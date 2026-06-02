@@ -109,6 +109,9 @@ target_link_libraries(EditRel PRIVATE
     winmm
     ws2_32
     dbghelp
+    ole32
+    windowscodecs
+    uuid
 
     # Tracy uses Windows process inspection APIs from Psapi.lib.
     Psapi

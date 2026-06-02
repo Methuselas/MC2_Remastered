@@ -1,0 +1,1015 @@
+/***************************************************************
+ * FILENAME: ui.fit
+ * DESCRIPTION: Mechlopedia UI labels, headers, help captions, stat formats, and font-reference strings.
+ * GENERATED: 2026-05-18
+ * SOURCE: MC2_Remastered.zip / data/defs/text/en_us/mc2res_legacy.fit
+ * PHASE: Phase 3 shared Mechlopedia text FIT setup
+ * NOTE: FIT owns the words. Legacy IDs are preserved for bridge lookup.
+ ***************************************************************/
+
+// -----------------------------------------------------------------------------
+// Group: Font Refs [font_refs]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.ui.font_refs"
+    type = "ui"
+    groupKey = "font_refs"
+    groupName = "Font Refs"
+    roles = "font_ref"
+    legacyIds = "27322,27701,27709,27712,27714,27716,40012"
+    recordCount = 7
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.font_refs.font_ref.logistics_mc_change_cost_font"
+    text = "ArialNarrow8.d3f"
+    legacyId = 27322
+    legacySymbol = "IDS_MC_CHANGE_COST_FONT"
+    legacyKey = "legacy.mc2res.27322"
+    source = "mechlopedia"
+    sourceKey = "logistics.mc.change.cost.font"
+    originalKey = "mechlopedia.ui.font_refs.font_ref"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "font_ref"
+    groupKey = "font_refs"
+    groupName = "Font Refs"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.font_refs.font_ref.logistics_en_encylopedia_font"
+    text = "AgencyFB17.d3f"
+    legacyId = 27701
+    legacySymbol = "IDS_EN_ENCYLOPEDIA_FONT"
+    legacyKey = "legacy.mc2res.27701"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.encylopedia.font"
+    originalKey = "mechlopedia.ui.font_refs.font_ref"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "font_ref"
+    groupKey = "font_refs"
+    groupName = "Font Refs"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.font_refs.font_ref.logistics_en_close_font"
+    text = "AgencyFB17.d3f"
+    legacyId = 27709
+    legacySymbol = "IDS_EN_CLOSE_FONT"
+    legacyKey = "legacy.mc2res.27709"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.close.font"
+    originalKey = "mechlopedia.ui.font_refs.font_ref"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "font_ref"
+    groupKey = "font_refs"
+    groupName = "Font Refs"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.font_refs.font_ref.logistics_en_mechname_font"
+    text = "AgencyFB14.d3f"
+    legacyId = 27712
+    legacySymbol = "IDS_EN_MECHNAME_FONT"
+    legacyKey = "legacy.mc2res.27712"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.mechname.font"
+    originalKey = "mechlopedia.ui.font_refs.font_ref"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "font_ref"
+    groupKey = "font_refs"
+    groupName = "Font Refs"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.font_refs.font_ref.unit_mech_stats_font"
+    text = "AgencyFB14.d3f"
+    legacyId = 27714
+    legacySymbol = "IDS_MECH_STATS_FONT"
+    legacyKey = "legacy.mc2res.27714"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.stats.font"
+    originalKey = "mechlopedia.ui.font_refs.font_ref"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "ui"
+    role = "font_ref"
+    groupKey = "font_refs"
+    groupName = "Font Refs"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.font_refs.font_ref.unit_mech_loadout_font"
+    text = "AgencyFB14.d3f"
+    legacyId = 27716
+    legacySymbol = "IDS_MECH_LOADOUT_FONT"
+    legacyKey = "legacy.mc2res.27716"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.loadout.font"
+    originalKey = "mechlopedia.ui.font_refs.font_ref"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "ui"
+    role = "font_ref"
+    groupKey = "font_refs"
+    groupName = "Font Refs"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.font_refs.font_ref.ui_help_font_800"
+    text = "ArialNarrow8.d3f"
+    legacyId = 40012
+    legacySymbol = "IDS_HELP_FONT"
+    legacyKey = "legacy.mc2res.40012"
+    source = "mechlopedia"
+    sourceKey = "ui.help.font.800"
+    originalKey = "mechlopedia.ui.font_refs.font_ref"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/ui_common.fit"
+    originalCategory = "ui_common"
+    mechlopediaType = "ui"
+    role = "font_ref"
+    groupKey = "font_refs"
+    groupName = "Font Refs"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Range Labels [range_labels]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.ui.range_labels"
+    type = "ui"
+    groupKey = "range_labels"
+    groupName = "Range Labels"
+    roles = "ui_text"
+    legacyIds = "43200,43201,43202"
+    recordCount = 3
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.range_labels.ui_text.ui_hotkey1"
+    text = "Short-Range Attack"
+    legacyId = 43200
+    legacySymbol = "IDS_HOTKEY1"
+    legacyKey = "legacy.mc2res.43200"
+    source = "mechlopedia"
+    sourceKey = "ui.hotkey1"
+    originalKey = "mechlopedia.ui.range_labels.ui_text"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/ui_common.fit"
+    originalCategory = "ui_common"
+    mechlopediaType = "ui"
+    role = "ui_text"
+    groupKey = "range_labels"
+    groupName = "Range Labels"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.range_labels.ui_text.ui_hotkey2"
+    text = "Medium-Range Attack"
+    legacyId = 43201
+    legacySymbol = "IDS_HOTKEY2"
+    legacyKey = "legacy.mc2res.43201"
+    source = "mechlopedia"
+    sourceKey = "ui.hotkey2"
+    originalKey = "mechlopedia.ui.range_labels.ui_text"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/ui_common.fit"
+    originalCategory = "ui_common"
+    mechlopediaType = "ui"
+    role = "ui_text"
+    groupKey = "range_labels"
+    groupName = "Range Labels"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.range_labels.ui_text.ui_hotkey3"
+    text = "Long-Range Attack"
+    legacyId = 43202
+    legacySymbol = "IDS_HOTKEY3"
+    legacyKey = "legacy.mc2res.43202"
+    source = "mechlopedia"
+    sourceKey = "ui.hotkey3"
+    originalKey = "mechlopedia.ui.range_labels.ui_text"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/ui_common.fit"
+    originalCategory = "ui_common"
+    mechlopediaType = "ui"
+    role = "ui_text"
+    groupKey = "range_labels"
+    groupName = "Range Labels"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Stats And Headers [stats_and_headers]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.ui.stats_and_headers"
+    type = "ui"
+    groupKey = "stats_and_headers"
+    groupName = "Stats And Headers"
+    roles = "font_ref,header,help_text,stat_format"
+    legacyIds = "27724,27733,27735,27723,27731,27732,27717,27718,27719,27720,27721,27722,27727,27728,27729,27734,27738,27739,27740,27741,27737"
+    recordCount = 21
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.stats_and_headers.font_ref.logistics_en_weapons_header_font"
+    text = "AgencyFB14.d3f"
+    legacyId = 27724
+    legacySymbol = "IDS_EN_WEAPONS_HEADER_FONT"
+    legacyKey = "legacy.mc2res.27724"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.weapons.header.font"
+    originalKey = "mechlopedia.ui.stats_and_headers.font_ref"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "font_ref"
+    groupKey = "stats_and_headers"
+    groupName = "Stats And Headers"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.stats_and_headers.font_ref.logistics_en_building_weapon_font"
+    text = "AgencyFB11.d3f"
+    legacyId = 27733
+    legacySymbol = "IDS_EN_BUILDING_WEAPON_FONT"
+    legacyKey = "legacy.mc2res.27733"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.building.weapon.font"
+    originalKey = "mechlopedia.ui.stats_and_headers.font_ref"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "font_ref"
+    groupKey = "stats_and_headers"
+    groupName = "Stats And Headers"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.stats_and_headers.font_ref.logistics_en_personality_font"
+    text = "AgencyFB14.d3f"
+    legacyId = 27735
+    legacySymbol = "IDS_EN_PERSONALITY_FONT"
+    legacyKey = "legacy.mc2res.27735"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.personality.font"
+    originalKey = "mechlopedia.ui.stats_and_headers.font_ref"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "font_ref"
+    groupKey = "stats_and_headers"
+    groupName = "Stats And Headers"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.stats_and_headers.header.logistics_en_weapons_header"
+    text = "WEAPON STATS"
+    legacyId = 27723
+    legacySymbol = "IDS_EN_WEAPONS_HEADER"
+    legacyKey = "legacy.mc2res.27723"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.weapons.header"
+    originalKey = "mechlopedia.ui.stats_and_headers.header"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "header"
+    groupKey = "stats_and_headers"
+    groupName = "Stats And Headers"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.stats_and_headers.header.unit_vehicle_stats"
+    text = "VEHICLE STATS"
+    legacyId = 27731
+    legacySymbol = "IDS_VEHICLE_STATS"
+    legacyKey = "legacy.mc2res.27731"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.stats"
+    originalKey = "mechlopedia.ui.stats_and_headers.header"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "ui"
+    role = "header"
+    groupKey = "stats_and_headers"
+    groupName = "Stats And Headers"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.stats_and_headers.header.logistics_en_building_weapon"
+    text = "WEAPONS LOADOUT"
+    legacyId = 27732
+    legacySymbol = "IDS_EN_BUILDING_WEAPON"
+    legacyKey = "legacy.mc2res.27732"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.building.weapon"
+    originalKey = "mechlopedia.ui.stats_and_headers.header"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "header"
+    groupKey = "stats_and_headers"
+    groupName = "Stats And Headers"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_house"
+    text = "HOUSE : %s"
+    legacyId = 27717
+    legacySymbol = "IDS_EN_HOUSE"
+    legacyKey = "legacy.mc2res.27717"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.house"
+    originalKey = "mechlopedia.ui.stats_and_headers.stat_format"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "stat_format"
+    groupKey = "stats_and_headers"
+    groupName = "Stats And Headers"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_weight"
+    text = "WEIGHT : %.0lf tons"
+    legacyId = 27718
+    legacySymbol = "IDS_EN_WEIGHT"
+    legacyKey = "legacy.mc2res.27718"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.weight"
+    originalKey = "mechlopedia.ui.stats_and_headers.stat_format"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "stat_format"
+    groupKey = "stats_and_headers"
+    groupName = "Stats And Headers"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_class"
+    text = "CLASS : %s"
+    legacyId = 27719
+    legacySymbol = "IDS_EN_CLASS"
+    legacyKey = "legacy.mc2res.27719"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.class"
+    originalKey = "mechlopedia.ui.stats_and_headers.stat_format"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "stat_format"
+    groupKey = "stats_and_headers"
+    groupName = "Stats And Headers"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_speed"
+    text = "SPEED : %ld Km/h"
+    legacyId = 27720
+    legacySymbol = "IDS_EN_SPEED"
+    legacyKey = "legacy.mc2res.27720"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.speed"
+    originalKey = "mechlopedia.ui.stats_and_headers.stat_format"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "stat_format"
+    groupKey = "stats_and_headers"
+    groupName = "Stats And Headers"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_jump"
+    text = "JUMP : %ld m"
+    legacyId = 27721
+    legacySymbol = "IDS_EN_JUMP"
+    legacyKey = "legacy.mc2res.27721"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.jump"
+    originalKey = "mechlopedia.ui.stats_and_headers.stat_format"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "stat_format"
+    groupKey = "stats_and_headers"
+    groupName = "Stats And Headers"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_armor"
+    text = "ARMOR: %s : %ld"
+    legacyId = 27722
+    legacySymbol = "IDS_EN_ARMOR"
+    legacyKey = "legacy.mc2res.27722"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.armor"
+    originalKey = "mechlopedia.ui.stats_and_headers.stat_format"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "stat_format"
+    groupKey = "stats_and_headers"
+    groupName = "Stats And Headers"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_weapon_heat"
+    text = "HEAT : %ld"
+    legacyId = 27727
+    legacySymbol = "IDS_EN_WEAPON_HEAT"
+    legacyKey = "legacy.mc2res.27727"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.weapon.heat"
+    originalKey = "mechlopedia.ui.stats_and_headers.stat_format"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "stat_format"
+    groupKey = "stats_and_headers"
+    groupName = "Stats And Headers"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_weapon_damage"
+    text = "DAMAGE : %ld"
+    legacyId = 27728
+    legacySymbol = "IDS_EN_WEAPON_DAMAGE"
+    legacyKey = "legacy.mc2res.27728"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.weapon.damage"
+    originalKey = "mechlopedia.ui.stats_and_headers.stat_format"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "stat_format"
+    groupKey = "stats_and_headers"
+    groupName = "Stats And Headers"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_weapon_range"
+    text = "RANGE : %s"
+    legacyId = 27729
+    legacySymbol = "IDS_EN_WEAPON_RANGE"
+    legacyKey = "legacy.mc2res.27729"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.weapon.range"
+    originalKey = "mechlopedia.ui.stats_and_headers.stat_format"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "stat_format"
+    groupKey = "stats_and_headers"
+    groupName = "Stats And Headers"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_building_weight"
+    text = "Structure Damage Points : %ld"
+    legacyId = 27734
+    legacySymbol = "IDS_EN_BUILDING_WEIGHT"
+    legacyKey = "legacy.mc2res.27734"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.building.weight"
+    originalKey = "mechlopedia.ui.stats_and_headers.stat_format"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "stat_format"
+    groupKey = "stats_and_headers"
+    groupName = "Stats And Headers"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_weapon_rateoffire"
+    text = "RATE OF FIRE: %.1lf"
+    legacyId = 27738
+    legacySymbol = "IDS_EN_WEAPON_RATEOFFIRE"
+    legacyKey = "legacy.mc2res.27738"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.weapon.rateoffire"
+    originalKey = "mechlopedia.ui.stats_and_headers.stat_format"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "stat_format"
+    groupKey = "stats_and_headers"
+    groupName = "Stats And Headers"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_weapon_cost"
+    text = "COST: %ld"
+    legacyId = 27739
+    legacySymbol = "IDS_EN_WEAPON_COST"
+    legacyKey = "legacy.mc2res.27739"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.weapon.cost"
+    originalKey = "mechlopedia.ui.stats_and_headers.stat_format"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "stat_format"
+    groupKey = "stats_and_headers"
+    groupName = "Stats And Headers"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_weapon_ammo"
+    text = "AMMO : %ld"
+    legacyId = 27740
+    legacySymbol = "IDS_EN_WEAPON_AMMO"
+    legacyKey = "legacy.mc2res.27740"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.weapon.ammo"
+    originalKey = "mechlopedia.ui.stats_and_headers.stat_format"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "stat_format"
+    groupKey = "stats_and_headers"
+    groupName = "Stats And Headers"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_weapon_armor"
+    text = "ARMOR : %ld"
+    legacyId = 27741
+    legacySymbol = "IDS_EN_WEAPON_ARMOR"
+    legacyKey = "legacy.mc2res.27741"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.weapon.armor"
+    originalKey = "mechlopedia.ui.stats_and_headers.stat_format"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "stat_format"
+    groupKey = "stats_and_headers"
+    groupName = "Stats And Headers"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.stats_and_headers.help_text"
+    text = "ENCYCLOPEDIA     In this screen, you can review in detail the 'Mechs, vehicles, buildings, weapons, and components in MechCommander 2. The personalities involved are also studied, and a primer on BattleTech history is provided."
+    legacyId = 27737
+    legacySymbol = "IDS_EN_TITLE_HELP"
+    legacyKey = "legacy.mc2res.27737"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.title.help"
+    originalKey = "mechlopedia.ui.stats_and_headers.help_text"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "help_text"
+    groupKey = "stats_and_headers"
+    groupName = "Stats And Headers"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Ui [ui]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.ui.ui"
+    type = "ui"
+    groupKey = "ui"
+    groupName = "Ui"
+    roles = "button_label,header,help_text,ui_text"
+    legacyIds = "27000,27700,27702,27703,27704,27705,27706,27707,27713,27715,27708,27710"
+    recordCount = 12
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.ui.ui_text.ui_string_first_logistics"
+    text = " "
+    legacyId = 27000
+    legacySymbol = "IDS_STRING_FIRST_LOGISTICS"
+    legacyKey = "legacy.mc2res.27000"
+    source = "mechlopedia"
+    sourceKey = "ui.string.first.logistics"
+    originalKey = "mechlopedia.ui.ui.ui_text"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/placeholders.fit"
+    originalCategory = "placeholders"
+    mechlopediaType = "ui"
+    role = "ui_text"
+    groupKey = "ui"
+    groupName = "Ui"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.ui.header.logistics_en_encylopedia"
+    text = "ENCYCLOPEDIA"
+    legacyId = 27700
+    legacySymbol = "IDS_EN_ENCYLOPEDIA"
+    legacyKey = "legacy.mc2res.27700"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.encylopedia"
+    originalKey = "mechlopedia.ui.ui.header"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "header"
+    groupKey = "ui"
+    groupName = "Ui"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.ui.ui_text.logistics_en_mechs"
+    text = "'MECHS     Review the history, stats, and payload of the MechCommander 2 'Mechs."
+    legacyId = 27702
+    legacySymbol = "IDS_EN_MECHS"
+    legacyKey = "legacy.mc2res.27702"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.mechs"
+    originalKey = "mechlopedia.ui.ui.ui_text"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "ui_text"
+    groupKey = "ui"
+    groupName = "Ui"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.ui.ui_text.logistics_en_buildings"
+    text = "BUILDINGS     Review the buildings on the field of the MechCommander 2 universe."
+    legacyId = 27703
+    legacySymbol = "IDS_EN_BUILDINGS"
+    legacyKey = "legacy.mc2res.27703"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.buildings"
+    originalKey = "mechlopedia.ui.ui.ui_text"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "ui_text"
+    groupKey = "ui"
+    groupName = "Ui"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.ui.ui_text.logistics_en_vehicles"
+    text = "VEHICLES     Review the vehicles you will encounter in MechCommander 2."
+    legacyId = 27704
+    legacySymbol = "IDS_EN_VEHICLES"
+    legacyKey = "legacy.mc2res.27704"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.vehicles"
+    originalKey = "mechlopedia.ui.ui.ui_text"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "ui_text"
+    groupKey = "ui"
+    groupName = "Ui"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.ui.ui_text.logistics_en_weapons"
+    text = "WEAPONS AND COMPONENTS     Review the history, stats, and advantages and disadvantages of weapons and components."
+    legacyId = 27705
+    legacySymbol = "IDS_EN_WEAPONS"
+    legacyKey = "legacy.mc2res.27705"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.weapons"
+    originalKey = "mechlopedia.ui.ui.ui_text"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "ui_text"
+    groupKey = "ui"
+    groupName = "Ui"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.ui.ui_text.logistics_en_personalities"
+    text = "PERSONALITIES     Review the personalities of the MechCommander 2 universe."
+    legacyId = 27706
+    legacySymbol = "IDS_EN_PERSONALITIES"
+    legacyKey = "legacy.mc2res.27706"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.personalities"
+    originalKey = "mechlopedia.ui.ui.ui_text"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "ui_text"
+    groupKey = "ui"
+    groupName = "Ui"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.ui.ui_text.logistics_en_history"
+    text = "HISTORY     Review the history of the BattleTech universe."
+    legacyId = 27707
+    legacySymbol = "IDS_EN_HISTORY"
+    legacyKey = "legacy.mc2res.27707"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.history"
+    originalKey = "mechlopedia.ui.ui.ui_text"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "ui_text"
+    groupKey = "ui"
+    groupName = "Ui"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.ui.header.unit_mech_stats"
+    text = "'MECH STATS"
+    legacyId = 27713
+    legacySymbol = "IDS_MECH_STATS"
+    legacyKey = "legacy.mc2res.27713"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.stats"
+    originalKey = "mechlopedia.ui.ui.header"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "ui"
+    role = "header"
+    groupKey = "ui"
+    groupName = "Ui"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.ui.header.unit_mech_loadout"
+    text = "WEAPONS LOADOUT"
+    legacyId = 27715
+    legacySymbol = "IDS_MECH_LOADOUT"
+    legacyKey = "legacy.mc2res.27715"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.loadout"
+    originalKey = "mechlopedia.ui.ui.header"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/components.fit"
+    originalCategory = "components"
+    mechlopediaType = "ui"
+    role = "header"
+    groupKey = "ui"
+    groupName = "Ui"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.ui.button_label"
+    text = "CLOSE"
+    legacyId = 27708
+    legacySymbol = "IDS_EN_CLOSE"
+    legacyKey = "legacy.mc2res.27708"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.close"
+    originalKey = "mechlopedia.ui.ui.button_label"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "button_label"
+    groupKey = "ui"
+    groupName = "Ui"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.ui.ui.help_text"
+    text = "CLOSE     Return to the previous screen."
+    legacyId = 27710
+    legacySymbol = "IDS_EN_CLOSE_HELP"
+    legacyKey = "legacy.mc2res.27710"
+    source = "mechlopedia"
+    sourceKey = "logistics.en.close.help"
+    originalKey = "mechlopedia.ui.ui.help_text"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "ui"
+    role = "help_text"
+    groupKey = "ui"
+    groupName = "Ui"
+    codeReference = "code/mechlopedia.cpp + data/defs/ui/legacy/game/mcl_en*.fit"
+    notes = "Pulled because the GOS Mechlopedia screens or Mechlopedia.cpp reference this legacy ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+

@@ -1,0 +1,490 @@
+file,key,legacySection,legacyComment,visibleText,helpCaptionText,explicitAction,actionType,targetPageKey,targetFit,legacyMessage,needsActionReview
+data/defs/ui/packages/legacy_imgui/defines/ui_elements.fit,ui.element.button,,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.default_attack_defunct,Button0,default attack- DEFUNCT,,Default Range,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.short_range_attack_defunct,Button1,short range attack DEFUNCT,,Short-Range Attack Command (S),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.medium_attack_defunct,Button2,medium attack  DEFUNCT,,Medium-Range Attack Command (M),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.l_attack_defunct,Button3,l attack DEFUNCT,,Long-Range Attack Command (L),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.jump,Button4,jump,,Jump Command (J),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.run,Button5,run,,Run Command (SPACEBAR),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.guard,Button6,guard,,Guard Command (G),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.fire_from_current_pos,Button7,fire from current pos,,Fire from Current Position Command (C),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.stop,Button8,stop,,Stop/Hold Fire Command (BACKSPACE),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.info,Button9,info,,Info (I),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.objectives,Button10,objectives,,Objectives List (F9),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.pause_button_com_palette,Button11,PAUSE BUTTON - COM PALETTE,,System Menu (ESC),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.tac_map_tab,Button12,tac map tab,,Tactical Map,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.info_tab,Button13,info tab,,Unit Info,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.support_tab,Button14,support tab,,Support Palette,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.minelayer,Button15,minelayer,,Lay Mines Toggle Command (V),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.repair,Button16,repair,,Repair,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.salvage,Button17,salvage,,Recover,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.artillery_piece_supression_fire,Button18,artillery piece supression fire,,Suppression Fire Toggle Command (V),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.hold_position,Button19,hold position,,Hold Position Toggle Command (H),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.filler_button,Button20,filler button,,Hold Position Toggle Command (H),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.button,ScrollButton,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.scroll_up,InfoButton0,scroll up,,Default Range,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.scroll_down,InfoButton1,scroll down,,Default Range,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.obj,PauseButton0,obj,OBJECTIVES,Objectives List,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.inmissionsave,PauseButton1,inmissionsave,QUICK SAVE,Quick Save,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.inmissionload,PauseButton2,inmissionload,QUICK LOAD,Quick Load,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.options,PauseButton3,options,OPTIONS,Options,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.restart_mission,PauseButton4,restart mission,ABORT MISSION,Abort Mission,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.exit,PauseButton5,exit,EXIT GAME,Exit Game,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,game.buttonlayout1024.button.return_to_game,PauseButton6,return to game,RETURN TO GAME,Return to Game,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.default_attack_defunct,Button0,default attack- DEFUNCT,,Default Range,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.short_range_attack_defunct,Button1,short range attack DEFUNCT,,Short-Range Attack Command (S),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.medium_attack_defunct,Button2,medium attack  DEFUNCT,,Medium-Range Attack Command (M),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.l_attack_defunct,Button3,l attack DEFUNCT,,Long-Range Attack Command (L),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.jump,Button4,jump,,Jump Command (J),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.run,Button5,run,,Run Command (SPACEBAR),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.guard,Button6,guard,,Guard Command (G),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.fire_from_current_pos,Button7,fire from current pos,,Fire from Current Position Command (C),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.stop,Button8,stop,,Stop/Hold Fire Command (BACKSPACE),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.info,Button9,info,,Info (I),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.objectives,Button10,objectives,,Objectives List (F9),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.pause_button_com_palette,Button11,PAUSE BUTTON - COM PALETTE,,System Menu (ESC),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.tac_map_tab,Button12,tac map tab,,Tactical Map,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.info_tab,Button13,info tab,,Unit Info,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.support_tab,Button14,support tab,,Support Palette,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.minelayer,Button15,minelayer,,Lay Mines Toggle Command (V),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.repair,Button16,repair,,Repair,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.salvage,Button17,salvage,,Recover,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.artillery_piece_supression_fire,Button18,artillery piece supression fire,,Suppression Fire Toggle Command (V),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.hold_position,Button19,hold position,,Hold Position Toggle Command (H),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.filler_button,Button20,filler button,,Hold Position Toggle Command (H),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.button,ScrollButton,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.scroll_up,InfoButton0,scroll up,,Default Range,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.scroll_down,InfoButton1,scroll down,,Default Range,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.obj,PauseButton0,obj,OBJECTIVES,Objectives List,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.inmissionsave,PauseButton1,inmissionsave,QUICK SAVE,Quick Save,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.inmissionload,PauseButton2,inmissionload,QUICK LOAD,Quick Load,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.options,PauseButton3,options,OPTIONS,Options,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.restart_mission,PauseButton4,restart mission,ABORT MISSION,Abort Mission,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.exit,PauseButton5,exit,EXIT GAME,Exit Game,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,game.buttonlayout1280.button.return_to_game,PauseButton6,return to game,RETURN TO GAME,Return to Game,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.default_attack_defunct,Button0,default attack- DEFUNCT,,Default Range,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.short_range_attack_defunct,Button1,short range attack DEFUNCT,,Short-Range Attack Command (S),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.medium_attack_defunct,Button2,medium attack  DEFUNCT,,Medium-Range Attack Command (M),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.l_attack_defunct,Button3,l attack DEFUNCT,,Long-Range Attack Command (L),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.jump,Button4,jump,,Jump Command (J),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.run,Button5,run,,Run Command (SPACEBAR),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.guard,Button6,guard,,Guard Command (G),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.fire_from_current_pos,Button7,fire from current pos,,Fire from Current Position Command (C),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.stop,Button8,stop,,Stop/Hold Fire Command (BACKSPACE),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.info,Button9,info,,Info (I),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.objectives,Button10,objectives,,Objectives List (F9),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.pause_button_com_palette,Button11,PAUSE BUTTON - COM PALETTE,,System Menu (ESC),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.tac_map_tab,Button12,tac map tab,,Tactical Map,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.info_tab,Button13,info tab,,Unit Info,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.support_tab,Button14,support tab,,Support Palette,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.minelayer,Button15,minelayer,,Lay Mines Toggle Command (V),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.repair,Button16,repair,,Repair,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.salvage,Button17,salvage,,Recover,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.artillery_piece_supression_fire,Button18,artillery piece supression fire,,Suppression Fire Toggle Command (V),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.hold_position,Button19,hold position,,Hold Position Toggle Command (H),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.button,ScrollButton,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.scroll_up,InfoButton0,scroll up,,Default Range,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.scroll_down,InfoButton1,scroll down,,Default Range,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.obj,PauseButton0,obj,OBJECTIVES,Objectives List,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.inmissionsave,PauseButton1,inmissionsave,QUICK SAVE,Quick Save,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.inmissionload,PauseButton2,inmissionload,QUICK LOAD,Quick Load,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.options,PauseButton3,options,OPTIONS,Options,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.restart_mission,PauseButton4,restart mission,ABORT MISSION,Abort Mission,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.exit,PauseButton5,exit,EXIT GAME,Exit Game,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,game.buttonlayout1600.button.return_to_game,PauseButton6,return to game,RETURN TO GAME,Return to Game,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.default_attack_defunct,Button0,default attack DEFUNCT,,Default Range,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.short_range_attack_defunct,Button1,short range attack DEFUNCT,,Short-Range Attack Command (S),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.medium_attack_defunct,Button2,medium attack DEFUNCT,,Medium-Range Attack Command (M),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.l_attack_defunct,Button3,l attack DEFUNCT,,Long-Range Attack Command (L),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.jump,Button4,jump,,Jump Command (J),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.run,Button5,run,,Run Command (SPACEBAR),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.guard,Button6,guard,,Guard Command (G),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.fire_from_current_pos,Button7,fire from current pos,,Fire from Current Position Command (C),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.stop,Button8,stop,,Stop/Hold Fire Command (BACKSPACE),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.info,Button9,info,,Info (I),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.objectives,Button10,objectives,,Objectives List (F9),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.pause_menu,Button11,PAUSE MENU,,System Menu (ESC),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.tac_map,Button12,tac map,,Tactical Map,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.info_tab,Button13,info tab,,Unit Info,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.vehicle_tab,Button14,vehicle tab,,Support Palette,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.minelayer,Button15,minelayer,,Lay Mines Toggle Command (V),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.repair,Button16,repair,,Repair,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.salvage,Button17,salvage,,Recover,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.artillery_piece_suppression_fire,Button18,artillery piece suppression fire,,Suppression Fire Toggle Command (V),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.hold_position,Button19,hold position,,Hold Position Toggle Command (H),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.button,ScrollButton,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.scroll_up,InfoButton0,scroll up,,Default Range,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.scroll_down,InfoButton1,scroll down,,Default Range,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.obj,PauseButton0,obj,OBJECTIVES,Objectives List,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.inmissionsave,PauseButton1,inmissionsave,QUICK SAVE,Quick Save,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.inmissionload,PauseButton2,inmissionload,QUICK LOAD,Quick Load,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.options,PauseButton3,options,OPTIONS,Options,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.restart_mission,PauseButton4,restart mission,ABORT MISSION,Abort Mission,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.exit,PauseButton5,exit,EXIT GAME,Exit Game,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,game.buttonlayout640.button.return_to_game,PauseButton6,return to game,RETURN TO GAME,Return to Game,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.default_attack,Button0,default attack,,Default Range,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.short_range_attack,Button1,short range attack,,Short-Range Attack Command (S),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.medium_attack,Button2,medium attack,,Medium-Range Attack Command (M),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.l_attack,Button3,l attack,,Long-Range Attack Command (L),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.jump,Button4,jump,,Jump Command (J),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.run,Button5,run,,Run Command (SPACEBAR),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.guard,Button6,guard,,Guard Command (G),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.fire_from_current_pos,Button7,fire from current pos,,Fire from Current Position Command (C),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.stop,Button8,stop,,Stop/Hold Fire Command (BACKSPACE),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.info,Button9,info,,Info (I),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.objectives,Button10,objectives,,Objectives List (F9),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.pause_window,Button11,PAUSE WINDOW,,System Menu (ESC),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.tac_map,Button12,tac map,,Tactical Map,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.info_tab,Button13,info tab,,Unit Info,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.vehicle_tab,Button14,vehicle tab,,Support Palette,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.minelayer,Button15,minelayer,,Lay Mines Toggle Command (V),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.repair,Button16,repair,,Repair,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.salvage,Button17,salvage,,Recover,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.artillery_piece_suppression_fire,Button18,artillery piece suppression fire,,Suppression Fire Toggle Command (V),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.hold_position,Button19,hold position,,Hold Position Toggle Command (H),false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.button,ScrollButton,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.scroll_up,InfoButton0,scroll up,,Default Range,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.scroll_down,InfoButton1,scroll down,,Default Range,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.obj,PauseButton0,obj,OBJECTIVES,Objectives List,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.inmissionsave,PauseButton1,inmissionsave,QUICK SAVE,Quick Save,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.inmissionload,PauseButton2,inmissionload,QUICK LOAD,Quick Load,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.options,PauseButton3,options,OPTIONS,Options,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.restart_mission,PauseButton4,restart mission,ABORT MISSION,Abort Mission,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.exit,PauseButton5,exit,EXIT GAME,Exit Game,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,game.buttonlayout800.button.return_to_game,PauseButton6,return to game,RETURN TO GAME,Return to Game,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_choosecampaign.fit,game.choose_campaign.button.cancel_button,Button0,cancel button,CANCEL,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_choosecampaign.fit,game.choose_campaign.button.accept_button,Button1,accept button.,SAVE,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_layout.fit,game.mission_selection.button.next_button_in_lower_right_corner,CMButton0,NEXT button in lower right corner,NEXT,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_layout.fit,game.mission_selection.button.main_menubutton_in_upper_right_corner,CMButton1,main menubutton in upper right corner,MAIN MENU,MAIN MENU,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_layout.fit,game.mission_selection.button.play_button_for_video_window,CMButton2,Play button for video window,,PLAY,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_layout.fit,game.mission_selection.button.pause_button_for_video_window,CMButton3,Pause button for video window,,PAUSE,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_layout.fit,game.mission_selection.button.stop_button_for_video_window,CMButton4,Stop button for video window,,STOP,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op1_1.fit,game.mcl_cm_op1_1.button.mission_1,Button0,mission 1,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op1_2.fit,game.mcl_cm_op1_2.button.mission_2,Button0,mission 2,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op1_3.fit,game.mcl_cm_op1_3.button.mission_3,Button0,mission 3,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op1_4.fit,game.mcl_cm_op1_4.button.mission_4,Button0,mission 4,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op1_5.fit,game.mcl_cm_op1_5.button.mission_5,Button0,mission 5,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op1_6.fit,game.mcl_cm_op1_6.button.mission_6,Button0,mission 6,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op1_6.fit,game.mcl_cm_op1_6.button.mission_7,Button1,mission 7,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op1_6.fit,game.mcl_cm_op1_6.button.mission_8,Button2,mission 8,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op1_6.fit,game.mcl_cm_op1_6.button.mission_9,Button3,mission 9,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op2_1.fit,game.mcl_cm_op2_1.button.mission_10,Button0,mission 10,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op2_2.fit,game.mcl_cm_op2_2.button.mission_11,Button0,mission 11,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op2_2.fit,game.mcl_cm_op2_2.button.mission_12,Button1,mission 12,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op2_2.fit,game.mcl_cm_op2_2.button.mission_13,Button2,mission 13,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op2_3.fit,game.mcl_cm_op2_3.button.mission_14,Button0,mission 14,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op2_3.fit,game.mcl_cm_op2_3.button.mission_15,Button1,mission 15,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op2_3.fit,game.mcl_cm_op2_3.button.mission_16,Button2,mission 16,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op2_3.fit,game.mcl_cm_op2_3.button.mission_17,Button3,mission 17,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op3_1.fit,game.mcl_cm_op3_1.button.mission_18,Button0,mission 18,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op3_2.fit,game.mcl_cm_op3_2.button.mission_19,Button0,mission 19,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op3_2.fit,game.mcl_cm_op3_2.button.mission_20,Button1,mission 20,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op3_2.fit,game.mcl_cm_op3_2.button.mission_21,Button2,mission 21,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op3_2.fit,game.mcl_cm_op3_2.button.mission_22,Button3,mission 22,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op3_3.fit,game.mcl_cm_op3_3.button.mission_23,Button0,mission 23,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op3_4.fit,game.mcl_cm_op3_4.button.mission_24,Button0,mission 24,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample.fit,game.mcl_cm_op_sample.button.mission1,Button0,mission1,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample.fit,game.mcl_cm_op_sample.button.mission2,Button1,mission2,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample.fit,game.mcl_cm_op_sample.button.mission3,Button2,mission3,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample.fit,game.mcl_cm_op_sample.button.mission4,Button3,mission4,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample.fit,game.mcl_cm_op_sample.button.mission5,Button4,mission5,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample_1_mission.fit,game.mcl_cm_op_sample_1_mission.button.mission_2,Button0,mission 2,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample_2_missions.fit,game.mcl_cm_op_sample_2_missions.button.button,Button0,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample_2_missions.fit,game.mcl_cm_op_sample_2_missions.button.button_01,Button1,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample_3_missions.fit,game.mcl_cm_op_sample_3_missions.button.mission_19,Button0,mission 19,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample_3_missions.fit,game.mcl_cm_op_sample_3_missions.button.mission_20,Button1,mission 20,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample_3_missions.fit,game.mcl_cm_op_sample_3_missions.button.mission_21,Button2,mission 21,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample_4_missions.fit,game.mcl_cm_op_sample_4_missions.button.mission_14,Button0,mission 14,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample_4_missions.fit,game.mcl_cm_op_sample_4_missions.button.mission_15,Button1,mission 15,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample_4_missions.fit,game.mcl_cm_op_sample_4_missions.button.mission_16,Button2,mission 16,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample_4_missions.fit,game.mcl_cm_op_sample_4_missions.button.mission_17,Button3,mission 17,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opgeneric_1.fit,game.mcl_cm_opgeneric_1.button.mission_2,Button0,mission 2,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opgeneric_2.fit,game.mcl_cm_opgeneric_2.button.button,Button0,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opgeneric_2.fit,game.mcl_cm_opgeneric_2.button.button_01,Button1,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opgeneric_3.fit,game.mcl_cm_opgeneric_3.button.mission_19,Button0,mission 19,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opgeneric_3.fit,game.mcl_cm_opgeneric_3.button.mission_20,Button1,mission 20,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opgeneric_3.fit,game.mcl_cm_opgeneric_3.button.mission_21,Button2,mission 21,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opgeneric_4.fit,game.mcl_cm_opgeneric_4.button.mission_14,Button0,mission 14,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opgeneric_4.fit,game.mcl_cm_opgeneric_4.button.mission_15,Button1,mission 15,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opgeneric_4.fit,game.mcl_cm_opgeneric_4.button.mission_16,Button2,mission 16,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opgeneric_4.fit,game.mcl_cm_opgeneric_4.button.mission_17,Button3,mission 17,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opplayer.fit,game.mcl_cm_opplayer.button.mission1,Button0,mission1,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opplayer.fit,game.mcl_cm_opplayer.button.mission2,Button1,mission2,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opplayer.fit,game.mcl_cm_opplayer.button.mission3,Button2,mission3,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opplayer.fit,game.mcl_cm_opplayer.button.mission4,Button3,mission4,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opplayer.fit,game.mcl_cm_opplayer.button.mission5,Button4,mission5,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_optutorials.fit,game.mcl_cm_optutorials.button.tutorial_1,Button0,tutorial 1,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_optutorials.fit,game.mcl_cm_optutorials.button.tutorial_2,Button1,tutorial 2,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_optutorials.fit,game.mcl_cm_optutorials.button.tutorial_3,Button2,tutorial 3,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_optutorials.fit,game.mcl_cm_optutorials.button.tutorial_4,Button3,tutorial 4,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_optutorials.fit,game.mcl_cm_optutorials.button.tutorial_5,Button4,tutorial 5,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_standinop.fit,game.mcl_cm_standinop.button.first_standin_button_for_mission_selection,Button0,first standin button for mission selection,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_standinop.fit,game.mcl_cm_standinop.button.second_standin_button_for_mission_selection,Button1,second standin button for mission selection,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_standinop.fit,game.mcl_cm_standinop.button.third_standin_button_for_mission_selection,Button2,third standin button for mission selection,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_dialog.fit,game.mcl_dialog.button.cancel_button,Button0,cancel button,NO,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_dialog.fit,game.mcl_dialog.button.okay_button,Button1,OKAY button,YES,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_dialog_edit.fit,game.mcl_dialog_edit.button.cancel_button,Button0,cancel button,NO,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_dialog_edit.fit,game.mcl_dialog_edit.button.okay_button,Button1,OKAY button,YES,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_dialog_onebutton.fit,game.mcl_dialog_onebutton.button.cancel_okay_whatever_button,Button0,"cancel,okay, whatever button",NO,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_dialoglegal.fit,game.mcl_dialoglegal.button.accept_button,Button0,accept button,ACCEPT,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_en.fit,game.mcl_en.button.mech_category_button,Button0,mech category button,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_en.fit,game.mcl_en.button.buildings_category_button,Button1,buildings category button,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_en.fit,game.mcl_en.button.vehicles,Button2,vehicles,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_en.fit,game.mcl_en.button.weapons,Button3,weapons,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_en.fit,game.mcl_en.button.personalities,Button4,personalities,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_en.fit,game.mcl_en.button.history,Button5,history,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_en.fit,game.mcl_en.button.close_button,Button6,close button,CLOSE,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,game.mcl_mb_layout.button.back_button,MechBayButton0,back button,BACK,NEXT,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,game.mcl_mb_layout.button.next_button,MechBayButton1,next button,NEXT,NEXT,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,game.mcl_mb_layout.button.add_mech_button,MechBayButton2,add mech button,ADD 'MECH,ADD 'MECH,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,game.mcl_mb_layout.button.remove_mech_button,MechBayButton3,remove mech button,REMOVE 'MECH,REMOVE 'MECH,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,game.mcl_mb_layout.button.main_menu_button,MechBayButton4,main menu button,MAIN MENU,MAIN MENU,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,game.mcl_mb_layout.button.change_weapons_button,MechBayButton5,change weapons button,MODIFY 'MECH,MODIFY 'MECH,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,game.mcl_mb_layout.button.purchase_mechs_button,MechBayButton6,purchase mechs button,BUY/SELL 'MECHS,BUY/SELL 'MECHS,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,game.mcl_mc.button.cancel_button,Button0,cancel button,CANCEL,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,game.mcl_mc.button.accept_button,Button1,accept button,ACCEPT,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,game.mcl_mc.button.add_component_button,Button2,add component button,ADD,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,game.mcl_mc.button.remove_component_button,Button3,remove component button,REMOVE,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,game.mcl_mc.button.main_menu_button,Button4,main menu button,MAIN MENU,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,game.mcl_mc.button.ballistic_tab,Button5,ballistic tab,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,game.mcl_mc.button.energy_tab,Button6,energy tab,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,game.mcl_mc.button.missile_tab,Button7,missile tab,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,game.mcl_mc.button.heat_and_jump_jet_tab,Button8,heat and jump jet tab,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mc_combobox0.fit,game.mcl_mc_combobox0.button.button,ExpandButton,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mdollar.fit,game.mcl_mdollar.button.main_menu_button,Button0,main menu button,MAIN MENU,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mdollar.fit,game.mcl_mdollar.button.buy_button,Button1,buy button,BUY 'MECH,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mdollar.fit,game.mcl_mdollar.button.sell_button,Button2,sell button,SELL 'MECH,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mdollar.fit,game.mcl_mdollar.button.cancel_button,Button3,cancel button,CANCEL,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mdollar.fit,game.mcl_mdollar.button.accept_button,Button4,accept button,ACCEPT,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mm.fit,game.mcl_mm.button.start_new_campaign,Button0,start new campaign,NEW CAMPAIGN,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mm.fit,game.mcl_mm.button.load_game,Button1,load game,LOAD GAME,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mm.fit,game.mcl_mm.button.save_game,Button2,save game,SAVE GAME,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mm.fit,game.mcl_mm.button.multiplayer,Button3,multiplayer,MULTIPLAYER,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mm.fit,game.mcl_mm.button.return_to_game,Button4,return to game,RETURN TO GAME,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mm.fit,game.mcl_mm.button.options,Button5,options,OPTIONS,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mm.fit,game.mcl_mm.button.encyclopedia,Button6,encyclopedia,ENCYCLOPEDIA,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mm.fit,game.mcl_mm.button.exit,Button7,exit,EXIT,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mm.fit,game.mcl_mm.button.skirmish,Button8,skirmish,SOLO MISSION,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mm.fit,game.mcl_mm.button.info_legalese_button,Button9,info legalese button,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mn.fit,game.mcl_mn.button.main_menu_button,Button0,main menu button,MAIN MENU,MAIN MENU,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mn.fit,game.mcl_mn.button.play_button,Button1,play button,,PLAY,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mn.fit,game.mcl_mn.button.pause_button,Button2,PAUSE BUTTON,,PAUSE,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mn.fit,game.mcl_mn.button.stop_button,Button3,STOP BUTTON,,STOP,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mn.fit,game.mcl_mn.button.back_button,Button4,back button,BACK,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mn.fit,game.mcl_mn.button.next_button,Button5,next button,NEXT,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_addai.fit,game.mcl_mp_addai.button.cancel_button,Button0,cancel button,CANCEL,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_addai.fit,game.mcl_mp_addai.button.accept_button,Button1,accept button,ACCEPT,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_addai_combobox0.fit,game.mcl_mp_addai_combobox0.button.button,ExpandButton,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_addai_combobox1.fit,game.mcl_mp_addai_combobox1.button.button,ExpandButton,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_addai_combobox2.fit,game.mcl_mp_addai_combobox2.button.button,ExpandButton,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_addai_combobox3.fit,game.mcl_mp_addai_combobox3.button.button,ExpandButton,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_chatwidget.fit,game.mcl_mp_chatwidget.button.help_chat_toggle,Button0,help/chat toggle,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_chatwidget.fit,game.mcl_mp_chatwidget.button.toggle_up_down_state_button,Button1,toggle up/down state button,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_chatwidget.fit,game.mcl_mp_chatwidget.button.toggle_chat_team_only_chat_all,Button2,toggle chat team only/chat all,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_connectiontype.fit,game.mcl_mp_connectiontype.button.main_menu_button,Button0,main menu button,MAIN MENU,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_connectiontype.fit,game.mcl_mp_connectiontype.button.internet_radio_button,Button1,internet radio button,INTERNET (ZONE.COM),,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_connectiontype.fit,game.mcl_mp_connectiontype.button.lan_radio_button,Button2,lan radio button,LOCAL NETWORK,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_connectiontype.fit,game.mcl_mp_connectiontype.button.direct_tcp_ip_radio_button,Button3,direct tcp/ip radio button,INTERNET (DIRECT TCP/IP),,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_contype_lan.fit,game.mcl_mp_contype_lan.button.go_to_lan_browser_button,Button0,"\""GO TO LAN BROWSER\"" button",GO TO LAN BROWSER,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_contype_lan.fit,game.mcl_mp_contype_lan.button.host_game_button,Button1,"\""HOST GAME\"" button",HOST GAME,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_contype_modem.fit,game.mcl_mp_contype_modem.button.join_game_button,Button0,"\""JOIN GAME\"" button",BUY/SELL 'MECHS,BUY/SELL 'MECHS,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_contype_modem.fit,game.mcl_mp_contype_modem.button.host_game_button,Button0,"\""HOST GAME\"" button",BUY/SELL 'MECHS,BUY/SELL 'MECHS,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_contype_tcpip.fit,game.mcl_mp_contype_tcpip.button.join_game_button,Button0,"\""JOIN GAME\"" button",JOIN GAME,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_contype_tcpip.fit,game.mcl_mp_contype_tcpip.button.host_game_button,Button1,"\""HOST GAME\"" button",HOST GAME,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_contype_zone.fit,game.mcl_mp_contype_zone.button.go_to_zone_button,Button0,"\""GO TO ZONE\"" button",GO TO THE ZONE,BUY/SELL 'MECHS,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_hostgame.fit,game.mcl_mp_hostgame.button.cancel_button,Button0,cancel button,CANCEL,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_hostgame.fit,game.mcl_mp_hostgame.button.accept_button,Button1,accept button,ACCEPT,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_hostgame.fit,game.mcl_mp_hostgame.button.check_box_for_allow_all_technologies,Button2,check box for allow all technologies,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_hostgamedialog.fit,game.mcl_mp_hostgamedialog.button.cancel_button,Button0,cancel button,CANCEL,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_hostgamedialog.fit,game.mcl_mp_hostgamedialog.button.save_button,Button1,save button.,ACCEPT,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_hostgamedialog_combobox0.fit,game.mcl_mp_hostgamedialog_combobox0.button.button,ExpandButton,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_hostgami_droplist0.fit,game.mcl_mp_hostgami_droplist0.button.down_triangle,ExpandButton,down triangle,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowser.fit,game.mcl_mp_lanbrowser.button.main_menu,Button0,main menu,MAIN MENU,MAIN MENU,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowser.fit,game.mcl_mp_lanbrowser.button.join_game,Button1,join game,JOIN,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowser.fit,game.mcl_mp_lanbrowser.button.host_game,Button2,host game,HOST GAME,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowser.fit,game.mcl_mp_lanbrowser.button.back_button,Button3,back button,BACK,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowser.fit,game.mcl_mp_lanbrowser.button.sort_by_locked_game,Button4,sort by locked game,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowser.fit,game.mcl_mp_lanbrowser.button.sort_by_game_name,Button5,sort by game name,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowser.fit,game.mcl_mp_lanbrowser.button.sort_by_players,Button6,sort by players,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowser.fit,game.mcl_mp_lanbrowser.button.sort_by_map_name,Button7,sort by map name,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowser.fit,game.mcl_mp_lanbrowser.button.sort_by_ping,Button8,sort by ping,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_loadmap.fit,game.mcl_mp_loadmap.button.cancel_button,Button0,cancel button,CANCEL,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_loadmap.fit,game.mcl_mp_loadmap.button.accept_button,Button1,accept button,ACCEPT,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_mapinfo.fit,game.mcl_mp_mapinfo.button.close_button,Button0,Close button,CLOSE,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_modem.fit,game.mcl_mp_modem.button.main_menu,Button0,main menu,MAIN MENU,MAIN MENU,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_modem.fit,game.mcl_mp_modem.button.join_game,Button1,join game,BUY/SELL 'MECHS,BUY/SELL 'MECHS,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_modem.fit,game.mcl_mp_modem.button.host_game,Button2,host game,BUY/SELL 'MECHS,BUY/SELL 'MECHS,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_modem.fit,game.mcl_mp_modem.button.back_button,Button3,back button,BACK,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_modem_combobox0.fit,game.mcl_mp_modem_combobox0.button.button,ExpandButton,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_modem_combobox1.fit,game.mcl_mp_modem_combobox1.button.button,ExpandButton,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.main_menu_button,Button0,main menu button,MAIN MENU,MAIN MENU,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.load_map_button,Button1,load map button,LOAD MAP,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.map_info_button,Button2,map info button,MAP INFO,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.up_button_arrow_for_map_info_cbills,Button3,up button arrow for map info cbills,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.down_arrow_button_for_map_info_cbills,Button4,down arrow button for map info cbills,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.up_button_arrow_for_map_info_time_limit,Button5,up button arrow for map info time limit,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.down_arrow_button_for_map_info_cbills_01,Button6,down arrow button for map info cbills,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.up_button_arrow_for_map_info_cbills_01,Button7,up button arrow for map info cbills,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.down_arrow_button_for_map_info_cbills_02,Button8,down arrow button for map info cbills,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.check_box_for_airstrikes,Button9,check box for airstrikes,AIRSTRIKE,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.check_box_for_sensor_probe,Button10,check box for sensor probe,SENSOR PROBE,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.check_box_for_minelayers,Button11,check box for minelayers,MINELAYER,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.check_box_for_repair_vehicles,Button12,check box for repair vehicles,REPAIR TRUCK,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.lock_game_button,Button13,lock game button,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.remove_player,Button14,remove player,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.check_box_for_scouts,Button15,check box for scouts,SCOUT 'COPTER,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.check_box_for_recovery_team,Button16,check box for recovery team,SALVAGE CRAFT,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.check_box_for_guard_towers,Button17,check box for guard towers,FIXED ARTILLERY,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.check_box_for_resource_buildings,Button18,check box for resource buildings,RESOURCE BLDG,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.check_box_for_unlimited_ammo,Button19,check box for unlimited ammo,UNLIMITED AMMO,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.check_box_for_variants,Button20,check box for variants,NO VARIANTS,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.check_box_for_all_tech,Button21,check box for all tech,ALL TECH,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.use_quickstart_button,Button22,use quickstart button,USE QUICKSTART,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.back_button,Button23,back button,BACK,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.next_button,Button24,next button,LAUNCH,NEXT,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.player_prefs_button,Button25,player prefs button,PLAYER PREFS,MAIN MENU,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.check_box_for_rp_s_for_kills,Button26,check box for rp's for kills,RP FOR 'MECHS,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.up_button_arrow_for_map_info_drop_weight,Button27,up button arrow for map info drop weight,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.down_arrow_button_for_map_info_drop_weight,Button28,down arrow button for map info drop weight,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.up_arrow_button_for_cbills_gadget,PlayerParamsCBillsSpinnerUpButton,up arrow button for cbills gadget,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.down_arrow_for_c_bills_gadget,PlayerParamsCBillsSpinnerDownButton,down arrow for c-bills gadget,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,game.mcl_mp_param.button.check_box_for_player_ready,PlayerParamsReadyButton,check box for player ready,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_combobox0.fit,game.mcl_mp_param_combobox0.button.button,ExpandButton,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_combobox1.fit,game.mcl_mp_param_combobox1.button.button,ExpandButton,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_droplist0.fit,game.mcl_mp_param_droplist0.button.down_triangle,ExpandButton,down triangle,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_droplist1.fit,game.mcl_mp_param_droplist1.button.down_triangle,ExpandButton,down triangle,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_droplist2.fit,game.mcl_mp_param_droplist2.button.down_triangle,ExpandButton,down triangle,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_droplist3.fit,game.mcl_mp_param_droplist3.button.down_triangle,ExpandButton,down triangle,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_droplist4.fit,game.mcl_mp_param_droplist4.button.down_triangle,ExpandButton,down triangle,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,game.mcl_mp_paramplay.button.main_menu_button,Button0,main menu button,MAIN MENU,MAIN MENU,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,game.mcl_mp_paramplay.button.check_box_for_player_ready,Button1,check box for player ready,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,game.mcl_mp_paramplay.button.map_info_button,Button2,map info button,BUY/SELL 'MECHS,BUY/SELL 'MECHS,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,game.mcl_mp_paramplay.button.check_box_for_airstrikes_non_clickable,Button3,check box for airstrikes- non clickable,BUY/SELL 'MECHS,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,game.mcl_mp_paramplay.button.check_box_for_sensor_probe,Button4,check box for sensor probe,BUY/SELL 'MECHS,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,game.mcl_mp_paramplay.button.check_box_for_minelayers,Button5,check box for minelayers,BUY/SELL 'MECHS,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,game.mcl_mp_paramplay.button.check_box_for_repair_vehicles,Button6,check box for repair vehicles,BUY/SELL 'MECHS,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,game.mcl_mp_paramplay.button.check_box_for_scouts,Button7,check box for scouts,BUY/SELL 'MECHS,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,game.mcl_mp_paramplay.button.check_box_for_recovery_team,Button8,check box for recovery team,BUY/SELL 'MECHS,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,game.mcl_mp_paramplay.button.check_box_for_guard_towers,Button9,check box for guard towers,BUY/SELL 'MECHS,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,game.mcl_mp_paramplay.button.check_box_for_resource_buildings,Button10,check box for resource buildings,BUY/SELL 'MECHS,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,game.mcl_mp_paramplay.button.check_box_for_unlimited_ammo,Button11,check box for unlimited ammo,BUY/SELL 'MECHS,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,game.mcl_mp_paramplay.button.check_box_for_variants,Button12,check box for variants,BUY/SELL 'MECHS,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,game.mcl_mp_paramplay.button.check_box_for_all_tech,Button13,check box for all tech,BUY/SELL 'MECHS,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,game.mcl_mp_paramplay.button.use_quickstart_button,Button14,use quickstart button,BUY/SELL 'MECHS,BUY/SELL 'MECHS,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,game.mcl_mp_paramplay.button.back_button,Button15,back button,BACK,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,game.mcl_mp_paramplay.button.chat_button,Button16,chat button,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,game.mcl_mp_paramplay.button.up_arrow_button_for_cbills_gadget,PlayerParamsCBillsSpinnerUpButton,up arrow button for cbills gadget,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,game.mcl_mp_paramplay.button.down_arrow_for_c_bills_gadget,PlayerParamsCBillsSpinnerDownButton,down arrow for c-bills gadget,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,game.mcl_mp_paramplay.button.check_box_for_player_ready_01,PlayerParamsReadyButton,check box for player ready,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_playerprefs.fit,game.mcl_mp_playerprefs.button.main_menu,Button0,main menu,MAIN MENU,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_playerprefs.fit,game.mcl_mp_playerprefs.button.base_color_tab,Button1,"\""BASE COLOR\"" tab",BASE COLOR,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_playerprefs.fit,game.mcl_mp_playerprefs.button.stripe_color_tab,Button2,"\""STRIPE COLOR\"" tab",STRIPE COLOR,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_playerprefs.fit,game.mcl_mp_playerprefs.button.cancel_button,Button5,"\""CANCEL\"" button",CANCEL,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_playerprefs.fit,game.mcl_mp_playerprefs.button.accept_button,Button3,"\""ACCEPT\"" button",ACCEPT,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_playerprefs_combobox1.fit,game.mcl_mp_playerprefs_combobox1.button.button,ExpandButton,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_playerprefs_combobox2.fit,game.mcl_mp_playerprefs_combobox2.button.button,ExpandButton,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_playerprefs_combobox3.fit,game.mcl_mp_playerprefs_combobox3.button.button,ExpandButton,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_combobox0.fit,game.mcl_mp_setup_combobox0.button.down_triangle,ExpandButton,down triangle,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_combobox1.fit,game.mcl_mp_setup_combobox1.button.down_triangle,ExpandButton,down triangle,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_droplist0.fit,game.mcl_mp_setup_droplist0.button.down_triangle,ExpandButton,down triangle,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setuplayout.fit,game.mcl_mp_setuplayout.button.done_button_in_lower_right_corner,Button0,DONE button in lower right corner,NEXT,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setuplayout.fit,game.mcl_mp_setuplayout.button.main_menubutton_in_upper_right_hand_corner,Button1,main menubutton in upper right hand corner,MAIN MENU,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setuplayout.fit,game.mcl_mp_setuplayout.button.radio_button_for_internet_zone,Button2,Radio button for internet (zone),,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setuplayout.fit,game.mcl_mp_setuplayout.button.radio_button_for_lan,Button3,Radio button for LAN,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setuplayout.fit,game.mcl_mp_setuplayout.button.radio_button_for_direct_tcp_ip,Button4,Radio button for direct tcp/ip,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setuplayout.fit,game.mcl_mp_setuplayout.button.radio_button_for_modem_to_modem,Button5,Radio button for modem to modem,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setuplayout.fit,game.mcl_mp_setuplayout.button.button,Tab0Button,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setuplayout.fit,game.mcl_mp_setuplayout.button.button_01,Tab1Button,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_stats.fit,game.mcl_mp_stats.button.close_button,Button0,CLOSE button,CLOSE,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_stats.fit,game.mcl_mp_stats.button.chat_button,Button1,chat button,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_tcpip.fit,game.mcl_mp_tcpip.button.main_menu,Button0,main menu,MAIN MENU,MAIN MENU,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_tcpip.fit,game.mcl_mp_tcpip.button.join_game,Button1,join game,BUY/SELL 'MECHS,BUY/SELL 'MECHS,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_tcpip.fit,game.mcl_mp_tcpip.button.host_game,Button2,host game,BUY/SELL 'MECHS,BUY/SELL 'MECHS,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_tcpip.fit,game.mcl_mp_tcpip.button.back_button,Button3,back button,BACK,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_tcpip_combobox0.fit,game.mcl_mp_tcpip_combobox0.button.button,ExpandButton,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_options.fit,game.mcl_options.button.graphics_tab,Button0,graphics tab,GRAPHICS,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_options.fit,game.mcl_options.button.audio_tab,Button1,audio tab,AUDIO,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_options.fit,game.mcl_options.button.gameplay_tab,Button2,gameplay tab,GAMEPLAY,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_options.fit,game.mcl_options.button.hotkey_tab,Button3,hotkey tab,HOTKEYS,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_options.fit,game.mcl_options.button.cancel_button,Button4,cancel button,CANCEL,MAIN MENU,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_options.fit,game.mcl_options.button.accept_button,Button5,accept button,ACCEPT,MAIN MENU,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_options_combobox0.fit,game.mcl_options_combobox0.button.button,ExpandButton,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_options_combobox2.fit,game.mcl_options_combobox2.button.button,ExpandButton,,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,game.mcl_optionsaudio.button.master_digital_low_vol,Button0,master digital low vol,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,game.mcl_optionsaudio.button.master_digital_high_vol,Button1,master digital high vol,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,game.mcl_optionsaudio.button.music_low_vol,Button2,music low vol,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,game.mcl_optionsaudio.button.music_high_vol,Button3,music high vol,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,game.mcl_optionsaudio.button.sfx_low_vol,Button4,sfx low vol,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,game.mcl_optionsaudio.button.sfx_high_vol,Button5,sfx high vol,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,game.mcl_optionsaudio.button.radio_low_vol,Button6,radio low vol,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,game.mcl_optionsaudio.button.radio_high_vol,Button7,radio high vol,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,game.mcl_optionsaudio.button.computer_message_low_vol,Button8,computer message low vol,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,game.mcl_optionsaudio.button.computer_message_high_vol,Button9,computer message high vol.,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,game.mcl_optionsaudio.button.reset_button,Button10,reset button,DEFAULT,BUY/SELL 'MECHS,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,game.mcl_optionsaudio.button.master_digital_slider,Button11,master digital slider,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,game.mcl_optionsaudio.button.music_slider,Button12,music slider,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,game.mcl_optionsaudio.button.sfx_slider,Button13,sfx slider,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,game.mcl_optionsaudio.button.radio_slider,Button14,radio slider,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,game.mcl_optionsaudio.button.computer_message_slider,Button15,computer message slider,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgameplay.fit,game.mcl_optionsgameplay.button.check_box_unlimited_ammo,Button0,check box: unlimited ammo,UNLIMITED AMMO,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgameplay.fit,game.mcl_optionsgameplay.button.difficulty_level_radio_green,Button1,difficulty level radio: green,GREEN,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgameplay.fit,game.mcl_optionsgameplay.button.check_box_left_click_right_click,Button2,check box: left click/right click,LEFT-CLICK/RIGHT-CLICK MOUSE CONTROL,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgameplay.fit,game.mcl_optionsgameplay.button.difficulty_level_radio_regular,Button3,difficulty level radio: regular,REGULAR,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgameplay.fit,game.mcl_optionsgameplay.button.difficulty_level_radio_veteran,Button4,difficulty level radio: veteran,VETERAN,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgameplay.fit,game.mcl_optionsgameplay.button.difficulty_level_radio_elite,Button5,difficulty level radio: elite,ELITE,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgameplay.fit,game.mcl_optionsgameplay.button.base_color_tab,Button6,base color tab,BASE COLOR,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgameplay.fit,game.mcl_optionsgameplay.button.accent_color_tab,Button7,accent color tab,STRIPE COLOR,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgameplay.fit,game.mcl_optionsgameplay.button.reset_button,Button8,reset button,DEFAULT,BUY/SELL 'MECHS,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgraphics.fit,game.mcl_optionsgraphics.button.check_box_pilot_videos,Button0,check box- pilot videos,PILOT VIDEOS,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgraphics.fit,game.mcl_optionsgraphics.button.check_box_terrain_detail,Button1,check box- terrain detail,DETAIL TEXTURES,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgraphics.fit,game.mcl_optionsgraphics.button.check_box_shadows,Button2,check box- shadows,SHADOWS,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgraphics.fit,game.mcl_optionsgraphics.button.check_box_high_object_detail,Button3,check box- high object detail,HIGH OBJECT DETAIL,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgraphics.fit,game.mcl_optionsgraphics.button.check_box_local_shadows,Button4,check box-  local shadows,LOCAL SHADOWS,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgraphics.fit,game.mcl_optionsgraphics.button.check_box_non_weapon_fx,Button5,check box- non weapon fx,NON-WEAPON EFFECTS,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgraphics.fit,game.mcl_optionsgraphics.button.check_box_hardware_rasterizer,Button6,check box-hardware rasterizer,HARDWARE RASTERIZER,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgraphics.fit,game.mcl_optionsgraphics.button.check_box_use_async_mouse,Button7,check box-use async mouse,HARDWARE MOUSE UPDATE,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgraphics.fit,game.mcl_optionsgraphics.button.reset_button,Button8,reset button,DEFAULT,BUY/SELL 'MECHS,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_optionshotkeys.fit,game.mcl_optionshotkeys.button.reset_button,Button0,reset button,DEFAULT,BUY/SELL 'MECHS,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_pr_layout.fit,game.mcl_pr_layout.button.back_button,PilotReadyButton0,back button,BACK,BACK,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_pr_layout.fit,game.mcl_pr_layout.button.launch_button,PilotReadyButton1,LAUNCH  button,LAUNCH,NEXT,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_pr_layout.fit,game.mcl_pr_layout.button.add_pilot_button,PilotReadyButton2,add pilot button,ADD PILOT,ADD PILOT,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_pr_layout.fit,game.mcl_pr_layout.button.remove_pilot_button,PilotReadyButton3,remove pilot button,REMOVE PILOT,REMOVE PILOT,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_pr_layout.fit,game.mcl_pr_layout.button.main_menu_button,PilotReadyButton4,main menu button,MAIN MENU,MAIN MENU,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_sm.fit,game.mcl_sm.button.delete_button,Button0,delete button,DELETE,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_sm.fit,game.mcl_sm.button.cancel_button,Button1,cancel button,CANCEL,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_sm.fit,game.mcl_sm.button.save_button_this_should_say_load_for_load_mission_dialog,Button2,save button.  this should say load for load mission dialog,SAVE,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_sv.fit,game.mcl_sv.button.delete_button,Button0,delete button,DELETE,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_sv.fit,game.mcl_sv.button.cancel_button,Button1,cancel button,CANCEL,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_sv.fit,game.mcl_sv.button.save_button,Button2,save button.,SAVE,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_sv_acceptchanges.fit,game.mcl_sv_acceptchanges.button.cancel_button,Button0,cancel button,CANCEL,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcl_sv_acceptchanges.fit,game.mcl_sv_acceptchanges.button.accept_button,Button1,accept button.,SAVE,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcui_keyref_1024.fit,game.mcui_keyref_1024.button.close_keyref_close_reference,Button0,"close keyref \""CLOSE REFERENCE\""",CLOSE,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcui_keyref_1280.fit,game.mcui_keyref_1280.button.close_keyref_close_reference,Button0,"close keyref \""CLOSE REFERENCE\""",CLOSE,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcui_keyref_1600.fit,game.mcui_keyref_1600.button.close_keyref_close_reference,Button0,"close keyref \""CLOSE REFERENCE\""",CLOSE,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcui_keyref_640.fit,game.mcui_keyref_640.button.close_keyref_close_reference,Button0,"close keyref \""CLOSE REFERENCE\""",CLOSE,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcui_keyref_800.fit,game.mcui_keyref_800.button.close_keyref_close_reference,Button0,"close keyref \""CLOSE REFERENCE\""",CLOSE,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,game.mcui_mr_layout.button.this_is_the_check_box_for_the_salvageable_mechs,SalvageAreaCheckBoxButton,This is the check box for the salvageable mechs.,,SALVAGE BUTTON,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,game.mcui_mr_layout.button.done_button_in_lower_right_corner,SalvageAreaButton0,DONE button in lower right corner,DONE,Done,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,game.mcui_mr_layout.button.done_button_in_lower_right_corner_01,PilotReviewButton0,DONE button in lower right corner,DONE,Done,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,game.mcui_mr_layout.button.confirm_button_in_lower_right_corner,PromoteGadgetRightButton0,confirm button in lower right corner,DONE,Done,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,game.mcui_mr_layout.button.this_is_the_radio_button_for_the_skill_entries,PromoteGadgetRightRadioButton,This is the radio button for the skill entries,,,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_salvageareaentrybox.fit,game.mcui_mr_salvageareaentrybox.button.this_is_the_check_box_for_the_salvageable_mechs,Button0,This is the check box for the salvageable mechs.,,SALVAGE BUTTON,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_specialtyskillsentrybox.fit,game.mcui_mr_specialtyskillsentrybox.button.this_is_the_radio_button_for_the_pilot_skill_entry_box,Button0,This is the radio button for the pilot skill entry box,,SALVAGE BUTTON,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,game.options_layout.button.done_button_in_lower_right_corner,OptionsAreaButton0,DONE button in lower right corner,,Done,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,game.options_layout.button.this_is_the_check_box,OptionsAreaButton1,This is the check box,,SALVAGE BUTTON,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,game.options_layout.button.this_is_the_check_box_01,OptionsAreaButton2,This is the check box,,SALVAGE BUTTON,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,game.options_layout.button.this_is_the_check_box_02,OptionsAreaButton3,This is the check box,,SALVAGE BUTTON,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,game.options_layout.button.this_is_the_check_box_03,OptionsAreaButton4,This is the check box,,SALVAGE BUTTON,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,game.options_layout.button.this_is_the_check_box_04,OptionsAreaButton5,This is the check box,,SALVAGE BUTTON,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,game.options_layout.button.this_is_the_check_box_05,OptionsAreaButton6,This is the check box,,SALVAGE BUTTON,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,game.options_layout.button.this_is_the_check_box_06,OptionsAreaButton7,This is the check box,,SALVAGE BUTTON,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,game.options_layout.button.this_is_the_check_box_07,OptionsAreaButton8,This is the check box,,SALVAGE BUTTON,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,game.options_layout.button.this_is_the_check_box_08,OptionsAreaButton9,This is the check box,,SALVAGE BUTTON,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,game.options_layout.button.this_is_the_check_box_09,OptionsAreaButton10,This is the check box,,SALVAGE BUTTON,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,game.options_layout.button.this_is_the_check_box_10,OptionsAreaButton11,This is the check box,,SALVAGE BUTTON,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,game.options_layout.button.this_is_the_check_box_11,OptionsAreaButton12,This is the check box,,SALVAGE BUTTON,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,game.options_layout.button.this_is_the_check_box_12,OptionsAreaButton13,This is the check box,,SALVAGE BUTTON,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,game.options_layout.button.this_is_the_check_box_13,OptionsAreaButton14,This is the check box,,SALVAGE BUTTON,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,game.options_layout.button.this_is_the_check_box_14,OptionsAreaButton15,This is the check box,,SALVAGE BUTTON,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,game.options_layout.button.this_is_the_check_box_15,OptionsAreaButton16,This is the check box,,SALVAGE BUTTON,false,,,,,true
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,game.options_layout.button.cancel_button,OptionsAreaButton17,cancel button,,Done,false,,,,,true

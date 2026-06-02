@@ -1,0 +1,26 @@
+CMake is re-running because D:/Repos/MC2_Remastered/build64/3rdparty/imgui/CMakeFiles/generate.stamp is out-of-date.
+  the file 'D:/Repos/MC2_Remastered/3rdparty/imgui/CMakeLists.txt'
+  is newer than 'D:/Repos/MC2_Remastered/build64/3rdparty/imgui/CMakeFiles/generate.stamp.depend'
+  result='-1'
+-- Selecting Windows SDK version 10.0.26100.0 to target Windows 10.0.19045.
+-- Target is 64 bits
+-- FFmpegLGPL: D:/Repos/MC2_Remastered/3rdparty/ffmpeg-lgpl-win64
+-- FFmpegLGPL DLLs: D:/Repos/MC2_Remastered/3rdparty/ffmpeg-lgpl-win64/bin/avcodec-61.dll;D:/Repos/MC2_Remastered/3rdparty/ffmpeg-lgpl-win64/bin/avformat-61.dll;D:/Repos/MC2_Remastered/3rdparty/ffmpeg-lgpl-win64/bin/avutil-59.dll;D:/Repos/MC2_Remastered/3rdparty/ffmpeg-lgpl-win64/bin/swscale-8.dll;D:/Repos/MC2_Remastered/3rdparty/ffmpeg-lgpl-win64/bin/swresample-5.dll
+-- Shared libraries disabled
+-- compiling zlib from sources
+-- VRML disabled
+-- tinyusdz disabled
+-- Enabled importer formats: FBX GLTF
+-- Disabled importer formats: AMF 3DS AC ASE ASSBIN B3D BVH COLLADA DXF CSM HMP IRRMESH IQM IRR LWO LWS MD2 MD3 MD5 MDC MDL NFF NDO OFF OBJ OGRE OPENGEX PLY MS3D COB BLEND IFC XGL Q3D Q3BSP RAW SIB SMD STL TERRAGEN 3D USD X X3D 3MF MMD
+-- Enabled exporter formats:
+-- Disabled exporter formats: OBJ OPENGEX PLY 3DS ASSBIN ASSXML COLLADA FBX STL X X3D GLTF 3MF PBRT ASSJSON STEP
+-- ENABLE_ASSIMP_IMPORTER=ON — vendored Assimp at 3rdparty/assimp/ (FBX + GLTF, static)
+-- imgui SDL2 include dirs: D:/vcpkg/installed/x64-windows/include;D:/vcpkg/installed/x64-windows/include/SDL2;D:/Repos/MC2_Remastered/3rdparty/include/SDL2
+-- Target is 64 bits
+-- viewer stb_image include: D:/Repos/MC2_Remastered/3rdparty/assimp/contrib/stb
+-- Configuring done (0.4s)
+-- Generating done (0.5s)
+-- Build files have been written to: D:/Repos/MC2_Remastered/build64
+MSBuild version 17.14.40+3e7442088 for .NET Framework
+MSBUILD : error MSB1009: Project file does not exist.
+Switch: help.vcxproj

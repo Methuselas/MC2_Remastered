@@ -33,6 +33,7 @@ MultiPlayer* MPlayer = NULL;
 //CPrefs prefs;
 
 extern float frameRate;
+static Stuff::MemoryStream *viewerEffectStream = NULL;
 
 // globals used for memory
 // NS3: systemHeap defined in mclib/heap.cpp (engine boundary).
@@ -68,15 +69,15 @@ long resolutionY = 0;
 bool useUnlimitedAmmo = true;
 
 Camera* eye = NULL;
-unsigned long BaseVertexColor  =0;
+extern unsigned long BaseVertexColor;
 
 #ifdef LINUX_BUILD
 #else
 enum { CPU_UNKNOWN, CPU_PENTIUM, CPU_MMX, CPU_KATMAI } Processor = CPU_PENTIUM;		//Needs to be set when GameOS supports ProcessorID -- MECHCMDR2
 #endif
 
-bool	reloadBounds = false;
-int     ObjectTextureSize = 128;
+extern bool reloadBounds;
+extern int ObjectTextureSize;
 // NS3: missionName defined in GameOS/gameos/gos_crashbundle.cpp (engine boundary).
 // NS3: gosFontScale defined in mclib/floathelp.cpp (engine boundary).
 
@@ -98,7 +99,7 @@ char*	ExceptionGameMsg = NULL;
 // NS3: justResaveAllMaps defined in mclib/terrain.cpp (engine boundary).
 bool	useLOSAngle = 0;
 
-// NS3: effectStream defined in mclib/txmmgr.cpp (engine boundary).
+// Viewer keeps its own effect stream pointer; do not depend on the mclib effectStream global.
 extern MidLevelRenderer::MLRClipper * theClipper;
 
 
@@ -560,8 +561,8 @@ void __stdcall InitializeGameEngine()
 	effectFile.read(effectsData,effectsSize);
 	effectFile.close();
 	
-	effectStream = new Stuff::MemoryStream(effectsData,effectsSize);
-	gosFX::EffectLibrary::Instance->Load(effectStream);
+	viewerEffectStream = new Stuff::MemoryStream(effectsData,effectsSize);
+	gosFX::EffectLibrary::Instance->Load(viewerEffectStream);
 	
 	gosFX::LightManager::Instance = new gosFX::LightManager();
 
@@ -661,7 +662,8 @@ void __stdcall TerminateGameEngine()
 	//----------------------------------------------------
 	gos_PushCurrentHeap(gosFX::Heap);
 
-	delete effectStream;
+	delete viewerEffectStream;
+	viewerEffectStream = NULL;
 	delete gosFX::LightManager::Instance;
 
 	gos_PopCurrentHeap();
@@ -758,5 +760,4 @@ void __stdcall GetGameOSEnvironment( const char* CommandLine )
 	Environment.screenWidth = 800;
 	Environment.screenHeight = 600;
 }
-
 

@@ -1,0 +1,918 @@
+/***************************************************************
+ * FILENAME: personalities.fit
+ * DESCRIPTION: Personality names, biographies, and portrait references.
+ * GENERATED: 2026-05-18
+ * SOURCE: MC2_Remastered.zip / data/defs/text/en_us/mc2res_legacy.fit
+ * PHASE: Phase 3 shared Mechlopedia text FIT setup
+ * NOTE: FIT owns the words. Legacy IDs are preserved for bridge lookup.
+ ***************************************************************/
+
+// -----------------------------------------------------------------------------
+// Group: Ambassador Yee [ambassador_yee]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.personality.ambassador_yee"
+    type = "personality"
+    groupKey = "ambassador_yee"
+    groupName = "Ambassador Yee"
+    roles = "description,image_ref,name"
+    legacyIds = "45306,45322,45346"
+    recordCount = 3
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.ambassador_yee.name"
+    text = "Ambassador Yee"
+    legacyId = 45306
+    legacySymbol = "IDS_PERSONALITY_6"
+    legacyKey = "legacy.mc2res.45306"
+    source = "mechlopedia"
+    sourceKey = "lore.personality.6"
+    originalKey = "mechlopedia.personality.ambassador_yee.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "name"
+    groupKey = "ambassador_yee"
+    groupName = "Ambassador Yee"
+    codeReference = "code/mechlopedia.cpp:912-990"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.ambassador_yee.description"
+    text = "Ambassador Yee is House Steiner's key representative on Carver V. She has amassed power as quickly as any Steiner figure since the return to war among the houses; she is but a few years out of the academy and already holds sway over political and intelligence activities for Steiner on Carver V.\n\nShe serves Colonel David Renard with intelligence gathered by Steiner forces and apprises him of House Steiner's objectives. She also maintains a schedule in public life as Steiner's political face on Carver V. Already entrusted with the responsibility of an entire planet, her political future seems assured if she acquits herself well through the tests of the next few months."
+    paragraphCount = 2
+    paragraph0 = "Ambassador Yee is House Steiner's key representative on Carver V. She has amassed power as quickly as any Steiner figure since the return to war among the houses; she is but a few years out of the academy and already holds sway over political and intelligence activities for Steiner on Carver V."
+    paragraph1 = "She serves Colonel David Renard with intelligence gathered by Steiner forces and apprises him of House Steiner's objectives. She also maintains a schedule in public life as Steiner's political face on Carver V. Already entrusted with the responsibility of an entire planet, her political future seems assured if she acquits herself well through the tests of the next few months."
+    legacyId = 45322
+    legacySymbol = "IDS_PERONSALITY_DESCRIPTION6"
+    legacyKey = "legacy.mc2res.45322"
+    source = "mechlopedia"
+    sourceKey = "lore.peronsality.description6"
+    originalKey = "mechlopedia.personality.ambassador_yee.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "description"
+    groupKey = "ambassador_yee"
+    groupName = "Ambassador Yee"
+    codeReference = "code/mechlopedia.cpp:971-979"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.ambassador_yee.image_ref"
+    text = "MCL_EN_Person_SteinerPolitician.tga"
+    legacyId = 45346
+    legacySymbol = "IDS_PERSONALITY_PICTURE6"
+    legacyKey = "legacy.mc2res.45346"
+    source = "mechlopedia"
+    sourceKey = "asset.ref.personality.picture6"
+    originalKey = "mechlopedia.personality.ambassador_yee.image_ref"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "image_ref"
+    groupKey = "ambassador_yee"
+    groupName = "Ambassador Yee"
+    codeReference = "code/mechlopedia.cpp:971-990"
+    notes = "Legacy asset reference kept beside the name/description for editing and Viewer hookup."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Archon Katrina Steiner [archon_katrina_steiner]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.personality.archon_katrina_steiner"
+    type = "personality"
+    groupKey = "archon_katrina_steiner"
+    groupName = "Archon Katrina Steiner"
+    roles = "description,image_ref,name"
+    legacyIds = "45300,45316,45340"
+    recordCount = 3
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.archon_katrina_steiner.name"
+    text = "Archon Katrina Steiner"
+    legacyId = 45300
+    legacySymbol = "IDS_PERSONALITY_0"
+    legacyKey = "legacy.mc2res.45300"
+    source = "mechlopedia"
+    sourceKey = "lore.personality.0"
+    originalKey = "mechlopedia.personality.archon_katrina_steiner.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "name"
+    groupKey = "archon_katrina_steiner"
+    groupName = "Archon Katrina Steiner"
+    codeReference = "code/mechlopedia.cpp:912-990"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.archon_katrina_steiner.description"
+    text = "Born Katherine Morgan Steiner-Davion, the Archon of the Lyran Alliance and Princess of the Federated Commonwealth is heir to the Inner Sphere's most powerful ruling houses. Instead of being trained in the arts of warfare like her brother, Victor Steiner-Davion, Katherine has been groomed from childhood to govern. She is a master of the well-timed phrase and has an unrivaled skill at focusing the media spotlight on her causes.\n\nHer leadership skills have served not only her realm but the entire Inner Sphere. Most recently she sponsored the Whitting Conferences and the campaign to resurrect the Star League.\n\nHer detractors, however, paint another picture. They whisper that she had a hand in her mother's death and that she has forged secret military alliances with the now-defunct Clan Smoke Jaguar and others to carve up the Inner Sphere.\n\nSince Prince Victor's deception of Thomas Marik, Captain-General of the Free Worlds League, the family ties between Victor and Katrina have been tenuous at best. It was Victorâs deception that precipitated Katherine changing her name.\n\nOne thing is certain: Katrina is determined to become the first lord of the new Star League by any means necessary. Whether she achieves her aims by peaceful negotiations or acts of violence remains to be seen."
+    paragraphCount = 5
+    paragraph0 = "Born Katherine Morgan Steiner-Davion, the Archon of the Lyran Alliance and Princess of the Federated Commonwealth is heir to the Inner Sphere's most powerful ruling houses. Instead of being trained in the arts of warfare like her brother, Victor Steiner-Davion, Katherine has been groomed from childhood to govern. She is a master of the well-timed phrase and has an unrivaled skill at focusing the media spotlight on her causes."
+    paragraph1 = "Her leadership skills have served not only her realm but the entire Inner Sphere. Most recently she sponsored the Whitting Conferences and the campaign to resurrect the Star League."
+    paragraph2 = "Her detractors, however, paint another picture. They whisper that she had a hand in her mother's death and that she has forged secret military alliances with the now-defunct Clan Smoke Jaguar and others to carve up the Inner Sphere."
+    paragraph3 = "Since Prince Victor's deception of Thomas Marik, Captain-General of the Free Worlds League, the family ties between Victor and Katrina have been tenuous at best. It was Victorâs deception that precipitated Katherine changing her name."
+    paragraph4 = "One thing is certain: Katrina is determined to become the first lord of the new Star League by any means necessary. Whether she achieves her aims by peaceful negotiations or acts of violence remains to be seen."
+    legacyId = 45316
+    legacySymbol = "IDS_PERONSALITY_DESCRIPTION0"
+    legacyKey = "legacy.mc2res.45316"
+    source = "mechlopedia"
+    sourceKey = "lore.peronsality.description0"
+    originalKey = "mechlopedia.personality.archon_katrina_steiner.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "description"
+    groupKey = "archon_katrina_steiner"
+    groupName = "Archon Katrina Steiner"
+    codeReference = "code/mechlopedia.cpp:971-979"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.archon_katrina_steiner.image_ref"
+    text = "MCL_EN_Person_KatrinaSteiner.tga"
+    legacyId = 45340
+    legacySymbol = "IDS_PERSONALITY_PICTURE0"
+    legacyKey = "legacy.mc2res.45340"
+    source = "mechlopedia"
+    sourceKey = "asset.ref.personality.picture0"
+    originalKey = "mechlopedia.personality.archon_katrina_steiner.image_ref"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "image_ref"
+    groupKey = "archon_katrina_steiner"
+    groupName = "Archon Katrina Steiner"
+    codeReference = "code/mechlopedia.cpp:971-990"
+    notes = "Legacy asset reference kept beside the name/description for editing and Viewer hookup."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Baxter [baxter]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.personality.baxter"
+    type = "personality"
+    groupKey = "baxter"
+    groupName = "Baxter"
+    roles = "description,image_ref,name"
+    legacyIds = "45305,45321,45345"
+    recordCount = 3
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.baxter.name"
+    text = "Baxter"
+    legacyId = 45305
+    legacySymbol = "IDS_PERSONALITY_5"
+    legacyKey = "legacy.mc2res.45305"
+    source = "mechlopedia"
+    sourceKey = "lore.personality.5"
+    originalKey = "mechlopedia.personality.baxter.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "name"
+    groupKey = "baxter"
+    groupName = "Baxter"
+    codeReference = "code/mechlopedia.cpp:912-990"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.baxter.description"
+    text = "Baxter is reputed to be the partisan leader of the provincial forces on Carver V attempting to lead an aboriginal grab for power."
+    legacyId = 45321
+    legacySymbol = "IDS_PERONSALITY_DESCRIPTION5"
+    legacyKey = "legacy.mc2res.45321"
+    source = "mechlopedia"
+    sourceKey = "lore.peronsality.description5"
+    originalKey = "mechlopedia.personality.baxter.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "description"
+    groupKey = "baxter"
+    groupName = "Baxter"
+    codeReference = "code/mechlopedia.cpp:971-979"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.baxter.image_ref"
+    text = "MCL_EN_Person_CivLeader.tga"
+    legacyId = 45345
+    legacySymbol = "IDS_PERSONALITY_PICTURE5"
+    legacyKey = "legacy.mc2res.45345"
+    source = "mechlopedia"
+    sourceKey = "asset.ref.personality.picture5"
+    originalKey = "mechlopedia.personality.baxter.image_ref"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "image_ref"
+    groupKey = "baxter"
+    groupName = "Baxter"
+    codeReference = "code/mechlopedia.cpp:971-990"
+    notes = "Legacy asset reference kept beside the name/description for editing and Viewer hookup."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Captain Jason Cho [captain_jason_cho]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.personality.captain_jason_cho"
+    type = "personality"
+    groupKey = "captain_jason_cho"
+    groupName = "Captain Jason Cho"
+    roles = "description,image_ref,name"
+    legacyIds = "45302,45318,45342"
+    recordCount = 3
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.captain_jason_cho.name"
+    text = "Captain Jason Cho"
+    legacyId = 45302
+    legacySymbol = "IDS_PERSONALITY_2"
+    legacyKey = "legacy.mc2res.45302"
+    source = "mechlopedia"
+    sourceKey = "lore.personality.2"
+    originalKey = "mechlopedia.personality.captain_jason_cho.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "name"
+    groupKey = "captain_jason_cho"
+    groupName = "Captain Jason Cho"
+    codeReference = "code/mechlopedia.cpp:912-990"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.captain_jason_cho.description"
+    text = "Captain Jason Cho emerged recently as an academy hero and tactical mastermind in the war games conducted in off-worlds by House Liao. The young Captain Cho has never commanded forces under live enemy fire before arriving on Carver V.\n\nHis medals and decorations from the classroom and the wastelands reveal nothing about Cho as a warrior, however. He may prove fearless or reckless yet, but in the minds of so many successful young graduates, every fight can be won. It is a safe bet that he is enormously assured of the loyalty of his lieutenants and 'Mech pilots.\n\nCaptain Cho spent his youth on Carver V as the prince to his father's Mandrake. As a native he doubtless feels intense territoriality about Carver V and will do everything in his power to rule the planet he considers his homeland. Any 'Mech team that stands in his way must pay dearly or destroy him."
+    paragraphCount = 3
+    paragraph0 = "Captain Jason Cho emerged recently as an academy hero and tactical mastermind in the war games conducted in off-worlds by House Liao. The young Captain Cho has never commanded forces under live enemy fire before arriving on Carver V."
+    paragraph1 = "His medals and decorations from the classroom and the wastelands reveal nothing about Cho as a warrior, however. He may prove fearless or reckless yet, but in the minds of so many successful young graduates, every fight can be won. It is a safe bet that he is enormously assured of the loyalty of his lieutenants and 'Mech pilots."
+    paragraph2 = "Captain Cho spent his youth on Carver V as the prince to his father's Mandrake. As a native he doubtless feels intense territoriality about Carver V and will do everything in his power to rule the planet he considers his homeland. Any 'Mech team that stands in his way must pay dearly or destroy him."
+    legacyId = 45318
+    legacySymbol = "IDS_PERONSALITY_DESCRIPTION2"
+    legacyKey = "legacy.mc2res.45318"
+    source = "mechlopedia"
+    sourceKey = "lore.peronsality.description2"
+    originalKey = "mechlopedia.personality.captain_jason_cho.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "description"
+    groupKey = "captain_jason_cho"
+    groupName = "Captain Jason Cho"
+    codeReference = "code/mechlopedia.cpp:971-979"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.captain_jason_cho.image_ref"
+    text = "MCL_EN_Person_LadyLiaoSon.tga"
+    legacyId = 45342
+    legacySymbol = "IDS_PERSONALITY_PICTURE2"
+    legacyKey = "legacy.mc2res.45342"
+    source = "mechlopedia"
+    sourceKey = "asset.ref.personality.picture2"
+    originalKey = "mechlopedia.personality.captain_jason_cho.image_ref"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "image_ref"
+    groupKey = "captain_jason_cho"
+    groupName = "Captain Jason Cho"
+    codeReference = "code/mechlopedia.cpp:971-990"
+    notes = "Legacy asset reference kept beside the name/description for editing and Viewer hookup."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Chancellor Sun Tzu Liao [chancellor_sun_tzu_liao]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.personality.chancellor_sun_tzu_liao"
+    type = "personality"
+    groupKey = "chancellor_sun_tzu_liao"
+    groupName = "Chancellor Sun Tzu Liao"
+    roles = "description,image_ref,name"
+    legacyIds = "45309,45325,45349"
+    recordCount = 3
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.chancellor_sun_tzu_liao.name"
+    text = "Chancellor Sun Tzu Liao"
+    legacyId = 45309
+    legacySymbol = "IDS_PERSONALITY_9"
+    legacyKey = "legacy.mc2res.45309"
+    source = "mechlopedia"
+    sourceKey = "lore.personality.9"
+    originalKey = "mechlopedia.personality.chancellor_sun_tzu_liao.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "name"
+    groupKey = "chancellor_sun_tzu_liao"
+    groupName = "Chancellor Sun Tzu Liao"
+    codeReference = "code/mechlopedia.cpp:912-990"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.chancellor_sun_tzu_liao.description"
+    text = "Long admired as one of the shrewdest politicians at the helm of any house, Sun-Tzu Liao's work is honored in unfamiliar ways by the current Liao leadership.\n\nSun-Tzu Liao, orphaned by a political assassination, took the throne and consolidated power more quickly with quiet maneuvering than he ever could have through brute force. Never known as a commander of any distinction, his political prowess gave him a career that combat never could have provided.\n\nThe rise of the Cho family on Carver V, however, has yet to leave House Liao with a clear legacy on the planet, and Mandrissa Cho, widow of the first ruler not to bear the Liao family name, may yet prove formidable in her golden years."
+    paragraphCount = 3
+    paragraph0 = "Long admired as one of the shrewdest politicians at the helm of any house, Sun-Tzu Liao's work is honored in unfamiliar ways by the current Liao leadership."
+    paragraph1 = "Sun-Tzu Liao, orphaned by a political assassination, took the throne and consolidated power more quickly with quiet maneuvering than he ever could have through brute force. Never known as a commander of any distinction, his political prowess gave him a career that combat never could have provided."
+    paragraph2 = "The rise of the Cho family on Carver V, however, has yet to leave House Liao with a clear legacy on the planet, and Mandrissa Cho, widow of the first ruler not to bear the Liao family name, may yet prove formidable in her golden years."
+    legacyId = 45325
+    legacySymbol = "IDS_PERONSALITY_DESCRIPTION9"
+    legacyKey = "legacy.mc2res.45325"
+    source = "mechlopedia"
+    sourceKey = "lore.peronsality.description9"
+    originalKey = "mechlopedia.personality.chancellor_sun_tzu_liao.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "description"
+    groupKey = "chancellor_sun_tzu_liao"
+    groupName = "Chancellor Sun Tzu Liao"
+    codeReference = "code/mechlopedia.cpp:971-979"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.chancellor_sun_tzu_liao.image_ref"
+    text = "MCL_EN_Person_SunTzuLiao.tga"
+    legacyId = 45349
+    legacySymbol = "IDS_PERSONALITY_PICTURE9"
+    legacyKey = "legacy.mc2res.45349"
+    source = "mechlopedia"
+    sourceKey = "asset.ref.personality.picture9"
+    originalKey = "mechlopedia.personality.chancellor_sun_tzu_liao.image_ref"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "image_ref"
+    groupKey = "chancellor_sun_tzu_liao"
+    groupName = "Chancellor Sun Tzu Liao"
+    codeReference = "code/mechlopedia.cpp:971-990"
+    notes = "Legacy asset reference kept beside the name/description for editing and Viewer hookup."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Colonel David Renard [colonel_david_renard]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.personality.colonel_david_renard"
+    type = "personality"
+    groupKey = "colonel_david_renard"
+    groupName = "Colonel David Renard"
+    roles = "description,image_ref,name"
+    legacyIds = "45310,45326,45350"
+    recordCount = 3
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.colonel_david_renard.name"
+    text = "Colonel David Renard"
+    legacyId = 45310
+    legacySymbol = "IDS_PERSONALITY_10"
+    legacyKey = "legacy.mc2res.45310"
+    source = "mechlopedia"
+    sourceKey = "lore.personality.10"
+    originalKey = "mechlopedia.personality.colonel_david_renard.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "name"
+    groupKey = "colonel_david_renard"
+    groupName = "Colonel David Renard"
+    codeReference = "code/mechlopedia.cpp:912-990"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.colonel_david_renard.description"
+    text = "Colonel David Renard's years of distinguished military service are at the very core of his being. As a field commander and briefly as an academy instructor, his insights and quick analytical abilities have distinguished him from his peers.\n\nHe began his military service in 3038, later entering combat for the first time when Theodore Kurita and the Davions joined forces to attack the Clans. In 3050, at the first victory over the Clans, Renard distinguished himself as a warrior and as a commander.\n\nServing on Luthien alongside the Kell Hounds with the ingenious Major Susan Kelly under his command, he parried Clan Nova Cat's advances despite being greatly outnumbered.\n\nHe fought with Victor Steiner-Davion on Strana Mechty, the homeworld of the Clans. His and Kelly's mastery of Clan battle tactics contributed greatly not only to the Inner Sphere victory there but also to the assurance of a military future for Renard within the Davion forces."
+    paragraphCount = 4
+    paragraph0 = "Colonel David Renard's years of distinguished military service are at the very core of his being. As a field commander and briefly as an academy instructor, his insights and quick analytical abilities have distinguished him from his peers."
+    paragraph1 = "He began his military service in 3038, later entering combat for the first time when Theodore Kurita and the Davions joined forces to attack the Clans. In 3050, at the first victory over the Clans, Renard distinguished himself as a warrior and as a commander."
+    paragraph2 = "Serving on Luthien alongside the Kell Hounds with the ingenious Major Susan Kelly under his command, he parried Clan Nova Cat's advances despite being greatly outnumbered."
+    paragraph3 = "He fought with Victor Steiner-Davion on Strana Mechty, the homeworld of the Clans. His and Kelly's mastery of Clan battle tactics contributed greatly not only to the Inner Sphere victory there but also to the assurance of a military future for Renard within the Davion forces."
+    legacyId = 45326
+    legacySymbol = "IDS_PERONSALITY_DESCRIPTION10"
+    legacyKey = "legacy.mc2res.45326"
+    source = "mechlopedia"
+    sourceKey = "lore.peronsality.description10"
+    originalKey = "mechlopedia.personality.colonel_david_renard.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "description"
+    groupKey = "colonel_david_renard"
+    groupName = "Colonel David Renard"
+    codeReference = "code/mechlopedia.cpp:971-979"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.colonel_david_renard.image_ref"
+    text = "MCL_EN_Person_ColonelRenard.tga"
+    legacyId = 45350
+    legacySymbol = "IDS_PERSONALITY_PICTURE10"
+    legacyKey = "legacy.mc2res.45350"
+    source = "mechlopedia"
+    sourceKey = "asset.ref.personality.picture10"
+    originalKey = "mechlopedia.personality.colonel_david_renard.image_ref"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "image_ref"
+    groupKey = "colonel_david_renard"
+    groupName = "Colonel David Renard"
+    codeReference = "code/mechlopedia.cpp:971-990"
+    notes = "Legacy asset reference kept beside the name/description for editing and Viewer hookup."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Gunnery Sergeant Cash [gunnery_sergeant_cash]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.personality.gunnery_sergeant_cash"
+    type = "personality"
+    groupKey = "gunnery_sergeant_cash"
+    groupName = "Gunnery Sergeant Cash"
+    roles = "description,image_ref,name"
+    legacyIds = "45307,45323,45347"
+    recordCount = 3
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.gunnery_sergeant_cash.name"
+    text = "Gunnery Sergeant Cash"
+    legacyId = 45307
+    legacySymbol = "IDS_PERSONALITY_7"
+    legacyKey = "legacy.mc2res.45307"
+    source = "mechlopedia"
+    sourceKey = "lore.personality.7"
+    originalKey = "mechlopedia.personality.gunnery_sergeant_cash.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/pilots.fit"
+    originalCategory = "pilots"
+    mechlopediaType = "personality"
+    role = "name"
+    groupKey = "gunnery_sergeant_cash"
+    groupName = "Gunnery Sergeant Cash"
+    codeReference = "code/mechlopedia.cpp:912-990"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.gunnery_sergeant_cash.description"
+    text = "Gunnery Sergeant Cash is the favorite weapons officer of pilots and enlisted soldiers alike. As the senior noncommissioned officer in mercenary forces on Carver V, he makes excellent use of his extensive practical experience with 'Mechs. First-hand knowledge such as his, gained from loading and repairing 'Mechs, is invaluable.\n\nHe grew up on Mehldau, where merc teams fought each other for the chance to control seemingly nonexistent planetary resources. His first and only military assignment was as a grenadier in the Rossy Corps, so he also knows the battlefield all too well."
+    paragraphCount = 2
+    paragraph0 = "Gunnery Sergeant Cash is the favorite weapons officer of pilots and enlisted soldiers alike. As the senior noncommissioned officer in mercenary forces on Carver V, he makes excellent use of his extensive practical experience with 'Mechs. First-hand knowledge such as his, gained from loading and repairing 'Mechs, is invaluable."
+    paragraph1 = "He grew up on Mehldau, where merc teams fought each other for the chance to control seemingly nonexistent planetary resources. His first and only military assignment was as a grenadier in the Rossy Corps, so he also knows the battlefield all too well."
+    legacyId = 45323
+    legacySymbol = "IDS_PERONSALITY_DESCRIPTION7"
+    legacyKey = "legacy.mc2res.45323"
+    source = "mechlopedia"
+    sourceKey = "lore.peronsality.description7"
+    originalKey = "mechlopedia.personality.gunnery_sergeant_cash.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "description"
+    groupKey = "gunnery_sergeant_cash"
+    groupName = "Gunnery Sergeant Cash"
+    codeReference = "code/mechlopedia.cpp:971-979"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.gunnery_sergeant_cash.image_ref"
+    text = "MCL_EN_Person_MaintOfficer.tga"
+    legacyId = 45347
+    legacySymbol = "IDS_PERSONALITY_PICTURE7"
+    legacyKey = "legacy.mc2res.45347"
+    source = "mechlopedia"
+    sourceKey = "asset.ref.personality.picture7"
+    originalKey = "mechlopedia.personality.gunnery_sergeant_cash.image_ref"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "image_ref"
+    groupKey = "gunnery_sergeant_cash"
+    groupName = "Gunnery Sergeant Cash"
+    codeReference = "code/mechlopedia.cpp:971-990"
+    notes = "Legacy asset reference kept beside the name/description for editing and Viewer hookup."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Lieutenant Diaz [lieutenant_diaz]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.personality.lieutenant_diaz"
+    type = "personality"
+    groupKey = "lieutenant_diaz"
+    groupName = "Lieutenant Diaz"
+    roles = "description,image_ref,name"
+    legacyIds = "45304,45320,45344"
+    recordCount = 3
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.lieutenant_diaz.name"
+    text = "Lieutenant Diaz"
+    legacyId = 45304
+    legacySymbol = "IDS_PERSONALITY_4"
+    legacyKey = "legacy.mc2res.45304"
+    source = "mechlopedia"
+    sourceKey = "lore.personality.4"
+    originalKey = "mechlopedia.personality.lieutenant_diaz.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "name"
+    groupKey = "lieutenant_diaz"
+    groupName = "Lieutenant Diaz"
+    codeReference = "code/mechlopedia.cpp:912-990"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.lieutenant_diaz.description"
+    text = "With Gunnery Sergeant Cash, Lieutenant D.C. Diaz is the backbone of mercenary operations on Carver V as tactical officer. She has revealed little of her youth or training since joining the merc team 4 years ago. She has served admirably in Chaos March battles as well as in Terran Defense efforts.\n\nLieutenant Diaz rarely if ever strays from duty and, with her intense focus and selflessness, has proven to be adept in almost any company. She acts as liaison with clients' key operatives in charge of strategy and finance during battle, after contracts have been signed. Commanders, pilots, and technicians all welcome her presence and insight."
+    paragraphCount = 2
+    paragraph0 = "With Gunnery Sergeant Cash, Lieutenant D.C. Diaz is the backbone of mercenary operations on Carver V as tactical officer. She has revealed little of her youth or training since joining the merc team 4 years ago. She has served admirably in Chaos March battles as well as in Terran Defense efforts."
+    paragraph1 = "Lieutenant Diaz rarely if ever strays from duty and, with her intense focus and selflessness, has proven to be adept in almost any company. She acts as liaison with clients' key operatives in charge of strategy and finance during battle, after contracts have been signed. Commanders, pilots, and technicians all welcome her presence and insight."
+    legacyId = 45320
+    legacySymbol = "IDS_PERONSALITY_DESCRIPTION4"
+    legacyKey = "legacy.mc2res.45320"
+    source = "mechlopedia"
+    sourceKey = "lore.peronsality.description4"
+    originalKey = "mechlopedia.personality.lieutenant_diaz.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "description"
+    groupKey = "lieutenant_diaz"
+    groupName = "Lieutenant Diaz"
+    codeReference = "code/mechlopedia.cpp:971-979"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.lieutenant_diaz.image_ref"
+    text = "MCL_EN_Person_TacOfficer.tga"
+    legacyId = 45344
+    legacySymbol = "IDS_PERSONALITY_PICTURE4"
+    legacyKey = "legacy.mc2res.45344"
+    source = "mechlopedia"
+    sourceKey = "asset.ref.personality.picture4"
+    originalKey = "mechlopedia.personality.lieutenant_diaz.image_ref"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "image_ref"
+    groupKey = "lieutenant_diaz"
+    groupName = "Lieutenant Diaz"
+    codeReference = "code/mechlopedia.cpp:971-990"
+    notes = "Legacy asset reference kept beside the name/description for editing and Viewer hookup."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Major Susan Kelly [major_susan_kelly]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.personality.major_susan_kelly"
+    type = "personality"
+    groupKey = "major_susan_kelly"
+    groupName = "Major Susan Kelly"
+    roles = "description,image_ref,name"
+    legacyIds = "45303,45319,45343"
+    recordCount = 3
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.major_susan_kelly.name"
+    text = "Major Susan Kelly"
+    legacyId = 45303
+    legacySymbol = "IDS_PERSONALITY_3"
+    legacyKey = "legacy.mc2res.45303"
+    source = "mechlopedia"
+    sourceKey = "lore.personality.3"
+    originalKey = "mechlopedia.personality.major_susan_kelly.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "name"
+    groupKey = "major_susan_kelly"
+    groupName = "Major Susan Kelly"
+    codeReference = "code/mechlopedia.cpp:912-990"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.major_susan_kelly.description"
+    text = "Major Susan Kelly first came to the attention of Colonel David Renard when he did a short tour of duty teaching at the Davion Military Academy. Her outstanding marks and intuitive understanding of Clan fighting tactics set her on a path toward senior command almost before she saw active duty.\n\nIn 3050, the year of peace between Clan invasions of Inner Sphere space, Kelly returned to her alma mater as an adjunct professor. Her store of intelligence from the battlefront formed the core of advanced training curricula for the young academy graduates in Davion's armies on Carver V today.\n\nIn her time as a lecturer, Major Kelly built a steadfast reputation as a woman of honor and principle, teaching the philosophy of warfare with a strong ethical and moral background. Combining her sense of propriety with her ability to \"get inside the heads\" of opposing commanders, Major Kelly has proven herself one of the most adroit young officers in House Davion."
+    paragraphCount = 3
+    paragraph0 = "Major Susan Kelly first came to the attention of Colonel David Renard when he did a short tour of duty teaching at the Davion Military Academy. Her outstanding marks and intuitive understanding of Clan fighting tactics set her on a path toward senior command almost before she saw active duty."
+    paragraph1 = "In 3050, the year of peace between Clan invasions of Inner Sphere space, Kelly returned to her alma mater as an adjunct professor. Her store of intelligence from the battlefront formed the core of advanced training curricula for the young academy graduates in Davion's armies on Carver V today."
+    paragraph2 = "In her time as a lecturer, Major Kelly built a steadfast reputation as a woman of honor and principle, teaching the philosophy of warfare with a strong ethical and moral background. Combining her sense of propriety with her ability to \"get inside the heads\" of opposing commanders, Major Kelly has proven herself one of the most adroit young officers in House Davion."
+    legacyId = 45319
+    legacySymbol = "IDS_PERONSALITY_DESCRIPTION3"
+    legacyKey = "legacy.mc2res.45319"
+    source = "mechlopedia"
+    sourceKey = "lore.peronsality.description3"
+    originalKey = "mechlopedia.personality.major_susan_kelly.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "description"
+    groupKey = "major_susan_kelly"
+    groupName = "Major Susan Kelly"
+    codeReference = "code/mechlopedia.cpp:971-979"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.major_susan_kelly.image_ref"
+    text = "MCL_EN_Person_DavionCommand.tga"
+    legacyId = 45343
+    legacySymbol = "IDS_PERSONALITY_PICTURE3"
+    legacyKey = "legacy.mc2res.45343"
+    source = "mechlopedia"
+    sourceKey = "asset.ref.personality.picture3"
+    originalKey = "mechlopedia.personality.major_susan_kelly.image_ref"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "image_ref"
+    groupKey = "major_susan_kelly"
+    groupName = "Major Susan Kelly"
+    codeReference = "code/mechlopedia.cpp:971-990"
+    notes = "Legacy asset reference kept beside the name/description for editing and Viewer hookup."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Mandrissa Anita Cho [mandrissa_anita_cho]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.personality.mandrissa_anita_cho"
+    type = "personality"
+    groupKey = "mandrissa_anita_cho"
+    groupName = "Mandrissa Anita Cho"
+    roles = "description,image_ref,name"
+    legacyIds = "45301,45317,45341"
+    recordCount = 3
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.mandrissa_anita_cho.name"
+    text = "Mandrissa Anita Cho"
+    legacyId = 45301
+    legacySymbol = "IDS_PERSONALITY_1"
+    legacyKey = "legacy.mc2res.45301"
+    source = "mechlopedia"
+    sourceKey = "lore.personality.1"
+    originalKey = "mechlopedia.personality.mandrissa_anita_cho.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "name"
+    groupKey = "mandrissa_anita_cho"
+    groupName = "Mandrissa Anita Cho"
+    codeReference = "code/mechlopedia.cpp:912-990"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.mandrissa_anita_cho.description"
+    text = "Mandrissa Anita Cho leads House Liao forces through troubling times on Carver V. Circumstances have thrust the Mandrissa into a tenuous position; her husband was killed in action during battle with Davion forces and Liao leaders off-world put her in charge with little reinforcement after years of firefights.\n\nCarver V represents the last hope for the Cho family to keep their name alive as Liao commanders. The Mandrissa would like nothing more than to guide House Liao to victory in the civil war and install her son Jason as Mandarin before her death.\n\nWith the military forces at her disposal and her fierce desire to avenge her husband and install her son as the ruler of Carver V, Mandrissa Cho and House Liao are no trifling foe. She has no military background herself, which her generals admit has made her disturbingly fearless when ordering her 'Mech teams into the breach."
+    paragraphCount = 3
+    paragraph0 = "Mandrissa Anita Cho leads House Liao forces through troubling times on Carver V. Circumstances have thrust the Mandrissa into a tenuous position; her husband was killed in action during battle with Davion forces and Liao leaders off-world put her in charge with little reinforcement after years of firefights."
+    paragraph1 = "Carver V represents the last hope for the Cho family to keep their name alive as Liao commanders. The Mandrissa would like nothing more than to guide House Liao to victory in the civil war and install her son Jason as Mandarin before her death."
+    paragraph2 = "With the military forces at her disposal and her fierce desire to avenge her husband and install her son as the ruler of Carver V, Mandrissa Cho and House Liao are no trifling foe. She has no military background herself, which her generals admit has made her disturbingly fearless when ordering her 'Mech teams into the breach."
+    legacyId = 45317
+    legacySymbol = "IDS_PERONSALITY_DESCRIPTION1"
+    legacyKey = "legacy.mc2res.45317"
+    source = "mechlopedia"
+    sourceKey = "lore.peronsality.description1"
+    originalKey = "mechlopedia.personality.mandrissa_anita_cho.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "description"
+    groupKey = "mandrissa_anita_cho"
+    groupName = "Mandrissa Anita Cho"
+    codeReference = "code/mechlopedia.cpp:971-979"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.mandrissa_anita_cho.image_ref"
+    text = "MCL_EN_Person_LadyLiao.tga"
+    legacyId = 45341
+    legacySymbol = "IDS_PERSONALITY_PICTURE1"
+    legacyKey = "legacy.mc2res.45341"
+    source = "mechlopedia"
+    sourceKey = "asset.ref.personality.picture1"
+    originalKey = "mechlopedia.personality.mandrissa_anita_cho.image_ref"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "image_ref"
+    groupKey = "mandrissa_anita_cho"
+    groupName = "Mandrissa Anita Cho"
+    codeReference = "code/mechlopedia.cpp:971-990"
+    notes = "Legacy asset reference kept beside the name/description for editing and Viewer hookup."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Prince Victor Davion [prince_victor_davion]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.personality.prince_victor_davion"
+    type = "personality"
+    groupKey = "prince_victor_davion"
+    groupName = "Prince Victor Davion"
+    roles = "description,image_ref,name"
+    legacyIds = "45308,45324,45348"
+    recordCount = 3
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.prince_victor_davion.name"
+    text = "Prince Victor Davion"
+    legacyId = 45308
+    legacySymbol = "IDS_PERSONALITY_8"
+    legacyKey = "legacy.mc2res.45308"
+    source = "mechlopedia"
+    sourceKey = "lore.personality.8"
+    originalKey = "mechlopedia.personality.prince_victor_davion.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "name"
+    groupKey = "prince_victor_davion"
+    groupName = "Prince Victor Davion"
+    codeReference = "code/mechlopedia.cpp:912-990"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.prince_victor_davion.description"
+    text = "Victor Davion has seen a brilliant career on the battlefield balanced unevenly by a rocky career as a politician. His mother's untimely death thrust him onto the throne too early; his middling skills in diplomacy fell far short of the mark. Time and time again he mishandled crises and cost himself the loyalty of his subjects and his peers.\n\nOn the battlefield, however, he is famous as a strategic mastermind. With age, his temperament has softened and he has taken a chessman's approach to governing, with slowly improving results.\n\nOn Carver V, Victor Davion's hand is felt at times in the strangely impetuous legacy he has spawned among all the commanders in his house. His soldier's sense of battlefield responsiveness too often colored his sense of compulsive loyalty even when evidence beggared a severing. Many Davion commanders served alongside Victor before serving him on Carver V."
+    paragraphCount = 3
+    paragraph0 = "Victor Davion has seen a brilliant career on the battlefield balanced unevenly by a rocky career as a politician. His mother's untimely death thrust him onto the throne too early; his middling skills in diplomacy fell far short of the mark. Time and time again he mishandled crises and cost himself the loyalty of his subjects and his peers."
+    paragraph1 = "On the battlefield, however, he is famous as a strategic mastermind. With age, his temperament has softened and he has taken a chessman's approach to governing, with slowly improving results."
+    paragraph2 = "On Carver V, Victor Davion's hand is felt at times in the strangely impetuous legacy he has spawned among all the commanders in his house. His soldier's sense of battlefield responsiveness too often colored his sense of compulsive loyalty even when evidence beggared a severing. Many Davion commanders served alongside Victor before serving him on Carver V."
+    legacyId = 45324
+    legacySymbol = "IDS_PERONSALITY_DESCRIPTION8"
+    legacyKey = "legacy.mc2res.45324"
+    source = "mechlopedia"
+    sourceKey = "lore.peronsality.description8"
+    originalKey = "mechlopedia.personality.prince_victor_davion.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "description"
+    groupKey = "prince_victor_davion"
+    groupName = "Prince Victor Davion"
+    codeReference = "code/mechlopedia.cpp:971-979"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.personality.prince_victor_davion.image_ref"
+    text = "MCL_EN_Person_VictorDavion.tga"
+    legacyId = 45348
+    legacySymbol = "IDS_PERSONALITY_PICTURE8"
+    legacyKey = "legacy.mc2res.45348"
+    source = "mechlopedia"
+    sourceKey = "asset.ref.personality.picture8"
+    originalKey = "mechlopedia.personality.prince_victor_davion.image_ref"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "personality"
+    role = "image_ref"
+    groupKey = "prince_victor_davion"
+    groupName = "Prince Victor Davion"
+    codeReference = "code/mechlopedia.cpp:971-990"
+    notes = "Legacy asset reference kept beside the name/description for editing and Viewer hookup."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+

@@ -1,0 +1,7356 @@
+/***************************************************************
+ * FILENAME: mechlopedia_legacy_aliases.fit
+ * DESCRIPTION: Alias-only reference for Phase 3 Mechlopedia legacy ID bindings.
+ * NOTE: mechlopedia_text_bridge.fit already includes these aliases for current loading.
+ ***************************************************************/
+
+LegacyTextAlias {
+    legacyId = 27000
+    textKey = "mechlopedia.ui.ui.ui_text.ui_string_first_logistics"
+    legacySymbol = "IDS_STRING_FIRST_LOGISTICS"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27322
+    textKey = "mechlopedia.ui.font_refs.font_ref.logistics_mc_change_cost_font"
+    legacySymbol = "IDS_MC_CHANGE_COST_FONT"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27700
+    textKey = "mechlopedia.ui.ui.header.logistics_en_encylopedia"
+    legacySymbol = "IDS_EN_ENCYLOPEDIA"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27701
+    textKey = "mechlopedia.ui.font_refs.font_ref.logistics_en_encylopedia_font"
+    legacySymbol = "IDS_EN_ENCYLOPEDIA_FONT"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27702
+    textKey = "mechlopedia.ui.ui.ui_text.logistics_en_mechs"
+    legacySymbol = "IDS_EN_MECHS"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27703
+    textKey = "mechlopedia.ui.ui.ui_text.logistics_en_buildings"
+    legacySymbol = "IDS_EN_BUILDINGS"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27704
+    textKey = "mechlopedia.ui.ui.ui_text.logistics_en_vehicles"
+    legacySymbol = "IDS_EN_VEHICLES"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27705
+    textKey = "mechlopedia.ui.ui.ui_text.logistics_en_weapons"
+    legacySymbol = "IDS_EN_WEAPONS"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27706
+    textKey = "mechlopedia.ui.ui.ui_text.logistics_en_personalities"
+    legacySymbol = "IDS_EN_PERSONALITIES"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27707
+    textKey = "mechlopedia.ui.ui.ui_text.logistics_en_history"
+    legacySymbol = "IDS_EN_HISTORY"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27708
+    textKey = "mechlopedia.ui.ui.button_label"
+    legacySymbol = "IDS_EN_CLOSE"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27709
+    textKey = "mechlopedia.ui.font_refs.font_ref.logistics_en_close_font"
+    legacySymbol = "IDS_EN_CLOSE_FONT"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27710
+    textKey = "mechlopedia.ui.ui.help_text"
+    legacySymbol = "IDS_EN_CLOSE_HELP"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27712
+    textKey = "mechlopedia.ui.font_refs.font_ref.logistics_en_mechname_font"
+    legacySymbol = "IDS_EN_MECHNAME_FONT"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27713
+    textKey = "mechlopedia.ui.ui.header.unit_mech_stats"
+    legacySymbol = "IDS_MECH_STATS"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27714
+    textKey = "mechlopedia.ui.font_refs.font_ref.unit_mech_stats_font"
+    legacySymbol = "IDS_MECH_STATS_FONT"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27715
+    textKey = "mechlopedia.ui.ui.header.unit_mech_loadout"
+    legacySymbol = "IDS_MECH_LOADOUT"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27716
+    textKey = "mechlopedia.ui.font_refs.font_ref.unit_mech_loadout_font"
+    legacySymbol = "IDS_MECH_LOADOUT_FONT"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27717
+    textKey = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_house"
+    legacySymbol = "IDS_EN_HOUSE"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27718
+    textKey = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_weight"
+    legacySymbol = "IDS_EN_WEIGHT"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27719
+    textKey = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_class"
+    legacySymbol = "IDS_EN_CLASS"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27720
+    textKey = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_speed"
+    legacySymbol = "IDS_EN_SPEED"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27721
+    textKey = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_jump"
+    legacySymbol = "IDS_EN_JUMP"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27722
+    textKey = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_armor"
+    legacySymbol = "IDS_EN_ARMOR"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27723
+    textKey = "mechlopedia.ui.stats_and_headers.header.logistics_en_weapons_header"
+    legacySymbol = "IDS_EN_WEAPONS_HEADER"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27724
+    textKey = "mechlopedia.ui.stats_and_headers.font_ref.logistics_en_weapons_header_font"
+    legacySymbol = "IDS_EN_WEAPONS_HEADER_FONT"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27727
+    textKey = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_weapon_heat"
+    legacySymbol = "IDS_EN_WEAPON_HEAT"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27728
+    textKey = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_weapon_damage"
+    legacySymbol = "IDS_EN_WEAPON_DAMAGE"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27729
+    textKey = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_weapon_range"
+    legacySymbol = "IDS_EN_WEAPON_RANGE"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27731
+    textKey = "mechlopedia.ui.stats_and_headers.header.unit_vehicle_stats"
+    legacySymbol = "IDS_VEHICLE_STATS"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27732
+    textKey = "mechlopedia.ui.stats_and_headers.header.logistics_en_building_weapon"
+    legacySymbol = "IDS_EN_BUILDING_WEAPON"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27733
+    textKey = "mechlopedia.ui.stats_and_headers.font_ref.logistics_en_building_weapon_font"
+    legacySymbol = "IDS_EN_BUILDING_WEAPON_FONT"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27734
+    textKey = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_building_weight"
+    legacySymbol = "IDS_EN_BUILDING_WEIGHT"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27735
+    textKey = "mechlopedia.ui.stats_and_headers.font_ref.logistics_en_personality_font"
+    legacySymbol = "IDS_EN_PERSONALITY_FONT"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27737
+    textKey = "mechlopedia.ui.stats_and_headers.help_text"
+    legacySymbol = "IDS_EN_TITLE_HELP"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27738
+    textKey = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_weapon_rateoffire"
+    legacySymbol = "IDS_EN_WEAPON_RATEOFFIRE"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27739
+    textKey = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_weapon_cost"
+    legacySymbol = "IDS_EN_WEAPON_COST"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27740
+    textKey = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_weapon_ammo"
+    legacySymbol = "IDS_EN_WEAPON_AMMO"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 27741
+    textKey = "mechlopedia.ui.stats_and_headers.stat_format.logistics_en_weapon_armor"
+    legacySymbol = "IDS_EN_WEAPON_ARMOR"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28904
+    textKey = "mechlopedia.mech.uller.name"
+    legacySymbol = "IDS_MECH_ULLER"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28905
+    textKey = "mechlopedia.mech.wolfhound.name"
+    legacySymbol = "IDS_MECH_WOLFHOUND"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28906
+    textKey = "mechlopedia.mech.shadow_cat.name"
+    legacySymbol = "IDS_MECH_SHADOWCAT"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28907
+    textKey = "mechlopedia.mech.enfield.name"
+    legacySymbol = "IDS_MECH_ENFEILD"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28908
+    textKey = "mechlopedia.mech.vulture.name"
+    legacySymbol = "IDS_MECH_VULTURE"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28909
+    textKey = "mechlopedia.mech.jagermech.name"
+    legacySymbol = "IDS_MECH_JAGERMECH"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28910
+    textKey = "mechlopedia.mech.mad_cat.name"
+    legacySymbol = "IDS_MECH_MADCAT"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28911
+    textKey = "mechlopedia.mech.blood_asp.name"
+    legacySymbol = "IDS_MECH_BLOODASP"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28912
+    textKey = "mechlopedia.mech.razorback.name"
+    legacySymbol = "IDS_MECH_WEREWOLF28912"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28913
+    textKey = "mechlopedia.mech.hollander.name"
+    legacySymbol = "IDS_MECH_HOLLANDER"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28914
+    textKey = "mechlopedia.mech.hunchback.name"
+    legacySymbol = "IDS_MECH_HUNCHBACK"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28915
+    textKey = "mechlopedia.mech.bushwacker.name"
+    legacySymbol = "IDS_MECH_BUSHWACKER"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28916
+    textKey = "mechlopedia.mech.shootist.name"
+    legacySymbol = "IDS_SHOOTIST"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28917
+    textKey = "mechlopedia.mech.zeus.name"
+    legacySymbol = "IDS_MECH_ZEUS"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28918
+    textKey = "mechlopedia.mech.highlander.name"
+    legacySymbol = "IDS_MECH_HIGHLANDER"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28919
+    textKey = "mechlopedia.mech.atlas.name"
+    legacySymbol = "IDS_MECH_ATLAS"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28920
+    textKey = "mechlopedia.mech.sha_yu.name"
+    legacySymbol = "IDS_MECH_SHAYU"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28921
+    textKey = "mechlopedia.mech.raven.name"
+    legacySymbol = "IDS_MECH_RAVEN"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28922
+    textKey = "mechlopedia.mech.anubis.name"
+    legacySymbol = "IDS_MECH_ANUBIS"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28923
+    textKey = "mechlopedia.mech.starslayer.name"
+    legacySymbol = "IDS_MECH_STARSLAYER"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28924
+    textKey = "mechlopedia.mech.men_shen.name"
+    legacySymbol = "IDS_MECH_MENSHEN"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28925
+    textKey = "mechlopedia.mech.catapult.name"
+    legacySymbol = "IDS_MECH_CATAPULT"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28926
+    textKey = "mechlopedia.mech.lao_hu.name"
+    legacySymbol = "IDS_MECH_LAOHU"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28927
+    textKey = "mechlopedia.mech.cyclops.name"
+    legacySymbol = "IDS_MECH_CYCLOPS"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28930
+    textKey = "mechlopedia.mech.cougar_legacy_uller2.description"
+    legacySymbol = "IDS_MECH_ULLER2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28939
+    textKey = "mechlopedia.mech.wolfhound.description"
+    legacySymbol = "IDS_MECH_WOLFHOUND2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28940
+    textKey = "mechlopedia.mech.shadow_cat.description"
+    legacySymbol = "IDS_MECH_SHADOWCAT2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28941
+    textKey = "mechlopedia.mech.enfield.description"
+    legacySymbol = "IDS_MECH_ENFEILD2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28942
+    textKey = "mechlopedia.mech.vulture.description"
+    legacySymbol = "IDS_MECH_VULTURE2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28943
+    textKey = "mechlopedia.mech.jagermech.description"
+    legacySymbol = "IDS_MECH_JAGERMECH2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28944
+    textKey = "mechlopedia.mech.mad_cat.description"
+    legacySymbol = "IDS_MECH_MADCAT2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28945
+    textKey = "mechlopedia.mech.blood_asp.description"
+    legacySymbol = "IDS_MECH_BLOODASP2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28946
+    textKey = "mechlopedia.mech.razorback.description"
+    legacySymbol = "IDS_MECH_WEREWOLF28913"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28947
+    textKey = "mechlopedia.mech.hollander.description"
+    legacySymbol = "IDS_MECH_HOLLANDER2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28948
+    textKey = "mechlopedia.mech.hunchback.description"
+    legacySymbol = "IDS_MECH_HUNCHBACK2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28949
+    textKey = "mechlopedia.mech.bushwacker.description"
+    legacySymbol = "IDS_MECH_BUSHWACKER2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28950
+    textKey = "mechlopedia.mech.shootist.description"
+    legacySymbol = "IDS_SHOOTIST2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28951
+    textKey = "mechlopedia.mech.zeus.description"
+    legacySymbol = "IDS_MECH_ZEUS2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28952
+    textKey = "mechlopedia.mech.highlander.description"
+    legacySymbol = "IDS_MECH_HIGHLANDER2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28953
+    textKey = "mechlopedia.mech.atlas.description"
+    legacySymbol = "IDS_MECH_ATLAS2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28954
+    textKey = "mechlopedia.mech.sha_yu.description"
+    legacySymbol = "IDS_MECH_SHAYU2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28955
+    textKey = "mechlopedia.mech.raven.description"
+    legacySymbol = "IDS_MECH_RAVEN2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28956
+    textKey = "mechlopedia.mech.anubis.description"
+    legacySymbol = "IDS_MECH_ANUBIS2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28957
+    textKey = "mechlopedia.mech.starslayer.description"
+    legacySymbol = "IDS_MECH_STARSLAYER2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28958
+    textKey = "mechlopedia.mech.men_shen.description"
+    legacySymbol = "IDS_MECH_MENSHEN2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28959
+    textKey = "mechlopedia.mech.catapult.description"
+    legacySymbol = "IDS_MECH_CATAPULT2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28960
+    textKey = "mechlopedia.mech.lao_hu.description"
+    legacySymbol = "IDS_MECH_LAOHU2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28961
+    textKey = "mechlopedia.mech.cyclops.description"
+    legacySymbol = "IDS_MECH_CYCLOPS2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28962
+    textKey = "mechlopedia.mech.uller.description"
+    legacySymbol = "IDS_MECH_ULLER3"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28963
+    textKey = "mechlopedia.mech.urbanmech.description"
+    legacySymbol = "IDS_URBANMECH2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28964
+    textKey = "mechlopedia.mech.wolfhound_duplicate.description"
+    legacySymbol = "IDS_WOLFHOUND"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28965
+    textKey = "mechlopedia.mech.thor.description"
+    legacySymbol = "IDS_THOR"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28966
+    textKey = "mechlopedia.mech.ryoken.description"
+    legacySymbol = "IDS_RYOKEN"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28967
+    textKey = "mechlopedia.mech.cougar.description"
+    legacySymbol = "IDS_COUGAR"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28968
+    textKey = "mechlopedia.mech.fire_ant.name"
+    legacySymbol = "IDS_FIREANT"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28969
+    textKey = "mechlopedia.mech.fire_ant.description"
+    legacySymbol = "IDS_FIREANT2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 28970
+    textKey = "mechlopedia.mech.urbanmech.name"
+    legacySymbol = "IDS_MECH_URBANMECH"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30077
+    textKey = "mechlopedia.vehicle.salvage_craft.name"
+    legacySymbol = "IDS_BDLG1"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30200
+    textKey = "mechlopedia.building.ammo_dump.name"
+    legacySymbol = "IDS_OBJECT_200"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30204
+    textKey = "mechlopedia.building.gate_control.name"
+    legacySymbol = "IDS_OBJECT_204"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30208
+    textKey = "mechlopedia.building.lookout_tower.name"
+    legacySymbol = "IDS_OBJECT_208_LIAO"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30211
+    textKey = "mechlopedia.building.perimeter_alarm.name"
+    legacySymbol = "IDS_OBJECT_211"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30213
+    textKey = "mechlopedia.building.repair_bay.name"
+    legacySymbol = "IDS_OBJECT_213"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30216
+    textKey = "mechlopedia.building.sensor_control.name"
+    legacySymbol = "IDS_OBJECT_216"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30217
+    textKey = "mechlopedia.building.sensor_tower.name"
+    legacySymbol = "IDS_OBJECT_217"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30220
+    textKey = "mechlopedia.building.spotlight_control.name"
+    legacySymbol = "IDS_OBJECT_220"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30221
+    textKey = "mechlopedia.building.turret_control.name"
+    legacySymbol = "IDS_OBJECT_221"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30222
+    textKey = "mechlopedia.building.turret_generator.name"
+    legacySymbol = "IDS_OBJECT_222"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30235
+    textKey = "mechlopedia.building.power_generator.name"
+    legacySymbol = "IDS_OBJECT_235"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30274
+    textKey = "mechlopedia.vehicle.apc.name"
+    legacySymbol = "IDS_OBJECT_274"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30275
+    textKey = "mechlopedia.vehicle.harasser.name"
+    legacySymbol = "IDS_OBJECT_275"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30277
+    textKey = "mechlopedia.vehicle.minelayer.name"
+    legacySymbol = "IDS_OBJECT_277"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30278
+    textKey = "mechlopedia.vehicle.partisan.name"
+    legacySymbol = "IDS_OBJECT_278"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30280
+    textKey = "mechlopedia.vehicle.vedette.name"
+    legacySymbol = "IDS_OBJECT_280"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30300
+    textKey = "mechlopedia.vehicle.scimitar.name"
+    legacySymbol = "IDS_OBJECT_300"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30301
+    textKey = "mechlopedia.vehicle.legion.name"
+    legacySymbol = "IDS_OBJECT_301"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30302
+    textKey = "mechlopedia.vehicle.armored_car.name"
+    legacySymbol = "IDS_OBJECT_302"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30303
+    textKey = "mechlopedia.vehicle.hunter.name"
+    legacySymbol = "IDS_OBJECT_303"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30305
+    textKey = "mechlopedia.vehicle.fuel_truck.name"
+    legacySymbol = "IDS_OBJECT_305"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30307
+    textKey = "mechlopedia.vehicle.cargo_truck.name"
+    legacySymbol = "IDS_OBJECT_307"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30308
+    textKey = "mechlopedia.vehicle.resource_truck.name"
+    legacySymbol = "IDS_OBJECT_308"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30309
+    textKey = "mechlopedia.building.light_wall.name"
+    legacySymbol = "IDS_OBJECT_309"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30310
+    textKey = "mechlopedia.building.light_gate.name"
+    legacySymbol = "IDS_OBJECT_310"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30311
+    textKey = "mechlopedia.building.medium_wall.name"
+    legacySymbol = "IDS_OBJECT_311"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30312
+    textKey = "mechlopedia.building.medium_gate.name"
+    legacySymbol = "IDS_OBJECT_312"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30313
+    textKey = "mechlopedia.building.heavy_wall.name"
+    legacySymbol = "IDS_OBJECT_313"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30314
+    textKey = "mechlopedia.building.heavy_gate.name"
+    legacySymbol = "IDS_OBJECT_314_LIAO"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30323
+    textKey = "mechlopedia.building.gauss_turret.name"
+    legacySymbol = "IDS_OBJECT_323"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30325
+    textKey = "mechlopedia.building.lrm_turret.name"
+    legacySymbol = "IDS_OBJECT_325"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30326
+    textKey = "mechlopedia.building.large_pulse_laser_turret.name"
+    legacySymbol = "IDS_OBJECT_326"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30327
+    textKey = "mechlopedia.building.long_tom_turret.name"
+    legacySymbol = "IDS_OBJECT_327"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30329
+    textKey = "mechlopedia.building.autocannon_turret.name"
+    legacySymbol = "IDS_OBJECT_329"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30330
+    textKey = "mechlopedia.building.srm_turret.name"
+    legacySymbol = "IDS_OBJECT_330"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30336
+    textKey = "mechlopedia.vehicle.jeep.name"
+    legacySymbol = "IDS_OBJECT_336"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30337
+    textKey = "mechlopedia.vehicle.repair_truck.name"
+    legacySymbol = "IDS_OBJECT_337"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30339
+    textKey = "mechlopedia.building.large_fuel_tank.name"
+    legacySymbol = "IDS_OBJECT_339"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30340
+    textKey = "mechlopedia.building.small_fuel_tank.name"
+    legacySymbol = "IDS_OBJECT_340"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30341
+    textKey = "mechlopedia.vehicle.storm.name"
+    legacySymbol = "IDS_OBJECT_341"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30342
+    textKey = "mechlopedia.vehicle.lrm_carrier.name"
+    legacySymbol = "IDS_OBJECT_342"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30366
+    textKey = "mechlopedia.vehicle.hetzer.name"
+    legacySymbol = "IDS_OBJECT_366"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30372
+    textKey = "mechlopedia.vehicle.attack_copter.name"
+    legacySymbol = "IDS_OBJECT_372"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30376
+    textKey = "mechlopedia.vehicle.troop_transport.name"
+    legacySymbol = "IDS_OBJECT_376"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30392
+    textKey = "mechlopedia.building.ammo_crates.name"
+    legacySymbol = "IDS_OBJECT_392"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30395
+    textKey = "mechlopedia.vehicle.infantry.name"
+    legacySymbol = "IDS_OBJECT_395"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30396
+    textKey = "mechlopedia.vehicle.powered_armor.name"
+    legacySymbol = "IDS_OBJECT_396"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30470
+    textKey = "mechlopedia.vehicle.centipede.name"
+    legacySymbol = "IDS_OBJECT_470"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30472
+    textKey = "mechlopedia.vehicle.drillson.name"
+    legacySymbol = "IDS_OBJECT_472"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30484
+    textKey = "mechlopedia.building.short_pipe.name"
+    legacySymbol = "IDS_OBJECT_484"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30494
+    textKey = "mechlopedia.building.resource_building.name"
+    legacySymbol = "IDS_OBJECT_494"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30501
+    textKey = "mechlopedia.vehicle.heavy_copter.name"
+    legacySymbol = "IDS_OBJECT_501"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30502
+    textKey = "mechlopedia.vehicle.scout_copter.name"
+    legacySymbol = "IDS_OBJECT_502"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30557
+    textKey = "mechlopedia.vehicle.fixed_artillery.name"
+    legacySymbol = "IDS_OBJECT_557"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30559
+    textKey = "mechlopedia.building.weapons_facility.name"
+    legacySymbol = "IDS_OBJECT_559"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30570
+    textKey = "mechlopedia.building.headquarters.name"
+    legacySymbol = "IDS_OBJECT_570"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30616
+    textKey = "mechlopedia.building.prison.name"
+    legacySymbol = "IDS_OBJECT_616"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30618
+    textKey = "mechlopedia.vehicle.aerospotter.name"
+    legacySymbol = "IDS_OBJECT_618"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 30643
+    textKey = "mechlopedia.vehicle.swarm_lrm_carrier.name"
+    legacySymbol = "IDS_RELEASE_VERSION"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32000
+    textKey = "mechlopedia.component.000_undefined.name"
+    legacySymbol = "IDS_COMP0"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32001
+    textKey = "mechlopedia.component.001_fusion_engine.name"
+    legacySymbol = "IDS_COMP1"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32002
+    textKey = "mechlopedia.component.002_xl_fusion_engine.name"
+    legacySymbol = "IDS_COMP2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32003
+    textKey = "mechlopedia.component.003_c_xl_fusion_engine.name"
+    legacySymbol = "IDS_COMP3"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32004
+    textKey = "mechlopedia.component.004_arm_actuator.name"
+    legacySymbol = "IDS_COMP4"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32005
+    textKey = "mechlopedia.component.005_leg_actuator.name"
+    legacySymbol = "IDS_COMP5"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32006
+    textKey = "mechlopedia.component.006_cockpit.name"
+    legacySymbol = "IDS_COMP6"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32007
+    textKey = "mechlopedia.component.007_heat_sink.name"
+    legacySymbol = "IDS_COMP7"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32008
+    textKey = "mechlopedia.component.008_double_heat_sink.name"
+    legacySymbol = "IDS_COMP8"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32009
+    textKey = "mechlopedia.component.009_c_double_heat_sink.name"
+    legacySymbol = "IDS_COMP9"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32010
+    textKey = "mechlopedia.component.010_jump_jets.name"
+    legacySymbol = "IDS_COMP10"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32011
+    textKey = "mechlopedia.component.011_medium_jump_jet.name"
+    legacySymbol = "IDS_COMP11"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32012
+    textKey = "mechlopedia.component.012_small_jump_jet.name"
+    legacySymbol = "IDS_COMP12"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32013
+    textKey = "mechlopedia.component.013_sensor_basic.name"
+    legacySymbol = "IDS_COMP13"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32014
+    textKey = "mechlopedia.component.014_sensor_intermediate.name"
+    legacySymbol = "IDS_COMP14"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32015
+    textKey = "mechlopedia.component.015_sensor_advanced.name"
+    legacySymbol = "IDS_COMP15"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32016
+    textKey = "mechlopedia.component.016_c_sensor_basic.name"
+    legacySymbol = "IDS_COMP16"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32017
+    textKey = "mechlopedia.component.017_c_sensor_adv.name"
+    legacySymbol = "IDS_COMP17"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32018
+    textKey = "mechlopedia.component.018_vehicle_sensor.name"
+    legacySymbol = "IDS_COMP18"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32019
+    textKey = "mechlopedia.component.019_adv_vehicle_sensor.name"
+    legacySymbol = "IDS_COMP19"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32020
+    textKey = "mechlopedia.component.020_gyroscope_iv.name"
+    legacySymbol = "IDS_COMP20"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32021
+    textKey = "mechlopedia.component.021_gyroscope_iii.name"
+    legacySymbol = "IDS_COMP21"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32022
+    textKey = "mechlopedia.component.022_gyroscope_ii.name"
+    legacySymbol = "IDS_COMP22"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32023
+    textKey = "mechlopedia.component.023_gyroscope_i.name"
+    legacySymbol = "IDS_COMP23"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32024
+    textKey = "mechlopedia.component.024_power_amplifier.name"
+    legacySymbol = "IDS_COMP24"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32025
+    textKey = "mechlopedia.component.025_armor.name"
+    legacySymbol = "IDS_COMP25"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32026
+    textKey = "mechlopedia.component.026_vehicle_ferro_fibrous_armor.name"
+    legacySymbol = "IDS_COMP26"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32027
+    textKey = "mechlopedia.component.027_c_ferro_fibrous_armor.name"
+    legacySymbol = "IDS_COMP27"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32028
+    textKey = "mechlopedia.component.028_c_vehicle_ferro_fibrous.name"
+    legacySymbol = "IDS_COMP28"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32029
+    textKey = "mechlopedia.component.029_endosteel_int_str.name"
+    legacySymbol = "IDS_COMP29"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32030
+    textKey = "mechlopedia.component.030_c_endosteel_int_str.name"
+    legacySymbol = "IDS_COMP30"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32031
+    textKey = "mechlopedia.component.031_case.name"
+    legacySymbol = "IDS_COMP31"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32032
+    textKey = "mechlopedia.component.032_c_case.name"
+    legacySymbol = "IDS_COMP32"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32033
+    textKey = "mechlopedia.component.033_shoulder.name"
+    legacySymbol = "IDS_COMP33"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32034
+    textKey = "mechlopedia.component.034_hip.name"
+    legacySymbol = "IDS_COMP34"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32035
+    textKey = "mechlopedia.component.035_lifesupport.name"
+    legacySymbol = "IDS_COMP35"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32036
+    textKey = "mechlopedia.component.036_vehicle_sensors.name"
+    legacySymbol = "IDS_COMP36"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32037
+    textKey = "mechlopedia.component.037_beagle_probe.name"
+    legacySymbol = "IDS_COMP37"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32038
+    textKey = "mechlopedia.component.038_mki_ecm_suite.name"
+    legacySymbol = "IDS_COMP38"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32039
+    textKey = "mechlopedia.component.039_undefined.name"
+    legacySymbol = "IDS_COMP39"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32040
+    textKey = "mechlopedia.component.040_undefined.name"
+    legacySymbol = "IDS_COMP40"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32041
+    textKey = "mechlopedia.component.041_undefined.name"
+    legacySymbol = "IDS_COMP41"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32042
+    textKey = "mechlopedia.component.042_mkii_ecm_suite.name"
+    legacySymbol = "IDS_COMP42"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32043
+    textKey = "mechlopedia.component.043_active_probe.name"
+    legacySymbol = "IDS_COMP43"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32044
+    textKey = "mechlopedia.component.044_undefined.name"
+    legacySymbol = "IDS_COMP44"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32045
+    textKey = "mechlopedia.component.045_undefined.name"
+    legacySymbol = "IDS_COMP45"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32046
+    textKey = "mechlopedia.component.046_undefined.name"
+    legacySymbol = "IDS_COMP46"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32047
+    textKey = "mechlopedia.component.047_undefined.name"
+    legacySymbol = "IDS_COMP47"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32048
+    textKey = "mechlopedia.component.048_undefined.name"
+    legacySymbol = "IDS_COMP48"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32049
+    textKey = "mechlopedia.component.049_undefined.name"
+    legacySymbol = "IDS_COMP49"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32050
+    textKey = "mechlopedia.component.050_undefined.name"
+    legacySymbol = "IDS_COMP50"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32051
+    textKey = "mechlopedia.component.051_undefined.name"
+    legacySymbol = "IDS_COMP51"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32052
+    textKey = "mechlopedia.component.052_undefined.name"
+    legacySymbol = "IDS_COMP52"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32053
+    textKey = "mechlopedia.component.053_undefined.name"
+    legacySymbol = "IDS_COMP53"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32054
+    textKey = "mechlopedia.component.054_undefined.name"
+    legacySymbol = "IDS_COMP54"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32055
+    textKey = "mechlopedia.component.055_undefined.name"
+    legacySymbol = "IDS_COMP55"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32056
+    textKey = "mechlopedia.component.056_undefined.name"
+    legacySymbol = "IDS_COMP56"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32057
+    textKey = "mechlopedia.component.057_undefined.name"
+    legacySymbol = "IDS_COMP57"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32058
+    textKey = "mechlopedia.component.058_undefined.name"
+    legacySymbol = "IDS_COMP58"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32059
+    textKey = "mechlopedia.component.059_undefined.name"
+    legacySymbol = "IDS_COMP59"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32060
+    textKey = "mechlopedia.component.060_undefined.name"
+    legacySymbol = "IDS_COMP60"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32061
+    textKey = "mechlopedia.component.061_undefined.name"
+    legacySymbol = "IDS_COMP61"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32062
+    textKey = "mechlopedia.component.062_undefined.name"
+    legacySymbol = "IDS_COMP62"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32063
+    textKey = "mechlopedia.component.063_undefined.name"
+    legacySymbol = "IDS_COMP63"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32064
+    textKey = "mechlopedia.component.064_undefined.name"
+    legacySymbol = "IDS_COMP64"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32065
+    textKey = "mechlopedia.component.065_undefined.name"
+    legacySymbol = "IDS_COMP65"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32066
+    textKey = "mechlopedia.component.066_undefined.name"
+    legacySymbol = "IDS_COMP66"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32067
+    textKey = "mechlopedia.component.067_undefined.name"
+    legacySymbol = "IDS_COMP67"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32068
+    textKey = "mechlopedia.component.068_undefined.name"
+    legacySymbol = "IDS_COMP68"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32069
+    textKey = "mechlopedia.component.069_undefined.name"
+    legacySymbol = "IDS_COMP69"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32070
+    textKey = "mechlopedia.component.070_undefined.name"
+    legacySymbol = "IDS_COMP70"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32071
+    textKey = "mechlopedia.component.071_undefined.name"
+    legacySymbol = "IDS_COMP71"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32072
+    textKey = "mechlopedia.component.072_undefined.name"
+    legacySymbol = "IDS_COMP72"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32073
+    textKey = "mechlopedia.component.073_undefined.name"
+    legacySymbol = "IDS_COMP73"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32074
+    textKey = "mechlopedia.component.074_undefined.name"
+    legacySymbol = "IDS_COMP74"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32075
+    textKey = "mechlopedia.component.075_undefined.name"
+    legacySymbol = "IDS_COMP75"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32076
+    textKey = "mechlopedia.component.076_undefined.name"
+    legacySymbol = "IDS_COMP76"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32077
+    textKey = "mechlopedia.component.077_undefined.name"
+    legacySymbol = "IDS_COMP77"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32078
+    textKey = "mechlopedia.component.078_undefined.name"
+    legacySymbol = "IDS_COMP78"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32079
+    textKey = "mechlopedia.component.079_undefined.name"
+    legacySymbol = "IDS_COMP79"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32080
+    textKey = "mechlopedia.component.080_undefined.name"
+    legacySymbol = "IDS_COMP80"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32081
+    textKey = "mechlopedia.component.081_undefined.name"
+    legacySymbol = "IDS_COMP81"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32082
+    textKey = "mechlopedia.component.082_undefined.name"
+    legacySymbol = "IDS_COMP82"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32083
+    textKey = "mechlopedia.component.083_undefined.name"
+    legacySymbol = "IDS_COMP83"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32084
+    textKey = "mechlopedia.component.084_undefined.name"
+    legacySymbol = "IDS_COMP84"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32085
+    textKey = "mechlopedia.component.085_undefined.name"
+    legacySymbol = "IDS_COMP85"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32086
+    textKey = "mechlopedia.component.086_undefined.name"
+    legacySymbol = "IDS_COMP86"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32087
+    textKey = "mechlopedia.component.087_undefined.name"
+    legacySymbol = "IDS_COMP87"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32088
+    textKey = "mechlopedia.component.088_undefined.name"
+    legacySymbol = "IDS_COMP88"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32089
+    textKey = "mechlopedia.component.089_undefined.name"
+    legacySymbol = "IDS_COMP89"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32090
+    textKey = "mechlopedia.component.090_undefined.name"
+    legacySymbol = "IDS_COMP90"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32091
+    textKey = "mechlopedia.component.091_undefined.name"
+    legacySymbol = "IDS_COMP91"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32092
+    textKey = "mechlopedia.component.092_undefined.name"
+    legacySymbol = "IDS_COMP92"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32093
+    textKey = "mechlopedia.component.093_undefined.name"
+    legacySymbol = "IDS_COMP93"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32094
+    textKey = "mechlopedia.component.094_undefined.name"
+    legacySymbol = "IDS_COMP94"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32095
+    textKey = "mechlopedia.component.095_undefined.name"
+    legacySymbol = "IDS_COMP95"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32096
+    textKey = "mechlopedia.component.096_undefined.name"
+    legacySymbol = "IDS_COMP96"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32097
+    textKey = "mechlopedia.component.097_undefined.name"
+    legacySymbol = "IDS_COMP97"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32098
+    textKey = "mechlopedia.component.098_rail_gun.name"
+    legacySymbol = "IDS_COMP98"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32099
+    textKey = "mechlopedia.component.099_light_gauss_rifle.name"
+    legacySymbol = "IDS_COMP99"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32100
+    textKey = "mechlopedia.component.100_light_autocannon.name"
+    legacySymbol = "IDS_COMP100"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32101
+    textKey = "mechlopedia.component.101_medium_autocannon.name"
+    legacySymbol = "IDS_COMP101"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32102
+    textKey = "mechlopedia.component.102_heavy_autocannon.name"
+    legacySymbol = "IDS_COMP102"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32103
+    textKey = "mechlopedia.component.103_ultra_light_autocannon.name"
+    legacySymbol = "IDS_COMP103"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32104
+    textKey = "mechlopedia.component.104_gauss_rifle.name"
+    legacySymbol = "IDS_COMP104"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32105
+    textKey = "mechlopedia.component.105_machine_gun.name"
+    legacySymbol = "IDS_COMP105"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32106
+    textKey = "mechlopedia.component.106_anti_missile_system.name"
+    legacySymbol = "IDS_COMP106"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32107
+    textKey = "mechlopedia.component.107_light_lbx_autocannon.name"
+    legacySymbol = "IDS_COMP107"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32108
+    textKey = "mechlopedia.component.108_ultra_medium_autocannon.name"
+    legacySymbol = "IDS_COMP108"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32109
+    textKey = "mechlopedia.component.109_clan_ultra_heavy_autocannon.name"
+    legacySymbol = "IDS_COMP109"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32110
+    textKey = "mechlopedia.component.110_clan_ultra_light_autocannon.name"
+    legacySymbol = "IDS_COMP110"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32111
+    textKey = "mechlopedia.component.111_clan_ultra_medium_autocannon.name"
+    legacySymbol = "IDS_COMP111"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32112
+    textKey = "mechlopedia.component.112_ultra_heavy_autocannon.name"
+    legacySymbol = "IDS_COMP112"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32113
+    textKey = "mechlopedia.component.113_clan_gauss_rifle.name"
+    legacySymbol = "IDS_COMP113"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32114
+    textKey = "mechlopedia.component.114_machine_gun_array.name"
+    legacySymbol = "IDS_COMP114"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32115
+    textKey = "mechlopedia.component.115_clan_anti_missile_system.name"
+    legacySymbol = "IDS_COMP115"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32116
+    textKey = "mechlopedia.component.116_clan_light_lbx_autocannon.name"
+    legacySymbol = "IDS_COMP116"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32117
+    textKey = "mechlopedia.component.117_clan_lbx_autocannon.name"
+    legacySymbol = "IDS_COMP117"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32118
+    textKey = "mechlopedia.component.118_clan_heavy_lbx_autocannon.name"
+    legacySymbol = "IDS_COMP118"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32119
+    textKey = "mechlopedia.component.119_undefined.name"
+    legacySymbol = "IDS_COMP119"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32120
+    textKey = "mechlopedia.component.120_lrm_rack.name"
+    legacySymbol = "IDS_COMP120"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32121
+    textKey = "mechlopedia.component.121_lr_missile_15.name"
+    legacySymbol = "IDS_COMP121"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32122
+    textKey = "mechlopedia.component.122_lr_missile_20.name"
+    legacySymbol = "IDS_COMP122"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32123
+    textKey = "mechlopedia.component.123_swarm_lrm_rack.name"
+    legacySymbol = "IDS_COMP123"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32124
+    textKey = "mechlopedia.component.124_srm_pack.name"
+    legacySymbol = "IDS_COMP124"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32125
+    textKey = "mechlopedia.component.125_streak_srm_pack.name"
+    legacySymbol = "IDS_COMP125"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32126
+    textKey = "mechlopedia.component.126_heavy_thunderbolt.name"
+    legacySymbol = "IDS_COMP126"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32127
+    textKey = "mechlopedia.component.127_undefined.name"
+    legacySymbol = "IDS_COMP127"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32128
+    textKey = "mechlopedia.component.128_undefined.name"
+    legacySymbol = "IDS_COMP128"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32129
+    textKey = "mechlopedia.component.129_undefined.name"
+    legacySymbol = "IDS_COMP129"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32130
+    textKey = "mechlopedia.component.130_clan_lrm_rack.name"
+    legacySymbol = "IDS_COMP130"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32131
+    textKey = "mechlopedia.component.131_clan_lr_missile_15.name"
+    legacySymbol = "IDS_COMP131"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32132
+    textKey = "mechlopedia.component.132_clan_lr_missile_20.name"
+    legacySymbol = "IDS_COMP132"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32133
+    textKey = "mechlopedia.component.133_clan_srm_pack.name"
+    legacySymbol = "IDS_COMP133"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32134
+    textKey = "mechlopedia.component.134_clan_sr_missile_6.name"
+    legacySymbol = "IDS_COMP134"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32135
+    textKey = "mechlopedia.component.135_clan_streak_srm_pack.name"
+    legacySymbol = "IDS_COMP135"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32136
+    textKey = "mechlopedia.component.136_clan_streak_sr_missile_6.name"
+    legacySymbol = "IDS_COMP136"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32137
+    textKey = "mechlopedia.component.137_undefined.name"
+    legacySymbol = "IDS_COMP137"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32138
+    textKey = "mechlopedia.component.138_undefined.name"
+    legacySymbol = "IDS_COMP138"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32139
+    textKey = "mechlopedia.component.139_clan_heavy_laser.name"
+    legacySymbol = "IDS_COMP139"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32140
+    textKey = "mechlopedia.component.140_large_laser.name"
+    legacySymbol = "IDS_COMP140"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32141
+    textKey = "mechlopedia.component.141_er_large_laser.name"
+    legacySymbol = "IDS_COMP141"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32142
+    textKey = "mechlopedia.component.142_large_pulse_laser.name"
+    legacySymbol = "IDS_COMP142"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32143
+    textKey = "mechlopedia.component.143_er_laser.name"
+    legacySymbol = "IDS_COMP143"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32144
+    textKey = "mechlopedia.component.144_pulse_laser.name"
+    legacySymbol = "IDS_COMP144"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32145
+    textKey = "mechlopedia.component.145_ppc.name"
+    legacySymbol = "IDS_COMP145"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32146
+    textKey = "mechlopedia.component.146_er_ppc.name"
+    legacySymbol = "IDS_COMP146"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32147
+    textKey = "mechlopedia.component.147_clan_heavy_large_laser.name"
+    legacySymbol = "IDS_COMP147"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32148
+    textKey = "mechlopedia.component.148_undefined.name"
+    legacySymbol = "IDS_COMP148"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32149
+    textKey = "mechlopedia.component.149_undefined.name"
+    legacySymbol = "IDS_COMP149"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32150
+    textKey = "mechlopedia.component.150_clan_er_large_laser.name"
+    legacySymbol = "IDS_COMP150"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32151
+    textKey = "mechlopedia.component.151_clan_large_pulse_laser.name"
+    legacySymbol = "IDS_COMP151"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32152
+    textKey = "mechlopedia.component.152_clan_er_laser.name"
+    legacySymbol = "IDS_COMP152"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32153
+    textKey = "mechlopedia.component.153_clan_pulse_laser.name"
+    legacySymbol = "IDS_COMP153"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32154
+    textKey = "mechlopedia.component.154_clan_er_ppc.name"
+    legacySymbol = "IDS_COMP154"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32155
+    textKey = "mechlopedia.component.155_flamer_array.name"
+    legacySymbol = "IDS_COMP155"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32156
+    textKey = "mechlopedia.component.156_laser.name"
+    legacySymbol = "IDS_COMP156"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32157
+    textKey = "mechlopedia.component.157_undefined.name"
+    legacySymbol = "IDS_COMP157"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32158
+    textKey = "mechlopedia.component.158_undefined.name"
+    legacySymbol = "IDS_COMP158"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32159
+    textKey = "mechlopedia.component.159_undefined.name"
+    legacySymbol = "IDS_COMP159"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32160
+    textKey = "mechlopedia.component.160_long_tom_cannon.name"
+    legacySymbol = "IDS_COMP160"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32161
+    textKey = "mechlopedia.component.161_thunderbolt_missile.name"
+    legacySymbol = "IDS_COMP161"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32162
+    textKey = "mechlopedia.component.162_undefined.name"
+    legacySymbol = "IDS_COMP162"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32163
+    textKey = "mechlopedia.component.163_undefined.name"
+    legacySymbol = "IDS_COMP163"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32164
+    textKey = "mechlopedia.component.164_undefined.name"
+    legacySymbol = "IDS_COMP164"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32165
+    textKey = "mechlopedia.component.165_undefined.name"
+    legacySymbol = "IDS_COMP165"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32166
+    textKey = "mechlopedia.component.166_undefined.name"
+    legacySymbol = "IDS_COMP166"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32167
+    textKey = "mechlopedia.component.167_undefined.name"
+    legacySymbol = "IDS_COMP167"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32168
+    textKey = "mechlopedia.component.168_undefined.name"
+    legacySymbol = "IDS_COMP168"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32169
+    textKey = "mechlopedia.component.169_undefined.name"
+    legacySymbol = "IDS_COMP169"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32170
+    textKey = "mechlopedia.component.170_undefined.name"
+    legacySymbol = "IDS_COMP170"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32171
+    textKey = "mechlopedia.component.171_undefined.name"
+    legacySymbol = "IDS_COMP171"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32172
+    textKey = "mechlopedia.component.172_undefined.name"
+    legacySymbol = "IDS_COMP172"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32173
+    textKey = "mechlopedia.component.173_undefined.name"
+    legacySymbol = "IDS_COMP173"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32174
+    textKey = "mechlopedia.component.174_undefined.name"
+    legacySymbol = "IDS_COMP174"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32175
+    textKey = "mechlopedia.component.175_undefined.name"
+    legacySymbol = "IDS_COMP175"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32176
+    textKey = "mechlopedia.component.176_undefined.name"
+    legacySymbol = "IDS_COMP176"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32177
+    textKey = "mechlopedia.component.177_undefined.name"
+    legacySymbol = "IDS_COMP177"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32178
+    textKey = "mechlopedia.component.178_undefined.name"
+    legacySymbol = "IDS_COMP178"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32179
+    textKey = "mechlopedia.component.179_undefined.name"
+    legacySymbol = "IDS_COMP179"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32180
+    textKey = "mechlopedia.component.180_undefined.name"
+    legacySymbol = "IDS_COMP180"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32181
+    textKey = "mechlopedia.component.181_undefined.name"
+    legacySymbol = "IDS_COMP181"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32182
+    textKey = "mechlopedia.component.182_undefined.name"
+    legacySymbol = "IDS_COMP182"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32183
+    textKey = "mechlopedia.component.183_undefined.name"
+    legacySymbol = "IDS_COMP183"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32184
+    textKey = "mechlopedia.component.184_undefined.name"
+    legacySymbol = "IDS_COMP184"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32185
+    textKey = "mechlopedia.component.185_undefined.name"
+    legacySymbol = "IDS_COMP185"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32186
+    textKey = "mechlopedia.component.186_undefined.name"
+    legacySymbol = "IDS_COMP186"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32187
+    textKey = "mechlopedia.component.187_undefined.name"
+    legacySymbol = "IDS_COMP187"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32188
+    textKey = "mechlopedia.component.188_undefined.name"
+    legacySymbol = "IDS_COMP188"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32189
+    textKey = "mechlopedia.component.189_undefined.name"
+    legacySymbol = "IDS_COMP189"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32190
+    textKey = "mechlopedia.component.190_undefined.name"
+    legacySymbol = "IDS_COMP190"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32191
+    textKey = "mechlopedia.component.191_undefined.name"
+    legacySymbol = "IDS_COMP191"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32192
+    textKey = "mechlopedia.component.192_undefined.name"
+    legacySymbol = "IDS_COMP192"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32193
+    textKey = "mechlopedia.component.193_undefined.name"
+    legacySymbol = "IDS_COMP193"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32194
+    textKey = "mechlopedia.component.194_undefined.name"
+    legacySymbol = "IDS_COMP194"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32195
+    textKey = "mechlopedia.component.195_undefined.name"
+    legacySymbol = "IDS_COMP195"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32196
+    textKey = "mechlopedia.component.196_undefined.name"
+    legacySymbol = "IDS_COMP196"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32197
+    textKey = "mechlopedia.component.197_undefined.name"
+    legacySymbol = "IDS_COMP197"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32198
+    textKey = "mechlopedia.component.198_rail_gun_ammo.name"
+    legacySymbol = "IDS_COMP198"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32199
+    textKey = "mechlopedia.component.199_lt_gauss_ammo.name"
+    legacySymbol = "IDS_COMP199"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32200
+    textKey = "mechlopedia.component.200_lt_ac_ammo.name"
+    legacySymbol = "IDS_COMP200"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32201
+    textKey = "mechlopedia.component.201_ac_ammo.name"
+    legacySymbol = "IDS_COMP201"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32202
+    textKey = "mechlopedia.component.202_hvy_ac_ammo.name"
+    legacySymbol = "IDS_COMP202"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32203
+    textKey = "mechlopedia.component.203_lt_ultra_ac_ammo.name"
+    legacySymbol = "IDS_COMP203"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32204
+    textKey = "mechlopedia.component.204_gauss_rifle_ammo.name"
+    legacySymbol = "IDS_COMP204"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32205
+    textKey = "mechlopedia.component.205_mg_array_ammo.name"
+    legacySymbol = "IDS_COMP205"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32206
+    textKey = "mechlopedia.component.206_anti_missile_ammo.name"
+    legacySymbol = "IDS_COMP206"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32207
+    textKey = "mechlopedia.component.207_lt_lbx_ammo.name"
+    legacySymbol = "IDS_COMP207"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32208
+    textKey = "mechlopedia.component.208_ultra_ac_ammo.name"
+    legacySymbol = "IDS_COMP208"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32209
+    textKey = "mechlopedia.component.209_heavy_ultra_ac_ammo.name"
+    legacySymbol = "IDS_COMP209"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32210
+    textKey = "mechlopedia.component.210_clan_lt_ultra_ac_ammo.name"
+    legacySymbol = "IDS_COMP210"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32211
+    textKey = "mechlopedia.component.211_clan_ultra_ac_ammo.name"
+    legacySymbol = "IDS_COMP211"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32212
+    textKey = "mechlopedia.component.212_clan_heavy_ultra_ac_ammo.name"
+    legacySymbol = "IDS_COMP212"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32213
+    textKey = "mechlopedia.component.213_clan_gauss_rifle_ammo.name"
+    legacySymbol = "IDS_COMP213"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32214
+    textKey = "mechlopedia.component.214_c_m_gun_ammo.name"
+    legacySymbol = "IDS_COMP214"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32215
+    textKey = "mechlopedia.component.215_c_anti_missile_ammo.name"
+    legacySymbol = "IDS_COMP215"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32216
+    textKey = "mechlopedia.component.216_c_lt_lbx_ammo.name"
+    legacySymbol = "IDS_COMP216"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32217
+    textKey = "mechlopedia.component.217_c_lbx_ammo.name"
+    legacySymbol = "IDS_COMP217"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32218
+    textKey = "mechlopedia.component.218_c_hvy_lbx_ammo.name"
+    legacySymbol = "IDS_COMP218"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32219
+    textKey = "mechlopedia.component.219_undefined.name"
+    legacySymbol = "IDS_COMP219"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32220
+    textKey = "mechlopedia.component.220_lrm_ammo.name"
+    legacySymbol = "IDS_COMP220"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32221
+    textKey = "mechlopedia.component.221_lrm_15_pack.name"
+    legacySymbol = "IDS_COMP221"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32222
+    textKey = "mechlopedia.component.222_lrm_20_pack.name"
+    legacySymbol = "IDS_COMP222"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32223
+    textKey = "mechlopedia.component.223_srm_ammo.name"
+    legacySymbol = "IDS_COMP223"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32224
+    textKey = "mechlopedia.component.224_srm_6_pack.name"
+    legacySymbol = "IDS_COMP224"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32225
+    textKey = "mechlopedia.component.225_st_srm_ammo.name"
+    legacySymbol = "IDS_COMP225"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32226
+    textKey = "mechlopedia.component.226_heavy_thunderbolt_ammo.name"
+    legacySymbol = "IDS_COMP226"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32227
+    textKey = "mechlopedia.component.227_long_tom_cannon_ammo.name"
+    legacySymbol = "IDS_COMP227"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32228
+    textKey = "mechlopedia.component.228_thunderbolt_missile_ammo.name"
+    legacySymbol = "IDS_COMP228"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32229
+    textKey = "mechlopedia.component.229_undefined.name"
+    legacySymbol = "IDS_COMP229"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32230
+    textKey = "mechlopedia.component.230_clan_lrm_ammo.name"
+    legacySymbol = "IDS_COMP230"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32231
+    textKey = "mechlopedia.component.231_swarm_lrm_ammo.name"
+    legacySymbol = "IDS_COMP231"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32232
+    textKey = "mechlopedia.component.232_c_lrm_20_pack.name"
+    legacySymbol = "IDS_COMP232"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32233
+    textKey = "mechlopedia.component.233_clan_srm_ammo.name"
+    legacySymbol = "IDS_COMP233"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32234
+    textKey = "mechlopedia.component.234_c_srm_6_pack.name"
+    legacySymbol = "IDS_COMP234"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32235
+    textKey = "mechlopedia.component.235_c_st_srm_ammo.name"
+    legacySymbol = "IDS_COMP235"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32236
+    textKey = "mechlopedia.component.236_c_st_srm_2_pack.name"
+    legacySymbol = "IDS_COMP236"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32237
+    textKey = "mechlopedia.component.237_undefined.name"
+    legacySymbol = "IDS_COMP237"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32238
+    textKey = "mechlopedia.component.238_undefined.name"
+    legacySymbol = "IDS_COMP238"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32239
+    textKey = "mechlopedia.component.239_undefined.name"
+    legacySymbol = "IDS_COMP239"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32240
+    textKey = "mechlopedia.component.240_undefined.name"
+    legacySymbol = "IDS_COMP240"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32241
+    textKey = "mechlopedia.component.241_undefined.name"
+    legacySymbol = "IDS_COMP241"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32242
+    textKey = "mechlopedia.component.242_undefined.name"
+    legacySymbol = "IDS_COMP242"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32243
+    textKey = "mechlopedia.component.243_undefined.name"
+    legacySymbol = "IDS_COMP243"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32244
+    textKey = "mechlopedia.component.244_undefined.name"
+    legacySymbol = "IDS_COMP244"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32245
+    textKey = "mechlopedia.component.245_undefined.name"
+    legacySymbol = "IDS_COMP245"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32246
+    textKey = "mechlopedia.component.246_undefined.name"
+    legacySymbol = "IDS_COMP246"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32247
+    textKey = "mechlopedia.component.247_undefined.name"
+    legacySymbol = "IDS_COMP247"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32248
+    textKey = "mechlopedia.component.248_undefined.name"
+    legacySymbol = "IDS_COMP248"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32249
+    textKey = "mechlopedia.component.249_undefined.name"
+    legacySymbol = "IDS_COMP249"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32250
+    textKey = "mechlopedia.component.250_undefined.name"
+    legacySymbol = "IDS_COMP250"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32251
+    textKey = "mechlopedia.component.251_undefined.name"
+    legacySymbol = "IDS_COMP251"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32252
+    textKey = "mechlopedia.component.252_undefined.name"
+    legacySymbol = "IDS_COMP252"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32253
+    textKey = "mechlopedia.component.253_undefined.name"
+    legacySymbol = "IDS_COMP253"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 32254
+    textKey = "mechlopedia.component.254_undefined.name"
+    legacySymbol = "IDS_COMP254"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33000
+    textKey = "mechlopedia.component.000_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR0"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33001
+    textKey = "mechlopedia.component.001_fusion_engine.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR1"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33002
+    textKey = "mechlopedia.component.002_xl_fusion_engine.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33003
+    textKey = "mechlopedia.component.003_c_xl_fusion_engine.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR3"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33004
+    textKey = "mechlopedia.component.004_arm_actuator.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR4"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33005
+    textKey = "mechlopedia.component.005_leg_actuator.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR5"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33006
+    textKey = "mechlopedia.component.006_cockpit.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR6"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33007
+    textKey = "mechlopedia.component.007_heat_sink.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR7"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33008
+    textKey = "mechlopedia.component.008_double_heat_sink.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR8"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33009
+    textKey = "mechlopedia.component.009_c_double_heat_sink.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR9"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33010
+    textKey = "mechlopedia.component.010_jump_jets.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR10"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33011
+    textKey = "mechlopedia.component.011_medium_jump_jet.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR11"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33012
+    textKey = "mechlopedia.component.012_small_jump_jet.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR12"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33013
+    textKey = "mechlopedia.component.013_sensor_basic.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR13"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33014
+    textKey = "mechlopedia.component.014_sensor_intermediate.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR14"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33015
+    textKey = "mechlopedia.component.015_sensor_advanced.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR15"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33016
+    textKey = "mechlopedia.component.016_c_sensor_basic.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR16"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33017
+    textKey = "mechlopedia.component.017_c_sensor_adv.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR17"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33018
+    textKey = "mechlopedia.component.018_vehicle_sensor.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR18"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33019
+    textKey = "mechlopedia.component.019_adv_vehicle_sensor.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR19"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33020
+    textKey = "mechlopedia.component.020_gyroscope_iv.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR20"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33021
+    textKey = "mechlopedia.component.021_gyroscope_iii.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR21"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33022
+    textKey = "mechlopedia.component.022_gyroscope_ii.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR22"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33023
+    textKey = "mechlopedia.component.023_gyroscope_i.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR23"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33024
+    textKey = "mechlopedia.component.024_power_amplifier.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR24"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33025
+    textKey = "mechlopedia.component.025_armor.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR25"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33026
+    textKey = "mechlopedia.component.026_vehicle_ferro_fibrous_armor.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR26"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33027
+    textKey = "mechlopedia.component.027_c_ferro_fibrous_armor.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR27"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33028
+    textKey = "mechlopedia.component.028_c_vehicle_ferro_fibrous.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR28"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33029
+    textKey = "mechlopedia.component.029_endosteel_int_str.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR29"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33030
+    textKey = "mechlopedia.component.030_c_endosteel_int_str.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR30"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33031
+    textKey = "mechlopedia.component.031_case.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR31"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33032
+    textKey = "mechlopedia.component.032_c_case.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR32"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33033
+    textKey = "mechlopedia.component.033_shoulder.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR33"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33034
+    textKey = "mechlopedia.component.034_hip.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR34"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33035
+    textKey = "mechlopedia.component.035_lifesupport.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR35"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33036
+    textKey = "mechlopedia.component.036_vehicle_sensors.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR36"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33037
+    textKey = "mechlopedia.component.037_beagle_probe.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR37"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33038
+    textKey = "mechlopedia.component.038_mki_ecm_suite.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR38"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33039
+    textKey = "mechlopedia.component.039_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR39"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33040
+    textKey = "mechlopedia.component.040_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR40"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33041
+    textKey = "mechlopedia.component.041_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR41"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33042
+    textKey = "mechlopedia.component.042_mkii_ecm_suite.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR42"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33043
+    textKey = "mechlopedia.component.043_active_probe.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR43"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33044
+    textKey = "mechlopedia.component.044_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR44"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33045
+    textKey = "mechlopedia.component.045_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR45"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33046
+    textKey = "mechlopedia.component.046_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR46"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33047
+    textKey = "mechlopedia.component.047_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR47"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33048
+    textKey = "mechlopedia.component.048_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR48"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33049
+    textKey = "mechlopedia.component.049_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR49"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33050
+    textKey = "mechlopedia.component.050_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR50"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33051
+    textKey = "mechlopedia.component.051_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR51"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33052
+    textKey = "mechlopedia.component.052_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR52"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33053
+    textKey = "mechlopedia.component.053_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR53"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33054
+    textKey = "mechlopedia.component.054_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR54"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33055
+    textKey = "mechlopedia.component.055_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR55"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33056
+    textKey = "mechlopedia.component.056_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR56"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33057
+    textKey = "mechlopedia.component.057_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR57"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33058
+    textKey = "mechlopedia.component.058_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR58"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33059
+    textKey = "mechlopedia.component.059_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR59"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33060
+    textKey = "mechlopedia.component.060_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR60"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33061
+    textKey = "mechlopedia.component.061_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR61"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33062
+    textKey = "mechlopedia.component.062_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR62"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33063
+    textKey = "mechlopedia.component.063_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR63"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33064
+    textKey = "mechlopedia.component.064_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR64"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33065
+    textKey = "mechlopedia.component.065_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR65"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33066
+    textKey = "mechlopedia.component.066_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR66"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33067
+    textKey = "mechlopedia.component.067_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR67"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33068
+    textKey = "mechlopedia.component.068_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR68"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33069
+    textKey = "mechlopedia.component.069_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR69"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33070
+    textKey = "mechlopedia.component.070_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR70"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33071
+    textKey = "mechlopedia.component.071_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR71"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33072
+    textKey = "mechlopedia.component.072_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR72"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33073
+    textKey = "mechlopedia.component.073_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR73"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33074
+    textKey = "mechlopedia.component.074_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR74"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33075
+    textKey = "mechlopedia.component.075_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR75"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33076
+    textKey = "mechlopedia.component.076_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR76"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33077
+    textKey = "mechlopedia.component.077_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR77"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33078
+    textKey = "mechlopedia.component.078_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR78"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33079
+    textKey = "mechlopedia.component.079_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR79"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33080
+    textKey = "mechlopedia.component.080_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR80"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33081
+    textKey = "mechlopedia.component.081_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR81"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33082
+    textKey = "mechlopedia.component.082_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR82"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33083
+    textKey = "mechlopedia.component.083_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR83"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33084
+    textKey = "mechlopedia.component.084_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR84"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33085
+    textKey = "mechlopedia.component.085_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR85"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33086
+    textKey = "mechlopedia.component.086_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR86"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33087
+    textKey = "mechlopedia.component.087_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR87"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33088
+    textKey = "mechlopedia.component.088_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR88"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33089
+    textKey = "mechlopedia.component.089_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR89"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33090
+    textKey = "mechlopedia.component.090_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR90"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33091
+    textKey = "mechlopedia.component.091_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR91"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33092
+    textKey = "mechlopedia.component.092_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR92"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33093
+    textKey = "mechlopedia.component.093_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR93"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33094
+    textKey = "mechlopedia.component.094_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR94"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33095
+    textKey = "mechlopedia.component.095_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR95"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33096
+    textKey = "mechlopedia.component.096_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR96"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33097
+    textKey = "mechlopedia.component.097_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR97"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33098
+    textKey = "mechlopedia.component.098_rail_gun.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR98"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33099
+    textKey = "mechlopedia.component.099_light_gauss_rifle.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR99"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33100
+    textKey = "mechlopedia.component.100_light_autocannon.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR100"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33101
+    textKey = "mechlopedia.component.101_medium_autocannon.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR101"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33102
+    textKey = "mechlopedia.component.102_heavy_autocannon.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR102"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33103
+    textKey = "mechlopedia.component.103_ultra_light_autocannon.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR103"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33104
+    textKey = "mechlopedia.component.104_gauss_rifle.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR104"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33105
+    textKey = "mechlopedia.component.105_machine_gun.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR105"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33106
+    textKey = "mechlopedia.component.106_anti_missile_system.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR106"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33107
+    textKey = "mechlopedia.component.107_light_lbx_autocannon.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR107"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33108
+    textKey = "mechlopedia.component.108_ultra_medium_autocannon.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR108"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33109
+    textKey = "mechlopedia.component.109_clan_ultra_heavy_autocannon.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR109"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33110
+    textKey = "mechlopedia.component.110_clan_ultra_light_autocannon.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR110"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33111
+    textKey = "mechlopedia.component.111_clan_ultra_medium_autocannon.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR111"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33112
+    textKey = "mechlopedia.component.112_ultra_heavy_autocannon.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR112"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33113
+    textKey = "mechlopedia.component.113_clan_gauss_rifle.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR113"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33114
+    textKey = "mechlopedia.component.114_machine_gun_array.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR114"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33115
+    textKey = "mechlopedia.component.115_clan_anti_missile_system.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR115"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33116
+    textKey = "mechlopedia.component.116_clan_light_lbx_autocannon.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR116"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33117
+    textKey = "mechlopedia.component.117_clan_lbx_autocannon.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR117"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33118
+    textKey = "mechlopedia.component.118_clan_heavy_lbx_autocannon.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR118"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33119
+    textKey = "mechlopedia.component.119_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR119"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33120
+    textKey = "mechlopedia.component.120_lrm_rack.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR120"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33121
+    textKey = "mechlopedia.component.121_lr_missile_15.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR121"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33122
+    textKey = "mechlopedia.component.122_lr_missile_20.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR122"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33123
+    textKey = "mechlopedia.component.123_swarm_lrm_rack.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR123"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33124
+    textKey = "mechlopedia.component.124_srm_pack.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR124"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33125
+    textKey = "mechlopedia.component.125_streak_srm_pack.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR125"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33126
+    textKey = "mechlopedia.component.126_heavy_thunderbolt.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR126"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33127
+    textKey = "mechlopedia.component.127_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR127"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33128
+    textKey = "mechlopedia.component.128_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR128"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33129
+    textKey = "mechlopedia.component.129_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR129"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33130
+    textKey = "mechlopedia.component.130_clan_lrm_rack.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR130"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33131
+    textKey = "mechlopedia.component.131_clan_lr_missile_15.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR131"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33132
+    textKey = "mechlopedia.component.132_clan_lr_missile_20.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR132"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33133
+    textKey = "mechlopedia.component.133_clan_srm_pack.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR133"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33134
+    textKey = "mechlopedia.component.134_clan_sr_missile_6.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR134"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33135
+    textKey = "mechlopedia.component.135_clan_streak_srm_pack.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR135"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33136
+    textKey = "mechlopedia.component.136_clan_streak_sr_missile_6.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR136"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33137
+    textKey = "mechlopedia.component.137_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR137"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33138
+    textKey = "mechlopedia.component.138_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR138"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33139
+    textKey = "mechlopedia.component.139_clan_heavy_laser.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR139"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33140
+    textKey = "mechlopedia.component.140_large_laser.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR140"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33141
+    textKey = "mechlopedia.component.141_er_large_laser.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR141"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33142
+    textKey = "mechlopedia.component.142_large_pulse_laser.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR142"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33143
+    textKey = "mechlopedia.component.143_er_laser.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR143"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33144
+    textKey = "mechlopedia.component.144_pulse_laser.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR144"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33145
+    textKey = "mechlopedia.component.145_ppc.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR145"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33146
+    textKey = "mechlopedia.component.146_er_ppc.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR146"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33147
+    textKey = "mechlopedia.component.147_clan_heavy_large_laser.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR147"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33148
+    textKey = "mechlopedia.component.148_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR148"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33149
+    textKey = "mechlopedia.component.149_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR149"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33150
+    textKey = "mechlopedia.component.150_clan_er_large_laser.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR150"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33151
+    textKey = "mechlopedia.component.151_clan_large_pulse_laser.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR151"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33152
+    textKey = "mechlopedia.component.152_clan_er_laser.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR152"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33153
+    textKey = "mechlopedia.component.153_clan_pulse_laser.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR153"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33154
+    textKey = "mechlopedia.component.154_clan_er_ppc.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR154"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33155
+    textKey = "mechlopedia.component.155_flamer_array.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR155"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33156
+    textKey = "mechlopedia.component.156_laser.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR156"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33157
+    textKey = "mechlopedia.component.157_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR157"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33158
+    textKey = "mechlopedia.component.158_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR158"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33159
+    textKey = "mechlopedia.component.159_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR159"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33160
+    textKey = "mechlopedia.component.160_long_tom_cannon.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR160"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33161
+    textKey = "mechlopedia.component.161_thunderbolt_missile.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR161"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33162
+    textKey = "mechlopedia.component.162_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR162"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33163
+    textKey = "mechlopedia.component.163_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR163"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33164
+    textKey = "mechlopedia.component.164_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR164"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33165
+    textKey = "mechlopedia.component.165_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR165"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33166
+    textKey = "mechlopedia.component.166_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR166"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33167
+    textKey = "mechlopedia.component.167_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR167"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33168
+    textKey = "mechlopedia.component.168_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR168"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33169
+    textKey = "mechlopedia.component.169_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR169"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33170
+    textKey = "mechlopedia.component.170_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR170"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33171
+    textKey = "mechlopedia.component.171_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR171"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33172
+    textKey = "mechlopedia.component.172_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR172"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33173
+    textKey = "mechlopedia.component.173_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR173"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33174
+    textKey = "mechlopedia.component.174_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR174"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33175
+    textKey = "mechlopedia.component.175_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR175"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33176
+    textKey = "mechlopedia.component.176_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR176"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33177
+    textKey = "mechlopedia.component.177_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR177"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33178
+    textKey = "mechlopedia.component.178_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR178"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33179
+    textKey = "mechlopedia.component.179_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR179"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33180
+    textKey = "mechlopedia.component.180_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR180"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33181
+    textKey = "mechlopedia.component.181_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR181"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33182
+    textKey = "mechlopedia.component.182_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR182"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33183
+    textKey = "mechlopedia.component.183_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR183"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33184
+    textKey = "mechlopedia.component.184_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR184"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33185
+    textKey = "mechlopedia.component.185_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR185"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33186
+    textKey = "mechlopedia.component.186_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR186"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33187
+    textKey = "mechlopedia.component.187_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR187"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33188
+    textKey = "mechlopedia.component.188_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR188"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33189
+    textKey = "mechlopedia.component.189_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR189"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33190
+    textKey = "mechlopedia.component.190_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR190"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33191
+    textKey = "mechlopedia.component.191_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR191"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33192
+    textKey = "mechlopedia.component.192_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR192"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33193
+    textKey = "mechlopedia.component.193_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR193"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33194
+    textKey = "mechlopedia.component.194_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR194"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33195
+    textKey = "mechlopedia.component.195_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR195"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33196
+    textKey = "mechlopedia.component.196_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR196"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33197
+    textKey = "mechlopedia.component.197_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR197"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33198
+    textKey = "mechlopedia.component.198_rail_gun_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR198"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33199
+    textKey = "mechlopedia.component.199_lt_gauss_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR199"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33200
+    textKey = "mechlopedia.component.200_lt_ac_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR200"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33201
+    textKey = "mechlopedia.component.201_ac_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR201"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33202
+    textKey = "mechlopedia.component.202_hvy_ac_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR202"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33203
+    textKey = "mechlopedia.component.203_lt_ultra_ac_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR203"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33204
+    textKey = "mechlopedia.component.204_gauss_rifle_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR204"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33205
+    textKey = "mechlopedia.component.205_mg_array_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR205"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33206
+    textKey = "mechlopedia.component.206_anti_missile_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR206"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33207
+    textKey = "mechlopedia.component.207_lt_lbx_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR207"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33208
+    textKey = "mechlopedia.component.208_ultra_ac_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR208"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33209
+    textKey = "mechlopedia.component.209_heavy_ultra_ac_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR209"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33210
+    textKey = "mechlopedia.component.210_clan_lt_ultra_ac_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR210"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33211
+    textKey = "mechlopedia.component.211_clan_ultra_ac_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR211"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33212
+    textKey = "mechlopedia.component.212_clan_heavy_ultra_ac_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR212"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33213
+    textKey = "mechlopedia.component.213_clan_gauss_rifle_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR213"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33214
+    textKey = "mechlopedia.component.214_c_m_gun_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR214"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33215
+    textKey = "mechlopedia.component.215_c_anti_missile_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR215"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33216
+    textKey = "mechlopedia.component.216_c_lt_lbx_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR216"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33217
+    textKey = "mechlopedia.component.217_c_lbx_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR217"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33218
+    textKey = "mechlopedia.component.218_c_hvy_lbx_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR218"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33219
+    textKey = "mechlopedia.component.219_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR219"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33220
+    textKey = "mechlopedia.component.220_lrm_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR220"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33221
+    textKey = "mechlopedia.component.221_lrm_15_pack.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR221"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33222
+    textKey = "mechlopedia.component.222_lrm_20_pack.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR222"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33223
+    textKey = "mechlopedia.component.223_srm_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR223"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33224
+    textKey = "mechlopedia.component.224_srm_6_pack.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR224"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33225
+    textKey = "mechlopedia.component.225_st_srm_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR225"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33226
+    textKey = "mechlopedia.component.226_heavy_thunderbolt_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR226"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33227
+    textKey = "mechlopedia.component.227_long_tom_cannon_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR227"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33228
+    textKey = "mechlopedia.component.228_thunderbolt_missile_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR228"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33229
+    textKey = "mechlopedia.component.229_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR229"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33230
+    textKey = "mechlopedia.component.230_clan_lrm_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR230"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33231
+    textKey = "mechlopedia.component.231_swarm_lrm_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR231"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33232
+    textKey = "mechlopedia.component.232_c_lrm_20_pack.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR232"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33233
+    textKey = "mechlopedia.component.233_clan_srm_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR233"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33234
+    textKey = "mechlopedia.component.234_c_srm_6_pack.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR234"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33235
+    textKey = "mechlopedia.component.235_c_st_srm_ammo.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR235"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33236
+    textKey = "mechlopedia.component.236_c_st_srm_2_pack.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR236"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33237
+    textKey = "mechlopedia.component.237_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR237"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33238
+    textKey = "mechlopedia.component.238_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR238"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33239
+    textKey = "mechlopedia.component.239_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR239"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33240
+    textKey = "mechlopedia.component.240_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR240"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33241
+    textKey = "mechlopedia.component.241_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR241"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33242
+    textKey = "mechlopedia.component.242_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR242"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33243
+    textKey = "mechlopedia.component.243_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR243"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33244
+    textKey = "mechlopedia.component.244_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR244"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33245
+    textKey = "mechlopedia.component.245_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR245"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33246
+    textKey = "mechlopedia.component.246_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR246"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33247
+    textKey = "mechlopedia.component.247_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR247"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33248
+    textKey = "mechlopedia.component.248_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR248"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33249
+    textKey = "mechlopedia.component.249_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR249"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33250
+    textKey = "mechlopedia.component.250_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR250"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33251
+    textKey = "mechlopedia.component.251_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR251"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33252
+    textKey = "mechlopedia.component.252_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR252"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33253
+    textKey = "mechlopedia.component.253_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR253"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 33254
+    textKey = "mechlopedia.component.254_undefined.abbreviation"
+    legacySymbol = "IDS_COMP_ABBR254"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34000
+    textKey = "mechlopedia.component.001_fusion_engine.description"
+    legacySymbol = "IDS_COMPENCYCLO"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34001
+    textKey = "mechlopedia.component.002_xl_fusion_engine.description"
+    legacySymbol = "IDS_COMPENCYCLO2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34002
+    textKey = "mechlopedia.component.003_c_xl_fusion_engine.description"
+    legacySymbol = "IDS_COMPENCYCLO3"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34003
+    textKey = "mechlopedia.component.004_arm_actuator.description"
+    legacySymbol = "IDS_COMPENCYCLO4"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34004
+    textKey = "mechlopedia.component.005_leg_actuator.description"
+    legacySymbol = "IDS_COMPENCYCLO5"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34005
+    textKey = "mechlopedia.component.006_cockpit.description"
+    legacySymbol = "IDS_COMPENCYCLO6"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34006
+    textKey = "mechlopedia.component.007_heat_sink.description"
+    legacySymbol = "IDS_COMPENCYCLO7"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34007
+    textKey = "mechlopedia.component.008_double_heat_sink.description"
+    legacySymbol = "IDS_COMPENCYCLO8"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34008
+    textKey = "mechlopedia.component.009_c_double_heat_sink.description"
+    legacySymbol = "IDS_COMPENCYCLO9"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34009
+    textKey = "mechlopedia.component.010_jump_jets.description"
+    legacySymbol = "IDS_COMPENCYCLO10"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34010
+    textKey = "mechlopedia.component.011_medium_jump_jet.description"
+    legacySymbol = "IDS_COMPENCYCLO11"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34011
+    textKey = "mechlopedia.component.012_small_jump_jet.description"
+    legacySymbol = "IDS_COMPENCYCLO12"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34012
+    textKey = "mechlopedia.component.013_sensor_basic.description"
+    legacySymbol = "IDS_COMPENCYCLO13"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34013
+    textKey = "mechlopedia.component.014_sensor_intermediate.description"
+    legacySymbol = "IDS_COMPENCYCLO14"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34014
+    textKey = "mechlopedia.component.015_sensor_advanced.description"
+    legacySymbol = "IDS_COMPENCYCLO15"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34015
+    textKey = "mechlopedia.component.016_c_sensor_basic.description"
+    legacySymbol = "IDS_COMPENCYCLO16"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34016
+    textKey = "mechlopedia.component.017_c_sensor_adv.description"
+    legacySymbol = "IDS_COMPENCYCLO17"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34017
+    textKey = "mechlopedia.component.018_vehicle_sensor.description"
+    legacySymbol = "IDS_COMPENCYCLO18"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34018
+    textKey = "mechlopedia.component.019_adv_vehicle_sensor.description"
+    legacySymbol = "IDS_COMPENCYCLO19"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34019
+    textKey = "mechlopedia.component.020_gyroscope_iv.description"
+    legacySymbol = "IDS_COMPENCYCLO20"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34020
+    textKey = "mechlopedia.component.021_gyroscope_iii.description"
+    legacySymbol = "IDS_COMPENCYCLO21"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34021
+    textKey = "mechlopedia.component.022_gyroscope_ii.description"
+    legacySymbol = "IDS_COMPENCYCLO22"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34022
+    textKey = "mechlopedia.component.023_gyroscope_i.description"
+    legacySymbol = "IDS_COMPENCYCLO23"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34023
+    textKey = "mechlopedia.component.024_power_amplifier.description"
+    legacySymbol = "IDS_COMPENCYCLO24"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34024
+    textKey = "mechlopedia.component.025_armor.description"
+    legacySymbol = "IDS_COMPENCYCLO25"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34025
+    textKey = "mechlopedia.component.026_vehicle_ferro_fibrous_armor.description"
+    legacySymbol = "IDS_COMPENCYCLO26"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34026
+    textKey = "mechlopedia.component.027_c_ferro_fibrous_armor.description"
+    legacySymbol = "IDS_COMPENCYCLO27"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34027
+    textKey = "mechlopedia.component.028_c_vehicle_ferro_fibrous.description"
+    legacySymbol = "IDS_COMPENCYCLO28"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34028
+    textKey = "mechlopedia.component.029_endosteel_int_str.description"
+    legacySymbol = "IDS_COMPENCYCLO29"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34029
+    textKey = "mechlopedia.component.030_c_endosteel_int_str.description"
+    legacySymbol = "IDS_COMPENCYCLO30"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34030
+    textKey = "mechlopedia.component.031_case.description"
+    legacySymbol = "IDS_COMPENCYCLO31"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34031
+    textKey = "mechlopedia.component.032_c_case.description"
+    legacySymbol = "IDS_COMPENCYCLO32"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34032
+    textKey = "mechlopedia.component.033_shoulder.description"
+    legacySymbol = "IDS_COMPENCYCLO33"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34033
+    textKey = "mechlopedia.component.034_hip.description"
+    legacySymbol = "IDS_COMPENCYCLO34"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34034
+    textKey = "mechlopedia.component.035_lifesupport.description"
+    legacySymbol = "IDS_COMPENCYCLO35"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34035
+    textKey = "mechlopedia.component.036_vehicle_sensors.description"
+    legacySymbol = "IDS_COMPENCYCLO36"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34036
+    textKey = "mechlopedia.component.037_beagle_probe.description"
+    legacySymbol = "IDS_COMPENCYCLO37"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34037
+    textKey = "mechlopedia.component.038_mki_ecm_suite.description"
+    legacySymbol = "IDS_COMPENCYCLO38"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34038
+    textKey = "mechlopedia.component.039_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO39"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34039
+    textKey = "mechlopedia.component.040_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO40"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34040
+    textKey = "mechlopedia.component.041_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO41"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34041
+    textKey = "mechlopedia.component.042_mkii_ecm_suite.description"
+    legacySymbol = "IDS_COMPENCYCLO42"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34042
+    textKey = "mechlopedia.component.043_active_probe.description"
+    legacySymbol = "IDS_COMPENCYCLO43"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34043
+    textKey = "mechlopedia.component.044_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO44"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34044
+    textKey = "mechlopedia.component.045_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO45"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34045
+    textKey = "mechlopedia.component.046_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO46"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34046
+    textKey = "mechlopedia.component.047_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO47"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34047
+    textKey = "mechlopedia.component.048_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO48"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34048
+    textKey = "mechlopedia.component.049_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO49"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34049
+    textKey = "mechlopedia.component.050_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO50"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34050
+    textKey = "mechlopedia.component.051_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO51"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34051
+    textKey = "mechlopedia.component.052_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO52"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34052
+    textKey = "mechlopedia.component.053_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO53"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34053
+    textKey = "mechlopedia.component.054_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO54"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34054
+    textKey = "mechlopedia.component.055_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO55"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34055
+    textKey = "mechlopedia.component.056_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO56"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34056
+    textKey = "mechlopedia.component.057_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO57"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34057
+    textKey = "mechlopedia.component.058_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO58"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34058
+    textKey = "mechlopedia.component.059_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO59"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34059
+    textKey = "mechlopedia.component.060_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO60"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34060
+    textKey = "mechlopedia.component.061_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO61"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34061
+    textKey = "mechlopedia.component.062_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO62"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34062
+    textKey = "mechlopedia.component.063_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO63"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34063
+    textKey = "mechlopedia.component.064_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO64"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34064
+    textKey = "mechlopedia.component.065_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO65"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34065
+    textKey = "mechlopedia.component.066_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO66"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34066
+    textKey = "mechlopedia.component.067_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO67"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34067
+    textKey = "mechlopedia.component.068_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO68"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34068
+    textKey = "mechlopedia.component.069_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO69"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34069
+    textKey = "mechlopedia.component.070_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO70"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34070
+    textKey = "mechlopedia.component.071_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO71"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34071
+    textKey = "mechlopedia.component.072_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO72"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34072
+    textKey = "mechlopedia.component.073_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO73"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34073
+    textKey = "mechlopedia.component.074_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO74"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34074
+    textKey = "mechlopedia.component.075_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO75"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34075
+    textKey = "mechlopedia.component.076_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO76"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34076
+    textKey = "mechlopedia.component.077_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO77"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34077
+    textKey = "mechlopedia.component.078_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO78"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34078
+    textKey = "mechlopedia.component.079_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO79"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34079
+    textKey = "mechlopedia.component.080_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO80"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34080
+    textKey = "mechlopedia.component.081_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO81"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34081
+    textKey = "mechlopedia.component.082_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO82"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34082
+    textKey = "mechlopedia.component.083_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO83"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34083
+    textKey = "mechlopedia.component.084_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO84"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34084
+    textKey = "mechlopedia.component.085_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO85"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34085
+    textKey = "mechlopedia.component.086_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO86"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34086
+    textKey = "mechlopedia.component.087_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO87"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34087
+    textKey = "mechlopedia.component.088_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO88"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34088
+    textKey = "mechlopedia.component.089_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO89"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34089
+    textKey = "mechlopedia.component.090_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO90"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34090
+    textKey = "mechlopedia.component.091_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO91"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34091
+    textKey = "mechlopedia.component.092_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO92"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34092
+    textKey = "mechlopedia.component.093_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO93"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34093
+    textKey = "mechlopedia.component.094_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO94"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34094
+    textKey = "mechlopedia.component.095_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO95"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34095
+    textKey = "mechlopedia.component.096_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO96"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34096
+    textKey = "mechlopedia.component.097_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO97"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34097
+    textKey = "mechlopedia.component.098_rail_gun.description"
+    legacySymbol = "IDS_COMPENCYCLO98"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34098
+    textKey = "mechlopedia.component.099_light_gauss_rifle.description"
+    legacySymbol = "IDS_COMPENCYCLO99"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34099
+    textKey = "mechlopedia.component.100_light_autocannon.description"
+    legacySymbol = "IDS_COMPENCYCLO100"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34100
+    textKey = "mechlopedia.component.101_medium_autocannon.description"
+    legacySymbol = "IDS_COMPENCYCLO101"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34101
+    textKey = "mechlopedia.component.102_heavy_autocannon.description"
+    legacySymbol = "IDS_COMPENCYCLO102"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34102
+    textKey = "mechlopedia.component.103_ultra_light_autocannon.description"
+    legacySymbol = "IDS_COMPENCYCLO103"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34103
+    textKey = "mechlopedia.component.104_gauss_rifle.description"
+    legacySymbol = "IDS_COMPENCYCLO104"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34104
+    textKey = "mechlopedia.component.105_machine_gun.description"
+    legacySymbol = "IDS_COMPENCYCLO105"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34105
+    textKey = "mechlopedia.component.106_anti_missile_system.description"
+    legacySymbol = "IDS_COMPENCYCLO106"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34106
+    textKey = "mechlopedia.component.107_light_lbx_autocannon.description"
+    legacySymbol = "IDS_COMPENCYCLO107"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34107
+    textKey = "mechlopedia.component.108_ultra_medium_autocannon.description"
+    legacySymbol = "IDS_COMPENCYCLO108"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34108
+    textKey = "mechlopedia.component.109_clan_ultra_heavy_autocannon.description"
+    legacySymbol = "IDS_COMPENCYCLO109"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34109
+    textKey = "mechlopedia.component.110_clan_ultra_light_autocannon.description"
+    legacySymbol = "IDS_COMPENCYCLO110"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34110
+    textKey = "mechlopedia.component.111_clan_ultra_medium_autocannon.description"
+    legacySymbol = "IDS_COMPENCYCLO111"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34111
+    textKey = "mechlopedia.component.112_ultra_heavy_autocannon.description"
+    legacySymbol = "IDS_COMPENCYCLO112"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34112
+    textKey = "mechlopedia.component.113_clan_gauss_rifle.description"
+    legacySymbol = "IDS_COMPENCYCLO113"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34113
+    textKey = "mechlopedia.component.114_machine_gun_array.description"
+    legacySymbol = "IDS_COMPENCYCLO114"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34114
+    textKey = "mechlopedia.component.115_clan_anti_missile_system.description"
+    legacySymbol = "IDS_COMPENCYCLO115"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34115
+    textKey = "mechlopedia.component.116_clan_light_lbx_autocannon.description"
+    legacySymbol = "IDS_COMPENCYCLO116"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34116
+    textKey = "mechlopedia.component.117_clan_lbx_autocannon.description"
+    legacySymbol = "IDS_COMPENCYCLO117"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34117
+    textKey = "mechlopedia.component.118_clan_heavy_lbx_autocannon.description"
+    legacySymbol = "IDS_COMPENCYCLO118"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34118
+    textKey = "mechlopedia.component.119_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO119"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34119
+    textKey = "mechlopedia.component.120_lrm_rack.description"
+    legacySymbol = "IDS_COMPENCYCLO120"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34120
+    textKey = "mechlopedia.component.121_lr_missile_15.description"
+    legacySymbol = "IDS_COMPENCYCLO121"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34121
+    textKey = "mechlopedia.component.122_lr_missile_20.description"
+    legacySymbol = "IDS_COMPENCYCLO122"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34122
+    textKey = "mechlopedia.component.123_swarm_lrm_rack.description"
+    legacySymbol = "IDS_COMPENCYCLO123"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34123
+    textKey = "mechlopedia.component.124_srm_pack.description"
+    legacySymbol = "IDS_COMPENCYCLO124"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34124
+    textKey = "mechlopedia.component.125_streak_srm_pack.description"
+    legacySymbol = "IDS_COMPENCYCLO125"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34125
+    textKey = "mechlopedia.component.126_heavy_thunderbolt.description"
+    legacySymbol = "IDS_COMPENCYCLO126"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34126
+    textKey = "mechlopedia.component.127_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO127"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34127
+    textKey = "mechlopedia.component.128_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO128"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34128
+    textKey = "mechlopedia.component.129_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO129"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34129
+    textKey = "mechlopedia.component.130_clan_lrm_rack.description"
+    legacySymbol = "IDS_COMPENCYCLO130"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34130
+    textKey = "mechlopedia.component.131_clan_lr_missile_15.description"
+    legacySymbol = "IDS_COMPENCYCLO131"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34131
+    textKey = "mechlopedia.component.132_clan_lr_missile_20.description"
+    legacySymbol = "IDS_COMPENCYCLO132"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34132
+    textKey = "mechlopedia.component.133_clan_srm_pack.description"
+    legacySymbol = "IDS_COMPENCYCLO133"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34133
+    textKey = "mechlopedia.component.134_clan_sr_missile_6.description"
+    legacySymbol = "IDS_COMPENCYCLO134"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34134
+    textKey = "mechlopedia.component.135_clan_streak_srm_pack.description"
+    legacySymbol = "IDS_COMPENCYCLO135"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34135
+    textKey = "mechlopedia.component.136_clan_streak_sr_missile_6.description"
+    legacySymbol = "IDS_COMPENCYCLO136"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34136
+    textKey = "mechlopedia.component.137_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO137"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34137
+    textKey = "mechlopedia.component.138_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO138"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34138
+    textKey = "mechlopedia.component.139_clan_heavy_laser.description"
+    legacySymbol = "IDS_COMPENCYCLO139"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34139
+    textKey = "mechlopedia.component.140_large_laser.description"
+    legacySymbol = "IDS_COMPENCYCLO140"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34140
+    textKey = "mechlopedia.component.141_er_large_laser.description"
+    legacySymbol = "IDS_COMPENCYCLO141"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34141
+    textKey = "mechlopedia.component.142_large_pulse_laser.description"
+    legacySymbol = "IDS_COMPENCYCLO142"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34142
+    textKey = "mechlopedia.component.143_er_laser.description"
+    legacySymbol = "IDS_COMPENCYCLO143"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34143
+    textKey = "mechlopedia.component.144_pulse_laser.description"
+    legacySymbol = "IDS_COMPENCYCLO144"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34144
+    textKey = "mechlopedia.component.145_ppc.description"
+    legacySymbol = "IDS_COMPENCYCLO145"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34145
+    textKey = "mechlopedia.component.146_er_ppc.description"
+    legacySymbol = "IDS_COMPENCYCLO146"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34146
+    textKey = "mechlopedia.component.147_clan_heavy_large_laser.description"
+    legacySymbol = "IDS_COMPENCYCLO147"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34147
+    textKey = "mechlopedia.component.148_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO148"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34148
+    textKey = "mechlopedia.component.149_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO149"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34149
+    textKey = "mechlopedia.component.150_clan_er_large_laser.description"
+    legacySymbol = "IDS_COMPENCYCLO150"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34150
+    textKey = "mechlopedia.component.151_clan_large_pulse_laser.description"
+    legacySymbol = "IDS_COMPENCYCLO151"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34151
+    textKey = "mechlopedia.component.152_clan_er_laser.description"
+    legacySymbol = "IDS_COMPENCYCLO152"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34152
+    textKey = "mechlopedia.component.153_clan_pulse_laser.description"
+    legacySymbol = "IDS_COMPENCYCLO153"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34153
+    textKey = "mechlopedia.component.154_clan_er_ppc.description"
+    legacySymbol = "IDS_COMPENCYCLO154"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34154
+    textKey = "mechlopedia.component.155_flamer_array.description"
+    legacySymbol = "IDS_COMPENCYCLO155"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34155
+    textKey = "mechlopedia.component.156_laser.description"
+    legacySymbol = "IDS_COMPENCYCLO156"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34156
+    textKey = "mechlopedia.component.157_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO157"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34157
+    textKey = "mechlopedia.component.158_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO158"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34158
+    textKey = "mechlopedia.component.159_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO159"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34159
+    textKey = "mechlopedia.component.160_long_tom_cannon.description"
+    legacySymbol = "IDS_COMPENCYCLO160"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34160
+    textKey = "mechlopedia.component.161_thunderbolt_missile.description"
+    legacySymbol = "IDS_COMPENCYCLO161"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34161
+    textKey = "mechlopedia.component.162_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO162"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34162
+    textKey = "mechlopedia.component.163_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO163"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34163
+    textKey = "mechlopedia.component.164_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO164"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34164
+    textKey = "mechlopedia.component.165_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO165"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34165
+    textKey = "mechlopedia.component.166_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO166"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34166
+    textKey = "mechlopedia.component.167_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO167"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34167
+    textKey = "mechlopedia.component.168_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO168"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34168
+    textKey = "mechlopedia.component.169_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO169"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34169
+    textKey = "mechlopedia.component.170_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO170"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34170
+    textKey = "mechlopedia.component.171_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO171"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34171
+    textKey = "mechlopedia.component.172_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO172"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34172
+    textKey = "mechlopedia.component.173_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO173"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34173
+    textKey = "mechlopedia.component.174_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO174"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34174
+    textKey = "mechlopedia.component.175_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO175"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34175
+    textKey = "mechlopedia.component.176_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO176"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34176
+    textKey = "mechlopedia.component.177_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO177"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34177
+    textKey = "mechlopedia.component.178_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO178"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34178
+    textKey = "mechlopedia.component.179_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO179"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34179
+    textKey = "mechlopedia.component.180_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO180"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34180
+    textKey = "mechlopedia.component.181_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO181"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34181
+    textKey = "mechlopedia.component.182_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO182"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34182
+    textKey = "mechlopedia.component.183_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO183"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34183
+    textKey = "mechlopedia.component.184_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO184"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34184
+    textKey = "mechlopedia.component.185_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO185"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34185
+    textKey = "mechlopedia.component.186_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO186"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34186
+    textKey = "mechlopedia.component.187_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO187"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34187
+    textKey = "mechlopedia.component.188_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO188"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34188
+    textKey = "mechlopedia.component.189_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO189"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34189
+    textKey = "mechlopedia.component.190_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO190"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34190
+    textKey = "mechlopedia.component.191_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO191"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34191
+    textKey = "mechlopedia.component.192_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO192"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34192
+    textKey = "mechlopedia.component.193_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO193"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34193
+    textKey = "mechlopedia.component.194_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO194"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34194
+    textKey = "mechlopedia.component.195_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO195"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34195
+    textKey = "mechlopedia.component.196_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO196"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34196
+    textKey = "mechlopedia.component.197_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO197"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34197
+    textKey = "mechlopedia.component.198_rail_gun_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO198"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34198
+    textKey = "mechlopedia.component.199_lt_gauss_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO199"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34199
+    textKey = "mechlopedia.component.200_lt_ac_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO200"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34200
+    textKey = "mechlopedia.component.201_ac_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO201"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34201
+    textKey = "mechlopedia.component.202_hvy_ac_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO202"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34202
+    textKey = "mechlopedia.component.203_lt_ultra_ac_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO203"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34203
+    textKey = "mechlopedia.component.204_gauss_rifle_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO204"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34204
+    textKey = "mechlopedia.component.205_mg_array_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO205"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34205
+    textKey = "mechlopedia.component.206_anti_missile_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO206"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34206
+    textKey = "mechlopedia.component.207_lt_lbx_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO207"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34207
+    textKey = "mechlopedia.component.208_ultra_ac_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO208"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34208
+    textKey = "mechlopedia.component.209_heavy_ultra_ac_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO209"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34209
+    textKey = "mechlopedia.component.210_clan_lt_ultra_ac_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO210"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34210
+    textKey = "mechlopedia.component.211_clan_ultra_ac_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO211"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34211
+    textKey = "mechlopedia.component.212_clan_heavy_ultra_ac_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO212"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34212
+    textKey = "mechlopedia.component.213_clan_gauss_rifle_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO213"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34213
+    textKey = "mechlopedia.component.214_c_m_gun_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO214"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34214
+    textKey = "mechlopedia.component.215_c_anti_missile_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO215"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34215
+    textKey = "mechlopedia.component.216_c_lt_lbx_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO216"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34216
+    textKey = "mechlopedia.component.217_c_lbx_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO217"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34217
+    textKey = "mechlopedia.component.218_c_hvy_lbx_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO218"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34218
+    textKey = "mechlopedia.component.219_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO219"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34219
+    textKey = "mechlopedia.component.220_lrm_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO220"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34220
+    textKey = "mechlopedia.component.221_lrm_15_pack.description"
+    legacySymbol = "IDS_COMPENCYCLO221"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34221
+    textKey = "mechlopedia.component.222_lrm_20_pack.description"
+    legacySymbol = "IDS_COMPENCYCLO222"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34222
+    textKey = "mechlopedia.component.223_srm_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO223"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34223
+    textKey = "mechlopedia.component.224_srm_6_pack.description"
+    legacySymbol = "IDS_COMPENCYCLO224"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34224
+    textKey = "mechlopedia.component.225_st_srm_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO225"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34225
+    textKey = "mechlopedia.component.226_heavy_thunderbolt_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO226"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34226
+    textKey = "mechlopedia.component.227_long_tom_cannon_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO227"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34227
+    textKey = "mechlopedia.component.228_thunderbolt_missile_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO228"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34228
+    textKey = "mechlopedia.component.229_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO229"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34229
+    textKey = "mechlopedia.component.230_clan_lrm_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO230"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34230
+    textKey = "mechlopedia.component.231_swarm_lrm_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO231"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34231
+    textKey = "mechlopedia.component.232_c_lrm_20_pack.description"
+    legacySymbol = "IDS_COMPENCYCLO232"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34232
+    textKey = "mechlopedia.component.233_clan_srm_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO233"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34233
+    textKey = "mechlopedia.component.234_c_srm_6_pack.description"
+    legacySymbol = "IDS_COMPENCYCLO234"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34234
+    textKey = "mechlopedia.component.235_c_st_srm_ammo.description"
+    legacySymbol = "IDS_COMPENCYCLO235"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34235
+    textKey = "mechlopedia.component.236_c_st_srm_2_pack.description"
+    legacySymbol = "IDS_COMPENCYCLO236"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34236
+    textKey = "mechlopedia.component.237_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO237"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34237
+    textKey = "mechlopedia.component.238_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO238"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34238
+    textKey = "mechlopedia.component.239_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO239"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34239
+    textKey = "mechlopedia.component.240_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO240"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34240
+    textKey = "mechlopedia.component.241_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO241"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34241
+    textKey = "mechlopedia.component.242_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO242"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34242
+    textKey = "mechlopedia.component.243_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO243"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34243
+    textKey = "mechlopedia.component.244_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO244"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34244
+    textKey = "mechlopedia.component.245_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO245"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34245
+    textKey = "mechlopedia.component.246_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO246"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34246
+    textKey = "mechlopedia.component.247_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO247"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34247
+    textKey = "mechlopedia.component.248_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO248"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34248
+    textKey = "mechlopedia.component.249_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO249"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34249
+    textKey = "mechlopedia.component.250_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO250"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34250
+    textKey = "mechlopedia.component.251_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO251"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34251
+    textKey = "mechlopedia.component.252_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO252"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34252
+    textKey = "mechlopedia.component.253_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO253"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34253
+    textKey = "mechlopedia.component.254_undefined.description"
+    legacySymbol = "IDS_COMPENCYCLO254"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 34254
+    textKey = "mechlopedia.component.255_component_placeholder.description"
+    legacySymbol = "IDS_COMPENCYCLO255"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 40012
+    textKey = "mechlopedia.ui.font_refs.font_ref.ui_help_font_800"
+    legacySymbol = "IDS_HELP_FONT"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 43200
+    textKey = "mechlopedia.ui.range_labels.ui_text.ui_hotkey1"
+    legacySymbol = "IDS_HOTKEY1"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 43201
+    textKey = "mechlopedia.ui.range_labels.ui_text.ui_hotkey2"
+    legacySymbol = "IDS_HOTKEY2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 43202
+    textKey = "mechlopedia.ui.range_labels.ui_text.ui_hotkey3"
+    legacySymbol = "IDS_HOTKEY3"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45200
+    textKey = "mechlopedia.vehicle.armored_car.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_0"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45201
+    textKey = "mechlopedia.vehicle.hunter.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_1"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45202
+    textKey = "mechlopedia.vehicle.hetzer.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45203
+    textKey = "mechlopedia.vehicle.lrm_carrier.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_3"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45204
+    textKey = "mechlopedia.vehicle.vedette.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_4"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45205
+    textKey = "mechlopedia.vehicle.storm.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_5"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45206
+    textKey = "mechlopedia.vehicle.partisan.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_6"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45207
+    textKey = "mechlopedia.vehicle.legion.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_7"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45208
+    textKey = "mechlopedia.vehicle.centipede.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_8"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45209
+    textKey = "mechlopedia.vehicle.harasser.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_9"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45210
+    textKey = "mechlopedia.vehicle.scimitar.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_10"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45211
+    textKey = "mechlopedia.vehicle.drillson.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_11"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45212
+    textKey = "mechlopedia.vehicle.scout_copter.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_12"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45213
+    textKey = "mechlopedia.vehicle.heavy_copter.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_13"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45214
+    textKey = "mechlopedia.vehicle.attack_copter.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_14"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45215
+    textKey = "mechlopedia.vehicle.aerospotter.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_15"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45216
+    textKey = "mechlopedia.vehicle.fixed_artillery.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_16"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45217
+    textKey = "mechlopedia.vehicle.swarm_lrm_carrier.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_17"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45218
+    textKey = "mechlopedia.vehicle.troop_transport.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_18"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45219
+    textKey = "mechlopedia.vehicle.minelayer.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_19"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45220
+    textKey = "mechlopedia.vehicle.repair_truck.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_20"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45221
+    textKey = "mechlopedia.vehicle.salvage_craft.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_21"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45222
+    textKey = "mechlopedia.vehicle.cargo_truck.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_22"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45223
+    textKey = "mechlopedia.vehicle.vtol.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_23"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45224
+    textKey = "mechlopedia.vehicle.shilone_bomber.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_24"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45225
+    textKey = "mechlopedia.vehicle.infantry.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_25"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45226
+    textKey = "mechlopedia.vehicle.powered_armor.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_26"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45227
+    textKey = "mechlopedia.vehicle.apc.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_27"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45228
+    textKey = "mechlopedia.vehicle.fuel_truck.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_28"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45229
+    textKey = "mechlopedia.vehicle.jeep.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_29"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45230
+    textKey = "mechlopedia.vehicle.resource_truck.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_30"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45231
+    textKey = "mechlopedia.vehicle.vehicle_placeholder_31.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_31"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45232
+    textKey = "mechlopedia.vehicle.vehicle_placeholder_32.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_32"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45233
+    textKey = "mechlopedia.vehicle.vehicle_placeholder_33.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_33"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45234
+    textKey = "mechlopedia.vehicle.vehicle_placeholder_34.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_34"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45235
+    textKey = "mechlopedia.vehicle.vehicle_placeholder_35.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_35"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45236
+    textKey = "mechlopedia.vehicle.vehicle_placeholder_36.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_36"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45237
+    textKey = "mechlopedia.vehicle.vehicle_placeholder_37.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_37"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45238
+    textKey = "mechlopedia.vehicle.vehicle_placeholder_38.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_38"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45239
+    textKey = "mechlopedia.vehicle.vehicle_placeholder_39.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_39"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45240
+    textKey = "mechlopedia.vehicle.vehicle_placeholder_40.description"
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_40"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45300
+    textKey = "mechlopedia.personality.archon_katrina_steiner.name"
+    legacySymbol = "IDS_PERSONALITY_0"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45301
+    textKey = "mechlopedia.personality.mandrissa_anita_cho.name"
+    legacySymbol = "IDS_PERSONALITY_1"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45302
+    textKey = "mechlopedia.personality.captain_jason_cho.name"
+    legacySymbol = "IDS_PERSONALITY_2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45303
+    textKey = "mechlopedia.personality.major_susan_kelly.name"
+    legacySymbol = "IDS_PERSONALITY_3"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45304
+    textKey = "mechlopedia.personality.lieutenant_diaz.name"
+    legacySymbol = "IDS_PERSONALITY_4"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45305
+    textKey = "mechlopedia.personality.baxter.name"
+    legacySymbol = "IDS_PERSONALITY_5"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45306
+    textKey = "mechlopedia.personality.ambassador_yee.name"
+    legacySymbol = "IDS_PERSONALITY_6"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45307
+    textKey = "mechlopedia.personality.gunnery_sergeant_cash.name"
+    legacySymbol = "IDS_PERSONALITY_7"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45308
+    textKey = "mechlopedia.personality.prince_victor_davion.name"
+    legacySymbol = "IDS_PERSONALITY_8"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45309
+    textKey = "mechlopedia.personality.chancellor_sun_tzu_liao.name"
+    legacySymbol = "IDS_PERSONALITY_9"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45310
+    textKey = "mechlopedia.personality.colonel_david_renard.name"
+    legacySymbol = "IDS_PERSONALITY_10"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45316
+    textKey = "mechlopedia.personality.archon_katrina_steiner.description"
+    legacySymbol = "IDS_PERONSALITY_DESCRIPTION0"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45317
+    textKey = "mechlopedia.personality.mandrissa_anita_cho.description"
+    legacySymbol = "IDS_PERONSALITY_DESCRIPTION1"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45318
+    textKey = "mechlopedia.personality.captain_jason_cho.description"
+    legacySymbol = "IDS_PERONSALITY_DESCRIPTION2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45319
+    textKey = "mechlopedia.personality.major_susan_kelly.description"
+    legacySymbol = "IDS_PERONSALITY_DESCRIPTION3"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45320
+    textKey = "mechlopedia.personality.lieutenant_diaz.description"
+    legacySymbol = "IDS_PERONSALITY_DESCRIPTION4"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45321
+    textKey = "mechlopedia.personality.baxter.description"
+    legacySymbol = "IDS_PERONSALITY_DESCRIPTION5"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45322
+    textKey = "mechlopedia.personality.ambassador_yee.description"
+    legacySymbol = "IDS_PERONSALITY_DESCRIPTION6"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45323
+    textKey = "mechlopedia.personality.gunnery_sergeant_cash.description"
+    legacySymbol = "IDS_PERONSALITY_DESCRIPTION7"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45324
+    textKey = "mechlopedia.personality.prince_victor_davion.description"
+    legacySymbol = "IDS_PERONSALITY_DESCRIPTION8"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45325
+    textKey = "mechlopedia.personality.chancellor_sun_tzu_liao.description"
+    legacySymbol = "IDS_PERONSALITY_DESCRIPTION9"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45326
+    textKey = "mechlopedia.personality.colonel_david_renard.description"
+    legacySymbol = "IDS_PERONSALITY_DESCRIPTION10"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45340
+    textKey = "mechlopedia.personality.archon_katrina_steiner.image_ref"
+    legacySymbol = "IDS_PERSONALITY_PICTURE0"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45341
+    textKey = "mechlopedia.personality.mandrissa_anita_cho.image_ref"
+    legacySymbol = "IDS_PERSONALITY_PICTURE1"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45342
+    textKey = "mechlopedia.personality.captain_jason_cho.image_ref"
+    legacySymbol = "IDS_PERSONALITY_PICTURE2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45343
+    textKey = "mechlopedia.personality.major_susan_kelly.image_ref"
+    legacySymbol = "IDS_PERSONALITY_PICTURE3"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45344
+    textKey = "mechlopedia.personality.lieutenant_diaz.image_ref"
+    legacySymbol = "IDS_PERSONALITY_PICTURE4"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45345
+    textKey = "mechlopedia.personality.baxter.image_ref"
+    legacySymbol = "IDS_PERSONALITY_PICTURE5"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45346
+    textKey = "mechlopedia.personality.ambassador_yee.image_ref"
+    legacySymbol = "IDS_PERSONALITY_PICTURE6"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45347
+    textKey = "mechlopedia.personality.gunnery_sergeant_cash.image_ref"
+    legacySymbol = "IDS_PERSONALITY_PICTURE7"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45348
+    textKey = "mechlopedia.personality.prince_victor_davion.image_ref"
+    legacySymbol = "IDS_PERSONALITY_PICTURE8"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45349
+    textKey = "mechlopedia.personality.chancellor_sun_tzu_liao.image_ref"
+    legacySymbol = "IDS_PERSONALITY_PICTURE9"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45350
+    textKey = "mechlopedia.personality.colonel_david_renard.image_ref"
+    legacySymbol = "IDS_PERSONALITY_PICTURE10"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45360
+    textKey = "mechlopedia.history.star_league_rise_and_collapse.title"
+    legacySymbol = "IDS_HISTORY_0"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45361
+    textKey = "mechlopedia.history.warring_houses.title"
+    legacySymbol = "IDS_HISTORY_1"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45362
+    textKey = "mechlopedia.history.return_of_the_clans.title"
+    legacySymbol = "IDS_HISTORY_2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45363
+    textKey = "mechlopedia.history.inner_sphere_civil_war_returns.title"
+    legacySymbol = "IDS_HISTORY_3"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45364
+    textKey = "mechlopedia.history.war_on_carver_v.title"
+    legacySymbol = "IDS_HISTORY_4"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45371
+    textKey = "mechlopedia.history.star_league_rise_and_collapse.description"
+    legacySymbol = "IDS_HISTORY_DESCRIPTION_0"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45372
+    textKey = "mechlopedia.history.warring_houses.description"
+    legacySymbol = "IDS_HISTORY_DESCRIPTION_1"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45373
+    textKey = "mechlopedia.history.return_of_the_clans.description"
+    legacySymbol = "IDS_HISTORY_DESCRIPTION_2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45374
+    textKey = "mechlopedia.history.inner_sphere_civil_war_returns.description"
+    legacySymbol = "IDS_HISTORY_DESCRIPTION_3"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45375
+    textKey = "mechlopedia.history.war_on_carver_v.description"
+    legacySymbol = "IDS_HISTORY_DESCRIPTION_4"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45381
+    textKey = "mechlopedia.history.star_league_rise_and_collapse.image_ref"
+    legacySymbol = "IDS_HISTORY_PICTURE0"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45382
+    textKey = "mechlopedia.history.warring_houses.image_ref"
+    legacySymbol = "IDS_HISTORY_PICTURE1"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45383
+    textKey = "mechlopedia.history.return_of_the_clans.image_ref"
+    legacySymbol = "IDS_HISTORY_PICTURE2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45384
+    textKey = "mechlopedia.history.inner_sphere_civil_war_returns.image_ref"
+    legacySymbol = "IDS_HISTORY_PICTURE3"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45385
+    textKey = "mechlopedia.history.war_on_carver_v.image_ref"
+    legacySymbol = "IDS_HISTORY_PICTURE4"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45391
+    textKey = "mechlopedia.vehicle.shilone_bomber.name"
+    legacySymbol = "IDS_SHILONE"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45400
+    textKey = "mechlopedia.building.ammo_dump.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO0"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45401
+    textKey = "mechlopedia.building.large_fuel_tank.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO1"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45402
+    textKey = "mechlopedia.building.gate_control.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO2"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45403
+    textKey = "mechlopedia.building.light_gate.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO3"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45404
+    textKey = "mechlopedia.building.medium_gate.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO4"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45405
+    textKey = "mechlopedia.building.heavy_gate.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO5"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45406
+    textKey = "mechlopedia.building.headquarters.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO6"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45407
+    textKey = "mechlopedia.building.spotlight_control.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO7"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45408
+    textKey = "mechlopedia.building.lookout_tower.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO8"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45409
+    textKey = "mechlopedia.building.mech_warrior_barracks.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO9"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45410
+    textKey = "mechlopedia.building.perimeter_alarm.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO10"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45411
+    textKey = "mechlopedia.building.short_pipe.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO11"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45412
+    textKey = "mechlopedia.building.power_generator.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO12"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45413
+    textKey = "mechlopedia.building.repair_bay.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO13"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45414
+    textKey = "mechlopedia.building.resource_building.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO14"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45415
+    textKey = "mechlopedia.building.sensor_control.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO15"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45416
+    textKey = "mechlopedia.building.sensor_tower.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO16"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45417
+    textKey = "mechlopedia.building.spotlight_control_alt.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO17"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45418
+    textKey = "mechlopedia.building.turret_control.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO18"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45419
+    textKey = "mechlopedia.building.turret_generator.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO19"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45420
+    textKey = "mechlopedia.building.light_wall.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO20"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45421
+    textKey = "mechlopedia.building.medium_wall.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO21"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45422
+    textKey = "mechlopedia.building.heavy_wall.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO22"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45423
+    textKey = "mechlopedia.building.weapons_facility.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO23"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45424
+    textKey = "mechlopedia.building.srm_turret.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO24"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45425
+    textKey = "mechlopedia.building.lrm_turret.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO25"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45426
+    textKey = "mechlopedia.building.autocannon_turret.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO26"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45427
+    textKey = "mechlopedia.building.gauss_turret.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO27"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45428
+    textKey = "mechlopedia.building.long_tom_turret.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO28"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45430
+    textKey = "mechlopedia.building.large_pulse_laser_turret.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO30"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45431
+    textKey = "mechlopedia.building.prison.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO31"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45432
+    textKey = "mechlopedia.building.ammo_crates.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO32"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45433
+    textKey = "mechlopedia.building.small_fuel_tank.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO33"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45434
+    textKey = "mechlopedia.building.building_placeholder_34.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO34"
+    source = "mechlopedia_text_bridge"
+}
+
+LegacyTextAlias {
+    legacyId = 45435
+    textKey = "mechlopedia.building.building_placeholder_35.description"
+    legacySymbol = "IDS_BUILDING_ENCYCLO35"
+    source = "mechlopedia_text_bridge"
+}
+

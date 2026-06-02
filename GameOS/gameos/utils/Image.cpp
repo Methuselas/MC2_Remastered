@@ -5,6 +5,15 @@
 #include <stdlib.h>
 #include <cassert>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <objbase.h>
+#include <wincodec.h>
+#endif
+
 //#include "math/vec.h"
 //#include "system/types.h"
 //#include "system/defines.h"
@@ -18,7 +27,7 @@
 
 
 void Image::clear(){
-	delete pixels;
+	delete[] pixels;
 	pixels = NULL;
 	width = height = 0;
 	format = FORMAT_NONE;
@@ -108,6 +117,8 @@ static FORMAT getFormatFromBpp(const unsigned int bpp) {
 Image::Image(void)
 {
 	pixels = 0;
+	width = height = 0;
+	format = FORMAT_NONE;
 }
 
 Image::~Image(void)
@@ -140,8 +151,141 @@ bool Image::loadFromFile(const char *fileName){
 	{
 		return loadBMP(fileName);
 	}
+	else if (stricmp(ext, "jpg") == 0 || stricmp(ext, "jpeg") == 0)
+	{
+		return loadJPG(fileName);
+	}
+	else if (stricmp(ext, "png") == 0)
+	{
+		return loadPNG(fileName);
+	}
 	return false;
-} 
+}
+
+bool Image::loadJPG(const char *fileName)
+{
+	return loadWIC(fileName);
+}
+
+bool Image::loadPNG(const char *fileName)
+{
+	return loadWIC(fileName);
+}
+
+bool Image::loadWIC(const char *fileName)
+{
+#ifdef _WIN32
+	clear();
+
+	if (!fileName || !fileName[0])
+		return false;
+
+	int wideLength = MultiByteToWideChar(CP_UTF8, 0, fileName, -1, NULL, 0);
+	UINT codePage = CP_UTF8;
+	if (wideLength <= 0)
+	{
+		codePage = CP_ACP;
+		wideLength = MultiByteToWideChar(codePage, 0, fileName, -1, NULL, 0);
+	}
+
+	if (wideLength <= 0)
+		return false;
+
+	wchar_t* wideFileName = new wchar_t[wideLength];
+	if (MultiByteToWideChar(codePage, 0, fileName, -1, wideFileName, wideLength) <= 0)
+	{
+		delete[] wideFileName;
+		return false;
+	}
+
+	HRESULT comInit = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+	const bool shouldUninitializeCom = SUCCEEDED(comInit);
+	if (comInit == RPC_E_CHANGED_MODE)
+		comInit = S_OK;
+
+	if (FAILED(comInit))
+	{
+		delete[] wideFileName;
+		return false;
+	}
+
+	IWICImagingFactory* factory = NULL;
+	IWICBitmapDecoder* decoder = NULL;
+	IWICBitmapFrameDecode* frame = NULL;
+	IWICFormatConverter* converter = NULL;
+
+	bool ok = false;
+
+	HRESULT hr = CoCreateInstance(
+		CLSID_WICImagingFactory,
+		NULL,
+		CLSCTX_INPROC_SERVER,
+		IID_PPV_ARGS(&factory));
+
+	if (SUCCEEDED(hr))
+		hr = factory->CreateDecoderFromFilename(
+		wideFileName,
+		NULL,
+		GENERIC_READ,
+		WICDecodeMetadataCacheOnLoad,
+		&decoder);
+
+	if (SUCCEEDED(hr))
+		hr = decoder->GetFrame(0, &frame);
+
+	UINT decodedWidth = 0;
+	UINT decodedHeight = 0;
+	if (SUCCEEDED(hr))
+		hr = frame->GetSize(&decodedWidth, &decodedHeight);
+
+	if (SUCCEEDED(hr))
+		hr = factory->CreateFormatConverter(&converter);
+
+	if (SUCCEEDED(hr))
+		hr = converter->Initialize(
+		frame,
+		GUID_WICPixelFormat32bppRGBA,
+		WICBitmapDitherTypeNone,
+		NULL,
+		0.0,
+		WICBitmapPaletteTypeCustom);
+
+	if (SUCCEEDED(hr) && decodedWidth > 0 && decodedHeight > 0)
+	{
+		const UINT stride = decodedWidth * 4;
+		const UINT imageBytes = stride * decodedHeight;
+		unsigned char* decodedPixels = new unsigned char[imageBytes];
+
+		hr = converter->CopyPixels(NULL, stride, imageBytes, decodedPixels);
+		if (SUCCEEDED(hr))
+		{
+			pixels = decodedPixels;
+			width = decodedWidth;
+			height = decodedHeight;
+			format = FORMAT_RGBA8;
+			ok = true;
+		}
+		else
+		{
+			delete[] decodedPixels;
+		}
+	}
+
+	if (converter) converter->Release();
+	if (frame) frame->Release();
+	if (decoder) decoder->Release();
+	if (factory) factory->Release();
+
+	if (shouldUninitializeCom)
+		CoUninitialize();
+
+	delete[] wideFileName;
+	return ok;
+#else
+	(void)fileName;
+	return false;
+#endif
+}
 
 bool Image::loadTGA(const char *fileName){
 	clear();
@@ -338,39 +482,44 @@ bool Image::loadCompressedTGA(const TGAHeader* header, const unsigned char* mem,
 	int offset = 0;
 	const size_t num_pixels = width * height;
 
-	unsigned char* pixels = new unsigned char[width * height * pixelSize];
+	delete[] pixels;
+	pixels = new unsigned char[width * height * pixelSize];
 
 	while (num_read_pixels < num_pixels) {
 
-		if (len < pixelSize + 1)
+		if (len < pixelSize + 1) {
+			clear();
 			return false;
+		}
 
 		memcpy(p, mem + offset, pixelSize + 1);
 
 		len -= pixelSize + 1;
 		offset += pixelSize + 1;
 
-		mergeBytes(&(pixels[num_read_pixels]), &(p[1]), pixelSize);
+		mergeBytes(&(pixels[num_read_pixels * pixelSize]), &(p[1]), pixelSize);
 		num_read_pixels++;
 
 		unsigned int  j = p[0] & 0x7f;
 		bool is_rle = p[0] & 0x80;
 		if (is_rle) {
-			for (unsigned int i = 0; i < j; i++) {
-				mergeBytes(&(pixels[num_read_pixels]), &(p[1]), pixelSize);
+			for (unsigned int i = 0; i < j && num_read_pixels < num_pixels; i++) {
+				mergeBytes(&(pixels[num_read_pixels * pixelSize]), &(p[1]), pixelSize);
 				num_read_pixels++;
 			}
 		}
 		else {
-			for (unsigned int i = 0; i < j; i++) {
+			for (unsigned int i = 0; i < j && num_read_pixels < num_pixels; i++) {
 
-				if (len < pixelSize)
+				if (len < pixelSize) {
+					clear();
 					return false;
+				}
 				memcpy(p, mem + offset, pixelSize);
 				len -= pixelSize;
 				offset += pixelSize;
 
-				mergeBytes(&(pixels[num_read_pixels]), p, pixelSize);
+				mergeBytes(&(pixels[num_read_pixels * pixelSize]), p, pixelSize);
 				num_read_pixels++;
 			}
 		}

@@ -1,20 +1,11 @@
 /***************************************************************
  * FILENAME: common.fit
- * DESCRIPTION: Shared localized text used across Editor, Viewer, game, or common UI surfaces.
+ * DESCRIPTION: Shared localized text used across Editor, Viewer, game, and common UI surfaces.
  *
- * AUTHOR: Microsoft / FASA source data
- * CREATED: Unknown
+ * CREATED BY: Methuselas
+ * CREATED: 2026-04-30
  *
- * UPDATED BY: Methuselas
- * UPDATED: 2026-05-05
- *
- * CHANGES:
- * - Built collapsed exact-text source string candidates; existing text keys reused when exact text already exists.
  ***************************************************************/
-
-// Generated for MC2R data/defs master FIT set.
-// Exact duplicate visible text is collapsed to one String key.
-// Legacy/resource/menu/control identity is preserved in alias/binding FITs.
 
 String {
     key = "common.text.alpha_mask_0xpercent_8x"

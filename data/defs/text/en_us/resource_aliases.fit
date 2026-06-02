@@ -1,20 +1,11 @@
 /***************************************************************
  * FILENAME: resource_aliases.fit
- * DESCRIPTION: Resource/string/audit key aliases that point old IDs and generated suggested keys to collapsed shared String keys.
+ * DESCRIPTION: Resource and string key aliases mapping legacy IDs and generated keys to canonical String keys.
  *
- * AUTHOR: Microsoft / FASA source data
- * CREATED: Unknown
+ * CREATED BY: Methuselas
+ * CREATED: 2026-04-30
  *
- * UPDATED BY: Methuselas
- * UPDATED: 2026-05-05
- *
- * CHANGES:
- * - Generated collapsed alias map; preserves behavior/resource IDs while sharing identical display text.
  ***************************************************************/
-
-// Generated for MC2R data/defs master FIT set.
-// Exact duplicate visible text is collapsed to one String key.
-// Legacy/resource/menu/control identity is preserved in alias/binding FITs.
 
 ResourceTextAlias {
     resourceId = "IDS_ERROR"

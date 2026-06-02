@@ -92,6 +92,8 @@ public:
 	
 	bool loadTGA(const char *fileName);
 	bool loadBMP(const char *fileName);
+	bool loadJPG(const char *fileName);
+	bool loadPNG(const char *fileName);
 
 	bool loadTGA(FILE* file);
 	bool loadBMP(FILE* file);
@@ -108,6 +110,7 @@ public:
 	unsigned char *getPixels() { return pixels; }
 
 private:
+	bool loadWIC(const char *fileName);
     bool loadTGA(const TGAHeader* header, unsigned char* readPixels);
     bool loadCompressedTGA(const TGAHeader* header, const unsigned char* readPixels, size_t len);
 

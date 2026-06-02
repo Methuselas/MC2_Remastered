@@ -1,20 +1,11 @@
 /***************************************************************
  * FILENAME: viewer.fit
- * DESCRIPTION: Viewer localized text definitions from source-string migration.
+ * DESCRIPTION: Viewer localized text definitions.
  *
- * AUTHOR: Microsoft / FASA source data
- * CREATED: Unknown
+ * CREATED BY: Methuselas
+ * CREATED: 2026-04-30
  *
- * UPDATED BY: Methuselas
- * UPDATED: 2026-05-05
- *
- * CHANGES:
- * - Built collapsed exact-text source string candidates; existing text keys reused when exact text already exists.
  ***************************************************************/
-
-// Generated for MC2R data/defs master FIT set.
-// Exact duplicate visible text is collapsed to one String key.
-// Legacy/resource/menu/control identity is preserved in alias/binding FITs.
 
 String {
     key = "viewer.source.fst"

@@ -1,0 +1,89 @@
+/***************************************************************
+ * FILENAME: manifest.fit
+ * DESCRIPTION: Phase 3 shared Mechlopedia text manifest.
+ * GENERATED: 2026-05-18
+ ***************************************************************/
+
+MechlopediaTextFile {
+    key = "mechlopedia.text.file.ui"
+    path = "data/defs/text/en_us/Mechlopedia/ui.fit"
+    recordCount = 43
+    uniqueLegacyIdCount = 43
+    firstLegacyId = 27000
+    lastLegacyId = 43202
+    description = "Mechlopedia UI labels, headers, help captions, stat formats, and font-reference strings."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+MechlopediaTextFile {
+    key = "mechlopedia.text.file.mechs"
+    path = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    recordCount = 57
+    uniqueLegacyIdCount = 57
+    firstLegacyId = 28904
+    lastLegacyId = 28970
+    description = "Mech names and encyclopedia descriptions."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+MechlopediaTextFile {
+    key = "mechlopedia.text.file.vehicles"
+    path = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    recordCount = 71
+    uniqueLegacyIdCount = 71
+    firstLegacyId = 30077
+    lastLegacyId = 45391
+    description = "Vehicle, copter, infantry, and support-unit names/descriptions."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+MechlopediaTextFile {
+    key = "mechlopedia.text.file.buildings"
+    path = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    recordCount = 67
+    uniqueLegacyIdCount = 66
+    firstLegacyId = 30200
+    lastLegacyId = 45435
+    description = "Building, gate, wall, turret, and field-object names/descriptions."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+MechlopediaTextFile {
+    key = "mechlopedia.text.file.weapons_components"
+    path = "data/defs/text/en_us/Mechlopedia/weapons_components.fit"
+    recordCount = 765
+    uniqueLegacyIdCount = 765
+    firstLegacyId = 32000
+    lastLegacyId = 34254
+    description = "Weapon/component names, abbreviations, short descriptions, and encyclopedia help text."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+MechlopediaTextFile {
+    key = "mechlopedia.text.file.personalities"
+    path = "data/defs/text/en_us/Mechlopedia/personalities.fit"
+    recordCount = 33
+    uniqueLegacyIdCount = 33
+    firstLegacyId = 45300
+    lastLegacyId = 45350
+    description = "Personality names, biographies, and portrait references."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+MechlopediaTextFile {
+    key = "mechlopedia.text.file.history"
+    path = "data/defs/text/en_us/Mechlopedia/history.fit"
+    recordCount = 15
+    uniqueLegacyIdCount = 15
+    firstLegacyId = 45360
+    lastLegacyId = 45385
+    description = "History article titles, descriptions, and image references."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+MechlopediaTextPackage {
+    key = "mechlopedia.text.package.phase3"
+    recordCount = 1051
+    rootBridge = "data/defs/text/en_us/mechlopedia_text_bridge.fit"
+    notes = "Subfolder files are the organized source; root bridge exists for current non-recursive MC2Strings loading."
+}
