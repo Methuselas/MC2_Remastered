@@ -1,0 +1,120 @@
+# MC2 Asset Pipeline & Inventory
+
+> **This is the canonical asset reference.** It catalogs every asset type — where
+> it lives, how it loads, its resolution / vertex budget, whether it has been
+> upscaled/cooked, and who *owns* it on the **render** side vs the **gamedata**
+> side. It also documents the upscale → cook → deploy pipeline.
+>
+> **Last verified:** 2026-06-02 (against `claude/nifty-mendeleev`, deploy `mc2-win64-v0.4`).
+> **Maintenance:** see [§7 Keeping this current](#7-keeping-this-current). Update this
+> doc whenever you add/remove/re-cook/upscale an asset set, change a loader, or change
+> the cook/upscale pipeline. `scripts/check-asset-pipeline-doc.sh` flags drift.
+
+---
+
+## 1. Master inventory
+
+| Type → subtype | Location / format | Loader (file:line) | Size / res | Upscaled? | Render owner | Gamedata owner |
+|---|---|---|---|---|---|---|
+| **Terrain — colormap/splat** | deploy `data/textures/*.ktx2`+`.txm` (~7,822 root); src `.burnin.tga` 5120² | `mclib/terrtxm2.cpp:1613-1695` (ktx2 sidecar probe) → `gos_terrain_indirect.cpp:867` BC7 upload | 5120² atlas (4× from 1280²) | **Yes** (4× ESRGAN; `release_assets/0.3/mc2-burnins-4x-pt1/2.zip`, 2.3 GB) | `gos_terrain_indirect.cpp` (atlas bake + indirect draw) | `terrtxm2.cpp TerrainColorMap::init`; mission `.pak` |
+| **Terrain — detail/normal** | `data/textures/{32,64,128,256}/detail_*.tga` (~20) | `terrtxm2.cpp:1814` → `shaders/gos_terrain.frag:44-48` (POM) | 64²→128²/256² | Yes | `gameos_graphics.cpp` terrain shader | `txmmgr.cpp` / TerrainColorMap |
+| **Terrain — water** | `data/textures/{tier}/water_ocean.tga` + 64-frame anim | `terrtxm2.cpp:1836-1895` → `gameos_graphics.cpp:2617` | 64²→256² | Base yes | water fast-path (`gameos_graphics.cpp`) | TerrainColorMap; mission `.pak` |
+| **Terrain — masks/overlays** | `data/textures/{tier}mask/` (126×4), `{tier}Overlays/` (475×4) | indirect cement atlas `gos_terrain_indirect.cpp:4140` | 64²→256² | Yes | indirect overlay packer | `mapdata.cpp`/`quad.cpp` |
+| **Terrain — heightmap** | runtime GL tex (R32F) rebuilt from quad verts; src `mc2srcdata/terrain/*.tga` | `gos_terrain_height_tex.cpp:38` | mission grid (≈128²/256²) | n/a (procedural) | terrain vert shader (sampler unit 11) | `terrain.cpp`/`quad.cpp` (mission `.pak`) |
+| **Static prop — geometry** (buildings ~2760, trees ~65, turrets ~111) | src `mc2srcdata/tgl/*.ase` (2,947); compiled `.tgl` → **`tgl.fst`** (33 MB) | `mclib/msl.cpp:563 LoadTGMultiShapeFromASE`; `bdactor.cpp:217/3391` | verts/tris in `.tgl` (`TG_TypeVertex` 28B `tgl.h:35`; `TG_TypeTriangle` 64B `tgl.h:121`) | n/a (geometry) | **`GpuStaticPropBatcher`** (`gos_static_prop_batcher.cpp:143`) | `BldgAppearanceType`/`TreeAppearanceType` (`bdactor.cpp`) |
+| **Static prop — textures** | deploy `data/tgl/{128,256,512,1024}/*.ktx2` (BC7) | `gos_static_prop_batcher.cpp:830/2435` (path) → `RenderCore/KtxLoader` | 128 base; **256/512/1024 tiers** (cook 2026-06-02) | **Yes** (src 512/1024 in `mc2-tgl.zip`) | GpuStaticPropBatcher | BldgAppearance |
+| **Mech — geometry** (13 src) | `mc2srcdata/tgl/*.ini`+`.ase`; only madcat deployed | `mclib/mech3d.cpp:239-387 init`; `gos_mech_batcher`; `GameAdapters/MechRenderAdapter.cpp:48` | verts via ASE `NUM_VERTEX` (`tgl.cpp:886`); 3 LODs, 25 anims | partial (4× archives) | `mech3d.cpp` (engine appearance) + `gos_mech_batcher` | `code/mech.cpp` BattleMech (game AI) |
+| **Mech — textures** | `mc2srcdata/textures/*.txm` (paint-hash) → `data/tgl/{tier}/*.ktx2` | `mech3d.cpp:1941 resetPaintScheme` → `txmmgr.cpp` | 128–1024 bucket; 27-bit paint instance | Yes (`art_4x_gpu`/BC7) | `txmmgr.cpp`; `RenderCore::MechVisualState` | BattleMech |
+| **Vehicles** (7 src) | `mc2srcdata/tgl/*.ini`+`.ase`, `objects/*.fit`; **not deployed in v0.4** | `mclib/gvactor.cpp:151 GVAppearanceType::init` (mirrors mech) | 3 LODs, 10 anims | — | `GVAppearance` (`gvactor.cpp`) | `code/gvehicl.cpp GroundVehicle` |
+| **VFX — GPU particles** | procedural SSBO (no disk tex); 64B `GpuParticle` | `gos_particle_bridge.cpp`; `mclib/particles/batcher.cpp`; `shaders/particle_billboard.{vert,frag}` | 64B/particle; atlas frames | n/a | `gos_particle_bridge_flush` | `code/weaponbolt.cpp`; `particles/spawn_*` |
+| **VFX — gosFX cards/clouds** | `data/effects/mc2.fx` (~900 KB #XFG); MLR tex pool | `mclib/gosfx/cardcloud.cpp:18`; `mlr/mlrcardcloud.cpp` (CPU legacy) | world-unit cards + UV curves | no | `particle_billboard` (GPU) / MLRCardCloud (CPU) | `weaponbolt` fire/hit/miss IDs |
+| **VFX — GPU trails** | procedural; `mclib/particles/gpu_trail.{h,cpp}` | `weaponbolt.cpp:1660 GpuTrailEmitter::Spawn` | density/m; MLR tex | no | particle bridge | weaponbolt (missile smoke/PPC) |
+| **VFX — burn-ins** | `.burnin.tga/.jpg` per mission; (also terrain colormap) | `mclib/burnin_jpeg_decode.cpp:25`; `terrtxm2.cpp:94` | 5120² | Yes (4× release zips) | terrain splat | mission load |
+| **UI/HUD art** | `data/art/` (~301 MB), `art/gui/` (531) `.tga`/`.png`; `art.fst` (24 MB) | `ui_editor/UiEditorImageCache.cpp:18`; `GuiRuntime/GuiRuntime.cpp`; legacy `code/controlgui.cpp` | menus 1024² TGA; HUD 256²/128² PNG | **Yes** (`mc2-art.zip` 1024/512) | GuiRuntime (ImGui) + legacy UI | `missiongui`/`campaigngui` |
+| **Fonts** | `data/defs/ui/fonts/*.fit` → `.d3f` v1/v4 (8-bit alpha) | `GameOS/gameos/gos_font.cpp:11/234` | atlas ≤4096²; ~256 glyphs | no (rasterized) | `gos_font.cpp` | UI text |
+| **Movies** | `data/movies/*.BIK` (185, 100 MB); `mc2-movies.zip` | `code/controlgui.cpp:152 playMovie`; ffmpeg headers | ~640×480/800×600 Bink | no | `MC2MoviePtr` player | mission scripting |
+| **Audio** | `data/sound/` (314, 200 MB) WAV + `betty.pak` voice | `GameOS/gameos/gameos_sound.cpp` (SDL2_mixer); `code/gamesound.h` | PCM WAV; SFX IDs `sounds.h` | n/a | `gameos_sound.cpp` (SDL2; no GPU) | `GameSoundSystem` |
+| **Mission/game data** | `mission.fst` (19 MB) `.fit`; `*.pak` terrain; `mc2-gamedata.zip` | `code/mission.cpp:1739 init`; `ObjectManager::loadTerrainObjects` | text INI / binary pak | n/a | — | `code/mission.cpp`, `logistics.cpp` |
+| **Save data** | `data/missions/save.fit` (text FIT) | `code/logistics.cpp:208/216` | INI | n/a | — | `LogisticsData` |
+
+> Per-model vertex/triangle counts are not enumerated here (they live in `.tgl`
+> binaries / ASE `NUM_VERTEX`). Run a header-parse pass over `mc2srcdata/tgl/*.ase`
+> if a vertex/tri budget histogram is needed.
+
+## 2. Archive / packaging formats
+
+- **FST FastFiles** (`mclib/fastfile.cpp`, `ffile.cpp`; ELF-hash directory). Deployed (~1.4 GB): `tgl.fst` (props 33M), `textures.fst` (176M), `art.fst` (24M), `mission.fst` (19M), `effect.fst`, `insignia.fst`, `misc.fst`, `camera.fst`. Built by `data_tools/makefst.cpp`.
+- **PAK** (`data_tools/pak.cpp`) — terrain/object binary; per-mission `*.pak`.
+- **FIT** (`mclib/inifile.h FitIniFile`) — text INI: missions, UI layouts, saves.
+
+## 3. Ownership split (render vs gamedata)
+
+| Domain | Render-side owner | Gamedata-side owner |
+|---|---|---|
+| Static props | `GpuStaticPropBatcher` (`gos_static_prop_batcher.cpp`) | `BldgAppearance`/`TreeAppearance` (`bdactor.cpp`) |
+| Mechs | `mech3d.cpp` + `gos_mech_batcher` + `MechRenderAdapter` | `code/mech.cpp BattleMech` |
+| Vehicles | `GVAppearance` (`gvactor.cpp`) | `code/gvehicl.cpp GroundVehicle` |
+| Terrain | `gos_terrain_indirect.cpp` + `gameos_graphics.cpp` | `terrain.cpp`/`terrtxm2.cpp` + mission `.pak` |
+| VFX | `gos_particle_bridge` / `particle_billboard` / MLR | `code/weaponbolt.cpp` + `gosfx` specs |
+| Textures (all) | `mclib/txmmgr.cpp` + `RenderCore/KtxLoader` | (asset-specific appearance) |
+| Text | `gos_font.cpp` | UI code |
+| Audio | `gameos_sound.cpp` (SDL2) | `GameSoundSystem` |
+
+## 4. Texture runtime path (disk → GPU)
+
+- `mclib/txmmgr.cpp:3426-3521` — if `MC2_TEXMGR_COMPRESSED_UPLOAD` and a same-stem
+  `.ktx2` sidecar exists: `RenderCore::ktxLoadRgba8` → validate BC7 (vkFormat 145/146)
+  → `gos_NewCompressedTexture2D` (`GL_COMPRESSED_[SRGB_ALPHA|RGBA]_BPTC_UNORM`, mip 0)
+  → else RGBA8 fallback.
+- **KTX2 support** (`RenderCore/KtxLoader.cpp`): RGBA8 (37/43) + BC7 (145/146), stored
+  (no Basis/supercompression). Constraints: typeSize=1, depth=0, faceCount=1, level≥1.
+
+## 5. Upscale → cook → deploy pipeline
+
+**Upscale** (4×, source TGA → upscaled TGA/PNG), root scripts:
+- `upscale_gpu.py` — Real-ESRGAN (realesrgan-ncnn-vulkan), GPU; art/ & tgl/.
+- `upscale_pytorch.py` — ESRGAN/SwinIR/HAT (ROCm/CUDA).
+- `upscale_stablesr.py`, `upscale_ui_textures.py`, `upscale_textures.py` — variants.
+- `deploy_256.py`, `deploy_colormaps.py` — upscaled → TGA mip chain / colormap deploy.
+
+**Cook** (TGA/PNG → KTX2, BC7 via KTX-Software CLI `A:/Games/mc2-tools/ktx/ktx.exe`):
+- `tools/mc2texcook/mc2texcook.py` — single-file; presets albedo(sRGB), normal/orm/mask/emissive(UNORM).
+- `tools/mc2texcook/batch_cook.py` — batch tree cook (`--src --dst --preset --bc7 [--no-mips]`); cooks at **native** source res (no resize).
+- `tools/mc2texcook/cook_tgl_tiers.py` — **multi-resolution tier cook** from the release `mc2-tgl.zip` → BC7 KTX2 into `data/tgl/{256,512,1024}`. Caps the longest edge per tier; **never upscales** (a 512 source in the 1024 tier stays 512). Example:
+  ```
+  py -3 tools/mc2texcook/cook_tgl_tiers.py \
+      --zip A:/Games/mc2-opengl-src/release_assets/0.3/mc2-tgl.zip \
+      --deploy A:/Games/mc2-opengl/mc2-win64-v0.4/data/tgl --tiers 256,512,1024 [--test]
+  ```
+
+**Tier convention:** numeric sibling folders (`64/128/256/512/1024`) under a texture
+set. The asset viewer's tier switcher (and any tiered loader) treats these as the
+resolution ladder; only tiers present on disk are offered.
+
+## 6. Upscale / cook status (as of last-verified)
+
+| Set | Upscaled sources | Cooked tiers deployed |
+|---|---|---|
+| Terrain colormaps | ✅ 4× burn-ins (release zips) | ✅ BC7 atlas (108→27 MB) |
+| **Static-prop tgl textures** | ✅ 512/1024 in `mc2-tgl.zip` | 128 base; **256/512/1024 cooked 2026-06-02** |
+| Mech textures | ✅ 4× archives | partial (bucketed 128–1024) |
+| Terrain detail/overlay | ✅ | 64/128/256 |
+| UI/menu art | ✅ 1024/512 (`mc2-art.zip`) | loose TGA/PNG (no BC7 tier yet) |
+| VFX / fonts / heightmap / movies / audio | n/a | n/a |
+
+**Originals are 128².** Deployed `tgl/128` cooks were made from the 128 originals;
+the 512/1024 `.tga` in the release zips are prior **upscale results** (packaged into
+`mc2-tgl.zip`, not loose in the working tree).
+
+## 7. Keeping this current
+
+Update this document when you:
+- add / remove / rename an asset set, or change where it deploys;
+- re-cook or upscale a set (record the new tiers in §1 + §6);
+- change a loader, archive format, or the cook/upscale scripts (§4/§5);
+- change render-side or gamedata-side ownership (§3).
+
+`scripts/check-asset-pipeline-doc.sh` is an advisory pre-commit check: it warns when a
+commit touches asset directories, cook/upscale scripts, or known asset loaders without
+also updating this file. Wire it into `.git/hooks/pre-commit` (or the project hook) to
+enforce. Bump the **Last verified** date in the header when you re-audit.
