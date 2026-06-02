@@ -2658,6 +2658,17 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                 const char* srcName = mcTextureManager->getTextureName(u.nodeIdx);
                 if (srcName && *srcName) {
                     const std::string ormPath = deriveOrmSidecar(srcName);
+                    // STATICPROP-ORM-VISUAL-CHECK-1: observability — log every ORM
+                    // unique probed (src path + expected sidecar + dims) so an
+                    // operator can author/place a matching .orm.ktx2. Gated; off by default.
+                    static const bool s_ormProbeTrace =
+                        (getenv("MC2_STATICPROP_ORM_TRACE") != nullptr);
+                    if (s_ormProbeTrace) {
+                        std::fprintf(stderr,
+                            "[STATICPROP_ORM_PROBE] group=%u layer=%zu dims=%dx%d src=%s sidecar=%s\n",
+                            (unsigned)group, k, bw, bh, srcName, ormPath.c_str());
+                        std::fflush(stderr);
+                    }
                     RenderCore::KtxImage img;
                     const bool loadOk = RenderCore::ktxLoadRgba8(ormPath.c_str(), img);
                     // Reject compressed sidecars (block bytes are not RGBA8) and
