@@ -20,6 +20,7 @@ public:
     static int runSmokePreview(const char* fixtureDir);
     static int runSmokeFit();
     static int runSmokeTiers(const char* fixtureDir);
+    static int runSmokeSphere();   // validates SphereMesh geometry + tangent basis
 private:
     FileBrowser browser_;
     AssetTypeSidebar sidebar_;

@@ -38,6 +38,9 @@ int main(int argc, char* argv[])
     if (argc >= 2 && strcmp(argv[1], "--smoke-tiers") == 0)
         return AssetViewerApp::runSmokeTiers(argc >= 3 ? argv[2] : ".");
 
+    if (argc >= 2 && strcmp(argv[1], "--smoke-sphere") == 0)
+        return AssetViewerApp::runSmokeSphere();
+
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0)
     {
         printf("SDL_Init error: %s\n", SDL_GetError());

@@ -3,6 +3,7 @@
  * DESCRIPTION: Top-level application class for mc2_asset_viewer.
  ***************************************************************/
 #include "AssetViewerApp.h"
+#include "SphereMesh.h"
 #include "UiEditorImageCache.h"
 #include "imgui.h"
 #include "TextureExtensions.h"
@@ -279,6 +280,34 @@ int AssetViewerApp::runSmokeTiers(const char* dir)
     if (fb.hasSelection())                    return smokeFail("selection should drop when file absent in new tier");
 
     std::printf("[smoke] PASS tiers (detect/switch/continuity)\n");
+    return 0;
+}
+
+int AssetViewerApp::runSmokeSphere()
+{
+    // CPU-only: no GL context required.
+    SphereMesh m;
+    m.generate(1.0f, 32, 64);
+    const auto& v = m.vertices();
+    const auto& idx = m.indices();
+    if (v.empty() || idx.empty()) { printf("[smoke] FAIL: empty mesh\n"); return 1; }
+    if (idx.size() % 3 != 0)      { printf("[smoke] FAIL: index count not triangulated\n"); return 1; }
+
+    for (const auto& sv : v) {
+        // position is on the unit sphere
+        float pr = std::sqrt(sv.px*sv.px + sv.py*sv.py + sv.pz*sv.pz);
+        if (std::fabs(pr - 1.0f) > 1e-3f) { printf("[smoke] FAIL: vertex off sphere (r=%f)\n", pr); return 1; }
+        // normal is unit length and equals the position direction (unit sphere)
+        float nl = std::sqrt(sv.nx*sv.nx + sv.ny*sv.ny + sv.nz*sv.nz);
+        if (std::fabs(nl - 1.0f) > 1e-3f) { printf("[smoke] FAIL: non-unit normal\n"); return 1; }
+        // tangent is unit length, perpendicular to the normal, handedness is +/-1
+        float tl = std::sqrt(sv.tx*sv.tx + sv.ty*sv.ty + sv.tz*sv.tz);
+        if (std::fabs(tl - 1.0f) > 1e-3f) { printf("[smoke] FAIL: non-unit tangent\n"); return 1; }
+        float ndott = sv.nx*sv.tx + sv.ny*sv.ty + sv.nz*sv.tz;
+        if (std::fabs(ndott) > 1e-2f) { printf("[smoke] FAIL: tangent not perpendicular to normal (%f)\n", ndott); return 1; }
+        if (std::fabs(std::fabs(sv.tw) - 1.0f) > 1e-3f) { printf("[smoke] FAIL: handedness not +/-1\n"); return 1; }
+    }
+    printf("[smoke] PASS sphere verts=%zu tris=%zu\n", v.size(), idx.size()/3);
     return 0;
 }
 
