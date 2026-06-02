@@ -57,6 +57,16 @@ void beginMissionLate(const char* missionName);
 void endMissionEarly();
 void endMissionLate();
 
+// Thin RenderWorld init/destroy seam. PRE-EXISTING public API retained for
+// the EDITOR (editor/EditorData.cpp): the editor drives onMapLoad /
+// GpuStaticPropRegistry::init / onMapUnload / destroy ITSELF and only needs
+// the RenderWorld seam (it has no mission name, so it skips setMissionForIbl).
+// The GAME lifecycle uses beginMissionEarly()/beginMissionLate() +
+// endMissionEarly()/endMissionLate() instead — do NOT call these two from the
+// game path (they would double-init RenderWorld).
+void beginMission();   // == RenderWorld::init()
+void endMission();     // == RenderWorld::destroy()
+
 // Post-spawn geometry finalisation. Absorbs the direct
 // GpuStaticPropBatcher::instance().finalizeGeometry() call previously
 // made in code/mission.cpp and code/saveload.cpp.
