@@ -84,7 +84,27 @@ Deploy manifest restored to `{"overrides":[]}` (install not left modded). Trace 
 
 Limitation: unit-cube box is tiny at MC2 world scale, so the override reads as "prop disappeared" rather than "prop is a visible box". The render-replacement is nonetheless proven by the hangar's disappearance + the applied logs. A larger box asset would make it visually obvious (deferred; not needed for proof).
 
-## Slice 4 — TREE-MODEL-OVERRIDE-PROOF — RENDER BLOCKED (root cause found)
+## Slice 4 — TREE-MODEL-OVERRIDE-PROOF — RENDERS ✅ (override trees draw in-game)
+
+**RESOLVED 2026-06-02.** Override trees render in-game via the GPU static-prop batcher, collision stays stock (dual-shape), exit 0, 0 GL errors. Confirmed on v0.4 / mc2_01 with the real PBR `tree_small.glb` (42k-tri, 20×): `registry loaded: 6`, all 6 tree types `render override applied`, pools 78% of 16M (fits), trees visible across the map (`.claude/slice4_forest_final.png`).
+
+### What made it work
+1. **Register the override RENDER shape into the batcher BEFORE `finalizeGeometry`** — added `registerMultiShape(getBldg/TreeRenderShape(i))` at the TOP of `BldgAppearance::registerStatic` / `TreeAppearance::registerStatic` (`bdactor.cpp`). The mission-load pre-pass (`registerStaticPropsForMissionLoad`, default-on) runs before `StaticProp::finalizeGeometry` (mission.cpp:3198), so the override type-shapes enter the immutable VBO (`s_typeIndex`) and `buildRecipeFromShape` succeeds → GPU-instanced draw. (The 2 `[GPUPROPS] late registerType` lines are unrelated pre-existing stock types — verified: their pointers don't match any override leaf.)
+2. **Pool caps sized for override forests** — `code/mission.cpp` pools 16M (vertex/color/shadow) / 8M (face/triangle), `mission2.cpp` startVertices 16M, `MC_MAXFACES` 8M. Per-instance lighting/transform buffers scale with override mesh complexity × instances; the detailed tree (~21k verts × ~147 instances of the 6 overridden types) peaks ~12.6M.
+3. **gltfpack for mesh weight** — built the vendored `gltfpack` (`3rdparty/meshoptimizer/gltf/gltfpack.cpp`; standalone build in `.claude/gltfpack_build`). `gltfpack -si 0.1 -sa -kn` crushes leaf-card foliage (which Blender collapse-decimate can't) → `tree_light.glb` (~4.3k tris) for cases needing many instances. The detailed `tree_small.glb` (42k) also fits the 16M pools.
+
+### CRITICAL debugging lesson (cost hours)
+A hung `mc2.exe` (validate process that didn't exit) held a **lock on the deployed `mc2.exe`**, so `cp`/`Copy-Item` of new builds **silently failed** → runs used a STALE exe → intermittent "no override / no trees" that looked like code bugs. Fix: `taskkill /F /IM mc2.exe /T` before every deploy-copy, and verify the copy. Also: `strings` is broken in this env (0 output) and bash `grep` mis-reads the UTF-16 stderr logs — use PowerShell `Select-String` for engine logs.
+
+### Remaining polish (not blockers)
+- **Untextured** → trees render dark (geometry only; importer sets texture NAMES, MC_TextureManager resolves by name — the glTF's embedded leaf/bark textures aren't wired into MC2's texture set). Material/texture binding is a follow-on.
+- **Leaf alpha**: tree leaf material is glTF BLEND (engine supports MASK/alpha-test only) — set CLIP in the Blender export; full leaf cutout needs the leaf texture's alpha bound.
+- **Perf**: detailed tree × instances → avg ~66ms (heavy per-instance lighting). Lighter tree (gltfpack) or a GPU per-instance-lighting path (avoids per-vertex pool storage) is the perf follow-on.
+- Add a **model-override** row to `docs/asset-pipeline.md` (§7 mandate) once finalized.
+
+---
+
+## (superseded) earlier RENDER-BLOCKED analysis — kept for history
 
 Tree asset: real PBR tree `tree_small_02_1k.gltf` (user-supplied) → Blender headless decimate (`.claude/tree_export.py`) → `data/model_overrides/source/trees/tree_small.glb`. Decimate floored at ~42,885 tris (leaf cards are disconnected quads — collapse-decimate can't reduce; **meshopt_simplifySloppy / gltfpack would** — vendored at `3rdparty/meshoptimizer`, CLI `gltf/gltfpack.cpp`). Leaf material set CLIP/MASK.
 

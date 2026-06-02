@@ -3300,23 +3300,26 @@ void Mission::initTGLForMission()
 		// shape whose getVerticesFromPool hit NULL (tgl.h:1022). That
 		// manifested as "half the mechs don't render" because mechs
 		// iterate AFTER buildings and got the empty pool.
-		// MODEL-OVERRIDE: pools 10x'd. The old 500k/200k caps were CPU-era
-		// limits; static props/trees are GPU-batched now, and modder model
-		// overrides can carry far heavier per-type geometry. Headroom > caps.
+		// MODEL-OVERRIDE: pools sized for modder model overrides. The old
+		// 500k/200k caps were CPU-era limits; per-instance vertex/color/shadow
+		// storage scales with override mesh complexity x instance count (e.g.
+		// ~1000 trees x ~12k verts = ~12M). Static props/trees are GPU-batched,
+		// but the per-instance lighting/transform buffers still draw from these
+		// pools. Sized to fit a detailed-tree forest with headroom.
 		colorPool 		= new TG_VertexPool;
-		colorPool->init(5000000);
+		colorPool->init(16000000);
 
 		vertexPool 		= new TG_GOSVertexPool;
-		vertexPool->init(5000000);
+		vertexPool->init(16000000);
 
 		facePool 		= new TG_DWORDPool;
-		facePool->init(2000000);
+		facePool->init(8000000);
 
 		shadowPool 		= new TG_ShadowPool;
-		shadowPool->init(5000000);
+		shadowPool->init(16000000);
 
 		trianglePool 	= new TG_TrianglePool;
-		trianglePool->init(2000000);
+		trianglePool->init(8000000);
 	}
 
 	loadProgress += 4.0f;

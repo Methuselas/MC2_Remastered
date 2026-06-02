@@ -4611,6 +4611,15 @@ void TreeAppearance::registerStatic() {
 	for (int i = 0; i < MAX_LODS; ++i)
 		GpuStaticPropBatcher::instance().registerMultiShape(appearType->getTreeRenderShape(i));
 
+	if (getenv("MC2_MODOVERRIDE_TRACE") && appearType->treeRenderShape) {
+		TG_TypeMultiShape* rs = appearType->treeRenderShape;
+		fprintf(stderr, "[MODOVERRIDE_TRACE] tree registerStatic name=%s renderShape=%p numShapes=%ld leaf0=%p leaf1=%p\n",
+		        appearType->name, (void*)rs, rs->GetNumShapes(),
+		        rs->GetNumShapes() > 0 ? (void*)rs->GetTypeNode(0) : nullptr,
+		        rs->GetNumShapes() > 1 ? (void*)rs->GetTypeNode(1) : nullptr);
+		fflush(stderr);
+	}
+
 	// Compute transform — same coordinate convention as TreeAppearance::update().
 	// yaw includes the per-instance yaw offset (matches first-render path exactly).
 	float yawAngle = (rotation * DEGREES_TO_RADS) + (yaw * DEGREES_TO_RADS);
