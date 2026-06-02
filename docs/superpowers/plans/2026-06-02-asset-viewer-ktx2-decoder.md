@@ -76,6 +76,10 @@ struct ITextureDecoder {
     // extLower is the lowercased extension WITHOUT the dot, e.g. "ktx2".
     virtual bool          handles(const std::string& extLower) const = 0;
     virtual DecodedTexture load(const std::string& path) const = 0;
+    // All lowercased extensions (without dot) this decoder handles. Drives the
+    // registry's supportedExtensions() so the seam stays pluggable (no central
+    // probe list). [added during Task 1 code review]
+    virtual std::vector<std::string> extensions() const = 0;
 };
 
 // Lowercased extension without the dot ("a/b.KTX2" -> "ktx2"; "noext" -> "").
@@ -119,6 +123,7 @@ class LegacyImageDecoder : public ITextureDecoder {
 public:
     bool          handles(const std::string& extLower) const override;
     DecodedTexture load(const std::string& path) const override;
+    std::vector<std::string> extensions() const override;   // {"png","jpg","jpeg","bmp","tga"}
 };
 ```
 
@@ -384,6 +389,7 @@ class Ktx2Decoder : public ITextureDecoder {
 public:
     bool          handles(const std::string& extLower) const override;
     DecodedTexture load(const std::string& path) const override;
+    std::vector<std::string> extensions() const override;   // {"ktx2"}
 };
 ```
 
