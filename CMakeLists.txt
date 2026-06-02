@@ -524,7 +524,12 @@ endif()
 add_subdirectory("./res" "./out/res")
 add_subdirectory("./data_tools" "./out/data_tools")
 add_subdirectory("./text_tool" "./out/text_tool")
-add_subdirectory("./Viewer" "./out/Viewer")
+# TEMP (merge-methuselas throwaway): @Methuselas's Viewer/CMakeLists.txt lists
+# ImGui-conversion sources (ViewerHostGlobals/Imgui/GuiFit/FontCatalog/
+# TextureLoader.cpp) that are NOT committed to methuselas/main -- one missing
+# source fails the whole CMake generate step. Disabled so ui_editor + mc2 can
+# build. Re-enable once those sources land. Not a real fix; do not upstream.
+# add_subdirectory("./Viewer" "./out/Viewer")
 
 # MC2 Mission Editor (MFC/Windows-only). editor/CMakeLists.txt guards
 # itself with if(NOT MSVC) return() so this is safe on all platforms.
