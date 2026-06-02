@@ -851,8 +851,14 @@ void BldgAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 		// cheap. Covers all LOD base shapes plus destroyed/damaged variants
 		// and their shadow proxies. Registration happens after texture
 		// handles are resolved so packets capture the correct GL handle.
+		// MODEL-OVERRIDE: register the RENDER shape (override-or-stock) so the
+		// batcher's s_typeIndex holds the override type-shapes that the
+		// per-instance bldgShape (CreateFrom'd from getBldgRenderShape) submits
+		// against. Registering the stock shape here would make submit() miss
+		// (render type-shape not in s_typeIndex) -> CPU-fallback/cull, and the
+		// override would never rasterize. Damage stays stock (out of MVP).
 		for (int i = 0; i < MAX_LODS; ++i)
-			GpuStaticPropBatcher::instance().registerMultiShape(appearType->bldgShape[i]);
+			GpuStaticPropBatcher::instance().registerMultiShape(appearType->getBldgRenderShape(i));
 		GpuStaticPropBatcher::instance().registerMultiShape(appearType->bldgDmgShape);
 	}
 }
@@ -2629,6 +2635,16 @@ void BldgAppearance::registerStatic() {
 	if (!GpuStaticPropRegistry::isEnabled()) return;
 	if (!isStaticEligible())  return;
 
+	// MODEL-OVERRIDE: register the RENDER shape geometry into s_typeIndex HERE,
+	// in the mission-load pre-pass (runs before StaticProp::finalizeGeometry).
+	// An override type-shape otherwise first registers late in per-instance
+	// init() -> buildRecipeFromShape() below misses s_typeIndex -> aborts to the
+	// CPU first-render fallback, which is catastrophic with ~1k tree instances
+	// (per-instance pool copies overflow). Idempotent for stock (already
+	// registered). getBldgRenderShape == stock when no override is present.
+	for (int i = 0; i < MAX_LODS; ++i)
+		GpuStaticPropBatcher::instance().registerMultiShape(appearType->getBldgRenderShape(i));
+
 	// Compute transform — same coordinate convention as BldgAppearance::update().
 	// At mission-load time position.z may not yet hold terrain elevation (set by
 	// bldng.cpp:810 on first update), so use getTerrainElevation() directly.
@@ -3776,9 +3792,11 @@ void TreeAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 			appearType->typeLowerRight = treeShape->GetMaxBox();
 		}
 
-		// GPU static-prop batcher: register this tree's type shapes + variants.
+		// GPU static-prop batcher: register the RENDER shape (override-or-stock)
+		// so override geometry actually rasterizes (see BldgAppearance reg site
+		// for the s_typeIndex rationale). Damage stays stock (out of MVP).
 		for (int i = 0; i < MAX_LODS; ++i)
-			GpuStaticPropBatcher::instance().registerMultiShape(appearType->treeShape[i]);
+			GpuStaticPropBatcher::instance().registerMultiShape(appearType->getTreeRenderShape(i));
 		GpuStaticPropBatcher::instance().registerMultiShape(appearType->treeDmgShape);
 	}
 
@@ -4586,6 +4604,12 @@ void TreeAppearance::registerStatic() {
 	if (staticReg.registered) return;
 	if (!treeShape)           return;
 	if (!GpuStaticPropRegistry::isEnabled()) return;
+
+	// MODEL-OVERRIDE: register render-shape geometry before finalizeGeometry
+	// (see BldgAppearance::registerStatic for full rationale — late init() reg
+	// otherwise drops ~1k override trees to the CPU first-render path).
+	for (int i = 0; i < MAX_LODS; ++i)
+		GpuStaticPropBatcher::instance().registerMultiShape(appearType->getTreeRenderShape(i));
 
 	// Compute transform — same coordinate convention as TreeAppearance::update().
 	// yaw includes the per-instance yaw offset (matches first-render path exactly).

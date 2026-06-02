@@ -62,7 +62,9 @@ Reader audit table written (gate cleared). Key refinement vs raw audit: two `bld
 ### Open for Slice 3 (flagged by quality review)
 - GPU static-prop batcher registers the stock TYPE shape at setObjStatus, not `bldgRenderShape`. The per-instance render shape (CreateFrom result) is what draws, so likely fine — but confirm the override actually renders in the Slice 3 applied-override smoke (render-completeness, not collision).
 
-## Slice 3 — STATICPROP-MODEL-OVERRIDE-PROOF — PROVEN (runtime)
+## Slice 3 — STATICPROP-MODEL-OVERRIDE-PROOF — PARTIAL (plumbing proven, RENDER INCOMPLETE)
+
+**Verdict:** the override RESOLVE + IMPORT + dual-shape collision-safety path all work and the engine is stable (exit 0, 0 GL errors), BUT the override geometry is NOT yet rasterized — the GPU static-prop batcher draws the stock type shape (see Visual CORRECTION below). Remaining work: register the render shape into the batcher.
 
 Runtime validated on the canonical runtime **`A:/Games/mc2-opengl/mc2-win64-v0.4`**, mission **`mc2_01`** (the validate-skill default `mis0101` does not exist in any deploy dir; the project smoke harness `scripts/run_smoke.py` uses `mc2_01` on v0.4 — that is the real target). Built full `mc2` (0 errors) and deployed exe+pdb+dlls+63 shaders + `data/model_overrides/`.
 
@@ -73,7 +75,7 @@ Discovery: added env-gated `MC2_MODOVERRIDE_TRACE` log of every staticProp/tree 
 Proof run (manifest overriding 14 real props → box, `MC2_MODOVERRIDE_TRACE` off):
 - **All 14 `[MODOVERRIDE] staticProp 'X': render override applied`** (crateswithtarp, dumpster, geodesicdome, hangar, hqtent, junkpile, lookouttower, Quonset, quonset2, sandbagbunker, sandbagwall, tent, wirefence, woodencrates).
 - `--validate --frames 30 -mission mc2_01` → **exit 0, gl_errors=[], shader_errors=[]**, avg 11.4ms. No destroys, no crash.
-- **Visual (render-completeness CONFIRMED):** stock screenshot `.claude/slice3_stock.png` shows the large hangar/quonset complex right of the runway; override screenshot `.claude/slice3_override.png` shows it GONE (replaced by the unit-cube box, invisible at world scale). Terrain, trees, runway, non-overridden center vehicle props identical. → **the per-instance override render shape DOES reach the GPU batcher** — resolves the Slice-2 quality-review render-completeness flag (batcher draws the per-instance shape, not the stock type shape).
+- **Visual — CORRECTION (initial conclusion was WRONG):** the hangar VANISHED in the override shot, and I first read that as "box rasterized." It is NOT. The GPU static-prop batcher (`g_useGpuObjects`/`static_prop_registry` ON) draws the **registered STOCK type shape** — `registerMultiShape(appearType->bldgShape[i])` at `bdactor.cpp:855` (trees: `treeShape[i]` at `:3781`). The dual-shape override fills `bldgRenderShape`/`treeRenderShape` + the per-instance shape, but the **batcher never registers the render shape**, so the override geometry is never rasterized. The hangar disappeared because the override shrank the per-instance render bounds → the actor was culled / drew degenerate — NOT because the box was drawn. **The Slice-2 quality-review render-completeness flag is CONFIRMED OPEN, not resolved.** Same root cause = override trees don't render. (The bare trees in the shots are unmodified `*dead` variants, which were never overridden.)
 - **Fallback:** manifest pointing `hangar` at a missing `.glb` → `[MODOVERRIDE] staticProp 'hangar': import failed … using stock`, exit 0, gl_errors=[]. Stock renders, no crash.
 - **No-mod identity:** discovery run with empty manifest = stock baseline (`registry loaded: 0 override(s)`, byte-equivalent to v0.4 stock validate `vcheck.json`).
 - **Collision:** code-guaranteed (dual-shape; collision reads stock type array, diff-proven Slice 2) + stable run (+0 destroys). Visual gameplay-collision probe is out of `--validate` scope.
@@ -82,5 +84,28 @@ Deploy manifest restored to `{"overrides":[]}` (install not left modded). Trace 
 
 Limitation: unit-cube box is tiny at MC2 world scale, so the override reads as "prop disappeared" rather than "prop is a visible box". The render-replacement is nonetheless proven by the hangar's disappearance + the applied logs. A larger box asset would make it visually obvious (deferred; not needed for proof).
 
-## Slice 4 — TREE-MODEL-OVERRIDE-PROOF — PENDING
-Same path applies (tree class already routes; discovery saw palms/oak/maple/tc1_* in mc2_01). Needs a leaf asset with `alphaMode=MASK` @ 0.5 to exercise the alpha-cutout leaf rule (the box has no alpha). Optional next step.
+## Slice 4 — TREE-MODEL-OVERRIDE-PROOF — RENDER BLOCKED (root cause found)
+
+Tree asset: real PBR tree `tree_small_02_1k.gltf` (user-supplied) → Blender headless decimate (`.claude/tree_export.py`) → `data/model_overrides/source/trees/tree_small.glb`. Decimate floored at ~42,885 tris (leaf cards are disconnected quads — collapse-decimate can't reduce; **meshopt_simplifySloppy / gltfpack would** — vendored at `3rdparty/meshoptimizer`, CLI `gltf/gltfpack.cpp`). Leaf material set CLIP/MASK.
+
+Runtime (v0.4 / mc2_01): override resolves + imports + 6× `render override applied`, exit 0, 0 GL errors — **but the override geometry does NOT render** (confirmed visually, repeatedly).
+
+### ROOT CAUSE — one-shot immutable GPU VBO
+`GpuStaticPropBatcher::finalizeGeometry()` (`GameOS/gameos/gos_static_prop_batcher.cpp`): `if (s_geometryFinalized) return;` then `glBufferStorage(..., flags=0)` → a **single, fully-immutable** shared VBO/IBO built once. The batcher draws static props/trees from this VBO via per-type recipes (`s_typeIndex: unordered_map<const TG_TypeShape*,uint32_t>`). A type registered **after** finalize → `[GPUPROPS] late registerType … CPU-fallback for this type`. The override render-shape is new geometry; it is not in the immutable VBO, so it falls to the per-instance CPU path, which:
+  (a) does not visibly rasterize under `g_useGpuObjects`, and
+  (b) retains a per-instance `CreateFrom` copy → TGL pools saturate deterministically (4,939,908/5,000,000 = ~235 of ~1000 trees before overflow). The pools are now 10x'd (5M/2M) but the per-instance-retention model still can't hold ~1000 heavy instances — and the GPU path is the only viable one for that count (geometry stored once).
+
+### What this means
+The dual-shape design is correct (collision stays stock — proven), and resolve/import/registration are wired, but **a render-only model override of a GPU-batched static prop/tree requires its geometry to be in the immutable batcher VBO**, i.e. registered **before the first `finalizeGeometry`**. Fixes attempted (register render shape at `init` 855/3787 + at `registerStatic` top, before the pre-pass `finalizeGeometry` at mission.cpp:3198) did NOT land it — 2 `late registerType` persist, implying finalize is already done by the time the override type is first seen (likely an earlier menu/shell finalize, or staging-VBO sizing reserved pre-override). Needs deeper batcher work, NOT another blind patch.
+
+### Candidate real fixes (for the expert/next session)
+1. **Pre-register override geometry before the first `finalizeGeometry`** — resolve the mod manifest at mission/menu boot and register all override render-shapes into the staging VBO before it's frozen. (Cleanest; matches the immutable-VBO design.)
+2. **Batcher VBO rebuild hook** — allow `finalizeGeometry` to re-stage when a mission with overrides loads (there's a `resetForRestore()` path in `GameAdapters/StaticPropRenderAdapter` / saveload.cpp:1628 worth reusing).
+3. **meshopt runtime clamp** (task b) — clamp override meshes to a budget so even CPU-fallback is survivable; helps but does not fix the no-render.
+Align any solution with `docs/asset-pipeline.md` (canonical; render-owner `GpuStaticPropBatcher`, gamedata-owner `BldgAppearance`/`TreeAppearance`) and add a **model-override** row there per its §7.
+
+### Committed this session (correct + endorsed, even though render incomplete)
+- Caps 10x: `code/mission.cpp:3303-3316` (5M/2M), `code/mission2.cpp:111`, `MC_MAXFACES` `mclib/txmmgr.h:49`. (User: caps were artificial CPU-era limits.)
+- Batcher registers the RENDER shape: `bdactor.cpp` init sites (855/3787) + `registerStatic()` tops (both bldg + tree).
+- Env-gated `MC2_MODOVERRIDE_TRACE` discovery log.
+NOTE: the Slice-3 "static-prop render replaced" claim was a misread (bounds-cull, not rasterization) — same root cause. Static props have the same limitation; only the dual-shape collision-safety + resolve/import are proven.
