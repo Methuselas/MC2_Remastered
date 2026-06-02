@@ -25,3 +25,7 @@ std::string FormatChannels(const TextureMetadata& m) {
         default: return "unknown";
     }
 }
+
+std::string FormatTextureFormat(const TextureMetadata& m) {
+    return m.formatLabel.empty() ? "unknown" : m.formatLabel;
+}

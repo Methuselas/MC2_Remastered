@@ -201,3 +201,47 @@ int AssetViewerApp::runSmokeKtx(const char* dir)
     if (rc == 0) std::printf("[smoke] PASS ktx upload\n");
     return rc;
 }
+
+int AssetViewerApp::runSmokePreview(const char* dir)
+{
+    namespace fs = std::filesystem;
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) return smokeFail("SDL_Init");
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+    SDL_Window* win = SDL_CreateWindow("smoke-preview", 0, 0, 64, 64, SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+    if (!win) { SDL_Quit(); return smokeFail("hidden window"); }
+    SDL_GLContext gl = SDL_GL_CreateContext(win);
+    if (!gl) { SDL_DestroyWindow(win); SDL_Quit(); return smokeFail("gl context"); }
+    SDL_GL_MakeCurrent(win, gl);
+    glewExperimental = GL_TRUE;
+    if (glewInit() != GLEW_OK) { SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit(); return smokeFail("glewInit"); }
+    glGetError();
+
+    int rc = 0;
+    {
+        UiEditorImageCache_Initialize();
+        TexturePreview2D surface;
+
+        surface.setSource((fs::path(dir) / "tex_rgba8.ktx2").string());
+        if (surface.hasError())                                  rc = smokeFail("ktx2 preview load");
+        else if (surface.metadata().formatLabel.rfind("RGBA8", 0) != 0) rc = smokeFail("ktx2 format label");
+
+        // Replace with a PNG (legacy, not owned) -> must free the prior KTX texture, no crash/leak-error.
+        if (rc == 0) surface.setSource((fs::path(dir) / "test_rgba.png").string());
+        if (rc == 0 && surface.hasError())                      rc = smokeFail("png after ktx2");
+
+        // Replace with another KTX2 -> exercises owned->owned replacement path.
+        if (rc == 0) surface.setSource((fs::path(dir) / "tex_rgba8.ktx2").string());
+        if (rc == 0 && surface.hasError())                      rc = smokeFail("ktx2 after png");
+
+        if (rc == 0 && glGetError() != GL_NO_ERROR)             rc = smokeFail("preview glGetError");
+        UiEditorImageCache_Shutdown();
+    }   // ~TexturePreview2D here must free its owned KTX texture without error
+
+    SDL_GL_DeleteContext(gl);
+    SDL_DestroyWindow(win);
+    SDL_Quit();
+    if (rc == 0) std::printf("[smoke] PASS preview ownership+metadata\n");
+    return rc;
+}
