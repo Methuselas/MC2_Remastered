@@ -11,6 +11,7 @@ set(ASSET_VIEWER_SOURCES
     LocalPbrMaterialBackend.cpp
     MaterialTextureLoader.cpp
     MaterialPreviewPBR.cpp
+    MaterialSlots.cpp
     # remaining sources added in later tasks
     TextureExtensions.cpp
     TextureMetadata.cpp
