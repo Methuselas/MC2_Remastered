@@ -965,9 +965,16 @@ void compute_dispatch() {
     }
 
     // Begin GL timer query.
+    // C-03: check availability before reading to avoid a blocking stall when the
+    // GPU is behind.  s_lastDispatchNs retains the previous frame's value when the
+    // result is not yet ready — acceptable for telemetry (perf-stat log only).
     if (s_timerPending) {
-        glGetQueryObjectui64v(s_timerQuery, GL_QUERY_RESULT, &s_lastDispatchNs);
-        s_timerPending = false;
+        GLint available = 0;
+        glGetQueryObjectiv(s_timerQuery, GL_QUERY_RESULT_AVAILABLE, &available);
+        if (available) {
+            glGetQueryObjectui64v(s_timerQuery, GL_QUERY_RESULT, &s_lastDispatchNs);
+            s_timerPending = false;
+        }
     }
     glBeginQuery(GL_TIME_ELAPSED, s_timerQuery);
 
