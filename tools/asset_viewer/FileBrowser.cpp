@@ -1,6 +1,8 @@
 #include "FileBrowser.h"
+#include "TextureDecoderRegistry.h"
 #include "TextureExtensions.h"
 #include "imgui.h"
+#include <string>
 #include <filesystem>
 #include <system_error>
 #include <cstdio>
@@ -29,8 +31,15 @@ static bool PickTextureFileWin32(std::string& outPath) {
     IFileOpenDialog* dlg = nullptr;
     if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
                                    IID_PPV_ARGS(&dlg)))) {
+        // Build "*.png;*.jpg;...;*.ktx2" from the decoder registry (single source of truth).
+        std::wstring pattern;
+        for (const auto& e : textureDecoderRegistry().supportedExtensions()) {
+            if (!pattern.empty()) pattern += L";";
+            pattern += L"*.";
+            pattern += std::wstring(e.begin(), e.end());   // ASCII ext -> wide
+        }
         COMDLG_FILTERSPEC filters[] = {
-            { L"Textures (PNG/JPG/BMP/TGA)", L"*.png;*.jpg;*.jpeg;*.bmp;*.tga" },
+            { L"Textures", pattern.c_str() },
             { L"All files (*.*)", L"*.*" },
         };
         dlg->SetFileTypes(2, filters);
@@ -102,8 +111,14 @@ void FileBrowser::refresh()
         if (IsSupportedTextureFile(name)) entries_.push_back(name);
     }
     if (ec) scanError_ = std::string("Scan error: ") + ec.message();
-    else if (entries_.empty() && scanError_.empty())
-        scanError_ = "No supported textures (.png/.jpg/.jpeg/.bmp/.tga) here.";
+    else if (entries_.empty() && scanError_.empty()) {
+        std::string extList;
+        for (const auto& e : textureDecoderRegistry().supportedExtensions()) {
+            if (!extList.empty()) extList += "/";
+            extList += "." + e;
+        }
+        scanError_ = "No supported textures (" + extList + ") here.";
+    }
 }
 
 void FileBrowser::draw()

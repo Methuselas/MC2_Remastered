@@ -99,6 +99,7 @@ DecodedTexture Ktx2Decoder::load(const std::string& path) const
     } else {
         if (!GLEW_ARB_texture_compression_bptc) {
             glDeleteTextures(1, &tex);
+            glGetError();   // consume any gen/bind error so it doesn't leak to the next load()
             d.error = "BC7 preview requires GL_ARB_texture_compression_bptc, "
                       "unavailable on this GPU/context.";
             return d;
