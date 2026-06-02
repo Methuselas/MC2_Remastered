@@ -265,18 +265,33 @@ void BldgAppearanceType::init (const char * fileName)
 			bldgRenderShape = new TG_TypeMultiShape;
 			// Source path = manifest dir + record source (see Slice 1 registry).
 			char overridePath[1024];
-			sprintf(overridePath, "data/model_overrides/%s", ov->sourceRelPath.c_str());
-			long r = ImportGeometryFromFile(overridePath, bldgRenderShape);
-			if (r != 0 || bldgRenderShape->GetNumShapes() == 0)
+			snprintf(overridePath, sizeof(overridePath), "%s/%s",
+			         ModelOverrideRegistry::instance().manifestDir().c_str(),
+			         ov->sourceRelPath.c_str());
+			// Guard the importer: Assimp may throw (DeadlyImportError). A throw
+			// here would leak the freshly-new'd render shape and unwind into
+			// non-exception-safe engine code, so collapse any throw to stock.
+			try
+			{
+				long r = ImportGeometryFromFile(overridePath, bldgRenderShape);
+				if (r != 0 || bldgRenderShape->GetNumShapes() == 0)
+				{
+					delete bldgRenderShape; bldgRenderShape = NULL;   // stock fallback
+					fprintf(stderr, "[MODOVERRIDE] staticProp '%s': import failed (%s), using stock render\n",
+					        bldgBaseName, overridePath);
+					fflush(stderr);
+				}
+				else
+				{
+					fprintf(stderr, "[MODOVERRIDE] staticProp '%s': render override applied (%s)\n",
+					        bldgBaseName, overridePath);
+					fflush(stderr);
+				}
+			}
+			catch (...)
 			{
 				delete bldgRenderShape; bldgRenderShape = NULL;   // stock fallback
-				fprintf(stderr, "[MODOVERRIDE] staticProp '%s': import failed (%s), using stock render\n",
-				        bldgBaseName, overridePath);
-				fflush(stderr);
-			}
-			else
-			{
-				fprintf(stderr, "[MODOVERRIDE] staticProp '%s': render override applied (%s)\n",
+				fprintf(stderr, "[MODOVERRIDE] staticProp '%s': import threw (%s), using stock render\n",
 				        bldgBaseName, overridePath);
 				fflush(stderr);
 			}
@@ -3506,22 +3521,39 @@ void TreeAppearanceType::init (const char * fileName)
 #ifdef ENABLE_ASSIMP_IMPORTER
 			treeRenderShape = new TG_TypeMultiShape;
 			char overridePath[1024];
-			sprintf(overridePath, "data/model_overrides/%s", ov->sourceRelPath.c_str());
-			long r = ImportGeometryFromFile(overridePath, treeRenderShape);
-			if (r != 0 || treeRenderShape->GetNumShapes() == 0)
+			snprintf(overridePath, sizeof(overridePath), "%s/%s",
+			         ModelOverrideRegistry::instance().manifestDir().c_str(),
+			         ov->sourceRelPath.c_str());
+			// Guard the importer: Assimp may throw (DeadlyImportError). A throw
+			// here would leak the freshly-new'd render shape and unwind into
+			// non-exception-safe engine code, so collapse any throw to stock.
+			try
+			{
+				long r = ImportGeometryFromFile(overridePath, treeRenderShape);
+				if (r != 0 || treeRenderShape->GetNumShapes() == 0)
+				{
+					delete treeRenderShape; treeRenderShape = NULL;   // stock fallback
+					fprintf(stderr, "[MODOVERRIDE] tree '%s': import failed (%s), using stock render\n",
+					        treeBaseName, overridePath);
+					fflush(stderr);
+				}
+				else
+				{
+					// Mirror the stock tree flag setup (treeShape[i]->SetAlphaTest(true)
+					// / SetFilter(true) at the stock LOD-load sites above, ~3464/3490)
+					// so the override renders with identical alpha-test/filter state.
+					// Intentional duplication — keep in sync with the stock sites.
+					treeRenderShape->SetAlphaTest(true);
+					treeRenderShape->SetFilter(true);
+					fprintf(stderr, "[MODOVERRIDE] tree '%s': render override applied (%s)\n",
+					        treeBaseName, overridePath);
+					fflush(stderr);
+				}
+			}
+			catch (...)
 			{
 				delete treeRenderShape; treeRenderShape = NULL;   // stock fallback
-				fprintf(stderr, "[MODOVERRIDE] tree '%s': import failed (%s), using stock render\n",
-				        treeBaseName, overridePath);
-				fflush(stderr);
-			}
-			else
-			{
-				// Match stock tree render flags so the override renders with
-				// the same alpha-test/filter setup as the stock shape.
-				treeRenderShape->SetAlphaTest(true);
-				treeRenderShape->SetFilter(true);
-				fprintf(stderr, "[MODOVERRIDE] tree '%s': render override applied (%s)\n",
+				fprintf(stderr, "[MODOVERRIDE] tree '%s': import threw (%s), using stock render\n",
 				        treeBaseName, overridePath);
 				fflush(stderr);
 			}

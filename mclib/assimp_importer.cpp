@@ -239,16 +239,18 @@ long ImportShapeFromMesh(const aiScene* scene, unsigned meshIdx,
 		verts[v].normal    = toMC2Vec(mesh->mNormals[v]);
 		verts[v].aRGBLight = 0xff000000;
 
-		// MODEL-OVERRIDE / Track C: vertex-tight bounding box. Expand the
-		// multi-shape box over every vertex in multi-shape-local space
-		// (nodeCenter + mesh-local position), matching how the ASE path and the
-		// bdactor.cpp OBBRadius/highZ consumer derive bounds. Previously the box
-		// was nodeCenter-only (loose), which gave wrong cull/HZB bounds for
-		// imported meshes routed through getBldgRenderShape/getTreeRenderShape.
+		// MODEL-OVERRIDE / Track C: vertex-tight bounding box, mesh-local.
+		// Accumulate over the SAME positions stored into the vertex buffer (no
+		// nodeCenter applied): import sets a zero node pivot, so the renderer
+		// draws these verts mesh-local. Baking center in would offset the box
+		// from the rendered geometry for any non-zero node translation; the ASE
+		// ref (msl.cpp ~300-323) keeps render-space and box-space in agreement.
+		// Empty-mesh sentinel + extentRadius floor handled in ComputeBoundingBox.
 		if (outMulti) {
-			const float wx = center.x + verts[v].position.x;
-			const float wy = center.y + verts[v].position.y;
-			const float wz = center.z + verts[v].position.z;
+			// Mesh-local box: matches the zero node-center render (no center pivot applied).
+			const float wx = verts[v].position.x;
+			const float wy = verts[v].position.y;
+			const float wz = verts[v].position.z;
 			if (wx < outMulti->minBox.x) outMulti->minBox.x = wx;
 			if (wy < outMulti->minBox.y) outMulti->minBox.y = wy;
 			if (wz < outMulti->minBox.z) outMulti->minBox.z = wz;
