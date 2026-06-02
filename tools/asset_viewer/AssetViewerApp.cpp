@@ -9,6 +9,7 @@
 #include "TextureDecoderRegistry.h"
 #include "TextureMetadata.h"
 #include "TexturePreview2D.h"
+#include "Ktx2Decoder.h"
 #include <SDL.h>
 #include <GL/glew.h>
 #include <cstdio>
@@ -91,6 +92,40 @@ int AssetViewerApp::runSmoke(const char* fixtureDir)
     SDL_Quit();
     if (rc == 0) std::printf("[smoke] PASS\n");
     return rc;
+}
+
+int AssetViewerApp::runSmokeKtxParse(const char* dir)
+{
+    namespace fs = std::filesystem;
+    auto p = [&](const char* f){ return (fs::path(dir) / f).string(); };
+
+    Ktx2DecodedImage rgba = loadKtx2Image(p("tex_rgba8.ktx2"));
+    if (!rgba.ok)                       return smokeFail("rgba8 ktx2 should parse");
+    if (rgba.img.width != 4 || rgba.img.height != 2) return smokeFail("rgba8 dims");
+    if (rgba.img.isCompressed)          return smokeFail("rgba8 should not be compressed");
+
+    // Validate the hand-written BC7 fixture against the REAL loader here (no GL).
+    // The GL smoke's BC7 path is BPTC-gated and may SKIP, so this is the only
+    // guard that a malformed BC7 fixture cannot ship green. (review fix: KTX2 #1)
+    Ktx2DecodedImage bc7 = loadKtx2Image(p("tex_bc7.ktx2"));
+    if (!bc7.ok)                        return smokeFail("bc7 ktx2 should parse");
+    if (!bc7.img.isCompressed)          return smokeFail("bc7 should be compressed");
+    if (bc7.img.width != 4 || bc7.img.height != 2) return smokeFail("bc7 dims");
+
+    Ktx2DecodedImage sup = loadKtx2Image(p("tex_super.ktx2"));
+    if (sup.ok || sup.error.find("Supercompressed") == std::string::npos)
+        return smokeFail("supercompressed should be classified");
+
+    Ktx2DecodedImage bad = loadKtx2Image(p("tex_badfmt.ktx2"));
+    if (bad.ok || bad.error.find("Unsupported KTX2 format") == std::string::npos)
+        return smokeFail("bad format should be classified");
+
+    Ktx2DecodedImage missing = loadKtx2Image(p("does_not_exist.ktx2"));
+    if (missing.ok || missing.error.find("not found") == std::string::npos)
+        return smokeFail("missing file should be classified");
+
+    std::printf("[smoke] PASS ktx parse+classify\n");
+    return 0;
 }
 
 int AssetViewerApp::runSmokeDecoder()

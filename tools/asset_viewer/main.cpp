@@ -23,6 +23,9 @@ int main(int argc, char* argv[])
     if (argc >= 2 && strcmp(argv[1], "--smoke-decoder") == 0)
         return AssetViewerApp::runSmokeDecoder();
 
+    if (argc >= 2 && strcmp(argv[1], "--smoke-ktx-parse") == 0)
+        return AssetViewerApp::runSmokeKtxParse(argc >= 3 ? argv[2] : ".");
+
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0)
     {
         printf("SDL_Init error: %s\n", SDL_GetError());
