@@ -46,16 +46,18 @@ Two related improvements to `mc2_asset_viewer`'s texture browser:
 Extract a pure helper (headless-testable, no GL/ImGui):
 
 ```cpp
+// Returns a plain POD (NOT ImVec2 — keeps this header ImGui-free + headless-testable).
+struct FitSize { float w; float h; };
 // Largest aspect-preserving size that fits (texW x texH) into (availW x availH),
 // then scaled by zoom. Guards against zero/negative inputs.
-ImVec2 FitTextureDisplaySize(int texW, int texH, float availW, float availH, float zoom);
+FitSize FitTextureDisplaySize(int texW, int texH, float availW, float availH, float zoom);
 ```
 
 Semantics:
 - `zoom == 1.0` → the texture exactly fits the available area (letterboxed by aspect).
 - Two textures with the **same aspect ratio** but different native resolutions (128 vs 256 vs 512) produce the **same** display size at the same zoom — satisfying the caveat.
 - `zoom > 1` enlarges beyond fit (pan via the existing horizontal/vertical scroll child).
-- Degenerate inputs (texW/texH ≤ 0, avail ≤ 0) return a safe non-zero fallback, never NaN/Inf/divide-by-zero.
+- Degenerate inputs never produce NaN/Inf/divide-by-zero: a zero-area texture (texW/texH ≤ 0) returns `{0,0}` (nothing to show); non-positive avail/zoom are clamped so the result stays finite and positive.
 
 `draw()` uses `FitTextureDisplaySize(meta_.width, meta_.height, avail.x, avail.y - <sliderRowHeight>, zoom_)` instead of the native-pixel formula. `zoom_` is NOT reset in `setSource` (already the case), so flipping tiers preserves the on-screen size.
 

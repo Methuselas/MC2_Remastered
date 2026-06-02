@@ -219,19 +219,35 @@ Run: `python tests\fixtures\asset_viewer\make_fixture.py` → confirms the tier 
 
 - [ ] **Step 2: Extend the FileBrowser public API**
 
-In `tools/asset_viewer/FileBrowser.h`, add to the `public:` section:
+Replace the ENTIRE `class FileBrowser { ... };` body in `tools/asset_viewer/FileBrowser.h` with the following (this moves `selectFile` private→public in one atomic edit so there is no duplicate/orphan declaration — review m3):
 
 ```cpp
-    void selectFile(const std::string& fullPath);          // (made public) select a known file
+class FileBrowser {
+public:
+    FileBrowser();                     // pre-fills folderPath_ with a default art dir + scans
+    void draw();
+    bool hasSelection() const { return hasSelection_; }
+    std::string takeSelection();
+
+    void selectFile(const std::string& fullPath);          // select a known file (sets folder=parent)
     const std::string& selectionPath() const { return selectionPath_; }
     void setFolder(const std::string& path);               // set folder + rescan
     // Resolution tiers = numeric-named sibling folders of the current folder.
     std::vector<std::string> SiblingTiers() const;         // ascending, e.g. {"64","128","256"}
     std::string CurrentTier() const;                        // current folder leaf if numeric, else ""
     void SwitchTier(const std::string& tier);               // repoint to <parent>/<tier>, keep same filename if present
+private:
+    void refresh();                    // re-scan folderPath_ into entries_
+    char folderPath_[1024] = {0};
+    std::vector<std::string> entries_;
+    std::string scanError_;
+    int selectedIndex_ = -1;
+    bool hasSelection_ = false;
+    std::string selectionPath_;
+};
 ```
 
-Remove the now-duplicate `selectFile` declaration from the `private:` section (it moves to `public:`).
+(`selectFile` is no longer in `private:` — it's now public. `refresh()` stays private. `#include <vector>`/`<string>` are already present.)
 
 - [ ] **Step 3: Write the failing `--smoke-tiers`**
 
@@ -311,13 +327,21 @@ std::vector<std::string> FileBrowser::SiblingTiers() const {
     std::error_code ec;
     if (parent.empty() || !fs::is_directory(parent, ec)) return tiers;
     for (auto it = fs::directory_iterator(parent, ec);
-         !ec && it != fs::directory_iterator(); it.increment(ec)) {
-        if (!it->is_directory(ec)) continue;
+         it != fs::directory_iterator(); it.increment(ec)) {
+        if (ec) break;                              // stop on iteration error (review m2)
+        std::error_code dec;                        // separate ec so an entry error
+        if (!it->is_directory(dec) || dec) continue; // doesn't abort the whole scan
         std::string name = it->path().filename().string();
-        if (fb_isAllDigits(name)) tiers.push_back(name);
+        // <=7 digits keeps values within int range; avoids std::stoi overflow (review m1)
+        if (fb_isAllDigits(name) && name.size() <= 7) tiers.push_back(name);
     }
+    // Ascending numeric order WITHOUT std::stoi: for all-digit strings, fewer digits
+    // == smaller; same length == lexical order == numeric order.
     std::sort(tiers.begin(), tiers.end(),
-              [](const std::string& a, const std::string& b){ return std::stoi(a) < std::stoi(b); });
+              [](const std::string& a, const std::string& b){
+                  if (a.size() != b.size()) return a.size() < b.size();
+                  return a < b;
+              });
     return tiers;
 }
 
