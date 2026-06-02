@@ -2373,7 +2373,8 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                 if (img.mipCount != bc7MipCount) { bc7Ok = false; failReason = "dim_mismatch"; break; }
             }
             if (bc7Ok) {
-                const GLenum internalformat = GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM;
+                // linear BC7 (UNORM): matches GL_RGBA8 baseline; engine has no GL_FRAMEBUFFER_SRGB
+                const GLenum internalformat = GL_COMPRESSED_RGBA_BPTC_UNORM;
                 const int levels = (bc7MipCount > 0) ? bc7MipCount : 1;
                 glGenTextures(1, &arr);
                 glBindTexture(GL_TEXTURE_2D_ARRAY, arr);
@@ -2787,12 +2788,8 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             }
 
             if (bc7Ok) {
-                // Static-prop albedo is always sRGB → use the SRGB BPTC
-                // internalformat for both 145 (UNORM) and 146 (SRGB) so the
-                // GPU performs sRGB→linear on sample, matching the existing
-                // RGBA8_SRGB path. (Documented: 145 sources are still treated
-                // as sRGB albedo here.)
-                const GLenum internalformat = GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM;
+                // linear BC7 (UNORM): matches GL_RGBA8 baseline; engine has no GL_FRAMEBUFFER_SRGB
+                const GLenum internalformat = GL_COMPRESSED_RGBA_BPTC_UNORM;
                 const int levels = (bc7MipCount > 0) ? bc7MipCount : 1;
 
                 glGenTextures(1, &outArray);
