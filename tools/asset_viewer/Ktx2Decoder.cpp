@@ -80,7 +80,6 @@ DecodedTexture Ktx2Decoder::load(const std::string& path) const
     d.height        = img.height;
     d.mipCount      = img.mipCount;
     d.isCompressed  = img.isCompressed;
-    d.ownsGlTexture = true;
 
     GLuint tex = 0;
     while (glGetError() != GL_NO_ERROR) {}   // drain stale errors so our check only sees OUR upload
@@ -137,6 +136,7 @@ DecodedTexture Ktx2Decoder::load(const std::string& path) const
         return d;
     }
     glBindTexture(GL_TEXTURE_2D, 0);
-    d.glTexture = tex;
+    d.glTexture     = tex;
+    d.ownsGlTexture = true;
     return d;
 }
