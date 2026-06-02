@@ -102,6 +102,7 @@ void FileBrowser::refresh()
     entries_.clear();
     scanError_.clear();
     selectedIndex_ = -1;
+    rescanTiers();                      // refresh tier list on folder change (NOT per draw frame)
     std::error_code ec;
     fs::path dir(folderPath_);
     if (!fs::is_directory(dir, ec)) { scanError_ = "Not a folder."; return; }
@@ -193,29 +194,28 @@ std::string FileBrowser::CurrentTier() const {
     return fb_isAllDigits(leaf) ? leaf : std::string();
 }
 
-std::vector<std::string> FileBrowser::SiblingTiers() const {
-    std::vector<std::string> tiers;
+void FileBrowser::rescanTiers() {
+    tiers_.clear();
     fs::path parent = fb_normFolder(folderPath_).parent_path();
     std::error_code ec;
-    if (parent.empty() || !fs::is_directory(parent, ec)) return tiers;
+    if (parent.empty() || !fs::is_directory(parent, ec)) return;
     auto it = fs::directory_iterator(parent, ec);
-    if (ec) return tiers;                           // open failed (perms etc.) -> no tiers (review m2)
+    if (ec) return;                                 // open failed (perms etc.) -> no tiers (review m2)
     for (; it != fs::directory_iterator(); it.increment(ec)) {
         if (ec) break;                              // stop on iteration error (review m2)
         std::error_code dec;                        // separate ec so an entry error
         if (!it->is_directory(dec) || dec) continue; // doesn't abort the whole scan
         std::string name = it->path().filename().string();
         // <=7 digits keeps values within int range; avoids std::stoi overflow (review m1)
-        if (fb_isAllDigits(name) && name.size() <= 7) tiers.push_back(name);
+        if (fb_isAllDigits(name) && name.size() <= 7) tiers_.push_back(name);
     }
     // Ascending numeric order WITHOUT std::stoi: for all-digit strings, fewer digits
     // == smaller; same length == lexical order == numeric order.
-    std::sort(tiers.begin(), tiers.end(),
+    std::sort(tiers_.begin(), tiers_.end(),
               [](const std::string& a, const std::string& b){
                   if (a.size() != b.size()) return a.size() < b.size();
                   return a < b;
               });
-    return tiers;
 }
 
 void FileBrowser::SwitchTier(const std::string& tier) {
@@ -226,6 +226,8 @@ void FileBrowser::SwitchTier(const std::string& tier) {
     std::string keepName;                     // remember selected filename
     if (selectedIndex_ >= 0 && selectedIndex_ < (int)entries_.size())
         keepName = entries_[selectedIndex_];
+    else if (hasSelection_ && !selectionPath_.empty())   // selection set via Browse w/o a list index (review final #2)
+        keepName = fs::path(selectionPath_).filename().string();
 
     setFolder(dst.string());                  // repoint + rescan (clears entries_/selectedIndex_)
     selectedIndex_ = -1;
