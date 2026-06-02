@@ -19,8 +19,9 @@ void FileBrowser::refresh()
         std::string name = it->path().filename().string();
         if (IsSupportedTextureFile(name)) entries_.push_back(name);
     }
-    if (entries_.empty() && scanError_.empty())
-        scanError_ = "No supported textures (.png/.jpg/.bmp/.tga) here.";
+    if (ec) scanError_ = std::string("Scan error: ") + ec.message();
+    else if (entries_.empty() && scanError_.empty())
+        scanError_ = "No supported textures (.png/.jpg/.jpeg/.bmp/.tga) here.";
 }
 
 void FileBrowser::draw()

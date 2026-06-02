@@ -11,8 +11,12 @@
 #include <SDL.h>
 #include <GL/glew.h>
 #include <cstdio>
+#include <filesystem>
 #include <string>
 
+// GUI mode: ctor/dtor own the cache lifetime. The static runSmoke() path does
+// NOT construct an AssetViewerApp and does its own Initialize/Shutdown — the two
+// paths are mutually exclusive, so there is no double-init.
 AssetViewerApp::AssetViewerApp()  { UiEditorImageCache_Initialize(); }
 AssetViewerApp::~AssetViewerApp() { UiEditorImageCache_Shutdown(); }
 
@@ -66,13 +70,14 @@ int AssetViewerApp::runSmoke(const char* fixtureDir)
     SDL_GLContext gl = SDL_GL_CreateContext(win);
     if (!gl) { SDL_DestroyWindow(win); SDL_Quit(); return smokeFail("gl context"); }
     SDL_GL_MakeCurrent(win, gl);
-    glewExperimental = GL_TRUE; glewInit();
+    glewExperimental = GL_TRUE;
+    if (glewInit() != GLEW_OK) { SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit(); return smokeFail("glewInit"); }
 
     int rc = 0;
     {
         UiEditorImageCache_Initialize();
         TexturePreview2D surface;
-        std::string path = std::string(fixtureDir) + "/test_rgba.png";
+        std::string path = (std::filesystem::path(fixtureDir) / "test_rgba.png").string();
         surface.setSource(path);
         if (surface.hasError())               rc = smokeFail("fixture failed to load");
         else if (surface.metadata().width  != 4) rc = smokeFail("fixture width != 4");

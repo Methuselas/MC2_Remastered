@@ -31,5 +31,7 @@ struct UiEditorImageTexture
 bool UiEditorImageCache_Initialize();
 void UiEditorImageCache_Shutdown();
 void UiEditorImageCache_Clear();
+// The returned pointer is valid only until the next call to UiEditorImageCache_Get()
+// (it points at a reused static). Copy any needed fields before calling again.
 const UiEditorImageTexture* UiEditorImageCache_Get(const char* path);
 const char* UiEditorImageCache_GetStatus();
