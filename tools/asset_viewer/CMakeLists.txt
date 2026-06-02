@@ -10,6 +10,7 @@ set(ASSET_VIEWER_SOURCES
     SphereMesh.cpp
     LocalPbrMaterialBackend.cpp
     MaterialTextureLoader.cpp
+    MaterialPreviewPBR.cpp
     # remaining sources added in later tasks
     TextureExtensions.cpp
     TextureMetadata.cpp

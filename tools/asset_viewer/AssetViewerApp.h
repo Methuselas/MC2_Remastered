@@ -23,6 +23,7 @@ public:
     static int runSmokeSphere();                        // validates SphereMesh geometry + tangent basis
     static int runSmokeBackend();                       // compiles Cook-Torrance PBR program on a GL 3.3 context
     static int runSmokeTexLoad(const char* fixtureDir); // slot-aware sRGB/linear upload check
+    static int runSmokeRender(const char* fixtureDir);  // offscreen FBO render: sphere distinct from background
 private:
     FileBrowser browser_;
     AssetTypeSidebar sidebar_;

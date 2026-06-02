@@ -6,6 +6,7 @@
 #include "SphereMesh.h"
 #include "LocalPbrMaterialBackend.h"
 #include "MaterialTextureLoader.h"
+#include "MaterialPreviewPBR.h"
 #include "UiEditorImageCache.h"
 #include "imgui.h"
 #include "TextureExtensions.h"
@@ -447,4 +448,85 @@ int AssetViewerApp::runSmokeTexLoad(const char* fixtureDir)
     if (rc == 0)
         std::printf("[smoke] PASS texload sRGB/linear internalformats correct\n");
     return rc;
+}
+
+int AssetViewerApp::runSmokeRender(const char* fixtureDir)
+{
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) return smokeFail("SDL_Init");
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_Window* win = SDL_CreateWindow("smoke-render", 0, 0, 64, 64,
+        SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+    if (!win) { SDL_Quit(); return smokeFail("hidden window"); }
+    SDL_GLContext gl = SDL_GL_CreateContext(win);
+    if (!gl) { SDL_DestroyWindow(win); SDL_Quit(); return smokeFail("gl context (need GL 3.3)"); }
+    SDL_GL_MakeCurrent(win, gl);
+    glewExperimental = GL_TRUE;
+    if (glewInit() != GLEW_OK) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        return smokeFail("glewInit");
+    }
+    glGetError(); // consume glew's spurious error
+
+    const int W = 256, H = 256;
+    MaterialPreviewPBR preview;
+    std::string err;
+    uint32_t base = MaterialTextureLoader_Load(std::string(fixtureDir) + "/mat_base.png",
+                                               MaterialSlotKind::BaseColor, &err);
+    if (!base) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        std::printf("[smoke] FAIL: base load %s\n", err.c_str());
+        return 1;
+    }
+    preview.setSlotTexture(MaterialSlotKind::BaseColor, base);
+
+    // Review fix MAJOR 5: do NOT call preview.draw() here — draw() ends with
+    // ImGui::Image/TextColored and this smoke has no ImGui context/frame, so it
+    // would dereference an uninitialized GImGui and crash. renderToPixels() is
+    // ImGui-free: it lazily builds the FBO + renders + reads back.
+    // The renderToPixels test hook returns false if backend init or FBO completeness
+    // failed (review fix MAJOR 6), so a failed shader compile is caught here rather
+    // than passing on a non-black clear.
+    std::vector<uint8_t> rgba;
+    if (!preview.renderToPixels(W, H, rgba)) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        std::printf("[smoke] FAIL: renderToPixels (init/FBO)\n");
+        return 1;
+    }
+    GLenum e = glGetError();
+    if (e != GL_NO_ERROR) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        std::printf("[smoke] FAIL: glGetError 0x%x\n", (unsigned)e);
+        return 1;
+    }
+    // Review fix MAJOR 6: the FBO clears to (0.10,0.11,0.13) -> a broken shader
+    // would still be non-black. Assert the sphere actually drew: the center
+    // region must be meaningfully BRIGHTER than the corner (background) region.
+    auto regionAvg = [&](int x0, int y0) -> long {
+        long s = 0;
+        for (int y = y0; y < y0+16; ++y)
+            for (int x = x0; x < x0+16; ++x) {
+                const uint8_t* p = &rgba[(y*W + x)*4];
+                s += p[0]+p[1]+p[2];
+            }
+        return s / 256;
+    };
+    long center = regionAvg(W/2 - 8, H/2 - 8);
+    long corner = regionAvg(2, 2);
+
+    SDL_GL_DeleteContext(gl);
+    SDL_DestroyWindow(win);
+    SDL_Quit();
+
+    if (center == 0) {
+        std::printf("[smoke] FAIL: center all black\n");
+        return 1;
+    }
+    if (center <= corner + 24) {
+        std::printf("[smoke] FAIL: sphere not distinct from background (c=%ld bg=%ld)\n", center, corner);
+        return 1;
+    }
+    std::printf("[smoke] PASS render: sphere distinct (c=%ld bg=%ld), glGetError clean\n", center, corner);
+    return 0;
 }
