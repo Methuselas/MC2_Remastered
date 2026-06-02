@@ -276,6 +276,9 @@ includes; add to the include-firewall scope so it stays clean. Provide a trivial
 default impl (disk filesystem, stderr logger, `gos_GetElapsedTime` clock, `getenv`
 config) so existing callers are untouched.
 *Exit:* compiles; `test_rendercore`-style GL-free unit test instantiates the defaults.
+**DONE** (`claude/engine-host-services-0`): `HostServices/{HostServices,DefaultHostServices}.*`
++ GL-free doctest suite "HostServices" (9 cases / 33 assertions); `HostServices` added to
+the include-firewall scope.
 
 ### Slice 2 — `RENDERCORE-STANDALONE-INIT-0`
 A tiny exe/test that, with **no Mission**: creates a GL context (reuse SDL path),
@@ -284,6 +287,14 @@ binds a `PipelineDesc`, clears + draws a pass marker, reads back center pixel, s
 down clean (`glGetError()==0`). This is the **Stage-2 Task 0 spike** — it answers
 "can the real pipeline come up without a Mission?" and decides Backend A vs B.
 *Exit:* non-black readback + clean GL error, zero Mission/ObjectManager symbols linked.
+**DONE — Backend A confirmed viable** (`claude/rendercore-standalone-init-0`):
+`tools/rendercore_standalone_spike/` links against ONLY SDL2 + GLEW + opengl32 + three
+game-free engine TUs (`view_uniforms_gl.cpp`, `pipeline_binder.cpp`,
+`RenderCore/PipelineRegistry.cpp`) + the Slice-1 host seam — no Mission/game libs. Runs
+green on GL 4.4 (7900 XTX): init UBO → `ViewUniforms`/`EngineView` upload+register →
+`applyPipeline(StaticPropOpaque)` → offscreen FBO clear → center pixel matches clear color,
+`glGetError()==0`, exit 0. The view+pipeline substrate has zero Mission/game *link*
+dependency, empirically confirming the static-closure recon.
 
 ### Slice 3 — `ASSET-VIEWER-PREVIEW-SCENE-0`
 Give `mc2_asset_viewer` a real preview runtime behind `PreviewSurface`:
@@ -310,9 +321,11 @@ and slots populated), no Mission.
    needs RenderWorld's scene API, this surfaces. Mitigation: Slices 1–3 avoid RenderWorld
    (PreviewScene can drive RenderCore + a tiny local backend directly); defer B1 until a
    tool genuinely needs RenderWorld scene management.
-2. **Backend A may not come up without a Mission.** The lit-draw shader/light/SSBO setup
-   is unproven standalone. Mitigation: Slice 2 is an explicit spike; Backend B keeps
-   Slice 3 deliverable regardless.
+2. **Backend A may not come up without a Mission.** ~~The lit-draw shader/light/SSBO setup
+   is unproven standalone.~~ **RESOLVED for the view+pipeline path** by the Slice-2 spike:
+   it links + runs with zero Mission/game dependency (Backend A viable). Residual unknown:
+   a full *lit* static-prop draw (program + light SSBO + material table) is still unproven —
+   that surfaces in Slice 4, not Slice 2. Backend B remains the fallback there.
 3. **`static_prop` shader is not a preview shader.** No tangent attribute, no normal/ORM
    sampling, batcher-SSBO-bound, MRT + legacy light gather. Do not force-fit it; preview
    and runtime pass shaders stay distinct for now (converge later, not now).
