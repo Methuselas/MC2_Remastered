@@ -1,0 +1,31 @@
+{
+  "assetId": "prop_orm_runtime_01",
+  "source": "mc2srcdata/objects/orm_runtime_01.fbx",
+  "kind": "prop",
+  "materials": [
+    {
+      "name": "orm_surface",
+      "shader": "static_prop",
+      "alphaMode": "opaque",
+      "doubleSided": false,
+      "pbr": {
+        "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
+        "metallicFactor": 1.0,
+        "roughnessFactor": 1.0
+      }
+    }
+  ],
+  "capabilities": {
+    "hasNormals": true,
+    "hasTangents": false,
+    "hasLods": false,
+    "hasImpostor": false,
+    "castsShadow": true,
+    "supportsObjectId": true
+  },
+  "lods": [],
+  "textureRefs": [
+    { "slot": "albedo", "path": "mc2srcdata/textures/orm_runtime_01_d.tga", "colorSpace": "srgb" },
+    { "slot": "orm", "path": "mc2srcdata/textures/orm_runtime_01_orm.tga", "colorSpace": "linear" }
+  ]
+}
