@@ -12,6 +12,7 @@
 #include "Ktx2Decoder.h"
 #include <SDL.h>
 #include <GL/glew.h>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -244,4 +245,39 @@ int AssetViewerApp::runSmokePreview(const char* dir)
     SDL_Quit();
     if (rc == 0) std::printf("[smoke] PASS preview ownership+metadata\n");
     return rc;
+}
+
+int AssetViewerApp::runSmokeFit()
+{
+    auto approx = [](float a, float b){ return std::fabs(a - b) < 0.01f; };
+
+    // Same aspect, different native res, same avail+zoom -> SAME display size (the caveat).
+    FitSize a = FitTextureDisplaySize(128, 128, 400.0f, 400.0f, 1.0f);
+    FitSize b = FitTextureDisplaySize(256, 256, 400.0f, 400.0f, 1.0f);
+    FitSize c = FitTextureDisplaySize(512, 512, 400.0f, 400.0f, 1.0f);
+    if (!approx(a.w, b.w) || !approx(a.h, b.h)) return smokeFail("128 vs 256 differ in display size");
+    if (!approx(a.w, c.w) || !approx(a.h, c.h)) return smokeFail("128 vs 512 differ in display size");
+
+    // zoom 1 fits inside the avail area (square -> 400x400).
+    if (a.w > 400.01f || a.h > 400.01f || a.w < 1.0f) return smokeFail("fit overflows or empty");
+
+    // Aspect preserved for non-square (256x128 -> w == 2*h, fits).
+    FitSize r = FitTextureDisplaySize(256, 128, 400.0f, 400.0f, 1.0f);
+    if (!approx(r.w, 2.0f * r.h)) return smokeFail("aspect not preserved");
+    if (r.w > 400.01f || r.h > 400.01f) return smokeFail("non-square overflows");
+
+    // zoom 2 == exactly 2x zoom 1.
+    FitSize z = FitTextureDisplaySize(128, 128, 400.0f, 400.0f, 2.0f);
+    if (!approx(z.w, 2.0f * a.w) || !approx(z.h, 2.0f * a.h)) return smokeFail("zoom not linear");
+
+    // Degenerate inputs: finite, no divide-by-zero.
+    FitSize d0 = FitTextureDisplaySize(0, 0, 400.0f, 400.0f, 1.0f);
+    if (d0.w != 0.0f || d0.h != 0.0f) return smokeFail("zero-dim texture should yield {0,0}");
+    FitSize d1 = FitTextureDisplaySize(128, 128, 0.0f, 0.0f, 1.0f);
+    if (!std::isfinite(d1.w) || !std::isfinite(d1.h) || d1.w < 0.0f) return smokeFail("zero-avail not finite");
+    FitSize d2 = FitTextureDisplaySize(128, 128, 400.0f, 400.0f, 0.0f);
+    if (!std::isfinite(d2.w) || d2.w <= 0.0f) return smokeFail("zero-zoom not handled");
+
+    std::printf("[smoke] PASS fit (size@1=%.1fx%.1f)\n", a.w, a.h);
+    return 0;
 }

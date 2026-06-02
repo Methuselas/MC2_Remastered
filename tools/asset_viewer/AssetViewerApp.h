@@ -18,6 +18,7 @@ public:
     static int runSmokeKtxParse(const char* fixtureDir);
     static int runSmokeKtx(const char* fixtureDir);
     static int runSmokePreview(const char* fixtureDir);
+    static int runSmokeFit();
 private:
     FileBrowser browser_;
     AssetTypeSidebar sidebar_;
