@@ -247,6 +247,41 @@ int AssetViewerApp::runSmokePreview(const char* dir)
     return rc;
 }
 
+int AssetViewerApp::runSmokeTiers(const char* dir)
+{
+    namespace fs = std::filesystem;
+    auto p = [&](const char* rel){ return (fs::path(dir) / rel).make_preferred().string(); };
+
+    // Select sample.ktx2 in the 128 tier (selectFile sets folder = parent).
+    FileBrowser fb;
+    fb.selectFile(p("tiers/128/sample.ktx2"));
+    if (fb.CurrentTier() != "128")            return smokeFail("CurrentTier should be 128");
+    auto tiers = fb.SiblingTiers();
+    if (tiers.size() != 2 || tiers[0] != "128" || tiers[1] != "256")
+        return smokeFail("SiblingTiers should be {128,256}");
+
+    // Switch to 256: same filename exists -> selection preserved, now under tiers/256.
+    fb.SwitchTier("256");
+    if (fb.CurrentTier() != "256")            return smokeFail("CurrentTier should be 256 after switch");
+    if (!fb.hasSelection())                   return smokeFail("selection should persist (sample exists in 256)");
+    if (fb.selectionPath().find("256") == std::string::npos ||
+        fb.selectionPath().find("sample.ktx2") == std::string::npos)
+        return smokeFail("selectionPath should point at tiers/256/sample.ktx2");
+
+    // Missing tier -> no-op (folder unchanged).
+    fb.SwitchTier("999");
+    if (fb.CurrentTier() != "256")            return smokeFail("missing tier should be a no-op");
+
+    // Switch to a tier lacking the selected file -> folder switches, no selection.
+    fb.selectFile(p("tiers/128/only128.ktx2"));
+    fb.SwitchTier("256");
+    if (fb.CurrentTier() != "256")            return smokeFail("should switch folder even when file absent");
+    if (fb.hasSelection())                    return smokeFail("selection should drop when file absent in new tier");
+
+    std::printf("[smoke] PASS tiers (detect/switch/continuity)\n");
+    return 0;
+}
+
 int AssetViewerApp::runSmokeFit()
 {
     auto approx = [](float a, float b){ return std::fabs(a - b) < 0.01f; };

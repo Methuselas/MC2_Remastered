@@ -2,6 +2,7 @@
 #include "TextureDecoderRegistry.h"
 #include "TextureExtensions.h"
 #include "imgui.h"
+#include <algorithm>
 #include <string>
 #include <filesystem>
 #include <system_error>
@@ -152,4 +153,68 @@ std::string FileBrowser::takeSelection()
 {
     hasSelection_ = false;
     return selectionPath_;
+}
+
+static bool fb_isAllDigits(const std::string& s) {
+    if (s.empty()) return false;
+    for (char c : s) if (c < '0' || c > '9') return false;
+    return true;
+}
+
+void FileBrowser::setFolder(const std::string& path) {
+    std::snprintf(folderPath_, sizeof(folderPath_), "%s", path.c_str());
+    refresh();
+}
+
+std::string FileBrowser::CurrentTier() const {
+    std::string leaf = fs::path(folderPath_).filename().string();
+    return fb_isAllDigits(leaf) ? leaf : std::string();
+}
+
+std::vector<std::string> FileBrowser::SiblingTiers() const {
+    std::vector<std::string> tiers;
+    fs::path parent = fs::path(folderPath_).parent_path();
+    std::error_code ec;
+    if (parent.empty() || !fs::is_directory(parent, ec)) return tiers;
+    for (auto it = fs::directory_iterator(parent, ec);
+         it != fs::directory_iterator(); it.increment(ec)) {
+        if (ec) break;                              // stop on iteration error (review m2)
+        std::error_code dec;                        // separate ec so an entry error
+        if (!it->is_directory(dec) || dec) continue; // doesn't abort the whole scan
+        std::string name = it->path().filename().string();
+        // <=7 digits keeps values within int range; avoids std::stoi overflow (review m1)
+        if (fb_isAllDigits(name) && name.size() <= 7) tiers.push_back(name);
+    }
+    // Ascending numeric order WITHOUT std::stoi: for all-digit strings, fewer digits
+    // == smaller; same length == lexical order == numeric order.
+    std::sort(tiers.begin(), tiers.end(),
+              [](const std::string& a, const std::string& b){
+                  if (a.size() != b.size()) return a.size() < b.size();
+                  return a < b;
+              });
+    return tiers;
+}
+
+void FileBrowser::SwitchTier(const std::string& tier) {
+    fs::path dst = fs::path(folderPath_).parent_path() / tier;
+    std::error_code ec;
+    if (!fs::is_directory(dst, ec)) return;   // missing tier -> no-op
+
+    std::string keepName;                     // remember selected filename
+    if (selectedIndex_ >= 0 && selectedIndex_ < (int)entries_.size())
+        keepName = entries_[selectedIndex_];
+
+    setFolder(dst.string());                  // repoint + rescan (clears entries_/selectedIndex_)
+    selectedIndex_ = -1;
+    hasSelection_  = false;
+    if (!keepName.empty()) {                   // restore selection if same file exists here
+        for (int i = 0; i < (int)entries_.size(); ++i) {
+            if (entries_[i] == keepName) {
+                selectedIndex_ = i;
+                selectionPath_ = (fs::path(folderPath_) / keepName).string();
+                hasSelection_  = true;
+                break;
+            }
+        }
+    }
 }
