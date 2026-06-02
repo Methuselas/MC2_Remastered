@@ -8,6 +8,7 @@ set(ASSET_VIEWER_SOURCES
     main.cpp
     AssetViewerApp.cpp
     SphereMesh.cpp
+    LocalPbrMaterialBackend.cpp
     # remaining sources added in later tasks
     TextureExtensions.cpp
     TextureMetadata.cpp

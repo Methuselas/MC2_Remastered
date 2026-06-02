@@ -4,6 +4,7 @@
  ***************************************************************/
 #include "AssetViewerApp.h"
 #include "SphereMesh.h"
+#include "LocalPbrMaterialBackend.h"
 #include "UiEditorImageCache.h"
 #include "imgui.h"
 #include "TextureExtensions.h"
@@ -309,6 +310,39 @@ int AssetViewerApp::runSmokeSphere()
     }
     printf("[smoke] PASS sphere verts=%zu tris=%zu\n", v.size(), idx.size()/3);
     return 0;
+}
+
+int AssetViewerApp::runSmokeBackend()
+{
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) return smokeFail("SDL_Init");
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_Window* win = SDL_CreateWindow("smoke-backend", 0, 0, 64, 64,
+        SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+    if (!win) { SDL_Quit(); return smokeFail("hidden window"); }
+    SDL_GLContext gl = SDL_GL_CreateContext(win);
+    if (!gl) { SDL_DestroyWindow(win); SDL_Quit(); return smokeFail("gl context (need GL 3.3)"); }
+    SDL_GL_MakeCurrent(win, gl);
+    glewExperimental = GL_TRUE;
+    if (glewInit() != GLEW_OK) { SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit(); return smokeFail("glewInit"); }
+    glGetError(); // consume glew's spurious error
+
+    LocalPbrMaterialBackend b;
+    bool ok = b.init();
+    GLenum e = glGetError();
+    int rc = 0;
+    if (!ok)             rc = smokeFail("backend init/compile failed");
+    else if (e != GL_NO_ERROR) rc = smokeFail("glGetError non-zero after init");
+    else {
+        b.shutdown();
+        std::printf("[smoke] PASS backend=%s approximate=%d\n", b.name(), (int)b.isApproximate());
+    }
+
+    SDL_GL_DeleteContext(gl);
+    SDL_DestroyWindow(win);
+    SDL_Quit();
+    return rc;
 }
 
 int AssetViewerApp::runSmokeFit()

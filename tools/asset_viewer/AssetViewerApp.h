@@ -21,6 +21,7 @@ public:
     static int runSmokeFit();
     static int runSmokeTiers(const char* fixtureDir);
     static int runSmokeSphere();   // validates SphereMesh geometry + tangent basis
+    static int runSmokeBackend();  // compiles Cook-Torrance PBR program on a GL 3.3 context
 private:
     FileBrowser browser_;
     AssetTypeSidebar sidebar_;
