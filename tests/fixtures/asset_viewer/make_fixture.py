@@ -49,3 +49,14 @@ write("tex_super.ktx2", ktx2(37, 4, 2, [rgba], super_scheme=1))
 
 # Unknown vkFormat -> classify as unsupported format.
 write("tex_badfmt.ktx2", ktx2(999, 4, 2, [rgba]))
+
+# ---- resolution-tier fixtures (for --smoke-tiers) ----
+import shutil
+_here = os.path.dirname(__file__)
+_src = os.path.join(_here, "tex_rgba8.ktx2")
+for _tier in ("128", "256"):
+    _d = os.path.join(_here, "tiers", _tier)
+    os.makedirs(_d, exist_ok=True)
+    shutil.copyfile(_src, os.path.join(_d, "sample.ktx2"))
+shutil.copyfile(_src, os.path.join(_here, "tiers", "128", "only128.ktx2"))
+print("wrote tiers/{128,256}/sample.ktx2 + tiers/128/only128.ktx2")

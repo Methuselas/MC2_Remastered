@@ -2,6 +2,7 @@
 #include "TextureDecoderRegistry.h"
 #include "TextureExtensions.h"
 #include "imgui.h"
+#include <algorithm>
 #include <string>
 #include <filesystem>
 #include <system_error>
@@ -101,6 +102,7 @@ void FileBrowser::refresh()
     entries_.clear();
     scanError_.clear();
     selectedIndex_ = -1;
+    rescanTiers();                      // refresh tier list on folder change (NOT per draw frame)
     std::error_code ec;
     fs::path dir(folderPath_);
     if (!fs::is_directory(dir, ec)) { scanError_ = "Not a folder."; return; }
@@ -123,6 +125,19 @@ void FileBrowser::refresh()
 
 void FileBrowser::draw()
 {
+    std::vector<std::string> tiers = SiblingTiers();
+    if (tiers.size() > 1) {
+        std::string cur = CurrentTier();
+        ImGui::TextUnformatted("Resolution:");
+        for (const auto& t : tiers) {
+            ImGui::SameLine();
+            bool active = (t == cur);
+            if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.50f, 0.80f, 1.0f));
+            if (ImGui::Button(t.c_str())) SwitchTier(t);
+            if (active) ImGui::PopStyleColor();
+        }
+        ImGui::Separator();
+    }
     ImGui::TextUnformatted("Folder");
     ImGui::SetNextItemWidth(-150.0f);
     ImGui::InputText("##folder", folderPath_, sizeof(folderPath_));
@@ -152,4 +167,79 @@ std::string FileBrowser::takeSelection()
 {
     hasSelection_ = false;
     return selectionPath_;
+}
+
+static bool fb_isAllDigits(const std::string& s) {
+    if (s.empty()) return false;
+    for (char c : s) if (c < '0' || c > '9') return false;
+    return true;
+}
+
+// folderPath_ may carry a trailing separator (e.g. user types "…/128\" in the
+// InputText box). Strip it so filename()/parent_path() behave (review fix:
+// otherwise CurrentTier() returns "" and SwitchTier() targets the wrong dir).
+static fs::path fb_normFolder(const char* raw) {
+    std::string s = raw ? raw : "";
+    while (!s.empty() && (s.back() == '/' || s.back() == '\\')) s.pop_back();
+    return fs::path(s);
+}
+
+void FileBrowser::setFolder(const std::string& path) {
+    std::snprintf(folderPath_, sizeof(folderPath_), "%s", path.c_str());
+    refresh();
+}
+
+std::string FileBrowser::CurrentTier() const {
+    std::string leaf = fb_normFolder(folderPath_).filename().string();
+    return fb_isAllDigits(leaf) ? leaf : std::string();
+}
+
+void FileBrowser::rescanTiers() {
+    tiers_.clear();
+    fs::path parent = fb_normFolder(folderPath_).parent_path();
+    std::error_code ec;
+    if (parent.empty() || !fs::is_directory(parent, ec)) return;
+    auto it = fs::directory_iterator(parent, ec);
+    if (ec) return;                                 // open failed (perms etc.) -> no tiers (review m2)
+    for (; it != fs::directory_iterator(); it.increment(ec)) {
+        if (ec) break;                              // stop on iteration error (review m2)
+        std::error_code dec;                        // separate ec so an entry error
+        if (!it->is_directory(dec) || dec) continue; // doesn't abort the whole scan
+        std::string name = it->path().filename().string();
+        // <=7 digits keeps values within int range; avoids std::stoi overflow (review m1)
+        if (fb_isAllDigits(name) && name.size() <= 7) tiers_.push_back(name);
+    }
+    // Ascending numeric order WITHOUT std::stoi: for all-digit strings, fewer digits
+    // == smaller; same length == lexical order == numeric order.
+    std::sort(tiers_.begin(), tiers_.end(),
+              [](const std::string& a, const std::string& b){
+                  if (a.size() != b.size()) return a.size() < b.size();
+                  return a < b;
+              });
+}
+
+void FileBrowser::SwitchTier(const std::string& tier) {
+    fs::path dst = fb_normFolder(folderPath_).parent_path() / tier;
+    std::error_code ec;
+    if (!fs::is_directory(dst, ec)) return;   // missing tier -> no-op
+
+    std::string keepName;                     // remember selected filename
+    if (selectedIndex_ >= 0 && selectedIndex_ < (int)entries_.size())
+        keepName = entries_[selectedIndex_];
+    else if (hasSelection_ && !selectionPath_.empty())   // selection set via Browse w/o a list index (review final #2)
+        keepName = fs::path(selectionPath_).filename().string();
+
+    setFolder(dst.string());                  // repoint + rescan (clears entries_/selectedIndex_)
+    selectedIndex_ = -1;
+    hasSelection_  = false;
+    if (!keepName.empty()) {                   // restore selection if same file exists here
+        for (int i = 0; i < (int)entries_.size(); ++i) {
+            if (entries_[i] == keepName) {
+                selectedIndex_ = i;
+                selectionPath_ = (fs::path(folderPath_) / keepName).string();
+                hasSelection_  = true;
+                break;
+            }
+        }
+    }
 }

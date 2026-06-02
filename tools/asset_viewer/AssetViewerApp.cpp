@@ -12,6 +12,7 @@
 #include "Ktx2Decoder.h"
 #include <SDL.h>
 #include <GL/glew.h>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -244,4 +245,74 @@ int AssetViewerApp::runSmokePreview(const char* dir)
     SDL_Quit();
     if (rc == 0) std::printf("[smoke] PASS preview ownership+metadata\n");
     return rc;
+}
+
+int AssetViewerApp::runSmokeTiers(const char* dir)
+{
+    namespace fs = std::filesystem;
+    auto p = [&](const char* rel){ return (fs::path(dir) / rel).make_preferred().string(); };
+
+    // Select sample.ktx2 in the 128 tier (selectFile sets folder = parent).
+    FileBrowser fb;
+    fb.selectFile(p("tiers/128/sample.ktx2"));
+    if (fb.CurrentTier() != "128")            return smokeFail("CurrentTier should be 128");
+    auto tiers = fb.SiblingTiers();
+    if (tiers.size() != 2 || tiers[0] != "128" || tiers[1] != "256")
+        return smokeFail("SiblingTiers should be {128,256}");
+
+    // Switch to 256: same filename exists -> selection preserved, now under tiers/256.
+    fb.SwitchTier("256");
+    if (fb.CurrentTier() != "256")            return smokeFail("CurrentTier should be 256 after switch");
+    if (!fb.hasSelection())                   return smokeFail("selection should persist (sample exists in 256)");
+    if (fb.selectionPath().find("256") == std::string::npos ||
+        fb.selectionPath().find("sample.ktx2") == std::string::npos)
+        return smokeFail("selectionPath should point at tiers/256/sample.ktx2");
+
+    // Missing tier -> no-op (folder unchanged).
+    fb.SwitchTier("999");
+    if (fb.CurrentTier() != "256")            return smokeFail("missing tier should be a no-op");
+
+    // Switch to a tier lacking the selected file -> folder switches, no selection.
+    fb.selectFile(p("tiers/128/only128.ktx2"));
+    fb.SwitchTier("256");
+    if (fb.CurrentTier() != "256")            return smokeFail("should switch folder even when file absent");
+    if (fb.hasSelection())                    return smokeFail("selection should drop when file absent in new tier");
+
+    std::printf("[smoke] PASS tiers (detect/switch/continuity)\n");
+    return 0;
+}
+
+int AssetViewerApp::runSmokeFit()
+{
+    auto approx = [](float a, float b){ return std::fabs(a - b) < 0.01f; };
+
+    // Same aspect, different native res, same avail+zoom -> SAME display size (the caveat).
+    FitSize a = FitTextureDisplaySize(128, 128, 400.0f, 400.0f, 1.0f);
+    FitSize b = FitTextureDisplaySize(256, 256, 400.0f, 400.0f, 1.0f);
+    FitSize c = FitTextureDisplaySize(512, 512, 400.0f, 400.0f, 1.0f);
+    if (!approx(a.w, b.w) || !approx(a.h, b.h)) return smokeFail("128 vs 256 differ in display size");
+    if (!approx(a.w, c.w) || !approx(a.h, c.h)) return smokeFail("128 vs 512 differ in display size");
+
+    // zoom 1 fits inside the avail area (square -> 400x400).
+    if (a.w > 400.01f || a.h > 400.01f || a.w < 1.0f) return smokeFail("fit overflows or empty");
+
+    // Aspect preserved for non-square (256x128 -> w == 2*h, fits).
+    FitSize r = FitTextureDisplaySize(256, 128, 400.0f, 400.0f, 1.0f);
+    if (!approx(r.w, 2.0f * r.h)) return smokeFail("aspect not preserved");
+    if (r.w > 400.01f || r.h > 400.01f) return smokeFail("non-square overflows");
+
+    // zoom 2 == exactly 2x zoom 1.
+    FitSize z = FitTextureDisplaySize(128, 128, 400.0f, 400.0f, 2.0f);
+    if (!approx(z.w, 2.0f * a.w) || !approx(z.h, 2.0f * a.h)) return smokeFail("zoom not linear");
+
+    // Degenerate inputs: finite, no divide-by-zero.
+    FitSize d0 = FitTextureDisplaySize(0, 0, 400.0f, 400.0f, 1.0f);
+    if (d0.w != 0.0f || d0.h != 0.0f) return smokeFail("zero-dim texture should yield {0,0}");
+    FitSize d1 = FitTextureDisplaySize(128, 128, 0.0f, 0.0f, 1.0f);
+    if (!std::isfinite(d1.w) || !std::isfinite(d1.h) || d1.w < 0.0f) return smokeFail("zero-avail not finite");
+    FitSize d2 = FitTextureDisplaySize(128, 128, 400.0f, 400.0f, 0.0f);
+    if (!std::isfinite(d2.w) || d2.w <= 0.0f) return smokeFail("zero-zoom not handled");
+
+    std::printf("[smoke] PASS fit (size@1=%.1fx%.1f)\n", a.w, a.h);
+    return 0;
 }
