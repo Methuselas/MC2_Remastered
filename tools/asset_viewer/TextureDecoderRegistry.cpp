@@ -42,15 +42,16 @@ bool TextureDecoderRegistry::isSupported(const std::string& path) const
 
 std::vector<std::string> TextureDecoderRegistry::supportedExtensions() const
 {
-    // Union, in registration order. (Small N; linear is fine.)
-    static const char* kProbe[] = {
-        "png","jpg","jpeg","bmp","tga","ktx2","dds","basis"
-    };
+    // Accumulate from each registered decoder's self-reported extensions().
+    // Dedup while preserving registration order; no hardcoded probe list.
     std::vector<std::string> out;
-    for (const char* e : kProbe) {
-        std::string ext = e;
-        for (const auto& d : decoders_)
-            if (d->handles(ext)) { out.push_back(ext); break; }
+    for (const auto& d : decoders_) {
+        for (const std::string& ext : d->extensions()) {
+            bool already = false;
+            for (const std::string& seen : out)
+                if (seen == ext) { already = true; break; }
+            if (!already) out.push_back(ext);
+        }
     }
     return out;
 }

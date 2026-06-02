@@ -1,5 +1,5 @@
 #pragma once
 #include <string>
-// True if `path` ends in a stage-1 supported texture extension (case-insensitive):
-// .png .jpg .jpeg .bmp .tga
+// True if `path`'s extension is handled by some registered texture decoder
+// (see TextureDecoderRegistry). Case-insensitive.
 bool IsSupportedTextureFile(const std::string& path);

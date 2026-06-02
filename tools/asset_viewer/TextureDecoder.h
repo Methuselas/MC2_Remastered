@@ -2,6 +2,7 @@
 #pragma once
 #include <cstdint>
 #include <string>
+#include <vector>
 
 // Result of decoding+uploading one texture file. glTexture==0 means failure
 // (error holds a friendly message). ownsGlTexture decides who frees it:
@@ -23,6 +24,8 @@ struct ITextureDecoder {
     // extLower is the lowercased extension WITHOUT the dot, e.g. "ktx2".
     virtual bool          handles(const std::string& extLower) const = 0;
     virtual DecodedTexture load(const std::string& path) const = 0;
+    // All lowercased extensions (without dot) this decoder handles.
+    virtual std::vector<std::string> extensions() const = 0;
 };
 
 // Lowercased extension without the dot ("a/b.KTX2" -> "ktx2"; "noext" -> "").

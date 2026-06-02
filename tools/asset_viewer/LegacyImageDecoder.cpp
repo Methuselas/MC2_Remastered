@@ -2,6 +2,12 @@
 #include "LegacyImageDecoder.h"
 #include "UiEditorImageCache.h"
 #include <cstdint>
+#include <vector>
+
+std::vector<std::string> LegacyImageDecoder::extensions() const
+{
+    return {"png","jpg","jpeg","bmp","tga"};
+}
 
 bool LegacyImageDecoder::handles(const std::string& extLower) const
 {
@@ -19,7 +25,7 @@ DecodedTexture LegacyImageDecoder::load(const std::string& path) const
             : "Failed to load image (not found or decode error).";
         return d;
     }
-    d.glTexture     = (uint32_t)(intptr_t)tex->textureId;
+    d.glTexture = static_cast<uint32_t>(static_cast<uintptr_t>(tex->textureId));  // ImU64 -> GLuint (GL ids fit in 32 bits)
     d.width         = tex->width;
     d.height        = tex->height;
     d.mipCount      = 1;

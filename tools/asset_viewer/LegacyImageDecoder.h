@@ -8,4 +8,5 @@ class LegacyImageDecoder : public ITextureDecoder {
 public:
     bool          handles(const std::string& extLower) const override;
     DecodedTexture load(const std::string& path) const override;
+    std::vector<std::string> extensions() const override;
 };
