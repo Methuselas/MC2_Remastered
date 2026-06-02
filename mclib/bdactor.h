@@ -51,7 +51,12 @@ class BldgAppearanceType : public AppearanceType
 	
 		TG_TypeMultiShapePtr		bldgShape[MAX_LODS];
 		float						lodDistance[MAX_LODS];
-		
+
+		// MODEL-OVERRIDE dual-shape (Slice 2): nullable type-level render shape.
+		// NULL = no override → render falls back to stock bldgShape[lod].
+		// Collision/damage NEVER read this; they read bldgShape[lod] directly.
+		TG_TypeMultiShapePtr		bldgRenderShape;
+
 		TG_TypeMultiShapePtr		bldgDmgShape;
 		
 		TG_AnimateShapePtr			bdAnimData[MAX_BD_ANIMATIONS];
@@ -85,6 +90,7 @@ class BldgAppearanceType : public AppearanceType
 				lodDistance[i] = 0.0f;
 			}
 
+			bldgRenderShape = NULL;   // MODEL-OVERRIDE dual-shape: no override by default
 			bldgDmgShape = NULL;
 			
 			for (i=0;i<MAX_BD_ANIMATIONS;i++)
@@ -170,8 +176,19 @@ class BldgAppearanceType : public AppearanceType
 		}
 		
   		virtual void init (const char *fileName);
-		
+
 		virtual void destroy (void);
+
+		// MODEL-OVERRIDE dual-shape accessors.
+		// Render authority: override if present, else stock LOD. LOD-collapses
+		// under override (returns the single override shape for every LOD).
+		TG_TypeMultiShape* getBldgRenderShape (long lod)
+		{
+			return bldgRenderShape ? bldgRenderShape : bldgShape[lod];
+		}
+		// Collision authority: ALWAYS stock. Collision must never call the
+		// render accessor (it already reads bldgShape[lod] directly).
+		TG_TypeMultiShape* getBldgCollisionShape (long lod) { return bldgShape[lod]; }
 
 };
 
@@ -454,7 +471,12 @@ class TreeAppearanceType : public AppearanceType
 	
 		TG_TypeMultiShapePtr		treeShape[MAX_LODS];
 		float						lodDistance[MAX_LODS];
-		
+
+		// MODEL-OVERRIDE dual-shape (Slice 2): nullable type-level render shape.
+		// NULL = no override → render falls back to stock treeShape[lod].
+		// Collision/damage NEVER read this; they read treeShape[lod] directly.
+		TG_TypeMultiShapePtr		treeRenderShape;
+
 		TG_TypeMultiShapePtr		treeDmgShape;
 		
 		TG_AnimateShapePtr			treeAnimData[MAX_BD_ANIMATIONS];
@@ -473,7 +495,8 @@ class TreeAppearanceType : public AppearanceType
 
 			for (i=0;i<MAX_BD_ANIMATIONS;i++)
 				treeAnimData[i] = NULL;
-				
+
+			treeRenderShape = NULL;   // MODEL-OVERRIDE dual-shape: no override by default
 			treeDmgShape = NULL;
 		}
 	
@@ -488,8 +511,15 @@ class TreeAppearanceType : public AppearanceType
 		}
 
 		virtual void init (const char *fileName);
-		
+
 		virtual void destroy (void);
+
+		// MODEL-OVERRIDE dual-shape accessors (mirror of BldgAppearanceType).
+		TG_TypeMultiShape* getTreeRenderShape (long lod)
+		{
+			return treeRenderShape ? treeRenderShape : treeShape[lod];
+		}
+		TG_TypeMultiShape* getTreeCollisionShape (long lod) { return treeShape[lod]; }
 };
 
 //***********************************************************************

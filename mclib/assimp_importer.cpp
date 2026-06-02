@@ -183,7 +183,7 @@ void BuildTextureList(const aiScene* scene, TG_TypeMultiShape* out) {
 //
 // Returns 0 on success, -1 on failure.
 long ImportShapeFromMesh(const aiScene* scene, unsigned meshIdx,
-                         TG_TypeShape* outShape) {
+                         TG_TypeShape* outShape, TG_TypeMultiShape* outMulti) {
 	const aiMesh* mesh = scene->mMeshes[meshIdx];
 	if (mesh->mNumVertices == 0 || mesh->mNumFaces == 0) {
 		// Empty mesh — leave shape inited but do not populate. Engine treats
@@ -238,6 +238,24 @@ long ImportShapeFromMesh(const aiScene* scene, unsigned meshIdx,
 		verts[v].position  = toMC2Pos(mesh->mVertices[v]);
 		verts[v].normal    = toMC2Vec(mesh->mNormals[v]);
 		verts[v].aRGBLight = 0xff000000;
+
+		// MODEL-OVERRIDE / Track C: vertex-tight bounding box. Expand the
+		// multi-shape box over every vertex in multi-shape-local space
+		// (nodeCenter + mesh-local position), matching how the ASE path and the
+		// bdactor.cpp OBBRadius/highZ consumer derive bounds. Previously the box
+		// was nodeCenter-only (loose), which gave wrong cull/HZB bounds for
+		// imported meshes routed through getBldgRenderShape/getTreeRenderShape.
+		if (outMulti) {
+			const float wx = center.x + verts[v].position.x;
+			const float wy = center.y + verts[v].position.y;
+			const float wz = center.z + verts[v].position.z;
+			if (wx < outMulti->minBox.x) outMulti->minBox.x = wx;
+			if (wy < outMulti->minBox.y) outMulti->minBox.y = wy;
+			if (wz < outMulti->minBox.z) outMulti->minBox.z = wz;
+			if (wx > outMulti->maxBox.x) outMulti->maxBox.x = wx;
+			if (wy > outMulti->maxBox.y) outMulti->maxBox.y = wy;
+			if (wz > outMulti->maxBox.z) outMulti->maxBox.z = wz;
+		}
 	}
 
 	// UV channel 0 is the standard diffuse channel. Mechs with UV1+ are out
@@ -299,37 +317,23 @@ long ImportShapeFromMesh(const aiScene* scene, unsigned meshIdx,
 }
 
 //-----------------------------------------------------------------------------
-// Compute multi-shape bounding box (min/max corner + extentRadius). Mirrors
-// what the ASE path does in ComputeBoundingBox / LoadBinaryCopy. Walks every
-// vertex of every shape, transforming by per-shape nodeCenter so the box is
-// in multi-shape-local space. Sets `out->maxBox`, `minBox`, `extentRadius`.
-void ComputeBoundingBox(TG_TypeMultiShape* out) {
+// Multi-shape bounding box (min/max corner + extentRadius). Mirrors what the
+// ASE path does in LoadBinaryCopy: vertex-tight over every transformed vertex
+// (accumulated in ImportShapeFromMesh in multi-shape-local space), then
+// finalized here for extentRadius. Sets `out->maxBox`, `minBox`, `extentRadius`.
+//
+// Reset the multi-shape box to "empty" extremes before the per-mesh vertex
+// accumulation in ImportShapeFromMesh. Call once before the mesh loop.
+void ResetBoundingBox(TG_TypeMultiShape* out) {
 	out->maxBox.x = out->maxBox.y = out->maxBox.z = -1.0e9f;
 	out->minBox.x = out->minBox.y = out->minBox.z =  1.0e9f;
+}
 
-	for (long i = 0; i < out->GetNumShapes(); i++) {
-		TG_TypeNodePtr n = out->GetTypeNode(i);
-		if (!n || n->GetNodeType() != SHAPE_NODE)
-			continue;
-		TG_TypeShape* ts = static_cast<TG_TypeShape*>(n);
-		const Stuff::Point3D centerLocal = ts->GetNodeCenter();
-		const DWORD nv = ts->GetNumTypeVertices();
-		// We need to read listOfTypeVertices, but it's protected. Use the
-		// existing GetTypeVertex accessor… actually there isn't one. Ship a
-		// loose bounding box for MVP using just nodeCenter as a sentinel —
-		// better approximation than zero, and the renderer doesn't gate on
-		// this for visibility (the per-instance pass recomputes per-frame
-		// world-space bounds via MultiTransformShape).
-		(void)nv;
-		if (centerLocal.x < out->minBox.x) out->minBox.x = centerLocal.x;
-		if (centerLocal.y < out->minBox.y) out->minBox.y = centerLocal.y;
-		if (centerLocal.z < out->minBox.z) out->minBox.z = centerLocal.z;
-		if (centerLocal.x > out->maxBox.x) out->maxBox.x = centerLocal.x;
-		if (centerLocal.y > out->maxBox.y) out->maxBox.y = centerLocal.y;
-		if (centerLocal.z > out->maxBox.z) out->maxBox.z = centerLocal.z;
-	}
-
-	// Sentinel if no shapes contributed.
+// Finalize the multi-shape box after every mesh has expanded min/max over its
+// vertices (vertex-tight, see ImportShapeFromMesh). Handles the empty-mesh
+// sentinel and computes the bounding-sphere radius.
+void ComputeBoundingBox(TG_TypeMultiShape* out) {
+	// Sentinel if no vertices contributed (no mesh expanded the box).
 	if (out->maxBox.x < out->minBox.x) {
 		out->maxBox.x = out->maxBox.y = out->maxBox.z = 0.0f;
 		out->minBox.x = out->minBox.y = out->minBox.z = 0.0f;
@@ -388,6 +392,10 @@ long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out) {
 	BuildTextureList(scene, out);
 	ASSIMP_TRACE("  BuildTextureList done");
 
+	// Vertex-tight box: reset to empty extremes, then each ImportShapeFromMesh
+	// expands min/max over its vertices; ComputeBoundingBox finalizes below.
+	ResetBoundingBox(out);
+
 	// Populate each shape from its mesh.
 	for (unsigned i = 0; i < scene->mNumMeshes; i++) {
 		ASSIMP_TRACE("  ImportShapeFromMesh i=%u verts=%u faces=%u matIdx=%u",
@@ -396,7 +404,7 @@ long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out) {
 		TG_TypeNodePtr slot = out->GetTypeNode((long)i);
 		if (!slot || slot->GetNodeType() != SHAPE_NODE)
 			continue;
-		long r = ImportShapeFromMesh(scene, i, static_cast<TG_TypeShape*>(slot));
+		long r = ImportShapeFromMesh(scene, i, static_cast<TG_TypeShape*>(slot), out);
 		if (r != 0) {
 			ASSIMP_TRACE("  ImportShapeFromMesh i=%u returned %ld", i, r);
 			return r;

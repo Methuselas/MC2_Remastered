@@ -43,6 +43,10 @@ static unsigned long s_spotDiagBldgCalls      = 0;   // update() call counter
 #include "spotlight_diag.h"  // T1.16 — (E)-owned slot tagging for per-slot probe
 #include "gos_profiler.h"  // PERF DIAGNOSTIC 2026-05-06: ZoneScopedN for per-update breakdown
 
+// MODEL-OVERRIDE dual-shape (Slice 2): registry resolve + direct geometry import.
+#include "model_override_registry.h"
+#include "assimp_importer.h"
+
 #ifndef CAMERA_H
 #include"camera.h"
 #endif
@@ -185,6 +189,11 @@ void BldgAppearanceType::init (const char * fileName)
 	}
 	
 	char aseFileName[512];
+	// MODEL-OVERRIDE dual-shape: capture the BASE (LOD0) asset name before the
+	// damage block below reuses aseFileName, so the override resolve keys off
+	// the base shape, not the damage shape.
+	char bldgBaseName[512];
+	bldgBaseName[0] = 0;
 	result = iniFile.readIdString("FileName",aseFileName,511);
 	if (result != NO_ERR)
 	{
@@ -195,7 +204,7 @@ void BldgAppearanceType::init (const char * fileName)
 			char baseLODDist[256];
 			sprintf(baseName,"FileName%d",i);
 			sprintf(baseLODDist,"Distance%d",i);
-			
+
 			result = iniFile.readIdString(baseName,aseFileName,511);
 			if (result == NO_ERR)
 			{
@@ -210,11 +219,14 @@ void BldgAppearanceType::init (const char * fileName)
 				// Base LOD shape.  In stand Pose by default.
 				bldgShape[i] = new TG_TypeMultiShape;
 				gosASSERT(bldgShape[i] != NULL);
-			
+
 				FullPathFileName bldgName;
 				bldgName.init(tglPath,aseFileName,".ase");
-			
+
 				bldgShape[i]->LoadTGMultiShapeFromASE(bldgName);
+
+				if (!i)
+					strncpy(bldgBaseName, aseFileName, sizeof(bldgBaseName) - 1);
 			}
 			else if (!i)
 			{
@@ -228,11 +240,52 @@ void BldgAppearanceType::init (const char * fileName)
 		// Base shape.  In stand Pose by default.
 		bldgShape[0] = new TG_TypeMultiShape;
 		gosASSERT(bldgShape[0] != NULL);
-	
+
 		FullPathFileName bldgName;
 		bldgName.init(tglPath,aseFileName,".ase");
-	
+
 		bldgShape[0]->LoadTGMultiShapeFromASE(bldgName);
+
+		strncpy(bldgBaseName, aseFileName, sizeof(bldgBaseName) - 1);
+	}
+
+	// MODEL-OVERRIDE dual-shape: render-only override for static props. The
+	// stock bldgShape[] load above is UNCHANGED (collision authority). Here we
+	// resolve a registry override for the BASE shape and, on hit, load the
+	// replacement geometry into the separate render shape only. On any failure
+	// we delete + NULL the render shape so render falls back to stock.
+	bldgBaseName[sizeof(bldgBaseName) - 1] = 0;
+	if (bldgBaseName[0])
+	{
+		const ModelOverrideRecord* ov =
+			ModelOverrideRegistry::instance().resolve("staticProp", bldgBaseName);
+		if (ov)
+		{
+#ifdef ENABLE_ASSIMP_IMPORTER
+			bldgRenderShape = new TG_TypeMultiShape;
+			// Source path = manifest dir + record source (see Slice 1 registry).
+			char overridePath[1024];
+			sprintf(overridePath, "data/model_overrides/%s", ov->sourceRelPath.c_str());
+			long r = ImportGeometryFromFile(overridePath, bldgRenderShape);
+			if (r != 0 || bldgRenderShape->GetNumShapes() == 0)
+			{
+				delete bldgRenderShape; bldgRenderShape = NULL;   // stock fallback
+				fprintf(stderr, "[MODOVERRIDE] staticProp '%s': import failed (%s), using stock render\n",
+				        bldgBaseName, overridePath);
+				fflush(stderr);
+			}
+			else
+			{
+				fprintf(stderr, "[MODOVERRIDE] staticProp '%s': render override applied (%s)\n",
+				        bldgBaseName, overridePath);
+				fflush(stderr);
+			}
+#else
+			fprintf(stderr, "[MODOVERRIDE] staticProp '%s': override resolved but importer disabled, using stock render\n",
+			        bldgBaseName);
+			fflush(stderr);
+#endif
+		}
 	}
 
 
@@ -452,6 +505,13 @@ void BldgAppearanceType::destroy (void)
 		}
 	}
 
+	// MODEL-OVERRIDE dual-shape: free the render override shape if loaded.
+	if (bldgRenderShape)
+	{
+		delete bldgRenderShape;
+		bldgRenderShape = NULL;
+	}
+
  	if (bldgDmgShape)
 	{
 		delete bldgDmgShape;
@@ -651,7 +711,10 @@ void BldgAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 	fogLightSet = false;
 	if (appearType)
 	{
-		bldgShape = appearType->bldgShape[0]->CreateFrom();
+		// MODEL-OVERRIDE dual-shape: build the per-instance RENDER shape from the
+		// render accessor (override if present, else stock). Collision rebuilds
+		// this same member from stock bldgShape[lod] when it needs passability.
+		bldgShape = appearType->getBldgRenderShape(0)->CreateFrom();
 
 		//-------------------------------------------------
 		// Load the texture and store its handle.
@@ -811,14 +874,16 @@ void BldgAppearance::setObjStatus (long oStatus)
 					delete bldgShape;
 					bldgShape = NULL;
 				}
-				
-				bldgShape = appearType->bldgShape[0]->CreateFrom();
+
+				// MODEL-OVERRIDE dual-shape: restore the per-instance RENDER
+				// shape via the render accessor (override if present, else stock).
+				bldgShape = appearType->getBldgRenderShape(0)->CreateFrom();
 				if (bdAnimationState != -1)
 					appearType->setAnimation(bldgShape,bdAnimationState);
-				
-				beenInView = false; 
+
+				beenInView = false;
 			}
-			
+
 		}
 
 		if (bldgShape)
@@ -3359,6 +3424,10 @@ void TreeAppearanceType::init (const char * fileName)
 		isForestClump = false;
 		
  	char aseFileName[512];
+	// MODEL-OVERRIDE dual-shape: capture the BASE (LOD0) asset name before the
+	// damage block below reuses aseFileName.
+	char treeBaseName[512];
+	treeBaseName[0] = 0;
 	result = iniFile.readIdString("FileName",aseFileName,511);
 	if (result != NO_ERR)
 	{
@@ -3369,7 +3438,7 @@ void TreeAppearanceType::init (const char * fileName)
 			char baseLODDist[256];
 			sprintf(baseName,"FileName%d",i);
 			sprintf(baseLODDist,"Distance%d",i);
-			
+
 			result = iniFile.readIdString(baseName,aseFileName,511);
 			if (result == NO_ERR)
 			{
@@ -3384,16 +3453,19 @@ void TreeAppearanceType::init (const char * fileName)
 				// Base LOD shape.  In stand Pose by default.
 				treeShape[i] = new TG_TypeMultiShape;
 				gosASSERT(treeShape[i] != NULL);
-			
+
 				FullPathFileName treeName;
 				treeName.init(tglPath,aseFileName,".ase");
-			
+
 				treeShape[i]->LoadTGMultiShapeFromASE(treeName);
-				
+
 				//---------------------------------------------------------
 				// Should only be necessary for trees.  Easy to data drive
 				treeShape[i]->SetAlphaTest(true);
 				treeShape[i]->SetFilter(true);
+
+				if (!i)
+					strncpy(treeBaseName, aseFileName, sizeof(treeBaseName) - 1);
 			}
 			else if (!i)
 			{
@@ -3407,16 +3479,58 @@ void TreeAppearanceType::init (const char * fileName)
 		// Base shape.  In stand Pose by default.
 		treeShape[0] = new TG_TypeMultiShape;
 		gosASSERT(treeShape[0] != NULL);
-	
+
 		FullPathFileName treeName;
 		treeName.init(tglPath,aseFileName,".ase");
-	
+
 		treeShape[0]->LoadTGMultiShapeFromASE(treeName);
-		
+
 		//---------------------------------------------------------
 		// Should only be necessary for trees.  Easy to data drive
 		treeShape[0]->SetAlphaTest(true);
 		treeShape[0]->SetFilter(true);
+
+		strncpy(treeBaseName, aseFileName, sizeof(treeBaseName) - 1);
+	}
+
+	// MODEL-OVERRIDE dual-shape: render-only override for trees. The stock
+	// treeShape[] load above is UNCHANGED (collision authority). On registry
+	// hit, load replacement geometry into the separate render shape only.
+	treeBaseName[sizeof(treeBaseName) - 1] = 0;
+	if (treeBaseName[0])
+	{
+		const ModelOverrideRecord* ov =
+			ModelOverrideRegistry::instance().resolve("tree", treeBaseName);
+		if (ov)
+		{
+#ifdef ENABLE_ASSIMP_IMPORTER
+			treeRenderShape = new TG_TypeMultiShape;
+			char overridePath[1024];
+			sprintf(overridePath, "data/model_overrides/%s", ov->sourceRelPath.c_str());
+			long r = ImportGeometryFromFile(overridePath, treeRenderShape);
+			if (r != 0 || treeRenderShape->GetNumShapes() == 0)
+			{
+				delete treeRenderShape; treeRenderShape = NULL;   // stock fallback
+				fprintf(stderr, "[MODOVERRIDE] tree '%s': import failed (%s), using stock render\n",
+				        treeBaseName, overridePath);
+				fflush(stderr);
+			}
+			else
+			{
+				// Match stock tree render flags so the override renders with
+				// the same alpha-test/filter setup as the stock shape.
+				treeRenderShape->SetAlphaTest(true);
+				treeRenderShape->SetFilter(true);
+				fprintf(stderr, "[MODOVERRIDE] tree '%s': render override applied (%s)\n",
+				        treeBaseName, overridePath);
+				fflush(stderr);
+			}
+#else
+			fprintf(stderr, "[MODOVERRIDE] tree '%s': override resolved but importer disabled, using stock render\n",
+			        treeBaseName);
+			fflush(stderr);
+#endif
+		}
 	}
 
 	result = iniFile.seekBlock("TGLDamage");
@@ -3460,6 +3574,13 @@ void TreeAppearanceType::destroy (void)
 			delete treeShape[i];
 			treeShape[i] = NULL;
 		}
+	}
+
+	// MODEL-OVERRIDE dual-shape: free the render override shape if loaded.
+	if (treeRenderShape)
+	{
+		delete treeRenderShape;
+		treeRenderShape = NULL;
 	}
 
 	if (treeDmgShape)
@@ -3516,7 +3637,10 @@ void TreeAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 
 	if (appearType)
 	{
-		treeShape = appearType->treeShape[0]->CreateFrom();
+		// MODEL-OVERRIDE dual-shape: build the per-instance RENDER shape from the
+		// render accessor (override if present, else stock). Collision (markTerrain/
+		// markLOS) rebuilds this member from stock treeShape[lod] when needed.
+		treeShape = appearType->getTreeRenderShape(0)->CreateFrom();
 
 		//-------------------------------------------------
 		// Load the texture and store its handle.
@@ -3653,11 +3777,13 @@ void TreeAppearance::setObjStatus (long oStatus)
 					delete treeShape;
 					treeShape = NULL;
 				}
-				
-				treeShape = appearType->treeShape[0]->CreateFrom();
-				beenInView = false; 
+
+				// MODEL-OVERRIDE dual-shape: restore per-instance RENDER shape
+				// via the render accessor (override if present, else stock).
+				treeShape = appearType->getTreeRenderShape(0)->CreateFrom();
+				beenInView = false;
 			}
-			
+
 		}
 
 		//-------------------------------------------------
