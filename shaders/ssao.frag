@@ -7,8 +7,8 @@
 //
 // Occlusion test is window-depth-ordering based with a world-distance range
 // check, so it needs NO camera-position uniform (sidesteps the Stuff->MC2
-// axis-swap hazard). Convention matches shadow_screen.frag: depth >= 1.0 is
-// sky / no-geometry (AO = 1, no darkening); larger window depth = farther.
+// axis-swap hazard). Convention matches shadow_screen.frag: reverse-Z far=0,
+// near=1, larger=closer; sky/cleared depth ~0.0 (NOT 1.0).
 //
 // Output: single grayscale AO factor in [0,1] (1 = unoccluded). Applied
 // multiplicatively to the scene by ssao_apply.frag.
@@ -55,8 +55,9 @@ void main()
 {
     float depth = texture(sceneDepthTex, TexCoord).r;
 
-    // Sky / no geometry: never darken (matches shadow_screen.frag sky guard).
-    if (depth >= 1.0) {
+    // Sky / no geometry: never darken. reverse-Z: far=0, near=1, larger=closer;
+    // sky/cleared pixels are ~0.0, not 1.0 (matches particle_billboard.frag idiom).
+    if (depth <= 0.0001) {
         FragColor = vec4(1.0);
         return;
     }
@@ -86,11 +87,13 @@ void main()
 
         float sampleProjDepth = ndc.z;                 // [0,1] ZERO_TO_ONE
         float storedDepth = texture(sceneDepthTex, sUV).r;
-        if (storedDepth >= 1.0) continue;              // sky behind sample
+        // reverse-Z: far=0, near=1, larger=closer; sky ~0.0 (matches particle_billboard.frag).
+        if (storedDepth <= 0.0001) continue;           // sky behind sample
 
-        // Stored surface NEARER the eye than the sample point (larger depth =
-        // farther, so smaller stored depth = nearer = occluder).
-        bool occluded = storedDepth < sampleProjDepth - aoBias;
+        // Stored surface NEARER the eye than the sample point: under reverse-Z
+        // larger depth = closer, so stored > sampleProjDepth means occluder.
+        // reverse-Z: far=0, near=1, larger=closer — occluder has greater depth.
+        bool occluded = storedDepth > sampleProjDepth + aoBias;
 
         // World-distance range check: only count nearby occluders so distant
         // geometry does not bleed AO (halo suppression).
