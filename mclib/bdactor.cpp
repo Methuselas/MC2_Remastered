@@ -38,6 +38,8 @@ static unsigned long s_spotDiagBldgCalls      = 0;   // update() call counter
 #include "../GameAdapters/StaticPropRenderAdapter.h"  // M1 RenderWorld Tasks 8-11
 #include <unordered_map>  // LODBUG probe: tracks per-actor previous bldgShape*
 #include "gos_object_parity_query.h"  // IsDualEmitArmed — Stage 2.D.2 dual-emit hook
+#include <set>            // [LIGHTSLOT v1] Task 0 cardinality gate
+#include "gos_smoke.h"    // [LIGHTSLOT v1] SmokeMode::missionHasStarted()
 #include "gos_object_recon_tracy.h"  // [OBJECT_RECON v1] slice-2 recon-zero
 #include "cpu_proj_cost_split.h"      // F3 CPU projection cost-baseline (RAII scope)
 #include "spotlight_diag.h"  // T1.16 — (E)-owned slot tagging for per-slot probe
@@ -1900,6 +1902,92 @@ long BldgAppearance::renderShadows (void)
 // CacheGpuLightData directly); generic props take the no-actor-light
 // path. C++-only. See docs/superpowers/plans/
 // 2026-05-17-static-lighting-bake-SIMPLIFIED.md
+// ============================================================================
+// [LIGHTSLOT v1] Task 0 — light-slot cardinality PROOF GATE (diagnostic only,
+// env-gated MC2_LIGHTSLOT_TRACE, ZERO behavior change). Proves whether the
+// unique static-prop light slots consumed by an override forest are bounded by
+// ~(types x LODs) after addLightDataStructure content dedup + the persistent
+// baked table, or scale with INSTANCES (K). Pure counting; emits ONE line per
+// map at mission_ready (NOT per-frame). All txmmgr numbers read via accessor
+// free fns (defined mclib/txmmgr.cpp).
+// ============================================================================
+extern uint32_t g_mc2FrameCounter;  // mclib/tgl.cpp
+// [LIGHTSLOT v1] accessor free fns (defined mclib/txmmgr.cpp, global scope).
+extern uint32_t mc2LightSlotBakedHighWater();
+extern uint64_t mc2LightSlotDedupHits();
+extern uint64_t mc2LightSlotActorKeyHits();
+extern uint32_t mc2LightSlotTableCount();
+namespace mc2_lightslot_trace {
+    static bool          s_enabled      = false;
+    static bool          s_inited       = false;
+    static bool          s_emitted      = false;
+    static uint32_t      s_armFrame     = 0;     // frame at which mission first seen ready
+    static uint32_t      s_accFrame     = 0xFFFFFFFFu; // frame the current accumulation belongs to
+    static uint64_t      s_instances    = 0;     // K: static-prop tree-instance captures THIS frame
+    static std::set<uint32_t> s_distinctSlots;   // D/U: distinct lightDataIndex over static instances (this frame)
+    static std::set<const void*> s_types;        // N: distinct override tree TYPES (by appearType ptr, this frame)
+
+    static inline void maybeEmit();  // fwd
+
+    static inline void initFromEnv() {
+        if (s_inited) return;
+        s_inited   = true;
+        s_enabled  = (std::getenv("MC2_LIGHTSLOT_TRACE") != nullptr);
+    }
+
+    // Record one static-prop tree instance's resolved light slot + its type.
+    // Accumulators are per-FRAME (reset on frame change) so s_instances is a
+    // true K (instance count), not frame x instance, and the distinct-slot set
+    // is a single-frame snapshot of the whole forest.
+    static inline void recordInstance(const void* appearType, bool isOverride,
+                                      uint32_t lightDataIndex) {
+        initFromEnv();
+        if (!s_enabled || s_emitted) return;
+        if (g_mc2FrameCounter != s_accFrame) {
+            // Frame boundary: the just-completed frame (s_accFrame) holds a
+            // full snapshot of every static tree touched. Try to emit from it
+            // BEFORE clearing for the new frame.
+            maybeEmit();
+            s_accFrame = g_mc2FrameCounter;
+            s_instances = 0;
+            s_distinctSlots.clear();
+            s_types.clear();
+        }
+        ++s_instances;
+        if (lightDataIndex != 0xFFFFFFFFu)
+            s_distinctSlots.insert(lightDataIndex);
+        if (appearType && isOverride)
+            s_types.insert(appearType);
+    }
+
+    // Emit one summary line once, a few frames after mission_ready so every
+    // instance has been touched at least once. Called from the tree capture
+    // site (cheap; bails immediately once emitted / disabled).
+    static inline void maybeEmit() {
+        if (!s_enabled || s_emitted) return;
+        if (!SmokeMode::missionHasStarted()) return;
+        if (s_armFrame == 0) { s_armFrame = s_accFrame; return; }
+        // Emit the just-completed frame's snapshot once it is >= 8 frames past
+        // mission_ready (forest fully touched + distinct-slot set settled).
+        if (s_accFrame == 0xFFFFFFFFu || s_accFrame < s_armFrame + 8) return;
+        if (s_instances == 0) return;
+
+        const uint64_t H = mc2LightSlotDedupHits() + mc2LightSlotActorKeyHits();
+        const uint32_t B = mc2LightSlotBakedHighWater();
+        const size_t   U = s_distinctSlots.size();   // distinct slots attributable to static-prop instances
+        const size_t   D = s_distinctSlots.size();   // per-instance distinct (same set — see report)
+        std::printf(
+            "[LIGHTSLOT v1] static_prop_instances=%llu override_tree_types=%zu "
+            "registered_recipes=%u unique_light_slots=%zu dedup_hits=%llu "
+            "baked_slots=%u per_instance_distinct=%zu table_count=%u\n",
+            (unsigned long long)s_instances, s_types.size(),
+            B /* R ~= baked recipe high-water */, U,
+            (unsigned long long)H, B, D, mc2LightSlotTableCount());
+        std::fflush(stdout);
+        s_emitted = true;
+    }
+}
+
 static void mc2CacheOrBakeStaticGpuLight(TG_MultiShape* shape,
                                          bool registered, int32_t recipeIndex)
 {
@@ -4226,6 +4314,14 @@ long TreeAppearance::render (long depthFixup)
 					GpuStaticPropRegistry::markVisible(staticReg.recipeIndex,
 					                                  staticReg.lightDataIndex,
 					                                  treeShape ? treeShape->GetExtentRadius() : 0.0f);
+					// [LIGHTSLOT v1] Task 0: registered static-replay trees record
+					// their per-frame slot here (the steady-state path) so the
+					// distinct-slot set captures the whole forest, not just frame-1
+					// full-bake instances.
+					mc2_lightslot_trace::recordInstance(
+						appearType,
+						appearType && appearType->treeRenderShape != nullptr,
+						staticReg.lightDataIndex);
 					submittedToGpu = true;
 				}
 			}
@@ -4555,6 +4651,11 @@ long TreeAppearance::update (bool animate)
 				mc2CacheOrBakeStaticGpuLight(treeShape, staticReg.registered, staticReg.recipeIndex);
 				// 2026-05-11 per-instance capture (mirror of BldgAppearance::update).
 				staticReg.lightDataIndex = treeShape->getCachedGpuLightIndex();
+				// [LIGHTSLOT v1] Task 0 cardinality gate (diagnostic only).
+				mc2_lightslot_trace::recordInstance(
+					appearType,
+					appearType && appearType->treeRenderShape != nullptr,
+					staticReg.lightDataIndex);
 			}
 			{
 				// GPU-INSTANCE-SKIP-POOLS-1 (2026-06-03): gpuEligible already
@@ -4621,6 +4722,13 @@ long TreeAppearance::update (bool animate)
 			mc2CacheOrBakeStaticGpuLight(treeShape, staticReg.registered, staticReg.recipeIndex);
 			// 2026-05-11 per-instance capture (mirror of gpuEligible branch).
 			staticReg.lightDataIndex = treeShape->getCachedGpuLightIndex();
+			// [LIGHTSLOT v1] Task 0 cardinality gate (diagnostic only). This is
+			// the branch registered override trees actually land in (gpuEligible
+			// above is gated by !needsFullBakeNextFrame).
+			mc2_lightslot_trace::recordInstance(
+				appearType,
+				appearType && appearType->treeRenderShape != nullptr,
+				staticReg.lightDataIndex);
 			needsFullBakeNextFrame = false;
 		}
 
