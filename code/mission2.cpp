@@ -108,7 +108,7 @@ void Mission::initBareMinimum()
 	}
 
 	//Startup the vertex array pool (MODEL-OVERRIDE: sized for override forests, see mission.cpp pools)
-	mcTextureManager->startVertices(16000000);
+	mcTextureManager->startVertices(32000000);
 	mcTextureManager->startShapes(10000);
 
 	initTGLForLogistics();

@@ -315,3 +315,63 @@ floor). A denser-canopy result would require a different source tree asset.
 - `.claude/make_leaf_alpha_tga.py`: leaf RGBA TGA author (repeatable).
 - `.claude/tree_export.py`: TARGET_TRIS=40000, SCALE=32.
 - Deploy manifest = 6 live tree types -> `source/trees/tree_small.glb`.
+
+---
+
+## Slice 7 — LUSH CANOPY via leaf-card-PRESERVING reduction (2026-06-03, viewed)
+
+**The Slice-6 "tris floor at 42885 / source is a sapling" conclusion was WRONG.**
+Inspected the source gltf accessors directly: `tree_small_02_1k.gltf` has 3
+primitives — branches 62k verts/94k tris, **leaves 1.7M verts / 1.94M tris**
+(30,250 disconnected leaf-card islands), trunk 15k/28k. The old
+`.claude/tree_export.py` runs a Blender **COLLAPSE** decimate over ALL meshes
+incl. leaves → crushes the 1.94M-tri canopy to ~42k total = the gutted sparse
+sticks (`.claude/tree_closeup.png`). Collapse-decimate DOES reduce the leaf cards
+(they share verts within each card) — it just destroys them.
+
+### Fix — `.claude/tree_export_lush.py` (NEW, leaf-card-preserving)
+- Separate the mesh by material; keep trunk + branches FULLY intact.
+- Leaves: union-find the faces into loose-part ISLANDS (= leaf cards), keep a
+  random fraction of WHOLE cards (`--keep`), delete the rest. NO collapse on
+  leaves → every surviving card stays a full leaf quad. Leaf mat → CLIP @0.5.
+- `--keep 0.30 --scale 32` → kept 9,075/30,250 cards → **leaves 583k + trunk/branch
+  122k = 706,628 tris**. Output `data/model_overrides/source/trees/tree_lush.glb`.
+
+### Pools raised to 32M/16M (the per-instance retention wall)
+- `code/mission.cpp:3310-3322` vertex/color/shadow 16M→**32M**, face/triangle 8M→**16M**.
+- `code/mission2.cpp:111` startVertices 16M→**32M**.
+- `mclib/txmmgr.h:49` `MC_MAXFACES` 8M→**16M**.
+
+### THE CONSTRAINT, quantified (this is the GPU-instancing signal)
+- `tc1_1` ALONE = **148 on-screen instances** (`registerStatic` count). The
+  706k-tri lush mesh × 148 → face pool peak **15,798,888 / 16,000,000 = 98%**,
+  triangle 97%. ONE live type at this fullness already pegs the 32M/16M pools.
+  A SECOND type would overflow and silently drop geometry.
+- So: a lush 706k canopy fits **exactly ONE on-screen live type (~148 instances)**
+  at 32M/16M pools. Fuller (higher --keep) or more types is impossible under the
+  per-instance-retention model — the static-prop batcher retains per-instance
+  geometry proportional to mesh×instances. **The proper fix is GPU instancing**
+  (geometry stored ONCE in the VBO, transforms per instance, no per-instance pool
+  retention) — recommend as the next slice rather than growing pools further.
+
+### Verified (trace + VIEWED images)
+- `[MODOVERRIDE] tree 'tc1_1': render override applied (...tree_lush.glb)`.
+- `[MODOVERRIDE_TEX] slot=0/1/2 -> gosHandle=864/865/866`, leaf slot
+  `a_tree_small_02_leaves_diff_1k.tga alpha=1` (alpha-cut leaves).
+- `[SEAMPROBE] tree buildRecipe HIT name=tc1_1 ... typeID=46/47/48` for all 3
+  child shapes → override geometry entered the immutable VBO and draws. NO
+  OVERRIDE_ROUTE / layer=-1 SKIP for override → real texture layers.
+- `--validate --frames 20 -mission mc2_01` exit 0, gl_errors=[], shader_errors=[],
+  avg 101ms (heavy — 148× 706k mesh; perf is the instancing follow-on).
+- Images I viewed: `.claude/lush_apron_tree_zoom.png` — brown trunks + a DENSE
+  full green leafy canopy with terrain/sky showing through alpha-cut leaf gaps;
+  dramatically fuller than the gutted `.claude/tree_closeup.png` (sparse sticks).
+  `.claude/lush_tc1_1.png` full frame; `.claude/ov_apronleft.png` apron cluster.
+  NOTE: same-camera A/B vs stock is unreliable — the validate flythrough lands
+  at a different camera pose between runs; the buildRecipe-HIT trace + the viewed
+  override-tree zoom are the decisive proof, not a pixel diff.
+
+### Deploy state
+- v0.3 manifest = `tc1_1 -> source/trees/tree_lush.glb` (the lush demo).
+  `tree_lush.glb` deployed alongside the existing 3 tree TGAs (incl the `a_`
+  alpha leaf) — no new textures needed (same materials as tree_small.glb).

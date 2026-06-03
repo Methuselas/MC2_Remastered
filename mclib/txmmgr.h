@@ -46,7 +46,7 @@ enum MC_TextureKey
 #define MAX_MC2_GOS_TEXTURES		3000
 #define TEXTURE_CACHE_SIZE			(40*1024*1024)	//Extra space here to facilitate editting
 #define MAX_CACHE_SIZE				(40*1024*1024)	//Actual amount map must run in!
-#define MC_MAXFACES					8000000		// MODEL-OVERRIDE: sized for override forests (was 200000, CPU-era cap)
+#define MC_MAXFACES					16000000		// MODEL-OVERRIDE: sized for override forests (was 200000, CPU-era cap)
 #define MAX_LZ_BUFFER_SIZE			((1024*1024*8) + 1024)
 
 #define MC2_ISTERRAIN				1

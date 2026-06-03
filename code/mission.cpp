@@ -3307,19 +3307,19 @@ void Mission::initTGLForMission()
 		// but the per-instance lighting/transform buffers still draw from these
 		// pools. Sized to fit a detailed-tree forest with headroom.
 		colorPool 		= new TG_VertexPool;
-		colorPool->init(16000000);
+		colorPool->init(32000000);
 
 		vertexPool 		= new TG_GOSVertexPool;
-		vertexPool->init(16000000);
+		vertexPool->init(32000000);
 
 		facePool 		= new TG_DWORDPool;
-		facePool->init(8000000);
+		facePool->init(16000000);
 
 		shadowPool 		= new TG_ShadowPool;
-		shadowPool->init(16000000);
+		shadowPool->init(32000000);
 
 		trianglePool 	= new TG_TrianglePool;
-		trianglePool->init(8000000);
+		trianglePool->init(16000000);
 	}
 
 	loadProgress += 4.0f;
