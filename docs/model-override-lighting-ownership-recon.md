@@ -115,3 +115,16 @@ After any of these lands and a re-run shows `U`/`D` ~O(types/recipes) and NOT
   capture + markVisible sites; one-shot emit ~8 frames after mission_ready).
 - No draw/state change; default-off; safe to leave in for re-measurement after
   the lighting-ownership slice.
+
+## 7. Perf-measurement convention (owner ruling 2026-06-03)
+
+For frame-rate / call-count / hot-zone decomposition on this work (the
+lighting-ownership re-gate, the LOD perf-capture, the 2.29s `Render.GpuStaticProps`
+split), use **`cost-split`** CostSplit buckets (per-frame ns accumulators + call
+counters + summary line) — methodology `.claude/skills/cost-split-recon-bucket-design.md`,
+shipped pattern at `gos_terrain_indirect.cpp` cost-split, env `MC2_*_COST_SPLIT`.
+**Cut the summary cadence to every 10 frames** (not the default 600) so a short
+`--validate --frames 20` run actually emits the line and re-gate runs stay quick.
+Respect the 100ns Tracy-floor / <10% instrumentation-overhead rule (don't time
+per-element work inside the per-instance loop — wrap the loop + count N). Relay the
+summary line back after each run (operator-visibility pattern 1).
