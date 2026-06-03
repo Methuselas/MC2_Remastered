@@ -284,7 +284,7 @@ void MeshPreview3D::setSource(const std::string& tglName) {
     }
 
     mesh_.destroy();
-    mesh_.upload(md, deployDir_);
+    mesh_.upload(md, deployDir_, tier_);
 
     if (!mesh_.valid()) {
         errorMsg_ = "MeshGpu upload produced no submeshes";
@@ -373,7 +373,7 @@ void MeshPreview3D::renderScene(int w, int h) {
         glUniform1i(u_albedo, 0);   // sampler bound on unit 0
 
         // Draw each submesh; drawLit sets u_hasAlbedo per submesh.
-        mesh_.drawLit(u_hasAlbedo);
+        mesh_.drawLit(u_hasAlbedo, showLights_);
     }
 
     // --- Restore state ---
@@ -409,12 +409,41 @@ void MeshPreview3D::draw(const ImVec2& availableSize) {
     ImGui::SliderFloat3("Model rot (deg)", modelRotDeg_, -180.0f, 180.0f);
     ImGui::SeparatorText("Light");
     ImGui::SliderFloat3("Light dir", lightDir_, -1.0f, 1.0f);
+
+    // -----------------------------------------------------------------------
+    // Texture resolution swap
+    // -----------------------------------------------------------------------
+    ImGui::SeparatorText("Texture");
+    {
+        static const int kTiers[] = { 128, 256, 512, 1024 };
+        ImGui::Text("Resolution:");
+        ImGui::SameLine();
+        for (int ti = 0; ti < 4; ++ti) {
+            int t = kTiers[ti];
+            bool active = (tier_ == t);
+            if (active) {
+                ImGui::PushStyleColor(ImGuiCol_Button,
+                    ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+            }
+            char lbl[16];
+            std::snprintf(lbl, sizeof(lbl), "%d##tier", t);
+            if (ImGui::Button(lbl) && !active) {
+                tier_ = t;
+                mesh_.reloadAlbedo(deployDir_, tier_);
+            }
+            if (active) ImGui::PopStyleColor();
+            if (ti < 3) ImGui::SameLine();
+        }
+    }
+    ImGui::Checkbox("Show lights", &showLights_);
+
     if (ImGui::Button("Reset view")) {
         yaw_   = 0.6f;
         pitch_ = 0.35f;
         modelRotDeg_[0] = -90.0f;
         modelRotDeg_[1] =   0.0f;
         modelRotDeg_[2] =   0.0f;
+        showLights_ = true;
         // Re-frame dist_ from current bounds (same formula as setSource).
         const float* bmin = mesh_.bmin();
         const float* bmax = mesh_.bmax();
@@ -424,6 +453,11 @@ void MeshPreview3D::draw(const ImVec2& availableSize) {
         float radius = 0.5f * std::sqrt(dx*dx + dy*dy + dz*dz);
         if (radius < 0.01f) radius = 0.01f;
         dist_ = 1.6f * radius;
+        // Reset tier to default and reload albedo at 512.
+        if (tier_ != 512) {
+            tier_ = 512;
+            mesh_.reloadAlbedo(deployDir_, tier_);
+        }
     }
     ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
         "Local preview (not exact MC2 shader)");

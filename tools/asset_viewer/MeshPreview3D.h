@@ -26,6 +26,13 @@ public:
     // No ImGui context required. Returns false if init or FBO failed.
     bool renderToPixels(int w, int h, std::vector<uint8_t>& rgbaOut);
 
+    // Test hook: reload albedo textures at the given tier and update tier_.
+    // Thin wrapper over mesh_.reloadAlbedo; safe to call without ImGui.
+    void reloadAlbedoAtTier(const std::string& deployDir, int tier) {
+        tier_ = tier;
+        mesh_.reloadAlbedo(deployDir, tier);
+    }
+
     // Camera / light controls (for UI extensions).
     float& orbitYaw()   { return yaw_; }
     float& orbitPitch() { return pitch_; }
@@ -69,6 +76,10 @@ private:
     // Model rotation: Euler angles in degrees applied as Rx * Ry * Rz (X first).
     // Default -90° X stands most MC2 props upright (they're stored Z-up in TGL).
     float modelRotDeg_[3] = { -90.0f, 0.0f, 0.0f };
+
+    // Texture resolution tier and lights-overlay toggle.
+    int  tier_       = 512;   // active albedo resolution: 128 / 256 / 512 / 1024
+    bool showLights_ = true;  // when false, …x submeshes (emissive overlays) are hidden
 
     std::string deployDir_ = ".";
     std::string tglName_;

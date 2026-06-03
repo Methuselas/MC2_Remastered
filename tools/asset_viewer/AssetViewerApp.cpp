@@ -1015,6 +1015,19 @@ int AssetViewerApp::runSmokeMeshRender(const char* deployDir)
                 std::printf("[smoke] PASS mesh-render c=%ld bg=%ld glGetError clean\n", center, corner);
             }
         }
+
+        // Optional: exercise the live reloadAlbedo path (tier swap) and check GL errors.
+        if (rc == 0) {
+            p.reloadAlbedoAtTier(deployDir, 256);
+            GLenum e2 = glGetError();
+            if (e2 != GL_NO_ERROR) {
+                std::fprintf(stderr, "[smoke] FAIL mesh-render: reloadAlbedo(256) glGetError 0x%x\n",
+                             (unsigned)e2);
+                rc = 1;
+            } else {
+                std::printf("[smoke] PASS mesh-render: reloadAlbedo(256) glGetError clean\n");
+            }
+        }
     }
 
     SDL_GL_DeleteContext(gl);
