@@ -26,25 +26,32 @@ static fs::path ExeDir() { return fs::current_path(); }
 #endif
 
 #ifdef _WIN32
-static bool PickTextureFileWin32(std::string& outPath) {
+// Generic Win32 IFileOpenDialog picker.
+// filterLabel/filterPattern: e.g. L"Textures" / L"*.png;*.ktx2"
+// initialDirAbs: absolute path to open in by default; nullptr = system default.
+static bool PickFileWin32(std::string& outPath,
+                          const wchar_t* filterLabel,
+                          const wchar_t* filterPattern,
+                          const wchar_t* initialDirAbs) {
     bool ok = false;
     HRESULT hrInit = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     IFileOpenDialog* dlg = nullptr;
     if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
                                    IID_PPV_ARGS(&dlg)))) {
-        // Build "*.png;*.jpg;...;*.ktx2" from the decoder registry (single source of truth).
-        std::wstring pattern;
-        for (const auto& e : textureDecoderRegistry().supportedExtensions()) {
-            if (!pattern.empty()) pattern += L";";
-            pattern += L"*.";
-            pattern += std::wstring(e.begin(), e.end());   // ASCII ext -> wide
-        }
         COMDLG_FILTERSPEC filters[] = {
-            { L"Textures", pattern.c_str() },
+            { filterLabel, filterPattern },
             { L"All files (*.*)", L"*.*" },
         };
         dlg->SetFileTypes(2, filters);
-        dlg->SetTitle(L"Select a texture");
+        // Set initial folder if the caller provided one and it exists on disk.
+        if (initialDirAbs && initialDirAbs[0] != L'\0') {
+            IShellItem* folder = nullptr;
+            if (SUCCEEDED(SHCreateItemFromParsingName(initialDirAbs, nullptr,
+                                                      IID_PPV_ARGS(&folder)))) {
+                dlg->SetFolder(folder);
+                folder->Release();
+            }
+        }
         if (SUCCEEDED(dlg->Show(nullptr))) {
             IShellItem* item = nullptr;
             if (SUCCEEDED(dlg->GetResult(&item))) {
@@ -66,7 +73,19 @@ static bool PickTextureFileWin32(std::string& outPath) {
     if (SUCCEEDED(hrInit)) CoUninitialize();
     return ok;
 }
+
+static bool PickTextureFileWin32(std::string& outPath) {
+    // Build "*.png;*.jpg;...;*.ktx2" from the decoder registry (single source of truth).
+    std::wstring pattern;
+    for (const auto& e : textureDecoderRegistry().supportedExtensions()) {
+        if (!pattern.empty()) pattern += L";";
+        pattern += L"*.";
+        pattern += std::wstring(e.begin(), e.end());   // ASCII ext -> wide
+    }
+    return PickFileWin32(outPath, L"Textures", pattern.c_str(), nullptr);
+}
 #else
+static bool PickFileWin32(std::string&, const wchar_t*, const wchar_t*, const wchar_t*) { return false; }
 static bool PickTextureFileWin32(std::string&) { return false; }
 #endif
 
@@ -221,6 +240,26 @@ void FileBrowser::rescanTiers() {
 std::string FileBrowser::PickFile() {
     std::string out;
     return PickTextureFileWin32(out) ? out : std::string();
+}
+
+std::string FileBrowser::PickFitFile() {
+    // Resolve an absolute path to data/defs/materials/viewer, preferring ExeDir then cwd.
+    const char* rel = "data/defs/materials/viewer";
+    fs::path roots[] = { ExeDir(), fs::current_path() };
+    std::wstring initialDir;
+    for (const auto& root : roots) {
+        std::error_code ec;
+        fs::path cand = root / rel;
+        if (fs::is_directory(cand, ec)) {
+            std::wstring w = cand.wstring();
+            initialDir = w;
+            break;
+        }
+    }
+    std::string out;
+    bool ok = PickFileWin32(out, L"MC2 material (*.fit)", L"*.fit",
+                            initialDir.empty() ? nullptr : initialDir.c_str());
+    return ok ? out : std::string();
 }
 
 void FileBrowser::SwitchTier(const std::string& tier) {

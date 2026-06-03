@@ -78,7 +78,7 @@ int MaterialSlots::loadFit(const std::string& fitPath, MaterialPreviewPBR& previ
 
 void MaterialSlots::draw(MaterialPreviewPBR& preview) {
     if (ImGui::Button("Load .fit material")) {
-        std::string fit = FileBrowser::PickFile();
+        std::string fit = FileBrowser::PickFitFile();
         if (!fit.empty())
             loadFit(fit, preview);
     }

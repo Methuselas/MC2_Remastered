@@ -20,6 +20,8 @@ public:
 
     // Opens the native file picker; returns the chosen path, or "" if cancelled.
     static std::string PickFile();
+    // Opens a .fit-specific picker (filters to *.fit, opens materials dir by default).
+    static std::string PickFitFile();
 private:
     void refresh();                    // re-scan folderPath_ into entries_ (and tiers_)
     void rescanTiers();                // recompute tiers_ from numeric sibling folders (folder-change only, not per-frame)
