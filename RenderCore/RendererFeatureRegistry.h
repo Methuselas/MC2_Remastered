@@ -620,6 +620,27 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "STATICPROP-REGISTRY-FLUSH-CACHED-BLOB-2A diagnostic: with the cached path active, also build the legacy temp instance+record per leaf and compare hash/count; logs mismatches. Default-OFF; requires MC2_STATIC_PROP_FLUSH_CACHED_BLOB=1."
     },
     {
+        "MC2_FEATURE_STATIC_PROP_PERSISTENT_BUCKETS",
+        "MC2_STATIC_PROP_PERSISTENT_BUCKETS",
+        EnvVarKind::Feature,
+        false,
+        "STATICPROP-PERSISTENT-STATIC-BUCKETS-2B-STAGE2 (Mechanism B): keep the static per-type instance block in a persistent batcher store (rebuilt only on registry-generation change); skip the per-frame static instance re-push; upload concatenates persistent-static + per-frame-dynamic per type. Default-OFF pending proof."
+    },
+    {
+        "MC2_TRACE_STATIC_PROP_PERSISTENT_BUCKETS_COMPARE",
+        "MC2_STATIC_PROP_PERSISTENT_BUCKETS_COMPARE",
+        EnvVarKind::Trace,
+        false,
+        "STATICPROP-PERSISTENT-STATIC-BUCKETS-2B-STAGE2 oracle: FNV-compare the persistent-store-sourced per-type instance stream vs a freshly-rebuilt legacy stream; logs mismatches. Default-OFF; requires MC2_STATIC_PROP_PERSISTENT_BUCKETS=1."
+    },
+    {
+        "MC2_TRACE_BUCKET_ORDER",
+        "MC2_BUCKET_ORDER_TRACE",
+        EnvVarKind::Trace,
+        false,
+        "STATICPROP-PERSISTENT-STATIC-BUCKETS-2B-STAGE2 Task-0 probe: per-type static-vs-dynamic add counts + order ([BUCKET_ORDER v1]). Diagnostic; default-OFF."
+    },
+    {
         "MC2_FEATURE_STATIC_PROP_COLORS_FILL",
         "MC2_STATIC_PROP_COLORS_FILL",
         EnvVarKind::Feature,

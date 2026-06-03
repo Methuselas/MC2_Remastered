@@ -214,6 +214,10 @@ void staticPropRegistryClearCullSubmissionState();
 // NOTE: ExtractRenderSnapshot() runs BEFORE flush() — this reflects the prior frame.
 bool staticPropGetHasCullRecord(int32_t recipeIndex, bool* out);
 
+// 2b Stage 2: monotonic registry generation (bumped on spawn/despawn/immutable-field
+// write). A clean generation across frames means the persistent static store is reusable.
+uint64_t getRegistryGeneration();
+
 // Returns GpuStaticPropInstance.flags for the first leaf of this recipe.
 // bit 0: lightsOut, bit 1: isWindow, bit 2: isSpotlight.
 // Returns false + *out=0 if recipeIndex invalid, tombstoned, or out is null.

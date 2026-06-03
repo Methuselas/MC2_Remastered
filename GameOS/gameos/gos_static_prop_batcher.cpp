@@ -395,6 +395,12 @@ void ensureRingCapacity(size_t neededInstances, size_t neededColorEntries);
 struct PerTypeBucket {
     std::vector<GpuStaticPropInstance> instances;
     std::vector<uint32_t>              colors;  // concatenated per-instance color blocks
+    // 2b Stage 2 Task-0 diagnostic (MC2_BUCKET_ORDER_TRACE): per-frame static-vs-
+    // dynamic add counts + which path touched this bucket first. Decides Mechanism
+    // A (static-front persist) vs B (separate persistent store). Throwaway.
+    uint32_t dbgStatic  = 0;
+    uint32_t dbgDynamic = 0;
+    uint8_t  dbgFirst   = 0;   // 0=none, 1=static-first, 2=dynamic-first
 };
 std::unordered_map<uint32_t, PerTypeBucket> s_bucketsByType;
 
@@ -409,6 +415,9 @@ std::unordered_map<uint32_t, PerTypeBucket> s_bucketsByType;
 static const bool s_staticPropColorsFill =
     (std::getenv("MC2_STATIC_PROP_COLORS_FILL") != nullptr &&
      std::getenv("MC2_STATIC_PROP_COLORS_FILL")[0] != '0');
+
+// 2b Stage 2 Task-0: bucket static/dynamic order + overlap probe (throwaway).
+static const bool s_bucketOrderTrace = (std::getenv("MC2_BUCKET_ORDER_TRACE") != nullptr);
 
 // Stage 3.C: per-submitMultiShape batch accumulator. Cleared at the start
 // of each submitMultiShape(); populated by submit() per leaf. After
@@ -3947,6 +3956,7 @@ bool GpuStaticPropBatcher::submit(TG_Shape* shape,
                 bucket.instances.size());
         }
     }
+    if (s_bucketOrderTrace) { if (!bucket.dbgFirst) bucket.dbgFirst = 2; ++bucket.dbgDynamic; }
     bucket.instances.push_back(inst);
     s_lastBuiltBatch.push_back(inst);  // Stage 3.C: batch accumulator
 
@@ -4517,6 +4527,28 @@ bool uploadAllBucketsIfNeeded() {
         instCursor += r.instanceByteSize;
         colCursor  += r.colorByteSize;
         s_typeRanges[typeID] = r;
+    }
+
+    // 2b Stage 2 Task-0 diagnostic: aggregate static/dynamic type overlap + order.
+    if (s_bucketOrderTrace) {
+        static uint64_t s_botCall = 0, s_botEmitted = 0;
+        ++s_botCall;
+        if ((s_botCall % 60u) == 0u && s_botEmitted < 16) {
+            ++s_botEmitted;
+            uint32_t sOnly = 0, dOnly = 0, mixed = 0, mixSF = 0, mixDF = 0;
+            for (auto& kv : s_bucketsByType) {
+                const PerTypeBucket& b = kv.second;
+                const bool hs = b.dbgStatic > 0, hd = b.dbgDynamic > 0;
+                if (hs && hd) { ++mixed; if (b.dbgFirst == 1) ++mixSF; else ++mixDF; }
+                else if (hs)  ++sOnly;
+                else if (hd)  ++dOnly;
+            }
+            std::fprintf(stderr,
+                "[BUCKET_ORDER v1] uploadCall=%llu types=%zu static_only=%u dynamic_only=%u mixed=%u "
+                "mixed_static_first=%u mixed_dynamic_first=%u\n",
+                (unsigned long long)s_botCall, s_bucketsByType.size(), sOnly, dOnly, mixed, mixSF, mixDF);
+            std::fflush(stderr);
+        }
     }
 
     s_lastUploadedSlot = s_frameSlot;
@@ -7076,6 +7108,7 @@ void GpuStaticPropBatcher::submitCachedInstance(const GpuStaticPropInstance& ins
                 bucket.instances.size());
         }
     }
+    if (s_bucketOrderTrace) { if (!bucket.dbgFirst) bucket.dbgFirst = 1; ++bucket.dbgStatic; }
     bucket.instances.push_back(updated);
     // STATICPROP-COLORS-FILL-DEBUGONLY-1: default-SKIP the colors zero-fill (no
     // production shader reads colors_; addr-mode 4 reads v_argb). MC2_STATIC_PROP_COLORS_FILL=1
@@ -7121,6 +7154,7 @@ void GpuStaticPropBatcher::submitCachedInstanceRange(const GpuStaticPropInstance
             updated.firstColorOffset = s_staticPropColorsFill
                 ? static_cast<uint32_t>(colOldSize + (size_t)local * type.vertexCount)
                 : 0u;
+            if (s_bucketOrderTrace) { if (!bucket.dbgFirst) bucket.dbgFirst = 1; ++bucket.dbgStatic; }
             bucket.instances.push_back(updated);
         }
         i = j;

@@ -172,6 +172,20 @@ static const bool s_flushCachedBlob =
 static const bool s_flushCachedBlobCompare =
     parseEnvBoolWithDefault("MC2_STATIC_PROP_FLUSH_CACHED_BLOB_COMPARE", false);
 
+// STATICPROP-PERSISTENT-STATIC-BUCKETS-2B-STAGE2 (Mechanism B): keep the static
+// per-type instance block in a persistent batcher store, rebuilt only when the
+// registry generation changes; skip the per-frame static instance re-push. Default
+// OFF until proven. _COMPARE drives the FNV cached-vs-rebuilt oracle.
+static const bool s_persistentBuckets =
+    parseEnvBoolWithDefault("MC2_STATIC_PROP_PERSISTENT_BUCKETS", false);
+static const bool s_persistentBucketsCompare =
+    parseEnvBoolWithDefault("MC2_STATIC_PROP_PERSISTENT_BUCKETS_COMPARE", false);
+
+// 2b Stage 2 dirty signal: monotonic generation bumped on every structural change
+// to the static-prop registry (spawn/despawn/immutable-field write). A clean
+// generation across frames means the persistent static store is reusable.
+static uint64_t s_registryGeneration = 0;
+
 #define SP_TRACE(fmt, ...) \
     do { if (s_trace) { printf("[STATIC_PROP] " fmt "\n", ##__VA_ARGS__); \
          fflush(stdout); } } while (0)
@@ -514,6 +528,7 @@ int32_t registerRecipe(TG_MultiShape* multi,
     // New entries are valid=0 (uncached); they will be lazily built on first flush (Task 4).
     s_cachedActorRecord.resize(s_recipes.size());
     s_cachedActorRecordValid.resize(s_recipes.size(), 0u);
+    ++s_registryGeneration;   // 2b Stage 2: spawn = structural change
     const int32_t regIdx = static_cast<int32_t>(s_recipeRanges.size());
     s_recipeRanges.push_back(rng);
     s_recipeHasSubstrateRecord.push_back(0u); // v2: one slot per recipe, parallel to s_recipeRanges
@@ -588,6 +603,7 @@ void markVisible(int32_t regIdx, uint32_t lightDataIndex, float extentRadius) {
             s_recipes[k].lightDataIndex = lightDataIndex;  // range light → every leaf
             invalidateCachedFlushRecord(k);                // rebuild cached record next flush
         }
+        ++s_registryGeneration;   // 2b Stage 2: immutable-field (light/extent) write
     }
     s_liveRangeIndices.push_back(static_cast<uint32_t>(regIdx));
 }
@@ -630,7 +646,14 @@ void invalidate(int32_t regIdx) {
     // [LIGHTBAKE v1] drop the baked static-light entry so destruction/LOD
     // multi-swap lazily re-bakes the same position-derived constant.
     ::mc2EraseBakedStaticLight(regIdx);
+    ++s_registryGeneration;   // 2b Stage 2: despawn = structural change
 }
+
+// 2b Stage 2: monotonic dirty signal. A clean generation across frames means the
+// persistent static instance store (batcher) is reusable; the per-frame static
+// re-push can be skipped. Bumped on spawn (registerRecipe), despawn (invalidate),
+// and immutable-field write (markVisible light/extent change).
+uint64_t getRegistryGeneration() { return s_registryGeneration; }
 
 bool isReady(int32_t regIdx) {
     if (!s_enabled) return false;

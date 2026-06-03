@@ -332,6 +332,9 @@ def main():
                             "MC2_STATIC_PROP_FLUSH_CACHED_BLOB",
                             "MC2_STATIC_PROP_FLUSH_CACHED_BLOB_COMPARE",
                             "MC2_STATIC_PROP_COLORS_FILL",
+                            "MC2_STATIC_PROP_PERSISTENT_BUCKETS",
+                            "MC2_STATIC_PROP_PERSISTENT_BUCKETS_COMPARE",
+                            "MC2_BUCKET_ORDER_TRACE",
                             # Task 7 — superset-parity counter probe (proof-gate #2)
                             "MC2_TOBJ_PARITY",
                             # alpha-Stage 1 §5 Stage 0 — candidate-predicate
