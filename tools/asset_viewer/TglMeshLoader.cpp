@@ -157,8 +157,11 @@ MeshData TglMeshLoader::loadMesh(const std::string& tglName)
     }
 
     // Per-texture-handle SubMesh accumulator across all shapes.
-    // Key = localTextureHandle (DWORD).
-    std::map<DWORD, SubMesh> subMap;
+    // Key = uint64_t combining localTextureHandle (low 32 bits) and a spotlight
+    // bit (bit 32) so that spotlight-shape triangles are always isolated into
+    // their own flagged submesh(es) and never merged with normal geometry that
+    // happens to share the same texture handle.
+    std::map<uint64_t, SubMesh> subMap;
 
     // Accumulated bounds (init from first real vertex).
     bool boundsInited = false;
@@ -197,15 +200,43 @@ MeshData TglMeshLoader::loadMesh(const std::string& tglName)
         const TG_TypeTriangle* T = shape->GetTypeTriangles();
         if (!V || !T) continue;
 
-        // Walk triangles; group by localTextureHandle.
+        // Determine if this shape is a spotlight beam by checking its node name.
+        // Node names of the form "SpotLight_*" (case-insensitive prefix, 10 chars)
+        // identify the forward headlight/beam geometry that can obscure the model.
+        const char* nodeId = node->getNodeId();
+        bool spot = false;
+        if (nodeId) {
+            // Manual case-insensitive prefix compare for "SpotLight_" (10 chars).
+            static const char kSpotPrefix[] = "SpotLight_";
+            static const int  kSpotLen      = 10;
+            bool match = true;
+            for (int ci = 0; ci < kSpotLen && match; ++ci) {
+                char nc = nodeId[ci];
+                if (nc == '\0') { match = false; break; }
+                // tolower
+                if (nc >= 'A' && nc <= 'Z') nc = (char)(nc + ('a' - 'A'));
+                char pc = kSpotPrefix[ci];
+                if (pc >= 'A' && pc <= 'Z') pc = (char)(pc + ('a' - 'A'));
+                if (nc != pc) match = false;
+            }
+            spot = match;
+        }
+
+        // Walk triangles; group by combined key so spotlight tris are isolated.
         for (long ti = 0; ti < numT; ++ti)
         {
             const TG_TypeTriangle& tri = T[ti];
             DWORD handle = tri.localTextureHandle;
 
+            // Combined key: low 32 bits = texture handle, bit 32 = spotlight flag.
+            uint64_t k = (uint64_t)handle | (spot ? (1ull << 32) : 0ull);
+
             // Lazy-create the submesh and populate its textureName once.
-            SubMesh& sub = subMap[handle];
-            if (sub.textureName.empty())
+            // isSpotlight is set unconditionally (all tris from the same shape share
+            // the same spot value, and the map key already encodes it).
+            SubMesh& sub = subMap[k];
+            sub.isSpotlight = spot;
+            if (sub.textureName.empty() && sub.verts.empty())
             {
                 char texBuf[256] = {0};
                 ms.GetTextureName(handle, texBuf, (long)sizeof(texBuf));

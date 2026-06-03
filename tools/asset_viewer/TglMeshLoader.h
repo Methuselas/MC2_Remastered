@@ -25,6 +25,7 @@ struct SubMesh {
     std::vector<MeshVertex> verts;  // non-indexed: verts.size() == idx.size()
     std::vector<uint32_t>   idx;    // sequential: 0,1,2,3,4,5,...
     std::string textureName;        // basename from GetTextureName (may be empty)
+    bool isSpotlight = false;       // true when shape node id starts with "SpotLight_"
 };
 
 struct MeshData {

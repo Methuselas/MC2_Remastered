@@ -443,7 +443,7 @@ void MeshPreview3D::draw(const ImVec2& availableSize) {
         modelRotDeg_[0] = -90.0f;
         modelRotDeg_[1] =   0.0f;
         modelRotDeg_[2] =   0.0f;
-        showLights_ = true;
+        showLights_ = false;
         // Re-frame dist_ from current bounds (same formula as setSource).
         const float* bmin = mesh_.bmin();
         const float* bmax = mesh_.bmax();

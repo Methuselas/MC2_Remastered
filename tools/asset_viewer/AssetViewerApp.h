@@ -32,9 +32,10 @@ public:
     static int runSmokeFitMaterial(const char* fixtureDir); // minimal FIT parser: Material{} block -> slot paths
     static int runSmokeFitLoad(const char* fixtureDir);    // loadFit() multi-base resolution + GL upload check
     static int runSmokeTglLoad(const char* deployDir);     // headless NS3 TGL loader: FastFileInit + LoadBinaryCopy
-    static int runSmokeMeshBuild(const char* deployDir);  // Task 1: TglMeshLoader CPU mesh extraction (no GL)
-    static int runSmokeMeshRender(const char* deployDir); // Task 2: MeshPreview3D GL render: model distinct from background
-    static int runSmokeMeshOrient(const char* deployDir); // orientation gate: 2civliving tall axis must be GL-Y after transform
+    static int runSmokeMeshBuild(const char* deployDir);    // Task 1: TglMeshLoader CPU mesh extraction (no GL)
+    static int runSmokeMeshRender(const char* deployDir);   // Task 2: MeshPreview3D GL render: model distinct from background
+    static int runSmokeMeshOrient(const char* deployDir);   // orientation gate: 2civliving tall axis must be GL-Y after transform
+    static int runSmokeSpotlight(const char* deployDir);    // spotlight gate: vehicle has ≥1 isSpotlight submesh; 2civliving has 0
 private:
     FileBrowser browser_;
     AssetTypeSidebar sidebar_;
