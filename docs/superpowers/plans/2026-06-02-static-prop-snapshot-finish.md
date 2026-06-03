@@ -382,7 +382,10 @@ At the top of the `if (runV6)` block, now that retirement is real, emit the arm 
                 std::fflush(stderr);
             }
 ```
-Then gate the main live build (the `baseInstanceMap` for the main path is the existing L5272-5275 pointer):
+**UNCONDITIONAL preamble (Task 0 Finding 3 — keep these OUTSIDE the gate):** the
+`if (runV6)` preamble at ~L5254-5265 — the `s_v6Frame*` counter resets, **`++s_v6TotalFrameCount`** (L5261), and the `s_spBuild*` resets (L5263-5265) — MUST stay unconditional. `s_v6TotalFrameCount` is the frame number in every `[..v6..]` log string (incl. dispatch-loop logs); gating it would freeze all frame numbers on retirement. Do NOT move it into `buildLiveV6Arrays` or behind `!retireLiveBuilder`. The oob/lockstep counters (`s_v6FrameSortedOob`/`PacketOob`/`TypeOob`/`FrameLockstepViolations`) are reset here and only *written* inside the helper — when retired they correctly stay 0.
+
+Then gate ONLY the main live build (the `baseInstanceMap` for the main path is the existing L5272-5275 pointer):
 ```cpp
             uint32_t v6LockstepViolations = 0u;
             if (!retireLiveBuilder) {
@@ -489,6 +492,14 @@ git commit -m "feat(v8): retire live builder by default — snapshot sole owner,
 Driven by Task 0 Step 3 findings. Only act on counters that (a) are written ONLY in the live builder loop AND (b) have an external consumer that would now read a stale/zero value when retired.
 
 **Files:** Modify `GameOS/gameos/gos_static_prop_batcher.cpp`.
+
+**Task 0 Finding 3 result (authoritative):** the only counter needing care is
+`s_v6TotalFrameCount` — handled in Task 4 Step 1 by keeping the preamble
+unconditional (NOT a relocation, a non-gating). `s_v6FrameDrawsIssued`/
+`ZeroInstSkips`/`GlErrors` are incremented in the dispatch loop → survive. The
+oob/lockstep counters are live-only but internally consumed (600-frame ok log) and
+correctly read 0 when retired. **Expected outcome of this task: NO relocation
+needed — verify the Task 4 preamble non-gating is in place, then record no-op.**
 
 - [ ] **Step 1: For each counter flagged in Task 0 Step 3, relocate its increment.**
 
