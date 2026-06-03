@@ -41,6 +41,68 @@ static void mul4(const float a[16], const float b[16], float o[16]) {
     }
 }
 
+// Identity 4×4 (column-major).
+static void identity4(float m[16]) {
+    for (int i = 0; i < 16; i++) m[i] = 0.0f;
+    m[0] = m[5] = m[10] = m[15] = 1.0f;
+}
+
+// Build column-major rotation matrix from Euler angles in degrees.
+// Order: Rx * Ry * Rz (X applied first, then Y, then Z) — i.e. vertices are
+// first rotated by X, then by Y, then by Z.
+// The matrix is ROTATION ONLY (no translation/scale).
+static void eulerRotMatrix(float xDeg, float yDeg, float zDeg, float m[16]) {
+    const float pi = 3.14159265f;
+    float rx = xDeg * pi / 180.0f;
+    float ry = yDeg * pi / 180.0f;
+    float rz = zDeg * pi / 180.0f;
+
+    float cx = std::cos(rx), sx = std::sin(rx);
+    float cy = std::cos(ry), sy = std::sin(ry);
+    float cz = std::cos(rz), sz = std::sin(rz);
+
+    // Rx (column-major):
+    float Rx[16]; identity4(Rx);
+    Rx[5]=cx; Rx[9]=-sx;
+    Rx[6]=sx; Rx[10]= cx;
+
+    // Ry (column-major):
+    float Ry[16]; identity4(Ry);
+    Ry[0]=cy; Ry[8]=sy;
+    Ry[2]=-sy;Ry[10]=cy;
+
+    // Rz (column-major):
+    float Rz[16]; identity4(Rz);
+    Rz[0]=cz; Rz[4]=-sz;
+    Rz[1]=sz; Rz[5]= cz;
+
+    // Combined: Rz * Ry * Rx   (so vertex sees Rx first, then Ry, then Rz)
+    float tmp[16];
+    mul4(Ry, Rx, tmp);
+    mul4(Rz, tmp, m);
+}
+
+// Build T(center) * R * T(-center) — rotate about bounds center.
+static void rotateAboutCenter(const float cx, const float cy, const float cz,
+                               float xDeg, float yDeg, float zDeg, float m[16]) {
+    float R[16];
+    eulerRotMatrix(xDeg, yDeg, zDeg, R);
+    // Pre-apply T(-center) by shifting the translation column:
+    // M = T(c) * R * T(-c)
+    // Column-major: column 3 = R * (-c) + c
+    // = (R[12..15] entries of R are 0,0,0,1 since R is pure rotation)
+    // So result column 3 (index 12,13,14,15):
+    //   tx = R[0]*(-cx) + R[4]*(-cy) + R[8]*(-cz)  + cx
+    //   ty = R[1]*(-cx) + R[5]*(-cy) + R[9]*(-cz)  + cy
+    //   tz = R[2]*(-cx) + R[6]*(-cy) + R[10]*(-cz) + cz
+    //   tw = 1
+    std::memcpy(m, R, 64);  // copy rotation part
+    m[12] = -(R[0]*cx + R[4]*cy + R[8]*cz)  + cx;
+    m[13] = -(R[1]*cx + R[5]*cy + R[9]*cz)  + cy;
+    m[14] = -(R[2]*cx + R[6]*cy + R[10]*cz) + cz;
+    m[15] = 1.0f;
+}
+
 // ---------------------------------------------------------------------------
 // Simple lit shader (N·L Lambert diffuse × albedo + ambient, gamma encode)
 // ---------------------------------------------------------------------------
@@ -51,17 +113,18 @@ layout(location=1) in vec3 a_normal;
 layout(location=2) in vec2 a_uv;
 
 uniform mat4 u_viewProj;
+uniform mat4 u_model;   // world transform (rotation about bounds center)
 
 out vec3 v_posWorld;
 out vec3 v_normal;
 out vec2 v_uv;
 
 void main() {
-    // model is identity
-    v_posWorld = a_pos;
-    v_normal   = normalize(a_normal);
+    vec4 wp    = u_model * vec4(a_pos, 1.0);
+    v_posWorld = wp.xyz;
+    v_normal   = normalize(mat3(u_model) * a_normal);
     v_uv       = a_uv;
-    gl_Position = u_viewProj * vec4(a_pos, 1.0);
+    gl_Position = u_viewProj * wp;
 }
 )GLSL";
 
@@ -165,6 +228,7 @@ void MeshPreview3D::ensureGL(int w, int h) {
 
         if (prog_) {
             u_viewProj  = glGetUniformLocation(prog_, "u_viewProj");
+            u_model_    = glGetUniformLocation(prog_, "u_model");
             u_cameraPos = glGetUniformLocation(prog_, "u_cameraPos");
             u_lightDir  = glGetUniformLocation(prog_, "u_lightDir");
             u_albedo    = glGetUniformLocation(prog_, "u_albedo");
@@ -296,6 +360,14 @@ void MeshPreview3D::renderScene(int w, int h) {
 
         glUseProgram(prog_);
         glUniformMatrix4fv(u_viewProj,  1, GL_FALSE, vp);
+
+        // Build T(center)*R*T(-center) so rotation pivots at the bounds center.
+        float modelMat[16];
+        rotateAboutCenter(center_[0], center_[1], center_[2],
+                          modelRotDeg_[0], modelRotDeg_[1], modelRotDeg_[2],
+                          modelMat);
+        glUniformMatrix4fv(u_model_, 1, GL_FALSE, modelMat);
+
         glUniform3fv(u_cameraPos, 1, cam);
         glUniform3fv(u_lightDir,  1, lightDir_);
         glUniform1i(u_albedo, 0);   // sampler bound on unit 0
@@ -332,11 +404,17 @@ void MeshPreview3D::draw(const ImVec2& availableSize) {
     ImGui::SliderFloat("Orbit yaw",   &yaw_,   -3.14159f, 3.14159f);
     ImGui::SliderFloat("Orbit pitch", &pitch_, -1.5f, 1.5f);
     ImGui::SliderFloat("Zoom",        &dist_,   0.05f, 50.0f);
+    // Model rotation: Euler X/Y/Z degrees; default -90 X stands props upright.
+    // Rotation order applied to vertices: Rx first, then Ry, then Rz.
+    ImGui::SliderFloat3("Model rot (deg)", modelRotDeg_, -180.0f, 180.0f);
     ImGui::SeparatorText("Light");
     ImGui::SliderFloat3("Light dir", lightDir_, -1.0f, 1.0f);
     if (ImGui::Button("Reset view")) {
         yaw_   = 0.6f;
         pitch_ = 0.35f;
+        modelRotDeg_[0] = -90.0f;
+        modelRotDeg_[1] =   0.0f;
+        modelRotDeg_[2] =   0.0f;
         // Re-frame dist_ from current bounds (same formula as setSource).
         const float* bmin = mesh_.bmin();
         const float* bmax = mesh_.bmax();
@@ -348,7 +426,7 @@ void MeshPreview3D::draw(const ImVec2& availableSize) {
         dist_ = 1.6f * radius;
     }
     ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
-        "Local preview — not exact MC2 shader");
+        "Local preview (not exact MC2 shader)");
     ImGui::Separator();
 
     // Subtract controls height from available size for the 3D viewport.

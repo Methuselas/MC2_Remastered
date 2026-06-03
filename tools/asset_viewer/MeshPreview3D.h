@@ -43,6 +43,7 @@ private:
     // GL program (compiled once in ensureGL)
     unsigned prog_  = 0;
     int u_viewProj  = -1;
+    int u_model_    = -1;   // model rotation matrix (world transform)
     int u_cameraPos = -1;
     int u_lightDir  = -1;
     int u_albedo    = -1;
@@ -64,6 +65,10 @@ private:
     float dist_  = 3.0f;
     float center_[3] = {0.0f, 0.0f, 0.0f};  // bounds center for orbit pivot
     float lightDir_[3] = { -0.4f, -0.7f, -0.5f };
+
+    // Model rotation: Euler angles in degrees applied as Rx * Ry * Rz (X first).
+    // Default -90° X stands most MC2 props upright (they're stored Z-up in TGL).
+    float modelRotDeg_[3] = { -90.0f, 0.0f, 0.0f };
 
     std::string deployDir_ = ".";
     std::string tglName_;
