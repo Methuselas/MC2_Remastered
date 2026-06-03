@@ -7076,14 +7076,21 @@ void GpuStaticPropBatcher::submitCachedInstanceRange(const GpuStaticPropInstance
         const uint32_t typeID = arr[i].typeID;
         if (typeID >= s_types.size()) { ++i; continue; }
         const GpuStaticPropType& type = s_types[typeID];
+        const unsigned long long _t_lk0 = s_spflushCostSplitEnabled ? __rdtsc() : 0ULL;
         PerTypeBucket& bucket = s_bucketsByType[typeID];          // one lookup per run
+        if (s_spflushCostSplitEnabled) spflush_cost_split::AddSubmitMapLookupCycles(__rdtsc() - _t_lk0);
         uint32_t j = i;
         while (j < count && arr[j].typeID == typeID) ++j;
         const uint32_t n = j - i;
         // patch 2: ONE color resize/fill per run, not per-instance insert.
+        // 2A REGRESSION FIX: do NOT reserve(size+n) per call — for single-leaf ranges
+        // (n==1, the common case) that sets capacity to EXACTLY size+1 each call,
+        // defeating std::vector geometric growth → a reallocation per leaf (O(N^2)).
+        // Plain push_back (like legacy submitCachedInstance) grows geometrically.
+        const unsigned long long _t_cf0 = s_spflushCostSplitEnabled ? __rdtsc() : 0ULL;
         const size_t colOldSize = bucket.colors.size();
         bucket.colors.resize(colOldSize + (size_t)n * type.vertexCount, 0u);
-        bucket.instances.reserve(bucket.instances.size() + n);
+        if (s_spflushCostSplitEnabled) spflush_cost_split::AddColorZeroFillCycles(__rdtsc() - _t_cf0);
         for (uint32_t local = 0u; local < n; ++local) {
             GpuStaticPropInstance updated = arr[i + local];
             // firstColorOffset = running bucket offset (correct even if the bucket

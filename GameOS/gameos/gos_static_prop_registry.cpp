@@ -88,6 +88,12 @@ unsigned long long s_win_registrations           = 0;
 int                s_spflushWindowFrames         = 0;
 unsigned long long s_win_leaves_appended         = 0;
 unsigned long long s_win_ranges_drawn            = 0;
+// 2A cached-path diagnostics (gate-ON branch only) — find the 5x regression.
+unsigned long long s_w_cached_total_cyc          = 0;  // whole cached else-branch per range
+unsigned long long s_w_cached_submit_cyc         = 0;  // submitCachedInstanceRange
+unsigned long long s_w_cached_records_cyc        = 0;  // per-leaf cached-record loop
+unsigned long long s_win_cache_builds            = 0;  // buildCachedActorRecord calls (thrash if ~= leaves)
+unsigned long long s_win_cache_hits              = 0;  // cached-record reuse (valid)
 }  // namespace
 
 // Rejects "0", "false", "off", "no"; accepts anything else (including "1") or
@@ -366,20 +372,6 @@ bool isLateSpawnRegEnabled()   { return s_lateSpawnRegEnabled; }
 
 uint64_t getStaticFirstFrameSkipCount()    { return s_firstFrameSkipCount; }
 uint64_t getLateSpawnTypeUnknownCount()    { return s_lateSpawnTypeUnknownCount; }
-
-// STATICPROP-REGISTRY-FLUSH-CACHED-BLOB-2A (Task 1)
-// 2A: persist the proven-permanent per-instance light slot into the recipe so
-// flush() needs no per-frame light patch. Written once at bake (idempotent).
-// patch 4: writing an immutable recipe field MUST dirty the cached flush record
-// for that recipe (so the next flush rebuilds it from the new value).
-void setRecipePermanentLightIndex(int32_t recipeIndex, uint32_t lightDataIndex) {
-    if (recipeIndex < 0) return;
-    const uint32_t ri = static_cast<uint32_t>(recipeIndex);
-    if (ri >= s_recipes.size()) return;
-    if (s_recipes[ri].lightDataIndex == lightDataIndex) return;  // no-op: stay clean
-    s_recipes[ri].lightDataIndex = lightDataIndex;   // permanent slot == recipeIndex
-    invalidateCachedFlushRecord(ri);                 // patch 3/4 — defined in Task 3
-}
 
 bool registerStaticProp(Appearance* app) {
     if (!isLateSpawnRegEnabled()) return false;
@@ -803,7 +795,24 @@ void flush() {
         // Task 4 (STATICPROP-REGISTRY-FLUSH-CACHED-BLOB-2A): branch on gate.
         // Gate OFF (default): existing per-leaf rebuild runs verbatim (zero behavior change).
         // Gate ON: bulk submit + cached actor records — no per-frame light patch, no rebuild.
-        if (!s_flushCachedBlob) {
+        //
+        // 2A review fix (adversarial + renderspine M1): take the cached path for
+        // THIS range ONLY when it is provably equivalent to legacy — i.e. the
+        // legacy freshLightIdx selector resolves to the exact value the cached
+        // path would submit (s_recipes[rng.first].lightDataIndex, stamped to the
+        // range light by markVisible). This self-heals every light divergence the
+        // cached path could otherwise introduce, falling back to the legacy
+        // per-leaf path (which uses freshLightIdx directly) for that range:
+        //   - MC2_STATIC_PER_INSTANCE_LIGHT=0 → freshLightIdx = multi cache != stamp → legacy
+        //   - sentinel range light          → freshLightIdx falls back to multi cache,
+        //                                      and the != sentinel guard forces legacy
+        // Default config (per-instance light ON, non-sentinel) → freshLightIdx ==
+        // the stamped index for all leaves → cached path, as proven by the oracle.
+        const bool useCachedBlob =
+            s_flushCachedBlob
+            && freshLightIdx != 0xFFFFFFFFu
+            && freshLightIdx == s_recipes[rng.first].lightDataIndex;
+        if (!useCachedBlob) {
         // --- GATE OFF: legacy per-leaf rebuild path (verbatim, moved) ---
         // [SPFLUSH_COST_SPLIT v1] submit_loop_total span wraps the whole leaf loop
         // for this range. One span per range covering all its leaves.
@@ -981,10 +990,14 @@ void flush() {
         if (s_spflushEnabled) s_w_submit_loop_total_cyc += __rdtsc() - _t_loop0;
         } else {
         // --- GATE ON: cached-blob flush path (Task 4, STATICPROP-REGISTRY-FLUSH-CACHED-BLOB-2A) ---
+        const unsigned long long _t_cached0 = s_spflushEnabled ? __rdtsc() : 0ULL;
         // 1. Instances: one bulk call. Recipes carry the permanent lightDataIndex from Task 1 —
         //    no per-frame light patch required.
+        const unsigned long long _t_csub0 = s_spflushEnabled ? __rdtsc() : 0ULL;
         batcher.submitCachedInstanceRange(&s_recipes[rng.first], rng.count);
+        if (s_spflushEnabled) s_w_cached_submit_cyc += __rdtsc() - _t_csub0;
         // 2. Per-recipe cached cull records.
+        const unsigned long long _t_crec0 = s_spflushEnabled ? __rdtsc() : 0ULL;
         if (gpu_cull::substrate_isEnabled()) {
             // FNV-1a-64 hasher for compare mode (patch 8).
             // Defined inline here; only referenced in the gate-ON path.
@@ -1012,6 +1025,9 @@ void flush() {
                 if (!s_cachedActorRecordValid[ri]) {
                     buildCachedActorRecord(rng, ri, s_cachedActorRecord[ri]);
                     s_cachedActorRecordValid[ri] = 1u;
+                    if (s_spflushEnabled) ++s_win_cache_builds;   // thrash if ~= leaves/frame
+                } else if (s_spflushEnabled) {
+                    ++s_win_cache_hits;
                 }
                 gpu_cull::substrate_appendStaticPropRecord(s_cachedActorRecord[ri]);
                 ++s_diag_leaves_appended;
@@ -1070,6 +1086,10 @@ void flush() {
                 }
             }
         }
+        if (s_spflushEnabled) {
+            s_w_cached_records_cyc += __rdtsc() - _t_crec0;
+            s_w_cached_total_cyc   += __rdtsc() - _t_cached0;
+        }
         } // end gate branch
     }
     s_diag_total_ns += static_cast<uint64_t>(
@@ -1125,6 +1145,7 @@ void flush() {
                 "map_lookup_ns=%lld color_fill_ns=%lld "
                 "actor_record_ns=%lld world_to_block_ns=%lld "
                 "substrate_append_ns=%lld baseinstance_upload_ns=%lld "
+                "| CACHED: total_ns=%lld submit_ns=%lld records_ns=%lld builds_pf=%lld hits_pf=%lld "
                 "| dirty(window): invalidates=%llu registrations=%llu rebuilds=%llu light_writes=%llu"
                 " | dirty(total): invalidates=%llu registrations=%llu rebuilds=%llu light_writes=%llu\n",
                 leaves_pf, ranges_pf,
@@ -1136,6 +1157,11 @@ void flush() {
                 cyc2ns(s_w_world_to_block_idx_cyc),
                 cyc2ns(s_w_substrate_append_cyc),
                 cyc2ns(bi_upload_cyc),
+                cyc2ns(s_w_cached_total_cyc),
+                cyc2ns(s_w_cached_submit_cyc),
+                cyc2ns(s_w_cached_records_cyc),
+                static_cast<long long>(s_win_cache_builds / static_cast<unsigned long long>(s_spflushWindowFrames)),
+                static_cast<long long>(s_win_cache_hits   / static_cast<unsigned long long>(s_spflushWindowFrames)),
                 s_win_invalidates, s_win_registrations, win_recipe_rebuilds, win_recipe_rebuilds,
                 s_total_invalidates, s_total_registrations, tot_recipe_rebuilds, tot_recipe_rebuilds);
             fflush(stderr);
@@ -1147,6 +1173,11 @@ void flush() {
             s_w_substrate_append_cyc   = 0;
             s_win_leaves_appended      = 0;
             s_win_ranges_drawn         = 0;
+            s_w_cached_total_cyc       = 0;
+            s_w_cached_submit_cyc      = 0;
+            s_w_cached_records_cyc     = 0;
+            s_win_cache_builds         = 0;
+            s_win_cache_hits           = 0;
             s_win_invalidates          = 0;
             s_win_registrations        = 0;
             // s_win_recipe_rebuilds reset inside spflush_ConsumeRecipeRebuildsDelta() (txmmgr).
@@ -1364,11 +1395,3 @@ bool staticPropGetInstanceFlags(int32_t recipeIndex, uint32_t* out) {
 } // namespace GpuStaticPropRegistry
 
 // ---------------------------------------------------------------------------
-// STATICPROP-REGISTRY-FLUSH-CACHED-BLOB-2A (Task 1): cross-TU free function
-// Defined at file scope after the GpuStaticPropRegistry namespace so the
-// linker sees an unmangled symbol (same pattern as mc2EraseBakedStaticLight).
-// Declared extern at file scope in txmmgr.cpp (NOT inside any function).
-// ---------------------------------------------------------------------------
-void mc2RegistrySetRecipePermanentLightIndex(int32_t recipeIndex, uint32_t lightDataIndex) {
-    GpuStaticPropRegistry::setRecipePermanentLightIndex(recipeIndex, lightDataIndex);
-}
