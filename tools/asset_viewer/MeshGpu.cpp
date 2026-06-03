@@ -21,13 +21,29 @@ static std::string stemLower(const std::string& textureName) {
     return s;
 }
 
-// Try tiers in order: 512, 256, 128. Return first existing path, or "".
-static std::string resolveAlbedoPath(const std::string& deployDir, const std::string& stem) {
-    static const char* tiers[] = { "512", "256", "128", nullptr };
-    for (int i = 0; tiers[i]; ++i) {
-        std::string p = deployDir + "/data/tgl/" + tiers[i] + "/" + stem + ".ktx2";
-        // Check existence via fopen (avoids <filesystem> exception on invalid paths).
+// Try tiers in order starting from preferredTier, then the remaining ones.
+// Returns the first existing path, or "" if none found.
+// Valid tiers: 128, 256, 512, 1024.
+static std::string resolveTexPath(const std::string& deployDir,
+                                   const std::string& stem,
+                                   int preferredTier) {
+    // Build the ordered list: preferred first, then the rest in descending order.
+    static const int kAllTiers[] = { 512, 256, 128, 1024 };
+    // Try preferred tier first.
+    auto tryPath = [&](int tier) -> std::string {
+        std::string p = deployDir + "/data/tgl/" + std::to_string(tier) + "/" + stem + ".ktx2";
         if (FILE* f = std::fopen(p.c_str(), "rb")) { std::fclose(f); return p; }
+        return {};
+    };
+
+    std::string p = tryPath(preferredTier);
+    if (!p.empty()) return p;
+
+    // Fall back through the remaining tiers.
+    for (int tier : kAllTiers) {
+        if (tier == preferredTier) continue;
+        p = tryPath(tier);
+        if (!p.empty()) return p;
     }
     return {};
 }
@@ -35,7 +51,7 @@ static std::string resolveAlbedoPath(const std::string& deployDir, const std::st
 // ---------------------------------------------------------------------------
 // MeshGpu::upload
 // ---------------------------------------------------------------------------
-void MeshGpu::upload(const MeshData& m, const std::string& deployDir) {
+void MeshGpu::upload(const MeshData& m, const std::string& deployDir, int preferredTier) {
     destroy();
 
     for (const SubMesh& sub : m.submeshes) {
@@ -82,10 +98,13 @@ void MeshGpu::upload(const MeshData& m, const std::string& deployDir) {
         // a standalone unbind of the EBO from the current context (safe, no-op for state).
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
-        // Resolve albedo
+        // Resolve albedo and classify the submesh.
         if (!sub.textureName.empty()) {
-            std::string stem = stemLower(sub.textureName);
-            std::string path = resolveAlbedoPath(deployDir, stem);
+            gs.texStem = stemLower(sub.textureName);
+            // isLights: stem ends with 'x' (e.g. "a_2civlivingx").
+            gs.isLights = !gs.texStem.empty() && gs.texStem.back() == 'x';
+
+            std::string path = resolveTexPath(deployDir, gs.texStem, preferredTier);
             if (!path.empty()) {
                 DecodedTexture dt = textureDecoderRegistry().load(path);
                 if (dt.glTexture) {
@@ -100,6 +119,31 @@ void MeshGpu::upload(const MeshData& m, const std::string& deployDir) {
 
     // Copy bounds
     for (int i = 0; i < 3; ++i) { bmin_[i] = m.bmin[i]; bmax_[i] = m.bmax[i]; }
+}
+
+// ---------------------------------------------------------------------------
+// MeshGpu::reloadAlbedo — hot-swap textures at a new tier; geometry unchanged.
+// ---------------------------------------------------------------------------
+void MeshGpu::reloadAlbedo(const std::string& deployDir, int preferredTier) {
+    for (GpuSubMesh& gs : subs_) {
+        // Free the current owned texture.
+        if (gs.albedo && gs.ownsAlbedo) {
+            glDeleteTextures(1, &gs.albedo);
+        }
+        gs.albedo     = 0;
+        gs.ownsAlbedo = false;
+
+        if (!gs.texStem.empty()) {
+            std::string path = resolveTexPath(deployDir, gs.texStem, preferredTier);
+            if (!path.empty()) {
+                DecodedTexture dt = textureDecoderRegistry().load(path);
+                if (dt.glTexture) {
+                    gs.albedo     = dt.glTexture;
+                    gs.ownsAlbedo = dt.ownsGlTexture;
+                }
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -120,10 +164,13 @@ void MeshGpu::draw() const {
 }
 
 // ---------------------------------------------------------------------------
-// MeshGpu::drawLit — draw with per-submesh u_hasAlbedo uniform
+// MeshGpu::drawLit — draw with per-submesh u_hasAlbedo uniform.
+// showLights: when false, submeshes with isLights==true are skipped.
 // ---------------------------------------------------------------------------
-void MeshGpu::drawLit(int uHasAlbedoLoc) const {
+void MeshGpu::drawLit(int uHasAlbedoLoc, bool showLights) const {
     for (const GpuSubMesh& gs : subs_) {
+        if (gs.isLights && !showLights) continue;
+
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, gs.albedo);
         if (uHasAlbedoLoc >= 0)

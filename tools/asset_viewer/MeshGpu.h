@@ -12,14 +12,23 @@ struct GpuSubMesh {
     unsigned albedo = 0;
     int      indexCount = 0;
     bool     ownsAlbedo = false;
+    // Lowercased stem of the source texture name (no extension, no path).
+    // e.g. "a_2civliving" or "a_2civlivingx".
+    std::string texStem;
+    // True when texStem ends with 'x' — emissive/glow overlay submesh.
+    bool isLights = false;
 };
 
 class MeshGpu {
 public:
     // Upload all submeshes from MeshData to GL.
-    // Resolves per-submesh albedo: looks for deployDir/data/tgl/{512,256,128}/<stem>.ktx2
-    // via textureDecoderRegistry(). Falls back to albedo=0 (shader uses flat white).
-    void upload(const MeshData& m, const std::string& deployDir);
+    // Resolves per-submesh albedo at the preferred tier first, then falls back.
+    // preferredTier must be one of {128, 256, 512, 1024}; default 512.
+    void upload(const MeshData& m, const std::string& deployDir, int preferredTier = 512);
+
+    // Reload albedo textures at a new resolution tier (hot-swap).
+    // VAO/VBO/EBO are untouched; only textures are freed (if owned) and re-resolved.
+    void reloadAlbedo(const std::string& deployDir, int preferredTier);
 
     // Bind each submesh's albedo (unit 0) and draw elements.
     // For the basic (no-shader) path.
@@ -27,7 +36,8 @@ public:
 
     // Draw with per-submesh u_hasAlbedo uniform (loc passed in).
     // Caller must have a program bound and u_albedo set to unit 0.
-    void drawLit(int uHasAlbedoLoc) const;
+    // showLights: if false, submeshes with isLights==true are skipped entirely.
+    void drawLit(int uHasAlbedoLoc, bool showLights = true) const;
 
     // Delete all GL objects.
     void destroy();
