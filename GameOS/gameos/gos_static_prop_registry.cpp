@@ -14,6 +14,7 @@
 #include <chrono>
 #include <set>
 #include <unordered_map>
+#include <intrin.h>  // __rdtsc — [SPFLUSH_COST_SPLIT v1]
 
 // MC_TextureManager singleton, defined in mclib/txmmgr.cpp.
 extern MC_TextureManager* mcTextureManager;
@@ -30,6 +31,64 @@ extern uint32_t g_mc2FrameCounter;
 // File-scope declaration — never declared inside flush(). Verifies the per-instance
 // permanent lightDataIndex is stable across frames + stays in the static prefix [0..S).
 extern void mc2LightBakeStabilityObserve(int32_t recipeIndex, uint32_t lightDataIndex);
+
+// ---------------------------------------------------------------------------
+// [SPFLUSH_COST_SPLIT v1] — env gate + RDTSC storage + TSC calibration.
+// Gate: MC2_STATIC_PROP_FLUSH_COST_SPLIT=1, default OFF.
+// All accumulation is no-op when the gate is unset (checked per-frame at
+// the top of flush() before any RDTSC reads, AND in the adder functions
+// in gos_static_prop_batcher.cpp for the callee-side buckets).
+// ---------------------------------------------------------------------------
+static const bool s_spflushEnabled = []() {
+    const char* v = getenv("MC2_STATIC_PROP_FLUSH_COST_SPLIT");
+    return v && v[0] == '1' && v[1] == '\0';
+}();
+
+// TSC -> ns calibration. Computed once on first flush() call under the gate.
+// Spin std::chrono::steady_clock for ~1ms, measure __rdtsc() delta.
+static double s_spflushCyclesPerNs = 1.0;  // safe default: 1 cycle/ns (no divide-by-zero)
+static bool   s_spflushCalibrated  = false;
+
+static void spflushCalibrate() {
+    if (s_spflushCalibrated) return;
+    using Clock = std::chrono::steady_clock;
+    const auto wall0 = Clock::now();
+    const unsigned long long tsc0 = __rdtsc();
+    // Spin ~1ms
+    while (std::chrono::duration_cast<std::chrono::microseconds>(
+               Clock::now() - wall0).count() < 1000) { /* spin */ }
+    const unsigned long long tsc1 = __rdtsc();
+    const long long wallUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                                 Clock::now() - wall0).count();
+    if (wallUs > 0 && tsc1 > tsc0) {
+        const double wallNs = static_cast<double>(wallUs) * 1000.0;
+        s_spflushCyclesPerNs = static_cast<double>(tsc1 - tsc0) / wallNs;
+    }
+    s_spflushCalibrated = true;
+}
+
+// Per-frame (window) RDTSC cycle accumulators — reset every 10 frames.
+namespace {
+// Registry-side buckets (accumulated in flush())
+unsigned long long s_w_submit_loop_total_cyc    = 0;
+unsigned long long s_w_inst_build_cyc           = 0;
+unsigned long long s_w_actor_record_build_cyc   = 0;
+unsigned long long s_w_world_to_block_idx_cyc   = 0;
+unsigned long long s_w_substrate_append_cyc     = 0;
+// Lifetime dirty-rate counters (monotonic, registry-side only)
+unsigned long long s_total_invalidates           = 0;
+unsigned long long s_total_registrations         = 0;
+// recipe_rebuilds / light_index_writes are sourced from txmmgr::bakeStaticLightSlot
+// via spflush_ConsumeRecipeRebuildsDelta() + spflush_GetRecipeRebuildTotal() — not tracked here.
+// (light_index_writes == recipe_rebuilds — both happen at bakeStaticLightSlot; only one kept.)
+// Window dirty-rate deltas (reset after each summary emit)
+unsigned long long s_win_invalidates             = 0;
+unsigned long long s_win_registrations           = 0;
+// Per-frame pass-through counters (use existing s_diag_* but we snapshot them)
+int                s_spflushWindowFrames         = 0;
+unsigned long long s_win_leaves_appended         = 0;
+unsigned long long s_win_ranges_drawn            = 0;
+}  // namespace
 
 // Rejects "0", "false", "off", "no"; accepts anything else (including "1") or
 // the unset/empty case (returns `defaultValue`). Matches the ParseEnvBool
@@ -221,6 +280,12 @@ static void releasePinsForRange(RecipeRange& rng) {
 extern void mc2EraseBakedStaticLight(int32_t);
 extern void mc2ClearAllBakedStaticLight();
 
+// [SPFLUSH_COST_SPLIT v1] txmmgr-side consume fns. Declared at FILE scope
+// (same reason as above — inside the namespace they mangle incorrectly).
+extern unsigned long long spflush_ConsumeBaseInstanceUploadCycles();
+extern unsigned long long spflush_ConsumeRecipeRebuildsDelta();
+extern unsigned long long spflush_GetRecipeRebuildTotal();
+
 namespace GpuStaticPropRegistry {
 
 bool isEnabled()               { return s_enabled; }
@@ -374,6 +439,8 @@ int32_t registerRecipe(TG_MultiShape* multi,
     if (!batch.empty()) {
         s_typeIDToRecipeIndex[batch[0].typeID] = regIdx;
     }
+    // [SPFLUSH_COST_SPLIT v1] lifetime registration counter.
+    if (s_spflushEnabled) { ++s_total_registrations; ++s_win_registrations; }
     SP_TRACE("register regIdx=%d first=%u count=%u", regIdx, rng.first, rng.count);
 
     // Pin every mcTextureNodeIndex referenced by this recipe's multi-shape.
@@ -426,6 +493,10 @@ void markVisible(int32_t regIdx, uint32_t lightDataIndex, float extentRadius) {
 void invalidate(int32_t regIdx) {
     if (!s_enabled) return;
     if (regIdx < 0 || static_cast<uint32_t>(regIdx) >= s_recipeRanges.size()) return;
+    // [SPFLUSH_COST_SPLIT v1] lifetime invalidation counter.
+    // LOD swaps manifest as paired invalidate+registration churn and are not
+    // separately identifiable here — no separate LOD counter.
+    if (s_spflushEnabled) { ++s_total_invalidates; ++s_win_invalidates; }
     RecipeRange& rng = s_recipeRanges[static_cast<uint32_t>(regIdx)];
     releasePinsForRange(rng);
     // M1.5 C1: tombstone the side-map entry BEFORE zeroing s_recipes
@@ -530,6 +601,7 @@ void flush() {
         }
         rng.firstFlushSeen = true;
         ++s_diag_ranges_drawn;
+        if (s_spflushEnabled) ++s_win_ranges_drawn; // [SPFLUSH_COST_SPLIT v1]
         // 2026-05-10 diag: env-gated dump of multi-leaf ranges (MC2_REGFLUSH_MULTI=1).
         {
             static const bool s_traceMulti = (getenv("MC2_REGFLUSH_MULTI") != nullptr);
@@ -613,9 +685,15 @@ void flush() {
              rootMtx[7],   // raw.z =  stuff.y (elev)
         };
 
+        // [SPFLUSH_COST_SPLIT v1] submit_loop_total span wraps the whole leaf loop
+        // for this range. One span per range covering all its leaves.
+        const unsigned long long _t_loop0 = s_spflushEnabled ? __rdtsc() : 0ULL;
         for (uint32_t i = 0; i < rng.count; ++i) {
+            // [SPFLUSH_COST_SPLIT v1] inst_build span: stack copy + lightDataIndex patch.
+            const unsigned long long _t_inst0 = s_spflushEnabled ? __rdtsc() : 0ULL;
             GpuStaticPropInstance inst = s_recipes[rng.first + i]; // stack copy
             inst.lightDataIndex = freshLightIdx;
+            if (s_spflushEnabled) s_w_inst_build_cyc += __rdtsc() - _t_inst0;
             batcher.submitCachedInstance(inst);
 
             // C1b GPU authority flip: emit one GpuActorRecord per submitted static prop
@@ -634,6 +712,8 @@ void flush() {
             // reach this loop (CPU visibility IS the admission gate for registry path).
             // Any GPU-culled prop that the CPU admitted will just fall back to 0-count
             // draw — invisible for that frame, restored next frame as it re-enters frustum.
+            // [SPFLUSH_COST_SPLIT v1] actor_record_build span starts here.
+            const unsigned long long _t_arb0 = s_spflushEnabled ? __rdtsc() : 0ULL;
             if (gpu_cull::substrate_isEnabled()) {
                 gpu_cull::GpuActorRecord gpuRec{};
                 // World position: inst.modelMatrix is Stuff row-vector
@@ -707,9 +787,12 @@ void flush() {
                 // is raw-MC2 east, [1] raw-MC2 north (the -stuff.x unswap was
                 // applied above producing the east-frame). Feed [0],[1] ONLY;
                 // NEVER [2] (elevation). worldCenter fully populated above.
+                // [SPFLUSH_COST_SPLIT v1] world_to_block_idx span (nested inside actor_record_build).
+                const unsigned long long _t_wtb0 = s_spflushEnabled ? __rdtsc() : 0ULL;
                 gpuRec.blockIdx       = static_cast<uint32_t>(
                     Terrain::worldToBlockIdx(gpuRec.worldCenter[0],
                                              gpuRec.worldCenter[1]));
+                if (s_spflushEnabled) s_w_world_to_block_idx_cyc += __rdtsc() - _t_wtb0;
                 // [BLKIDX v1] env-gated GEOMETRIC probe (demote-not-delete).
                 // Non-degeneracy is provably blind to a frame mirror — assert
                 // the helper == hand-rolled CPU block math for THIS prop's
@@ -743,8 +826,12 @@ void flush() {
                         fflush(stderr);
                     }
                 }
+                // [SPFLUSH_COST_SPLIT v1] substrate_append span.
+                const unsigned long long _t_sa0 = s_spflushEnabled ? __rdtsc() : 0ULL;
                 gpu_cull::substrate_appendStaticPropRecord(gpuRec);
+                if (s_spflushEnabled) s_w_substrate_append_cyc += __rdtsc() - _t_sa0;
                 ++s_diag_leaves_appended;
+                if (s_spflushEnabled) ++s_win_leaves_appended; // [SPFLUSH_COST_SPLIT v1]
                 // v2: record substrate submission for this recipe (extraction reads previous frame's state).
                 if (regIdx < static_cast<uint32_t>(s_recipeHasSubstrateRecord.size()))
                     s_recipeHasSubstrateRecord[regIdx] = 1u;
@@ -767,7 +854,11 @@ void flush() {
                     }
                 }
             }
+            // [SPFLUSH_COST_SPLIT v1] actor_record_build span ends here (includes world_to_block_idx).
+            if (s_spflushEnabled) s_w_actor_record_build_cyc += __rdtsc() - _t_arb0;
         }
+        // [SPFLUSH_COST_SPLIT v1] submit_loop_total span ends after all leaves of this range.
+        if (s_spflushEnabled) s_w_submit_loop_total_cyc += __rdtsc() - _t_loop0;
     }
     s_diag_total_ns += static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -790,6 +881,65 @@ void flush() {
             (unsigned long long)s_diag_leaves_appended,
             s_liveRangeIndices.size(), mean_us);
         fflush(stderr);
+    }
+    // [SPFLUSH_COST_SPLIT v1] -- per-10-frame summary emit.
+    // s_win_leaves_appended / s_win_ranges_drawn are incremented directly in the
+    // leaf loop above (alongside the existing s_diag_* counters). Window accumulators
+    // are reset after each emit, so they hold the current window-period totals.
+    if (s_spflushEnabled) {
+        if (!s_spflushCalibrated) spflushCalibrate();
+        ++s_spflushWindowFrames;
+        if (s_spflushWindowFrames >= 10) {
+            // Consume batcher-side callee accumulators (read+reset).
+            const unsigned long long map_lookup_cyc  = spflush_cost_split::ConsumeSubmitMapLookupCycles();
+            const unsigned long long color_fill_cyc  = spflush_cost_split::ConsumeColorZeroFillCycles();
+            // Consume txmmgr-side accumulators (file-scope externs declared below namespace).
+            const unsigned long long bi_upload_cyc       = ::spflush_ConsumeBaseInstanceUploadCycles();
+            const unsigned long long win_recipe_rebuilds = ::spflush_ConsumeRecipeRebuildsDelta();
+            const unsigned long long tot_recipe_rebuilds = ::spflush_GetRecipeRebuildTotal();
+            // Convert cycles -> ns using the calibrated cycles_per_ns.
+            const double cpns = s_spflushCyclesPerNs;
+            const double wf   = static_cast<double>(s_spflushWindowFrames);
+            auto cyc2ns = [&](unsigned long long c) -> long long {
+                return static_cast<long long>(static_cast<double>(c) / cpns / wf);
+            };
+            // Per-frame leaf/range averages (window totals / frames).
+            const long long leaves_pf  = static_cast<long long>(s_win_leaves_appended / static_cast<unsigned long long>(s_spflushWindowFrames));
+            const long long ranges_pf  = static_cast<long long>(s_win_ranges_drawn    / static_cast<unsigned long long>(s_spflushWindowFrames));
+            fprintf(stderr,
+                "[SPFLUSH_COST_SPLIT v1] event=summary frames=10 "
+                "leaves=%lld ranges=%lld "
+                "submit_loop_ns=%lld inst_build_ns=%lld "
+                "map_lookup_ns=%lld color_fill_ns=%lld "
+                "actor_record_ns=%lld world_to_block_ns=%lld "
+                "substrate_append_ns=%lld baseinstance_upload_ns=%lld "
+                "| dirty(window): invalidates=%llu registrations=%llu rebuilds=%llu light_writes=%llu"
+                " | dirty(total): invalidates=%llu registrations=%llu rebuilds=%llu light_writes=%llu\n",
+                leaves_pf, ranges_pf,
+                cyc2ns(s_w_submit_loop_total_cyc),
+                cyc2ns(s_w_inst_build_cyc),
+                cyc2ns(map_lookup_cyc),
+                cyc2ns(color_fill_cyc),
+                cyc2ns(s_w_actor_record_build_cyc),
+                cyc2ns(s_w_world_to_block_idx_cyc),
+                cyc2ns(s_w_substrate_append_cyc),
+                cyc2ns(bi_upload_cyc),
+                s_win_invalidates, s_win_registrations, win_recipe_rebuilds, win_recipe_rebuilds,
+                s_total_invalidates, s_total_registrations, tot_recipe_rebuilds, tot_recipe_rebuilds);
+            fflush(stderr);
+            // Reset window accumulators.
+            s_w_submit_loop_total_cyc  = 0;
+            s_w_inst_build_cyc         = 0;
+            s_w_actor_record_build_cyc = 0;
+            s_w_world_to_block_idx_cyc = 0;
+            s_w_substrate_append_cyc   = 0;
+            s_win_leaves_appended      = 0;
+            s_win_ranges_drawn         = 0;
+            s_win_invalidates          = 0;
+            s_win_registrations        = 0;
+            // s_win_recipe_rebuilds reset inside spflush_ConsumeRecipeRebuildsDelta() (txmmgr).
+            s_spflushWindowFrames      = 0;
+        }
     }
     // compute_dispatch() runs after this (moved to txmmgr.cpp between registry flush
     // and batcher flush) so it sees the appended static prop records.

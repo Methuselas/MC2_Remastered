@@ -60,6 +60,7 @@
 #include <unordered_set>
 #include <vector>
 #include <chrono>   // [LIGHTBRIDGE v1] coarse per-frame populate sizing
+#include <intrin.h> // __rdtsc — [SPFLUSH_COST_SPLIT v1]
 #include <utils/gl_utils.h>
 #include <GL/glew.h>                 // TEXMGR-COMPRESSED-UPLOAD-1: BPTC cap + GL_COMPRESSED_* enums
 #include "../RenderCore/KtxLoader.h" // TEXMGR-COMPRESSED-UPLOAD-1: BC7 .ktx2 sidecar loader
@@ -126,6 +127,39 @@ static unsigned long s_spotDiagPackCalls     = 0;
 static unsigned long s_spotDiagPackActiveSum = 0;
 static unsigned long s_spotDiagPackInactSum  = 0;
 static unsigned long s_spotDiagPackPointSum  = 0;
+
+// ---------------------------------------------------------------------------
+// [SPFLUSH_COST_SPLIT v1] — txmmgr-side RDTSC accumulator.
+// Measures the batcher_prepareBaseInstanceTable() + bucket-upload span each
+// frame. Gate mirrors the registry-side gate (same env var). The consume
+// function is called by the registry summary emit (extern declaration there).
+// ---------------------------------------------------------------------------
+static const bool s_spflushTxmEnabled = []() {
+    const char* v = getenv("MC2_STATIC_PROP_FLUSH_COST_SPLIT");
+    return v && v[0] == '1' && v[1] == '\0';
+}();
+static unsigned long long s_spflush_baseinstance_upload_cyc = 0;
+// recipe_rebuilds: monotonic + window delta. light_index_writes==recipe_rebuilds (same site).
+static unsigned long long s_spflush_recipe_rebuilds_txm      = 0;
+static unsigned long long s_spflush_recipe_rebuilds_total     = 0;
+
+// Exposed via extern in gos_static_prop_registry.cpp summary emit.
+unsigned long long spflush_ConsumeBaseInstanceUploadCycles() {
+    const unsigned long long v = s_spflush_baseinstance_upload_cyc;
+    s_spflush_baseinstance_upload_cyc = 0;
+    return v;
+}
+// Returns the window delta and the lifetime total for recipe_rebuilds.
+// Delta is reset on call; total is monotonic.
+unsigned long long spflush_ConsumeRecipeRebuildsDelta() {
+    const unsigned long long v = s_spflush_recipe_rebuilds_txm;
+    s_spflush_recipe_rebuilds_total += v;
+    s_spflush_recipe_rebuilds_txm    = 0;
+    return v;
+}
+unsigned long long spflush_GetRecipeRebuildTotal() {
+    return s_spflush_recipe_rebuilds_total;
+}
 #define TEX_LC(fmt, ...) \
     do { if (s_texLifecycleTrace) { printf("[TEX_LIFECYCLE v1] " fmt "\n", ##__VA_ARGS__); fflush(stdout); } } while (0)
 
@@ -1538,6 +1572,9 @@ void MC_TextureManager::bakeStaticLightSlot(int32_t recipeIndex, const TG_HWLigh
     lightData_[ri] = baked;                                 // CPU mirror (persists)
     mc2MarkStaticLightPrefixDirty();                        // [LIGHTSSBO v2] prefix content changed
     if (ri + 1 > s_staticLightHighWater) s_staticLightHighWater = ri + 1;
+    // [SPFLUSH_COST_SPLIT v1] recipe_rebuild counter. light_index_writes == recipe_rebuilds
+    // (both happen at this bakeStaticLightSlot call — same site, same count; only one counter kept).
+    if (s_spflushTxmEnabled) ++s_spflush_recipe_rebuilds_txm;
     // CRITICAL: the frame a recipe FIRST bakes, this-frame's count was
     // set to the OLD (smaller) S at frame-start resetLightData. Without
     // this bump, a later dynamic addLightDataStructure append THIS frame
@@ -2417,7 +2454,12 @@ void MC_TextureManager::renderLists (void)
 			// Step 4.6 (global-pool slice 1): compute per-cmd baseInstance prefix-sum
 			// and advance the coalesce ring slot BEFORE compute_dispatch() so the
 			// patch shader can read baseInstanceByCmd[] in the same dispatch.
-			batcher_prepareBaseInstanceTable();
+			// [SPFLUSH_COST_SPLIT v1] baseinstance_upload span.
+			{
+				const unsigned long long _t_bi0 = s_spflushTxmEnabled ? __rdtsc() : 0ULL;
+				batcher_prepareBaseInstanceTable();
+				if (s_spflushTxmEnabled) s_spflush_baseinstance_upload_cyc += __rdtsc() - _t_bi0;
+			}
 
 			// C1b GPU authority flip: compute_dispatch() is now called HERE
 			// (moved from mission.cpp) so it processes BOTH dynamic actor records

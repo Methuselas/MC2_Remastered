@@ -868,6 +868,19 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         false,
         "Static-prop ORM load trace: logs source path + dims per unique ORM texture. Default-OFF diagnostic; no correctness effect."
     },
+    // SPFLUSH-COST-SPLIT-1: RDTSC decomposition of StaticPropRegistryFlush hot zone.
+    {
+        "MC2_TRACE_STATIC_PROP_FLUSH_COST_SPLIT",
+        "MC2_STATIC_PROP_FLUSH_COST_SPLIT",
+        EnvVarKind::Trace,
+        false,
+        "SPFLUSH-COST-SPLIT-1: RDTSC cost-split decomposition of GpuStaticPropRegistry::flush(). "
+        "Emits [SPFLUSH_COST_SPLIT v1] event=summary every 10 frames with per-bucket ns averages "
+        "(submit_loop, inst_build, map_lookup, color_fill, actor_record, world_to_block, "
+        "substrate_append, baseinstance_upload) + lifetime/window dirty counters "
+        "(invalidates, registrations, recipe_rebuilds, light_writes). "
+        "TSC calibrated once at first use (~1ms spin). Default-OFF; =1 enables. ZERO behavior change."
+    },
 };
 
 // ---------------------------------------------------------------------------

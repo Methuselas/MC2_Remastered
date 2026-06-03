@@ -76,6 +76,44 @@ static const bool s_treeDiagTrace = (getenv("MC2_TREE_DIAG_TRACE") != nullptr);
 // used by [OBJBATCHER v1] / [TGL_POOL v1].
 static const bool s_spotlightRealTrace = (getenv("MC2_SPOTLIGHT_REAL_TRACE") != nullptr);
 
+// ---------------------------------------------------------------------------
+// [SPFLUSH_COST_SPLIT v1] — batcher-side RDTSC cycle accumulators.
+// Implemented here (submitCachedInstance is in this TU).
+// Gate: MC2_STATIC_PROP_FLUSH_COST_SPLIT=1, default OFF.
+// Adder functions are declared in gos_static_prop_batcher.h (file scope);
+// the registry + txmmgr TUs call them after measuring spans with __rdtsc().
+// ---------------------------------------------------------------------------
+#include <intrin.h>  // __rdtsc (MSVC intrinsic)
+
+static const bool s_spflushCostSplitEnabled = []() {
+    const char* v = getenv("MC2_STATIC_PROP_FLUSH_COST_SPLIT");
+    return v && v[0] == '1' && v[1] == '\0';
+}();
+
+namespace {
+unsigned long long s_spflush_submit_map_lookup_cyc = 0;
+unsigned long long s_spflush_color_zero_fill_cyc   = 0;
+}  // namespace
+
+namespace spflush_cost_split {
+void AddSubmitMapLookupCycles(unsigned long long c) {
+    if (s_spflushCostSplitEnabled) s_spflush_submit_map_lookup_cyc += c;
+}
+void AddColorZeroFillCycles(unsigned long long c) {
+    if (s_spflushCostSplitEnabled) s_spflush_color_zero_fill_cyc += c;
+}
+unsigned long long ConsumeSubmitMapLookupCycles() {
+    const unsigned long long v = s_spflush_submit_map_lookup_cyc;
+    s_spflush_submit_map_lookup_cyc = 0;
+    return v;
+}
+unsigned long long ConsumeColorZeroFillCycles() {
+    const unsigned long long v = s_spflush_color_zero_fill_cyc;
+    s_spflush_color_zero_fill_cyc = 0;
+    return v;
+}
+}  // namespace spflush_cost_split
+
 // MC2_STATIC_PROP_GLOBAL_POOL_LEGACY=1 — forces the legacy per-type-cap
 // coalesce layout (keeps existing path; new global-pool path is disabled).
 // Env-read once at process start; survives until soak completes.
@@ -6992,8 +7030,11 @@ const std::vector<GpuStaticPropInstance>& GpuStaticPropBatcher::getLastBuiltBatc
 
 void GpuStaticPropBatcher::submitCachedInstance(const GpuStaticPropInstance& inst) {
     if (inst.typeID >= s_types.size()) return;
+    // [SPFLUSH_COST_SPLIT v1] submit_map_lookup span.
+    const unsigned long long _t_lookup0 = s_spflushCostSplitEnabled ? __rdtsc() : 0ULL;
     const GpuStaticPropType& type = s_types[inst.typeID];
     PerTypeBucket& bucket = s_bucketsByType[inst.typeID];
+    if (s_spflushCostSplitEnabled) spflush_cost_split::AddSubmitMapLookupCycles(__rdtsc() - _t_lookup0);
 
     // firstColorOffset must be updated to the current bucket color position
     // so the GPU shader indexes colors correctly for this frame's layout.
@@ -7019,7 +7060,10 @@ void GpuStaticPropBatcher::submitCachedInstance(const GpuStaticPropInstance& ins
     bucket.instances.push_back(updated);
     // Zero-fill colors. Normal render ignores the Colors SSBO (binding 1);
     // debug addr-mode 4 shows black for static-registry instances.
+    // [SPFLUSH_COST_SPLIT v1] color_zero_fill span.
+    const unsigned long long _t_color0 = s_spflushCostSplitEnabled ? __rdtsc() : 0ULL;
     bucket.colors.insert(bucket.colors.end(), type.vertexCount, 0u);
+    if (s_spflushCostSplitEnabled) spflush_cost_split::AddColorZeroFillCycles(__rdtsc() - _t_color0);
 }
 
 // Track B -----------------------------------------------------------------
