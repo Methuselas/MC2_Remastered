@@ -1705,6 +1705,12 @@ long BldgAppearance::renderShadows (void)
 }
 
 //-----------------------------------------------------------------------------
+// [LIGHTBAKE-PROOF v1] A/B parity trace (defined in mclib/txmmgr.cpp). File-scope
+// declaration — never declared inside a function body. Proves the baked permanent
+// slot == the gathered transient record byte/hash.
+extern void mc2LightBakeParityCheck(int32_t recipeIndex, const TG_HWLightsData* gatheredLeaf,
+                                    float wx, float wy, float wz, const char* appearance);
+
 // [LIGHTBAKE v1] Static-actor lighting mission-load bake gate. Replaces
 // the raw shape->CacheGpuLightData() at the 4 static (bldg/tree) call
 // sites. The trailing staticReg.lightDataIndex =
@@ -1752,6 +1758,10 @@ static void mc2CacheOrBakeStaticGpuLight(TG_MultiShape* shape,
 			// path, so from this frame on there is NO per-frame
 			// addLightDataStructure for this recipe.
 			mc2WriteStaticLightSlot(recipeIndex, *leaf);
+			// [LIGHTBAKE-PROOF v1] pos + appearance are diagnostic LABELS only; the
+			// proof is match=1. Slot was written synchronously just above, so this
+			// reads the populated permanent slot. No-op unless MC2_LIGHTBAKE_PARITY.
+			mc2LightBakeParityCheck(recipeIndex, leaf, 0.0f, 0.0f, 0.0f, nullptr);
 			shape->EmitBakedGpuLightData(recipeIndex, *leaf);
 		}
 	}

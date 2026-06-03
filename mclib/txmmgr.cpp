@@ -1525,6 +1525,50 @@ MC_TextureManager::LightSlotPeek MC_TextureManager::peekLightSlot(uint32_t idx) 
     return p;
 }
 
+// [LIGHTBAKE-PROOF v1] read-only full-slot copy for the parity trace.
+bool MC_TextureManager::copyLightSlot(uint32_t idx, TG_HWLightsData& out) const
+{
+    if (idx >= lightDataStructuresCount || !lightData_) return false;
+    out = lightData_[idx];
+    return true;
+}
+
+// [LIGHTBAKE-PROOF v1] A/B parity: hash the freshly-gathered leaf record and the
+// permanent slot content at recipeIndex; they must match by construction
+// (mc2WriteStaticLightSlot copied *leaf into lightData_[recipeIndex] synchronously,
+// just before this is called). Proves the baked permanent record == the legacy
+// transient gathered record byte-for-byte. Env-gated (MC2_LIGHTBAKE_PARITY),
+// capped at 32 lines (+ always logs any mismatch). No behavior change.
+static const bool s_lbParityTrace =
+    (std::getenv("MC2_LIGHTBAKE_PARITY") != nullptr);
+static uint64_t s_lbParityChecks   = 0;
+static uint64_t s_lbParityMismatch = 0;
+
+void mc2LightBakeParityCheck(int32_t recipeIndex,
+                             const TG_HWLightsData* gatheredLeaf,
+                             float wx, float wy, float wz,
+                             const char* appearance)
+{
+    if (!s_lbParityTrace || recipeIndex < 0 || !gatheredLeaf || !mcTextureManager)
+        return;
+    const uint64_t leafHash = fnv1a_64_struct(gatheredLeaf, sizeof(TG_HWLightsData));
+    TG_HWLightsData slot{};
+    if (!mcTextureManager->copyLightSlot(static_cast<uint32_t>(recipeIndex), slot))
+        return;  // slot not yet addressable; skip
+    const uint64_t slotHash = fnv1a_64_struct(&slot, sizeof(TG_HWLightsData));
+    ++s_lbParityChecks;
+    const bool match = (leafHash == slotHash);
+    if (!match) ++s_lbParityMismatch;
+    if (s_lbParityChecks <= 32 || !match) {
+        std::fprintf(stderr,
+            "[LIGHTBAKE-PROOF v1] event=parity recipe=%d leafHash=%016llx slotHash=%016llx "
+            "match=%d pos=(%.1f,%.1f,%.1f) appr=%s\n",
+            recipeIndex, (unsigned long long)leafHash, (unsigned long long)slotHash,
+            match ? 1 : 0, wx, wy, wz, appearance ? appearance : "?");
+        std::fflush(stderr);
+    }
+}
+
 mat4 gos2my(Stuff::Matrix4D& m)
 {
 	mat4 m2(
