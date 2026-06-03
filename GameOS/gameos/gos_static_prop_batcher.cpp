@@ -5301,6 +5301,8 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
 
             constexpr uint32_t kNoObjectIndex = 0xFFFFFFFFu;
 
+            {
+            ZoneScopedN("StaticProp.LiveBuild");
             // --- Builder loop ---
             for (uint32_t i = 0u; i < totalCmds; ++i) {
                 // Guard 1: sorted_oob — i must be valid index into s_sortedPacketOrder
@@ -5408,6 +5410,7 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                 }
             }
             s_v6FrameLockstepViolations = v6LockstepViolations;
+            }  // end StaticProp.LiveBuild
         }
 
         // DrawPacket v5: per-draw-call dispatch (MC2_DRAW_PACKET_COALESCE_V5=1).
@@ -5500,6 +5503,8 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                 }
                 else {
                     // All guards passed — build snapshot arrays.
+                    {
+                    ZoneScopedN("StaticProp.SnapshotBuild");
                     s_snapV6Packets.resize(totalCmds);
                     s_snapV6Meta.resize(totalCmds);
 
@@ -5562,7 +5567,11 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                         s_snapV6Packets[si].indexCount = spkt.indexCount;
                     }
 
+                    }  // end StaticProp.SnapshotBuild
+
                     // Compare snapshot-built vs live-built, field-by-field per slot.
+                    {
+                    ZoneScopedN("StaticProp.BuildCompare");
                     for (uint32_t ci = 0u; ci < totalCmds; ++ci) {
                         const StaticPropDispatchMeta& sm = s_snapV6Meta[ci];
                         const StaticPropDispatchMeta& lm = v6Meta[ci];
@@ -5580,6 +5589,7 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                         if (sp.firstIndex  != lp.firstIndex)  ++s_spBuildPacketMismatch;
                         if (sp.indexCount  != lp.indexCount)  ++s_spBuildPacketMismatch;
                     }
+                    }  // end StaticProp.BuildCompare
 
                     snapBuilt = true;
                 }
