@@ -234,3 +234,20 @@ git commit -m "test+docs(modoverride): black-tree regression gate + LOD perf cap
 - Stop conditions (spec §8) preserved: Task 0 STOP; M4 LOD-unavailable clamp; collision-leak BLOCK; pre-finalize timing in Task 2.
 - Type consistency: `staticReg[MAX_LODS]`, `treeRenderShape[MAX_LODS]`, `getTreeRenderShape(lod)`, `activeLOD` used consistently across tasks.
 - Buildings explicitly deferred (trees-only MVP).
+
+---
+
+## Plan-review revisions (render-spine review 2026-06-03 → REVISE→folded; these SUPERSEDE the text above where they conflict)
+
+**M-A (load-bearing — recipe/light must key on the render LOD shape, not `treeShape`):** Today `registerStatic` builds the recipe via `buildRecipeFromShape` over the per-instance `treeShape` (the render-instance, currently CreateFrom'd from LOD0) and captures `lightDataIndex` from `treeShape`. Per-LOD selection that only swaps `staticReg[lod].recipeIndex` while the recipe geometry stays LOD0 yields **no perf win** and breaks the `IsStaticNow` `shape==treeShape` key. **Required:** in Task 2, each LOD's recipe AND `lightDataIndex` must be built from `getTreeRenderShape(lod)` geometry (per-LOD `buildRecipeFromShape` / cached light index). At runtime, the active-LOD switch (Task 5) must also repoint the per-instance render-instance to the active LOD's shape (re-`CreateFrom` from `getTreeRenderShape(activeLOD)`) with the `needsFullBakeNextFrame=true` re-arm, OR draw purely via the active LOD's pre-registered recipe — whichever the executor confirms actually swaps the drawn VBO geometry. `treeShape`'s collision role is unaffected (collision reads stock `treeShape[]`, separate).
+
+**M-B (stale line refs — fix before editing):** `TreeAppearance::registerStatic` is at **bdactor.cpp:4806** (`:4796` is `invalidateStaticRegistration`). Tree per-frame `markVisible` is at **:4226** (the `:1422` cite is the **Building** path — do not edit it for trees). `buildRecipe` MISS abort `return;` at `:4874` is correct.
+
+**M-C (avoid 3× LOD0 upload):** The geometry-register loop `for (i<MAX_LODS) registerMultiShape(getTreeRenderShape(i))` (bdactor.cpp ~:4821-4822) currently uploads the single override shape `MAX_LODS` times. After Task 1 promotes `treeRenderShape[]`, change the loop to iterate **only populated LODs** (`i < treeRenderShapeLodCount`), registering each distinct LOD shape once — no duplicate type registration / slot inflation.
+
+**Minors folded:**
+- m1: `lodDistance[]` at `:3634` already has a `*=5.0f` zoom-push for stock LOD bands — Task 5 must decide whether render-LOD bands reuse the scaled thresholds or define their own; state it.
+- m2: Task 0 `[LIGHTSLOT v1]` line fires at **mission_ready only** (one line/map), never per-frame.
+- m3: Task 0 commit add-list must match the file actually instrumented (`txmmgr.cpp` if the counter lives by `addLightDataStructure`, else `gos_static_prop_batcher.cpp`).
+
+**Verdict after fold:** render-spine review was EXECUTE-ready contingent on M-A/M-B/M-C; with these folded the plan is execution-ready. Re-grounding confirmed: `treeRenderShape`:478, `getTreeRenderShape`:518 (discards lod today ✓), `mc2CacheOrBakeStaticGpuLight`:1903, `addLightDataStructure`:1278 (+dedup :1286), `lodDistance`:3634, `currentLOD=0`:3834, `MAX_LODS=3`, `finalizeGeometry` one-shot — all verified.
