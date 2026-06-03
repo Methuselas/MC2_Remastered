@@ -142,6 +142,76 @@ const char* StripPath(const char* p) {
 }
 
 //-----------------------------------------------------------------------------
+// MODEL-OVERRIDE texture binding: derive an MC2 texture NAME from a glTF/FBX
+// material's base-color image so MC_TextureManager can resolve it by name to a
+// loose data/tgl/<size>/<name>.tga (file.cpp strips the size subdir) or BC7
+// .ktx2 sidecar. MC2 stores the diffuse texture name WITH its ".tga" extension
+// (see msl.cpp ParseASEFile + the shadow-X strlen-4 logic). So:
+//   1. resolve the material's base-color/diffuse image to a filename,
+//   2. strip any directory, strip the source extension (.png/.jpg/...),
+//   3. sanitize to MC2-safe chars and lowercase,
+//   4. append ".tga", clamped to the TG_Texture::textureName[256] field.
+// Returns false when the material has NO base-color image (caller keeps the
+// "NULLTXM" sentinel — truly-untextured material).
+//
+// Embedded GLB images: Assimp reports the texture path as "*<index>" into
+// scene->mTextures[]. We resolve that to the embedded image's mFilename so the
+// derived name matches the authored image stem, not an opaque index.
+bool DeriveMC2TextureName(const aiScene* scene, const aiMaterial* mat,
+                          std::string& outName) {
+	aiString path;
+	bool have = false;
+	// glTF baseColor lands on BASE_COLOR in newer Assimp, DIFFUSE in the
+	// compatibility mapping. Try both.
+	if (mat->GetTexture(aiTextureType_BASE_COLOR, 0, &path) == AI_SUCCESS && path.length > 0)
+		have = true;
+	else if (mat->GetTexture(aiTextureType_DIFFUSE, 0, &path) == AI_SUCCESS && path.length > 0)
+		have = true;
+	if (!have)
+		return false;
+
+	const char* raw = path.C_Str();
+
+	// Resolve embedded "*N" to the source image filename when available.
+	std::string resolved;
+	if (raw[0] == '*' && scene != NULL) {
+		const unsigned idx = (unsigned)atoi(raw + 1);
+		if (idx < scene->mNumTextures && scene->mTextures[idx] != NULL
+		    && scene->mTextures[idx]->mFilename.length > 0) {
+			resolved = scene->mTextures[idx]->mFilename.C_Str();
+		}
+	}
+	const char* src = resolved.empty() ? raw : resolved.c_str();
+
+	// Strip directory, then strip extension.
+	std::string stem = StripPath(src);
+	const size_t dot = stem.find_last_of('.');
+	if (dot != std::string::npos)
+		stem.erase(dot);
+
+	// Sanitize: lowercase, keep [a-z0-9_-], map everything else to '_'.
+	for (size_t i = 0; i < stem.size(); ++i) {
+		char c = stem[i];
+		if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+		const bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+		              || c == '_' || c == '-';
+		stem[i] = ok ? c : '_';
+	}
+	if (stem.empty())
+		return false;
+
+	// Clamp stem so stem + ".tga" + NUL fits TG_Texture::textureName[256].
+	const size_t kMaxName = 256;
+	const size_t kExt = 4; // ".tga"
+	if (stem.size() + kExt + 1 > kMaxName)
+		stem.erase(kMaxName - kExt - 1);
+
+	stem += ".tga";
+	outName.swap(stem);
+	return true;
+}
+
+//-----------------------------------------------------------------------------
 // Build the multi-shape's TG_Texture[] from scene materials. One slot per
 // Assimp material (one-to-one mapping); per-material diffuse texture name is
 // extracted via aiTextureType_DIFFUSE channel 0. Materials with no diffuse
@@ -161,13 +231,15 @@ void BuildTextureList(const aiScene* scene, TG_TypeMultiShape* out) {
 	std::vector<const char*> nameCStrs(count);
 
 	for (DWORD i = 0; i < count; i++) {
-		aiString path;
 		const aiMaterial* mat = scene->mMaterials[i];
-		if (mat->GetTexture(aiTextureType_DIFFUSE, 0, &path) == AI_SUCCESS && path.length > 0) {
-			names[i] = StripPath(path.C_Str());
-		}
-		if (names[i].empty())
+		std::string derived;
+		if (DeriveMC2TextureName(scene, mat, derived)) {
+			names[i] = derived;
+			ASSIMP_TRACE("  material %lu base-color tex -> '%s'", (unsigned long)i, names[i].c_str());
+		} else {
 			names[i] = "NULLTXM";
+			ASSIMP_TRACE("  material %lu has no base-color image -> NULLTXM", (unsigned long)i);
+		}
 		nameCStrs[i] = names[i].c_str();
 	}
 

@@ -100,9 +100,80 @@ The advisor's read was correct — geometry is NOT texture-style; it goes throug
 - Caps 16M/8M, gltfpack built — real, retained.
 
 ### Remaining polish (NOT blockers — override now renders)
-- **Texture binding**: override draws with a borrowed layer-0 albedo (wrong/orange). Wire the override glTF's own texture into MC2's texture manager/array. This is the next real chunk.
+- ~~**Texture binding**~~ — DONE, see Slice 5 below.
 - Leaf alpha-MASK for tree leaf cards; per-instance lighting/perf.
 - Add a model-override row to `docs/asset-pipeline.md` (§7).
+
+## Slice 5 — MODEL-OVERRIDE TEXTURE BINDING ✅ (2026-06-02)
+
+Override trees now render with their OWN glTF textures (bark + leaf + trunk),
+not the borrowed wrong layer-0 albedo. Verified on **v0.3 / mc2_01**, exit 0,
+0 GL errors, collision untouched (only `assimp_importer.cpp` + `bdactor.cpp`
+changed; stock byte-identical).
+
+### Target
+Dead tree types (bare → leafy, fewer instances, unmistakable). Discovery trace
+on mc2_01: dead types present = maple1dead, maple2dead, maple3dead, oak1dead,
+oak3dead (all have instances; pool peak jumps to 1.68M with all 5 overridden →
+geometry really instances). `oak1dead` chosen as the single-type focus; all 5
+used for the visual A/B (more instances = clearer change).
+
+### Mechanism (3 parts)
+1. **Importer assigns real texture NAMES** — `mclib/assimp_importer.cpp`
+   `DeriveMC2TextureName()` (new) + rewritten `BuildTextureList()`. For a
+   material WITH a base-color image (BASE_COLOR or DIFFUSE channel), derive the
+   MC2 texture name from the image stem: resolve embedded `*N` →
+   `scene->mTextures[N]->mFilename`, strip dir + source ext, sanitize
+   (lowercase, `[a-z0-9_-]`, else `_`), clamp to fit `TG_Texture::textureName[256]`,
+   append `.tga` (MC2 stores diffuse names WITH `.tga` — see msl.cpp shadow-X
+   strlen-4). Truly-untextured material → keeps `NULLTXM`. Trace
+   (`MC2_ASSIMP_TRACE=1`): material 0→`tree_small_02_branch_diff_1k.tga`,
+   1→`tree_small_02_leaves_diff_1k.tga`, 2→`tree_small_02_diff_1k.tga`, 3→NULLTXM.
+2. **Deployed loose TGAs** — extracted the 3 embedded diffuse images from
+   `tree_small.glb` (branch jpg, leaves PNG, trunk jpg), converted via PIL →
+   `data/tgl/128/<name>.tga` (loose path; `fileExists` uses literal `_stat`, so
+   placed under `128/` directly — the file.cpp size-subdir strip is only a
+   fallback). NOTE: the leaves diffuse has NO alpha channel (RGB) → leaf cards
+   render OPAQUE (no cutout); acceptable per MVP priority.
+3. **Type-render-shape texture resolution** — `mclib/bdactor.cpp`
+   `LoadOverrideRenderShapeTextures()` (new static helper) called right after a
+   successful override import for BOTH bldg + tree. Root cause it fixes: the
+   stock per-instance loaders (bdactor.cpp ~3786/935) load textures onto the
+   CreateFrom'd PER-INSTANCE shape, NOT the TYPE render shape that the GPU
+   batcher registers + draws → the type shape's `listOfTextures[].gosTextureHandle`
+   stayed 0xFFFFFFFF → batcher saw W<=0 → borrowed layer-0. The helper mirrors
+   the stock loader (loadTexture by name → `SetTextureHandle` on the type
+   multishape, which propagates to all type sub-shapes). The batcher's
+   `4171be63` borrowed-layer-0 route is now a genuine FALLBACK only — it fires
+   solely when W<=0 (texture unavailable); with handles resolved the packet
+   takes the normal real-layer path (gos_static_prop_batcher.cpp ~2911).
+
+### Verified facts (trace + viewed images)
+- `[MODOVERRIDE_TEX] slot=0/1/2 -> gosHandle=933/934/935 alpha=0`, 0 NOT FOUND.
+- `[SEAMPROBE] tree buildRecipe HIT … typeID=199/200/201` for the override tree.
+- **`OVERRIDE_ROUTE` count = 0** and no `layer=-1 SKIP` for the override types →
+  override packets resolve their OWN real texture layers, not the borrowed one.
+  `[COALESCE] armed … unique_tex_on=37` (the 3 new tree textures added).
+- exit 0, gl_errors=[], peak_textures 235→238 (=+3 deployed textures).
+- A/B (`.claude/before.png` empty manifest vs `.claude/all5.png` 5 dead types,
+  crop `.claude/ab_before_all5.png`): the left tree cluster gains denser leafy
+  GREEN-textured / brown-bark canopies where bare dead trees were. Camera_motion=1
+  offsets the two runs slightly so pixel-diff is noisy; the trace is the decisive
+  proof, the images corroborate.
+
+### Files / commits
+- `mclib/assimp_importer.cpp`: `DeriveMC2TextureName` + `BuildTextureList` rewrite.
+- `mclib/bdactor.cpp`: `LoadOverrideRenderShapeTextures` + 2 call sites (tree ~3642, bldg ~352).
+
+### Remaining follow-ons
+- **Leaf alpha-MASK**: source leaves diffuse is RGB (no alpha) → opaque leaf
+  cards. Need a leaf texture WITH an alpha channel (or a separate opacity map
+  bound to ALPHA_TEST_BIT, 0.5 cutoff) for true cutout foliage.
+- **Branch KHR_texture_transform**: the branch material has a UV offset/scale
+  (`offset[0,0.4] scale[3,0.6]` + texCoord 1) the importer does not apply →
+  branch UVs may tile/shift wrong. Trunk + leaves (no transform) are correct.
+- BC7 `.ktx2` cook of the 3 TGAs for the compressed path.
+- Per-instance lighting/perf for heavy override forests.
 
 ### (history) earlier RETRACTION — kept for the record
 An interim revision claimed trees render when they did not (misread dark stock trees), and a later revision correctly retracted that. The magenta-box test then proved no-render, which led to this seam probe that actually fixed it. Net: the retraction was right at the time; the box now genuinely draws. A definitive test (override the on-screen **hangar** with a bright **magenta 12-unit box**) proves the override geometry is **NOT drawn** on EITHER v0.4 or v0.3: the hangar vanishes (stock shape displaced by the override) and **no magenta box appears**. Screenshots `.claude/magenta_hangar_test.png` (v0.4), `.claude/v3_magenta_hangar.png` (v0.3).

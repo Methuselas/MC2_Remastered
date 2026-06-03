@@ -123,6 +123,69 @@ extern bool MLRVertexLimitReached;
 #define SPINRATE					90.0f
 #define BASE_NODE_RECYCLE_TIME		0.25f
 #define MAX_WEAPON_NODES			4
+
+//-----------------------------------------------------------------------------
+// MODEL-OVERRIDE texture binding. The dual-shape override RENDER multishape
+// (bldgRenderShape / treeRenderShape) is what the GPU static-prop batcher
+// registers + draws (BldgAppearance/TreeAppearance::registerStatic). Its
+// per-material texture NAMES are assigned by the Assimp importer
+// (BuildTextureList -> data/tgl/<size>/<name>.tga). But those names are NOT
+// resolved to GOS texture handles anywhere on the *type* shape — the stock
+// per-instance loaders (~bdactor.cpp:3786/935) only touch the CreateFrom'd
+// per-instance shape, leaving the registered type render shape with
+// gosTextureHandle=0xFFFFFFFF. The batcher then sees W<=0 and falls back to a
+// borrowed (wrong) layer. Resolve them here, on the type render multishape,
+// immediately after a successful override import — mirrors the stock loaders.
+static void LoadOverrideRenderShapeTextures(TG_TypeMultiShape* rs)
+{
+	if (!rs || !mcTextureManager)
+		return;
+	for (long i = 0; i < rs->GetNumTextures(); i++)
+	{
+		char txmName[1024];
+		rs->GetTextureName(i, txmName, 256);
+		if (txmName[0] == 0 || S_stricmp(txmName, "NULLTXM") == 0)
+		{
+			rs->SetTextureHandle(i, 0xffffffff);
+			continue;
+		}
+
+		char texturePath[1024];
+		sprintf(texturePath, "%s%d" PATH_SEPARATOR, tglPath, ObjectTextureSize);
+
+		FullPathFileName textureName;
+		textureName.init(texturePath, txmName, "");
+
+		if (fileExists(textureName))
+		{
+			// "a_"-prefixed names are the engine's alpha-channel convention.
+			const bool alpha = (S_strnicmp(txmName, "a_", 2) == 0);
+			DWORD gosTextureHandle = mcTextureManager->loadTexture(
+				textureName,
+				alpha ? gos_Texture_Alpha : gos_Texture_Solid,
+				gosHint_DisableMipmap | gosHint_DontShrink);
+			gosASSERT(gosTextureHandle != 0xffffffff);
+			rs->SetTextureHandle(i, gosTextureHandle);
+			rs->SetTextureAlpha(i, alpha);
+			if (getenv("MC2_MODOVERRIDE_TRACE"))
+			{
+				fprintf(stderr, "[MODOVERRIDE_TEX] slot=%ld name='%s' -> gosHandle=%lu alpha=%d\n",
+				        i, txmName, (unsigned long)gosTextureHandle, (int)alpha);
+				fflush(stderr);
+			}
+		}
+		else
+		{
+			rs->SetTextureHandle(i, 0xffffffff);
+			if (getenv("MC2_MODOVERRIDE_TRACE"))
+			{
+				fprintf(stderr, "[MODOVERRIDE_TEX] slot=%ld name='%s' NOT FOUND (path=%s)\n",
+				        i, txmName, (const char*)textureName);
+				fflush(stderr);
+			}
+		}
+	}
+}
 //-----------------------------------------------------------------------------
 // class BldgAppearanceType
 void BldgAppearanceType::init (const char * fileName)
@@ -288,6 +351,9 @@ void BldgAppearanceType::init (const char * fileName)
 				}
 				else
 				{
+					// MODEL-OVERRIDE texture binding: resolve importer-assigned
+					// texture names to GOS handles on the TYPE render shape.
+					LoadOverrideRenderShapeTextures(bldgRenderShape);
 					fprintf(stderr, "[MODOVERRIDE] staticProp '%s': render override applied (%s)\n",
 					        bldgBaseName, overridePath);
 					fflush(stderr);
@@ -3637,6 +3703,10 @@ void TreeAppearanceType::init (const char * fileName)
 					// Intentional duplication — keep in sync with the stock sites.
 					treeRenderShape->SetAlphaTest(true);
 					treeRenderShape->SetFilter(true);
+					// MODEL-OVERRIDE texture binding: resolve the importer-assigned
+					// texture names to GOS handles on the TYPE render shape so the
+					// GPU batcher draws with the override's OWN textures.
+					LoadOverrideRenderShapeTextures(treeRenderShape);
 					fprintf(stderr, "[MODOVERRIDE] tree '%s': render override applied (%s)\n",
 					        treeBaseName, overridePath);
 					fflush(stderr);
