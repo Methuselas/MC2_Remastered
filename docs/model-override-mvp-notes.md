@@ -4,20 +4,23 @@ Running validation/decision log. See plan: `docs/model-override-mvp-plan.md`.
 
 ---
 
-## TREE-OVERRIDE-LOD-MVP-1 Task 0 (M2 light-slot cardinality gate) — **STOP**
+## TREE-OVERRIDE-LOD-MVP-1 Task 0 (M2 light-slot cardinality) — **BASELINE FINDING** (reframed from STOP per owner ruling 2026-06-03)
 
 - `MC2_LIGHTSLOT_TRACE` `[LIGHTSLOT v1]` measured (v0.3, `--validate --frames 20
   -mission mc2_01`, exit 0, 0 GL errors):
-  - override lush 6-type: `instances=29 types=6 recipes=982 unique_slots=29
-    dedup_hits=264 baked=982 per_instance_distinct=29`
-  - stock baseline:        `instances=119 types=0 recipes=982 unique_slots=119
-    dedup_hits=299 baked=982 per_instance_distinct=119`
-- **Verdict: STOP.** `U == D == K` (ratio 1.0) in BOTH runs → per-instance
-  light-slot growth; content dedup does NOT bound it (position-dependent
-  gather, `txmmgr.cpp:1278`/`:1333` + `msl.cpp:2061`). LOD plan HALTED.
-- Full writeup + recommended lighting-ownership slice:
-  `docs/model-override-lighting-ownership-recon.md`. Do NOT start LOD Task 1
-  until U/D re-measure as ~O(types/recipes), not ~K.
+  - override lush 6-type: `instances=29 types=6 recipes=982 unique_slots=29 per_instance_distinct=29`
+  - stock baseline:        `instances=119 types=0 recipes=982 unique_slots=119 per_instance_distinct=119`
+- **Reframe (owner ruling): NOT a hard stop.** Single-LOD `U == K` is **pre-existing
+  engine behavior** (stock ALSO shows `U == K`), **not** override-specific, **not** a
+  per-frame bake (allocated once + O(1) baked replay), and **not** the GPU raster cost
+  (that's LOD/overdraw). Position-dependent gather (`txmmgr.cpp:1278`/`:1333`,
+  `msl.cpp:2061`) → per-instance slot. Recorded as **deferred lighting-ownership
+  cleanup** (`docs/model-override-lighting-ownership-recon.md`), NOT a blocker.
+- **NEW GATE — at Task 3** (after LOD1 imported + registered alongside LOD0, rerun LIGHTSLOT):
+  - **PASS:** U stays ≈ K / bounded per instance — no multiplication by LOD count
+    (LODs of one instance share position → same gather → dedup to one slot).
+  - **STOP:** U grows toward K×M → split explicit lighting-ownership before continuing.
+- Proceeding: Task 1 `treeRenderShape[MAX_LODS]`, Task 2 `staticReg[MAX_LODS]`, Task 3 LOD1 import + remeasure (the real K×M gate).
 
 ---
 
