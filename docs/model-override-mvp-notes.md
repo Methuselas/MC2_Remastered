@@ -234,3 +234,19 @@ Align any solution with `docs/asset-pipeline.md` (canonical; render-owner `GpuSt
 - Batcher registers the RENDER shape: `bdactor.cpp` init sites (855/3787) + `registerStatic()` tops (both bldg + tree).
 - Env-gated `MC2_MODOVERRIDE_TRACE` discovery log.
 NOTE: the Slice-3 "static-prop render replaced" claim was a misread (bounds-cull, not rasterization) — same root cause. Static props have the same limitation; only the dual-shape collision-safety + resolve/import are proven.
+
+---
+
+## TREE OVERRIDE — VERIFIED RENDERING (2026-06-02, on-screen live-tree test)
+
+**Definitively confirmed (two ways, after repeated false positives on dead trees):**
+- The earlier "dead tree" overrides showed NO visible change because mc2_01's dead-tree instances (maple/oak dead) are OFF-CAMERA in the validate view — not because trees can't render. User was right to distrust those shots.
+- Overriding the **on-screen LIVE tree types** (tc1_1..4, palm1, palms) makes the change unmistakable:
+  - magenta/box override → the left tree cluster becomes a field of boxes (`.claude/vlt_magenta_livetrees.png`) — proves the tree override geometry RASTERIZES.
+  - textured `tree_small.glb` override → the stock leafy cluster is replaced by the imported tree geometry with its OWN resolved textures (`[MODOVERRIDE_TEX] gosHandle=860/861/862`, no OVERRIDE_ROUTE → real layers, pool 81% = instanced) (`.claude/vlx_textured_livetrees.png`). exit 0, 0 GL errors.
+
+**Net:** model overrides render in-game for BOTH static props (hangar magenta box, verified earlier) AND trees (live-tree box + textured, verified here), via the GPU static-prop batcher, with collision stock (dual-shape). 
+
+**Lesson:** ALWAYS test overrides on instances confirmed ON-CAMERA; a no-visible-change result on off-screen instances is not evidence of non-render. Only an unmistakable on-screen change (box) counts.
+
+**Quality polish remaining (renders, but rough):** decimated foliage is sparse; leaf cards opaque (no alpha-MASK; source leaf diffuse is RGB, no alpha); modest scale; branch KHR_texture_transform UV not applied. None block "renders"; they affect how good it looks.
