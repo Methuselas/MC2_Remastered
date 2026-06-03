@@ -16,7 +16,7 @@
 // ---------------------------------------------------------------------------
 
 struct MeshVertex {
-    float px, py, pz;   // position  (Stuff -> GL: x'=-x, y'=z, z'=y)
+    float px, py, pz;   // position  (Stuff -> GL: x'=-x, y'=stuffZ, z'=stuffY)
     float nx, ny, nz;   // normal    (same swap)
     float u, v;         // UV (per-corner expanded)
 };
@@ -52,7 +52,7 @@ namespace TglMeshLoader {
     // Load a .tgl by name (as stored in the FST, e.g. "data/tgl/2civliving.tgl").
     // Calls TG_TypeMultiShape::LoadBinaryCopy, walks all shapes, groups triangles
     // by localTextureHandle into SubMesh entries, expands per-corner UVs.
-    // Applies Stuff->GL coordinate swap: x'=-x, y'=z, z'=y.
+    // Applies Stuff->GL coordinate swap: x'=-stuffX, y'=stuffZ, z'=stuffY.
     // Returns ok=false + error string on failure.
     MeshData loadMesh(const std::string& tglName);
 

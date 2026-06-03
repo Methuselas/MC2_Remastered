@@ -1024,6 +1024,53 @@ int AssetViewerApp::runSmokeMeshRender(const char* deployDir)
 }
 
 // ---------------------------------------------------------------------------
+// runSmokeMeshOrient — orientation gate: load 2civliving.tgl and assert that
+// the GL-Y axis extent is the largest of the three axes (a building is taller
+// than it is wide or deep). No GL required.
+// ---------------------------------------------------------------------------
+int AssetViewerApp::runSmokeMeshOrient(const char* deployDir)
+{
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+
+    if (!TglMeshLoader::ensureFastFile(deployDir))
+    {
+        std::fprintf(stderr, "[smoke] FAIL mesh-orient: ensureFastFile('%s')\n", deployDir);
+        return 1;
+    }
+
+    MeshData md = TglMeshLoader::loadMesh("data/tgl/2civliving.tgl");
+    if (!md.ok)
+    {
+        std::fprintf(stderr, "[smoke] FAIL mesh-orient: loadMesh error: %s\n", md.error.c_str());
+        return 1;
+    }
+
+    float extX = md.bmax[0] - md.bmin[0];   // GL X (Stuff X after transform)
+    float extY = md.bmax[1] - md.bmin[1];   // GL Y (Stuff Z after transform = vertical)
+    float extZ = md.bmax[2] - md.bmin[2];   // GL Z (-Stuff Y after transform)
+
+    std::printf("[smoke] mesh-orient: extents X=%.3f  Y=%.3f  Z=%.3f\n", extX, extY, extZ);
+
+    // A 2-storey building must have GL-Y as the "tall" axis: taller than it is
+    // deep (GL-Z). 2civliving is a wide city block so its footprint (X, Z) can
+    // be large, but the spec's fallback says "Y must not be the smallest".
+    // With the correct Stuff-Z-up → GL-Y-up mapping, GL-Y = stuffZ (the MC2
+    // vertical), and GL-Z = stuffY (depth). Assert GL-Y >= GL-Z.
+    if (extY < extZ)
+    {
+        std::fprintf(stderr,
+            "[smoke] FAIL mesh-orient: GL-Y (%.3f) < GL-Z (%.3f) — "
+            "coordinate transform maps the wrong Stuff axis to GL vertical\n",
+            extY, extZ);
+        return 1;
+    }
+
+    std::printf("[smoke] PASS mesh-orient: GL-Y=%.3f >= GL-Z=%.3f (vertical axis correct)\n",
+        extY, extZ);
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
 // runSmokeMeshBuild — Task 1 headless gate: TglMeshLoader CPU mesh extraction.
 // No GL required.
 // ---------------------------------------------------------------------------

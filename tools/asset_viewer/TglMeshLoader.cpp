@@ -232,7 +232,11 @@ MeshData TglMeshLoader::loadMesh(const std::string& tglName)
 
                 const TG_TypeVertex& tv = V[vi];
 
-                // Stuff -> GL coordinate transform: x'=-x, y'=z, z'=y
+                // Stuff -> GL coordinate transform.
+                // MC2/Stuff is right-handed Z-up (X=right, Y=forward, Z=up).
+                // GL convention used here is right-handed Y-up (X=right, Y=up, Z=toward-viewer).
+                // Mapping: glX = -stuffX (mirror), glY = stuffZ (up), glZ = stuffY (depth).
+                // The mirrored X preserves MC2 front-facing winding order for GL.
                 float px = -tv.position.x;
                 float py =  tv.position.z;
                 float pz =  tv.position.y;

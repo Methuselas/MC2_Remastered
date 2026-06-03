@@ -60,7 +60,7 @@ private:
 
     // Camera / light
     float yaw_   = 0.6f;
-    float pitch_ = 0.3f;
+    float pitch_ = 0.35f;
     float dist_  = 3.0f;
     float center_[3] = {0.0f, 0.0f, 0.0f};  // bounds center for orbit pivot
     float lightDir_[3] = { -0.4f, -0.7f, -0.5f };
