@@ -12,6 +12,11 @@ class MaterialSlots {
 public:
     void draw(MaterialPreviewPBR& preview);
 
+    // Parse a .fit Material{} block and load its slots into `preview`. Each slot
+    // path is resolved by trying, in order: <fitDir>/<rel>, <cwd>/<rel>, <rel>.
+    // Returns the number of slots successfully loaded (0 if not found / none loaded).
+    int loadFit(const std::string& fitPath, MaterialPreviewPBR& preview);
+
 private:
     void slotRow(const char* label, MaterialSlotKind kind, MaterialPreviewPBR& preview);
     std::string paths_[4];     // indexed by (int)MaterialSlotKind
