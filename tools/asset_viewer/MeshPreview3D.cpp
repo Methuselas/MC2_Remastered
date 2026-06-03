@@ -334,7 +334,6 @@ void MeshPreview3D::draw(const ImVec2& availableSize) {
     ImGui::SliderFloat("Zoom",        &dist_,   0.05f, 50.0f);
     ImGui::SeparatorText("Light");
     ImGui::SliderFloat3("Light dir", lightDir_, -1.0f, 1.0f);
-    ImGui::SameLine();
     if (ImGui::Button("Reset view")) {
         yaw_   = 0.6f;
         pitch_ = 0.35f;
@@ -353,13 +352,10 @@ void MeshPreview3D::draw(const ImVec2& availableSize) {
     ImGui::Separator();
 
     // Subtract controls height from available size for the 3D viewport.
-    float ctrlH = ImGui::GetCursorPosY() - 0.0f;  // already advanced past controls
     ImVec2 vpSize = availableSize;
-    // Account for what's been consumed: remaining height = available - cursor offset.
     float usedH = ImGui::GetCursorPos().y - ImGui::GetWindowContentRegionMin().y;
     if (usedH > 0.0f && vpSize.y > usedH + 16.0f)
         vpSize.y -= usedH;
-    (void)ctrlH;
 
     int w = (int)vpSize.x, h = (int)vpSize.y;
     if (w < 16) w = 16; if (h < 16) h = 16;
@@ -390,6 +386,8 @@ void MeshPreview3D::draw(const ImVec2& availableSize) {
         ImGuiIO& io = ImGui::GetIO();
         if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
             yaw_   += io.MouseDelta.x * 0.01f;
+            if (yaw_ >  3.14159f) yaw_ -= 6.28318f;     // wrap to slider range [-pi,pi]
+            if (yaw_ < -3.14159f) yaw_ += 6.28318f;
             pitch_ += io.MouseDelta.y * 0.01f;
             const float lim = 1.55f;
             if (pitch_ >  lim) pitch_ =  lim;
