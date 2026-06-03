@@ -1741,6 +1741,10 @@ void GatherLightsParameters(TG_HWLightsData* lights)
 // then draws all alpha with isTerrain set.
 void MC_TextureManager::renderLists (void)
 {
+	ZoneScopedN("textureManagerRenderLists");
+	static bool bSkip = true; // used across preamble and Render.3DObjects
+	{
+	ZoneScopedN("RenderLists.Preamble");
 	if (Environment.Renderer == 3)
 	{
 		gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_OneZero);
@@ -1773,7 +1777,7 @@ void MC_TextureManager::renderLists (void)
 		gos_SetRenderState( gos_State_ZCompare, 1);
 		gos_SetRenderState(	gos_State_ZWrite, 1);
 	}
-		
+
 	DWORD fogColor = eye->fogColor;
 	//-----------------------------------------------------
 	// FOG time.  Set Render state to FOG on!
@@ -1787,12 +1791,13 @@ void MC_TextureManager::renderLists (void)
 		gos_SetRenderState( gos_State_Fog, 0);
 	}
 
-	static bool bSkip = true;
-
 	gos_SetRenderState(gos_State_Culling, gos_Cull_CW);
+	} // end RenderLists.Preamble
 
+	{
+	ZoneScopedN("RenderLists.LightDataUpload");
     // copy global list of light data into GPU buffer
-    
+
     // [LIGHTSSBO v1] Upload-size FLOOR retained (NOT a removable UBO-window
     // artifact — falsified 2026-05-17). The engine deliberately tolerates
     // transient over-count lightDataIndex for cull-stale actors whose
@@ -1808,8 +1813,9 @@ void MC_TextureManager::renderLists (void)
     gos_LightDataSsbo_Upload(
         lightData_,
         lightUploadCount * sizeof(TG_HWLightsData));
+	} // end RenderLists.LightDataUpload
     //
-    
+
     // update scene data uniform buffer
     Stuff::Vector3D cp = eye->getCameraOrigin();
     {
@@ -1896,6 +1902,8 @@ void MC_TextureManager::renderLists (void)
 	} // end Render.3DObjects zone
 	drainGLErrors("objects_3d");
 
+	{
+	ZoneScopedN("RenderLists.PostObjectsStateRestore");
 	// [Moved in Phase 4 debug] flush() was originally here (after
 	// Render.3DObjects). But Render.TerrainSolid runs AFTER us on line
 	// ~1287, so terrain was overwriting our building pixels. Flush is
@@ -1906,6 +1914,7 @@ void MC_TextureManager::renderLists (void)
 
 	// restore viewport
 	gos_SetRenderViewport(0, 0, Environment.drawableWidth, Environment.drawableHeight);
+	} // end RenderLists.PostObjectsStateRestore
 
 	// VPL-#shadow Phase 1+2 (arch-doc docs/plans/static-terrain-shadow-
 	// architecture.md): build the static terrain shadow from the FULL map
@@ -1997,6 +2006,7 @@ void MC_TextureManager::renderLists (void)
 	// terrain objects (they now also cast static shadows). Gate mirrors the
 	// Render.GpuStaticProps block; runs regardless of tessellation/mech state.
 	{
+		ZoneScopedN("RenderLists.StaticPropRegistryFlush");
 		extern bool g_useGpuStaticProps;
 		extern bool g_useGpuObjects;
 		if (g_useGpuStaticProps || g_useGpuObjects) {
@@ -2010,13 +2020,14 @@ void MC_TextureManager::renderLists (void)
 			if (s_finishProbe) glFinish();
 			GpuStaticPropRegistry::flush();
 		}
-	}
+	} // end RenderLists.StaticPropRegistryFlush
 	// GPU-driven dynamic sun shadow (Phase 1): frustum-fit + flushShadow.
 	// Runs BEFORE gpu_cull::compute_dispatch so the static-prop shadow uses the
 	// full camera-visible per-type ranges (not the cull-narrowed indirect).
 	// Casters = the camera-visible (inView) batched set (Phase 1 scope; the
 	// off-screen-caster low-sun shadow is the documented Phase-2 gap).
 	{
+		ZoneScopedN("RenderLists.DynamicShadowPass");
 		extern bool g_useGpuObjects;
 		extern bool g_useGpuMechs;
 		if (gos_IsTerrainTessellationActive() && (g_useGpuObjects || g_useGpuMechs)) {
@@ -2401,8 +2412,10 @@ void MC_TextureManager::renderLists (void)
 	}
 	
     // sebi: split in 2 parts, first draw objects which have alpha test off, then with alpha test on
-    for(int states = 0; states < 2; ++states) 
-    {   
+	{
+	ZoneScopedN("RenderLists.TerrainAlphaWaterLoops");
+    for(int states = 0; states < 2; ++states)
+    {
         gos_SetRenderState( gos_State_AlphaTest, states);
 
         for (int i=0;i<nextAvailableVertexNode;i++)
@@ -2467,6 +2480,7 @@ void MC_TextureManager::renderLists (void)
     }
     //reset alpha test at the end
     gos_SetRenderState( gos_State_AlphaTest, 0);
+	} // end RenderLists.TerrainAlphaWaterLoops
 
 
 	//<< sebi: added this section to draw objects which do not have terrain underlayer (those are added in quad.cpp, see (*) there )
@@ -2534,6 +2548,8 @@ void MC_TextureManager::renderLists (void)
 	// are now drawn by gos_DrawTerrainOverlays() and gos_DrawDecals() before Render.Overlays.
 	// The old Render.CraterOverlays and non-terrain crater loops are removed.
 
+	{
+	ZoneScopedN("RenderLists.ShadowBlobs");
 	if (Environment.Renderer == 3)
 	{
 		gos_SetRenderState( gos_State_TextureAddress, gos_TextureWrap );
@@ -2599,18 +2615,21 @@ void MC_TextureManager::renderLists (void)
 			}
 		}
 	}
+	} // end RenderLists.ShadowBlobs
 
 
+	{
+	ZoneScopedN("RenderLists.NonTerrainAlphaLoops");
 	gos_SetRenderState( gos_State_ZCompare, 1);
 	if (Environment.Renderer != 3)
 	{
 		gos_SetRenderState( gos_State_ShadeMode, gos_ShadeGouraud);
 		gos_SetRenderState(	gos_State_ZWrite, 1);
 	}
-	
+
     // sebi: split in 2 parts, first draw objects which have alpha test off, then with alpha test on
-    for(int states = 0; states < 2; ++states) 
-    {   
+    for(int states = 0; states < 2; ++states)
+    {
         gos_SetRenderState( gos_State_AlphaTest, states);
         for (int i=0;i<nextAvailableVertexNode;i++)
         {
@@ -2660,8 +2679,10 @@ void MC_TextureManager::renderLists (void)
     }
     //reset alpha test at the end
     gos_SetRenderState( gos_State_AlphaTest, 0);
+	} // end RenderLists.NonTerrainAlphaLoops
 
-	
+	{
+	ZoneScopedN("RenderLists.VfxHudSubmit");
 	if (Environment.Renderer == 3)
 	{
 		gos_SetRenderState( gos_State_ShadeMode, gos_ShadeGouraud);
@@ -2868,6 +2889,7 @@ void MC_TextureManager::renderLists (void)
 
 	// Reset terrain extra buffer after rendering — will be re-filled during next frame's TerrainQuad::draw() calls
 	gos_TerrainExtraReset();
+	} // end RenderLists.VfxHudSubmit
 	} // end Render.Overlays zone
 }
 
