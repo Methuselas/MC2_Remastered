@@ -30,6 +30,7 @@ public:
     static int runSmokeFitMaterial(const char* fixtureDir); // minimal FIT parser: Material{} block -> slot paths
     static int runSmokeFitLoad(const char* fixtureDir);    // loadFit() multi-base resolution + GL upload check
     static int runSmokeTglLoad(const char* deployDir);     // headless NS3 TGL loader: FastFileInit + LoadBinaryCopy
+    static int runSmokeMeshBuild(const char* deployDir);  // Task 1: TglMeshLoader CPU mesh extraction (no GL)
 private:
     FileBrowser browser_;
     AssetTypeSidebar sidebar_;

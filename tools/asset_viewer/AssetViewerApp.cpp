@@ -914,3 +914,129 @@ int AssetViewerApp::runSmokeTglLoad(const char* deployDir)
         totalFiles, tglCount, numV, numT, texBuf);
     return 0;
 }
+
+// ---------------------------------------------------------------------------
+// runSmokeMeshBuild — Task 1 headless gate: TglMeshLoader CPU mesh extraction.
+// No GL required.
+// ---------------------------------------------------------------------------
+#include "TglMeshLoader.h"
+
+int AssetViewerApp::runSmokeMeshBuild(const char* deployDir)
+{
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+
+    // --- 1. Init FastFile via TglMeshLoader ---
+    if (!TglMeshLoader::ensureFastFile(deployDir))
+    {
+        std::fprintf(stderr, "[smoke] FAIL mesh-build: ensureFastFile('%s')\n", deployDir);
+        return 1;
+    }
+
+    // --- 2. Enumerate .tgl names ---
+    std::vector<std::string> tgls = TglMeshLoader::listTgl();
+    if (tgls.empty())
+    {
+        std::fprintf(stderr, "[smoke] FAIL mesh-build: listTgl() returned 0 entries\n");
+        return 1;
+    }
+
+    // Prefer a known prop; fall back to the first one found.
+    std::string target = tgls[0];
+    for (const auto& t : tgls)
+    {
+        if (t.find("2civliving") != std::string::npos)
+        {
+            target = t;
+            break;
+        }
+    }
+
+    std::printf("[smoke] mesh-build: loading '%s' (of %zu tgls)\n",
+        target.c_str(), tgls.size());
+
+    // --- 3. Load mesh ---
+    MeshData md = TglMeshLoader::loadMesh(target);
+    if (!md.ok)
+    {
+        std::fprintf(stderr, "[smoke] FAIL mesh-build: loadMesh error: %s\n", md.error.c_str());
+        return 1;
+    }
+
+    if (md.submeshes.empty())
+    {
+        std::fprintf(stderr, "[smoke] FAIL mesh-build: no submeshes\n");
+        return 1;
+    }
+
+    // --- 4. Validate each submesh ---
+    size_t totalVerts = 0, totalTris = 0;
+    bool hasNonEmptyTex = false;
+
+    for (size_t si = 0; si < md.submeshes.size(); ++si)
+    {
+        const SubMesh& sub = md.submeshes[si];
+
+        // Non-indexed expansion: verts.size() == idx.size()
+        if (sub.verts.size() != sub.idx.size())
+        {
+            std::fprintf(stderr,
+                "[smoke] FAIL mesh-build: sub[%zu] verts(%zu) != idx(%zu)\n",
+                si, sub.verts.size(), sub.idx.size());
+            return 1;
+        }
+
+        // Index count must be a multiple of 3 (whole triangles).
+        if (sub.idx.size() % 3 != 0)
+        {
+            std::fprintf(stderr,
+                "[smoke] FAIL mesh-build: sub[%zu] idx.size()=%zu not multiple of 3\n",
+                si, sub.idx.size());
+            return 1;
+        }
+
+        // All indices must be valid (< verts.size(), non-indexed so sequential).
+        for (size_t ii = 0; ii < sub.idx.size(); ++ii)
+        {
+            if (sub.idx[ii] >= (uint32_t)sub.verts.size())
+            {
+                std::fprintf(stderr,
+                    "[smoke] FAIL mesh-build: sub[%zu] idx[%zu]=%u >= verts.size()=%zu\n",
+                    si, ii, sub.idx[ii], sub.verts.size());
+                return 1;
+            }
+        }
+
+        if (!sub.textureName.empty()) hasNonEmptyTex = true;
+
+        totalVerts += sub.verts.size();
+        totalTris  += sub.idx.size() / 3;
+    }
+
+    if (!hasNonEmptyTex)
+    {
+        std::fprintf(stderr, "[smoke] FAIL mesh-build: no submesh has a non-empty textureName\n");
+        return 1;
+    }
+
+    // --- 5. Validate bounds are finite and bmax >= bmin ---
+    for (int a = 0; a < 3; ++a)
+    {
+        if (!std::isfinite(md.bmin[a]) || !std::isfinite(md.bmax[a]))
+        {
+            std::fprintf(stderr, "[smoke] FAIL mesh-build: non-finite bounds[%d]\n", a);
+            return 1;
+        }
+        if (md.bmax[a] < md.bmin[a])
+        {
+            std::fprintf(stderr,
+                "[smoke] FAIL mesh-build: bmax[%d]=%.3f < bmin[%d]=%.3f\n",
+                a, md.bmax[a], a, md.bmin[a]);
+            return 1;
+        }
+    }
+
+    std::printf("[smoke] PASS mesh-build subs=%zu verts=%zu tris=%zu tex0=%s\n",
+        md.submeshes.size(), totalVerts, totalTris,
+        md.submeshes[0].textureName.c_str());
+    return 0;
+}

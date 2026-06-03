@@ -32,6 +32,7 @@ endif()
 
 add_library(mc2_tglloader STATIC
     engine_stubs.cpp
+    TglMeshLoader.cpp
     # --- mclib TUs (geometry loader closure) ---
     "${CMAKE_SOURCE_DIR}/mclib/msl.cpp"
     "${CMAKE_SOURCE_DIR}/mclib/tgl.cpp"
@@ -118,6 +119,7 @@ target_compile_definitions(mc2_tglloader PRIVATE
 )
 
 target_include_directories(mc2_tglloader PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"          # tools/asset_viewer/ — for TglMeshLoader.h
     "${CMAKE_SOURCE_DIR}/mclib"
     "${CMAKE_SOURCE_DIR}/mclib/stuff"
     "${CMAKE_SOURCE_DIR}/GameOS/include"
@@ -128,9 +130,10 @@ target_include_directories(mc2_tglloader PRIVATE
     "${CMAKE_SOURCE_DIR}"
 )
 
-# mc2_tglloader's public headers (mclib + GameOS/include) need to be visible
-# to mc2_asset_viewer TUs that include e.g. tgl.h / fastfile.h.
+# mc2_tglloader's public headers (mclib + GameOS/include + TglMeshLoader.h)
+# must be visible to mc2_asset_viewer TUs.
 target_include_directories(mc2_tglloader PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}"          # tools/asset_viewer/ — exposes TglMeshLoader.h
     "${CMAKE_SOURCE_DIR}/mclib"
     "${CMAKE_SOURCE_DIR}/mclib/stuff"
     "${CMAKE_SOURCE_DIR}/GameOS/include"

@@ -62,6 +62,9 @@ int main(int argc, char* argv[])
     if (argc >= 2 && strcmp(argv[1], "--smoke-tgl-load") == 0)
         return AssetViewerApp::runSmokeTglLoad(argc >= 3 ? argv[2] : ".");
 
+    if (argc >= 2 && strcmp(argv[1], "--smoke-mesh-build") == 0)
+        return AssetViewerApp::runSmokeMeshBuild(argc >= 3 ? argv[2] : ".");
+
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0)
     {
         printf("SDL_Init error: %s\n", SDL_GetError());
