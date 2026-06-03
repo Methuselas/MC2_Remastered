@@ -7066,6 +7066,36 @@ void GpuStaticPropBatcher::submitCachedInstance(const GpuStaticPropInstance& ins
     if (s_spflushCostSplitEnabled) spflush_cost_split::AddColorZeroFillCycles(__rdtsc() - _t_color0);
 }
 
+void GpuStaticPropBatcher::submitCachedInstanceRange(const GpuStaticPropInstance* arr,
+                                                     uint32_t count) {
+    if (!arr || count == 0u) return;
+    // Group consecutive same-typeID runs so the map lookup + the color resize
+    // happen ONCE per run, not per leaf.
+    uint32_t i = 0u;
+    while (i < count) {
+        const uint32_t typeID = arr[i].typeID;
+        if (typeID >= s_types.size()) { ++i; continue; }
+        const GpuStaticPropType& type = s_types[typeID];
+        PerTypeBucket& bucket = s_bucketsByType[typeID];          // one lookup per run
+        uint32_t j = i;
+        while (j < count && arr[j].typeID == typeID) ++j;
+        const uint32_t n = j - i;
+        // patch 2: ONE color resize/fill per run, not per-instance insert.
+        const size_t colOldSize = bucket.colors.size();
+        bucket.colors.resize(colOldSize + (size_t)n * type.vertexCount, 0u);
+        bucket.instances.reserve(bucket.instances.size() + n);
+        for (uint32_t local = 0u; local < n; ++local) {
+            GpuStaticPropInstance updated = arr[i + local];
+            // firstColorOffset = running bucket offset (correct even if the bucket
+            // already holds dynamic instances submitted earlier this frame).
+            updated.firstColorOffset =
+                static_cast<uint32_t>(colOldSize + (size_t)local * type.vertexCount);
+            bucket.instances.push_back(updated);
+        }
+        i = j;
+    }
+}
+
 // Track B -----------------------------------------------------------------
 
 bool GpuStaticPropBatcher::buildRecipeFromShape(

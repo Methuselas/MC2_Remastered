@@ -308,6 +308,14 @@ public:
     // the Colors SSBO binding 1).
     void submitCachedInstance(const GpuStaticPropInstance& inst);
 
+    // 2A: bulk variant — one map lookup + bulk reserve/insert for an entire
+    // contiguous run of recipes of (possibly mixed) typeIDs. firstColorOffset is
+    // computed from the running bucket color offset, so it is correct even when a
+    // type bucket also holds dynamic instances submitted earlier this frame.
+    // Equivalent result to calling submitCachedInstance() per element, at a
+    // fraction of the per-leaf overhead.
+    void submitCachedInstanceRange(const GpuStaticPropInstance* arr, uint32_t count);
+
     // Track B: pure recipe-construction path, side-effect-free.
     // Builds a GpuStaticPropInstance from static per-shape inputs.
     // Does NOT touch per-frame state (no bucket/SSBO writes).
