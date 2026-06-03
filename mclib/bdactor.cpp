@@ -1927,7 +1927,28 @@ namespace mc2_lightslot_trace {
     static std::set<uint32_t> s_distinctSlots;   // D/U: distinct lightDataIndex over static instances (this frame)
     static std::set<const void*> s_types;        // N: distinct override tree TYPES (by appearType ptr, this frame)
 
-    static inline void maybeEmit();  // fwd
+    static inline void maybeEmit();    // fwd
+    static inline void initFromEnv();  // fwd
+
+    // TREE-OVERRIDE-LOD-MVP Task 3 (K×M GATE): registration-time accumulators for
+    // the higher-LOD (lod>0) baked light slots. The per-frame s_distinctSlots set
+    // only ever sees activeLOD=0 (pinned), so it cannot reveal whether LOD1's
+    // per-instance bake created a SECOND lightData_ slot per instance. These
+    // counters capture the lightData_ index every lod>0 registration bake
+    // resolves to: LOD1_baked_instances counts the bakes; LOD1_distinct_slots is
+    // the set of distinct lightData_ indices those bakes resolved to. If LODs of
+    // one instance dedup to LOD0's slot, LOD1_distinct_slots stays ~K (PASS); if
+    // each instance's LOD1 takes a fresh slot, it grows toward K (additive → K×M
+    // total). These are cross-frame (registration is one-shot at mission load).
+    static uint64_t      s_lodBakeCount = 0;
+    static std::set<uint32_t> s_lodDistinctSlots;
+    static inline void recordLodBakeSlot(uint32_t lightDataIndex) {
+        initFromEnv();
+        if (!s_enabled) return;
+        ++s_lodBakeCount;
+        if (lightDataIndex != 0xFFFFFFFFu)
+            s_lodDistinctSlots.insert(lightDataIndex);
+    }
 
     static inline void initFromEnv() {
         if (s_inited) return;
@@ -1979,10 +2000,12 @@ namespace mc2_lightslot_trace {
         std::printf(
             "[LIGHTSLOT v1] static_prop_instances=%llu override_tree_types=%zu "
             "registered_recipes=%u unique_light_slots=%zu dedup_hits=%llu "
-            "baked_slots=%u per_instance_distinct=%zu table_count=%u\n",
+            "baked_slots=%u per_instance_distinct=%zu table_count=%u "
+            "lod_bake_count=%llu lod_distinct_slots=%zu\n",
             (unsigned long long)s_instances, s_types.size(),
             B /* R ~= baked recipe high-water */, U,
-            (unsigned long long)H, B, D, mc2LightSlotTableCount());
+            (unsigned long long)H, B, D, mc2LightSlotTableCount(),
+            (unsigned long long)s_lodBakeCount, s_lodDistinctSlots.size());
         std::fflush(stdout);
         s_emitted = true;
     }
@@ -3823,6 +3846,61 @@ void TreeAppearanceType::init (const char * fileName)
 					fprintf(stderr, "[MODOVERRIDE] tree '%s': render override applied (%s)\n",
 					        treeBaseName, overridePath);
 					fflush(stderr);
+
+					// TREE-OVERRIDE-LOD-MVP Task 3: load each manifest lods[] entry
+					// into treeRenderShape[lod]. Each LOD gets its OWN import,
+					// vertex-tight mesh-local bounds (ImportGeometryFromFile sets
+					// that), and its textures resolved (decimated LODs share the
+					// LOD0 texture set — same material names). A failed/odd-index
+					// LOD is dropped (stock-clamp via getTreeRenderShape) without
+					// disturbing LOD0. treeRenderShapeLodCount becomes the highest
+					// populated index + 1 so the per-LOD register loop (M-C) and
+					// the K×M light gate (Task 3 GATE) see both LODs.
+					for (const ModelOverrideLod& lentry : ov->lods)
+					{
+						const int li = lentry.lod;
+						if (li <= 0 || li >= MAX_LODS) {
+							fprintf(stderr, "[MODOVERRIDE] tree '%s': lod %d out of range, skipped\n",
+							        treeBaseName, li);
+							fflush(stderr);
+							continue;
+						}
+						if (treeRenderShape[li]) {
+							fprintf(stderr, "[MODOVERRIDE] tree '%s': duplicate lod %d, skipped\n",
+							        treeBaseName, li);
+							fflush(stderr);
+							continue;
+						}
+						char lodPath[1024];
+						snprintf(lodPath, sizeof(lodPath), "%s/%s",
+						         ModelOverrideRegistry::instance().manifestDir().c_str(),
+						         lentry.sourceRelPath.c_str());
+						treeRenderShape[li] = new TG_TypeMultiShape;
+						try {
+							long lr = ImportGeometryFromFile(lodPath, treeRenderShape[li]);
+							if (lr != 0 || treeRenderShape[li]->GetNumShapes() == 0) {
+								delete treeRenderShape[li]; treeRenderShape[li] = NULL;
+								fprintf(stderr, "[MODOVERRIDE] tree '%s': lod %d import failed (%s), dropped\n",
+								        treeBaseName, li, lodPath);
+								fflush(stderr);
+								continue;
+							}
+							treeRenderShape[li]->SetAlphaTest(true);
+							treeRenderShape[li]->SetFilter(true);
+							LoadOverrideRenderShapeTextures(treeRenderShape[li]);
+							if (li + 1 > treeRenderShapeLodCount)
+								treeRenderShapeLodCount = li + 1;
+							fprintf(stderr, "[MODOVERRIDE] tree '%s': lod %d applied (%s) lodCount=%ld\n",
+							        treeBaseName, li, lodPath, treeRenderShapeLodCount);
+							fflush(stderr);
+						}
+						catch (...) {
+							delete treeRenderShape[li]; treeRenderShape[li] = NULL;
+							fprintf(stderr, "[MODOVERRIDE] tree '%s': lod %d import threw (%s), dropped\n",
+							        treeBaseName, li, lodPath);
+							fflush(stderr);
+						}
+					}
 				}
 			}
 			catch (...)
@@ -5097,6 +5175,28 @@ void TreeAppearance::registerStatic() {
 			staticReg[lod].shape       = (lod == 0) ? treeShape : lodShape;
 			staticReg[lod].recipeIndex = regIdx;
 			anyRegistered = true;
+
+			// TREE-OVERRIDE-LOD-MVP Task 3 (K×M GATE): bake the higher-LOD light
+			// slot HERE, at registration, from this LOD's OWN transformed render-
+			// instance. LOD0's light is baked by the next update() (activeLOD=0,
+			// byte-identical to pre-LOD), but a higher LOD never becomes active
+			// while activeLOD is pinned 0 (Task 5 adds distance selection), so its
+			// light would otherwise never gather — and the K×M gate could not see
+			// whether LOD1's per-instance bake creates a SECOND lightData_ slot or
+			// dedups to LOD0's. mc2CacheOrBakeStaticGpuLight walks the hierarchy +
+			// GatherGpuObjectLightDataOnly (position-keyed) and routes the content
+			// through addLightDataStructure's FNV+memcmp dedup. Same world position
+			// as LOD0 ⇒ byte-identical TG_HWLightsData ⇒ dedup HIT ⇒ shares LOD0's
+			// lightData_ slot (the architectural PASS basis). It DOES consume a
+			// distinct recipe-keyed baked slot (B grows with recipes, bounded by
+			// types×LODs — expected, not instance growth). LOD0 skipped here to
+			// keep the LOD0-only baseline bit-identical.
+			if (lod != 0) {
+				mc2CacheOrBakeStaticGpuLight(lodShape, true, regIdx);
+				// K×M GATE: record which lightData_ slot this LOD's bake resolved
+				// to (dedup-shared with LOD0 = PASS; fresh-per-instance = STOP).
+				mc2_lightslot_trace::recordLodBakeSlot(lodShape->getCachedGpuLightIndex());
+			}
 		} else {
 			// M4: LOD unavailable — leave registered=false, continue.
 			staticReg[lod].registered  = false;

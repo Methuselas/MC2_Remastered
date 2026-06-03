@@ -24,6 +24,91 @@ Running validation/decision log. See plan: `docs/model-override-mvp-plan.md`.
 
 ---
 
+## TREE-OVERRIDE-LOD-MVP-1 Task 3 (K×M GATE) — **VERDICT: STOP** (2026-06-03)
+
+LOD1 generated + imported + registered + baked alongside LOD0 for ONE 2-LOD type
+(`tree:tc1_1`); `[LIGHTSLOT v1]` remeasured. **The K×M gate FAILS: LOD1's
+per-instance light bake takes a FRESH slot per instance — the table grows by ~K,
+not deduped to LOD0's slot.** Per the gate's STOP condition, HALT before Task 4.
+
+### Asset
+- `tree_lush_lod1.glb` = **235,546 tris** (leaf-card-PRESERVING thin of the lush
+  LOD0: `.claude/tree_export_lush_lod1.py --keep 0.06`, kept 1,815/30,250 leaf
+  cards — a SUBSET of LOD0's 9,075 via the same seed=1234 — + full trunk/branch
+  122k). LOD0 lush = 706,628 tris. LOD1 ≈ 33% of LOD0, visibly lighter, canopy
+  preserved. Deployed to v0.3.
+
+### Manifest used (the 2-LOD type)
+```json
+{ "type":"model","class":"tree","replaces":"tree:tc1_1",
+  "source":"source/trees/tree_lush.glb","renderOnly":true,"scale":1.0,"fallback":"stock",
+  "lods":[ { "lod":1, "source":"source/trees/tree_lush_lod1.glb", "distance":300 } ] }
+```
+(single type, focused gate; `lods[]` parse added to registry — minimal-but-safe,
+full validation + tests still Task 4. distance:300 unused until Task 5.)
+
+### `[LIGHTSLOT v1]` — single-LOD baseline vs 2-LOD (v0.3, `--validate --frames 20
+-mission mc2_01`, MC2_LIGHTSLOT_TRACE=1, exit 0, gl_errors=[], shader_errors=[])
+
+| Run (tc1_1 isolated) | K (instances, in-view@emit) | U (unique_light_slots, activeLOD=0 set) | baked_slots B (recipe high-water) | table_count | lod_bake_count | **lod_distinct_slots** |
+|---|---:|---:|---:|---:|---:|---:|
+| **1-LOD baseline** | 67 | 67 | 982 | 983 | 0 | 0 |
+| **2-LOD (LOD0+LOD1)** | 69 | 69 | **1130** | **1131** | **148** | **148** |
+
+(empty manifest no-mod identity: `override_tree_types=0 baked_slots=982 table_count=983
+lod_bake_count=0` — stock byte-identical, exit 0, gl=[]/shader=[].)
+
+### GATE VERDICT: **STOP** — U grows toward K×M (LOD1 does NOT dedup to LOD0)
+- `registered_recipes`/`baked_slots`: 982 → **1130** = **+148**, exactly the LOD1
+  recipe count (tc1_1 = 148 instances). ✓ LOD1 registered as expected.
+- **`lod_distinct_slots=148` with `lod_bake_count=148` → ratio 1:1.** Every one of
+  the 148 LOD1 instance bakes resolved to a DISTINCT `lightData_` slot.
+- **`table_count`: 983 → 1131 = +148** — the global light table grew by exactly the
+  LOD1 bake count. The LOD1 slots are **genuinely NEW appends**, NOT dedup hits
+  against LOD0's existing per-instance slots. (If LOD1 had deduped to each
+  instance's LOD0 slot, table_count would have stayed ~983 and lod_distinct_slots
+  would have collapsed to ≈0 new.)
+- Net: with M LODs registered+baked, the visible-forest light table → **K×M**
+  (here K + K for 2 LODs). This is the exact STOP condition the gate exists to
+  prevent — building Tasks 4-6 on top would amplify the already-1:1-with-instances
+  light-slot growth (lighting-ownership recon §4).
+- activeLOD=0 ⇒ the DRAWN image is still LOD0 (U/per_instance_distinct seen by the
+  per-frame set tracks LOD0 only at 69; forest renders, exit 0). The K×M growth is
+  in the registration-time bake table, not the draw.
+
+### Why LOD1 does not dedup (the failing site)
+The per-instance `lightDataIndex` comes from `TG_Shape::GatherGpuObjectLightDataOnly`
+(`tgl.cpp:2913`) → `addLightDataStructureWithPerActorColor` → FNV+memcmp dedup on
+the leaf's `lightData_` (`txmmgr.cpp:1290`). The dedup is content-keyed on the
+gathered `TG_HWLightsData`. LOD0 and LOD1 of one instance share world POSITION,
+but they are DIFFERENT meshes (different first SHAPE_NODE leaf, different
+per-vertex light accumulation feeding `lightData_`), so the gathered struct is
+byte-DIFFERENT and the memcmp dedup misses → a fresh slot per LOD per instance.
+Position alone is NOT the dedup key; the per-leaf gathered light content is, and
+that differs per LOD geometry. So the architectural "same position → same gather →
+dedup" assumption is FALSE at this site for distinct LOD meshes.
+
+### Recommendation — HALT for the lighting-ownership slice BEFORE Tasks 4-6
+Do NOT proceed to distance selection (Task 5) on this axis. The fix is the
+separate lighting-ownership slice already scoped in
+`docs/model-override-lighting-ownership-recon.md` §5: make the per-instance
+`lightDataIndex` resolve through a position-quantized or recipe-keyed shared
+light (independent of LOD mesh) so all LODs of an instance — and ideally all
+instances of a type in a cell — collapse to a bounded slot set. Re-run this gate;
+require `lod_distinct_slots` ≈ 0-new and `table_count` flat across LOD count
+before re-opening Task 4. (Per-LOD register+bake plumbing from Tasks 1-3 is
+correct and retained; only the light-slot ownership is the blocker.)
+
+### Files / commit
+- Asset: `.claude/tree_export_lush_lod1.py`, `data/model_overrides/source/trees/tree_lush_lod1.glb`.
+- `mclib/model_override_registry.{h,cpp}`: `ModelOverrideLod` + `lods[]` minimal-safe parse.
+- `mclib/bdactor.cpp`: per-LOD `lods[]` import into `treeRenderShape[lod]`; per-LOD
+  registration-time light bake (lod>0) + `lod_bake_count`/`lod_distinct_slots`
+  gate counters in `[LIGHTSLOT v1]`.
+- exit 0, gl_errors=[], shader_errors=[] on all three runs (baseline / 2-LOD / empty).
+
+---
+
 ## Slice 1 — `MODEL-OVERRIDE-REGISTRY-0` — SHIPPED
 
 - Commits: `19acd6a1` (vendor nlohmann/json + isolation guard), `4d7c5285` (registry + tests + empty manifest), `8ebbeb6e` (review fixes).

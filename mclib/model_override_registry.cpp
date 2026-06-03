@@ -101,6 +101,41 @@ int ModelOverrideRegistry::loadFromFile(const std::string& manifestPath,
         rec.appearanceName = name;
         rec.sourceRelPath  = source;
         rec.scale          = scale;
+
+        // TREE-OVERRIDE-LOD-MVP-1 Task 3/4: optional lower-detail LOD chain.
+        // Minimal-but-safe parse: each entry must be an object with int `lod`>=1
+        // and a safe `source`; entries kept in ascending-lod order; a non-
+        // ascending or duplicate lod, or an unsafe/missing source, drops THAT
+        // LOD entry (logged) but keeps the record's LOD0. (Full validation +
+        // unit tests are Task 4.)
+        if (e.contains("lods") && e["lods"].is_array()) {
+            int lastLod = 0;  // LOD0 implied by `source`
+            for (const auto& le : e["lods"]) {
+                if (!le.is_object()) { logDrop("lods entry not an object", key); continue; }
+                if (!le.contains("lod") || !le["lod"].is_number_integer()) {
+                    logDrop("lods entry missing integer 'lod'", key); continue;
+                }
+                const int lod = le["lod"].get<int>();
+                if (lod <= lastLod) { logDrop("lods 'lod' not strictly ascending (LOD0=source)", key); continue; }
+
+                std::string lsrc = le.value("source", std::string());
+                {
+                    size_t b = 0, en = lsrc.size();
+                    while (b < en && std::isspace((unsigned char)lsrc[b])) ++b;
+                    while (en > b && std::isspace((unsigned char)lsrc[en - 1])) --en;
+                    lsrc = lsrc.substr(b, en - b);
+                }
+                if (!isSafeSource(lsrc)) { logDrop("lods entry unsafe/non-glTF source", key); continue; }
+
+                ModelOverrideLod l;
+                l.lod          = lod;
+                l.sourceRelPath = lsrc;
+                l.distance     = le.value("distance", 0.0f);
+                rec.lods.push_back(std::move(l));
+                lastLod = lod;
+            }
+        }
+
         records_.push_back(std::move(rec));
         } catch (const std::exception& ex) {
             logDrop(ex.what(), "<entry>"); continue;
