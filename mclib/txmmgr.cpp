@@ -1257,14 +1257,20 @@ static bool mc2StaticLightUploadSplitEnabled()
     return s_split;
 }
 
-// [LIGHTBAKE-PROOF v1] Stability trace: for the first N recipes, record the
-// permanent slot index the first time it is observed, then verify it never
-// changes across frames and stays < S (inPrefix). Env-gated (MC2_LIGHTBAKE_STABILITY),
-// capped at 32 lines, demote-not-delete. No behavior change.
+// [LIGHTBAKE-PROOF v1] Stability trace: record each recipe's permanent slot
+// index the first time it is observed, then verify it never changes across
+// frames and stays < S (inPrefix). Env-gated (MC2_LIGHTBAKE_STABILITY),
+// demote-not-delete. No behavior change. Per-recipe first/UNSTABLE lines are
+// capped at 32 to bound log volume, but DETECTION runs for ALL recipes and an
+// aggregate coverage line (recipes_tracked / max_index / out-of-prefix count)
+// is emitted every 256 new recipes — so coverage is never silently 32-capped
+// (M2 fix, adversarial review 2026-06-03).
 static const bool s_lbStabilityTrace =
     (std::getenv("MC2_LIGHTBAKE_STABILITY") != nullptr);
 static std::unordered_map<int32_t, uint32_t> s_lbFirstSeenIndex;   // recipeIndex -> first index
-static uint64_t s_lbStabilityViolations = 0;
+static uint64_t s_lbStabilityViolations = 0;   // cross-frame index changes
+static uint64_t s_lbOutOfPrefix        = 0;    // first-seen index >= S (should stay 0)
+static uint32_t s_lbMaxIndex           = 0;    // max permanent index observed
 
 void mc2LightBakeStabilityObserve(int32_t recipeIndex, uint32_t lightDataIndex)
 {
@@ -1273,14 +1279,24 @@ void mc2LightBakeStabilityObserve(int32_t recipeIndex, uint32_t lightDataIndex)
     auto it = s_lbFirstSeenIndex.find(recipeIndex);
     if (it == s_lbFirstSeenIndex.end()) {
         s_lbFirstSeenIndex.emplace(recipeIndex, lightDataIndex);
+        if (lightDataIndex > s_lbMaxIndex) s_lbMaxIndex = lightDataIndex;
+        if (lightDataIndex >= S)           ++s_lbOutOfPrefix;   // counted for ALL recipes
         if (s_lbFirstSeenIndex.size() <= 32) {
             std::fprintf(stderr,
                 "[LIGHTBAKE-PROOF v1] event=first recipe=%d index=%u S=%u inPrefix=%d\n",
                 recipeIndex, lightDataIndex, S, (lightDataIndex < S) ? 1 : 0);
             std::fflush(stderr);
         }
+        // Aggregate coverage so recipes beyond the 32 log-cap are accounted for.
+        if ((s_lbFirstSeenIndex.size() % 256u) == 0u) {
+            std::fprintf(stderr,
+                "[LIGHTBAKE-PROOF v1] event=coverage recipes_tracked=%zu max_index=%u S=%u out_of_prefix=%llu\n",
+                s_lbFirstSeenIndex.size(), s_lbMaxIndex, S,
+                (unsigned long long)s_lbOutOfPrefix);
+            std::fflush(stderr);
+        }
     } else if (it->second != lightDataIndex) {
-        ++s_lbStabilityViolations;
+        ++s_lbStabilityViolations;   // detection runs for ALL recipes (uncapped)
         if (s_lbStabilityViolations <= 32) {
             std::fprintf(stderr,
                 "[LIGHTBAKE-PROOF v1] event=UNSTABLE recipe=%d was=%u now=%u S=%u\n",
@@ -1328,7 +1344,7 @@ void mc2ClearAllBakedStaticLight()
     // recipeIndex restarts at 0 against a fresh prefix.
     s_bakedStaticLight.clear();
     s_staticLightHighWater = 0;
-    s_staticLightPrefixDirty = true;   // [LIGHTSSBO v2] table reset → re-upload prefix next frame
+    mc2MarkStaticLightPrefixDirty();   // [LIGHTSSBO v2] table reset → re-upload prefix next frame
 }
 
 // [LIGHTBAKE v2] Persistent static slot write. Replaces the retired
@@ -1520,7 +1536,7 @@ void MC_TextureManager::bakeStaticLightSlot(int32_t recipeIndex, const TG_HWLigh
         lightDataStructuresCapacity = newCap;
     }
     lightData_[ri] = baked;                                 // CPU mirror (persists)
-    s_staticLightPrefixDirty = true;                        // [LIGHTSSBO v2] prefix content changed
+    mc2MarkStaticLightPrefixDirty();                        // [LIGHTSSBO v2] prefix content changed
     if (ri + 1 > s_staticLightHighWater) s_staticLightHighWater = ri + 1;
     // CRITICAL: the frame a recipe FIRST bakes, this-frame's count was
     // set to the OLD (smaller) S at frame-start resetLightData. Without
@@ -1561,12 +1577,18 @@ bool MC_TextureManager::copyLightSlot(uint32_t idx, TG_HWLightsData& out) const
     return true;
 }
 
-// [LIGHTBAKE-PROOF v1] A/B parity: hash the freshly-gathered leaf record and the
-// permanent slot content at recipeIndex; they must match by construction
-// (mc2WriteStaticLightSlot copied *leaf into lightData_[recipeIndex] synchronously,
-// just before this is called). Proves the baked permanent record == the legacy
-// transient gathered record byte-for-byte. Env-gated (MC2_LIGHTBAKE_PARITY),
-// capped at 32 lines (+ always logs any mismatch). No behavior change.
+// [LIGHTBAKE-PROOF v1] Slot-write INTEGRITY check (NOT an independent A/B parity —
+// M1 honesty fix, adversarial review 2026-06-03). Hashes the freshly-gathered leaf
+// (the CacheGpuLightData MISS-path result == the legacy transient gather) against
+// the permanent slot lightData_[recipeIndex] it was just memcpy'd into by
+// mc2WriteStaticLightSlot. So match=1 proves the permanent slot FAITHFULLY STORES
+// the legacy-gathered record (no corruption/truncation in the store) — combined
+// with the stability trace (slot never changes), that gives "every frame the GPU
+// sees the legacy-gathered value." It does NOT independently re-derive the legacy
+// value (that would be tautological here — the leaf IS the gather source). The true
+// baked-vs-transient A/B is the cross-run MC2_LIGHTBAKE=0 vs =1 comparison (validated
+// when the bake shipped, 2db2a04). Env-gated (MC2_LIGHTBAKE_PARITY), capped at 32
+// lines (+ always logs any mismatch). No behavior change.
 static const bool s_lbParityTrace =
     (std::getenv("MC2_LIGHTBAKE_PARITY") != nullptr);
 static uint64_t s_lbParityChecks   = 0;
@@ -1589,7 +1611,7 @@ void mc2LightBakeParityCheck(int32_t recipeIndex,
     if (!match) ++s_lbParityMismatch;
     if (s_lbParityChecks <= 32 || !match) {
         std::fprintf(stderr,
-            "[LIGHTBAKE-PROOF v1] event=parity recipe=%d leafHash=%016llx slotHash=%016llx "
+            "[LIGHTBAKE-PROOF v1] event=slot_write_integrity recipe=%d leafHash=%016llx slotHash=%016llx "
             "match=%d pos=(%.1f,%.1f,%.1f) appr=%s\n",
             recipeIndex, (unsigned long long)leafHash, (unsigned long long)slotHash,
             match ? 1 : 0, wx, wy, wz, appearance ? appearance : "?");

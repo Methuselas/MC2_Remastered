@@ -1758,9 +1758,10 @@ static void mc2CacheOrBakeStaticGpuLight(TG_MultiShape* shape,
 			// path, so from this frame on there is NO per-frame
 			// addLightDataStructure for this recipe.
 			mc2WriteStaticLightSlot(recipeIndex, *leaf);
-			// [LIGHTBAKE-PROOF v1] pos + appearance are diagnostic LABELS only; the
-			// proof is match=1. Slot was written synchronously just above, so this
-			// reads the populated permanent slot. No-op unless MC2_LIGHTBAKE_PARITY.
+			// [LIGHTBAKE-PROOF v1] slot-write integrity check (match=1 = permanent slot
+			// faithfully stores the gathered leaf; NOT an independent A/B — see the
+			// function comment in txmmgr.cpp). pos/appearance are diagnostic labels.
+			// Slot written synchronously just above. No-op unless MC2_LIGHTBAKE_PARITY.
 			mc2LightBakeParityCheck(recipeIndex, leaf, 0.0f, 0.0f, 0.0f, nullptr);
 			shape->EmitBakedGpuLightData(recipeIndex, *leaf);
 		}
