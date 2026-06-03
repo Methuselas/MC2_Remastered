@@ -128,6 +128,15 @@ static const bool s_snapshotBuildEnabled = []() -> bool {
     const char* v = std::getenv("MC2_SNAPSHOT_STATIC_PROP_BUILD");
     return !(v && v[0] == '0');
 }();
+// STATIC-PROP-SNAPSHOT-FINISH (v8): snapshot is the sole draw-packet owner.
+// DEBUG/LEGACY kill-switch — default OFF (retired). =1 restores the v3-flip dual
+// build (live + snapshot_packet_build) + compare path for regression bisect / A-B.
+static const bool s_keepLiveBuilder = []() -> bool {
+    const char* keep = std::getenv("MC2_STATIC_PROP_LIVE_BUILDER");
+    return keep && keep[0] == '1';
+}();
+// One-shot arm log latch (the arm log itself is emitted in a LATER task, when retirement is real).
+static bool s_v8ArmLogged = false;
 
 // v3 per-flush counters. Reset each flush by the runV6 block.
 // Read by batcher_getSnapshotBuildStats() for render_snapshot.cpp ok gate.
@@ -5260,6 +5269,21 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             s_v6FrameLockstepViolations = 0u;
             s_v6FrameGlErrors           = 0u;
             ++s_v6TotalFrameCount;
+
+            // v8: PLANNED retirement predicate. This task computes it; a later task consumes it
+            // to skip the live builder, set s_spBuildRetired, and emit the arm log.
+            // Behavior is UNCHANGED here — NO telemetry is set from this yet.
+            //
+            // Why !s_snapCullEnabled is a condition: the snap-cull path (MC2_SNAP_CULL,
+            // opt-in, default OFF) still relies on the live<->snapshot compare for slot
+            // ownership in v8; it has not been ported to sole-owner packet build. Keep
+            // the live builder whenever snap-cull is active until that port lands.
+            const bool retireLiveBuilderPlanned =
+                !s_keepLiveBuilder && s_snapshotBuildEnabled && !s_snapCullEnabled;
+            (void)retireLiveBuilderPlanned;   // consumed in a later task
+            // s_spBuildRetired stays 0 this task (set later when the live builder is actually
+            // skipped). Do NOT set it here — false telemetry otherwise.
+            (void)s_v8ArmLogged;
 
             // v3: reset per-flush build counters so stale stats never persist.
             s_spBuildAttempted = s_spBuildCountMismatch = s_spBuildPacketMismatch =
