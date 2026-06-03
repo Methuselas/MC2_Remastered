@@ -2,6 +2,15 @@
  * FILENAME: AssetViewerApp.cpp
  * DESCRIPTION: Top-level application class for mc2_asset_viewer.
  ***************************************************************/
+// TGL loader includes (engine_stubs.cpp provides all referenced symbols).
+// These must come BEFORE any imgui/SDL headers so that platform_windows.h
+// from the engine side doesn't collide with SDL's own WIN32 guards.
+#include "heap.h"
+#include "tgl.h"
+#include "msl.h"
+#include "fastfile.h"
+#include "ffile.h"
+
 #include "AssetViewerApp.h"
 #include "SphereMesh.h"
 #include "LocalPbrMaterialBackend.h"
@@ -747,5 +756,161 @@ int AssetViewerApp::runSmokeFitMaterial(const char* dir)
         return 1;
     }
     std::printf("[smoke] PASS fit parse base/normal/orm/packing\n");
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// runSmokeTglLoad — Task 0 headless gate: prove the NS3 TGL loader links and
+// loads a real prop from tgl.fst inside the viewer's link unit. No GL needed.
+// ---------------------------------------------------------------------------
+// Forward-declare the heap installer from engine_stubs.cpp.
+extern void InstallTglHeap();
+extern UserHeapPtr userHeapForTgl;
+
+int AssetViewerApp::runSmokeTglLoad(const char* deployDir)
+{
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+
+    // --- 1. Install the TGL heap (non-GOS CRT-backed). ---
+    InstallTglHeap();
+
+    // --- 2. Set up FastFile globals and open tgl.fst. ---
+    //   maxFastFiles / fastFiles are defined in mclib/fastfile.cpp (NS3 boundary).
+    //   We allocate space for one archive and call FastFileInit.
+    extern FastFile** fastFiles;
+    extern long numFastFiles;
+    extern long maxFastFiles;
+    extern long ffLastError;
+
+    maxFastFiles = 4;
+    fastFiles = static_cast<FastFile**>(std::malloc(maxFastFiles * sizeof(FastFile*)));
+    if (!fastFiles)
+    {
+        std::fprintf(stderr, "[smoke] FAIL tgl-load: malloc fastFiles\n");
+        return 1;
+    }
+    std::memset(fastFiles, 0, maxFastFiles * sizeof(FastFile*));
+    numFastFiles = 0;
+
+    std::string fstPath = std::string(deployDir) + "/tgl.fst";
+    if (!FastFileInit(fstPath.c_str()))
+    {
+        std::fprintf(stderr, "[smoke] FAIL tgl-load: FastFileInit('%s') failed (ffLastError=%ld)\n",
+            fstPath.c_str(), ffLastError);
+        std::free(fastFiles);
+        fastFiles = nullptr;
+        return 1;
+    }
+
+    if (numFastFiles < 1 || !fastFiles[0])
+    {
+        std::fprintf(stderr, "[smoke] FAIL tgl-load: no fastFile registered\n");
+        return 1;
+    }
+
+    // --- 3. Enumerate files; find all .tgl entries. ---
+    long totalFiles = fastFiles[0]->getNumFiles();
+    const FILE_HANDLE* handles = fastFiles[0]->getFilesInfo();
+
+    long tglCount = 0;
+    const char* firstTglName = nullptr;
+    if (handles)
+    {
+        for (long i = 0; i < totalFiles; ++i)
+        {
+            if (!handles[i].pfe) continue;
+            const char* name = handles[i].pfe->name;
+            size_t len = std::strlen(name);
+            // Check for ".tgl" suffix (case-insensitive enough — all are lower in the fst).
+            if (len >= 4 &&
+                (name[len-4] == '.' &&
+                 (name[len-3] == 't' || name[len-3] == 'T') &&
+                 (name[len-2] == 'g' || name[len-2] == 'G') &&
+                 (name[len-1] == 'l' || name[len-1] == 'L')))
+            {
+                if (tglCount == 0) firstTglName = name;
+                ++tglCount;
+            }
+        }
+    }
+
+    if (totalFiles <= 0)
+    {
+        std::fprintf(stderr, "[smoke] FAIL tgl-load: tgl.fst has 0 entries\n");
+        return 1;
+    }
+    if (tglCount == 0)
+    {
+        std::fprintf(stderr, "[smoke] FAIL tgl-load: no .tgl entries in tgl.fst (total=%ld)\n", totalFiles);
+        return 1;
+    }
+
+    std::printf("[smoke] tgl.fst files=%ld  tgl=%ld  first='%s'\n",
+        totalFiles, tglCount, firstTglName ? firstTglName : "(null)");
+
+    // --- 4. LoadBinaryCopy the first .tgl found. ---
+    TG_TypeMultiShape ms;
+    long rc = ms.LoadBinaryCopy(firstTglName);
+    if (rc != 0)
+    {
+        std::fprintf(stderr, "[smoke] FAIL tgl-load: LoadBinaryCopy('%s') returned %ld\n",
+            firstTglName, rc);
+        return 1;
+    }
+
+    long numShapes = ms.GetNumShapes();
+    if (numShapes <= 0)
+    {
+        std::fprintf(stderr, "[smoke] FAIL tgl-load: GetNumShapes()=%ld\n", numShapes);
+        return 1;
+    }
+
+    // --- 5. Walk shapes, find one with geometry. ---
+    TG_TypeShape* geomShape = nullptr;
+    for (long i = 0; i < numShapes; ++i)
+    {
+        TG_TypeNodePtr node = ms.GetTypeNode(i);
+        if (!node) continue;
+        TG_TypeShape* s = dynamic_cast<TG_TypeShape*>(node);
+        if (s && s->GetNumTypeVertices() > 0)
+        {
+            geomShape = s;
+            break;
+        }
+    }
+
+    if (!geomShape)
+    {
+        std::fprintf(stderr, "[smoke] FAIL tgl-load: no TG_TypeShape with verts in '%s'\n", firstTglName);
+        return 1;
+    }
+
+    int  numV = geomShape->GetNumTypeVertices();
+    long numT = geomShape->GetNumTypeTriangles();
+
+    if (numV <= 0)
+    {
+        std::fprintf(stderr, "[smoke] FAIL tgl-load: verts=%d\n", numV);
+        return 1;
+    }
+    if (numT <= 0)
+    {
+        std::fprintf(stderr, "[smoke] FAIL tgl-load: tris=%ld\n", numT);
+        return 1;
+    }
+
+    // --- 6. Read texture name from triangle 0. ---
+    const TG_TypeTriangle* tris = geomShape->GetTypeTriangles();
+    char texBuf[256] = {0};
+    ms.GetTextureName(tris[0].localTextureHandle, texBuf, (long)sizeof(texBuf));
+    if (texBuf[0] == '\0')
+    {
+        std::fprintf(stderr, "[smoke] FAIL tgl-load: texture name empty for tri[0].localTextureHandle=%lu\n",
+            (unsigned long)tris[0].localTextureHandle);
+        return 1;
+    }
+
+    std::printf("[smoke] PASS tgl-load files=%ld tgl=%ld shape0 v=%d t=%ld tex=%s\n",
+        totalFiles, tglCount, numV, numT, texBuf);
     return 0;
 }

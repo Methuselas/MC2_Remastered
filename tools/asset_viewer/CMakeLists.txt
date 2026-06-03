@@ -4,6 +4,144 @@
 # includes "SDL.h", so the SDL2 include folder itself must be on the
 # include path, not just the parent include directory.
 
+# ---------------------------------------------------------------------------
+# mc2_tglloader — isolated static lib that links the NS3 game-free TGL loader
+# TU set (mclib + Stuff + platform_str + engine_stubs).
+#
+# ISOLATION RATIONALE: the engine TUs need PLATFORM_WINDOWS + LINUX_BUILD
+# defines, and engine_stubs.cpp defines symbols (gos_*, Environment, eye, …)
+# that may collide with anything in the viewer's imgui/SDL/UiEditor TUs.
+# Putting them in their own STATIC lib with their own compile definitions and
+# include paths keeps those defines off mc2_asset_viewer's TUs entirely. The
+# viewer then links mc2_tglloader as a private dependency.
+# ---------------------------------------------------------------------------
+
+# zlib — FastFile/PacketFile/lzdecomp decompression. Prebuilt; search the
+# vendored 3rdparty paths (worktree first, then the parent repo's copy).
+find_library(MC2_ZLIB
+    NAMES zlib zlibstatic
+    PATHS
+        "${CMAKE_SOURCE_DIR}/3rdparty/3rdparty/lib/x64"
+        "${CMAKE_SOURCE_DIR}/3rdparty/lib/x64"
+        "A:/Games/mc2-opengl-src/3rdparty/3rdparty/lib/x64"
+    NO_DEFAULT_PATH
+)
+if(NOT MC2_ZLIB)
+    message(FATAL_ERROR "zlib.lib not found — copy 3rdparty/3rdparty/lib/x64/zlib.lib from a built tree")
+endif()
+
+add_library(mc2_tglloader STATIC
+    engine_stubs.cpp
+    # --- mclib TUs (geometry loader closure) ---
+    "${CMAKE_SOURCE_DIR}/mclib/msl.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/tgl.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/cident.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/mathfunc.cpp"
+    "${CMAKE_SOURCE_DIR}/GameOS/src/platform_str.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/file.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/fastfile.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/ffile.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/packet.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/lzdecomp.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/fst_hash.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/heap.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/paths.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/timing.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/cpu_proj_cost_split.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/projectz_trace.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/object_admission_predicate.cpp"
+    # --- Stuff library TUs (game-free math + containers) ---
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/affinematrix.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/angle.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/color.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/extentbox.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/line.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/linearmatrix.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/matrix.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/motion.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/normal.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/obb.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/origin.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/plane.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/point3d.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/polar.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/random.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/ray.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/rotation.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/scalar.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/sphere.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/unitvector.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/vector3d.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/vector4d.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/matrixstack.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/memoryblock.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/mstring.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/chain.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/hash.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/iterator.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/link.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/node.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/plug.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/registeredclass.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/safechain.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/safesocket.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/slot.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/socket.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/sortedchain.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/sortedsocket.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/table.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/tree.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/database.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/filestream.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/filestreammanager.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/memorystream.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/namelist.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/notationfile.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/note.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/page.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/style.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/trace.cpp"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff/stuff.cpp"
+    # Tracy profiler client (needed because TRACY_ENABLE is set globally and
+    # msl.cpp includes gos_profiler.h which includes Tracy.hpp inline-instantiating
+    # the ConcurrentQueue that references GetProfiler/GetToken/rpmalloc/etc).
+    "${CMAKE_SOURCE_DIR}/3rdparty/tracy/TracyClient.cpp"
+)
+
+target_compile_features(mc2_tglloader PRIVATE cxx_std_17)
+
+target_compile_definitions(mc2_tglloader PRIVATE
+    PLATFORM_WINDOWS
+    LINUX_BUILD
+    _CRT_SECURE_NO_WARNINGS
+    # NOTE: deliberately NOT defining ENABLE_ASSIMP_IMPORTER
+)
+
+target_include_directories(mc2_tglloader PRIVATE
+    "${CMAKE_SOURCE_DIR}/mclib"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff"
+    "${CMAKE_SOURCE_DIR}/GameOS/include"
+    "${CMAKE_SOURCE_DIR}/GameOS/gameos"
+    # GL/glew.h needed as a header (tgl.cpp -> gos_static_prop_batcher.h). No GL .lib linked.
+    "${CMAKE_SOURCE_DIR}/3rdparty/include"
+    "${CMAKE_SOURCE_DIR}/3rdparty/tracy"
+    "${CMAKE_SOURCE_DIR}"
+)
+
+# mc2_tglloader's public headers (mclib + GameOS/include) need to be visible
+# to mc2_asset_viewer TUs that include e.g. tgl.h / fastfile.h.
+target_include_directories(mc2_tglloader PUBLIC
+    "${CMAKE_SOURCE_DIR}/mclib"
+    "${CMAKE_SOURCE_DIR}/mclib/stuff"
+    "${CMAKE_SOURCE_DIR}/GameOS/include"
+)
+
+target_link_libraries(mc2_tglloader PRIVATE ${MC2_ZLIB})
+
+# ---------------------------------------------------------------------------
+# End mc2_tglloader
+# ---------------------------------------------------------------------------
+
 set(ASSET_VIEWER_SOURCES
     main.cpp
     AssetViewerApp.cpp
@@ -127,6 +265,19 @@ target_link_libraries(mc2_asset_viewer PRIVATE OpenGL::GL)
 
 if(WIN32)
     target_link_libraries(mc2_asset_viewer PRIVATE ole32 windowscodecs uuid)
+    # Tracy needs Psapi (EnumProcessModules, GetModuleInformation, etc.).
+    target_link_libraries(mc2_asset_viewer PRIVATE Psapi)
 endif()
 
 target_link_libraries(mc2_asset_viewer PRIVATE GLEW::GLEW)
+
+# Link the TGL loader lib (NS3 game-free loader + engine_stubs, isolated).
+target_link_libraries(mc2_asset_viewer PRIVATE mc2_tglloader)
+
+# The viewer also needs GameOS/gameos headers for engine_stubs-exposed types.
+# mc2_tglloader already exposes mclib + GameOS/include as PUBLIC; add gameos:
+target_include_directories(mc2_asset_viewer PRIVATE
+    "${CMAKE_SOURCE_DIR}/GameOS/gameos"
+    "${CMAKE_SOURCE_DIR}/3rdparty/tracy"
+    "${CMAKE_SOURCE_DIR}"
+)

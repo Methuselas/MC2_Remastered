@@ -29,6 +29,7 @@ public:
     static int runSmokeTangent(const char* fixtureDir); // tangent correctness: flat==no-normal, tilt perturbs, no seam blow-up
     static int runSmokeFitMaterial(const char* fixtureDir); // minimal FIT parser: Material{} block -> slot paths
     static int runSmokeFitLoad(const char* fixtureDir);    // loadFit() multi-base resolution + GL upload check
+    static int runSmokeTglLoad(const char* deployDir);     // headless NS3 TGL loader: FastFileInit + LoadBinaryCopy
 private:
     FileBrowser browser_;
     AssetTypeSidebar sidebar_;
