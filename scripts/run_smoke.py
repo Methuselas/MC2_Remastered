@@ -475,6 +475,8 @@ def main():
                             "MC2_DRAW_PACKET_STATIC_PROP_V6_TRACE",
                             # DrawPacket v7 kill-switch (reverts to legacy multidraw).
                             "MC2_STATIC_PROP_LEGACY_DISPATCH",
+                            # DrawPacket v8 kill-switch: =1 restores live build + snapshot compare.
+                            "MC2_STATIC_PROP_LIVE_BUILDER",
                             # MaterialGpu v7 kill-switch (set =0 to disable shader sampling).
                             "MC2_MATERIAL_GPU_SAMPLE",
                             # MaterialGpu master kill-switch (set =0 to disable table upload).

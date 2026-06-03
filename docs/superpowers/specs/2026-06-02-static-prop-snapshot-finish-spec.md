@@ -118,8 +118,13 @@ requires the snapshot packet path active. Resolve the collision at startup:
 ```cpp
 // Retire only when the kill-switch is unset AND snapshot_packet_build is enabled
 // (nothing else produces the dispatch arrays). Otherwise keep the live builder.
-const bool retireLiveBuilder = !s_keepLiveBuilder && s_snapshotBuildEnabled;
+// Also requires snap-cull not active (snap-cull not yet ported to sole-owner path).
+const bool retireLiveBuilder = !s_keepLiveBuilder && s_snapshotBuildEnabled && !s_snapCullEnabled;
 ```
+
+> **Implementation note:** the shipped predicate also guards `&& !s_snapCullEnabled` — snap-cull
+> (`MC2_SNAP_CULL=1`) is not yet ported to the sole-owner path, so live builder is kept when
+> snap-cull is active.
 
 **Arm log (once at first flush), with resolved reason:**
 

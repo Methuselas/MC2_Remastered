@@ -132,6 +132,8 @@ Full state: `memory/shadow_dynamic_projection_and_caster_feed_fixed.md`.
 - **DrawPacket v7.2** (PENDING — 1+ week soak): Remove `MC2_DRAW_PACKET_COALESCE_V5`
   gate plumbing after confirming no disarms. Not yet started.
 
+- **DrawPacket v8** (default-ON, retire live builder): snapshot sole draw-packet owner; kill-switch MC2_STATIC_PROP_LIVE_BUILDER=1 restores dual build+compare. Commit-1 (retire); live-builder delete = follow-up.
+
 - **DrawPacket v8** (DEFERRED): Shadow-pass packet dispatch, GPU-cull count
   integration, sortKey population, mech/terrain packets, log-tag normalization
   `[STATIC_PROP_PACKET_DISPATCH v1]`. No spec yet.

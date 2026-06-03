@@ -186,6 +186,9 @@ is fully inert; gate plumbing removed in v7.1. Future path: v8 will normalize th
 - `MC2_DRAW_PACKET_STATIC_PROP_V6=1` — **REMOVED in v7.1.** Gate plumbing deleted; setting this var has no effect whatsoever. Kill-switch for the primary path: `MC2_STATIC_PROP_LEGACY_DISPATCH=1`.
 - `MC2_DRAW_PACKET_STATIC_PROP_V6_TRACE=1` — per-slot verbose trace for v6. Emits one `[DRAW_PACKET_V6] slot=S pkt=P type=T group=G inst=I base=B drawID=D first=F count=C baseV=V` line per issued draw. Requires v6 path active (default in v7; no explicit env var needed). Default OFF. Cached at process start.
 - `MC2_STATIC_PROP_LEGACY_DISPATCH=1` — v7 kill-switch. Reverts the v6 packet+meta dispatch path to legacy `glMultiDrawElementsIndirect` for this process. Use to isolate v6-specific rendering regressions. When set, `s_v6Enabled` returns false at process start; no `[DRAW_PACKET_V6]` lines appear in logs. Default OFF. Cached at process start.
+- `MC2_STATIC_PROP_LIVE_BUILDER` — default OFF. Legacy/debug kill-switch.
+  unset/0: snapshot is sole draw-packet owner (live builder + per-flush compare retired).
+  1:       restore v3-flip dual build (live + snapshot_packet_build) + compare.
 
 ## Snapshot-assisted dispatch (Extraction v2.3)
 
