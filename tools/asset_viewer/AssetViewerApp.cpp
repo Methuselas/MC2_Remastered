@@ -1208,3 +1208,74 @@ int AssetViewerApp::runSmokeMeshBuild(const char* deployDir)
         md.submeshes[0].textureName.c_str());
     return 0;
 }
+
+// ---------------------------------------------------------------------------
+// runSmokeSpotlight — headless gate: verifies isSpotlight detection.
+// Loads ambulance.tgl (has SpotLight_ nodes) and asserts ≥1 isSpotlight submesh.
+// Loads 2civliving.tgl (no SpotLight_ nodes) and asserts 0 isSpotlight submeshes.
+// No GL required.
+// ---------------------------------------------------------------------------
+int AssetViewerApp::runSmokeSpotlight(const char* deployDir)
+{
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+
+    if (!TglMeshLoader::ensureFastFile(deployDir))
+    {
+        std::fprintf(stderr, "[smoke] FAIL spotlight: ensureFastFile('%s')\n", deployDir);
+        return 1;
+    }
+
+    // --- Vehicle with SpotLight_ shapes: ambulance.tgl ---
+    {
+        MeshData md = TglMeshLoader::loadMesh("data/tgl/ambulance.tgl");
+        if (!md.ok)
+        {
+            std::fprintf(stderr, "[smoke] FAIL spotlight: ambulance loadMesh error: %s\n",
+                md.error.c_str());
+            return 1;
+        }
+
+        size_t spotCount = 0;
+        for (const SubMesh& sub : md.submeshes)
+            if (sub.isSpotlight) ++spotCount;
+
+        std::printf("[smoke] spotlight: ambulance.tgl subs=%zu spotlightSubs=%zu\n",
+            md.submeshes.size(), spotCount);
+
+        if (spotCount == 0)
+        {
+            std::fprintf(stderr,
+                "[smoke] FAIL spotlight: ambulance.tgl has 0 isSpotlight submeshes "
+                "(expected ≥1 — SpotLight_ detection broken)\n");
+            return 1;
+        }
+    }
+
+    // --- Building with no SpotLight_ shapes: 2civliving.tgl ---
+    {
+        MeshData md = TglMeshLoader::loadMesh("data/tgl/2civliving.tgl");
+        if (!md.ok)
+        {
+            std::fprintf(stderr, "[smoke] FAIL spotlight: 2civliving loadMesh error: %s\n",
+                md.error.c_str());
+            return 1;
+        }
+
+        for (const SubMesh& sub : md.submeshes)
+        {
+            if (sub.isSpotlight)
+            {
+                std::fprintf(stderr,
+                    "[smoke] FAIL spotlight: 2civliving.tgl has isSpotlight submesh "
+                    "(false positive — non-vehicle flagged as spotlight)\n");
+                return 1;
+            }
+        }
+
+        std::printf("[smoke] spotlight: 2civliving.tgl subs=%zu spotlightSubs=0 (correct)\n",
+            md.submeshes.size());
+    }
+
+    std::printf("[smoke] PASS spotlight: ambulance has beams, 2civliving has none\n");
+    return 0;
+}

@@ -15,8 +15,9 @@ struct GpuSubMesh {
     // Lowercased stem of the source texture name (no extension, no path).
     // e.g. "a_2civliving" or "a_2civlivingx".
     std::string texStem;
-    // True when texStem ends with 'x' — emissive/glow overlay submesh.
-    bool isLights = false;
+    // True when this submesh's shapes have node names starting with "SpotLight_".
+    // These are forward headlight/spotlight beam geometry that obscure the model.
+    bool isSpotlight = false;
 };
 
 class MeshGpu {
@@ -36,7 +37,7 @@ public:
 
     // Draw with per-submesh u_hasAlbedo uniform (loc passed in).
     // Caller must have a program bound and u_albedo set to unit 0.
-    // showLights: if false, submeshes with isLights==true are skipped entirely.
+    // showLights: if false, submeshes with isSpotlight==true are skipped entirely.
     void drawLit(int uHasAlbedoLoc, bool showLights = true) const;
 
     // Delete all GL objects.

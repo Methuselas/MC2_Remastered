@@ -98,11 +98,12 @@ void MeshGpu::upload(const MeshData& m, const std::string& deployDir, int prefer
         // a standalone unbind of the EBO from the current context (safe, no-op for state).
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
-        // Resolve albedo and classify the submesh.
+        // Carry the spotlight flag from the CPU submesh.
+        gs.isSpotlight = sub.isSpotlight;
+
+        // Resolve albedo.
         if (!sub.textureName.empty()) {
             gs.texStem = stemLower(sub.textureName);
-            // isLights: stem ends with 'x' (e.g. "a_2civlivingx").
-            gs.isLights = !gs.texStem.empty() && gs.texStem.back() == 'x';
 
             std::string path = resolveTexPath(deployDir, gs.texStem, preferredTier);
             if (!path.empty()) {
@@ -165,11 +166,11 @@ void MeshGpu::draw() const {
 
 // ---------------------------------------------------------------------------
 // MeshGpu::drawLit — draw with per-submesh u_hasAlbedo uniform.
-// showLights: when false, submeshes with isLights==true are skipped.
+// showLights: when false, submeshes with isSpotlight==true are skipped.
 // ---------------------------------------------------------------------------
 void MeshGpu::drawLit(int uHasAlbedoLoc, bool showLights) const {
     for (const GpuSubMesh& gs : subs_) {
-        if (gs.isLights && !showLights) continue;
+        if (gs.isSpotlight && !showLights) continue;
 
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, gs.albedo);

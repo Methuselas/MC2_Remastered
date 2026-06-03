@@ -77,9 +77,9 @@ private:
     // Default -90° X stands most MC2 props upright (they're stored Z-up in TGL).
     float modelRotDeg_[3] = { -90.0f, 0.0f, 0.0f };
 
-    // Texture resolution tier and lights-overlay toggle.
-    int  tier_       = 512;   // active albedo resolution: 128 / 256 / 512 / 1024
-    bool showLights_ = true;  // when false, …x submeshes (emissive overlays) are hidden
+    // Texture resolution tier and spotlight-beam toggle.
+    int  tier_       = 512;    // active albedo resolution: 128 / 256 / 512 / 1024
+    bool showLights_ = false;  // when false, SpotLight_* beam submeshes are hidden
 
     std::string deployDir_ = ".";
     std::string tglName_;
