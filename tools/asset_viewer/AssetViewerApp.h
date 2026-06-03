@@ -28,6 +28,7 @@ public:
     static int runSmokeRender(const char* fixtureDir);  // offscreen FBO render: sphere distinct from background
     static int runSmokeTangent(const char* fixtureDir); // tangent correctness: flat==no-normal, tilt perturbs, no seam blow-up
     static int runSmokeFitMaterial(const char* fixtureDir); // minimal FIT parser: Material{} block -> slot paths
+    static int runSmokeFitLoad(const char* fixtureDir);    // loadFit() multi-base resolution + GL upload check
 private:
     FileBrowser browser_;
     AssetTypeSidebar sidebar_;
@@ -35,4 +36,5 @@ private:
     TexturePreview2D surface_;
     MaterialPreviewPBR materialSurface_;
     MaterialSlots      materialSlots_;
+    bool materialsAutoLoaded_ = false;
 };

@@ -26,27 +26,61 @@ void MaterialSlots::slotRow(const char* label, MaterialSlotKind kind, MaterialPr
     ImGui::PopID();
 }
 
+int MaterialSlots::loadFit(const std::string& fitPath, MaterialPreviewPBR& preview) {
+    namespace fs = std::filesystem;
+    std::string err;
+    FitMaterial fm = FitMaterialLoader_Parse(fitPath, &err);
+    if (!fm.found) return 0;
+
+    fs::path fitDir = fs::path(fitPath).parent_path();
+    fs::path cwd    = fs::current_path();
+
+    // Pairs of (relative-path, slot-kind, index) to load.
+    struct SlotDesc { const std::string& rel; MaterialSlotKind kind; int idx; };
+    SlotDesc descs[] = {
+        { fm.baseColor, MaterialSlotKind::BaseColor, 0 },
+        { fm.normal,    MaterialSlotKind::Normal,    1 },
+        { fm.orm,       MaterialSlotKind::Orm,       2 },
+        { fm.emissive,  MaterialSlotKind::Emissive,  3 },
+    };
+
+    int loaded = 0;
+    for (auto& d : descs) {
+        if (d.rel.empty()) continue;
+        // Try 3 candidate bases in order: fitDir, cwd, bare rel.
+        std::string candidates[] = {
+            (fitDir / d.rel).string(),
+            (cwd    / d.rel).string(),
+            d.rel,
+        };
+        bool ok = false;
+        for (auto& cand : candidates) {
+            std::string e;
+            uint32_t t = MaterialTextureLoader_Load(cand, d.kind, &e);
+            if (t) {
+                paths_[d.idx]  = cand;
+                errors_[d.idx].clear();
+                preview.setSlotTexture(d.kind, t);
+                ++loaded;
+                ok = true;
+                break;
+            }
+        }
+        if (!ok) {
+            // Record the fitDir-relative attempt's error as the representative error.
+            std::string e;
+            MaterialTextureLoader_Load(candidates[0], d.kind, &e);
+            errors_[d.idx] = e;
+        }
+    }
+    return loaded;
+}
+
 void MaterialSlots::draw(MaterialPreviewPBR& preview) {
     if (ImGui::Button("Load .fit material")) {
         std::string fit = FileBrowser::PickFile();
-        if (!fit.empty()) {
-            std::string err;
-            FitMaterial fm = FitMaterialLoader_Parse(fit, &err);
-            if (fm.found) {
-                std::filesystem::path base = std::filesystem::path(fit).parent_path();
-                auto loadInto = [&](const std::string& rel, MaterialSlotKind k, int idx) {
-                    if (rel.empty()) return;
-                    std::string full = (base / rel).string();
-                    std::string e; uint32_t t = MaterialTextureLoader_Load(full, k, &e);
-                    if (t) { paths_[idx] = full; errors_[idx].clear(); preview.setSlotTexture(k, t); }
-                    else   { errors_[idx] = e; }
-                };
-                loadInto(fm.baseColor, MaterialSlotKind::BaseColor, 0);
-                loadInto(fm.normal,    MaterialSlotKind::Normal,    1);
-                loadInto(fm.orm,       MaterialSlotKind::Orm,       2);
-                loadInto(fm.emissive,  MaterialSlotKind::Emissive,  3);
-            }
-        }
+        if (!fit.empty())
+            loadFit(fit, preview);
     }
     ImGui::SeparatorText("Material slots");
     slotRow("Base Color", MaterialSlotKind::BaseColor, preview);

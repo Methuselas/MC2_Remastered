@@ -61,6 +61,10 @@ void AssetViewerApp::drawUi()
         inspector_.draw(surface_);                                  // calls surface_.draw(GetContentRegionAvail())
         break;
       case AssetType::Materials:
+        if (!materialsAutoLoaded_) {
+            materialsAutoLoaded_ = true;   // attempt once, regardless of success
+            materialSlots_.loadFit("data/defs/materials/viewer/test_materials.fit", materialSurface_);
+        }
         materialSlots_.draw(materialSurface_);                      // slot pickers + light/camera
         materialSurface_.draw(ImGui::GetContentRegionAvail());      // lit sphere + approximate label
         break;
@@ -673,6 +677,48 @@ int AssetViewerApp::runSmokeTangent(const char* fixtureDir)
 
     std::printf("[smoke] PASS tangent flat=%.2f tilt=%.2f seam-ok\n", dFlat, dTilt);
     return 0;
+}
+
+int AssetViewerApp::runSmokeFitLoad(const char* fixtureDir)
+{
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) return smokeFail("SDL_Init");
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_Window* win = SDL_CreateWindow("smoke-fit-load", 0, 0, 64, 64,
+        SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+    if (!win) { SDL_Quit(); return smokeFail("hidden window"); }
+    SDL_GLContext gl = SDL_GL_CreateContext(win);
+    if (!gl) { SDL_DestroyWindow(win); SDL_Quit(); return smokeFail("gl context (need GL 3.3)"); }
+    SDL_GL_MakeCurrent(win, gl);
+    glewExperimental = GL_TRUE;
+    if (glewInit() != GLEW_OK) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        return smokeFail("glewInit");
+    }
+    glGetError(); // consume glew's spurious error
+
+    int rc = 0;
+    {
+        MaterialPreviewPBR preview;
+        MaterialSlots slots;
+        std::string fitPath = std::string(fixtureDir) + "/sample.fit";
+        int n = slots.loadFit(fitPath, preview);
+        if (n < 3) {
+            std::printf("[smoke] FAIL fit-load: expected >=3 slots loaded, got %d\n", n);
+            rc = 1;
+        } else if (glGetError() != GL_NO_ERROR) {
+            std::printf("[smoke] FAIL fit-load: glGetError non-zero after loadFit\n");
+            rc = 1;
+        } else {
+            std::printf("[smoke] PASS fit-load n=%d\n", n);
+        }
+    }
+
+    SDL_GL_DeleteContext(gl);
+    SDL_DestroyWindow(win);
+    SDL_Quit();
+    return rc;
 }
 
 int AssetViewerApp::runSmokeFitMaterial(const char* dir)
