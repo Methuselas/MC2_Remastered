@@ -793,6 +793,14 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         false,
         "COLORMAP-CPU-RETIRE-1 parity probe: logs displacement magnitude (maxDispMag in wu) from the CPU colormap displacement path. Requires MC2_COLORMAP_CPU_RETIRE=0 (kill-switch) so cpuColorMap is still alive. Default-OFF; set to any non-null value to enable. Every 50000 calls: prints [COLORMAP_PROBE] samples=N maxDispMag=X wu."
     },
+    // DrawPacket v8 kill-switch
+    {
+        "MC2_FEATURE_STATIC_PROP_LIVE_BUILDER",
+        "MC2_STATIC_PROP_LIVE_BUILDER",
+        EnvVarKind::Feature,
+        false,
+        "v8 kill-switch: =1 restores live build + snapshot compare"
+    },
     // TRACKV-CI-GATE-RESTORE-1 diagnostic trace vars
     {
         "MC2_TRACE_ASSIMP_TRACE",

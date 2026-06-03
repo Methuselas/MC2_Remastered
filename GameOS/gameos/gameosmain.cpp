@@ -1303,7 +1303,7 @@ int main(int argc, char** argv)
                 std::fprintf(stderr,
                     "[DRAW_PACKET v1] frame=%llu emitted=%u expected=%u"
                     " old_expected=%u distinct_types=%u static_props=%u"
-                    " invalid=%u skipped=%u mat_mismatch=%u overflow=%d\n",
+                    " invalid=%u skipped=%u mat_mismatch=%u overflow=%d retired=%u\n",
                     static_cast<unsigned long long>(snap.frameIndex),
                     stats.emitted,
                     stats.expectedPackets,
@@ -1313,7 +1313,8 @@ int main(int argc, char** argv)
                     stats.invalidRanges,
                     stats.skippedRanges,
                     stats.materialMismatches,
-                    stats.overflow ? 1 : 0);
+                    stats.overflow ? 1 : 0,
+                    snap.spBuildRetired);
             }
 
             // Feed ImGui DrawPackets panel (read in GraphicsOptionsWindow::draw).
