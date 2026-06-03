@@ -1221,6 +1221,49 @@ bool mc2LightBakeEnabled()
     return s_bakeEnabled;
 }
 
+// [LIGHTBAKE-PROOF v1] read-only S accessor. s_staticLightHighWater lives in the
+// anonymous namespace above but is visible throughout this TU (same pattern as
+// mc2GetBakedStaticLight reading s_bakedStaticLight). Exposed as a cross-TU free
+// fn for the stability trace below and the upload-split caller (Task 4) — no
+// txmmgr.h coupling into the consuming TUs.
+uint32_t mc2StaticLightHighWater()
+{
+    return s_staticLightHighWater;
+}
+
+// [LIGHTBAKE-PROOF v1] Stability trace: for the first N recipes, record the
+// permanent slot index the first time it is observed, then verify it never
+// changes across frames and stays < S (inPrefix). Env-gated (MC2_LIGHTBAKE_STABILITY),
+// capped at 32 lines, demote-not-delete. No behavior change.
+static const bool s_lbStabilityTrace =
+    (std::getenv("MC2_LIGHTBAKE_STABILITY") != nullptr);
+static std::unordered_map<int32_t, uint32_t> s_lbFirstSeenIndex;   // recipeIndex -> first index
+static uint64_t s_lbStabilityViolations = 0;
+
+void mc2LightBakeStabilityObserve(int32_t recipeIndex, uint32_t lightDataIndex)
+{
+    if (!s_lbStabilityTrace || recipeIndex < 0) return;
+    const uint32_t S = mc2StaticLightHighWater();
+    auto it = s_lbFirstSeenIndex.find(recipeIndex);
+    if (it == s_lbFirstSeenIndex.end()) {
+        s_lbFirstSeenIndex.emplace(recipeIndex, lightDataIndex);
+        if (s_lbFirstSeenIndex.size() <= 32) {
+            std::fprintf(stderr,
+                "[LIGHTBAKE-PROOF v1] event=first recipe=%d index=%u S=%u inPrefix=%d\n",
+                recipeIndex, lightDataIndex, S, (lightDataIndex < S) ? 1 : 0);
+            std::fflush(stderr);
+        }
+    } else if (it->second != lightDataIndex) {
+        ++s_lbStabilityViolations;
+        if (s_lbStabilityViolations <= 32) {
+            std::fprintf(stderr,
+                "[LIGHTBAKE-PROOF v1] event=UNSTABLE recipe=%d was=%u now=%u S=%u\n",
+                recipeIndex, it->second, lightDataIndex, S);
+            std::fflush(stderr);
+        }
+    }
+}
+
 bool mc2GetBakedStaticLight(int32_t recipeIndex, TG_HWLightsData& out)
 {
     if (recipeIndex < 0) return false;

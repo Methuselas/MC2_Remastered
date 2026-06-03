@@ -26,6 +26,11 @@ extern MC_TextureManager* mcTextureManager;
 // detect this and skip emitting a draw for that recipe.
 extern uint32_t g_mc2FrameCounter;
 
+// [LIGHTBAKE-PROOF v1] stability trace observer (defined in mclib/txmmgr.cpp).
+// File-scope declaration — never declared inside flush(). Verifies the per-instance
+// permanent lightDataIndex is stable across frames + stays in the static prefix [0..S).
+extern void mc2LightBakeStabilityObserve(int32_t recipeIndex, uint32_t lightDataIndex);
+
 // Rejects "0", "false", "off", "no"; accepts anything else (including "1") or
 // the unset/empty case (returns `defaultValue`). Matches the ParseEnvBool
 // pattern in code/terrobj.cpp:79-85, extended with a default for "0=disable
@@ -562,6 +567,10 @@ void flush() {
             (s_perInstanceLight && rng.lightDataIndex != 0xFFFFFFFFu)
                 ? rng.lightDataIndex
                 : rng.multi->getCachedGpuLightIndex();
+        // [LIGHTBAKE-PROOF v1] prove the resolved per-instance index is permanent
+        // (stable across frames) + in the static prefix [0..S). No-op unless
+        // MC2_LIGHTBAKE_STABILITY is set.
+        mc2LightBakeStabilityObserve(static_cast<int32_t>(regIdx), freshLightIdx);
         // 2026-05-05 black-billboard diagnostic: report numLights at the cached
         // slot. If numLights==0 here, calc_light returns base_light only — for
         // tree leaves with aRGBLight=0xFF000000 + BaseVertexColor=0, that's black.
