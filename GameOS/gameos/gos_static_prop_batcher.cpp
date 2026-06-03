@@ -5443,6 +5443,8 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             const uint32_t* baseInstanceMap = reinterpret_cast<const uint32_t*>(
                 static_cast<const uint8_t*>(s_baseInstanceByCmdMap) + fr_off_bi_v6);
 
+            // When retired and the snapshot builds clean, s_v6FrameLockstepViolations
+            // stays 0 from the unconditional per-flush reset above (no live build runs).
             if (!retireLiveBuilder) {
                 ZoneScopedN("StaticProp.LiveBuild");
                 v6LockstepViolations = buildLiveV6Arrays(totalCmds, baseInstanceMap, v6Packets, v6Meta);
@@ -5645,19 +5647,33 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
 
             // Dispatch ref-swap.
             bool useSnapshot;
+            bool skipDispatch = false;
             if (retireLiveBuilder) {
                 // Snapshot is sole owner. Dispatch unless STRUCTURALLY invalid.
                 // snapshotInvalid == NOT built (guards failed: snap nullptr / ok!=1 /
                 // count mismatch / malformed metadata). An empty-but-valid snapshot
                 // (snapBuilt with totalCmds==0) is VALID → dispatch zero, NEVER fallback.
-                const bool snapshotInvalid = !snapBuilt;
+                //
+                // A per-row guard failure during the snapshot build increments these
+                // (and zeroes the bad slot) but still leaves snapBuilt=true. Treat any
+                // such divergence as structurally invalid so we fall back to the live
+                // build for the whole frame — matching the dual path's mismatch->fallback
+                // safety. This also makes the spBuildFallback==0 merge gate cover it.
+                const bool snapshotInvalid = !snapBuilt
+                    || s_spBuildMetaMismatch   != 0u
+                    || s_spBuildPacketMismatch != 0u;
                 if (snapshotInvalid) {
                     ++s_spBuildFallback;
-                    ZoneScopedN("StaticProp.LiveBuild");   // rare fallback build, counted
+                    ZoneScopedN("StaticProp.LiveBuild.Fallback");  // rare fallback build, counted
                     v6LockstepViolations =
                         buildLiveV6Arrays(totalCmds, baseInstanceMapDisp, v6Packets, v6Meta);
                     s_v6FrameLockstepViolations = v6LockstepViolations;
                     useSnapshot = false;
+                    if (v6LockstepViolations != 0u) {
+                        // Fallback build itself is inconsistent — do not issue draws from a
+                        // broken array this frame (matches dual-mode lockstep gating).
+                        skipDispatch = true;
+                    }
                 } else {
                     useSnapshot = true;
                 }
@@ -5688,6 +5704,7 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             const std::vector<StaticPropDispatchMeta>* pDispatchMeta =
                 useSnapshot ? &s_snapV6Meta    : &v6Meta;
 
+            if (!skipDispatch)
             for (uint32_t i = 0u; i < totalCmds; ++i) {
                 const StaticPropDispatchMeta& m  = (*pDispatchMeta)[i];
                 const RenderCore::DrawPacket&  dp = (*pDispatchPackets)[i];
