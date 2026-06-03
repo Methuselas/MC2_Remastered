@@ -1307,6 +1307,29 @@ long BldgAppearance::render (long depthFixup)
 			static uint64_t s_diag_dyn_submit = 0;
 			++s_diag_render_calls;
 			const bool isnow = IsStaticNow();
+			// [SEAMPROBE] stage 10: per-render admission gate for the override
+			// building (hangar). Logs IsStaticNow() components so we can see why
+			// markVisible() never fires for the prop while it fires for trees.
+			{
+				static const bool s_seamRender = (getenv("MC2_MODOVERRIDE_TRACE") != nullptr);
+				static int s_seamRenderLogged = 0;
+				if (s_seamRender && appearType && appearType->bldgRenderShape
+				        && s_seamRenderLogged < 12) {
+					++s_seamRenderLogged;
+					fprintf(stderr,
+						"[SEAMPROBE] bldg render name=%s isnow=%d reg=%d shapeMatch=%d "
+						"needBake=%d elig=%d recipeIdx=%d | spin=%d "
+						"drawFlash=%d destructFX=%d activity=%d activity1=%d animState=%d\n",
+						appearType->name, (int)isnow, (int)staticReg.registered,
+						(int)(staticReg.shape == bldgShape), (int)needsFullBakeNextFrame,
+						(int)isStaticEligible(), staticReg.recipeIndex,
+						(int)(appearType?appearType->spinMe:-1),
+						(int)(drawFlash!=0), (int)(destructFX!=NULL),
+						(int)(activity!=0), (int)(activity1!=0),
+						(int)bdAnimationState);
+					fflush(stderr);
+				}
+			}
 			if (isnow) ++s_diag_static_now_true;
 			else {
 				if (!staticReg.registered) ++s_diag_static_now_false_reg;
@@ -2619,7 +2642,19 @@ bool BldgAppearance::isStaticEligible() const
 	if (destructFX)                           return false;
 	if (activity)                             return false;
 	if (activity1)                            return false;
-	if (bdAnimationState != -1)               return false;  // currently animating
+	// MODEL-OVERRIDE admission fix (SEAMPROBE-1): a renderOnly override prop
+	// substitutes a static .glb render shape that carries NO MC2 bdAnimData;
+	// setAnimation() on it is a no-op. Stock buildings get a default idle
+	// gesture (bdAnimationState=0) set during init/update even when the TYPE
+	// has no animations — which spuriously trips this gate for an override
+	// prop, leaving its static recipe permanently un-admitted (markVisible
+	// never fires -> no substrate record -> never drawn). When this is an
+	// override-backed type with no real animations, the cached recipe is a
+	// faithful representation regardless of bdAnimationState, so skip the gate.
+	// Strictly scoped to bldgRenderShape!=nullptr: stock path byte-identical.
+	const bool overrideStatic =
+		appearType->bldgRenderShape && !bldgTypeHasAnimations(appearType);
+	if (bdAnimationState != -1 && !overrideStatic) return false;  // currently animating
 	return true;
 }
 
@@ -2746,6 +2781,10 @@ void BldgAppearance::registerStatic() {
 	int32_t regIdx = -1;
 	(void)GameAdapters::StaticProp::syncStaticProp(
 		bldgShape, batch.data(), batch.size(), &regIdx);
+	if (seamProbe)
+		fprintf(stderr, "[SEAMPROBE] bldg syncStaticProp name=%s batchSize=%zu regIdx=%d firstTypeID=%u\n",
+			appearType->name, batch.size(), (int)regIdx,
+			batch.empty()?0xFFFFFFFFu:batch[0].typeID), fflush(stderr);
 	if (regIdx >= 0) {
 		staticReg.registered  = true;
 		staticReg.shape       = bldgShape;

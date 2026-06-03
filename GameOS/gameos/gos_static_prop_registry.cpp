@@ -604,6 +604,25 @@ void flush() {
              rootMtx[7],   // raw.z =  stuff.y (elev)
         };
 
+        // [SEAMPROBE] stage 9: per-recipe flush-emit census keyed to override
+        // typeIDs (hangar=33, tc1_1=41/42/43). Proves whether the override
+        // recipe reaches the substrate emit loop each frame (admission gate).
+        {
+            static const bool s_seamFlush = (getenv("MC2_MODOVERRIDE_TRACE") != nullptr);
+            static int s_seamFlushLogged = 0;
+            if (s_seamFlush && rng.count > 0 && s_seamFlushLogged < 200) {
+                const uint32_t t0 = s_recipes[rng.first].typeID;
+                if (t0 == 33u || t0 == 41u || t0 == 42u || t0 == 43u) {
+                    ++s_seamFlushLogged;
+                    fprintf(stderr,
+                        "[SEAMPROBE] flush-emit regIdx=%u firstTypeID=%u count=%u "
+                        "extentRadius=%.2f rootCtr=(%.1f,%.1f,%.1f)\n",
+                        regIdx, t0, rng.count, rng.extentRadius,
+                        actorWorldCenter[0], actorWorldCenter[1], actorWorldCenter[2]);
+                    fflush(stderr);
+                }
+            }
+        }
         for (uint32_t i = 0; i < rng.count; ++i) {
             GpuStaticPropInstance inst = s_recipes[rng.first + i]; // stack copy
             inst.lightDataIndex = freshLightIdx;
