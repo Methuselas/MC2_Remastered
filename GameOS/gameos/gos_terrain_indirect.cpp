@@ -235,6 +235,15 @@ bool IsOverlayParityCheckEnabled() {
     return s;
 }
 
+// MC2_THIN_CANARY=1 enables the Probe-6 thin-record canary readback+compare
+// (diagnostic for the corrupt-recipeIdx grey-triangle bug). Default OFF — it is a
+// per-frame ~80KB glGetBufferSubData readback + CPU compare and must not run in
+// production. Kill-switch restores it for diagnosis.
+static const bool s_thinCanaryEnabled = []() -> bool {
+    const char* v = std::getenv("MC2_THIN_CANARY");
+    return v && v[0] == '1';
+}();
+
 // Slice A — wire the real predicate (replaces the Stage 0b/1b/2b always-false
 // stub). Mirrors IsFrameMineArmed() == IsMineEnabled() EXACTLY: arming is
 // purely the env gate. The cement-overlay static bake (DrawDecalStatic) lazy-
@@ -2807,7 +2816,7 @@ void ComputeDispatch() {
         // Cost: visibleCount * 4 bytes for canary + visibleCount * 4 bytes for
         // thin.recipeIdx = ~80KB/frame at peak visibleCount=10000. PCIe stall
         // possible but acceptable for diagnostic.
-        if (g_thinCanarySSBO != 0 && g_thinRecordSSBO != 0 && prevVisible > 0) {
+        if (s_thinCanaryEnabled && g_thinCanarySSBO != 0 && g_thinRecordSSBO != 0 && prevVisible > 0) {
             const uint32_t vis = prevVisible < (uint32_t)kMaxThinRecords
                                 ? prevVisible : (uint32_t)kMaxThinRecords;
             const int priorSlot = (g_thinRingSlot + kThinRingFrames - 1) % kThinRingFrames;
