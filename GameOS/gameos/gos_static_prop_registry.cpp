@@ -219,6 +219,12 @@ struct RecipeRange {
 static std::vector<GpuStaticPropInstance> s_recipes;
 static std::vector<RecipeRange>           s_recipeRanges;
 
+// 2A: per-recipe cached immutable cull record (one per s_recipes[] entry).
+// Built lazily on first flush of a recipe; invalidated on any immutable-field write.
+// Sized in lockstep with s_recipes (resize in registerRecipe, new entries valid=0).
+static std::vector<gpu_cull::GpuActorRecord> s_cachedActorRecord;
+static std::vector<uint8_t>                  s_cachedActorRecordValid; // 0/1 per recipe
+
 // v1.1: per-typeID primary material cache. Populated by finalizeGeometry().
 // Indexed by typeID (dense); resized as needed by staticPropCacheTypePrimaryMaterial.
 static std::vector<GpuStaticPropRegistry::StaticPropTypeMaterialCache> s_typeMatCache;
@@ -263,11 +269,60 @@ static uint64_t s_firstFrameSkipCount = 0;
 // ineligible). Emitted in destroy() for per-mission accounting.
 static uint64_t s_lateSpawnTypeUnknownCount = 0;
 
-// TASK3: real impl replaces this stub (adds s_cachedActorRecord arrays).
-// Placed inside the anonymous namespace so it can access the cached arrays
-// that Task 3 will add here. With gate OFF (default), this stub fires at
-// most once per recipe (idempotent early-return in setRecipePermanentLightIndex).
-static inline void invalidateCachedFlushRecord(uint32_t) {}  // TASK3: real impl replaces this stub
+// patch 3/4: any write to a recipe's immutable fields (modelMatrix, typeID,
+// lightDataIndex, bounds/extent, category/block inputs) MUST call this so the
+// next flush rebuilds the cached record from the new values.
+static void invalidateCachedFlushRecord(uint32_t recipeIndex) {
+    if (recipeIndex < s_cachedActorRecordValid.size())
+        s_cachedActorRecordValid[recipeIndex] = 0u;
+}
+
+// Builds the immutable cull record for ONE recipe leaf (recipeIdx into s_recipes[]).
+// worldCenter uses the range's actor-root translation (actor-center fix: the root
+// leaf's modelMatrix translation is shared across all leaves of the range).
+// category uses THIS recipe's typeID (per-leaf — a multi-leaf range has different
+// typeIDs per leaf, so per-range sharing is incorrect for category scatter).
+// Pure function of immutable recipe + range data; produces byte-identical output
+// to the inline per-leaf build in flush() for the same recipe+range pair.
+// Declared static: referenced only by flush() (Task 4) and the cache fill below.
+static void buildCachedActorRecord(const RecipeRange& rng, uint32_t recipeIdx,
+                                   gpu_cull::GpuActorRecord& out) {
+    out = gpu_cull::GpuActorRecord{};
+    // World position: axis-swap from Stuff/MLR frame to raw MC2 world coords.
+    // Mirrors the inline actor-center fix at flush():~712-717.
+    const float* rootMtx = s_recipes[rng.first].modelMatrix;
+    const float actorWorldCenter[3] = {
+        -rootMtx[3],   // raw.x = -stuff.x
+         rootMtx[11],  // raw.y =  stuff.z
+         rootMtx[7],   // raw.z =  stuff.y (elev)
+    };
+    out.worldCenter[0] = actorWorldCenter[0];
+    out.worldCenter[1] = actorWorldCenter[1];
+    out.worldCenter[2] = actorWorldCenter[2];
+    // Bounding radius from per-prop extent radius; fallback to 200.0f for
+    // unpatched callers or missing shape pointer (preserves pre-fix behavior).
+    out.boundingRadius = (rng.extentRadius > 0.0f) ? rng.extentRadius : 200.0f;
+    out.worldAabbMin[0] = out.worldCenter[0] - out.boundingRadius;
+    out.worldAabbMin[1] = out.worldCenter[1] - out.boundingRadius;
+    out.worldAabbMin[2] = out.worldCenter[2] - out.boundingRadius;
+    out.worldAabbMax[0] = out.worldCenter[0] + out.boundingRadius;
+    out.worldAabbMax[1] = out.worldCenter[1] + out.boundingRadius;
+    out.worldAabbMax[2] = out.worldCenter[2] + out.boundingRadius;
+    // Category: this recipe's typeID (per-leaf) in upper 28 bits + Cat_StaticProp in lower 4.
+    out.category = (static_cast<uint32_t>(s_recipes[recipeIdx].typeID) << 4)
+                 | static_cast<uint32_t>(gpu_cull::Cat_StaticProp);
+    // Diagnostic force-admit flag (mirrors the flush() inline s_diag_forceAdmit check).
+    static const bool s_diag_forceAdmit = (getenv("MC2_STATIC_FORCE_ADMIT") != nullptr);
+    out.flags          = s_diag_forceAdmit
+                           ? static_cast<uint32_t>(gpu_cull::Flag_AlwaysVisible)
+                           : gpu_cull::Flag_None;
+    out.actorId        = 0u;   // static props have no actor handle
+    out.prevVisibilityBit = 1u; // CPU admitted this prop this frame
+    out.consumerFlags  = 0u;
+    // Terrain block index: feed raw-MC2 east [0] and north [1] only (never elevation [2]).
+    out.blockIdx = static_cast<uint32_t>(
+        Terrain::worldToBlockIdx(out.worldCenter[0], out.worldCenter[1]));
+}
 
 // Release every pin held by a single RecipeRange. Idempotent via
 // rng.pinsReleased — invalidate() may run before destroy() does its
@@ -425,6 +480,9 @@ void destroy() {
 
     s_recipes.clear();          s_recipes.shrink_to_fit();
     s_recipeRanges.clear();     s_recipeRanges.shrink_to_fit();
+    // 2A: clear the per-recipe cached actor-record arrays (parallel to s_recipes).
+    s_cachedActorRecord.clear();      s_cachedActorRecord.shrink_to_fit();
+    s_cachedActorRecordValid.clear(); s_cachedActorRecordValid.shrink_to_fit();
     s_liveRangeIndices.clear(); s_liveRangeIndices.shrink_to_fit();
     s_typeMatCache.clear();          s_typeMatCache.shrink_to_fit();
     staticPropRegistryClearCullSubmissionState();
@@ -460,6 +518,10 @@ int32_t registerRecipe(TG_MultiShape* multi,
     rng.shapeName[0]      = '\0';         // populated by late-spawn path if Appearance* available
     rng.population        = 0xFFu;        // SHADOW-STATIC-BUILDINGS-2: unset until setRecipePopulation()
     s_recipes.insert(s_recipes.end(), batch.begin(), batch.end());
+    // 2A: keep cached-actor-record arrays in lockstep with s_recipes.
+    // New entries are valid=0 (uncached); they will be lazily built on first flush (Task 4).
+    s_cachedActorRecord.resize(s_recipes.size());
+    s_cachedActorRecordValid.resize(s_recipes.size(), 0u);
     const int32_t regIdx = static_cast<int32_t>(s_recipeRanges.size());
     s_recipeRanges.push_back(rng);
     s_recipeHasSubstrateRecord.push_back(0u); // v2: one slot per recipe, parallel to s_recipeRanges
@@ -518,6 +580,11 @@ void markVisible(int32_t regIdx, uint32_t lightDataIndex, float extentRadius) {
     rng.lightDataIndex = lightDataIndex;
     // 2026-05-22 F4 T3: store per-prop extent radius for GPU cull record.
     rng.extentRadius = extentRadius;
+    // 2A patch 3: rng.lightDataIndex and rng.extentRadius are immutable inputs to
+    // the cached GpuActorRecord (boundingRadius, AABB). Invalidate every leaf recipe
+    // in this range so the cached records are rebuilt on the next flush.
+    for (uint32_t k = rng.first; k < rng.first + rng.count; ++k)
+        invalidateCachedFlushRecord(k);
     s_liveRangeIndices.push_back(static_cast<uint32_t>(regIdx));
 }
 
@@ -541,8 +608,13 @@ void invalidate(int32_t regIdx) {
             it->second = -1;
         }
     }
-    for (uint32_t i = 0; i < rng.count; ++i)
+    for (uint32_t i = 0; i < rng.count; ++i) {
         s_recipes[rng.first + i] = GpuStaticPropInstance{};
+        // 2A patch 3: this recipe leaf's immutable fields (modelMatrix, typeID) are
+        // being zeroed — invalidate the cached cull record so Task 4 rebuilds it if
+        // this slot is ever reused after a re-registration.
+        invalidateCachedFlushRecord(rng.first + i);
+    }
     SP_TRACE("invalidate regIdx=%d (was count=%u)", regIdx, rng.count);
     rng.count = 0;
     // v2: zero-out substrate tracking (don't erase — keeps index stable).
