@@ -43,27 +43,40 @@ stays). Confirm the transform dominates before committing to the port.
   100ns-floor): `Vehicle.RecalcBounds` (`gvactor.cpp:1628`), `Vehicle.UpdateGeometry`
   (the `updateGeometry` body incl. `TransformMultiShape` `:2389-2542`),
   `Vehicle.Render` (`gvShape->Render` `:2173`).
+- **Also clarify the transform SEAM (load-bearing — patch 6):** read what
+  `TransformMultiShape` actually does (node `shapeToWorld` matrix production vs per-vertex
+  transform) and what `mech3d.cpp:2557-2708` actually skips. The recon is internally
+  inconsistent here (it says both "skip TransformMultiShape" and "mechs keep
+  TransformMultiShape, skip Render"). Resolve it: identify the exact call(s) the mech port
+  skips, and confirm the **node-matrix production survives** (the batcher's bone SSBO needs
+  `listOfShapes[i].shapeToWorld`). Record the precise seam: which call produces node
+  matrices (KEEP) vs which does the per-vertex transform + MLR submit (SKIP).
 - One user-driven Tracy capture, vehicle-heavy mission.
-- **GATE:** the GPU-portable cost = `Vehicle.UpdateGeometry`(transform part) +
-  `Vehicle.Render`. If that is a clear majority of the per-vehicle cost (expected —
-  `TransformMultiShape` is per-vertex over the whole mesh ×2), **PROCEED**. If
-  `recalcBounds` dominates and the transform is small, **STOP** and write a short note;
-  the port would be a big change for a small win.
-- This task ships its own commit (observational zones, no behavior change) and stays in
-  the tree (useful for the before/after perf proof).
+- **GATE (patch 1):** portable cost = the per-vertex transform + `Vehicle.Render` (per the
+  seam above; node-matrix production is NOT portable, it stays CPU).
+  - **PROCEED** if `(per-vertex transform + Render) >= 60% of vehicle appearance cost`
+    **OR** absolute savings `>= 0.15ms` in a vehicle-heavy mission.
+  - **STOP** if portable cost `< 0.10ms` AND `recalcBounds` dominates — write a short note;
+    the port would be a big change for a small win.
+- This task ships its own commit (observational zones + the seam note, no behavior change)
+  and stays in the tree (useful for the before/after perf proof).
 
 ---
 
 ## 3. Architecture
 
-### 3.1 Generalize the batcher type key
+### 3.1 Generalize the batcher type key — OPAQUE handle, mech path byte-identical
 Today `gos_mech_batcher` keys registration on `Mech3DAppearanceType*` / `TG_TypeShape*`,
-but everything it READS is generic `TG_TypeMultiShape`/`TG_MultiShape`. Generalize so a
-`GVAppearanceType::gvShape[lod]` (`TG_TypeMultiShapePtr`, `gvactor.h:53`) can register the
-same way mechs do (`registerTypeLod` already accepts a `TG_TypeMultiShape*`). Minimal
-surface: an opaque type-key (handle/int) instead of the concrete `Mech3DAppearanceType*`,
-or a small base accepted by `registerTypeLod`/`submitActor`. Keep mech registration
-byte-identical.
+but everything it READS is generic `TG_TypeMultiShape`/`TG_MultiShape`.
+- **(patch 3)** Use an **opaque type key (handle / integer ID)** — NOT a new shared
+  `AppearanceType` base class. Mechs and vehicles each map their concrete type to a unique
+  opaque key the batcher stores. No cross-hierarchy coupling.
+- **Mech registration/submit must stay byte-identical** — the mech call sites pass the same
+  data; only the internal key type widens. Verify mech tier1 (mc2_17/24) unchanged.
+- **(patch 4 — naming)** Do NOT rename `gos_mech_batcher.{h,cpp}` / `GpuMechBatcher` /
+  `GpuMech*` structs broadly in this slice. Add vehicle support **internally** under the
+  existing names. A rename to a neutral name (e.g. `GpuActorBatcher`) is a later cosmetic
+  slice if desired. Vehicle-facing wrappers may use vehicle-named thin shims.
 
 ### 3.2 Vehicle registration (type-load, mirror mech3d.cpp:381)
 At `GVAppearanceType` load, `registerTypeLod(vehicleTypeKey, lod)` for each populated
@@ -71,23 +84,32 @@ At `GVAppearanceType` load, `registerTypeLod(vehicleTypeKey, lod)` for each popu
 registered types (no vehicle-specific change).
 
 ### 3.3 Vehicle submit site (mirror mech3d.cpp:2557-2708)
-In the vehicle per-frame path (where `updateGeometry` runs the node transforms), after
-populating per-node `shapeToWorld`:
+In the vehicle per-frame path (where `updateGeometry` runs the node transforms):
 ```
+ALWAYS: produce per-node shapeToWorld matrices on the CPU   // patch 6 — NEVER skip this
+        (the cheap per-node transform; the bone SSBO + recalcBounds + picking all need it)
 IF s_vehicleGpuBatch AND NOT suppressGpu(this):
-    fill GpuMechSubmitDesc from gvShape (shapeToWorld nodes, slot0TexHandle=localTextureHandle,
+    fill GpuMechSubmitDesc from gvShape (per-node shapeToWorld, slot0TexHandle=localTextureHandle,
         lightDataIndex, renderFlags, highlightARGB, fogARGB, objectIdRaw=0 for now)
     if batcher.submitActor(desc) succeeded:
-        skip gvShape->TransformMultiShape (per-vertex)   // the win
-        skip gvShape->Render(true)                       // the win
+        SKIP only the per-vertex CPU transform + the MLR submit   // the win
+        (mirror EXACTLY what mech3d.cpp:2557-2708 skips — per Task 0's seam finding;
+         mechs keep node-matrix production and skip gvShape->Render(true))
     else:
-        fall through to legacy CPU path (TransformMultiShape + Render)
+        fall through to legacy CPU path (full per-vertex transform + Render)
 ELSE:
     legacy CPU path (unchanged)
 ```
-`suppressGpu(this)` = `sensorLevel > 0` (blip path) OR fading (`alphaValue != 0`) OR
-(Task 5) any vertex-deforming anim frame. The cheap per-node `shapeToWorld` transform is
-still computed on the CPU (needed for the bone SSBO and for `recalcBounds`/picking).
+**(patch 6) Transform seam — load-bearing:** do NOT skip "all of `TransformMultiShape`"
+blindly. Node `shapeToWorld` matrices MUST still be produced (the batcher's `GpuMechBone`
+rows are copied from `listOfShapes[i].shapeToWorld`; `recalcBounds`/picking need them too).
+Skip only the per-vertex CPU transform + MLR render — the exact set Task 0 identifies that
+`mech3d` skips. If `TransformMultiShape` produces node matrices AND transforms vertices in
+one indivisible call, the seam may require the same mechanism mech3d uses (e.g. keep the
+call, skip `Render`) rather than skipping `TransformMultiShape` itself.
+
+`suppressGpu(this)` = `sensorLevel > 0` (blip path) OR fading (`alphaValue != 0`, patch 2 —
+CPU fallback) OR (patch 5) any vertex-deforming anim frame.
 
 ### 3.4 Draw + dispatch
 No new draw code — the batcher's existing `flush()` (after `renderLists`) draws all
@@ -109,7 +131,7 @@ additional registered types/instances.
 | Risk | Severity | Handling |
 |---|---|---|
 | Sensor blips render small shapes *in place of* mesh when `sensorLevel>0` (`gvactor.cpp:2371`) | MED | `suppressGpu` excludes `sensorLevel>0`; blips stay on CPU MLR path |
-| Fade (`alphaValue`) — no per-instance alpha slot | MED | While fading, keep CPU path (`suppressGpu`); OR carry alpha in an existing SSBO field if cheap |
+| Fade (`alphaValue`) — no per-instance alpha slot | MED | **(patch 2)** While fading, keep CPU path (`suppressGpu`). NO SSBO/shader alpha in this slice. |
 | `gvAnimData` keyframe anim (repair/refit) may deform vertices, not just node matrices | MED→VERIFY | **Task 5 pre-check:** confirm `SetFrameNum`/`currentFrame` drive node `shapeToWorld` only. Node-only → free on GPU. Vertex-deform → `suppressGpu` for those frames (CPU fallback) |
 | Per-actor LOD swap deletes/recreates `gvShape` (`gvactor.cpp:1855`) | MED | Re-register or key on type×LOD so the swap finds the right registered recipe (mechs solved this per-LOD) |
 | Batcher type-key generalization regresses mechs | MED | Keep mech registration/submit byte-identical; gate vehicle path entirely behind `MC2_VEHICLE_GPU_BATCH`; tier1 mech missions (mc2_17/24) unaffected with flag off |
@@ -138,10 +160,16 @@ dynamic shadows to batcher `flushShadow()`; flip default-ON after soak.
 
 ---
 
-## 7. Open questions for review
-1. **Type-key generalization shape:** opaque int/handle key vs a thin `AppearanceType`
-   base — which keeps mech path most byte-identical with least churn?
-2. **Fade handling:** CPU-fallback while fading (simplest) vs add per-instance alpha
-   (one SSBO field + shader) — worth it, or are fades rare/brief enough to keep CPU?
-3. **Task 0 STOP threshold:** what transform-fraction is the go/no-go line (e.g. ≥60% of
-   the per-vehicle bucket)?
+## 7. Resolved review decisions (2026-06-03)
+1. **Type key:** opaque handle/integer key — NO new shared `AppearanceType` base; mech path
+   byte-identical (§3.1, patch 3).
+2. **Fade:** CPU fallback while fading; no SSBO/shader alpha this slice (§4, patch 2).
+3. **Task 0 gate:** PROCEED if portable cost ≥60% of vehicle appearance cost OR absolute
+   savings ≥0.15ms (vehicle-heavy mission); STOP if portable <0.10ms AND recalcBounds
+   dominates (§2, patch 1).
+4. **Naming:** no broad `GpuMechBatcher` rename this slice — add vehicle support internally;
+   rename later if desired (§3.1, patch 4).
+5. **Animation:** verify `gvAnimData` is node-transform-only; vertex-deform frames take CPU
+   fallback via `suppressGpu` (§4 risk + Task 5, patch 5).
+6. **Transform seam:** keep node-matrix production; skip only per-vertex transform + MLR
+   render — exact set per Task 0's seam finding, mirroring `mech3d` (§3.3, patch 6).
