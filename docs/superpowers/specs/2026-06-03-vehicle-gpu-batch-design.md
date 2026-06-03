@@ -100,13 +100,21 @@ IF s_vehicleGpuBatch AND NOT suppressGpu(this):
 ELSE:
     legacy CPU path (unchanged)
 ```
-**(patch 6) Transform seam — load-bearing:** do NOT skip "all of `TransformMultiShape`"
-blindly. Node `shapeToWorld` matrices MUST still be produced (the batcher's `GpuMechBone`
-rows are copied from `listOfShapes[i].shapeToWorld`; `recalcBounds`/picking need them too).
-Skip only the per-vertex CPU transform + MLR render — the exact set Task 0 identifies that
-`mech3d` skips. If `TransformMultiShape` produces node matrices AND transforms vertices in
-one indivisible call, the seam may require the same mechanism mech3d uses (e.g. keep the
-call, skip `Render`) rather than skipping `TransformMultiShape` itself.
+**(patch 6) Transform seam — RESOLVED (the mechanism already exists):**
+`TG_MultiShape::TransformMultiShape_HierarchyOnly` (`msl.cpp:2010`) sets `s_buildRecipeOnly=true`
+and runs `TransformMultiShape` with the **per-leaf/per-vertex dispatch skipped, hierarchy
+walk preserved** — i.e. it produces node `shapeToWorld` matrices (what the batcher's bone
+SSBO + recalcBounds + picking need) WITHOUT the per-vertex transform + TGL pool alloc. This
+is the exact wrapper mechs use for the GPU body callsite, and the same `s_buildRecipeOnly`
+mechanism behind the static-prop skip-pools win (99%→0% pools).
+So the vehicle port is:
+```
+GPU path:  gvShape->TransformMultiShape_HierarchyOnly(...)  +  SKIP gvShape->Render(true)  +  submitActor()
+CPU path:  gvShape->TransformMultiShape(...)  +  gvShape->Render(true)        (unchanged fallback)
+```
+Do NOT skip `TransformMultiShape` outright; swap it for `_HierarchyOnly` on the GPU path. The
+win = the per-leaf/per-vertex dispatch `_HierarchyOnly` skips (the same pool work that
+dominated static props). Task 0 confirms the magnitude; the mechanism is settled.
 
 `suppressGpu(this)` = `sensorLevel > 0` (blip path) OR fading (`alphaValue != 0`, patch 2 —
 CPU fallback) OR (patch 5) any vertex-deforming anim frame.
