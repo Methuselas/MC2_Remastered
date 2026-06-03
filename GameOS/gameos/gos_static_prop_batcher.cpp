@@ -136,7 +136,7 @@ static uint32_t s_spBuildCountMismatch  = 0u;
 static uint32_t s_spBuildPacketMismatch = 0u;
 static uint32_t s_spBuildMetaMismatch   = 0u;
 static uint32_t s_spBuildFallback       = 0u;
-static uint32_t s_spBuildRetired       = 0u;  // v8: 1 when live builder + compare retired this flush
+static uint32_t s_spBuildRetired        = 0u;  // v8: 1 when live builder + compare retired this flush
 // Latched on first fallback; never reset. Guards the first-occurrence log line.
 static bool s_spBuildFirstFallbackLogged = false;
 // Latched on first snap-cull collision; never reset. Guards the one-shot collision log line.
@@ -5263,7 +5263,7 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
 
             // v3: reset per-flush build counters so stale stats never persist.
             s_spBuildAttempted = s_spBuildCountMismatch = s_spBuildPacketMismatch =
-            s_spBuildMetaMismatch = s_spBuildFallback = 0u;
+            s_spBuildMetaMismatch = s_spBuildFallback = s_spBuildRetired = 0u;
 
             const uint32_t totalCmds = s_alphaOffCmdCount + s_alphaOnCmdCount;
             v6Packets.resize(totalCmds);
