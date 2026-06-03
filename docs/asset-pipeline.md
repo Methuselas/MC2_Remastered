@@ -127,6 +127,17 @@ resolution ladder; only tiers present on disk are offered.
 the 512/1024 `.tga` in the release zips are prior **upscale results** (packaged into
 `mc2-tgl.zip`, not loose in the working tree).
 
+### Decision: in-game static-prop normal mapping SHELVED (2026-06-02)
+
+Engine-session finding: moving prop diffuse per-fragment showed **on ≈ off** (no visible
+gain) under MC2's lighting model — so a normal map feeding diffuse would also show ~nothing.
+Specular-only normal mapping (Option A) is real but subtle and only on shiny sun-facing
+faces — low ROI on these matte stone props. **Conclusion: do NOT invest in in-game
+static-prop normal/ORM map cooking or shader work.** Normal/ORM map **authoring + preview
+lives in the asset viewer** (Materials mode: normal slot + tangent-space mapping, validated
+by `--smoke-tangent`). This is why deployed `tgl/128` is albedo-only — that's correct, not a
+gap. Revisit only if the lighting model changes (e.g. stronger speculars / HDR).
+
 ## 7. Keeping this current
 
 Update this document when you:
