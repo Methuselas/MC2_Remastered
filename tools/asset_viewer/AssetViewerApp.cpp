@@ -34,7 +34,11 @@
 // GUI mode: ctor/dtor own the cache lifetime. The static runSmoke() path does
 // NOT construct an AssetViewerApp and does its own Initialize/Shutdown — the two
 // paths are mutually exclusive, so there is no double-init.
-AssetViewerApp::AssetViewerApp()  { UiEditorImageCache_Initialize(); }
+AssetViewerApp::AssetViewerApp()  {
+    UiEditorImageCache_Initialize();
+    // Deploy root is the viewer's cwd; "." -> ./tgl.fst for TglMeshLoader.
+    meshSurface_.setDeployDir(".");
+}
 AssetViewerApp::~AssetViewerApp() { UiEditorImageCache_Shutdown(); }
 
 void AssetViewerApp::drawUi()
@@ -52,13 +56,19 @@ void AssetViewerApp::drawUi()
     ImGui::EndChild();
     ImGui::SameLine();
 
-    // browser child: only feed the texture surface in Textures mode.
+    // browser child: dispatch on the active asset type.
     ImGui::BeginChild("browser", ImVec2(browserW, 0), true);
-    browser_.draw();
-    if (browser_.hasSelection()) {
-        std::string sel = browser_.takeSelection();
-        if (sidebar_.active() == AssetType::Textures) surface_.setSource(sel);
-        // Materials mode: slots are assigned via MaterialSlots' own picker, not the browser.
+    if (sidebar_.active() == AssetType::StaticProps) {
+        modelBrowser_.draw();
+        if (modelBrowser_.hasSelection())
+            meshSurface_.setSource(modelBrowser_.takeSelection());
+    } else {
+        browser_.draw();
+        if (browser_.hasSelection()) {
+            std::string sel = browser_.takeSelection();
+            if (sidebar_.active() == AssetType::Textures) surface_.setSource(sel);
+            // Materials mode: slots are assigned via MaterialSlots' own picker, not the browser.
+        }
     }
     ImGui::EndChild();
     ImGui::SameLine();
@@ -76,6 +86,9 @@ void AssetViewerApp::drawUi()
         }
         materialSlots_.draw(materialSurface_);                      // slot pickers + light/camera
         materialSurface_.draw(ImGui::GetContentRegionAvail());      // lit sphere + approximate label
+        break;
+      case AssetType::StaticProps:
+        meshSurface_.draw(ImGui::GetContentRegionAvail());
         break;
     }
     ImGui::EndChild();

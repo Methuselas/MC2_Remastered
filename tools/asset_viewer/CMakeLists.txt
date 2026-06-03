@@ -157,6 +157,8 @@ set(ASSET_VIEWER_SOURCES
     # Task 2: mesh GPU upload + 3D preview
     MeshGpu.cpp
     MeshPreview3D.cpp
+    # Task 3: model browser (Static Props panel)
+    ModelBrowser.cpp
     # remaining sources added in later tasks
     TextureExtensions.cpp
     TextureMetadata.cpp

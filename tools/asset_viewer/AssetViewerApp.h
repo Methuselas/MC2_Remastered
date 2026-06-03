@@ -9,6 +9,8 @@
 #include "TexturePreview2D.h"
 #include "MaterialPreviewPBR.h"
 #include "MaterialSlots.h"
+#include "MeshPreview3D.h"
+#include "ModelBrowser.h"
 
 class AssetViewerApp {
 public:
@@ -39,5 +41,7 @@ private:
     TexturePreview2D surface_;
     MaterialPreviewPBR materialSurface_;
     MaterialSlots      materialSlots_;
+    MeshPreview3D      meshSurface_;
+    ModelBrowser       modelBrowser_;
     bool materialsAutoLoaded_ = false;
 };
