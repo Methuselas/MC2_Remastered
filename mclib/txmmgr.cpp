@@ -1533,7 +1533,14 @@ public:
 		gos_SetRenderState(gos_State_Texture, texture_id);
 		gos_SetRenderViewport(viewport_[2], viewport_[3], viewport_[0], viewport_[1]);
 
-		HGOSRENDERMATERIAL mat = texture_id == 0 ? gos_getRenderMaterial("gos_vertex_lighted") : gos_getRenderMaterial("gos_tex_vertex_lighted");
+		HGOSRENDERMATERIAL mat;
+		if (texture_id == 0) {
+			static const HGOSRENDERMATERIAL s_matVertexLighted = gos_getRenderMaterial("gos_vertex_lighted");
+			mat = s_matVertexLighted;
+		} else {
+			static const HGOSRENDERMATERIAL s_matTexVertexLighted = gos_getRenderMaterial("gos_tex_vertex_lighted");
+			mat = s_matTexVertexLighted;
+		}
 
 		gos_SetRenderMaterialParameterMat4(mat, "world_", (const float*)*world_);
 		//gos_SetRenderMaterialParameterMat4(mat, "view_", (const float*)*view_);
