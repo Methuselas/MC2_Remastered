@@ -583,6 +583,28 @@ static_assert(
 // The enforcement script greps BOTH tables for "MC2_" string literals.
 
 static constexpr EnvVarDesc kAuxEnvVars[] = {
+    // STATICPROP-PERMANENT-INSTANCE-LIGHTS-1 (Slice 1)
+    {
+        "MC2_TRACE_LIGHTBAKE_STABILITY",
+        "MC2_LIGHTBAKE_STABILITY",
+        EnvVarKind::Trace,
+        false,
+        "STATICPROP-PERMANENT-INSTANCE-LIGHTS-1: per-instance lightDataIndex permanence/stability proof. Logs [LIGHTBAKE-PROOF v1] event=first / UNSTABLE (capped 32). Default-off; no behavior change."
+    },
+    {
+        "MC2_TRACE_LIGHTBAKE_PARITY",
+        "MC2_LIGHTBAKE_PARITY",
+        EnvVarKind::Trace,
+        false,
+        "STATICPROP-PERMANENT-INSTANCE-LIGHTS-1: baked permanent light record == gathered transient record byte/hash parity. Logs [LIGHTBAKE-PROOF v1] event=parity match=1 (capped 32). Default-off; no behavior change."
+    },
+    {
+        "MC2_FEATURE_STATIC_LIGHT_UPLOAD_SPLIT",
+        "MC2_STATIC_LIGHT_UPLOAD_SPLIT",
+        EnvVarKind::Feature,
+        true,
+        "STATICPROP-PERMANENT-INSTANCE-LIGHTS-1: upload the immutable static light prefix [0..S) once/dirty-only + the dynamic suffix [S..count) per frame, instead of the whole LightsData SSBO every frame. Default-ON; =0 = legacy whole-buffer upload (bit-identical GPU contents). Requires MC2_LIGHTBAKE; bypassed when bake is off."
+    },
     {
         "MC2_FEATURE_BURNIN_NO_JPG",
         "MC2_BURNIN_NO_JPG",
