@@ -606,6 +606,20 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "STATICPROP-PERMANENT-INSTANCE-LIGHTS-1: upload the immutable static light prefix [0..S) once/dirty-only + the dynamic suffix [S..count) per frame, instead of the whole LightsData SSBO every frame. Default-ON; =0 = legacy whole-buffer upload (bit-identical GPU contents). Requires MC2_LIGHTBAKE; bypassed when bake is off."
     },
     {
+        "MC2_FEATURE_STATIC_PROP_FLUSH_CACHED_BLOB",
+        "MC2_STATIC_PROP_FLUSH_CACHED_BLOB",
+        EnvVarKind::Feature,
+        false,
+        "STATICPROP-REGISTRY-FLUSH-CACHED-BLOB-2A: replace the per-leaf registry-flush rebuild with cached immutable instance/actor-record blobs bulk-appended into the existing rings. Keeps the per-frame range walk + staleness skip (does NOT zero flush). Default-OFF pending Tracy proof; =1 enables."
+    },
+    {
+        "MC2_TRACE_STATIC_PROP_FLUSH_CACHED_BLOB_COMPARE",
+        "MC2_STATIC_PROP_FLUSH_CACHED_BLOB_COMPARE",
+        EnvVarKind::Trace,
+        false,
+        "STATICPROP-REGISTRY-FLUSH-CACHED-BLOB-2A diagnostic: with the cached path active, also build the legacy temp instance+record per leaf and compare hash/count; logs mismatches. Default-OFF; requires MC2_STATIC_PROP_FLUSH_CACHED_BLOB=1."
+    },
+    {
         "MC2_FEATURE_BURNIN_NO_JPG",
         "MC2_BURNIN_NO_JPG",
         EnvVarKind::Feature,

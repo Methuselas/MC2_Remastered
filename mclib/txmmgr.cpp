@@ -95,6 +95,10 @@ bool MLRVertexLimitReached = false;
 extern bool useFog;
 extern DWORD BaseVertexColor;
 extern uint32_t g_mc2FrameCounter;
+// STATICPROP-REGISTRY-FLUSH-CACHED-BLOB-2A (Task 1): persist the permanent
+// per-instance light slot index into the registry recipe leaf at bake time.
+// Defined at file scope in gos_static_prop_registry.cpp (after the namespace).
+extern void mc2RegistrySetRecipePermanentLightIndex(int32_t recipeIndex, uint32_t lightDataIndex);
 
 // CP-1: file-scope so a per-mission hook can re-prime the static terrain shadow
 // accumulation for the new mission.  Previously a function-local static inside
@@ -1571,6 +1575,9 @@ void MC_TextureManager::bakeStaticLightSlot(int32_t recipeIndex, const TG_HWLigh
     }
     lightData_[ri] = baked;                                 // CPU mirror (persists)
     mc2MarkStaticLightPrefixDirty();                        // [LIGHTSSBO v2] prefix content changed
+    // 2A: the permanent light slot index == recipeIndex; persist it into the
+    // registry recipe so the per-frame flush light-patch can be skipped.
+    mc2RegistrySetRecipePermanentLightIndex(recipeIndex, static_cast<uint32_t>(recipeIndex));
     if (ri + 1 > s_staticLightHighWater) s_staticLightHighWater = ri + 1;
     // [SPFLUSH_COST_SPLIT v1] recipe_rebuild counter. light_index_writes == recipe_rebuilds
     // (both happen at this bakeStaticLightSlot call — same site, same count; only one counter kept).

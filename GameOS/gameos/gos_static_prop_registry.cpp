@@ -155,6 +155,17 @@ static const bool s_lateSpawnRegEnabled =
 static const bool s_perInstanceLight =
     parseEnvBoolWithDefault("MC2_STATIC_PER_INSTANCE_LIGHT", true);
 
+// STATICPROP-REGISTRY-FLUSH-CACHED-BLOB-2A: build cached immutable instance +
+// per-recipe actor-record content once and bulk-append per frame instead of
+// per-leaf rebuild. Default OFF until Tracy-proven; =1 enables.
+static const bool s_flushCachedBlob =
+    parseEnvBoolWithDefault("MC2_STATIC_PROP_FLUSH_CACHED_BLOB", false);
+// Diagnostic compare (patch 8): when the cached path is active, ALSO build the
+// legacy temp instance+record for each leaf and compare hash/count; log any
+// mismatch. Default OFF. Requires MC2_STATIC_PROP_FLUSH_CACHED_BLOB=1.
+static const bool s_flushCachedBlobCompare =
+    parseEnvBoolWithDefault("MC2_STATIC_PROP_FLUSH_CACHED_BLOB_COMPARE", false);
+
 #define SP_TRACE(fmt, ...) \
     do { if (s_trace) { printf("[STATIC_PROP] " fmt "\n", ##__VA_ARGS__); \
          fflush(stdout); } } while (0)
@@ -252,6 +263,12 @@ static uint64_t s_firstFrameSkipCount = 0;
 // ineligible). Emitted in destroy() for per-mission accounting.
 static uint64_t s_lateSpawnTypeUnknownCount = 0;
 
+// TASK3: real impl replaces this stub (adds s_cachedActorRecord arrays).
+// Placed inside the anonymous namespace so it can access the cached arrays
+// that Task 3 will add here. With gate OFF (default), this stub fires at
+// most once per recipe (idempotent early-return in setRecipePermanentLightIndex).
+static inline void invalidateCachedFlushRecord(uint32_t) {}  // TASK3: real impl replaces this stub
+
 // Release every pin held by a single RecipeRange. Idempotent via
 // rng.pinsReleased — invalidate() may run before destroy() does its
 // safety-net sweep, and we don't want to unpinNode the same node twice.
@@ -294,6 +311,20 @@ bool isLateSpawnRegEnabled()   { return s_lateSpawnRegEnabled; }
 
 uint64_t getStaticFirstFrameSkipCount()    { return s_firstFrameSkipCount; }
 uint64_t getLateSpawnTypeUnknownCount()    { return s_lateSpawnTypeUnknownCount; }
+
+// STATICPROP-REGISTRY-FLUSH-CACHED-BLOB-2A (Task 1)
+// 2A: persist the proven-permanent per-instance light slot into the recipe so
+// flush() needs no per-frame light patch. Written once at bake (idempotent).
+// patch 4: writing an immutable recipe field MUST dirty the cached flush record
+// for that recipe (so the next flush rebuilds it from the new value).
+void setRecipePermanentLightIndex(int32_t recipeIndex, uint32_t lightDataIndex) {
+    if (recipeIndex < 0) return;
+    const uint32_t ri = static_cast<uint32_t>(recipeIndex);
+    if (ri >= s_recipes.size()) return;
+    if (s_recipes[ri].lightDataIndex == lightDataIndex) return;  // no-op: stay clean
+    s_recipes[ri].lightDataIndex = lightDataIndex;   // permanent slot == recipeIndex
+    invalidateCachedFlushRecord(ri);                 // patch 3/4 — defined in Task 3
+}
 
 bool registerStaticProp(Appearance* app) {
     if (!isLateSpawnRegEnabled()) return false;
@@ -1150,3 +1181,13 @@ bool staticPropGetInstanceFlags(int32_t recipeIndex, uint32_t* out) {
 }
 
 } // namespace GpuStaticPropRegistry
+
+// ---------------------------------------------------------------------------
+// STATICPROP-REGISTRY-FLUSH-CACHED-BLOB-2A (Task 1): cross-TU free function
+// Defined at file scope after the GpuStaticPropRegistry namespace so the
+// linker sees an unmangled symbol (same pattern as mc2EraseBakedStaticLight).
+// Declared extern at file scope in txmmgr.cpp (NOT inside any function).
+// ---------------------------------------------------------------------------
+void mc2RegistrySetRecipePermanentLightIndex(int32_t recipeIndex, uint32_t lightDataIndex) {
+    GpuStaticPropRegistry::setRecipePermanentLightIndex(recipeIndex, lightDataIndex);
+}

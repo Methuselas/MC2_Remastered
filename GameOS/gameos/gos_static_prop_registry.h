@@ -214,6 +214,18 @@ void staticPropRegistryClearCullSubmissionState();
 // NOTE: ExtractRenderSnapshot() runs BEFORE flush() — this reflects the prior frame.
 bool staticPropGetHasCullRecord(int32_t recipeIndex, bool* out);
 
+// STATICPROP-REGISTRY-FLUSH-CACHED-BLOB-2A (Task 1): persist the proven-permanent
+// per-instance light slot index into the recipe leaf. Written once at bake;
+// idempotent (early-returns if unchanged). Calls invalidateCachedFlushRecord
+// internally (Task 3 wires the real invalidation; Task 1 stubs it).
+// Free-function forwarder mc2RegistrySetRecipePermanentLightIndex (below) is
+// declared at file scope in txmmgr.cpp and called from bakeStaticLightSlot.
+void setRecipePermanentLightIndex(int32_t recipeIndex, uint32_t lightDataIndex);
+
+// Cross-TU free function mc2RegistrySetRecipePermanentLightIndex: NOT declared
+// here — txmmgr.cpp carries its own file-scope extern decl per the cross-TU
+// convention (same as mc2EraseBakedStaticLight / mc2ClearAllBakedStaticLight).
+
 // Returns GpuStaticPropInstance.flags for the first leaf of this recipe.
 // bit 0: lightsOut, bit 1: isWindow, bit 2: isSpotlight.
 // Returns false + *out=0 if recipeIndex invalid, tombstoned, or out is null.
