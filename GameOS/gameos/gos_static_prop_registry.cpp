@@ -577,14 +577,26 @@ void markVisible(int32_t regIdx, uint32_t lightDataIndex, float extentRadius) {
     // at the moment THIS actor's update/touch wrote it, before sibling actors of
     // the same multi-type overwrote it). flush() consumes this when
     // MC2_STATIC_PER_INSTANCE_LIGHT=1 is set; otherwise flush ignores it.
+    // 2A FIX (compare-oracle caught divergence): the permanent per-leaf light is
+    // the RANGE's lightDataIndex for ALL leaves (matching the legacy flush, which
+    // gives every leaf of a range the single freshLightIdx == rng.lightDataIndex)
+    // — NOT each leaf's own recipeIndex. A multi-leaf range (count>1) must stamp
+    // the same range light onto s_recipes[first..first+count). Also DIRTY-GATE the
+    // propagation + cached-record invalidation on actual change: markVisible runs
+    // per-frame per visible actor, but lightDataIndex/extentRadius are stable, so
+    // re-stamping every frame would defeat the cache (records would rebuild every
+    // frame). Only touch on change.
+    const bool lightOrExtentChanged =
+        (rng.lightDataIndex != lightDataIndex) || (rng.extentRadius != extentRadius);
     rng.lightDataIndex = lightDataIndex;
     // 2026-05-22 F4 T3: store per-prop extent radius for GPU cull record.
     rng.extentRadius = extentRadius;
-    // 2A patch 3: rng.lightDataIndex and rng.extentRadius are immutable inputs to
-    // the cached GpuActorRecord (boundingRadius, AABB). Invalidate every leaf recipe
-    // in this range so the cached records are rebuilt on the next flush.
-    for (uint32_t k = rng.first; k < rng.first + rng.count; ++k)
-        invalidateCachedFlushRecord(k);
+    if (lightOrExtentChanged) {
+        for (uint32_t k = rng.first; k < rng.first + rng.count; ++k) {
+            s_recipes[k].lightDataIndex = lightDataIndex;  // range light → every leaf
+            invalidateCachedFlushRecord(k);                // rebuild cached record next flush
+        }
+    }
     s_liveRangeIndices.push_back(static_cast<uint32_t>(regIdx));
 }
 

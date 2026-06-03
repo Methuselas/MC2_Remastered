@@ -1575,9 +1575,12 @@ void MC_TextureManager::bakeStaticLightSlot(int32_t recipeIndex, const TG_HWLigh
     }
     lightData_[ri] = baked;                                 // CPU mirror (persists)
     mc2MarkStaticLightPrefixDirty();                        // [LIGHTSSBO v2] prefix content changed
-    // 2A: the permanent light slot index == recipeIndex; persist it into the
-    // registry recipe so the per-frame flush light-patch can be skipped.
-    mc2RegistrySetRecipePermanentLightIndex(recipeIndex, static_cast<uint32_t>(recipeIndex));
+    // 2A: the per-leaf permanent light index is NOT recipeIndex — it is the
+    // owning RANGE's lightDataIndex (all leaves of a multi-leaf range share one
+    // light slot, matching legacy flush). That propagation now lives in the
+    // registry's markVisible() (range-aware). The earlier bake-time per-recipe
+    // persist was wrong for multi-leaf ranges (compare-oracle caught it) and is
+    // removed. The light-table SLOT content here is unchanged.
     if (ri + 1 > s_staticLightHighWater) s_staticLightHighWater = ri + 1;
     // [SPFLUSH_COST_SPLIT v1] recipe_rebuild counter. light_index_writes == recipe_rebuilds
     // (both happen at this bakeStaticLightSlot call — same site, same count; only one counter kept).
