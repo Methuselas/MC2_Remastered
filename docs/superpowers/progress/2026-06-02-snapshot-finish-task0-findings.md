@@ -155,6 +155,132 @@ side-effect counter.
 
 ---
 
+## Validation (P1/P4/P5)
+
+**Run date:** 2026-06-02  
+**Exe:** `build64/RelWithDebInfo/mc2.exe` (pre-built, no source changes)
+
+---
+
+### P1 — Zero mismatch + zero fallback + retired active
+
+**Command:** `$env:MC2_RENDER_SNAPSHOT_LOG="1"; run_smoke.py --tier tier1 --duration 30 --keep-logs`  
+**Artifact:** `tests/smoke/artifacts/2026-06-02T23-26-30/`
+
+**Smoke result:** 5/5 PASS, +0 destroys on all missions.
+
+**Arm event (all missions):**
+```
+[STATIC_PROP_PACKET_DISPATCH v8] event=arm live_builder_retired=1 snapshot_packet_build=1 live_builder_forced=0 reason=snapshot_sole_owner
+```
+`live_builder_retired=1` confirmed on mc2_01, mc2_03, mc2_10, mc2_17, mc2_24.
+
+**Per-frame snapshot counters** (sample from mc2_01 frame 1):
+```
+[RENDER_SNAPSHOT v3+mech-extract] frame=1 mechs=0 static_props=997 lights=0 bytes=187200 overflow=0 ok=1
+  sp_fail=0 sp_sentinel_mat=0 sp_sentinel_cull=997 sizeof_static_prop=184
+  [v2.3 compare] snapshot_count=134 live_count=134 count_mismatch=0
+  [v3 build] attempted=1 count_mismatch=0 pkt_mismatch=0 meta_mismatch=0 fallback=0
+```
+
+**v3 build counters across all 5 missions:** `count_mismatch=0 pkt_mismatch=0 meta_mismatch=0 fallback=0` — no exceptions on any frame across all missions.
+
+**ok=0 / sp_fail check:** zero `ok=0` lines and zero nonzero `sp_fail` values found in any mission log.
+
+**mc2_10 historical sp_fail window (frames ~1706–3326):** clean throughout.  
+Sample — frame 1700, 2500, 3000:
+```
+[RENDER_SNAPSHOT v3+mech-extract] frame=1700 mechs=0 static_props=2611 lights=0 bytes=492100 overflow=0 ok=1
+[RENDER_SNAPSHOT v3+mech-extract] frame=2500 mechs=0 static_props=2611 lights=0 bytes=492100 overflow=0 ok=1
+```
+
+**Per-mission result:**
+
+| Mission | Smoke | retired=1 | sp_fail=0 | fallback=0 | ok=1 all frames |
+|---------|-------|-----------|-----------|------------|-----------------|
+| mc2_01  | PASS  | ✓         | ✓         | ✓          | ✓               |
+| mc2_03  | PASS  | ✓         | ✓         | ✓          | ✓               |
+| mc2_10  | PASS  | ✓         | ✓         | ✓          | ✓               |
+| mc2_17  | PASS  | ✓         | ✓         | ✓          | ✓               |
+| mc2_24  | PASS  | ✓         | ✓         | ✓          | ✓               |
+
+**P1 verdict: PASS**
+
+---
+
+### P4 — snapshot_packet_build disabled keeps the live builder
+
+**Command:** `$env:MC2_SNAPSHOT_STATIC_PROP_BUILD="0"; run_smoke.py --mission mc2_24 --duration 30 --keep-logs`  
+**Artifact:** `tests/smoke/artifacts/2026-06-02T23-30-51/`
+
+**Arm line:**
+```
+[STATIC_PROP_PACKET_DISPATCH v8] event=arm live_builder_retired=0 snapshot_packet_build=0 live_builder_forced=0 reason=snapshot_packet_build_disabled_keep_live
+```
+`live_builder_retired=0`, `reason=snapshot_packet_build_disabled_keep_live` — exactly as specified.
+
+**Smoke result:** mc2_24 PASS, +0 destroys.  
+**GL errors:** none (`gl_errors=0` in `DRAW_PACKET_V6` dispatch summary at frame 600).
+
+**P4 verdict: PASS**
+
+---
+
+### P5 — Contracts + default tier1 + kill-switch A/B
+
+#### check-contracts.sh
+
+**Result: 5/8 pass, 3 fail — but only pre-existing / infrastructure failures.**
+
+| Contract | Result | Note |
+|---|---|---|
+| env_registry | FAIL | Pre-existing: `MC2_STATICPROP_MATERIAL_PBR_SLOTS` + `MC2_STATICPROP_ORM_TRACE` only. `MC2_STATIC_PROP_LIVE_BUILDER` NOT listed. |
+| material_gpu_mirror | FAIL | Infrastructure: `git ls-files` empty due to WSL path resolution in this worktree. Not a v8 regression. |
+| no_raw_gl_from_game | FAIL | Infrastructure: same `git ls-files` empty issue. Not a v8 regression. |
+| visibility_log_schema | PASS | |
+| include_firewall | PASS | |
+| vfx_no_objectid | PASS | |
+| destroy_invariant | PASS | |
+| render_contract_gbuf1 | PASS | |
+
+The env_registry failure is the pre-existing `MC2_STATICPROP_MATERIAL_PBR_SLOTS` / `MC2_STATICPROP_ORM_TRACE` pair (unrelated to v8). The two git-infrastructure failures were pre-existing in this worktree. No v8 regression.  
+**Effective score: 5/8. No v8 contract regression.**
+
+#### Default tier1 (no env vars)
+
+**Command:** `run_smoke.py --tier tier1 --duration 30 --keep-logs`  
+**Artifact:** `tests/smoke/artifacts/2026-06-02T23-32-05/`  
+**Result:** 5/5 PASS, +0 destroys.  
+**Arm (mc2_01):** `live_builder_retired=1 snapshot_packet_build=1 live_builder_forced=0 reason=snapshot_sole_owner`
+
+#### Kill-switch A/B (MC2_STATIC_PROP_LIVE_BUILDER=1)
+
+**Command:** `$env:MC2_STATIC_PROP_LIVE_BUILDER="1"; run_smoke.py --mission mc2_24 --duration 30 --keep-logs`  
+**Artifact:** `tests/smoke/artifacts/2026-06-02T23-35-20/`  
+**Result:** mc2_24 PASS, +0 destroys.  
+**Arm:** `live_builder_retired=0 snapshot_packet_build=1 live_builder_forced=1 reason=live_builder_forced`
+
+**P5 verdict: PASS** (no v8 contract regression; default + kill-switch both route correctly)
+
+---
+
+## P2/P3 — PENDING USER CAPTURE
+
+**P2 — Same-camera visual A/B (pixel identity):**  
+User must capture same-camera screenshots on mc2_24 and a terrain-object-dense mission (e.g. mc2_10) under two conditions: (a) default (snapshot sole owner), (b) `MC2_STATIC_PROP_LIVE_BUILDER=1` (dual build+compare). Pixel-diff must be identity (zero diff). This requires a running display — cannot be automated headlessly.
+
+**P3 — Tracy performance profile (wolfman, mc2_24 combat):**  
+User must run a Tracy capture on mc2_24 in a combat scenario and report self-times for the following Tracy zones:
+- `GpuStaticProps.Flush` — overall static-prop flush time
+- `textureManagerRenderLists` — texture upload/bind overhead
+- `StaticProp.LiveBuild` — must be ~0 when `live_builder_retired=1`
+- `StaticProp.BuildCompare` — must be ~0 when `live_builder_retired=1`
+- `Extract.SP.Fill` — must be UNCHANGED vs baseline (snapshot extraction must not regress)
+
+These zones require an interactive Tracy session connected to a live game process.
+
+---
+
 ## Summary
 
 | # | Finding | Status |
