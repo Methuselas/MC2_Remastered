@@ -92,6 +92,22 @@ The preview now fits each texture to the view area (1.00× = fit); the zoom slid
 multiplies that. Switching resolution tiers — or opening a higher-resolution
 texture — no longer changes the on-screen size, only the detail.
 
+## Static Props (model preview)
+
+Select **Static Props** in the sidebar to browse and preview the 2,030 props
+registered in `tgl.fst`. The left panel shows a filterable list of `.tgl` archive
+names; clicking one loads it and renders it on a lit turntable in the inspector
+panel.
+
+The prop is rendered with its real albedo texture (looked up from the deploy root
+via TglMeshLoader). Use the orbit and zoom controls to inspect the model from any
+angle.
+
+> **Preview mode: approximate (Backend B).** The viewer renders with a
+> self-contained phong/albedo shader, not the in-game static-prop batcher.
+> Pixel-faithful Backend A (matching the MC2 GPU pipeline) is deferred. Mechs,
+> vehicles, trees, and other asset types are also deferred.
+
 ## Materials (Stage 2)
 
 Select **Materials** in the sidebar to preview a PBR material on a lit sphere.
