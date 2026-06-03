@@ -2,8 +2,9 @@ import bpy, sys, math
 
 SRC = r"C:\Users\Joe\Downloads\tree_small_02_1k.gltf\tree_small_02_1k.gltf"
 OUT = r"A:\Games\mc2-model-override-recon\data\model_overrides\source\trees\tree_small.glb"
-TARGET_TRIS = 12000   # runtime-sane: well under MC2 pools (vert 500k / tri 200k per instance)
-SCALE = 20.0           # asset ~4.5u tall -> ~36u, roughly MC2 tree scale (tune via screenshot)
+TARGET_TRIS = 40000   # keep canopy full: leaf cards are disconnected quads that
+                      # collapse-decimate can't reduce anyway; 16M/8M pools afford it
+SCALE = 32.0           # reads as a real tree vs mc2 vehicles/hangar (tuned via screenshot)
 
 # fresh scene
 bpy.ops.wm.read_factory_settings(use_empty=True)

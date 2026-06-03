@@ -250,3 +250,68 @@ NOTE: the Slice-3 "static-prop render replaced" claim was a misread (bounds-cull
 **Lesson:** ALWAYS test overrides on instances confirmed ON-CAMERA; a no-visible-change result on off-screen instances is not evidence of non-render. Only an unmistakable on-screen change (box) counts.
 
 **Quality polish remaining (renders, but rough):** decimated foliage is sparse; leaf cards opaque (no alpha-MASK; source leaf diffuse is RGB, no alpha); modest scale; branch KHR_texture_transform UV not applied. None block "renders"; they affect how good it looks.
+
+---
+
+## Slice 6 — LEAF ALPHA-CUTOUT + SCALE (2026-06-02, viewed) — leaves now cut out
+
+Override trees now render with **alpha-tested leaf cards** (see-through gaps
+between leaves, not opaque blocks) and a larger, tree-reading scale. Verified on
+**v0.3 / mc2_01**, exit 0, gl_errors=[], shader_errors=[]. Collision untouched
+(only `assimp_importer.cpp` + asset/scale changed; stock byte-identical, empty
+manifest = stock).
+
+### 1. Leaf alpha-cutout (highest impact) — DONE
+- **Authored an RGBA leaf TGA** (`.claude/make_leaf_alpha_tga.py`): the source
+  `tree_small_02_leaves_diff_1k.jpg` is an RGB leaf atlas on a PURE BLACK
+  background; keyed the background out by luminance (soft 18->42 ramp) into an
+  8-bit alpha channel. Written as uncompressed 32-bit **BGRA, bottom-left
+  origin (desc=8)** — byte-format identical to the engine's other prop TGAs
+  (verified by matching `tree_small_02_leaves_diff_1k.tga`'s header + pixel
+  order). Deployed to `data/tgl/128/a_tree_small_02_leaves_diff_1k.tga`.
+- **Wired alpha-test via the engine's "a_" naming convention.**
+  `mclib/assimp_importer.cpp` `DeriveMC2TextureName()` now detects an
+  alpha-cutout material (glTF `$mat.gltf.alphaMode` == MASK/BLEND, else material
+  name contains leaf/leaves/foliage) and **prefixes the derived texture name
+  with `a_`**. `bdactor.cpp LoadOverrideRenderShapeTextures` already loads
+  `a_`-prefixed names as `gos_Texture_Alpha` + `SetTextureAlpha(true)`, which
+  propagates `textureAlpha` to the leaf type-shapes; the static-prop batcher's
+  per-packet alpha re-resolve (`gos_static_prop_batcher.cpp:4982`,
+  `src->listOfTextures[slot].textureAlpha`) then sets
+  `STATIC_PROP_FLAG_ALPHA_TEST` (0.5 cutoff in `static_prop.frag`).
+- **Trace proof:** `[MODOVERRIDE_TEX] slot=1 name='a_tree_small_02_leaves_diff_1k.tga'
+  -> gosHandle=861 alpha=1` (was `alpha=0` pre-slice). Branch/trunk slots stay
+  `alpha=0` (OPAQUE). All 6 live types apply.
+- **Viewed:** `.claude/tree_closeup.png` (8x crop of an override tree on the
+  sandbag compound, frames=8 framing) — brown trunk/branches + GREEN leaf cards
+  with terrain visible THROUGH the gaps between leaves = genuinely alpha-cut,
+  not a solid green block. `.claude/left_apron_zoom.png` shows the cluster of
+  override trees on the apron compounds.
+
+### 2. Fullness + scale
+- Re-exported via `.claude/tree_export.py` (TARGET_TRIS 12k->40k, SCALE 20->32).
+  Mesh tris floor at **42885** regardless of target — the leaf cards are
+  disconnected quads collapse-decimate cannot reduce, so the canopy is already
+  at full source density; the bump just stops decimate from thinning it. Pools
+  16M/8M comfortably hold the 6 live types' instances (no overflow; exit 0).
+  Scale 32 reads as a small real tree vs vehicles/hangar.
+
+### 3. Branch KHR_texture_transform — DEFERRED (minor)
+The branch material carries `offset[0,0.4] scale[3,0.6]` on texCoord 1; the
+importer reads only `mTextureCoords[0]` (assimp_importer.cpp:412) and does not
+apply the transform. Applying it needs per-material `$tex.uvtrafo` query + the
+right UV set — non-trivial, and only slightly mis-tiles branch BARK (trunk +
+leaves have no transform and are correct). Deferred per priority; documented.
+
+### Honest assessment
+Leaves are unmistakably alpha-cut and the tree reads as a real leafy tree (trunk
++ branches + cut-out green leaves). The canopy is **modest/sparse** because the
+SOURCE asset (`tree_small_02`) is a small young sapling, not a dense mature tree
+— that is the asset's nature, not a decimation artifact (tris are at the source
+floor). A denser-canopy result would require a different source tree asset.
+
+### Files / commands
+- `mclib/assimp_importer.cpp`: `DeriveMC2TextureName` alpha-prefix detection.
+- `.claude/make_leaf_alpha_tga.py`: leaf RGBA TGA author (repeatable).
+- `.claude/tree_export.py`: TARGET_TRIS=40000, SCALE=32.
+- Deploy manifest = 6 live tree types -> `source/trees/tree_small.glb`.

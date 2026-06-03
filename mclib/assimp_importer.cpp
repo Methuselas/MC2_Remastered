@@ -207,6 +207,41 @@ bool DeriveMC2TextureName(const aiScene* scene, const aiMaterial* mat,
 		stem.erase(kMaxName - kExt - 1);
 
 	stem += ".tga";
+
+	// Alpha-cutout detection. MC2's texture loader uses an "a_" name prefix as
+	// the alpha-channel convention (bdactor.cpp LoadOverrideRenderShapeTextures:
+	// names starting "a_" → gos_Texture_Alpha + SetTextureAlpha(true) → the
+	// static-prop batcher flags STATIC_PROP_FLAG_ALPHA_TEST for the packet).
+	// A glTF leaf-card material is alphaMode MASK/BLEND; prefix "a_" so the
+	// deployed RGBA TGA is loaded with its alpha channel and cuts out. Detect
+	// via the glTF alphaMode key, falling back to a foliage name heuristic.
+	bool wantAlpha = false;
+	aiString alphaMode;
+	// glTF alphaMode is exposed as the importer string key "$mat.gltf.alphaMode".
+	if (mat->Get("$mat.gltf.alphaMode", 0, 0, alphaMode) == AI_SUCCESS) {
+		const char* am = alphaMode.C_Str();
+		if (am && (strcmp(am, "MASK") == 0 || strcmp(am, "BLEND") == 0))
+			wantAlpha = true;
+	}
+	if (!wantAlpha) {
+		aiString matName;
+		if (mat->Get(AI_MATKEY_NAME, matName) == AI_SUCCESS) {
+			std::string mn = matName.C_Str();
+			for (size_t i = 0; i < mn.size(); ++i)
+				if (mn[i] >= 'A' && mn[i] <= 'Z') mn[i] = (char)(mn[i] - 'A' + 'a');
+			if (mn.find("leaf") != std::string::npos ||
+			    mn.find("leaves") != std::string::npos ||
+			    mn.find("foliage") != std::string::npos)
+				wantAlpha = true;
+		}
+	}
+	if (wantAlpha && stem.compare(0, 2, "a_") != 0) {
+		// keep within textureName[256] after the 2-char prefix
+		if (stem.size() + 2 + 1 > 256)
+			stem.erase(256 - 2 - 1);
+		stem.insert(0, "a_");
+	}
+
 	outName.swap(stem);
 	return true;
 }
