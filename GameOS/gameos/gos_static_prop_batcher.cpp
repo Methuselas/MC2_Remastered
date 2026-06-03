@@ -1902,7 +1902,7 @@ void GpuStaticPropBatcher::registerType(TG_TypeShape* typeShape, TG_TypeMultiSha
     }
 }
 
-void GpuStaticPropBatcher::registerMultiShape(TG_TypeMultiShape* multiShape) {
+void GpuStaticPropBatcher::registerMultiShape(TG_TypeMultiShape* multiShape, bool isOverride) {
     if (!multiShape) return;
     const long n       = multiShape->GetNumShapes();
     const long numTxms = multiShape->GetNumTextures();
@@ -1911,6 +1911,16 @@ void GpuStaticPropBatcher::registerMultiShape(TG_TypeMultiShape* multiShape) {
         if (node && node->GetNodeType() == SHAPE_NODE) {
             TG_TypeShape* typeShape = static_cast<TG_TypeShape*>(node);
             registerType(typeShape, multiShape);
+            // MODEL-OVERRIDE-GPU-BATCHER-SEAM: tag the just-registered (or
+            // pre-existing idempotent) type as override-backed so the coalesce
+            // layer-build routes its untextured packets to a valid default
+            // layer instead of culling them. Look up by source ptr.
+            if (isOverride) {
+                auto tit = s_typeIndex.find(typeShape);
+                if (tit != s_typeIndex.end() && tit->second < s_types.size()) {
+                    s_types[tit->second].isOverride = true;
+                }
+            }
             // GPU-offloaded actors bypass TransformMultiShape, so the leaf
             // TG_TypeShape::listOfTextures[j].gosTextureHandle is never set by
             // TMS (msl.cpp:1380). Prime it now from the multi-type's
@@ -2838,6 +2848,47 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                                typeID, pIdx, group == 0u ? "off" : "on",
                                (unsigned long)nodeIdx,
                                (unsigned long)gosHandle, glTexId);
+                // [SEAMPROBE] stage 10: layer-assignment census. When the
+                // override prop/tree packets land here, they get layer=-1 and
+                // are dropped from the multidraw (the bdactor.cpp:262 skip
+                // rule) -> override never rasterizes. Gated, capped.
+                {
+                    static int s_seamLayerSkip = 0;
+                    if (getenv("MC2_MODOVERRIDE_TRACE") && s_seamLayerSkip < 200) {
+                        ++s_seamLayerSkip;
+                        std::fprintf(stderr, "[SEAMPROBE] layer=-1 SKIP type=%u pkt=%u "
+                            "nodeIdx=%lu gosHandle=%lu glTexId=%u W=%d H=%d override=%d uniques=%zu\n",
+                            typeID, pIdx, (unsigned long)nodeIdx,
+                            (unsigned long)gosHandle, glTexId, (int)W, (int)H,
+                            (int)type.isOverride, uniques.size());
+                        std::fflush(stderr);
+                    }
+                }
+                // MODEL-OVERRIDE-GPU-BATCHER-SEAM-PROBE-1 fix: a modder glTF
+                // render-override imports with unresolved "NULLTXM" texture
+                // handles (nodeIdx=0xFFFFFFFF, no GL upload -> W<=0 here). The
+                // stock skip rule (layer=-1 -> dropped from the coalesce
+                // multidraw, see bdactor.cpp:262) makes the override geometry
+                // invisible. For override-backed types ONLY, route the packet
+                // to an already-built valid layer in this group (layer 0) so it
+                // RASTERIZES with that texture (wrong albedo, but visible) —
+                // the MVP success criterion is a box that draws, not correct
+                // texturing. Stock/damage-shape packets are UNAFFECTED: they
+                // keep the layer=-1 skip (no isOverride flag), so the orange-
+                // ghost destroyed-building regression cannot recur. If no valid
+                // layer exists yet in this group, fall through to the skip.
+                if (type.isOverride && !uniques.empty()) {
+                    layerForPacket[globalPktIdx] = 0;
+                    if (pIdx == 0) layerForType[typeID] = 0;
+                    packetsInGroup.emplace_back(globalPktIdx, 0);
+                    if (getenv("MC2_MODOVERRIDE_TRACE")) {
+                        std::fprintf(stderr, "[SEAMPROBE] OVERRIDE_ROUTE type=%u pkt=%u "
+                            "-> layer=0 (default) group=%s\n",
+                            typeID, pIdx, group == 0u ? "off" : "on");
+                        std::fflush(stderr);
+                    }
+                    continue;
+                }
                 continue;
             }
 

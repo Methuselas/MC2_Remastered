@@ -134,6 +134,14 @@ struct GpuStaticPropType {
     uint32_t coalesceByteOffsetWithinGroup;  // §5.1b group-relative byte offset
     uint32_t lastSeenGosHandle;              // §5.4 eviction-detect snapshot
     uint8_t  alphaClass;                     // §CRITICAL-C 0=alpha-OFF, 1=alpha-ON
+    // MODEL-OVERRIDE-GPU-BATCHER-SEAM: set true for types registered from a
+    // modder glTF render-override multishape. Override geometry imports with
+    // unresolved "NULLTXM" texture handles (nodeIdx=0xFFFFFFFF), so its packets
+    // would get layerForPacket=-1 and be culled from the coalesce multidraw
+    // (the bdactor.cpp damage-shape skip rule). When this flag is set the
+    // batcher routes such packets to a valid default texture layer so the
+    // override RASTERIZES (flat/wrong-texture box) instead of vanishing.
+    bool     isOverride;
 };
 
 // Forward declaration needed for flush() signature (v2.3).
@@ -168,7 +176,10 @@ public:
 
     // Convenience wrapper: iterate a multishape's listOfTypeShapes and call
     // registerType on each SHAPE_NODE leaf. Safe to call with NULL (no-op).
-    void registerMultiShape(TG_TypeMultiShape* multiShape);
+    // isOverride: tag every leaf type registered here as a modder glTF
+    // render-override (see GpuStaticPropType::isOverride). Default false keeps
+    // the stock call sites byte-identical.
+    void registerMultiShape(TG_TypeMultiShape* multiShape, bool isOverride = false);
 
     // Called at end of registration to upload the immutable VBO/IBO.
     void finalizeGeometry();

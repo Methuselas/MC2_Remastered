@@ -857,8 +857,9 @@ void BldgAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 		// against. Registering the stock shape here would make submit() miss
 		// (render type-shape not in s_typeIndex) -> CPU-fallback/cull, and the
 		// override would never rasterize. Damage stays stock (out of MVP).
+		const bool _bldgIsOverride = (appearType->bldgRenderShape != nullptr);
 		for (int i = 0; i < MAX_LODS; ++i)
-			GpuStaticPropBatcher::instance().registerMultiShape(appearType->getBldgRenderShape(i));
+			GpuStaticPropBatcher::instance().registerMultiShape(appearType->getBldgRenderShape(i), _bldgIsOverride);
 		GpuStaticPropBatcher::instance().registerMultiShape(appearType->bldgDmgShape);
 	}
 }
@@ -2689,8 +2690,9 @@ void BldgAppearance::registerStatic() {
 	// CPU first-render fallback, which is catastrophic with ~1k tree instances
 	// (per-instance pool copies overflow). Idempotent for stock (already
 	// registered). getBldgRenderShape == stock when no override is present.
+	const bool _regIsOverride = (appearType->bldgRenderShape != nullptr);
 	for (int i = 0; i < MAX_LODS; ++i)
-		GpuStaticPropBatcher::instance().registerMultiShape(appearType->getBldgRenderShape(i));
+		GpuStaticPropBatcher::instance().registerMultiShape(appearType->getBldgRenderShape(i), _regIsOverride);
 
 	if (getenv("MC2_MODOVERRIDE_TRACE") && appearType->bldgRenderShape) {
 		TG_TypeMultiShape* rs = appearType->bldgRenderShape;
@@ -3861,8 +3863,9 @@ void TreeAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 		// GPU static-prop batcher: register the RENDER shape (override-or-stock)
 		// so override geometry actually rasterizes (see BldgAppearance reg site
 		// for the s_typeIndex rationale). Damage stays stock (out of MVP).
+		const bool _treeIsOverride = (appearType->treeRenderShape != nullptr);
 		for (int i = 0; i < MAX_LODS; ++i)
-			GpuStaticPropBatcher::instance().registerMultiShape(appearType->getTreeRenderShape(i));
+			GpuStaticPropBatcher::instance().registerMultiShape(appearType->getTreeRenderShape(i), _treeIsOverride);
 		GpuStaticPropBatcher::instance().registerMultiShape(appearType->treeDmgShape);
 	}
 
@@ -4680,8 +4683,9 @@ void TreeAppearance::registerStatic() {
 	// MODEL-OVERRIDE: register render-shape geometry before finalizeGeometry
 	// (see BldgAppearance::registerStatic for full rationale — late init() reg
 	// otherwise drops ~1k override trees to the CPU first-render path).
+	const bool _treeRegIsOverride = (appearType->treeRenderShape != nullptr);
 	for (int i = 0; i < MAX_LODS; ++i)
-		GpuStaticPropBatcher::instance().registerMultiShape(appearType->getTreeRenderShape(i));
+		GpuStaticPropBatcher::instance().registerMultiShape(appearType->getTreeRenderShape(i), _treeRegIsOverride);
 
 	if (getenv("MC2_MODOVERRIDE_TRACE") && appearType->treeRenderShape) {
 		TG_TypeMultiShape* rs = appearType->treeRenderShape;
