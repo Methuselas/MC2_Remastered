@@ -823,6 +823,29 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         false,
         "TRACKV-CI-GATE-RESTORE-1: GPU pipeline flush probe via glFinish. WARNING: triggers GPU pipeline stall — diagnostic default-OFF only. =1 enables glFinish at the probe site to measure GPU-complete latency."
     },
+    // TRACKV quick-win: Probe-6 thin-record canary gate
+    {
+        "MC2_TRACE_THIN_CANARY",
+        "MC2_THIN_CANARY",
+        EnvVarKind::Trace,
+        false,
+        "TRACKV: gates Probe-6 thin-record canary readback (per-frame ~80KB glGetBufferSubData x2 + CPU recipeIdx/flags compare, diagnostic for the corrupt-recipeIdx grey-triangle bug). Default-OFF; =1 re-enables. No render effect."
+    },
+    // Static-prop ORM (PBR) — load-only feature + trace
+    {
+        "MC2_FEATURE_STATICPROP_MATERIAL_PBR_SLOTS",
+        "MC2_STATICPROP_MATERIAL_PBR_SLOTS",
+        EnvVarKind::Feature,
+        false,
+        "Static-prop PBR ORM (occlusion-roughness-metallic) texture-array slots + sidecar feed. Default-OFF (any non-'0' non-empty enables); gate-OFF path is byte-identical (zero ORM arrays, zero sidecar I/O)."
+    },
+    {
+        "MC2_TRACE_STATICPROP_ORM_TRACE",
+        "MC2_STATICPROP_ORM_TRACE",
+        EnvVarKind::Trace,
+        false,
+        "Static-prop ORM load trace: logs source path + dims per unique ORM texture. Default-OFF diagnostic; no correctness effect."
+    },
 };
 
 // ---------------------------------------------------------------------------
