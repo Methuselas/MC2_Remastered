@@ -398,6 +398,18 @@ struct PerTypeBucket {
 };
 std::unordered_map<uint32_t, PerTypeBucket> s_bucketsByType;
 
+// STATICPROP-COLORS-FILL-DEBUGONLY-1: the per-instance Colors SSBO (binding 1) is
+// read by NO production shader — static_prop.vert declares colors_ but never uses
+// it, firstColorOffset is unused, and the coalesce multidraw never binds binding 1
+// (only the legacy non-coalesce draw does, gos_static_prop_batcher.cpp ~:6256).
+// So the per-static-instance colors zero-fill (~80ns/leaf at wolfman) is pure
+// waste. DEFAULT-SKIP for static-registry instances; MC2_STATIC_PROP_COLORS_FILL=1
+// restores the legacy fill (kill-switch). Dynamic submit()/submitMultiShape path
+// is untouched.
+static const bool s_staticPropColorsFill =
+    (std::getenv("MC2_STATIC_PROP_COLORS_FILL") != nullptr &&
+     std::getenv("MC2_STATIC_PROP_COLORS_FILL")[0] != '0');
+
 // Stage 3.C: per-submitMultiShape batch accumulator. Cleared at the start
 // of each submitMultiShape(); populated by submit() per leaf. After
 // submitMultiShape() returns true, getLastBuiltBatch() returns this vector
@@ -6253,9 +6265,13 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
         glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_instanceSsbo,
                           static_cast<GLintptr>(r.instanceByteOffset),
                           static_cast<GLsizeiptr>(r.instanceByteSize));
-        glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 1, s_colorSsbo,
-                          static_cast<GLintptr>(r.colorByteOffset),
-                          static_cast<GLsizeiptr>(r.colorByteSize));
+        // STATICPROP-COLORS-FILL-DEBUGONLY-1: colorByteSize is 0 for static types
+        // when the colors fill is skipped (the default). A 0-size glBindBufferRange
+        // is GL_INVALID_VALUE — and no shader reads binding 1 — so skip the bind.
+        if (r.colorByteSize)
+            glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 1, s_colorSsbo,
+                              static_cast<GLintptr>(r.colorByteOffset),
+                              static_cast<GLsizeiptr>(r.colorByteSize));
 
         // SEMANTIC: max VALID local vertex index, not count. Lets the
         // gradient debug mode hit t=1.0 at the last vertex.
@@ -7041,7 +7057,10 @@ void GpuStaticPropBatcher::submitCachedInstance(const GpuStaticPropInstance& ins
     // Diagnostic counters (submitted_instances_by_pop etc.) are NOT incremented
     // for registry-injected instances — they measure the dynamic compute path.
     GpuStaticPropInstance updated = inst;
-    updated.firstColorOffset = static_cast<uint32_t>(bucket.colors.size());
+    // firstColorOffset is unused by any production shader; only meaningful when the
+    // (default-skipped) colors fill runs. Keep it accurate when filling, else 0.
+    updated.firstColorOffset = s_staticPropColorsFill
+        ? static_cast<uint32_t>(bucket.colors.size()) : 0u;
     {
         // MC2_TREE_DIAG_TRACE diagnostic. Same format as submit() so a grep
         // diff (`grep "[TREE_DIAG]" log | sort`) lines up dyn-vs-static fields.
@@ -7058,11 +7077,12 @@ void GpuStaticPropBatcher::submitCachedInstance(const GpuStaticPropInstance& ins
         }
     }
     bucket.instances.push_back(updated);
-    // Zero-fill colors. Normal render ignores the Colors SSBO (binding 1);
-    // debug addr-mode 4 shows black for static-registry instances.
-    // [SPFLUSH_COST_SPLIT v1] color_zero_fill span.
+    // STATICPROP-COLORS-FILL-DEBUGONLY-1: default-SKIP the colors zero-fill (no
+    // production shader reads colors_; addr-mode 4 reads v_argb). MC2_STATIC_PROP_COLORS_FILL=1
+    // restores it. [SPFLUSH_COST_SPLIT v1] color_zero_fill span (now ~0 by default).
     const unsigned long long _t_color0 = s_spflushCostSplitEnabled ? __rdtsc() : 0ULL;
-    bucket.colors.insert(bucket.colors.end(), type.vertexCount, 0u);
+    if (s_staticPropColorsFill)
+        bucket.colors.insert(bucket.colors.end(), type.vertexCount, 0u);
     if (s_spflushCostSplitEnabled) spflush_cost_split::AddColorZeroFillCycles(__rdtsc() - _t_color0);
 }
 
@@ -7087,16 +7107,20 @@ void GpuStaticPropBatcher::submitCachedInstanceRange(const GpuStaticPropInstance
         // (n==1, the common case) that sets capacity to EXACTLY size+1 each call,
         // defeating std::vector geometric growth → a reallocation per leaf (O(N^2)).
         // Plain push_back (like legacy submitCachedInstance) grows geometrically.
+        // STATICPROP-COLORS-FILL-DEBUGONLY-1: default-SKIP the colors zero-fill
+        // (no production shader reads colors_). MC2_STATIC_PROP_COLORS_FILL=1 restores it.
         const unsigned long long _t_cf0 = s_spflushCostSplitEnabled ? __rdtsc() : 0ULL;
         const size_t colOldSize = bucket.colors.size();
-        bucket.colors.resize(colOldSize + (size_t)n * type.vertexCount, 0u);
+        if (s_staticPropColorsFill)
+            bucket.colors.resize(colOldSize + (size_t)n * type.vertexCount, 0u);
         if (s_spflushCostSplitEnabled) spflush_cost_split::AddColorZeroFillCycles(__rdtsc() - _t_cf0);
         for (uint32_t local = 0u; local < n; ++local) {
             GpuStaticPropInstance updated = arr[i + local];
-            // firstColorOffset = running bucket offset (correct even if the bucket
-            // already holds dynamic instances submitted earlier this frame).
-            updated.firstColorOffset =
-                static_cast<uint32_t>(colOldSize + (size_t)local * type.vertexCount);
+            // firstColorOffset is unused by any production shader; keep it accurate
+            // when filling, else 0 (running bucket offset only meaningful with fill).
+            updated.firstColorOffset = s_staticPropColorsFill
+                ? static_cast<uint32_t>(colOldSize + (size_t)local * type.vertexCount)
+                : 0u;
             bucket.instances.push_back(updated);
         }
         i = j;

@@ -620,6 +620,13 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "STATICPROP-REGISTRY-FLUSH-CACHED-BLOB-2A diagnostic: with the cached path active, also build the legacy temp instance+record per leaf and compare hash/count; logs mismatches. Default-OFF; requires MC2_STATIC_PROP_FLUSH_CACHED_BLOB=1."
     },
     {
+        "MC2_FEATURE_STATIC_PROP_COLORS_FILL",
+        "MC2_STATIC_PROP_COLORS_FILL",
+        EnvVarKind::Feature,
+        false,
+        "STATICPROP-COLORS-FILL-DEBUGONLY-1: per-static-instance Colors SSBO (binding 1) zero-fill. No production shader reads colors_ (coalesce multidraw never binds binding 1; addr-mode 4 reads v_argb). DEFAULT-SKIP (~80ns/leaf saved); =1 restores the legacy fill (kill-switch). Dynamic submit() path untouched."
+    },
+    {
         "MC2_FEATURE_BURNIN_NO_JPG",
         "MC2_BURNIN_NO_JPG",
         EnvVarKind::Feature,
