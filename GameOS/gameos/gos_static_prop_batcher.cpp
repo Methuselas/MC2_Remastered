@@ -84,6 +84,19 @@ static const bool s_globalPoolLegacy = []() {
     return v != nullptr && v[0] != '0';
 }();
 
+// GPU-INSTANCE-SKIP-POOLS-1 (2026-06-03) — when set, forces the LEGACY
+// per-instance frame-pool path (_PositionsOnly + non-null listOfVertices gate)
+// for GPU-registered static-prop types. Default (unset) is the new GPU-only
+// path: registered instances run the zero-pool hierarchy walk in *Appearance::
+// update and submit straight from rec.shapeToWorld, so the TGL frame pools stay
+// flat regardless of override mesh size × instance count. This flag is the A/B
+// escape hatch. Env-read once at process start.
+static const bool s_legacyInstancePools = []() {
+    const char* v = getenv("MC2_LEGACY_INSTANCE_POOLS");
+    return v != nullptr && v[0] != '0';
+}();
+bool gos_StaticPropLegacyInstancePools() { return s_legacyInstancePools; }
+
 // DrawPacket v5: per-draw-call substitutive dispatch.
 // Gate: MC2_DRAW_PACKET_COALESCE_V5=1
 // Extension: ARB_base_instance (GL 4.2 core, available on all tier1 GPUs).
@@ -4356,9 +4369,29 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
         // Also listOfColors NULL: CPU also early-outs. Submit's zero-pad
         // path would render this child black, which is the bug we're
         // avoiding — so skip here.
+        //
+        // GPU-INSTANCE-SKIP-POOLS-1: in the new GPU-only path, registered
+        // types intentionally run the zero-pool hierarchy walk
+        // (TransformMultiShape_HierarchyOnly) in *Appearance::update, which
+        // leaves listOfVertices/listOfColors NULL but DOES populate
+        // rec.shapeToWorld (used at :4391). Such a child is a legitimate GPU
+        // instance: its geometry is the immutable per-type VBO and its colors
+        // are the debug-only (zero-padded) Colors SSBO the lit shader ignores
+        // (static_prop.vert:5). So admit a NULL-vertex child IFF its type is
+        // registered in s_typeIndex AND we are not in the legacy escape hatch.
+        // A NULL-vertex child whose type is NOT registered (true day-spotlight
+        // early-out) is still skipped, preserving stock behavior.
         if (!child->listOfVertices || !child->listOfColors) {
-            s_counters.skipped_children++;
-            continue;
+            bool admitAsGpuOnly = false;
+            if (!s_legacyInstancePools && child->myType) {
+                const TG_TypeShape* ts =
+                    static_cast<const TG_TypeShape*>(child->myType);
+                admitAsGpuOnly = (s_typeIndex.find(ts) != s_typeIndex.end());
+            }
+            if (!admitAsGpuOnly) {
+                s_counters.skipped_children++;
+                continue;
+            }
         }
 
         // [T3.1] SpotLight_-prefixed children are illuminated as real TG_Lights

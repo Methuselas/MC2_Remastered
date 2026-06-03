@@ -2340,7 +2340,16 @@ long BldgAppearance::update (bool animate)
 				staticReg.lightDataIndex = bldgShape->getCachedGpuLightIndex();
 			}
 			{
-				bldgShape->TransformMultiShape_PositionsOnly (&xlatPosition,&rot);
+				// GPU-INSTANCE-SKIP-POOLS-1 (2026-06-03): see TreeAppearance::
+				// update for the full rationale. gpuEligible guarantees every
+				// leaf is registered; run the ZERO-POOL hierarchy walk so no TGL
+				// frame pool is allocated per visible instance. submit reads
+				// rec.shapeToWorld (populated by the walk) + the debug-only
+				// zero-padded Colors SSBO. MC2_LEGACY_INSTANCE_POOLS=1 reverts.
+				if (gos_StaticPropLegacyInstancePools())
+					bldgShape->TransformMultiShape_PositionsOnly (&xlatPosition,&rot);
+				else
+					bldgShape->TransformMultiShape_HierarchyOnly (&xlatPosition,&rot);
 			}
 			// Stage 2.D.2: on the dual-emit frame (latch Armed), also run
 			// the full bake so listOfTriangles[].aRGBLight is populated for
@@ -2362,7 +2371,17 @@ long BldgAppearance::update (bool animate)
 		}
 		else
 		{
-			bldgShape->TransformMultiShape (&xlatPosition,&rot);
+			// GPU-INSTANCE-SKIP-POOLS-1 (2026-06-03): see TreeAppearance::update
+			// for the full rationale + A/B evidence. For a registered type the
+			// full-bake pool content is vestigial (GPU draws from the per-type
+			// VBO + rec.shapeToWorld; light cache below is pool-independent), so
+			// run the zero-pool hierarchy walk. mc2CacheOrBakeStaticGpuLight still
+			// runs to seed the light index. MC2_LEGACY_INSTANCE_POOLS=1 reverts.
+			if (!gos_StaticPropLegacyInstancePools() &&
+			    GpuStaticPropBatcher::instance().isMultiShapeEligibleForGpuObjects(bldgShape))
+				bldgShape->TransformMultiShape_HierarchyOnly (&xlatPosition,&rot);
+			else
+				bldgShape->TransformMultiShape (&xlatPosition,&rot);
 			// 2026-05-10: also seed cachedGpuLightIndex_ in the full-bake
 			// branch. Without this, the first-frame transition out of the
 			// H4 latch (set by registerStatic at :2754) leaves the index
@@ -4538,7 +4557,21 @@ long TreeAppearance::update (bool animate)
 				staticReg.lightDataIndex = treeShape->getCachedGpuLightIndex();
 			}
 			{
-				treeShape->TransformMultiShape_PositionsOnly (&xlatPosition,&rot);
+				// GPU-INSTANCE-SKIP-POOLS-1 (2026-06-03): gpuEligible already
+				// guarantees every leaf is registered in s_typeIndex, so geometry
+				// is in the immutable per-type VBO and lighting is O(1) via
+				// lightDataIndex. Legacy _PositionsOnly allocated all six TGL
+				// frame pools sized to the mesh per visible instance (peak = Σ
+				// over the forest → overflow on a heavy override mesh), yet the
+				// GPU draw consumes NONE of that content (submit reads
+				// rec.shapeToWorld + the debug-only zero-padded Colors SSBO). Run
+				// the ZERO-POOL hierarchy walk instead — still populates
+				// rec.shapeToWorld per leaf, no pool alloc.
+				// MC2_LEGACY_INSTANCE_POOLS=1 reverts to the old path.
+				if (gos_StaticPropLegacyInstancePools())
+					treeShape->TransformMultiShape_PositionsOnly (&xlatPosition,&rot);
+				else
+					treeShape->TransformMultiShape_HierarchyOnly (&xlatPosition,&rot);
 			}
 			// Stage 2.D.2: dual-emit full bake — same rationale as BldgAppearance
 			// above. Populates listOfTriangles[].aRGBLight for snapshot in submit().
@@ -4549,7 +4582,28 @@ long TreeAppearance::update (bool animate)
 		}
 		else
 		{
-			treeShape->TransformMultiShape (&xlatPosition,&rot);
+			// GPU-INSTANCE-SKIP-POOLS-1 (2026-06-03): this "full-bake" else-branch
+			// is where registered override trees actually land every frame — the
+			// gpuEligible branch above is gated by !needsFullBakeNextFrame, and the
+			// GPU light index (addLightDataStructureWithPerActorColor, 32-slot UBO)
+			// returns UINT32_MAX under forest contention, so render() invalidates
+			// and re-arms the full-bake latch perpetually. Verified A/B: this
+			// branch full-baking the 6×~535k-vert lush forest pegged the TGL pools
+			// to 99% (legacy), yet the trees draw via the GPU registry/substrate
+			// indirect path (buckets=227), NOT via the CPU TG_Shape::Render() that
+			// reads the pools (submit_trees=0, gpu indirect_draw present). Pixel
+			// A/B (same camera, legacy 99% vs skip 0%) shows IDENTICAL tree canopy.
+			// So for a registered type the full-bake pool content is vestigial:
+			// run the ZERO-POOL hierarchy walk to populate rec.shapeToWorld and
+			// still call mc2CacheOrBakeStaticGpuLight below (pool-independent — it
+			// only walks the hierarchy + GatherGpuObjectLightDataOnly). Result:
+			// pool peak 99%→0% on the heavy forest, no visual change.
+			// MC2_LEGACY_INSTANCE_POOLS=1 reverts to the full bake.
+			if (!gos_StaticPropLegacyInstancePools() &&
+			    GpuStaticPropBatcher::instance().isMultiShapeEligibleForGpuObjects(treeShape))
+				treeShape->TransformMultiShape_HierarchyOnly (&xlatPosition,&rot);
+			else
+				treeShape->TransformMultiShape (&xlatPosition,&rot);
 			// 2026-05-10: mirror of the BldgAppearance fix at :2339-2341.
 			// Seed cachedGpuLightIndex_ in the full-bake branch so the
 			// next render() doesn't fail the UINT32_MAX gate at :4341
