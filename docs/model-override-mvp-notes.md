@@ -84,9 +84,28 @@ Deploy manifest restored to `{"overrides":[]}` (install not left modded). Trace 
 
 Limitation: unit-cube box is tiny at MC2 world scale, so the override reads as "prop disappeared" rather than "prop is a visible box". The render-replacement is nonetheless proven by the hangar's disappearance + the applied logs. A larger box asset would make it visually obvious (deferred; not needed for proof).
 
-## Slice 4 — TREE-MODEL-OVERRIDE-PROOF — DOES NOT RENDER (corrected 2026-06-02)
+## Slice 4 — MODEL OVERRIDE RENDERS ✅ (verified 2026-06-02, A/B confirmed)
 
-**RETRACTION:** an earlier revision of this section claimed trees render. That was WRONG — those were stock trees; I misread dark pixels. A definitive test (override the on-screen **hangar** with a bright **magenta 12-unit box**) proves the override geometry is **NOT drawn** on EITHER v0.4 or v0.3: the hangar vanishes (stock shape displaced by the override) and **no magenta box appears**. Screenshots `.claude/magenta_hangar_test.png` (v0.4), `.claude/v3_magenta_hangar.png` (v0.3).
+**RESOLVED via a focused GPU-batcher seam probe (`MODEL-OVERRIDE-GPU-BATCHER-SEAM-PROBE-1`).** Override geometry now rasterizes in-game, verified by same-camera A/B (`.claude/seamfix_before_zoom.png` = empty apron where the hangar was; `.claude/seamfix_after_zoom.png` = a solid override box drawn there). Collision stays stock (dual-shape). Draws untextured (borrowed albedo) — texture binding is the remaining polish.
+
+### The render path had THREE seams (all now fixed), past registration:
+The advisor's read was correct — geometry is NOT texture-style; it goes through the immutable mission-load GPU recipe/batcher. Registration + recipe + type-identity were already correct pre-finalize (`CreateFrom` preserves `myType` = the registered render-shape `TG_TypeShape*`). The override was lost downstream:
+1. **Admission gate** (commit `566097f0`): `BldgAppearance::isStaticEligible()` rejected the override prop via the `bdAnimationState != -1` gate (stock buildings get a default idle gesture; the override has no anims) → `IsStaticNow()` false → `render()` never `markVisible()`d the recipe → no substrate record → not drawn (and stock displaced → prop vanished). Fix: skip that gate for override-backed types (`bldgRenderShape != null`) with no real anims; stock path byte-identical. (Trees have no such gate — already admitted.)
+2. **Draw-consumption / multidraw cull** (commit `4171be63`): override packets import untextured (`NULLTXM`, `gosTextureHandle=0xFFFFFFFF`) → coalesce per-packet texture-array build assigns `layerForPacket=-1` → packet dropped from `s_sortedPacketOrder` (same skip as the damage-shape orange-ghost guard, bdactor.cpp:262) → override contributes ZERO draw commands. Fix: added `isOverride` flag to `GpuStaticPropType`/`registerMultiShape`; an override packet that would skip with layer −1 is routed to a valid layer (0) instead of dropped. Stock/damage keep the −1 skip (no flag) → no regression. Emitted packets 130→134; override types now contribute draws.
+3. (necessary precondition) **register render shape before finalize** via `registerStatic` (committed earlier) so the override type is in the immutable VBO.
+
+### Verified facts
+- `[SEAMPROBE] OVERRIDE_ROUTE type=33/41/42/43 -> layer=0`; coalesce armed `types=217`; before/after A/B shows the box appears (I viewed both images).
+- Prop (hangar→bigbox) + trees (tc1_*→tree_small) both route + draw.
+- Caps 16M/8M, gltfpack built — real, retained.
+
+### Remaining polish (NOT blockers — override now renders)
+- **Texture binding**: override draws with a borrowed layer-0 albedo (wrong/orange). Wire the override glTF's own texture into MC2's texture manager/array. This is the next real chunk.
+- Leaf alpha-MASK for tree leaf cards; per-instance lighting/perf.
+- Add a model-override row to `docs/asset-pipeline.md` (§7).
+
+### (history) earlier RETRACTION — kept for the record
+An interim revision claimed trees render when they did not (misread dark stock trees), and a later revision correctly retracted that. The magenta-box test then proved no-render, which led to this seam probe that actually fixed it. Net: the retraction was right at the time; the box now genuinely draws. A definitive test (override the on-screen **hangar** with a bright **magenta 12-unit box**) proves the override geometry is **NOT drawn** on EITHER v0.4 or v0.3: the hangar vanishes (stock shape displaced by the override) and **no magenta box appears**. Screenshots `.claude/magenta_hangar_test.png` (v0.4), `.claude/v3_magenta_hangar.png` (v0.3).
 
 ### What actually happens
 - `[MODOVERRIDE] render override applied` only means the glTF IMPORTED into the render shape — NOT that it draws.
