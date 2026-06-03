@@ -9,6 +9,8 @@
 #include "TexturePreview2D.h"
 #include "MaterialPreviewPBR.h"
 #include "MaterialSlots.h"
+#include "MeshPreview3D.h"
+#include "ModelBrowser.h"
 
 class AssetViewerApp {
 public:
@@ -29,6 +31,9 @@ public:
     static int runSmokeTangent(const char* fixtureDir); // tangent correctness: flat==no-normal, tilt perturbs, no seam blow-up
     static int runSmokeFitMaterial(const char* fixtureDir); // minimal FIT parser: Material{} block -> slot paths
     static int runSmokeFitLoad(const char* fixtureDir);    // loadFit() multi-base resolution + GL upload check
+    static int runSmokeTglLoad(const char* deployDir);     // headless NS3 TGL loader: FastFileInit + LoadBinaryCopy
+    static int runSmokeMeshBuild(const char* deployDir);  // Task 1: TglMeshLoader CPU mesh extraction (no GL)
+    static int runSmokeMeshRender(const char* deployDir); // Task 2: MeshPreview3D GL render: model distinct from background
 private:
     FileBrowser browser_;
     AssetTypeSidebar sidebar_;
@@ -36,5 +41,7 @@ private:
     TexturePreview2D surface_;
     MaterialPreviewPBR materialSurface_;
     MaterialSlots      materialSlots_;
+    MeshPreview3D      meshSurface_;
+    ModelBrowser       modelBrowser_;
     bool materialsAutoLoaded_ = false;
 };

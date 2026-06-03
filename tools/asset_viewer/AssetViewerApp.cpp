@@ -2,6 +2,15 @@
  * FILENAME: AssetViewerApp.cpp
  * DESCRIPTION: Top-level application class for mc2_asset_viewer.
  ***************************************************************/
+// TGL loader includes (engine_stubs.cpp provides all referenced symbols).
+// These must come BEFORE any imgui/SDL headers so that platform_windows.h
+// from the engine side doesn't collide with SDL's own WIN32 guards.
+#include "heap.h"
+#include "tgl.h"
+#include "msl.h"
+#include "fastfile.h"
+#include "ffile.h"
+
 #include "AssetViewerApp.h"
 #include "SphereMesh.h"
 #include "LocalPbrMaterialBackend.h"
@@ -25,7 +34,11 @@
 // GUI mode: ctor/dtor own the cache lifetime. The static runSmoke() path does
 // NOT construct an AssetViewerApp and does its own Initialize/Shutdown — the two
 // paths are mutually exclusive, so there is no double-init.
-AssetViewerApp::AssetViewerApp()  { UiEditorImageCache_Initialize(); }
+AssetViewerApp::AssetViewerApp()  {
+    UiEditorImageCache_Initialize();
+    // Deploy root is the viewer's cwd; "." -> ./tgl.fst for TglMeshLoader.
+    meshSurface_.setDeployDir(".");
+}
 AssetViewerApp::~AssetViewerApp() { UiEditorImageCache_Shutdown(); }
 
 void AssetViewerApp::drawUi()
@@ -43,13 +56,19 @@ void AssetViewerApp::drawUi()
     ImGui::EndChild();
     ImGui::SameLine();
 
-    // browser child: only feed the texture surface in Textures mode.
+    // browser child: dispatch on the active asset type.
     ImGui::BeginChild("browser", ImVec2(browserW, 0), true);
-    browser_.draw();
-    if (browser_.hasSelection()) {
-        std::string sel = browser_.takeSelection();
-        if (sidebar_.active() == AssetType::Textures) surface_.setSource(sel);
-        // Materials mode: slots are assigned via MaterialSlots' own picker, not the browser.
+    if (sidebar_.active() == AssetType::StaticProps) {
+        modelBrowser_.draw();
+        if (modelBrowser_.hasSelection())
+            meshSurface_.setSource(modelBrowser_.takeSelection());
+    } else {
+        browser_.draw();
+        if (browser_.hasSelection()) {
+            std::string sel = browser_.takeSelection();
+            if (sidebar_.active() == AssetType::Textures) surface_.setSource(sel);
+            // Materials mode: slots are assigned via MaterialSlots' own picker, not the browser.
+        }
     }
     ImGui::EndChild();
     ImGui::SameLine();
@@ -67,6 +86,9 @@ void AssetViewerApp::drawUi()
         }
         materialSlots_.draw(materialSurface_);                      // slot pickers + light/camera
         materialSurface_.draw(ImGui::GetContentRegionAvail());      // lit sphere + approximate label
+        break;
+      case AssetType::StaticProps:
+        meshSurface_.draw(ImGui::GetContentRegionAvail());
         break;
     }
     ImGui::EndChild();
@@ -747,5 +769,382 @@ int AssetViewerApp::runSmokeFitMaterial(const char* dir)
         return 1;
     }
     std::printf("[smoke] PASS fit parse base/normal/orm/packing\n");
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// runSmokeTglLoad — Task 0 headless gate: prove the NS3 TGL loader links and
+// loads a real prop from tgl.fst inside the viewer's link unit. No GL needed.
+// ---------------------------------------------------------------------------
+// Forward-declare the heap installer from engine_stubs.cpp.
+extern void InstallTglHeap();
+extern UserHeapPtr userHeapForTgl;
+
+int AssetViewerApp::runSmokeTglLoad(const char* deployDir)
+{
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+
+    // --- 1. Install the TGL heap (non-GOS CRT-backed). ---
+    InstallTglHeap();
+
+    // --- 2. Set up FastFile globals and open tgl.fst. ---
+    //   maxFastFiles / fastFiles are defined in mclib/fastfile.cpp (NS3 boundary).
+    //   We allocate space for one archive and call FastFileInit.
+    extern FastFile** fastFiles;
+    extern long numFastFiles;
+    extern long maxFastFiles;
+    extern long ffLastError;
+
+    maxFastFiles = 4;
+    fastFiles = static_cast<FastFile**>(std::malloc(maxFastFiles * sizeof(FastFile*)));
+    if (!fastFiles)
+    {
+        std::fprintf(stderr, "[smoke] FAIL tgl-load: malloc fastFiles\n");
+        return 1;
+    }
+    std::memset(fastFiles, 0, maxFastFiles * sizeof(FastFile*));
+    numFastFiles = 0;
+
+    std::string fstPath = std::string(deployDir) + "/tgl.fst";
+    if (!FastFileInit(fstPath.c_str()))
+    {
+        std::fprintf(stderr, "[smoke] FAIL tgl-load: FastFileInit('%s') failed (ffLastError=%ld)\n",
+            fstPath.c_str(), ffLastError);
+        std::free(fastFiles);
+        fastFiles = nullptr;
+        return 1;
+    }
+
+    if (numFastFiles < 1 || !fastFiles[0])
+    {
+        std::fprintf(stderr, "[smoke] FAIL tgl-load: no fastFile registered\n");
+        return 1;
+    }
+
+    // --- 3. Enumerate files; find all .tgl entries. ---
+    long totalFiles = fastFiles[0]->getNumFiles();
+    const FILE_HANDLE* handles = fastFiles[0]->getFilesInfo();
+
+    long tglCount = 0;
+    const char* firstTglName = nullptr;
+    if (handles)
+    {
+        for (long i = 0; i < totalFiles; ++i)
+        {
+            if (!handles[i].pfe) continue;
+            const char* name = handles[i].pfe->name;
+            size_t len = std::strlen(name);
+            // Check for ".tgl" suffix (case-insensitive enough — all are lower in the fst).
+            if (len >= 4 &&
+                (name[len-4] == '.' &&
+                 (name[len-3] == 't' || name[len-3] == 'T') &&
+                 (name[len-2] == 'g' || name[len-2] == 'G') &&
+                 (name[len-1] == 'l' || name[len-1] == 'L')))
+            {
+                if (tglCount == 0) firstTglName = name;
+                ++tglCount;
+            }
+        }
+    }
+
+    if (totalFiles <= 0)
+    {
+        std::fprintf(stderr, "[smoke] FAIL tgl-load: tgl.fst has 0 entries\n");
+        return 1;
+    }
+    if (tglCount == 0)
+    {
+        std::fprintf(stderr, "[smoke] FAIL tgl-load: no .tgl entries in tgl.fst (total=%ld)\n", totalFiles);
+        return 1;
+    }
+
+    std::printf("[smoke] tgl.fst files=%ld  tgl=%ld  first='%s'\n",
+        totalFiles, tglCount, firstTglName ? firstTglName : "(null)");
+
+    // --- 4. LoadBinaryCopy the first .tgl found. ---
+    TG_TypeMultiShape ms;
+    long rc = ms.LoadBinaryCopy(firstTglName);
+    if (rc != 0)
+    {
+        std::fprintf(stderr, "[smoke] FAIL tgl-load: LoadBinaryCopy('%s') returned %ld\n",
+            firstTglName, rc);
+        return 1;
+    }
+
+    long numShapes = ms.GetNumShapes();
+    if (numShapes <= 0)
+    {
+        std::fprintf(stderr, "[smoke] FAIL tgl-load: GetNumShapes()=%ld\n", numShapes);
+        return 1;
+    }
+
+    // --- 5. Walk shapes, find one with geometry. ---
+    TG_TypeShape* geomShape = nullptr;
+    for (long i = 0; i < numShapes; ++i)
+    {
+        TG_TypeNodePtr node = ms.GetTypeNode(i);
+        if (!node) continue;
+        TG_TypeShape* s = dynamic_cast<TG_TypeShape*>(node);
+        if (s && s->GetNumTypeVertices() > 0)
+        {
+            geomShape = s;
+            break;
+        }
+    }
+
+    if (!geomShape)
+    {
+        std::fprintf(stderr, "[smoke] FAIL tgl-load: no TG_TypeShape with verts in '%s'\n", firstTglName);
+        return 1;
+    }
+
+    int  numV = geomShape->GetNumTypeVertices();
+    long numT = geomShape->GetNumTypeTriangles();
+
+    if (numV <= 0)
+    {
+        std::fprintf(stderr, "[smoke] FAIL tgl-load: verts=%d\n", numV);
+        return 1;
+    }
+    if (numT <= 0)
+    {
+        std::fprintf(stderr, "[smoke] FAIL tgl-load: tris=%ld\n", numT);
+        return 1;
+    }
+
+    // --- 6. Read texture name from triangle 0. ---
+    const TG_TypeTriangle* tris = geomShape->GetTypeTriangles();
+    char texBuf[256] = {0};
+    ms.GetTextureName(tris[0].localTextureHandle, texBuf, (long)sizeof(texBuf));
+    if (texBuf[0] == '\0')
+    {
+        std::fprintf(stderr, "[smoke] FAIL tgl-load: texture name empty for tri[0].localTextureHandle=%lu\n",
+            (unsigned long)tris[0].localTextureHandle);
+        return 1;
+    }
+
+    std::printf("[smoke] PASS tgl-load files=%ld tgl=%ld shape0 v=%d t=%ld tex=%s\n",
+        totalFiles, tglCount, numV, numT, texBuf);
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// runSmokeMeshRender — Task 2 GL gate: MeshPreview3D renders a prop; model
+// must be distinct from background. Requires GL 3.3 + a real deploy dir.
+// ---------------------------------------------------------------------------
+#include "MeshPreview3D.h"
+
+int AssetViewerApp::runSmokeMeshRender(const char* deployDir)
+{
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+        std::fprintf(stderr, "[smoke] FAIL mesh-render: SDL_Init: %s\n", SDL_GetError());
+        return 1;
+    }
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_Window* win = SDL_CreateWindow("smoke-mesh-render", 0, 0, 64, 64,
+        SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+    if (!win) {
+        SDL_Quit();
+        std::fprintf(stderr, "[smoke] FAIL mesh-render: hidden window: %s\n", SDL_GetError());
+        return 1;
+    }
+    SDL_GLContext gl = SDL_GL_CreateContext(win);
+    if (!gl) {
+        SDL_DestroyWindow(win); SDL_Quit();
+        std::fprintf(stderr, "[smoke] FAIL mesh-render: gl context: %s\n", SDL_GetError());
+        return 1;
+    }
+    SDL_GL_MakeCurrent(win, gl);
+    glewExperimental = GL_TRUE;
+    if (glewInit() != GLEW_OK) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        std::fprintf(stderr, "[smoke] FAIL mesh-render: glewInit\n");
+        return 1;
+    }
+    glGetError(); // consume glew's spurious error
+
+    const int W = 256, H = 256;
+    int rc = 0;
+    {
+        MeshPreview3D p;
+        p.setDeployDir(deployDir);
+        p.setSource("data/tgl/2civliving.tgl");
+
+        std::vector<uint8_t> rgba;
+        if (!p.renderToPixels(W, H, rgba)) {
+            std::fprintf(stderr, "[smoke] FAIL mesh-render: renderToPixels (init/FBO/shader failed)\n");
+            rc = 1;
+        }
+
+        if (rc == 0) {
+            GLenum e = glGetError();
+            if (e != GL_NO_ERROR) {
+                std::fprintf(stderr, "[smoke] FAIL mesh-render: glGetError 0x%x\n", (unsigned)e);
+                rc = 1;
+            }
+        }
+
+        if (rc == 0) {
+            // Center region (16x16) vs corner region (16x16 at top-left).
+            // FBO is bottom-up; pixel (x,y) is at rgba[(y*W+x)*4].
+            auto regionAvg = [&](int x0, int y0) -> long {
+                long s = 0;
+                for (int y = y0; y < y0 + 16; ++y)
+                    for (int x = x0; x < x0 + 16; ++x) {
+                        const uint8_t* px = &rgba[(y * W + x) * 4];
+                        s += px[0] + px[1] + px[2];
+                    }
+                return s / 256;
+            };
+            long center = regionAvg(W / 2 - 8, H / 2 - 8);
+            long corner = regionAvg(2, 2);
+
+            if (center == 0) {
+                std::fprintf(stderr, "[smoke] FAIL mesh-render: center all black\n");
+                rc = 1;
+            } else if (center <= corner + 12) {
+                std::fprintf(stderr,
+                    "[smoke] FAIL mesh-render: model not distinct from background (c=%ld bg=%ld)\n",
+                    center, corner);
+                rc = 1;
+            } else {
+                std::printf("[smoke] PASS mesh-render c=%ld bg=%ld glGetError clean\n", center, corner);
+            }
+        }
+    }
+
+    SDL_GL_DeleteContext(gl);
+    SDL_DestroyWindow(win);
+    SDL_Quit();
+    return rc;
+}
+
+// ---------------------------------------------------------------------------
+// runSmokeMeshBuild — Task 1 headless gate: TglMeshLoader CPU mesh extraction.
+// No GL required.
+// ---------------------------------------------------------------------------
+#include "TglMeshLoader.h"
+
+int AssetViewerApp::runSmokeMeshBuild(const char* deployDir)
+{
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+
+    // --- 1. Init FastFile via TglMeshLoader ---
+    if (!TglMeshLoader::ensureFastFile(deployDir))
+    {
+        std::fprintf(stderr, "[smoke] FAIL mesh-build: ensureFastFile('%s')\n", deployDir);
+        return 1;
+    }
+
+    // --- 2. Enumerate .tgl names ---
+    std::vector<std::string> tgls = TglMeshLoader::listTgl();
+    if (tgls.empty())
+    {
+        std::fprintf(stderr, "[smoke] FAIL mesh-build: listTgl() returned 0 entries\n");
+        return 1;
+    }
+
+    // Prefer a known prop; fall back to the first one found.
+    std::string target = tgls[0];
+    for (const auto& t : tgls)
+    {
+        if (t.find("2civliving") != std::string::npos)
+        {
+            target = t;
+            break;
+        }
+    }
+
+    std::printf("[smoke] mesh-build: loading '%s' (of %zu tgls)\n",
+        target.c_str(), tgls.size());
+
+    // --- 3. Load mesh ---
+    MeshData md = TglMeshLoader::loadMesh(target);
+    if (!md.ok)
+    {
+        std::fprintf(stderr, "[smoke] FAIL mesh-build: loadMesh error: %s\n", md.error.c_str());
+        return 1;
+    }
+
+    if (md.submeshes.empty())
+    {
+        std::fprintf(stderr, "[smoke] FAIL mesh-build: no submeshes\n");
+        return 1;
+    }
+
+    // --- 4. Validate each submesh ---
+    size_t totalVerts = 0, totalTris = 0;
+    bool hasNonEmptyTex = false;
+
+    for (size_t si = 0; si < md.submeshes.size(); ++si)
+    {
+        const SubMesh& sub = md.submeshes[si];
+
+        // Non-indexed expansion: verts.size() == idx.size()
+        if (sub.verts.size() != sub.idx.size())
+        {
+            std::fprintf(stderr,
+                "[smoke] FAIL mesh-build: sub[%zu] verts(%zu) != idx(%zu)\n",
+                si, sub.verts.size(), sub.idx.size());
+            return 1;
+        }
+
+        // Index count must be a multiple of 3 (whole triangles).
+        if (sub.idx.size() % 3 != 0)
+        {
+            std::fprintf(stderr,
+                "[smoke] FAIL mesh-build: sub[%zu] idx.size()=%zu not multiple of 3\n",
+                si, sub.idx.size());
+            return 1;
+        }
+
+        // All indices must be valid (< verts.size(), non-indexed so sequential).
+        for (size_t ii = 0; ii < sub.idx.size(); ++ii)
+        {
+            if (sub.idx[ii] >= (uint32_t)sub.verts.size())
+            {
+                std::fprintf(stderr,
+                    "[smoke] FAIL mesh-build: sub[%zu] idx[%zu]=%u >= verts.size()=%zu\n",
+                    si, ii, sub.idx[ii], sub.verts.size());
+                return 1;
+            }
+        }
+
+        if (!sub.textureName.empty()) hasNonEmptyTex = true;
+
+        totalVerts += sub.verts.size();
+        totalTris  += sub.idx.size() / 3;
+    }
+
+    if (!hasNonEmptyTex)
+    {
+        std::fprintf(stderr, "[smoke] FAIL mesh-build: no submesh has a non-empty textureName\n");
+        return 1;
+    }
+
+    // --- 5. Validate bounds are finite and bmax >= bmin ---
+    for (int a = 0; a < 3; ++a)
+    {
+        if (!std::isfinite(md.bmin[a]) || !std::isfinite(md.bmax[a]))
+        {
+            std::fprintf(stderr, "[smoke] FAIL mesh-build: non-finite bounds[%d]\n", a);
+            return 1;
+        }
+        if (md.bmax[a] < md.bmin[a])
+        {
+            std::fprintf(stderr,
+                "[smoke] FAIL mesh-build: bmax[%d]=%.3f < bmin[%d]=%.3f\n",
+                a, md.bmax[a], a, md.bmin[a]);
+            return 1;
+        }
+    }
+
+    std::printf("[smoke] PASS mesh-build subs=%zu verts=%zu tris=%zu tex0=%s\n",
+        md.submeshes.size(), totalVerts, totalTris,
+        md.submeshes[0].textureName.c_str());
     return 0;
 }
