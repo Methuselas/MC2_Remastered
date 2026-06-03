@@ -4583,11 +4583,21 @@ long TreeAppearance::update (bool animate)
 		else
 		{
 			// GPU-INSTANCE-SKIP-POOLS-1 (2026-06-03): this "full-bake" else-branch
-			// is where registered override trees actually land every frame — the
-			// gpuEligible branch above is gated by !needsFullBakeNextFrame, and the
-			// GPU light index (addLightDataStructureWithPerActorColor, 32-slot UBO)
-			// returns UINT32_MAX under forest contention, so render() invalidates
-			// and re-arms the full-bake latch perpetually. Verified A/B: this
+			// is where registered override trees land — the gpuEligible branch
+			// above is gated by !needsFullBakeNextFrame.
+			// CORRECTION (2026-06-03, recon docs/model-override-lighting-lod-recon.md):
+			// the earlier claim here — "32-slot light UBO returns UINT32_MAX under
+			// forest contention, perpetually re-arming the full-bake latch" — is
+			// STALE/FALSE. The static-prop light table is an UNBOUNDED grow-on-demand
+			// SSBO (b41baec); there is no 32-slot cap and no allocator overflow
+			// sentinel. cachedGpuLightIndex_==0xFFFFFFFF means "not yet cached / gather
+			// didn't run", NOT overflow. Registered override trees use the persistent
+			// baked-light table (MC2_LIGHTBAKE, O(1) re-ship) after frame 1. The
+			// needsFullBakeNextFrame re-arm is the LOD-swap-black guard + mission-load
+			// transient, not a lighting overflow. The forest's real cost is GPU
+			// LOD/overdraw (trees pinned LOD0, full 706k-tri at all distances), not
+			// CPU lighting. The pool-skip rationale below is independently verified and
+			// stands regardless. Verified A/B: this
 			// branch full-baking the 6×~535k-vert lush forest pegged the TGL pools
 			// to 99% (legacy), yet the trees draw via the GPU registry/substrate
 			// indirect path (buckets=227), NOT via the CPU TG_Shape::Render() that
