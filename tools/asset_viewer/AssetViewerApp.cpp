@@ -916,6 +916,101 @@ int AssetViewerApp::runSmokeTglLoad(const char* deployDir)
 }
 
 // ---------------------------------------------------------------------------
+// runSmokeMeshRender — Task 2 GL gate: MeshPreview3D renders a prop; model
+// must be distinct from background. Requires GL 3.3 + a real deploy dir.
+// ---------------------------------------------------------------------------
+#include "MeshPreview3D.h"
+
+int AssetViewerApp::runSmokeMeshRender(const char* deployDir)
+{
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+        std::fprintf(stderr, "[smoke] FAIL mesh-render: SDL_Init: %s\n", SDL_GetError());
+        return 1;
+    }
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_Window* win = SDL_CreateWindow("smoke-mesh-render", 0, 0, 64, 64,
+        SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+    if (!win) {
+        SDL_Quit();
+        std::fprintf(stderr, "[smoke] FAIL mesh-render: hidden window: %s\n", SDL_GetError());
+        return 1;
+    }
+    SDL_GLContext gl = SDL_GL_CreateContext(win);
+    if (!gl) {
+        SDL_DestroyWindow(win); SDL_Quit();
+        std::fprintf(stderr, "[smoke] FAIL mesh-render: gl context: %s\n", SDL_GetError());
+        return 1;
+    }
+    SDL_GL_MakeCurrent(win, gl);
+    glewExperimental = GL_TRUE;
+    if (glewInit() != GLEW_OK) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        std::fprintf(stderr, "[smoke] FAIL mesh-render: glewInit\n");
+        return 1;
+    }
+    glGetError(); // consume glew's spurious error
+
+    const int W = 256, H = 256;
+    int rc = 0;
+    {
+        MeshPreview3D p;
+        p.setDeployDir(deployDir);
+        p.setSource("data/tgl/2civliving.tgl");
+
+        std::vector<uint8_t> rgba;
+        if (!p.renderToPixels(W, H, rgba)) {
+            std::fprintf(stderr, "[smoke] FAIL mesh-render: renderToPixels (init/FBO/shader failed)\n");
+            rc = 1;
+        }
+
+        if (rc == 0) {
+            GLenum e = glGetError();
+            if (e != GL_NO_ERROR) {
+                std::fprintf(stderr, "[smoke] FAIL mesh-render: glGetError 0x%x\n", (unsigned)e);
+                rc = 1;
+            }
+        }
+
+        if (rc == 0) {
+            // Center region (16x16) vs corner region (16x16 at top-left).
+            // FBO is bottom-up; pixel (x,y) is at rgba[(y*W+x)*4].
+            auto regionAvg = [&](int x0, int y0) -> long {
+                long s = 0;
+                for (int y = y0; y < y0 + 16; ++y)
+                    for (int x = x0; x < x0 + 16; ++x) {
+                        const uint8_t* px = &rgba[(y * W + x) * 4];
+                        s += px[0] + px[1] + px[2];
+                    }
+                return s / 256;
+            };
+            long center = regionAvg(W / 2 - 8, H / 2 - 8);
+            long corner = regionAvg(2, 2);
+
+            if (center == 0) {
+                std::fprintf(stderr, "[smoke] FAIL mesh-render: center all black\n");
+                rc = 1;
+            } else if (center <= corner + 12) {
+                std::fprintf(stderr,
+                    "[smoke] FAIL mesh-render: model not distinct from background (c=%ld bg=%ld)\n",
+                    center, corner);
+                rc = 1;
+            } else {
+                std::printf("[smoke] PASS mesh-render c=%ld bg=%ld glGetError clean\n", center, corner);
+            }
+        }
+    }
+
+    SDL_GL_DeleteContext(gl);
+    SDL_DestroyWindow(win);
+    SDL_Quit();
+    return rc;
+}
+
+// ---------------------------------------------------------------------------
 // runSmokeMeshBuild — Task 1 headless gate: TglMeshLoader CPU mesh extraction.
 // No GL required.
 // ---------------------------------------------------------------------------

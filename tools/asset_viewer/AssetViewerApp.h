@@ -31,6 +31,7 @@ public:
     static int runSmokeFitLoad(const char* fixtureDir);    // loadFit() multi-base resolution + GL upload check
     static int runSmokeTglLoad(const char* deployDir);     // headless NS3 TGL loader: FastFileInit + LoadBinaryCopy
     static int runSmokeMeshBuild(const char* deployDir);  // Task 1: TglMeshLoader CPU mesh extraction (no GL)
+    static int runSmokeMeshRender(const char* deployDir); // Task 2: MeshPreview3D GL render: model distinct from background
 private:
     FileBrowser browser_;
     AssetTypeSidebar sidebar_;

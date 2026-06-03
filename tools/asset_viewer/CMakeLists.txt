@@ -154,6 +154,9 @@ set(ASSET_VIEWER_SOURCES
     MaterialPreviewPBR.cpp
     MaterialSlots.cpp
     FitMaterialLoader.cpp
+    # Task 2: mesh GPU upload + 3D preview
+    MeshGpu.cpp
+    MeshPreview3D.cpp
     # remaining sources added in later tasks
     TextureExtensions.cpp
     TextureMetadata.cpp
