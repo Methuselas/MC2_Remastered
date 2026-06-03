@@ -188,7 +188,8 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
     s << "    \"spBuildFallback\": " << snap.spBuildFallback << ",\n";
     s << "    \"spBuildCountMismatch\": " << snap.spBuildCountMismatch << ",\n";
     s << "    \"spBuildPacketMismatch\": " << snap.spBuildPacketMismatch << ",\n";
-    s << "    \"spBuildMetaMismatch\": " << snap.spBuildMetaMismatch << "\n";
+    s << "    \"spBuildMetaMismatch\": " << snap.spBuildMetaMismatch << ",\n";
+    s << "    \"spBuildRetired\": " << snap.spBuildRetired << "\n";
     s << "  },\n";
     s << "  \"renderPasses\": {\n";
     s << "    \"shadow\": "; b(s, ps.shadow); s << ",\n";

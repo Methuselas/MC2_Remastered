@@ -544,9 +544,10 @@ void batcher_getSnapCullStats(uint32_t* skipped, uint32_t* active, uint32_t* slo
 // packetMismatch: DrawPacket field divergence count (accumulated per-slot).
 // metaMismatch:   DispatchMeta field divergence count (accumulated per-slot).
 // fallback:       gate enabled/attempted but snapshot arrays not dispatched this flush.
+// retired:        v8: 1 when live builder + compare retired this flush (sole-owner).
 void batcher_getSnapshotBuildStats(uint32_t* attempted, uint32_t* countMismatch,
                                    uint32_t* packetMismatch, uint32_t* metaMismatch,
-                                   uint32_t* fallback);
+                                   uint32_t* fallback, uint32_t* retired = nullptr);
 
 // DEBUG-STATE-DUMP-1: read-only StaticPropOpaque visual/debug state.
 struct StaticPropOpaqueDebugState {

@@ -136,6 +136,7 @@ static uint32_t s_spBuildCountMismatch  = 0u;
 static uint32_t s_spBuildPacketMismatch = 0u;
 static uint32_t s_spBuildMetaMismatch   = 0u;
 static uint32_t s_spBuildFallback       = 0u;
+static uint32_t s_spBuildRetired       = 0u;  // v8: 1 when live builder + compare retired this flush
 // Latched on first fallback; never reset. Guards the first-occurrence log line.
 static bool s_spBuildFirstFallbackLogged = false;
 // Latched on first snap-cull collision; never reset. Guards the one-shot collision log line.
@@ -7245,13 +7246,14 @@ void batcher_getSnapCullStats(uint32_t* skipped, uint32_t* active, uint32_t* slo
 
 void batcher_getSnapshotBuildStats(uint32_t* attempted, uint32_t* countMismatch,
                                    uint32_t* packetMismatch, uint32_t* metaMismatch,
-                                   uint32_t* fallback)
+                                   uint32_t* fallback, uint32_t* retired)
 {
     if (attempted)      *attempted      = s_spBuildAttempted;
     if (countMismatch)  *countMismatch  = s_spBuildCountMismatch;
     if (packetMismatch) *packetMismatch = s_spBuildPacketMismatch;
     if (metaMismatch)   *metaMismatch   = s_spBuildMetaMismatch;
     if (fallback)       *fallback       = s_spBuildFallback;
+    if (retired)        *retired        = s_spBuildRetired;
 }
 
 uint32_t batcher_getPerTypePeakCount(uint32_t typeID) {

@@ -376,13 +376,14 @@ RenderSnapshot ExtractRenderSnapshot()
 
     // v3: read snapshot build stats from the most recent flush().
     {
-        uint32_t attempted = 0u, countMis = 0u, pktMis = 0u, metaMis = 0u, fallback = 0u;
-        batcher_getSnapshotBuildStats(&attempted, &countMis, &pktMis, &metaMis, &fallback);
+        uint32_t attempted = 0u, countMis = 0u, pktMis = 0u, metaMis = 0u, fallback = 0u, retired = 0u;
+        batcher_getSnapshotBuildStats(&attempted, &countMis, &pktMis, &metaMis, &fallback, &retired);
         snap.spBuildAttempted      = attempted;
         snap.spBuildCountMismatch  = countMis;
         snap.spBuildPacketMismatch = pktMis;
         snap.spBuildMetaMismatch   = metaMis;
         snap.spBuildFallback       = fallback;
+        snap.spBuildRetired        = retired;
     }
 
     // Sync arenaOverflow from FrameArena (definitive; explicit sets above are belt+suspenders).
@@ -404,6 +405,7 @@ RenderSnapshot ExtractRenderSnapshot()
                snap.spMaterialIdxMismatch      == 0u &&
                snap.spTexLayerMismatch         == 0u &&
                snap.spSnapCullSlotMismatch     == 0u &&
+               // v8: spBuild*Mismatch are 0 when spBuildRetired==1 (no compare) — gate stays valid.
                snap.spBuildCountMismatch       == 0u &&
                snap.spBuildPacketMismatch      == 0u &&
                snap.spBuildMetaMismatch        == 0u &&
