@@ -325,7 +325,39 @@ void MeshPreview3D::renderScene(int w, int h) {
 // draw (ImGui path)
 // ---------------------------------------------------------------------------
 void MeshPreview3D::draw(const ImVec2& availableSize) {
-    int w = (int)availableSize.x, h = (int)availableSize.y;
+    // -----------------------------------------------------------------------
+    // Controls strip (parity with Materials mode)
+    // -----------------------------------------------------------------------
+    ImGui::SeparatorText("View");
+    ImGui::SliderFloat("Orbit yaw",   &yaw_,   -3.14159f, 3.14159f);
+    ImGui::SliderFloat("Orbit pitch", &pitch_, -1.5f, 1.5f);
+    ImGui::SliderFloat("Zoom",        &dist_,   0.05f, 50.0f);
+    ImGui::SeparatorText("Light");
+    ImGui::SliderFloat3("Light dir", lightDir_, -1.0f, 1.0f);
+    if (ImGui::Button("Reset view")) {
+        yaw_   = 0.6f;
+        pitch_ = 0.35f;
+        // Re-frame dist_ from current bounds (same formula as setSource).
+        const float* bmin = mesh_.bmin();
+        const float* bmax = mesh_.bmax();
+        float dx = bmax[0] - bmin[0];
+        float dy = bmax[1] - bmin[1];
+        float dz = bmax[2] - bmin[2];
+        float radius = 0.5f * std::sqrt(dx*dx + dy*dy + dz*dz);
+        if (radius < 0.01f) radius = 0.01f;
+        dist_ = 1.6f * radius;
+    }
+    ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
+        "Local preview — not exact MC2 shader");
+    ImGui::Separator();
+
+    // Subtract controls height from available size for the 3D viewport.
+    ImVec2 vpSize = availableSize;
+    float usedH = ImGui::GetCursorPos().y - ImGui::GetWindowContentRegionMin().y;
+    if (usedH > 0.0f && vpSize.y > usedH + 16.0f)
+        vpSize.y -= usedH;
+
+    int w = (int)vpSize.x, h = (int)vpSize.y;
     if (w < 16) w = 16; if (h < 16) h = 16;
     ensureGL(w, h);
 
@@ -346,8 +378,26 @@ void MeshPreview3D::draw(const ImVec2& availableSize) {
     ImGui::Image((ImTextureID)(intptr_t)colorTex_,
                  ImVec2((float)w, (float)h),
                  ImVec2(0, 1), ImVec2(1, 0));
-    ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
-        "Local preview — not exact MC2 shader");
+
+    // -----------------------------------------------------------------------
+    // Mouse orbit + zoom (active while hovered over the Image above)
+    // -----------------------------------------------------------------------
+    if (ImGui::IsItemHovered()) {
+        ImGuiIO& io = ImGui::GetIO();
+        if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+            yaw_   += io.MouseDelta.x * 0.01f;
+            if (yaw_ >  3.14159f) yaw_ -= 6.28318f;     // wrap to slider range [-pi,pi]
+            if (yaw_ < -3.14159f) yaw_ += 6.28318f;
+            pitch_ += io.MouseDelta.y * 0.01f;
+            const float lim = 1.55f;
+            if (pitch_ >  lim) pitch_ =  lim;
+            if (pitch_ < -lim) pitch_ = -lim;
+        }
+        if (io.MouseWheel != 0.0f) {
+            dist_ *= (1.0f - io.MouseWheel * 0.1f);
+            if (dist_ < 0.05f) dist_ = 0.05f;
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
