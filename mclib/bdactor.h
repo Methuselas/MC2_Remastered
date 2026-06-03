@@ -475,7 +475,12 @@ class TreeAppearanceType : public AppearanceType
 		// MODEL-OVERRIDE dual-shape (Slice 2): nullable type-level render shape.
 		// NULL = no override → render falls back to stock treeShape[lod].
 		// Collision/damage NEVER read this; they read treeShape[lod] directly.
-		TG_TypeMultiShapePtr		treeRenderShape;
+		// TREE-OVERRIDE-LOD-MVP Task 1: per-LOD render chain. treeRenderShape[0]
+		// is the override LOD0 (was the single member); higher indices hold
+		// auto/offline-generated lower LODs (populated in Task 3+). All NULL =
+		// no override. treeRenderShapeLodCount = number of populated LODs.
+		TG_TypeMultiShapePtr		treeRenderShape[MAX_LODS];
+		long						treeRenderShapeLodCount;
 
 		TG_TypeMultiShapePtr		treeDmgShape;
 		
@@ -496,7 +501,10 @@ class TreeAppearanceType : public AppearanceType
 			for (i=0;i<MAX_BD_ANIMATIONS;i++)
 				treeAnimData[i] = NULL;
 
-			treeRenderShape = NULL;   // MODEL-OVERRIDE dual-shape: no override by default
+			// TREE-OVERRIDE-LOD-MVP Task 1: no override by default; all LODs NULL.
+			for (i=0;i<MAX_LODS;i++)
+				treeRenderShape[i] = NULL;
+			treeRenderShapeLodCount = 0;
 			treeDmgShape = NULL;
 		}
 	
@@ -515,9 +523,26 @@ class TreeAppearanceType : public AppearanceType
 		virtual void destroy (void);
 
 		// MODEL-OVERRIDE dual-shape accessors (mirror of BldgAppearanceType).
+		// TREE-OVERRIDE-LOD-MVP Task 1: real per-LOD indexing.
+		//  - exact override LOD if populated;
+		//  - else clamp DOWN to the highest populated override LOD <= lod
+		//    (so a request beyond the populated chain reuses the lowest-detail
+		//    override we have, never falls back to stock mid-chain);
+		//  - else (no override at all) stock treeShape[lod].
+		// NEVER returns NULL. Collision reads stock treeShape[] via
+		// getTreeCollisionShape — unchanged, LOD-independent.
 		TG_TypeMultiShape* getTreeRenderShape (long lod)
 		{
-			return treeRenderShape ? treeRenderShape : treeShape[lod];
+			if (lod < 0)        lod = 0;
+			if (lod >= MAX_LODS) lod = MAX_LODS - 1;
+			if (treeRenderShape[lod])
+				return treeRenderShape[lod];
+			// clamp to the highest populated override LOD <= lod
+			for (long i = lod - 1; i >= 0; --i)
+				if (treeRenderShape[i])
+					return treeRenderShape[i];
+			// no override populated for this or any lower index → stock
+			return treeShape[lod];
 		}
 		TG_TypeMultiShape* getTreeCollisionShape (long lod) { return treeShape[lod]; }
 };
@@ -545,7 +570,13 @@ class TreeAppearance : public ObjectAppearance
 			// 2026-05-11: see BldgAppearance::StaticRegistration::lightDataIndex.
 			uint32_t         lightDataIndex = 0xFFFFFFFFu;
 		};
-		StaticRegistration							staticReg;
+		// TREE-OVERRIDE-LOD-MVP Task 2: per-LOD static registration. Each
+		// populated render LOD owns its own recipe + permanent baked light slot,
+		// registered before finalizeGeometry. activeLOD selects which tuple the
+		// per-frame replay path uses; pinned 0 in Tasks 1-4 (distance selection
+		// arrives in Task 5) so behavior == single-LOD today.
+		StaticRegistration							staticReg[MAX_LODS];
+		long										activeLOD;
 
 		float										hazeFactor;
 		float										pitch;

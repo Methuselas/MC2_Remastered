@@ -3784,7 +3784,10 @@ void TreeAppearanceType::init (const char * fileName)
 		if (ov)
 		{
 #ifdef ENABLE_ASSIMP_IMPORTER
-			treeRenderShape = new TG_TypeMultiShape;
+			// TREE-OVERRIDE-LOD-MVP Task 1: the existing import fills LOD0 only.
+			// Higher LODs stay NULL until Task 3 populates them; LOD0-only ⇒
+			// getTreeRenderShape(any) → LOD0 → identical to pre-LOD behavior.
+			treeRenderShape[0] = new TG_TypeMultiShape;
 			char overridePath[1024];
 			snprintf(overridePath, sizeof(overridePath), "%s/%s",
 			         ModelOverrideRegistry::instance().manifestDir().c_str(),
@@ -3794,10 +3797,11 @@ void TreeAppearanceType::init (const char * fileName)
 			// non-exception-safe engine code, so collapse any throw to stock.
 			try
 			{
-				long r = ImportGeometryFromFile(overridePath, treeRenderShape);
-				if (r != 0 || treeRenderShape->GetNumShapes() == 0)
+				long r = ImportGeometryFromFile(overridePath, treeRenderShape[0]);
+				if (r != 0 || treeRenderShape[0]->GetNumShapes() == 0)
 				{
-					delete treeRenderShape; treeRenderShape = NULL;   // stock fallback
+					delete treeRenderShape[0]; treeRenderShape[0] = NULL;   // stock fallback
+					treeRenderShapeLodCount = 0;
 					fprintf(stderr, "[MODOVERRIDE] tree '%s': import failed (%s), using stock render\n",
 					        treeBaseName, overridePath);
 					fflush(stderr);
@@ -3808,12 +3812,14 @@ void TreeAppearanceType::init (const char * fileName)
 					// / SetFilter(true) at the stock LOD-load sites above, ~3464/3490)
 					// so the override renders with identical alpha-test/filter state.
 					// Intentional duplication — keep in sync with the stock sites.
-					treeRenderShape->SetAlphaTest(true);
-					treeRenderShape->SetFilter(true);
+					treeRenderShape[0]->SetAlphaTest(true);
+					treeRenderShape[0]->SetFilter(true);
 					// MODEL-OVERRIDE texture binding: resolve the importer-assigned
 					// texture names to GOS handles on the TYPE render shape so the
 					// GPU batcher draws with the override's OWN textures.
-					LoadOverrideRenderShapeTextures(treeRenderShape);
+					LoadOverrideRenderShapeTextures(treeRenderShape[0]);
+					// TREE-OVERRIDE-LOD-MVP Task 1: LOD0 populated.
+					treeRenderShapeLodCount = 1;
 					fprintf(stderr, "[MODOVERRIDE] tree '%s': render override applied (%s)\n",
 					        treeBaseName, overridePath);
 					fflush(stderr);
@@ -3821,7 +3827,8 @@ void TreeAppearanceType::init (const char * fileName)
 			}
 			catch (...)
 			{
-				delete treeRenderShape; treeRenderShape = NULL;   // stock fallback
+				delete treeRenderShape[0]; treeRenderShape[0] = NULL;   // stock fallback
+				treeRenderShapeLodCount = 0;
 				fprintf(stderr, "[MODOVERRIDE] tree '%s': import threw (%s), using stock render\n",
 				        treeBaseName, overridePath);
 				fflush(stderr);
@@ -3877,12 +3884,17 @@ void TreeAppearanceType::destroy (void)
 		}
 	}
 
-	// MODEL-OVERRIDE dual-shape: free the render override shape if loaded.
-	if (treeRenderShape)
+	// MODEL-OVERRIDE dual-shape: free every populated render override LOD.
+	// TREE-OVERRIDE-LOD-MVP Task 1: per-LOD chain.
+	for (long i = 0; i < MAX_LODS; i++)
 	{
-		delete treeRenderShape;
-		treeRenderShape = NULL;
+		if (treeRenderShape[i])
+		{
+			delete treeRenderShape[i];
+			treeRenderShape[i] = NULL;
+		}
 	}
+	treeRenderShapeLodCount = 0;
 
 	if (treeDmgShape)
 	{
@@ -3932,7 +3944,10 @@ void TreeAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
     // Slice 2 (object-offload) substrate flag; set true by GPU batcher on late
     // registration to force a full TransformMultiShape next frame.
     needsFullBakeNextFrame = false;
-    staticReg = {};  // Stage 3.C: zero-init StaticRegistration
+    // TREE-OVERRIDE-LOD-MVP Task 2: zero-init per-LOD static registration.
+    for (long _l = 0; _l < MAX_LODS; ++_l)
+        staticReg[_l] = StaticRegistration{};
+    activeLOD = 0;  // pinned 0 until Task 5 adds distance selection
     treeShape = NULL;
     //
 
@@ -4040,8 +4055,15 @@ void TreeAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 		// GPU static-prop batcher: register the RENDER shape (override-or-stock)
 		// so override geometry actually rasterizes (see BldgAppearance reg site
 		// for the s_typeIndex rationale). Damage stays stock (out of MVP).
-		const bool _treeIsOverride = (appearType->treeRenderShape != nullptr);
-		for (int i = 0; i < MAX_LODS; ++i)
+		// TREE-OVERRIDE-LOD-MVP M-C: for override types iterate ONLY populated
+		// LODs (treeRenderShapeLodCount) so we register each distinct override
+		// LOD shape once — NOT MAX_LODS times (which would upload LOD0 3× since
+		// getTreeRenderShape clamps unpopulated indices back to LOD0). Stock
+		// types keep the full MAX_LODS loop: getTreeRenderShape(i) returns the
+		// distinct stock treeShape[i] per LOD, all of which must register.
+		const bool _treeIsOverride = (appearType->treeRenderShapeLodCount > 0);
+		const int _treeRegLods = _treeIsOverride ? (int)appearType->treeRenderShapeLodCount : MAX_LODS;
+		for (int i = 0; i < _treeRegLods; ++i)
 			GpuStaticPropBatcher::instance().registerMultiShape(appearType->getTreeRenderShape(i), _treeIsOverride);
 		GpuStaticPropBatcher::instance().registerMultiShape(appearType->treeDmgShape);
 	}
@@ -4311,8 +4333,10 @@ long TreeAppearance::render (long depthFixup)
 					// Fall through to the if (!submittedToGpu && treeShape) dynamic path below.
 				} else {
 					// 2026-05-11: see BldgAppearance::render markVisible site.
-					GpuStaticPropRegistry::markVisible(staticReg.recipeIndex,
-					                                  staticReg.lightDataIndex,
+					// TREE-OVERRIDE-LOD-MVP Task 2: replay the active LOD's recipe +
+					// light slot (activeLOD pinned 0 → identical to single-LOD today).
+					GpuStaticPropRegistry::markVisible(staticReg[activeLOD].recipeIndex,
+					                                  staticReg[activeLOD].lightDataIndex,
 					                                  treeShape ? treeShape->GetExtentRadius() : 0.0f);
 					// [LIGHTSLOT v1] Task 0: registered static-replay trees record
 					// their per-frame slot here (the steady-state path) so the
@@ -4320,8 +4344,8 @@ long TreeAppearance::render (long depthFixup)
 					// full-bake instances.
 					mc2_lightslot_trace::recordInstance(
 						appearType,
-						appearType && appearType->treeRenderShape != nullptr,
-						staticReg.lightDataIndex);
+						appearType && appearType->treeRenderShapeLodCount > 0,
+						staticReg[activeLOD].lightDataIndex);
 					submittedToGpu = true;
 				}
 			}
@@ -4336,7 +4360,10 @@ long TreeAppearance::render (long depthFixup)
 				// analysis, LOD-swap-driven invalidate+re-register on trees was
 				// running tens of times per frame, leaking recipe slots and
 				// pin-count churn. Tracy zone makes the rate visible per-frame.
-				if (staticReg.registered && staticReg.shape != treeShape) {
+				// TREE-OVERRIDE-LOD-MVP Task 2: the dynamic recovery path only ever
+				// deals with the live LOD0 render-instance (treeShape); key on the
+				// active LOD tuple (activeLOD pinned 0).
+				if (staticReg[activeLOD].registered && staticReg[activeLOD].shape != treeShape) {
 					invalidateStaticRegistration();
 				}
 
@@ -4356,7 +4383,7 @@ long TreeAppearance::render (long depthFixup)
 				// submission with no late-reg flag, snapshot the leaf batch into the
 				// registry. Subsequent frames use the static path above.
 				// Pass treeShape as multi so flush() can patch lightDataIndex each frame.
-				if (submittedToGpu && !staticReg.registered
+				if (submittedToGpu && !staticReg[activeLOD].registered
 				        && GpuStaticPropRegistry::isEnabled()
 				        && !needsFullBakeNextFrame) {
 					const auto& batch =
@@ -4365,10 +4392,10 @@ long TreeAppearance::render (long depthFixup)
 					int32_t legacyIdx = -1;
 					(void)GameAdapters::StaticProp::syncStaticProp(
 						treeShape, batch.data(), batch.size(), &legacyIdx);
-					staticReg.recipeIndex = legacyIdx;
-					staticReg.registered  = (staticReg.recipeIndex >= 0);
-					staticReg.shape        = treeShape;
-					if (staticReg.registered) {
+					staticReg[activeLOD].recipeIndex = legacyIdx;
+					staticReg[activeLOD].registered  = (staticReg[activeLOD].recipeIndex >= 0);
+					staticReg[activeLOD].shape        = treeShape;
+					if (staticReg[activeLOD].registered) {
 						// H4 follow-up (2026-05-07): per-frame re-registration
 						// after LOD/shape swap has the same lightData_ gap as
 						// mission-load registerStatic(). Force one full update()
@@ -4648,14 +4675,14 @@ long TreeAppearance::update (bool animate)
 		{
 			// Stage 2.D.2 fix: cache GPU light data while lights are per-actor-correct.
 			{
-				mc2CacheOrBakeStaticGpuLight(treeShape, staticReg.registered, staticReg.recipeIndex);
+				mc2CacheOrBakeStaticGpuLight(treeShape, staticReg[activeLOD].registered, staticReg[activeLOD].recipeIndex);
 				// 2026-05-11 per-instance capture (mirror of BldgAppearance::update).
-				staticReg.lightDataIndex = treeShape->getCachedGpuLightIndex();
+				staticReg[activeLOD].lightDataIndex = treeShape->getCachedGpuLightIndex();
 				// [LIGHTSLOT v1] Task 0 cardinality gate (diagnostic only).
 				mc2_lightslot_trace::recordInstance(
 					appearType,
-					appearType && appearType->treeRenderShape != nullptr,
-					staticReg.lightDataIndex);
+					appearType && appearType->treeRenderShapeLodCount > 0,
+					staticReg[activeLOD].lightDataIndex);
 			}
 			{
 				// GPU-INSTANCE-SKIP-POOLS-1 (2026-06-03): gpuEligible already
@@ -4719,16 +4746,16 @@ long TreeAppearance::update (bool animate)
 			// Seed cachedGpuLightIndex_ in the full-bake branch so the
 			// next render() doesn't fail the UINT32_MAX gate at :4341
 			// and invalidate the freshly-set staticReg.
-			mc2CacheOrBakeStaticGpuLight(treeShape, staticReg.registered, staticReg.recipeIndex);
+			mc2CacheOrBakeStaticGpuLight(treeShape, staticReg[activeLOD].registered, staticReg[activeLOD].recipeIndex);
 			// 2026-05-11 per-instance capture (mirror of gpuEligible branch).
-			staticReg.lightDataIndex = treeShape->getCachedGpuLightIndex();
+			staticReg[activeLOD].lightDataIndex = treeShape->getCachedGpuLightIndex();
 			// [LIGHTSLOT v1] Task 0 cardinality gate (diagnostic only). This is
 			// the branch registered override trees actually land in (gpuEligible
 			// above is gated by !needsFullBakeNextFrame).
 			mc2_lightslot_trace::recordInstance(
 				appearType,
-				appearType && appearType->treeRenderShape != nullptr,
-				staticReg.lightDataIndex);
+				appearType && appearType->treeRenderShapeLodCount > 0,
+				staticReg[activeLOD].lightDataIndex);
 			needsFullBakeNextFrame = false;
 		}
 
@@ -4868,8 +4895,11 @@ void TreeAppearance::markLOS (bool clearIt)
 
 bool TreeAppearance::IsStaticNow() const
 {
-	return staticReg.registered
-		&& staticReg.shape == treeShape
+	// TREE-OVERRIDE-LOD-MVP Task 2: the live per-instance render shape is the
+	// active LOD's shape (LOD0 today; activeLOD pinned 0). The shape-key check
+	// guards against treeShape reassignment (LOD/damage swaps).
+	return staticReg[activeLOD].registered
+		&& staticReg[activeLOD].shape == treeShape
 		&& !needsFullBakeNextFrame;
 }
 
@@ -4890,51 +4920,62 @@ void TreeAppearance::touch()
 		extern bool mc2GetBakedStaticLight(int32_t, TG_HWLightsData&);
 		TG_HWLightsData baked;
 		if (mc2LightBakeEnabled()
-		    && staticReg.registered && staticReg.recipeIndex >= 0
-		    && mc2GetBakedStaticLight(staticReg.recipeIndex, baked)) {
-			treeShape->EmitBakedGpuLightData(staticReg.recipeIndex, baked);
+		    && staticReg[activeLOD].registered && staticReg[activeLOD].recipeIndex >= 0
+		    && mc2GetBakedStaticLight(staticReg[activeLOD].recipeIndex, baked)) {
+			treeShape->EmitBakedGpuLightData(staticReg[activeLOD].recipeIndex, baked);
 		} else {
 			treeShape->ResubmitCachedGpuLightData();
 		}
 		// 2026-05-11 per-instance capture: see BldgAppearance::touch.
-		staticReg.lightDataIndex = treeShape->getCachedGpuLightIndex();
+		staticReg[activeLOD].lightDataIndex = treeShape->getCachedGpuLightIndex();
 		treeShape->Touch();
 	}
 }
 
 void TreeAppearance::invalidateStaticRegistration()
 {
-	if (staticReg.registered && staticReg.recipeIndex >= 0)
-		GameAdapters::StaticProp::destroyStaticPropByIndex(staticReg.recipeIndex);
-	staticReg = {};
+	// TREE-OVERRIDE-LOD-MVP Task 2: tear down every registered LOD recipe.
+	for (long lod = 0; lod < MAX_LODS; ++lod) {
+		if (staticReg[lod].registered && staticReg[lod].recipeIndex >= 0)
+			GameAdapters::StaticProp::destroyStaticPropByIndex(staticReg[lod].recipeIndex);
+		staticReg[lod] = StaticRegistration{};
+	}
 }
 
 // Task 5 (Track B): mission-load bulk static-prop registration (mirror of
 // BldgAppearance::registerStatic). HC-1: writes directly to typed staticReg.
 void TreeAppearance::registerStatic() {
 	const bool seamProbe = (getenv("MC2_MODOVERRIDE_TRACE") != nullptr)
-		&& appearType && appearType->treeRenderShape;
+		&& appearType && appearType->treeRenderShape[0];
 	if (seamProbe)
 		fprintf(stderr, "[SEAMPROBE] tree registerStatic ENTER name=%s registered=%d hasShape=%d enabled=%d renderShape=%p\n",
-			appearType->name, (int)staticReg.registered, (int)(treeShape!=NULL),
-			(int)GpuStaticPropRegistry::isEnabled(), (void*)appearType->treeRenderShape), fflush(stderr);
-	if (staticReg.registered) return;
-	if (!treeShape)           return;
+			appearType->name, (int)staticReg[0].registered, (int)(treeShape!=NULL),
+			(int)GpuStaticPropRegistry::isEnabled(), (void*)appearType->treeRenderShape[0]), fflush(stderr);
+	// TREE-OVERRIDE-LOD-MVP Task 2: registered-state is now per-LOD. LOD0 is
+	// the canonical "already done" gate (it always exists — override or stock).
+	if (staticReg[0].registered) return;
+	if (!treeShape)              return;
 	if (!GpuStaticPropRegistry::isEnabled()) return;
 
 	// MODEL-OVERRIDE: register render-shape geometry before finalizeGeometry
 	// (see BldgAppearance::registerStatic for full rationale — late init() reg
 	// otherwise drops ~1k override trees to the CPU first-render path).
-	const bool _treeRegIsOverride = (appearType->treeRenderShape != nullptr);
-	for (int i = 0; i < MAX_LODS; ++i)
+	// TREE-OVERRIDE-LOD-MVP M-C: for override types iterate ONLY populated LODs
+	// (each distinct override LOD shape uploaded once); stock types keep the
+	// full MAX_LODS loop (distinct stock treeShape[i] per LOD).
+	const bool _treeRegIsOverride = (appearType->treeRenderShapeLodCount > 0);
+	const int  _treeRegLods = _treeRegIsOverride
+		? (int)appearType->treeRenderShapeLodCount : MAX_LODS;
+	for (int i = 0; i < _treeRegLods; ++i)
 		GpuStaticPropBatcher::instance().registerMultiShape(appearType->getTreeRenderShape(i), _treeRegIsOverride);
 
-	if (getenv("MC2_MODOVERRIDE_TRACE") && appearType->treeRenderShape) {
-		TG_TypeMultiShape* rs = appearType->treeRenderShape;
-		fprintf(stderr, "[MODOVERRIDE_TRACE] tree registerStatic name=%s renderShape=%p numShapes=%ld leaf0=%p leaf1=%p\n",
+	if (getenv("MC2_MODOVERRIDE_TRACE") && appearType->treeRenderShape[0]) {
+		TG_TypeMultiShape* rs = appearType->treeRenderShape[0];
+		fprintf(stderr, "[MODOVERRIDE_TRACE] tree registerStatic name=%s renderShape=%p numShapes=%ld leaf0=%p leaf1=%p lodCount=%ld\n",
 		        appearType->name, (void*)rs, rs->GetNumShapes(),
 		        rs->GetNumShapes() > 0 ? (void*)rs->GetTypeNode(0) : nullptr,
-		        rs->GetNumShapes() > 1 ? (void*)rs->GetTypeNode(1) : nullptr);
+		        rs->GetNumShapes() > 1 ? (void*)rs->GetTypeNode(1) : nullptr,
+		        appearType->treeRenderShapeLodCount);
 		fflush(stderr);
 	}
 
@@ -4948,89 +4989,145 @@ void TreeAppearance::registerStatic() {
 	xlatPosition.x = -position.x;
 	xlatPosition.y = land ? land->getTerrainElevation(position) : 0.0f;
 	xlatPosition.z = position.y;
-	treeShape->TransformMultiShape_BuildRecipe(&xlatPosition, &rot);
 
-	// Build per-leaf recipe batch.
-	// Use public GetNumShapes()/GetShapeRec() — numTG_Shapes/listOfShapes are protected.
-	std::vector<GpuStaticPropInstance> batch;
-	const int numShapes = static_cast<int>(treeShape->GetNumShapes());
-	batch.reserve(numShapes);
-	int t_diag_total=0,t_diag_skip_pm=0,t_diag_skip_h=0,t_diag_skip_unreg=0,t_diag_added=0;
-	for (int i = 0; i < numShapes; ++i) {
-		++t_diag_total;
-		const TG_ShapeRec* rec = treeShape->GetShapeRec(i);
-		if (!rec || !rec->processMe || !rec->node) { ++t_diag_skip_pm; continue; }
-		TG_Shape* child = rec->node;
-		// 2026-05-10 fix: skip non-SHAPE_NODE helpers (mirror of submitMultiShape's
-		// filter) — see BldgAppearance::registerStatic for full rationale.
-		if (!child->IsShapeNode()) { ++t_diag_skip_h; continue; }
-		uint32_t flags = 0;
-		if (child->GetLightsOut())   flags |= (1u << 0);
-		if (child->GetIsWindow())    flags |= (1u << 1);
-		if (child->GetIsSpotlight()) flags |= (1u << 2);
-		Stuff::Matrix4D xform(rec->shapeToWorld);
-		GpuStaticPropInstance inst;
-		if (!GpuStaticPropBatcher::instance().buildRecipeFromShape(
-				child, xform,
-				static_cast<uint32_t>(child->GetARGBHighlight()),
-				static_cast<uint32_t>(child->GetFogRGB()),
-				flags, &inst)) {
-			++t_diag_skip_unreg;
+	// TREE-OVERRIDE-LOD-MVP M-A (load-bearing): build the recipe AND capture the
+	// light slot per LOD FROM getTreeRenderShape(lod)'s OWN geometry. If we only
+	// swapped recipeIndex while the recipe geometry stayed LOD0, per-LOD
+	// selection (Task 5) would draw the SAME mesh → no perf win, and the
+	// IsStaticNow shape-key would break. So each populated LOD gets its own
+	// transformed render-instance, its own buildRecipeFromShape pass, its own
+	// syncStaticProp recipe index, and (via the post-register bake re-arm) its
+	// own permanent baked light slot.
+	//
+	// LOD0 reuses the existing per-instance `treeShape` (which is
+	// CreateFrom(getTreeRenderShape(0))) so the LOD0 recipe + the IsStaticNow
+	// `staticReg[0].shape == treeShape` key are byte-identical to pre-LOD
+	// behavior. Higher LODs build from a throwaway CreateFrom(getTreeRenderShape
+	// (lod)) instance that is freed before return — its geometry already lives in
+	// the immutable per-type VBO (registered above), and only its recipe/light
+	// slot are persisted in staticReg[lod]. treeShape stays collision/bounds +
+	// LOD0 render; collision reads stock treeShape[] (untouched).
+	//
+	// M4: a buildRecipe MISS for a given LOD marks ONLY that LOD unavailable and
+	// CONTINUES — never aborts the whole instance or half-populates. LOD0 MISS
+	// still leaves staticReg[0].registered=false (first-render fallback covers
+	// it, exactly as the single-LOD abort did before).
+	bool anyRegistered = false;
+	const int lodCount = _treeRegIsOverride ? (int)appearType->treeRenderShapeLodCount : 1;
+	for (int lod = 0; lod < lodCount && lod < MAX_LODS; ++lod) {
+		// Render-instance for THIS LOD: reuse treeShape for LOD0; temp for >0.
+		TG_MultiShape* lodShape = (lod == 0)
+			? treeShape
+			: appearType->getTreeRenderShape(lod)->CreateFrom();
+		if (!lodShape) { staticReg[lod].registered = false; continue; }
+
+		lodShape->TransformMultiShape_BuildRecipe(&xlatPosition, &rot);
+
+		std::vector<GpuStaticPropInstance> batch;
+		const int numShapes = static_cast<int>(lodShape->GetNumShapes());
+		batch.reserve(numShapes);
+		int t_diag_total=0,t_diag_skip_pm=0,t_diag_skip_h=0,t_diag_skip_unreg=0,t_diag_added=0;
+		bool lodMiss = false;
+		for (int i = 0; i < numShapes; ++i) {
+			++t_diag_total;
+			const TG_ShapeRec* rec = lodShape->GetShapeRec(i);
+			if (!rec || !rec->processMe || !rec->node) { ++t_diag_skip_pm; continue; }
+			TG_Shape* child = rec->node;
+			// 2026-05-10 fix: skip non-SHAPE_NODE helpers (mirror of submitMultiShape's
+			// filter) — see BldgAppearance::registerStatic for full rationale.
+			if (!child->IsShapeNode()) { ++t_diag_skip_h; continue; }
+			uint32_t flags = 0;
+			if (child->GetLightsOut())   flags |= (1u << 0);
+			if (child->GetIsWindow())    flags |= (1u << 1);
+			if (child->GetIsSpotlight()) flags |= (1u << 2);
+			Stuff::Matrix4D xform(rec->shapeToWorld);
+			GpuStaticPropInstance inst;
+			if (!GpuStaticPropBatcher::instance().buildRecipeFromShape(
+					child, xform,
+					static_cast<uint32_t>(child->GetARGBHighlight()),
+					static_cast<uint32_t>(child->GetFogRGB()),
+					flags, &inst)) {
+				++t_diag_skip_unreg;
+				if (seamProbe)
+					fprintf(stderr, "[SEAMPROBE] tree buildRecipe MISS name=%s lod=%d leaf=%d child=%p node=%s -> LOD unavailable\n",
+						appearType->name, lod, i, (void*)child, child->getNodeName()), fflush(stderr);
+				// M4: mark THIS LOD unavailable and stop building it; do NOT
+				// abort the whole instance — other LODs still register.
+				lodMiss = true;
+				break;
+			}
 			if (seamProbe)
-				fprintf(stderr, "[SEAMPROBE] tree buildRecipe MISS name=%s leaf=%d child=%p node=%s -> ABORT\n",
-					appearType->name, i, (void*)child, child->getNodeName()), fflush(stderr);
-			return;  // unregistered type — abort; first-render fallback covers it
+				fprintf(stderr, "[SEAMPROBE] tree buildRecipe HIT name=%s lod=%d leaf=%d child=%p node=%s typeID=%u\n",
+					appearType->name, lod, i, (void*)child, child->getNodeName(), inst.typeID), fflush(stderr);
+			batch.push_back(inst);
+			++t_diag_added;
 		}
-		if (seamProbe)
-			fprintf(stderr, "[SEAMPROBE] tree buildRecipe HIT name=%s leaf=%d child=%p node=%s typeID=%u\n",
-				appearType->name, i, (void*)child, child->getNodeName(), inst.typeID), fflush(stderr);
-		batch.push_back(inst);
-		++t_diag_added;
-	}
-	{
-		static const bool s_trace = (getenv("MC2_TREE_REG_TRACE") != nullptr);
-		static int s_treeRegLogged = 0;
-		if (s_trace && s_treeRegLogged < 80) {
-			++s_treeRegLogged;
-			fprintf(stderr,
-				"[TREE_REG_DIAG v1] appearType=%s numShapes=%d total=%d pm_skip=%d "
-				"h_skip=%d unreg_skip=%d added=%d\n",
-				(appearType ? appearType->name : "<null>"),
-				numShapes, t_diag_total, t_diag_skip_pm, t_diag_skip_h,
-				t_diag_skip_unreg, t_diag_added);
-			fflush(stderr);
+		{
+			static const bool s_trace = (getenv("MC2_TREE_REG_TRACE") != nullptr);
+			static int s_treeRegLogged = 0;
+			if (s_trace && s_treeRegLogged < 80) {
+				++s_treeRegLogged;
+				fprintf(stderr,
+					"[TREE_REG_DIAG v1] appearType=%s lod=%d numShapes=%d total=%d pm_skip=%d "
+					"h_skip=%d unreg_skip=%d added=%d\n",
+					(appearType ? appearType->name : "<null>"), lod,
+					numShapes, t_diag_total, t_diag_skip_pm, t_diag_skip_h,
+					t_diag_skip_unreg, t_diag_added);
+				fflush(stderr);
+			}
+			(void)t_diag_total; (void)t_diag_skip_pm; (void)t_diag_skip_h;
+			(void)t_diag_skip_unreg; (void)t_diag_added;
 		}
-		(void)t_diag_total; (void)t_diag_skip_pm; (void)t_diag_skip_h;
-		(void)t_diag_skip_unreg; (void)t_diag_added;
-	}
-	if (batch.empty()) return;
 
-	int32_t regIdx = -1;
-	(void)GameAdapters::StaticProp::syncStaticProp(
-		treeShape, batch.data(), batch.size(), &regIdx);
-	if (seamProbe)
-		fprintf(stderr, "[SEAMPROBE] tree syncStaticProp name=%s batchSize=%zu regIdx=%d firstTypeID=%u\n",
-			appearType->name, batch.size(), (int)regIdx,
-			batch.empty()?0xFFFFFFFFu:batch[0].typeID), fflush(stderr);
-	if (regIdx >= 0) {
-		staticReg.registered  = true;
-		staticReg.shape       = treeShape;
-		staticReg.recipeIndex = regIdx;
+		int32_t regIdx = -1;
+		if (!lodMiss && !batch.empty()) {
+			(void)GameAdapters::StaticProp::syncStaticProp(
+				lodShape, batch.data(), batch.size(), &regIdx);
+			if (seamProbe)
+				fprintf(stderr, "[SEAMPROBE] tree syncStaticProp name=%s lod=%d batchSize=%zu regIdx=%d firstTypeID=%u\n",
+					appearType->name, lod, batch.size(), (int)regIdx,
+					batch.empty()?0xFFFFFFFFu:batch[0].typeID), fflush(stderr);
+		}
+		if (regIdx >= 0) {
+			staticReg[lod].registered  = true;
+			// shape key: LOD0 keys on treeShape (the live render-instance);
+			// the IsStaticNow check is LOD0-only (see IsStaticNow). Higher LODs
+			// have no live per-instance shape, so we record the type's render
+			// shape for diagnostics only — never compared at draw time.
+			staticReg[lod].shape       = (lod == 0) ? treeShape : lodShape;
+			staticReg[lod].recipeIndex = regIdx;
+			anyRegistered = true;
+		} else {
+			// M4: LOD unavailable — leave registered=false, continue.
+			staticReg[lod].registered  = false;
+		}
+
+		// Free the throwaway higher-LOD render-instance (LOD0 == treeShape, kept).
+		if (lod != 0 && lodShape) {
+			lodShape->ClearAnimation();
+			delete lodShape;
+		}
+	}
+
+	if (anyRegistered) {
 		// H4 fix (2026-05-06): see BldgAppearance::registerStatic for full
 		// rationale. registerStatic only ran TransformMultiShape_BuildRecipe
 		// (positions only); leaf TG_Shape::lightData_ is still default/zero.
 		// needsFullBakeNextFrame = true forces the first post-registration
-		// frame through full update() (populating lightData_); subsequent
-		// frames proceed via UPDATE_SKIP / static-replay with valid cached data.
+		// frame through full update() (populating lightData_) so every
+		// registered LOD recipe gets its permanent baked light slot before the
+		// first static replay; subsequent frames proceed via UPDATE_SKIP /
+		// static-replay with valid cached data.
 		// Spec: docs/superpowers/specs/2026-05-06-update-skip-touch-residual-debug-strategy.md
 		needsFullBakeNextFrame = true;
 	}
 }
 
-bool TreeAppearance::isStaticRegistered() const { return staticReg.registered; }
+// TREE-OVERRIDE-LOD-MVP Task 2: report the active LOD's registration (pinned 0).
+bool TreeAppearance::isStaticRegistered() const { return staticReg[activeLOD].registered; }
 
 int32_t TreeAppearance::getStaticRecipeIndex() const {
-    return staticReg.registered ? staticReg.recipeIndex : -1;
+    return staticReg[activeLOD].registered ? staticReg[activeLOD].recipeIndex : -1;
 }
 
 //-----------------------------------------------------------------------------
