@@ -788,6 +788,11 @@ void flush() {
              rootMtx[7],   // raw.z =  stuff.y (elev)
         };
 
+        // Task 4 (STATICPROP-REGISTRY-FLUSH-CACHED-BLOB-2A): branch on gate.
+        // Gate OFF (default): existing per-leaf rebuild runs verbatim (zero behavior change).
+        // Gate ON: bulk submit + cached actor records — no per-frame light patch, no rebuild.
+        if (!s_flushCachedBlob) {
+        // --- GATE OFF: legacy per-leaf rebuild path (verbatim, moved) ---
         // [SPFLUSH_COST_SPLIT v1] submit_loop_total span wraps the whole leaf loop
         // for this range. One span per range covering all its leaves.
         const unsigned long long _t_loop0 = s_spflushEnabled ? __rdtsc() : 0ULL;
@@ -962,6 +967,98 @@ void flush() {
         }
         // [SPFLUSH_COST_SPLIT v1] submit_loop_total span ends after all leaves of this range.
         if (s_spflushEnabled) s_w_submit_loop_total_cyc += __rdtsc() - _t_loop0;
+        } else {
+        // --- GATE ON: cached-blob flush path (Task 4, STATICPROP-REGISTRY-FLUSH-CACHED-BLOB-2A) ---
+        // 1. Instances: one bulk call. Recipes carry the permanent lightDataIndex from Task 1 —
+        //    no per-frame light patch required.
+        batcher.submitCachedInstanceRange(&s_recipes[rng.first], rng.count);
+        // 2. Per-recipe cached cull records.
+        if (gpu_cull::substrate_isEnabled()) {
+            // FNV-1a-64 hasher for compare mode (patch 8).
+            // Defined inline here; only referenced in the gate-ON path.
+            auto fnvStruct = [](const void* p, size_t n) -> uint64_t {
+                const uint8_t* data = static_cast<const uint8_t*>(p);
+                uint64_t h = 14695981039346656037ULL;
+                for (size_t k = 0; k < n; ++k) {
+                    h ^= static_cast<uint64_t>(data[k]);
+                    h *= 1099511628211ULL;
+                }
+                return h;
+            };
+            // Compare-mode counters (patch 8): per-frame, reset each range entry.
+            // Declared static so they persist across range iterations within a frame.
+            // NOTE: these accumulate across ALL ranges in a single flush() call and
+            // are printed once after the per-range loop (see below, outside this else).
+            // Actually they must be declared outside the range loop — see patch 8 block
+            // after the range loop end. Declare here as statics so they survive the loop.
+            static uint64_t s_cmp_checked   = 0;
+            static uint64_t s_cmp_mismatches = 0;
+            static uint32_t s_cmp_mismatch_cap = 0;  // per-session cap on mismatch logs
+            for (uint32_t i = 0; i < rng.count; ++i) {
+                const uint32_t ri = rng.first + i;
+                // Lazy build of the cached cull record on first flush of this recipe.
+                if (!s_cachedActorRecordValid[ri]) {
+                    buildCachedActorRecord(rng, ri, s_cachedActorRecord[ri]);
+                    s_cachedActorRecordValid[ri] = 1u;
+                }
+                gpu_cull::substrate_appendStaticPropRecord(s_cachedActorRecord[ri]);
+                ++s_diag_leaves_appended;
+                if (s_spflushEnabled) ++s_win_leaves_appended;
+                // v2: record substrate submission for this recipe (matches legacy path exactly).
+                if (regIdx < static_cast<uint32_t>(s_recipeHasSubstrateRecord.size()))
+                    s_recipeHasSubstrateRecord[regIdx] = 1u;
+                // --- patch 8: compare mode (only when s_flushCachedBlobCompare is set) ---
+                if (s_flushCachedBlobCompare) {
+                    ++s_cmp_checked;
+                    // (a) Light index: the permanent index in s_recipes[ri] MUST equal freshLightIdx.
+                    //     If they differ, the Task 1 persist has a bug or the bake hasn't run yet.
+                    const uint32_t cachedLightIdx = s_recipes[ri].lightDataIndex;
+                    if (cachedLightIdx != freshLightIdx) {
+                        if (s_cmp_mismatch_cap < 32) {
+                            ++s_cmp_mismatch_cap;
+                            fprintf(stderr,
+                                "[SPFLUSH_CACHED_COMPARE v1] event=mismatch"
+                                " recipe=%u field=inst_light"
+                                " cached_light=%u legacy_light=%u\n",
+                                ri, cachedLightIdx, freshLightIdx);
+                            fflush(stderr);
+                        }
+                        ++s_cmp_mismatches;
+                    }
+                    // (b) Actor record hash: cached vs freshly-built legacy record.
+                    gpu_cull::GpuActorRecord legacyRec{};
+                    buildCachedActorRecord(rng, ri, legacyRec);
+                    const uint64_t hashCached = fnvStruct(&s_cachedActorRecord[ri],
+                                                           sizeof(gpu_cull::GpuActorRecord));
+                    const uint64_t hashLegacy = fnvStruct(&legacyRec,
+                                                           sizeof(gpu_cull::GpuActorRecord));
+                    if (hashCached != hashLegacy) {
+                        if (s_cmp_mismatch_cap < 32) {
+                            ++s_cmp_mismatch_cap;
+                            fprintf(stderr,
+                                "[SPFLUSH_CACHED_COMPARE v1] event=mismatch"
+                                " recipe=%u field=record"
+                                " hash_cached=%llu hash_legacy=%llu\n",
+                                ri,
+                                (unsigned long long)hashCached,
+                                (unsigned long long)hashLegacy);
+                            fflush(stderr);
+                        }
+                        ++s_cmp_mismatches;
+                    }
+                    // Emit periodic summary every 600 frames.
+                    if (s_flushCachedBlobCompare && (currentFrame % 600u) == 0u && i == 0u) {
+                        fprintf(stderr,
+                            "[SPFLUSH_CACHED_COMPARE v1] event=summary"
+                            " checked=%llu mismatches=%llu\n",
+                            (unsigned long long)s_cmp_checked,
+                            (unsigned long long)s_cmp_mismatches);
+                        fflush(stderr);
+                    }
+                }
+            }
+        }
+        } // end gate branch
     }
     s_diag_total_ns += static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(
