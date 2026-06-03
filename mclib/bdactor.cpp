@@ -2630,10 +2630,22 @@ bool BldgAppearance::isStaticEligible() const
 // builds a recipe batch per leaf via buildRecipeFromShape, and registers with
 // GpuStaticPropRegistry. HC-1: writes directly to typed staticReg member.
 void BldgAppearance::registerStatic() {
+	// [SEAMPROBE] stage 2: registerStatic entry + which early-return fires.
+	// Gate on the override target (hangar) to avoid log spam.
+	const bool seamProbe = (getenv("MC2_MODOVERRIDE_TRACE") != nullptr)
+		&& appearType && appearType->bldgRenderShape;
+	if (seamProbe)
+		fprintf(stderr, "[SEAMPROBE] bldg registerStatic ENTER name=%s registered=%d hasShape=%d enabled=%d eligible=%d renderShape=%p\n",
+			appearType->name, (int)staticReg.registered, (int)(bldgShape!=NULL),
+			(int)GpuStaticPropRegistry::isEnabled(), (int)isStaticEligible(),
+			(void*)appearType->bldgRenderShape), fflush(stderr);
 	if (staticReg.registered) return;
 	if (!bldgShape)           return;
 	if (!GpuStaticPropRegistry::isEnabled()) return;
-	if (!isStaticEligible())  return;
+	if (!isStaticEligible()) {
+		if (seamProbe) fprintf(stderr, "[SEAMPROBE] bldg registerStatic ABORT name=%s reason=!isStaticEligible\n", appearType->name), fflush(stderr);
+		return;
+	}
 
 	// MODEL-OVERRIDE: register the RENDER shape geometry into s_typeIndex HERE,
 	// in the mission-load pre-pass (runs before StaticProp::finalizeGeometry).
@@ -2701,8 +2713,14 @@ void BldgAppearance::registerStatic() {
 				static_cast<uint32_t>(child->GetFogRGB()),
 				flags, &inst)) {
 			++diag_skip_unreg;
+			if (seamProbe)
+				fprintf(stderr, "[SEAMPROBE] bldg buildRecipe MISS name=%s leaf=%d child=%p node=%s (override type not in s_typeIndex) -> ABORT\n",
+					appearType->name, i, (void*)child, child->getNodeName()), fflush(stderr);
 			return;  // unregistered type — abort; first-render fallback covers it
 		}
+		if (seamProbe)
+			fprintf(stderr, "[SEAMPROBE] bldg buildRecipe HIT name=%s leaf=%d child=%p node=%s typeID=%u\n",
+				appearType->name, i, (void*)child, child->getNodeName(), inst.typeID), fflush(stderr);
 		batch.push_back(inst);
 		++diag_added;
 	}
@@ -4610,6 +4628,12 @@ void TreeAppearance::invalidateStaticRegistration()
 // Task 5 (Track B): mission-load bulk static-prop registration (mirror of
 // BldgAppearance::registerStatic). HC-1: writes directly to typed staticReg.
 void TreeAppearance::registerStatic() {
+	const bool seamProbe = (getenv("MC2_MODOVERRIDE_TRACE") != nullptr)
+		&& appearType && appearType->treeRenderShape;
+	if (seamProbe)
+		fprintf(stderr, "[SEAMPROBE] tree registerStatic ENTER name=%s registered=%d hasShape=%d enabled=%d renderShape=%p\n",
+			appearType->name, (int)staticReg.registered, (int)(treeShape!=NULL),
+			(int)GpuStaticPropRegistry::isEnabled(), (void*)appearType->treeRenderShape), fflush(stderr);
 	if (staticReg.registered) return;
 	if (!treeShape)           return;
 	if (!GpuStaticPropRegistry::isEnabled()) return;
@@ -4667,8 +4691,14 @@ void TreeAppearance::registerStatic() {
 				static_cast<uint32_t>(child->GetFogRGB()),
 				flags, &inst)) {
 			++t_diag_skip_unreg;
+			if (seamProbe)
+				fprintf(stderr, "[SEAMPROBE] tree buildRecipe MISS name=%s leaf=%d child=%p node=%s -> ABORT\n",
+					appearType->name, i, (void*)child, child->getNodeName()), fflush(stderr);
 			return;  // unregistered type — abort; first-render fallback covers it
 		}
+		if (seamProbe)
+			fprintf(stderr, "[SEAMPROBE] tree buildRecipe HIT name=%s leaf=%d child=%p node=%s typeID=%u\n",
+				appearType->name, i, (void*)child, child->getNodeName(), inst.typeID), fflush(stderr);
 		batch.push_back(inst);
 		++t_diag_added;
 	}
@@ -4693,6 +4723,10 @@ void TreeAppearance::registerStatic() {
 	int32_t regIdx = -1;
 	(void)GameAdapters::StaticProp::syncStaticProp(
 		treeShape, batch.data(), batch.size(), &regIdx);
+	if (seamProbe)
+		fprintf(stderr, "[SEAMPROBE] tree syncStaticProp name=%s batchSize=%zu regIdx=%d firstTypeID=%u\n",
+			appearType->name, batch.size(), (int)regIdx,
+			batch.empty()?0xFFFFFFFFu:batch[0].typeID), fflush(stderr);
 	if (regIdx >= 0) {
 		staticReg.registered  = true;
 		staticReg.shape       = treeShape;

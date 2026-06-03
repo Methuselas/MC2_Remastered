@@ -1888,6 +1888,18 @@ void GpuStaticPropBatcher::registerType(TG_TypeShape* typeShape, TG_TypeMultiSha
 
     s_typeIndex[typeShape] = newTypeID;
     s_types.push_back(type);
+
+    // [SEAMPROBE] stage 4: record geometry of each freshly-registered type
+    // (capped) so override render-shape leaves can be matched by ptr in the log.
+    {
+        static int s_seamRegLogged = 0;
+        if (getenv("MC2_MODOVERRIDE_TRACE") && s_seamRegLogged < 400) {
+            ++s_seamRegLogged;
+            fprintf(stderr, "[SEAMPROBE] registerType src=%p typeID=%u numTris=%u numVerts=%u finalized=%d\n",
+                (void*)typeShape, newTypeID, numTris, numVerts, (int)s_geometryFinalized);
+            fflush(stderr);
+        }
+    }
 }
 
 void GpuStaticPropBatcher::registerMultiShape(TG_TypeMultiShape* multiShape) {
@@ -6079,6 +6091,25 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             }
         }
 
+    // [SEAMPROBE] stage 8: one-shot per-type draw census (which types have a
+    // range / instances / packets at first legacy draw). Gated on MC2_MODOVERRIDE_TRACE.
+    {
+        static bool s_seamDrawCensus = false;
+        if (!s_seamDrawCensus && getenv("MC2_MODOVERRIDE_TRACE")) {
+            s_seamDrawCensus = true;
+            for (uint32_t tid = 0; tid < s_types.size(); ++tid) {
+                auto rit2 = s_typeRanges.find(tid);
+                bool hasRange = (rit2 != s_typeRanges.end());
+                uint32_t ic = hasRange ? rit2->second.instanceCount : 0;
+                const GpuStaticPropType& ty = s_types[tid];
+                if (ty.packetCount > 0 && (!hasRange || ic == 0)) {
+                    fprintf(stderr, "[SEAMPROBE] draw-census typeID=%u src=%p packetCount=%u vertexCount=%u hasRange=%d instanceCount=%u (NOT DRAWN)\n",
+                        tid, (void*)ty.source, ty.packetCount, ty.vertexCount, (int)hasRange, ic);
+                }
+            }
+            fflush(stderr);
+        }
+    }
     for (uint32_t typeID = 0; typeID < s_types.size(); ++typeID) {
         auto rit = s_typeRanges.find(typeID);
         if (rit == s_typeRanges.end()) continue;
