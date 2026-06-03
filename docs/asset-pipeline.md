@@ -37,9 +37,30 @@
 | **Mission/game data** | `mission.fst` (19 MB) `.fit`; `*.pak` terrain; `mc2-gamedata.zip` | `code/mission.cpp:1739 init`; `ObjectManager::loadTerrainObjects` | text INI / binary pak | n/a | — | `code/mission.cpp`, `logistics.cpp` |
 | **Save data** | `data/missions/save.fit` (text FIT) | `code/logistics.cpp:208/216` | INI | n/a | — | `LogisticsData` |
 
-> Per-model vertex/triangle counts are not enumerated here (they live in `.tgl`
-> binaries / ASE `NUM_VERTEX`). Run a header-parse pass over `mc2srcdata/tgl/*.ase`
-> if a vertex/tri budget histogram is needed.
+### 1a. Geometry budgets (vertex/triangle, from `.ase`)
+
+Audited 2026-06-02 via `tools/mc2texcook/ase_geo_audit.py` over `mc2srcdata/tgl/*.ase`
+(2,947 meshes, summing `*MESH_NUMVERTEX`/`*MESH_NUMFACES` across each file's GEOMOBJECTs).
+**Total: 288,708 verts / 366,484 tris.** MC2-era low-poly throughout.
+
+| Category | files | total verts | total tris | median V/T | max V/T |
+|---|---|---|---|---|---|
+| building/other | 2399 | 233,235 | 294,059 | 76 / 82 | 979 / 1493 |
+| mech | 200 | 31,214 | 44,601 | 186 / 268 | 241 / 332 |
+| turret/sensor | 112 | 9,617 | 10,247 | 69 / 73 | 222 / 253 |
+| tree/foliage | 122 | 7,644 | 8,326 | 21 / 15 | 479 / 274 |
+| vehicle | 114 | 6,998 | 9,251 | 49 / 68 | 392 / 602 |
+
+Notes:
+- **`mech` file count = animation frames**, not distinct mechs: each mech ships ~25
+  gesture `.ase` of the *same* base mesh. Base mech mesh ≈ **208–215 verts / ~314 tris**
+  (Atlas, Urbanmech). So the real mech vertex budget is per-mech ~314 tris, not the 44k sum.
+- **`building/other` includes `mcl_mc_*`** — Mechlopedia/mechlab *component* models
+  (weapons: gauss/laser/SRM/etc, ~300–626 tris each), miscategorized as buildings by the
+  filename heuristic. The single heaviest mesh is `bloodaspsttowk` (1493 tris). Genuine
+  building props cluster near the 76v/82t median.
+- Counts are source `.ase` (pre-LOD-merge); damage/`l1`/`x` variants are separate files.
+- Re-run: `py -3 tools/mc2texcook/ase_geo_audit.py [--dir ...] [--top N]`.
 
 ## 2. Archive / packaging formats
 
