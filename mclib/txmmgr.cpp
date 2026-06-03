@@ -1231,6 +1231,32 @@ uint32_t mc2StaticLightHighWater()
     return s_staticLightHighWater;
 }
 
+// [LIGHTSSBO v2] Static prefix dirty flag. Set whenever the permanent prefix
+// [0..S) changes: a new recipe bakes, a recipe re-bakes on invalidate, or the
+// table is cleared on mission unload. Consumed (and cleared) once per frame by
+// the LightDataUpload split path. Initial true → first frame uploads the prefix.
+static bool s_staticLightPrefixDirty = true;
+
+void mc2MarkStaticLightPrefixDirty() { s_staticLightPrefixDirty = true; }
+bool mc2ConsumeStaticLightPrefixDirty()
+{
+    const bool d = s_staticLightPrefixDirty;
+    s_staticLightPrefixDirty = false;
+    return d;
+}
+
+// [LIGHTSSBO v2] Upload-split kill-switch. Default ON; MC2_STATIC_LIGHT_UPLOAD_SPLIT=0
+// forces the legacy whole-buffer upload every frame (bit-identical GPU contents).
+// parseEnvBoolWithDefault is not visible in this TU; use the explicit =0 idiom.
+static bool mc2StaticLightUploadSplitEnabled()
+{
+    static const bool s_split = []{
+        const char* e = std::getenv("MC2_STATIC_LIGHT_UPLOAD_SPLIT");
+        return !(e != nullptr && e[0] == '0' && e[1] == '\0');   // default true; "0" disables
+    }();
+    return s_split;
+}
+
 // [LIGHTBAKE-PROOF v1] Stability trace: for the first N recipes, record the
 // permanent slot index the first time it is observed, then verify it never
 // changes across frames and stays < S (inPrefix). Env-gated (MC2_LIGHTBAKE_STABILITY),
@@ -1302,6 +1328,7 @@ void mc2ClearAllBakedStaticLight()
     // recipeIndex restarts at 0 against a fresh prefix.
     s_bakedStaticLight.clear();
     s_staticLightHighWater = 0;
+    s_staticLightPrefixDirty = true;   // [LIGHTSSBO v2] table reset → re-upload prefix next frame
 }
 
 // [LIGHTBAKE v2] Persistent static slot write. Replaces the retired
@@ -1493,6 +1520,7 @@ void MC_TextureManager::bakeStaticLightSlot(int32_t recipeIndex, const TG_HWLigh
         lightDataStructuresCapacity = newCap;
     }
     lightData_[ri] = baked;                                 // CPU mirror (persists)
+    s_staticLightPrefixDirty = true;                        // [LIGHTSSBO v2] prefix content changed
     if (ri + 1 > s_staticLightHighWater) s_staticLightHighWater = ri + 1;
     // CRITICAL: the frame a recipe FIRST bakes, this-frame's count was
     // set to the OLD (smaller) S at frame-start resetLightData. Without
@@ -1894,12 +1922,29 @@ void MC_TextureManager::renderLists (void)
     // instead of past-end (-> zero -> black props). std::max keeps the
     // old max(count, 64) semantics; lightData_ is capacity(128)-sized so
     // sourcing 64 entries is in-bounds.
+    // [LIGHTSSBO v2] kLightUploadFloor=64 is PRESERVED: totalBytes stays
+    // max(count,64)*stride. When count<64 the padded tail [count..64) lands in
+    // the per-frame SUFFIX [prefixBytes..totalBytes) and is uploaded every frame,
+    // so the deliberate tolerance of transient over-count lightDataIndex for
+    // cull-stale offscreen actors still reads valid backing memory — identical
+    // in-bounds guarantee to the legacy whole-buffer upload. The split only
+    // changes WHICH bytes re-upload each frame, never the uploaded extent.
     constexpr uint32_t kLightUploadFloor = 64u;
     const size_t lightUploadCount =
         std::max<uint32_t>(lightDataStructuresCount, kLightUploadFloor);
-    gos_LightDataSsbo_Upload(
-        lightData_,
-        lightUploadCount * sizeof(TG_HWLightsData));
+    const size_t totalBytes = lightUploadCount * sizeof(TG_HWLightsData);
+    // mc2StaticLightHighWater / mc2ConsumeStaticLightPrefixDirty / the split gate
+    // are all file-scope fns defined earlier in this TU — call directly.
+    if (mc2StaticLightUploadSplitEnabled() && mc2LightBakeEnabled()) {
+        // Prefix = permanent static table [0..S), clamped to the floored count.
+        const uint32_t S = mc2StaticLightHighWater();
+        const size_t prefixCount = (S < lightUploadCount) ? S : lightUploadCount;
+        const size_t prefixBytes = prefixCount * sizeof(TG_HWLightsData);
+        const bool prefixDirty = mc2ConsumeStaticLightPrefixDirty();
+        gos_LightDataSsbo_UploadSplit(lightData_, prefixBytes, totalBytes, prefixDirty);
+    } else {
+        gos_LightDataSsbo_Upload(lightData_, totalBytes);   // legacy whole-buffer
+    }
 	} // end RenderLists.LightDataUpload
     //
 
