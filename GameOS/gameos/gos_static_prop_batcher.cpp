@@ -5398,9 +5398,8 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             s_v6FrameGlErrors           = 0u;
             ++s_v6TotalFrameCount;
 
-            // v8: PLANNED retirement predicate. This task computes it; a later task consumes it
-            // to skip the live builder, set s_spBuildRetired, and emit the arm log.
-            // Behavior is UNCHANGED here — NO telemetry is set from this yet.
+            // v8: retirement predicate. Consumed just below to gate the live builder,
+            // set s_spBuildRetired, and emit the one-shot arm log.
             //
             // Why !s_snapCullEnabled is a condition: the snap-cull path (MC2_SNAP_CULL,
             // opt-in, default OFF) still relies on the live<->snapshot compare for slot
@@ -5663,7 +5662,9 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                     || s_spBuildMetaMismatch   != 0u
                     || s_spBuildPacketMismatch != 0u;
                 if (snapshotInvalid) {
-                    ++s_spBuildFallback;
+                    // Stage 4 (count mismatch) already counted a fallback for this frame;
+                    // avoid double-counting so spBuildFallback reflects frames, not events.
+                    if (s_spBuildCountMismatch == 0u) ++s_spBuildFallback;
                     ZoneScopedN("StaticProp.LiveBuild.Fallback");  // rare fallback build, counted
                     v6LockstepViolations =
                         buildLiveV6Arrays(totalCmds, baseInstanceMapDisp, v6Packets, v6Meta);

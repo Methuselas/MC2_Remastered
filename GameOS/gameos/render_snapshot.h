@@ -248,6 +248,9 @@ struct RenderSnapshot {
     //   spBuildRetired==1                       → live builder + compare intentionally skipped (sole-owner).
     //   spBuildRetired==0 && spBuildAttempted==0 → suspicious / unvalidated.
     //   spBuildRetired==0 && spBuildAttempted==1 → dual-build path ran the compare (kill-switch on).
+    //   NOTE: spBuildRetired==1 means retirement is ARMED this flush; on a rare
+    //   structural-invalid frame the live builder still runs as the safety net —
+    //   spBuildFallback (>0) is the authoritative "live builder actually ran" signal.
     uint32_t spBuildRetired        = 0u;
 
     // --- TERRAIN-PASS-PACKET-0: pass-level terrain facts (inspection-only) ---
