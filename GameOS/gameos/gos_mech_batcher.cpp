@@ -1541,14 +1541,17 @@ void GpuMechBatcher::flush() {
     }
 
     // Step 2.5: Build mech MaterialGpu table (same bucket iteration order as Step 5).
-    s_mechMaterialTable.clear();
-    s_mechHandleToMaterialIdx.clear();
+    // s_mechDrawMaterialIdx is per-draw (bucket-iteration order) — rebuilt every flush.
+    // s_mechMaterialTable / s_mechHandleToMaterialIdx PERSIST within a mission
+    // (texHandle->idx is stable; reset by onMapUnload). Upload only when the table grows.
     s_mechDrawMaterialIdx.clear();
     if (s_mechMaterialGpuEnabled) {
-        s_mechMaterialTable.push_back(RenderCore::MaterialGpu{}); // index 0 = sentinel/not-assigned
+        if (s_mechMaterialTable.empty())
+            s_mechMaterialTable.push_back(RenderCore::MaterialGpu{}); // index 0 = sentinel/not-assigned
+        bool tableDirty = false;
         for (const auto& kv : buckets) {
             const uint32_t texHandle = kv.first.texHandle;
-            uint32_t mIdx = 0u;
+            uint32_t mIdx;
             auto it = s_mechHandleToMaterialIdx.find(texHandle);
             if (it != s_mechHandleToMaterialIdx.end()) {
                 mIdx = it->second;
@@ -1558,16 +1561,19 @@ void GpuMechBatcher::flush() {
                 entry.albedoTex = texHandle;
                 s_mechMaterialTable.push_back(entry);
                 s_mechHandleToMaterialIdx[texHandle] = mIdx;
+                tableDirty = true;
             }
             s_mechDrawMaterialIdx.push_back(mIdx);
         }
-        // Upload table to SSBO at binding 2
-        const size_t byteSize = s_mechMaterialTable.size() * sizeof(RenderCore::MaterialGpu);
-        if (s_mechMaterialSsbo == 0) glGenBuffers(1, &s_mechMaterialSsbo);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_mechMaterialSsbo);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, static_cast<GLsizeiptr>(byteSize),
-                     s_mechMaterialTable.data(), GL_DYNAMIC_DRAW);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        // Upload only when the table grew (or buffer not yet created).
+        if (s_mechMaterialSsbo == 0 || tableDirty) {
+            const size_t byteSize = s_mechMaterialTable.size() * sizeof(RenderCore::MaterialGpu);
+            if (s_mechMaterialSsbo == 0) glGenBuffers(1, &s_mechMaterialSsbo);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_mechMaterialSsbo);
+            glBufferData(GL_SHADER_STORAGE_BUFFER, static_cast<GLsizeiptr>(byteSize),
+                         s_mechMaterialTable.data(), GL_DYNAMIC_DRAW);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        }
     }
     // Throttled table_link log (first flush + every 600th)
     ++s_mechMaterialGpuFrameCount;
