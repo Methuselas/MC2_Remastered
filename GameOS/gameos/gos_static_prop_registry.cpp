@@ -1402,25 +1402,41 @@ void staticPropCacheTypePrimaryMaterial(uint32_t typeID,
         s_typeMatCache.resize(typeID + 1u); // default-init: hasPrimary=false
     }
     StaticPropTypeMaterialCache& c = s_typeMatCache[typeID];
+    // SNAPSHOT-DIRTYONLY coherence: this fn mutates five fields the render snapshot
+    // captures per row (texArrayLayer/materialIdx/alphaClass/packetCount/firstPacket)
+    // but is invoked from the batcher AFTER ExtractRenderSnapshot() in the same frame.
+    // The snapshot dirty-only cache (render_snapshot.cpp) is gated on s_registryGeneration;
+    // if a material first-cache or alpha-on→alpha-off upgrade here did NOT bump the
+    // generation, the next clean frame would serve a stale material row. Snapshot the
+    // pre-state and bump on any real change so the next snapshot rebuilds. First-write-
+    // wins keeps this stable after warmup, so the dirty-only steady-state win is preserved.
+    const StaticPropTypeMaterialCache before = c;
     // Type metadata: always idempotent (same type → same values).
-    // Written unconditionally BEFORE the prefer-alpha-off early-return checks
-    // so alphaClass/packetCount/firstPacket are always set regardless of primary outcome.
+    // Written unconditionally BEFORE the prefer-alpha-off check so
+    // alphaClass/packetCount/firstPacket are always set regardless of primary outcome.
     c.alphaClass   = alphaClass;
     c.packetCount  = packetCount;
     c.firstPacket  = firstPacket;
     // Prefer alpha-off primary over alpha-on fallback.
     // Rule: alpha-off overwrites alpha-on; nothing overwrites alpha-off.
-    if (c.hasPrimary) {
-        if (!c.primaryWasAlphaOn) return; // already have alpha-off primary; done
-        if (wasAlphaOn)           return; // both alpha-on; keep first
-        // Upgrading from alpha-on fallback to alpha-off primary -- fall through.
+    // keepExisting == the original early-return conditions, restructured so the
+    // generation-change check below always runs.
+    const bool keepExisting = c.hasPrimary && (!c.primaryWasAlphaOn || wasAlphaOn);
+    if (!keepExisting) {
+        c.hasPrimary        = true;
+        c.primaryWasAlphaOn = wasAlphaOn;
+        c.multiPacket       = multiPacket;
+        c.texArrayLayer     = texArrayLayer;
+        c.materialIdx       = materialIdx;
+        c.hasMaterialIdx    = hasMaterialIdx;
     }
-    c.hasPrimary        = true;
-    c.primaryWasAlphaOn = wasAlphaOn;
-    c.multiPacket       = multiPacket;
-    c.texArrayLayer     = texArrayLayer;
-    c.materialIdx       = materialIdx;
-    c.hasMaterialIdx    = hasMaterialIdx;
+    if (c.texArrayLayer != before.texArrayLayer ||
+        c.materialIdx   != before.materialIdx   ||
+        c.alphaClass    != before.alphaClass    ||
+        c.packetCount   != before.packetCount   ||
+        c.firstPacket   != before.firstPacket) {
+        ++s_registryGeneration;   // material-cache change = snapshot row change
+    }
 }
 
 void staticPropRegistryClearMaterialCache() {
