@@ -39,11 +39,12 @@ static const bool s_bridgeCompareEnabled = []() -> bool {
 }();
 // STATICPROP-SNAPSHOT-FILL-DIRTYONLY-1: on clean registry/cull generations, skip
 // fillStaticPropSlots + the per-prop WriteLoop and memcpy the cached rows into the
-// frame arena instead. Gate: MC2_STATIC_PROP_SNAPSHOT_FILL_DIRTYONLY (default-OFF;
-// =1 enables the dirty-only fast path, 0/unset = legacy full rebuild every frame).
+// frame arena instead. Gate: MC2_STATIC_PROP_SNAPSHOT_FILL_DIRTYONLY (default-ON
+// after Tracy proof — ExtractRenderSnapshot ~1.68ms -> ~37us median, -97%;
+// unset/=1 = dirty-only fast path, =0 = legacy full rebuild kill-switch).
 static const bool s_dirtyOnlyEnabled = []() -> bool {
     const char* v = std::getenv("MC2_STATIC_PROP_SNAPSHOT_FILL_DIRTYONLY");
-    return v && v[0] == '1';
+    return !(v && v[0] == '0');
 }();
 // Production row cache (DIRTYONLY-1): a copy of the legacy propBuf rows from the last
 // dirty frame. Clean frames memcpy these into the frame arena; snap.staticProps NEVER
