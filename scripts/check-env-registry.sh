@@ -187,6 +187,7 @@ ALLOWLIST=(
     MC2_PATCHSTREAM_THIN_RECORD_FASTPATH  # feature -- promote-to-registry
     MC2_PATCHSTREAM_THIN_RECORDS  # trace
     MC2_PATCHSTREAM_THIN_RECORDS_DRAW  # trace
+    MC2_PRESWAP_FINISH          # trace -- env-gated glFinish before SwapWindow (present-stall attribution)
     MC2_PROJECTZ_BYPASS_MODE    # feature -- promote-to-registry
     MC2_PROJECTZ_GUARD_PX       # override
     MC2_PROJECTZ_HEATMAP        # trace

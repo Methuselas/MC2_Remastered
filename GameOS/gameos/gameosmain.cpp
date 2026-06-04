@@ -1534,7 +1534,15 @@ int main(int argc, char** argv)
 
         {
             ZoneScopedN("SwapWindow");
-            graphics::swap_window(win);
+            // SwapWindow split: env-gated glFinish probe attributes the present
+            // stall. If MC2_PRESWAP_FINISH=1 moves the ~45ms into PreFinish, the
+            // cost is GPU-completion backpressure (GPU draining terrain/shadows),
+            // not vsync/CPU. SwapWindow.SDL isolates the bare SDL_GL_SwapWindow.
+            {
+                static const bool s_preSwapFinish = (getenv("MC2_PRESWAP_FINISH") != nullptr);
+                if (s_preSwapFinish) { ZoneScopedN("SwapWindow.PreFinish"); glFinish(); }
+            }
+            { ZoneScopedN("SwapWindow.SDL"); graphics::swap_window(win); }
             static bool s_first_frame_logged = false;
             if (!s_first_frame_logged) {
                 s_first_frame_logged = true;
