@@ -2110,6 +2110,16 @@ void Terrain::geometry (void)
 		const bool skipSetup = s_armedSkipOn && fullyArmed;
 		long quadsSkipped = 0;
 		long waterCandidates = 0;
+		// Both per-quad bodies are no-ops in the default-ON steady state (Slice A
+		// skips setupTextures() + 1B's GPU water cull owns selection so the narrow
+		// walk is off): the loop would iterate ~40K quads doing nothing. Skip it
+		// whole — retires the residual ~32µs bare-iteration cost. currentQuad is a
+		// pure cursor with no post-loop reader, so it need not advance here.
+		if (skipSetup && !s_waterNarrowOn)
+		{
+			quadsSkipped = numberQuads;
+		}
+		else
 		for (i=0;i<numberQuads;i++)
 		{
 			if (skipSetup)
