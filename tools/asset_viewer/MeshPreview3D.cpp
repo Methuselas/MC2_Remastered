@@ -306,6 +306,38 @@ void MeshPreview3D::setSource(const std::string& tglName) {
 }
 
 // ---------------------------------------------------------------------------
+// setMeshData: upload an arbitrary MeshData (GLB override) — untextured preview.
+// Mirrors setSource's exact upload call; textures won't resolve (expected).
+// ---------------------------------------------------------------------------
+void MeshPreview3D::setMeshData(const MeshData& md) {
+    if (!md.ok) {
+        errorMsg_ = md.error.empty() ? "bad mesh" : md.error;
+        return;
+    }
+    errorMsg_.clear();
+    tglName_.clear();
+
+    mesh_.destroy();
+    mesh_.upload(md, deployDir_, tier_);
+
+    if (!mesh_.valid()) {
+        errorMsg_ = "MeshGpu upload produced no submeshes";
+        return;
+    }
+
+    // Frame camera from MeshData bounds (same formula as setSource).
+    float dx = md.bmax[0] - md.bmin[0];
+    float dy = md.bmax[1] - md.bmin[1];
+    float dz = md.bmax[2] - md.bmin[2];
+    float radius = 0.5f * std::sqrt(dx*dx + dy*dy + dz*dz);
+    if (radius < 0.01f) radius = 0.01f;
+    dist_      = 1.6f * radius;
+    center_[0] = 0.5f * (md.bmin[0] + md.bmax[0]);
+    center_[1] = 0.5f * (md.bmin[1] + md.bmax[1]);
+    center_[2] = 0.5f * (md.bmin[2] + md.bmax[2]);
+}
+
+// ---------------------------------------------------------------------------
 // buildViewProj: orbit camera centered at center_
 // ---------------------------------------------------------------------------
 void MeshPreview3D::buildViewProj(int w, int h, const float center[3],

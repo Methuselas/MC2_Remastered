@@ -22,6 +22,9 @@ public:
     // Set the deploy directory before calling setSource().
     void setDeployDir(const std::string& dir) { deployDir_ = dir; }
 
+    // Render an arbitrary MeshData (e.g. a GLB override). Untextured preview.
+    void setMeshData(const MeshData& md);
+
     // Test hook: render into an internal FBO and read back RGBA pixels.
     // No ImGui context required. Returns false if init or FBO failed.
     bool renderToPixels(int w, int h, std::vector<uint8_t>& rgbaOut);

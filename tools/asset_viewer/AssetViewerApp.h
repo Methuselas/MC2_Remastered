@@ -11,12 +11,15 @@
 #include "MaterialSlots.h"
 #include "MeshPreview3D.h"
 #include "ModelBrowser.h"
+#include "ModWorkbench.h"
+#include "ModWorkbenchPanel.h"
 
 class AssetViewerApp {
 public:
     AssetViewerApp();
     ~AssetViewerApp();
     void drawUi();
+    void onFileDropped(const char* path);
     static int runSmoke(const char* fixtureDir);
     static int runSmokeDecoder();
     static int runSmokeKtxParse(const char* fixtureDir);
@@ -36,6 +39,12 @@ public:
     static int runSmokeMeshRender(const char* deployDir);   // Task 2: MeshPreview3D GL render: model distinct from background
     static int runSmokeMeshOrient(const char* deployDir);   // orientation gate: 2civliving tall axis must be GL-Y after transform
     static int runSmokeSpotlight(const char* deployDir);    // spotlight gate: vehicle has ≥1 isSpotlight submesh; 2civliving has 0
+    static int runSmokeWorkbenchLink();   // S0: registry + assimp link/run
+    static int runSmokeWorkbenchGlb(const char* fixtureDir);   // S1
+    static int runSmokeWorkbenchBind(const char* deployDir, const char* fixtureDir);  // S2
+    static int runSmokeWorkbenchValidate(const char* fixtureDir);  // S3
+    static int runSmokeWorkbenchExport(const char* fixtureDir, const char* tmpDir);  // S4
+    static int runSmokeWorkbenchReload(const char* fixtureDir);  // review: override-state reset on reload
 private:
     FileBrowser browser_;
     AssetTypeSidebar sidebar_;
@@ -45,5 +54,7 @@ private:
     MaterialSlots      materialSlots_;
     MeshPreview3D      meshSurface_;
     ModelBrowser       modelBrowser_;
+    ModWorkbench       workbench_;
+    ModWorkbenchPanel  workbenchPanel_;
     bool materialsAutoLoaded_ = false;
 };

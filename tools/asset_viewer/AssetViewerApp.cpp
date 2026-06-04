@@ -38,6 +38,8 @@ AssetViewerApp::AssetViewerApp()  {
     UiEditorImageCache_Initialize();
     // Deploy root is the viewer's cwd; "." -> ./tgl.fst for TglMeshLoader.
     meshSurface_.setDeployDir(".");
+    workbenchPanel_.setDeployDir(".");
+    workbench_.setDeployDir(".");
 }
 AssetViewerApp::~AssetViewerApp() { UiEditorImageCache_Shutdown(); }
 
@@ -62,6 +64,8 @@ void AssetViewerApp::drawUi()
         modelBrowser_.draw();
         if (modelBrowser_.hasSelection())
             meshSurface_.setSource(modelBrowser_.takeSelection());
+    } else if (sidebar_.active() == AssetType::ModWorkbench) {
+        ImGui::TextDisabled("Drop a GLB on the window.");
     } else {
         browser_.draw();
         if (browser_.hasSelection()) {
@@ -89,6 +93,9 @@ void AssetViewerApp::drawUi()
         break;
       case AssetType::StaticProps:
         meshSurface_.draw(ImGui::GetContentRegionAvail());
+        break;
+      case AssetType::ModWorkbench:
+        workbenchPanel_.draw(workbench_, ImGui::GetContentRegionAvail());
         break;
     }
     ImGui::EndChild();
@@ -1278,4 +1285,140 @@ int AssetViewerApp::runSmokeSpotlight(const char* deployDir)
 
     std::printf("[smoke] PASS spotlight: ambulance has beams, 2civliving has none\n");
     return 0;
+}
+
+#include "GlbMeshLoader.h"
+#include "model_override_registry.h"
+#include "WorkbenchValidation.h"
+#include "BundleExport.h"
+#include <assimp/Importer.hpp>
+#include <assimp/scene.h>
+#include <assimp/postprocess.h>
+
+int AssetViewerApp::runSmokeWorkbenchLink()
+{
+    ModelOverrideRegistry reg;
+    if (reg.loadFromFile("does_not_exist_models.json", ".") != 0)
+        return smokeFail("workbench-link: expected 0 records");
+    Assimp::Importer imp;
+    if (!imp.IsExtensionSupported(".gltf"))
+        return smokeFail("workbench-link: assimp lacks .gltf importer");
+    std::printf("[smoke] PASS workbench-link (registry + assimp glTF linked)\n");
+    return 0;
+}
+
+int AssetViewerApp::runSmokeWorkbenchGlb(const char* fixtureDir)
+{
+    MeshData md = GlbMeshLoader::load(std::string(fixtureDir) + "/unit_tri.gltf");
+    if (!md.ok) return smokeFail((std::string("workbench-glb: ") + md.error).c_str());
+    if (md.submeshes.size() != 1) return smokeFail("workbench-glb: submeshes!=1");
+    const SubMesh& sm = md.submeshes[0];
+    if (sm.verts.size() != 3) return smokeFail("workbench-glb: verts!=3");
+    auto has = [&](float x,float y,float z){
+        for (auto& v : sm.verts)
+            if (std::fabs(v.px-x)<1e-3f && std::fabs(v.py-y)<1e-3f && std::fabs(v.pz-z)<1e-3f) return true;
+        return false; };
+    if (!has(0,0,0) || !has(2,0,5) || !has(0,3,7))
+        return smokeFail("workbench-glb: transformed positions wrong (axis swap?)");
+    float ex=md.bmax[0]-md.bmin[0], ey=md.bmax[1]-md.bmin[1], ez=md.bmax[2]-md.bmin[2];
+    if (std::fabs(ex-2)>1e-3f || std::fabs(ey-3)>1e-3f || std::fabs(ez-7)>1e-3f)
+        return smokeFail("workbench-glb: extents wrong");
+    // Discriminating v-flip check: src vert1 UV (1,0) -> (1,1) ONLY if v->1-v applied.
+    bool flipOk=false; for (auto& v: sm.verts) if (std::fabs(v.u-1.0f)<1e-3f && std::fabs(v.v-1.0f)<1e-3f) flipOk=true;
+    if (!flipOk) return smokeFail("workbench-glb: UV v-flip not applied (expected (1,1))");
+    std::printf("[smoke] PASS workbench-glb verts=3 ext=%.1f,%.1f,%.1f\n", ex,ey,ez);
+    return 0;
+}
+
+int AssetViewerApp::runSmokeWorkbenchBind(const char* deployDir, const char* fixtureDir){
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    ModWorkbench wb;
+    wb.setDeployDir(deployDir);
+    if (!wb.loadOverride(std::string(fixtureDir) + "/unit_tri.gltf"))
+        return smokeFail("bind: override load");
+    uint64_t g0 = wb.generation();
+    if (!wb.bindStock("data/tgl/2civliving.tgl"))
+        return smokeFail("bind: stock load (need deploy dir w/ tgl.fst)");
+    if (wb.generation() == g0)
+        return smokeFail("bind: generation did not advance");
+    auto d = wb.computeDelta();
+    if (d.stockExt[1] <= 0.0f)
+        return smokeFail("bind: stock has no Y extent");
+    if (d.maxRatio <= 0.0f)
+        return smokeFail("bind: ratio not computed");
+    std::printf("[smoke] PASS workbench-bind stockY=%.2f ovY=%.2f ratio=%.3f\n",
+        d.stockExt[1], d.overrideExt[1], d.maxRatio);
+    return 0;
+}
+
+int AssetViewerApp::runSmokeWorkbenchValidate(const char* fixtureDir){
+    WorkbenchOverride ok; ok.overrideClass="staticProp"; ok.appearanceName="example_name"; ok.appearanceVerified=true;
+    ok.sourceRelPath="props/example.glb"; ok.scale=1.0f; ok.renderOnly=true; ok.fallback="stock";
+    if (!ValidateRecordRules(ok).empty()) return smokeFail("validate: clean record flagged");
+    auto hasCode=[&](const std::vector<Warning>& v,const char* c){ for(auto&x:v) if(x.code==c) return true; return false; };
+    { auto bs=ok; bs.scale=2.0f; if(!hasCode(ValidateRecordRules(bs),"scale")) return smokeFail("validate: scale!=1 not blocked"); }
+    { auto bsrc=ok; bsrc.sourceRelPath="C:/abs.png"; if(!hasCode(ValidateRecordRules(bsrc),"source")) return smokeFail("validate: unsafe source not blocked"); }
+    { auto unv=ok; unv.appearanceVerified=false; if(!hasCode(ValidateRecordRules(unv),"appearance-unverified")) return smokeFail("validate: unverified appearance not blocked"); }
+    ModelOverrideRegistry reg;
+    if (reg.loadFromFile(std::string(fixtureDir)+"/wb_valid.json",fixtureDir)!=1 || reg.resolve("staticProp","example_name")==nullptr)
+        return smokeFail("validate: registry should accept wb_valid.json");
+    if (reg.loadFromFile(std::string(fixtureDir)+"/wb_bad_scale.json",fixtureDir)!=0)
+        return smokeFail("validate: registry should reject wb_bad_scale.json");
+    MeshData ov; ov.ok=true; ov.bmax[0]=4; ov.bmax[1]=4; ov.bmax[2]=4;
+    MeshData st; st.ok=true; st.bmax[0]=1; st.bmax[1]=1; st.bmax[2]=1;
+    SemanticInputs si; si.overrideMesh=&ov; si.stockMesh=&st; si.maxFootprintRatio=4.0f;
+    if(!hasCode(ValidateSemantics(ok,si),"bounds-delta")) return smokeFail("validate: oversize not warned");
+    std::printf("[smoke] PASS workbench-validate\n"); return 0;
+}
+
+int AssetViewerApp::runSmokeWorkbenchExport(const char* fixtureDir, const char* tmpDir){
+    namespace fs=std::filesystem;
+    std::string root=std::string(tmpDir)+"/model_overrides"; fs::remove_all(root);
+    std::string glb=std::string(fixtureDir)+"/unit_tri.gltf";
+    WorkbenchOverride rec; rec.overrideClass="staticProp"; rec.appearanceName="example_name";
+    rec.appearanceVerified=true; rec.scale=1.0f; rec.renderOnly=true; rec.fallback="stock";
+
+    ExportResult r=ExportBundle(root,"example_id",glb,rec);
+    if(!r.ok) return smokeFail((std::string("export: ")+r.message).c_str());
+    if(!fs::exists(r.manifestPath)) return smokeFail("export: models.generated.json missing");
+    if(!fs::exists(r.bundleDir+"/unit_tri.gltf")) return smokeFail("export: glb not copied");
+    ModelOverrideRegistry reg; reg.loadFromFile(r.manifestPath, root);
+    if(reg.resolve("staticProp","example_name")==nullptr) return smokeFail("export: registry did not resolve record");
+
+    { auto bad=rec; bad.scale=2.0f; if(ExportBundle(root,"bad_scale",glb,bad).ok) return smokeFail("export: should refuse scale!=1"); }
+    { auto bad=rec; bad.appearanceVerified=false; if(ExportBundle(root,"unverified",glb,bad).ok) return smokeFail("export: should refuse unverified appearance"); }
+    { if(ExportBundle(root,"../escape",glb,rec).ok) return smokeFail("export: should refuse bad bundle id"); }
+    { auto q=rec; q.appearanceName="a\"b\\c"; q.appearanceVerified=true;
+      ExportResult er=ExportBundle(root,"escape_id",glb,q);
+      if(er.ok){ ModelOverrideRegistry rr; rr.loadFromFile(er.manifestPath, root);
+                 if(rr.resolve("staticProp","a\"b\\c")==nullptr) return smokeFail("export: escaped key did not round-trip"); } }
+    std::printf("[smoke] PASS workbench-export (round-trip + refusals + escaping)\n"); return 0;
+}
+
+int AssetViewerApp::runSmokeWorkbenchReload(const char* fixtureDir){
+    // A newly dropped override must NOT inherit the prior override's appearance
+    // key / verified flag / LOD chain (else override-B could export under
+    // override-A's verified key). Pure ModWorkbench logic — no GL.
+    ModWorkbench wb;
+    std::string glb = std::string(fixtureDir)+"/unit_tri.gltf";
+    if (!wb.loadOverride(glb)) return smokeFail("reload: first load");
+    wb.record().appearanceName    = "stale_key";
+    wb.record().appearanceVerified = true;
+    wb.record().lods.push_back({1, "lod1.glb", 50.0f});
+    if (!wb.loadOverride(glb)) return smokeFail("reload: second load");
+    if (!wb.record().appearanceName.empty()) return smokeFail("reload: appearanceName not cleared");
+    if (wb.record().appearanceVerified)      return smokeFail("reload: appearanceVerified not reset");
+    if (!wb.record().lods.empty())           return smokeFail("reload: lods not cleared");
+    std::printf("[smoke] PASS workbench-reload (override state reset on reload)\n");
+    return 0;
+}
+
+void AssetViewerApp::onFileDropped(const char* path){
+    if (!path) return;
+    std::string p = path, low = p; for (char& c: low) c=(char)tolower((unsigned char)c);
+    auto ends=[&](const char* s){ size_t n=strlen(s); return low.size()>=n && low.compare(low.size()-n,n,s)==0; };
+    if (ends(".glb") || ends(".gltf")){
+        workbench_.loadOverride(p);
+        sidebar_.setActive(AssetType::ModWorkbench);
+    }
 }

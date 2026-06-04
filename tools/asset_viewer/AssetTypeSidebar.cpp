@@ -6,6 +6,7 @@ void AssetTypeSidebar::draw()
     if (ImGui::Selectable("Textures",     active_ == AssetType::Textures))     active_ = AssetType::Textures;
     if (ImGui::Selectable("Materials",    active_ == AssetType::Materials))    active_ = AssetType::Materials;
     if (ImGui::Selectable("Static Props", active_ == AssetType::StaticProps))  active_ = AssetType::StaticProps;
+    if (ImGui::Selectable("Mod Workbench",active_ == AssetType::ModWorkbench)) active_ = AssetType::ModWorkbench;
     ImGui::Spacing();
     ImGui::TextDisabled("Deferred");
     static const char* kDeferred[] = {
