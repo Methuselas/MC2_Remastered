@@ -623,8 +623,8 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "MC2_FEATURE_STATIC_PROP_PERSISTENT_BUCKETS",
         "MC2_STATIC_PROP_PERSISTENT_BUCKETS",
         EnvVarKind::Feature,
-        false,
-        "STATICPROP-PERSISTENT-STATIC-BUCKETS-2B-STAGE2 (Mechanism B): keep the static per-type instance block in a persistent batcher store (rebuilt only on registry-generation change); skip the per-frame static instance re-push; upload concatenates persistent-static + per-frame-dynamic per type. Default-OFF pending proof."
+        true,
+        "STATICPROP-PERSISTENT-STATIC-BUCKETS-2B-STAGE2 (Mechanism B-reinject): persistent static instance store, rebuilt only on registry-generation change, bulk-injected into s_bucketsByType each frame; skips the per-frame static re-push. DEFAULT-ON (user-Tracy StaticPropRegistryFlush 312us->68us at wolfman, ~78%). Kill-switch =0 restores per-frame re-push."
     },
     {
         "MC2_TRACE_STATIC_PROP_PERSISTENT_BUCKETS_COMPARE",

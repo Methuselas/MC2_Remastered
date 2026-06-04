@@ -176,8 +176,10 @@ static const bool s_flushCachedBlobCompare =
 // per-type instance block in a persistent batcher store, rebuilt only when the
 // registry generation changes; skip the per-frame static instance re-push. Default
 // OFF until proven. _COMPARE drives the FNV cached-vs-rebuilt oracle.
+// DEFAULT-ON 2026-06-03 (user-Tracy: StaticPropRegistryFlush 312us->68us at wolfman,
+// ~78%; compare-oracle clean; tier1 5/5). Kill-switch MC2_STATIC_PROP_PERSISTENT_BUCKETS=0.
 static const bool s_persistentBuckets =
-    parseEnvBoolWithDefault("MC2_STATIC_PROP_PERSISTENT_BUCKETS", false);
+    parseEnvBoolWithDefault("MC2_STATIC_PROP_PERSISTENT_BUCKETS", true);
 static const bool s_persistentBucketsCompare =
     parseEnvBoolWithDefault("MC2_STATIC_PROP_PERSISTENT_BUCKETS_COMPARE", false);
 
