@@ -158,6 +158,24 @@ bool NarrowEnabled() {
     return NarrowEnabledImpl();
 }
 
+// WATER-GPU-FULL-RECIPE-CULL-1B: authoritative full-recipe GPU cull. When ON, the
+// compute path culls the whole world-indexed recipe set directly (no CPU candidate
+// window), its output FEEDS THE DRAW, and the CPU narrow walk is skipped. Default-OFF
+// (only literal "0" disambiguates the off-with-value case). Proven byte-identical to
+// the candidate path by 1A parity across tier1 + a camera-pan-across-water-edge check.
+bool IsFullRecipeAuthoritative() {
+    static bool s_known = false, s_val = false;
+    if (!s_known) {
+        // DEFAULT-ON since 2026-06-03 (1A byte-identical parity across tier1 +
+        // user pan-across-water-edge + visual soak): only literal "0" opts out
+        // (revert escape hatch); any other value INCLUDING UNSET opts in.
+        const char* v = getenv("MC2_WATER_GPU_FULL_RECIPE_AUTHORITATIVE");
+        s_val = !(v && v[0] == '0' && v[1] == '\0');
+        s_known = true;
+    }
+    return s_val;
+}
+
 void BeginFrameNarrow() {
     if (!NarrowEnabledImpl()) return;
     // Reserve last-frame max + 10% slack, capped at recipe count (the hard
@@ -1321,8 +1339,16 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
         g_thinSlot = 0;
     }
     // Build and upload per-frame quad window SSBO.
-    const uint32_t windowCount = BuildQuadWindowSSBO();
-    if (windowCount == 0) return false;
+    // WATER-GPU-FULL-RECIPE-CULL-1B: in authoritative full-recipe mode the CPU narrow
+    // walk is skipped, so g_narrowQuadsThisFrame is empty and BuildQuadWindowSSBO would
+    // return 0. Bypass the window build AND the windowCount==0 early-return [adversarial
+    // C-1]; the dispatch bound becomes the full world-indexed recipe set. The full-recipe
+    // output writes the SAME real thin/header buffers the candidate path uses, so DISPATCH
+    // 2 + the VS draw consume it unchanged. Non-auth (1A/legacy) path is untouched.
+    const bool fullRecipeAuth = IsFullRecipeAuthoritative();
+    const uint32_t windowCount   = fullRecipeAuth ? 0u : BuildQuadWindowSSBO();
+    const uint32_t dispatchCount = fullRecipeAuth ? maxThinRecords : windowCount;
+    if (dispatchCount == 0) return false;
 
     // Advance ring slot so GPU write doesn't stomp a slot the GPU is still consuming.
     // Must happen AFTER the windowCount==0 early-return so we don't burn a slot
@@ -1369,6 +1395,11 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
     const GLint locFrameCos    = glGetUniformLocation(g_waterComputeProgram, "u_frameCos");
     const GLint locMapSide     = glGetUniformLocation(g_waterComputeProgram, "u_mapSide");
     const GLint locMVP         = glGetUniformLocation(g_waterComputeProgram, "u_worldToClipGL");
+    // WATER-FULL-RECIPE-GPU-TIMER-SPIKE-0 uniforms (optional — absent on un-patched shader).
+    const GLint locFullMode    = glGetUniformLocation(g_waterComputeProgram, "u_fullRecipeMode");
+    const GLint locShoreExt    = glGetUniformLocation(g_waterComputeProgram, "u_shoreExt");
+    const float spikeShoreExt  = (MapData::alphaDepth * 0.5f > 0.0f)
+                                 ? MapData::alphaDepth * 0.5f : 15.0f;
 
     if (locWindowCount < 0) {
         fprintf(stderr, "[GPU_DRIVEN_WATER v1] event=warn msg=u_windowCount_not_found\n");
@@ -1377,7 +1408,7 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
         glUseProgram(0);
         return false;
     }
-    glUniform1i(locWindowCount, (int)windowCount);
+    glUniform1i(locWindowCount, (int)dispatchCount);   // 1B: full recipe count when authoritative
 
     if (locMaxThin < 0) {
         fprintf(stderr, "[GPU_DRIVEN_WATER v1] event=warn msg=u_maxThinRecords_not_found\n");
@@ -1603,9 +1634,166 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
         }
     }
 
-    const uint32_t groups = (windowCount + 63u) / 64u;
-    glDispatchCompute(groups, 1, 1);
+    // Live-dispatch mode: full-recipe (authoritative 1B, writes the real draw buffers)
+    // or window (1A/legacy candidate-fed).
+    if (locFullMode >= 0) glUniform1i(locFullMode, fullRecipeAuth ? 1 : 0);
+    if (locShoreExt >= 0) glUniform1f(locShoreExt, spikeShoreExt);
+
+    // WATER-FULL-RECIPE-GPU-TIMER-SPIKE-0 (MC2_WATER_FULL_RECIPE_SPIKE): measurement
+    // only. Times the live candidate-fed cull dispatch, then runs a PROTOTYPE
+    // full-recipe cull dispatch over the whole world-indexed recipe set (GPU
+    // eligibility predicate) to SCRATCH buffers never fed to draw, and logs the
+    // GPU-us comparison every 600 frames. Default-off: zero behavior change.
+    static const bool s_spikeOn = (getenv("MC2_WATER_FULL_RECIPE_SPIKE") != nullptr);
+    // WATER-GPU-FULL-RECIPE-CULL-1A (MC2_WATER_GPU_FULL_RECIPE_CULL, default-OFF):
+    // runs the full-recipe cull path NON-AUTHORITATIVELY (candidate path still draws,
+    // CPU narrow walk stays alive) and parity-compares the two GPU outputs. Authority
+    // flip + walk-skip is 1B. [adversarial M-3: walk alive so the candidate reference
+    // is non-empty; M-1: this whole function only runs when the GPU water path is
+    // armed (fast path owns the draw); C-2: recipes stay at binding 0; M-2: u_worldToClipGL.]
+    static const bool s_cullOn = (getenv("MC2_WATER_GPU_FULL_RECIPE_CULL") != nullptr
+                                  && getenv("MC2_WATER_GPU_FULL_RECIPE_CULL")[0] != '0');
+    // The scratch full-recipe dispatch (spike timer / 1A parity) is the NON-authoritative
+    // comparison harness — pointless in 1B authoritative mode (the live dispatch IS
+    // full-recipe to the real buffers), so disable it there.
+    const bool runFullRecipe = (s_spikeOn || s_cullOn) && !fullRecipeAuth;
+    static GLuint s_qCand = 0, s_qSpike = 0;
+    if (s_spikeOn) {
+        if (!s_qCand)  glGenQueries(1, &s_qCand);
+        if (!s_qSpike) glGenQueries(1, &s_qSpike);
+    }
+
+    const uint32_t groups = (dispatchCount + 63u) / 64u;   // 1B: full recipe set when authoritative
+    if (s_spikeOn) glBeginQuery(GL_TIME_ELAPSED, s_qCand);
+    glDispatchCompute(groups, 1, 1);   // AUTHORITATIVE dispatch (feeds draw): full-recipe (1B) or candidate (1A/legacy)
+    if (s_spikeOn) glEndQuery(GL_TIME_ELAPSED);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+    // 1B sanity telemetry: confirm the authoritative full-recipe dispatch actually
+    // produced water records (visibleCount > 0), every 600 frames.
+    if (fullRecipeAuth) {
+        static uint32_t s_authFrame = 0;
+        if ((s_authFrame++ % 600u) == 0u) {
+            uint32_t vis = 0;
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_waterBucketHeaderSsbo);
+            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, 4, &vis);
+            printf("[WATER_FULL_RECIPE_AUTH v1] recipeCount=%u authoritativeOutput=%u\n",
+                   maxThinRecords, vis);
+            fflush(stdout);
+        }
+    }
+
+    if (runFullRecipe && locFullMode >= 0 && locShoreExt >= 0) {
+        static GLuint s_spikeThin = 0, s_spikeHeader = 0;
+        static GLsizeiptr s_spikeThinBytes = 0;
+        const GLsizeiptr needThin = (GLsizeiptr)maxThinRecords * (GLsizeiptr)sizeof(WaterThinRecord);
+        if (!s_spikeThin || needThin > s_spikeThinBytes) {
+            if (s_spikeThin) glDeleteBuffers(1, &s_spikeThin);
+            glGenBuffers(1, &s_spikeThin);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_spikeThin);
+            glBufferData(GL_SHADER_STORAGE_BUFFER, needThin, nullptr, GL_DYNAMIC_COPY);
+            s_spikeThinBytes = needThin;
+        }
+        if (!s_spikeHeader) {
+            glGenBuffers(1, &s_spikeHeader);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_spikeHeader);
+            glBufferData(GL_SHADER_STORAGE_BUFFER, 16, nullptr, GL_DYNAMIC_COPY);
+        }
+        const uint32_t zero4[4] = {0u, 0u, 0u, 0u};
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_spikeHeader);
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, 16, zero4);  // reset visibleCount accumulator
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, s_spikeThin);   // scratch thin-write (NOT fed to draw)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, s_spikeHeader); // scratch header
+        const uint32_t recipeCount = (uint32_t)g_recipes.size();
+        glUniform1i(locFullMode, 1);
+        glUniform1i(locWindowCount, (int)recipeCount);  // dispatch bound = full recipe set
+        const uint32_t frGroups = (recipeCount + 63u) / 64u;
+        if (s_spikeOn) glBeginQuery(GL_TIME_ELAPSED, s_qSpike);
+        glDispatchCompute(frGroups, 1, 1);
+        if (s_spikeOn) glEndQuery(GL_TIME_ELAPSED);
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+        // Restore window mode + release scratch bindings (final rebind below fixes 6).
+        glUniform1i(locFullMode, 0);
+        glUniform1i(locWindowCount, (int)windowCount);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, 0);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, 0);
+
+        uint32_t frOut = 0;
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_spikeHeader);
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, 4, &frOut);
+
+        // ---- Spike timer log (MC2_WATER_FULL_RECIPE_SPIKE only) ----
+        if (s_spikeOn) {
+            GLuint64 nsCand = 0, nsSpike = 0;
+            glGetQueryObjectui64v(s_qCand,  GL_QUERY_RESULT, &nsCand);
+            glGetQueryObjectui64v(s_qSpike, GL_QUERY_RESULT, &nsSpike);
+            static double s_sumCand = 0.0, s_sumSpike = 0.0; static uint32_t s_n = 0;
+            static uint32_t s_lastRecipe = 0, s_lastCand = 0, s_lastFrOut = 0;
+            s_sumCand += (double)nsCand / 1000.0; s_sumSpike += (double)nsSpike / 1000.0; s_n++;
+            s_lastRecipe = recipeCount; s_lastCand = windowCount; s_lastFrOut = frOut;
+            if (s_n >= 600u) {
+                printf("[WATER_FULL_RECIPE_SPIKE v1] recipeCount=%u candidateCount=%u "
+                       "candidateGpuUs=%.1f fullRecipeGpuUs=%.1f deltaUs=%.1f fullRecipeOut=%u (mean/600)\n",
+                       s_lastRecipe, s_lastCand, s_sumCand / (double)s_n, s_sumSpike / (double)s_n,
+                       (s_sumSpike - s_sumCand) / (double)s_n, s_lastFrOut);
+                fflush(stdout);
+                s_sumCand = 0.0; s_sumSpike = 0.0; s_n = 0u;
+            }
+        }
+
+        // ---- 1A parity: candidate-fed (authoritative) vs full-recipe GPU output ----
+        // Readback is expensive (GPU->CPU stall); cadence-gated. The candidate output
+        // lives in g_thinBuffer at thinSlotOffset (count = g_waterBucketHeaderSsbo
+        // .visibleCount, written by the authoritative dispatch above, NOT yet consumed
+        // by DISPATCH 2). The full-recipe output is in s_spikeThin (count = frOut).
+        if (s_cullOn) {
+            static uint32_t s_parityFrame = 0;
+            const bool doParity = ((s_parityFrame++ % 120u) == 0u);
+            if (doParity) {
+                uint32_t candCount = 0;
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_waterBucketHeaderSsbo);
+                glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, 4, &candCount);
+                if (candCount > maxThinRecords) candCount = maxThinRecords;
+                uint32_t frCount = (frOut > maxThinRecords) ? maxThinRecords : frOut;
+                std::vector<WaterThinRecord> candRec(candCount), frRec(frCount);
+                if (candCount) {
+                    glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinBuffer);
+                    glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, thinSlotOffset,
+                        (GLsizeiptr)candCount * (GLsizeiptr)sizeof(WaterThinRecord), candRec.data());
+                }
+                if (frCount) {
+                    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_spikeThin);
+                    glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                        (GLsizeiptr)frCount * (GLsizeiptr)sizeof(WaterThinRecord), frRec.data());
+                }
+                // Compare order-independently by recipeIdx (atomicAdd slot alloc is
+                // nondeterministic). Set match + per-field match for shared recipeIdx.
+                std::unordered_map<uint32_t, const WaterThinRecord*> candMap;
+                candMap.reserve(candCount * 2u + 1u);
+                for (const auto& r : candRec) candMap[r.recipeIdx] = &r;
+                uint32_t shared = 0, onlyFr = 0, fieldMismatch = 0;
+                for (const auto& f : frRec) {
+                    auto it = candMap.find(f.recipeIdx);
+                    if (it == candMap.end()) { ++onlyFr; continue; }
+                    ++shared;
+                    const WaterThinRecord& c = *it->second;
+                    if (f.flags != c.flags ||
+                        f.lightRGB0 != c.lightRGB0 || f.lightRGB1 != c.lightRGB1 ||
+                        f.lightRGB2 != c.lightRGB2 || f.lightRGB3 != c.lightRGB3 ||
+                        f.fogRGB0 != c.fogRGB0 || f.fogRGB1 != c.fogRGB1 ||
+                        f.fogRGB2 != c.fogRGB2 || f.fogRGB3 != c.fogRGB3)
+                        ++fieldMismatch;
+                }
+                const uint32_t onlyCand = (candCount > shared) ? (candCount - shared) : 0u;
+                printf("[WATER_FULL_RECIPE_PARITY v1] candCount=%u fullRecipeCount=%u "
+                       "shared=%u onlyCandidate=%u onlyFullRecipe=%u fieldMismatch=%u "
+                       "setMatch=%d\n",
+                       candCount, frCount, shared, onlyCand, onlyFr, fieldMismatch,
+                       (onlyCand == 0u && onlyFr == 0u && fieldMismatch == 0u) ? 1 : 0);
+                fflush(stdout);
+            }
+        }
+    }
 
     // ------------------------------------------------------------------
     // DISPATCH 2: cmd-patch (gpu_driven_cmd_patch.comp)

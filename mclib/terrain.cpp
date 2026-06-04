@@ -2054,7 +2054,12 @@ void Terrain::geometry (void)
 		// Predicate MUST match UploadThin's exactly — see
 		// gos_terrain_water_stream.cpp:UploadAndBindThinRecords.
 		WaterStream::BeginFrameNarrow();
-		const bool s_waterNarrowOn = WaterStream::NarrowEnabled();
+		// WATER-GPU-FULL-RECIPE-CULL-1B: when authoritative full-recipe GPU cull owns
+		// the water draw, the GPU culls the whole world-indexed recipe set directly and
+		// the CPU narrow candidate walk feeds nothing — skip it (this is the ~0.16ms
+		// per-frame walk this lane set out to retire). Proven byte-identical by 1A parity.
+		const bool s_waterNarrowOn =
+			WaterStream::NarrowEnabled() && !WaterStream::IsFullRecipeAuthoritative();
 		// S6 coarse cost A/B instrument: ONE QPC pair around the WHOLE
 		// per-frame setupTextures loop (NOT per-quad - the per-quad
 		// std::chrono COST_SPLIT scopes are observer-effect-poisoned and
@@ -2072,9 +2077,45 @@ void Terrain::geometry (void)
 				QueryPerformanceFrequency((LARGE_INTEGER*)&s_s6QpcFreq);
 			QueryPerformanceCounter((LARGE_INTEGER*)&s_s6QpcStart);
 		}
+		// QUADSETUP-ARMED-SKIP-WALK-1: when the GPU terrain path fully owns the
+		// frame, the per-quad setupTextures() call is dead work — its consumers
+		// (draw()/drawWater(), the recipe + mine-enqueue blocks, clipInfo) are
+		// all either skipped or self-gated to no-op when armed, and decals/mines
+		// come from the static bakes (DrawDecalStatic/DrawMineStatic, default-ON
+		// since 2026-05-17). The water producer is the narrow-candidate walk
+		// below, which reads pVertex directly under the fast path and does NOT
+		// need setupTextures. Picking is independent (Camera::inverseProject
+		// forward-projects fresh from vx/vy/elevation — Task 0 verified: zero
+		// wx/wy/wz/clipInfo dependency). The narrow walk MUST still run every
+		// frame because quadList is a camera-relative sliding window (its slots
+		// remap to different world tiles as the view pans), so the eligible-water
+		// set is NOT cacheable across frames. Gate default-OFF; MC2_QUADSETUP_ARMED_SKIP
+		// (unset/"0" = OFF kill-switch, any other value = ON). NarrowEnabled() is
+		// in the predicate so we only skip when the pVertex water producer is live.
+		// DEFAULT-ON since 2026-06-03 (clean Tracy mc2_01 1.01ms->372us, tier1 5/5,
+		// water/mines/decals/picking user-verified): only literal "0" opts out
+		// (bisection / revert escape hatch), any other value INCLUDING UNSET opts in.
+		static const bool s_armedSkipOn = []() {
+			const char* v = getenv("MC2_QUADSETUP_ARMED_SKIP");
+			return !(v && v[0] == '0' && v[1] == '\0');
+		}();
+		const bool fullyArmed =
+			gos_terrain_indirect::IsFrameSolidArmed() &&
+			gos_terrain_indirect::IsFrameOverlayArmed() &&
+			gos_terrain_indirect::IsFrameMineArmed() &&
+			gos_terrain_indirect::WaterFastPathOwnsArmedDraw() &&
+			(Terrain::terrainTextures2 != NULL) &&
+			!drawTerrainGrid &&
+			WaterStream::NarrowEnabled();
+		const bool skipSetup = s_armedSkipOn && fullyArmed;
+		long quadsSkipped = 0;
+		long waterCandidates = 0;
 		for (i=0;i<numberQuads;i++)
 		{
-			currentQuad->setupTextures();
+			if (skipSetup)
+				++quadsSkipped;
+			else
+				currentQuad->setupTextures();
 			if (s_waterNarrowOn) {
 				const TerrainQuad& q = *currentQuad;
 				if (q.vertices[0] && q.vertices[1] &&
@@ -2119,11 +2160,24 @@ void Terrain::geometry (void)
 						    q.vertices[3]->pVertex->elevation < we + shoreExt);
 						append = waterHandleSet || submergedSand;
 					}
-					if (append)
+					if (append) {
 						WaterStream::AppendNarrowCandidate(currentQuad);
+						++waterCandidates;
+					}
 				}
 			}
 			currentQuad++;
+		}
+		// QUADSETUP-ARMED-SKIP-WALK-1 bounded telemetry (every 600 frames, only
+		// when the gate is enabled so production-with-feature-off stays silent).
+		if (s_armedSkipOn) {
+			static uint32_t s_qsSkipFrames = 0;
+			if ((++s_qsSkipFrames % 600) == 0) {
+				printf("[QUADSETUP_SKIP v1] fullyArmed=%d skip=%d quadsSkipped=%ld waterCandidates=%ld pickingCarveout=none\n",
+				       fullyArmed ? 1 : 0, skipSetup ? 1 : 0,
+				       quadsSkipped, waterCandidates);
+				fflush(stdout);
+			}
 		}
 		if (s_s6CostOn)
 		{
