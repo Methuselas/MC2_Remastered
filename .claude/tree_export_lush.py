@@ -124,6 +124,15 @@ bpy.ops.object.transform_apply(location=False,rotation=False,scale=True)
 obj.data.calc_loop_triangles()
 print("FINAL tris=", len(obj.data.loop_triangles), "node=", obj.name, flush=True)
 
+import math as _m
+# Flip 180deg about X so the lush LOD0 matches the hand-built impostor/cook cards
+# (they had opposite Y in the GLB -> LOD0 rendered upside-down vs LOD1).
+import mathutils as _mu
+_o=bpy.context.view_layer.objects.active
+if _o and _o.type=='MESH':
+    _o.data.transform(_mu.Matrix.Rotation(_m.radians(180),4,'X'))
+    _o.data.update()
+    print('FLIP applied; new z-bounds', min(v.co.z for v in _o.data.vertices), max(v.co.z for v in _o.data.vertices))
 bpy.ops.export_scene.gltf(filepath=OUT, export_format='GLB',
     use_selection=False, export_apply=True, export_yup=True)
 print("EXPORTED", OUT, flush=True)
