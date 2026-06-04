@@ -1087,6 +1087,10 @@ void compute_dispatch() {
                     uint32_t totalVisible   = 0u;
                     uint32_t totalFalseNeg  = 0u;
                     int      typesWithMiss  = 0;
+                    // Slice-A diagnostic: value-space probe — is visibleIds populated
+                    // (scattered indices) or all-zero (unpopulated)? And what range?
+                    uint32_t vMin = 0xFFFFFFFFu, vMax = 0u, vZeros = 0u;
+                    int      sampType = -1; uint32_t sampBase=0, sampN=0, sampV0=0, sampV1=0, sampV2=0;
 
                     for (int t = 0; t < typeCount; ++t)
                     {
@@ -1108,10 +1112,15 @@ void compute_dispatch() {
                                                static_cast<GLsizeiptr>(n * sizeof(uint32_t)),
                                                ids.data());
 
+                        if (sampType < 0) {
+                            sampType = t; sampBase = base; sampN = n;
+                            sampV0 = ids[0]; sampV1 = (n>1?ids[1]:0u); sampV2 = (n>2?ids[2]:0u);
+                        }
                         uint32_t falseNeg = 0u;
                         for (uint32_t k = 0u; k < n; ++k)
                         {
                             const uint32_t V = ids[k];
+                            if (V < vMin) vMin = V; if (V > vMax) vMax = V; if (V == 0u) ++vZeros;
                             // V is a record index.  The draw renders records
                             // [base, base+n); any V outside that window is cut off.
                             if (V < base || V >= base + n)
@@ -1131,6 +1140,9 @@ void compute_dispatch() {
                            totalVisible ? 100.0 * totalFalseNeg / totalVisible : 0.0,
                            typesWithMiss,
                            overflow);
+                    printf("[GPU_CULL_OWNERSHIP_PARITY_DIAG] vMin=%u vMax=%u vZeros=%u | sampType=%d base=%u n=%u V0=%u V1=%u V2=%u\n",
+                           (vMin==0xFFFFFFFFu?0u:vMin), vMax, vZeros,
+                           sampType, sampBase, sampN, sampV0, sampV1, sampV2);
                     fflush(stdout);
                 }
             }
