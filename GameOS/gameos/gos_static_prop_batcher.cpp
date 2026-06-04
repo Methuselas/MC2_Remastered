@@ -419,6 +419,15 @@ static const bool s_staticPropColorsFill =
 // 2b Stage 2 Task-0: bucket static/dynamic order + overlap probe (throwaway).
 static const bool s_bucketOrderTrace = (std::getenv("MC2_BUCKET_ORDER_TRACE") != nullptr);
 
+// 2b Stage 2 (Mechanism B-reinject): persistent per-type static instance store,
+// rebuilt only when the registry generation changes. Each frame the registry
+// flush BULK-injects these blocks into s_bucketsByType (one memcpy per type)
+// instead of re-walking the registry per leaf — killing the per-leaf walk/push/
+// map overhead. Downstream (uploadAllBucketsIfNeeded + coalesce pool build) read
+// s_bucketsByType unchanged. Static blocks carry 0 colors (Stage 1).
+static std::unordered_map<uint32_t, std::vector<GpuStaticPropInstance>> s_persistentStaticStore;
+static uint64_t s_persistentStaticGen = 0xFFFFFFFFFFFFFFFFull;  // sentinel = never built
+
 // Stage 3.C: per-submitMultiShape batch accumulator. Cleared at the start
 // of each submitMultiShape(); populated by submit() per leaf. After
 // submitMultiShape() returns true, getLastBuiltBatch() returns this vector
@@ -7158,6 +7167,54 @@ void GpuStaticPropBatcher::submitCachedInstanceRange(const GpuStaticPropInstance
             bucket.instances.push_back(updated);
         }
         i = j;
+    }
+}
+
+// 2b Stage 2 (Mechanism B-reinject) -----------------------------------------
+uint64_t GpuStaticPropBatcher::persistentStaticGen() { return s_persistentStaticGen; }
+void GpuStaticPropBatcher::setPersistentStaticGen(uint64_t g) { s_persistentStaticGen = g; }
+uint64_t GpuStaticPropBatcher::persistentStaticTotalCount() {
+    uint64_t n = 0; for (auto& kv : s_persistentStaticStore) n += kv.second.size(); return n;
+}
+
+void GpuStaticPropBatcher::clearPersistentStatic() {
+    // Keep the map + per-type vector capacity; just reset sizes (rebuild refills).
+    for (auto& kv : s_persistentStaticStore) kv.second.clear();
+    s_persistentStaticGen = 0xFFFFFFFFFFFFFFFFull;  // invalid until the rebuild sets it
+}
+
+// Append a contiguous run of recipes (one registry range) into the persistent
+// static store, grouped by typeID. Called ONLY on a dirty generation (rare), so
+// per-element push_back is fine. firstColorOffset is irrelevant (static carries 0
+// colors, no shader reads it) — stored verbatim.
+void GpuStaticPropBatcher::appendPersistentStaticRange(const GpuStaticPropInstance* arr,
+                                                       uint32_t count) {
+    if (!arr || count == 0u) return;
+    uint32_t i = 0u;
+    while (i < count) {
+        const uint32_t typeID = arr[i].typeID;
+        if (typeID >= s_types.size()) { ++i; continue; }
+        uint32_t j = i;
+        while (j < count && arr[j].typeID == typeID) ++j;
+        auto& store = s_persistentStaticStore[typeID];
+        // NOTE: do NOT reserve(size + n) here — for single-leaf runs that sets
+        // capacity to EXACTLY size+1 per call, defeating geometric growth (the 2a
+        // reserve-O(N^2) regression). push_back grows geometrically; dirty-only.
+        for (uint32_t k = i; k < j; ++k) store.push_back(arr[k]);
+        i = j;
+    }
+}
+
+// Every frame: bulk-inject each persistent static block into its per-type bucket
+// (one memcpy per type, NOT per leaf). Dynamic instances (if any) are appended by
+// the dynamic submit path separately; static carries 0 colors so colors untouched.
+void GpuStaticPropBatcher::reinjectPersistentStatic() {
+    for (auto& kv : s_persistentStaticStore) {
+        const auto& block = kv.second;
+        if (block.empty()) continue;
+        PerTypeBucket& bucket = s_bucketsByType[kv.first];
+        bucket.instances.insert(bucket.instances.end(), block.begin(), block.end());  // bulk
+        if (s_bucketOrderTrace) { if (!bucket.dbgFirst) bucket.dbgFirst = 1; bucket.dbgStatic += (uint32_t)block.size(); }
     }
 }
 

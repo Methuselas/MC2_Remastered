@@ -316,6 +316,15 @@ public:
     // fraction of the per-leaf overhead.
     void submitCachedInstanceRange(const GpuStaticPropInstance* arr, uint32_t count);
 
+    // 2b Stage 2 (Mechanism B-reinject): persistent static instance store.
+    // Registry drives: clear+append on a dirty generation, reinject every frame.
+    uint64_t persistentStaticGen();
+    void     setPersistentStaticGen(uint64_t g);
+    uint64_t persistentStaticTotalCount();
+    void     clearPersistentStatic();
+    void     appendPersistentStaticRange(const GpuStaticPropInstance* arr, uint32_t count);
+    void     reinjectPersistentStatic();
+
     // Track B: pure recipe-construction path, side-effect-free.
     // Builds a GpuStaticPropInstance from static per-shape inputs.
     // Does NOT touch per-frame state (no bucket/SSBO writes).

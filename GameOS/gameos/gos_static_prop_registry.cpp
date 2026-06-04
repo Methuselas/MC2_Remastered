@@ -698,6 +698,19 @@ void flush() {
     // Timing: flush(N) clears → sets bits; extraction(N+1) reads before flush(N+1).
     // So extraction always sees frame N state, NOT the current frame being built.
     std::fill(s_recipeHasSubstrateRecord.begin(), s_recipeHasSubstrateRecord.end(), 0u);
+
+    // 2b Stage 2 (Mechanism B-reinject): the persistent static store is rebuilt only
+    // when the registry generation changes (spawn/despawn/light-change). On a clean
+    // generation the per-range loop skips the instance append entirely; the static
+    // instances are bulk-reinjected into s_bucketsByType after the loop. The records
+    // (substrate) still run per-frame (that's Stage 3 work).
+    GpuStaticPropBatcher& batcher_pb = GpuStaticPropBatcher::instance();
+    const uint64_t s_currentGen   = getRegistryGeneration();
+    const bool     s_storeDirty   = s_persistentBuckets &&
+                                    (batcher_pb.persistentStaticGen() != s_currentGen);
+    if (s_storeDirty) batcher_pb.clearPersistentStatic();
+    uint64_t s_pbExpectStaticCount = 0;  // [_COMPARE] sum of stored leaves this rebuild
+
     for (uint32_t regIdx : s_liveRangeIndices) {
         RecipeRange& rng = s_recipeRanges[regIdx];
         ++s_diag_ranges_total;
@@ -831,8 +844,11 @@ void flush() {
         //                                      and the != sentinel guard forces legacy
         // Default config (per-instance light ON, non-sentinel) → freshLightIdx ==
         // the stamped index for all leaves → cached path, as proven by the oracle.
+        // 2b Stage 2: persistent-buckets also uses the cached-record branch (same
+        // equivalence guard) — its instance submit routes to the persistent store
+        // instead of the per-frame bucket.
         const bool useCachedBlob =
-            s_flushCachedBlob
+            (s_flushCachedBlob || s_persistentBuckets)
             && freshLightIdx != 0xFFFFFFFFu
             && freshLightIdx == s_recipes[rng.first].lightDataIndex;
         if (!useCachedBlob) {
@@ -1017,7 +1033,16 @@ void flush() {
         // 1. Instances: one bulk call. Recipes carry the permanent lightDataIndex from Task 1 —
         //    no per-frame light patch required.
         const unsigned long long _t_csub0 = s_spflushEnabled ? __rdtsc() : 0ULL;
-        batcher.submitCachedInstanceRange(&s_recipes[rng.first], rng.count);
+        if (s_persistentBuckets) {
+            // B-reinject: append to the persistent store ONLY on a dirty generation;
+            // a clean frame skips this entirely (reinjected in bulk after the loop).
+            if (s_storeDirty) {
+                batcher.appendPersistentStaticRange(&s_recipes[rng.first], rng.count);
+                s_pbExpectStaticCount += rng.count;
+            }
+        } else {
+            batcher.submitCachedInstanceRange(&s_recipes[rng.first], rng.count);
+        }
         if (s_spflushEnabled) s_w_cached_submit_cyc += __rdtsc() - _t_csub0;
         // 2. Per-recipe cached cull records.
         const unsigned long long _t_crec0 = s_spflushEnabled ? __rdtsc() : 0ULL;
@@ -1115,6 +1140,44 @@ void flush() {
         }
         } // end gate branch
     }
+
+    // 2b Stage 2 (Mechanism B-reinject): finalize the store on a dirty rebuild, then
+    // bulk-inject the static blocks into s_bucketsByType every frame (one memcpy per
+    // type). The downstream upload + coalesce pool read s_bucketsByType unchanged.
+    if (s_persistentBuckets) {
+        if (s_storeDirty) batcher_pb.setPersistentStaticGen(s_currentGen);
+        batcher_pb.reinjectPersistentStatic();
+        // [_COMPARE] store-consistency oracle: on a DIRTY rebuild the store total
+        // must equal what we just appended (s_pbExpectStaticCount); on a CLEAN frame
+        // it must be UNCHANGED from the last rebuild (the store is frozen between
+        // dirty events). A mismatch = store corruption / a missed generation bump.
+        // (Visual/instance equivalence vs legacy is validated by the rendered-output
+        // parity + tier1 + Tracy, per the validation bar.)
+        if (s_persistentBucketsCompare) {
+            static uint64_t s_pbCmpChecks = 0, s_pbCmpMismatch = 0, s_pbCmpCap = 0;
+            static uint64_t s_pbLastRebuildCount = 0;
+            ++s_pbCmpChecks;
+            const uint64_t storedCount = batcher_pb.persistentStaticTotalCount();
+            const uint64_t expect = s_storeDirty ? s_pbExpectStaticCount : s_pbLastRebuildCount;
+            if (s_storeDirty) s_pbLastRebuildCount = storedCount;
+            if (storedCount != expect) {
+                ++s_pbCmpMismatch;
+                if (s_pbCmpCap < 32) { ++s_pbCmpCap;
+                    fprintf(stderr, "[PERSIST_BUCKET_COMPARE v1] event=mismatch stored=%llu expect=%llu dirty=%d\n",
+                        (unsigned long long)storedCount, (unsigned long long)expect, s_storeDirty ? 1 : 0);
+                    fflush(stderr);
+                }
+            }
+            if ((s_diag_flush_calls % 600u) == 0u) {
+                fprintf(stderr, "[PERSIST_BUCKET_COMPARE v1] event=summary checks=%llu mismatches=%llu stored=%llu\n",
+                    (unsigned long long)s_pbCmpChecks, (unsigned long long)s_pbCmpMismatch,
+                    (unsigned long long)storedCount);
+                fflush(stderr);
+            }
+        }
+    }
+    (void)s_pbExpectStaticCount;
+
     s_diag_total_ns += static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now() - _flush_t0).count());
