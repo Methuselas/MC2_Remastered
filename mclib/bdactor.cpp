@@ -4441,7 +4441,9 @@ long TreeAppearance::render (long depthFixup)
 				// TREE-OVERRIDE-LOD-MVP Task 2: the dynamic recovery path only ever
 				// deals with the live LOD0 render-instance (treeShape); key on the
 				// active LOD tuple (activeLOD pinned 0).
-				if (staticReg[activeLOD].registered && staticReg[activeLOD].shape != treeShape) {
+				// forced-LOD FIX: only the live LOD0 instance can suffer treeShape reassignment;
+				// guard to activeLOD==0 so a higher LOD's nullptr .shape never triggers invalidation.
+				if (activeLOD == 0 && staticReg[0].registered && staticReg[0].shape != treeShape) {
 					invalidateStaticRegistration();
 				}
 
@@ -4652,6 +4654,27 @@ long TreeAppearance::update (bool animate)
 	if (rotation < -180)
 		rotation += 360;
 
+	// TREE-OVERRIDE-LOD-MVP-1 Task 5: select the active render-LOD. MC2_FORCE_LOD
+	// (debug override) takes precedence and is validated FIRST; distance-driven
+	// selection is folded in below once the forced path proves clean. Always clamp
+	// to the highest registered+available LOD (M4 — never select an unavailable
+	// LOD). On a LOD switch re-arm needsFullBakeNextFrame (black-tree guard).
+	{
+		int _wantLOD = 0;  // default LOD0; distance selection arrives in a later step.
+		static const char* s_forceLodStr = getenv("MC2_FORCE_LOD");
+		if (s_forceLodStr) _wantLOD = atoi(s_forceLodStr);
+		int _maxAvailLOD = 0;
+		for (int _l = MAX_LODS - 1; _l > 0; --_l) {
+			if (staticReg[_l].registered) { _maxAvailLOD = _l; break; }
+		}
+		if (_wantLOD < 0) _wantLOD = 0;
+		if (_wantLOD > _maxAvailLOD) _wantLOD = _maxAvailLOD;
+		if (_wantLOD != activeLOD) {
+			activeLOD = _wantLOD;
+			needsFullBakeNextFrame = true;  // black-tree re-arm on LOD switch
+		}
+	}
+
 	//-------------------------------------------
 	// Does math necessary to draw Tree
 	Stuff::UnitQuaternion rot;
@@ -4753,9 +4776,17 @@ long TreeAppearance::update (bool animate)
 		{
 			// Stage 2.D.2 fix: cache GPU light data while lights are per-actor-correct.
 			{
-				mc2CacheOrBakeStaticGpuLight(treeShape, staticReg[activeLOD].registered, staticReg[activeLOD].recipeIndex);
+				// TREE-OVERRIDE-LOD-MVP K×M FIX (2026-06-03): per-instance light slot is
+				// LOD-INDEPENDENT. treeShape is always the LOD0 render-instance and the
+				// gather is position-keyed (terrain light by world pos), not geometry-keyed.
+				// Bake ONCE keyed on LOD0 and SHARE that single slot with whatever LOD is
+				// active -> light table stays U~=K (pre-LOD baseline) flat across LOD count,
+				// never K×M. Drawn geometry still swaps per-LOD via staticReg[lod].recipeIndex.
+				mc2CacheOrBakeStaticGpuLight(treeShape, staticReg[0].registered, staticReg[0].recipeIndex);
 				// 2026-05-11 per-instance capture (mirror of BldgAppearance::update).
-				staticReg[activeLOD].lightDataIndex = treeShape->getCachedGpuLightIndex();
+				const uint32_t _sharedLightSlot = treeShape->getCachedGpuLightIndex();
+				staticReg[0].lightDataIndex = _sharedLightSlot;
+				staticReg[activeLOD].lightDataIndex = _sharedLightSlot;  // share LOD0 slot
 				// [LIGHTSLOT v1] Task 0 cardinality gate (diagnostic only).
 				mc2_lightslot_trace::recordInstance(
 					appearType,
@@ -4824,9 +4855,13 @@ long TreeAppearance::update (bool animate)
 			// Seed cachedGpuLightIndex_ in the full-bake branch so the
 			// next render() doesn't fail the UINT32_MAX gate at :4341
 			// and invalidate the freshly-set staticReg.
-			mc2CacheOrBakeStaticGpuLight(treeShape, staticReg[activeLOD].registered, staticReg[activeLOD].recipeIndex);
+			// TREE-OVERRIDE-LOD-MVP K×M FIX (2026-06-03): bake keyed on LOD0, share slot
+			// to active LOD (see gpuEligible branch above for rationale).
+			mc2CacheOrBakeStaticGpuLight(treeShape, staticReg[0].registered, staticReg[0].recipeIndex);
 			// 2026-05-11 per-instance capture (mirror of gpuEligible branch).
-			staticReg[activeLOD].lightDataIndex = treeShape->getCachedGpuLightIndex();
+			const uint32_t _sharedLightSlot = treeShape->getCachedGpuLightIndex();
+			staticReg[0].lightDataIndex = _sharedLightSlot;
+			staticReg[activeLOD].lightDataIndex = _sharedLightSlot;  // share LOD0 slot
 			// [LIGHTSLOT v1] Task 0 cardinality gate (diagnostic only). This is
 			// the branch registered override trees actually land in (gpuEligible
 			// above is gated by !needsFullBakeNextFrame).
@@ -4976,8 +5011,13 @@ bool TreeAppearance::IsStaticNow() const
 	// TREE-OVERRIDE-LOD-MVP Task 2: the live per-instance render shape is the
 	// active LOD's shape (LOD0 today; activeLOD pinned 0). The shape-key check
 	// guards against treeShape reassignment (LOD/damage swaps).
+	// TREE-OVERRIDE-LOD-MVP forced-LOD FIX (2026-06-03): the shape-key guards
+	// treeShape reassignment, which only applies to the live LOD0 render-instance.
+	// Higher LODs have no live per-instance shape (staticReg[lod>=1].shape==nullptr),
+	// so the key is bypassed for activeLOD!=0 — markVisible replays the pre-registered
+	// LOD recipe directly (drawing the correct LOD geometry).
 	return staticReg[activeLOD].registered
-		&& staticReg[activeLOD].shape == treeShape
+		&& (activeLOD == 0 ? staticReg[0].shape == treeShape : true)
 		&& !needsFullBakeNextFrame;
 }
 
@@ -5159,8 +5199,21 @@ void TreeAppearance::registerStatic() {
 
 		int32_t regIdx = -1;
 		if (!lodMiss && !batch.empty()) {
+			// TREE-OVERRIDE-LOD-MVP forced-LOD FIX (2026-06-03): pass treeShape
+			// (the ALWAYS-LIVE LOD0 per-instance shape) as the recipe `multi`, NOT
+			// the throwaway lodShape — lodShape is deleted before the next frame, so
+			// rng.multi would dangle and flush()'s stale-frame gate
+			// (rng.multi->getCachedFrame() != currentFrame) would fire every frame →
+			// recipe skipped → LOD1 instances drawn=0 → trees invisible. The DRAWN
+			// geometry stays LOD1: it is carried by the batch entries' typeIDs (built
+			// from lodShape's leaves via buildRecipeFromShape above, pointing at LOD1's
+			// VBO region), not by `multi`. `multi` is used only for the frame-stamp
+			// gate, the per-frame lightDataIndex fallback (shared LOD0 slot — correct),
+			// and texture pins (LOD1 shares LOD0's texture set). treeShape's frame
+			// stamp is refreshed every frame by touch()/update(), keeping the LOD1
+			// recipe live exactly like LOD0.
 			(void)GameAdapters::StaticProp::syncStaticProp(
-				lodShape, batch.data(), batch.size(), &regIdx);
+				treeShape, batch.data(), batch.size(), &regIdx);
 			if (seamProbe)
 				fprintf(stderr, "[SEAMPROBE] tree syncStaticProp name=%s lod=%d batchSize=%zu regIdx=%d firstTypeID=%u\n",
 					appearType->name, lod, batch.size(), (int)regIdx,
@@ -5172,7 +5225,13 @@ void TreeAppearance::registerStatic() {
 			// the IsStaticNow check is LOD0-only (see IsStaticNow). Higher LODs
 			// have no live per-instance shape, so we record the type's render
 			// shape for diagnostics only — never compared at draw time.
-			staticReg[lod].shape       = (lod == 0) ? treeShape : lodShape;
+			// TREE-OVERRIDE-LOD-MVP K×M/forced-LOD FIX (2026-06-03): store nullptr for
+			// lod>=1, NOT the throwaway lodShape (freed below). A dangling .shape made
+			// IsStaticNow()'s shape-key fail for activeLOD>=1 → recovery path re-registered
+			// treeShape (LOD0) into staticReg[lod] → forced LOD drew LOD0 geometry (STOP).
+			// Higher-LOD .shape is never compared at draw time (IsStaticNow bypasses the
+			// key when activeLOD!=0; recovery check is activeLOD==0-only).
+			staticReg[lod].shape       = (lod == 0) ? treeShape : nullptr;
 			staticReg[lod].recipeIndex = regIdx;
 			anyRegistered = true;
 
@@ -5191,11 +5250,20 @@ void TreeAppearance::registerStatic() {
 			// distinct recipe-keyed baked slot (B grows with recipes, bounded by
 			// types×LODs — expected, not instance growth). LOD0 skipped here to
 			// keep the LOD0-only baseline bit-identical.
+			// TREE-OVERRIDE-LOD-MVP K×M FIX (2026-06-03): do NOT bake/gather a separate
+			// light slot per LOD. Higher LODs SHARE the LOD0 actor light slot -- same
+			// world position => identical terrain lighting, and the gather is position-
+			// keyed not geometry-keyed, so a per-LOD bake here only risked a fresh
+			// per-instance slot (the K×M STOP) for zero lighting gain. update() resolves
+			// staticReg[0].lightDataIndex each frame and shares it to the active LOD;
+			// seed the share here so a higher LOD that becomes active before the next
+			// update() still points at LOD0's slot.
 			if (lod != 0) {
-				mc2CacheOrBakeStaticGpuLight(lodShape, true, regIdx);
-				// K×M GATE: record which lightData_ slot this LOD's bake resolved
-				// to (dedup-shared with LOD0 = PASS; fresh-per-instance = STOP).
-				mc2_lightslot_trace::recordLodBakeSlot(lodShape->getCachedGpuLightIndex());
+				staticReg[lod].lightDataIndex = staticReg[0].lightDataIndex;
+				// K×M GATE (now PASS by construction): record the SHARED LOD0 slot, not a
+				// per-LOD bake. The real proof is recordInstance()'s U counter staying flat
+				// across LOD count.
+				mc2_lightslot_trace::recordLodBakeSlot(staticReg[0].lightDataIndex);
 			}
 		} else {
 			// M4: LOD unavailable — leave registered=false, continue.

@@ -130,11 +130,13 @@ ALLOWLIST=(
     MC2_HEARTBEAT               # infra
     MC2_HOTKEY_TRACE            # trace
     MC2_INVIEW_CONFLATION_TRACE # trace
+    MC2_LEGACY_INSTANCE_POOLS   # override -- dev testing (revert pool-skip)
     MC2_LIGHT_COST_SPLIT        # feature -- promote-to-registry
     MC2_LIGHT_DEDUP_TRACE       # trace
     MC2_LIGHTBAKE               # feature -- promote-to-registry
     MC2_LIGHTBRIDGE             # feature -- promote-to-registry
     MC2_LIGHTSSBO_TRACE         # trace
+    MC2_LIGHTSLOT_TRACE         # trace -- TREE-OVERRIDE-LOD light-slot cardinality gate
     MC2_LIGHTING_SHADOW_PREDICATE_MODE  # feature -- promote-to-registry
     MC2_LODBUG_TRACE            # trace
     MC2_MECH_AMBIENT_V1         # feature -- promote-to-registry
@@ -167,6 +169,7 @@ ALLOWLIST=(
     MC2_MODERN_TEX_RESOLVE      # feature -- promote-to-registry
     MC2_MODERN_TEX_RESOLVE_TRACE  # trace
     MC2_MODERN_TEX_RESOLVE_VALIDATE  # parity
+    MC2_MODOVERRIDE_TRACE       # trace -- model-override seam diagnostics
     MC2_OBJECT_ADMISSION_PREDICATE  # feature -- promote-to-registry
     MC2_OBJECT_ADMISSION_SELFTEST  # infra -- self-test
     MC2_OBJECT_ID_BUFFER_SELFTEST  # infra -- self-test
@@ -223,6 +226,8 @@ ALLOWLIST=(
     MC2_STATIC_PROP_PICK        # feature -- promote-to-registry
     MC2_STATIC_PROP_PICK_DEBUG  # trace
     MC2_STATIC_PROP_TRACE       # trace
+    MC2_STATICPROP_MATERIAL_PBR_SLOTS  # feature -- promote-to-registry
+    MC2_STATICPROP_ORM_TRACE    # trace -- static-prop ORM material diagnostics
     MC2_STRINGS_TRACE           # trace
     MC2_SUBMIT_TYPEHIST         # trace
     MC2_SUBSTRATE_COALESCE_LEGACY  # legacy

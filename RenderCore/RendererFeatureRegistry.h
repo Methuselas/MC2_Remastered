@@ -591,6 +591,13 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "BURNIN-DISK-JPEG kill-switch: when set, skip the <name>.burnin.jpg sidecar probe in TerrainColorMap::init and load the full <name>.burnin.tga (or .tga) instead. Default-unset = JPEG sidecar preferred when present (stb_image decode, ~9:1 disk; lossy but the burn-in colormap is a low-visibility tiled/minified ground texture). On JPEG absence/decode-error the runtime falls through to the .tga path regardless of this var. No gameplay/geometry change; visual delta is JPEG quantization only."
     },
     {
+        "MC2_TRACE_FORCE_LOD",
+        "MC2_FORCE_LOD",
+        EnvVarKind::Trace,
+        false,
+        "TREE-OVERRIDE-LOD-MVP-1 (Task 5): force the active render-LOD index for override trees (0..MAX_LODS-1), clamped to the highest registered+available LOD. Overrides distance selection. Default-unset = distance-driven. Read per-frame in TreeAppearance::update; validates the per-LOD draw path before distance bands ship. No gameplay change."
+    },
+    {
         "MC2_TRACE_RENDER_WORLD",
         "MC2_RENDER_WORLD_TRACE",
         EnvVarKind::Trace,
