@@ -16,6 +16,7 @@
 #include "gpu_cull_substrate.h"
 #include "gpu_cull_record.h"
 #include "gpu_cull_readback.h"
+#include "gos_profiler.h"   // ZoneScopedN / TracyGpuZone (cull-dispatch split)
 #include "gos_static_prop_killswitch.h"   // gos_GetTerrainMVPMat4()
 #include "gos_static_prop_batcher.h"      // batcher_getTypeCount(), batcher_getTypeDrawInfo()
 
@@ -824,6 +825,7 @@ void compute_dispatch() {
     // C2 frame begin: non-blocking tryConsume of last frame's readback.
     // Must be called BEFORE the compute shader is dispatched.
     if (readback_isEnabled()) {
+        TracyGpuZone("Cull.Readback");
         readback_tryConsume();
     }
 
@@ -861,12 +863,14 @@ void compute_dispatch() {
     const GLsizeiptr copyBytes =
         (slotBytes <= (GLsizeiptr)s_stagingBytes) ? slotBytes : (GLsizeiptr)s_stagingBytes;
 
+    { TracyGpuZone("Cull.CopyStaging");
     glBindBuffer(GL_COPY_READ_BUFFER,  substrateSsbo);
     glBindBuffer(GL_COPY_WRITE_BUFFER, s_stagingSsbo);
     glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER,
                         slotOffset, 0, copyBytes);
     glBindBuffer(GL_COPY_READ_BUFFER,  0);
     glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
+    }
 
     // Record count: read the CPU-side counter directly. The value was just
     // copied from substrate's persistent-mapped buffer (where it lives in
@@ -997,6 +1001,7 @@ void compute_dispatch() {
         // a surviving clear would raise per-frame GL_INVALID_OPERATION on
         // props->props-less.
         {
+            TracyGpuZone("Cull.Clears");
             const GLuint zero = 0u;
             const uint32_t effectiveCount = recordCount <= s_maxActors ? recordCount : s_maxActors;
             glClearNamedBufferSubData(s_bucketCountsBuf, GL_R32UI, 0,
@@ -1036,7 +1041,7 @@ void compute_dispatch() {
             if (locBC >= 0)
                 glUniform1i(locBC, s_blockVisBuf ? (int)s_blockCount : 0);
         }
-        glDispatchCompute(cullGroups, 1, 1);
+        { TracyGpuZone("Cull.CullShader"); glDispatchCompute(cullGroups, 1, 1); }
         glUseProgram(0);
 
         // 3. Barrier: SSBO writes (visibleIds, perBucketCount, actorVisBits) ready.
@@ -1116,7 +1121,7 @@ void compute_dispatch() {
             const uint32_t patchInvocations =
                 perPacketPatch ? pktCmdCount : s_bucketCount;
             const uint32_t patchGroups = (patchInvocations + 63u) / 64u;
-            glDispatchCompute(patchGroups, 1, 1);
+            { TracyGpuZone("Cull.PatchShader"); glDispatchCompute(patchGroups, 1, 1); }
             glUseProgram(0);
 
             batcher_unbindBaseInstanceByCmdSsboForPatch();  // restore slot 16

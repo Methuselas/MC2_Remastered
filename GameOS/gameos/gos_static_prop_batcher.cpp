@@ -4510,6 +4510,7 @@ bool uploadAllBucketsIfNeeded() {
         s_coalesceFrameSlot = s_frameSlot;
     }
     if (s_fence[s_frameSlot]) {
+        ZoneScopedN("GpuSP.FenceWaitRender");
         glClientWaitSync(s_fence[s_frameSlot], GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
         glDeleteSync(s_fence[s_frameSlot]);
         s_fence[s_frameSlot] = 0;

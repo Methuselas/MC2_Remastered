@@ -2259,7 +2259,7 @@ void MC_TextureManager::renderLists (void)
 			// Step 4.6 (global-pool slice 1): compute per-cmd baseInstance prefix-sum
 			// and advance the coalesce ring slot BEFORE compute_dispatch() so the
 			// patch shader can read baseInstanceByCmd[] in the same dispatch.
-			batcher_prepareBaseInstanceTable();
+			{ ZoneScopedN("GpuSP.PrepBaseInstance"); batcher_prepareBaseInstanceTable(); }
 
 			// C1b GPU authority flip: compute_dispatch() is now called HERE
 			// (moved from mission.cpp) so it processes BOTH dynamic actor records
@@ -2272,6 +2272,8 @@ void MC_TextureManager::renderLists (void)
 				gpu_cull::substrate_countParityCheck();
 #endif
 			if (gpu_cull::compute_isEnabled()) {
+				ZoneScopedN("GpuSP.CullDispatch");
+				TracyGpuZone("GpuSP.CullDispatch");
 				gpu_cull::compute_dispatch();
 			}
 
@@ -2319,7 +2321,11 @@ void MC_TextureManager::renderLists (void)
 				}
 			}
 
-			GpuStaticPropBatcher::instance().flush(getLastRenderSnapshot());
+			{
+				ZoneScopedN("GpuSP.BatcherFlush");
+				TracyGpuZone("GpuSP.BatcherFlush");
+				GpuStaticPropBatcher::instance().flush(getLastRenderSnapshot());
+			}
 		}
 
 		// GPU mech batcher Slice A flush — runs after static-prop flush,
