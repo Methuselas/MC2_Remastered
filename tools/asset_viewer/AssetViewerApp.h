@@ -44,6 +44,7 @@ public:
     static int runSmokeWorkbenchBind(const char* deployDir, const char* fixtureDir);  // S2
     static int runSmokeWorkbenchValidate(const char* fixtureDir);  // S3
     static int runSmokeWorkbenchExport(const char* fixtureDir, const char* tmpDir);  // S4
+    static int runSmokeWorkbenchReload(const char* fixtureDir);  // review: override-state reset on reload
 private:
     FileBrowser browser_;
     AssetTypeSidebar sidebar_;

@@ -37,6 +37,7 @@ void ModWorkbenchPanel::draw(ModWorkbench& wb, const ImVec2& avail) {
     if (wb.generation() != lastSyncedGen_) {
         syncMeshes(wb);
         lastSyncedGen_ = wb.generation();
+        appe_[0] = '\0';   // reprime appearance buffer from the (reset/suggested) record
     }
 
     // Sync orbit controls: override follows stock camera.
@@ -67,10 +68,9 @@ void ModWorkbenchPanel::draw(ModWorkbench& wb, const ImVec2& avail) {
     }
 
     auto& rec = wb.record();
-    static char appe[128] = "";
-    if (appe[0]=='\0' && !rec.appearanceName.empty()) strncpy(appe, rec.appearanceName.c_str(), sizeof(appe)-1);
-    ImGui::InputText("Appearance key", appe, sizeof(appe));
-    rec.appearanceName = appe;
+    if (appe_[0]=='\0' && !rec.appearanceName.empty()) strncpy(appe_, rec.appearanceName.c_str(), sizeof(appe_)-1);
+    ImGui::InputText("Appearance key", appe_, sizeof(appe_));
+    rec.appearanceName = appe_;
     ImGui::Checkbox("Appearance key verified (matches engine)", &rec.appearanceVerified);
     wb.revalidate();
     ImGui::Separator(); ImGui::TextUnformatted("Warnings:");

@@ -29,6 +29,13 @@ bool ModWorkbench::loadOverride(const std::string& glbPath){
     lastError_ = overrideMesh_.ok ? std::string() : overrideMesh_.error;
     if (overrideMesh_.ok){
         ++generation_;
+        // Fresh override: reset override-specific record state so a newly dropped
+        // asset never inherits the prior override's appearance key, verified flag,
+        // or LOD chain (would otherwise let override-B export under override-A's
+        // verified key).
+        record_.appearanceName.clear();
+        record_.appearanceVerified = false;
+        record_.lods.clear();
         // Set sourceRelPath to just the filename (S4 rewrites to <id>/<file>)
         record_.sourceRelPath = filenameOnly(glbPath);
     }

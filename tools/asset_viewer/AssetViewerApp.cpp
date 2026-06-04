@@ -1395,6 +1395,24 @@ int AssetViewerApp::runSmokeWorkbenchExport(const char* fixtureDir, const char* 
     std::printf("[smoke] PASS workbench-export (round-trip + refusals + escaping)\n"); return 0;
 }
 
+int AssetViewerApp::runSmokeWorkbenchReload(const char* fixtureDir){
+    // A newly dropped override must NOT inherit the prior override's appearance
+    // key / verified flag / LOD chain (else override-B could export under
+    // override-A's verified key). Pure ModWorkbench logic — no GL.
+    ModWorkbench wb;
+    std::string glb = std::string(fixtureDir)+"/unit_tri.gltf";
+    if (!wb.loadOverride(glb)) return smokeFail("reload: first load");
+    wb.record().appearanceName    = "stale_key";
+    wb.record().appearanceVerified = true;
+    wb.record().lods.push_back({1, "lod1.glb", 50.0f});
+    if (!wb.loadOverride(glb)) return smokeFail("reload: second load");
+    if (!wb.record().appearanceName.empty()) return smokeFail("reload: appearanceName not cleared");
+    if (wb.record().appearanceVerified)      return smokeFail("reload: appearanceVerified not reset");
+    if (!wb.record().lods.empty())           return smokeFail("reload: lods not cleared");
+    std::printf("[smoke] PASS workbench-reload (override state reset on reload)\n");
+    return 0;
+}
+
 void AssetViewerApp::onFileDropped(const char* path){
     if (!path) return;
     std::string p = path, low = p; for (char& c: low) c=(char)tolower((unsigned char)c);

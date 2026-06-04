@@ -19,4 +19,5 @@ private:
     MeshPreview3D stockPreview_;
     MeshPreview3D overridePreview_;
     uint64_t      lastSyncedGen_ = (uint64_t)-1;
+    char          appe_[128] = {0};   // appearance-key edit buffer; reprimed on generation change
 };
