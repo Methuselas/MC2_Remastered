@@ -6942,6 +6942,14 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             std::fflush(stderr);
         }
     }
+
+    // FOLIAGE-STATICPROP-DEPTH-PREPASS-1 (C): consume the per-frame depth-prepass
+    // flag. Next frame's prepass re-arms it. (The color EQUAL/no-write override is
+    // applied inline above off the prepass return value; this flag is the
+    // file-scope record of "prepass ran this frame" for any later reader. The
+    // early-return guards near flush() top are all BEFORE the prepass, so the flag
+    // is only ever set after them and this reset is the single consume point.)
+    s_depthPrepassRanThisFrame = false;
 }
 
 // File-scope counters written by flushShadow() and read by Task 6 probe.
