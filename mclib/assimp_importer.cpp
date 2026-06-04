@@ -45,24 +45,26 @@ namespace {
 //-----------------------------------------------------------------------------
 // Coordinate transforms (spec §6).
 //
-// ASE / 3DS Max convention is X-right, Y-forward, Z-up.
-// MC2 expects mc2.x = -src.x, mc2.y = src.z, mc2.z = src.y.
-// Same flip applies to positions and normals.
-//
-// Assimp's built-in axis flags are unreliable across format variants — we
-// apply this explicitly per-vertex/normal.
+// glTF is Y-up, right-handed (X-right, Y-up, Z-toward-viewer). The engine's
+// world-up in Stuff space is stuff.Y (stock ASE trees load their up axis into
+// position.y; the static_prop shader maps stuff.z->GL.up via MC2). The previous
+// mapping (mc2.y=src.z, mc2.z=src.y) was written for an ASE/Max Z-up source and
+// put the glTF up-axis (Y) into stuff.z -> every imported override mesh rendered
+// LYING ON ITS SIDE. Correct mapping for Y-up glTF: up (Y) -> stuff.y. We negate
+// X AND Z (two axis flips) so triangle winding / handedness is preserved (a
+// single flip would invert winding and backface-cull the mesh).
 inline Stuff::Point3D toMC2Pos(const aiVector3D& v) {
 	Stuff::Point3D p;
 	p.x = -v.x;
-	p.y =  v.z;
-	p.z =  v.y;
+	p.y =  v.y;
+	p.z = -v.z;
 	return p;
 }
 inline Stuff::Vector3D toMC2Vec(const aiVector3D& v) {
 	Stuff::Vector3D n;
 	n.x = -v.x;
-	n.y =  v.z;
-	n.z =  v.y;
+	n.y =  v.y;
+	n.z = -v.z;
 	return n;
 }
 // UV V-flip (spec §6).
