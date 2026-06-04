@@ -11,12 +11,14 @@
 #include "MaterialSlots.h"
 #include "MeshPreview3D.h"
 #include "ModelBrowser.h"
+#include "ModWorkbench.h"
 
 class AssetViewerApp {
 public:
     AssetViewerApp();
     ~AssetViewerApp();
     void drawUi();
+    void onFileDropped(const char* path);
     static int runSmoke(const char* fixtureDir);
     static int runSmokeDecoder();
     static int runSmokeKtxParse(const char* fixtureDir);
@@ -37,6 +39,7 @@ public:
     static int runSmokeMeshOrient(const char* deployDir);   // orientation gate: 2civliving tall axis must be GL-Y after transform
     static int runSmokeSpotlight(const char* deployDir);    // spotlight gate: vehicle has ≥1 isSpotlight submesh; 2civliving has 0
     static int runSmokeWorkbenchLink();   // S0: registry + assimp link/run
+    static int runSmokeWorkbenchGlb(const char* fixtureDir);   // S1
 private:
     FileBrowser browser_;
     AssetTypeSidebar sidebar_;
@@ -46,5 +49,6 @@ private:
     MaterialSlots      materialSlots_;
     MeshPreview3D      meshSurface_;
     ModelBrowser       modelBrowser_;
+    ModWorkbench       workbench_;
     bool materialsAutoLoaded_ = false;
 };

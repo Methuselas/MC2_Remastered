@@ -1280,6 +1280,7 @@ int AssetViewerApp::runSmokeSpotlight(const char* deployDir)
     return 0;
 }
 
+#include "GlbMeshLoader.h"
 #include "model_override_registry.h"
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
@@ -1295,4 +1296,36 @@ int AssetViewerApp::runSmokeWorkbenchLink()
         return smokeFail("workbench-link: assimp lacks .gltf importer");
     std::printf("[smoke] PASS workbench-link (registry + assimp glTF linked)\n");
     return 0;
+}
+
+int AssetViewerApp::runSmokeWorkbenchGlb(const char* fixtureDir)
+{
+    MeshData md = GlbMeshLoader::load(std::string(fixtureDir) + "/unit_tri.gltf");
+    if (!md.ok) return smokeFail((std::string("workbench-glb: ") + md.error).c_str());
+    if (md.submeshes.size() != 1) return smokeFail("workbench-glb: submeshes!=1");
+    const SubMesh& sm = md.submeshes[0];
+    if (sm.verts.size() != 3) return smokeFail("workbench-glb: verts!=3");
+    auto has = [&](float x,float y,float z){
+        for (auto& v : sm.verts)
+            if (std::fabs(v.px-x)<1e-3f && std::fabs(v.py-y)<1e-3f && std::fabs(v.pz-z)<1e-3f) return true;
+        return false; };
+    if (!has(0,0,0) || !has(2,0,5) || !has(0,3,7))
+        return smokeFail("workbench-glb: transformed positions wrong (axis swap?)");
+    float ex=md.bmax[0]-md.bmin[0], ey=md.bmax[1]-md.bmin[1], ez=md.bmax[2]-md.bmin[2];
+    if (std::fabs(ex-2)>1e-3f || std::fabs(ey-3)>1e-3f || std::fabs(ez-7)>1e-3f)
+        return smokeFail("workbench-glb: extents wrong");
+    bool flipped=false; for (auto& v: sm.verts) if (std::fabs(v.u)<1e-3f && std::fabs(v.v)<1e-3f) flipped=true;
+    if (!flipped) return smokeFail("workbench-glb: UV v-flip missing");
+    std::printf("[smoke] PASS workbench-glb verts=3 ext=%.1f,%.1f,%.1f\n", ex,ey,ez);
+    return 0;
+}
+
+void AssetViewerApp::onFileDropped(const char* path){
+    if (!path) return;
+    std::string p = path, low = p; for (char& c: low) c=(char)tolower((unsigned char)c);
+    auto ends=[&](const char* s){ size_t n=strlen(s); return low.size()>=n && low.compare(low.size()-n,n,s)==0; };
+    if (ends(".glb") || ends(".gltf")){
+        workbench_.loadOverride(p);
+        // sidebar_.setActive(AssetType::ModWorkbench);   // ENABLED IN S2 — leave commented now
+    }
 }

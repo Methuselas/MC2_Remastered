@@ -174,6 +174,10 @@ set(ASSET_VIEWER_SOURCES
     "${CMAKE_SOURCE_DIR}/GameOS/gameos/utils/Image.cpp"
     # engine-independent override-manifest parser (validates/round-trips models.json)
     "${CMAKE_SOURCE_DIR}/mclib/model_override_registry.cpp"
+    # S1: glTF/GLB loader, mod workbench, override manifest
+    GlbMeshLoader.cpp
+    ModWorkbench.cpp
+    OverrideManifest.cpp
 )
 
 add_executable(mc2_asset_viewer ${ASSET_VIEWER_SOURCES})

@@ -77,6 +77,9 @@ int main(int argc, char* argv[])
     if (argc >= 2 && strcmp(argv[1], "--smoke-workbench-link") == 0)
         return AssetViewerApp::runSmokeWorkbenchLink();
 
+    if (argc >= 2 && strcmp(argv[1], "--smoke-workbench-glb") == 0)
+        return AssetViewerApp::runSmokeWorkbenchGlb(argc >= 3 ? argv[2] : ".");
+
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0)
     {
         printf("SDL_Init error: %s\n", SDL_GetError());
@@ -153,6 +156,7 @@ int main(int argc, char* argv[])
                     event.window.event == SDL_WINDOWEVENT_CLOSE &&
                     event.window.windowID == SDL_GetWindowID(window))
                     running = false;
+                if (event.type == SDL_DROPFILE){ app.onFileDropped(event.drop.file); SDL_free(event.drop.file); }
             }
 
             ImGui_ImplOpenGL3_NewFrame();
