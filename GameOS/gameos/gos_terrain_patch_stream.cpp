@@ -1084,6 +1084,7 @@ bool TerrainPatchStream::flush()
     const bool checkBucketErrors = s_traceOn && s_bucketErrFramesChecked < 2;
     {
     ZoneScopedN("PatchStream.DrawBuckets");
+    TracyGpuZone("PatchStream.DrawBuckets");
     gos_terrain_bridge_beginBucketLoop();
     for (uint32_t b = 0; b < s_drawBucketCount; ++b) {
         const PatchStreamBucket& bk = s_drawBuckets[b];
@@ -1214,6 +1215,7 @@ bool TerrainPatchStream::flush()
     // --- M1b record draw path ---
     if (s_quadRecordsOn && s_quadRecordsDrawOn && s_recordBuf && s_recordCount > 0) {
         ZoneScopedN("PatchStream.DrawRecords");
+        TracyGpuZone("PatchStream.DrawRecords");
 
         // Drain any pre-existing GL errors before our own GL calls.
         { GLenum e; while ((e = glGetError()) != GL_NO_ERROR) {
