@@ -150,7 +150,8 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
     s << "    \"MC2_MATERIAL_GPU\": "; b(s, featureActive("MC2_MATERIAL_GPU", true)); s << ",\n";
     s << "    \"MC2_MATERIAL_GPU_SAMPLE\": "; b(s, featureActive("MC2_MATERIAL_GPU_SAMPLE", true)); s << ",\n";
     s << "    \"MC2_STATIC_PROP_IBL_SH\": "; b(s, featureActive("MC2_STATIC_PROP_IBL_SH", true)); s << ",\n";
-    s << "    \"MC2_STATIC_PROP_PBR_V1\": "; b(s, featureActive("MC2_STATIC_PROP_PBR_V1", false)); s << "\n";
+    s << "    \"MC2_STATIC_PROP_PBR_V1\": "; b(s, featureActive("MC2_STATIC_PROP_PBR_V1", false)); s << ",\n";
+    s << "    \"MC2_QUADSETUP_ARMED_SKIP\": "; b(s, featureActive("MC2_QUADSETUP_ARMED_SKIP", false)); s << "\n";
     s << "  },\n";
     s << "  \"engineView\": {\n";
     s << "    \"known\": "; b(s, viewKnown); s << ",\n";
