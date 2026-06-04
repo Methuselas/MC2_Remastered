@@ -491,7 +491,9 @@ void Weather::render (void)
 		static int s_rainBatchMode = -1; // -1 = uninitialised
 		if (s_rainBatchMode < 0) {
 			const char* ev = ::getenv("MC2_RAIN_BATCH");
-			s_rainBatchMode = (ev && ev[0] != '0' && ev[0] != '\0') ? 1 : 0;
+			// DEFAULT-ON since 2026-06-04 (smoke-clean mc2_17, geometrically identical
+			// to legacy — same verts/one draw call): only literal "0" opts out.
+			s_rainBatchMode = (ev && ev[0] == '0' && ev[1] == '\0') ? 0 : 1;
 		}
 
 		if (s_rainBatchMode) {

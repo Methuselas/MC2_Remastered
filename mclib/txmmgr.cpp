@@ -2307,8 +2307,11 @@ void MC_TextureManager::renderLists (void)
 					// NOTE: includeBldg is captured from a static at the outer scope, so it
 					// is also effectively constant per session; the extra compare is free.
 					static const bool s_dynPropDirtyOnly = []() {
+						// DEFAULT-ON since 2026-06-04 (smoke-clean mc2_24; proven
+						// s_registryGeneration dirty-only pattern, shadow pass reads only
+						// modelMatrix+typeID): only literal "0" opts out.
 						const char* v = getenv("MC2_SHADOW_DYNAMIC_PROP_DIRTY_ONLY");
-						return (v && v[0] != '0');
+						return !(v && v[0] == '0' && v[1] == '\0');
 					}();
 					static uint64_t  s_dynPropInstsGeneration = UINT64_MAX; // sentinel: force first build
 					static bool      s_dynPropInstsIncludeBldg = false;
