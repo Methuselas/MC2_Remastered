@@ -188,6 +188,14 @@ static const bool s_persistentBucketsCompare =
 // generation across frames means the persistent static store is reusable.
 static uint64_t s_registryGeneration = 0;
 
+// STATICPROP-SNAPSHOT-BRIDGE-COMPARE-1: monotonic version of the submitted-prop set.
+// Bumped at end of flush() when s_recipeHasSubstrateRecord differs from the previous
+// flush. In a stable scene (same props submitted each frame), this stays stable.
+// Never reset — stays monotonic across missions so callers can use it as a change
+// signal even across level boundaries.
+static uint64_t              s_cullRecordVersion = 0;
+static std::vector<uint8_t>  s_prevCullRecord;  // copy of s_recipeHasSubstrateRecord from last flush
+
 #define SP_TRACE(fmt, ...) \
     do { if (s_trace) { printf("[STATIC_PROP] " fmt "\n", ##__VA_ARGS__); \
          fflush(stdout); } } while (0)
@@ -656,6 +664,9 @@ void invalidate(int32_t regIdx) {
 // re-push can be skipped. Bumped on spawn (registerRecipe), despawn (invalidate),
 // and immutable-field write (markVisible light/extent change).
 uint64_t getRegistryGeneration() { return s_registryGeneration; }
+
+// STATICPROP-SNAPSHOT-BRIDGE-COMPARE-1: submitted-prop set version.
+uint64_t getCullRecordVersion() { return s_cullRecordVersion; }
 
 bool isReady(int32_t regIdx) {
     if (!s_enabled) return false;
@@ -1272,6 +1283,21 @@ void flush() {
             s_spflushWindowFrames      = 0;
         }
     }
+    // STATICPROP-SNAPSHOT-BRIDGE-COMPARE-1: bump s_cullRecordVersion only when the
+    // set of props submitted to the GPU cull substrate changed vs the previous flush.
+    // In a stable scene (same props visible each frame), this stays constant after warmup.
+    {
+        bool changed = (s_prevCullRecord.size() != s_recipeHasSubstrateRecord.size());
+        if (!changed) {
+            for (size_t ci = 0; ci < s_recipeHasSubstrateRecord.size(); ++ci) {
+                if (s_prevCullRecord[ci] != s_recipeHasSubstrateRecord[ci]) { changed = true; break; }
+            }
+        }
+        if (changed) {
+            ++s_cullRecordVersion;
+            s_prevCullRecord = s_recipeHasSubstrateRecord;
+        }
+    }
     // compute_dispatch() runs after this (moved to txmmgr.cpp between registry flush
     // and batcher flush) so it sees the appended static prop records.
     // batcher.flush() is called by txmmgr.cpp immediately after compute_dispatch().
@@ -1405,6 +1431,9 @@ void staticPropRegistryClearMaterialCache() {
 void staticPropRegistryClearCullSubmissionState() {
     s_recipeHasSubstrateRecord.clear();
     s_recipeHasSubstrateRecord.shrink_to_fit();
+    s_prevCullRecord.clear();
+    s_prevCullRecord.shrink_to_fit();
+    // Do NOT reset s_cullRecordVersion — stays monotonic across missions.
 }
 
 bool staticPropGetHasCullRecord(int32_t recipeIndex, bool* out) {
