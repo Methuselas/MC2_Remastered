@@ -1279,3 +1279,20 @@ int AssetViewerApp::runSmokeSpotlight(const char* deployDir)
     std::printf("[smoke] PASS spotlight: ambulance has beams, 2civliving has none\n");
     return 0;
 }
+
+#include "model_override_registry.h"
+#include <assimp/Importer.hpp>
+#include <assimp/scene.h>
+#include <assimp/postprocess.h>
+
+int AssetViewerApp::runSmokeWorkbenchLink()
+{
+    ModelOverrideRegistry reg;
+    if (reg.loadFromFile("does_not_exist_models.json", ".") != 0)
+        return smokeFail("workbench-link: expected 0 records");
+    Assimp::Importer imp;
+    if (!imp.IsExtensionSupported(".gltf"))
+        return smokeFail("workbench-link: assimp lacks .gltf importer");
+    std::printf("[smoke] PASS workbench-link (registry + assimp glTF linked)\n");
+    return 0;
+}

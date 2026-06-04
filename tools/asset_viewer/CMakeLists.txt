@@ -172,6 +172,8 @@ set(ASSET_VIEWER_SOURCES
     "${CMAKE_SOURCE_DIR}/RenderCore/KtxLoader.cpp"
     "${CMAKE_SOURCE_DIR}/ui_editor/UiEditorImageCache.cpp"
     "${CMAKE_SOURCE_DIR}/GameOS/gameos/utils/Image.cpp"
+    # engine-independent override-manifest parser (validates/round-trips models.json)
+    "${CMAKE_SOURCE_DIR}/mclib/model_override_registry.cpp"
 )
 
 add_executable(mc2_asset_viewer ${ASSET_VIEWER_SOURCES})
@@ -257,6 +259,9 @@ target_include_directories(mc2_asset_viewer PRIVATE
 
 target_link_libraries(mc2_asset_viewer PRIVATE imgui)
 
+# Assimp (glTF importer only, per root CMake ASSIMP_BUILD_GLTF_IMPORTER=ON).
+target_link_libraries(mc2_asset_viewer PRIVATE assimp::assimp)
+
 if(TARGET SDL2::SDL2)
     target_link_libraries(mc2_asset_viewer PRIVATE SDL2::SDL2)
 elseif(DEFINED SDL2_LIBRARIES)
@@ -288,4 +293,8 @@ target_include_directories(mc2_asset_viewer PRIVATE
     "${CMAKE_SOURCE_DIR}/GameOS/gameos"
     "${CMAKE_SOURCE_DIR}/3rdparty/tracy"
     "${CMAKE_SOURCE_DIR}"
+    "${CMAKE_SOURCE_DIR}/mclib"                       # model_override_registry.h
+    "${CMAKE_SOURCE_DIR}/3rdparty/include"            # nlohmann/json.hpp (registry TU only)
+    "${CMAKE_SOURCE_DIR}/3rdparty/assimp/include"     # <assimp/Importer.hpp>
+    "${CMAKE_BINARY_DIR}/out/3rdparty/assimp/include" # generated assimp config.h
 )

@@ -36,6 +36,7 @@ public:
     static int runSmokeMeshRender(const char* deployDir);   // Task 2: MeshPreview3D GL render: model distinct from background
     static int runSmokeMeshOrient(const char* deployDir);   // orientation gate: 2civliving tall axis must be GL-Y after transform
     static int runSmokeSpotlight(const char* deployDir);    // spotlight gate: vehicle has ≥1 isSpotlight submesh; 2civliving has 0
+    static int runSmokeWorkbenchLink();   // S0: registry + assimp link/run
 private:
     FileBrowser browser_;
     AssetTypeSidebar sidebar_;
