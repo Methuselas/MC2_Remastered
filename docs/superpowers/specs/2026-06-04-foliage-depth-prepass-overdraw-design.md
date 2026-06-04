@@ -214,6 +214,32 @@ Default-OFF → prove GL_EQUAL parity → measure (Phase 2) → flip default-ON 
 parity holds and the win is real and no opaque regression (else ship Mode B or
 stay alpha-only). `=0` remains the kill-switch.
 
+## Validation results (2026-06-04)
+
+**Implemented + code-reviewed.** Commits `a5461d80..98a39c77`. Mode A (prepass all
+static props). Gate `MC2_STATIC_PROP_DEPTH_PREPASS`, default OFF.
+
+- **GL_EQUAL parity: HOLDS.** Build clean; gate OFF and ON both smoke-PASS,
+  GL-clean, +0 destroys on mc2_24 + mc2_01. User confirmed navigated-camera visual
+  parity — trees render identically ON vs OFF, nothing vanished. The depth program
+  is built in the active **coalesce** variant; `invariant gl_Position` + identical
+  alpha predicate (materialGpuSample/slot-5 SSBO/debugAddrMode all uploaded to the
+  depth program — code review caught 2 CRITICAL parity bugs here that would have
+  vanished override-textured trees in a navigated view; fixed).
+- **Performance: prepass was NOT the close-up bottleneck.** User Tracy on a
+  near-foliage navigated view: enabling the prepass "looked the same and didn't
+  help close up." Root cause — the dominant close-up GPU cost is the **dynamic prop
+  SHADOW caster** (`drawDynamicPropShadows`), not the color pass. The shadow caster
+  had no GPU Tracy zone, so its cost was mis-attributed to `GpuSP.BatcherFlush`
+  (first-GPU-zone attribution). The color depth-prepass is correct and parity-sound
+  but addresses the wrong pass for this scene. See the Lane-D design
+  (`2026-06-04-shadow-caster-cull-and-projection-design.md`) for the shadow fix.
+- **Disposition:** keep `MC2_STATIC_PROP_DEPTH_PREPASS` **default-OFF**. It remains
+  a correct tool for genuinely color-overdraw-bound scenes (dense alpha foliage
+  without a dominating shadow pass), but it is not the current limiter. Re-measure
+  once the Lane-D shadow caster is culled (then the color pass may become the next
+  visible cost and the prepass may pay off).
+
 ## Risks
 
 1. **`GL_EQUAL` depth/state mismatch → invisible props.** THE risk. Mitigated by
