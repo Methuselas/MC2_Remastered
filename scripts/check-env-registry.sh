@@ -104,6 +104,9 @@ ALLOWLIST=(
     MC2_GL_DEBUG_FATAL          # infra -- abort on GL_DEBUG_SEVERITY_HIGH
     MC2_GL_ERROR_DRAIN_SILENT   # infra
     MC2_GPUPROPS_TRACE          # trace
+    MC2_GLTF_AXIS               # override -- glTF import axis mapping select (orientation dial)
+    MC2_GLTF_GROUND             # override -- glTF import auto-ground end select (1=base,2=opp,0=off)
+    MC2_GLTF_YOFF               # override -- glTF import up-offset (un-bury)
     MC2_GPU_CULL                # feature -- promote-to-registry
     MC2_GPU_CULL_AABB_PARITY    # parity
     MC2_GPU_CULL_COMPUTE_TRACE  # trace

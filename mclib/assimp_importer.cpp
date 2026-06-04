@@ -53,18 +53,29 @@ namespace {
 // LYING ON ITS SIDE. Correct mapping for Y-up glTF: up (Y) -> stuff.y. We negate
 // X AND Z (two axis flips) so triangle winding / handedness is preserved (a
 // single flip would invert winding and backface-cull the mesh).
+// MC2_GLTF_AXIS (0..3) selects the axis mapping at runtime so orientation can be
+// dialed in-game without rebuilds; MC2_GLTF_YOFF nudges the up component (stuff.y)
+// to lift a buried mesh (pivot-not-at-base). All four mappings are even-parity
+// (winding preserved). Bake the winning combo as the default once confirmed.
+static inline int s_gltfAxis() { static int a=[]{const char*e=getenv("MC2_GLTF_AXIS"); return e?atoi(e):0;}(); return a; }
+static inline float s_gltfYoff() { static float o=[]{const char*e=getenv("MC2_GLTF_YOFF"); return e?(float)atof(e):0.0f;}(); return o; }
+static inline void axisMap(const aiVector3D& v, float& X, float& Y, float& Z) {
+	switch (s_gltfAxis()) {
+	default:
+	case 0: X=-v.x; Y=-v.y; Z= v.z; break;  // -x,-y,z
+	case 1: X=-v.x; Y= v.z; Z= v.y; break;  // -x,z,y (original 'on-side')
+	case 2: X=-v.x; Y= v.y; Z=-v.z; break;  // -x,y,-z ('upside down')
+	case 3: X=-v.x; Y=-v.z; Z=-v.y; break;  // -x,-z,-y
+	}
+}
 inline Stuff::Point3D toMC2Pos(const aiVector3D& v) {
-	Stuff::Point3D p;
-	p.x = -v.x;
-	p.y = -v.y;
-	p.z =  v.z;
+	Stuff::Point3D p; float X,Y,Z; axisMap(v,X,Y,Z);
+	p.x = X; p.y = Y + s_gltfYoff(); p.z = Z;
 	return p;
 }
 inline Stuff::Vector3D toMC2Vec(const aiVector3D& v) {
-	Stuff::Vector3D n;
-	n.x = -v.x;
-	n.y = -v.y;
-	n.z =  v.z;
+	Stuff::Vector3D n; float X,Y,Z; axisMap(v,X,Y,Z);
+	n.x = X; n.y = Y; n.z = Z;   // normals: no translation
 	return n;
 }
 // UV V-flip (spec §6).
@@ -524,6 +535,24 @@ long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out) {
 
 	ASSIMP_TRACE("  ComputeBoundingBox...");
 	ComputeBoundingBox(out);
+
+	// AUTO-GROUND: imported override meshes are often centered on their pivot, so
+	// the placement (pivot at terrain elevation) puts terrain through the MIDPOINT.
+	// GL-up = -stuff.y (canopy at the most-negative y), so the BASE is at the
+	// largest stuff.y; translate that to 0 so the base sits on the ground.
+	// MC2_GLTF_GROUND=2 grounds the opposite end; =0 disables.
+	{
+		static const int s_ground = [](){ const char* e=getenv("MC2_GLTF_GROUND"); return e?atoi(e):1; }();
+		if (s_ground) {
+			const float dy = (s_ground==2) ? -out->minBox.y : -out->maxBox.y;
+			for (unsigned si=0; si<scene->mNumMeshes; ++si) {
+				TG_TypeNodePtr nd = out->GetTypeNode((long)si);
+				if (nd && nd->GetNodeType()==SHAPE_NODE)
+					static_cast<TG_TypeShape*>(nd)->TranslateTypeVerticesY(dy);
+			}
+			out->minBox.y += dy; out->maxBox.y += dy;
+		}
+	}
 
 	ASSIMP_TRACE("  SUCCESS");
 	SPEW(("ASSIMP", "%s: %u meshes, %u materials imported",
