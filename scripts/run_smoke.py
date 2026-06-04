@@ -562,7 +562,17 @@ def main():
                             # DEBUG-STATE-DUMP-1: override output directory.
                             "MC2_DEBUG_STATE_DUMP_DIR",
                             # DEBUG-STATE-DUMP-2: rolling 8-slot history ring.
-                            "MC2_DEBUG_STATE_DUMP_HISTORY")},
+                            "MC2_DEBUG_STATE_DUMP_HISTORY",
+                            # STATICPROP-SNAPSHOT-BRIDGE-COMPARE-1: independent
+                            # registry cache + field-by-field compare probe.
+                            # Default-OFF; =1 emits [SNAPSHOT_BRIDGE_COMPARE v1]
+                            # per-frame to stderr.
+                            "MC2_STATIC_PROP_SNAPSHOT_BRIDGE_COMPARE",
+                            # STATICPROP-SNAPSHOT-FILL-DIRTYONLY-1: clean-generation
+                            # fast path that skips fillStaticPropSlots + WriteLoop
+                            # and memcpy's cached rows into the snapshot arena.
+                            # Default-OFF; =1 enables the dirty-only path.
+                            "MC2_STATIC_PROP_SNAPSHOT_FILL_DIRTYONLY")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission

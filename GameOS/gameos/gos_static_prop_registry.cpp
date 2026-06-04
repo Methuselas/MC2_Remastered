@@ -188,6 +188,14 @@ static const bool s_persistentBucketsCompare =
 // generation across frames means the persistent static store is reusable.
 static uint64_t s_registryGeneration = 0;
 
+// STATICPROP-SNAPSHOT-BRIDGE-COMPARE-1: monotonic version of the submitted-prop set.
+// Bumped at end of flush() when s_recipeHasSubstrateRecord differs from the previous
+// flush. In a stable scene (same props submitted each frame), this stays stable.
+// Never reset — stays monotonic across missions so callers can use it as a change
+// signal even across level boundaries.
+static uint64_t              s_cullRecordVersion = 0;
+static std::vector<uint8_t>  s_prevCullRecord;  // copy of s_recipeHasSubstrateRecord from last flush
+
 #define SP_TRACE(fmt, ...) \
     do { if (s_trace) { printf("[STATIC_PROP] " fmt "\n", ##__VA_ARGS__); \
          fflush(stdout); } } while (0)
@@ -656,6 +664,9 @@ void invalidate(int32_t regIdx) {
 // re-push can be skipped. Bumped on spawn (registerRecipe), despawn (invalidate),
 // and immutable-field write (markVisible light/extent change).
 uint64_t getRegistryGeneration() { return s_registryGeneration; }
+
+// STATICPROP-SNAPSHOT-BRIDGE-COMPARE-1: submitted-prop set version.
+uint64_t getCullRecordVersion() { return s_cullRecordVersion; }
 
 bool isReady(int32_t regIdx) {
     if (!s_enabled) return false;
@@ -1272,6 +1283,21 @@ void flush() {
             s_spflushWindowFrames      = 0;
         }
     }
+    // STATICPROP-SNAPSHOT-BRIDGE-COMPARE-1: bump s_cullRecordVersion only when the
+    // set of props submitted to the GPU cull substrate changed vs the previous flush.
+    // In a stable scene (same props visible each frame), this stays constant after warmup.
+    {
+        bool changed = (s_prevCullRecord.size() != s_recipeHasSubstrateRecord.size());
+        if (!changed) {
+            for (size_t ci = 0; ci < s_recipeHasSubstrateRecord.size(); ++ci) {
+                if (s_prevCullRecord[ci] != s_recipeHasSubstrateRecord[ci]) { changed = true; break; }
+            }
+        }
+        if (changed) {
+            ++s_cullRecordVersion;
+            s_prevCullRecord = s_recipeHasSubstrateRecord;
+        }
+    }
     // compute_dispatch() runs after this (moved to txmmgr.cpp between registry flush
     // and batcher flush) so it sees the appended static prop records.
     // batcher.flush() is called by txmmgr.cpp immediately after compute_dispatch().
@@ -1376,25 +1402,41 @@ void staticPropCacheTypePrimaryMaterial(uint32_t typeID,
         s_typeMatCache.resize(typeID + 1u); // default-init: hasPrimary=false
     }
     StaticPropTypeMaterialCache& c = s_typeMatCache[typeID];
+    // SNAPSHOT-DIRTYONLY coherence: this fn mutates five fields the render snapshot
+    // captures per row (texArrayLayer/materialIdx/alphaClass/packetCount/firstPacket)
+    // but is invoked from the batcher AFTER ExtractRenderSnapshot() in the same frame.
+    // The snapshot dirty-only cache (render_snapshot.cpp) is gated on s_registryGeneration;
+    // if a material first-cache or alpha-on→alpha-off upgrade here did NOT bump the
+    // generation, the next clean frame would serve a stale material row. Snapshot the
+    // pre-state and bump on any real change so the next snapshot rebuilds. First-write-
+    // wins keeps this stable after warmup, so the dirty-only steady-state win is preserved.
+    const StaticPropTypeMaterialCache before = c;
     // Type metadata: always idempotent (same type → same values).
-    // Written unconditionally BEFORE the prefer-alpha-off early-return checks
-    // so alphaClass/packetCount/firstPacket are always set regardless of primary outcome.
+    // Written unconditionally BEFORE the prefer-alpha-off check so
+    // alphaClass/packetCount/firstPacket are always set regardless of primary outcome.
     c.alphaClass   = alphaClass;
     c.packetCount  = packetCount;
     c.firstPacket  = firstPacket;
     // Prefer alpha-off primary over alpha-on fallback.
     // Rule: alpha-off overwrites alpha-on; nothing overwrites alpha-off.
-    if (c.hasPrimary) {
-        if (!c.primaryWasAlphaOn) return; // already have alpha-off primary; done
-        if (wasAlphaOn)           return; // both alpha-on; keep first
-        // Upgrading from alpha-on fallback to alpha-off primary -- fall through.
+    // keepExisting == the original early-return conditions, restructured so the
+    // generation-change check below always runs.
+    const bool keepExisting = c.hasPrimary && (!c.primaryWasAlphaOn || wasAlphaOn);
+    if (!keepExisting) {
+        c.hasPrimary        = true;
+        c.primaryWasAlphaOn = wasAlphaOn;
+        c.multiPacket       = multiPacket;
+        c.texArrayLayer     = texArrayLayer;
+        c.materialIdx       = materialIdx;
+        c.hasMaterialIdx    = hasMaterialIdx;
     }
-    c.hasPrimary        = true;
-    c.primaryWasAlphaOn = wasAlphaOn;
-    c.multiPacket       = multiPacket;
-    c.texArrayLayer     = texArrayLayer;
-    c.materialIdx       = materialIdx;
-    c.hasMaterialIdx    = hasMaterialIdx;
+    if (c.texArrayLayer != before.texArrayLayer ||
+        c.materialIdx   != before.materialIdx   ||
+        c.alphaClass    != before.alphaClass    ||
+        c.packetCount   != before.packetCount   ||
+        c.firstPacket   != before.firstPacket) {
+        ++s_registryGeneration;   // material-cache change = snapshot row change
+    }
 }
 
 void staticPropRegistryClearMaterialCache() {
@@ -1405,6 +1447,9 @@ void staticPropRegistryClearMaterialCache() {
 void staticPropRegistryClearCullSubmissionState() {
     s_recipeHasSubstrateRecord.clear();
     s_recipeHasSubstrateRecord.shrink_to_fit();
+    s_prevCullRecord.clear();
+    s_prevCullRecord.shrink_to_fit();
+    // Do NOT reset s_cullRecordVersion — stays monotonic across missions.
 }
 
 bool staticPropGetHasCullRecord(int32_t recipeIndex, bool* out) {
