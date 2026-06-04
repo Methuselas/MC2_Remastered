@@ -8,7 +8,7 @@ Supersedes neither — it points into both:
   2026-06-04 ship-log.
 - `2026-05-22-visual-fidelity-roadmap.md` (Track V V1–V11) — now backfilled
   with a 2026-06-04 status table.
-- `render-pipeline-matrix.md` + `observations/2026-05-25-pipeline-master-index.md`
+- `observations/2026-05-14-render-pipeline-matrix.md` + `observations/2026-05-25-pipeline-master-index.md`
   (the render-pipeline contract map) — master-index now committed; matrix
   Status column flagged stale.
 
@@ -249,7 +249,7 @@ PBR + particles.
   `2026-05-22-engine-convergence-roadmap.md` (2026-06-04 ship-log at top).
 - Track V V1–V11 + status table:
   `2026-05-22-visual-fidelity-roadmap.md` (2026-06-04 status backfill at top).
-- Render-pipeline contract map: `render-pipeline-matrix.md` (submission-path /
+- Render-pipeline contract map: `observations/2026-05-14-render-pipeline-matrix.md` (submission-path /
   ownership / lifecycle; Status column stale — re-validate vs ship-log) +
   `observations/2026-05-25-pipeline-master-index.md` (frame spine + binding-point
   quick-ref) + per-subsystem maps `observations/2026-05-25-*-pipeline-map.md`.
