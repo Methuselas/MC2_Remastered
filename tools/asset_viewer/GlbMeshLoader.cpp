@@ -36,9 +36,12 @@ MeshData GlbMeshLoader::load(const std::string& path){
                 srcToGl(m->mVertices[vi].x,m->mVertices[vi].y,m->mVertices[vi].z, v.px,v.py,v.pz);
                 if (m->HasNormals())
                     srcToGl(m->mNormals[vi].x,m->mNormals[vi].y,m->mNormals[vi].z, v.nx,v.ny,v.nz);
-                if (m->HasTextureCoords(0)){ v.u=m->mTextureCoords[0][vi].x; v.v=1.0f-m->mTextureCoords[0][vi].y; }
+                // Assimp's glTF importer already flips V (glTF top-left -> GL bottom-left).
+                // Do NOT flip again here.
+                if (m->HasTextureCoords(0)){ v.u=m->mTextureCoords[0][vi].x; v.v=m->mTextureCoords[0][vi].y; }
                 smsh.verts.push_back(v); smsh.idx.push_back((uint32_t)smsh.idx.size());
-                for (int k=0;k<3;++k){ float p=(&v.px)[k]; if(p<lo[k])lo[k]=p; if(p>hi[k])hi[k]=p; }
+                const float pos[3] = { v.px, v.py, v.pz };
+                for (int k=0;k<3;++k){ if(pos[k]<lo[k])lo[k]=pos[k]; if(pos[k]>hi[k])hi[k]=pos[k]; }
             }
         }
         if (!smsh.verts.empty()) out.submeshes.push_back(std::move(smsh));

@@ -1314,8 +1314,9 @@ int AssetViewerApp::runSmokeWorkbenchGlb(const char* fixtureDir)
     float ex=md.bmax[0]-md.bmin[0], ey=md.bmax[1]-md.bmin[1], ez=md.bmax[2]-md.bmin[2];
     if (std::fabs(ex-2)>1e-3f || std::fabs(ey-3)>1e-3f || std::fabs(ez-7)>1e-3f)
         return smokeFail("workbench-glb: extents wrong");
-    bool flipped=false; for (auto& v: sm.verts) if (std::fabs(v.u)<1e-3f && std::fabs(v.v)<1e-3f) flipped=true;
-    if (!flipped) return smokeFail("workbench-glb: UV v-flip missing");
+    // Discriminating v-flip check: src vert1 UV (1,0) -> (1,1) ONLY if v->1-v applied.
+    bool flipOk=false; for (auto& v: sm.verts) if (std::fabs(v.u-1.0f)<1e-3f && std::fabs(v.v-1.0f)<1e-3f) flipOk=true;
+    if (!flipOk) return smokeFail("workbench-glb: UV v-flip not applied (expected (1,1))");
     std::printf("[smoke] PASS workbench-glb verts=3 ext=%.1f,%.1f,%.1f\n", ex,ey,ez);
     return 0;
 }
