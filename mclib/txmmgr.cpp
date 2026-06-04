@@ -2292,7 +2292,33 @@ void MC_TextureManager::renderLists (void)
 					// map is NOT active (else buildings would double-shadow). This keeps
 					// buildings casting under bare MC2_SHADOW_ENABLE (no regression).
 					const bool includeBldg = !s_skipBldgInDynamic;
-					GpuStaticPropRegistry::getDynamicPropShadowInstances(s_dynPropInsts, includeBldg);
+					// SHADOW-DYNAMIC-PROP-DIRTY-ONLY-1 (gate, DEFAULT OFF; set env to enable):
+					// The caster set (registry-indexed instances: modelMatrix + typeID) is
+					// REGISTRY-STATIC — it changes only when a prop spawns, despawns, or has
+					// an immutable-field write, all of which bump s_registryGeneration. The
+					// shadow pass uses only modelMatrix+typeID from the instances (no lighting
+					// data, no per-frame color offset), so the vector is safe to cache across
+					// frames as long as the generation is unchanged.
+					// Cache policy: rebuild when (a) generation changes, or (b) includeBldg
+					// toggles (env-gated at startup — in practice stable per session, but
+					// compare it anyway). On a clean scene getDynamicPropShadowInstances walks
+					// the full s_recipeRanges vector (~14K recipes); skipping it saves ~120-
+					// 150µs of cache-cold memory traffic per frame.
+					// NOTE: includeBldg is captured from a static at the outer scope, so it
+					// is also effectively constant per session; the extra compare is free.
+					static const bool s_dynPropDirtyOnly = []() {
+						const char* v = getenv("MC2_SHADOW_DYNAMIC_PROP_DIRTY_ONLY");
+						return (v && v[0] != '0');
+					}();
+					static uint64_t  s_dynPropInstsGeneration = UINT64_MAX; // sentinel: force first build
+					static bool      s_dynPropInstsIncludeBldg = false;
+					if (!s_dynPropDirtyOnly ||
+					    GpuStaticPropRegistry::getRegistryGeneration() != s_dynPropInstsGeneration ||
+					    includeBldg != s_dynPropInstsIncludeBldg) {
+						GpuStaticPropRegistry::getDynamicPropShadowInstances(s_dynPropInsts, includeBldg);
+						s_dynPropInstsGeneration  = GpuStaticPropRegistry::getRegistryGeneration();
+						s_dynPropInstsIncludeBldg = includeBldg;
+					}
 				GpuStaticPropBatcher::instance().drawDynamicPropShadows(s_dynPropInsts);
 			} else {
 				GpuStaticPropBatcher::instance().flushShadow(s_skipBldgInDynamic);
