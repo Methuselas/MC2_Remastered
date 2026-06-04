@@ -3,12 +3,13 @@
 void AssetTypeSidebar::draw()
 {
     ImGui::TextDisabled("Implemented");
-    ImGui::Selectable("Textures", true);
+    if (ImGui::Selectable("Textures",     active_ == AssetType::Textures))     active_ = AssetType::Textures;
+    if (ImGui::Selectable("Materials",    active_ == AssetType::Materials))    active_ = AssetType::Materials;
+    if (ImGui::Selectable("Static Props", active_ == AssetType::StaticProps))  active_ = AssetType::StaticProps;
     ImGui::Spacing();
     ImGui::TextDisabled("Deferred");
     static const char* kDeferred[] = {
-        "Materials", "Static Props", "Trees", "Mechs",
-        "Vehicles", "VFX", "Terrain Materials", "Mod Package"
+        "Trees", "Mechs", "Vehicles", "VFX", "Terrain Materials", "Mod Package"
     };
     ImGui::BeginDisabled(true);
     for (const char* name : kDeferred)

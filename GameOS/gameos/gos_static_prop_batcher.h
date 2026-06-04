@@ -324,6 +324,23 @@ public:
     // the Colors SSBO binding 1).
     void submitCachedInstance(const GpuStaticPropInstance& inst);
 
+    // 2A: bulk variant — one map lookup + bulk reserve/insert for an entire
+    // contiguous run of recipes of (possibly mixed) typeIDs. firstColorOffset is
+    // computed from the running bucket color offset, so it is correct even when a
+    // type bucket also holds dynamic instances submitted earlier this frame.
+    // Equivalent result to calling submitCachedInstance() per element, at a
+    // fraction of the per-leaf overhead.
+    void submitCachedInstanceRange(const GpuStaticPropInstance* arr, uint32_t count);
+
+    // 2b Stage 2 (Mechanism B-reinject): persistent static instance store.
+    // Registry drives: clear+append on a dirty generation, reinject every frame.
+    uint64_t persistentStaticGen();
+    void     setPersistentStaticGen(uint64_t g);
+    uint64_t persistentStaticTotalCount();
+    void     clearPersistentStatic();
+    void     appendPersistentStaticRange(const GpuStaticPropInstance* arr, uint32_t count);
+    void     reinjectPersistentStatic();
+
     // Track B: pure recipe-construction path, side-effect-free.
     // Builds a GpuStaticPropInstance from static per-shape inputs.
     // Does NOT touch per-frame state (no bucket/SSBO writes).
@@ -535,6 +552,23 @@ uint32_t batcher_getDrawSlotCount();
 // materialIdx: 0xFFFFFFFFu if MC2_MATERIAL_GPU sidecar was not valid at finalizeGeometry().
 bool batcher_getDrawSlotEntry(uint32_t slot, ExtractedStaticPropPacket* out);
 
+// ---------------------------------------------------------------------------
+// [SPFLUSH_COST_SPLIT v1] -- cross-TU RDTSC cycle adders.
+// Defined in gos_static_prop_batcher.cpp; declared here (file scope) so
+// gos_static_prop_registry.cpp and mclib/txmmgr.cpp can call them without
+// any extern-inside-function declarations. All functions are no-ops when
+// MC2_STATIC_PROP_FLUSH_COST_SPLIT is not set (gate is checked in the .cpp).
+// ---------------------------------------------------------------------------
+namespace spflush_cost_split {
+void AddSubmitMapLookupCycles(unsigned long long c);
+void AddColorZeroFillCycles(unsigned long long c);
+// Called from GpuStaticPropRegistry::flush() summary emit to read + reset the
+// batcher-side window accumulators. Returns raw cycle counts accumulated since
+// the last call (or since process start).
+unsigned long long ConsumeSubmitMapLookupCycles();
+unsigned long long ConsumeColorZeroFillCycles();
+}  // namespace spflush_cost_split
+
 // v2.2 extraction: dispatch-fact compare (extraction-time facts only; baseInstance deferred).
 // Compares snap->staticPropPackets[] against live batcher state (sortedPacketOrder,
 // pipelineId via RenderCore::PipelineId, materialIdx sidecar, texArrayLayer vs albedoTex).
@@ -560,9 +594,10 @@ void batcher_getSnapCullStats(uint32_t* skipped, uint32_t* active, uint32_t* slo
 // packetMismatch: DrawPacket field divergence count (accumulated per-slot).
 // metaMismatch:   DispatchMeta field divergence count (accumulated per-slot).
 // fallback:       gate enabled/attempted but snapshot arrays not dispatched this flush.
+// retired:        v8: 1 when live builder + compare retired this flush (sole-owner).
 void batcher_getSnapshotBuildStats(uint32_t* attempted, uint32_t* countMismatch,
                                    uint32_t* packetMismatch, uint32_t* metaMismatch,
-                                   uint32_t* fallback);
+                                   uint32_t* fallback, uint32_t* retired = nullptr);
 
 // DEBUG-STATE-DUMP-1: read-only StaticPropOpaque visual/debug state.
 struct StaticPropOpaqueDebugState {

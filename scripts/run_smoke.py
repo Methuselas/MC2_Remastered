@@ -328,6 +328,13 @@ def main():
                             "MC2_LIGHT_COST_SPLIT",
                             "MC2_SLIM_COST_SPLIT",
                             "MC2_TOBJ_COST_SPLIT",
+                            "MC2_STATIC_PROP_FLUSH_COST_SPLIT",
+                            "MC2_STATIC_PROP_FLUSH_CACHED_BLOB",
+                            "MC2_STATIC_PROP_FLUSH_CACHED_BLOB_COMPARE",
+                            "MC2_STATIC_PROP_COLORS_FILL",
+                            "MC2_STATIC_PROP_PERSISTENT_BUCKETS",
+                            "MC2_STATIC_PROP_PERSISTENT_BUCKETS_COMPARE",
+                            "MC2_BUCKET_ORDER_TRACE",
                             # Task 7 — superset-parity counter probe (proof-gate #2)
                             "MC2_TOBJ_PARITY",
                             # alpha-Stage 1 §5 Stage 0 — candidate-predicate
@@ -475,6 +482,8 @@ def main():
                             "MC2_DRAW_PACKET_STATIC_PROP_V6_TRACE",
                             # DrawPacket v7 kill-switch (reverts to legacy multidraw).
                             "MC2_STATIC_PROP_LEGACY_DISPATCH",
+                            # DrawPacket v8 kill-switch: =1 restores live build + snapshot compare.
+                            "MC2_STATIC_PROP_LIVE_BUILDER",
                             # MaterialGpu v7 kill-switch (set =0 to disable shader sampling).
                             "MC2_MATERIAL_GPU_SAMPLE",
                             # MaterialGpu master kill-switch (set =0 to disable table upload).
@@ -553,7 +562,17 @@ def main():
                             # DEBUG-STATE-DUMP-1: override output directory.
                             "MC2_DEBUG_STATE_DUMP_DIR",
                             # DEBUG-STATE-DUMP-2: rolling 8-slot history ring.
-                            "MC2_DEBUG_STATE_DUMP_HISTORY")},
+                            "MC2_DEBUG_STATE_DUMP_HISTORY",
+                            # STATICPROP-SNAPSHOT-BRIDGE-COMPARE-1: independent
+                            # registry cache + field-by-field compare probe.
+                            # Default-OFF; =1 emits [SNAPSHOT_BRIDGE_COMPARE v1]
+                            # per-frame to stderr.
+                            "MC2_STATIC_PROP_SNAPSHOT_BRIDGE_COMPARE",
+                            # STATICPROP-SNAPSHOT-FILL-DIRTYONLY-1: clean-generation
+                            # fast path that skips fillStaticPropSlots + WriteLoop
+                            # and memcpy's cached rows into the snapshot arena.
+                            # Default-OFF; =1 enables the dirty-only path.
+                            "MC2_STATIC_PROP_SNAPSHOT_FILL_DIRTYONLY")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission

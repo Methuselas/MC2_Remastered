@@ -1,0 +1,9 @@
+Material {
+    baseColor = "mat_base.png"
+    normal    = "nrm_flat.png"
+    orm       = "mat_orm.png"
+    emissive  = ""
+    shader    = "pbr.orm"
+    ormPacking = "RAO_GRough_BMetal"
+    alphaMode  = "opaque"
+}

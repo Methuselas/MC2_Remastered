@@ -549,6 +549,9 @@ class MC_TextureManager
         };
         uint32_t getLightStructCount() const { return lightDataStructuresCount; }
         LightSlotPeek peekLightSlot(uint32_t idx) const;
+        // [LIGHTBAKE-PROOF v1] copy a light slot's full struct (parity trace).
+        // Returns false if idx is beyond the allocated count.
+        bool copyLightSlot(uint32_t idx, TG_HWLightsData& out) const;
 
  		//-----------------------------------------------------------------
 		// Gets gosTextureHandle for Node ID.  Does all caching necessary.

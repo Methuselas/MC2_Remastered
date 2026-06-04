@@ -1,9 +1,11 @@
 #pragma once
-// Left sidebar: the modder-facing asset-type vocabulary. Only "Textures" is
-// enabled in stage 1; the rest are visible-but-disabled (directional, no logic).
-enum class AssetType { Textures };
+// Left sidebar: the modder-facing asset-type vocabulary.
+// Textures and Materials are live in stage 2; the remaining 7 are deferred.
+enum class AssetType { Textures, Materials, StaticProps };
 class AssetTypeSidebar {
 public:
     void draw();
-    AssetType active() const { return AssetType::Textures; }
+    AssetType active() const { return active_; }
+private:
+    AssetType active_ = AssetType::Textures;
 };

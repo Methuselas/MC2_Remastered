@@ -646,6 +646,22 @@ class TG_TypeShape : public TG_TypeNode
 			return numTypeVertices;
 		}
 
+		// NS3 standalone-loader / asset-viewer read-only accessors.
+		// Expose the immutable per-type geometry arrays (otherwise protected)
+		// so a game-free consumer can walk vertices/triangles after load.
+		const TG_TypeVertex* GetTypeVertices (void) const
+		{
+			return listOfTypeVertices;
+		}
+		const TG_TypeTriangle* GetTypeTriangles (void) const
+		{
+			return listOfTypeTriangles;
+		}
+		long GetNumTypeTriangles (void) const
+		{
+			return (long)numTypeTriangles;
+		}
+
 		// MODEL-OVERRIDE auto-ground: shift all type-vertices along the up axis
 		// (stuff.y) so an imported mesh's base sits at the local origin.
 		void TranslateTypeVerticesY(float dy)
@@ -654,7 +670,7 @@ class TG_TypeShape : public TG_TypeNode
 			for (DWORD i = 0; i < numTypeVertices; ++i)
 				listOfTypeVertices[i].position.y += dy;
 		}
-		
+
  		//Function return 0 is OK.  -1 if file is not ASE Format or missing data.
 		//This function simply parses the ASE buffers handed to it.  This allows
 		//users to load the ase file themselves and manage their own memory for it.

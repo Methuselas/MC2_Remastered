@@ -583,6 +583,70 @@ static_assert(
 // The enforcement script greps BOTH tables for "MC2_" string literals.
 
 static constexpr EnvVarDesc kAuxEnvVars[] = {
+    // STATICPROP-PERMANENT-INSTANCE-LIGHTS-1 (Slice 1)
+    {
+        "MC2_TRACE_LIGHTBAKE_STABILITY",
+        "MC2_LIGHTBAKE_STABILITY",
+        EnvVarKind::Trace,
+        false,
+        "STATICPROP-PERMANENT-INSTANCE-LIGHTS-1: per-instance lightDataIndex permanence/stability proof. Logs [LIGHTBAKE-PROOF v1] event=first / UNSTABLE (capped 32). Default-off; no behavior change."
+    },
+    {
+        "MC2_TRACE_LIGHTBAKE_PARITY",
+        "MC2_LIGHTBAKE_PARITY",
+        EnvVarKind::Trace,
+        false,
+        "STATICPROP-PERMANENT-INSTANCE-LIGHTS-1: baked permanent light record == gathered transient record byte/hash parity. Logs [LIGHTBAKE-PROOF v1] event=parity match=1 (capped 32). Default-off; no behavior change."
+    },
+    {
+        "MC2_FEATURE_STATIC_LIGHT_UPLOAD_SPLIT",
+        "MC2_STATIC_LIGHT_UPLOAD_SPLIT",
+        EnvVarKind::Feature,
+        true,
+        "STATICPROP-PERMANENT-INSTANCE-LIGHTS-1: upload the immutable static light prefix [0..S) once/dirty-only + the dynamic suffix [S..count) per frame, instead of the whole LightsData SSBO every frame. Default-ON; =0 = legacy whole-buffer upload (bit-identical GPU contents). Requires MC2_LIGHTBAKE; bypassed when bake is off."
+    },
+    {
+        "MC2_FEATURE_STATIC_PROP_FLUSH_CACHED_BLOB",
+        "MC2_STATIC_PROP_FLUSH_CACHED_BLOB",
+        EnvVarKind::Feature,
+        false,
+        "STATICPROP-REGISTRY-FLUSH-CACHED-BLOB-2A: replace the per-leaf registry-flush rebuild with cached immutable instance/actor-record blobs bulk-appended into the existing rings. Keeps the per-frame range walk + staleness skip (does NOT zero flush). Default-OFF pending Tracy proof; =1 enables."
+    },
+    {
+        "MC2_TRACE_STATIC_PROP_FLUSH_CACHED_BLOB_COMPARE",
+        "MC2_STATIC_PROP_FLUSH_CACHED_BLOB_COMPARE",
+        EnvVarKind::Trace,
+        false,
+        "STATICPROP-REGISTRY-FLUSH-CACHED-BLOB-2A diagnostic: with the cached path active, also build the legacy temp instance+record per leaf and compare hash/count; logs mismatches. Default-OFF; requires MC2_STATIC_PROP_FLUSH_CACHED_BLOB=1."
+    },
+    {
+        "MC2_FEATURE_STATIC_PROP_PERSISTENT_BUCKETS",
+        "MC2_STATIC_PROP_PERSISTENT_BUCKETS",
+        EnvVarKind::Feature,
+        true,
+        "STATICPROP-PERSISTENT-STATIC-BUCKETS-2B-STAGE2 (Mechanism B-reinject): persistent static instance store, rebuilt only on registry-generation change, bulk-injected into s_bucketsByType each frame; skips the per-frame static re-push. DEFAULT-ON (user-Tracy StaticPropRegistryFlush 312us->68us at wolfman, ~78%). Kill-switch =0 restores per-frame re-push."
+    },
+    {
+        "MC2_TRACE_STATIC_PROP_PERSISTENT_BUCKETS_COMPARE",
+        "MC2_STATIC_PROP_PERSISTENT_BUCKETS_COMPARE",
+        EnvVarKind::Trace,
+        false,
+        "STATICPROP-PERSISTENT-STATIC-BUCKETS-2B-STAGE2 oracle: FNV-compare the persistent-store-sourced per-type instance stream vs a freshly-rebuilt legacy stream; logs mismatches. Default-OFF; requires MC2_STATIC_PROP_PERSISTENT_BUCKETS=1."
+    },
+    {
+        "MC2_TRACE_BUCKET_ORDER",
+        "MC2_BUCKET_ORDER_TRACE",
+        EnvVarKind::Trace,
+        false,
+        "STATICPROP-PERSISTENT-STATIC-BUCKETS-2B-STAGE2 Task-0 probe: per-type static-vs-dynamic add counts + order ([BUCKET_ORDER v1]). Diagnostic; default-OFF."
+    },
+    {
+        "MC2_FEATURE_STATIC_PROP_COLORS_FILL",
+        "MC2_STATIC_PROP_COLORS_FILL",
+        EnvVarKind::Feature,
+        false,
+        "STATICPROP-COLORS-FILL-DEBUGONLY-1: per-static-instance Colors SSBO (binding 1) zero-fill. No production shader reads colors_ (coalesce multidraw never binds binding 1; addr-mode 4 reads v_argb). DEFAULT-SKIP (~80ns/leaf saved); =1 restores the legacy fill (kill-switch). Dynamic submit() path untouched."
+    },
     {
         "MC2_FEATURE_BURNIN_NO_JPG",
         "MC2_BURNIN_NO_JPG",
@@ -800,6 +864,22 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         false,
         "COLORMAP-CPU-RETIRE-1 parity probe: logs displacement magnitude (maxDispMag in wu) from the CPU colormap displacement path. Requires MC2_COLORMAP_CPU_RETIRE=0 (kill-switch) so cpuColorMap is still alive. Default-OFF; set to any non-null value to enable. Every 50000 calls: prints [COLORMAP_PROBE] samples=N maxDispMag=X wu."
     },
+    // DrawPacket v8 kill-switch
+    {
+        "MC2_FEATURE_STATIC_PROP_LIVE_BUILDER",
+        "MC2_STATIC_PROP_LIVE_BUILDER",
+        EnvVarKind::Feature,
+        false,
+        "v8 kill-switch: =1 restores live build + snapshot compare"
+    },
+    // STATICPROP-SNAPSHOT-BRIDGE-COMPARE-1
+    {
+        "MC2_TRACE_STATIC_PROP_SNAPSHOT_BRIDGE_COMPARE",
+        "MC2_STATIC_PROP_SNAPSHOT_BRIDGE_COMPARE",
+        EnvVarKind::Trace,
+        false,
+        "STATICPROP-SNAPSHOT-BRIDGE-COMPARE-1 gate: default OFF. =1 builds s_spRowCache from registry each frame and compares field-by-field with legacy propBuf. Emits [SNAPSHOT_BRIDGE_COMPARE v1] log per frame."
+    },
     // TRACKV-CI-GATE-RESTORE-1 diagnostic trace vars
     {
         "MC2_TRACE_ASSIMP_TRACE",
@@ -821,6 +901,42 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         EnvVarKind::Trace,
         false,
         "TRACKV-CI-GATE-RESTORE-1: GPU pipeline flush probe via glFinish. WARNING: triggers GPU pipeline stall — diagnostic default-OFF only. =1 enables glFinish at the probe site to measure GPU-complete latency."
+    },
+    // TRACKV quick-win: Probe-6 thin-record canary gate
+    {
+        "MC2_TRACE_THIN_CANARY",
+        "MC2_THIN_CANARY",
+        EnvVarKind::Trace,
+        false,
+        "TRACKV: gates Probe-6 thin-record canary readback (per-frame ~80KB glGetBufferSubData x2 + CPU recipeIdx/flags compare, diagnostic for the corrupt-recipeIdx grey-triangle bug). Default-OFF; =1 re-enables. No render effect."
+    },
+    // Static-prop ORM (PBR) — load-only feature + trace
+    {
+        "MC2_FEATURE_STATICPROP_MATERIAL_PBR_SLOTS",
+        "MC2_STATICPROP_MATERIAL_PBR_SLOTS",
+        EnvVarKind::Feature,
+        false,
+        "Static-prop PBR ORM (occlusion-roughness-metallic) texture-array slots + sidecar feed. Default-OFF (any non-'0' non-empty enables); gate-OFF path is byte-identical (zero ORM arrays, zero sidecar I/O)."
+    },
+    {
+        "MC2_TRACE_STATICPROP_ORM_TRACE",
+        "MC2_STATICPROP_ORM_TRACE",
+        EnvVarKind::Trace,
+        false,
+        "Static-prop ORM load trace: logs source path + dims per unique ORM texture. Default-OFF diagnostic; no correctness effect."
+    },
+    // SPFLUSH-COST-SPLIT-1: RDTSC decomposition of StaticPropRegistryFlush hot zone.
+    {
+        "MC2_TRACE_STATIC_PROP_FLUSH_COST_SPLIT",
+        "MC2_STATIC_PROP_FLUSH_COST_SPLIT",
+        EnvVarKind::Trace,
+        false,
+        "SPFLUSH-COST-SPLIT-1: RDTSC cost-split decomposition of GpuStaticPropRegistry::flush(). "
+        "Emits [SPFLUSH_COST_SPLIT v1] event=summary every 10 frames with per-bucket ns averages "
+        "(submit_loop, inst_build, map_lookup, color_fill, actor_record, world_to_block, "
+        "substrate_append, baseinstance_upload) + lifetime/window dirty counters "
+        "(invalidates, registrations, recipe_rebuilds, light_writes). "
+        "TSC calibrated once at first use (~1ms spin). Default-OFF; =1 enables. ZERO behavior change."
     },
 };
 

@@ -2725,6 +2725,12 @@ void __stdcall gos_SetupObjectShadows(HGOSRENDERMATERIAL material);
 // buffer to LIGHT_DATA_SSBO_BINDING; Destroy = teardown; BindStorageBlock
 // = per-draw program block->binding for the legacy lit materials.
 void __stdcall gos_LightDataSsbo_Upload(const void* data, size_t bytes);
+// [LIGHTSSBO v2] Split upload: prefix [0..prefixBytes) is the immutable static
+// light table (uploaded only when prefixDirty); suffix [prefixBytes..totalBytes)
+// is the per-frame dynamic light data. `data` is the full contiguous CPU mirror
+// of length totalBytes. On first call / grow, uploads the whole buffer.
+void __stdcall gos_LightDataSsbo_UploadSplit(const void* data, size_t prefixBytes,
+                                             size_t totalBytes, bool prefixDirty);
 void __stdcall gos_LightDataSsbo_Destroy();
 void __stdcall gos_BindLightDataStorageBlock(HGOSRENDERMATERIAL material);
 

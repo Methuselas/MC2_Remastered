@@ -1,0 +1,35 @@
+// tools/asset_viewer/MaterialRenderBackend.h
+#pragma once
+#include <cstdint>
+
+class SphereMesh;
+
+// The four PBR slot textures as raw GL texture ids (0 = unassigned).
+struct MaterialSlotTextures {
+    uint32_t baseColor = 0;   // sRGB-uploaded
+    uint32_t normal    = 0;   // linear; 0 => treat as flat (0,0,1)
+    uint32_t orm       = 0;   // linear; R=AO, G=Roughness, B=Metallic; 0 => AO=1, rough=0.5, metal=0
+    uint32_t emissive  = 0;   // sRGB; 0 => no emission
+};
+
+struct RenderInputs {
+    const SphereMesh* mesh = nullptr;
+    float viewProj[16];       // column-major MVP-less: this is proj*view (model is identity)
+    float cameraPosWorld[3];
+    float lightDirWorld[3];   // direction the light travels (surface->light = -lightDir)
+    float lightColor[3];
+    float ambient[3];
+    int   fboWidth = 0;
+    int   fboHeight = 0;
+};
+
+class MaterialRenderBackend {
+public:
+    virtual ~MaterialRenderBackend() = default;
+    virtual bool init() = 0;                                  // compile/link program; false on failure
+    virtual void setMaterial(const MaterialSlotTextures& slots) = 0;
+    virtual void render(const RenderInputs& in) = 0;          // assumes target FBO already bound
+    virtual void shutdown() = 0;
+    virtual const char* name() const = 0;                     // e.g. "LocalPBR (approximate)"
+    virtual bool isApproximate() const = 0;                   // Backend B => true
+};

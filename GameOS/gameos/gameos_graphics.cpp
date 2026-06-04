@@ -7446,6 +7446,42 @@ void __stdcall gos_LightDataSsbo_Upload(const void* data, size_t bytes)
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
 
+void __stdcall gos_LightDataSsbo_UploadSplit(const void* data, size_t prefixBytes,
+                                             size_t totalBytes, bool prefixDirty)
+{
+	if (totalBytes == 0) return;
+	if (prefixBytes > totalBytes) prefixBytes = totalBytes;  // clamp (S floored by count)
+	const char* base = static_cast<const char*>(data);
+
+	// Create or grow → full upload (prefix necessarily included; dirty cleared
+	// implicitly since the whole buffer is now fresh).
+	if (s_lightDataSsbo == 0 || (GLsizeiptr)totalBytes > s_lightDataSsboBytes) {
+		gos_LightDataSsbo_Upload(data, totalBytes);  // reuses create/grow + binding
+		if (s_lightSsboTrace) {
+			std::fprintf(stderr, "[LIGHTSSBO v2] event=full_on_grow total=%zu prefix=%zu\n",
+			             totalBytes, prefixBytes);
+			std::fflush(stderr);
+		}
+		return;
+	}
+
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_lightDataSsbo);
+	if (prefixDirty && prefixBytes > 0) {
+		glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)prefixBytes, base);
+	}
+	if (totalBytes > prefixBytes) {
+		glBufferSubData(GL_SHADER_STORAGE_BUFFER, (GLintptr)prefixBytes,
+		                (GLsizeiptr)(totalBytes - prefixBytes), base + prefixBytes);
+	}
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, LIGHT_DATA_SSBO_BINDING, s_lightDataSsbo);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+	if (s_lightSsboTrace) {
+		std::fprintf(stderr, "[LIGHTSSBO v2] event=split prefixDirty=%d prefix=%zu suffix=%zu\n",
+		             prefixDirty ? 1 : 0, prefixBytes, totalBytes - prefixBytes);
+		std::fflush(stderr);
+	}
+}
+
 void __stdcall gos_LightDataSsbo_Destroy()
 {
 	if (s_lightDataSsbo) {

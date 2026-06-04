@@ -76,6 +76,44 @@ static const bool s_treeDiagTrace = (getenv("MC2_TREE_DIAG_TRACE") != nullptr);
 // used by [OBJBATCHER v1] / [TGL_POOL v1].
 static const bool s_spotlightRealTrace = (getenv("MC2_SPOTLIGHT_REAL_TRACE") != nullptr);
 
+// ---------------------------------------------------------------------------
+// [SPFLUSH_COST_SPLIT v1] — batcher-side RDTSC cycle accumulators.
+// Implemented here (submitCachedInstance is in this TU).
+// Gate: MC2_STATIC_PROP_FLUSH_COST_SPLIT=1, default OFF.
+// Adder functions are declared in gos_static_prop_batcher.h (file scope);
+// the registry + txmmgr TUs call them after measuring spans with __rdtsc().
+// ---------------------------------------------------------------------------
+#include <intrin.h>  // __rdtsc (MSVC intrinsic)
+
+static const bool s_spflushCostSplitEnabled = []() {
+    const char* v = getenv("MC2_STATIC_PROP_FLUSH_COST_SPLIT");
+    return v && v[0] == '1' && v[1] == '\0';
+}();
+
+namespace {
+unsigned long long s_spflush_submit_map_lookup_cyc = 0;
+unsigned long long s_spflush_color_zero_fill_cyc   = 0;
+}  // namespace
+
+namespace spflush_cost_split {
+void AddSubmitMapLookupCycles(unsigned long long c) {
+    if (s_spflushCostSplitEnabled) s_spflush_submit_map_lookup_cyc += c;
+}
+void AddColorZeroFillCycles(unsigned long long c) {
+    if (s_spflushCostSplitEnabled) s_spflush_color_zero_fill_cyc += c;
+}
+unsigned long long ConsumeSubmitMapLookupCycles() {
+    const unsigned long long v = s_spflush_submit_map_lookup_cyc;
+    s_spflush_submit_map_lookup_cyc = 0;
+    return v;
+}
+unsigned long long ConsumeColorZeroFillCycles() {
+    const unsigned long long v = s_spflush_color_zero_fill_cyc;
+    s_spflush_color_zero_fill_cyc = 0;
+    return v;
+}
+}  // namespace spflush_cost_split
+
 // MC2_STATIC_PROP_GLOBAL_POOL_LEGACY=1 — forces the legacy per-type-cap
 // coalesce layout (keeps existing path; new global-pool path is disabled).
 // Env-read once at process start; survives until soak completes.
@@ -141,6 +179,15 @@ static const bool s_snapshotBuildEnabled = []() -> bool {
     const char* v = std::getenv("MC2_SNAPSHOT_STATIC_PROP_BUILD");
     return !(v && v[0] == '0');
 }();
+// STATIC-PROP-SNAPSHOT-FINISH (v8): snapshot is the sole draw-packet owner.
+// DEBUG/LEGACY kill-switch — default OFF (retired). =1 restores the v3-flip dual
+// build (live + snapshot_packet_build) + compare path for regression bisect / A-B.
+static const bool s_keepLiveBuilder = []() -> bool {
+    const char* keep = std::getenv("MC2_STATIC_PROP_LIVE_BUILDER");
+    return keep && keep[0] == '1';
+}();
+// One-shot arm log latch (the arm log itself is emitted in a LATER task, when retirement is real).
+static bool s_v8ArmLogged = false;
 
 // v3 per-flush counters. Reset each flush by the runV6 block.
 // Read by batcher_getSnapshotBuildStats() for render_snapshot.cpp ok gate.
@@ -149,6 +196,7 @@ static uint32_t s_spBuildCountMismatch  = 0u;
 static uint32_t s_spBuildPacketMismatch = 0u;
 static uint32_t s_spBuildMetaMismatch   = 0u;
 static uint32_t s_spBuildFallback       = 0u;
+static uint32_t s_spBuildRetired        = 0u;  // v8: 1 when live builder + compare retired this flush
 // Latched on first fallback; never reset. Guards the first-occurrence log line.
 static bool s_spBuildFirstFallbackLogged = false;
 // Latched on first snap-cull collision; never reset. Guards the one-shot collision log line.
@@ -360,8 +408,38 @@ void ensureRingCapacity(size_t neededInstances, size_t neededColorEntries);
 struct PerTypeBucket {
     std::vector<GpuStaticPropInstance> instances;
     std::vector<uint32_t>              colors;  // concatenated per-instance color blocks
+    // 2b Stage 2 Task-0 diagnostic (MC2_BUCKET_ORDER_TRACE): per-frame static-vs-
+    // dynamic add counts + which path touched this bucket first. Decides Mechanism
+    // A (static-front persist) vs B (separate persistent store). Throwaway.
+    uint32_t dbgStatic  = 0;
+    uint32_t dbgDynamic = 0;
+    uint8_t  dbgFirst   = 0;   // 0=none, 1=static-first, 2=dynamic-first
 };
 std::unordered_map<uint32_t, PerTypeBucket> s_bucketsByType;
+
+// STATICPROP-COLORS-FILL-DEBUGONLY-1: the per-instance Colors SSBO (binding 1) is
+// read by NO production shader — static_prop.vert declares colors_ but never uses
+// it, firstColorOffset is unused, and the coalesce multidraw never binds binding 1
+// (only the legacy non-coalesce draw does, gos_static_prop_batcher.cpp ~:6256).
+// So the per-static-instance colors zero-fill (~80ns/leaf at wolfman) is pure
+// waste. DEFAULT-SKIP for static-registry instances; MC2_STATIC_PROP_COLORS_FILL=1
+// restores the legacy fill (kill-switch). Dynamic submit()/submitMultiShape path
+// is untouched.
+static const bool s_staticPropColorsFill =
+    (std::getenv("MC2_STATIC_PROP_COLORS_FILL") != nullptr &&
+     std::getenv("MC2_STATIC_PROP_COLORS_FILL")[0] != '0');
+
+// 2b Stage 2 Task-0: bucket static/dynamic order + overlap probe (throwaway).
+static const bool s_bucketOrderTrace = (std::getenv("MC2_BUCKET_ORDER_TRACE") != nullptr);
+
+// 2b Stage 2 (Mechanism B-reinject): persistent per-type static instance store,
+// rebuilt only when the registry generation changes. Each frame the registry
+// flush BULK-injects these blocks into s_bucketsByType (one memcpy per type)
+// instead of re-walking the registry per leaf — killing the per-leaf walk/push/
+// map overhead. Downstream (uploadAllBucketsIfNeeded + coalesce pool build) read
+// s_bucketsByType unchanged. Static blocks carry 0 colors (Stage 1).
+static std::unordered_map<uint32_t, std::vector<GpuStaticPropInstance>> s_persistentStaticStore;
+static uint64_t s_persistentStaticGen = 0xFFFFFFFFFFFFFFFFull;  // sentinel = never built
 
 // Stage 3.C: per-submitMultiShape batch accumulator. Cleared at the start
 // of each submitMultiShape(); populated by submit() per leaf. After
@@ -3963,6 +4041,7 @@ bool GpuStaticPropBatcher::submit(TG_Shape* shape,
                 bucket.instances.size());
         }
     }
+    if (s_bucketOrderTrace) { if (!bucket.dbgFirst) bucket.dbgFirst = 2; ++bucket.dbgDynamic; }
     bucket.instances.push_back(inst);
     s_lastBuiltBatch.push_back(inst);  // Stage 3.C: batch accumulator
 
@@ -4556,11 +4635,158 @@ bool uploadAllBucketsIfNeeded() {
         s_typeRanges[typeID] = r;
     }
 
+    // 2b Stage 2 Task-0 diagnostic: aggregate static/dynamic type overlap + order.
+    if (s_bucketOrderTrace) {
+        static uint64_t s_botCall = 0, s_botEmitted = 0;
+        ++s_botCall;
+        if ((s_botCall % 60u) == 0u && s_botEmitted < 16) {
+            ++s_botEmitted;
+            uint32_t sOnly = 0, dOnly = 0, mixed = 0, mixSF = 0, mixDF = 0;
+            for (auto& kv : s_bucketsByType) {
+                const PerTypeBucket& b = kv.second;
+                const bool hs = b.dbgStatic > 0, hd = b.dbgDynamic > 0;
+                if (hs && hd) { ++mixed; if (b.dbgFirst == 1) ++mixSF; else ++mixDF; }
+                else if (hs)  ++sOnly;
+                else if (hd)  ++dOnly;
+            }
+            std::fprintf(stderr,
+                "[BUCKET_ORDER v1] uploadCall=%llu types=%zu static_only=%u dynamic_only=%u mixed=%u "
+                "mixed_static_first=%u mixed_dynamic_first=%u\n",
+                (unsigned long long)s_botCall, s_bucketsByType.size(), sOnly, dOnly, mixed, mixSF, mixDF);
+            std::fflush(stderr);
+        }
+    }
+
     s_lastUploadedSlot = s_frameSlot;
     return true;
 }
 
 } // namespace
+
+// v8: single source of truth for the live v6 array build. Writes outPackets/outMeta
+// (lockstep) and the s_v6Frame* diagnostic counters as a side effect. Returns the
+// lockstep-violation count. Behavior is identical to the inlined loop it replaces.
+static uint32_t buildLiveV6Arrays(
+        uint32_t totalCmds,
+        const uint32_t* baseInstanceMap,
+        std::vector<RenderCore::DrawPacket>& outPackets,
+        std::vector<StaticPropDispatchMeta>& outMeta)
+{
+    outPackets.resize(totalCmds);
+    outMeta.resize(totalCmds);
+    uint32_t lockstepViolations = 0u;
+
+    constexpr uint32_t kNoObjectIndex = 0xFFFFFFFFu;
+
+    // --- Builder loop ---
+    for (uint32_t i = 0u; i < totalCmds; ++i) {
+        // Guard 1: sorted_oob — i must be valid index into s_sortedPacketOrder
+        if (i >= static_cast<uint32_t>(s_sortedPacketOrder.size())) {
+            ++s_v6FrameSortedOob;
+            outMeta[i]    = {};
+            outPackets[i] = {};
+            continue;
+        }
+        const uint32_t globalPktIdx = s_sortedPacketOrder[i];
+
+        // Guard 2: packet_oob — globalPktIdx must be valid index into s_packets
+        if (globalPktIdx >= static_cast<uint32_t>(s_packets.size())) {
+            ++s_v6FramePacketOob;
+            outMeta[i]    = {};
+            outPackets[i] = {};
+            continue;
+        }
+        const GpuStaticPropPacket& pkt = s_packets[globalPktIdx];
+
+        // Guard 3: type_oob — owningTypeID outside static all-types table
+        if (pkt.owningTypeID >= static_cast<uint32_t>(s_types.size())) {
+            ++s_v6FrameTypeOob;
+            outMeta[i]    = {};
+            outPackets[i] = {};
+            continue;
+        }
+
+        const auto typeIt = s_typeRanges.find(pkt.owningTypeID);
+        const uint32_t instCount =
+            (typeIt != s_typeRanges.end()) ? typeIt->second.instanceCount : 0u;
+
+        const uint32_t grp = (i < s_alphaOffCmdCount) ? 0u : 1u;
+
+        outMeta[i].sortedSlot      = i;
+        outMeta[i].globalPacketIdx = globalPktIdx;
+        outMeta[i].typeId          = pkt.owningTypeID;
+        outMeta[i].group           = grp;
+        outMeta[i].instanceCount   = instCount;
+        outMeta[i].baseInstance    = baseInstanceMap[i];
+        outMeta[i].drawIDBase      = i;
+        outMeta[i].baseVertex      = pkt.baseVertex;
+
+        outPackets[i].pipelineId    = static_cast<uint32_t>(
+            grp == 0u ? RenderCore::PipelineId::StaticPropOpaque
+                      : RenderCore::PipelineId::StaticPropAlphaTest);
+        outPackets[i].mesh          = {};
+        outPackets[i].material      = {};
+        outPackets[i].objectIndex   = kNoObjectIndex;
+        outPackets[i].lightIndex    = kNoObjectIndex;
+        outPackets[i].firstIndex    = pkt.firstIndex;
+        outPackets[i].indexCount    = pkt.indexCount;
+        outPackets[i].instanceCount = instCount;
+        outPackets[i].sortKey       = 0u;
+    }
+
+    // --- Lockstep validator (ALL checks before any glDraw) ---
+    if (outPackets.size() != outMeta.size()) {
+        std::fprintf(stderr,
+            "[DRAW_PACKET_V6] frame=%u event=lockstep_violation"
+            " slot=- field=array_size expected=%zu got=%zu\n",
+            s_v6TotalFrameCount, outMeta.size(), outPackets.size());
+        ++lockstepViolations;
+    }
+
+    for (uint32_t i = 0u; i < totalCmds; ++i) {
+        // Skip slots zeroed by builder guard continues (sorted/packet/type OOB).
+        if (i >= static_cast<uint32_t>(s_sortedPacketOrder.size())) continue;
+        const uint32_t gIdx = s_sortedPacketOrder[i];
+        if (gIdx >= static_cast<uint32_t>(s_packets.size())) continue;
+        const GpuStaticPropPacket& p = s_packets[gIdx];
+        if (p.owningTypeID >= static_cast<uint32_t>(s_types.size())) continue;
+
+        const uint32_t grp = (i < s_alphaOffCmdCount) ? 0u : 1u;
+        const uint32_t expectedPipelineId = static_cast<uint32_t>(
+            grp == 0u ? RenderCore::PipelineId::StaticPropOpaque
+                      : RenderCore::PipelineId::StaticPropAlphaTest);
+
+#define V6_CHECK(field, expected_expr, got_expr) \
+    if ((expected_expr) != (got_expr)) { \
+        std::fprintf(stderr, \
+            "[DRAW_PACKET_V6] frame=%u event=lockstep_violation slot=%u" \
+            " field=" #field " expected=%u got=%u\n", \
+            s_v6TotalFrameCount, i, \
+            static_cast<unsigned>(expected_expr), \
+            static_cast<unsigned>(got_expr)); \
+        ++lockstepViolations; \
+    }
+        V6_CHECK(sortedSlot,     i,                  outMeta[i].sortedSlot)
+        V6_CHECK(globalPacketIdx, gIdx,              outMeta[i].globalPacketIdx)
+        V6_CHECK(drawIDBase,     i,                  outMeta[i].drawIDBase)
+        V6_CHECK(typeId,         p.owningTypeID,     outMeta[i].typeId)
+        V6_CHECK(group,          grp,                outMeta[i].group)
+        V6_CHECK(pipelineId,     expectedPipelineId, outPackets[i].pipelineId)
+        V6_CHECK(indexCount,     p.indexCount,       outPackets[i].indexCount)
+        V6_CHECK(firstIndex,     p.firstIndex,       outPackets[i].firstIndex)
+        V6_CHECK(instanceCount,  outMeta[i].instanceCount, outPackets[i].instanceCount)
+#undef V6_CHECK
+        if (outMeta[i].baseVertex != p.baseVertex) {
+            std::fprintf(stderr,
+                "[DRAW_PACKET_V6] frame=%u event=lockstep_violation slot=%u"
+                " field=baseVertex expected=%d got=%d\n",
+                s_v6TotalFrameCount, i, p.baseVertex, outMeta[i].baseVertex);
+            ++lockstepViolations;
+        }
+    }
+
+    return lockstepViolations;
+}
 
 // [RENDER_CONTRACT:Pass=StaticProp id=GpuStaticPropBatcher_flush]
 //   Routes through static_prop.frag which writes
@@ -5346,6 +5572,9 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
         static std::vector<RenderCore::DrawPacket>  v6Packets;
         static std::vector<StaticPropDispatchMeta>  v6Meta;
         uint32_t v6LockstepViolations = 0u;
+        // v8: snapshot-sole-owner decision. Set in the runV6 preamble, read again in
+        // the dispatch block (a separate scope) to select dispatch + structural fallback.
+        bool retireLiveBuilder = false;
 
         if (runV6) {
             s_v6FrameDrawsIssued        = 0u;
@@ -5357,13 +5586,43 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             s_v6FrameGlErrors           = 0u;
             ++s_v6TotalFrameCount;
 
+            // v8: retirement predicate. Consumed just below to gate the live builder,
+            // set s_spBuildRetired, and emit the one-shot arm log.
+            //
+            // Why !s_snapCullEnabled is a condition: the snap-cull path (MC2_SNAP_CULL,
+            // opt-in, default OFF) still relies on the live<->snapshot compare for slot
+            // ownership in v8; it has not been ported to sole-owner packet build. Keep
+            // the live builder whenever snap-cull is active until that port lands.
+            const bool retireLiveBuilderPlanned =
+                !s_keepLiveBuilder && s_snapshotBuildEnabled && !s_snapCullEnabled;
+
+            // v8: snapshot is now the SOLE owner when retired. Consume the planned
+            // predicate, set telemetry, emit the one-shot arm log.
+            retireLiveBuilder = retireLiveBuilderPlanned;
+            if (!s_v8ArmLogged) {
+                s_v8ArmLogged = true;
+                const char* reason =
+                    retireLiveBuilder       ? "snapshot_sole_owner" :
+                    s_keepLiveBuilder       ? "live_builder_forced" :
+                    !s_snapshotBuildEnabled ? "snapshot_packet_build_disabled_keep_live" :
+                                              "snap_cull_collision_keep_live";
+                std::fprintf(stderr,
+                    "[STATIC_PROP_PACKET_DISPATCH v8] event=arm live_builder_retired=%d"
+                    " snapshot_packet_build=%d live_builder_forced=%d reason=%s\n",
+                    retireLiveBuilder ? 1 : 0, s_snapshotBuildEnabled ? 1 : 0,
+                    s_keepLiveBuilder ? 1 : 0, reason);
+                std::fflush(stderr);
+            }
+
             // v3: reset per-flush build counters so stale stats never persist.
             s_spBuildAttempted = s_spBuildCountMismatch = s_spBuildPacketMismatch =
-            s_spBuildMetaMismatch = s_spBuildFallback = 0u;
+            s_spBuildMetaMismatch = s_spBuildFallback = s_spBuildRetired = 0u;
+
+            // v8: set retirement telemetry AFTER the unconditional reset above so it
+            // is not clobbered. 1 = live builder skipped this frame (snapshot sole owner).
+            s_spBuildRetired = retireLiveBuilder ? 1u : 0u;
 
             const uint32_t totalCmds = s_alphaOffCmdCount + s_alphaOnCmdCount;
-            v6Packets.resize(totalCmds);
-            v6Meta.resize(totalCmds);
 
             // Ring-slot base-instance map pointer (same arithmetic as v5).
             const size_t fr_off_bi_v6 =
@@ -5371,115 +5630,13 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             const uint32_t* baseInstanceMap = reinterpret_cast<const uint32_t*>(
                 static_cast<const uint8_t*>(s_baseInstanceByCmdMap) + fr_off_bi_v6);
 
-            constexpr uint32_t kNoObjectIndex = 0xFFFFFFFFu;
-
-            // --- Builder loop ---
-            for (uint32_t i = 0u; i < totalCmds; ++i) {
-                // Guard 1: sorted_oob — i must be valid index into s_sortedPacketOrder
-                if (i >= static_cast<uint32_t>(s_sortedPacketOrder.size())) {
-                    ++s_v6FrameSortedOob;
-                    v6Meta[i]    = {};
-                    v6Packets[i] = {};
-                    continue;
-                }
-                const uint32_t globalPktIdx = s_sortedPacketOrder[i];
-
-                // Guard 2: packet_oob — globalPktIdx must be valid index into s_packets
-                if (globalPktIdx >= static_cast<uint32_t>(s_packets.size())) {
-                    ++s_v6FramePacketOob;
-                    v6Meta[i]    = {};
-                    v6Packets[i] = {};
-                    continue;
-                }
-                const GpuStaticPropPacket& pkt = s_packets[globalPktIdx];
-
-                // Guard 3: type_oob — owningTypeID outside static all-types table
-                if (pkt.owningTypeID >= static_cast<uint32_t>(s_types.size())) {
-                    ++s_v6FrameTypeOob;
-                    v6Meta[i]    = {};
-                    v6Packets[i] = {};
-                    continue;
-                }
-
-                const auto typeIt = s_typeRanges.find(pkt.owningTypeID);
-                const uint32_t instCount =
-                    (typeIt != s_typeRanges.end()) ? typeIt->second.instanceCount : 0u;
-
-                const uint32_t grp = (i < s_alphaOffCmdCount) ? 0u : 1u;
-
-                v6Meta[i].sortedSlot      = i;
-                v6Meta[i].globalPacketIdx = globalPktIdx;
-                v6Meta[i].typeId          = pkt.owningTypeID;
-                v6Meta[i].group           = grp;
-                v6Meta[i].instanceCount   = instCount;
-                v6Meta[i].baseInstance    = baseInstanceMap[i];
-                v6Meta[i].drawIDBase      = i;
-                v6Meta[i].baseVertex      = pkt.baseVertex;
-
-                v6Packets[i].pipelineId    = static_cast<uint32_t>(
-                    grp == 0u ? RenderCore::PipelineId::StaticPropOpaque
-                              : RenderCore::PipelineId::StaticPropAlphaTest);
-                v6Packets[i].mesh          = {};
-                v6Packets[i].material      = {};
-                v6Packets[i].objectIndex   = kNoObjectIndex;
-                v6Packets[i].lightIndex    = kNoObjectIndex;
-                v6Packets[i].firstIndex    = pkt.firstIndex;
-                v6Packets[i].indexCount    = pkt.indexCount;
-                v6Packets[i].instanceCount = instCount;
-                v6Packets[i].sortKey       = 0u;
+            // When retired and the snapshot builds clean, s_v6FrameLockstepViolations
+            // stays 0 from the unconditional per-flush reset above (no live build runs).
+            if (!retireLiveBuilder) {
+                ZoneScopedN("StaticProp.LiveBuild");
+                v6LockstepViolations = buildLiveV6Arrays(totalCmds, baseInstanceMap, v6Packets, v6Meta);
+                s_v6FrameLockstepViolations = v6LockstepViolations;
             }
-
-            // --- Lockstep validator (ALL checks before any glDraw) ---
-            if (v6Packets.size() != v6Meta.size()) {
-                std::fprintf(stderr,
-                    "[DRAW_PACKET_V6] frame=%u event=lockstep_violation"
-                    " slot=- field=array_size expected=%zu got=%zu\n",
-                    s_v6TotalFrameCount, v6Meta.size(), v6Packets.size());
-                ++v6LockstepViolations;
-            }
-
-            for (uint32_t i = 0u; i < totalCmds; ++i) {
-                // Skip slots zeroed by builder guard continues (sorted/packet/type OOB).
-                if (i >= static_cast<uint32_t>(s_sortedPacketOrder.size())) continue;
-                const uint32_t gIdx = s_sortedPacketOrder[i];
-                if (gIdx >= static_cast<uint32_t>(s_packets.size())) continue;
-                const GpuStaticPropPacket& p = s_packets[gIdx];
-                if (p.owningTypeID >= static_cast<uint32_t>(s_types.size())) continue;
-
-                const uint32_t grp = (i < s_alphaOffCmdCount) ? 0u : 1u;
-                const uint32_t expectedPipelineId = static_cast<uint32_t>(
-                    grp == 0u ? RenderCore::PipelineId::StaticPropOpaque
-                              : RenderCore::PipelineId::StaticPropAlphaTest);
-
-#define V6_CHECK(field, expected_expr, got_expr) \
-    if ((expected_expr) != (got_expr)) { \
-        std::fprintf(stderr, \
-            "[DRAW_PACKET_V6] frame=%u event=lockstep_violation slot=%u" \
-            " field=" #field " expected=%u got=%u\n", \
-            s_v6TotalFrameCount, i, \
-            static_cast<unsigned>(expected_expr), \
-            static_cast<unsigned>(got_expr)); \
-        ++v6LockstepViolations; \
-    }
-                V6_CHECK(sortedSlot,     i,                  v6Meta[i].sortedSlot)
-                V6_CHECK(globalPacketIdx, gIdx,              v6Meta[i].globalPacketIdx)
-                V6_CHECK(drawIDBase,     i,                  v6Meta[i].drawIDBase)
-                V6_CHECK(typeId,         p.owningTypeID,     v6Meta[i].typeId)
-                V6_CHECK(group,          grp,                v6Meta[i].group)
-                V6_CHECK(pipelineId,     expectedPipelineId, v6Packets[i].pipelineId)
-                V6_CHECK(indexCount,     p.indexCount,       v6Packets[i].indexCount)
-                V6_CHECK(firstIndex,     p.firstIndex,       v6Packets[i].firstIndex)
-                V6_CHECK(instanceCount,  v6Meta[i].instanceCount, v6Packets[i].instanceCount)
-#undef V6_CHECK
-                if (v6Meta[i].baseVertex != p.baseVertex) {
-                    std::fprintf(stderr,
-                        "[DRAW_PACKET_V6] frame=%u event=lockstep_violation slot=%u"
-                        " field=baseVertex expected=%d got=%d\n",
-                        s_v6TotalFrameCount, i, p.baseVertex, v6Meta[i].baseVertex);
-                    ++v6LockstepViolations;
-                }
-            }
-            s_v6FrameLockstepViolations = v6LockstepViolations;
         }
 
         // DrawPacket v5: per-draw-call dispatch (MC2_DRAW_PACKET_COALESCE_V5=1).
@@ -5489,6 +5646,14 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
 
         if (runV6 && v6LockstepViolations == 0u) {
             const uint32_t totalCmds = s_alphaOffCmdCount + s_alphaOnCmdCount;
+
+            // v8: re-home the ring-slot base-instance map for this dispatch. The snapshot
+            // build borrows baseInstance from here (NOT from the live build, which is
+            // skipped when retired). Same arithmetic as the live path's baseInstanceMap.
+            const size_t fr_off_bi_disp =
+                static_cast<size_t>(s_coalesceFrameSlot) * s_baseInstanceByCmdBytesPerFrame;
+            const uint32_t* baseInstanceMapDisp = reinterpret_cast<const uint32_t*>(
+                static_cast<const uint8_t*>(s_baseInstanceByCmdMap) + fr_off_bi_disp);
 
             // Unconditionally bind SSBO slot 0 (same as v5).
             {
@@ -5572,6 +5737,8 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                 }
                 else {
                     // All guards passed — build snapshot arrays.
+                    {
+                    ZoneScopedN("StaticProp.SnapshotBuild");
                     s_snapV6Packets.resize(totalCmds);
                     s_snapV6Meta.resize(totalCmds);
 
@@ -5622,7 +5789,7 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                         s_snapV6Meta[si].typeId          = row.typeId;
                         s_snapV6Meta[si].group           = grp;
                         s_snapV6Meta[si].instanceCount   = instCount;
-                        s_snapV6Meta[si].baseInstance    = v6Meta[si].baseInstance;
+                        s_snapV6Meta[si].baseInstance    = baseInstanceMapDisp[si];
                         s_snapV6Meta[si].drawIDBase      = si;
                         s_snapV6Meta[si].baseVertex      = spkt.baseVertex;
 
@@ -5634,7 +5801,14 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                         s_snapV6Packets[si].indexCount = spkt.indexCount;
                     }
 
+                    }  // end StaticProp.SnapshotBuild
+
                     // Compare snapshot-built vs live-built, field-by-field per slot.
+                    // v8: skip when the live builder is retired — v6Meta/v6Packets are
+                    // STALE (not rebuilt this frame), so the compare is meaningless and
+                    // would set spurious mismatches. Snapshot is sole owner in that mode.
+                    if (!retireLiveBuilder) {
+                    ZoneScopedN("StaticProp.BuildCompare");
                     for (uint32_t ci = 0u; ci < totalCmds; ++ci) {
                         const StaticPropDispatchMeta& sm = s_snapV6Meta[ci];
                         const StaticPropDispatchMeta& lm = v6Meta[ci];
@@ -5652,28 +5826,65 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                         if (sp.firstIndex  != lp.firstIndex)  ++s_spBuildPacketMismatch;
                         if (sp.indexCount  != lp.indexCount)  ++s_spBuildPacketMismatch;
                     }
+                    }  // end StaticProp.BuildCompare
 
                     snapBuilt = true;
                 }
             }
 
-            // Dispatch ref-swap: use snapshot arrays only when compare clean.
-            const bool useSnapshot = snapBuilt
-                && s_spBuildPacketMismatch == 0
-                && s_spBuildMetaMismatch   == 0;
+            // Dispatch ref-swap.
+            bool useSnapshot;
+            bool skipDispatch = false;
+            if (retireLiveBuilder) {
+                // Snapshot is sole owner. Dispatch unless STRUCTURALLY invalid.
+                // snapshotInvalid == NOT built (guards failed: snap nullptr / ok!=1 /
+                // count mismatch / malformed metadata). An empty-but-valid snapshot
+                // (snapBuilt with totalCmds==0) is VALID → dispatch zero, NEVER fallback.
+                //
+                // A per-row guard failure during the snapshot build increments these
+                // (and zeroes the bad slot) but still leaves snapBuilt=true. Treat any
+                // such divergence as structurally invalid so we fall back to the live
+                // build for the whole frame — matching the dual path's mismatch->fallback
+                // safety. This also makes the spBuildFallback==0 merge gate cover it.
+                const bool snapshotInvalid = !snapBuilt
+                    || s_spBuildMetaMismatch   != 0u
+                    || s_spBuildPacketMismatch != 0u;
+                if (snapshotInvalid) {
+                    // Stage 4 (count mismatch) already counted a fallback for this frame;
+                    // avoid double-counting so spBuildFallback reflects frames, not events.
+                    if (s_spBuildCountMismatch == 0u) ++s_spBuildFallback;
+                    ZoneScopedN("StaticProp.LiveBuild.Fallback");  // rare fallback build, counted
+                    v6LockstepViolations =
+                        buildLiveV6Arrays(totalCmds, baseInstanceMapDisp, v6Packets, v6Meta);
+                    s_v6FrameLockstepViolations = v6LockstepViolations;
+                    useSnapshot = false;
+                    if (v6LockstepViolations != 0u) {
+                        // Fallback build itself is inconsistent — do not issue draws from a
+                        // broken array this frame (matches dual-mode lockstep gating).
+                        skipDispatch = true;
+                    }
+                } else {
+                    useSnapshot = true;
+                }
+            } else {
+                // Legacy dual path: use snapshot arrays only when compare clean.
+                useSnapshot = snapBuilt
+                    && s_spBuildPacketMismatch == 0
+                    && s_spBuildMetaMismatch   == 0;
 
-            if (snapBuilt && !useSnapshot) {
-                ++s_spBuildFallback;
-                if (!s_spBuildFirstFallbackLogged) {
-                    s_spBuildFirstFallbackLogged = true;
-                    std::fprintf(stderr,
-                        "[RENDER_SNAPSHOT v3] frame=%u first-fallback"
-                        " attempted=1 count_mismatch=%u pkt_mismatch=%u"
-                        " meta_mismatch=%u fallback=1\n",
-                        s_v6TotalFrameCount,
-                        s_spBuildCountMismatch,
-                        s_spBuildPacketMismatch,
-                        s_spBuildMetaMismatch);
+                if (snapBuilt && !useSnapshot) {
+                    ++s_spBuildFallback;
+                    if (!s_spBuildFirstFallbackLogged) {
+                        s_spBuildFirstFallbackLogged = true;
+                        std::fprintf(stderr,
+                            "[RENDER_SNAPSHOT v3] frame=%u first-fallback"
+                            " attempted=1 count_mismatch=%u pkt_mismatch=%u"
+                            " meta_mismatch=%u fallback=1\n",
+                            s_v6TotalFrameCount,
+                            s_spBuildCountMismatch,
+                            s_spBuildPacketMismatch,
+                            s_spBuildMetaMismatch);
+                    }
                 }
             }
 
@@ -5682,6 +5893,7 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             const std::vector<StaticPropDispatchMeta>* pDispatchMeta =
                 useSnapshot ? &s_snapV6Meta    : &v6Meta;
 
+            if (!skipDispatch)
             for (uint32_t i = 0u; i < totalCmds; ++i) {
                 const StaticPropDispatchMeta& m  = (*pDispatchMeta)[i];
                 const RenderCore::DrawPacket&  dp = (*pDispatchPackets)[i];
@@ -6210,9 +6422,13 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
         glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_instanceSsbo,
                           static_cast<GLintptr>(r.instanceByteOffset),
                           static_cast<GLsizeiptr>(r.instanceByteSize));
-        glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 1, s_colorSsbo,
-                          static_cast<GLintptr>(r.colorByteOffset),
-                          static_cast<GLsizeiptr>(r.colorByteSize));
+        // STATICPROP-COLORS-FILL-DEBUGONLY-1: colorByteSize is 0 for static types
+        // when the colors fill is skipped (the default). A 0-size glBindBufferRange
+        // is GL_INVALID_VALUE — and no shader reads binding 1 — so skip the bind.
+        if (r.colorByteSize)
+            glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 1, s_colorSsbo,
+                              static_cast<GLintptr>(r.colorByteOffset),
+                              static_cast<GLsizeiptr>(r.colorByteSize));
 
         // SEMANTIC: max VALID local vertex index, not count. Lets the
         // gradient debug mode hit t=1.0 at the last vertex.
@@ -6987,15 +7203,21 @@ const std::vector<GpuStaticPropInstance>& GpuStaticPropBatcher::getLastBuiltBatc
 
 void GpuStaticPropBatcher::submitCachedInstance(const GpuStaticPropInstance& inst) {
     if (inst.typeID >= s_types.size()) return;
+    // [SPFLUSH_COST_SPLIT v1] submit_map_lookup span.
+    const unsigned long long _t_lookup0 = s_spflushCostSplitEnabled ? __rdtsc() : 0ULL;
     const GpuStaticPropType& type = s_types[inst.typeID];
     PerTypeBucket& bucket = s_bucketsByType[inst.typeID];
+    if (s_spflushCostSplitEnabled) spflush_cost_split::AddSubmitMapLookupCycles(__rdtsc() - _t_lookup0);
 
     // firstColorOffset must be updated to the current bucket color position
     // so the GPU shader indexes colors correctly for this frame's layout.
     // Diagnostic counters (submitted_instances_by_pop etc.) are NOT incremented
     // for registry-injected instances — they measure the dynamic compute path.
     GpuStaticPropInstance updated = inst;
-    updated.firstColorOffset = static_cast<uint32_t>(bucket.colors.size());
+    // firstColorOffset is unused by any production shader; only meaningful when the
+    // (default-skipped) colors fill runs. Keep it accurate when filling, else 0.
+    updated.firstColorOffset = s_staticPropColorsFill
+        ? static_cast<uint32_t>(bucket.colors.size()) : 0u;
     {
         // MC2_TREE_DIAG_TRACE diagnostic. Same format as submit() so a grep
         // diff (`grep "[TREE_DIAG]" log | sort`) lines up dyn-vs-static fields.
@@ -7011,10 +7233,105 @@ void GpuStaticPropBatcher::submitCachedInstance(const GpuStaticPropInstance& ins
                 bucket.instances.size());
         }
     }
+    if (s_bucketOrderTrace) { if (!bucket.dbgFirst) bucket.dbgFirst = 1; ++bucket.dbgStatic; }
     bucket.instances.push_back(updated);
-    // Zero-fill colors. Normal render ignores the Colors SSBO (binding 1);
-    // debug addr-mode 4 shows black for static-registry instances.
-    bucket.colors.insert(bucket.colors.end(), type.vertexCount, 0u);
+    // STATICPROP-COLORS-FILL-DEBUGONLY-1: default-SKIP the colors zero-fill (no
+    // production shader reads colors_; addr-mode 4 reads v_argb). MC2_STATIC_PROP_COLORS_FILL=1
+    // restores it. [SPFLUSH_COST_SPLIT v1] color_zero_fill span (now ~0 by default).
+    const unsigned long long _t_color0 = s_spflushCostSplitEnabled ? __rdtsc() : 0ULL;
+    if (s_staticPropColorsFill)
+        bucket.colors.insert(bucket.colors.end(), type.vertexCount, 0u);
+    if (s_spflushCostSplitEnabled) spflush_cost_split::AddColorZeroFillCycles(__rdtsc() - _t_color0);
+}
+
+void GpuStaticPropBatcher::submitCachedInstanceRange(const GpuStaticPropInstance* arr,
+                                                     uint32_t count) {
+    if (!arr || count == 0u) return;
+    // Group consecutive same-typeID runs so the map lookup + the color resize
+    // happen ONCE per run, not per leaf.
+    uint32_t i = 0u;
+    while (i < count) {
+        const uint32_t typeID = arr[i].typeID;
+        if (typeID >= s_types.size()) { ++i; continue; }
+        const GpuStaticPropType& type = s_types[typeID];
+        const unsigned long long _t_lk0 = s_spflushCostSplitEnabled ? __rdtsc() : 0ULL;
+        PerTypeBucket& bucket = s_bucketsByType[typeID];          // one lookup per run
+        if (s_spflushCostSplitEnabled) spflush_cost_split::AddSubmitMapLookupCycles(__rdtsc() - _t_lk0);
+        uint32_t j = i;
+        while (j < count && arr[j].typeID == typeID) ++j;
+        const uint32_t n = j - i;
+        // patch 2: ONE color resize/fill per run, not per-instance insert.
+        // 2A REGRESSION FIX: do NOT reserve(size+n) per call — for single-leaf ranges
+        // (n==1, the common case) that sets capacity to EXACTLY size+1 each call,
+        // defeating std::vector geometric growth → a reallocation per leaf (O(N^2)).
+        // Plain push_back (like legacy submitCachedInstance) grows geometrically.
+        // STATICPROP-COLORS-FILL-DEBUGONLY-1: default-SKIP the colors zero-fill
+        // (no production shader reads colors_). MC2_STATIC_PROP_COLORS_FILL=1 restores it.
+        const unsigned long long _t_cf0 = s_spflushCostSplitEnabled ? __rdtsc() : 0ULL;
+        const size_t colOldSize = bucket.colors.size();
+        if (s_staticPropColorsFill)
+            bucket.colors.resize(colOldSize + (size_t)n * type.vertexCount, 0u);
+        if (s_spflushCostSplitEnabled) spflush_cost_split::AddColorZeroFillCycles(__rdtsc() - _t_cf0);
+        for (uint32_t local = 0u; local < n; ++local) {
+            GpuStaticPropInstance updated = arr[i + local];
+            // firstColorOffset is unused by any production shader; keep it accurate
+            // when filling, else 0 (running bucket offset only meaningful with fill).
+            updated.firstColorOffset = s_staticPropColorsFill
+                ? static_cast<uint32_t>(colOldSize + (size_t)local * type.vertexCount)
+                : 0u;
+            if (s_bucketOrderTrace) { if (!bucket.dbgFirst) bucket.dbgFirst = 1; ++bucket.dbgStatic; }
+            bucket.instances.push_back(updated);
+        }
+        i = j;
+    }
+}
+
+// 2b Stage 2 (Mechanism B-reinject) -----------------------------------------
+uint64_t GpuStaticPropBatcher::persistentStaticGen() { return s_persistentStaticGen; }
+void GpuStaticPropBatcher::setPersistentStaticGen(uint64_t g) { s_persistentStaticGen = g; }
+uint64_t GpuStaticPropBatcher::persistentStaticTotalCount() {
+    uint64_t n = 0; for (auto& kv : s_persistentStaticStore) n += kv.second.size(); return n;
+}
+
+void GpuStaticPropBatcher::clearPersistentStatic() {
+    // Keep the map + per-type vector capacity; just reset sizes (rebuild refills).
+    for (auto& kv : s_persistentStaticStore) kv.second.clear();
+    s_persistentStaticGen = 0xFFFFFFFFFFFFFFFFull;  // invalid until the rebuild sets it
+}
+
+// Append a contiguous run of recipes (one registry range) into the persistent
+// static store, grouped by typeID. Called ONLY on a dirty generation (rare), so
+// per-element push_back is fine. firstColorOffset is irrelevant (static carries 0
+// colors, no shader reads it) — stored verbatim.
+void GpuStaticPropBatcher::appendPersistentStaticRange(const GpuStaticPropInstance* arr,
+                                                       uint32_t count) {
+    if (!arr || count == 0u) return;
+    uint32_t i = 0u;
+    while (i < count) {
+        const uint32_t typeID = arr[i].typeID;
+        if (typeID >= s_types.size()) { ++i; continue; }
+        uint32_t j = i;
+        while (j < count && arr[j].typeID == typeID) ++j;
+        auto& store = s_persistentStaticStore[typeID];
+        // NOTE: do NOT reserve(size + n) here — for single-leaf runs that sets
+        // capacity to EXACTLY size+1 per call, defeating geometric growth (the 2a
+        // reserve-O(N^2) regression). push_back grows geometrically; dirty-only.
+        for (uint32_t k = i; k < j; ++k) store.push_back(arr[k]);
+        i = j;
+    }
+}
+
+// Every frame: bulk-inject each persistent static block into its per-type bucket
+// (one memcpy per type, NOT per leaf). Dynamic instances (if any) are appended by
+// the dynamic submit path separately; static carries 0 colors so colors untouched.
+void GpuStaticPropBatcher::reinjectPersistentStatic() {
+    for (auto& kv : s_persistentStaticStore) {
+        const auto& block = kv.second;
+        if (block.empty()) continue;
+        PerTypeBucket& bucket = s_bucketsByType[kv.first];
+        bucket.instances.insert(bucket.instances.end(), block.begin(), block.end());  // bulk
+        if (s_bucketOrderTrace) { if (!bucket.dbgFirst) bucket.dbgFirst = 1; bucket.dbgStatic += (uint32_t)block.size(); }
+    }
 }
 
 // Track B -----------------------------------------------------------------
@@ -7361,13 +7678,14 @@ void batcher_getSnapCullStats(uint32_t* skipped, uint32_t* active, uint32_t* slo
 
 void batcher_getSnapshotBuildStats(uint32_t* attempted, uint32_t* countMismatch,
                                    uint32_t* packetMismatch, uint32_t* metaMismatch,
-                                   uint32_t* fallback)
+                                   uint32_t* fallback, uint32_t* retired)
 {
     if (attempted)      *attempted      = s_spBuildAttempted;
     if (countMismatch)  *countMismatch  = s_spBuildCountMismatch;
     if (packetMismatch) *packetMismatch = s_spBuildPacketMismatch;
     if (metaMismatch)   *metaMismatch   = s_spBuildMetaMismatch;
     if (fallback)       *fallback       = s_spBuildFallback;
+    if (retired)        *retired        = s_spBuildRetired;
 }
 
 uint32_t batcher_getPerTypePeakCount(uint32_t typeID) {

@@ -22,6 +22,20 @@
 // file-scope pattern in code/terrobj.cpp:176.
 static bool s_tobjSplitBdOn = (getenv("MC2_TOBJ_COST_SPLIT") != nullptr);
 
+// BLDG-TYPE-ANIM-GATE-FIX-1 kill-switch.
+// Unset/1 = new: idle animatable-type buildings eligible for static path.
+// 0       = legacy: bldgTypeHasAnimations disqualifies entire type.
+static bool s_bldgTypeAnimStaticEligible = []() -> bool {
+    const char* v = getenv("MC2_BLDG_TYPE_ANIM_STATIC_ELIGIBLE");
+    if (!v) return true;
+    return !(v[0] == '0');
+}();
+
+// BLDG-TYPE-ANIM-GATE-FIX-1 diagnostic counters (cumulative).
+static uint32_t s_animTypeIdleNowStatic   = 0;
+static uint32_t s_animStartInvalidated    = 0;
+static uint32_t s_animStateToStateGesture = 0;
+
 // T1.15 SpotLight_ illumination diagnostic — registration probe (bldg class).
 // Env-gated per Debug Instrumentation Rule. First-hit is always-on (one stderr
 // line per BldgAppearance instance that walks the lazy-init block). Periodic
@@ -1100,8 +1114,31 @@ void BldgAppearance::setGesture (unsigned long gestureId)
 	if (gestureId == bdAnimationState)
 		return;
 
+	// BLDG-TYPE-ANIM-GATE-FIX-1: invalidate static registration on idle→animated.
+	// When an idle building (bdAnimationState == -1) that is registered as a
+	// static prop receives its first gesture, the GPU registry holds a stale
+	// static-pose recipe. Invalidate before state change so the static draw is
+	// removed before CPU animation begins. needsFullBakeNextFrame is NOT set —
+	// invalidateStaticRegistration() clears staticReg, making IsStaticNow()
+	// false, and the next update() runs the full bake naturally.
+	// State-to-state (bdAnimationState != -1 → new state): already dynamic,
+	// not registered, no action needed.
+	if (bdAnimationState == -1 && staticReg.registered) {
+		invalidateStaticRegistration();
+		++s_animStartInvalidated;
+	}
+	// Count all setGesture calls while already in a non-idle state.
+	// Not an animation-end counter — bdAnimationState never returns to -1 after
+	// the first setGesture() call: BldgAppearance has no idle-reset path, and
+	// setGesture() itself guards gestureId >= MAX_BD_ANIMATIONS (blocking the
+	// unsigned cast of -1). If a future refactor adds an idle-reset, this block
+	// will need re-evaluation.
+	if (bdAnimationState != -1) {
+		++s_animStateToStateGesture;
+	}
+
 	//----------------------------------------------------------------------
-	// If state is OK, set animation data, set first frame, set loop and 
+	// If state is OK, set animation data, set first frame, set loop and
 	// reverse flag, and start it going until you hear otherwise.
 	appearType->setAnimation(bldgShape,gestureId);
 	bdAnimationState = gestureId;
@@ -1888,6 +1925,12 @@ long BldgAppearance::renderShadows (void)
 }
 
 //-----------------------------------------------------------------------------
+// [LIGHTBAKE-PROOF v1] A/B parity trace (defined in mclib/txmmgr.cpp). File-scope
+// declaration — never declared inside a function body. Proves the baked permanent
+// slot == the gathered transient record byte/hash.
+extern void mc2LightBakeParityCheck(int32_t recipeIndex, const TG_HWLightsData* gatheredLeaf,
+                                    float wx, float wy, float wz, const char* appearance);
+
 // [LIGHTBAKE v1] Static-actor lighting mission-load bake gate. Replaces
 // the raw shape->CacheGpuLightData() at the 4 static (bldg/tree) call
 // sites. The trailing staticReg.lightDataIndex =
@@ -2044,6 +2087,11 @@ static void mc2CacheOrBakeStaticGpuLight(TG_MultiShape* shape,
 			// path, so from this frame on there is NO per-frame
 			// addLightDataStructure for this recipe.
 			mc2WriteStaticLightSlot(recipeIndex, *leaf);
+			// [LIGHTBAKE-PROOF v1] slot-write integrity check (match=1 = permanent slot
+			// faithfully stores the gathered leaf; NOT an independent A/B — see the
+			// function comment in txmmgr.cpp). pos/appearance are diagnostic labels.
+			// Slot written synchronously just above. No-op unless MC2_LIGHTBAKE_PARITY.
+			mc2LightBakeParityCheck(recipeIndex, leaf, 0.0f, 0.0f, 0.0f, nullptr);
 			shape->EmitBakedGpuLightData(recipeIndex, *leaf);
 		}
 	}
@@ -2829,25 +2877,29 @@ namespace {
 
 bool BldgAppearance::isStaticEligible() const
 {
-	// Type-level disqualifiers: this building TYPE is dynamic by design.
-	if (!appearType)                          return false;
-	if (appearType->spinMe)                   return false;
-	if (bldgTypeHasAnimations(appearType))    return false;
-	// Instance-level disqualifiers: this PARTICULAR building is currently
-	// mutating in a way the cached recipe can't reflect.
-	if (drawFlash)                            return false;
-	if (destructFX)                           return false;
-	if (activity)                             return false;
-	if (activity1)                            return false;
-	// MODEL-OVERRIDE admission fix (SEAMPROBE-1): a renderOnly override prop
-	// substitutes a static .glb render shape that carries NO MC2 bdAnimData;
-	// setAnimation() on it is a no-op. Stock buildings get a default idle
-	// gesture (bdAnimationState=0) set during init/update even when the TYPE
-	// has no animations — which spuriously trips this gate for an override
-	// prop, leaving its static recipe permanently un-admitted (markVisible
-	// never fires -> no substrate record -> never drawn). When this is an
-	// override-backed type with no real animations, the cached recipe is a
-	// faithful representation regardless of bdAnimationState, so skip the gate.
+	// Type-level disqualifiers.
+	if (!appearType)        return false;
+	if (appearType->spinMe) return false;
+	// BLDG-TYPE-ANIM-GATE-FIX-1 (nifty): legacy type-level animation-capacity
+	// check. Kill-switch MC2_BLDG_TYPE_ANIM_STATIC_ELIGIBLE=0 restores old
+	// behaviour. When enabled (default), the bdAnimationState guard below is
+	// sufficient.
+	if (!s_bldgTypeAnimStaticEligible && bldgTypeHasAnimations(appearType))
+		return false;
+	// Instance-level disqualifiers.
+	if (drawFlash)          return false;
+	if (destructFX)         return false;
+	if (activity)           return false;
+	if (activity1)          return false;
+	// MODEL-OVERRIDE admission fix (SEAMPROBE-1, override branch): a renderOnly
+	// override prop substitutes a static .glb render shape that carries NO MC2
+	// bdAnimData; setAnimation() on it is a no-op. Stock buildings get a default
+	// idle gesture (bdAnimationState=0) set during init/update even when the
+	// TYPE has no animations — which spuriously trips the guard below for an
+	// override prop, leaving its static recipe permanently un-admitted
+	// (markVisible never fires -> no substrate record -> never drawn). When this
+	// is an override-backed type with no real animations, the cached recipe is a
+	// faithful representation regardless of bdAnimationState, so skip the guard.
 	// Strictly scoped to bldgRenderShape!=nullptr: stock path byte-identical.
 	const bool overrideStatic =
 		appearType->bldgRenderShape && !bldgTypeHasAnimations(appearType);
@@ -3021,6 +3073,11 @@ bool BldgAppearance::IsStaticNow() const
 
 void BldgAppearance::touch()
 {
+	// BLDG-TYPE-ANIM-GATE-FIX-1: count touch() calls for newly-eligible pop:
+	// type has animation data, instance is idle (bdAnimationState==-1), and
+	// currently registered (staticReg.registered). Nonzero delta proves fix works.
+	if (bldgTypeHasAnimations(appearType) && bdAnimationState == -1 && staticReg.registered)
+		++s_animTypeIdleNowStatic;
 	// MC2_STATIC_UPDATE_SKIP defaults TRUE (terrobj.cpp:92); touch() is the
 	// DEFAULT path. update() runs only when the env var is explicitly cleared.
 	if (bldgShape) {
@@ -5330,6 +5387,11 @@ bool TreeAppearance::isStaticRegistered() const { return staticReg[activeLOD].re
 int32_t TreeAppearance::getStaticRecipeIndex() const {
     return staticReg[activeLOD].registered ? staticReg[activeLOD].recipeIndex : -1;
 }
+
+// BLDG-TYPE-ANIM-GATE-FIX-1 counter accessors (header: bldg_anim_gate_counters.h).
+uint32_t g_bldgAnimGate_typeIdleNowStatic()    { return s_animTypeIdleNowStatic; }
+uint32_t g_bldgAnimGate_animStartInvalidated() { return s_animStartInvalidated; }
+uint32_t g_bldgAnimGate_animStateToState()     { return s_animStateToStateGesture; }
 
 //-----------------------------------------------------------------------------
 

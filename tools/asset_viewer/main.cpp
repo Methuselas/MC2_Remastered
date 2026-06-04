@@ -32,6 +32,48 @@ int main(int argc, char* argv[])
     if (argc >= 2 && strcmp(argv[1], "--smoke-preview") == 0)
         return AssetViewerApp::runSmokePreview(argc >= 3 ? argv[2] : ".");
 
+    if (argc >= 2 && strcmp(argv[1], "--smoke-fit") == 0)
+        return AssetViewerApp::runSmokeFit();
+
+    if (argc >= 2 && strcmp(argv[1], "--smoke-tiers") == 0)
+        return AssetViewerApp::runSmokeTiers(argc >= 3 ? argv[2] : ".");
+
+    if (argc >= 2 && strcmp(argv[1], "--smoke-sphere") == 0)
+        return AssetViewerApp::runSmokeSphere();
+
+    if (argc >= 2 && strcmp(argv[1], "--smoke-backend") == 0)
+        return AssetViewerApp::runSmokeBackend();
+
+    if (argc >= 2 && strcmp(argv[1], "--smoke-texload") == 0)
+        return AssetViewerApp::runSmokeTexLoad(argc >= 3 ? argv[2] : ".");
+
+    if (argc >= 2 && strcmp(argv[1], "--smoke-render") == 0)
+        return AssetViewerApp::runSmokeRender(argc >= 3 ? argv[2] : ".");
+
+    if (argc >= 2 && strcmp(argv[1], "--smoke-tangent") == 0)
+        return AssetViewerApp::runSmokeTangent(argc >= 3 ? argv[2] : ".");
+
+    if (argc >= 2 && strcmp(argv[1], "--smoke-fit-material") == 0)
+        return AssetViewerApp::runSmokeFitMaterial(argc >= 3 ? argv[2] : ".");
+
+    if (argc >= 2 && strcmp(argv[1], "--smoke-fit-load") == 0)
+        return AssetViewerApp::runSmokeFitLoad(argc >= 3 ? argv[2] : ".");
+
+    if (argc >= 2 && strcmp(argv[1], "--smoke-tgl-load") == 0)
+        return AssetViewerApp::runSmokeTglLoad(argc >= 3 ? argv[2] : ".");
+
+    if (argc >= 2 && strcmp(argv[1], "--smoke-mesh-build") == 0)
+        return AssetViewerApp::runSmokeMeshBuild(argc >= 3 ? argv[2] : ".");
+
+    if (argc >= 2 && strcmp(argv[1], "--smoke-mesh-render") == 0)
+        return AssetViewerApp::runSmokeMeshRender(argc >= 3 ? argv[2] : ".");
+
+    if (argc >= 2 && strcmp(argv[1], "--smoke-mesh-orient") == 0)
+        return AssetViewerApp::runSmokeMeshOrient(argc >= 3 ? argv[2] : ".");
+
+    if (argc >= 2 && strcmp(argv[1], "--smoke-spotlight") == 0)
+        return AssetViewerApp::runSmokeSpotlight(argc >= 3 ? argv[2] : ".");
+
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0)
     {
         printf("SDL_Init error: %s\n", SDL_GetError());
@@ -41,7 +83,7 @@ int main(int argc, char* argv[])
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);  // PBR shaders use #version 330
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);

@@ -60,6 +60,7 @@
 #include <unordered_set>
 #include <vector>
 #include <chrono>   // [LIGHTBRIDGE v1] coarse per-frame populate sizing
+#include <intrin.h> // __rdtsc — [SPFLUSH_COST_SPLIT v1]
 #include <utils/gl_utils.h>
 #include <GL/glew.h>                 // TEXMGR-COMPRESSED-UPLOAD-1: BPTC cap + GL_COMPRESSED_* enums
 #include "../RenderCore/KtxLoader.h" // TEXMGR-COMPRESSED-UPLOAD-1: BC7 .ktx2 sidecar loader
@@ -126,6 +127,39 @@ static unsigned long s_spotDiagPackCalls     = 0;
 static unsigned long s_spotDiagPackActiveSum = 0;
 static unsigned long s_spotDiagPackInactSum  = 0;
 static unsigned long s_spotDiagPackPointSum  = 0;
+
+// ---------------------------------------------------------------------------
+// [SPFLUSH_COST_SPLIT v1] — txmmgr-side RDTSC accumulator.
+// Measures the batcher_prepareBaseInstanceTable() + bucket-upload span each
+// frame. Gate mirrors the registry-side gate (same env var). The consume
+// function is called by the registry summary emit (extern declaration there).
+// ---------------------------------------------------------------------------
+static const bool s_spflushTxmEnabled = []() {
+    const char* v = getenv("MC2_STATIC_PROP_FLUSH_COST_SPLIT");
+    return v && v[0] == '1' && v[1] == '\0';
+}();
+static unsigned long long s_spflush_baseinstance_upload_cyc = 0;
+// recipe_rebuilds: monotonic + window delta. light_index_writes==recipe_rebuilds (same site).
+static unsigned long long s_spflush_recipe_rebuilds_txm      = 0;
+static unsigned long long s_spflush_recipe_rebuilds_total     = 0;
+
+// Exposed via extern in gos_static_prop_registry.cpp summary emit.
+unsigned long long spflush_ConsumeBaseInstanceUploadCycles() {
+    const unsigned long long v = s_spflush_baseinstance_upload_cyc;
+    s_spflush_baseinstance_upload_cyc = 0;
+    return v;
+}
+// Returns the window delta and the lifetime total for recipe_rebuilds.
+// Delta is reset on call; total is monotonic.
+unsigned long long spflush_ConsumeRecipeRebuildsDelta() {
+    const unsigned long long v = s_spflush_recipe_rebuilds_txm;
+    s_spflush_recipe_rebuilds_total += v;
+    s_spflush_recipe_rebuilds_txm    = 0;
+    return v;
+}
+unsigned long long spflush_GetRecipeRebuildTotal() {
+    return s_spflush_recipe_rebuilds_total;
+}
 #define TEX_LC(fmt, ...) \
     do { if (s_texLifecycleTrace) { printf("[TEX_LIFECYCLE v1] " fmt "\n", ##__VA_ARGS__); fflush(stdout); } } while (0)
 
@@ -1225,6 +1259,91 @@ bool mc2LightBakeEnabled()
     return s_bakeEnabled;
 }
 
+// [LIGHTBAKE-PROOF v1] read-only S accessor. s_staticLightHighWater lives in the
+// anonymous namespace above but is visible throughout this TU (same pattern as
+// mc2GetBakedStaticLight reading s_bakedStaticLight). Exposed as a cross-TU free
+// fn for the stability trace below and the upload-split caller (Task 4) — no
+// txmmgr.h coupling into the consuming TUs.
+uint32_t mc2StaticLightHighWater()
+{
+    return s_staticLightHighWater;
+}
+
+// [LIGHTSSBO v2] Static prefix dirty flag. Set whenever the permanent prefix
+// [0..S) changes: a new recipe bakes, a recipe re-bakes on invalidate, or the
+// table is cleared on mission unload. Consumed (and cleared) once per frame by
+// the LightDataUpload split path. Initial true → first frame uploads the prefix.
+static bool s_staticLightPrefixDirty = true;
+
+void mc2MarkStaticLightPrefixDirty() { s_staticLightPrefixDirty = true; }
+bool mc2ConsumeStaticLightPrefixDirty()
+{
+    const bool d = s_staticLightPrefixDirty;
+    s_staticLightPrefixDirty = false;
+    return d;
+}
+
+// [LIGHTSSBO v2] Upload-split kill-switch. Default ON; MC2_STATIC_LIGHT_UPLOAD_SPLIT=0
+// forces the legacy whole-buffer upload every frame (bit-identical GPU contents).
+// parseEnvBoolWithDefault is not visible in this TU; use the explicit =0 idiom.
+static bool mc2StaticLightUploadSplitEnabled()
+{
+    static const bool s_split = []{
+        const char* e = std::getenv("MC2_STATIC_LIGHT_UPLOAD_SPLIT");
+        return !(e != nullptr && e[0] == '0' && e[1] == '\0');   // default true; "0" disables
+    }();
+    return s_split;
+}
+
+// [LIGHTBAKE-PROOF v1] Stability trace: record each recipe's permanent slot
+// index the first time it is observed, then verify it never changes across
+// frames and stays < S (inPrefix). Env-gated (MC2_LIGHTBAKE_STABILITY),
+// demote-not-delete. No behavior change. Per-recipe first/UNSTABLE lines are
+// capped at 32 to bound log volume, but DETECTION runs for ALL recipes and an
+// aggregate coverage line (recipes_tracked / max_index / out-of-prefix count)
+// is emitted every 256 new recipes — so coverage is never silently 32-capped
+// (M2 fix, adversarial review 2026-06-03).
+static const bool s_lbStabilityTrace =
+    (std::getenv("MC2_LIGHTBAKE_STABILITY") != nullptr);
+static std::unordered_map<int32_t, uint32_t> s_lbFirstSeenIndex;   // recipeIndex -> first index
+static uint64_t s_lbStabilityViolations = 0;   // cross-frame index changes
+static uint64_t s_lbOutOfPrefix        = 0;    // first-seen index >= S (should stay 0)
+static uint32_t s_lbMaxIndex           = 0;    // max permanent index observed
+
+void mc2LightBakeStabilityObserve(int32_t recipeIndex, uint32_t lightDataIndex)
+{
+    if (!s_lbStabilityTrace || recipeIndex < 0) return;
+    const uint32_t S = mc2StaticLightHighWater();
+    auto it = s_lbFirstSeenIndex.find(recipeIndex);
+    if (it == s_lbFirstSeenIndex.end()) {
+        s_lbFirstSeenIndex.emplace(recipeIndex, lightDataIndex);
+        if (lightDataIndex > s_lbMaxIndex) s_lbMaxIndex = lightDataIndex;
+        if (lightDataIndex >= S)           ++s_lbOutOfPrefix;   // counted for ALL recipes
+        if (s_lbFirstSeenIndex.size() <= 32) {
+            std::fprintf(stderr,
+                "[LIGHTBAKE-PROOF v1] event=first recipe=%d index=%u S=%u inPrefix=%d\n",
+                recipeIndex, lightDataIndex, S, (lightDataIndex < S) ? 1 : 0);
+            std::fflush(stderr);
+        }
+        // Aggregate coverage so recipes beyond the 32 log-cap are accounted for.
+        if ((s_lbFirstSeenIndex.size() % 256u) == 0u) {
+            std::fprintf(stderr,
+                "[LIGHTBAKE-PROOF v1] event=coverage recipes_tracked=%zu max_index=%u S=%u out_of_prefix=%llu\n",
+                s_lbFirstSeenIndex.size(), s_lbMaxIndex, S,
+                (unsigned long long)s_lbOutOfPrefix);
+            std::fflush(stderr);
+        }
+    } else if (it->second != lightDataIndex) {
+        ++s_lbStabilityViolations;   // detection runs for ALL recipes (uncapped)
+        if (s_lbStabilityViolations <= 32) {
+            std::fprintf(stderr,
+                "[LIGHTBAKE-PROOF v1] event=UNSTABLE recipe=%d was=%u now=%u S=%u\n",
+                recipeIndex, it->second, lightDataIndex, S);
+            std::fflush(stderr);
+        }
+    }
+}
+
 bool mc2GetBakedStaticLight(int32_t recipeIndex, TG_HWLightsData& out)
 {
     if (recipeIndex < 0) return false;
@@ -1263,6 +1382,7 @@ void mc2ClearAllBakedStaticLight()
     // recipeIndex restarts at 0 against a fresh prefix.
     s_bakedStaticLight.clear();
     s_staticLightHighWater = 0;
+    mc2MarkStaticLightPrefixDirty();   // [LIGHTSSBO v2] table reset → re-upload prefix next frame
 }
 
 // [LIGHTBAKE v2] Persistent static slot write. Replaces the retired
@@ -1464,7 +1584,17 @@ void MC_TextureManager::bakeStaticLightSlot(int32_t recipeIndex, const TG_HWLigh
         lightDataStructuresCapacity = newCap;
     }
     lightData_[ri] = baked;                                 // CPU mirror (persists)
+    mc2MarkStaticLightPrefixDirty();                        // [LIGHTSSBO v2] prefix content changed
+    // 2A: the per-leaf permanent light index is NOT recipeIndex — it is the
+    // owning RANGE's lightDataIndex (all leaves of a multi-leaf range share one
+    // light slot, matching legacy flush). That propagation now lives in the
+    // registry's markVisible() (range-aware). The earlier bake-time per-recipe
+    // persist was wrong for multi-leaf ranges (compare-oracle caught it) and is
+    // removed. The light-table SLOT content here is unchanged.
     if (ri + 1 > s_staticLightHighWater) s_staticLightHighWater = ri + 1;
+    // [SPFLUSH_COST_SPLIT v1] recipe_rebuild counter. light_index_writes == recipe_rebuilds
+    // (both happen at this bakeStaticLightSlot call — same site, same count; only one counter kept).
+    if (s_spflushTxmEnabled) ++s_spflush_recipe_rebuilds_txm;
     // CRITICAL: the frame a recipe FIRST bakes, this-frame's count was
     // set to the OLD (smaller) S at frame-start resetLightData. Without
     // this bump, a later dynamic addLightDataStructure append THIS frame
@@ -1494,6 +1624,56 @@ MC_TextureManager::LightSlotPeek MC_TextureManager::peekLightSlot(uint32_t idx) 
         p.firstColorB = d.lightColor[0][2];
     }
     return p;
+}
+
+// [LIGHTBAKE-PROOF v1] read-only full-slot copy for the parity trace.
+bool MC_TextureManager::copyLightSlot(uint32_t idx, TG_HWLightsData& out) const
+{
+    if (idx >= lightDataStructuresCount || !lightData_) return false;
+    out = lightData_[idx];
+    return true;
+}
+
+// [LIGHTBAKE-PROOF v1] Slot-write INTEGRITY check (NOT an independent A/B parity —
+// M1 honesty fix, adversarial review 2026-06-03). Hashes the freshly-gathered leaf
+// (the CacheGpuLightData MISS-path result == the legacy transient gather) against
+// the permanent slot lightData_[recipeIndex] it was just memcpy'd into by
+// mc2WriteStaticLightSlot. So match=1 proves the permanent slot FAITHFULLY STORES
+// the legacy-gathered record (no corruption/truncation in the store) — combined
+// with the stability trace (slot never changes), that gives "every frame the GPU
+// sees the legacy-gathered value." It does NOT independently re-derive the legacy
+// value (that would be tautological here — the leaf IS the gather source). The true
+// baked-vs-transient A/B is the cross-run MC2_LIGHTBAKE=0 vs =1 comparison (validated
+// when the bake shipped, 2db2a04). Env-gated (MC2_LIGHTBAKE_PARITY), capped at 32
+// lines (+ always logs any mismatch). No behavior change.
+static const bool s_lbParityTrace =
+    (std::getenv("MC2_LIGHTBAKE_PARITY") != nullptr);
+static uint64_t s_lbParityChecks   = 0;
+static uint64_t s_lbParityMismatch = 0;
+
+void mc2LightBakeParityCheck(int32_t recipeIndex,
+                             const TG_HWLightsData* gatheredLeaf,
+                             float wx, float wy, float wz,
+                             const char* appearance)
+{
+    if (!s_lbParityTrace || recipeIndex < 0 || !gatheredLeaf || !mcTextureManager)
+        return;
+    const uint64_t leafHash = fnv1a_64_struct(gatheredLeaf, sizeof(TG_HWLightsData));
+    TG_HWLightsData slot{};
+    if (!mcTextureManager->copyLightSlot(static_cast<uint32_t>(recipeIndex), slot))
+        return;  // slot not yet addressable; skip
+    const uint64_t slotHash = fnv1a_64_struct(&slot, sizeof(TG_HWLightsData));
+    ++s_lbParityChecks;
+    const bool match = (leafHash == slotHash);
+    if (!match) ++s_lbParityMismatch;
+    if (s_lbParityChecks <= 32 || !match) {
+        std::fprintf(stderr,
+            "[LIGHTBAKE-PROOF v1] event=slot_write_integrity recipe=%d leafHash=%016llx slotHash=%016llx "
+            "match=%d pos=(%.1f,%.1f,%.1f) appr=%s\n",
+            recipeIndex, (unsigned long long)leafHash, (unsigned long long)slotHash,
+            match ? 1 : 0, wx, wy, wz, appearance ? appearance : "?");
+        std::fflush(stderr);
+    }
 }
 
 mat4 gos2my(Stuff::Matrix4D& m)
@@ -1547,7 +1727,14 @@ public:
 		gos_SetRenderState(gos_State_Texture, texture_id);
 		gos_SetRenderViewport(viewport_[2], viewport_[3], viewport_[0], viewport_[1]);
 
-		HGOSRENDERMATERIAL mat = texture_id == 0 ? gos_getRenderMaterial("gos_vertex_lighted") : gos_getRenderMaterial("gos_tex_vertex_lighted");
+		HGOSRENDERMATERIAL mat;
+		if (texture_id == 0) {
+			static const HGOSRENDERMATERIAL s_matVertexLighted = gos_getRenderMaterial("gos_vertex_lighted");
+			mat = s_matVertexLighted;
+		} else {
+			static const HGOSRENDERMATERIAL s_matTexVertexLighted = gos_getRenderMaterial("gos_tex_vertex_lighted");
+			mat = s_matTexVertexLighted;
+		}
 
 		gos_SetRenderMaterialParameterMat4(mat, "world_", (const float*)*world_);
 		//gos_SetRenderMaterialParameterMat4(mat, "view_", (const float*)*view_);
@@ -1748,6 +1935,10 @@ void GatherLightsParameters(TG_HWLightsData* lights)
 // then draws all alpha with isTerrain set.
 void MC_TextureManager::renderLists (void)
 {
+	ZoneScopedN("textureManagerRenderLists");
+	static bool bSkip = true; // used across preamble and Render.3DObjects
+	{
+	ZoneScopedN("RenderLists.Preamble");
 	if (Environment.Renderer == 3)
 	{
 		gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_OneZero);
@@ -1780,7 +1971,7 @@ void MC_TextureManager::renderLists (void)
 		gos_SetRenderState( gos_State_ZCompare, 1);
 		gos_SetRenderState(	gos_State_ZWrite, 1);
 	}
-		
+
 	DWORD fogColor = eye->fogColor;
 	//-----------------------------------------------------
 	// FOG time.  Set Render state to FOG on!
@@ -1794,12 +1985,13 @@ void MC_TextureManager::renderLists (void)
 		gos_SetRenderState( gos_State_Fog, 0);
 	}
 
-	static bool bSkip = true;
-
 	gos_SetRenderState(gos_State_Culling, gos_Cull_CW);
+	} // end RenderLists.Preamble
 
+	{
+	ZoneScopedN("RenderLists.LightDataUpload");
     // copy global list of light data into GPU buffer
-    
+
     // [LIGHTSSBO v1] Upload-size FLOOR retained (NOT a removable UBO-window
     // artifact — falsified 2026-05-17). The engine deliberately tolerates
     // transient over-count lightDataIndex for cull-stale actors whose
@@ -1809,14 +2001,32 @@ void MC_TextureManager::renderLists (void)
     // instead of past-end (-> zero -> black props). std::max keeps the
     // old max(count, 64) semantics; lightData_ is capacity(128)-sized so
     // sourcing 64 entries is in-bounds.
+    // [LIGHTSSBO v2] kLightUploadFloor=64 is PRESERVED: totalBytes stays
+    // max(count,64)*stride. When count<64 the padded tail [count..64) lands in
+    // the per-frame SUFFIX [prefixBytes..totalBytes) and is uploaded every frame,
+    // so the deliberate tolerance of transient over-count lightDataIndex for
+    // cull-stale offscreen actors still reads valid backing memory — identical
+    // in-bounds guarantee to the legacy whole-buffer upload. The split only
+    // changes WHICH bytes re-upload each frame, never the uploaded extent.
     constexpr uint32_t kLightUploadFloor = 64u;
     const size_t lightUploadCount =
         std::max<uint32_t>(lightDataStructuresCount, kLightUploadFloor);
-    gos_LightDataSsbo_Upload(
-        lightData_,
-        lightUploadCount * sizeof(TG_HWLightsData));
+    const size_t totalBytes = lightUploadCount * sizeof(TG_HWLightsData);
+    // mc2StaticLightHighWater / mc2ConsumeStaticLightPrefixDirty / the split gate
+    // are all file-scope fns defined earlier in this TU — call directly.
+    if (mc2StaticLightUploadSplitEnabled() && mc2LightBakeEnabled()) {
+        // Prefix = permanent static table [0..S), clamped to the floored count.
+        const uint32_t S = mc2StaticLightHighWater();
+        const size_t prefixCount = (S < lightUploadCount) ? S : lightUploadCount;
+        const size_t prefixBytes = prefixCount * sizeof(TG_HWLightsData);
+        const bool prefixDirty = mc2ConsumeStaticLightPrefixDirty();
+        gos_LightDataSsbo_UploadSplit(lightData_, prefixBytes, totalBytes, prefixDirty);
+    } else {
+        gos_LightDataSsbo_Upload(lightData_, totalBytes);   // legacy whole-buffer
+    }
+	} // end RenderLists.LightDataUpload
     //
-    
+
     // update scene data uniform buffer
     Stuff::Vector3D cp = eye->getCameraOrigin();
     {
@@ -1903,6 +2113,8 @@ void MC_TextureManager::renderLists (void)
 	} // end Render.3DObjects zone
 	drainGLErrors("objects_3d");
 
+	{
+	ZoneScopedN("RenderLists.PostObjectsStateRestore");
 	// [Moved in Phase 4 debug] flush() was originally here (after
 	// Render.3DObjects). But Render.TerrainSolid runs AFTER us on line
 	// ~1287, so terrain was overwriting our building pixels. Flush is
@@ -1913,6 +2125,7 @@ void MC_TextureManager::renderLists (void)
 
 	// restore viewport
 	gos_SetRenderViewport(0, 0, Environment.drawableWidth, Environment.drawableHeight);
+	} // end RenderLists.PostObjectsStateRestore
 
 	// VPL-#shadow Phase 1+2 (arch-doc docs/plans/static-terrain-shadow-
 	// architecture.md): build the static terrain shadow from the FULL map
@@ -2004,6 +2217,7 @@ void MC_TextureManager::renderLists (void)
 	// terrain objects (they now also cast static shadows). Gate mirrors the
 	// Render.GpuStaticProps block; runs regardless of tessellation/mech state.
 	{
+		ZoneScopedN("RenderLists.StaticPropRegistryFlush");
 		extern bool g_useGpuStaticProps;
 		extern bool g_useGpuObjects;
 		if (g_useGpuStaticProps || g_useGpuObjects) {
@@ -2017,13 +2231,14 @@ void MC_TextureManager::renderLists (void)
 			if (s_finishProbe) glFinish();
 			GpuStaticPropRegistry::flush();
 		}
-	}
+	} // end RenderLists.StaticPropRegistryFlush
 	// GPU-driven dynamic sun shadow (Phase 1): frustum-fit + flushShadow.
 	// Runs BEFORE gpu_cull::compute_dispatch so the static-prop shadow uses the
 	// full camera-visible per-type ranges (not the cull-narrowed indirect).
 	// Casters = the camera-visible (inView) batched set (Phase 1 scope; the
 	// off-screen-caster low-sun shadow is the documented Phase-2 gap).
 	{
+		ZoneScopedN("RenderLists.DynamicShadowPass");
 		extern bool g_useGpuObjects;
 		extern bool g_useGpuMechs;
 		if (gos_IsTerrainTessellationActive() && (g_useGpuObjects || g_useGpuMechs)) {
@@ -2091,7 +2306,36 @@ void MC_TextureManager::renderLists (void)
 					// map is NOT active (else buildings would double-shadow). This keeps
 					// buildings casting under bare MC2_SHADOW_ENABLE (no regression).
 					const bool includeBldg = !s_skipBldgInDynamic;
-					GpuStaticPropRegistry::getDynamicPropShadowInstances(s_dynPropInsts, includeBldg);
+					// SHADOW-DYNAMIC-PROP-DIRTY-ONLY-1 (gate, DEFAULT OFF; set env to enable):
+					// The caster set (registry-indexed instances: modelMatrix + typeID) is
+					// REGISTRY-STATIC — it changes only when a prop spawns, despawns, or has
+					// an immutable-field write, all of which bump s_registryGeneration. The
+					// shadow pass uses only modelMatrix+typeID from the instances (no lighting
+					// data, no per-frame color offset), so the vector is safe to cache across
+					// frames as long as the generation is unchanged.
+					// Cache policy: rebuild when (a) generation changes, or (b) includeBldg
+					// toggles (env-gated at startup — in practice stable per session, but
+					// compare it anyway). On a clean scene getDynamicPropShadowInstances walks
+					// the full s_recipeRanges vector (~14K recipes); skipping it saves ~120-
+					// 150µs of cache-cold memory traffic per frame.
+					// NOTE: includeBldg is captured from a static at the outer scope, so it
+					// is also effectively constant per session; the extra compare is free.
+					static const bool s_dynPropDirtyOnly = []() {
+						// DEFAULT-ON since 2026-06-04 (smoke-clean mc2_24; proven
+						// s_registryGeneration dirty-only pattern, shadow pass reads only
+						// modelMatrix+typeID): only literal "0" opts out.
+						const char* v = getenv("MC2_SHADOW_DYNAMIC_PROP_DIRTY_ONLY");
+						return !(v && v[0] == '0' && v[1] == '\0');
+					}();
+					static uint64_t  s_dynPropInstsGeneration = UINT64_MAX; // sentinel: force first build
+					static bool      s_dynPropInstsIncludeBldg = false;
+					if (!s_dynPropDirtyOnly ||
+					    GpuStaticPropRegistry::getRegistryGeneration() != s_dynPropInstsGeneration ||
+					    includeBldg != s_dynPropInstsIncludeBldg) {
+						GpuStaticPropRegistry::getDynamicPropShadowInstances(s_dynPropInsts, includeBldg);
+						s_dynPropInstsGeneration  = GpuStaticPropRegistry::getRegistryGeneration();
+						s_dynPropInstsIncludeBldg = includeBldg;
+					}
 				GpuStaticPropBatcher::instance().drawDynamicPropShadows(s_dynPropInsts);
 			} else {
 				GpuStaticPropBatcher::instance().flushShadow(s_skipBldgInDynamic);
@@ -2259,7 +2503,14 @@ void MC_TextureManager::renderLists (void)
 			// Step 4.6 (global-pool slice 1): compute per-cmd baseInstance prefix-sum
 			// and advance the coalesce ring slot BEFORE compute_dispatch() so the
 			// patch shader can read baseInstanceByCmd[] in the same dispatch.
-			{ ZoneScopedN("GpuSP.PrepBaseInstance"); batcher_prepareBaseInstanceTable(); }
+			// [SPFLUSH_COST_SPLIT v1] baseinstance_upload span (nifty) wrapped in
+			// the GpuSP.PrepBaseInstance Tracy zone (override branch).
+			{
+				ZoneScopedN("GpuSP.PrepBaseInstance");
+				const unsigned long long _t_bi0 = s_spflushTxmEnabled ? __rdtsc() : 0ULL;
+				batcher_prepareBaseInstanceTable();
+				if (s_spflushTxmEnabled) s_spflush_baseinstance_upload_cyc += __rdtsc() - _t_bi0;
+			}
 
 			// C1b GPU authority flip: compute_dispatch() is now called HERE
 			// (moved from mission.cpp) so it processes BOTH dynamic actor records
@@ -2414,8 +2665,10 @@ void MC_TextureManager::renderLists (void)
 	}
 	
     // sebi: split in 2 parts, first draw objects which have alpha test off, then with alpha test on
-    for(int states = 0; states < 2; ++states) 
-    {   
+	{
+	ZoneScopedN("RenderLists.TerrainAlphaWaterLoops");
+    for(int states = 0; states < 2; ++states)
+    {
         gos_SetRenderState( gos_State_AlphaTest, states);
 
         for (int i=0;i<nextAvailableVertexNode;i++)
@@ -2480,6 +2733,7 @@ void MC_TextureManager::renderLists (void)
     }
     //reset alpha test at the end
     gos_SetRenderState( gos_State_AlphaTest, 0);
+	} // end RenderLists.TerrainAlphaWaterLoops
 
 
 	//<< sebi: added this section to draw objects which do not have terrain underlayer (those are added in quad.cpp, see (*) there )
@@ -2547,6 +2801,8 @@ void MC_TextureManager::renderLists (void)
 	// are now drawn by gos_DrawTerrainOverlays() and gos_DrawDecals() before Render.Overlays.
 	// The old Render.CraterOverlays and non-terrain crater loops are removed.
 
+	{
+	ZoneScopedN("RenderLists.ShadowBlobs");
 	if (Environment.Renderer == 3)
 	{
 		gos_SetRenderState( gos_State_TextureAddress, gos_TextureWrap );
@@ -2612,18 +2868,21 @@ void MC_TextureManager::renderLists (void)
 			}
 		}
 	}
+	} // end RenderLists.ShadowBlobs
 
 
+	{
+	ZoneScopedN("RenderLists.NonTerrainAlphaLoops");
 	gos_SetRenderState( gos_State_ZCompare, 1);
 	if (Environment.Renderer != 3)
 	{
 		gos_SetRenderState( gos_State_ShadeMode, gos_ShadeGouraud);
 		gos_SetRenderState(	gos_State_ZWrite, 1);
 	}
-	
+
     // sebi: split in 2 parts, first draw objects which have alpha test off, then with alpha test on
-    for(int states = 0; states < 2; ++states) 
-    {   
+    for(int states = 0; states < 2; ++states)
+    {
         gos_SetRenderState( gos_State_AlphaTest, states);
         for (int i=0;i<nextAvailableVertexNode;i++)
         {
@@ -2673,8 +2932,10 @@ void MC_TextureManager::renderLists (void)
     }
     //reset alpha test at the end
     gos_SetRenderState( gos_State_AlphaTest, 0);
+	} // end RenderLists.NonTerrainAlphaLoops
 
-	
+	{
+	ZoneScopedN("RenderLists.VfxHudSubmit");
 	if (Environment.Renderer == 3)
 	{
 		gos_SetRenderState( gos_State_ShadeMode, gos_ShadeGouraud);
@@ -2881,6 +3142,7 @@ void MC_TextureManager::renderLists (void)
 
 	// Reset terrain extra buffer after rendering — will be re-filled during next frame's TerrainQuad::draw() calls
 	gos_TerrainExtraReset();
+	} // end RenderLists.VfxHudSubmit
 	} // end Render.Overlays zone
 }
 

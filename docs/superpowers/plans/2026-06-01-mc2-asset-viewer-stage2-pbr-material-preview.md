@@ -52,6 +52,13 @@ Modified files:
 - **GL texture id type:** raw `GLuint`. To show in ImGui: `ImGui::Image((ImTextureID)(intptr_t)glId, size)` (matches `UiEditorImageCache.cpp:355`).
 - **Smoke harness pattern:** the exe parses `argv[1]` for a `--smoke*` flag and calls a static method on `AssetViewerApp` that sets up a headless SDL/GL context, runs assertions, prints `[smoke] PASS` / `[smoke] FAIL: <reason>`, and returns `0` / `1` (matches `main.cpp:17-20`, `AssetViewerApp.cpp:54-93`). New checks are added as new `--smoke-*` subcommands so each is runnable in isolation.
 - **GL context version (review fix — BLOCKER 3):** the stage-1 code requests a GL **3.0** core context (`main.cpp:31-32`, `AssetViewerApp.cpp:65-66`), but the PBR shaders below use `#version 330 core`. Before any of these tasks, bump BOTH the app (`main.cpp`) and EVERY new `--smoke-*` SDL setup to request **3.3** core: `SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);` (major stays 3). A strict driver rejects `#version 330` on a literal 3.0 context. Do not copy the `MINOR_VERSION, 0` line verbatim when "reusing the runSmoke setup" — use 3.
+- **Pre-execution reconciliation (verified 2026-06-02 vs current nifty — KTX2/tiers landed since authoring):**
+  - `--smoke-fit` / `runSmokeFit` ALREADY EXIST (the resolution-tiers feature). Task 8's FIT-material smoke is renamed to **`runSmokeFitMaterial` / `--smoke-fit-material`** throughout to avoid clobbering them. The other new flags (`--smoke-sphere/-backend/-texload/-render/-tangent`) do not collide.
+  - `AssetTypeSidebar` is currently an Implemented/Deferred list with a STUB `enum { Textures }` + literal `active()`; Task 6 patched to match (see its drift note).
+  - `AssetViewerApp::drawUi()` currently feeds `browser_` → `surface_` UNCONDITIONALLY; Task 6 Step 2 guards it on `sidebar_.active()`.
+  - `FileBrowser::PickFile()` does NOT exist yet — Task 5 Step 2 adds it (clean).
+  - `MaterialTextureLoader`'s `STB_IMAGE_IMPLEMENTATION` is collision-free (the viewer doesn't link `mclib`/assimp); Task 3 must add `3rdparty/stb` to the viewer's `target_include_directories` (not currently present).
+  - No file/name collisions between the new PBR files and the KTX2/tiers additions (`FitMaterialLoader` ≠ `FitSize`).
 - **Fixtures:** generated into `tests/fixtures/asset_viewer/` by `tests/fixtures/asset_viewer/make_fixture.py` (extended per task). PNG, written with a deterministic generator.
 - **Color space:** baseColor/emissive textures are uploaded as `GL_SRGB8_ALPHA8` (GL linearizes on sample). normal/ORM are `GL_RGBA8` (linear). Lighting is computed in linear space; the fragment shader applies gamma encoding (`pow(color, 1/2.2)`) on output because the FBO color attachment is plain `GL_RGBA8`, not sRGB.
 
@@ -1107,7 +1114,9 @@ git commit -m "feat(asset-viewer): material slot pickers + camera/light controls
 
 - [ ] **Step 1: Make Materials selectable in the sidebar**
 
-Edit `tools/asset_viewer/AssetTypeSidebar.h`:
+**Drift note (verified against current nifty):** `AssetTypeSidebar.h` currently has a STUB `enum class AssetType { Textures };` + `active() const { return AssetType::Textures; }` (literal, no member). `AssetTypeSidebar.cpp draw()` is an "Implemented / Deferred" two-section list with a `kDeferred[]` array of 8 disabled entries (`Materials, Static Props, Trees, Mechs, Vehicles, VFX, Terrain Materials, Mod Package`). This step REPLACES both to add a real `active_` member and move ONLY `Materials` from Deferred → Implemented; the other 7 stay deferred.
+
+Replace the `enum`/class in `tools/asset_viewer/AssetTypeSidebar.h` with:
 
 ```cpp
 enum class AssetType { Textures, Materials };
@@ -1120,15 +1129,20 @@ private:
 };
 ```
 
-Edit `tools/asset_viewer/AssetTypeSidebar.cpp` `draw()` so `Textures` and `Materials` are enabled `ImGui::Selectable`s that set `active_`, the rest stay disabled:
+Replace `AssetTypeSidebar.cpp` `draw()` (preserve the Implemented/Deferred layout; Textures + Materials live, remaining 7 disabled):
 
 ```cpp
 void AssetTypeSidebar::draw() {
+    ImGui::TextDisabled("Implemented");
     if (ImGui::Selectable("Textures",  active_ == AssetType::Textures))  active_ = AssetType::Textures;
     if (ImGui::Selectable("Materials", active_ == AssetType::Materials)) active_ = AssetType::Materials;
-    ImGui::BeginDisabled();
-    ImGui::Selectable("Static Props", false);
-    ImGui::Selectable("Mechs", false);
+    ImGui::Spacing();
+    ImGui::TextDisabled("Deferred");
+    static const char* kDeferred[] = {
+        "Static Props", "Trees", "Mechs", "Vehicles", "VFX", "Terrain Materials", "Mod Package"
+    };
+    ImGui::BeginDisabled(true);
+    for (const char* name : kDeferred) ImGui::Selectable(name, false);
     ImGui::EndDisabled();
 }
 ```
@@ -1300,7 +1314,7 @@ git commit -m "test(asset-viewer): tangent validation smoke (flat==none, tilt pe
 - Modify: `tools/asset_viewer/CMakeLists.txt`
 - Modify: `tools/asset_viewer/MaterialSlots.cpp` (add the "Load .fit material" button)
 - Modify: `tests/fixtures/asset_viewer/` (add a tiny `sample.fit`)
-- Modify: `tools/asset_viewer/AssetViewerApp.{h,cpp}` + `main.cpp` (`--smoke-fit`)
+- Modify: `tools/asset_viewer/AssetViewerApp.{h,cpp}` + `main.cpp` (`--smoke-fit-material`)
 
 - [ ] **Step 1: Write the header**
 
@@ -1343,13 +1357,13 @@ Material {
 }
 ```
 
-Add to `AssetViewerApp.h`: `static int runSmokeFit(const char* fixtureDir);`
-Add to `main.cpp`: `if (argc >= 2 && strcmp(argv[1], "--smoke-fit") == 0) return AssetViewerApp::runSmokeFit(argc >= 3 ? argv[2] : ".");`
+Add to `AssetViewerApp.h`: `static int runSmokeFitMaterial(const char* fixtureDir);`
+Add to `main.cpp`: `if (argc >= 2 && strcmp(argv[1], "--smoke-fit-material") == 0) return AssetViewerApp::runSmokeFitMaterial(argc >= 3 ? argv[2] : ".");`
 Implement in `AssetViewerApp.cpp` (no GL needed):
 
 ```cpp
 #include "FitMaterialLoader.h"
-int AssetViewerApp::runSmokeFit(const char* dir) {
+int AssetViewerApp::runSmokeFitMaterial(const char* dir) {
     std::string err;
     FitMaterial m = FitMaterialLoader_Parse(std::string(dir) + "/sample.fit", &err);
     if (!m.found)                       { printf("[smoke] FAIL: no Material block (%s)\n", err.c_str()); return 1; }
@@ -1362,7 +1376,7 @@ int AssetViewerApp::runSmokeFit(const char* dir) {
 }
 ```
 
-Run: `mc2_asset_viewer --smoke-fit tests/fixtures/asset_viewer` → Expected: build failure until implemented.
+Run: `mc2_asset_viewer --smoke-fit-material tests/fixtures/asset_viewer` → Expected: build failure until implemented.
 
 - [ ] **Step 3: Implement FitMaterialLoader.cpp**
 
@@ -1423,7 +1437,7 @@ Add `FitMaterialLoader.cpp` to `ASSET_VIEWER_SOURCES`.
 
 - [ ] **Step 4: Run the parser smoke to verify it passes**
 
-Run: `mc2_asset_viewer --smoke-fit tests/fixtures/asset_viewer`
+Run: `mc2_asset_viewer --smoke-fit-material tests/fixtures/asset_viewer`
 Expected: `[smoke] PASS fit parse base/normal/orm/packing`
 
 - [ ] **Step 5: Wire the "Load .fit material" button into the slots UI**
@@ -1482,7 +1496,7 @@ mc2_asset_viewer --smoke-backend
 mc2_asset_viewer --smoke-texload tests/fixtures/asset_viewer
 mc2_asset_viewer --smoke-render  tests/fixtures/asset_viewer
 mc2_asset_viewer --smoke-tangent tests/fixtures/asset_viewer
-mc2_asset_viewer --smoke-fit     tests/fixtures/asset_viewer
+mc2_asset_viewer --smoke-fit-material     tests/fixtures/asset_viewer
 mc2_asset_viewer --smoke         tests/fixtures/asset_viewer   # existing stage-1 texture smoke still passes
 ```
 

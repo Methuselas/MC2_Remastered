@@ -2,6 +2,7 @@
 #include "TextureDecoderRegistry.h"
 #include "TextureExtensions.h"
 #include "imgui.h"
+#include <algorithm>
 #include <string>
 #include <filesystem>
 #include <system_error>
@@ -25,25 +26,32 @@ static fs::path ExeDir() { return fs::current_path(); }
 #endif
 
 #ifdef _WIN32
-static bool PickTextureFileWin32(std::string& outPath) {
+// Generic Win32 IFileOpenDialog picker.
+// filterLabel/filterPattern: e.g. L"Textures" / L"*.png;*.ktx2"
+// initialDirAbs: absolute path to open in by default; nullptr = system default.
+static bool PickFileWin32(std::string& outPath,
+                          const wchar_t* filterLabel,
+                          const wchar_t* filterPattern,
+                          const wchar_t* initialDirAbs) {
     bool ok = false;
     HRESULT hrInit = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     IFileOpenDialog* dlg = nullptr;
     if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
                                    IID_PPV_ARGS(&dlg)))) {
-        // Build "*.png;*.jpg;...;*.ktx2" from the decoder registry (single source of truth).
-        std::wstring pattern;
-        for (const auto& e : textureDecoderRegistry().supportedExtensions()) {
-            if (!pattern.empty()) pattern += L";";
-            pattern += L"*.";
-            pattern += std::wstring(e.begin(), e.end());   // ASCII ext -> wide
-        }
         COMDLG_FILTERSPEC filters[] = {
-            { L"Textures", pattern.c_str() },
+            { filterLabel, filterPattern },
             { L"All files (*.*)", L"*.*" },
         };
         dlg->SetFileTypes(2, filters);
-        dlg->SetTitle(L"Select a texture");
+        // Set initial folder if the caller provided one and it exists on disk.
+        if (initialDirAbs && initialDirAbs[0] != L'\0') {
+            IShellItem* folder = nullptr;
+            if (SUCCEEDED(SHCreateItemFromParsingName(initialDirAbs, nullptr,
+                                                      IID_PPV_ARGS(&folder)))) {
+                dlg->SetFolder(folder);
+                folder->Release();
+            }
+        }
         if (SUCCEEDED(dlg->Show(nullptr))) {
             IShellItem* item = nullptr;
             if (SUCCEEDED(dlg->GetResult(&item))) {
@@ -65,7 +73,19 @@ static bool PickTextureFileWin32(std::string& outPath) {
     if (SUCCEEDED(hrInit)) CoUninitialize();
     return ok;
 }
+
+static bool PickTextureFileWin32(std::string& outPath) {
+    // Build "*.png;*.jpg;...;*.ktx2" from the decoder registry (single source of truth).
+    std::wstring pattern;
+    for (const auto& e : textureDecoderRegistry().supportedExtensions()) {
+        if (!pattern.empty()) pattern += L";";
+        pattern += L"*.";
+        pattern += std::wstring(e.begin(), e.end());   // ASCII ext -> wide
+    }
+    return PickFileWin32(outPath, L"Textures", pattern.c_str(), nullptr);
+}
 #else
+static bool PickFileWin32(std::string&, const wchar_t*, const wchar_t*, const wchar_t*) { return false; }
 static bool PickTextureFileWin32(std::string&) { return false; }
 #endif
 
@@ -101,6 +121,7 @@ void FileBrowser::refresh()
     entries_.clear();
     scanError_.clear();
     selectedIndex_ = -1;
+    rescanTiers();                      // refresh tier list on folder change (NOT per draw frame)
     std::error_code ec;
     fs::path dir(folderPath_);
     if (!fs::is_directory(dir, ec)) { scanError_ = "Not a folder."; return; }
@@ -123,6 +144,19 @@ void FileBrowser::refresh()
 
 void FileBrowser::draw()
 {
+    std::vector<std::string> tiers = SiblingTiers();
+    if (tiers.size() > 1) {
+        std::string cur = CurrentTier();
+        ImGui::TextUnformatted("Resolution:");
+        for (const auto& t : tiers) {
+            ImGui::SameLine();
+            bool active = (t == cur);
+            if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.50f, 0.80f, 1.0f));
+            if (ImGui::Button(t.c_str())) SwitchTier(t);
+            if (active) ImGui::PopStyleColor();
+        }
+        ImGui::Separator();
+    }
     ImGui::TextUnformatted("Folder");
     ImGui::SetNextItemWidth(-150.0f);
     ImGui::InputText("##folder", folderPath_, sizeof(folderPath_));
@@ -152,4 +186,104 @@ std::string FileBrowser::takeSelection()
 {
     hasSelection_ = false;
     return selectionPath_;
+}
+
+static bool fb_isAllDigits(const std::string& s) {
+    if (s.empty()) return false;
+    for (char c : s) if (c < '0' || c > '9') return false;
+    return true;
+}
+
+// folderPath_ may carry a trailing separator (e.g. user types "…/128\" in the
+// InputText box). Strip it so filename()/parent_path() behave (review fix:
+// otherwise CurrentTier() returns "" and SwitchTier() targets the wrong dir).
+static fs::path fb_normFolder(const char* raw) {
+    std::string s = raw ? raw : "";
+    while (!s.empty() && (s.back() == '/' || s.back() == '\\')) s.pop_back();
+    return fs::path(s);
+}
+
+void FileBrowser::setFolder(const std::string& path) {
+    std::snprintf(folderPath_, sizeof(folderPath_), "%s", path.c_str());
+    refresh();
+}
+
+std::string FileBrowser::CurrentTier() const {
+    std::string leaf = fb_normFolder(folderPath_).filename().string();
+    return fb_isAllDigits(leaf) ? leaf : std::string();
+}
+
+void FileBrowser::rescanTiers() {
+    tiers_.clear();
+    fs::path parent = fb_normFolder(folderPath_).parent_path();
+    std::error_code ec;
+    if (parent.empty() || !fs::is_directory(parent, ec)) return;
+    auto it = fs::directory_iterator(parent, ec);
+    if (ec) return;                                 // open failed (perms etc.) -> no tiers (review m2)
+    for (; it != fs::directory_iterator(); it.increment(ec)) {
+        if (ec) break;                              // stop on iteration error (review m2)
+        std::error_code dec;                        // separate ec so an entry error
+        if (!it->is_directory(dec) || dec) continue; // doesn't abort the whole scan
+        std::string name = it->path().filename().string();
+        // <=7 digits keeps values within int range; avoids std::stoi overflow (review m1)
+        if (fb_isAllDigits(name) && name.size() <= 7) tiers_.push_back(name);
+    }
+    // Ascending numeric order WITHOUT std::stoi: for all-digit strings, fewer digits
+    // == smaller; same length == lexical order == numeric order.
+    std::sort(tiers_.begin(), tiers_.end(),
+              [](const std::string& a, const std::string& b){
+                  if (a.size() != b.size()) return a.size() < b.size();
+                  return a < b;
+              });
+}
+
+std::string FileBrowser::PickFile() {
+    std::string out;
+    return PickTextureFileWin32(out) ? out : std::string();
+}
+
+std::string FileBrowser::PickFitFile() {
+    // Resolve an absolute path to data/defs/materials/viewer, preferring ExeDir then cwd.
+    const char* rel = "data/defs/materials/viewer";
+    fs::path roots[] = { ExeDir(), fs::current_path() };
+    std::wstring initialDir;
+    for (const auto& root : roots) {
+        std::error_code ec;
+        fs::path cand = root / rel;
+        if (fs::is_directory(cand, ec)) {
+            std::wstring w = cand.wstring();
+            initialDir = w;
+            break;
+        }
+    }
+    std::string out;
+    bool ok = PickFileWin32(out, L"MC2 material (*.fit)", L"*.fit",
+                            initialDir.empty() ? nullptr : initialDir.c_str());
+    return ok ? out : std::string();
+}
+
+void FileBrowser::SwitchTier(const std::string& tier) {
+    fs::path dst = fb_normFolder(folderPath_).parent_path() / tier;
+    std::error_code ec;
+    if (!fs::is_directory(dst, ec)) return;   // missing tier -> no-op
+
+    std::string keepName;                     // remember selected filename
+    if (selectedIndex_ >= 0 && selectedIndex_ < (int)entries_.size())
+        keepName = entries_[selectedIndex_];
+    else if (hasSelection_ && !selectionPath_.empty())   // selection set via Browse w/o a list index (review final #2)
+        keepName = fs::path(selectionPath_).filename().string();
+
+    setFolder(dst.string());                  // repoint + rescan (clears entries_/selectedIndex_)
+    selectedIndex_ = -1;
+    hasSelection_  = false;
+    if (!keepName.empty()) {                   // restore selection if same file exists here
+        for (int i = 0; i < (int)entries_.size(); ++i) {
+            if (entries_[i] == keepName) {
+                selectedIndex_ = i;
+                selectionPath_ = (fs::path(folderPath_) / keepName).string();
+                hasSelection_  = true;
+                break;
+            }
+        }
+    }
 }

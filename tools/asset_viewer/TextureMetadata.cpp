@@ -1,4 +1,6 @@
 #include "TextureMetadata.h"
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 std::string FormatDimensions(const TextureMetadata& m) {
@@ -28,4 +30,18 @@ std::string FormatChannels(const TextureMetadata& m) {
 
 std::string FormatTextureFormat(const TextureMetadata& m) {
     return m.formatLabel.empty() ? "unknown" : m.formatLabel;
+}
+
+FitSize FitTextureDisplaySize(int texW, int texH, float availW, float availH, float zoom)
+{
+    FitSize r;
+    if (texW <= 0 || texH <= 0) return r;                 // {0,0}: nothing to show
+    float aw = availW > 1.0f ? availW : 1.0f;             // clamp non-positive avail
+    float ah = availH > 1.0f ? availH : 1.0f;
+    float z  = zoom   > 0.0f ? zoom   : 1.0f;             // clamp non-positive zoom
+    float scale = std::min(aw / (float)texW, ah / (float)texH);   // aspect-preserving fit
+    if (!(scale > 0.0f) || !std::isfinite(scale)) scale = 1.0f;   // guard NaN/inf
+    r.w = (float)texW * scale * z;
+    r.h = (float)texH * scale * z;
+    return r;
 }

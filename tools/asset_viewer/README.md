@@ -79,3 +79,43 @@ Supported KTX2 formats: uncompressed RGBA8 (unorm/sRGB) and stored BC7
 
 Not yet supported (deferred): DDS, Basis/supercompressed KTX2, CPU BC7
 transcoding, asset cooking.
+
+## Resolution tiers + display sizing
+
+When the current folder sits in a set of numeric sibling folders (e.g.
+`data/tgl/{128,256,512}` or `data/textures/{64,128,256}`), a **Resolution** row
+appears with a button per available tier. Switching tiers keeps the selected
+texture (same filename) and reloads it at the new resolution. Only tiers that
+exist on disk are shown.
+
+The preview now fits each texture to the view area (1.00× = fit); the zoom slider
+multiplies that. Switching resolution tiers — or opening a higher-resolution
+texture — no longer changes the on-screen size, only the detail.
+
+## Static Props (model preview)
+
+Select **Static Props** in the sidebar to browse and preview the 2,030 props
+registered in `tgl.fst`. The left panel shows a filterable list of `.tgl` archive
+names; clicking one loads it and renders it on a lit turntable in the inspector
+panel.
+
+The prop is rendered with its real albedo texture (looked up from the deploy root
+via TglMeshLoader). Use the orbit and zoom controls to inspect the model from any
+angle.
+
+> **Preview mode: approximate (Backend B).** The viewer renders with a
+> self-contained phong/albedo shader, not the in-game static-prop batcher.
+> Pixel-faithful Backend A (matching the MC2 GPU pipeline) is deferred. Mechs,
+> vehicles, trees, and other asset types are also deferred.
+
+## Materials (Stage 2)
+
+Select **Materials** in the sidebar to preview a PBR material on a lit sphere.
+Assign up to four slots via **Browse...**: Base Color (sRGB), Normal (linear),
+ORM (linear; R=AO, G=Roughness, B=Metallic), Emissive (sRGB). Use the View and
+Light controls to orbit, zoom, and rotate the directional light.
+
+> **Preview mode: Local PBR approximation, not exact MC2 shader.** The viewer
+> renders with a self-contained Cook-Torrance shader (Backend B). MC2 has no
+> standalone ORM material shader to mirror, so this preview is approximate and
+> must not be treated as pixel-exact to in-game rendering.
