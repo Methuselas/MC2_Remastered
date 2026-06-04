@@ -56,15 +56,15 @@ namespace {
 inline Stuff::Point3D toMC2Pos(const aiVector3D& v) {
 	Stuff::Point3D p;
 	p.x = -v.x;
-	p.y =  v.y;
-	p.z = -v.z;
+	p.y = -v.y;
+	p.z =  v.z;
 	return p;
 }
 inline Stuff::Vector3D toMC2Vec(const aiVector3D& v) {
 	Stuff::Vector3D n;
 	n.x = -v.x;
-	n.y =  v.y;
-	n.z = -v.z;
+	n.y = -v.y;
+	n.z =  v.z;
 	return n;
 }
 // UV V-flip (spec §6).
