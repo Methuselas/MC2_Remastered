@@ -221,6 +221,8 @@ ALLOWLIST=(
     MC2_SHADOW_CASTER_LIGHTBOX_CULL  # feature -- promote-to-registry; cull dynamic prop shadow casters to the shadow frustum (default OFF)
     MC2_SHADOW_CULL_DEBUG       # trace -- dump caster world pos + NDC for the light-box cull
     MC2_SHADOW_DIAG             # trace
+    MC2_SHADOW_FOCUS_CENTER     # feature -- promote-to-registry; SHADOW-FOCUS-CENTER-1 center shadow box on camera near-ground focus point (default OFF)
+    MC2_SHADOW_FOCUS_DIST       # override -- focus-point distance in front of camera (WU, default 1500, clamp [256,8000])
     MC2_SLIM_COST_SPLIT         # feature -- promote-to-registry
     MC2_SMOKE_MODE              # infra -- smoke harness
     MC2_SMOKE_PERF_SAMPLES      # infra -- smoke harness
