@@ -2087,9 +2087,12 @@ void Terrain::geometry (void)
 		// set is NOT cacheable across frames. Gate default-OFF; MC2_QUADSETUP_ARMED_SKIP
 		// (unset/"0" = OFF kill-switch, any other value = ON). NarrowEnabled() is
 		// in the predicate so we only skip when the pVertex water producer is live.
+		// DEFAULT-ON since 2026-06-03 (clean Tracy mc2_01 1.01ms->372us, tier1 5/5,
+		// water/mines/decals/picking user-verified): only literal "0" opts out
+		// (bisection / revert escape hatch), any other value INCLUDING UNSET opts in.
 		static const bool s_armedSkipOn = []() {
 			const char* v = getenv("MC2_QUADSETUP_ARMED_SKIP");
-			return v != nullptr && !(v[0] == '0' && v[1] == '\0');
+			return !(v && v[0] == '0' && v[1] == '\0');
 		}();
 		const bool fullyArmed =
 			gos_terrain_indirect::IsFrameSolidArmed() &&
