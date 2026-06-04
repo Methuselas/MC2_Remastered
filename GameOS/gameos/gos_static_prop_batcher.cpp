@@ -746,14 +746,20 @@ GLuint s_staticPropProgramCoalesce = 0;  // coalesce variant (Step 7.5)
 // program's. 0 = the program failed to link this session → flushDepthPrepass()
 // must no-op (color path unaffected).
 GLuint s_staticPropDepthProgram = 0;
-struct DepthCoalesceLocs { GLint drawIDBase = -1; };
+// FOLIAGE-STATICPROP-DEPTH-PREPASS-1 GL_EQUAL-parity (review CRITICAL-1/IMPORTANT-1):
+// the depth program is a DISTINCT GL program object, so its uniform state is
+// independent of the color program's. The depth frag mirrors the color frag's
+// alpha-derivation, so it needs the SAME u_materialGpuSample (texArrayLayer vs
+// MaterialTable.albedoTex select) and u_debugAddrMode (mode-8 LODBUG bypass)
+// uploaded to ITS program — uninitialized GL uniforms default to 0, which would
+// make the prepass discard differently than the color pass under GL_EQUAL and
+// make foliage vanish. Coalesce-only locations; -1 (legacy/absent) skips upload.
+struct DepthCoalesceLocs {
+    GLint drawIDBase        = -1;
+    GLint materialGpuSample = -1;   // CRITICAL-1: u_materialGpuSample
+    GLint debugAddrMode     = -1;   // IMPORTANT-1: u_debugAddrMode
+};
 static DepthCoalesceLocs s_locsDepthCoalesce;
-
-// FOLIAGE-STATICPROP-DEPTH-PREPASS-1: set true by the in-flush depth prepass
-// (flushDepthPrepassV6) when it actually drew this frame; read by the color
-// applyPipeline that follows it to flip to GL_EQUAL + depthWrite-off so early-Z
-// keeps only the front-most fragment the prepass laid. Reset at flush() end.
-static bool s_depthPrepassRanThisFrame = false;
 
 // Step 2.1 — persistent map pointer + fence ring.
 void*  s_coalesceInstanceMap = nullptr;
@@ -1314,6 +1320,15 @@ void loadProgramsIfNeeded() {
             // (and the prepass never uploads it on the legacy path).
             s_locsDepthCoalesce.drawIDBase =
                 glGetUniformLocation(s_staticPropDepthProgram, "u_drawIDBase");
+            // GL_EQUAL-parity (review CRITICAL-1/IMPORTANT-1): capture the depth
+            // program's OWN u_materialGpuSample + u_debugAddrMode so the prepass
+            // can upload the SAME values the color pass uploads to its program.
+            // u_materialGpuSample is coalesce-only (legacy returns -1, harmless);
+            // u_debugAddrMode exists in both variants. Per-program locations.
+            s_locsDepthCoalesce.materialGpuSample =
+                glGetUniformLocation(s_staticPropDepthProgram, "u_materialGpuSample");
+            s_locsDepthCoalesce.debugAddrMode =
+                glGetUniformLocation(s_staticPropDepthProgram, "u_debugAddrMode");
             // The coalesce frag samples u_texArr via a sampler2DArray uniform; bind
             // it to texture unit 0 once (matches the color program's init-only bind
             // at the coalesce block above) so the per-draw prepass loop only binds
@@ -1328,10 +1343,13 @@ void loadProgramsIfNeeded() {
                 }
             }
             std::fprintf(stderr, "[GPUPROPS-DIAG] static_prop_depth program=%u "
-                         "variant=%s loc_drawIDBase=%d\n",
+                         "variant=%s loc_drawIDBase=%d loc_materialGpuSample=%d "
+                         "loc_debugAddrMode=%d\n",
                          s_staticPropDepthProgram,
                          depthUsesCoalesce ? "coalesce" : "legacy",
-                         s_locsDepthCoalesce.drawIDBase);
+                         s_locsDepthCoalesce.drawIDBase,
+                         s_locsDepthCoalesce.materialGpuSample,
+                         s_locsDepthCoalesce.debugAddrMode);
         } else {
             std::fprintf(stderr,
                 "[GPUPROPS] static_prop_depth program failed to compile/link — "
@@ -4891,7 +4909,8 @@ static uint32_t buildLiveV6Arrays(
 //
 // Lays the nearest reverse-Z depth (GEQUAL + write) with the cheap depth-only
 // program (alpha-test discard only), color writes masked off. Caller flips the
-// color pass to GL_EQUAL + depthWrite-off afterward (s_depthPrepassRanThisFrame).
+// color pass to GL_EQUAL + depthWrite-off afterward, keyed off this function's
+// inline return value (true == prepass drew this frame).
 //
 // Mirrors the v6 color draw loop's per-packet GL exactly: same VAO/IBO/SSBO,
 // same OFF→ON texture-array flip at the alpha-ON group boundary, same
@@ -4906,7 +4925,8 @@ static bool flushDepthPrepassV6(
     const std::vector<RenderCore::DrawPacket>&  dispatchPackets,
     const std::vector<StaticPropDispatchMeta>&  dispatchMeta,
     uint32_t                                    totalCmds,
-    bool                                        bc7Buckets)
+    bool                                        bc7Buckets,
+    int                                         debugAddrMode_)  // IMPORTANT-1: mode-8 bypass parity
 {
     ZoneScopedN("GpuSP.DepthPrepass");
 
@@ -4927,6 +4947,26 @@ static bool flushDepthPrepassV6(
             std::fprintf(stderr, "[GPUPROPS] depth-prepass skipped: bc7-bucket "
                                  "texture path active (per-bucket array bind "
                                  "unsupported in this slice)\n");
+        }
+        return false;
+    }
+
+    // GL_EQUAL-parity (review CRITICAL-2): when MC2_VIEW_UNIFORMS=0 the VS uses a
+    // plain `uniform mat4 u_worldToClipGL` (cached on the COLOR program as
+    // s_locsCoalesce.terrainMVP) instead of the view-uniform UBO. The depth
+    // program is a distinct GL object and the prepass does NOT upload that MVP
+    // to it, so its u_worldToClipGL would be the zero matrix → gl_Position = 0 →
+    // the prepass lays no usable depth and GL_EQUAL makes all props vanish.
+    // s_viewUniformsDisabled (file-scope, == !s_viewUniformsShaderEnabled) is the
+    // non-default kill-switch combo; skip the prepass entirely so the color path
+    // falls back to single-pass GEQUAL (return false → caller draws unchanged).
+    if (s_viewUniformsDisabled) {
+        static bool warnedNoUbo = false;
+        if (!warnedNoUbo) {
+            warnedNoUbo = true;
+            std::fprintf(stderr, "[GPUPROPS] depth-prepass skipped: "
+                                 "MC2_VIEW_UNIFORMS=0 (non-UBO MVP path "
+                                 "unsupported)\n");
         }
         return false;
     }
@@ -4952,6 +4992,27 @@ static bool flushDepthPrepassV6(
     if (s_perTypeSsbo) glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, s_perTypeSsbo);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOff);   // alpha-OFF group default
+
+    // GL_EQUAL-parity (review CRITICAL-1): the depth frag derives effectiveLayer
+    // (texArrayLayer vs MaterialTable.albedoTex @ binding 5) under u_materialGpuSample
+    // EXACTLY like the color frag. Mirror the color pass's slot-5 bind + sampleOn
+    // computation (flush() ~line 5598-5621) on THIS program so the alpha-test UV →
+    // tex_color.a → discard decision is byte-identical. sampleOn replicates the
+    // color pass's five-condition gate verbatim (incl. s_materialGpuSidecarValid).
+    if (s_materialGpuEnabled && s_materialGpuSsbo != 0)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, s_materialGpuSsbo);
+    const bool depthSampleOn = s_materialGpuEnabled
+                            && s_materialGpuSampleEnabled
+                            && s_materialGpuSsbo != 0
+                            && s_materialGpuSidecarValid
+                            && s_locsDepthCoalesce.materialGpuSample >= 0;
+    if (s_locsDepthCoalesce.materialGpuSample >= 0)
+        glUniform1i(s_locsDepthCoalesce.materialGpuSample, depthSampleOn ? 1 : 0);
+    // GL_EQUAL-parity (review IMPORTANT-1): mode-8 LODBUG bypass must match the
+    // color pass's u_debugAddrMode upload (flush() ~line 5532) so the depth frag's
+    // `u_debugAddrMode != 8` discard gate agrees with the color frag.
+    if (s_locsDepthCoalesce.debugAddrMode >= 0)
+        glUniform1i(s_locsDepthCoalesce.debugAddrMode, debugAddrMode_);
 
     bool enteredOnGroup = false;
     for (uint32_t i = 0u; i < totalCmds; ++i) {
@@ -6110,8 +6171,7 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             // color loop re-binds the OFF texture array via enteredOnGroup logic).
             if (!skipDispatch &&
                 flushDepthPrepassV6(*pDispatchPackets, *pDispatchMeta,
-                                    totalCmds, bc7Buckets)) {
-                s_depthPrepassRanThisFrame = true;
+                                    totalCmds, bc7Buckets, debugAddrMode_)) {
                 // Color pass: keep ONLY the front-most fragment the prepass laid
                 // (reverse-Z, so GEQUAL prepass stored the nearest depth). EQUAL +
                 // no depth re-write. Object-ID (frag loc=2) is unaffected — it is a
@@ -6943,13 +7003,10 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
         }
     }
 
-    // FOLIAGE-STATICPROP-DEPTH-PREPASS-1 (C): consume the per-frame depth-prepass
-    // flag. Next frame's prepass re-arms it. (The color EQUAL/no-write override is
-    // applied inline above off the prepass return value; this flag is the
-    // file-scope record of "prepass ran this frame" for any later reader. The
-    // early-return guards near flush() top are all BEFORE the prepass, so the flag
-    // is only ever set after them and this reset is the single consume point.)
-    s_depthPrepassRanThisFrame = false;
+    // FOLIAGE-STATICPROP-DEPTH-PREPASS-1 (C): the color EQUAL/no-write override is
+    // applied inline above directly off flushDepthPrepassV6()'s return value — there
+    // is no per-frame "prepass ran" flag to consume (review MINOR-1 removed the dead
+    // s_depthPrepassRanThisFrame state that was set+reset but never read).
 }
 
 // File-scope counters written by flushShadow() and read by Task 6 probe.

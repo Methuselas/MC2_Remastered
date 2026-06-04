@@ -105,7 +105,10 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* depthWriteEnable    */ true,
         /* depthFunc           */ DepthFunc::GreaterEqual, // reverse-Z, lay nearest
         /* cullMode            */ CullMode::Back,
-        /* colorAttachments    */ { true, true, false },
+        // IMPORTANT-2: depth-only — no color attachments written. The caller masks
+        // color via glColorMask (not attachment reconfig; same FBO stays bound), so
+        // this row advertises the true write set: nothing color, depth only.
+        /* colorAttachments    */ { false, false, false },
         /* objectIdWriteEnabled*/ false,
         /* ssboBindingsMask    */ kStaticPropSsbos,
     },
