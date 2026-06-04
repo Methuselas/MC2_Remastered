@@ -135,6 +135,13 @@ uniform int   u_windowCount;
 uniform int   u_maxThinRecords;
 uniform int   u_mapSide;           // Terrain::realVerticesMapSide
 uniform mat4  u_worldToClipGL;  // world -> GL clip (kAxisSwapMC2toGL * worldToClip)
+// WATER-FULL-RECIPE-GPU-TIMER-SPIKE-0: when u_fullRecipeMode != 0, gl_GlobalInvocationID
+// IS the recipe index over the whole world-indexed recipe set (u_windowCount carries
+// recipeCount in this mode), and the shader applies the water-eligibility predicate
+// (mirror terrain.cpp narrow-walk fast path) since the full recipe set is unfiltered.
+// u_shoreExt = MapData::alphaDepth*0.5 (or 15.0 fallback). Default 0 = legacy window mode.
+uniform int   u_fullRecipeMode;
+uniform float u_shoreExt;
 
 // ---------------------------------------------------------------------------
 // terrainTypeToMaterial — replicates terrainTypeToMaterialLocal() in
@@ -188,13 +195,27 @@ bool pzOk(vec4 clip) {
 // ---------------------------------------------------------------------------
 void main() {
     uint id = uint(gl_GlobalInvocationID.x);
-    if (id >= uint(u_windowCount)) return;
+    if (id >= uint(u_windowCount)) return;   // u_windowCount = dispatch bound (window count OR recipeCount in full mode)
 
-    // The window array carries recipe indices. The host-side CPU resolves
-    // top-left vertexNum → recipeIdx via g_vertexNumToRecipe before filling
-    // the window SSBO, mirroring the hash lookup in UploadAndBindThinRecords.
-    uint recipeIdx = windowIdx[id];
+    // Window mode: the window array carries recipe indices (CPU resolved top-left
+    // vertexNum → recipeIdx via g_vertexNumToRecipe). Full-recipe mode (SPIKE):
+    // id IS the recipe index over the whole world-indexed recipe set.
+    uint recipeIdx = (u_fullRecipeMode != 0) ? id : windowIdx[id];
     WaterRecipe r  = recipes[recipeIdx];
+    if (u_fullRecipeMode != 0) {
+        // Eligibility predicate — mirror terrain.cpp narrow-walk fast path
+        // (waterFlagged || submergedSand). The recipe set is unfiltered (every
+        // map quad), so the GPU must filter here instead of trusting a CPU window.
+        uint w0 = (r.waterBits      ) & 0xFFu;
+        uint w1 = (r.waterBits >>  8) & 0xFFu;
+        uint w2 = (r.waterBits >> 16) & 0xFFu;
+        uint w3 = (r.waterBits >> 24) & 0xFFu;
+        bool waterFlagged = ((w0 | w1 | w2 | w3) & 1u) != 0u;
+        float thr = u_waterElevation + u_shoreExt;
+        bool submergedSand = !waterFlagged &&
+            (r.v0e < thr || r.v1e < thr || r.v2e < thr || r.v3e < thr);
+        if (!(waterFlagged || submergedSand)) return;
+    }
 
     // -----------------------------------------------------------------------
     // Per-vertex water-surface projection and pz-valid check.

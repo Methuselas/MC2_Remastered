@@ -1369,6 +1369,11 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
     const GLint locFrameCos    = glGetUniformLocation(g_waterComputeProgram, "u_frameCos");
     const GLint locMapSide     = glGetUniformLocation(g_waterComputeProgram, "u_mapSide");
     const GLint locMVP         = glGetUniformLocation(g_waterComputeProgram, "u_worldToClipGL");
+    // WATER-FULL-RECIPE-GPU-TIMER-SPIKE-0 uniforms (optional — absent on un-patched shader).
+    const GLint locFullMode    = glGetUniformLocation(g_waterComputeProgram, "u_fullRecipeMode");
+    const GLint locShoreExt    = glGetUniformLocation(g_waterComputeProgram, "u_shoreExt");
+    const float spikeShoreExt  = (MapData::alphaDepth * 0.5f > 0.0f)
+                                 ? MapData::alphaDepth * 0.5f : 15.0f;
 
     if (locWindowCount < 0) {
         fprintf(stderr, "[GPU_DRIVEN_WATER v1] event=warn msg=u_windowCount_not_found\n");
@@ -1603,9 +1608,82 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
         }
     }
 
+    // Normal (window) mode for the live dispatch.
+    if (locFullMode >= 0) glUniform1i(locFullMode, 0);
+    if (locShoreExt >= 0) glUniform1f(locShoreExt, spikeShoreExt);
+
+    // WATER-FULL-RECIPE-GPU-TIMER-SPIKE-0 (MC2_WATER_FULL_RECIPE_SPIKE): measurement
+    // only. Times the live candidate-fed cull dispatch, then runs a PROTOTYPE
+    // full-recipe cull dispatch over the whole world-indexed recipe set (GPU
+    // eligibility predicate) to SCRATCH buffers never fed to draw, and logs the
+    // GPU-us comparison every 600 frames. Default-off: zero behavior change.
+    static const bool s_spikeOn = (getenv("MC2_WATER_FULL_RECIPE_SPIKE") != nullptr);
+    static GLuint s_qCand = 0, s_qSpike = 0;
+    if (s_spikeOn) {
+        if (!s_qCand)  glGenQueries(1, &s_qCand);
+        if (!s_qSpike) glGenQueries(1, &s_qSpike);
+    }
+
     const uint32_t groups = (windowCount + 63u) / 64u;
+    if (s_spikeOn) glBeginQuery(GL_TIME_ELAPSED, s_qCand);
     glDispatchCompute(groups, 1, 1);
+    if (s_spikeOn) glEndQuery(GL_TIME_ELAPSED);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+    if (s_spikeOn && locFullMode >= 0 && locShoreExt >= 0) {
+        static GLuint s_spikeThin = 0, s_spikeHeader = 0;
+        static GLsizeiptr s_spikeThinBytes = 0;
+        const GLsizeiptr needThin = (GLsizeiptr)maxThinRecords * (GLsizeiptr)sizeof(WaterThinRecord);
+        if (!s_spikeThin || needThin > s_spikeThinBytes) {
+            if (s_spikeThin) glDeleteBuffers(1, &s_spikeThin);
+            glGenBuffers(1, &s_spikeThin);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_spikeThin);
+            glBufferData(GL_SHADER_STORAGE_BUFFER, needThin, nullptr, GL_DYNAMIC_COPY);
+            s_spikeThinBytes = needThin;
+        }
+        if (!s_spikeHeader) {
+            glGenBuffers(1, &s_spikeHeader);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_spikeHeader);
+            glBufferData(GL_SHADER_STORAGE_BUFFER, 16, nullptr, GL_DYNAMIC_COPY);
+        }
+        const uint32_t zero4[4] = {0u, 0u, 0u, 0u};
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_spikeHeader);
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, 16, zero4);  // reset visibleCount accumulator
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, s_spikeThin);   // scratch thin-write
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, s_spikeHeader); // scratch header
+        const uint32_t recipeCount = (uint32_t)g_recipes.size();
+        glUniform1i(locFullMode, 1);
+        glUniform1i(locWindowCount, (int)recipeCount);  // dispatch bound = full recipe set
+        const uint32_t frGroups = (recipeCount + 63u) / 64u;
+        glBeginQuery(GL_TIME_ELAPSED, s_qSpike);
+        glDispatchCompute(frGroups, 1, 1);
+        glEndQuery(GL_TIME_ELAPSED);
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+        // Restore window mode + release scratch bindings (final rebind below fixes 6).
+        glUniform1i(locFullMode, 0);
+        glUniform1i(locWindowCount, (int)windowCount);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, 0);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, 0);
+
+        GLuint64 nsCand = 0, nsSpike = 0;
+        glGetQueryObjectui64v(s_qCand,  GL_QUERY_RESULT, &nsCand);   // finished (spike ran after)
+        glGetQueryObjectui64v(s_qSpike, GL_QUERY_RESULT, &nsSpike);  // blocks until spike GPU done
+        uint32_t frOut = 0;
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_spikeHeader);
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, 4, &frOut);
+        static double s_sumCand = 0.0, s_sumSpike = 0.0; static uint32_t s_n = 0;
+        static uint32_t s_lastRecipe = 0, s_lastCand = 0, s_lastFrOut = 0;
+        s_sumCand += (double)nsCand / 1000.0; s_sumSpike += (double)nsSpike / 1000.0; s_n++;
+        s_lastRecipe = recipeCount; s_lastCand = windowCount; s_lastFrOut = frOut;
+        if (s_n >= 600u) {
+            printf("[WATER_FULL_RECIPE_SPIKE v1] recipeCount=%u candidateCount=%u "
+                   "candidateGpuUs=%.1f fullRecipeGpuUs=%.1f deltaUs=%.1f fullRecipeOut=%u (mean/600)\n",
+                   s_lastRecipe, s_lastCand, s_sumCand / (double)s_n, s_sumSpike / (double)s_n,
+                   (s_sumSpike - s_sumCand) / (double)s_n, s_lastFrOut);
+            fflush(stdout);
+            s_sumCand = 0.0; s_sumSpike = 0.0; s_n = 0u;
+        }
+    }
 
     // ------------------------------------------------------------------
     // DISPATCH 2: cmd-patch (gpu_driven_cmd_patch.comp)
