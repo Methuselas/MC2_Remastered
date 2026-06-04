@@ -12,6 +12,7 @@
 #include "MeshPreview3D.h"
 #include "ModelBrowser.h"
 #include "ModWorkbench.h"
+#include "ModWorkbenchPanel.h"
 
 class AssetViewerApp {
 public:
@@ -40,6 +41,7 @@ public:
     static int runSmokeSpotlight(const char* deployDir);    // spotlight gate: vehicle has ≥1 isSpotlight submesh; 2civliving has 0
     static int runSmokeWorkbenchLink();   // S0: registry + assimp link/run
     static int runSmokeWorkbenchGlb(const char* fixtureDir);   // S1
+    static int runSmokeWorkbenchBind(const char* deployDir, const char* fixtureDir);  // S2
 private:
     FileBrowser browser_;
     AssetTypeSidebar sidebar_;
@@ -50,5 +52,6 @@ private:
     MeshPreview3D      meshSurface_;
     ModelBrowser       modelBrowser_;
     ModWorkbench       workbench_;
+    ModWorkbenchPanel  workbenchPanel_;
     bool materialsAutoLoaded_ = false;
 };

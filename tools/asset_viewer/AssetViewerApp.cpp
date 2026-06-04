@@ -38,6 +38,8 @@ AssetViewerApp::AssetViewerApp()  {
     UiEditorImageCache_Initialize();
     // Deploy root is the viewer's cwd; "." -> ./tgl.fst for TglMeshLoader.
     meshSurface_.setDeployDir(".");
+    workbenchPanel_.setDeployDir(".");
+    workbench_.setDeployDir(".");
 }
 AssetViewerApp::~AssetViewerApp() { UiEditorImageCache_Shutdown(); }
 
@@ -62,6 +64,8 @@ void AssetViewerApp::drawUi()
         modelBrowser_.draw();
         if (modelBrowser_.hasSelection())
             meshSurface_.setSource(modelBrowser_.takeSelection());
+    } else if (sidebar_.active() == AssetType::ModWorkbench) {
+        ImGui::TextDisabled("Drop a GLB on the window.");
     } else {
         browser_.draw();
         if (browser_.hasSelection()) {
@@ -89,6 +93,9 @@ void AssetViewerApp::drawUi()
         break;
       case AssetType::StaticProps:
         meshSurface_.draw(ImGui::GetContentRegionAvail());
+        break;
+      case AssetType::ModWorkbench:
+        workbenchPanel_.draw(workbench_, ImGui::GetContentRegionAvail());
         break;
     }
     ImGui::EndChild();
@@ -1321,12 +1328,33 @@ int AssetViewerApp::runSmokeWorkbenchGlb(const char* fixtureDir)
     return 0;
 }
 
+int AssetViewerApp::runSmokeWorkbenchBind(const char* deployDir, const char* fixtureDir){
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    ModWorkbench wb;
+    wb.setDeployDir(deployDir);
+    if (!wb.loadOverride(std::string(fixtureDir) + "/unit_tri.gltf"))
+        return smokeFail("bind: override load");
+    uint64_t g0 = wb.generation();
+    if (!wb.bindStock("data/tgl/2civliving.tgl"))
+        return smokeFail("bind: stock load (need deploy dir w/ tgl.fst)");
+    if (wb.generation() == g0)
+        return smokeFail("bind: generation did not advance");
+    auto d = wb.computeDelta();
+    if (d.stockExt[1] <= 0.0f)
+        return smokeFail("bind: stock has no Y extent");
+    if (d.maxRatio <= 0.0f)
+        return smokeFail("bind: ratio not computed");
+    std::printf("[smoke] PASS workbench-bind stockY=%.2f ovY=%.2f ratio=%.3f\n",
+        d.stockExt[1], d.overrideExt[1], d.maxRatio);
+    return 0;
+}
+
 void AssetViewerApp::onFileDropped(const char* path){
     if (!path) return;
     std::string p = path, low = p; for (char& c: low) c=(char)tolower((unsigned char)c);
     auto ends=[&](const char* s){ size_t n=strlen(s); return low.size()>=n && low.compare(low.size()-n,n,s)==0; };
     if (ends(".glb") || ends(".gltf")){
         workbench_.loadOverride(p);
-        // sidebar_.setActive(AssetType::ModWorkbench);   // ENABLED IN S2 — leave commented now
+        sidebar_.setActive(AssetType::ModWorkbench);
     }
 }

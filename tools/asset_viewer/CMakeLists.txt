@@ -178,6 +178,8 @@ set(ASSET_VIEWER_SOURCES
     GlbMeshLoader.cpp
     ModWorkbench.cpp
     OverrideManifest.cpp
+    # S2: mod workbench side-by-side panel
+    ModWorkbenchPanel.cpp
 )
 
 add_executable(mc2_asset_viewer ${ASSET_VIEWER_SOURCES})
