@@ -139,6 +139,10 @@ struct RecipeRange {
     // (excluded from the static building shadow). Visibility-independent — the
     // static building shadow pass replays from here, NOT per-frame buckets.
     uint8_t            population;
+    // SHADOW-FOLIAGE-ALPHA-DISCARD: impostor / far-LOD recipes skip dynamic
+    // shadow casting (flat alpha cards otherwise cast solid blob shadows; the
+    // shadow depth pass has no alpha discard). Set via setRecipeNoShadow().
+    bool               noShadow;
 };
 
 static std::vector<GpuStaticPropInstance> s_recipes;
@@ -358,6 +362,7 @@ int32_t registerRecipe(TG_MultiShape* multi,
     rng.extentRadius      = 0.0f;
     rng.shapeName[0]      = '\0';         // populated by late-spawn path if Appearance* available
     rng.population        = 0xFFu;        // SHADOW-STATIC-BUILDINGS-2: unset until setRecipePopulation()
+    rng.noShadow          = false;        // SHADOW-FOLIAGE: casts unless setRecipeNoShadow(true)
     s_recipes.insert(s_recipes.end(), batch.begin(), batch.end());
     const int32_t regIdx = static_cast<int32_t>(s_recipeRanges.size());
     s_recipeRanges.push_back(rng);
@@ -836,6 +841,12 @@ void setRecipePopulation(int32_t recipeIndex, GpuStaticPropPopulation pop) {
         static_cast<uint8_t>(pop);
 }
 
+void setRecipeNoShadow(int32_t recipeIndex, bool noShadow) {
+    if (recipeIndex < 0 ||
+        recipeIndex >= static_cast<int32_t>(s_recipeRanges.size())) return;
+    s_recipeRanges[static_cast<size_t>(recipeIndex)].noShadow = noShadow;
+}
+
 // SHADOW-STATIC-BUILDINGS-2: append every non-tombstoned BUILDING recipe's leaf
 // instances (baked modelMatrix + typeID) to `out`. Visibility-independent — reads
 // the full registry (s_recipes/s_recipeRanges), NOT the per-frame visible buckets.
@@ -869,6 +880,7 @@ void getDynamicPropShadowInstances(std::vector<GpuStaticPropInstance>& out,
     const uint8_t bldg = static_cast<uint8_t>(GpuStaticPropPopulation::Building);
     for (const RecipeRange& rng : s_recipeRanges) {
         if (rng.count == 0) continue;            // tombstone (invalidated/destroyed)
+        if (rng.noShadow) continue;              // SHADOW-FOLIAGE: impostor/far-LOD casts no shadow
         if (!includeBuildings && rng.population == bldg) continue;  // buildings cast via the static map
         const size_t end = static_cast<size_t>(rng.first) + rng.count;
         if (end > s_recipes.size()) continue;     // defense: stale range

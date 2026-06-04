@@ -5280,6 +5280,10 @@ void TreeAppearance::registerStatic() {
 				// per-LOD bake. The real proof is recordInstance()'s U counter staying flat
 				// across LOD count.
 				mc2_lightslot_trace::recordLodBakeSlot(staticReg[0].lightDataIndex);
+				// SHADOW-FOLIAGE: far/impostor LODs (flat alpha cards) must NOT cast solid
+				// rectangular blob shadows (shadow depth pass has no alpha discard). The near
+				// LOD0 still casts when active; the far LOD's shadow is low-value anyway.
+				GpuStaticPropRegistry::setRecipeNoShadow(regIdx, true);
 			}
 		} else {
 			// M4: LOD unavailable — leave registered=false, continue.

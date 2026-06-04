@@ -132,6 +132,8 @@ bool staticPropGetTypeId(int32_t recipeIndex, uint32_t* out);
 // registration. Lets the world-fixed static shadow map replay buildings only,
 // visibility-independent (NOT per-frame markVisible buckets).
 void setRecipePopulation(int32_t recipeIndex, GpuStaticPropPopulation pop);
+// SHADOW-FOLIAGE: mark a recipe (impostor/far-LOD) to skip dynamic shadow casting.
+void setRecipeNoShadow(int32_t recipeIndex, bool noShadow);
 
 // SHADOW-STATIC-BUILDINGS-2: append all non-tombstoned BUILDING recipe leaves
 // (baked modelMatrix + typeID) to `out` for the static building shadow pass.
