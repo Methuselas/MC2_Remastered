@@ -25,6 +25,9 @@
 #include"tgl.h"
 #endif
 
+#include <cstdlib>  // getenv
+#include <vector>   // MC2_RAIN_BATCH staging buffer
+
 //----------------------------------------------------------------------------------
 // Macro Definitions
 Weather *weather = NULL;
@@ -481,50 +484,115 @@ void Weather::render (void)
 		gos_SetRenderState( gos_State_ZCompare, 1);
 		gos_SetRenderState(	gos_State_ZWrite, 0);
 		
-		for (long i=0;i<currentRainDrops;i++)
-		{
-			Stuff::Vector4D screen1, screen2;
-			// [PROJECTZ:Both id=weather_raindrop_top]
-			PROJECTZ_SITE("weather_raindrop_top", "Both");
-			bool onScreen = eye->projectForEffectAdmission(rainDrops[i].position,screen1);
-			if (onScreen)
-			{
-				Stuff::Point3D  botPos = rainDrops[i].position;
-				botPos.z -= rainDrops[i].length;
+		// MC2_RAIN_BATCH=1 → collect all visible streaks into one vertex array and
+		// issue a single gos_DrawLines call instead of one per streak (up to 500
+		// calls → 1), eliminating per-streak applyRenderStates / setTransform thrash.
+		// Default OFF (unset or "0") until validated on mc2_17.
+		static int s_rainBatchMode = -1; // -1 = uninitialised
+		if (s_rainBatchMode < 0) {
+			const char* ev = ::getenv("MC2_RAIN_BATCH");
+			s_rainBatchMode = (ev && ev[0] != '0' && ev[0] != '\0') ? 1 : 0;
+		}
 
-				// [PROJECTZ:Both id=weather_raindrop_bot]
-				PROJECTZ_SITE("weather_raindrop_bot", "Both");
-			onScreen = eye->projectForEffectAdmission(botPos,screen2);
+		if (s_rainBatchMode) {
+			// --- BATCHED PATH: collect all visible streaks, one draw call ---
+			std::vector<gos_VERTEX> batchVerts;
+			batchVerts.reserve(currentRainDrops * 2);
+
+			for (long i = 0; i < currentRainDrops; i++)
+			{
+				Stuff::Vector4D screen1, screen2;
+				// [PROJECTZ:Both id=weather_raindrop_top]
+				PROJECTZ_SITE("weather_raindrop_top", "Both");
+				bool onScreen = eye->projectForEffectAdmission(rainDrops[i].position, screen1);
 				if (onScreen)
 				{
-					// Reverse-Z (Step 6d): screen1.z is post-divide reverse-Z
-					// [near->1, far->0]. The original (1.0f - z) made rain
-					// brightest near the camera under forward-Z (near=0).
-					// Under reverse-Z near=1, so the near-bright factor is
-					// screen1.z itself. Scene screen-z arithmetic consumer.
-					unsigned char amb = ambientFactor * screen1.z;
-					DWORD rainColor = (amb << 24) + (0xff << 16) + (0xff << 8) + (0xff);
-					
-					//Gotta draw this one!
-					gos_VERTEX sVertices[2];
-					
-					sVertices[0].x = screen1.x;
-					sVertices[0].y = screen1.y;
-					sVertices[0].z = screen1.z;
-					sVertices[0].rhw = screen1.w;
-					sVertices[0].u = sVertices[0].v = 0.0f;
-					sVertices[0].argb = rainColor;
-					sVertices[0].frgb = 0xff000000;
-					
-					sVertices[1].x = screen2.x;
-					sVertices[1].y = screen2.y;
-					sVertices[1].z = screen2.z;
-					sVertices[1].rhw = screen2.w;
-					sVertices[1].u = sVertices[1].v = 0.0f;
-					sVertices[1].argb = rainColor;
-					sVertices[1].frgb = 0xff000000;
-					
-					gos_DrawLines(sVertices,2);
+					Stuff::Point3D  botPos = rainDrops[i].position;
+					botPos.z -= rainDrops[i].length;
+
+					// [PROJECTZ:Both id=weather_raindrop_bot]
+					PROJECTZ_SITE("weather_raindrop_bot", "Both");
+					onScreen = eye->projectForEffectAdmission(botPos, screen2);
+					if (onScreen)
+					{
+						unsigned char amb = ambientFactor * screen1.z;
+						DWORD rainColor = (amb << 24) + (0xff << 16) + (0xff << 8) + (0xff);
+
+						gos_VERTEX v0, v1;
+
+						v0.x    = screen1.x;
+						v0.y    = screen1.y;
+						v0.z    = screen1.z;
+						v0.rhw  = screen1.w;
+						v0.u    = v0.v = 0.0f;
+						v0.argb = rainColor;
+						v0.frgb = 0xff000000;
+
+						v1.x    = screen2.x;
+						v1.y    = screen2.y;
+						v1.z    = screen2.z;
+						v1.rhw  = screen2.w;
+						v1.u    = v1.v = 0.0f;
+						v1.argb = rainColor;
+						v1.frgb = 0xff000000;
+
+						batchVerts.push_back(v0);
+						batchVerts.push_back(v1);
+					}
+				}
+			}
+
+			// One draw call for all visible rain streaks.
+			if (!batchVerts.empty())
+				gos_DrawLines(batchVerts.data(), (int)batchVerts.size());
+		}
+		else {
+			// --- LEGACY PATH (default): one draw call per streak ---
+			for (long i=0;i<currentRainDrops;i++)
+			{
+				Stuff::Vector4D screen1, screen2;
+				// [PROJECTZ:Both id=weather_raindrop_top]
+				PROJECTZ_SITE("weather_raindrop_top", "Both");
+				bool onScreen = eye->projectForEffectAdmission(rainDrops[i].position,screen1);
+				if (onScreen)
+				{
+					Stuff::Point3D  botPos = rainDrops[i].position;
+					botPos.z -= rainDrops[i].length;
+
+					// [PROJECTZ:Both id=weather_raindrop_bot]
+					PROJECTZ_SITE("weather_raindrop_bot", "Both");
+				onScreen = eye->projectForEffectAdmission(botPos,screen2);
+					if (onScreen)
+					{
+						// Reverse-Z (Step 6d): screen1.z is post-divide reverse-Z
+						// [near->1, far->0]. The original (1.0f - z) made rain
+						// brightest near the camera under forward-Z (near=0).
+						// Under reverse-Z near=1, so the near-bright factor is
+						// screen1.z itself. Scene screen-z arithmetic consumer.
+						unsigned char amb = ambientFactor * screen1.z;
+						DWORD rainColor = (amb << 24) + (0xff << 16) + (0xff << 8) + (0xff);
+
+						//Gotta draw this one!
+						gos_VERTEX sVertices[2];
+
+						sVertices[0].x = screen1.x;
+						sVertices[0].y = screen1.y;
+						sVertices[0].z = screen1.z;
+						sVertices[0].rhw = screen1.w;
+						sVertices[0].u = sVertices[0].v = 0.0f;
+						sVertices[0].argb = rainColor;
+						sVertices[0].frgb = 0xff000000;
+
+						sVertices[1].x = screen2.x;
+						sVertices[1].y = screen2.y;
+						sVertices[1].z = screen2.z;
+						sVertices[1].rhw = screen2.w;
+						sVertices[1].u = sVertices[1].v = 0.0f;
+						sVertices[1].argb = rainColor;
+						sVertices[1].frgb = 0xff000000;
+
+						gos_DrawLines(sVertices,2);
+					}
 				}
 			}
 		}
