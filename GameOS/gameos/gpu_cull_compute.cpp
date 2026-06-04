@@ -32,6 +32,10 @@
 // Trace macro (env-gated, default off)
 // ---------------------------------------------------------------------------
 static const bool s_computeTrace = (getenv("MC2_GPU_CULL_COMPUTE_TRACE") != nullptr);
+
+// Ownership-parity oracle (Slice A, measurement-only, default off).
+// Set MC2_GPU_CULL_OWNERSHIP_PARITY=1 to enable.
+static const bool s_ownershipParity = (getenv("MC2_GPU_CULL_OWNERSHIP_PARITY") != nullptr);
 #define COMPUTE_TRACE(fmt, ...) \
     do { if (s_computeTrace) { printf("[GPU_CULL v1] " fmt "\n", ##__VA_ARGS__); fflush(stdout); } } while (0)
 
@@ -1042,6 +1046,95 @@ void compute_dispatch() {
         // 3. Barrier: SSBO writes (visibleIds, perBucketCount, actorVisBits) ready.
         // DO NOT add GL_ATOMIC_COUNTER_BARRIER_BIT — no ACBOs (Q12 contract).
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+        // 3a. Ownership-parity oracle (Slice A — MEASUREMENT ONLY, no behavior change).
+        // Quantifies the H4 false-negative rate: the GPU computes a compacted
+        // visibleIds[] set but the draw renders the first-N instances in SSBO
+        // order; GPU-visible instances at high indices get cut off on camera
+        // motion.  This readback+log measures how many.
+        // Env gate: MC2_GPU_CULL_OWNERSHIP_PARITY (default off).
+        // Readback stalls the GPU — fire at most every 300 calls.
+        if (s_ownershipParity &&
+            s_visibleIdsBuf && s_bucketCountsBuf && s_bucketCapsBuf)
+        {
+            static uint32_t s_parityCallCounter = 0u;
+            ++s_parityCallCounter;
+            if (s_parityCallCounter >= 300u)
+            {
+                s_parityCallCounter = 0u;
+
+                const int typeCount = static_cast<int>(s_bucketCount);
+                if (typeCount > 0)
+                {
+                    // --- Read bucketCapacity[] and bucketBase[] from s_bucketCapsBuf ---
+                    // Layout: [caps[0..N-1], bases[0..N-1]]  (2*N uints).
+                    std::vector<uint32_t> capsAndBases(static_cast<size_t>(typeCount) * 2u, 0u);
+                    glGetNamedBufferSubData(s_bucketCapsBuf,
+                                           0,
+                                           static_cast<GLsizeiptr>(typeCount * 2 * (int)sizeof(uint32_t)),
+                                           capsAndBases.data());
+
+                    // --- Read perBucketCount[] + overflowCount from s_bucketCountsBuf ---
+                    // Layout: [count[0..N-1], overflowCount]  (N+1 uints).
+                    std::vector<uint32_t> countsAndOverflow(static_cast<size_t>(typeCount) + 1u, 0u);
+                    glGetNamedBufferSubData(s_bucketCountsBuf,
+                                           0,
+                                           static_cast<GLsizeiptr>((typeCount + 1) * (int)sizeof(uint32_t)),
+                                           countsAndOverflow.data());
+
+                    const uint32_t overflow = countsAndOverflow[static_cast<size_t>(typeCount)];
+
+                    uint32_t totalVisible   = 0u;
+                    uint32_t totalFalseNeg  = 0u;
+                    int      typesWithMiss  = 0;
+
+                    for (int t = 0; t < typeCount; ++t)
+                    {
+                        const uint32_t cap   = capsAndBases[static_cast<size_t>(t)];
+                        const uint32_t base  = capsAndBases[static_cast<size_t>(typeCount + t)];
+                        const uint32_t count = countsAndOverflow[static_cast<size_t>(t)];
+                        const uint32_t n     = (count < cap) ? count : cap;  // clamp to cap
+
+                        if (n == 0u)
+                            continue;
+
+                        // Read this type's run of visibleIds: [base .. base+n)
+                        // visibleIds[base+k] stores the record index of a GPU-visible
+                        // instance of type t.  If that index falls outside [base, base+n)
+                        // it is outside the draw window and will be cut off — false-negative.
+                        std::vector<uint32_t> ids(n, 0u);
+                        glGetNamedBufferSubData(s_visibleIdsBuf,
+                                               static_cast<GLintptr>(base * sizeof(uint32_t)),
+                                               static_cast<GLsizeiptr>(n * sizeof(uint32_t)),
+                                               ids.data());
+
+                        uint32_t falseNeg = 0u;
+                        for (uint32_t k = 0u; k < n; ++k)
+                        {
+                            const uint32_t V = ids[k];
+                            // V is a record index.  The draw renders records
+                            // [base, base+n); any V outside that window is cut off.
+                            if (V < base || V >= base + n)
+                                ++falseNeg;
+                        }
+
+                        totalVisible  += n;
+                        totalFalseNeg += falseNeg;
+                        if (falseNeg)
+                            ++typesWithMiss;
+                    }
+
+                    printf("[GPU_CULL_OWNERSHIP_PARITY v1] types=%d totalVisible=%u totalFalseNeg=%u (%.1f%%) typesWithMiss=%d overflow=%u\n",
+                           typeCount,
+                           totalVisible,
+                           totalFalseNeg,
+                           totalVisible ? 100.0 * totalFalseNeg / totalVisible : 0.0,
+                           typesWithMiss,
+                           overflow);
+                    fflush(stdout);
+                }
+            }
+        }
 
         // 4. Patch dispatch: perBucketCount[] → cmds[].instanceCount
         {
