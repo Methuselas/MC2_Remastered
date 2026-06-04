@@ -20,7 +20,9 @@ ExportResult ExportBundle(const std::string& outRoot, const std::string& bundleI
     if(ec){ res.message="copy failed: "+ec.message(); return res; }
     std::string manifest=dir+"/models.generated.json";
     { std::vector<WorkbenchOverride> v{rec}; std::ofstream out(manifest, std::ios::binary);
-      if(!out){ res.message="write manifest failed"; return res; } out<<ToModelsJson(v); }
+      if(!out){ res.message="write manifest failed (open)"; return res; }
+      out<<ToModelsJson(v); out.close();
+      if(!out){ res.message="write manifest failed (incomplete write)"; return res; } }
     ModelOverrideRegistry check; check.loadFromFile(manifest, dir);
     if (check.resolve(rec.overrideClass.c_str(), rec.appearanceName.c_str())==nullptr){
         res.message="EXPORT BLOCKED BY REGISTRY (round-trip failed)"; return res; }
