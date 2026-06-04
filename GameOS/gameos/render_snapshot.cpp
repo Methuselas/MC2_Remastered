@@ -37,9 +37,33 @@ static const bool s_bridgeCompareEnabled = []() -> bool {
     const char* v = std::getenv("MC2_STATIC_PROP_SNAPSHOT_BRIDGE_COMPARE");
     return v && v[0] == '1';
 }();
-static std::vector<ExtractedStaticProp> s_spRowCache;  // built from registry this frame
-static uint64_t s_cacheRegGen  = UINT64_MAX;  // reserved for future incremental-rebuild gate
-static uint64_t s_cacheCullGen = UINT64_MAX;  // reserved for future incremental-rebuild gate
+// STATICPROP-SNAPSHOT-FILL-DIRTYONLY-1: on clean registry/cull generations, skip
+// fillStaticPropSlots + the per-prop WriteLoop and memcpy the cached rows into the
+// frame arena instead. Gate: MC2_STATIC_PROP_SNAPSHOT_FILL_DIRTYONLY (default-OFF;
+// =1 enables the dirty-only fast path, 0/unset = legacy full rebuild every frame).
+static const bool s_dirtyOnlyEnabled = []() -> bool {
+    const char* v = std::getenv("MC2_STATIC_PROP_SNAPSHOT_FILL_DIRTYONLY");
+    return v && v[0] == '1';
+}();
+// Production row cache (DIRTYONLY-1): a copy of the legacy propBuf rows from the last
+// dirty frame. Clean frames memcpy these into the frame arena; snap.staticProps NEVER
+// points at this persistent buffer directly.
+static std::vector<ExtractedStaticProp> s_spRowCache;
+static uint32_t s_cacheWriteIdx = 0u;          // valid rows in s_spRowCache
+static bool     s_cacheValid    = false;       // false until first dirty rebuild
+static uint64_t s_cacheRegGen   = UINT64_MAX;  // registryGeneration of cached rows
+static uint64_t s_cacheCullGen  = UINT64_MAX;  // cullRecordVersion of cached rows
+// DIRTYONLY-1: per-prop diagnostic counters captured on the dirty rebuild and restored
+// verbatim on clean frames (the WriteLoop that computes them is skipped).
+struct CachedSnapshotCounters {
+    uint32_t validationFail, sentinelMat, sentinelCull, texWired, texSentinel,
+             matWired, matSentinel, primaryAlphaOn, multiPacket, cullSubmitted,
+             cullMissing, hasBounds, alphaOn, hasShapeName, packetRangesOk,
+             packetRangeFail;
+};
+static CachedSnapshotCounters s_cachedCounters = {};
+// BRIDGE-COMPARE / DIRTYONLY-1 oracle scratch (validation only; independent rebuild).
+static std::vector<ExtractedStaticProp> s_oracleScratch;
 static constexpr size_t kArenaBytes = 1024u * 1024u;
 alignas(16) static uint8_t s_arenaBuffers[2][kArenaBytes];
 static RenderCore::FrameArena s_frameArenas[2];
@@ -59,6 +83,124 @@ static bool           s_hasLastSnapshot = false;
 
 const RenderSnapshot* getLastRenderSnapshot() {
     return s_hasLastSnapshot ? &s_lastSnapshot : nullptr;
+}
+
+// ---------------------------------------------------------------------------
+// BRIDGE-COMPARE / DIRTYONLY-1 oracle helpers.
+//
+// BuildOracleRows() rebuilds the static-prop rows straight from the registry with
+// its OWN independent fillStaticPropSlots() pass — never copying the legacy propBuf.
+// It is the validation oracle for the bridge compare in both the dirty and clean
+// snapshot paths. Returns the number of rows written into 'out'.
+// ---------------------------------------------------------------------------
+static uint32_t BuildOracleRows(std::vector<ExtractedStaticProp>& out)
+{
+    const uint32_t slotCount = RenderWorld::getStaticPropSlotCount();
+    std::vector<RenderWorld::StaticPropRecordView> views;
+    views.resize(slotCount);
+    const uint32_t total = RenderWorld::fillStaticPropSlots(views.data(), slotCount);
+    if (total > slotCount) {
+        views.resize(total);
+        RenderWorld::fillStaticPropSlots(views.data(), total);
+    }
+
+    out.clear();
+    out.reserve(views.size());
+    for (uint32_t i = 0u; i < static_cast<uint32_t>(views.size()); ++i) {
+        const RenderWorld::StaticPropRecordView& v = views[i];
+        if (!v.alive || !v.generationValid) continue;
+
+        float mtx[16];
+        if (!GpuStaticPropRegistry::staticPropGetModelMatrix(v.recipeIndex, mtx)) continue;
+        uint32_t typeId = 0u;
+        if (!GpuStaticPropRegistry::staticPropGetTypeId(v.recipeIndex, &typeId)) continue;
+        uint32_t instanceFlags = 0u;
+        if (!GpuStaticPropRegistry::staticPropGetInstanceFlags(v.recipeIndex, &instanceFlags)) continue;
+
+        ExtractedStaticProp& cp = out.emplace_back();
+        cp.rwHandle      = v.handle;
+        cp.recipeIndex   = v.recipeIndex;
+        cp.typeId        = typeId;
+        cp.instanceFlags = instanceFlags;
+        std::memcpy(cp.worldMatrix, mtx, sizeof(float) * 16);
+        cp.worldCenterX = -mtx[3];    // MC2 east
+        cp.worldCenterY =  mtx[11];   // MC2 north
+        cp.worldCenterZ =  mtx[7];    // MC2 elevation
+        cp.boundingRadius = 0.0f;
+        GpuStaticPropRegistry::staticPropGetExtentRadius(v.recipeIndex, &cp.boundingRadius);
+        cp.lightDataIndex = 0xFFFFFFFFu;
+        GpuStaticPropRegistry::staticPropGetLightDataIndex(v.recipeIndex, &cp.lightDataIndex);
+        cp.hasCullRecord = false;
+        {
+            bool cr = false;
+            GpuStaticPropRegistry::staticPropGetHasCullRecord(v.recipeIndex, &cr);
+            cp.hasCullRecord = cr;
+        }
+        cp.texArrayLayer = -1;
+        cp.materialIdx   = 0xFFFFFFFFu;
+        cp.alphaClass    = 0u;
+        cp.packetCount   = 0u;
+        cp.firstPacket   = 0xFFFFFFFFu;
+        GpuStaticPropRegistry::StaticPropTypeMaterialCache matInfo{};
+        if (GpuStaticPropRegistry::staticPropGetMaterialCacheInfo(v.recipeIndex, &matInfo)) {
+            cp.texArrayLayer = matInfo.texArrayLayer;
+            cp.materialIdx   = matInfo.materialIdx;
+            cp.alphaClass    = matInfo.alphaClass;
+            cp.packetCount   = matInfo.packetCount;
+            cp.firstPacket   = matInfo.firstPacket;
+        }
+        cp.shapeName[0] = '\0';
+        {
+            const char* sn = GpuStaticPropRegistry::getRecipeShapeName(v.recipeIndex);
+            if (sn) std::snprintf(cp.shapeName, sizeof(cp.shapeName), "%s", sn);
+        }
+    }
+    return static_cast<uint32_t>(out.size());
+}
+
+// Compare the produced rows 'out[0..outCount)' (legacy propBuf on a dirty frame, or the
+// memcpy'd arena span on a clean frame) against the independent oracle, and emit the
+// per-frame [SNAPSHOT_BRIDGE_COMPARE v1] line. immutableMismatch must stay 0; hasCull
+// may differ only during cull-version warmup. 'tag' is "DIRTY" or "CLEAN".
+static void CompareOracleAndLog(const ExtractedStaticProp* out, uint32_t outCount,
+                                const std::vector<ExtractedStaticProp>& oracle,
+                                uint32_t oracleCount,
+                                uint64_t regGen, uint64_t cullGen,
+                                uint64_t frameIndex, const char* tag)
+{
+    const uint32_t rowCountMismatch = (outCount != oracleCount) ? 1u : 0u;
+    uint32_t immutableMismatch = 0u;
+    uint32_t hasCullMismatch   = 0u;
+    const uint32_t compareCount = (outCount < oracleCount) ? outCount : oracleCount;
+    for (uint32_t ci = 0u; ci < compareCount; ++ci) {
+        const ExtractedStaticProp& L = out[ci];      // produced (legacy or clean copy)
+        const ExtractedStaticProp& C = oracle[ci];   // independent oracle
+        if (L.recipeIndex    != C.recipeIndex    ||
+            L.typeId         != C.typeId         ||
+            L.instanceFlags  != C.instanceFlags  ||
+            L.boundingRadius != C.boundingRadius ||
+            L.lightDataIndex != C.lightDataIndex ||
+            L.materialIdx    != C.materialIdx    ||
+            L.texArrayLayer  != C.texArrayLayer  ||
+            L.alphaClass     != C.alphaClass     ||
+            L.packetCount    != C.packetCount    ||
+            L.firstPacket    != C.firstPacket    ||
+            std::memcmp(L.worldMatrix, C.worldMatrix, sizeof(float) * 16) != 0 ||
+            std::memcmp(L.shapeName,   C.shapeName,   sizeof(L.shapeName)) != 0) {
+            ++immutableMismatch;
+        }
+        if (L.hasCullRecord != C.hasCullRecord) ++hasCullMismatch;
+    }
+    std::fprintf(stderr,
+        "[SNAPSHOT_BRIDGE_COMPARE v1] path=%s frame=%llu regGen=%llu cullVer=%llu"
+        " rowCount=%u oracleCount=%u rowCountMismatch=%u immutableMismatch=%u hasCullMismatch=%u\n",
+        tag,
+        static_cast<unsigned long long>(frameIndex),
+        static_cast<unsigned long long>(regGen),
+        static_cast<unsigned long long>(cullGen),
+        outCount, oracleCount,
+        rowCountMismatch, immutableMismatch, hasCullMismatch);
+    std::fflush(stderr);
 }
 
 // ---------------------------------------------------------------------------
@@ -138,6 +280,54 @@ RenderSnapshot ExtractRenderSnapshot()
     // Extraction v1: static-prop snapshot
     // -----------------------------------------------------------------------
     {
+        // DIRTYONLY-1: read generation signals up front to choose clean vs dirty path.
+        const uint64_t curRegGen  = GpuStaticPropRegistry::getRegistryGeneration();
+        const uint64_t curCullGen = GpuStaticPropRegistry::getCullRecordVersion();
+        const bool gensClean    = (curRegGen == s_cacheRegGen) && (curCullGen == s_cacheCullGen);
+        const bool useCleanPath = s_dirtyOnlyEnabled && s_cacheValid && gensClean;
+
+        if (useCleanPath) {
+            // ---- CLEAN FAST PATH: skip Fill + WriteLoop; memcpy cached rows into arena. ----
+            ZoneScopedN("Extract.SP.CleanCopy");
+            const uint32_t n = s_cacheWriteIdx;
+            RenderCore::Span<ExtractedStaticProp> propSpan =
+                snap.frameArena.allocArray<ExtractedStaticProp>(n, "ExtractedStaticProp");
+            if (!propSpan.data && n > 0u) {
+                snap.arenaOverflow = true;
+                std::fprintf(stderr,
+                    "[RENDER_SNAPSHOT] WARNING: arena overflow allocating %u ExtractedStaticProp (clean)\n", n);
+            } else {
+                if (n) std::memcpy(propSpan.data, s_spRowCache.data(),
+                                   static_cast<size_t>(n) * sizeof(ExtractedStaticProp));
+                snap.staticProps              = Span<ExtractedStaticProp>(propSpan.data, n);
+                // Restore the cached per-prop diagnostic counters verbatim (WriteLoop skipped).
+                snap.staticPropValidationFail = s_cachedCounters.validationFail;
+                snap.staticPropSentinelMat    = s_cachedCounters.sentinelMat;
+                snap.staticPropSentinelCull   = s_cachedCounters.sentinelCull;
+                snap.staticPropTexWired       = s_cachedCounters.texWired;
+                snap.staticPropTexSentinel    = s_cachedCounters.texSentinel;
+                snap.staticPropMatWired       = s_cachedCounters.matWired;
+                snap.staticPropMatSentinel    = s_cachedCounters.matSentinel;
+                snap.staticPropPrimaryAlphaOn = s_cachedCounters.primaryAlphaOn;
+                snap.staticPropMultiPacket    = s_cachedCounters.multiPacket;
+                snap.staticPropCullSubmitted    = s_cachedCounters.cullSubmitted;
+                snap.staticPropCullMissing      = s_cachedCounters.cullMissing;
+                snap.staticPropHasBounds        = s_cachedCounters.hasBounds;
+                snap.staticPropAlphaOn          = s_cachedCounters.alphaOn;
+                snap.staticPropHasShapeName     = s_cachedCounters.hasShapeName;
+                snap.staticPropPacketRangesOk   = s_cachedCounters.packetRangesOk;
+                snap.staticPropPacketRangesFail = s_cachedCounters.packetRangeFail;
+
+                // Compare still available under dirty-only: prove the cached rows match a
+                // fresh independent registry rebuild. Runs its own Fill (validation only).
+                if (s_bridgeCompareEnabled) {
+                    const uint32_t oracleCount = BuildOracleRows(s_oracleScratch);
+                    CompareOracleAndLog(propSpan.data, n, s_oracleScratch, oracleCount,
+                                        curRegGen, curCullGen, snap.frameIndex, "CLEAN");
+                }
+            }
+        } else {
+        // ---- DIRTY / LEGACY PATH: full Fill + WriteLoop rebuild (also refreshes cache). ----
         // Temp views on the heap — NOT the frame arena (extraction scratch only).
         const uint32_t slotCount = RenderWorld::getStaticPropSlotCount();
         std::vector<RenderWorld::StaticPropRecordView> views;
@@ -318,124 +508,13 @@ RenderSnapshot ExtractRenderSnapshot()
             }
             }  // end Extract.SP.WriteLoop scope
 
-            // STATICPROP-SNAPSHOT-BRIDGE-COMPARE-1: build independent cache from registry
-            // and compare field-by-field with the legacy propBuf. Gate: MC2_STATIC_PROP_SNAPSHOT_BRIDGE_COMPARE.
+            // STATICPROP-SNAPSHOT-BRIDGE-COMPARE-1 / DIRTYONLY-1: build an independent
+            // registry oracle and compare field-by-field against the legacy propBuf this
+            // dirty frame. Gate: MC2_STATIC_PROP_SNAPSHOT_BRIDGE_COMPARE.
             if (s_bridgeCompareEnabled) {
-                // propBuf is non-null here (guaranteed by enclosing else-block at ~line 180).
-                // Read current generation signals.
-                const uint64_t curRegGen  = GpuStaticPropRegistry::getRegistryGeneration();
-                const uint64_t curCullGen = GpuStaticPropRegistry::getCullRecordVersion();
-                s_cacheRegGen  = curRegGen;
-                s_cacheCullGen = curCullGen;
-
-                // Build s_spRowCache INDEPENDENTLY from registry sources using the same views[].
-                // CRITICAL: read from registry functions directly — do NOT copy from propBuf.
-                s_spRowCache.clear();
-                s_spRowCache.reserve(aliveCount);
-                for (uint32_t i = 0u; i < static_cast<uint32_t>(views.size()); ++i) {
-                    const RenderWorld::StaticPropRecordView& v = views[i];
-                    if (!v.alive || !v.generationValid) continue;
-
-                    float mtx[16];
-                    if (!GpuStaticPropRegistry::staticPropGetModelMatrix(v.recipeIndex, mtx)) continue;
-                    uint32_t typeId = 0u;
-                    if (!GpuStaticPropRegistry::staticPropGetTypeId(v.recipeIndex, &typeId)) continue;
-                    uint32_t instanceFlags = 0u;
-                    if (!GpuStaticPropRegistry::staticPropGetInstanceFlags(v.recipeIndex, &instanceFlags)) continue;
-
-                    ExtractedStaticProp& cp = s_spRowCache.emplace_back();
-                    cp.rwHandle    = v.handle;
-                    cp.recipeIndex = v.recipeIndex;
-                    cp.typeId      = typeId;
-                    cp.instanceFlags = instanceFlags;
-                    std::memcpy(cp.worldMatrix, mtx, sizeof(float) * 16);
-                    cp.worldCenterX = -mtx[3];    // MC2 east
-                    cp.worldCenterY =  mtx[11];   // MC2 north
-                    cp.worldCenterZ =  mtx[7];    // MC2 elevation
-                    // worldCenterX/Y/Z derived deterministically from worldMatrix (same formula both paths);
-                    // matching worldMatrix guarantees matching worldCenter*.
-                    cp.boundingRadius = 0.0f;
-                    GpuStaticPropRegistry::staticPropGetExtentRadius(v.recipeIndex, &cp.boundingRadius);
-                    cp.lightDataIndex = 0xFFFFFFFFu;
-                    GpuStaticPropRegistry::staticPropGetLightDataIndex(v.recipeIndex, &cp.lightDataIndex);
-                    cp.hasCullRecord = false;
-                    {
-                        bool cr = false;
-                        GpuStaticPropRegistry::staticPropGetHasCullRecord(v.recipeIndex, &cr);
-                        cp.hasCullRecord = cr;
-                    }
-                    cp.texArrayLayer = -1;
-                    cp.materialIdx   = 0xFFFFFFFFu;
-                    cp.alphaClass    = 0u;
-                    cp.packetCount   = 0u;
-                    cp.firstPacket   = 0xFFFFFFFFu;
-                    GpuStaticPropRegistry::StaticPropTypeMaterialCache matInfo{};
-                    if (GpuStaticPropRegistry::staticPropGetMaterialCacheInfo(v.recipeIndex, &matInfo)) {
-                        cp.texArrayLayer = matInfo.texArrayLayer;
-                        cp.materialIdx   = matInfo.materialIdx;
-                        cp.alphaClass    = matInfo.alphaClass;
-                        cp.packetCount   = matInfo.packetCount;
-                        cp.firstPacket   = matInfo.firstPacket;
-                        // primaryWasAlphaOn and multiPacket are diagnostic counters, not ExtractedStaticProp fields;
-                        // they are intentionally excluded from the per-row comparison.
-                    }
-                    cp.shapeName[0] = '\0';
-                    {
-                        const char* sn = GpuStaticPropRegistry::getRecipeShapeName(v.recipeIndex);
-                        if (sn) std::snprintf(cp.shapeName, sizeof(cp.shapeName), "%s", sn);
-                    }
-                }
-
-                // Compare cache rows against legacy propBuf.
-                // Both should be in the same order (both iterate views[] in index order).
-                const uint32_t cacheCount = static_cast<uint32_t>(s_spRowCache.size());
-                uint32_t rowCountMismatch  = 0u;
-                uint32_t immutableMismatch = 0u;
-                uint32_t hasCullMismatch   = 0u;
-                const uint32_t compareCount = std::min(writeIdx, cacheCount);
-                if (writeIdx != cacheCount) {
-                    // Row count mismatch — structural failure distinct from per-row field mismatch.
-                    ++rowCountMismatch;
-                }
-                for (uint32_t ci = 0u; ci < compareCount; ++ci) {
-                    const ExtractedStaticProp& L = propBuf[ci];      // legacy
-                    const ExtractedStaticProp& C = s_spRowCache[ci]; // cache
-                    // Immutable fields: must NEVER mismatch after mission load.
-                    if (L.recipeIndex       != C.recipeIndex       ||
-                        L.typeId            != C.typeId            ||
-                        L.instanceFlags     != C.instanceFlags     ||
-                        L.boundingRadius    != C.boundingRadius    ||
-                        L.lightDataIndex    != C.lightDataIndex    ||
-                        L.materialIdx       != C.materialIdx       ||
-                        L.texArrayLayer     != C.texArrayLayer     ||
-                        L.alphaClass        != C.alphaClass        ||
-                        L.packetCount       != C.packetCount       ||
-                        L.firstPacket       != C.firstPacket       ||
-                        std::memcmp(L.worldMatrix, C.worldMatrix, sizeof(float) * 16) != 0 ||
-                        // worldCenterX/Y/Z derived deterministically from worldMatrix (same formula both paths);
-                        // matching worldMatrix guarantees matching worldCenter*.
-                        std::memcmp(L.shapeName,   C.shapeName,   sizeof(L.shapeName)) != 0) {
-                        ++immutableMismatch;
-                    }
-                    // hasCullRecord: per-frame field; may mismatch during warmup only.
-                    if (L.hasCullRecord != C.hasCullRecord) {
-                        ++hasCullMismatch;
-                    }
-                }
-
-                // Emit log line every frame when gate is ON.
-                std::fprintf(stderr,
-                    "[SNAPSHOT_BRIDGE_COMPARE v1] frame=%llu regGen=%llu cullVer=%llu"
-                    " rowCount=%u aliveCount=%u rowCountMismatch=%u immutableMismatch=%u hasCullMismatch=%u\n",
-                    static_cast<unsigned long long>(snap.frameIndex),
-                    static_cast<unsigned long long>(curRegGen),
-                    static_cast<unsigned long long>(curCullGen),
-                    cacheCount,
-                    static_cast<uint32_t>(aliveCount),
-                    rowCountMismatch,
-                    immutableMismatch,
-                    hasCullMismatch);
-                std::fflush(stderr);
+                const uint32_t oracleCount = BuildOracleRows(s_oracleScratch);
+                CompareOracleAndLog(propBuf, writeIdx, s_oracleScratch, oracleCount,
+                                    curRegGen, curCullGen, snap.frameIndex, "DIRTY");
             }
 
             snap.staticProps              = Span<ExtractedStaticProp>(propBuf, writeIdx);
@@ -455,7 +534,35 @@ RenderSnapshot ExtractRenderSnapshot()
             snap.staticPropHasShapeName     = hasShapeName;
             snap.staticPropPacketRangesOk   = packetRangesOk;
             snap.staticPropPacketRangesFail = packetRangeFail;
+
+            // DIRTYONLY-1: snapshot this dirty frame's rows + counters into the persistent
+            // cache so subsequent clean frames can memcpy them. Copy from propBuf (== the
+            // independent oracle, proven by BRIDGE-COMPARE); never alias snap.staticProps.
+            if (s_dirtyOnlyEnabled) {
+                s_spRowCache.assign(propBuf, propBuf + writeIdx);
+                s_cacheWriteIdx = writeIdx;
+                s_cachedCounters.validationFail  = validationFail;
+                s_cachedCounters.sentinelMat     = sentinelMat;
+                s_cachedCounters.sentinelCull    = sentinelCull;
+                s_cachedCounters.texWired        = texWired;
+                s_cachedCounters.texSentinel     = texSentinel;
+                s_cachedCounters.matWired        = matWired;
+                s_cachedCounters.matSentinel     = matSentinel;
+                s_cachedCounters.primaryAlphaOn  = primaryAlphaOn;
+                s_cachedCounters.multiPacket     = multiPacket;
+                s_cachedCounters.cullSubmitted   = cullSubmitted;
+                s_cachedCounters.cullMissing     = cullMissing;
+                s_cachedCounters.hasBounds       = hasBounds;
+                s_cachedCounters.alphaOn         = alphaOn;
+                s_cachedCounters.hasShapeName    = hasShapeName;
+                s_cachedCounters.packetRangesOk  = packetRangesOk;
+                s_cachedCounters.packetRangeFail = packetRangeFail;
+                s_cacheRegGen  = curRegGen;
+                s_cacheCullGen = curCullGen;
+                s_cacheValid   = true;
+            }
         }
+        }  // end dirty/legacy branch (DIRTYONLY-1)
     }
 
     // -----------------------------------------------------------------------
