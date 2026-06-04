@@ -255,6 +255,21 @@ static std::vector<RecipeRange>           s_recipeRanges;
 static std::vector<gpu_cull::GpuActorRecord> s_cachedActorRecord;
 static std::vector<uint8_t>                  s_cachedActorRecordValid; // 0/1 per recipe
 
+// M1 FROZEN-STATIC-CULL-RECORDS (gate MC2_GPU_CULL_STATIC_FROZEN_RECORDS).
+// On a dirty store rebuild, capture each recipe's type-local STORE RANK (its slot
+// within s_persistentStaticStore[typeID], == its instance-pool slot within the
+// type). gpu_cull_buildStaticPrefixGolden() (called after
+// batcher_prepareBaseInstanceTable) then places each cull record at
+// baseInstanceForType[typeID] + storeRank == the exact binding-0 slot the draw
+// indexes, so record-index == instance-pool-slot by construction. All gated;
+// gate-off leaves the per-frame substrate_appendStaticPropRecord path untouched.
+static const bool s_staticFrozenReg =
+    (getenv("MC2_GPU_CULL_STATIC_FROZEN_RECORDS") != nullptr);
+static std::vector<uint32_t> s_recipeToStoreSlot;   // [ri] -> type-local store rank (dirty-built)
+static std::vector<uint32_t> s_goldenRecipeList;    // recipes placed this dirty, in store order
+static std::vector<uint32_t> s_pbStoreCursor;       // per-type store cursor (reset/grown at dirty)
+static bool                  s_goldenDirty = false; // a dirty rebuild happened; golden needs rebuild
+
 // v1.1: per-typeID primary material cache. Populated by finalizeGeometry().
 // Indexed by typeID (dense); resized as needed by staticPropCacheTypePrimaryMaterial.
 static std::vector<GpuStaticPropRegistry::StaticPropTypeMaterialCache> s_typeMatCache;
@@ -538,6 +553,7 @@ int32_t registerRecipe(TG_MultiShape* multi,
     // New entries are valid=0 (uncached); they will be lazily built on first flush (Task 4).
     s_cachedActorRecord.resize(s_recipes.size());
     s_cachedActorRecordValid.resize(s_recipes.size(), 0u);
+    s_recipeToStoreSlot.resize(s_recipes.size(), 0u);  // M1: lockstep with s_recipes
     ++s_registryGeneration;   // 2b Stage 2: spawn = structural change
     const int32_t regIdx = static_cast<int32_t>(s_recipeRanges.size());
     s_recipeRanges.push_back(rng);
@@ -690,6 +706,74 @@ const char* getRecipeShapeName(int32_t recipeIndex) {
     return rng.shapeName[0] ? rng.shapeName : nullptr;
 }
 
+// M1 FROZEN-STATIC-CULL-RECORDS: build the frozen static cull-record prefix and
+// install it via substrate_rebuildStaticPrefix. Call once per frame AFTER
+// batcher_prepareBaseInstanceTable() (so baseInstanceForType is valid) and BEFORE
+// compute_dispatch(). Rebuilds only when a store-dirty flush happened
+// (s_goldenDirty); a clean frame is a no-op (the substrate keeps the frozen
+// prefix). No effect unless MC2_GPU_CULL_STATIC_FROZEN_RECORDS is set.
+void buildStaticPrefixGolden() {
+    if (!s_staticFrozenReg) return;
+    if (!s_goldenDirty) return;                          // nothing changed since last build
+    if (!batcher_isBaseInstanceTableReady()) return;     // base table not valid this frame yet
+
+    const uint32_t S = static_cast<uint32_t>(s_goldenRecipeList.size());
+    static std::vector<gpu_cull::GpuActorRecord> s_goldenStaging;
+    s_goldenStaging.assign(S, gpu_cull::GpuActorRecord{});
+
+    // Scatter each recipe's cached cull record to its exact binding-0 slot:
+    //   global_slot = baseInstanceForType[typeID] + storeRank
+    // Upload (batcher:4995) and baseInstanceForType (batcher:7764) share the
+    // alpha-group ordering, so global_slot is the instance the draw renders for
+    // this record => record-index == instance-pool-slot by construction.
+    uint32_t placed = 0u, outOfRange = 0u;
+    for (uint32_t ri : s_goldenRecipeList) {
+        if (ri >= s_recipes.size()) { ++outOfRange; continue; }
+        const uint32_t tid  = s_recipes[ri].typeID;
+        const uint32_t base = batcher_getBaseInstanceForType(tid);
+        const uint32_t rank = (ri < s_recipeToStoreSlot.size()) ? s_recipeToStoreSlot[ri] : 0u;
+        const uint32_t slot = base + rank;
+        if (slot >= S) { ++outOfRange; continue; }       // base+rank must land in [0,S)
+        s_goldenStaging[slot] = s_cachedActorRecord[ri];
+        ++placed;
+    }
+
+    gpu_cull::substrate_rebuildStaticPrefix(s_goldenStaging.data(), S);
+    s_goldenDirty = false;
+
+    // Order-validation oracle (gated): for each placed record, verify its actor
+    // center is near the recipe's own leaf world position (within the bounding
+    // sphere). A base+rank mis-scatter puts a DIFFERENT, far-away prop at the slot
+    // => large position delta. This catches an ordering bug that per-type
+    // counts-parity cannot see. MC2_GPU_CULL_STATIC_FROZEN_ORDER_ORACLE=1.
+    static const bool s_orderOracle =
+        (getenv("MC2_GPU_CULL_STATIC_FROZEN_ORDER_ORACLE") != nullptr);
+    if (s_orderOracle) {
+        uint32_t checked = 0u, mismatch = 0u;
+        for (uint32_t ri : s_goldenRecipeList) {
+            if (ri >= s_recipes.size()) continue;
+            const uint32_t tid  = s_recipes[ri].typeID;
+            const uint32_t slot = batcher_getBaseInstanceForType(tid)
+                                + ((ri < s_recipeToStoreSlot.size()) ? s_recipeToStoreSlot[ri] : 0u);
+            if (slot >= S) continue;
+            const gpu_cull::GpuActorRecord& rec = s_goldenStaging[slot];
+            // Leaf world pos from its model matrix (Stuff col-major; unswap to raw
+            // MC2 east/north, matching the cull-record build at flush():~923-925).
+            const float* m  = s_recipes[ri].modelMatrix;
+            const float lx  = -m[3];      // raw east  = -stuff.x
+            const float ly  =  m[11];     // raw north =  stuff.z
+            const float dx  = rec.worldCenter[0] - lx;
+            const float dy  = rec.worldCenter[1] - ly;
+            const float tol = rec.boundingRadius * rec.boundingRadius + 1.0f;
+            ++checked;
+            if (dx*dx + dy*dy > tol) ++mismatch;   // far apart => wrong prop at slot
+        }
+        fprintf(stderr, "[GPU_CULL_FROZEN_ORDER_ORACLE] S=%u placed=%u outOfRange=%u "
+                "checked=%u posMismatch=%u\n", S, placed, outOfRange, checked, mismatch);
+        fflush(stderr);
+    }
+}
+
 void flush() {
     // V1A: latch BEFORE any early return so queryVisibility() always sees
     // a current-frame value (0 when disabled or nothing visible this frame).
@@ -722,6 +806,15 @@ void flush() {
     const bool     s_storeDirty   = s_persistentBuckets &&
                                     (batcher_pb.persistentStaticGen() != s_currentGen);
     if (s_storeDirty) batcher_pb.clearPersistentStatic();
+    if (s_staticFrozenReg && s_storeDirty) {
+        // M1: a new store rebuild — reset the per-type store cursor + golden recipe
+        // list, re-accumulated in the cached-blob record loop below in the SAME
+        // order appendPersistentStaticRange fills the store. Golden is then rebuilt
+        // at the post-prepareBaseInstanceTable hook (baseInstanceForType is ready).
+        std::fill(s_pbStoreCursor.begin(), s_pbStoreCursor.end(), 0u);
+        s_goldenRecipeList.clear();
+        s_goldenDirty = true;
+    }
     uint64_t s_pbExpectStaticCount = 0;  // [_COMPARE] sum of stored leaves this rebuild
 
     for (uint32_t regIdx : s_liveRangeIndices) {
@@ -1009,7 +1102,14 @@ void flush() {
                 }
                 // [SPFLUSH_COST_SPLIT v1] substrate_append span.
                 const unsigned long long _t_sa0 = s_spflushEnabled ? __rdtsc() : 0ULL;
-                gpu_cull::substrate_appendStaticPropRecord(gpuRec);
+                // M1: under the frozen-records gate, the legacy (light-mismatch)
+                // path is unsupported — these ranges go to submitCachedInstance
+                // (per-frame bucket), NOT the persistent store, so they have no
+                // frozen golden slot. In the default config (per-instance light on)
+                // NO range reaches this path. If one does under the gate it will
+                // surface as oracle emptyPoolButVisible. Skip the per-frame append.
+                if (!s_staticFrozenReg)
+                    gpu_cull::substrate_appendStaticPropRecord(gpuRec);
                 if (s_spflushEnabled) s_w_substrate_append_cyc += __rdtsc() - _t_sa0;
                 ++s_diag_leaves_appended;
                 if (s_spflushEnabled) ++s_win_leaves_appended; // [SPFLUSH_COST_SPLIT v1]
@@ -1090,7 +1190,22 @@ void flush() {
                 } else if (s_spflushEnabled) {
                     ++s_win_cache_hits;
                 }
-                gpu_cull::substrate_appendStaticPropRecord(s_cachedActorRecord[ri]);
+                // M1: capture the type-local store rank (== instance-pool slot
+                // within the type) in the SAME order appendPersistentStaticRange
+                // filled the store, and defer the record to the frozen golden
+                // prefix (skip the per-frame append). Only on a dirty rebuild;
+                // a clean frame reuses the frozen golden + frozen storeSlot.
+                if (s_staticFrozenReg) {
+                    if (s_storeDirty) {
+                        const uint32_t tid = s_recipes[ri].typeID;
+                        if (tid >= s_pbStoreCursor.size()) s_pbStoreCursor.resize(tid + 1u, 0u);
+                        if (ri < s_recipeToStoreSlot.size())
+                            s_recipeToStoreSlot[ri] = s_pbStoreCursor[tid]++;
+                        s_goldenRecipeList.push_back(ri);
+                    }
+                } else {
+                    gpu_cull::substrate_appendStaticPropRecord(s_cachedActorRecord[ri]);
+                }
                 ++s_diag_leaves_appended;
                 if (s_spflushEnabled) ++s_win_leaves_appended;
                 // v2: record substrate submission for this recipe (matches legacy path exactly).

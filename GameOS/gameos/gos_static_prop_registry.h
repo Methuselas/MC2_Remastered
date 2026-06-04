@@ -92,6 +92,12 @@ const char* getRecipeShapeName(int32_t recipeIndex);
 // then draws everything in one combined GPU pass.
 void flush();
 
+// M1 FROZEN-STATIC-CULL-RECORDS: build + install the frozen static cull-record
+// prefix (pool-ordered). Call once per frame AFTER batcher_prepareBaseInstanceTable()
+// and BEFORE gpu_cull::compute_dispatch(). No-op on clean frames and unless
+// MC2_GPU_CULL_STATIC_FROZEN_RECORDS is set. See gos_static_prop_registry.cpp.
+void buildStaticPrefixGolden();
+
 // [STATIC_FIRST_FRAME v1] proof-of-fix accessor (Track B Task 4).
 // Returns the count of registrations whose VERY FIRST flush() attempt was
 // rejected by the staleness gate. Must read zero after Task 3's cachedFrame_

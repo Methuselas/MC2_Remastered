@@ -418,6 +418,17 @@ uint32_t batcher_getInstanceCap(uint32_t typeID);
 // GPU-cull cut-off upper-bound oracle. 0 if typeID has no uploaded range.
 uint32_t batcher_getTypeUploadedInstanceCount(uint32_t typeID);
 
+// M1 FROZEN-STATIC-CULL-RECORDS: per-type global instance-pool base (alpha-group
+// prefix-sum), the binding-0 slot where typeID's instances start. Valid after
+// batcher_prepareBaseInstanceTable() in global-pool armed mode (see
+// batcher_isBaseInstanceTableReady). global_slot(typeID, rank) = base + rank.
+uint32_t batcher_getBaseInstanceForType(uint32_t typeID);
+
+// True when the per-type base table is valid this frame (global-pool armed and
+// prepareBaseInstanceTable has run). The golden static cull-record build gates
+// on this so it only scatters when the binding-0 slot layout is well-defined.
+bool batcher_isBaseInstanceTableReady();
+
 // GL handles for the coalesce-path SSBOs and texture arrays. 0 before
 // finalize, or if coalesce is disabled/disarmed.
 GLuint batcher_getCoalesceInstanceSsbo();   // ring-buffered, persistent-mapped

@@ -7376,6 +7376,26 @@ uint32_t batcher_getTypeUploadedInstanceCount(uint32_t typeID) {
     return it->second.instanceCount;
 }
 
+// M1 FROZEN-STATIC-CULL-RECORDS: module-scope copy of the per-type global
+// instance-pool base (alpha-group prefix-sum over s_sortedTypeOrder), published
+// by batcher_prepareBaseInstanceTable(). global_slot(typeID, store_rank) ==
+// s_baseInstanceForType[typeID] + store_rank, the exact binding-0 slot the draw
+// indexes. Valid only after prepareBaseInstanceTable() runs in global-pool armed
+// mode (empty under legacy/disarmed). The golden static cull-record build reads
+// it to place each record at its instance-pool slot (record-index == pool-slot).
+static std::vector<uint32_t> s_baseInstanceForType;
+
+uint32_t batcher_getBaseInstanceForType(uint32_t typeID) {
+    return (typeID < s_baseInstanceForType.size()) ? s_baseInstanceForType[typeID] : 0u;
+}
+
+// True when the per-type base table is valid this frame (global-pool armed and
+// prepareBaseInstanceTable has run). The golden build must gate on this.
+bool batcher_isBaseInstanceTableReady() {
+    return !s_globalPoolLegacy && batcher_isCoalesceArmed()
+           && !s_baseInstanceForType.empty();
+}
+
 GLuint batcher_getCoalesceInstanceSsbo() { return s_coalesceInstanceSsbo; }
 GLuint batcher_getPerDrawSsbo()          { return s_perDrawSsbo;          }
 // COMPRESSION-BC7-STATICPROP-2: under the gate the two named handles are 0
@@ -7791,6 +7811,12 @@ void batcher_prepareBaseInstanceTable() {
             baseInstanceForType[typeID] += offGroupCount;
         }
     }
+
+    // M1: publish the finalized per-type base for the golden static cull-record
+    // scatter (batcher_getBaseInstanceForType). This is the exact binding-0 slot
+    // layout the draw uses, so a record placed at base[t]+rank aligns 1:1 with
+    // the instance the draw renders.
+    s_baseInstanceForType = baseInstanceForType;
 
     // Write baseInstanceByCmd[c] for each cmd.
     const uint32_t pktCount = static_cast<uint32_t>(s_sortedPacketOrder.size());

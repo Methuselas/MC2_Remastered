@@ -2506,6 +2506,12 @@ void MC_TextureManager::renderLists (void)
 #if defined(MC2_SUBSTRATE_COUNT_PARITY)
 				gpu_cull::substrate_countParityCheck();
 #endif
+			// M1 FROZEN-STATIC-CULL-RECORDS: build + install the frozen static
+			// cull-record prefix now that baseInstanceForType is valid (set by
+			// batcher_prepareBaseInstanceTable above) and before compute_dispatch
+			// consumes the records. No-op on clean frames / unless the gate is set.
+			GpuStaticPropRegistry::buildStaticPrefixGolden();
+
 			if (gpu_cull::compute_isEnabled()) {
 				gpu_cull::compute_dispatch();
 			}
