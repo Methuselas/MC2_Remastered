@@ -38,8 +38,8 @@ static const bool s_bridgeCompareEnabled = []() -> bool {
     return v && v[0] == '1';
 }();
 static std::vector<ExtractedStaticProp> s_spRowCache;  // built from registry this frame
-static uint64_t s_cacheRegGen  = UINT64_MAX;           // last seen registryGeneration
-static uint64_t s_cacheCullGen = UINT64_MAX;           // last seen cullRecordVersion
+static uint64_t s_cacheRegGen  = UINT64_MAX;  // reserved for future incremental-rebuild gate
+static uint64_t s_cacheCullGen = UINT64_MAX;  // reserved for future incremental-rebuild gate
 static constexpr size_t kArenaBytes = 1024u * 1024u;
 alignas(16) static uint8_t s_arenaBuffers[2][kArenaBytes];
 static RenderCore::FrameArena s_frameArenas[2];
@@ -241,7 +241,7 @@ RenderSnapshot ExtractRenderSnapshot()
 
                 // Translation: row-major Stuff-space axis swap.
                 // Must match gos_static_prop_registry.cpp:550-555.
-                p.worldCenterX = -mtx[3];   // MC2 east
+                p.worldCenterX = -mtx[3];    // MC2 east
                 p.worldCenterY =  mtx[11];  // MC2 north
                 p.worldCenterZ =  mtx[7];   // MC2 elevation
 
@@ -277,6 +277,8 @@ RenderSnapshot ExtractRenderSnapshot()
                     p.firstPacket   = matInfo.firstPacket;   // v2
                     if (matInfo.primaryWasAlphaOn) ++primaryAlphaOn;
                     if (matInfo.multiPacket)       ++multiPacket;
+                    // primaryWasAlphaOn and multiPacket are diagnostic counters, not ExtractedStaticProp fields;
+                    // they are intentionally excluded from the per-row comparison.
                 }
 
                 // v2: shapeName — safe truncating copy.
@@ -319,6 +321,7 @@ RenderSnapshot ExtractRenderSnapshot()
             // STATICPROP-SNAPSHOT-BRIDGE-COMPARE-1: build independent cache from registry
             // and compare field-by-field with the legacy propBuf. Gate: MC2_STATIC_PROP_SNAPSHOT_BRIDGE_COMPARE.
             if (s_bridgeCompareEnabled) {
+                // propBuf is non-null here (guaranteed by enclosing else-block at ~line 180).
                 // Read current generation signals.
                 const uint64_t curRegGen  = GpuStaticPropRegistry::getRegistryGeneration();
                 const uint64_t curCullGen = GpuStaticPropRegistry::getCullRecordVersion();
@@ -346,9 +349,11 @@ RenderSnapshot ExtractRenderSnapshot()
                     cp.typeId      = typeId;
                     cp.instanceFlags = instanceFlags;
                     std::memcpy(cp.worldMatrix, mtx, sizeof(float) * 16);
-                    cp.worldCenterX = -mtx[3];
-                    cp.worldCenterY =  mtx[11];
-                    cp.worldCenterZ =  mtx[7];
+                    cp.worldCenterX = -mtx[3];    // MC2 east
+                    cp.worldCenterY =  mtx[11];   // MC2 north
+                    cp.worldCenterZ =  mtx[7];    // MC2 elevation
+                    // worldCenterX/Y/Z derived deterministically from worldMatrix (same formula both paths);
+                    // matching worldMatrix guarantees matching worldCenter*.
                     cp.boundingRadius = 0.0f;
                     GpuStaticPropRegistry::staticPropGetExtentRadius(v.recipeIndex, &cp.boundingRadius);
                     cp.lightDataIndex = 0xFFFFFFFFu;
@@ -371,6 +376,8 @@ RenderSnapshot ExtractRenderSnapshot()
                         cp.alphaClass    = matInfo.alphaClass;
                         cp.packetCount   = matInfo.packetCount;
                         cp.firstPacket   = matInfo.firstPacket;
+                        // primaryWasAlphaOn and multiPacket are diagnostic counters, not ExtractedStaticProp fields;
+                        // they are intentionally excluded from the per-row comparison.
                     }
                     cp.shapeName[0] = '\0';
                     {
@@ -381,12 +388,14 @@ RenderSnapshot ExtractRenderSnapshot()
 
                 // Compare cache rows against legacy propBuf.
                 // Both should be in the same order (both iterate views[] in index order).
+                const uint32_t cacheCount = static_cast<uint32_t>(s_spRowCache.size());
+                uint32_t rowCountMismatch  = 0u;
                 uint32_t immutableMismatch = 0u;
                 uint32_t hasCullMismatch   = 0u;
-                const uint32_t compareCount = std::min(writeIdx, static_cast<uint32_t>(s_spRowCache.size()));
-                if (writeIdx != static_cast<uint32_t>(s_spRowCache.size())) {
-                    // Row count mismatch — treat as immutable mismatch (structural failure).
-                    ++immutableMismatch;
+                const uint32_t compareCount = std::min(writeIdx, cacheCount);
+                if (writeIdx != cacheCount) {
+                    // Row count mismatch — structural failure distinct from per-row field mismatch.
+                    ++rowCountMismatch;
                 }
                 for (uint32_t ci = 0u; ci < compareCount; ++ci) {
                     const ExtractedStaticProp& L = propBuf[ci];      // legacy
@@ -403,6 +412,8 @@ RenderSnapshot ExtractRenderSnapshot()
                         L.packetCount       != C.packetCount       ||
                         L.firstPacket       != C.firstPacket       ||
                         std::memcmp(L.worldMatrix, C.worldMatrix, sizeof(float) * 16) != 0 ||
+                        // worldCenterX/Y/Z derived deterministically from worldMatrix (same formula both paths);
+                        // matching worldMatrix guarantees matching worldCenter*.
                         std::memcmp(L.shapeName,   C.shapeName,   sizeof(L.shapeName)) != 0) {
                         ++immutableMismatch;
                     }
@@ -415,12 +426,13 @@ RenderSnapshot ExtractRenderSnapshot()
                 // Emit log line every frame when gate is ON.
                 std::fprintf(stderr,
                     "[SNAPSHOT_BRIDGE_COMPARE v1] frame=%llu regGen=%llu cullVer=%llu"
-                    " rowCount=%u aliveCount=%u immutableMismatch=%u hasCullMismatch=%u\n",
+                    " rowCount=%u aliveCount=%u rowCountMismatch=%u immutableMismatch=%u hasCullMismatch=%u\n",
                     static_cast<unsigned long long>(snap.frameIndex),
                     static_cast<unsigned long long>(curRegGen),
                     static_cast<unsigned long long>(curCullGen),
-                    static_cast<uint32_t>(s_spRowCache.size()),
+                    cacheCount,
                     static_cast<uint32_t>(aliveCount),
+                    rowCountMismatch,
                     immutableMismatch,
                     hasCullMismatch);
                 std::fflush(stderr);
