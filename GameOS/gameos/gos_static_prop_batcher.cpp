@@ -749,6 +749,12 @@ GLuint s_staticPropDepthProgram = 0;
 struct DepthCoalesceLocs { GLint drawIDBase = -1; };
 static DepthCoalesceLocs s_locsDepthCoalesce;
 
+// FOLIAGE-STATICPROP-DEPTH-PREPASS-1: set true by the in-flush depth prepass
+// (flushDepthPrepassV6) when it actually drew this frame; read by the color
+// applyPipeline that follows it to flip to GL_EQUAL + depthWrite-off so early-Z
+// keeps only the front-most fragment the prepass laid. Reset at flush() end.
+static bool s_depthPrepassRanThisFrame = false;
+
 // Step 2.1 — persistent map pointer + fence ring.
 void*  s_coalesceInstanceMap = nullptr;
 GLsync s_coalesceFence[RING_FRAMES] = {};
@@ -4871,6 +4877,120 @@ static uint32_t buildLiveV6Arrays(
     return lockstepViolations;
 }
 
+// FOLIAGE-STATICPROP-DEPTH-PREPASS-1 ----------------------------------------
+// In-flush depth prepass for the v6/coalesced static-prop dispatch.
+//
+// DELIBERATE DEVIATION from the plan's txmmgr-level call: the plan called
+// flushDepthPrepass() from txmmgr between compute_dispatch() and flush(). But
+// the per-frame dispatch lists (pDispatchPackets / pDispatchMeta / totalCmds)
+// are built INSIDE flush() (snapshot vs live selection). A txmmgr-level prepass
+// cannot see those lists and could draw a DIFFERENT set, which breaks the
+// GL_EQUAL color pass (every color fragment must have a matching depth from the
+// prepass). So the prepass runs here, inside flush(), consuming the EXACT same
+// lists the color loop draws — ONE source of truth for the draw set.
+//
+// Lays the nearest reverse-Z depth (GEQUAL + write) with the cheap depth-only
+// program (alpha-test discard only), color writes masked off. Caller flips the
+// color pass to GL_EQUAL + depthWrite-off afterward (s_depthPrepassRanThisFrame).
+//
+// Mirrors the v6 color draw loop's per-packet GL exactly: same VAO/IBO/SSBO,
+// same OFF→ON texture-array flip at the alpha-ON group boundary, same
+// glDrawElementsInstancedBaseVertexBaseInstance args. Returns true iff it drew.
+//
+// Gated by MC2_STATIC_PROP_DEPTH_PREPASS (default OFF). No-op + log-once when
+// the depth program failed to link or the bc7-bucket texture path is active
+// (per-bucket array bind differs from the simple OFF/ON bind — handled in a
+// later slice). It does NOT touch SSBO slot 0 (the coalesce instance range
+// bound earlier in flush()) so that binding survives for the color loop.
+static bool flushDepthPrepassV6(
+    const std::vector<RenderCore::DrawPacket>&  dispatchPackets,
+    const std::vector<StaticPropDispatchMeta>&  dispatchMeta,
+    uint32_t                                    totalCmds,
+    bool                                        bc7Buckets)
+{
+    ZoneScopedN("GpuSP.DepthPrepass");
+
+    static const bool s_prepassEnabled =
+        (std::getenv("MC2_STATIC_PROP_DEPTH_PREPASS") != nullptr);
+    if (!s_prepassEnabled)              return false;
+    if (s_staticPropDepthProgram == 0)  return false;   // program didn't link
+    if (totalCmds == 0u)                return false;
+
+    // bc7-bucket path: the color loop binds a different per-bucket texture array
+    // per slot for alpha sampling. The depth shader must sample the SAME array to
+    // make the SAME alpha decision; the simple OFF/ON bind below would diverge.
+    // Skip + log for now (handle bc7 in a follow-up slice).
+    if (bc7Buckets) {
+        static bool warnedBc7 = false;
+        if (!warnedBc7) {
+            warnedBc7 = true;
+            std::fprintf(stderr, "[GPUPROPS] depth-prepass skipped: bc7-bucket "
+                                 "texture path active (per-bucket array bind "
+                                 "unsupported in this slice)\n");
+        }
+        return false;
+    }
+
+    // Save the color write mask so the color pass writes normally afterward.
+    GLboolean prevColorMask[4];
+    glGetBooleanv(GL_COLOR_WRITEMASK, prevColorMask);
+
+    // Depth-only: bind the depth program + GEQUAL/write via the StaticPropDepth
+    // desc, then mask color. applyPipeline also (re)sets blend-off + cull-back,
+    // matching the color pass.
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::StaticPropDepth));
+    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+
+    // Re-assert the geometry bindings the v6 loop relies on. SSBO slot 0 (the
+    // coalesce instance range) and slot 2 (per-type hot-color) were bound earlier
+    // in flush(); we do NOT touch slot 0 (so it survives for the color loop) but
+    // re-bind VAO/IBO/slot-2/texture defensively in case applyPipeline or a prior
+    // pass left them in an unexpected state.
+    glBindVertexArray(s_sharedVao);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_sharedIbo);
+    if (s_perTypeSsbo) glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, s_perTypeSsbo);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOff);   // alpha-OFF group default
+
+    bool enteredOnGroup = false;
+    for (uint32_t i = 0u; i < totalCmds; ++i) {
+        const StaticPropDispatchMeta& m  = dispatchMeta[i];
+        const RenderCore::DrawPacket&  dp = dispatchPackets[i];
+        if (m.instanceCount == 0u) continue;
+
+        // Texture-array switch at the alpha-ON boundary (mirror flush()'s loop:
+        // alpha-OFF slots come first, then alpha-ON; one bind flip total).
+        if (m.group == 1u && !enteredOnGroup) {
+            glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOn);
+            enteredOnGroup = true;
+        }
+
+        // The DEPTH program's OWN u_drawIDBase location (coalesce variant).
+        if (s_locsDepthCoalesce.drawIDBase >= 0)
+            glUniform1i(s_locsDepthCoalesce.drawIDBase,
+                        static_cast<GLint>(m.drawIDBase));
+
+        glDrawElementsInstancedBaseVertexBaseInstance(
+            GL_TRIANGLES,
+            static_cast<GLsizei>(dp.indexCount),
+            GL_UNSIGNED_INT,
+            reinterpret_cast<const void*>(
+                static_cast<uintptr_t>(dp.firstIndex) * sizeof(uint32_t)),
+            static_cast<GLsizei>(m.instanceCount),
+            m.baseVertex,
+            m.baseInstance);
+    }
+    if (enteredOnGroup)
+        glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOff);
+
+    // Restore the color write mask. Depth state + program are reset by the color
+    // applyPipeline the caller issues immediately after this returns.
+    glColorMask(prevColorMask[0], prevColorMask[1],
+                prevColorMask[2], prevColorMask[3]);
+    return true;
+}
+
 // [RENDER_CONTRACT:Pass=StaticProp id=GpuStaticPropBatcher_flush]
 //   Routes through static_prop.frag which writes
 //   rc_gbuffer1_screenShadowEligible (production) or
@@ -5975,6 +6095,39 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                 useSnapshot ? &s_snapV6Packets : &v6Packets;
             const std::vector<StaticPropDispatchMeta>* pDispatchMeta =
                 useSnapshot ? &s_snapV6Meta    : &v6Meta;
+
+            // FOLIAGE-STATICPROP-DEPTH-PREPASS-1 (B + C): run the depth prepass
+            // over the SAME dispatch lists the color loop below draws, then flip
+            // the color pass to GL_EQUAL + depthWrite-off. Gated/no-op by default
+            // (flushDepthPrepassV6 returns false → color path byte-identical to
+            // pre-change behavior, no re-applyPipeline issued).
+            //
+            // The prepass clobbers the bound program + depth state + color mask;
+            // it restores the color mask itself. We re-apply the color pipeline
+            // here (with the EQUAL/no-write override) so the color loop below runs
+            // against the right program + depth state. SSBO slot 0 (instance
+            // range) and the VAO/IBO survive (prepass does not rebind slot 0; the
+            // color loop re-binds the OFF texture array via enteredOnGroup logic).
+            if (!skipDispatch &&
+                flushDepthPrepassV6(*pDispatchPackets, *pDispatchMeta,
+                                    totalCmds, bc7Buckets)) {
+                s_depthPrepassRanThisFrame = true;
+                // Color pass: keep ONLY the front-most fragment the prepass laid
+                // (reverse-Z, so GEQUAL prepass stored the nearest depth). EQUAL +
+                // no depth re-write. Object-ID (frag loc=2) is unaffected — it is a
+                // color attachment write, not a depth-state field.
+                RenderCore::PipelineDesc colorDesc =
+                    RenderCore::getPipelineDesc(RenderCore::PipelineId::StaticPropOpaque);
+                colorDesc.depthFunc        = RenderCore::DepthFunc::Equal;
+                colorDesc.depthWriteEnable = false;
+                pipeline_binder::applyPipeline(colorDesc);
+                // applyPipeline rebinds the program but NOT the VAO/IBO/SSBO/
+                // texture; re-assert the geometry bindings the color loop expects
+                // (the prepass left the OFF texture array bound, slot-2 bound, and
+                // slot 0 untouched, so this is belt-and-suspenders).
+                glBindVertexArray(s_sharedVao);
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_sharedIbo);
+            }
 
             if (!skipDispatch)
             for (uint32_t i = 0u; i < totalCmds; ++i) {
