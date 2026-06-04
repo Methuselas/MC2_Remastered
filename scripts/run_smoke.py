@@ -318,6 +318,14 @@ def main():
                             "MC2_SHADOW_BOUNDED_NEAR_FIT",
                             "MC2_SHADOW_BOUNDED_NEAR_RADIUS",
                             "MC2_SHADOW_FRUSTUM_DIAG",
+                            # SHADOW-CASTER-LIGHTBOX-CULL-1 (2026-06-04): per-frame
+                            # cull of dynamic prop shadow casters to the shadow
+                            # frustum (default OFF). Without these in the allowlist
+                            # subprocess.Popen drops them and the gate-ON smoke
+                            # state is meaningless (cull never engages).
+                            "MC2_SHADOW_CASTER_LIGHTBOX_CULL",
+                            "MC2_SHADOW_CASTER_CULL_MARGIN",
+                            "MC2_SHADOW_CULL_DEBUG",
                             # Mask-dispatch (pre-bake-terrain merge)
                             "MC2_TERRAIN_MASK_DISPATCH",
                             "MC2_TERRAIN_MASK_DISPATCH_PARITY",

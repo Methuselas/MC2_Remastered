@@ -217,6 +217,9 @@ ALLOWLIST=(
     MC2_SELECTION_PICKING_PREDICATE_MODE  # feature -- promote-to-registry
     MC2_SHADER_HOT_RELOAD       # infra
     MC2_SHAPE_C_PARITY_CHECK    # parity
+    MC2_SHADOW_CASTER_CULL_MARGIN  # feature -- NDC margin for shadow caster light-box cull (default 0.25)
+    MC2_SHADOW_CASTER_LIGHTBOX_CULL  # feature -- promote-to-registry; cull dynamic prop shadow casters to the shadow frustum (default OFF)
+    MC2_SHADOW_CULL_DEBUG       # trace -- dump caster world pos + NDC for the light-box cull
     MC2_SHADOW_DIAG             # trace
     MC2_SLIM_COST_SPLIT         # feature -- promote-to-registry
     MC2_SMOKE_MODE              # infra -- smoke harness

@@ -2336,13 +2336,104 @@ void MC_TextureManager::renderLists (void)
 						s_dynPropInstsGeneration  = GpuStaticPropRegistry::getRegistryGeneration();
 						s_dynPropInstsIncludeBldg = includeBldg;
 					}
+
+					// SHADOW-CASTER-LIGHTBOX-CULL-1 (gate MC2_SHADOW_CASTER_LIGHTBOX_CULL,
+					// DEFAULT OFF). The caster set above is the WHOLE registry (~14K props,
+					// visibility-independent). The dynamic shadow map is camera-fit (small,
+					// esp. under MC2_SHADOW_BOUNDED_NEAR_FIT), so thousands of off-map props
+					// draw shadows that never land in the map = wasted GPU fill. When ON,
+					// filter the casters to only those whose origin projects inside the
+					// dynamic shadow frustum (+margin), using the EXACT same matrix the
+					// shadow VS uses (getDynamicLightSpaceMatrix(), column-major, GL_FALSE).
+					//
+					// World-position frame: shaders/shadow_static_prop.vert computes
+					//   worldStuff = vec4(a_position,1) * modelMatrix   (row-vector * M)
+					//   worldMC2   = vec3(-worldStuff.x, worldStuff.z, worldStuff.y)
+					//   gl_Position = lightSpaceMatrix * vec4(worldMC2,1)
+					// For the local origin a_position=(0,0,0): worldStuff = (M[3],M[7],M[11])
+					// in the column-major float[16] (v*M picks element c*4+3), so
+					//   worldMC2 = (-M[3], M[11], M[7])
+					// This is EXACTLY the registry's actorWorldCenter extraction
+					// (gos_static_prop_registry.cpp:842-847) and the frame the light matrix
+					// consumes — verified against both the VS and the SHADOWZRANGE probe.
+					static const bool s_casterLightboxCull = (
+						getenv("MC2_SHADOW_CASTER_LIGHTBOX_CULL") != nullptr &&
+						getenv("MC2_SHADOW_CASTER_LIGHTBOX_CULL")[0] == '1');  // DEFAULT OFF
+					const std::vector<GpuStaticPropInstance>* dynShadowSet = &s_dynPropInsts;
+					if (s_casterLightboxCull) {
+						ZoneScopedN("Shadow.CasterCull");
+						static std::vector<GpuStaticPropInstance> s_culledDynPropInsts; // reused, no churn
+						s_culledDynPropInsts.clear();
+						s_culledDynPropInsts.reserve(s_dynPropInsts.size());
+						static const float s_cullMargin = []() {
+							const char* v = getenv("MC2_SHADOW_CASTER_CULL_MARGIN");
+							const float m = (v && v[0]) ? static_cast<float>(atof(v)) : 0.25f;
+							return (m >= 0.0f) ? m : 0.25f;
+						}();
+						static const bool s_cullDebug =
+							(getenv("MC2_SHADOW_CULL_DEBUG") != nullptr);
+						gosPostProcess* ppCull = getGosPostProcess();
+						const float* M = ppCull ? ppCull->getDynamicLightSpaceMatrix() : nullptr;
+						if (!M) {
+							// No matrix yet (early frames) -> keep everything (safe).
+							dynShadowSet = &s_dynPropInsts;
+						} else {
+							const float lim = 1.0f + s_cullMargin;
+							int dbgN = 0;
+							for (const GpuStaticPropInstance& inst : s_dynPropInsts) {
+								const float* mm = inst.modelMatrix;
+								// world (MC2 frame the light matrix consumes)
+								const float wx = -mm[3];
+								const float wy =  mm[11];
+								const float wz =  mm[7];
+								// clip = M * (wx,wy,wz,1), M column-major: (row r,col c)=M[c*4+r]
+								const float cx = M[0*4+0]*wx + M[1*4+0]*wy + M[2*4+0]*wz + M[3*4+0];
+								const float cy = M[0*4+1]*wx + M[1*4+1]*wy + M[2*4+1]*wz + M[3*4+1];
+								const float cw = M[0*4+3]*wx + M[1*4+3]*wy + M[2*4+3]*wz + M[3*4+3];
+								bool keep = true;
+								if (cw > 0.0f) {
+									const float ndcx = cx / cw;
+									const float ndcy = cy / cw;
+									keep = (ndcx >= -lim && ndcx <= lim &&
+									        ndcy >= -lim && ndcy <= lim);
+								} else {
+									// behind the light near plane: cannot land in the map.
+									keep = false;
+								}
+								if (s_cullDebug && dbgN < 8) {
+									++dbgN;
+									const float ndcx = (cw != 0.0f) ? cx / cw : 0.0f;
+									const float ndcy = (cw != 0.0f) ? cy / cw : 0.0f;
+									fprintf(stderr,
+										"[SHADOW_CULL_DBG] world=(%.1f,%.1f,%.1f) "
+										"clipW=%.3f ndc=(%.3f,%.3f) keep=%d\n",
+										wx, wy, wz, cw, ndcx, ndcy, keep ? 1 : 0);
+									fflush(stderr);
+								}
+								if (keep) s_culledDynPropInsts.push_back(inst);
+							}
+							dynShadowSet = &s_culledDynPropInsts;
+
+							static bool s_cullLogged = false;
+							if (!s_cullLogged) {
+								s_cullLogged = true;
+								const size_t total = s_dynPropInsts.size();
+								const size_t kept  = s_culledDynPropInsts.size();
+								const float pct = total ? (100.0f * (float)(total - kept) / (float)total) : 0.0f;
+								fprintf(stderr,
+									"[SHADOW_CULL] casters %zu -> %zu (%.0f%% culled, margin=%.2f)\n",
+									total, kept, pct, s_cullMargin);
+								fflush(stderr);
+							}
+						}
+					}
 				{
 				// LANE-D measure-first: give the dynamic prop shadow CASTER draw its
 				// own GPU timestamp so its cost is deconflated from GpuSP.BatcherFlush
 				// (which previously absorbed it as first-GPU-zone self-time).
 				ZoneScopedN("RenderLists.DynShadowDraw");
 				TracyGpuZone("GpuSP.DynShadowDraw");
-				GpuStaticPropBatcher::instance().drawDynamicPropShadows(s_dynPropInsts);
+				GpuStaticPropBatcher::instance().drawDynamicPropShadows(*dynShadowSet);
 			}
 			} else {
 				GpuStaticPropBatcher::instance().flushShadow(s_skipBldgInDynamic);
