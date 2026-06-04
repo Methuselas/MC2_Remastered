@@ -411,6 +411,13 @@ bool batcher_getPacketMaterialFlags(uint32_t globalPacketIdx,
 // Per-type instance capacity (§5.1 formula). 0 if typeID out of range.
 uint32_t batcher_getInstanceCap(uint32_t typeID);
 
+// Per-type LIVE instance count from the last upload (= the frozen draw-pool
+// span the indirect draw renders from for this type). Captured at
+// uploadAllBucketsIfNeeded; for frozen static props this equals the current
+// frame's pool span (1-frame lag only across a dirty rebuild). Used by the
+// GPU-cull cut-off upper-bound oracle. 0 if typeID has no uploaded range.
+uint32_t batcher_getTypeUploadedInstanceCount(uint32_t typeID);
+
 // GL handles for the coalesce-path SSBOs and texture arrays. 0 before
 // finalize, or if coalesce is disabled/disarmed.
 GLuint batcher_getCoalesceInstanceSsbo();   // ring-buffered, persistent-mapped

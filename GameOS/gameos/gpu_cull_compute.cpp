@@ -1066,83 +1066,66 @@ void compute_dispatch() {
                 const int typeCount = static_cast<int>(s_bucketCount);
                 if (typeCount > 0)
                 {
-                    // --- Read bucketCapacity[] and bucketBase[] from s_bucketCapsBuf ---
-                    // Layout: [caps[0..N-1], bases[0..N-1]]  (2*N uints).
-                    std::vector<uint32_t> capsAndBases(static_cast<size_t>(typeCount) * 2u, 0u);
-                    glGetNamedBufferSubData(s_bucketCapsBuf,
-                                           0,
-                                           static_cast<GLsizeiptr>(typeCount * 2 * (int)sizeof(uint32_t)),
-                                           capsAndBases.data());
-
-                    // --- Read perBucketCount[] + overflowCount from s_bucketCountsBuf ---
-                    // Layout: [count[0..N-1], overflowCount]  (N+1 uints).
-                    std::vector<uint32_t> countsAndOverflow(static_cast<size_t>(typeCount) + 1u, 0u);
+                    // --- CHEAP CUT-OFF UPPER-BOUND (no record->slot map) ---
+                    // Recon H4: the draw renders the FIRST `count` instances of
+                    // each type's FROZEN instance pool (binding 0); the GPU cull
+                    // selects a SCATTERED subset (visibleIds, which the VS never
+                    // reads). record-index space (binding 8, per-frame, scene
+                    // order) and instance-pool-slot space (binding 0, frozen,
+                    // per-type sorted) are DIVERGED, so a sound per-instance
+                    // false-negative count needs an authoritative
+                    // record->draw-slot map (NOT done here; see the spec note
+                    // 2026-06-04-gpu-cull-oracle-fix-notes.md). The prior
+                    // "100% false-neg" / "garbage base" prints were artifacts of
+                    // comparing record-index against a visibleIds buffer-offset.
+                    //
+                    // This is the cheap NECESSARY-CONDITION proxy: per type the
+                    // draw can only cut a prop off when the GPU-visible count is
+                    // LESS than the pool span (it renders count of pool, omitting
+                    // the rest). omittedSlots/pool bounds how much cut-off is even
+                    // POSSIBLE. ~0% => cull renders ~everything => H4 immaterial.
+                    // Reads only perBucketCount (binding 10) + a CPU per-type pool
+                    // count; no big readback, no index-space mixing.
+                    std::vector<uint32_t> countsAndOverflow(
+                        static_cast<size_t>(typeCount) + 1u, 0u);
                     glGetNamedBufferSubData(s_bucketCountsBuf,
                                            0,
                                            static_cast<GLsizeiptr>((typeCount + 1) * (int)sizeof(uint32_t)),
                                            countsAndOverflow.data());
-
                     const uint32_t overflow = countsAndOverflow[static_cast<size_t>(typeCount)];
 
-                    uint32_t totalVisible   = 0u;
-                    uint32_t totalFalseNeg  = 0u;
-                    int      typesWithMiss  = 0;
-                    // Slice-A diagnostic: value-space probe — is visibleIds populated
-                    // (scattered indices) or all-zero (unpopulated)? And what range?
-                    uint32_t vMin = 0xFFFFFFFFu, vMax = 0u, vZeros = 0u;
-                    int      sampType = -1; uint32_t sampBase=0, sampN=0, sampV0=0, sampV1=0, sampV2=0;
+                    uint32_t totalPool = 0u, totalVisible = 0u, totalOmitted = 0u;
+                    int      typesCutoffPossible = 0, typesEmptyPoolButVisible = 0;
+                    uint32_t worstOmit = 0u; int worstType = -1;
+                    uint32_t worstPool = 0u, worstVis = 0u;
 
                     for (int t = 0; t < typeCount; ++t)
                     {
-                        const uint32_t cap   = capsAndBases[static_cast<size_t>(t)];
-                        const uint32_t base  = capsAndBases[static_cast<size_t>(typeCount + t)];
-                        const uint32_t count = countsAndOverflow[static_cast<size_t>(t)];
-                        const uint32_t n     = (count < cap) ? count : cap;  // clamp to cap
-
-                        if (n == 0u)
-                            continue;
-
-                        // Read this type's run of visibleIds: [base .. base+n)
-                        // visibleIds[base+k] stores the record index of a GPU-visible
-                        // instance of type t.  If that index falls outside [base, base+n)
-                        // it is outside the draw window and will be cut off — false-negative.
-                        std::vector<uint32_t> ids(n, 0u);
-                        glGetNamedBufferSubData(s_visibleIdsBuf,
-                                               static_cast<GLintptr>(base * sizeof(uint32_t)),
-                                               static_cast<GLsizeiptr>(n * sizeof(uint32_t)),
-                                               ids.data());
-
-                        if (sampType < 0) {
-                            sampType = t; sampBase = base; sampN = n;
-                            sampV0 = ids[0]; sampV1 = (n>1?ids[1]:0u); sampV2 = (n>2?ids[2]:0u);
-                        }
-                        uint32_t falseNeg = 0u;
-                        for (uint32_t k = 0u; k < n; ++k)
+                        const uint32_t vis = countsAndOverflow[static_cast<size_t>(t)];
+                        // t == typeID: the cull build passes t to
+                        // batcher_getTypeDrawInfo, and the shader bucket =
+                        // category>>4 == typeID. So index the pool by t directly.
+                        const uint32_t pool = batcher_getTypeUploadedInstanceCount(
+                                                  static_cast<uint32_t>(t));
+                        if (pool == 0u) { if (vis > 0u) ++typesEmptyPoolButVisible; continue; }
+                        totalPool    += pool;
+                        totalVisible += (vis < pool) ? vis : pool;  // clamp stale-pool frame
+                        if (vis < pool)
                         {
-                            const uint32_t V = ids[k];
-                            if (V < vMin) vMin = V; if (V > vMax) vMax = V; if (V == 0u) ++vZeros;
-                            // V is a record index.  The draw renders records
-                            // [base, base+n); any V outside that window is cut off.
-                            if (V < base || V >= base + n)
-                                ++falseNeg;
+                            ++typesCutoffPossible;
+                            const uint32_t omit = pool - vis;  // pool slots the draw omits
+                            totalOmitted += omit;
+                            if (omit > worstOmit) { worstOmit = omit; worstType = t; worstPool = pool; worstVis = vis; }
                         }
-
-                        totalVisible  += n;
-                        totalFalseNeg += falseNeg;
-                        if (falseNeg)
-                            ++typesWithMiss;
                     }
 
-                    printf("[GPU_CULL_OWNERSHIP_PARITY v1] types=%d totalVisible=%u totalFalseNeg=%u (%.1f%%) typesWithMiss=%d overflow=%u\n",
-                           typeCount,
-                           totalVisible,
-                           totalFalseNeg,
-                           totalVisible ? 100.0 * totalFalseNeg / totalVisible : 0.0,
-                           typesWithMiss,
-                           overflow);
-                    printf("[GPU_CULL_OWNERSHIP_PARITY_DIAG] vMin=%u vMax=%u vZeros=%u | sampType=%d base=%u n=%u V0=%u V1=%u V2=%u\n",
-                           (vMin==0xFFFFFFFFu?0u:vMin), vMax, vZeros,
-                           sampType, sampBase, sampN, sampV0, sampV1, sampV2);
+                    printf("[GPU_CULL_CUTOFF_UPPERBOUND v2] types=%d pool=%u visible=%u "
+                           "omittedSlots=%u (%.1f%% of pool) typesCutoffPossible=%d "
+                           "emptyPoolButVisible=%d overflow=%u | worst type=%d pool=%u vis=%u omit=%u\n",
+                           typeCount, totalPool, totalVisible, totalOmitted,
+                           totalPool ? 100.0 * totalOmitted / totalPool : 0.0,
+                           typesCutoffPossible, typesEmptyPoolButVisible, overflow,
+                           worstType, worstPool, worstVis, worstOmit);
                     fflush(stdout);
                 }
             }

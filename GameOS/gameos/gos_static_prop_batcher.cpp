@@ -7364,6 +7364,18 @@ uint32_t batcher_getInstanceCap(uint32_t typeID) {
     return s_types[typeID].instanceCap;
 }
 
+// Slice-A cut-off upper-bound oracle: per-type LIVE instance count from the
+// last upload (= the frozen draw-pool span the indirect draw renders from).
+// s_typeRanges is rebuilt every upload (uploadAllBucketsIfNeeded :4538) with
+// instanceCount = bucket.instances.size(); reading it gives an authoritative,
+// timing-stable denominator (no per-frame bucket clear race). For frozen static
+// props it equals this frame's pool span.
+uint32_t batcher_getTypeUploadedInstanceCount(uint32_t typeID) {
+    auto it = s_typeRanges.find(typeID);
+    if (it == s_typeRanges.end()) return 0u;
+    return it->second.instanceCount;
+}
+
 GLuint batcher_getCoalesceInstanceSsbo() { return s_coalesceInstanceSsbo; }
 GLuint batcher_getPerDrawSsbo()          { return s_perDrawSsbo;          }
 // COMPRESSION-BC7-STATICPROP-2: under the gate the two named handles are 0
