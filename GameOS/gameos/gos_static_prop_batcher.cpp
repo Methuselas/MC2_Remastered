@@ -1106,36 +1106,13 @@ void loadProgramsIfNeeded() {
     }
     s_staticPropProgram = s_staticPropProgramObj->shp_;
 
-    // FOLIAGE-STATICPROP-DEPTH-PREPASS-1: depth-prepass program. Same VS
-    // (static_prop.vert, now with invariant gl_Position) + the cheap
-    // static_prop_depth.frag (alpha-test discard only). Built with the SAME
-    // legacyPrefix as the color program above so the frag's preprocessor
-    // selection (MC2_COALESCE / MC2_OBJECT_ID_BUFFER / MC2_USE_VIEW_UNIFORMS /
-    // MC2_STATICPROP_PBR_SLOTS) matches the color program byte-for-byte — a
-    // precondition for the later GL_EQUAL pass. This is a DISTINCT program
-    // object, so we capture its OWN u_drawIDBase location (uniform locations
-    // are per-program). Link failure disables the prepass only; the color path
-    // is untouched (s_staticPropDepthProgram stays 0 → flushDepthPrepass()
-    // no-ops).
-    glsl_program* depthObj = glsl_program::makeProgram(
-        "static_prop_depth",
-        "shaders/static_prop.vert",
-        "shaders/static_prop_depth.frag",
-        legacyPrefix.c_str());
-    if (depthObj && depthObj->is_valid()) {
-        s_staticPropDepthProgram = depthObj->shp_;
-        RenderCore::bindProgram(RenderCore::PipelineId::StaticPropDepth, s_staticPropDepthProgram);
-        s_locsDepthCoalesce.drawIDBase =
-            glGetUniformLocation(s_staticPropDepthProgram, "u_drawIDBase");
-        std::fprintf(stderr, "[GPUPROPS-DIAG] static_prop_depth program=%u "
-                     "loc_drawIDBase=%d\n",
-                     s_staticPropDepthProgram, s_locsDepthCoalesce.drawIDBase);
-    } else {
-        std::fprintf(stderr,
-            "[GPUPROPS] static_prop_depth program failed to compile/link — "
-            "depth-prepass disabled this session (color path unaffected)\n");
-        s_staticPropDepthProgram = 0;   // flushDepthPrepass() must no-op when 0
-    }
+    // FOLIAGE-STATICPROP-DEPTH-PREPASS-1: the depth-prepass program is built
+    // LATER, after the coalesce color program below — it must use the SAME
+    // shader variant (legacy vs coalesce prefix) as the program that is
+    // actually bound for the static-prop color pass, or GL_EQUAL parity fails
+    // (the depth it lays would derive vertex transform / alpha differently).
+    // See the "depth-prepass program (variant-matched)" block at the end of
+    // this function.
 
     // Wire GL program name into PipelineRegistry so applyPipeline() can bind it.
     // Both IDs share the same program — alpha distinction is texture-array + shader
@@ -1291,6 +1268,69 @@ void loadProgramsIfNeeded() {
                          "static_prop_coalesce — coalesce path disabled "
                          "for this session; legacy path unaffected\n");
             s_staticPropProgramCoalesce = 0;
+        }
+    }
+
+    // FOLIAGE-STATICPROP-DEPTH-PREPASS-1: depth-prepass program (variant-matched).
+    // Built AFTER the coalesce color program so it uses the SAME shader variant
+    // (and thus the same vertex transform + alpha-flag derivation) as the program
+    // that applyPipeline() will actually bind for the static-prop COLOR pass —
+    // the load-bearing precondition for the later GL_EQUAL depth test.
+    //
+    // The active color program is the coalesce one (s_staticPropProgramCoalesce)
+    // exactly when it linked above (lines just before this rebound StaticPropOpaque/
+    // AlphaTest to it). In that case use coalescePrefix (with MC2_COALESCE); the
+    // depth frag's #ifdef MC2_COALESCE branch then derives materialFlags/tex_color.a
+    // via the PerDrawEntry SSBO + u_texArr + u_drawIDBase exactly like the color
+    // frag. Otherwise the legacy program is active, so use legacyPrefix (no
+    // MC2_COALESCE; u_materialFlags + u_tex path). Same MC2_OBJECT_ID_BUFFER /
+    // MC2_USE_VIEW_UNIFORMS / MC2_STATICPROP_PBR_SLOTS defines are already baked
+    // into both prefixes above, so this matches the color program byte-for-byte.
+    //
+    // This is a DISTINCT program object, so we capture its OWN u_drawIDBase
+    // location (uniform locations are per-program). Link failure disables the
+    // prepass only; the color path is untouched (s_staticPropDepthProgram stays 0
+    // → flushDepthPrepass() no-ops).
+    {
+        const bool depthUsesCoalesce = (s_staticPropProgramCoalesce != 0);
+        const char* depthPrefix =
+            depthUsesCoalesce ? coalescePrefix.c_str() : legacyPrefix.c_str();
+        glsl_program* depthObj = glsl_program::makeProgram(
+            "static_prop_depth",
+            "shaders/static_prop.vert",
+            "shaders/static_prop_depth.frag",
+            depthPrefix);
+        if (depthObj && depthObj->is_valid()) {
+            s_staticPropDepthProgram = depthObj->shp_;
+            RenderCore::bindProgram(RenderCore::PipelineId::StaticPropDepth,
+                                    s_staticPropDepthProgram);
+            // u_drawIDBase exists ONLY in the coalesce variant; legacy returns -1
+            // (and the prepass never uploads it on the legacy path).
+            s_locsDepthCoalesce.drawIDBase =
+                glGetUniformLocation(s_staticPropDepthProgram, "u_drawIDBase");
+            // The coalesce frag samples u_texArr via a sampler2DArray uniform; bind
+            // it to texture unit 0 once (matches the color program's init-only bind
+            // at the coalesce block above) so the per-draw prepass loop only binds
+            // the texture handle, not re-issue glUniform1i.
+            if (depthUsesCoalesce) {
+                const GLint depthTexArrLoc =
+                    glGetUniformLocation(s_staticPropDepthProgram, "u_texArr");
+                if (depthTexArrLoc >= 0) {
+                    glUseProgram(s_staticPropDepthProgram);
+                    glUniform1i(depthTexArrLoc, 0);
+                    glUseProgram(0);
+                }
+            }
+            std::fprintf(stderr, "[GPUPROPS-DIAG] static_prop_depth program=%u "
+                         "variant=%s loc_drawIDBase=%d\n",
+                         s_staticPropDepthProgram,
+                         depthUsesCoalesce ? "coalesce" : "legacy",
+                         s_locsDepthCoalesce.drawIDBase);
+        } else {
+            std::fprintf(stderr,
+                "[GPUPROPS] static_prop_depth program failed to compile/link — "
+                "depth-prepass disabled this session (color path unaffected)\n");
+            s_staticPropDepthProgram = 0;   // flushDepthPrepass() must no-op when 0
         }
     }
 }

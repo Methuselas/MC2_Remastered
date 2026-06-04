@@ -226,6 +226,7 @@ ALLOWLIST=(
     MC2_SPOT_DIAG               # trace
     MC2_STATIC_FORCE_ADMIT      # override
     MC2_STATIC_PROP_BAKE_SELFTEST  # infra -- self-test
+    MC2_STATIC_PROP_DEPTH_PREPASS  # feature -- promote-to-registry; FOLIAGE-STATICPROP-DEPTH-PREPASS-1 camera depth-prepass (GL_EQUAL early-Z foliage overdraw cut, default OFF)
     MC2_STATIC_PROP_GLOBAL_CAP  # override
     MC2_STATIC_PROP_GLOBAL_POOL_LEGACY  # legacy
     MC2_STATIC_PROP_PICK        # feature -- promote-to-registry
