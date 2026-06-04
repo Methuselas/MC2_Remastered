@@ -2054,7 +2054,12 @@ void Terrain::geometry (void)
 		// Predicate MUST match UploadThin's exactly — see
 		// gos_terrain_water_stream.cpp:UploadAndBindThinRecords.
 		WaterStream::BeginFrameNarrow();
-		const bool s_waterNarrowOn = WaterStream::NarrowEnabled();
+		// WATER-GPU-FULL-RECIPE-CULL-1B: when authoritative full-recipe GPU cull owns
+		// the water draw, the GPU culls the whole world-indexed recipe set directly and
+		// the CPU narrow candidate walk feeds nothing — skip it (this is the ~0.16ms
+		// per-frame walk this lane set out to retire). Proven byte-identical by 1A parity.
+		const bool s_waterNarrowOn =
+			WaterStream::NarrowEnabled() && !WaterStream::IsFullRecipeAuthoritative();
 		// S6 coarse cost A/B instrument: ONE QPC pair around the WHOLE
 		// per-frame setupTextures loop (NOT per-quad - the per-quad
 		// std::chrono COST_SPLIT scopes are observer-effect-poisoned and

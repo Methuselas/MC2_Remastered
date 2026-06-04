@@ -146,6 +146,12 @@ struct NarrowCandidate {
 };
 void AppendNarrowCandidate(const void* quadPtr);
 
+// WATER-GPU-FULL-RECIPE-CULL-1B: true when authoritative full-recipe GPU cull is
+// enabled (MC2_WATER_GPU_FULL_RECIPE_AUTHORITATIVE, default-OFF). When true the CPU
+// narrow walk is skipped and the GPU culls the whole world-indexed recipe set
+// directly into the draw-feeding thin buffer.
+bool IsFullRecipeAuthoritative();
+
 // --- Phase C Stage 1: compute dispatch ------------------------------------
 //
 // ComputeDispatchAndBindThinRecords() replaces UploadAndBindThinRecords() on

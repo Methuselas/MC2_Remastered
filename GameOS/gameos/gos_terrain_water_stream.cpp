@@ -158,6 +158,21 @@ bool NarrowEnabled() {
     return NarrowEnabledImpl();
 }
 
+// WATER-GPU-FULL-RECIPE-CULL-1B: authoritative full-recipe GPU cull. When ON, the
+// compute path culls the whole world-indexed recipe set directly (no CPU candidate
+// window), its output FEEDS THE DRAW, and the CPU narrow walk is skipped. Default-OFF
+// (only literal "0" disambiguates the off-with-value case). Proven byte-identical to
+// the candidate path by 1A parity across tier1 + a camera-pan-across-water-edge check.
+bool IsFullRecipeAuthoritative() {
+    static bool s_known = false, s_val = false;
+    if (!s_known) {
+        const char* v = getenv("MC2_WATER_GPU_FULL_RECIPE_AUTHORITATIVE");
+        s_val = (v != nullptr && v[0] != '0');
+        s_known = true;
+    }
+    return s_val;
+}
+
 void BeginFrameNarrow() {
     if (!NarrowEnabledImpl()) return;
     // Reserve last-frame max + 10% slack, capped at recipe count (the hard
@@ -1321,8 +1336,16 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
         g_thinSlot = 0;
     }
     // Build and upload per-frame quad window SSBO.
-    const uint32_t windowCount = BuildQuadWindowSSBO();
-    if (windowCount == 0) return false;
+    // WATER-GPU-FULL-RECIPE-CULL-1B: in authoritative full-recipe mode the CPU narrow
+    // walk is skipped, so g_narrowQuadsThisFrame is empty and BuildQuadWindowSSBO would
+    // return 0. Bypass the window build AND the windowCount==0 early-return [adversarial
+    // C-1]; the dispatch bound becomes the full world-indexed recipe set. The full-recipe
+    // output writes the SAME real thin/header buffers the candidate path uses, so DISPATCH
+    // 2 + the VS draw consume it unchanged. Non-auth (1A/legacy) path is untouched.
+    const bool fullRecipeAuth = IsFullRecipeAuthoritative();
+    const uint32_t windowCount   = fullRecipeAuth ? 0u : BuildQuadWindowSSBO();
+    const uint32_t dispatchCount = fullRecipeAuth ? maxThinRecords : windowCount;
+    if (dispatchCount == 0) return false;
 
     // Advance ring slot so GPU write doesn't stomp a slot the GPU is still consuming.
     // Must happen AFTER the windowCount==0 early-return so we don't burn a slot
@@ -1382,7 +1405,7 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
         glUseProgram(0);
         return false;
     }
-    glUniform1i(locWindowCount, (int)windowCount);
+    glUniform1i(locWindowCount, (int)dispatchCount);   // 1B: full recipe count when authoritative
 
     if (locMaxThin < 0) {
         fprintf(stderr, "[GPU_DRIVEN_WATER v1] event=warn msg=u_maxThinRecords_not_found\n");
@@ -1608,8 +1631,9 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
         }
     }
 
-    // Normal (window) mode for the live dispatch.
-    if (locFullMode >= 0) glUniform1i(locFullMode, 0);
+    // Live-dispatch mode: full-recipe (authoritative 1B, writes the real draw buffers)
+    // or window (1A/legacy candidate-fed).
+    if (locFullMode >= 0) glUniform1i(locFullMode, fullRecipeAuth ? 1 : 0);
     if (locShoreExt >= 0) glUniform1f(locShoreExt, spikeShoreExt);
 
     // WATER-FULL-RECIPE-GPU-TIMER-SPIKE-0 (MC2_WATER_FULL_RECIPE_SPIKE): measurement
@@ -1626,18 +1650,35 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
     // armed (fast path owns the draw); C-2: recipes stay at binding 0; M-2: u_worldToClipGL.]
     static const bool s_cullOn = (getenv("MC2_WATER_GPU_FULL_RECIPE_CULL") != nullptr
                                   && getenv("MC2_WATER_GPU_FULL_RECIPE_CULL")[0] != '0');
-    const bool runFullRecipe = (s_spikeOn || s_cullOn);
+    // The scratch full-recipe dispatch (spike timer / 1A parity) is the NON-authoritative
+    // comparison harness — pointless in 1B authoritative mode (the live dispatch IS
+    // full-recipe to the real buffers), so disable it there.
+    const bool runFullRecipe = (s_spikeOn || s_cullOn) && !fullRecipeAuth;
     static GLuint s_qCand = 0, s_qSpike = 0;
     if (s_spikeOn) {
         if (!s_qCand)  glGenQueries(1, &s_qCand);
         if (!s_qSpike) glGenQueries(1, &s_qSpike);
     }
 
-    const uint32_t groups = (windowCount + 63u) / 64u;
+    const uint32_t groups = (dispatchCount + 63u) / 64u;   // 1B: full recipe set when authoritative
     if (s_spikeOn) glBeginQuery(GL_TIME_ELAPSED, s_qCand);
-    glDispatchCompute(groups, 1, 1);   // AUTHORITATIVE candidate-fed dispatch (feeds draw)
+    glDispatchCompute(groups, 1, 1);   // AUTHORITATIVE dispatch (feeds draw): full-recipe (1B) or candidate (1A/legacy)
     if (s_spikeOn) glEndQuery(GL_TIME_ELAPSED);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+    // 1B sanity telemetry: confirm the authoritative full-recipe dispatch actually
+    // produced water records (visibleCount > 0), every 600 frames.
+    if (fullRecipeAuth) {
+        static uint32_t s_authFrame = 0;
+        if ((s_authFrame++ % 600u) == 0u) {
+            uint32_t vis = 0;
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_waterBucketHeaderSsbo);
+            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, 4, &vis);
+            printf("[WATER_FULL_RECIPE_AUTH v1] recipeCount=%u authoritativeOutput=%u\n",
+                   maxThinRecords, vis);
+            fflush(stdout);
+        }
+    }
 
     if (runFullRecipe && locFullMode >= 0 && locShoreExt >= 0) {
         static GLuint s_spikeThin = 0, s_spikeHeader = 0;
