@@ -29,6 +29,17 @@
 // writes into it; the previous frame's data sits untouched in the other slot.
 // FrameArena instances are non-owning wrappers; actual buffers are s_arenaBuffers.
 // ---------------------------------------------------------------------------
+
+// STATICPROP-SNAPSHOT-BRIDGE-COMPARE-1: persistent cache for compare-only validation.
+// Built each frame from registry sources independently of the legacy propBuf path.
+// Gate: MC2_STATIC_PROP_SNAPSHOT_BRIDGE_COMPARE (default-off).
+static const bool s_bridgeCompareEnabled = []() -> bool {
+    const char* v = std::getenv("MC2_STATIC_PROP_SNAPSHOT_BRIDGE_COMPARE");
+    return v && v[0] == '1';
+}();
+static std::vector<ExtractedStaticProp> s_spRowCache;  // built from registry this frame
+static uint64_t s_cacheRegGen  = UINT64_MAX;           // last seen registryGeneration
+static uint64_t s_cacheCullGen = UINT64_MAX;           // last seen cullRecordVersion
 static constexpr size_t kArenaBytes = 1024u * 1024u;
 alignas(16) static uint8_t s_arenaBuffers[2][kArenaBytes];
 static RenderCore::FrameArena s_frameArenas[2];
@@ -304,6 +315,116 @@ RenderSnapshot ExtractRenderSnapshot()
                 }
             }
             }  // end Extract.SP.WriteLoop scope
+
+            // STATICPROP-SNAPSHOT-BRIDGE-COMPARE-1: build independent cache from registry
+            // and compare field-by-field with the legacy propBuf. Gate: MC2_STATIC_PROP_SNAPSHOT_BRIDGE_COMPARE.
+            if (s_bridgeCompareEnabled) {
+                // Read current generation signals.
+                const uint64_t curRegGen  = GpuStaticPropRegistry::getRegistryGeneration();
+                const uint64_t curCullGen = GpuStaticPropRegistry::getCullRecordVersion();
+                s_cacheRegGen  = curRegGen;
+                s_cacheCullGen = curCullGen;
+
+                // Build s_spRowCache INDEPENDENTLY from registry sources using the same views[].
+                // CRITICAL: read from registry functions directly — do NOT copy from propBuf.
+                s_spRowCache.clear();
+                s_spRowCache.reserve(aliveCount);
+                for (uint32_t i = 0u; i < static_cast<uint32_t>(views.size()); ++i) {
+                    const RenderWorld::StaticPropRecordView& v = views[i];
+                    if (!v.alive || !v.generationValid) continue;
+
+                    float mtx[16];
+                    if (!GpuStaticPropRegistry::staticPropGetModelMatrix(v.recipeIndex, mtx)) continue;
+                    uint32_t typeId = 0u;
+                    if (!GpuStaticPropRegistry::staticPropGetTypeId(v.recipeIndex, &typeId)) continue;
+                    uint32_t instanceFlags = 0u;
+                    if (!GpuStaticPropRegistry::staticPropGetInstanceFlags(v.recipeIndex, &instanceFlags)) continue;
+
+                    ExtractedStaticProp& cp = s_spRowCache.emplace_back();
+                    cp.rwHandle    = v.handle;
+                    cp.recipeIndex = v.recipeIndex;
+                    cp.typeId      = typeId;
+                    cp.instanceFlags = instanceFlags;
+                    std::memcpy(cp.worldMatrix, mtx, sizeof(float) * 16);
+                    cp.worldCenterX = -mtx[3];
+                    cp.worldCenterY =  mtx[11];
+                    cp.worldCenterZ =  mtx[7];
+                    cp.boundingRadius = 0.0f;
+                    GpuStaticPropRegistry::staticPropGetExtentRadius(v.recipeIndex, &cp.boundingRadius);
+                    cp.lightDataIndex = 0xFFFFFFFFu;
+                    GpuStaticPropRegistry::staticPropGetLightDataIndex(v.recipeIndex, &cp.lightDataIndex);
+                    cp.hasCullRecord = false;
+                    {
+                        bool cr = false;
+                        GpuStaticPropRegistry::staticPropGetHasCullRecord(v.recipeIndex, &cr);
+                        cp.hasCullRecord = cr;
+                    }
+                    cp.texArrayLayer = -1;
+                    cp.materialIdx   = 0xFFFFFFFFu;
+                    cp.alphaClass    = 0u;
+                    cp.packetCount   = 0u;
+                    cp.firstPacket   = 0xFFFFFFFFu;
+                    GpuStaticPropRegistry::StaticPropTypeMaterialCache matInfo{};
+                    if (GpuStaticPropRegistry::staticPropGetMaterialCacheInfo(v.recipeIndex, &matInfo)) {
+                        cp.texArrayLayer = matInfo.texArrayLayer;
+                        cp.materialIdx   = matInfo.materialIdx;
+                        cp.alphaClass    = matInfo.alphaClass;
+                        cp.packetCount   = matInfo.packetCount;
+                        cp.firstPacket   = matInfo.firstPacket;
+                    }
+                    cp.shapeName[0] = '\0';
+                    {
+                        const char* sn = GpuStaticPropRegistry::getRecipeShapeName(v.recipeIndex);
+                        if (sn) std::snprintf(cp.shapeName, sizeof(cp.shapeName), "%s", sn);
+                    }
+                }
+
+                // Compare cache rows against legacy propBuf.
+                // Both should be in the same order (both iterate views[] in index order).
+                uint32_t immutableMismatch = 0u;
+                uint32_t hasCullMismatch   = 0u;
+                const uint32_t compareCount = std::min(writeIdx, static_cast<uint32_t>(s_spRowCache.size()));
+                if (writeIdx != static_cast<uint32_t>(s_spRowCache.size())) {
+                    // Row count mismatch — treat as immutable mismatch (structural failure).
+                    ++immutableMismatch;
+                }
+                for (uint32_t ci = 0u; ci < compareCount; ++ci) {
+                    const ExtractedStaticProp& L = propBuf[ci];      // legacy
+                    const ExtractedStaticProp& C = s_spRowCache[ci]; // cache
+                    // Immutable fields: must NEVER mismatch after mission load.
+                    if (L.recipeIndex       != C.recipeIndex       ||
+                        L.typeId            != C.typeId            ||
+                        L.instanceFlags     != C.instanceFlags     ||
+                        L.boundingRadius    != C.boundingRadius    ||
+                        L.lightDataIndex    != C.lightDataIndex    ||
+                        L.materialIdx       != C.materialIdx       ||
+                        L.texArrayLayer     != C.texArrayLayer     ||
+                        L.alphaClass        != C.alphaClass        ||
+                        L.packetCount       != C.packetCount       ||
+                        L.firstPacket       != C.firstPacket       ||
+                        std::memcmp(L.worldMatrix, C.worldMatrix, sizeof(float) * 16) != 0 ||
+                        std::memcmp(L.shapeName,   C.shapeName,   sizeof(L.shapeName)) != 0) {
+                        ++immutableMismatch;
+                    }
+                    // hasCullRecord: per-frame field; may mismatch during warmup only.
+                    if (L.hasCullRecord != C.hasCullRecord) {
+                        ++hasCullMismatch;
+                    }
+                }
+
+                // Emit log line every frame when gate is ON.
+                std::fprintf(stderr,
+                    "[SNAPSHOT_BRIDGE_COMPARE v1] frame=%llu regGen=%llu cullVer=%llu"
+                    " rowCount=%u aliveCount=%u immutableMismatch=%u hasCullMismatch=%u\n",
+                    static_cast<unsigned long long>(snap.frameIndex),
+                    static_cast<unsigned long long>(curRegGen),
+                    static_cast<unsigned long long>(curCullGen),
+                    static_cast<uint32_t>(s_spRowCache.size()),
+                    static_cast<uint32_t>(aliveCount),
+                    immutableMismatch,
+                    hasCullMismatch);
+                std::fflush(stderr);
+            }
 
             snap.staticProps              = Span<ExtractedStaticProp>(propBuf, writeIdx);
             snap.staticPropValidationFail = validationFail;
