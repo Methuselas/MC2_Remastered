@@ -95,12 +95,20 @@ deconflates the shadow-caster GPU cost from `GpuSP.BatcherFlush`.
 - **Smoke (mc2_24):** all gates off, and each gate on — PASS, +0 destroys,
   GL-clean.
 - **Projection proof:** `MC2_SHADOW_FRUSTUM_DIAG` worldCenter moved off-map→on-ground.
-- **Caveat — smoke camera is degenerate** for this: the fixed start camera looks
-  across the map, so even with focus-center the absolute box can sit off the
-  battlefield. The *relative* move (toward camera focus, onto the scene) is the
-  proof. **Real validation needs a gameplay battlefield camera** (user, or
-  desktop-driven): confirm shadows track the camera (no edge-reflection), the box
-  centers on the visible trees, and `N→M` drops with the near trees kept.
+- **Gameplay-validated (desktop-driven, focus+bounded+cull all ON, mc2_24):**
+  ran the deployed v0.3 build interactively (smoke/passive mode, tactical camera).
+  Result: `fitRadius=2500` (bounded, from orig 11404), box `worldCenter=(-2194,
+  -7926,70)` — **Z=70 on the ground** (was 7526 off-map), `focusWorld=(-795,-8300,
+  1470)`, nearSpread 61 / farSpread 27983. **`[SHADOW_CULL] casters 5674 → 2269
+  (60% culled)`** — 60% of shadow-caster draws eliminated. Ran **1800+ frames with
+  `gl_errors=0` throughout** (GL-clean), **93 FPS / GPU 61%** at the tactical
+  camera, trees rendered, no crash, process killed clean. The full stack is proven
+  functional + a real GPU reduction.
+- **Still user-gated:** the low-angle CLOSE-UP visual A/B (the camera in the
+  user's 46 ms screenshot) — confirm the shadows look sensible (no edge-reflection)
+  and `GpuSP.DynShadowDraw` collapses there. The tactical-camera gameplay run above
+  proves correctness + cull magnitude but not the close-up visual quality, which
+  needs the user's navigated camera. After that → flip the three gates default-ON.
 
 ## Rollout
 
