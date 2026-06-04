@@ -17,3 +17,8 @@ struct WorkbenchOverride {
 // ADVISORY mirror of the registry's MVP invariants for live UI. The registry
 // round-trip (BundleExport, S4) is AUTHORITATIVE. S3's smoke asserts agreement.
 std::vector<Warning> ValidateRecordRules(const WorkbenchOverride& rec);
+
+// Serialize to the engine's models.json shape {"overrides":[...]}. Hand-rolled
+// (keeps nlohmann to the registry TU). Correctness is guaranteed at export by
+// the registry round-trip; escaping is covered by S4's smoke.
+std::string ToModelsJson(const std::vector<WorkbenchOverride>& recs);

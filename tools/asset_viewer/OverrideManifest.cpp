@@ -1,5 +1,6 @@
 #include "OverrideManifest.h"
 #include <cctype>
+#include <string>
 static std::string lower(std::string s){ for(char& c:s) c=(char)std::tolower((unsigned char)c); return s; }
 static bool isSafeSource(const std::string& s){
     if (s.empty()||s[0]=='/'||s[0]=='\\') return false;
@@ -22,4 +23,27 @@ std::vector<Warning> ValidateRecordRules(const WorkbenchOverride& r){
         if (!isSafeSource(l.sourceRelPath))  block("lod-source","LOD source must be a safe relative .glb/.gltf path");
         last=l.lod; }
     return w;
+}
+
+static std::string esc(const std::string& s){
+    std::string o; o.reserve(s.size()+8);
+    for(char c:s){ switch(c){
+        case '"': o+="\\\""; break; case '\\': o+="\\\\"; break;
+        case '\n': o+="\\n"; break; case '\t': o+="\\t"; break; case '\r': o+="\\r"; break;
+        default: o+=c; } }
+    return o;
+}
+std::string ToModelsJson(const std::vector<WorkbenchOverride>& recs){
+    std::string o="{\n  \"overrides\": [\n";
+    for (size_t i=0;i<recs.size();++i){ const auto& r=recs[i];
+        o+="    {\"type\":\"model\",\"class\":\""+esc(r.overrideClass)+"\",";
+        o+="\"replaces\":\""+esc(r.overrideClass+":"+r.appearanceName)+"\",";
+        o+="\"source\":\""+esc(r.sourceRelPath)+"\",\"renderOnly\":true,\"scale\":1.0,\"fallback\":\"stock\"";
+        if(!r.lods.empty()){ o+=",\"lods\":[";
+            for(size_t j=0;j<r.lods.size();++j){ const auto& l=r.lods[j];
+                o+="{\"lod\":"+std::to_string(l.lod)+",\"source\":\""+esc(l.sourceRelPath)+"\",\"distance\":"+std::to_string(l.distance)+"}";
+                if(j+1<r.lods.size()) o+=","; }
+            o+="]"; }
+        o+="}"; if(i+1<recs.size()) o+=","; o+="\n"; }
+    o+="  ]\n}\n"; return o;
 }

@@ -2,6 +2,7 @@
 #include "GlbMeshLoader.h"
 #include <cmath>
 #include <cctype>
+#include <string>
 
 // Extract basename without extension (lowercase) from a path.
 static std::string basenameNoExt(const std::string& path){
@@ -67,6 +68,12 @@ void ModWorkbench::revalidate(const std::vector<std::string>& missing){
 bool ModWorkbench::hasBlocking() const {
     for(const auto& w:warnings_) if(w.severity==WarnSeverity::Block) return true;
     return false;
+}
+
+ExportResult ModWorkbench::exportBundle(const std::string& outRoot, const std::string& bundleId){
+    revalidate();
+    if (hasBlocking()){ ExportResult r; r.message="fix BLOCK warnings before export"; return r; }
+    return ExportBundle(outRoot, bundleId, overridePath_, record_);
 }
 
 ModWorkbench::BoundsDelta ModWorkbench::computeDelta() const {

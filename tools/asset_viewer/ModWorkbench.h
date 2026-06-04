@@ -2,6 +2,7 @@
 #pragma once
 #include "TglMeshLoader.h"
 #include "OverrideManifest.h"
+#include "BundleExport.h"
 #include "WorkbenchWarning.h"
 #include "WorkbenchValidation.h"
 #include <cstdint>
@@ -33,6 +34,7 @@ public:
     const std::vector<Warning>& warnings() const { return warnings_; }
     bool hasBlocking() const;
     void revalidate(const std::vector<std::string>& missingTextures = {});
+    ExportResult exportBundle(const std::string& outRoot, const std::string& bundleId);
 
 private:
     std::string overridePath_;

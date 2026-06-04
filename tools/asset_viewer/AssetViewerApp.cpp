@@ -1290,6 +1290,7 @@ int AssetViewerApp::runSmokeSpotlight(const char* deployDir)
 #include "GlbMeshLoader.h"
 #include "model_override_registry.h"
 #include "WorkbenchValidation.h"
+#include "BundleExport.h"
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
@@ -1368,6 +1369,30 @@ int AssetViewerApp::runSmokeWorkbenchValidate(const char* fixtureDir){
     SemanticInputs si; si.overrideMesh=&ov; si.stockMesh=&st; si.maxFootprintRatio=4.0f;
     if(!hasCode(ValidateSemantics(ok,si),"bounds-delta")) return smokeFail("validate: oversize not warned");
     std::printf("[smoke] PASS workbench-validate\n"); return 0;
+}
+
+int AssetViewerApp::runSmokeWorkbenchExport(const char* fixtureDir, const char* tmpDir){
+    namespace fs=std::filesystem;
+    std::string root=std::string(tmpDir)+"/model_overrides"; fs::remove_all(root);
+    std::string glb=std::string(fixtureDir)+"/unit_tri.gltf";
+    WorkbenchOverride rec; rec.overrideClass="staticProp"; rec.appearanceName="example_name";
+    rec.appearanceVerified=true; rec.scale=1.0f; rec.renderOnly=true; rec.fallback="stock";
+
+    ExportResult r=ExportBundle(root,"example_id",glb,rec);
+    if(!r.ok) return smokeFail((std::string("export: ")+r.message).c_str());
+    if(!fs::exists(r.manifestPath)) return smokeFail("export: models.generated.json missing");
+    if(!fs::exists(r.bundleDir+"/unit_tri.gltf")) return smokeFail("export: glb not copied");
+    ModelOverrideRegistry reg; reg.loadFromFile(r.manifestPath, root);
+    if(reg.resolve("staticProp","example_name")==nullptr) return smokeFail("export: registry did not resolve record");
+
+    { auto bad=rec; bad.scale=2.0f; if(ExportBundle(root,"bad_scale",glb,bad).ok) return smokeFail("export: should refuse scale!=1"); }
+    { auto bad=rec; bad.appearanceVerified=false; if(ExportBundle(root,"unverified",glb,bad).ok) return smokeFail("export: should refuse unverified appearance"); }
+    { if(ExportBundle(root,"../escape",glb,rec).ok) return smokeFail("export: should refuse bad bundle id"); }
+    { auto q=rec; q.appearanceName="a\"b\\c"; q.appearanceVerified=true;
+      ExportResult er=ExportBundle(root,"escape_id",glb,q);
+      if(er.ok){ ModelOverrideRegistry rr; rr.loadFromFile(er.manifestPath, root);
+                 if(rr.resolve("staticProp","a\"b\\c")==nullptr) return smokeFail("export: escaped key did not round-trip"); } }
+    std::printf("[smoke] PASS workbench-export (round-trip + refusals + escaping)\n"); return 0;
 }
 
 void AssetViewerApp::onFileDropped(const char* path){

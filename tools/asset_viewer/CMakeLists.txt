@@ -182,6 +182,8 @@ set(ASSET_VIEWER_SOURCES
     ModWorkbenchPanel.cpp
     # S3: semantic validation
     WorkbenchValidation.cpp
+    # S4: bundle export + registry round-trip gate
+    BundleExport.cpp
 )
 
 add_executable(mc2_asset_viewer ${ASSET_VIEWER_SOURCES})

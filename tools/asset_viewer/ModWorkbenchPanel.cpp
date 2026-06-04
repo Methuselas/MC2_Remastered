@@ -1,9 +1,11 @@
 // tools/asset_viewer/ModWorkbenchPanel.cpp
 // S2: stock vs override side-by-side panel with generation-sync.
 // S3: warnings panel + appearance-verify control.
+// S4: export draft bundle button.
 #include "ModWorkbenchPanel.h"
 #include "imgui.h"
 #include <cstring>
+#include <string>
 
 void ModWorkbenchPanel::setDeployDir(const std::string& d) {
     stockPreview_.setDeployDir(d);
@@ -78,4 +80,19 @@ void ModWorkbenchPanel::draw(ModWorkbench& wb, const ImVec2& avail) {
         ImGui::TextColored(blk?ImVec4(1,0.4f,0.4f,1):ImVec4(1,0.8f,0.3f,1),
                            "  [%s] %s", blk?"BLOCK (mirror, advisory)":"WARN", w.message.c_str());
     }
+
+    ImGui::Separator();
+    static char bundleId[128]="my_override";
+    static char outRoot[260]="data/model_overrides";
+    static std::string exportMsg;
+    ImGui::InputText("Bundle id", bundleId, sizeof(bundleId));
+    ImGui::InputText("Out root (model_overrides dir)", outRoot, sizeof(outRoot));
+    ImGui::BeginDisabled(wb.hasBlocking());
+    if (ImGui::Button("Export draft bundle")){
+        ExportResult r=wb.exportBundle(outRoot,bundleId);
+        exportMsg=(r.ok?"OK: ":"FAILED: ")+r.message;
+    }
+    ImGui::EndDisabled();
+    if (!exportMsg.empty()) ImGui::TextWrapped("%s", exportMsg.c_str());
+    ImGui::TextDisabled("Writes <out>/<id>/{model.glb, models.generated.json}. Does NOT edit your central models.json.");
 }
