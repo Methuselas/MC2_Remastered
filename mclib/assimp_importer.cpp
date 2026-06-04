@@ -542,7 +542,7 @@ long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out) {
 	// largest stuff.y; translate that to 0 so the base sits on the ground.
 	// MC2_GLTF_GROUND=2 grounds the opposite end; =0 disables.
 	{
-		static const int s_ground = [](){ const char* e=getenv("MC2_GLTF_GROUND"); return e?atoi(e):1; }();
+		static const int s_ground = [](){ const char* e=getenv("MC2_GLTF_GROUND"); return e?atoi(e):2; }();
 		if (s_ground) {
 			const float dy = (s_ground==2) ? -out->minBox.y : -out->maxBox.y;
 			for (unsigned si=0; si<scene->mNumMeshes; ++si) {
