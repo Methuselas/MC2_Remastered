@@ -22,6 +22,20 @@
 // file-scope pattern in code/terrobj.cpp:176.
 static bool s_tobjSplitBdOn = (getenv("MC2_TOBJ_COST_SPLIT") != nullptr);
 
+// BLDG-TYPE-ANIM-GATE-FIX-1 kill-switch.
+// Unset/1 = new: idle animatable-type buildings eligible for static path.
+// 0       = legacy: bldgTypeHasAnimations disqualifies entire type.
+static bool s_bldgTypeAnimStaticEligible = []() -> bool {
+    const char* v = getenv("MC2_BLDG_TYPE_ANIM_STATIC_ELIGIBLE");
+    if (!v) return true;
+    return !(v[0] == '0');
+}();
+
+// BLDG-TYPE-ANIM-GATE-FIX-1 diagnostic counters (cumulative).
+static uint32_t s_animTypeIdleNowStatic   = 0;
+static uint32_t s_animStartInvalidated    = 0;
+static uint32_t s_animStateToStateGesture = 0;
+
 // T1.15 SpotLight_ illumination diagnostic — registration probe (bldg class).
 // Env-gated per Debug Instrumentation Rule. First-hit is always-on (one stderr
 // line per BldgAppearance instance that walks the lazy-init block). Periodic
@@ -940,8 +954,31 @@ void BldgAppearance::setGesture (unsigned long gestureId)
 	if (gestureId == bdAnimationState)
 		return;
 
+	// BLDG-TYPE-ANIM-GATE-FIX-1: invalidate static registration on idle→animated.
+	// When an idle building (bdAnimationState == -1) that is registered as a
+	// static prop receives its first gesture, the GPU registry holds a stale
+	// static-pose recipe. Invalidate before state change so the static draw is
+	// removed before CPU animation begins. needsFullBakeNextFrame is NOT set —
+	// invalidateStaticRegistration() clears staticReg, making IsStaticNow()
+	// false, and the next update() runs the full bake naturally.
+	// State-to-state (bdAnimationState != -1 → new state): already dynamic,
+	// not registered, no action needed.
+	if (bdAnimationState == -1 && staticReg.registered) {
+		invalidateStaticRegistration();
+		++s_animStartInvalidated;
+	}
+	// Count all setGesture calls while already in a non-idle state.
+	// Not an animation-end counter — bdAnimationState never returns to -1 after
+	// the first setGesture() call: BldgAppearance has no idle-reset path, and
+	// setGesture() itself guards gestureId >= MAX_BD_ANIMATIONS (blocking the
+	// unsigned cast of -1). If a future refactor adds an idle-reset, this block
+	// will need re-evaluation.
+	if (bdAnimationState != -1) {
+		++s_animStateToStateGesture;
+	}
+
 	//----------------------------------------------------------------------
-	// If state is OK, set animation data, set first frame, set loop and 
+	// If state is OK, set animation data, set first frame, set loop and
 	// reverse flag, and start it going until you hear otherwise.
 	appearType->setAnimation(bldgShape,gestureId);
 	bdAnimationState = gestureId;
@@ -2529,17 +2566,20 @@ namespace {
 
 bool BldgAppearance::isStaticEligible() const
 {
-	// Type-level disqualifiers: this building TYPE is dynamic by design.
-	if (!appearType)                          return false;
-	if (appearType->spinMe)                   return false;
-	if (bldgTypeHasAnimations(appearType))    return false;
-	// Instance-level disqualifiers: this PARTICULAR building is currently
-	// mutating in a way the cached recipe can't reflect.
-	if (drawFlash)                            return false;
-	if (destructFX)                           return false;
-	if (activity)                             return false;
-	if (activity1)                            return false;
-	if (bdAnimationState != -1)               return false;  // currently animating
+	// Type-level disqualifiers.
+	if (!appearType)        return false;
+	if (appearType->spinMe) return false;
+	// BLDG-TYPE-ANIM-GATE-FIX-1: legacy type-level animation-capacity check.
+	// Kill-switch MC2_BLDG_TYPE_ANIM_STATIC_ELIGIBLE=0 restores old behaviour.
+	// When enabled (default), bdAnimationState guard below is sufficient.
+	if (!s_bldgTypeAnimStaticEligible && bldgTypeHasAnimations(appearType))
+		return false;
+	// Instance-level disqualifiers.
+	if (drawFlash)          return false;
+	if (destructFX)         return false;
+	if (activity)           return false;
+	if (activity1)          return false;
+	if (bdAnimationState != -1) return false;
 	return true;
 }
 
@@ -2667,6 +2707,11 @@ bool BldgAppearance::IsStaticNow() const
 
 void BldgAppearance::touch()
 {
+	// BLDG-TYPE-ANIM-GATE-FIX-1: count touch() calls for newly-eligible pop:
+	// type has animation data, instance is idle (bdAnimationState==-1), and
+	// currently registered (staticReg.registered). Nonzero delta proves fix works.
+	if (bldgTypeHasAnimations(appearType) && bdAnimationState == -1 && staticReg.registered)
+		++s_animTypeIdleNowStatic;
 	// MC2_STATIC_UPDATE_SKIP defaults TRUE (terrobj.cpp:92); touch() is the
 	// DEFAULT path. update() runs only when the env var is explicitly cleared.
 	if (bldgShape) {
@@ -4516,6 +4561,11 @@ bool TreeAppearance::isStaticRegistered() const { return staticReg.registered; }
 int32_t TreeAppearance::getStaticRecipeIndex() const {
     return staticReg.registered ? staticReg.recipeIndex : -1;
 }
+
+// BLDG-TYPE-ANIM-GATE-FIX-1 counter accessors (header: bldg_anim_gate_counters.h).
+uint32_t g_bldgAnimGate_typeIdleNowStatic()    { return s_animTypeIdleNowStatic; }
+uint32_t g_bldgAnimGate_animStartInvalidated() { return s_animStartInvalidated; }
+uint32_t g_bldgAnimGate_animStateToState()     { return s_animStateToStateGesture; }
 
 //-----------------------------------------------------------------------------
 

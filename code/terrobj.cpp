@@ -64,6 +64,7 @@
 
 #include"objectappearance.h"
 #include "static_update_counters.h"
+#include "bldg_anim_gate_counters.h"
 
 //---------------------------------------------------------------------------
 // Slice 3 Static-Update Bypass instrumentation (worktree CLAUDE.md
@@ -158,6 +159,30 @@ void g_staticUpdateEmitSummary(uint32_t frame) {
         }
     }
     fflush(stdout);
+
+    // [ANIM_GATE v1] BLDG-TYPE-ANIM-GATE-FIX-1 event counters.
+    // typeIdleNowStatic_delta: touch() calls for idle registered anim-type buildings;
+    //   nonzero proves the fix is exercised.
+    // animStartInvalidated_delta: reg-clear events on idle->animated transition;
+    //   may be zero in smoke missions if no registered-static building animates.
+    // animStateToState_delta: setGesture calls between non-idle states (e.g. gates).
+    {
+        static uint32_t s_prevTypeIdle  = 0;
+        static uint32_t s_prevAnimStart = 0;
+        static uint32_t s_prevStoS      = 0;
+        const uint32_t curIdle  = g_bldgAnimGate_typeIdleNowStatic();
+        const uint32_t curStart = g_bldgAnimGate_animStartInvalidated();
+        const uint32_t curStoS  = g_bldgAnimGate_animStateToState();
+        printf("[ANIM_GATE v1] frame=%u typeIdleNowStatic_delta=%u animStartInvalidated_delta=%u animStateToState_delta=%u\n",
+               frame,
+               curIdle  - s_prevTypeIdle,
+               curStart - s_prevAnimStart,
+               curStoS  - s_prevStoS);
+        fflush(stdout);
+        s_prevTypeIdle  = curIdle;
+        s_prevAnimStart = curStart;
+        s_prevStoS      = curStoS;
+    }
 
     g_staticUpdateLastSummary = cur;
     g_staticUpdateLastSummaryFrame = frame;
