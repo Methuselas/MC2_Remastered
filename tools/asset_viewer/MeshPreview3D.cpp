@@ -320,6 +320,11 @@ void MeshPreview3D::setMeshData(const MeshData& md) {
     mesh_.destroy();
     mesh_.upload(md, deployDir_, tier_);
 
+    if (!mesh_.valid()) {
+        errorMsg_ = "MeshGpu upload produced no submeshes";
+        return;
+    }
+
     // Frame camera from MeshData bounds (same formula as setSource).
     float dx = md.bmax[0] - md.bmin[0];
     float dy = md.bmax[1] - md.bmin[1];
