@@ -166,8 +166,11 @@ bool NarrowEnabled() {
 bool IsFullRecipeAuthoritative() {
     static bool s_known = false, s_val = false;
     if (!s_known) {
+        // DEFAULT-ON since 2026-06-03 (1A byte-identical parity across tier1 +
+        // user pan-across-water-edge + visual soak): only literal "0" opts out
+        // (revert escape hatch); any other value INCLUDING UNSET opts in.
         const char* v = getenv("MC2_WATER_GPU_FULL_RECIPE_AUTHORITATIVE");
-        s_val = (v != nullptr && v[0] != '0');
+        s_val = !(v && v[0] == '0' && v[1] == '\0');
         s_known = true;
     }
     return s_val;
