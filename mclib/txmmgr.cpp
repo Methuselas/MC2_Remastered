@@ -2336,7 +2336,14 @@ void MC_TextureManager::renderLists (void)
 						s_dynPropInstsGeneration  = GpuStaticPropRegistry::getRegistryGeneration();
 						s_dynPropInstsIncludeBldg = includeBldg;
 					}
+				{
+				// LANE-D measure-first: give the dynamic prop shadow CASTER draw its
+				// own GPU timestamp so its cost is deconflated from GpuSP.BatcherFlush
+				// (which previously absorbed it as first-GPU-zone self-time).
+				ZoneScopedN("RenderLists.DynShadowDraw");
+				TracyGpuZone("GpuSP.DynShadowDraw");
 				GpuStaticPropBatcher::instance().drawDynamicPropShadows(s_dynPropInsts);
+			}
 			} else {
 				GpuStaticPropBatcher::instance().flushShadow(s_skipBldgInDynamic);
 			}
