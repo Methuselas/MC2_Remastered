@@ -4660,12 +4660,28 @@ long TreeAppearance::update (bool animate)
 	// to the highest registered+available LOD (M4 — never select an unavailable
 	// LOD). On a LOD switch re-arm needsFullBakeNextFrame (black-tree guard).
 	{
-		int _wantLOD = 0;  // default LOD0; distance selection arrives in a later step.
-		static const char* s_forceLodStr = getenv("MC2_FORCE_LOD");
-		if (s_forceLodStr) _wantLOD = atoi(s_forceLodStr);
+		// Highest registered+available LOD (M4: never select an unavailable LOD).
 		int _maxAvailLOD = 0;
 		for (int _l = MAX_LODS - 1; _l > 0; --_l) {
 			if (staticReg[_l].registered) { _maxAvailLOD = _l; break; }
+		}
+		int _wantLOD = 0;  // default near = LOD0
+		static const char* s_forceLodStr = getenv("MC2_FORCE_LOD");
+		if (s_forceLodStr) {
+			_wantLOD = atoi(s_forceLodStr);            // debug override
+		} else if (_maxAvailLOD >= 1 && eye) {
+			// Distance-driven: far trees draw the cheap far LOD (impostor / reduced
+			// card) so the alpha-card overdraw collapses where the tree is small on
+			// screen. Threshold tunable via MC2_IMPOSTOR_DIST (world units).
+			static const float s_impostorDist = [](){
+				const char* e = getenv("MC2_IMPOSTOR_DIST"); return e ? (float)atof(e) : 800.0f;
+			}();
+			Stuff::Vector3D _camP;
+			_camP.x = -eye->getCameraOrigin().x;
+			_camP.y =  eye->getCameraOrigin().z;
+			_camP.z =  eye->getCameraOrigin().y;
+			Stuff::Vector3D _d; _d.Subtract(position, _camP);
+			if (_d.GetApproximateLength() > s_impostorDist) _wantLOD = _maxAvailLOD;
 		}
 		if (_wantLOD < 0) _wantLOD = 0;
 		if (_wantLOD > _maxAvailLOD) _wantLOD = _maxAvailLOD;

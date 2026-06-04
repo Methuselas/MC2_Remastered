@@ -130,6 +130,7 @@ ALLOWLIST=(
     MC2_HEARTBEAT               # infra
     MC2_HOTKEY_TRACE            # trace
     MC2_INVIEW_CONFLATION_TRACE # trace
+    MC2_IMPOSTOR_DIST           # override -- tree impostor far-LOD distance (world units)
     MC2_LEGACY_INSTANCE_POOLS   # override -- dev testing (revert pool-skip)
     MC2_LIGHT_COST_SPLIT        # feature -- promote-to-registry
     MC2_LIGHT_DEDUP_TRACE       # trace
