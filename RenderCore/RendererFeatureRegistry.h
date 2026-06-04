@@ -865,6 +865,14 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         false,
         "v8 kill-switch: =1 restores live build + snapshot compare"
     },
+    // STATICPROP-SNAPSHOT-BRIDGE-COMPARE-1
+    {
+        "MC2_TRACE_STATIC_PROP_SNAPSHOT_BRIDGE_COMPARE",
+        "MC2_STATIC_PROP_SNAPSHOT_BRIDGE_COMPARE",
+        EnvVarKind::Trace,
+        false,
+        "STATICPROP-SNAPSHOT-BRIDGE-COMPARE-1 gate: default OFF. =1 builds s_spRowCache from registry each frame and compares field-by-field with legacy propBuf. Emits [SNAPSHOT_BRIDGE_COMPARE v1] log per frame."
+    },
     // TRACKV-CI-GATE-RESTORE-1 diagnostic trace vars
     {
         "MC2_TRACE_ASSIMP_TRACE",

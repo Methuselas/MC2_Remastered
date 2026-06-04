@@ -20,6 +20,9 @@
 ## TRACKV CPU perf kill-switches (2026-06-03)
 
 - `MC2_STATIC_PROP_LIVE_BUILDER=1` — DrawPacket v8 kill-switch. Default **OFF** = snapshot is sole static-prop draw-packet owner (live builder + per-flush compare retired). `=1` restores the v3-flip dual build + compare path (regression bisect / A-B).
+- `MC2_STATIC_PROP_SNAPSHOT_BRIDGE_COMPARE` — default **OFF**. STATICPROP-SNAPSHOT-BRIDGE-COMPARE-1 gate.
+  - unset/0: no-op (no behavior change).
+  - 1: builds s_spRowCache from registry each frame and compares field-by-field with legacy propBuf. Emits `[SNAPSHOT_BRIDGE_COMPARE v1]` log per frame with: regGen, cullVer, rowCount, aliveCount, rowCountMismatch, immutableMismatch, hasCullMismatch.
 - `MC2_THIN_CANARY=1` — re-enable Probe-6 thin-record canary readback (per-frame ~80KB `glGetBufferSubData` ×2 + CPU recipeIdx/flags compare). Default **OFF**. Diagnostic only; gated 2026-06-03 (was ungated per-frame stall).
 - `MC2_STATIC_PROP_LEGACY_DISPATCH=1` — DrawPacket v7 kill-switch: revert to legacy `glMultiDrawElementsIndirect`. Default **OFF**.
 
