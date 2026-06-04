@@ -22,6 +22,62 @@ recommendation.
 
 ## Update log (post-2026-05-22 ships)
 
+**2026-06-04 June perf-debt closeout + visual/authoring advances.**
+
+*Perf (advances item 3 extraction, item 11 DrawPacket, item 13):*
+
+- **Static-prop snapshot fill dirty-only** (STATICPROP-SNAPSHOT-FILL-DIRTYONLY-1,
+  merged nifty `cf654080`) — `ExtractRenderSnapshot` 1.68ms→36.7µs via
+  clean-generation fast path. Advances item 3 — snapshot now incrementally owned.
+- **Permanent instance lights + LightsData upload split**
+  (STATICPROP-PERMANENT-INSTANCE-LIGHTS-1, STATIC-LIGHT-UPLOAD-SPLIT default-ON) —
+  `RenderLists.LightDataUpload` 224µs→7µs.
+- **DrawPacket v8 + static-prop live-builder retired** (nifty `3f9f1da2`) —
+  snapshot is sole static-prop draw-packet owner; `flush()` skips per-flush live
+  build. Advances item 11 to v8.
+- **GOM.readbackSnapshot shadow-copy** (SHADOW-COPY-1) — vis-bits shadow-copied to
+  system RAM, killed BAR-read stall 10ms→360ns.
+- **quadSetupTextures retire** (QUADSETUP-ARMED-SKIP +
+  WATER-GPU-FULL-RECIPE-AUTHORITATIVE default-ON, merged nifty `6ecace0a`) —
+  per-quad `setupTextures()` loop retired 1.01ms→~0.6µs; GPU culls whole
+  world-indexed water recipe set, CPU narrow-walk retired.
+- **Tier-3 cleanup** (nifty `a23250ef`) — `MC2_RAIN_BATCH` default-ON
+  (rain ~500 draws→1 batched), `MC2_SHADOW_DYNAMIC_PROP_DIRTY_ONLY` default-ON
+  (`DynamicShadowPass` 192µs→40µs).
+
+*GPU-cull (item 6 / item 10 follow-up — IN FLIGHT, not merged):*
+
+- **GPU-cull ownership oracle corrected + measured** (branch
+  `claude/perf-gpucull-ownership-1`) — H4 bimodal cull divergence characterized.
+  Chose FROZEN-STATIC-CULL-RECORDS metafix (frozen pool-aligned cull records so
+  record-index==pool-slot; retires per-frame static rebuild). IN EXECUTION,
+  not shipped.
+
+*Track V visual (Tier-2 ladder advances — see visual-fidelity-roadmap for full status):*
+
+- **Foliage 2-card impostor far-LOD** (branch `model-override-system-recon-1`,
+  `01f3c1b6..d12f7c2b`, v0.3) — `Render.GpuStaticProps` 6.77s→161µs (~40,000×),
+  frame 5.84s→55ms. Root cause was alpha-card screen-coverage/overdraw, NOT
+  triangle count.
+- **Foliage static-prop depth-prepass** (`MC2_STATIC_PROP_DEPTH_PREPASS`
+  default-OFF, `a5461d80..98a39c77`) — camera depth-prepass collapses foliage
+  overdraw.
+- **Model-override system end-to-end** (branch `model-override-system-recon-1`,
+  `c1fbc9ac`) — glTF import → MC2 texture binding (`a_` alpha-leaf convention) →
+  register → textured trees render. GPU-INSTANCE-SKIP-POOLS-1 (`313df6aa`). This is
+  the de-facto **prototype of the Track G asset-cook import path**.
+- **Water SH-L2 sky reflection** (merged `68343329`, default OFF); **shadow
+  dynamic-projection + caster-feed fix** (`69522900`, 733 prop casters);
+  **colormap BC7 KTX2 atlas** (`7768d4e5`, 108→27MB).
+- **Asset viewer stage 1** shipped (`mc2_asset_viewer` exe, ImGui/FIT,
+  nifty `29aebfe5`); stage 2 spec ready (branch `claude/asset-viewer-stage2`).
+
+Net: June was a perf-debt closeout (multi-second→sub-ms across
+static-prop/terrain/water/shadow/foliage) + the model-override import prototype
+that seeds Track G. See
+`docs/superpowers/specs/2026-06-04-engine-convergence-and-fidelity-next-arc.md`
+for the next-arc scoping.
+
 **2026-05-29 Infrastructure + Track V visual batch.**
 
 *Infrastructure (Track R substrate):*
@@ -331,7 +387,7 @@ contracts that replace the imperative `XXX::render()` enqueuers.
 
 ### 3. World snapshot / extraction phase
 
-**Status: IN PROGRESS — extraction arc v2.1–v3 SHIPPED (2026-05-26). Static-prop axis proven; frame-decoupled dispatch opt-in gate live.**
+**Status: IN PROGRESS — extraction arc v2.1–v3 SHIPPED (2026-05-26). Static-prop axis proven; frame-decoupled dispatch opt-in gate live. + snapshot fill dirty-only SHIPPED 2026-06-04 (ExtractRenderSnapshot 1.68ms→36.7µs); authority-flip still the next slice.**
 
 `GameCamera::render` still calls `objectManager->render()` which
 iterates live game objects for ALL subsystems. Render code reads
@@ -585,7 +641,7 @@ without adding new substrate.
 
 ### 11. Draw packets / render packets
 
-**Status: v7+v7.1 SHIPPED — DrawPacket canonical dispatch DEFAULT-ON (2026-05-26). HEAD `f780949f`.**
+**Status: v7+v7.1 SHIPPED — DrawPacket canonical dispatch DEFAULT-ON (2026-05-26). HEAD `f780949f`. v8 (2026-06-04): static-prop live-builder retired, snapshot sole draw-packet owner (nifty `3f9f1da2`).**
 
 The DrawPacket arc makes the rendering intent explicit in a data structure that
 outlives the draw-call submission window, enabling sort, cull, and multi-pass

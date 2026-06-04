@@ -1,5 +1,7 @@
 # Render Pipeline Matrix
 
+> **Staleness (2026-06-04):** Status column predates the June perf closeout. Known drift: water fast-path is now DEFAULT-ON (WATER-GPU-FULL-RECIPE-AUTHORITATIVE), quadSetupTextures RETIRED, static-prop substrate snapshot-owned (live-builder retired). Re-validate the Status column against the June ship-log in the convergence roadmap before quoting. Cell symbols (file:line) remain grep-to-confirm as always.
+
 For each thing-type the engine renders, this document maps where it lives at each of the 4 stages of the pipeline. Use this to answer "what does X touch?" in 30 seconds instead of 30 minutes of grep.
 
 Operating principle behind this artifact: every cell is a NAMED contract surface that was previously implicit. See `memory/named_contracts_at_intersections.md`.
