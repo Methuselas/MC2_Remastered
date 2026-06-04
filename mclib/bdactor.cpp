@@ -4654,42 +4654,10 @@ long TreeAppearance::update (bool animate)
 	if (rotation < -180)
 		rotation += 360;
 
-	// TREE-OVERRIDE-LOD-MVP-1 Task 5: select the active render-LOD. MC2_FORCE_LOD
-	// (debug override) takes precedence and is validated FIRST; distance-driven
-	// selection is folded in below once the forced path proves clean. Always clamp
-	// to the highest registered+available LOD (M4 — never select an unavailable
-	// LOD). On a LOD switch re-arm needsFullBakeNextFrame (black-tree guard).
-	{
-		// Highest registered+available LOD (M4: never select an unavailable LOD).
-		int _maxAvailLOD = 0;
-		for (int _l = MAX_LODS - 1; _l > 0; --_l) {
-			if (staticReg[_l].registered) { _maxAvailLOD = _l; break; }
-		}
-		int _wantLOD = 0;  // default near = LOD0
-		static const char* s_forceLodStr = getenv("MC2_FORCE_LOD");
-		if (s_forceLodStr) {
-			_wantLOD = atoi(s_forceLodStr);            // debug override
-		} else if (_maxAvailLOD >= 1 && eye) {
-			// Distance-driven: far trees draw the cheap far LOD (impostor / reduced
-			// card) so the alpha-card overdraw collapses where the tree is small on
-			// screen. Threshold tunable via MC2_IMPOSTOR_DIST (world units).
-			static const float s_impostorDist = [](){
-				const char* e = getenv("MC2_IMPOSTOR_DIST"); return e ? (float)atof(e) : 800.0f;
-			}();
-			Stuff::Vector3D _camP;
-			_camP.x = -eye->getCameraOrigin().x;
-			_camP.y =  eye->getCameraOrigin().z;
-			_camP.z =  eye->getCameraOrigin().y;
-			Stuff::Vector3D _d; _d.Subtract(position, _camP);
-			if (_d.GetApproximateLength() > s_impostorDist) _wantLOD = _maxAvailLOD;
-		}
-		if (_wantLOD < 0) _wantLOD = 0;
-		if (_wantLOD > _maxAvailLOD) _wantLOD = _maxAvailLOD;
-		if (_wantLOD != activeLOD) {
-			activeLOD = _wantLOD;
-			needsFullBakeNextFrame = true;  // black-tree re-arm on LOD switch
-		}
-	}
+	// TREE-OVERRIDE-LOD-MVP-1: per-frame active-LOD pick. Runs in BOTH update()
+	// and touch() — registered trees take the touch() skip path every frame, so
+	// selecting only in update() froze activeLOD at first registration.
+	selectActiveLOD();
 
 	//-------------------------------------------
 	// Does math necessary to draw Tree
@@ -5037,8 +5005,43 @@ bool TreeAppearance::IsStaticNow() const
 		&& !needsFullBakeNextFrame;
 }
 
+void TreeAppearance::selectActiveLOD()
+{
+	// Per-frame distance-driven LOD pick. MUST run on BOTH update() and touch():
+	// registered/stable trees take the touch() skip path (MC2_STATIC_UPDATE_SKIP=1)
+	// every frame, so selecting LOD only in update() froze activeLOD. On a change,
+	// re-arm needsFullBakeNextFrame -> IsStaticNow() false next frame -> terrobj gate
+	// routes to update() for the re-bake, then back to touch().
+	int _maxAvailLOD = 0;
+	for (int _l = MAX_LODS - 1; _l > 0; --_l)
+		if (staticReg[_l].registered) { _maxAvailLOD = _l; break; }
+	int _wantLOD = 0;
+	static const char* s_forceLodStr = getenv("MC2_FORCE_LOD");
+	if (s_forceLodStr) {
+		_wantLOD = atoi(s_forceLodStr);            // debug override
+	} else if (_maxAvailLOD >= 1 && eye) {
+		// Far trees draw the cheap far LOD (impostor); threshold MC2_IMPOSTOR_DIST.
+		static const float s_impostorDist = [](){
+			const char* e = getenv("MC2_IMPOSTOR_DIST"); return e ? (float)atof(e) : 800.0f;
+		}();
+		Stuff::Vector3D _camP;
+		_camP.x = -eye->getCameraOrigin().x;
+		_camP.y =  eye->getCameraOrigin().z;
+		_camP.z =  eye->getCameraOrigin().y;
+		Stuff::Vector3D _d; _d.Subtract(position, _camP);
+		if (_d.GetApproximateLength() > s_impostorDist) _wantLOD = _maxAvailLOD;
+	}
+	if (_wantLOD < 0) _wantLOD = 0;
+	if (_wantLOD > _maxAvailLOD) _wantLOD = _maxAvailLOD;
+	if (_wantLOD != activeLOD) {
+		activeLOD = _wantLOD;
+		needsFullBakeNextFrame = true;
+	}
+}
+
 void TreeAppearance::touch()
 {
+	selectActiveLOD();  // re-evaluate LOD every frame on the skip path
 	// Stage 3.C: called by the outer-skip gate instead of update() when this
 	// tree is registered and stable. Re-submits the cached lightData_ (set
 	// during the last update() call) to get a fresh UBO slot index for this

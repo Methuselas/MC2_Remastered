@@ -618,6 +618,7 @@ class TreeAppearance : public ObjectAppearance
 		// Stage 3.C: static-registry overrides
 		virtual bool IsStaticNow() const override;
 		virtual void touch() override;
+		void selectActiveLOD();  // TREE-OVERRIDE-LOD-MVP: per-frame distance LOD pick (update+touch)
 		virtual void invalidateStaticRegistration() override;
 		// Task 5 (Track B): mission-load bulk registration overrides.
 		virtual void registerStatic()              override;
