@@ -1289,6 +1289,7 @@ int AssetViewerApp::runSmokeSpotlight(const char* deployDir)
 
 #include "GlbMeshLoader.h"
 #include "model_override_registry.h"
+#include "WorkbenchValidation.h"
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
@@ -1347,6 +1348,26 @@ int AssetViewerApp::runSmokeWorkbenchBind(const char* deployDir, const char* fix
     std::printf("[smoke] PASS workbench-bind stockY=%.2f ovY=%.2f ratio=%.3f\n",
         d.stockExt[1], d.overrideExt[1], d.maxRatio);
     return 0;
+}
+
+int AssetViewerApp::runSmokeWorkbenchValidate(const char* fixtureDir){
+    WorkbenchOverride ok; ok.overrideClass="staticProp"; ok.appearanceName="example_name"; ok.appearanceVerified=true;
+    ok.sourceRelPath="props/example.glb"; ok.scale=1.0f; ok.renderOnly=true; ok.fallback="stock";
+    if (!ValidateRecordRules(ok).empty()) return smokeFail("validate: clean record flagged");
+    auto hasCode=[&](const std::vector<Warning>& v,const char* c){ for(auto&x:v) if(x.code==c) return true; return false; };
+    { auto bs=ok; bs.scale=2.0f; if(!hasCode(ValidateRecordRules(bs),"scale")) return smokeFail("validate: scale!=1 not blocked"); }
+    { auto bsrc=ok; bsrc.sourceRelPath="C:/abs.png"; if(!hasCode(ValidateRecordRules(bsrc),"source")) return smokeFail("validate: unsafe source not blocked"); }
+    { auto unv=ok; unv.appearanceVerified=false; if(!hasCode(ValidateRecordRules(unv),"appearance-unverified")) return smokeFail("validate: unverified appearance not blocked"); }
+    ModelOverrideRegistry reg;
+    if (reg.loadFromFile(std::string(fixtureDir)+"/wb_valid.json",fixtureDir)!=1 || reg.resolve("staticProp","example_name")==nullptr)
+        return smokeFail("validate: registry should accept wb_valid.json");
+    if (reg.loadFromFile(std::string(fixtureDir)+"/wb_bad_scale.json",fixtureDir)!=0)
+        return smokeFail("validate: registry should reject wb_bad_scale.json");
+    MeshData ov; ov.ok=true; ov.bmax[0]=4; ov.bmax[1]=4; ov.bmax[2]=4;
+    MeshData st; st.ok=true; st.bmax[0]=1; st.bmax[1]=1; st.bmax[2]=1;
+    SemanticInputs si; si.overrideMesh=&ov; si.stockMesh=&st; si.maxFootprintRatio=4.0f;
+    if(!hasCode(ValidateSemantics(ok,si),"bounds-delta")) return smokeFail("validate: oversize not warned");
+    std::printf("[smoke] PASS workbench-validate\n"); return 0;
 }
 
 void AssetViewerApp::onFileDropped(const char* path){

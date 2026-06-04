@@ -3,8 +3,10 @@
 #include "TglMeshLoader.h"
 #include "OverrideManifest.h"
 #include "WorkbenchWarning.h"
+#include "WorkbenchValidation.h"
 #include <cstdint>
 #include <string>
+#include <vector>
 class ModWorkbench {
 public:
     bool loadOverride(const std::string& glbPath);   // bumps generation on success
@@ -27,6 +29,11 @@ public:
     };
     BoundsDelta computeDelta() const;
 
+    WorkbenchOverride& record(){ return record_; }
+    const std::vector<Warning>& warnings() const { return warnings_; }
+    bool hasBlocking() const;
+    void revalidate(const std::vector<std::string>& missingTextures = {});
+
 private:
     std::string overridePath_;
     MeshData    overrideMesh_;
@@ -36,4 +43,7 @@ private:
     std::string deployDir_ = ".";
     std::string stockTgl_;
     MeshData    stockMesh_;
+
+    WorkbenchOverride        record_;
+    std::vector<Warning>     warnings_;
 };

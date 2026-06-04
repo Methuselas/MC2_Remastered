@@ -1,12 +1,36 @@
 #include "ModWorkbench.h"
 #include "GlbMeshLoader.h"
 #include <cmath>
+#include <cctype>
+
+// Extract basename without extension (lowercase) from a path.
+static std::string basenameNoExt(const std::string& path){
+    // Find last slash
+    size_t sep = path.find_last_of("/\\");
+    std::string name = (sep == std::string::npos) ? path : path.substr(sep + 1);
+    // Strip extension
+    size_t dot = name.rfind('.');
+    if (dot != std::string::npos) name = name.substr(0, dot);
+    // Lowercase
+    for (char& c : name) c = (char)std::tolower((unsigned char)c);
+    return name;
+}
+
+// Extract filename only (no directory) from a path.
+static std::string filenameOnly(const std::string& path){
+    size_t sep = path.find_last_of("/\\");
+    return (sep == std::string::npos) ? path : path.substr(sep + 1);
+}
 
 bool ModWorkbench::loadOverride(const std::string& glbPath){
     overridePath_ = glbPath;
     overrideMesh_ = GlbMeshLoader::load(glbPath);
     lastError_ = overrideMesh_.ok ? std::string() : overrideMesh_.error;
-    if (overrideMesh_.ok) ++generation_;
+    if (overrideMesh_.ok){
+        ++generation_;
+        // Set sourceRelPath to just the filename (S4 rewrites to <id>/<file>)
+        record_.sourceRelPath = filenameOnly(glbPath);
+    }
     return overrideMesh_.ok;
 }
 
@@ -19,7 +43,30 @@ bool ModWorkbench::bindStock(const std::string& tglName){
     stockMesh_ = TglMeshLoader::loadMesh(tglName);
     if (!stockMesh_.ok){ lastError_ = stockMesh_.error; return false; }
     ++generation_;
+    // Suggest appearanceName from tgl basename (strip dir + extension, lowercase)
+    record_.overrideClass = "staticProp";
+    if (record_.appearanceName.empty()){
+        record_.appearanceName = basenameNoExt(tglName);
+        record_.appearanceVerified = false;
+    }
     return true;
+}
+
+void ModWorkbench::revalidate(const std::vector<std::string>& missing){
+    warnings_.clear();
+    auto b=ValidateRecordRules(record_); warnings_.insert(warnings_.end(),b.begin(),b.end());
+    SemanticInputs si;
+    si.overrideMesh = overrideMesh_.ok?&overrideMesh_:nullptr;
+    si.stockMesh    = stockMesh_.ok?&stockMesh_:nullptr;
+    auto d=computeDelta(); si.maxFootprintRatio=d.maxRatio;
+    si.pivotOffsetXZ=std::sqrt(d.pivotOffset[0]*d.pivotOffset[0]+d.pivotOffset[2]*d.pivotOffset[2]);
+    si.pivotOffsetY=d.pivotOffset[1]; si.missingTextures=missing; si.hasImpostorLod=!record_.lods.empty();
+    auto s=ValidateSemantics(record_,si); warnings_.insert(warnings_.end(),s.begin(),s.end());
+}
+
+bool ModWorkbench::hasBlocking() const {
+    for(const auto& w:warnings_) if(w.severity==WarnSeverity::Block) return true;
+    return false;
 }
 
 ModWorkbench::BoundsDelta ModWorkbench::computeDelta() const {

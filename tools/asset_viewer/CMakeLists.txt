@@ -180,6 +180,8 @@ set(ASSET_VIEWER_SOURCES
     OverrideManifest.cpp
     # S2: mod workbench side-by-side panel
     ModWorkbenchPanel.cpp
+    # S3: semantic validation
+    WorkbenchValidation.cpp
 )
 
 add_executable(mc2_asset_viewer ${ASSET_VIEWER_SOURCES})

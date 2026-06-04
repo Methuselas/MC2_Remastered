@@ -42,6 +42,7 @@ public:
     static int runSmokeWorkbenchLink();   // S0: registry + assimp link/run
     static int runSmokeWorkbenchGlb(const char* fixtureDir);   // S1
     static int runSmokeWorkbenchBind(const char* deployDir, const char* fixtureDir);  // S2
+    static int runSmokeWorkbenchValidate(const char* fixtureDir);  // S3
 private:
     FileBrowser browser_;
     AssetTypeSidebar sidebar_;

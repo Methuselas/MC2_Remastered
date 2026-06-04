@@ -13,3 +13,7 @@ struct WorkbenchOverride {
     std::string fallback = "stock";
     std::vector<WorkbenchOverrideLod> lods;
 };
+
+// ADVISORY mirror of the registry's MVP invariants for live UI. The registry
+// round-trip (BundleExport, S4) is AUTHORITATIVE. S3's smoke asserts agreement.
+std::vector<Warning> ValidateRecordRules(const WorkbenchOverride& rec);
