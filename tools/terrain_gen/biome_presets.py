@@ -57,19 +57,23 @@ BIOMES: dict[str, BiomePreset] = {
         materials=dict(snow_line=0.88, rock_slope=0.40, grass_lowland=0.25),
     ),
     "snow_mountain": BiomePreset(
+        # Desolate frozen-rock biome: NOT a white snowfield. The dominant ground is
+        # barren grey-brown frozen dirt/rock; snow only caps the very highest peaks
+        # (~<=1%). Vegetation palette entries are recoloured to bleak greys so the
+        # majority "grass" classification reads as barren tundra, not green.
         palette=Palette(
-            grass=(62, 79, 50),
-            dry_grass=(80, 90, 64),
-            dirt=(90, 80, 64),
-            rock=(106, 101, 96),
-            dark_rock=(80, 75, 70),
-            snow=(216, 220, 224),
-            mud=(90, 80, 64),
-            water=(60, 80, 100),
-            forest_floor=(42, 56, 40),
+            grass=(118, 114, 104),       # barren frozen ground (grey-tan)
+            dry_grass=(132, 124, 110),
+            dirt=(96, 88, 76),
+            rock=(112, 108, 102),
+            dark_rock=(74, 70, 66),
+            snow=(220, 224, 228),
+            mud=(82, 78, 70),
+            water=(58, 74, 92),
+            forest_floor=(92, 90, 84),   # no real forest here; keep barren
         ),
         height=dict(base_frequency=4.5, ridged_amount=0.7, mountain_amount=0.7, erosion_passes=3),
-        materials=dict(snow_line=0.52, rock_slope=0.45, grass_lowland=0.35),
+        materials=dict(snow_line=0.98, rock_slope=0.30, grass_lowland=0.18),
     ),
     "swamp_forest": BiomePreset(
         palette=Palette(
