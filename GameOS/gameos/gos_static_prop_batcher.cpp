@@ -7694,6 +7694,30 @@ uint64_t GpuStaticPropBatcher::persistentStaticTotalCount() {
     uint64_t n = 0; for (auto& kv : s_persistentStaticStore) n += kv.second.size(); return n;
 }
 
+// VANISH-PROBE-1: stable-order access to persistent static instance origins.
+// Free functions (no header coupling) so code/gamecam.cpp can extern-declare
+// them and project a real prop through worldToClipGL at the live camera angle.
+uint32_t gos_ProbeStaticInstanceCount() {
+    uint32_t n = 0; for (auto& kv : s_persistentStaticStore) n += (uint32_t)kv.second.size();
+    return n;
+}
+bool gos_ProbeStaticInstanceWorld(uint32_t idx, float outXYZ[3]) {
+    // unordered_map iteration order is stable between calls within a frame (no
+    // mutation), which is all the probe needs. modelMatrix is row-major data
+    // uploaded GL_FALSE -> the prop vertex shader reads it column-major, so the
+    // instance origin (modelMatrix * vec4(0,0,0,1)) is column 3 = m[12..14].
+    for (auto& kv : s_persistentStaticStore) {
+        const auto& v = kv.second;
+        if (idx < v.size()) {
+            const float* m = v[idx].modelMatrix;
+            outXYZ[0] = m[12]; outXYZ[1] = m[13]; outXYZ[2] = m[14];
+            return true;
+        }
+        idx -= (uint32_t)v.size();
+    }
+    return false;
+}
+
 void GpuStaticPropBatcher::clearPersistentStatic() {
     // Keep the map + per-type vector capacity; just reset sizes (rebuild refills).
     for (auto& kv : s_persistentStaticStore) kv.second.clear();
