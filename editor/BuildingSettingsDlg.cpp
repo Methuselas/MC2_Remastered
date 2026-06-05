@@ -27,6 +27,7 @@ BuildingSettingsDlg::BuildingSettingsDlg( EList< EditorObject*, EditorObject* >&
 	m_y = 0.0f;
 	m_partID = 0;
 	m_forestName = _T("");
+	m_bDamaged = FALSE;
 	//}}AFX_DATA_INIT
 
 	pUndoMgr = &undoMgr;
@@ -45,6 +46,7 @@ void BuildingSettingsDlg::DoDataExchange(CDataExchange* pDX)
 	DDX_Text(pDX, IDC_BS_Y_EDIT, m_y);
 	DDX_Text(pDX, IDC_BS_PARTID_EDIT, m_partID);
 	DDX_Text(pDX, IDC_FOREST_NAME, m_forestName);
+	DDX_Check(pDX, IDC_BS_DAMAGED_CHECK, m_bDamaged);
 	//}}AFX_DATA_MAP
 }
 
@@ -109,6 +111,15 @@ void BuildingSettingsDlg::applyChanges()
 		{
 			(*iter)->setAlignment( index );
 		}
+	}
+
+	// apply the damaged flag (UpdateData(true) above refreshed m_bDamaged).
+	// setDamage() updates the appearance's damage state directly; the editor
+	// render loop reads appearance()->damage each frame, so no extra refresh
+	// is needed for the change to show.
+	for ( EDITOROBJECT_LIST::EIterator iter = units.Begin(); !iter.IsDone(); iter++ )
+	{
+		(*iter)->setDamage( m_bDamaged ? true : false );
 	}
 
 	unsigned long base=0, color1=0, color2=0;
@@ -331,6 +342,18 @@ void BuildingSettingsDlg::updateMemberVariables()
 				m_Mech.SetCurSel( index );
 
 			}
+		}
+	}
+
+	// initialize the damaged checkbox from the building(s); if a multi-select
+	// disagrees, leave it unchecked (applyChanges only writes the explicit state on OK)
+	m_bDamaged = pEditorObject->getDamage() ? TRUE : FALSE;
+	for ( iter = units.Begin(); !iter.IsDone(); iter++ )
+	{
+		if ( ((*iter)->getDamage() ? TRUE : FALSE) != m_bDamaged )
+		{
+			m_bDamaged = FALSE;
+			break;
 		}
 	}
 

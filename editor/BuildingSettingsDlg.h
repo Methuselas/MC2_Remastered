@@ -32,6 +32,7 @@ public:
 	float	m_y;
 	int		m_partID;
 	CString	m_forestName;
+	BOOL	m_bDamaged;
 	//}}AFX_DATA
 
 

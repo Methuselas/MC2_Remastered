@@ -242,6 +242,7 @@
 #define IDC_BS_Y_EDIT                   1115
 #define IDC_BS_PARTID_EDIT              1116
 #define IDC_FOREST_NAME                 1117
+#define IDC_BS_DAMAGED_CHECK            1118
 #define IDC_SCENARIO_TUNE_COMBO         1119
 #define IDC_TRANSPARENCY_EDIT           1120
 #define IDC_OBJECTIVE_UNHIDE_CHECK      1121

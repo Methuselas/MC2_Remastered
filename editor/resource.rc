@@ -75,7 +75,7 @@ BEGIN
             VALUE "FileDescription", "MechCommander 2 Editor\0"
             VALUE "FileVersion", "00,1,6,2522"
             VALUE "InternalName", "MechCommander 2 Editor\0"
-            VALUE "LegalCopyright", "Copyright © 2001 Microsoft\0"
+            VALUE "LegalCopyright", "Copyright ï¿½ 2001 Microsoft\0"
             VALUE "LegalTrademarks", "\0"
             VALUE "OriginalFilename", "EditorRel.exe\0"
             VALUE "PrivateBuild", "\0"
@@ -426,6 +426,8 @@ BEGIN
     LTEXT           "y",IDC_STATIC,66,108,8,8
     LTEXT           "Part ID",IDC_STATIC,118,108,23,8
     LTEXT           "Forest",IDC_STATIC,187,110,20,8
+    CONTROL         "&Damaged",IDC_BS_DAMAGED_CHECK,"Button",
+                    BS_AUTOCHECKBOX | WS_TABSTOP,12,135,60,10
 END
 
 IDD_CHOOSE_UNIT DIALOG DISCARDABLE  0, 0, 300, 46
