@@ -813,6 +813,15 @@ static const uint32_t s_globalInstanceCap = []() {
     return STATIC_PROP_GLOBAL_CAP_DEFAULT;
 }();
 
+// M2a POPULATION-SPLIT state (defined early so onMapUnload :1729 can tear the
+// SSBO down; the build/fill helpers + accessors live near s_baseInstanceForType).
+static std::vector<uint32_t> s_staticBaseInstanceForType;
+static uint64_t              s_staticBaseBuiltGen     = 0xFFFFFFFFFFFFFFFFull;
+static GLuint                s_staticInstanceSsbo     = 0;
+static void*                 s_staticInstanceMap      = nullptr;   // GL_MAP_PERSISTENT|COHERENT
+static size_t                s_staticInstanceBytes    = 0;         // == cap * sizeof(instance)
+static uint64_t              s_staticInstanceFillGen  = 0xFFFFFFFFFFFFFFFFull;
+
 GLuint   s_baseInstanceByCmdSsbo          = 0;
 void*    s_baseInstanceByCmdMap           = nullptr;
 size_t   s_baseInstanceByCmdBytesPerFrame = 0;
@@ -1790,6 +1799,25 @@ void GpuStaticPropBatcher::onMapUnload() {
         glDeleteBuffers(1, &s_coalesceInstanceSsbo);
         s_coalesceInstanceSsbo = 0;
     }
+
+    // M2a POPULATION-SPLIT: tear down the static instance SSBO on map unload,
+    // mirroring s_coalesceInstanceSsbo above. ensureStaticInstanceCapacity()
+    // early-returns on a non-zero handle, so without this the persistent map
+    // handle would survive a context recreation as a dangling pointer. Reset the
+    // dirty-gens so the next map's first dirty flush rebuilds base + fill.
+    if (s_staticInstanceSsbo) {
+        if (s_staticInstanceMap) {
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_staticInstanceSsbo);
+            glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+            s_staticInstanceMap = nullptr;
+        }
+        glDeleteBuffers(1, &s_staticInstanceSsbo);
+        s_staticInstanceSsbo  = 0;
+        s_staticInstanceBytes = 0;
+    }
+    s_staticInstanceFillGen = 0xFFFFFFFFFFFFFFFFull;
+    s_staticBaseBuiltGen    = 0xFFFFFFFFFFFFFFFFull;
 
     // 4.4 — delete remaining coalesce GL resources (only if non-zero).
     if (s_texArrayOff)     { glDeleteTextures(1, &s_texArrayOff);     s_texArrayOff     = 0; }
@@ -7400,13 +7428,11 @@ static bool staticPopSplitArmed() {
     return s_on && GpuStaticPropRegistry::frozenRecordsArmed();
 }
 
-// Static-only per-type base: prefix-sum over s_persistentStaticStore[t].size()
-// in the SAME sorted+alpha order as s_baseInstanceForType, but counting ONLY
-// persistent-static instances (no dynamics). This is the stable base the golden
-// scatter must use. Dirty-gated on s_persistentStaticGen.
-static std::vector<uint32_t> s_staticBaseInstanceForType;
-static uint64_t              s_staticBaseBuiltGen = 0xFFFFFFFFFFFFFFFFull;
-
+// Static-only per-type base (s_staticBaseInstanceForType, defined early near
+// s_globalInstanceCap): prefix-sum over s_persistentStaticStore[t].size() in the
+// SAME sorted+alpha order as s_baseInstanceForType, but counting ONLY persistent-
+// static instances (no dynamics). The stable base the golden scatter must use.
+// Dirty-gated on s_persistentStaticGen via s_staticBaseBuiltGen.
 static void rebuildStaticBaseInstanceTableIfDirty() {
     if (s_staticBaseBuiltGen == s_persistentStaticGen) return;  // dirty-gated
     s_staticBaseInstanceForType.assign(s_types.size(), 0u);
@@ -7434,15 +7460,11 @@ uint32_t batcher_getStaticBaseInstanceForType(uint32_t typeID) {
                ? s_staticBaseInstanceForType[typeID] : 0u;
 }
 
-// StaticPopulation instance buffer (Task 2): persistent-mapped, SINGLE region
-// (static is frozen -> no triple-buffer ring). Sized ONCE at the global cap so
-// growth never reallocates an immutable buffer mid-flight (registration/despawn
-// fire during gameplay). Filled [0,total) once per dirty in static-base layout.
-static GLuint   s_staticInstanceSsbo    = 0;
-static void*    s_staticInstanceMap     = nullptr;   // GL_MAP_PERSISTENT|COHERENT
-static size_t   s_staticInstanceBytes   = 0;         // == cap * sizeof(instance)
-static uint64_t s_staticInstanceFillGen = 0xFFFFFFFFFFFFFFFFull;
-
+// StaticPopulation instance buffer (Task 2; state s_staticInstanceSsbo/Map/Bytes/
+// FillGen defined early near s_globalInstanceCap): persistent-mapped, SINGLE
+// region (static is frozen -> no triple-buffer ring). Sized ONCE at the global
+// cap so growth never reallocates an immutable buffer mid-flight. Filled
+// [0,total) once per dirty in static-base layout.
 static bool ensureStaticInstanceCapacity() {
     if (s_staticInstanceSsbo) return s_staticInstanceMap != nullptr;
     const size_t want = static_cast<size_t>(s_globalInstanceCap)
