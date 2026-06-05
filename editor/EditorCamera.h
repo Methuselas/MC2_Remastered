@@ -104,6 +104,17 @@ public:
 			drawCompass = true;
 			cameraLineChanged = 0;
 			theSky = NULL;
+
+			// Editor camera: unlock the zoom range far beyond the game's (these are
+			// static Camera members; the editor is a separate process so the game
+			// camera is unaffected). ~10x higher altitude ceiling so large generated
+			// maps fit on screen, and a lower floor for closer inspection.
+			Camera::AltitudeMaximumLo = 60000.0f;
+			Camera::AltitudeMaximumHi = 64000.0f;
+			Camera::AltitudeMinimum   = 20.0f;
+			// Push the far plane out so terrain doesn't clip at the new max zoom-out.
+			Camera::MinFarPlane = 120000.0f;
+			Camera::MaxFarPlane = 120000.0f;
 		}
 
 	virtual void reset (void)

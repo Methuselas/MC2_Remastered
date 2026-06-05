@@ -12,7 +12,12 @@ from terrain_gen.biome_presets import BiomePreset
 
 class BurninRenderer:
     def render(self, masks: TerrainMasks, recipe: TerrainRecipe, preset: BiomePreset) -> Image.Image:
-        res = recipe.burnin_resolution()
+        target_res = recipe.burnin_resolution()
+        # Render at a bounded working resolution to keep memory sane (a 1020 map's
+        # colormap is 13056px -> multi-GB float arrays). The final image is resized
+        # to target_res so the engine still gets the map-matched colormap size;
+        # colormap detail beyond ~2k is imperceptible at terrain scale.
+        res = min(target_res, 2048)
         b   = recipe.burnin
         p   = preset.palette
         m   = recipe.materials
@@ -83,4 +88,7 @@ class BurninRenderer:
         color += grain[..., None]
 
         color = np.clip(color * 255, 0, 255).astype(np.uint8)
-        return Image.fromarray(color, mode='RGB')
+        img = Image.fromarray(color, mode='RGB')
+        if target_res != res:
+            img = img.resize((target_res, target_res), Image.BICUBIC)
+        return img

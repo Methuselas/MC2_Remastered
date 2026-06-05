@@ -60,8 +60,12 @@ class TerrainRecipe:
             raise ValueError(f"unknown biome '{self.biome}'; valid: {list(BIOMES)}")
 
     def burnin_resolution(self) -> int:
-        # MVP: fixed 1280 for all maps (classic MC2 natural size, engine tile-count parity).
-        return 1280
+        # The colormap MUST be (vertices / verticesBlockSide) * 256 px wide so the
+        # engine's numTexturesAcross (= width/256) matches the map's block count.
+        # A mismatched resolution makes the per-quad colormap UVs sample the wrong
+        # place -> black patches across the map. (verticesBlockSide=20, tile=256;
+        # 20*12.8=256, so this equals size*12.8.)
+        return (self.size // 20) * 256
 
     def apply_biome(self) -> None:
         """Overlay biome preset defaults onto height/material params."""
