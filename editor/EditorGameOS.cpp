@@ -530,6 +530,9 @@ DWORD __stdcall RunGameOSLogic()
             ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar);
         ImGui::Text("ImGui live | F=demo  Ctrl+Shift+LMB=pick");
         ImGui::End();
+
+        if (EditorInterface::instance())
+            EditorInterface::instance()->renderToolbarImGui();
     }
 #endif
     gos_RendererBeginFrame();

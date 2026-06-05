@@ -35,6 +35,12 @@ void GuiRuntime::Init() {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    // HW-CURSOR-SUPPRESS-1: stop the ImGui SDL backend from managing the OS
+    // cursor (it calls SDL_ShowCursor/SDL_SetCursor every frame over its
+    // windows). MC2 hides the OS cursor (SDL_ShowCursor(SDL_DISABLE)) and draws
+    // its own in-game cursor sprite; without this flag the ImGui menu re-shows
+    // the Windows arrow on top of the in-game cursor.
+    io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
 
     ImGui::StyleColorsDark();
 
@@ -86,7 +92,35 @@ void GuiRuntime::NewFrame() {
                 POINT cursorPt;
                 if (::GetCursorPos(&cursorPt) && ::IsWindow(glHwnd)) {
                     ::ScreenToClient(glHwnd, &cursorPt);
-                    io.AddMousePosEvent((float)cursorPt.x, (float)cursorPt.y);
+                    // The window client coords from ScreenToClient are in the window's
+                    // logical pixel space, but ImGui's DisplaySize is the full
+                    // framebuffer (drawable) size -- which differs on HiDPI displays
+                    // (e.g. 2x). Scale the cursor into DisplaySize space so ImGui
+                    // hit-testing lines up with what is drawn. Without this the mouse
+                    // and the highlighted widget are offset by the DPI factor.
+                    // (No-op on 1x displays where client size == DisplaySize.)
+                    float mx = (float)cursorPt.x;
+                    float my = (float)cursorPt.y;
+                    RECT cr;
+                    if (::GetClientRect(glHwnd, &cr)) {
+                        const int cw = cr.right - cr.left;
+                        const int ch = cr.bottom - cr.top;
+                        if (cw > 0 && ch > 0 && io.DisplaySize.x > 0.f && io.DisplaySize.y > 0.f) {
+                            mx *= io.DisplaySize.x / (float)cw;
+                            my *= io.DisplaySize.y / (float)ch;
+                        }
+                        static bool s_traceGuiMouse = false;
+                        if (!s_traceGuiMouse) {
+                            s_traceGuiMouse = true;
+                            fprintf(stderr,
+                                "[GuiRuntime mouse] client=(%d,%d) cursorClient=(%ld,%ld) "
+                                "DisplaySize=(%.0f,%.0f) -> imguiMouse=(%.1f,%.1f)\n",
+                                cw, ch, cursorPt.x, cursorPt.y,
+                                io.DisplaySize.x, io.DisplaySize.y, mx, my);
+                            fflush(stderr);
+                        }
+                    }
+                    io.AddMousePosEvent(mx, my);
                 }
             }
         }

@@ -80,6 +80,7 @@ private:
 public:
 
 	static EditorInterface* instance(){ return s_instance; }
+	void renderToolbarImGui();
 	
 	EditorInterface();
 	~EditorInterface();
@@ -292,6 +293,12 @@ private:
 	ModifyBuildingAction*		m_pDragAction;
 	int							m_dragStartX;
 	int							m_dragStartY;
+	Stuff::Vector3D				m_dragStartWorld;
+	Stuff::Vector3D				m_dragObjStartPos;
+	// last cursor screen pos during a drag; the per-frame screen->world delta uses
+	// a LOCALLY-sampled map (inverseProject snaps to the 128-unit grid, and a single
+	// grab-time map overshoots as world-units-per-pixel changes across the screen).
+	int							m_dragLastScreenX, m_dragLastScreenY;
 
 	MainMenu					*m_pMainMenu;
 

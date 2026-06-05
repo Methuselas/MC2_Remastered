@@ -1157,15 +1157,14 @@ void EditorObjectMgr::update()
 					if ( pBAppr->recalcBounds() )
 					{
 						Stuff::Vector3D pos = pBAppr->position;
-						int cellR, cellC;
-						land->worldToCell(pos, cellR, cellC);
-						/*We're calling what appears to be a redundant moveBuilding() here to
-						ensure that the objects are level with the terrain (incase the terrain got
-						altered I guess). Note that moveBuilding() also updates any links that
-						the building might be a part of.*/
-						moveBuilding((*iter), cellR, cellC);
-
-						pos = pBAppr->position;
+						// Keep the building level with the terrain WITHOUT snapping it to the
+						// cell grid. The legacy path called moveBuilding(worldToCell(pos)) here,
+						// which re-derived x,y from the cell CENTRE every frame -- making free
+						// (sub-cell) placement impossible (a dragged building snapped straight
+						// back to tile intersections). We only need to refresh z to the terrain
+						// height at the building's (possibly sub-cell) x,y.
+						pos.z = land->getTerrainElevation(pos);
+						pBAppr->position = pos;
 						gosASSERT((8 > pBAppr->teamId) && (-1 <= pBAppr->teamId));
 						pBAppr->setObjectParameters(pos, pBAppr->rotation, pBAppr->selected, pBAppr->teamId, homeRelations[pBAppr->teamId+1]);
 						pBAppr->update();

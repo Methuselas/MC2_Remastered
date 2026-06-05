@@ -163,12 +163,35 @@ bool SelectionBrush::paint( Stuff::Vector3D& worldPos, int screenX, int screenY 
 			int newCellI, newCellJ;
 			land->worldToCell( worldPos, newCellJ, newCellI );
 
-			//if ( lastRow  != 0 && lastCol != 0 )
-			if ( true )
 			{
 				pCurModifyBuildingAction->addBuildingInfo(*(const_cast<EditorObject*>(pObject)));
-				EditorObjectMgr::instance()->moveBuilding( const_cast<EditorObject*>(pObject),
-					newCellJ, newCellI );
+				// Free (un-snapped) move: moveBuilding keeps cell/link bookkeeping
+				// current, then we override its grid-snapped position with the exact
+				// cursor world point so buildings can be aligned precisely. The legacy
+				// path stopped at moveBuilding(), which snapped the building to the
+				// cell grid every drag step.
+				EditorObject* pMutable = const_cast<EditorObject*>(pObject);
+				EditorObjectMgr::instance()->moveBuilding( pMutable, newCellJ, newCellI );
+				if ( pMutable->appearance() )
+				{
+					ObjectAppearance* pApp = pMutable->appearance();
+					pApp->position.x = worldPos.x;
+					pApp->position.y = worldPos.y;
+					pApp->position.z = land->getTerrainElevation( worldPos );
+					// Invalidate the baked static recipe BEFORE update() so update()
+					// runs UNREGISTERED and re-transforms from the free position; the
+					// next render then re-bakes the recipe at the free pose. If
+					// invalidate came after update(), update() takes the still-
+					// registered PositionsOnly path and never re-bakes -> snap-back.
+					pApp->invalidateStaticRegistration();
+					pApp->update();
+					// Re-bake the static recipe at the new pose. invalidate() only
+					// destroys the old recipe (registered=false); update() does NOT
+					// re-register, and render-time late-spawn registration is off by
+					// default -- so without this explicit re-register the GPU keeps
+					// drawing the last baked (snapped) modelMatrix.
+					pApp->registerStatic();
+				}
 			}
 			lastRow = newCellI;
 			lastCol = newCellJ;

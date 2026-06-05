@@ -816,6 +816,10 @@ EditorInterface::EditorInterface()
 	m_pDragAction = NULL;
 	m_dragStartX = 0;
 	m_dragStartY = 0;
+	m_dragStartWorld.x = m_dragStartWorld.y = m_dragStartWorld.z = 0.0f;
+	m_dragObjStartPos.x = m_dragObjStartPos.y = m_dragObjStartPos.z = 0.0f;
+	m_dragLastScreenX = 0;
+	m_dragLastScreenY = 0;
 
 	smoothRadius = 2;
 	dragging = false;
@@ -1425,6 +1429,10 @@ void EditorInterface::handleLeftButtonDown( int PosX, int PosY )
 			m_dragObjMoved = false;
 			m_dragStartX = PosX;
 			m_dragStartY = PosY;
+			m_dragStartWorld = vector;
+			m_dragObjStartPos = pHit->appearance() ? pHit->appearance()->position : vector;
+			m_dragLastScreenX = PosX;
+			m_dragLastScreenY = PosY;
 			m_pDragAction = new ModifyBuildingAction;
 			m_pDragAction->addBuildingInfo( *pHit );
 			lastClickPos = vector;
@@ -1470,23 +1478,54 @@ void EditorInterface::handleMouseMove( int PosX, int PosY )
 		if ( !m_dragObjMoved && (ddx * ddx + ddy * ddy) < (8 * 8) )
 			return;
 
+		// Free (un-snapped) positioning via a world-space delta from the grab point.
+		// Using a delta cancels any constant offset between the inverseProject world
+		// space and the object's stored-position space, so the building tracks the
+		// cursor exactly and can be aligned precisely. moveBuilding keeps cell/link
+		// bookkeeping current; we then override its grid-snapped position.
+		// Continuous free placement that tracks the cursor under the tilted camera.
+		// Sample the screen->world map LOCALLY around the current cursor each frame
+		// (so it matches the perspective where the object is), then advance the
+		// object by the per-frame pixel delta * that local map. A single grab-time
+		// map overshoots because world-units-per-pixel varies across the screen.
+		ObjectAppearance* pDragApp = m_pDragObject->appearance();
+		if ( !pDragApp )
+			return;
+		const int K = 120;
+		Stuff::Vector3D wxp, wxm, wyp, wym;
+		Stuff::Vector2DOf<long> sp;
+		sp.x = PosX + K; sp.y = PosY; eye->inverseProject( sp, wxp );
+		sp.x = PosX - K; sp.y = PosY; eye->inverseProject( sp, wxm );
+		sp.x = PosX; sp.y = PosY + K; eye->inverseProject( sp, wyp );
+		sp.x = PosX; sp.y = PosY - K; eye->inverseProject( sp, wym );
+		float inv2K = 1.0f / ( 2.0f * (float)K );
+		float Mxx = ( wxp.x - wxm.x ) * inv2K, Myx = ( wxp.y - wxm.y ) * inv2K;
+		float Mxy = ( wyp.x - wym.x ) * inv2K, Myy = ( wyp.y - wym.y ) * inv2K;
+		float dsx = (float)( PosX - m_dragLastScreenX );
+		float dsy = (float)( PosY - m_dragLastScreenY );
+		m_dragLastScreenX = PosX;
+		m_dragLastScreenY = PosY;
+		Stuff::Vector3D newPos = pDragApp->position;
+		newPos.x += Mxx * dsx + Mxy * dsy;
+		newPos.y += Myx * dsx + Myy * dsy;
+		newPos.z = m_dragObjStartPos.z;
 		int row = 0, col = 0;
-		land->worldToCell( vector, row, col );
-		// Keep cell/link bookkeeping current (moveBuilding updates cellRow/Column and
-		// any building links), then override its grid-snapped position with the exact
-		// cursor point so buildings can be FREELY aligned. Pure cell snapping made it
-		// impossible to line objects back up after a move.
+		land->worldToCell( newPos, row, col );
 		EditorObjectMgr::instance()->moveBuilding( m_pDragObject, row, col );
 		if ( m_pDragObject->appearance() )
 		{
 			ObjectAppearance* pApp = m_pDragObject->appearance();
-			pApp->position.x = vector.x;
-			pApp->position.y = vector.y;
-			pApp->position.z = land->getTerrainElevation( vector );
-			pApp->update();
-			// Static props render from a baked GPU recipe; clear it so the next frame
-			// re-bakes at the new position. Mechs no-op this override.
+			newPos.z = land->getTerrainElevation( newPos );
+			pApp->position = newPos;
+			// Invalidate the baked static recipe BEFORE update() so update() runs
+			// unregistered and re-transforms from the free position; the next render
+			// re-bakes at the free pose. Invalidate-after-update never re-bakes.
 			pApp->invalidateStaticRegistration();
+			pApp->update();
+			// Re-bake the static recipe at the new pose (invalidate only destroys
+			// the old recipe; nothing else re-registers it, so the GPU would keep
+			// drawing the last baked/snapped modelMatrix).
+			pApp->registerStatic();
 		}
 		m_dragObjMoved = true;
 		return;
@@ -4056,6 +4095,45 @@ BOOL EditorInterface::OnMouseWheel(UINT nFlags, short zDelta, CPoint pt)
 	return CWnd ::OnMouseWheel(nFlags, zDelta, pt);
 }
 
+#ifdef MC2_IMGUI
+// Floating tool palette (Photoshop-style). Buttons re-post the same WM_COMMAND
+// the menu items use, so they share the existing tool-switch handlers. The active
+// tool is highlighted. Drawn each frame from EditorGameOS.cpp's ImGui block.
+void EditorInterface::renderToolbarImGui()
+{
+	struct ToolDef { const char* label; int cmdId; };
+	static const ToolDef tools[] = {
+		{ "Select",      ID_OTHER_SELECT },
+		{ "Area Select", ID_OTHER_SELECTAREA },
+		{ "Flatten",     ID_OTHER_FLATTEN },
+		{ "Erase",       ID_OTHER_ERASE },
+		{ "Mine",        ID_OTHER_LAYMINES },
+		{ "Link",        ID_OTHER_LINK },
+		{ "Damage",      ID_OTHER_DAMAGE },
+	};
+
+	ImGuiIO& io = ImGui::GetIO();
+	const float toolbarW = 195.0f;
+	ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - toolbarW - 16.0f, 16.0f), ImGuiCond_Once);
+	ImGui::SetNextWindowSize(ImVec2(toolbarW, 0.f), ImGuiCond_Once);
+	ImGui::Begin("Tools", nullptr, ImGuiWindowFlags_NoScrollbar);
+	ImGui::SetWindowFontScale(1.5f);
+	for (int i = 0; i < (int)(sizeof(tools) / sizeof(tools[0])); ++i)
+	{
+		const bool active = (currentBrushMenuID == tools[i].cmdId);
+		if (active)
+			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.45f, 0.80f, 1.0f));
+		if (ImGui::Button(tools[i].label, ImVec2(-1.f, 0.f)))
+			PostMessage(WM_COMMAND, MAKEWPARAM(tools[i].cmdId, 0), 0);
+		if (active)
+			ImGui::PopStyleColor();
+	}
+	ImGui::End();
+}
+#else
+void EditorInterface::renderToolbarImGui() {}
+#endif
+
 void EditorInterface::OnHScroll(UINT nSBCode, UINT nPos, CScrollBar* pScrollBar) 
 {
 	
@@ -4469,8 +4547,9 @@ void EditorInterface::rotateSelectedObjects( int direction )
 		{
 			(*iter)->appearance()->rotation += direction * 45;
 		}
-		(*iter)->appearance()->update();
 		(*iter)->appearance()->invalidateStaticRegistration();
+		(*iter)->appearance()->update();
+		(*iter)->appearance()->registerStatic();
 		iter++;
 	}
 
@@ -4493,8 +4572,9 @@ void EditorInterface::rotateSelectedObjectsDegrees( float deg )
 		(*iter)->appearance()->rotation += deg;
 		// Recompute transform + re-bake the static GPU recipe so static props
 		// visibly rotate (mechs no-op the invalidate; see drag-move note).
-		(*iter)->appearance()->update();
 		(*iter)->appearance()->invalidateStaticRegistration();
+		(*iter)->appearance()->update();
+		(*iter)->appearance()->registerStatic();
 		iter++;
 	}
 

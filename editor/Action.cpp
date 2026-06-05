@@ -547,7 +547,21 @@ bool ModifyBuildingAction::doRedo()
 
             long row, column;
             pBuilding->getCells(row, column);
+            // Preserve the snapshot's (possibly free, sub-cell) position across the
+            // cell/link bookkeeping moveBuilding, so undo/redo of a freely-placed
+            // building does not snap it back to the grid.
+            ObjectAppearance* pUndoApp = pBuilding->appearance();
+            Stuff::Vector3D undoFreePos;
+            if (pUndoApp)
+                undoFreePos = pUndoApp->position;
             EditorObjectMgr::instance()->moveBuilding(pBuilding, row, column);
+            if (pUndoApp)
+            {
+                pUndoApp->position = undoFreePos;
+                pUndoApp->invalidateStaticRegistration();
+                pUndoApp->update();
+                pUndoApp->registerStatic();
+            }
 
             (*iter4).x = pBuilding->getPosition().x;
             (*iter4).y = pBuilding->getPosition().y;
