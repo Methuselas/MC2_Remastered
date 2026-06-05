@@ -129,4 +129,47 @@ a time, behind a compare oracle (`vu.worldToClipGL == legacy MVP ≤1e-5` alread
   angle). So the projection family must be settled before M2b flips static to GPU-culled draw.
 - This recon lives on nifty (canonical) so both sessions see it. The merge with M2a is on
   `claude/cook-m2a-merge` (`5ecb3dc2`), parity-clean, gated default-off.
+
+## 8. Progress log — 2026-06-05 (arc-owner session)
+
+### Step 1 — Shadow light-basis fix: SHIPPED (nifty `f78d7973`, doc `beb73420`)
+`SHADOW-ROBUST-BASIS-1`, gate `MC2_SHADOW_ROBUST_BASIS` default-ON (`=0` kill).
+`gos_postprocess.cpp` — both build{Static,Dynamic}LightMatrix now share
+`mc2ComputeLightBasis()`:
+- **Singularity guard:** KEEPS the legacy up-hint pick as primary (byte-identical
+  for normal suns — no texel-grid perturbation of working cases); re-picks up as
+  the world axis least parallel to the sun ONLY when the legacy cross degenerates
+  (`len < 1e-3`). Kills §3 bullet-1.
+- **AABB corner-scarcity fallback:** rebuild the light AABB from all 8 corners when
+  `validCorners < 4` (legacy fell back only at `==0`). Kills §3 bullet-2 (the
+  sliver-AABB mis-center that slides shadow coverage off-view).
+- **Validation** (mc2_24, `--validate --enable shadows`, isolated junction deploy off
+  v0.4 since v0.4 mc2.exe was live in another session): default-ON and `=0` both
+  render shadows **gl-clean** (shader_errors=[], gl_errors=[], exit 0, 90 frames).
+  Default-ON frame-1 light-space AABB matches the `=0` AABB to camera-jitter
+  (~5 WU / 70000) → basis path unchanged for normal suns; scarcity fallback inert
+  (validCorners=8 in the flythrough). **Interactive SS2-angle confirmation on the
+  cook+M2a merge remains user-gated** — the validate flythrough camera cannot be
+  steered to the failing angle headless.
+
+### Step 2 — SS3 prop diagnostic: PARTIAL (headless ceiling reached)
+Ran the §4 recipe on the **nifty** exe (`MC2_PROJECTZ_BYPASS_MODE=Compare`, mc2_24,
+120 frames). Findings:
+- The cull/store diagnostics (`storeTotal`, `projectz` disagree, `frustum_admit`)
+  **emit only on the merge branch** (gated by `MC2_STATIC_POP_SPLIT` et al.) — nifty
+  has no M2a, so they were absent. The full §4 recipe MUST run on `claude/cook-m2a-merge`.
+- The one Compare artifact nifty does emit, `screenxy_screen_delta`, is striking:
+  **`legacyScreen=(0,0)` for every world point** while `bypassScreen` (modern GL) gives
+  real coords (world origin → ~`(803,-317)`). The legacy D3D screen projection is
+  effectively **dead/degenerate** here; only the default Bypass=GL path projects
+  correctly. Corroborates §4 ("default GL→GL correct") AND the family verdict: any pass
+  still riding the legacy convention is catastrophically wrong → reinforces P2-5.
+- No prop-vanish reproduced in the flythrough (SS3 angle not reached), 0 gl_errors.
+
+**Still BLOCKED / next (unchanged sequencing — first commandment still holds):** the
+authoritative SS3 diagnostic needs the merge branch built + an **interactive** session
+steered to the failing angle (capture `storeTotal` constant?, `projectz` disagree spike?,
+one prop's clip coords). Do NOT touch M2b / visibleIds / static-pop draw until that frame
++ the P2-5 plan exist. Step 1's shadow fix should be merged forward into
+`claude/cook-m2a-merge` so the merge deploy has SS2 fixed before the SS3 repro session.
 </content>
