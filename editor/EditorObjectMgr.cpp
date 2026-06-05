@@ -764,84 +764,51 @@ EditorObject* EditorObjectMgr::addDropZone( const Stuff::Vector3D& position, int
 //-------------------------------------------------------------------------------------------------
 EditorObject* EditorObjectMgr::getObjectAtPosition( const Stuff::Vector3D& position )
 {
-	Stuff::Vector4D screenPos;
-	Stuff::Vector4D tmpPos;
+	// World-space match: nearest object whose footprint (extent radius, with a
+	// terrain-cell tolerance floor) contains the given world point. The old path
+	// projected each object to screen and tested stale screen bounds + PerPolySelect,
+	// which mis-targeted in the GL port -- damage/erase/link hit the wrong object or
+	// nothing. This mirrors getObjectAtScreenPosition's matching so every brush that
+	// uses getObjectAtPosition picks the same object the Select tool does.
+	const float pickFloor = 3.0f * ( land ? land->worldUnitsPerVertex : 64.0f );
+	float bestDistSq = 1.0e30f;
+	EditorObject* pBest = NULL;
 
-	eye->projectZ( const_cast<Stuff::Vector3D&>(position), screenPos );
+	for ( BUILDING_LIST::EIterator iter = buildings.Begin(); !iter.IsDone(); iter++ )
+	{
+		EditorObject* o = (*iter);
+		if ( !o || !o->appearance() ) continue;
+		ObjectAppearance* a = o->appearance();
+		float dx = a->position.x - position.x;
+		float dy = a->position.y - position.y;
+		float d = dx * dx + dy * dy;
+		float r = a->getRadius(); if ( r < pickFloor ) r = pickFloor;
+		if ( d <= r * r && d < bestDistSq ) { bestDistSq = d; pBest = o; }
+	}
 
-	for( BUILDING_LIST::EIterator iter = buildings.Begin();
-		!iter.IsDone(); iter++ )
-		{
-			EditorObject* pObject = (*iter);
-			ObjectAppearance* pAppearance = pObject ? pObject->appearance() : NULL;
-
-			// by Methuselas: selection now reaches this path again through the
-			// embedded GL child-window forwarder.  Legacy catalog/load states can
-			// leave an EditorObject without a live appearance, so skip it instead
-			// of crashing before the per-poly hit test.
-			if (pAppearance && pAppearance->canBeSeen())
-			{
-				int left, top, right, bottom;
-
-				left = pAppearance->upperLeft.x;
-				top = pAppearance->upperLeft.y;
-				right = pAppearance->lowerRight.x;
-				bottom = pAppearance->lowerRight.y;
-
-				eye->projectZ( pAppearance->position, tmpPos );
-
-				if ( screenPos.x >= left && screenPos.x <= right
-					&& screenPos.y >= top && screenPos.y <= bottom 
-					&& pAppearance->PerPolySelect(screenPos.x,screenPos.y))
-				{
-					return (*iter);
-				}
-			}
-
-		}
-
-		for( UNIT_LIST::EIterator mIter = units.Begin();
-		!mIter.IsDone(); mIter++ )
-		{
-			EditorObject* pObject = (*mIter);
-			ObjectAppearance* pAppearance = pObject ? pObject->appearance() : NULL;
-
-			if (pAppearance && pAppearance->canBeSeen())
-			{
-				int left, top, right, bottom;
-
-				left = pAppearance->upperLeft.x;
-				top = pAppearance->upperLeft.y;
-				right = pAppearance->lowerRight.x;
-				bottom = pAppearance->lowerRight.y;
-
-				eye->projectZ( pAppearance->position, tmpPos );
-
-				if ( screenPos.x >= left && screenPos.x <= right
-					&& screenPos.y >= top && screenPos.y <= bottom )
-				{
-					return (*mIter);
-				}
-			}
-
-		}
+	for ( UNIT_LIST::EIterator mIter = units.Begin(); !mIter.IsDone(); mIter++ )
+	{
+		EditorObject* o = (*mIter);
+		if ( !o || !o->appearance() ) continue;
+		ObjectAppearance* a = o->appearance();
+		float dx = a->position.x - position.x;
+		float dy = a->position.y - position.y;
+		float d = dx * dx + dy * dy;
+		float r = a->getRadius(); if ( r < pickFloor ) r = pickFloor;
+		if ( d <= r * r && d < bestDistSq ) { bestDistSq = d; pBest = o; }
+	}
 
 	for ( DROP_LIST::EIterator dIter = dropZones.Begin(); !dIter.IsDone(); dIter++ )
 	{
-		// need to change this when we get drop zone art
-		// Guard: drop zones without a loaded appearance crash getPosition().
-		if (!(*dIter) || !(*dIter)->appearance()) continue;
-		Stuff::Vector3D position = (*dIter)->getPosition();
-		eye->projectZ( position, tmpPos );
-
-		if ( screenPos.x >= tmpPos.x - 3 && screenPos.x <= tmpPos.x + 3 && screenPos.y <= tmpPos.y + 3 &&
-			screenPos.y >= tmpPos.y -3 )
-			return *dIter;
-
+		EditorObject* o = (*dIter);
+		if ( !o || !o->appearance() ) continue;
+		float dx = o->getPosition().x - position.x;
+		float dy = o->getPosition().y - position.y;
+		float d = dx * dx + dy * dy;
+		if ( d <= pickFloor * pickFloor && d < bestDistSq ) { bestDistSq = d; pBest = o; }
 	}
 
-
-	return NULL;
+	return pBest;
 }
 
 // World-space object pick helper: nearest object whose footprint contains the

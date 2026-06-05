@@ -4106,7 +4106,6 @@ void EditorInterface::renderToolbarImGui()
 	struct ToolDef { const char* label; int cmdId; };
 	static const ToolDef tools[] = {
 		{ "Select",      ID_OTHER_SELECT },
-		{ "Area Select", ID_OTHER_SELECTAREA },
 		{ "Flatten",     ID_OTHER_FLATTEN },
 		{ "Erase",       ID_OTHER_ERASE },
 		{ "Mine",        ID_OTHER_LAYMINES },
@@ -4126,7 +4125,7 @@ void EditorInterface::renderToolbarImGui()
 		if (active)
 			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.45f, 0.80f, 1.0f));
 		if (ImGui::Button(tools[i].label, ImVec2(-1.f, 0.f)))
-			PostMessage(WM_COMMAND, MAKEWPARAM(tools[i].cmdId, 0), 0);
+			handleNewMenuMessage(tools[i].cmdId);  // direct call (reliable; these are brush switches, no dialogs)
 		if (active)
 			ImGui::PopStyleColor();
 	}
