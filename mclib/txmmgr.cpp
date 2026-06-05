@@ -1385,6 +1385,23 @@ void mc2ClearAllBakedStaticLight()
     mc2MarkStaticLightPrefixDirty();   // [LIGHTSSBO v2] table reset → re-upload prefix next frame
 }
 
+// [G1-STATIC-EAGER-LIGHT v1] Probe helper: returns true when lightData_[recipeIndex]
+// has been written by a real bake (numLights_ > 0). Default-constructed slots and
+// the G1 ambient fallback both set numLights_=1, so this is specifically the check
+// "has the slot ever been written by mc2WriteStaticLightSlot (static prefix only)".
+// Used by MC2_GPU_CULL_STATIC_LIGHT_ZERO_PROBE to count never-baked alive props.
+// Checks the persistent static prefix [0..s_staticLightHighWater) only:
+// slot beyond S means registerRecipe ran but bakeStaticLightSlot was never called.
+bool mc2IsStaticLightSlotBaked(int32_t recipeIndex)
+{
+    if (recipeIndex < 0 || !mcTextureManager) return false;
+    const uint32_t ri = static_cast<uint32_t>(recipeIndex);
+    if (ri >= s_staticLightHighWater) return false;  // slot never written
+    TG_HWLightsData slot{};
+    if (!mcTextureManager->copyLightSlot(ri, slot)) return false;
+    return slot.numLights_ > 0;
+}
+
 // [LIGHTBAKE v2] Persistent static slot write. Replaces the retired
 // per-frame mc2SubmitBakedLightSlot (which re-ran addLightDataStructure
 // -> 1792B FNV + 1792B memcmp every frame per recipe). Called ONCE per
@@ -2620,6 +2637,12 @@ void MC_TextureManager::renderLists (void)
 #if defined(MC2_SUBSTRATE_COUNT_PARITY)
 				gpu_cull::substrate_countParityCheck();
 #endif
+			// M1 FROZEN-STATIC-CULL-RECORDS: build + install the frozen static
+			// cull-record prefix now that baseInstanceForType is valid (set by
+			// batcher_prepareBaseInstanceTable above) and before compute_dispatch
+			// consumes the records. No-op on clean frames / unless the gate is set.
+			GpuStaticPropRegistry::buildStaticPrefixGolden();
+
 			if (gpu_cull::compute_isEnabled()) {
 				ZoneScopedN("GpuSP.CullDispatch");
 				TracyGpuZone("GpuSP.CullDispatch");

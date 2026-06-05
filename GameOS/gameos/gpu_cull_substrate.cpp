@@ -59,6 +59,26 @@ static uint32_t* s_cpuActorIds[RING_FRAMES]  = {nullptr, nullptr, nullptr};
 static uint32_t  s_cpuSlotCount[RING_FRAMES] = {0u, 0u, 0u};
 
 // ---------------------------------------------------------------------------
+// M1 FROZEN-STATIC-CULL-RECORDS (gate MC2_GPU_CULL_STATIC_FROZEN_RECORDS).
+// CPU golden copy of the static-prop cull records, built on registry-generation
+// dirty in persistent-pool order (so record-index == instance-pool slot). Frozen
+// between dirty events; memcpy'd into each ring slot lazily on its next
+// frameBegin (per-slot dirty), so the static prefix [0,S) is RESIDENT before
+// dynamic actors append [S,S+D). This decouples static record PRODUCTION from
+// the per-frame timeline (the dynamic-first append-order constraint). When the
+// gate is off, OR before the registry has populated the prefix (S==0), frameBegin
+// behaves exactly as before (cursor resets to 0) — additive + byte-identical.
+// REQUIRES the registry-side step (skip the per-frame static append + call
+// substrate_rebuildStaticPrefix on dirty) before the gate may be turned on;
+// otherwise statics would be double-counted (prefix + per-frame append).
+static const bool s_staticFrozen =
+    (getenv("MC2_GPU_CULL_STATIC_FROZEN_RECORDS") != nullptr);
+static GpuActorRecord* s_staticRecords            = nullptr;  // golden copy, sized maxActors
+static uint32_t        s_staticPrefixCount        = 0u;       // S
+static uint32_t        s_staticPrefixVisibleCount = 0u;       // # prevVisibilityBit==1 in [0,S)
+static uint32_t        s_staticDirty[RING_FRAMES] = {0u, 0u, 0u};  // per-slot: refill needed
+
+// ---------------------------------------------------------------------------
 // Env probe (lazy, cached)
 // ---------------------------------------------------------------------------
 
@@ -115,6 +135,9 @@ void substrate_init(uint32_t maxActors) {
     s_frameSlot      = 0;
     s_flushCount     = 0;
     s_firstFlushDone = false;
+    s_staticPrefixCount        = 0u;   // M1: no frozen prefix until the registry rebuilds it
+    s_staticPrefixVisibleCount = 0u;
+    for (uint32_t i = 0u; i < RING_FRAMES; ++i) s_staticDirty[i] = 0u;
 
     // Per-slot layout: [GpuActorRecordHeader][GpuActorRecord * maxActors]
     s_slotBytes = sizeof(GpuActorRecordHeader) + maxActors * sizeof(GpuActorRecord);
@@ -143,6 +166,8 @@ void substrate_init(uint32_t maxActors) {
         s_cpuActorIds[i]  = new uint32_t[maxActors]();
         s_cpuSlotCount[i] = 0u;
     }
+    // M1: golden copy for the frozen static-prop record prefix (sized maxActors).
+    s_staticRecords = new GpuActorRecord[maxActors]();
 
     s_initialized = true;
 
@@ -183,6 +208,12 @@ void substrate_shutdown() {
         s_cpuActorIds[i]  = nullptr;
         s_cpuSlotCount[i] = 0u;
     }
+    // M1: free the frozen static-prop golden copy.
+    delete[] s_staticRecords;
+    s_staticRecords            = nullptr;
+    s_staticPrefixCount        = 0u;
+    s_staticPrefixVisibleCount = 0u;
+    for (uint32_t i = 0u; i < RING_FRAMES; ++i) s_staticDirty[i] = 0u;
 
     s_mappedPtr      = nullptr;
     s_maxActors      = 0;
@@ -217,12 +248,60 @@ void substrate_frameBegin() {
     }
 
     // Reset the per-frame record count for this slot.
-    s_perFrameCount = 0;
-    s_cpuVisibleCount = 0;
+    if (s_staticFrozen && s_staticPrefixCount > 0u) {
+        // M1: static records are a FROZEN prefix [0,S). Refill THIS ring slot
+        // from the CPU golden copy if it is dirty (per-slot, lazy, AFTER the
+        // fence wait above so the GPU is done reading this slot), then start the
+        // per-frame cursor AFTER the prefix so dynamic actors append into
+        // [S,S+D). No per-frame static append (the registry skips it under the
+        // gate). When S==0 or the gate is off, the else-branch keeps the
+        // original reset-to-0 behavior — additive + byte-identical.
+        const uint32_t S = s_staticPrefixCount;
+        if (s_staticDirty[s_frameSlot]) {
+            const size_t slotOffset = s_frameSlot * s_slotBytes;
+            char* recBase = static_cast<char*>(s_mappedPtr) + slotOffset
+                            + sizeof(GpuActorRecordHeader);
+            memcpy(recBase, s_staticRecords,
+                   static_cast<size_t>(S) * sizeof(GpuActorRecord));
+            for (uint32_t k = 0u; k < S; ++k)
+                s_cpuActorIds[s_frameSlot][k] = s_staticRecords[k].actorId;
+            s_staticDirty[s_frameSlot] = 0u;
+        }
+        s_perFrameCount             = S;
+        s_cpuVisibleCount           = s_staticPrefixVisibleCount;
+        s_cpuSlotCount[s_frameSlot] = S;
+    } else {
+        s_perFrameCount = 0;
+        s_cpuVisibleCount = 0;
+        s_cpuSlotCount[s_frameSlot] = 0u;
+    }
     s_overflowLoggedThisFrame = false;  // 2026-05-11 reset overflow log latch
-    s_cpuSlotCount[s_frameSlot] = 0u;
 
     SUBSTRATE_TRACE("event=frame_begin slot=%u", s_frameSlot);
+}
+
+// ---------------------------------------------------------------------------
+// substrate_rebuildStaticPrefix  (M1 FROZEN-STATIC-CULL-RECORDS)
+// ---------------------------------------------------------------------------
+//
+// Installs the frozen static-prop cull-record prefix [0,S) into the CPU golden
+// copy, in persistent-pool order (so record-index == instance-pool slot). Call
+// on a registry-generation dirty event (the static set or a cull-relevant field
+// changed). Marks all ring slots dirty; each slot is memcpy'd from the golden
+// copy into its mapped record array lazily at its next substrate_frameBegin().
+// Maintained regardless of the gate; only frameBegin's consumption is gated.
+void substrate_rebuildStaticPrefix(const GpuActorRecord* recs, uint32_t count) {
+    if (!substrate_isEnabled() || !s_initialized || !s_staticRecords) return;
+    if (count > s_maxActors) count = s_maxActors;  // clamp; shortfall surfaces as cull overflow
+    uint32_t vis = 0u;
+    for (uint32_t k = 0u; k < count; ++k) {
+        s_staticRecords[k] = recs[k];
+        if (recs[k].prevVisibilityBit) ++vis;
+    }
+    s_staticPrefixCount        = count;
+    s_staticPrefixVisibleCount = vis;
+    for (uint32_t s = 0u; s < RING_FRAMES; ++s) s_staticDirty[s] = 1u;
+    SUBSTRATE_TRACE("event=rebuild_static_prefix count=%u vis=%u", count, vis);
 }
 
 // ---------------------------------------------------------------------------
