@@ -29,6 +29,11 @@ uniform sampler2D matNormal0;   // rock normal+disp
 uniform sampler2D matNormal1;   // grass normal+disp
 uniform sampler2D matNormal2;   // dirt normal+disp
 uniform sampler2D matNormal3;   // concrete normal+disp
+
+#include <include/terrain_mat_layers.hglsl>
+#ifdef TERRAIN_NORMAL_ARRAY
+uniform sampler2DArray matNormalArray;
+#endif
 uniform vec4 detailNormalTiling; // .x = base tiling multiplier
 
 #include <include/terrain_common.hglsl>
@@ -112,7 +117,11 @@ void main()
         if (dirtWeight > 0.01) {
             float baseTiling = detailNormalTiling.x;
             vec2 dispUV = Texcoord * baseTiling * TC_MAT_TILING.z;
+#ifdef TERRAIN_NORMAL_ARRAY
+            float disp = 1.0 - texture(matNormalArray, vec3(dispUV, float(MAT_LAYER_DIRT))).a;
+#else
             float disp = 1.0 - texture(matNormal2, dispUV).a;
+#endif
             worldPos += worldNorm * (disp - 0.5) * displaceScale * dirtWeight;
         }
     }
