@@ -829,6 +829,7 @@ EditorInterface::EditorInterface()
 	m_scatterMode = false;
 	m_stampRadius = 400.0f;
 	m_stampStrength = 50.0f;
+	m_waterHeight = 0.0f;
 	m_pendGenerateMission = false;
 
 	smoothRadius = 2;
@@ -4375,6 +4376,20 @@ void EditorInterface::renderToolbarImGui()
 			EditorData::amplifyTerrain(1.5f);
 		if (ImGui::Button("Flatten x0.67", ImVec2(-1.f, 0.f)))
 			EditorData::amplifyTerrain(0.6667f);
+
+		// Live water-height slider (same effect as the Water dialog: sets the
+		// water elevation/plane; recalcWater reflows which cells are submerged).
+		// Raise it into the terrain range to flood basins with a real water surface.
+		if (land && Terrain::mapData)
+		{
+			m_waterHeight = Terrain::mapData->waterDepth;   // sync display to current
+			if (ImGui::SliderFloat("Water Ht", &m_waterHeight, -50.0f, 800.0f, "%.0f"))
+			{
+				Terrain::waterElevation     = m_waterHeight;
+				Terrain::mapData->waterDepth = m_waterHeight;
+				land->recalcWater();
+			}
+		}
 	}
 
 	ImGui::End();

@@ -315,6 +315,7 @@ private:
 	bool						m_scatterMode;     // object brush scatters in a radius vs single place
 	float						m_stampRadius;
 	float						m_stampStrength;
+	float						m_waterHeight;     // live water-elevation slider value
 	bool						m_pendGenerateMission; // deferred: run generator outside the ImGui pass
 
 	MainMenu					*m_pMainMenu;
