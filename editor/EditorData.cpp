@@ -1135,13 +1135,25 @@ bool EditorData::generateMission( int mapSize, int terrain, unsigned long seed )
 {
 	const int N = genMapSizeToN( mapSize );
 
-	// TerrainDlg index -> generator biome. Order matches the type dialog roughly;
-	// out-of-range falls back to temperate.
-	static const char* kBiomes[] = {
-		"temperate_hills", "desert", "snow_mountain", "rocky_badlands", "swamp_forest"
-	};
-	const int nBiomes = (int)( sizeof(kBiomes) / sizeof(kBiomes[0]) );
-	const char* biome = kBiomes[ ( terrain >= 0 && terrain < nBiomes ) ? terrain : 0 ];
+	// Map the chosen terrain TYPE NAME (not its list index -- the dialog listbox
+	// order does not match a fixed enum) to a generator biome. Resolve the name
+	// the same way initTerrainFromTGA does, then match case-insensitively.
+	char typeName[256] = {0};
+	EditorSafeLoadString( TerrainColorMap::getTextureNameID( terrain ), typeName, 256 );
+	char lname[256];
+	strncpy( lname, typeName, sizeof(lname) - 1 ); lname[sizeof(lname) - 1] = 0;
+	_strlwr( lname );
+
+	const char* biome = "temperate_hills";
+	if ( strstr( lname, "desert" ) || strstr( lname, "sand" ) || strstr( lname, "dune" ) )
+		biome = "desert";
+	else if ( strstr( lname, "snow" ) || strstr( lname, "ice" ) || strstr( lname, "arctic" ) || strstr( lname, "cold" ) || strstr( lname, "tundra" ) )
+		biome = "snow_mountain";
+	else if ( strstr( lname, "forest" ) || strstr( lname, "swamp" ) || strstr( lname, "jungle" ) || strstr( lname, "marsh" ) )
+		biome = "swamp_forest";
+	else if ( strstr( lname, "rock" ) || strstr( lname, "badland" ) || strstr( lname, "mountain" ) || strstr( lname, "lunar" ) || strstr( lname, "crater" ) )
+		biome = "rocky_badlands";
+	EditorDataTrace( "generateMission: terrain=%d typeName='%s' -> biome=%s", terrain, typeName, biome );
 
 	const char* mapName = "genmap";
 
