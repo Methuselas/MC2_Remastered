@@ -4407,12 +4407,14 @@ void gosRenderer::init() {
     // Used by PatchStream M1g to draw thin records via GL_TRIANGLES, avoiding tessellation overhead.
     {
         ZoneScopedN("gosRenderer::init thinTerrainProg");
-        static const char* kThinPrefix = "#version 430\n";
+        std::string kThinPrefix = "#version 430\n";
+        if (terrainNormalArrayEnabled())
+            kThinPrefix += "#define TERRAIN_NORMAL_ARRAY\n";
         thin_terrain_prog_ = glsl_program::makeProgram(
             "gos_terrain_thin",
             "shaders/gos_terrain_thin.vert",
             "shaders/gos_terrain.frag",
-            kThinPrefix);
+            kThinPrefix.c_str());
         if (!thin_terrain_prog_ || !thin_terrain_prog_->shp_)
             fprintf(stderr, "[THIN_TERRAIN] WARNING: failed to compile thin terrain shader"
                             " — thin draw path disabled\n");
@@ -4431,12 +4433,14 @@ void gosRenderer::init() {
     // run log for shader compile errors.
     {
         ZoneScopedN("gosRenderer::init terrainSurfaceProg");
-        static const char* kSurfacePrefix = "#version 430\n";
+        std::string kSurfacePrefix = "#version 430\n";
+        if (terrainNormalArrayEnabled())
+            kSurfacePrefix += "#define TERRAIN_NORMAL_ARRAY\n";
         terrain_surface_prog_ = glsl_program::makeProgram(
             "gos_terrain_surface",
             "shaders/gos_terrain_surface.vert",
             "shaders/gos_terrain.frag",
-            kSurfacePrefix);
+            kSurfacePrefix.c_str());
         if (!terrain_surface_prog_ || !terrain_surface_prog_->shp_)
             fprintf(stderr, "[TERRAIN_SURFACE v1] event=shader_compile_fail "
                             "vs=gos_terrain_surface.vert fs=gos_terrain.frag "
@@ -4470,12 +4474,14 @@ void gosRenderer::init() {
     // PBR/shadow/atlas logic from gos_terrain.frag.
     {
         ZoneScopedN("gosRenderer::init maskSolidProg");
-        static const char* kMaskSolidPrefix = "#version 430\n";
+        std::string kMaskSolidPrefix = "#version 430\n";
+        if (terrainNormalArrayEnabled())
+            kMaskSolidPrefix += "#define TERRAIN_NORMAL_ARRAY\n";
         mask_solid_prog_ = glsl_program::makeProgram(
             "gos_terrain_mask_solid",
             "shaders/gos_terrain_mask_solid.vert",
             "shaders/gos_terrain.frag",
-            kMaskSolidPrefix);
+            kMaskSolidPrefix.c_str());
         if (!mask_solid_prog_ || !mask_solid_prog_->shp_)
             fprintf(stderr, "[MASK_SOLID] WARNING: failed to compile mask-SOLID shader"
                             " — MC2_TERRAIN_MASK_DISPATCH=1 SOLID draw disabled\n");
