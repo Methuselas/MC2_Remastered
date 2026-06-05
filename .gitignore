@@ -137,3 +137,5 @@ ucrt-list.txt
 !tools/mcp/**
 !tools/terrain_gen/
 !tools/terrain_gen/**
+terrain_out/
+tools/terrain_gen/__pycache__/
