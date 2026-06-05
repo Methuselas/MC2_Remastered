@@ -104,6 +104,8 @@ def main() -> None:
     parser.add_argument('recipe', help='Path to recipe JSON file')
     parser.add_argument('--out', default='terrain_out', help='Output directory')
     parser.add_argument('--template-pak', help='Template .pak for Packet 0 patching (Phase B)')
+    parser.add_argument('--preview', action='store_true',
+                        help='Fast preview: render a small thumbnail only (no elevation/extras)')
     args = parser.parse_args()
 
     out = Path(args.out)
@@ -111,8 +113,26 @@ def main() -> None:
 
     print(f"Loading recipe: {args.recipe}")
     recipe = TerrainRecipe.from_json(args.recipe)
-    print(f"  size={recipe.size}  biome={recipe.biome}  seed={recipe.seed}")
+
+    # Fast preview: shrink to a small grid (snapped to the block size) so the
+    # height/material/burnin pipeline runs quickly; we only emit the thumbnail.
+    if args.preview:
+        prev = max(40, min(recipe.size, 100))
+        prev = (prev // 20) * 20
+        recipe.size = prev
+        recipe._burnin_cap = 256   # tiny colormap for a fast thumbnail
+
+    print(f"  size={recipe.size}  biome={recipe.biome}  seed={recipe.seed}  preview={args.preview}")
     recipe.apply_biome()
+
+    if args.preview:
+        height = HeightGenerator().generate(recipe)
+        masks  = MaterialClassifier().classify(height, recipe)
+        burnin = BurninRenderer().render(masks, recipe, BIOMES[recipe.biome])
+        make_preview(burnin).save(str(out / f"{recipe.name}.preview.png"))
+        print(f"  {recipe.name}.preview.png (preview)")
+        print("Done.")
+        return
 
     print("Generating height...")
     height = HeightGenerator().generate(recipe)

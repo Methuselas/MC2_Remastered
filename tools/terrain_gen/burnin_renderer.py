@@ -17,7 +17,9 @@ class BurninRenderer:
         # colormap is 13056px -> multi-GB float arrays). The final image is resized
         # to target_res so the engine still gets the map-matched colormap size;
         # colormap detail beyond ~2k is imperceptible at terrain scale.
-        res = min(target_res, 2048)
+        # Preview mode caps the working res hard so the thumbnail renders fast.
+        cap = getattr(recipe, '_burnin_cap', 2048)
+        res = min(target_res, cap)
         b   = recipe.burnin
         p   = preset.palette
         m   = recipe.materials

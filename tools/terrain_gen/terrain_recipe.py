@@ -68,12 +68,17 @@ class TerrainRecipe:
         return (self.size // 20) * 256
 
     def apply_biome(self) -> None:
-        """Overlay biome preset defaults onto height/material params."""
+        """Overlay biome preset defaults onto height/material params, but NEVER
+        clobber fields the recipe explicitly overrode (see _overrides, populated by
+        from_json). Lets the editor's Map Generator dialog set height/water/etc."""
+        ov = getattr(self, '_overrides', {})
         preset = BIOMES[self.biome]
         for k, v in preset.height.items():
-            setattr(self.height, k, v)
+            if k not in ov.get('height', ()):
+                setattr(self.height, k, v)
         for k, v in preset.materials.items():
-            setattr(self.materials, k, v)
+            if k not in ov.get('materials', ()):
+                setattr(self.materials, k, v)
 
     def to_json(self, path: Path | str) -> None:
         with open(path, 'w') as f:
@@ -86,7 +91,7 @@ class TerrainRecipe:
         height    = HeightParams(**d.get('height', {}))
         materials = MaterialParams(**d.get('materials', {}))
         burnin    = BurninParams(**d.get('burnin', {}))
-        return cls(
+        r = cls(
             version=d.get('version', 1),
             name=d.get('name', 'unnamed'),
             size=d['size'],
@@ -96,3 +101,10 @@ class TerrainRecipe:
             materials=materials,
             burnin=burnin,
         )
+        # Record explicitly-provided height/materials keys so apply_biome() won't
+        # overwrite them (editor Map Generator dialog sends these as overrides).
+        r._overrides = {
+            'height':    set(d.get('height', {}).keys()),
+            'materials': set(d.get('materials', {}).keys()),
+        }
+        return r
