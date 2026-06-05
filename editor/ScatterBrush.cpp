@@ -25,7 +25,7 @@ extern Terrain*  land;
 
 // Scatter control defaults.
 float ScatterBrush::s_radius        = 400.0f;
-int   ScatterBrush::s_density       = 12;
+int   ScatterBrush::s_density       = 4;
 float ScatterBrush::s_minSpacing    = 96.0f;
 float ScatterBrush::s_maxSlopeRise  = 0.0f;    // 0 = no slope filter
 bool  ScatterBrush::s_randomRotation = true;
@@ -37,7 +37,7 @@ static inline float    frand01( unsigned& s ) { return (float)( lcgNext( s ) >> 
 
 ScatterBrush::ScatterBrush( int group, int indexInGroup, int alignment )
 	: m_group( group ), m_indexInGroup( indexInGroup ), m_alignment( alignment ),
-	  m_pAction( NULL ), m_rng( 0x12345u )
+	  m_pAction( NULL ), m_rng( 0x12345u ), m_haveLast( false ), m_lastX( 0.0f ), m_lastY( 0.0f )
 {
 }
 
@@ -48,6 +48,7 @@ ScatterBrush::~ScatterBrush()
 bool ScatterBrush::beginPaint()
 {
 	m_pAction = new BuildingBrush::BuildingAction;
+	m_haveLast = false;
 	return true;
 }
 
@@ -67,6 +68,22 @@ bool ScatterBrush::paint( Stuff::Vector3D& worldPos, int /*screenX*/, int /*scre
 {
 	if ( !land )
 		return false;
+
+	// Throttle: paint() fires every frame while the button is held, so without
+	// this a single click (or a slow drag) dumps the full density many times over.
+	// Only scatter again once the cursor has moved ~half a radius, giving an even
+	// drag-painted spread and roughly one density-batch per click.
+	if ( m_haveLast )
+	{
+		const float mvx = worldPos.x - m_lastX;
+		const float mvy = worldPos.y - m_lastY;
+		const float moveThresh = s_radius * 0.5f;
+		if ( mvx * mvx + mvy * mvy < moveThresh * moveThresh )
+			return false;
+	}
+	m_lastX = worldPos.x;
+	m_lastY = worldPos.y;
+	m_haveLast = true;
 
 	EditorObjectMgr* mgr = EditorObjectMgr::instance();
 	BuildingBrush::BuildingAction* pAct = (BuildingBrush::BuildingAction*)m_pAction;

@@ -50,6 +50,8 @@ private:
 	int     m_alignment;
 	void*   m_pAction;        // BuildingBrush::BuildingAction* (opaque here to avoid header coupling)
 	unsigned m_rng;
+	bool    m_haveLast;       // throttle: only re-scatter after the cursor moves
+	float   m_lastX, m_lastY;
 };
 
 #endif // SCATTERBRUSH_H
