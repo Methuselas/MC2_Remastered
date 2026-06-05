@@ -123,8 +123,9 @@ def main() -> None:
             print("WARNING: --template-pak provided but pak_exporter not available (Phase B). Skipping.")
         else:
             print(f"Patching pak from template: {args.template_pak}")
-            pkt0 = PakExporter().build_packet0(height, masks, recipe)
-            PakExporter().patch_pak(args.template_pak, str(out / f"{name}.pak"), pkt0)
+            exp  = PakExporter()
+            pkt0 = exp.build_packet0(height, masks, recipe)
+            exp.patch_pak(args.template_pak, str(out / f"{name}.pak"), pkt0)
             print(f"  {name}.pak")
 
     print("Done.")

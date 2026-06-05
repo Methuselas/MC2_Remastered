@@ -33,7 +33,7 @@ def test_elevation_encoded_correctly():
     r, h, masks, data = _run(size=60)
     v = VERTEX_STRUCT.unpack_from(data, 0)
     elevation_stored = v[3]
-    expected_elev = float(h[0, 0]) * r.height.max_elevation
+    expected_elev = float(h[0, 0]) * r.height.max_elevation + r.height.min_elevation
     assert abs(elevation_stored - expected_elev) < 0.5, \
         f"elevation mismatch: {elevation_stored} vs {expected_elev}"
 

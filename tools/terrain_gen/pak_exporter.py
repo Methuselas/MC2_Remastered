@@ -80,7 +80,7 @@ class PakExporter:
         if n_pkt < 2:
             raise ValueError(f"PacketFile needs at least 2 seek entries, got {n_pkt}")
 
-        seek = list(struct.unpack_from(f'<{n_pkt}i', raw, 8))
+        seek = list(struct.unpack_from(f'<{n_pkt}I', raw, 8))  # unsigned — file offsets are never negative
         start = seek[0]
         end   = seek[1]
         expected = end - start
