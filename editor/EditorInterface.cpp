@@ -2374,6 +2374,7 @@ void EditorInterface::render()
 		
 		//curBrush->beginPaint();
 		curBrush->render( pt.x, pt.y );
+		renderTerrainSelection();
 		//curBrush->endPaint();
 
 		if ( painting && !dragging )
@@ -4098,6 +4099,45 @@ BOOL EditorInterface::OnMouseWheel(UINT nFlags, short zDelta, CPoint pt)
 	tacMap.RedrawWindow();
 	syncScrollBars();
 	return CWnd ::OnMouseWheel(nFlags, zDelta, pt);
+}
+
+// Highlight the currently-selected terrain area (translucent green) so drag-select
+// on the ground gives visible feedback.
+void EditorInterface::renderTerrainSelection()
+{
+	if ( !land || !eye || !land->hasSelection() )
+		return;
+
+	const int side = land->realVerticesMapSide;
+	const float wupv = land->worldUnitsPerVertex;
+
+	gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_AlphaInvAlpha );
+
+	for ( int j = 0; j < side - 1; ++j )
+	{
+		for ( int i = 0; i < side - 1; ++i )
+		{
+			if ( !land->isVertexSelected( j, i ) )
+				continue;
+
+			Stuff::Vector3D c[4];
+			c[0].x = land->mapTopLeft3d.x + (float)i * wupv;       c[0].y = land->mapTopLeft3d.y - (float)j * wupv;
+			c[1].x = land->mapTopLeft3d.x + (float)(i + 1) * wupv; c[1].y = c[0].y;
+			c[2].x = c[1].x;                                       c[2].y = land->mapTopLeft3d.y - (float)(j + 1) * wupv;
+			c[3].x = c[0].x;                                       c[3].y = c[2].y;
+
+			gos_VERTEX q[4];
+			memset( q, 0, sizeof( q ) );
+			for ( int k = 0; k < 4; ++k )
+			{
+				c[k].z = land->getTerrainElevation( c[k] );
+				Stuff::Vector4D s;
+				eye->projectZ( c[k], s );
+				q[k].x = s.x; q[k].y = s.y; q[k].rhw = 1.0f; q[k].argb = 0x5000ff00;
+			}
+			gos_DrawQuads( q, 4 );
+		}
+	}
 }
 
 void EditorInterface::setSculptBrush( int mode )

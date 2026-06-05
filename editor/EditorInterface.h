@@ -82,6 +82,7 @@ public:
 	static EditorInterface* instance(){ return s_instance; }
 	void renderToolbarImGui();
 	void setSculptBrush( int mode );
+	void renderTerrainSelection();
 	
 	EditorInterface();
 	~EditorInterface();

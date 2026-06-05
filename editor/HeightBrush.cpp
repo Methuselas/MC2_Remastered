@@ -160,11 +160,14 @@ void HeightBrush::render( int screenX, int screenY )
 	Stuff::Vector2DOf<long> sp;
 	sp.x = screenX; sp.y = screenY;
 	eye->inverseProject( sp, center );
+	center.z = land->getTerrainElevation( center );
 
+	Stuff::Vector4D centerS;
+	eye->projectZ( center, centerS );
+
+	// Project the rim of the brush footprint onto the terrain.
 	const int N = 48;
-	Stuff::Vector4D prev;
-	bool havePrev = false;
-
+	Stuff::Vector4D rim[N + 1];
 	for ( int k = 0; k <= N; ++k )
 	{
 		const float ang = (float)k / (float)N * 6.2831853f;
@@ -172,20 +175,30 @@ void HeightBrush::render( int screenX, int screenY )
 		wp.x += cosf( ang ) * radius;
 		wp.y += sinf( ang ) * radius;
 		wp.z = land->getTerrainElevation( wp );
+		eye->projectZ( wp, rim[k] );
+	}
 
-		Stuff::Vector4D s;
-		eye->projectZ( wp, s );
+	gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_AlphaInvAlpha );
 
-		if ( havePrev )
-		{
-			gos_VERTEX v[2];
-			memset( v, 0, sizeof( v ) );
-			v[0].x = prev.x; v[0].y = prev.y; v[0].z = 0.0f; v[0].rhw = 1.0f; v[0].argb = 0xffff00ff;
-			v[1].x = s.x;    v[1].y = s.y;    v[1].z = 0.0f; v[1].rhw = 1.0f; v[1].argb = 0xffff00ff;
-			gos_DrawLines( v, 2 );
-		}
-		prev = s;
-		havePrev = true;
+	// Filled translucent magenta disc (triangle fan from the centre to the rim).
+	for ( int k = 0; k < N; ++k )
+	{
+		gos_VERTEX t[3];
+		memset( t, 0, sizeof( t ) );
+		t[0].x = centerS.x; t[0].y = centerS.y; t[0].rhw = 1.0f; t[0].argb = 0x40ff00ff;
+		t[1].x = rim[k].x;  t[1].y = rim[k].y;  t[1].rhw = 1.0f; t[1].argb = 0x40ff00ff;
+		t[2].x = rim[k+1].x;t[2].y = rim[k+1].y;t[2].rhw = 1.0f; t[2].argb = 0x40ff00ff;
+		gos_DrawTriangles( t, 3 );
+	}
+
+	// Bright magenta outline ring on top.
+	for ( int k = 0; k < N; ++k )
+	{
+		gos_VERTEX v[2];
+		memset( v, 0, sizeof( v ) );
+		v[0].x = rim[k].x;   v[0].y = rim[k].y;   v[0].rhw = 1.0f; v[0].argb = 0xffff00ff;
+		v[1].x = rim[k+1].x; v[1].y = rim[k+1].y; v[1].rhw = 1.0f; v[1].argb = 0xffff00ff;
+		gos_DrawLines( v, 2 );
 	}
 }
 
