@@ -77,4 +77,18 @@ else
     echo "  (warn) Buildings.csv source not found; editor will fall back to art.fst"
 fi
 
+# Terrain generator (Path B) -- the "Generate Map" editor button shells out to
+# tools/terrain_gen/terrain_gen.py relative to the deploy CWD. Ship the python
+# package so it's runnable from the install. (Requires Python 3 + numpy/Pillow/
+# opensimplex on the user's PATH: pip install -r tools/terrain_gen/requirements.txt)
+if [ -d "$REPO/tools/terrain_gen" ]; then
+    mkdir -p "$DEPLOY/tools/terrain_gen/recipes"
+    for f in "$REPO"/tools/terrain_gen/*.py "$REPO"/tools/terrain_gen/requirements.txt; do
+        [ -f "$f" ] && copy_if_diff "$f" "$DEPLOY/tools/terrain_gen/$(basename "$f")"
+    done
+    for f in "$REPO"/tools/terrain_gen/recipes/*.json; do
+        [ -f "$f" ] && copy_if_diff "$f" "$DEPLOY/tools/terrain_gen/recipes/$(basename "$f")"
+    done
+fi
+
 echo "[deploy-editor] done"

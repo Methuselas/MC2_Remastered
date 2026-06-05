@@ -141,6 +141,10 @@ class EditorData
 		
 		// makes a terrain from a height map.  
 		static bool initTerrainFromTGA( int mapSize, int min = 0, int max = 512, int terrain = 0 );
+		// Generated mission (Path B): runs the python terrain generator for the
+		// chosen size + terrain-type/biome + seed, then builds an editable map from
+		// its heightmap + burnin colormap via initTerrainFromTGA.
+		static bool generateMission( int mapSize, int terrain, unsigned long seed );
 		static bool initTerrainFromPCV( const char* fileName );
 		static bool	reassignHeightsFromTGA( const char* fileName, int min, int max );
 

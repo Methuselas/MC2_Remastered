@@ -31,6 +31,16 @@ long        g_cliFrameCounter    = 0;     // bumped by EditorCamera::render
 bool        g_cliClosePosted     = false; // one-shot guard for WM_CLOSE
 bool        g_cliAutoLoadFired   = false; // one-shot guard for auto-load
 
+// --new-map[=mapSize,terrain]: headless repro of the File->New (from-scratch
+// generator) path. Mirrors -mission auto-load but calls initTerrainFromTGA
+// instead of initTerrainFromPCV. mapSize/terrain are the MapSizeDlg/TerrainDlg
+// indices (default 0,0). Diagnostic harness for debugging the generator; not
+// surfaced in the UI.
+bool        g_cliNewMap          = false;
+bool        g_cliGenMap          = false;
+int         g_cliNewMapSize      = 0;
+int         g_cliNewMapTerrain   = 0;
+
 static void editor_set_default_env_vars()
 {
     // Bake editor-preferred defaults so RenderDoc and other tools can launch
@@ -142,6 +152,31 @@ static void s_cli_parse(const char* cmd)
 		else if (s_cli_flag_match(tok, "-exit-on-load-fail", "--exit-on-load-fail"))
 		{
 			g_cliExitOnLoadFail = true;
+		}
+		else if (s_cli_flag_match(tok, "-new-map", "--new-map"))
+		{
+			g_cliNewMap = true;
+		}
+		else if (s_cli_starts_with(tok, "-new-map=", &rest) ||
+		         s_cli_starts_with(tok, "--new-map=", &rest))
+		{
+			// rest = "size" or "size,terrain"
+			g_cliNewMap = true;
+			g_cliNewMapSize = atol(rest);
+			const char* comma = strchr(rest, ',');
+			if (comma) g_cliNewMapTerrain = atol(comma + 1);
+		}
+		else if (s_cli_flag_match(tok, "-gen-map", "--gen-map"))
+		{
+			g_cliGenMap = true;
+		}
+		else if (s_cli_starts_with(tok, "-gen-map=", &rest) ||
+		         s_cli_starts_with(tok, "--gen-map=", &rest))
+		{
+			g_cliGenMap = true;
+			g_cliNewMapSize = atol(rest);
+			const char* comma = strchr(rest, ',');
+			if (comma) g_cliNewMapTerrain = atol(comma + 1);
 		}
 	}
 }
@@ -404,16 +439,42 @@ BOOL EditorMFCApp::OnIdle(LONG lCount)
 
 	// S-CLI: auto-load a mission on the FIRST idle after InitGameOS so the GL
 	// context, asset system, and texture manager are fully up. One-shot.
-	if (!g_cliAutoLoadFired && !g_cliMissionPath.empty() && !m_bPendingInitGameOS)
+	if (!g_cliAutoLoadFired && (!g_cliMissionPath.empty() || g_cliNewMap || g_cliGenMap) && !m_bPendingInitGameOS)
 	{
 		g_cliAutoLoadFired = true;
-		EarlyTrace("OnIdle: S-CLI auto-load: enter");
-		bool ok = EditorData::initTerrainFromPCV(g_cliMissionPath.c_str());
-		EarlyTrace(ok ? "OnIdle: S-CLI auto-load: OK" : "OnIdle: S-CLI auto-load: FAILED");
+		bool ok = false;
+		if (g_cliGenMap)
+		{
+			fprintf(stderr, "[EDITOR_CLI v1] event=gen_map_begin size=%d terrain=%d\n",
+				g_cliNewMapSize, g_cliNewMapTerrain);
+			fflush(stderr);
+			EarlyTrace("OnIdle: S-CLI auto-gen-map: enter");
+			ok = EditorData::generateMission(g_cliNewMapSize, g_cliNewMapTerrain, 12345u);
+			EarlyTrace(ok ? "OnIdle: S-CLI auto-gen-map: OK" : "OnIdle: S-CLI auto-gen-map: FAILED");
+			fprintf(stderr, "[EDITOR_CLI v1] event=gen_map_end ok=%d\n", ok ? 1 : 0);
+			fflush(stderr);
+		}
+		else if (g_cliNewMap)
+		{
+			fprintf(stderr, "[EDITOR_CLI v1] event=new_map_begin size=%d terrain=%d\n",
+				g_cliNewMapSize, g_cliNewMapTerrain);
+			fflush(stderr);
+			EarlyTrace("OnIdle: S-CLI auto-new-map: enter");
+			ok = EditorData::initTerrainFromTGA(g_cliNewMapSize, 0, 0, g_cliNewMapTerrain);
+			EarlyTrace(ok ? "OnIdle: S-CLI auto-new-map: OK" : "OnIdle: S-CLI auto-new-map: FAILED");
+			fprintf(stderr, "[EDITOR_CLI v1] event=new_map_end ok=%d\n", ok ? 1 : 0);
+			fflush(stderr);
+		}
+		else
+		{
+			EarlyTrace("OnIdle: S-CLI auto-load: enter");
+			ok = EditorData::initTerrainFromPCV(g_cliMissionPath.c_str());
+			EarlyTrace(ok ? "OnIdle: S-CLI auto-load: OK" : "OnIdle: S-CLI auto-load: FAILED");
+		}
 		if (!ok && g_cliExitOnLoadFail)
 		{
-			fprintf(stderr, "[EDITOR_CLI v1] event=load_fail mission=\"%s\"\n",
-				g_cliMissionPath.c_str());
+			fprintf(stderr, "[EDITOR_CLI v1] event=load_fail mission=\"%s\" newmap=%d\n",
+				g_cliMissionPath.c_str(), g_cliNewMap ? 1 : 0);
 			fflush(stderr);
 			exit(1);
 		}

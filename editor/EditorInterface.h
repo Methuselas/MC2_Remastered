@@ -209,6 +209,7 @@ private:
 	int Redo();	
 	int FileOpen();
 	int New();
+	int NewGeneratedMission();
 	int PaintDirtRoad();
 	int PaintRocks();
 	int PaintPaved();
@@ -314,6 +315,7 @@ private:
 	bool						m_scatterMode;     // object brush scatters in a radius vs single place
 	float						m_stampRadius;
 	float						m_stampStrength;
+	bool						m_pendGenerateMission; // deferred: run generator outside the ImGui pass
 
 	MainMenu					*m_pMainMenu;
 

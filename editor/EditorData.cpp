@@ -988,8 +988,21 @@ bool EditorData::reassignHeightsFromTGA( const char* fileName, int min, int max 
 
 }
 
-void* DecodeJPG( const char* FileName, BYTE* Data, DWORD DataSize, DWORD* TextureWidth, DWORD* TextureHeight, bool TextureLoad, void *pDestSurf );
+// Working JPEG decoder lives in mclib/burnin_jpeg_decode.cpp (stb_image, the
+// same TU terrtxm2 uses for the .burnin.jpg sidecars). The legacy DecodeJPG()
+// in gameos.cpp is a NULL stub on this build, which is why every editor
+// new-map colormap fell back to flat grey. Route through the real decoder.
+extern "C" unsigned char* BurninJpeg_DecodeRGB(const unsigned char* data, int dataLen, int* outW, int* outH);
+extern "C" void           BurninJpeg_FreePixels(unsigned char* px);
+
 //-------------------------------------------------------------------------------------------------
+// Decode a source colormap JPEG (tmpRAM/fileSize) and (nearest-neighbour) scale
+// it to a square colormap TGA sized to the map, written to localColorMapName as
+// 32-bit BGRA. mapWidth is the terrain's vertices-per-side; colormap resolution
+// is 12.8 texels per map tile, rounded up to a whole multiple of
+// COLOR_MAP_TEXTURE_SIZE (terrtxm2 STOPs on a colormap whose side is not evenly
+// divisible by COLOR_MAP_TEXTURE_SIZE). Scaling (not cropping) is what lets an
+// author drop in an arbitrary-resolution colormap and have it fit any map size.
 bool CreateScaledColorMap(long mapWidth, char *localColorMapName, MemoryPtr tmpRAM, long fileSize)
 {
 	EditorDataTrace("CreateScaledColorMap: enter mapWidth=%ld fileSize=%ld out=%s",
@@ -1001,44 +1014,28 @@ bool CreateScaledColorMap(long mapWidth, char *localColorMapName, MemoryPtr tmpR
 		return false;
 	}
 
-	// Terrain colormap pixels are 12.8 texels per map tile.
+	// Terrain colormap pixels are 12.8 texels per map tile, snapped up to a whole
+	// number of colormap tiles so terrtxm2's divisibility STOP passes.
+	// COLOR_MAP_TEXTURE_SIZE is private to terrtxm2.cpp; mirror its value here.
+	const long kColorMapTileSize = 256;
 	long requestedWidth = (long)((float)mapWidth * 12.8f + 0.5f);
-	long newWidth = requestedWidth;
+	long newWidth = ((requestedWidth + kColorMapTileSize - 1) / kColorMapTileSize) * kColorMapTileSize;
 	if (newWidth <= 0)
 	{
 		EditorDataTrace("CreateScaledColorMap: computed width invalid requested=%ld", requestedWidth);
 		return false;
 	}
 
-	DWORD jpgColorMapWidth = 0;
-	DWORD jpgColorMapHeight = 0;
-	MemoryPtr decodedImage = NULL;
-
+	int jpgW = 0, jpgH = 0;
+	unsigned char* decodedRGB = NULL;
 	if (tmpRAM && fileSize > 0)
-	{
-		decodedImage = (MemoryPtr)DecodeJPG("Startup.jpg", tmpRAM, fileSize,
-			&jpgColorMapWidth, &jpgColorMapHeight, false, NULL);
-	}
+		decodedRGB = BurninJpeg_DecodeRGB((const unsigned char*)tmpRAM, (int)fileSize, &jpgW, &jpgH);
 
-	EditorDataTrace("CreateScaledColorMap: DecodeJPG image=%p w=%lu h=%lu",
-		decodedImage, (unsigned long)jpgColorMapWidth, (unsigned long)jpgColorMapHeight);
-
-	bool useDecodedImage = (decodedImage && jpgColorMapWidth > 0 && jpgColorMapHeight > 0);
-	if (useDecodedImage)
-	{
-		if (newWidth > (long)jpgColorMapWidth)
-			newWidth = (long)jpgColorMapWidth;
-		if (newWidth > (long)jpgColorMapHeight)
-			newWidth = (long)jpgColorMapHeight;
-	}
-	else
-	{
-		// The retail random-map JPGs can fail this old DecodeJPG path on the
-		// modern build.  Do not fail mission creation and bounce the user back
-		// through the terrain/size dialogs forever; emit a valid neutral TGA
-		// so the rest of the new-map pipeline can continue.
-		EditorDataTrace("CreateScaledColorMap: DecodeJPG failed; writing fallback neutral TGA");
-	}
+	const bool useDecodedImage = (decodedRGB && jpgW > 0 && jpgH > 0);
+	EditorDataTrace("CreateScaledColorMap: decode rgb=%p w=%d h=%d use=%d",
+		decodedRGB, jpgW, jpgH, useDecodedImage ? 1 : 0);
+	if (!useDecodedImage)
+		EditorDataTrace("CreateScaledColorMap: JPEG decode failed; writing fallback neutral TGA");
 
 	long physWidth = newWidth * 4;
 	long outputBytes = physWidth * newWidth;
@@ -1050,49 +1047,52 @@ bool CreateScaledColorMap(long mapWidth, char *localColorMapName, MemoryPtr tmpR
 	if (!tmpImage)
 	{
 		EditorDataTrace("CreateScaledColorMap: malloc failed bytes=%ld", outputBytes + (long)sizeof(TGAFileHeader));
+		if (decodedRGB) BurninJpeg_FreePixels(decodedRGB);
 		return false;
 	}
 
 	TGAFileHeader *output = (TGAFileHeader *)tmpImage;
 	memset(output, 0, sizeof(TGAFileHeader));
-	output->image_id_len = 0;
-	output->color_map = 0;
 	output->image_type = UNC_TRUE;
-	output->cm_first_entry = 0;
-	output->cm_length = 0;
-	output->cm_entry_size = 0;
-	output->x_origin = 0;
-	output->y_origin = 0;
 	output->width = (short)newWidth;
 	output->height = (short)newWidth;
 	output->pixel_depth = 32;
-	output->image_descriptor = 32;
+	output->image_descriptor = 32;   // bit5 = top-left origin -> terrtxm2 skips its flip
 
 	MemoryPtr newImage = tmpImage + sizeof(TGAFileHeader);
 
 	if (useDecodedImage)
 	{
-		MemoryPtr srcImage = decodedImage;
-		for (long i = 0; i < newWidth; i++)
+		// Nearest-neighbour scale the decoded RGB (jpgW x jpgH, row-major,
+		// top-to-bottom) into a newWidth x newWidth 32-bit BGRA image. terrtxm2
+		// reads the 32-bit colormap as BGRA (atlas uploads it with GL_BGRA), so
+		// emit B,G,R,A; stb gives R,G,B.
+		for (long y = 0; y < newWidth; y++)
 		{
-			memcpy(newImage, srcImage, physWidth);
-			srcImage += jpgColorMapWidth * 4;
-			newImage += physWidth;
+			const long sy = (long)((long long)y * jpgH / newWidth);
+			const unsigned char* srcRow = decodedRGB + (size_t)sy * jpgW * 3;
+			unsigned char* dst = newImage + (size_t)y * physWidth;
+			for (long x = 0; x < newWidth; x++)
+			{
+				const long sx = (long)((long long)x * jpgW / newWidth);
+				const unsigned char* p = srcRow + (size_t)sx * 3;
+				dst[0] = p[2];   // B
+				dst[1] = p[1];   // G
+				dst[2] = p[0];   // R
+				dst[3] = 0xff;   // A
+				dst += 4;
+			}
 		}
+		BurninJpeg_FreePixels(decodedRGB);
 	}
 	else
 	{
-		// Patch: flat fallback instead of patterned fallback.
-		// The previous generated (x+y)&0x3f grayscale pattern looked like
-		// terrain/shadow striping and masked the real failure: selected JPG decode/path.
+		// Flat neutral fallback (only if the JPEG genuinely won't decode).
 		for (long y = 0; y < newWidth; y++)
 		{
-			DWORD *dst = (DWORD *)newImage;
+			DWORD *dst = (DWORD *)(newImage + (size_t)y * physWidth);
 			for (long x = 0; x < newWidth; x++)
-			{
 				dst[x] = 0xff606060;
-			}
-			newImage += physWidth;
 		}
 	}
 
@@ -1108,6 +1108,85 @@ bool CreateScaledColorMap(long mapWidth, char *localColorMapName, MemoryPtr tmpR
 
 //-------------------------------------------------------------------------------------------------
 // Does things the new Colormap WAY!!! (tm)
+// Terrain-generator (Path B) hand-off: generateMission() fills these, then calls
+// initTerrainFromTGA(), which uses the pre-generated burnin colormap and applies
+// the generated elevation file instead of a flat zero terrain. Cleared at the end
+// of initTerrainFromTGA so a normal blank New is unaffected.
+static char s_genColormapName[256] = {0};   // map name; burnin at data/textures/<name>.burnin.tga
+static char s_genElevPath[1024]    = {0};    // raw float32 N*N world-unit elevations (row-major)
+
+// Map the MapSizeDlg index to vertices-per-side (mirror initTerrainFromTGA's switch).
+static int genMapSizeToN( int mapSize )
+{
+	switch ( mapSize )
+	{
+		case 0: return 60;
+		case 1: return 80;
+		case 2: return 100;
+		case 3: return 120;
+		case 4: return 256;
+		case 5: return 512;
+		case 6: return 1024;
+		default: return 120;
+	}
+}
+
+bool EditorData::generateMission( int mapSize, int terrain, unsigned long seed )
+{
+	const int N = genMapSizeToN( mapSize );
+
+	// TerrainDlg index -> generator biome. Order matches the type dialog roughly;
+	// out-of-range falls back to temperate.
+	static const char* kBiomes[] = {
+		"temperate_hills", "desert", "snow_mountain", "rocky_badlands", "swamp_forest"
+	};
+	const int nBiomes = (int)( sizeof(kBiomes) / sizeof(kBiomes[0]) );
+	const char* biome = kBiomes[ ( terrain >= 0 && terrain < nBiomes ) ? terrain : 0 ];
+
+	const char* mapName = "genmap";
+
+	CreateDirectory( "terrain_gen_out", NULL );
+
+	char recipePath[512];
+	sprintf( recipePath, "terrain_gen_out\\%s.recipe.json", mapName );
+	FILE* rf = fopen( recipePath, "wb" );
+	if ( !rf )
+	{
+		AfxMessageBox( "Generate Mission: could not write recipe file." );
+		return false;
+	}
+	fprintf( rf, "{\"version\":1,\"name\":\"%s\",\"size\":%d,\"biome\":\"%s\",\"seed\":%lu}\n",
+		mapName, N, biome, (unsigned long)( seed & 0x7fffffff ) );
+	fclose( rf );
+
+	// Run the python generator (blocking). CWD is the deploy root (run-editor.bat
+	// cd's there); the generator + its deps live in tools\terrain_gen\.
+	char cmd[1024];
+	sprintf( cmd, "py -3 tools\\terrain_gen\\terrain_gen.py \"%s\" --out terrain_gen_out", recipePath );
+	EditorDataTrace( "generateMission: N=%d biome=%s seed=%lu cmd=%s", N, biome, seed, cmd );
+	int rc = system( cmd );
+	EditorDataTrace( "generateMission: generator rc=%d", rc );
+	if ( rc != 0 )
+	{
+		AfxMessageBox( "Terrain generator failed.\n\nNeeds Python 3 on PATH with numpy, Pillow and opensimplex installed\n(pip install -r tools\\terrain_gen\\requirements.txt)." );
+		return false;
+	}
+
+	// Place the burnin colormap where terrtxm2 looks (data\textures\<name>.burnin.tga).
+	char srcBurnin[512], dstBurnin[512];
+	sprintf( srcBurnin, "terrain_gen_out\\%s.burnin.tga", mapName );
+	sprintf( dstBurnin, "%s%s.burnin.tga", texturePath, mapName );
+	SetFileAttributes( dstBurnin, FILE_ATTRIBUTE_NORMAL );
+	if ( !CopyFile( srcBurnin, dstBurnin, FALSE ) )
+		EditorDataTrace( "generateMission: WARNING CopyFile burnin %s -> %s failed", srcBurnin, dstBurnin );
+
+	// Hand off to initTerrainFromTGA: use the burnin colormap + apply the heightmap.
+	strcpy( s_genColormapName, mapName );
+	sprintf( s_genElevPath, "terrain_gen_out\\%s.elev.r32", mapName );
+
+	return initTerrainFromTGA( mapSize, 0, 0, terrain );
+}
+
 bool EditorData::initTerrainFromTGA( int mapSize, int min, int max, int terrain )
 {
 	gEditorDataMoveDataReadyForFullSave = false;
@@ -1172,6 +1251,22 @@ bool EditorData::initTerrainFromTGA( int mapSize, int min, int max, int terrain 
 	EditorDataTrace("EditorData::initTerrainFromTGA: after land->init realVerticesMapSide=%ld terrainTextures2=%p", land->realVerticesMapSide, land->terrainTextures2);
 	land->setUserSettings( min, max, terrain );
 	EditorDataTrace("EditorData::initTerrainFromTGA: after setUserSettings");
+
+	//-----------------------------------------------------------------
+	// Generated mission (Path B): the burnin colormap already exists in
+	// data/textures/<name>.burnin.tga. Point terrainTextures2 at it (terrtxm2
+	// resolves the .burnin.tga from terrainName) so the JPG-synthesis block below
+	// is skipped. mapName is set to newmap by the else-branch so Save prompts.
+	if ( s_genColormapName[0] && !land->terrainTextures2 )
+	{
+		CreateDirectory(missionPath, NULL);
+		CreateDirectory(terrainPath, NULL);
+		CreateDirectory(texturePath, NULL);
+		land->terrainTextures2 = new TerrainColorMap;
+		land->terrainName = (char *)gos_Malloc( strlen( s_genColormapName ) + 1 );
+		strcpy( land->terrainName, s_genColormapName );
+		EditorDataTrace("EditorData::initTerrainFromTGA: GEN colormap terrainName=%s", land->terrainName );
+	}
 
 	//-----------------------------------------------------------------
 	// Startup the Terrain Color Map
@@ -1365,12 +1460,51 @@ bool EditorData::initTerrainFromTGA( int mapSize, int min, int max, int terrain 
 	eye->fogStart = min - 1; 
 	eye->fogFull = min - 2;
 
-	for ( int j = 0; j < land->realVerticesMapSide; ++j )
+	const long genSide = land->realVerticesMapSide;
+	bool genHeightApplied = false;
+	if ( s_genElevPath[0] )
 	{
-		for ( int i = 0; i < land->realVerticesMapSide; ++i )
+		// Generated mission: load raw float32 world-unit elevations (row-major,
+		// y outer, x inner — matches the generator's vertex order) into the grid.
+		FILE* ef = fopen( s_genElevPath, "rb" );
+		if ( ef )
 		{
-			land->setVertexHeight( j * land->realVerticesMapSide + i, 0 );
+			const long count = genSide * genSide;
+			float* elev = (float *)malloc( sizeof(float) * count );
+			if ( elev && (long)fread( elev, sizeof(float), count, ef ) == count )
+			{
+				for ( long k = 0; k < count; ++k )
+					land->setVertexHeight( (int)k, elev[k] );
+				genHeightApplied = true;
+				EditorDataTrace("EditorData::initTerrainFromTGA: GEN elevations applied count=%ld from %s", count, s_genElevPath);
+			}
+			else
+			{
+				EditorDataTrace("EditorData::initTerrainFromTGA: GEN elev read failed (%s)", s_genElevPath);
+			}
+			if ( elev ) free( elev );
+			fclose( ef );
 		}
+		else
+		{
+			EditorDataTrace("EditorData::initTerrainFromTGA: GEN elev open failed (%s)", s_genElevPath);
+		}
+	}
+	if ( !genHeightApplied )
+	{
+		for ( int j = 0; j < land->realVerticesMapSide; ++j )
+		{
+			for ( int i = 0; i < land->realVerticesMapSide; ++i )
+			{
+				land->setVertexHeight( j * land->realVerticesMapSide + i, 0 );
+			}
+		}
+	}
+	else if ( Terrain::mapData )
+	{
+		// Generated terrain has real slopes -> recompute vertex normals before the
+		// recipe build (primeMissionTerrainCache) so lighting isn't flat.
+		Terrain::mapData->calcLight();
 	}
 
 	EditorDataTrace("EditorData::initTerrainFromTGA: before recalcWater waterDepth=%f waterElevation=%f",
@@ -1464,6 +1598,10 @@ bool EditorData::initTerrainFromTGA( int mapSize, int min, int max, int terrain 
 
 	EditorInterface::instance()->UnsetBusyMode();
 	EditorDataTrace("EditorData::initTerrainFromTGA: success");
+
+	// One-shot: clear generator hand-off so a subsequent plain New is a flat map.
+	s_genColormapName[0] = 0;
+	s_genElevPath[0]     = 0;
 
 	return true;
 }

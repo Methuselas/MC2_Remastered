@@ -829,6 +829,7 @@ EditorInterface::EditorInterface()
 	m_scatterMode = false;
 	m_stampRadius = 400.0f;
 	m_stampStrength = 50.0f;
+	m_pendGenerateMission = false;
 
 	smoothRadius = 2;
 	dragging = false;
@@ -1382,6 +1383,39 @@ int EditorInterface::New()
 
 	tacMap.UpdateMap();
 	syncScrollBars();
+	return true;
+}
+
+//--------------------------------------------------------------------------------------
+// Generate a pseudo-random, editable mission: pick terrain type + size, then run
+// the terrain generator (Path B) and build the map from its heightmap + colormap.
+int EditorInterface::NewGeneratedMission()
+{
+	int res = PromptAndSaveIfNecessary();
+	if (IDCANCEL == res)
+		return false;
+
+	TerrainDlg dlg;
+	dlg.terrain = 0;
+	if ( IDOK != dlg.DoModal() )
+		return true;
+
+	MapSizeDlg msdlg;
+	msdlg.mapSize = 0;
+	if ( IDOK != msdlg.DoModal() )
+		return true;
+
+	SetBusyMode();
+	eye->reset();
+	bool bOK = EditorData::generateMission( msdlg.mapSize, dlg.terrain, (unsigned long)GetTickCount() );
+	UnsetBusyMode();
+
+	if ( bOK )
+	{
+		tacMap.UpdateMap();
+		syncScrollBars();
+		PlaySound("SystemDefault",NULL,SND_ASYNC);
+	}
 	return true;
 }
 
@@ -2339,6 +2373,15 @@ void EditorInterface::update()
 {
 	if ( !bThisIsInitialized )
 		return;
+
+	// Deferred "Generate Map": the toolbar button only sets a flag so the MFC
+	// modal dialogs (TerrainDlg/MapSizeDlg) open here, outside the ImGui render.
+	if ( m_pendGenerateMission )
+	{
+		m_pendGenerateMission = false;
+		NewGeneratedMission();
+		return;
+	}
 
 	if ( curBrush )
 	{
@@ -4229,6 +4272,16 @@ void EditorInterface::renderToolbarImGui()
 	ImGui::SetNextWindowSize(ImVec2(toolbarW, 0.f), ImGuiCond_Once);
 	ImGui::Begin("Tools", nullptr, ImGuiWindowFlags_NoScrollbar);
 	ImGui::SetWindowFontScale(1.5f);
+
+	// Generate a pseudo-random editable mission (pick type + size, then runs the
+	// terrain generator). Deferred one frame so the MFC modal dialogs don't open
+	// inside the ImGui render pass.
+	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.30f, 1.0f));
+	if (ImGui::Button("Generate Map", ImVec2(-1.f, 0.f)))
+		m_pendGenerateMission = true;
+	ImGui::PopStyleColor();
+	ImGui::Separator();
+
 	for (int i = 0; i < (int)(sizeof(tools) / sizeof(tools[0])); ++i)
 	{
 		const bool active = (currentBrushMenuID == tools[i].cmdId);

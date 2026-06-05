@@ -129,6 +129,16 @@ def main() -> None:
     _save_tga(burnin, out / f"{name}.burnin.tga")
     print(f"  {name}.burnin.tga  ({burnin.size[0]}x{burnin.size[1]})")
 
+    # Editor (Path B) elevation export: raw float32 world-unit elevations,
+    # row-major (y outer, x inner) matching PostcompVertex order. The editor
+    # reads this straight into setVertexHeight; no pak round-trip needed.
+    # elevation = height[0,1] * max_elevation + min_elevation (same as PakExporter).
+    h_p = recipe.height
+    elev = (height.astype(np.float32) * np.float32(h_p.max_elevation)
+            + np.float32(h_p.min_elevation)).astype('<f4')
+    elev.tofile(str(out / f"{name}.elev.r32"))
+    print(f"  {name}.elev.r32  ({recipe.size}x{recipe.size} float32)")
+
     make_preview(burnin).save(str(out / f"{name}.preview.png"))
     print(f"  {name}.preview.png")
 
