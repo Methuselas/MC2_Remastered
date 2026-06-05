@@ -2270,6 +2270,61 @@ void gos_ResetStaticShadowPriming()
     if (pp) pp->resetStaticLightMatrix();
 }
 
+// SHADOW-ROBUST-BASIS-1 (gate MC2_SHADOW_ROBUST_BASIS, DEFAULT ON; =0 kill).
+// Build an orthonormal light-space basis (right/up) from the normalized sun
+// forward (fx,fy,fz).
+//
+// The legacy up-hint pick is up=(0,0,1), switched to (0,1,0) when |fz|>0.9 (a
+// single hard threshold). For all normal mission suns that pick yields a
+// well-conditioned cross, so we KEEP it as the primary path -- the robust
+// guard must NOT perturb the shadow texel-grid orientation of cases that
+// already work. The guard fires ONLY when the legacy cross degenerates
+// (length near zero -- the documented basis singularity at a sun aligned with
+// the chosen up-axis): it then re-picks up as the world axis LEAST parallel to
+// the sun, guaranteeing |dot(sun,up)| <= 1/sqrt(3) so the cross length is
+// >= sqrt(2/3) ~ 0.816. Default-ON is thus byte-identical to legacy except at
+// the singularity; =0 disables the guard entirely (pure legacy, can go
+// singular).
+static void mc2ComputeLightBasis(float fx, float fy, float fz,
+                                 float& rx, float& ry, float& rz,
+                                 float& ux, float& uy, float& uz)
+{
+    static const bool s_robustGuard = []() {
+        const char* v = getenv("MC2_SHADOW_ROBUST_BASIS");
+        return !(v && v[0] == '0');   // default ON
+    }();
+
+    // Legacy up-hint pick (primary path; unchanged behavior).
+    ux = 0.0f; uy = 0.0f; uz = 1.0f;
+    if (fabsf(fz) > 0.9f) { ux = 0.0f; uy = 1.0f; uz = 0.0f; }
+
+    rx = fy * uz - fz * uy;
+    ry = fz * ux - fx * uz;
+    rz = fx * uy - fy * ux;
+    float len = sqrtf(rx*rx + ry*ry + rz*rz);
+
+    if (s_robustGuard && len < 1e-3f) {
+        // Singularity: legacy up-hint is ~parallel to the sun. Re-pick up as
+        // the world axis least parallel to the sun and recompute.
+        const float ax = fabsf(fx), ay = fabsf(fy), az = fabsf(fz);
+        ux = uy = uz = 0.0f;
+        if (az <= ax && az <= ay)      uz = 1.0f;
+        else if (ay <= ax && ay <= az) uy = 1.0f;
+        else                           ux = 1.0f;
+        rx = fy * uz - fz * uy;
+        ry = fz * ux - fx * uz;
+        rz = fx * uy - fy * ux;
+        len = sqrtf(rx*rx + ry*ry + rz*rz);
+    }
+
+    if (len < 1e-6f) len = 1.0f;   // final paranoia guard (unreachable)
+    rx /= len; ry /= len; rz /= len;
+
+    ux = ry * fz - rz * fy;
+    uy = rz * fx - rx * fz;
+    uz = rx * fy - ry * fx;
+}
+
 void gosPostProcess::buildStaticLightMatrix(float sunDirX, float sunDirY, float sunDirZ,
                                              float mapHalfExtent)
 {
@@ -2288,19 +2343,9 @@ void gosPostProcess::buildStaticLightMatrix(float sunDirX, float sunDirY, float 
     float lightPosY = -fy * r;
     float lightPosZ = -fz * r;
 
-    // Right = cross(forward, up_hint); Z-up for MC2
-    float ux = 0, uy = 0, uz = 1;
-    if (fabsf(fz) > 0.9f) { ux = 0; uy = 1; uz = 0; }
-
-    float rx = fy * uz - fz * uy;
-    float ry = fz * ux - fx * uz;
-    float rz = fx * uy - fy * ux;
-    len = sqrtf(rx*rx + ry*ry + rz*rz);
-    rx /= len; ry /= len; rz /= len;
-
-    ux = ry * fz - rz * fy;
-    uy = rz * fx - rx * fz;
-    uz = rx * fy - ry * fx;
+    // Right = cross(forward, up_hint); Z-up for MC2 (robust basis, SHADOW-ROBUST-BASIS-1)
+    float rx, ry, rz, ux, uy, uz;
+    mc2ComputeLightBasis(fx, fy, fz, rx, ry, rz, ux, uy, uz);
 
     float view[16] = {
          rx,  ux, -fx, 0,
@@ -2503,18 +2548,8 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
     // Light basis (Gram-Schmidt on sun direction, Z-up world).
     // Identical to the view matrix construction below; computed here first
     // so we can project corners before building the matrix.
-    float ux = 0.0f, uy = 0.0f, uz = 1.0f;
-    if (fabsf(fz) > 0.9f) { ux = 0.0f; uy = 1.0f; uz = 0.0f; }
-
-    float rx = fy * uz - fz * uy;
-    float ry = fz * ux - fx * uz;
-    float rz = fx * uy - fy * ux;
-    len = sqrtf(rx*rx + ry*ry + rz*rz);
-    rx /= len; ry /= len; rz /= len;
-
-    ux = ry * fz - rz * fy;
-    uy = rz * fx - rx * fz;
-    uz = rx * fy - ry * fx;
+    float rx, ry, rz, ux, uy, uz;
+    mc2ComputeLightBasis(fx, fy, fz, rx, ry, rz, ux, uy, uz);
 
     // Project each frustum corner to light space (light-X = dot(world,right),
     // light-Y = dot(world,up)). Filter corners deeper than -200 WU below sea
@@ -2534,8 +2569,21 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
         if (ly < minLY) minLY = ly;  if (ly > maxLY) maxLY = ly;
         ++validCorners;
     }
-    if (validCorners == 0) {
-        // All corners underground (shouldn't happen in gameplay) -- include all.
+    // SHADOW-ROBUST-BASIS-1: scarcity fallback. The wz<-200 filter drops
+    // underground far-frustum corners; at some camera pitches it eats so many
+    // that the surviving subset is a tiny/skewed sliver, which mis-centers the
+    // light AABB and slides the shadow region off where the camera looks (the
+    // "shadows vanish at angle" symptom). When corners are scarce, rebuild the
+    // AABB from ALL 8 corners so the fit can't degenerate to a sliver. Legacy
+    // only fell back at validCorners==0. Gated (default ON) via the same knob.
+    static const int s_minValidCorners = []() {
+        const char* g = getenv("MC2_SHADOW_ROBUST_BASIS");
+        if (g && g[0] == '0') return 1;        // legacy: only the ==0 (i.e. <1) path
+        return 4;                              // robust: fall back when <4 survive
+    }();
+    if (validCorners < s_minValidCorners) {
+        minLX = 1e30f; maxLX = -1e30f;
+        minLY = 1e30f; maxLY = -1e30f;
         for (int c = 0; c < 8; ++c) {
             const float lx = rx*camFitCornersMC2[c][0] + ry*camFitCornersMC2[c][1] + rz*camFitCornersMC2[c][2];
             const float ly = ux*camFitCornersMC2[c][0] + uy*camFitCornersMC2[c][1] + uz*camFitCornersMC2[c][2];
