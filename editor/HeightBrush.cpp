@@ -9,6 +9,7 @@ HeightBrush.cpp : see HeightBrush.h
 #endif
 
 #include "../GameOS/gameos/gos_terrain_indirect.h"
+#include "mapdata.h"
 
 #include <math.h>
 
@@ -39,7 +40,30 @@ Action* HeightBrush::endPaint()
 		pRet = NULL;
 	}
 	if ( land )
+	{
 		land->recalcWater();
+
+		// Recompute vertex normals over the map so sculpted terrain lights
+		// correctly. setVertexHeight only changes elevation; the per-vertex
+		// normals (and vertex light) are derived in MapData::calcLight from the
+		// 8 neighbouring faces. Without this the sculpted area keeps its pre-edit
+		// (flat) normals and renders unlit/flat. Then re-invalidate the touched
+		// quads so the GPU-direct terrain recipes re-bake with the fresh normals
+		// (the recipe bakes p*.vertexNormal at build time).
+		if ( Terrain::mapData )
+			Terrain::mapData->calcLight();
+
+		const int side = land->realVerticesMapSide;
+		if ( side > 0 )
+		{
+			for ( std::set<int>::const_iterator it = touchedThisStroke.begin();
+			      it != touchedThisStroke.end(); ++it )
+			{
+				const int vn = *it;
+				invalidateQuadsAround( vn / side, vn % side );
+			}
+		}
+	}
 	pCurAction = NULL;
 	touchedThisStroke.clear();
 	return pRet;
