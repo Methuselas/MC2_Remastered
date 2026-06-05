@@ -831,6 +831,18 @@ static_assert(sizeof(StaticDrawCmd) == 20, "StaticDrawCmd must be 20 bytes");
 static GLuint                       s_staticIndirectCmdBuf = 0;
 static std::vector<StaticDrawCmd>   s_staticDrawCmds;          // CPU mirror
 static uint64_t                     s_staticCmdBuiltGen = 0xFFFFFFFFFFFFFFFFull;
+// Task 4 criterion 2: fence covering the last StaticPopulation draw. The single-
+// region s_staticInstanceSsbo is overwritten in place on a dirty fill; wait on
+// this before overwriting so a prior frame's in-flight draw has finished reading
+// (GPU executes in submission order -> the latest fence covers all earlier).
+static GLsync                       s_staticDrawFence = nullptr;
+
+// Gate: MC2_STATIC_POP_SPLIT env AND the G2 frozen-records path armed. Defined
+// early (before onMapUnload / the draw / reinject) so all use sites resolve.
+static bool staticPopSplitArmed() {
+    static const bool s_on = (getenv("MC2_STATIC_POP_SPLIT") != nullptr);
+    return s_on && GpuStaticPropRegistry::frozenRecordsArmed();
+}
 
 GLuint   s_baseInstanceByCmdSsbo          = 0;
 void*    s_baseInstanceByCmdMap           = nullptr;
@@ -1830,6 +1842,7 @@ void GpuStaticPropBatcher::onMapUnload() {
         glDeleteBuffers(1, &s_staticIndirectCmdBuf);
         s_staticIndirectCmdBuf = 0;
     }
+    if (s_staticDrawFence) { glDeleteSync(s_staticDrawFence); s_staticDrawFence = nullptr; }
     s_staticDrawCmds.clear();
     s_staticInstanceFillGen = 0xFFFFFFFFFFFFFFFFull;
     s_staticBaseBuiltGen    = 0xFFFFFFFFFFFFFFFFull;
@@ -5508,6 +5521,49 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             }
         }
 
+        // === M2a Task 4: StaticPopulation draw (gate MC2_STATIC_POP_SPLIT) ===
+        // Emitted ONCE here, before the dynamic draw chain (runV6/runV5/BC7/
+        // existing), so it is path-independent: it reuses the program + s_sharedVao
+        // + depth(GEQUAL)/blend(disabled) state set by applyPipeline() at the top of
+        // the draw section, and s_perDrawSsbo (slot 4, prologue), then binds its OWN
+        // instance SSBO at binding 0 + its own indirect cmds and issues OFF then ON
+        // multidraws. Static opaque draws before all alpha; alpha is alpha-test with
+        // blend disabled, so cross-population alpha order is not a correctness
+        // concern (depth-writing cutout). De-merge (reinjectPersistentStatic
+        // early-out under the gate) keeps statics out of the dynamic bucket so they
+        // are not double-drawn. instanceCount = full static population (first-N, NOT
+        // GPU-culled — visibleIds authority is M2b).
+        if (staticPopSplitArmed() && s_staticIndirectCmdBuf && !s_staticDrawCmds.empty()) {
+            size_t staticTotal = 0;
+            for (auto& kv : s_persistentStaticStore) staticTotal += kv.second.size();
+            glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_staticInstanceSsbo, 0,
+                static_cast<GLsizeiptr>((staticTotal ? staticTotal : 1) * sizeof(GpuStaticPropInstance)));
+            glBindBuffer(GL_DRAW_INDIRECT_BUFFER, s_staticIndirectCmdBuf);
+            const uintptr_t cmdSize =
+                static_cast<uintptr_t>(gpu_cull::kDrawElementsIndirectCommandSize);
+            if (s_alphaOffCmdCount > 0u) {
+                if (s_locsCoalesce.drawIDBase >= 0) glUniform1i(s_locsCoalesce.drawIDBase, 0);
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOff);
+                glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT,
+                    reinterpret_cast<const void*>(static_cast<uintptr_t>(0)),
+                    static_cast<GLsizei>(s_alphaOffCmdCount), 0);
+            }
+            if (s_alphaOnCmdCount > 0u) {
+                if (s_locsCoalesce.drawIDBase >= 0)
+                    glUniform1i(s_locsCoalesce.drawIDBase, static_cast<GLint>(s_alphaOffCmdCount));
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOn);
+                glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT,
+                    reinterpret_cast<const void*>(static_cast<uintptr_t>(s_alphaOffCmdCount) * cmdSize),
+                    static_cast<GLsizei>(s_alphaOnCmdCount), 0);
+            }
+            glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+            // Criterion 2: fence this draw so the next dirty in-place fill waits on it.
+            if (s_staticDrawFence) glDeleteSync(s_staticDrawFence);
+            s_staticDrawFence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        }
+
         // 2026-05-11 per-packet rework: each indirect cmd is per-PACKET, so
         // the multidraw counts and the alpha-ON byte offset use per-PACKET
         // counts (s_alphaOffCmdCount / s_alphaOnCmdCount). The PerDrawEntry
@@ -7253,6 +7309,11 @@ void GpuStaticPropBatcher::appendPersistentStaticRange(const GpuStaticPropInstan
 // (one memcpy per type, NOT per leaf). Dynamic instances (if any) are appended by
 // the dynamic submit path separately; static carries 0 colors so colors untouched.
 void GpuStaticPropBatcher::reinjectPersistentStatic() {
+    // M2a Task 4 DE-MERGE: under the population split, static props are drawn
+    // from their own buffer + cmds (the static draw in flush()), so they must NOT
+    // be merged into the dynamic bucket (else they double-draw). s_bucketsByType
+    // becomes dynamic-only.
+    if (staticPopSplitArmed()) return;
     for (auto& kv : s_persistentStaticStore) {
         const auto& block = kv.second;
         if (block.empty()) continue;
@@ -7438,12 +7499,6 @@ static std::vector<uint32_t> s_baseInstanceForType;
 // Default-off => byte-identical (every new path gates on staticPopSplitArmed()).
 // ===========================================================================
 
-static bool staticPopSplitArmed() {
-    static const bool s_on = (getenv("MC2_STATIC_POP_SPLIT") != nullptr);
-    // Requires the frozen-records (G2) path to be the cull-record source.
-    return s_on && GpuStaticPropRegistry::frozenRecordsArmed();
-}
-
 // Static-only per-type base (s_staticBaseInstanceForType, defined early near
 // s_globalInstanceCap): prefix-sum over s_persistentStaticStore[t].size() in the
 // SAME sorted+alpha order as s_baseInstanceForType, but counting ONLY persistent-
@@ -7515,6 +7570,14 @@ static void fillStaticInstanceBufferIfDirty() {
         return;  // never write past the cap
     }
     if (!ensureStaticInstanceCapacity()) return;
+    // Criterion 2: the buffer is overwritten in place — wait for the prior
+    // static draw to drain before clobbering it (dirties are rare, so the stall
+    // is rare; GPU in-order execution makes one wait cover all earlier frames).
+    if (s_staticDrawFence) {
+        glClientWaitSync(s_staticDrawFence, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
+        glDeleteSync(s_staticDrawFence);
+        s_staticDrawFence = nullptr;
+    }
     auto* dst = static_cast<GpuStaticPropInstance*>(s_staticInstanceMap);
     for (auto& kv : s_persistentStaticStore) {
         const uint32_t typeID = kv.first;
