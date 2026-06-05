@@ -3710,7 +3710,9 @@ void EditorInterface::OnLButtonUp(UINT nFlags, CPoint point)
 
 	if (wasClick && currentBrushID == IDS_SELECT)
 	{
-		bool toggle = (GetAsyncKeyState(VK_CONTROL) != 0) || (GetAsyncKeyState(VK_SHIFT) != 0);
+		// Shift = add/remove (multi-select). Ctrl+click and plain click both do a
+		// plain replace-select so a single click always selects the clicked object.
+		bool toggle = (GetAsyncKeyState(VK_SHIFT) != 0);
 
 		// by Methuselas: drag-select is still brush-owned.  This direct
 		// click-pick path runs only after a true non-drag click and uses the
@@ -4705,6 +4707,17 @@ void EditorInterface::OnForestTool()
 				count++;
 			}
 		}
+	}
+
+	// The forest tool scatters trees over the SELECTED terrain vertices. With no
+	// selection there is nothing to plant (and the centre below divides by zero) --
+	// tell the user instead of silently doing nothing.
+	if ( count == 0 )
+	{
+		MessageBox(
+			_T("Select a terrain area first (drag-select with the Area Select tool), then choose Other > Forests."),
+			_T("Forest"), MB_OK | MB_ICONINFORMATION );
+		return;
 	}
 
 	float centerX = xAvg/count;

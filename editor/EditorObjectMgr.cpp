@@ -1250,7 +1250,9 @@ void EditorObjectMgr::render()
 					// Flush is issued later from mcTextureManager->renderLists().
 					(*iter)->appearance()->render();
 					++bRendered;
-					if ( (*iter)->getColor() & 0xff000000 )
+					if ( (*iter)->isSelected() )
+						(*iter)->appearance()->drawSelectBrackets( 0xffffff00 );  // selection highlight (yellow)
+					else if ( (*iter)->getColor() & 0xff000000 )
 						(*iter)->appearance()->drawSelectBrackets( (*iter)->getColor() );
 				}
 			}
@@ -1284,7 +1286,9 @@ void EditorObjectMgr::render()
 			++uRendered;
 			if ( (*mIter)->getDamage() )
 				pObj->appearance()->drawBars();
-			if ( (*mIter)->getColor() & 0xff000000 )
+			if ( (*mIter)->isSelected() )
+				pObj->appearance()->drawSelectBrackets( 0xffffff00 );  // selection highlight (yellow)
+			else if ( (*mIter)->getColor() & 0xff000000 )
 				pObj->appearance()->drawSelectBrackets( pObj->getColor() );
 		}
 	}
