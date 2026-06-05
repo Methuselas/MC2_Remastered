@@ -134,3 +134,5 @@ ucrt-list.txt
 
 !tools/mcp/
 !tools/mcp/**
+!tools/terrain_gen/
+!tools/terrain_gen/**
