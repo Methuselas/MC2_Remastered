@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "name": "mc2_01_override",
+  "size": 100,
+  "biome": "temperate_hills",
+  "seed": 42,
+  "height": {
+    "generator": "layered_noise",
+    "base_frequency": 4.0,
+    "octaves": 6,
+    "persistence": 0.5,
+    "lacunarity": 2.0,
+    "ridged_amount": 0.5,
+    "mountain_amount": 0.55,
+    "erosion_passes": 3,
+    "plateau_strength": 0.1,
+    "min_elevation": 0.0,
+    "max_elevation": 420.0
+  },
+  "materials": {
+    "water_level": 0.08,
+    "snow_line": 0.78,
+    "rock_slope": 0.55,
+    "rock_curvature": 0.4,
+    "grass_lowland": 0.35,
+    "dirt_noise": 0.25,
+    "dirt_noise_scale": 5.0
+  },
+  "burnin": {
+    "ao_strength": 0.35,
+    "slope_shading": 0.25,
+    "grain_scale": 0.5,
+    "color_variation": 0.12
+  }
+}
