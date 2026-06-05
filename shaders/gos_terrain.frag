@@ -39,13 +39,14 @@ uniform sampler2D tex3;  // cement-catalog atlas (was: legacy detail displacemen
                          // glBindSampler(3, 0) so the texture-object wrap is the contract.
                          // No mipmaps (cement atlas cells lack gutters; bleed risk).
 
-// Per-material normal maps (individual sampler2D on units 5-8)
-// Alpha channel = displacement map for per-material POM
-uniform sampler2D matNormal0;  // rock
-uniform sampler2D matNormal1;  // grass
-uniform sampler2D matNormal2;  // dirt
-uniform sampler2D matNormal3;  // concrete
-uniform sampler2D matNormal4;  // snow (optional — 5th slot)
+// Per-material normal maps. Units assigned by kTerrainMatNormalUnits[] in
+// gameos_graphics.cpp: matNormal0-3 = units 5-8, matNormal4 (snow) = unit 12.
+// Alpha channel = displacement map for per-material POM.
+uniform sampler2D matNormal0;  // rock     (unit 5)
+uniform sampler2D matNormal1;  // grass    (unit 6)
+uniform sampler2D matNormal2;  // dirt     (unit 7)
+uniform sampler2D matNormal3;  // concrete (unit 8)
+uniform sampler2D matNormal4;  // snow     (unit 12)
 
 uniform PREC vec4 terrainLightDir;
 uniform PREC vec4 detailNormalTiling;

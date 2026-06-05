@@ -82,6 +82,28 @@ static bool isAllConcreteTerrainBatch(const gos_VERTEX* vertices, int count) {
     return true;
 }
 
+// TERRAIN-TEX-UNIT-MAP-1: canonical texture unit assignments for the terrain pass.
+// Never write raw integers for terrain units — use these names.
+// History: matNormal4 (snow) was incorrectly placed at unit 9, which is also the
+// static shadow map. Shadow binding ran after the matNormal loop and silently
+// overwrote unit 9, making snow normals always sample the shadow depth texture.
+// Fix: snow moved to unit 12. All terrain bind sites updated to use this table.
+static constexpr GLint kTerrainTexUnitStaticShadow  = 9;
+static constexpr GLint kTerrainTexUnitDynamicShadow = 10;
+static constexpr GLint kTerrainTexUnitHeight        = 11;
+// matNormal0-3: units 5-8 (rock/grass/dirt/concrete); matNormal4 (snow): unit 12
+static constexpr GLint kTerrainMatNormalUnits[5]    = { 5, 6, 7, 8, 12 };
+// When MC2_TERRAIN_NORMAL_ARRAY=1 (future plan), the array texture occupies unit 5.
+static constexpr GLint kTerrainTexUnitNormalArray   = 5;
+static_assert(kTerrainMatNormalUnits[4] != kTerrainTexUnitStaticShadow,
+              "matNormal4 collides with static shadow map unit");
+static_assert(kTerrainMatNormalUnits[4] != kTerrainTexUnitDynamicShadow,
+              "matNormal4 collides with dynamic shadow map unit");
+static_assert(kTerrainMatNormalUnits[4] != kTerrainTexUnitHeight,
+              "matNormal4 collides with height texture unit");
+static_assert(kTerrainMatNormalUnits[4] < 16,
+              "matNormal4 exceeds OpenGL min-spec 16-unit floor");
+
 gosRenderer* getGosRenderer() {
     return g_gos_renderer;
 }
@@ -1845,6 +1867,14 @@ class gosRenderer {
         void cacheTerrainUniformLocations(GLuint shp) {
             if (terrainLocs_.program == shp) return;  // already cached
             terrainLocs_.program = shp;
+            // TERRAIN-TEX-UNIT-MAP-1: verify the highest unit we use fits on this GPU.
+            {
+                GLint maxUnits = 0;
+                glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &maxUnits);
+                if (kTerrainMatNormalUnits[4] >= maxUnits || kTerrainTexUnitHeight >= maxUnits)
+                    STOP(("GL_MAX_TEXTURE_IMAGE_UNITS=%d too small; terrain needs unit %d (height) and %d (snow normal)",
+                          maxUnits, kTerrainTexUnitHeight, kTerrainMatNormalUnits[4]));
+            }
             terrainLocs_.tessLevel = glGetUniformLocation(shp, "tessLevel");
             terrainLocs_.tessDistanceRange = glGetUniformLocation(shp, "tessDistanceRange");
             terrainLocs_.tessDisplace = glGetUniformLocation(shp, "tessDisplace");
@@ -5082,8 +5112,8 @@ void gosRenderer::beginShadowPrePass(bool clearDepth) {
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &shadow_prepass_prev_fbo_);
     glGetIntegerv(GL_VIEWPORT, shadow_prepass_prev_viewport_);
 
-    // Unbind shadow texture from unit 9 (prevent feedback loop — AMD requirement)
-    glActiveTexture(GL_TEXTURE9);
+    // Unbind shadow texture (prevent feedback loop — AMD requirement)
+    glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitStaticShadow);
     glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE0);
 
@@ -5160,10 +5190,10 @@ void gosRenderer::drawShadowBatchTessellated(gos_VERTEX* vertices, int numVerts,
     // projection_ needed by shadow vert shader (TES overrides gl_Position, but VS needs it for gl_Position passthrough)
     if (sl.mvp >= 0) glUniformMatrix4fv(sl.mvp, 1, GL_TRUE, (const float*)&projection_);
 
-    // Displacement textures: dirt normal on unit 7
+    // Displacement textures: dirt normal on unit kTerrainMatNormalUnits[2]
     if (sl.matNormal2 >= 0) {
-        glUniform1i(sl.matNormal2, 7);
-        glActiveTexture(GL_TEXTURE7);
+        glUniform1i(sl.matNormal2, kTerrainMatNormalUnits[2]);
+        glActiveTexture(GL_TEXTURE0 + kTerrainMatNormalUnits[2]);
         glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[2]);  // dirt normal map
         glActiveTexture(GL_TEXTURE0);
     }
@@ -5300,8 +5330,8 @@ void gosRenderer::beginDynamicShadowPass() {
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &shadow_prepass_prev_fbo_);
     glGetIntegerv(GL_VIEWPORT, shadow_prepass_prev_viewport_);
 
-    // Unbind dynamic shadow texture from unit 10 (AMD feedback loop prevention)
-    glActiveTexture(GL_TEXTURE10);
+    // Unbind dynamic shadow texture (AMD feedback loop prevention)
+    glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitDynamicShadow);
     glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE0);
 
@@ -5377,8 +5407,8 @@ static void bindTerrainHeightTexUniforms(GLint heightTexLoc, GLint paramsLoc,
 {
     const GLuint htex = (GLuint)gos_terrainHeightTexHandle();
     if (htex != 0 && heightTexLoc >= 0) {
-        glUniform1i(heightTexLoc, 11);
-        glActiveTexture(GL_TEXTURE11);
+        glUniform1i(heightTexLoc, kTerrainTexUnitHeight);
+        glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitHeight);
         glBindTexture(GL_TEXTURE_2D, htex);
     }
     if (htex != 0 && paramsLoc >= 0) {
@@ -5501,8 +5531,8 @@ void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
 
     for (int i = 0; i < 5; i++) {
         if (terrain_mat_normal_[i] != 0 && tl.matNormal[i] >= 0) {
-            glUniform1i(tl.matNormal[i], 5 + i);
-            glActiveTexture(GL_TEXTURE5 + i);
+            glUniform1i(tl.matNormal[i], kTerrainMatNormalUnits[i]);
+            glActiveTexture(GL_TEXTURE0 + kTerrainMatNormalUnits[i]);
             glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[i]);
         }
     }
@@ -5523,8 +5553,8 @@ void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
         if (tl.enableShadows >= 0)    glUniform1i(tl.enableShadows, 1);
         if (tl.shadowSoftness >= 0)   glUniform1f(tl.shadowSoftness, terrain_shadow_softness_);
         if (tl.shadowMap >= 0) {
-            glUniform1i(tl.shadowMap, 9);
-            glActiveTexture(GL_TEXTURE9);
+            glUniform1i(tl.shadowMap, kTerrainTexUnitStaticShadow);
+            glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitStaticShadow);
             glBindTexture(GL_TEXTURE_2D, pp->getShadowTexture());
             glActiveTexture(GL_TEXTURE0);
         }
@@ -5533,8 +5563,8 @@ void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
                 glUniformMatrix4fv(tl.dynamicLightSpaceMatrix, 1, GL_FALSE, pp->getDynamicLightSpaceMatrix());
             if (tl.enableDynamicShadows >= 0) glUniform1i(tl.enableDynamicShadows, 1);
             if (tl.dynamicShadowMap >= 0) {
-                glUniform1i(tl.dynamicShadowMap, 10);
-                glActiveTexture(GL_TEXTURE10);
+                glUniform1i(tl.dynamicShadowMap, kTerrainTexUnitDynamicShadow);
+                glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitDynamicShadow);
                 glBindTexture(GL_TEXTURE_2D, pp->getDynamicShadowTexture());
                 glActiveTexture(GL_TEXTURE0);
             }
@@ -5625,8 +5655,8 @@ int gosRenderer::terrainBindThinUniformsForPatchStream(glsl_program* overridePro
     if (tl.tex1 >= 0) glUniform1i(tl.tex1, 0);
     for (int i = 0; i < 5; i++) {
         if (terrain_mat_normal_[i] != 0 && tl.matNormal[i] >= 0) {
-            glUniform1i(tl.matNormal[i], 5 + i);
-            glActiveTexture(GL_TEXTURE5 + i);
+            glUniform1i(tl.matNormal[i], kTerrainMatNormalUnits[i]);
+            glActiveTexture(GL_TEXTURE0 + kTerrainMatNormalUnits[i]);
             glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[i]);
         }
     }
@@ -5648,8 +5678,8 @@ int gosRenderer::terrainBindThinUniformsForPatchStream(glsl_program* overridePro
         if (tl.enableShadows >= 0)  glUniform1i(tl.enableShadows, 1);
         if (tl.shadowSoftness >= 0) glUniform1f(tl.shadowSoftness, terrain_shadow_softness_);
         if (tl.shadowMap >= 0) {
-            glUniform1i(tl.shadowMap, 9);
-            glActiveTexture(GL_TEXTURE9);
+            glUniform1i(tl.shadowMap, kTerrainTexUnitStaticShadow);
+            glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitStaticShadow);
             glBindTexture(GL_TEXTURE_2D, pp->getShadowTexture());
             glActiveTexture(GL_TEXTURE0);
         }
@@ -5659,8 +5689,8 @@ int gosRenderer::terrainBindThinUniformsForPatchStream(glsl_program* overridePro
                                    pp->getDynamicLightSpaceMatrix());
             if (tl.enableDynamicShadows >= 0) glUniform1i(tl.enableDynamicShadows, 1);
             if (tl.dynamicShadowMap >= 0) {
-                glUniform1i(tl.dynamicShadowMap, 10);
-                glActiveTexture(GL_TEXTURE10);
+                glUniform1i(tl.dynamicShadowMap, kTerrainTexUnitDynamicShadow);
+                glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitDynamicShadow);
                 glBindTexture(GL_TEXTURE_2D, pp->getDynamicShadowTexture());
                 glActiveTexture(GL_TEXTURE0);
             }
@@ -5766,11 +5796,11 @@ void gosRenderer::terrainDrawIndexedPatches(gosRenderMaterial* material, gosMesh
         glUniform1f(tl.time, elapsed);
     }
 
-    // Bind per-material normal maps (units 5-8)
+    // Bind per-material normal maps (units per kTerrainMatNormalUnits: 5,6,7,8,12)
     for (int i = 0; i < 5; i++) {
         if (terrain_mat_normal_[i] != 0 && tl.matNormal[i] >= 0) {
-            glUniform1i(tl.matNormal[i], 5 + i);
-            glActiveTexture(GL_TEXTURE5 + i);
+            glUniform1i(tl.matNormal[i], kTerrainMatNormalUnits[i]);
+            glActiveTexture(GL_TEXTURE0 + kTerrainMatNormalUnits[i]);
             glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[i]);
         }
     }
@@ -5793,19 +5823,19 @@ void gosRenderer::terrainDrawIndexedPatches(gosRenderMaterial* material, gosMesh
             if (tl.enableShadows >= 0) glUniform1i(tl.enableShadows, 1);
             if (tl.shadowSoftness >= 0) glUniform1f(tl.shadowSoftness, terrain_shadow_softness_);
             if (tl.shadowMap >= 0) {
-                glUniform1i(tl.shadowMap, 9);
-                glActiveTexture(GL_TEXTURE9);
+                glUniform1i(tl.shadowMap, kTerrainTexUnitStaticShadow);
+                glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitStaticShadow);
                 glBindTexture(GL_TEXTURE_2D, pp->getShadowTexture());
                 glActiveTexture(GL_TEXTURE0);
             }
-            // Dynamic object shadow map (unit 10)
+            // Dynamic object shadow map (unit kTerrainTexUnitDynamicShadow)
             if (pp->getDynamicShadowFBO()) {
                 if (tl.dynamicLightSpaceMatrix >= 0)
                     glUniformMatrix4fv(tl.dynamicLightSpaceMatrix, 1, GL_FALSE, pp->getDynamicLightSpaceMatrix());
                 if (tl.enableDynamicShadows >= 0) glUniform1i(tl.enableDynamicShadows, 1);
                 if (tl.dynamicShadowMap >= 0) {
-                    glUniform1i(tl.dynamicShadowMap, 10);
-                    glActiveTexture(GL_TEXTURE10);
+                    glUniform1i(tl.dynamicShadowMap, kTerrainTexUnitDynamicShadow);
+                    glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitDynamicShadow);
                     glBindTexture(GL_TEXTURE_2D, pp->getDynamicShadowTexture());
                     glActiveTexture(GL_TEXTURE0);
                 }
@@ -7560,12 +7590,12 @@ void __stdcall gos_SetupObjectShadows(HGOSRENDERMATERIAL material)
 
 	loc = glGetUniformLocation(shp, "shadowMap");
 	if (loc >= 0) {
-		glUniform1i(loc, 9);
-		glActiveTexture(GL_TEXTURE9);
+		glUniform1i(loc, kTerrainTexUnitStaticShadow);
+		glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitStaticShadow);
 		glBindTexture(GL_TEXTURE_2D, pp->getShadowTexture());
 	}
 
-	// Dynamic shadow map (texture unit 10)
+	// Dynamic shadow map (unit kTerrainTexUnitDynamicShadow)
 	if (pp->getDynamicShadowFBO()) {
 		loc = glGetUniformLocation(shp, "enableDynamicShadows");
 		if (loc >= 0) glUniform1i(loc, 1);
@@ -7576,8 +7606,8 @@ void __stdcall gos_SetupObjectShadows(HGOSRENDERMATERIAL material)
 
 		loc = glGetUniformLocation(shp, "dynamicShadowMap");
 		if (loc >= 0) {
-			glUniform1i(loc, 10);
-			glActiveTexture(GL_TEXTURE10);
+			glUniform1i(loc, kTerrainTexUnitDynamicShadow);
+			glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitDynamicShadow);
 			glBindTexture(GL_TEXTURE_2D, pp->getDynamicShadowTexture());
 		}
 	} else {
@@ -8037,8 +8067,8 @@ static void setupOverlayShadowsForShp(GLuint shp)
     if (loc >= 0) glUniform1f(loc, g_gos_renderer->getTerrainShadowSoftness());
     loc = glGetUniformLocation(shp, "shadowMap");
     if (loc >= 0) {
-        glUniform1i(loc, 9);
-        glActiveTexture(GL_TEXTURE9);
+        glUniform1i(loc, kTerrainTexUnitStaticShadow);
+        glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitStaticShadow);
         glBindTexture(GL_TEXTURE_2D, pp->getShadowTexture());
     }
 
@@ -8049,8 +8079,8 @@ static void setupOverlayShadowsForShp(GLuint shp)
         if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_FALSE, pp->getDynamicLightSpaceMatrix());
         loc = glGetUniformLocation(shp, "dynamicShadowMap");
         if (loc >= 0) {
-            glUniform1i(loc, 10);
-            glActiveTexture(GL_TEXTURE10);
+            glUniform1i(loc, kTerrainTexUnitDynamicShadow);
+            glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitDynamicShadow);
             glBindTexture(GL_TEXTURE_2D, pp->getDynamicShadowTexture());
         }
     } else {
