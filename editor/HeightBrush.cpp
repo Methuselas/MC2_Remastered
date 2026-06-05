@@ -9,6 +9,7 @@ HeightBrush.cpp : see HeightBrush.h
 #endif
 
 #include "../GameOS/gameos/gos_terrain_indirect.h"
+#include "../GameOS/gameos/gos_terrain_water_stream.h"
 #include "mapdata.h"
 
 #include <math.h>
@@ -42,6 +43,12 @@ Action* HeightBrush::endPaint()
 	if ( land )
 	{
 		land->recalcWater();
+
+		// Rebuild the water recipe set against the new terrain heights, else the
+		// baked-at-load water surface ignores sculpted ridges/pathways (water
+		// "passes through" the new terrain). Build() reads MapData::blocks live.
+		WaterStream::Reset();
+		WaterStream::Build();
 
 		// Recompute vertex normals over the map so sculpted terrain lights
 		// correctly. setVertexHeight only changes elevation; the per-vertex

@@ -89,6 +89,7 @@ extern graphics::RenderContextHandle EditorGameOS_GetRenderContext();
 #include "ScatterBrush.h"
 #include "StampBrush.h"
 #include "object_recent_ring.h"
+#include "../GameOS/gameos/gos_terrain_water_stream.h"
 #endif
 
 #ifndef HEIGHTDLG_H
@@ -4419,6 +4420,14 @@ void EditorInterface::renderToolbarImGui()
 				Terrain::waterElevation     = m_waterHeight;
 				Terrain::mapData->waterDepth = m_waterHeight;
 				land->recalcWater();
+			}
+			// On release, rebuild the water recipe set so the new level re-evaluates
+			// which cells are water against the current (possibly sculpted) terrain
+			// -- this is what makes water divide around ridges/pathways.
+			if (ImGui::IsItemDeactivatedAfterEdit())
+			{
+				WaterStream::Reset();
+				WaterStream::Build();
 			}
 		}
 	}

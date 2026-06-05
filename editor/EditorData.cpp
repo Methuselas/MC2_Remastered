@@ -24,6 +24,7 @@
 
 #include "../GameOS/gameos/gos_static_prop_batcher.h"
 #include "../GameOS/gameos/gos_terrain_indirect.h"
+#include "../GameOS/gameos/gos_terrain_water_stream.h"
 #include "../GameOS/gameos/gos_mech_batcher.h"
 #include "../GameOS/gameos/gos_static_prop_registry.h"
 #include "../GameOS/gameos/gpu_cull_substrate.h"
@@ -1157,6 +1158,8 @@ bool EditorData::amplifyTerrain( float factor )
 	}
 
 	land->recalcWater();
+	WaterStream::Reset();            // rebuild water recipes against the new relief
+	WaterStream::Build();
 	Terrain::mapData->calcLight();   // recompute normals for the new relief
 
 	// Re-bake every quad's GPU recipe with the new elevations/normals.
