@@ -83,6 +83,7 @@ public:
 	void renderToolbarImGui();
 	void renderObjectCompanionPanel();
 	void setSculptBrush( int mode );
+	void setStampBrush( int type );
 	void renderTerrainSelection();
 
 	// Object placement: shared by the Objects menu and the companion panel.
@@ -311,6 +312,8 @@ private:
 	float						m_sculptRadius;
 	float						m_sculptStrength;
 	bool						m_scatterMode;     // object brush scatters in a radius vs single place
+	float						m_stampRadius;
+	float						m_stampStrength;
 
 	MainMenu					*m_pMainMenu;
 

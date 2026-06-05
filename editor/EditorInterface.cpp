@@ -87,6 +87,7 @@ extern graphics::RenderContextHandle EditorGameOS_GetRenderContext();
 #include "FlattenBrush.h"
 #include "HeightBrush.h"
 #include "ScatterBrush.h"
+#include "StampBrush.h"
 #include "object_recent_ring.h"
 #endif
 
@@ -826,6 +827,8 @@ EditorInterface::EditorInterface()
 	m_sculptRadius = 400.0f;
 	m_sculptStrength = 30.0f;
 	m_scatterMode = false;
+	m_stampRadius = 400.0f;
+	m_stampStrength = 50.0f;
 
 	smoothRadius = 2;
 	dragging = false;
@@ -4193,6 +4196,14 @@ void EditorInterface::setSculptBrush( int mode )
 	currentBrushMenuID = -1;
 }
 
+void EditorInterface::setStampBrush( int type )
+{
+	KillCurBrush();
+	curBrush = new StampBrush( (StampBrush::Type)type, m_stampRadius, m_stampStrength );
+	currentBrushID = -200 - type;   // synthetic sentinel
+	currentBrushMenuID = -1;
+}
+
 #ifdef MC2_IMGUI
 // Floating tool palette (Photoshop-style). Buttons re-post the same WM_COMMAND
 // the menu items use, so they share the existing tool-switch handlers. The active
@@ -4246,6 +4257,28 @@ void EditorInterface::renderToolbarImGui()
 			hb->setRadius(m_sculptRadius);
 		if (ImGui::SliderFloat("Strength", &m_sculptStrength, 1.0f, 300.0f, "%.0f") && hb)
 			hb->setStrength(m_sculptStrength);
+	}
+
+	ImGui::Separator();
+	ImGui::Text("Terrain Stamp");
+	{
+		StampBrush* st = dynamic_cast<StampBrush*>(curBrush);
+		struct SD { const char* label; int type; };
+		static const SD sd[] = { { "Pad", 0 }, { "Crater", 1 }, { "Hill", 2 } };
+		for (int i = 0; i < 3; ++i)
+		{
+			const bool sactive = st && (int)st->getType() == sd[i].type;
+			if (sactive)
+				ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.70f, 0.85f, 1.0f));
+			if (ImGui::Button(sd[i].label, ImVec2(-1.f, 0.f)))
+				setStampBrush(sd[i].type);
+			if (sactive)
+				ImGui::PopStyleColor();
+		}
+		if (ImGui::SliderFloat("StampSize", &m_stampRadius, 64.0f, 3000.0f, "%.0f") && st)
+			st->setRadius(m_stampRadius);
+		if (ImGui::SliderFloat("StampAmt", &m_stampStrength, 1.0f, 500.0f, "%.0f") && st)
+			st->setStrength(m_stampStrength);
 	}
 
 	ImGui::End();
