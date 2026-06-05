@@ -55,16 +55,13 @@ class MaterialClassifier:
 
         # Valley: inverted blurred altitude (high = low flat areas)
         h_pil  = Image.fromarray((np.clip(height, 0, 1) * 255).astype(np.uint8), mode='L')
-        h_blur = np.array(h_pil.filter(ImageFilter.GaussianBlur(radius=max(1, N // 8)))) / 255.0
+        h_blur = np.array(h_pil.filter(ImageFilter.GaussianBlur(radius=max(1, min(N // 8, 48))))) / 255.0
         valley = np.clip(1.0 - h_blur.astype(np.float32), 0.0, 1.0)
 
-        # Noise variation for dirt blending
+        # Noise variation for dirt blending (vectorised; per-pixel python was O(N^2)).
         gen = OpenSimplex(recipe.seed + 2)
-        noise = np.array([
-            [gen.noise2(x / N * m.dirt_noise_scale, y / N * m.dirt_noise_scale)
-             for x in range(N)]
-            for y in range(N)
-        ], dtype=np.float32)
+        coords = np.arange(N, dtype=np.float64) / N * m.dirt_noise_scale
+        noise = gen.noise2array(coords, coords).astype(np.float32)
         noise = (noise - noise.min()) / (noise.max() - noise.min() + 1e-8)
 
         # TerrainType classification (priority: water < dirt < rock < snow)

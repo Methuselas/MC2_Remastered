@@ -1116,6 +1116,9 @@ static char s_genColormapName[256] = {0};   // map name; burnin at data/textures
 static char s_genElevPath[1024]    = {0};    // raw float32 N*N world-unit elevations (row-major)
 
 // Map the MapSizeDlg index to vertices-per-side (mirror initTerrainFromTGA's switch).
+// MC2 terrain requires a multiple of verticesBlockSide(20); the large sizes are the
+// nearest multiple of 20 to their label (260~256, 520~512, 1020~1024). This also
+// keeps the colormap width a clean multiple of 256 (20*12.8=256).
 static int genMapSizeToN( int mapSize )
 {
 	switch ( mapSize )
@@ -1124,9 +1127,9 @@ static int genMapSizeToN( int mapSize )
 		case 1: return 80;
 		case 2: return 100;
 		case 3: return 120;
-		case 4: return 256;
-		case 5: return 512;
-		case 6: return 1024;
+		case 4: return 260;
+		case 5: return 520;
+		case 6: return 1020;
 		default: return 120;
 	}
 }
@@ -1231,15 +1234,15 @@ bool EditorData::initTerrainFromTGA( int mapSize, int min, int max, int terrain 
 		break;
 
 	case 4:
-		mapWidth = 256;
+		mapWidth = 260;   // ~256, multiple of verticesBlockSide(20)
 		break;
 
 	case 5:
-		mapWidth = 512;
+		mapWidth = 520;   // ~512
 		break;
 
 	case 6:
-		mapWidth = 1024;
+		mapWidth = 1020;  // ~1024
 		break;
 
 	default:

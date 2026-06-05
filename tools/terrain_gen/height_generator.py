@@ -14,19 +14,17 @@ class HeightGenerator:
         gen2 = OpenSimplex(recipe.seed + 1)
 
         # fx/fy are normalized [0,1] coords. base_frequency ~4 gives macro hills.
-        height = np.zeros((N, N), dtype=np.float64)
-        for y in range(N):
-            for x in range(N):
-                fx = x / N
-                fy = y / N
-                base = self._fbm(gen1, fx, fy, h.octaves, h.persistence, h.lacunarity, h.base_frequency)
-                if h.mountain_amount > 0.0:
-                    ridged = self._ridged(gen2, fx, fy, h.base_frequency * 2.0)
-                    detail = self._fbm(gen2, fx, fy, h.octaves, h.persistence, h.lacunarity, h.base_frequency)
-                    mountain = detail + ridged * h.ridged_amount
-                    height[y, x] = base + mountain * h.mountain_amount * 0.4
-                else:
-                    height[y, x] = base
+        # Vectorised with opensimplex.noise2array (C-accelerated) -- the old per-pixel
+        # python double loop was O(N^2) and took minutes at 1020x1020.
+        coords = np.arange(N, dtype=np.float64) / N   # normalized [0,1)
+        base = self._fbm_array(gen1, coords, h.octaves, h.persistence, h.lacunarity, h.base_frequency)
+        if h.mountain_amount > 0.0:
+            ridged = self._ridged_array(gen2, coords, h.base_frequency * 2.0)
+            detail = self._fbm_array(gen2, coords, h.octaves, h.persistence, h.lacunarity, h.base_frequency)
+            mountain = detail + ridged * h.ridged_amount
+            height = base + mountain * h.mountain_amount * 0.4
+        else:
+            height = base
 
         # Map to [0, 1] via tanh.
         # mountain_amount increases the tanh contrast (scale), which monotonically
@@ -46,20 +44,24 @@ class HeightGenerator:
 
         return height.astype(np.float32)
 
-    def _fbm(self, gen, x, y, octaves, persistence, lacunarity, freq):
-        value = 0.0
+    def _fbm_array(self, gen, coords, octaves, persistence, lacunarity, freq):
+        """Vectorised fBm over an NxN grid. coords = normalized [0,1) per axis.
+        noise2array(x, y) returns shape (len(y), len(x)) = result[y, x]."""
+        N = coords.shape[0]
+        value = np.zeros((N, N), dtype=np.float64)
         amplitude = 1.0
         total_amp = 0.0
+        f = freq
         for _ in range(octaves):
-            value     += gen.noise2(x * freq, y * freq) * amplitude
+            value     += gen.noise2array(coords * f, coords * f) * amplitude
             total_amp += amplitude
             amplitude *= persistence
-            freq      *= lacunarity
+            f         *= lacunarity
         return value / total_amp
 
-    def _ridged(self, gen, x, y, freq):
-        n = gen.noise2(x * freq, y * freq)
-        return 1.0 - abs(n)
+    def _ridged_array(self, gen, coords, freq):
+        n = gen.noise2array(coords * freq, coords * freq)
+        return 1.0 - np.abs(n)
 
     def _fake_erosion(self, height: np.ndarray, passes: int) -> np.ndarray:
         for _ in range(passes):

@@ -69,12 +69,11 @@ class BurninRenderer:
         streak = valley * slope * 0.3
         color = color * (1.0 - streak[..., None])
 
-        # Large color variation
+        # Large color variation (vectorised; the per-pixel python loop over res*res
+        # = ~1.6M noise2 calls dominated generation time).
         gen = OpenSimplex(recipe.seed + 3)
-        var_noise = np.array(
-            [[gen.noise2(x / res * 4, y / res * 4) for x in range(res)] for y in range(res)],
-            dtype=np.float32
-        )
+        vc = np.arange(res, dtype=np.float64) / res * 4.0
+        var_noise = gen.noise2array(vc, vc).astype(np.float32)
         var_noise = (var_noise - var_noise.min()) / (var_noise.max() - var_noise.min() + 1e-8)
         color = color * (1.0 - b.color_variation * 0.5 + var_noise[..., None] * b.color_variation)
 
