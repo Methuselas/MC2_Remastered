@@ -70,6 +70,7 @@
 #ifdef MC2_IMGUI
 #include "EditorInspector.h"
 #include "imgui.h"
+#include "MapGeneratorDialog.h"
 #include "gameplay_pick.h"  // tryGameplayPick: shared pick spine, no game-object deps
 #include "gameos.hpp"       // gos_GetViewport, Environment (drawableWidth/Height)
 #include "gos_render.h"     // graphics::make_current_context
@@ -391,9 +392,11 @@ void Editor::init( char* loader )
 				{
 					resolved = true;
 					bOK = true;
-					// Open the ImGui Map Generator dialog on the first rendered frame
-					// (GL context is not up yet at NewSingleMission modal time).
-					m_pendMapGenOnFirstFrame = true;
+					// Open the ImGui Map Generator dialog. MapGeneratorDialog::Open()
+					// only sets a static flag — safe to call before GL is fully up.
+#ifdef MC2_IMGUI
+					MapGeneratorDialog::Open();
+#endif
 				}
 				else
 				{
@@ -840,7 +843,6 @@ EditorInterface::EditorInterface()
 	m_stampStrength = 50.0f;
 	m_waterHeight = 0.0f;
 	m_pendGenerateMission = false;
-	m_pendMapGenOnFirstFrame = false;
 
 	smoothRadius = 2;
 	dragging = false;
@@ -4342,13 +4344,6 @@ void EditorInterface::renderToolbarImGui()
 	ImGui::Begin("Tools", nullptr, ImGuiWindowFlags_NoScrollbar);
 	ImGui::SetWindowFontScale(1.5f);
 
-	// Generate a pseudo-random editable mission — opens the ImGui Map Generator
-	// dialog (replaces the old MFC TerrainDlg+MapSizeDlg flow).
-	// Deferred-open flag: if set from the startup NewSingleMission path, open now.
-	if (m_pendMapGenOnFirstFrame) {
-		MapGeneratorDialog::Open();
-		m_pendMapGenOnFirstFrame = false;
-	}
 	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.30f, 1.0f));
 	if (ImGui::Button("Generate Map", ImVec2(-1.f, 0.f)))
 		MapGeneratorDialog::Open();
