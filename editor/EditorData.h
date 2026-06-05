@@ -148,6 +148,11 @@ class EditorData
 		// Amplify terrain relief: scale every vertex elevation about the mean by
 		// `factor` (>1 exaggerates hills + deepens basins; keeps the heightmap shape).
 		static bool amplifyTerrain( float factor );
+		// Rebuild the terrain face cache + re-bake all GPU recipes after a terrain/
+		// overlay edit. setTerrain/setOverlay NULL the face cache for the session;
+		// without rebuilding, buildRecipeSlot gets nodeId=0 and the terrain renders
+		// black. Call from terrain/overlay brush endPaint and undo/redo.
+		static void refreshTerrainAfterEdit();
 		static bool initTerrainFromPCV( const char* fileName );
 		static bool	reassignHeightsFromTGA( const char* fileName, int min, int max );
 

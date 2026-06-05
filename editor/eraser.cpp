@@ -13,6 +13,7 @@ eraser.cpp			: Implementation of the eraser component.
 #ifndef OBJECTMGR_H
 #include "EditorObjectMgr.h"
 #endif
+#include "EditorData.h"
 
 //---------------------------------------------------------------------------
 inline bool isCementType (DWORD type)
@@ -31,6 +32,9 @@ bool Eraser::beginPaint()
 }
 Action* Eraser::endPaint()
 {
+	// Erasing terrain overlays/types NULLs the face cache; rebuild so erased cells
+	// don't render black.
+	EditorData::refreshTerrainAfterEdit();
 	Action* pRetAction = NULL;
 	if (pCurAction)
 	{

@@ -9,6 +9,7 @@ OverlayBrush.cpp			: Implementation of the OverlayBrush component.
 #include "OverlayBrush.h"
 #include "Action.h"
 #include "EList.h"
+#include "EditorData.h"
 #include <map>
 
 //-------------------------------------------------------------------------------------------------
@@ -571,6 +572,9 @@ bool OverlayBrush::beginPaint( )
 
 Action*  OverlayBrush::endPaint()
 {
+	// Overlay edits NULLed the terrain face cache; rebuild it + recipes so the
+	// painted cells don't render black.
+	EditorData::refreshTerrainAfterEdit();
 	Action* pRetAction = pAction;
 	pAction  = NULL;
 	return pRetAction;

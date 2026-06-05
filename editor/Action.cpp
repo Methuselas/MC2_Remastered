@@ -23,6 +23,7 @@
 #include "terrain.h"
 #include "Action.h"
 #include "TerrTxm.h"
+#include "EditorData.h"
 
 ActionUndoMgr* ActionUndoMgr::instance = NULL;
 
@@ -288,6 +289,9 @@ bool ActionPaintTile::doRedo()
         (*iter).elevation = elv;
     }
 
+    // setOverlay/setTerrain above NULLed the terrain face cache; rebuild so the
+    // undone/redone tiles don't render black.
+    EditorData::refreshTerrainAfterEdit();
     return true;
 }
 

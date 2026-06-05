@@ -7,6 +7,7 @@ terrainBrush.cpp			: Implementation of the terrainBrush component.
 \*************************************************************************************************/
 
 #include "terrainBrush.h"
+#include "EditorData.h"
 
 int TerrainBrush::s_lastType = 0;
 
@@ -25,6 +26,7 @@ Action* TerrainBrush::applyToSelection()
 		}
 	}
 
+	EditorData::refreshTerrainAfterEdit();   // rebuild face cache so edited cells aren't black
 	return pRetAction;
 }
 //*************************************************************************************************

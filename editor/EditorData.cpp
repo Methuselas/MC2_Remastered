@@ -1180,6 +1180,22 @@ bool EditorData::amplifyTerrain( float factor )
 	return true;
 }
 
+void EditorData::refreshTerrainAfterEdit()
+{
+	if ( !land || !Terrain::mapData )
+		return;
+	// setTerrain/setOverlay called invalidateTerrainFaceCache(), nulling the whole
+	// Shape-C face cache. Rebuild it (valid terrainHandles) then re-bake every quad
+	// recipe so the GPU-direct terrain doesn't draw nodeId=0 (black) for edited cells.
+	volatile float prog = 0.0f;
+	Terrain::mapData->buildTerrainFaceCache( &prog, 0.0f );
+	const long side = land->realVerticesMapSide;
+	for ( long j = 0; j < side - 1; ++j )
+		for ( long i = 0; i < side - 1; ++i )
+			gos_terrain_indirect::InvalidateRecipeForVertexNum( (int)( j * side + i ) );
+	EditorDataTrace( "EditorData::refreshTerrainAfterEdit: rebuilt face cache + recipes side=%ld", side );
+}
+
 bool EditorData::generateMission( int mapSize, int terrain, unsigned long seed )
 {
 	const int N = genMapSizeToN( mapSize );
