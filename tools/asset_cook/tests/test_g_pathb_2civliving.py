@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
-"""tools/asset_cook/tests/test_g_pathb_2civliving.py — Track G path B parity gate.
+"""tools/asset_cook/tests/test_g_pathb_2civliving.py — Track G path B transform gate.
 
 Path B = stock .tgl -> (workbench --export-tgl-meshdump) -> meshdump.json ->
-tglmeshdump_to_glb (axis-inverted) -> stage. The OFFLINE PARITY ORACLE: the
-staged engine-space EXTENTS must reproduce the stock MeshData extents (the
-importer round-trips the inversion; footprint + height preserved, Y re-grounded).
+tglmeshdump_to_glb (calibrated `-x,-z,y`) -> stage.
 
-This proves the convention is correct for a REAL non-symmetric building
-(2civliving) — bigbox was a symmetric cube and could hide axis errors.
+CALIBRATED MAPPING (visually confirmed 2026-06-04, see docs/assets/trackg-r0/):
+the workbench MeshData is GL-space (-sx, sz, sy). The engine renders stock props
+in (-sx, sy, sz). So the cooked glb maps MeshData -> (-mx,-mz,my) and the importer
+axisMap0 yields engine (-sx, sy, sz). Net effect on extents: engine X == stock X,
+but engine Y == stock-Z and engine Z == stock-Y (Stuff Y/Z preserved, NOT the
+workbench's GL swap). The earlier `-x,-y,z` produced a 90deg-X rotation (Y/Z swap)
+that passed a naive extents oracle but rendered wrong — so this test asserts the
+SWAPPED mapping, and the screenshot is the real gate (extents alone are
+mirror/rotation-blind).
 
   py -3 tools/asset_cook/tests/test_g_pathb_2civliving.py
 Exit 0 = pass. Uses the committed meshdump fixture (no workbench rebuild needed).
@@ -39,7 +44,9 @@ def main() -> int:
         print(f"SKIP test_g_pathb_2civliving (fixture missing: {DUMP})")
         return 0
     dump = json.loads(DUMP.read_text())
-    stock_ext = ext(dump["bmin"], dump["bmax"])
+    se = ext(dump["bmin"], dump["bmax"])           # stock MeshData extents [X, Ygl, Zgl]
+    # calibrated engine extents: X kept, MeshData Y/Z swapped (Stuff Y/Z preserved)
+    expected = [se[0], se[2], se[1]]
 
     errs = []
     with tempfile.TemporaryDirectory() as td:
@@ -55,19 +62,20 @@ def main() -> int:
         b = json.loads((td / "out" / "staged.json").read_text())["geometry"]["bounds"]
         stage_ext = ext(b["min"], b["max"])
 
-        if any(abs(stock_ext[i] - stage_ext[i]) > 0.05 for i in range(3)):
-            errs.append(f"extent mismatch: stock {stock_ext} vs staged {stage_ext}")
-        # Y must be the grounded (base-0) vertical axis after import
+        if any(abs(expected[i] - stage_ext[i]) > 0.05 for i in range(3)):
+            errs.append(f"extent mismatch: calibrated-expected {expected} vs staged {stage_ext} "
+                        f"(stock MeshData {se}); transform `-x,-z,y` not applied?")
         if abs(b["min"][1]) > 0.01:
-            errs.append(f"Y not grounded to 0: min.y={b['min'][1]}")
+            errs.append(f"importer-Y not grounded to 0: min.y={b['min'][1]}")
 
     if errs:
         print("FAIL test_g_pathb_2civliving:")
         for e in errs:
             print(f"  - {e}")
         return 1
-    print(f"PASS test_g_pathb_2civliving (stock->meshdump->inverted-glb->stage reproduces "
-          f"extents {stock_ext} [X,Y,Z], Y grounded to 0 — real-building convention correct)")
+    print(f"PASS test_g_pathb_2civliving (calibrated `-x,-z,y`: engine extents {expected} "
+          f"= stock {se} with Y/Z swapped to Stuff order; visually confirmed). "
+          f"NB: extents are mirror/rotation-blind — screenshot is the real gate.")
     return 0
 
 

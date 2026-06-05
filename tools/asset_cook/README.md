@@ -66,11 +66,16 @@ textures               -> data/tgl/<tier>/<tex>.ktx2 (BC7) + materials.json
 assemble               -> manifest.json (schema-valid) + models.generated.json (registry subset)
 ```
 **Path B (stock source):** for a stock prop with no authored glb, dump it from the engine's
-own `.tgl` via the workbench (`MeshData` in GL space), then `tglmeshdump_to_glb.py` writes a glb
-whose positions/normals are inverted `(-x,-y,z)` and UV `1-v` so the override importer
-(`axisMap0` + auto-ground) reconstructs the stock geometry. Proven on **2civliving** (a real
-non-symmetric building): staged engine extents reproduce the stock `[70.54, 69.88, 15.47]`
-footprint+height, Y grounded — `test_g_pathb_2civliving.py`.
+own `.tgl` via the workbench (`MeshData` = GL-space `(-sx, sz, sy)`), then `tglmeshdump_to_glb.py`
+writes a glb with the **calibrated `-x,-z,y`** axis map + UV `1-v` so the override importer
+(`axisMap0` + auto-ground) yields engine world `(-sx, sy, sz)` — the engine's native stock-prop
+coords. **Calibration story (important):** the first attempt used `-x,-y,z`, which swapped Stuff
+Y/Z → every cooked building rendered **90° rotated about X** (lying down). It passed a naive
+"staged extents == stock MeshData extents" oracle anyway, because **extents are mirror- and
+rotation-blind**. Caught only by a `--screenshot` comparison (`docs/assets/trackg-r0/`:
+`cooked_hangar.png` wrong vs `confirm_hangar_quonset.png` fixed). Lesson: the screenshot is the
+real gate; the extents oracle is necessary-not-sufficient. `test_g_pathb_2civliving.py` now
+asserts the calibrated Y/Z-swapped mapping.
 Authoritative round-trip is the C++ `ExportBundle`/`ModelOverrideRegistry` at integration;
 `registry_resolves` is the offline Python mirror. Promotion of `models.generated.json` into
 central `models.json` stays a separate reviewed merge.

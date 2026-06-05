@@ -26,7 +26,30 @@ from pathlib import Path
 import numpy as np
 
 
-def build_glb(dump: dict) -> bytes:
+def parse_axes(spec: str):
+    """spec like '-x,-y,z' -> function mapping a [N,3] array to the permuted/signed array."""
+    cols = {"x": 0, "y": 1, "z": 2}
+    plan = []
+    for tok in spec.split(","):
+        tok = tok.strip()
+        sign = -1.0 if tok[0] == "-" else 1.0
+        plan.append((cols[tok[-1]], sign))
+
+    def fn(a):
+        out = a.copy()
+        for i, (src, sign) in enumerate(plan):
+            out[:, i] = sign * a[:, src]
+        return out
+    return fn
+
+
+def build_glb(dump: dict, axes: str = "-x,-z,y") -> bytes:
+    # axes default "-x,-z,y" is the CALIBRATED stock-> glb transform: importer axisMap0
+    # then yields engine world (-sx, sy, sz), matching the engine's native stock-prop
+    # coords (X-mirror, Stuff Y/Z preserved). The earlier "-x,-y,z" swapped Y/Z -> 90deg-X
+    # rotation (visually confirmed + corrected 2026-06-04). Visual is the real gate; the
+    # offline extents oracle is necessary-not-sufficient (mirror/rotation-blind).
+    pos_xform = parse_axes(axes)
     bin_parts: list[bytes] = []
     offset = 0
     bufferViews, accessors, primitives = [], [], []
@@ -45,12 +68,9 @@ def build_glb(dump: dict) -> bytes:
         verts = np.array(sm["verts"], dtype=np.float64)  # [N,8] px..nz,u,v
         if verts.size == 0:
             continue
-        pos = verts[:, 0:3].copy()
-        nrm = verts[:, 3:6].copy()
+        pos = pos_xform(verts[:, 0:3])
+        nrm = pos_xform(verts[:, 3:6])
         uv = verts[:, 6:8].copy()
-        # axis/uv inversion so the importer reconstructs stock GL space
-        pos[:, 0] *= -1.0; pos[:, 1] *= -1.0
-        nrm[:, 0] *= -1.0; nrm[:, 1] *= -1.0
         uv[:, 1] = 1.0 - uv[:, 1]
         idx = np.array(sm["idx"], dtype=np.uint32)
 
@@ -119,10 +139,11 @@ def build_glb(dump: dict) -> bytes:
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
+    if len(sys.argv) not in (3, 4):
         print(__doc__); return 2
+    axes = sys.argv[3] if len(sys.argv) == 4 else "-x,-z,y"
     dump = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-    glb = build_glb(dump)
+    glb = build_glb(dump, axes)
     Path(sys.argv[2]).write_bytes(glb)
     nverts = sum(len(s["verts"]) for s in dump["submeshes"])
     print(f"GLB {sys.argv[2]}  {len(dump['submeshes'])} prim, {nverts} verts, {len(glb)} bytes "
