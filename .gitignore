@@ -132,6 +132,7 @@ ucrt-list.txt
 *.safetensors
 *.pth
 
+!tools/
 !tools/mcp/
 !tools/mcp/**
 !tools/terrain_gen/
