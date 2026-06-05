@@ -1910,7 +1910,7 @@ ObjectAppearance* EditorObjectMgr::getAppearance( EditorObjectMgr::Building* pBu
 		appearanceTypeList = new AppearanceTypeList;
 		gosASSERT(appearanceTypeList != NULL);
 		
-		appearanceTypeList->init(2048000);
+		appearanceTypeList->init(81920000);   // 10x the real engine's spriteHeapSize (8192000); editor edits many appearances/forests
 	}
 
 	//MUST ALWAYS CALL GET, EVEN IF WE HAVE AN APPEARANCE TYPE OR REFERENCE COUNT DOES NOT INCREASE!

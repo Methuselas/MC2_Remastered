@@ -4117,11 +4117,11 @@ void EditorInterface::renderToolbarImGui()
 	struct ToolDef { const char* label; int cmdId; };
 	static const ToolDef tools[] = {
 		{ "Select",      ID_OTHER_SELECT },
-		{ "Flatten",     ID_OTHER_FLATTEN },
-		{ "Erase",       ID_OTHER_ERASE },
+		{ "Flatten (F)", ID_OTHER_FLATTEN },
+		{ "Erase (E)",   ID_OTHER_ERASE },
 		{ "Mine",        ID_OTHER_LAYMINES },
-		{ "Link",        ID_OTHER_LINK },
-		{ "Damage",      ID_OTHER_DAMAGE },
+		{ "Link (L)",    ID_OTHER_LINK },
+		{ "Damage (D)",  ID_OTHER_DAMAGE },
 	};
 
 	ImGuiIO& io = ImGui::GetIO();
