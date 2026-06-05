@@ -104,6 +104,71 @@ static_assert(kTerrainMatNormalUnits[4] != kTerrainTexUnitHeight,
 static_assert(kTerrainMatNormalUnits[4] < 16,
               "matNormal4 exceeds OpenGL min-spec 16-unit floor");
 
+// TERRAIN-NORMAL-ARRAY: save/restore all GL pixel transfer, PBO, and texture
+// binding state that glGetTexImage / glTexSubImage3D are sensitive to.
+// Construct once, destructor restores. Use in any function that calls
+// glGetTexImage or bulk texture upload to avoid clobbering surrounding state.
+struct GlPixelStoreGuard {
+    GLint packBuffer = 0, unpackBuffer = 0;
+    GLint packAlign = 0, unpackAlign = 0;
+    GLint packRowLen = 0, unpackRowLen = 0;
+    GLint packSkipRows = 0, packSkipPixels = 0;
+    GLint unpackSkipRows = 0, unpackSkipPixels = 0;
+    GLint activeTex = 0;
+    GLint binding2D = 0, binding2DArray = 0;
+
+    GlPixelStoreGuard() {
+        glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING,   &packBuffer);
+        glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &unpackBuffer);
+        glGetIntegerv(GL_PACK_ALIGNMENT,    &packAlign);
+        glGetIntegerv(GL_UNPACK_ALIGNMENT,  &unpackAlign);
+        glGetIntegerv(GL_PACK_ROW_LENGTH,   &packRowLen);
+        glGetIntegerv(GL_UNPACK_ROW_LENGTH, &unpackRowLen);
+        glGetIntegerv(GL_PACK_SKIP_ROWS,    &packSkipRows);
+        glGetIntegerv(GL_PACK_SKIP_PIXELS,  &packSkipPixels);
+        glGetIntegerv(GL_UNPACK_SKIP_ROWS,  &unpackSkipRows);
+        glGetIntegerv(GL_UNPACK_SKIP_PIXELS,&unpackSkipPixels);
+        glGetIntegerv(GL_ACTIVE_TEXTURE,    &activeTex);
+        glGetIntegerv(GL_TEXTURE_BINDING_2D,       &binding2D);
+        glGetIntegerv(GL_TEXTURE_BINDING_2D_ARRAY, &binding2DArray);
+
+        glBindBuffer(GL_PIXEL_PACK_BUFFER,   0);
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+        glPixelStorei(GL_PACK_ALIGNMENT,    1);
+        glPixelStorei(GL_PACK_ROW_LENGTH,   0);
+        glPixelStorei(GL_PACK_SKIP_ROWS,    0);
+        glPixelStorei(GL_PACK_SKIP_PIXELS,  0);
+        glPixelStorei(GL_UNPACK_ALIGNMENT,  1);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+        glPixelStorei(GL_UNPACK_SKIP_ROWS,  0);
+        glPixelStorei(GL_UNPACK_SKIP_PIXELS,0);
+    }
+
+    ~GlPixelStoreGuard() {
+        glBindBuffer(GL_PIXEL_PACK_BUFFER,   (GLuint)packBuffer);
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, (GLuint)unpackBuffer);
+        glPixelStorei(GL_PACK_ALIGNMENT,    packAlign);
+        glPixelStorei(GL_PACK_ROW_LENGTH,   packRowLen);
+        glPixelStorei(GL_PACK_SKIP_ROWS,    packSkipRows);
+        glPixelStorei(GL_PACK_SKIP_PIXELS,  packSkipPixels);
+        glPixelStorei(GL_UNPACK_ALIGNMENT,  unpackAlign);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, unpackRowLen);
+        glPixelStorei(GL_UNPACK_SKIP_ROWS,  unpackSkipRows);
+        glPixelStorei(GL_UNPACK_SKIP_PIXELS,unpackSkipPixels);
+        glBindTexture(GL_TEXTURE_2D,       (GLuint)binding2D);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, (GLuint)binding2DArray);
+        glActiveTexture((GLenum)activeTex);
+    }
+};
+
+// Single-source gate for the sampler2DArray terrain normal path.
+// Used by shader prefix injection AND all bind paths — must agree for the
+// lifetime of compiled programs. Evaluated once at startup via static.
+static bool terrainNormalArrayEnabled() {
+    static const bool enabled = debugEnvEnabled("MC2_TERRAIN_NORMAL_ARRAY");
+    return enabled;
+}
+
 gosRenderer* getGosRenderer() {
     return g_gos_renderer;
 }
