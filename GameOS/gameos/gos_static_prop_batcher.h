@@ -424,6 +424,12 @@ uint32_t batcher_getTypeUploadedInstanceCount(uint32_t typeID);
 // batcher_isBaseInstanceTableReady). global_slot(typeID, rank) = base + rank.
 uint32_t batcher_getBaseInstanceForType(uint32_t typeID);
 
+// M2a POPULATION-SPLIT (gate MC2_STATIC_POP_SPLIT). Static-only per-type base
+// (prefix-sum over persistent-static counts; excludes dynamics) and the handle
+// of the StaticPopulation instance SSBO (front-packed, frozen, dirty-filled).
+uint32_t batcher_getStaticBaseInstanceForType(uint32_t typeID);
+GLuint   batcher_getStaticInstanceSsbo();
+
 // True when the per-type base table is valid this frame (global-pool armed and
 // prepareBaseInstanceTable has run). The golden static cull-record build gates
 // on this so it only scatters when the binding-0 slot layout is well-defined.

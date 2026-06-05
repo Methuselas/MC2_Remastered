@@ -717,6 +717,11 @@ const char* getRecipeShapeName(int32_t recipeIndex) {
 // compute_dispatch(). Rebuilds only when a store-dirty flush happened
 // (s_goldenDirty); a clean frame is a no-op (the substrate keeps the frozen
 // prefix). No effect unless MC2_GPU_CULL_STATIC_FROZEN_RECORDS is set.
+// M2a POPULATION-SPLIT: expose the G2 frozen-records gate to the batcher.
+// s_staticFrozenReg lives in the file-local anonymous namespace above, so this
+// definition (in the GpuStaticPropRegistry namespace) can read it directly.
+bool frozenRecordsArmed() { return s_staticFrozenReg; }
+
 void buildStaticPrefixGolden() {
     if (!s_staticFrozenReg) return;
     if (!s_goldenDirty) return;                          // nothing changed since last build

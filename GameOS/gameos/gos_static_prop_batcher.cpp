@@ -7385,7 +7385,116 @@ uint32_t batcher_getTypeUploadedInstanceCount(uint32_t typeID) {
 // it to place each record at its instance-pool slot (record-index == pool-slot).
 static std::vector<uint32_t> s_baseInstanceForType;
 
+// ===========================================================================
+// M2a POPULATION-SPLIT (gate MC2_STATIC_POP_SPLIT, requires G2). De-merge the
+// persistent static instances out of the per-frame dynamic bucket so the
+// static cull-record golden has a STABLE per-type base (the merged base shifts
+// per-frame when dynamics share a static type's bucket -> the outOfRange 0->71
+// defect). Tasks 1+2: static-only base table + own front-packed instance SSBO.
+// Default-off => byte-identical (every new path gates on staticPopSplitArmed()).
+// ===========================================================================
+
+static bool staticPopSplitArmed() {
+    static const bool s_on = (getenv("MC2_STATIC_POP_SPLIT") != nullptr);
+    // Requires the frozen-records (G2) path to be the cull-record source.
+    return s_on && GpuStaticPropRegistry::frozenRecordsArmed();
+}
+
+// Static-only per-type base: prefix-sum over s_persistentStaticStore[t].size()
+// in the SAME sorted+alpha order as s_baseInstanceForType, but counting ONLY
+// persistent-static instances (no dynamics). This is the stable base the golden
+// scatter must use. Dirty-gated on s_persistentStaticGen.
+static std::vector<uint32_t> s_staticBaseInstanceForType;
+static uint64_t              s_staticBaseBuiltGen = 0xFFFFFFFFFFFFFFFFull;
+
+static void rebuildStaticBaseInstanceTableIfDirty() {
+    if (s_staticBaseBuiltGen == s_persistentStaticGen) return;  // dirty-gated
+    s_staticBaseInstanceForType.assign(s_types.size(), 0u);
+    std::array<uint32_t, 2> groupCursor = {0u, 0u};
+    for (uint32_t i = 0; i < s_sortedTypeOrder.size(); ++i) {
+        const uint32_t typeID = s_sortedTypeOrder[i];
+        if (typeID >= s_types.size()) continue;
+        auto it = s_persistentStaticStore.find(typeID);
+        const uint32_t cnt = (it != s_persistentStaticStore.end())
+                                 ? static_cast<uint32_t>(it->second.size()) : 0u;
+        const uint32_t group = s_types[typeID].alphaClass;
+        s_staticBaseInstanceForType[typeID] = groupCursor[group];
+        groupCursor[group] += cnt;
+    }
+    const uint32_t offGroupCount = groupCursor[0];
+    for (uint32_t typeID : s_sortedTypeOrder) {
+        if (typeID < s_types.size() && s_types[typeID].alphaClass == 1u)
+            s_staticBaseInstanceForType[typeID] += offGroupCount;
+    }
+    s_staticBaseBuiltGen = s_persistentStaticGen;
+}
+
+uint32_t batcher_getStaticBaseInstanceForType(uint32_t typeID) {
+    return (typeID < s_staticBaseInstanceForType.size())
+               ? s_staticBaseInstanceForType[typeID] : 0u;
+}
+
+// StaticPopulation instance buffer (Task 2): persistent-mapped, SINGLE region
+// (static is frozen -> no triple-buffer ring). Sized ONCE at the global cap so
+// growth never reallocates an immutable buffer mid-flight (registration/despawn
+// fire during gameplay). Filled [0,total) once per dirty in static-base layout.
+static GLuint   s_staticInstanceSsbo    = 0;
+static void*    s_staticInstanceMap     = nullptr;   // GL_MAP_PERSISTENT|COHERENT
+static size_t   s_staticInstanceBytes   = 0;         // == cap * sizeof(instance)
+static uint64_t s_staticInstanceFillGen = 0xFFFFFFFFFFFFFFFFull;
+
+static bool ensureStaticInstanceCapacity() {
+    if (s_staticInstanceSsbo) return s_staticInstanceMap != nullptr;
+    const size_t want = static_cast<size_t>(s_globalInstanceCap)
+                        * sizeof(GpuStaticPropInstance);
+    glGenBuffers(1, &s_staticInstanceSsbo);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_staticInstanceSsbo);
+    const GLbitfield flags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
+    while (glGetError() != GL_NO_ERROR) {}
+    glBufferStorage(GL_SHADER_STORAGE_BUFFER, static_cast<GLsizeiptr>(want), nullptr, flags);
+    if (glGetError() != GL_NO_ERROR) {
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        glDeleteBuffers(1, &s_staticInstanceSsbo);
+        s_staticInstanceSsbo = 0;
+        std::fprintf(stderr, "[STATIC_POP_SPLIT] event=alloc_failed bytes=%zu\n", want);
+        return false;
+    }
+    s_staticInstanceMap = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0,
+                                           static_cast<GLsizeiptr>(want), flags);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    s_staticInstanceBytes = want;
+    return s_staticInstanceMap != nullptr;
+}
+
+static void fillStaticInstanceBufferIfDirty() {
+    if (s_staticInstanceFillGen == s_persistentStaticGen) return;
+    rebuildStaticBaseInstanceTableIfDirty();
+    size_t total = 0;
+    for (auto& kv : s_persistentStaticStore) total += kv.second.size();
+    if (total > static_cast<size_t>(s_globalInstanceCap)) {
+        std::fprintf(stderr, "[STATIC_POP_SPLIT] event=overflow total=%zu cap=%u\n",
+                     total, s_globalInstanceCap);
+        return;  // never write past the cap
+    }
+    if (!ensureStaticInstanceCapacity()) return;
+    auto* dst = static_cast<GpuStaticPropInstance*>(s_staticInstanceMap);
+    for (auto& kv : s_persistentStaticStore) {
+        const uint32_t typeID = kv.first;
+        if (typeID >= s_staticBaseInstanceForType.size()) continue;
+        const uint32_t base = s_staticBaseInstanceForType[typeID];
+        const auto& vec = kv.second;
+        for (uint32_t r = 0; r < vec.size(); ++r) dst[base + r] = vec[r];
+    }
+    s_staticInstanceFillGen = s_persistentStaticGen;
+}
+
+GLuint batcher_getStaticInstanceSsbo() { return s_staticInstanceSsbo; }
+
 uint32_t batcher_getBaseInstanceForType(uint32_t typeID) {
+    // M2a: under the population split, the golden scatter must use the STABLE
+    // static-only base (dynamics no longer inflate it) -> outOfRange -> 0.
+    if (staticPopSplitArmed())
+        return batcher_getStaticBaseInstanceForType(typeID);
     return (typeID < s_baseInstanceForType.size()) ? s_baseInstanceForType[typeID] : 0u;
 }
 
@@ -7817,6 +7926,16 @@ void batcher_prepareBaseInstanceTable() {
     // layout the draw uses, so a record placed at base[t]+rank aligns 1:1 with
     // the instance the draw renders.
     s_baseInstanceForType = baseInstanceForType;
+
+    // M2a POPULATION-SPLIT: rebuild the static-only base table + fill the static
+    // instance buffer when the persistent store changed (both dirty-gated on
+    // s_persistentStaticGen). The base table must be ready before the golden
+    // scatter (buildStaticPrefixGolden) reads it later this frame. Default-off
+    // => not called => byte-identical.
+    if (staticPopSplitArmed()) {
+        rebuildStaticBaseInstanceTableIfDirty();
+        fillStaticInstanceBufferIfDirty();
+    }
 
     // Write baseInstanceByCmd[c] for each cmd.
     const uint32_t pktCount = static_cast<uint32_t>(s_sortedPacketOrder.size());

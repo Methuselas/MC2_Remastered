@@ -98,6 +98,10 @@ void flush();
 // MC2_GPU_CULL_STATIC_FROZEN_RECORDS is set. See gos_static_prop_registry.cpp.
 void buildStaticPrefixGolden();
 
+// M2a POPULATION-SPLIT: true when MC2_GPU_CULL_STATIC_FROZEN_RECORDS (G2) is
+// armed. Cross-module gate read by the batcher's static population-split path.
+bool frozenRecordsArmed();
+
 // [STATIC_FIRST_FRAME v1] proof-of-fix accessor (Track B Task 4).
 // Returns the count of registrations whose VERY FIRST flush() attempt was
 // rejected by the staleness gate. Must read zero after Task 3's cachedFrame_
