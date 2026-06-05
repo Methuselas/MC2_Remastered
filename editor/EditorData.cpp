@@ -23,6 +23,7 @@
 #include "ECharString.h"
 
 #include "../GameOS/gameos/gos_static_prop_batcher.h"
+#include "../GameOS/gameos/gos_terrain_indirect.h"
 #include "../GameOS/gameos/gos_mech_batcher.h"
 #include "../GameOS/gameos/gos_static_prop_registry.h"
 #include "../GameOS/gameos/gpu_cull_substrate.h"
@@ -1132,6 +1133,39 @@ static int genMapSizeToN( int mapSize )
 		case 6: return 1020;
 		default: return 120;
 	}
+}
+
+bool EditorData::amplifyTerrain( float factor )
+{
+	if ( !land || !Terrain::mapData )
+		return false;
+	const long side  = land->realVerticesMapSide;
+	const long count = side * side;
+	if ( count <= 0 )
+		return false;
+
+	// Pivot about the mean elevation so peaks rise and basins drop symmetrically.
+	double sum = 0.0;
+	for ( long k = 0; k < count; ++k )
+		sum += Terrain::mapData->getVertexHeight( (int)k );
+	const float pivot = (float)( sum / (double)count );
+
+	for ( long k = 0; k < count; ++k )
+	{
+		const float e = Terrain::mapData->getVertexHeight( (int)k );
+		land->setVertexHeight( (int)k, pivot + ( e - pivot ) * factor );
+	}
+
+	land->recalcWater();
+	Terrain::mapData->calcLight();   // recompute normals for the new relief
+
+	// Re-bake every quad's GPU recipe with the new elevations/normals.
+	for ( long j = 0; j < side - 1; ++j )
+		for ( long i = 0; i < side - 1; ++i )
+			gos_terrain_indirect::InvalidateRecipeForVertexNum( (int)( j * side + i ) );
+
+	EditorDataTrace( "EditorData::amplifyTerrain: factor=%.2f pivot=%.1f side=%ld", factor, pivot, side );
+	return true;
 }
 
 bool EditorData::generateMission( int mapSize, int terrain, unsigned long seed )

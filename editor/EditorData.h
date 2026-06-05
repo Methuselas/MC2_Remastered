@@ -145,6 +145,9 @@ class EditorData
 		// chosen size + terrain-type/biome + seed, then builds an editable map from
 		// its heightmap + burnin colormap via initTerrainFromTGA.
 		static bool generateMission( int mapSize, int terrain, unsigned long seed );
+		// Amplify terrain relief: scale every vertex elevation about the mean by
+		// `factor` (>1 exaggerates hills + deepens basins; keeps the heightmap shape).
+		static bool amplifyTerrain( float factor );
 		static bool initTerrainFromPCV( const char* fileName );
 		static bool	reassignHeightsFromTGA( const char* fileName, int min, int max );
 

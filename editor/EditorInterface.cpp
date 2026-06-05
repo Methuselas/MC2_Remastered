@@ -4366,6 +4366,17 @@ void EditorInterface::renderToolbarImGui()
 			st->setStrength(m_stampStrength);
 	}
 
+	ImGui::Separator();
+	ImGui::Text("Terrain Relief");
+	{
+		// Amplify/flatten the whole heightmap about its mean (exaggerate hills +
+		// deepen basins, or smooth toward flat). Repeatable per click.
+		if (ImGui::Button("Amplify x1.5", ImVec2(-1.f, 0.f)))
+			EditorData::amplifyTerrain(1.5f);
+		if (ImGui::Button("Flatten x0.67", ImVec2(-1.f, 0.f)))
+			EditorData::amplifyTerrain(0.6667f);
+	}
+
 	ImGui::End();
 
 	renderObjectCompanionPanel();
