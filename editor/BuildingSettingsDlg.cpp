@@ -84,6 +84,13 @@ void BuildingSettingsDlg::OnSelchangeGroup()
 
 void BuildingSettingsDlg::applyChanges()
 {
+	// Preserve each selected object's world position across the appearance/shape
+	// swaps below (setAppearance / setDamage can swap the mesh and otherwise shift
+	// the object); restored + re-baked at the end of this function.
+	std::vector<Stuff::Vector3D> savedPos;
+	for ( EDITOROBJECT_LIST::EIterator pit = units.Begin(); !pit.IsDone(); pit++ )
+		savedPos.push_back( (*pit)->appearance() ? (*pit)->appearance()->position : Stuff::Vector3D() );
+
 	// get the type info from the dlg box
 	int index = m_Group.GetCurSel( );
 	if ( index != -1 )
@@ -178,11 +185,28 @@ void BuildingSettingsDlg::applyChanges()
 			sscanf( tmpStr, "%x", &color2 );
 			color2 |= 0xff000000;
 		}
-		
+
+	}
+
+	// Restore the saved world positions + re-bake static recipes so toggling the
+	// type/damaged state does not move the building.
+	{
+		size_t si = 0;
+		for ( EDITOROBJECT_LIST::EIterator rit = units.Begin(); !rit.IsDone() && si < savedPos.size(); rit++, ++si )
+		{
+			ObjectAppearance* pA = (*rit)->appearance();
+			if ( pA )
+			{
+				pA->position = savedPos[si];
+				pA->invalidateStaticRegistration();
+				pA->update();
+				pA->registerStatic();
+			}
+		}
 	}
 }
 
-void BuildingSettingsDlg::OnOK() 
+void BuildingSettingsDlg::OnOK()
 {
 	if (NULL != pUndoMgr)
 	{
