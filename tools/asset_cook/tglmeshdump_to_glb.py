@@ -75,7 +75,25 @@ def build_glb(dump: dict) -> bytes:
                            "indices": a_idx, "mode": 4, "material": mat})
 
     binblob = b"".join(bin_parts)
-    materials = [{"name": (sm.get("textureName") or "NULLTXM")} for sm in dump["submeshes"] if sm["verts"]]
+    # Materials carry a baseColorTexture whose URI == the stock texture name, so the
+    # override importer's DeriveMC2TextureName derives it and LoadOverrideRenderShapeTextures
+    # binds the EXISTING data/tgl/<size>/<name>.ktx2 (no re-cook). 'a_'/'A_' prefix => alpha.
+    images, textures, materials = [], [], []
+    for sm in dump["submeshes"]:
+        if not sm["verts"]:
+            continue
+        tn = sm.get("textureName") or ""
+        if tn and tn.upper() != "NULLTXM":
+            img = len(images); images.append({"uri": tn})
+            tex = len(textures); textures.append({"source": img})
+            is_alpha = tn[:2].lower() == "a_"
+            materials.append({
+                "name": Path(tn).stem,
+                "alphaMode": "MASK" if is_alpha else "OPAQUE",
+                "pbrMetallicRoughness": {"baseColorTexture": {"index": tex}},
+            })
+        else:
+            materials.append({"name": "NULLTXM"})
     gltf = {
         "asset": {"version": "2.0", "generator": "trackg tglmeshdump_to_glb.v1"},
         "scenes": [{"nodes": [0]}], "scene": 0,
@@ -86,6 +104,9 @@ def build_glb(dump: dict) -> bytes:
         "bufferViews": bufferViews,
         "accessors": accessors,
     }
+    if images:
+        gltf["images"] = images
+        gltf["textures"] = textures
     js = json.dumps(gltf, separators=(",", ":")).encode("utf-8")
     js += b" " * ((-len(js)) % 4)
     binpad = binblob + b"\x00" * ((-len(binblob)) % 4)

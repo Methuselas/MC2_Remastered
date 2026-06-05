@@ -82,6 +82,18 @@ legacy_static> pools=<skipped|legacy>`. Read-only, zero behavior change.
 rendered via the override path on a free v0.4 `--validate` run (gl-clean, exit 0); G5 log +
 case-insensitive accept confirmed live. Evidence: `docs/assets/trackg-r0/restamp_g5_e2e_evidence.txt`.
 
+## Batch — cook the whole stock library
+```
+workbench --export-tgl-meshdump-all <deploy> <dumpdir>     # 2030 .tgl -> 2015 meshdumps (15 load-fail skipped)
+cook_all_stock.py --meshdumps <dumpdir> --deploy-root <deploy> --out <lib>
+```
+`cook_all_stock.py` runs glb->stage->assemble in-process per prop, resolving existing
+`data/tgl/<tier>/<name>.ktx2` tiles by sanitized name (no re-cook). Full-set run:
+**2015 cooked, 0 errors — 1629 full textured manifests, 386 untextured geometry-only,
+493 multi-submesh** (`docs/assets/trackg-r0/batch_cook_all_report.json`). Textured glb
+materials carry the stock texture URI so the override importer binds existing tiles
+(verified live: `[MODOVERRIDE_TEX] a_2civliving.tga -> gosHandle, alpha=1`).
+
 ## Next (not yet built)
 G-E2E **2civliving** — author `2civliving.glb` from the stock `.ase` (content step), cook,
 register, render with stock-parity via the `TglMeshLoader` footprint/pivot oracle.
