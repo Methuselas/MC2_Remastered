@@ -1139,6 +1139,18 @@ bool EditorData::initTerrainFromTGA( int mapSize, int min, int max, int terrain 
 		mapWidth = 120;
 		break;
 
+	case 4:
+		mapWidth = 256;
+		break;
+
+	case 5:
+		mapWidth = 512;
+		break;
+
+	case 6:
+		mapWidth = 1024;
+		break;
+
 	default:
 		mapWidth = 120;
 		break;
