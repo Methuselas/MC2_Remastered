@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""tools/asset_cook/tests/run_tests.py — G3a manifest-schema TDD harness.
+
+Asserts the golden mc2-asset-manifest-v1 VALIDATES and every broken fixture is
+REJECTED for its intended reason. Pure data/validation — no cook, no engine.
+
+  py -3 tools/asset_cook/tests/run_tests.py
+
+Exit 0 = all expectations met. Exit 1 = any golden-fail or broken-pass.
+"""
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+VALIDATOR = HERE.parent / "validate_asset_manifest.py"
+
+# (path, expected_exit, must_mention) — must_mention asserts the failure is for
+# the INTENDED reason, not an incidental schema slip.
+CASES = [
+    (HERE / "golden" / "bigbox" / "manifest.json", 0, None),
+    (HERE / "broken" / "broken_class_camelcase.json", 1, "class"),
+    (HERE / "broken" / "broken_slot_index.json", 1, "slot"),
+    (HERE / "broken" / "broken_replaces_mismatch.json", 1, "replaces"),
+    (HERE / "broken" / "broken_scale.json", 1, "scale"),
+    (HERE / "broken" / "broken_alphaclass.json", 1, "alphaClass"),
+]
+
+
+def main() -> int:
+    failures = 0
+    print(f"{'CASE':<34} {'WANT':>4} {'GOT':>4}  RESULT")
+    print("-" * 64)
+    for path, want_exit, must_mention in CASES:
+        proc = subprocess.run(
+            [sys.executable, str(VALIDATOR), str(path)],
+            capture_output=True, text=True,
+        )
+        got = proc.returncode
+        out = proc.stdout + proc.stderr
+        ok = (got == want_exit)
+        if ok and must_mention and must_mention.lower() not in out.lower():
+            ok = False
+            reason = f"exit ok but did not mention {must_mention!r}"
+        else:
+            reason = "" if ok else f"exit {got} != {want_exit}"
+        if not ok:
+            failures += 1
+        print(f"{path.name:<34} {want_exit:>4} {got:>4}  {'PASS' if ok else 'FAIL ' + reason}")
+        if not ok:
+            for line in out.splitlines():
+                print(f"      | {line}")
+    print("-" * 64)
+    if failures:
+        print(f"{failures} case(s) FAILED")
+        return 1
+    print(f"all {len(CASES)} cases PASS (golden validates, 5 broken rejected for cause)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

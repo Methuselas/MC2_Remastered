@@ -1,0 +1,15 @@
+{
+  "schema": "mc2-asset-manifest-v1",
+  "cookVersion": 1,
+  "comment": "BROKEN: replaces 'staticprop:warehouse' != class:appearanceName ('staticprop:hangar') — must FAIL coherence.",
+  "asset": { "id": "bigbox", "class": "staticprop", "appearanceName": "hangar", "replaces": "staticprop:warehouse" },
+  "geometry": {
+    "source": "data/model_overrides/source/props/bigbox.glb", "cooked": "bigbox.glb",
+    "convention": { "axis": 0, "vflip": true, "importer": "assimp_importer.v1" }, "scale": 1.0,
+    "bounds": { "min": [-6.0, 0.0, -6.0], "max": [6.0, 12.0, 6.0], "radius": 12.0 },
+    "pivot": [0.0, 0.0, 0.0], "counts": { "verts": 24, "tris": 12, "submeshes": 1 }, "lods": []
+  },
+  "materials": [ { "slot": 0, "textureName": "bigbox", "alphaClass": 0,
+    "albedo_ktx2": { "128": "data/tgl/128/bigbox.ktx2" }, "flags": {} } ],
+  "capabilities": { "hasLegacyMesh": true, "hasCookedGlb": true, "hasLodChain": false, "hasMeshlets": false, "hasImpostor": false, "alphaTest": false, "castsShadow": true, "supportsObjectId": true }
+}

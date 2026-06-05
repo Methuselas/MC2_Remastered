@@ -1,0 +1,170 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "mc2-asset-manifest-v1",
+  "title": "MC2 Cooked Static-Prop Asset Manifest",
+  "description": "Offline cook contract for a glTF-sourced static-prop/tree override asset. Superset of the override models.json (geometry/identity) and material_manifest (textures). Geometry + materials + capability + provenance for one cooked asset. The runtime consumes only the projected models.generated.json subset; this manifest is authoring/asset-db truth.",
+  "type": "object",
+  "required": ["schema", "cookVersion", "asset", "geometry", "materials", "capabilities"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "type": "string", "const": "mc2-asset-manifest-v1" },
+    "cookVersion": { "type": "integer", "const": 1, "description": "Cook format version. Bump on any field add/remove/reinterpret." },
+    "comment": { "type": "string", "description": "Optional human note. Not consumed by the cook/runtime." },
+
+    "asset": {
+      "type": "object",
+      "required": ["id", "class", "appearanceName", "replaces"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "description": "Source asset id (cooked-dir name)." },
+        "class": { "type": "string", "enum": ["staticprop", "tree"], "description": "CANONICAL LOWERCASE. Registry normalizeKey lowercases; accept compare is literal 'staticprop'/'tree' (model_override_registry.cpp:77). Input is case-insensitive at runtime but the manifest MUST emit lowercase." },
+        "appearanceName": { "type": "string", "minLength": 1, "description": "Stock appearance/.ase base name being replaced (the override key, lowercase)." },
+        "replaces": { "type": "string", "pattern": "^(staticprop|tree):.+$", "description": "Composite key '<class>:<appearanceName>'. Validator enforces == class + ':' + appearanceName, all lowercase." }
+      }
+    },
+
+    "geometry": {
+      "type": "object",
+      "required": ["source", "cooked", "convention", "scale", "bounds", "pivot", "counts"],
+      "additionalProperties": false,
+      "properties": {
+        "source": { "type": "string", "description": "Authored source glb/gltf, relative to deploy root." },
+        "cooked": { "type": "string", "description": "Cooked glb, relative to this manifest (bundle-local)." },
+        "convention": {
+          "type": "object",
+          "required": ["axis", "vflip", "importer"],
+          "additionalProperties": false,
+          "description": "AUDIT ONLY. Records the frozen runtime-importer convention the cooked glb was baked to. Runtime MC2_GLTF_* env is NOT part of the contract.",
+          "properties": {
+            "axis": { "type": "integer", "const": 0, "description": "MC2_GLTF_AXIS default 0 (-x,-y,z)." },
+            "vflip": { "type": "boolean", "const": true, "description": "assimp_importer toMC2V = 1-v applied." },
+            "importer": { "type": "string", "const": "assimp_importer.v1" }
+          }
+        },
+        "scale": { "type": "number", "const": 1.0, "description": "MVP invariant. Bake scale into the glb." },
+        "bounds": {
+          "type": "object",
+          "required": ["min", "max", "radius"],
+          "additionalProperties": false,
+          "properties": {
+            "min": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+            "max": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+            "radius": { "type": "number", "minimum": 0.0 }
+          }
+        },
+        "pivot": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+        "counts": {
+          "type": "object",
+          "required": ["verts", "tris", "submeshes"],
+          "additionalProperties": false,
+          "properties": {
+            "verts": { "type": "integer", "minimum": 0 },
+            "tris": { "type": "integer", "minimum": 0 },
+            "submeshes": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "lods": {
+          "type": "array",
+          "default": [],
+          "description": "Optional LOD chain. LOD0 == cooked; entries are lod>=1, strictly ascending.",
+          "items": {
+            "type": "object",
+            "required": ["lod", "cooked"],
+            "additionalProperties": false,
+            "properties": {
+              "lod": { "type": "integer", "minimum": 1 },
+              "cooked": { "type": "string" },
+              "distance": { "type": "number", "minimum": 0.0, "default": 0.0 }
+            }
+          }
+        }
+      }
+    },
+
+    "materials": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Ordered; materials[N] cooks into MaterialGpu table slot N. Index == submesh material slot.",
+      "items": { "$ref": "#/definitions/MaterialEntry" }
+    },
+
+    "capabilities": {
+      "type": "object",
+      "required": ["hasLegacyMesh", "hasCookedGlb", "hasLodChain", "hasMeshlets", "hasImpostor", "alphaTest", "castsShadow", "supportsObjectId"],
+      "additionalProperties": false,
+      "description": "MeshCapability flags. DESCRIPTIVE this slice (logged, not path-authoritative).",
+      "properties": {
+        "hasLegacyMesh": { "type": "boolean" },
+        "hasCookedGlb": { "type": "boolean" },
+        "hasLodChain": { "type": "boolean", "description": "Validator enforces == (geometry.lods non-empty)." },
+        "hasMeshlets": { "type": "boolean", "description": ".cdag sidecar — always false this slice." },
+        "hasImpostor": { "type": "boolean", "description": "far-LOD card — always false for buildings this slice." },
+        "alphaTest": { "type": "boolean", "description": "Validator enforces == any material alphaClass==1." },
+        "castsShadow": { "type": "boolean" },
+        "supportsObjectId": { "type": "boolean" },
+        "packed": { "type": "integer", "minimum": 0, "description": "Optional packed uint32 mirror of the bits." }
+      }
+    },
+
+    "deps": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "stockFallback": { "type": "string", "description": "appearanceName the runtime falls back to (== asset.appearanceName)." },
+        "textures": { "type": "array", "items": { "type": "string" } },
+        "sourceGlb": { "type": "string" }
+      }
+    },
+
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sourceSha256": { "type": "string" },
+        "cookTools": { "type": "object" },
+        "cookedUtc": { "type": "string", "description": "Stamped post-cook (NOT by the deterministic cook body)." }
+      }
+    }
+  },
+
+  "definitions": {
+    "MaterialEntry": {
+      "type": "object",
+      "required": ["slot", "textureName", "alphaClass", "albedo_ktx2"],
+      "additionalProperties": false,
+      "properties": {
+        "slot": { "type": "integer", "minimum": 0, "description": "Validator enforces materials[i].slot == i." },
+        "textureName": { "type": "string", "minLength": 1, "description": "Base name. 'a_' prefix iff alphaClass==1 (resolver convention)." },
+        "alphaClass": { "type": "integer", "enum": [0, 1], "description": "0=opaque 1=alpha. Validator enforces coherence with flags.alpha_test and the 'a_' prefix." },
+        "albedo_ktx2": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": false,
+          "description": "Tier map: resolution -> KTX2 path. Runtime picks tier by ObjectTextureSize. albedoTex = the texture-array layer at runtime.",
+          "properties": {
+            "128": { "type": "string" },
+            "256": { "type": "string" },
+            "512": { "type": "string" },
+            "1024": { "type": "string" }
+          }
+        },
+        "normal_ktx2": { "type": ["string", "null"], "default": null, "description": "null = kMaterialTexAbsent; flag unset. In-game normal SHELVED per asset-pipeline §6." },
+        "metallic_roughness_ktx2": { "type": ["string", "null"], "default": null },
+        "emissive_ktx2": { "type": ["string", "null"], "default": null },
+        "base_color_factor": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 1.0 },
+        "metallic_factor": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0 },
+        "roughness_factor": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 1.0 },
+        "flags": {
+          "type": "object",
+          "additionalProperties": false,
+          "default": {},
+          "properties": {
+            "alpha_test": { "type": "boolean", "default": false },
+            "double_sided": { "type": "boolean", "default": false },
+            "window": { "type": "boolean", "default": false }
+          }
+        }
+      }
+    }
+  }
+}

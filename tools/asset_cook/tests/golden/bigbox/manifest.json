@@ -1,0 +1,66 @@
+{
+  "schema": "mc2-asset-manifest-v1",
+  "cookVersion": 1,
+  "comment": "R0 golden — bigbox placeholder cooked as a staticprop override of stock 'hangar'. Proven to render in-game (docs/assets/trackg-r0). Untextured borrowed-albedo box; albedo tiers are placeholder paths.",
+  "asset": {
+    "id": "bigbox",
+    "class": "staticprop",
+    "appearanceName": "hangar",
+    "replaces": "staticprop:hangar"
+  },
+  "geometry": {
+    "source": "data/model_overrides/source/props/bigbox.glb",
+    "cooked": "bigbox.glb",
+    "convention": { "axis": 0, "vflip": true, "importer": "assimp_importer.v1" },
+    "scale": 1.0,
+    "bounds": { "min": [-6.0, 0.0, -6.0], "max": [6.0, 12.0, 6.0], "radius": 12.0 },
+    "pivot": [0.0, 0.0, 0.0],
+    "counts": { "verts": 24, "tris": 12, "submeshes": 1 },
+    "lods": []
+  },
+  "materials": [
+    {
+      "slot": 0,
+      "textureName": "bigbox",
+      "alphaClass": 0,
+      "albedo_ktx2": {
+        "128": "data/tgl/128/bigbox.ktx2",
+        "256": "data/tgl/256/bigbox.ktx2",
+        "512": "data/tgl/512/bigbox.ktx2",
+        "1024": "data/tgl/1024/bigbox.ktx2"
+      },
+      "normal_ktx2": null,
+      "metallic_roughness_ktx2": null,
+      "emissive_ktx2": null,
+      "base_color_factor": 1.0,
+      "metallic_factor": 0.0,
+      "roughness_factor": 1.0,
+      "flags": { "alpha_test": false, "double_sided": false, "window": false }
+    }
+  ],
+  "capabilities": {
+    "hasLegacyMesh": true,
+    "hasCookedGlb": true,
+    "hasLodChain": false,
+    "hasMeshlets": false,
+    "hasImpostor": false,
+    "alphaTest": false,
+    "castsShadow": true,
+    "supportsObjectId": true
+  },
+  "deps": {
+    "stockFallback": "hangar",
+    "textures": [
+      "data/tgl/128/bigbox.ktx2",
+      "data/tgl/256/bigbox.ktx2",
+      "data/tgl/512/bigbox.ktx2",
+      "data/tgl/1024/bigbox.ktx2"
+    ],
+    "sourceGlb": "data/model_overrides/source/props/bigbox.glb"
+  },
+  "provenance": {
+    "sourceSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "cookTools": { "ktx": "ktx-software-x", "assimp": "5.x", "driver": "trackg_cook.v1" },
+    "cookedUtc": "2026-06-04T00:00:00Z"
+  }
+}
