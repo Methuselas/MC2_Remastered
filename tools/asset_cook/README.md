@@ -67,15 +67,18 @@ assemble               -> manifest.json (schema-valid) + models.generated.json (
 ```
 **Path B (stock source):** for a stock prop with no authored glb, dump it from the engine's
 own `.tgl` via the workbench (`MeshData` = GL-space `(-sx, sz, sy)`), then `tglmeshdump_to_glb.py`
-writes a glb with the **calibrated `-x,-z,y`** axis map + UV `1-v` so the override importer
-(`axisMap0` + auto-ground) yields engine world `(-sx, sy, sz)` — the engine's native stock-prop
-coords. **Calibration story (important):** the first attempt used `-x,-y,z`, which swapped Stuff
-Y/Z → every cooked building rendered **90° rotated about X** (lying down). It passed a naive
-"staged extents == stock MeshData extents" oracle anyway, because **extents are mirror- and
-rotation-blind**. Caught only by a `--screenshot` comparison (`docs/assets/trackg-r0/`:
-`cooked_hangar.png` wrong vs `confirm_hangar_quonset.png` fixed). Lesson: the screenshot is the
-real gate; the extents oracle is necessary-not-sufficient. `test_g_pathb_2civliving.py` now
-asserts the calibrated Y/Z-swapped mapping.
+writes a glb with the **calibrated `x,-z,y` axis map + UV `none`** so the override importer
+(`axisMap0`, auto-ground OFF) yields the engine's **raw Stuff coords `(sx,sy,sz)`** — the exact
+space stock props bake through `TransformShape` (so each building's per-instance facing rotation
+applies correctly). Plus an engine change: `ImportGeometryFromFile(..., autoGround=false)` for
+staticprop overrides (they carry the stock pivot; trees still ground).
+
+**Calibration story (4 wrong turns, all caught by `--screenshot`, none by the offline oracle):**
+`-x,-y,z` → giant warped sails (Y/Z swap); `-x,-z,y` → 90°/180°/45° mess (X-mirror + grounding
+shift); `x,-z,y`+UV `1-v` → geometry right but "backside had front textures" (UV double-flip);
+**`x,-z,y` + UV `none` + ground-off → correct** (user-confirmed, hangar/quonset/dome).
+**Lesson (load-bearing): the extents oracle is mirror/rotation-blind — necessary, not
+sufficient. The screenshot is the real gate.** Evidence in `docs/assets/trackg-r0/`.
 Authoritative round-trip is the C++ `ExportBundle`/`ModelOverrideRegistry` at integration;
 `registry_resolves` is the offline Python mirror. Promotion of `models.generated.json` into
 central `models.json` stays a separate reviewed merge.

@@ -43,7 +43,15 @@ def parse_axes(spec: str):
     return fn
 
 
-def build_glb(dump: dict, axes: str = "-x,-z,y") -> bytes:
+def build_glb(dump: dict, axes: str = "x,-z,y", uvmode: str = "none") -> bytes:
+    # CALIBRATED (visually confirmed 2026-06-04): geometry axes `x,-z,y` (raw Stuff coords,
+    # the engine's stock-prop space via TransformShape), UV `none` (pass raw tgl UVs; the
+    # importer's 1-v lands correctly on the stock tile). Earlier `-x,-z,y`+`v` = mirror + UV
+    # double-flip ("backside had front textures"). Auto-ground must be OFF (GROUND=0): stock
+    # props carry their own pivot; grounding shifts them in depth.
+    #   uvmode: "none" (default), "v"=1-v, "u"=1-u, "uv"=both.
+    flip_u = uvmode in ("u", "uv")
+    flip_v = uvmode in ("v", "uv")
     # axes default "-x,-z,y" is the CALIBRATED stock-> glb transform: importer axisMap0
     # then yields engine world (-sx, sy, sz), matching the engine's native stock-prop
     # coords (X-mirror, Stuff Y/Z preserved). The earlier "-x,-y,z" swapped Y/Z -> 90deg-X
@@ -71,7 +79,10 @@ def build_glb(dump: dict, axes: str = "-x,-z,y") -> bytes:
         pos = pos_xform(verts[:, 0:3])
         nrm = pos_xform(verts[:, 3:6])
         uv = verts[:, 6:8].copy()
-        uv[:, 1] = 1.0 - uv[:, 1]
+        if flip_u:
+            uv[:, 0] = 1.0 - uv[:, 0]
+        if flip_v:
+            uv[:, 1] = 1.0 - uv[:, 1]
         idx = np.array(sm["idx"], dtype=np.uint32)
 
         pos32 = pos.astype(np.float32)
@@ -139,11 +150,12 @@ def build_glb(dump: dict, axes: str = "-x,-z,y") -> bytes:
 
 
 def main() -> int:
-    if len(sys.argv) not in (3, 4):
+    if len(sys.argv) not in (3, 4, 5):
         print(__doc__); return 2
-    axes = sys.argv[3] if len(sys.argv) == 4 else "-x,-z,y"
+    axes = sys.argv[3] if len(sys.argv) >= 4 else "x,-z,y"
+    uvmode = sys.argv[4] if len(sys.argv) == 5 else "none"
     dump = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-    glb = build_glb(dump, axes)
+    glb = build_glb(dump, axes, uvmode)
     Path(sys.argv[2]).write_bytes(glb)
     nverts = sum(len(s["verts"]) for s in dump["submeshes"])
     print(f"GLB {sys.argv[2]}  {len(dump['submeshes'])} prim, {nverts} verts, {len(glb)} bytes "
