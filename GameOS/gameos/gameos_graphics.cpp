@@ -1619,7 +1619,126 @@ class gosRenderer {
         void setTerrainLightDir(float x, float y, float z) { terrain_light_dir_ = vec4(x, y, z, 0.0f); }
         const vec4& getTerrainLightDir() const { return terrain_light_dir_; }
         void setTerrainDetailParams(float tiling, float strength) { terrain_detail_tiling_ = tiling; terrain_detail_strength_ = strength; }
-        void setTerrainMaterialNormal(int idx, GLuint texId) { if (idx >= 0 && idx < 5) terrain_mat_normal_[idx] = texId; }
+        void setTerrainMaterialNormal(int idx, GLuint texId) {
+            if (idx >= 0 && idx < 5) {
+                terrain_mat_normal_[idx] = texId;
+                terrain_normal_array_dirty_ = true;
+            }
+        }
+        void buildTerrainNormalArray() {
+            // Require all 5 slots to be filled. Log once if incomplete.
+            for (int i = 0; i < 5; ++i) {
+                if (terrain_mat_normal_[i] == 0) {
+                    static bool s_warned = false;
+                    if (!s_warned) {
+                        s_warned = true;
+                        SPEW(("GRAPHICS", "buildTerrainNormalArray: slot %d is zero -- deferring build until all 5 slots are set\n", i));
+                    }
+                    return;
+                }
+            }
+
+            GlPixelStoreGuard guard;  // saves and restores pixel-store, PBO, active tex, bindings
+
+            // Query slot 0 for reference dimensions and internal format.
+            GLint refW = 0, refH = 0, refFmt = 0;
+            GLint baseLevel = 0, maxLevel = 0;
+            glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[0]);
+            glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH,           &refW);
+            glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT,          &refH);
+            glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, &refFmt);
+            glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, &baseLevel);
+            glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL,  &maxLevel);
+            glBindTexture(GL_TEXTURE_2D, 0);
+
+            if (refW <= 0 || refH <= 0)
+                STOP(("buildTerrainNormalArray: slot 0 has invalid size %dx%d", refW, refH));
+
+            // Assert all 5 textures match in dimensions and internal format.
+            for (int i = 1; i < 5; ++i) {
+                GLint wi = 0, hi = 0, fmti = 0;
+                glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[i]);
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH,           &wi);
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT,          &hi);
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, &fmti);
+                glBindTexture(GL_TEXTURE_2D, 0);
+                if (wi != refW || hi != refH)
+                    STOP(("buildTerrainNormalArray: slot %d size %dx%d != slot 0 size %dx%d",
+                          i, wi, hi, refW, refH));
+                if (fmti != refFmt)
+                    STOP(("buildTerrainNormalArray: slot %d internal format 0x%X != slot 0 format 0x%X",
+                          i, fmti, refFmt));
+            }
+
+            // Determine the actual mip chain depth.
+            int numLevels = maxLevel - baseLevel + 1;
+            if (numLevels < 1) numLevels = 1;
+            {
+                int maxPossible = 0, d = (refW > refH ? refW : refH);
+                while (d > 0) { ++maxPossible; d >>= 1; }
+                if (numLevels > maxPossible) numLevels = maxPossible;
+            }
+
+            // Delete the previous array texture if it exists.
+            if (terrain_normal_array_tex_ != 0) {
+                glDeleteTextures(1, &terrain_normal_array_tex_);
+                terrain_normal_array_tex_ = 0;
+            }
+
+            // Allocate the GL_TEXTURE_2D_ARRAY with GL_RGBA8 storage.
+            // glGetTexImage always decompresses if the source is compressed; we
+            // receive RGBA8 regardless of the source internal format.
+            glGenTextures(1, &terrain_normal_array_tex_);
+            glBindTexture(GL_TEXTURE_2D_ARRAY, terrain_normal_array_tex_);
+            glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8,
+                         refW, refH, 5 /*layers*/,
+                         0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+            // Copy all mip levels from each source texture into the array.
+            // Normal-map mips are authored — do not use glGenerateMipmap here
+            // (averaging would shorten normals; hardware-generated mips differ
+            // from the source importer's output).
+            std::vector<uint8_t> pixels;
+            for (int level = baseLevel; level < baseLevel + numLevels; ++level) {
+                GLint mipW = 0, mipH = 0;
+                glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[0]);
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, level, GL_TEXTURE_WIDTH,  &mipW);
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, level, GL_TEXTURE_HEIGHT, &mipH);
+                glBindTexture(GL_TEXTURE_2D, 0);
+                if (mipW <= 0 || mipH <= 0) break;
+
+                glBindTexture(GL_TEXTURE_2D_ARRAY, terrain_normal_array_tex_);
+                glTexImage3D(GL_TEXTURE_2D_ARRAY, level, GL_RGBA8,
+                             mipW, mipH, 5, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+                const size_t mipBytes = (size_t)mipW * mipH * 4;
+                pixels.resize(mipBytes);
+
+                for (int layer = 0; layer < 5; ++layer) {
+                    glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[layer]);
+                    glGetTexImage(GL_TEXTURE_2D, level, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                    glBindTexture(GL_TEXTURE_2D, 0);
+
+                    glBindTexture(GL_TEXTURE_2D_ARRAY, terrain_normal_array_tex_);
+                    glTexSubImage3D(GL_TEXTURE_2D_ARRAY, level,
+                                    0, 0, layer,
+                                    mipW, mipH, 1,
+                                    GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                }
+            }
+
+            // Sampling params.
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_BASE_LEVEL, baseLevel);
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL,  baseLevel + numLevels - 1);
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
+            glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+            // guard destructor restores all state
+
+            terrain_normal_array_dirty_ = false;
+        }
         void setTerrainCellBombParams(float s, float j, float r) { terrain_cell_scale_ = s; terrain_cell_jitter_ = j; terrain_cell_rotation_ = r; }
         void setTerrainPOMParams(float scale, float, float) { terrain_pom_scale_ = scale; }
         void setTerrainWorldScale(float scale) { terrain_world_scale_ = scale; }
@@ -1826,6 +1945,8 @@ class gosRenderer {
         float terrain_detail_tiling_ = 1.0f;
         float terrain_detail_strength_ = 4.0f;
         GLuint terrain_mat_normal_[5] = {0, 0, 0, 0, 0};
+        GLuint terrain_normal_array_tex_   = 0;     // GL_TEXTURE_2D_ARRAY; 0 = not built
+        bool   terrain_normal_array_dirty_ = false; // rebuild needed at next bind
         float terrain_cell_scale_ = 8.0f;
         float terrain_cell_jitter_ = 0.8f;
         float terrain_cell_rotation_ = 1.0f;
@@ -4509,6 +4630,10 @@ void gosRenderer::destroy() {
     terrain_extra_data_ = nullptr;
     if (terrain_extra_vb_) { glDeleteBuffers(1, &terrain_extra_vb_); terrain_extra_vb_ = 0; }
     if (terrain_material_) { gosRenderMaterial::destroy(terrain_material_); terrain_material_ = nullptr; }
+    if (terrain_normal_array_tex_ != 0) {
+        glDeleteTextures(1, &terrain_normal_array_tex_);
+        terrain_normal_array_tex_ = 0;
+    }
 
     glDeleteVertexArrays(1, &gVAO);
 
