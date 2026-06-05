@@ -1496,6 +1496,12 @@ void MapData::setTerrain( long indexY, long indexX, int Type )
 	// setTerrain() calls (mines, scorch) leave cache NULL for the rest of that
 	// mission -- acceptable since these events are rare.
 	invalidateTerrainFaceCache();
+	// Terrain-type changes also affect which decal quads are eligible (overlay
+	// recipes reference the same tile data). Without this, TerrainBrush/Eraser
+	// strokes leave the decal VBO stale and overlays vanish until enough draws
+	// accumulate to trigger a full rebuild. Mirrors MarkDecalDirty() at the
+	// Terrain::setOverlay() chokepoint (terrain.cpp). Idempotent (dirty-flag).
+	gos_terrain_indirect::MarkDecalDirty();
 }
 
 //---------------------------------------------------------------------------

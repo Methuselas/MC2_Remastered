@@ -1193,7 +1193,11 @@ void EditorData::refreshTerrainAfterEdit()
 	for ( long j = 0; j < side - 1; ++j )
 		for ( long i = 0; i < side - 1; ++i )
 			gos_terrain_indirect::InvalidateRecipeForVertexNum( (int)( j * side + i ) );
-	EditorDataTrace( "EditorData::refreshTerrainAfterEdit: rebuilt face cache + recipes side=%ld", side );
+	// Belt-and-suspenders: after any brush stroke the decal VBO must be
+	// rebuilt even if setTerrain()'s own MarkDecalDirty() was somehow skipped
+	// (e.g. direct mapData->setTerrain() calls bypassing Terrain::setTerrain).
+	gos_terrain_indirect::MarkDecalDirty();
+	EditorDataTrace( "EditorData::refreshTerrainAfterEdit: rebuilt face cache + recipes + decal dirty side=%ld", side );
 }
 
 bool EditorData::generateMission( int mapSize, int terrain, unsigned long seed )
