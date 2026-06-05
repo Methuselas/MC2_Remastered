@@ -81,6 +81,7 @@ public:
 
 	static EditorInterface* instance(){ return s_instance; }
 	void renderToolbarImGui();
+	void setSculptBrush( int mode );
 	
 	EditorInterface();
 	~EditorInterface();
@@ -299,6 +300,8 @@ private:
 	// a LOCALLY-sampled map (inverseProject snaps to the 128-unit grid, and a single
 	// grab-time map overshoots as world-units-per-pixel changes across the screen).
 	int							m_dragLastScreenX, m_dragLastScreenY;
+	float						m_sculptRadius;
+	float						m_sculptStrength;
 
 	MainMenu					*m_pMainMenu;
 

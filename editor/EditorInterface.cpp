@@ -85,6 +85,7 @@ extern graphics::RenderContextHandle EditorGameOS_GetRenderContext();
 
 #ifndef FLATTENBRUSH_H
 #include "FlattenBrush.h"
+#include "HeightBrush.h"
 #endif
 
 #ifndef HEIGHTDLG_H
@@ -820,6 +821,8 @@ EditorInterface::EditorInterface()
 	m_dragObjStartPos.x = m_dragObjStartPos.y = m_dragObjStartPos.z = 0.0f;
 	m_dragLastScreenX = 0;
 	m_dragLastScreenY = 0;
+	m_sculptRadius = 400.0f;
+	m_sculptStrength = 30.0f;
 
 	smoothRadius = 2;
 	dragging = false;
@@ -4097,6 +4100,14 @@ BOOL EditorInterface::OnMouseWheel(UINT nFlags, short zDelta, CPoint pt)
 	return CWnd ::OnMouseWheel(nFlags, zDelta, pt);
 }
 
+void EditorInterface::setSculptBrush( int mode )
+{
+	KillCurBrush();
+	curBrush = new HeightBrush( (HeightBrush::Mode)mode, m_sculptRadius, m_sculptStrength );
+	currentBrushID = -100 - mode;   // synthetic sentinel (not IDS_SELECT, not the object range)
+	currentBrushMenuID = -1;
+}
+
 #ifdef MC2_IMGUI
 // Floating tool palette (Photoshop-style). Buttons re-post the same WM_COMMAND
 // the menu items use, so they share the existing tool-switch handlers. The active
@@ -4129,6 +4140,29 @@ void EditorInterface::renderToolbarImGui()
 		if (active)
 			ImGui::PopStyleColor();
 	}
+
+	ImGui::Separator();
+	ImGui::Text("Sculpt Terrain");
+	HeightBrush* hb = dynamic_cast<HeightBrush*>(curBrush);
+	{
+		struct SM { const char* label; int mode; };
+		static const SM sm[] = { { "Raise", 0 }, { "Lower", 1 }, { "Smooth", 2 } };
+		for (int i = 0; i < 3; ++i)
+		{
+			const bool sactive = hb && (int)hb->getMode() == sm[i].mode;
+			if (sactive)
+				ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.20f, 0.70f, 1.0f));
+			if (ImGui::Button(sm[i].label, ImVec2(-1.f, 0.f)))
+				setSculptBrush(sm[i].mode);
+			if (sactive)
+				ImGui::PopStyleColor();
+		}
+		if (ImGui::SliderFloat("Size", &m_sculptRadius, 64.0f, 3000.0f, "%.0f") && hb)
+			hb->setRadius(m_sculptRadius);
+		if (ImGui::SliderFloat("Strength", &m_sculptStrength, 1.0f, 300.0f, "%.0f") && hb)
+			hb->setStrength(m_sculptStrength);
+	}
+
 	ImGui::End();
 }
 #else

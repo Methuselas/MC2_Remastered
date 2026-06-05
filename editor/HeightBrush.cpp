@@ -1,0 +1,193 @@
+/*************************************************************************************************\
+HeightBrush.cpp : see HeightBrush.h
+\*************************************************************************************************/
+
+#include "HeightBrush.h"
+
+#ifndef CAMERA_H
+#include "Camera.h"
+#endif
+
+#include "../GameOS/gameos/gos_terrain_indirect.h"
+
+#include <math.h>
+
+//-------------------------------------------------------------------------------------------------
+HeightBrush::HeightBrush( Mode m, float r, float s )
+	: mode( m ), radius( r ), strength( s ), pCurAction( NULL )
+{
+}
+
+HeightBrush::~HeightBrush()
+{
+}
+
+//-------------------------------------------------------------------------------------------------
+bool HeightBrush::beginPaint()
+{
+	pCurAction = new ActionPaintTile();
+	touchedThisStroke.clear();
+	return true;
+}
+
+Action* HeightBrush::endPaint()
+{
+	ActionPaintTile* pRet = pCurAction;
+	if ( pCurAction && !pCurAction->vertexInfoList.Count() )
+	{
+		delete pCurAction;
+		pRet = NULL;
+	}
+	if ( land )
+		land->recalcWater();
+	pCurAction = NULL;
+	touchedThisStroke.clear();
+	return pRet;
+}
+
+//-------------------------------------------------------------------------------------------------
+bool HeightBrush::paint( Stuff::Vector3D& worldPos, int screenX, int screenY )
+{
+	if ( !land || !pCurAction )
+		return false;
+
+	const float wupv = land->worldUnitsPerVertex;
+	const int   side = land->realVerticesMapSide;
+	if ( wupv <= 0.0f || side <= 0 )
+		return false;
+
+	// Vertex nearest the cursor, and the vertex-radius covering the brush radius.
+	const int cx = (int)floor( ( worldPos.x - land->mapTopLeft3d.x ) / wupv + 0.5f );
+	const int cy = (int)floor( ( land->mapTopLeft3d.y - worldPos.y ) / wupv + 0.5f );
+	const int vr = (int)ceil( radius / wupv ) + 1;
+
+	for ( int j = cy - vr; j <= cy + vr; ++j )
+	{
+		if ( j < 0 || j >= side ) continue;
+		for ( int i = cx - vr; i <= cx + vr; ++i )
+		{
+			if ( i < 0 || i >= side ) continue;
+
+			// World position of this vertex (mirror FlattenBrush index math).
+			const float vwx = land->mapTopLeft3d.x + (float)i * wupv;
+			const float vwy = land->mapTopLeft3d.y - (float)j * wupv;
+			const float dx  = vwx - worldPos.x;
+			const float dy  = vwy - worldPos.y;
+			const float dist = sqrtf( dx * dx + dy * dy );
+			if ( dist > radius ) continue;
+
+			const int key = j * side + i;
+			if ( touchedThisStroke.count( key ) )   // one step per stroke -> passes layer
+				continue;
+			touchedThisStroke.insert( key );
+
+			applyToVertex( j, i, dist );
+		}
+	}
+
+	return true;
+}
+
+//-------------------------------------------------------------------------------------------------
+void HeightBrush::applyToVertex( int row, int col, float worldDist )
+{
+	const int side = land->realVerticesMapSide;
+	const int vn   = row * side + col;
+
+	// Smoothstep falloff: full at the centre, 0 at the radius edge.
+	float t = ( radius > 0.0f ) ? ( 1.0f - worldDist / radius ) : 1.0f;
+	if ( t < 0.0f ) t = 0.0f;
+	if ( t > 1.0f ) t = 1.0f;
+	const float falloff = t * t * ( 3.0f - 2.0f * t );
+
+	pCurAction->addChangedVertexInfo( row, col );   // undo
+
+	const float cur = land->getTerrainElevation( row, col );
+
+	if ( mode == SMOOTH )
+	{
+		float sum = 0.0f; int n = 0;
+		const int nb[4][2] = { { row - 1, col }, { row + 1, col }, { row, col - 1 }, { row, col + 1 } };
+		for ( int k = 0; k < 4; ++k )
+		{
+			const int r = nb[k][0], c = nb[k][1];
+			if ( r >= 0 && r < side && c >= 0 && c < side )
+			{
+				sum += land->getTerrainElevation( r, c );
+				++n;
+			}
+		}
+		if ( n > 0 )
+		{
+			const float avg = sum / (float)n;
+			land->setVertexHeight( vn, cur + ( avg - cur ) * falloff );
+		}
+	}
+	else
+	{
+		const float dir = ( mode == RAISE ) ? 1.0f : -1.0f;
+		land->setVertexHeight( vn, cur + strength * falloff * dir );
+	}
+
+	invalidateQuadsAround( row, col );
+}
+
+//-------------------------------------------------------------------------------------------------
+// A moved vertex belongs to up to four terrain quads; invalidate each quad's GPU
+// recipe (top-left vertexNum) so the GPU-direct terrain re-bakes the new elevation.
+// Height edits do NOT null the Shape-C face cache (only setTerrain/setOverlay do),
+// so the recipe re-bake gets a valid texture nodeId and the quad does not go black.
+void HeightBrush::invalidateQuadsAround( int row, int col )
+{
+	const int side = land->realVerticesMapSide;
+	const int q[4][2] = { { row, col }, { row, col - 1 }, { row - 1, col }, { row - 1, col - 1 } };
+	for ( int k = 0; k < 4; ++k )
+	{
+		const int r = q[k][0], c = q[k][1];
+		if ( r >= 0 && r < side - 1 && c >= 0 && c < side - 1 )
+			gos_terrain_indirect::InvalidateRecipeForVertexNum( r * side + c );
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
+// Draw the brush footprint as a magenta ring on the terrain around the cursor.
+void HeightBrush::render( int screenX, int screenY )
+{
+	if ( !eye || !land )
+		return;
+
+	Stuff::Vector3D center;
+	Stuff::Vector2DOf<long> sp;
+	sp.x = screenX; sp.y = screenY;
+	eye->inverseProject( sp, center );
+
+	const int N = 48;
+	Stuff::Vector4D prev;
+	bool havePrev = false;
+
+	for ( int k = 0; k <= N; ++k )
+	{
+		const float ang = (float)k / (float)N * 6.2831853f;
+		Stuff::Vector3D wp = center;
+		wp.x += cosf( ang ) * radius;
+		wp.y += sinf( ang ) * radius;
+		wp.z = land->getTerrainElevation( wp );
+
+		Stuff::Vector4D s;
+		eye->projectZ( wp, s );
+
+		if ( havePrev )
+		{
+			gos_VERTEX v[2];
+			memset( v, 0, sizeof( v ) );
+			v[0].x = prev.x; v[0].y = prev.y; v[0].z = 0.0f; v[0].rhw = 1.0f; v[0].argb = 0xffff00ff;
+			v[1].x = s.x;    v[1].y = s.y;    v[1].z = 0.0f; v[1].rhw = 1.0f; v[1].argb = 0xffff00ff;
+			gos_DrawLines( v, 2 );
+		}
+		prev = s;
+		havePrev = true;
+	}
+}
+
+//*************************************************************************************************
+// end of file ( HeightBrush.cpp )
