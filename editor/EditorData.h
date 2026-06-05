@@ -145,6 +145,13 @@ class EditorData
 		// chosen size + terrain-type/biome + seed, then builds an editable map from
 		// its heightmap + burnin colormap via initTerrainFromTGA.
 		static bool generateMission( int mapSize, int terrain, unsigned long seed );
+		// ImGui Map Generator dialog path: python has already run and written
+		// terrain_gen_out/genmap.{burnin.tga,elev.r32}.  This function copies the
+		// burnin to the textures path and applies the heightmap via initTerrainFromTGA.
+		// mapSizeIndex matches genMapSizeToN() indices (0=60..6=1020).
+		// biome is informational only (already baked into the generator output);
+		// terrain index 0 is used so initTerrainFromTGA skips the colormap fallback.
+		static bool generateFromDialogParams( int mapSizeIndex, const char* biome );
 		// Amplify terrain relief: scale every vertex elevation about the mean by
 		// `factor` (>1 exaggerates hills + deepens basins; keeps the heightmap shape).
 		static bool amplifyTerrain( float factor );

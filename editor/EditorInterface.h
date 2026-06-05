@@ -33,6 +33,10 @@ class ModifyBuildingAction;
 
 #include "stdafx.h"
 
+#ifdef MC2_IMGUI
+#include "MapGeneratorDialog.h"
+#endif
+
 // forward declarations
 class DlgFileOpen;
 class Brush;
@@ -317,6 +321,7 @@ private:
 	float						m_stampStrength;
 	float						m_waterHeight;     // live water-elevation slider value
 	bool						m_pendGenerateMission; // deferred: run generator outside the ImGui pass
+	bool						m_pendMapGenOnFirstFrame; // deferred open: ImGui dialog opens on first rendered frame
 
 	MainMenu					*m_pMainMenu;
 

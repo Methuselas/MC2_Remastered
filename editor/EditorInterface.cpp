@@ -390,33 +390,10 @@ void Editor::init( char* loader )
 				else if ( retVal == ID_MAPGENERATOR )
 				{
 					resolved = true;
-					while ( !bOK )
-					{
-						TerrainDlg tdlg;
-						tdlg.terrain = 0;
-						if ( IDOK == tdlg.DoModal() )
-						{
-							MapSizeDlg msdlg;
-							msdlg.mapSize = 0;
-							if ( IDOK == msdlg.DoModal() )
-							{
-								char path[256];
-								strcpy( path, cameraPath );
-								strcat( path, "cameras.fit" );
-								FitIniFile camFile;
-								camFile.open( path );
-								if (EditorInterface::instance())
-									EditorInterface::instance()->SetBusyMode();
-								eye->init( &camFile );
-								bOK = EditorData::generateMission( msdlg.mapSize, tdlg.terrain, (unsigned long)GetTickCount() );
-								if (EditorInterface::instance())
-									EditorInterface::instance()->UnsetBusyMode();
-								if ( !bOK ) { resolved = false; break; }
-							}
-							else { resolved = false; break; }
-						}
-						else { resolved = false; break; }
-					}
+					bOK = true;
+					// Open the ImGui Map Generator dialog on the first rendered frame
+					// (GL context is not up yet at NewSingleMission modal time).
+					m_pendMapGenOnFirstFrame = true;
 				}
 				else
 				{
@@ -863,6 +840,7 @@ EditorInterface::EditorInterface()
 	m_stampStrength = 50.0f;
 	m_waterHeight = 0.0f;
 	m_pendGenerateMission = false;
+	m_pendMapGenOnFirstFrame = false;
 
 	smoothRadius = 2;
 	dragging = false;
@@ -2436,14 +2414,43 @@ void EditorInterface::update()
 	if ( !bThisIsInitialized )
 		return;
 
-	// Deferred "Generate Map": the toolbar button only sets a flag so the MFC
-	// modal dialogs (TerrainDlg/MapSizeDlg) open here, outside the ImGui render.
+	// Deferred "Generate Map" (legacy MFC path — kept for non-ImGui builds).
 	if ( m_pendGenerateMission )
 	{
 		m_pendGenerateMission = false;
 		NewGeneratedMission();
 		return;
 	}
+
+#ifdef MC2_IMGUI
+	// ImGui Map Generator dialog: handle preview / generate actions deferred
+	// outside the ImGui render pass (so blocking python shell-outs are safe).
+	{
+		MapGeneratorDialog::PendingAction act = MapGeneratorDialog::TakeAction();
+		if (act == MapGeneratorDialog::PendingAction::Preview)
+		{
+			SetBusyMode();
+			MapGeneratorDialog::ExecutePreview();
+			UnsetBusyMode();
+			// Don't return — let the rest of update() run.
+		}
+		else if (act == MapGeneratorDialog::PendingAction::Generate)
+		{
+			SetBusyMode();
+			eye->reset();
+			MapGeneratorDialog::ExecuteGenerate();
+			UnsetBusyMode();
+			if (!MapGeneratorDialog::IsOpen())
+			{
+				// Generation succeeded and dialog was closed.
+				tacMap.UpdateMap();
+				syncScrollBars();
+				PlaySound("SystemDefault", NULL, SND_ASYNC);
+			}
+			return;
+		}
+	}
+#endif
 
 	if ( curBrush )
 	{
@@ -4335,13 +4342,20 @@ void EditorInterface::renderToolbarImGui()
 	ImGui::Begin("Tools", nullptr, ImGuiWindowFlags_NoScrollbar);
 	ImGui::SetWindowFontScale(1.5f);
 
-	// Generate a pseudo-random editable mission (pick type + size, then runs the
-	// terrain generator). Deferred one frame so the MFC modal dialogs don't open
-	// inside the ImGui render pass.
+	// Generate a pseudo-random editable mission — opens the ImGui Map Generator
+	// dialog (replaces the old MFC TerrainDlg+MapSizeDlg flow).
+	// Deferred-open flag: if set from the startup NewSingleMission path, open now.
+	if (m_pendMapGenOnFirstFrame) {
+		MapGeneratorDialog::Open();
+		m_pendMapGenOnFirstFrame = false;
+	}
 	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.30f, 1.0f));
 	if (ImGui::Button("Generate Map", ImVec2(-1.f, 0.f)))
-		m_pendGenerateMission = true;
+		MapGeneratorDialog::Open();
 	ImGui::PopStyleColor();
+
+	// Draw the Map Generator dialog (no-op when closed).
+	MapGeneratorDialog::Draw();
 	ImGui::Separator();
 
 	for (int i = 0; i < (int)(sizeof(tools) / sizeof(tools[0])); ++i)

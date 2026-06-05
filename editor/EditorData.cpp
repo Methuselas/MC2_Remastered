@@ -1268,6 +1268,31 @@ bool EditorData::generateMission( int mapSize, int terrain, unsigned long seed )
 	return initTerrainFromTGA( mapSize, 0, 0, terrain );
 }
 
+bool EditorData::generateFromDialogParams( int mapSizeIndex, const char* biome )
+{
+	// The MapGeneratorDialog has already written the recipe JSON and run the
+	// python generator; we only need to stage the burnin + hand off to
+	// initTerrainFromTGA (same as the tail of generateMission).
+	const char* mapName = "genmap";
+
+	EditorDataTrace( "generateFromDialogParams: mapSizeIndex=%d biome=%s", mapSizeIndex, biome ? biome : "" );
+
+	// Copy the burnin colormap to where terrtxm2 looks (data\textures\<name>.burnin.tga).
+	char srcBurnin[512], dstBurnin[512];
+	sprintf( srcBurnin, "terrain_gen_out\\%s.burnin.tga", mapName );
+	sprintf( dstBurnin, "%s%s.burnin.tga", texturePath, mapName );
+	SetFileAttributes( dstBurnin, FILE_ATTRIBUTE_NORMAL );
+	if ( !CopyFile( srcBurnin, dstBurnin, FALSE ) )
+		EditorDataTrace( "generateFromDialogParams: WARNING CopyFile burnin %s -> %s failed", srcBurnin, dstBurnin );
+
+	// Hand off to initTerrainFromTGA: use the burnin colormap + apply the heightmap.
+	// terrain=0 with s_genColormapName set makes initTerrainFromTGA use the burnin path.
+	strcpy( s_genColormapName, mapName );
+	sprintf( s_genElevPath, "terrain_gen_out\\%s.elev.r32", mapName );
+
+	return initTerrainFromTGA( mapSizeIndex, 0, 0, 0 );
+}
+
 bool EditorData::initTerrainFromTGA( int mapSize, int min, int max, int terrain )
 {
 	gEditorDataMoveDataReadyForFullSave = false;
