@@ -1435,6 +1435,21 @@ bool EditorData::initTerrainFromTGA( int mapSize, int min, int max, int terrain 
 		gos_ResetStaticShadowPriming();
 		mc_ResetTerrainShadowPrimed();
 	}
+	// Load the colormap into terrainTextures2. The load path does this inside
+	// Terrain::load (terrain.cpp:568-573), which the new-map path skips -- leaving
+	// terrainTextures2 an EMPTY colormap, so the terrain has no texture and renders
+	// black. terrainName is "newMap", so this loads the newMap.tga colormap built
+	// above. Must run BEFORE primeMissionTerrainCache (recipes resolve texture
+	// handles from terrainTextures2).
+	if ( land->terrainTextures2 )
+	{
+		if ( land->colorMapName )
+			land->terrainTextures2->init( land->colorMapName );
+		else
+			land->terrainTextures2->init( land->terrainName );
+		EditorDataTrace("EditorData::initTerrainFromTGA: NEWMAP colormap init done terrainName=%s",
+			land->terrainName ? land->terrainName : "<null>");
+	}
 	{
 		volatile float editorLoadProgress = 36.0f;
 		land->primeMissionTerrainCache(editorLoadProgress, 4.0f);   // builds dense terrain recipes -> g_recipeReady=true

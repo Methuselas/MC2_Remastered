@@ -36,6 +36,15 @@ void MapSizeDlg::Init()
 	index = pListBox->AddString( "120x120" );
 	pListBox->SetItemData( index, 3 );
 
+	index = pListBox->AddString( "256x256 (large)" );
+	pListBox->SetItemData( index, 4 );
+
+	index = pListBox->AddString( "512x512 (huge)" );
+	pListBox->SetItemData( index, 5 );
+
+	index = pListBox->AddString( "1024x1024 (max)" );
+	pListBox->SetItemData( index, 6 );
+
 	pListBox->SetCurSel( mapSize );
 }
 
