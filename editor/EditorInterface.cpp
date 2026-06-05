@@ -1700,15 +1700,17 @@ void EditorInterface::handleKeyDown( int Key )
 		} 
 	}
 	
-	if ( currentBrushID >= IDS_OBJECT_200 && currentBrushID <= IDS_OBJECT_200 + 600 )
+	BuildingBrush* rotBB = ( currentBrushID >= IDS_OBJECT_200 && currentBrushID <= IDS_OBJECT_200 + 600 )
+		? dynamic_cast<BuildingBrush*>(curBrush) : NULL;   // ScatterBrush is in range but not a BuildingBrush
+	if ( rotBB )
 	{
 		if (Key == KEY_LBRACKET)
 		{
-			((BuildingBrush*)curBrush)->rotateBrush( 1 );
+			rotBB->rotateBrush( 1 );
 		}
 		else if (Key == KEY_RBRACKET)
 		{
-			((BuildingBrush*)curBrush)->rotateBrush( -1 );
+			rotBB->rotateBrush( -1 );
 		}
 	}
 	else 
@@ -4075,11 +4077,12 @@ BOOL EditorInterface::OnMouseWheel(UINT nFlags, short zDelta, CPoint pt)
 	if ( zDelta != 0 && !(nFlags & MK_CONTROL) )
 	{
 		float deg = ( (nFlags & MK_SHIFT) ? 1.0f : 15.0f ) * ( (zDelta > 0) ? 1.0f : -1.0f );
-		bool isPlacementBrush = ( curBrush != NULL )
-			&& ( currentBrushID >= IDS_OBJECT_200 ) && ( currentBrushID <= IDS_OBJECT_200 + 600 );
-		if ( isPlacementBrush )
+		// Only a single-placement BuildingBrush rotates on the wheel. A ScatterBrush
+		// is also in the object-id range but is NOT a BuildingBrush, so cast safely
+		// (an unchecked cast here crashed when scattering — it has no rotation).
+		if ( BuildingBrush* bb = dynamic_cast<BuildingBrush*>(curBrush) )
 		{
-			((BuildingBrush*)curBrush)->addRotationDegrees( deg );
+			bb->addRotationDegrees( deg );
 			tacMap.RedrawWindow();
 			return TRUE;
 		}
