@@ -811,6 +811,12 @@ EditorInterface::EditorInterface()
 	currentBrushID = IDS_SELECT;
 	currentBrushMenuID = ID_OTHER_SELECT;
 
+	m_pDragObject = NULL;
+	m_dragObjMoved = false;
+	m_pDragAction = NULL;
+	m_dragStartX = 0;
+	m_dragStartY = 0;
+
 	smoothRadius = 2;
 	dragging = false;
 	prevBrush = NULL;
@@ -1403,6 +1409,29 @@ void EditorInterface::handleLeftButtonDown( int PosX, int PosY )
 	Stuff::Vector2DOf<long> v2( PosX, PosY );
 	eye->inverseProject( v2, vector );
 
+	// Object drag-move: in the select/pointer tool, a press that lands on an
+	// object grabs it for dragging (and selects it) instead of starting a
+	// terrain/area paint. The drag itself runs in handleMouseMove().
+	if ( currentBrushID == IDS_SELECT )
+	{
+		EditorObject* pHit = EditorObjectMgr::instance()->getObjectAtScreenPosition( PosX, PosY );
+		if ( pHit )
+		{
+			// Grab for a potential drag-move only. Do NOT change selection here:
+			// selection is owned by the click-release path (normal/Ctrl click via
+			// EditorInterface_SelectObjectAtScreenPoint). Mutating it on press
+			// fought that path -- a release pick-miss could deselect the grab.
+			m_pDragObject = pHit;
+			m_dragObjMoved = false;
+			m_dragStartX = PosX;
+			m_dragStartY = PosY;
+			m_pDragAction = new ModifyBuildingAction;
+			m_pDragAction->addBuildingInfo( *pHit );
+			lastClickPos = vector;
+			return;
+		}
+	}
+
 	if ( curBrush )
 	{
 		painting = true;
@@ -1425,8 +1454,44 @@ void EditorInterface::handleMouseMove( int PosX, int PosY )
 	Stuff::Vector3D vector;
 	Stuff::Vector2DOf<long> v2( PosX, PosY );
 	eye->inverseProject( v2, vector );
-		
-	
+
+	// Object drag-move: while an object is grabbed, follow the cursor by moving
+	// it to the cell under the mouse. moveBuilding() snaps to the cell grid and
+	// keeps any building links in sync; it returns false if the target cell is
+	// occupied, in which case the object simply stays put.
+	if ( m_pDragObject )
+	{
+		// Require a deliberate drag before moving: until the cursor leaves a small
+		// tolerance around the press point, treat the gesture as a click (select),
+		// not a drag. Without this, a click that merely grazed an object nudged it
+		// by a cell ("mechs move when I click near them").
+		int ddx = PosX - m_dragStartX;
+		int ddy = PosY - m_dragStartY;
+		if ( !m_dragObjMoved && (ddx * ddx + ddy * ddy) < (8 * 8) )
+			return;
+
+		int row = 0, col = 0;
+		land->worldToCell( vector, row, col );
+		// Keep cell/link bookkeeping current (moveBuilding updates cellRow/Column and
+		// any building links), then override its grid-snapped position with the exact
+		// cursor point so buildings can be FREELY aligned. Pure cell snapping made it
+		// impossible to line objects back up after a move.
+		EditorObjectMgr::instance()->moveBuilding( m_pDragObject, row, col );
+		if ( m_pDragObject->appearance() )
+		{
+			ObjectAppearance* pApp = m_pDragObject->appearance();
+			pApp->position.x = vector.x;
+			pApp->position.y = vector.y;
+			pApp->position.z = land->getTerrainElevation( vector );
+			pApp->update();
+			// Static props render from a baked GPU recipe; clear it so the next frame
+			// re-bakes at the new position. Mechs no-op this override.
+			pApp->invalidateStaticRegistration();
+		}
+		m_dragObjMoved = true;
+		return;
+	}
+
 	if ( curBrush && ( painting ) )
 	{
 		if ( curBrush->canPaint( vector, PosX, PosY, 0 ) )
@@ -1528,6 +1593,21 @@ void EditorInterface::handleLeftButtonUp( int PosX, int PosY )
 {
 	if ( !eye || !eye->active  )
 		return;
+
+	// Finalize an object drag-move: commit the undo action if the object
+	// actually moved, otherwise discard it (it was a plain click-select).
+	if ( m_pDragObject )
+	{
+		if ( m_dragObjMoved && m_pDragAction )
+			undoMgr.AddAction( m_pDragAction );
+		else
+			delete m_pDragAction;
+		m_pDragAction = NULL;
+		m_pDragObject = NULL;
+		m_dragObjMoved = false;
+		tacMap.RedrawWindow();
+		return;
+	}
 
 	if ( curBrush && painting )
 	{
@@ -3892,8 +3972,32 @@ void EditorInterface::OnRButtonUp(UINT nFlags, CPoint point)
 	}*/
 }
 
-BOOL EditorInterface::OnMouseWheel(UINT nFlags, short zDelta, CPoint pt) 
+BOOL EditorInterface::OnMouseWheel(UINT nFlags, short zDelta, CPoint pt)
 {
+	//--------------------------------------------------
+	// Mouse-wheel rotation. When a placement brush is active the wheel rotates
+	// the placement cursor; otherwise, if objects are selected, it rotates the
+	// selection. Ctrl+wheel always falls through to camera zoom (escape hatch),
+	// and Shift gives fine 1-degree steps instead of the default 15.
+	if ( zDelta != 0 && !(nFlags & MK_CONTROL) )
+	{
+		float deg = ( (nFlags & MK_SHIFT) ? 1.0f : 15.0f ) * ( (zDelta > 0) ? 1.0f : -1.0f );
+		bool isPlacementBrush = ( curBrush != NULL )
+			&& ( currentBrushID >= IDS_OBJECT_200 ) && ( currentBrushID <= IDS_OBJECT_200 + 600 );
+		if ( isPlacementBrush )
+		{
+			((BuildingBrush*)curBrush)->addRotationDegrees( deg );
+			tacMap.RedrawWindow();
+			return TRUE;
+		}
+		else if ( EditorObjectMgr::instance()->getSelectionCount() > 0 )
+		{
+			rotateSelectedObjectsDegrees( deg );
+			tacMap.RedrawWindow();
+			return TRUE;
+		}
+	}
+
 	//--------------------------------------------------
 	// Zoom Camera based on Mouse Wheel input.
 	long mouseWheelDelta = zDelta; // 240 is the weird increment that the mouse wheel is in
@@ -4365,6 +4469,32 @@ void EditorInterface::rotateSelectedObjects( int direction )
 		{
 			(*iter)->appearance()->rotation += direction * 45;
 		}
+		(*iter)->appearance()->update();
+		(*iter)->appearance()->invalidateStaticRegistration();
+		iter++;
+	}
+
+	undoMgr.AddAction(pAction);
+	pAction = NULL;
+}
+
+// Continuous-angle rotation of the current selection, used by the mouse wheel.
+// Mirrors rotateSelectedObjects() but applies an arbitrary degree delta instead
+// of the discrete 45/90 step, so the wheel can spin objects smoothly.
+void EditorInterface::rotateSelectedObjectsDegrees( float deg )
+{
+	ModifyBuildingAction *pAction = new ModifyBuildingAction;
+	EditorObjectMgr::EDITOR_OBJECT_LIST selectedObjects;
+	selectedObjects = EditorObjectMgr::instance()->getSelectedObjectList();
+	EditorObjectMgr::EDITOR_OBJECT_LIST::EIterator iter = selectedObjects.Begin();
+	while (!iter.IsDone())
+	{
+		pAction->addBuildingInfo(*(*iter));
+		(*iter)->appearance()->rotation += deg;
+		// Recompute transform + re-bake the static GPU recipe so static props
+		// visibly rotate (mechs no-op the invalidate; see drag-move note).
+		(*iter)->appearance()->update();
+		(*iter)->appearance()->invalidateStaticRegistration();
 		iter++;
 	}
 

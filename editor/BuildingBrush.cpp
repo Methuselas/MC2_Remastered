@@ -38,6 +38,14 @@ BuildingBrush::BuildingBrush( int Group, int IndexInGroup, int Alignment )
 	pCursor->setVisibility(true,true);
 	pCursor->position = eye->getPosition();
 	pCursor->update();
+	// GL port: placed buildings render through the GPU static-prop batcher, which
+	// only draws appearances that own a recipe (registered at mission load via
+	// EditorObjectMgr::registerStaticPropsForMissionLoad -> app->registerStatic()).
+	// The preview cursor is created AFTER mission load and was never registered,
+	// so its per-frame appearance()->render() submit produced no geometry -> no
+	// placement ghost. Register it on menu-select so the ghost (and its live
+	// mouse-follow position + wheel rotation) renders like a placed object.
+	pCursor->registerStatic();
 	alignment = Alignment;
 }
 
@@ -227,14 +235,16 @@ void BuildingBrush::rotateBrush( int direction )
 {
 	int ID = EditorObjectMgr::instance()->getID( group, indexInGroup );
 	int fitID = EditorObjectMgr::instance()->getFitID(ID);
-	if ((EditorObjectMgr::WALL == EditorObjectMgr::instance()->getSpecialType(ID)) || (33/*repair bay*/ == fitID))
-	{
-		pCursor->rotation += direction * 90;
-	}
-	else
-	{
-		pCursor->rotation += direction * 45;
-	}
+	float step = ((EditorObjectMgr::WALL == EditorObjectMgr::instance()->getSpecialType(ID)) || (33/*repair bay*/ == fitID)) ? 90.0f : 45.0f;
+	addRotationDegrees( direction * step );
+}
+
+// Continuous rotation entry point used by the mouse wheel (EditorInterface::OnMouseWheel).
+// rotateBrush() above remains the discrete [/] keyboard 45/90 stepper.
+void BuildingBrush::addRotationDegrees( float deg )
+{
+	if ( pCursor )
+		pCursor->rotation += deg;
 }
 
 //*************************************************************************************************

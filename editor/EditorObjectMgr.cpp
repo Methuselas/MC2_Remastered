@@ -205,18 +205,36 @@ static void EditorObjectMgr_ConsiderScreenCenter(EditorObject* pObject, int scre
 	if (!pObject || !pObject->appearance())
 		return;
 
+	ObjectAppearance* pApp = pObject->appearance();
+
 	Stuff::Vector4D center;
-	eye->projectZ(pObject->appearance()->position, center);
+	eye->projectZ(pApp->position, center);
+
+	// Size-aware pick radius: project a world point one extent-radius from the
+	// object center and measure the screen-space gap, so large objects (walls,
+	// big buildings) are pickable across their whole footprint rather than only
+	// within a fixed pixel radius of the projected center. The legacy fixed 32px
+	// fallback made click-selection feel unreliable -- it only hit near the
+	// center and ignored the (often stale/3D) screen bounds.
+	float worldRadius = pApp->getRadius();
+	if (worldRadius < 1.0f)
+		worldRadius = 1.0f;
+	Stuff::Vector3D edgeWorld = pApp->position;
+	edgeWorld.x += worldRadius;
+	Stuff::Vector4D edge;
+	eye->projectZ(edgeWorld, edge);
+	float rdx = edge.x - center.x;
+	float rdy = edge.y - center.y;
+	float screenRadius = sqrtf(rdx * rdx + rdy * rdy);
+	// Floor so small or zoomed-out objects stay clickable.
+	if (screenRadius < 14.0f)
+		screenRadius = 14.0f;
 
 	float dx = center.x - (float)screenX;
 	float dy = center.y - (float)screenY;
 	float distanceSq = dx * dx + dy * dy;
 
-	// by Methuselas: drag-select works by projected object center. This fallback
-	// gives single-click a small center-pick radius for remastered mechs whose
-	// legacy screen bounds/per-poly data can be stale or empty in the Editor.
-	const float maxClickPickDistanceSq = 32.0f * 32.0f;
-	if (distanceSq <= maxClickPickDistanceSq && distanceSq < bestDistanceSq)
+	if (distanceSq <= screenRadius * screenRadius && distanceSq < bestDistanceSq)
 	{
 		bestDistanceSq = distanceSq;
 		pBestObject = pObject;
@@ -826,66 +844,60 @@ EditorObject* EditorObjectMgr::getObjectAtPosition( const Stuff::Vector3D& posit
 	return NULL;
 }
 
-//-------------------------------------------------------------------------------------------------
+// World-space object pick helper: nearest object whose footprint contains the
+// cursor's ground point. pickFloor is a scale-aware (terrain-cell-based) minimum
+// click tolerance so objects whose shape reports a tiny/zero extent radius (many
+// static buildings) are still selectable across their footprint.
+static void EditorObjectMgr_ConsiderWorldPick(EditorObject* pObject, const Stuff::Vector3D& world, float pickFloor, float& bestDistSq, EditorObject*& pBest)
+{
+	if (!pObject || !pObject->appearance())
+		return;
+	ObjectAppearance* pApp = pObject->appearance();
+	float dx = pApp->position.x - world.x;
+	float dy = pApp->position.y - world.y;
+	float distSq = dx * dx + dy * dy;
+	float r = pApp->getRadius();
+	if (r < pickFloor)
+		r = pickFloor;
+	if (distSq <= r * r && distSq < bestDistSq)
+	{
+		bestDistSq = distSq;
+		pBest = pObject;
+	}
+}
+
 EditorObject* EditorObjectMgr::getObjectAtScreenPosition( int screenX, int screenY )
 {
-	float bestDistanceSq = 1.0e30f;
-	EditorObject* pBestObject = NULL;
+	// Pick in WORLD space using inverseProject (the coordinate-correct screen->world
+	// transform placement uses) and match objects by world distance. The cell-based
+	// path (worldToCell + getObjectAtCell) had a cell-coordinate offset that matched
+	// nothing; raw world coordinates are reliable.
+	if (!eye || !land)
+		return NULL;
 
-	// by Methuselas: single-click selection should use the mouse's actual screen
-	// point. The old world-position picker projects the terrain point back to
-	// screen space and can miss remastered mech appearances even while drag-select
-	// still succeeds from projected object centers.
+	Stuff::Vector3D world;
+	Stuff::Vector2DOf<long> screenPt;
+	screenPt.x = screenX;
+	screenPt.y = screenY;
+	eye->inverseProject(screenPt, world);
 
-	for( BUILDING_LIST::EIterator iter = buildings.Begin();
-		!iter.IsDone(); iter++ )
-	{
-		EditorObject* pObject = (*iter);
-		ObjectAppearance* pAppearance = pObject ? pObject->appearance() : NULL;
-		if (!pAppearance)
-			continue;
+	// ~3 terrain cells of tolerance so multi-cell buildings (hangars) are clickable
+	// across their body even when their shape reports no usable extent radius.
+	float pickFloor = 3.0f * land->worldUnitsPerVertex;
 
-		if (EditorObjectMgr_PointInsideAppearance(pAppearance, screenX, screenY, true))
-			return pObject;
+	float bestDistSq = 1.0e30f;
+	EditorObject* pBest = NULL;
 
-		EditorObjectMgr_ConsiderScreenCenter(pObject, screenX, screenY, bestDistanceSq, pBestObject);
-	}
+	for( BUILDING_LIST::EIterator iter = buildings.Begin(); !iter.IsDone(); iter++ )
+		EditorObjectMgr_ConsiderWorldPick(*iter, world, pickFloor, bestDistSq, pBest);
 
-	for( UNIT_LIST::EIterator mIter = units.Begin();
-		!mIter.IsDone(); mIter++ )
-	{
-		EditorObject* pObject = (*mIter);
-		ObjectAppearance* pAppearance = pObject ? pObject->appearance() : NULL;
-		if (!pAppearance)
-			continue;
-
-		if (EditorObjectMgr_PointInsideAppearance(pAppearance, screenX, screenY, false))
-			return pObject;
-
-		EditorObjectMgr_ConsiderScreenCenter(pObject, screenX, screenY, bestDistanceSq, pBestObject);
-	}
+	for( UNIT_LIST::EIterator mIter = units.Begin(); !mIter.IsDone(); mIter++ )
+		EditorObjectMgr_ConsiderWorldPick(*mIter, world, pickFloor, bestDistSq, pBest);
 
 	for ( DROP_LIST::EIterator dIter = dropZones.Begin(); !dIter.IsDone(); dIter++ )
-	{
-		EditorObject* pObject = (*dIter);
-		ObjectAppearance* pAppearance = pObject ? pObject->appearance() : NULL;
-		if (!pAppearance)
-			continue;
+		EditorObjectMgr_ConsiderWorldPick(*dIter, world, pickFloor, bestDistSq, pBest);
 
-		Stuff::Vector4D screenPos;
-		Stuff::Vector3D position = pObject->getPosition();
-		eye->projectZ(position, screenPos);
-
-		if ( screenX >= screenPos.x - 3 && screenX <= screenPos.x + 3
-			&& screenY <= screenPos.y + 3 && screenY >= screenPos.y - 3 )
-		{
-			return pObject;
-		}
-
-		EditorObjectMgr_ConsiderScreenCenter(pObject, screenX, screenY, bestDistanceSq, pBestObject);
-	}
-
-	return pBestObject;
+	return pBest;
 }
 
 static bool areCloseEnough(float f1, float f2)

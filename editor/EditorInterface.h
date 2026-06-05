@@ -13,6 +13,8 @@
 
 #ifndef ACTION_H
 #include "Action.h"
+class EditorObject;
+class ModifyBuildingAction;
 #endif
 
 #ifndef EDITOROBJECTMGR_H
@@ -252,6 +254,7 @@ private:
 	void addBuildingsToNewMenu();
 
 	void rotateSelectedObjects( int direction );
+	void rotateSelectedObjectsDegrees( float deg );
 
 	//-------------------------------------------
 	// Data to control scroll, rotation and zoom
@@ -282,6 +285,13 @@ private:
 
 	int							currentBrushID;
 	int							currentBrushMenuID;
+
+	// Object drag-move (IDS_SELECT): grab on press, drag to move, finalize on release.
+	EditorObject*				m_pDragObject;
+	bool						m_dragObjMoved;
+	ModifyBuildingAction*		m_pDragAction;
+	int							m_dragStartX;
+	int							m_dragStartY;
 
 	MainMenu					*m_pMainMenu;
 

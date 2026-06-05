@@ -40,6 +40,7 @@ class BuildingBrush: public Brush
 		virtual void render( int ScreenMouseX, int ScreenMouseY);
 		virtual void update( int screenX, int screenY );
 		void rotateBrush( int direction );
+		void addRotationDegrees( float deg );
 
 		
 		class BuildingAction : public Action
