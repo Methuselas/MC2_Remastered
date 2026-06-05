@@ -1650,6 +1650,10 @@ bool EditorData::initTerrainFromTGA( int mapSize, int min, int max, int terrain 
 		land->primeMissionTerrainCache(editorLoadProgress, 4.0f);   // builds dense terrain recipes -> g_recipeReady=true
 	}
 	EditorObjectMgr::instance()->registerStaticPropsForMissionLoad();   // no-op for a blank map
+	// Pre-warm all building types before finalize so placing a Bridge (etc.) on a
+	// new/generated map doesn't hit the late-register CPU-fallback -> black (same
+	// fix as the PCV load path).
+	EditorObjectMgr::instance()->primeAllBuildingAppearanceTypes();
 	GpuStaticPropBatcher::instance().finalizeGeometry();
 	GpuMechBatcher::instance().finalizeGeometry();
 	if (gpu_cull::compute_isEnabled())
