@@ -1413,6 +1413,38 @@ bool EditorData::initTerrainFromTGA( int mapSize, int min, int max, int terrain 
 	// with real map-cell information.
 	EditorDataTrace("EditorData::initTerrainFromTGA: skipped MOVE_buildData for new blank terrain side=%ld", land->realVerticesMapSide);
 
+	// New blank maps must run the same terrain/GPU priming as a loaded map, or the
+	// GPU-direct terrain has no dense recipes (g_recipeReady stays false) and the
+	// whole map renders black (dispatch preflight reason=recipe_not_ready). clear()
+	// at the top of this function already tore down any prior map's GPU state.
+	// Mirrors the load path (initTerrainFromPCV); object-load steps are omitted
+	// because a freshly generated map has no objects.
+	GpuStaticPropBatcher::instance().onMapLoad();
+	GpuMechBatcher::instance().onMapLoad();
+	GpuStaticPropRegistry::init();
+	GameAdapters::StaticProp::beginMission();
+	GameAdapters::Mech::beginMission();
+	{
+		const uint32_t kEditorMaxActors = 2048u;
+		const uint32_t kStaticPropHeadroom = 8192u;
+		gpu_cull::substrate_init(kEditorMaxActors + kEditorMaxActors / 4u + kStaticPropHeadroom);
+		gpu_cull::compute_init();
+		gos_terrain_lighting::mission_init(
+			static_cast<uint32_t>(Terrain::realVerticesMapSide * Terrain::realVerticesMapSide), 64u);
+		gpu_cull::readback_init(kEditorMaxActors + kEditorMaxActors / 4u + kStaticPropHeadroom);
+		gos_ResetStaticShadowPriming();
+		mc_ResetTerrainShadowPrimed();
+	}
+	{
+		volatile float editorLoadProgress = 36.0f;
+		land->primeMissionTerrainCache(editorLoadProgress, 4.0f);   // builds dense terrain recipes -> g_recipeReady=true
+	}
+	EditorObjectMgr::instance()->registerStaticPropsForMissionLoad();   // no-op for a blank map
+	GpuStaticPropBatcher::instance().finalizeGeometry();
+	GpuMechBatcher::instance().finalizeGeometry();
+	if (gpu_cull::compute_isEnabled())
+		gpu_cull::compute_buildIndirectBuffer(batcher_getTypeCount());
+
 	EditorDataWarmTerrain("initTerrainFromTGA");
 
 	EditorInterface::instance()->UnsetBusyMode();
