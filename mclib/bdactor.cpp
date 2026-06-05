@@ -2942,6 +2942,19 @@ void BldgAppearance::registerStatic() {
 	for (int i = 0; i < MAX_LODS; ++i)
 		GpuStaticPropBatcher::instance().registerMultiShape(appearType->getBldgRenderShape(i), _regIsOverride);
 
+	// G5 RENDER-PATH OBSERVABILITY (descriptive; env-gated; ZERO behavior change):
+	// one line per registered static-prop type recording which render path it takes.
+	// path = override_multidraw (cooked/override geometry, layer-0 route) vs legacy_static.
+	// Full MeshCapability bits come once the engine reads the cooked manifest.json (later
+	// integration); for now we log what the seam knows. Schema-grep: \[RENDER_PATH v[0-9]+\].
+	if (getenv("MC2_RENDER_PATH")) {
+		fprintf(stderr, "[RENDER_PATH v1] key=staticprop:%s isOverride=%d path=%s pools=%s\n",
+		        appearType->name, _regIsOverride ? 1 : 0,
+		        _regIsOverride ? "override_multidraw" : "legacy_static",
+		        gos_StaticPropLegacyInstancePools() ? "legacy" : "skipped");
+		fflush(stderr);
+	}
+
 	if (getenv("MC2_MODOVERRIDE_TRACE") && appearType->bldgRenderShape) {
 		TG_TypeMultiShape* rs = appearType->bldgRenderShape;
 		fprintf(stderr, "[MODOVERRIDE_TRACE] bldg registerStatic name=%s renderShape=%p numShapes=%ld leaf0=%p leaf1=%p finalized_guess(typeNodes_above)\n",
