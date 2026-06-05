@@ -399,6 +399,13 @@ before 2civliving.
 
 Plan APPROVED after patches 1–5. Binding execution order:
 
+> **R0 STATUS: ✅ PASS (2026-06-04).** Staticprop/building override class renders in-game
+> (hangar→bigbox A/B, `docs/assets/trackg-r0/`); convention frozen (runtime importer authority,
+> bake-into-glb); class spelling proven (lowercase `staticprop`, case-insensitive accept). Full
+> writeup: `docs/superpowers/specs/2026-06-04-trackg-r0-convention-and-seam-proof.md`. One
+> non-blocking follow-up: fresh current-HEAD `--validate` re-stamp when the shared runtime is
+> free (R0 used verified on-branch evidence — a concurrent session held v0.4). **GO for G3a.**
+
 **Mandatory first slice = R0** (convention + staticprop render-seam proof). **Do NOT
 implement the full cook until ALL of these hold:**
 - bigbox `staticprop` override VISIBLY renders in-game (not the tree path — the building class).
