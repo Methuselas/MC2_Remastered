@@ -5433,8 +5433,14 @@ void TreeAppearance::registerStatic() {
 				fallback.lightColor[0][1] = 0.3f;
 				fallback.lightColor[0][2] = 0.3f;
 				fallback.lightColor[0][3] = 1.0f;
-				mc2SetBakedStaticLight(regIdx, fallback);
-				mc2WriteStaticLightSlot(regIdx, fallback);
+				// MERGE FIX (cook tree-LOD x gpucull G1): gpucull used a single regIdx; the cook
+				// branch rewrote this fn for per-LOD recipes (staticReg[lod]). Eager-bake all.
+				for (int _lod = 0; _lod < MAX_LODS; ++_lod) {
+					if (staticReg[_lod].registered && staticReg[_lod].recipeIndex >= 0) {
+						mc2SetBakedStaticLight(staticReg[_lod].recipeIndex, fallback);
+						mc2WriteStaticLightSlot(staticReg[_lod].recipeIndex, fallback);
+					}
+				}
 			}
 		}
 	}
