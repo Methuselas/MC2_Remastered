@@ -114,12 +114,19 @@ Rules:
   stock prop pivot (so derived bounds match). The cook FREEZES the import convention and
   validates parity; it does not silently re-scale.
 
-Convention freeze (the load-bearing decision): the **runtime importer
-(`assimp_importer.cpp`) is authority** — default `MC2_GLTF_AXIS=0` `(-x,-y,z)` + `1-v`
-V-flip. The cook bakes orientation so the default-env runtime import is correct, and
-records `geometry.convention = {axis:0, vflip:true, importer:"assimp_importer.v1"}` in the
-manifest. The workbench `GlbMeshLoader` preview uses a *different* chain (two-step, no
-flip) → its preview orientation may differ from runtime; reconcile or label (task R0).
+Convention freeze (the load-bearing DECISION — not a recommendation):
+
+> **The cooked output GLB is normalized so the runtime default importer env renders it
+> correctly.** The cook bakes orientation/axis into the cooked glb such that, under default
+> environment (no `MC2_GLTF_*` set, i.e. `MC2_GLTF_AXIS=0` `(-x,-y,z)` + `1-v` V-flip), the
+> runtime `assimp_importer.cpp` import is correct. **The manifest records
+> `geometry.convention = {axis:0, vflip:true, importer:"assimp_importer.v1"}` for AUDIT ONLY.
+> Runtime env overrides (`MC2_GLTF_AXIS/YOFF/GROUND`) are NOT part of the cooked-asset
+> contract** — a cooked asset must never depend on a non-default importer env to look right.
+
+The runtime importer (`assimp_importer.cpp`) is the sole authority. The workbench
+`GlbMeshLoader` preview uses a *different* chain (two-step srcToGl, no manual flip) → its
+preview orientation may differ from runtime; it is advisory only (reconcile or label in R0).
 
 ---
 
@@ -189,6 +196,16 @@ mc2-asset-manifest-v1`. Hand-authored golden first (data before behavior), cook-
 ```
 
 Notes:
+- **Canonical class spelling = lowercase `staticprop`** (and `tree`). PROVEN against the
+  real registry: `model_override_registry.cpp` `normalizeKey` lowercases all keys (`:23`);
+  the accept compare is against literal `"staticprop"` (`:77`); `resolve()` normalizes its
+  input too (`:150`). So **input is case-insensitive** (`staticProp`/`StaticProp`/`STATICPROP`
+  all accepted → normalized to `staticprop`), but the manifest MUST emit lowercase
+  `staticprop` as canonical. The camelCase `staticProp` seen in some docs is only the
+  misleading `logDrop` message string at `:77` ("class not staticProp|tree") — cosmetic, not
+  the accepted key. Schema `enum: ["staticprop","tree"]`; validator rejects non-lowercase in
+  emitted manifests; a unit test asserts the registry accepts mixed-case input and that the
+  cook always writes lowercase.
 - **`models.generated.json` is the runtime PROJECTION** of this manifest: only
   `{type:"model", class, replaces, source, renderOnly:true, scale:1.0, fallback:"stock",
   lods[]}`. The registry consumes that subset; the rich manifest is authoring/asset-db truth.
@@ -296,8 +313,14 @@ Reuse the workbench harness; add cook-specific gates. Each is a TDD anchor for i
    destroys. bigbox proves the staticprop-class path; 2civliving proves stock-parity.
 7. **Round-trip determinism**: cook twice → byte-identical glb + manifest (modulo stamped
    `cookedUtc`/provenance) — reproducibility gate.
+8. **No central-manifest write (concrete guard, Patch 4)**: record sha256 + mtime of
+   `data/model_overrides/models.json` BEFORE the cook; run a full cook; assert sha256 + mtime
+   UNCHANGED after. Belt-and-suspenders: the cook driver accepts a `--deploy-root <tmp>` and
+   CI runs it against a throwaway deploy copy, so even a bug cannot touch the real central
+   manifest. RED first: a deliberately-broken cook that appends to `models.json` must fail
+   this test. (Mirrors stop condition #5.)
 
-New cook smokes alongside the 6 workbench smokes: `--smoke-trackg-{cook,manifest,render}`.
+New cook smokes alongside the 6 workbench smokes: `--smoke-trackg-{cook,manifest,render,nocentralwrite}`.
 
 ---
 
@@ -305,13 +328,33 @@ New cook smokes alongside the 6 workbench smokes: `--smoke-trackg-{cook,manifest
 
 Data before behavior. Each slice: RED test → impl → GREEN → tier1 5/5 + 0 GL errors gate.
 
-- **R0 — convention reconciliation (recon-finish, no code):** confirm runtime importer
-  (`assimp_importer.cpp` axis0 + `1-v`) is the authority; document the workbench
-  `GlbMeshLoader` divergence; decide bake-into-glb vs record-in-manifest (recommend: bake
-  orientation, record convention). Output: a 1-page convention note + the `convention{}`
-  manifest field locked. **Gate: STOP if the staticprop-class render seam isn't actually
-  wired for buildings** (verify a trivial bigbox override renders where trees do — agent
-  recon says bldg path IS wired at `bdactor.cpp:344/2934`, but prove it before building cook).
+- **R0 — convention + staticprop render-seam proof (FORMAL STOP GATE, Patch 1).** Mandatory
+  first slice. Minimal code (register an existing `source/props/bigbox.glb` as a
+  `staticprop` override; freeze convention). **The tree path passing is NOT sufficient — the
+  building/staticprop class must be proven independently.**
+
+  **Required PASS artifacts (all four, committed):**
+  1. **Convention note committed** — 1-pager: runtime importer (`assimp_importer.cpp` axis0 +
+     `1-v`) is authority; workbench `GlbMeshLoader` divergence documented; the
+     bake-orientation decision (Patch 2) recorded; `convention{}` manifest field locked.
+  2. **bigbox visible** — screenshot OR smoke log proving the bigbox `staticprop` override
+     renders in-game (not invisible / not dropped at `layer=-1`).
+  3. **bounds/orientation compare vs stock** — `TglMeshLoader` oracle vs cooked import:
+     footprint ratio ∈ [0.67,1.5], no mirror/flip/upside-down. (No stock for bigbox itself →
+     use a known-orientation fixture; full stock parity is deferred to 2civliving.)
+  4. **registration log proves the staticprop override path** — the register→admit→route
+     trace for `staticprop:<id>` (`registerMultiShape(...,isOverride=true)` → past
+     `isStaticEligible` bdAnim guard → layer-0 route). `[RENDER_PATH v1]` NOT required yet
+     (that's G5), but the existing registration/admission logging must show the staticprop
+     class taking the override path.
+  5. **class spelling proven** (Patch 5) — confirm against the real registry that the
+     canonical key is lowercase `staticprop` (done: `normalizeKey` `:23`, compare `:77`,
+     `resolve` `:150`); lock `enum:["staticprop","tree"]` into the schema; add the
+     mixed-case-accept test.
+
+  **STOP (hard) if the building/staticprop override does not visibly render.** Do not build
+  any cook on top of an unproven seam — fix the seam as its own slice first. Recon indicates
+  the bldg path is wired (`bdactor.cpp:344/2934`), but R0 PROVES it.
 
 - **G3a — manifest schema FIRST (data):** `tools/asset_cook/manifest.schema.json`
   (mc2-asset-manifest-v1, superset) + `validate_manifest.py` (extend the material-cook
@@ -338,12 +381,39 @@ Data before behavior. Each slice: RED test → impl → GREEN → tier1 5/5 + 0 
   no path change). Test: log emits expected `caps=0x..` for bigbox/2civliving; schema-grep
   `\[RENDER_PATH v[0-9]+\]` passes; tier1 unchanged.
 
-- **G-E2E — first assets end-to-end:** Slice A `bigbox.glb` (plumbing, staticprop-class
-  proof). Slice B `2civliving` (author the .glb from the stock .ase, real building,
-  stock-parity render). Test: render parity smoke (visible, correct orientation, 0 GL errors).
+- **G-E2E — first assets end-to-end (STRICT ORDER, Patch 3):** Slice A `bigbox.glb`
+  (plumbing, staticprop-class path proof). **THEN** Slice B `2civliving` (author the .glb
+  from the stock .ase; real building). **Do NOT start with `2civliving`** — it bundles stock
+  parity + texture naming + bounds + material detail + `.ase`→glb conversion all at once;
+  bigbox isolates the path so a failure has one cause. bigbox = path proof; 2civliving = real
+  asset proof. Test: render parity smoke (visible, correct orientation, 0 GL errors); 2civliving
+  additionally asserts stock-parity bounds/footprint via the `TglMeshLoader` oracle.
 
-Sequence: R0 → G3a → (G1 ∥ G2) → G3b → G5 → G-E2E. G3a is the gating deliverable; G1/G2 can
-overlap; G5 + E2E last.
+Sequence: R0 → G3a → (G1 ∥ G2) → G3b → G5 → G-E2E. R0 is the mandatory STOP gate; G3a is the
+gating contract deliverable; G1/G2 can overlap; G5 + E2E last; within E2E, bigbox strictly
+before 2civliving.
+
+---
+
+## Execution gate (post-patch, 2026-06-04)
+
+Plan APPROVED after patches 1–5. Binding execution order:
+
+**Mandatory first slice = R0** (convention + staticprop render-seam proof). **Do NOT
+implement the full cook until ALL of these hold:**
+- bigbox `staticprop` override VISIBLY renders in-game (not the tree path — the building class).
+- runtime importer convention is FROZEN (cooked glb normalized to default-env; manifest
+  records convention for audit only; no runtime env in the contract).
+- schema class spelling PROVEN against the real registry (lowercase `staticprop` canonical;
+  case-insensitive accept; `enum` locked; mixed-case test).
+- central `models.json` write GUARDED (before/after sha256+mtime test; `--deploy-root` temp).
+- convention note COMMITTED.
+
+**Then proceed in order:** G3a manifest schema → G1 offline GLB staging → G2 KTX2 material
+cook → G3b manifest assembly + `models.generated.json` projection → G5 descriptive
+MeshCapability + `[RENDER_PATH v1]` → G-E2E bigbox THEN 2civliving.
+
+Each slice is TDD (RED test first) and gated tier1 5/5 + 0 GL errors before merge.
 
 ---
 
