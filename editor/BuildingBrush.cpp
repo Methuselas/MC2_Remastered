@@ -83,6 +83,19 @@ bool BuildingBrush::beginPaint()
 	return true; // need to set up undo here
 }
 
+bool BuildingBrush::tryWallSnap( const Stuff::Vector3D& inPos, Stuff::Vector3D& outPos )
+{
+	if ( !pCursor )
+		return false;
+	EditorObjectMgr* mgr = EditorObjectMgr::instance();
+	if ( mgr->getSpecialType( mgr->getID( group, indexInGroup ) ) != EditorObjectMgr::WALL )
+		return false;
+	EditorInterface* ui = EditorInterface::instance();
+	if ( !ui || !ui->magneticWallsEnabled() )
+		return false;
+	return mgr->findWallEndpointSnap( inPos, pCursor->rotation, pCursor->getRadius(), NULL, outPos );
+}
+
 bool BuildingBrush::paint( Stuff::Vector3D& worldPos, int screenX, int screenY )
 {
 	// Patch: Editor placement must not be blocked by the legacy appearance-heap
@@ -90,7 +103,17 @@ bool BuildingBrush::paint( Stuff::Vector3D& worldPos, int screenX, int screenY )
 	// appearance heap even when the actual addBuilding path can still allocate
 	// and place the object.  The old dialog prevented placement before the real
 	// operation was attempted, which also blocked save testing.
-	EditorObject* pInfo = EditorObjectMgr::instance()->addBuilding( worldPos, group, indexInGroup, alignment, pCursor->rotation );
+
+	// Magnetic wall joins: if a neighbour endpoint is in range, place at the
+	// snapped (off-grid) pose so the wall run connects at its rotated angle.
+	// bSnapToCell=false stores the exact snapped position; cell bookkeeping still
+	// derives from it. Non-wall / no-neighbour placement is unchanged (grid).
+	Stuff::Vector3D placePos = worldPos;
+	const bool snapped = tryWallSnap( worldPos, placePos );
+
+	EditorObject* pInfo = snapped
+		? EditorObjectMgr::instance()->addBuilding( placePos, group, indexInGroup, alignment, pCursor->rotation, 1.0f, false )
+		: EditorObjectMgr::instance()->addBuilding( worldPos, group, indexInGroup, alignment, pCursor->rotation );
 	if ( pInfo && pAction )
 		pAction->addBuildingInfo( *pInfo );
 
@@ -192,8 +215,17 @@ void BuildingBrush::update( int ScreenMouseX, int ScreenMouseY )
 	pt.x = ScreenMouseX;
 	pt.y = ScreenMouseY;
 	eye->inverseProject( pt, pos );
-	
-	if ( !EditorObjectMgr::instance()->canAddBuilding( pos, pCursor->rotation, group, indexInGroup ) )
+
+	// Preview the magnetic wall snap so the ghost shows where it will actually
+	// land. Blue tint signals "snapped to a neighbour endpoint".
+	Stuff::Vector3D snappedPos;
+	const bool wallSnapped = tryWallSnap( pos, snappedPos );
+	if ( wallSnapped )
+		pos = snappedPos;
+
+	if ( wallSnapped )
+		pCursor->setHighlightColor( 0x00003fbf );   // blue-ish: magnetic snap active
+	else if ( !EditorObjectMgr::instance()->canAddBuilding( pos, pCursor->rotation, group, indexInGroup ) )
 		pCursor->setHighlightColor( 0x00400000 );
 	else
 		pCursor->setHighlightColor( 0x00004000 );
