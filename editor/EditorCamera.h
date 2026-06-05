@@ -104,17 +104,7 @@ public:
 			drawCompass = true;
 			cameraLineChanged = 0;
 			theSky = NULL;
-
-			// Editor camera: unlock the zoom range far beyond the game's (these are
-			// static Camera members; the editor is a separate process so the game
-			// camera is unaffected). ~10x higher altitude ceiling so large generated
-			// maps fit on screen, and a lower floor for closer inspection.
-			Camera::AltitudeMaximumLo = 60000.0f;
-			Camera::AltitudeMaximumHi = 64000.0f;
-			Camera::AltitudeMinimum   = 20.0f;
-			// Push the far plane out so terrain doesn't clip at the new max zoom-out.
-			Camera::MinFarPlane = 120000.0f;
-			Camera::MaxFarPlane = 120000.0f;
+			// Zoom range is set per-frame in render() (Camera::init resets these).
 		}
 
 	virtual void reset (void)
@@ -129,6 +119,17 @@ public:
 	
  	virtual void render (void)
 	{
+		// Editor zoom range. Re-applied every frame because Camera::init() resets
+		// these statics to the game's small values (6000/6400); a 1020 map is
+		// ~130k world-units wide, so the ceiling must be well above that to frame
+		// it. Editor is a separate process so the game camera is unaffected. Far
+		// plane scales with altitude (close stays precise, far reaches the ceiling).
+		Camera::AltitudeMaximumLo = 200000.0f;
+		Camera::AltitudeMaximumHi = 210000.0f;
+		Camera::AltitudeMinimum   = 20.0f;
+		Camera::MinFarPlane       = 61500.0f;
+		Camera::MaxFarPlane       = 500000.0f;
+
 		// Diagnostic probe: throttled per-frame trace of EditorCamera::render
 		// entry. Active/turn gate inside this function may skip the bulk of
 		// rendering when (active && turn > 1) is false; logging entry tells
