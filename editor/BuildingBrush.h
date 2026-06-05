@@ -42,6 +42,12 @@ class BuildingBrush: public Brush
 		void rotateBrush( int direction );
 		void addRotationDegrees( float deg );
 
+		// Read-only accessors so the object companion panel can show/highlight
+		// the active object and reselect siblings without re-walking the menu.
+		int getGroup() const { return group; }
+		int getIndexInGroup() const { return indexInGroup; }
+		int getAlignment() const { return alignment; }
+
 		
 		class BuildingAction : public Action
 		{

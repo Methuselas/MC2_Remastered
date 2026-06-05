@@ -81,8 +81,15 @@ public:
 
 	static EditorInterface* instance(){ return s_instance; }
 	void renderToolbarImGui();
+	void renderObjectCompanionPanel();
 	void setSculptBrush( int mode );
 	void renderTerrainSelection();
+
+	// Object placement: shared by the Objects menu and the companion panel.
+	bool selectBuildingObject( int group, int indexInGroup );
+	int  currentAlignmentFromMenu();
+	int  objectMessageId( int group, int indexInGroup );
+	static const class ObjectRecentRing& objectRecentRing();
 	
 	EditorInterface();
 	~EditorInterface();

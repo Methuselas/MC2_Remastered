@@ -86,6 +86,7 @@ extern graphics::RenderContextHandle EditorGameOS_GetRenderContext();
 #ifndef FLATTENBRUSH_H
 #include "FlattenBrush.h"
 #include "HeightBrush.h"
+#include "object_recent_ring.h"
 #endif
 
 #ifndef HEIGHTDLG_H
@@ -2216,47 +2217,84 @@ int EditorInterface::Redo()
 	return true;
 }
 
+// MRU list of placed objects, shared by the menu path and the companion panel.
+static ObjectRecentRing g_objectRecentRing;
+
+const ObjectRecentRing& EditorInterface::objectRecentRing() { return g_objectRecentRing; }
+
+// Current placement alignment, read from the team-alignment menu radio (the
+// single source the menu path has always used).
+int EditorInterface::currentAlignmentFromMenu()
+{
+	int alignment = EDITOR_TEAM2;
+	for ( int j = 0; j < 9; ++j )
+	{
+		if ( GetParent()->GetMenu()->GetMenuState( ID_ALIGNMENT_TEAM1 + j, MF_BYCOMMAND ) & MF_CHECKED )
+		{
+			if (j != 8)
+				alignment = EDITOR_TEAM1 + j;
+			else
+				alignment = EDITOR_TEAMNONE;
+		}
+	}
+	return alignment;
+}
+
+// The WM_COMMAND message id the menu uses for a given object slot
+// (IDS_OBJECT_200 + cumulative building count of preceding groups + index).
+int EditorInterface::objectMessageId( int group, int indexInGroup )
+{
+	EditorObjectMgr* pMgr = EditorObjectMgr::instance();
+	int id = IDS_OBJECT_200;
+	for ( int i = 0; i < group; ++i )
+		id += pMgr->getNumberBuildingsInGroup( i );
+	return id + indexInGroup;
+}
+
+// Make (group, indexInGroup) the active placement object. Shared by paintBuildings()
+// (menu) and the companion panel so both behave identically: same mover-neutral
+// guard, same alignment source, same brush construction, and MRU tracking.
+bool EditorInterface::selectBuildingObject( int group, int indexInGroup )
+{
+	EditorObjectMgr* pMgr = EditorObjectMgr::instance();
+	if ( group < 0 || group >= pMgr->getBuildingGroupCount() )
+		return false;
+	if ( indexInGroup < 0 || indexInGroup >= pMgr->getNumberBuildingsInGroup( group ) )
+		return false;
+
+	const int alignment = currentAlignmentFromMenu();
+
+	// Movers (groups 4 and 6) must not be neutral.
+	if (((group == 4) || (group == 6)) && (alignment == EDITOR_TEAMNONE))
+	{
+		EMessageBox(IDS_NO_NEUTRAL_MOVERS,IDS_ERROR,MB_OK);
+		return false;
+	}
+
+	KillCurBrush();
+	curBrush = new BuildingBrush( group, indexInGroup, alignment );
+	const int message = objectMessageId( group, indexInGroup );
+	currentBrushID = message;
+	currentBrushMenuID = message;
+
+	g_objectRecentRing.push( group, indexInGroup );
+	return true;
+}
+
 int	EditorInterface::paintBuildings( int message )
 {
 	EditorObjectMgr* pMgr = EditorObjectMgr::instance();
 	int groupCount = pMgr->getBuildingGroupCount();
 
 	int id = IDS_OBJECT_200;
-	int i = 0;
-	for ( i = 0; i < groupCount; ++i )
+	for ( int i = 0; i < groupCount; ++i )
 	{
 		int buildCount = pMgr->getNumberBuildingsInGroup( i );
-
 		if ( id <= message && message < id + buildCount )
 		{
-				int alignment = EDITOR_TEAM2;
-				for ( int j = 0; j < 9; ++j )
-				{
-					if ( GetParent()->GetMenu()->GetMenuState( ID_ALIGNMENT_TEAM1 + j, MF_BYCOMMAND ) & MF_CHECKED )
-					{
-						if (j != 8)
-							alignment = EDITOR_TEAM1 + j;
-						else
-							alignment = EDITOR_TEAMNONE;
-					}
-				}
-
-				//Check groups for movers.
-				// If they are Movers, they must NOT be neutral.
-				// Bring up a dialog and DO NOT create a brush!!
-				if (((i == 4) || (i == 6)) && (alignment == EDITOR_TEAMNONE))
-				{
-					EMessageBox(IDS_NO_NEUTRAL_MOVERS,IDS_ERROR,MB_OK);
-					return false;
-				}
-
-				KillCurBrush();
-				curBrush = new BuildingBrush( i, message - id, alignment );
-				currentBrushID = message;
-				currentBrushMenuID = message;
+			selectBuildingObject( i, message - id );
 			break;
 		}
-
 		id += buildCount;
 	}
 
@@ -4204,9 +4242,114 @@ void EditorInterface::renderToolbarImGui()
 	}
 
 	ImGui::End();
+
+	renderObjectCompanionPanel();
+}
+
+// Companion panel for object placement: when a BuildingBrush is active, show the
+// current TEAM, the active object's same-group siblings (one-click swap), and an
+// MRU "Recent" strip. Lets the user bounce between related objects (wall <-> gate)
+// without re-walking the Objects menu. Shares selectBuildingObject() with the menu.
+void EditorInterface::renderObjectCompanionPanel()
+{
+	BuildingBrush* bb = dynamic_cast<BuildingBrush*>(curBrush);
+	if (!bb)
+		return;
+
+	EditorObjectMgr* pMgr = EditorObjectMgr::instance();
+	const int group     = bb->getGroup();
+	const int activeIdx = bb->getIndexInGroup();
+	if (group < 0 || group >= pMgr->getBuildingGroupCount())
+		return;
+
+	ImGuiIO& io = ImGui::GetIO();
+	const float w = 240.0f;
+	ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - w - 16.0f, 360.0f), ImGuiCond_Once);
+	ImGui::SetNextWindowSize(ImVec2(w, 0.f), ImGuiCond_Once);
+	ImGui::Begin("Objects", nullptr, ImGuiWindowFlags_NoScrollbar);
+	ImGui::SetWindowFontScale(1.3f);
+
+	// Clicking a button must not delete curBrush (this bb) or mutate the recent
+	// ring mid-render, so defer the actual swap until after all widgets are drawn.
+	int pendGroup = -1, pendIndex = -1;
+
+	// TEAM indicator (display only in v1).
+	const int align = currentAlignmentFromMenu();
+	if (align == EDITOR_TEAMNONE)
+		ImGui::Text("TEAM: Neutral");
+	else
+		ImGui::Text("TEAM: %d", align - EDITOR_TEAM1 + 1);
+	ImGui::Separator();
+
+	// Same-group siblings.
+	ImGui::Text("%s", pMgr->getGroupName(group));
+	const int count = pMgr->getNumberBuildingsInGroup(group);
+	if (count > 0)
+	{
+		const char* names[512] = { 0 };
+		int n = 0;
+		const int cap = (count <= 512) ? count : 512;
+		pMgr->getBuildingNamesInGroup(group, names, n);
+		if (n > cap) n = cap;
+		for (int i = 0; i < n; ++i)
+		{
+			const bool active = (i == activeIdx);
+			if (active)
+				ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.45f, 0.80f, 1.0f));
+			ImGui::PushID(i);
+			if (ImGui::Button(names[i] ? names[i] : "?", ImVec2(-1.f, 0.f)))
+			{
+				pendGroup = group;
+				pendIndex = i;
+			}
+			ImGui::PopID();
+			if (active)
+				ImGui::PopStyleColor();
+		}
+	}
+
+	// Recent (MRU across groups). Validate each entry against the current palette.
+	const ObjectRecentRing& ring = objectRecentRing();
+	if (!ring.items().empty())
+	{
+		ImGui::Separator();
+		ImGui::Text("Recent");
+		int rid = 0;
+		for (const RecentObject& r : ring.items())
+		{
+			if (r.group < 0 || r.group >= pMgr->getBuildingGroupCount())
+				continue;
+			const int rc = pMgr->getNumberBuildingsInGroup(r.group);
+			if (r.indexInGroup < 0 || r.indexInGroup >= rc)
+				continue;
+
+			const char* rnames[512] = { 0 };
+			int rn = 0;
+			pMgr->getBuildingNamesInGroup(r.group, rnames, rn);
+			const char* nm = (r.indexInGroup < rn && rnames[r.indexInGroup]) ? rnames[r.indexInGroup] : "?";
+
+			char label[160];
+			sprintf(label, "%s: %s", pMgr->getGroupName(r.group), nm);
+			ImGui::PushID(1000 + rid);
+			if (ImGui::Button(label, ImVec2(-1.f, 0.f)))
+			{
+				pendGroup = r.group;
+				pendIndex = r.indexInGroup;
+			}
+			ImGui::PopID();
+			++rid;
+		}
+	}
+
+	ImGui::End();
+
+	// Apply the deferred selection now that no widget code holds bb / iterates the ring.
+	if (pendGroup >= 0)
+		selectBuildingObject(pendGroup, pendIndex);
 }
 #else
 void EditorInterface::renderToolbarImGui() {}
+void EditorInterface::renderObjectCompanionPanel() {}
 #endif
 
 void EditorInterface::OnHScroll(UINT nSBCode, UINT nPos, CScrollBar* pScrollBar) 
