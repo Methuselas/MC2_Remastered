@@ -67,10 +67,17 @@ Authoritative round-trip is the C++ `ExportBundle`/`ModelOverrideRegistry` at in
 `registry_resolves` is the offline Python mirror. Promotion of `models.generated.json` into
 central `models.json` stays a separate reviewed merge.
 
+**G5 DONE** (override branch `adc01edd`): engine `[RENDER_PATH v1]` descriptive log
+(`MC2_RENDER_PATH=1`) — `key=staticprop:<name> isOverride=<0|1> path=<override_multidraw|
+legacy_static> pools=<skipped|legacy>`. Read-only, zero behavior change.
+**G-E2E bigbox DONE** (2026-06-04): cooked `cooked/bigbox/bigbox.glb` resolved + imported +
+rendered via the override path on a free v0.4 `--validate` run (gl-clean, exit 0); G5 log +
+case-insensitive accept confirmed live. Evidence: `docs/assets/trackg-r0/restamp_g5_e2e_evidence.txt`.
+
 ## Next (not yet built)
-G5 capability log `[RENDER_PATH v1]` (engine, descriptive — read-only) · G-E2E bigbox then
-2civliving (author 2civliving.glb from its .ase; stock-parity via TglMeshLoader oracle).
-Follow-ups: meshopt in `stage`; in-game C++ `ExportBundle` round-trip wired to this manifest;
+G-E2E **2civliving** — author `2civliving.glb` from the stock `.ase` (content step), cook,
+register, render with stock-parity via the `TglMeshLoader` footprint/pivot oracle.
+Follow-ups: meshopt in `stage`; wire the in-game C++ `ExportBundle` round-trip to this manifest;
 registry mixed-case-accept C++ doctest.
 
 ## Follow-up

@@ -420,6 +420,16 @@ implement the full cook until ALL of these hold:**
 cook → G3b manifest assembly + `models.generated.json` projection → G5 descriptive
 MeshCapability + `[RENDER_PATH v1]` → G-E2E bigbox THEN 2civliving.
 
+> **PROGRESS (2026-06-04):** R0 ✅ · G3a ✅ · G1 ✅ · G2 ✅ · G3b ✅ (all in `tools/asset_cook/`,
+> full harness GREEN; nifty `b8a882da`/`2a150cab`/`4fd1b75c`/`f30b4d50`) · G5 ✅ engine
+> `[RENDER_PATH v1]` (override branch `adc01edd`, compiled + runtime-verified) · **G-E2E bigbox
+> ✅** — cooked `cooked/bigbox/bigbox.glb` resolved+imported+rendered via override path on a free
+> v0.4 run (gl-clean, exit 0; evidence `docs/assets/trackg-r0/restamp_g5_e2e_evidence.txt`).
+> **Remaining: G-E2E 2civliving** (author `2civliving.glb` from the stock `.ase` — content step —
+> then stock-parity render via the `TglMeshLoader` oracle). Plus the non-blocking follow-ups:
+> meshopt in `stage`, wire the C++ `ExportBundle` round-trip to this manifest, registry
+> mixed-case C++ doctest.
+
 Each slice is TDD (RED test first) and gated tier1 5/5 + 0 GL errors before merge.
 
 ---

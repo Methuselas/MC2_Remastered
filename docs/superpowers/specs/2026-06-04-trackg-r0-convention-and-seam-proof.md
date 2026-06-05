@@ -124,10 +124,15 @@ always produces lowercase.
   shared runtime (`mc2.exe` PID running, v0.4 deploy exe being rewritten live), so swapping
   the v0.4 exe / taskkilling would have disrupted it. The current build exe
   (`build64/RelWithDebInfo/mc2.exe`, Jun 4 16:12) postdates the seam fix and HEAD `ef05919a`
-  is the validated commit → high confidence. **Non-blocking follow-up:** re-stamp with a fresh
-  `--validate --frames 30 -mission mc2_01` (`MC2_MODOVERRIDE_TRACE=1`) on the current build
-  when the runtime is free; expect `staticProp 'hangar': render override applied`, override
-  drawn, exit 0, `gl_errors=[]`.
+  is the validated commit → high confidence.
+  - **✅ RE-STAMP DONE (2026-06-04, runtime free):** fresh `--validate --frames 30 -mission mc2_01`
+    on the current override build (+ the G5 log), cooked-bundle entry
+    `staticprop:hangar → cooked/bigbox/bigbox.glb`. Result: `[MODOVERRIDE] staticProp 'hangar':
+    render override applied (…/cooked/bigbox/bigbox.glb)`, `[RENDER_PATH v1] key=staticprop:Hangar
+    isOverride=1 path=override_multidraw pools=skipped`, validate.json exit 0 / gl_errors=[] /
+    shader_errors=[]. Also empirically confirmed case-insensitive class/name accept (`Hangar` ↔
+    `hangar`). v0.4 restored to as-found. Evidence: `docs/assets/trackg-r0/restamp_g5_e2e_evidence.txt`.
+    Caveat CLOSED.
 - **No-central-write (clean):** R0 did NOT modify the deploy central manifest
   `A:/Games/mc2-opengl/mc2-win64-v0.4/data/model_overrides/models.json`. The render evidence
   predates this session; this session only READ deploy data. Consistent with STOP #5.
