@@ -821,6 +821,16 @@ static GLuint                s_staticInstanceSsbo     = 0;
 static void*                 s_staticInstanceMap      = nullptr;   // GL_MAP_PERSISTENT|COHERENT
 static size_t                s_staticInstanceBytes    = 0;         // == cap * sizeof(instance)
 static uint64_t              s_staticInstanceFillGen  = 0xFFFFFFFFFFFFFFFFull;
+// Task 3: StaticPopulation indirect commands — own buffer, CPU-written (counts
+// are the frozen static population, NOT GPU cull; first-N draw, see patch 2).
+// 20-byte DrawElementsIndirectCommand: count, instanceCount, firstIndex,
+// baseVertex, baseInstance (matches gpu_cull_compute.cpp's DrawCmd).
+struct StaticDrawCmd { uint32_t count; uint32_t instanceCount; uint32_t firstIndex;
+                       int32_t baseVertex; uint32_t baseInstance; };
+static_assert(sizeof(StaticDrawCmd) == 20, "StaticDrawCmd must be 20 bytes");
+static GLuint                       s_staticIndirectCmdBuf = 0;
+static std::vector<StaticDrawCmd>   s_staticDrawCmds;          // CPU mirror
+static uint64_t                     s_staticCmdBuiltGen = 0xFFFFFFFFFFFFFFFFull;
 
 GLuint   s_baseInstanceByCmdSsbo          = 0;
 void*    s_baseInstanceByCmdMap           = nullptr;
@@ -1816,8 +1826,14 @@ void GpuStaticPropBatcher::onMapUnload() {
         s_staticInstanceSsbo  = 0;
         s_staticInstanceBytes = 0;
     }
+    if (s_staticIndirectCmdBuf) {
+        glDeleteBuffers(1, &s_staticIndirectCmdBuf);
+        s_staticIndirectCmdBuf = 0;
+    }
+    s_staticDrawCmds.clear();
     s_staticInstanceFillGen = 0xFFFFFFFFFFFFFFFFull;
     s_staticBaseBuiltGen    = 0xFFFFFFFFFFFFFFFFull;
+    s_staticCmdBuiltGen     = 0xFFFFFFFFFFFFFFFFull;
 
     // 4.4 — delete remaining coalesce GL resources (only if non-zero).
     if (s_texArrayOff)     { glDeleteTextures(1, &s_texArrayOff);     s_texArrayOff     = 0; }
@@ -7512,6 +7528,69 @@ static void fillStaticInstanceBufferIfDirty() {
 
 GLuint batcher_getStaticInstanceSsbo() { return s_staticInstanceSsbo; }
 
+// Task 3: build the StaticPopulation indirect cmds, one per sorted packet (same
+// [alpha-OFF | alpha-ON] order as s_sortedPacketOrder, so the Task-4 draw splits
+// at s_alphaOffCmdCount exactly like the dynamic draw). count/firstIndex/
+// baseVertex are geometry-static; baseInstance = the type's STABLE static-only
+// base; instanceCount = the type's full static population (first-N draw — NOT a
+// GPU cull count; visibleIds authority arrives in M2b). A packet whose type has
+// 0 static instances gets instanceCount=0 -> harmless no-op sub-draw. Dirty-
+// gated on s_persistentStaticGen. Built but NOT drawn until Task 4.
+static void rebuildStaticDrawCmdsIfDirty() {
+    if (s_staticCmdBuiltGen == s_persistentStaticGen) return;
+    rebuildStaticBaseInstanceTableIfDirty();
+    const uint32_t pktCount = static_cast<uint32_t>(s_sortedPacketOrder.size());
+    s_staticDrawCmds.assign(pktCount, StaticDrawCmd{});
+    for (uint32_t i = 0; i < pktCount; ++i) {
+        const uint32_t gp = s_sortedPacketOrder[i];
+        if (gp >= s_packets.size()) continue;
+        const GpuStaticPropPacket& pkt = s_packets[gp];
+        const uint32_t tid = pkt.owningTypeID;
+        auto it = s_persistentStaticStore.find(tid);
+        const uint32_t cnt = (it != s_persistentStaticStore.end())
+                                 ? static_cast<uint32_t>(it->second.size()) : 0u;
+        StaticDrawCmd& c = s_staticDrawCmds[i];
+        c.count         = pkt.indexCount;
+        c.instanceCount = cnt;
+        c.firstIndex    = pkt.firstIndex;
+        c.baseVertex    = pkt.baseVertex;
+        c.baseInstance  = batcher_getStaticBaseInstanceForType(tid);
+    }
+    if (pktCount > 0u) {
+        if (!s_staticIndirectCmdBuf) glGenBuffers(1, &s_staticIndirectCmdBuf);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, s_staticIndirectCmdBuf);
+        glBufferData(GL_DRAW_INDIRECT_BUFFER,
+                     static_cast<GLsizeiptr>(pktCount * sizeof(StaticDrawCmd)),
+                     s_staticDrawCmds.data(), GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+    }
+    s_staticCmdBuiltGen = s_persistentStaticGen;
+
+    // Diag (env-gated): dump the static cmd summary so Task 3 can be validated
+    // before the draw exists. Sum of instanceCount over OFF/ON groups must equal
+    // persistentStaticTotalCount(); non-zero cmd count == sorted packet count.
+    static const bool s_cmdDiag = (getenv("MC2_STATIC_POP_SPLIT_CMD_DIAG") != nullptr);
+    if (s_cmdDiag) {
+        // maxBaseInstance+its instanceCount must stay within the static pool
+        // [0,storeTotal); nonZeroCmds = packets whose type has static instances.
+        uint32_t nonZero = 0, maxEnd = 0;
+        for (const auto& c : s_staticDrawCmds) {
+            if (c.instanceCount) ++nonZero;
+            const uint32_t end = c.baseInstance + c.instanceCount;
+            if (end > maxEnd) maxEnd = end;
+        }
+        uint64_t storeTotal = 0;
+        for (auto& kv : s_persistentStaticStore) storeTotal += kv.second.size();
+        std::fprintf(stderr, "[STATIC_POP_SPLIT_CMD] pkts=%u nonZeroCmds=%u offCmds=%u "
+                     "maxBaseInst+count=%u storeTotal=%llu (maxEnd<=storeTotal expected)\n",
+                     pktCount, nonZero, s_alphaOffCmdCount, maxEnd,
+                     (unsigned long long)storeTotal);
+        std::fflush(stderr);
+    }
+}
+
+GLuint batcher_getStaticIndirectCmdBuf() { return s_staticIndirectCmdBuf; }
+
 uint32_t batcher_getBaseInstanceForType(uint32_t typeID) {
     // M2a: under the population split, the golden scatter must use the STABLE
     // static-only base (dynamics no longer inflate it) -> outOfRange -> 0.
@@ -7957,6 +8036,7 @@ void batcher_prepareBaseInstanceTable() {
     if (staticPopSplitArmed()) {
         rebuildStaticBaseInstanceTableIfDirty();
         fillStaticInstanceBufferIfDirty();
+        rebuildStaticDrawCmdsIfDirty();   // Task 3: own indirect cmds (not drawn until Task 4)
     }
 
     // Write baseInstanceByCmd[c] for each cmd.

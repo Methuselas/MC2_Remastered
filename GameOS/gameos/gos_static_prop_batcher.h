@@ -429,6 +429,7 @@ uint32_t batcher_getBaseInstanceForType(uint32_t typeID);
 // of the StaticPopulation instance SSBO (front-packed, frozen, dirty-filled).
 uint32_t batcher_getStaticBaseInstanceForType(uint32_t typeID);
 GLuint   batcher_getStaticInstanceSsbo();
+GLuint   batcher_getStaticIndirectCmdBuf();   // Task 3: CPU-written static cmds
 
 // True when the per-type base table is valid this frame (global-pool armed and
 // prepareBaseInstanceTable has run). The golden static cull-record build gates
