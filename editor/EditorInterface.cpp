@@ -1861,6 +1861,35 @@ void EditorInterface::handleKeyDown( int Key )
 	bool scrollLf = (GetAsyncKeyState(KEY_LEFT) && !shiftDn && !ctrlDn && !altDn);
 	bool scrollRt = (GetAsyncKeyState(KEY_RIGHT) && !shiftDn && !ctrlDn && !altDn);
 
+	// Mouse-edge scrolling (like the game): cursor near a viewport edge scrolls the
+	// camera that way, so big maps are navigable without the arrow keys. Suppressed
+	// when ImGui is using the mouse (so hovering the tool panels doesn't pan) and
+	// only while the editor window is foreground.
+	if ( ::GetForegroundWindow() == GetSafeHwnd() || ::IsChild( GetSafeHwnd(), ::GetForegroundWindow() )
+	     || ::GetForegroundWindow() == ::GetParent( GetSafeHwnd() ) )
+	{
+		bool imguiMouse = false;
+#ifdef MC2_IMGUI
+		imguiMouse = ( ImGui::GetCurrentContext() != NULL ) && ImGui::GetIO().WantCaptureMouse;
+#endif
+		if ( !imguiMouse )
+		{
+			POINT cp;
+			::GetCursorPos( &cp );
+			ScreenToClient( &cp );
+			RECT rc;
+			GetClientRect( &rc );
+			const int margin = 24;
+			if ( cp.x >= rc.left && cp.x < rc.right && cp.y >= rc.top && cp.y < rc.bottom )
+			{
+				if ( cp.x <  rc.left  + margin ) scrollLf = true;
+				if ( cp.x >= rc.right - margin ) scrollRt = true;
+				if ( cp.y <  rc.top   + margin ) scrollUp = true;
+				if ( cp.y >= rc.bottom- margin ) scrollDn = true;
+			}
+		}
+	}
+
 	bool zoomOut = (GetAsyncKeyState (KEY_SUBTRACT) && !shiftDn && !ctrlDn && !altDn);
 	bool zoomIn = (GetAsyncKeyState (KEY_ADD) && !shiftDn && !ctrlDn && !altDn);
 
