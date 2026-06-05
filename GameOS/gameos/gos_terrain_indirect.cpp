@@ -44,6 +44,7 @@ void __stdcall gos_SetTerrainMVP(const float* matrix16);
 #include "../../mclib/txmmgr.h"     // MC_MAXTEXTURES (cement node-index space)
 #include "gos_terrain_bridge.h"     // gos_terrain_bridge_glTextureForGosHandle (cement readback)
 #include "../../RenderCore/KtxLoader.h"  // COLORMAP-BC7-KTX2-1: ktxLoadRgba8 for BC7 atlas upload
+#include "gos_terrain_arm_logic.h"        // shared GPU-terrain arm predicate (editor↔game)
 
 #include "../gameos/gos_profiler.h"
 
@@ -828,7 +829,7 @@ static void CollectUniqueNodeIds() {
     for (const TerrainQuadRecipe& rec : g_denseRecipes) {
         uint32_t nodeId;
         memcpy(&nodeId, &rec._wp2, 4);
-        if (nodeId == 0 || nodeId >= (uint32_t)MC_MAXTEXTURES) continue;
+        if (!gos_terrain_arm::IsTileHandle(nodeId, (uint32_t)MC_MAXTEXTURES)) continue;
         if (!seen[nodeId]) {
             seen[nodeId] = true;
             g_uniqueTerrainNodeIds.push_back(nodeId);
@@ -1739,6 +1740,7 @@ static GLint g_locSolidMVP = -1;   // u_terrainMVP    (per-frame)
 // primary compute shader (MC2_BUCKET_HEADER_TRACE).
 static GLint g_locSolidBHT = -1;   // u_bucketHeaderTrace (per-frame int gate)
 static GLint g_locSolidUW  = -1;   // u_useWindow (per-frame: 1=windowed, 0=full-range identity)
+static GLint g_locSolidMS  = -1;   // u_mapSide (PER-FRAME: changes when a different-size map loads)
 
 
 // Flag: whether ComputeDispatch() ran the GPU path this frame.
@@ -2488,17 +2490,36 @@ bool ComputePreflight() {
 
     FlushDirtyRecipeSlotsToGPU();
 
-    if (gpu_driven::IsTerrainSolidEnabled() && !g_uniqueTerrainNodeIds.empty()) {
+    // Arm the GPU terrain path when this is a colormap (terrainTextures2) map.
+    // Two independent signals indicate that:
+    //   (a) g_uniqueTerrainNodeIds non-empty — the map has cement/overlay quads
+    //       whose recipe._wp2 is a real tile node index (needs the handle LUT); OR
+    //   (b) g_atlasGLTex != 0 — BuildColormapAtlas produced the merged colormap
+    //       atlas. The bulk of a colormap map's quads carry the 0xFFFFFFFF
+    //       sentinel in _wp2 and sample this atlas directly by world position,
+    //       NOT via the node LUT, so they render even with an empty LUT.
+    //
+    // The legacy code armed on (a) alone. That silently fails for a map made
+    // ENTIRELY of colormap quads with no cement/overlay tiles — e.g. a freshly
+    // generated flat editor map: every quad's _wp2 is 0xFFFFFFFF, which
+    // CollectUniqueNodeIds() drops (>= MC_MAXTEXTURES), leaving the node list
+    // empty. The GPU path never armed, the frame fell through to the CPU thin
+    // path which packed zero records (zero_thin), and the terrain rendered as
+    // the black clear color. Adding (b) fixes that without changing behaviour
+    // for any existing map: stock maps always have both an atlas AND some tile
+    // quads, and legacy non-colormap maps build no atlas (terrainTextures2 NULL)
+    // and leave _wp2=0 — so neither signal fires and they still take the CPU
+    // path. g_atlasGLTex is zeroed per-mission on unload, so it can't go stale.
+    if (gos_terrain_arm::ShouldArmGpuTerrain(
+            gpu_driven::IsTerrainSolidEnabled(),
+            !g_uniqueTerrainNodeIds.empty(),
+            g_atlasGLTex != 0)) {
         // GPU path: arm immediately. ComputeDispatch() (called after Phase 1
         // PackAndDispatch) will build the window SSBO and issue the primary
         // cull/pack compute dispatch.  Per VPL step 2 (commit 2b), the primary
         // dispatch is the sole writer of cmds[0].count (atomicAdd of 6u per
         // admitted record); the cmd-patch shader dispatch is retired.
         // DrawIndirect() fires glMultiDrawArraysIndirect with cmdCount=1.
-        // Guard: g_uniqueTerrainNodeIds populated only when terrainTextures2 is active
-        // (recipe._wp2 baked in buildRecipeSlot). Legacy terrainTextures path leaves
-        // _wp2=0 → empty node list → zero-LUT → GPU skips all quads → black terrain.
-        // Fall through to CPU thin-record path in that case.
         s_frameSolidPackedThinCount = -1;   // sentinel: GPU path (logged only)
         s_frameSolidCmdCount        = 1;    // PR1: always 1 indirect draw command
         s_frameSolidArmed           = true;
@@ -2507,8 +2528,8 @@ bool ComputePreflight() {
             static bool s_firstArm = false;
             if (!s_firstArm) {
                 s_firstArm = true;
-                fprintf(stderr, "[TERRAIN_INDIRECT v1] event=first_arm path=gpu nodeIds=%zu\n",
-                        g_uniqueTerrainNodeIds.size());
+                fprintf(stderr, "[TERRAIN_INDIRECT v1] event=first_arm path=gpu nodeIds=%zu atlasTex=%u\n",
+                        g_uniqueTerrainNodeIds.size(), (unsigned)g_atlasGLTex);
                 fflush(stderr);
             }
         }
@@ -2584,13 +2605,18 @@ void ComputeDispatch() {
         g_locSolidBHT = glGetUniformLocation(g_solidComputeProgram, "u_bucketHeaderTrace");
         // Approach A: window-vs-identity gate for the solid index buffer.
         g_locSolidUW  = glGetUniformLocation(g_solidComputeProgram, "u_useWindow");
-        // Upload constants once — these never change across frames.
+        // u_mapSide is NOT a constant: it changes whenever a different-size map
+        // loads. The program is compiled once per process, so uploading it here
+        // baked in the FIRST map's side and a later, larger map (e.g. editor blank
+        // 120 -> generated 260) had the shader skip ~79% of quads (edge + index
+        // decompose use the stale side) -> all-black terrain. Cache the location;
+        // upload the live value per frame in ComputeDispatch().
+        g_locSolidMS  = glGetUniformLocation(g_solidComputeProgram, "u_mapSide");
+        // Upload the genuinely-constant uniforms once.
         glUseProgram(g_solidComputeProgram);
         const GLint locMTR  = glGetUniformLocation(g_solidComputeProgram, "u_maxThinRecords");
-        const GLint locMS   = glGetUniformLocation(g_solidComputeProgram, "u_mapSide");
         const GLint locWUPV = glGetUniformLocation(g_solidComputeProgram, "u_worldUnitsPerVertex");
         if (locMTR  >= 0) glUniform1i(locMTR, (int)kMaxThinRecords);
-        if (locMS   >= 0) glUniform1i(locMS,  (int)Terrain::realVerticesMapSide);
         if (locWUPV >= 0) glUniform1f(locWUPV, Terrain::worldUnitsPerVertex);
         glUseProgram(0);
     }
@@ -3072,6 +3098,10 @@ void ComputeDispatch() {
     }
 
     glUniform1i(g_locSolidWC, (int)windowCount);
+    // Per-frame: the current map's side. Stale-from-first-map here = all-black on
+    // any later different-size map (the shader's edge cull + index decompose use it).
+    if (g_locSolidMS >= 0)
+        glUniform1i(g_locSolidMS, (int)Terrain::realVerticesMapSide);
     if (g_locSolidAO >= 0)
         glUniform1i(g_locSolidAO, Terrain::terrainTextures2 != nullptr ? 1 : 0);
     // Step 2b: upload u_bucketHeaderTrace gate every frame.  Uniform values

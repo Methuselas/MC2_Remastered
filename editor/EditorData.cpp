@@ -1154,8 +1154,8 @@ bool EditorData::generateMission( int mapSize, int terrain, unsigned long seed )
 		biome = "snow_mountain";
 	else if ( strstr( lname, "forest" ) || strstr( lname, "swamp" ) || strstr( lname, "jungle" ) || strstr( lname, "marsh" ) )
 		biome = "swamp_forest";
-	else if ( strstr( lname, "rock" ) || strstr( lname, "badland" ) || strstr( lname, "mountain" ) || strstr( lname, "lunar" ) || strstr( lname, "crater" ) )
-		biome = "rocky_badlands";
+	else if ( strstr( lname, "rock" ) || strstr( lname, "badland" ) || strstr( lname, "mountain" ) || strstr( lname, "lunar" ) || strstr( lname, "crater" ) || strstr( lname, "volcanic" ) || strstr( lname, "lava" ) || strstr( lname, "ash" ) )
+		biome = "rocky_badlands";   // no dedicated volcanic biome yet; rocky is the closest barren look
 	EditorDataTrace( "generateMission: terrain=%d typeName='%s' -> biome=%s", terrain, typeName, biome );
 
 	const char* mapName = "genmap";
