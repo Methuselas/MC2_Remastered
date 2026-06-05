@@ -1,0 +1,182 @@
+/*************************************************************************************************\
+ScatterBrush.cpp : see ScatterBrush.h
+\*************************************************************************************************/
+
+#include "stdafx.h"
+#include "ScatterBrush.h"
+
+#ifndef BUILDINGBRUSH_H
+#include "BuildingBrush.h"      // reuse BuildingBrush::BuildingAction for undo
+#endif
+#ifndef EDITOROBJECTMGR_H
+#include "EditorObjectMgr.h"
+#endif
+#ifndef TERRAIN_H
+#include "Terrain.h"
+#endif
+#ifndef CAMERA_H
+#include "Camera.h"
+#endif
+
+#include <math.h>
+
+extern CameraPtr eye;
+extern Terrain*  land;
+
+// Scatter control defaults.
+float ScatterBrush::s_radius        = 400.0f;
+int   ScatterBrush::s_density       = 12;
+float ScatterBrush::s_minSpacing    = 96.0f;
+float ScatterBrush::s_maxSlopeRise  = 0.0f;    // 0 = no slope filter
+bool  ScatterBrush::s_randomRotation = true;
+float ScatterBrush::s_scaleJitter   = 0.15f;
+
+// Small deterministic RNG (LCG) so a given seed+click is repeatable.
+static inline unsigned lcgNext( unsigned& s ) { s = s * 1664525u + 1013904223u; return s; }
+static inline float    frand01( unsigned& s ) { return (float)( lcgNext( s ) >> 8 ) / (float)( 1u << 24 ); }
+
+ScatterBrush::ScatterBrush( int group, int indexInGroup, int alignment )
+	: m_group( group ), m_indexInGroup( indexInGroup ), m_alignment( alignment ),
+	  m_pAction( NULL ), m_rng( 0x12345u )
+{
+}
+
+ScatterBrush::~ScatterBrush()
+{
+}
+
+bool ScatterBrush::beginPaint()
+{
+	m_pAction = new BuildingBrush::BuildingAction;
+	return true;
+}
+
+Action* ScatterBrush::endPaint()
+{
+	BuildingBrush::BuildingAction* pAct = (BuildingBrush::BuildingAction*)m_pAction;
+	if ( pAct && !pAct->objInfoPtrList.Count() )
+	{
+		delete pAct;
+		pAct = NULL;
+	}
+	m_pAction = NULL;
+	return pAct;
+}
+
+bool ScatterBrush::paint( Stuff::Vector3D& worldPos, int /*screenX*/, int /*screenY*/ )
+{
+	if ( !land )
+		return false;
+
+	EditorObjectMgr* mgr = EditorObjectMgr::instance();
+	BuildingBrush::BuildingAction* pAct = (BuildingBrush::BuildingAction*)m_pAction;
+
+	const float wupv = land->worldUnitsPerVertex;
+
+	// Seed the per-stroke RNG from the click location so repeated paints in the
+	// same spot reproduce, but different spots differ.
+	m_rng ^= (unsigned)( worldPos.x * 7.0f ) * 2654435761u
+	       ^ (unsigned)( worldPos.y * 13.0f ) * 40503u;
+
+	int placed = 0;
+	for ( int i = 0; i < s_density; ++i )
+	{
+		// Uniform random point in the brush disc (sqrt for area-uniform).
+		const float ang = frand01( m_rng ) * 6.2831853f;
+		const float rr  = sqrtf( frand01( m_rng ) ) * s_radius;
+		Stuff::Vector3D p = worldPos;
+		p.x += cosf( ang ) * rr;
+		p.y += sinf( ang ) * rr;
+		p.z = land->getTerrainElevation( p );
+
+		// Slope filter: reject if the terrain rises more than s_maxSlopeRise over
+		// one vertex spacing in either axis.
+		if ( s_maxSlopeRise > 0.0f && wupv > 0.0f )
+		{
+			Stuff::Vector3D px = p, py = p;
+			px.x += wupv; py.y += wupv;
+			const float dzx = fabsf( land->getTerrainElevation( px ) - p.z );
+			const float dzy = fabsf( land->getTerrainElevation( py ) - p.z );
+			if ( dzx > s_maxSlopeRise || dzy > s_maxSlopeRise )
+				continue;
+		}
+
+		// Spacing: skip if something is already very close.
+		if ( s_minSpacing > 0.0f )
+		{
+			EditorObject* nearObj = mgr->getObjectAtLocation( p.x, p.y );
+			if ( nearObj && nearObj->appearance() )
+			{
+				const float ddx = nearObj->getPosition().x - p.x;
+				const float ddy = nearObj->getPosition().y - p.y;
+				if ( ddx * ddx + ddy * ddy < s_minSpacing * s_minSpacing )
+					continue;
+			}
+		}
+
+		const float rot   = s_randomRotation ? frand01( m_rng ) * 360.0f : 0.0f;
+		const float scale = 1.0f + ( frand01( m_rng ) * 2.0f - 1.0f ) * s_scaleJitter;
+
+		// Engine refuses overlapping props; canAddBuilding gates that.
+		if ( !mgr->canAddBuilding( p, rot, m_group, m_indexInGroup ) )
+			continue;
+
+		EditorObject* o = mgr->addBuilding( p, m_group, m_indexInGroup, m_alignment, rot, scale, false /*bSnapToCell*/ );
+		if ( o )
+		{
+			if ( pAct )
+				pAct->addBuildingInfo( *o );
+			++placed;
+		}
+	}
+
+	return placed > 0;
+}
+
+void ScatterBrush::render( int screenX, int screenY )
+{
+	if ( !eye || !land )
+		return;
+
+	Stuff::Vector3D center;
+	Stuff::Vector2DOf<long> sp;
+	sp.x = screenX; sp.y = screenY;
+	eye->inverseProject( sp, center );
+	center.z = land->getTerrainElevation( center );
+
+	Stuff::Vector4D centerS;
+	eye->projectZ( center, centerS );
+
+	const int N = 48;
+	Stuff::Vector4D rim[N + 1];
+	for ( int k = 0; k <= N; ++k )
+	{
+		const float ang = (float)k / (float)N * 6.2831853f;
+		Stuff::Vector3D wp = center;
+		wp.x += cosf( ang ) * s_radius;
+		wp.y += sinf( ang ) * s_radius;
+		wp.z = land->getTerrainElevation( wp );
+		eye->projectZ( wp, rim[k] );
+	}
+
+	gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_AlphaInvAlpha );
+
+	// Translucent green disc (scatter footprint).
+	for ( int k = 0; k < N; ++k )
+	{
+		gos_VERTEX t[3];
+		memset( t, 0, sizeof( t ) );
+		t[0].x = centerS.x; t[0].y = centerS.y; t[0].rhw = 1.0f; t[0].argb = 0x3000ff40;
+		t[1].x = rim[k].x;  t[1].y = rim[k].y;  t[1].rhw = 1.0f; t[1].argb = 0x3000ff40;
+		t[2].x = rim[k+1].x;t[2].y = rim[k+1].y;t[2].rhw = 1.0f; t[2].argb = 0x3000ff40;
+		gos_DrawTriangles( t, 3 );
+	}
+	for ( int k = 0; k < N; ++k )
+	{
+		gos_VERTEX v[2];
+		memset( v, 0, sizeof( v ) );
+		v[0].x = rim[k].x;   v[0].y = rim[k].y;   v[0].rhw = 1.0f; v[0].argb = 0xff00ff40;
+		v[1].x = rim[k+1].x; v[1].y = rim[k+1].y; v[1].rhw = 1.0f; v[1].argb = 0xff00ff40;
+		gos_DrawLines( v, 2 );
+	}
+}

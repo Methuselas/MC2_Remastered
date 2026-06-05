@@ -310,6 +310,7 @@ private:
 	int							m_dragLastScreenX, m_dragLastScreenY;
 	float						m_sculptRadius;
 	float						m_sculptStrength;
+	bool						m_scatterMode;     // object brush scatters in a radius vs single place
 
 	MainMenu					*m_pMainMenu;
 

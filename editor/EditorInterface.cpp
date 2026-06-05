@@ -86,6 +86,7 @@ extern graphics::RenderContextHandle EditorGameOS_GetRenderContext();
 #ifndef FLATTENBRUSH_H
 #include "FlattenBrush.h"
 #include "HeightBrush.h"
+#include "ScatterBrush.h"
 #include "object_recent_ring.h"
 #endif
 
@@ -824,6 +825,7 @@ EditorInterface::EditorInterface()
 	m_dragLastScreenY = 0;
 	m_sculptRadius = 400.0f;
 	m_sculptStrength = 30.0f;
+	m_scatterMode = false;
 
 	smoothRadius = 2;
 	dragging = false;
@@ -2272,7 +2274,12 @@ bool EditorInterface::selectBuildingObject( int group, int indexInGroup )
 	}
 
 	KillCurBrush();
-	curBrush = new BuildingBrush( group, indexInGroup, alignment );
+	// Scatter mode paints many jittered copies in a radius (the generalised forest
+	// brush); normal mode places one object per click.
+	if ( m_scatterMode )
+		curBrush = new ScatterBrush( group, indexInGroup, alignment );
+	else
+		curBrush = new BuildingBrush( group, indexInGroup, alignment );
 	const int message = objectMessageId( group, indexInGroup );
 	currentBrushID = message;
 	currentBrushMenuID = message;
@@ -4252,13 +4259,22 @@ void EditorInterface::renderToolbarImGui()
 // without re-walking the Objects menu. Shares selectBuildingObject() with the menu.
 void EditorInterface::renderObjectCompanionPanel()
 {
-	BuildingBrush* bb = dynamic_cast<BuildingBrush*>(curBrush);
-	if (!bb)
+	// Panel is active for either object-placement brush (single place or scatter).
+	int group = -1, activeIdx = -1;
+	if ( BuildingBrush* bb = dynamic_cast<BuildingBrush*>(curBrush) )
+	{
+		group = bb->getGroup();
+		activeIdx = bb->getIndexInGroup();
+	}
+	else if ( ScatterBrush* sb = dynamic_cast<ScatterBrush*>(curBrush) )
+	{
+		group = sb->getGroup();
+		activeIdx = sb->getIndexInGroup();
+	}
+	else
 		return;
 
 	EditorObjectMgr* pMgr = EditorObjectMgr::instance();
-	const int group     = bb->getGroup();
-	const int activeIdx = bb->getIndexInGroup();
 	if (group < 0 || group >= pMgr->getBuildingGroupCount())
 		return;
 
@@ -4279,6 +4295,21 @@ void EditorInterface::renderObjectCompanionPanel()
 		ImGui::Text("TEAM: Neutral");
 	else
 		ImGui::Text("TEAM: %d", align - EDITOR_TEAM1 + 1);
+
+	// Scatter mode: paint many jittered copies in a radius (generalised forest
+	// brush). Toggling re-creates the current brush in the new mode (deferred).
+	bool scatterToggled = false;
+	if (ImGui::Checkbox("Scatter mode", &m_scatterMode))
+		scatterToggled = true;
+	if (m_scatterMode)
+	{
+		ImGui::SliderFloat("Radius",  &ScatterBrush::s_radius,     64.0f, 3000.0f, "%.0f");
+		ImGui::SliderInt  ("Density", &ScatterBrush::s_density,    1,     60);
+		ImGui::SliderFloat("Spacing", &ScatterBrush::s_minSpacing, 0.0f,  512.0f, "%.0f");
+		ImGui::SliderFloat("ScaleJit",&ScatterBrush::s_scaleJitter,0.0f,  0.9f,   "%.2f");
+		ImGui::SliderFloat("MaxSlope",&ScatterBrush::s_maxSlopeRise,0.0f, 256.0f, "%.0f");
+		ImGui::Checkbox   ("Rand rot", &ScatterBrush::s_randomRotation);
+	}
 	ImGui::Separator();
 
 	// Same-group siblings.
@@ -4341,9 +4372,16 @@ void EditorInterface::renderObjectCompanionPanel()
 		}
 	}
 
+	// Toggling scatter mode re-creates the current object's brush in the new mode.
+	if (scatterToggled && pendGroup < 0)
+	{
+		pendGroup = group;
+		pendIndex = activeIdx;
+	}
+
 	ImGui::End();
 
-	// Apply the deferred selection now that no widget code holds bb / iterates the ring.
+	// Apply the deferred selection now that no widget code holds the brush / iterates the ring.
 	if (pendGroup >= 0)
 		selectBuildingObject(pendGroup, pendIndex);
 }
