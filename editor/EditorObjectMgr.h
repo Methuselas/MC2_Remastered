@@ -138,17 +138,7 @@ public:
 	EditorObject* getObjectAtLocation( float x, float y );
 
 	EditorObject* getBuilding( const EditorObject &building );
-
-	// Magnetic wall joins: given a ghost wall (center, rotation, bounding radius),
-	// search placed WALL-type objects for the nearest endpoint to one of the
-	// ghost's endpoints. If a pair is within the snap distance, returns true and
-	// fills outSnappedPos = the ghost center translated so its endpoint coincides
-	// with that neighbour endpoint. exclude skips a specific object (e.g. the one
-	// being dragged). Position-only (rotation unchanged).
-	bool findWallEndpointSnap( const Stuff::Vector3D& ghostPos, float ghostRotDeg,
-	                           float ghostRadius, const EditorObject* exclude,
-	                           Stuff::Vector3D& outSnappedPos );
-
+	
 	bool		canAddBuilding( const Stuff::Vector3D& position,
 								float rotation,
 								unsigned long group,

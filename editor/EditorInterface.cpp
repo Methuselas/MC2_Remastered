@@ -824,7 +824,6 @@ EditorInterface::EditorInterface()
 	m_dragLastScreenY = 0;
 	m_sculptRadius = 400.0f;
 	m_sculptStrength = 30.0f;
-	m_magneticWalls = true;
 
 	smoothRadius = 2;
 	dragging = false;
@@ -4280,7 +4279,6 @@ void EditorInterface::renderObjectCompanionPanel()
 		ImGui::Text("TEAM: Neutral");
 	else
 		ImGui::Text("TEAM: %d", align - EDITOR_TEAM1 + 1);
-	ImGui::Checkbox("Magnetic walls", &m_magneticWalls);
 	ImGui::Separator();
 
 	// Same-group siblings.

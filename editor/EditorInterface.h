@@ -87,7 +87,6 @@ public:
 
 	// Object placement: shared by the Objects menu and the companion panel.
 	bool selectBuildingObject( int group, int indexInGroup );
-	bool magneticWallsEnabled() const { return m_magneticWalls; }
 	int  currentAlignmentFromMenu();
 	int  objectMessageId( int group, int indexInGroup );
 	static const class ObjectRecentRing& objectRecentRing();
@@ -311,7 +310,6 @@ private:
 	int							m_dragLastScreenX, m_dragLastScreenY;
 	float						m_sculptRadius;
 	float						m_sculptStrength;
-	bool						m_magneticWalls;   // snap wall endpoints to neighbours on place/drag
 
 	MainMenu					*m_pMainMenu;
 

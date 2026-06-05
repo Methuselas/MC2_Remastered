@@ -48,11 +48,6 @@ class BuildingBrush: public Brush
 		int getIndexInGroup() const { return indexInGroup; }
 		int getAlignment() const { return alignment; }
 
-		// Magnetic wall joins: if this brush is a wall, magnetic mode is on, and a
-		// neighbour wall endpoint is within range of inPos's endpoints, set outPos
-		// to the snapped center and return true. Otherwise return false.
-		bool tryWallSnap( const Stuff::Vector3D& inPos, Stuff::Vector3D& outPos );
-
 		
 		class BuildingAction : public Action
 		{
