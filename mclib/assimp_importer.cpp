@@ -472,7 +472,7 @@ void ComputeBoundingBox(TG_TypeMultiShape* out) {
 
 //=============================================================================
 // Public entry point.
-long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out) {
+long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out, bool autoGround) {
 	if (!path || !out) return -1;
 
 	ASSIMP_TRACE("ImportGeometryFromFile path='%s'", path);
@@ -543,7 +543,7 @@ long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out) {
 	// MC2_GLTF_GROUND=2 grounds the opposite end; =0 disables.
 	{
 		static const int s_ground = [](){ const char* e=getenv("MC2_GLTF_GROUND"); return e?atoi(e):2; }();
-		if (s_ground) {
+		if (s_ground && autoGround) {
 			const float dy = (s_ground==2) ? -out->minBox.y : -out->maxBox.y;
 			for (unsigned si=0; si<scene->mNumMeshes; ++si) {
 				TG_TypeNodePtr nd = out->GetTypeNode((long)si);

@@ -357,7 +357,9 @@ void BldgAppearanceType::init (const char * fileName)
 			// non-exception-safe engine code, so collapse any throw to stock.
 			try
 			{
-				long r = ImportGeometryFromFile(overridePath, bldgRenderShape);
+				// staticprop overrides cooked from stock .tgl carry the stock pivot already
+				// -> no auto-ground (would shift them in depth). Trees keep autoGround=true.
+				long r = ImportGeometryFromFile(overridePath, bldgRenderShape, /*autoGround=*/false);
 				if (r != 0 || bldgRenderShape->GetNumShapes() == 0)
 				{
 					delete bldgRenderShape; bldgRenderShape = NULL;   // stock fallback
