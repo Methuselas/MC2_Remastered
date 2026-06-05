@@ -2688,6 +2688,33 @@ void BldgAppearance::registerStatic() {
 		// every frame thereafter. Spec:
 		// docs/superpowers/specs/2026-05-06-update-skip-touch-residual-debug-strategy.md
 		needsFullBakeNextFrame = true;
+		// [G1-STATIC-EAGER-LIGHT v1] Eager fallback: write a non-zero ambient slot so
+		// lightData_[recipeIndex] is never pure-zero if this prop is never on screen.
+		// CANNOT call CacheGpuLightData here -- worldLights[] are not populated until
+		// the first update() (SetLightList requires a live eye/camera). Instead we seed
+		// a minimal ambient record (numLights_=1, dim neutral color) so GPU-Scene cull
+		// can upload this slot without blacking the prop. The first real update() calls
+		// mc2CacheOrBakeStaticGpuLight -> MISS path -> CacheGpuLightData + mc2WriteStaticLightSlot
+		// which overwrites this fallback with the terrain-correct light. Gate default-OFF;
+		// unset = byte-identical to existing behavior.
+		{
+			extern void mc2SetBakedStaticLight(int32_t, const TG_HWLightsData&);
+			extern void mc2WriteStaticLightSlot(int32_t, const TG_HWLightsData&);
+			static const bool s_eagerLightBake = (getenv("MC2_GPU_CULL_STATIC_EAGER_LIGHT_BAKE") != nullptr);
+			if (s_eagerLightBake) {
+				TG_HWLightsData fallback;
+				// Minimal ambient: one dim neutral-white light. Overwritten on first
+				// in-view update() by the terrain-correct bake (MISS path). Non-zero
+				// numLights_ is the sentinel the zero-probe checks.
+				fallback.numLights_ = 1;
+				fallback.lightColor[0][0] = 0.3f;
+				fallback.lightColor[0][1] = 0.3f;
+				fallback.lightColor[0][2] = 0.3f;
+				fallback.lightColor[0][3] = 1.0f;
+				mc2SetBakedStaticLight(regIdx, fallback);
+				mc2WriteStaticLightSlot(regIdx, fallback);
+			}
+		}
 	}
 }
 
@@ -4553,6 +4580,23 @@ void TreeAppearance::registerStatic() {
 		// frames proceed via UPDATE_SKIP / static-replay with valid cached data.
 		// Spec: docs/superpowers/specs/2026-05-06-update-skip-touch-residual-debug-strategy.md
 		needsFullBakeNextFrame = true;
+		// [G1-STATIC-EAGER-LIGHT v1] Eager fallback: mirror of BldgAppearance::registerStatic.
+		// See that site for full rationale. Gate default-OFF; unset = byte-identical.
+		{
+			extern void mc2SetBakedStaticLight(int32_t, const TG_HWLightsData&);
+			extern void mc2WriteStaticLightSlot(int32_t, const TG_HWLightsData&);
+			static const bool s_eagerLightBake = (getenv("MC2_GPU_CULL_STATIC_EAGER_LIGHT_BAKE") != nullptr);
+			if (s_eagerLightBake) {
+				TG_HWLightsData fallback;
+				fallback.numLights_ = 1;
+				fallback.lightColor[0][0] = 0.3f;
+				fallback.lightColor[0][1] = 0.3f;
+				fallback.lightColor[0][2] = 0.3f;
+				fallback.lightColor[0][3] = 1.0f;
+				mc2SetBakedStaticLight(regIdx, fallback);
+				mc2WriteStaticLightSlot(regIdx, fallback);
+			}
+		}
 	}
 }
 

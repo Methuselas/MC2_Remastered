@@ -32,6 +32,11 @@ extern uint32_t g_mc2FrameCounter;
 // permanent lightDataIndex is stable across frames + stays in the static prefix [0..S).
 extern void mc2LightBakeStabilityObserve(int32_t recipeIndex, uint32_t lightDataIndex);
 
+// [G1-STATIC-EAGER-LIGHT v1] Zero-slot probe helper (defined in mclib/txmmgr.cpp).
+// Returns true when lightData_[recipeIndex] has numLights_ > 0 (baked at least once).
+// File-scope so the declaration lands outside the GpuStaticPropRegistry namespace.
+extern bool mc2IsStaticLightSlotBaked(int32_t recipeIndex);
+
 // ---------------------------------------------------------------------------
 // [SPFLUSH_COST_SPLIT v1] — env gate + RDTSC storage + TSC calibration.
 // Gate: MC2_STATIC_PROP_FLUSH_COST_SPLIT=1, default OFF.
@@ -1332,6 +1337,31 @@ void flush() {
             s_liveRangeIndices.size(),
             aliveLeaves * 112.0 / 1048576.0, aliveLeaves * 64.0 / 1048576.0,
             aliveActors * 1808.0 / 1048576.0, maxRangeLeaves);
+        fflush(stderr);
+    }
+
+    // [G1-STATIC-EAGER-LIGHT v1] Zero-light probe: count alive registered static props
+    // whose permanent light slot (lightData_[recipeIndex]) has numLights_=0 (never baked).
+    // With MC2_GPU_CULL_STATIC_EAGER_LIGHT_BAKE set, zeroLightSlots should reach 0 after
+    // mission load. Without it, zeroLightSlots counts all props not yet on screen.
+    // Emit every ~300 flushes (matching GPU_SCENE_SCALE cadence). Gate default-OFF.
+    static const bool s_staticLightZeroProbe = (getenv("MC2_GPU_CULL_STATIC_LIGHT_ZERO_PROBE") != nullptr);
+    static const bool s_staticEagerGate      = (getenv("MC2_GPU_CULL_STATIC_EAGER_LIGHT_BAKE") != nullptr);
+    if (s_staticLightZeroProbe && (s_diag_flush_calls % 300) == 0) {
+        uint32_t aliveProps = 0u, zeroLightSlots = 0u;
+        for (int32_t ri = 0; ri < static_cast<int32_t>(s_recipeRanges.size()); ++ri) {
+            const RecipeRange& r = s_recipeRanges[static_cast<size_t>(ri)];
+            if (r.count > 0u) {
+                ++aliveProps;
+                // recipeIndex == position in s_recipeRanges == permanent light slot index
+                // (LIGHTBAKE v2 invariant: lightData_[recipeIndex] is the permanent slot).
+                if (!mc2IsStaticLightSlotBaked(ri)) ++zeroLightSlots;
+            }
+        }
+        fprintf(stderr,
+            "[STATIC_LIGHT_ZERO v1] frame=%llu aliveProps=%u zeroLightSlots=%u eager=%d\n",
+            (unsigned long long)s_diag_flush_calls, aliveProps, zeroLightSlots,
+            s_staticEagerGate ? 1 : 0);
         fflush(stderr);
     }
 
