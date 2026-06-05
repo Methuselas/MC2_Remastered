@@ -4703,7 +4703,12 @@ uint32_t s_lastUploadedSlot = 0xFFFFFFFFu;
 bool uploadAllBucketsIfNeeded() {
     if (s_lastUploadedSlot == s_frameSlot) return true;
 
-    if (s_bucketsByType.empty()) return false;
+    // M2a POPULATION-SPLIT: when staticPopSplitArmed(), statics are excluded from
+    // s_bucketsByType (reinjectPersistentStatic early-out). If there are also no
+    // dynamic props, the bucket is empty but flush() must still proceed so the M2a
+    // block can draw all statics from s_staticInstanceSsbo. Do NOT return false here
+    // when armed — fall through to the fence wait + slot advance below.
+    if (s_bucketsByType.empty() && !staticPopSplitArmed()) return false;
 
     loadProgramsIfNeeded();
     if (s_fatalRegistrationFailure) return false;
@@ -4733,7 +4738,9 @@ bool uploadAllBucketsIfNeeded() {
         instBytesNeeded += kv.second.instances.size() * sizeof(GpuStaticPropInstance);
         colBytesNeeded  += kv.second.colors.size() * sizeof(uint32_t);
     }
-    if (instBytesNeeded == 0) return false;
+    // Same reasoning: M2a armed with no dynamic props → instBytesNeeded stays 0
+    // but we still need the ring slot advanced + fence waited so flush() can proceed.
+    if (instBytesNeeded == 0 && !staticPopSplitArmed()) return false;
 
     // Convert back to element counts (ceil) for ensureRingCapacity, which is
     // element-based. Round up so subsequent ring-indexing in bytes fits.
