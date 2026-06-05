@@ -39,6 +39,7 @@ static void EditorObjMgrTrace(const char* fmt, ...)
 #endif
 
 #include "EditorObjectMgr.h"
+#include "../GameOS/gameos/gos_static_prop_batcher.h"
 
 
 #ifndef FILE_H
@@ -1946,7 +1947,81 @@ ObjectAppearance* EditorObjectMgr::getAppearance( unsigned long group, unsigned 
 	Building* pBuilding = &pGroup->buildings[indexWithinGroup];
 
 	return getAppearance( pBuilding );
-	
+
+}
+
+// Pre-loads every building AppearanceType from the object catalogue and
+// registers its TG_TypeMultiShape(s) with GpuStaticPropBatcher so that all
+// object types are available before finalizeGeometry() is called.  Without
+// this, any object type not already present on the loaded map hits the
+// late-register path (registerType after s_geometryFinalized == true) and
+// renders solid black when first placed.
+//
+// Bridges and other rarely-used building types are the most common victims
+// because they are absent from most stock starter maps.
+void EditorObjectMgr::primeAllBuildingAppearanceTypes()
+{
+	EditorObjMgrTrace("EditorObjectMgr::primeAllBuildingAppearanceTypes enter groups=%ld",
+		(long)groups.Count());
+
+	if (!appearanceTypeList)
+	{
+		appearanceTypeList = new AppearanceTypeList;
+		gosASSERT(appearanceTypeList != NULL);
+		appearanceTypeList->init(2048000);
+	}
+
+	long nPrimed = 0;
+	for (GROUP_LIST::EIterator groupIter = groups.Begin(); !groupIter.IsDone(); groupIter++)
+	{
+		Group& grp = *groupIter;
+		for (EList<Building, Building&>::EIterator bldgIter = grp.buildings.Begin();
+			 !bldgIter.IsDone(); bldgIter++)
+		{
+			Building& bldg = *bldgIter;
+
+			// Skip types that are not rendered via the GPU static-prop batcher
+			// (mechs, vehicles, nav-markers are handled by their own batchers).
+			if (bldg.type != BLDG_TYPE && bldg.type != TREED_TYPE)
+				continue;
+
+			// Load the AppearanceType if not already cached (idempotent).
+			// MUST ALWAYS CALL GET even if non-null — the reference count must
+			// be incremented (see comment in getAppearance(Building*)).
+			bldg.appearanceType = appearanceTypeList->getAppearance(
+				bldg.type << 24, bldg.fileName);
+
+			if (!bldg.appearanceType)
+				continue;
+
+			if (bldg.type == BLDG_TYPE)
+			{
+				BldgAppearanceType* bat = static_cast<BldgAppearanceType*>(bldg.appearanceType);
+				for (int lod = 0; lod < MAX_LODS; ++lod)
+					GpuStaticPropBatcher::instance().registerMultiShape(bat->bldgShape[lod]);
+				GpuStaticPropBatcher::instance().registerMultiShape(bat->bldgDmgShape);
+				++nPrimed;
+			}
+			else
+			{
+				// TREED_TYPE — TreeAppearanceType; registration mirrors
+				// TreeAppearance::init (treeactor.cpp).  We only need the
+				// shape registered, not a full appearance instance.
+				// TreeAppearanceType stores its shape as treeShape[lod];
+				// cast and call registerMultiShape for each LOD.
+				// NOTE: if TreeAppearanceType layout changes, revisit this cast.
+				// For now use the same pattern as BldgAppearanceType (both derive
+				// from AppearanceType; shapes are TG_TypeMultiShape*).
+				// We skip trees here because the TreeAppearance::init already
+				// calls registerMultiShape unconditionally at placement time and
+				// tree types are typically present in the map (forests).
+				// Bridging the gap only for buildings is sufficient for the bug.
+				(void)0;
+			}
+		}
+	}
+
+	EditorObjMgrTrace("EditorObjectMgr::primeAllBuildingAppearanceTypes exit nPrimed=%ld", nPrimed);
 }
 
 bool  EditorObjectMgr::loadMechs( FitIniFile& file )

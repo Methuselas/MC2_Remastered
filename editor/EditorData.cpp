@@ -502,6 +502,15 @@ bool EditorData::initTerrainFromPCV( const char* fileName )
 	EditorObjectMgr::instance()->registerStaticPropsForMissionLoad();
 	EditorDataTrace("EditorData::initTerrainFromPCV: after registerStaticPropsForMissionLoad");
 
+	// Step 10b — pre-warm ALL building AppearanceTypes from the catalogue so
+	// that object types not already present in the loaded map are registered
+	// with the GPU batcher before finalizeGeometry() is called.  Without this,
+	// placing a Bridge (or any other type absent from the starter map) hits the
+	// late-register path (s_geometryFinalized==true at registerType time) and
+	// renders solid black.
+	EditorObjectMgr::instance()->primeAllBuildingAppearanceTypes();
+	EditorDataTrace("EditorData::initTerrainFromPCV: after primeAllBuildingAppearanceTypes");
+
 	// Steps 11-13 (game lines 3136-3143): finalize batcher geometry, then build indirect buffer.
 	// All TG_TypeMultiShape instances created during EditorObjectMgr::load() above have been
 	// registered via BldgAppearance::init() against the armed batcher state. finalizeGeometry()

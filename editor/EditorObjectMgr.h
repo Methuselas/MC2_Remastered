@@ -190,6 +190,12 @@ public:
 
 	bool getBuildingFromID( int fitID, unsigned long& group, unsigned long& index, bool canBeMech );
 
+	// Pre-loads every building AppearanceType from the object catalogue and
+	// registers its TG_TypeMultiShape(s) with GpuStaticPropBatcher so that
+	// objects placed by the user after map-load do not hit the late-register
+	// path and render solid black.  Must be called BEFORE finalizeGeometry().
+	void primeAllBuildingAppearanceTypes();
+
 	void unselectAll();
 	void select( const Stuff::Vector4D& pos1, const Stuff::Vector4D& pos2 );
 	void select( EditorObject &object, bool bSelect = true );
