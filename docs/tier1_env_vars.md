@@ -102,6 +102,31 @@
 - `MC2_DEBUG_STATE_DUMP_DIR=<path>` — override output dir.
 - `MC2_DEBUG_STATE_DUMP_HISTORY=1` — rolling 8-slot history ring. Requires `MC2_DEBUG_STATE_DUMP=1`.
 
+## Terrain gates
+
+### MC2_TERRAIN_NORMAL_ARRAY
+
+**Default:** off
+
+Switches terrain normal-map sampling from 5 individual `sampler2D` uniforms
+(units 5–8, 12) to a single `sampler2DArray` on unit 5. Packs all 5
+per-material normal maps (rock/grass/dirt/concrete/snow) into one `GL_RGBA8`
+array texture, rebuilt once on texture slot change (lazy, at first draw).
+Copies source mip levels from each individual texture rather than regenerating
+them, preserving authored displacement-alpha behavior.
+
+**Ceiling removed:** per-material texture-unit ceiling at the sampler-binding
+layer. The classifier/blending ceiling (vec4 matWeights, 5 named layers,
+separate snow logic) is a separate future task.
+
+**When to enable:** when adding more than 8 terrain materials, or as a
+long-term cleanup of the individual-sampler path. After a soak period, delete
+the `#else` branches (see post-migration section in the plan).
+
+**Safety:** `buildTerrainNormalArray()` saves/restores all GL pixel-store, PBO,
+active texture unit, and texture binding state via `GlPixelStoreGuard`. Safe to
+call from inside a draw-bind path.
+
 ## Terrain debug / visual
 
 - `MC2_TERRAIN_DEBUG_MODE=N` — terrain frag debug-mode (0=off, 1=DepthCmp, 2=RawColormap, 3=BlurredColormap, 4=MatWeights R=rock/G=grass/B=dirt, 5=NormalLighting, 6=ShadowFactor, 7=CloudShadow, 8=CementDiag, 9=ThinRecordDiag, 10=HeightNormal, 11=HemiAdditive, -1=TessAliveProbe).
