@@ -2597,6 +2597,75 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
     float cyL = 0.5f * (minLY + maxLY);
     const float halfLX = 0.5f * (maxLX - minLX);
     const float halfLY = 0.5f * (maxLY - minLY);
+
+    // SHADOW-FOCUS-CENTER-1 (gate, default OFF): center the shadow box on the
+    // camera's near-ground FOCUS POINT instead of the frustum-corner AABB
+    // centroid. For an oblique near-ground camera the far/horizon corners drag
+    // the AABB centroid off-map (measured worldCenter=(-17131,-35844,7526)
+    // while the scene is at ~(+-300,3349,635)) and oscillate near map edges
+    // -> "shadows reflect off the map edge". Focus-point centering decouples
+    // the center from the far corners: box tracks where the player looks.
+    // KEEP the radius fit (halfLX/halfLY -> fitRadius) unchanged below; ONLY
+    // the center (cxL/cyL) is overridden, BEFORE the texel-snap + back-project.
+    static const bool s_focusCenter = []() {
+        const char* v = getenv("MC2_SHADOW_FOCUS_CENTER");
+        return (v && v[0] == '1');
+    }();
+    bool focusApplied = false;
+    float focusWorld[3] = {0.0f, 0.0f, 0.0f};
+    float focusDistUsed = 0.0f;
+    float nearSpread = 0.0f, farSpread = 0.0f;
+    if (s_focusCenter) {
+        static const float s_focusDist = []() {
+            const char* v = getenv("MC2_SHADOW_FOCUS_DIST");
+            float d = (v ? (float)atof(v) : 1500.0f);
+            if (d < 256.0f)  d = 256.0f;
+            if (d > 8000.0f) d = 8000.0f;
+            return d;
+        }();
+        // Robust near/far corner identification. Corners 0-3 have GL-NDC z=0,
+        // 4-7 have z=1 (txmmgr.cpp:2259-2277), but we do NOT assume which is
+        // the near plane -- we detect by SPREAD. A perspective frustum's near
+        // corners are closer together (smaller max corner-to-centroid dist)
+        // than the far corners. The set with the smaller spread is NEAR.
+        float cA[3] = {0,0,0}, cB[3] = {0,0,0};   // A = corners[0..3], B = corners[4..7]
+        for (int c = 0; c < 4; ++c) {
+            cA[0] += camFitCornersMC2[c][0]; cA[1] += camFitCornersMC2[c][1]; cA[2] += camFitCornersMC2[c][2];
+        }
+        for (int c = 4; c < 8; ++c) {
+            cB[0] += camFitCornersMC2[c][0]; cB[1] += camFitCornersMC2[c][1]; cB[2] += camFitCornersMC2[c][2];
+        }
+        for (int k = 0; k < 3; ++k) { cA[k] *= 0.25f; cB[k] *= 0.25f; }
+        float spreadA = 0.0f, spreadB = 0.0f;
+        for (int c = 0; c < 4; ++c) {
+            float dx = camFitCornersMC2[c][0]-cA[0], dy = camFitCornersMC2[c][1]-cA[1], dz = camFitCornersMC2[c][2]-cA[2];
+            float d = sqrtf(dx*dx+dy*dy+dz*dz);
+            if (d > spreadA) spreadA = d;
+        }
+        for (int c = 4; c < 8; ++c) {
+            float dx = camFitCornersMC2[c][0]-cB[0], dy = camFitCornersMC2[c][1]-cB[1], dz = camFitCornersMC2[c][2]-cB[2];
+            float d = sqrtf(dx*dx+dy*dy+dz*dz);
+            if (d > spreadB) spreadB = d;
+        }
+        // Pick near = smaller spread.
+        const float* nearC; const float* farC;
+        if (spreadA <= spreadB) { nearC = cA; farC = cB; nearSpread = spreadA; farSpread = spreadB; }
+        else                    { nearC = cB; farC = cA; nearSpread = spreadB; farSpread = spreadA; }
+
+        float vd[3] = { farC[0]-nearC[0], farC[1]-nearC[1], farC[2]-nearC[2] };
+        float vlen = sqrtf(vd[0]*vd[0] + vd[1]*vd[1] + vd[2]*vd[2]);
+        if (vlen > 1e-3f) {
+            vd[0] /= vlen; vd[1] /= vlen; vd[2] /= vlen;
+            focusWorld[0] = nearC[0] + vd[0] * s_focusDist;
+            focusWorld[1] = nearC[1] + vd[1] * s_focusDist;
+            focusWorld[2] = nearC[2] + vd[2] * s_focusDist;
+            // Override light-space center with the focus projection.
+            cxL = rx*focusWorld[0] + ry*focusWorld[1] + rz*focusWorld[2];
+            cyL = ux*focusWorld[0] + uy*focusWorld[1] + uz*focusWorld[2];
+            focusDistUsed = s_focusDist;
+            focusApplied = true;
+        }
+    }
     float fitRadius = (halfLX > halfLY ? halfLX : halfLY);
     if (fitRadius < 64.0f) fitRadius = 64.0f;
     float r = mapHalfExtent_ * sqrtf(2.0f) * 1.05f;   // full-map safety cap
@@ -2657,6 +2726,13 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
                     fitRadius, origFitRadius, xyRadius, r,
                     worldUnitsPerTexel, 2.0f * xyRadius, 2.0f * xyRadius,
                     validCorners, dynShadowMapSize_);
+                if (focusApplied) {
+                    fprintf(stderr,
+                        "[SHADOW_FRUSTUM_DIAG]   focusCenter=1 focusWorld=(%.0f,%.0f,%.0f) "
+                        "focusDist=%.0f nearSpread=%.0f farSpread=%.0f\n",
+                        focusWorld[0], focusWorld[1], focusWorld[2],
+                        focusDistUsed, nearSpread, farSpread);
+                }
                 fflush(stderr);
             }
         }

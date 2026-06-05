@@ -318,6 +318,21 @@ def main():
                             "MC2_SHADOW_BOUNDED_NEAR_FIT",
                             "MC2_SHADOW_BOUNDED_NEAR_RADIUS",
                             "MC2_SHADOW_FRUSTUM_DIAG",
+                            # SHADOW-CASTER-LIGHTBOX-CULL-1 (2026-06-04): per-frame
+                            # cull of dynamic prop shadow casters to the shadow
+                            # frustum (default OFF). Without these in the allowlist
+                            # subprocess.Popen drops them and the gate-ON smoke
+                            # state is meaningless (cull never engages).
+                            "MC2_SHADOW_CASTER_LIGHTBOX_CULL",
+                            "MC2_SHADOW_CASTER_CULL_MARGIN",
+                            "MC2_SHADOW_CULL_DEBUG",
+                            # SHADOW-FOCUS-CENTER-1 (2026-06-04): center the
+                            # dynamic shadow box on the camera near-ground focus
+                            # point instead of the frustum-corner AABB centroid
+                            # (default OFF). Popen replaces env -- without these
+                            # in the allowlist the gate-ON smoke does nothing.
+                            "MC2_SHADOW_FOCUS_CENTER",
+                            "MC2_SHADOW_FOCUS_DIST",
                             # Mask-dispatch (pre-bake-terrain merge)
                             "MC2_TERRAIN_MASK_DISPATCH",
                             "MC2_TERRAIN_MASK_DISPATCH_PARITY",
@@ -335,6 +350,8 @@ def main():
                             "MC2_STATIC_PROP_PERSISTENT_BUCKETS",
                             "MC2_STATIC_PROP_PERSISTENT_BUCKETS_COMPARE",
                             "MC2_BUCKET_ORDER_TRACE",
+                            # GPU-cull ownership-port Slice A: cut-off upper-bound oracle
+                            "MC2_GPU_CULL_OWNERSHIP_PARITY",
                             # Task 7 — superset-parity counter probe (proof-gate #2)
                             "MC2_TOBJ_PARITY",
                             # alpha-Stage 1 §5 Stage 0 — candidate-predicate

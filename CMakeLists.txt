@@ -624,3 +624,12 @@ if(Python3_FOUND AND BASH_EXECUTABLE)
         VERBATIM
     )
 endif()
+
+# ---------------------------------------------------------------------------
+# MC2_BUILD_TESTS: unit/integration test targets (model_override_tests, etc.)
+# ---------------------------------------------------------------------------
+option(MC2_BUILD_TESTS "Build unit/integration test targets" ON)
+if(MC2_BUILD_TESTS)
+  enable_testing()
+  add_subdirectory(tests/model_override)
+endif()

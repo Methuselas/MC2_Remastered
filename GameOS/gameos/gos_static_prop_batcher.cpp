@@ -122,6 +122,19 @@ static const bool s_globalPoolLegacy = []() {
     return v != nullptr && v[0] != '0';
 }();
 
+// GPU-INSTANCE-SKIP-POOLS-1 (2026-06-03) — when set, forces the LEGACY
+// per-instance frame-pool path (_PositionsOnly + non-null listOfVertices gate)
+// for GPU-registered static-prop types. Default (unset) is the new GPU-only
+// path: registered instances run the zero-pool hierarchy walk in *Appearance::
+// update and submit straight from rec.shapeToWorld, so the TGL frame pools stay
+// flat regardless of override mesh size × instance count. This flag is the A/B
+// escape hatch. Env-read once at process start.
+static const bool s_legacyInstancePools = []() {
+    const char* v = getenv("MC2_LEGACY_INSTANCE_POOLS");
+    return v != nullptr && v[0] != '0';
+}();
+bool gos_StaticPropLegacyInstancePools() { return s_legacyInstancePools; }
+
 // DrawPacket v5: per-draw-call substitutive dispatch.
 // Gate: MC2_DRAW_PACKET_COALESCE_V5=1
 // Extension: ARB_base_instance (GL 4.2 core, available on all tier1 GPUs).
@@ -725,6 +738,29 @@ std::vector<std::vector<bool>>    s_ormLayerHasMap;     // per bucket, per bucke
 GLuint s_permutationSsbo           = 0;  // sortedSlot[typeID] mapping (binding 15)
 GLuint s_staticPropProgramCoalesce = 0;  // coalesce variant (Step 7.5)
 
+// FOLIAGE-STATICPROP-DEPTH-PREPASS-1: depth-prepass program object — same
+// static_prop.vert (invariant gl_Position), but the cheap static_prop_depth.frag
+// that does ONLY the alpha-test discard (no color/lighting/object-id). It is a
+// DISTINCT GL program object, so its uniform locations differ from the color
+// program's — the prepass must use THIS program's u_drawIDBase, not the color
+// program's. 0 = the program failed to link this session → flushDepthPrepass()
+// must no-op (color path unaffected).
+GLuint s_staticPropDepthProgram = 0;
+// FOLIAGE-STATICPROP-DEPTH-PREPASS-1 GL_EQUAL-parity (review CRITICAL-1/IMPORTANT-1):
+// the depth program is a DISTINCT GL program object, so its uniform state is
+// independent of the color program's. The depth frag mirrors the color frag's
+// alpha-derivation, so it needs the SAME u_materialGpuSample (texArrayLayer vs
+// MaterialTable.albedoTex select) and u_debugAddrMode (mode-8 LODBUG bypass)
+// uploaded to ITS program — uninitialized GL uniforms default to 0, which would
+// make the prepass discard differently than the color pass under GL_EQUAL and
+// make foliage vanish. Coalesce-only locations; -1 (legacy/absent) skips upload.
+struct DepthCoalesceLocs {
+    GLint drawIDBase        = -1;
+    GLint materialGpuSample = -1;   // CRITICAL-1: u_materialGpuSample
+    GLint debugAddrMode     = -1;   // IMPORTANT-1: u_debugAddrMode
+};
+static DepthCoalesceLocs s_locsDepthCoalesce;
+
 // Step 2.1 — persistent map pointer + fence ring.
 void*  s_coalesceInstanceMap = nullptr;
 GLsync s_coalesceFence[RING_FRAMES] = {};
@@ -812,6 +848,37 @@ static const uint32_t s_globalInstanceCap = []() {
     }
     return STATIC_PROP_GLOBAL_CAP_DEFAULT;
 }();
+
+// M2a POPULATION-SPLIT state (defined early so onMapUnload :1729 can tear the
+// SSBO down; the build/fill helpers + accessors live near s_baseInstanceForType).
+static std::vector<uint32_t> s_staticBaseInstanceForType;
+static uint64_t              s_staticBaseBuiltGen     = 0xFFFFFFFFFFFFFFFFull;
+static GLuint                s_staticInstanceSsbo     = 0;
+static void*                 s_staticInstanceMap      = nullptr;   // GL_MAP_PERSISTENT|COHERENT
+static size_t                s_staticInstanceBytes    = 0;         // == cap * sizeof(instance)
+static uint64_t              s_staticInstanceFillGen  = 0xFFFFFFFFFFFFFFFFull;
+// Task 3: StaticPopulation indirect commands — own buffer, CPU-written (counts
+// are the frozen static population, NOT GPU cull; first-N draw, see patch 2).
+// 20-byte DrawElementsIndirectCommand: count, instanceCount, firstIndex,
+// baseVertex, baseInstance (matches gpu_cull_compute.cpp's DrawCmd).
+struct StaticDrawCmd { uint32_t count; uint32_t instanceCount; uint32_t firstIndex;
+                       int32_t baseVertex; uint32_t baseInstance; };
+static_assert(sizeof(StaticDrawCmd) == 20, "StaticDrawCmd must be 20 bytes");
+static GLuint                       s_staticIndirectCmdBuf = 0;
+static std::vector<StaticDrawCmd>   s_staticDrawCmds;          // CPU mirror
+static uint64_t                     s_staticCmdBuiltGen = 0xFFFFFFFFFFFFFFFFull;
+// Task 4 criterion 2: fence covering the last StaticPopulation draw. The single-
+// region s_staticInstanceSsbo is overwritten in place on a dirty fill; wait on
+// this before overwriting so a prior frame's in-flight draw has finished reading
+// (GPU executes in submission order -> the latest fence covers all earlier).
+static GLsync                       s_staticDrawFence = nullptr;
+
+// Gate: MC2_STATIC_POP_SPLIT env AND the G2 frozen-records path armed. Defined
+// early (before onMapUnload / the draw / reinject) so all use sites resolve.
+static bool staticPopSplitArmed() {
+    static const bool s_on = (getenv("MC2_STATIC_POP_SPLIT") != nullptr);
+    return s_on && GpuStaticPropRegistry::frozenRecordsArmed();
+}
 
 GLuint   s_baseInstanceByCmdSsbo          = 0;
 void*    s_baseInstanceByCmdMap           = nullptr;
@@ -1081,6 +1148,15 @@ void loadProgramsIfNeeded() {
         return;
     }
     s_staticPropProgram = s_staticPropProgramObj->shp_;
+
+    // FOLIAGE-STATICPROP-DEPTH-PREPASS-1: the depth-prepass program is built
+    // LATER, after the coalesce color program below — it must use the SAME
+    // shader variant (legacy vs coalesce prefix) as the program that is
+    // actually bound for the static-prop color pass, or GL_EQUAL parity fails
+    // (the depth it lays would derive vertex transform / alpha differently).
+    // See the "depth-prepass program (variant-matched)" block at the end of
+    // this function.
+
     // Wire GL program name into PipelineRegistry so applyPipeline() can bind it.
     // Both IDs share the same program — alpha distinction is texture-array + shader
     // discard, not a separate program object.
@@ -1235,6 +1311,81 @@ void loadProgramsIfNeeded() {
                          "static_prop_coalesce — coalesce path disabled "
                          "for this session; legacy path unaffected\n");
             s_staticPropProgramCoalesce = 0;
+        }
+    }
+
+    // FOLIAGE-STATICPROP-DEPTH-PREPASS-1: depth-prepass program (variant-matched).
+    // Built AFTER the coalesce color program so it uses the SAME shader variant
+    // (and thus the same vertex transform + alpha-flag derivation) as the program
+    // that applyPipeline() will actually bind for the static-prop COLOR pass —
+    // the load-bearing precondition for the later GL_EQUAL depth test.
+    //
+    // The active color program is the coalesce one (s_staticPropProgramCoalesce)
+    // exactly when it linked above (lines just before this rebound StaticPropOpaque/
+    // AlphaTest to it). In that case use coalescePrefix (with MC2_COALESCE); the
+    // depth frag's #ifdef MC2_COALESCE branch then derives materialFlags/tex_color.a
+    // via the PerDrawEntry SSBO + u_texArr + u_drawIDBase exactly like the color
+    // frag. Otherwise the legacy program is active, so use legacyPrefix (no
+    // MC2_COALESCE; u_materialFlags + u_tex path). Same MC2_OBJECT_ID_BUFFER /
+    // MC2_USE_VIEW_UNIFORMS / MC2_STATICPROP_PBR_SLOTS defines are already baked
+    // into both prefixes above, so this matches the color program byte-for-byte.
+    //
+    // This is a DISTINCT program object, so we capture its OWN u_drawIDBase
+    // location (uniform locations are per-program). Link failure disables the
+    // prepass only; the color path is untouched (s_staticPropDepthProgram stays 0
+    // → flushDepthPrepass() no-ops).
+    {
+        const bool depthUsesCoalesce = (s_staticPropProgramCoalesce != 0);
+        const char* depthPrefix =
+            depthUsesCoalesce ? coalescePrefix.c_str() : legacyPrefix.c_str();
+        glsl_program* depthObj = glsl_program::makeProgram(
+            "static_prop_depth",
+            "shaders/static_prop.vert",
+            "shaders/static_prop_depth.frag",
+            depthPrefix);
+        if (depthObj && depthObj->is_valid()) {
+            s_staticPropDepthProgram = depthObj->shp_;
+            RenderCore::bindProgram(RenderCore::PipelineId::StaticPropDepth,
+                                    s_staticPropDepthProgram);
+            // u_drawIDBase exists ONLY in the coalesce variant; legacy returns -1
+            // (and the prepass never uploads it on the legacy path).
+            s_locsDepthCoalesce.drawIDBase =
+                glGetUniformLocation(s_staticPropDepthProgram, "u_drawIDBase");
+            // GL_EQUAL-parity (review CRITICAL-1/IMPORTANT-1): capture the depth
+            // program's OWN u_materialGpuSample + u_debugAddrMode so the prepass
+            // can upload the SAME values the color pass uploads to its program.
+            // u_materialGpuSample is coalesce-only (legacy returns -1, harmless);
+            // u_debugAddrMode exists in both variants. Per-program locations.
+            s_locsDepthCoalesce.materialGpuSample =
+                glGetUniformLocation(s_staticPropDepthProgram, "u_materialGpuSample");
+            s_locsDepthCoalesce.debugAddrMode =
+                glGetUniformLocation(s_staticPropDepthProgram, "u_debugAddrMode");
+            // The coalesce frag samples u_texArr via a sampler2DArray uniform; bind
+            // it to texture unit 0 once (matches the color program's init-only bind
+            // at the coalesce block above) so the per-draw prepass loop only binds
+            // the texture handle, not re-issue glUniform1i.
+            if (depthUsesCoalesce) {
+                const GLint depthTexArrLoc =
+                    glGetUniformLocation(s_staticPropDepthProgram, "u_texArr");
+                if (depthTexArrLoc >= 0) {
+                    glUseProgram(s_staticPropDepthProgram);
+                    glUniform1i(depthTexArrLoc, 0);
+                    glUseProgram(0);
+                }
+            }
+            std::fprintf(stderr, "[GPUPROPS-DIAG] static_prop_depth program=%u "
+                         "variant=%s loc_drawIDBase=%d loc_materialGpuSample=%d "
+                         "loc_debugAddrMode=%d\n",
+                         s_staticPropDepthProgram,
+                         depthUsesCoalesce ? "coalesce" : "legacy",
+                         s_locsDepthCoalesce.drawIDBase,
+                         s_locsDepthCoalesce.materialGpuSample,
+                         s_locsDepthCoalesce.debugAddrMode);
+        } else {
+            std::fprintf(stderr,
+                "[GPUPROPS] static_prop_depth program failed to compile/link — "
+                "depth-prepass disabled this session (color path unaffected)\n");
+            s_staticPropDepthProgram = 0;   // flushDepthPrepass() must no-op when 0
         }
     }
 }
@@ -1791,6 +1942,32 @@ void GpuStaticPropBatcher::onMapUnload() {
         s_coalesceInstanceSsbo = 0;
     }
 
+    // M2a POPULATION-SPLIT: tear down the static instance SSBO on map unload,
+    // mirroring s_coalesceInstanceSsbo above. ensureStaticInstanceCapacity()
+    // early-returns on a non-zero handle, so without this the persistent map
+    // handle would survive a context recreation as a dangling pointer. Reset the
+    // dirty-gens so the next map's first dirty flush rebuilds base + fill.
+    if (s_staticInstanceSsbo) {
+        if (s_staticInstanceMap) {
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_staticInstanceSsbo);
+            glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+            s_staticInstanceMap = nullptr;
+        }
+        glDeleteBuffers(1, &s_staticInstanceSsbo);
+        s_staticInstanceSsbo  = 0;
+        s_staticInstanceBytes = 0;
+    }
+    if (s_staticIndirectCmdBuf) {
+        glDeleteBuffers(1, &s_staticIndirectCmdBuf);
+        s_staticIndirectCmdBuf = 0;
+    }
+    if (s_staticDrawFence) { glDeleteSync(s_staticDrawFence); s_staticDrawFence = nullptr; }
+    s_staticDrawCmds.clear();
+    s_staticInstanceFillGen = 0xFFFFFFFFFFFFFFFFull;
+    s_staticBaseBuiltGen    = 0xFFFFFFFFFFFFFFFFull;
+    s_staticCmdBuiltGen     = 0xFFFFFFFFFFFFFFFFull;
+
     // 4.4 — delete remaining coalesce GL resources (only if non-zero).
     if (s_texArrayOff)     { glDeleteTextures(1, &s_texArrayOff);     s_texArrayOff     = 0; }
     if (s_texArrayOn)      { glDeleteTextures(1, &s_texArrayOn);      s_texArrayOn      = 0; }
@@ -1966,9 +2143,21 @@ void GpuStaticPropBatcher::registerType(TG_TypeShape* typeShape, TG_TypeMultiSha
 
     s_typeIndex[typeShape] = newTypeID;
     s_types.push_back(type);
+
+    // [SEAMPROBE] stage 4: record geometry of each freshly-registered type
+    // (capped) so override render-shape leaves can be matched by ptr in the log.
+    {
+        static int s_seamRegLogged = 0;
+        if (getenv("MC2_MODOVERRIDE_TRACE") && s_seamRegLogged < 400) {
+            ++s_seamRegLogged;
+            fprintf(stderr, "[SEAMPROBE] registerType src=%p typeID=%u numTris=%u numVerts=%u finalized=%d\n",
+                (void*)typeShape, newTypeID, numTris, numVerts, (int)s_geometryFinalized);
+            fflush(stderr);
+        }
+    }
 }
 
-void GpuStaticPropBatcher::registerMultiShape(TG_TypeMultiShape* multiShape) {
+void GpuStaticPropBatcher::registerMultiShape(TG_TypeMultiShape* multiShape, bool isOverride) {
     if (!multiShape) return;
     const long n       = multiShape->GetNumShapes();
     const long numTxms = multiShape->GetNumTextures();
@@ -1977,6 +2166,16 @@ void GpuStaticPropBatcher::registerMultiShape(TG_TypeMultiShape* multiShape) {
         if (node && node->GetNodeType() == SHAPE_NODE) {
             TG_TypeShape* typeShape = static_cast<TG_TypeShape*>(node);
             registerType(typeShape, multiShape);
+            // MODEL-OVERRIDE-GPU-BATCHER-SEAM: tag the just-registered (or
+            // pre-existing idempotent) type as override-backed so the coalesce
+            // layer-build routes its untextured packets to a valid default
+            // layer instead of culling them. Look up by source ptr.
+            if (isOverride) {
+                auto tit = s_typeIndex.find(typeShape);
+                if (tit != s_typeIndex.end() && tit->second < s_types.size()) {
+                    s_types[tit->second].isOverride = true;
+                }
+            }
             // GPU-offloaded actors bypass TransformMultiShape, so the leaf
             // TG_TypeShape::listOfTextures[j].gosTextureHandle is never set by
             // TMS (msl.cpp:1380). Prime it now from the multi-type's
@@ -2904,6 +3103,47 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                                typeID, pIdx, group == 0u ? "off" : "on",
                                (unsigned long)nodeIdx,
                                (unsigned long)gosHandle, glTexId);
+                // [SEAMPROBE] stage 10: layer-assignment census. When the
+                // override prop/tree packets land here, they get layer=-1 and
+                // are dropped from the multidraw (the bdactor.cpp:262 skip
+                // rule) -> override never rasterizes. Gated, capped.
+                {
+                    static int s_seamLayerSkip = 0;
+                    if (getenv("MC2_MODOVERRIDE_TRACE") && s_seamLayerSkip < 200) {
+                        ++s_seamLayerSkip;
+                        std::fprintf(stderr, "[SEAMPROBE] layer=-1 SKIP type=%u pkt=%u "
+                            "nodeIdx=%lu gosHandle=%lu glTexId=%u W=%d H=%d override=%d uniques=%zu\n",
+                            typeID, pIdx, (unsigned long)nodeIdx,
+                            (unsigned long)gosHandle, glTexId, (int)W, (int)H,
+                            (int)type.isOverride, uniques.size());
+                        std::fflush(stderr);
+                    }
+                }
+                // MODEL-OVERRIDE-GPU-BATCHER-SEAM-PROBE-1 fix: a modder glTF
+                // render-override imports with unresolved "NULLTXM" texture
+                // handles (nodeIdx=0xFFFFFFFF, no GL upload -> W<=0 here). The
+                // stock skip rule (layer=-1 -> dropped from the coalesce
+                // multidraw, see bdactor.cpp:262) makes the override geometry
+                // invisible. For override-backed types ONLY, route the packet
+                // to an already-built valid layer in this group (layer 0) so it
+                // RASTERIZES with that texture (wrong albedo, but visible) —
+                // the MVP success criterion is a box that draws, not correct
+                // texturing. Stock/damage-shape packets are UNAFFECTED: they
+                // keep the layer=-1 skip (no isOverride flag), so the orange-
+                // ghost destroyed-building regression cannot recur. If no valid
+                // layer exists yet in this group, fall through to the skip.
+                if (type.isOverride && !uniques.empty()) {
+                    layerForPacket[globalPktIdx] = 0;
+                    if (pIdx == 0) layerForType[typeID] = 0;
+                    packetsInGroup.emplace_back(globalPktIdx, 0);
+                    if (getenv("MC2_MODOVERRIDE_TRACE")) {
+                        std::fprintf(stderr, "[SEAMPROBE] OVERRIDE_ROUTE type=%u pkt=%u "
+                            "-> layer=0 (default) group=%s\n",
+                            typeID, pIdx, group == 0u ? "off" : "on");
+                        std::fflush(stderr);
+                    }
+                    continue;
+                }
                 continue;
             }
 
@@ -4372,9 +4612,29 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
         // Also listOfColors NULL: CPU also early-outs. Submit's zero-pad
         // path would render this child black, which is the bug we're
         // avoiding — so skip here.
+        //
+        // GPU-INSTANCE-SKIP-POOLS-1: in the new GPU-only path, registered
+        // types intentionally run the zero-pool hierarchy walk
+        // (TransformMultiShape_HierarchyOnly) in *Appearance::update, which
+        // leaves listOfVertices/listOfColors NULL but DOES populate
+        // rec.shapeToWorld (used at :4391). Such a child is a legitimate GPU
+        // instance: its geometry is the immutable per-type VBO and its colors
+        // are the debug-only (zero-padded) Colors SSBO the lit shader ignores
+        // (static_prop.vert:5). So admit a NULL-vertex child IFF its type is
+        // registered in s_typeIndex AND we are not in the legacy escape hatch.
+        // A NULL-vertex child whose type is NOT registered (true day-spotlight
+        // early-out) is still skipped, preserving stock behavior.
         if (!child->listOfVertices || !child->listOfColors) {
-            s_counters.skipped_children++;
-            continue;
+            bool admitAsGpuOnly = false;
+            if (!s_legacyInstancePools && child->myType) {
+                const TG_TypeShape* ts =
+                    static_cast<const TG_TypeShape*>(child->myType);
+                admitAsGpuOnly = (s_typeIndex.find(ts) != s_typeIndex.end());
+            }
+            if (!admitAsGpuOnly) {
+                s_counters.skipped_children++;
+                continue;
+            }
         }
 
         // [T3.1] SpotLight_-prefixed children are illuminated as real TG_Lights
@@ -4443,7 +4703,12 @@ uint32_t s_lastUploadedSlot = 0xFFFFFFFFu;
 bool uploadAllBucketsIfNeeded() {
     if (s_lastUploadedSlot == s_frameSlot) return true;
 
-    if (s_bucketsByType.empty()) return false;
+    // M2a POPULATION-SPLIT: when staticPopSplitArmed(), statics are excluded from
+    // s_bucketsByType (reinjectPersistentStatic early-out). If there are also no
+    // dynamic props, the bucket is empty but flush() must still proceed so the M2a
+    // block can draw all statics from s_staticInstanceSsbo. Do NOT return false here
+    // when armed — fall through to the fence wait + slot advance below.
+    if (s_bucketsByType.empty() && !staticPopSplitArmed()) return false;
 
     loadProgramsIfNeeded();
     if (s_fatalRegistrationFailure) return false;
@@ -4473,7 +4738,9 @@ bool uploadAllBucketsIfNeeded() {
         instBytesNeeded += kv.second.instances.size() * sizeof(GpuStaticPropInstance);
         colBytesNeeded  += kv.second.colors.size() * sizeof(uint32_t);
     }
-    if (instBytesNeeded == 0) return false;
+    // Same reasoning: M2a armed with no dynamic props → instBytesNeeded stays 0
+    // but we still need the ring slot advanced + fence waited so flush() can proceed.
+    if (instBytesNeeded == 0 && !staticPopSplitArmed()) return false;
 
     // Convert back to element counts (ceil) for ensureRingCapacity, which is
     // element-based. Round up so subsequent ring-indexing in bytes fits.
@@ -4493,6 +4760,7 @@ bool uploadAllBucketsIfNeeded() {
         s_coalesceFrameSlot = s_frameSlot;
     }
     if (s_fence[s_frameSlot]) {
+        ZoneScopedN("GpuSP.FenceWaitRender");
         glClientWaitSync(s_fence[s_frameSlot], GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
         glDeleteSync(s_fence[s_frameSlot]);
         s_fence[s_frameSlot] = 0;
@@ -4689,6 +4957,163 @@ static uint32_t buildLiveV6Arrays(
     }
 
     return lockstepViolations;
+}
+
+// FOLIAGE-STATICPROP-DEPTH-PREPASS-1 ----------------------------------------
+// In-flush depth prepass for the v6/coalesced static-prop dispatch.
+//
+// DELIBERATE DEVIATION from the plan's txmmgr-level call: the plan called
+// flushDepthPrepass() from txmmgr between compute_dispatch() and flush(). But
+// the per-frame dispatch lists (pDispatchPackets / pDispatchMeta / totalCmds)
+// are built INSIDE flush() (snapshot vs live selection). A txmmgr-level prepass
+// cannot see those lists and could draw a DIFFERENT set, which breaks the
+// GL_EQUAL color pass (every color fragment must have a matching depth from the
+// prepass). So the prepass runs here, inside flush(), consuming the EXACT same
+// lists the color loop draws — ONE source of truth for the draw set.
+//
+// Lays the nearest reverse-Z depth (GEQUAL + write) with the cheap depth-only
+// program (alpha-test discard only), color writes masked off. Caller flips the
+// color pass to GL_EQUAL + depthWrite-off afterward, keyed off this function's
+// inline return value (true == prepass drew this frame).
+//
+// Mirrors the v6 color draw loop's per-packet GL exactly: same VAO/IBO/SSBO,
+// same OFF→ON texture-array flip at the alpha-ON group boundary, same
+// glDrawElementsInstancedBaseVertexBaseInstance args. Returns true iff it drew.
+//
+// Gated by MC2_STATIC_PROP_DEPTH_PREPASS (default OFF). No-op + log-once when
+// the depth program failed to link or the bc7-bucket texture path is active
+// (per-bucket array bind differs from the simple OFF/ON bind — handled in a
+// later slice). It does NOT touch SSBO slot 0 (the coalesce instance range
+// bound earlier in flush()) so that binding survives for the color loop.
+static bool flushDepthPrepassV6(
+    const std::vector<RenderCore::DrawPacket>&  dispatchPackets,
+    const std::vector<StaticPropDispatchMeta>&  dispatchMeta,
+    uint32_t                                    totalCmds,
+    bool                                        bc7Buckets,
+    int                                         debugAddrMode_)  // IMPORTANT-1: mode-8 bypass parity
+{
+    ZoneScopedN("GpuSP.DepthPrepass");
+
+    static const bool s_prepassEnabled =
+        (std::getenv("MC2_STATIC_PROP_DEPTH_PREPASS") != nullptr);
+    if (!s_prepassEnabled)              return false;
+    if (s_staticPropDepthProgram == 0)  return false;   // program didn't link
+    if (totalCmds == 0u)                return false;
+
+    // bc7-bucket path: the color loop binds a different per-bucket texture array
+    // per slot for alpha sampling. The depth shader must sample the SAME array to
+    // make the SAME alpha decision; the simple OFF/ON bind below would diverge.
+    // Skip + log for now (handle bc7 in a follow-up slice).
+    if (bc7Buckets) {
+        static bool warnedBc7 = false;
+        if (!warnedBc7) {
+            warnedBc7 = true;
+            std::fprintf(stderr, "[GPUPROPS] depth-prepass skipped: bc7-bucket "
+                                 "texture path active (per-bucket array bind "
+                                 "unsupported in this slice)\n");
+        }
+        return false;
+    }
+
+    // GL_EQUAL-parity (review CRITICAL-2): when MC2_VIEW_UNIFORMS=0 the VS uses a
+    // plain `uniform mat4 u_worldToClipGL` (cached on the COLOR program as
+    // s_locsCoalesce.terrainMVP) instead of the view-uniform UBO. The depth
+    // program is a distinct GL object and the prepass does NOT upload that MVP
+    // to it, so its u_worldToClipGL would be the zero matrix → gl_Position = 0 →
+    // the prepass lays no usable depth and GL_EQUAL makes all props vanish.
+    // s_viewUniformsDisabled (file-scope, == !s_viewUniformsShaderEnabled) is the
+    // non-default kill-switch combo; skip the prepass entirely so the color path
+    // falls back to single-pass GEQUAL (return false → caller draws unchanged).
+    if (s_viewUniformsDisabled) {
+        static bool warnedNoUbo = false;
+        if (!warnedNoUbo) {
+            warnedNoUbo = true;
+            std::fprintf(stderr, "[GPUPROPS] depth-prepass skipped: "
+                                 "MC2_VIEW_UNIFORMS=0 (non-UBO MVP path "
+                                 "unsupported)\n");
+        }
+        return false;
+    }
+
+    // Save the color write mask so the color pass writes normally afterward.
+    GLboolean prevColorMask[4];
+    glGetBooleanv(GL_COLOR_WRITEMASK, prevColorMask);
+
+    // Depth-only: bind the depth program + GEQUAL/write via the StaticPropDepth
+    // desc, then mask color. applyPipeline also (re)sets blend-off + cull-back,
+    // matching the color pass.
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::StaticPropDepth));
+    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+
+    // Re-assert the geometry bindings the v6 loop relies on. SSBO slot 0 (the
+    // coalesce instance range) and slot 2 (per-type hot-color) were bound earlier
+    // in flush(); we do NOT touch slot 0 (so it survives for the color loop) but
+    // re-bind VAO/IBO/slot-2/texture defensively in case applyPipeline or a prior
+    // pass left them in an unexpected state.
+    glBindVertexArray(s_sharedVao);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_sharedIbo);
+    if (s_perTypeSsbo) glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, s_perTypeSsbo);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOff);   // alpha-OFF group default
+
+    // GL_EQUAL-parity (review CRITICAL-1): the depth frag derives effectiveLayer
+    // (texArrayLayer vs MaterialTable.albedoTex @ binding 5) under u_materialGpuSample
+    // EXACTLY like the color frag. Mirror the color pass's slot-5 bind + sampleOn
+    // computation (flush() ~line 5598-5621) on THIS program so the alpha-test UV →
+    // tex_color.a → discard decision is byte-identical. sampleOn replicates the
+    // color pass's five-condition gate verbatim (incl. s_materialGpuSidecarValid).
+    if (s_materialGpuEnabled && s_materialGpuSsbo != 0)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, s_materialGpuSsbo);
+    const bool depthSampleOn = s_materialGpuEnabled
+                            && s_materialGpuSampleEnabled
+                            && s_materialGpuSsbo != 0
+                            && s_materialGpuSidecarValid
+                            && s_locsDepthCoalesce.materialGpuSample >= 0;
+    if (s_locsDepthCoalesce.materialGpuSample >= 0)
+        glUniform1i(s_locsDepthCoalesce.materialGpuSample, depthSampleOn ? 1 : 0);
+    // GL_EQUAL-parity (review IMPORTANT-1): mode-8 LODBUG bypass must match the
+    // color pass's u_debugAddrMode upload (flush() ~line 5532) so the depth frag's
+    // `u_debugAddrMode != 8` discard gate agrees with the color frag.
+    if (s_locsDepthCoalesce.debugAddrMode >= 0)
+        glUniform1i(s_locsDepthCoalesce.debugAddrMode, debugAddrMode_);
+
+    bool enteredOnGroup = false;
+    for (uint32_t i = 0u; i < totalCmds; ++i) {
+        const StaticPropDispatchMeta& m  = dispatchMeta[i];
+        const RenderCore::DrawPacket&  dp = dispatchPackets[i];
+        if (m.instanceCount == 0u) continue;
+
+        // Texture-array switch at the alpha-ON boundary (mirror flush()'s loop:
+        // alpha-OFF slots come first, then alpha-ON; one bind flip total).
+        if (m.group == 1u && !enteredOnGroup) {
+            glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOn);
+            enteredOnGroup = true;
+        }
+
+        // The DEPTH program's OWN u_drawIDBase location (coalesce variant).
+        if (s_locsDepthCoalesce.drawIDBase >= 0)
+            glUniform1i(s_locsDepthCoalesce.drawIDBase,
+                        static_cast<GLint>(m.drawIDBase));
+
+        glDrawElementsInstancedBaseVertexBaseInstance(
+            GL_TRIANGLES,
+            static_cast<GLsizei>(dp.indexCount),
+            GL_UNSIGNED_INT,
+            reinterpret_cast<const void*>(
+                static_cast<uintptr_t>(dp.firstIndex) * sizeof(uint32_t)),
+            static_cast<GLsizei>(m.instanceCount),
+            m.baseVertex,
+            m.baseInstance);
+    }
+    if (enteredOnGroup)
+        glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOff);
+
+    // Restore the color write mask. Depth state + program are reset by the color
+    // applyPipeline the caller issues immediately after this returns.
+    glColorMask(prevColorMask[0], prevColorMask[1],
+                prevColorMask[2], prevColorMask[3]);
+    return true;
 }
 
 // [RENDER_CONTRACT:Pass=StaticProp id=GpuStaticPropBatcher_flush]
@@ -5464,6 +5889,49 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             }
         }
 
+        // === M2a Task 4: StaticPopulation draw (gate MC2_STATIC_POP_SPLIT) ===
+        // Emitted ONCE here, before the dynamic draw chain (runV6/runV5/BC7/
+        // existing), so it is path-independent: it reuses the program + s_sharedVao
+        // + depth(GEQUAL)/blend(disabled) state set by applyPipeline() at the top of
+        // the draw section, and s_perDrawSsbo (slot 4, prologue), then binds its OWN
+        // instance SSBO at binding 0 + its own indirect cmds and issues OFF then ON
+        // multidraws. Static opaque draws before all alpha; alpha is alpha-test with
+        // blend disabled, so cross-population alpha order is not a correctness
+        // concern (depth-writing cutout). De-merge (reinjectPersistentStatic
+        // early-out under the gate) keeps statics out of the dynamic bucket so they
+        // are not double-drawn. instanceCount = full static population (first-N, NOT
+        // GPU-culled — visibleIds authority is M2b).
+        if (staticPopSplitArmed() && s_staticIndirectCmdBuf && !s_staticDrawCmds.empty()) {
+            size_t staticTotal = 0;
+            for (auto& kv : s_persistentStaticStore) staticTotal += kv.second.size();
+            glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_staticInstanceSsbo, 0,
+                static_cast<GLsizeiptr>((staticTotal ? staticTotal : 1) * sizeof(GpuStaticPropInstance)));
+            glBindBuffer(GL_DRAW_INDIRECT_BUFFER, s_staticIndirectCmdBuf);
+            const uintptr_t cmdSize =
+                static_cast<uintptr_t>(gpu_cull::kDrawElementsIndirectCommandSize);
+            if (s_alphaOffCmdCount > 0u) {
+                if (s_locsCoalesce.drawIDBase >= 0) glUniform1i(s_locsCoalesce.drawIDBase, 0);
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOff);
+                glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT,
+                    reinterpret_cast<const void*>(static_cast<uintptr_t>(0)),
+                    static_cast<GLsizei>(s_alphaOffCmdCount), 0);
+            }
+            if (s_alphaOnCmdCount > 0u) {
+                if (s_locsCoalesce.drawIDBase >= 0)
+                    glUniform1i(s_locsCoalesce.drawIDBase, static_cast<GLint>(s_alphaOffCmdCount));
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOn);
+                glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT,
+                    reinterpret_cast<const void*>(static_cast<uintptr_t>(s_alphaOffCmdCount) * cmdSize),
+                    static_cast<GLsizei>(s_alphaOnCmdCount), 0);
+            }
+            glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+            // Criterion 2: fence this draw so the next dirty in-place fill waits on it.
+            if (s_staticDrawFence) glDeleteSync(s_staticDrawFence);
+            s_staticDrawFence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        }
+
         // 2026-05-11 per-packet rework: each indirect cmd is per-PACKET, so
         // the multidraw counts and the alpha-ON byte offset use per-PACKET
         // counts (s_alphaOffCmdCount / s_alphaOnCmdCount). The PerDrawEntry
@@ -5795,6 +6263,38 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                 useSnapshot ? &s_snapV6Packets : &v6Packets;
             const std::vector<StaticPropDispatchMeta>* pDispatchMeta =
                 useSnapshot ? &s_snapV6Meta    : &v6Meta;
+
+            // FOLIAGE-STATICPROP-DEPTH-PREPASS-1 (B + C): run the depth prepass
+            // over the SAME dispatch lists the color loop below draws, then flip
+            // the color pass to GL_EQUAL + depthWrite-off. Gated/no-op by default
+            // (flushDepthPrepassV6 returns false → color path byte-identical to
+            // pre-change behavior, no re-applyPipeline issued).
+            //
+            // The prepass clobbers the bound program + depth state + color mask;
+            // it restores the color mask itself. We re-apply the color pipeline
+            // here (with the EQUAL/no-write override) so the color loop below runs
+            // against the right program + depth state. SSBO slot 0 (instance
+            // range) and the VAO/IBO survive (prepass does not rebind slot 0; the
+            // color loop re-binds the OFF texture array via enteredOnGroup logic).
+            if (!skipDispatch &&
+                flushDepthPrepassV6(*pDispatchPackets, *pDispatchMeta,
+                                    totalCmds, bc7Buckets, debugAddrMode_)) {
+                // Color pass: keep ONLY the front-most fragment the prepass laid
+                // (reverse-Z, so GEQUAL prepass stored the nearest depth). EQUAL +
+                // no depth re-write. Object-ID (frag loc=2) is unaffected — it is a
+                // color attachment write, not a depth-state field.
+                RenderCore::PipelineDesc colorDesc =
+                    RenderCore::getPipelineDesc(RenderCore::PipelineId::StaticPropOpaque);
+                colorDesc.depthFunc        = RenderCore::DepthFunc::Equal;
+                colorDesc.depthWriteEnable = false;
+                pipeline_binder::applyPipeline(colorDesc);
+                // applyPipeline rebinds the program but NOT the VAO/IBO/SSBO/
+                // texture; re-assert the geometry bindings the color loop expects
+                // (the prepass left the OFF texture array bound, slot-2 bound, and
+                // slot 0 untouched, so this is belt-and-suspenders).
+                glBindVertexArray(s_sharedVao);
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_sharedIbo);
+            }
 
             if (!skipDispatch)
             for (uint32_t i = 0u; i < totalCmds; ++i) {
@@ -6291,6 +6791,25 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             }
         }
 
+    // [SEAMPROBE] stage 8: one-shot per-type draw census (which types have a
+    // range / instances / packets at first legacy draw). Gated on MC2_MODOVERRIDE_TRACE.
+    {
+        static bool s_seamDrawCensus = false;
+        if (!s_seamDrawCensus && getenv("MC2_MODOVERRIDE_TRACE")) {
+            s_seamDrawCensus = true;
+            for (uint32_t tid = 0; tid < s_types.size(); ++tid) {
+                auto rit2 = s_typeRanges.find(tid);
+                bool hasRange = (rit2 != s_typeRanges.end());
+                uint32_t ic = hasRange ? rit2->second.instanceCount : 0;
+                const GpuStaticPropType& ty = s_types[tid];
+                if (ty.packetCount > 0 && (!hasRange || ic == 0)) {
+                    fprintf(stderr, "[SEAMPROBE] draw-census typeID=%u src=%p packetCount=%u vertexCount=%u hasRange=%d instanceCount=%u (NOT DRAWN)\n",
+                        tid, (void*)ty.source, ty.packetCount, ty.vertexCount, (int)hasRange, ic);
+                }
+            }
+            fflush(stderr);
+        }
+    }
     for (uint32_t typeID = 0; typeID < s_types.size(); ++typeID) {
         auto rit = s_typeRanges.find(typeID);
         if (rit == s_typeRanges.end()) continue;
@@ -6590,6 +7109,11 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             std::fflush(stderr);
         }
     }
+
+    // FOLIAGE-STATICPROP-DEPTH-PREPASS-1 (C): the color EQUAL/no-write override is
+    // applied inline above directly off flushDepthPrepassV6()'s return value — there
+    // is no per-frame "prepass ran" flag to consume (review MINOR-1 removed the dead
+    // s_depthPrepassRanThisFrame state that was set+reset but never read).
 }
 
 // File-scope counters written by flushShadow() and read by Task 6 probe.
@@ -7177,6 +7701,30 @@ uint64_t GpuStaticPropBatcher::persistentStaticTotalCount() {
     uint64_t n = 0; for (auto& kv : s_persistentStaticStore) n += kv.second.size(); return n;
 }
 
+// VANISH-PROBE-1: stable-order access to persistent static instance origins.
+// Free functions (no header coupling) so code/gamecam.cpp can extern-declare
+// them and project a real prop through worldToClipGL at the live camera angle.
+uint32_t gos_ProbeStaticInstanceCount() {
+    uint32_t n = 0; for (auto& kv : s_persistentStaticStore) n += (uint32_t)kv.second.size();
+    return n;
+}
+bool gos_ProbeStaticInstanceWorld(uint32_t idx, float outXYZ[3]) {
+    // unordered_map iteration order is stable between calls within a frame (no
+    // mutation), which is all the probe needs. modelMatrix is row-major data
+    // uploaded GL_FALSE -> the prop vertex shader reads it column-major, so the
+    // instance origin (modelMatrix * vec4(0,0,0,1)) is column 3 = m[12..14].
+    for (auto& kv : s_persistentStaticStore) {
+        const auto& v = kv.second;
+        if (idx < v.size()) {
+            const float* m = v[idx].modelMatrix;
+            outXYZ[0] = m[12]; outXYZ[1] = m[13]; outXYZ[2] = m[14];
+            return true;
+        }
+        idx -= (uint32_t)v.size();
+    }
+    return false;
+}
+
 void GpuStaticPropBatcher::clearPersistentStatic() {
     // Keep the map + per-type vector capacity; just reset sizes (rebuild refills).
     for (auto& kv : s_persistentStaticStore) kv.second.clear();
@@ -7209,6 +7757,11 @@ void GpuStaticPropBatcher::appendPersistentStaticRange(const GpuStaticPropInstan
 // (one memcpy per type, NOT per leaf). Dynamic instances (if any) are appended by
 // the dynamic submit path separately; static carries 0 colors so colors untouched.
 void GpuStaticPropBatcher::reinjectPersistentStatic() {
+    // M2a Task 4 DE-MERGE: under the population split, static props are drawn
+    // from their own buffer + cmds (the static draw in flush()), so they must NOT
+    // be merged into the dynamic bucket (else they double-draw). s_bucketsByType
+    // becomes dynamic-only.
+    if (staticPopSplitArmed()) return;
     for (auto& kv : s_persistentStaticStore) {
         const auto& block = kv.second;
         if (block.empty()) continue;
@@ -7362,6 +7915,206 @@ bool batcher_getPacketMaterialFlags(uint32_t globalPacketIdx,
 uint32_t batcher_getInstanceCap(uint32_t typeID) {
     if (!s_geometryFinalized || typeID >= s_types.size()) return 0;
     return s_types[typeID].instanceCap;
+}
+
+// Slice-A cut-off upper-bound oracle: per-type LIVE instance count from the
+// last upload (= the frozen draw-pool span the indirect draw renders from).
+// s_typeRanges is rebuilt every upload (uploadAllBucketsIfNeeded :4538) with
+// instanceCount = bucket.instances.size(); reading it gives an authoritative,
+// timing-stable denominator (no per-frame bucket clear race). For frozen static
+// props it equals this frame's pool span.
+uint32_t batcher_getTypeUploadedInstanceCount(uint32_t typeID) {
+    auto it = s_typeRanges.find(typeID);
+    if (it == s_typeRanges.end()) return 0u;
+    return it->second.instanceCount;
+}
+
+// M1 FROZEN-STATIC-CULL-RECORDS: module-scope copy of the per-type global
+// instance-pool base (alpha-group prefix-sum over s_sortedTypeOrder), published
+// by batcher_prepareBaseInstanceTable(). global_slot(typeID, store_rank) ==
+// s_baseInstanceForType[typeID] + store_rank, the exact binding-0 slot the draw
+// indexes. Valid only after prepareBaseInstanceTable() runs in global-pool armed
+// mode (empty under legacy/disarmed). The golden static cull-record build reads
+// it to place each record at its instance-pool slot (record-index == pool-slot).
+static std::vector<uint32_t> s_baseInstanceForType;
+
+// ===========================================================================
+// M2a POPULATION-SPLIT (gate MC2_STATIC_POP_SPLIT, requires G2). De-merge the
+// persistent static instances out of the per-frame dynamic bucket so the
+// static cull-record golden has a STABLE per-type base (the merged base shifts
+// per-frame when dynamics share a static type's bucket -> the outOfRange 0->71
+// defect). Tasks 1+2: static-only base table + own front-packed instance SSBO.
+// Default-off => byte-identical (every new path gates on staticPopSplitArmed()).
+// ===========================================================================
+
+// Static-only per-type base (s_staticBaseInstanceForType, defined early near
+// s_globalInstanceCap): prefix-sum over s_persistentStaticStore[t].size() in the
+// SAME sorted+alpha order as s_baseInstanceForType, but counting ONLY persistent-
+// static instances (no dynamics). The stable base the golden scatter must use.
+// Dirty-gated on s_persistentStaticGen via s_staticBaseBuiltGen.
+static void rebuildStaticBaseInstanceTableIfDirty() {
+    if (s_staticBaseBuiltGen == s_persistentStaticGen) return;  // dirty-gated
+    s_staticBaseInstanceForType.assign(s_types.size(), 0u);
+    std::array<uint32_t, 2> groupCursor = {0u, 0u};
+    for (uint32_t i = 0; i < s_sortedTypeOrder.size(); ++i) {
+        const uint32_t typeID = s_sortedTypeOrder[i];
+        if (typeID >= s_types.size()) continue;
+        auto it = s_persistentStaticStore.find(typeID);
+        const uint32_t cnt = (it != s_persistentStaticStore.end())
+                                 ? static_cast<uint32_t>(it->second.size()) : 0u;
+        const uint32_t group = s_types[typeID].alphaClass;
+        s_staticBaseInstanceForType[typeID] = groupCursor[group];
+        groupCursor[group] += cnt;
+    }
+    const uint32_t offGroupCount = groupCursor[0];
+    for (uint32_t typeID : s_sortedTypeOrder) {
+        if (typeID < s_types.size() && s_types[typeID].alphaClass == 1u)
+            s_staticBaseInstanceForType[typeID] += offGroupCount;
+    }
+    s_staticBaseBuiltGen = s_persistentStaticGen;
+}
+
+uint32_t batcher_getStaticBaseInstanceForType(uint32_t typeID) {
+    return (typeID < s_staticBaseInstanceForType.size())
+               ? s_staticBaseInstanceForType[typeID] : 0u;
+}
+
+// StaticPopulation instance buffer (Task 2; state s_staticInstanceSsbo/Map/Bytes/
+// FillGen defined early near s_globalInstanceCap): persistent-mapped, SINGLE
+// region (static is frozen -> no triple-buffer ring). Sized ONCE at the global
+// cap so growth never reallocates an immutable buffer mid-flight. Filled
+// [0,total) once per dirty in static-base layout.
+static bool ensureStaticInstanceCapacity() {
+    if (s_staticInstanceSsbo) return s_staticInstanceMap != nullptr;
+    const size_t want = static_cast<size_t>(s_globalInstanceCap)
+                        * sizeof(GpuStaticPropInstance);
+    glGenBuffers(1, &s_staticInstanceSsbo);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_staticInstanceSsbo);
+    const GLbitfield flags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
+    while (glGetError() != GL_NO_ERROR) {}
+    glBufferStorage(GL_SHADER_STORAGE_BUFFER, static_cast<GLsizeiptr>(want), nullptr, flags);
+    if (glGetError() != GL_NO_ERROR) {
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        glDeleteBuffers(1, &s_staticInstanceSsbo);
+        s_staticInstanceSsbo = 0;
+        std::fprintf(stderr, "[STATIC_POP_SPLIT] event=alloc_failed bytes=%zu\n", want);
+        return false;
+    }
+    s_staticInstanceMap = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0,
+                                           static_cast<GLsizeiptr>(want), flags);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    s_staticInstanceBytes = want;
+    return s_staticInstanceMap != nullptr;
+}
+
+static void fillStaticInstanceBufferIfDirty() {
+    if (s_staticInstanceFillGen == s_persistentStaticGen) return;
+    rebuildStaticBaseInstanceTableIfDirty();
+    size_t total = 0;
+    for (auto& kv : s_persistentStaticStore) total += kv.second.size();
+    if (total > static_cast<size_t>(s_globalInstanceCap)) {
+        std::fprintf(stderr, "[STATIC_POP_SPLIT] event=overflow total=%zu cap=%u\n",
+                     total, s_globalInstanceCap);
+        return;  // never write past the cap
+    }
+    if (!ensureStaticInstanceCapacity()) return;
+    // Criterion 2: the buffer is overwritten in place — wait for the prior
+    // static draw to drain before clobbering it (dirties are rare, so the stall
+    // is rare; GPU in-order execution makes one wait cover all earlier frames).
+    if (s_staticDrawFence) {
+        glClientWaitSync(s_staticDrawFence, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
+        glDeleteSync(s_staticDrawFence);
+        s_staticDrawFence = nullptr;
+    }
+    auto* dst = static_cast<GpuStaticPropInstance*>(s_staticInstanceMap);
+    for (auto& kv : s_persistentStaticStore) {
+        const uint32_t typeID = kv.first;
+        if (typeID >= s_staticBaseInstanceForType.size()) continue;
+        const uint32_t base = s_staticBaseInstanceForType[typeID];
+        const auto& vec = kv.second;
+        for (uint32_t r = 0; r < vec.size(); ++r) dst[base + r] = vec[r];
+    }
+    s_staticInstanceFillGen = s_persistentStaticGen;
+}
+
+GLuint batcher_getStaticInstanceSsbo() { return s_staticInstanceSsbo; }
+
+// Task 3: build the StaticPopulation indirect cmds, one per sorted packet (same
+// [alpha-OFF | alpha-ON] order as s_sortedPacketOrder, so the Task-4 draw splits
+// at s_alphaOffCmdCount exactly like the dynamic draw). count/firstIndex/
+// baseVertex are geometry-static; baseInstance = the type's STABLE static-only
+// base; instanceCount = the type's full static population (first-N draw — NOT a
+// GPU cull count; visibleIds authority arrives in M2b). A packet whose type has
+// 0 static instances gets instanceCount=0 -> harmless no-op sub-draw. Dirty-
+// gated on s_persistentStaticGen. Built but NOT drawn until Task 4.
+static void rebuildStaticDrawCmdsIfDirty() {
+    if (s_staticCmdBuiltGen == s_persistentStaticGen) return;
+    rebuildStaticBaseInstanceTableIfDirty();
+    const uint32_t pktCount = static_cast<uint32_t>(s_sortedPacketOrder.size());
+    s_staticDrawCmds.assign(pktCount, StaticDrawCmd{});
+    for (uint32_t i = 0; i < pktCount; ++i) {
+        const uint32_t gp = s_sortedPacketOrder[i];
+        if (gp >= s_packets.size()) continue;
+        const GpuStaticPropPacket& pkt = s_packets[gp];
+        const uint32_t tid = pkt.owningTypeID;
+        auto it = s_persistentStaticStore.find(tid);
+        const uint32_t cnt = (it != s_persistentStaticStore.end())
+                                 ? static_cast<uint32_t>(it->second.size()) : 0u;
+        StaticDrawCmd& c = s_staticDrawCmds[i];
+        c.count         = pkt.indexCount;
+        c.instanceCount = cnt;
+        c.firstIndex    = pkt.firstIndex;
+        c.baseVertex    = pkt.baseVertex;
+        c.baseInstance  = batcher_getStaticBaseInstanceForType(tid);
+    }
+    if (pktCount > 0u) {
+        if (!s_staticIndirectCmdBuf) glGenBuffers(1, &s_staticIndirectCmdBuf);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, s_staticIndirectCmdBuf);
+        glBufferData(GL_DRAW_INDIRECT_BUFFER,
+                     static_cast<GLsizeiptr>(pktCount * sizeof(StaticDrawCmd)),
+                     s_staticDrawCmds.data(), GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+    }
+    s_staticCmdBuiltGen = s_persistentStaticGen;
+
+    // Diag (env-gated): dump the static cmd summary so Task 3 can be validated
+    // before the draw exists. Sum of instanceCount over OFF/ON groups must equal
+    // persistentStaticTotalCount(); non-zero cmd count == sorted packet count.
+    static const bool s_cmdDiag = (getenv("MC2_STATIC_POP_SPLIT_CMD_DIAG") != nullptr);
+    if (s_cmdDiag) {
+        // maxBaseInstance+its instanceCount must stay within the static pool
+        // [0,storeTotal); nonZeroCmds = packets whose type has static instances.
+        uint32_t nonZero = 0, maxEnd = 0;
+        for (const auto& c : s_staticDrawCmds) {
+            if (c.instanceCount) ++nonZero;
+            const uint32_t end = c.baseInstance + c.instanceCount;
+            if (end > maxEnd) maxEnd = end;
+        }
+        uint64_t storeTotal = 0;
+        for (auto& kv : s_persistentStaticStore) storeTotal += kv.second.size();
+        std::fprintf(stderr, "[STATIC_POP_SPLIT_CMD] pkts=%u nonZeroCmds=%u offCmds=%u "
+                     "maxBaseInst+count=%u storeTotal=%llu (maxEnd<=storeTotal expected)\n",
+                     pktCount, nonZero, s_alphaOffCmdCount, maxEnd,
+                     (unsigned long long)storeTotal);
+        std::fflush(stderr);
+    }
+}
+
+GLuint batcher_getStaticIndirectCmdBuf() { return s_staticIndirectCmdBuf; }
+
+uint32_t batcher_getBaseInstanceForType(uint32_t typeID) {
+    // M2a: under the population split, the golden scatter must use the STABLE
+    // static-only base (dynamics no longer inflate it) -> outOfRange -> 0.
+    if (staticPopSplitArmed())
+        return batcher_getStaticBaseInstanceForType(typeID);
+    return (typeID < s_baseInstanceForType.size()) ? s_baseInstanceForType[typeID] : 0u;
+}
+
+// True when the per-type base table is valid this frame (global-pool armed and
+// prepareBaseInstanceTable has run). The golden build must gate on this.
+bool batcher_isBaseInstanceTableReady() {
+    return !s_globalPoolLegacy && batcher_isCoalesceArmed()
+           && !s_baseInstanceForType.empty();
 }
 
 GLuint batcher_getCoalesceInstanceSsbo() { return s_coalesceInstanceSsbo; }
@@ -7778,6 +8531,23 @@ void batcher_prepareBaseInstanceTable() {
         if (s_types[typeID].alphaClass == 1u) {
             baseInstanceForType[typeID] += offGroupCount;
         }
+    }
+
+    // M1: publish the finalized per-type base for the golden static cull-record
+    // scatter (batcher_getBaseInstanceForType). This is the exact binding-0 slot
+    // layout the draw uses, so a record placed at base[t]+rank aligns 1:1 with
+    // the instance the draw renders.
+    s_baseInstanceForType = baseInstanceForType;
+
+    // M2a POPULATION-SPLIT: rebuild the static-only base table + fill the static
+    // instance buffer when the persistent store changed (both dirty-gated on
+    // s_persistentStaticGen). The base table must be ready before the golden
+    // scatter (buildStaticPrefixGolden) reads it later this frame. Default-off
+    // => not called => byte-identical.
+    if (staticPopSplitArmed()) {
+        rebuildStaticBaseInstanceTableIfDirty();
+        fillStaticInstanceBufferIfDirty();
+        rebuildStaticDrawCmdsIfDirty();   // Task 3: own indirect cmds (not drawn until Task 4)
     }
 
     // Write baseInstanceByCmd[c] for each cmd.

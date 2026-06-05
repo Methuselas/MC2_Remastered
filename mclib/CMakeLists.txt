@@ -89,6 +89,7 @@ set(SOURCES ${SOURCES}
     ewcharstring.cpp
     tacmap.cpp
     utilities.cpp
+    model_override_registry.cpp
     )
 
 # Track D — Assimp-backed FBX/GLB mech importer.
@@ -100,6 +101,7 @@ endif()
 
 include_directories(${COMMON_INCLUDE_DIRS} "./mclib" "../Editor" "../DirectX8/include" "./")
 include_directories(${THIRDPARTY_INCLUDE_DIRS})
+include_directories(${CMAKE_SOURCE_DIR}/3rdparty/include)
 
 # BGR was a DX-era holdover: setPaintScheme ran bgrTorgb on every color
 # DWORD, assuming callers passed BGR-encoded values. In this port all

@@ -1224,6 +1224,10 @@ namespace {
     // so dynamic appends never collide into [0..S).
     static std::unordered_map<int32_t, TG_HWLightsData> s_bakedStaticLight;
     static uint32_t                                      s_staticLightHighWater = 0;
+    // [LIGHTSLOT v1] diagnostic-only counters (Task 0 cardinality gate). Pure
+    // counting, no behavior change. Read via mc2LightSlot* accessors below.
+    static uint64_t s_lightSlotDedupHits = 0;   // addLightDataStructure FNV+memcmp matches
+    static uint64_t s_lightSlotActorKeyHits = 0; // per-actor-color slot-cache hits
     static bool s_bakeInit = false;
     static bool s_bakeEnabled = true;          // default ON
     static bool s_bakeFirstLogged = false;
@@ -1381,6 +1385,23 @@ void mc2ClearAllBakedStaticLight()
     mc2MarkStaticLightPrefixDirty();   // [LIGHTSSBO v2] table reset → re-upload prefix next frame
 }
 
+// [G1-STATIC-EAGER-LIGHT v1] Probe helper: returns true when lightData_[recipeIndex]
+// has been written by a real bake (numLights_ > 0). Default-constructed slots and
+// the G1 ambient fallback both set numLights_=1, so this is specifically the check
+// "has the slot ever been written by mc2WriteStaticLightSlot (static prefix only)".
+// Used by MC2_GPU_CULL_STATIC_LIGHT_ZERO_PROBE to count never-baked alive props.
+// Checks the persistent static prefix [0..s_staticLightHighWater) only:
+// slot beyond S means registerRecipe ran but bakeStaticLightSlot was never called.
+bool mc2IsStaticLightSlotBaked(int32_t recipeIndex)
+{
+    if (recipeIndex < 0 || !mcTextureManager) return false;
+    const uint32_t ri = static_cast<uint32_t>(recipeIndex);
+    if (ri >= s_staticLightHighWater) return false;  // slot never written
+    TG_HWLightsData slot{};
+    if (!mcTextureManager->copyLightSlot(ri, slot)) return false;
+    return slot.numLights_ > 0;
+}
+
 // [LIGHTBAKE v2] Persistent static slot write. Replaces the retired
 // per-frame mc2SubmitBakedLightSlot (which re-ran addLightDataStructure
 // -> 1792B FNV + 1792B memcmp every frame per recipe). Called ONCE per
@@ -1394,6 +1415,14 @@ void mc2WriteStaticLightSlot(int32_t recipeIndex, const TG_HWLightsData& baked)
     if (recipeIndex < 0 || !mcTextureManager) return;
     mcTextureManager->bakeStaticLightSlot(recipeIndex, baked);
 }
+
+// [LIGHTSLOT v1] Task 0 cardinality-gate accessors (diagnostic only).
+// B = permanent baked static slots (high-water); H components = dedup +
+// actor-key cache hits; U-source = total live light-table count.
+uint32_t mc2LightSlotBakedHighWater()   { return s_staticLightHighWater; }
+uint64_t mc2LightSlotDedupHits()         { return s_lightSlotDedupHits; }
+uint64_t mc2LightSlotActorKeyHits()      { return s_lightSlotActorKeyHits; }
+uint32_t mc2LightSlotTableCount()        { return mcTextureManager ? mcTextureManager->getLightStructCount() : 0u; }
 
 uint32_t MC_TextureManager::addLightDataStructure(TG_HWLightsData* light_data)
 {
@@ -1409,6 +1438,7 @@ uint32_t MC_TextureManager::addLightDataStructure(TG_HWLightsData* light_data)
         // Verify with memcmp on hash match (collision safety).
         if (slot < lightDataStructuresCount &&
             0 == memcmp(lightData_ + slot, light_data, sizeof(TG_HWLightsData))) {
+            ++s_lightSlotDedupHits;   // [LIGHTSLOT v1] content dedup matched an existing slot
             return slot;
         }
         // Hash collision (vanishingly rare) — fall through to append.
@@ -1504,6 +1534,7 @@ uint32_t MC_TextureManager::addLightDataStructureWithPerActorColor(TG_HWLightsDa
         auto sit = s_lightSlotByActorKey.find(combined);
         if (sit != s_lightSlotByActorKey.end() &&
             sit->second.tmpl == key && sit->second.actorARGB == actorARGB) {
+            ++s_lightSlotActorKeyHits;  // [LIGHTSLOT v1] per-actor-color slot-cache hit
             return sit->second.slot;   // retired: no FNV, no memcmp
         }
         const uint32_t slot = addLightDataStructure(light_data);
@@ -2322,7 +2353,105 @@ void MC_TextureManager::renderLists (void)
 						s_dynPropInstsGeneration  = GpuStaticPropRegistry::getRegistryGeneration();
 						s_dynPropInstsIncludeBldg = includeBldg;
 					}
-				GpuStaticPropBatcher::instance().drawDynamicPropShadows(s_dynPropInsts);
+
+					// SHADOW-CASTER-LIGHTBOX-CULL-1 (gate MC2_SHADOW_CASTER_LIGHTBOX_CULL,
+					// DEFAULT OFF). The caster set above is the WHOLE registry (~14K props,
+					// visibility-independent). The dynamic shadow map is camera-fit (small,
+					// esp. under MC2_SHADOW_BOUNDED_NEAR_FIT), so thousands of off-map props
+					// draw shadows that never land in the map = wasted GPU fill. When ON,
+					// filter the casters to only those whose origin projects inside the
+					// dynamic shadow frustum (+margin), using the EXACT same matrix the
+					// shadow VS uses (getDynamicLightSpaceMatrix(), column-major, GL_FALSE).
+					//
+					// World-position frame: shaders/shadow_static_prop.vert computes
+					//   worldStuff = vec4(a_position,1) * modelMatrix   (row-vector * M)
+					//   worldMC2   = vec3(-worldStuff.x, worldStuff.z, worldStuff.y)
+					//   gl_Position = lightSpaceMatrix * vec4(worldMC2,1)
+					// For the local origin a_position=(0,0,0): worldStuff = (M[3],M[7],M[11])
+					// in the column-major float[16] (v*M picks element c*4+3), so
+					//   worldMC2 = (-M[3], M[11], M[7])
+					// This is EXACTLY the registry's actorWorldCenter extraction
+					// (gos_static_prop_registry.cpp:842-847) and the frame the light matrix
+					// consumes — verified against both the VS and the SHADOWZRANGE probe.
+					static const bool s_casterLightboxCull = (
+						getenv("MC2_SHADOW_CASTER_LIGHTBOX_CULL") != nullptr &&
+						getenv("MC2_SHADOW_CASTER_LIGHTBOX_CULL")[0] == '1');  // DEFAULT OFF
+					const std::vector<GpuStaticPropInstance>* dynShadowSet = &s_dynPropInsts;
+					if (s_casterLightboxCull) {
+						ZoneScopedN("Shadow.CasterCull");
+						static std::vector<GpuStaticPropInstance> s_culledDynPropInsts; // reused, no churn
+						s_culledDynPropInsts.clear();
+						s_culledDynPropInsts.reserve(s_dynPropInsts.size());
+						static const float s_cullMargin = []() {
+							const char* v = getenv("MC2_SHADOW_CASTER_CULL_MARGIN");
+							const float m = (v && v[0]) ? static_cast<float>(atof(v)) : 0.25f;
+							return (m >= 0.0f) ? m : 0.25f;
+						}();
+						static const bool s_cullDebug =
+							(getenv("MC2_SHADOW_CULL_DEBUG") != nullptr);
+						gosPostProcess* ppCull = getGosPostProcess();
+						const float* M = ppCull ? ppCull->getDynamicLightSpaceMatrix() : nullptr;
+						if (!M) {
+							// No matrix yet (early frames) -> keep everything (safe).
+							dynShadowSet = &s_dynPropInsts;
+						} else {
+							const float lim = 1.0f + s_cullMargin;
+							int dbgN = 0;
+							for (const GpuStaticPropInstance& inst : s_dynPropInsts) {
+								const float* mm = inst.modelMatrix;
+								// world (MC2 frame the light matrix consumes)
+								const float wx = -mm[3];
+								const float wy =  mm[11];
+								const float wz =  mm[7];
+								// clip = M * (wx,wy,wz,1), M column-major: (row r,col c)=M[c*4+r]
+								const float cx = M[0*4+0]*wx + M[1*4+0]*wy + M[2*4+0]*wz + M[3*4+0];
+								const float cy = M[0*4+1]*wx + M[1*4+1]*wy + M[2*4+1]*wz + M[3*4+1];
+								const float cw = M[0*4+3]*wx + M[1*4+3]*wy + M[2*4+3]*wz + M[3*4+3];
+								bool keep = true;
+								if (cw > 0.0f) {
+									const float ndcx = cx / cw;
+									const float ndcy = cy / cw;
+									keep = (ndcx >= -lim && ndcx <= lim &&
+									        ndcy >= -lim && ndcy <= lim);
+								} else {
+									// behind the light near plane: cannot land in the map.
+									keep = false;
+								}
+								if (s_cullDebug && dbgN < 8) {
+									++dbgN;
+									const float ndcx = (cw != 0.0f) ? cx / cw : 0.0f;
+									const float ndcy = (cw != 0.0f) ? cy / cw : 0.0f;
+									fprintf(stderr,
+										"[SHADOW_CULL_DBG] world=(%.1f,%.1f,%.1f) "
+										"clipW=%.3f ndc=(%.3f,%.3f) keep=%d\n",
+										wx, wy, wz, cw, ndcx, ndcy, keep ? 1 : 0);
+									fflush(stderr);
+								}
+								if (keep) s_culledDynPropInsts.push_back(inst);
+							}
+							dynShadowSet = &s_culledDynPropInsts;
+
+							static bool s_cullLogged = false;
+							if (!s_cullLogged) {
+								s_cullLogged = true;
+								const size_t total = s_dynPropInsts.size();
+								const size_t kept  = s_culledDynPropInsts.size();
+								const float pct = total ? (100.0f * (float)(total - kept) / (float)total) : 0.0f;
+								fprintf(stderr,
+									"[SHADOW_CULL] casters %zu -> %zu (%.0f%% culled, margin=%.2f)\n",
+									total, kept, pct, s_cullMargin);
+								fflush(stderr);
+							}
+						}
+					}
+				{
+				// LANE-D measure-first: give the dynamic prop shadow CASTER draw its
+				// own GPU timestamp so its cost is deconflated from GpuSP.BatcherFlush
+				// (which previously absorbed it as first-GPU-zone self-time).
+				ZoneScopedN("RenderLists.DynShadowDraw");
+				TracyGpuZone("GpuSP.DynShadowDraw");
+				GpuStaticPropBatcher::instance().drawDynamicPropShadows(*dynShadowSet);
+			}
 			} else {
 				GpuStaticPropBatcher::instance().flushShadow(s_skipBldgInDynamic);
 			}
@@ -2489,8 +2618,10 @@ void MC_TextureManager::renderLists (void)
 			// Step 4.6 (global-pool slice 1): compute per-cmd baseInstance prefix-sum
 			// and advance the coalesce ring slot BEFORE compute_dispatch() so the
 			// patch shader can read baseInstanceByCmd[] in the same dispatch.
-			// [SPFLUSH_COST_SPLIT v1] baseinstance_upload span.
+			// [SPFLUSH_COST_SPLIT v1] baseinstance_upload span (nifty) wrapped in
+			// the GpuSP.PrepBaseInstance Tracy zone (override branch).
 			{
+				ZoneScopedN("GpuSP.PrepBaseInstance");
 				const unsigned long long _t_bi0 = s_spflushTxmEnabled ? __rdtsc() : 0ULL;
 				batcher_prepareBaseInstanceTable();
 				if (s_spflushTxmEnabled) s_spflush_baseinstance_upload_cyc += __rdtsc() - _t_bi0;
@@ -2506,7 +2637,15 @@ void MC_TextureManager::renderLists (void)
 #if defined(MC2_SUBSTRATE_COUNT_PARITY)
 				gpu_cull::substrate_countParityCheck();
 #endif
+			// M1 FROZEN-STATIC-CULL-RECORDS: build + install the frozen static
+			// cull-record prefix now that baseInstanceForType is valid (set by
+			// batcher_prepareBaseInstanceTable above) and before compute_dispatch
+			// consumes the records. No-op on clean frames / unless the gate is set.
+			GpuStaticPropRegistry::buildStaticPrefixGolden();
+
 			if (gpu_cull::compute_isEnabled()) {
+				ZoneScopedN("GpuSP.CullDispatch");
+				TracyGpuZone("GpuSP.CullDispatch");
 				gpu_cull::compute_dispatch();
 			}
 
@@ -2554,7 +2693,11 @@ void MC_TextureManager::renderLists (void)
 				}
 			}
 
-			GpuStaticPropBatcher::instance().flush(getLastRenderSnapshot());
+			{
+				ZoneScopedN("GpuSP.BatcherFlush");
+				TracyGpuZone("GpuSP.BatcherFlush");
+				GpuStaticPropBatcher::instance().flush(getLastRenderSnapshot());
+			}
 		}
 
 		// GPU mech batcher Slice A flush — runs after static-prop flush,

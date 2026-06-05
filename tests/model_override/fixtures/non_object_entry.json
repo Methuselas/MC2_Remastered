@@ -1,0 +1,1 @@
+{ "overrides": [ 42, "junk", { "type":"model","class":"tree","replaces":"tree:ok","source":"ok.gltf","renderOnly":true,"fallback":"stock" } ] }

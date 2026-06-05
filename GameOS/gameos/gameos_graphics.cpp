@@ -2421,6 +2421,7 @@ void gosRenderer::renderWaterFastPath(
     float maxMinUV)
 {
     ZoneScopedN("renderWaterFastPath");
+    TracyGpuZone("renderWaterFastPath");
     if (!water_fast_prog_ || !water_fast_prog_->shp_ || recordCount == 0) return;
     GLuint prog = water_fast_prog_->shp_;
 
@@ -3188,6 +3189,7 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
                                      unsigned int indirectCmdBuffer)
 {
     ZoneScopedN("Terrain::IndirectDraw");
+    TracyGpuZone("Terrain::IndirectDraw");
     if (!g_gos_renderer) return false;
     // Honour the ImGui "Terrain Draw" toggle on the GPU-driven path too.
     if (!g_gos_renderer->getTerrainDrawEnabled()) return false;

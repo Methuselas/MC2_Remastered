@@ -1,0 +1,1 @@
+{ "overrides": [ { "type":"model","class":"staticProp","replaces":"staticProp:x","source":"a.glb","renderOnly":true,"fallback":"impostor" } ] }

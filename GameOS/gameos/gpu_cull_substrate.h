@@ -69,6 +69,14 @@ GLsizeiptr substrate_getSlotBytes();
 // buffer are always immediately coherent regardless of fence state.
 void substrate_appendStaticPropRecord(const GpuActorRecord& rec);
 
+// M1 FROZEN-STATIC-CULL-RECORDS: install the frozen static-prop cull-record
+// prefix [0,S) (pool-ordered, so record-index == instance-pool slot). Call on a
+// registry-generation dirty event. Copies into a CPU golden copy and marks all
+// ring slots dirty; each slot is refilled from the golden copy lazily at its
+// next substrate_frameBegin(), placing the static prefix before the per-frame
+// dynamic records. Consumed only when MC2_GPU_CULL_STATIC_FROZEN_RECORDS is set.
+void substrate_rebuildStaticPrefix(const GpuActorRecord* recs, uint32_t count);
+
 // Returns the current record count for the active slot (after any appends).
 // Used by compute_dispatch() to get the post-append count before dispatching.
 uint32_t substrate_getCurrentRecordCount();

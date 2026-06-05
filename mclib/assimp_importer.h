@@ -32,6 +32,9 @@ class TG_TypeMultiShape;
 // (0xffffffff) and resolved later by the engine's MC_TextureManager — the
 // importer must NOT cache live gosTextureHandle values (memory:
 // mc2_texture_handle_is_live.md).
-long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out);
+// autoGround: when true (default), apply MC2_GLTF_GROUND base-snapping (for trees /
+// pivot-centered authored meshes). Pass false for stock-derived staticprop overrides
+// (cooked from .tgl) — they already carry the stock pivot; grounding would shift them.
+long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out, bool autoGround = true);
 
 #endif // ENABLE_ASSIMP_IMPORTER

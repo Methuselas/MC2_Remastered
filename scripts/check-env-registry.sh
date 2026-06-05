@@ -104,6 +104,9 @@ ALLOWLIST=(
     MC2_GL_DEBUG_FATAL          # infra -- abort on GL_DEBUG_SEVERITY_HIGH
     MC2_GL_ERROR_DRAIN_SILENT   # infra
     MC2_GPUPROPS_TRACE          # trace
+    MC2_GLTF_AXIS               # override -- glTF import axis mapping select (orientation dial)
+    MC2_GLTF_GROUND             # override -- glTF import auto-ground end select (1=base,2=opp,0=off)
+    MC2_GLTF_YOFF               # override -- glTF import up-offset (un-bury)
     MC2_GPU_CULL                # feature -- promote-to-registry
     MC2_GPU_CULL_AABB_PARITY    # parity
     MC2_GPU_CULL_COMPUTE_TRACE  # trace
@@ -130,11 +133,14 @@ ALLOWLIST=(
     MC2_HEARTBEAT               # infra
     MC2_HOTKEY_TRACE            # trace
     MC2_INVIEW_CONFLATION_TRACE # trace
+    MC2_IMPOSTOR_DIST           # override -- tree impostor far-LOD distance (world units)
+    MC2_LEGACY_INSTANCE_POOLS   # override -- dev testing (revert pool-skip)
     MC2_LIGHT_COST_SPLIT        # feature -- promote-to-registry
     MC2_LIGHT_DEDUP_TRACE       # trace
     MC2_LIGHTBAKE               # feature -- promote-to-registry
     MC2_LIGHTBRIDGE             # feature -- promote-to-registry
     MC2_LIGHTSSBO_TRACE         # trace
+    MC2_LIGHTSLOT_TRACE         # trace -- TREE-OVERRIDE-LOD light-slot cardinality gate
     MC2_LIGHTING_SHADOW_PREDICATE_MODE  # feature -- promote-to-registry
     MC2_LODBUG_TRACE            # trace
     MC2_MECH_AMBIENT_V1         # feature -- promote-to-registry
@@ -167,6 +173,7 @@ ALLOWLIST=(
     MC2_MODERN_TEX_RESOLVE      # feature -- promote-to-registry
     MC2_MODERN_TEX_RESOLVE_TRACE  # trace
     MC2_MODERN_TEX_RESOLVE_VALIDATE  # parity
+    MC2_MODOVERRIDE_TRACE       # trace -- model-override seam diagnostics
     MC2_OBJECT_ADMISSION_PREDICATE  # feature -- promote-to-registry
     MC2_OBJECT_ADMISSION_SELFTEST  # infra -- self-test
     MC2_OBJECT_ID_BUFFER_SELFTEST  # infra -- self-test
@@ -183,6 +190,7 @@ ALLOWLIST=(
     MC2_PATCHSTREAM_THIN_RECORD_FASTPATH  # feature -- promote-to-registry
     MC2_PATCHSTREAM_THIN_RECORDS  # trace
     MC2_PATCHSTREAM_THIN_RECORDS_DRAW  # trace
+    MC2_PRESWAP_FINISH          # trace -- env-gated glFinish before SwapWindow (present-stall attribution)
     MC2_PROJECTZ_BYPASS_MODE    # feature -- promote-to-registry
     MC2_PROJECTZ_GUARD_PX       # override
     MC2_PROJECTZ_HEATMAP        # trace
@@ -209,7 +217,12 @@ ALLOWLIST=(
     MC2_SELECTION_PICKING_PREDICATE_MODE  # feature -- promote-to-registry
     MC2_SHADER_HOT_RELOAD       # infra
     MC2_SHAPE_C_PARITY_CHECK    # parity
+    MC2_SHADOW_CASTER_CULL_MARGIN  # feature -- NDC margin for shadow caster light-box cull (default 0.25)
+    MC2_SHADOW_CASTER_LIGHTBOX_CULL  # feature -- promote-to-registry; cull dynamic prop shadow casters to the shadow frustum (default OFF)
+    MC2_SHADOW_CULL_DEBUG       # trace -- dump caster world pos + NDC for the light-box cull
     MC2_SHADOW_DIAG             # trace
+    MC2_SHADOW_FOCUS_CENTER     # feature -- promote-to-registry; SHADOW-FOCUS-CENTER-1 center shadow box on camera near-ground focus point (default OFF)
+    MC2_SHADOW_FOCUS_DIST       # override -- focus-point distance in front of camera (WU, default 1500, clamp [256,8000])
     MC2_SLIM_COST_SPLIT         # feature -- promote-to-registry
     MC2_SMOKE_MODE              # infra -- smoke harness
     MC2_SMOKE_PERF_SAMPLES      # infra -- smoke harness
@@ -218,11 +231,14 @@ ALLOWLIST=(
     MC2_SPOT_DIAG               # trace
     MC2_STATIC_FORCE_ADMIT      # override
     MC2_STATIC_PROP_BAKE_SELFTEST  # infra -- self-test
+    MC2_STATIC_PROP_DEPTH_PREPASS  # feature -- promote-to-registry; FOLIAGE-STATICPROP-DEPTH-PREPASS-1 camera depth-prepass (GL_EQUAL early-Z foliage overdraw cut, default OFF)
     MC2_STATIC_PROP_GLOBAL_CAP  # override
     MC2_STATIC_PROP_GLOBAL_POOL_LEGACY  # legacy
     MC2_STATIC_PROP_PICK        # feature -- promote-to-registry
     MC2_STATIC_PROP_PICK_DEBUG  # trace
     MC2_STATIC_PROP_TRACE       # trace
+    MC2_STATICPROP_MATERIAL_PBR_SLOTS  # feature -- promote-to-registry
+    MC2_STATICPROP_ORM_TRACE    # trace -- static-prop ORM material diagnostics
     MC2_STRINGS_TRACE           # trace
     MC2_SUBMIT_TYPEHIST         # trace
     MC2_SUBSTRATE_COALESCE_LEGACY  # legacy

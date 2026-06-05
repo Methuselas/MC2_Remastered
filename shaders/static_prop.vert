@@ -190,6 +190,16 @@ flat out uint v_drawID;          // plan v3.8 Step 8.2: forwarded to FS as
                                  // else 0u (fragment shader's MC2_COALESCE
                                  // branch indexes perDraw_.entries[] by it).
 
+// FOLIAGE-STATICPROP-DEPTH-PREPASS-1: guarantee gl_Position is computed
+// bit-identically across the two program objects that link this same VS — the
+// color program (static_prop.frag) and the depth-prepass program
+// (static_prop_depth.frag). Without this, a cross-program compiler reordering
+// of the position math could yield a 1-ULP depth difference and the color
+// pass's GL_EQUAL test would reject every fragment (props vanish). Global
+// redeclaration of the built-in is legal in GLSL and applies to the implicit
+// gl_Position output.
+invariant gl_Position;
+
 #if defined(MC2_USE_VIEW_UNIFORMS)
 // V-MATERIAL-PBR-3: varyings for per-fragment PBR specular.
 //   v_worldPos       — world-space fragment position (Stuff-space here, same

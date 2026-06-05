@@ -106,6 +106,11 @@ constexpr uint32_t STATIC_PROP_FLAG_ALPHA_TEST = 1u << 0;
 // becomes false-equivalent and the legacy path is byte-for-byte unchanged.
 bool eligibleForGpuObjects(class TG_Shape* shape);
 
+// GPU-INSTANCE-SKIP-POOLS-1: true iff MC2_LEGACY_INSTANCE_POOLS is set (escape
+// hatch forcing the legacy per-instance frame-pool path). Default false → the
+// GPU-only zero-pool path. Read once at process start.
+bool gos_StaticPropLegacyInstancePools();
+
 // Population tag — passed by caller so the batcher can split per-population
 // counts in the [OBJBATCHER v1] summary. Not stored; consumed inside submit
 // only.
@@ -134,6 +139,14 @@ struct GpuStaticPropType {
     uint32_t coalesceByteOffsetWithinGroup;  // §5.1b group-relative byte offset
     uint32_t lastSeenGosHandle;              // §5.4 eviction-detect snapshot
     uint8_t  alphaClass;                     // §CRITICAL-C 0=alpha-OFF, 1=alpha-ON
+    // MODEL-OVERRIDE-GPU-BATCHER-SEAM: set true for types registered from a
+    // modder glTF render-override multishape. Override geometry imports with
+    // unresolved "NULLTXM" texture handles (nodeIdx=0xFFFFFFFF), so its packets
+    // would get layerForPacket=-1 and be culled from the coalesce multidraw
+    // (the bdactor.cpp damage-shape skip rule). When this flag is set the
+    // batcher routes such packets to a valid default texture layer so the
+    // override RASTERIZES (flat/wrong-texture box) instead of vanishing.
+    bool     isOverride;
 };
 
 // Forward declaration needed for flush() signature (v2.3).
@@ -168,7 +181,10 @@ public:
 
     // Convenience wrapper: iterate a multishape's listOfTypeShapes and call
     // registerType on each SHAPE_NODE leaf. Safe to call with NULL (no-op).
-    void registerMultiShape(TG_TypeMultiShape* multiShape);
+    // isOverride: tag every leaf type registered here as a modder glTF
+    // render-override (see GpuStaticPropType::isOverride). Default false keeps
+    // the stock call sites byte-identical.
+    void registerMultiShape(TG_TypeMultiShape* multiShape, bool isOverride = false);
 
     // Called at end of registration to upload the immutable VBO/IBO.
     void finalizeGeometry();
@@ -410,6 +426,31 @@ bool batcher_getPacketMaterialFlags(uint32_t globalPacketIdx,
 
 // Per-type instance capacity (§5.1 formula). 0 if typeID out of range.
 uint32_t batcher_getInstanceCap(uint32_t typeID);
+
+// Per-type LIVE instance count from the last upload (= the frozen draw-pool
+// span the indirect draw renders from for this type). Captured at
+// uploadAllBucketsIfNeeded; for frozen static props this equals the current
+// frame's pool span (1-frame lag only across a dirty rebuild). Used by the
+// GPU-cull cut-off upper-bound oracle. 0 if typeID has no uploaded range.
+uint32_t batcher_getTypeUploadedInstanceCount(uint32_t typeID);
+
+// M1 FROZEN-STATIC-CULL-RECORDS: per-type global instance-pool base (alpha-group
+// prefix-sum), the binding-0 slot where typeID's instances start. Valid after
+// batcher_prepareBaseInstanceTable() in global-pool armed mode (see
+// batcher_isBaseInstanceTableReady). global_slot(typeID, rank) = base + rank.
+uint32_t batcher_getBaseInstanceForType(uint32_t typeID);
+
+// M2a POPULATION-SPLIT (gate MC2_STATIC_POP_SPLIT). Static-only per-type base
+// (prefix-sum over persistent-static counts; excludes dynamics) and the handle
+// of the StaticPopulation instance SSBO (front-packed, frozen, dirty-filled).
+uint32_t batcher_getStaticBaseInstanceForType(uint32_t typeID);
+GLuint   batcher_getStaticInstanceSsbo();
+GLuint   batcher_getStaticIndirectCmdBuf();   // Task 3: CPU-written static cmds
+
+// True when the per-type base table is valid this frame (global-pool armed and
+// prepareBaseInstanceTable has run). The golden static cull-record build gates
+// on this so it only scatters when the binding-0 slot layout is well-defined.
+bool batcher_isBaseInstanceTableReady();
 
 // GL handles for the coalesce-path SSBOs and texture arrays. 0 before
 // finalize, or if coalesce is disabled/disarmed.

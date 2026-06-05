@@ -93,6 +93,26 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* ssboBindingsMask    */ 0u,              // mech binds its own SSBOs
     },
 
+    // [4] StaticPropDepth — camera depth-prepass. Depth-only: GEQUAL + write so
+    // it lays the nearest reverse-Z depth; alpha discard in static_prop_depth.frag.
+    // Color writes are masked off by the caller (glColorMask), NOT by attachment
+    // changes — same FBO stays bound. Shares the static-prop SSBOs (instance /
+    // per-type / per-draw) because it reuses static_prop.vert.
+    {
+        /* glProgramName       */ 0u,              // filled by bindProgram()
+        /* blend               */ BlendMode::AlphaTest, // discard path; GL_BLEND off
+        /* depthTestEnable     */ true,
+        /* depthWriteEnable    */ true,
+        /* depthFunc           */ DepthFunc::GreaterEqual, // reverse-Z, lay nearest
+        /* cullMode            */ CullMode::Back,
+        // IMPORTANT-2: depth-only — no color attachments written. The caller masks
+        // color via glColorMask (not attachment reconfig; same FBO stays bound), so
+        // this row advertises the true write set: nothing color, depth only.
+        /* colorAttachments    */ { false, false, false },
+        /* objectIdWriteEnabled*/ false,
+        /* ssboBindingsMask    */ kStaticPropSsbos,
+    },
+
 }};
 
 static_assert(

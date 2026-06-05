@@ -45,24 +45,37 @@ namespace {
 //-----------------------------------------------------------------------------
 // Coordinate transforms (spec §6).
 //
-// ASE / 3DS Max convention is X-right, Y-forward, Z-up.
-// MC2 expects mc2.x = -src.x, mc2.y = src.z, mc2.z = src.y.
-// Same flip applies to positions and normals.
-//
-// Assimp's built-in axis flags are unreliable across format variants — we
-// apply this explicitly per-vertex/normal.
+// glTF is Y-up, right-handed (X-right, Y-up, Z-toward-viewer). The engine's
+// world-up in Stuff space is stuff.Y (stock ASE trees load their up axis into
+// position.y; the static_prop shader maps stuff.z->GL.up via MC2). The previous
+// mapping (mc2.y=src.z, mc2.z=src.y) was written for an ASE/Max Z-up source and
+// put the glTF up-axis (Y) into stuff.z -> every imported override mesh rendered
+// LYING ON ITS SIDE. Correct mapping for Y-up glTF: up (Y) -> stuff.y. We negate
+// X AND Z (two axis flips) so triangle winding / handedness is preserved (a
+// single flip would invert winding and backface-cull the mesh).
+// MC2_GLTF_AXIS (0..3) selects the axis mapping at runtime so orientation can be
+// dialed in-game without rebuilds; MC2_GLTF_YOFF nudges the up component (stuff.y)
+// to lift a buried mesh (pivot-not-at-base). All four mappings are even-parity
+// (winding preserved). Bake the winning combo as the default once confirmed.
+static inline int s_gltfAxis() { static int a=[]{const char*e=getenv("MC2_GLTF_AXIS"); return e?atoi(e):0;}(); return a; }
+static inline float s_gltfYoff() { static float o=[]{const char*e=getenv("MC2_GLTF_YOFF"); return e?(float)atof(e):0.0f;}(); return o; }
+static inline void axisMap(const aiVector3D& v, float& X, float& Y, float& Z) {
+	switch (s_gltfAxis()) {
+	default:
+	case 0: X=-v.x; Y=-v.y; Z= v.z; break;  // -x,-y,z
+	case 1: X=-v.x; Y= v.z; Z= v.y; break;  // -x,z,y (original 'on-side')
+	case 2: X=-v.x; Y= v.y; Z=-v.z; break;  // -x,y,-z ('upside down')
+	case 3: X=-v.x; Y=-v.z; Z=-v.y; break;  // -x,-z,-y
+	}
+}
 inline Stuff::Point3D toMC2Pos(const aiVector3D& v) {
-	Stuff::Point3D p;
-	p.x = -v.x;
-	p.y =  v.z;
-	p.z =  v.y;
+	Stuff::Point3D p; float X,Y,Z; axisMap(v,X,Y,Z);
+	p.x = X; p.y = Y + s_gltfYoff(); p.z = Z;
 	return p;
 }
 inline Stuff::Vector3D toMC2Vec(const aiVector3D& v) {
-	Stuff::Vector3D n;
-	n.x = -v.x;
-	n.y =  v.z;
-	n.z =  v.y;
+	Stuff::Vector3D n; float X,Y,Z; axisMap(v,X,Y,Z);
+	n.x = X; n.y = Y; n.z = Z;   // normals: no translation
 	return n;
 }
 // UV V-flip (spec §6).
@@ -142,6 +155,111 @@ const char* StripPath(const char* p) {
 }
 
 //-----------------------------------------------------------------------------
+// MODEL-OVERRIDE texture binding: derive an MC2 texture NAME from a glTF/FBX
+// material's base-color image so MC_TextureManager can resolve it by name to a
+// loose data/tgl/<size>/<name>.tga (file.cpp strips the size subdir) or BC7
+// .ktx2 sidecar. MC2 stores the diffuse texture name WITH its ".tga" extension
+// (see msl.cpp ParseASEFile + the shadow-X strlen-4 logic). So:
+//   1. resolve the material's base-color/diffuse image to a filename,
+//   2. strip any directory, strip the source extension (.png/.jpg/...),
+//   3. sanitize to MC2-safe chars and lowercase,
+//   4. append ".tga", clamped to the TG_Texture::textureName[256] field.
+// Returns false when the material has NO base-color image (caller keeps the
+// "NULLTXM" sentinel — truly-untextured material).
+//
+// Embedded GLB images: Assimp reports the texture path as "*<index>" into
+// scene->mTextures[]. We resolve that to the embedded image's mFilename so the
+// derived name matches the authored image stem, not an opaque index.
+bool DeriveMC2TextureName(const aiScene* scene, const aiMaterial* mat,
+                          std::string& outName) {
+	aiString path;
+	bool have = false;
+	// glTF baseColor lands on BASE_COLOR in newer Assimp, DIFFUSE in the
+	// compatibility mapping. Try both.
+	if (mat->GetTexture(aiTextureType_BASE_COLOR, 0, &path) == AI_SUCCESS && path.length > 0)
+		have = true;
+	else if (mat->GetTexture(aiTextureType_DIFFUSE, 0, &path) == AI_SUCCESS && path.length > 0)
+		have = true;
+	if (!have)
+		return false;
+
+	const char* raw = path.C_Str();
+
+	// Resolve embedded "*N" to the source image filename when available.
+	std::string resolved;
+	if (raw[0] == '*' && scene != NULL) {
+		const unsigned idx = (unsigned)atoi(raw + 1);
+		if (idx < scene->mNumTextures && scene->mTextures[idx] != NULL
+		    && scene->mTextures[idx]->mFilename.length > 0) {
+			resolved = scene->mTextures[idx]->mFilename.C_Str();
+		}
+	}
+	const char* src = resolved.empty() ? raw : resolved.c_str();
+
+	// Strip directory, then strip extension.
+	std::string stem = StripPath(src);
+	const size_t dot = stem.find_last_of('.');
+	if (dot != std::string::npos)
+		stem.erase(dot);
+
+	// Sanitize: lowercase, keep [a-z0-9_-], map everything else to '_'.
+	for (size_t i = 0; i < stem.size(); ++i) {
+		char c = stem[i];
+		if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+		const bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+		              || c == '_' || c == '-';
+		stem[i] = ok ? c : '_';
+	}
+	if (stem.empty())
+		return false;
+
+	// Clamp stem so stem + ".tga" + NUL fits TG_Texture::textureName[256].
+	const size_t kMaxName = 256;
+	const size_t kExt = 4; // ".tga"
+	if (stem.size() + kExt + 1 > kMaxName)
+		stem.erase(kMaxName - kExt - 1);
+
+	stem += ".tga";
+
+	// Alpha-cutout detection. MC2's texture loader uses an "a_" name prefix as
+	// the alpha-channel convention (bdactor.cpp LoadOverrideRenderShapeTextures:
+	// names starting "a_" → gos_Texture_Alpha + SetTextureAlpha(true) → the
+	// static-prop batcher flags STATIC_PROP_FLAG_ALPHA_TEST for the packet).
+	// A glTF leaf-card material is alphaMode MASK/BLEND; prefix "a_" so the
+	// deployed RGBA TGA is loaded with its alpha channel and cuts out. Detect
+	// via the glTF alphaMode key, falling back to a foliage name heuristic.
+	bool wantAlpha = false;
+	aiString alphaMode;
+	// glTF alphaMode is exposed as the importer string key "$mat.gltf.alphaMode".
+	if (mat->Get("$mat.gltf.alphaMode", 0, 0, alphaMode) == AI_SUCCESS) {
+		const char* am = alphaMode.C_Str();
+		if (am && (strcmp(am, "MASK") == 0 || strcmp(am, "BLEND") == 0))
+			wantAlpha = true;
+	}
+	if (!wantAlpha) {
+		aiString matName;
+		if (mat->Get(AI_MATKEY_NAME, matName) == AI_SUCCESS) {
+			std::string mn = matName.C_Str();
+			for (size_t i = 0; i < mn.size(); ++i)
+				if (mn[i] >= 'A' && mn[i] <= 'Z') mn[i] = (char)(mn[i] - 'A' + 'a');
+			if (mn.find("leaf") != std::string::npos ||
+			    mn.find("leaves") != std::string::npos ||
+			    mn.find("foliage") != std::string::npos)
+				wantAlpha = true;
+		}
+	}
+	if (wantAlpha && stem.compare(0, 2, "a_") != 0) {
+		// keep within textureName[256] after the 2-char prefix
+		if (stem.size() + 2 + 1 > 256)
+			stem.erase(256 - 2 - 1);
+		stem.insert(0, "a_");
+	}
+
+	outName.swap(stem);
+	return true;
+}
+
+//-----------------------------------------------------------------------------
 // Build the multi-shape's TG_Texture[] from scene materials. One slot per
 // Assimp material (one-to-one mapping); per-material diffuse texture name is
 // extracted via aiTextureType_DIFFUSE channel 0. Materials with no diffuse
@@ -161,13 +279,15 @@ void BuildTextureList(const aiScene* scene, TG_TypeMultiShape* out) {
 	std::vector<const char*> nameCStrs(count);
 
 	for (DWORD i = 0; i < count; i++) {
-		aiString path;
 		const aiMaterial* mat = scene->mMaterials[i];
-		if (mat->GetTexture(aiTextureType_DIFFUSE, 0, &path) == AI_SUCCESS && path.length > 0) {
-			names[i] = StripPath(path.C_Str());
-		}
-		if (names[i].empty())
+		std::string derived;
+		if (DeriveMC2TextureName(scene, mat, derived)) {
+			names[i] = derived;
+			ASSIMP_TRACE("  material %lu base-color tex -> '%s'", (unsigned long)i, names[i].c_str());
+		} else {
 			names[i] = "NULLTXM";
+			ASSIMP_TRACE("  material %lu has no base-color image -> NULLTXM", (unsigned long)i);
+		}
 		nameCStrs[i] = names[i].c_str();
 	}
 
@@ -183,7 +303,7 @@ void BuildTextureList(const aiScene* scene, TG_TypeMultiShape* out) {
 //
 // Returns 0 on success, -1 on failure.
 long ImportShapeFromMesh(const aiScene* scene, unsigned meshIdx,
-                         TG_TypeShape* outShape) {
+                         TG_TypeShape* outShape, TG_TypeMultiShape* outMulti) {
 	const aiMesh* mesh = scene->mMeshes[meshIdx];
 	if (mesh->mNumVertices == 0 || mesh->mNumFaces == 0) {
 		// Empty mesh — leave shape inited but do not populate. Engine treats
@@ -238,6 +358,26 @@ long ImportShapeFromMesh(const aiScene* scene, unsigned meshIdx,
 		verts[v].position  = toMC2Pos(mesh->mVertices[v]);
 		verts[v].normal    = toMC2Vec(mesh->mNormals[v]);
 		verts[v].aRGBLight = 0xff000000;
+
+		// MODEL-OVERRIDE / Track C: vertex-tight bounding box, mesh-local.
+		// Accumulate over the SAME positions stored into the vertex buffer (no
+		// nodeCenter applied): import sets a zero node pivot, so the renderer
+		// draws these verts mesh-local. Baking center in would offset the box
+		// from the rendered geometry for any non-zero node translation; the ASE
+		// ref (msl.cpp ~300-323) keeps render-space and box-space in agreement.
+		// Empty-mesh sentinel + extentRadius floor handled in ComputeBoundingBox.
+		if (outMulti) {
+			// Mesh-local box: matches the zero node-center render (no center pivot applied).
+			const float wx = verts[v].position.x;
+			const float wy = verts[v].position.y;
+			const float wz = verts[v].position.z;
+			if (wx < outMulti->minBox.x) outMulti->minBox.x = wx;
+			if (wy < outMulti->minBox.y) outMulti->minBox.y = wy;
+			if (wz < outMulti->minBox.z) outMulti->minBox.z = wz;
+			if (wx > outMulti->maxBox.x) outMulti->maxBox.x = wx;
+			if (wy > outMulti->maxBox.y) outMulti->maxBox.y = wy;
+			if (wz > outMulti->maxBox.z) outMulti->maxBox.z = wz;
+		}
 	}
 
 	// UV channel 0 is the standard diffuse channel. Mechs with UV1+ are out
@@ -299,37 +439,23 @@ long ImportShapeFromMesh(const aiScene* scene, unsigned meshIdx,
 }
 
 //-----------------------------------------------------------------------------
-// Compute multi-shape bounding box (min/max corner + extentRadius). Mirrors
-// what the ASE path does in ComputeBoundingBox / LoadBinaryCopy. Walks every
-// vertex of every shape, transforming by per-shape nodeCenter so the box is
-// in multi-shape-local space. Sets `out->maxBox`, `minBox`, `extentRadius`.
-void ComputeBoundingBox(TG_TypeMultiShape* out) {
+// Multi-shape bounding box (min/max corner + extentRadius). Mirrors what the
+// ASE path does in LoadBinaryCopy: vertex-tight over every transformed vertex
+// (accumulated in ImportShapeFromMesh in multi-shape-local space), then
+// finalized here for extentRadius. Sets `out->maxBox`, `minBox`, `extentRadius`.
+//
+// Reset the multi-shape box to "empty" extremes before the per-mesh vertex
+// accumulation in ImportShapeFromMesh. Call once before the mesh loop.
+void ResetBoundingBox(TG_TypeMultiShape* out) {
 	out->maxBox.x = out->maxBox.y = out->maxBox.z = -1.0e9f;
 	out->minBox.x = out->minBox.y = out->minBox.z =  1.0e9f;
+}
 
-	for (long i = 0; i < out->GetNumShapes(); i++) {
-		TG_TypeNodePtr n = out->GetTypeNode(i);
-		if (!n || n->GetNodeType() != SHAPE_NODE)
-			continue;
-		TG_TypeShape* ts = static_cast<TG_TypeShape*>(n);
-		const Stuff::Point3D centerLocal = ts->GetNodeCenter();
-		const DWORD nv = ts->GetNumTypeVertices();
-		// We need to read listOfTypeVertices, but it's protected. Use the
-		// existing GetTypeVertex accessor… actually there isn't one. Ship a
-		// loose bounding box for MVP using just nodeCenter as a sentinel —
-		// better approximation than zero, and the renderer doesn't gate on
-		// this for visibility (the per-instance pass recomputes per-frame
-		// world-space bounds via MultiTransformShape).
-		(void)nv;
-		if (centerLocal.x < out->minBox.x) out->minBox.x = centerLocal.x;
-		if (centerLocal.y < out->minBox.y) out->minBox.y = centerLocal.y;
-		if (centerLocal.z < out->minBox.z) out->minBox.z = centerLocal.z;
-		if (centerLocal.x > out->maxBox.x) out->maxBox.x = centerLocal.x;
-		if (centerLocal.y > out->maxBox.y) out->maxBox.y = centerLocal.y;
-		if (centerLocal.z > out->maxBox.z) out->maxBox.z = centerLocal.z;
-	}
-
-	// Sentinel if no shapes contributed.
+// Finalize the multi-shape box after every mesh has expanded min/max over its
+// vertices (vertex-tight, see ImportShapeFromMesh). Handles the empty-mesh
+// sentinel and computes the bounding-sphere radius.
+void ComputeBoundingBox(TG_TypeMultiShape* out) {
+	// Sentinel if no vertices contributed (no mesh expanded the box).
 	if (out->maxBox.x < out->minBox.x) {
 		out->maxBox.x = out->maxBox.y = out->maxBox.z = 0.0f;
 		out->minBox.x = out->minBox.y = out->minBox.z = 0.0f;
@@ -346,7 +472,7 @@ void ComputeBoundingBox(TG_TypeMultiShape* out) {
 
 //=============================================================================
 // Public entry point.
-long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out) {
+long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out, bool autoGround) {
 	if (!path || !out) return -1;
 
 	ASSIMP_TRACE("ImportGeometryFromFile path='%s'", path);
@@ -388,6 +514,10 @@ long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out) {
 	BuildTextureList(scene, out);
 	ASSIMP_TRACE("  BuildTextureList done");
 
+	// Vertex-tight box: reset to empty extremes, then each ImportShapeFromMesh
+	// expands min/max over its vertices; ComputeBoundingBox finalizes below.
+	ResetBoundingBox(out);
+
 	// Populate each shape from its mesh.
 	for (unsigned i = 0; i < scene->mNumMeshes; i++) {
 		ASSIMP_TRACE("  ImportShapeFromMesh i=%u verts=%u faces=%u matIdx=%u",
@@ -396,7 +526,7 @@ long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out) {
 		TG_TypeNodePtr slot = out->GetTypeNode((long)i);
 		if (!slot || slot->GetNodeType() != SHAPE_NODE)
 			continue;
-		long r = ImportShapeFromMesh(scene, i, static_cast<TG_TypeShape*>(slot));
+		long r = ImportShapeFromMesh(scene, i, static_cast<TG_TypeShape*>(slot), out);
 		if (r != 0) {
 			ASSIMP_TRACE("  ImportShapeFromMesh i=%u returned %ld", i, r);
 			return r;
@@ -405,6 +535,24 @@ long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out) {
 
 	ASSIMP_TRACE("  ComputeBoundingBox...");
 	ComputeBoundingBox(out);
+
+	// AUTO-GROUND: imported override meshes are often centered on their pivot, so
+	// the placement (pivot at terrain elevation) puts terrain through the MIDPOINT.
+	// GL-up = -stuff.y (canopy at the most-negative y), so the BASE is at the
+	// largest stuff.y; translate that to 0 so the base sits on the ground.
+	// MC2_GLTF_GROUND=2 grounds the opposite end; =0 disables.
+	{
+		static const int s_ground = [](){ const char* e=getenv("MC2_GLTF_GROUND"); return e?atoi(e):2; }();
+		if (s_ground && autoGround) {
+			const float dy = (s_ground==2) ? -out->minBox.y : -out->maxBox.y;
+			for (unsigned si=0; si<scene->mNumMeshes; ++si) {
+				TG_TypeNodePtr nd = out->GetTypeNode((long)si);
+				if (nd && nd->GetNodeType()==SHAPE_NODE)
+					static_cast<TG_TypeShape*>(nd)->TranslateTypeVerticesY(dy);
+			}
+			out->minBox.y += dy; out->maxBox.y += dy;
+		}
+	}
 
 	ASSIMP_TRACE("  SUCCESS");
 	SPEW(("ASSIMP", "%s: %u meshes, %u materials imported",

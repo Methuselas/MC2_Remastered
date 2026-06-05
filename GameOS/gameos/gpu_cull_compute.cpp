@@ -16,6 +16,7 @@
 #include "gpu_cull_substrate.h"
 #include "gpu_cull_record.h"
 #include "gpu_cull_readback.h"
+#include "gos_profiler.h"   // ZoneScopedN / TracyGpuZone (cull-dispatch split)
 #include "gos_static_prop_killswitch.h"   // gos_GetTerrainMVPMat4()
 #include "gos_static_prop_batcher.h"      // batcher_getTypeCount(), batcher_getTypeDrawInfo()
 
@@ -32,6 +33,10 @@
 // Trace macro (env-gated, default off)
 // ---------------------------------------------------------------------------
 static const bool s_computeTrace = (getenv("MC2_GPU_CULL_COMPUTE_TRACE") != nullptr);
+
+// Ownership-parity oracle (Slice A, measurement-only, default off).
+// Set MC2_GPU_CULL_OWNERSHIP_PARITY=1 to enable.
+static const bool s_ownershipParity = (getenv("MC2_GPU_CULL_OWNERSHIP_PARITY") != nullptr);
 #define COMPUTE_TRACE(fmt, ...) \
     do { if (s_computeTrace) { printf("[GPU_CULL v1] " fmt "\n", ##__VA_ARGS__); fflush(stdout); } } while (0)
 
@@ -824,6 +829,7 @@ void compute_dispatch() {
     // C2 frame begin: non-blocking tryConsume of last frame's readback.
     // Must be called BEFORE the compute shader is dispatched.
     if (readback_isEnabled()) {
+        TracyGpuZone("Cull.Readback");
         readback_tryConsume();
     }
 
@@ -861,12 +867,14 @@ void compute_dispatch() {
     const GLsizeiptr copyBytes =
         (slotBytes <= (GLsizeiptr)s_stagingBytes) ? slotBytes : (GLsizeiptr)s_stagingBytes;
 
+    { TracyGpuZone("Cull.CopyStaging");
     glBindBuffer(GL_COPY_READ_BUFFER,  substrateSsbo);
     glBindBuffer(GL_COPY_WRITE_BUFFER, s_stagingSsbo);
     glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER,
                         slotOffset, 0, copyBytes);
     glBindBuffer(GL_COPY_READ_BUFFER,  0);
     glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
+    }
 
     // Record count: read the CPU-side counter directly. The value was just
     // copied from substrate's persistent-mapped buffer (where it lives in
@@ -997,6 +1005,7 @@ void compute_dispatch() {
         // a surviving clear would raise per-frame GL_INVALID_OPERATION on
         // props->props-less.
         {
+            TracyGpuZone("Cull.Clears");
             const GLuint zero = 0u;
             const uint32_t effectiveCount = recordCount <= s_maxActors ? recordCount : s_maxActors;
             glClearNamedBufferSubData(s_bucketCountsBuf, GL_R32UI, 0,
@@ -1036,12 +1045,96 @@ void compute_dispatch() {
             if (locBC >= 0)
                 glUniform1i(locBC, s_blockVisBuf ? (int)s_blockCount : 0);
         }
-        glDispatchCompute(cullGroups, 1, 1);
+        { TracyGpuZone("Cull.CullShader"); glDispatchCompute(cullGroups, 1, 1); }
         glUseProgram(0);
 
         // 3. Barrier: SSBO writes (visibleIds, perBucketCount, actorVisBits) ready.
         // DO NOT add GL_ATOMIC_COUNTER_BARRIER_BIT — no ACBOs (Q12 contract).
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+        // 3a. Ownership-parity oracle (Slice A — MEASUREMENT ONLY, no behavior change).
+        // Quantifies the H4 false-negative rate: the GPU computes a compacted
+        // visibleIds[] set but the draw renders the first-N instances in SSBO
+        // order; GPU-visible instances at high indices get cut off on camera
+        // motion.  This readback+log measures how many.
+        // Env gate: MC2_GPU_CULL_OWNERSHIP_PARITY (default off).
+        // Readback stalls the GPU — fire at most every 300 calls.
+        if (s_ownershipParity &&
+            s_visibleIdsBuf && s_bucketCountsBuf && s_bucketCapsBuf)
+        {
+            static uint32_t s_parityCallCounter = 0u;
+            ++s_parityCallCounter;
+            if (s_parityCallCounter >= 300u)
+            {
+                s_parityCallCounter = 0u;
+
+                const int typeCount = static_cast<int>(s_bucketCount);
+                if (typeCount > 0)
+                {
+                    // --- CHEAP CUT-OFF UPPER-BOUND (no record->slot map) ---
+                    // Recon H4: the draw renders the FIRST `count` instances of
+                    // each type's FROZEN instance pool (binding 0); the GPU cull
+                    // selects a SCATTERED subset (visibleIds, which the VS never
+                    // reads). record-index space (binding 8, per-frame, scene
+                    // order) and instance-pool-slot space (binding 0, frozen,
+                    // per-type sorted) are DIVERGED, so a sound per-instance
+                    // false-negative count needs an authoritative
+                    // record->draw-slot map (NOT done here; see the spec note
+                    // 2026-06-04-gpu-cull-oracle-fix-notes.md). The prior
+                    // "100% false-neg" / "garbage base" prints were artifacts of
+                    // comparing record-index against a visibleIds buffer-offset.
+                    //
+                    // This is the cheap NECESSARY-CONDITION proxy: per type the
+                    // draw can only cut a prop off when the GPU-visible count is
+                    // LESS than the pool span (it renders count of pool, omitting
+                    // the rest). omittedSlots/pool bounds how much cut-off is even
+                    // POSSIBLE. ~0% => cull renders ~everything => H4 immaterial.
+                    // Reads only perBucketCount (binding 10) + a CPU per-type pool
+                    // count; no big readback, no index-space mixing.
+                    std::vector<uint32_t> countsAndOverflow(
+                        static_cast<size_t>(typeCount) + 1u, 0u);
+                    glGetNamedBufferSubData(s_bucketCountsBuf,
+                                           0,
+                                           static_cast<GLsizeiptr>((typeCount + 1) * (int)sizeof(uint32_t)),
+                                           countsAndOverflow.data());
+                    const uint32_t overflow = countsAndOverflow[static_cast<size_t>(typeCount)];
+
+                    uint32_t totalPool = 0u, totalVisible = 0u, totalOmitted = 0u;
+                    int      typesCutoffPossible = 0, typesEmptyPoolButVisible = 0;
+                    uint32_t worstOmit = 0u; int worstType = -1;
+                    uint32_t worstPool = 0u, worstVis = 0u;
+
+                    for (int t = 0; t < typeCount; ++t)
+                    {
+                        const uint32_t vis = countsAndOverflow[static_cast<size_t>(t)];
+                        // t == typeID: the cull build passes t to
+                        // batcher_getTypeDrawInfo, and the shader bucket =
+                        // category>>4 == typeID. So index the pool by t directly.
+                        const uint32_t pool = batcher_getTypeUploadedInstanceCount(
+                                                  static_cast<uint32_t>(t));
+                        if (pool == 0u) { if (vis > 0u) ++typesEmptyPoolButVisible; continue; }
+                        totalPool    += pool;
+                        totalVisible += (vis < pool) ? vis : pool;  // clamp stale-pool frame
+                        if (vis < pool)
+                        {
+                            ++typesCutoffPossible;
+                            const uint32_t omit = pool - vis;  // pool slots the draw omits
+                            totalOmitted += omit;
+                            if (omit > worstOmit) { worstOmit = omit; worstType = t; worstPool = pool; worstVis = vis; }
+                        }
+                    }
+
+                    printf("[GPU_CULL_CUTOFF_UPPERBOUND v2] types=%d pool=%u visible=%u "
+                           "omittedSlots=%u (%.1f%% of pool) typesCutoffPossible=%d "
+                           "emptyPoolButVisible=%d overflow=%u | worst type=%d pool=%u vis=%u omit=%u\n",
+                           typeCount, totalPool, totalVisible, totalOmitted,
+                           totalPool ? 100.0 * totalOmitted / totalPool : 0.0,
+                           typesCutoffPossible, typesEmptyPoolButVisible, overflow,
+                           worstType, worstPool, worstVis, worstOmit);
+                    fflush(stdout);
+                }
+            }
+        }
 
         // 4. Patch dispatch: perBucketCount[] → cmds[].instanceCount
         {
@@ -1116,7 +1209,7 @@ void compute_dispatch() {
             const uint32_t patchInvocations =
                 perPacketPatch ? pktCmdCount : s_bucketCount;
             const uint32_t patchGroups = (patchInvocations + 63u) / 64u;
-            glDispatchCompute(patchGroups, 1, 1);
+            { TracyGpuZone("Cull.PatchShader"); glDispatchCompute(patchGroups, 1, 1); }
             glUseProgram(0);
 
             batcher_unbindBaseInstanceByCmdSsboForPatch();  // restore slot 16

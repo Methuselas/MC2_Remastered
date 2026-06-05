@@ -662,6 +662,15 @@ class TG_TypeShape : public TG_TypeNode
 			return (long)numTypeTriangles;
 		}
 
+		// MODEL-OVERRIDE auto-ground: shift all type-vertices along the up axis
+		// (stuff.y) so an imported mesh's base sits at the local origin.
+		void TranslateTypeVerticesY(float dy)
+		{
+			if (!listOfTypeVertices) return;
+			for (DWORD i = 0; i < numTypeVertices; ++i)
+				listOfTypeVertices[i].position.y += dy;
+		}
+
  		//Function return 0 is OK.  -1 if file is not ASE Format or missing data.
 		//This function simply parses the ASE buffers handed to it.  This allows
 		//users to load the ase file themselves and manage their own memory for it.

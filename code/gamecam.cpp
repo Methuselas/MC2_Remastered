@@ -255,6 +255,54 @@ void GameCamera::render (void)
 				}
 			}
 
+			// VANISH-PROBE-1 (env MC2_VANISH_PROBE): project real persistent
+			// static-prop origins through worldToClipGL at the LIVE camera angle.
+			// Rotate to the trees-gone view; if a prop that is clearly in frame
+			// reports inFrustum=0 (|x|>w, |y|>w, or z outside [0,w]) -> the prop
+			// vanishes because the shared camera projection clips it (depth/
+			// reverse-Z/near-plane), NOT cull/store (storeTotal stays high) and
+			// NOT matrix divergence (VIEW_UNIFORMS compare stays ok=1). One-shot
+			// per ~60 frames; coarse, off by default.
+			{
+				static const bool s_vanishProbe = (getenv("MC2_VANISH_PROBE") != nullptr);
+				if (s_vanishProbe) {
+					extern uint32_t gos_ProbeStaticInstanceCount();
+					extern bool     gos_ProbeStaticInstanceWorld(uint32_t, float[3]);
+					static int s_vpFrame = 0;
+					++s_vpFrame;
+					if ((s_vpFrame % 60) == 1) {
+						const uint32_t n = gos_ProbeStaticInstanceCount();
+						const uint32_t step = (n > 0u) ? (n / 6u + 1u) : 1u;
+						int inCount = 0, total = 0;
+						for (uint32_t i = 0; i < n; i += step) {
+							float wp[3];
+							if (!gos_ProbeStaticInstanceWorld(i, wp)) break;
+							Stuff::Vector4D win, wout;
+							win.x = wp[0]; win.y = wp[1]; win.z = wp[2]; win.w = 1.0f;
+							wout.Multiply(win, eye->worldToClipGL());  // row-vec * matrix (txmmgr convention)
+							const float w = wout.w;
+							const bool inFr = (w > 0.0f) &&
+								(wout.x >= -w && wout.x <= w) &&
+								(wout.y >= -w && wout.y <= w) &&
+								(wout.z >= 0.0f && wout.z <= w);
+							if (inFr) ++inCount;
+							++total;
+							fprintf(stderr,
+								"[VANISH_PROBE] frame=%d inst=%u/%u world=(%.0f,%.0f,%.0f) "
+								"clip=(%.1f,%.1f,%.1f,w=%.1f) ndc=(%.3f,%.3f,%.3f) inFrustum=%d\n",
+								s_vpFrame, i, n, wp[0], wp[1], wp[2],
+								wout.x, wout.y, wout.z, w,
+								(w != 0.0f ? wout.x / w : 0.0f),
+								(w != 0.0f ? wout.y / w : 0.0f),
+								(w != 0.0f ? wout.z / w : 0.0f), inFr ? 1 : 0);
+						}
+						fprintf(stderr, "[VANISH_PROBE] frame=%d storeCount=%u sampled=%d inFrustum=%d\n",
+							s_vpFrame, n, total, inCount);
+						fflush(stderr);
+					}
+				}
+			}
+
 			// Camera position in MC2 world space for TCS distance LOD
 			Stuff::Vector3D camOrig = getCameraOrigin();
 			gos_SetTerrainCameraPos(camOrig.x, camOrig.y, camOrig.z);
