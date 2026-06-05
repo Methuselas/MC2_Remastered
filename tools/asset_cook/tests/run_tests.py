@@ -53,10 +53,20 @@ def main() -> int:
             for line in out.splitlines():
                 print(f"      | {line}")
     print("-" * 64)
+    print(f"schema: {len(CASES) - failures}/{len(CASES)} cases as expected")
+
+    # G1 stage geometry gate
+    g1 = subprocess.run([sys.executable, str(HERE / "test_g1_stage.py")],
+                        capture_output=True, text=True)
+    print(g1.stdout.strip() + (("\n" + g1.stderr.strip()) if g1.stderr.strip() else ""))
+    if g1.returncode != 0:
+        failures += 1
+
+    print("-" * 64)
     if failures:
-        print(f"{failures} case(s) FAILED")
+        print(f"{failures} check(s) FAILED")
         return 1
-    print(f"all {len(CASES)} cases PASS (golden validates, 5 broken rejected for cause)")
+    print(f"ALL PASS -- schema {len(CASES)}/{len(CASES)} (golden + 5 broken-for-cause) + G1 stage geometry")
     return 0
 
 

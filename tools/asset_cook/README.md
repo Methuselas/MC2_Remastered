@@ -3,9 +3,16 @@
 The cooked-asset contract + validator. Slice `TRACKG-OFFLINE-GLB-COOK-MANIFEST-1`.
 Plan: `docs/superpowers/plans/2026-06-04-trackg-offline-glb-cook-manifest-plan.md`.
 
-**G3a (this slice — DONE): the manifest contract, data before behavior.** No cook yet.
+**G3a DONE:** the manifest contract (data before behavior).
+**G1 DONE:** offline GLB staging — `trackg_cook.py stage` computes geometry in the runtime
+importer's convention and emits a `staged.json` fragment + cooked glb.
 
 ## Files
+- `trackg_cook.py` — cook driver. `stage <src.glb> <out_dir> --id --class --appearance`:
+  replicates `assimp_importer.cpp` default-env transform (axis0 `X=-x,Y=-y,Z=z` + auto-ground
+  GROUND=2) to compute MC2-space bounds/pivot/counts; passthrough-cooks the glb (meshopt
+  later); discovers material names + alphaClass (KTX2 cook is G2). Emits `staged.json`. Uses
+  the RUNTIME convention, NOT the workbench `GlbMeshLoader` (divergent — see R0 note).
 - `asset_manifest.schema.json` — `mc2-asset-manifest-v1` (draft-07). Superset of the
   override `models.json` (identity/geometry) and `material_manifest` (textures). Geometry +
   materials + capability + provenance for one cooked static-prop/tree override asset.
@@ -37,8 +44,10 @@ py -3 tools/asset_cook/tests/run_tests.py
   texture handle unresolved.
 
 ## Next (not yet built)
-G1 stage (geometry section + cooked glb) · G2 KTX2 cook (materials section) · G3b assemble +
-`models.generated.json` projection + registry round-trip · G5 capability + `[RENDER_PATH v1]`.
+G2 KTX2 cook (fills `materials[].albedo_ktx2` tiers) · G3b assemble staged.json + G2 →
+full `manifest.json` + `models.generated.json` projection + registry round-trip · G5
+capability + `[RENDER_PATH v1]`. (G1 emits a `staged.json` geometry fragment; full
+schema-valid manifest assembly is G3b once G2 supplies the texture tiers.)
 
 ## Follow-up
 Registry-side C++ unit test asserting mixed-case class input resolves (the case-insensitive
