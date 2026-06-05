@@ -72,6 +72,33 @@ def _save_terrain_type(tt: np.ndarray, path: Path) -> None:
     Image.fromarray(rgb, mode='RGB').save(str(path))
 
 
+def _write_fit(path: Path, burnin_name: str, recipe: TerrainRecipe) -> None:
+    """Write a minimal FitIniFile that the MC2 editor can open alongside a .pak.
+
+    The editor (EditorData::initTerrainFromPCV) requires:
+      - [ColorMap] / ColorMapName  -> tells terrtxm2 which burnin TGA to load
+      - [Terrain] / UserMin+UserMax -> elevation range displayed in editor sliders
+
+    Everything else (camera, warriors, objects) the editor builds fresh on first save.
+    burnin_name is the stem only (no extension), e.g. "my_map" -> loads "my_map.burnin.tga".
+    """
+    world_half = recipe.size * 128 * 0.5   # worldUnitsPerVertex=128
+    content = (
+        "FITini \n"
+        "FITini \n"
+        "\n"
+        "[ColorMap]\n"
+        f"s ColorMapName = \"{burnin_name}\"\n"
+        "\n"
+        "[Terrain]\n"
+        f"l UserMin = {int(recipe.height.min_elevation)}\n"
+        f"l UserMax = {int(recipe.height.max_elevation)}\n"
+        f"f TerrainMinX = {-world_half:.6f}\n"
+        f"f TerrainMinY = {world_half:.6f}\n"
+    )
+    path.write_text(content, encoding='latin-1')
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description='MC2 terrain generator')
     parser.add_argument('recipe', help='Path to recipe JSON file')
@@ -127,6 +154,9 @@ def main() -> None:
             pkt0 = exp.build_packet0(height, masks, recipe)
             exp.patch_pak(args.template_pak, str(out / f"{name}.pak"), pkt0)
             print(f"  {name}.pak")
+            # Write companion .fit so the editor can open the new mission directly
+            _write_fit(out / f"{name}.fit", f"{name}.burnin", recipe)
+            print(f"  {name}.fit")
 
     print("Done.")
 
