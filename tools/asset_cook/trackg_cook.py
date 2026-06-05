@@ -298,6 +298,131 @@ def textures(args) -> int:
     return 0
 
 
+# ---- G3b: assemble full manifest + project models.generated.json ----------
+
+def _is_safe_source(s: str) -> bool:
+    """Mirror model_override_registry.cpp isSafeSource(): relative, no drive/.., glb/gltf."""
+    if not s or s[0] in "/\\" or (len(s) > 1 and s[1] == ":"):
+        return False
+    if ".." in s.replace("\\", "/").split("/"):
+        return False
+    return s.lower().endswith((".glb", ".gltf"))
+
+
+def registry_resolves(entry: dict) -> tuple[bool, str]:
+    """Python mirror of ModelOverrideRegistry::loadFromFile per-entry accept rules.
+    The authoritative gate is the C++ ExportBundle round-trip; this catches drift offline."""
+    if entry.get("type") != "model":
+        return False, "type != model"
+    if entry.get("renderOnly") is not True:
+        return False, "renderOnly != true"
+    if entry.get("fallback") != "stock":
+        return False, "fallback != stock"
+    if entry.get("scale") != 1.0:
+        return False, "scale != 1.0"
+    cls = str(entry.get("class", "")).lower()
+    if cls not in ("staticprop", "tree"):
+        return False, f"class {cls!r} not staticprop|tree"
+    rep = entry.get("replaces", "")
+    if ":" not in rep:
+        return False, "replaces has no ':'"
+    rcls, rname = rep.split(":", 1)
+    if rcls.lower() != cls or not rname:
+        return False, "replaces class/name mismatch"
+    if not _is_safe_source(entry.get("source", "")):
+        return False, f"unsafe source {entry.get('source')!r}"
+    return True, "ok"
+
+
+def assemble(args) -> int:
+    import hashlib
+    staged = json.loads(Path(args.staged).read_text(encoding="utf-8"))
+    mats = json.loads(Path(args.materials).read_text(encoding="utf-8")).get("materials", [])
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    asset = staged["asset"]
+    geom = staged["geometry"]
+    lods = geom.get("lods", []) or []
+    any_alpha = any(m.get("alphaClass", 0) == 1 for m in mats)
+
+    textures = sorted({p for m in mats for p in (m.get("albedo_ktx2") or {}).values()})
+    src_sha = ""
+    cooked_glb = out_dir / geom["cooked"]
+    if cooked_glb.exists():
+        src_sha = hashlib.sha256(cooked_glb.read_bytes()).hexdigest()
+
+    manifest = {
+        "schema": "mc2-asset-manifest-v1",
+        "cookVersion": 1,
+        "asset": asset,
+        "geometry": geom,
+        "materials": mats,
+        "capabilities": {
+            "hasLegacyMesh": bool(args.has_legacy),
+            "hasCookedGlb": True,
+            "hasLodChain": len(lods) > 0,
+            "hasMeshlets": False,
+            "hasImpostor": False,
+            "alphaTest": any_alpha,
+            "castsShadow": bool(args.casts_shadow),
+            "supportsObjectId": True,
+        },
+        "deps": {
+            "stockFallback": asset["appearanceName"],
+            "textures": textures,
+            "sourceGlb": geom["source"],
+        },
+        "provenance": {
+            "sourceSha256": src_sha,
+            "cookTools": {"ktx": "ktx-software-v4.4.2", "driver": "trackg_cook.v1"},
+            "cookedUtc": args.cooked_utc,
+        },
+    }
+    if not mats:
+        # schema requires >=1 material; an untextured prop still needs a slot.
+        print("FAIL assemble: no cooked materials (schema requires materials[] >= 1). "
+              "Cook at least one albedo (or add a placeholder) before assembling.")
+        return 1
+
+    # runtime projection (the subset the registry consumes)
+    override_source = args.override_source or f"cooked/{asset['id']}/{geom['cooked']}"
+    entry = {"type": "model", "class": asset["class"], "replaces": asset["replaces"],
+             "source": override_source, "renderOnly": True, "scale": 1.0, "fallback": "stock"}
+    if lods:
+        entry["lods"] = [{"lod": l["lod"], "source": args_override_lod(args, asset, l),
+                          "distance": l.get("distance", 0.0)} for l in lods]
+    ok, why = registry_resolves(entry)
+    if not ok:
+        print(f"FAIL assemble: projected models.generated.json would NOT resolve in registry: {why}")
+        return 1
+
+    # SAFETY (Patch 4): never write a file literally named models.json (the central manifest).
+    mpath = out_dir / "manifest.json"
+    gpath = out_dir / "models.generated.json"
+    for p in (mpath, gpath):
+        if p.name == "models.json":
+            print(f"FAIL assemble: refusing to write central manifest name {p}")
+            return 1
+
+    # validate the full manifest against the schema before writing
+    mpath.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    rc = subprocess.run([sys.executable, str(Path(__file__).with_name("validate_asset_manifest.py")),
+                         str(mpath)], capture_output=True, text=True)
+    if rc.returncode != 0:
+        print("FAIL assemble: assembled manifest failed schema/coherence:\n" + rc.stdout + rc.stderr)
+        return 1
+
+    gpath.write_text(json.dumps({"overrides": [entry]}, indent=2), encoding="utf-8")
+    print(f"ASSEMBLED {asset['replaces']} -> {mpath.name} (schema OK) + {gpath.name} "
+          f"(registry-resolvable; source={override_source})")
+    return 0
+
+
+def args_override_lod(args, asset, l):
+    return f"cooked/{asset['id']}/{l['cooked']}"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Track G offline static-prop cook driver.")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -319,6 +444,16 @@ def main() -> int:
     t.add_argument("--out-json", required=True, help="materials.json fragment to write")
     t.add_argument("--tiers", default="128,256,512,1024")
     t.set_defaults(func=textures)
+
+    a = sub.add_parser("assemble", help="staged.json + materials.json -> full manifest.json + models.generated.json")
+    a.add_argument("--staged", required=True)
+    a.add_argument("--materials", required=True)
+    a.add_argument("--out-dir", required=True, help="bundle-local cooked/<id>/ dir")
+    a.add_argument("--override-source", default=None, help="source path the registry loads (rel to data/model_overrides); default cooked/<id>/<glb>")
+    a.add_argument("--casts-shadow", type=int, default=1)
+    a.add_argument("--has-legacy", type=int, default=1)
+    a.add_argument("--cooked-utc", default="", help="provenance stamp (default empty for determinism)")
+    a.set_defaults(func=assemble)
 
     args = ap.parse_args()
     return args.func(args)

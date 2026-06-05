@@ -8,6 +8,9 @@ Plan: `docs/superpowers/plans/2026-06-04-trackg-offline-glb-cook-manifest-plan.m
 importer's convention and emits a `staged.json` fragment + cooked glb.
 **G2 DONE:** KTX2 material cook — `trackg_cook.py textures` cooks discovered materials' albedo
 to stored-BC7 KTX2 tiers (`ktx.exe` uastc->bc7) and emits `materials.json` with the tier map.
+**G3b DONE:** assemble — `trackg_cook.py assemble` merges staged.json + materials.json into the
+full schema-valid `manifest.json`, derives `capabilities{}`, and projects the runtime
+`models.generated.json` (registry-resolvable; central `models.json` never written).
 
 ## Files
 - `trackg_cook.py` — cook driver.
@@ -19,6 +22,11 @@ to stored-BC7 KTX2 tiers (`ktx.exe` uastc->bc7) and emits `materials.json` with 
     finds `<base>.{png,tga}`, cooks albedo to `data/tgl/<tier>/<textureName>.ktx2` (stored BC7,
     sRGB, Lanczos down, never upscale — reuses `cook_tgl_tiers.py`'s `ktx.exe` recipe), verifies
     vkFormat 145/146, emits `materials.json` (tier map + `a_`/alpha_test/double_sided flags).
+  - `assemble --staged --materials --out-dir [--override-source --casts-shadow --has-legacy]`:
+    merges geometry + cooked materials → full `manifest.json` (re-validated against the schema),
+    derives `capabilities{}` (alphaTest/hasLodChain from content), projects the registry subset
+    to `models.generated.json`, and runs a Python mirror of the registry accept rules
+    (`registry_resolves`) + refuses to write a file named `models.json` (central-manifest guard).
 - `asset_manifest.schema.json` — `mc2-asset-manifest-v1` (draft-07). Superset of the
   override `models.json` (identity/geometry) and `material_manifest` (textures). Geometry +
   materials + capability + provenance for one cooked static-prop/tree override asset.
@@ -49,11 +57,21 @@ py -3 tools/asset_cook/tests/run_tests.py
 - **`a_` prefix iff alpha** — the resolver naming convention; mismatch leaves the runtime
   texture handle unresolved.
 
+## Pipeline (one asset, end to end)
+```
+stage <src.glb>        -> cooked glb + staged.json (geometry + materials_discovered)
+textures               -> data/tgl/<tier>/<tex>.ktx2 (BC7) + materials.json
+assemble               -> manifest.json (schema-valid) + models.generated.json (registry subset)
+```
+Authoritative round-trip is the C++ `ExportBundle`/`ModelOverrideRegistry` at integration;
+`registry_resolves` is the offline Python mirror. Promotion of `models.generated.json` into
+central `models.json` stays a separate reviewed merge.
+
 ## Next (not yet built)
-G3b assemble `staged.json` (geometry + materials_discovered) + G2 `materials.json` →
-full schema-valid `manifest.json`, derive `capabilities{}`, project the runtime
-`models.generated.json` subset, run the registry round-trip + no-central-write guard ·
-G5 capability log `[RENDER_PATH v1]` · G-E2E bigbox then 2civliving.
+G5 capability log `[RENDER_PATH v1]` (engine, descriptive — read-only) · G-E2E bigbox then
+2civliving (author 2civliving.glb from its .ase; stock-parity via TglMeshLoader oracle).
+Follow-ups: meshopt in `stage`; in-game C++ `ExportBundle` round-trip wired to this manifest;
+registry mixed-case-accept C++ doctest.
 
 ## Follow-up
 Registry-side C++ unit test asserting mixed-case class input resolves (the case-insensitive
