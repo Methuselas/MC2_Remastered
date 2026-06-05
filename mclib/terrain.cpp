@@ -322,14 +322,12 @@ long Terrain::init (PacketFile* pakFile, int whichPacket, unsigned long visibleV
 	int tmp = pakFile->getPacketSize();
 	realVerticesMapSide = sqrt( float(tmp/ sizeof(PostcompVertex)));
 	
-	if (!justResaveAllMaps && 
-		(realVerticesMapSide != 120) &&
-		(realVerticesMapSide != 100) && 
-		(realVerticesMapSide != 80) &&
-		(realVerticesMapSide != 60))
+	if (!justResaveAllMaps)
 	{
-		PAUSE(("This map size NO longer supported %d.  Must be 120, 100, 80 or 60 now!  Can Continue, for NOW!!",realVerticesMapSide));
-//		return -1;
+		if (realVerticesMapSide < 60 || realVerticesMapSide > 2048)
+			STOP(("Terrain grid size %d out of supported range [60, 2048]", realVerticesMapSide));
+		if (realVerticesMapSide % verticesBlockSide != 0)
+			STOP(("Terrain grid size %d not divisible by verticesBlockSide (%d)", realVerticesMapSide, verticesBlockSide));
 	}
 	
 	init( realVerticesMapSide, pakFile, visibleVertices, percent, percentRange );	
@@ -389,11 +387,6 @@ long Terrain::init( unsigned long verticesPerMapSide, PacketFile* pakFile, unsig
 					float percentRange)
 {
 	ZoneScopedN("Terrain::init");
-	//Did we pass in the hi-res colormap?
-	// If so, convert back to old verticesPerMapSide!
-	if (verticesPerMapSide > 300)
-		verticesPerMapSide /= 12.8;
-		
 	realVerticesMapSide = verticesPerMapSide;
 	halfVerticesMapSide = realVerticesMapSide >> 1;
 	blocksMapSide = realVerticesMapSide / verticesBlockSide;
