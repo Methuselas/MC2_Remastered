@@ -56,17 +56,18 @@ def main() -> int:
     print(f"schema: {len(CASES) - failures}/{len(CASES)} cases as expected")
 
     # G1 stage geometry gate
-    g1 = subprocess.run([sys.executable, str(HERE / "test_g1_stage.py")],
-                        capture_output=True, text=True)
-    print(g1.stdout.strip() + (("\n" + g1.stderr.strip()) if g1.stderr.strip() else ""))
-    if g1.returncode != 0:
-        failures += 1
+    for sub_test in ("test_g1_stage.py", "test_g2_textures.py"):
+        r = subprocess.run([sys.executable, str(HERE / sub_test)], capture_output=True, text=True)
+        print(r.stdout.strip() + (("\n" + r.stderr.strip()) if r.stderr.strip() else ""))
+        if r.returncode != 0:
+            failures += 1
 
     print("-" * 64)
     if failures:
         print(f"{failures} check(s) FAILED")
         return 1
-    print(f"ALL PASS -- schema {len(CASES)}/{len(CASES)} (golden + 5 broken-for-cause) + G1 stage geometry")
+    print(f"ALL PASS -- schema {len(CASES)}/{len(CASES)} (golden + 5 broken-for-cause) "
+          f"+ G1 stage geometry + G2 KTX2 cook")
     return 0
 
 

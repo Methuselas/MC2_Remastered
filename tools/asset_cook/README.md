@@ -6,13 +6,19 @@ Plan: `docs/superpowers/plans/2026-06-04-trackg-offline-glb-cook-manifest-plan.m
 **G3a DONE:** the manifest contract (data before behavior).
 **G1 DONE:** offline GLB staging — `trackg_cook.py stage` computes geometry in the runtime
 importer's convention and emits a `staged.json` fragment + cooked glb.
+**G2 DONE:** KTX2 material cook — `trackg_cook.py textures` cooks discovered materials' albedo
+to stored-BC7 KTX2 tiers (`ktx.exe` uastc->bc7) and emits `materials.json` with the tier map.
 
 ## Files
-- `trackg_cook.py` — cook driver. `stage <src.glb> <out_dir> --id --class --appearance`:
-  replicates `assimp_importer.cpp` default-env transform (axis0 `X=-x,Y=-y,Z=z` + auto-ground
-  GROUND=2) to compute MC2-space bounds/pivot/counts; passthrough-cooks the glb (meshopt
-  later); discovers material names + alphaClass (KTX2 cook is G2). Emits `staged.json`. Uses
-  the RUNTIME convention, NOT the workbench `GlbMeshLoader` (divergent — see R0 note).
+- `trackg_cook.py` — cook driver.
+  - `stage <src.glb> <out_dir> --id --class --appearance`: replicates `assimp_importer.cpp`
+    default-env transform (axis0 `X=-x,Y=-y,Z=z` + auto-ground GROUND=2) to compute MC2-space
+    bounds/pivot/counts; passthrough-cooks the glb (meshopt later); discovers material names +
+    alphaClass. Emits `staged.json`. RUNTIME convention, NOT workbench `GlbMeshLoader`.
+  - `textures --staged --texture-dir --out-root --out-json [--tiers]`: per discovered material,
+    finds `<base>.{png,tga}`, cooks albedo to `data/tgl/<tier>/<textureName>.ktx2` (stored BC7,
+    sRGB, Lanczos down, never upscale — reuses `cook_tgl_tiers.py`'s `ktx.exe` recipe), verifies
+    vkFormat 145/146, emits `materials.json` (tier map + `a_`/alpha_test/double_sided flags).
 - `asset_manifest.schema.json` — `mc2-asset-manifest-v1` (draft-07). Superset of the
   override `models.json` (identity/geometry) and `material_manifest` (textures). Geometry +
   materials + capability + provenance for one cooked static-prop/tree override asset.
@@ -44,10 +50,10 @@ py -3 tools/asset_cook/tests/run_tests.py
   texture handle unresolved.
 
 ## Next (not yet built)
-G2 KTX2 cook (fills `materials[].albedo_ktx2` tiers) · G3b assemble staged.json + G2 →
-full `manifest.json` + `models.generated.json` projection + registry round-trip · G5
-capability + `[RENDER_PATH v1]`. (G1 emits a `staged.json` geometry fragment; full
-schema-valid manifest assembly is G3b once G2 supplies the texture tiers.)
+G3b assemble `staged.json` (geometry + materials_discovered) + G2 `materials.json` →
+full schema-valid `manifest.json`, derive `capabilities{}`, project the runtime
+`models.generated.json` subset, run the registry round-trip + no-central-write guard ·
+G5 capability log `[RENDER_PATH v1]` · G-E2E bigbox then 2civliving.
 
 ## Follow-up
 Registry-side C++ unit test asserting mixed-case class input resolves (the case-insensitive

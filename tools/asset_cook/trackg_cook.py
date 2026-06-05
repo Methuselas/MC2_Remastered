@@ -29,10 +29,15 @@ import json
 import math
 import shutil
 import struct
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
+
+KTX_CLI = r"A:/Games/mc2-tools/ktx/ktx.exe"
+DEFAULT_TIERS = (128, 256, 512, 1024)
 
 # ---- glTF accessor decode -------------------------------------------------
 
@@ -202,6 +207,97 @@ def stage(args) -> int:
     return 0
 
 
+# ---- G2: KTX2 material cook (reuses the cook_tgl_tiers.py ktx.exe recipe) ---
+
+def _resized(img, cap: int):
+    from PIL import Image
+    w, h = img.size
+    if max(w, h) <= cap:
+        return img  # never upscale
+    if w >= h:
+        nw, nh = cap, max(1, round(h * cap / w))
+    else:
+        nw, nh = max(1, round(w * cap / h)), cap
+    return img.resize((nw, nh), Image.LANCZOS)
+
+
+def _ktx_cook(img, dst: Path, srgb: bool):
+    """uastc encode -> bc7 transcode (stored BC7; the loader rejects supercompressed).
+    Mirrors tools/mc2texcook/cook_tgl_tiers.py::_ktx_cook."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    fmt = "R8G8B8A8_SRGB" if srgb else "R8G8B8A8_UNORM"
+    tf = "srgb" if srgb else "linear"
+    with tempfile.TemporaryDirectory() as td:
+        png = Path(td) / "s.png"
+        uastc = Path(td) / "u.ktx2"
+        img.convert("RGBA").save(png, "PNG")
+        for step in (
+            [KTX_CLI, "create", "--encode", "uastc", "--format", fmt,
+             "--assign-tf", tf, "--generate-mipmap", str(png), str(uastc)],
+            [KTX_CLI, "transcode", "--target", "bc7", str(uastc), str(dst)],
+        ):
+            r = subprocess.run(step, capture_output=True, text=True)
+            if r.returncode != 0:
+                raise RuntimeError(f"ktx {step[1]} rc={r.returncode}: {(r.stderr or r.stdout).strip()[:200]}")
+
+
+def ktx2_format(path: Path) -> int:
+    """Return vkFormat (145/146 = BC7 UNORM/SRGB) or -1. Asserts no supercompression."""
+    with open(path, "rb") as f:
+        if f.read(12) != b"\xabKTX 20\xbb\r\n\x1a\n":
+            return -1
+        vk, _ts, _w, _h, _d, _l, _fc, _lv, sc = struct.unpack("<9I", f.read(36))
+    return vk if sc == 0 else -1
+
+
+def textures(args) -> int:
+    from PIL import Image
+    if not Path(KTX_CLI).is_file():
+        print(f"FAIL: ktx CLI missing: {KTX_CLI}")
+        return 1
+    staged = json.loads(Path(args.staged).read_text(encoding="utf-8"))
+    tex_dir = Path(args.texture_dir)
+    out_root = Path(args.out_root)
+    tiers = [int(t) for t in args.tiers.split(",") if t.strip()]
+
+    materials, warnings = [], []
+    for m in staged.get("materials_discovered", []):
+        slot = m["slot"]
+        tname = m["textureName"]            # carries a_ prefix iff alpha
+        alpha = int(m.get("alphaClass", 0))
+        base = tname[2:] if tname.startswith("a_") else tname
+        # find source image (base.png / base.tga)
+        srcimg = next((p for ext in (".png", ".tga", ".PNG", ".TGA")
+                       if (p := tex_dir / f"{base}{ext}").exists()), None)
+        if srcimg is None:
+            warnings.append(f"slot {slot}: no source texture for {base!r} -> NULLTXM (untextured)")
+            continue
+        img = Image.open(srcimg)
+        if alpha and img.mode != "RGBA":
+            img = img.convert("RGBA")
+        tiermap = {}
+        for cap in tiers:
+            dst = out_root / "data" / "tgl" / str(cap) / f"{tname}.ktx2"
+            _ktx_cook(_resized(img, cap), dst, srgb=True)  # albedo = sRGB
+            vk = ktx2_format(dst)
+            if vk not in (145, 146):
+                print(f"FAIL: {dst} not stored BC7 (vkFormat={vk})")
+                return 1
+            tiermap[str(cap)] = f"data/tgl/{cap}/{tname}.ktx2"
+        materials.append({
+            "slot": slot, "textureName": tname, "alphaClass": alpha,
+            "albedo_ktx2": tiermap,
+            "normal_ktx2": None, "metallic_roughness_ktx2": None, "emissive_ktx2": None,
+            "base_color_factor": 1.0, "metallic_factor": 0.0, "roughness_factor": 1.0,
+            "flags": {"alpha_test": bool(alpha), "double_sided": False, "window": False},
+        })
+    out = {"materials": materials, "warnings": warnings}
+    Path(args.out_json).write_text(json.dumps(out, indent=2), encoding="utf-8")
+    print(f"TEXTURES {len(materials)} material(s) cooked to BC7 tiers {tiers} -> {args.out_json}"
+          + (f"  ({len(warnings)} warn)" if warnings else ""))
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Track G offline static-prop cook driver.")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -215,6 +311,15 @@ def main() -> int:
     s.add_argument("--ground", type=int, default=2, help="MC2_GLTF_GROUND (default 2)")
     s.add_argument("--yoff", type=float, default=0.0, help="MC2_GLTF_YOFF (default 0)")
     s.set_defaults(func=stage)
+
+    t = sub.add_parser("textures", help="cook discovered materials' albedo -> BC7 KTX2 tiers + materials.json")
+    t.add_argument("--staged", required=True, help="staged.json from `stage`")
+    t.add_argument("--texture-dir", required=True, help="dir of source <textureName>.{png,tga}")
+    t.add_argument("--out-root", required=True, help="deploy root; tiers land under <root>/data/tgl/<tier>/")
+    t.add_argument("--out-json", required=True, help="materials.json fragment to write")
+    t.add_argument("--tiers", default="128,256,512,1024")
+    t.set_defaults(func=textures)
+
     args = ap.parse_args()
     return args.func(args)
 
