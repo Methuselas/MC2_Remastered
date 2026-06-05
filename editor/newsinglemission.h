@@ -41,6 +41,7 @@ protected:
 	//{{AFX_MSG(NewSingleMission)
 	afx_msg void OnLoadMission();
 	afx_msg void OnNewmission();
+	afx_msg void OnMapGenerator();
 	virtual void OnCancel();
 	//}}AFX_MSG
 	DECLARE_MESSAGE_MAP()

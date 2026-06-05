@@ -386,6 +386,37 @@ void Editor::init( char* loader )
 						}
 					}
 				}
+				else if ( retVal == ID_MAPGENERATOR )
+				{
+					resolved = true;
+					while ( !bOK )
+					{
+						TerrainDlg tdlg;
+						tdlg.terrain = 0;
+						if ( IDOK == tdlg.DoModal() )
+						{
+							MapSizeDlg msdlg;
+							msdlg.mapSize = 0;
+							if ( IDOK == msdlg.DoModal() )
+							{
+								char path[256];
+								strcpy( path, cameraPath );
+								strcat( path, "cameras.fit" );
+								FitIniFile camFile;
+								camFile.open( path );
+								if (EditorInterface::instance())
+									EditorInterface::instance()->SetBusyMode();
+								eye->init( &camFile );
+								bOK = EditorData::generateMission( msdlg.mapSize, tdlg.terrain, (unsigned long)GetTickCount() );
+								if (EditorInterface::instance())
+									EditorInterface::instance()->UnsetBusyMode();
+								if ( !bOK ) { resolved = false; break; }
+							}
+							else { resolved = false; break; }
+						}
+						else { resolved = false; break; }
+					}
+				}
 				else
 				{
 					resolved = true;

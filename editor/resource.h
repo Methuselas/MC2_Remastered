@@ -219,6 +219,7 @@
 #define ID_NEWMISSION                   1098
 #define IDC_LIGHT_BUTTON                1098
 #define ID_LOAD_MISSION                 1099
+#define ID_MAPGENERATOR                 1226
 #define IDC_DAYLENGTH                   1099
 #define IDC_MISSION_NAME_EDIT           1099
 #define IDC_AUTHOR_EDIT                 1100

@@ -41,6 +41,7 @@ BEGIN_MESSAGE_MAP(NewSingleMission, CDialog)
 	//{{AFX_MSG_MAP(NewSingleMission)
 	ON_BN_CLICKED(ID_LOAD_MISSION, OnLoadMission)
 	ON_BN_CLICKED(ID_NEWMISSION, OnNewmission)
+	ON_BN_CLICKED(ID_MAPGENERATOR, OnMapGenerator)
 	//}}AFX_MSG_MAP
 END_MESSAGE_MAP()
 
@@ -52,10 +53,15 @@ void NewSingleMission::OnLoadMission()
 	EndDialog( ID_LOAD_MISSION );	
 }
 
-void NewSingleMission::OnNewmission() 
+void NewSingleMission::OnNewmission()
 {
 	EndDialog( ID_NEWMISSION );
-	
+
+}
+
+void NewSingleMission::OnMapGenerator()
+{
+	EndDialog( ID_MAPGENERATOR );
 }
 
 void NewSingleMission::OnCancel() 
