@@ -59,10 +59,18 @@ py -3 tools/asset_cook/tests/run_tests.py
 
 ## Pipeline (one asset, end to end)
 ```
+[path B] workbench --export-tgl-meshdump <deploy> <tgl> <dump.json>   # stock .tgl -> MeshData JSON
+[path B] tglmeshdump_to_glb.py <dump.json> <out.glb>                  # axis-inverted glb (importer round-trips)
 stage <src.glb>        -> cooked glb + staged.json (geometry + materials_discovered)
 textures               -> data/tgl/<tier>/<tex>.ktx2 (BC7) + materials.json
 assemble               -> manifest.json (schema-valid) + models.generated.json (registry subset)
 ```
+**Path B (stock source):** for a stock prop with no authored glb, dump it from the engine's
+own `.tgl` via the workbench (`MeshData` in GL space), then `tglmeshdump_to_glb.py` writes a glb
+whose positions/normals are inverted `(-x,-y,z)` and UV `1-v` so the override importer
+(`axisMap0` + auto-ground) reconstructs the stock geometry. Proven on **2civliving** (a real
+non-symmetric building): staged engine extents reproduce the stock `[70.54, 69.88, 15.47]`
+footprint+height, Y grounded — `test_g_pathb_2civliving.py`.
 Authoritative round-trip is the C++ `ExportBundle`/`ModelOverrideRegistry` at integration;
 `registry_resolves` is the offline Python mirror. Promotion of `models.generated.json` into
 central `models.json` stays a separate reviewed merge.

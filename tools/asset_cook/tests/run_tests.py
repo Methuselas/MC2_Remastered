@@ -56,7 +56,8 @@ def main() -> int:
     print(f"schema: {len(CASES) - failures}/{len(CASES)} cases as expected")
 
     # G1 stage geometry gate
-    for sub_test in ("test_g1_stage.py", "test_g2_textures.py", "test_g3b_assemble.py"):
+    for sub_test in ("test_g1_stage.py", "test_g2_textures.py", "test_g3b_assemble.py",
+                     "test_g_pathb_2civliving.py"):
         r = subprocess.run([sys.executable, str(HERE / sub_test)], capture_output=True, text=True)
         print(r.stdout.strip() + (("\n" + r.stderr.strip()) if r.stderr.strip() else ""))
         if r.returncode != 0:
