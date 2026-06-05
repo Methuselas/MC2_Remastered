@@ -38,6 +38,9 @@ def test_json_roundtrip(tmp_path):
     assert r2.size == 100
     assert r2.biome == "snow_mountain"
     assert r2.seed == 999
+    assert r2.height.base_frequency == r.height.base_frequency
+    assert r2.materials.dirt_noise_scale == r.materials.dirt_noise_scale
+    assert r2.burnin.ao_strength == r.burnin.ao_strength
 
 
 def test_apply_biome_overrides_defaults():
