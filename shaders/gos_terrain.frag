@@ -48,6 +48,13 @@ uniform sampler2D matNormal2;  // dirt     (unit 7)
 uniform sampler2D matNormal3;  // concrete (unit 8)
 uniform sampler2D matNormal4;  // snow     (unit 12)
 
+#include <include/terrain_mat_layers.hglsl>
+#ifdef TERRAIN_NORMAL_ARRAY
+// Array path: all 5 per-material normal maps packed into layers MAT_LAYER_*.
+// Bound at unit kTerrainTexUnitNormalArray (= 5) by C++.
+uniform sampler2DArray matNormalArray;
+#endif
+
 uniform PREC vec4 terrainLightDir;
 uniform PREC vec4 detailNormalTiling;
 // Atlas-mode toggle for tex1 (colormap) sampling. When the indirect path binds
@@ -173,6 +180,29 @@ PREC vec4 sampleAntiTile(sampler2D tex, PREC vec2 uv, PREC float scale) {
     return (s0 * w0 + s1 * w1 + s2 * w2) / wTotal;
 }
 
+#ifdef TERRAIN_NORMAL_ARRAY
+PREC vec4 sampleAntiTileArr(int layer, PREC vec2 uv, PREC float scale) {
+    PREC vec2 off1 = hash22(floor(uv / scale)) * scale;
+    PREC vec2 off2 = hash22(floor(uv / scale) + vec2(7.0, 13.0)) * scale;
+
+    PREC vec3 uvl  = vec3(uv,        float(layer));
+    PREC vec3 uvl1 = vec3(uv + off1, float(layer));
+    PREC vec3 uvl2 = vec3(uv + off2, float(layer));
+
+    PREC vec4 s0 = texture(matNormalArray, uvl);
+    PREC vec4 s1 = texture(matNormalArray, uvl1);
+    PREC vec4 s2 = texture(matNormalArray, uvl2);
+
+    PREC vec2 f = fract(uv / scale);
+    PREC float w0 = 1.0;
+    PREC float w1 = smoothstep(0.2, 0.5, f.x) * smoothstep(0.2, 0.5, f.y);
+    PREC float w2 = smoothstep(0.2, 0.5, 1.0 - f.x) * smoothstep(0.2, 0.5, 1.0 - f.y);
+    PREC float wTotal = w0 + w1 + w2;
+
+    return (s0 * w0 + s1 * w1 + s2 * w2) / wTotal;
+}
+#endif
+
 // --- Color classification helpers ---
 
 PREC vec3 rgb2hsv(PREC vec3 c) {
@@ -226,10 +256,17 @@ const PREC vec4 pomScaleMat = vec4(1.0, 1.0, 2.5, 1.0);  // rock doubled 0.5→1
 
 PREC float sampleDisplacement(PREC vec2 uv, PREC vec4 weights) {
     PREC float d = 0.0;
+#ifdef TERRAIN_NORMAL_ARRAY
+    if (weights.x > 0.01) d += weights.x * texture(matNormalArray, vec3(uv, float(MAT_LAYER_ROCK))).a;
+    if (weights.y > 0.01) d += weights.y * texture(matNormalArray, vec3(uv, float(MAT_LAYER_GRASS))).a;
+    if (weights.z > 0.01) d += weights.z * 1.0;  // dirt: blank alpha (no POM shift)
+    if (weights.w > 0.01) d += weights.w * texture(matNormalArray, vec3(uv, float(MAT_LAYER_CONCRETE))).a;
+#else
     if (weights.x > 0.01) d += weights.x * texture(matNormal0, uv).a;
     if (weights.y > 0.01) d += weights.y * texture(matNormal1, uv).a;
     if (weights.z > 0.01) d += weights.z * 1.0;  // dirt: blank alpha (no POM shift)
     if (weights.w > 0.01) d += weights.w * texture(matNormal3, uv).a;
+#endif
     return 1.0 - d;
 }
 
@@ -592,6 +629,36 @@ void main(void)
     PREC vec4 matSample;
     bool useAntiTile = (lodNear > 0.01);
 
+#ifdef TERRAIN_NORMAL_ARRAY
+    if (matWeights.x > 0.01) {
+        matSample = (useAntiTile && atsRock > 0.01)
+            ? sampleAntiTileArr(MAT_LAYER_ROCK, uvRock, atsRock)
+            : texture(matNormalArray, vec3(uvRock, float(MAT_LAYER_ROCK)));
+        detailN += matWeights.x * normalBoost.x * fwRock * (matSample.rgb * 2.0 - 1.0);
+    }
+    if (matWeights.y > 0.01) {
+        matSample = (useAntiTile && atsGrass > 0.01)
+            ? sampleAntiTileArr(MAT_LAYER_GRASS, uvGrass, atsGrass)
+            : texture(matNormalArray, vec3(uvGrass, float(MAT_LAYER_GRASS)));
+        detailN += matWeights.y * normalBoost.y * (matSample.rgb * 2.0 - 1.0);
+    }
+    if (matWeights.z > 0.01) {
+        matSample = (useAntiTile && atsDirt > 0.01)
+            ? sampleAntiTileArr(MAT_LAYER_DIRT, uvDirt, atsDirt)
+            : texture(matNormalArray, vec3(uvDirt, float(MAT_LAYER_DIRT)));
+        detailN += matWeights.z * normalBoost.z * fwDirt * (matSample.rgb * 2.0 - 1.0);
+    }
+    if (matWeights.w > 0.01) {
+        matSample = (useAntiTile && atsConcrete > 0.01)
+            ? sampleAntiTileArr(MAT_LAYER_CONCRETE, uvConcrete, atsConcrete)
+            : texture(matNormalArray, vec3(uvConcrete, float(MAT_LAYER_CONCRETE)));
+        detailN += matWeights.w * normalBoost.w * fwConcrete * (matSample.rgb * 2.0 - 1.0);
+    }
+    if (snowWeight > 0.01) {
+        PREC vec4 snowSample = texture(matNormalArray, vec3(uvSnow, float(MAT_LAYER_SNOW)));
+        detailN += snowWeight * 0.9 * (snowSample.rgb * 2.0 - 1.0);
+    }
+#else
     if (matWeights.x > 0.01) {
         matSample = (useAntiTile && atsRock > 0.01) ? sampleAntiTile(matNormal0, uvRock, atsRock) : texture(matNormal0, uvRock);
         detailN += matWeights.x * normalBoost.x * fwRock * (matSample.rgb * 2.0 - 1.0);
@@ -608,11 +675,11 @@ void main(void)
         matSample = (useAntiTile && atsConcrete > 0.01) ? sampleAntiTile(matNormal3, uvConcrete, atsConcrete) : texture(matNormal3, uvConcrete);
         detailN += matWeights.w * normalBoost.w * fwConcrete * (matSample.rgb * 2.0 - 1.0);
     }
-    // Snow normal contribution (broad tiling, moderate strength).
     if (snowWeight > 0.01) {
         PREC vec4 snowSample = texture(matNormal4, uvSnow);
         detailN += snowWeight * 0.9 * (snowSample.rgb * 2.0 - 1.0);
     }
+#endif
     detailN *= (1.0 - pureConcrete);
 
     PREC vec3 N;
