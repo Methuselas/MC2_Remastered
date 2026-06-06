@@ -281,11 +281,11 @@ static void drawTerrainTuningSection() {
     ImGui::SeparatorText("Tessellation");
     bool tessChanged = false;
     tessChanged |= ImGui::SliderFloat("Level##tess",      &s_tessLevel, 1.0f, 16.0f, "%.1f");
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Inner/outer tess factor. Default: 4.0");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Max tessellation subdivisions (full tiling at near dist). Default: 4.0\nOnly visible on curved/hilly terrain — flat terrain looks unchanged.");
     tessChanged |= ImGui::SliderFloat("Near dist##tess",  &s_tessNear,  50.0f, 1000.0f, "%.0f wu");
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Distance at which max tessellation begins. Default: 200");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Camera distance at which max tessellation applies. Default: 200 wu");
     tessChanged |= ImGui::SliderFloat("Far dist##tess",   &s_tessFar,   500.0f, 8000.0f, "%.0f wu");
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Distance at which tessellation falls off. Default: 2000");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Camera distance at which tessellation falls to 1× (disabled). Default: 2000 wu");
     if (tessChanged)
         gos_SetTerrainTessParams(s_tessLevel, s_tessNear, s_tessFar);
     ImGui::SameLine();
@@ -301,7 +301,7 @@ static void drawTerrainTuningSection() {
         gos_SetTerrainPhongAlpha(phong);
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("0 = linear TES interpolation, 1 = full Phong smoothing. Default: 0.5\n"
-                          "Higher values round off tessellated terrain vertices more aggressively.");
+                          "Only visible on curved/hilly terrain; flat terrain is unaffected.");
     ImGui::SameLine();
     if (ImGui::SmallButton("Reset##phong")) gos_SetTerrainPhongAlpha(0.5f);
 
@@ -312,7 +312,8 @@ static void drawTerrainTuningSection() {
         gos_SetTerrainDisplaceScale(disp);
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Vertex displacement amplitude (dirt material only). Default: 2.0\n"
-                          "Acts on the dirt weight channel — non-dirt patches unaffected.");
+                          "Requires dirt normal map with height data in alpha channel.\n"
+                          "Set > 0 and look at a dirt-heavy area to see the effect.");
     ImGui::SameLine();
     if (ImGui::SmallButton("Reset##disp")) gos_SetTerrainDisplaceScale(2.0f);
 

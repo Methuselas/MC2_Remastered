@@ -65,7 +65,11 @@ void main()
         gl_out[gl_InvocationID].gl_Position = gl_in[gl_InvocationID].gl_Position;
 
         if (gl_InvocationID == 0) {
-            float level = max(tessLevel.x, 1.0);
+            // Distance-based tessellation LOD
+            vec3 centroid = (tcs_WorldPos[0] + tcs_WorldPos[1] + tcs_WorldPos[2]) / 3.0;
+            float camDist = length(centroid - cameraPos.xyz);
+            float t = clamp((camDist - tessDistanceRange.x) / max(tessDistanceRange.y - tessDistanceRange.x, 1.0), 0.0, 1.0);
+            float level = max(mix(tessLevel.x, 1.0, t), 1.0);
             gl_TessLevelOuter[0] = level;
             gl_TessLevelOuter[1] = level;
             gl_TessLevelOuter[2] = level;
@@ -148,7 +152,12 @@ void main()
     // Tessellation levels -- only invocation 0 writes patch-level state.
     if (id == 0u) {
         uint pzValid = (triIdx == 0u) ? pzTri1 : pzTri2;
-        float level = (pzValid != 0u) ? max(tessLevel.x, 1.0) : 0.0;
+        // Distance-based tessellation LOD (same formula as passthrough path)
+        vec3 centroid = (tcs_WorldPos[0] + tcs_WorldPos[1] + tcs_WorldPos[2]) / 3.0;
+        float camDist = length(centroid - cameraPos.xyz);
+        float t = clamp((camDist - tessDistanceRange.x) / max(tessDistanceRange.y - tessDistanceRange.x, 1.0), 0.0, 1.0);
+        float distLevel = max(mix(tessLevel.x, 1.0, t), 1.0);
+        float level = (pzValid != 0u) ? distLevel : 0.0;
         gl_TessLevelOuter[0] = level;
         gl_TessLevelOuter[1] = level;
         gl_TessLevelOuter[2] = level;
