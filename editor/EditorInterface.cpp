@@ -2452,6 +2452,20 @@ void EditorInterface::update()
 			UnsetBusyMode();
 			if (!MapGeneratorDialog::IsOpen())
 			{
+				// Re-seat the camera for the generated terrain. eye->reset()
+				// was called before generate; the terrain is now a different
+				// size and elevation, so reinitialise from cameras.fit to
+				// put the camera at a sensible starting position. Without
+				// this the sky sphere renders at an incorrect world position
+				// and the camera frustum is wrong for mech placement picks.
+				{
+					char camPath[256];
+					strcpy( camPath, cameraPath );
+					strcat( camPath, "cameras.fit" );
+					FitIniFile camFile;
+					if ( NO_ERR == camFile.open( camPath ) )
+						eye->init( &camFile );
+				}
 				if ( land )
 				{
 					addBuildingsToNewMenu();
