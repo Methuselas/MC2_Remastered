@@ -451,6 +451,7 @@ void Editor::init( char* loader )
 		}
 	}
 
+	fprintf(stderr, "[GENDBG] Editor::init bOK=%d bCanceled=%d calling EditorInterface::init\n", bOK?1:0, bCanceled?1:0); fflush(stderr);
 	if (bOK)
 	{
 		if (EditorInterface::instance())
@@ -918,12 +919,15 @@ void EditorInterface::terminate()
 
 void EditorInterface::init( const char* fileName )
 {
+	fprintf(stderr, "[GENDBG] EditorInterface::init enter fileName=%s land=%p\n", fileName ? fileName : "<null>", (void*)land); fflush(stderr);
 	SetBusyMode(false/*no redraw*/);
 
 	FitIniFile loader;
 	loader.open( const_cast<char*>(fileName) );
+	fprintf(stderr, "[GENDBG] EditorInterface::init loader opened\n"); fflush(stderr);
 
 	long result = loader.seekBlock("CameraData");
+	fprintf(stderr, "[GENDBG] EditorInterface::init seekBlock CameraData result=%ld\n", result); fflush(stderr);
 	gosASSERT(result == NO_ERR);
 	
 	result = loader.readIdFloat("ScrollIncrement",scrollInc);
@@ -962,9 +966,12 @@ void EditorInterface::init( const char* fileName )
 	gosASSERT(result == NO_ERR);
 
 
+	fprintf(stderr, "[GENDBG] EditorInterface::init before addBuildingsToNewMenu\n"); fflush(stderr);
 	addBuildingsToNewMenu();
+	fprintf(stderr, "[GENDBG] EditorInterface::init after addBuildingsToNewMenu\n"); fflush(stderr);
 
 	curBrush = new SelectionBrush( false, -1 );
+	fprintf(stderr, "[GENDBG] EditorInterface::init brush created, land=%p\n", (void*)land); fflush(stderr);
 	ChangeCursor( IDC_MC2ARROW );
 
 	// Guard: syncScrollBars/initTacMap require terrain (land != NULL).
@@ -978,6 +985,7 @@ void EditorInterface::init( const char* fileName )
 	}
 
 	UnsetBusyMode();
+	fprintf(stderr, "[GENDBG] EditorInterface::init done\n"); fflush(stderr);
 
 	bThisIsInitialized = true;
 }
