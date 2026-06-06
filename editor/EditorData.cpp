@@ -1270,7 +1270,6 @@ bool EditorData::generateMission( int mapSize, int terrain, unsigned long seed )
 
 bool EditorData::generateFromDialogParams( int mapSizeIndex, const char* biome )
 {
-	fprintf(stderr, "[GENDBG] generateFromDialogParams: enter sizeIdx=%d\n", mapSizeIndex); fflush(stderr);
 	// The MapGeneratorDialog has already written the recipe JSON and run the
 	// python generator; we only need to stage the burnin + hand off to
 	// initTerrainFromTGA (same as the tail of generateMission).
@@ -1285,26 +1284,22 @@ bool EditorData::generateFromDialogParams( int mapSizeIndex, const char* biome )
 	SetFileAttributes( dstBurnin, FILE_ATTRIBUTE_NORMAL );
 	if ( !CopyFile( srcBurnin, dstBurnin, FALSE ) )
 		EditorDataTrace( "generateFromDialogParams: WARNING CopyFile burnin %s -> %s failed", srcBurnin, dstBurnin );
-	fprintf(stderr, "[GENDBG] generateFromDialogParams: burnin copied\n"); fflush(stderr);
 
 	// Hand off to initTerrainFromTGA: use the burnin colormap + apply the heightmap.
 	// terrain=0 with s_genColormapName set makes initTerrainFromTGA use the burnin path.
 	strcpy( s_genColormapName, mapName );
 	sprintf( s_genElevPath, "terrain_gen_out\\%s.elev.r32", mapName );
 
-	fprintf(stderr, "[GENDBG] generateFromDialogParams: calling initTerrainFromTGA\n"); fflush(stderr);
 	return initTerrainFromTGA( mapSizeIndex, 0, 0, 0 );
 }
 
 bool EditorData::initTerrainFromTGA( int mapSize, int min, int max, int terrain )
 {
-	fprintf(stderr, "[GENDBG] initTerrainFromTGA: enter mapSize=%d\n", mapSize); fflush(stderr);
 	gEditorDataMoveDataReadyForFullSave = false;
 	EditorDataTrace("EditorData::initTerrainFromTGA: enter mapSize=%d min=%d max=%d terrain=%d; move data marked not ready", mapSize, min, max, terrain);
 	EditorInterface::instance()->SetBusyMode(false/*no redraw*/);
 
 	clear(); // get rid of all the old stuff now
-	fprintf(stderr, "[GENDBG] initTerrainFromTGA: after clear\n"); fflush(stderr);
 	EditorData::instance->MissionNeedsSaving(true);
 
 	float MinVal = min;
@@ -1355,15 +1350,12 @@ bool EditorData::initTerrainFromTGA( int mapSize, int min, int max, int terrain 
 	}
 
 	land = new Terrain( );
-	fprintf(stderr, "[GENDBG] initTerrainFromTGA: land created land=%p\n", (void*)land); fflush(stderr);
 	EditorDataTrace("EditorData::initTerrainFromTGA: Terrain new land=%p", land);
 	volatile float crap = 0;
 	EditorDataTrace("EditorData::initTerrainFromTGA: before land->init");
 	land->init( mapWidth, NULL, EDITOR_VISIBLE_VERTICES, crap, 100 );
-	fprintf(stderr, "[GENDBG] initTerrainFromTGA: land inited\n"); fflush(stderr);
 	EditorDataTrace("EditorData::initTerrainFromTGA: after land->init realVerticesMapSide=%ld terrainTextures2=%p", land->realVerticesMapSide, land->terrainTextures2);
 	land->setUserSettings( min, max, terrain );
-	fprintf(stderr, "[GENDBG] initTerrainFromTGA: userSettings done\n"); fflush(stderr);
 	EditorDataTrace("EditorData::initTerrainFromTGA: after setUserSettings");
 
 	//-----------------------------------------------------------------
@@ -1380,7 +1372,6 @@ bool EditorData::initTerrainFromTGA( int mapSize, int min, int max, int terrain 
 		land->terrainName = (char *)gos_Malloc( strlen( s_genColormapName ) + 1 );
 		strcpy( land->terrainName, s_genColormapName );
 		EditorDataTrace("EditorData::initTerrainFromTGA: GEN colormap terrainName=%s", land->terrainName );
-		fprintf(stderr, "[GENDBG] initTerrainFromTGA: terrainName set terrainName=%s\n", land->terrainName); fflush(stderr);
 	}
 
 	//-----------------------------------------------------------------
@@ -1698,13 +1689,11 @@ bool EditorData::initTerrainFromTGA( int mapSize, int min, int max, int terrain 
 			land->terrainTextures2->init( land->terrainName );
 		EditorDataTrace("EditorData::initTerrainFromTGA: NEWMAP colormap init done terrainName=%s",
 			land->terrainName ? land->terrainName : "<null>");
-		fprintf(stderr, "[GENDBG] initTerrainFromTGA: colormap inited\n"); fflush(stderr);
 	}
 	{
 		volatile float editorLoadProgress = 36.0f;
 		land->primeMissionTerrainCache(editorLoadProgress, 4.0f);   // builds dense terrain recipes -> g_recipeReady=true
 	}
-	fprintf(stderr, "[GENDBG] initTerrainFromTGA: primed\n"); fflush(stderr);
 	EditorObjectMgr::instance()->registerStaticPropsForMissionLoad();   // no-op for a blank map
 	// Pre-warm all building types before finalize so placing a Bridge (etc.) on a
 	// new/generated map doesn't hit the late-register CPU-fallback -> black (same
