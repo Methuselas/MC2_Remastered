@@ -435,13 +435,16 @@ void MapGeneratorDialog::ExecutePreview() {
 }
 
 void MapGeneratorDialog::ExecuteGenerate() {
+    fprintf(stderr, "[GENDBG] ExecuteGenerate: enter\n"); fflush(stderr);
     std::string json = BuildRecipeJSON(/*preview=*/false);
     if (!WriteRecipeFile(json)) {
         snprintf(s_state.statusMsg, sizeof(s_state.statusMsg),
             "Generate failed: could not write recipe JSON");
         return;
     }
+    fprintf(stderr, "[GENDBG] ExecuteGenerate: recipe written\n"); fflush(stderr);
     bool ok = RunTerrainGen(/*preview=*/false);
+    fprintf(stderr, "[GENDBG] ExecuteGenerate: terrainGen rc=%d\n", ok ? 0 : 1); fflush(stderr);
     if (!ok) {
         snprintf(s_state.statusMsg, sizeof(s_state.statusMsg),
             "Generate failed: terrain_gen.py returned error");
@@ -450,6 +453,8 @@ void MapGeneratorDialog::ExecuteGenerate() {
     // Apply to editor via EditorData.  mapSizeIndex maps 1:1 with
     // genMapSizeToN() indices in EditorData.cpp; terrain=0 is unused when
     // s_genColormapName is set (the generator writes its own burnin colormap).
+    fprintf(stderr, "[GENDBG] ExecuteGenerate: calling generateFromDialogParams sizeIdx=%d biome=%s\n",
+        s_state.mapSizeIndex, k_biomeKeys[s_state.biomeIndex]); fflush(stderr);
     bool applied = EditorData::generateFromDialogParams(
         s_state.mapSizeIndex,
         k_biomeKeys[s_state.biomeIndex]);

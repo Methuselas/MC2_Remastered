@@ -967,9 +967,15 @@ void EditorInterface::init( const char* fileName )
 	curBrush = new SelectionBrush( false, -1 );
 	ChangeCursor( IDC_MC2ARROW );
 
-	syncScrollBars();
-
-	initTacMap();
+	// Guard: syncScrollBars/initTacMap require terrain (land != NULL).
+	// For the ImGui generator path, terrain is not yet loaded when
+	// EditorInterface::init() runs — skip and call postTerrainInit() after
+	// generateFromDialogParams() sets up the terrain.
+	if ( land )
+	{
+		syncScrollBars();
+		initTacMap();
+	}
 
 	UnsetBusyMode();
 
@@ -2445,8 +2451,14 @@ void EditorInterface::update()
 			if (!MapGeneratorDialog::IsOpen())
 			{
 				// Generation succeeded and dialog was closed.
+				// If EditorInterface::init() ran before terrain was loaded
+				// (generator path), finish the deferred terrain-dependent init now.
+				if ( land )
+				{
+					syncScrollBars();
+					initTacMap();
+				}
 				tacMap.UpdateMap();
-				syncScrollBars();
 				PlaySound("SystemDefault", NULL, SND_ASYNC);
 			}
 			return;
