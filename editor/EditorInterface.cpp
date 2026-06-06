@@ -307,7 +307,6 @@ void Editor::init( char* loader )
 								{
 								}
 					resolved = true;
-					fprintf(stderr, "[TERMSRC] Editor::init IDCANCEL calling gos_TerminateApplication\n"); fflush(stderr);
 					gos_TerminateApplication();
 					PostQuitMessage(0);
 					bOK = true;
@@ -392,24 +391,28 @@ void Editor::init( char* loader )
 				else if ( retVal == ID_MAPGENERATOR )
 				{
 					resolved = true;
-					bOK = true;
-					// Open the ImGui Map Generator dialog. MapGeneratorDialog::Open()
-					// only sets a static flag — safe to call before GL is fully up.
-#ifdef MC2_IMGUI
-					MapGeneratorDialog::Open();
-#endif
-					// Initialize camera from cameras.fit — same as ID_NEWMISSION path.
-					// eye exists (created above) but Camera::init() has not been called yet;
-					// without this, eye->reset() in update() post-generate crashes.
+					// Create a blank placeholder terrain exactly like ID_NEWMISSION so
+					// EditorInterface::init() runs with land != NULL — giving the editor
+					// fully-initialized camera, scrollbars, menus, and tacmap state.
+					// The MapGeneratorDialog then opens on top and replaces it, following
+					// the same code path as the toolbar "Generate Map" button (which works).
 					{
 						char camPath[256];
 						strcpy( camPath, cameraPath );
 						strcat( camPath, "cameras.fit" );
 						FitIniFile camFile;
-						if ( NO_ERR == camFile.open( camPath ) )
-							eye->init( &camFile );
+						long camResult = camFile.open( camPath );
+						if ( NO_ERR != camResult ) { /* cameras.fit missing — eye->init skipped */ }
+						else eye->init( &camFile );
 					}
-					fprintf(stderr, "[TERMSRC] ID_MAPGENERATOR path taken, bOK=1, dialog open\n"); fflush(stderr);
+					// mapSize=3 → 120x120 (medium) blank flat map; terrain=0 (default).
+					bOK = EditorData::initTerrainFromTGA( 3, 0, 0, 0 );
+					// Open the generator dialog automatically — user picks settings and
+					// clicks Generate to replace the placeholder with Python terrain.
+#ifdef MC2_IMGUI
+					if ( bOK )
+						MapGeneratorDialog::Open();
+#endif
 				}
 				else
 				{
@@ -1332,7 +1335,6 @@ int EditorInterface::Quit()
 	int res = PromptAndSaveIfNecessary();
 	if (IDCANCEL != res) {
 		SetBusyMode();
-		fprintf(stderr, "[TERMSRC] EditorInterface::Quit calling gos_TerminateApplication\n"); fflush(stderr);
 		gos_TerminateApplication();
 		PostQuitMessage(0);
 		UnsetBusyMode();
@@ -2458,9 +2460,6 @@ void EditorInterface::update()
 			UnsetBusyMode();
 			if (!MapGeneratorDialog::IsOpen())
 			{
-				// Generation succeeded and dialog was closed.
-				// If EditorInterface::init() ran before terrain was loaded
-				// (generator path), finish the deferred terrain-dependent init now.
 				if ( land )
 				{
 					addBuildingsToNewMenu();
