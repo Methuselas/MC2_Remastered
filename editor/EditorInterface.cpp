@@ -391,27 +391,20 @@ void Editor::init( char* loader )
 				else if ( retVal == ID_MAPGENERATOR )
 				{
 					resolved = true;
-					// Create a blank placeholder terrain exactly like ID_NEWMISSION so
-					// EditorInterface::init() runs with land != NULL — giving the editor
-					// fully-initialized camera, scrollbars, menus, and tacmap state.
-					// The MapGeneratorDialog then opens on top and replaces it, following
-					// the same code path as the toolbar "Generate Map" button (which works).
+					bOK = true;
+					// Init camera from cameras.fit (same as ID_NEWMISSION path).
 					{
 						char camPath[256];
 						strcpy( camPath, cameraPath );
 						strcat( camPath, "cameras.fit" );
 						FitIniFile camFile;
-						long camResult = camFile.open( camPath );
-						if ( NO_ERR != camResult ) { /* cameras.fit missing — eye->init skipped */ }
-						else eye->init( &camFile );
+						if ( NO_ERR == camFile.open( camPath ) )
+							eye->init( &camFile );
 					}
-					// mapSize=3 → 120x120 (medium) blank flat map; terrain=0 (default).
-					bOK = EditorData::initTerrainFromTGA( 3, 0, 0, 0 );
-					// Open the generator dialog automatically — user picks settings and
-					// clicks Generate to replace the placeholder with Python terrain.
+					// Open the generator dialog — land stays NULL until the user generates.
+					// All land-dependent code in Editor::update() is guarded by if(land).
 #ifdef MC2_IMGUI
-					if ( bOK )
-						MapGeneratorDialog::Open();
+					MapGeneratorDialog::Open();
 #endif
 				}
 				else

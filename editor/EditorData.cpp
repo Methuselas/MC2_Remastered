@@ -1691,6 +1691,12 @@ bool EditorData::initTerrainFromTGA( int mapSize, int min, int max, int terrain 
 			land->terrainName ? land->terrainName : "<null>");
 	}
 	{
+		// Warm camera frustum before primeMissionTerrainCache — buildTerrainFaceCache
+		// uses eye clip planes for culling. On the generator startup path, eye->update()
+		// was never called (land was NULL so Editor::update skipped the land block).
+		// Calling it once here puts eye in the same state as the toolbar-generate path.
+		if ( eye )
+			eye->update();
 		volatile float editorLoadProgress = 36.0f;
 		land->primeMissionTerrainCache(editorLoadProgress, 4.0f);   // builds dense terrain recipes -> g_recipeReady=true
 	}
