@@ -285,13 +285,37 @@ MapGeneratorDialog::PendingAction MapGeneratorDialog::TakeAction() {
     return a;
 }
 
+// Returns Windows DPI scale relative to 96 DPI baseline (1.0 = 100%, 2.0 = 200%).
+// Cached after first call; uses GetDpiForSystem (Win8.1+) with fallback.
+static float GetDpiScale() {
+    static float s_scale = 0.0f;
+    if (s_scale == 0.0f) {
+#if defined(_WIN32)
+        // GetDpiForSystem available since Win8.1 (always present on Win10+).
+        typedef UINT (WINAPI *PFN_GetDpiForSystem)();
+        HMODULE user32 = GetModuleHandleA("user32.dll");
+        PFN_GetDpiForSystem fn = user32
+            ? (PFN_GetDpiForSystem)GetProcAddress(user32, "GetDpiForSystem")
+            : nullptr;
+        UINT dpi = fn ? fn() : 96;
+        s_scale = (float)dpi / 96.0f;
+#else
+        s_scale = 1.0f;
+#endif
+        if (s_scale < 1.0f) s_scale = 1.0f;  // never shrink below baseline
+    }
+    return s_scale;
+}
+
 void MapGeneratorDialog::Draw() {
     if (!s_state.open) return;
+
+    const float sc = GetDpiScale();
 
     ImGuiIO& io = ImGui::GetIO();
     ImVec2 center(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(540, 0), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(540.f * sc, 0), ImGuiCond_Appearing);
 
     bool windowOpen = true;
     if (!ImGui::Begin("Map Generator", &windowOpen,
@@ -305,11 +329,12 @@ void MapGeneratorDialog::Draw() {
         Close();
         return;
     }
+    ImGui::SetWindowFontScale(sc);  // scale text within this window
 
     // --- Biome ---
     ImGui::Text("Biome");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(200.f);
+    ImGui::SetNextItemWidth(200.f * sc);
     if (ImGui::BeginCombo("##biome", k_biomeLabels[s_state.biomeIndex])) {
         for (int i = 0; i < 5; ++i) {
             bool sel = (s_state.biomeIndex == i);
@@ -323,7 +348,7 @@ void MapGeneratorDialog::Draw() {
     // --- Map Size ---
     ImGui::Text("Size  ");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(200.f);
+    ImGui::SetNextItemWidth(200.f * sc);
     if (ImGui::BeginCombo("##size", k_mapSizeLabels[s_state.mapSizeIndex])) {
         for (int i = 0; i < k_numMapSizes; ++i) {
             bool sel = (s_state.mapSizeIndex == i);
@@ -338,26 +363,26 @@ void MapGeneratorDialog::Draw() {
     ImGui::Text("Height");
     ImGui::Indent();
 
-    ImGui::SetNextItemWidth(280.f);
+    ImGui::SetNextItemWidth(280.f * sc);
     ImGui::SliderFloat("Min Elevation",  &s_state.minElevation, 0.f, 500.f, "%.0f");
-    ImGui::SetNextItemWidth(280.f);
+    ImGui::SetNextItemWidth(280.f * sc);
     ImGui::SliderFloat("Max Elevation",  &s_state.maxElevation, 0.f, 500.f, "%.0f");
     // Keep min <= max
     if (s_state.minElevation > s_state.maxElevation)
         s_state.minElevation = s_state.maxElevation;
 
-    ImGui::SetNextItemWidth(280.f);
+    ImGui::SetNextItemWidth(280.f * sc);
     ImGui::SliderFloat("Flat <-> Mountainous", &s_state.mountainAmount, 0.f, 1.f, "%.2f");
-    ImGui::SetNextItemWidth(280.f);
+    ImGui::SetNextItemWidth(280.f * sc);
     ImGui::SliderFloat("Ridged Noise",   &s_state.ridgedAmount,   0.f, 1.f, "%.2f");
     ImGui::Unindent();
 
     ImGui::Separator();
     ImGui::Text("Materials");
     ImGui::Indent();
-    ImGui::SetNextItemWidth(280.f);
+    ImGui::SetNextItemWidth(280.f * sc);
     ImGui::SliderFloat("Grass Lowland",  &s_state.grassLowland,  0.f, 1.f, "%.2f");
-    ImGui::SetNextItemWidth(280.f);
+    ImGui::SetNextItemWidth(280.f * sc);
     ImGui::SliderFloat("Snow Line",      &s_state.snowLine,       0.f, 1.f, "%.2f");
     ImGui::Unindent();
 
@@ -367,14 +392,14 @@ void MapGeneratorDialog::Draw() {
     if (!s_state.randomSeed) {
         ImGui::SameLine();
         int seed_i = (int)(s_state.seed & 0x7fffffff);
-        ImGui::SetNextItemWidth(120.f);
+        ImGui::SetNextItemWidth(120.f * sc);
         if (ImGui::InputInt("##seed", &seed_i))
             s_state.seed = (unsigned long)(seed_i < 0 ? 0 : seed_i);
     }
 
     ImGui::Separator();
     // --- Preview thumbnail ---
-    const float previewDisplayW = 256.f;
+    const float previewDisplayW = 256.f * sc;
     if (s_state.previewTexID) {
         ImGui::Text("Preview:");
         float aspect = (s_state.previewH > 0)
@@ -396,17 +421,17 @@ void MapGeneratorDialog::Draw() {
 
     ImGui::Separator();
     // --- Buttons ---
-    if (ImGui::Button("Preview (~3s)", ImVec2(120, 0))) {
+    if (ImGui::Button("Preview (~3s)", ImVec2(120.f * sc, 0))) {
         snprintf(s_state.statusMsg, sizeof(s_state.statusMsg), "Running preview...");
         s_state.pendingAction = PendingAction::Preview;
     }
     ImGui::SameLine();
-    if (ImGui::Button("Generate", ImVec2(100, 0))) {
+    if (ImGui::Button("Generate", ImVec2(100.f * sc, 0))) {
         snprintf(s_state.statusMsg, sizeof(s_state.statusMsg), "Generating (please wait)...");
         s_state.pendingAction = PendingAction::Generate;
     }
     ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(80, 0))) {
+    if (ImGui::Button("Cancel", ImVec2(80.f * sc, 0))) {
         Close();
     }
 
