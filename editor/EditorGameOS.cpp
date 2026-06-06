@@ -537,21 +537,18 @@ DWORD __stdcall RunGameOSLogic()
 #endif
     gos_RendererBeginFrame();
 
-    // DoGameLogic / UpdateRenderers both require terrain (land != NULL).
-    // When the ImGui map generator dialog is open before any map is loaded,
-    // skip the terrain render pass — ImGui renders independently via
-    // GuiRuntime::NewFrame / GuiRuntime::Render below.
+    // DoGameLogic must always run — it drives EditorInterface::update() which
+    // processes MapGeneratorDialog::TakeAction() (Generate/Preview clicks).
+    // UpdateRenderers requires terrain (land != NULL); skip it when no map
+    // is loaded (e.g. while the generator dialog is open at startup).
+    if (Environment.DoGameLogic)
+        Environment.DoGameLogic();
+
 #ifdef MC2_IMGUI
-    const bool terrainReady = (land != nullptr);
-#else
-    const bool terrainReady = true;
+    if (land)
 #endif
-    if (terrainReady)
-    {
-        if (Environment.DoGameLogic)
-            Environment.DoGameLogic();
         Environment.UpdateRenderers();
-    }
+
     gos_RendererEndFrame();
 
     // Composite scene FBO → default FB (tone-map, FXAA, bloom, shadow overlay).
