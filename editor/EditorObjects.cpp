@@ -882,6 +882,20 @@ void Pilot::initPilots()
 			if ( bytesRead < 2 )
 				break;
 
+			// Guard: pilots.csv may be zlib-compressed inside the FST and the
+			// FST reader returns raw deflate bytes.  Any non-printable byte in
+			// the filename means the data is corrupt/binary — stop loading.
+			{
+				bool validName = true;
+				for ( int ci = 0; ci < bytesRead; ++ci )
+				{
+					unsigned char c = (unsigned char)pilotFileName[ci];
+					if ( c < 0x20 || c > 0x7e ) { validName = false; break; }
+				}
+				if ( !validName )
+					break;
+			}
+
 			CString postFix;
 			if (0 == i)
 			{
@@ -909,10 +923,9 @@ void Pilot::initPilots()
 
 			if ( NO_ERR != pilotFile.open( tmpPath ) )
 			{
-				char errorString[256];
-				sprintf( errorString, "Couldn't open file %s", (const char*)tmpPath);
-				Assert( 0, 0, errorString );
-				return;
+				// Pilot .fit missing — skip rather than crash.  The editor's pilot
+				// assignment dialog will just have fewer options.
+				continue;
 			}
 
 			infos[*counter].fileName = new char[strlen( pilotFileName ) + 1];
