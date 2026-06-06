@@ -4552,6 +4552,90 @@ void EditorInterface::renderObjectCompanionPanel()
 		}
 	}
 
+	// Ecosystem Components section -------------------------------------------
+	// When the selected building is part of a functional system (turrets,
+	// sensors, spotlights) show all related building types grouped by role so
+	// the user can quickly place every component of that system.
+	{
+		using BT = EditorObjectMgr::BuildingType;
+
+		// Three ecosystems: each entry lists the trigger types, the role
+		// names, and which specialType maps to which role index.
+		struct EcoRole { const char* label; BT type; };
+		struct Ecosystem
+		{
+			const char* header;
+			EcoRole     roles[4];
+			int         roleCount;
+		};
+		static const Ecosystem k_ecosystems[] =
+		{
+			{ "Turret Components",    { {"Controls",   BT::TURRET_CONTROL},
+			                            {"Generators", BT::TURRET_GENERATOR},
+			                            {"Turrets",    BT::EDITOR_TURRET} }, 3 },
+			{ "Sensor Components",   { {"Controls",   BT::SENSOR_CONTROL},
+			                            {"Sensors",    BT::SENSOR_TOWER}  }, 2 },
+			{ "Spotlight Components",{ {"Controls",   BT::SPOTLIGHT_CONTROL},
+			                            {"Spotlights", BT::SPOTLIGHT}     }, 2 },
+		};
+		static const int k_numEco = (int)(sizeof(k_ecosystems) / sizeof(k_ecosystems[0]));
+
+		// Determine current building's specialType.
+		const BT curType = (group >= 0 && activeIdx >= 0)
+		    ? pMgr->getBuildingSpecialType(group, activeIdx)
+		    : BT::UNSPECIAL;
+
+		// Find which ecosystem (if any) this type belongs to.
+		const Ecosystem* eco = nullptr;
+		for (int e = 0; e < k_numEco && !eco; ++e)
+			for (int r = 0; r < k_ecosystems[e].roleCount && !eco; ++r)
+				if (k_ecosystems[e].roles[r].type == curType)
+					eco = &k_ecosystems[e];
+
+		if (eco)
+		{
+			ImGui::Separator();
+			if (ImGui::CollapsingHeader(eco->header, ImGuiTreeNodeFlags_DefaultOpen))
+			{
+				const int totalGroups = pMgr->getBuildingGroupCount();
+				for (int r = 0; r < eco->roleCount; ++r)
+				{
+					const BT roleType = eco->roles[r].type;
+					// Collect all buildings of this role type across all groups.
+					bool headerPrinted = false;
+					int  ecoID = 2000 + r * 256; // unique widget ID base
+					for (int g = 0; g < totalGroups; ++g)
+					{
+						const int cnt = pMgr->getNumberBuildingsInGroup(g);
+						for (int i = 0; i < cnt; ++i)
+						{
+							if (pMgr->getBuildingSpecialType(g, i) != roleType)
+								continue;
+							if (!headerPrinted)
+							{
+								ImGui::TextDisabled("%s", eco->roles[r].label);
+								headerPrinted = true;
+							}
+							const bool isActive = (g == group && i == activeIdx);
+							if (isActive)
+								ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.45f, 0.80f, 1.0f));
+							ImGui::PushID(ecoID++);
+							if (ImGui::Button(pMgr->getBuildingName(g, i), ImVec2(-1.f, 0.f)))
+							{
+								pendGroup = g;
+								pendIndex = i;
+							}
+							ImGui::PopID();
+							if (isActive)
+								ImGui::PopStyleColor();
+						}
+					}
+				}
+			}
+		}
+	}
+	// End Ecosystem Components ------------------------------------------------
+
 	// Recent (MRU across groups). Validate each entry against the current palette.
 	const ObjectRecentRing& ring = objectRecentRing();
 	if (!ring.items().empty())

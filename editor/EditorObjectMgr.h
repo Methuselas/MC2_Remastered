@@ -155,6 +155,8 @@ public:
 	void		getVariantNames( int group, int indexInGroup, const char** names, int& numberOfNames ) const;
 	const char*	getGroupName( int group ) const;
 	const char*	getObjectName( int ID ) const;
+	BuildingType getBuildingSpecialType( int group, int idx ) const;
+	const char*  getBuildingName( int group, int idx ) const;
 
 	int			getUnitGroupCount() const;
 	void		getUnitGroupNames( const char** names, int* IDs, int& numberOfNames ) const;
@@ -335,6 +337,14 @@ inline unsigned long EditorObjectMgr::getIndexInGroup( long id )
 inline EditorObjectMgr::BuildingType	EditorObjectMgr::getSpecialType( int ID )
 {
 	return groups[getGroup( ID )].buildings[getIndexInGroup( ID )].specialType;
+}
+inline EditorObjectMgr::BuildingType EditorObjectMgr::getBuildingSpecialType( int group, int idx ) const
+{
+	return groups[group].buildings[idx].specialType;
+}
+inline const char* EditorObjectMgr::getBuildingName( int group, int idx ) const
+{
+	return groups[group].buildings[idx].name;
 }
 
 inline bool EditorObjectMgr::isAlignable( int ID )
