@@ -391,20 +391,19 @@ void Editor::init( char* loader )
 				else if ( retVal == ID_MAPGENERATOR )
 				{
 					resolved = true;
-					bOK = true;
-					// Init camera from cameras.fit (same as ID_NEWMISSION path).
 					{
 						char camPath[256];
 						strcpy( camPath, cameraPath );
 						strcat( camPath, "cameras.fit" );
 						FitIniFile camFile;
-						if ( NO_ERR == camFile.open( camPath ) )
-							eye->init( &camFile );
+						long camResult = camFile.open( camPath );
+						if ( NO_ERR != camResult ) { /* cameras.fit missing */ }
+						else eye->init( &camFile );
 					}
-					// Open the generator dialog — land stays NULL until the user generates.
-					// All land-dependent code in Editor::update() is guarded by if(land).
+					bOK = EditorData::initTerrainFromTGA( 3, 0, 0, 0 );
 #ifdef MC2_IMGUI
-					MapGeneratorDialog::Open();
+					if ( bOK )
+						MapGeneratorDialog::Open();
 #endif
 				}
 				else
