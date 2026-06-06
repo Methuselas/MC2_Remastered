@@ -725,51 +725,42 @@ void Editor::update()
 	//interMgr.update();
 
 	mcTextureManager->clearArrays();
-	
-	eye->update();
-	if (land->terrainTextures2 && !(land->terrainTextures2->colorMapStarted) && (EditorInterface::instance()))
+
+	// Guard all land/eye terrain work — land is NULL until the generator
+	// produces a map. EditorInterface::update() below still runs so that
+	// MapGeneratorDialog::TakeAction() (Generate/Preview) is processed.
+	if ( land )
 	{
-		if (EditorInterface::instance())
-	{
-		EditorInterface::instance()->SetBusyMode(false/*no redraw*/);
-	}
-	else
-	{
-	}
-		land->update();
-		if (EditorInterface::instance())
-								{
-									EditorInterface::instance()->UnsetBusyMode();
-								}
-								else
-								{
-								}
-	}
-	else
-	{
-		land->update();
+		eye->update();
+		if (land->terrainTextures2 && !(land->terrainTextures2->colorMapStarted) && (EditorInterface::instance()))
+		{
+			if (EditorInterface::instance())
+				EditorInterface::instance()->SetBusyMode(false/*no redraw*/);
+			land->update();
+			if (EditorInterface::instance())
+				EditorInterface::instance()->UnsetBusyMode();
+		}
+		else
+		{
+			land->update();
+		}
+
+		// S2.13-surgical: hoist camera projection-state refresh from
+		// EditorCamera::render() to BEFORE land->geometry().
+		{
+			float viewMulX, viewMulY, viewAddX, viewAddY;
+			gos_GetViewport(&viewMulX, &viewMulY, &viewAddX, &viewAddY);
+			Stuff::Vector3D newRes;
+			newRes.x = viewMulX;
+			newRes.y = viewMulY;
+			newRes.z = 0.0f;
+			eye->changeResolution(newRes);
+		}
+
+		land->clearObjBlocksActive();
+		land->geometry();
 	}
 
-	// S2.13-surgical: hoist camera projection-state refresh from
-	// EditorCamera::render() to BEFORE land->geometry(). The terrain geometry
-	// pass consumes eye->verticalSphereClipConstant / horizontalSphereClipConstant
-	// and the cameraToClip-derived clip vector. Previously those were updated
-	// inside EditorCamera::render() (post-geometry), so frame 1 saw zero
-	// constants and frame N>=2 saw frame-(N-1) values. Mirrors game's
-	// Mission::update ordering (camera state setup -> terrain geometry).
-	{
-		float viewMulX, viewMulY, viewAddX, viewAddY;
-		gos_GetViewport(&viewMulX, &viewMulY, &viewAddX, &viewAddY);
-		Stuff::Vector3D newRes;
-		newRes.x = viewMulX;
-		newRes.y = viewMulY;
-		newRes.z = 0.0f;
-		eye->changeResolution(newRes);  // sets screenResolution + calculateProjectionConstants
-	}
-
-	land->clearObjBlocksActive();
-	land->geometry();
-	
 	if (EditorInterface::instance())
 	{
 		EditorInterface::instance()->update();
