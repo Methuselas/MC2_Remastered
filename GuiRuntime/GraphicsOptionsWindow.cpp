@@ -18,6 +18,8 @@ uint32_t batcher_getStaticPropTypeDescCount();
 // Terrain PBR parameter accessors (defined in gameos_graphics.cpp).
 void  gos_SetTerrainMatNormalBoost(float rock, float grass, float dirt, float concrete);
 void  gos_GetTerrainMatNormalBoost(float* rock, float* grass, float* dirt, float* concrete);
+void  gos_SetTerrainMatTiling(float rock, float grass, float dirt, float concrete, float snow);
+void  gos_GetTerrainMatTiling(float* rock, float* grass, float* dirt, float* concrete, float* snow);
 void  gos_SetTerrainTintStrengthScale(float s);
 float gos_GetTerrainTintStrengthScale();
 // TERRAIN-TUNING-UI-1 / TERRAIN-LIGHTING-1 — consolidated tunables (the
@@ -323,8 +325,9 @@ static void drawTerrainTuningSection() {
     if (ImGui::SliderFloat("Tiling##nm", &tiling, 0.1f, 4.0f))
         gos_SetTerrainDetailParams(tiling, s_strength);
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Global UV tiling multiplier on top of per-material constants.\n"
-                          "Per-material: rock=3×, grass=12×, dirt=1×, concrete=6×. Default: 1.0");
+        ImGui::SetTooltip("Global UV tiling multiplier on top of per-material values.\n"
+                          "Per-material defaults: rock=3×, grass=2×, dirt=1×, concrete=6×, snow=1×\n"
+                          "(tune per-material in the 'Per-Material Tiling' section below). Default: 1.0");
 
     if (ImGui::SliderFloat("Strength##nm", &s_strength, 0.0f, 12.0f))
         gos_SetTerrainDetailParams(tiling, s_strength);
@@ -362,6 +365,36 @@ static void drawTerrainTuningSection() {
     if (ImGui::SmallButton("Reset##nb")) {
         s_boostRock = 0.9f; s_boostGrass = 1.1f; s_boostDirt = 1.1f; s_boostConcrete = 2.5f;
         gos_SetTerrainMatNormalBoost(0.9f, 1.1f, 1.1f, 2.5f);
+    }
+
+    // ── Per-material tiling ───────────────────────────────────────────────────
+    ImGui::SeparatorText("Per-Material Tiling");
+    ImGui::TextDisabled("UV repeat multiplier per material. Grass default 2x (was 12x).");
+
+    static float s_tilingRock     = 3.0f;
+    static float s_tilingGrass    = 2.0f;
+    static float s_tilingDirt     = 1.0f;
+    static float s_tilingConcrete = 6.0f;
+    static float s_tilingSnow     = 1.0f;
+    static bool  s_tilingInited   = false;
+    if (!s_tilingInited) {
+        gos_GetTerrainMatTiling(&s_tilingRock, &s_tilingGrass, &s_tilingDirt, &s_tilingConcrete, &s_tilingSnow);
+        s_tilingInited = true;
+    }
+
+    bool tilingChanged = false;
+    tilingChanged |= ImGui::SliderFloat("Rock##mt",     &s_tilingRock,     0.1f, 20.0f, "%.1f");
+    tilingChanged |= ImGui::SliderFloat("Grass##mt",    &s_tilingGrass,    0.1f, 20.0f, "%.1f");
+    tilingChanged |= ImGui::SliderFloat("Dirt##mt",     &s_tilingDirt,     0.1f, 20.0f, "%.1f");
+    tilingChanged |= ImGui::SliderFloat("Concrete##mt", &s_tilingConcrete, 0.1f, 20.0f, "%.1f");
+    tilingChanged |= ImGui::SliderFloat("Snow##mt",     &s_tilingSnow,     0.1f, 20.0f, "%.1f");
+    if (tilingChanged)
+        gos_SetTerrainMatTiling(s_tilingRock, s_tilingGrass, s_tilingDirt, s_tilingConcrete, s_tilingSnow);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Reset##mt")) {
+        s_tilingRock = 3.0f; s_tilingGrass = 2.0f; s_tilingDirt = 1.0f;
+        s_tilingConcrete = 6.0f; s_tilingSnow = 1.0f;
+        gos_SetTerrainMatTiling(3.0f, 2.0f, 1.0f, 6.0f, 1.0f);
     }
 
     // ── POM ───────────────────────────────────────────────────────────────────

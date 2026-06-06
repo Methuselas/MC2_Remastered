@@ -1578,6 +1578,20 @@ class gosRenderer {
             *d = terrain_mat_normal_boost_[2];
             *c = terrain_mat_normal_boost_[3];
         }
+        void setTerrainMatTiling(float rock, float grass, float dirt, float concrete, float snow) {
+            terrain_mat_tiling_[0] = rock;
+            terrain_mat_tiling_[1] = grass;
+            terrain_mat_tiling_[2] = dirt;
+            terrain_mat_tiling_[3] = concrete;
+            terrain_mat_tiling_snow_ = snow;
+        }
+        void getTerrainMatTiling(float* rock, float* grass, float* dirt, float* concrete, float* snow) const {
+            *rock = terrain_mat_tiling_[0];
+            *grass = terrain_mat_tiling_[1];
+            *dirt = terrain_mat_tiling_[2];
+            *concrete = terrain_mat_tiling_[3];
+            *snow = terrain_mat_tiling_snow_;
+        }
         // TERRAIN-CLASSIFY-TUNING-1
         void setTerrainClassGrass(const float* v) { memcpy(terrain_class_grass_, v, 4 * sizeof(float)); }
         void getTerrainClassGrass(float* v) const  { memcpy(v, terrain_class_grass_, 4 * sizeof(float)); }
@@ -1956,6 +1970,10 @@ class gosRenderer {
         float terrain_world_scale_ = 15360.0f;
         // Per-material normal boost: [rock, grass, dirt, concrete]; matches shader const default.
         float terrain_mat_normal_boost_[4] = { 0.9f, 1.1f, 1.1f, 2.5f };
+        // Per-material UV tiling: [rock, grass, dirt, concrete]; snow separate.
+        // Grass default lowered 12→2 to reduce excessive normal-map repetition.
+        float terrain_mat_tiling_[4] = { 3.0f, 2.0f, 1.0f, 6.0f };
+        float terrain_mat_tiling_snow_ = 1.0f;
         // TERRAIN-CLASSIFY-TUNING-1: colormap HSV classifier thresholds.
         //   grass = (hLo, hHi, sLo, sHi); dirt = (hHi, hLo, satLo, satHi) — hHi/hLo reversed
         // Sand_M24 profile resets dirt sat at mission start (see mclib/terrain.cpp).
@@ -1996,6 +2014,8 @@ class gosRenderer {
             GLint terrainMaterialProfile = -1;  // C1 tactical (mclib/terrain.h)
             GLint worldToClipGL = -1;            // F1 Task 7b probe uniform
             GLint matNormalBoost = -1;           // per-material normal strength (vec4)
+            GLint matTiling = -1;                // per-material UV tiling (vec4: rock,grass,dirt,concrete)
+            GLint matTilingSnow = -1;            // snow UV tiling (float)
             GLint tintStrengthScale = -1;        // global tint blend scalar
             // TERRAIN-CLASSIFY-TUNING-1
             GLint terrainClassGrass = -1;        // colormap HSV grass thresholds (vec4)
@@ -2028,6 +2048,8 @@ class gosRenderer {
             GLint terrainMaterialProfile = -1;  // C1 tactical (mclib/terrain.h)
             GLint tessDebug = -1;               // shader debug-viz mode (frag mode 1..8)
             GLint matNormalBoost = -1;          // per-material normal strength (vec4)
+            GLint matTiling = -1;               // per-material UV tiling (vec4: rock,grass,dirt,concrete)
+            GLint matTilingSnow = -1;           // snow UV tiling (float)
             GLint tintStrengthScale = -1;       // global tint blend scalar
             // TERRAIN-CLASSIFY-TUNING-1
             GLint terrainClassGrass = -1;       // colormap HSV grass thresholds (vec4)
@@ -2097,6 +2119,8 @@ class gosRenderer {
             // F1 Task 7b: probe uniform location (flat uniform, not UBO member).
             terrainLocs_.worldToClipGL    = glGetUniformLocation(shp, "u_worldToClipGL");
             terrainLocs_.matNormalBoost   = glGetUniformLocation(shp, "matNormalBoost");
+            terrainLocs_.matTiling        = glGetUniformLocation(shp, "matTiling");
+            terrainLocs_.matTilingSnow    = glGetUniformLocation(shp, "matTilingSnow");
             terrainLocs_.tintStrengthScale = glGetUniformLocation(shp, "tintStrengthScale");
             // TERRAIN-CLASSIFY-TUNING-1
             terrainLocs_.terrainClassGrass = glGetUniformLocation(shp, "terrainClassGrass");
@@ -2147,6 +2171,8 @@ class gosRenderer {
             thinTerrainLocs_.terrainMaterialProfile = glGetUniformLocation(shp, "g_terrainMaterialProfile");
             thinTerrainLocs_.tessDebug          = glGetUniformLocation(shp, "tessDebug");
             thinTerrainLocs_.matNormalBoost     = glGetUniformLocation(shp, "matNormalBoost");
+            thinTerrainLocs_.matTiling          = glGetUniformLocation(shp, "matTiling");
+            thinTerrainLocs_.matTilingSnow      = glGetUniformLocation(shp, "matTilingSnow");
             thinTerrainLocs_.tintStrengthScale  = glGetUniformLocation(shp, "tintStrengthScale");
             // TERRAIN-CLASSIFY-TUNING-1
             thinTerrainLocs_.terrainClassGrass = glGetUniformLocation(shp, "terrainClassGrass");
@@ -5735,6 +5761,8 @@ void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
     if (tl.terrainWorldScale >= 0)    glUniform4fv(tl.terrainWorldScale, 1, worldScaleV);
     if (tl.cellBombParams >= 0)       glUniform4fv(tl.cellBombParams, 1, cellP);
     if (tl.matNormalBoost >= 0)       glUniform4fv(tl.matNormalBoost, 1, terrain_mat_normal_boost_);
+    if (tl.matTiling >= 0)            glUniform4fv(tl.matTiling, 1, terrain_mat_tiling_);
+    if (tl.matTilingSnow >= 0)        glUniform1f(tl.matTilingSnow, terrain_mat_tiling_snow_);
     if (tl.tintStrengthScale >= 0)    glUniform1f(tl.tintStrengthScale, terrain_tint_strength_scale_);
     if (tl.terrainClassGrass >= 0)    glUniform4fv(tl.terrainClassGrass, 1, terrain_class_grass_);
     if (tl.terrainClassDirt  >= 0)    glUniform4fv(tl.terrainClassDirt,  1, terrain_class_dirt_);
@@ -5868,6 +5896,8 @@ int gosRenderer::terrainBindThinUniformsForPatchStream(glsl_program* overridePro
     if (tl.terrainWorldScale >= 0)    glUniform4fv(tl.terrainWorldScale, 1, worldScaleV);
     if (tl.cellBombParams >= 0)       glUniform4fv(tl.cellBombParams, 1, cellP);
     if (tl.matNormalBoost >= 0)       glUniform4fv(tl.matNormalBoost, 1, terrain_mat_normal_boost_);
+    if (tl.matTiling >= 0)            glUniform4fv(tl.matTiling, 1, terrain_mat_tiling_);
+    if (tl.matTilingSnow >= 0)        glUniform1f(tl.matTilingSnow, terrain_mat_tiling_snow_);
     if (tl.tintStrengthScale >= 0)    glUniform1f(tl.tintStrengthScale, terrain_tint_strength_scale_);
     if (tl.terrainClassGrass >= 0)    glUniform4fv(tl.terrainClassGrass, 1, terrain_class_grass_);
     if (tl.terrainClassDirt  >= 0)    glUniform4fv(tl.terrainClassDirt,  1, terrain_class_dirt_);
@@ -6020,6 +6050,8 @@ void gosRenderer::terrainDrawIndexedPatches(gosRenderMaterial* material, gosMesh
     float cellP[4] = { terrain_cell_scale_, terrain_cell_jitter_, terrain_cell_rotation_, 0.0f };
     if (tl.cellBombParams >= 0) glUniform4fv(tl.cellBombParams, 1, cellP);
     if (tl.matNormalBoost >= 0)       glUniform4fv(tl.matNormalBoost, 1, terrain_mat_normal_boost_);
+    if (tl.matTiling >= 0)            glUniform4fv(tl.matTiling, 1, terrain_mat_tiling_);
+    if (tl.matTilingSnow >= 0)        glUniform1f(tl.matTilingSnow, terrain_mat_tiling_snow_);
     if (tl.tintStrengthScale >= 0)    glUniform1f(tl.tintStrengthScale, terrain_tint_strength_scale_);
     if (tl.terrainClassGrass >= 0)    glUniform4fv(tl.terrainClassGrass, 1, terrain_class_grass_);
     if (tl.terrainClassDirt  >= 0)    glUniform4fv(tl.terrainClassDirt,  1, terrain_class_dirt_);
@@ -8160,6 +8192,13 @@ void gos_SetTerrainMatNormalBoost(float rock, float grass, float dirt, float con
 void gos_GetTerrainMatNormalBoost(float* rock, float* grass, float* dirt, float* concrete) {
     if (g_gos_renderer) g_gos_renderer->getTerrainMatNormalBoost(rock, grass, dirt, concrete);
     else { *rock = 0.9f; *grass = 1.1f; *dirt = 1.1f; *concrete = 2.5f; }
+}
+void gos_SetTerrainMatTiling(float rock, float grass, float dirt, float concrete, float snow) {
+    if (g_gos_renderer) g_gos_renderer->setTerrainMatTiling(rock, grass, dirt, concrete, snow);
+}
+void gos_GetTerrainMatTiling(float* rock, float* grass, float* dirt, float* concrete, float* snow) {
+    if (g_gos_renderer) g_gos_renderer->getTerrainMatTiling(rock, grass, dirt, concrete, snow);
+    else { *rock = 3.0f; *grass = 2.0f; *dirt = 1.0f; *concrete = 6.0f; *snow = 1.0f; }
 }
 // TERRAIN-CLASSIFY-TUNING-1
 void gos_SetTerrainClassGrass(float hLo, float hHi, float sLo, float sHi) {

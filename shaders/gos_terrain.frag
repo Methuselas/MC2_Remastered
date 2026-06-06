@@ -129,6 +129,10 @@ uniform int g_terrainMaterialProfile;
 // Per-material and global color tuning (set via gos_SetTerrainMatNormalBoost /
 // gos_SetTerrainTintStrengthScale). Defaults match the previous shader constants.
 uniform PREC vec4  matNormalBoost;     // [rock, grass, dirt, concrete]; default (0.9, 1.1, 1.1, 2.5)
+// Per-material UV tiling (set via gos_SetTerrainMatTiling). Grass default
+// lowered from 12→2 to reduce excessive normal-map repetition at PBR zoom.
+uniform PREC vec4  matTiling;          // [rock, grass, dirt, concrete]; default (3, 2, 1, 6)
+uniform PREC float matTilingSnow;      // snow tiling; default 1.0
 // TERRAIN-CLASSIFY-TUNING-1: colormap HSV classifier thresholds. Defaults match
 // the pre-ImGui hardcoded values; Sand_M24 profile writes dirt sat via
 // gos_SetTerrainClassDirt at mission start, then visual_tuning can override.
@@ -570,10 +574,8 @@ void main(void)
     }
 
     // Per-material tiling (rock, grass, dirt/riverbed, concrete).
-    // Rock bumped from 1.0→3.0: at 1 texture per terrain tile, rock normal detail
-    // was too stretched to read at RTS zoom on biomes without authored colormap variation.
-    const PREC vec4 matTiling = vec4(3.0, 12.0, 1.0, 6.0);
-    const PREC float matTilingSnow = 1.0;  // same broad tiling as rock/dirt
+    // Values are C++-tunable uniforms (gos_SetTerrainMatTiling / ImGui "Per-Material Tiling").
+    // Grass was 12.0 historically; default lowered to 2.0 to match visual expectations.
     PREC float baseTiling = detailNormalTiling.x;
 
     // Compute per-material UVs (straight tiling, anti-tiling done at sample time)
