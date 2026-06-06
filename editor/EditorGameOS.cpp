@@ -537,12 +537,21 @@ DWORD __stdcall RunGameOSLogic()
 #endif
     gos_RendererBeginFrame();
 
-    if (Environment.DoGameLogic)
+    // DoGameLogic / UpdateRenderers both require terrain (land != NULL).
+    // When the ImGui map generator dialog is open before any map is loaded,
+    // skip the terrain render pass — ImGui renders independently via
+    // GuiRuntime::NewFrame / GuiRuntime::Render below.
+#ifdef MC2_IMGUI
+    const bool terrainReady = (land != nullptr);
+#else
+    const bool terrainReady = true;
+#endif
+    if (terrainReady)
     {
-        Environment.DoGameLogic();
+        if (Environment.DoGameLogic)
+            Environment.DoGameLogic();
+        Environment.UpdateRenderers();
     }
-
-    Environment.UpdateRenderers();
     gos_RendererEndFrame();
 
     // Composite scene FBO → default FB (tone-map, FXAA, bloom, shadow overlay).
