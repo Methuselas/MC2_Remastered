@@ -307,6 +307,7 @@ void Editor::init( char* loader )
 								{
 								}
 					resolved = true;
+					fprintf(stderr, "[TERMSRC] Editor::init IDCANCEL calling gos_TerminateApplication\n"); fflush(stderr);
 					gos_TerminateApplication();
 					PostQuitMessage(0);
 					bOK = true;
@@ -397,6 +398,18 @@ void Editor::init( char* loader )
 #ifdef MC2_IMGUI
 					MapGeneratorDialog::Open();
 #endif
+					// Initialize camera from cameras.fit — same as ID_NEWMISSION path.
+					// eye exists (created above) but Camera::init() has not been called yet;
+					// without this, eye->reset() in update() post-generate crashes.
+					{
+						char camPath[256];
+						strcpy( camPath, cameraPath );
+						strcat( camPath, "cameras.fit" );
+						FitIniFile camFile;
+						if ( NO_ERR == camFile.open( camPath ) )
+							eye->init( &camFile );
+					}
+					fprintf(stderr, "[TERMSRC] ID_MAPGENERATOR path taken, bOK=1, dialog open\n"); fflush(stderr);
 				}
 				else
 				{
@@ -1328,6 +1341,7 @@ int EditorInterface::Quit()
 	int res = PromptAndSaveIfNecessary();
 	if (IDCANCEL != res) {
 		SetBusyMode();
+		fprintf(stderr, "[TERMSRC] EditorInterface::Quit calling gos_TerminateApplication\n"); fflush(stderr);
 		gos_TerminateApplication();
 		PostQuitMessage(0);
 		UnsetBusyMode();
@@ -4976,7 +4990,15 @@ void EditorInterface::OnViewRefreshtacmap()
 bool EditorInterface::SafeRunGameOSLogic()
 {
 	static unsigned long s_safeRunCount = 0;
-	if (bThisIsInitialized && (NULL != land))
+	// Allow rendering when the ImGui map generator dialog is open even if no
+	// terrain is loaded yet — the dialog needs GL frames to draw itself.
+#ifdef MC2_IMGUI
+	const bool needRender = bThisIsInitialized &&
+	                        ((NULL != land) || MapGeneratorDialog::IsOpen());
+#else
+	const bool needRender = bThisIsInitialized && (NULL != land);
+#endif
+	if (needRender)
 	{
 		if (!m_bInRunGameOSLogicCall)
 		{

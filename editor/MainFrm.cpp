@@ -180,8 +180,9 @@ LRESULT MainFrame::WindowProc(UINT message, WPARAM wParam, LPARAM lParam)
 	return CFrameWnd::WindowProc(message, wParam, lParam);
 }
 
-void MainFrame::OnClose() 
+void MainFrame::OnClose()
 {
+	fprintf(stderr, "[TERMSRC] MainFrame::OnClose entered\n"); fflush(stderr);
 	int res = IDNO;
 	if (EditorInterface::instance() && EditorInterface::instance()->ThisIsInitialized()
 		&& EditorData::instance) {
@@ -191,6 +192,7 @@ void MainFrame::OnClose()
 		if (EditorInterface::instance()) {
 			EditorInterface::instance()->SetBusyMode();
 		}
+		fprintf(stderr, "[TERMSRC] MainFrame::OnClose calling gos_TerminateApplication\n"); fflush(stderr);
 		gos_TerminateApplication();
 		PostQuitMessage(0);
 		if (EditorInterface::instance()) {
