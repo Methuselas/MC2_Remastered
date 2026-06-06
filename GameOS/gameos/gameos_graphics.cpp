@@ -104,6 +104,71 @@ static_assert(kTerrainMatNormalUnits[4] != kTerrainTexUnitHeight,
 static_assert(kTerrainMatNormalUnits[4] < 16,
               "matNormal4 exceeds OpenGL min-spec 16-unit floor");
 
+// TERRAIN-NORMAL-ARRAY: save/restore all GL pixel transfer, PBO, and texture
+// binding state that glGetTexImage / glTexSubImage3D are sensitive to.
+// Construct once, destructor restores. Use in any function that calls
+// glGetTexImage or bulk texture upload to avoid clobbering surrounding state.
+struct GlPixelStoreGuard {
+    GLint packBuffer = 0, unpackBuffer = 0;
+    GLint packAlign = 0, unpackAlign = 0;
+    GLint packRowLen = 0, unpackRowLen = 0;
+    GLint packSkipRows = 0, packSkipPixels = 0;
+    GLint unpackSkipRows = 0, unpackSkipPixels = 0;
+    GLint activeTex = 0;
+    GLint binding2D = 0, binding2DArray = 0;
+
+    GlPixelStoreGuard() {
+        glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING,   &packBuffer);
+        glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &unpackBuffer);
+        glGetIntegerv(GL_PACK_ALIGNMENT,    &packAlign);
+        glGetIntegerv(GL_UNPACK_ALIGNMENT,  &unpackAlign);
+        glGetIntegerv(GL_PACK_ROW_LENGTH,   &packRowLen);
+        glGetIntegerv(GL_UNPACK_ROW_LENGTH, &unpackRowLen);
+        glGetIntegerv(GL_PACK_SKIP_ROWS,    &packSkipRows);
+        glGetIntegerv(GL_PACK_SKIP_PIXELS,  &packSkipPixels);
+        glGetIntegerv(GL_UNPACK_SKIP_ROWS,  &unpackSkipRows);
+        glGetIntegerv(GL_UNPACK_SKIP_PIXELS,&unpackSkipPixels);
+        glGetIntegerv(GL_ACTIVE_TEXTURE,    &activeTex);
+        glGetIntegerv(GL_TEXTURE_BINDING_2D,       &binding2D);
+        glGetIntegerv(GL_TEXTURE_BINDING_2D_ARRAY, &binding2DArray);
+
+        glBindBuffer(GL_PIXEL_PACK_BUFFER,   0);
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+        glPixelStorei(GL_PACK_ALIGNMENT,    1);
+        glPixelStorei(GL_PACK_ROW_LENGTH,   0);
+        glPixelStorei(GL_PACK_SKIP_ROWS,    0);
+        glPixelStorei(GL_PACK_SKIP_PIXELS,  0);
+        glPixelStorei(GL_UNPACK_ALIGNMENT,  1);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+        glPixelStorei(GL_UNPACK_SKIP_ROWS,  0);
+        glPixelStorei(GL_UNPACK_SKIP_PIXELS,0);
+    }
+
+    ~GlPixelStoreGuard() {
+        glBindBuffer(GL_PIXEL_PACK_BUFFER,   (GLuint)packBuffer);
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, (GLuint)unpackBuffer);
+        glPixelStorei(GL_PACK_ALIGNMENT,    packAlign);
+        glPixelStorei(GL_PACK_ROW_LENGTH,   packRowLen);
+        glPixelStorei(GL_PACK_SKIP_ROWS,    packSkipRows);
+        glPixelStorei(GL_PACK_SKIP_PIXELS,  packSkipPixels);
+        glPixelStorei(GL_UNPACK_ALIGNMENT,  unpackAlign);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, unpackRowLen);
+        glPixelStorei(GL_UNPACK_SKIP_ROWS,  unpackSkipRows);
+        glPixelStorei(GL_UNPACK_SKIP_PIXELS,unpackSkipPixels);
+        glBindTexture(GL_TEXTURE_2D,       (GLuint)binding2D);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, (GLuint)binding2DArray);
+        glActiveTexture((GLenum)activeTex);
+    }
+};
+
+// Single-source gate for the sampler2DArray terrain normal path.
+// Used by shader prefix injection AND all bind paths — must agree for the
+// lifetime of compiled programs. Evaluated once at startup via static.
+static bool terrainNormalArrayEnabled() {
+    static const bool enabled = debugEnvEnabled("MC2_TERRAIN_NORMAL_ARRAY");
+    return enabled;
+}
+
 gosRenderer* getGosRenderer() {
     return g_gos_renderer;
 }
@@ -266,6 +331,8 @@ class gosMaterialVariationHelper {
                     defines_str.append("#define MRT_ENABLED 1\n");
                 }
             }
+            if (terrainNormalArrayEnabled())
+                defines_str.append("#define TERRAIN_NORMAL_ARRAY\n");
             defines_str.append("\n");
 
             if(variation.defines_)
@@ -1554,7 +1621,126 @@ class gosRenderer {
         void setTerrainLightDir(float x, float y, float z) { terrain_light_dir_ = vec4(x, y, z, 0.0f); }
         const vec4& getTerrainLightDir() const { return terrain_light_dir_; }
         void setTerrainDetailParams(float tiling, float strength) { terrain_detail_tiling_ = tiling; terrain_detail_strength_ = strength; }
-        void setTerrainMaterialNormal(int idx, GLuint texId) { if (idx >= 0 && idx < 5) terrain_mat_normal_[idx] = texId; }
+        void setTerrainMaterialNormal(int idx, GLuint texId) {
+            if (idx >= 0 && idx < 5) {
+                terrain_mat_normal_[idx] = texId;
+                terrain_normal_array_dirty_ = true;
+            }
+        }
+        void buildTerrainNormalArray() {
+            // Require all 5 slots to be filled. Log once if incomplete.
+            for (int i = 0; i < 5; ++i) {
+                if (terrain_mat_normal_[i] == 0) {
+                    static bool s_warned = false;
+                    if (!s_warned) {
+                        s_warned = true;
+                        SPEW(("GRAPHICS", "buildTerrainNormalArray: slot %d is zero -- deferring build until all 5 slots are set\n", i));
+                    }
+                    return;
+                }
+            }
+
+            GlPixelStoreGuard guard;  // saves and restores pixel-store, PBO, active tex, bindings
+
+            // Query slot 0 for reference dimensions and internal format.
+            GLint refW = 0, refH = 0, refFmt = 0;
+            GLint baseLevel = 0, maxLevel = 0;
+            glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[0]);
+            glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH,           &refW);
+            glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT,          &refH);
+            glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, &refFmt);
+            glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, &baseLevel);
+            glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL,  &maxLevel);
+            glBindTexture(GL_TEXTURE_2D, 0);
+
+            if (refW <= 0 || refH <= 0)
+                STOP(("buildTerrainNormalArray: slot 0 has invalid size %dx%d", refW, refH));
+
+            // Assert all 5 textures match in dimensions and internal format.
+            for (int i = 1; i < 5; ++i) {
+                GLint wi = 0, hi = 0, fmti = 0;
+                glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[i]);
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH,           &wi);
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT,          &hi);
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, &fmti);
+                glBindTexture(GL_TEXTURE_2D, 0);
+                if (wi != refW || hi != refH)
+                    STOP(("buildTerrainNormalArray: slot %d size %dx%d != slot 0 size %dx%d",
+                          i, wi, hi, refW, refH));
+                if (fmti != refFmt)
+                    STOP(("buildTerrainNormalArray: slot %d internal format 0x%X != slot 0 format 0x%X",
+                          i, fmti, refFmt));
+            }
+
+            // Determine the actual mip chain depth.
+            int numLevels = maxLevel - baseLevel + 1;
+            if (numLevels < 1) numLevels = 1;
+            {
+                int maxPossible = 0, d = (refW > refH ? refW : refH);
+                while (d > 0) { ++maxPossible; d >>= 1; }
+                if (numLevels > maxPossible) numLevels = maxPossible;
+            }
+
+            // Delete the previous array texture if it exists.
+            if (terrain_normal_array_tex_ != 0) {
+                glDeleteTextures(1, &terrain_normal_array_tex_);
+                terrain_normal_array_tex_ = 0;
+            }
+
+            // Allocate the GL_TEXTURE_2D_ARRAY with GL_RGBA8 storage.
+            // glGetTexImage always decompresses if the source is compressed; we
+            // receive RGBA8 regardless of the source internal format.
+            glGenTextures(1, &terrain_normal_array_tex_);
+            glBindTexture(GL_TEXTURE_2D_ARRAY, terrain_normal_array_tex_);
+            glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8,
+                         refW, refH, 5 /*layers*/,
+                         0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+            // Copy all mip levels from each source texture into the array.
+            // Normal-map mips are authored — do not use glGenerateMipmap here
+            // (averaging would shorten normals; hardware-generated mips differ
+            // from the source importer's output).
+            std::vector<uint8_t> pixels;
+            for (int level = baseLevel; level < baseLevel + numLevels; ++level) {
+                GLint mipW = 0, mipH = 0;
+                glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[0]);
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, level, GL_TEXTURE_WIDTH,  &mipW);
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, level, GL_TEXTURE_HEIGHT, &mipH);
+                glBindTexture(GL_TEXTURE_2D, 0);
+                if (mipW <= 0 || mipH <= 0) break;
+
+                glBindTexture(GL_TEXTURE_2D_ARRAY, terrain_normal_array_tex_);
+                glTexImage3D(GL_TEXTURE_2D_ARRAY, level, GL_RGBA8,
+                             mipW, mipH, 5, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+                const size_t mipBytes = (size_t)mipW * mipH * 4;
+                pixels.resize(mipBytes);
+
+                for (int layer = 0; layer < 5; ++layer) {
+                    glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[layer]);
+                    glGetTexImage(GL_TEXTURE_2D, level, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                    glBindTexture(GL_TEXTURE_2D, 0);
+
+                    glBindTexture(GL_TEXTURE_2D_ARRAY, terrain_normal_array_tex_);
+                    glTexSubImage3D(GL_TEXTURE_2D_ARRAY, level,
+                                    0, 0, layer,
+                                    mipW, mipH, 1,
+                                    GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                }
+            }
+
+            // Sampling params.
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_BASE_LEVEL, baseLevel);
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL,  baseLevel + numLevels - 1);
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
+            glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+            // guard destructor restores all state
+
+            terrain_normal_array_dirty_ = false;
+        }
         void setTerrainCellBombParams(float s, float j, float r) { terrain_cell_scale_ = s; terrain_cell_jitter_ = j; terrain_cell_rotation_ = r; }
         void setTerrainPOMParams(float scale, float, float) { terrain_pom_scale_ = scale; }
         void setTerrainWorldScale(float scale) { terrain_world_scale_ = scale; }
@@ -1761,6 +1947,8 @@ class gosRenderer {
         float terrain_detail_tiling_ = 1.0f;
         float terrain_detail_strength_ = 4.0f;
         GLuint terrain_mat_normal_[5] = {0, 0, 0, 0, 0};
+        GLuint terrain_normal_array_tex_   = 0;     // GL_TEXTURE_2D_ARRAY; 0 = not built
+        bool   terrain_normal_array_dirty_ = false; // rebuild needed at next bind
         float terrain_cell_scale_ = 8.0f;
         float terrain_cell_jitter_ = 0.8f;
         float terrain_cell_rotation_ = 1.0f;
@@ -1800,6 +1988,7 @@ class gosRenderer {
             GLint terrainLightDir = -1, detailNormalTiling = -1, detailNormalStrength = -1;
             GLint pomParams = -1, terrainWorldScale = -1, cellBombParams = -1;
             GLint matNormal[5] = {-1, -1, -1, -1, -1};
+            GLint matNormalArray = -1;   // sampler2DArray (TERRAIN_NORMAL_ARRAY path)
             GLint lightSpaceMatrix = -1, enableShadows = -1, shadowSoftness = -1, shadowMap = -1;
             GLint dynamicLightSpaceMatrix = -1, enableDynamicShadows = -1, dynamicShadowMap = -1;
             GLint time = -1;
@@ -1830,6 +2019,7 @@ class gosRenderer {
             GLint detailNormalTiling = -1, detailNormalStrength = -1;
             GLint pomParams = -1, terrainWorldScale = -1, cellBombParams = -1;
             GLint matNormal[5] = {-1,-1,-1,-1,-1};
+            GLint matNormalArray = -1;
             GLint tex1 = -1;
             GLint lightSpaceMatrix = -1, enableShadows = -1, shadowSoftness = -1, shadowMap = -1;
             GLint dynamicLightSpaceMatrix = -1, enableDynamicShadows = -1, dynamicShadowMap = -1;
@@ -1860,6 +2050,7 @@ class gosRenderer {
             GLint lightSpaceMatrix = -1, tessLevel = -1, tessDistanceRange = -1;
             GLint tessDisplace = -1, cameraPos = -1, mvp = -1;
             GLint matNormal2 = -1, detailNormalTiling = -1, tex1 = -1;
+            GLint matNormalArray = -1;
             GLint terrainMaterialProfile = -1;  // C1 tactical (mclib/terrain.h)
             GLuint program = 0;
         } shadowLocs_;
@@ -1892,6 +2083,7 @@ class gosRenderer {
             terrainLocs_.matNormal[2] = glGetUniformLocation(shp, "matNormal2");
             terrainLocs_.matNormal[3] = glGetUniformLocation(shp, "matNormal3");
             terrainLocs_.matNormal[4] = glGetUniformLocation(shp, "matNormal4");
+            terrainLocs_.matNormalArray = glGetUniformLocation(shp, "matNormalArray");
             terrainLocs_.lightSpaceMatrix = glGetUniformLocation(shp, "lightSpaceMatrix");
             terrainLocs_.enableShadows = glGetUniformLocation(shp, "enableShadows");
             terrainLocs_.shadowSoftness = glGetUniformLocation(shp, "shadowSoftness");
@@ -1940,6 +2132,7 @@ class gosRenderer {
             thinTerrainLocs_.matNormal[2]       = glGetUniformLocation(shp, "matNormal2");
             thinTerrainLocs_.matNormal[3]       = glGetUniformLocation(shp, "matNormal3");
             thinTerrainLocs_.matNormal[4]       = glGetUniformLocation(shp, "matNormal4");
+            thinTerrainLocs_.matNormalArray     = glGetUniformLocation(shp, "matNormalArray");
             thinTerrainLocs_.tex1               = glGetUniformLocation(shp, "tex1");
             thinTerrainLocs_.lightSpaceMatrix   = glGetUniformLocation(shp, "lightSpaceMatrix");
             thinTerrainLocs_.enableShadows      = glGetUniformLocation(shp, "enableShadows");
@@ -1983,6 +2176,7 @@ class gosRenderer {
             shadowLocs_.cameraPos = glGetUniformLocation(shp, "cameraPos");
             shadowLocs_.mvp = glGetUniformLocation(shp, "mvp");
             shadowLocs_.matNormal2 = glGetUniformLocation(shp, "matNormal2");
+            shadowLocs_.matNormalArray = glGetUniformLocation(shp, "matNormalArray");
             shadowLocs_.detailNormalTiling = glGetUniformLocation(shp, "detailNormalTiling");
             shadowLocs_.tex1 = glGetUniformLocation(shp, "tex1");
             shadowLocs_.terrainMaterialProfile = glGetUniformLocation(shp, "g_terrainMaterialProfile");
@@ -4213,12 +4407,14 @@ void gosRenderer::init() {
     // Used by PatchStream M1g to draw thin records via GL_TRIANGLES, avoiding tessellation overhead.
     {
         ZoneScopedN("gosRenderer::init thinTerrainProg");
-        static const char* kThinPrefix = "#version 430\n";
+        std::string kThinPrefix = "#version 430\n";
+        if (terrainNormalArrayEnabled())
+            kThinPrefix += "#define TERRAIN_NORMAL_ARRAY\n";
         thin_terrain_prog_ = glsl_program::makeProgram(
             "gos_terrain_thin",
             "shaders/gos_terrain_thin.vert",
             "shaders/gos_terrain.frag",
-            kThinPrefix);
+            kThinPrefix.c_str());
         if (!thin_terrain_prog_ || !thin_terrain_prog_->shp_)
             fprintf(stderr, "[THIN_TERRAIN] WARNING: failed to compile thin terrain shader"
                             " — thin draw path disabled\n");
@@ -4237,12 +4433,14 @@ void gosRenderer::init() {
     // run log for shader compile errors.
     {
         ZoneScopedN("gosRenderer::init terrainSurfaceProg");
-        static const char* kSurfacePrefix = "#version 430\n";
+        std::string kSurfacePrefix = "#version 430\n";
+        if (terrainNormalArrayEnabled())
+            kSurfacePrefix += "#define TERRAIN_NORMAL_ARRAY\n";
         terrain_surface_prog_ = glsl_program::makeProgram(
             "gos_terrain_surface",
             "shaders/gos_terrain_surface.vert",
             "shaders/gos_terrain.frag",
-            kSurfacePrefix);
+            kSurfacePrefix.c_str());
         if (!terrain_surface_prog_ || !terrain_surface_prog_->shp_)
             fprintf(stderr, "[TERRAIN_SURFACE v1] event=shader_compile_fail "
                             "vs=gos_terrain_surface.vert fs=gos_terrain.frag "
@@ -4276,12 +4474,14 @@ void gosRenderer::init() {
     // PBR/shadow/atlas logic from gos_terrain.frag.
     {
         ZoneScopedN("gosRenderer::init maskSolidProg");
-        static const char* kMaskSolidPrefix = "#version 430\n";
+        std::string kMaskSolidPrefix = "#version 430\n";
+        if (terrainNormalArrayEnabled())
+            kMaskSolidPrefix += "#define TERRAIN_NORMAL_ARRAY\n";
         mask_solid_prog_ = glsl_program::makeProgram(
             "gos_terrain_mask_solid",
             "shaders/gos_terrain_mask_solid.vert",
             "shaders/gos_terrain.frag",
-            kMaskSolidPrefix);
+            kMaskSolidPrefix.c_str());
         if (!mask_solid_prog_ || !mask_solid_prog_->shp_)
             fprintf(stderr, "[MASK_SOLID] WARNING: failed to compile mask-SOLID shader"
                             " — MC2_TERRAIN_MASK_DISPATCH=1 SOLID draw disabled\n");
@@ -4444,6 +4644,10 @@ void gosRenderer::destroy() {
     terrain_extra_data_ = nullptr;
     if (terrain_extra_vb_) { glDeleteBuffers(1, &terrain_extra_vb_); terrain_extra_vb_ = 0; }
     if (terrain_material_) { gosRenderMaterial::destroy(terrain_material_); terrain_material_ = nullptr; }
+    if (terrain_normal_array_tex_ != 0) {
+        glDeleteTextures(1, &terrain_normal_array_tex_);
+        terrain_normal_array_tex_ = 0;
+    }
 
     glDeleteVertexArrays(1, &gVAO);
 
@@ -5190,12 +5394,22 @@ void gosRenderer::drawShadowBatchTessellated(gos_VERTEX* vertices, int numVerts,
     // projection_ needed by shadow vert shader (TES overrides gl_Position, but VS needs it for gl_Position passthrough)
     if (sl.mvp >= 0) glUniformMatrix4fv(sl.mvp, 1, GL_TRUE, (const float*)&projection_);
 
-    // Displacement textures: dirt normal on unit kTerrainMatNormalUnits[2]
-    if (sl.matNormal2 >= 0) {
-        glUniform1i(sl.matNormal2, kTerrainMatNormalUnits[2]);
-        glActiveTexture(GL_TEXTURE0 + kTerrainMatNormalUnits[2]);
-        glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[2]);  // dirt normal map
-        glActiveTexture(GL_TEXTURE0);
+    // Displacement texture for shadow TES (dirt normal / array path)
+    if (terrainNormalArrayEnabled()) {
+        if (terrain_normal_array_dirty_) buildTerrainNormalArray();
+        if (terrain_normal_array_tex_ != 0 && sl.matNormalArray >= 0) {
+            glUniform1i(sl.matNormalArray, kTerrainTexUnitNormalArray);
+            glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitNormalArray);
+            glBindTexture(GL_TEXTURE_2D_ARRAY, terrain_normal_array_tex_);
+            glActiveTexture(GL_TEXTURE0);
+        }
+    } else {
+        if (sl.matNormal2 >= 0) {
+            glUniform1i(sl.matNormal2, kTerrainMatNormalUnits[2]);
+            glActiveTexture(GL_TEXTURE0 + kTerrainMatNormalUnits[2]);
+            glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[2]);
+            glActiveTexture(GL_TEXTURE0);
+        }
     }
 
     float tiling[4] = { terrain_detail_tiling_, 0.0f, 0.0f, 0.0f };
@@ -5529,11 +5743,20 @@ void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
         glUniform1f(tl.time, elapsed);
     }
 
-    for (int i = 0; i < 5; i++) {
-        if (terrain_mat_normal_[i] != 0 && tl.matNormal[i] >= 0) {
-            glUniform1i(tl.matNormal[i], kTerrainMatNormalUnits[i]);
-            glActiveTexture(GL_TEXTURE0 + kTerrainMatNormalUnits[i]);
-            glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[i]);
+    if (terrainNormalArrayEnabled()) {
+        if (terrain_normal_array_dirty_) buildTerrainNormalArray();
+        if (terrain_normal_array_tex_ != 0 && tl.matNormalArray >= 0) {
+            glUniform1i(tl.matNormalArray, kTerrainTexUnitNormalArray);
+            glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitNormalArray);
+            glBindTexture(GL_TEXTURE_2D_ARRAY, terrain_normal_array_tex_);
+        }
+    } else {
+        for (int i = 0; i < 5; i++) {
+            if (terrain_mat_normal_[i] != 0 && tl.matNormal[i] >= 0) {
+                glUniform1i(tl.matNormal[i], kTerrainMatNormalUnits[i]);
+                glActiveTexture(GL_TEXTURE0 + kTerrainMatNormalUnits[i]);
+                glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[i]);
+            }
         }
     }
     // TERRAIN-NORMALS-FROM-HEIGHT-1
@@ -5653,11 +5876,20 @@ int gosRenderer::terrainBindThinUniformsForPatchStream(glsl_program* overridePro
         glUniform1f(tl.time, elapsed);
     }
     if (tl.tex1 >= 0) glUniform1i(tl.tex1, 0);
-    for (int i = 0; i < 5; i++) {
-        if (terrain_mat_normal_[i] != 0 && tl.matNormal[i] >= 0) {
-            glUniform1i(tl.matNormal[i], kTerrainMatNormalUnits[i]);
-            glActiveTexture(GL_TEXTURE0 + kTerrainMatNormalUnits[i]);
-            glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[i]);
+    if (terrainNormalArrayEnabled()) {
+        if (terrain_normal_array_dirty_) buildTerrainNormalArray();
+        if (terrain_normal_array_tex_ != 0 && tl.matNormalArray >= 0) {
+            glUniform1i(tl.matNormalArray, kTerrainTexUnitNormalArray);
+            glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitNormalArray);
+            glBindTexture(GL_TEXTURE_2D_ARRAY, terrain_normal_array_tex_);
+        }
+    } else {
+        for (int i = 0; i < 5; i++) {
+            if (terrain_mat_normal_[i] != 0 && tl.matNormal[i] >= 0) {
+                glUniform1i(tl.matNormal[i], kTerrainMatNormalUnits[i]);
+                glActiveTexture(GL_TEXTURE0 + kTerrainMatNormalUnits[i]);
+                glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[i]);
+            }
         }
     }
     // TERRAIN-NORMALS-FROM-HEIGHT-1
@@ -5797,11 +6029,20 @@ void gosRenderer::terrainDrawIndexedPatches(gosRenderMaterial* material, gosMesh
     }
 
     // Bind per-material normal maps (units per kTerrainMatNormalUnits: 5,6,7,8,12)
-    for (int i = 0; i < 5; i++) {
-        if (terrain_mat_normal_[i] != 0 && tl.matNormal[i] >= 0) {
-            glUniform1i(tl.matNormal[i], kTerrainMatNormalUnits[i]);
-            glActiveTexture(GL_TEXTURE0 + kTerrainMatNormalUnits[i]);
-            glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[i]);
+    if (terrainNormalArrayEnabled()) {
+        if (terrain_normal_array_dirty_) buildTerrainNormalArray();
+        if (terrain_normal_array_tex_ != 0 && tl.matNormalArray >= 0) {
+            glUniform1i(tl.matNormalArray, kTerrainTexUnitNormalArray);
+            glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitNormalArray);
+            glBindTexture(GL_TEXTURE_2D_ARRAY, terrain_normal_array_tex_);
+        }
+    } else {
+        for (int i = 0; i < 5; i++) {
+            if (terrain_mat_normal_[i] != 0 && tl.matNormal[i] >= 0) {
+                glUniform1i(tl.matNormal[i], kTerrainMatNormalUnits[i]);
+                glActiveTexture(GL_TEXTURE0 + kTerrainMatNormalUnits[i]);
+                glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[i]);
+            }
         }
     }
     // TERRAIN-NORMALS-FROM-HEIGHT-1

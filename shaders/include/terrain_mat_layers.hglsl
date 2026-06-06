@@ -1,0 +1,10 @@
+// TERRAIN-NORMAL-ARRAY: material layer indices for sampler2DArray path.
+// Layer N in the array corresponds to the same material as matNormalN in the
+// individual-sampler path. Keep in sync with buildTerrainNormalArray() layer
+// order in gameos_graphics.cpp.
+#define MAT_LAYER_ROCK     0
+#define MAT_LAYER_GRASS    1
+#define MAT_LAYER_DIRT     2
+#define MAT_LAYER_CONCRETE 3
+#define MAT_LAYER_SNOW     4
+#define MAT_LAYER_COUNT    5
