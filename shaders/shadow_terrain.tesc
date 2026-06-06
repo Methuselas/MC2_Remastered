@@ -24,8 +24,8 @@ void main()
 
     if (gl_InvocationID == 0) {
         // Distance-based tessellation LOD (mirrors main terrain TCS)
-        vec3 centroid = (tcs_WorldPos[0] + tcs_WorldPos[1] + tcs_WorldPos[2]) / 3.0;
-        float camDist = length(centroid - cameraPos.xyz);
+        vec3 triCenter = (tcs_WorldPos[0] + tcs_WorldPos[1] + tcs_WorldPos[2]) / 3.0;
+        float camDist = length(triCenter - cameraPos.xyz);
         float t = clamp((camDist - tessDistanceRange.x) / max(tessDistanceRange.y - tessDistanceRange.x, 1.0), 0.0, 1.0);
         float level = max(mix(tessLevel.x, 1.0, t), 1.0);
         gl_TessLevelOuter[0] = level;
