@@ -65,7 +65,6 @@ class LogisticsMech
 		void			setColors( unsigned long base, unsigned long high1, unsigned long high2 );
 		void			getColors( unsigned long& base, unsigned long& high1, unsigned long& high2 ) const;
 		int				getIconIndex() const { return pVariant->chassis->iconPictureIndex; }
-		const char*		getIconAtlasName() const { return (pVariant && pVariant->chassis && !pVariant->chassis->iconFileNames[0].IsEmpty()) ? pVariant->chassis->iconFileNames[0].Data() : nullptr; }
 
 		LogisticsVariant* getVariant() { return pVariant; }
 

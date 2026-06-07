@@ -473,13 +473,6 @@ void MechListBox::initIcon( LogisticsMech* pMech, aObject& mechIcon )
 	mechIcon = (MechListBoxItem::s_templateItem->mechIcon);
 
 	long index = pMech->getIconIndex();
-
-	// switch atlas if the chassis specifies a per-type icon sheet
-	// guard: only accept real data/ paths, not MCL_GN_ symbol strings
-	const char* altAtlas = pMech->getIconAtlasName();
-	if (altAtlas && strncmp(altAtlas, "data/", 5) == 0)
-		mechIcon.setTexture(altAtlas);
-
 	long xIndex = index % 10;
 	long yIndex = index / 10;
 
