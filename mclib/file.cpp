@@ -58,32 +58,27 @@
 #include "platform_str.h"
 
 //---------------------------------------------------------------------------
-// Mod overlay — two-tier, hash-indexed.
+// Mod overlay — session-scoped, single active mod.
 //
-// BASE MODS (auto-detected: no data/missions/ .fit files — e.g. mc2x-compat):
-//   Always-on. Provide shared infrastructure (merged object paks, etc.).
-//   Serve for every open, including base-game missions.
+// Selected by launcher via MC2_ACTIVE_MOD env var (set before spawning mc2.exe).
+// When unset: base game mode — g_modIndex empty, zero overhead, mods/ ignored.
+// When set:   active mod + declared dependencies indexed into g_modIndex.
 //
-// CAMPAIGN MODS (have data/missions/ .fit files — cveg, DarkRain, etc.):
-//   Mission-scoped. Activated by ActivateModForMission(); deactivated on
-//   mission end. Base-game missions see zero campaign-mod files.
-//
-// Priority: campaign-mod file > base-mod file > data/ > FastFile > CD
-// When no campaign active: base-mod file > data/ > FastFile > CD
+// Priority: active mod > dependency N..0 > base data/ > FastFiles > CD
+// File lookup: O(1) hash, no per-file disk probing.
+// Diagnostics: MC2_LOG_FILE_RESOLVE=1
 
 #include <unordered_map>
 #include <string>
+#include <vector>
 
 struct ModFileEntry {
-    std::string path;
-    std::string modName;
+    std::string path;   // absolute path to real file
+    std::string modId;  // owning mod id (for logging)
 };
 
-// Base mods: always-on (mc2x-compat etc.).
-static std::unordered_map<std::string, ModFileEntry> g_baseIndex;
-// Campaign mods: mission-scoped (cveg, DarkRain, POAR, TangoMaster etc.).
-static std::unordered_map<std::string, ModFileEntry> g_campaignIndex;
-static std::string g_activeMod;
+static std::unordered_map<std::string, ModFileEntry> g_modIndex;
+static std::string g_activeModId;
 static bool logFileResolve = false;
 
 static bool IsAbsolutePath(const char* p) {
@@ -112,27 +107,14 @@ static std::string NormalizeKey(const char* p) {
     return s;
 }
 
-// Returns true if mod dir is a campaign mod — it has .fit files in data/missions/.
-// A base mod (e.g. mc2x-compat) may have data/missions/warriors/*.abl but no .fit
-// files; those should remain classified as base mods so their files stay in
-// g_baseIndex (always-on) rather than g_campaignIndex (mission-scoped).
-static bool ModHasMissions(const char* dataDir) {
-    char fitPattern[MAX_PATH];
-    _snprintf(fitPattern, sizeof(fitPattern), "%smissions\\*.fit", dataDir);
-    fitPattern[sizeof(fitPattern) - 1] = '\0';
-    WIN32_FIND_DATAA fd;
-    HANDLE h = FindFirstFileA(fitPattern, &fd);
-    if (h == INVALID_HANDLE_VALUE) return false;
-    FindClose(h);
-    return true;
-}
-
-static void IndexModDir(
-    std::unordered_map<std::string, ModFileEntry>& index,
-    const char* fullDirPath, const char* relBase, const char* modName
+// Index all files under dataDir (absolute, trailing '/') into idx (first-wins).
+// relBase should be "data/" so keys come out like "data/missions/foo.fit".
+static void IndexModData(
+    std::unordered_map<std::string, ModFileEntry>& idx,
+    const char* dataDir, const char* relBase, const char* modId
 ) {
     char pattern[MAX_PATH];
-    _snprintf(pattern, sizeof(pattern), "%s*", fullDirPath);
+    _snprintf(pattern, sizeof(pattern), "%s*", dataDir);
     pattern[sizeof(pattern) - 1] = '\0';
 
     WIN32_FIND_DATAA fd;
@@ -143,7 +125,7 @@ static void IndexModDir(
         if (fd.cFileName[0] == '.') continue;
 
         char fullChild[MAX_PATH], relChild[MAX_PATH];
-        _snprintf(fullChild, sizeof(fullChild), "%s%s", fullDirPath, fd.cFileName);
+        _snprintf(fullChild, sizeof(fullChild), "%s%s", dataDir, fd.cFileName);
         fullChild[sizeof(fullChild) - 1] = '\0';
         _snprintf(relChild, sizeof(relChild), "%s%s", relBase, fd.cFileName);
         relChild[sizeof(relChild) - 1] = '\0';
@@ -154,119 +136,120 @@ static void IndexModDir(
             _snprintf(relSub,  sizeof(relSub),  "%s/", relChild);
             fullSub[sizeof(fullSub) - 1] = '\0';
             relSub[sizeof(relSub) - 1]   = '\0';
-            IndexModDir(index, fullSub, relSub, modName);
+            IndexModData(idx, fullSub, relSub, modId);
         } else {
             std::string key = NormalizeKey(relChild);
-            if (index.find(key) == index.end())
-                index[key] = { fullChild, modName };
+            if (idx.find(key) == idx.end())
+                idx[key] = { fullChild, modId };
         }
     } while (FindNextFileA(h, &fd));
 
     FindClose(h);
 }
 
-// O(1) lookup. Campaign layer first (when active), then base layer (always).
+// Minimal JSON string field extractor — no full parser needed for mod.json.
+static std::string JsonGetString(const char* json, const char* key) {
+    char needle[128];
+    _snprintf(needle, sizeof(needle), "\"%s\"", key);
+    needle[sizeof(needle)-1] = '\0';
+    const char* p = strstr(json, needle);
+    if (!p) return {};
+    p += strlen(needle);
+    while (*p == ' ' || *p == ':' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    if (*p != '"') return {};
+    p++;
+    const char* end = strchr(p, '"');
+    if (!end) return {};
+    return std::string(p, (size_t)(end - p));
+}
+
+// Extract string array from "key": ["a","b",...].
+static std::vector<std::string> JsonGetStringArray(const char* json, const char* key) {
+    char needle[128];
+    _snprintf(needle, sizeof(needle), "\"%s\"", key);
+    needle[sizeof(needle)-1] = '\0';
+    const char* p = strstr(json, needle);
+    if (!p) return {};
+    p += strlen(needle);
+    while (*p == ' ' || *p == ':' || *p == '\t') p++;
+    if (*p != '[') return {};
+    p++;
+    const char* end = strchr(p, ']');
+    if (!end) return {};
+
+    std::vector<std::string> result;
+    while (p < end) {
+        while (p < end && (*p == ' ' || *p == '\t' || *p == ',')) p++;
+        if (*p == '"') {
+            p++;
+            const char* se = strchr(p, '"');
+            if (!se || se > end) break;
+            result.push_back(std::string(p, (size_t)(se - p)));
+            p = se + 1;
+        } else { p++; }
+    }
+    return result;
+}
+
+// Read mod.json at jsonPath. Returns false if file not found.
+static bool ReadModJson(const char* jsonPath,
+                        std::string& outId, std::string& outName,
+                        std::vector<std::string>& outDeps) {
+    HANDLE fh = CreateFileA(jsonPath, GENERIC_READ, FILE_SHARE_READ, NULL,
+                             OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (fh == INVALID_HANDLE_VALUE) return false;
+    char buf[4096] = {};
+    DWORD read = 0;
+    ReadFile(fh, buf, sizeof(buf)-1, &read, NULL);
+    CloseHandle(fh);
+    buf[read] = '\0';
+
+    outId   = JsonGetString(buf, "id");
+    outName = JsonGetString(buf, "name");
+    outDeps = JsonGetStringArray(buf, "dependencies");
+    return !outId.empty();
+}
+
+// O(1) lookup. Returns false immediately when no mod active (g_modIndex empty).
 static bool TryModOpen(const char* fileName, int* outHandle) {
+    if (g_modIndex.empty()) return false;
     if (!ShouldSearchMods(fileName)) return false;
     std::string key = NormalizeKey(fileName);
-
-    // Auto-activate campaign from .fit mission file lookup (smoke runner / direct launch).
-    // The normal code path calls ActivateCampaignMod() from the campaign-select UI.
-    // When a mission is launched directly (--mission torrin), the .fit lookup here is
-    // the first chance to set g_activeMod from the campaign index.
-    if (g_activeMod.empty()) {
-        bool isFit = (key.compare(0, 14, "data/missions/") == 0 &&
-                      key.size() > 4 &&
-                      key.compare(key.size() - 4, 4, ".fit") == 0);
-        if (isFit) {
-            auto it = g_campaignIndex.find(key);
-            if (it != g_campaignIndex.end()) {
-                g_activeMod = it->second.modName;
-                printf("[mod] auto-activated campaign '%s' from mission lookup\n", g_activeMod.c_str());
-                fflush(stdout);
-            }
-        }
+    auto it = g_modIndex.find(key);
+    if (it == g_modIndex.end()) {
+        if (logFileResolve) { printf("[mod-miss] %s\n", key.c_str()); fflush(stdout); }
+        return false;
     }
-
-    // Campaign layer: serve files from the active campaign mod.
-    if (!g_activeMod.empty()) {
-        auto it = g_campaignIndex.find(key);
-        if (it != g_campaignIndex.end() && it->second.modName == g_activeMod) {
-            int h = _open(it->second.path.c_str(), _O_RDONLY | _O_BINARY);
-            if (h != -1) {
-                if (logFileResolve) { printf("[mod-hit] campaign %s\n", it->second.path.c_str()); fflush(stdout); }
-                *outHandle = h;
-                return true;
-            }
-        }
-    }
-
-    // Base layer: gate tgl/ and objects/*.pak on campaign-active.
-    // Rationale: mc2x-compat's object2.pak remaps ObjectTypeNum values used by base-game
-    // missions (type 1 → bunkw, type 3 → supplytruck, only defines 0-24 so type 252 falls
-    // off the end). Base-game missions must use the original compbas.csv + FastFile objects.
-    // tgl files stay gated because mc2x-compat may shadow base tgl assets unexpectedly.
-    // Campaign missions (g_activeMod set) get both object2.pak AND the tgl appearances.
-    {
-        auto it = g_baseIndex.find(key);
-        if (it != g_baseIndex.end()) {
-            bool isTgl   = (key.compare(0, 8, "data/tgl") == 0);
-            bool isObjPak = (key.compare(0, 12, "data/objects") == 0 && key.size() > 4 &&
-                             key.compare(key.size() - 4, 4, ".pak") == 0);
-            bool needsCampaign = isTgl || isObjPak;
-            if (!needsCampaign || !g_activeMod.empty()) {
-                int h = _open(it->second.path.c_str(), _O_RDONLY | _O_BINARY);
-                if (h != -1) {
-                    if (logFileResolve) { printf("[mod-hit] base %s\n", it->second.path.c_str()); fflush(stdout); }
-                    *outHandle = h;
-                    return true;
-                }
-            }
-        }
-    }
-
-    return false;
-}
-
-// Call when player selects a campaign. Looks up data/campaign/<name>.fit in campaign
-// index; sets g_activeMod for the entire campaign session (mech bay, briefing, missions).
-// Clears g_activeMod for base-game campaigns (no mod owns the .fit).
-void ActivateCampaignMod(const char* campaignFitName) {
-    std::string key = NormalizeKey("data/campaign/");
-    key += NormalizeKey(campaignFitName);
-    if (key.size() < 4 || key.compare(key.size() - 4, 4, ".fit") != 0)
-        key += ".fit";
-    auto it = g_campaignIndex.find(key);
-    if (it != g_campaignIndex.end()) {
-        g_activeMod = it->second.modName;
-        printf("[mod] campaign activated: %s\n", g_activeMod.c_str());
-    } else {
-        g_activeMod.clear();
-        printf("[mod] campaign deactivated (base game)\n");
-    }
-    fflush(stdout);
-}
-
-// No-op: g_activeMod is now set at campaign-select time, not per-mission.
-// Kept for call-site compatibility in mission.cpp.
-void ActivateModForMission(const char* /*missionFitKey*/) {}
-
-// Call when returning to main menu (campaign exit, not between missions).
-void DeactivateMod() {
-    if (!g_activeMod.empty()) {
-        printf("[mod] deactivated: %s\n", g_activeMod.c_str());
+    int h = _open(it->second.path.c_str(), _O_RDONLY | _O_BINARY);
+    if (h == -1) return false;
+    if (logFileResolve) {
+        printf("[mod-hit] [%s] %s -> %s\n",
+               it->second.modId.c_str(), key.c_str(), it->second.path.c_str());
         fflush(stdout);
     }
-    g_activeMod.clear();
+    *outHandle = h;
+    return true;
 }
 
+// No-ops — mod is selected at launcher time, not at campaign-select time.
+// Kept for call-site compatibility in logisticsdata.cpp / logisticsdialog.cpp / mission.cpp.
+void ActivateCampaignMod(const char* /*campaignFitName*/) {}
+void ActivateModForMission(const char* /*missionFitKey*/) {}
+void DeactivateMod() {}
+
+// Enumerate campaign .fit files from the active mod index.
+// Called by logisticsdialog.cpp to inject mod campaigns into the campaign list UI.
+// Skips "data/campaign/campaign.fit" (base game manifest) — only individual campaigns.
 void EnumerateModCampaignFiles(ModCampaignCallback cb, void* userData) {
-    static const std::string prefix = "data/campaign/";
-    static const std::string ext    = ".fit";
-    for (auto& kv : g_campaignIndex) {
+    if (g_modIndex.empty()) return;
+    static const std::string prefix  = "data/campaign/";
+    static const std::string ext     = ".fit";
+    static const std::string exclude = "data/campaign/campaign.fit";
+    for (auto& kv : g_modIndex) {
         const std::string& key = kv.first;
-        if (key.size() <= prefix.size() + ext.size()) continue;
+        if (key == exclude) continue;
         if (key.compare(0, prefix.size(), prefix) != 0) continue;
+        if (key.size() <= prefix.size() + ext.size()) continue;
         if (key.compare(key.size() - ext.size(), ext.size(), ext) != 0) continue;
         std::string fname = key.substr(prefix.size(), key.size() - prefix.size() - ext.size());
         cb(fname.c_str(), kv.second.path.c_str(), userData);
@@ -274,56 +257,71 @@ void EnumerateModCampaignFiles(ModCampaignCallback cb, void* userData) {
 }
 
 void InitModSearchPaths(const char* modsRoot) {
-    g_baseIndex.clear();
-    g_campaignIndex.clear();
-    g_activeMod.clear();
+    g_modIndex.clear();
+    g_activeModId.clear();
     logFileResolve = (getenv("MC2_LOG_FILE_RESOLVE") != nullptr);
 
-    char absRoot[MAX_PATH];
-    if (!GetFullPathNameA(modsRoot, sizeof(absRoot), absRoot, nullptr))
+    const char* envMod = getenv("MC2_ACTIVE_MOD");
+    if (!envMod || !envMod[0]) {
+        printf("[mod] base game mode (MC2_ACTIVE_MOD not set)\n"); fflush(stdout);
         return;
+    }
+    g_activeModId = envMod;
+
+    // Resolve modsRoot to absolute path so index keys stay valid regardless of CWD changes.
+    char absRoot[MAX_PATH];
+    if (!GetFullPathNameA(modsRoot, sizeof(absRoot), absRoot, nullptr)) {
+        printf("[mod] failed to resolve mods root: %s\n", modsRoot); fflush(stdout);
+        return;
+    }
     size_t rootLen = strlen(absRoot);
     if (rootLen > 0 && absRoot[rootLen-1] != '\\' && absRoot[rootLen-1] != '/') {
         absRoot[rootLen]   = '/';
         absRoot[rootLen+1] = '\0';
     }
 
-    char pattern[MAX_PATH];
-    _snprintf(pattern, sizeof(pattern), "%s*", absRoot);
-    pattern[sizeof(pattern) - 1] = '\0';
+    // Read active mod's mod.json for dependencies.
+    char jsonPath[MAX_PATH];
+    _snprintf(jsonPath, sizeof(jsonPath), "%s%s/mod.json", absRoot, envMod);
+    jsonPath[sizeof(jsonPath)-1] = '\0';
 
-    WIN32_FIND_DATAA fd;
-    HANDLE h = FindFirstFileA(pattern, &fd);
-    if (h == INVALID_HANDLE_VALUE) {
-        printf("[mod] no mods dir: %s\n", absRoot); fflush(stdout);
-        return;
+    std::string modId, modName;
+    std::vector<std::string> deps;
+    if (!ReadModJson(jsonPath, modId, modName, deps)) {
+        // No mod.json — treat the folder name as the id, no dependencies.
+        modId   = envMod;
+        modName = envMod;
+        printf("[mod] warning: no mod.json for '%s', loading with no dependencies\n", envMod);
+    }
+    if (logFileResolve)
+        printf("[mod] loading '%s' (%s) deps=%zu\n", modId.c_str(), modName.c_str(), deps.size());
+
+    // Index active mod first (highest priority — first-wins so active mod beats deps).
+    char activeDataDir[MAX_PATH];
+    _snprintf(activeDataDir, sizeof(activeDataDir), "%s%s/data/", absRoot, envMod);
+    activeDataDir[sizeof(activeDataDir)-1] = '\0';
+    if (GetFileAttributesA(activeDataDir) != INVALID_FILE_ATTRIBUTES) {
+        size_t before = g_modIndex.size();
+        IndexModData(g_modIndex, activeDataDir, "data/", modId.c_str());
+        printf("[mod] active '%s': %zu files\n", envMod, g_modIndex.size() - before);
     }
 
-    int numBase = 0, numCampaign = 0;
-    do {
-        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
-        if (fd.cFileName[0] == '.') continue;
+    // Index dependencies (lower priority — fill gaps not covered by active mod).
+    for (const auto& dep : deps) {
+        char depDataDir[MAX_PATH];
+        _snprintf(depDataDir, sizeof(depDataDir), "%s%s/data/", absRoot, dep.c_str());
+        depDataDir[sizeof(depDataDir)-1] = '\0';
+        if (GetFileAttributesA(depDataDir) == INVALID_FILE_ATTRIBUTES) {
+            printf("[mod] dependency '%s' not found, skipping\n", dep.c_str()); fflush(stdout);
+            continue;
+        }
+        size_t before = g_modIndex.size();
+        IndexModData(g_modIndex, depDataDir, "data/", dep.c_str());
+        printf("[mod] dep '%s': %zu new files\n", dep.c_str(), g_modIndex.size() - before);
+    }
 
-        char dataDir[MAX_PATH];
-        _snprintf(dataDir, sizeof(dataDir), "%s%s/data/", absRoot, fd.cFileName);
-        dataDir[sizeof(dataDir) - 1] = '\0';
-
-        if (GetFileAttributesA(dataDir) == INVALID_FILE_ATTRIBUTES) continue;
-
-        bool isCampaign = ModHasMissions(dataDir);
-        auto& idx = isCampaign ? g_campaignIndex : g_baseIndex;
-        size_t before = idx.size();
-        IndexModDir(idx, dataDir, "data/", fd.cFileName);
-        printf("[mod] %s %s: %zu files\n",
-               isCampaign ? "campaign" : "base",
-               fd.cFileName, idx.size() - before);
-        fflush(stdout);
-        isCampaign ? ++numCampaign : ++numBase;
-    } while (FindNextFileA(h, &fd));
-
-    FindClose(h);
-    printf("[mod] ready: %d base mods (%zu files), %d campaign mods (%zu files)\n",
-           numBase, g_baseIndex.size(), numCampaign, g_campaignIndex.size());
+    printf("[mod] ready: active='%s' (%s) total=%zu files\n",
+           envMod, modName.c_str(), g_modIndex.size());
     fflush(stdout);
 }
 

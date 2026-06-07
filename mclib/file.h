@@ -68,11 +68,11 @@ long fileExists(const char *fName, long destination_mask = FILE_ON_DISK|FILE_ON_
 long fileExistsOnCD(const char *fName);
 bool file1OlderThan2(const char *file1, const char* file2);
 void InitModSearchPaths(const char* modsRoot);
-void ActivateCampaignMod(const char* campaignFitName); // call at campaign-select time
-void ActivateModForMission(const char* missionFitKey); // no-op, kept for compat
-void DeactivateMod();                                  // call on return to main menu
-// Iterates campaign mod index for data/campaign/*.fit files (mod campaigns invisible
-// to raw FindFirstFile scans). fitFileName = bare name without path or extension.
+// No-ops — mod is selected at launcher time. Kept for call-site compat.
+void ActivateCampaignMod(const char* campaignFitName);
+void ActivateModForMission(const char* missionFitKey);
+void DeactivateMod();
+// Enumerate data/campaign/*.fit files from the active mod (for campaign list UI).
 typedef void (*ModCampaignCallback)(const char* fitFileName, const char* fullPath, void* userData);
 void EnumerateModCampaignFiles(ModCampaignCallback cb, void* userData);
 

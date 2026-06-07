@@ -285,6 +285,9 @@ endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/asset_viewer/CMakeLists.txt")
     add_subdirectory("./tools/asset_viewer" "./out/tools/asset_viewer")
 endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/mc2_launcher/CMakeLists.txt")
+    add_subdirectory("./tools/mc2_launcher" "./out/tools/mc2_launcher")
+endif()
 
 
 set(SOURCES 
