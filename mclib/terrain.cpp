@@ -207,6 +207,9 @@ static uint8_t chooseLodLevel(float distSq, uint8_t prevLevel)
 }
 
 bool 						drawTerrainGrid = false;		//Override locally in editor so game don't come with these please!  Love -fs
+bool						drawEditorPassability = false;	// Editor passability overlay — MOVE-free path for large maps
+uint8_t*					gEditorNavFlags    = nullptr;	// Set by EditorNavLayer::BuildFromTerrain()
+int						gEditorNavCellSide = 0;		// terrain cellSide = realVerticesMapSide - 1
 bool						drawLOSGrid = false;
 bool						drawTerrainTiles = true;
 bool						drawTerrainOverlays = true;
@@ -355,7 +358,9 @@ static void recomputeSuperchunkAabb(int scX, int scY)
     }
     sc.worldMinX = xMin; sc.worldMaxX = xMax;
     sc.worldMinY = yMin; sc.worldMaxY = yMax;
-    sc.worldMinZ = zMin; sc.worldMaxZ = zMax;
+    // Conservative z-range matching old frustum path.
+    sc.worldMinZ = -200.0f;
+    sc.worldMaxZ = 2500.0f;
     sc.inFrustum = false;
 }
 
@@ -1452,10 +1457,123 @@ long Terrain::update (void)
 		const float halfMap = worldUnitsMapSide * 0.5f;
 
 		// Camera position in MC2 world space for LOD distance metric.
-		// getCameraOrigin() is in raw MC2 space; X/Y match the terrain world coords.
+		// getCameraOrigin() returns Stuff/MLR coords (.x=west, .y=elev, .z=north).
+		// Terrain rendering space: east = -west, north = .z.
+		// Use east/north for ground-plane LOD distance to block center.
 		Stuff::Vector3D camOriginLod = eye->getCameraOrigin();
-		const float eyeX = camOriginLod.x;
-		const float eyeY = camOriginLod.y;
+		const float eyeX = -camOriginLod.x;   // east = -west
+		const float eyeY =  camOriginLod.z;   // north = Stuff/MLR .z
+
+		// Diagnostic: one-shot dump of planes + first superchunk AABB + camera pos.
+		// MC2_TERRAIN_LOD_CHUNK_NO_CULL=1 bypasses frustum so GPU path can be tested.
+		static const bool s_noCull = (getenv("MC2_TERRAIN_LOD_CHUNK_NO_CULL") != nullptr);
+		static bool s_cullDiagDone = false;
+		if (!s_cullDiagDone && gCurrentFrame == 2) {
+			s_cullDiagDone = true;
+			const SuperchunkMeta& sc0 = s_superchunkMeta[0];
+			printf("[TerrainLOD v1] DIAG halfMap=%.1f worldUnitsMapSide=%.1f\n",
+				halfMap, worldUnitsMapSide);
+			printf("[TerrainLOD v1] DIAG cam=(%.1f,%.1f,%.1f)\n",
+				camOriginLod.x, camOriginLod.y, camOriginLod.z);
+			printf("[TerrainLOD v1] DIAG sc[0] AABB x=[%.1f,%.1f] y=[%.1f,%.1f] z=[%.1f,%.1f]\n",
+				sc0.worldMinX, sc0.worldMaxX, sc0.worldMinY, sc0.worldMaxY,
+				sc0.worldMinZ, sc0.worldMaxZ);
+			// Print all 6 planes with pass/fail for sc[0].
+			static const char* planeNames[6] = {"left","right","bottom","top","near","far"};
+			for (int p = 0; p < 6; p++) {
+				float a = planes[p][0], b = planes[p][1], c = planes[p][2], d = planes[p][3];
+				float px = (a >= 0.0f) ? sc0.worldMaxX : sc0.worldMinX;
+				float py = (b >= 0.0f) ? sc0.worldMaxY : sc0.worldMinY;
+				float pz = (c >= 0.0f) ? sc0.worldMaxZ : sc0.worldMinZ;
+				float dot = a*px + b*py + c*pz + d;
+				printf("[TerrainLOD v1] DIAG plane[%d]=%s (%.4f,%.4f,%.4f,%.4f) pv=(%.1f,%.1f,%.1f) dot=%.4f %s\n",
+					p, planeNames[p], a, b, c, d, px, py, pz, dot, dot>=0.0f?"PASS":"FAIL");
+			}
+			printf("[TerrainLOD v1] DIAG noCull=%d superchunks=%d blocks=%d\n",
+				(int)s_noCull, s_superchunkSide * s_superchunkSide,
+				s_terrainChunkSide * s_terrainChunkSide);
+			fflush(stdout);
+
+			// --- 4-point vertex parity: legacy tileColToWorldCoord vs chunk formula ---
+			// Confirms the two formulas agree on world position for 4 corner samples.
+			// Points: (0,0), (side-1,0), (0,side-1), (side/2,side/2).
+			if (mapData && mapData->getBlocks() && tileColToWorldCoord && tileRowToWorldCoord) {
+				int side = (int)realVerticesMapSide;
+				int samples[4][2] = {
+					{0, 0},
+					{side - 1, 0},
+					{0, side - 1},
+					{side / 2, side / 2}
+				};
+				const auto* blks = mapData->getBlocks();
+				for (int i = 0; i < 4; i++) {
+					int col = samples[i][0], row = samples[i][1];
+					// Legacy formula (tileColToWorldCoord/tileRowToWorldCoord lookups).
+					float legX = tileColToWorldCoord[col];  // col*128 - halfMap
+					float legY = tileRowToWorldCoord[row];  // halfMap - row*128
+					float legZ = blks[col + row * side].elevation;
+					// Chunk shader formula (what the GLSL vertex shader computes).
+					float chkX = float(col) * 128.0f - halfMap;
+					float chkY = halfMap - float(row) * 128.0f;
+					float chkZ = blks[col + row * side].elevation;
+					printf("[TerrainLOD parity] sample[%d]=(%d,%d) "
+						   "legacy=(%.1f,%.1f,%.1f) chunk=(%.1f,%.1f,%.1f) %s\n",
+						   i, col, row,
+						   legX, legY, legZ,
+						   chkX, chkY, chkZ,
+						   (legX==chkX && legY==chkY && legZ==chkZ) ? "MATCH" : "MISMATCH");
+				}
+				fflush(stdout);
+			}
+		}
+
+		// Late-frame DIAG: steady-state planes when camera is live.
+		static bool s_cullDiag120Done = false;
+		if (!s_cullDiag120Done && gCurrentFrame == 120) {
+			s_cullDiag120Done = true;
+			const SuperchunkMeta& sc0 = s_superchunkMeta[0];
+			printf("[TerrainLOD v1] DIAG120 cam=(%.1f,%.1f,%.1f)\n",
+				camOriginLod.x, camOriginLod.y, camOriginLod.z);
+			printf("[TerrainLOD v1] DIAG120 sc[0] AABB x=[%.1f,%.1f] y=[%.1f,%.1f] z=[%.1f,%.1f]\n",
+				sc0.worldMinX, sc0.worldMaxX, sc0.worldMinY, sc0.worldMaxY,
+				sc0.worldMinZ, sc0.worldMaxZ);
+			for (int p = 0; p < 6; p++) {
+				float a = planes[p][0], b = planes[p][1], c = planes[p][2], d = planes[p][3];
+				float px2 = (a >= 0.0f) ? sc0.worldMaxX : sc0.worldMinX;
+				float py2 = (b >= 0.0f) ? sc0.worldMaxY : sc0.worldMinY;
+				float pz2 = (c >= 0.0f) ? sc0.worldMaxZ : sc0.worldMinZ;
+				float dot2 = a*px2 + b*py2 + c*pz2 + d;
+				static const char* pn[6] = {"left","right","bottom","top","near","far"};
+				printf("[TerrainLOD v1] DIAG120 plane[%d]=%s (%.4f,%.4f,%.4f,%.4f) dot=%.4f %s\n",
+					p, pn[p], a, b, c, d, dot2, dot2>=0.0f?"PASS":"FAIL");
+			}
+			// Center block AABB + per-plane test. sc[0] is top-left and may be
+			// legitimately off-screen. Center block is the better "should always pass"
+			// reference; if it also fails, the plane equation or AABB formula is wrong.
+			int cbx = s_terrainChunkSide / 2, cby = s_terrainChunkSide / 2;
+			const TerrainBlockMeta& cbm = s_blockMeta[cbx + cby * s_terrainChunkSide];
+			float cbHalfMap = worldUnitsMapSide * 0.5f;
+			Stuff::Vector3D cbMn, cbMx;
+			cbMn.x = float(cbm.originX) * 128.0f - cbHalfMap;
+			cbMx.x = float(cbm.originX + cbm.quadCountX) * 128.0f - cbHalfMap;
+			cbMx.y = cbHalfMap - float(cbm.originY) * 128.0f;
+			cbMn.y = cbHalfMap - float(cbm.originY + cbm.quadCountY) * 128.0f;
+			cbMn.z = -200.0f; cbMx.z = 2500.0f;
+			printf("[TerrainLOD v1] DIAG120 center block=(%d,%d) originXY=(%d,%d) AABB x=[%.1f,%.1f] y=[%.1f,%.1f]\n",
+				cbx, cby, cbm.originX, cbm.originY,
+				cbMn.x, cbMx.x, cbMn.y, cbMx.y);
+			static const char* pn2[6] = {"left","right","bottom","top","near","far"};
+			for (int p = 0; p < 6; p++) {
+				float a = planes[p][0], b = planes[p][1], c = planes[p][2], d = planes[p][3];
+				float pxc = (a >= 0.0f) ? cbMx.x : cbMn.x;
+				float pyc = (b >= 0.0f) ? cbMx.y : cbMn.y;
+				float pzc = (c >= 0.0f) ? cbMx.z : cbMn.z;
+				float dotc = a*pxc + b*pyc + c*pzc + d;
+				printf("[TerrainLOD v1] DIAG120 center plane[%d]=%s dot=%.4f %s\n",
+					p, pn2[p], dotc, dotc>=0.0f?"PASS":"FAIL");
+			}
+			fflush(stdout);
+		}
 
 		// --- Phase 5 Pass 1: superchunk cull + per-block frustum + LOD selection ---
 		for (int scY = 0; scY < s_superchunkSide; ++scY)
@@ -1468,7 +1586,7 @@ long Terrain::update (void)
 				scMn.x = sc.worldMinX; scMn.y = sc.worldMinY; scMn.z = sc.worldMinZ;
 				scMx.x = sc.worldMaxX; scMx.y = sc.worldMaxY; scMx.z = sc.worldMaxZ;
 
-				sc.inFrustum = eye->quadAabbInFrustum(planes, scMn, scMx);
+				sc.inFrustum = s_noCull ? true : eye->quadAabbInFrustum(planes, scMn, scMx);
 				if (!sc.inFrustum)
 				{
 					// Cull all constituent blocks without testing them.
@@ -1504,11 +1622,14 @@ long Terrain::update (void)
 						bmMx.x =  float(bm.originX + bm.quadCountX)  * 128.0f - halfMap;
 						bmMx.y =  halfMap - float(bm.originY)                  * 128.0f;
 						bmMn.y =  halfMap - float(bm.originY + bm.quadCountY)  * 128.0f;
-						bmMn.z = bm.minElev;
-						bmMx.z = bm.maxElev;
+						// Use conservative z-range matching old MC2_BLOCK_FRUSTUM_FALLBACK path
+						// (kBlockZMin=-200, kBlockZMax=2500) so tight actual elevations don't cause
+						// spurious frustum failure. Actual elevations still used for skirt depth below.
+						bmMn.z = -200.0f;
+						bmMx.z = 2500.0f;
 
 						// CRIT-1: write inFrustum BEFORE any continue.
-						bool passedCull = eye->quadAabbInFrustum(planes, bmMn, bmMx);
+						bool passedCull = s_noCull ? true : eye->quadAabbInFrustum(planes, bmMn, bmMx);
 						bm.inFrustum = passedCull;
 
 						// Phase 5: compute block center in MC2 world space and choose LOD.
@@ -1884,7 +2005,7 @@ void Terrain::render (void)
 		TerrainQuadPtr currentQuad = quadList;
 		for (long i = 0; i < numberQuads; i++)
 		{
-			if (drawTerrainGrid)
+			if (drawTerrainGrid || drawEditorPassability)
 			{
 				if (useFog) gos_SetRenderState(gos_State_Fog, 0);
 				currentQuad->drawLine();
@@ -1914,6 +2035,15 @@ void Terrain::render (void)
 // (s_blockMeta is nullptr, s_cmdCount is 0). No GL calls in mclib/.
 void Terrain::flushDrawCommands (void)
 {
+	// Phase 7.5 flush-cardinality probe: log every 60 frames so we know
+	// flush runs once-per-frame unconditionally.
+	static int s_flushCallCount = 0;
+	++s_flushCallCount;
+	if (s_flushCallCount % 60 == 0) {
+		printf("[TerrainLOD flush] count=%d cmds=%d\n", s_flushCallCount, s_cmdCount);
+		fflush(stdout);
+	}
+
 	if (s_blockMeta && s_cmdCount > 0)
 		gos_TerrainLodChunk_SubmitDrawCommands(s_drawCmds, s_skirtDepths, s_cmdCount);
 }

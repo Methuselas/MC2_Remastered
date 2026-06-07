@@ -29,6 +29,7 @@
 #ifndef EDITORDATA_H
 #include "EditorData.h"
 #endif
+#include "EditorNavLayer.h"
 
 // S2.9: gpu_cull::substrate_frameBegin() hoist into editor's per-tick update.
 // Mirrors game commit f8d6b171's fix in code/mission.cpp (~line 527): substrate
@@ -215,6 +216,7 @@ extern bool drawTerrainOverlays;
 extern bool renderObjects;
 extern bool renderTrees;
 extern bool drawTerrainGrid;
+extern bool drawEditorPassability;
 extern bool drawLOSGrid;
 extern bool useClouds;
 extern bool	useFog;
@@ -5420,32 +5422,41 @@ void EditorInterface::OnViewOrthographiccamera()
 
 void EditorInterface::OnViewShowpassabilitymap()
 {
-	// Passability grid requires GameMap (set by MOVE_buildData).
-	// If MOVE hasn't been built yet, try to build it now.
-	if (!GameMap) {
-		std::string err;
-		if (!EditorData::RebuildMoveFromCurrentTerrain(&err)) {
-			// Rebuild failed -- can't display passability grid.
-			char msg[512];
-			snprintf(msg, sizeof(msg),
-				"Cannot show passability map:\n%s\n\n"
-				"Use Mission Checklist > Build MOVE to initialize pathfinding data.",
-				err.c_str());
-			AfxMessageBox(msg);
-			// Ensure menu stays unchecked
-			GetParent()->GetMenu()->CheckMenuItem(ID_VIEW_SHOWPASSABILITYMAP, MF_BYCOMMAND | MF_UNCHECKED);
-			drawTerrainGrid = false;
-			return;
-		}
+	bool isChecked = (GetParent()->GetMenu()->GetMenuState(ID_VIEW_SHOWPASSABILITYMAP, MF_BYCOMMAND) & MF_CHECKED) != 0;
+
+	if (isChecked) {
+		// Toggle off — clear whichever overlay is active.
+		GetParent()->GetMenu()->CheckMenuItem(ID_VIEW_SHOWPASSABILITYMAP, MF_BYCOMMAND | MF_UNCHECKED);
+		drawTerrainGrid      = false;
+		drawEditorPassability = false;
+		EditorNavLayer::Get().Clear();
+		return;
 	}
 
-	if (GetParent()->GetMenu()->GetMenuState( ID_VIEW_SHOWPASSABILITYMAP, MF_BYCOMMAND ) & MF_CHECKED) {
-		GetParent()->GetMenu()->CheckMenuItem( ID_VIEW_SHOWPASSABILITYMAP, MF_BYCOMMAND | MF_UNCHECKED );
-		drawTerrainGrid = false;
-	} else {
-		GetParent()->GetMenu()->CheckMenuItem( ID_VIEW_SHOWPASSABILITYMAP, MF_BYCOMMAND | MF_CHECKED );
-		drawTerrainGrid = true;
+	// Toggle on — prefer legacy MOVE overlay (small maps); fall back to EditorNav (large maps).
+	if (!GameMap) {
+		std::string err;
+		EditorData::RebuildMoveFromCurrentTerrain(&err);
+		// GameMap is now set if MOVE built successfully; null if map too large.
 	}
+
+	if (GameMap) {
+		// Legacy MOVE overlay available.
+		GetParent()->GetMenu()->CheckMenuItem(ID_VIEW_SHOWPASSABILITYMAP, MF_BYCOMMAND | MF_CHECKED);
+		drawTerrainGrid      = true;
+		drawEditorPassability = false;
+		return;
+	}
+
+	// MOVE unavailable (map exceeds MAX_MAP_CELL_WIDTH or build failed) — use EditorNav overlay.
+	if (!EditorNavLayer::Get().BuildFromTerrain()) {
+		AfxMessageBox("Cannot build terrain passability overlay.");
+		GetParent()->GetMenu()->CheckMenuItem(ID_VIEW_SHOWPASSABILITYMAP, MF_BYCOMMAND | MF_UNCHECKED);
+		return;
+	}
+
+	GetParent()->GetMenu()->CheckMenuItem(ID_VIEW_SHOWPASSABILITYMAP, MF_BYCOMMAND | MF_CHECKED);
+	drawEditorPassability = true;
 }
 
 void EditorInterface::OnMButtonUp(UINT nFlags, CPoint point) 

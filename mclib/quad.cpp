@@ -3544,6 +3544,37 @@ void TerrainQuad::drawLine (void)
 				}
 			}
 		}
+		else if (drawEditorPassability && gEditorNavFlags)
+		{
+			// EditorNav overlay — one colored outline per terrain tile.
+			// No GameMap dependency; works on maps of any size.
+			long rowCol = vertices[0]->posTile;
+			long tileR  = rowCol >> 16;
+			long tileC  = rowCol & 0x0000ffff;
+
+			if (tileR >= 0 && tileR < gEditorNavCellSide &&
+			    tileC >= 0 && tileC < gEditorNavCellSide)
+			{
+				uint8_t f = gEditorNavFlags[tileR * gEditorNavCellSide + tileC];
+				DWORD color;
+				if      (f & EDITOR_NAV_BLOCKED)          color = SB_RED;
+				else if (f & EDITOR_NAV_DEEP_WATER)       color = SB_ORANGE;
+				else if (f & EDITOR_NAV_SHALLOW_WATER)    color = XP_BLUE;
+				else if (f & EDITOR_NAV_GROUND_PASSABLE)  color = XP_GREEN;
+				else                                       color = XP_RED;
+
+				Stuff::Vector4D p0, p1, p2, p3;
+				p0.x = vertices[0]->px; p0.y = vertices[0]->py; p0.z = vertices[0]->pz + 0.002f; p0.w = 1.f;
+				p1.x = vertices[1]->px; p1.y = vertices[1]->py; p1.z = vertices[1]->pz + 0.002f; p1.w = 1.f;
+				p2.x = vertices[2]->px; p2.y = vertices[2]->py; p2.z = vertices[2]->pz + 0.002f; p2.w = 1.f;
+				p3.x = vertices[3]->px; p3.y = vertices[3]->py; p3.z = vertices[3]->pz + 0.002f; p3.w = 1.f;
+
+				{ LineElement e(p0, p1, color, nullptr); e.draw(); }
+				{ LineElement e(p1, p3, color, nullptr); e.draw(); }
+				{ LineElement e(p3, p2, color, nullptr); e.draw(); }
+				{ LineElement e(p2, p0, color, nullptr); e.draw(); }
+			}
+		}
 	}
 
 	if (GlobalMoveMap[0]->badLoad)
