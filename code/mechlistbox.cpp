@@ -472,10 +472,10 @@ void MechListBox::initIcon( LogisticsMech* pMech, aObject& mechIcon )
 {
 	mechIcon = (MechListBoxItem::s_templateItem->mechIcon);
 
-	bool bClan = pMech->isClanMech();
-	if ( bClan )
-		mechIcon.setTexture( "data/art/mc2x_mechicons.tga" );
-
+	// Icon atlas (mcui_gn_mechicons.tga) uses 25x30px cells at setFileWidth(256).
+	// Overriding texture to mc2x_mechicons.tga (512px) with setFileWidth(256) gave
+	// broken UVs (wrong half of atlas). Base IS atlas for all mechs; clan icons
+	// at high indices show IS-atlas fallback (pre-existing limitation).
 	long index = pMech->getIconIndex();
 	long xIndex = index % 10;
 	long yIndex = index / 10;

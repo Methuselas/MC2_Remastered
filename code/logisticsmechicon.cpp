@@ -126,10 +126,10 @@ void LogisticsMechIcon::setMech( LogisticsMech* pNewMech )
 	if ( pMech )
 	{
 		// need to set the uv's of the mech icon
-		bool bClan = pMech->isClanMech();
-		if ( bClan )
-			icon.setTexture( "data/art/mc2x_mechicons.tga" );
-
+		// Icon atlas (mcui_gn_mechicons.tga) uses 25x30px cells at setFileWidth(256).
+		// Overriding the texture to mc2x_mechicons.tga (512px) with setFileWidth(256) gave
+		// broken UVs (wrong half of atlas). Revert to base IS atlas for all mechs;
+		// clan mech icons at high indices show IS-atlas fallback (pre-existing limitation).
 		long index = pMech->getIconIndex();
 		long xIndex = index % 10;
 		long yIndex = index / 10;
