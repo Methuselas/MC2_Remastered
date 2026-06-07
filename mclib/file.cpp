@@ -164,6 +164,24 @@ static bool TryModOpen(const char* fileName, int* outHandle) {
     if (!ShouldSearchMods(fileName)) return false;
     std::string key = NormalizeKey(fileName);
 
+    // Auto-activate campaign from .fit mission file lookup (smoke runner / direct launch).
+    // The normal code path calls ActivateCampaignMod() from the campaign-select UI.
+    // When a mission is launched directly (--mission torrin), the .fit lookup here is
+    // the first chance to set g_activeMod from the campaign index.
+    if (g_activeMod.empty()) {
+        bool isFit = (key.compare(0, 14, "data/missions/") == 0 &&
+                      key.size() > 4 &&
+                      key.compare(key.size() - 4, 4, ".fit") == 0);
+        if (isFit) {
+            auto it = g_campaignIndex.find(key);
+            if (it != g_campaignIndex.end()) {
+                g_activeMod = it->second.modName;
+                printf("[mod] auto-activated campaign '%s' from mission lookup\n", g_activeMod.c_str());
+                fflush(stdout);
+            }
+        }
+    }
+
     // Campaign layer: serve files from the active campaign mod.
     if (!g_activeMod.empty()) {
         auto it = g_campaignIndex.find(key);
