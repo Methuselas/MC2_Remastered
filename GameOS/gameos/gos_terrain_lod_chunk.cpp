@@ -29,6 +29,7 @@ static GLint    s_locBlockOriginY   = -1;
 static GLint    s_locMapSide        = -1;
 static GLint    s_locHalfMap        = -1;
 static GLint    s_locMvp            = -1;
+static GLint    s_locLodStep        = -1;  // Phase 5: per-block LOD stride uniform
 
 // ---------------------------------------------------------------------------
 // Patch geometry cache (Phase 4).
@@ -162,11 +163,12 @@ void gos_TerrainLodChunk_Init()
             s_locMapSide      = glGetUniformLocation(s_terrainProgram, "u_mapSide");
             s_locHalfMap      = glGetUniformLocation(s_terrainProgram, "u_halfMap");
             s_locMvp          = glGetUniformLocation(s_terrainProgram, "u_worldToClipGL");
+            s_locLodStep      = glGetUniformLocation(s_terrainProgram, "u_lodStep");  // Phase 5
             printf("[TerrainLodChunk] shader loaded prog=%u "
-                   "locs: originX=%d originY=%d mapSide=%d halfMap=%d mvp=%d\n",
+                   "locs: originX=%d originY=%d mapSide=%d halfMap=%d mvp=%d lodStep=%d\n",
                    (unsigned)s_terrainProgram,
                    s_locBlockOriginX, s_locBlockOriginY,
-                   s_locMapSide, s_locHalfMap, s_locMvp);
+                   s_locMapSide, s_locHalfMap, s_locMvp, s_locLodStep);
             fflush(stdout);
         }
     }
@@ -198,6 +200,7 @@ void gos_TerrainLodChunk_Destroy()
         s_locMapSide        = -1;
         s_locHalfMap        = -1;
         s_locMvp            = -1;
+        s_locLodStep        = -1;
     }
 
     if (s_heightSsbo != 0)
@@ -259,6 +262,8 @@ void gos_TerrainLodChunk_SubmitDrawCommands(const TerrainDrawCommand* cmds, int 
             glUniform1i(s_locBlockOriginX, cmd.blockOriginX);
         if (s_locBlockOriginY >= 0)
             glUniform1i(s_locBlockOriginY, cmd.blockOriginY);
+        if (s_locLodStep >= 0)
+            glUniform1i(s_locLodStep, cmd.lodStep);  // Phase 5: LOD band for debug vis
 
         // Bind VBO: ivec2 localOffset at attribute location 0.
         glBindBuffer(GL_ARRAY_BUFFER, patch.vbo);

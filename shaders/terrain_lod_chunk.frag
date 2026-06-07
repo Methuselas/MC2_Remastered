@@ -1,9 +1,22 @@
+// Phase 5: LOD-band debug visualization.
+// u_lodStep ∈ {1,2,4,5,10,20} corresponding to LOD levels 0-5.
+// Fine (green) -> coarse (dark red). Elevation modulates brightness.
+
 in vec3 v_worldPos;
+uniform int u_lodStep;
 out vec4 fragColor;
 
 void main() {
-    // Debug: elevation-mapped color.
-    // z range roughly -200..3000 for MC2 maps; normalize to [0,1].
+    vec3 lodColor;
+    if      (u_lodStep == 1)  lodColor = vec3(0.0,  0.85, 0.15);  // LOD0 bright green
+    else if (u_lodStep == 2)  lodColor = vec3(0.45, 0.85, 0.0);   // LOD1 yellow-green
+    else if (u_lodStep == 4)  lodColor = vec3(0.85, 0.75, 0.0);   // LOD2 yellow
+    else if (u_lodStep == 5)  lodColor = vec3(0.9,  0.45, 0.0);   // LOD3 orange
+    else if (u_lodStep == 10) lodColor = vec3(0.9,  0.15, 0.0);   // LOD4 red
+    else                      lodColor = vec3(0.6,  0.0,  0.1);   // LOD5 dark red
+
+    // Subtle elevation modulation: normalize height to [0.6, 1.0].
     float t = clamp((v_worldPos.z + 200.0) / 3200.0, 0.0, 1.0);
-    fragColor = vec4(t * 0.2 + 0.1, t * 0.6 + 0.2, t * 0.1 + 0.1, 1.0);
+    float bright = 0.6 + 0.4 * t;
+    fragColor = vec4(lodColor * bright, 1.0);
 }

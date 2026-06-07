@@ -164,6 +164,43 @@ unsigned long				Terrain::gCurrentFrame     = 0;
 int							Terrain::s_terrainChunkSide = 0;
 int							Terrain::s_superchunkSide   = 0;
 
+// ---------------------------------------------------------------------------
+// Terrain LOD chunk Phase 5 — per-block distance LOD selection.
+// LOD_STEPS[i] is the vertex stride baked into each patch VBO.
+// LOD_DIST_THRESH[k] is the upper distance (world units) for lodLevel k.
+// Each block is 20 quads * 128 wu/quad = 2560 wu per side.
+// ---------------------------------------------------------------------------
+static const int   LOD_STEPS[6]      = {1, 2, 4, 5, 10, 20};
+static const float LOD_DIST_THRESH[5] = {
+    3000.0f,   // lodLevel 0: lodStep=1  — within 3 K wu
+    7000.0f,   // lodLevel 1: lodStep=2  — within 7 K wu
+    15000.0f,  // lodLevel 2: lodStep=4  — within 15 K wu
+    30000.0f,  // lodLevel 3: lodStep=5  — within 30 K wu
+    60000.0f,  // lodLevel 4: lodStep=10 — within 60 K wu
+               // lodLevel 5: lodStep=20 — beyond 60 K wu
+};
+
+// Choose LOD level (0-5) for a block given squared distance and previous level.
+// Promotion (going finer) is immediate; demotion (going coarser) uses 10%
+// hysteresis in linear distance (= 1.21x in distSq) to prevent flickering.
+static uint8_t chooseLodLevel(float distSq, uint8_t prevLevel)
+{
+    uint8_t desired = 5;
+    for (int k = 0; k < 5; ++k) {
+        if (distSq < LOD_DIST_THRESH[k] * LOD_DIST_THRESH[k]) {
+            desired = (uint8_t)k;
+            break;
+        }
+    }
+    if (desired > prevLevel) {
+        // Demotion — only commit if clearly past the current fine threshold.
+        float thresh = LOD_DIST_THRESH[desired - 1];
+        if (distSq < thresh * thresh * 1.21f)
+            return prevLevel; // stay fine
+    }
+    return desired;
+}
+
 bool 						drawTerrainGrid = false;		//Override locally in editor so game don't come with these please!  Love -fs
 bool						drawLOSGrid = false;
 bool						drawTerrainTiles = true;
@@ -1166,7 +1203,13 @@ long Terrain::update (void)
 
 		const float halfMap = worldUnitsMapSide * 0.5f;
 
-		// --- Level 1: superchunk cull ---
+		// Camera position in MC2 world space for LOD distance metric.
+		// getCameraOrigin() is in raw MC2 space; X/Y match the terrain world coords.
+		Stuff::Vector3D camOriginLod = eye->getCameraOrigin();
+		const float eyeX = camOriginLod.x;
+		const float eyeY = camOriginLod.y;
+
+		// --- Phase 5 Pass 1: superchunk cull + per-block frustum + LOD selection ---
 		for (int scY = 0; scY < s_superchunkSide; ++scY)
 		{
 			for (int scX = 0; scX < s_superchunkSide; ++scX)
@@ -1193,7 +1236,7 @@ long Terrain::update (void)
 					continue;
 				}
 
-				// --- Level 2: block cull within visible superchunk ---
+				// --- Level 2: block cull + LOD selection within visible superchunk ---
 				for (int dy = 0; dy < 4; ++dy)
 				{
 					for (int dx = 0; dx < 4; ++dx)
@@ -1219,19 +1262,94 @@ long Terrain::update (void)
 						// CRIT-1: write inFrustum BEFORE any continue.
 						bool passedCull = eye->quadAabbInFrustum(planes, bmMn, bmMx);
 						bm.inFrustum = passedCull;
-						if (!bm.inFrustum) continue;
 
-						// Emit draw command (lodStep=1 fixed; Phase 5 will choose per distance).
-						s_drawCmds[s_cmdCount++] = {
-							bm.originX,
-							bm.originY,
-							1 /*lodStep: fixed in Phase 4*/,
-							(bm.quadCountX & 0xFF) | ((bm.quadCountY & 0xFF) << 8)
-						};
+						// Phase 5: compute block center in MC2 world space and choose LOD.
+						// Block center vertex = (originX + quadCountX*0.5, originY + quadCountY*0.5).
+						// MC2 world: worldX = mapX * 128 - halfMap; worldY = halfMap - mapY * 128.
+						float cX = float(bm.originX) * 128.0f + float(bm.quadCountX) * 0.5f * 128.0f - halfMap;
+						float cY = halfMap - (float(bm.originY) * 128.0f + float(bm.quadCountY) * 0.5f * 128.0f);
+						float dx2 = cX - eyeX, dy2 = cY - eyeY;
+						float distSq = dx2 * dx2 + dy2 * dy2;
+						bm.lodLevel = chooseLodLevel(distSq, bm.lodLevel);
 					}
 				}
 			}
 		}
+
+		// --- Phase 5 Pass 2: neighbor LOD delta clamp (visible blocks only) ---
+		// Iterates until stable so chains (e.g., LOD0 next to LOD5) propagate.
+		{
+			bool lodChanged = true;
+			while (lodChanged)
+			{
+				lodChanged = false;
+				for (int by = 0; by < s_terrainChunkSide; ++by)
+				{
+					for (int bx = 0; bx < s_terrainChunkSide; ++bx)
+					{
+						TerrainBlockMeta& bm = s_blockMeta[bx + by * s_terrainChunkSide];
+						if (!bm.inFrustum) continue;
+
+						// Check 4 axis-aligned neighbors: E, W, S, N
+						const int nbDx[4] = { 1, -1,  0,  0};
+						const int nbDy[4] = { 0,  0,  1, -1};
+						for (int n = 0; n < 4; ++n)
+						{
+							int nx = bx + nbDx[n], ny = by + nbDy[n];
+							if (nx < 0 || nx >= s_terrainChunkSide) continue;
+							if (ny < 0 || ny >= s_terrainChunkSide) continue;
+							TerrainBlockMeta& nbm = s_blockMeta[nx + ny * s_terrainChunkSide];
+							if (!nbm.inFrustum) continue;
+							int delta = (int)bm.lodLevel - (int)nbm.lodLevel;
+							if (delta > 1) {
+								bm.lodLevel = nbm.lodLevel + 1;
+								lodChanged = true;
+							} else if (delta < -1) {
+								nbm.lodLevel = bm.lodLevel + 1;
+								lodChanged = true;
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// --- Phase 5 Pass 3: emit draw commands using lodLevel -> lodStep ---
+		for (int by = 0; by < s_terrainChunkSide; ++by)
+		{
+			for (int bx = 0; bx < s_terrainChunkSide; ++bx)
+			{
+				const TerrainBlockMeta& bm = s_blockMeta[bx + by * s_terrainChunkSide];
+				if (!bm.inFrustum) continue;
+				s_drawCmds[s_cmdCount].blockOriginX     = bm.originX;
+				s_drawCmds[s_cmdCount].blockOriginY     = bm.originY;
+				s_drawCmds[s_cmdCount].lodStep          = LOD_STEPS[bm.lodLevel];
+				s_drawCmds[s_cmdCount].quadCountsPacked = (bm.quadCountX & 0xFF) | ((bm.quadCountY & 0xFF) << 8);
+				++s_cmdCount;
+			}
+		}
+
+		// Phase 5 LOD telemetry — one log line per 180 frames.
+		if (gCurrentFrame % 180 == 0 && s_cmdCount > 0)
+		{
+			int lodCounts[6] = {};
+			for (int ci = 0; ci < s_cmdCount; ++ci)
+			{
+				const int step = s_drawCmds[ci].lodStep;
+				int lvl = (step == 1)  ? 0
+				        : (step == 2)  ? 1
+				        : (step == 4)  ? 2
+				        : (step == 5)  ? 3
+				        : (step == 10) ? 4 : 5;
+				lodCounts[lvl]++;
+			}
+			printf("[TerrainLOD v1] frame=%lu cmds=%d LOD0=%d LOD1=%d LOD2=%d LOD3=%d LOD4=%d LOD5=%d\n",
+			       (unsigned long)gCurrentFrame, s_cmdCount,
+			       lodCounts[0], lodCounts[1], lodCounts[2],
+			       lodCounts[3], lodCounts[4], lodCounts[5]);
+			fflush(stdout);
+		}
+
 		// s_drawCmds[] is submitted in Terrain::flushDrawCommands() from gamecam.cpp.
 	}
 
