@@ -71,6 +71,7 @@
 #include "EditorInspector.h"
 #include "imgui.h"
 #include "MapGeneratorDialog.h"
+#include "MissionValidation.h"
 #include "gameplay_pick.h"  // tryGameplayPick: shared pick spine, no game-object deps
 #include "gameos.hpp"       // gos_GetViewport, Environment (drawableWidth/Height)
 #include "gos_render.h"     // graphics::make_current_context
@@ -4344,6 +4345,12 @@ void EditorInterface::renderToolbarImGui()
 
 	// Draw the Map Generator dialog (no-op when closed).
 	MapGeneratorDialog::Draw();
+
+	// Mission Save Checklist — shows why .pak save is ready/blocked + warnings.
+	if (ImGui::Button("Mission Checklist", ImVec2(-1.f, 0.f)))
+		MissionValidator::Open();
+	MissionValidator::Draw();
+
 	ImGui::Separator();
 
 	for (int i = 0; i < (int)(sizeof(tools) / sizeof(tools[0])); ++i)

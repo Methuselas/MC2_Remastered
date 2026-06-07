@@ -45,6 +45,10 @@
 // MOVE_buildData/MOVE_saveData for them is the known Save/Save As CTD point.
 static bool gEditorDataMoveDataReadyForFullSave = false;
 
+/*static*/ bool EditorData::IsMoveDataReadyForFullSave() {
+    return gEditorDataMoveDataReadyForFullSave;
+}
+
 static void EditorDataTrace(const char* fmt, ...)
 {
 	if (getenv("MC2_EDITOR_TRACE") == NULL)
@@ -1185,19 +1189,24 @@ void EditorData::refreshTerrainAfterEdit()
 	if ( !land || !Terrain::mapData )
 		return;
 	// setTerrain/setOverlay called invalidateTerrainFaceCache(), nulling the whole
-	// Shape-C face cache. Rebuild it (valid terrainHandles) then re-bake every quad
-	// recipe so the GPU-direct terrain doesn't draw nodeId=0 (black) for edited cells.
+	// Shape-C face cache. Rebuild it so recipe slots read valid nodeIds.
 	volatile float prog = 0.0f;
 	Terrain::mapData->buildTerrainFaceCache( &prog, 0.0f );
-	const long side = land->realVerticesMapSide;
-	for ( long j = 0; j < side - 1; ++j )
-		for ( long i = 0; i < side - 1; ++i )
-			gos_terrain_indirect::InvalidateRecipeForVertexNum( (int)( j * side + i ) );
+
+	// Invalidate and rebuild all recipe slots. Uses InvalidateAllRecipes() (O(N),
+	// calls PopulateRecipeCementWords once) instead of the old per-vertex loop
+	// (O(N²), called PopulateRecipeCementWords N times).
+	// NOTE: RebuildCementAtlas() was tried here but caused normal/detail texture
+	// tiling to reset across the whole map (glGetTexImage stalls break GL state
+	// mid-frame). Road overlays render correctly via the decal VBO path
+	// (BuildDecalStaticVBO uses overlayHandle from alpha-cement face cache entries),
+	// so the cement atlas rebuild is not needed on every brush stroke.
+	gos_terrain_indirect::InvalidateAllRecipes();
+
 	// Belt-and-suspenders: after any brush stroke the decal VBO must be
-	// rebuilt even if setTerrain()'s own MarkDecalDirty() was somehow skipped
-	// (e.g. direct mapData->setTerrain() calls bypassing Terrain::setTerrain).
+	// rebuilt even if setTerrain()'s own MarkDecalDirty() was somehow skipped.
 	gos_terrain_indirect::MarkDecalDirty();
-	EditorDataTrace( "EditorData::refreshTerrainAfterEdit: rebuilt face cache + recipes + decal dirty side=%ld", side );
+	EditorDataTrace( "EditorData::refreshTerrainAfterEdit: rebuilt face cache + recipes + decal dirty side=%ld", land->realVerticesMapSide );
 }
 
 bool EditorData::generateMission( int mapSize, int terrain, unsigned long seed )

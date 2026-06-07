@@ -170,6 +170,10 @@ class EditorData
 
 		static void setMapName( const char* name );
 		static const char* getMapName(){ return strlen( mapName ) ? mapName : 0; }
+
+		// True when MOVE pathfinding data was loaded/built and is safe to write.
+		// False for newly generated blank maps (set to true only after packet-4 read).
+		static bool IsMoveDataReadyForFullSave();
 		static void updateTitleBar();
 
 		EString MissionName() { return m_missionName; }
