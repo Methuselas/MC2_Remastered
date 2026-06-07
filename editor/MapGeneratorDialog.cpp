@@ -423,31 +423,37 @@ void MapGeneratorDialog::Draw() {
     // --- Buttons ---
 
     // "Load Preset" -- instant load from pre-baked flat terrain files (no Python).
-    // Check whether a preset exists for the current biome+size so we can grey it out.
+    // Three states based on manifest.json (written last during generation = completion flag):
+    //   1. Folder absent          -> preset missing
+    //   2. Folder present, no manifest -> incomplete / interrupted generation
+    //   3. manifest.json present  -> preset complete, button enabled
     {
         char presetDir[512];
         snprintf(presetDir, sizeof(presetDir),
             "terrain_gen_presets\\%s_%d",
             k_biomeKeys[s_state.biomeIndex],
             k_mapSizeVertices[s_state.mapSizeIndex]);
-        char presetElev[640];
-        snprintf(presetElev, sizeof(presetElev), "%s\\genmap.elev.r32", presetDir);
-        bool presetExists = (GetFileAttributesA(presetElev) != INVALID_FILE_ATTRIBUTES);
+        char presetManifest[640];
+        snprintf(presetManifest, sizeof(presetManifest), "%s\\manifest.json", presetDir);
 
-        if (!presetExists) {
-            ImGui::BeginDisabled();
-        }
+        bool dirExists      = (GetFileAttributesA(presetDir)      != INVALID_FILE_ATTRIBUTES);
+        bool presetComplete = (GetFileAttributesA(presetManifest) != INVALID_FILE_ATTRIBUTES);
+        bool presetPartial  = dirExists && !presetComplete;
+
+        if (!presetComplete) ImGui::BeginDisabled();
         if (ImGui::Button("Load Preset", ImVec2(110.f * sc, 0))) {
             snprintf(s_state.statusMsg, sizeof(s_state.statusMsg), "Loading preset...");
             s_state.pendingAction = PendingAction::LoadPreset;
         }
-        if (!presetExists) {
+        if (!presetComplete) {
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                ImGui::SetTooltip(
-                    "No preset for this biome+size.\n"
-                    "Run tools/terrain_gen/gen_presets.py to bake presets.\n"
-                    "Or use Generate to run the full generator.");
+                ImGui::SetTooltip(presetPartial
+                    ? "Preset folder exists but is incomplete (generation may have been interrupted).\n"
+                      "Re-run: py tools/terrain_gen/gen_presets.py"
+                    : "No pre-baked preset for this biome+size.\n"
+                      "Run: py tools/terrain_gen/gen_presets.py\n"
+                      "Or use Generate to run the full generator.");
             }
         } else {
             if (ImGui::IsItemHovered()) {
@@ -535,51 +541,61 @@ void MapGeneratorDialog::ExecuteLoadPreset() {
     char srcDir[512];
     snprintf(srcDir, sizeof(srcDir), "terrain_gen_presets\\%s_%d", biomeKey, sizeN);
 
-    // Verify preset exists
-    char srcElev[640], srcBurnin[640], srcPreview[640];
-    snprintf(srcElev,    sizeof(srcElev),    "%s\\genmap.elev.r32",    srcDir);
-    snprintf(srcBurnin,  sizeof(srcBurnin),  "%s\\genmap.burnin.tga",  srcDir);
-    snprintf(srcPreview, sizeof(srcPreview), "%s\\genmap.preview.png", srcDir);
+    // Verify manifest (written last during generation — presence guarantees data files intact)
+    char srcManifest[640], srcElev[640], srcBurnin[640], srcPreview[640];
+    snprintf(srcManifest, sizeof(srcManifest), "%s\\manifest.json",      srcDir);
+    snprintf(srcElev,     sizeof(srcElev),     "%s\\genmap.elev.r32",    srcDir);
+    snprintf(srcBurnin,   sizeof(srcBurnin),   "%s\\genmap.burnin.tga",  srcDir);
+    snprintf(srcPreview,  sizeof(srcPreview),  "%s\\genmap.preview.png", srcDir);
 
-    if (GetFileAttributesA(srcElev) == INVALID_FILE_ATTRIBUTES) {
+    if (GetFileAttributesA(srcManifest) == INVALID_FILE_ATTRIBUTES) {
+        bool dirExists = (GetFileAttributesA(srcDir) != INVALID_FILE_ATTRIBUTES);
         snprintf(s_state.statusMsg, sizeof(s_state.statusMsg),
-            "Preset not found: %s\nRun tools/terrain_gen/gen_presets.py first.", srcDir);
+            dirExists
+                ? "Preset incomplete — re-run tools/terrain_gen/gen_presets.py"
+                : "Preset not found: %s", srcDir);
         return;
     }
 
     // Ensure output directory exists
     CreateDirectoryA("terrain_gen_out", NULL);
 
-    // Copy preset files into terrain_gen_out/
-    bool ok = true;
-    if (!CopyFileA(srcElev,   "terrain_gen_out\\genmap.elev.r32",    FALSE)) {
-        // overwrite if needed
-        SetFileAttributesA("terrain_gen_out\\genmap.elev.r32", FILE_ATTRIBUTE_NORMAL);
-        if (!CopyFileA(srcElev, "terrain_gen_out\\genmap.elev.r32", FALSE))
-            ok = false;
+    // Atomic copy: write both files to .tmp names first, then rename when both succeed.
+    // This guarantees terrain_gen_out/ never holds a mixed old+new terrain pair.
+    const char* dstElev   = "terrain_gen_out\\genmap.elev.r32";
+    const char* dstBurnin = "terrain_gen_out\\genmap.burnin.tga";
+    const char* tmpElev   = "terrain_gen_out\\genmap.elev.r32.tmp";
+    const char* tmpBurnin = "terrain_gen_out\\genmap.burnin.tga.tmp";
+
+    DeleteFileA(tmpElev);   // clear any stale temps from a prior interrupted copy
+    DeleteFileA(tmpBurnin);
+
+    bool ok = CopyFileA(srcElev,   tmpElev,   FALSE)
+           && CopyFileA(srcBurnin, tmpBurnin, FALSE);
+
+    if (!ok) {
+        DeleteFileA(tmpElev);
+        DeleteFileA(tmpBurnin);
+        snprintf(s_state.statusMsg, sizeof(s_state.statusMsg),
+            "Failed to copy preset files from %s", srcDir);
+        return;
     }
-    if (ok && !CopyFileA(srcBurnin, "terrain_gen_out\\genmap.burnin.tga", FALSE)) {
-        SetFileAttributesA("terrain_gen_out\\genmap.burnin.tga", FILE_ATTRIBUTE_NORMAL);
-        if (!CopyFileA(srcBurnin, "terrain_gen_out\\genmap.burnin.tga", FALSE))
-            ok = false;
-    }
-    // Copy preview too (optional; don't fail if absent)
+
+    // Both temp files written successfully — commit by replacing the live files.
+    SetFileAttributesA(dstElev,   FILE_ATTRIBUTE_NORMAL);
+    SetFileAttributesA(dstBurnin, FILE_ATTRIBUTE_NORMAL);
+    MoveFileExA(tmpElev,   dstElev,   MOVEFILE_REPLACE_EXISTING);
+    MoveFileExA(tmpBurnin, dstBurnin, MOVEFILE_REPLACE_EXISTING);
+
+    // Preview is optional; don't fail if absent
     if (GetFileAttributesA(srcPreview) != INVALID_FILE_ATTRIBUTES) {
         SetFileAttributesA("terrain_gen_out\\genmap.preview.png", FILE_ATTRIBUTE_NORMAL);
         CopyFileA(srcPreview, "terrain_gen_out\\genmap.preview.png", FALSE);
         LoadPreviewPNG();
     }
 
-    if (!ok) {
-        snprintf(s_state.statusMsg, sizeof(s_state.statusMsg),
-            "Failed to copy preset files from %s", srcDir);
-        return;
-    }
-
     // Hand off to editor (same path as ExecuteGenerate, no Python needed)
-    bool applied = EditorData::generateFromDialogParams(
-        s_state.mapSizeIndex,
-        biomeKey);
+    bool applied = EditorData::generateFromDialogParams(s_state.mapSizeIndex, biomeKey);
     if (!applied) {
         snprintf(s_state.statusMsg, sizeof(s_state.statusMsg),
             "Preset files copied but terrain apply failed.");

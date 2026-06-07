@@ -24,6 +24,7 @@ terrain_gen.py.
 """
 import sys
 import os
+import json
 import argparse
 import time
 from pathlib import Path
@@ -105,6 +106,17 @@ def generate_flat_preset(biome: str, size_n: int, out_dir: Path) -> None:
     # --- preview.png ---
     make_preview(burnin).save(str(out_dir / "genmap.preview.png"))
 
+    # --- manifest.json (written last so its presence == all files complete) ---
+    manifest = {
+        "version": 1,
+        "type": "flat_terrain_preset",
+        "biome": biome,
+        "size": size_n,
+        "files": ["genmap.elev.r32", "genmap.burnin.tga", "genmap.preview.png"],
+        "complete": True,
+    }
+    (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+
     dt = time.time() - t0
     print(f"  [{biome:20s} {size_n:5d}x{size_n}]  -> {out_dir}  ({dt:.1f}s)")
 
@@ -148,6 +160,19 @@ def main() -> None:
             subdir = out_root / f"{biome}_{size_n}"
             generate_flat_preset(biome, size_n, subdir)
             done += 1
+
+    # Write root catalog manifest after all presets are done.
+    catalog = {
+        "version": 1,
+        "type": "terrain_preset_catalog",
+        "biomes": list(args.biomes),
+        "sizes": list(args.sizes),
+        "presets": [
+            {"biome": b, "size": s, "dir": f"{b}_{s}"}
+            for b in args.biomes for s in args.sizes
+        ],
+    }
+    (out_root / "manifest.json").write_text(json.dumps(catalog, indent=2))
 
     print()
     print(f"Done: {done}/{total} presets in {time.time()-t_all:.1f}s  ->  {out_root}/")
