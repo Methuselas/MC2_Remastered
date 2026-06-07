@@ -1490,12 +1490,52 @@ void MapData::setTerrain( long indexY, long indexX, int Type )
 		}
 	}
 
-	// Mutations to blocks[].textureData invalidate the terrain face cache. Shape C
-	// falls back to inline for ALL cache reads until buildTerrainFaceCache() is
-	// explicitly called again (at next primeMissionTerrainCache). In-gameplay
-	// setTerrain() calls (mines, scorch) leave cache NULL for the rest of that
-	// mission -- acceptable since these events are rare.
-	invalidateTerrainFaceCache();
+	// Update only the affected face cache entries rather than nuking the whole
+	// buffer (old: invalidateTerrainFaceCache → cache=NULL → entire terrain black
+	// until the next full rebuild).  setTerrain touches up to 4 quads; rebuild
+	// each one inline.  If the cache hasn't been built yet (terrainFaceCache==NULL)
+	// this is a no-op — buildTerrainFaceCache() will populate it at mission load.
+	if (terrainFaceCache && Terrain::terrainTextures && Terrain::terrainTextures2) {
+		const long cacheWidth = worldQuadCacheWidth();
+		Vertex wv[4];
+		for (int _iv = 0; _iv < 4; ++_iv) {
+			const long tr = Vertices[_iv][y];
+			const long tc = Vertices[_iv][x];
+			if (tr < 0 || tr >= cacheWidth || tc < 0 || tc >= cacheWidth) continue;
+			const long idx = tc + tr * Terrain::realVerticesMapSide;
+			PostcompVertexPtr p1 = &blocks[idx];
+			PostcompVertexPtr p2 = p1 + 1;
+			PostcompVertexPtr p3 = p1 + Terrain::realVerticesMapSide + 1;
+			PostcompVertexPtr p4 = p1 + Terrain::realVerticesMapSide;
+			fillWorldCacheVertex(wv[0], p1, tr, tc);
+			fillWorldCacheVertex(wv[1], p2, tr, tc + 1);
+			fillWorldCacheVertex(wv[2], p3, tr + 1, tc + 1);
+			fillWorldCacheVertex(wv[3], p4, tr + 1, tc);
+			WorldQuadTerrainCacheEntry& e = terrainFaceCache[worldQuadCacheIndex(tr, tc)];
+			e.init();
+			const DWORD baseTex = p1->textureData & 0x0000ffff;
+			const bool isCem = Terrain::terrainTextures->isCement(baseTex);
+			const bool isAlp = Terrain::terrainTextures->isAlpha(baseTex);
+			if (isCem) e.flags |= TERRAIN_CACHE_CEMENT;
+			if (isAlp) e.flags |= TERRAIN_CACHE_ALPHA;
+			if (!isCem) {
+				const long uvm = worldQuadUVMode(tr, tc);
+				VertexPtr vMin = (uvm == BOTTOMRIGHT) ? &wv[0] : &wv[1];
+				VertexPtr vMax = (uvm == BOTTOMRIGHT) ? &wv[2] : &wv[3];
+				e.terrainHandle      = Terrain::terrainTextures2->resolveTextureHandle(vMin, vMax, &e.uvData, NULL, false);
+				e.terrainDetailHandle = Terrain::terrainTextures2->peekDetailHandle();
+				e.flags |= TERRAIN_CACHE_COLORMAP;
+			} else if (isAlp) {
+				e.overlayHandle      = Terrain::terrainTextures->peekTextureHandle(baseTex);
+				e.terrainHandle      = Terrain::terrainTextures2->resolveTextureHandle(&wv[1], &wv[3], &e.uvData, NULL, false);
+				e.terrainDetailHandle = Terrain::terrainTextures2->peekDetailHandle();
+				e.flags |= TERRAIN_CACHE_COLORMAP;
+			} else {
+				e.terrainHandle = Terrain::terrainTextures->peekTextureHandle(baseTex);
+			}
+			e.flags |= TERRAIN_CACHE_VALID;
+		}
+	}
 	// Terrain-type changes also affect which decal quads are eligible (overlay
 	// recipes reference the same tile data). Without this, TerrainBrush/Eraser
 	// strokes leave the decal VBO stale and overlays vanish until enough draws

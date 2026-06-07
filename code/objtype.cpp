@@ -476,6 +476,16 @@ ObjectTypePtr ObjectTypeManager::load (ObjectTypeNumber objTypeNum, bool noCache
 			}
 			break;
 
+		case KLIEG_LIGHT_TYPE: {
+			// Klieg lights are placed terrain objects; load as BuildingType so
+			// countObject and setNumObjects can allocate space for them.
+			objType = new BuildingType;
+			objType->setObjTypeNum(objTypeNum);
+			if (objType->init(objectFile,objectFile->getPacketSize()) != NO_ERR)
+				Fatal(objectTypeNum, " ObjectTypeManager.load: unable to init KliegLight(BuildingType) ");
+			}
+			break;
+
 		default:
 			// Fall through with objType=NULL — the post-switch stub-substitution
 			// will create a BattleMechType so the mission still spawns a mover.

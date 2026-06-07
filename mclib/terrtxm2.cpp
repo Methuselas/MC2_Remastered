@@ -108,16 +108,15 @@ static MemoryPtr tryLoadBurninJpg(const char* texturePath, const char* fileName,
 	FullPathFileName burnInJpg;
 	burnInJpg.init(texturePath, jName, ".jpg");
 
-	FILE* fp = std::fopen((const char*)burnInJpg, "rb");
-	if (!fp)
+	// Use File::open so the mod overlay (TryModOpen) is consulted — std::fopen bypasses it.
+	File jpgFile;
+	if (NO_ERR != jpgFile.open((const char*)burnInJpg))
 		return NULL; // sidecar absent -> caller uses .tga
 
-	std::fseek(fp, 0, SEEK_END);
-	long jFileSize = std::ftell(fp);
-	std::fseek(fp, 0, SEEK_SET);
+	long jFileSize = jpgFile.fileSize();
 	if (jFileSize <= 0)
 	{
-		std::fclose(fp);
+		jpgFile.close();
 		printf("[BURNIN_JPG] fallback name=%s reason=empty-file\n", fileName);
 		return NULL;
 	}
@@ -125,18 +124,18 @@ static MemoryPtr tryLoadBurninJpg(const char* texturePath, const char* fileName,
 	unsigned char* jpgBytes = (unsigned char*)malloc((size_t)jFileSize);
 	if (!jpgBytes)
 	{
-		std::fclose(fp);
+		jpgFile.close();
 		printf("[BURNIN_JPG] fallback name=%s reason=read-alloc-failed (%ld bytes)\n", fileName, jFileSize);
 		return NULL;
 	}
-	if (std::fread(jpgBytes, 1, (size_t)jFileSize, fp) != (size_t)jFileSize)
+	if (jpgFile.read(jpgBytes, jFileSize) != jFileSize)
 	{
 		free(jpgBytes);
-		std::fclose(fp);
+		jpgFile.close();
 		printf("[BURNIN_JPG] fallback name=%s reason=read-failed\n", fileName);
 		return NULL;
 	}
-	std::fclose(fp);
+	jpgFile.close();
 
 	int w = 0, h = 0;
 	unsigned char* rgb = BurninJpeg_DecodeRGB(jpgBytes, (int)jFileSize, &w, &h);

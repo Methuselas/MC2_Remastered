@@ -1131,6 +1131,11 @@ void GameObjectManager::countObject( ObjDataLoader *data)
 				Terrain::objBlockInfo[data->blockNumber].numCollidableObjects++;
 				numGates++;
 				break;
+			case KLIEG_LIGHT:
+				// Klieg lights are placed terrain objects loaded as BuildingType.
+				// Count as buildings but skip the BuildingTypePtr sensor checks.
+				numBuildings++;
+				break;
 			case BUILDING:
 			case TREEBUILDING:
 			if (((((BuildingTypePtr)objType)->perimeterAlarmRange > 0.0f) &&
