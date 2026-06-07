@@ -2113,21 +2113,27 @@ bool EditorData::save( const char* fileName, bool quickSave )
 	EditorDataTrace("EditorData::save: quickSave=%d moveReady=%d",
 		quickSave ? 1 : 0, gEditorDataMoveDataReadyForFullSave ? 1 : 0);
 
-	// For full saves: rebuild MOVE in-memory from current terrain + objects.
-	// Gate: only call MOVE_saveData if rebuild succeeds; never call it with GameMap==NULL.
+	// For full saves: rebuild MOVE only if dirty (terrain/objects changed since last build).
+	// If the .pak was just loaded, s_moveDirty=false and MOVE is already in systemHeap from
+	// MOVE_readData.  Unconditionally calling RebuildMoveFromCurrentTerrain here would
+	// double-allocate from systemHeap (old + new MOVE data both live) → heap exhausted → crash.
+	//
+	// RebuildMoveIfDirty() short-circuits when not dirty and returns true immediately.
+	// IsMoveDataReadyForFullSave() is then the authoritative gate for whether to write MOVE.
 	bool moveRebuildOk = false;
 	if (!quickSave)
 	{
 		std::string moveErr;
-		moveRebuildOk = RebuildMoveFromCurrentTerrain(&moveErr);
-		if (!moveRebuildOk) {
-			// Do NOT crash.  Save proceeds but MOVE data is omitted from the .pak.
-			// The mission will load but AI movement won't work.
+		RebuildMoveIfDirty(&moveErr);
+		if (!moveErr.empty()) {
+			// Rebuild was attempted and failed -- save proceeds without MOVE data.
 			printf("[MOVE_REBUILD] save: rebuild failed (%s) — saving without MOVE data\n",
 			       moveErr.c_str());
 			fflush(stdout);
 			EditorDataTrace("EditorData::save: MOVE rebuild failed: %s", moveErr.c_str());
 		}
+		// True if MOVE was loaded from disk, or if dirty rebuild just succeeded.
+		moveRebuildOk = IsMoveDataReadyForFullSave();
 	}
  
 	// create a pak file with the correct number of entries
