@@ -264,6 +264,10 @@ class Terrain
 
 		long update (void);
 		void render (void);
+		// Terrain LOD chunk Phase 4: submit GPU draw commands built in update().
+		// Called from code/gamecam.cpp after shadow pass, before renderLists().
+		// No-op when MC2_TERRAIN_LOD_CHUNK is unset (s_blockMeta is nullptr).
+		static void flushDrawCommands (void);
 		void renderWater (void);
 		// Stage 2 of renderWater architectural slice: GPU water fast path.
 		// Called AFTER mcTextureManager->renderLists() so terrain has been

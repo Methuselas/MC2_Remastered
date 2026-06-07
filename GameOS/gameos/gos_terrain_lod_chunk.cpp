@@ -1,14 +1,126 @@
 #include "gos_terrain_lod_chunk.h"
 #include "utils/gl_utils.h"
+#include "utils/shader_builder.h"
 #include <cstdio>
 #include <cstdlib>
+#include <cstdint>
+#include <cstring>
+#include <vector>
+#include <map>
+
+// Terrain MVP matrix — exposed by gameos_graphics.cpp for all terrain draw paths.
+extern const float* gos_GetTerrainMVPMat4();
 
 // ---------------------------------------------------------------------------
 // Static SSBO state — all GL objects live here, never in mclib/.
 // ---------------------------------------------------------------------------
 
 static GLuint s_heightSsbo = 0;   // GL handle; 0 = not yet allocated
-static int    s_ssboMapSide = 0;  // mapSide stored at last UploadHeightFull
+static int    s_mapSide    = 0;   // mapSide stored at last UploadHeightFull
+static float  s_halfMap    = 0.0f;// (mapSide * 128.0 * 0.5)
+
+// ---------------------------------------------------------------------------
+// Shader program + uniform locations (Phase 4).
+// ---------------------------------------------------------------------------
+
+static GLuint   s_terrainProgram    = 0;
+static GLint    s_locBlockOriginX   = -1;
+static GLint    s_locBlockOriginY   = -1;
+static GLint    s_locMapSide        = -1;
+static GLint    s_locHalfMap        = -1;
+static GLint    s_locMvp            = -1;
+
+// ---------------------------------------------------------------------------
+// Patch geometry cache (Phase 4).
+// Each unique (qcX, qcY, lodStep) triple gets one VBO+IBO pair.
+// VBO contains int16_t[2] (localX, localY) per vertex.
+// IBO contains uint16_t triangle indices.
+// ---------------------------------------------------------------------------
+
+struct PatchShape {
+    GLuint vbo;
+    GLuint ibo;
+    int    vertexCount;
+    int    indexCount;
+};
+
+static std::map<uint32_t, PatchShape> s_patchCache;
+
+static uint32_t patchKey(int qcX, int qcY, int lodStep)
+{
+    return ((uint32_t)qcX & 0xFF)
+         | (((uint32_t)qcY    & 0xFF) << 8)
+         | (((uint32_t)lodStep & 0xFF) << 16);
+}
+
+// Build sample positions along one axis, always including far edge.
+static std::vector<int> makeSamplePositions(int quadCount, int lodStep)
+{
+    std::vector<int> pos;
+    for (int p = 0; p <= quadCount; p += lodStep)
+        pos.push_back(p);
+    if (pos.back() != quadCount)
+        pos.push_back(quadCount);
+    return pos;
+}
+
+static const PatchShape& getOrBuildPatch(int qcX, int qcY, int lodStep)
+{
+    uint32_t key = patchKey(qcX, qcY, lodStep);
+    auto it = s_patchCache.find(key);
+    if (it != s_patchCache.end()) return it->second;
+
+    auto xs = makeSamplePositions(qcX, lodStep);
+    auto ys = makeSamplePositions(qcY, lodStep);
+
+    struct LocalVertex { int16_t lx, ly; };
+    std::vector<LocalVertex> verts;
+    verts.reserve(xs.size() * ys.size());
+    for (int yy : ys)
+        for (int xx : xs)
+            verts.push_back({(int16_t)xx, (int16_t)yy});
+
+    // Two CCW triangles per quad cell: TL, BL, BR  /  TL, BR, TR
+    std::vector<uint16_t> indices;
+    int W = (int)xs.size();
+    for (int j = 0; j < (int)ys.size() - 1; ++j) {
+        for (int i = 0; i < (int)xs.size() - 1; ++i) {
+            uint16_t tl = (uint16_t)(j*W+i);
+            uint16_t tr = (uint16_t)(j*W+i+1);
+            uint16_t bl = (uint16_t)((j+1)*W+i);
+            uint16_t br = (uint16_t)((j+1)*W+i+1);
+            indices.insert(indices.end(), {tl, bl, br, tl, br, tr});
+        }
+    }
+
+    PatchShape ps;
+    ps.vertexCount = (int)verts.size();
+    ps.indexCount  = (int)indices.size();
+
+    glGenBuffers(1, &ps.vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, ps.vbo);
+    glBufferData(GL_ARRAY_BUFFER,
+                 (GLsizeiptr)(verts.size() * sizeof(LocalVertex)),
+                 verts.data(), GL_STATIC_DRAW);
+
+    glGenBuffers(1, &ps.ibo);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ps.ibo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                 (GLsizeiptr)(indices.size() * sizeof(uint16_t)),
+                 indices.data(), GL_STATIC_DRAW);
+
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+
+    s_patchCache[key] = ps;
+    return s_patchCache.at(key);
+}
+
+// ---------------------------------------------------------------------------
+// VAO for patch draws — reused every frame, attributes re-pointed per batch.
+// ---------------------------------------------------------------------------
+
+static GLuint s_patchVao = 0;
 
 // ---------------------------------------------------------------------------
 // Init / Destroy — called from gosRenderer::init / gosRenderer::destroy.
@@ -24,26 +136,146 @@ void gos_TerrainLodChunk_Init()
     {
         fprintf(stderr, "[TerrainLodChunk] glGenBuffers failed for height SSBO\n");
         fflush(stderr);
+        return;
     }
+
+    // Shader program (Phase 4) — load unconditionally; SubmitDrawCommands gates
+    // on the env var so no pixels change unless MC2_TERRAIN_LOD_CHUNK=1.
+    {
+        static const char* kPrefix = "#version 430\n";
+        glsl_program* prog = glsl_program::makeProgram(
+            "terrain_lod_chunk",
+            "shaders/terrain_lod_chunk.vert",
+            "shaders/terrain_lod_chunk.frag",
+            kPrefix);
+        if (!prog || !prog->shp_)
+        {
+            fprintf(stderr, "[TerrainLodChunk] WARNING: shader compile failed"
+                            " -- LOD chunk draw disabled\n");
+            fflush(stderr);
+        }
+        else
+        {
+            s_terrainProgram  = prog->shp_;
+            s_locBlockOriginX = glGetUniformLocation(s_terrainProgram, "u_blockOriginX");
+            s_locBlockOriginY = glGetUniformLocation(s_terrainProgram, "u_blockOriginY");
+            s_locMapSide      = glGetUniformLocation(s_terrainProgram, "u_mapSide");
+            s_locHalfMap      = glGetUniformLocation(s_terrainProgram, "u_halfMap");
+            s_locMvp          = glGetUniformLocation(s_terrainProgram, "u_worldToClipGL");
+            printf("[TerrainLodChunk] shader loaded prog=%u "
+                   "locs: originX=%d originY=%d mapSide=%d halfMap=%d mvp=%d\n",
+                   (unsigned)s_terrainProgram,
+                   s_locBlockOriginX, s_locBlockOriginY,
+                   s_locMapSide, s_locHalfMap, s_locMvp);
+            fflush(stdout);
+        }
+    }
+
+    // VAO — one global; attributes are re-pointed each draw in SubmitDrawCommands.
+    glGenVertexArrays(1, &s_patchVao);
 }
 
 void gos_TerrainLodChunk_Destroy()
 {
+    // Free patch cache VBOs/IBOs.
+    for (auto& kv : s_patchCache) {
+        glDeleteBuffers(1, &kv.second.vbo);
+        glDeleteBuffers(1, &kv.second.ibo);
+    }
+    s_patchCache.clear();
+
+    if (s_patchVao != 0) {
+        glDeleteVertexArrays(1, &s_patchVao);
+        s_patchVao = 0;
+    }
+
+    // Shader program is owned by glsl_program cache; delete by name.
+    if (s_terrainProgram != 0) {
+        glsl_program::deleteProgram("terrain_lod_chunk");
+        s_terrainProgram    = 0;
+        s_locBlockOriginX   = -1;
+        s_locBlockOriginY   = -1;
+        s_locMapSide        = -1;
+        s_locHalfMap        = -1;
+        s_locMvp            = -1;
+    }
+
     if (s_heightSsbo != 0)
     {
         glDeleteBuffers(1, &s_heightSsbo);
-        s_heightSsbo  = 0;
-        s_ssboMapSide = 0;
+        s_heightSsbo = 0;
+        s_mapSide    = 0;
+        s_halfMap    = 0.0f;
     }
 }
 
 // ---------------------------------------------------------------------------
-// Submit draw commands — stub until the indirect draw shader is wired up.
+// Submit draw commands — Phase 4 real implementation.
+// Called only from Terrain::flushDrawCommands() in mclib/terrain.cpp.
+// count==0 is a strict no-op. Restores GL state on exit.
 // ---------------------------------------------------------------------------
 
-void gos_TerrainLodChunk_SubmitDrawCommands(const TerrainDrawCommand* /*cmds*/, int /*count*/)
+void gos_TerrainLodChunk_SubmitDrawCommands(const TerrainDrawCommand* cmds, int count)
 {
-    // Phase 4 will consume cmds[] to build an indirect draw buffer.
+    if (count == 0) return;
+    if (s_terrainProgram == 0 || s_heightSsbo == 0) return;
+    if (s_patchVao == 0) return;
+
+    const float* mvp = gos_GetTerrainMVPMat4();
+    if (!mvp) return;
+
+    // Save state.
+    GLint prevProg = 0;
+    glGetIntegerv(GL_CURRENT_PROGRAM, &prevProg);
+    GLint prevVAO = 0;
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVAO);
+
+    glUseProgram(s_terrainProgram);
+    glBindVertexArray(s_patchVao);
+
+    // Bind height SSBO (stays bound for all patches this frame).
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_HEIGHT_SSBO_BINDING, s_heightSsbo);
+
+    // Upload per-frame uniforms (same for every patch).
+    if (s_locMapSide >= 0)
+        glUniform1i(s_locMapSide, s_mapSide);
+    if (s_locHalfMap >= 0)
+        glUniform1f(s_locHalfMap, s_halfMap);
+    if (s_locMvp >= 0)
+        glUniformMatrix4fv(s_locMvp, 1, GL_FALSE, mvp);
+
+    for (int i = 0; i < count; ++i)
+    {
+        const TerrainDrawCommand& cmd = cmds[i];
+        int qcX = cmd.quadCountsPacked & 0xFF;
+        int qcY = (cmd.quadCountsPacked >> 8) & 0xFF;
+
+        if (qcX <= 0 || qcY <= 0) continue;
+
+        const PatchShape& patch = getOrBuildPatch(qcX, qcY, cmd.lodStep);
+
+        // Per-block uniforms.
+        if (s_locBlockOriginX >= 0)
+            glUniform1i(s_locBlockOriginX, cmd.blockOriginX);
+        if (s_locBlockOriginY >= 0)
+            glUniform1i(s_locBlockOriginY, cmd.blockOriginY);
+
+        // Bind VBO: ivec2 localOffset at attribute location 0.
+        glBindBuffer(GL_ARRAY_BUFFER, patch.vbo);
+        glEnableVertexAttribArray(0);
+        glVertexAttribIPointer(0, 2, GL_SHORT, (GLsizei)(2 * sizeof(int16_t)), (const void*)0);
+
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, patch.ibo);
+        glDrawElements(GL_TRIANGLES, patch.indexCount, GL_UNSIGNED_SHORT, 0);
+    }
+
+    // Restore GL state.
+    glDisableVertexAttribArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_HEIGHT_SSBO_BINDING, 0);
+    glBindVertexArray((GLuint)prevVAO);
+    glUseProgram((GLuint)prevProg);
 }
 
 // ---------------------------------------------------------------------------
@@ -69,7 +301,8 @@ void gos_TerrainLodChunk_UploadHeightFull(const float* elevations, int mapSide)
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_HEIGHT_SSBO_BINDING, s_heightSsbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
-    s_ssboMapSide = mapSide;
+    s_mapSide = mapSide;
+    s_halfMap = (float)mapSide * 128.0f * 0.5f;
 
 #ifdef _DEBUG
     // First-frame readback verify: confirm that the GPU round-trips the first

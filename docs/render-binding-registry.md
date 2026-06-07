@@ -86,7 +86,7 @@ right point in the frame. See "Known multi-binder slots" below.
 | 20      | `LIGHT_DATA_SSBO_BINDING` / `SurfaceVertexBuf` | gameos lighting / terrain surface | SSBO | `GameOS/include/gameos.hpp:2827` (constant), `gameos_graphics.cpp:6966/6993/7020`, `:2835/:2886`               | `shaders/gos_terrain_surface.vert:60`                                                                                                                                                                                                                         | **Multi-binder conflict candidate.** Per `gameos.hpp:2826` comment, "SSBO bindings 0-19 are allocated elsewhere", but `SurfaceVertexBuf` also uses 20 (`gameos_graphics.cpp:2835`). Terrain surface and lighting SSBO use disjoint passes — but the comment is now stale. See "Known issues". |
 | 21      | `SurfaceIndexBuf`                     | terrain surface               | SSBO | `gameos_graphics.cpp:2867/2887`                                                                                 | `shaders/gos_terrain_surface.vert:63`                                                                                                                                                                                                                         |  |
 | 22      | `SurfaceTileBuf`                      | terrain surface               | SSBO | `gameos_graphics.cpp:2844/2888`                                                                                 | `shaders/gos_terrain_surface.vert:78`                                                                                                                                                                                                                         |  |
-| 23      | (none in current code path)           | —                             | —    | TBD — F1 handoff references "final transport is SSBO at binding=23" for unified-projection but no current bind sites match | —                                                                                                                                                                                                                                                             | TBD — verify if still in use. |
+| 23      | `TERRAIN_HEIGHT_SSBO_BINDING` / `TerrainHeightBuf` | terrain LOD chunk             | SSBO | `GameOS/gameos/gos_terrain_lod_chunk.cpp`                                                                       | `shaders/terrain_lod_chunk.vert:layout(binding=23)`                                                                                                                                                                                                           | Added Phase 3. Full map float[] upload at load; dirty row-wise patch on edit. |
 
 ---
 
@@ -145,8 +145,8 @@ this snapshot. Known driver-specific oddity:
 - AMD TES uniform / UBO propagation is unreliable — see memory note
   `amd_tes_uniform_propagation_unreliable` (referenced by the
   unified-projection F1 handoff). The workaround is to push the final
-  transport over an SSBO; the binding for that workaround is recorded as
-  "TBD binding 23" above.
+  transport over an SSBO; binding 23 (`TERRAIN_HEIGHT_SSBO_BINDING`) is
+  now the live slot for that transport (terrain LOD chunk heightfield).
 
 ---
 
@@ -192,15 +192,7 @@ reviewers don't try to "clean them up":
    Suggested action: update the comment to acknowledge terrain-surface SSBOs
    at 20–22 and define the contract for when each path holds the slot.
 
-3. **TBD binding 23.** Referenced in the unified-projection F1 handoff
-   (memory: AMD TES SSBO workaround "final transport is SSBO at binding=23"),
-   but no `glBindBufferBase(..., 23, ...)` call site nor `layout(binding=23)`
-   shader site found in the current snapshot. Either the workaround has been
-   superseded (ViewUniforms UBO at binding=3 default-ON since F1-3D) or the
-   binding has been retired. Suggested action: confirm and record in a
-   handoff.
-
-4. **UBO 0 (legacy `LIGHT_DATA_ATTACHMENT_SLOT`)** — superseded by SSBO 20
+3. **UBO 0 (legacy `LIGHT_DATA_ATTACHMENT_SLOT`)** — superseded by SSBO 20
    per `gameos.hpp:2824` comment, but the `#define LIGHT_DATA_ATTACHMENT_SLOT 0`
    constant remains at `gameos.hpp:2823`. Verify no path still binds to UBO 0
    under this name before removing.

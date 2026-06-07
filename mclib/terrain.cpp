@@ -1135,17 +1135,20 @@ long Terrain::update (void)
 		ZoneScopedN("Terrain::update mapDataUpdate");
 		Terrain::mapData->update();
 	}
+	// Terrain LOD chunk Phase 4: skip legacy vertex/quad list build when chunk
+	// path owns rendering. makeLists populates vertexList/quadList used by the
+	// per-quad draw() loop; that loop is suppressed under the same env gate.
+	if (!getenv("MC2_TERRAIN_LOD_CHUNK"))
 	{
 		ZoneScopedN("Terrain::update makeLists");
 		Terrain::mapData->makeLists(vertexList,numberVertices,quadList,numberQuads);
 	}
 
 	// -------------------------------------------------------------------------
-	// Terrain LOD chunk Phase 2 — two-level AABB frustum cull (shadow mode).
-	// MC2_TERRAIN_LOD_CHUNK=1 gate. Observational only: writes bm.inFrustum,
-	// builds s_drawCmds[], logs false negatives. Zero GL calls. NOT submitted.
-	// PHASE2_ONLY: remove validation loop + BRIDGE_OBJBLOCK write before Phase 4
-	//   (geometry() is suppressed in Phase 4, making objBlockInfo stale).
+	// Terrain LOD chunk Phase 4 — two-level AABB frustum cull.
+	// MC2_TERRAIN_LOD_CHUNK=1 gate (s_blockMeta is nullptr when env unset).
+	// Builds s_drawCmds[]; submitted via Terrain::flushDrawCommands() from
+	// code/gamecam.cpp after shadow pass, before mcTextureManager->renderLists().
 	if (s_blockMeta && s_superchunkMeta && s_drawCmds && eye)
 	{
 		ZoneScopedN("Terrain::update lodChunkCull");
@@ -1157,8 +1160,7 @@ long Terrain::update (void)
 		s_cmdCount = 0;
 
 		// Cache frustum planes once for this frame (eye->cacheFrustumPlanes()
-		// is idempotent per-frame; safe to call here even if geometry() also
-		// calls it later).
+		// is idempotent per-frame).
 		eye->cacheFrustumPlanes();
 		const float (*planes)[4] = eye->getCachedFrustumPlanes();
 
@@ -1219,67 +1221,18 @@ long Terrain::update (void)
 						bm.inFrustum = passedCull;
 						if (!bm.inFrustum) continue;
 
-						// Emit draw command (Phase 2: lodStep=1 fixed; Phase 3 will choose).
+						// Emit draw command (lodStep=1 fixed; Phase 5 will choose per distance).
 						s_drawCmds[s_cmdCount++] = {
 							bm.originX,
 							bm.originY,
-							1 /*lodStep: fixed in Phase 2*/,
+							1 /*lodStep: fixed in Phase 4*/,
 							(bm.quadCountX & 0xFF) | ((bm.quadCountY & 0xFF) << 8)
 						};
 					}
 				}
 			}
 		}
-
-		// --- Phase 2 validation: check for false negatives vs objBlockInfo ---
-		// PHASE2_ONLY: remove this block before Phase 4.
-		{
-			int falseNegatives = 0;
-			for (int by = 0; by < s_terrainChunkSide; ++by)
-			{
-				for (int bx = 0; bx < s_terrainChunkSide; ++bx)
-				{
-					if (bx >= blocksMapSide || by >= blocksMapSide) continue;
-					const TerrainBlockMeta& bm = s_blockMeta[bx + by * s_terrainChunkSide];
-					int objIdx = bx + by * blocksMapSide;
-					// False negative: cull says hidden but object system says visible.
-					// False positives (inFrustum=true && !active) are acceptable (conservative).
-					if (!bm.inFrustum && objBlockInfo[objIdx].active)
-						++falseNegatives;
-				}
-			}
-
-			static int s_validLogThrottle = 0;
-			if (falseNegatives > 0)
-			{
-				++s_validLogThrottle;
-				if (s_validLogThrottle >= 60)
-				{
-					s_validLogThrottle = 0;
-					log_warning("TerrainLODChunk: %d false negatives -- Phase 3 advance BLOCKED\n",
-					            falseNegatives);
-				}
-			}
-			else
-			{
-				s_validLogThrottle = 0;
-			}
-		}
-
-		// --- Bridge gate: optionally mirror inFrustum -> objBlockInfo.active ---
-		// PHASE2_ONLY: remove this block before Phase 4.
-		if (getenv("MC2_TERRAIN_LOD_CHUNK_BRIDGE_OBJBLOCK"))
-		{
-			for (int by = 0; by < s_terrainChunkSide; ++by)
-				for (int bx = 0; bx < s_terrainChunkSide; ++bx)
-				{
-					if (bx >= blocksMapSide || by >= blocksMapSide) continue;
-					objBlockInfo[bx + by * blocksMapSide].active =
-					    s_blockMeta[bx + by * s_terrainChunkSide].inFrustum;
-				}
-		}
-		// NOTE: s_drawCmds[] is populated but NOT submitted (Phase 2 shadow mode).
-		// gos_TerrainLodChunk_SubmitDrawCommands() must NOT be called here.
+		// s_drawCmds[] is submitted in Terrain::flushDrawCommands() from gamecam.cpp.
 	}
 
 	// Set terrain light direction for normal map shader
@@ -1425,6 +1378,9 @@ void Terrain::render (void)
 	if (drawTerrainTiles)
 	{
 		ZoneScopedN("Terrain::render drawPass");
+		// Terrain LOD chunk Phase 4 kill switch: when MC2_TERRAIN_LOD_CHUNK=1 the
+		// chunk path owns terrain rendering; suppress the per-quad draw() loop
+		// entirely to avoid double-draw. Mine pass is NOT suppressed (Phase 7).
 		// drawPass-retirement Slice B (mirrors the proven minePass gate at
 		// the sibling loop below). The per-quad draw() loop is retired only
 		// when BOTH producers it bundles are GPU-covered:
@@ -1444,44 +1400,47 @@ void Terrain::render (void)
 		// STILL runs draw() so decals fall back to the M2d per-quad emit
 		// and do not vanish = the 9964d5a-regression guard. Gating on
 		// IsFrameSolidArmed() alone would kill decals on the =0 revert.
-		if (!(gos_terrain_indirect::IsFrameSolidArmed()
-		      && gos_terrain_indirect::IsFrameOverlayArmed()))
+		if (!getenv("MC2_TERRAIN_LOD_CHUNK"))
 		{
-			TerrainQuadPtr currentQuad = quadList;
-			for (long i = 0; i < numberQuads; i++)
+			if (!(gos_terrain_indirect::IsFrameSolidArmed()
+			      && gos_terrain_indirect::IsFrameOverlayArmed()))
 			{
-				// M2b loop-level pure-water hoist: skip the function call entirely for
-				// quads with no base terrain, no overlay, and no detail handle. ~28K
-				// quads/frame on water-heavy maps. Mirror of the in-draw() early-exit;
-				// the in-function check is the fallback if useOverlayTexture /
-				// useWaterInterestTexture globals get toggled at runtime.
-				if (currentQuad->terrainHandle == 0
-				    && currentQuad->overlayHandle == 0xffffffff
-				    && currentQuad->terrainDetailHandle == 0xffffffff)
+				TerrainQuadPtr currentQuad = quadList;
+				for (long i = 0; i < numberQuads; i++)
 				{
+					// M2b loop-level pure-water hoist: skip the function call entirely for
+					// quads with no base terrain, no overlay, and no detail handle. ~28K
+					// quads/frame on water-heavy maps. Mirror of the in-draw() early-exit;
+					// the in-function check is the fallback if useOverlayTexture /
+					// useWaterInterestTexture globals get toggled at runtime.
+					if (currentQuad->terrainHandle == 0
+					    && currentQuad->overlayHandle == 0xffffffff
+					    && currentQuad->terrainDetailHandle == 0xffffffff)
+					{
+						currentQuad++;
+						continue;
+					}
+					currentQuad->draw();
 					currentQuad++;
-					continue;
 				}
-				currentQuad->draw();
-				currentQuad++;
 			}
-		}
-		else
-		{
-			// [SUBSYS] lifecycle line (env-gated, one-shot) per the
-			// debug-instrumentation rule. Mirrors the mine retirement
-			// trace. drawPass zone is now ~empty on armed frames -> the
-			// Tracy total-frame delta is the substitutive proof.
-			static bool s_drawPassRetiredLogged = false;
-			if (!s_drawPassRetiredLogged
-			    && gos_terrain_indirect::IsTraceEnabled())
+			else
 			{
-				s_drawPassRetiredLogged = true;
-				printf("[TERRAIN_DRAWPASS v1] event=retired "
-				       "reason=solid+overlay_armed "
-				       "(SOLID->gpu_indirect, decals->static_bake, "
-				       "detail->dead)\n");
-				fflush(stdout);
+				// [SUBSYS] lifecycle line (env-gated, one-shot) per the
+				// debug-instrumentation rule. Mirrors the mine retirement
+				// trace. drawPass zone is now ~empty on armed frames -> the
+				// Tracy total-frame delta is the substitutive proof.
+				static bool s_drawPassRetiredLogged = false;
+				if (!s_drawPassRetiredLogged
+				    && gos_terrain_indirect::IsTraceEnabled())
+				{
+					s_drawPassRetiredLogged = true;
+					printf("[TERRAIN_DRAWPASS v1] event=retired "
+					       "reason=solid+overlay_armed "
+					       "(SOLID->gpu_indirect, decals->static_bake, "
+					       "detail->dead)\n");
+					fflush(stdout);
+				}
 			}
 		}
 	}
@@ -1532,6 +1491,17 @@ void Terrain::render (void)
 			currentQuad++;
 		}
 	}
+}
+
+//---------------------------------------------------------------------------
+// Terrain LOD chunk Phase 4 — flush pending draw commands to the GPU.
+// Called from code/gamecam.cpp after the shadow pass and before
+// mcTextureManager->renderLists(). No-op when MC2_TERRAIN_LOD_CHUNK is unset
+// (s_blockMeta is nullptr, s_cmdCount is 0). No GL calls in mclib/.
+void Terrain::flushDrawCommands (void)
+{
+	if (s_blockMeta && s_cmdCount > 0)
+		gos_TerrainLodChunk_SubmitDrawCommands(s_drawCmds, s_cmdCount);
 }
 
 //---------------------------------------------------------------------------
