@@ -80,14 +80,13 @@ std::vector<MissionCheck> MissionValidator::ValidateForPakSave() {
          ChecklistAction::OpenSaveAs,   // Save As is the first step; MOVE rebuilds on reload
          moveReady
              ? "MOVE pathfinding data is initialized and will be saved."
-             : "MOVE pathfinding data is NOT initialized.\n\n"
-               "The mission can be saved, but AI units will not path-find until MOVE "
-               "data is generated.\n\n"
-               "How to rebuild MOVE data:\n"
-               "1. Use 'Save As...' to save your terrain as a .pak file.\n"
-               "2. Re-open that saved mission (File > Open).\n"
-               "3. Save again -- the reload initializes MOVE, and the second save "
-               "writes it into the file.");
+             : "Generated terrain does not have MOVE pathfinding data yet.\n"
+               "The mission can be saved, but AI movement will not work until MOVE "
+               "data is built.\n\n"
+               "Rebuild MOVE Data:\n"
+               "  1. Save As...  (write the .pak file)\n"
+               "  2. Reopen the saved mission  (File > Open)\n"
+               "  3. Save again  (the editor rebuilds MOVE on the second save)");
 
     // 4. Objectives have conditions -- WARNING
     //    Same check the editor shows as a MessageBox during save.  Surfaced here
