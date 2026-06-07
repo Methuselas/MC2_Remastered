@@ -1,10 +1,10 @@
 #pragma once
 /***************************************************************
 * FILENAME: MissionValidation.h
-* DESCRIPTION: Read-only mission save-readiness checks and ImGui checklist panel.
-*   Inspects the live editor state (terrain, map name, MOVE flag, objectives) and
-*   surfaces blocking issues and warnings without mutating any data.
-*   Commit 2 adds MissionMinimalBuilder which acts on autoFixable checks.
+* DESCRIPTION: Mission save-readiness checks and ImGui checklist control surface.
+*   Commit 1: read-only validator + panel.
+*   Commit 2: per-check action buttons, HasBlockingFailures/HasWarnings helpers,
+*             TakeAction() deferred dispatch, PrepareSaveableMission.
 * DATE: 2026-06-07
 ****************************************************************/
 
@@ -16,31 +16,68 @@
 
 // Severity drives icon colour and summary counters.
 enum class MissionCheckSeverity {
-    Blocking,   // save may crash or produce corrupt output if this fails
-    Warning,    // save completes but saved mission may not be game-playable
-    Info,       // informational only; no action required
+    Blocking,   // save may crash or produce corrupt output
+    Warning,    // save works but mission may not be game-playable
+    Info,       // informational only
+};
+
+// Action the panel button next to a failing check should trigger.
+// None = no button (check is purely informational or not fixable from here).
+enum class ChecklistAction {
+    None,
+    OpenMapGenerator,   // open the Map Generator dialog
+    OpenSaveAs,         // open File > Save As dialog
+    OpenObjectives,     // open Mission > Teams (team 1) objective editor
+    PrepareSaveable,    // "Prepare Saveable Mission" bottom button:
+                        //   re-validate, trigger first failing check's action
 };
 
 struct MissionCheck {
-    const char*          id;           // stable string key (e.g. "terrain_loaded")
-    const char*          label;        // one-line display string shown in panel
-    std::string          details;      // tooltip / multi-line explanation
+    const char*          id;       // stable key (e.g. "terrain_loaded")
+    const char*          label;    // one-line display string
+    std::string          details;  // tooltip / multi-line explanation
     MissionCheckSeverity severity;
     bool                 passed;
-    bool                 autoFixable;  // MissionMinimalBuilder::FixCheck(id) handles it
+    ChecklistAction      action;   // None = no button shown
 };
 
 class MissionValidator {
 public:
+    // ---------------------------------------------------------------------------
+    // Validation
+    // ---------------------------------------------------------------------------
+
     // Run all checks for File > Save As (.pak).
-    // Returns every check (passed and failed); caller inspects .passed + .severity.
+    // Returns every check (passed and failed).
     static std::vector<MissionCheck> ValidateForPakSave();
 
-    // ImGui floating panel — open/close/draw each frame from renderToolbarImGui().
+    // Quick helpers used by the Save() intercept.
+    static bool HasBlockingFailures();   // re-validates inline
+    static bool HasWarnings();           // re-validates inline
+
+    // ---------------------------------------------------------------------------
+    // ImGui panel
+    // ---------------------------------------------------------------------------
+
     static void Open();
     static void Close();
     static bool IsOpen();
+
+    // Draw the floating panel each frame from renderToolbarImGui().
+    // Sets a pending action when the user clicks a check button or the
+    // "Prepare Saveable Mission" bottom button.
     static void Draw();
+
+    // ---------------------------------------------------------------------------
+    // Deferred action dispatch (processed in EditorInterface::update())
+    // ---------------------------------------------------------------------------
+
+    // Return and clear the pending action (atomically).  Returns None when idle.
+    static ChecklistAction TakeAction();
+
+    // Queue an action from outside the panel (e.g. PrepareSaveable handler needs
+    // to queue the first failing action for the next update() tick).
+    static void QueueAction(ChecklistAction act);
 };
 
 #endif // MISSION_VALIDATION_H

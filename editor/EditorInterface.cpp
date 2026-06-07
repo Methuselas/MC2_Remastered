@@ -1231,7 +1231,18 @@ void EditorInterface::handleNewMenuMessage( long specificMessage )
 			case ID_FILE_NEW2: { New(); } break;
 			case ID_FILE_OPEN2: { FileOpen(); } break;
 			case ID_FILE_SAVEAS: { SaveAs(); } break;
-			case ID_FILE_SAVE: { Save(); } break;
+			case ID_FILE_SAVE: {
+				// Gate on blocking failures (e.g. no terrain loaded).
+				// Warnings (MOVE data, objectives) are surfaced but do NOT
+				// block the save -- the user can proceed and review the
+				// checklist separately.
+				if (MissionValidator::HasBlockingFailures()) {
+					MissionValidator::Open();
+				} else {
+					Save();
+				}
+				break;
+			}
 			case ID_FILE_QUICKSAVE: { QuickSave(); } break;
 			case ID_FILE_ASSIGNHEIGHTMAP: { NewHeightMap(); } break;
 			case ID_FILE_EXIT: { Quit(); } break;
@@ -2438,6 +2449,50 @@ void EditorInterface::update()
 				PlaySound("SystemDefault", NULL, SND_ASYNC);
 			}
 			return;
+		}
+	}
+
+	// Mission Save Readiness checklist: handle per-check action buttons and
+	// "Prepare Saveable Mission" outside the ImGui render pass so MFC dialogs
+	// (SaveAs, Team) can be called safely.
+	{
+		ChecklistAction checklistAct = MissionValidator::TakeAction();
+		switch (checklistAct)
+		{
+			case ChecklistAction::OpenMapGenerator:
+				MapGeneratorDialog::Open();
+				break;
+
+			case ChecklistAction::OpenSaveAs:
+				SaveAs();
+				MissionValidator::QueueAction(ChecklistAction::None); // clear any re-queue
+				break;
+
+			case ChecklistAction::OpenObjectives:
+				Team(0);   // opens Mission > Teams > Team 1 (objectives live here)
+				break;
+
+			case ChecklistAction::PrepareSaveable:
+			{
+				// Re-validate and trigger the first failing check's action.
+				// Does NOT create mission content -- only navigates to the
+				// right editor panel.
+				auto checks = MissionValidator::ValidateForPakSave();
+				for (const auto& c : checks)
+				{
+					if (!c.passed
+					 && c.action != ChecklistAction::None
+					 && c.action != ChecklistAction::PrepareSaveable)
+					{
+						MissionValidator::QueueAction(c.action);
+						break;
+					}
+				}
+				break;
+			}
+
+			default:
+				break;
 		}
 	}
 #endif

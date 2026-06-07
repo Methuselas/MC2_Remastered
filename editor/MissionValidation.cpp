@@ -1,6 +1,6 @@
 /***************************************************************
 * FILENAME: MissionValidation.cpp
-* DESCRIPTION: Read-only mission save-readiness checks and ImGui checklist panel.
+* DESCRIPTION: Mission save-readiness checks and ImGui checklist control surface.
 * DATE: 2026-06-07
 ****************************************************************/
 
@@ -21,98 +21,130 @@ std::vector<MissionCheck> MissionValidator::ValidateForPakSave() {
     std::vector<MissionCheck> checks;
 
     auto push = [&](const char* id, const char* label,
-                    MissionCheckSeverity sev, bool passed, bool fixable,
-                    std::string details) {
+                    MissionCheckSeverity sev, bool passed,
+                    ChecklistAction action, std::string details) {
         MissionCheck c;
-        c.id          = id;
-        c.label       = label;
-        c.severity    = sev;
-        c.passed      = passed;
-        c.autoFixable = fixable;
-        c.details     = std::move(details);
+        c.id      = id;
+        c.label   = label;
+        c.severity = sev;
+        c.passed  = passed;
+        c.action  = action;
+        c.details = std::move(details);
         checks.push_back(c);
     };
 
     // 1. Terrain loaded -- BLOCKING
     //    land is the global TerrainPtr (extern in MCLib.h / terrain.h).
-    //    If null the save path crashes at land->realVerticesMapSide.
+    //    Save() crashes at land->realVerticesMapSide when land is null.
     bool terrainLoaded = (land != nullptr);
     push("terrain_loaded",
          "Terrain is loaded",
          MissionCheckSeverity::Blocking,
          terrainLoaded,
-         /*fixable*/ false,
+         ChecklistAction::OpenMapGenerator,
          terrainLoaded
              ? "Terrain data is in memory.  Save can proceed."
-             : "No terrain is loaded.  Generate or open a map first "
-               "(File > New or the Generate Map button).");
+             : "No terrain is loaded.  Generate or open a map first.");
 
     if (!terrainLoaded)
-        return checks;   // remaining checks dereference land or EditorData
+        return checks;
 
-    // 2. Map has a save path (not the default 'newmap') -- INFO
-    //    If the map name is "data\\missions\\newmap.pak" (or null), Save() redirects
-    //    to SaveAs() which opens a file-chooser dialog.  Not a hard block, but
-    //    surfaced here so users know what to expect.
+    // 2. Map has a real save path -- INFO
+    //    Default 'newmap' path makes Save() redirect to SaveAs() (file dialog).
+    //    Not a hard block, but surfaced so users know what to expect.
     const char* mapName = EditorData::instance->getMapName();
-    bool hasPath = mapName && (strcmp(mapName, "data\\missions\\newmap.pak") != 0);
+    bool hasPath = mapName && strcmp(mapName, "data\\missions\\newmap.pak") != 0;
     push("save_path",
          "Map has a save path",
          MissionCheckSeverity::Info,
          hasPath,
-         /*fixable*/ false,
+         ChecklistAction::OpenSaveAs,
          hasPath
              ? (std::string("Save path: ") + mapName)
              : "Using the default 'newmap' path.  File > Save (Ctrl+S) will open a "
-               "Save As dialog so you can choose a filename before saving.");
+               "Save As dialog to let you choose a filename before writing the .pak.");
 
-    // 3. MOVE pathfinding data ready -- WARNING
-    //    gEditorDataMoveDataReadyForFullSave is set false when terrain is generated
-    //    from scratch (to prevent CTD from uninitialized MOVE backend).  The .pak
-    //    saves without it but the game AI cannot path-find in the mission.
+    // 3. MOVE pathfinding data -- WARNING
+    //    Generated maps skip MOVE_buildData (intentional CTD prevention when the
+    //    MOVE backend is uninitialized for blank terrain).  The save succeeds but
+    //    AI movement does not work in the resulting mission.
+    //    Fix: save the mission once its terrain features are finalized; MOVE data
+    //    is rebuilt automatically on each non-quick save for missions that have it.
+    //    For generated maps, the flag becomes true only after a packet-4 round-trip
+    //    (i.e. after the mission is saved and reloaded as an existing mission).
     bool moveReady = EditorData::IsMoveDataReadyForFullSave();
     push("move_data_ready",
          "MOVE pathfinding data ready",
          MissionCheckSeverity::Warning,
          moveReady,
-         /*fixable*/ false,
+         ChecklistAction::OpenSaveAs,   // Save As is the first step; MOVE rebuilds on reload
          moveReady
-             ? "MOVE pathfinding data is initialized and will be included in the save."
-             : "MOVE pathfinding data is NOT initialized (generated maps start without it).\n\n"
-               "The mission will save successfully, but AI units will not path-find when "
-               "the saved map is played in-engine.\n\n"
-               "To rebuild MOVE data: load an existing mission, copy/sculpt your terrain "
-               "there, and save -- the save rebuilds MOVE from the live terrain.");
+             ? "MOVE pathfinding data is initialized and will be saved."
+             : "MOVE pathfinding data is NOT initialized.\n\n"
+               "The mission can be saved, but AI units will not path-find until MOVE "
+               "data is generated.\n\n"
+               "How to rebuild MOVE data:\n"
+               "1. Use 'Save As...' to save your terrain as a .pak file.\n"
+               "2. Re-open that saved mission (File > Open).\n"
+               "3. Save again -- the reload initializes MOVE, and the second save "
+               "writes it into the file.");
 
     // 4. Objectives have conditions -- WARNING
-    //    Same check the editor shows as a MessageBox during save.  Surfaced here so
-    //    users can fix it before save rather than being surprised mid-save.
+    //    Same check the editor shows as a MessageBox during save.  Surfaced here
+    //    so users can fix it before save rather than being surprised mid-save.
     bool objsOk = !EditorData::instance->TeamsRef().ThereAreObjectivesWithNoConditions();
     push("objectives_conditions",
          "All objectives have conditions",
          MissionCheckSeverity::Warning,
          objsOk,
-         /*fixable*/ false,
+         ChecklistAction::OpenObjectives,
          objsOk
              ? "All objectives have at least one condition (or there are no objectives)."
              : "One or more objectives have no conditions -- they can never be completed.\n\n"
                "Open Mission > Teams, select the objective, and add at least one condition.  "
-               "Or delete objectives that are not yet ready.");
+               "Or remove objectives that are not yet ready.");
 
     return checks;
+}
+
+// ---------------------------------------------------------------------------
+// Quick helpers
+// ---------------------------------------------------------------------------
+
+/*static*/ bool MissionValidator::HasBlockingFailures() {
+    for (const auto& c : ValidateForPakSave())
+        if (!c.passed && c.severity == MissionCheckSeverity::Blocking) return true;
+    return false;
+}
+
+/*static*/ bool MissionValidator::HasWarnings() {
+    for (const auto& c : ValidateForPakSave())
+        if (!c.passed && c.severity == MissionCheckSeverity::Warning) return true;
+    return false;
 }
 
 // ---------------------------------------------------------------------------
 // Panel state
 // ---------------------------------------------------------------------------
 
-static bool                     s_open         = false;
+static bool                      s_open         = false;
 static std::vector<MissionCheck> s_lastChecks;
-static bool                     s_needsRefresh = true;
+static bool                      s_needsRefresh = true;
+static ChecklistAction           s_pendingAction = ChecklistAction::None;
 
 void MissionValidator::Open()    { s_open = true;  s_needsRefresh = true; }
 void MissionValidator::Close()   { s_open = false; }
 bool MissionValidator::IsOpen()  { return s_open; }
+
+/*static*/ ChecklistAction MissionValidator::TakeAction() {
+    ChecklistAction act = s_pendingAction;
+    s_pendingAction = ChecklistAction::None;
+    return act;
+}
+
+/*static*/ void MissionValidator::QueueAction(ChecklistAction act) {
+    s_pendingAction = act;
+}
 
 // ---------------------------------------------------------------------------
 // ImGui panel
@@ -121,11 +153,20 @@ bool MissionValidator::IsOpen()  { return s_open; }
 #ifdef MC2_IMGUI
 
 namespace {
-    constexpr ImVec4 kColBlock { 0.95f, 0.25f, 0.20f, 1.0f };  // red
-    constexpr ImVec4 kColWarn  { 0.95f, 0.75f, 0.10f, 1.0f };  // amber
-    constexpr ImVec4 kColInfo  { 0.50f, 0.70f, 1.00f, 1.0f };  // blue
-    constexpr ImVec4 kColPass  { 0.30f, 0.85f, 0.30f, 1.0f };  // green
-    constexpr ImVec4 kColGrey  { 0.55f, 0.55f, 0.55f, 1.0f };  // greyed
+    constexpr ImVec4 kColBlock { 0.95f, 0.25f, 0.20f, 1.0f };
+    constexpr ImVec4 kColWarn  { 0.95f, 0.75f, 0.10f, 1.0f };
+    constexpr ImVec4 kColInfo  { 0.50f, 0.70f, 1.00f, 1.0f };
+    constexpr ImVec4 kColPass  { 0.30f, 0.85f, 0.30f, 1.0f };
+    constexpr ImVec4 kColGrey  { 0.55f, 0.55f, 0.55f, 1.0f };
+
+    const char* ActionLabel(ChecklistAction act) {
+        switch (act) {
+            case ChecklistAction::OpenMapGenerator: return "Generate Map...";
+            case ChecklistAction::OpenSaveAs:       return "Save As...";
+            case ChecklistAction::OpenObjectives:   return "Open Objectives";
+            default:                                return nullptr;
+        }
+    }
 }
 
 void MissionValidator::Draw() {
@@ -134,14 +175,14 @@ void MissionValidator::Draw() {
     const ImGuiIO& io = ImGui::GetIO();
     const float    sc = io.DisplaySize.x / 1280.f;
 
-    ImGui::SetNextWindowSize(ImVec2(440.f * sc, 0.f), ImGuiCond_Once);
+    ImGui::SetNextWindowSize(ImVec2(450.f * sc, 0.f), ImGuiCond_Once);
     ImGui::SetNextWindowPos(
-        ImVec2(io.DisplaySize.x * 0.5f - 220.f * sc,
-               io.DisplaySize.y * 0.5f - 140.f * sc),
+        ImVec2(io.DisplaySize.x * 0.5f - 225.f * sc,
+               io.DisplaySize.y * 0.5f - 150.f * sc),
         ImGuiCond_Once);
 
     bool open = s_open;
-    if (!ImGui::Begin("Mission Save Checklist", &open,
+    if (!ImGui::Begin("Mission Save Readiness", &open,
                       ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::End();
         s_open = open;
@@ -149,15 +190,13 @@ void MissionValidator::Draw() {
     }
     s_open = open;
 
-    // Refresh button
     if (s_needsRefresh) {
-        s_lastChecks  = MissionValidator::ValidateForPakSave();
+        s_lastChecks   = MissionValidator::ValidateForPakSave();
         s_needsRefresh = false;
     }
 
-    if (ImGui::Button("Refresh")) {
-        s_lastChecks  = MissionValidator::ValidateForPakSave();
-    }
+    if (ImGui::Button("Refresh"))
+        s_lastChecks = MissionValidator::ValidateForPakSave();
     ImGui::SameLine();
     ImGui::TextDisabled("Checks run against live editor state.");
 
@@ -174,17 +213,17 @@ void MissionValidator::Draw() {
 
     if (blockCount > 0) {
         ImGui::TextColored(kColBlock,
-            "%d blocking issue%s, %d warning%s  -- fix blocking issues before saving.",
+            "%d blocking issue%s, %d warning%s  --  fix blocking issues before saving.",
             blockCount, blockCount == 1 ? "" : "s",
             warnCount,  warnCount  == 1 ? "" : "s");
     } else if (warnCount > 0) {
         ImGui::TextColored(kColWarn,
-            "No blocking issues.  %d warning%s -- save will work but review warnings.",
+            "No blocking issues.  %d warning%s  --  save will work but review warnings.",
             warnCount, warnCount == 1 ? "" : "s");
     } else if (!s_lastChecks.empty()) {
         ImGui::TextColored(kColPass, "All checks passed -- ready to save.");
     } else {
-        ImGui::TextColored(kColGrey, "(No checks run yet -- click Refresh)");
+        ImGui::TextColored(kColGrey, "(No checks run -- click Refresh)");
     }
 
     ImGui::Spacing();
@@ -213,31 +252,34 @@ void MissionValidator::Draw() {
         if (ImGui::IsItemHovered() && !c.details.empty())
             ImGui::SetTooltip("%s", c.details.c_str());
 
-        // Fix button -- disabled in commit 1 (MissionMinimalBuilder not yet present)
-        if (c.autoFixable && !c.passed) {
-            char fixId[64];
-            snprintf(fixId, sizeof(fixId), "Fix##%s", c.id);
+        // Per-check action button (only on failing checks that have an action)
+        const char* btnLabel = (!c.passed) ? ActionLabel(c.action) : nullptr;
+        if (btnLabel) {
             ImGui::SameLine();
-            ImGui::BeginDisabled();
-            ImGui::SmallButton(fixId);
-            ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip("Auto-fix available in next update.");
+            char btnId[128];
+            snprintf(btnId, sizeof(btnId), "%s##%s", btnLabel, c.id);
+            if (ImGui::SmallButton(btnId))
+                s_pendingAction = c.action;
+            if (ImGui::IsItemHovered() && !c.details.empty())
+                ImGui::SetTooltip("%s", c.details.c_str());
         }
     }
 
     ImGui::Separator();
 
-    // "Create Minimum Viable Mission" -- disabled in commit 1
-    ImGui::BeginDisabled();
-    if (ImGui::Button("Create Minimum Viable Mission", ImVec2(-1.f, 0.f)))
-        {}  // commit 2: call MissionMinimalBuilder::CreateMinimumViableMission()
-    ImGui::EndDisabled();
+    // "Prepare Saveable Mission" bottom button.
+    // Re-validates and triggers the first failing check's action.
+    // Does NOT create mission content -- only navigates to the right editor panel.
+    bool anyFailing = (blockCount > 0 || warnCount > 0);
+    if (!anyFailing) ImGui::BeginDisabled();
+    if (ImGui::Button("Prepare Saveable Mission", ImVec2(-1.f, 0.f)))
+        s_pendingAction = ChecklistAction::PrepareSaveable;
+    if (!anyFailing) ImGui::EndDisabled();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-        ImGui::SetTooltip(
-            "Coming in next commit: auto-fills the bare minimum required for the saved\n"
-            "map to be loadable by the game engine (mission name, teams, player entry).\n"
-            "Conservative: does NOT place objects, objectives, or scripted events.");
+        ImGui::SetTooltip(anyFailing
+            ? "Navigates to the first issue that needs attention.\n"
+              "Does NOT create fake mission content."
+            : "No issues to fix.");
     }
 
     ImGui::End();
