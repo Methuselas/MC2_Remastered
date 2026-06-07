@@ -45,10 +45,9 @@ extern Stuff::MemoryStream *effectStream;	// NS3: def in mclib/txmmgr.cpp
 extern DWORD BaseVertexColor;	// NS3: def in mclib/quad.cpp (used at ParseCmdLine/prefs)
 static MemoryPtr effectsData = NULL;  // kept alive until effectStream is deleted at shutdown
 
-// 32 MB for editor (was 8 MB).  MOVE data for a 240-cell map (moveSide=720)
-// needs ~3x 720*720*sizeof(short) + 720*720*sizeof(MapCell) ~ 6.8 MB in
-// GlobalMaps alone; 8 MB was too tight.  Editor-only: game binary unchanged.
-unsigned long systemHeapSize = 32 * 1024 * 1024;
+// 128 MB for editor (original 8 MB was a 1999-era constraint).
+// Editor-only: game binary unchanged.
+unsigned long systemHeapSize = 128 * 1024 * 1024;
 unsigned long guiHeapSize = 1023999;
 unsigned long tglHeapSize = 65536000;
 
