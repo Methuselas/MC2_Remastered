@@ -284,11 +284,12 @@ void MissionSelectionScreen::begin()
     int i = 0;
 	for (; i < missionCount; i++ )
 	{
-		if ( i > operationScreen.buttonCount )
+		if ( i >= operationScreen.buttonCount )
 		{
 			Assert( 0, 0, "not enough buttons on the operation screen" );
+			break;
 		}
-		else 
+		else
 		{
 			operationScreen.buttons[i].setID( MSG_FIRST_MISSION + i );
 			operationScreen.buttons[i].setPressFX( LOG_SELECT );

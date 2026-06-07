@@ -65,6 +65,7 @@ class LogisticsMech
 		void			setColors( unsigned long base, unsigned long high1, unsigned long high2 );
 		void			getColors( unsigned long& base, unsigned long& high1, unsigned long& high2 ) const;
 		int				getIconIndex() const { return pVariant->chassis->iconPictureIndex; }
+		bool			isClanMech() const { return pVariant && pVariant->getHouseID() >= 4; }
 
 		LogisticsVariant* getVariant() { return pVariant; }
 

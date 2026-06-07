@@ -472,6 +472,10 @@ void MechListBox::initIcon( LogisticsMech* pMech, aObject& mechIcon )
 {
 	mechIcon = (MechListBoxItem::s_templateItem->mechIcon);
 
+	bool bClan = pMech->isClanMech();
+	if ( bClan )
+		mechIcon.setTexture( "data/art/mc2x_mechicons.tga" );
+
 	long index = pMech->getIconIndex();
 	long xIndex = index % 10;
 	long yIndex = index / 10;
@@ -487,11 +491,11 @@ void MechListBox::initIcon( LogisticsMech* pMech, aObject& mechIcon )
 
 	fX += 1.f;
 	fY += 1.f;
-	
+
 	float u2 = (fX * width);
 	float v2 = (fY * height);
 
-	mechIcon.setFileWidth(256.f);
+	mechIcon.setFileWidth( 256.f );
 	mechIcon.setUVs( u, v, u2, v2 );
 
 }

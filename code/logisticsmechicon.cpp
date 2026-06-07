@@ -126,6 +126,10 @@ void LogisticsMechIcon::setMech( LogisticsMech* pNewMech )
 	if ( pMech )
 	{
 		// need to set the uv's of the mech icon
+		bool bClan = pMech->isClanMech();
+		if ( bClan )
+			icon.setTexture( "data/art/mc2x_mechicons.tga" );
+
 		long index = pMech->getIconIndex();
 		long xIndex = index % 10;
 		long yIndex = index / 10;
@@ -141,11 +145,11 @@ void LogisticsMechIcon::setMech( LogisticsMech* pNewMech )
 
 		fX += 1.f;
 		fY += 1.f;
-		
+
 		float u2 = (fX * width);
 		float v2 = (fY * height);
 
-		icon.setFileWidth(256.f);
+		icon.setFileWidth( 256.f );
 		icon.setUVs( u, v, u2, v2 );
 
 		chassisName.setText( pMech->getChassisName() );

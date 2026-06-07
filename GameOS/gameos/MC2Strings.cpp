@@ -565,7 +565,16 @@ namespace
 
                 if (!oldIsMC2Res && newIsMC2Res)
                 {
+                    // mc2res canonical key overrides a prior non-mc2res entry
                     Trace("legacyId %ld remapped to canonical mc2res key '%s' from prior key '%s'",
+                          record.legacyId, record.key.c_str(), idIt->second.c_str());
+                    idIt->second = record.key;
+                    state.legacySourceById[record.legacyId] = record.source;
+                }
+                else if (oldIsMC2Res && !newIsMC2Res)
+                {
+                    // Mod/game-specific entry overrides mc2res placeholder (e.g. "undefined")
+                    Trace("legacyId %ld: mod key '%s' overrides mc2res placeholder '%s'",
                           record.legacyId, record.key.c_str(), idIt->second.c_str());
                     idIt->second = record.key;
                     state.legacySourceById[record.legacyId] = record.source;
@@ -790,6 +799,11 @@ namespace
 #else
         snprintf(number, sizeof(number), "%ld", value);
 #endif
+        if ( getenv("MC2_LOG_STRINGS") )
+        {
+            printf("[strings] missing prefix='%s' id=%ld\n", prefix ? prefix : "null", value);
+            fflush(stdout);
+        }
         return MissingMarker(prefix, number);
     }
 }

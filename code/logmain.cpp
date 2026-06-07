@@ -289,7 +289,7 @@ void InitializeGameEngine()
 				}
 			}
 		}
-		
+
 		long result = systemFile->seekBlock("UseMusic");
 		if (result == NO_ERR)
 			useMusic = TRUE;

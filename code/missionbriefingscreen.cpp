@@ -279,22 +279,8 @@ long	MissionBriefingScreen::getMissionTGA( const char* missionName )
 	FullPathFileName path;
 	path.init( missionPath, missionName, ".pak" );
 
-    // sebi: check that file was removed? NB!
-#ifndef LINUX_BUILD
-	if ( 1 == fileExists( path ) )
-	{
-
-		// big hack here for some reason we can open files while they're being transferred.
-		HANDLE hFile = CreateFile( path, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, 0 );
-
-		int error = GetLastError();
-
-		if ( hFile == INVALID_HANDLE_VALUE )
-			return 0;
-
-		CloseHandle( hFile );
-	}
-#endif
+    // CreateFile lock-check removed: it used the raw path and bypassed the mod overlay,
+    // causing preview to fail for campaign mod .pak files. PacketFile::open handles open failure.
 
 	// read the tga out of the pak file
 	PacketFile file;

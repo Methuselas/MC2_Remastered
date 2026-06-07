@@ -2029,11 +2029,14 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	FullPathFileName missionFileName;
 	missionFileName.init(missionPath,missionName,".fit");
 
+	// Activate mod scope for this mission (no-op if it's a base-game mission).
+	ActivateModForMission(missionFileName);
+
 	duration = 60;
-	
+
 	missionFile = new FitIniFile;
 	gosASSERT(missionFile != NULL);
-	
+
 	result = missionFile->open(missionFileName);
 	if (result != NO_ERR)
 		STOP(("Unable to open Mission File %s",missionFileName));

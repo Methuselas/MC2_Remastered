@@ -4216,6 +4216,9 @@ float startLocal = 40.0f;
 			long startCellC = startCellCol;
 			long startCellR = startCellRow;
 
+			if (!GameMap->inBounds(startCellR, startCellC))
+				continue;
+
 			land->getCellPos(startCellR,startCellC,currentPos);
 			float localElev = (worldUnitsPerMeter * (float)GameMap->getLocalHeight(startCellR,startCellC));
 			currentPos.z += localElev;

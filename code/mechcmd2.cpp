@@ -1222,7 +1222,11 @@ void __stdcall InitializeGameEngine()
 					}
 				}
 			}
-			
+
+			// Mod overlay: all subdirs of ./mods/ are active.
+			// Mods shadow base data/ files for relative data/* reads.
+			InitModSearchPaths("./mods/");
+
 			long result = systemFile->seekBlock("UseMusic");
 			if (result == NO_ERR)
 				useMusic = TRUE;

@@ -452,29 +452,17 @@ bool MechIcon::initTextures()
 		char path[256];
 		strcpy( path, artPath );
 
-		// Use extended atlas when mc2x-compat overlay is active.
-		// mc2x_mechicons.tga covers both IS and Clan icon indices so it
-		// replaces the resolution-specific base atlas entirely.
-		{
-			char mc2xPath[256];
-			strcpy( mc2xPath, artPath );
-			strcat( mc2xPath, "mc2x_mechicons.tga" );
-			File testFile;
-			bool hasMc2x = (NO_ERR == testFile.open( mc2xPath ));
-			if ( hasMc2x )
-				strcpy( path, mc2xPath );
-			else if ( Environment.screenWidth == 800 )
-				strcat( path, "mcui_med4.tga" );
-			else if ( Environment.screenWidth == 640 )
-				strcat( path, "mcui_low4.tga" );
-			else
-				strcat( path, "mcui_high7.tga" );
-		}
+		if ( Environment.screenWidth == 800 )
+			strcat( path, "mcui_med4.tga" );
+		else if ( Environment.screenWidth == 640 )
+			strcat( path, "mcui_low4.tga" );
+		else
+			strcat( path, "mcui_high7.tga" );
 
 		S_strlwr( path );
 		s_MechTexturesKey = AssetScale::key(path);
 
-		if ( NO_ERR != file.open( path ) ) 
+		if ( NO_ERR != file.open( path ) )
 		{
 			Assert( 0, 0, "Couldn't open the mech parts" );
 			return false;
@@ -487,6 +475,15 @@ bool MechIcon::initTextures()
 		s_MechTextures = (TGAFileHeader*)new char[size];
 		file.read( (BYTE*)s_MechTextures, size );
 		BYTE* pTmp = (BYTE*)(s_MechTextures + 1);
+
+		if ( getenv("MC2_LOG_MECHICON") )
+		{
+			printf("[mechicon] atlas='%s' w=%u h=%u unitIconX=%.0f unitIconY=%.0f maxIndex=%d\n",
+				path, (unsigned)s_MechTextures->width, (unsigned)s_MechTextures->height,
+				unitIconX, unitIconY,
+				(int)(s_MechTextures->width / unitIconX) - 1);
+			fflush(stdout);
+		}
 
 		flipTopToBottom (pTmp, s_MechTextures->pixel_depth, s_MechTextures->width, s_MechTextures->height );
 
@@ -556,6 +553,15 @@ bool MechIcon::init( long whichIndex )
 	{
 		const uint32_t actualW = (uint32_t)s_MechTextures->width;
 		const uint32_t actualH = (uint32_t)s_MechTextures->height;
+
+		if ( getenv("MC2_LOG_MECHICON") )
+		{
+			printf("[mechicon] init whichIndex=%ld srcOffsetX=%ld atlasW=%u atlasH=%u unitIconX=%.0f %s\n",
+				whichIndex, offsetX, actualW, actualH, unitIconX,
+				((long)actualW > 0 && offsetX + (long)unitIconX > (long)actualW) ? "OOB!" : "ok");
+			fflush(stdout);
+		}
+
 		const AssetScale::Vec2 f = AssetScale::factorFor(
 			MechIcon::s_MechTexturesKey, actualW, actualH, "mechicon.blit");
 		// Direct-index path (see note in blit 1 above). No OOB clamp.

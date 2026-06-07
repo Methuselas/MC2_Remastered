@@ -560,6 +560,43 @@ void LogisticsSaveDialog::initDialog( const char* path, bool bCampaign )
 		FindClose(searchHandle);
 	}
 
+	// Also enumerate campaign .fit files from mod folders (invisible to FindFirstFile).
+	if (bCampaign)
+	{
+		struct ModCampaignCtx {
+			LogisticsSaveDialog* self;
+			unsigned long itemColor;
+		};
+		ModCampaignCtx ctx = { this, edits[0].getColor() };
+		EnumerateModCampaignFiles([](const char* fitFileName, const char* fullPath, void* ud) {
+			ModCampaignCtx* c = static_cast<ModCampaignCtx*>(ud);
+
+			// Open by absolute path — bypasses mod overlay (g_activeMod empty on menu).
+			FitIniFile file;
+			char campaignName[1024];
+			campaignName[0] = '\0';
+			if (NO_ERR == file.open(const_cast<char*>(fullPath))) {
+				if (NO_ERR == file.seekBlock("Campaign")) {
+					long lName = 0;
+					if (NO_ERR == file.readIdLong("NameID", lName))
+						cLoadString(lName, campaignName, 1023);
+					else
+						file.readIdString("CampaignName", campaignName, 1023);
+				}
+				file.close();
+			}
+			if (campaignName[0] == '\0')
+				strncpy(campaignName, fitFileName, 1023);
+
+			aLocalizedListItem* pEntry = new aLocalizedListItem();
+			*pEntry = s_instance->templateItem;
+			pEntry->setText(campaignName);
+			pEntry->setHiddenText(fitFileName);
+			pEntry->setColor(c->itemColor);
+			c->self->gameListBox.AddItem(pEntry);
+		}, &ctx);
+	}
+
 	//Check for the two we KNOW are there but may be in fast files.
 	// Campaign and tutorial
 	if (bCampaign)
@@ -722,6 +759,8 @@ void LogisticsSaveDialog::update()
 
 	if ( (bLoad || bCampaign) && fileName.Length() )
 	{
+		if ( bCampaign )
+			ActivateCampaignMod( fileName );
 
 		FullPathFileName path;
 		const bool do_not_lower = true;
