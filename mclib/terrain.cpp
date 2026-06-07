@@ -1576,6 +1576,23 @@ void Terrain::render (void)
 		}
 	}
 
+	// Terrain LOD chunk Phase 7A — mine enqueue from visible tile grid.
+	// When MC2_TERRAIN_LOD_CHUNK=1, the per-quad mine enqueue that was embedded
+	// in setupTextures() is suppressed (see quad.cpp setupTextures s_lodChunkActive
+	// guard). This block replaces it: enqueue runs over the full quadList once per
+	// frame, identical population to the minePass drawMine loop below.
+	// Must precede the minePass drawMine loop (draw reads mineResult set here).
+	// Not gated on drawTerrainTiles — mine enqueue is a booking step that must
+	// fire regardless of whether the LOD mesh draw is active this frame.
+	if (getenv("MC2_TERRAIN_LOD_CHUNK")
+	    && !gos_terrain_indirect::IsFrameMineArmed()
+	    && quadList
+	    && numberQuads > 0)
+	{
+		ZoneScopedN("Terrain::render lodChunkMineEnqueue");
+		TerrainQuad::enqueueMinesFromGrid(quadList, numberQuads);
+	}
+
 	if (drawTerrainTiles)
 	{
 		ZoneScopedN("Terrain::render minePass");

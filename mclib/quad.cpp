@@ -475,6 +475,22 @@ static void enqueueTerrainMineState(TerrainQuad& quad)
 	}
 }
 
+// Terrain LOD chunk Phase 7A — standalone mine enqueue from visible quadList.
+// Called from Terrain::render() when MC2_TERRAIN_LOD_CHUNK=1 is active,
+// replacing the mine enqueue that was embedded in setupTextures().
+// Iterates the camera-relative quadList (same population as the minePass
+// drawMine loop) and runs enqueueTerrainMineState on every quad.
+// The setupTextures mine-enqueue call is suppressed by a parallel guard in
+// setupTextures() when MC2_TERRAIN_LOD_CHUNK=1, so no double-enqueue occurs.
+// Callers must gate on !IsFrameMineArmed() — the GPU static-bake path owns
+// mine state when armed and this function must not run.
+void TerrainQuad::enqueueMinesFromGrid (TerrainQuadPtr quadList, long count)
+{
+	TerrainQuadPtr q = quadList;
+	for (long i = 0; i < count; ++i, ++q)
+		enqueueTerrainMineState(*q);
+}
+
 //---------------------------------------------------------------------------
 //---------------------------------------------------------------------------
 // Class TerrainQuad
@@ -963,7 +979,18 @@ void TerrainQuad::setupTextures (void)
 				// PR2c Stage 2c — gate off legacy enqueueTerrainMineState when
 				// the static-bake path is armed. Indirect path owns mine state
 				// for this frame; legacy reservation is unnecessary work.
-				if (!gos_terrain_indirect::IsFrameMineArmed()) {
+				//
+				// Terrain LOD chunk Phase 7A: also suppress when
+				// MC2_TERRAIN_LOD_CHUNK=1 — the new standalone mine enqueue
+				// (TerrainQuad::enqueueMinesFromGrid, called from
+				// Terrain::render()) owns mine state for the LOD path.
+				// Both guards are necessary: IsFrameMineArmed() handles the
+				// GPU static-bake retirement; the LOD flag handles the
+				// setupTextures-bypass retirement. Neither subsumes the other.
+				static const bool s_lodChunkActive =
+					(getenv("MC2_TERRAIN_LOD_CHUNK") != nullptr);
+				if (!gos_terrain_indirect::IsFrameMineArmed()
+				    && !s_lodChunkActive) {
 					enqueueTerrainMineState(*this);
 				}
 			}

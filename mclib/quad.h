@@ -134,6 +134,13 @@ class TerrainQuad
 		void drawDebugCellLine (void);
 		void drawLOSLine (void);
 		void drawWater (void);
+
+		// Terrain LOD chunk Phase 7A — mine enqueue from visible tile grid.
+		// Replaces the per-quad mine enqueue that was embedded in setupTextures().
+		// Called from Terrain::render() when MC2_TERRAIN_LOD_CHUNK=1 and
+		// !IsFrameMineArmed(). Writes quad.mineResult and reserves addTriangleBulk
+		// slots for all mine-bearing tiles in the visible quadList.
+		static void enqueueMinesFromGrid (TerrainQuadPtr quadList, long count);
 };
 
 //---------------------------------------------------------------------------
