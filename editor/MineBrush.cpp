@@ -40,6 +40,9 @@ Action* MineBrush::endPaint()
 
 bool MineBrush::paint( Stuff::Vector3D& worldPos, int screenX, int screenY  )
 {
+	if (!GameMap)
+		return false;  // MOVE data not built yet; can't place mines without GameMap
+
 	 int tileC;
 	 int tileR;
 
@@ -80,6 +83,9 @@ bool MineBrush::canPaintSelection( )
 
 Action* MineBrush::applyToSelection()
 {
+	if (!GameMap)
+		return nullptr;  // MOVE data not built yet; can't place mines without GameMap
+
 	MineAction* pRetAction = new MineAction();
 	for ( int i = 0; i < land->realVerticesMapSide; ++i )
 	{
@@ -102,6 +108,9 @@ Action* MineBrush::applyToSelection()
 
 bool MineBrush::MineAction::undo()
 {
+	if (!GameMap)
+		return true;  // MOVE data gone (e.g. map reload); treat as silent no-op
+
 	for ( MINE_INFO_LIST::EIterator iter = mineInfoList.Begin();
 		!iter.IsDone(); iter++ )
 	{

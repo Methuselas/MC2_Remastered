@@ -1130,23 +1130,46 @@ bool CreateScaledColorMap(long mapWidth, char *localColorMapName, MemoryPtr tmpR
 static char s_genColormapName[256] = {0};   // map name; burnin at data/textures/<name>.burnin.tga
 static char s_genElevPath[1024]    = {0};    // raw float32 N*N world-unit elevations (row-major)
 
-// Map the MapSizeDlg index to vertices-per-side (mirror initTerrainFromTGA's switch).
-// MC2 terrain requires a multiple of verticesBlockSide(20); the large sizes are the
-// nearest multiple of 20 to their label (260~256, 520~512, 1020~1024). This also
-// keeps the colormap width a clean multiple of 256 (20*12.8=256).
-static int genMapSizeToN( int mapSize )
+// ---------------------------------------------------------------------------
+// MapSizeToCellSide / MapSizeToVertexSide
+//
+// Single source of truth for the three-layer map-size model:
+//
+//   Layer          Formula          Example (index 0)
+//   ─────────────  ───────────────  ─────────────────
+//   cellSide       switch table     60    (quads/side, user-facing label)
+//   vertexSide     cellSide + 1     61    (terrain vertex array dim)
+//   moveSide       cellSide * 3     180   (MOVE grid dim; 180%30==0 ✓)
+//
+// cellSide values are multiples of 20 (terrain block contract) AND multiples
+// of 10 (MOVE sector contract), so moveSide % SECTOR_DIM(30) is always 0.
+//
+// DO NOT write raw +1/*3 or new switch tables at call sites.  Use these.
+// ---------------------------------------------------------------------------
+/*static*/ int EditorData::MapSizeToCellSide( int sizeIndex )
 {
-	switch ( mapSize )
+	switch ( sizeIndex )
 	{
-		case 0: return 60;
-		case 1: return 80;
-		case 2: return 100;
-		case 3: return 120;
-		case 4: return 260;
-		case 5: return 520;
+		case 0: return   60;
+		case 1: return   80;
+		case 2: return  100;
+		case 3: return  120;
+		case 4: return  260;
+		case 5: return  520;
 		case 6: return 1020;
 		default: return 120;
 	}
+}
+
+/*static*/ int EditorData::MapSizeToVertexSide( int sizeIndex )
+{
+	return MapSizeToCellSide( sizeIndex ) + 1;
+}
+
+// Thin shim kept for the generateMission() call-site only.
+static int genMapSizeToN( int mapSize )
+{
+	return EditorData::MapSizeToVertexSide( mapSize );
 }
 
 bool EditorData::amplifyTerrain( float factor )
@@ -1314,41 +1337,9 @@ bool EditorData::initTerrainFromTGA( int mapSize, int min, int max, int terrain 
 	float MinVal = min;
 	float MaxVal = max;
 
-	long mapWidth = 0;
-	switch (mapSize)
-	{
-	case 0:
-		mapWidth = 60;
-		break;
-
-	case 1:
-		mapWidth = 80;
-		break;
-
-	case 2:
-		mapWidth = 100;
-		break;
-
-	case 3:
-		mapWidth = 120;
-		break;
-
-	case 4:
-		mapWidth = 260;   // ~256, multiple of verticesBlockSide(20)
-		break;
-
-	case 5:
-		mapWidth = 520;   // ~512
-		break;
-
-	case 6:
-		mapWidth = 1020;  // ~1024
-		break;
-
-	default:
-		mapWidth = 120;
-		break;
-	}
+	// vertexSide = cellSide + 1.  Terrain requires (vertexSide-1) % 20 == 0.
+	// Use MapSizeToVertexSide — never repeat the lookup table here.
+	long mapWidth = (long)EditorData::MapSizeToVertexSide( mapSize );
 
 	EditorDataTrace("EditorData::initTerrainFromTGA: resolved mapWidth=%ld", mapWidth);
 	if (mapWidth <= 0)
@@ -1732,6 +1723,330 @@ bool EditorData::initTerrainFromTGA( int mapSize, int min, int max, int terrain 
 float CliffTerrainAngle = 45.0f;
 
 //-------------------------------------------------------------------------------------------------
+// MOVE dirty/rebuild helpers
+//-------------------------------------------------------------------------------------------------
+static bool s_moveDirty = false;
+
+/*static*/ void EditorData::MarkMoveDataDirty()
+{
+	s_moveDirty = true;
+	gEditorDataMoveDataReadyForFullSave = false;
+	EditorDataTrace("EditorData::MarkMoveDataDirty: MOVE marked dirty");
+}
+
+/*static*/ bool EditorData::RebuildMoveIfDirty(std::string* errorOut)
+{
+	if (!s_moveDirty)
+		return true;   // nothing to do; MOVE is already valid
+
+	bool ok = RebuildMoveFromCurrentTerrain(errorOut);
+	if (ok)
+		s_moveDirty = false;
+	// If rebuild failed, leave dirty=true so next tick retries.
+	return ok;
+}
+
+//-------------------------------------------------------------------------------------------------
+// RebuildMoveFromCurrentTerrain
+//
+// Defensive in-place MOVE rebuild from current terrain + placed objects.
+// MOVE is treated as cached derived data — call MarkMoveDataDirty() after any
+// terrain load/generation, then let RebuildMoveIfDirty() fire from update().
+//
+// Returns false (with *errorOut set) on any validation or build failure.
+// On success: GameMap + GlobalMoveMap[0..2] are valid; IsMoveDataReadyForFullSave() = true.
+//
+// IMPORTANT: MOVE_init() must have been called at editor startup before this (it is, at
+// Editor.cpp:755).  No other ordering constraint beyond land being fully initialized.
+//
+// ── Three-layer map-size model ───────────────────────────────────────────────────────────
+//  Layer       Variable    Meaning                         Contract
+//  ─────────── ─────────── ─────────────────────────────── ─────────────────────────────
+//  Render/load vertexSide  terrain vertex array dimension   (vertexSide-1) % 20 == 0
+//  Gameplay    cellSide    quads per side (user-facing)     cellSide = vertexSide - 1
+//  Pathfinding moveSide    MOVE grid dimension              moveSide % SECTOR_DIM(30)==0
+//                          moveSide = cellSide * 3
+//
+//  All three contracts are asserted at the top of this function.
+//  Never sample vertex heights with a cellSide index (off by 1 at border).
+//  Never pass moveSide=vertexSide*3 to MOVE_buildData (SECTOR_DIM assert fires).
+//-------------------------------------------------------------------------------------------------
+/*static*/ bool EditorData::RebuildMoveFromCurrentTerrain(std::string* errorOut)
+{
+	auto SetError = [&](const char* msg) {
+		if (errorOut) *errorOut = msg;
+		printf("[MOVE_REBUILD] FAIL: %s\n", msg); fflush(stdout);
+		gEditorDataMoveDataReadyForFullSave = false;
+	};
+
+	if (!land) {
+		SetError("No terrain loaded (land is null).");
+		return false;
+	}
+
+	const int vertexSide = land->realVerticesMapSide;
+	const int cellSide   = vertexSide - 1;  // quads per side (gameplay layer)
+	const int moveSide   = cellSide * 3;    // MOVE grid dimension (pathfinding layer)
+
+	// ── System-boundary assertions (see docstring above) ──────────────────────────────
+	gosASSERT(vertexSide > 1);                        // terrain must have at least one cell
+	gosASSERT((cellSide % 20) == 0);                  // terrain block contract
+	gosASSERT((moveSide % SECTOR_DIM) == 0);          // MOVE global-map sector contract
+
+	// Diagnostic: always print so crash logs show all three dimensions.
+	printf("[MOVE_REBUILD] begin: land=%p vertexSide=%d cellSide=%d moveSide=%d GameMap(before)=%p\n",
+	       (void*)land, vertexSide, cellSide, moveSide, (void*)GameMap);
+	fflush(stdout);
+
+	if (cellSide <= 0) {
+		char buf[128];
+		snprintf(buf, sizeof(buf), "Invalid terrain dimensions: vertexSide=%d cellSide=%d", vertexSide, cellSide);
+		SetError(buf);
+		return false;
+	}
+
+	// ── Size gate: MOVE arrays are bounded by MAX_MAP_CELL_WIDTH (720 MOVE cells/side) ──
+	// moveSide = cellSide*3, so max supported cellSide = 240.
+	// Maps larger than this (260, 520, 1020 cells) would overflow fixed MOVE arrays
+	// (tileMulMAPCELL_DIM[], trigger maps, etc.) and exceed systemHeap capacity.
+	// Terrain save/load still works; AI pathfinding is not supported at this size.
+	if (moveSide > MAX_MAP_CELL_WIDTH) {
+		char buf[256];
+		snprintf(buf, sizeof(buf),
+			"Map too large for MOVE: moveSide=%d > MAX_MAP_CELL_WIDTH=%d "
+			"(cellSide=%d; max supported cellSide=%d). "
+			"Terrain editing and save/load still work. "
+			"AI pathfinding not supported at this map size.",
+			moveSide, MAX_MAP_CELL_WIDTH, cellSide, MAX_MAP_CELL_WIDTH / MAPCELL_DIM);
+		SetError(buf);
+		return false;
+	}
+
+	// pInfo: one _ScenarioMapCellInfo per MOVE cell.  moveSide² = (cellSide*3)² entries.
+	_ScenarioMapCellInfo* pInfo = (_ScenarioMapCellInfo*)malloc(
+		sizeof(_ScenarioMapCellInfo) * moveSide * moveSide);
+	memset(pInfo, 0, sizeof(_ScenarioMapCellInfo) * moveSide * moveSide);
+	MissionMapCellInfo* pTmp = pInfo;
+
+	// Iterate over CELLS (quads), not vertices.  Each cell (i,j) has 3×3 MOVE sub-cells.
+	for ( int i = 0; i < cellSide; ++i )
+	{
+		for ( int cellI = 0; cellI < 3; ++cellI )
+		{
+			for ( int j = 0; j < cellSide; ++j )
+			{
+				for ( int cellJ = 0; cellJ < 3; ++cellJ )
+				{
+					pTmp->terrain = MC_NONE_TYPE;
+					pTmp->overlay = (unsigned char)INVALID_OVERLAY;
+					pTmp->road = false;
+					pTmp->specialID = 0;
+					pTmp->specialType = SPECIAL_NONE;
+					pTmp->lineOfSight = 0;
+					pTmp->passable = true;
+
+					pTmp->terrain = land->getTerrain( i, j );
+
+					if ((i==0) || (j==0) || (i >= (cellSide-1)) || (j >= (cellSide-1)))
+					{
+						pTmp->passable = false;
+					}
+					else
+					{
+						bool tlx = (long(land->mapData->topLeftVertex.x) & 1);
+						bool tly = (long(land->mapData->topLeftVertex.y) & 1);
+
+						long x = i - land->mapData->topLeftVertex.x;
+						long y = j - land->mapData->topLeftVertex.y;
+
+						bool yby2 = (y & 1) ^ (tly);
+						bool xby2 = (x & 1) ^ (tlx);
+
+						long uvMode = 0;
+						if (yby2)
+						{
+							if (xby2) uvMode = BOTTOMRIGHT;
+							else       uvMode = BOTTOMLEFT;
+						}
+						else
+						{
+							if (xby2) uvMode = BOTTOMLEFT;
+							else       uvMode = BOTTOMRIGHT;
+						}
+
+						if (uvMode == BOTTOMRIGHT)
+						{
+							float elv0 = land->getTerrainElevation(i  ,j);
+							float elv1 = land->getTerrainElevation(i+1,j);
+							float elv2 = land->getTerrainElevation(i+1,j+1);
+							float elv3 = land->getTerrainElevation(i  ,j+1);
+
+							float elvDiff1 = fabs(elv0 - elv2);
+							float elvDiff2 = fabs(elv0 - elv1);
+							float elvAngleFactor = Terrain::worldUnitsPerVertex * sin(CliffTerrainAngle * DEGREES_TO_RADS);
+							if ((elvDiff1 > elvAngleFactor) || (elvDiff2 > elvAngleFactor))
+								pTmp->passable = false;
+
+							elvDiff1 = fabs(elv0 - elv2);
+							elvDiff2 = fabs(elv0 - elv3);
+							if ((elvDiff1 > elvAngleFactor) || (elvDiff2 > elvAngleFactor))
+								pTmp->passable = false;
+						}
+						else	// uvMode is BOTTOMLEFT
+						{
+							float elv0 = land->getTerrainElevation(i  ,j);
+							float elv1 = land->getTerrainElevation(i+1,j);
+							float elv2 = land->getTerrainElevation(i+1,j+1);
+							float elv3 = land->getTerrainElevation(i  ,j+1);
+
+							float elvDiff1 = fabs(elv0 - elv1);
+							float elvDiff2 = fabs(elv0 - elv3);
+							float elvAngleFactor = Terrain::worldUnitsPerVertex * sin(CliffTerrainAngle * DEGREES_TO_RADS);
+							if ((elvDiff1 > elvAngleFactor) || (elvDiff2 > elvAngleFactor))
+								pTmp->passable = false;
+
+							elvDiff1 = fabs(elv1 - elv2);
+							elvDiff2 = fabs(elv1 - elv3);
+							if ((elvDiff1 > elvAngleFactor) || (elvDiff2 > elvAngleFactor))
+								pTmp->passable = false;
+						}
+					}
+
+					Overlays overlay;
+					unsigned long offset;
+					land->getOverlay( i, j, overlay, offset );
+					if ( overlay != INVALID_OVERLAY )
+					{
+						pTmp->overlay = (int)overlay;
+						pTmp->road = true;
+					}
+
+					int cellRow = i * 3 + cellI;
+					int cellColumn = j * 3 + cellJ;
+					pTmp->mine = (GameMap && GameMap->inBounds(cellRow, cellColumn))
+					             ? GameMap->getMine(cellRow, cellColumn) : 0;
+
+					pTmp++;
+				}
+			}
+		}
+	}
+
+	// Mark impassability from placed objects (gates, walls, bridges, forests, etc.)
+	GameObjectFootPrint specialAreaFootPrints[MAX_SPECIAL_AREAS];
+	long wallTotalCount = 0;
+	long gateTotalCount = 0;
+	long landBridgeTotalCount = 0;
+	EditorObjectMgr::BUILDING_LIST completeBuildingList = EditorObjectMgr::instance()->getBuildings();
+	if (completeBuildingList.Count() > 0)
+	{
+		EditorObjectMgr::BUILDING_LIST::EConstIterator it = completeBuildingList.Begin();
+		while (!it.IsDone())
+		{
+			if ((*it)->getType() == BLDG_TYPE)
+			{
+				if      ((*it)->getSpecialType() == EditorObjectMgr::EDITOR_GATE)   gateTotalCount++;
+				else if ((*it)->getSpecialType() == EditorObjectMgr::WALL)           wallTotalCount++;
+				else if ((*it)->getSpecialType() == EditorObjectMgr::EDITOR_BRIDGE) landBridgeTotalCount++;
+			}
+			it++;
+		}
+	}
+	long wallCount = 0;
+	long gateCount = 0;
+	long landBridgeCount = 0;
+	completeBuildingList = EditorObjectMgr::instance()->getBuildings();
+	if (completeBuildingList.Count() > 0)
+	{
+		EditorObjectMgr::BUILDING_LIST::EConstIterator it = completeBuildingList.Begin();
+		while (!it.IsDone())
+		{
+			if ((*it)->getType() == BLDG_TYPE)
+			{
+				if ((*it)->getSpecialType() == EditorObjectMgr::EDITOR_GATE)
+				{
+					(*it)->markTerrain( pInfo, SPECIAL_GATE, gateCount );
+					Stuff::Vector3D pos = (*it)->appearance()->position;
+					int r, c;
+					land->worldToCell(pos, r, c);
+					specialAreaFootPrints[gateCount].cellPositionRow = r;
+					specialAreaFootPrints[gateCount].cellPositionCol = c;
+					gateCount++;
+				}
+				else if ((*it)->getSpecialType() == EditorObjectMgr::WALL)
+				{
+					(*it)->markTerrain( pInfo, SPECIAL_WALL, gateTotalCount + wallCount);
+					Stuff::Vector3D pos = (*it)->appearance()->position;
+					int r, c;
+					land->worldToCell(pos, r, c);
+					specialAreaFootPrints[gateTotalCount + wallCount].cellPositionRow = r;
+					specialAreaFootPrints[gateTotalCount + wallCount].cellPositionCol = c;
+					wallCount++;
+				}
+				else if ((*it)->getSpecialType() == EditorObjectMgr::EDITOR_BRIDGE)
+				{
+					(*it)->markTerrain( pInfo, SPECIAL_LAND_BRIDGE, gateTotalCount + wallTotalCount + landBridgeCount);
+					Stuff::Vector3D pos = (*it)->appearance()->position;
+					int r, c;
+					land->worldToCell(pos, r, c);
+					specialAreaFootPrints[gateTotalCount + wallTotalCount + landBridgeCount].cellPositionRow = r;
+					specialAreaFootPrints[gateTotalCount + wallTotalCount + landBridgeCount].cellPositionCol = c;
+					landBridgeCount++;
+				}
+				else if ((*it)->appearance()->isForestClump() || (*it)->getForestID() != -1 )
+					(*it)->markTerrain( pInfo, SPECIAL_FOREST, 0);
+				else if (EditorData::instance && !EditorData::instance->IsSinglePlayer()
+				      && (*it)->getSpecialType() == EditorObjectMgr::RESOURCE_BUILDING)
+					(*it)->markTerrain( pInfo, EditorObjectMgr::RESOURCE_BUILDING, 0);
+				else
+					(*it)->markTerrain(pInfo, SPECIAL_NONE, 0);
+			}
+			it++;
+		}
+	}
+
+	for (long i = 0; i < gateCount + wallCount + landBridgeCount; i++) {
+		specialAreaFootPrints[i].preNumCells = specialAreaFootPrints[i].numCells;
+		specialAreaFootPrints[i].numCells = 0;
+	}
+	pTmp = pInfo;
+	for (long r = 0; r < moveSide; r++)
+		for (long c = 0; c < moveSide; c++) {
+			if (pTmp->specialType != SPECIAL_NONE) {
+				if (pTmp->passable) {
+					specialAreaFootPrints[pTmp->specialID].cells[specialAreaFootPrints[pTmp->specialID].numCells][0] = r;
+					specialAreaFootPrints[pTmp->specialID].cells[specialAreaFootPrints[pTmp->specialID].numCells][1] = c;
+					specialAreaFootPrints[pTmp->specialID].numCells++;
+				}
+			}
+			pTmp++;
+		}
+
+	printf("[MOVE_REBUILD] MOVE_buildData moveSide=%d specials=%ld\n",
+	       moveSide, gateCount + wallCount + landBridgeCount);
+	fflush(stdout);
+	EditorDataTrace("EditorData::RebuildMoveFromCurrentTerrain: MOVE_buildData moveSide=%d specials=%ld",
+		moveSide, gateCount + wallCount + landBridgeCount);
+
+	MOVE_buildData(moveSide, moveSide, pInfo,
+		gateCount + wallCount + landBridgeCount, specialAreaFootPrints);
+
+	free(pInfo);
+
+	// Post-build validation: MOVE_buildData should have set GameMap.
+	if (!GameMap) {
+		SetError("MOVE_buildData completed but GameMap is still null.");
+		return false;
+	}
+
+	printf("[MOVE_REBUILD] ok: GameMap=%p\n", (void*)GameMap);
+	fflush(stdout);
+	EditorDataTrace("EditorData::RebuildMoveFromCurrentTerrain: done, GameMap=%p", (void*)GameMap);
+	gEditorDataMoveDataReadyForFullSave = true;
+	return true;
+}
+
+//-------------------------------------------------------------------------------------------------
 bool EditorData::save( const char* fileName, bool quickSave )
 {
 	EditorInterface::instance()->SetBusyMode();
@@ -1795,271 +2110,24 @@ bool EditorData::save( const char* fileName, bool quickSave )
 
 	mapAsset = (IProviderAsset*)mapAssetPtr;
 
-	bool saveMoveDataThisPass = (!quickSave && gEditorDataMoveDataReadyForFullSave);
-	// by Methuselas: skipping MOVE data here is intentional CTD prevention for
-	// newly generated blank maps, not an incomplete Save/Save-As implementation.
-	// Existing missions still rebuild and write MOVE data after packet 4 is read.
-	EditorDataTrace("EditorData::save: move data policy quickSave=%d moveReady=%d saveMove=%d",
-		quickSave ? 1 : 0,
-		gEditorDataMoveDataReadyForFullSave ? 1 : 0,
-		saveMoveDataThisPass ? 1 : 0);
+	EditorDataTrace("EditorData::save: quickSave=%d moveReady=%d",
+		quickSave ? 1 : 0, gEditorDataMoveDataReadyForFullSave ? 1 : 0);
 
+	// For full saves: rebuild MOVE in-memory from current terrain + objects.
+	// Gate: only call MOVE_saveData if rebuild succeeds; never call it with GameMap==NULL.
+	bool moveRebuildOk = false;
 	if (!quickSave)
 	{
-		//-----------------------------------------------------------------------
-		// Whenever we call calcWater, we should do this to speed up save times
-		_ScenarioMapCellInfo* pInfo = (_ScenarioMapCellInfo *)malloc( sizeof(_ScenarioMapCellInfo) * land->realVerticesMapSide * land->realVerticesMapSide * 9);
-		memset( pInfo, 0, sizeof( _ScenarioMapCellInfo ) * land->realVerticesMapSide * land->realVerticesMapSide * 9 );
-		MissionMapCellInfo* pTmp = pInfo;
-
-		for ( int i = 0; i < land->realVerticesMapSide; ++i  )
-		{
-			for ( int cellI = 0; cellI < 3; ++cellI )
-			{
-				for ( int j = 0; j < land->realVerticesMapSide; ++j )
-				{
-					for ( int cellJ = 0; cellJ < 3; ++cellJ )
-					{
-						pTmp->terrain = MC_NONE_TYPE;
-						pTmp->overlay = (unsigned char)INVALID_OVERLAY;
-						pTmp->road = false;
-						pTmp->specialID = 0;
-						pTmp->specialType = SPECIAL_NONE;
-						pTmp->lineOfSight = 0;		//Now the local height!!!!!!
-						pTmp->passable = true;
-						
-						pTmp->terrain = land->getTerrain( i, j );
-						// If physical terrain type not passable, mark as such.
-						// WATER IS NOT STORED IN THIS VARIABLE!!!!!!!!!!!!!!
-						// Water is deep or not and not deep water is PASSABLE!
-
-						//-------------------------------------------------------
-						// NOW, mark cliffs as impassable.  ANY tile whose angle
-						// Exceeds CliffTerrainAngle value.
-						if ((i==0) || (j==0) || (i >= (land->realVerticesMapSide-1)) || (j >= (land->realVerticesMapSide-1)))
-						{
-							pTmp->passable = false;
-						}
-						else
-						{
-							//--------------------------------------------------------------------------------------
-							//We need to check cliff angles based on UVMode.  This check is great for the old WAY!!
-							bool tlx = (long(land->mapData->topLeftVertex.x) & 1);
-							bool tly = (long(land->mapData->topLeftVertex.y) & 1);
-						
-							long x = i - land->mapData->topLeftVertex.x;
-							long y = j - land->mapData->topLeftVertex.y;
-						
-							bool yby2 = (y & 1) ^ (tly);
-							bool xby2 = (x & 1) ^ (tlx);
-						
-							long uvMode = 0;
-							if (yby2)
-							{
-								if (xby2)
-								{
-									uvMode = BOTTOMRIGHT;
-								}
-								else
-								{
-									uvMode = BOTTOMLEFT;
-								}
-							}
-							else
-							{
-								if (xby2)
-								{
-									uvMode = BOTTOMLEFT;
-								}
-								else
-								{
-									uvMode = BOTTOMRIGHT;
-								}
-							}
-							
-							if (uvMode == BOTTOMRIGHT)
-							{
-								float elv0 = land->getTerrainElevation(i  ,j);
-								float elv1 = land->getTerrainElevation(i+1,j);
-								float elv2 = land->getTerrainElevation(i+1,j+1);
-								float elv3 = land->getTerrainElevation(i  ,j+1);
-								
-								float elvDiff1 = fabs(elv0 - elv2);
-								float elvDiff2 = fabs(elv0 - elv1);
-								
-								float elvAngleFactor = Terrain::worldUnitsPerVertex * sin(CliffTerrainAngle * DEGREES_TO_RADS);
-								if ((elvDiff1 > elvAngleFactor) || (elvDiff2 > elvAngleFactor))
-								{
-									pTmp->passable = false;
-								}
-								
-								elvDiff1 = fabs(elv0 - elv2);
-								elvDiff2 = fabs(elv0 - elv3);
-								
-								elvAngleFactor = Terrain::worldUnitsPerVertex * sin(CliffTerrainAngle * DEGREES_TO_RADS);
-								if ((elvDiff1 > elvAngleFactor) || (elvDiff2 > elvAngleFactor))
-								{
-									pTmp->passable = false;
-								}
-							}
-							else	//uvMode is BOTTOMLEFT!
-							{
-								float elv0 = land->getTerrainElevation(i  ,j);
-								float elv1 = land->getTerrainElevation(i+1,j);
-								float elv2 = land->getTerrainElevation(i+1,j+1);
-								float elv3 = land->getTerrainElevation(i  ,j+1);
-								
-								float elvDiff1 = fabs(elv0 - elv1);
-								float elvDiff2 = fabs(elv0 - elv3);
-								
-								float elvAngleFactor = Terrain::worldUnitsPerVertex * sin(CliffTerrainAngle * DEGREES_TO_RADS);
-								if ((elvDiff1 > elvAngleFactor) || (elvDiff2 > elvAngleFactor))
-								{
-									pTmp->passable = false;
-								}
-								
-								elvDiff1 = fabs(elv1 - elv2);
-								elvDiff2 = fabs(elv1 - elv3);
-								
-								elvAngleFactor = Terrain::worldUnitsPerVertex * sin(CliffTerrainAngle * DEGREES_TO_RADS);
-								if ((elvDiff1 > elvAngleFactor) || (elvDiff2 > elvAngleFactor))
-								{
-									pTmp->passable = false;
-								}
-							}
-						}
-						
-						
-						Overlays overlay;
-						unsigned long offset;
-						land->getOverlay( i, j, overlay, offset );
-						if ( overlay != INVALID_OVERLAY )
-						{
-							pTmp->overlay = (int)overlay;
-							pTmp->road = true;	// This should be more accurate!!!!! Need to fix...
-						}
-
-						int cellRow = i * 3 + cellI;
-						int cellColumn = j * 3 + cellJ;
-						pTmp->mine = (GameMap && GameMap->inBounds(cellRow, cellColumn)) ? GameMap->getMine(cellRow, cellColumn) : 0;
-
-						pTmp++;
-					}
-				}
-			}
+		std::string moveErr;
+		moveRebuildOk = RebuildMoveFromCurrentTerrain(&moveErr);
+		if (!moveRebuildOk) {
+			// Do NOT crash.  Save proceeds but MOVE data is omitted from the .pak.
+			// The mission will load but AI movement won't work.
+			printf("[MOVE_REBUILD] save: rebuild failed (%s) — saving without MOVE data\n",
+			       moveErr.c_str());
+			fflush(stdout);
+			EditorDataTrace("EditorData::save: MOVE rebuild failed: %s", moveErr.c_str());
 		}
-		
-		//-----------------------------------------------------------------------------------------
-		// Now scan through every single object and have them mark impassability!
-		// Buildings will mark impassable WHEN PLACED to avoid placing buildings on top of each other.
-		// This would mean, however, that the pInfo or whatever we use must exist always not just here.
-		// For now, this is fine.  We should definitely change for ship version! -fs
-		GameObjectFootPrint specialAreaFootPrints[MAX_SPECIAL_AREAS];
-		long wallTotalCount = 0;
-		long gateTotalCount = 0;
-		long landBridgeTotalCount = 0;
-		EditorObjectMgr::BUILDING_LIST completeBuildingList = EditorObjectMgr::instance()->getBuildings();
-		if (completeBuildingList.Count() > 0)
-		{
-			EditorObjectMgr::BUILDING_LIST::EConstIterator it = completeBuildingList.Begin();
-			while (!it.IsDone())
-			{
-				if ((*it)->getType() == BLDG_TYPE)
-				{
-					//ONLY Buildings mark impassable.  Thus, if we want trees, forest clumps etc to block, they must be buildings
-					if ( ((*it)->getSpecialType() == EditorObjectMgr::EDITOR_GATE))
-						gateTotalCount++;
-					else if ((*it)->getSpecialType() == EditorObjectMgr::WALL)
-						wallTotalCount++;
-					else if ((*it)->getSpecialType() == EditorObjectMgr::EDITOR_BRIDGE)
-						landBridgeTotalCount++;
-				}
-				it++;
-			}
-		}
-		long wallCount = 0;
-		long gateCount = 0;
-		long landBridgeCount = 0;
-		completeBuildingList = EditorObjectMgr::instance()->getBuildings();
-		if (completeBuildingList.Count() > 0)
-		{
-			EditorObjectMgr::BUILDING_LIST::EConstIterator it = completeBuildingList.Begin();
-			while (!it.IsDone())
-			{
-				if ((*it)->getType() == BLDG_TYPE)
-				{
-					//ONLY Buildings mark impassable.  Thus, if we want trees, forest clumps etc to block, they must be buildings
-					if ( ((*it)->getSpecialType() == EditorObjectMgr::EDITOR_GATE))
-					{
-						(*it)->markTerrain( pInfo, SPECIAL_GATE, gateCount );
-						Stuff::Vector3D pos = (*it)->appearance()->position;
-						int r, c;
-						land->worldToCell(pos, r, c);
-						specialAreaFootPrints[gateCount].cellPositionRow = r;
-						specialAreaFootPrints[gateCount].cellPositionCol = c;
-						gateCount++;
-					}
-					else if ((*it)->getSpecialType() == EditorObjectMgr::WALL)
-					{
-						(*it)->markTerrain( pInfo, SPECIAL_WALL, gateTotalCount + wallCount);
-						Stuff::Vector3D pos = (*it)->appearance()->position;
-						int r, c;
-						land->worldToCell(pos, r, c);
-						specialAreaFootPrints[gateTotalCount + wallCount].cellPositionRow = r;
-						specialAreaFootPrints[gateTotalCount + wallCount].cellPositionCol = c;
-						wallCount++;
-					}
-					else if ((*it)->getSpecialType() == EditorObjectMgr::EDITOR_BRIDGE)
-					{
-						(*it)->markTerrain( pInfo, SPECIAL_LAND_BRIDGE, gateTotalCount + wallTotalCount + landBridgeCount);
-						Stuff::Vector3D pos = (*it)->appearance()->position;
-						int r, c;
-						land->worldToCell(pos, r, c);
-						specialAreaFootPrints[gateTotalCount + wallTotalCount + landBridgeCount].cellPositionRow = r;
-						specialAreaFootPrints[gateTotalCount + wallTotalCount + landBridgeCount].cellPositionCol = c;
-						landBridgeCount++;
-					}
-					else if ((*it)->appearance()->isForestClump() || (*it)->getForestID() != -1 )
-						(*it)->markTerrain( pInfo, SPECIAL_FOREST, 0);
-					else if (!IsSinglePlayer() && (*it)->getSpecialType() == EditorObjectMgr::RESOURCE_BUILDING)
-						(*it)->markTerrain( pInfo, EditorObjectMgr::RESOURCE_BUILDING , 0);
-					else
-						(*it)->markTerrain(pInfo,SPECIAL_NONE, 0);
-				}
-				it++;
-			}
-		}
-
-		for (long i = 0; i < gateCount + wallCount + landBridgeCount; i++) {
-			specialAreaFootPrints[i].preNumCells = specialAreaFootPrints[i].numCells;
-			specialAreaFootPrints[i].numCells = 0;
-		}
-		pTmp = pInfo;
-		for (long r = 0; r < land->realVerticesMapSide * 3; r++)
-			for (long c = 0; c < land->realVerticesMapSide * 3; c++) {
-				if (pTmp->specialType != SPECIAL_NONE) {
-					if (pTmp->passable) {
-						specialAreaFootPrints[pTmp->specialID].cells[specialAreaFootPrints[pTmp->specialID].numCells][0] = r;
-						specialAreaFootPrints[pTmp->specialID].cells[specialAreaFootPrints[pTmp->specialID].numCells][1] = c;
-						specialAreaFootPrints[pTmp->specialID].numCells++;
-					}
-				}
-				pTmp++;		
-			}
-
-		if (saveMoveDataThisPass)
-		{
-			EditorDataTrace("EditorData::save: before MOVE_buildData rows=%ld cols=%ld specials=%ld",
-				land->realVerticesMapSide * 3, land->realVerticesMapSide * 3, gateCount + wallCount + landBridgeCount);
-			MOVE_buildData(land->realVerticesMapSide * 3, land->realVerticesMapSide * 3, pInfo, gateCount + wallCount + landBridgeCount, specialAreaFootPrints);
-			EditorDataTrace("EditorData::save: after MOVE_buildData");
-		}
-		else
-		{
-			EditorDataTrace("EditorData::save: skipped MOVE_buildData because move data is not ready for full save");
-		}
-		free( pInfo );
-		pInfo = NULL;
 	}
  
 	// create a pak file with the correct number of entries
@@ -2079,18 +2147,20 @@ bool EditorData::save( const char* fileName, bool quickSave )
 
 	//------------------------------------------------------------------------
 	// This reserve MUST come after we've initialized and built the move data.
+	// Gate: MOVE_saveData requires GameMap (set by MOVE_buildData).
+	// Only query packet count if moveRebuildOk -- never call with GameMap==NULL.
 	DWORD movePacketCount = 0;
-	if (saveMoveDataThisPass)
+	if (!quickSave && moveRebuildOk)
 	{
 		EditorDataTrace("EditorData::save: before MOVE_saveData(NULL)");
 		movePacketCount = MOVE_saveData(NULL);
 		EditorDataTrace("EditorData::save: MOVE_saveData(NULL) count=%lu", (unsigned long)movePacketCount);
 	}
-	else
+	else if (!quickSave)
 	{
-		EditorDataTrace("EditorData::save: skipped MOVE_saveData(NULL); reserving empty packet 4 and GUID packet");
+		EditorDataTrace("EditorData::save: skipping MOVE_saveData(NULL): moveRebuildOk=false");
 	}
-	DWORD numPackets = saveMoveDataThisPass ? (5 + movePacketCount) : 6;
+	DWORD numPackets = (!quickSave && moveRebuildOk) ? (5 + movePacketCount) : 6;
 	EditorDataTrace("EditorData::save: numPackets=%lu", (unsigned long)numPackets);
 	file.reserve(numPackets, false);
 	land->unselectAll();
@@ -2102,7 +2172,7 @@ bool EditorData::save( const char* fileName, bool quickSave )
 		EditorDataTrace("EditorData::save: before saveTacMap");
 		saveTacMap( &file, 3 );
 		EditorDataTrace("EditorData::save: after saveTacMap");
-		if (saveMoveDataThisPass)
+		if (moveRebuildOk)
 		{
 			EditorDataTrace("EditorData::save: before MOVE_saveData(file)");
 			MOVE_saveData(&file, 4);
@@ -2110,7 +2180,9 @@ bool EditorData::save( const char* fileName, bool quickSave )
 		}
 		else
 		{
-			EditorDataTrace("EditorData::save: skipped MOVE_saveData(file); packet 4 remains empty");
+			// Packet 4 is reserved but empty -- MOVE rebuild failed.
+			// Mission loads but AI movement will not work.
+			EditorDataTrace("EditorData::save: skipped MOVE_saveData(file): moveRebuildOk=false");
 		}
 	}
 	else

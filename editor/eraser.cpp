@@ -105,7 +105,7 @@ bool Eraser::paint( Stuff::Vector3D& worldPos, int screenX, int screenY )
 			return true;
 		}
 
-		if ( GameMap->getMine( cellRow, cellCol ) )
+		if ( GameMap && GameMap->getMine( cellRow, cellCol ) )
 		{
 			GameMap->setMine( cellRow, cellCol, 0 );
 		}
@@ -147,7 +147,7 @@ bool Eraser::canPaint( Stuff::Vector3D& worldPos, int screenX, int screenY, int 
 		return true;
 	}
 	
-	if ( GameMap->getMine( cellRow, cellCol ) )
+	if ( GameMap && GameMap->getMine( cellRow, cellCol ) )
 	{
 		return true;
 	}
@@ -221,13 +221,15 @@ Action* Eraser::applyToSelection()
 				land->setOverlay( j, i, INVALID_OVERLAY, 0 );
 				land->setTerrain(j, i, DEFAULT_TERRAIN);
 
-				for (long icell = 0;icell<MAPCELL_DIM;icell++)
-				{
-					for (long jcell = 0;jcell<MAPCELL_DIM;jcell++)
+				if (GameMap) {
+					for (long icell = 0;icell<MAPCELL_DIM;icell++)
 					{
-						long cellRow = j * MAPCELL_DIM + jcell;
-						long cellCol = i * MAPCELL_DIM + icell;
-						GameMap->setMine(cellRow,cellCol,0);
+						for (long jcell = 0;jcell<MAPCELL_DIM;jcell++)
+						{
+							long cellRow = j * MAPCELL_DIM + jcell;
+							long cellCol = i * MAPCELL_DIM + icell;
+							GameMap->setMine(cellRow,cellCol,0);
+						}
 					}
 				}
 			}

@@ -2472,6 +2472,20 @@ void EditorInterface::update()
 				Team(0);   // opens Mission > Teams > Team 1 (objectives live here)
 				break;
 
+			case ChecklistAction::BuildMove:
+			{
+				// Build MOVE pathfinding in-memory from the current terrain + objects.
+				// Sets GameMap + GlobalMoveMap[0..2] so passability grid and AI work.
+				// No save needed -- results are immediately usable.
+				std::string moveErr;
+				bool moveOk = EditorData::RebuildMoveFromCurrentTerrain(&moveErr);
+				if (!moveOk && !moveErr.empty()) {
+					printf("[EDITOR_UPDATE] BuildMove failed: %s\n", moveErr.c_str());
+					fflush(stdout);
+				}
+				break;
+			}
+
 			case ChecklistAction::PrepareSaveable:
 			{
 				// Re-validate and trigger the first failing check's action.
@@ -2494,6 +2508,13 @@ void EditorInterface::update()
 			default:
 				break;
 		}
+
+		// MOVE rebuild is now user-triggered, not automatic.
+		// Preset/generate load calls MarkMoveDataDirty(); the user then clicks
+		// "Build MOVE" in the Mission Checklist (ChecklistAction::BuildMove above)
+		// or saves (save() calls RebuildMoveFromCurrentTerrain internally).
+		// Eager auto-rebuild was removed because it crashed on systemHeap exhaustion
+		// before any user interaction was possible.
 	}
 #endif
 
@@ -5397,8 +5418,27 @@ void EditorInterface::OnViewOrthographiccamera()
 	syncScrollBars();
 }
 
-void EditorInterface::OnViewShowpassabilitymap() 
+void EditorInterface::OnViewShowpassabilitymap()
 {
+	// Passability grid requires GameMap (set by MOVE_buildData).
+	// If MOVE hasn't been built yet, try to build it now.
+	if (!GameMap) {
+		std::string err;
+		if (!EditorData::RebuildMoveFromCurrentTerrain(&err)) {
+			// Rebuild failed -- can't display passability grid.
+			char msg[512];
+			snprintf(msg, sizeof(msg),
+				"Cannot show passability map:\n%s\n\n"
+				"Use Mission Checklist > Build MOVE to initialize pathfinding data.",
+				err.c_str());
+			AfxMessageBox(msg);
+			// Ensure menu stays unchecked
+			GetParent()->GetMenu()->CheckMenuItem(ID_VIEW_SHOWPASSABILITYMAP, MF_BYCOMMAND | MF_UNCHECKED);
+			drawTerrainGrid = false;
+			return;
+		}
+	}
+
 	if (GetParent()->GetMenu()->GetMenuState( ID_VIEW_SHOWPASSABILITYMAP, MF_BYCOMMAND ) & MF_CHECKED) {
 		GetParent()->GetMenu()->CheckMenuItem( ID_VIEW_SHOWPASSABILITYMAP, MF_BYCOMMAND | MF_UNCHECKED );
 		drawTerrainGrid = false;
