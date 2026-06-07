@@ -1,7 +1,7 @@
 // mc2_launcher.cpp — MC2 OpenGL Campaign Mod Launcher
 //
 // Scans ./mods/ for mod.json files, shows a selection dialog,
-// then launches mc2.exe with MC2_ACTIVE_MOD=<id> in its environment.
+// then launches mc2.exe with MC2_ACTIVE_MOD=<foldername> in its environment.
 //
 // Selecting "Base Game" leaves MC2_ACTIVE_MOD unset — mc2.exe runs in
 // pure base-game mode with no mod overlay active.
@@ -23,7 +23,8 @@
 #define MAX_MODS 64
 
 struct ModEntry {
-    char id[128];
+    char id[128];          // from mod.json "id" — for future use/display
+    char folderName[256];  // actual OS directory name — passed as MC2_ACTIVE_MOD
     char name[256];
     char type[32];
     char description[512];
@@ -87,6 +88,7 @@ static void ScanMods(const char* modsPath) {
         buf[bytesRead] = '\0';
 
         ModEntry& e = s_mods[s_modCount];
+        _snprintf(e.folderName, sizeof(e.folderName), "%s", fd.cFileName);
         if (!JsonGetString(buf, "id",   e.id,   sizeof(e.id)))
             _snprintf(e.id, sizeof(e.id), "%s", fd.cFileName);
         if (!JsonGetString(buf, "name", e.name, sizeof(e.name)))
@@ -98,6 +100,11 @@ static void ScanMods(const char* modsPath) {
         // Strip non-ASCII bytes so ANSI SetWindowText doesn't show garbage.
         for (char* p = e.description; *p; p++)
             if ((unsigned char)*p > 127) *p = '?';
+
+        // Only surface campaign-type mods as selectable choices.
+        // Dependency mods (type="dependency") are mounted automatically by the
+        // resolver when a campaign that declares them is selected.
+        if (_stricmp(e.type, "campaign") != 0) continue;
 
         s_modCount++;
     } while (FindNextFileA(h, &fd));
@@ -116,7 +123,7 @@ static void DoLaunch(HWND hwnd) {
         // inherits an unset variable.
         SetEnvironmentVariableA("MC2_ACTIVE_MOD", NULL);
     } else if (sel <= s_modCount) {
-        SetEnvironmentVariableA("MC2_ACTIVE_MOD", s_mods[sel-1].id);
+        SetEnvironmentVariableA("MC2_ACTIVE_MOD", s_mods[sel-1].folderName);
     }
 
     // Look for mc2.exe in the same directory as this launcher.

@@ -451,13 +451,25 @@ bool MechIcon::initTextures()
 		File file;
 		char path[256];
 		strcpy( path, artPath );
-		
-		if ( Environment.screenWidth == 800 )
-			strcat( path, "mcui_med4.tga" );
-		else if ( Environment.screenWidth == 640 )
-			strcat( path, "mcui_low4.tga" );
-		else 
-			strcat( path, "mcui_high7.tga" );
+
+		// Use extended atlas when mc2x-compat overlay is active.
+		// mc2x_mechicons.tga covers both IS and Clan icon indices so it
+		// replaces the resolution-specific base atlas entirely.
+		{
+			char mc2xPath[256];
+			strcpy( mc2xPath, artPath );
+			strcat( mc2xPath, "mc2x_mechicons.tga" );
+			File testFile;
+			bool hasMc2x = (NO_ERR == testFile.open( mc2xPath ));
+			if ( hasMc2x )
+				strcpy( path, mc2xPath );
+			else if ( Environment.screenWidth == 800 )
+				strcat( path, "mcui_med4.tga" );
+			else if ( Environment.screenWidth == 640 )
+				strcat( path, "mcui_low4.tga" );
+			else
+				strcat( path, "mcui_high7.tga" );
+		}
 
 		S_strlwr( path );
 		s_MechTexturesKey = AssetScale::key(path);
