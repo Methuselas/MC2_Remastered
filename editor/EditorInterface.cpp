@@ -2416,6 +2416,28 @@ void EditorInterface::update()
 			}
 			return;
 		}
+		else if (act == MapGeneratorDialog::PendingAction::LoadPreset)
+		{
+			// Load pre-baked flat preset: same camera/UI setup as Generate.
+			SetBusyMode();
+			eye->reset();
+			MapGeneratorDialog::ExecuteLoadPreset();
+			UnsetBusyMode();
+			if (!MapGeneratorDialog::IsOpen())
+			{
+				if ( land )
+					eye->setPosition( Stuff::Vector3D(0.0f, 0.0f, 0.0f), false );
+				if ( land )
+				{
+					addBuildingsToNewMenu();
+					syncScrollBars();
+					initTacMap();
+				}
+				tacMap.UpdateMap();
+				PlaySound("SystemDefault", NULL, SND_ASYNC);
+			}
+			return;
+		}
 	}
 #endif
 

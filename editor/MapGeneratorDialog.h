@@ -20,8 +20,9 @@ namespace MapGeneratorDialog {
     // on in EditorInterface::update() OUTSIDE the ImGui render pass).
     enum class PendingAction {
         None,
-        Preview,   // run python --preview, load thumbnail
-        Generate,  // run python full, apply to editor, close dialog
+        Preview,      // run python --preview, load thumbnail
+        Generate,     // run python full, apply to editor, close dialog
+        LoadPreset,   // copy pre-baked preset files then apply (no python run)
     };
 
     // Open (or re-open) the dialog.  Call from toolbar "Generate Map" button
@@ -44,6 +45,9 @@ namespace MapGeneratorDialog {
     // Execute the pending action (called from update(), outside ImGui pass).
     void ExecutePreview();
     void ExecuteGenerate();
+    // Load a pre-baked flat preset (no Python run).
+    // Checks terrain_gen_presets/<biome>_<sizeN>/ for pre-generated files.
+    void ExecuteLoadPreset();
 
 } // namespace MapGeneratorDialog
 
