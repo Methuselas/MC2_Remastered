@@ -667,6 +667,16 @@ long Terrain::init( unsigned long verticesPerMapSide, PacketFile* pakFile, unsig
 		for (int scY = 0; scY < s_superchunkSide; ++scY)
 			for (int scX = 0; scX < s_superchunkSide; ++scX)
 				recomputeSuperchunkAabb(scX, scY);
+
+		// Terrain LOD chunk Phase 3 — upload full heightfield to GPU SSBO.
+		{
+			int n = (int)realVerticesMapSide * (int)realVerticesMapSide;
+			std::vector<float> elev((size_t)n);
+			const PostcompVertex* blks = mapData->getBlocks();
+			for (int i = 0; i < n; ++i)
+				elev[i] = blks[i].elevation;
+			gos_TerrainLodChunk_UploadHeightFull(elev.data(), (int)realVerticesMapSide);
+		}
 	}
 
 	//----------------------------------------------------------------------
@@ -1347,7 +1357,35 @@ void Terrain::getOverlay( long tileR, long tileC, enum Overlays& type, DWORD& Of
 void Terrain::setVertexHeight( int VertexIndex, float Val )
 {
 	if ( VertexIndex > -1 && VertexIndex < realVerticesMapSide * realVerticesMapSide )
+	{
 		mapData->setVertexHeight( VertexIndex, Val );
+
+		// Terrain LOD chunk Phase 3 — dirty-patch upload after edit.
+		if (s_blockMeta && getenv("MC2_TERRAIN_LOD_CHUNK"))
+		{
+			int vx = VertexIndex % (int)realVerticesMapSide;
+			int vy = VertexIndex / (int)realVerticesMapSide;
+			int bx = vx / (int)verticesBlockSide;
+			int by = vy / (int)verticesBlockSide;
+			if (bx >= s_terrainChunkSide) bx = s_terrainChunkSide - 1;
+			if (by >= s_terrainChunkSide) by = s_terrainChunkSide - 1;
+			int blockIdx = bx + by * s_terrainChunkSide;
+			s_blockMeta[blockIdx].dirtyAabb = true;
+
+			const TerrainBlockMeta& bm = s_blockMeta[blockIdx];
+			int rows = bm.quadCountY + 1;
+			int cols = bm.quadCountX + 1;
+			std::vector<float> patch((size_t)rows * cols);
+			const PostcompVertex* blks = mapData->getBlocks();
+			for (int dy = 0; dy < rows; ++dy)
+				for (int dx = 0; dx < cols; ++dx)
+					patch[dx + dy * cols] = blks[
+						(bm.originX + dx) + (bm.originY + dy) * (int)realVerticesMapSide].elevation;
+			gos_TerrainLodChunk_UploadHeightPatch(
+				patch.data(), bm.originX, bm.originY,
+				bm.quadCountX, bm.quadCountY, (int)realVerticesMapSide);
+		}
+	}
 }
 
 //---------------------------------------------------------------------------

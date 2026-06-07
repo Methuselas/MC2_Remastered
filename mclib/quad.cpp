@@ -41,6 +41,7 @@
 
 #include"../GameOS/gameos/gos_profiler.h"
 #include"../GameOS/gameos/gos_terrain_patch_stream.h"
+#include"../GameOS/gameos/gos_terrain_lod_chunk.h"  // Terrain LOD chunk Phase 3: lastWaterFrame guard
 #include"../GameOS/gameos/gos_terrain_indirect.h"
 #include"../GameOS/gameos/gos_terrain_lighting.h"
 #include"projectz_trace.h"
@@ -706,6 +707,9 @@ void TerrainQuad::setupTextures (void)
 	// MUST stay UNCONDITIONAL (they are (i)/M2a - never move them inside the
 	// if (legacyWaterDraw) braces).
 	const bool legacyWaterDraw = !gos_terrain_indirect::WaterFastPathOwnsArmedDraw();
+	// Terrain LOD chunk Phase 3: cache env gate once per quad (hot path; avoid
+	// repeated getenv() in the per-vertex loop below).
+	const bool useLodChunkWaterGuard = (getenv("MC2_TERRAIN_LOD_CHUNK") != nullptr);
 
 	// PERF-SETUPTEXTURES-GPU-GATE-1: gate the recipe-cache lookup + member-field
 	// assignments when both GPU SOLID and GPU OVERLAY own this frame. In that state
@@ -993,8 +997,9 @@ void TerrainQuad::setupTextures (void)
 
  		float negCos = Terrain::frameCos * -1.0;
 		float ourCos = Terrain::frameCos;
-		if (!(vertices[0]->calcThisFrame & 2))
-		{
+		// Phase 3 water guard: frame-stamp path (MC2_TERRAIN_LOD_CHUNK) or
+		// bit-flag path (legacy). Old path 100% intact when env is unset.
+		auto calcWaterVert0 = [&]() {
 			if (clipped1 || clipped2)
 			{
 				if (vertices[0]->pVertex->water & 128)
@@ -1043,13 +1048,21 @@ void TerrainQuad::setupTextures (void)
 					vertices[0]->wz = screenPos.z;
 					vertices[0]->ww = screenPos.w;
 				}
-
+			}
+		};
+		if (useLodChunkWaterGuard) {
+			if (vertices[0]->lastWaterFrame != Terrain::gCurrentFrame) {
+				calcWaterVert0();
+				vertices[0]->lastWaterFrame = Terrain::gCurrentFrame;
+			}
+		} else {
+			if (!(vertices[0]->calcThisFrame & 2)) {
+				calcWaterVert0();
 				vertices[0]->calcThisFrame |= 2;
 			}
 		}
 
-		if (!(vertices[1]->calcThisFrame & 2))
-		{
+		auto calcWaterVert1 = [&]() {
 			if (clipped1 || clipped2)
 			{
 				if (vertices[1]->pVertex->water & 128)
@@ -1096,13 +1109,21 @@ void TerrainQuad::setupTextures (void)
 					vertices[1]->wz = screenPos.z;
 					vertices[1]->ww = screenPos.w;
 				}
-
+			}
+		};
+		if (useLodChunkWaterGuard) {
+			if (vertices[1]->lastWaterFrame != Terrain::gCurrentFrame) {
+				calcWaterVert1();
+				vertices[1]->lastWaterFrame = Terrain::gCurrentFrame;
+			}
+		} else {
+			if (!(vertices[1]->calcThisFrame & 2)) {
+				calcWaterVert1();
 				vertices[1]->calcThisFrame |= 2;
 			}
 		}
 
-		if (!(vertices[2]->calcThisFrame & 2))
-		{
+		auto calcWaterVert2 = [&]() {
 			if (clipped1 || clipped2)
 			{
 				if (vertices[2]->pVertex->water & 128)
@@ -1149,13 +1170,21 @@ void TerrainQuad::setupTextures (void)
 					vertices[2]->wz = screenPos.z;
 					vertices[2]->ww = screenPos.w;
 				}
-
+			}
+		};
+		if (useLodChunkWaterGuard) {
+			if (vertices[2]->lastWaterFrame != Terrain::gCurrentFrame) {
+				calcWaterVert2();
+				vertices[2]->lastWaterFrame = Terrain::gCurrentFrame;
+			}
+		} else {
+			if (!(vertices[2]->calcThisFrame & 2)) {
+				calcWaterVert2();
 				vertices[2]->calcThisFrame |= 2;
 			}
 		}
 
-		if (!(vertices[3]->calcThisFrame & 2))
-		{
+		auto calcWaterVert3 = [&]() {
 			if (clipped1 || clipped2)
 			{
 				if (vertices[3]->pVertex->water & 128)
@@ -1202,7 +1231,16 @@ void TerrainQuad::setupTextures (void)
 					vertices[3]->wz = screenPos.z;
 					vertices[3]->ww = screenPos.w;
 				}
-
+			}
+		};
+		if (useLodChunkWaterGuard) {
+			if (vertices[3]->lastWaterFrame != Terrain::gCurrentFrame) {
+				calcWaterVert3();
+				vertices[3]->lastWaterFrame = Terrain::gCurrentFrame;
+			}
+		} else {
+			if (!(vertices[3]->calcThisFrame & 2)) {
+				calcWaterVert3();
 				vertices[3]->calcThisFrame |= 2;
 			}
 		}

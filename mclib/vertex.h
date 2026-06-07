@@ -17,6 +17,7 @@
 #endif
 
 #include<stuff/stuff.hpp>
+#include<cstdint>
 
 //---------------------------------------------------------------------------
 // Macro Definitions
@@ -95,6 +96,8 @@ class Vertex
 		float				wAlpha;				//Used to environment Map Sky onto water.
 
 		DWORD				calcThisFrame;		//Calced this vertex this frame?
+
+		uint32_t			lastWaterFrame;		//Frame stamp for MC2_TERRAIN_LOD_CHUNK water guard.
 
 		float				hazeFactor;			//Used to distance fog the terrain.
 		

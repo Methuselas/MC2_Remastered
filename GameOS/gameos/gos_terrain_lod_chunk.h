@@ -30,3 +30,9 @@ void gos_TerrainLodChunk_UploadHeightPatch(
     int originX, int originY,
     int quadCountX, int quadCountY,
     int mapSide);
+
+// Allocate the height SSBO. Call once after GL context is live (from gosRenderer::init).
+void gos_TerrainLodChunk_Init();
+
+// Free the height SSBO. Call at shutdown (from gosRenderer::destroy).
+void gos_TerrainLodChunk_Destroy();
