@@ -126,6 +126,7 @@ public:
 	virtual void handleLeftButtonUp( int PosX, int PosY ); // pop ups etc need this
 	virtual void handleKeyDown( int Key );
 	virtual void handleMouseMove( int PosX, int PosY );
+	void updateCameraInput();   // per-frame camera scroll/zoom/rotate from keys + edge-scroll
 
 	void update (void);
 

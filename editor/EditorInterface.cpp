@@ -1875,175 +1875,9 @@ void EditorInterface::handleKeyDown( int Key )
 		}
 	}
 
-	//------------------------
-	// Keyboard Checks First
-	bool scrollUp = (GetAsyncKeyState(KEY_UP) && !shiftDn && !ctrlDn && !altDn);
-	bool scrollDn = (GetAsyncKeyState(KEY_DOWN) && !shiftDn && !ctrlDn && !altDn);
-	bool scrollLf = (GetAsyncKeyState(KEY_LEFT) && !shiftDn && !ctrlDn && !altDn);
-	bool scrollRt = (GetAsyncKeyState(KEY_RIGHT) && !shiftDn && !ctrlDn && !altDn);
-
-	// Mouse-edge scrolling (like the game): cursor near a viewport edge scrolls the
-	// camera that way, so big maps are navigable without the arrow keys. Suppressed
-	// when ImGui is using the mouse (so hovering the tool panels doesn't pan) and
-	// only while the editor window is foreground.
-	if ( ::GetForegroundWindow() == GetSafeHwnd() || ::IsChild( GetSafeHwnd(), ::GetForegroundWindow() )
-	     || ::GetForegroundWindow() == ::GetParent( GetSafeHwnd() ) )
-	{
-		bool imguiMouse = false;
-#ifdef MC2_IMGUI
-		imguiMouse = ( ImGui::GetCurrentContext() != NULL ) && ImGui::GetIO().WantCaptureMouse;
-#endif
-		if ( !imguiMouse )
-		{
-			POINT cp;
-			::GetCursorPos( &cp );
-			ScreenToClient( &cp );
-			RECT rc;
-			GetClientRect( &rc );
-			const int margin = 24;
-			if ( cp.x >= rc.left && cp.x < rc.right && cp.y >= rc.top && cp.y < rc.bottom )
-			{
-				if ( cp.x <  rc.left  + margin ) scrollLf = true;
-				if ( cp.x >= rc.right - margin ) scrollRt = true;
-				if ( cp.y <  rc.top   + margin ) scrollUp = true;
-				if ( cp.y >= rc.bottom- margin ) scrollDn = true;
-			}
-		}
-	}
-
-	bool zoomOut = (GetAsyncKeyState (KEY_SUBTRACT) && !shiftDn && !ctrlDn && !altDn);
-	bool zoomIn = (GetAsyncKeyState (KEY_ADD) && !shiftDn && !ctrlDn && !altDn);
-
-	bool rotateLf = (GetAsyncKeyState (KEY_LEFT) && shiftDn && !ctrlDn && !altDn);
-	bool rotateRt = (GetAsyncKeyState (KEY_RIGHT) && shiftDn && !ctrlDn && !altDn);
-
-	bool rotateLightLf = (GetAsyncKeyState (KEY_LEFT) && !shiftDn && ctrlDn && !altDn);
-	bool rotateLightRt = (GetAsyncKeyState (KEY_RIGHT) && !shiftDn && ctrlDn && !altDn);
-	bool rotateLightUp = (GetAsyncKeyState (KEY_UP) && !shiftDn && ctrlDn && !altDn);
-	bool rotateLightDn = (GetAsyncKeyState (KEY_DOWN) && !shiftDn && ctrlDn && !altDn);
-			
-	bool tiltUp 	= (GetAsyncKeyState (KEY_DOWN) && shiftDn && !ctrlDn && !altDn);
-	bool tiltDn 	= (GetAsyncKeyState (KEY_UP) && shiftDn && !ctrlDn && !altDn);
-	bool tiltNormal = (GetAsyncKeyState (KEY_HOME) && !shiftDn && !ctrlDn && !altDn);
-
-	// Update the Camera based on Input
-	if (scrollLf)
-	{
-		eye->moveLeft(scrollFactor);
-		syncScrollBars();
-	}
-
-	if (scrollRt)
-	{
-		eye->moveRight(scrollFactor);
-		syncScrollBars();
-	}
-
-	if (scrollDn)
-	{
-		eye->moveDown(scrollFactor);
-		syncScrollBars();
-	}
-
-	if (scrollUp)
-	{
-		eye->moveUp(scrollFactor);
-		syncScrollBars();
-	}
-
-	if (zoomOut)
-	{
-		eye->ZoomOut(zoomInc * frameFactor * eye->getScaleFactor());
-
-		if (eye->getScaleFactor() <= 0.3)
-			renderTrees = false;
-
-		syncScrollBars();
-		tacMap.RedrawWindow();
-	}
-
-	if (zoomIn)
-	{
-		eye->ZoomIn(zoomInc * frameFactor * eye->getScaleFactor());
-		if (eye->getScaleFactor() > 0.3)
-			renderTrees = true;
-
-		syncScrollBars();
-		tacMap.RedrawWindow();
-	}
-
-	if (tiltDn)
-	{
-		eye->tiltDown(scrollFactor * frameFactor * 10.0f);
-		syncScrollBars();
-		tacMap.RedrawWindow();
-	}
-	
-	if (tiltUp)
-	{
-		eye->tiltUp(scrollFactor * frameFactor * 10.0f);
-		syncScrollBars();
-		tacMap.RedrawWindow();
-	}
-	
-	if (tiltNormal)
-	{
-		eye->tiltNormal();
-		syncScrollBars();
-		tacMap.RedrawWindow();
-	}
- 				  
-	if (rotateLf)
-	{
-		realRotation += degPerSecRot * frameFactor;
-		if (realRotation >= rotationInc)
-		{
-			eye->rotateLeft(rotationInc);
-			realRotation = 0;
-		}
-		syncScrollBars();
-	}
-
-	if (rotateRt)
-	{
-		realRotation -= degPerSecRot * frameFactor;
-		if (realRotation <= -rotationInc)
-		{
-			eye->rotateRight(rotationInc);
-			realRotation = 0;
-		}
-		syncScrollBars();
-	}
-
-	//------------------------------------------------
-	// TEST LIGHTING MODEL
-	if (rotateLightRt)
-	{
-		eye->rotateLightRight(rotationInc);
-	}
-
-	if (rotateLightLf)
-	{
-		eye->rotateLightLeft(rotationInc);
-	}
-
-	if (rotateLightUp)
-	{
-		eye->rotateLightUp(rotationInc);
-	}
-
-	if (rotateLightDn)
-	{
-		eye->rotateLightDown(rotationInc);
-	}
-
 	lastKey = Key;
-	
-	if (scrollUp || scrollDn || scrollLf || scrollRt || zoomOut || zoomIn || rotateLf || rotateRt
-		|| rotateLightLf || rotateLightRt || rotateLightUp || rotateLightDn || tiltUp || tiltDn || tiltNormal)
-	{
-		SafeRunGameOSLogic();
-	}
+	// Camera scroll/zoom/rotate is handled per-frame in updateCameraInput() (called from
+	// render()) so it runs at render rate (~100fps) rather than key-repeat rate (~30Hz).
 	
 	//------------------------------------------------
 	//IF there is a selected object, find distance to it from camera.
@@ -2072,6 +1906,115 @@ void EditorInterface::handleKeyDown( int Key )
 	// need to put this value in the appropriate place.
 	sprintf( buffer, "%.3f", eyeDistance);
 	((MainFrame*)AfxGetMainWnd())->m_wndDlgBar.GetDlgItem( IDC_OBJDISTANCEEDIT )->SetWindowText( buffer );
+}
+
+// Called every render frame from render().  Handles all continuous camera input:
+// arrow-key scroll, numpad +/- zoom, Shift+arrow tilt/rotate, Ctrl+arrow light,
+// and mouse-edge scrolling.  Running here at render rate (~100 fps) instead of
+// WM_KEYDOWN key-repeat rate (~30 Hz) gives smooth camera motion on large maps.
+void EditorInterface::updateCameraInput()
+{
+	if ( !eye || !eye->active )
+		return;
+
+	float frameFactor = frameLength / baseFrameLength;
+	float scrollFactor = scrollInc / eye->getScaleFactor() * frameFactor;
+
+	bool shiftDn = GetAsyncKeyState( KEY_LSHIFT ) ? true : false;
+	bool ctrlDn  = GetAsyncKeyState( KEY_LCONTROL ) ? true : false;
+	long altDn   = GetAsyncKeyState( KEY_LMENU ) ? true : false;
+
+	//------------------------
+	// Keyboard + mouse-edge scroll flags
+	bool scrollUp = (GetAsyncKeyState(KEY_UP)    && !shiftDn && !ctrlDn && !altDn);
+	bool scrollDn = (GetAsyncKeyState(KEY_DOWN)  && !shiftDn && !ctrlDn && !altDn);
+	bool scrollLf = (GetAsyncKeyState(KEY_LEFT)  && !shiftDn && !ctrlDn && !altDn);
+	bool scrollRt = (GetAsyncKeyState(KEY_RIGHT) && !shiftDn && !ctrlDn && !altDn);
+
+	// Mouse-edge scrolling: cursor within 24px of any viewport edge pans the camera.
+	// Suppressed when ImGui owns the mouse and when the editor is not the foreground window.
+	if ( ::GetForegroundWindow() == GetSafeHwnd() || ::IsChild( GetSafeHwnd(), ::GetForegroundWindow() )
+	     || ::GetForegroundWindow() == ::GetParent( GetSafeHwnd() ) )
+	{
+		bool imguiMouse = false;
+#ifdef MC2_IMGUI
+		imguiMouse = ( ImGui::GetCurrentContext() != NULL ) && ImGui::GetIO().WantCaptureMouse;
+#endif
+		if ( !imguiMouse )
+		{
+			POINT cp;
+			::GetCursorPos( &cp );
+			ScreenToClient( &cp );
+			RECT rc;
+			GetClientRect( &rc );
+			const int margin = 24;
+			if ( cp.x >= rc.left && cp.x < rc.right && cp.y >= rc.top && cp.y < rc.bottom )
+			{
+				if ( cp.x <  rc.left  + margin ) scrollLf = true;
+				if ( cp.x >= rc.right - margin ) scrollRt = true;
+				if ( cp.y <  rc.top   + margin ) scrollUp = true;
+				if ( cp.y >= rc.bottom- margin ) scrollDn = true;
+			}
+		}
+	}
+
+	bool zoomOut    = (GetAsyncKeyState(KEY_SUBTRACT) && !shiftDn && !ctrlDn && !altDn);
+	bool zoomIn     = (GetAsyncKeyState(KEY_ADD)      && !shiftDn && !ctrlDn && !altDn);
+
+	bool rotateLf   = (GetAsyncKeyState(KEY_LEFT)  && shiftDn && !ctrlDn && !altDn);
+	bool rotateRt   = (GetAsyncKeyState(KEY_RIGHT) && shiftDn && !ctrlDn && !altDn);
+
+	bool rotateLightLf = (GetAsyncKeyState(KEY_LEFT)  && !shiftDn && ctrlDn && !altDn);
+	bool rotateLightRt = (GetAsyncKeyState(KEY_RIGHT) && !shiftDn && ctrlDn && !altDn);
+	bool rotateLightUp = (GetAsyncKeyState(KEY_UP)    && !shiftDn && ctrlDn && !altDn);
+	bool rotateLightDn = (GetAsyncKeyState(KEY_DOWN)  && !shiftDn && ctrlDn && !altDn);
+
+	bool tiltUp    = (GetAsyncKeyState(KEY_DOWN) && shiftDn && !ctrlDn && !altDn);
+	bool tiltDn    = (GetAsyncKeyState(KEY_UP)   && shiftDn && !ctrlDn && !altDn);
+	bool tiltNormal= (GetAsyncKeyState(KEY_HOME) && !shiftDn && !ctrlDn && !altDn);
+
+	// Apply camera movement
+	if (scrollLf) { eye->moveLeft(scrollFactor);  syncScrollBars(); }
+	if (scrollRt) { eye->moveRight(scrollFactor); syncScrollBars(); }
+	if (scrollDn) { eye->moveDown(scrollFactor);  syncScrollBars(); }
+	if (scrollUp) { eye->moveUp(scrollFactor);    syncScrollBars(); }
+
+	if (zoomOut)
+	{
+		eye->ZoomOut(zoomInc * frameFactor * eye->getScaleFactor());
+		if (eye->getScaleFactor() <= 0.3) renderTrees = false;
+		syncScrollBars();
+		tacMap.RedrawWindow();
+	}
+	if (zoomIn)
+	{
+		eye->ZoomIn(zoomInc * frameFactor * eye->getScaleFactor());
+		if (eye->getScaleFactor() > 0.3) renderTrees = true;
+		syncScrollBars();
+		tacMap.RedrawWindow();
+	}
+
+	if (tiltDn)    { eye->tiltDown(scrollFactor * frameFactor * 10.0f); syncScrollBars(); tacMap.RedrawWindow(); }
+	if (tiltUp)    { eye->tiltUp  (scrollFactor * frameFactor * 10.0f); syncScrollBars(); tacMap.RedrawWindow(); }
+	if (tiltNormal){ eye->tiltNormal();                                  syncScrollBars(); tacMap.RedrawWindow(); }
+
+	if (rotateLf)
+	{
+		realRotation += degPerSecRot * frameFactor;
+		if (realRotation >= rotationInc) { eye->rotateLeft(rotationInc); realRotation = 0; }
+		syncScrollBars();
+	}
+	if (rotateRt)
+	{
+		realRotation -= degPerSecRot * frameFactor;
+		if (realRotation <= -rotationInc) { eye->rotateRight(rotationInc); realRotation = 0; }
+		syncScrollBars();
+	}
+
+	if (rotateLightRt) eye->rotateLightRight(rotationInc);
+	if (rotateLightLf) eye->rotateLightLeft(rotationInc);
+	if (rotateLightUp) eye->rotateLightUp(rotationInc);
+	if (rotateLightDn) eye->rotateLightDown(rotationInc);
 }
 
 void EditorInterface::KillCurBrush()
@@ -2452,20 +2395,16 @@ void EditorInterface::update()
 			UnsetBusyMode();
 			if (!MapGeneratorDialog::IsOpen())
 			{
-				// Re-seat the camera for the generated terrain. eye->reset()
-				// was called before generate; the terrain is now a different
-				// size and elevation, so reinitialise from cameras.fit to
-				// put the camera at a sensible starting position. Without
-				// this the sky sphere renders at an incorrect world position
-				// and the camera frustum is wrong for mech placement picks.
-				{
-					char camPath[256];
-					strcpy( camPath, cameraPath );
-					strcat( camPath, "cameras.fit" );
-					FitIniFile camFile;
-					if ( NO_ERR == camFile.open( camPath ) )
-						eye->init( &camFile );
-				}
+				// Re-seat camera to terrain center after generate.
+				// cameras.fit is absent for newly generated maps so the prior
+				// eye->init() approach was a silent no-op. setPosition() derives
+				// position.z from land->getTerrainElevation(), putting the camera
+				// above the generated terrain surface instead of at blank-terrain
+				// y=0 (which is underground on hilly generated maps). This fixes
+				// the sky sphere rendering at ground level and mech placement
+				// picks using incorrect inverseProject results.
+				if ( land )
+					eye->setPosition( Stuff::Vector3D(0.0f, 0.0f, 0.0f), false );
 				if ( land )
 				{
 					addBuildingsToNewMenu();
@@ -2494,6 +2433,10 @@ void EditorInterface::render()
 {
 	if ( !bThisIsInitialized )
 		return;
+
+	// Poll keyboard + mouse-edge every render frame so camera responds at render rate
+	// (~100 fps) rather than WM_KEYDOWN key-repeat rate (~30 Hz).
+	updateCameraInput();
 
 	ModifyStyle( 0, WS_HSCROLL | WS_VSCROLL );
 
@@ -4287,6 +4230,8 @@ BOOL EditorInterface::OnMouseWheel(UINT nFlags, short zDelta, CPoint pt)
 	sprintf( buffer, "%.3f", eyeDistance);
 	((MainFrame*)AfxGetMainWnd())->m_wndDlgBar.GetDlgItem( IDC_OBJDISTANCEEDIT )->SetWindowText( buffer );
 
+	// Re-render immediately so the zoomed view is visible before the next OnIdle tick.
+	SafeRunGameOSLogic();
 	tacMap.RedrawWindow();
 	syncScrollBars();
 	return CWnd ::OnMouseWheel(nFlags, zDelta, pt);
