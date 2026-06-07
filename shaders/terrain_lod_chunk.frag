@@ -2,13 +2,30 @@
 // u_lodStep ∈ {1,2,4,5,10,20} corresponding to LOD levels 0-5.
 // Fine (green) -> coarse (dark red). Elevation modulates brightness.
 // Phase 6: skirts are darkened (50%) for debug visibility when u_skirtDepth > 0.
+// Phase 7.5: u_forceColor=1 enables neon palette — unmistakable proof chunk renderer is active.
 
 in vec3 v_worldPos;
 uniform int   u_lodStep;
 uniform float u_skirtDepth;  // Phase 6: >0 when drawing a skirt strip
+uniform int   u_forceColor;  // Phase 7.5: 1 = neon debug palette; 0 = normal LOD bands
 out vec4 fragColor;
 
 void main() {
+    // Phase 7.5: neon palette overrides all other logic when u_forceColor=1.
+    // Colors are deliberately extreme so any terrain coverage is unmistakable.
+    if (u_forceColor != 0) {
+        vec3 fc;
+        if      (u_lodStep == 1)  fc = vec3(0.0,  1.0,  0.0);   // LOD0 neon green
+        else if (u_lodStep == 2)  fc = vec3(1.0,  1.0,  0.0);   // LOD1 yellow
+        else if (u_lodStep == 4)  fc = vec3(1.0,  0.0,  1.0);   // LOD2 magenta
+        else if (u_lodStep == 5)  fc = vec3(0.0,  1.0,  1.0);   // LOD3 cyan
+        else if (u_lodStep == 10) fc = vec3(1.0,  0.0,  0.0);   // LOD4 red
+        else                      fc = vec3(1.0,  1.0,  1.0);   // LOD5 white
+        if (u_skirtDepth > 0.0)   fc = vec3(0.0,  0.0,  0.5);   // skirts dark blue
+        fragColor = vec4(fc, 1.0);
+        return;
+    }
+
     vec3 lodColor;
     if      (u_lodStep == 1)  lodColor = vec3(0.0,  0.85, 0.15);  // LOD0 bright green
     else if (u_lodStep == 2)  lodColor = vec3(0.45, 0.85, 0.0);   // LOD1 yellow-green

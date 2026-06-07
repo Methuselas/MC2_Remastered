@@ -24,6 +24,7 @@ static float  s_halfMap    = 0.0f;// (mapSide * 128.0 * 0.5)
 // ---------------------------------------------------------------------------
 
 static GLuint   s_terrainProgram    = 0;
+static int      s_submitZeroStreak  = 0;  // Phase 7.5: consecutive frames with count==0
 static GLint    s_locBlockOriginX   = -1;
 static GLint    s_locBlockOriginY   = -1;
 static GLint    s_locMapSide        = -1;
@@ -31,6 +32,7 @@ static GLint    s_locHalfMap        = -1;
 static GLint    s_locMvp            = -1;
 static GLint    s_locLodStep        = -1;  // Phase 5: per-block LOD stride uniform
 static GLint    s_locSkirtDepth     = -1;  // Phase 6: skirt depth uniform
+static GLint    s_locForceColor     = -1;  // Phase 7.5: neon debug palette override
 
 // ---------------------------------------------------------------------------
 // Patch geometry cache (Phase 4).
@@ -229,13 +231,17 @@ void gos_TerrainLodChunk_Init()
             s_locMapSide      = glGetUniformLocation(s_terrainProgram, "u_mapSide");
             s_locHalfMap      = glGetUniformLocation(s_terrainProgram, "u_halfMap");
             s_locMvp          = glGetUniformLocation(s_terrainProgram, "u_worldToClipGL");
-            s_locLodStep      = glGetUniformLocation(s_terrainProgram, "u_lodStep");   // Phase 5
+            s_locLodStep      = glGetUniformLocation(s_terrainProgram, "u_lodStep");    // Phase 5
             s_locSkirtDepth   = glGetUniformLocation(s_terrainProgram, "u_skirtDepth"); // Phase 6
+            s_locForceColor   = glGetUniformLocation(s_terrainProgram, "u_forceColor"); // Phase 7.5
             printf("[TerrainLodChunk] shader loaded prog=%u "
-                   "locs: originX=%d originY=%d mapSide=%d halfMap=%d mvp=%d lodStep=%d skirtDepth=%d\n",
+                   "locs: originX=%d originY=%d mapSide=%d halfMap=%d mvp=%d lodStep=%d skirtDepth=%d forceColor=%d\n",
                    (unsigned)s_terrainProgram,
                    s_locBlockOriginX, s_locBlockOriginY,
-                   s_locMapSide, s_locHalfMap, s_locMvp, s_locLodStep, s_locSkirtDepth);
+                   s_locMapSide, s_locHalfMap, s_locMvp, s_locLodStep, s_locSkirtDepth, s_locForceColor);
+            fflush(stdout);
+            // Phase 7.5: separate startup confirmation line for easy grep.
+            printf("[TerrainLOD v1] shader program compiled OK (program=%u)\n", s_terrainProgram);
             fflush(stdout);
         }
     }
@@ -271,6 +277,7 @@ void gos_TerrainLodChunk_Destroy()
         s_locMvp            = -1;
         s_locLodStep        = -1;
         s_locSkirtDepth     = -1;
+        s_locForceColor     = -1;
     }
 
     if (s_heightSsbo != 0)
@@ -321,6 +328,25 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         glUniform1f(s_locHalfMap, s_halfMap);
     if (s_locMvp >= 0)
         glUniformMatrix4fv(s_locMvp, 1, GL_FALSE, mvp);
+
+    // Phase 7.5: neon force-color mode — set once per frame before the patch loop.
+    {
+        int forceColorMode = getenv("MC2_TERRAIN_LOD_CHUNK_FORCE_COLOR") ? 1 : 0;
+        if (s_locForceColor >= 0)
+            glUniform1i(s_locForceColor, forceColorMode);
+    }
+
+    // Phase 7.5: log first successful submit so the user can confirm the path is live.
+    // Also reset the zero-submit streak counter on any non-zero submit.
+    {
+        static bool s_firstSubmit = true;
+        s_submitZeroStreak = 0;  // reset on any non-zero submit
+        if (s_firstSubmit && count > 0) {
+            printf("[TerrainLOD v1] FIRST SUBMIT: %d draw commands queued\n", count);
+            fflush(stdout);
+            s_firstSubmit = false;
+        }
+    }
 
     for (int i = 0; i < count; ++i)
     {

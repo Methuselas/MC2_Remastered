@@ -165,6 +165,10 @@ unsigned long				Terrain::gCurrentFrame     = 0;
 int							Terrain::s_terrainChunkSide = 0;
 int							Terrain::s_superchunkSide   = 0;
 
+// Phase 7.5 diagnostic: streak counter for frames where LOD chunk is enabled
+// but zero draw commands are emitted (signals frustum/cull bug).
+static int s_lodZeroCmdFrames = 0;
+
 // ---------------------------------------------------------------------------
 // Terrain LOD chunk Phase 5 — per-block distance LOD selection.
 // LOD_STEPS[i] is the vertex stride baked into each patch VBO.
@@ -685,6 +689,12 @@ long Terrain::init( unsigned long verticesPerMapSide, PacketFile* pakFile, unsig
 
 		gCurrentFrame = 1;
 		s_cmdCount    = 0;
+
+		// Phase 7.5 diagnostic: startup banner — unmistakable confirmation the
+		// chunk renderer is active on this launch.
+		printf("[TerrainLOD v1] ENABLED chunks=%d x=%d ssbo=binding23 drawPath=chunk\n",
+		       s_terrainChunkSide * s_terrainChunkSide, s_terrainChunkSide);
+		fflush(stdout);
 
 		// Initialize per-block metadata.
 		for (int by = 0; by < s_terrainChunkSide; ++by) {
@@ -1575,8 +1585,8 @@ long Terrain::update (void)
 			}
 		}
 
-		// Phase 5 LOD telemetry — one log line per 180 frames.
-		if (gCurrentFrame % 180 == 0 && s_cmdCount > 0)
+		// Phase 5/7.5 LOD telemetry — every frame for first 60 frames, then every 180.
+		if ((gCurrentFrame <= 60 || gCurrentFrame % 180 == 0) && s_cmdCount > 0)
 		{
 			int lodCounts[6] = {};
 			for (int ci = 0; ci < s_cmdCount; ++ci)
@@ -1594,6 +1604,20 @@ long Terrain::update (void)
 			       lodCounts[0], lodCounts[1], lodCounts[2],
 			       lodCounts[3], lodCounts[4], lodCounts[5]);
 			fflush(stdout);
+		}
+
+		// Phase 7.5 diagnostic: zero-command error detection.
+		// If the chunk path is enabled but emits nothing after the first 10 frames,
+		// log an error at 60 consecutive failures and every 300 thereafter.
+		if (getenv("MC2_TERRAIN_LOD_CHUNK")) {
+			if (s_cmdCount == 0 && gCurrentFrame > 10) {
+				++s_lodZeroCmdFrames;
+				if (s_lodZeroCmdFrames == 60 || s_lodZeroCmdFrames % 300 == 0)
+					printf("[TerrainLOD v1] ERROR: enabled but zero draw commands (frame=%lu streak=%d)\n",
+					       (unsigned long)gCurrentFrame, s_lodZeroCmdFrames);
+			} else {
+				s_lodZeroCmdFrames = 0;
+			}
 		}
 
 		// s_drawCmds[] is submitted in Terrain::flushDrawCommands() from gamecam.cpp.
@@ -1766,6 +1790,15 @@ void Terrain::render (void)
 		// IsFrameSolidArmed() alone would kill decals on the =0 revert.
 		if (!getenv("MC2_TERRAIN_LOD_CHUNK"))
 		{
+			// Phase 7.5 diagnostic: confirm the old draw path is active (flag not set).
+			// Fires once so we know which path owns terrain on this launch.
+			static bool s_oldPathLoggedOnce = false;
+			if (!s_oldPathLoggedOnce) {
+				printf("[TerrainLOD v1] OLD draw path active (flag not set)\n");
+				fflush(stdout);
+				s_oldPathLoggedOnce = true;
+			}
+
 			if (!(gos_terrain_indirect::IsFrameSolidArmed()
 			      && gos_terrain_indirect::IsFrameOverlayArmed()))
 			{
