@@ -45,6 +45,7 @@
 #include"../GameOS/gameos/gos_terrain_lighting.h"
 #include"../GameOS/gameos/gos_terrain_height_tex.h"  // TERRAIN-NORMALS-FROM-HEIGHT-1
 #include"../GameOS/gameos/gos_terrain_lod_chunk.h"   // Terrain LOD chunk Phase 1
+#include"../GameOS/gameos/utils/logging.h"            // Terrain LOD chunk Phase 2: throttled false-negative log
 #include"terrain_admission_mode.h"  // F6 T2: shared isModern() flag for terrain.cpp + quad.cpp
 
 #include <vector>
@@ -1127,6 +1128,148 @@ long Terrain::update (void)
 	{
 		ZoneScopedN("Terrain::update makeLists");
 		Terrain::mapData->makeLists(vertexList,numberVertices,quadList,numberQuads);
+	}
+
+	// -------------------------------------------------------------------------
+	// Terrain LOD chunk Phase 2 — two-level AABB frustum cull (shadow mode).
+	// MC2_TERRAIN_LOD_CHUNK=1 gate. Observational only: writes bm.inFrustum,
+	// builds s_drawCmds[], logs false negatives. Zero GL calls. NOT submitted.
+	// PHASE2_ONLY: remove validation loop + BRIDGE_OBJBLOCK write before Phase 4
+	//   (geometry() is suppressed in Phase 4, making objBlockInfo stale).
+	if (s_blockMeta && s_superchunkMeta && s_drawCmds && eye)
+	{
+		ZoneScopedN("Terrain::update lodChunkCull");
+
+		// Increment per-frame counter.
+		++gCurrentFrame;
+
+		// Reset draw-command list.
+		s_cmdCount = 0;
+
+		// Cache frustum planes once for this frame (eye->cacheFrustumPlanes()
+		// is idempotent per-frame; safe to call here even if geometry() also
+		// calls it later).
+		eye->cacheFrustumPlanes();
+		const float (*planes)[4] = eye->getCachedFrustumPlanes();
+
+		const float halfMap = worldUnitsMapSide * 0.5f;
+
+		// --- Level 1: superchunk cull ---
+		for (int scY = 0; scY < s_superchunkSide; ++scY)
+		{
+			for (int scX = 0; scX < s_superchunkSide; ++scX)
+			{
+				SuperchunkMeta& sc = s_superchunkMeta[scX + scY * s_superchunkSide];
+
+				Stuff::Vector3D scMn, scMx;
+				scMn.x = sc.worldMinX; scMn.y = sc.worldMinY; scMn.z = sc.worldMinZ;
+				scMx.x = sc.worldMaxX; scMx.y = sc.worldMaxY; scMx.z = sc.worldMaxZ;
+
+				sc.inFrustum = eye->quadAabbInFrustum(planes, scMn, scMx);
+				if (!sc.inFrustum)
+				{
+					// Cull all constituent blocks without testing them.
+					for (int dy = 0; dy < 4; ++dy)
+					{
+						for (int dx = 0; dx < 4; ++dx)
+						{
+							int bx = scX * 4 + dx, by = scY * 4 + dy;
+							if (bx >= s_terrainChunkSide || by >= s_terrainChunkSide) continue;
+							s_blockMeta[bx + by * s_terrainChunkSide].inFrustum = false;
+						}
+					}
+					continue;
+				}
+
+				// --- Level 2: block cull within visible superchunk ---
+				for (int dy = 0; dy < 4; ++dy)
+				{
+					for (int dx = 0; dx < 4; ++dx)
+					{
+						int bx = scX * 4 + dx, by = scY * 4 + dy;
+						if (bx >= s_terrainChunkSide || by >= s_terrainChunkSide) continue;
+
+						TerrainBlockMeta& bm = s_blockMeta[bx + by * s_terrainChunkSide];
+
+						// Recompute dirty AABB before testing.
+						if (bm.dirtyAabb)
+							recomputeBlockAabb(bm);
+
+						// World-space AABB (same formula as recomputeSuperchunkAabb).
+						Stuff::Vector3D bmMn, bmMx;
+						bmMn.x =  float(bm.originX)                  * 128.0f - halfMap;
+						bmMx.x =  float(bm.originX + bm.quadCountX)  * 128.0f - halfMap;
+						bmMx.y =  halfMap - float(bm.originY)                  * 128.0f;
+						bmMn.y =  halfMap - float(bm.originY + bm.quadCountY)  * 128.0f;
+						bmMn.z = bm.minElev;
+						bmMx.z = bm.maxElev;
+
+						// CRIT-1: write inFrustum BEFORE any continue.
+						bool passedCull = eye->quadAabbInFrustum(planes, bmMn, bmMx);
+						bm.inFrustum = passedCull;
+						if (!bm.inFrustum) continue;
+
+						// Emit draw command (Phase 2: lodStep=1 fixed; Phase 3 will choose).
+						s_drawCmds[s_cmdCount++] = {
+							bm.originX,
+							bm.originY,
+							1 /*lodStep: fixed in Phase 2*/,
+							(bm.quadCountX & 0xFF) | ((bm.quadCountY & 0xFF) << 8)
+						};
+					}
+				}
+			}
+		}
+
+		// --- Phase 2 validation: check for false negatives vs objBlockInfo ---
+		// PHASE2_ONLY: remove this block before Phase 4.
+		{
+			int falseNegatives = 0;
+			for (int by = 0; by < s_terrainChunkSide; ++by)
+			{
+				for (int bx = 0; bx < s_terrainChunkSide; ++bx)
+				{
+					if (bx >= blocksMapSide || by >= blocksMapSide) continue;
+					const TerrainBlockMeta& bm = s_blockMeta[bx + by * s_terrainChunkSide];
+					int objIdx = bx + by * blocksMapSide;
+					// False negative: cull says hidden but object system says visible.
+					// False positives (inFrustum=true && !active) are acceptable (conservative).
+					if (!bm.inFrustum && objBlockInfo[objIdx].active)
+						++falseNegatives;
+				}
+			}
+
+			static int s_validLogThrottle = 0;
+			if (falseNegatives > 0)
+			{
+				++s_validLogThrottle;
+				if (s_validLogThrottle >= 60)
+				{
+					s_validLogThrottle = 0;
+					log_warning("TerrainLODChunk: %d false negatives -- Phase 3 advance BLOCKED\n",
+					            falseNegatives);
+				}
+			}
+			else
+			{
+				s_validLogThrottle = 0;
+			}
+		}
+
+		// --- Bridge gate: optionally mirror inFrustum -> objBlockInfo.active ---
+		// PHASE2_ONLY: remove this block before Phase 4.
+		if (getenv("MC2_TERRAIN_LOD_CHUNK_BRIDGE_OBJBLOCK"))
+		{
+			for (int by = 0; by < s_terrainChunkSide; ++by)
+				for (int bx = 0; bx < s_terrainChunkSide; ++bx)
+				{
+					if (bx >= blocksMapSide || by >= blocksMapSide) continue;
+					objBlockInfo[bx + by * blocksMapSide].active =
+					    s_blockMeta[bx + by * s_terrainChunkSide].inFrustum;
+				}
+		}
+		// NOTE: s_drawCmds[] is populated but NOT submitted (Phase 2 shadow mode).
+		// gos_TerrainLodChunk_SubmitDrawCommands() must NOT be called here.
 	}
 
 	// Set terrain light direction for normal map shader
