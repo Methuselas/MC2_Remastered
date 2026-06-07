@@ -565,13 +565,18 @@ void PackAndDispatch() {
         const int nv = land->getNumVertices();
         const VertexPtr vlist = land->getVertexList();
 
-        // Reset entries for live vertices (don't memset entire array each frame —
-        // only clear the flag so shader knows the vertex is "untouched" if not reached,
-        // but since we're writing ALL reached slots, this is fine to do selectively).
-        // Actually: clear entire pack buffer for correctness (stale data from prior frame
-        // at vertexNums that are no longer in camera window). The buffer is numVertices
-        // entries; at 14400 × 32B = ~450KB, a memset is fast (~200µs worst case).
-        memset(s_packBuf.data(), 0, s_numVertices * sizeof(GpuTerrainVertexInput));
+        // PERF-FIX: previously memset'd the entire pack buffer (O(N²) = up to 32 MB
+        // for a 1k map) every frame even though only ~40K entries (200×200 visible
+        // window) are written.  The compute dispatch is bounded by the solid-window
+        // SSBO (camera-windowed recipe indices), so stale entries for off-screen quads
+        // are never dispatched and stale lighting data causes no visual artifact.
+        // Instead we skip the full memset and upload only the min–max contiguous range
+        // covering this frame's visible window — typically ~6.5 MB for a 1k map vs 32 MB.
+        // For the full-range fallback (s_solidUseWindow=0), off-screen quads have stale
+        // lighting but are frustum-culled by the compute shader before reaching the draw
+        // command, so correctness is maintained in both modes.
+        uint32_t packMinVN = s_numVertices;   // sentinel: will be lowered to min written vn
+        uint32_t packMaxVN = 0;               // will be raised to max written vn
 
         // Step 7: MC2_HAZE_PARITY — per-frame accumulators (first ~256 verts).
         int    hpProbed = 0;
@@ -586,7 +591,11 @@ void PackAndDispatch() {
             const Vertex& v = vlist[i];
             if (v.vertexNum < 0 || static_cast<uint32_t>(v.vertexNum) >= s_numVertices) continue;
 
-            GpuTerrainVertexInput& vi = s_packBuf[v.vertexNum];
+            const uint32_t uvn = static_cast<uint32_t>(v.vertexNum);
+            if (uvn < packMinVN) packMinVN = uvn;
+            if (uvn > packMaxVN) packMaxVN = uvn;
+
+            GpuTerrainVertexInput& vi = s_packBuf[uvn];
             vi.xy[0]      = v.vx;
             vi.xy[1]      = v.vy;
             vi.elevation  = v.pVertex ? v.pVertex->elevation : 0.0f;
@@ -655,11 +664,17 @@ void PackAndDispatch() {
             }
         }
 
-        // Upload full dense pack to GPU
-        const GLsizeiptr uploadBytes = static_cast<GLsizeiptr>(s_numVertices * sizeof(GpuTerrainVertexInput));
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_vertexInputSsbo);
-        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, uploadBytes, s_packBuf.data());
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        // Upload only the visible window range [packMinVN, packMaxVN].
+        // For a 1k map (N=1020) with a 200-vertex view window this is ~6.5 MB
+        // instead of the previous ~32 MB full-buffer upload.
+        if (packMinVN <= packMaxVN) {
+            const GLintptr  uploadOffset = static_cast<GLintptr >(packMinVN * sizeof(GpuTerrainVertexInput));
+            const GLsizeiptr uploadBytes = static_cast<GLsizeiptr>((packMaxVN - packMinVN + 1) * sizeof(GpuTerrainVertexInput));
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_vertexInputSsbo);
+            glBufferSubData(GL_SHADER_STORAGE_BUFFER, uploadOffset, uploadBytes,
+                            s_packBuf.data() + packMinVN);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        }
     }
 
     // --- Pack light input SSBO (lights starting at index 2 — first two factored into sun) ---

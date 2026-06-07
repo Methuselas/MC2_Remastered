@@ -44,6 +44,11 @@
 
 #include <SDL2/SDL.h>
 
+#ifdef TRACY_ENABLE
+#  include "tracy/Tracy.hpp"
+#  include "tracy/TracyOpenGL.hpp"
+#endif
+
 #ifdef MC2_IMGUI
 #include "GuiRuntime.h"
 #include "imgui.h"
@@ -295,6 +300,9 @@ void __stdcall InitGameOS(HINSTANCE /*hInstance*/, HWND hWindow, char* commandLi
 
             if (glewErr == GLEW_OK)
             {
+#ifdef TRACY_ENABLE
+                TracyGpuContext;
+#endif
                 EditorGameOSTrace("InitGameOS: before gos_CreateRenderer context=%p window=%p", g_editorRenderContext, g_editorRenderWindow);
                 gos_CreateRenderer(g_editorRenderContext, g_editorRenderWindow, w, h);
                 EditorGameOSTrace("InitGameOS: after gos_CreateRenderer renderer=%p", getGosRenderer());
@@ -588,6 +596,11 @@ DWORD __stdcall RunGameOSLogic()
     // down state the renderer expects to persist across the swap.  Let the
     // renderer own its own program lifecycle.
     graphics::swap_window(g_editorRenderWindow);
+
+#ifdef TRACY_ENABLE
+    TracyGpuCollect;
+    FrameMark;
+#endif
 
     return 0;
 }
