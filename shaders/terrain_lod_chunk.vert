@@ -1,9 +1,11 @@
 layout(location = 0) in ivec2 localOffset;  // (localX, localY) from patch VBO
+layout(location = 1) in int   isSkirtFlag;  // Phase 6: 0=surface vertex, 1=skirt bottom vertex
 
 uniform int   u_blockOriginX;
 uniform int   u_blockOriginY;
 uniform int   u_mapSide;
 uniform float u_halfMap;
+uniform float u_skirtDepth;   // Phase 6: world-unit depth to pull skirt verts downward
 uniform mat4  u_worldToClipGL;
 
 layout(binding = 23, std430) readonly buffer TerrainHeightBuf {
@@ -18,6 +20,10 @@ void main() {
     mapX = clamp(mapX, 0, u_mapSide - 1);
     mapY = clamp(mapY, 0, u_mapSide - 1);
     float h = heights[mapX + mapY * u_mapSide];
+
+    // Phase 6: skirt bottom verts are pulled below the surface by u_skirtDepth.
+    // For main patch draws attrib 1 is disabled, so isSkirtFlag reads as 0.
+    h -= float(isSkirtFlag) * u_skirtDepth;
 
     float worldX = float(mapX) * 128.0 - u_halfMap;
     float worldY = u_halfMap - float(mapY) * 128.0;

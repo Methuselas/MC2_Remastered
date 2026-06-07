@@ -1,9 +1,11 @@
 // Phase 5: LOD-band debug visualization.
 // u_lodStep ∈ {1,2,4,5,10,20} corresponding to LOD levels 0-5.
 // Fine (green) -> coarse (dark red). Elevation modulates brightness.
+// Phase 6: skirts are darkened (50%) for debug visibility when u_skirtDepth > 0.
 
 in vec3 v_worldPos;
-uniform int u_lodStep;
+uniform int   u_lodStep;
+uniform float u_skirtDepth;  // Phase 6: >0 when drawing a skirt strip
 out vec4 fragColor;
 
 void main() {
@@ -18,5 +20,10 @@ void main() {
     // Subtle elevation modulation: normalize height to [0.6, 1.0].
     float t = clamp((v_worldPos.z + 200.0) / 3200.0, 0.0, 1.0);
     float bright = 0.6 + 0.4 * t;
-    fragColor = vec4(lodColor * bright, 1.0);
+
+    // Phase 6: darken skirt pixels 50% for debug visibility.
+    if (u_skirtDepth > 0.0)
+        fragColor = vec4(lodColor * bright * 0.5, 1.0);
+    else
+        fragColor = vec4(lodColor * bright, 1.0);
 }

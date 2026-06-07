@@ -218,6 +218,7 @@ class Terrain
 		static TerrainBlockMeta*				s_blockMeta;      // [s_terrainChunkSide * s_terrainChunkSide]
 		static SuperchunkMeta*					s_superchunkMeta; // [s_superchunkSide * s_superchunkSide]
 		static TerrainDrawCommand*				s_drawCmds;       // [s_terrainChunkSide * s_terrainChunkSide]
+		static float*							s_skirtDepths;    // [s_terrainChunkSide * s_terrainChunkSide], parallel to s_drawCmds
 		static int								s_cmdCount;
 		static unsigned long					gCurrentFrame;    // starts at 1; incremented each frame
 		static int								s_terrainChunkSide; // = ceil(quads/20); render chunk array dim

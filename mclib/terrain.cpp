@@ -159,6 +159,7 @@ bool						Terrain::recalcLight = false;
 TerrainBlockMeta*			Terrain::s_blockMeta       = nullptr;
 SuperchunkMeta*				Terrain::s_superchunkMeta  = nullptr;
 TerrainDrawCommand*			Terrain::s_drawCmds        = nullptr;
+float*						Terrain::s_skirtDepths     = nullptr;
 int							Terrain::s_cmdCount        = 0;
 unsigned long				Terrain::gCurrentFrame     = 0;
 int							Terrain::s_terrainChunkSide = 0;
@@ -670,14 +671,17 @@ long Terrain::init( unsigned long verticesPerMapSide, PacketFile* pakFile, unsig
 		s_blockMeta      = (TerrainBlockMeta*)  terrainHeap->Malloc(sizeof(TerrainBlockMeta)   * nBlocks);
 		s_superchunkMeta = (SuperchunkMeta*)    terrainHeap->Malloc(sizeof(SuperchunkMeta)      * nSuperchunks);
 		s_drawCmds       = (TerrainDrawCommand*)terrainHeap->Malloc(sizeof(TerrainDrawCommand)  * nBlocks);
+		s_skirtDepths    = new float[nBlocks];
 
 		gosASSERT(s_blockMeta      != NULL);
 		gosASSERT(s_superchunkMeta != NULL);
 		gosASSERT(s_drawCmds       != NULL);
+		gosASSERT(s_skirtDepths    != NULL);
 
 		memset(s_blockMeta,      0, sizeof(TerrainBlockMeta)   * nBlocks);
 		memset(s_superchunkMeta, 0, sizeof(SuperchunkMeta)      * nSuperchunks);
 		memset(s_drawCmds,       0, sizeof(TerrainDrawCommand)  * nBlocks);
+		memset(s_skirtDepths,    0, sizeof(float)               * nBlocks);
 
 		gCurrentFrame = 1;
 		s_cmdCount    = 0;
@@ -994,6 +998,7 @@ void Terrain::destroy (void)
 		if (s_blockMeta)      { terrainHeap->Free(s_blockMeta);      s_blockMeta      = nullptr; }
 		if (s_superchunkMeta) { terrainHeap->Free(s_superchunkMeta); s_superchunkMeta = nullptr; }
 		if (s_drawCmds)       { terrainHeap->Free(s_drawCmds);       s_drawCmds       = nullptr; }
+		delete[] s_skirtDepths; s_skirtDepths = nullptr;
 		s_terrainChunkSide = 0;
 		s_superchunkSide   = 0;
 		s_cmdCount         = 0;
@@ -1315,6 +1320,7 @@ long Terrain::update (void)
 		}
 
 		// --- Phase 5 Pass 3: emit draw commands using lodLevel -> lodStep ---
+		// --- Phase 6: also compute per-block skirt depth (parallel array) ---
 		for (int by = 0; by < s_terrainChunkSide; ++by)
 		{
 			for (int bx = 0; bx < s_terrainChunkSide; ++bx)
@@ -1325,6 +1331,13 @@ long Terrain::update (void)
 				s_drawCmds[s_cmdCount].blockOriginY     = bm.originY;
 				s_drawCmds[s_cmdCount].lodStep          = LOD_STEPS[bm.lodLevel];
 				s_drawCmds[s_cmdCount].quadCountsPacked = (bm.quadCountX & 0xFF) | ((bm.quadCountY & 0xFF) << 8);
+				// Phase 6: skirt depth = max(64, (maxElev - minElev) + 32).
+				// bm.minElev/maxElev are populated by recomputeBlockAabb() before this loop.
+				{
+					float elevRange = bm.maxElev - bm.minElev;
+					float depth     = elevRange + 32.0f;
+					s_skirtDepths[s_cmdCount] = (depth > 64.0f) ? depth : 64.0f;
+				}
 				++s_cmdCount;
 			}
 		}
@@ -1619,7 +1632,7 @@ void Terrain::render (void)
 void Terrain::flushDrawCommands (void)
 {
 	if (s_blockMeta && s_cmdCount > 0)
-		gos_TerrainLodChunk_SubmitDrawCommands(s_drawCmds, s_cmdCount);
+		gos_TerrainLodChunk_SubmitDrawCommands(s_drawCmds, s_skirtDepths, s_cmdCount);
 }
 
 //---------------------------------------------------------------------------

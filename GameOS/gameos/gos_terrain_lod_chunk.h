@@ -17,7 +17,11 @@ constexpr uint32_t TERRAIN_HEIGHT_SSBO_BINDING = 23u;
 
 // Submit block draw commands for the current frame.
 // count==0 is a strict no-op. mclib calls this via Terrain::flushDrawCommands() only.
-void gos_TerrainLodChunk_SubmitDrawCommands(const TerrainDrawCommand* cmds, int count);
+// skirtDepths: parallel float array [count], one depth value per command.
+void gos_TerrainLodChunk_SubmitDrawCommands(
+    const TerrainDrawCommand* cmds,
+    const float*              skirtDepths,
+    int                       count);
 
 // Upload full heightfield to GPU SSBO at map load.
 // elevations: float[mapSide*mapSide] row-major.

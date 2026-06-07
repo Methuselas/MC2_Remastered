@@ -30,6 +30,7 @@ static GLint    s_locMapSide        = -1;
 static GLint    s_locHalfMap        = -1;
 static GLint    s_locMvp            = -1;
 static GLint    s_locLodStep        = -1;  // Phase 5: per-block LOD stride uniform
+static GLint    s_locSkirtDepth     = -1;  // Phase 6: skirt depth uniform
 
 // ---------------------------------------------------------------------------
 // Patch geometry cache (Phase 4).
@@ -39,10 +40,14 @@ static GLint    s_locLodStep        = -1;  // Phase 5: per-block LOD stride unif
 // ---------------------------------------------------------------------------
 
 struct PatchShape {
-    GLuint vbo;
-    GLuint ibo;
+    GLuint vbo;          // main patch: int16_t[2] (lx, ly) per vertex
+    GLuint ibo;          // main patch: uint16_t triangle indices
     int    vertexCount;
     int    indexCount;
+    GLuint skirtVbo;     // Phase 6: int16_t[4] (lx, ly, isSkirt, _pad) per skirt vertex
+    GLuint skirtIbo;     // Phase 6: uint16_t triangle indices for skirts
+    int    skirtVertexCount;
+    int    skirtIndexCount;
 };
 
 static std::map<uint32_t, PatchShape> s_patchCache;
@@ -113,6 +118,67 @@ static const PatchShape& getOrBuildPatch(int qcX, int qcY, int lodStep)
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
+    // -----------------------------------------------------------------------
+    // Phase 6: Build skirt geometry — four edge strips, each a quad-strip.
+    // SkirtVertex: lx, ly, isSkirt (0=surface, 1=below), _pad.
+    // The vertex shader reads isSkirt and applies: h -= isSkirt * u_skirtDepth.
+    // Winding is CCW viewed from outside; backface culling is disabled during
+    // skirt draws so winding does not need to be perfect in this first pass.
+    // -----------------------------------------------------------------------
+    struct SkirtVertex { int16_t lx, ly, isSkirt, _pad; };
+    std::vector<SkirtVertex> skirtVerts;
+    std::vector<uint16_t>    skirtIdx;
+
+    // Each edge strip has 2 * edgeLen vertices.
+    // Indices: for each quad in the strip, 2 triangles connecting top[i]/bot[i] to top[i+1]/bot[i+1].
+    // Layout within strip (base offset B, 2 verts per column: top=B+2*i, bot=B+2*i+1):
+    //   tri1: top[i], bot[i], bot[i+1]  → B+2*i, B+2*i+1, B+2*(i+1)+1
+    //   tri2: top[i], bot[i+1], top[i+1] → B+2*i, B+2*(i+1)+1, B+2*(i+1)
+    // This is CCW when the strip faces the camera from the outside (correct for all four edges
+    // when backface culling is disabled, so no per-edge winding correction needed).
+
+    auto buildEdge = [&](const std::vector<int>& uPos, int fixedCoord, bool fixedIsY)
+    {
+        int base = (int)skirtVerts.size();
+        int n    = (int)uPos.size();
+        for (int i = 0; i < n; ++i) {
+            int16_t lx = fixedIsY ? (int16_t)uPos[i] : (int16_t)fixedCoord;
+            int16_t ly = fixedIsY ? (int16_t)fixedCoord : (int16_t)uPos[i];
+            skirtVerts.push_back({lx, ly, 0, 0});  // surface
+            skirtVerts.push_back({lx, ly, 1, 0});  // below
+        }
+        for (int i = 0; i < n - 1; ++i) {
+            uint16_t t0 = (uint16_t)(base + 2*i);
+            uint16_t b0 = (uint16_t)(base + 2*i + 1);
+            uint16_t t1 = (uint16_t)(base + 2*(i+1));
+            uint16_t b1 = (uint16_t)(base + 2*(i+1) + 1);
+            skirtIdx.insert(skirtIdx.end(), {t0, b0, b1, t0, b1, t1});
+        }
+    };
+
+    buildEdge(xs, (int)ys.front(), false); // North edge: y = ys[0], iterate x
+    buildEdge(xs, (int)ys.back(),  false); // South edge: y = ys.back(), iterate x
+    buildEdge(ys, (int)xs.front(), true);  // West edge:  x = xs[0], iterate y
+    buildEdge(ys, (int)xs.back(),  true);  // East edge:  x = xs.back(), iterate y
+
+    ps.skirtVertexCount = (int)skirtVerts.size();
+    ps.skirtIndexCount  = (int)skirtIdx.size();
+
+    glGenBuffers(1, &ps.skirtVbo);
+    glBindBuffer(GL_ARRAY_BUFFER, ps.skirtVbo);
+    glBufferData(GL_ARRAY_BUFFER,
+                 (GLsizeiptr)(skirtVerts.size() * sizeof(SkirtVertex)),
+                 skirtVerts.data(), GL_STATIC_DRAW);
+
+    glGenBuffers(1, &ps.skirtIbo);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ps.skirtIbo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                 (GLsizeiptr)(skirtIdx.size() * sizeof(uint16_t)),
+                 skirtIdx.data(), GL_STATIC_DRAW);
+
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+
     s_patchCache[key] = ps;
     return s_patchCache.at(key);
 }
@@ -163,12 +229,13 @@ void gos_TerrainLodChunk_Init()
             s_locMapSide      = glGetUniformLocation(s_terrainProgram, "u_mapSide");
             s_locHalfMap      = glGetUniformLocation(s_terrainProgram, "u_halfMap");
             s_locMvp          = glGetUniformLocation(s_terrainProgram, "u_worldToClipGL");
-            s_locLodStep      = glGetUniformLocation(s_terrainProgram, "u_lodStep");  // Phase 5
+            s_locLodStep      = glGetUniformLocation(s_terrainProgram, "u_lodStep");   // Phase 5
+            s_locSkirtDepth   = glGetUniformLocation(s_terrainProgram, "u_skirtDepth"); // Phase 6
             printf("[TerrainLodChunk] shader loaded prog=%u "
-                   "locs: originX=%d originY=%d mapSide=%d halfMap=%d mvp=%d lodStep=%d\n",
+                   "locs: originX=%d originY=%d mapSide=%d halfMap=%d mvp=%d lodStep=%d skirtDepth=%d\n",
                    (unsigned)s_terrainProgram,
                    s_locBlockOriginX, s_locBlockOriginY,
-                   s_locMapSide, s_locHalfMap, s_locMvp, s_locLodStep);
+                   s_locMapSide, s_locHalfMap, s_locMvp, s_locLodStep, s_locSkirtDepth);
             fflush(stdout);
         }
     }
@@ -179,10 +246,12 @@ void gos_TerrainLodChunk_Init()
 
 void gos_TerrainLodChunk_Destroy()
 {
-    // Free patch cache VBOs/IBOs.
+    // Free patch cache VBOs/IBOs (main + Phase 6 skirt).
     for (auto& kv : s_patchCache) {
         glDeleteBuffers(1, &kv.second.vbo);
         glDeleteBuffers(1, &kv.second.ibo);
+        glDeleteBuffers(1, &kv.second.skirtVbo);
+        glDeleteBuffers(1, &kv.second.skirtIbo);
     }
     s_patchCache.clear();
 
@@ -201,6 +270,7 @@ void gos_TerrainLodChunk_Destroy()
         s_locHalfMap        = -1;
         s_locMvp            = -1;
         s_locLodStep        = -1;
+        s_locSkirtDepth     = -1;
     }
 
     if (s_heightSsbo != 0)
@@ -218,7 +288,10 @@ void gos_TerrainLodChunk_Destroy()
 // count==0 is a strict no-op. Restores GL state on exit.
 // ---------------------------------------------------------------------------
 
-void gos_TerrainLodChunk_SubmitDrawCommands(const TerrainDrawCommand* cmds, int count)
+void gos_TerrainLodChunk_SubmitDrawCommands(
+    const TerrainDrawCommand* cmds,
+    const float*              skirtDepths,
+    int                       count)
 {
     if (count == 0) return;
     if (s_terrainProgram == 0 || s_heightSsbo == 0) return;
@@ -232,6 +305,8 @@ void gos_TerrainLodChunk_SubmitDrawCommands(const TerrainDrawCommand* cmds, int 
     glGetIntegerv(GL_CURRENT_PROGRAM, &prevProg);
     GLint prevVAO = 0;
     glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVAO);
+    // Phase 6: save cull state so we can disable it around skirt draws.
+    GLboolean prevCullFace = glIsEnabled(GL_CULL_FACE);
 
     glUseProgram(s_terrainProgram);
     glBindVertexArray(s_patchVao);
@@ -257,7 +332,7 @@ void gos_TerrainLodChunk_SubmitDrawCommands(const TerrainDrawCommand* cmds, int 
 
         const PatchShape& patch = getOrBuildPatch(qcX, qcY, cmd.lodStep);
 
-        // Per-block uniforms.
+        // Per-block uniforms (shared by main patch and skirt).
         if (s_locBlockOriginX >= 0)
             glUniform1i(s_locBlockOriginX, cmd.blockOriginX);
         if (s_locBlockOriginY >= 0)
@@ -265,17 +340,54 @@ void gos_TerrainLodChunk_SubmitDrawCommands(const TerrainDrawCommand* cmds, int 
         if (s_locLodStep >= 0)
             glUniform1i(s_locLodStep, cmd.lodStep);  // Phase 5: LOD band for debug vis
 
-        // Bind VBO: ivec2 localOffset at attribute location 0.
+        // --- Draw main patch (skirtDepth=0 so isSkirtFlag pulls height by 0) ---
+        if (s_locSkirtDepth >= 0)
+            glUniform1f(s_locSkirtDepth, 0.0f);
+
+        // Attrib 0: ivec2 localOffset. Attrib 1 (isSkirt) left disabled -> reads as 0.
+        glDisableVertexAttribArray(1);
         glBindBuffer(GL_ARRAY_BUFFER, patch.vbo);
         glEnableVertexAttribArray(0);
         glVertexAttribIPointer(0, 2, GL_SHORT, (GLsizei)(2 * sizeof(int16_t)), (const void*)0);
 
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, patch.ibo);
         glDrawElements(GL_TRIANGLES, patch.indexCount, GL_UNSIGNED_SHORT, 0);
+
+        // --- Phase 6: Draw skirt strips ---
+        if (patch.skirtIndexCount > 0 && skirtDepths != nullptr)
+        {
+            float skirtDepth = skirtDepths[i];
+            if (skirtDepth > 0.0f)
+            {
+                if (s_locSkirtDepth >= 0)
+                    glUniform1f(s_locSkirtDepth, skirtDepth);
+
+                // Disable backface culling for skirts (avoids needing perfect winding).
+                glDisable(GL_CULL_FACE);
+
+                // Attrib 0: lx, ly (first 2 int16_t of SkirtVertex, stride=8).
+                // Attrib 1: isSkirt (third int16_t of SkirtVertex, offset=4).
+                glBindBuffer(GL_ARRAY_BUFFER, patch.skirtVbo);
+                glEnableVertexAttribArray(0);
+                glVertexAttribIPointer(0, 2, GL_SHORT, (GLsizei)(4 * sizeof(int16_t)), (const void*)0);
+                glEnableVertexAttribArray(1);
+                glVertexAttribIPointer(1, 1, GL_SHORT, (GLsizei)(4 * sizeof(int16_t)), (const void*)(2 * sizeof(int16_t)));
+
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, patch.skirtIbo);
+                glDrawElements(GL_TRIANGLES, patch.skirtIndexCount, GL_UNSIGNED_SHORT, 0);
+
+                glDisableVertexAttribArray(1);
+
+                // Restore cull state to what it was before this batch.
+                if (prevCullFace)
+                    glEnable(GL_CULL_FACE);
+            }
+        }
     }
 
     // Restore GL state.
     glDisableVertexAttribArray(0);
+    glDisableVertexAttribArray(1);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_HEIGHT_SSBO_BINDING, 0);
