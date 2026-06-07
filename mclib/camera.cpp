@@ -878,6 +878,89 @@ unsigned long Camera::inverseProject (Stuff::Vector2DOf<long> &screenPos, Stuff:
 	}
 
 	//-----------------------------------------------------------
+	// Phase 7B: heightfield raycast picker — replaces the quadList AABB/
+	// screen-triangle scan when MC2_TERRAIN_LOD_CHUNK=1.
+	// The quadList may be empty or stale under the LOD chunk path, so we
+	// build a world-space ray from the screen pixel via worldToClipGL()^-1
+	// and fire it against the full-resolution PostcompVertex heightfield.
+	// Object picking (findObjectByMouse) is UNAFFECTED — this replaces only
+	// the terrain-surface portion of inverseProject.
+	static const bool s_lodChunkPick = (std::getenv("MC2_TERRAIN_LOD_CHUNK") != nullptr);
+	if (s_lodChunkPick && land)
+	{
+		// Build the GL clip-to-world inverse matrix.
+		Stuff::Matrix4D M = worldToClipGL();
+		Stuff::Matrix4D Minv;
+		Minv.Invert(M);
+
+		// Convert screen pixel to GL NDC.
+		// screenPos: Y-down from top-left (same convention as screenResolution).
+		// GL NDC: x in [-1,+1] left-to-right, y in [-1,+1] bottom-to-top.
+		const float w = screenResolution.x;
+		const float h = screenResolution.y;
+		const float ndcX =  2.0f * (float(screenPos.x) / w) - 1.0f;
+		const float ndcY =  1.0f - 2.0f * (float(screenPos.y) / h);
+
+		// Unproject near and far NDC points to world space.
+		// Row-vector convention: world_row = clip_row * Minv.
+		// Clip near: (ndcX, ndcY, -1, 1); Clip far: (ndcX, ndcY, +1, 1).
+		auto unprojectNDC = [&](float nx, float ny, float nz) -> Stuff::Vector3D {
+			// clip_row * Minv; w=1
+			float wx = nx * Minv(0,0) + ny * Minv(1,0) + nz * Minv(2,0) + Minv(3,0);
+			float wy = nx * Minv(0,1) + ny * Minv(1,1) + nz * Minv(2,1) + Minv(3,1);
+			float wz = nx * Minv(0,2) + ny * Minv(1,2) + nz * Minv(2,2) + Minv(3,2);
+			float ww = nx * Minv(0,3) + ny * Minv(1,3) + nz * Minv(2,3) + Minv(3,3);
+			Stuff::Vector3D v;
+			const float invW = (fabsf(ww) > 1e-8f) ? (1.0f / ww) : 0.0f;
+			v.x = wx * invW;
+			v.y = wy * invW;
+			v.z = wz * invW;
+			return v;
+		};
+
+		Stuff::Vector3D nearPt = unprojectNDC(ndcX, ndcY, -1.0f);
+		Stuff::Vector3D farPt  = unprojectNDC(ndcX, ndcY,  1.0f);
+
+		// worldToClipGL uses the GL axis swap (x'=-x, y'=z, z'=y).
+		// The unprojected world positions are in GL-swapped space:
+		//   glX = -mc2X,  glY = mc2Z,  glZ = mc2Y
+		// Invert to recover MC2 world coords:
+		//   mc2X = -glX,  mc2Y = glZ,  mc2Z = glY
+		auto glToMC2 = [](const Stuff::Vector3D& g) -> Stuff::Vector3D {
+			Stuff::Vector3D r;
+			r.x = -g.x;
+			r.y =  g.z;
+			r.z =  g.y;
+			return r;
+		};
+		Stuff::Vector3D ro = glToMC2(nearPt);
+		Stuff::Vector3D rd_raw = glToMC2(farPt);
+
+		float rdx = rd_raw.x - ro.x;
+		float rdy = rd_raw.y - ro.y;
+		float rdz = rd_raw.z - ro.z;
+		const float rlen = sqrtf(rdx*rdx + rdy*rdy + rdz*rdz);
+		if (rlen > 1e-6f)
+		{
+			const float inv = 1.0f / rlen;
+			rdx *= inv; rdy *= inv; rdz *= inv;
+		}
+
+		float hitX, hitY, hitZ;
+		if (Terrain::raycastTerrain(ro.x, ro.y, ro.z, rdx, rdy, rdz,
+		                            &hitX, &hitY, &hitZ))
+		{
+			point.x = hitX;
+			point.y = hitY;
+			point.z = hitZ;
+			return 0;
+		}
+		// Miss — fall through to the quadList path (which may also miss and
+		// return 1). On an empty quadList the old path will iterate zero tiles
+		// and hit the off-map fallback, which returns 1 (acceptable miss).
+	}
+
+	//-----------------------------------------------------------
 	// VPL-retirement Step 3 (3a): recursion-free tile selection.
 	// Replaces the old per-frame VPL tile walk (clipInfo admission +
 	// overThisTile screen test reading stale vertices[]->px/py + closest-pz

@@ -293,6 +293,17 @@ class Terrain
 		// getBlockAndVertexNumber (which has ~12 collision-critical callers).
 		static long worldToBlockIdx (float wx, float wy);
 
+		// Phase 7B: heightfield raycast for terrain picking.
+		// Replaces the quadList AABB/screen-triangle scan inside
+		// Camera::inverseProject when MC2_TERRAIN_LOD_CHUNK=1.
+		// Ray is in MC2 world space (x=east, y=north, z=up).
+		// Returns true and writes (outX,outY,outZ) on hit; false on miss.
+		// Uses the full-resolution PostcompVertex heightfield, NOT LOD mesh.
+		static bool raycastTerrain(
+		    float ox, float oy, float oz,
+		    float dx, float dy, float dz,
+		    float* outX, float* outY, float* outZ);
+
 		long save( PacketFile* fileName, int whichPacket, bool QuickSave = false);
 		bool save( FitIniFile* fitFile ); // save stuff like water info
 		bool load( FitIniFile* fitFile );
