@@ -44,6 +44,7 @@
 #include"../GameOS/gameos/gos_terrain_bridge.h"
 #include"../GameOS/gameos/gos_terrain_lighting.h"
 #include"../GameOS/gameos/gos_terrain_height_tex.h"  // TERRAIN-NORMALS-FROM-HEIGHT-1
+#include"../GameOS/gameos/gos_terrain_lod_chunk.h"   // Terrain LOD chunk Phase 1
 #include"terrain_admission_mode.h"  // F6 T2: shared isModern() flag for terrain.cpp + quad.cpp
 
 #include <vector>
@@ -153,6 +154,15 @@ unsigned char				Terrain::fractalNoise = 0;
 bool						Terrain::recalcShadows = false;
 bool						Terrain::recalcLight = false;
 
+// Terrain LOD chunk Phase 1 static members (MC2_TERRAIN_LOD_CHUNK=1 gate).
+TerrainBlockMeta*			Terrain::s_blockMeta       = nullptr;
+SuperchunkMeta*				Terrain::s_superchunkMeta  = nullptr;
+TerrainDrawCommand*			Terrain::s_drawCmds        = nullptr;
+int							Terrain::s_cmdCount        = 0;
+unsigned long				Terrain::gCurrentFrame     = 0;
+int							Terrain::s_terrainChunkSide = 0;
+int							Terrain::s_superchunkSide   = 0;
+
 bool 						drawTerrainGrid = false;		//Override locally in editor so game don't come with these please!  Love -fs
 bool						drawLOSGrid = false;
 bool						drawTerrainTiles = true;
@@ -244,6 +254,69 @@ void clearMoverList (void)
 //---------------------------------------------------------------------------
 
 //---------------------------------------------------------------------------
+// Terrain LOD chunk Phase 1 static helpers.
+// Only called when MC2_TERRAIN_LOD_CHUNK is set; all access already gated.
+
+static void recomputeBlockAabb(TerrainBlockMeta& bm)
+{
+    // Scan the (quadCountX+1) x (quadCountY+1) inclusive vertex footprint.
+    // OOB vertices (past map edge) use blankVertex elevation (33.0f).
+    float mn =  1e30f;
+    float mx = -1e30f;
+    int mapSide = (int)Terrain::realVerticesMapSide;
+    PostcompVertexPtr blks = Terrain::mapData->getBlocks();
+    for (int dy = 0; dy <= bm.quadCountY; ++dy) {
+        for (int dx = 0; dx <= bm.quadCountX; ++dx) {
+            int vx = bm.originX + dx;
+            int vy = bm.originY + dy;
+            float elev;
+            if (vx >= mapSide || vy >= mapSide)
+                elev = 33.0f;   // blankVertex elevation (mapdata.cpp:641)
+            else
+                elev = blks[vx + vy * mapSide].elevation;
+            if (elev < mn) mn = elev;
+            if (elev > mx) mx = elev;
+        }
+    }
+    bm.minElev   = mn;
+    bm.maxElev   = mx;
+    bm.dirtyAabb = false;
+}
+
+static void recomputeSuperchunkAabb(int scX, int scY)
+{
+    SuperchunkMeta& sc = Terrain::s_superchunkMeta[scX + scY * Terrain::s_superchunkSide];
+    float xMin =  1e30f, xMax = -1e30f;
+    float yMin =  1e30f, yMax = -1e30f;
+    float zMin =  1e30f, zMax = -1e30f;
+
+    float halfMap = Terrain::worldUnitsMapSide * 0.5f;
+
+    for (int dy = 0; dy < 4; ++dy) {
+        for (int dx = 0; dx < 4; ++dx) {
+            int bx = scX * 4 + dx, by = scY * 4 + dy;
+            if (bx >= Terrain::s_terrainChunkSide || by >= Terrain::s_terrainChunkSide) continue;
+            const TerrainBlockMeta& bm =
+                Terrain::s_blockMeta[bx + by * Terrain::s_terrainChunkSide];
+            float wMinX =  float(bm.originX)                  * 128.0f - halfMap;
+            float wMaxX =  float(bm.originX + bm.quadCountX)  * 128.0f - halfMap;
+            float wMaxY =  halfMap - float(bm.originY)                  * 128.0f;
+            float wMinY =  halfMap - float(bm.originY + bm.quadCountY)  * 128.0f;
+            if (wMinX < xMin) xMin = wMinX;
+            if (wMaxX > xMax) xMax = wMaxX;
+            if (wMinY < yMin) yMin = wMinY;
+            if (wMaxY > yMax) yMax = wMaxY;
+            if (bm.minElev < zMin) zMin = bm.minElev;
+            if (bm.maxElev > zMax) zMax = bm.maxElev;
+        }
+    }
+    sc.worldMinX = xMin; sc.worldMaxX = xMax;
+    sc.worldMinY = yMin; sc.worldMaxY = yMax;
+    sc.worldMinZ = zMin; sc.worldMaxZ = zMax;
+    sc.inFrustum = false;
+}
+
+//---------------------------------------------------------------------------
 // class Terrain
 void Terrain::init (void)
 {
@@ -326,8 +399,15 @@ long Terrain::init (PacketFile* pakFile, int whichPacket, unsigned long visibleV
 	{
 		if (realVerticesMapSide < 60 || realVerticesMapSide > 2048)
 			STOP(("Terrain grid size %d out of supported range [60, 2048]", realVerticesMapSide));
-		if (realVerticesMapSide % verticesBlockSide != 0)
-			STOP(("Terrain grid size %d not divisible by verticesBlockSide (%d)", realVerticesMapSide, verticesBlockSide));
+		// Check quads (vertices-1), not vertices, so partial-edge blocks are permitted
+		// under MC2_TERRAIN_LOD_CHUNK=1 (e.g. 120-vertex map: 119 quads, last block = 19).
+		if ((realVerticesMapSide - 1) % verticesBlockSide != 0) {
+			if (!getenv("MC2_TERRAIN_LOD_CHUNK"))
+				STOP(("Terrain quad count %d not divisible by verticesBlockSide (%d)",
+				      realVerticesMapSide - 1, verticesBlockSide));
+			// Partial-edge blocks permitted under MC2_TERRAIN_LOD_CHUNK=1.
+			// quadCountX = min(verticesBlockSide, (realVerticesMapSide-1) - originX).
+		}
 	}
 	
 	init( realVerticesMapSide, pakFile, visibleVertices, percent, percentRange );	
@@ -538,7 +618,56 @@ long Terrain::init( unsigned long verticesPerMapSide, PacketFile* pakFile, unsig
 
 	percent += percentRange/5.f;
 
-	
+	//----------------------------------------------------------------------
+	// Terrain LOD chunk Phase 1 — allocate per-block + superchunk metadata.
+	// MC2_TERRAIN_LOD_CHUNK=1 gate. mapData must be live before this block.
+	if (getenv("MC2_TERRAIN_LOD_CHUNK")) {
+		// terrainChunkSide = ceil((vertices-1) / verticesBlockSide)
+		s_terrainChunkSide = ((realVerticesMapSide - 1) + verticesBlockSide - 1) / verticesBlockSide;
+		s_superchunkSide   = (s_terrainChunkSide + 3) / 4;
+
+		int nBlocks      = s_terrainChunkSide * s_terrainChunkSide;
+		int nSuperchunks = s_superchunkSide   * s_superchunkSide;
+
+		s_blockMeta      = (TerrainBlockMeta*)  terrainHeap->Malloc(sizeof(TerrainBlockMeta)   * nBlocks);
+		s_superchunkMeta = (SuperchunkMeta*)    terrainHeap->Malloc(sizeof(SuperchunkMeta)      * nSuperchunks);
+		s_drawCmds       = (TerrainDrawCommand*)terrainHeap->Malloc(sizeof(TerrainDrawCommand)  * nBlocks);
+
+		gosASSERT(s_blockMeta      != NULL);
+		gosASSERT(s_superchunkMeta != NULL);
+		gosASSERT(s_drawCmds       != NULL);
+
+		memset(s_blockMeta,      0, sizeof(TerrainBlockMeta)   * nBlocks);
+		memset(s_superchunkMeta, 0, sizeof(SuperchunkMeta)      * nSuperchunks);
+		memset(s_drawCmds,       0, sizeof(TerrainDrawCommand)  * nBlocks);
+
+		gCurrentFrame = 1;
+		s_cmdCount    = 0;
+
+		// Initialize per-block metadata.
+		for (int by = 0; by < s_terrainChunkSide; ++by) {
+			for (int bx = 0; bx < s_terrainChunkSide; ++bx) {
+				TerrainBlockMeta& bm = s_blockMeta[bx + by * s_terrainChunkSide];
+				bm.originX    = bx * (int)verticesBlockSide;
+				bm.originY    = by * (int)verticesBlockSide;
+				int qx = (int)(realVerticesMapSide - 1) - bm.originX;
+				int qy = (int)(realVerticesMapSide - 1) - bm.originY;
+				bm.quadCountX = (qx < (int)verticesBlockSide) ? qx : (int)verticesBlockSide;
+				bm.quadCountY = (qy < (int)verticesBlockSide) ? qy : (int)verticesBlockSide;
+				bm.dirtyAabb  = false;
+				bm.inFrustum  = false;
+				bm.lodLevel   = 0;
+				if (mapData && mapData->getBlocks())
+					recomputeBlockAabb(bm);
+			}
+		}
+
+		// Initialize superchunk AABBs.
+		for (int scY = 0; scY < s_superchunkSide; ++scY)
+			for (int scX = 0; scX < s_superchunkSide; ++scX)
+				recomputeSuperchunkAabb(scX, scY);
+	}
+
 	//----------------------------------------------------------------------
 	// Create the VertexList
 	numberVertices = 0;
@@ -579,12 +708,13 @@ long Terrain::init( unsigned long verticesPerMapSide, PacketFile* pakFile, unsig
 		// TERRAIN-CLASSIFY-TUNING-1: sync dirt sat window with profile so the
 		// ImGui-tunable uniforms start at the right defaults for this mission.
 		// Sand_M24 washes out to low-saturation sand; widen the dirt sat gate.
-		extern void gos_SetTerrainClassDirt(float hHi, float hLo, float satLo, float satHi);
+		extern void gos_SetTerrainClassDirt(float rMinusGLo, float rMinusGHi, float rBrightLo, float rBrightHi);
 		if (profileKey[0] != '\0' && _stricmp(profileKey, "mc2_24") == 0) {
 			g_terrainMaterialProfile = TERRAIN_MAT_PROFILE_SAND_M24;
-			gos_SetTerrainClassDirt(0.17f, 0.11f, 0.04f, 0.20f);
+			// Sand_M24: widen R-G band + raise brightness ceiling for bright sun-lit sand
+			gos_SetTerrainClassDirt(-0.02f, 0.12f, 0.18f, 0.80f);
 		} else {
-			gos_SetTerrainClassDirt(0.17f, 0.11f, 0.10f, 0.32f);
+			gos_SetTerrainClassDirt(-0.02f, 0.06f, 0.22f, 0.45f);
 		}
 	}
 
@@ -809,6 +939,17 @@ void Terrain::destroy (void)
 	// GL_STATIC_DRAW buffer allocation for next-mission reuse (mirror
 	// ResetMineStaticVBO teardown placement).
 	gos_terrain_indirect::ResetDecalStaticVBO();
+
+	// Terrain LOD chunk Phase 1 teardown — free before terrainHeap destroy.
+	// MC2_TERRAIN_LOD_CHUNK=1 gate; idempotent (NULL guards prevent double-free).
+	if (getenv("MC2_TERRAIN_LOD_CHUNK")) {
+		if (s_blockMeta)      { terrainHeap->Free(s_blockMeta);      s_blockMeta      = nullptr; }
+		if (s_superchunkMeta) { terrainHeap->Free(s_superchunkMeta); s_superchunkMeta = nullptr; }
+		if (s_drawCmds)       { terrainHeap->Free(s_drawCmds);       s_drawCmds       = nullptr; }
+		s_terrainChunkSide = 0;
+		s_superchunkSide   = 0;
+		s_cmdCount         = 0;
+	}
 
 	if (terrainTextures)
 	{

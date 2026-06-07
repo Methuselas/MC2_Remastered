@@ -150,3 +150,11 @@ call from inside a draw-bind path.
 - `MC2_VFX_GPU_SIM_CARDCLOUD=1` — CardCloud GPU sim SSBO substrate. Default **OFF**.
 - `MC2_VFX_SOFT_PARTICLES=1` — depth-fade soft particles. Default **OFF**.
 - `MC2_VFX_LIT_PARTICLES=1` — ambient+sun*0.5 fill on particles. Default **OFF**.
+
+## Terrain LOD chunk
+
+- `MC2_TERRAIN_LOD_CHUNK=1` — chunked heightfield LOD renderer. Default **OFF**.
+  Phase 1: AABB allocation only. Phase 2: shadow-mode cull. Phase 3: height SSBO.
+  Phase 4+: GPU draw path replaces makeLists/geometry()/TerrainQuad::draw().
+- `MC2_TERRAIN_LOD_CHUNK_BRIDGE_OBJBLOCK=1` — bridge ObjBlockInfo.active from
+  blockMeta.inFrustum each frame. Default **OFF**. Phase 2 only; removed Phase 4. Runtime getenv().

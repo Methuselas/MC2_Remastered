@@ -96,13 +96,41 @@ extern int g_terrainMaterialProfile;
 
 //---------------------------------------------------------------------------
 // Used by the object system to load the objects on the terrain.
-typedef struct _ObjBlockInfo 
+typedef struct _ObjBlockInfo
 {
 	bool		active;
 	long		numCollidableObjects;
 	long		numObjects;					// includes collidable objects
 	long		firstHandle;				// collidables, followed by non
 } ObjBlockInfo;
+
+//---------------------------------------------------------------------------
+// Terrain LOD chunk — Phase 1: per-block AABB + superchunk metadata.
+// MC2_TERRAIN_LOD_CHUNK=1 gate. Zero behavior change when unset.
+
+// Forward declaration; full type in GameOS/gameos/gos_terrain_lod_chunk.h.
+struct TerrainDrawCommand;
+
+struct TerrainBlockMeta {
+	int            originX;     // blockX * 20 (vertex-grid index)
+	int            originY;     // blockY * 20
+	int            quadCountX;  // min(20, (realVerticesMapSide-1) - originX); 1021->always 20
+	int            quadCountY;  // min(20, (realVerticesMapSide-1) - originY); 1021->always 20
+	float          minElev;     // min elevation over [originX..originX+quadCountX] inclusive
+	float          maxElev;     // max elevation over [originY..originY+quadCountY] inclusive
+	bool           dirtyAabb;   // height changed -> recompute AABB + patch SSBO
+	bool           inFrustum;   // result of AABB cull this frame
+	unsigned char  lodLevel;    // 0-5, chosen each frame
+	unsigned char  _pad;        // explicit padding
+};
+
+struct SuperchunkMeta {
+	float          worldMinX, worldMaxX;  // union AABB of constituent TerrainBlockMeta world extents
+	float          worldMinY, worldMaxY;
+	float          worldMinZ, worldMaxZ;
+	bool           inFrustum;
+	unsigned char  _pad[3];
+};
 
 //---------------------------------------------------------------------------
 //Everything goes through here now.
@@ -185,6 +213,15 @@ class Terrain
 
 		static bool								recalcShadows;				//Should we recalc the shadow map!
 		static bool								recalcLight;				//Should we recalc the light data.
+
+		// Terrain LOD chunk Phase 1 — MC2_TERRAIN_LOD_CHUNK=1 gate only.
+		static TerrainBlockMeta*				s_blockMeta;      // [s_terrainChunkSide * s_terrainChunkSide]
+		static SuperchunkMeta*					s_superchunkMeta; // [s_superchunkSide * s_superchunkSide]
+		static TerrainDrawCommand*				s_drawCmds;       // [s_terrainChunkSide * s_terrainChunkSide]
+		static int								s_cmdCount;
+		static unsigned long					gCurrentFrame;    // starts at 1; incremented each frame
+		static int								s_terrainChunkSide; // = ceil(quads/20); render chunk array dim
+		static int								s_superchunkSide;   // = (s_terrainChunkSide + 3) / 4
 
 	//Member Functions
 	//-----------------
