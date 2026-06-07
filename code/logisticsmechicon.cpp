@@ -127,6 +127,13 @@ void LogisticsMechIcon::setMech( LogisticsMech* pNewMech )
 	{
 		// need to set the uv's of the mech icon
 		long index = pMech->getIconIndex();
+
+		// switch atlas if the chassis specifies a per-type icon sheet
+		// guard: only accept real data/ paths, not MCL_GN_ symbol strings
+		const char* altAtlas = pMech->getIconAtlasName();
+		if (altAtlas && strncmp(altAtlas, "data/", 5) == 0)
+			icon.setTexture(altAtlas);
+
 		long xIndex = index % 10;
 		long yIndex = index / 10;
 
