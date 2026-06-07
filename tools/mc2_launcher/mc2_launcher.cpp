@@ -95,6 +95,9 @@ static void ScanMods(const char* modsPath) {
             strcpy(e.type, "campaign");
         if (!JsonGetString(buf, "description", e.description, sizeof(e.description)))
             e.description[0] = '\0';
+        // Strip non-ASCII bytes so ANSI SetWindowText doesn't show garbage.
+        for (char* p = e.description; *p; p++)
+            if ((unsigned char)*p > 127) *p = '?';
 
         s_modCount++;
     } while (FindNextFileA(h, &fd));
