@@ -64,29 +64,65 @@ std::vector<MissionCheck> MissionValidator::ValidateForPakSave() {
              : "Using the default 'newmap' path.  File > Save (Ctrl+S) will open a "
                "Save As dialog to let you choose a filename before writing the .pak.");
 
-    // 3. MOVE pathfinding data -- WARNING
-    //    Generated maps skip MOVE_buildData (intentional CTD prevention when the
-    //    MOVE backend is uninitialized for blank terrain).  The save succeeds but
-    //    AI movement does not work in the resulting mission.
-    //    Fix: save the mission once its terrain features are finalized; MOVE data
-    //    is rebuilt automatically on each non-quick save for missions that have it.
-    //    For generated maps, the flag becomes true only after a packet-4 round-trip
-    //    (i.e. after the mission is saved and reloaded as an existing mission).
-    bool moveReady = EditorData::IsMoveDataReadyForFullSave();
-    push("move_data_ready",
-         "MOVE pathfinding data ready",
-         MissionCheckSeverity::Warning,
-         moveReady,
-         ChecklistAction::OpenSaveAs,   // Save As is the first step; MOVE rebuilds on reload
-         moveReady
-             ? "MOVE pathfinding data is initialized and will be saved."
-             : "Generated terrain does not have MOVE pathfinding data yet.\n"
-               "The mission can be saved, but AI movement will not work until MOVE "
-               "data is built.\n\n"
-               "Rebuild MOVE Data:\n"
-               "  1. Save As...  (write the .pak file)\n"
-               "  2. Reopen the saved mission  (File > Open)\n"
-               "  3. Save again  (the editor rebuilds MOVE on the second save)");
+    // 3. MOVE pathfinding data -- two states:
+    //    a) Map too large for legacy MOVE  → Info (not a failure; expected for generated maps)
+    //    b) Map within range but not built → Warning with "Build MOVE" button
+    //
+    //    Legacy MOVE grid limit: moveSide = cellSide * MAPCELL_DIM(3) <= MAX_MAP_CELL_WIDTH(720)
+    //    → max supported cellSide = 240 cells/side.
+    //    Generated maps at 260/520/1020 cells all exceed this and should never see
+    //    a "Build MOVE" button — just a clear explanation of why MOVE is unavailable.
+    {
+        const int cellSide  = land->realVerticesMapSide - 1;
+        const int moveSide  = cellSide * MAPCELL_DIM;     // MAPCELL_DIM = 3
+        const int maxCellSide = MAX_MAP_CELL_WIDTH / MAPCELL_DIM;  // 240
+        const bool tooLarge = (moveSide > MAX_MAP_CELL_WIDTH);
+        const bool moveReady = EditorData::IsMoveDataReadyForFullSave();
+
+        if (tooLarge) {
+            // Informational — not a blocking or warning failure, just a capability note.
+            // No "Build MOVE" button: clicking it would do nothing (size gate in
+            // RebuildMoveFromCurrentTerrain will reject it and log an error).
+            char details[512];
+            snprintf(details, sizeof(details),
+                "Legacy AI navigation (MOVE) is not supported for maps this large.\n\n"
+                "This map:    %d x %d cells  (MOVE grid would be %d x %d)\n"
+                "Legacy limit: %d cells/side  (MOVE grid <= %d x %d)\n\n"
+                "Terrain editing and terrain save/load still work normally.\n"
+                "Future chunked navigation will support large generated maps.",
+                cellSide, cellSide, moveSide, moveSide,
+                maxCellSide, MAX_MAP_CELL_WIDTH, MAX_MAP_CELL_WIDTH);
+            push("move_data_ready",
+                 "Legacy MOVE unsupported for this map size",
+                 MissionCheckSeverity::Info,
+                 false,   // not passed, so [i] icon shows; but Info = not counted as warning
+                 ChecklistAction::None,
+                 details);
+        } else {
+            // Map is within legacy MOVE range.  Warn if not built, OK if ready.
+            char details[512];
+            if (moveReady) {
+                snprintf(details, sizeof(details),
+                    "MOVE pathfinding data is initialized (GameMap + GlobalMoveMap ready).\n"
+                    "Map: %d x %d cells -- MOVE grid: %d x %d.",
+                    cellSide, cellSide, moveSide, moveSide);
+            } else {
+                snprintf(details, sizeof(details),
+                    "MOVE pathfinding data is not built yet for this terrain.\n"
+                    "AI movement and the passability grid both require it.\n\n"
+                    "This map: %d x %d cells (within the %d-cell legacy MOVE limit).\n\n"
+                    "Click 'Build MOVE' to initialize it in-place -- no save needed.\n"
+                    "MOVE is also built automatically on every non-quickSave.",
+                    cellSide, cellSide, maxCellSide);
+            }
+            push("move_data_ready",
+                 "MOVE pathfinding data ready",
+                 MissionCheckSeverity::Warning,
+                 moveReady,
+                 moveReady ? ChecklistAction::None : ChecklistAction::BuildMove,
+                 details);
+        }
+    }
 
     // 4. Objectives have conditions -- WARNING
     //    Same check the editor shows as a MessageBox during save.  Surfaced here
@@ -163,6 +199,7 @@ namespace {
             case ChecklistAction::OpenMapGenerator: return "Generate Map...";
             case ChecklistAction::OpenSaveAs:       return "Save As...";
             case ChecklistAction::OpenObjectives:   return "Open Objectives";
+            case ChecklistAction::BuildMove:        return "Build MOVE";
             default:                                return nullptr;
         }
     }
