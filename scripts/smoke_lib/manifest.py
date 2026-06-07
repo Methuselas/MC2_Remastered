@@ -17,7 +17,7 @@ from typing import Optional
 
 VALID_TIERS = {"tier1", "tier2", "tier3", "skip"}
 VALID_KEYS = {"duration", "heartbeat_timeout_load", "heartbeat_timeout_play",
-              "profile", "active", "reason"}
+              "profile", "active", "reason", "allow_asset_oob"}
 
 
 @dataclass
@@ -30,6 +30,7 @@ class Entry:
     profile: Optional[str] = None
     active: bool = False
     reason: str = ""
+    allow_asset_oob: bool = False
     source_line: int = 0
 
 
@@ -72,5 +73,7 @@ def parse_manifest(path: Path) -> list[Entry]:
                 e.active = v.lower() in ("1", "true", "yes")
             elif k == "reason":
                 e.reason = v
+            elif k == "allow_asset_oob":
+                e.allow_asset_oob = v.lower() in ("1", "true", "yes")
         out.append(e)
     return out

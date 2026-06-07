@@ -276,6 +276,7 @@ def main():
             heartbeat_timeout_load_s=e.heartbeat_timeout_load or 60,
             heartbeat_timeout_play_s=e.heartbeat_timeout_play or 3,
             grace_s=60,
+            allow_asset_oob=e.allow_asset_oob,
             env_extra={
                 "MC2_SMOKE_SEED": "0xC0FFEE",
                 # Propagate PatchStream env vars from parent if set —

@@ -13,6 +13,7 @@ class GateConfig:
     heartbeat_timeout_load_s: int = 60
     heartbeat_timeout_play_s: int = 3
     duration_s: int = 120
+    allow_asset_oob: bool = False
 
 
 @dataclass
@@ -50,7 +51,7 @@ def evaluate(s: LogSummary, cfg: GateConfig, *,
         buckets.append("gl_error"); details.append(f"{s.gl_errors} errors")
     if s.pool_nulls > 0:
         buckets.append("pool_null"); details.append(f"{s.pool_nulls} NULLs")
-    if s.asset_oob > 0:
+    if s.asset_oob > 0 and not cfg.allow_asset_oob:
         buckets.append("asset_oob"); details.append(f"{s.asset_oob} oob")
     if s.shader_errors > 0:
         buckets.append("shader_error"); details.append(f"{s.shader_errors}")

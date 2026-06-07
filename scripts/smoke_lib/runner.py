@@ -44,6 +44,7 @@ class RunConfig:
     heartbeat_timeout_play_s: int
     grace_s: int                        # walltime cap = duration + grace
     env_extra: dict
+    allow_asset_oob: bool = False
 
 
 @dataclass
@@ -156,6 +157,7 @@ def run_one(cfg: RunConfig) -> RunResult:
         heartbeat_timeout_load_s=cfg.heartbeat_timeout_load_s,
         heartbeat_timeout_play_s=cfg.heartbeat_timeout_play_s,
         duration_s=cfg.duration,
+        allow_asset_oob=cfg.allow_asset_oob,
     )
     verdict = evaluate(summary, gcfg, exit_code=proc.returncode,
                        walltime_s=walltime, killed_by_timeout=killed)

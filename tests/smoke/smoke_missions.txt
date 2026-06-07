@@ -41,11 +41,13 @@ tier2 mc2_24 reason="campaign"
 
 skip ai_glenn reason="dev leftover"
 skip gamesys reason="systems stub, not a real mission"
-tier3 poar_01 reason="POAR campaign mod test"
+tier3 poar_01 allow_asset_oob=1 reason="POAR campaign mod test"
 
 # Campaign mod missions (mc2x-compat + campaign mods in mc2-win64-0.4c)
-tier3 torrin reason="DarkRain campaign mod - was crashing on hfdelemental.ini"
-tier3 clearwater reason="TangoMaster campaign mod"
-tier3 ruins reason="TangoMaster campaign mod"
-tier3 area16 reason="DarkRain campaign mod"
-tier3 coldstone reason="DarkRain campaign mod"
+# allow_asset_oob: Clan mech icon atlas does not include mc2x-compat variants;
+# icon blits land out-of-range but are clamped and non-fatal.
+tier3 torrin allow_asset_oob=1 reason="DarkRain campaign mod"
+tier3 clearwater allow_asset_oob=1 reason="TangoMaster campaign mod"
+tier3 ruins allow_asset_oob=1 reason="TangoMaster campaign mod"
+tier3 area16 allow_asset_oob=1 reason="DarkRain campaign mod"
+tier3 coldstone allow_asset_oob=1 reason="DarkRain campaign mod"

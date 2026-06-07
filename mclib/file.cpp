@@ -112,13 +112,19 @@ static std::string NormalizeKey(const char* p) {
     return s;
 }
 
-// Returns true if mod dir has a data/missions/ subdirectory (campaign mod).
+// Returns true if mod dir is a campaign mod — it has .fit files in data/missions/.
+// A base mod (e.g. mc2x-compat) may have data/missions/warriors/*.abl but no .fit
+// files; those should remain classified as base mods so their files stay in
+// g_baseIndex (always-on) rather than g_campaignIndex (mission-scoped).
 static bool ModHasMissions(const char* dataDir) {
-    char missionsPath[MAX_PATH];
-    _snprintf(missionsPath, sizeof(missionsPath), "%smissions", dataDir);
-    missionsPath[sizeof(missionsPath) - 1] = '\0';
-    DWORD attr = GetFileAttributesA(missionsPath);
-    return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY);
+    char fitPattern[MAX_PATH];
+    _snprintf(fitPattern, sizeof(fitPattern), "%smissions\\*.fit", dataDir);
+    fitPattern[sizeof(fitPattern) - 1] = '\0';
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(fitPattern, &fd);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    FindClose(h);
+    return true;
 }
 
 static void IndexModDir(
