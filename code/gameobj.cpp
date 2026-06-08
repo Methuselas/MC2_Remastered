@@ -1859,9 +1859,19 @@ void GameObject::setPosition (const Stuff::Vector3D& newPosition, bool calcPosit
 	// GameMap can be NULL when a mission was saved without MOVE data and the
 	// blank-MOVE synthesis in Mission::init also failed (oversized map).
 	// Skip the bounds check rather than crash; position is still set above.
+	//
+	// When the map exceeds MAX_MAP_CELL_WIDTH the synthesized MOVE grid is
+	// clamped smaller than the terrain cell range, so objects legitimately sit
+	// beyond GameMap's extent. The "off map" assert is only meaningful when the
+	// grid actually covers the terrain — otherwise it spams every frame.
 	if (GameMap) {
-		Assert((cellPositionRow >= 0) && (cellPositionRow < GameMap->getHeight()), 0, " Object moved off map ");
-		Assert((cellPositionCol >= 0) && (cellPositionCol < GameMap->getWidth()), 0, " Object moved off map ");
+		long terrainCells = (Terrain::realVerticesMapSide - 1) * MAPCELL_DIM;
+		bool gridCoversTerrain = (GameMap->getHeight() >= terrainCells) &&
+		                         (GameMap->getWidth()  >= terrainCells);
+		if (gridCoversTerrain) {
+			Assert((cellPositionRow >= 0) && (cellPositionRow < GameMap->getHeight()), 0, " Object moved off map ");
+			Assert((cellPositionCol >= 0) && (cellPositionCol < GameMap->getWidth()), 0, " Object moved off map ");
+		}
 	}
 }
 

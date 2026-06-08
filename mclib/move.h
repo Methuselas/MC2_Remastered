@@ -1379,6 +1379,12 @@ class GlobalMap {
 		long calcPath (Stuff::Vector3D start, Stuff::Vector3D goal, GlobalPathStepPtr path);
 
 		long calcArea (long row, long col) {
+			// Bounds guard: synthesized blank MOVE grids are clamped to
+			// MAX_MAP_CELL_WIDTH and can be smaller than the terrain cell
+			// range, so worldToCell-derived row/col may exceed this grid.
+			// Out-of-range = no area (mirrors the areaId<0 sentinel).
+			if ((row < 0) || (row >= height) || (col < 0) || (col >= width))
+				return(-1);
 			long areaId = areaMap[row * width + col];
 			if (areaId < 0)
 				return(-1);
