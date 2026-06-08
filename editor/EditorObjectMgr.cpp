@@ -19,17 +19,24 @@
 // MC2_EDITOR_TRACE env var (same convention as EditorDataTrace in
 // EditorData.cpp). ASCII only. Remove with the rest of the editor render
 // probes when the object-loop GPU port slice is verified.
+#include "../GameOS/gameos/gos_crashbundle.h"
 static void EditorObjMgrTrace(const char* fmt, ...)
 {
+	char buf[512];
+	va_list args;
+	va_start(args, fmt);
+	vsnprintf(buf, sizeof(buf), fmt, args);
+	va_end(args);
+
+	// Always feed crash ring — visible in last_trace.txt on CTD.
+	crashbundle_append(buf);
+
 	if (getenv("MC2_EDITOR_TRACE") == NULL)
 		return;
 	FILE* f = fopen("editor-startup.log", "a");
 	if (!f)
 		return;
-	va_list args;
-	va_start(args, fmt);
-	vfprintf(f, fmt, args);
-	va_end(args);
+	fputs(buf, f);
 	fputc('\n', f);
 	fclose(f);
 }

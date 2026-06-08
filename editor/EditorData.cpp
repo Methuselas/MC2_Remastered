@@ -23,6 +23,7 @@
 #include "ECharString.h"
 
 #include "../GameOS/gameos/gos_static_prop_batcher.h"
+#include "../GameOS/gameos/gos_crashbundle.h"
 #include "../GameOS/gameos/gos_terrain_indirect.h"
 #include "../GameOS/gameos/gos_terrain_water_stream.h"
 #include "../GameOS/gameos/gos_mech_batcher.h"
@@ -51,16 +52,23 @@ static bool gEditorDataMoveDataReadyForFullSave = false;
 
 static void EditorDataTrace(const char* fmt, ...)
 {
+	char buf[512];
+	va_list args;
+	va_start(args, fmt);
+	vsnprintf(buf, sizeof(buf), fmt, args);
+	va_end(args);
+
+	// Always feed the crash ring buffer so the last ~64KB of editor activity
+	// appears in crashes/<timestamp>/last_trace.txt on any CTD.
+	crashbundle_append(buf);
+
 	if (getenv("MC2_EDITOR_TRACE") == NULL)
 		return;
 
 	FILE* f = fopen("editor-startup.log", "a");
 	if (!f)
 		return;
-	va_list args;
-	va_start(args, fmt);
-	vfprintf(f, fmt, args);
-	va_end(args);
+	fputs(buf, f);
 	fputc('\n', f);
 	fclose(f);
 }

@@ -13,6 +13,7 @@
 #include <string>
 #include <cstring>
 #include <vector>
+#include "../GameOS/gameos/gos_crashbundle.h"
 
 // ---------------------------------------------------------------------------
 // S-CLI: command-line flags for autonomous editor launches.
@@ -53,6 +54,9 @@ static void editor_set_default_env_vars()
 
 static void EarlyTrace(const char* msg)
 {
+	// Always feed crash ring — visible in last_trace.txt on CTD.
+	crashbundle_append(msg);
+
 	if (getenv("MC2_EDITOR_TRACE") == NULL)
 		return;
 
@@ -217,6 +221,7 @@ EditorMFCApp theApp;
 BOOL EditorMFCApp::InitInstance()
 {
 	editor_set_default_env_vars();
+	crashbundle_init();    // install SEH filter; writes crashes/<timestamp>/ on CTD
 	EarlyTraceBegin();
 	EarlyTrace("InitInstance: enter");
 	EarlyTrace(EditorVersion_GetStartupLine());
