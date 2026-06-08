@@ -1856,8 +1856,13 @@ void GameObject::setPosition (const Stuff::Vector3D& newPosition, bool calcPosit
 		d_vertexNum = tileRow * Terrain::realVerticesMapSide + tileCol;
 	}
 
-	Assert((cellPositionRow >= 0) && (cellPositionRow < GameMap->getHeight()), 0, " Object moved off map ");
-	Assert((cellPositionCol >= 0) && (cellPositionCol < GameMap->getWidth()), 0, " Object moved off map ");
+	// GameMap can be NULL when a mission was saved without MOVE data and the
+	// blank-MOVE synthesis in Mission::init also failed (oversized map).
+	// Skip the bounds check rather than crash; position is still set above.
+	if (GameMap) {
+		Assert((cellPositionRow >= 0) && (cellPositionRow < GameMap->getHeight()), 0, " Object moved off map ");
+		Assert((cellPositionCol >= 0) && (cellPositionCol < GameMap->getWidth()), 0, " Object moved off map ");
+	}
 }
 
 //---------------------------------------------------------------------------

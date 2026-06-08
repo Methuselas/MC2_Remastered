@@ -2359,8 +2359,32 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 				GlobalMoveMap[2]->isGateOpenCallback = IsGateOpen;
 			}
 		}
-		else
+		else {
+			// Packet 4 is empty — mission was saved without MOVE data (editor saved
+			// before "Generate Passability Map" was run, or a QuickSave).
+			// STOP is a no-op in RelWithDebInfo so execution falls through with
+			// GameMap==NULL, crashing hundreds of lines later at setPosition().
+			// Instead: synthesize a blank all-passable MOVE from terrain dimensions
+			// so the mission loads without crashing. AI pathfinding will be degraded
+			// (all cells passable, no area/door structure) but the game runs.
 			STOP(("Mission has not movement Data.  QuickSaved Map?"));
+			int cellSide = Terrain::realVerticesMapSide - 1;
+			int moveSide = cellSide * MAPCELL_DIM;
+			bool moveOk = false;
+			if (moveSide > 0
+			 && moveSide <= MAX_MAP_CELL_WIDTH
+			 && (moveSide % SECTOR_DIM) == 0)
+			{
+				MOVE_buildData(moveSide, moveSide, NULL /*all-passable blank*/, 0, NULL);
+				moveOk = (GameMap != NULL);
+			}
+			if (moveOk) {
+				GameMap->placeMoversCallback = PlaceMovers;
+				// Blank MOVE has no area/door structure; skip gate callbacks.
+			}
+			// If moveSide is out of range or build failed, GameMap stays NULL.
+			// The null guard in GameObject::setPosition skips the bounds check.
+		}
 	}
 
 	PathFindMap[SECTOR_PATHMAP]->blockedDoorCallback = GetBlockedDoorCells;
