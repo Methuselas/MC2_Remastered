@@ -540,17 +540,23 @@ GameObjectFootPrint* tempSpecialAreaFootPrints = NULL;
 
 void MOVE_buildData (long height, long width, MissionMapCellInfo* mapData, long numSpecialAreas, GameObjectFootPrint* specialAreaFootPrints) {
 
+	printf("[MOVE_BD] enter h=%ld w=%ld mapData=%p specials=%ld\n", height, width, (void*)mapData, numSpecialAreas); fflush(stdout);
+
 	EditorSave = true;
 
 	if (GameMap)
 		delete GameMap;
 	GameMap = new MissionMap;
-	gosASSERT(GameMap != NULL);
+	if (!GameMap) { printf("[MOVE_BD] FATAL: new MissionMap returned NULL\n"); fflush(stdout); return; }
+	printf("[MOVE_BD] MissionMap allocated OK, calling init(%ld,%ld)\n", height, width); fflush(stdout);
 
 	if (mapData)
 		GameMap->init(height, width, 0, mapData);
 	else
 		GameMap->init( height, width );
+
+	if (!GameMap->map) { printf("[MOVE_BD] FATAL: GameMap->map is NULL after init — systemHeap exhausted?\n"); fflush(stdout); return; }
+	printf("[MOVE_BD] GameMap->init OK map=%p\n", (void*)GameMap->map); fflush(stdout);
 
 	long numOffMap = 0;
 	for (long r = 0; r < height; r++)
@@ -562,6 +568,8 @@ void MOVE_buildData (long height, long width, MissionMapCellInfo* mapData, long 
 			if (set)
 				numOffMap++;
 		}
+
+	printf("[MOVE_BD] offMap loop done numOffMap=%ld\n", numOffMap); fflush(stdout);
 
 	if (tempSpecialAreaFootPrints) {
 		systemHeap->Free(tempSpecialAreaFootPrints);
@@ -593,22 +601,27 @@ void MOVE_buildData (long height, long width, MissionMapCellInfo* mapData, long 
 		GlobalMoveMap[2] = NULL;
 	}
 
+	printf("[MOVE_BD] building GlobalMoveMap[0] (ground)\n"); fflush(stdout);
 	GlobalMoveMap[0] = new GlobalMap;
 	if (!GlobalMoveMap[0])
 		Fatal(0, " MOVE_Init: Cannot initialize GlobalMoveMap ");
 	GlobalMoveMap[0]->build(mapData);
 
+	printf("[MOVE_BD] building GlobalMoveMap[1] (hover)\n"); fflush(stdout);
 	GlobalMoveMap[1] = new GlobalMap;
 	if (!GlobalMoveMap[1])
 		Fatal(0, " MOVE_Init: Cannot initialize GlobalMoveMap ");
 	GlobalMoveMap[1]->hover = true;
 	GlobalMoveMap[1]->build(mapData);
 
+	printf("[MOVE_BD] building GlobalMoveMap[2] (blank/heli)\n"); fflush(stdout);
 	GlobalMoveMap[2] = new GlobalMap;
 	if (!GlobalMoveMap[2])
 		Fatal(0, " MOVE_Init: Cannot initialize HeliGlobalMoveMap ");
 	GlobalMoveMap[2]->blank = true;
 	GlobalMoveMap[2]->build(NULL);
+
+	printf("[MOVE_BD] all GlobalMaps built OK\n"); fflush(stdout);
 
 	//-----------------------
 	// Just some debugging...
@@ -819,6 +832,7 @@ void MissionMap::operator delete (void* us) {
 
 void MissionMap::init (long h, long w) {
 
+	printf("[MM_INIT] enter h=%ld w=%ld systemHeap=%p\n", h, w, (void*)systemHeap); fflush(stdout);
 	height = h;
 	width = w;
 
@@ -849,9 +863,12 @@ void MissionMap::init (long h, long w) {
 		map = NULL;
 	}
 	long mapSize = sizeof(MapCell) * width * height;
+	printf("[MM_INIT] allocating map: sizeof(MapCell)=%zu count=%ld bytes=%ld\n", sizeof(MapCell), (long)(width*height), (long)mapSize); fflush(stdout);
 	if (mapSize > 0)
 		map = (MapCellPtr)systemHeap->Malloc(sizeof(MapCell) * width * height);
+	printf("[MM_INIT] map alloc result: map=%p\n", (void*)map); fflush(stdout);
 	gosASSERT(map != NULL);
+	if (!map) { printf("[MM_INIT] FATAL map=NULL — systemHeap out of memory! heapSize~8MB\n"); fflush(stdout); return; }
 	memclear(map, sizeof(MapCell) * width * height);
 
 	// Per-tile mine count tracking — sized to the tile grid (cells / MAPCELL_DIM
@@ -1527,10 +1544,13 @@ void GlobalMap::operator delete (void* us) {
 
 void GlobalMap::init (long w, long h) {
 
+	printf("[GM_INIT] enter w=%ld h=%ld\n", w, h); fflush(stdout);
 	width = w;
 	height = h;
 	areaMap = (short*)systemHeap->Malloc(sizeof(short) * w * h);
+	printf("[GM_INIT] areaMap=%p (size=%ld bytes)\n", (void*)areaMap, (long)(sizeof(short)*w*h)); fflush(stdout);
 	gosASSERT(areaMap != NULL);
+	if (!areaMap) { printf("[GM_INIT] FATAL areaMap=NULL — systemHeap out of memory!\n"); fflush(stdout); return; }
 	for (long r = 0; r < height; r++)
 		for (long c = 0; c < width; c++)
 			areaMap[r * width + c] = -1;
@@ -2293,6 +2313,17 @@ void GlobalMap::calcAreas (void) {
 	gosASSERT(numAreas <= MAX_GLOBALMAP_AREAS);
 	areas = (GlobalMapAreaPtr)systemHeap->Malloc(sizeof(GlobalMapArea) * (numAreas + 1));
 	gosASSERT(areas != NULL);
+	// Build path: areas_doors and areas_cellsCovered are not pre-allocated here
+	// (the packet-load path in init(PacketFile, packet) allocates them before calling
+	// calcAreas). Allocate them now so the loop below doesn't crash on NULL dereference.
+	if (!areas_doors) {
+		areas_doors = (DoorInfoPtr*)systemHeap->Malloc(sizeof(DoorInfoPtr) * (numAreas + 1));
+		gosASSERT(areas_doors != NULL);
+	}
+	if (!areas_cellsCovered) {
+		areas_cellsCovered = (short**)systemHeap->Malloc(sizeof(short*) * (numAreas + 1));
+		gosASSERT(areas_cellsCovered != NULL);
+	}
 	for (long i = 0; i < (numAreas + 1); i++) {
 		areas[i].sectorR = 0;
 		areas[i].sectorC = 0;
@@ -2456,6 +2487,14 @@ void GlobalMap::endDoorProcessing (void) {
 		// Free the temp build list...
 		systemHeap->Free(doorBuildList);
 		doorBuildList = NULL;
+		// Build path: doors_links is only pre-allocated in the packet-load path
+		// (init(PacketFile, packet) line ~1765).  Allocate it here so calcDoorLinks()
+		// doesn't crash on a NULL dereference when indexing doors_links[d].
+		if (!doors_links) {
+			doors_links = (DoorInfoLinksPtr*)systemHeap->Malloc(sizeof(DoorInfoLinksPtr) * (numDoors + NUM_DOOR_OFFSETS));
+			gosASSERT(doors_links != NULL);
+			memset(doors_links, 0, sizeof(DoorInfoLinksPtr) * (numDoors + NUM_DOOR_OFFSETS));
+		}
 	}
 //	systemHeap->walkHeap();
 }
@@ -4086,12 +4125,14 @@ void GlobalMap::destroy (void) {
 
 	if (areas) {
 		if (!doorInfos) {
+			// Build path: areas_cellsCovered and areas_doors elements are individually
+			// heap-allocated in calcAreaDoors(). Free each one.
 			for (long i = 0; i < (numAreas + 1); i++) {
-				if (areas_cellsCovered[i]) {
+				if (areas_cellsCovered && areas_cellsCovered[i]) {
 					systemHeap->Free(areas_cellsCovered[i]);
 				    areas_cellsCovered[i] = NULL;
 				}
-				if (areas_doors[i]) {
+				if (areas_doors && areas_doors[i]) {
 					systemHeap->Free(areas_doors[i]);
 					areas_doors[i] = NULL;
 				}
@@ -4099,14 +4140,25 @@ void GlobalMap::destroy (void) {
 		}
 		systemHeap->Free(areas);
 		areas = NULL;
-        areas_doors = NULL;
+	}
+	// Free the pointer arrays themselves — they are systemHeap-allocated in both
+	// the build path (calcAreas) and the load path (init(PacketFile,packet)).
+	if (areas_cellsCovered) {
+		systemHeap->Free(areas_cellsCovered);
+		areas_cellsCovered = NULL;
+	}
+	if (areas_doors) {
+		systemHeap->Free(areas_doors);
+		areas_doors = NULL;
 	}
 
 	if (doors) {
 		if (!doorLinks) {
+			// Build path: each doors_links[i][s] element is individually heap-allocated
+			// in calcDoorLinks(). Free each one.
 			for (long i = 0; i < (numDoors + NUM_DOOR_OFFSETS); i++)
 				for (long s = 0; s < 2; s++) {
-					if (doors_links[i][s]) {
+					if (doors_links && doors_links[i][s]) {
 						systemHeap->Free(doors_links[i][s]);
 						doors_links[i][s] = NULL;
 					}
@@ -4114,7 +4166,11 @@ void GlobalMap::destroy (void) {
 		}
 		systemHeap->Free(doors);
 		doors = NULL;
-        doors_links = NULL;
+	}
+	// Free the doors_links pointer array itself — allocated in both paths.
+	if (doors_links) {
+		systemHeap->Free(doors_links);
+		doors_links = NULL;
 	}
 
 	if (doorInfos) {
