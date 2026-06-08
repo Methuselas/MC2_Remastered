@@ -668,6 +668,51 @@ Depends on Phase 4 (old draw path disabled under flag; new path active). Depends
 
 ---
 
+### 8a/8b/8c Extraction Spec (2026-06-08, from producer-contract recon)
+
+**Goal (re-anchored on the perf hotspot):** retire the unconditional O(`realVerticesMapSide²`) `geometry()` slimReduce per-vertex walk (terrain.cpp:2748) — the structural blocker for 1K×1K maps (~1M verts/frame). slimReduce keeps two outputs alive under the flag; re-home BOTH onto the O(blocks) chunk grid, then gate the per-vertex loop off.
+
+**The two surviving outputs (recon-confirmed):**
+- **A. object-active set:** `objBlockInfo[b].active = true` AND `objVertexActive[vn] = true`, set `if (rv->clipInfo)`. `clipInfo == onScreenR` = the **768u/384u-dilated angular cone** cull (terrain.cpp:2753-2805), NOT a tight frustum. Per-frame reset to `false` is in `objmgr.cpp:520` (additive within frame — keep). Readers AND-gate on `objVertexActive[obj->getVertexNum()]` (objmgr.cpp:1822/1960/2201/3546) plus `objBlockInfo[].active` (objmgr.cpp:2193 lifecycle). **FP-safe, FN-unsafe.**
+- **B. solid recipe window:** `gos_terrain_indirect::AppendSolidWindowCandidate(vertexNum)` per cull-active vertex, gated `clipInfo && SolidWindowEnabled() && RecipeForVertexNum(vn)`. Consumer = order-independent flat `uint[]` SSBO (binding 9); empty→full-range fallback exists. Must be filled between `BeginFrameSolidWindow()` and `ComputeDispatch()`.
+
+**Replacement = ONE block-driven pass** (`Terrain::produceActiveSetFromChunks()`), called under `MC2_TERRAIN_LOD_CHUNK=1` in `geometry()` in place of the slimReduce loop. Prototype already exists: `MC2_BLOCK_FRUSTUM_FALLBACK` (terrain.cpp:2967-3000) iterates blocks and writes `objVertexActive` over each block's `[rowStart,rowEnd)×[colStart,colEnd)` span — lift that loop.
+```
+BeginFrameSolidWindow();
+for each chunk block (bx,by) with effectiveActive(bx,by):       // see margin below
+    // A: object-active  (reindex 2-D — chunk side != objBlock side!)
+    if (bx < blocksMapSide && by < blocksMapSide)
+        objBlockInfo[bx + by*blocksMapSide].active = true;
+    for each vertex (col,row) in block span:
+        vn = row*realVerticesMapSide + col;
+        objVertexActive[vn] = true;
+        // B: solid window
+        if (SolidWindowEnabled() && RecipeForVertexNum(vn))
+            AppendSolidWindowCandidate(vn);
+```
+
+**Margin — the load-bearing correctness rule (superset obligation):** `s_blockMeta[].inFrustum` is a block-AABB frustum test (the one just fixed in a280dde2). It is TIGHTER than the legacy dilated angular cone near-camera and at edges. To guarantee `chunkActiveSet ⊇ legacyActiveSet` (FN=0), `effectiveActive(bx,by)` must dilate:
+- **near-field:** any block whose AABB is within `CLIP_THRESHOLD_DISTANCE` (768u) of the camera → force active (legacy = "everything within 768u on-screen");
+- **one-block neighbor ring** around each `inFrustum` block (covers the 384u extent slack + AABB tightness);
+- (alternative: expand block AABBs by 384u before the frustum test — pick whichever proves FN=0).
+
+**Index mapping (must-not-get-wrong):** `s_terrainChunkSide = ceil((realVerticesMapSide-1)/verticesBlockSide)`; `blocksMapSide = realVerticesMapSide/verticesBlockSide` (FLOOR). They diverge on non-multiple-of-20 maps. Convert via 2-D `(bx,by)` with `bx,by < blocksMapSide` guard. `vertexNum = row*realVerticesMapSide + col` (row-major). `verticesBlockSide = 20`.
+
+**Sub-phases & gating:**
+- **8a:** implement `produceActiveSetFromChunks()` producing A only; run it ALONGSIDE legacy slimReduce (do NOT gate slimReduce off yet). Add A/B diagnostic `MC2_TERRAIN_ACTIVE_AB`: assert `chunkSet ⊇ legacySet`, log `falseNeg` (must be 0) and `falsePos` (informational). Tune margin until falseNeg==0 across tier1 + a 1K map + full camera sweep (pan/zoom/rotate).
+- **8b:** extend the same pass to produce B (solid window); validate with the EXISTING parity probe (gos_terrain_indirect.cpp:2293, `dropped` must stay 0) — it compares the window against `objVertexActive`. Since the same pass now produces both, parity is structural.
+- **8c:** ONLY after 8a falseNeg==0 AND 8b dropped==0 on the sweep: gate the per-vertex slimReduce loop off under `MC2_TERRAIN_LOD_CHUNK=1` (skip the `for ri<numberVertices` walk; run `produceActiveSetFromChunks()` instead). Legacy slimReduce stays for flag-unset + editor.
+
+**Acceptance (8a–8c):**
+1. Flag unset: legacy `geometry()` byte-unchanged.
+2. Flag set: per-vertex slimReduce loop NOT entered (verify via Tracy `Terrain::geometry slimReduce` zone absent / a counter).
+3. `MC2_TERRAIN_ACTIVE_AB`: falseNeg==0 vs legacy across tier1 + 1K map + camera sweep.
+4. Solid-window parity probe: `dropped`==0.
+5. objBlockInfo.active count ≈ legacy or conservative superset; no object vanish, no gate/turret/power logic stall (manual check on a gate mission).
+6. 1K map: no O(`realVerticesMapSide²`) terrain CPU loop per frame (Tracy slimReduce zone gone; cost now O(visible blocks × ~21²)).
+
+---
+
 ### FINAL deletion step (8z) — BLOCKED until 8a–8e + Phase 10 complete
 
 **Slice kind:** cleanup (dead code deletion; no behavior change under MC2_TERRAIN_LOD_CHUNK=1)
