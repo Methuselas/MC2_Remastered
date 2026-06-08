@@ -3005,6 +3005,122 @@ void Terrain::geometry (void)
 		}
 	}
 
+	// === Phase 8c: PRODUCTION handoff — chunk producer writes the REAL
+	// objBlockInfo.active / objVertexActive / solid window under the flag ===
+	// Active when MC2_TERRAIN_LOD_CHUNK=1 AND NOT MC2_TERRAIN_ACTIVE_AB (A/B mode
+	// forces the legacy baseline instead — see block below). Under the flag,
+	// makeLists is skipped so slimReduce is a no-op and these production outputs
+	// are otherwise EMPTY (terrain-object AI gated off at objmgr.cpp:2193, solid
+	// window falls back to full-range). This re-homes them onto the O(blocks)
+	// chunk producer (the SAME angular-cone + 1-ring dilation proven FN=0 by
+	// 8a/8b on tier1 and the 1K map). Production arrays are pre-cleared every
+	// frame by clearObjBlocksActive / clearObjVerticesActive (mission.cpp:565-566)
+	// BEFORE geometry(), so we only set true. All writes happen INSIDE the
+	// O(active-blocks x span) loop — never an O(nV) scan — so the retired O(n^2)
+	// slimReduce stays retired (guardrail: do NOT revive makeLists here).
+	static const bool s_lodChunkProd = (getenv("MC2_TERRAIN_LOD_CHUNK") != nullptr);
+	static const bool s_activeABForce = (getenv("MC2_TERRAIN_ACTIVE_AB") != nullptr);
+	if (s_lodChunkProd && !s_activeABForce && eye && objBlockInfo && objVertexActive && numObjBlocks > 0)
+	{
+		ZoneScopedN("Terrain::geometry chunkActiveProd");
+		const long nB = numObjBlocks;
+		const long nV = realVerticesMapSide * realVerticesMapSide;
+		static std::vector<uint8_t> s_prodBlock;
+		s_prodBlock.assign(nB, 0);
+
+		const float hMapW      = float(halfVerticesMapSide) * worldUnitsPerVertex;
+		const float kNearField = 768.0f;   // CLIP_THRESHOLD_DISTANCE
+		const float kExtent    = 384.0f;   // VERTEX_EXTENT_RADIUS
+		const float blockR     = (verticesBlockSide * 0.5f) * worldUnitsPerVertex * 1.5f;
+
+		// Base-active: angular-cone replication of legacy onScreenR (identical to 8a).
+		for (long b = 0; b < nB; ++b)
+		{
+			const long bx = b % blocksMapSide, by = b / blocksMapSide;
+			Stuff::Vector3D bc(
+				(float(bx * verticesBlockSide) + verticesBlockSide * 0.5f) * worldUnitsPerVertex - hMapW,
+				hMapW - (float(by * verticesBlockSide) + verticesBlockSide * 0.5f) * worldUnitsPerVertex,
+				cameraPos.z);
+			Stuff::Vector3D oc; oc.Subtract(bc, cameraPos);
+			Camera::cameraFrame.trans_to_frame(oc);
+			const float distEye = oc.GetApproximateLength();
+			Stuff::Vector3D cv = oc; cv.z = 0.0f;
+			const float distClip = cv.GetApproximateLength();
+			bool act = (distClip <= (kNearField + blockR));
+			if (!act)
+			{
+				if (fabs(oc.y) > 1.0e-3f && distEye > 1.0e-3f)
+				{
+					const float clip_distance = fabsf(1.0f / oc.y);
+					const float extent_angle  = kExtent / distEye;
+					const float angR          = blockR * clip_distance;
+					const float hAng          = fabsf(oc.x) * clip_distance;
+					if (hAng <= (hClipConstant + extent_angle + angR)) act = true;
+				}
+				else act = true;
+			}
+			if (act) s_prodBlock[b] = 1;
+		}
+
+		// 1-block neighbor dilation (closes frustum-edge sliver FN; FP-safe).
+		{
+			const long bms = blocksMapSide;
+			std::vector<uint8_t> dil(nB, 0);
+			for (long b = 0; b < nB; ++b)
+			{
+				if (!s_prodBlock[b]) continue;
+				const long bx = b % bms, by = b / bms;
+				for (long dy = -1; dy <= 1; ++dy)
+				for (long dx = -1; dx <= 1; ++dx)
+				{
+					const long nx = bx + dx, ny = by + dy;
+					if (nx < 0 || ny < 0 || nx >= bms || ny >= bms) continue;
+					dil[nx + ny * bms] = 1;
+				}
+			}
+			s_prodBlock.swap(dil);
+		}
+
+		// SINK: write PRODUCTION inside the O(active-blocks x span) loop. The live
+		// solid window was cleared this frame by BeginFrameSolidWindow() (in the
+		// slimReduce block above, which still runs but iterates zero vertices).
+		const bool solidOn = gos_terrain_indirect::SolidWindowEnabled();
+		long pBlocks = 0, pVerts = 0, pWin = 0;
+		for (long b = 0; b < nB; ++b)
+		{
+			if (!s_prodBlock[b]) continue;
+			objBlockInfo[b].active = true;
+			++pBlocks;
+			const long bx = b % blocksMapSide, by = b / blocksMapSide;
+			const long rowStart = by * verticesBlockSide, colStart = bx * verticesBlockSide;
+			for (long row = rowStart; row < rowStart + verticesBlockSide && row < realVerticesMapSide; ++row)
+			for (long col = colStart; col < colStart + verticesBlockSide && col < realVerticesMapSide; ++col)
+			{
+				const long vn = row * realVerticesMapSide + col;
+				if (vn < 0 || vn >= nV) continue;
+				objVertexActive[vn] = true;
+				++pVerts;
+				if (solidOn && gos_terrain_indirect::RecipeForVertexNum((int32_t)vn))
+				{
+					gos_terrain_indirect::AppendSolidWindowCandidate((int32_t)vn);
+					++pWin;
+				}
+			}
+		}
+
+		// Telemetry — guards the silent "obj-active empty under flag" failure mode.
+		static unsigned long s_prodFrame = 0;
+		++s_prodFrame;
+		if (s_prodFrame <= 3 || (s_prodFrame % 600) == 0)
+		{
+			printf("[TerrainLOD prod] frame=%lu objBlocks=%ld objVerts=%ld solidWindow=%ld slimVerts=0\n",
+			       s_prodFrame, pBlocks, pVerts, pWin);
+			if (pBlocks == 0)
+				printf("[TerrainLOD prod] WARNING: zero active obj blocks — terrain-object AI would be gated off\n");
+			fflush(stdout);
+		}
+	}
+
 	// === Phase 8a: chunk-derived object-active SHADOW + A/B vs legacy ===
 	// MC2_TERRAIN_ACTIVE_AB=1 (needs MC2_TERRAIN_LOD_CHUNK=1 so s_blockMeta
 	// inFrustum is populated by Terrain::update, which runs before geometry()).
