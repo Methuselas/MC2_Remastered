@@ -2485,11 +2485,11 @@ void EditorInterface::update()
 					printf("[EDITOR_UPDATE] BuildMove failed: %s\n", moveErr.c_str());
 					fflush(stdout);
 				}
-				// Automatically enable the passability overlay so the user sees the
-				// result immediately (same as View > Show Passability Map).
-				if (moveOk) {
-					OnViewShowpassabilitymap();
-				}
+				// Do NOT auto-show the passability overlay here: drawLine() iterates
+				// 9 sub-cells per visible quad via GameMap->getCell(), which becomes
+				// hundreds of thousands of GL calls per frame on large maps and kills
+				// editor panning performance. The user can toggle View > Show Passability
+				// Map manually when they want to inspect it.
 				break;
 			}
 

@@ -1977,7 +1977,11 @@ long GlobalMap::write (PacketFilePtr packetFile, long whichPacket) {
 		if (areas[i].numDoors) {
 			long packetSize = sizeof(DoorInfo) * areas[i].numDoors;
 			//result = packetFile->writePacket(whichPacket++, (unsigned char*)areas[i].doors, packetSize);
-			result = packetFile->writePacket(whichPacket++, (unsigned char*)areas_doors[i], packetSize);
+			// STORAGE_TYPE_RAW: skip compress+decompress cycle for small per-area
+			// buffers — zlib adds no benefit on buffers this small and the
+			// compress2()+uncompress() round-trip in writePacket costs ~1ms each.
+			// readPacket handles RAW transparently on load.
+			result = packetFile->writePacket(whichPacket++, (unsigned char*)areas_doors[i], packetSize, STORAGE_TYPE_RAW);
 			if (result <= 0)
 				Fatal(result, " GlobalMap.write: Unable to write doorInfos packet ");
 			numDoorInfosWritten += areas[i].numDoors;
@@ -2017,14 +2021,17 @@ long GlobalMap::write (PacketFilePtr packetFile, long whichPacket) {
 	for (int i = 0; i < (numDoors + NUM_DOOR_OFFSETS); i++) {
 		long numLinks = doors[i].numLinks[0] + NUM_EXTRA_DOOR_LINKS;
 		gosASSERT(numLinks >= 2);
-		result = packetFile->writePacket(whichPacket++, (unsigned char*)doors_links[i][0], sizeof(DoorLink) * numLinks);
+		// STORAGE_TYPE_RAW: skip compress+decompress per door-link buffer.
+		// Same rationale as doorInfos above — these are small buffers and the
+		// compress2()+uncompress() overhead dominates over any size savings.
+		result = packetFile->writePacket(whichPacket++, (unsigned char*)doors_links[i][0], sizeof(DoorLink) * numLinks, STORAGE_TYPE_RAW);
 		if (result <= 0)
 			Fatal(result, " GlobalMap.write: Unable to write doorLinks packet ");
 		numberL += numLinks;
 
 		numLinks = doors[i].numLinks[1] + NUM_EXTRA_DOOR_LINKS;
 		gosASSERT(numLinks >= 2);
-		result = packetFile->writePacket(whichPacket++, (unsigned char*)doors_links[i][1], sizeof(DoorLink) * numLinks);
+		result = packetFile->writePacket(whichPacket++, (unsigned char*)doors_links[i][1], sizeof(DoorLink) * numLinks, STORAGE_TYPE_RAW);
 		if (result <= 0)
 			Fatal(result, " GlobalMap.write: Unable to write doorLinks packet ");
 		numberL += numLinks;
