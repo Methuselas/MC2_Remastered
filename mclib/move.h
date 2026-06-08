@@ -610,6 +610,12 @@ class MissionMap {
 		}
 
 		bool getPassable (long row, long col) {
+			// worldToCell (terrain.h) does NOT clamp, so far-off-map cursor
+			// positions can yield OOB row/col. Treat off-map as impassable
+			// instead of indexing map[] out of bounds (READ AV). Same OOB
+			// class as the GameMap calcArea/calcRegions guards.
+			if (!inBounds(row, col))
+				return(false);
 			return(map[row * width + col].getPassable());
 		}
 
