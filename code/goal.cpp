@@ -399,6 +399,12 @@ bool GoalManager::fillRegion (long row, long col, long region) {
 
 void GoalManager::calcRegions (void) {
 
+	// GameMap can be NULL for missions loaded without MOVE data (blank-synthesis
+	// fallback gives all-passable movement but no region info).  Skip gracefully
+	// rather than crashing — goal pathfinding will be degraded but not fatal.
+	if (!GameMap)
+		return;
+
 	//----------------------------------------------------------------------
 	// This is the same method used in GlobalMap::calcAreas, so see notes...
 	for (long r = 0; r < GameMap->height; r++)

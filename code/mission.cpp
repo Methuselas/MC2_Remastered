@@ -2360,30 +2360,37 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 			}
 		}
 		else {
-			// Packet 4 is empty — mission was saved without MOVE data (editor saved
-			// before "Generate Passability Map" was run, or a QuickSave).
-			// STOP is a no-op in RelWithDebInfo so execution falls through with
-			// GameMap==NULL, crashing hundreds of lines later at setPosition().
-			// Instead: synthesize a blank all-passable MOVE from terrain dimensions
-			// so the mission loads without crashing. AI pathfinding will be degraded
-			// (all cells passable, no area/door structure) but the game runs.
+			// Packet 4 is empty — mission was saved without MOVE data.
 			STOP(("Mission has not movement Data.  QuickSaved Map?"));
-			int cellSide = Terrain::realVerticesMapSide - 1;
-			int moveSide = cellSide * MAPCELL_DIM;
-			bool moveOk = false;
-			if (moveSide > 0
-			 && moveSide <= MAX_MAP_CELL_WIDTH
-			 && (moveSide % SECTOR_DIM) == 0)
-			{
-				MOVE_buildData(moveSide, moveSide, NULL /*all-passable blank*/, 0, NULL);
-				moveOk = (GameMap != NULL);
-			}
-			if (moveOk) {
+			// Blank MOVE synthesized below (shared with the seekPacket-failed path).
+		}
+	}
+
+	// Safety net: if GameMap is still NULL here the mission will crash in
+	// goal.cpp, group.cpp, etc. at frame ~1455 when the AI starts calculating
+	// paths (GameMap->width/height accessed without null guard everywhere).
+	// Covers three failure modes:
+	//   (a) seekPacket(4) returned error — no packet 4 at all
+	//   (b) getPacketSize() == 0 — packet reserved but empty
+	//   (c) badLoad on GlobalMoveMap[0] left GameMap initialised but
+	//       GlobalMoveMap[1/2] == NULL (hover/heli units crash if ever used)
+	// Build a blank all-passable MOVE from terrain dimensions.
+	// Round moveSide DOWN to the nearest SECTOR_DIM multiple so
+	// GlobalMap::build's assertion passes on non-standard map sizes.
+	if (!GameMap) {
+		int cellSide = Terrain::realVerticesMapSide - 1;
+		int moveSide = cellSide * MAPCELL_DIM;
+		if (moveSide % SECTOR_DIM != 0)
+			moveSide = (moveSide / SECTOR_DIM) * SECTOR_DIM;  // round down
+		if (moveSide > MAX_MAP_CELL_WIDTH)
+			moveSide = MAX_MAP_CELL_WIDTH;
+		if (moveSide > 0) {
+			printf("[MISSION] synthesizing blank MOVE: moveSide=%d (terrainVtx=%d)\n",
+			       moveSide, (int)Terrain::realVerticesMapSide);
+			fflush(stdout);
+			MOVE_buildData(moveSide, moveSide, NULL /*all-passable blank*/, 0, NULL);
+			if (GameMap)
 				GameMap->placeMoversCallback = PlaceMovers;
-				// Blank MOVE has no area/door structure; skip gate callbacks.
-			}
-			// If moveSide is out of range or build failed, GameMap stays NULL.
-			// The null guard in GameObject::setPosition skips the bounds check.
 		}
 	}
 

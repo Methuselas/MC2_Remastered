@@ -409,6 +409,9 @@ long MoverGroup::calcMoveGoals (Stuff::Vector3D goal, long numMovers, Stuff::Vec
 			Fatal(0, " MoverGroup.calcMoveGoals: unable to malloc goalMap ");
 	}
 
+	if (!GameMap)
+		return(-1);
+
 	int goalRow, goalCol;
 	land->worldToCell(goal, goalRow, goalCol);
 	int topLeftRow = goalRow - GOALMAP_DIM / 2;
