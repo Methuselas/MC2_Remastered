@@ -1431,7 +1431,12 @@ long Terrain::update (void)
 	// Terrain LOD chunk Phase 4: skip legacy vertex/quad list build when chunk
 	// path owns rendering. makeLists populates vertexList/quadList used by the
 	// per-quad draw() loop; that loop is suppressed under the same env gate.
-	if (!getenv("MC2_TERRAIN_LOD_CHUNK"))
+	// Phase 8a: MC2_TERRAIN_ACTIVE_AB forces makeLists even under the flag so the
+	// legacy slimReduce produces a real objBlockInfo.active baseline this frame to
+	// A/B against the chunk-derived shadow set (without it, makeLists is skipped,
+	// numberVertices stays 0, slimReduce is a no-op, and the baseline is empty —
+	// which is also why terrain-object update() is gated off under the flag today).
+	if (!getenv("MC2_TERRAIN_LOD_CHUNK") || getenv("MC2_TERRAIN_ACTIVE_AB"))
 	{
 		ZoneScopedN("Terrain::update makeLists");
 		Terrain::mapData->makeLists(vertexList,numberVertices,quadList,numberQuads);
@@ -2998,6 +3003,168 @@ void Terrain::geometry (void)
 				}
 			}
 		}
+	}
+
+	// === Phase 8a: chunk-derived object-active SHADOW + A/B vs legacy ===
+	// MC2_TERRAIN_ACTIVE_AB=1 (needs MC2_TERRAIN_LOD_CHUNK=1 so s_blockMeta
+	// inFrustum is populated by Terrain::update, which runs before geometry()).
+	// ADDITIVE / DIAGNOSTIC ONLY: writes to file-local shadow arrays, NEVER to
+	// production objBlockInfo[]/objVertexActive[]. Proves a block-level O(blocks)
+	// pass can produce a SUPERSET of the legacy O(realVerticesMapSide^2)
+	// slimReduce active set (FP-safe, FN-unsafe). Success metric: blockFN==0 AND
+	// vertexFN==0 across the camera sweep. slimReduce stays authoritative until
+	// 8c gates it off (1K fixture required first). The O(nV) compare below is
+	// diagnostic-only (runs only when the env var is set), not the production cost.
+	static const bool s_activeAB = (getenv("MC2_TERRAIN_ACTIVE_AB") != nullptr);
+	if (s_activeAB && eye && objBlockInfo && objVertexActive && numObjBlocks > 0)
+	{
+		ZoneScopedN("Terrain::geometry activeAB");
+		const long nB = numObjBlocks;
+		const long nV = realVerticesMapSide * realVerticesMapSide;
+		static std::vector<uint8_t> s_shBlock, s_shVert;
+		s_shBlock.assign(nB, 0);
+		s_shVert.assign(nV, 0);
+
+		const float hMapW = float(halfVerticesMapSide) * worldUnitsPerVertex;
+		const float kNearField = 768.0f;             // CLIP_THRESHOLD_DISTANCE legacy near-field bypass
+		const float kExtent    = 384.0f;             // VERTEX_EXTENT_RADIUS legacy angular slack
+		const float blockR     = (verticesBlockSide * 0.5f) * worldUnitsPerVertex * 1.5f; // block half-diag + margin
+
+		// O(numObjBlocks) producer that REPLICATES the legacy per-vertex angular
+		// cull (slimReduce onScreenR) conservatively at block granularity. onScreenR
+		// is a CAMERA-FRAME angular cone (|x|/y <= hClip + 384/dist, bypassed within
+		// 768u) — NOT the render frustum, so a frustum-AABB test under-covers it
+		// (observed FN). Here: transform block center to camera frame; near-field
+		// bypass (distClip <= 768 + blockR); else horizontal-cone test with slack
+		// widened by the block's angular radius. The VERTICAL cull is intentionally
+		// NOT applied (block z := camera elevation -> camera-frame z ~ 0 -> always
+		// passes): a conservative FP-only over-inclusion that drops elevation
+		// dependence and guarantees no vertical false-negative. FP is acceptable
+		// (extra object updates); FN is not (objects vanish / logic stalls).
+		for (long b = 0; b < nB; ++b)
+		{
+			const long bx = b % blocksMapSide;
+			const long by = b / blocksMapSide;
+			Stuff::Vector3D bc(
+				(float(bx * verticesBlockSide) + verticesBlockSide * 0.5f) * worldUnitsPerVertex - hMapW,
+				hMapW - (float(by * verticesBlockSide) + verticesBlockSide * 0.5f) * worldUnitsPerVertex,
+				cameraPos.z);
+			Stuff::Vector3D oc;
+			oc.Subtract(bc, cameraPos);
+			Camera::cameraFrame.trans_to_frame(oc);
+			const float distEye = oc.GetApproximateLength();
+			Stuff::Vector3D cv = oc;
+			cv.z = 0.0f;
+			const float distClip = cv.GetApproximateLength();
+
+			bool act = (distClip <= (kNearField + blockR));   // near-field bypass (conservative)
+			if (!act)
+			{
+				if (fabs(oc.y) > 1.0e-3f && distEye > 1.0e-3f)
+				{
+					const float clip_distance = fabsf(1.0f / oc.y);
+					const float extent_angle  = kExtent / distEye;
+					const float angR          = blockR * clip_distance;  // block angular radius
+					const float hAng          = fabsf(oc.x) * clip_distance;
+					if (hAng <= (hClipConstant + extent_angle + angR)) act = true;
+				}
+				else
+				{
+					act = true;   // degenerate (block ~at camera depth) -> conservative include
+				}
+			}
+			if (!act) continue;
+			s_shBlock[b] = 1;   // direct-active only; vertex spans filled after dilation
+		}
+
+		// 1-block neighbor dilation: a legacy-active block can be a frustum-edge
+		// sliver (active via ~1 onscreen vertex) whose CENTER falls just outside the
+		// cone; such a block is always adjacent to a fully-active block, so dilating
+		// the active set by a one-block ring closes those residual FN cheaply.
+		// FP-only over-inclusion (acceptable). Then fill per-vertex spans from the
+		// DILATED block set so objVertexActive[] is also a superset.
+		{
+			const long bms = blocksMapSide;
+			std::vector<uint8_t> dil(nB, 0);
+			for (long b = 0; b < nB; ++b)
+			{
+				if (!s_shBlock[b]) continue;
+				const long bx = b % bms, by = b / bms;
+				for (long dy = -1; dy <= 1; ++dy)
+				for (long dx = -1; dx <= 1; ++dx)
+				{
+					const long nx = bx + dx, ny = by + dy;
+					if (nx < 0 || ny < 0 || nx >= bms || ny >= bms) continue;
+					dil[nx + ny * bms] = 1;
+				}
+			}
+			s_shBlock.swap(dil);
+
+			for (long b = 0; b < nB; ++b)
+			{
+				if (!s_shBlock[b]) continue;
+				const long bx = b % bms, by = b / bms;
+				const long rowStart = by * verticesBlockSide;
+				const long colStart = bx * verticesBlockSide;
+				for (long row = rowStart; row < rowStart + verticesBlockSide && row < realVerticesMapSide; ++row)
+				for (long col = colStart; col < colStart + verticesBlockSide && col < realVerticesMapSide; ++col)
+				{
+					const long vn = row * realVerticesMapSide + col;
+					if (vn >= 0 && vn < nV) s_shVert[vn] = 1;
+				}
+			}
+		}
+
+		// Compare vs legacy production (filled by slimReduce above). FN = legacy
+		// active but chunk shadow MISSED it (the unsafe direction).
+		// FN = legacy active but chunk MISSED (unsafe). FP = chunk active but
+		// legacy not (safe, informational). legacyVertexActive lets the gate
+		// exclude vacuous frames (legacy baseline empty -> proof excluded).
+		long blockFN = 0, vertexFN = 0, blockFP = 0, vertexFP = 0;
+		long chunkActive = 0, legacyActive = 0, legacyVertexActive = 0;
+		long realBlockFN = 0, staleBlockFN = 0;
+		for (long b = 0; b < nB; ++b)
+		{
+			const bool c = (s_shBlock[b] != 0);
+			const bool l = objBlockInfo[b].active;
+			if (c) ++chunkActive;
+			if (l) ++legacyActive;
+			if (c && !l) ++blockFP;
+			if (l && !c)
+			{
+				++blockFN;
+				// Split FN by whether the missed legacy block has ANY legacy-active
+				// vertex in its own span. realBlockFN (has teeth) = a true coverage
+				// gap that breaks the objmgr AND-gate. staleBlockFN (no active vert)
+				// = legacy sticky/reset-order artifact — harmless if every reader
+				// AND-gates on objVertexActive (grep-confirmed). Gate on realBlockFN.
+				const long bx = b % blocksMapSide, by = b / blocksMapSide;
+				bool hasActiveVert = false;
+				const long rs = by * verticesBlockSide, cs = bx * verticesBlockSide;
+				for (long row = rs; row < rs + verticesBlockSide && row < realVerticesMapSide && !hasActiveVert; ++row)
+				for (long col = cs; col < cs + verticesBlockSide && col < realVerticesMapSide && !hasActiveVert; ++col)
+				{
+					const long vn = row * realVerticesMapSide + col;
+					if (vn >= 0 && vn < nV && objVertexActive[vn]) hasActiveVert = true;
+				}
+				if (hasActiveVert) ++realBlockFN; else ++staleBlockFN;
+			}
+		}
+		for (long v = 0; v < nV; ++v)
+		{
+			const bool c = (s_shVert[v] != 0);
+			const bool l = (objVertexActive[v] != 0);
+			if (l) ++legacyVertexActive;
+			if (l && !c) ++vertexFN;
+			if (c && !l) ++vertexFP;
+		}
+
+		static unsigned long s_abFrame = 0;
+		++s_abFrame;
+		const char* vac = (legacyActive == 0 || legacyVertexActive == 0) ? " baseline=vacuous" : "";
+		printf("[TerrainLOD activeAB] frame=%lu blockFN=%ld realBlockFN=%ld staleBlockFN=%ld vertexFN=%ld blockFP=%ld vertexFP=%ld chunkActive=%ld legacyActive=%ld legacyVertexActive=%ld margin=angular_cone_repl+blockR+nf768%s\n",
+		       s_abFrame, blockFN, realBlockFN, staleBlockFN, vertexFN, blockFP, vertexFP, chunkActive, legacyActive, legacyVertexActive, vac);
+		fflush(stdout);
 	}
 
 	//-----------------------------------
