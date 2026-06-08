@@ -2437,6 +2437,12 @@ void AppendSolidWindowCandidate(int32_t vn0) {
         g_solidWindowMaxSeen = (uint32_t)g_solidWindowStaging.size();
 }
 
+// Phase 8b A/B: read-only view of the legacy staging window. No mutation.
+const uint32_t* SolidWindowStagingData(uint32_t* outCount) {
+    if (outCount) *outCount = (uint32_t)g_solidWindowStaging.size();
+    return g_solidWindowStaging.empty() ? nullptr : g_solidWindowStaging.data();
+}
+
 bool ComputePreflight() {
     ZoneScopedN("Terrain::IndirectPreflight");
     {

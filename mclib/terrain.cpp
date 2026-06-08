@@ -3165,6 +3165,49 @@ void Terrain::geometry (void)
 		printf("[TerrainLOD activeAB] frame=%lu blockFN=%ld realBlockFN=%ld staleBlockFN=%ld vertexFN=%ld blockFP=%ld vertexFP=%ld chunkActive=%ld legacyActive=%ld legacyVertexActive=%ld margin=angular_cone_repl+blockR+nf768%s\n",
 		       s_abFrame, blockFN, realBlockFN, staleBlockFN, vertexFN, blockFP, vertexFP, chunkActive, legacyActive, legacyVertexActive, vac);
 		fflush(stdout);
+
+		// === Phase 8b: chunk-derived SOLID-WINDOW shadow A/B ===
+		// MC2_TERRAIN_SOLID_AB=1 (also needs MC2_TERRAIN_ACTIVE_AB so s_shVert is
+		// built, and MC2_TERRAIN_SOLID_NARROW != 0 so the legacy window is filled).
+		// PURE SHADOW: builds the chunk window membership from s_shVert (proven
+		// superset of objVertexActive) intersected with the SAME RecipeForVertexNum
+		// live filter the legacy appender (AppendSolidWindowCandidate) applies.
+		// Does NOT call the live appender, does NOT mutate g_solidWindowStaging,
+		// does NOT feed the GPU. Compares against a read-only snapshot of this
+		// frame's legacy staging. Gate: windowFN==0 (every legacy window vn covered).
+		static const bool s_solidAB = (getenv("MC2_TERRAIN_SOLID_AB") != nullptr);
+		if (s_solidAB)
+		{
+			ZoneScopedN("Terrain::geometry solidAB");
+			// Legacy window presence set (dedup; staging may contain duplicates).
+			uint32_t legCount = 0;
+			const uint32_t* legData = gos_terrain_indirect::SolidWindowStagingData(&legCount);
+			static std::vector<uint8_t> s_legWin;
+			s_legWin.assign(nV, 0);
+			for (uint32_t i = 0; i < legCount; ++i)
+			{
+				const uint32_t vn = legData[i];
+				if (vn < (uint32_t)nV) s_legWin[vn] = 1;
+			}
+
+			long windowFN = 0, windowFP = 0, legacyWindowCount = 0, chunkWindowCount = 0;
+			for (long v = 0; v < nV; ++v)
+			{
+				const bool leg   = (s_legWin[v] != 0);
+				// chunk window = covered vertex with a live recipe (same filter as
+				// AppendSolidWindowCandidate's caller predicate).
+				const bool chunk = (s_shVert[v] != 0) &&
+				                   (gos_terrain_indirect::RecipeForVertexNum((int32_t)v) != nullptr);
+				if (leg)   ++legacyWindowCount;
+				if (chunk) ++chunkWindowCount;
+				if (leg && !chunk) ++windowFN;   // legacy window vn the chunk set MISSED (unsafe)
+				if (chunk && !leg) ++windowFP;   // chunk-only (safe superset, informational)
+			}
+			const char* svac = (legacyWindowCount == 0) ? " baseline=vacuous" : "";
+			printf("[TerrainLOD solidAB] frame=%lu windowFN=%ld windowFP=%ld legacyWindowCount=%ld chunkWindowCount=%ld%s\n",
+			       s_abFrame, windowFN, windowFP, legacyWindowCount, chunkWindowCount, svac);
+			fflush(stdout);
+		}
 	}
 
 	//-----------------------------------

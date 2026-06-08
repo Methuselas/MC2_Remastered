@@ -424,6 +424,10 @@ void BeginFrame();              // reset armed flag; call unconditionally once p
 // the loose superset predicate — see terrain.cpp).  NO new walk.
 void BeginFrameSolidWindow();
 void AppendSolidWindowCandidate(int32_t vn0);
+// Phase 8b A/B: read-only snapshot of this frame's legacy solid-window staging
+// (the vns slimReduce appended). Returns data ptr + count; ptr null when empty.
+// Valid between the slim-loop fill and ComputeDispatch consume. Does NOT mutate.
+const uint32_t* SolidWindowStagingData(uint32_t* outCount);
 bool ComputePreflight();
 // v4 split: ComputePreflight() does arming gates only. ComputeDispatch()
 // runs after Phase 1's PackAndDispatch at terrain.cpp so it can read
