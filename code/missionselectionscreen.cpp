@@ -174,7 +174,8 @@ void MissionSelectionScreen::update()
 
 	missionDescriptionListBox.update();
 
-	if ( pressedButton != -1 )
+	if ( pressedButton != -1 && pressedButton < missionCount
+		&& pressedButton < MAX_MISSIONS_IN_GROUP && missionNames[pressedButton] )
 	{
 		operationScreen.textObjects[0].setText( LogisticsData::instance->getMissionFriendlyName(
 			missionNames[pressedButton] ) );
