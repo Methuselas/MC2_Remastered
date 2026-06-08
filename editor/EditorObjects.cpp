@@ -44,6 +44,7 @@
 using namespace Microsoft::Xna::Arm;
 extern IProviderEngine* armProvider;
 
+
 extern HSTRRES gameResourceHandle;
 
 Pilot::PilotInfo Pilot::s_BadPilots[MAX_PILOT] = { 0 };
@@ -374,9 +375,9 @@ bool Unit::save( FitIniFile* file, int WarriorNumber, int controlDataType, char*
 			strcat(buf, iniFilename);
 			strcat(buf, ".ini");
 
-			IProviderAssetPtr objAssetPtr = armProvider->OpenAsset(buf, 
+			IProviderAssetPtr objAssetPtr = armProvider->OpenAsset(buf,
 								AssetType_Physical, ProviderType_Primary);
-						
+
 			if (getDisplayName()[0])
 			{
 				objAssetPtr->AddProperty("DisplayName", getDisplayName());
@@ -393,17 +394,24 @@ bool Unit::save( FitIniFile* file, int WarriorNumber, int controlDataType, char*
 		strcat(buf, ".fit");
 		mechAsset->AddRelationship("ObjectProfile", buf);
 
-		strcpy(buf, "Data\\Objects\\");
-		strcat(buf, iniFilename);
-		strcat(buf, ".cvs");
-		mechAsset->AddRelationship("CSVFile", buf);
+		// iniFilename may be NULL for units whose type ID isn't in the editor
+		// object database (e.g. a mech type not present in the current mod
+		// config).  Guard both CSVFile and AppearanceFile relationships with
+		// the same null check that already guards the TGL block above.
+		if (iniFilename && iniFilename[0])
+		{
+			strcpy(buf, "Data\\Objects\\");
+			strcat(buf, iniFilename);
+			strcat(buf, ".cvs");
+			mechAsset->AddRelationship("CSVFile", buf);
 
-		strcpy(buf, "Data\\TGL\\");
-		strcat(buf, iniFilename);
-		strcat(buf, ".ini");
-		mechAsset->AddRelationship("AppearanceFile", buf);
+			strcpy(buf, "Data\\TGL\\");
+			strcat(buf, iniFilename);
+			strcat(buf, ".ini");
+			mechAsset->AddRelationship("AppearanceFile", buf);
+		}
 	}
-	
+
 	pilot.save( file, appearance()->teamId == EDITOR_TEAM1 ? 1 : 0 );
 	brain.save( file, WarriorNumber, appearance()->teamId == EDITOR_TEAM1 ? 1 : 0);
 
@@ -438,7 +446,9 @@ bool Unit::save( FitIniFile* file, int WarriorNumber, int controlDataType, char*
 
 	file->writeIdULong( "ControlDataType", controlDataType );
 	file->writeIdString( "ObjectProfile", objectProfile );
-	file->writeIdString( "CSVFile",  EditorObjectMgr::instance()->getFileName( id ) );
+	// getFileName may return NULL for unknown object type IDs — write empty string rather than crash.
+	const char* csvFileName = EditorObjectMgr::instance()->getFileName( id );
+	file->writeIdString( "CSVFile", csvFileName ? csvFileName : "" );
 	file->writeIdULong( "VariantNumber", variant );
 
 	file->writeIdULong( "SquadNum", getSquad() );
@@ -794,10 +804,14 @@ Brain& Brain::operator=( const Brain& src )
 
 void Pilot::save( FitIniFile* file, int bGoodGuy )
 {
-	file->writeIdString( "Profile", info->fileName );
+	// info is NULL when the unit was loaded from a pak/fit without calling
+	// pilot.load() (the editor's Unit::load() never calls it).  Write an
+	// empty profile string rather than crashing on info->fileName.
+	const char* profileName = (info && info->fileName) ? info->fileName : "";
+	file->writeIdString( "Profile", profileName );
 
 	// ARM
-	if (mechAsset && info->fileName[0])
+	if (mechAsset && info && info->fileName && info->fileName[0])
 	{
 		char buf[512] = {0};
 		strcpy(buf, "Data\\Missions\\Warriors\\");

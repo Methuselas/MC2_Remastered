@@ -2110,8 +2110,11 @@ bool EditorData::save( const char* fileName, bool quickSave )
 
 	mapAsset = (IProviderAsset*)mapAssetPtr;
 
-	EditorDataTrace("EditorData::save: quickSave=%d moveReady=%d",
-		quickSave ? 1 : 0, gEditorDataMoveDataReadyForFullSave ? 1 : 0);
+	EditorDataTrace("EditorData::save: enter: quickSave=%d moveReady=%d moveDirty=%d GameMap=%p",
+		quickSave ? 1 : 0,
+		gEditorDataMoveDataReadyForFullSave ? 1 : 0,
+		s_moveDirty ? 1 : 0,
+		(void*)GameMap);
 
 	// For full saves: rebuild MOVE only if dirty (terrain/objects changed since last build).
 	// If the .pak was just loaded, s_moveDirty=false and MOVE is already in systemHeap from
@@ -2127,16 +2130,16 @@ bool EditorData::save( const char* fileName, bool quickSave )
 		RebuildMoveIfDirty(&moveErr);
 		if (!moveErr.empty()) {
 			// Rebuild was attempted and failed -- save proceeds without MOVE data.
-			printf("[MOVE_REBUILD] save: rebuild failed (%s) — saving without MOVE data\n",
-			       moveErr.c_str());
-			fflush(stdout);
 			EditorDataTrace("EditorData::save: MOVE rebuild failed: %s", moveErr.c_str());
 		}
 		// True if MOVE was loaded from disk, or if dirty rebuild just succeeded.
 		moveRebuildOk = IsMoveDataReadyForFullSave();
+		EditorDataTrace("EditorData::save: after MOVE block: moveRebuildOk=%d GameMap=%p",
+			moveRebuildOk ? 1 : 0, (void*)GameMap);
 	}
  
 	// create a pak file with the correct number of entries
+	EditorDataTrace("EditorData::save: creating pak: %s", path);
 	PacketFile file;
 	if ( NO_ERR != file.create( path ) )
 	{
@@ -2158,7 +2161,7 @@ bool EditorData::save( const char* fileName, bool quickSave )
 	DWORD movePacketCount = 0;
 	if (!quickSave && moveRebuildOk)
 	{
-		EditorDataTrace("EditorData::save: before MOVE_saveData(NULL)");
+		EditorDataTrace("EditorData::save: before MOVE_saveData(NULL): GameMap=%p", (void*)GameMap);
 		movePacketCount = MOVE_saveData(NULL);
 		EditorDataTrace("EditorData::save: MOVE_saveData(NULL) count=%lu", (unsigned long)movePacketCount);
 	}
@@ -2167,10 +2170,12 @@ bool EditorData::save( const char* fileName, bool quickSave )
 		EditorDataTrace("EditorData::save: skipping MOVE_saveData(NULL): moveRebuildOk=false");
 	}
 	DWORD numPackets = (!quickSave && moveRebuildOk) ? (5 + movePacketCount) : 6;
-	EditorDataTrace("EditorData::save: numPackets=%lu", (unsigned long)numPackets);
+	EditorDataTrace("EditorData::save: numPackets=%lu land=%p", (unsigned long)numPackets, (void*)land);
 	file.reserve(numPackets, false);
 	land->unselectAll();
+	EditorDataTrace("EditorData::save: land->save packet 0");
 	bool bRetVal = land->save( &file, 0, (0.0 < eye->day2NightTransitionTime) ) ? true : false;
+	EditorDataTrace("EditorData::save: EditorObjectMgr::save packet 1");
 	bRetVal = EditorObjectMgr::instance()->save( file, 1 ) && bRetVal;
 
 	if (!quickSave)
@@ -2180,7 +2185,7 @@ bool EditorData::save( const char* fileName, bool quickSave )
 		EditorDataTrace("EditorData::save: after saveTacMap");
 		if (moveRebuildOk)
 		{
-			EditorDataTrace("EditorData::save: before MOVE_saveData(file)");
+			EditorDataTrace("EditorData::save: before MOVE_saveData(file): GameMap=%p", (void*)GameMap);
 			MOVE_saveData(&file, 4);
 			EditorDataTrace("EditorData::save: after MOVE_saveData(file)");
 		}
@@ -2202,8 +2207,10 @@ bool EditorData::save( const char* fileName, bool quickSave )
 	GUID id;
 	CoCreateGuid(&id);
 
+	EditorDataTrace("EditorData::save: writePacket GUID (packet %lu)", (unsigned long)(numPackets-1));
 	file.writePacket(numPackets-1,MemoryPtr(&id),sizeof(GUID));
 
+	EditorDataTrace("EditorData::save: file.close()");
 	file.close();
 
 	CString newFit;
@@ -2227,10 +2234,13 @@ bool EditorData::save( const char* fileName, bool quickSave )
 	}
 	gosASSERT( result == NO_ERR );
 
+	EditorDataTrace("EditorData::save: land->saveColorMapName");
 	land->saveColorMapName(&fitFile);
 
+	EditorDataTrace("EditorData::save: saveMissionFitFileStuff");
 	bRetVal = saveMissionFitFileStuff(fitFile) && bRetVal;
 
+	EditorDataTrace("EditorData::save: fitFile.close()");
 	fitFile.close();
  
 	if (!quickSave)
@@ -2440,6 +2450,7 @@ bool EditorData::save( const char* fileName, bool quickSave )
 		}
 	}
 
+	EditorDataTrace("EditorData::save: mapAssetPtr->Close()");
 	// ARM
 	mapAssetPtr->Close();
 	mapAssetPtr = NULL;
@@ -2450,6 +2461,7 @@ bool EditorData::save( const char* fileName, bool quickSave )
 		CoUninitialize();
 	}
 
+	EditorDataTrace("EditorData::save: done: bRetVal=%d", bRetVal ? 1 : 0);
 	EditorData::instance->MissionNeedsSaving(false);
 
 	EditorInterface::instance()->undoMgr.NoteThatASaveHasJustOccurred();
@@ -2470,15 +2482,22 @@ bool EditorData::quickSave( const char* fileName )
 bool EditorData::saveMissionFitFileStuff( FitIniFile &fitFile )
 {
 	bool bRetVal = true;
+	EditorDataTrace("EditorData::saveMissionFitFileStuff: eye->save");
 	eye->save( &fitFile );
+	EditorDataTrace("EditorData::saveMissionFitFileStuff: land->save(fitFile)");
 	bRetVal = land->save( &fitFile ) && bRetVal;
 
+	EditorDataTrace("EditorData::saveMissionFitFileStuff: saveMechs");
 	EditorObjectMgr::instance()->saveMechs( fitFile );
+	EditorDataTrace("EditorData::saveMissionFitFileStuff: saveDropZones");
 	EditorObjectMgr::instance()->saveDropZones( fitFile );
+	EditorDataTrace("EditorData::saveMissionFitFileStuff: saveForests");
 	EditorObjectMgr::instance()->saveForests( fitFile );
 
+	EditorDataTrace("EditorData::saveMissionFitFileStuff: missionSettings.save");
 	missionSettings.save( &fitFile );
 
+	EditorDataTrace("EditorData::saveMissionFitFileStuff: MissionSettings block");
 	fitFile.writeBlock( "MissionSettings" );
 	fitFile.writeIdString( "MissionName", EditorData::instance->MissionName() );
 	fitFile.writeIdBoolean( "MissionNameUseResourceString", EditorData::instance->MissionNameUseResourceString() );
@@ -2524,13 +2543,17 @@ bool EditorData::saveMissionFitFileStuff( FitIniFile &fitFile )
 	fitFile.writeBlock("TheSky");
 	fitFile.writeIdLong("SkyNumber",EditorData::instance->TheSkyNumber());
 	
+	EditorDataTrace("EditorData::saveMissionFitFileStuff: saveObjectives");
 	saveObjectives( &fitFile );
+	EditorDataTrace("EditorData::saveMissionFitFileStuff: PlayersRef().Save");
 	PlayersRef().Save( &fitFile );
 
+	EditorDataTrace("EditorData::saveMissionFitFileStuff: Music/Script blocks");
 	fitFile.writeBlock( "Music" );
 	fitFile.writeIdUChar( "scenarioTuneNum", 0 );
 	fitFile.writeBlock( "Script" );
 	fitFile.writeIdString( "ScenarioScript", missionScriptName );
+	EditorDataTrace("EditorData::saveMissionFitFileStuff: done");
 
 	if (mapAsset)
 	{

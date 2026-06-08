@@ -28,6 +28,7 @@ enum class ChecklistAction {
     OpenMapGenerator,   // open the Map Generator dialog
     OpenSaveAs,         // open File > Save As dialog
     OpenObjectives,     // open Mission > Teams (team 1) objective editor
+    BuildMove,          // call EditorData::RebuildMoveFromCurrentTerrain() in-place
     PrepareSaveable,    // "Prepare Saveable Mission" bottom button:
                         //   re-validate, trigger first failing check's action
 };

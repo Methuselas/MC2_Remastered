@@ -2101,6 +2101,7 @@ bool  EditorObjectMgr::loadMechs( FitIniFile& file )
 
 bool		EditorObjectMgr::saveMechs( FitIniFile& file )
 {
+	EditorObjMgrTrace("EditorObjectMgr::saveMechs: enter units.Count=%d", units.Count());
 	file.writeBlock( "Warriors" );
 
 	UNIT_LIST unitsByPlayer[8/*max players*/];
@@ -2253,17 +2254,23 @@ bool		EditorObjectMgr::saveMechs( FitIniFile& file )
 		sprintf( buffer, "Warrior%ld", counter );
 		file.writeBlock( buffer );
 		// ARM
-		
+
 		// Make a new name of the form "level23_warrior8"
 		char armName[512] = {0};
 		strcpy(armName, file.getFilename());
 		_strlwr(armName);
 		char * fitExt = strstr(armName, ".fit");
-		*fitExt = '_';
-		sprintf(fitExt+1, "warrior%02d", counter);
-		mapAsset->AddRelationship("warrior", armName);
+		// Guard: if getFilename() returns a path without .fit extension, skip ARM relationship.
+		if (!fitExt) {
+			EditorObjMgrTrace("EditorObjectMgr::saveMechs: armName has no .fit: '%s' (skipping ARM warrior relationship)", armName);
+		} else {
+			*fitExt = '_';
+			sprintf(fitExt+1, "warrior%02d", counter);
+			mapAsset->AddRelationship("warrior", armName);
+		}
 
-		IProviderAssetPtr mechAssetPtr = armProvider->OpenAsset(armName, (AssetType)1, ProviderType_Primary);
+		IProviderAssetPtr mechAssetPtr = armProvider->OpenAsset(
+			fitExt ? armName : "", (AssetType)1, ProviderType_Primary);
 		mechAsset = (IProviderAsset*)mechAssetPtr;
 
 		(*iter)->save( &file, counter );
@@ -2346,7 +2353,7 @@ bool		EditorObjectMgr::saveMechs( FitIniFile& file )
 
 }
 
-bool EditorObjectMgr::saveForests( FitIniFile& file ) 
+bool EditorObjectMgr::saveForests( FitIniFile& file )
 {
 	long counter = 0;
 	char header[256];

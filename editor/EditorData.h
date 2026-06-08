@@ -4,6 +4,7 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.                 //
 //===========================================================================//
 
+#include <string>
 #include "mclib.h"
 
 #ifndef OBJECTIVE_H
@@ -137,9 +138,22 @@ class EditorData
 		~EditorData();
 
 		// wipes all the data, the terrain, object etc.
-		static bool clear(); 
-		
-		// makes a terrain from a height map.  
+		static bool clear();
+
+		// ---------- Map-size helpers --------------------------------------------------
+		// The three layers a map-size index maps to:
+		//   cellSide   = quads per side (user-facing label).  Always a multiple of 20.
+		//   vertexSide = cellSide + 1   (terrain vertex-array dimension).
+		//   moveSide   = cellSide * 3   (MOVE pathfinding grid dimension).
+		//                               moveSide % SECTOR_DIM(30) == 0 because
+		//                               cellSide is a multiple of 20 and lcm(20,30)=60,
+		//                               so every valid cellSide is also a multiple of 60.
+		// Always use these helpers — never write raw switch/+1/*3 at call sites.
+		static int MapSizeToCellSide(int sizeIndex);   // 0->60  1->80  ... 6->1020
+		static int MapSizeToVertexSide(int sizeIndex); // cellSide + 1
+		// ---------- end map-size helpers ----------------------------------------------
+
+		// makes a terrain from a height map.
 		static bool initTerrainFromTGA( int mapSize, int min = 0, int max = 512, int terrain = 0 );
 		// Generated mission (Path B): runs the python terrain generator for the
 		// chosen size + terrain-type/biome + seed, then builds an editable map from
@@ -148,7 +162,7 @@ class EditorData
 		// ImGui Map Generator dialog path: python has already run and written
 		// terrain_gen_out/genmap.{burnin.tga,elev.r32}.  This function copies the
 		// burnin to the textures path and applies the heightmap via initTerrainFromTGA.
-		// mapSizeIndex matches genMapSizeToN() indices (0=60..6=1020).
+		// mapSizeIndex matches MapSizeToCellSide() indices (0->60 cells..6->1020 cells).
 		// biome is informational only (already baked into the generator output);
 		// terrain index 0 is used so initTerrainFromTGA skips the colormap fallback.
 		static bool generateFromDialogParams( int mapSizeIndex, const char* biome );
@@ -174,6 +188,25 @@ class EditorData
 		// True when MOVE pathfinding data was loaded/built and is safe to write.
 		// False for newly generated blank maps (set to true only after packet-4 read).
 		static bool IsMoveDataReadyForFullSave();
+
+		// ---------------------------------------------------------------------------
+		// MOVE rebuild API — treat MOVE as cached derived data.
+		// ---------------------------------------------------------------------------
+
+		// Mark MOVE as dirty (needs rebuild).  Call after terrain generation or load
+		// completes, BEFORE terrain/object state is stable enough to rebuild.
+		// Does NOT rebuild immediately — safe to call from mid-load paths.
+		static void MarkMoveDataDirty();
+
+		// Build MOVE pathfinding in-memory from the current terrain + placed objects.
+		// Returns false (with reason in *errorOut if provided) on failure.
+		// Only call when land is fully initialized and object lists are stable.
+		static bool RebuildMoveFromCurrentTerrain(std::string* errorOut = nullptr);
+
+		// Rebuild only if dirty.  Returns true if MOVE is valid after the call
+		// (either was clean, or rebuild succeeded).  Returns false only if a rebuild
+		// was attempted and failed.  Safe to call every update() tick.
+		static bool RebuildMoveIfDirty(std::string* errorOut = nullptr);
 		static void updateTitleBar();
 
 		EString MissionName() { return m_missionName; }

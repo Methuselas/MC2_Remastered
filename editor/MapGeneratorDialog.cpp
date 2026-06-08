@@ -12,8 +12,10 @@
 *   "Rocky Badlands"    -> "rocky_badlands"
 *   "Volcanic"          -> "rocky_badlands"  (no dedicated volcanic biome yet)
 *
-* Map sizes are multiples of 20 (verticesBlockSide) per existing generateMission()
-* convention: 60,80,100,120,260,520,1020.
+* Map size labels and k_mapSizeCellSides use the CELL (quad) count per side — the
+* user-facing dimension.  Vertex count = cellSide + 1.  The terrain generator recipe
+* uses the vertex count so the generator produces the right grid size.  Use
+* EditorData::MapSizeToCellSide() / MapSizeToVertexSide() for all conversions.
 *
 * Recipe JSON is written to terrain_gen_out/genmap_recipe.json.
 * Preview PNG is loaded from terrain_gen_out/genmap.preview.png into a GL
@@ -79,8 +81,10 @@ static const char* k_biomeKeys[5] = {
     "rocky_badlands",
 };
 
-// MapSize index -> vertex side length (matches genMapSizeToN in EditorData.cpp)
-static const int   k_mapSizeVertices[7] = { 60, 80, 100, 120, 260, 520, 1020 };
+// MapSize index -> cell side (quads per side, user-facing label).  Always multiples of 20.
+// Use EditorData::MapSizeToCellSide() / MapSizeToVertexSide() for conversions instead of
+// indexing this array directly — it is kept here only for the preset dir name and recipe.
+static const int   k_mapSizeCellSides[7] = { 60, 80, 100, 120, 260, 520, 1020 };
 static const char* k_mapSizeLabels[7]   = {
     "60x60",
     "80x80",
@@ -152,7 +156,8 @@ static std::string BuildRecipeJSON(bool preview) {
             s_state.seed = seed;
     }
 
-    int sideN    = k_mapSizeVertices[s_state.mapSizeIndex];
+    // Recipe "size" is the VERTEX count so the generator produces the right grid.
+    int sideN    = EditorData::MapSizeToVertexSide(s_state.mapSizeIndex);
     float mnt    = SliderToMountainAmount(s_state.mountainAmount);
     float ridged = SliderToRidgedAmount(s_state.ridgedAmount);
 
@@ -432,7 +437,7 @@ void MapGeneratorDialog::Draw() {
         snprintf(presetDir, sizeof(presetDir),
             "terrain_gen_presets\\%s_%d",
             k_biomeKeys[s_state.biomeIndex],
-            k_mapSizeVertices[s_state.mapSizeIndex]);
+            EditorData::MapSizeToCellSide(s_state.mapSizeIndex));
         char presetManifest[640];
         snprintf(presetManifest, sizeof(presetManifest), "%s\\manifest.json", presetDir);
 
@@ -526,6 +531,9 @@ void MapGeneratorDialog::ExecuteGenerate() {
         snprintf(s_state.statusMsg, sizeof(s_state.statusMsg),
             "Generate succeeded but terrain apply failed.");
     } else {
+        // Mark MOVE dirty — rebuild fires in EditorInterface::update() after this
+        // frame, once terrain/overlay/object state has fully settled.
+        EditorData::MarkMoveDataDirty();
         Close();
     }
 }
@@ -536,7 +544,8 @@ void MapGeneratorDialog::ExecuteGenerate() {
 // generateFromDialogParams() -- no Python invocation.
 void MapGeneratorDialog::ExecuteLoadPreset() {
     const char* biomeKey = k_biomeKeys[s_state.biomeIndex];
-    const int   sizeN    = k_mapSizeVertices[s_state.mapSizeIndex];
+    // Preset dirs are named by CELL side (user-facing).  e.g. desert_60, not desert_61.
+    const int   sizeN    = EditorData::MapSizeToCellSide(s_state.mapSizeIndex);
 
     char srcDir[512];
     snprintf(srcDir, sizeof(srcDir), "terrain_gen_presets\\%s_%d", biomeKey, sizeN);
@@ -600,6 +609,11 @@ void MapGeneratorDialog::ExecuteLoadPreset() {
         snprintf(s_state.statusMsg, sizeof(s_state.statusMsg),
             "Preset files copied but terrain apply failed.");
     } else {
+        // Build MOVE in-memory immediately so the passability grid works without
+        // requiring a save/load round-trip.  land is ready at this point.
+        // Mark MOVE dirty — rebuild fires in EditorInterface::update() after this
+        // frame, once terrain/overlay/object state has fully settled.
+        EditorData::MarkMoveDataDirty();
         Close();
     }
 }
