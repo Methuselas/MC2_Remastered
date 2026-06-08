@@ -138,6 +138,46 @@ lives in the asset viewer** (Materials mode: normal slot + tangent-space mapping
 by `--smoke-tangent`). This is why deployed `tgl/128` is albedo-only — that's correct, not a
 gap. Revisit only if the lighting model changes (e.g. stronger speculars / HDR).
 
+## 6a. Mech HUD icon atlases (`mcui_med4` / `mcui_low4` / `mcui_high7`)
+
+In-mission HUD + force-group mech icons. Loader: `code/mechicon.cpp`
+(`MechIcon::initTextures` → `File::open("data/art/mcui_med4.tga")`, loose-first).
+**Distinct subsystem from the mech-bay roster atlas** `mcui_gn_mechicons.tga`
+(`code/logisticsmechicon.cpp`) — do not confuse them.
+
+Resolution → file → cell (`setIconVariables`, screenWidth switch):
+
+| screenWidth | file | unitIconX × unitIconY |
+|---|---|---|
+| 800 | `mcui_med4.tga` | 32 × 38 |
+| 640 | `mcui_low4.tga` | 25 × 30 |
+| else | `mcui_high7.tga` | 40 × 48 |
+
+Layout = **N columns × 2 rows**: row 0 = front view, row 1 (`+unitIconY`) = back view.
+Blit indexes by **column only**: `srcX = iconPictureIndex × unitIconX`. The atlas MUST be
+uniform pitch = `unitIconX`, with the mech's cell at column = its `iconPictureIndex`.
+
+**Stock (FST) atlas only has 33 mechs (cols 0–32).** MC2X/CVE-G mechs use indices >32
+(e.g. Turkina = 76) → off the right edge → `AssetScale` clamps to width 0 → blank →
+engine default-fallback icon. Fix = deploy a wider atlas with the mod roster.
+
+**Authoritative CVE-G atlases live in `MC2X-CVE-G/art.fst`** (zlib, ver `CADDECAF`),
+85 mechs each, correctly uniform-gridded:
+
+| file | dims | cols @ cell |
+|---|---|---|
+| `mcui_med4.tga` | 2720 × 76 | 85 @ 32px |
+| `mcui_low4.tga` | 2125 × 60 | 85 @ 25px |
+| `mcui_high7.tga` | 3400 × 96 | 85 @ 40px |
+
+Deploy = extract those three from `MC2X-CVE-G/art.fst` → loose into v0.4 `data/art/`.
+**Then set `data/art/asset_sizes.csv` nominal = actual** (`mcui_med4 → 2720,76` etc.) so
+`AssetScale::factorFor` returns 1 — these are direct-indexed sprite sheets, NOT upscales;
+a non-1 factor multiplies `srcX` and reads OOB (crash in `MechIcon::setDrawBack`).
+
+⚠️ Do **not** use `mc2-win64-0.4c/mods/mc2x-compat/data/art/mcui_med4.tga` (4256×76): it is
+non-uniform (32px stock head + 25.6px CVE tail) — unreadable by any single `unitIconX`.
+
 ## 7. Keeping this current
 
 Update this document when you:
