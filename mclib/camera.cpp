@@ -875,6 +875,60 @@ static inline bool s_overThisTileProjected (const Stuff::Point3D corners[4],
 }
 		
 //---------------------------------------------------------------------------
+// PARITY DIAGNOSTIC helper (MC2_TERRAIN_PICK_PARITY). Logs the raycast vs
+// legacy world results for the same screen coords, then yields the value the
+// active flag-on mode (raycast-if-flag-on-else-legacy) would have returned:
+//   - raycast hit  -> overwrite point with the raycast hit, return 0.
+//   - raycast miss -> leave the legacy point/return unchanged.
+static unsigned long parityReport (Stuff::Vector2DOf<long> &screenPos,
+                                   bool raycastHit,
+                                   const Stuff::Vector3D &raycastPt,
+                                   Stuff::Vector3D &point,
+                                   unsigned long legacyRet)
+{
+	const long verticesMapSideDivTwo = Terrain::realVerticesMapSide / 2;
+	const long metersMapSideDivTwo =
+		verticesMapSideDivTwo * float2long(Terrain::worldUnitsPerVertex);
+
+	// Tile cell index for the legacy world point.
+	long legacyTileC =
+		float2long(point.x * Terrain::oneOverWorldUnitsPerVertex + verticesMapSideDivTwo);
+	long legacyTileR =
+		float2long((metersMapSideDivTwo - point.y) * Terrain::oneOverWorldUnitsPerVertex);
+
+	long rcTileC = -1, rcTileR = -1;
+	float dWorld = -1.0f;
+	if (raycastHit)
+	{
+		rcTileC = float2long(raycastPt.x * Terrain::oneOverWorldUnitsPerVertex + verticesMapSideDivTwo);
+		rcTileR = float2long((metersMapSideDivTwo - raycastPt.y) * Terrain::oneOverWorldUnitsPerVertex);
+		const float ddx = raycastPt.x - point.x;
+		const float ddy = raycastPt.y - point.y;
+		const float ddz = raycastPt.z - point.z;
+		const float d2 = ddx*ddx + ddy*ddy + ddz*ddz;
+		dWorld = (d2 > 0.0f) ? sqrtf(d2) : 0.0f;
+	}
+
+	std::printf("[PICK_PARITY] screen=(%ld,%ld)  "
+	            "raycast=(%.3f,%.3f,%.3f) cell=(%ld,%ld)  "
+	            "legacy=(%.3f,%.3f,%.3f) cell=(%ld,%ld)  "
+	            "dWorld=%.4f  raycastHit=%d\n",
+	            (long)screenPos.x, (long)screenPos.y,
+	            raycastPt.x, raycastPt.y, raycastPt.z, rcTileC, rcTileR,
+	            point.x, point.y, point.z, legacyTileC, legacyTileR,
+	            dWorld, raycastHit ? 1 : 0);
+	std::fflush(stdout);
+
+	// Preserve flag-on return behavior: raycast wins when it hit.
+	if (raycastHit)
+	{
+		point = raycastPt;
+		return 0;
+	}
+	return legacyRet;
+}
+
+//---------------------------------------------------------------------------
 unsigned long Camera::inverseProject (Stuff::Vector2DOf<long> &screenPos, Stuff::Vector3D &point)
 {
 	if (turn < 4)
@@ -892,6 +946,14 @@ unsigned long Camera::inverseProject (Stuff::Vector2DOf<long> &screenPos, Stuff:
 	// Object picking (findObjectByMouse) is UNAFFECTED — this replaces only
 	// the terrain-surface portion of inverseProject.
 	static const bool s_lodChunkPick = (std::getenv("MC2_TERRAIN_LOD_CHUNK") != nullptr);
+	// PARITY DIAGNOSTIC: when MC2_TERRAIN_PICK_PARITY is set we compute BOTH
+	// the heightfield raycast hit AND the legacy quadList result for the same
+	// screen coords, log the delta, and still return exactly what the active
+	// mode (raycast-if-flag-on-else-legacy) would have returned.
+	static const bool s_pickParity = (std::getenv("MC2_TERRAIN_PICK_PARITY") != nullptr);
+	bool   parityRaycastHit = false;
+	Stuff::Vector3D parityRaycastPt;
+	parityRaycastPt.x = parityRaycastPt.y = parityRaycastPt.z = 0.0f;
 	if (s_lodChunkPick && land)
 	{
 		// Build the GL clip-to-world inverse matrix.
@@ -956,10 +1018,22 @@ unsigned long Camera::inverseProject (Stuff::Vector2DOf<long> &screenPos, Stuff:
 		if (Terrain::raycastTerrain(ro.x, ro.y, ro.z, rdx, rdy, rdz,
 		                            &hitX, &hitY, &hitZ))
 		{
-			point.x = hitX;
-			point.y = hitY;
-			point.z = hitZ;
-			return 0;
+			if (s_pickParity)
+			{
+				// Record the raycast hit but DO NOT return yet: let the legacy
+				// quadList path below run too so we can log both and the delta.
+				parityRaycastHit = true;
+				parityRaycastPt.x = hitX;
+				parityRaycastPt.y = hitY;
+				parityRaycastPt.z = hitZ;
+			}
+			else
+			{
+				point.x = hitX;
+				point.y = hitY;
+				point.z = hitZ;
+				return 0;
+			}
 		}
 		// Miss — fall through to the quadList path (which may also miss and
 		// return 1). On an empty quadList the old path will iterate zero tiles
@@ -1245,8 +1319,14 @@ unsigned long Camera::inverseProject (Stuff::Vector2DOf<long> &screenPos, Stuff:
 		point.y = land->tileRowToWorldCoord[closeRow];
 		point.z = land->getTerrainElevation( closeRow, closeCol );
 
+		if (s_pickParity && s_lodChunkPick)
+			return parityReport(screenPos, parityRaycastHit, parityRaycastPt, point, 1);
+
 		return 1; // don't return success for bogus value
 	}
+
+	if (s_pickParity && s_lodChunkPick)
+		return parityReport(screenPos, parityRaycastHit, parityRaycastPt, point, 0);
 
 	return(0);
 }

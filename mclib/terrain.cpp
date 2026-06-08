@@ -48,7 +48,10 @@
 #include"../GameOS/gameos/utils/logging.h"            // Terrain LOD chunk Phase 2: throttled false-negative log
 #include"terrain_admission_mode.h"  // F6 T2: shared isModern() flag for terrain.cpp + quad.cpp
 
+#include"move.h"   // MC2_TERRAIN_MINE_AB diagnostic: GameMap (extern MissionMapPtr)
 #include <vector>
+#include <algorithm>   // MC2_TERRAIN_MINE_AB diagnostic: sort/unique/set_difference
+#include <iterator>    // MC2_TERRAIN_MINE_AB diagnostic: std::back_inserter
 #include <cstdint>
 
 // Externals from quad.cpp / mapdata.cpp / mechcmd2.cpp used by the water fast path.
@@ -1706,6 +1709,32 @@ long Terrain::update (void)
 			}
 		}
 
+		// Block-set-change diagnostic: log which (bx,by) blocks are visible whenever
+		// the visible set changes. Fires on change only — no noise when camera is still.
+		// Bitmask: bit = by*terrainChunkSide + bx (25 blocks, fits uint32_t).
+		{
+			uint32_t blockMask = 0;
+			for (int by2 = 0; by2 < s_terrainChunkSide; ++by2)
+				for (int bx2 = 0; bx2 < s_terrainChunkSide; ++bx2)
+					if (s_blockMeta[bx2 + by2 * s_terrainChunkSide].inFrustum)
+						blockMask |= (1u << (by2 * s_terrainChunkSide + bx2));
+			static uint32_t s_prevBlockMask = 0xFFFFFFFF;  // force first print
+			if (blockMask != s_prevBlockMask) {
+				s_prevBlockMask = blockMask;
+				// Build compact "(bx,by)" list of passing blocks.
+				char buf[256]; int pos = 0;
+				for (int by2 = 0; by2 < s_terrainChunkSide && pos < 200; ++by2)
+					for (int bx2 = 0; bx2 < s_terrainChunkSide && pos < 200; ++bx2)
+						if (blockMask & (1u << (by2 * s_terrainChunkSide + bx2)))
+							pos += snprintf(buf + pos, sizeof(buf) - pos, "(%d,%d)", bx2, by2);
+				buf[pos] = '\0';
+				// Camera east/north already computed above as eyeX/eyeY.
+				printf("[BlockSet] frame=%lu cmds=%d cam=(%.0f,%.0f) blocks=%s\n",
+					(unsigned long)gCurrentFrame, s_cmdCount, eyeX, eyeY, buf);
+				fflush(stdout);
+			}
+		}
+
 		// Phase 5/7.5 LOD telemetry — every frame for first 60 frames, then every 180.
 		if ((gCurrentFrame <= 60 || gCurrentFrame % 180 == 0) && s_cmdCount > 0)
 		{
@@ -1725,6 +1754,32 @@ long Terrain::update (void)
 			       lodCounts[0], lodCounts[1], lodCounts[2],
 			       lodCounts[3], lodCounts[4], lodCounts[5]);
 			fflush(stdout);
+		}
+
+		// One-shot: fires the first time cmds transitions from >0 to 0.
+		// Prints all 6 frustum planes + camera position at the failure frame.
+		{
+			static bool s_wasNonZero   = false;
+			static bool s_firstZeroDone = false;
+			if (s_cmdCount > 0) s_wasNonZero = true;
+			if (s_cmdCount == 0 && s_wasNonZero && !s_firstZeroDone) {
+				s_firstZeroDone = true;
+				printf("[TerrainLOD v1] FIRST_ZERO frame=%lu cam=(%.1f,%.1f,%.1f)\n",
+					(unsigned long)gCurrentFrame,
+					camOriginLod.x, camOriginLod.y, camOriginLod.z);
+				static const char* pnz[6] = {"left","right","bottom","top","near","far"};
+				for (int p = 0; p < 6; p++) {
+					float a = planes[p][0], b = planes[p][1], c = planes[p][2], d = planes[p][3];
+					const SuperchunkMeta& sc0 = s_superchunkMeta[0];
+					float px = (a >= 0.0f) ? sc0.worldMaxX : sc0.worldMinX;
+					float py = (b >= 0.0f) ? sc0.worldMaxY : sc0.worldMinY;
+					float pz = (c >= 0.0f) ? sc0.worldMaxZ : sc0.worldMinZ;
+					float dot = a*px + b*py + c*pz + d;
+					printf("[TerrainLOD v1] FIRST_ZERO plane[%d]=%s (%.4f,%.4f,%.4f,%.4f) dot=%.4f %s\n",
+						p, pnz[p], a, b, c, d, dot, dot >= 0.0f ? "PASS" : "FAIL");
+				}
+				fflush(stdout);
+			}
 		}
 
 		// Phase 7.5 diagnostic: zero-command error detection.
@@ -1959,6 +2014,96 @@ void Terrain::render (void)
 					       "detail->dead)\n");
 					fflush(stdout);
 				}
+			}
+		}
+	}
+
+	// MC2_TERRAIN_MINE_AB — A/B diagnostic. Pure observation: proves the legacy
+	// per-quad mine enqueue (quad.cpp enqueueTerrainMineState, walked by the
+	// setupTextures path) and the LOD-chunk grid enqueue (enqueueMinesFromGrid)
+	// select the SAME set of mine-bearing cells over the visible quadList. Both
+	// SET_LEGACY and SET_GRID mirror the exact cell loop + getMine call from
+	// quad.cpp:422-476 (replicated inline; we do not touch quad.cpp state). Does
+	// NOT enqueue or draw anything. Behavior is identical when the var is unset.
+	{
+		static bool s_mineAB = (getenv("MC2_TERRAIN_MINE_AB") != NULL);
+		if (s_mineAB && GameMap && quadList && numberQuads > 0)
+		{
+			static unsigned long s_mineABFrame = 0;
+			++s_mineABFrame;
+
+			std::vector<long> setLegacy;
+			std::vector<long> setGrid;
+
+			// SET_LEGACY — walk quadList as the legacy per-quad path does.
+			{
+				TerrainQuadPtr q = quadList;
+				for (long i = 0; i < numberQuads; i++, q++)
+				{
+					long rowCol = q->vertices[0]->posTile;
+					long tileR = rowCol >> 16;
+					long tileC = rowCol & 0x0000ffff;
+					if (!GameMap->tileHasMines(tileR, tileC))
+						continue;
+					for (long cellR = 0; cellR < MAPCELL_DIM; cellR++)
+					{
+						for (long cellC = 0; cellC < MAPCELL_DIM; cellC++)
+						{
+							long actualCellRow = tileR * MAPCELL_DIM + cellR;
+							long actualCellCol = tileC * MAPCELL_DIM + cellC;
+							if (GameMap->inBounds(actualCellRow, actualCellCol)
+							    && GameMap->getMine(actualCellRow, actualCellCol) != 0)
+								setLegacy.push_back((long)actualCellRow * 100000 + actualCellCol);
+						}
+					}
+				}
+			}
+
+			// SET_GRID — mirror enqueueMinesFromGrid: same quadList, same cell
+			// loop + getMine selection (enqueueMinesFromGrid -> enqueueTerrainMineState).
+			{
+				TerrainQuadPtr q = quadList;
+				for (long i = 0; i < numberQuads; i++, q++)
+				{
+					long rowCol = q->vertices[0]->posTile;
+					long tileR = rowCol >> 16;
+					long tileC = rowCol & 0x0000ffff;
+					if (!GameMap->tileHasMines(tileR, tileC))
+						continue;
+					for (long cellR = 0; cellR < MAPCELL_DIM; cellR++)
+					{
+						for (long cellC = 0; cellC < MAPCELL_DIM; cellC++)
+						{
+							long actualCellRow = tileR * MAPCELL_DIM + cellR;
+							long actualCellCol = tileC * MAPCELL_DIM + cellC;
+							if (GameMap->inBounds(actualCellRow, actualCellCol)
+							    && GameMap->getMine(actualCellRow, actualCellCol) != 0)
+								setGrid.push_back((long)actualCellRow * 100000 + actualCellCol);
+						}
+					}
+				}
+			}
+
+			std::sort(setLegacy.begin(), setLegacy.end());
+			setLegacy.erase(std::unique(setLegacy.begin(), setLegacy.end()), setLegacy.end());
+			std::sort(setGrid.begin(), setGrid.end());
+			setGrid.erase(std::unique(setGrid.begin(), setGrid.end()), setGrid.end());
+
+			std::vector<long> onlyLegacy;
+			std::vector<long> onlyGrid;
+			std::set_difference(setLegacy.begin(), setLegacy.end(),
+			                    setGrid.begin(), setGrid.end(),
+			                    std::back_inserter(onlyLegacy));
+			std::set_difference(setGrid.begin(), setGrid.end(),
+			                    setLegacy.begin(), setLegacy.end(),
+			                    std::back_inserter(onlyGrid));
+
+			if (setLegacy.size() != setGrid.size() || (s_mineABFrame % 300 == 0))
+			{
+				printf("[MINE_AB] frame=%lu legacy=%d grid=%d onlyLegacy=%d onlyGrid=%d\n",
+				       s_mineABFrame, (int)setLegacy.size(), (int)setGrid.size(),
+				       (int)onlyLegacy.size(), (int)onlyGrid.size());
+				fflush(stdout);
 			}
 		}
 	}
