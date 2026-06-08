@@ -2485,6 +2485,11 @@ void EditorInterface::update()
 					printf("[EDITOR_UPDATE] BuildMove failed: %s\n", moveErr.c_str());
 					fflush(stdout);
 				}
+				// Automatically enable the passability overlay so the user sees the
+				// result immediately (same as View > Show Passability Map).
+				if (moveOk) {
+					OnViewShowpassabilitymap();
+				}
 				break;
 			}
 
