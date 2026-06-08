@@ -2370,7 +2370,6 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	PathFindMap[SIMPLE_PATHMAP]->forestCost = forestMoveCost;
 	PathManager = new MovePathManager;
 
-
 #ifdef LAB_ONLY
 	x=GetCycles();
 	MCTimeMoveLoad=x-x1;
@@ -2393,7 +2392,7 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	libraryFileName2.init(missionPath, "corebrain", ".abx");
 	library = ABLi_loadLibrary(libraryFileName2, &numErrors, &numLinesProcessed);
 	gosASSERT(library != NULL);
-	
+
 	//---------------------------
 	// Load the mission script...
 	//-----------------------------------------------------------------
@@ -2419,7 +2418,7 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 #endif
 		missionBrain->init(missionScriptHandle);
 	gosASSERT(brainErr == NO_ERR);
-	
+
 	missionBrain->setName("Mission");
 	//MissionBrain->setStep(TRUE);
 

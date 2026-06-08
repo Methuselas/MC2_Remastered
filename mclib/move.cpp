@@ -690,22 +690,6 @@ long MOVE_readData (PacketFile* packetFile, long whichPacket) {
 	gosASSERT(GameMap != NULL);
 	long numMissionMapPackets = GameMap->init(packetFile, whichPacket);
 
-	//-----------------------
-	// Just some debugging...
-	//long numOffMap[2] = {0,0};
-	//for (long r = 0; r < GameMap->height; r++)
-	//	for (long c = 0; c < GameMap->width; c++) {
-	//		if (GameMap->getOffMap(r, c))
-	//			numOffMap[0]++;
-	//		Stuff::Vector3D worldPos;
-	//		land->cellToWorld(r, c, worldPos);
-	//		bool set = (land->IsEditorSelectTerrainPosition(worldPos) && !land->IsGameSelectTerrainPosition(worldPos));
-	//		if (set)
-	//			numOffMap[1]++;
-	//		if (set && !GameMap->getOffMap(r, c))
-	//			set = false;
-	//	}
-	
 	if (!PathFindMap[SECTOR_PATHMAP])
 		Fatal(0, " MOVE_BuildData: Must call MOVE_Init()! ");
 
@@ -730,7 +714,6 @@ long MOVE_readData (PacketFile* packetFile, long whichPacket) {
 		GlobalMoveMap[1]->hover = true;
 		numGlobalMap1Packets = GlobalMoveMap[1]->init(packetFile, whichPacket + numMissionMapPackets + numGlobalMap0Packets);
 
-		
 		//--------------------------------------
 		// Let's read the helicoptor move map...
 		if (GlobalMoveMap[2]) {
@@ -755,8 +738,20 @@ long MOVE_readData (PacketFile* packetFile, long whichPacket) {
 			tempSpecialAreaFootPrints = NULL;
 		}
 		if (tempNumSpecialAreas > 0) {
-			tempSpecialAreaFootPrints = (GameObjectFootPrint*)systemHeap->Malloc(sizeof(GameObjectFootPrint) * tempNumSpecialAreas);
-			numBytes = packetFile->readPacket(whichPacket + numMissionMapPackets + numGlobalMap0Packets + numGlobalMap1Packets + numGlobalMap2Packets + 1, (unsigned char*)tempSpecialAreaFootPrints);
+			// Mod-tolerance: mc2_10 and other large maps write GameObjectFootPrint
+			// with MAX_GAME_OBJECT_CELLS=128 (520 bytes each) rather than the
+			// current MAX_GAME_OBJECT_CELLS=64 (264 bytes each). Allocating
+			// sizeof(GameObjectFootPrint)*N bytes then reading the full packet
+			// caused a 4864-byte heap overflow and non-deterministic crash.
+			// Fix: allocate max(packetSize, sizeof*N) — same pattern as GlobalMap
+			// mod-tolerance.
+			long footprintPkt = whichPacket + numMissionMapPackets + numGlobalMap0Packets + numGlobalMap1Packets + numGlobalMap2Packets + 1;
+			packetFile->seekPacket(footprintPkt);
+			size_t packetSize = (size_t)packetFile->getPacketSize();
+			size_t expectedSize = sizeof(GameObjectFootPrint) * (size_t)tempNumSpecialAreas;
+			size_t allocSize = (packetSize > expectedSize) ? packetSize : expectedSize;
+			tempSpecialAreaFootPrints = (GameObjectFootPrint*)systemHeap->Malloc(allocSize);
+			numBytes = packetFile->readPacket(footprintPkt, (unsigned char*)tempSpecialAreaFootPrints);
 			if (numBytes <= 0)
 				Fatal(numBytes, " MOVE_readData: Unable to read num special areas ");
 		}
@@ -832,7 +827,6 @@ void MissionMap::operator delete (void* us) {
 
 void MissionMap::init (long h, long w) {
 
-	printf("[MM_INIT] enter h=%ld w=%ld systemHeap=%p\n", h, w, (void*)systemHeap); fflush(stdout);
 	height = h;
 	width = w;
 
@@ -863,12 +857,9 @@ void MissionMap::init (long h, long w) {
 		map = NULL;
 	}
 	long mapSize = sizeof(MapCell) * width * height;
-	printf("[MM_INIT] allocating map: sizeof(MapCell)=%zu count=%ld bytes=%ld\n", sizeof(MapCell), (long)(width*height), (long)mapSize); fflush(stdout);
 	if (mapSize > 0)
 		map = (MapCellPtr)systemHeap->Malloc(sizeof(MapCell) * width * height);
-	printf("[MM_INIT] map alloc result: map=%p\n", (void*)map); fflush(stdout);
 	gosASSERT(map != NULL);
-	if (!map) { printf("[MM_INIT] FATAL map=NULL — systemHeap out of memory! heapSize~8MB\n"); fflush(stdout); return; }
 	memclear(map, sizeof(MapCell) * width * height);
 
 	// Per-tile mine count tracking — sized to the tile grid (cells / MAPCELL_DIM
@@ -920,19 +911,6 @@ long MissionMap::init (PacketFile* packetFile, long whichPacket) {
 	packetFile->readPacket(whichPacket++, (unsigned char*)&planet);
 	init(height, width);
 	packetFile->readPacket(whichPacket++, (unsigned char*)map);
-
-	//-----------------------
-	// Just some debugging...
-	//long numOffMap = 0;
-	//for (long r = 0; r < height; r++)
-	//	for (long c = 0; c < width; c++) {
-	//		Stuff::Vector3D worldPos;
-	//		land->cellToWorld(r, c, worldPos);
-	//		bool set = (land->IsEditorSelectTerrainPosition(worldPos) && !land->IsGameSelectTerrainPosition(worldPos));
-	//		GameMap->setOffMap(r, c, set);
-	//		if (set)
-	//			numOffMap++;
-	//	}
 
 	for (long r = 0; r < height; r++)
 		for (long c = 0; c < width; c++) {
@@ -1544,13 +1522,10 @@ void GlobalMap::operator delete (void* us) {
 
 void GlobalMap::init (long w, long h) {
 
-	printf("[GM_INIT] enter w=%ld h=%ld\n", w, h); fflush(stdout);
 	width = w;
 	height = h;
 	areaMap = (short*)systemHeap->Malloc(sizeof(short) * w * h);
-	printf("[GM_INIT] areaMap=%p (size=%ld bytes)\n", (void*)areaMap, (long)(sizeof(short)*w*h)); fflush(stdout);
 	gosASSERT(areaMap != NULL);
-	if (!areaMap) { printf("[GM_INIT] FATAL areaMap=NULL — systemHeap out of memory!\n"); fflush(stdout); return; }
 	for (long r = 0; r < height; r++)
 		for (long c = 0; c < width; c++)
 			areaMap[r * width + c] = -1;
@@ -1844,12 +1819,12 @@ long GlobalMap::init (PacketFilePtr packetFile, long whichPacket) {
 	numOffMapAreas = 0;
 	for (int i = 0; i < numAreas; i++)
 		if (areas[i].offMap) {
-			offMapAreas[numOffMapAreas++] = i;
+			if (numOffMapAreas < MAX_OFFMAP_AREAS)
+				offMapAreas[numOffMapAreas++] = i;
 			closeArea(i);
-			}
+		}
 		else
 			openArea(i);
-
 	//--------------------------
 	// Create pathExistsTable...
 	pathExistsTable = (unsigned char*)systemHeap->Malloc(numAreas * (numAreas / 4 + 1));

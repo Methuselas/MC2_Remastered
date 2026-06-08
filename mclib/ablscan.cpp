@@ -1297,8 +1297,9 @@ long openSourceFile (const char* sourceFileName) {
 	ABLFile* sFile = NULL;
 	sFile = new ABLFile;
 
-	if (sFile->open(sourceFileName) != ABL_NO_ERR)
+	if (sFile->open(sourceFileName) != ABL_NO_ERR) {
 		return(-3);
+	}
 
 	strcpy(SourceFiles[NumSourceFiles], sourceFileName);
 	FileNumber = NumSourceFiles++;
