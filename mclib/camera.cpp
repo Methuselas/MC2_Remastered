@@ -716,58 +716,64 @@ inline void mapCellToWorldPos (long cellR, long cellC, Stuff::Vector3D& worldPos
 
 //---------------------------------------------------------------------------
 // VPL-retirement Step 3 (3a): shared CPU camera-frustum x quad-AABB primitive.
-// Members of Camera; Step 3 (this file) defines, Step 5B references. Pure CPU,
-// no GL, no GPU readback (all inputs are CPU camera matrices + map-stable
-// vertex coords - see memory/substrate_coalesce_sync_point_lesson.md).
+// Members of Camera; pure CPU, no GL, no GPU readback (all inputs are CPU
+// camera matrices + map-stable vertex coords).
 //
-// Stuff::Matrix4D is COLUMN-MAJOR (entries[(column<<2)+row], matrix.hpp:133/141);
-// operator()(row,column) is the accessor. The projection multiply is row-vector
-// clip = s * worldToClip with the swizzled point s = (-wx, wz, wy, 1) (the C
-// path of Vector4D::Multiply(Point3D,Matrix4D), vector4d.hpp:359-362, active
-// because USE_ASSEMBLER_CODE==0). With rX[k]=M(k,0), rY[k]=M(k,1), rZ[k]=M(k,2),
-// rW[k]=M(k,3): clip.x=dot4(s4,rX), clip.y=dot4(s4,rY), clip.z=dot4(s4,rZ),
-// clip.w=dot4(s4,rW) where s4=(s.x,s.y,s.z,1).
+// UNIFIED PROJECTION (2026-06-08): planes are extracted by Gribb-Hartmann
+// directly from worldToClipGL() -- the SAME world->GL-NDC matrix the GPU
+// rasterizes terrain/props/mechs with (kAxisSwapMC2toGL * worldToCam *
+// cameraToClip * kPixelHomogToGLNDC). This is the single source of truth for
+// the view frustum: cull and render share one matrix and can no longer drift.
 //
-// Gribb-Hartmann planes in swizzled space (engine uses glClipControl native
-// [0,1], so near is rZ, NOT rW+rZ):
-//   left = rW+rX, right = rW-rX, bottom = rW+rY, top = rW-rY,
-//   near = rZ,    far = rW-rZ.
-// Each is [a b c d]. Fold the swizzle s=(-wx, wz, wy) so the plane tests RAW
-// world AABBs:  a*s.x + b*s.y + c*s.z + d
-//             = a*(-wx) + b*(wz) + c*(wy) + d
-//             = (-a)*wx + (c)*wy + (b)*wz + d
-// => worldPlane = [ -a, c, b, d ]  (negate X coef; swap Y and Z coefs). Exact:
-// the swizzle is a signed axis permutation, composes with no approximation.
+// History / why this was wrong before: the previous body extracted planes from
+// the raw `worldToClip` member (= worldToCam * cameraToClip) and hand-folded
+// ONLY the MC2->GL axis swap. But `worldToClip` is D3D-pixel-homogeneous
+// (clip.xy/clip.w in [0,1], Y-down, clip.w<0 for in-front -- see
+// makePixelHomogToGLNDC). It is NOT GL clip space. The kPixelHomogToGLNDC stage
+// (the -2x/+w X map, Y-flip, and w-negate) was dropped, so the extracted
+// left/right planes were MIRRORED vs the rendered image -> terrain LOD chunk
+// cull rejected on-screen blocks on one screen half (orientation-dependent
+// "zero-command" streaks). Extracting from worldToClipGL() carries every stage
+// the GPU applies, so the planes are correct by construction. This is the same
+// D3D<->GL split-brain that bit shadow (a365e6ad) and static props (09707cd8).
+//
+// Convention: row-vector multiply clip_col = sum_row world_row * M(row,col)
+// with world = (wx, wy, wz, 1) (same as projectModernClipGL()). GL clip-Z is
+// ZERO_TO_ONE (glClipControl in gameosmain.cpp), so the clip volume is
+//   -w <= x <= w,  -w <= y <= w,  0 <= z <= w   (matches clipSpaceFrustumAdmitGL)
+// giving the six half-spaces:
+//   left=  x+w>=0   right= w-x>=0
+//   bottom=y+w>=0   top=   w-y>=0
+//   near=  z  >=0   far=   w-z>=0   (near is BARE z under ZERO_TO_ONE, not z+w)
+// Each plane [a b c d] tests RAW world AABBs as a*wx + b*wy + c*wz + d >= 0,
+// where a=M(0,*), b=M(1,*), c=M(2,*), d=M(3,*) combine column 3 (w) with the
+// per-plane axis column. Planes are unnormalized: quadAabbInFrustum tests sign
+// only, so scale is irrelevant.
 void Camera::extractFrustumPlanes (float planes[6][4]) const
 {
-	float rX[4], rY[4], rZ[4], rW[4];
-	for (int k = 0; k < 4; k++)
-	{
-		rX[k] = worldToClip(k,0);
-		rY[k] = worldToClip(k,1);
-		rZ[k] = worldToClip(k,2);
-		rW[k] = worldToClip(k,3);
-	}
+	const Stuff::Matrix4D M = worldToClipGL();
 
-	// Swizzled-space planes [a b c d] over s = (-wx, wz, wy, 1).
-	float sw[6][4];
-	for (int k = 0; k < 4; k++)
-	{
-		sw[0][k] = rW[k] + rX[k];   // left
-		sw[1][k] = rW[k] - rX[k];   // right
-		sw[2][k] = rW[k] + rY[k];   // bottom
-		sw[3][k] = rW[k] - rY[k];   // top
-		sw[4][k] = rZ[k];           // near (native [0,1] -> rZ, NOT rW+rZ)
-		sw[5][k] = rW[k] - rZ[k];   // far
-	}
+	// Per plane: axis clip column, sign on w (col 3), sign on the axis column.
+	// plane = wSign * M(:,3) + aSign * M(:,axisCol).
+	struct PlaneSel { int axisCol; float wSign; float aSign; };
+	static const PlaneSel sel[6] = {
+		{0, +1.0f, +1.0f},   // left   :  x + w
+		{0, +1.0f, -1.0f},   // right  :  w - x
+		{1, +1.0f, +1.0f},   // bottom :  y + w
+		{1, +1.0f, -1.0f},   // top    :  w - y
+		{2,  0.0f, +1.0f},   // near   :  z       (ZERO_TO_ONE: z >= 0)
+		{2, +1.0f, -1.0f},   // far    :  w - z
+	};
 
-	// Fold the projection swizzle into each plane: worldPlane = [-a, c, b, d].
 	for (int p = 0; p < 6; p++)
 	{
-		planes[p][0] = -sw[p][0];   // -a  (world X coef)
-		planes[p][1] =  sw[p][2];   //  c  (world Y coef)
-		planes[p][2] =  sw[p][1];   //  b  (world Z coef)
-		planes[p][3] =  sw[p][3];   //  d  (constant)
+		const int   c  = sel[p].axisCol;
+		const float ws = sel[p].wSign;
+		const float as = sel[p].aSign;
+		planes[p][0] = ws * M(0, 3) + as * M(0, c);   // world X coef
+		planes[p][1] = ws * M(1, 3) + as * M(1, c);   // world Y coef
+		planes[p][2] = ws * M(2, 3) + as * M(2, c);   // world Z coef
+		planes[p][3] = ws * M(3, 3) + as * M(3, c);   // constant
 	}
 }
 
