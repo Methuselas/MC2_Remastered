@@ -41,6 +41,24 @@ them. Add new findings as new bullets; remove fixed ones outright (don't append
 - **Water shoreline z-fight on zoom/elevation-change (NOT pan); water sits slightly low** (pre-existing). Interim fast-path fixes shipped 2026-05-17. Full state: `memory/water_fastpath_interim_fixes_and_residuals.md`.
 - **Terrain transparency / flicker during fast pan** (pre-existing ring-buffer coherency race, NOT a regression). When the camera pans quickly, brief transparent patches appear on the terrain. Root cause documented at `GameOS/gameos/gos_terrain_indirect.cpp` ~line 2660-2668: the thin-record ring-buffer fence wait can expire, producing a RAW hazard where the CPU overwrites a slot the GPU may still be reading. Effect is masked when the camera is stationary (thin-record content is frame-to-frame identical under no-motion). To confirm this is NOT caused by tile-retirement (COLORMAP-TILES-RETIRE-1): launch with `MC2_SETUPTEXTURES_LEGACY_FORCE=1` and pan at the same speed — the artifact reproduces identically with the 400-tile path active. Diagnostic gate: `MC2_RING_TRACE=1` writes `ring_trace.log` with per-frame fence wait timings and MVP fingerprints.
 
+## Terrain LOD chunk renderer (opt-in, `MC2_TERRAIN_LOD_CHUNK=1`)
+
+- **CUTOVER-READY, NOT yet default-on (2026-06-09).** The chunk path reached
+  near-parity with legacy (stitching/shadows/smooth-normal/material+colour/concrete
+  +cement-atlas + all ImGui tunables). The default-on cutover (gate flip +
+  chunk-path smoke + editor/legacy-fallback check) is the remaining step. Full
+  record + the 3 load-bearing depth/MVP rules:
+  `memory/HANDOFF_2026_06_09_terrain_lod_chunk_phase10_fidelity_cutover_prep.md`.
+- **RESOLVED (do not re-discover) — three chunk-ONLY bugs were depth/MVP/early-Z,
+  NOT a "matrix divergence":** water-recede-on-zoom (net depth must be -0.004, the
+  legacy thin path double-applies the fudge), shore-water-dropout-on-pitch +
+  decal-tearing-on-zoom (chunk must project with the baked dispatch MVP
+  `IsFrameSolidArmed()?getDispatchMvp16():live` — frame N-1 — that water-cull/decals
+  use, else a 1-frame offset), and the early-Z violation (bias PRE-DIVIDE in the
+  vert, never frag `gl_FragDepth`). All fixed (`4da9cfb1`,`67e4f5e4`).
+- Editor remains on the legacy path (flag-off self-skip); interactive gameplay
+  sanity (picking/gates/turrets) is a pre-cutover check.
+
 ## First-launch / startup
 
 - **First-launch black terrain intermittency** — tier1 first mission occasionally renders black; second normal. Suspected: GPU/shader state dirty from previous mission teardown. Repro: tier1 with `--fail-fast`.

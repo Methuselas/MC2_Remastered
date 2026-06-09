@@ -816,6 +816,32 @@ Depends on Phase 8 (old path deleted; clean baseline). Phase 9 is optional and m
 
 ## Phase 10: Normal/material/light/shadow GPU streams; terrain edit dirty propagation
 
+> **STATUS 2026-06-09: PHASE 10 COMPLETE — chunk terrain at near-parity with legacy; CUTOVER-READY.**
+> Shipped (commits `9c99b217`→`b00a7930`, all opt-in `MC2_TERRAIN_LOD_CHUNK=1`): edge
+> stitching (vertex neighbour-min snap, no T-junction cracks); shadows (shadow.hglsl,
+> static+dynamic); smooth heightfield normal (frag bilinear central-diff, kills cliff
+> faceting); material detail normals + legacy colour mapping (tints/cliff/fbm-breakup);
+> concrete + cement catalog atlas (frag-side per-tile lookup, LOD-independent); and all
+> ImGui tunables (hemisphere V1/V2, normals-from-height strength, material profile, POM,
+> anti-tiling — byte-safe defaults). Plus a NORMAL-ARRAY mip-completeness fix (helped the
+> legacy array path too) + `MC2_TERRAIN_NORMAL_ARRAY` default-on.
+>
+> **Implementation impl notes (NOT the planned _pbr.frag split — done inline in
+> terrain_lod_chunk.frag/.vert):**
+> - The frag does NOT use `terrain_lod_chunk_pbr.frag`; the production shading lives in
+>   `terrain_lod_chunk.frag` directly.
+> - **3 LOAD-BEARING DEPTH/MVP RULES** for the chunk draw (any new terrain draw must obey;
+>   each was a real chunk-only bug this session): (1) net depth **-0.004** (legacy thin
+>   path double-applies `TERRAIN_DEPTH_FUDGE`: vert `clip.z+=FUDGE*w` + frag `+FUDGE`) —
+>   `4da9cfb1`; (2) project with the **baked dispatch MVP** water-cull/decals use
+>   (`IsFrameSolidArmed()?getDispatchMvp16():live`, frame N-1) not the live MVP, or a
+>   1-frame offset tears decals + drops shore water on motion — `67e4f5e4`; (3) bias depth
+>   **PRE-DIVIDE in the vert**, never frag `gl_FragDepth` (AMD early-Z) — `67e4f5e4`.
+> - Canonical record: `memory/HANDOFF_2026_06_09_terrain_lod_chunk_phase10_fidelity_cutover_prep.md`.
+>
+> **NEXT = Phase 11 default-on cutover** (gate flip + chunk-path smoke + editor/legacy
+> fallback check), then Phase 8z deletion of slimReduce/makeLists.
+
 **Slice kind:** dispatch-changing (adds per-frame GPU buffer uploads for normals, materials, lights, shadow)
 **Goal:** Bring terrain LOD chunk path to full visual fidelity: GPU-side normal computation from heightfield, material/texture-ID splatting, light integration, and shadow map sampling. Also: full dirty propagation for real-time terrain edits (editor path).
 **GL discipline:** All new SSBO/texture uploads in `gos_terrain_lod_chunk.cpp`. `mclib/` calls GameOS API only.
