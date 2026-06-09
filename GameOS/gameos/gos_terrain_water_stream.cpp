@@ -38,6 +38,7 @@
 #include "../../mclib/quad.h"
 #include "../../mclib/vertex.h"
 #include "../../mclib/mapdata.h"
+#include "mc2_hitch_trace.h"
 
 // [WATER_DEPTHPROBE v1] cross-TU Probe-8 fingerprint accessors (terrain-solid
 // side). Paired per-frame against the water-upload MVP fingerprint to
@@ -428,7 +429,7 @@ unsigned int EnsureRecipeBufferUploaded() {
         glGenBuffers(1, &g_recipeBuffer);
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_recipeBuffer);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, bytes, g_recipes.data(), GL_STATIC_DRAW);
+    MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER, bytes, g_recipes.data(), GL_STATIC_DRAW);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
     g_recipeBufferUploadedCount = (uint32_t)g_recipes.size();
@@ -656,7 +657,7 @@ uint32_t UploadAndBindThinRecords() {
             (uint32_t)(g_recipes.size() * sizeof(WaterThinRecord));
         const uint32_t cap = (capPerSlot > (uint32_t)slotBytes)
                               ? capPerSlot : (uint32_t)slotBytes;
-        glBufferData(GL_SHADER_STORAGE_BUFFER,
+        MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER,
                      (GLsizeiptr)(cap * kThinRingSlots),
                      nullptr, GL_DYNAMIC_DRAW);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
@@ -668,7 +669,7 @@ uint32_t UploadAndBindThinRecords() {
     const GLintptr slotOffset = (GLintptr)(g_thinSlot * g_thinSlotCapacity);
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinBuffer);
-    glBufferSubData(GL_SHADER_STORAGE_BUFFER, slotOffset, slotBytes,
+    MC2_GL_BufferSubData(GL_SHADER_STORAGE_BUFFER, slotOffset, slotBytes,
                     g_thinStaging.data());
     glBindBufferRange(GL_SHADER_STORAGE_BUFFER, kWaterThinSsboBinding,
                       g_thinBuffer, slotOffset, slotBytes);
@@ -1254,13 +1255,13 @@ static uint32_t BuildQuadWindowSSBO() {
         const uint32_t cap = (uint32_t)(g_recipes.size() * sizeof(uint32_t));
         glGenBuffers(1, &g_quadWindowSsbo);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_quadWindowSsbo);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)cap, nullptr, GL_DYNAMIC_DRAW);
+        MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)cap, nullptr, GL_DYNAMIC_DRAW);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
         g_quadWindowSsboCapacity = cap;
     }
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_quadWindowSsbo);
-    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+    MC2_GL_BufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
                     (GLsizeiptr)(windowCount * sizeof(uint32_t)),
                     g_quadWindowStaging.data());
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
@@ -1270,8 +1271,16 @@ static uint32_t BuildQuadWindowSSBO() {
 
 bool ComputeDispatchAndBindThinRecords(float frameCos) {
     g_waterGpuDrivenArmed = false;
+    mc2_hitch::HitchScope _hitchWater(mc2_hitch::HitchSpanKind::WaterFastPath);
+    if (g_mc2HitchEnabled) {
+        ++g_mc2HitchAccum.waterCalled;
+        g_mc2HitchAccum.waterPresent = g_recipes.empty() ? 0u : 1u;
+    }
 
-    if (!gpu_driven::IsWaterEnabled()) return false;
+    if (!gpu_driven::IsWaterEnabled()) {
+        if (g_mc2HitchEnabled) ++g_mc2HitchAccum.waterEarlyOut;
+        return false;
+    }
 
     // Lazy-build compute programs and GPU resources on first call.
     if (g_waterComputeProgram == 0) {
@@ -1283,31 +1292,32 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
             // Don't leave partial state.
             if (g_waterComputeProgram) { glDeleteProgram(g_waterComputeProgram); g_waterComputeProgram = 0; }
             if (g_cmdPatchProgram)     { glDeleteProgram(g_cmdPatchProgram);     g_cmdPatchProgram = 0; }
+            if (g_mc2HitchEnabled) ++g_mc2HitchAccum.waterEarlyOut;
             return false;
         }
 
         // Bucket header: 16 B GpuDrivenBucketHeader (visibleCount + 3 pads).
         glGenBuffers(1, &g_waterBucketHeaderSsbo);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_waterBucketHeaderSsbo);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, 16, nullptr, GL_DYNAMIC_DRAW);
+        MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER, 16, nullptr, GL_DYNAMIC_DRAW);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
         // Indirect cmd buffer: 2 × DrawArraysIndirectCommand = 2 × 16 B = 32 B.
         glGenBuffers(1, &g_waterIndirectCmdBuffer);
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, g_waterIndirectCmdBuffer);
-        glBufferData(GL_DRAW_INDIRECT_BUFFER, 32, nullptr, GL_DYNAMIC_DRAW);
+        MC2_GL_BufferData(GL_DRAW_INDIRECT_BUFFER, 32, nullptr, GL_DYNAMIC_DRAW);
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
     }
 
     // Ensure recipe SSBO is ready.
-    if (!EnsureRecipeBufferUploaded()) return false;
-    if (g_recipeBuffer == 0) return false;
+    if (!EnsureRecipeBufferUploaded()) { if (g_mc2HitchEnabled) ++g_mc2HitchAccum.waterEarlyOut; return false; }
+    if (g_recipeBuffer == 0) { if (g_mc2HitchEnabled) ++g_mc2HitchAccum.waterEarlyOut; return false; }
 
     // Ensure thin-record SSBO is allocated (UploadAndBindThinRecords creates it lazily;
     // on the GPU path we may skip that function, so we ensure the buffer exists here).
     // The thin buffer must have at least one slot large enough for g_recipes.size() records.
     const uint32_t maxThinRecords = (uint32_t)g_recipes.size();
-    if (maxThinRecords == 0) return false;
+    if (maxThinRecords == 0) { if (g_mc2HitchEnabled) ++g_mc2HitchAccum.waterEarlyOut; return false; }
 
     // M1 guard: lighting SSBO must be ready before water compute reads it (binding 1).
     // GetOutputSsbo() returns 0 until the lighting compute has run (mission_init path).
@@ -1322,6 +1332,7 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
                 fflush(stdout);
                 s_warnedLightSsbo = true;
             }
+            if (g_mc2HitchEnabled) ++g_mc2HitchAccum.waterEarlyOut;
             return false;
         }
         s_warnedLightSsbo = false; // reset so it re-warns if SSBO goes away again
@@ -1331,7 +1342,7 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
     if (g_thinBuffer == 0) {
         glGenBuffers(1, &g_thinBuffer);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinBuffer);
-        glBufferData(GL_SHADER_STORAGE_BUFFER,
+        MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER,
                      thinSlotBytes * (GLsizeiptr)kThinRingSlots,
                      nullptr, GL_DYNAMIC_DRAW);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
@@ -1348,7 +1359,7 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
     const bool fullRecipeAuth = IsFullRecipeAuthoritative();
     const uint32_t windowCount   = fullRecipeAuth ? 0u : BuildQuadWindowSSBO();
     const uint32_t dispatchCount = fullRecipeAuth ? maxThinRecords : windowCount;
-    if (dispatchCount == 0) return false;
+    if (dispatchCount == 0) { if (g_mc2HitchEnabled) ++g_mc2HitchAccum.waterEarlyOut; return false; }
 
     // Advance ring slot so GPU write doesn't stomp a slot the GPU is still consuming.
     // Must happen AFTER the windowCount==0 early-return so we don't burn a slot
@@ -1406,6 +1417,7 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
         fflush(stderr);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, 0);
         glUseProgram(0);
+        if (g_mc2HitchEnabled) ++g_mc2HitchAccum.waterEarlyOut;
         return false;
     }
     glUniform1i(locWindowCount, (int)dispatchCount);   // 1B: full recipe count when authoritative
@@ -1415,6 +1427,7 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
         fflush(stderr);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, 0);
         glUseProgram(0);
+        if (g_mc2HitchEnabled) ++g_mc2HitchAccum.waterEarlyOut;
         return false;
     }
     glUniform1i(locMaxThin, (int)maxThinRecords);
@@ -1424,6 +1437,7 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
         fflush(stderr);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, 0);
         glUseProgram(0);
+        if (g_mc2HitchEnabled) ++g_mc2HitchAccum.waterEarlyOut;
         return false;
     }
     glUniform1f(locWaterElev, Terrain::waterElevation);
@@ -1438,6 +1452,7 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
         fflush(stderr);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, 0);
         glUseProgram(0);
+        if (g_mc2HitchEnabled) ++g_mc2HitchAccum.waterEarlyOut;
         return false;
     }
     glUniform1i(locMapSide, (int)Terrain::realVerticesMapSide);
@@ -1449,6 +1464,7 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
         fflush(stderr);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, 0);  // unbind stale thin slot
         glUseProgram(0);
+        if (g_mc2HitchEnabled) ++g_mc2HitchAccum.waterEarlyOut;
         return false;
     }
     {
@@ -1630,6 +1646,7 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
             // MVP not available this frame (terrain not yet rendered). Bail out.
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, 0);  // unbind stale thin slot
             glUseProgram(0);
+            if (g_mc2HitchEnabled) ++g_mc2HitchAccum.waterEarlyOut;
             return false;
         }
     }
@@ -1691,17 +1708,17 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
             if (s_spikeThin) glDeleteBuffers(1, &s_spikeThin);
             glGenBuffers(1, &s_spikeThin);
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_spikeThin);
-            glBufferData(GL_SHADER_STORAGE_BUFFER, needThin, nullptr, GL_DYNAMIC_COPY);
+            MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER, needThin, nullptr, GL_DYNAMIC_COPY);
             s_spikeThinBytes = needThin;
         }
         if (!s_spikeHeader) {
             glGenBuffers(1, &s_spikeHeader);
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_spikeHeader);
-            glBufferData(GL_SHADER_STORAGE_BUFFER, 16, nullptr, GL_DYNAMIC_COPY);
+            MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER, 16, nullptr, GL_DYNAMIC_COPY);
         }
         const uint32_t zero4[4] = {0u, 0u, 0u, 0u};
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_spikeHeader);
-        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, 16, zero4);  // reset visibleCount accumulator
+        MC2_GL_BufferSubData(GL_SHADER_STORAGE_BUFFER, 0, 16, zero4);  // reset visibleCount accumulator
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, s_spikeThin);   // scratch thin-write (NOT fed to draw)
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, s_spikeHeader); // scratch header
         const uint32_t recipeCount = (uint32_t)g_recipes.size();
@@ -1832,6 +1849,14 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, 0);
 
     g_waterGpuDrivenArmed = true;
+    if (g_mc2HitchEnabled) {
+        // waterGlCalls = cumulative GL upload calls at this point in the frame.
+        // Approximation: includes terrain/static calls made before water in the same frame.
+        g_mc2HitchAccum.waterGlCalls =
+            g_mc2HitchAccum.glBufferDataCalls +
+            g_mc2HitchAccum.glBufferSubDataCalls +
+            g_mc2HitchAccum.glBindTextureCalls;
+    }
     return true;
 }
 
