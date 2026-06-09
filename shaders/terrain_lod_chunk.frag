@@ -12,7 +12,8 @@
 #define PREC highp                // noise.hglsl uses PREC (legacy frag defines it)
 #include <include/noise.hglsl>   // fbm() for the colour break-up (matches legacy)
 
-in vec3 v_worldPos;
+in vec3  v_worldPos;
+in float v_terrainType;       // Step 5b: interpolated per-vertex terrainType (concrete)
 uniform int   u_lodStep;
 uniform float u_skirtDepth;  // Phase 6: >0 when drawing a skirt strip
 uniform int   u_forceColor;  // Phase 7.5: 1 = neon debug palette; 0 = colormap
@@ -161,14 +162,16 @@ vec3 chunkDetailNormal(vec4 w, float snowWeight, vec2 worldXY) {
     // Screen-space derivative AA (legacy fwRock/fwGrass/...): fade a layer to 0
     // as its tiling goes sub-pixel. WITHOUT this, far/zoomed-out detail collapses
     // to a dark-biased mean normal -> uniform darkening with no visible relief.
-    vec2 uvRock  = uv * matTiling.x;
-    vec2 uvGrass = uv * matTiling.y;
-    vec2 uvDirt  = uv * matTiling.z;
-    vec2 uvSnow  = uv * matTilingSnow;
-    float fwRock  = clamp(1.0 - (length(fwidth(uvRock))  - 0.5) * 2.0, 0.0, 1.0);
-    float fwGrass = clamp(1.0 - (length(fwidth(uvGrass)) - 0.5) * 2.0, 0.0, 1.0);
-    float fwDirt  = clamp(1.0 - (length(fwidth(uvDirt))  - 0.5) * 2.0, 0.0, 1.0);
-    float fwSnow  = clamp(1.0 - (length(fwidth(uvSnow))  - 0.5) * 2.0, 0.0, 1.0);
+    vec2 uvRock     = uv * matTiling.x;
+    vec2 uvGrass    = uv * matTiling.y;
+    vec2 uvDirt     = uv * matTiling.z;
+    vec2 uvConcrete = uv * matTiling.w;
+    vec2 uvSnow     = uv * matTilingSnow;
+    float fwRock     = clamp(1.0 - (length(fwidth(uvRock))     - 0.5) * 2.0, 0.0, 1.0);
+    float fwGrass    = clamp(1.0 - (length(fwidth(uvGrass))    - 0.5) * 2.0, 0.0, 1.0);
+    float fwDirt     = clamp(1.0 - (length(fwidth(uvDirt))     - 0.5) * 2.0, 0.0, 1.0);
+    float fwConcrete = clamp(1.0 - (length(fwidth(uvConcrete)) - 0.5) * 2.0, 0.0, 1.0);
+    float fwSnow     = clamp(1.0 - (length(fwidth(uvSnow))     - 0.5) * 2.0, 0.0, 1.0);
     vec3 dN = vec3(0.0);
     if (w.x > 0.01) dN += w.x * matNormalBoost.x * fwRock *
         (texture(matNormalArray, vec3(uvRock,  float(MAT_LAYER_ROCK))).rgb  * 2.0 - 1.0);
@@ -176,6 +179,8 @@ vec3 chunkDetailNormal(vec4 w, float snowWeight, vec2 worldXY) {
         (texture(matNormalArray, vec3(uvGrass, float(MAT_LAYER_GRASS))).rgb * 2.0 - 1.0);
     if (w.z > 0.01) dN += w.z * matNormalBoost.z * fwDirt *
         (texture(matNormalArray, vec3(uvDirt,  float(MAT_LAYER_DIRT))).rgb  * 2.0 - 1.0);
+    if (w.w > 0.01) dN += w.w * matNormalBoost.w * fwConcrete *
+        (texture(matNormalArray, vec3(uvConcrete, float(MAT_LAYER_CONCRETE))).rgb * 2.0 - 1.0);
     if (snowWeight > 0.01) dN += snowWeight * 0.9 * fwSnow *
         (texture(matNormalArray, vec3(uvSnow,  float(MAT_LAYER_SNOW))).rgb * 2.0 - 1.0);
     return dN;
@@ -232,6 +237,15 @@ void main() {
     vec4  matWeights; float snowWeight;
     chunkWeights(base, matWeights, snowWeight);
 
+    // Step 5b: concrete/cement. TerrainType ~3 at cement vertices (interpolated,
+    // so boundary patches blend). pureConcrete pushes weights fully to concrete
+    // (.w), suppresses snow, and (below) restores the authored colormap tone +
+    // flattens lighting. Matches legacy gos_terrain.frag:539-548,738,772.
+    float pureConcrete       = smoothstep(2.0, 3.0, v_terrainType);
+    float concreteColorBlend = sqrt(clamp(pureConcrete, 0.0, 1.0));
+    matWeights = mix(matWeights, vec4(0.0, 0.0, 0.0, 1.0), pureConcrete);
+    snowWeight *= (1.0 - pureConcrete);
+
     // --- Surface normal (smooth macro slope + tangent-space detail) ---
     vec3 N;
     if (u_skirtDepth > 0.0) {
@@ -247,7 +261,8 @@ void main() {
         if ((u_diag & 32) != 0) {
             N = baseN;  // detail disabled (A/B)
         } else {
-            vec3 dN   = chunkDetailNormal(matWeights, snowWeight, v_worldPos.xy);
+            vec3 dN   = chunkDetailNormal(matWeights, snowWeight, v_worldPos.xy)
+                      * (1.0 - pureConcrete);  // cement is smooth (legacy)
             vec3 pert = vec3(baseN.xy / max(baseN.z, 0.2) + dN.xy * detailNormalStrength.x, 1.0);
             N = normalize(pert);
         }
@@ -266,6 +281,9 @@ void main() {
     float tintBase    = mix(0.18, 0.50, smoothstep(0.1, 0.6, colLum));
     float tintStrength= mix(tintBase, 0.85, snowWeight) * tintStrengthScale;
     vec3  baseColor   = mix(base, materialTint, tintStrength);
+    // Cement: restore the authored colormap tone (runway/apron) instead of the
+    // generic concrete tint.
+    baseColor = mix(baseColor, base, concreteColorBlend);
 
     // Cliff mapping: desaturate + darken toward rock on steep slopes (uses N.z).
     {
@@ -289,6 +307,7 @@ void main() {
     float NdotL       = dot(N, terrainLightDir.xyz);
     float diffuse     = clamp(NdotL, 0.02, 1.0);
     float normalLight = ((u_diag & 4) != 0) ? 1.0 : mix(0.35, 1.20, diffuse);
+    normalLight = mix(normalLight, 1.0, pureConcrete * 0.85);  // cement: flatter lit
 
     float shadow = 1.0;
     if ((u_diag & 8) == 0) {

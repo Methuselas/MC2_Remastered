@@ -14,6 +14,7 @@ struct TerrainDrawCommand {
 static_assert(sizeof(TerrainDrawCommand) == 16, "TerrainDrawCommand must be 16 bytes");
 
 constexpr uint32_t TERRAIN_HEIGHT_SSBO_BINDING = 23u;
+constexpr uint32_t TERRAIN_TYPE_SSBO_BINDING   = 24u;  // Step 5b: per-vertex terrainType (concrete)
 
 // Submit block draw commands for the current frame.
 // count==0 is a strict no-op. mclib calls this via Terrain::flushDrawCommands() only.
@@ -34,6 +35,10 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
 // Upload full heightfield to GPU SSBO at map load.
 // elevations: float[mapSide*mapSide] row-major.
 void gos_TerrainLodChunk_UploadHeightFull(const float* elevations, int mapSide);
+
+// Step 5b: upload per-vertex terrainType (0..N; cement/concrete ~3) to its SSBO.
+// types: float[mapSide*mapSide] row-major (parallel to the heightfield).
+void gos_TerrainLodChunk_UploadTerrainTypeFull(const float* types, int mapSide);
 
 // Patch a dirty block's heightfield rows after terrain edit.
 // rowData: float[(quadCountY+1)*(quadCountX+1)] row-major.

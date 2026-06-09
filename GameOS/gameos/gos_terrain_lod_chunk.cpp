@@ -17,6 +17,7 @@ extern const float* gos_GetTerrainMVPMat4();
 // ---------------------------------------------------------------------------
 
 static GLuint s_heightSsbo = 0;   // GL handle; 0 = not yet allocated
+static GLuint s_typeSsbo   = 0;   // Step 5b: per-vertex terrainType SSBO (binding 24)
 static int    s_mapSide    = 0;   // mapSide stored at last UploadHeightFull
 static float  s_halfMap    = 0.0f;// (mapSide * 128.0 * 0.5)
 
@@ -273,6 +274,7 @@ void gos_TerrainLodChunk_Init()
         fflush(stderr);
         return;
     }
+    glGenBuffers(1, &s_typeSsbo);   // Step 5b: terrainType SSBO (concrete)
 
     // Shader program (Phase 4) — load unconditionally; SubmitDrawCommands gates
     // on the env var so no pixels change unless MC2_TERRAIN_LOD_CHUNK=1.
@@ -381,6 +383,11 @@ void gos_TerrainLodChunk_Destroy()
         s_mapSide    = 0;
         s_halfMap    = 0.0f;
     }
+    if (s_typeSsbo != 0)
+    {
+        glDeleteBuffers(1, &s_typeSsbo);
+        s_typeSsbo = 0;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -457,6 +464,9 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
 
     // Bind height SSBO (stays bound for all patches this frame).
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_HEIGHT_SSBO_BINDING, s_heightSsbo);
+    // Step 5b: terrainType SSBO (concrete). 0 if never uploaded -> vert reads 0.
+    if (s_typeSsbo != 0)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_TYPE_SSBO_BINDING, s_typeSsbo);
 
     // Upload per-frame uniforms (same for every patch).
     if (s_locMapSide >= 0)
@@ -732,6 +742,19 @@ void gos_TerrainLodChunk_UploadHeightFull(const float* elevations, int mapSide)
         fflush(stderr);
     }
 #endif
+}
+
+// Step 5b: per-vertex terrainType upload (parallel to the heightfield). Used by
+// the chunk frag's concrete material/colour selection (pureConcrete).
+void gos_TerrainLodChunk_UploadTerrainTypeFull(const float* types, int mapSide)
+{
+    if (s_typeSsbo == 0 || !types || mapSide <= 0)
+        return;
+    GLsizeiptr bytes = (GLsizeiptr)mapSide * mapSide * sizeof(float);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_typeSsbo);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, bytes, types, GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_TYPE_SSBO_BINDING, s_typeSsbo);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
 
 // ---------------------------------------------------------------------------

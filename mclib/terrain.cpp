@@ -754,10 +754,15 @@ long Terrain::init( unsigned long verticesPerMapSide, PacketFile* pakFile, unsig
 		{
 			int n = (int)realVerticesMapSide * (int)realVerticesMapSide;
 			std::vector<float> elev((size_t)n);
+			std::vector<float> ttype((size_t)n);  // Step 5b: per-vertex terrainType (concrete)
 			const PostcompVertex* blks = mapData->getBlocks();
 			for (int i = 0; i < n; ++i)
-				elev[i] = blks[i].elevation;
+			{
+				elev[i]  = blks[i].elevation;
+				ttype[i] = (float)blks[i].terrainType;
+			}
 			gos_TerrainLodChunk_UploadHeightFull(elev.data(), (int)realVerticesMapSide);
+			gos_TerrainLodChunk_UploadTerrainTypeFull(ttype.data(), (int)realVerticesMapSide);
 		}
 	}
 

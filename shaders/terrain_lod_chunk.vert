@@ -18,8 +18,14 @@ uniform int   u_edgeStitch;
 layout(binding = 23, std430) readonly buffer TerrainHeightBuf {
     float heights[];
 };
+// Step 5b: per-vertex terrainType (concrete selection). Interpolated to the frag
+// so cement/terrain boundary patches blend (legacy smoothstep(2,3,TerrainType)).
+layout(binding = 24, std430) readonly buffer TerrainTypeBuf {
+    float terrainTypes[];
+};
 
-out vec3 v_worldPos;
+out vec3  v_worldPos;
+out float v_terrainType;
 
 float sampleH(int mx, int my) {
     mx = clamp(mx, 0, u_mapSide - 1);
@@ -68,6 +74,7 @@ void main() {
     float worldX = float(mapX) * 128.0 - u_halfMap;
     float worldY = u_halfMap - float(mapY) * 128.0;
     v_worldPos = vec3(worldX, worldY, h);
+    v_terrainType = terrainTypes[mapX + mapY * u_mapSide];  // interpolated to frag
 
     gl_Position = u_worldToClipGL * vec4(worldX, worldY, h, 1.0);
 }
