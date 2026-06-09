@@ -26,6 +26,8 @@
 // points, or provide safe no-op defaults where the old symbol was pure
 // Win32 boilerplate that has no SDL equivalent.
 #include "stdafx.h"
+#include "EditorGpuTimer.h"  // EditorFramePhase_* whole-frame timing (MC2_EDITOR_GPU_TIMERS)
+#include "EditorWatchdog.h"  // EditorWatchdog_Heartbeat (MC2_EDITOR_WATCHDOG)
 #include <cstdarg>
 #include <stdlib.h>
 #include <cstdio>
@@ -415,6 +417,8 @@ extern bool gosExitGameOS();
 
 DWORD __stdcall RunGameOSLogic()
 {
+    EditorWatchdog_Heartbeat();  // main-thread liveness for the stall watchdog
+
     if (!g_editorRenderWindow || !g_editorRenderContext || !getGosRenderer())
     {
         EditorGameOSTrace("RunGameOSLogic: skipped window=%p context=%p renderer=%p",
@@ -543,7 +547,9 @@ DWORD __stdcall RunGameOSLogic()
             EditorInterface::instance()->renderToolbarImGui();
     }
 #endif
+    EditorFramePhase_Begin();
     gos_RendererBeginFrame();
+    EditorFramePhase_Mark("beginFrame");
 
     // DoGameLogic must always run — it drives EditorInterface::update() which
     // processes MapGeneratorDialog::TakeAction() (Generate/Preview clicks).
@@ -551,13 +557,16 @@ DWORD __stdcall RunGameOSLogic()
     // is loaded (e.g. while the generator dialog is open at startup).
     if (Environment.DoGameLogic)
         Environment.DoGameLogic();
+    EditorFramePhase_Mark("doLogic");
 
 #ifdef MC2_IMGUI
     if (land)
 #endif
         Environment.UpdateRenderers();
+    EditorFramePhase_Mark("updRend");
 
     gos_RendererEndFrame();
+    EditorFramePhase_Mark("endFrame");
 
     // Composite scene FBO → default FB (tone-map, FXAA, bloom, shadow overlay).
     // This is what makes the scene visible on screen; without it the FBO contents
@@ -567,6 +576,7 @@ DWORD __stdcall RunGameOSLogic()
     if (pp_editor) {
         pp_editor->endScene();
     }
+    EditorFramePhase_Mark("endScene");
 
 #ifdef MC2_IMGUI
     if (g_imguiInitialized) {
@@ -590,12 +600,15 @@ DWORD __stdcall RunGameOSLogic()
     }
     GuiRuntime::Render();
 #endif
+    EditorFramePhase_Mark("gui");
 
     // Do NOT call glUseProgram(0) here.  The Remastered terrain shader program
     // is managed by the gosRenderer; forcibly unbinding it after EndFrame tears
     // down state the renderer expects to persist across the swap.  Let the
     // renderer own its own program lifecycle.
     graphics::swap_window(g_editorRenderWindow);
+    EditorFramePhase_Mark("swap");
+    EditorFramePhase_End();
 
 #ifdef TRACY_ENABLE
     TracyGpuCollect;

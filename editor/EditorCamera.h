@@ -34,7 +34,9 @@ EditorCamera.h			: Interface for the EditorCamera component.
 #endif
 
 #include "../GameOS/gameos/gos_static_prop_registry.h"
+#include "../GameOS/gameos/gos_mech_batcher.h"
 #include "../GameOS/gameos/view_uniforms_gl.h"  // setCurrentView + uploadViewUniforms
+#include "EditorGpuTimer.h"                      // MC2_EDITOR_GPU_TIMERS per-pass GPU timing
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -259,12 +261,22 @@ public:
 			gos_SetTerrainCameraPos(camOrig.x, camOrig.y, camOrig.z);
 			gos_SetTerrainLightDir(lightDirection.x, lightDirection.y, lightDirection.z);
 
+			EditorGpuTimer_Begin();                            // GPU per-pass timing (env-gated)
+
 			if (theSky)
 				theSky->render(1);
+			EditorGpuTimer_Mark("sky");
 
 			GpuStaticPropRegistry::frameBegin();               // step 2 — game line 198
+
+			// Absorb any mech types registered after finalizeGeometry() (late
+			// placement in the editor). Mirrors logistics.cpp:814 (VPL-#11).
+			// No-op when s_pendingLateTypes==false (single branch, ~1ns).
+			GpuMechBatcher::instance().finalizePending();
+
 			if (land)
 				land->render();                                // step 3 — game line 199
+			EditorGpuTimer_Mark("terrain");
 
 			// step 4 — game line 214: ObjectManager->render(...)
 			// TODO(S2): editor has no GameObjectManager (ObjectManager == nullptr —
@@ -274,9 +286,11 @@ public:
 			// scope per plan; see report).
 			if (!s_bSensorMapEnabled)
 				EditorObjectMgr::instance()->render();
+			EditorGpuTimer_Mark("objmgr");
 
 			if (land)
 				land->renderWater();                           // step 5 — game line 219
+			EditorGpuTimer_Mark("water");
 
 			// step 6 — game line 225: ObjectManager->renderShadows(...)
 			// TODO(S2): same gap as step 4. EditorObjectMgr::renderShadows() was
@@ -294,12 +308,17 @@ public:
 			{
 				EditorInterface::instance()->render();
 			}
+			EditorGpuTimer_Mark("ui");
 
 			if (mcTextureManager)
 				mcTextureManager->renderLists();               // step 7 — game line 246 (drives GpuStaticPropBatcher::flush at txmmgr.cpp:2164)
+			EditorGpuTimer_Mark("props");
 
 			if (land)
 				land->renderWaterFastPath();                   // step 8 — game line 257
+			EditorGpuTimer_Mark("waterFast");
+
+			EditorGpuTimer_End();
 		}
 	
 	 	//-----------------------------------------------------
@@ -439,8 +458,16 @@ public:
 			
 			if (theSky)
 			{
+				// Position sky sphere at camera eye height, not terrain surface.
+				// getPosition().z == cameraShiftZ == terrain elevation; the camera
+				// eye is cameraAltitude units above that. On a high-altitude editor
+				// camera the gap (~800+ wu) places the sphere center far below the
+				// eye, making the sphere appear as a wall at ground level. Adding
+				// cameraAltitude centers the sphere at the actual eye height so the
+				// camera is always inside the sphere regardless of zoom level.
 				Stuff::Vector3D pos = getPosition();
-				
+				pos.z = cameraShiftZ + cameraAltitude;
+
 				theSky->setObjectParameters(pos,0.0f,false,0,0);
 				theSky->setMoverParameters(0.0f);
 				theSky->setGesture(0);
