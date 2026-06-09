@@ -65,6 +65,7 @@ set(SOURCES ${SOURCES}
     ${CMAKE_SOURCE_DIR}/3rdparty/tinyexr/miniz.c
     utils/string_utils.cpp
     utils/file_utils.cpp
+    mc2_hitch_trace.cpp
     )
 
 set_source_files_properties(
