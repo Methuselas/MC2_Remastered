@@ -106,6 +106,8 @@ def main() -> None:
     parser.add_argument('--template-pak', help='Template .pak for Packet 0 patching (Phase B)')
     parser.add_argument('--preview', action='store_true',
                         help='Fast preview: render a small thumbnail only (no elevation/extras)')
+    parser.add_argument('--debug-assets', action='store_true',
+                        help='Write contact sheet and diagnostic PNGs')
     args = parser.parse_args()
 
     out = Path(args.out)
@@ -120,10 +122,17 @@ def main() -> None:
         prev = max(40, min(recipe.size, 100))
         prev = (prev // 20) * 20
         recipe.size = prev
-        recipe._burnin_cap = 256   # tiny colormap for a fast thumbnail
+        recipe._burnin_final_cap = 256
+        recipe._burnin_working_cap = 256
 
     print(f"  size={recipe.size}  biome={recipe.biome}  seed={recipe.seed}  preview={args.preview}")
     recipe.apply_biome()
+
+    # Set burnin resolution caps if not already set (e.g. by tests).
+    if not hasattr(recipe, "_burnin_final_cap"):
+        recipe._burnin_final_cap = 4096
+    if not hasattr(recipe, "_burnin_working_cap"):
+        recipe._burnin_working_cap = 2048
 
     if args.preview:
         height = HeightGenerator().generate(recipe)
@@ -162,15 +171,16 @@ def main() -> None:
     make_preview(burnin).save(str(out / f"{name}.preview.png"))
     print(f"  {name}.preview.png")
 
-    make_contact_sheet(height, masks, burnin).save(str(out / "contact_sheet.png"))
-    print(f"  contact_sheet.png")
+    if args.debug_assets:
+        make_contact_sheet(height, masks, burnin).save(str(out / "contact_sheet.png"))
+        print(f"  contact_sheet.png")
 
-    _save_gray(height,         out / "height.png")
-    _save_gray(masks.slope,    out / "slope.png")
-    _save_gray(masks.altitude, out / "altitude.png")
-    _save_gray(masks.valley,   out / "valley.png")
-    _save_terrain_type(masks.terrain_type, out / "terrain_type.png")
-    print("  height.png  slope.png  altitude.png  valley.png  terrain_type.png")
+        _save_gray(height,         out / "height.png")
+        _save_gray(masks.slope,    out / "slope.png")
+        _save_gray(masks.altitude, out / "altitude.png")
+        _save_gray(masks.valley,   out / "valley.png")
+        _save_terrain_type(masks.terrain_type, out / "terrain_type.png")
+        print("  height.png  slope.png  altitude.png  valley.png  terrain_type.png")
 
     recipe.to_json(out / f"{name}.recipe.json")
     print(f"  {name}.recipe.json")

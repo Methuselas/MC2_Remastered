@@ -60,11 +60,12 @@ class TerrainRecipe:
             raise ValueError(f"unknown biome '{self.biome}'; valid: {list(BIOMES)}")
 
     def burnin_resolution(self) -> int:
-        # The colormap MUST be (vertices / verticesBlockSide) * 256 px wide so the
-        # engine's numTexturesAcross (= width/256) matches the map's block count.
-        # A mismatched resolution makes the per-quad colormap UVs sample the wrong
-        # place -> black patches across the map. (verticesBlockSide=20, tile=256;
-        # 20*12.8=256, so this equals size*12.8.)
+        # Historical engine-matched colormap resolution:
+        #   (vertices / verticesBlockSide) * 256
+        # The renderer may cap final output, currently 4096² max, because
+        # high-frequency detail comes from normal/detail maps rather than enormous
+        # baked colormaps. (verticesBlockSide=20, tile=256; 20*12.8=256, so this
+        # equals size*12.8.)
         return (self.size // 20) * 256
 
     def apply_biome(self) -> None:

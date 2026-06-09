@@ -12,21 +12,25 @@ from terrain_gen.biome_presets import BiomePreset
 
 class BurninRenderer:
     def render(self, masks: TerrainMasks, recipe: TerrainRecipe, preset: BiomePreset) -> Image.Image:
-        target_res = recipe.burnin_resolution()
-        # Render at a bounded working resolution to keep memory sane (a 1020 map's
-        # colormap is 13056px -> multi-GB float arrays). The final image is resized
-        # to target_res so the engine still gets the map-matched colormap size;
-        # colormap detail beyond ~2k is imperceptible at terrain scale.
-        # Preview mode caps the working res hard so the thumbnail renders fast.
-        cap = getattr(recipe, '_burnin_cap', 2048)
-        res = min(target_res, cap)
+        engine_res = recipe.burnin_resolution()
+
+        # Final output cap. We intentionally do NOT emit enormous engine-matched
+        # colormaps anymore; detail comes from normal/detail systems.
+        final_cap = int(getattr(recipe, "_burnin_final_cap", 4096))
+        target_res = min(engine_res, final_cap)
+
+        # Working resolution cap. Standard generation can shade at 2048 then upscale
+        # to <=4096. Preview sets this to 256.
+        working_cap = int(getattr(recipe, "_burnin_working_cap", min(2048, target_res)))
+        res = min(target_res, working_cap)
+
         b   = recipe.burnin
         p   = preset.palette
         m   = recipe.materials
 
         def up(arr: np.ndarray) -> np.ndarray:
             img = Image.fromarray((np.clip(arr, 0, 1) * 255).astype(np.uint8), mode='L')
-            return np.array(img.resize((res, res), Image.BICUBIC)) / 255.0
+            return np.asarray(img.resize((res, res), Image.BICUBIC), dtype=np.float32) / np.float32(255.0)
 
         alt    = up(masks.altitude)
         slope  = up(masks.slope)
@@ -49,7 +53,7 @@ class BurninRenderer:
         w_grass = np.clip(w_grass - w_forest, 0, 1)
 
         def to_f(rgb):
-            return np.array([v / 255.0 for v in rgb], dtype=np.float64)
+            return np.array([v / 255.0 for v in rgb], dtype=np.float32)
 
         color = (
             to_f(p.grass)        * w_grass[..., None]  +
@@ -65,7 +69,10 @@ class BurninRenderer:
 
         # Ambient occlusion
         alt_pil  = Image.fromarray((alt * 255).astype(np.uint8), mode='L')
-        alt_blur = np.array(alt_pil.filter(ImageFilter.GaussianBlur(radius=max(1, res // 20)))) / 255.0
+        alt_blur = np.asarray(
+            alt_pil.filter(ImageFilter.GaussianBlur(radius=max(1, res // 20))),
+            dtype=np.float32,
+        ) / np.float32(255.0)
         ao = np.clip(alt - alt_blur, 0, 1)
         color *= (1.0 - b.ao_strength * ao)[..., None]
 
@@ -86,11 +93,11 @@ class BurninRenderer:
 
         # Fine grain
         rng = np.random.default_rng(recipe.seed)
-        grain = (rng.random((res, res)) - 0.5) * b.grain_scale * 0.05
+        grain = (rng.random((res, res), dtype=np.float32) - np.float32(0.5)) * np.float32(b.grain_scale * 0.05)
         color += grain[..., None]
 
         color = np.clip(color * 255, 0, 255).astype(np.uint8)
         img = Image.fromarray(color, mode='RGB')
-        if target_res != res:
+        if res != target_res:
             img = img.resize((target_res, target_res), Image.BICUBIC)
         return img
