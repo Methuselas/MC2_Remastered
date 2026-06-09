@@ -440,7 +440,7 @@ int CPrefs::applyPrefs(bool applyRes) {
 	Camera::MaxClipDistance = 50000.0f;
 	Camera::MinHazeDistance = 50000.0f;
 
-	::GameVisibleVertices = 200;
+	::GameVisibleVertices = 500;
 
 	if (land)
 	{

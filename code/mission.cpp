@@ -305,7 +305,7 @@ extern PriorityQueuePtr	openList;
 extern "C" void mission_phase_begin();
 extern "C" void mission_phase_mark(const char* name);
 
-long GameVisibleVertices		= 200;
+long GameVisibleVertices		= 500;
 float BaseHeadShotElevation		= 1.0f;
 
 bool DisplayCameraAngle = false;

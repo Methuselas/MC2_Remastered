@@ -81,6 +81,7 @@ extern CPrefs prefs;
 #include "gos_validate.h"
 #include "gos_profiler.h"
 #include "../GameOS/gameos/gos_smoke.h"
+#include "../GameOS/gameos/MC2Strings.h"
 
 //------------------------------------------------------------------------------------------------------------
 // MechCmdr2 Global Instances of Things
@@ -1226,6 +1227,10 @@ void __stdcall InitializeGameEngine()
 			// Mod overlay: all subdirs of ./mods/ are active.
 			// Mods shadow base data/ files for relative data/* reads.
 			InitModSearchPaths("./mods/");
+			// Inject mod-overlay text FITs now that mod index is populated.
+			// MC2Strings may have already fired Load() before this point (with
+			// an empty mod index); LoadModFits() bypasses the one-shot guard.
+			MC2Strings::LoadModFits();
 
 			long result = systemFile->seekBlock("UseMusic");
 			if (result == NO_ERR)
@@ -1492,8 +1497,8 @@ void __stdcall InitializeGameEngine()
 					
 				result = prefsFile->readIdLong("GameVisibleVertices",GameVisibleVertices);
 				if (result != NO_ERR)
-					GameVisibleVertices = 200;
-				GameVisibleVertices = 200;  // Override config — full visibility
+					GameVisibleVertices = 500;
+				GameVisibleVertices = 500;  // Override config — full visibility
 
 				result = prefsFile->readIdFloat("MaxClipDistance",Camera::MaxClipDistance);
 				if (result != NO_ERR)
