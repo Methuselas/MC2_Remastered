@@ -115,8 +115,8 @@ def main() -> None:
                         help='Write contact sheet and diagnostic PNGs')
     parser.add_argument('--interactive', action='store_true',
                         help='Interactive mode: lower work resolution + reduced erosion for editor')
-    parser.add_argument('--height-work-size', type=int, default=768,
-                        help='Generate height at this resolution, then upscale (0 = full resolution)')
+    parser.add_argument('--height-work-size', type=int, default=256,
+                        help='Generate height at this resolution, then upscale (0 = full resolution, 256 default for interactive)')
     args = parser.parse_args()
 
     out = Path(args.out)

@@ -57,7 +57,7 @@ class HeightGenerator:
 
         if progress:
             progress(5, "height", "base noise")
-        base = self._fbm_array(gen1, coords, h.octaves, h.persistence, h.lacunarity, h.base_frequency, progress)
+        base = self._fbm_array(gen1, coords, h.octaves, h.persistence, h.lacunarity, h.base_frequency, progress, label="base")
 
         if h.mountain_amount > 0.0:
             if progress:
@@ -65,7 +65,7 @@ class HeightGenerator:
             ridged = self._ridged_array(gen2, coords, h.base_frequency * 2.0)
             if progress:
                 progress(40, "height", "detail noise")
-            detail = self._fbm_array(gen2, coords, h.octaves, h.persistence, h.lacunarity, h.base_frequency, progress)
+            detail = self._fbm_array(gen2, coords, h.octaves, h.persistence, h.lacunarity, h.base_frequency, progress, label="detail")
             mountain = detail + ridged * h.ridged_amount
             height = base + mountain * h.mountain_amount * 0.4
         else:
@@ -96,7 +96,7 @@ class HeightGenerator:
 
         return height.astype(np.float32)
 
-    def _fbm_array(self, gen, coords, octaves, persistence, lacunarity, freq, progress=None):
+    def _fbm_array(self, gen, coords, octaves, persistence, lacunarity, freq, progress=None, label="fbm"):
         """Vectorised fBm over an NxN grid. coords = normalized [0,1) per axis.
         noise2array(x, y) returns shape (len(y), len(x)) = result[y, x]."""
         N = coords.shape[0]
@@ -106,7 +106,7 @@ class HeightGenerator:
         f = freq
         for i in range(octaves):
             if progress and i % max(1, octaves // 3) == 0:  # Report every ~3 octaves
-                progress(int(5 + 30 * i / max(1, octaves)), "height", f"octave {i + 1}/{octaves}")
+                progress(int(5 + 30 * i / max(1, octaves)), "height", f"{label} octave {i + 1}/{octaves}")
             value     += gen.noise2array(coords * f, coords * f) * amplitude
             total_amp += amplitude
             amplitude *= persistence
