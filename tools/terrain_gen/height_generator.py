@@ -6,6 +6,10 @@ from terrain_gen.terrain_recipe import TerrainRecipe
 
 
 class HeightGenerator:
+    # Standard MC2 dimensions for banded generation
+    CHUNK_SIZE = 20
+    SUPERCHUNK_CHUNKS = 3
+
     def generate(self, recipe: TerrainRecipe, progress=None) -> np.ndarray:
         """Return float32 ndarray [size, size] in [0, 1].
 
@@ -40,6 +44,144 @@ class HeightGenerator:
 
         # Full resolution generation
         return self._generate_at_size(recipe, final_N, progress)
+
+    def generate_fullres_banded(self, recipe: TerrainRecipe, progress=None, superchunk_chunks: int = 3) -> np.ndarray:
+        """Generate full-resolution height via row bands (no upscaling).
+
+        Processes height in bands of size (chunk_size * superchunk_chunks) rows.
+        Uses global x coordinates and band-local y coordinates.
+        Applies tanh/plateau/erosion globally after all bands are combined.
+
+        Args:
+            recipe: Terrain recipe
+            progress: optional callable(pct, stage, msg)
+            superchunk_chunks: Number of chunks per band (default 3 = 60 rows)
+        Returns:
+            float32 ndarray [N, N] in [0, 1]
+        """
+        N = recipe.size
+        h = recipe.height
+        band_height = self.CHUNK_SIZE * superchunk_chunks
+
+        if progress:
+            progress(1, "height", f"full-res banding (bands of {band_height} rows)")
+
+        gen1 = OpenSimplex(recipe.seed)
+        gen2 = OpenSimplex(recipe.seed + 1)
+
+        # Generate base fBm banded
+        if progress:
+            progress(5, "height", "base noise")
+        base = self._fbm_banded(gen1, N, h.octaves, h.persistence, h.lacunarity, h.base_frequency,
+                               band_height, progress, label="base", pct0=5, pct1=35)
+
+        # Generate mountain component if needed
+        if h.mountain_amount > 0.0:
+            if progress:
+                progress(35, "height", "ridged noise")
+            ridged = self._ridged_banded(gen2, N, h.base_frequency * 2.0, band_height,
+                                        progress, pct0=35, pct1=48)
+
+            if progress:
+                progress(48, "height", "detail noise")
+            detail = self._fbm_banded(gen2, N, h.octaves, h.persistence, h.lacunarity, h.base_frequency,
+                                     band_height, progress, label="detail", pct0=48, pct1=65)
+
+            mountain = detail + ridged * h.ridged_amount
+            height = base + mountain * h.mountain_amount * 0.4
+        else:
+            height = base
+
+        # Apply global transformations on full height array
+        if progress:
+            progress(66, "height", "tanh mapping")
+        tanh_scale = 2.0 + h.mountain_amount * 3.0
+        height = (np.tanh(height * tanh_scale) + 1.0) * 0.5
+
+        # Plateau shaping
+        if h.plateau_strength > 0:
+            if progress:
+                progress(70, "height", "plateau shaping")
+            height = np.power(height, 1.0 + h.plateau_strength)
+            mx2 = height.max()
+            if mx2 > 0:
+                height /= mx2
+
+        # Erosion passes
+        if h.erosion_passes > 0:
+            if progress:
+                progress(75, "height", f"erosion {h.erosion_passes} passes")
+            height = self._fake_erosion(height, h.erosion_passes, progress)
+
+        return height.astype(np.float32)
+
+    def _fbm_banded(self, gen, N: int, octaves: int, persistence: float, lacunarity: float, freq: float,
+                    band_height: int, progress=None, label: str = "fbm", pct0: int = 0, pct1: int = 100) -> np.ndarray:
+        """Vectorised fBm processed band-by-band. Uses global x, band-local y coordinates.
+
+        Args:
+            gen: OpenSimplex generator
+            N: Total grid dimension
+            octaves, persistence, lacunarity, freq: fBm parameters
+            band_height: Height of each band (rows)
+            progress: optional callback
+            label: Label for progress reporting (e.g., "base" or "detail")
+            pct0, pct1: Progress range for this stage
+        Returns:
+            float32 [N, N] fBm array
+        """
+        xcoords = np.arange(N, dtype=np.float64) / N
+        value = np.zeros((N, N), dtype=np.float32)
+
+        amplitude = np.float32(1.0)
+        total_amp = np.float32(0.0)
+        f = freq
+
+        total_bands = (N + band_height - 1) // band_height
+        total_steps = max(1, octaves * total_bands)
+        step = 0
+
+        for octave in range(octaves):
+            for band_idx, y0 in enumerate(range(0, N, band_height)):
+                y1 = min(y0 + band_height, N)
+                band_rows = y1 - y0
+                ycoords = np.arange(y0, y1, dtype=np.float64) / N
+
+                # Generate noise for this band
+                band_noise = gen.noise2array(xcoords * f, ycoords * f).astype(np.float32)
+                value[y0:y1, :] += band_noise * amplitude
+
+                step += 1
+                if progress:
+                    pct = pct0 + int((pct1 - pct0) * step / total_steps)
+                    progress(pct, "height", f"{label} octave {octave + 1}/{octaves} band {band_idx + 1}/{total_bands}")
+
+            total_amp += amplitude
+            amplitude *= np.float32(persistence)
+            f *= lacunarity
+
+        return value / total_amp
+
+    def _ridged_banded(self, gen, N: int, freq: float, band_height: int,
+                       progress=None, pct0: int = 0, pct1: int = 100) -> np.ndarray:
+        """Ridged noise processed band-by-band."""
+        xcoords = np.arange(N, dtype=np.float64) / N
+        value = np.zeros((N, N), dtype=np.float32)
+
+        total_bands = (N + band_height - 1) // band_height
+
+        for band_idx, y0 in enumerate(range(0, N, band_height)):
+            y1 = min(y0 + band_height, N)
+            ycoords = np.arange(y0, y1, dtype=np.float64) / N
+
+            band_noise = gen.noise2array(xcoords * freq, ycoords * freq).astype(np.float32)
+            value[y0:y1, :] = 1.0 - np.abs(band_noise)
+
+            if progress:
+                pct = pct0 + int((pct1 - pct0) * (band_idx + 1) / total_bands)
+                progress(pct, "height", f"ridged band {band_idx + 1}/{total_bands}")
+
+        return value
 
     def _generate_at_size(self, recipe: TerrainRecipe, N: int, progress=None) -> np.ndarray:
         """Generate height field at specified resolution N."""

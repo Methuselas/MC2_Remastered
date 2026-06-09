@@ -117,6 +117,10 @@ def main() -> None:
                         help='Interactive mode: lower work resolution + reduced erosion for editor')
     parser.add_argument('--height-work-size', type=int, default=256,
                         help='Generate height at this resolution, then upscale (0 = full resolution, 256 default for interactive)')
+    parser.add_argument('--full-res', action='store_true',
+                        help='Full-resolution banded generation (no upscaling, progress per band)')
+    parser.add_argument('--superchunk-chunks', type=int, default=3,
+                        help='Rows per band: chunk_size (20) * this value. Default 3 = 60 rows/band')
     args = parser.parse_args()
 
     out = Path(args.out)
@@ -161,8 +165,16 @@ def main() -> None:
         return
 
     progress(0, "height", "starting")
-    height = HeightGenerator().generate(recipe, progress=progress)
-    progress(65, "height", "done")
+    gen = HeightGenerator()
+
+    if args.full_res:
+        # Full-resolution banded generation (no upscaling)
+        height = gen.generate_fullres_banded(recipe, progress=progress, superchunk_chunks=args.superchunk_chunks)
+    else:
+        # Interactive or standard generation (may upscale)
+        height = gen.generate(recipe, progress=progress)
+
+    progress(76, "height", "done")
 
     progress(70, "classify", "starting")
     masks = MaterialClassifier().classify(height, recipe)
