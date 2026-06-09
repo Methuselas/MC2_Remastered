@@ -69,6 +69,11 @@ layout(location = 1) out vec4 GBuffer1;   // shadow-handled flat-up (terrain MRT
 // gl_FragCoord.z -> z-fight (terrain "disappears" depending on selection/overlay
 // draw order, worst at distance). Match the legacy convention. Keep LOCKSTEP with
 // shaders/include/terrain_depth_bias.hglsl (TERRAIN_DEPTH_FUDGE = -0.002).
+// Canonical shared value (lockstep with terrain_depth_bias.hglsl). The water/
+// decal/overlay depth biases are calibrated against THIS. Do NOT epsilon-bump it
+// for the chunk path — that reproduces the Sym2 zoom-recede (see history). The
+// chunk's water-recede/decal-tearing is a coarse-LOD GEOMETRY mismatch, fixed by
+// clamping shoreline/cement blocks to fine LOD (geometry matches legacy).
 const float TERRAIN_DEPTH_FUDGE = -0.002;
 
 float heightAtCell(int cx, int cy) {
@@ -202,7 +207,14 @@ vec3 chunkDetailNormal(vec4 w, float snowWeight, vec2 worldXY) {
 
 void main() {
     // Reverse-Z terrain depth fudge (bit 2 disables it: raw gl_FragCoord.z).
-    float fudge = ((u_diag & 2) != 0) ? 0.0 : TERRAIN_DEPTH_FUDGE;
+    // MATCH LEGACY NET DEPTH: the legacy thin/indirect terrain applies the fudge
+    // TWICE (gos_terrain_thin.vert:194 clip.z+=FUDGE*clip.w -> gl_FragCoord.z &
+    // UndisplacedDepth both carry -0.002, then gos_terrain.frag:957 adds -0.002
+    // again -> net -0.004). Water (-0.00375) + decals (+0.00005) are calibrated
+    // against that -0.004. The chunk vert does NOT pre-divide the fudge, so apply
+    // 2x here to land at the same net depth -> water reclaims the shore + decals
+    // win the cement boundary. (Was 1x -0.002 -> 0.002 too close -> recede/tear.)
+    float fudge = ((u_diag & 2) != 0) ? 0.0 : 2.0 * TERRAIN_DEPTH_FUDGE;
     gl_FragDepth = clamp(gl_FragCoord.z + fudge, 0.0, 1.0);
 
     // Phase 7.5 debug: neon LOD-band palette when u_forceColor=1 (launch_lod_*color.bat).
