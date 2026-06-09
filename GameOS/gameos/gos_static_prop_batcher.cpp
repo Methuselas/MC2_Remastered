@@ -84,6 +84,7 @@ static const bool s_spotlightRealTrace = (getenv("MC2_SPOTLIGHT_REAL_TRACE") != 
 // the registry + txmmgr TUs call them after measuring spans with __rdtsc().
 // ---------------------------------------------------------------------------
 #include <intrin.h>  // __rdtsc (MSVC intrinsic)
+#include "mc2_hitch_trace.h"
 
 static const bool s_spflushCostSplitEnabled = []() {
     const char* v = getenv("MC2_STATIC_PROP_FLUSH_COST_SPLIT");
@@ -966,7 +967,7 @@ static void allocPermutationSsboAsIdentity(uint32_t typeCount) {
     for (uint32_t i = 0; i < typeCount; ++i) identity[i] = i;
     if (s_permutationSsbo == 0) glGenBuffers(1, &s_permutationSsbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_permutationSsbo);
-    glBufferData(GL_SHADER_STORAGE_BUFFER,
+    MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER,
                  typeCount * sizeof(uint32_t),
                  identity.data(),
                  GL_STATIC_DRAW);
@@ -1425,7 +1426,7 @@ void ensureRingCapacity(size_t neededInstances, size_t neededColorEntries) {
     // Wait for all in-flight frames before resizing.
     for (uint32_t i = 0; i < RING_FRAMES; ++i) {
         if (s_fence[i]) {
-            glClientWaitSync(s_fence[i], GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
+            MC2_GL_ClientWaitSync(s_fence[i], GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
             glDeleteSync(s_fence[i]);
             s_fence[i] = 0;
         }
@@ -1446,7 +1447,7 @@ void ensureRingCapacity(size_t neededInstances, size_t neededColorEntries) {
     glBufferStorage(GL_SHADER_STORAGE_BUFFER,
                     static_cast<GLsizeiptr>(RING_FRAMES * s_instanceCapacity * sizeof(GpuStaticPropInstance)),
                     nullptr, storageFlags);
-    s_instanceMap = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0,
+    s_instanceMap = MC2_GL_MapBufferRange(GL_SHADER_STORAGE_BUFFER, 0,
                     static_cast<GLsizeiptr>(RING_FRAMES * s_instanceCapacity * sizeof(GpuStaticPropInstance)),
                     mapFlags);
 
@@ -1455,7 +1456,7 @@ void ensureRingCapacity(size_t neededInstances, size_t neededColorEntries) {
     glBufferStorage(GL_SHADER_STORAGE_BUFFER,
                     static_cast<GLsizeiptr>(RING_FRAMES * s_colorCapacity * sizeof(uint32_t)),
                     nullptr, storageFlags);
-    s_colorMap = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0,
+    s_colorMap = MC2_GL_MapBufferRange(GL_SHADER_STORAGE_BUFFER, 0,
                     static_cast<GLsizeiptr>(RING_FRAMES * s_colorCapacity * sizeof(uint32_t)),
                     mapFlags);
 
@@ -2597,7 +2598,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             s_coalesceArmed       = false;
             return;
         }
-        s_coalesceInstanceMap = glMapBufferRange(
+        s_coalesceInstanceMap = MC2_GL_MapBufferRange(
             GL_SHADER_STORAGE_BUFFER, 0, totalBytes, mapFlags);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
         if (!s_coalesceInstanceMap) {
@@ -3804,7 +3805,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                 while (glGetError() != GL_NO_ERROR) {}  // drain stale BEFORE operation
                 glGenBuffers(1, &s_materialGpuSsbo);
                 glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_materialGpuSsbo);
-                glBufferData(GL_SHADER_STORAGE_BUFFER,
+                MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER,
                              static_cast<GLsizeiptr>(byteSize),
                              s_materialGpuTable.data(),
                              GL_STATIC_DRAW);
@@ -3979,7 +3980,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
 
         glGenBuffers(1, &s_perDrawSsbo);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_perDrawSsbo);
-        glBufferData(GL_SHADER_STORAGE_BUFFER,
+        MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER,
                      static_cast<GLsizeiptr>(entries.size() * sizeof(PerDrawEntry)),
                      entries.data(),
                      GL_STATIC_DRAW);
@@ -3992,7 +3993,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             glGenBuffers(1, &s_cmdToBucketSsbo);
         }
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_cmdToBucketSsbo);
-        glBufferData(GL_SHADER_STORAGE_BUFFER,
+        MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER,
                      static_cast<GLsizeiptr>(cmdToBucket.size() * sizeof(uint32_t)),
                      cmdToBucket.data(),
                      GL_STATIC_DRAW);
@@ -4041,7 +4042,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                 s_coalesceArmed       = false;
                 return;
             }
-            s_baseInstanceByCmdMap = glMapBufferRange(
+            s_baseInstanceByCmdMap = MC2_GL_MapBufferRange(
                 GL_SHADER_STORAGE_BUFFER, 0, totalBytes, mapFlags);
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
             if (!s_baseInstanceByCmdMap) {
@@ -4069,7 +4070,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             permutation[typeID] = i;  // typeID → sortedSlot
         }
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_permutationSsbo);
-        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+        MC2_GL_BufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
                         static_cast<GLsizeiptr>(permutation.size() * sizeof(uint32_t)),
                         permutation.data());
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
@@ -4761,7 +4762,7 @@ bool uploadAllBucketsIfNeeded() {
     }
     if (s_fence[s_frameSlot]) {
         ZoneScopedN("GpuSP.FenceWaitRender");
-        glClientWaitSync(s_fence[s_frameSlot], GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
+        MC2_GL_ClientWaitSync(s_fence[s_frameSlot], GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
         glDeleteSync(s_fence[s_frameSlot]);
         s_fence[s_frameSlot] = 0;
     }
@@ -5122,6 +5123,7 @@ static bool flushDepthPrepassV6(
 //   rc_gbuffer1_legacyDebugSentinelScreenShadowEligible (debug).
 void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
     ZoneScopedN("GpuStaticProps.Flush");
+    mc2_hitch::HitchScope _hitchFlush(mc2_hitch::HitchSpanKind::GpuStaticPropsFlush);
     initTraceOnce();
     // LODBUG probe: env-var override for debugAddrMode_.  RAlt+9 cycling is
     // unreliable on some hosts; set MC2_GPU_PROPS_DEBUG_MODE=8 to force the
@@ -5398,7 +5400,7 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
     // Non-legacy mode: prepare-table already waited and cleared this fence;
     // skip to avoid a double-wait on the same sync object.
     if (s_globalPoolLegacy && s_coalesceFence[s_coalesceFrameSlot]) {
-        glClientWaitSync(s_coalesceFence[s_coalesceFrameSlot],
+        MC2_GL_ClientWaitSync(s_coalesceFence[s_coalesceFrameSlot],
                          GL_SYNC_FLUSH_COMMANDS_BIT,
                          GL_TIMEOUT_IGNORED);
         glDeleteSync(s_coalesceFence[s_coalesceFrameSlot]);
@@ -5582,7 +5584,7 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                 glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_perDrawSsbo);
                 for (size_t i = 0; i < pktCount; ++i) {
                     const int32_t f = s_lastSeenMaterialFlags[i];
-                    glBufferSubData(GL_SHADER_STORAGE_BUFFER,
+                    MC2_GL_BufferSubData(GL_SHADER_STORAGE_BUFFER,
                                     static_cast<GLintptr>(i * entryStride + flagOffset),
                                     sizeof(int32_t), &f);
                 }
@@ -5929,7 +5931,7 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
             // Criterion 2: fence this draw so the next dirty in-place fill waits on it.
             if (s_staticDrawFence) glDeleteSync(s_staticDrawFence);
-            s_staticDrawFence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+            s_staticDrawFence = MC2_GL_FenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
         }
 
         // 2026-05-11 per-packet rework: each indirect cmd is per-PACKET, so
@@ -5994,6 +5996,11 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             s_spBuildRetired = retireLiveBuilder ? 1u : 0u;
 
             const uint32_t totalCmds = s_alphaOffCmdCount + s_alphaOnCmdCount;
+
+            if (g_mc2HitchEnabled) {
+                g_mc2HitchAccum.staticRecords  = static_cast<uint32_t>(s_bucketsByType.size());
+                g_mc2HitchAccum.staticDrawCmds = totalCmds;
+            }
 
             // Ring-slot base-instance map pointer (same arithmetic as v5).
             const size_t fr_off_bi_v6 =
@@ -6110,6 +6117,7 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                     // All guards passed — build snapshot arrays.
                     {
                     ZoneScopedN("StaticProp.SnapshotBuild");
+                    mc2_hitch::HitchScope _hitchSnap(mc2_hitch::HitchSpanKind::GpuStaticPropsSnapshot);
                     s_snapV6Packets.resize(totalCmds);
                     s_snapV6Meta.resize(totalCmds);
 
@@ -6999,14 +7007,14 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
     }
     } // end Step 11.8 else (!IsCoalesceEnabled() legacy draw loop)
 
-    s_fence[s_frameSlot] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    s_fence[s_frameSlot] = MC2_GL_FenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     // Plan v3.8 Step 11.9 — coalesce fence insert after all draws issued.
     // Independent of legacy s_fence[]: tracks s_coalesceInstanceSsbo's
     // ring-slot lifecycle so the next visit (RING_FRAMES frames from now)
     // can wait on this fence before overwriting the slot's CPU writes.
     if (IsCoalesceEnabled()) {
         // Step 4.4 — use s_coalesceFrameSlot (coalesce ring), not s_frameSlot (legacy ring).
-        s_coalesceFence[s_coalesceFrameSlot] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        s_coalesceFence[s_coalesceFrameSlot] = MC2_GL_FenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     }
     // Stage 2.D.1: record this slot's parity-byte usage so the next visit
     // (RING_FRAMES frames from now) knows exactly how much to glGetBufferSubData.
@@ -7328,7 +7336,7 @@ void GpuStaticPropBatcher::drawStaticBuildingShadows(
 
     if (s_staticBldgShadowSsbo == 0) glGenBuffers(1, &s_staticBldgShadowSsbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_staticBldgShadowSsbo);
-    glBufferData(GL_SHADER_STORAGE_BUFFER,
+    MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER,
         static_cast<GLsizeiptr>(sorted.size() * sizeof(GpuStaticPropInstance)),
         sorted.data(), GL_STATIC_DRAW);
 
@@ -7446,7 +7454,7 @@ void GpuStaticPropBatcher::drawDynamicPropShadows(
 
     if (s_dynamicPropShadowSsbo == 0) glGenBuffers(1, &s_dynamicPropShadowSsbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_dynamicPropShadowSsbo);
-    glBufferData(GL_SHADER_STORAGE_BUFFER,
+    MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER,
         static_cast<GLsizeiptr>(sorted.size() * sizeof(GpuStaticPropInstance)),
         sorted.data(), GL_DYNAMIC_DRAW);   // rebuilt every frame
 
@@ -8000,7 +8008,7 @@ static bool ensureStaticInstanceCapacity() {
         std::fprintf(stderr, "[STATIC_POP_SPLIT] event=alloc_failed bytes=%zu\n", want);
         return false;
     }
-    s_staticInstanceMap = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0,
+    s_staticInstanceMap = MC2_GL_MapBufferRange(GL_SHADER_STORAGE_BUFFER, 0,
                                            static_cast<GLsizeiptr>(want), flags);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     s_staticInstanceBytes = want;
@@ -8022,7 +8030,7 @@ static void fillStaticInstanceBufferIfDirty() {
     // static draw to drain before clobbering it (dirties are rare, so the stall
     // is rare; GPU in-order execution makes one wait cover all earlier frames).
     if (s_staticDrawFence) {
-        glClientWaitSync(s_staticDrawFence, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
+        MC2_GL_ClientWaitSync(s_staticDrawFence, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
         glDeleteSync(s_staticDrawFence);
         s_staticDrawFence = nullptr;
     }
@@ -8070,7 +8078,7 @@ static void rebuildStaticDrawCmdsIfDirty() {
     if (pktCount > 0u) {
         if (!s_staticIndirectCmdBuf) glGenBuffers(1, &s_staticIndirectCmdBuf);
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, s_staticIndirectCmdBuf);
-        glBufferData(GL_DRAW_INDIRECT_BUFFER,
+        MC2_GL_BufferData(GL_DRAW_INDIRECT_BUFFER,
                      static_cast<GLsizeiptr>(pktCount * sizeof(StaticDrawCmd)),
                      s_staticDrawCmds.data(), GL_DYNAMIC_DRAW);
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
@@ -8464,7 +8472,7 @@ void batcher_prepareBaseInstanceTable() {
 
     // Wait on the fence for the slot we just took (from RING_FRAMES frames ago).
     if (s_coalesceFence[s_coalesceFrameSlot]) {
-        glClientWaitSync(s_coalesceFence[s_coalesceFrameSlot],
+        MC2_GL_ClientWaitSync(s_coalesceFence[s_coalesceFrameSlot],
                          GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
         glDeleteSync(s_coalesceFence[s_coalesceFrameSlot]);
         s_coalesceFence[s_coalesceFrameSlot] = nullptr;
