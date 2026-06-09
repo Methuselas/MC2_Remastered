@@ -54,6 +54,11 @@ static GLint    s_locEnableDynShadows   = -1;
 // Mirror gameos_graphics.cpp's file-static terrain shadow texture units (9/10).
 static constexpr GLint kChunkTexUnitStaticShadow  = 9;
 static constexpr GLint kChunkTexUnitDynamicShadow = 10;
+// Phase 10 Step 5a: merged material normal sampler2DArray (own unit, no collision
+// with colormap=0 / shadows=9,10). Sourced from gos_GetTerrainNormalArrayTex().
+static GLint    s_locMatNormalArray     = -1;
+static constexpr GLint kChunkTexUnitMatNormalArray = 5;
+extern unsigned int gos_GetTerrainNormalArrayTex();
 
 // Phase 10: colormap atlas accessors (defined in gos_terrain_indirect.cpp,
 // global free functions). Same atlas tex1 + UV params the legacy gos_terrain.frag
@@ -288,6 +293,7 @@ void gos_TerrainLodChunk_Init()
             s_locDynShadowMap     = glGetUniformLocation(s_terrainProgram, "dynamicShadowMap");
             s_locDynLightSpaceMat = glGetUniformLocation(s_terrainProgram, "dynamicLightSpaceMatrix");
             s_locEnableDynShadows = glGetUniformLocation(s_terrainProgram, "enableDynamicShadows");
+            s_locMatNormalArray   = glGetUniformLocation(s_terrainProgram, "matNormalArray");
             printf("[TerrainLodChunk] shader loaded prog=%u "
                    "locs: originX=%d originY=%d mapSide=%d halfMap=%d mvp=%d lodStep=%d skirtDepth=%d forceColor=%d\n",
                    (unsigned)s_terrainProgram,
@@ -495,6 +501,17 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
             if (s_locEnableShadows >= 0)    glUniform1i(s_locEnableShadows, 0);
             if (s_locEnableDynShadows >= 0) glUniform1i(s_locEnableDynShadows, 0);
         }
+    }
+
+    // Phase 10 Step 5a: bind the merged material normal sampler2DArray (same
+    // texture the legacy terrain uses) on its own unit. 0 until all 5 material
+    // slots are populated -> the frag samples the default texture (flat-ish
+    // normal -> falls back to the smooth base normal, no crash).
+    if (s_locMatNormalArray >= 0) {
+        glUniform1i(s_locMatNormalArray, kChunkTexUnitMatNormalArray);
+        glActiveTexture(GL_TEXTURE0 + kChunkTexUnitMatNormalArray);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, (GLuint)gos_GetTerrainNormalArrayTex());
+        glActiveTexture(GL_TEXTURE0);
     }
 
     // Phase 7.5: log first successful submit so the user can confirm the path is live.

@@ -1763,6 +1763,16 @@ class gosRenderer {
 
             terrain_normal_array_dirty_ = false;
         }
+        // Phase 10 Step 5: expose the merged material normal sampler2DArray so the
+        // terrain LOD chunk path (a bolt-on draw) can bind the SAME texture the
+        // legacy terrain uses. Builds lazily if dirty/never-built; returns 0 until
+        // all 5 material slots are populated. GL context assumed live (call from a
+        // draw, like the legacy bind sites).
+        GLuint getTerrainNormalArrayTexEnsureBuilt() {
+            if (terrain_normal_array_dirty_ || terrain_normal_array_tex_ == 0)
+                buildTerrainNormalArray();
+            return terrain_normal_array_tex_;
+        }
         void setTerrainCellBombParams(float s, float j, float r) { terrain_cell_scale_ = s; terrain_cell_jitter_ = j; terrain_cell_rotation_ = r; }
         void setTerrainPOMParams(float scale, float, float) { terrain_pom_scale_ = scale; }
         void setTerrainWorldScale(float scale) { terrain_world_scale_ = scale; }
@@ -2355,6 +2365,11 @@ int gos_getShadowMapSize() {
 int gos_getDynShadowMapSize() {
     gosPostProcess* pp = getGosPostProcess();
     return pp ? pp->getDynamicShadowMapSize() : 0;
+}
+// Phase 10 Step 5: material normal sampler2DArray handle for the LOD chunk path.
+unsigned int gos_GetTerrainNormalArrayTex() {
+    gosRenderer* r = getGosRenderer();
+    return r ? r->getTerrainNormalArrayTexEnsureBuilt() : 0u;
 }
 
 // ─── gos_terrain_bridge implementation ────────────────────────────────────

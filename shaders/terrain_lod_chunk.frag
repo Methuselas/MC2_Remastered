@@ -29,6 +29,7 @@ uniform int   u_diag;                     // Bisection bitmask (MC2_TERRAIN_LOD_
                                           //   4  = no lighting (colormap only)
                                           //   8  = no shadows (skip calcShadow)
                                           //   16 = flat per-triangle normal (old dFdx)
+                                          //   32 = no material detail normals (Step 5a)
 
 // Step 1c-fix: SMOOTH per-pixel normal from the heightfield. The frag reads the
 // SAME height SSBO the vert uses (binding 23) and takes a bilinear central
@@ -84,6 +85,69 @@ vec3 smoothTerrainNormal(vec2 worldXY) {
     return normalize(vec3(-dhdx, -dhdy, 1.0));
 }
 
+// Phase 10 Step 5a: detail material normals. The legacy terrain blends 5 per-
+// material tangent-space normal maps (rock/grass/dirt/concrete/snow) chosen by
+// colormap-derived weights -> high-frequency surface relief the flat colormap
+// lacks. Port the COLOR-weight + normal-blend core (POM / anti-tiling / per-cell
+// TerrainType concrete deferred). Tunables hardcoded to the legacy CPU defaults;
+// wire to the ImGui uniforms in a later pass. u_diag&32 disables (A/B).
+#include <include/terrain_mat_layers.hglsl>
+uniform sampler2DArray matNormalArray;
+
+const vec4  MAT_CLASS_GRASS    = vec4(-0.02, 0.06, 0.22, 0.40);
+const vec4  MAT_CLASS_DIRT     = vec4(-0.02, 0.06, 0.22, 0.45);
+const vec4  MAT_TILING         = vec4(3.0, 2.0, 1.0, 6.0);   // rock, grass, dirt, concrete
+const vec4  MAT_NORMAL_BOOST   = vec4(0.9, 1.1, 1.1, 2.5);
+const float MAT_TILING_SNOW    = 1.0;
+const float MAT_BASE_TILING    = 1.0;   // detailNormalTiling.x default
+const float MAT_DETAIL_STRENGTH= 4.0;   // detailNormalStrength.x default
+
+vec4 chunkColorWeights(vec3 color) {
+    vec4 w = vec4(0.0);
+    float gMinusR = color.g - color.r;
+    w.y = smoothstep(MAT_CLASS_GRASS.x, MAT_CLASS_GRASS.y, gMinusR)
+        * smoothstep(MAT_CLASS_GRASS.z, MAT_CLASS_GRASS.w, color.g);
+    float rMinusG = color.r - color.g;
+    w.z = smoothstep(MAT_CLASS_DIRT.x, MAT_CLASS_DIRT.y, rMinusG)
+        * smoothstep(MAT_CLASS_DIRT.z, MAT_CLASS_DIRT.w, color.r);
+    w.x = 1.0 - max(w.y, w.z);   // everything else -> rock
+    float isWater = smoothstep(0.0, 0.08, min(color.g, color.b) - color.r);
+    w.x += isWater; w.y *= (1.0 - isWater); w.z *= (1.0 - isWater);
+    float total = w.x + w.y + w.z + w.w;
+    return (total < 0.01) ? vec4(1.0, 0.0, 0.0, 0.0) : w / total;
+}
+
+vec3 rgb2hsvChunk(vec3 c) {
+    vec4 K = vec4(0.0, -1.0/3.0, 2.0/3.0, -1.0);
+    vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
+    vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+    float d = q.x - min(q.w, q.y);
+    return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + 1.0e-10)), d / (q.x + 1.0e-10), q.x);
+}
+
+// Accumulated tangent-space (Z-up) detail normal from the colormap color.
+vec3 chunkDetailNormal(vec3 colAvg, vec2 worldXY) {
+    vec4 w = chunkColorWeights(colAvg);
+    vec3 hsv = rgb2hsvChunk(colAvg);
+    float snowRaw    = smoothstep(0.15, 0.03, hsv.y) * smoothstep(0.42, 0.62, hsv.z);
+    float snowWeight = smoothstep(0.25, 0.55, snowRaw);
+    w *= (1.0 - snowWeight);
+    float tot = w.x + w.y + w.z + w.w;
+    if (tot > 0.01) w /= tot; else w = vec4(1.0, 0.0, 0.0, 0.0);
+
+    vec2 uv = worldXY * (MAT_BASE_TILING / 128.0);   // per-cell tiling, GL_REPEAT
+    vec3 dN = vec3(0.0);
+    if (w.x > 0.01) dN += w.x * MAT_NORMAL_BOOST.x *
+        (texture(matNormalArray, vec3(uv * MAT_TILING.x, float(MAT_LAYER_ROCK))).rgb  * 2.0 - 1.0);
+    if (w.y > 0.01) dN += w.y * MAT_NORMAL_BOOST.y *
+        (texture(matNormalArray, vec3(uv * MAT_TILING.y, float(MAT_LAYER_GRASS))).rgb * 2.0 - 1.0);
+    if (w.z > 0.01) dN += w.z * MAT_NORMAL_BOOST.z *
+        (texture(matNormalArray, vec3(uv * MAT_TILING.z, float(MAT_LAYER_DIRT))).rgb  * 2.0 - 1.0);
+    if (snowWeight > 0.01) dN += snowWeight * 0.9 *
+        (texture(matNormalArray, vec3(uv * MAT_TILING_SNOW, float(MAT_LAYER_SNOW))).rgb * 2.0 - 1.0);
+    return dN;
+}
+
 void main() {
     // Reverse-Z terrain depth fudge (bit 2 disables it: raw gl_FragCoord.z).
     float fudge = ((u_diag & 2) != 0) ? 0.0 : TERRAIN_DEPTH_FUDGE;
@@ -123,13 +187,23 @@ void main() {
     vec3 N;
     if (u_skirtDepth > 0.0) {
         N = vec3(0.0, 0.0, 1.0);
-    } else if ((u_diag & 16) != 0) {
-        // A/B fallback: old flat per-triangle geometric normal.
-        N = normalize(cross(dFdx(v_worldPos), dFdy(v_worldPos)));
-        if (N.z < 0.0) N = -N;
     } else {
-        // Smooth heightfield normal -> no faceted cliffs at coarse LOD.
-        N = smoothTerrainNormal(v_worldPos.xy);
+        vec3 baseN;
+        if ((u_diag & 16) != 0) {
+            baseN = normalize(cross(dFdx(v_worldPos), dFdy(v_worldPos)));  // flat A/B
+            if (baseN.z < 0.0) baseN = -baseN;
+        } else {
+            baseN = smoothTerrainNormal(v_worldPos.xy);  // smooth macro slope
+        }
+        if ((u_diag & 32) != 0) {
+            N = baseN;  // detail disabled (A/B)
+        } else {
+            // Perturb the macro slope with tangent-space detail in a Z-up param
+            // (matches legacy: N.xy = detailN.xy*strength + slope.xy/slope.z).
+            vec3 dN   = chunkDetailNormal(base, v_worldPos.xy);
+            vec3 pert = vec3(baseN.xy / max(baseN.z, 0.2) + dN.xy * MAT_DETAIL_STRENGTH, 1.0);
+            N = normalize(pert);
+        }
     }
     float NdotL       = dot(N, terrainLightDir.xyz);
     float diffuse     = clamp(NdotL, 0.02, 1.0);
