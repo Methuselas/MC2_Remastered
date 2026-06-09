@@ -20,10 +20,15 @@ constexpr uint32_t TERRAIN_HEIGHT_SSBO_BINDING = 23u;
 // skirtDepths: parallel float array [count], one depth value per command.
 // skirtEdgeMasks: parallel uint8 array [count] (Phase 10.2b), bit 0=N,1=S,2=W,3=E
 //   — draw a skirt only on edges whose neighbour LOD differs. nullptr -> all edges.
+// edgeStitch: parallel uint32 array [count] (Phase 10.4). Packs the COARSER
+//   neighbour's vertex stride per edge (N=bits0-7, S=8-15, W=16-23, E=24-31; 0 =
+//   no stitch). Passed to the vert as u_edgeStitch; the fine edge's intermediate
+//   verts snap onto the coarse edge line -> crack-free LOD seam. nullptr -> off.
 void gos_TerrainLodChunk_SubmitDrawCommands(
     const TerrainDrawCommand* cmds,
     const float*              skirtDepths,
     const unsigned char*      skirtEdgeMasks,
+    const unsigned int*       edgeStitch,
     int                       count);
 
 // Upload full heightfield to GPU SSBO at map load.

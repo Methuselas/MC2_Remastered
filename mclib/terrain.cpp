@@ -193,6 +193,13 @@ static const float LOD_DIST_THRESH[5] = {
 // the driver draws a skirt only on edges whose neighbour LOD differs.
 static std::vector<uint8_t> s_skirtEdgeMaskVec;
 
+// Phase 10.4: per-draw-command edge-STITCH packing. For each edge bordering a
+// COARSER visible neighbour, pack that neighbour's vertex stride into a byte
+// (N=bits0-7, S=8-15, W=16-23, E=24-31; 0 = no stitch). The vertex shader snaps
+// the fine edge's intermediate verts onto the coarse edge line -> bit-identical
+// shared edge -> no T-junction crack (neighbour-min technique, cf c2d7eb46).
+static std::vector<uint32_t> s_stitchStepVec;
+
 // Choose LOD level (0-5) for a block given squared distance and previous level.
 // Promotion (going finer) is immediate; demotion (going coarser) uses 10%
 // hysteresis in linear distance (= 1.21x in distSq) to prevent flickering.
@@ -1478,6 +1485,8 @@ long Terrain::update (void)
 			const size_t need = (size_t)s_terrainChunkSide * (size_t)s_terrainChunkSide;
 			if (s_skirtEdgeMaskVec.size() < need)
 				s_skirtEdgeMaskVec.resize(need, 0);
+			if (s_stitchStepVec.size() < need)
+				s_stitchStepVec.resize(need, 0);
 		}
 
 		// Cache frustum planes once for this frame (eye->cacheFrustumPlanes()
@@ -1786,8 +1795,17 @@ long Terrain::update (void)
 					// only if its neighbour needs sealing — same-LOD edges draw no
 					// skirt (the source of the ridge slivers), map-boundary edges
 					// draw none, and the 1-ring apron covers most cull edges.
-					uint8_t edgeMask = 0;
-					if (!s_noSkirts)
+					// Phase 10.4: ALSO pack the per-edge STITCH stride. For each edge
+					// bordering a COARSER visible neighbour, the vertex shader snaps the
+					// fine intermediate verts onto the coarse edge line so the shared
+					// edge is bit-identical from both sides -> no T-junction crack
+					// (neighbour-min, cf c2d7eb46). Skirts are KEPT as a backstop (a
+					// skirt below a now-collinear edge is hidden, so it is harmless).
+					// MC2_TERRAIN_LOD_CHUNK_NO_STITCH=1 disables stitching (A/B).
+					static const bool s_noStitch =
+						(getenv("MC2_TERRAIN_LOD_CHUNK_NO_STITCH") != nullptr);
+					uint8_t  edgeMask = 0;
+					uint32_t stitch   = 0;
 					{
 						const int edx[4] = {  0,  0, -1,  1 };  // N, S, W, E
 						const int edy[4] = { -1,  1,  0,  0 };
@@ -1796,14 +1814,20 @@ long Terrain::update (void)
 							int nx = bx + edx[e], ny = by + edy[e];
 							if (nx < 0 || ny < 0 ||
 								nx >= s_terrainChunkSide || ny >= s_terrainChunkSide)
-								continue;  // map boundary -> no skirt on this edge
+								continue;  // map boundary -> no skirt / no stitch
 							const TerrainBlockMeta& nbm =
 								s_blockMeta[nx + ny * s_terrainChunkSide];
-							if (!nbm.inFrustum || nbm.lodLevel != bm.lodLevel)
-								edgeMask |= (uint8_t)(1u << e);  // this edge needs sealing
+							if (!s_noSkirts &&
+								(!nbm.inFrustum || nbm.lodLevel != bm.lodLevel))
+								edgeMask |= (uint8_t)(1u << e);  // skirt backstop
+							if (!s_noStitch && nbm.inFrustum &&
+								nbm.lodLevel > bm.lodLevel)      // coarser visible neighbour
+								stitch |= ((uint32_t)(LOD_STEPS[nbm.lodLevel] & 0xFF))
+										  << (e * 8);            // edge order N,S,W,E -> byte 0..3
 						}
 					}
 					s_skirtEdgeMaskVec[s_cmdCount] = edgeMask;
+					s_stitchStepVec[s_cmdCount]    = stitch;
 					if (edgeMask)
 					{
 						// Skirt depth must cover the LOD CRACK (deviation of the fine
@@ -2341,7 +2365,8 @@ void Terrain::flushDrawCommands (void)
 
 	if (s_blockMeta && s_cmdCount > 0)
 		gos_TerrainLodChunk_SubmitDrawCommands(s_drawCmds, s_skirtDepths,
-			s_skirtEdgeMaskVec.empty() ? nullptr : s_skirtEdgeMaskVec.data(), s_cmdCount);
+			s_skirtEdgeMaskVec.empty() ? nullptr : s_skirtEdgeMaskVec.data(),
+			s_stitchStepVec.empty() ? nullptr : s_stitchStepVec.data(), s_cmdCount);
 }
 
 //---------------------------------------------------------------------------

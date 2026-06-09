@@ -39,6 +39,9 @@ static GLint    s_locAtlasTLY       = -1;  // Phase 10: atlas top-left Y (world)
 static GLint    s_locAtlasOOW       = -1;  // Phase 10: atlas oneOverWorldUnitsMapSide
 static GLint    s_locLightDir       = -1;  // Phase 10 Step 1b: terrainLightDir (sun)
 static GLint    s_locDiag           = -1;  // bisection bitmask (MC2_TERRAIN_LOD_CHUNK_DIAG)
+static GLint    s_locQuadCountX     = -1;  // Phase 10.4: block quad extent X (edge detect)
+static GLint    s_locQuadCountY     = -1;  // Phase 10.4: block quad extent Y (edge detect)
+static GLint    s_locEdgeStitch     = -1;  // Phase 10.4: packed coarser-neighbour stride
 
 // Phase 10: colormap atlas accessors (defined in gos_terrain_indirect.cpp,
 // global free functions). Same atlas tex1 + UV params the legacy gos_terrain.frag
@@ -263,6 +266,9 @@ void gos_TerrainLodChunk_Init()
             s_locAtlasOOW     = glGetUniformLocation(s_terrainProgram, "u_atlasOneOverWorldUnits");
             s_locLightDir     = glGetUniformLocation(s_terrainProgram, "terrainLightDir");
             s_locDiag         = glGetUniformLocation(s_terrainProgram, "u_diag");
+            s_locQuadCountX   = glGetUniformLocation(s_terrainProgram, "u_quadCountX");
+            s_locQuadCountY   = glGetUniformLocation(s_terrainProgram, "u_quadCountY");
+            s_locEdgeStitch   = glGetUniformLocation(s_terrainProgram, "u_edgeStitch");
             printf("[TerrainLodChunk] shader loaded prog=%u "
                    "locs: originX=%d originY=%d mapSide=%d halfMap=%d mvp=%d lodStep=%d skirtDepth=%d forceColor=%d\n",
                    (unsigned)s_terrainProgram,
@@ -328,6 +334,7 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     const TerrainDrawCommand* cmds,
     const float*              skirtDepths,
     const unsigned char*      skirtEdgeMasks,
+    const unsigned int*       edgeStitch,
     int                       count)
 {
     if (count == 0) return;
@@ -472,6 +479,19 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
             glUniform1i(s_locBlockOriginY, cmd.blockOriginY);
         if (s_locLodStep >= 0)
             glUniform1i(s_locLodStep, cmd.lodStep);  // Phase 5: LOD band for debug vis
+
+        // Phase 10.4: edge stitching. Block quad extent (for edge detection) +
+        // packed coarser-neighbour stride per edge. Skirt verts (isSkirtFlag!=0)
+        // skip the snap in the vert, so this is safe to set once per block.
+        // u_quadCount* must be the MAX localOffset the patch actually emits, which
+        // makeSamplePositions caps at the last multiple of lodStep <= quad count.
+        // (For partial map-edge blocks qcX may not be a multiple of lodStep.)
+        const int maxOffX = (cmd.lodStep > 0) ? (qcX / cmd.lodStep) * cmd.lodStep : qcX;
+        const int maxOffY = (cmd.lodStep > 0) ? (qcY / cmd.lodStep) * cmd.lodStep : qcY;
+        if (s_locQuadCountX >= 0) glUniform1i(s_locQuadCountX, maxOffX);
+        if (s_locQuadCountY >= 0) glUniform1i(s_locQuadCountY, maxOffY);
+        if (s_locEdgeStitch >= 0)
+            glUniform1i(s_locEdgeStitch, edgeStitch ? (GLint)edgeStitch[i] : 0);
 
         // --- Draw main patch (skirtDepth=0 so isSkirtFlag pulls height by 0) ---
         if (s_locSkirtDepth >= 0)
