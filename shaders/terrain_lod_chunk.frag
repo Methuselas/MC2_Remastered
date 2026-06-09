@@ -49,8 +49,17 @@ void main() {
     // Step 1b: geometric normal from world-pos screen derivatives (faceted per
     // triangle; gives relief lighting without sampling the height SSBO in the
     // frag). Terrain world up = +Z (elevation); flip to keep N up-facing.
-    vec3 N = normalize(cross(dFdx(v_worldPos), dFdy(v_worldPos)));
-    if (N.z < 0.0) N = -N;
+    // Phase 10.2: SKIRT pixels (u_skirtDepth>0) are vertical seam-fillers — their
+    // geometric normal is horizontal, which would shade them as dark walls at LOD
+    // edges. Use a flat-up normal so the skirt is lit like the adjacent surface it
+    // fills and blends invisibly instead of drawing a dark line.
+    vec3 N;
+    if (u_skirtDepth > 0.0) {
+        N = vec3(0.0, 0.0, 1.0);
+    } else {
+        N = normalize(cross(dFdx(v_worldPos), dFdy(v_worldPos)));
+        if (N.z < 0.0) N = -N;
+    }
     float NdotL       = dot(N, terrainLightDir.xyz);
     float diffuse     = clamp(NdotL, 0.02, 1.0);
     float normalLight = mix(0.35, 1.20, diffuse);   // same band as legacy gos_terrain.frag:771
