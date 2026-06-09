@@ -48,6 +48,7 @@ void __stdcall gos_SetTerrainMVP(const float* matrix16);
 #include "gos_terrain_lod_chunk.h"        // Step 5c: push cement words to the LOD chunk path
 
 #include "../gameos/gos_profiler.h"
+#include "mc2_hitch_trace.h"
 
 // CEMENT_DIAG: file-scope extern for the global mission name buffer
 // (defined in code/mechcmd2.cpp:180 and code/logmain.cpp:88 as
@@ -895,7 +896,7 @@ void BuildColormapAtlas() {
                 : img.pixels.size();
 
             if (g_atlasGLTex == 0) glGenTextures(1, &g_atlasGLTex);
-            glBindTexture(GL_TEXTURE_2D, g_atlasGLTex);
+            MC2_GL_BindTexture(GL_TEXTURE_2D, g_atlasGLTex);
             glCompressedTexImage2D(GL_TEXTURE_2D, 0, glIF,
                                    img.width, img.height, 0,
                                    (GLsizei)mip0Bytes, img.pixels.data());
@@ -903,7 +904,7 @@ void BuildColormapAtlas() {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            glBindTexture(GL_TEXTURE_2D, 0);
+            MC2_GL_BindTexture(GL_TEXTURE_2D, 0);
 
             atlasSizeCapture = img.width;
             atlasBuilt = true;
@@ -942,18 +943,18 @@ void BuildColormapAtlas() {
         }
 
         if (g_atlasGLTex == 0) glGenTextures(1, &g_atlasGLTex);
-        glBindTexture(GL_TEXTURE_2D, g_atlasGLTex);
+        MC2_GL_BindTexture(GL_TEXTURE_2D, g_atlasGLTex);
         // cpuColorMap is BGRA-in-memory (mc2_argb_packing memory note: MC2's
         // textures are BGRA). Upload format param = GL_BGRA so the driver swizzles
         // to RGBA8 storage at upload time.
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8,
+        MC2_GL_TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8,
                      tcm->cpuColorMapSize, tcm->cpuColorMapSize,
                      0, GL_BGRA, GL_UNSIGNED_BYTE, tcm->cpuColorMap);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glBindTexture(GL_TEXTURE_2D, 0);
+        MC2_GL_BindTexture(GL_TEXTURE_2D, 0);
 
         atlasSizeCapture = tcm->cpuColorMapSize;
 
@@ -1137,7 +1138,7 @@ void BuildCementCatalogAtlas() {
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 
     for (int k = 0; k < N; ++k) {
-        glBindTexture(GL_TEXTURE_2D, cementGLTextures[k]);
+        MC2_GL_BindTexture(GL_TEXTURE_2D, cementGLTextures[k]);
         glGetTexImage(GL_TEXTURE_2D, 0, GL_BGRA, GL_UNSIGNED_BYTE, tileBuf.data());
 
         const int col  = k % gridSide;
@@ -1152,8 +1153,8 @@ void BuildCementCatalogAtlas() {
     }
 
     if (g_cementAtlasGLTex == 0) glGenTextures(1, &g_cementAtlasGLTex);
-    glBindTexture(GL_TEXTURE_2D, g_cementAtlasGLTex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8,
+    MC2_GL_BindTexture(GL_TEXTURE_2D, g_cementAtlasGLTex);
+    MC2_GL_TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8,
                  atlasPixelSide, atlasPixelSide, 0,
                  GL_BGRA, GL_UNSIGNED_BYTE, atlasBuf.data());
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);  // no mips — see header comment
@@ -1164,7 +1165,7 @@ void BuildCementCatalogAtlas() {
     // Restore state (V24).
     glPixelStorei(GL_PACK_ALIGNMENT, savedPackAlign);
     glPixelStorei(GL_UNPACK_ALIGNMENT, savedUnpackAlign);
-    glBindTexture(GL_TEXTURE_2D, (GLuint)savedTex0Binding);
+    MC2_GL_BindTexture(GL_TEXTURE_2D, (GLuint)savedTex0Binding);
     glActiveTexture((GLenum)savedActive);
 
     g_cementAtlasGridSide    = gridSide;
@@ -1269,7 +1270,7 @@ void BuildDenseRecipe() {
         fflush(stdout);
     }
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_recipeSSBO);
-    glBufferData(GL_SHADER_STORAGE_BUFFER,
+    MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER,
                  (GLsizeiptr)(N * sizeof(TerrainQuadRecipe)),
                  g_denseRecipes.data(),
                  GL_DYNAMIC_DRAW);
@@ -1405,7 +1406,7 @@ void FlushDirtyRecipeSlotsToGPU() {
     const size_t N = g_denseRecipes.size();
     for (size_t vn = 0; vn < N; ++vn) {
         if (!g_denseRecipeDirty[vn]) continue;
-        glBufferSubData(GL_SHADER_STORAGE_BUFFER,
+        MC2_GL_BufferSubData(GL_SHADER_STORAGE_BUFFER,
                         (GLintptr)(vn * sizeof(TerrainQuadRecipe)),
                         sizeof(TerrainQuadRecipe),
                         &g_denseRecipes[vn]);
@@ -1776,7 +1777,7 @@ static bool ResourcesReady() {
     if (g_thinRecordSSBO == 0) {
         glGenBuffers(1, &g_thinRecordSSBO);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinRecordSSBO);
-        glBufferData(GL_SHADER_STORAGE_BUFFER,
+        MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER,
                      (GLsizeiptr)(kThinRingFrames * kThinRecordBytes),
                      nullptr, GL_STREAM_DRAW);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
@@ -1807,7 +1808,7 @@ static bool ResourcesReady() {
             initCmd[i].first         = 0;
             initCmd[i].baseInstance  = 0;
         }
-        glBufferData(GL_DRAW_INDIRECT_BUFFER,
+        MC2_GL_BufferData(GL_DRAW_INDIRECT_BUFFER,
                      (GLsizeiptr)kIndirectCmdBufferBytes,
                      initCmd, GL_STREAM_DRAW);
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
@@ -2093,7 +2094,7 @@ static int PackThinRecordsForFrame() {
     // Upload to the current ring slot.
     const GLintptr slotOffset = (GLintptr)(g_thinRingSlot * kThinRecordBytes);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinRecordSSBO);
-    glBufferSubData(GL_SHADER_STORAGE_BUFFER,
+    MC2_GL_BufferSubData(GL_SHADER_STORAGE_BUFFER,
                     slotOffset,
                     (GLsizeiptr)(packed * sizeof(TerrainQuadThinRecord)),
                     s_shadow);
@@ -2129,7 +2130,7 @@ static int BuildIndirectCommands(int thinCount) {
     cmd.baseInstance  = 0u;
 
     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, g_indirectCmdBuffer);
-    glBufferSubData(GL_DRAW_INDIRECT_BUFFER, 0,
+    MC2_GL_BufferSubData(GL_DRAW_INDIRECT_BUFFER, 0,
                     (GLsizeiptr)sizeof(cmd), &cmd);
     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
     return 1;
@@ -2149,7 +2150,7 @@ static uint32_t UploadTerrainHandleLUT() {
     if (g_terrainHandleLutSSBO == 0) {
         glGenBuffers(1, &g_terrainHandleLutSSBO);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_terrainHandleLutSSBO);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, kLutBytes, nullptr, GL_DYNAMIC_DRAW);
+        MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER, kLutBytes, nullptr, GL_DYNAMIC_DRAW);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     }
 
@@ -2165,7 +2166,7 @@ static uint32_t UploadTerrainHandleLUT() {
     }
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_terrainHandleLutSSBO);
-    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, kLutBytes, lut);
+    MC2_GL_BufferSubData(GL_SHADER_STORAGE_BUFFER, 0, kLutBytes, lut);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
     {
@@ -2237,14 +2238,14 @@ static uint32_t BuildSolidQuadWindowSSBO(int* outUseWindow) {
             (uint32_t)(kMaxThinRecords * sizeof(uint32_t));
         glGenBuffers(1, &g_solidQuadWindowSsbo);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidQuadWindowSsbo);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)cap, nullptr,
+        MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)cap, nullptr,
                      GL_DYNAMIC_DRAW);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
         g_solidQuadWindowCapacity = cap;
     }
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidQuadWindowSsbo);
-    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)bytesNeeded,
+    MC2_GL_BufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)bytesNeeded,
                     g_solidWindowStaging.data());
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
@@ -2588,6 +2589,7 @@ void ComputeDispatch() {
     if (!gpu_driven::IsTerrainSolidEnabled())  return;
 
     ZoneScopedN("Terrain::SolidComputeDispatch");
+    mc2_hitch::HitchScope _hitchTerrain(mc2_hitch::HitchSpanKind::TerrainSolidDispatch);
 
     // Guard: Phase 1 lighting SSBO must be ready.
     const GLuint lightSsbo = gos_terrain_lighting::GetOutputSsbo();
@@ -2627,12 +2629,12 @@ void ComputeDispatch() {
         // upload the live value per frame in ComputeDispatch().
         g_locSolidMS  = glGetUniformLocation(g_solidComputeProgram, "u_mapSide");
         // Upload the genuinely-constant uniforms once.
-        glUseProgram(g_solidComputeProgram);
+        MC2_GL_UseProgram(g_solidComputeProgram);
         const GLint locMTR  = glGetUniformLocation(g_solidComputeProgram, "u_maxThinRecords");
         const GLint locWUPV = glGetUniformLocation(g_solidComputeProgram, "u_worldUnitsPerVertex");
         if (locMTR  >= 0) glUniform1i(locMTR, (int)kMaxThinRecords);
         if (locWUPV >= 0) glUniform1f(locWUPV, Terrain::worldUnitsPerVertex);
-        glUseProgram(0);
+        MC2_GL_UseProgram(0);
     }
     // Step 2b (VPL retirement): cmd-patch program compile retired -- the
     // primary compute writes cmds[0].count directly via atomicAdd.
@@ -2647,7 +2649,7 @@ void ComputeDispatch() {
     if (s_bucketHeaderTrace && g_solidBucketHeaderSsbo == 0) {
         glGenBuffers(1, &g_solidBucketHeaderSsbo);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidBucketHeaderSsbo);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, 16, nullptr, GL_DYNAMIC_DRAW);
+        MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER, 16, nullptr, GL_DYNAMIC_DRAW);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     }
 
@@ -2656,7 +2658,7 @@ void ComputeDispatch() {
     if (g_thinCanarySSBO == 0) {
         glGenBuffers(1, &g_thinCanarySSBO);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinCanarySSBO);
-        glBufferData(GL_SHADER_STORAGE_BUFFER,
+        MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER,
                      (GLsizeiptr)(2u * kMaxThinRecords * sizeof(uint32_t)),
                      nullptr, GL_DYNAMIC_DRAW);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
@@ -3077,7 +3079,7 @@ void ComputeDispatch() {
     // Binding 9 is the first free slot — chosen to avoid the collision the
     // plan explicitly warned against.
     // ------------------------------------------------------------------
-    glUseProgram(g_solidComputeProgram);
+    MC2_GL_UseProgram(g_solidComputeProgram);
 
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, g_recipeSSBO);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, lightSsbo);
@@ -3112,7 +3114,7 @@ void ComputeDispatch() {
             "u_windowCount=%d u_terrainMVP=%d\n",
             g_locSolidWC, g_locSolidMVP);
         fflush(stderr);
-        glUseProgram(0);
+        MC2_GL_UseProgram(0);
         ForceDisableArmingForProcess();
         return;
     }
@@ -3137,7 +3139,7 @@ void ComputeDispatch() {
 
     {
         const float* mvp = gos_GetTerrainMVPMat4();
-        if (!mvp) { glUseProgram(0); return; }
+        if (!mvp) { MC2_GL_UseProgram(0); return; }
         glUniformMatrix4fv(g_locSolidMVP, 1, GL_FALSE, mvp);
         // Probe 8: fingerprint the MVP the COMPUTE uploaded (FNV-1a over rotation
         // + translation rows = first 12 floats).  Bridge compares against MVP
@@ -3469,7 +3471,7 @@ void ComputeDispatch() {
     // calculation now derives from the primary's atomicAdd accounting
     // (see comment in that block).
 
-    glUseProgram(0);
+    MC2_GL_UseProgram(0);
 
     // Restore compute-only slots to clean state.
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, 0);
@@ -3838,15 +3840,15 @@ void BuildMineTextureArray() {
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 
     MINE_GLPROBE("before_getteximage");
-    glBindTexture(GL_TEXTURE_2D, mineGLTex);
+    MC2_GL_BindTexture(GL_TEXTURE_2D, mineGLTex);
     glGetTexImage(GL_TEXTURE_2D, 0, GL_BGRA, GL_UNSIGNED_BYTE, mineBuf.data());
     MINE_GLPROBE("after_getteximage_mine");
-    glBindTexture(GL_TEXTURE_2D, blownGLTex);
+    MC2_GL_BindTexture(GL_TEXTURE_2D, blownGLTex);
     glGetTexImage(GL_TEXTURE_2D, 0, GL_BGRA, GL_UNSIGNED_BYTE, blownBuf.data());
     MINE_GLPROBE("after_getteximage_blown");
 
     if (g_mineTextureArrayGL == 0) glGenTextures(1, &g_mineTextureArrayGL);
-    glBindTexture(GL_TEXTURE_2D_ARRAY, g_mineTextureArrayGL);
+    MC2_GL_BindTexture(GL_TEXTURE_2D_ARRAY, g_mineTextureArrayGL);
     // Allocate 2-layer storage. glTexImage3D with NULL data orphans / reserves.
     glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, kW, kH, 2,
                  0, GL_BGRA, GL_UNSIGNED_BYTE, nullptr);
@@ -3860,13 +3862,13 @@ void BuildMineTextureArray() {
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+    MC2_GL_BindTexture(GL_TEXTURE_2D_ARRAY, 0);
     MINE_GLPROBE("after_teximage3d");
 
     // Restore state.
     glPixelStorei(GL_PACK_ALIGNMENT, savedPackAlign);
     glPixelStorei(GL_UNPACK_ALIGNMENT, savedUnpackAlign);
-    glBindTexture(GL_TEXTURE_2D, (GLuint)savedTex0);
+    MC2_GL_BindTexture(GL_TEXTURE_2D, (GLuint)savedTex0);
     glActiveTexture((GLenum)savedActive);
 
     g_mineTextureArrayReady = true;
@@ -3955,7 +3957,7 @@ void BuildMineStaticVBO() {
     // glBufferData with size>0 always uploads even if vector is empty
     // (verts.data() returns a non-null sentinel on empty MSVC vectors, but
     // we pass nullptr-on-empty defensively to match Khronos expectations).
-    glBufferData(GL_ARRAY_BUFFER,
+    MC2_GL_BufferData(GL_ARRAY_BUFFER,
                  (GLsizeiptr)(verts.size() * sizeof(MineVert)),
                  verts.empty() ? nullptr : verts.data(),
                  GL_STATIC_DRAW);
@@ -4110,6 +4112,14 @@ constexpr float kOldMaxV = 0.9921875f;
 }  // namespace
 
 namespace gos_terrain_indirect {
+
+// Public forwarder: calls the anonymous-namespace BuildCementCatalogAtlas() from
+// editor code (e.g. EditorData::refreshTerrainAfterEdit) that needs to rebuild the
+// cement atlas after overlay painting creates new texture slots not present at
+// mission-load atlas-build time. Editor uses only; game path goes through BuildDenseRecipe.
+void RebuildCementAtlas() {
+    BuildCementCatalogAtlas();
+}
 
 // Mirror MarkMineDirty — idempotent; multiple cement mutations between paints
 // debounce to one rebuild via the dirty flag.
@@ -4308,7 +4318,7 @@ void BuildDecalStaticVBO() {
 
     if (g_decalStaticVBO_GL == 0) glGenBuffers(1, &g_decalStaticVBO_GL);
     glBindBuffer(GL_ARRAY_BUFFER, g_decalStaticVBO_GL);
-    glBufferData(GL_ARRAY_BUFFER,
+    MC2_GL_BufferData(GL_ARRAY_BUFFER,
                  (GLsizeiptr)(verts.size() * sizeof(DecalVert)),
                  verts.empty() ? nullptr : verts.data(),
                  GL_STATIC_DRAW);
