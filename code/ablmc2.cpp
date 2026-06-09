@@ -241,7 +241,8 @@ void calcAttackPlan (long numAttackers, GameObjectPtr* attackers, long numDefend
 			}
 		}
 		attackTotal[toughest] += attackers[a]->getThreatRating();
-		attackRatio[toughest] = attackTotal[toughest] / defenders[toughest]->getThreatRating();
+		long defThreat = defenders[toughest]->getThreatRating();
+		attackRatio[toughest] = (defThreat != 0) ? (float)attackTotal[toughest] / (float)defThreat : 0.0f;
 		target[a] = defenders[toughest];
 	}
 

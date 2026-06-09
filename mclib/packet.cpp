@@ -420,7 +420,10 @@ int PacketFile::seekPacket (int packet)
 	//if (packet < 0)
 	if(packet >= numPackets)
 	{
-		STOP(("requested packet number %d is bigger than number of packets: %d\n", packet, numPackets));
+		static int s_oobCount = 0;
+		++s_oobCount;
+		if (s_oobCount == 1 || s_oobCount % 100 == 0)
+			STOP(("[PACKET_OOB] packet=%d maxPackets=%d count=%d\n", packet, numPackets, s_oobCount));
 		return(PACKET_OUT_OF_RANGE);
 	}
 	

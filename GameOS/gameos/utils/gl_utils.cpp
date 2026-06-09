@@ -310,6 +310,15 @@ void setSamplerParams(TexType tt, TexAddressMode address_mode, TexFilterMode fil
 
 void getTextureData(const Texture& t, int lod, unsigned char* poutdata, TexFormat format/*= TF_COUNT*/) {
 
+    if (t.fmt_ == TF_NONE) {
+        // Block-compressed texture (e.g. BC7 KTX2). glGetTexImage cannot decode
+        // compressed data as uncompressed — caller must not lock compressed textures.
+        static int s_compressedReadCount = 0;
+        if (++s_compressedReadCount <= 3)
+            printf("[GL] getTextureData: skip compressed texture id=%u (call %d)\n", t.id, s_compressedReadCount);
+        return;
+    }
+
     glBindTexture(GL_TEXTURE_2D, t.id);
     GLenum fmt = (format == TF_COUNT) ? textureFormats[t.fmt_] : textureFormats[format];
     GLenum ch_type = textureFormatChannelType[t.fmt_];

@@ -18,7 +18,13 @@
 #include"dobjmgr.h"
 #endif
 
+#include <cstdio>
 #include <cmath>   // std::abs for clip.w sign-safe frustum test
+#include <cstring>
+#include <string>
+#include <unordered_map>
+#include <vector>
+#include <algorithm>
 #include "gos_static_prop_killswitch.h"  // g_useGpuStaticProps
 #include "static_update_counters.h"      // g_staticUpdateRunCount/SkipCount/EmitSummary
 #include "../GameOS/gameos/gpu_cull_substrate.h"       // C0: GPU cull substrate SSBO upload
@@ -47,6 +53,9 @@
 #endif
 
 #include"gos_profiler.h"
+
+extern void mc2EmitStaticRegDiagSummary();
+extern void mc2EmitStaticRegRuntimeDiagSummary(uint32_t frame);
 
 #ifndef ARTLRY_H
 #include"artlry.h"
@@ -124,6 +133,38 @@
 // Default off — legacy inView/canBeSeen/blockActive path unchanged.
 // ---------------------------------------------------------------------------
 static const bool s_gpuCullLifecycle = (getenv("MC2_GPU_CULL_LIFECYCLE") != nullptr);
+
+// ---------------------------------------------------------------------------
+// GOM Recon: object type classification & mutation tracking (read-only).
+// MC2_GOM_RECON=1 enables per-frame logging of terrain object types and counts.
+// Zero overhead when disabled. Gated diagnostics only.
+// ---------------------------------------------------------------------------
+static const bool s_gomReconEnabled = (getenv("MC2_GOM_RECON") != nullptr);
+inline bool MC2_GOM_RECON_ENABLED() { return s_gomReconEnabled; }
+
+static bool mc2SkipStaticTreesEnabled (void)
+{
+	static int cached = -1;
+	if (cached < 0)
+	{
+		const char* v = getenv("MC2_SKIP_STATIC_TREES");
+		cached = (!v || v[0] != '0') ? 1 : 0;
+	}
+	return(cached != 0);
+}
+
+static bool mc2SkipStaticTreesDiagEnabled (void)
+{
+	static int cached = -1;
+	if (cached < 0)
+		cached = (getenv("MC2_SKIP_STATIC_TREES_DIAG") != nullptr) ? 1 : 0;
+	return(cached != 0);
+}
+
+static bool mc2StaticTreeNameStartsWith (const char* typeName, const char* prefix)
+{
+	return(typeName && prefix && (std::strncmp(typeName, prefix, std::strlen(prefix)) == 0));
+}
 
 // alpha-Stage 1 §5 Stage 0: candidate-predicate disagreement probe.
 // For each live actor each frame, compute four CANDIDATE predicates that
@@ -1438,6 +1479,7 @@ void GameObjectManager::registerStaticPropsForMissionLoad() {
 		byArr_reg[1], byArr_enum[1], byArr_skip[1], byArr_noapp[1],
 		byArr_reg[2], byArr_enum[2], byArr_skip[2], byArr_noapp[2],
 		byArr_reg[3], byArr_enum[3], byArr_skip[3], byArr_noapp[3]);
+	mc2EmitStaticRegDiagSummary();
 	fflush(stderr);
 }
 
@@ -2124,6 +2166,45 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 		long terrainObjectsUpdated = 0;
 		long terrainObjectsVisited = 0;
 		long cullRecordsEmitted = 0;
+		long skippedStaticTrees = 0;
+		long eligibleStaticTrees = 0;
+		long treeCandidates = 0;
+		long fallingTreesUpdated = 0;
+		long justCreatedTreesUpdated = 0;
+		long missNotStaticNow = 0;
+		long missStaticNotRegistered = 0;
+		long missStaticShapeMismatch = 0;
+		long missStaticNeedsFullBake = 0;
+		long missStaticOther = 0;
+		long missStaticUnregTreeAppearance = 0;
+		long missStaticUnregBldgAppearance = 0;
+		long missStaticUnregOtherAppearance = 0;
+		long missStaticUnregObjTree = 0;
+		long missStaticUnregObjTerrain = 0;
+		long missStaticUnregObjBuilding = 0;
+		long missStaticUnregObjOther = 0;
+		long missSpecial = 0;
+		long missAlarm = 0;
+		long missLookout = 0;
+		long missSensor = 0;
+		long missPower = 0;
+		long missControl = 0;
+		long missMechBay = 0;
+		long missFalling = 0;
+		long missJustCreated = 0;
+		long nonTreeUpdated = 0;
+		long unknownUpdated = 0;
+		const bool skipStaticTrees = mc2SkipStaticTreesEnabled();
+		const bool skipStaticTreesDiag = mc2SkipStaticTreesDiagEnabled();
+		const uint32_t treeDiagFrame = g_mc2FrameCounter;
+		const bool emitTreeDiagThisFrame = skipStaticTreesDiag &&
+		                                   ((treeDiagFrame <= 5) || ((treeDiagFrame % 300) == 0));
+		long nonTreeSampleCount = 0;
+		std::unordered_map<std::string, long> missStaticUnregTypeCounts;
+
+		// MC2_GOM_RECON: type classification & mutation tracking
+		long recon_buildings = 0, recon_gates = 0, recon_turrets = 0, recon_other = 0;
+		long recon_updated = 0, recon_multiShapeLoops = 0, recon_lightScans = 0;
 
 		//First Update all of the Special Buildings.
 		// They will mark themselves updated and not re-update below.
@@ -2212,6 +2293,213 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 						Terrain::objVertexActive[objList[objIndex]->getVertexNum()] &&
 						objList[objIndex]->getExists())
 					{
+						eligibleStaticTrees++;
+
+						// MC2_GOM_RECON: classify object type
+						GameObjectPtr obj = objList[objIndex];
+						ObjectTypePtr objType = obj->getObjectType();
+						AppearancePtr appearance = obj->getAppearance();
+						const bool isJustCreated = obj->getFlag(OBJECT_FLAG_JUSTCREATED);
+						const bool isFalling = obj->getFlag(OBJECT_FLAG_FALLING);
+						const char* typeName = (objType && objType->getAppearanceTypeName()) ? objType->getAppearanceTypeName() : "<null>";
+						const bool isPineAppearance = mc2StaticTreeNameStartsWith(typeName, "Pine");
+						bool isTreeCandidate = false;
+						bool isPineStaticBuildingCandidate = false;
+						long pineSpecialBuilding = 0;
+						long pinePerimeterAlarm = 0;
+						long pineLookout = 0;
+						long pineSensor = 0;
+						long pinePowerSource = 0;
+						long pineControlBuilding = obj->getFlag(OBJECT_FLAG_CONTROLBUILDING) ? 1L : 0L;
+						long pineMechBay = obj->getFlag(OBJECT_FLAG_MECHBAY) ? 1L : 0L;
+
+						if (objType)
+						{
+							long objectClass = objType->getObjectClass();
+							if (objectClass == TREE)
+							{
+								isTreeCandidate = true;
+							}
+							else if (objectClass == TERRAINOBJECT)
+							{
+								TerrainObjectTypePtr terrainType = (TerrainObjectTypePtr)objType;
+								isTreeCandidate = (terrainType->subType == TERROBJ_TREE);
+							}
+							else if ((objectClass == BUILDING) && isPineAppearance)
+							{
+								BuildingPtr building = dynamic_cast<Building*>(obj);
+								BuildingTypePtr bldgType = dynamic_cast<BuildingTypePtr>(objType);
+								if (building && bldgType)
+								{
+									pineSpecialBuilding = building->isSpecialBuilding() ? 1L : 0L;
+									pinePerimeterAlarm = ((bldgType->perimeterAlarmRange > 0.0f) &&
+									                      (bldgType->perimeterAlarmTimer > 0.0f)) ? 1L : 0L;
+									pineLookout = (bldgType->lookoutTowerRange > 0.0f) ? 1L : 0L;
+									pineSensor = (bldgType->sensorRange > 0.0f) ? 1L : 0L;
+									pinePowerSource = bldgType->powerSource ? 1L : 0L;
+									isPineStaticBuildingCandidate =
+										!pineSpecialBuilding &&
+										!pinePerimeterAlarm &&
+										!pineLookout &&
+										!pineSensor &&
+										!pinePowerSource &&
+										!pineControlBuilding &&
+										!pineMechBay;
+								}
+								else
+								{
+									nonTreeUpdated++;
+								}
+							}
+							else
+							{
+								nonTreeUpdated++;
+							}
+						}
+						else
+						{
+							unknownUpdated++;
+						}
+
+						if (isTreeCandidate)
+						{
+							treeCandidates++;
+							if (skipStaticTrees && (turn >= 3) && !isFalling && !isJustCreated)
+							{
+								skippedStaticTrees++;
+								continue;
+							}
+							if (isFalling)
+							{
+								fallingTreesUpdated++;
+								missFalling++;
+							}
+							else if (isJustCreated)
+							{
+								justCreatedTreesUpdated++;
+								missJustCreated++;
+							}
+						}
+						else if (isPineStaticBuildingCandidate)
+						{
+							treeCandidates++;
+							const long staticNow = appearance ? (appearance->IsStaticNow() ? 1L : 0L) : 0L;
+							if (skipStaticTrees && (turn >= 3) && staticNow && !isFalling && !isJustCreated)
+							{
+								skippedStaticTrees++;
+								continue;
+							}
+							if (isFalling)
+							{
+								fallingTreesUpdated++;
+								missFalling++;
+							}
+							else if (isJustCreated)
+							{
+								justCreatedTreesUpdated++;
+								missJustCreated++;
+							}
+							else if (!staticNow)
+							{
+								missNotStaticNow++;
+								bool staticReasonRecorded = false;
+								if (TreeAppearance* treeAppearance = dynamic_cast<TreeAppearance*>(appearance))
+								{
+									missStaticUnregTreeAppearance++;
+									const long activeLod = treeAppearance->activeLOD;
+									const bool registered = (activeLod >= 0) && (activeLod < MAX_LODS) &&
+									                        treeAppearance->staticReg[activeLod].registered;
+									const bool shapeMatch = (activeLod != 0) ||
+									                        (treeAppearance->staticReg[0].shape == treeAppearance->treeShape);
+									if (!registered)
+									{
+										missStaticNotRegistered++;
+										staticReasonRecorded = true;
+									}
+									else if (!shapeMatch)
+									{
+										missStaticShapeMismatch++;
+										staticReasonRecorded = true;
+									}
+									else if (treeAppearance->needsFullBakeNextFrame)
+									{
+										missStaticNeedsFullBake++;
+										staticReasonRecorded = true;
+									}
+								}
+								else if (BldgAppearance* bldgAppearance = dynamic_cast<BldgAppearance*>(appearance))
+								{
+									missStaticUnregBldgAppearance++;
+									if (!bldgAppearance->staticReg.registered)
+									{
+										missStaticNotRegistered++;
+										staticReasonRecorded = true;
+									}
+									else if (bldgAppearance->staticReg.shape != bldgAppearance->bldgShape)
+									{
+										missStaticShapeMismatch++;
+										staticReasonRecorded = true;
+									}
+									else if (bldgAppearance->needsFullBakeNextFrame)
+									{
+										missStaticNeedsFullBake++;
+										staticReasonRecorded = true;
+									}
+								}
+								else
+								{
+									missStaticUnregOtherAppearance++;
+								}
+								switch (obj->getObjectClass())
+								{
+								case TREE:
+									missStaticUnregObjTree++;
+									break;
+								case TERRAINOBJECT:
+									missStaticUnregObjTerrain++;
+									break;
+								case BUILDING:
+									missStaticUnregObjBuilding++;
+									break;
+								default:
+									missStaticUnregObjOther++;
+									break;
+								}
+								if (typeName && typeName[0])
+									missStaticUnregTypeCounts[std::string(typeName)]++;
+								else
+									missStaticUnregTypeCounts[std::string("<null>")]++;
+								if (!staticReasonRecorded)
+									missStaticOther++;
+							}
+						}
+						// Per-object sample lines removed — use MC2_SKIP_STATIC_TREES_DIAG summary instead.
+
+						if (isPineAppearance && !isPineStaticBuildingCandidate)
+						{
+							if (pineSpecialBuilding)
+								missSpecial++;
+							if (pinePerimeterAlarm)
+								missAlarm++;
+							if (pineLookout)
+								missLookout++;
+							if (pineSensor)
+								missSensor++;
+							if (pinePowerSource)
+								missPower++;
+							if (pineControlBuilding)
+								missControl++;
+							if (pineMechBay)
+								missMechBay++;
+						}
+
+						if (MC2_GOM_RECON_ENABLED()) {
+							if (dynamic_cast<Building*>(obj)) recon_buildings++;
+							else if (dynamic_cast<Gate*>(obj)) recon_gates++;
+							else if (dynamic_cast<Turret*>(obj)) recon_turrets++;
+							else recon_other++;
+						}
+
 						{
 							ZoneScopedN("GOM.TerrainObjects.ObjUpdate");
 							long updateRet_instr = objList[objIndex]->update();
@@ -2225,6 +2513,9 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 							else
 							{
 								terrainObjectsUpdated++;
+								if (MC2_GOM_RECON_ENABLED()) {
+									recon_updated++;
+								}
 							}
 						}
 						// C0-3: emit after update() so inView is fresh; gated on getExists()
@@ -2236,6 +2527,59 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 							cullRecordsEmitted++;
 						}
 					}
+				}
+			}
+		}
+
+		// MC2_GOM_RECON: emit object type classification
+		if (MC2_GOM_RECON_ENABLED()) {
+			static uint32_t lastReconFrame = 0;
+			uint32_t curFrame = g_mc2FrameCounter;
+			if (curFrame != lastReconFrame) {
+				lastReconFrame = curFrame;
+				SPEWALWAYS(("GOM_RECON", "frame=%u buildings=%ld gates=%ld turrets=%ld other=%ld updated=%ld",
+				             curFrame, recon_buildings, recon_gates, recon_turrets, recon_other, recon_updated));
+			}
+		}
+
+		if (skipStaticTreesDiag) {
+			static uint32_t lastTreeSkipFrame = 0;
+			if ((treeDiagFrame <= 5) || ((treeDiagFrame % 300) == 0)) {
+				if (treeDiagFrame != lastTreeSkipFrame) {
+					lastTreeSkipFrame = treeDiagFrame;
+					std::fprintf(stderr,
+					             "[STATIC TREES] frame=%u eligible=%ld tree=%ld skipped=%ld falling=%ld justCreated=%ld miss_notStaticNow=%ld miss_static_unregistered=%ld miss_static_shape=%ld miss_static_fullBake=%ld miss_static_other=%ld miss_unreg_treeAppr=%ld miss_unreg_bldgAppr=%ld miss_unreg_otherAppr=%ld miss_unreg_objTree=%ld miss_unreg_objTerrain=%ld miss_unreg_objBuilding=%ld miss_unreg_objOther=%ld miss_special=%ld miss_alarm=%ld miss_lookout=%ld miss_sensor=%ld miss_power=%ld miss_control=%ld miss_mechBay=%ld miss_falling=%ld miss_justCreated=%ld nonTree=%ld unknown=%ld updated=%ld\n",
+					             treeDiagFrame, eligibleStaticTrees, treeCandidates, skippedStaticTrees,
+					             fallingTreesUpdated, justCreatedTreesUpdated,
+					             missNotStaticNow, missStaticNotRegistered, missStaticShapeMismatch,
+					             missStaticNeedsFullBake, missStaticOther,
+					             missStaticUnregTreeAppearance, missStaticUnregBldgAppearance, missStaticUnregOtherAppearance,
+					             missStaticUnregObjTree, missStaticUnregObjTerrain, missStaticUnregObjBuilding, missStaticUnregObjOther,
+					             missSpecial, missAlarm, missLookout, missSensor,
+					             missPower, missControl, missMechBay, missFalling, missJustCreated,
+					             nonTreeUpdated, unknownUpdated, terrainObjectsUpdated);
+					mc2EmitStaticRegRuntimeDiagSummary(treeDiagFrame);
+					if (!missStaticUnregTypeCounts.empty())
+					{
+						std::vector<std::pair<std::string, long>> topUnregTypes(
+							missStaticUnregTypeCounts.begin(), missStaticUnregTypeCounts.end());
+						std::sort(topUnregTypes.begin(), topUnregTypes.end(),
+						          [](const std::pair<std::string, long>& a, const std::pair<std::string, long>& b) {
+							          if (a.second != b.second)
+								          return a.second > b.second;
+							          return a.first < b.first;
+						          });
+						const size_t topCount = std::min<size_t>(8, topUnregTypes.size());
+						for (size_t i = 0; i < topCount; ++i)
+						{
+							std::fprintf(stderr,
+							             "[STATIC TREES] unreg_rank=%u type=%s count=%ld\n",
+							             static_cast<unsigned>(i),
+							             topUnregTypes[i].first.c_str(),
+							             topUnregTypes[i].second);
+						}
+					}
+					std::fflush(stderr);
 				}
 			}
 		}
@@ -2969,8 +3313,10 @@ GameObjectPtr GameObjectManager::findMoverByMouse (long mouseX,
 
 GameObjectPtr GameObjectManager::findTerrainObjectByMouse (long mouseX,
 														   long mouseY,
-														   bool skipDisabled) 
+														   bool skipDisabled)
 {
+	int32_t pickCandidates = 0;
+	int32_t activeBlocksVisited = 0;
 	for (long terrainBlock = 0; terrainBlock < Terrain::numObjBlocks; terrainBlock++)
 	{
 		// Cull-cascade consumer (mouse pick). Post-8c source of truth for
@@ -2981,8 +3327,10 @@ GameObjectPtr GameObjectManager::findTerrainObjectByMouse (long mouseX,
 		// deleted it). See VPL-retirement plan v3.5 note (CRIT-0).
 		if (Terrain::objBlockInfo[terrainBlock].active)
 		{
+			activeBlocksVisited++;
 			long numObjs = Terrain::objBlockInfo[terrainBlock].numObjects;
 			long objIndex = Terrain::objBlockInfo[terrainBlock].firstHandle;
+			pickCandidates += numObjs;
 
 			// CRIT-1 re-home (Task 4): the per-object test below is
 			// DUPLICATED from the shared 5-param findObjectByMouse loop
@@ -3112,6 +3460,8 @@ GameObjectPtr GameObjectManager::findTerrainObjectByMouse (long mouseX,
 		}
 	}
 
+	TracyPlot("MIF.TerrainPick.activeBlocks", int64_t(activeBlocksVisited));
+	TracyPlot("MIF.TerrainPick.candidates", int64_t(pickCandidates));
 	return(NULL);
 }
 
@@ -3121,36 +3471,34 @@ GameObjectPtr GameObjectManager::findObjectByMouse (long mouseX, long mouseY) {
 
 	GameObjectPtr obj = NULL;
 
-	//-------------------------------------------------------------
-	// This function will search movers first. If we find an object
-	// near the mouse, we're done...
-	// Mitch wants to find live ones before dead ones
 	long homeCommanderId = Commander::home->getId();
-	obj = findMoverByMouse(mouseX, mouseY, homeCommanderId, true);
-	if (obj)
-		return(obj);
-	obj = findMoverByMouse(mouseX, mouseY, homeCommanderId, false);
-	if (obj)
-		return(obj);
-	
-	obj = findMoverByMouse(mouseX, mouseY, -1, true);
-	if (obj)
-		return(obj);
-	obj = findMoverByMouse(mouseX, mouseY, -1, false);
-	if (obj)
-		return(obj);
-	
+	{
+		ZoneScopedN("MIF.FindMover");
+		obj = findMoverByMouse(mouseX, mouseY, homeCommanderId, true);
+		if (obj)
+			return(obj);
+		obj = findMoverByMouse(mouseX, mouseY, homeCommanderId, false);
+		if (obj)
+			return(obj);
+		obj = findMoverByMouse(mouseX, mouseY, -1, true);
+		if (obj)
+			return(obj);
+		obj = findMoverByMouse(mouseX, mouseY, -1, false);
+		if (obj)
+			return(obj);
+	}
 
-	//-------------------------------------------------------------------------
-	// If we still haven't found anything, check everything (including terrain)
-	// with disregard to disabled status...
-	// Skip disabled should be on.  I have Spoken! -fs
-	// Frank -- I need to find the nav markers so I can get their little highlight text.... HKG
-	obj = findObjectByMouse(mouseX, mouseY, &objList[1], getMaxObjects(),false);
-	if (obj)
-		return(obj);
-		
-	return(findTerrainObjectByMouse(mouseX, mouseY,true));
+	{
+		ZoneScopedN("MIF.FindObjList");
+		obj = findObjectByMouse(mouseX, mouseY, &objList[1], getMaxObjects(),false);
+		if (obj)
+			return(obj);
+	}
+
+	{
+		ZoneScopedN("MIF.FindTerrainObj");
+		return(findTerrainObjectByMouse(mouseX, mouseY,true));
+	}
 }
 
 //---------------------------------------------------------------------------

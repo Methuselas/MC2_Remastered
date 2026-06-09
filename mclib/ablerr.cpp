@@ -162,9 +162,15 @@ void ABL_Assert (bool test, long errCode, const char* s) {
 
 void syntaxError (int errCode) {
 
+	// Deduplicate: print only the first occurrence of each (file, line, errCode) triple.
+	static long s_lastFile = -1, s_lastLine = -1, s_lastCode = -1;
+	bool isDup = (FileNumber == s_lastFile && lineNumber == s_lastLine && errCode == s_lastCode);
+	s_lastFile = FileNumber; s_lastLine = lineNumber; s_lastCode = errCode;
+
 	char errMessage[MAXLEN_ERROR_MESSAGE];
 	sprintf(errMessage, "SYNTAX ERROR %s [line %d] - (type %d) %s \"%s\"\n", SourceFiles[FileNumber], lineNumber, errCode, syntaxErrorMessages[errCode], wordString);
-	ABL_Fatal(0, errMessage);
+	if (!isDup)
+		ABL_Fatal(0, errMessage);
 	
 	*tokenp = '\0';
 	errorCount++;

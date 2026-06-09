@@ -684,10 +684,10 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         }
     }
 
-    // Cardinality probe: log every 60 submits.
+    // Cardinality probe: log every 600 submits.
     static int s_submitCount = 0;
     ++s_submitCount;
-    if (s_submitCount % 60 == 0) {
+    if (s_submitCount % 600 == 0) {
         printf("[TerrainLOD submit] count=%d cmds=%d\n", s_submitCount, count);
         fflush(stdout);
     }

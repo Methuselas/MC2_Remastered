@@ -2438,7 +2438,7 @@ void Terrain::flushDrawCommands (void)
 	// flush runs once-per-frame unconditionally.
 	static int s_flushCallCount = 0;
 	++s_flushCallCount;
-	if (s_flushCallCount % 60 == 0) {
+	if (s_flushCallCount % 600 == 0) {
 		printf("[TerrainLOD flush] count=%d cmds=%d\n", s_flushCallCount, s_cmdCount);
 		fflush(stdout);
 	}
