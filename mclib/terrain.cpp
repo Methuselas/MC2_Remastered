@@ -130,6 +130,17 @@ char * 						Terrain::colorMapName = NULL;
 // non-LEGACY profile.
 int							g_terrainMaterialProfile = TERRAIN_MAT_PROFILE_LEGACY;
 
+// Terrain LOD chunk renderer gate — DEFAULT ON (cutover 2026-06-09). Opt out with
+// MC2_TERRAIN_LOD_CHUNK=0. Cached once. Single source of truth (see terrain.h).
+bool mc2TerrainLodChunkEnabled()
+{
+	static const bool s_on = []() {
+		const char* v = getenv("MC2_TERRAIN_LOD_CHUNK");
+		return !(v && v[0] == '0' && v[1] == '\0');   // default ON; "0" = off
+	}();
+	return s_on;
+}
+
 long		   				Terrain::numObjBlocks = 0;
 ObjBlockInfo				*Terrain::objBlockInfo = NULL;
 bool						*Terrain::objVertexActive = NULL;
@@ -476,7 +487,7 @@ long Terrain::init (PacketFile* pakFile, int whichPacket, unsigned long visibleV
 		// Check quads (vertices-1), not vertices, so partial-edge blocks are permitted
 		// under MC2_TERRAIN_LOD_CHUNK=1 (e.g. 120-vertex map: 119 quads, last block = 19).
 		if ((realVerticesMapSide - 1) % verticesBlockSide != 0) {
-			if (!getenv("MC2_TERRAIN_LOD_CHUNK"))
+			if (!mc2TerrainLodChunkEnabled())
 				STOP(("Terrain quad count %d not divisible by verticesBlockSide (%d)",
 				      realVerticesMapSide - 1, verticesBlockSide));
 			// Partial-edge blocks permitted under MC2_TERRAIN_LOD_CHUNK=1.
@@ -695,7 +706,7 @@ long Terrain::init( unsigned long verticesPerMapSide, PacketFile* pakFile, unsig
 	//----------------------------------------------------------------------
 	// Terrain LOD chunk Phase 1 — allocate per-block + superchunk metadata.
 	// MC2_TERRAIN_LOD_CHUNK=1 gate. mapData must be live before this block.
-	if (getenv("MC2_TERRAIN_LOD_CHUNK")) {
+	if (mc2TerrainLodChunkEnabled()) {
 		// terrainChunkSide = ceil((vertices-1) / verticesBlockSide)
 		s_terrainChunkSide = ((realVerticesMapSide - 1) + verticesBlockSide - 1) / verticesBlockSide;
 		s_superchunkSide   = (s_terrainChunkSide + 3) / 4;
@@ -1306,7 +1317,7 @@ void Terrain::destroy (void)
 
 	// Terrain LOD chunk Phase 1 teardown — free before terrainHeap destroy.
 	// MC2_TERRAIN_LOD_CHUNK=1 gate; idempotent (NULL guards prevent double-free).
-	if (getenv("MC2_TERRAIN_LOD_CHUNK")) {
+	if (mc2TerrainLodChunkEnabled()) {
 		if (s_blockMeta)      { terrainHeap->Free(s_blockMeta);      s_blockMeta      = nullptr; }
 		if (s_superchunkMeta) { terrainHeap->Free(s_superchunkMeta); s_superchunkMeta = nullptr; }
 		if (s_drawCmds)       { terrainHeap->Free(s_drawCmds);       s_drawCmds       = nullptr; }
@@ -1497,7 +1508,7 @@ long Terrain::update (void)
 	// A/B against the chunk-derived shadow set (without it, makeLists is skipped,
 	// numberVertices stays 0, slimReduce is a no-op, and the baseline is empty —
 	// which is also why terrain-object update() is gated off under the flag today).
-	if (!getenv("MC2_TERRAIN_LOD_CHUNK") || getenv("MC2_TERRAIN_ACTIVE_AB"))
+	if (!mc2TerrainLodChunkEnabled() || getenv("MC2_TERRAIN_ACTIVE_AB"))
 	{
 		ZoneScopedN("Terrain::update makeLists");
 		Terrain::mapData->makeLists(vertexList,numberVertices,quadList,numberQuads);
@@ -2016,7 +2027,7 @@ long Terrain::update (void)
 		// Phase 7.5 diagnostic: zero-command error detection.
 		// If the chunk path is enabled but emits nothing after the first 10 frames,
 		// log an error at 60 consecutive failures and every 300 thereafter.
-		if (getenv("MC2_TERRAIN_LOD_CHUNK")) {
+		if (mc2TerrainLodChunkEnabled()) {
 			if (s_cmdCount == 0 && gCurrentFrame > 10) {
 				++s_lodZeroCmdFrames;
 				if (s_lodZeroCmdFrames == 60 || s_lodZeroCmdFrames % 300 == 0)
@@ -2109,7 +2120,7 @@ void Terrain::setVertexHeight( int VertexIndex, float Val )
 		mapData->setVertexHeight( VertexIndex, Val );
 
 		// Terrain LOD chunk Phase 3 — dirty-patch upload after edit.
-		if (s_blockMeta && getenv("MC2_TERRAIN_LOD_CHUNK"))
+		if (s_blockMeta && mc2TerrainLodChunkEnabled())
 		{
 			int vx = VertexIndex % (int)realVerticesMapSide;
 			int vy = VertexIndex / (int)realVerticesMapSide;
@@ -2195,7 +2206,7 @@ void Terrain::render (void)
 		// STILL runs draw() so decals fall back to the M2d per-quad emit
 		// and do not vanish = the 9964d5a-regression guard. Gating on
 		// IsFrameSolidArmed() alone would kill decals on the =0 revert.
-		if (!getenv("MC2_TERRAIN_LOD_CHUNK"))
+		if (!mc2TerrainLodChunkEnabled())
 		{
 			// Phase 7.5 diagnostic: confirm the old draw path is active (flag not set).
 			// Fires once so we know which path owns terrain on this launch.
@@ -2347,7 +2358,7 @@ void Terrain::render (void)
 	// Must precede the minePass drawMine loop (draw reads mineResult set here).
 	// Not gated on drawTerrainTiles — mine enqueue is a booking step that must
 	// fire regardless of whether the LOD mesh draw is active this frame.
-	if (getenv("MC2_TERRAIN_LOD_CHUNK")
+	if (mc2TerrainLodChunkEnabled()
 	    && !gos_terrain_indirect::IsFrameMineArmed()
 	    && quadList
 	    && numberQuads > 0)
@@ -3246,7 +3257,7 @@ void Terrain::geometry (void)
 	// BEFORE geometry(), so we only set true. All writes happen INSIDE the
 	// O(active-blocks x span) loop — never an O(nV) scan — so the retired O(n^2)
 	// slimReduce stays retired (guardrail: do NOT revive makeLists here).
-	static const bool s_lodChunkProd = (getenv("MC2_TERRAIN_LOD_CHUNK") != nullptr);
+	static const bool s_lodChunkProd = (mc2TerrainLodChunkEnabled());
 	static const bool s_activeABForce = (getenv("MC2_TERRAIN_ACTIVE_AB") != nullptr);
 	if (s_lodChunkProd && !s_activeABForce && eye && objBlockInfo && objVertexActive && numObjBlocks > 0)
 	{

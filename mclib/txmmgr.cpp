@@ -2502,7 +2502,17 @@ void MC_TextureManager::renderLists (void)
 			// back to flush() when DrawIndirect returns false (plan v2 advisor
 			// stop-the-line #1). A false return is a hard failure: logged, arming
 			// disabled process-wide; operator advice in event=hard_failure line.
-			modernHandled = gos_terrain_indirect::DrawIndirect();
+			//
+			// Phase 7.5 LOD chunk coexistence: when MC2_TERRAIN_LOD_CHUNK=1 the chunk
+			// path owns terrain rendering (flushDrawCommands in gamecam.cpp). Suppress
+			// DrawIndirect to prevent depth/color conflicts — both paths write the same
+			// world-space surface and the indirect path draws first (land->render),
+			// causing the coarser LOD chunk mesh to fail the depth test.
+			if (mc2TerrainLodChunkEnabled()) {
+				modernHandled = true;   // chunks handle it; mark handled to suppress legacy fall-through
+			} else {
+				modernHandled = gos_terrain_indirect::DrawIndirect();
+			}
 		} else if (TerrainPatchStream::isReady() && !TerrainPatchStream::isOverflowed()) {
 			// Un-armed frame: gate-off did not fire, legacy admits filled
 			// TerrainPatchStream normally. M2 thin-record-direct draw runs SOLID.

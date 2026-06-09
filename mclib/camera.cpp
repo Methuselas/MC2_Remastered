@@ -995,7 +995,7 @@ unsigned long Camera::inverseProject (Stuff::Vector2DOf<long> &screenPos, Stuff:
 	// and fire it against the full-resolution PostcompVertex heightfield.
 	// Object picking (findObjectByMouse) is UNAFFECTED — this replaces only
 	// the terrain-surface portion of inverseProject.
-	static const bool s_lodChunkPick = (std::getenv("MC2_TERRAIN_LOD_CHUNK") != nullptr);
+	static const bool s_lodChunkPick = (mc2TerrainLodChunkEnabled());
 	// PARITY DIAGNOSTIC: when MC2_TERRAIN_PICK_PARITY is set we compute BOTH
 	// the heightfield raycast hit AND the legacy quadList result for the same
 	// screen coords, log the delta, and still return exactly what the active

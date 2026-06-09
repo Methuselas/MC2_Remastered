@@ -73,6 +73,12 @@ extern uint8_t* gEditorNavFlags;      // null when overlay not active
 extern int      gEditorNavCellSide;   // terrain cellSide = realVerticesMapSide - 1
 extern bool     drawEditorPassability;
 
+// Single source of truth for the terrain LOD chunk renderer gate. DEFAULT ON
+// (cutover 2026-06-09); opt out with MC2_TERRAIN_LOD_CHUNK=0 (e.g. the editor, or
+// to fall back to the legacy tessellated path). Cached on first call. Replaces the
+// scattered getenv("MC2_TERRAIN_LOD_CHUNK") presence checks so they cannot drift.
+bool mc2TerrainLodChunkEnabled();
+
 //---------------------------------------------------------------------------
 // Tactical mission-gated material profile (C1 — disposable).
 // When the real material-palette architecture lands (post-Slice 0 design),

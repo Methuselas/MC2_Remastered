@@ -725,7 +725,7 @@ void TerrainQuad::setupTextures (void)
 	const bool legacyWaterDraw = !gos_terrain_indirect::WaterFastPathOwnsArmedDraw();
 	// Terrain LOD chunk Phase 3: cache env gate once per quad (hot path; avoid
 	// repeated getenv() in the per-vertex loop below).
-	const bool useLodChunkWaterGuard = (getenv("MC2_TERRAIN_LOD_CHUNK") != nullptr);
+	const bool useLodChunkWaterGuard = (mc2TerrainLodChunkEnabled());
 
 	// PERF-SETUPTEXTURES-GPU-GATE-1: gate the recipe-cache lookup + member-field
 	// assignments when both GPU SOLID and GPU OVERLAY own this frame. In that state
@@ -988,7 +988,7 @@ void TerrainQuad::setupTextures (void)
 				// GPU static-bake retirement; the LOD flag handles the
 				// setupTextures-bypass retirement. Neither subsumes the other.
 				static const bool s_lodChunkActive =
-					(getenv("MC2_TERRAIN_LOD_CHUNK") != nullptr);
+					(mc2TerrainLodChunkEnabled());
 				if (!gos_terrain_indirect::IsFrameMineArmed()
 				    && !s_lodChunkActive) {
 					enqueueTerrainMineState(*this);
