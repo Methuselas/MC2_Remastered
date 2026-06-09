@@ -11,6 +11,14 @@
 
 // Terrain MVP matrix — exposed by gameos_graphics.cpp for all terrain draw paths.
 extern const float* gos_GetTerrainMVPMat4();
+// Fix-B frame-of-reference: the GPU water cull and DrawDecalStatic project with
+// the PREVIOUS-frame dispatch MVP (baked in Terrain::geometry()) when armed, NOT
+// the live current-frame MVP. The legacy terrain draw also uses that baked MVP,
+// so terrain depth + water cull + decals all agree at frame N-1. The chunk MUST
+// match, or it writes depth at frame N while water/decals project at N-1 -> a
+// 1-frame offset -> shore-water dropout + decal tearing under camera motion.
+extern "C" const float* gos_terrain_indirect_getDispatchMvp16();
+namespace gos_terrain_indirect { bool IsFrameSolidArmed(); }
 
 // ---------------------------------------------------------------------------
 // Static SSBO state — all GL objects live here, never in mclib/.
@@ -427,7 +435,14 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     if (s_terrainProgram == 0 || s_heightSsbo == 0) return;
     if (s_patchVao == 0) return;
 
-    const float* mvp = gos_GetTerrainMVPMat4();
+    // Match the water-cull / decal frame-of-reference: use the baked dispatch MVP
+    // when the solid pass is armed (== what the legacy terrain draw used), else
+    // the live MVP. Eliminates the 1-frame offset that caused shore-water dropout
+    // + decal tearing under camera motion (greybeard META-FIX).
+    const float* mvp = gos_terrain_indirect::IsFrameSolidArmed()
+                       ? gos_terrain_indirect_getDispatchMvp16()
+                       : gos_GetTerrainMVPMat4();
+    if (!mvp) mvp = gos_GetTerrainMVPMat4();
     {
         // Diag 7.5: log every time mvp is null (causes silent bail-out).
         static int s_mvpNullCount = 0;

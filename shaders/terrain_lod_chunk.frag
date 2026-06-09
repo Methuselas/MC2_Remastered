@@ -62,19 +62,10 @@ layout(binding = 25, std430) readonly buffer TerrainCementBufFrag {
 layout(location = 0) out vec4 fragColor;
 layout(location = 1) out vec4 GBuffer1;   // shadow-handled flat-up (terrain MRT composite)
 
-// Phase 10.3: REVERSE-Z depth fudge — the scene runs reverse-Z (glDepthFunc
-// GL_GEQUAL) and legacy gos_terrain.frag writes gl_FragDepth = depth +
-// TERRAIN_DEPTH_FUDGE so ground-level objects/overlays/selection markers win the
-// GEQUAL tie instead of z-fighting terrain. The chunk frag was writing raw
-// gl_FragCoord.z -> z-fight (terrain "disappears" depending on selection/overlay
-// draw order, worst at distance). Match the legacy convention. Keep LOCKSTEP with
-// shaders/include/terrain_depth_bias.hglsl (TERRAIN_DEPTH_FUDGE = -0.002).
-// Canonical shared value (lockstep with terrain_depth_bias.hglsl). The water/
-// decal/overlay depth biases are calibrated against THIS. Do NOT epsilon-bump it
-// for the chunk path — that reproduces the Sym2 zoom-recede (see history). The
-// chunk's water-recede/decal-tearing is a coarse-LOD GEOMETRY mismatch, fixed by
-// clamping shoreline/cement blocks to fine LOD (geometry matches legacy).
-const float TERRAIN_DEPTH_FUDGE = -0.002;
+// Reverse-Z terrain depth bias (net -0.004, matching the legacy thin path) is now
+// applied PRE-DIVIDE in terrain_lod_chunk.vert (clip.z += 2*FUDGE*clip.w), NOT via
+// gl_FragDepth here. Writing gl_FragDepth disabled early-Z/Hi-Z on AMD and caused
+// decal tearing at the cement boundary under camera motion. See the vert.
 
 float heightAtCell(int cx, int cy) {
     cx = clamp(cx, 0, u_mapSide - 1);
@@ -206,16 +197,10 @@ vec3 chunkDetailNormal(vec4 w, float snowWeight, vec2 worldXY) {
 }
 
 void main() {
-    // Reverse-Z terrain depth fudge (bit 2 disables it: raw gl_FragCoord.z).
-    // MATCH LEGACY NET DEPTH: the legacy thin/indirect terrain applies the fudge
-    // TWICE (gos_terrain_thin.vert:194 clip.z+=FUDGE*clip.w -> gl_FragCoord.z &
-    // UndisplacedDepth both carry -0.002, then gos_terrain.frag:957 adds -0.002
-    // again -> net -0.004). Water (-0.00375) + decals (+0.00005) are calibrated
-    // against that -0.004. The chunk vert does NOT pre-divide the fudge, so apply
-    // 2x here to land at the same net depth -> water reclaims the shore + decals
-    // win the cement boundary. (Was 1x -0.002 -> 0.002 too close -> recede/tear.)
-    float fudge = ((u_diag & 2) != 0) ? 0.0 : 2.0 * TERRAIN_DEPTH_FUDGE;
-    gl_FragDepth = clamp(gl_FragCoord.z + fudge, 0.0, 1.0);
+    // Depth: NO gl_FragDepth write. The -0.004 net terrain bias is applied
+    // PRE-DIVIDE in the vert (clip.z += 2*FUDGE*clip.w). Writing gl_FragDepth here
+    // disabled early-Z/Hi-Z on AMD -> decal tearing at the cement boundary under
+    // camera motion (greybeard META-FIX; vulkan_aligned_depth_bias_ruling.md).
 
     // Phase 7.5 debug: neon LOD-band palette when u_forceColor=1 (launch_lod_*color.bat).
     if (u_forceColor != 0) {
