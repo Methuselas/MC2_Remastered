@@ -38,6 +38,7 @@ static GLint    s_locAtlasTLX       = -1;  // Phase 10: atlas top-left X (world)
 static GLint    s_locAtlasTLY       = -1;  // Phase 10: atlas top-left Y (world)
 static GLint    s_locAtlasOOW       = -1;  // Phase 10: atlas oneOverWorldUnitsMapSide
 static GLint    s_locLightDir       = -1;  // Phase 10 Step 1b: terrainLightDir (sun)
+static GLint    s_locDiag           = -1;  // bisection bitmask (MC2_TERRAIN_LOD_CHUNK_DIAG)
 
 // Phase 10: colormap atlas accessors (defined in gos_terrain_indirect.cpp,
 // global free functions). Same atlas tex1 + UV params the legacy gos_terrain.frag
@@ -255,6 +256,7 @@ void gos_TerrainLodChunk_Init()
             s_locAtlasTLY     = glGetUniformLocation(s_terrainProgram, "u_atlasTopLeftY");
             s_locAtlasOOW     = glGetUniformLocation(s_terrainProgram, "u_atlasOneOverWorldUnits");
             s_locLightDir     = glGetUniformLocation(s_terrainProgram, "terrainLightDir");
+            s_locDiag         = glGetUniformLocation(s_terrainProgram, "u_diag");
             printf("[TerrainLodChunk] shader loaded prog=%u "
                    "locs: originX=%d originY=%d mapSide=%d halfMap=%d mvp=%d lodStep=%d skirtDepth=%d forceColor=%d\n",
                    (unsigned)s_terrainProgram,
@@ -387,6 +389,13 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         int forceColorMode = getenv("MC2_TERRAIN_LOD_CHUNK_FORCE_COLOR") ? 1 : 0;
         if (s_locForceColor >= 0)
             glUniform1i(s_locForceColor, forceColorMode);
+    }
+
+    // Bisection bitmask uniform (MC2_TERRAIN_LOD_CHUNK_DIAG): 1=no GBuffer1,
+    // 2=no depth fudge, 4=no lighting. Shader-side A/B without rebuilding.
+    if (s_locDiag >= 0) {
+        const char* dv = getenv("MC2_TERRAIN_LOD_CHUNK_DIAG");
+        glUniform1i(s_locDiag, dv ? atoi(dv) : 0);
     }
 
     // Phase 10 (Step 1a): bind the merged colormap atlas (tex1) on unit 0 and

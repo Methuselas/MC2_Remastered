@@ -17,6 +17,10 @@ uniform float u_atlasTopLeftX;            // = Terrain::mapTopLeft3d.x
 uniform float u_atlasTopLeftY;            // = Terrain::mapTopLeft3d.y
 uniform float u_atlasOneOverWorldUnits;   // = Terrain::oneOverWorldUnitsMapSide
 uniform vec4  terrainLightDir;            // Phase 10 Step 1b: sun dir (same uniform as legacy)
+uniform int   u_diag;                     // Bisection bitmask (MC2_TERRAIN_LOD_CHUNK_DIAG):
+                                          //   1 = do NOT write GBuffer1
+                                          //   2 = no depth fudge (raw gl_FragCoord.z)
+                                          //   4 = no lighting (colormap only)
 
 layout(location = 0) out vec4 fragColor;
 layout(location = 1) out vec4 GBuffer1;   // shadow-handled flat-up (terrain MRT composite)
@@ -31,8 +35,9 @@ layout(location = 1) out vec4 GBuffer1;   // shadow-handled flat-up (terrain MRT
 const float TERRAIN_DEPTH_FUDGE = -0.002;
 
 void main() {
-    // Reverse-Z terrain depth fudge (applies to every output path below).
-    gl_FragDepth = clamp(gl_FragCoord.z + TERRAIN_DEPTH_FUDGE, 0.0, 1.0);
+    // Reverse-Z terrain depth fudge (bit 2 disables it: raw gl_FragCoord.z).
+    float fudge = ((u_diag & 2) != 0) ? 0.0 : TERRAIN_DEPTH_FUDGE;
+    gl_FragDepth = clamp(gl_FragCoord.z + fudge, 0.0, 1.0);
 
     // Phase 7.5 debug: neon LOD-band palette when u_forceColor=1 (launch_lod_*color.bat).
     if (u_forceColor != 0) {
@@ -45,7 +50,7 @@ void main() {
         else                      fc = vec3(1.0,  1.0,  1.0);   // LOD5 white
         if (u_skirtDepth > 0.0)   fc = vec3(0.0,  0.0,  0.5);   // skirts dark blue
         fragColor = vec4(fc, 1.0);
-        GBuffer1  = vec4(0.5, 0.5, 1.0, 1.0);
+        if ((u_diag & 1) == 0) GBuffer1 = vec4(0.5, 0.5, 1.0, 1.0);
         return;
     }
 
@@ -74,8 +79,8 @@ void main() {
     }
     float NdotL       = dot(N, terrainLightDir.xyz);
     float diffuse     = clamp(NdotL, 0.02, 1.0);
-    float normalLight = mix(0.35, 1.20, diffuse);   // same band as legacy gos_terrain.frag:771
+    float normalLight = ((u_diag & 4) != 0) ? 1.0 : mix(0.35, 1.20, diffuse); // legacy band
 
-    fragColor = vec4(base * normalLight, 1.0);
-    GBuffer1  = vec4(0.5, 0.5, 1.0, 1.0);           // rc_gbuffer1_shadowHandled_flatUp
+    fragColor = vec4(base * normalLight, 1.0);                       // alpha forced 1.0
+    if ((u_diag & 1) == 0) GBuffer1 = vec4(0.5, 0.5, 1.0, 1.0);      // rc_gbuffer1_shadowHandled_flatUp
 }
