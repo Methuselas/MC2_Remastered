@@ -99,6 +99,11 @@ def _write_fit(path: Path, burnin_name: str, recipe: TerrainRecipe) -> None:
     path.write_text(content, encoding='latin-1')
 
 
+def progress(pct: int, stage: str, msg: str = "") -> None:
+    """Emit progress line (editor can parse `PROGRESS pct stage msg`)."""
+    print(f"PROGRESS {pct} {stage} {msg}", flush=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description='MC2 terrain generator')
     parser.add_argument('recipe', help='Path to recipe JSON file')
@@ -108,6 +113,10 @@ def main() -> None:
                         help='Fast preview: render a small thumbnail only (no elevation/extras)')
     parser.add_argument('--debug-assets', action='store_true',
                         help='Write contact sheet and diagnostic PNGs')
+    parser.add_argument('--interactive', action='store_true',
+                        help='Interactive mode: lower work resolution + reduced erosion for editor')
+    parser.add_argument('--height-work-size', type=int, default=768,
+                        help='Generate height at this resolution, then upscale (0 = full resolution)')
     args = parser.parse_args()
 
     out = Path(args.out)
@@ -134,6 +143,14 @@ def main() -> None:
     if not hasattr(recipe, "_burnin_working_cap"):
         recipe._burnin_working_cap = 2048
 
+    # Interactive mode: lower work resolution + reduced erosion for editor responsiveness
+    if args.interactive:
+        recipe._interactive = True
+        recipe._height_work_size = args.height_work_size or 768
+        recipe.height.erosion_passes = min(recipe.height.erosion_passes, 1)
+    elif args.height_work_size > 0:
+        recipe._height_work_size = args.height_work_size
+
     if args.preview:
         height = HeightGenerator().generate(recipe)
         masks  = MaterialClassifier().classify(height, recipe)
@@ -143,14 +160,17 @@ def main() -> None:
         print("Done.")
         return
 
-    print("Generating height...")
-    height = HeightGenerator().generate(recipe)
+    progress(0, "height", "starting")
+    height = HeightGenerator().generate(recipe, progress=progress)
+    progress(65, "height", "done")
 
-    print("Classifying materials...")
+    progress(70, "classify", "starting")
     masks = MaterialClassifier().classify(height, recipe)
+    progress(80, "classify", "done")
 
-    print("Rendering burnin...")
+    progress(85, "burnin", "rendering")
     burnin = BurninRenderer().render(masks, recipe, BIOMES[recipe.biome])
+    progress(92, "burnin", "done")
 
     name = recipe.name
     print(f"Saving to {out}/")
