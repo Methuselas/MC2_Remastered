@@ -190,13 +190,17 @@ static int s_lodZeroCmdFrames = 0;
 // Each block is 20 quads * 128 wu/quad = 2560 wu per side.
 // ---------------------------------------------------------------------------
 static const int   LOD_STEPS[6]      = {1, 2, 4, 5, 10, 20};
+// Doubled 2026-06-09 (was 3K/7K/15K/30K/60K) so LOD transitions sit well outside
+// normal RTS view distance -> no visible pop-in at gameplay zoom. Runtime-scale
+// with MC2_TERRAIN_LOD_CHUNK_DIST_SCALE (default 1.0; e.g. 0.5 restores the old
+// thresholds, 2.0 pushes them even farther).
 static const float LOD_DIST_THRESH[5] = {
-    3000.0f,   // lodLevel 0: lodStep=1  — within 3 K wu
-    7000.0f,   // lodLevel 1: lodStep=2  — within 7 K wu
-    15000.0f,  // lodLevel 2: lodStep=4  — within 15 K wu
-    30000.0f,  // lodLevel 3: lodStep=5  — within 30 K wu
-    60000.0f,  // lodLevel 4: lodStep=10 — within 60 K wu
-               // lodLevel 5: lodStep=20 — beyond 60 K wu
+    6000.0f,    // lodLevel 0: lodStep=1  — within 6 K wu
+    14000.0f,   // lodLevel 1: lodStep=2  — within 14 K wu
+    30000.0f,   // lodLevel 2: lodStep=4  — within 30 K wu
+    60000.0f,   // lodLevel 3: lodStep=5  — within 60 K wu
+    120000.0f,  // lodLevel 4: lodStep=10 — within 120 K wu
+                // lodLevel 5: lodStep=20 — beyond 120 K wu
 };
 
 // Phase 10.2b: per-draw-command skirt EDGE mask (bit 0=N,1=S,2=W,3=E). Parallel
@@ -227,16 +231,24 @@ static uint8_t chooseLodLevel(float distSq, uint8_t prevLevel)
     if (s_forceLod >= 0)
         return (uint8_t)(s_forceLod > 5 ? 5 : s_forceLod);
 
+    // Runtime distance scale (default 1.0). >1 pushes LOD transitions farther.
+    static const float s_distScale = []() -> float {
+        const char* v = getenv("MC2_TERRAIN_LOD_CHUNK_DIST_SCALE");
+        float s = v ? (float)atof(v) : 1.0f;
+        return (s > 0.05f) ? s : 1.0f;
+    }();
+
     uint8_t desired = 5;
     for (int k = 0; k < 5; ++k) {
-        if (distSq < LOD_DIST_THRESH[k] * LOD_DIST_THRESH[k]) {
+        float t = LOD_DIST_THRESH[k] * s_distScale;
+        if (distSq < t * t) {
             desired = (uint8_t)k;
             break;
         }
     }
     if (desired > prevLevel) {
         // Demotion — only commit if clearly past the current fine threshold.
-        float thresh = LOD_DIST_THRESH[desired - 1];
+        float thresh = LOD_DIST_THRESH[desired - 1] * s_distScale;
         if (distSq < thresh * thresh * 1.21f)
             return prevLevel; // stay fine
     }
