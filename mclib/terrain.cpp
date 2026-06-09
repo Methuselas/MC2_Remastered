@@ -1780,9 +1780,21 @@ long Terrain::update (void)
 					}
 					if (needsSkirt)
 					{
+						// Skirt depth must cover the LOD CRACK (deviation of the fine
+						// edge from the coarse neighbour's interpolated edge), which is
+						// only a fraction of the block's full min->max elevation range.
+						// Using the full range produced giant cliff walls on hilly
+						// terrain (mountains: elevRange in the thousands). Scale down
+						// and CAP. MC2_TERRAIN_LOD_CHUNK_SKIRT_MAX overrides the cap.
+						static const float s_skirtMax = []() -> float {
+							const char* v = getenv("MC2_TERRAIN_LOD_CHUNK_SKIRT_MAX");
+							return v ? (float)atof(v) : 256.0f;
+						}();
 						float elevRange = bm.maxElev - bm.minElev;
-						float depth     = elevRange + 32.0f;
-						s_skirtDepths[s_cmdCount] = (depth > 64.0f) ? depth : 64.0f;
+						float depth     = elevRange * 0.5f + 32.0f;
+						if (depth > s_skirtMax) depth = s_skirtMax;
+						if (depth < 32.0f)      depth = 32.0f;
+						s_skirtDepths[s_cmdCount] = depth;
 					}
 					else
 					{
