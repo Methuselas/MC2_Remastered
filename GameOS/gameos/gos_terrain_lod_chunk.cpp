@@ -359,6 +359,18 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     glUseProgram(s_terrainProgram);
     glBindVertexArray(s_patchVao);
 
+    // Phase 10.3: render terrain DOUBLE-SIDED for the whole draw. terrainMVP bakes
+    // the kPixelHomogToGLNDC negative-X scale (reverse-Z / GL-NDC X-flip), which
+    // INVERTS triangle winding in screen space — so with GL_CULL_FACE enabled and
+    // the default CCW front face the terrain TOP is treated as a backface and
+    // culled ("transparent terrain, see the skirts through it"; worse on steep
+    // slopes near the camera; flipped by whatever global cull state mech-selection
+    // happens to leave set, since the main patch previously inherited it). Disable
+    // cull once here for main patches AND skirts; restore the inherited state at
+    // the end. Terrain is an opaque heightfield, so double-sided is free of
+    // visual cost (the underside is never seen).
+    glDisable(GL_CULL_FACE);
+
     // Bind height SSBO (stays bound for all patches this frame).
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_HEIGHT_SSBO_BINDING, s_heightSsbo);
 
@@ -458,9 +470,7 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
                 if (s_locSkirtDepth >= 0)
                     glUniform1f(s_locSkirtDepth, skirtDepth);
 
-                // Disable backface culling for skirts (avoids needing perfect winding).
-                glDisable(GL_CULL_FACE);
-
+                // (GL_CULL_FACE already disabled for the whole draw — see top.)
                 // Attrib 0: lx, ly (first 2 int16_t of SkirtVertex, stride=8).
                 // Attrib 1: isSkirt (third int16_t of SkirtVertex, offset=4).
                 glBindBuffer(GL_ARRAY_BUFFER, patch.skirtVbo);
@@ -473,10 +483,6 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
                 glDrawElements(GL_TRIANGLES, patch.skirtIndexCount, GL_UNSIGNED_SHORT, 0);
 
                 glDisableVertexAttribArray(1);
-
-                // Restore cull state to what it was before this batch.
-                if (prevCullFace)
-                    glEnable(GL_CULL_FACE);
             }
         }
     }
@@ -487,6 +493,8 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_HEIGHT_SSBO_BINDING, 0);
+    if (prevCullFace)
+        glEnable(GL_CULL_FACE);   // Phase 10.3: restore inherited cull state
     glBindVertexArray((GLuint)prevVAO);
     glUseProgram((GLuint)prevProg);
     if (s_depthAlways)
