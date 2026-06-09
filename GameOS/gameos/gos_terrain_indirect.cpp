@@ -2767,8 +2767,14 @@ void ComputeDispatch() {
     // a fence if frame-1's DrawIndirect didn't issue (recipe not ready /
     // MVP not yet valid).  This is benign startup, not a bug.
     {
+        // When MC2_TERRAIN_LOD_CHUNK=1 the chunk path owns terrain rendering and
+        // DrawIndirect is suppressed — no fences are ever written, so every frame
+        // past warmup triggers fenceMissedAfterWarmup. Gate it out to silence the
+        // flood and let useful diagnostics from the LOD chunk path show up in logs.
+        const bool s_lodChunkActive = mc2TerrainLodChunkEnabled();  // default-on aware
         const bool fenceMissedAfterWarmup =
-            (!fencePresent) && (ringFrameIdx > (uint64_t)(2 * kThinRingFrames));
+            (!fencePresent) && (ringFrameIdx > (uint64_t)(2 * kThinRingFrames))
+            && !s_lodChunkActive;
         const bool timeoutFired =
             (waitResult == GL_TIMEOUT_EXPIRED || waitResult == GL_WAIT_FAILED);
         if (fenceMissedAfterWarmup || timeoutFired) {

@@ -800,7 +800,23 @@ long Building::update (void)
 			// MUST update appearance every frame or animation goes HINKY!
 			// Appearance update now checks inView and does NOT run transform math unless necessary!
 			// Whoops!
-			appearance->update();
+			// Stage 3.E: buildings bypassed the TerrainObject static-update skip
+			// (Building::update is a separate vtable override). Gate appearance->update()
+			// with the SAME proven predicate as terrobj.cpp:903 — IsStaticNow() is false
+			// whenever the building is animating / has FX / spinning (isStaticEligible),
+			// and is only true when GPU-static-registered, so animated buildings still
+			// get the full update; idle registered-static buildings take the cheap
+			// touch() path (was running a full BldgAppearance::update — spotlight
+			// SetPosition loop + hierarchy transform — every frame). updateAnimations()
+			// + recalcBounds already ran above. MC2_STATIC_UPDATE_SKIP=0 opts out.
+			static const bool s_bldgStaticSkip = []() {
+				const char* v = getenv("MC2_STATIC_UPDATE_SKIP");
+				return !(v && v[0] == '0' && v[1] == '\0');   // default ON; "0" = off
+			}();
+			if (s_bldgStaticSkip && appearance->IsStaticNow() && !getFlag(OBJECT_FLAG_FALLING))
+				appearance->touch();
+			else
+				appearance->update();
 
 			if (inView)
 			{
