@@ -37,6 +37,7 @@ static GLint    s_locColormap       = -1;  // Phase 10: merged colormap atlas sa
 static GLint    s_locAtlasTLX       = -1;  // Phase 10: atlas top-left X (world)
 static GLint    s_locAtlasTLY       = -1;  // Phase 10: atlas top-left Y (world)
 static GLint    s_locAtlasOOW       = -1;  // Phase 10: atlas oneOverWorldUnitsMapSide
+static GLint    s_locLightDir       = -1;  // Phase 10 Step 1b: terrainLightDir (sun)
 
 // Phase 10: colormap atlas accessors (defined in gos_terrain_indirect.cpp,
 // global free functions). Same atlas tex1 + UV params the legacy gos_terrain.frag
@@ -45,6 +46,9 @@ extern GLuint gos_terrain_indirect_getAtlasGLTex();
 extern float  gos_terrain_indirect_getAtlasMapTopLeftX();
 extern float  gos_terrain_indirect_getAtlasMapTopLeftY();
 extern float  gos_terrain_indirect_getAtlasOneOverWorldUnits();
+// Phase 10 Step 1b: terrain sun direction (gameos.hpp), same value the legacy
+// terrain frag's terrainLightDir uniform receives.
+extern void   gos_GetTerrainLightDir(float* x, float* y, float* z);
 
 // ---------------------------------------------------------------------------
 // Patch geometry cache (Phase 4).
@@ -250,6 +254,7 @@ void gos_TerrainLodChunk_Init()
             s_locAtlasTLX     = glGetUniformLocation(s_terrainProgram, "u_atlasTopLeftX");
             s_locAtlasTLY     = glGetUniformLocation(s_terrainProgram, "u_atlasTopLeftY");
             s_locAtlasOOW     = glGetUniformLocation(s_terrainProgram, "u_atlasOneOverWorldUnits");
+            s_locLightDir     = glGetUniformLocation(s_terrainProgram, "terrainLightDir");
             printf("[TerrainLodChunk] shader loaded prog=%u "
                    "locs: originX=%d originY=%d mapSide=%d halfMap=%d mvp=%d lodStep=%d skirtDepth=%d forceColor=%d\n",
                    (unsigned)s_terrainProgram,
@@ -385,6 +390,12 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         if (s_locAtlasTLX >= 0) glUniform1f(s_locAtlasTLX, gos_terrain_indirect_getAtlasMapTopLeftX());
         if (s_locAtlasTLY >= 0) glUniform1f(s_locAtlasTLY, gos_terrain_indirect_getAtlasMapTopLeftY());
         if (s_locAtlasOOW >= 0) glUniform1f(s_locAtlasOOW, gos_terrain_indirect_getAtlasOneOverWorldUnits());
+        // Step 1b: sun direction for NdotL relief lighting (same as legacy terrain).
+        if (s_locLightDir >= 0) {
+            float lx = 0.f, ly = 0.f, lz = 1.f;
+            gos_GetTerrainLightDir(&lx, &ly, &lz);
+            glUniform4f(s_locLightDir, lx, ly, lz, 0.0f);
+        }
     }
 
     // Phase 7.5: log first successful submit so the user can confirm the path is live.
