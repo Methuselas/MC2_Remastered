@@ -1703,12 +1703,49 @@ long Terrain::update (void)
 				s_drawCmds[s_cmdCount].blockOriginY     = bm.originY;
 				s_drawCmds[s_cmdCount].lodStep          = LOD_STEPS[bm.lodLevel];
 				s_drawCmds[s_cmdCount].quadCountsPacked = (bm.quadCountX & 0xFF) | ((bm.quadCountY & 0xFF) << 8);
-				// Phase 6: skirt depth = max(64, (maxElev - minElev) + 32).
-				// bm.minElev/maxElev are populated by recomputeBlockAabb() before this loop.
+				// Phase 10.2: production skirt rule. A skirt only seals a real seam —
+				// an LOD-mismatch crack or a cull-boundary drop. The Phase 6 debug
+				// behavior (skirt on every edge, full depth) makes interior same-LOD
+				// seams AND the map boundary render as cliff walls / floating slabs.
+				// Emit a skirt only if an IN-MAP neighbor edge needs sealing:
+				//   neighbor off-map (map boundary)     -> no skirt
+				//   neighbor visible & same LOD         -> no skirt (coplanar, crack-free)
+				//   neighbor LOD differs                -> skirt (LOD crack)
+				//   neighbor not in-frustum (cull edge) -> skirt (fallback until 10.2e apron)
+				// MC2_TERRAIN_LOD_CHUNK_NO_SKIRTS=1 forces all skirts off (A/B).
 				{
-					float elevRange = bm.maxElev - bm.minElev;
-					float depth     = elevRange + 32.0f;
-					s_skirtDepths[s_cmdCount] = (depth > 64.0f) ? depth : 64.0f;
+					static const bool s_noSkirts =
+						(getenv("MC2_TERRAIN_LOD_CHUNK_NO_SKIRTS") != nullptr);
+					bool needsSkirt = false;
+					if (!s_noSkirts)
+					{
+						const int nbDx[4] = { 1, -1, 0, 0 };
+						const int nbDy[4] = { 0, 0, 1, -1 };
+						for (int n = 0; n < 4; ++n)
+						{
+							int nx = bx + nbDx[n], ny = by + nbDy[n];
+							if (nx < 0 || ny < 0 ||
+								nx >= s_terrainChunkSide || ny >= s_terrainChunkSide)
+								continue;  // map boundary -> no skirt
+							const TerrainBlockMeta& nbm =
+								s_blockMeta[nx + ny * s_terrainChunkSide];
+							if (!nbm.inFrustum || nbm.lodLevel != bm.lodLevel)
+							{
+								needsSkirt = true;
+								break;
+							}
+						}
+					}
+					if (needsSkirt)
+					{
+						float elevRange = bm.maxElev - bm.minElev;
+						float depth     = elevRange + 32.0f;
+						s_skirtDepths[s_cmdCount] = (depth > 64.0f) ? depth : 64.0f;
+					}
+					else
+					{
+						s_skirtDepths[s_cmdCount] = 0.0f;
+					}
 				}
 				++s_cmdCount;
 			}
