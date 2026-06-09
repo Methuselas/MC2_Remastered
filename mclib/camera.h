@@ -984,6 +984,15 @@ class Camera
 		void cacheFrustumPlanes();
 		const float (*getCachedFrustumPlanes() const)[4];
 
+		// WARNING: inverseProject is a LEGACY TERRAIN PICKER. It may scan
+		// thousands of terrain quads (getNumQuads) with a per-quad projection.
+		// NEVER call it from paint/input/UI hot paths (mouse-move, wheel, paint,
+		// scrollbar sync, minimap repaint) — doing so froze the editor for tens
+		// of seconds on large maps. Those affordances use the O(1)
+		// screenToGroundPlaneApprox() below. Reserve inverseProject for discrete
+		// events that genuinely need the exact terrain hit (e.g. a click).
+		//
+		// LESSON: never call terrain picking from paint/input UI affordances.
 		unsigned long inverseProject (Stuff::Vector2DOf<long> &screenPos, Stuff::Vector3D &point);
 
 		// screenToGroundPlaneApprox: O(1) screen-pixel -> world point on the
