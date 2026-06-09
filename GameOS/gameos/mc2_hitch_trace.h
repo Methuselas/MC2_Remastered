@@ -133,7 +133,7 @@ extern mc2_hitch::HitchFrameAccum  g_mc2HitchAccum;
     do {                                                                    \
         if (g_mc2HitchEnabled) {                                            \
             ++g_mc2HitchAccum.glTexImageCalls;                              \
-            /* Estimate bytes: width * height * 4 (conservative RGBA8) */  \
+            /* Estimate bytes: w*h*4 (RGBA8 approx; over-estimates for compressed formats) */ \
             g_mc2HitchAccum.glTexImageBytes +=                              \
                 (uint64_t)(w) * (uint64_t)(h) * 4u;                        \
         }                                                                   \
