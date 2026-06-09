@@ -193,6 +193,17 @@ static const float LOD_DIST_THRESH[5] = {
 // hysteresis in linear distance (= 1.21x in distSq) to prevent flickering.
 static uint8_t chooseLodLevel(float distSq, uint8_t prevLevel)
 {
+    // Camera-isolation diagnostic: MC2_TERRAIN_LOD_CHUNK_FORCE_LOD=k forces every
+    // block to LOD k (0=finest). With FORCE_LOD=0 + NO_CULL + NO_SKIRTS, rotation
+    // in place MUST be stable — if it still breaks, the defect is in the
+    // shader/worldToClip/camera convention, NOT LOD/cull/skirt policy.
+    static const int s_forceLod = []() -> int {
+        const char* v = getenv("MC2_TERRAIN_LOD_CHUNK_FORCE_LOD");
+        return v ? atoi(v) : -1;
+    }();
+    if (s_forceLod >= 0)
+        return (uint8_t)(s_forceLod > 5 ? 5 : s_forceLod);
+
     uint8_t desired = 5;
     for (int k = 0; k < 5; ++k) {
         if (distSq < LOD_DIST_THRESH[k] * LOD_DIST_THRESH[k]) {
@@ -1802,6 +1813,34 @@ long Terrain::update (void)
 					}
 				}
 				++s_cmdCount;
+			}
+		}
+
+		// Camera-isolation diagnostic (MC2_TERRAIN_CAM_DIAG=1). Throttled per-frame
+		// log of camera position + a frustum-plane checksum + cmd count. KEY TEST:
+		// rotate IN PLACE (fixed position/zoom). If camPos is unchanged but cmds or
+		// planeHash swing wildly between "good" and "bad" angles, the defect is the
+		// frustum cull / camera-convention (angle-sensitive), NOT LOD distance.
+		// LOD is distance-based and must not change much under pure yaw.
+		{
+			static const bool s_camDiag = (getenv("MC2_TERRAIN_CAM_DIAG") != nullptr);
+			if (s_camDiag)
+			{
+				// FNV-1a over the 24 cached frustum-plane floats.
+				uint32_t planeHash = 2166136261u;
+				const unsigned char* pb = (const unsigned char*)planes;
+				for (size_t i = 0; i < sizeof(float) * 6 * 4; ++i)
+					planeHash = (planeHash ^ pb[i]) * 16777619u;
+				static unsigned long s_camDiagFrame = 0;
+				++s_camDiagFrame;
+				if (s_camDiagFrame <= 5 || (s_camDiagFrame % 15) == 0)
+				{
+					printf("[TerrainCamDiag] frame=%lu camPos=(%.1f,%.1f,%.1f) "
+						   "cmds=%d planeHash=%08x\n",
+						   s_camDiagFrame, camOriginLod.x, camOriginLod.y, camOriginLod.z,
+						   s_cmdCount, planeHash);
+					fflush(stdout);
+				}
 			}
 		}
 
