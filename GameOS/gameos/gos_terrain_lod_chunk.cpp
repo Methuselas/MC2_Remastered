@@ -348,15 +348,24 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     // Phase 6: save cull state so we can disable it around skirt draws.
     GLboolean prevCullFace = glIsEnabled(GL_CULL_FACE);
 
-    // Diag 7.5: MC2_TERRAIN_LOD_DEPTH_ALWAYS=1 uses GL_ALWAYS depth test to
-    // bypass depth contention — if all LOD colors appear, something writes
-    // terrain depth before us and causes LOD1/2 to fail LEQUAL.
+    // Phase 10.3: chunk terrain is OPAQUE and must EXPLICITLY own depth state.
+    // The driver previously inherited GL_DEPTH_TEST / glDepthMask / GL_BLEND /
+    // glDepthFunc from whatever pass ran before. If a prior transparent/overlay
+    // pass left depth WRITES off (glDepthMask FALSE) or blend on, the terrain top
+    // renders color but writes NO depth -> never occludes -> "transparent,
+    // see-through to the skirts / lower terrain", flipping with draw order and
+    // mech-selection (which changes the prior pass). Independent of frag output
+    // (confirmed: diag7 with all frag outputs neutralized was still transparent).
+    // Set the opaque reverse-Z state explicitly; restore everything at the end.
     static const bool s_depthAlways = (getenv("MC2_TERRAIN_LOD_DEPTH_ALWAYS") != nullptr);
-    GLint prevDepthFunc = GL_LEQUAL;
-    if (s_depthAlways) {
-        glGetIntegerv(GL_DEPTH_FUNC, &prevDepthFunc);
-        glDepthFunc(GL_ALWAYS);
-    }
+    GLboolean prevDepthTest = glIsEnabled(GL_DEPTH_TEST);
+    GLboolean prevDepthMask = GL_TRUE; glGetBooleanv(GL_DEPTH_WRITEMASK, &prevDepthMask);
+    GLboolean prevBlend     = glIsEnabled(GL_BLEND);
+    GLint     prevDepthFunc = GL_GEQUAL; glGetIntegerv(GL_DEPTH_FUNC, &prevDepthFunc);
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+    glDepthFunc(s_depthAlways ? GL_ALWAYS : GL_GEQUAL);   // reverse-Z opaque terrain
 
     glUseProgram(s_terrainProgram);
     glBindVertexArray(s_patchVao);
@@ -504,10 +513,13 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_HEIGHT_SSBO_BINDING, 0);
     if (prevCullFace)
         glEnable(GL_CULL_FACE);   // Phase 10.3: restore inherited cull state
+    // Phase 10.3: restore inherited depth/blend state.
+    glDepthMask(prevDepthMask);
+    if (!prevDepthTest) glDisable(GL_DEPTH_TEST);
+    if (prevBlend)      glEnable(GL_BLEND);
+    glDepthFunc((GLenum)prevDepthFunc);
     glBindVertexArray((GLuint)prevVAO);
     glUseProgram((GLuint)prevProg);
-    if (s_depthAlways)
-        glDepthFunc((GLenum)prevDepthFunc);
 }
 
 // ---------------------------------------------------------------------------
