@@ -39,28 +39,32 @@ void TacMapTGA::OnPaint()
 		POINT pts[5];
 
 
-		// alrighty need to draw that little rectangle
+		// Draw the view rectangle. Use the cheap O(1) ground-plane unproject —
+		// NOT eye->inverseProject (the legacy terrain picker, which scans ~40k
+		// quads per call and froze the editor for seconds when OnMouseWheel
+		// forced a synchronous tacmap repaint per notch). The rectangle is an
+		// approximate overlay; exact terrain intersection is unnecessary.
 		screen.x = 1;
 		screen.y = 1;
-		eye->inverseProject( screen, world );
+		eye->screenToGroundPlaneApprox( screen.x, screen.y, world );
 		TacMap::worldToTacMap( world, 0, 0, EDITOR_TACMAP_DISPLAY_SIZE, EDITOR_TACMAP_DISPLAY_SIZE,  tmp );
 		pts[0].x = tmp.x;
 		pts[0].y = tmp.y;
 
 		screen.y = Environment.screenHeight - 1;
-		eye->inverseProject( screen, world );
+		eye->screenToGroundPlaneApprox( screen.x, screen.y, world );
 		TacMap::worldToTacMap( world, 0, 0, EDITOR_TACMAP_DISPLAY_SIZE, EDITOR_TACMAP_DISPLAY_SIZE,  tmp );
 		pts[1].x = tmp.x;
 		pts[1].y = tmp.y;
 
 		screen.x = Environment.screenWidth - 1;
-		eye->inverseProject( screen, world );
+		eye->screenToGroundPlaneApprox( screen.x, screen.y, world );
 		TacMap::worldToTacMap( world, 0, 0,EDITOR_TACMAP_DISPLAY_SIZE, EDITOR_TACMAP_DISPLAY_SIZE, tmp );
 		pts[2].x = tmp.x;
 		pts[2].y = tmp.y;
 
 		screen.y = 1;
-		eye->inverseProject( screen, world );
+		eye->screenToGroundPlaneApprox( screen.x, screen.y, world );
 		TacMap::worldToTacMap( world, 0, 0, EDITOR_TACMAP_DISPLAY_SIZE, EDITOR_TACMAP_DISPLAY_SIZE, tmp );
 		pts[3].x = tmp.x;
 		pts[3].y = tmp.y;

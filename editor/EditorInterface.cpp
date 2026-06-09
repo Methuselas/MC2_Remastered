@@ -1540,7 +1540,13 @@ void EditorInterface::handleMouseMove( int PosX, int PosY )
 	
 	Stuff::Vector3D vector;
 	Stuff::Vector2DOf<long> v2( PosX, PosY );
-	eye->inverseProject( v2, vector );
+	// Per-move cursor world position. Use the cheap O(1) ground-plane unproject,
+	// NOT the legacy terrain picker (eye->inverseProject scans ~40k quads — it was
+	// 125-296ms PER mouse-move here, the residual editor pan/paint hitch). Every
+	// consumer below is cell-based (worldToCell uses x,y); elevation is not read.
+	// Precise terrain picks remain where they matter: click (handleLeftButtonDown)
+	// and the object drag-move jacobian (4 inverseProject calls just below).
+	eye->screenToGroundPlaneApprox( v2.x, v2.y, vector );
 
 	// Object drag-move: while an object is grabbed, follow the cursor by moving
 	// it to the cell under the mouse. moveBuilding() snaps to the cell grid and
@@ -1647,7 +1653,7 @@ void EditorInterface::handleMouseMove( int PosX, int PosY )
 		lastY = PosY;
 
 		SafeRunGameOSLogic();
-		tacMap.RedrawWindow();
+		tacMap.Invalidate(FALSE);  // async/coalesced — avoid synchronous per-event minimap repaint storm
 		syncScrollBars();
 	}
 
@@ -1723,7 +1729,7 @@ void EditorInterface::handleLeftButtonUp( int PosX, int PosY )
 		m_pDragAction = NULL;
 		m_pDragObject = NULL;
 		m_dragObjMoved = false;
-		tacMap.RedrawWindow();
+		tacMap.Invalidate(FALSE);  // async/coalesced — avoid synchronous per-event minimap repaint storm
 		return;
 	}
 
@@ -1999,19 +2005,19 @@ void EditorInterface::updateCameraInput()
 		eye->ZoomOut(zoomInc * frameFactor * eye->getScaleFactor());
 		if (eye->getScaleFactor() <= 0.3) renderTrees = false;
 		syncScrollBars();
-		tacMap.RedrawWindow();
+		tacMap.Invalidate(FALSE);  // async/coalesced — avoid synchronous per-event minimap repaint storm
 	}
 	if (zoomIn)
 	{
 		eye->ZoomIn(zoomInc * frameFactor * eye->getScaleFactor());
 		if (eye->getScaleFactor() > 0.3) renderTrees = true;
 		syncScrollBars();
-		tacMap.RedrawWindow();
+		tacMap.Invalidate(FALSE);  // async/coalesced — avoid synchronous per-event minimap repaint storm
 	}
 
-	if (tiltDn)    { eye->tiltDown(scrollFactor * frameFactor * 10.0f); syncScrollBars(); tacMap.RedrawWindow(); }
-	if (tiltUp)    { eye->tiltUp  (scrollFactor * frameFactor * 10.0f); syncScrollBars(); tacMap.RedrawWindow(); }
-	if (tiltNormal){ eye->tiltNormal();                                  syncScrollBars(); tacMap.RedrawWindow(); }
+	if (tiltDn)    { eye->tiltDown(scrollFactor * frameFactor * 10.0f); syncScrollBars(); tacMap.Invalidate(FALSE); }
+	if (tiltUp)    { eye->tiltUp  (scrollFactor * frameFactor * 10.0f); syncScrollBars(); tacMap.Invalidate(FALSE); }
+	if (tiltNormal){ eye->tiltNormal();                                  syncScrollBars(); tacMap.Invalidate(FALSE); }
 
 	if (rotateLf)
 	{
@@ -3347,9 +3353,9 @@ void EditorInterface::syncHScroll()
 		Stuff::Vector3D world1, world2;
 		screen.y = Environment.screenHeight / 2;
 		screen.x = 1;
-		eye->inverseProject( screen, world1 );
+		eye->screenToGroundPlaneApprox( screen.x, screen.y, world1 );  // cheap: span only needs x,y
 		screen.x = Environment.screenWidth - 1;
-		eye->inverseProject( screen, world2 );
+		eye->screenToGroundPlaneApprox( screen.x, screen.y, world2 );
 		float dx = world2.x - world1.x;
 		float dy = world2.y - world1.y;
 		float span = sqrt(dx * dx + dy * dy);
@@ -3361,7 +3367,7 @@ void EditorInterface::syncHScroll()
 		SetScrollInfo(SB_HORZ, &si);
 	}
 
-	tacMap.RedrawWindow();
+	tacMap.Invalidate(FALSE);  // async/coalesced — avoid synchronous per-event minimap repaint storm
 }
 
 /* make the vertical scroll bar reflect the current camera position */
@@ -3400,9 +3406,9 @@ void EditorInterface::syncVScroll()
 		Stuff::Vector3D world1, world2;
 		screen.x = Environment.screenWidth / 2;
 		screen.y = 1;
-		eye->inverseProject( screen, world1 );
+		eye->screenToGroundPlaneApprox( screen.x, screen.y, world1 );  // cheap: span only needs x,y
 		screen.y = Environment.screenHeight - 1;
-		eye->inverseProject( screen, world2 );
+		eye->screenToGroundPlaneApprox( screen.x, screen.y, world2 );
 		float dx = world2.x - world1.x;
 		float dy = world2.y - world1.y;
 		float span = sqrt(dx * dx + dy * dy);
@@ -3414,7 +3420,7 @@ void EditorInterface::syncVScroll()
 		SetScrollInfo(SB_VERT, &si);
 	}
 
-	tacMap.RedrawWindow();
+	tacMap.Invalidate(FALSE);  // async/coalesced — avoid synchronous per-event minimap repaint storm
 }
 
 void EditorInterface::SetBusyMode(bool)
@@ -3689,7 +3695,7 @@ int EditorInterface::OnCreate(LPCREATESTRUCT lpCreateStruct)
 	{
 		tacMap.Create( IDD_TACMAP, this );
 		tacMap.ShowWindow( true );
-		tacMap.RedrawWindow();
+		tacMap.Invalidate(FALSE);  // async/coalesced — avoid synchronous per-event minimap repaint storm
 	}
 	else
 	{
@@ -3985,7 +3991,7 @@ void EditorInterface::OnLButtonUp(UINT nFlags, CPoint point)
 			if (EditorInterface_ShouldOpenSettingsForClick(point.x, point.y))
 				UnitSettings();
 
-			tacMap.RedrawWindow();
+			tacMap.Invalidate(FALSE);  // async/coalesced — avoid synchronous per-event minimap repaint storm
 			SafeRunGameOSLogic();
 		}
 	}
@@ -4265,7 +4271,7 @@ void EditorInterface::OnRButtonUp(UINT nFlags, CPoint point)
 	}
 	else
 	{
-		tacMap.RedrawWindow();
+		tacMap.Invalidate(FALSE);  // async/coalesced — avoid synchronous per-event minimap repaint storm
 		syncScrollBars();
 	}
 
@@ -4309,13 +4315,13 @@ BOOL EditorInterface::OnMouseWheel(UINT nFlags, short zDelta, CPoint pt)
 		if ( BuildingBrush* bb = dynamic_cast<BuildingBrush*>(curBrush) )
 		{
 			bb->addRotationDegrees( deg );
-			tacMap.RedrawWindow();
+			tacMap.Invalidate(FALSE);  // async/coalesced — avoid synchronous per-event minimap repaint storm
 			return TRUE;
 		}
 		else if ( EditorObjectMgr::instance()->getSelectionCount() > 0 )
 		{
 			rotateSelectedObjectsDegrees( deg );
-			tacMap.RedrawWindow();
+			tacMap.Invalidate(FALSE);  // async/coalesced — avoid synchronous per-event minimap repaint storm
 			return TRUE;
 		}
 	}
@@ -4375,7 +4381,7 @@ BOOL EditorInterface::OnMouseWheel(UINT nFlags, short zDelta, CPoint pt)
 
 	// Re-render immediately so the zoomed view is visible before the next OnIdle tick.
 	SafeRunGameOSLogic();
-	tacMap.RedrawWindow();
+	tacMap.Invalidate(FALSE);  // async/coalesced — avoid synchronous per-event minimap repaint storm
 	syncScrollBars();
 	return CWnd ::OnMouseWheel(nFlags, zDelta, pt);
 }
@@ -4898,7 +4904,7 @@ void EditorInterface::OnHScroll(UINT nSBCode, UINT nPos, CScrollBar* pScrollBar)
 	CWnd ::OnHScroll(nSBCode, nPos, pScrollBar);
 
 	SafeRunGameOSLogic();
-	tacMap.RedrawWindow();
+	tacMap.Invalidate(FALSE);  // async/coalesced — avoid synchronous per-event minimap repaint storm
 	syncScrollBars();
 }
 
@@ -4980,7 +4986,7 @@ void EditorInterface::OnVScroll(UINT nSBCode, UINT nPos, CScrollBar* pScrollBar)
 	CWnd ::OnVScroll(nSBCode, nPos, pScrollBar);
 
 	SafeRunGameOSLogic();
-	tacMap.RedrawWindow();
+	tacMap.Invalidate(FALSE);  // async/coalesced — avoid synchronous per-event minimap repaint storm
 	syncScrollBars();
 }
 
@@ -5066,7 +5072,7 @@ void EditorInterface::initTacMap()
 	tacMap.SetData( pData, size );
 	free( pData );
 	pData = NULL;
-	tacMap.RedrawWindow();
+	tacMap.Invalidate(FALSE);  // async/coalesced — avoid synchronous per-event minimap repaint storm
 }
 
 BOOL EditorInterface::PreTranslateMessage(MSG* pMsg) 

@@ -986,6 +986,14 @@ class Camera
 
 		unsigned long inverseProject (Stuff::Vector2DOf<long> &screenPos, Stuff::Vector3D &point);
 
+		// screenToGroundPlaneApprox: O(1) screen-pixel -> world point on the
+		// z=0 ground plane via the inverse clip matrix + ray/plane intersect.
+		// NOT a terrain pick: does no quad scan and ignores elevation. Use for
+		// cheap, approximate overlays (e.g. the tacmap view rectangle) where
+		// exact terrain intersection is unnecessary. Do NOT substitute for
+		// inverseProject() when a real terrain hit is required.
+		bool screenToGroundPlaneApprox (long screenX, long screenY, Stuff::Vector3D &outWorld);
+
 		// getClosestVertex: screen-click -> terrain vertex (row,col).
 		// Reinstated 2026-05-24 for the EditRel Mission Editor (sole caller
 		// editor/TerrainBrush.h). Thin adapter over Camera::inverseProject +

@@ -929,6 +929,56 @@ static unsigned long parityReport (Stuff::Vector2DOf<long> &screenPos,
 }
 
 //---------------------------------------------------------------------------
+// O(1) screen -> z=0 ground-plane unproject. No quad scan, no terrain pick.
+// See header. Mirrors the matrix-inverse unproject used by the LOD-chunk pick
+// path, then intersects the camera ray with the world z=0 plane.
+bool Camera::screenToGroundPlaneApprox (long screenX, long screenY, Stuff::Vector3D &outWorld)
+{
+	outWorld.x = outWorld.y = outWorld.z = 0.0f;
+	if (turn < 4)
+		return false;
+
+	Stuff::Matrix4D M = worldToClipGL();
+	Stuff::Matrix4D Minv;
+	Minv.Invert(M);
+
+	const float w = screenResolution.x;
+	const float h = screenResolution.y;
+	if (w <= 0.0f || h <= 0.0f)
+		return false;
+
+	const float ndcX =  2.0f * (float(screenX) / w) - 1.0f;
+	const float ndcY =  1.0f - 2.0f * (float(screenY) / h);
+
+	// clip_row * Minv (row-vector convention), perspective divide.
+	auto unprojectNDC = [&](float nz) -> Stuff::Vector3D {
+		float wx = ndcX*Minv(0,0) + ndcY*Minv(1,0) + nz*Minv(2,0) + Minv(3,0);
+		float wy = ndcX*Minv(0,1) + ndcY*Minv(1,1) + nz*Minv(2,1) + Minv(3,1);
+		float wz = ndcX*Minv(0,2) + ndcY*Minv(1,2) + nz*Minv(2,2) + Minv(3,2);
+		float ww = ndcX*Minv(0,3) + ndcY*Minv(1,3) + nz*Minv(2,3) + Minv(3,3);
+		const float invW = (fabsf(ww) > 1e-8f) ? (1.0f / ww) : 0.0f;
+		Stuff::Vector3D v; v.x = wx*invW; v.y = wy*invW; v.z = wz*invW;
+		return v;
+	};
+	// GL-swapped (x'=-x, y'=z, z'=y) -> MC2 world (x=-glX, y=glZ, z=glY).
+	auto glToMC2 = [](const Stuff::Vector3D& g) -> Stuff::Vector3D {
+		Stuff::Vector3D r; r.x = -g.x; r.y = g.z; r.z = g.y; return r;
+	};
+
+	Stuff::Vector3D ro = glToMC2(unprojectNDC(-1.0f));   // near
+	Stuff::Vector3D rf = glToMC2(unprojectNDC( 1.0f));   // far
+
+	const float dz = rf.z - ro.z;
+	if (fabsf(dz) < 1e-6f) { outWorld = ro; outWorld.z = 0.0f; return false; }
+
+	const float t = (0.0f - ro.z) / dz;   // intersect z=0 ground plane
+	outWorld.x = ro.x + t * (rf.x - ro.x);
+	outWorld.y = ro.y + t * (rf.y - ro.y);
+	outWorld.z = 0.0f;
+	return true;
+}
+
+//---------------------------------------------------------------------------
 unsigned long Camera::inverseProject (Stuff::Vector2DOf<long> &screenPos, Stuff::Vector3D &point)
 {
 	if (turn < 4)
