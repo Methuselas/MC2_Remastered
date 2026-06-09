@@ -2122,6 +2122,8 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 		long gatesUpdated = 0;
 		long activeBlocksVisited = 0;
 		long terrainObjectsUpdated = 0;
+		long terrainObjectsVisited = 0;
+		long cullRecordsEmitted = 0;
 
 		//First Update all of the Special Buildings.
 		// They will mark themselves updated and not re-update below.
@@ -2197,26 +2199,42 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 				long objIndex = Terrain::objBlockInfo[terrainBlock].firstHandle;
 				for (long terrainObj = 0; terrainObj < numObjs; terrainObj++,objIndex++)
 				{
+					{
+						ZoneScopedN("GOM.TerrainObjects.ActiveGate");
+						if (objList[objIndex] &&
+							Terrain::objVertexActive[objList[objIndex]->getVertexNum()] &&
+							objList[objIndex]->getExists())
+						{
+							terrainObjectsVisited++;
+						}
+					}
 					if (objList[objIndex] &&
 						Terrain::objVertexActive[objList[objIndex]->getVertexNum()] &&
 						objList[objIndex]->getExists())
 					{
-						long updateRet_instr = objList[objIndex]->update();
-						objList[objIndex]->lastUpdateRet = (int32_t)updateRet_instr;
-						if (!updateRet_instr)
 						{
-							//-----------------------------------------
-							// Update failed, so it no longer exists...
-							MC2_DESTROY(objList[objIndex], "update_false");
-						}
-						else
-						{
-							terrainObjectsUpdated++;
+							ZoneScopedN("GOM.TerrainObjects.ObjUpdate");
+							long updateRet_instr = objList[objIndex]->update();
+							objList[objIndex]->lastUpdateRet = (int32_t)updateRet_instr;
+							if (!updateRet_instr)
+							{
+								//-----------------------------------------
+								// Update failed, so it no longer exists...
+								MC2_DESTROY(objList[objIndex], "update_false");
+							}
+							else
+							{
+								terrainObjectsUpdated++;
+							}
 						}
 						// C0-3: emit after update() so inView is fresh; gated on getExists()
 						if (objList[objIndex] && objList[objIndex]->getExists())
+						{
+							ZoneScopedN("GOM.TerrainObjects.GpuCullRecord");
 							emitGpuCullRecord(objList[objIndex], gpu_cull::Cat_Other,
 							                  gpu_cull::Consumer_RenderGate | gpu_cull::Consumer_LifecycleGate);
+							cullRecordsEmitted++;
+						}
 					}
 				}
 			}
@@ -2228,6 +2246,10 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 		TracyPlot("TerrainObjects visible objects updated", int64_t(terrainObjectsUpdated));
 		TracyPlot("TerrainObjects dynamic updates", int64_t(g_staticUpdateRunCount()));
 		TracyPlot("TerrainObjects static skipped",  int64_t(g_staticUpdateSkipCount()));
+		TracyPlot("GOM.TerrainObjects.ActiveBlocks", int64_t(activeBlocksVisited));
+		TracyPlot("GOM.TerrainObjects.VisitedObjects", int64_t(terrainObjectsVisited));
+		TracyPlot("GOM.TerrainObjects.UpdatedObjects", int64_t(terrainObjectsUpdated));
+		TracyPlot("GOM.TerrainObjects.CullRecords", int64_t(cullRecordsEmitted));
 
 		const uint32_t curFrame = g_mc2FrameCounter;
 		if (curFrame > 0 && (curFrame % 600) == 0 &&
