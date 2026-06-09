@@ -201,8 +201,11 @@ public:
 	afx_msg void OnViewOrthographiccamera();
 	afx_msg void OnViewShowpassabilitymap();
 	afx_msg void OnMButtonUp(UINT nFlags, CPoint point);
+	afx_msg void OnTimer(UINT_PTR nIDEvent);   // render-pump timer (freeze fix)
 	//}}AFX_MSG
 		DECLARE_MESSAGE_MAP()
+
+	enum { kRenderTimerId = 0xED20 };          // WM_TIMER id for the render pump
 
 	afx_msg void OnCommand(UINT nID);
 	

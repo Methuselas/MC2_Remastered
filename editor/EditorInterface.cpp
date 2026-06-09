@@ -812,6 +812,7 @@ BEGIN_MESSAGE_MAP(EditorInterface,CWnd )
 	ON_COMMAND(ID_VIEW_ORTHOGRAPHICCAMERA, OnViewOrthographiccamera)
 	ON_COMMAND(ID_VIEW_SHOWPASSABILITYMAP, OnViewShowpassabilitymap)
 	ON_WM_MBUTTONUP()
+	ON_WM_TIMER()
 	//}}AFX_MSG_MAP
 	ON_UPDATE_COMMAND_UI_RANGE(0, 0xffff, UpdateButton ) 
 	ON_COMMAND_RANGE( 0, 0xffff, OnCommand )
@@ -3694,7 +3695,25 @@ int EditorInterface::OnCreate(LPCREATESTRUCT lpCreateStruct)
 	{
 		gosASSERT(false);
 	}
+
+	// FREEZE FIX (catch-all): drive a render tick from a WM_TIMER so the 3D view
+	// keeps updating even when the normal OnIdle/WM_PAINT pump is starved AND the
+	// mouse isn't moving — e.g. wheel-zoom, edge-scroll with a still cursor, or an
+	// MFC modal scrollbar-drag loop (WM_TIMER is still dispatched in those loops).
+	// ~120 Hz. SafeRunGameOSLogic self-guards reentrancy and renderer-not-ready.
+	SetTimer(kRenderTimerId, 8, NULL);
+
 	return 0;
+}
+
+void EditorInterface::OnTimer(UINT_PTR nIDEvent)
+{
+	if (nIDEvent == kRenderTimerId)
+	{
+		SafeRunGameOSLogic();
+		return;
+	}
+	CWnd::OnTimer(nIDEvent);
 }
 
 extern bool gActive;
@@ -4121,6 +4140,24 @@ void EditorInterface::OnMouseMove(UINT nFlags, CPoint point)
 	// EditorGosRender forwards GL-child mouse messages here so this legacy
 	// camera/tool path remains the single source of truth.
 	handleMouseMove( point.x, point.y );
+
+	// PERF/FREEZE FIX: the 3D viewport normally renders via OnIdle -> InvalidateRect
+	// -> WM_PAINT. A continuous mouse drag (pan / edge-scroll / wheel-zoom with
+	// motion) floods the queue with WM_MOUSEMOVE, which starves BOTH OnIdle (only
+	// runs on an empty queue) and WM_PAINT (lowest priority). Result: the view
+	// freezes for the whole duration of the drag (measured 7-19s gaps between
+	// RunGameOSLogic ticks) while tacmap/coords stay live (handled here directly).
+	// Pump a render frame from the flood handler itself, throttled to ~120 fps so
+	// high-rate mice don't over-render. SafeRunGameOSLogic self-guards reentrancy.
+	{
+		static DWORD s_lastRenderTick = 0;
+		DWORD nowTick = ::GetTickCount();
+		if (nowTick - s_lastRenderTick >= 8)
+		{
+			s_lastRenderTick = nowTick;
+			SafeRunGameOSLogic();
+		}
+	}
 }
 
 void EditorInterface::ChangeCursor( int ID )
@@ -4355,9 +4392,28 @@ void EditorInterface::renderTerrainSelection()
 
 	gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_AlphaInvAlpha );
 
-	for ( int j = 0; j < side - 1; ++j )
+	// PERF: window the selection-overlay scan to the visible camera vertex
+	// range (same window MapData::makeLists renders). Previously this was an
+	// unconditional O(realVerticesMapSide^2) double loop — on a 1k map that is
+	// ~1.04M iterations + a gos_DrawQuads per selected cell EVERY frame, which
+	// dominated the editor frame (~560ms, the "slow pan" hot loop). Off-screen
+	// selected cells don't need drawing. Bounds mirror makeLists (mapdata.cpp).
+	int jLo = 0, jHi = side - 1, iLo = 0, iHi = side - 1;
+	if ( Terrain::mapData && Terrain::visibleVerticesPerSide > 0 )
 	{
-		for ( int i = 0; i < side - 1; ++i )
+		const Stuff::Vector2DOf<float> tlv = Terrain::mapData->getTopLeftVertex();
+		const int vvps = (int)Terrain::visibleVerticesPerSide;
+		const int topX = (int)tlv.x;
+		const int topY = (int)tlv.y;
+		iLo = topX < 0 ? 0 : topX;
+		jLo = topY < 0 ? 0 : topY;
+		iHi = (topX + vvps) < (side - 1) ? (topX + vvps) : (side - 1);
+		jHi = (topY + vvps) < (side - 1) ? (topY + vvps) : (side - 1);
+	}
+
+	for ( int j = jLo; j < jHi; ++j )
+	{
+		for ( int i = iLo; i < iHi; ++i )
 		{
 			if ( !land->isVertexSelected( j, i ) )
 				continue;
