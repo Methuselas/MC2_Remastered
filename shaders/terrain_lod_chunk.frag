@@ -24,10 +24,22 @@ uniform float u_atlasTopLeftY;            // = Terrain::mapTopLeft3d.y
 uniform float u_atlasOneOverWorldUnits;   // = Terrain::oneOverWorldUnitsMapSide
 uniform vec4  terrainLightDir;            // Phase 10 Step 1b: sun dir (same uniform as legacy)
 uniform int   u_diag;                     // Bisection bitmask (MC2_TERRAIN_LOD_CHUNK_DIAG):
-                                          //   1 = do NOT write GBuffer1
-                                          //   2 = no depth fudge (raw gl_FragCoord.z)
-                                          //   4 = no lighting (colormap only)
-                                          //   8 = no shadows (skip calcShadow)
+                                          //   1  = do NOT write GBuffer1
+                                          //   2  = no depth fudge (raw gl_FragCoord.z)
+                                          //   4  = no lighting (colormap only)
+                                          //   8  = no shadows (skip calcShadow)
+                                          //   16 = flat per-triangle normal (old dFdx)
+
+// Step 1c-fix: SMOOTH per-pixel normal from the heightfield. The frag reads the
+// SAME height SSBO the vert uses (binding 23) and takes a bilinear central
+// difference, so even coarse LOD triangles shade smoothly instead of as flat
+// faceted wedges (the "atrocious cliff" artifact). u_mapSide/u_halfMap are the
+// SAME linked-program uniforms the vert already receives from the driver.
+uniform int   u_mapSide;
+uniform float u_halfMap;
+layout(binding = 23, std430) readonly buffer TerrainHeightBufFrag {
+    float heightsF[];
+};
 
 layout(location = 0) out vec4 fragColor;
 layout(location = 1) out vec4 GBuffer1;   // shadow-handled flat-up (terrain MRT composite)
@@ -40,6 +52,37 @@ layout(location = 1) out vec4 GBuffer1;   // shadow-handled flat-up (terrain MRT
 // draw order, worst at distance). Match the legacy convention. Keep LOCKSTEP with
 // shaders/include/terrain_depth_bias.hglsl (TERRAIN_DEPTH_FUDGE = -0.002).
 const float TERRAIN_DEPTH_FUDGE = -0.002;
+
+float heightAtCell(int cx, int cy) {
+    cx = clamp(cx, 0, u_mapSide - 1);
+    cy = clamp(cy, 0, u_mapSide - 1);
+    return heightsF[cx + cy * u_mapSide];
+}
+
+// Bilinear height at a continuous (col,row) — matches the legacy LINEAR-filtered
+// terrainHeightTex so the central difference is continuous (no per-cell terrace).
+float heightBilinear(float fx, float fy) {
+    int   x0 = int(floor(fx)), y0 = int(floor(fy));
+    float tx = fx - float(x0), ty = fy - float(y0);
+    float h00 = heightAtCell(x0,     y0);
+    float h10 = heightAtCell(x0 + 1, y0);
+    float h01 = heightAtCell(x0,     y0 + 1);
+    float h11 = heightAtCell(x0 + 1, y0 + 1);
+    return mix(mix(h00, h10, tx), mix(h01, h11, tx), ty);
+}
+
+// Smooth world-space normal from the heightfield (central difference). World
+// convention matches the vert: worldX = col*128 - halfMap, worldY = halfMap -
+// row*128 (row increases as Y decreases -> dh/dy = -dh/drow). Returns +Z up.
+vec3 smoothTerrainNormal(vec2 worldXY) {
+    float colF = (worldXY.x + u_halfMap) / 128.0;
+    float rowF = (u_halfMap - worldXY.y) / 128.0;
+    float span = 2.0 * 128.0;
+    float dhdx   = (heightBilinear(colF + 1.0, rowF) - heightBilinear(colF - 1.0, rowF)) / span;
+    float dhdrow = (heightBilinear(colF, rowF + 1.0) - heightBilinear(colF, rowF - 1.0)) / span;
+    float dhdy   = -dhdrow;
+    return normalize(vec3(-dhdx, -dhdy, 1.0));
+}
 
 void main() {
     // Reverse-Z terrain depth fudge (bit 2 disables it: raw gl_FragCoord.z).
@@ -80,9 +123,13 @@ void main() {
     vec3 N;
     if (u_skirtDepth > 0.0) {
         N = vec3(0.0, 0.0, 1.0);
-    } else {
+    } else if ((u_diag & 16) != 0) {
+        // A/B fallback: old flat per-triangle geometric normal.
         N = normalize(cross(dFdx(v_worldPos), dFdy(v_worldPos)));
         if (N.z < 0.0) N = -N;
+    } else {
+        // Smooth heightfield normal -> no faceted cliffs at coarse LOD.
+        N = smoothTerrainNormal(v_worldPos.xy);
     }
     float NdotL       = dot(N, terrainLightDir.xyz);
     float diffuse     = clamp(NdotL, 0.02, 1.0);
