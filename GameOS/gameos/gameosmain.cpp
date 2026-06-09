@@ -168,6 +168,7 @@ static LONG WINAPI mc2_unhandled_exception_filter(EXCEPTION_POINTERS* ep)
 #include "../../GuiRuntime/EditorInspector.h"     // TERRAIN-SPINE-0
 #include "imgui_impl_sdl2.h"
 #endif
+#include "mc2_hitch_trace.h"
 
 // Tier-1 instrumentation (stability spec §5.1): single source of truth for
 // the frame=... field used by TGL_POOL, DESTROY, and GL_ERROR log lines.
@@ -1147,10 +1148,12 @@ int main(int argc, char** argv)
     timeBeginPeriod(1);
 #endif
 
+    static uint32_t s_hitchFrame = 0u;
     while( !g_exit ) {
         ZoneScopedN("Frame");
 
 		uint64_t start_tick = timing::gettickcount();
+        mc2_hitch::BeginFrame(s_hitchFrame);
 
         // Throttle when the window is actually invisible (minimized / hidden),
         // NOT merely when it lacks keyboard focus. Plain focus loss happens
@@ -1623,6 +1626,8 @@ int main(int argc, char** argv)
 		uint64_t end_tick = timing::gettickcount();
 		uint64_t dt = timing::ticks2ms(end_tick - start_tick);
 		frameRate = dt ? (1000.0f / (float)dt) : 0.0f;
+        mc2_hitch::EndFrame(s_hitchFrame, static_cast<double>(dt));
+        ++s_hitchFrame;
 
         // Validation mode: record frame and check exit condition
         if (getValidateConfig().enabled) {
