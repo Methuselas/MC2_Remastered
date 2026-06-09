@@ -18,6 +18,7 @@ extern const float* gos_GetTerrainMVPMat4();
 
 static GLuint s_heightSsbo = 0;   // GL handle; 0 = not yet allocated
 static GLuint s_typeSsbo   = 0;   // Step 5b: per-vertex terrainType SSBO (binding 24)
+static GLuint s_cementSsbo = 0;   // Step 5c: per-vertex cement word SSBO (binding 25)
 static int    s_mapSide    = 0;   // mapSide stored at last UploadHeightFull
 static float  s_halfMap    = 0.0f;// (mapSide * 128.0 * 0.5)
 
@@ -78,6 +79,15 @@ extern void  gos_GetTerrainTintRock(float*, float*, float*);
 extern void  gos_GetTerrainTintGrass(float*, float*, float*);
 extern void  gos_GetTerrainTintDirt(float*, float*, float*);
 extern float gos_GetTerrainTintStrengthScale();
+// Step 5c: cement catalog atlas (tex3) accessors from gos_terrain_indirect.cpp.
+extern unsigned int gos_terrain_indirect_getCementAtlasGLTex();
+extern int          gos_terrain_indirect_getCementAtlasGridSide();
+extern bool         gos_terrain_indirect_isCementAtlasReady();
+static GLint    s_locCementAtlas    = -1;
+static GLint    s_locUseCement      = -1;
+static GLint    s_locCementGridSide = -1;
+static GLint    s_locCementWUPT     = -1;
+static constexpr GLint kChunkTexUnitCement = 3;  // matches legacy tex3
 extern void  gos_GetTerrainMatNormalBoost(float*, float*, float*, float*);
 extern void  gos_GetTerrainClassGrass(float*, float*, float*, float*);
 extern void  gos_GetTerrainClassDirt(float*, float*, float*, float*);
@@ -275,6 +285,7 @@ void gos_TerrainLodChunk_Init()
         return;
     }
     glGenBuffers(1, &s_typeSsbo);   // Step 5b: terrainType SSBO (concrete)
+    glGenBuffers(1, &s_cementSsbo); // Step 5c: cement word SSBO
 
     // Shader program (Phase 4) — load unconditionally; SubmitDrawCommands gates
     // on the env var so no pixels change unless MC2_TERRAIN_LOD_CHUNK=1.
@@ -330,6 +341,10 @@ void gos_TerrainLodChunk_Init()
             s_locTintGrass         = glGetUniformLocation(s_terrainProgram, "tintGrass");
             s_locTintDirt          = glGetUniformLocation(s_terrainProgram, "tintDirt");
             s_locTintStrengthScale = glGetUniformLocation(s_terrainProgram, "tintStrengthScale");
+            s_locCementAtlas    = glGetUniformLocation(s_terrainProgram, "u_cementAtlas");
+            s_locUseCement      = glGetUniformLocation(s_terrainProgram, "u_useCement");
+            s_locCementGridSide = glGetUniformLocation(s_terrainProgram, "u_cementGridSide");
+            s_locCementWUPT     = glGetUniformLocation(s_terrainProgram, "u_cementWUPT");
             printf("[TerrainLodChunk] shader loaded prog=%u "
                    "locs: originX=%d originY=%d mapSide=%d halfMap=%d mvp=%d lodStep=%d skirtDepth=%d forceColor=%d\n",
                    (unsigned)s_terrainProgram,
@@ -387,6 +402,11 @@ void gos_TerrainLodChunk_Destroy()
     {
         glDeleteBuffers(1, &s_typeSsbo);
         s_typeSsbo = 0;
+    }
+    if (s_cementSsbo != 0)
+    {
+        glDeleteBuffers(1, &s_cementSsbo);
+        s_cementSsbo = 0;
     }
 }
 
@@ -467,6 +487,9 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     // Step 5b: terrainType SSBO (concrete). 0 if never uploaded -> vert reads 0.
     if (s_typeSsbo != 0)
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_TYPE_SSBO_BINDING, s_typeSsbo);
+    // Step 5c: cement word SSBO.
+    if (s_cementSsbo != 0)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_CEMENT_SSBO_BINDING, s_cementSsbo);
 
     // Upload per-frame uniforms (same for every patch).
     if (s_locMapSide >= 0)
@@ -557,6 +580,26 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         glActiveTexture(GL_TEXTURE0 + kChunkTexUnitMatNormalArray);
         glBindTexture(GL_TEXTURE_2D_ARRAY, matArrTex);
         glActiveTexture(GL_TEXTURE0);
+    }
+
+    // Step 5c: cement catalog atlas (tex3 / unit 3) + params — concrete tiles
+    // sample this instead of the colormap (legacy gos_terrain.frag:414-426).
+    {
+        bool cementReady = gos_terrain_indirect_isCementAtlasReady();
+        if (s_locUseCement >= 0)
+            glUniform1i(s_locUseCement, (cementReady && s_cementSsbo != 0) ? 1 : 0);
+        if (cementReady) {
+            if (s_locCementGridSide >= 0)
+                glUniform1i(s_locCementGridSide, gos_terrain_indirect_getCementAtlasGridSide());
+            if (s_locCementWUPT >= 0)
+                glUniform1f(s_locCementWUPT, 128.0f);  // Terrain::worldUnitsPerVertex
+            if (s_locCementAtlas >= 0) {
+                glUniform1i(s_locCementAtlas, kChunkTexUnitCement);
+                glActiveTexture(GL_TEXTURE0 + kChunkTexUnitCement);
+                glBindTexture(GL_TEXTURE_2D, (GLuint)gos_terrain_indirect_getCementAtlasGLTex());
+                glActiveTexture(GL_TEXTURE0);
+            }
+        }
     }
 
     // Step 5a: upload the live material tunables (driven by the ImGui terrain
@@ -754,6 +797,19 @@ void gos_TerrainLodChunk_UploadTerrainTypeFull(const float* types, int mapSide)
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_typeSsbo);
     glBufferData(GL_SHADER_STORAGE_BUFFER, bytes, types, GL_DYNAMIC_DRAW);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_TYPE_SSBO_BINDING, s_typeSsbo);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+}
+
+// Step 5c: per-vertex cement word upload (valid bit | atlas layer index). Built by
+// gos_terrain_indirect after the cement catalog atlas is ready (PopulateRecipeCementWords).
+void gos_TerrainLodChunk_UploadCementWordsFull(const unsigned int* words, int count, int mapSide)
+{
+    if (s_cementSsbo == 0 || !words || count <= 0 || mapSide <= 0)
+        return;
+    GLsizeiptr bytes = (GLsizeiptr)count * sizeof(unsigned int);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_cementSsbo);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, bytes, words, GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_CEMENT_SSBO_BINDING, s_cementSsbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
 

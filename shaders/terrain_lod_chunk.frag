@@ -15,6 +15,13 @@
 in vec3  v_worldPos;
 in float v_terrainType;       // Step 5b: interpolated per-vertex terrainType (concrete)
 uniform int   u_lodStep;
+
+// Step 5c: cement catalog atlas (legacy tex3). Concrete tiles sample this instead
+// of the colormap. Same UV math as gos_terrain.frag.
+uniform sampler2D u_cementAtlas;
+uniform int       u_useCement;
+uniform int       u_cementGridSide;
+uniform float     u_cementWUPT;   // world units per cement tile (= 128)
 uniform float u_skirtDepth;  // Phase 6: >0 when drawing a skirt strip
 uniform int   u_forceColor;  // Phase 7.5: 1 = neon debug palette; 0 = colormap
 
@@ -34,6 +41,7 @@ uniform int   u_diag;                     // Bisection bitmask (MC2_TERRAIN_LOD_
                                           //   16 = flat per-triangle normal (old dFdx)
                                           //   32 = no material detail normals (Step 5a)
                                           //   64 = viz raw matNormalArray rock sample
+                                          //  128 = viz v_terrainType (grey + red=concrete)
 
 // Step 1c-fix: SMOOTH per-pixel normal from the heightfield. The frag reads the
 // SAME height SSBO the vert uses (binding 23) and takes a bilinear central
@@ -44,6 +52,11 @@ uniform int   u_mapSide;
 uniform float u_halfMap;
 layout(binding = 23, std430) readonly buffer TerrainHeightBufFrag {
     float heightsF[];
+};
+// Step 5c: per-tile cement words, read by WORLD TILE in the frag (LOD-independent
+// -> continuous runways at any LOD; coarse geometry is fine since cement is flat).
+layout(binding = 25, std430) readonly buffer TerrainCementBufFrag {
+    uint cementWordsF[];
 };
 
 layout(location = 0) out vec4 fragColor;
@@ -119,7 +132,7 @@ uniform float tintStrengthScale;   // 0 = colormap passthrough, 1 = full tint
 // chunk frag has world coords, so divide by this to get the per-tile UV before
 // per-material tiling. (Using /128 = per CELL was ~3x too dense -> sub-pixel
 // noise instead of detail.) This is geometry-derived, not a tunable.
-const float MAT_WORLD_UNITS_PER_TILE = 384.0;
+const float MAT_WORLD_UNITS_PER_TILE = 768.0;  // 2 tiles/repeat (~half the prior density)
 
 vec4 chunkColorWeights(vec3 color) {
     vec4 w = vec4(0.0);
@@ -162,7 +175,8 @@ vec3 chunkDetailNormal(vec4 w, float snowWeight, vec2 worldXY) {
     // Screen-space derivative AA (legacy fwRock/fwGrass/...): fade a layer to 0
     // as its tiling goes sub-pixel. WITHOUT this, far/zoomed-out detail collapses
     // to a dark-biased mean normal -> uniform darkening with no visible relief.
-    vec2 uvRock     = uv * matTiling.x;
+    // Rock tiling /3 (and normal strength /3 below) — rock detail was too dense/strong.
+    vec2 uvRock     = uv * (matTiling.x / 3.0);
     vec2 uvGrass    = uv * matTiling.y;
     vec2 uvDirt     = uv * matTiling.z;
     vec2 uvConcrete = uv * matTiling.w;
@@ -173,7 +187,7 @@ vec3 chunkDetailNormal(vec4 w, float snowWeight, vec2 worldXY) {
     float fwConcrete = clamp(1.0 - (length(fwidth(uvConcrete)) - 0.5) * 2.0, 0.0, 1.0);
     float fwSnow     = clamp(1.0 - (length(fwidth(uvSnow))     - 0.5) * 2.0, 0.0, 1.0);
     vec3 dN = vec3(0.0);
-    if (w.x > 0.01) dN += w.x * matNormalBoost.x * fwRock *
+    if (w.x > 0.01) dN += w.x * (matNormalBoost.x / 3.0) * fwRock *
         (texture(matNormalArray, vec3(uvRock,  float(MAT_LAYER_ROCK))).rgb  * 2.0 - 1.0);
     if (w.y > 0.01) dN += w.y * matNormalBoost.y * fwGrass *
         (texture(matNormalArray, vec3(uvGrass, float(MAT_LAYER_GRASS))).rgb * 2.0 - 1.0);
@@ -213,7 +227,37 @@ void main() {
     vec2 uv;
     uv.x = (v_worldPos.x - u_atlasTopLeftX) * u_atlasOneOverWorldUnits;
     uv.y = (u_atlasTopLeftY - v_worldPos.y) * u_atlasOneOverWorldUnits;
-    vec3 base = texture(u_colormap, uv).rgb;
+    // 9-tap disc blur for a soft splatted colormap (legacy colAvg style). CMAP_BLUR
+    // is an atlas-UV radius — one-line tunable.
+    const float CMAP_BLUR = 0.0020;
+    const float CMAP_R2   = CMAP_BLUR * 0.707;
+    vec3 base = texture(u_colormap, uv).rgb
+              + texture(u_colormap, uv + vec2( CMAP_BLUR, 0.0)).rgb
+              + texture(u_colormap, uv + vec2(-CMAP_BLUR, 0.0)).rgb
+              + texture(u_colormap, uv + vec2(0.0,  CMAP_BLUR)).rgb
+              + texture(u_colormap, uv + vec2(0.0, -CMAP_BLUR)).rgb
+              + texture(u_colormap, uv + vec2( CMAP_R2,  CMAP_R2)).rgb
+              + texture(u_colormap, uv + vec2(-CMAP_R2,  CMAP_R2)).rgb
+              + texture(u_colormap, uv + vec2( CMAP_R2, -CMAP_R2)).rgb
+              + texture(u_colormap, uv + vec2(-CMAP_R2, -CMAP_R2)).rgb;
+    base /= 9.0;
+
+    // Step 5c: cement catalog override. Pure-cement tiles (validity bit set)
+    // sample the cement atlas instead of the colormap (legacy gos_terrain.frag).
+    bool cementHit = false;
+    int  ctX = clamp(int(floor((v_worldPos.x + u_halfMap) / 128.0)), 0, u_mapSide - 1);
+    int  ctY = clamp(int(floor((u_halfMap - v_worldPos.y) / 128.0)), 0, u_mapSide - 1);
+    uint cw  = cementWordsF[ctX + ctY * u_mapSide];
+    if (u_useCement != 0 && (cw & 0x80000000u) != 0u) {
+        uint layerIdx = cw & 0xFFFFu;
+        int  gs   = max(u_cementGridSide, 1);
+        int  cCol = int(layerIdx) % gs;
+        int  cRow = int(layerIdx) / gs;
+        vec2 cTileUV  = fract(vec2(v_worldPos.x, -v_worldPos.y) / u_cementWUPT);
+        vec2 cAtlasUV = (vec2(float(cCol), float(cRow)) + cTileUV) / float(gs);
+        base = texture(u_cementAtlas, cAtlasUV).rgb;
+        cementHit = true;
+    }
 
     // DIAG bit 64: visualize the raw matNormalArray ROCK-layer sample as color
     // (no lighting). Bluish normal-map texture with visible detail => sampling
@@ -225,6 +269,16 @@ void main() {
         if ((u_diag & 1) == 0) GBuffer1 = vec4(0.5, 0.5, 1.0, 1.0);
         return;
     }
+    // DIAG bit 128: visualize v_terrainType (material index 0-3) as grayscale +
+    // RED where it would be treated as concrete (smoothstep(2,3)). Mostly-black
+    // with red only on cement = correct. Uniform grey / all-red = SSBO garbage.
+    if ((u_diag & 128) != 0) {
+        float g = clamp(v_terrainType / 3.0, 0.0, 1.0);
+        float pc = smoothstep(2.0, 3.0, v_terrainType);
+        fragColor = vec4(g + pc, g * (1.0 - pc), g * (1.0 - pc), 1.0);
+        if ((u_diag & 1) == 0) GBuffer1 = vec4(0.5, 0.5, 1.0, 1.0);
+        return;
+    }
 
     // Step 1b: geometric normal from world-pos screen derivatives (faceted per
     // triangle; gives relief lighting without sampling the height SSBO in the
@@ -233,6 +287,15 @@ void main() {
     // geometric normal is horizontal, which would shade them as dark walls at LOD
     // edges. Use a flat-up normal so the skirt is lit like the adjacent surface it
     // fills and blends invisibly instead of drawing a dark line.
+    // DIAG bit 256: raw colormap sample only (no tint/detail/lighting). Varied
+    // colours => colormap fine, muting is in the composition. Uniform/flat =>
+    // the colormap sample itself is broken (wrong atlas/UV/over-blur).
+    if ((u_diag & 256) != 0) {
+        fragColor = vec4(base, 1.0);
+        if ((u_diag & 1) == 0) GBuffer1 = vec4(0.5, 0.5, 1.0, 1.0);
+        return;
+    }
+
     // Material weights + snow (shared by detail normal AND colour tint).
     vec4  matWeights; float snowWeight;
     chunkWeights(base, matWeights, snowWeight);
@@ -242,12 +305,14 @@ void main() {
     // (.w), suppresses snow, and (below) restores the authored colormap tone +
     // flattens lighting. Matches legacy gos_terrain.frag:539-548,738,772.
     float pureConcrete       = smoothstep(2.0, 3.0, v_terrainType);
+    if (cementHit) pureConcrete = 1.0;  // cement atlas hit -> full concrete (base already set)
     float concreteColorBlend = sqrt(clamp(pureConcrete, 0.0, 1.0));
     matWeights = mix(matWeights, vec4(0.0, 0.0, 0.0, 1.0), pureConcrete);
     snowWeight *= (1.0 - pureConcrete);
 
     // --- Surface normal (smooth macro slope + tangent-space detail) ---
-    vec3 N;
+    vec3  N;
+    float macroNz = 1.0;   // MACRO (un-perturbed) slope Z — used for the cliff test
     if (u_skirtDepth > 0.0) {
         N = vec3(0.0, 0.0, 1.0);
     } else {
@@ -258,6 +323,7 @@ void main() {
         } else {
             baseN = smoothTerrainNormal(v_worldPos.xy);  // smooth macro slope
         }
+        macroNz = baseN.z;
         if ((u_diag & 32) != 0) {
             N = baseN;  // detail disabled (A/B)
         } else {
@@ -281,13 +347,17 @@ void main() {
     float tintBase    = mix(0.18, 0.50, smoothstep(0.1, 0.6, colLum));
     float tintStrength= mix(tintBase, 0.85, snowWeight) * tintStrengthScale;
     vec3  baseColor   = mix(base, materialTint, tintStrength);
+    if ((u_diag & 512) != 0) baseColor = base;   // DIAG 512: bypass material tint (A/B)
     // Cement: restore the authored colormap tone (runway/apron) instead of the
     // generic concrete tint.
     baseColor = mix(baseColor, base, concreteColorBlend);
 
-    // Cliff mapping: desaturate + darken toward rock on steep slopes (uses N.z).
+    // Cliff mapping: desaturate + darken toward rock on steep slopes. MUST use the
+    // MACRO slope (un-perturbed), NOT the detail-perturbed N — detail bumps drop
+    // N.z to ~0.65 even on flat ground, which fired the cliff blend everywhere and
+    // desaturated the whole map to grey (matches legacy using WorldNorm.z).
     {
-        float cliffBlend = smoothstep(0.85, 0.55, abs(N.z));
+        float cliffBlend = smoothstep(0.85, 0.55, abs(macroNz));
         if (cliffBlend > 0.01) {
             float luma = dot(baseColor, vec3(0.299, 0.587, 0.114));
             vec3  cliffColor = mix(vec3(luma), tintRock, 0.6) * 0.8;

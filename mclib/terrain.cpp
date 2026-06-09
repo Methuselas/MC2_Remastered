@@ -754,15 +754,48 @@ long Terrain::init( unsigned long verticesPerMapSide, PacketFile* pakFile, unsig
 		{
 			int n = (int)realVerticesMapSide * (int)realVerticesMapSide;
 			std::vector<float> elev((size_t)n);
-			std::vector<float> ttype((size_t)n);  // Step 5b: per-vertex terrainType (concrete)
+			std::vector<float> ttype((size_t)n);  // Step 5b: per-vertex MATERIAL index (0-3)
 			const PostcompVertex* blks = mapData->getBlocks();
+			// Map the raw terrainType INDEX -> material (0=Rock,1=Grass,2=Dirt,
+			// 3=Concrete). MUST mirror gos_terrain_indirect.cpp
+			// terrainTypeToMaterialLocal / quad.cpp terrainTypeToMaterial. The chunk
+			// frag does smoothstep(2,3,material) for concrete, so uploading the raw
+			// index (0-20) would mark most terrain as concrete.
+			auto terrainTypeToMaterial = [](DWORD t) -> float {
+				switch (t) {
+					case 3:  case 8:  case 9:  case 12:           return 1.0f; // Grass
+					case 2:  case 4:                              return 2.0f; // Dirt
+					case 10: case 13: case 14: case 15: case 16:
+					case 17: case 18: case 19: case 20:           return 3.0f; // Concrete
+					default:                                      return 0.0f; // Rock
+				}
+			};
 			for (int i = 0; i < n; ++i)
 			{
 				elev[i]  = blks[i].elevation;
-				ttype[i] = (float)blks[i].terrainType;
+				ttype[i] = terrainTypeToMaterial(blks[i].terrainType);
 			}
 			gos_TerrainLodChunk_UploadHeightFull(elev.data(), (int)realVerticesMapSide);
 			gos_TerrainLodChunk_UploadTerrainTypeFull(ttype.data(), (int)realVerticesMapSide);
+
+			// Step 5c: flag blocks containing concrete (material 3). The cement
+			// word is per-tile; a coarse-LOD triangle spans several tiles and gets
+			// one tile's word -> torn runways. The LOD pass clamps these blocks fine.
+			const int side = (int)realVerticesMapSide;
+			for (int by = 0; by < s_terrainChunkSide; ++by)
+				for (int bx = 0; bx < s_terrainChunkSide; ++bx)
+				{
+					TerrainBlockMeta& bm = s_blockMeta[bx + by * s_terrainChunkSide];
+					bm.hasConcrete = false;
+					const int ox = bx * 20, oy = by * 20;
+					for (int ly = 0; ly <= 20 && !bm.hasConcrete; ++ly)
+						for (int lx = 0; lx <= 20; ++lx)
+						{
+							const int mx = ox + lx, my = oy + ly;
+							if (mx >= side || my >= side) continue;
+							if (ttype[(size_t)mx + (size_t)my * side] >= 2.5f) { bm.hasConcrete = true; break; }
+						}
+				}
 		}
 	}
 
@@ -1729,6 +1762,25 @@ long Terrain::update (void)
 					bm.lodLevel  = chooseLodLevel(dx2 * dx2 + dy2 * dy2, bm.lodLevel);
 					bm.inFrustum = true;   // render this apron block
 				}
+			}
+		}
+
+		// --- Step 5c: clamp CONCRETE blocks to fine LOD ---
+		// The cement word is per-tile; at coarse LOD a triangle spans several
+		// tiles and samples one tile's cement-atlas layer -> torn/garbled runways.
+		// Force concrete blocks to LOD 0 (per-tile accurate). Done BEFORE the delta
+		// clamp so neighbors ramp down gracefully into the cement area.
+		// MC2_TERRAIN_LOD_CHUNK_CEMENT_MAXLOD=k relaxes the cap (default 0).
+		{
+			static const int s_cementMaxLod = []() -> int {
+				const char* v = getenv("MC2_TERRAIN_LOD_CHUNK_CEMENT_MAXLOD");
+				return v ? atoi(v) : 0;
+			}();
+			for (int i = 0; i < s_terrainChunkSide * s_terrainChunkSide; ++i)
+			{
+				TerrainBlockMeta& bm = s_blockMeta[i];
+				if (bm.inFrustum && bm.hasConcrete && bm.lodLevel > (unsigned char)s_cementMaxLod)
+					bm.lodLevel = (unsigned char)s_cementMaxLod;
 			}
 		}
 

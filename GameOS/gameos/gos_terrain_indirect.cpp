@@ -45,6 +45,7 @@ void __stdcall gos_SetTerrainMVP(const float* matrix16);
 #include "gos_terrain_bridge.h"     // gos_terrain_bridge_glTextureForGosHandle (cement readback)
 #include "../../RenderCore/KtxLoader.h"  // COLORMAP-BC7-KTX2-1: ktxLoadRgba8 for BC7 atlas upload
 #include "gos_terrain_arm_logic.h"        // shared GPU-terrain arm predicate (editor↔game)
+#include "gos_terrain_lod_chunk.h"        // Step 5c: push cement words to the LOD chunk path
 
 #include "../gameos/gos_profiler.h"
 
@@ -788,6 +789,9 @@ static void PopulateRecipeCementWords() {
     constexpr uint32_t kCementLayerValidBit = 0x80000000u;
 
     long cementQuadCount = 0;
+    // Step 5c: also collect a full per-vn cement-word array for the terrain LOD
+    // chunk path (indexed vn = mx + my*mapSide, matching its heightfield SSBO).
+    std::vector<uint32_t> chunkCementWords((size_t)mapSide * (size_t)mapSide, 0u);
     for (size_t vn = 0; vn < N; ++vn) {
         const long mx = (long)vn % mapSide;
         const long my = (long)vn / mapSide;
@@ -807,8 +811,12 @@ static void PopulateRecipeCementWords() {
         }
         memcpy(&g_denseRecipes[vn]._wp3, &cementWord, 4);
         g_denseRecipeDirty[vn]  = true;
+        if (vn < chunkCementWords.size()) chunkCementWords[vn] = cementWord;
     }
     g_denseRecipeAnyDirty = true;
+    // Push to the chunk renderer (no-op if its SSBO/Init has not run yet).
+    gos_TerrainLodChunk_UploadCementWordsFull(
+        chunkCementWords.data(), (int)chunkCementWords.size(), (int)mapSide);
     printf("[CEMENT_ATLAS v1] event=cement_words_baked cement_quads=%ld total_vn=%zu\n",
            cementQuadCount, N);
     fflush(stdout);

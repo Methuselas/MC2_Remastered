@@ -139,7 +139,8 @@ struct TerrainBlockMeta {
 	bool           dirtyAabb;   // height changed -> recompute AABB + patch SSBO
 	bool           inFrustum;   // result of AABB cull this frame
 	unsigned char  lodLevel;    // 0-5, chosen each frame
-	unsigned char  _pad;        // explicit padding
+	bool           hasConcrete; // Step 5c: any cement/concrete vertex -> clamp LOD fine
+	                            // (cement word is per-tile; coarse LOD tears the runway)
 };
 
 struct SuperchunkMeta {

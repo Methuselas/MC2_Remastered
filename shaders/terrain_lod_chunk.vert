@@ -23,7 +23,6 @@ layout(binding = 23, std430) readonly buffer TerrainHeightBuf {
 layout(binding = 24, std430) readonly buffer TerrainTypeBuf {
     float terrainTypes[];
 };
-
 out vec3  v_worldPos;
 out float v_terrainType;
 
