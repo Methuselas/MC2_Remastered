@@ -1,6 +1,7 @@
 #include "gos_terrain_lod_chunk.h"
 #include "utils/gl_utils.h"
 #include "utils/shader_builder.h"
+#include "gos_postprocess.h"   // Phase 10 Step 1c: shadow textures + light matrices
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
@@ -42,6 +43,17 @@ static GLint    s_locDiag           = -1;  // bisection bitmask (MC2_TERRAIN_LOD
 static GLint    s_locQuadCountX     = -1;  // Phase 10.4: block quad extent X (edge detect)
 static GLint    s_locQuadCountY     = -1;  // Phase 10.4: block quad extent Y (edge detect)
 static GLint    s_locEdgeStitch     = -1;  // Phase 10.4: packed coarser-neighbour stride
+// Phase 10 Step 1c: shadow uniforms (declared by include/shadow.hglsl).
+static GLint    s_locShadowMap          = -1;
+static GLint    s_locLightSpaceMatrix   = -1;
+static GLint    s_locEnableShadows      = -1;
+static GLint    s_locShadowSoftness     = -1;
+static GLint    s_locDynShadowMap       = -1;
+static GLint    s_locDynLightSpaceMat   = -1;
+static GLint    s_locEnableDynShadows   = -1;
+// Mirror gameos_graphics.cpp's file-static terrain shadow texture units (9/10).
+static constexpr GLint kChunkTexUnitStaticShadow  = 9;
+static constexpr GLint kChunkTexUnitDynamicShadow = 10;
 
 // Phase 10: colormap atlas accessors (defined in gos_terrain_indirect.cpp,
 // global free functions). Same atlas tex1 + UV params the legacy gos_terrain.frag
@@ -269,6 +281,13 @@ void gos_TerrainLodChunk_Init()
             s_locQuadCountX   = glGetUniformLocation(s_terrainProgram, "u_quadCountX");
             s_locQuadCountY   = glGetUniformLocation(s_terrainProgram, "u_quadCountY");
             s_locEdgeStitch   = glGetUniformLocation(s_terrainProgram, "u_edgeStitch");
+            s_locShadowMap        = glGetUniformLocation(s_terrainProgram, "shadowMap");
+            s_locLightSpaceMatrix = glGetUniformLocation(s_terrainProgram, "lightSpaceMatrix");
+            s_locEnableShadows    = glGetUniformLocation(s_terrainProgram, "enableShadows");
+            s_locShadowSoftness   = glGetUniformLocation(s_terrainProgram, "shadowSoftness");
+            s_locDynShadowMap     = glGetUniformLocation(s_terrainProgram, "dynamicShadowMap");
+            s_locDynLightSpaceMat = glGetUniformLocation(s_terrainProgram, "dynamicLightSpaceMatrix");
+            s_locEnableDynShadows = glGetUniformLocation(s_terrainProgram, "enableDynamicShadows");
             printf("[TerrainLodChunk] shader loaded prog=%u "
                    "locs: originX=%d originY=%d mapSide=%d halfMap=%d mvp=%d lodStep=%d skirtDepth=%d forceColor=%d\n",
                    (unsigned)s_terrainProgram,
@@ -439,6 +458,42 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
             float lx = 0.f, ly = 0.f, lz = 1.f;
             gos_GetTerrainLightDir(&lx, &ly, &lz);
             glUniform4f(s_locLightDir, lx, ly, lz, 0.0f);
+        }
+    }
+
+    // Phase 10 Step 1c: bind the shadow maps + light matrices that
+    // include/shadow.hglsl reads. The chunk draw is a bolt-on — like the GL depth
+    // state, it MUST set these or enableShadows defaults to 0 and calcShadow
+    // returns 1.0 (no shadows). Mirrors gosRenderer::terrainBindShadowUniforms.
+    {
+        gosPostProcess* pp = getGosPostProcess();
+        if (pp && pp->shadowsEnabled_) {
+            if (s_locLightSpaceMatrix >= 0)
+                glUniformMatrix4fv(s_locLightSpaceMatrix, 1, GL_FALSE, pp->getLightSpaceMatrix());
+            if (s_locEnableShadows >= 0)  glUniform1i(s_locEnableShadows, 1);
+            if (s_locShadowSoftness >= 0) glUniform1f(s_locShadowSoftness, 2.5f);  // shadow.hglsl default
+            if (s_locShadowMap >= 0) {
+                glUniform1i(s_locShadowMap, kChunkTexUnitStaticShadow);
+                glActiveTexture(GL_TEXTURE0 + kChunkTexUnitStaticShadow);
+                glBindTexture(GL_TEXTURE_2D, pp->getShadowTexture());
+                glActiveTexture(GL_TEXTURE0);
+            }
+            if (pp->getDynamicShadowFBO()) {
+                if (s_locDynLightSpaceMat >= 0)
+                    glUniformMatrix4fv(s_locDynLightSpaceMat, 1, GL_FALSE, pp->getDynamicLightSpaceMatrix());
+                if (s_locEnableDynShadows >= 0) glUniform1i(s_locEnableDynShadows, 1);
+                if (s_locDynShadowMap >= 0) {
+                    glUniform1i(s_locDynShadowMap, kChunkTexUnitDynamicShadow);
+                    glActiveTexture(GL_TEXTURE0 + kChunkTexUnitDynamicShadow);
+                    glBindTexture(GL_TEXTURE_2D, pp->getDynamicShadowTexture());
+                    glActiveTexture(GL_TEXTURE0);
+                }
+            } else if (s_locEnableDynShadows >= 0) {
+                glUniform1i(s_locEnableDynShadows, 0);
+            }
+        } else {
+            if (s_locEnableShadows >= 0)    glUniform1i(s_locEnableShadows, 0);
+            if (s_locEnableDynShadows >= 0) glUniform1i(s_locEnableDynShadows, 0);
         }
     }
 

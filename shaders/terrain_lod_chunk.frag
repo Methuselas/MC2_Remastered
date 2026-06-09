@@ -4,6 +4,12 @@
 // Phase 6: skirts are darkened (50%) for debug visibility when u_skirtDepth > 0.
 // Phase 7.5: u_forceColor=1 enables neon palette — unmistakable proof chunk renderer is active.
 
+// Phase 10 Step 1c: shadows. shadow.hglsl declares shadowMap/lightSpaceMatrix/
+// enableShadows/shadowSoftness + the dynamic equivalents and provides calcShadow/
+// calcDynamicShadow (Poisson PCF). The chunk DRIVER must bind those uniforms (same
+// as the legacy terrain draw) or enableShadows reads 0 -> calcShadow returns 1.0.
+#include <include/shadow.hglsl>
+
 in vec3 v_worldPos;
 uniform int   u_lodStep;
 uniform float u_skirtDepth;  // Phase 6: >0 when drawing a skirt strip
@@ -21,6 +27,7 @@ uniform int   u_diag;                     // Bisection bitmask (MC2_TERRAIN_LOD_
                                           //   1 = do NOT write GBuffer1
                                           //   2 = no depth fudge (raw gl_FragCoord.z)
                                           //   4 = no lighting (colormap only)
+                                          //   8 = no shadows (skip calcShadow)
 
 layout(location = 0) out vec4 fragColor;
 layout(location = 1) out vec4 GBuffer1;   // shadow-handled flat-up (terrain MRT composite)
@@ -81,6 +88,20 @@ void main() {
     float diffuse     = clamp(NdotL, 0.02, 1.0);
     float normalLight = ((u_diag & 4) != 0) ? 1.0 : mix(0.35, 1.20, diffuse); // legacy band
 
-    fragColor = vec4(base * normalLight, 1.0);                       // alpha forced 1.0
+    // Step 1c: bake the sun shadow into the colour (GBuffer1 stays
+    // shadowHandled_flatUp -> the compositor does NOT re-shadow terrain). Use a
+    // flat up-normal for the shadow test (matches legacy gos_terrain.frag: detail-
+    // normal bias flips cause sprinkle/inverted shadows). min(static,dynamic) so
+    // overlapping casters don't double-darken. Skirts (u_skirtDepth>0) are flat
+    // seam-fillers — shadow them like the surface they fill. u_diag&8 disables.
+    float shadow = 1.0;
+    if ((u_diag & 8) == 0) {
+        const vec3 shadowN = vec3(0.0, 0.0, 1.0);
+        float staticS = calcShadow(v_worldPos, shadowN, terrainLightDir.xyz, 16);
+        float dynS    = calcDynamicShadow(v_worldPos, shadowN, terrainLightDir.xyz, 8);
+        shadow = min(staticS, dynS);
+    }
+
+    fragColor = vec4(base * normalLight * shadow, 1.0);              // alpha forced 1.0
     if ((u_diag & 1) == 0) GBuffer1 = vec4(0.5, 0.5, 1.0, 1.0);      // rc_gbuffer1_shadowHandled_flatUp
 }
