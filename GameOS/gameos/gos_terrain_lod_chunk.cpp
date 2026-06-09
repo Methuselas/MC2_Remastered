@@ -33,6 +33,18 @@ static GLint    s_locMvp            = -1;
 static GLint    s_locLodStep        = -1;  // Phase 5: per-block LOD stride uniform
 static GLint    s_locSkirtDepth     = -1;  // Phase 6: skirt depth uniform
 static GLint    s_locForceColor     = -1;  // Phase 7.5: neon debug palette override
+static GLint    s_locColormap       = -1;  // Phase 10: merged colormap atlas sampler
+static GLint    s_locAtlasTLX       = -1;  // Phase 10: atlas top-left X (world)
+static GLint    s_locAtlasTLY       = -1;  // Phase 10: atlas top-left Y (world)
+static GLint    s_locAtlasOOW       = -1;  // Phase 10: atlas oneOverWorldUnitsMapSide
+
+// Phase 10: colormap atlas accessors (defined in gos_terrain_indirect.cpp,
+// global free functions). Same atlas tex1 + UV params the legacy gos_terrain.frag
+// useAtlasColormap path consumes.
+extern GLuint gos_terrain_indirect_getAtlasGLTex();
+extern float  gos_terrain_indirect_getAtlasMapTopLeftX();
+extern float  gos_terrain_indirect_getAtlasMapTopLeftY();
+extern float  gos_terrain_indirect_getAtlasOneOverWorldUnits();
 
 // ---------------------------------------------------------------------------
 // Patch geometry cache (Phase 4).
@@ -234,6 +246,10 @@ void gos_TerrainLodChunk_Init()
             s_locLodStep      = glGetUniformLocation(s_terrainProgram, "u_lodStep");    // Phase 5
             s_locSkirtDepth   = glGetUniformLocation(s_terrainProgram, "u_skirtDepth"); // Phase 6
             s_locForceColor   = glGetUniformLocation(s_terrainProgram, "u_forceColor"); // Phase 7.5
+            s_locColormap     = glGetUniformLocation(s_terrainProgram, "u_colormap");   // Phase 10
+            s_locAtlasTLX     = glGetUniformLocation(s_terrainProgram, "u_atlasTopLeftX");
+            s_locAtlasTLY     = glGetUniformLocation(s_terrainProgram, "u_atlasTopLeftY");
+            s_locAtlasOOW     = glGetUniformLocation(s_terrainProgram, "u_atlasOneOverWorldUnits");
             printf("[TerrainLodChunk] shader loaded prog=%u "
                    "locs: originX=%d originY=%d mapSide=%d halfMap=%d mvp=%d lodStep=%d skirtDepth=%d forceColor=%d\n",
                    (unsigned)s_terrainProgram,
@@ -305,7 +321,17 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     if (s_patchVao == 0) return;
 
     const float* mvp = gos_GetTerrainMVPMat4();
-    if (!mvp) return;
+    {
+        // Diag 7.5: log every time mvp is null (causes silent bail-out).
+        static int s_mvpNullCount = 0;
+        if (!mvp) {
+            ++s_mvpNullCount;
+            if (s_mvpNullCount <= 5 || s_mvpNullCount % 300 == 0)
+                printf("[TerrainLOD submit] mvp=NULL bail count=%d (count=%d)\n",
+                    s_mvpNullCount, count);
+            return;
+        }
+    }
 
     // Save state.
     GLint prevProg = 0;
@@ -314,6 +340,16 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVAO);
     // Phase 6: save cull state so we can disable it around skirt draws.
     GLboolean prevCullFace = glIsEnabled(GL_CULL_FACE);
+
+    // Diag 7.5: MC2_TERRAIN_LOD_DEPTH_ALWAYS=1 uses GL_ALWAYS depth test to
+    // bypass depth contention — if all LOD colors appear, something writes
+    // terrain depth before us and causes LOD1/2 to fail LEQUAL.
+    static const bool s_depthAlways = (getenv("MC2_TERRAIN_LOD_DEPTH_ALWAYS") != nullptr);
+    GLint prevDepthFunc = GL_LEQUAL;
+    if (s_depthAlways) {
+        glGetIntegerv(GL_DEPTH_FUNC, &prevDepthFunc);
+        glDepthFunc(GL_ALWAYS);
+    }
 
     glUseProgram(s_terrainProgram);
     glBindVertexArray(s_patchVao);
@@ -336,6 +372,21 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
             glUniform1i(s_locForceColor, forceColorMode);
     }
 
+    // Phase 10 (Step 1a): bind the merged colormap atlas (tex1) on unit 0 and
+    // feed the atlas-UV reconstruction params (same source as the legacy
+    // gos_terrain.frag useAtlasColormap path). When the atlas is not yet built
+    // (g_atlasGLTex==0) the sampler reads the default texture -> dark; the
+    // colormap pipeline normally has it ready by first in-mission frame.
+    {
+        const GLuint atlasTex = gos_terrain_indirect_getAtlasGLTex();
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, atlasTex);
+        if (s_locColormap >= 0) glUniform1i(s_locColormap, 0);
+        if (s_locAtlasTLX >= 0) glUniform1f(s_locAtlasTLX, gos_terrain_indirect_getAtlasMapTopLeftX());
+        if (s_locAtlasTLY >= 0) glUniform1f(s_locAtlasTLY, gos_terrain_indirect_getAtlasMapTopLeftY());
+        if (s_locAtlasOOW >= 0) glUniform1f(s_locAtlasOOW, gos_terrain_indirect_getAtlasOneOverWorldUnits());
+    }
+
     // Phase 7.5: log first successful submit so the user can confirm the path is live.
     // Also reset the zero-submit streak counter on any non-zero submit.
     {
@@ -346,6 +397,14 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
             fflush(stdout);
             s_firstSubmit = false;
         }
+    }
+
+    // Cardinality probe: log every 60 submits.
+    static int s_submitCount = 0;
+    ++s_submitCount;
+    if (s_submitCount % 60 == 0) {
+        printf("[TerrainLOD submit] count=%d cmds=%d\n", s_submitCount, count);
+        fflush(stdout);
     }
 
     for (int i = 0; i < count; ++i)
@@ -419,6 +478,8 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_HEIGHT_SSBO_BINDING, 0);
     glBindVertexArray((GLuint)prevVAO);
     glUseProgram((GLuint)prevProg);
+    if (s_depthAlways)
+        glDepthFunc((GLenum)prevDepthFunc);
 }
 
 // ---------------------------------------------------------------------------

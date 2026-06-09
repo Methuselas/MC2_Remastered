@@ -7,12 +7,20 @@
 in vec3 v_worldPos;
 uniform int   u_lodStep;
 uniform float u_skirtDepth;  // Phase 6: >0 when drawing a skirt strip
-uniform int   u_forceColor;  // Phase 7.5: 1 = neon debug palette; 0 = normal LOD bands
+uniform int   u_forceColor;  // Phase 7.5: 1 = neon debug palette; 0 = colormap
+
+// Phase 10 (Step 1a): production base color from the merged colormap atlas
+// (tex1 in legacy gos_terrain.frag). Same atlas-UV reconstruction as the
+// legacy useAtlasColormap path: atlas-absolute UV from world position.
+uniform sampler2D u_colormap;
+uniform float u_atlasTopLeftX;            // = Terrain::mapTopLeft3d.x
+uniform float u_atlasTopLeftY;            // = Terrain::mapTopLeft3d.y
+uniform float u_atlasOneOverWorldUnits;   // = Terrain::oneOverWorldUnitsMapSide
+
 out vec4 fragColor;
 
 void main() {
-    // Phase 7.5: neon palette overrides all other logic when u_forceColor=1.
-    // Colors are deliberately extreme so any terrain coverage is unmistakable.
+    // Phase 7.5 debug: neon LOD-band palette when u_forceColor=1 (launch_lod_*color.bat).
     if (u_forceColor != 0) {
         vec3 fc;
         if      (u_lodStep == 1)  fc = vec3(0.0,  1.0,  0.0);   // LOD0 neon green
@@ -26,21 +34,12 @@ void main() {
         return;
     }
 
-    vec3 lodColor;
-    if      (u_lodStep == 1)  lodColor = vec3(0.0,  0.85, 0.15);  // LOD0 bright green
-    else if (u_lodStep == 2)  lodColor = vec3(0.45, 0.85, 0.0);   // LOD1 yellow-green
-    else if (u_lodStep == 4)  lodColor = vec3(0.85, 0.75, 0.0);   // LOD2 yellow
-    else if (u_lodStep == 5)  lodColor = vec3(0.9,  0.45, 0.0);   // LOD3 orange
-    else if (u_lodStep == 10) lodColor = vec3(0.9,  0.15, 0.0);   // LOD4 red
-    else                      lodColor = vec3(0.6,  0.0,  0.1);   // LOD5 dark red
-
-    // Subtle elevation modulation: normalize height to [0.6, 1.0].
-    float t = clamp((v_worldPos.z + 200.0) / 3200.0, 0.0, 1.0);
-    float bright = 0.6 + 0.4 * t;
-
-    // Phase 6: darken skirt pixels 50% for debug visibility.
-    if (u_skirtDepth > 0.0)
-        fragColor = vec4(lodColor * bright * 0.5, 1.0);
-    else
-        fragColor = vec4(lodColor * bright, 1.0);
+    // Production: sample the colormap atlas. Atlas UV in [0,1] across the map.
+    // Skirt verts share the edge surface vertex's worldPos.xy, so they sample
+    // the same color as the adjacent surface -> seamless production skirts (no
+    // debug darken). (Step 1b will add normals-from-height lighting + GBuffer1.)
+    vec2 uv;
+    uv.x = (v_worldPos.x - u_atlasTopLeftX) * u_atlasOneOverWorldUnits;
+    uv.y = (u_atlasTopLeftY - v_worldPos.y) * u_atlasOneOverWorldUnits;
+    fragColor = vec4(texture(u_colormap, uv).rgb, 1.0);
 }
