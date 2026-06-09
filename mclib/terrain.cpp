@@ -188,6 +188,11 @@ static const float LOD_DIST_THRESH[5] = {
                // lodLevel 5: lodStep=20 — beyond 60 K wu
 };
 
+// Phase 10.2b: per-draw-command skirt EDGE mask (bit 0=N,1=S,2=W,3=E). Parallel
+// to s_drawCmds / s_skirtDepths; sized to the block count, written in Pass 3 so
+// the driver draws a skirt only on edges whose neighbour LOD differs.
+static std::vector<uint8_t> s_skirtEdgeMaskVec;
+
 // Choose LOD level (0-5) for a block given squared distance and previous level.
 // Promotion (going finer) is immediate; demotion (going coarser) uses 10%
 // hysteresis in linear distance (= 1.21x in distSq) to prevent flickering.
@@ -1467,6 +1472,13 @@ long Terrain::update (void)
 
 		// Reset draw-command list.
 		s_cmdCount = 0;
+		// Phase 10.2b: ensure the per-command skirt edge-mask array can hold one
+		// entry per block (Pass 3 writes s_skirtEdgeMaskVec[s_cmdCount]).
+		{
+			const size_t need = (size_t)s_terrainChunkSide * (size_t)s_terrainChunkSide;
+			if (s_skirtEdgeMaskVec.size() < need)
+				s_skirtEdgeMaskVec.resize(need, 0);
+		}
 
 		// Cache frustum planes once for this frame (eye->cacheFrustumPlanes()
 		// is idempotent per-frame).
@@ -1769,27 +1781,30 @@ long Terrain::update (void)
 				{
 					static const bool s_noSkirts =
 						(getenv("MC2_TERRAIN_LOD_CHUNK_NO_SKIRTS") != nullptr);
-					bool needsSkirt = false;
+					// Phase 10.2b: PER-EDGE mask. Build order N,S,W,E (matches the
+					// driver's skirtEdgeOffset slots). A skirt is drawn on an edge
+					// only if its neighbour needs sealing — same-LOD edges draw no
+					// skirt (the source of the ridge slivers), map-boundary edges
+					// draw none, and the 1-ring apron covers most cull edges.
+					uint8_t edgeMask = 0;
 					if (!s_noSkirts)
 					{
-						const int nbDx[4] = { 1, -1, 0, 0 };
-						const int nbDy[4] = { 0, 0, 1, -1 };
-						for (int n = 0; n < 4; ++n)
+						const int edx[4] = {  0,  0, -1,  1 };  // N, S, W, E
+						const int edy[4] = { -1,  1,  0,  0 };
+						for (int e = 0; e < 4; ++e)
 						{
-							int nx = bx + nbDx[n], ny = by + nbDy[n];
+							int nx = bx + edx[e], ny = by + edy[e];
 							if (nx < 0 || ny < 0 ||
 								nx >= s_terrainChunkSide || ny >= s_terrainChunkSide)
-								continue;  // map boundary -> no skirt
+								continue;  // map boundary -> no skirt on this edge
 							const TerrainBlockMeta& nbm =
 								s_blockMeta[nx + ny * s_terrainChunkSide];
 							if (!nbm.inFrustum || nbm.lodLevel != bm.lodLevel)
-							{
-								needsSkirt = true;
-								break;
-							}
+								edgeMask |= (uint8_t)(1u << e);  // this edge needs sealing
 						}
 					}
-					if (needsSkirt)
+					s_skirtEdgeMaskVec[s_cmdCount] = edgeMask;
+					if (edgeMask)
 					{
 						// Skirt depth must cover the LOD CRACK (deviation of the fine
 						// edge from the coarse neighbour's interpolated edge), which is
@@ -2325,7 +2340,8 @@ void Terrain::flushDrawCommands (void)
 	}
 
 	if (s_blockMeta && s_cmdCount > 0)
-		gos_TerrainLodChunk_SubmitDrawCommands(s_drawCmds, s_skirtDepths, s_cmdCount);
+		gos_TerrainLodChunk_SubmitDrawCommands(s_drawCmds, s_skirtDepths,
+			s_skirtEdgeMaskVec.empty() ? nullptr : s_skirtEdgeMaskVec.data(), s_cmdCount);
 }
 
 //---------------------------------------------------------------------------

@@ -67,6 +67,11 @@ struct PatchShape {
     GLuint skirtIbo;     // Phase 6: uint16_t triangle indices for skirts
     int    skirtVertexCount;
     int    skirtIndexCount;
+    // Phase 10.2b: per-edge index ranges into skirtIbo (build order N,S,W,E) so
+    // the driver can draw ONLY the edges whose neighbour LOD differs (per-block
+    // edge mask) instead of all four. Offsets/counts are in INDEX units.
+    int    skirtEdgeOffset[4];   // 0=N, 1=S, 2=W, 3=E
+    int    skirtEdgeCount[4];
 };
 
 static std::map<uint32_t, PatchShape> s_patchCache;
@@ -175,10 +180,11 @@ static const PatchShape& getOrBuildPatch(int qcX, int qcY, int lodStep)
         }
     };
 
-    buildEdge(xs, (int)ys.front(), false); // North edge: y = ys[0], iterate x
-    buildEdge(xs, (int)ys.back(),  false); // South edge: y = ys.back(), iterate x
-    buildEdge(ys, (int)xs.front(), true);  // West edge:  x = xs[0], iterate y
-    buildEdge(ys, (int)xs.back(),  true);  // East edge:  x = xs.back(), iterate y
+    // Phase 10.2b: record each edge's index range (build order N,S,W,E).
+    ps.skirtEdgeOffset[0] = (int)skirtIdx.size(); buildEdge(xs, (int)ys.front(), false); ps.skirtEdgeCount[0] = (int)skirtIdx.size() - ps.skirtEdgeOffset[0]; // North (y=ys[0])
+    ps.skirtEdgeOffset[1] = (int)skirtIdx.size(); buildEdge(xs, (int)ys.back(),  false); ps.skirtEdgeCount[1] = (int)skirtIdx.size() - ps.skirtEdgeOffset[1]; // South (y=ys.back)
+    ps.skirtEdgeOffset[2] = (int)skirtIdx.size(); buildEdge(ys, (int)xs.front(), true ); ps.skirtEdgeCount[2] = (int)skirtIdx.size() - ps.skirtEdgeOffset[2]; // West  (x=xs[0])
+    ps.skirtEdgeOffset[3] = (int)skirtIdx.size(); buildEdge(ys, (int)xs.back(),  true ); ps.skirtEdgeCount[3] = (int)skirtIdx.size() - ps.skirtEdgeOffset[3]; // East  (x=xs.back)
 
     ps.skirtVertexCount = (int)skirtVerts.size();
     ps.skirtIndexCount  = (int)skirtIdx.size();
@@ -321,6 +327,7 @@ void gos_TerrainLodChunk_Destroy()
 void gos_TerrainLodChunk_SubmitDrawCommands(
     const TerrainDrawCommand* cmds,
     const float*              skirtDepths,
+    const unsigned char*      skirtEdgeMasks,
     int                       count)
 {
     if (count == 0) return;
@@ -498,7 +505,15 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
                 glVertexAttribIPointer(1, 1, GL_SHORT, (GLsizei)(4 * sizeof(int16_t)), (const void*)(2 * sizeof(int16_t)));
 
                 glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, patch.skirtIbo);
-                glDrawElements(GL_TRIANGLES, patch.skirtIndexCount, GL_UNSIGNED_SHORT, 0);
+                // Phase 10.2b: draw ONLY the edges flagged in the per-block mask
+                // (bit 0=N,1=S,2=W,3=E). No mask array -> all four (back-compat).
+                const unsigned int mask = skirtEdgeMasks ? skirtEdgeMasks[i] : 0xFu;
+                for (int e = 0; e < 4; ++e) {
+                    if (((mask >> e) & 1u) == 0u) continue;
+                    if (patch.skirtEdgeCount[e] <= 0) continue;
+                    glDrawElements(GL_TRIANGLES, patch.skirtEdgeCount[e], GL_UNSIGNED_SHORT,
+                                   (const void*)(size_t)(patch.skirtEdgeOffset[e] * sizeof(uint16_t)));
+                }
 
                 glDisableVertexAttribArray(1);
             }

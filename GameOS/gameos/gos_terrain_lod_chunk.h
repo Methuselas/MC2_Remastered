@@ -18,9 +18,12 @@ constexpr uint32_t TERRAIN_HEIGHT_SSBO_BINDING = 23u;
 // Submit block draw commands for the current frame.
 // count==0 is a strict no-op. mclib calls this via Terrain::flushDrawCommands() only.
 // skirtDepths: parallel float array [count], one depth value per command.
+// skirtEdgeMasks: parallel uint8 array [count] (Phase 10.2b), bit 0=N,1=S,2=W,3=E
+//   — draw a skirt only on edges whose neighbour LOD differs. nullptr -> all edges.
 void gos_TerrainLodChunk_SubmitDrawCommands(
     const TerrainDrawCommand* cmds,
     const float*              skirtDepths,
+    const unsigned char*      skirtEdgeMasks,
     int                       count);
 
 // Upload full heightfield to GPU SSBO at map load.
