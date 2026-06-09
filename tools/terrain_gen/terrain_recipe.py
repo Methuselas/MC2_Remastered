@@ -54,8 +54,16 @@ class TerrainRecipe:
     def __post_init__(self):
         if not (60 <= self.size <= 2048):
             raise ValueError(f"size {self.size} out of range [60, 2048]")
-        if self.size % 20 != 0:
-            raise ValueError(f"size {self.size} must be a multiple of 20 (verticesBlockSide=20)")
+        # Accept both vertex counts (cellSide + 1) and cell counts (multiples of 20).
+        # Editor passes vertex counts: 121 (120 cells), 141 (140 cells), etc.
+        # So validate: size is multiple of 20 OR (size - 1) is multiple of 20.
+        is_cell_count = (self.size % 20 == 0)
+        is_vertex_count = ((self.size - 1) % 20 == 0)
+        if not (is_cell_count or is_vertex_count):
+            raise ValueError(
+                f"size {self.size} invalid: must be cell count (multiple of 20) "
+                f"or vertex count (multiple of 20 + 1)"
+            )
         if self.biome not in BIOMES:
             raise ValueError(f"unknown biome '{self.biome}'; valid: {list(BIOMES)}")
 
