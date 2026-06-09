@@ -87,6 +87,17 @@ extern void  gos_GetTerrainTintRock(float*, float*, float*);
 extern void  gos_GetTerrainTintGrass(float*, float*, float*);
 extern void  gos_GetTerrainTintDirt(float*, float*, float*);
 extern float gos_GetTerrainTintStrengthScale();
+// Remaining legacy tunables (env gates replicated in the upload so default==legacy).
+extern float gos_GetTerrainLightingV1Strength();
+extern float gos_GetTerrainLightingV2Floor();
+extern float gos_GetTerrainNormalsFromHeightStrength();
+extern float gos_GetTerrainPOMScale();
+extern int   g_terrainMaterialProfile;   // global; 0 = legacy
+static GLint s_locLightingV1     = -1;
+static GLint s_locLightingV2     = -1;
+static GLint s_locNfhStrength    = -1;
+static GLint s_locPomParams      = -1;
+static GLint s_locMatProfile     = -1;
 // Step 5c: cement catalog atlas (tex3) accessors from gos_terrain_indirect.cpp.
 extern unsigned int gos_terrain_indirect_getCementAtlasGLTex();
 extern int          gos_terrain_indirect_getCementAtlasGridSide();
@@ -349,6 +360,11 @@ void gos_TerrainLodChunk_Init()
             s_locTintGrass         = glGetUniformLocation(s_terrainProgram, "tintGrass");
             s_locTintDirt          = glGetUniformLocation(s_terrainProgram, "tintDirt");
             s_locTintStrengthScale = glGetUniformLocation(s_terrainProgram, "tintStrengthScale");
+            s_locLightingV1  = glGetUniformLocation(s_terrainProgram, "terrainLightingV1Strength");
+            s_locLightingV2  = glGetUniformLocation(s_terrainProgram, "terrainLightingV2ShadowFillFloor");
+            s_locNfhStrength = glGetUniformLocation(s_terrainProgram, "terrainNormalsFromHeightStrength");
+            s_locPomParams   = glGetUniformLocation(s_terrainProgram, "pomParams");
+            s_locMatProfile  = glGetUniformLocation(s_terrainProgram, "g_terrainMaterialProfile");
             s_locCementAtlas    = glGetUniformLocation(s_terrainProgram, "u_cementAtlas");
             s_locUseCement      = glGetUniformLocation(s_terrainProgram, "u_useCement");
             s_locCementGridSide = glGetUniformLocation(s_terrainProgram, "u_cementGridSide");
@@ -642,6 +658,18 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         if (s_locTintGrass         >= 0) glUniform3f(s_locTintGrass, tg[0], tg[1], tg[2]);
         if (s_locTintDirt          >= 0) glUniform3f(s_locTintDirt,  td[0], td[1], td[2]);
         if (s_locTintStrengthScale >= 0) glUniform1f(s_locTintStrengthScale, tss);
+
+        // Remaining tunables. Hemisphere V1/V2 are env-gated OFF by default (match
+        // legacy: force-zeroed unless MC2_TERRAIN_LIGHTING_V1/V2 set). NFH strength
+        // scales the chunk's always-on smooth normal (default 1.0 = no change). POM
+        // = legacy scale (default 0.02). Material profile = global int (0=legacy).
+        static const bool s_v1Env = (getenv("MC2_TERRAIN_LIGHTING_V1") != nullptr);
+        static const bool s_v2Env = (getenv("MC2_TERRAIN_LIGHTING_V2") != nullptr);
+        if (s_locLightingV1  >= 0) glUniform1f(s_locLightingV1,  s_v1Env ? gos_GetTerrainLightingV1Strength() : 0.0f);
+        if (s_locLightingV2  >= 0) glUniform1f(s_locLightingV2,  s_v2Env ? gos_GetTerrainLightingV2Floor()    : 1.0f);
+        if (s_locNfhStrength >= 0) glUniform1f(s_locNfhStrength, gos_GetTerrainNormalsFromHeightStrength());
+        if (s_locPomParams   >= 0) glUniform4f(s_locPomParams,   gos_GetTerrainPOMScale(), 8.0f, 32.0f, 0.0f);
+        if (s_locMatProfile  >= 0) glUniform1i(s_locMatProfile,  g_terrainMaterialProfile);
     }
 
     // Phase 7.5: log first successful submit so the user can confirm the path is live.

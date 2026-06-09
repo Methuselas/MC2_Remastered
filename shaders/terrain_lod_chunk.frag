@@ -124,6 +124,15 @@ uniform vec3  tintRock;             // default (0.36, 0.37, 0.40)
 uniform vec3  tintGrass;            // default (0.35, 0.42, 0.25)
 uniform vec3  tintDirt;             // default (0.48, 0.42, 0.33)
 uniform float tintStrengthScale;   // 0 = colormap passthrough, 1 = full tint
+
+// Remaining legacy tunables (copied with legacy defaults; driver replicates the
+// env gates so default == legacy default). cellBombParams is a DEAD uniform in
+// legacy (no shader consumer) -> not wired.
+uniform float terrainLightingV1Strength;       // hemisphere ambient; 0 = off (env-gated default off)
+uniform float terrainLightingV2ShadowFillFloor;// shadow-aware fill floor; 1 = no influence
+uniform float terrainNormalsFromHeightStrength;// macro-slope strength scalar (default 1.0)
+uniform vec4  pomParams;                        // .x=scale(0=off), .y=minLayers, .z=maxLayers
+uniform int   g_terrainMaterialProfile;         // 0=legacy, 1=sand(mc2_24 dirt-gate widen)
 // Legacy Texcoord is [0,1] per MC2 TILE = MAPCELL_DIM(3) * 128 world units. The
 // chunk frag has world coords, so divide by this to get the per-tile UV before
 // per-material tiling. (Using /128 = per CELL was ~3x too dense -> sub-pixel
@@ -136,8 +145,13 @@ vec4 chunkColorWeights(vec3 color) {
     w.y = smoothstep(terrainClassGrass.x, terrainClassGrass.y, gMinusR)
         * smoothstep(terrainClassGrass.z, terrainClassGrass.w, color.g);
     float rMinusG = color.r - color.g;
+    // Material profile 1 (sand, mc2_24) widens the dirt gate (legacy lowers the
+    // dirt saturation thresholds). Approximate by lowering the dirt brightness
+    // floor so more of the sandy colormap classifies as dirt. Profile 0 = legacy.
+    float dirtLo = (g_terrainMaterialProfile == 1) ? terrainClassDirt.z * 0.6 : terrainClassDirt.z;
+    float dirtHi = (g_terrainMaterialProfile == 1) ? terrainClassDirt.w * 0.8 : terrainClassDirt.w;
     w.z = smoothstep(terrainClassDirt.x, terrainClassDirt.y, rMinusG)
-        * smoothstep(terrainClassDirt.z, terrainClassDirt.w, color.r);
+        * smoothstep(dirtLo, dirtHi, color.r);
     w.x = 1.0 - max(w.y, w.z);   // everything else -> rock
     float isWater = smoothstep(0.0, 0.08, min(color.g, color.b) - color.r);
     w.x += isWater; w.y *= (1.0 - isWater); w.z *= (1.0 - isWater);
@@ -151,6 +165,56 @@ vec3 rgb2hsvChunk(vec3 c) {
     vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
     float d = q.x - min(q.w, q.y);
     return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + 1.0e-10)), d / (q.x + 1.0e-10), q.x);
+}
+
+// --- Anti-tiling (legacy sampleAntiTileArr) + POM (parallaxMapping) helpers ---
+// Both are near-camera detail effects; gated on the per-layer fwidth (sub-pixel
+// at distance -> skip, bounding cost on a default-on renderer). matTiling drives
+// the anti-tile cell scale; pomParams.x (0=off) drives POM.
+vec2 hash22(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.xx + p3.yz) * p3.zy);
+}
+vec4 sampleAntiTileArr(int layer, vec2 uv, float scale) {
+    vec2 off1 = hash22(floor(uv / scale)) * scale;
+    vec2 off2 = hash22(floor(uv / scale) + vec2(7.0, 13.0)) * scale;
+    vec4 s0 = texture(matNormalArray, vec3(uv,        float(layer)));
+    vec4 s1 = texture(matNormalArray, vec3(uv + off1, float(layer)));
+    vec4 s2 = texture(matNormalArray, vec3(uv + off2, float(layer)));
+    vec2 f = fract(uv / scale);
+    float w1 = smoothstep(0.2, 0.5, f.x) * smoothstep(0.2, 0.5, f.y);
+    float w2 = smoothstep(0.2, 0.5, 1.0 - f.x) * smoothstep(0.2, 0.5, 1.0 - f.y);
+    return (s0 + s1 * w1 + s2 * w2) / (1.0 + w1 + w2);
+}
+float chunkSampleDisplacement(vec2 uv, vec4 w) {
+    float d = 0.0;
+    if (w.x > 0.01) d += w.x * texture(matNormalArray, vec3(uv, float(MAT_LAYER_ROCK))).a;
+    if (w.y > 0.01) d += w.y * texture(matNormalArray, vec3(uv, float(MAT_LAYER_GRASS))).a;
+    if (w.w > 0.01) d += w.w * texture(matNormalArray, vec3(uv, float(MAT_LAYER_CONCRETE))).a;
+    return 1.0 - d;
+}
+// Parallax occlusion (fixed faux view dir, like legacy). Bounded 16 layers.
+vec2 chunkParallax(vec2 uv, float scale, vec4 w) {
+    const vec3 viewDirTS = vec3(0.15, 0.85, 0.15);
+    float numLayers = mix(pomParams.y, pomParams.z, max(viewDirTS.y, 0.0));
+    numLayers = clamp(numLayers, 4.0, 16.0);
+    float layerDepth = 1.0 / numLayers;
+    float curLayer = 0.0;
+    vec2 P = viewDirTS.xz / max(viewDirTS.y, 0.001) * scale;
+    vec2 dUV = P / numLayers;
+    vec2 curUV = uv;
+    float curD = chunkSampleDisplacement(curUV, w);
+    for (int i = 0; i < 16; ++i) {
+        if (curLayer >= curD) break;
+        curUV -= dUV;
+        curD = chunkSampleDisplacement(curUV, w);
+        curLayer += layerDepth;
+    }
+    vec2 prevUV = curUV + dUV;
+    float after  = curD - curLayer;
+    float before = chunkSampleDisplacement(prevUV, w) - curLayer + layerDepth;
+    return mix(curUV, prevUV, after / (after - before));
 }
 
 // Material weights + snow from the colormap colour (computed once, shared by the
@@ -182,15 +246,49 @@ vec3 chunkDetailNormal(vec4 w, float snowWeight, vec2 worldXY) {
     float fwDirt     = clamp(1.0 - (length(fwidth(uvDirt))     - 0.5) * 2.0, 0.0, 1.0);
     float fwConcrete = clamp(1.0 - (length(fwidth(uvConcrete)) - 0.5) * 2.0, 0.0, 1.0);
     float fwSnow     = clamp(1.0 - (length(fwidth(uvSnow))     - 0.5) * 2.0, 0.0, 1.0);
+
+    // POM: parallax-offset the material UVs (legacy pomParams.x>0). fwidth-gated
+    // (near only) -> bounded cost on a default-on renderer. Off when scale<=0.
+    if (pomParams.x > 0.0 && fwRock > 0.4) {
+        const vec4 pomScaleMat = vec4(1.0, 1.0, 2.5, 1.0);
+        float pomScale = pomParams.x * dot(pomScaleMat, w) * fwRock;
+        vec2  pomUV    = uv * dot(matTiling, w);
+        vec2  pomOff   = (chunkParallax(pomUV, pomScale, w) - pomUV) * fwRock;
+        uvRock += pomOff; uvGrass += pomOff; uvDirt += pomOff; uvConcrete += pomOff;
+    }
+
+    // Anti-tile scale per material (legacy: tiling>=4 full, <=1 off). Near only.
+    float atsRock  = mix(0.0, 3.0, clamp((matTiling.x - 1.0) / 3.0, 0.0, 1.0));
+    float atsGrass = mix(0.0, 3.0, clamp((matTiling.y - 1.0) / 3.0, 0.0, 1.0));
+    float atsDirt  = mix(0.0, 3.0, clamp((matTiling.z - 1.0) / 3.0, 0.0, 1.0));
+    float atsConc  = mix(0.0, 3.0, clamp((matTiling.w - 1.0) / 3.0, 0.0, 1.0));
+    bool  antiTile = true;  // gated per-layer by fw* (near) + ats below
+
     vec3 dN = vec3(0.0);
-    if (w.x > 0.01) dN += w.x * (matNormalBoost.x / 3.0) * fwRock *
-        (texture(matNormalArray, vec3(uvRock,  float(MAT_LAYER_ROCK))).rgb  * 2.0 - 1.0);
-    if (w.y > 0.01) dN += w.y * matNormalBoost.y * fwGrass *
-        (texture(matNormalArray, vec3(uvGrass, float(MAT_LAYER_GRASS))).rgb * 2.0 - 1.0);
-    if (w.z > 0.01) dN += w.z * matNormalBoost.z * fwDirt *
-        (texture(matNormalArray, vec3(uvDirt,  float(MAT_LAYER_DIRT))).rgb  * 2.0 - 1.0);
-    if (w.w > 0.01) dN += w.w * matNormalBoost.w * fwConcrete *
-        (texture(matNormalArray, vec3(uvConcrete, float(MAT_LAYER_CONCRETE))).rgb * 2.0 - 1.0);
+    if (w.x > 0.01) {
+        vec4 s = (antiTile && atsRock > 0.01 && fwRock > 0.5)
+               ? sampleAntiTileArr(MAT_LAYER_ROCK, uvRock, atsRock)
+               : texture(matNormalArray, vec3(uvRock, float(MAT_LAYER_ROCK)));
+        dN += w.x * (matNormalBoost.x / 3.0) * fwRock * (s.rgb * 2.0 - 1.0);
+    }
+    if (w.y > 0.01) {
+        vec4 s = (antiTile && atsGrass > 0.01 && fwGrass > 0.5)
+               ? sampleAntiTileArr(MAT_LAYER_GRASS, uvGrass, atsGrass)
+               : texture(matNormalArray, vec3(uvGrass, float(MAT_LAYER_GRASS)));
+        dN += w.y * matNormalBoost.y * fwGrass * (s.rgb * 2.0 - 1.0);
+    }
+    if (w.z > 0.01) {
+        vec4 s = (antiTile && atsDirt > 0.01 && fwDirt > 0.5)
+               ? sampleAntiTileArr(MAT_LAYER_DIRT, uvDirt, atsDirt)
+               : texture(matNormalArray, vec3(uvDirt, float(MAT_LAYER_DIRT)));
+        dN += w.z * matNormalBoost.z * fwDirt * (s.rgb * 2.0 - 1.0);
+    }
+    if (w.w > 0.01) {
+        vec4 s = (antiTile && atsConc > 0.01 && fwConcrete > 0.5)
+               ? sampleAntiTileArr(MAT_LAYER_CONCRETE, uvConcrete, atsConc)
+               : texture(matNormalArray, vec3(uvConcrete, float(MAT_LAYER_CONCRETE)));
+        dN += w.w * matNormalBoost.w * fwConcrete * (s.rgb * 2.0 - 1.0);
+    }
     if (snowWeight > 0.01) dN += snowWeight * 0.9 * fwSnow *
         (texture(matNormalArray, vec3(uvSnow,  float(MAT_LAYER_SNOW))).rgb * 2.0 - 1.0);
     return dN;
@@ -326,7 +424,9 @@ void main() {
         } else {
             vec3 dN   = chunkDetailNormal(matWeights, snowWeight, v_worldPos.xy)
                       * (1.0 - pureConcrete);  // cement is smooth (legacy)
-            vec3 pert = vec3(baseN.xy / max(baseN.z, 0.2) + dN.xy * detailNormalStrength.x, 1.0);
+            // terrainNormalsFromHeightStrength scales the macro-slope tilt (default 1.0).
+            vec3 pert = vec3(baseN.xy / max(baseN.z, 0.2) * terrainNormalsFromHeightStrength
+                             + dN.xy * detailNormalStrength.x, 1.0);
             N = normalize(pert);
         }
     }
@@ -384,6 +484,20 @@ void main() {
         shadow = min(staticS, dynS);
     }
 
-    fragColor = vec4(baseColor * normalLight * shadow, 1.0);        // alpha forced 1.0
+    vec3 lit = baseColor * normalLight * shadow;
+    // Hemisphere ambient fill (TERRAIN-LIGHTING-1/2) — added AFTER shadow so sky/
+    // ground bounce still lights shadowed terrain. Env-gated OFF by default
+    // (terrainLightingV1Strength=0 -> skipped, byte-safe). Matches gos_terrain.frag.
+    if (terrainLightingV1Strength > 0.0) {
+        const vec3 hemiSkyTint    = vec3(0.55, 0.62, 0.75);
+        const vec3 hemiGroundTint = vec3(0.32, 0.28, 0.22);
+        float skyFactor    = N.z * 0.5 + 0.5;
+        vec3  hemiFill     = mix(hemiGroundTint, hemiSkyTint, skyFactor);
+        float hemiAmount   = terrainLightingV1Strength * (1.0 - 0.5 * snowWeight);
+        float hemiShadowMix = mix(terrainLightingV2ShadowFillFloor, 1.0, shadow);
+        lit += hemiFill * hemiAmount * 0.25 * hemiShadowMix;
+    }
+
+    fragColor = vec4(lit, 1.0);                                     // alpha forced 1.0
     if ((u_diag & 1) == 0) GBuffer1 = vec4(0.5, 0.5, 1.0, 1.0);     // rc_gbuffer1_shadowHandled_flatUp
 }

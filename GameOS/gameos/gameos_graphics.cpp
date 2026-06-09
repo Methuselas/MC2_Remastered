@@ -1561,6 +1561,7 @@ class gosRenderer {
         float getTerrainDisplaceScale() const { return terrain_displace_scale_; }
         float getTerrainDetailTiling() const { return terrain_detail_tiling_; }
         float getTerrainDetailStrength() const { return terrain_detail_strength_; }
+        float getTerrainPOMScale() const { return terrain_pom_scale_; }
         bool getTerrainWireframe() const { return terrain_wireframe_; }
         gos_TERRAIN_EXTRA* getTerrainExtraData() const { return terrain_extra_data_; }
         bool isTerrainMVPValid() const { return terrain_mvp_valid_; }
@@ -8026,6 +8027,9 @@ float gos_GetTerrainDetailTiling() {
 }
 float gos_GetTerrainDetailStrength() {
     return g_gos_renderer ? g_gos_renderer->getTerrainDetailStrength() : 4.0f;
+}
+float gos_GetTerrainPOMScale() {
+    return g_gos_renderer ? g_gos_renderer->getTerrainPOMScale() : 0.0f;
 }
 void __stdcall gos_SetTerrainWireframe(bool w) {
     if (g_gos_renderer) g_gos_renderer->setTerrainWireframe(w);
