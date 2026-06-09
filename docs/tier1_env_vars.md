@@ -153,9 +153,10 @@ call from inside a draw-bind path.
 
 ## Terrain LOD chunk
 
-- `MC2_TERRAIN_LOD_CHUNK=1` — chunked heightfield LOD renderer. Default **OFF**.
-  Phase 1: AABB allocation only. Phase 2: shadow-mode cull. Phase 3: height SSBO.
-  Phase 4+: GPU draw path replaces makeLists/geometry()/TerrainQuad::draw().
+- `MC2_TERRAIN_LOD_CHUNK` — chunked heightfield LOD renderer. **DEFAULT ON** (cutover
+  2026-06-09 `a7b090be`); set `=0` to opt out (legacy tessellated path, e.g. editor).
+  Single-source gate `mc2TerrainLodChunkEnabled()` (terrain.h). Replaces
+  makeLists/geometry()/TerrainQuad::draw() + suppresses legacy DrawIndirect.
 - `MC2_TERRAIN_LOD_CHUNK_BRIDGE_OBJBLOCK=1` — bridge ObjBlockInfo.active from
   blockMeta.inFrustum each frame. Default **OFF**. Phase 2 only; removed Phase 4. Runtime getenv().
 - `MC2_TERRAIN_LOD_CHUNK_FORCE_LOD=k` — force every chunk block to LOD k (diag).

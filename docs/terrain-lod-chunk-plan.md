@@ -839,8 +839,11 @@ Depends on Phase 8 (old path deleted; clean baseline). Phase 9 is optional and m
 >   **PRE-DIVIDE in the vert**, never frag `gl_FragDepth` (AMD early-Z) — `67e4f5e4`.
 > - Canonical record: `memory/HANDOFF_2026_06_09_terrain_lod_chunk_phase10_fidelity_cutover_prep.md`.
 >
-> **NEXT = Phase 11 default-on cutover** (gate flip + chunk-path smoke + editor/legacy
-> fallback check), then Phase 8z deletion of slimReduce/makeLists.
+> **Phase 11 default-on cutover SHIPPED `a7b090be` (2026-06-09):** chunk is now the
+> DEFAULT renderer via single-source gate `mc2TerrainLodChunkEnabled()` (opt out
+> `MC2_TERRAIN_LOD_CHUNK=0`); full tier1 5/5 PASS on the no-flag chunk path.
+> Editor chunk path UNVERIFIED (opt out =0 if needed). **NEXT = Phase 8z** (retire
+> slimReduce/makeLists now that the chunk path is default).
 
 **Slice kind:** dispatch-changing (adds per-frame GPU buffer uploads for normals, materials, lights, shadow)
 **Goal:** Bring terrain LOD chunk path to full visual fidelity: GPU-side normal computation from heightfield, material/texture-ID splatting, light integration, and shadow map sampling. Also: full dirty propagation for real-time terrain edits (editor path).
