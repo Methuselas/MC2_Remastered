@@ -577,49 +577,61 @@ class MissionMap {
 
 		long write (PacketFile* packetFile, long whichPacket = 0);
 
+		// OOB guards (cd071ca9 pattern): worldToCell (terrain.h) does NOT clamp,
+		// and on oversized maps the MOVE/cell grid (width x height) is smaller than
+		// the terrain grid, so far-off-map cursor positions yield OOB row/col.
+		// Every map[row*width+col] accessor must inBounds-guard or it READ-AVs
+		// (e.g. getTerrain via printDebugInfo:3493). Getters return a benign
+		// default off-map; setters no-op off-map.
 		unsigned long getTerrain (long row, long col) {
+			if (!inBounds(row, col)) return(0);
 			return(map[row * width + col].getTerrain());
 		}
 
 		void setTerrain (long row, long col, unsigned long terrain) {
+			if (!inBounds(row, col)) return;
 			map[row * width + col].setTerrain(terrain);
 		}
 
 		unsigned long getOverlay (long row, long col) {
+			if (!inBounds(row, col)) return(0);
 			return(map[row * width + col].getOverlay());
 		}
 
 		void setOverlay (long row, long col, unsigned long overlay) {
+			if (!inBounds(row, col)) return;
 			map[row * width + col].setOverlay(overlay);
 		}
 
 		bool getMover (long row, long col) {
+			if (!inBounds(row, col)) return(false);
 			return(map[row * width + col].getMover());
 		}
 
 		void setMover (long row, long col, bool moverHere) {
+			if (!inBounds(row, col)) return;
 			map[row * width + col].setMover(moverHere);
 		}
 
 		unsigned long getGate (long row, long col) {
+			if (!inBounds(row, col)) return(0);
 			return(map[row * width + col].getGate());
 		}
 
 		void setGate (long row, long col, unsigned long gate) {
+			if (!inBounds(row, col)) return;
 			map[row * width + col].setGate(gate);
 		}
 
 		bool getPassable (long row, long col) {
-			// worldToCell (terrain.h) does NOT clamp, so far-off-map cursor
-			// positions can yield OOB row/col. Treat off-map as impassable
-			// instead of indexing map[] out of bounds (READ AV). Same OOB
-			// class as the GameMap calcArea/calcRegions guards.
+			// Treat off-map as impassable instead of indexing map[] OOB.
 			if (!inBounds(row, col))
 				return(false);
 			return(map[row * width + col].getPassable());
 		}
 
 		void setPassable (long row, long col, bool passable) {
+			if (!inBounds(row, col)) return;
 			map[row * width + col].setPassable(passable);
 		}
 
