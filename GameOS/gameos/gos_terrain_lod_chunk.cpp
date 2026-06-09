@@ -59,6 +59,29 @@ static constexpr GLint kChunkTexUnitDynamicShadow = 10;
 static GLint    s_locMatNormalArray     = -1;
 static constexpr GLint kChunkTexUnitMatNormalArray = 5;
 extern unsigned int gos_GetTerrainNormalArrayTex();
+// Step 5a: live material tunables (same uniforms + source as legacy terrain), so
+// the ImGui terrain panel drives the chunk detail too.
+static GLint    s_locClassGrass         = -1;
+static GLint    s_locClassDirt          = -1;
+static GLint    s_locMatTiling          = -1;
+static GLint    s_locMatNormalBoost     = -1;
+static GLint    s_locMatTilingSnow      = -1;
+static GLint    s_locDetailTiling       = -1;
+static GLint    s_locDetailStrength     = -1;
+static GLint    s_locTintRock           = -1;
+static GLint    s_locTintGrass          = -1;
+static GLint    s_locTintDirt           = -1;
+static GLint    s_locTintStrengthScale  = -1;
+extern void  gos_GetTerrainMatTiling(float*, float*, float*, float*, float*);
+extern void  gos_GetTerrainTintRock(float*, float*, float*);
+extern void  gos_GetTerrainTintGrass(float*, float*, float*);
+extern void  gos_GetTerrainTintDirt(float*, float*, float*);
+extern float gos_GetTerrainTintStrengthScale();
+extern void  gos_GetTerrainMatNormalBoost(float*, float*, float*, float*);
+extern void  gos_GetTerrainClassGrass(float*, float*, float*, float*);
+extern void  gos_GetTerrainClassDirt(float*, float*, float*, float*);
+extern float gos_GetTerrainDetailTiling();
+extern float gos_GetTerrainDetailStrength();
 
 // Phase 10: colormap atlas accessors (defined in gos_terrain_indirect.cpp,
 // global free functions). Same atlas tex1 + UV params the legacy gos_terrain.frag
@@ -294,6 +317,17 @@ void gos_TerrainLodChunk_Init()
             s_locDynLightSpaceMat = glGetUniformLocation(s_terrainProgram, "dynamicLightSpaceMatrix");
             s_locEnableDynShadows = glGetUniformLocation(s_terrainProgram, "enableDynamicShadows");
             s_locMatNormalArray   = glGetUniformLocation(s_terrainProgram, "matNormalArray");
+            s_locClassGrass     = glGetUniformLocation(s_terrainProgram, "terrainClassGrass");
+            s_locClassDirt      = glGetUniformLocation(s_terrainProgram, "terrainClassDirt");
+            s_locMatTiling      = glGetUniformLocation(s_terrainProgram, "matTiling");
+            s_locMatNormalBoost = glGetUniformLocation(s_terrainProgram, "matNormalBoost");
+            s_locMatTilingSnow  = glGetUniformLocation(s_terrainProgram, "matTilingSnow");
+            s_locDetailTiling   = glGetUniformLocation(s_terrainProgram, "detailNormalTiling");
+            s_locDetailStrength = glGetUniformLocation(s_terrainProgram, "detailNormalStrength");
+            s_locTintRock          = glGetUniformLocation(s_terrainProgram, "tintRock");
+            s_locTintGrass         = glGetUniformLocation(s_terrainProgram, "tintGrass");
+            s_locTintDirt          = glGetUniformLocation(s_terrainProgram, "tintDirt");
+            s_locTintStrengthScale = glGetUniformLocation(s_terrainProgram, "tintStrengthScale");
             printf("[TerrainLodChunk] shader loaded prog=%u "
                    "locs: originX=%d originY=%d mapSide=%d halfMap=%d mvp=%d lodStep=%d skirtDepth=%d forceColor=%d\n",
                    (unsigned)s_terrainProgram,
@@ -508,10 +542,38 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     // slots are populated -> the frag samples the default texture (flat-ish
     // normal -> falls back to the smooth base normal, no crash).
     if (s_locMatNormalArray >= 0) {
+        GLuint matArrTex = (GLuint)gos_GetTerrainNormalArrayTex();
         glUniform1i(s_locMatNormalArray, kChunkTexUnitMatNormalArray);
         glActiveTexture(GL_TEXTURE0 + kChunkTexUnitMatNormalArray);
-        glBindTexture(GL_TEXTURE_2D_ARRAY, (GLuint)gos_GetTerrainNormalArrayTex());
+        glBindTexture(GL_TEXTURE_2D_ARRAY, matArrTex);
         glActiveTexture(GL_TEXTURE0);
+    }
+
+    // Step 5a: upload the live material tunables (driven by the ImGui terrain
+    // panel via the same gosRenderer members the legacy terrain reads).
+    {
+        float mt[5] = {3,2,1,6,1};  gos_GetTerrainMatTiling(&mt[0], &mt[1], &mt[2], &mt[3], &mt[4]);
+        float nb[4] = {0.9f,1.1f,1.1f,2.5f}; gos_GetTerrainMatNormalBoost(&nb[0], &nb[1], &nb[2], &nb[3]);
+        float cg[4] = {-0.02f,0.06f,0.22f,0.40f}; gos_GetTerrainClassGrass(&cg[0], &cg[1], &cg[2], &cg[3]);
+        float cd[4] = {-0.02f,0.06f,0.22f,0.45f}; gos_GetTerrainClassDirt(&cd[0], &cd[1], &cd[2], &cd[3]);
+        float dt = gos_GetTerrainDetailTiling();
+        float ds = gos_GetTerrainDetailStrength();
+        if (s_locMatTiling      >= 0) glUniform4f(s_locMatTiling,      mt[0], mt[1], mt[2], mt[3]);
+        if (s_locMatTilingSnow  >= 0) glUniform1f(s_locMatTilingSnow,  mt[4]);
+        if (s_locMatNormalBoost >= 0) glUniform4f(s_locMatNormalBoost, nb[0], nb[1], nb[2], nb[3]);
+        if (s_locClassGrass     >= 0) glUniform4f(s_locClassGrass,     cg[0], cg[1], cg[2], cg[3]);
+        if (s_locClassDirt      >= 0) glUniform4f(s_locClassDirt,      cd[0], cd[1], cd[2], cd[3]);
+        if (s_locDetailTiling   >= 0) glUniform4f(s_locDetailTiling,   dt, 0.0f, 0.0f, 0.0f);
+        if (s_locDetailStrength >= 0) glUniform4f(s_locDetailStrength, ds, 0.0f, 0.0f, 0.0f);
+
+        float tr[3]={0.36f,0.37f,0.40f}; gos_GetTerrainTintRock(&tr[0],&tr[1],&tr[2]);
+        float tg[3]={0.35f,0.42f,0.25f}; gos_GetTerrainTintGrass(&tg[0],&tg[1],&tg[2]);
+        float td[3]={0.48f,0.42f,0.33f}; gos_GetTerrainTintDirt(&td[0],&td[1],&td[2]);
+        float tss = gos_GetTerrainTintStrengthScale();
+        if (s_locTintRock          >= 0) glUniform3f(s_locTintRock,  tr[0], tr[1], tr[2]);
+        if (s_locTintGrass         >= 0) glUniform3f(s_locTintGrass, tg[0], tg[1], tg[2]);
+        if (s_locTintDirt          >= 0) glUniform3f(s_locTintDirt,  td[0], td[1], td[2]);
+        if (s_locTintStrengthScale >= 0) glUniform1f(s_locTintStrengthScale, tss);
     }
 
     // Phase 7.5: log first successful submit so the user can confirm the path is live.

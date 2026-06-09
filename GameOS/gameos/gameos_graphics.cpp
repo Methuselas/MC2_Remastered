@@ -166,7 +166,16 @@ struct GlPixelStoreGuard {
 // Used by shader prefix injection AND all bind paths — must agree for the
 // lifetime of compiled programs. Evaluated once at startup via static.
 static bool terrainNormalArrayEnabled() {
-    static const bool enabled = debugEnvEnabled("MC2_TERRAIN_NORMAL_ARRAY");
+    // DEFAULT ON (was opt-in). The sampler2DArray path is the only one whose
+    // build runs at the clean terrain/shadow bind sites; the terrain LOD chunk
+    // renderer needs the array populated to apply material detail normals.
+    // Visual is identical to the legacy individual-sampler path by design
+    // (validated 5/5 ON). Explicit MC2_TERRAIN_NORMAL_ARRAY=0 forces the old
+    // individual-sampler path.
+    static const bool enabled = []() {
+        const char* v = std::getenv("MC2_TERRAIN_NORMAL_ARRAY");
+        return !(v && std::strcmp(v, "0") == 0);
+    }();
     return enabled;
 }
 
@@ -1551,6 +1560,7 @@ class gosRenderer {
         float getTerrainPhongAlpha() const { return terrain_phong_alpha_; }
         float getTerrainDisplaceScale() const { return terrain_displace_scale_; }
         float getTerrainDetailTiling() const { return terrain_detail_tiling_; }
+        float getTerrainDetailStrength() const { return terrain_detail_strength_; }
         bool getTerrainWireframe() const { return terrain_wireframe_; }
         gos_TERRAIN_EXTRA* getTerrainExtraData() const { return terrain_extra_data_; }
         bool isTerrainMVPValid() const { return terrain_mvp_valid_; }
@@ -1723,6 +1733,7 @@ class gosRenderer {
             // (averaging would shorten normals; hardware-generated mips differ
             // from the source importer's output).
             std::vector<uint8_t> pixels;
+            int levelsCopied = 0;
             for (int level = baseLevel; level < baseLevel + numLevels; ++level) {
                 GLint mipW = 0, mipH = 0;
                 glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[0]);
@@ -1730,6 +1741,7 @@ class gosRenderer {
                 glGetTexLevelParameteriv(GL_TEXTURE_2D, level, GL_TEXTURE_HEIGHT, &mipH);
                 glBindTexture(GL_TEXTURE_2D, 0);
                 if (mipW <= 0 || mipH <= 0) break;
+                ++levelsCopied;
 
                 glBindTexture(GL_TEXTURE_2D_ARRAY, terrain_normal_array_tex_);
                 glTexImage3D(GL_TEXTURE_2D_ARRAY, level, GL_RGBA8,
@@ -1751,10 +1763,17 @@ class gosRenderer {
                 }
             }
 
-            // Sampling params.
+            // Sampling params. CRITICAL: MAX_LEVEL must match the levels ACTUALLY
+            // copied, not the pre-computed numLevels. The copy loop breaks early
+            // when a source mip is absent; if we declare more levels than exist,
+            // the array is mip-INCOMPLETE -> every sample returns black under a
+            // mipmap min filter (the chunk material-detail "all black" bug). If
+            // only level 0 exists, drop to a non-mip filter so it stays complete.
+            if (levelsCopied < 1) levelsCopied = 1;
             glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_BASE_LEVEL, baseLevel);
-            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL,  baseLevel + numLevels - 1);
-            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL,  baseLevel + levelsCopied - 1);
+            glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER,
+                            (levelsCopied > 1) ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
             glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
@@ -8004,6 +8023,9 @@ float gos_GetTerrainDisplaceScale() {
 }
 float gos_GetTerrainDetailTiling() {
     return g_gos_renderer ? g_gos_renderer->getTerrainDetailTiling() : 1.0f;
+}
+float gos_GetTerrainDetailStrength() {
+    return g_gos_renderer ? g_gos_renderer->getTerrainDetailStrength() : 4.0f;
 }
 void __stdcall gos_SetTerrainWireframe(bool w) {
     if (g_gos_renderer) g_gos_renderer->setTerrainWireframe(w);
