@@ -1653,6 +1653,48 @@ long Terrain::update (void)
 			}
 		}
 
+		// --- Phase 10.2e: 1-ring terrain draw APRON ---
+		// Render one extra block beyond the frustum-visible set so the cull
+		// boundary does not show as a cliff / missing-terrain edge. Apron blocks
+		// were skipped for LOD selection if their superchunk was culled, so assign
+		// a LOD here; Pass 2 below then delta-clamps the dilated set (fewer seams).
+		// RENDER-ONLY: the Phase 8 object-active / solid-window producers use an
+		// independent angular test and never read s_blockMeta.inFrustum.
+		// MC2_TERRAIN_LOD_CHUNK_NO_APRON=1 disables it (A/B).
+		{
+			static const bool s_noApron =
+				(getenv("MC2_TERRAIN_LOD_CHUNK_NO_APRON") != nullptr);
+			if (!s_noApron)
+			{
+				const int side = s_terrainChunkSide;
+				static std::vector<uint8_t> s_visSnap;
+				s_visSnap.assign((size_t)side * side, 0);
+				for (int i = 0; i < side * side; ++i)
+					s_visSnap[i] = s_blockMeta[i].inFrustum ? 1 : 0;
+				for (int by = 0; by < side; ++by)
+				for (int bx = 0; bx < side; ++bx)
+				{
+					if (s_visSnap[bx + by * side]) continue;   // already visible
+					bool nearVis = false;
+					for (int dy = -1; dy <= 1 && !nearVis; ++dy)
+					for (int dx = -1; dx <= 1 && !nearVis; ++dx)
+					{
+						int nx = bx + dx, ny = by + dy;
+						if (nx < 0 || ny < 0 || nx >= side || ny >= side) continue;
+						if (s_visSnap[nx + ny * side]) nearVis = true;
+					}
+					if (!nearVis) continue;
+					TerrainBlockMeta& bm = s_blockMeta[bx + by * side];
+					if (bm.dirtyAabb) recomputeBlockAabb(bm);
+					float cX = float(bm.originX) * 128.0f + float(bm.quadCountX) * 0.5f * 128.0f - halfMap;
+					float cY = halfMap - (float(bm.originY) * 128.0f + float(bm.quadCountY) * 0.5f * 128.0f);
+					float dx2 = cX - eyeX, dy2 = cY - eyeY;
+					bm.lodLevel  = chooseLodLevel(dx2 * dx2 + dy2 * dy2, bm.lodLevel);
+					bm.inFrustum = true;   // render this apron block
+				}
+			}
+		}
+
 		// --- Phase 5 Pass 2: neighbor LOD delta clamp (visible blocks only) ---
 		// Iterates until stable so chains (e.g., LOD0 next to LOD5) propagate.
 		{
