@@ -21,7 +21,19 @@ uniform vec4  terrainLightDir;            // Phase 10 Step 1b: sun dir (same uni
 layout(location = 0) out vec4 fragColor;
 layout(location = 1) out vec4 GBuffer1;   // shadow-handled flat-up (terrain MRT composite)
 
+// Phase 10.3: REVERSE-Z depth fudge — the scene runs reverse-Z (glDepthFunc
+// GL_GEQUAL) and legacy gos_terrain.frag writes gl_FragDepth = depth +
+// TERRAIN_DEPTH_FUDGE so ground-level objects/overlays/selection markers win the
+// GEQUAL tie instead of z-fighting terrain. The chunk frag was writing raw
+// gl_FragCoord.z -> z-fight (terrain "disappears" depending on selection/overlay
+// draw order, worst at distance). Match the legacy convention. Keep LOCKSTEP with
+// shaders/include/terrain_depth_bias.hglsl (TERRAIN_DEPTH_FUDGE = -0.002).
+const float TERRAIN_DEPTH_FUDGE = -0.002;
+
 void main() {
+    // Reverse-Z terrain depth fudge (applies to every output path below).
+    gl_FragDepth = clamp(gl_FragCoord.z + TERRAIN_DEPTH_FUDGE, 0.0, 1.0);
+
     // Phase 7.5 debug: neon LOD-band palette when u_forceColor=1 (launch_lod_*color.bat).
     if (u_forceColor != 0) {
         vec3 fc;
