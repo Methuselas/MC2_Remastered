@@ -81,7 +81,7 @@ void EndFrame(uint32_t frame, double dtMs) {
         a.glFenceSyncCalls, a.glFinishCalls, a.glFlushCalls);
 
     // Detail line: terrain solid dispatch.
-    if (a.terrainSolidMs > 0.0 || a.terrainBinds || a.terrainUploads) {
+    if (a.terrainSolidMs > 0.0 || a.terrainBinds || a.terrainUploads || a.terrainTexImageCalls) {
         fprintf(stderr,
             "[HITCH_TERRAIN_TEX] quadSetupMs=%.2f binds=%u uploads=%u texImageCalls=%u\n",
             a.terrainSolidMs, a.terrainBinds, a.terrainUploads, a.terrainTexImageCalls);
