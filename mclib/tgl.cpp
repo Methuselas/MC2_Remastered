@@ -3208,6 +3208,29 @@ bool TG_Shape::PerPolySelect (float mouseX, float mouseY)
 			return false;
 	}
 
+	// Cheap screen-space AABB reject before the per-triangle hit test.
+	// listOfVertices[] is already this frame's screen-space transform (the
+	// guard above proved lastTurnTransformed==turn-1), so this reuses work
+	// instead of re-projecting like the reverted objmgr rect pre-filter did.
+	// In a dense cluster ~700 statics/frame run PerPolySelect; 699 of them do
+	// NOT contain the cursor. For those an O(numVertices) min/max compare beats
+	// the O(numVisibleFaces) point-in-triangle loop (~13 mults/face). The bbox
+	// spans ALL transformed verts (over-inclusive) so it can never reject a
+	// candidate the cursor is actually over. (FindTerrainObj 1.5ms hotspot;
+	// see HANDOFF_2026_06_10_pick_path_hotspots_recon.)
+	{
+		float minX = listOfVertices[0].x, maxX = minX;
+		float minY = listOfVertices[0].y, maxY = minY;
+		for (long j=1;j<numVertices;j++)
+		{
+			float x = listOfVertices[j].x, y = listOfVertices[j].y;
+			if (x < minX) minX = x; else if (x > maxX) maxX = x;
+			if (y < minY) minY = y; else if (y > maxY) maxY = y;
+		}
+		if (mouseX < minX || mouseX > maxX || mouseY < minY || mouseY > maxY)
+			return false;
+	}
+
 	TG_TypeShapePtr theShape = (TG_TypeShapePtr)myType;
  	for (long j=0;j<numVisibleFaces;j++)
 	{
