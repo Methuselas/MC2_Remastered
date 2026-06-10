@@ -206,6 +206,19 @@ def run_case(name: str, exe: Path, deploy: Path, exit_sec: int, timeout: int,
                 bucket = "outliner_sel_bad"; detail = f"count={cnt} but selected={sel} (want 1)"
             elif int(cnt) == 0 and sel != "0":
                 bucket = "outliner_sel_bad"; detail = f"count=0 but selected={sel} (want 0)"
+        if expect == "inspector":
+            # Read-only Inspector produced a selection summary. An auto-generated
+            # empty map has nothing to select (selected=0, type=none); a non-empty
+            # one selects the first object (selected=1, type != none). Either way
+            # the step must run crash-free with a consistent type token.
+            isel = esmoke.get("inspector_selected")
+            itype = esmoke.get("inspector_type")
+            if isel not in ("0", "1"):
+                bucket = "inspector_not_run"; detail = f"inspector_selected={isel} (want 0/1)"
+            elif isel == "1" and (not itype or itype == "none"):
+                bucket = "inspector_type_bad"; detail = f"selected=1 but type={itype}"
+            elif isel == "0" and itype != "none":
+                bucket = "inspector_type_bad"; detail = f"selected=0 but type={itype} (want none)"
 
     passed = (bucket == "")
     return dict(name=name, passed=passed, bucket=bucket, detail=detail,
@@ -231,6 +244,7 @@ def build_suite(deploy: Path):
         "foliage_garbage": (["-gen-map=0,0", "-smoke-foliage=terrain_gen_out\\garbage.foliage.json"], "foliage_tolerated"),
         "foliage_menu_commands": (["-gen-map=0,0", "-smoke-foliage-menu"], "menu"),
         "outliner":        (["-gen-map=0,0", "-smoke-outliner"], "outliner"),  # read-only Scene Outliner
+        "inspector":       (["-gen-map=0,0", "-smoke-inspector"], "inspector"),  # read-only Inspector
         # gen_save_load is handled specially (two phases) in main().
     }
     return cases

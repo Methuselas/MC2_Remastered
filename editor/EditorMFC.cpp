@@ -83,6 +83,14 @@ bool         g_cliSmokeOutliner       = false;
 int          g_cliSmokeOutlinerCount  = -1;   // -1 = not attempted, >=0 = total objects
 int          g_cliSmokeOutlinerSel    = -1;   // -1 = not attempted, 0/1 = first-object selected
 
+// -smoke-inspector: after the map auto-loads, select the first object (existing
+// EditorObjectMgr path) and ask the read-only Inspector for its selection
+// summary. Read-only; reported in the [ESMOKE v1] summary. An empty generated
+// map yields selected=0 / type=none, which is still a valid crash-free PASS.
+bool         g_cliSmokeInspector       = false;
+int          g_cliSmokeInspectorSel    = -1;   // -1 = not attempted, 0/1 = had selection
+char         g_cliSmokeInspectorType[32] = "none";
+
 // Set true after the auto-load block finishes ALL its work (generate + optional
 // foliage + optional save). The smoke exit countdown starts from THIS, not from
 // g_cliAutoLoadFired (which is set at block ENTRY) -- otherwise a slow generation
@@ -152,6 +160,7 @@ static void EarlyTraceBegin()
 #include "EditorData.h"
 #include "FoliageRender.h"
 #include "SceneOutliner.h"
+#include "InspectorPanel.h"
 #include "resource.h"   // ID_FOLIAGE_* for the -smoke-foliage-menu WM_COMMAND drive
 
 // -- S-CLI parser ------------------------------------------------------------
@@ -284,11 +293,15 @@ static void s_cli_parse(const char* cmd)
 		{
 			g_cliSmokeOutliner = true;
 		}
+		else if (s_cli_flag_match(tok, "-smoke-inspector", "--smoke-inspector"))
+		{
+			g_cliSmokeInspector = true;
+		}
 	}
 
 	// Any smoke flag implies headless -> suppress the auto-run-path failure modals.
 	g_cliSuppressModals = (g_cliExitAfterSec > 0) || g_cliSmokeFoliage || g_cliSmokeSave
-	                      || g_cliSmokeOutliner;
+	                      || g_cliSmokeOutliner || g_cliSmokeInspector;
 }
 
 // Forward declaration — defined in EditorGameOS.cpp.
@@ -556,10 +569,12 @@ static void s_emit_esmoke(const char* how)
 		"[ESMOKE v1] event=summary how=%s clean_exit=1 frames=%ld autoload=%d gen_map=%d "
 		"foliage_smoke=%d foliage_count=%d saved=%d "
 		"outliner_count=%d outliner_selected=%d "
+		"inspector_selected=%d inspector_type=%s "
 		"menu_vis0=%d menu_vis1=%d menu_vis2=%d menu_clear=%d menu_reload=%d",
 		how, g_cliFrameCounter, g_cliAutoLoadFired ? 1 : 0, g_cliGenMap ? 1 : 0,
 		g_cliSmokeFoliageFired ? 1 : 0, g_cliSmokeFoliageCount, g_cliSmokeSaveOk,
 		g_cliSmokeOutlinerCount, g_cliSmokeOutlinerSel,
+		g_cliSmokeInspectorSel, g_cliSmokeInspectorType,
 		g_menuVis0, g_menuVis1, g_menuVis2, g_menuClearCount, g_menuReloadCount);
 	esmoke[sizeof(esmoke) - 1] = '\0';
 	fprintf(stderr, "%s\n", esmoke);
@@ -743,6 +758,22 @@ BOOL EditorMFCApp::OnIdle(LONG lCount)
 				oc.units, oc.buildings, oc.navMarkers, oc.dropZones, oc.forests);
 			fflush(stderr);
 			EarlyTrace("OnIdle: smoke-outliner done");
+		}
+
+		// -smoke-inspector: select the first object (existing path) then ask the
+		// read-only Inspector for its selection summary. Safe on an empty map
+		// (selected=0, type=none). Facts -> [ESMOKE v1] at exit.
+		if (g_cliSmokeInspector)
+		{
+			SceneOutliner::SelectFirstObject();   // no-op/false on empty map
+			InspectorPanel::Open();
+			bool had = InspectorPanel::GetSelectionSummary(
+				g_cliSmokeInspectorType, sizeof(g_cliSmokeInspectorType));
+			g_cliSmokeInspectorSel = had ? 1 : 0;
+			fprintf(stderr, "[EDITOR_CLI v1] event=inspector selected=%d type=%s\n",
+				g_cliSmokeInspectorSel, g_cliSmokeInspectorType);
+			fflush(stderr);
+			EarlyTrace("OnIdle: smoke-inspector done");
 		}
 
 		// All auto-load work (generate + foliage + save) is complete -> arm the
