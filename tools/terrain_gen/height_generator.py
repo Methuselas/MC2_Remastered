@@ -5,12 +5,17 @@ from opensimplex import OpenSimplex
 from terrain_gen.terrain_recipe import TerrainRecipe
 
 
+class CancelledError(Exception):
+    """Raised when a cancel_check fires mid-generation."""
+    pass
+
+
 class HeightGenerator:
     # Standard MC2 dimensions for banded generation
     CHUNK_SIZE = 20
     SUPERCHUNK_CHUNKS = 3
 
-    def generate(self, recipe: TerrainRecipe, progress=None) -> np.ndarray:
+    def generate(self, recipe: TerrainRecipe, progress=None, cancel_check=None) -> np.ndarray:
         """Return float32 ndarray [size, size] in [0, 1].
 
         If recipe._height_work_size is set, generates at lower resolution then upscales.
@@ -27,7 +32,7 @@ class HeightGenerator:
             if progress:
                 progress(1, "height", f"working at {work_N} then upscaling to {final_N}")
 
-            height = self._generate_at_size(recipe, work_N, progress)
+            height = self._generate_at_size(recipe, work_N, progress, cancel_check)
 
             # Upscale to final resolution using high-quality BICUBIC interpolation
             if progress:
@@ -43,9 +48,10 @@ class HeightGenerator:
             return np.clip(out, 0, 1).astype(np.float32)
 
         # Full resolution generation
-        return self._generate_at_size(recipe, final_N, progress)
+        return self._generate_at_size(recipe, final_N, progress, cancel_check)
 
-    def generate_fullres_banded(self, recipe: TerrainRecipe, progress=None, superchunk_chunks: int = 3) -> np.ndarray:
+    def generate_fullres_banded(self, recipe: TerrainRecipe, progress=None, superchunk_chunks: int = 3,
+                                cancel_check=None) -> np.ndarray:
         """Generate full-resolution height via row bands (no upscaling).
 
         Processes height in bands of size (chunk_size * superchunk_chunks) rows.
@@ -73,19 +79,19 @@ class HeightGenerator:
         if progress:
             progress(5, "height", "base noise")
         base = self._fbm_banded(gen1, N, h.octaves, h.persistence, h.lacunarity, h.base_frequency,
-                               band_height, progress, label="base", pct0=5, pct1=35)
+                               band_height, progress, label="base", pct0=5, pct1=35, cancel_check=cancel_check)
 
         # Generate mountain component if needed
         if h.mountain_amount > 0.0:
             if progress:
                 progress(35, "height", "ridged noise")
             ridged = self._ridged_banded(gen2, N, h.base_frequency * 2.0, band_height,
-                                        progress, pct0=35, pct1=48)
+                                        progress, pct0=35, pct1=48, cancel_check=cancel_check)
 
             if progress:
                 progress(48, "height", "detail noise")
             detail = self._fbm_banded(gen2, N, h.octaves, h.persistence, h.lacunarity, h.base_frequency,
-                                     band_height, progress, label="detail", pct0=48, pct1=65)
+                                     band_height, progress, label="detail", pct0=48, pct1=65, cancel_check=cancel_check)
 
             mountain = detail + ridged * h.ridged_amount
             height = base + mountain * h.mountain_amount * 0.4
@@ -111,12 +117,16 @@ class HeightGenerator:
         if h.erosion_passes > 0:
             if progress:
                 progress(75, "height", f"erosion {h.erosion_passes} passes")
-            height = self._fake_erosion(height, h.erosion_passes, progress)
+            height = self._fake_erosion(height, h.erosion_passes, progress, cancel_check)
 
+        # Fail loud on any shape drift (banding bug would surface here, not in the editor).
+        if height.shape != (N, N):
+            raise ValueError(f"banded height shape {height.shape} != ({N}, {N})")
         return height.astype(np.float32)
 
     def _fbm_banded(self, gen, N: int, octaves: int, persistence: float, lacunarity: float, freq: float,
-                    band_height: int, progress=None, label: str = "fbm", pct0: int = 0, pct1: int = 100) -> np.ndarray:
+                    band_height: int, progress=None, label: str = "fbm", pct0: int = 0, pct1: int = 100,
+                    cancel_check=None) -> np.ndarray:
         """Vectorised fBm processed band-by-band. Uses global x, band-local y coordinates.
 
         Args:
@@ -143,6 +153,8 @@ class HeightGenerator:
 
         for octave in range(octaves):
             for band_idx, y0 in enumerate(range(0, N, band_height)):
+                if cancel_check:
+                    cancel_check()
                 y1 = min(y0 + band_height, N)
                 band_rows = y1 - y0
                 ycoords = np.arange(y0, y1, dtype=np.float64) / N
@@ -163,7 +175,7 @@ class HeightGenerator:
         return value / total_amp
 
     def _ridged_banded(self, gen, N: int, freq: float, band_height: int,
-                       progress=None, pct0: int = 0, pct1: int = 100) -> np.ndarray:
+                       progress=None, pct0: int = 0, pct1: int = 100, cancel_check=None) -> np.ndarray:
         """Ridged noise processed band-by-band."""
         xcoords = np.arange(N, dtype=np.float64) / N
         value = np.zeros((N, N), dtype=np.float32)
@@ -171,6 +183,8 @@ class HeightGenerator:
         total_bands = (N + band_height - 1) // band_height
 
         for band_idx, y0 in enumerate(range(0, N, band_height)):
+            if cancel_check:
+                cancel_check()
             y1 = min(y0 + band_height, N)
             ycoords = np.arange(y0, y1, dtype=np.float64) / N
 
@@ -183,7 +197,7 @@ class HeightGenerator:
 
         return value
 
-    def _generate_at_size(self, recipe: TerrainRecipe, N: int, progress=None) -> np.ndarray:
+    def _generate_at_size(self, recipe: TerrainRecipe, N: int, progress=None, cancel_check=None) -> np.ndarray:
         """Generate height field at specified resolution N."""
         h = recipe.height
         gen1 = OpenSimplex(recipe.seed)
@@ -234,7 +248,7 @@ class HeightGenerator:
         if h.erosion_passes > 0:
             if progress:
                 progress(55, "height", f"erosion {h.erosion_passes} passes")
-            height = self._fake_erosion(height, h.erosion_passes, progress)
+            height = self._fake_erosion(height, h.erosion_passes, progress, cancel_check)
 
         return height.astype(np.float32)
 
@@ -259,8 +273,10 @@ class HeightGenerator:
         n = gen.noise2array(coords * freq, coords * freq)
         return 1.0 - np.abs(n)
 
-    def _fake_erosion(self, height: np.ndarray, passes: int, progress=None) -> np.ndarray:
+    def _fake_erosion(self, height: np.ndarray, passes: int, progress=None, cancel_check=None) -> np.ndarray:
         for i in range(passes):
+            if cancel_check:
+                cancel_check()
             if progress:
                 progress(55 + int(5 * i / max(1, passes)), "height", f"erosion pass {i + 1}/{passes}")
             gy, gx = np.gradient(height)

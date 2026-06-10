@@ -152,6 +152,9 @@ def main() -> None:
                              'or both (default; keeps editor compat).')
     parser.add_argument('--burnin-quality', type=int, default=95,
                         help='JPEG quality for .burnin.jpg (default 95).')
+    parser.add_argument('--cancel-file',
+                        help='If this path appears mid-generation, abort cleanly '
+                             '(exit 2, prints CANCELLED). Editor cancel button writes it.')
     args = parser.parse_args()
 
     # Resolve quality preset -> legacy flags/caps. Only when --quality is passed,
@@ -228,12 +231,23 @@ def main() -> None:
     progress(0, "height", "starting")
     gen = HeightGenerator()
 
+    # Cancellation: editor writes the cancel-file to abort a long generate. We check
+    # between bands/octaves/erosion passes and exit 2 cleanly (no half-written outputs).
+    cancel_check = None
+    if args.cancel_file:
+        def cancel_check():
+            if os.path.exists(args.cancel_file):
+                print("CANCELLED", flush=True)
+                sys.exit(2)
+
     if args.full_res:
         # Full-resolution banded generation (no upscaling)
-        height = gen.generate_fullres_banded(recipe, progress=progress, superchunk_chunks=args.superchunk_chunks)
+        height = gen.generate_fullres_banded(recipe, progress=progress,
+                                             superchunk_chunks=args.superchunk_chunks,
+                                             cancel_check=cancel_check)
     else:
         # Interactive or standard generation (may upscale)
-        height = gen.generate(recipe, progress=progress)
+        height = gen.generate(recipe, progress=progress, cancel_check=cancel_check)
 
     progress(76, "height", "done")
 
