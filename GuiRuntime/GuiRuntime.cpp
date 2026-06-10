@@ -96,10 +96,15 @@ static int s_fixedX = 0, s_fixedY = 0;     // fixed-layout rect from EditorGameO
 static int s_fixedW = 0, s_fixedH = 0;     // (w>0 => override the dynamic central node)
 
 bool GuiRuntime::RttEnabled() {
+    // DEFAULT OFF (2026-06-10): the RTT scene-shrink reproduces a position-dependent
+    // pick error (objects parallax + picking drifts toward screen edges) because the
+    // shrunk scene projection diverges from the legacy object/pick projection. The
+    // full-window scene (RTT off) picks PERFECTLY (user-bisected). Panels overlay the
+    // map's right edge and are collapsible instead. Opt back in: MC2_EDITOR_RTT=1.
     static int s_on = -1;
     if (s_on < 0) {
         const char* r = std::getenv("MC2_EDITOR_RTT");
-        s_on = (r && strcmp(r, "0") == 0) ? 0 : 1;   // default ON
+        s_on = (r && strcmp(r, "1") == 0) ? 1 : 0;   // default OFF
     }
     return s_on != 0;
 }
@@ -202,17 +207,6 @@ static void BuildEditorDockspace() {
             ImGui::GetBackgroundDrawList()->AddImage(
                 (ImTextureID)(intptr_t)s_rttTex, p0, p1,
                 ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
-            static int s_imgTrace = 0;
-            if ((s_imgTrace++ % 600) == 1)
-                fprintf(stderr, "[RTT image] tex=%u rect=(%d,%d)+(%dx%d) fixed=%d\n",
-                    s_rttTex, s_vpX, s_vpY, s_vpW, s_vpH, useFixed ? 1 : 0);
-        } else {
-            static bool s_noImg = false;
-            if (!s_noImg) {
-                s_noImg = true;
-                fprintf(stderr, "[RTT image] NOT drawn (rtt=%d tex=%u)\n",
-                    GuiRuntime::RttEnabled() ? 1 : 0, s_rttTex);
-            }
         }
     }
 }

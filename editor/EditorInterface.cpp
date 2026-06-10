@@ -4714,6 +4714,62 @@ void EditorInterface::renderToolbarImGui()
 	// Apply the master scale before any window is drawn this frame.
 	io.FontGlobalScale = s_uiScale;
 
+	// --- Collapsible panels -------------------------------------------------------
+	// The full-window scene (RTT off, the exact-picking path) means the docked panel
+	// column OVERLAYS the map's right edge. Let the user collapse it to reveal the
+	// whole map. Toggle with backtick (`) or the always-visible button (top-right).
+	// The status HUD and the toggle button stay visible when collapsed.
+	static bool s_panelsVisible = true;
+	{
+		static bool s_togPrev = false;
+		const bool tog = (::GetAsyncKeyState(VK_OEM_3) & 0x8000) != 0;   // backtick `
+		if (tog && !s_togPrev && !io.WantTextInput)
+			s_panelsVisible = !s_panelsVisible;
+		s_togPrev = tog;
+	}
+
+	// Status HUD (top-left) — always visible, even when panels are collapsed.
+	{
+		ImGui::SetNextWindowPos( ImVec2( 8.f, 8.f ), ImGuiCond_Always );
+		ImGui::SetNextWindowBgAlpha( 0.35f );
+		ImGuiWindowFlags hudFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoNav |
+			ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize |
+			ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+			ImGuiWindowFlags_NoInputs;
+		if ( ImGui::Begin( "##statushud", nullptr, hudFlags ) )
+		{
+			const char* mod = ModPicker::ActiveMod();
+			ImGui::Text( "Mod: %s", ( mod && mod[0] ) ? mod : "None (stock)" );
+			if ( land && Terrain::realVerticesMapSide > 1 )
+				ImGui::Text( "Terrain: %ld x %ld", Terrain::realVerticesMapSide, Terrain::realVerticesMapSide );
+			else
+				ImGui::TextDisabled( "Terrain: (none)" );
+			int selCount = EditorObjectMgr::instance() ? EditorObjectMgr::instance()->getSelectionCount() : 0;
+			ImGui::Text( "Selected: %d", selCount );
+			ImGui::Text( "Foliage: %d", FoliageRender::Count() );
+			ImGui::Text( "%.0f fps", ImGui::GetIO().Framerate );
+		}
+		ImGui::End();
+	}
+
+	// Always-visible collapse toggle (top-right overlay; never docked).
+	{
+		ImGui::SetNextWindowPos( ImVec2( io.DisplaySize.x - 160.f * s_uiScale, 8.f ), ImGuiCond_Always );
+		ImGui::SetNextWindowBgAlpha( 0.35f );
+		ImGuiWindowFlags tf = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking |
+			ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+			ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
+		if ( ImGui::Begin( "##panelToggle", nullptr, tf ) )
+		{
+			if ( ImGui::Button( s_panelsVisible ? "Hide Panels (`)" : "Show Panels (`)" ) )
+				s_panelsVisible = !s_panelsVisible;
+		}
+		ImGui::End();
+	}
+
+	if ( !s_panelsVisible )
+		return;   // collapsed: skip the Tools window + all docked panels (HUD + toggle stay)
+
 	const float toolbarW = 195.0f * s_uiScale;
 	// SetNextWindowPos pulls a window OUT of the DockBuilder assignment (floats it), so
 	// skip it under autodock -- the Tools panel then docks into the right column.
@@ -4763,29 +4819,8 @@ void EditorInterface::renderToolbarImGui()
 
 	// Debug overlay control panel (chunk/superchunk grid toggles + stats).
 	EditorDebugOverlay::RenderImGui();
-
-	// Always-on status HUD (top-left): at-a-glance editor state. No input, click-through.
-	{
-		ImGui::SetNextWindowPos( ImVec2( 8.f, 8.f ), ImGuiCond_Always );
-		ImGui::SetNextWindowBgAlpha( 0.35f );
-		ImGuiWindowFlags hudFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoNav |
-			ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
-			ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoInputs;
-		if ( ImGui::Begin( "##statushud", nullptr, hudFlags ) )
-		{
-			const char* mod = ModPicker::ActiveMod();
-			ImGui::Text( "Mod: %s", ( mod && mod[0] ) ? mod : "None (stock)" );
-			if ( land && Terrain::realVerticesMapSide > 1 )
-				ImGui::Text( "Terrain: %ld x %ld", Terrain::realVerticesMapSide, Terrain::realVerticesMapSide );
-			else
-				ImGui::TextDisabled( "Terrain: (none)" );
-			int selCount = EditorObjectMgr::instance() ? EditorObjectMgr::instance()->getSelectionCount() : 0;
-			ImGui::Text( "Selected: %d", selCount );
-			ImGui::Text( "Foliage: %d", FoliageRender::Count() );
-			ImGui::Text( "%.0f fps", ImGui::GetIO().Framerate );
-		}
-		ImGui::End();
-	}
+	// (Status HUD is drawn at the top of this function so it stays visible when the
+	// panel column is collapsed.)
 
 	// Scene Outliner Lite — read-only list of placed objects, click-to-select.
 	if (ImGui::Button("Scene Outliner", ImVec2(-1.f, 0.f)))

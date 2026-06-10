@@ -522,19 +522,6 @@ DWORD __stdcall RunGameOSLogic()
                         0.0f, 0.0f, (float)sh / s_gosFullH, (float)sw / s_gosFullW);
                 }
             }
-
-            static int s_pwDiag = 0;
-            if ((s_pwDiag++ % 300) == 1) {
-                // FULL camera-cache coherence dump (captured log). Every value here
-                // MUST equal sw to get exact picking. If any reads the full window
-                // (=w), that cache is the remaining leak.
-                float vmx = 0, vmy = 0, vax = 0, vay = 0;
-                gos_GetViewport(&vmx, &vmy, &vax, &vay);
-                float crx = eye ? eye->fgetScreenResX() : -1.0f;
-                EditorGameOSTrace("PICKW: client=%dx%d scene=%dx%d drawable=%dx%d gosViewMul=%.0fx%.0f camScrRes=%.0f",
-                    w, h, sw, sh, Environment.drawableWidth, Environment.drawableHeight,
-                    vmx, vmy, crx);
-            }
         }
 #endif
     }
@@ -703,21 +690,6 @@ DWORD __stdcall RunGameOSLogic()
                           GL_COLOR_BUFFER_BIT, GL_NEAREST);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         GuiRuntime::SetViewportTexture(s_presentTex);
-        static int s_rttTrace = 0;
-        if ((s_rttTrace++ % 600) == 1)
-            EditorGameOSTrace("RTT: capture presentTex=%u %dx%d vpRect=%d,%d %dx%d",
-                s_presentTex, viewport_w, viewport_h,
-                GuiRuntime::ViewportRectX(), GuiRuntime::ViewportRectY(),
-                GuiRuntime::ViewportRectW(), GuiRuntime::ViewportRectH());
-    }
-    else {
-        static bool s_rttOffTrace = false;
-        if (!s_rttOffTrace) {
-            s_rttOffTrace = true;
-            EditorGameOSTrace("RTT: NOT capturing (imgui=%d rtt=%d vw=%d vh=%d)",
-                g_imguiInitialized ? 1 : 0, GuiRuntime::RttEnabled() ? 1 : 0,
-                viewport_w, viewport_h);
-        }
     }
 
     if (g_imguiInitialized) {
