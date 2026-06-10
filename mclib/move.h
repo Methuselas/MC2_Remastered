@@ -39,6 +39,14 @@
 
 #include<gameos.hpp>
 
+// MC2_MOVE_RECON: lightweight OOB counter for pathlock calls (see move_recon.h).
+// Include is deferred to avoid pulling <chrono> into every TU that includes move.h;
+// we only need the three extern globals used in the inlines below.
+extern bool     g_moveReconEnabled;
+extern uint64_t g_moveRecon_getPathlock_calls;
+extern uint64_t g_moveRecon_setPathlock_calls;
+extern uint64_t g_moveRecon_offmap_noops;
+
 //***************************************************************************
 
 #define	USE_FORESTS			0
@@ -638,7 +646,11 @@ class MissionMap {
 		bool getPassable (Stuff::Vector3D cellPosition);
 
 		bool getPathlock (long level, long row, long col) {
-			if (!inBounds(row, col)) return(false);
+			if (!inBounds(row, col)) {
+				if (g_moveReconEnabled) g_moveRecon_offmap_noops++;
+				return(false);
+			}
+			if (g_moveReconEnabled) g_moveRecon_getPathlock_calls++;
 			return(map[row * width + col].getPathlock(level));
 		}
 
@@ -646,7 +658,11 @@ class MissionMap {
 			// Oversized maps have a MOVE grid smaller than the terrain grid, so a
 			// mover's cellPositionRow/Col can exceed width/height -> map[] OOB
 			// READ-AV (mover.cpp:5327, Mover::updatePathLock on 1kbasicmap).
-			if (!inBounds(row, col)) return;
+			if (!inBounds(row, col)) {
+				if (g_moveReconEnabled) g_moveRecon_offmap_noops++;
+				return;
+			}
+			if (g_moveReconEnabled) g_moveRecon_setPathlock_calls++;
 			map[row * width + col].setPathlock(level, pathlock);
 		}
 
@@ -1758,6 +1774,12 @@ class MoveMap {
 
 inline void MoveMap::setCost (long row, long col, long newCost) {
 
+	// Write-path OOB guard: oversized maps have a MOVE grid smaller than the
+	// terrain grid, so a world->cell-derived row/col can exceed the grid and
+	// WRITE-AV here. No-op off-map, matching the guarded inline setters. This
+	// out-of-line def was the one accessor 77a0c12a flagged for follow-up.
+	if (!inBounds(row, col))
+		return;
 	map[row * maxWidth + col].cost = newCost;
 }
 
