@@ -86,6 +86,11 @@ public:
 	static EditorInterface* instance(){ return s_instance; }
 	void renderToolbarImGui();
 	void renderObjectCompanionPanel();
+
+	// Modder-friendly wrapper panels (Phase 1d). Each surfaces EXISTING editor
+	// state/flows through ImGui; no new placement/launch/package systems.
+	void renderPlacePanelImGui();    // scatter mode + params + active brush + clear
+	void renderMissionToolsImGui();  // Test Mission (launch game) + Build Mod Package
 	void setSculptBrush( int mode );
 	void setStampBrush( int type );
 	void renderTerrainSelection();

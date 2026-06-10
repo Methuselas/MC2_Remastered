@@ -4515,6 +4515,10 @@ void EditorInterface::setStampBrush( int type )
 }
 
 #ifdef MC2_IMGUI
+// Visibility for the Phase 1d wrapper panels (toggled from the Tools palette).
+static bool s_placePanelOpen   = false;
+static bool s_missionToolsOpen = false;
+
 // Floating tool palette (Photoshop-style). Buttons re-post the same WM_COMMAND
 // the menu items use, so they share the existing tool-switch handlers. The active
 // tool is highlighted. Drawn each frame from EditorGameOS.cpp's ImGui block.
@@ -4570,6 +4574,16 @@ void EditorInterface::renderToolbarImGui()
 	if (ImGui::Button("Asset Browser", ImVec2(-1.f, 0.f)))
 		AssetBrowser::Toggle();
 	AssetBrowser::Draw();
+
+	// Place Tool — scatter mode + params + active brush (wraps existing brushes).
+	if (ImGui::Button("Place Tool", ImVec2(-1.f, 0.f)))
+		s_placePanelOpen = !s_placePanelOpen;
+	renderPlacePanelImGui();
+
+	// Mission Tools — Test Mission (launch game) + Build Mod Package.
+	if (ImGui::Button("Mission Tools", ImVec2(-1.f, 0.f)))
+		s_missionToolsOpen = !s_missionToolsOpen;
+	renderMissionToolsImGui();
 
 	ImGui::Separator();
 
@@ -4882,9 +4896,199 @@ void EditorInterface::renderObjectCompanionPanel()
 	if (pendGroup >= 0)
 		selectBuildingObject(pendGroup, pendIndex);
 }
+// ---------------------------------------------------------------------------
+// Place Tool panel (Phase 1d): a single always-available control surface for the
+// EXISTING object-placement brushes. Shows the active brush, toggles scatter
+// mode, and exposes the scatter parameters (the same ScatterBrush statics the
+// companion panel edits). No new placement system -- placement still happens via
+// BuildingBrush/ScatterBrush -> Action undo.
+// ---------------------------------------------------------------------------
+void EditorInterface::renderPlacePanelImGui()
+{
+	if (!s_placePanelOpen)
+		return;
+
+	ImGui::SetNextWindowSize(ImVec2(260.f, 0.f), ImGuiCond_FirstUseEver);
+	if (!ImGui::Begin("Place Tool", &s_placePanelOpen))
+	{
+		ImGui::End();
+		return;
+	}
+
+	EditorObjectMgr* pMgr = EditorObjectMgr::instance();
+
+	// Active placement brush (if any) -> show what will be placed.
+	int group = -1, idx = -1;
+	if (BuildingBrush* bb = dynamic_cast<BuildingBrush*>(curBrush))
+	{
+		group = bb->getGroup();
+		idx   = bb->getIndexInGroup();
+	}
+	else if (ScatterBrush* sb = dynamic_cast<ScatterBrush*>(curBrush))
+	{
+		group = sb->getGroup();
+		idx   = sb->getIndexInGroup();
+	}
+
+	if (pMgr && group >= 0 && group < pMgr->getBuildingGroupCount()
+	    && idx >= 0 && idx < pMgr->getNumberBuildingsInGroup(group))
+	{
+		ImGui::Text("Placing: %s / %s",
+		            pMgr->getGroupName(group), pMgr->getBuildingName(group, idx));
+	}
+	else
+	{
+		ImGui::TextDisabled("No object selected.");
+		ImGui::TextDisabled("Pick one in the Asset Browser.");
+	}
+
+	// Team indicator (display only in v1; alignment is driven by the menu).
+	const int align = currentAlignmentFromMenu();
+	if (align == EDITOR_TEAMNONE)
+		ImGui::Text("Team: Neutral");
+	else
+		ImGui::Text("Team: %d", align - EDITOR_TEAM1 + 1);
+
+	ImGui::Separator();
+
+	// Scatter mode toggle. Re-create the active brush in the new mode so the
+	// change takes effect immediately (selectBuildingObject reads m_scatterMode).
+	if (ImGui::Checkbox("Scatter mode", &m_scatterMode))
+	{
+		if (group >= 0 && idx >= 0)
+			selectBuildingObject(group, idx);
+	}
+
+	if (m_scatterMode)
+	{
+		ImGui::SliderFloat("Radius",   &ScatterBrush::s_radius,       64.0f, 3000.0f, "%.0f");
+		ImGui::SliderInt  ("Density",  &ScatterBrush::s_density,      1,     60);
+		ImGui::SliderFloat("Spacing",  &ScatterBrush::s_minSpacing,   0.0f,  512.0f,  "%.0f");
+		ImGui::SliderFloat("ScaleJit", &ScatterBrush::s_scaleJitter,  0.0f,  0.9f,    "%.2f");
+		ImGui::SliderFloat("MaxSlope", &ScatterBrush::s_maxSlopeRise, 0.0f,  256.0f,  "%.0f");
+		ImGui::Checkbox   ("Rand rot", &ScatterBrush::s_randomRotation);
+	}
+
+	ImGui::Separator();
+	if (ImGui::Button("Clear brush", ImVec2(-1.f, 0.f)))
+		KillCurBrush();
+
+	ImGui::End();
+}
+
+// ---------------------------------------------------------------------------
+// Mission Tools panel (Phase 1d): the smallest useful Test Mission + Build Mod
+// Package flows, wrapping existing pieces (EditorTaskRunner for the launch,
+// getMapName() for the current .pak, plain file copies for the package). No new
+// mission/launch/package SYSTEM -- just buttons over what already exists.
+// Editable path fields keep it safe to use on any machine.
+// ---------------------------------------------------------------------------
+void EditorInterface::renderMissionToolsImGui()
+{
+	if (!s_missionToolsOpen)
+		return;
+
+	ImGui::SetNextWindowSize(ImVec2(440.f, 0.f), ImGuiCond_FirstUseEver);
+	if (!ImGui::Begin("Mission Tools", &s_missionToolsOpen))
+	{
+		ImGui::End();
+		return;
+	}
+
+	const char* missionPath = EditorData::instance ? EditorData::instance->getMapName() : 0;
+	const bool  haveMission = (missionPath && missionPath[0]);
+
+	ImGui::Text("Current mission: %s", haveMission ? missionPath : "(unsaved -- save first)");
+	ImGui::Separator();
+
+	// --- Test Mission: launch the game on the current .pak --------------------
+	ImGui::TextUnformatted("Test Mission");
+	static char s_gameExe[512] = "A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe";
+	ImGui::SetNextItemWidth(-1.f);
+	ImGui::InputText("##gameexe", s_gameExe, sizeof(s_gameExe));
+
+	if (!haveMission) ImGui::BeginDisabled();
+	if (ImGui::Button("Launch Game on this Mission", ImVec2(-1.f, 0.f)))
+	{
+		// Game loads a mission directly from a -mission <pak> argument (same flag
+		// the editor itself accepts). Launch async via the existing task runner so
+		// the editor UI never blocks; progress/exit show in the Task Monitor.
+		EditorTaskRunner::TaskSpec spec;
+		spec.name = "Test Mission";
+		char cmd[1100];
+		snprintf(cmd, sizeof(cmd), "\"%s\" -mission \"%s\"", s_gameExe, missionPath);
+		spec.commandLine = cmd;
+		// cwd = the game exe's directory (best effort; "" inherits if unknown).
+		std::string exeDir(s_gameExe);
+		size_t slash = exeDir.find_last_of("/\\");
+		spec.workingDirectory = (slash != std::string::npos) ? exeDir.substr(0, slash) : std::string();
+		EditorTaskRunner::StartTask(spec);
+	}
+	if (!haveMission) ImGui::EndDisabled();
+	if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !haveMission)
+		ImGui::SetTooltip("Save the mission to a .pak first (File > Save As).");
+
+	ImGui::Separator();
+
+	// --- Build Mod Package: copy the mission + sidecars into mods/<name>/ -----
+	ImGui::TextUnformatted("Build Mod Package");
+	static char s_modName[128]  = "my_mission";
+	static char s_modsRoot[512] = "mods";
+	static char s_pkgStatus[256] = "";
+	ImGui::SetNextItemWidth(-1.f);
+	ImGui::InputText("Mod name##modname", s_modName, sizeof(s_modName));
+	ImGui::SetNextItemWidth(-1.f);
+	ImGui::InputText("Mods root##modsroot", s_modsRoot, sizeof(s_modsRoot));
+
+	if (!haveMission) ImGui::BeginDisabled();
+	if (ImGui::Button("Build Package", ImVec2(-1.f, 0.f)))
+	{
+		// Derive <dir>/<base>.pak, then copy <base>.{pak,fit,burnin.jpg,foliage.json}
+		// that exist into <modsRoot>/<modName>/missions/. Additive + reversible
+		// (delete the folder to undo). Never deletes or overwrites outside dest.
+		std::string src(missionPath);
+		size_t slash = src.find_last_of("/\\");
+		std::string srcDir  = (slash != std::string::npos) ? src.substr(0, slash) : std::string(".");
+		std::string fileNm  = (slash != std::string::npos) ? src.substr(slash + 1) : src;
+		size_t dot = fileNm.find_last_of('.');
+		std::string base = (dot != std::string::npos) ? fileNm.substr(0, dot) : fileNm;
+
+		char destDir[900];
+		snprintf(destDir, sizeof(destDir), "%s/%s/missions", s_modsRoot, s_modName);
+
+		// Create mods/<name>/missions/ (each level; ignore "already exists").
+		char lvl[900];
+		snprintf(lvl, sizeof(lvl), "%s", s_modsRoot);                         CreateDirectoryA(lvl, NULL);
+		snprintf(lvl, sizeof(lvl), "%s/%s", s_modsRoot, s_modName);           CreateDirectoryA(lvl, NULL);
+		CreateDirectoryA(destDir, NULL);
+
+		const char* exts[] = { ".pak", ".fit", ".burnin.jpg", ".foliage.json" };
+		int copied = 0;
+		for (int i = 0; i < (int)(sizeof(exts) / sizeof(exts[0])); ++i)
+		{
+			char srcF[900], dstF[1000];
+			snprintf(srcF, sizeof(srcF), "%s/%s%s", srcDir.c_str(), base.c_str(), exts[i]);
+			snprintf(dstF, sizeof(dstF), "%s/%s%s", destDir, base.c_str(), exts[i]);
+			// CopyFileA(bFailIfExists=FALSE) overwrites only inside our dest dir.
+			if (CopyFileA(srcF, dstF, FALSE))
+				++copied;
+		}
+		snprintf(s_pkgStatus, sizeof(s_pkgStatus),
+		         "Copied %d file(s) to %s", copied, destDir);
+	}
+	if (!haveMission) ImGui::EndDisabled();
+
+	if (s_pkgStatus[0])
+		ImGui::TextWrapped("%s", s_pkgStatus);
+
+	ImGui::End();
+}
+
 #else
 void EditorInterface::renderToolbarImGui() {}
 void EditorInterface::renderObjectCompanionPanel() {}
+void EditorInterface::renderPlacePanelImGui() {}
+void EditorInterface::renderMissionToolsImGui() {}
 #endif
 
 void EditorInterface::OnHScroll(UINT nSBCode, UINT nPos, CScrollBar* pScrollBar) 
