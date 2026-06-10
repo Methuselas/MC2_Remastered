@@ -20,6 +20,16 @@ namespace ModPicker
 #endif
 	// Currently active mod folder name; "" = None (stock).
 	const char* ActiveMod();
+
+	// --- non-ImGui API (used by the MFC IDD_NEW_SINGLEPLAYER startup dialog) -------
+	// (Re)scan mods/ for mod folders.
+	void ScanMods();
+	// Discovered mod folders (after ScanMods / first use).
+	int  ModCount();
+	const char* ModName( int index );
+	// Activate a mod ("" or NULL = stock): sets MC2_ACTIVE_MOD + re-indexes. Shared
+	// state with Draw(), so the toolbar combo reflects it too.
+	void Activate( const char* modId );
 }
 
 #endif // MOD_PICKER_H

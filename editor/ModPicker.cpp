@@ -24,39 +24,59 @@ namespace
 	int   s_selected = 0;                  // 0 = None (stock); else s_mods[idx-1]
 	char  s_active[128] = "";              // active mod folder name ("" = stock)
 
-	void scanMods()
-	{
-		s_mods.clear();
-		WIN32_FIND_DATAA fd;
-		HANDLE h = FindFirstFileA( "mods\\*", &fd );
-		if ( h != INVALID_HANDLE_VALUE )
-		{
-			do
-			{
-				if ( ( fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY ) &&
-				     fd.cFileName[0] != '.' )
-					s_mods.push_back( fd.cFileName );
-			}
-			while ( FindNextFileA( h, &fd ) );
-			FindClose( h );
-		}
-		s_scanned = true;
-	}
-
-	// Activate a mod ("" = stock). Sets MC2_ACTIVE_MOD then re-indexes via the same
-	// path the game/editor startup uses. InitModSearchPaths clears g_modIndex first,
-	// so switching mods (or back to stock) is clean.
-	void applyMod( const char* modId )
-	{
-		_putenv_s( "MC2_ACTIVE_MOD", modId ? modId : "" );
-		InitModSearchPaths( "./mods/" );
-		strncpy( s_active, modId ? modId : "", sizeof( s_active ) - 1 );
-		s_active[sizeof( s_active ) - 1] = '\0';
-	}
 }
 
 namespace ModPicker
 {
+
+void ScanMods()
+{
+	s_mods.clear();
+	WIN32_FIND_DATAA fd;
+	HANDLE h = FindFirstFileA( "mods\\*", &fd );
+	if ( h != INVALID_HANDLE_VALUE )
+	{
+		do
+		{
+			if ( ( fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY ) &&
+			     fd.cFileName[0] != '.' )
+				s_mods.push_back( fd.cFileName );
+		}
+		while ( FindNextFileA( h, &fd ) );
+		FindClose( h );
+	}
+	s_scanned = true;
+}
+
+int ModCount()
+{
+	if ( !s_scanned ) ScanMods();
+	return (int)s_mods.size();
+}
+
+const char* ModName( int index )
+{
+	if ( !s_scanned ) ScanMods();
+	if ( index < 0 || index >= (int)s_mods.size() ) return "";
+	return s_mods[index].c_str();
+}
+
+// Activate a mod ("" or NULL = stock). Sets MC2_ACTIVE_MOD then re-indexes via the
+// same path the game/editor startup uses. InitModSearchPaths clears g_modIndex first,
+// so switching mods (or back to stock) is clean. Keeps s_selected in sync so the
+// ImGui toolbar combo reflects a change made from the MFC startup dialog.
+void Activate( const char* modId )
+{
+	const char* id = modId ? modId : "";
+	_putenv_s( "MC2_ACTIVE_MOD", id );
+	InitModSearchPaths( "./mods/" );
+	strncpy( s_active, id, sizeof( s_active ) - 1 );
+	s_active[sizeof( s_active ) - 1] = '\0';
+
+	s_selected = 0;
+	for ( int i = 0; i < (int)s_mods.size(); ++i )
+		if ( s_mods[i] == id ) { s_selected = i + 1; break; }
+}
 
 const char* ActiveMod() { return s_active; }
 
@@ -64,7 +84,7 @@ const char* ActiveMod() { return s_active; }
 void Draw()
 {
 	if ( !s_scanned )
-		scanMods();
+		ScanMods();
 
 	ImGui::TextUnformatted( "Mod content" );
 	ImGui::SameLine();
@@ -75,18 +95,12 @@ void Draw()
 	if ( ImGui::BeginCombo( "##modpicker", cur ) )
 	{
 		if ( ImGui::Selectable( "None (stock)", s_selected == 0 ) )
-		{
-			s_selected = 0;
-			applyMod( "" );
-		}
+			Activate( "" );
 		for ( int i = 0; i < (int)s_mods.size(); ++i )
 		{
 			bool sel = ( s_selected == i + 1 );
 			if ( ImGui::Selectable( s_mods[i].c_str(), sel ) )
-			{
-				s_selected = i + 1;
-				applyMod( s_mods[i].c_str() );
-			}
+				Activate( s_mods[i].c_str() );
 		}
 		ImGui::EndCombo();
 	}
@@ -99,7 +113,7 @@ void Draw()
 
 	ImGui::SameLine();
 	if ( ImGui::SmallButton( "Rescan" ) )
-		scanMods();
+		ScanMods();
 }
 #endif
 

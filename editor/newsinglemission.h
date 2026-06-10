@@ -32,10 +32,12 @@ public:
 	//{{AFX_VIRTUAL(NewSingleMission)
 	protected:
 	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV support
+	virtual BOOL OnInitDialog();                        // populate the Mod combo
 	//}}AFX_VIRTUAL
 
 // Implementation
 protected:
+	void applySelectedMod();   // read combo -> ModPicker::Activate before a load
 
 	// Generated message map functions
 	//{{AFX_MSG(NewSingleMission)
