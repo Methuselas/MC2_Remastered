@@ -191,6 +191,21 @@ def run_case(name: str, exe: Path, deploy: Path, exit_sec: int, timeout: int,
                 bucket = "menu_clear_bad"; detail = f"count after Clear = {clr} (want 0)"
             elif not (rld and rld.lstrip("-").isdigit() and int(rld) > 0):
                 bucket = "menu_reload_bad"; detail = f"count after reload = {rld} (want >0)"
+        if expect == "outliner":
+            # Read-only Scene Outliner enumerated placed objects. An auto-generated
+            # empty map legitimately has 0 objects (selected=0); the pass condition
+            # is that the step ran (count present, >=0) and the select-first result
+            # is consistent: objects present -> selected, none -> not selected.
+            cnt = esmoke.get("outliner_count")
+            sel = esmoke.get("outliner_selected")
+            if cnt is None or not cnt.lstrip("-").isdigit() or int(cnt) < 0:
+                bucket = "outliner_not_run"; detail = f"outliner_count={cnt} (want >=0)"
+            elif sel not in ("0", "1"):
+                bucket = "outliner_sel_bad"; detail = f"outliner_selected={sel} (want 0/1)"
+            elif int(cnt) > 0 and sel != "1":
+                bucket = "outliner_sel_bad"; detail = f"count={cnt} but selected={sel} (want 1)"
+            elif int(cnt) == 0 and sel != "0":
+                bucket = "outliner_sel_bad"; detail = f"count=0 but selected={sel} (want 0)"
 
     passed = (bucket == "")
     return dict(name=name, passed=passed, bucket=bucket, detail=detail,
@@ -215,6 +230,7 @@ def build_suite(deploy: Path):
         "foliage_missing": (["-gen-map=0,0", "-smoke-foliage=terrain_gen_out\\__does_not_exist__.json"], "foliage_tolerated"),
         "foliage_garbage": (["-gen-map=0,0", "-smoke-foliage=terrain_gen_out\\garbage.foliage.json"], "foliage_tolerated"),
         "foliage_menu_commands": (["-gen-map=0,0", "-smoke-foliage-menu"], "menu"),
+        "outliner":        (["-gen-map=0,0", "-smoke-outliner"], "outliner"),  # read-only Scene Outliner
         # gen_save_load is handled specially (two phases) in main().
     }
     return cases
