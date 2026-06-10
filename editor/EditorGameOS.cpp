@@ -629,13 +629,8 @@ DWORD __stdcall RunGameOSLogic()
     }
     GuiRuntime::NewFrame();
     if (g_imguiInitialized) {
-        ImGui::SetNextWindowPos(ImVec2(10.f, 50.f), ImGuiCond_Once);
-        ImGui::SetNextWindowSize(ImVec2(220.f, 60.f), ImGuiCond_Once);
-        ImGui::Begin("MC2 Editor", nullptr,
-            ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar);
-        ImGui::Text("ImGui live | F=demo  Ctrl+Shift+LMB=pick");
-        ImGui::End();
-
+        // (Removed the leftover "MC2 Editor" bring-up window that floated at (10,50)
+        // and overlapped the top-left status HUD.)
         if (EditorInterface::instance())
             EditorInterface::instance()->renderToolbarImGui();
     }

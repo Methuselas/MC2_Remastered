@@ -53,6 +53,18 @@ void GuiRuntime::Init() {
             io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     }
 
+    // Auto-dock: make the CODE-defined layout authoritative. With a saved imgui.ini,
+    // a window's stale per-window float state (Pos + DockId=0) can survive the
+    // DockBuilder rebuild and keep that panel floating (the "Tools floats" symptom).
+    // Disabling ini persistence under autodock means every launch starts from the
+    // clean built layout with ALL panels docked. (MC2_EDITOR_AUTODOCK=0 keeps the
+    // saved layout.) In-session re-docks still work; they just don't persist.
+    {
+        const char* a = std::getenv("MC2_EDITOR_AUTODOCK");
+        if (!a || strcmp(a, "0") != 0)
+            io.IniFilename = nullptr;
+    }
+
     ImGui::StyleColorsDark();
 
     ImGui_ImplSDL2_InitForOpenGL(graphics::getSDLWindow(), graphics::getSDLGLContext());
@@ -91,6 +103,14 @@ bool GuiRuntime::RttEnabled() {
     }
     return s_on != 0;
 }
+bool GuiRuntime::AutoDockActive() {
+    static int s = -1;
+    if (s < 0) {
+        const char* a = std::getenv("MC2_EDITOR_AUTODOCK");
+        s = (a && strcmp(a, "0") == 0) ? 0 : 1;
+    }
+    return s != 0;
+}
 void GuiRuntime::SetViewportTexture(unsigned int glTex) { s_rttTex = glTex; }
 void GuiRuntime::SetFixedViewportRect(int x, int y, int w, int h) {
     s_fixedX = x; s_fixedY = y; s_fixedW = w; s_fixedH = h;
@@ -116,23 +136,41 @@ static void BuildEditorDockspace() {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGuiID dockId = ImGui::DockSpaceOverViewport(0, vp, ImGuiDockNodeFlags_PassthruCentralNode);
 
-    // First run only: split a right column and dock the known editor panels into it.
-    // (Skipped once imgui.ini exists so the user's saved layout wins.)
+    // Auto-dock: every launch, force ALL editor panels into a FIXED-width right column
+    // so nothing floats. The column width equals the scene's reserved panel strip
+    // (full window - fixed scene width) so the panels sit exactly beside the map, not
+    // over it. Re-docks on every process start (the user wants a clean docked layout,
+    // not scattered floaters); in-session re-docks still work until next launch.
+    // MC2_EDITOR_AUTODOCK=0 disables (saved imgui.ini layout wins).
+    static int s_autodock = -1;
+    if (s_autodock < 0) {
+        const char* a = std::getenv("MC2_EDITOR_AUTODOCK");
+        s_autodock = (a && strcmp(a, "0") == 0) ? 0 : 1;
+    }
     static bool s_built = false;
     if (!s_built) {
         s_built = true;
-        if (ImGui::DockBuilderGetNode(dockId) == nullptr ||
-            ImGui::DockBuilderGetNode(dockId)->IsLeafNode())   // not yet laid out by a saved ini
-        {
+        if (s_autodock) {
+            // Right-column width = the reserved panel strip (vpW - fixed scene width).
+            // Falls back to 0.26 of the window until the fixed rect is known (frame 1).
+            float vpW = vp->Size.x > 1.0f ? vp->Size.x : 1.0f;
+            float panelPx = (s_fixedW > 0) ? (vpW - (float)s_fixedW) : (vpW * 0.26f);
+            if (panelPx < 64.0f)        panelPx = 64.0f;
+            if (panelPx > vpW - 256.0f) panelPx = vpW - 256.0f;
+            float ratio = panelPx / vpW;
+
             ImGui::DockBuilderRemoveNode(dockId);
             ImGui::DockBuilderAddNode(dockId, ImGuiDockNodeFlags_DockSpace | ImGuiDockNodeFlags_PassthruCentralNode);
             ImGui::DockBuilderSetNodeSize(dockId, vp->Size);
             ImGuiID rightId = 0, centerId = 0;
-            ImGui::DockBuilderSplitNode(dockId, ImGuiDir_Right, 0.26f, &rightId, &centerId);
+            ImGui::DockBuilderSplitNode(dockId, ImGuiDir_Right, ratio, &rightId, &centerId);
+            // EXACT ImGui::Begin titles (grep-verified). The HUD overlay (##statushud)
+            // and the tiny "MC2 Editor" status line are intentionally left as overlays.
             static const char* kPanels[] = {
-                "Tools", "Map Generator", "Debug Overlays", "Task Monitor",
-                "Mission Checklist", "Editor Inspector", "Scene Outliner",
-                "Inspector", "Asset Browser", "Graphics Options"
+                "Tools", "Mission Tools", "Place Tool", "Map Generator", "Objects",
+                "Object Inspector", "Inspector", "Scene Outliner", "Asset Browser",
+                "Debug Overlays", "Task Monitor", "Foliage Detail", "Renderer Features",
+                "Mission Save Readiness", "Graphics Options  [Ctrl+Shift+G]"
             };
             for (int i = 0; i < (int)(sizeof(kPanels) / sizeof(kPanels[0])); ++i)
                 ImGui::DockBuilderDockWindow(kPanels[i], rightId);

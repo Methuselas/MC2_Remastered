@@ -4715,7 +4715,10 @@ void EditorInterface::renderToolbarImGui()
 	io.FontGlobalScale = s_uiScale;
 
 	const float toolbarW = 195.0f * s_uiScale;
-	ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - toolbarW - 16.0f, 16.0f), ImGuiCond_Once);
+	// SetNextWindowPos pulls a window OUT of the DockBuilder assignment (floats it), so
+	// skip it under autodock -- the Tools panel then docks into the right column.
+	if (!GuiRuntime::AutoDockActive())
+		ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - toolbarW - 16.0f, 16.0f), ImGuiCond_Once);
 	ImGui::SetNextWindowSize(ImVec2(toolbarW, 0.f), ImGuiCond_Once);
 	ImGui::Begin("Tools", nullptr, ImGuiWindowFlags_NoScrollbar);
 

@@ -6,6 +6,7 @@
 
 #include "stdafx.h"
 #include "MissionValidation.h"
+#include "GuiRuntime.h"   // GuiRuntime::AutoDockActive (skip SetNextWindowPos when docking)
 #include "EditorData.h"
 #include "EditorObjectMgr.h"   // live unit list for staffing checks
 #include "EditorObjects.h"
@@ -342,14 +343,19 @@ void MissionValidator::Draw() {
     const float    sc = io.DisplaySize.x / 1280.f;
 
     ImGui::SetNextWindowSize(ImVec2(450.f * sc, 0.f), ImGuiCond_Once);
-    ImGui::SetNextWindowPos(
-        ImVec2(io.DisplaySize.x * 0.5f - 225.f * sc,
-               io.DisplaySize.y * 0.5f - 150.f * sc),
-        ImGuiCond_Once);
+    // Skip explicit pos under autodock (it would float the window out of the dock).
+    // AlwaysAutoResize also fights docking, so drop it when autodocking.
+    const bool autodock = GuiRuntime::AutoDockActive();
+    if (!autodock)
+        ImGui::SetNextWindowPos(
+            ImVec2(io.DisplaySize.x * 0.5f - 225.f * sc,
+                   io.DisplaySize.y * 0.5f - 150.f * sc),
+            ImGuiCond_Once);
 
     bool open = s_open;
-    if (!ImGui::Begin("Mission Save Readiness", &open,
-                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
+    ImGuiWindowFlags msrFlags = ImGuiWindowFlags_NoCollapse;
+    if (!autodock) msrFlags |= ImGuiWindowFlags_AlwaysAutoResize;
+    if (!ImGui::Begin("Mission Save Readiness", &open, msrFlags)) {
         ImGui::End();
         s_open = open;
         return;

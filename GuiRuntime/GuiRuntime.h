@@ -21,6 +21,10 @@ namespace GuiRuntime {
     // picking still reaches GameOS). EditorGameOS hands the texture id here each
     // frame after compositing+blit. Picking offsets client mouse by the rect origin.
     bool RttEnabled();                              // MC2_EDITOR_RTT (default ON)
+    // True when the editor force-docks all panels into the right column each launch
+    // (MC2_EDITOR_AUTODOCK != 0). Panel windows must then SKIP SetNextWindowPos before
+    // Begin -- an explicit next-window-pos pulls the window out of the dock and floats it.
+    bool AutoDockActive();
     void SetViewportTexture(unsigned int glTex);    // GLuint; called pre-Render()
     // Fixed-layout scene rect (client/screen pixels, left-anchored). When set (w>0),
     // the dockspace paints the RTT texture into THIS rect instead of the dynamic

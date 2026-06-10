@@ -10,6 +10,7 @@
 //-------------------------------------------------------------------------------------------------
 #include "stdafx.h"
 #include "EditorDebugOverlay.h"
+#include "GuiRuntime.h"   // GuiRuntime::AutoDockActive (skip SetNextWindowPos when docking)
 
 #include "Camera.h"
 #include "Terrain.h"
@@ -347,7 +348,9 @@ void RunProbeOnce()
 void RenderImGui()
 {
 	ImGui::SetNextWindowSize( ImVec2( 300.f, 0.f ), ImGuiCond_Once );
-	ImGui::SetNextWindowPos ( ImVec2( 16.f, 540.f ), ImGuiCond_Once );
+	// Skip explicit pos under autodock (it would float the window out of the dock).
+	if ( !GuiRuntime::AutoDockActive() )
+		ImGui::SetNextWindowPos ( ImVec2( 16.f, 540.f ), ImGuiCond_Once );
 	if ( !ImGui::Begin( "Debug Overlays" ) ) { ImGui::End(); return; }
 
 	ImGui::Checkbox( "Show Chunk Grid",      &s_showChunkGrid );
