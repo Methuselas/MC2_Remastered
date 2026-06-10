@@ -392,32 +392,46 @@ void RenderImGui()
 		{
 			ImGui::Text( "Recipe/grid side: %ld   expect verts: %ld",
 				s_probe.side, s_probe.expectVerts );
+			// Map-identity guard (adversarial finding): the elev file is only the
+			// CURRENT map's if its vertex count matches. A leftover file from a prior
+			// generate would otherwise be silently compared against a loaded .pak.
+			const bool fileCurrent =
+				s_probe.fileFound && s_probe.file.valid && ( s_probe.file.count == s_probe.expectVerts );
 			ImGui::Text( "Elev file: %s%s", kProbeElevPath,
-				s_probe.fileFound ? "" : "  (NOT FOUND)" );
+				!s_probe.fileFound ? "  (NOT FOUND)"
+				: fileCurrent      ? ""
+				:                    "  (STALE: vert-count != this map)" );
 			row( "1 file elev",   s_probe.file );
-			row( "2 vertex store", s_probe.vert );
-			row( "3 render mesh",  s_probe.mesh );
+			// Sources 2 and 3 ALIAS the same MapData::blocks[] (get/setVertexHeight and
+			// getData().elevation are the same array; recalcWater reads it too). Shown
+			// separately only as a self-check -- they are EXPECTED to be identical.
+			row( "2 vert store",   s_probe.vert );
+			row( "3 mesh(==2)",    s_probe.mesh );
 			ImGui::Text( "Water elev: %.1f   water verts: %ld   dry verts: %ld",
 				s_probe.waterElev, s_probe.waterVerts, s_probe.dryVerts );
 			ImGui::Text( "colormap set: %s   recipe ready: %s",
 				s_probe.hasColormap ? "yes" : "NO",
 				s_probe.recipeReady ? "yes" : "NO" );
 
-			// Inline verdict hint -- where the chain first diverges.
-			if ( s_probe.file.valid && s_probe.vert.valid &&
-			     ( fabsf( s_probe.file.mx - s_probe.vert.mx ) > 2.0f ||
-			       fabsf( s_probe.file.mn - s_probe.vert.mn ) > 2.0f ) )
+			// Decisive verdict: the only independent comparison is disk file vs the
+			// blocks[] mesh (what the renderer + recalcWater consume).
+			const HeightStats& M = s_probe.mesh;   // == vert store
+			if ( s_probe.fileFound && !fileCurrent )
 				ImGui::TextColored( ImVec4(1,0.5f,0.5f,1),
-					"-> lost BEFORE vertex store (file != getVertexHeight)" );
-			else if ( s_probe.vert.valid && s_probe.mesh.valid &&
-			          ( fabsf( s_probe.vert.mx - s_probe.mesh.mx ) > 2.0f ||
-			            fabsf( s_probe.vert.mn - s_probe.mesh.mn ) > 2.0f ) )
-				ImGui::TextColored( ImVec4(1,0.5f,0.5f,1),
-					"-> lost BETWEEN vertex store and render mesh" );
-			else if ( s_probe.mesh.valid && s_probe.waterElev > s_probe.mesh.mn - 0.5f &&
-			          s_probe.waterVerts > 0 && s_probe.mesh.mn > s_probe.waterElev + 1.0f )
-				ImGui::TextColored( ImVec4(1,0.5f,0.5f,1),
-					"-> heights OK but water flags wrong (recalcWater source/units)" );
+					"-> source 1 is a DIFFERENT map (count mismatch) -- ignore it" );
+			else if ( fileCurrent && M.valid &&
+			          ( fabsf( s_probe.file.mx - M.mx ) > 2.0f ||
+			            fabsf( s_probe.file.mn - M.mn ) > 2.0f ) )
+				ImGui::TextColored( ImVec4(1,0.4f,0.4f,1),
+					"-> heights LOST in apply: file != mesh blocks[] (setVertexHeight path)" );
+			else if ( M.valid && s_probe.waterVerts > 0 &&
+			          M.mn > s_probe.waterElev + 1.0f )
+				ImGui::TextColored( ImVec4(1,0.6f,0.3f,1),
+					"-> heights OK but %ld verts flagged wet though all elev > waterElev"
+					" (recalcWater ran with stale waterDepth / before apply)", s_probe.waterVerts );
+			else if ( M.valid )
+				ImGui::TextColored( ImVec4(0.5f,0.9f,0.5f,1),
+					"-> file == mesh, water consistent (heights+water OK)" );
 		}
 	}
 
