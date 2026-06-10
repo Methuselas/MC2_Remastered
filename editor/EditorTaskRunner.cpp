@@ -190,7 +190,7 @@ static void WorkerMain(std::shared_ptr<Task> t)
 		std::lock_guard<std::mutex> lk(s_mutex);
 		t->exitCode = (int)code;
 		if (t->cancelRequested.load())      t->status = Status::Cancelled;
-		else if (code == 0)                 t->status = Status::Succeeded;
+		else if (code == 0)               { t->status = Status::Succeeded; t->progress = 100; }
 		else                                t->status = Status::Failed;
 		t->hProcess = NULL;
 	}

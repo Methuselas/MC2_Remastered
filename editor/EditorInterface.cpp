@@ -2417,6 +2417,11 @@ void EditorInterface::update()
 	// the old blocking Generate path did inline; deferred here to the main thread.
 	if ( MapGeneratorDialog::TakePostGenerateApplied() )
 	{
+		// Reset the camera FIRST (zoom/rotation/frustum back to defaults), exactly
+		// as the old synchronous Generate path and the LoadPreset path do. Without
+		// this the camera keeps its prior zoom/orientation and the freshly generated
+		// terrain renders tiny/far ("white square") with a mismatched-scale horizon.
+		eye->reset();
 		// setPosition() derives z from land->getTerrainElevation(), placing the
 		// camera above the generated surface (blank-terrain y=0 is underground on
 		// hilly maps -> sky sphere at ground level + bad inverseProject picks).
