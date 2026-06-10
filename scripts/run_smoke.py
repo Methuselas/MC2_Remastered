@@ -609,7 +609,10 @@ def main():
                             # MC2_MISSION_SPLIT=1: wall-ms split of Mission::update
                             # sub-calls (land_update/pathmgr/clearVerts/geometry/
                             # objmgr...) to locate the 1K-map logic hotspot.
-                            "MC2_MISSION_SPLIT")},
+                            "MC2_MISSION_SPLIT",
+                            "MC2_WATER_S6_COST",
+                            "MC2_QUADSETUP_ARMED_SKIP",
+                            "MC2_GEOM_PHASE_SPLIT")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission

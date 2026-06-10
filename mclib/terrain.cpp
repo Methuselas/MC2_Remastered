@@ -2852,10 +2852,73 @@ namespace {
 	}
 }  // namespace
 
+// ---- MC2_GEOM_PHASE_SPLIT: wall-ns split of Terrain::geometry() phases -------
+// Locate the 1K-map geometry() spike (avg ~2.25ms / max ~236ms) by phase.
+// Default OFF, zero behavior change. Per-phase avg/max at exit + a per-spike
+// (>5ms) line naming the top contributor. Coarse per-phase scopes only (NOT
+// per-quad/vertex — respects the 100ns hot-loop rule).
+#include <chrono>
+namespace {
+	enum GeoPhase { GP_TOTAL=0, GP_SLIM, GP_CHUNKPROD, GP_QUADSETUP,
+	                GP_LIGHTPACK, GP_LIGHTCOPY, GP_INDIRECT, GP_COUNT };
+	static const char* s_gpNames[GP_COUNT] = {
+		"total","slim","chunkProd","quadSetup","lightingPack","lightingCopy","indirectCompute" };
+	static const bool s_gpOn = (getenv("MC2_GEOM_PHASE_SPLIT") != nullptr);
+	static unsigned long long s_gpSum[GP_COUNT]     = {0};
+	static unsigned long long s_gpMax[GP_COUNT]     = {0};
+	static unsigned long long s_gpFrameNs[GP_COUNT] = {0};
+	static unsigned long long s_gpFrames = 0;
+	static bool s_gpAtexit = false;
+	static void gpEmit() {
+		if (!s_gpOn) return;
+		std::printf("[GEOM_PHASE_SPLIT v1] event=shutdown frames=%llu", s_gpFrames);
+		for (int i = 0; i < GP_COUNT; i++)
+			std::printf(" %s={avg_us:%.1f,max_us:%.1f}", s_gpNames[i],
+				s_gpFrames ? (double)s_gpSum[i]/s_gpFrames/1000.0 : 0.0,
+				(double)s_gpMax[i]/1000.0);
+		std::printf("\n"); std::fflush(stdout);
+	}
+	struct GeoScope {
+		int idx; std::chrono::steady_clock::time_point t0;
+		explicit GeoScope(int i) : idx(i) {
+			if (s_gpOn) t0 = std::chrono::steady_clock::now();
+		}
+		~GeoScope() {
+			if (!s_gpOn) return;
+			s_gpFrameNs[idx] += (unsigned long long)
+				std::chrono::duration_cast<std::chrono::nanoseconds>(
+					std::chrono::steady_clock::now() - t0).count();
+		}
+	};
+	// Fold per-frame -> totals/max + spike log. Call once at geometry() exit.
+	static void gpFrameEnd(unsigned long long totalNs, long numberQuads, long numObjBlocks) {
+		if (!s_gpOn) return;
+		if (!s_gpAtexit) { s_gpAtexit = true; std::atexit(gpEmit); }
+		++s_gpFrames;
+		s_gpFrameNs[GP_TOTAL] = totalNs;
+		int culprit = GP_SLIM; unsigned long long cmax = 0;
+		for (int i = 0; i < GP_COUNT; i++) {
+			s_gpSum[i] += s_gpFrameNs[i];
+			if (s_gpFrameNs[i] > s_gpMax[i]) s_gpMax[i] = s_gpFrameNs[i];
+			if (i != GP_TOTAL && s_gpFrameNs[i] > cmax) { cmax = s_gpFrameNs[i]; culprit = i; }
+		}
+		if (totalNs > 5000000ULL) {  // >5ms spike
+			std::printf("[GEOM_PHASE_SPIKE v1] frame=%llu total_us=%.1f culprit=%s "
+				"culprit_us=%.1f numberQuads=%ld numObjBlocks=%ld\n",
+				s_gpFrames, (double)totalNs/1000.0, s_gpNames[culprit],
+				(double)cmax/1000.0, numberQuads, numObjBlocks);
+			std::fflush(stdout);
+		}
+		for (int i = 0; i < GP_COUNT; i++) s_gpFrameNs[i] = 0;
+	}
+}
+
 //---------------------------------------------------------------------------
 void Terrain::geometry (void)
 {
 	ZoneScopedN("Terrain::geometry");
+	const std::chrono::steady_clock::time_point _geoT0 =
+		s_gpOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
 
 	// Shape A (M0a) — per-frame texture-handle memoization. Initialized at
 	// the EARLIEST terrain frame boundary because converted setup-time reads
@@ -2987,6 +3050,7 @@ void Terrain::geometry (void)
 
 	{
 		ZoneScopedN("Terrain::geometry slimReduce");
+		GeoScope _gsSlim(GP_SLIM);
 		const bool ssOn = SlimSplitOn();  // [SLIMSPLIT v1] latched, loop-local
 		// CULL de-inline: hoist the two loop-invariant cull-cascade bounds
 		// (mission-load constants; written only in init/destroy, never in
@@ -3274,6 +3338,7 @@ void Terrain::geometry (void)
 	if (s_lodChunkProd && !s_activeABForce && eye && objBlockInfo && objVertexActive && numObjBlocks > 0)
 	{
 		ZoneScopedN("Terrain::geometry chunkActiveProd");
+		GeoScope _gsChunk(GP_CHUNKPROD);
 		const long nB = numObjBlocks;
 		const long nV = realVerticesMapSide * realVerticesMapSide;
 		static std::vector<uint8_t> s_prodBlock;
@@ -3594,11 +3659,11 @@ void Terrain::geometry (void)
 		// CopyResultsToVertexPool (Stage 3): T1/T2/T3 non-blocking tryConsume
 		// writes GPU lightRGB/fogRGB into vertices[i] BEFORE the setupTextures loop.
 		gos_terrain_lighting::BeginFrame();
-		gos_terrain_lighting::PackAndDispatch();
-		gos_terrain_lighting::CopyResultsToVertexPool(quadList, numberQuads);
+		{ GeoScope _gsLP(GP_LIGHTPACK); gos_terrain_lighting::PackAndDispatch(); }
+		{ GeoScope _gsLC(GP_LIGHTCOPY); gos_terrain_lighting::CopyResultsToVertexPool(quadList, numberQuads); }
 		// Phase C: SOLID compute dispatch. MUST be AFTER PackAndDispatch above
 		// so Phase 1's post-dispatch barrier has published the lighting SSBO.
-		gos_terrain_indirect::ComputeDispatch();
+		{ GeoScope _gsIC(GP_INDIRECT); gos_terrain_indirect::ComputeDispatch(); }
 		// Water-fast-path narrow walk: reset the candidate vector once per
 		// frame, then append every quad that passes UploadThin's eligibility
 		// gate immediately after setupTextures() establishes waterHandle.
@@ -3720,6 +3785,7 @@ void Terrain::geometry (void)
 			}
 		}
 
+		GeoScope _gsQuadSetup(GP_QUADSETUP);  // setup loop + water narrow walk (GPU dispatches timed separately above)
 		long quadsSkipped = 0;
 		long waterCandidates = 0;
 		// Both per-quad bodies are no-ops in the default-ON steady state (Slice A
@@ -3843,6 +3909,12 @@ void Terrain::geometry (void)
 		}
 	}
 
+	if (s_gpOn) {
+		const unsigned long long _geoTotal = (unsigned long long)
+			std::chrono::duration_cast<std::chrono::nanoseconds>(
+				std::chrono::steady_clock::now() - _geoT0).count();
+		gpFrameEnd(_geoTotal, numberQuads, numObjBlocks);
+	}
 }
 
 //---------------------------------------------------------------------------
