@@ -381,6 +381,16 @@ static DWORD WINAPI s_smoke_thread(LPVOID);   // smoke driver: defined below
 BOOL EditorMFCApp::InitInstance()
 {
 	editor_set_default_env_vars();
+
+	// Mount mod overlays so the editor can load MOD missions + their appearance
+	// assets, not just base-game content. mods/<MC2_ACTIVE_MOD>/data/* shadow base
+	// data/* for relative reads -- the SAME call the game makes (mechcmd2.cpp:1229).
+	// Without it the editor is base-game-only and CTDs loading a mod .pak whose
+	// mech/object appearances live under mods/<mod>/data/tgl/ (e.g. chimera.ini).
+	// Set MC2_ACTIVE_MOD=<modfolder> before launching to activate a mod.
+	extern void InitModSearchPaths(const char* modsRoot);  // mclib/file.h
+	InitModSearchPaths("./mods/");
+
 	crashbundle_init();    // install SEH filter; writes crashes/<timestamp>/ on CTD
 	EarlyTraceBegin();
 	EarlyTrace("InitInstance: enter");
