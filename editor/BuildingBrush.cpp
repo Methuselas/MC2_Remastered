@@ -192,7 +192,15 @@ void BuildingBrush::update( int ScreenMouseX, int ScreenMouseY )
 	pt.x = ScreenMouseX;
 	pt.y = ScreenMouseY;
 	eye->inverseProject( pt, pos );
-	
+
+	// WYSIWYG: snap to the cell addBuilding() will commit to (see render()).
+	if ( land )
+	{
+		int cr = 0, cc = 0;
+		land->worldToCell( pos, cr, cc );
+		land->getCellPos( cr, cc, pos );
+	}
+
 	if ( !EditorObjectMgr::instance()->canAddBuilding( pos, pCursor->rotation, group, indexInGroup ) )
 		pCursor->setHighlightColor( 0x00400000 );
 	else
@@ -220,6 +228,18 @@ void BuildingBrush::render( int ScreenMouseX, int ScreenMouseY )
 	pt.x = ScreenMouseX;
 	pt.y = ScreenMouseY;
 	eye->inverseProject( pt, pos );
+
+	// WYSIWYG: addBuilding() commits the object SNAPPED to the cell grid
+	// (realPos = getCellPos(worldToCell(pos)), bSnapToCell default true). The preview
+	// cursor was drawn at the RAW unprojected point, so the highlight sat up to a
+	// tile off the cell the object actually lands on. Snap the preview to the same
+	// cell so what you see is what you place.
+	if ( land )
+	{
+		int cr = 0, cc = 0;
+		land->worldToCell( pos, cr, cc );
+		land->getCellPos( cr, cc, pos );
+	}
 
 	if ( !EditorObjectMgr::instance()->canAddBuilding( pos, pCursor->rotation, group, indexInGroup ) )
 		pCursor->setHighlightColor( 0x00400000 );
