@@ -75,6 +75,7 @@
 #include "MissionValidation.h"
 #include "EditorTaskRunner.h"
 #include "EditorDebugOverlay.h"
+#include "ModPicker.h"
 #include "SceneOutliner.h"
 #include "InspectorPanel.h"
 #include "AssetBrowser.h"
@@ -4580,6 +4581,11 @@ void EditorInterface::renderToolbarImGui()
 	ImGui::SliderFloat("##uiscale", &s_uiScale, 0.8f, 3.0f, "%.1fx");
 	if (s_uiScale < 0.8f) s_uiScale = 0.8f;
 	if (s_uiScale > 3.0f) s_uiScale = 3.0f;
+	ImGui::Separator();
+
+	// Pre-load mod selector: mount a mod's content BEFORE loading a mission (default
+	// None = stock). Above the load/generate actions so it's set first.
+	ModPicker::Draw();
 	ImGui::Separator();
 
 	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.30f, 1.0f));
