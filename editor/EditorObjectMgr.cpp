@@ -819,58 +819,92 @@ EditorObject* EditorObjectMgr::getObjectAtPosition( const Stuff::Vector3D& posit
 	return pBest;
 }
 
-// World-space object pick helper: nearest object whose footprint contains the
-// cursor's ground point. pickFloor is a scale-aware (terrain-cell-based) minimum
-// click tolerance so objects whose shape reports a tiny/zero extent radius (many
-// static buildings) are still selectable across their footprint.
-static void EditorObjectMgr_ConsiderWorldPick(EditorObject* pObject, const Stuff::Vector3D& world, float pickFloor, float& bestDistSq, EditorObject*& pBest)
+// Screen-space object pick helper: project the object's ACTUAL world position
+// (real elevation) to screen pixels with the GL-correct forward transform
+// (Camera::projectForScreenXY -- the same one FoliageRender renders with) and
+// match by pixel distance to the click. This replaces the old inverseProject
+// (screen->world unproject) pick, which diverged from the status-bar/placement
+// transform (screenToGroundPlaneApprox) and, under the default-on LOD-chunk
+// terrain path, returned a far/garbage world point on a heightfield-raycast miss
+// -- so a click on empty foliage latched onto the nearest mech across the map.
+//
+// Forward projection is elevation-EXACT (uses position.z, no z=0 parallax) and
+// needs no unproject, no t-range guard, and no nearest-vertex fallback. A true
+// miss leaves pBest NULL. The per-object pixel tolerance is derived from the
+// object's own world radius projected to screen (so big buildings stay clickable
+// near and small props don't over-grab far), floored by a base click slop.
+static void EditorObjectMgr_ConsiderScreenPick(EditorObject* pObject,
+	float clickX, float clickY, float pixelFloor, float& bestPixSq, EditorObject*& pBest)
 {
 	if (!pObject || !pObject->appearance())
 		return;
 	ObjectAppearance* pApp = pObject->appearance();
-	float dx = pApp->position.x - world.x;
-	float dy = pApp->position.y - world.y;
-	float distSq = dx * dx + dy * dy;
-	float r = pApp->getRadius();
-	if (r < pickFloor)
-		r = pickFloor;
-	if (distSq <= r * r && distSq < bestDistSq)
+
+	Stuff::Vector3D wp = pApp->position;   // real position, real elevation
+	Stuff::Vector4D sp;
+	if (!eye->projectForScreenXY(wp, sp))  // outside frustum
+		return;
+	if (sp.w <= 1e-4f)                     // at/behind the near plane
+		return;
+	if (!(sp.x == sp.x) || !(sp.y == sp.y))  // NaN guard
+		return;
+
+	// Per-object screen radius: project a point one world-radius away in X and
+	// measure the pixel delta. Falls back to the click-slop floor.
+	float tol = pixelFloor;
+	float worldR = pApp->getRadius();
+	if (worldR > 1.0f)
 	{
-		bestDistSq = distSq;
+		Stuff::Vector3D wr = wp;
+		wr.x += worldR;
+		Stuff::Vector4D sr;
+		if (eye->projectForScreenXY(wr, sr) && sr.w > 1e-4f
+		    && (sr.x == sr.x) && (sr.y == sr.y))
+		{
+			float rpx = sr.x - sp.x;
+			float rpy = sr.y - sp.y;
+			float screenR = sqrtf(rpx * rpx + rpy * rpy);
+			if (screenR > tol)
+				tol = screenR;
+		}
+	}
+
+	float dx = sp.x - clickX;
+	float dy = sp.y - clickY;
+	float pixSq = dx * dx + dy * dy;
+	if (pixSq <= tol * tol && pixSq < bestPixSq)
+	{
+		bestPixSq = pixSq;
 		pBest = pObject;
 	}
 }
 
 EditorObject* EditorObjectMgr::getObjectAtScreenPosition( int screenX, int screenY )
 {
-	// Pick in WORLD space using inverseProject (the coordinate-correct screen->world
-	// transform placement uses) and match objects by world distance. The cell-based
-	// path (worldToCell + getObjectAtCell) had a cell-coordinate offset that matched
-	// nothing; raw world coordinates are reliable.
-	if (!eye || !land)
+	// Match objects in SCREEN space by forward-projecting each object's real
+	// world position (see EditorObjectMgr_ConsiderScreenPick). This is what the
+	// user actually sees on screen, so the pick lines up with the cursor; it does
+	// not depend on the fragile screen->world unproject.
+	if (!eye)
 		return NULL;
 
-	Stuff::Vector3D world;
-	Stuff::Vector2DOf<long> screenPt;
-	screenPt.x = screenX;
-	screenPt.y = screenY;
-	eye->inverseProject(screenPt, world);
+	const float clickX = (float)screenX;
+	const float clickY = (float)screenY;
 
-	// ~3 terrain cells of tolerance so multi-cell buildings (hangars) are clickable
-	// across their body even when their shape reports no usable extent radius.
-	float pickFloor = 3.0f * land->worldUnitsPerVertex;
+	// Base click slop in pixels (objects with a larger projected radius widen it).
+	const float pixelFloor = 12.0f;
 
-	float bestDistSq = 1.0e30f;
+	float bestPixSq = 1.0e30f;
 	EditorObject* pBest = NULL;
 
 	for( BUILDING_LIST::EIterator iter = buildings.Begin(); !iter.IsDone(); iter++ )
-		EditorObjectMgr_ConsiderWorldPick(*iter, world, pickFloor, bestDistSq, pBest);
+		EditorObjectMgr_ConsiderScreenPick(*iter, clickX, clickY, pixelFloor, bestPixSq, pBest);
 
 	for( UNIT_LIST::EIterator mIter = units.Begin(); !mIter.IsDone(); mIter++ )
-		EditorObjectMgr_ConsiderWorldPick(*mIter, world, pickFloor, bestDistSq, pBest);
+		EditorObjectMgr_ConsiderScreenPick(*mIter, clickX, clickY, pixelFloor, bestPixSq, pBest);
 
 	for ( DROP_LIST::EIterator dIter = dropZones.Begin(); !dIter.IsDone(); dIter++ )
-		EditorObjectMgr_ConsiderWorldPick(*dIter, world, pickFloor, bestDistSq, pBest);
+		EditorObjectMgr_ConsiderScreenPick(*dIter, clickX, clickY, pixelFloor, bestPixSq, pBest);
 
 	return pBest;
 }
