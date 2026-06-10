@@ -136,6 +136,7 @@ static LONG WINAPI mc2_unhandled_exception_filter(EXCEPTION_POINTERS* ep)
 #include "utils/timing.h"
 #include "gos_postprocess.h"
 #include "gos_validate.h"
+#include "gos_screenshot.h"   // deterministic backbuffer->TGA capture (oracle)
 #include "gos_static_prop_killswitch.h"
 #include "gos_static_prop_registry.h"  // Stage 3.C: isEnabled() for [INSTR v1]
 #include "../../RenderWorld/RenderWorld.h"  // M1 Task 14
@@ -1178,6 +1179,7 @@ int main(int argc, char** argv)
 
         {
             ZoneScopedN("GameLogic");
+            mc2_hitch::HitchScope _hitchLogic(mc2_hitch::HitchSpanKind::PhaseGameLogic);
             if(gos_RenderGetEnableDebugDrawCalls()) {
                 gos_RenderUpdateDebugInput();
             } else {
@@ -1517,6 +1519,7 @@ int main(int argc, char** argv)
 
         {
             ZoneScopedN("DrawScreen");
+            mc2_hitch::HitchScope _hitchRender(mc2_hitch::HitchSpanKind::PhaseRender);
             graphics::make_current_context(ctx);
             draw_screen();
         }
@@ -1537,7 +1540,46 @@ int main(int argc, char** argv)
         }
 
         {
+            // Oracle: deterministic backbuffer screenshot at a target frame.
+            // MC2_SCREENSHOT_AT_FRAME=N + MC2_SCREENSHOT_PATH=out.tga. Captures
+            // the finished backbuffer just before present (after draw_screen +
+            // EndFrame), once, when the frame counter first reaches N. Default
+            // OFF, zero cost when env unset. Lets the dynamic-pipeline oracle
+            // produce a real pixel image headlessly (TGA) for visual regression.
+            static const char* s_ssPath  = getenv("MC2_SCREENSHOT_PATH");
+            static const long  s_ssFrame = getenv("MC2_SCREENSHOT_AT_FRAME")
+                ? atol(getenv("MC2_SCREENSHOT_AT_FRAME")) : -1L;
+            static bool s_ssDone = false;
+            if (s_ssPath && s_ssFrame >= 0 && !s_ssDone
+                && (long)g_mc2FrameCounter >= s_ssFrame) {
+                // Capture the offscreen post-process scene FBO, NOT the window
+                // backbuffer (FBO 0) — when the window is minimized the driver
+                // never composites to FBO 0 (it reads black), but sceneFBO_ is
+                // a real offscreen RGBA16F target that always holds the rendered
+                // scene. endScene() samples it (does not clear it), so it is
+                // still intact here, just before swap. Reading RGBA16F as
+                // GL_UNSIGNED_BYTE clamps HDR->LDR in the driver — fine for a
+                // visual oracle.
+                gosPostProcess* ppShot = getGosPostProcess();
+                GLuint ssFbo = ppShot ? ppShot->getSceneFBO() : 0;
+                int ssW = ppShot ? ppShot->getWidth()  : 0;
+                int ssH = ppShot ? ppShot->getHeight() : 0;
+                if (ssFbo && ssW > 0 && ssH > 0) {
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, ssFbo);
+                    glReadBuffer(GL_COLOR_ATTACHMENT0);
+                    gos::screenshot::writeTGA(s_ssPath, ssW, ssH);
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+                    s_ssDone = true;
+                    fprintf(stderr, "[SCREENSHOT v1] frame=%u wrote %s (%dx%d, sceneFBO)\n",
+                            g_mc2FrameCounter, s_ssPath, ssW, ssH);
+                    fflush(stderr);
+                }
+            }
+        }
+
+        {
             ZoneScopedN("SwapWindow");
+            mc2_hitch::HitchScope _hitchPresent(mc2_hitch::HitchSpanKind::PhasePresent);
             // SwapWindow split: env-gated glFinish probe attributes the present
             // stall. If MC2_PRESWAP_FINISH=1 moves the ~45ms into PreFinish, the
             // cost is GPU-completion backpressure (GPU draining terrain/shadows),
@@ -1607,6 +1649,7 @@ int main(int argc, char** argv)
                 uint64_t now = timing::gettickcount();
                 uint64_t elapsed_ms = timing::ticks2ms(now - start_tick);
                 if (elapsed_ms < target_ms) {
+                    mc2_hitch::HitchScope _hitchCap(mc2_hitch::HitchSpanKind::PhaseCap);
                     timing::sleep((unsigned int)((target_ms - elapsed_ms) * 1000000u));
                 }
             }

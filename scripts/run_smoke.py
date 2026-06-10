@@ -284,6 +284,8 @@ def main():
                 # entirely, so vars not explicitly listed get dropped.
                 **{k: v for k, v in os.environ.items()
                    if k in ("MC2_FX_COUNT_LOG",
+                            "MC2_SCREENSHOT_AT_FRAME",
+                            "MC2_SCREENSHOT_PATH",
                             "MC2_MODERN_TERRAIN_SURFACE",
                             "MC2_MODERN_TERRAIN_PATCHES",
                             "MC2_SHAPE_C_PARITY_CHECK",
