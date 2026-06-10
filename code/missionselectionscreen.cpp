@@ -28,6 +28,12 @@ MissionSelectionScreen::MissionSelectionScreen(  )
 	bMovie = 0;
 
 	missionCount = 0;
+	// pressedButton was left uninitialized -> update() reads garbage at line 177
+	// (the `!= -1` guard passes for any non-(-1) value) and indexes
+	// missionNames[garbage] -> wild READ crash. Nondeterministic: triggers only
+	// when the uninitialized value happens to satisfy the bounds checks, so a
+	// rebuild that shifts memory layout can surface it. Init to the "none" sentinel.
+	pressedButton = -1;
 
 	memset( missionNames, 0, sizeof( const char* ) * MAX_MISSIONS_IN_GROUP );
 	bStop = 0;
@@ -174,7 +180,9 @@ void MissionSelectionScreen::update()
 
 	missionDescriptionListBox.update();
 
-	if ( pressedButton != -1 && pressedButton < missionCount
+	// Use >= 0 (not != -1): any negative index, not just the -1 sentinel, must
+	// be rejected before missionNames[pressedButton] or it reads before the array.
+	if ( pressedButton >= 0 && pressedButton < missionCount
 		&& pressedButton < MAX_MISSIONS_IN_GROUP && missionNames[pressedButton] )
 	{
 		operationScreen.textObjects[0].setText( LogisticsData::instance->getMissionFriendlyName(
