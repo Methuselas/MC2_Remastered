@@ -434,9 +434,13 @@ DWORD __stdcall RunGameOSLogic()
         ::GetClientRect(hwnd, &rc);
         int w = rc.right - rc.left;
         int h = rc.bottom - rc.top;
-        if (w > 0 && h > 0 &&
-            (Environment.drawableWidth != w || Environment.drawableHeight != h))
+        // Compare against the last REAL client size (not Environment, which we shrink
+        // below for the docked scene viewport -- otherwise this fires every frame).
+        static int s_lastClientW = -1, s_lastClientH = -1;
+        if (w > 0 && h > 0 && (w != s_lastClientW || h != s_lastClientH))
         {
+            s_lastClientW = w;
+            s_lastClientH = h;
             Environment.screenWidth = w;
             Environment.screenHeight = h;
             Environment.drawableWidth = w;
@@ -444,6 +448,34 @@ DWORD __stdcall RunGameOSLogic()
             graphics::resize_window(g_editorRenderWindow, w, h);
             EditorGameOSTrace("RunGameOSLogic: resize w=%d h=%d", w, h);
         }
+
+#ifdef MC2_IMGUI
+        // Dock map-resize: shrink the SCENE viewport to the dockspace CENTRAL node (the
+        // area not covered by docked panels) so the GL map fills only that region and
+        // the docked right-side panels sit beside it, not over it. The scene FBO +
+        // glViewport + camera aspect all follow Environment.drawable/screen dims, and
+        // endScene composites to glViewport(0,0,width_,height_) -> the left region;
+        // ImGui (DisplaySize = full SDL window) draws panels in the right strip.
+        // SceneViewportWidth() lags one frame (built in NewFrame) -- harmless. The
+        // scene is left-anchored at (0,0) so mouse-pick coords still map 1:1.
+        // MC2_EDITOR_DOCK_RESIZE=0 disables (scene stays full-window behind panels).
+        {
+            static int s_resizeOn = -1;
+            if (s_resizeOn < 0) {
+                const char* r = std::getenv("MC2_EDITOR_DOCK_RESIZE");
+                s_resizeOn = (!r || strcmp(r, "0") != 0) ? 1 : 0;
+            }
+            int sw = GuiRuntime::SceneViewportWidth();
+            int sh = GuiRuntime::SceneViewportHeight();
+            if (s_resizeOn && w > 0 && h > 0 && sw >= 64 && sh >= 64 && sw <= w && sh <= h)
+            {
+                Environment.screenWidth    = sw;
+                Environment.drawableWidth  = sw;
+                Environment.screenHeight   = sh;
+                Environment.drawableHeight = sh;
+            }
+        }
+#endif
     }
 
     // --- Pump SDL events ---------------------------------------------------

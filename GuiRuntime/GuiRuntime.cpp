@@ -6,6 +6,7 @@
 #include "imgui_impl_opengl3.h"
 #include <cstdlib>   // getenv
 #include <cstdio>    // fprintf
+#include <cstring>   // strcmp
 
 #include <GL/glew.h>  // glGetError, glGetIntegerv for Render() diagnostics
 
@@ -41,6 +42,11 @@ void GuiRuntime::Init() {
     // its own in-game cursor sprite; without this flag the ImGui menu re-shows
     // the Windows arrow on top of the in-game cursor.
     io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+    // NOTE: the vendored ImGui (1.91.8) is the NON-docking build, so true docking
+    // (ImGuiConfigFlags_DockingEnable / DockBuilder) is unavailable. We instead
+    // reserve a fixed right-side panel strip and shrink the scene viewport to the
+    // left region (see BuildEditorDockspace + EditorGameOS). Swapping to the ImGui
+    // docking branch would upgrade this to real drag-redock docking.
 
     ImGui::StyleColorsDark();
 
@@ -56,6 +62,37 @@ void GuiRuntime::Shutdown() {
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
     g_imguiInitialized = false;
+}
+
+// --- Dockspace -------------------------------------------------------------------
+static int s_sceneViewW = 0;
+static int s_sceneViewH = 0;
+
+int GuiRuntime::SceneViewportWidth()  { return s_sceneViewW; }
+int GuiRuntime::SceneViewportHeight() { return s_sceneViewH; }
+
+static bool dockEnabled() {
+    const char* d = std::getenv("MC2_EDITOR_DOCK");
+    return (!d || strcmp(d, "0") != 0);
+}
+
+// Reserve a fixed right-side panel strip and report the LEFT region size so the editor
+// shrinks its scene viewport to it (the map fills the left, panels sit in the right
+// strip). No-op (size 0) when docking is off or the window is too small. (Real
+// drag-redock docking would need the ImGui docking-branch sources.)
+static const int kRightPanelStripW = 360;
+
+static void BuildEditorDockspace() {
+    if (!dockEnabled()) { s_sceneViewW = s_sceneViewH = 0; return; }
+    ImGuiIO& io = ImGui::GetIO();
+    const int W = (int)io.DisplaySize.x;
+    const int H = (int)io.DisplaySize.y;
+    if (W > kRightPanelStripW + 240 && H > 120) {
+        s_sceneViewW = W - kRightPanelStripW;
+        s_sceneViewH = H;
+    } else {
+        s_sceneViewW = s_sceneViewH = 0;
+    }
 }
 
 void GuiRuntime::NewFrame() {
@@ -156,6 +193,11 @@ void GuiRuntime::NewFrame() {
 #endif
 
     ImGui::NewFrame();
+
+    // Editor dockspace (right-side panels) + scene-viewport-size feedback. Submitted
+    // first so the panel windows dock into it this frame.
+    BuildEditorDockspace();
+
     // Tell the game input layer whether ImGui has claimed the mouse this frame.
     input::setImguiWantsMouse(ImGui::GetIO().WantCaptureMouse);
 }
