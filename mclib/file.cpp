@@ -17,6 +17,7 @@
 #ifndef FILE_H
 #include"file.h"
 #endif
+#include <algorithm>
 
 #ifndef HEAP_H
 #include"heap.h"
@@ -139,14 +140,211 @@ static void IndexModData(
             IndexModData(idx, fullSub, relSub, modId);
         } else {
             std::string key = NormalizeKey(relChild);
-            if (idx.find(key) == idx.end())
+            auto existing = idx.find(key);
+            if (existing == idx.end()) {
                 idx[key] = { fullChild, modId };
+            } else if (logFileResolve) {
+                printf("[mod-dup] %s  winner=[%s]  loser=[%s]\n",
+                       key.c_str(), existing->second.modId.c_str(), modId);
+                fflush(stdout);
+            }
         }
     } while (FindNextFileA(h, &fd));
 
     FindClose(h);
 }
 
+// ---------------------------------------------------------------------------
+// Mod index disk cache — converts O(N files × FindNextFile) startup scan to
+// a single sequential file read on repeat runs.
+//
+// Cache file: mods/<modId>/.modindex-cache  (plain text, tab-separated)
+// Invalidation: cache mtime vs max mtime of data/ + each immediate subdir.
+// Force rebuild: MC2_REBUILD_MOD_CACHE=1
+//
+// Cache format:
+//   MC2MODIDX 1\n
+//   modid <id>\n
+//   count <N>\n
+//   <key>\t<absPath>\t<modId>\n   (N lines)
+// ---------------------------------------------------------------------------
+
+static const char* kCacheHeader = "MC2MODIDX 1";
+static const int   kCacheVersion = 1;
+
+// Get max FILETIME from a directory and its immediate subdirs (two-level sweep).
+// Avoids a full recursive walk while still catching the common case where a
+// user adds/removes files inside a named subdir like data/tgl/ or data/art/.
+static FILETIME GetModDataMtime(const char* dataDir) {
+    FILETIME latest = {};
+    WIN32_FILE_ATTRIBUTE_DATA da;
+    if (GetFileAttributesExA(dataDir, GetFileExInfoStandard, &da))
+        if (CompareFileTime(&da.ftLastWriteTime, &latest) > 0)
+            latest = da.ftLastWriteTime;
+
+    char pat[MAX_PATH];
+    _snprintf(pat, sizeof(pat), "%s*", dataDir);
+    pat[sizeof(pat)-1] = '\0';
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pat, &fd);
+    if (h == INVALID_HANDLE_VALUE) return latest;
+    do {
+        if (fd.cFileName[0] == '.') continue;
+        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+        if (CompareFileTime(&fd.ftLastWriteTime, &latest) > 0)
+            latest = fd.ftLastWriteTime;
+        // one level deeper
+        char subPat[MAX_PATH];
+        _snprintf(subPat, sizeof(subPat), "%s%s/*", dataDir, fd.cFileName);
+        subPat[sizeof(subPat)-1] = '\0';
+        WIN32_FIND_DATAA fd2;
+        HANDLE h2 = FindFirstFileA(subPat, &fd2);
+        if (h2 == INVALID_HANDLE_VALUE) continue;
+        do {
+            if (fd2.cFileName[0] == '.') continue;
+            if (!(fd2.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+            if (CompareFileTime(&fd2.ftLastWriteTime, &latest) > 0)
+                latest = fd2.ftLastWriteTime;
+        } while (FindNextFileA(h2, &fd2));
+        FindClose(h2);
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+    return latest;
+}
+
+static FILETIME GetFileMtime(const char* path) {
+    WIN32_FILE_ATTRIBUTE_DATA da;
+    if (!GetFileAttributesExA(path, GetFileExInfoStandard, &da)) { FILETIME z={}; return z; }
+    return da.ftLastWriteTime;
+}
+
+// Write g_modIndex (filtered to entries with matching modId, for one mod layer) to cache.
+// We write ALL entries from the map — the cache is per-call-to-IndexModData, so we
+// pass the entries vector directly.
+static void WriteModIndexCache(
+    const char* cachePath,
+    const std::string& modId,
+    const std::vector<std::pair<std::string,ModFileEntry>>& entries
+) {
+    FILE* f = fopen(cachePath, "wb");
+    if (!f) return;
+    fprintf(f, "%s\n", kCacheHeader);
+    fprintf(f, "modid %s\n", modId.c_str());
+    fprintf(f, "count %zu\n", entries.size());
+    for (auto& e : entries)
+        fprintf(f, "%s\t%s\t%s\n", e.first.c_str(), e.second.path.c_str(), e.second.modId.c_str());
+    fclose(f);
+}
+
+// Load cache into idx (first-wins, same as IndexModData).
+// Returns number of entries loaded, or -1 on format error.
+static int LoadModIndexCache(
+    std::unordered_map<std::string, ModFileEntry>& idx,
+    const char* cachePath,
+    const char* expectedModId
+) {
+    FILE* f = fopen(cachePath, "rb");
+    if (!f) return -1;
+
+    char line[MAX_PATH * 3];
+    // header
+    if (!fgets(line, sizeof(line), f)) { fclose(f); return -1; }
+    line[strcspn(line, "\r\n")] = '\0';
+    if (strcmp(line, kCacheHeader) != 0) { fclose(f); return -1; }
+    // modid
+    if (!fgets(line, sizeof(line), f)) { fclose(f); return -1; }
+    line[strcspn(line, "\r\n")] = '\0';
+    if (strncmp(line, "modid ", 6) != 0) { fclose(f); return -1; }
+    if (strcmp(line + 6, expectedModId) != 0) { fclose(f); return -1; }
+    // count
+    if (!fgets(line, sizeof(line), f)) { fclose(f); return -1; }
+    line[strcspn(line, "\r\n")] = '\0';
+    if (strncmp(line, "count ", 6) != 0) { fclose(f); return -1; }
+    int count = atoi(line + 6);
+    if (count < 0) { fclose(f); return -1; }
+
+    int loaded = 0;
+    while (fgets(line, sizeof(line), f)) {
+        line[strcspn(line, "\r\n")] = '\0';
+        if (!line[0]) continue;
+        char* tab1 = strchr(line, '\t');
+        if (!tab1) continue;
+        *tab1 = '\0';
+        char* tab2 = strchr(tab1+1, '\t');
+        if (!tab2) continue;
+        *tab2 = '\0';
+        std::string key    = line;
+        std::string path   = tab1 + 1;
+        std::string modid  = tab2 + 1;
+        if (idx.find(key) == idx.end())
+            idx[key] = { path, modid };
+        loaded++;
+    }
+    fclose(f);
+    return loaded;
+}
+
+// Try to load the cache for one mod layer (dataDir, modId) into idx.
+// Returns true if cache was valid and loaded, false if a fresh scan is needed.
+static bool TryLoadModCache(
+    std::unordered_map<std::string, ModFileEntry>& idx,
+    const char* absModRoot,   // e.g. "A:/Games/.../mods/"
+    const char* modId,        // e.g. "mc2x-pbr"
+    const char* dataDir       // e.g. "...mods/mc2x-pbr/data/"
+) {
+    if (getenv("MC2_REBUILD_MOD_CACHE")) return false;
+
+    char cachePath[MAX_PATH];
+    _snprintf(cachePath, sizeof(cachePath), "%s%s/.modindex-cache", absModRoot, modId);
+    cachePath[sizeof(cachePath)-1] = '\0';
+
+    FILETIME cacheMtime = GetFileMtime(cachePath);
+    // cache doesn't exist
+    ULARGE_INTEGER cmt; cmt.LowPart = cacheMtime.dwLowDateTime; cmt.HighPart = cacheMtime.dwHighDateTime;
+    if (cmt.QuadPart == 0) return false;
+
+    FILETIME dataMtime = GetModDataMtime(dataDir);
+    if (CompareFileTime(&dataMtime, &cacheMtime) > 0) return false; // data newer than cache
+
+    size_t before = idx.size();
+    int loaded = LoadModIndexCache(idx, cachePath, modId);
+    if (loaded < 0) return false; // parse error
+
+    printf("[mod-cache] hit modid='%s' loaded=%d files\n", modId, loaded);
+    fflush(stdout);
+    (void)before;
+    return true;
+}
+
+// Build fresh index for one mod layer and write cache.
+static void IndexModDataCached(
+    std::unordered_map<std::string, ModFileEntry>& idx,
+    const char* absModRoot,
+    const char* modId,
+    const char* dataDir,
+    const char* relBase
+) {
+    // Snapshot keys before to identify newly added entries after the walk.
+    std::unordered_map<std::string, ModFileEntry> layer;
+    IndexModData(layer, dataDir, relBase, modId);
+
+    // Merge into idx (first-wins).
+    for (auto& kv : layer)
+        if (idx.find(kv.first) == idx.end())
+            idx[kv.first] = kv.second;
+
+    // Collect layer entries for cache (all entries this mod owns in the layer map).
+    std::vector<std::pair<std::string,ModFileEntry>> fresh(layer.begin(), layer.end());
+
+    char cachePath[MAX_PATH];
+    _snprintf(cachePath, sizeof(cachePath), "%s%s/.modindex-cache", absModRoot, modId);
+    cachePath[sizeof(cachePath)-1] = '\0';
+    WriteModIndexCache(cachePath, modId, fresh);
+    printf("[mod-cache] miss modid='%s' indexed=%zu wrote cache\n", modId, fresh.size());
+    fflush(stdout);
+}
+
+// ---------------------------------------------------------------------------
 // Minimal JSON string field extractor — no full parser needed for mod.json.
 static std::string JsonGetString(const char* json, const char* key) {
     char needle[128];
@@ -231,6 +429,16 @@ static bool TryModOpen(const char* fileName, int* outHandle) {
     return true;
 }
 
+// Returns the owning mod id for a given data path (normalized), or nullptr if not in mod index.
+// Used for diagnostic logging only — O(1) lookup.
+const char* LookupModOwner(const char* dataPath) {
+    if (g_modIndex.empty()) return nullptr;
+    std::string key = NormalizeKey(dataPath);
+    auto it = g_modIndex.find(key);
+    if (it == g_modIndex.end()) return nullptr;
+    return it->second.modId.c_str();
+}
+
 // No-ops — mod is selected at launcher time, not at campaign-select time.
 // Kept for call-site compatibility in logisticsdata.cpp / logisticsdialog.cpp / mission.cpp.
 void ActivateCampaignMod(const char* /*campaignFitName*/) {}
@@ -254,6 +462,25 @@ void EnumerateModCampaignFiles(ModCampaignCallback cb, void* userData) {
         std::string fname = key.substr(prefix.size(), key.size() - prefix.size() - ext.size());
         cb(fname.c_str(), kv.second.path.c_str(), userData);
     }
+}
+
+void EnumerateModFitFiles(const char* keyPrefix, ModFitCallback cb, void* userData) {
+    if (g_modIndex.empty() || !keyPrefix || !cb) return;
+    std::string prefix = NormalizeKey(keyPrefix);
+    static const std::string ext = ".fit";
+    // Collect matching absolute paths, keyed by filename for sort stability.
+    std::vector<std::pair<std::string, std::string>> hits; // (filename, absPath)
+    for (auto& kv : g_modIndex) {
+        const std::string& key = kv.first;
+        if (key.compare(0, prefix.size(), prefix) != 0) continue;
+        if (key.size() < ext.size()) continue;
+        if (key.compare(key.size() - ext.size(), ext.size(), ext) != 0) continue;
+        std::string fname = key.substr(prefix.size());
+        hits.push_back({ fname, kv.second.path });
+    }
+    std::sort(hits.begin(), hits.end()); // sort by filename
+    for (auto& h : hits)
+        cb(h.second.c_str(), userData);
 }
 
 void InitModSearchPaths(const char* modsRoot) {
@@ -293,35 +520,49 @@ void InitModSearchPaths(const char* modsRoot) {
         modName = envMod;
         printf("[mod] warning: no mod.json for '%s', loading with no dependencies\n", envMod);
     }
-    if (logFileResolve)
-        printf("[mod] loading '%s' (%s) deps=%zu\n", modId.c_str(), modName.c_str(), deps.size());
+    // Priority order: base data < dep[N-1] < ... < dep[0] < active mod.
+    // Index is first-wins, so scan highest priority first.
+    // Duplicates: winner keeps its slot; loser is logged when MC2_LOG_FILE_RESOLVE=1.
+    {
+        // Build display string: "base < dep[N-1] < ... < dep[0] < active"
+        std::string order = "base";
+        for (int i = (int)deps.size()-1; i >= 0; i--) order += " < " + deps[i];
+        order += " < "; order += modId;
+        printf("[mod] load order (lowest to highest priority): %s\n", order.c_str());
+        fflush(stdout);
+    }
 
-    // Index active mod first (highest priority — first-wins so active mod beats deps).
+    // Index active mod first (highest priority).
     char activeDataDir[MAX_PATH];
     _snprintf(activeDataDir, sizeof(activeDataDir), "%s%s/data/", absRoot, envMod);
     activeDataDir[sizeof(activeDataDir)-1] = '\0';
     if (GetFileAttributesA(activeDataDir) != INVALID_FILE_ATTRIBUTES) {
         size_t before = g_modIndex.size();
-        IndexModData(g_modIndex, activeDataDir, "data/", modId.c_str());
-        printf("[mod] active '%s': %zu files\n", envMod, g_modIndex.size() - before);
+        if (!TryLoadModCache(g_modIndex, absRoot, modId.c_str(), activeDataDir))
+            IndexModDataCached(g_modIndex, absRoot, modId.c_str(), activeDataDir, "data/");
+        printf("[mod] [1/%zu] active '%s': %zu files\n",
+               deps.size()+1, envMod, g_modIndex.size() - before);
     }
 
-    // Index dependencies (lower priority — fill gaps not covered by active mod).
-    for (const auto& dep : deps) {
+    // Index dependencies in declared order (dep[0] > dep[1] > ...).
+    for (size_t i = 0; i < deps.size(); i++) {
+        const std::string& dep = deps[i];
         char depDataDir[MAX_PATH];
         _snprintf(depDataDir, sizeof(depDataDir), "%s%s/data/", absRoot, dep.c_str());
         depDataDir[sizeof(depDataDir)-1] = '\0';
         if (GetFileAttributesA(depDataDir) == INVALID_FILE_ATTRIBUTES) {
-            printf("[mod] dependency '%s' not found, skipping\n", dep.c_str()); fflush(stdout);
+            printf("[mod] dep '%s' not found at %s, skipping\n", dep.c_str(), depDataDir);
+            fflush(stdout);
             continue;
         }
         size_t before = g_modIndex.size();
-        IndexModData(g_modIndex, depDataDir, "data/", dep.c_str());
-        printf("[mod] dep '%s': %zu new files\n", dep.c_str(), g_modIndex.size() - before);
+        if (!TryLoadModCache(g_modIndex, absRoot, dep.c_str(), depDataDir))
+            IndexModDataCached(g_modIndex, absRoot, dep.c_str(), depDataDir, "data/");
+        printf("[mod] [%zu/%zu] dep '%s': %zu new files\n",
+               i+2, deps.size()+1, dep.c_str(), g_modIndex.size() - before);
     }
 
-    printf("[mod] ready: active='%s' (%s) total=%zu files\n",
-           envMod, modName.c_str(), g_modIndex.size());
+    printf("[mod] ready: active='%s' total=%zu files\n", envMod, g_modIndex.size());
     fflush(stdout);
 }
 
@@ -529,9 +770,17 @@ long File::open (const char* fName, FileMode _mode, long numChild, bool doNotLow
 		{
 			int modHandle = -1;
 			if (TryModOpen(fileName, &modHandle))
+			{
 				handle = modHandle;
+				if (getenv("MC2_LOG_MECH_ICON") && strstr(fileName, "mechicon"))
+					printf("[MECHICON] File::open MOD-HIT: %s\n", fileName);
+			}
 			else
+			{
 				handle = _open(fileName, _O_RDONLY | _O_BINARY);
+				if (getenv("MC2_LOG_MECH_ICON") && strstr(fileName, "mechicon") && handle != INVALID_HANDLE_VALUE)
+					printf("[MECHICON] File::open LOOSE: %s\n", fileName);
+			}
 		}
 
 		// Try stripping a numeric size subdir (e.g. data/tgl/128/foo.tga -> data/tgl/foo.tga).
@@ -563,6 +812,8 @@ long File::open (const char* fName, FileMode _mode, long numChild, bool doNotLow
 			lastError = errno;
 
 			fastFile = FastFileFind(fileName,fastFileHandle);
+			if (getenv("MC2_LOG_MECH_ICON") && fastFile && strstr(fileName, "mechicon"))
+				printf("[MECHICON] File::open FST-HIT: %s\n", fileName);
 			if (!fastFile)
 			{
                 if(!Environment.checkCDForFiles)
