@@ -199,3 +199,44 @@ Decide: does large-/oversized-map gameplay perf matter for the project?
   rendering). The MOVE-grid pathfinding scaling is the prime suspect.
 - **No** → there is no current perf bottleneck worth chasing; the render arc closes, and the oracle
   infrastructure (counters + screenshot) remains for future *correctness* work.
+
+---
+
+## P1 STAGE 0 RESULTS — Measured 2026-06-09 (MC2_MOVE_RECON + SLIMSPLIT + mc2_24 control)
+
+Hypothesis under test: the 1K-map 50ms logic is mover-AI / pathfinding / MOVE-map.
+**Verdict: REJECTED. The 50ms is NOT pathfinding.** Four independent measurements:
+
+| Subsystem | cost | tool |
+|-----------|------|------|
+| Mover AI (`control.update`) on 1K (2 movers) | ~8µs/frame | MOVE_RECON |
+| Pathlock range updates on 1K | ~1.6µs/frame | MOVE_RECON |
+| Path search / A* on 1K | 0 (0 replans; 5s-throttled) | MOVE_RECON |
+| Object appearance update | 0.07ms | OBJECT_RECON |
+| Terrain slimReduce/makeLists | **0 cycles** (gated off by default chunk path) | SLIMSPLIT |
+| Render draw | 0.45ms | HITCH_PHASE |
+| **Terrain-logic (mission.cpp:544/567/569)** | **~50ms (by elimination)** | wall-timer TODO |
+
+### The mc2_24 control (the decisive test)
+mc2_24 stresses AI movement hard: ~41 mechs pathfinding after a gate/wall event, 1287 replans.
+Measured: ctrl 59µs + pathlock 16µs + astar 31µs ≈ **~106µs/frame average**, peak ~1–2ms; total
+HITCH logic stays **2.3ms** at 67fps. **AI/pathfinding is cheap even under maximum load.** If it were
+the 1K 50ms, mc2_24 (far more movement) would have shown it. It did not. Pathfinding is conclusively
+exonerated as a perf bottleneck.
+
+### Standing facts (independent of perf)
+- **Crash fixed** (commit 77a0c12a): all MissionMap cell accessors inBounds-guarded. The pathlock
+  OOB-AV class is closed.
+- **MOVE-grid / terrain-grid mismatch is real**: `offmap_noops` ≈ 4/frame on the 1K map (movers
+  querying cells beyond the 720² MOVE grid, absorbed by the guard). An architecture smell worth
+  documenting, but NOT a perf cost.
+- astar_global (area-graph search) is the larger A* component (~22µs/frame, 0.58ms peak on mc2_24) and
+  scales with area count — a future watch-item on very large multi-area maps, not a current problem.
+
+### Conclusion & next step
+- **Close the pathfinding-perf idea.** Measured cheap under max load. No new pathfinding arc.
+- **The 1K 50ms is terrain-logic** (`land->update` / `terrainTextures->update` / `land->geometry`
+  minus slimReduce). One wall-timer on mission.cpp:544/567/569 pinpoints which call. This is the
+  **existing terrain-LOD-chunk arc's** territory (Phase 8z), not a new arc.
+- MC2_MOVE_RECON instrumentation left uncommitted (scaffolding; code/objmgr.cpp is mixed with
+  pre-existing R2b work — split the hunk before persisting if desired).
