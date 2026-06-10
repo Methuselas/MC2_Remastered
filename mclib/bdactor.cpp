@@ -51,6 +51,7 @@ static unsigned long s_spotDiagBldgCalls      = 0;   // update() call counter
 #include "gos_static_prop_registry.h"  // Stage 3.C: static-registry fast path
 #include "../GameAdapters/StaticPropRenderAdapter.h"  // M1 RenderWorld Tasks 8-11
 #include <unordered_map>  // LODBUG probe: tracks per-actor previous bldgShape*
+#include <cstring>
 #include "gos_object_parity_query.h"  // IsDualEmitArmed — Stage 2.D.2 dual-emit hook
 #include <set>            // [LIGHTSLOT v1] Task 0 cardinality gate
 #include "gos_smoke.h"    // [LIGHTSLOT v1] SmokeMode::missionHasStarted()
@@ -58,6 +59,17 @@ static unsigned long s_spotDiagBldgCalls      = 0;   // update() call counter
 #include "cpu_proj_cost_split.h"      // F3 CPU projection cost-baseline (RAII scope)
 #include "spotlight_diag.h"  // T1.16 — (E)-owned slot tagging for per-slot probe
 #include "gos_profiler.h"  // PERF DIAGNOSTIC 2026-05-06: ZoneScopedN for per-update breakdown
+
+static bool staticRegIsNaturalBuildingName(const char* name)
+{
+    if (!name)
+        return false;
+    return (std::strncmp(name, "Pine", 4) == 0) ||
+           (std::strncmp(name, "Oak", 3) == 0) ||
+           (std::strncmp(name, "Birch", 5) == 0) ||
+           (std::strncmp(name, "Willow", 6) == 0) ||
+           (std::strncmp(name, "rock_", 5) == 0);
+}
 
 // MODEL-OVERRIDE dual-shape (Slice 2): registry resolve + direct geometry import.
 #include "model_override_registry.h"
@@ -1116,6 +1128,9 @@ void BldgAppearance::setGesture (unsigned long gestureId)
 	if (gestureId == bdAnimationState)
 		return;
 
+	const bool naturalStaticExempt =
+		appearType && staticRegIsNaturalBuildingName(appearType->name) && isStaticEligible();
+
 	// BLDG-TYPE-ANIM-GATE-FIX-1: invalidate static registration on idle→animated.
 	// When an idle building (bdAnimationState == -1) that is registered as a
 	// static prop receives its first gesture, the GPU registry holds a stale
@@ -1126,8 +1141,15 @@ void BldgAppearance::setGesture (unsigned long gestureId)
 	// State-to-state (bdAnimationState != -1 → new state): already dynamic,
 	// not registered, no action needed.
 	if (bdAnimationState == -1 && staticReg.registered) {
-		invalidateStaticRegistration();
-		++s_animStartInvalidated;
+		// Some natural props are authored as BUILDING appearances and receive a
+		// dummy gesture=0 startup state even though there is no real animation
+		// payload. Keep their static registration intact so pure render-static
+		// trees/rocks remain skippable, while real animated/service buildings
+		// still invalidate and wake normally.
+		if (!naturalStaticExempt) {
+			invalidateStaticRegistration();
+			++s_animStartInvalidated;
+		}
 	}
 	// Count all setGesture calls while already in a non-idle state.
 	// Not an animation-end counter — bdAnimationState never returns to -1 after
@@ -2875,6 +2897,12 @@ namespace {
 		}
 		return false;
 	}
+
+	bool bldgGestureHasAnimation(const BldgAppearanceType* t, long gestureId) {
+		if (!t) return false;
+		if (gestureId < 0 || gestureId >= MAX_BD_ANIMATIONS) return false;
+		return t->bdAnimData[gestureId] != nullptr;
+	}
 } // anon namespace
 
 bool BldgAppearance::isStaticEligible() const
@@ -2905,7 +2933,9 @@ bool BldgAppearance::isStaticEligible() const
 	// Strictly scoped to bldgRenderShape!=nullptr: stock path byte-identical.
 	const bool overrideStatic =
 		appearType->bldgRenderShape && !bldgTypeHasAnimations(appearType);
-	if (bdAnimationState != -1 && !overrideStatic) return false;  // currently animating
+	const bool activeGestureHasAnimation =
+		bdAnimationState != -1 && bldgGestureHasAnimation(appearType, bdAnimationState);
+	if (activeGestureHasAnimation && !overrideStatic) return false;  // currently animating
 	return true;
 }
 

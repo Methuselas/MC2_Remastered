@@ -75,6 +75,7 @@
 - VFX no objectId: `sh scripts/check-vfx-no-objectid.sh`
 
 ## Material / static prop gates
+- `MC2_SKIP_STATIC_TREES=1` â€” enable pure static natural-prop update skip. Default **OFF**.
 
 - `MC2_MATERIAL_KTX=1` — KTX2 sidecar loader for static-prop tex array. Default **OFF**.
 - `MC2_MATERIAL_GPU` — MaterialGpu table upload + SSBO bind. Default **ON**.

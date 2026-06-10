@@ -1,0 +1,7 @@
+add_executable(static_natural_skip_policy_tests
+  test_static_natural_skip_policy.cpp)
+target_include_directories(static_natural_skip_policy_tests PRIVATE
+  ${CMAKE_SOURCE_DIR}/code)
+target_compile_features(static_natural_skip_policy_tests PRIVATE cxx_std_14)
+add_test(NAME static_natural_skip_policy_tests
+  COMMAND static_natural_skip_policy_tests)

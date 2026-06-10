@@ -54,9 +54,6 @@
 
 #include"gos_profiler.h"
 
-extern void mc2EmitStaticRegDiagSummary();
-extern void mc2EmitStaticRegRuntimeDiagSummary(uint32_t frame);
-
 #ifndef ARTLRY_H
 #include"artlry.h"
 #endif
@@ -146,10 +143,7 @@ static bool mc2SkipStaticTreesEnabled (void)
 {
 	static int cached = -1;
 	if (cached < 0)
-	{
-		const char* v = getenv("MC2_SKIP_STATIC_TREES");
-		cached = (!v || v[0] != '0') ? 1 : 0;
-	}
+		cached = (getenv("MC2_SKIP_STATIC_TREES") != nullptr) ? 1 : 0;
 	return(cached != 0);
 }
 
@@ -1479,7 +1473,6 @@ void GameObjectManager::registerStaticPropsForMissionLoad() {
 		byArr_reg[1], byArr_enum[1], byArr_skip[1], byArr_noapp[1],
 		byArr_reg[2], byArr_enum[2], byArr_skip[2], byArr_noapp[2],
 		byArr_reg[3], byArr_enum[3], byArr_skip[3], byArr_noapp[3]);
-	mc2EmitStaticRegDiagSummary();
 	fflush(stderr);
 }
 
@@ -2548,7 +2541,7 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 				if (treeDiagFrame != lastTreeSkipFrame) {
 					lastTreeSkipFrame = treeDiagFrame;
 					std::fprintf(stderr,
-					             "[STATIC TREES] frame=%u eligible=%ld tree=%ld skipped=%ld falling=%ld justCreated=%ld miss_notStaticNow=%ld miss_static_unregistered=%ld miss_static_shape=%ld miss_static_fullBake=%ld miss_static_other=%ld miss_unreg_treeAppr=%ld miss_unreg_bldgAppr=%ld miss_unreg_otherAppr=%ld miss_unreg_objTree=%ld miss_unreg_objTerrain=%ld miss_unreg_objBuilding=%ld miss_unreg_objOther=%ld miss_special=%ld miss_alarm=%ld miss_lookout=%ld miss_sensor=%ld miss_power=%ld miss_control=%ld miss_mechBay=%ld miss_falling=%ld miss_justCreated=%ld nonTree=%ld unknown=%ld updated=%ld\n",
+					             "[STATIC_NATURAL_SKIP] frame=%u eligible=%ld tree=%ld skipped=%ld falling=%ld justCreated=%ld miss_notStaticNow=%ld miss_static_unregistered=%ld miss_static_shape=%ld miss_static_fullBake=%ld miss_static_other=%ld miss_unreg_treeAppr=%ld miss_unreg_bldgAppr=%ld miss_unreg_otherAppr=%ld miss_unreg_objTree=%ld miss_unreg_objTerrain=%ld miss_unreg_objBuilding=%ld miss_unreg_objOther=%ld miss_special=%ld miss_alarm=%ld miss_lookout=%ld miss_sensor=%ld miss_power=%ld miss_control=%ld miss_mechBay=%ld miss_falling=%ld miss_justCreated=%ld nonTree=%ld unknown=%ld updated=%ld\n",
 					             treeDiagFrame, eligibleStaticTrees, treeCandidates, skippedStaticTrees,
 					             fallingTreesUpdated, justCreatedTreesUpdated,
 					             missNotStaticNow, missStaticNotRegistered, missStaticShapeMismatch,
@@ -2558,7 +2551,6 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 					             missSpecial, missAlarm, missLookout, missSensor,
 					             missPower, missControl, missMechBay, missFalling, missJustCreated,
 					             nonTreeUpdated, unknownUpdated, terrainObjectsUpdated);
-					mc2EmitStaticRegRuntimeDiagSummary(treeDiagFrame);
 					if (!missStaticUnregTypeCounts.empty())
 					{
 						std::vector<std::pair<std::string, long>> topUnregTypes(
@@ -2573,7 +2565,7 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 						for (size_t i = 0; i < topCount; ++i)
 						{
 							std::fprintf(stderr,
-							             "[STATIC TREES] unreg_rank=%u type=%s count=%ld\n",
+							             "[STATIC_REG_HEALTH] unreg_rank=%u type=%s count=%ld\n",
 							             static_cast<unsigned>(i),
 							             topUnregTypes[i].first.c_str(),
 							             topUnregTypes[i].second);
