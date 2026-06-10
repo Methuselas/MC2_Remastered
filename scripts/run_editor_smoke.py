@@ -230,6 +230,19 @@ def run_case(name: str, exe: Path, deploy: Path, exit_sec: int, timeout: int,
                 bucket = "inspector_type_bad"; detail = f"selected=1 but type={itype}"
             elif isel == "0" and itype != "none":
                 bucket = "inspector_type_bad"; detail = f"selected=0 but type={itype} (want none)"
+        if expect == "validate":
+            # The live validator ran on a freshly generated empty map (no units),
+            # so it MUST report a unit-staffing warning (no player/enemy units),
+            # and at least one warning overall. No blocking failures are expected
+            # on a generated map (terrain is loaded). This proves the save-time
+            # warnings are now visible pre-save without a modal.
+            vw = esmoke.get("validate_warning")
+            uw = esmoke.get("validate_units_warn")
+            if uw != "1":
+                bucket = "validate_no_staffing_warn"
+                detail = f"expected unit-staffing warning on empty map, units_warn={uw}"
+            elif not (vw and vw.lstrip("-").isdigit() and int(vw) >= 1):
+                bucket = "validate_no_warning"; detail = f"expected warning>=1, got {vw}"
 
     passed = (bucket == "")
     return dict(name=name, passed=passed, bucket=bucket, detail=detail,
@@ -295,6 +308,7 @@ def build_suite(deploy: Path):
         "foliage_menu_commands": (["-gen-map=0,0", "-smoke-foliage-menu"], "menu"),
         "outliner":        (["-gen-map=0,0", "-smoke-outliner"], "outliner"),  # read-only Scene Outliner
         "inspector":       (["-gen-map=0,0", "-smoke-inspector"], "inspector"),  # read-only Inspector
+        "validate":        (["-gen-map=0,0", "-smoke-validate"], "validate"),  # live Mission validator
         # gen_save_load is handled specially (two phases) in main().
     }
     return cases

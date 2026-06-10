@@ -91,6 +91,16 @@ bool         g_cliSmokeInspector       = false;
 int          g_cliSmokeInspectorSel    = -1;   // -1 = not attempted, 0/1 = had selection
 char         g_cliSmokeInspectorType[32] = "none";
 
+// -smoke-validate: after the map auto-loads, open the live Mission Save
+// Readiness panel and tally its checks (read-only). Reports issue counts and
+// whether a unit-staffing warning fired in the [ESMOKE v1] summary. A freshly
+// generated empty map has no units -> expect a staffing warning.
+bool         g_cliSmokeValidate         = false;
+int          g_cliValidateBlock         = -1;  // -1 = not attempted, >=0 = failing blocking checks
+int          g_cliValidateWarn          = -1;  // >=0 = failing warning checks
+int          g_cliValidateInfo          = -1;  // >=0 = failing info checks
+int          g_cliValidateUnitsWarn     = -1;  // -1 = not attempted, 0/1 = unit-staffing warning
+
 // Set true after the auto-load block finishes ALL its work (generate + optional
 // foliage + optional save). The smoke exit countdown starts from THIS, not from
 // g_cliAutoLoadFired (which is set at block ENTRY) -- otherwise a slow generation
@@ -161,6 +171,7 @@ static void EarlyTraceBegin()
 #include "FoliageRender.h"
 #include "SceneOutliner.h"
 #include "InspectorPanel.h"
+#include "MissionValidation.h"
 #include "resource.h"   // ID_FOLIAGE_* for the -smoke-foliage-menu WM_COMMAND drive
 
 // -- S-CLI parser ------------------------------------------------------------
@@ -297,11 +308,15 @@ static void s_cli_parse(const char* cmd)
 		{
 			g_cliSmokeInspector = true;
 		}
+		else if (s_cli_flag_match(tok, "-smoke-validate", "--smoke-validate"))
+		{
+			g_cliSmokeValidate = true;
+		}
 	}
 
 	// Any smoke flag implies headless -> suppress the auto-run-path failure modals.
 	g_cliSuppressModals = (g_cliExitAfterSec > 0) || g_cliSmokeFoliage || g_cliSmokeSave
-	                      || g_cliSmokeOutliner || g_cliSmokeInspector;
+	                      || g_cliSmokeOutliner || g_cliSmokeInspector || g_cliSmokeValidate;
 }
 
 // Forward declaration — defined in EditorGameOS.cpp.
@@ -570,11 +585,13 @@ static void s_emit_esmoke(const char* how)
 		"foliage_smoke=%d foliage_count=%d saved=%d "
 		"outliner_count=%d outliner_selected=%d "
 		"inspector_selected=%d inspector_type=%s "
+		"validate_blocking=%d validate_warning=%d validate_info=%d validate_units_warn=%d "
 		"menu_vis0=%d menu_vis1=%d menu_vis2=%d menu_clear=%d menu_reload=%d",
 		how, g_cliFrameCounter, g_cliAutoLoadFired ? 1 : 0, g_cliGenMap ? 1 : 0,
 		g_cliSmokeFoliageFired ? 1 : 0, g_cliSmokeFoliageCount, g_cliSmokeSaveOk,
 		g_cliSmokeOutlinerCount, g_cliSmokeOutlinerSel,
 		g_cliSmokeInspectorSel, g_cliSmokeInspectorType,
+		g_cliValidateBlock, g_cliValidateWarn, g_cliValidateInfo, g_cliValidateUnitsWarn,
 		g_menuVis0, g_menuVis1, g_menuVis2, g_menuClearCount, g_menuReloadCount);
 	esmoke[sizeof(esmoke) - 1] = '\0';
 	fprintf(stderr, "%s\n", esmoke);
@@ -774,6 +791,24 @@ BOOL EditorMFCApp::OnIdle(LONG lCount)
 				g_cliSmokeInspectorSel, g_cliSmokeInspectorType);
 			fflush(stderr);
 			EarlyTrace("OnIdle: smoke-inspector done");
+		}
+
+		// -smoke-validate: open the live Mission Save Readiness panel and tally its
+		// checks (read-only). A freshly generated empty map has no units, so a
+		// unit-staffing warning is expected. Facts -> [ESMOKE v1] at exit.
+		if (g_cliSmokeValidate)
+		{
+			MissionValidator::Open();
+			int vb = 0, vw = 0, vi = 0;
+			MissionValidator::GetIssueCounts(vb, vw, vi);
+			g_cliValidateBlock = vb;
+			g_cliValidateWarn  = vw;
+			g_cliValidateInfo  = vi;
+			g_cliValidateUnitsWarn = MissionValidator::HasUnitStaffingWarning() ? 1 : 0;
+			fprintf(stderr, "[EDITOR_CLI v1] event=validate blocking=%d warning=%d info=%d "
+				"units_warn=%d\n", vb, vw, vi, g_cliValidateUnitsWarn);
+			fflush(stderr);
+			EarlyTrace("OnIdle: smoke-validate done");
 		}
 
 		// All auto-load work (generate + foliage + save) is complete -> arm the
