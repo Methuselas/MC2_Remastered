@@ -47,6 +47,11 @@ uint64_t g_moveRecon_ag_maxNumAreas         = 0;
 uint64_t g_moveRecon_ag_max_prologue_ns     = 0;
 uint64_t g_moveRecon_ag_max_search_ns       = 0;
 
+uint64_t g_moveRecon_al_nodesPopped         = 0;
+uint64_t g_moveRecon_al_maxNodes            = 0;
+uint64_t g_moveRecon_al_goalFound           = 0;
+uint64_t g_moveRecon_al_goalMissed          = 0;
+
 // -----------------------------------------------------------------------
 // Internal state
 // -----------------------------------------------------------------------
@@ -94,7 +99,11 @@ void moveReconEmit()
         " ag_numDoors=%llu"
         " ag_numAreas=%llu"
         " ag_max_prologue_ns=%llu"
-        " ag_max_search_ns=%llu\n",
+        " ag_max_search_ns=%llu"
+        " al_nodesPopped=%llu"
+        " al_maxNodes=%llu"
+        " al_goalFound=%llu"
+        " al_goalMissed=%llu\n",
         (unsigned long long)g_moveRecon_frames,
         (unsigned long long)g_moveRecon_movers_total,
         (unsigned long long)g_moveRecon_ctrl_ns,
@@ -118,7 +127,11 @@ void moveReconEmit()
         (unsigned long long)g_moveRecon_ag_maxNumDoors,
         (unsigned long long)g_moveRecon_ag_maxNumAreas,
         (unsigned long long)g_moveRecon_ag_max_prologue_ns,
-        (unsigned long long)g_moveRecon_ag_max_search_ns
+        (unsigned long long)g_moveRecon_ag_max_search_ns,
+        (unsigned long long)g_moveRecon_al_nodesPopped,
+        (unsigned long long)g_moveRecon_al_maxNodes,
+        (unsigned long long)g_moveRecon_al_goalFound,
+        (unsigned long long)g_moveRecon_al_goalMissed
     );
     std::fflush(stdout);
 }

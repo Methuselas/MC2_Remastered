@@ -38,6 +38,16 @@ extern uint64_t g_moveRecon_ag_maxNumAreas;
 extern uint64_t g_moveRecon_ag_max_prologue_ns; // worst single-call prologue
 extern uint64_t g_moveRecon_ag_max_search_ns;   // worst single-call search
 
+// Local-A* (MoveMap::calcPath) node-expansion size. This is the layer the
+// Warrior.Path 2ms self-time actually lives in: MoveMap::calcPath has NO Tracy
+// zone of its own, so its per-node loop folds into GameLogic.Warrior.Path self
+// time; only calcHPrime is carved out as the CalcPath3 child. CalcPath3 xN ==
+// N nodes expanded by ONE local search. Sizes deep-search vs many-calls.
+extern uint64_t g_moveRecon_al_nodesPopped;   // total local nodes expanded
+extern uint64_t g_moveRecon_al_maxNodes;      // worst single-call node count
+extern uint64_t g_moveRecon_al_goalFound;     // local searches that found goal
+extern uint64_t g_moveRecon_al_goalMissed;    // local searches that flooded to cutoff
+
 // Per-frame accumulators (reset each frame by moveReconFrameTick).
 extern uint64_t g_moveRecon_frame_ctrl_ns;
 extern uint64_t g_moveRecon_frame_pathlock_ns;
@@ -57,6 +67,23 @@ void moveReconFrameTick();
 
 // atexit handler — prints shutdown summary to stdout.
 void moveReconEmit();
+
+// Return-safe per-call local-A* node counter. Increment .n per node popped;
+// on destruction folds the count into the totals + rolling max. No-op when off.
+struct MoveReconNodeCounter {
+    uint64_t n = 0;
+    bool found = false;
+    ~MoveReconNodeCounter()
+    {
+        if (g_moveReconEnabled) {
+            g_moveRecon_al_nodesPopped += n;
+            if (n > g_moveRecon_al_maxNodes)
+                g_moveRecon_al_maxNodes = n;
+            if (found) g_moveRecon_al_goalFound++;
+            else       g_moveRecon_al_goalMissed++;
+        }
+    }
+};
 
 // RAII scope timer — no-op when !g_moveReconEnabled.
 struct MoveReconScope {

@@ -5258,6 +5258,7 @@ inline void MoveMap::propogateCostJUMP (long r, long c, long cost, long g) {
 long MoveMap::calcPath (MovePathPtr path, Stuff::Vector3D* goalWorldPos, int* goalCell) {
 
 	MoveReconScope _recon_al(&g_moveRecon_astar_local_ns, &g_moveRecon_frame_astar_local_ns);
+	MoveReconNodeCounter _aln;  // per-call local node-expansion size (Warrior.Path 2ms layer)
 	if (g_moveReconEnabled) g_moveRecon_astar_local_calls++;
 
 	#ifdef TIME_PATH
@@ -5345,21 +5346,23 @@ long MoveMap::calcPath (MovePathPtr path, Stuff::Vector3D* goalWorldPos, int* go
 		// Grab the best node...
 		PQNode bestPQNode;
 		openList->remove(bestPQNode);
+		_aln.n++;
 		bestRow = bestPQNode.row;
 		bestCol = bestPQNode.col;
 		MoveMapNodePtr bestMapNode = &map[bestPQNode.id];
 		bestMapNode->clearFlag(MOVEFLAG_OPEN);
-		
+
 		int bestNodeG = bestMapNode->g;
 
 		//----------------------------
 		// Now, close the best node...
 		bestMapNode->setFlag(MOVEFLAG_CLOSED);
-		
+
 		//--------------------------
 		// Have we found the goal...
 		if (bestMapNode->flags & MOVEFLAG_GOAL) {
 			goalFound = true;
+			_aln.found = true;
 			break;
 		}
 		
