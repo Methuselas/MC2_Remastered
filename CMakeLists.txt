@@ -288,6 +288,10 @@ endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/mc2_launcher/CMakeLists.txt")
     add_subdirectory("./tools/mc2_launcher" "./out/tools/mc2_launcher")
 endif()
+# mc2fx — standalone gosFX .fx blob inspector (opt-in; curated game-free target).
+if(ENABLE_MC2FX AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/mc2fx/CMakeLists.txt")
+    add_subdirectory("./tools/mc2fx" "./out/tools/mc2fx")
+endif()
 
 
 set(SOURCES 
