@@ -5337,6 +5337,56 @@ void EditorInterface::rotateSelectedObjectsDegrees( float deg )
 	pAction = NULL;
 }
 
+// Editable Inspector v1 transform. Reuses ModifyBuildingAction exactly like the
+// drag-move (handleLeftButtonDown/Move) and rotateSelectedObjects paths: capture
+// the old appearance snapshot, mutate the live appearance, re-bake the static GPU
+// recipe, then note the new position so the action's location-based undo can find
+// the object at its new pose. No new transform/undo system.
+bool EditorInterface::applyObjectTransform( EditorObject* obj, float worldX, float worldY, float yawDegrees )
+{
+	if ( !obj || !obj->appearance() || !land )
+		return false;
+
+	// Forest-member trees are placed/owned by the forest; moving one individually
+	// would desync forest bookkeeping. Out of scope for v1.
+	if ( obj->getForestID() != -1 )
+		return false;
+
+	ModifyBuildingAction* pAction = new ModifyBuildingAction;
+	pAction->addBuildingInfo( *obj );   // captures OLD snapshot + OLD position
+
+	Stuff::Vector3D newPos;
+	newPos.x = worldX;
+	newPos.y = worldY;
+	newPos.z = obj->appearance()->position.z;
+
+	// Cell/link bookkeeping (best-effort, mirrors drag-move which ignores the
+	// return), then override with the precise free XY and terrain-locked Z.
+	int row = 0, col = 0;
+	land->worldToCell( newPos, row, col );
+	EditorObjectMgr::instance()->moveBuilding( obj, row, col );
+
+	ObjectAppearance* pApp = obj->appearance();
+	newPos.z = land->getTerrainElevation( newPos );
+	pApp->position = newPos;
+	pApp->rotation = yawDegrees;
+	pApp->invalidateStaticRegistration();
+	pApp->update();
+	pApp->registerStatic();
+
+	// buildingIDs must hold the object's CURRENT position so the action's
+	// getObjectAtLocation-based undo/redo can locate it (it was captured at the
+	// OLD position by addBuildingInfo).
+	pAction->updateNotedObjectPositions();
+
+	undoMgr.AddAction( pAction );
+
+	if ( EditorData::instance )
+		EditorData::instance->MissionNeedsSaving( true );
+
+	return true;
+}
+
 static void UpdateMissionPlayerPlayer(int player, CCmdUI* pCmdUI)
 {
 	if (EditorData::instance->MaxPlayers() < player) {

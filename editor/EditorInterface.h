@@ -280,6 +280,13 @@ private:
 	void rotateSelectedObjects( int direction );
 	void rotateSelectedObjectsDegrees( float deg );
 
+	// Editable Inspector v1: set one object's world XY + absolute yaw through the
+	// existing ModifyBuildingAction undo path (same mechanism as drag-move /
+	// rotateSelectedObjects). Z stays terrain-locked. Returns false (no-op) for
+	// null / no-appearance / forest-member objects. Pushes ONE undoable action
+	// and marks the mission dirty.
+	bool applyObjectTransform( EditorObject* obj, float worldX, float worldY, float yawDegrees );
+
 	//-------------------------------------------
 	// Data to control scroll, rotation and zoom
 	float						baseFrameLength;
