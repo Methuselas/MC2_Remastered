@@ -439,8 +439,46 @@ void MissionInterfaceManager::setTutorialText(const char *text)
 	controlGui.setChatText(tutorialPlayerName,text, 0x00ffffff, 0 );
 }
 
+// ---- MC2_MIF_SPLIT: split MissionInterfaceManager::update() (the 1K 43.9ms) --
+// Default OFF. Prime suspect: Camera::inverseProject walking every quad on
+// camera-motion cache misses -> walk-vs-cacheHit counter proves it.
+#include <chrono>
+#include <cstdlib>
+#include <cstdio>
+namespace {
+	enum MifPhase { MF_TOTAL=0, MF_INVPROJ, MF_LOS, MF_CTRLGUI, MF_UPDTGT, MF_POSTTGT, MF_DRAWBARS, MF_COUNT };
+	static const char* s_mfNames[MF_COUNT] = {"TOTAL","invProj","LOS","controlGui","updateTarget","postTarget","drawBars"};
+	static const bool s_mfOn = (getenv("MC2_MIF_SPLIT") != nullptr);
+	static unsigned long long s_mfSum[MF_COUNT]={0}, s_mfMax[MF_COUNT]={0}, s_mfFrameNs[MF_COUNT]={0};
+	static unsigned long long s_mfFrames=0, s_mfInvWalks=0, s_mfInvHits=0;
+	static bool s_mfAtexit=false;
+	static void mfEmit() {
+		if (!s_mfOn) return;
+		std::printf("[MIF_SPLIT v1] event=shutdown frames=%llu invProj_walks=%llu invProj_cacheHits=%llu",
+			s_mfFrames, s_mfInvWalks, s_mfInvHits);
+		for (int i=0;i<MF_COUNT;i++)
+			std::printf(" %s={avg_us:%.1f,max_us:%.1f}", s_mfNames[i],
+				s_mfFrames?(double)s_mfSum[i]/s_mfFrames/1000.0:0.0, (double)s_mfMax[i]/1000.0);
+		std::printf("\n"); std::fflush(stdout);
+	}
+	struct MifScope {
+		int idx; std::chrono::steady_clock::time_point t0;
+		explicit MifScope(int i):idx(i){ if(s_mfOn) t0=std::chrono::steady_clock::now(); }
+		~MifScope(){ if(!s_mfOn) return; s_mfFrameNs[idx]+=(unsigned long long)
+			std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-t0).count(); }
+	};
+	static void mfFrameEnd(unsigned long long totalNs) {
+		if (!s_mfOn) return;
+		if (!s_mfAtexit) { s_mfAtexit=true; std::atexit(mfEmit); }
+		++s_mfFrames; s_mfFrameNs[MF_TOTAL]=totalNs;
+		for (int i=0;i<MF_COUNT;i++) { s_mfSum[i]+=s_mfFrameNs[i]; if(s_mfFrameNs[i]>s_mfMax[i]) s_mfMax[i]=s_mfFrameNs[i]; s_mfFrameNs[i]=0; }
+	}
+}
+
 void MissionInterfaceManager::update (void)
 {
+	const std::chrono::steady_clock::time_point _mifT0 =
+		s_mfOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
 	if ( Environment.screenWidth != resolution )
 	{
 		swapResolutions();
@@ -772,9 +810,12 @@ void MissionInterfaceManager::update (void)
 	{
 		// Cursor and camera both unchanged - reuse the cached world point.
 		wPos = cachedWPos;
+		if (s_mfOn) ++s_mfInvHits;
 	}
 	else
 	{
+		MifScope _mInv(MF_INVPROJ);
+		if (s_mfOn) ++s_mfInvWalks;
 		eye->inverseProject(mouseXY, wPos);
 		prevMouseX = mouseX;
 		prevMouseY = mouseY;
@@ -788,7 +829,7 @@ void MissionInterfaceManager::update (void)
 	bool passable = 1;
 	bool lineOfSight = 0;
 	{
-		ZoneScopedN("MIF.LOS");
+		ZoneScopedN("MIF.LOS"); MifScope _mLOS(MF_LOS);
 		if ( Terrain::IsGameSelectTerrainPosition( wPos ) )
 		{
 			land->worldToCell(wPos, cellR, cellC);
@@ -800,7 +841,7 @@ void MissionInterfaceManager::update (void)
 
 	// update buttons and stuff, even if not in region, it draws objectives and stuff
 	{
-		ZoneScopedN("MIF.ControlGui");
+		ZoneScopedN("MIF.ControlGui"); MifScope _mCG(MF_CTRLGUI);
 		controlGui.update( isPaused() && !isPausedWithoutMenu(), lineOfSight );
 	}
 
@@ -810,7 +851,7 @@ void MissionInterfaceManager::update (void)
 
 
 	{
-		ZoneScopedN("MIF.UpdateTarget");
+		ZoneScopedN("MIF.UpdateTarget"); MifScope _mUT(MF_UPDTGT);
 		updateTarget(bGui);
 	}
 
@@ -943,7 +984,7 @@ void MissionInterfaceManager::update (void)
 	}
 
 	{
-		ZoneScopedN("MIF.DrawBars");
+		ZoneScopedN("MIF.DrawBars"); MifScope _mDB(MF_DRAWBARS);
 		for (int i = 0; i < Team::home->getRosterSize(); i++ )
 		{
 			Mover* pMover = (Mover*)Team::home->getMover( i );
@@ -970,6 +1011,10 @@ void MissionInterfaceManager::update (void)
 		ZoneScopedN("MIF.Rollovers");
 		updateRollovers();
 	}
+
+	if (s_mfOn)
+		mfFrameEnd((unsigned long long)std::chrono::duration_cast<std::chrono::nanoseconds>(
+			std::chrono::steady_clock::now() - _mifT0).count());
 }
 
 void MissionInterfaceManager::updateVTol()
