@@ -8,6 +8,7 @@
 #include <cstdlib>   // getenv
 #include <cstdio>    // fprintf
 #include <cstring>   // strcmp
+#include <cstdint>   // intptr_t (ImTextureID cast)
 
 #include <GL/glew.h>  // glGetError, glGetIntegerv for Render() diagnostics
 
@@ -75,6 +76,25 @@ static int s_sceneViewH = 0;
 int GuiRuntime::SceneViewportWidth()  { return s_sceneViewW; }
 int GuiRuntime::SceneViewportHeight() { return s_sceneViewH; }
 
+// --- Render-to-texture viewport ---------------------------------------------------
+static unsigned int s_rttTex = 0;          // GLuint of the editor present texture
+static int s_vpX = 0, s_vpY = 0;           // central-node screen rect (DisplaySize space)
+static int s_vpW = 0, s_vpH = 0;
+
+bool GuiRuntime::RttEnabled() {
+    static int s_on = -1;
+    if (s_on < 0) {
+        const char* r = std::getenv("MC2_EDITOR_RTT");
+        s_on = (r && strcmp(r, "0") == 0) ? 0 : 1;   // default ON
+    }
+    return s_on != 0;
+}
+void GuiRuntime::SetViewportTexture(unsigned int glTex) { s_rttTex = glTex; }
+int  GuiRuntime::ViewportRectX() { return s_vpX; }
+int  GuiRuntime::ViewportRectY() { return s_vpY; }
+int  GuiRuntime::ViewportRectW() { return s_vpW; }
+int  GuiRuntime::ViewportRectH() { return s_vpH; }
+
 static bool dockEnabled() {
     const char* d = std::getenv("MC2_EDITOR_DOCK");
     return (!d || strcmp(d, "0") != 0);
@@ -118,6 +138,25 @@ static void BuildEditorDockspace() {
     if (ImGuiDockNode* central = ImGui::DockBuilderGetCentralNode(dockId)) {
         s_sceneViewW = (int)central->Size.x;
         s_sceneViewH = (int)central->Size.y;
+
+        // RTT: paint the editor scene texture into the central node via the
+        // BACKGROUND draw list. No ImGui window -> WantCaptureMouse stays false
+        // over the scene, so picking/camera input still reach the GameOS path
+        // (identical to the PassthruCentralNode behavior). The texture is filled
+        // by EditorGameOS (composite -> blit) before GuiRuntime::Render samples it.
+        s_vpX = (int)central->Pos.x;
+        s_vpY = (int)central->Pos.y;
+        s_vpW = (int)central->Size.x;
+        s_vpH = (int)central->Size.y;
+        if (GuiRuntime::RttEnabled() && s_rttTex != 0) {
+            const ImVec2 p0 = central->Pos;
+            const ImVec2 p1 = ImVec2(central->Pos.x + central->Size.x,
+                                     central->Pos.y + central->Size.y);
+            // GL texture origin is bottom-left; flip V so the scene is upright.
+            ImGui::GetBackgroundDrawList()->AddImage(
+                (ImTextureID)(intptr_t)s_rttTex, p0, p1,
+                ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+        }
     }
 }
 

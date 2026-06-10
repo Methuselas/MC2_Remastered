@@ -84,13 +84,32 @@
 #include "gameos.hpp"       // gos_GetViewport, Environment (drawableWidth/Height)
 #include "gos_render.h"     // graphics::make_current_context
 #include "gos_postprocess.h" // gosPostProcess + getGosPostProcess() — OID scan diagnostic
+#include "GuiRuntime.h"      // RTT viewport rect (central-node origin) for pick offset
 // g_imguiInitialized is defined in GuiRuntime/GuiRuntime.cpp.
 extern bool g_imguiInitialized;
+
+// RTT viewport pick offset: the editor scene renders into the dockspace CENTRAL node
+// (a sub-rect of the GL-child window), not the full window. Full-window client mouse
+// coords must be shifted into the central-node's local space before any screen->world
+// unproject, else the placement cursor / object pick diverge from the mouse (the
+// historical "2x toward the right" bug). No-op when RTT is off (origin 0,0 == full).
+static inline void EditorRttClientToViewport(int& x, int& y)
+{
+    if (!g_imguiInitialized || !GuiRuntime::RttEnabled())
+        return;
+    if (GuiRuntime::ViewportRectW() <= 0 || GuiRuntime::ViewportRectH() <= 0)
+        return;
+    x -= GuiRuntime::ViewportRectX();
+    y -= GuiRuntime::ViewportRectY();
+}
 // Render context handle for explicit GL context bind before glReadPixels.
 // SDL_PollEvent inside RunGameOSLogic fires before make_current_context;
 // any WM_LBUTTONUP that arrives between RunGameOSLogic iterations needs
 // the context made current before tryGameplayPick calls glReadPixels.
 extern graphics::RenderContextHandle EditorGameOS_GetRenderContext();
+#else
+// Non-ImGui editor build: no RTT viewport, pick offset is a no-op.
+static inline void EditorRttClientToViewport(int&, int&) {}
 #endif
 
 #ifndef FLATTENBRUSH_H
@@ -1540,6 +1559,10 @@ void EditorInterface::handleLeftButtonDown( int PosX, int PosY )
 	if ( !eye || !eye->active  )
 		return;
 
+	// RTT: viewport-local coords for the press pick + drag origin, so they live in
+	// the same space as handleMouseMove (which also offsets). No-op when RTT off.
+	EditorRttClientToViewport( PosX, PosY );
+
 	Stuff::Vector3D vector;
 	Stuff::Vector2DOf<long> v2( PosX, PosY );
 	eye->inverseProject( v2, vector );
@@ -1588,8 +1611,13 @@ void EditorInterface::handleMouseMove( int PosX, int PosY )
 {
 	if (  !eye || !eye->active  )
 		return;
-	
-	
+
+	// RTT: shift full-window client coords into the central-node viewport space so
+	// every screen->world unproject below (ground-plane, drag jacobian) matches the
+	// rect the scene is actually drawn in. No-op when RTT off. Camera-rotate/drag
+	// deltas are offset-invariant, so this is safe for all consumers here.
+	EditorRttClientToViewport( PosX, PosY );
+
 	Stuff::Vector3D vector;
 	Stuff::Vector2DOf<long> v2( PosX, PosY );
 	// Per-move cursor world position. Use the cheap O(1) ground-plane unproject,
@@ -2701,9 +2729,14 @@ void EditorInterface::render()
 		POINT pt;
 		GetCursorPos( &pt );
 		ScreenToClient( &pt );
-		
+
 		//curBrush->beginPaint();
-		curBrush->render( pt.x, pt.y );
+		// RTT: the brush preview unprojects to world, so it needs viewport-local
+		// coords. Offset a copy; the edge-scroll logic below stays in full-window
+		// space (it compares against Width()).
+		int brushX = (int)pt.x, brushY = (int)pt.y;
+		EditorRttClientToViewport( brushX, brushY );
+		curBrush->render( brushX, brushY );
 		renderTerrainSelection();
 		//curBrush->endPaint();
 
@@ -4137,9 +4170,12 @@ void EditorInterface::OnLButtonUp(UINT nFlags, CPoint point)
 		// click-pick path runs only after a true non-drag click and uses the
 		// remastered screen-space object picker so single-click selection does
 		// not depend on the old terrain inverse-project path.
-		if (EditorInterface_SelectObjectAtScreenPoint(point.x, point.y, toggle))
+		// RTT: the picker unprojects, so feed it viewport-local coords.
+		int selX = (int)point.x, selY = (int)point.y;
+		EditorRttClientToViewport( selX, selY );
+		if (EditorInterface_SelectObjectAtScreenPoint(selX, selY, toggle))
 		{
-			if (EditorInterface_ShouldOpenSettingsForClick(point.x, point.y))
+			if (EditorInterface_ShouldOpenSettingsForClick(selX, selY))
 				UnitSettings();
 
 			tacMap.Invalidate(FALSE);  // async/coalesced — avoid synchronous per-event minimap repaint storm
@@ -4171,14 +4207,31 @@ void EditorInterface::OnLButtonUp(UINT nFlags, CPoint point)
 		// mismatch case: editorMouseX = point.x * vMulX / windowWidth.
 		float vmx = 1.f, vmy = 1.f, vax = 0.f, vay = 0.f;
 		gos_GetViewport(&vmx, &vmy, &vax, &vay);
-		CRect clientRect;
-		GetClientRect(&clientRect);
-		const int winW = clientRect.Width()  > 0 ? clientRect.Width()  : 1;
-		const int winH = clientRect.Height() > 0 ? clientRect.Height() : 1;
+		// RTT: the scene renders in the central-node sub-rect. Normalise through the
+		// viewport rect (offset + dims), not the full window — else the click maps
+		// full-window width onto the shrunk scene and diverges (the "2x" bug). When
+		// RTT is off the rect is the full window, so this reduces to the old math.
+		int pickPx = (int)point.x, pickPy = (int)point.y;
+		EditorRttClientToViewport( pickPx, pickPy );
+		int normW = 0, normH = 0;
+		if ( g_imguiInitialized && GuiRuntime::RttEnabled()
+			&& GuiRuntime::ViewportRectW() > 0 && GuiRuntime::ViewportRectH() > 0 )
+		{
+			normW = GuiRuntime::ViewportRectW();
+			normH = GuiRuntime::ViewportRectH();
+		}
+		else
+		{
+			CRect clientRect;
+			GetClientRect(&clientRect);
+			normW = clientRect.Width()  > 0 ? clientRect.Width()  : 1;
+			normH = clientRect.Height() > 0 ? clientRect.Height() : 1;
+		}
+		const int winW = normW, winH = normH;
 
 		GameplayPickRequest req{};
-		req.mouseX               = (int)((float)point.x / winW * vmx);
-		req.mouseY               = (int)((float)point.y / winH * vmy);
+		req.mouseX               = (int)((float)pickPx / winW * vmx);
+		req.mouseY               = (int)((float)pickPy / winH * vmy);
 		req.shiftDn              = true;
 		req.leftClicked          = true;
 		req.bGui                 = false;   // no HUD region in editor
@@ -5542,11 +5595,14 @@ void EditorInterface::OnLButtonDblClk(UINT nFlags, CPoint point)
 	// The old handler inverse-projected to terrain and then re-projected through
 	// getObjectAtPosition(), which can miss remastered mech appearances even when
 	// drag-select works.  Use the same screen-space picker as single-click.
-	EditorObject* pObject = EditorInterface_PickObjectAtScreenPoint(point.x, point.y);
+	// RTT: viewport-local coords for the dbl-click picker (it unprojects).
+	int dblX = (int)point.x, dblY = (int)point.y;
+	EditorRttClientToViewport( dblX, dblY );
+	EditorObject* pObject = EditorInterface_PickObjectAtScreenPoint(dblX, dblY);
 	if (NULL != pObject)
 	{
 		bool toggle = false;
-		EditorInterface_SelectObjectAtScreenPoint(point.x, point.y, toggle);
+		EditorInterface_SelectObjectAtScreenPoint(dblX, dblY, toggle);
 		s_editorLastObjectClickTime = 0;
 		UnitSettings();
 	}

@@ -470,9 +470,14 @@ DWORD __stdcall RunGameOSLogic()
                 const char* r = std::getenv("MC2_EDITOR_DOCK_RESIZE");
                 s_resizeOn = (r && strcmp(r, "1") == 0) ? 1 : 0;
             }
+            // RTT also shrinks the scene to the central node — but unlike the legacy
+            // DOCK_RESIZE path, the scene is painted into the central node's exact
+            // screen rect (background draw list) and picking is offset by that rect,
+            // so the old pick-coordinate divergence does not apply. RTT default ON.
+            const bool shrink = (s_resizeOn != 0) || GuiRuntime::RttEnabled();
             int sw = GuiRuntime::SceneViewportWidth();
             int sh = GuiRuntime::SceneViewportHeight();
-            if (s_resizeOn && w > 0 && h > 0 && sw >= 64 && sh >= 64 && sw <= w && sh <= h)
+            if (shrink && w > 0 && h > 0 && sw >= 64 && sh >= 64 && sw <= w && sh <= h)
             {
                 Environment.screenWidth    = sw;
                 Environment.drawableWidth  = sw;
@@ -628,6 +633,44 @@ DWORD __stdcall RunGameOSLogic()
     EditorFramePhase_Mark("endScene");
 
 #ifdef MC2_IMGUI
+    // RENDER-TO-TEXTURE viewport: endScene() composited the scene into the bottom-left
+    // (0,0,viewport_w,viewport_h) region of FBO 0. Capture it into an editor-owned
+    // texture so the dockspace can paint it into the central node at the node's exact
+    // screen rect (GuiRuntime background draw list). This makes the scene size, the
+    // displayed rect, and the pick-coordinate offset all consistent -> retires the
+    // legacy DOCK_RESIZE pick divergence. Editor-only; the shared endScene is untouched.
+    if (g_imguiInitialized && GuiRuntime::RttEnabled() && viewport_w > 0 && viewport_h > 0) {
+        static GLuint s_presentFBO = 0, s_presentTex = 0;
+        static int s_presentW = 0, s_presentH = 0;
+        if (s_presentFBO == 0)
+            glGenFramebuffers(1, &s_presentFBO);
+        if (s_presentTex == 0 || s_presentW != viewport_w || s_presentH != viewport_h) {
+            if (s_presentTex == 0) glGenTextures(1, &s_presentTex);
+            glBindTexture(GL_TEXTURE_2D, s_presentTex);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, viewport_w, viewport_h, 0,
+                         GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glBindTexture(GL_TEXTURE_2D, 0);
+            glBindFramebuffer(GL_FRAMEBUFFER, s_presentFBO);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                   GL_TEXTURE_2D, s_presentTex, 0);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            s_presentW = viewport_w; s_presentH = viewport_h;
+        }
+        // Blit the composited scene region of FBO 0 into the present texture.
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+        glReadBuffer(GL_BACK);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s_presentFBO);
+        glBlitFramebuffer(0, 0, viewport_w, viewport_h,
+                          0, 0, viewport_w, viewport_h,
+                          GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        GuiRuntime::SetViewportTexture(s_presentTex);
+    }
+
     if (g_imguiInitialized) {
         // Ensure ImGui renders to the default framebuffer.
         // Shadow/terrain passes leave non-zero FBOs bound; if we don't reset here
@@ -641,6 +684,13 @@ DWORD __stdcall RunGameOSLogic()
             SDL_GetWindowSize(sw, &vw, &vh);
         if (vw > 0 && vh > 0)
             glViewport(0, 0, vw, vh);
+        // RTT: the scene now lives in the present texture (painted into the central
+        // node by GuiRuntime). Wipe FBO 0 so the raw bottom-left composite left by
+        // endScene does not peek out from under the dockspace panels/empty regions.
+        if (GuiRuntime::RttEnabled()) {
+            glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+        }
         static bool s_renderTrace = false;
         if (!s_renderTrace) {
             s_renderTrace = true;

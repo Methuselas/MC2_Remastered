@@ -14,6 +14,19 @@ namespace GuiRuntime {
     // live layout by one frame (built in NewFrame, read at frame top).
     int SceneViewportWidth();
     int SceneViewportHeight();
+
+    // Render-to-texture viewport (editor). When enabled, the editor renders the
+    // scene into an offscreen texture and the dockspace paints it into the central
+    // node via the background draw list (no ImGui window -> no WantCaptureMouse, so
+    // picking still reaches GameOS). EditorGameOS hands the texture id here each
+    // frame after compositing+blit. Picking offsets client mouse by the rect origin.
+    bool RttEnabled();                              // MC2_EDITOR_RTT (default ON)
+    void SetViewportTexture(unsigned int glTex);    // GLuint; called pre-Render()
+    // Central-node screen rect (ImGui DisplaySize space == GL-child client coords).
+    int  ViewportRectX();
+    int  ViewportRectY();
+    int  ViewportRectW();
+    int  ViewportRectH();
 }
 
 extern bool g_imguiInitialized;
