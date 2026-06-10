@@ -5387,6 +5387,48 @@ bool EditorInterface::applyObjectTransform( EditorObject* obj, float worldX, flo
 	return true;
 }
 
+int EditorInterface::runInspectorEditSmoke()
+{
+	if ( !land || !EditorObjectMgr::instance() )
+		return -1;
+
+	// Place a throwaway drop zone near map center (no catalog group/index needed).
+	const int mid = ( land->realVerticesMapSide - 1 ) / 2;
+	Stuff::Vector3D p;
+	land->cellToWorld( mid, mid, p );
+	p.z = land->getTerrainElevation( p );
+
+	EditorObject* obj = EditorObjectMgr::instance()->addDropZone( p, 0, false );
+	if ( !obj || !obj->appearance() )
+		return -1;
+
+	// Exercise the real selection path too.
+	EditorObjectMgr::instance()->unselectAll();
+	EditorObjectMgr::instance()->select( *obj, true );
+
+	const float ox = obj->getPosition().x;
+	const float oy = obj->getPosition().y;
+
+	bool applied = applyObjectTransform( obj, ox + 64.0f, oy + 64.0f, 90.0f );
+	const float nx = obj->getPosition().x;
+	const float ny = obj->getPosition().y;
+	const bool moved = applied && ( fabsf( nx - ox ) > 1.0f || fabsf( ny - oy ) > 1.0f );
+
+	int result = moved ? 1 : 0;
+
+	// Undo through the SAME manager the transform pushed to (member undoMgr).
+	if ( undoMgr.HaveUndo() )
+	{
+		undoMgr.Undo();
+		const float ux = obj->getPosition().x;
+		const float uy = obj->getPosition().y;
+		if ( fabsf( ux - ox ) < 1.0f && fabsf( uy - oy ) < 1.0f )
+			result |= 2;
+	}
+
+	return result;
+}
+
 static void UpdateMissionPlayerPlayer(int player, CCmdUI* pCmdUI)
 {
 	if (EditorData::instance->MaxPlayers() < player) {

@@ -243,6 +243,17 @@ def run_case(name: str, exe: Path, deploy: Path, exit_sec: int, timeout: int,
                 detail = f"expected unit-staffing warning on empty map, units_warn={uw}"
             elif not (vw and vw.lstrip("-").isdigit() and int(vw) >= 1):
                 bucket = "validate_no_warning"; detail = f"expected warning>=1, got {vw}"
+        if expect == "inspector_edit":
+            # End-to-end editable Inspector: a throwaway object is transformed via
+            # applyObjectTransform (must move it) then undone (must restore it).
+            # Both must succeed -- this proves the Action/undo path, not just a
+            # direct mutation.
+            ea = esmoke.get("inspector_edit_applied")
+            eu = esmoke.get("inspector_edit_undo")
+            if ea != "1":
+                bucket = "edit_not_applied"; detail = f"transform did not move object, applied={ea}"
+            elif eu != "1":
+                bucket = "edit_undo_failed"; detail = f"undo did not restore position, undo={eu}"
 
     passed = (bucket == "")
     return dict(name=name, passed=passed, bucket=bucket, detail=detail,
@@ -309,6 +320,7 @@ def build_suite(deploy: Path):
         "outliner":        (["-gen-map=0,0", "-smoke-outliner"], "outliner"),  # read-only Scene Outliner
         "inspector":       (["-gen-map=0,0", "-smoke-inspector"], "inspector"),  # read-only Inspector
         "validate":        (["-gen-map=0,0", "-smoke-validate"], "validate"),  # live Mission validator
+        "inspector_edit":  (["-gen-map=0,0", "-smoke-inspector-edit"], "inspector_edit"),  # transform+undo
         # gen_save_load is handled specially (two phases) in main().
     }
     return cases

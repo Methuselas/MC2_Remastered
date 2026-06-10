@@ -101,6 +101,13 @@ int          g_cliValidateWarn          = -1;  // >=0 = failing warning checks
 int          g_cliValidateInfo          = -1;  // >=0 = failing info checks
 int          g_cliValidateUnitsWarn     = -1;  // -1 = not attempted, 0/1 = unit-staffing warning
 
+// -smoke-inspector-edit: place a throwaway drop zone, transform it via the
+// Inspector's applyObjectTransform path, then undo -- exercising the editable
+// Inspector + ModifyBuildingAction undo end to end. Reported in [ESMOKE v1].
+bool         g_cliSmokeInspectorEdit     = false;
+int          g_cliEditApplied            = -1;  // -1 = not attempted, 0/1 = transform moved object
+int          g_cliEditUndo               = -1;  // -1 = not attempted, 0/1 = undo restored position
+
 // Set true after the auto-load block finishes ALL its work (generate + optional
 // foliage + optional save). The smoke exit countdown starts from THIS, not from
 // g_cliAutoLoadFired (which is set at block ENTRY) -- otherwise a slow generation
@@ -312,11 +319,16 @@ static void s_cli_parse(const char* cmd)
 		{
 			g_cliSmokeValidate = true;
 		}
+		else if (s_cli_flag_match(tok, "-smoke-inspector-edit", "--smoke-inspector-edit"))
+		{
+			g_cliSmokeInspectorEdit = true;
+		}
 	}
 
 	// Any smoke flag implies headless -> suppress the auto-run-path failure modals.
 	g_cliSuppressModals = (g_cliExitAfterSec > 0) || g_cliSmokeFoliage || g_cliSmokeSave
-	                      || g_cliSmokeOutliner || g_cliSmokeInspector || g_cliSmokeValidate;
+	                      || g_cliSmokeOutliner || g_cliSmokeInspector || g_cliSmokeValidate
+	                      || g_cliSmokeInspectorEdit;
 }
 
 // Forward declaration — defined in EditorGameOS.cpp.
@@ -586,12 +598,14 @@ static void s_emit_esmoke(const char* how)
 		"outliner_count=%d outliner_selected=%d "
 		"inspector_selected=%d inspector_type=%s "
 		"validate_blocking=%d validate_warning=%d validate_info=%d validate_units_warn=%d "
+		"inspector_edit_applied=%d inspector_edit_undo=%d "
 		"menu_vis0=%d menu_vis1=%d menu_vis2=%d menu_clear=%d menu_reload=%d",
 		how, g_cliFrameCounter, g_cliAutoLoadFired ? 1 : 0, g_cliGenMap ? 1 : 0,
 		g_cliSmokeFoliageFired ? 1 : 0, g_cliSmokeFoliageCount, g_cliSmokeSaveOk,
 		g_cliSmokeOutlinerCount, g_cliSmokeOutlinerSel,
 		g_cliSmokeInspectorSel, g_cliSmokeInspectorType,
 		g_cliValidateBlock, g_cliValidateWarn, g_cliValidateInfo, g_cliValidateUnitsWarn,
+		g_cliEditApplied, g_cliEditUndo,
 		g_menuVis0, g_menuVis1, g_menuVis2, g_menuClearCount, g_menuReloadCount);
 	esmoke[sizeof(esmoke) - 1] = '\0';
 	fprintf(stderr, "%s\n", esmoke);
@@ -809,6 +823,20 @@ BOOL EditorMFCApp::OnIdle(LONG lCount)
 				"units_warn=%d\n", vb, vw, vi, g_cliValidateUnitsWarn);
 			fflush(stderr);
 			EarlyTrace("OnIdle: smoke-validate done");
+		}
+
+		// -smoke-inspector-edit: exercise the editable Inspector transform + undo
+		// end to end (places a throwaway drop zone, transforms it, undoes). Facts
+		// -> [ESMOKE v1] at exit. Requires terrain (gen-map) to place the object.
+		if (g_cliSmokeInspectorEdit && EditorInterface::instance())
+		{
+			int r = EditorInterface::instance()->runInspectorEditSmoke();
+			g_cliEditApplied = (r >= 0 && (r & 1)) ? 1 : 0;
+			g_cliEditUndo    = (r >= 0 && (r & 2)) ? 1 : 0;
+			fprintf(stderr, "[EDITOR_CLI v1] event=inspector_edit setup=%d applied=%d undo=%d\n",
+				(r >= 0) ? 1 : 0, g_cliEditApplied, g_cliEditUndo);
+			fflush(stderr);
+			EarlyTrace("OnIdle: smoke-inspector-edit done");
 		}
 
 		// All auto-load work (generate + foliage + save) is complete -> arm the

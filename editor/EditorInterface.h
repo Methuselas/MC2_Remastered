@@ -97,6 +97,12 @@ public:
 	// and marks the mission dirty.
 	bool applyObjectTransform( EditorObject* obj, float worldX, float worldY, float yawDegrees );
 
+	// Smoke-only (-smoke-inspector-edit): place a throwaway drop zone, transform it
+	// via applyObjectTransform, then undo through the same undo manager. Returns a
+	// bitmask: bit0 = transform moved the object, bit1 = undo restored it.
+	// Returns -1 if setup failed (no terrain / object-mgr).
+	int runInspectorEditSmoke();
+
 	// Object placement: shared by the Objects menu and the companion panel.
 	bool selectBuildingObject( int group, int indexInGroup );
 	int  currentAlignmentFromMenu();
