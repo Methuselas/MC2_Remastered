@@ -61,6 +61,12 @@ def _save_tga(img: Image.Image, path: Path) -> None:
     img.save(str(path), format='TGA')
 
 
+def _save_jpg(img: Image.Image, path: Path, quality: int = 95) -> None:
+    # terrtxm2 prefers <name>.burnin.jpg over .tga (UV-decoupled sampling, GPU-side).
+    # q95 keeps colormap artifacts negligible at a fraction of TGA size.
+    img.convert('RGB').save(str(path), format='JPEG', quality=quality, subsampling=0)
+
+
 def _save_gray(arr: np.ndarray, path: Path) -> None:
     Image.fromarray((np.clip(arr, 0, 1) * 255).astype(np.uint8), mode='L').save(str(path))
 
@@ -141,6 +147,11 @@ def main() -> None:
                         help='Hard cap on final burnin colormap dimension (default 4096).')
     parser.add_argument('--burnin-working-cap', type=int, default=0,
                         help='Burnin shading working res cap (0 = preset/default).')
+    parser.add_argument('--burnin-format', choices=('jpg', 'tga', 'both'), default='both',
+                        help='Colormap output: jpg (engine-preferred), tga (editor staging), '
+                             'or both (default; keeps editor compat).')
+    parser.add_argument('--burnin-quality', type=int, default=95,
+                        help='JPEG quality for .burnin.jpg (default 95).')
     args = parser.parse_args()
 
     # Resolve quality preset -> legacy flags/caps. Only when --quality is passed,
@@ -237,8 +248,17 @@ def main() -> None:
     name = recipe.name
     print(f"Saving to {out}/")
 
-    _save_tga(burnin, out / f"{name}.burnin.tga")
-    print(f"  {name}.burnin.tga  ({burnin.size[0]}x{burnin.size[1]})")
+    # Primary colormap: JPEG q95 (terrtxm2 prefers <name>.burnin.jpg). Also keep
+    # .burnin.tga for the editor staging path (EditorData.cpp initTerrainFromTGA),
+    # until that path is migrated to jpg. --burnin-format controls which are written.
+    fmt = args.burnin_format
+    if fmt in ("jpg", "both"):
+        _save_jpg(burnin, out / f"{name}.burnin.jpg", quality=args.burnin_quality)
+        jpg_kb = (out / f"{name}.burnin.jpg").stat().st_size // 1024
+        print(f"  {name}.burnin.jpg  ({burnin.size[0]}x{burnin.size[1]}, q{args.burnin_quality}, {jpg_kb} KB)")
+    if fmt in ("tga", "both"):
+        _save_tga(burnin, out / f"{name}.burnin.tga")
+        print(f"  {name}.burnin.tga  ({burnin.size[0]}x{burnin.size[1]})")
 
     # Editor (Path B) elevation export: raw float32 world-unit elevations,
     # row-major (y outer, x inner) matching PostcompVertex order. The editor
