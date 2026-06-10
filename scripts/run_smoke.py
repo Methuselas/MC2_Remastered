@@ -613,7 +613,8 @@ def main():
                             "MC2_WATER_S6_COST",
                             "MC2_QUADSETUP_ARMED_SKIP",
                             "MC2_GEOM_PHASE_SPLIT",
-                            "MC2_MIF_SPLIT")},
+                            "MC2_MIF_SPLIT",
+                            "MC2_PICK_RECON")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission

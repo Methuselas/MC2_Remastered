@@ -51,3 +51,7 @@ tier3 clearwater allow_asset_oob=1 reason="TangoMaster campaign mod"
 tier3 ruins allow_asset_oob=1 reason="TangoMaster campaign mod"
 tier3 area16 allow_asset_oob=1 reason="DarkRain campaign mod"
 tier3 coldstone allow_asset_oob=1 reason="DarkRain campaign mod"
+
+# 1K-vertex map fixture for TerrainLOD Phase 8 extraction sweeps (not a gate)
+tier3 1kbasicmap heartbeat_timeout_load=180 heartbeat_timeout_play=60 reason="1K map LOD active/solid A/B fixture"
+tier3 metropolitan heartbeat_timeout_load=180 heartbeat_timeout_play=60 reason="dense urban perf fixture (FindTerrainObj/Warrior.Path hotspots)"

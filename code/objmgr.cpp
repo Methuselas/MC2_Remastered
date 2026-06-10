@@ -3316,10 +3316,38 @@ GameObjectPtr GameObjectManager::findMoverByMouse (long mouseX,
 
 //---------------------------------------------------------------------------
 
+// ---- MC2_PICK_RECON: recon-only split of findTerrainObjectByMouse (the dense-
+// urban FindTerrainObj 3.6ms hotspot). Default OFF, NO behavior change. Counts
+// candidates (objects in active blocks), inRect-passers (-> PerPolySelect volume),
+// rectProj calls, and per-call wall-time. Run interactively (mouse over a dense
+// cluster) to size the fix: candidate-volume vs per-PerPolySelect cost vs the
+// per-frame block scan. (NEXT-SESSION measurement scaffolding; see memory.)
+#include <chrono>
+namespace {
+	static const bool s_pickRecon = (getenv("MC2_PICK_RECON") != nullptr);
+	static unsigned long long s_pkCalls=0, s_pkCandidates=0, s_pkInRect=0, s_pkRectProj=0;
+	static unsigned long long s_pkNs=0, s_pkMaxNs=0, s_pkMaxCand=0;
+	static bool s_pkAtexit=false;
+	static void pkEmit() {
+		if (!s_pickRecon) return;
+		std::printf("[PICK_RECON v1] event=shutdown calls=%llu candidates=%llu inRect=%llu "
+			"rectProj=%llu total_ms=%.1f avg_us=%.1f max_us=%.1f max_candidates_call=%llu\n",
+			s_pkCalls, s_pkCandidates, s_pkInRect, s_pkRectProj, (double)s_pkNs/1e6,
+			s_pkCalls?(double)s_pkNs/s_pkCalls/1000.0:0.0, (double)s_pkMaxNs/1000.0, s_pkMaxCand);
+		std::fflush(stdout);
+	}
+	struct PkTimer {
+		std::chrono::steady_clock::time_point t0; bool on;
+		PkTimer():on(s_pickRecon){ if(on){ if(!s_pkAtexit){s_pkAtexit=true;std::atexit(pkEmit);} t0=std::chrono::steady_clock::now(); ++s_pkCalls; } }
+		~PkTimer(){ if(!on)return; unsigned long long ns=(unsigned long long)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-t0).count(); s_pkNs+=ns; if(ns>s_pkMaxNs)s_pkMaxNs=ns; }
+	};
+}
+
 GameObjectPtr GameObjectManager::findTerrainObjectByMouse (long mouseX,
 														   long mouseY,
 														   bool skipDisabled)
 {
+	PkTimer _pk;  // MC2_PICK_RECON per-call wall-time
 	int32_t pickCandidates = 0;
 	int32_t activeBlocksVisited = 0;
 	for (long terrainBlock = 0; terrainBlock < Terrain::numObjBlocks; terrainBlock++)
@@ -3336,6 +3364,7 @@ GameObjectPtr GameObjectManager::findTerrainObjectByMouse (long mouseX,
 			long numObjs = Terrain::objBlockInfo[terrainBlock].numObjects;
 			long objIndex = Terrain::objBlockInfo[terrainBlock].firstHandle;
 			pickCandidates += numObjs;
+				if (s_pickRecon) { s_pkCandidates += (unsigned long long)numObjs; if ((unsigned long long)numObjs > s_pkMaxCand) s_pkMaxCand = (unsigned long long)numObjs; }
 
 			// CRIT-1 re-home (Task 4): the per-object test below is
 			// DUPLICATED from the shared 5-param findObjectByMouse loop
@@ -3421,8 +3450,10 @@ GameObjectPtr GameObjectManager::findTerrainObjectByMouse (long mouseX,
 								((oc == BUILDING) || (oc == TREEBUILDING))
 									? (BldgAppearance*)obj->getAppearance()
 									: NULL;
-							if (ba)
+							if (ba) {
+								if (s_pickRecon) ++s_pkRectProj;
 								haveRect = projectPickCandidateRect(ba, ulx, uly, lrx, lry);
+							}
 
 							bool inRect = true;
 							if (haveRect)
@@ -3435,6 +3466,7 @@ GameObjectPtr GameObjectManager::findTerrainObjectByMouse (long mouseX,
 
 							if (inRect)
 							{
+								if (s_pickRecon) ++s_pkInRect;
 								//---------------------------
 								// We're on it, so save it...
 								if (!obj->isMover() || (obj->isMover() && obj->isOnGUI() && Terrain::IsGameSelectTerrainPosition(obj->getPosition())))
