@@ -65,7 +65,31 @@ Standalone game-free CLI built. `dump` works: reads loose `mc2.fx` (CRT) → liv
 - Curated link (asset_viewer pattern): globs gosfx+mlr+particles+stuff, slim `mc2fx_stubs.cpp` (gos_* heap/file/draw no-ops, CRT-backed). Zero engine-source edits.
 - Headless init order (load-bearing): `Stuff::InitializeClasses()` → `MidLevelRenderer::InitializeClasses(...)` → construct `MLRTexturePool::Instance(new TGAFilePool(...))` → `gosFX::InitializeClasses()` → push gosFX::Heap → Load. (texture pool needed: MLRState::Load resolves texture *names*; mcTextureManager stubbed no-op.)
 - Coherent heap stack in stubs so `Verify(gos_GetCurrentHeap()==gosFX::Heap)` holds.
-- **NEXT (slice 2):** per-curve depth in JSON (walk Specification subclass members per classID) + `build` subcommand (`EffectLibrary::Save` round-trip → re-emit mc2.fx). classID seen 1312/1314/1318/1322/1324 → need classID→typename map (gosfx.hpp ClassID enum).
+### COMMAND SURFACE (slices 1-3 + previewer SHIPPED 2026-06-10)
+```
+mc2fx dump        <in.fx> [out.json]              # shallow catalog (index/effectID/classID/name)
+mc2fx dump --full <in.fx> [out.json]             # + per-curve values (constant/linear/spline/complex/seeded)
+mc2fx rebuild     <in.fx> <out.fx>               # Load->Save round-trip (reloadable; ~1 LSB color drift on mesh fx)
+mc2fx build       <base.fx> <patch.json> <out.fx>  # apply sparse named-effect constant-curve overrides
+mc2fx clone       <base.fx> <src> <newName> <out.fx>  # duplicate+rename existing effect (type-agnostic reparse)
+mc2fx new         <base.fx> <type> <newName> <out.fx> # blank effect from leaf type + BuildDefaults
+mc2fx_preview     <in.fx>                         # GUI: list effects + plot animation curves vs age (SDL+GL+ImGui)
+```
+patch.json: `{"edits":[{"effect":NAME,"set":{FIELD:{"type":"constant","value":N}}}]}`. authoring uses stream-splice (bump count@off8 + append spec bytes) — no engine edit. `new` types: PointCloud/ShardCloud/CardCloud/EffectCloud/Card/Tube/DebrisCloud/PointLight (abstract bases rejected).
+
+### FULL MODDER WORKFLOW (today)
+```
+mc2fx clone data/effects/mc2.fx PPC_Trail Plasma_Trail my.fx   # duplicate
+mc2fx_preview my.fx                                            # eyeball curves, decide edits
+mc2fx build my.fx patch.json my2.fx                           # retune color/scale/lifetime
+cp my2.fx mods/<id>/data/effects/mc2.fx                       # mod-overlay (MC2_ACTIVE_MOD=<id>)
+# bind: compbas.csv Special FX ID + effects.csv names -> "Plasma_Trail" (PART 1)
+```
+### LIMITS (next slices)
+- Edits: only `constant`-type curve overrides; no keyframe-list / multi-key complex authoring; seed sub-curve + MLRState (texture/blend) + emitter physics (accel/ether/drag) not yet editable.
+- `new` leaf types only; no insert-at-index / delete / in-place rename of existing specs.
+- Round-trip semantic not byte-exact (color quant + WriteBytes reserve — see [[gosfx-save-roundtrip-bugs]]).
+- Previewer = curve grapher, NOT particle-sim render (MLR draw path unavailable game-free).
 
 ## THE GAP (what to build for a real new-effect modder path)
 Byte serialization is done. Missing, in order of effort:
