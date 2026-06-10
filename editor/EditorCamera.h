@@ -451,6 +451,16 @@ public:
 			sceneRes.z = 0.0f;
 			changeResolution(sceneRes);
 
+			// The object-space projection (Camera::project* -> findObjectByMouse highlight
+			// + placement getObjectAtScreenPosition) maps world->screen via the TG/userInput
+			// viewport transform, which Camera::update set from gos_GetViewport (FULL window).
+			// Re-point it at the SCENE width too -- otherwise objects project into full-window
+			// space while the map renders + mouse live in the centralW space, so the highlight
+			// and placement diverge from the cursor toward the right. (No-op undocked.)
+			TG_Shape::SetViewport(sceneRes.x, sceneRes.y, 0.0f, 0.0f);
+			if (userInput)
+				userInput->setViewport(sceneRes.x, sceneRes.y, 0.0f, 0.0f);
+
 			static int s_resDiag = 0;
 			if ((++s_resDiag % 600) == 1) {
 				GLint vp[4] = {0,0,0,0};
