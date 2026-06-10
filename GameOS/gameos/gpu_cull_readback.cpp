@@ -134,7 +134,7 @@ static uint32_t   s_staleFrameCount           = 0u;
 // Per-actor GPU visibility snapshot. Declared at module scope (before
 // readback_selftest) so the selftest can synthesize OR-merge bit patterns
 // without forward-referencing.
-constexpr uint32_t MAX_ACTOR_HANDLE = 4096u;
+constexpr uint32_t MAX_ACTOR_HANDLE = 8192u;
 static uint8_t s_actorVis[MAX_ACTOR_HANDLE];  // 0=invisible, 1=visible
 
 // 600-call counter for lifecycle_snapshot log line (readback_buildActorVisSnapshot).
@@ -415,12 +415,14 @@ ReadbackTier readback_tryConsume() {
 
         s_staleFrameCount = 0u;  // M-4: fence ready — staleness cleared
         ++s_consumeCount;
-        const bool doLog = !s_firstConsumeDone || ((s_consumeCount % 600u) == 0u);
-        if (doLog) {
-            s_firstConsumeDone = true;
-            printf("[GPU_CULL v1] event=readback_ok slot=%u stale_frames=0 visibleCount=%u\n",
-                   n1Slot, s_lastGoodVisibleCount);
-            fflush(stdout);
+        if (s_readbackTrace) {
+            const bool doLog = !s_firstConsumeDone || ((s_consumeCount % 600u) == 0u);
+            if (doLog) {
+                s_firstConsumeDone = true;
+                printf("[GPU_CULL v1] event=readback_ok slot=%u stale_frames=0 visibleCount=%u\n",
+                       n1Slot, s_lastGoodVisibleCount);
+                fflush(stdout);
+            }
         }
 
         RB_TRACE("event=consume_tier1 slot=%u visible=%u", n1Slot, s_lastGoodVisibleCount);
@@ -453,9 +455,7 @@ ReadbackTier readback_tryConsume() {
         }
 
         s_staleFrameCount = 0u;  // M-4: fence ready — staleness cleared
-        printf("[GPU_CULL v1] event=readback_fallback_n2 slot=%u stale_frames=2\n",
-               n2Slot);
-        fflush(stdout);
+        RB_TRACE("event=readback_fallback_n2 slot=%u stale_frames=2", n2Slot);
 
         RB_TRACE("event=consume_tier2 slot=%u visible=%u", n2Slot, s_lastGoodVisibleCount);
         return ReadbackTier::Tier2_NMinusTwo;
@@ -473,8 +473,7 @@ ReadbackTier readback_tryConsume() {
         s_lastGoodSlot = UINT32_MAX;
         s_lastGoodVisibleCount = UINT32_MAX;
     }
-    printf("[GPU_CULL v1] event=readback_fallback_conservative stale=%u\n", s_staleFrameCount);
-    fflush(stdout);
+    RB_TRACE("event=readback_fallback_conservative stale=%u", s_staleFrameCount);
 
     RB_TRACE("event=consume_tier3_conservative stale=%u", s_staleFrameCount);
     return ReadbackTier::Tier3_Conservative;
@@ -680,13 +679,14 @@ void readback_buildActorVisSnapshot(uint32_t maxActorHandle) {
 
     // T3 sentinel: UINT32_MAX means no valid readback yet (or T3 conservative).
     if (!readback_isEnabled() || s_lastGoodSlot == UINT32_MAX) {
-        // Log on first call and every 600 calls so the operator can see the state.
         ++s_snapshotCallCount;
-        const bool doLog = !s_snapshotFirstDone || ((s_snapshotCallCount % 600u) == 0u);
-        if (doLog) {
-            s_snapshotFirstDone = true;
-            printf("[GPU_CULL v1] event=lifecycle_snapshot slot=none visible=0 invisible=0 conservative=1\n");
-            fflush(stdout);
+        if (s_readbackTrace) {
+            const bool doLog = !s_snapshotFirstDone || ((s_snapshotCallCount % 600u) == 0u);
+            if (doLog) {
+                s_snapshotFirstDone = true;
+                printf("[GPU_CULL v1] event=lifecycle_snapshot slot=none visible=0 invisible=0 conservative=1\n");
+                fflush(stdout);
+            }
         }
         return;
     }
@@ -694,12 +694,14 @@ void readback_buildActorVisSnapshot(uint32_t maxActorHandle) {
     // Also treat T3 (UINT32_MAX visible count) as all-visible.
     if (s_lastGoodVisibleCount == UINT32_MAX) {
         ++s_snapshotCallCount;
-        const bool doLog = !s_snapshotFirstDone || ((s_snapshotCallCount % 600u) == 0u);
-        if (doLog) {
-            s_snapshotFirstDone = true;
-            printf("[GPU_CULL v1] event=lifecycle_snapshot slot=%u visible=0 invisible=0 conservative=1\n",
-                   s_lastGoodSlot);
-            fflush(stdout);
+        if (s_readbackTrace) {
+            const bool doLog = !s_snapshotFirstDone || ((s_snapshotCallCount % 600u) == 0u);
+            if (doLog) {
+                s_snapshotFirstDone = true;
+                printf("[GPU_CULL v1] event=lifecycle_snapshot slot=%u visible=0 invisible=0 conservative=1\n",
+                       s_lastGoodSlot);
+                fflush(stdout);
+            }
         }
         return;
     }
@@ -771,12 +773,14 @@ void readback_buildActorVisSnapshot(uint32_t maxActorHandle) {
     uint32_t primaryVisible = 0u;
     if (!applySlot(s_lastGoodSlot, true, &primaryVisible, nullptr)) {
         ++s_snapshotCallCount;
-        const bool doLog = !s_snapshotFirstDone || ((s_snapshotCallCount % 600u) == 0u);
-        if (doLog) {
-            s_snapshotFirstDone = true;
-            printf("[GPU_CULL v1] event=lifecycle_snapshot slot=%u visible=0 invisible=0 conservative=1\n",
-                   s_lastGoodSlot);
-            fflush(stdout);
+        if (s_readbackTrace) {
+            const bool doLog = !s_snapshotFirstDone || ((s_snapshotCallCount % 600u) == 0u);
+            if (doLog) {
+                s_snapshotFirstDone = true;
+                printf("[GPU_CULL v1] event=lifecycle_snapshot slot=%u visible=0 invisible=0 conservative=1\n",
+                       s_lastGoodSlot);
+                fflush(stdout);
+            }
         }
         return;
     }
@@ -792,15 +796,17 @@ void readback_buildActorVisSnapshot(uint32_t maxActorHandle) {
     s_accDilatedAdmits += s_cpuDilatedAdmits[s_lastGoodSlot];
     ++s_motionTolFrames;
     ++s_motionTolSummaryCount;
-    const bool doMotionLog = !s_motionTolFirstDone || ((s_motionTolSummaryCount % 600u) == 0u);
+    const bool doMotionLog = (s_motionTolSummaryCount % 600u) == 0u;
     if (doMotionLog) {
-        s_motionTolFirstDone = true;
-        printf("[GPU_CULL v1] event=motion_tolerance frames=%u dilated_admits=%llu conservative_or_admits=%llu or_enabled=%d\n",
-               s_motionTolFrames,
-               (unsigned long long)s_accDilatedAdmits,
-               (unsigned long long)s_accConservativeOrAdmits,
-               (int)useOr);
-        fflush(stdout);
+        if (s_readbackTrace) {
+            s_motionTolFirstDone = true;
+            printf("[GPU_CULL v1] event=motion_tolerance frames=%u dilated_admits=%llu conservative_or_admits=%llu or_enabled=%d\n",
+                   s_motionTolFrames,
+                   (unsigned long long)s_accDilatedAdmits,
+                   (unsigned long long)s_accConservativeOrAdmits,
+                   (int)useOr);
+            fflush(stdout);
+        }
         s_accDilatedAdmits        = 0u;
         s_accConservativeOrAdmits = 0u;
         s_motionTolFrames         = 0u;
@@ -809,16 +815,18 @@ void readback_buildActorVisSnapshot(uint32_t maxActorHandle) {
     // Lifecycle snapshot stats (recount from final s_actorVis to reflect OR-merge).
     uint32_t nVisible = 0u, nInvisible = 0u;
     (void)primaryVisible;
-    for (uint32_t id = 1u; id < cap; ++id) {
-        if (s_actorVis[id]) ++nVisible; else ++nInvisible;
-    }
     ++s_snapshotCallCount;
-    const bool doLog = !s_snapshotFirstDone || ((s_snapshotCallCount % 600u) == 0u);
-    if (doLog) {
-        s_snapshotFirstDone = true;
-        printf("[GPU_CULL v1] event=lifecycle_snapshot slot=%u visible=%u invisible=%u conservative=0 or_admits=%u\n",
-               s_lastGoodSlot, nVisible, nInvisible, orFlips);
-        fflush(stdout);
+    if (s_readbackTrace) {
+        const bool doLog = !s_snapshotFirstDone || ((s_snapshotCallCount % 600u) == 0u);
+        if (doLog) {
+            s_snapshotFirstDone = true;
+            for (uint32_t id = 1u; id < cap; ++id) {
+                if (s_actorVis[id]) ++nVisible; else ++nInvisible;
+            }
+            printf("[GPU_CULL v1] event=lifecycle_snapshot slot=%u visible=%u invisible=%u conservative=0 or_admits=%u\n",
+                   s_lastGoodSlot, nVisible, nInvisible, orFlips);
+            fflush(stdout);
+        }
     }
 }
 
