@@ -54,6 +54,7 @@
 #include "MapGeneratorDialog.h"
 #include "EditorData.h"    // EditorData::generateFromDialogParams declaration
 #include "EditorTaskRunner.h"  // async subprocess (Phase 1: no UI-thread blocking)
+#include "FoliageRender.h"     // load generated foliage sidecar after apply
 
 #include <cstdio>
 #include <cstdlib>
@@ -117,6 +118,14 @@ struct DialogState {
     float ridgedAmount   = 0.3f; // 0..1 slider
     float grassLowland   = 0.5f;
     float snowLine       = 1.0f; // Default to 1.0 (snow only at very top)
+
+    // Foliage / trees (PCG sidecar -> generator --generate-foliage). When on, the
+    // recipe carries a "foliage" rules array and the generated genmap.foliage.json
+    // is loaded into FoliageRender after the terrain applies.
+    bool  generateFoliage = true;
+    float treeDensity     = 0.5f; // 0..1 -> rule density
+    float treeLine        = 0.85f;// 0..1 -> tree max_altitude (no trees above)
+    bool  placeRocks      = true; // scatter rocks on slopes
 
     unsigned long seed   = 0;    // 0 = randomise each run
     bool  randomSeed     = true;
@@ -197,8 +206,7 @@ static std::string BuildRecipeJSON(bool preview) {
         "  \"materials\": {\n"
         "    \"grass_lowland\": %.3f,\n"
         "    \"snow_line\": %.3f\n"
-        "  }\n"
-        "}\n",
+        "  }",                       // NOTE: no top-level close yet (foliage may follow)
         sideN,
         k_biomeKeys[s_state.biomeIndex],
         seed,
@@ -209,7 +217,38 @@ static std::string BuildRecipeJSON(bool preview) {
         (double)s_state.grassLowland,
         (double)s_state.snowLine
     );
-    return std::string(buf);
+
+    std::string recipe(buf);
+
+    // Optional foliage rules: trees on non-water below the tree line, plus rocks
+    // on slopes. Density slider [0..1] -> rule density [0.004..0.030].
+    if (s_state.generateFoliage) {
+        float treeD = 0.004f + s_state.treeDensity * 0.026f;
+        float treeMaxAlt = s_state.treeLine;
+        char fol[1024];
+        int n = snprintf(fol, sizeof(fol),
+            ",\n  \"foliage\": [\n"
+            "    { \"asset\": \"tree_pine_a\", \"kind\": \"tree\", \"density\": %.4f,\n"
+            "      \"avoid_water\": true, \"max_altitude\": %.3f, \"max_slope\": 0.55,\n"
+            "      \"min_spacing\": 256.0, \"scale_min\": 0.8, \"scale_max\": 1.25 }",
+            (double)treeD, (double)treeMaxAlt);
+        recipe += fol;
+        if (s_state.placeRocks) {
+            char rk[768];
+            snprintf(rk, sizeof(rk),
+                ",\n"
+                "    { \"asset\": \"rock_a\", \"kind\": \"rock\", \"density\": %.4f,\n"
+                "      \"avoid_water\": true, \"min_altitude\": 0.20, \"max_slope\": 1.0,\n"
+                "      \"min_spacing\": 320.0, \"scale_min\": 0.7, \"scale_max\": 1.4 }",
+                (double)(treeD * 0.3f));
+            recipe += rk;
+        }
+        recipe += "\n  ]";
+        (void)n;
+    }
+
+    recipe += "\n}\n";
+    return recipe;
 }
 
 // Write recipe JSON to disk.  Returns false on error.
@@ -232,8 +271,11 @@ static std::string BuildTerrainGenCmd(bool preview) {
     const char* outArg    = "terrain_gen_out";
     char cmd[1024];
     snprintf(cmd, sizeof(cmd),
-        "py -3 -u tools\\terrain_gen\\terrain_gen.py \"%s\" --out \"%s\"%s",
-        recipeArg, outArg, preview ? " --preview" : "");
+        "py -3 -u tools\\terrain_gen\\terrain_gen.py \"%s\" --out \"%s\"%s%s",
+        recipeArg, outArg,
+        preview ? " --preview" : "",
+        // Foliage is a full-generate artifact only; skip it for the fast preview.
+        (s_state.generateFoliage && !preview) ? " --generate-foliage" : "");
     return std::string(cmd);
 }
 
@@ -400,6 +442,21 @@ void MapGeneratorDialog::Draw() {
     ImGui::Unindent();
 
     ImGui::Separator();
+    // --- Foliage / Trees ---
+    ImGui::Text("Foliage");
+    ImGui::Indent();
+    ImGui::Checkbox("Generate trees & rocks", &s_state.generateFoliage);
+    if (s_state.generateFoliage) {
+        ImGui::SetNextItemWidth(280.f * sc);
+        ImGui::SliderFloat("Tree Density", &s_state.treeDensity, 0.f, 1.f, "%.2f");
+        ImGui::SetNextItemWidth(280.f * sc);
+        ImGui::SliderFloat("Tree Line (max altitude)", &s_state.treeLine, 0.f, 1.f, "%.2f");
+        ImGui::Checkbox("Scatter rocks on slopes", &s_state.placeRocks);
+        ImGui::TextDisabled("Trees apply on full Generate (not the fast Preview).");
+    }
+    ImGui::Unindent();
+
+    ImGui::Separator();
     // --- Seed ---
     ImGui::Checkbox("Random seed", &s_state.randomSeed);
     if (!s_state.randomSeed) {
@@ -529,6 +586,16 @@ bool MapGeneratorDialog::ApplyPendingGenerate() {
         return false;
     }
     EditorData::MarkMoveDataDirty();
+
+    // Load the generated foliage sidecar so trees/rocks show immediately. Load is
+    // failure-tolerant (missing/empty -> 0 instances, no crash); force-visible.
+    if (s_state.generateFoliage) {
+        if (FoliageRender::Load("terrain_gen_out\\genmap.foliage.json")) {
+            if (!FoliageRender::Visible())
+                FoliageRender::Toggle();
+        }
+    }
+
     Close();
     return true;
 }
