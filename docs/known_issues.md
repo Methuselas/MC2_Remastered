@@ -70,6 +70,10 @@ them. Add new findings as new bullets; remove fixed ones outright (don't append
 
 - **First-launch black terrain intermittency** — tier1 first mission occasionally renders black; second normal. Suspected: GPU/shader state dirty from previous mission teardown. Repro: tier1 with `--fail-fast`.
 
+## Editor picking
+
+- **Editor pick uses raw MFC client pixels vs GL viewport space (pre-existing, low-risk).** `EditorObjectMgr::getObjectAtScreenPosition` now forward-projects each object to screen via `Camera::projectForScreenXY` and matches by pixel distance (fixed the wrong-far-object pick; commit screen-space-pick). The click coords are raw MFC `CPoint` client pixels, while `projectForScreenXY` uses the `gos_GetViewport` GL viewport — same space the status bar uses, and they agree UNLESS the editor window is resized so GL viewport width != MFC client width (`EditorInterface.cpp:~4072` normalizes this for the gameplay-pick path but the status-bar/object-pick paths do not). Correct in the common no-resize case; if a resize-offset pick is ever reported, normalize the click coords the same way the gameplay pick does. Meta-fix history: `memory/editor_pick_screen_projection_metafix.md`.
+
 ## Editor smoke
 
 - **MSBuild stale-object after a same-second edit (false smoke failure).** If a NEW `[ESMOKE v1]` field comes back missing / `None` from `run_editor_smoke.py` right after a `check-editor-build.sh --build-only` that printed PASS, the build likely SKIPPED recompiling a just-edited source: MSBuild's up-to-date check has ~1s timestamp granularity, so an edit landing in the same second as the prior object can be judged "up to date" and the deployed exe ships old code. **Diagnose before assuming a code/path bug:** confirm the field string is literally in the built exe — `powershell -NoProfile -Command "Select-String -Path 'build64/out/editor/RelWithDebInfo/Mission Editor.exe' -Pattern 'your_new_field' -SimpleMatch -Quiet"`. If ABSENT, force a recompile (touch the source: `(Get-Item editor/EditorMFC.cpp).LastWriteTime = Get-Date`) and rebuild + redeploy. Observed 2026-06-09 (validate_* fields). Memory: `memory/msbuild_stale_object_same_second_edit.md`.
