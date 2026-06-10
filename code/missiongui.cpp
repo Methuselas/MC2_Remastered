@@ -816,7 +816,15 @@ void MissionInterfaceManager::update (void)
 	{
 		MifScope _mInv(MF_INVPROJ);
 		if (s_mfOn) ++s_mfInvWalks;
-		eye->inverseProject(mouseXY, wPos);
+		// PERF (1K-map fix): the per-frame cursor-world projection feeding the
+		// status bar + target preview was Camera::inverseProject, which walks
+		// EVERY quad (O(quads)) and cache-misses every frame under camera motion
+		// -> 46ms/frame on the oversized 1K map (80% of frame). Swap to the O(1)
+		// inverse-clip ray/z=0 ground-plane unproject the editor already uses for
+		// its continuous tac-map cursor (camera.cpp screenToGroundPlaneApprox).
+		// Cell-precision (x,y) is exact; z is ground-plane (fine for the status
+		// bar + cell/area readout). Discrete clicks still use inverseProject.
+		eye->screenToGroundPlaneApprox(mouseXY.x, mouseXY.y, wPos);
 		prevMouseX = mouseX;
 		prevMouseY = mouseY;
 		cachedWPos = wPos;
