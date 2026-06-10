@@ -104,6 +104,19 @@ def progress(pct: int, stage: str, msg: str = "") -> None:
     print(f"PROGRESS {pct} {stage} {msg}", flush=True)
 
 
+# Quality presets. These resolve to the legacy flags/caps so the no-quality CLI
+# path stays byte-for-byte identical to before (editor compat). Only applied when
+# --quality is explicitly passed.
+#   work_size: height working res (0 = full-res banded), erosion_cap: max passes,
+#   final_cap / working_cap: burnin caps, full_res: use banded generator.
+QUALITY_PRESETS: dict = {
+    "preview":     dict(work_size=256, erosion_cap=0, final_cap=256,  working_cap=256,  full_res=False, shrink=True),
+    "interactive": dict(work_size=512, erosion_cap=1, final_cap=4096, working_cap=1024, full_res=False, shrink=False),
+    "standard":    dict(work_size=768, erosion_cap=99, final_cap=4096, working_cap=2048, full_res=False, shrink=False),
+    "final":       dict(work_size=0,   erosion_cap=99, final_cap=4096, working_cap=2048, full_res=True,  shrink=False),
+}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description='MC2 terrain generator')
     parser.add_argument('recipe', help='Path to recipe JSON file')
@@ -121,7 +134,33 @@ def main() -> None:
                         help='Full-resolution banded generation (no upscaling, progress per band)')
     parser.add_argument('--superchunk-chunks', type=int, default=3,
                         help='Rows per band: chunk_size (20) * this value. Default 3 = 60 rows/band')
+    parser.add_argument('--quality', choices=list(QUALITY_PRESETS),
+                        help='Quality preset: preview|interactive|standard|final. '
+                             'Resolves work-size/erosion/burnin caps. Omit = legacy behavior.')
+    parser.add_argument('--burnin-final-cap', type=int, default=4096,
+                        help='Hard cap on final burnin colormap dimension (default 4096).')
+    parser.add_argument('--burnin-working-cap', type=int, default=0,
+                        help='Burnin shading working res cap (0 = preset/default).')
     args = parser.parse_args()
+
+    # Resolve quality preset -> legacy flags/caps. Only when --quality is passed,
+    # so the no-quality path is unchanged (editor compat). Explicit flags still win
+    # where they are non-default.
+    q = QUALITY_PRESETS.get(args.quality) if args.quality else None
+    if q:
+        if q["shrink"]:
+            args.preview = True
+        if q["full_res"]:
+            args.full_res = True
+        # height work size: preset value unless user overrode --height-work-size
+        if args.height_work_size == 256:  # 256 = argparse default (not user-set)
+            args.height_work_size = q["work_size"]
+        args.interactive = args.interactive or (args.quality == "interactive")
+        if args.burnin_final_cap == 4096:
+            args.burnin_final_cap = q["final_cap"]
+        if args.burnin_working_cap == 0:
+            args.burnin_working_cap = q["working_cap"]
+        args._erosion_cap = q["erosion_cap"]
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -141,11 +180,17 @@ def main() -> None:
     print(f"  size={recipe.size}  biome={recipe.biome}  seed={recipe.seed}  preview={args.preview}")
     recipe.apply_biome()
 
-    # Set burnin resolution caps if not already set (e.g. by tests).
+    # Set burnin resolution caps. Preview already pinned them to 256 above; only set
+    # when not already set so preview wins. CLI --burnin-*-cap override the defaults.
     if not hasattr(recipe, "_burnin_final_cap"):
-        recipe._burnin_final_cap = 4096
+        recipe._burnin_final_cap = args.burnin_final_cap
     if not hasattr(recipe, "_burnin_working_cap"):
-        recipe._burnin_working_cap = 2048
+        recipe._burnin_working_cap = args.burnin_working_cap or 2048
+
+    # Quality erosion cap (final/standard = uncapped 99, interactive = 1, preview = 0)
+    erosion_cap = getattr(args, "_erosion_cap", None)
+    if erosion_cap is not None:
+        recipe.height.erosion_passes = min(recipe.height.erosion_passes, erosion_cap)
 
     # Interactive mode: lower work resolution + reduced erosion for editor responsiveness
     if args.interactive:
@@ -156,10 +201,15 @@ def main() -> None:
         recipe._height_work_size = args.height_work_size
 
     if args.preview:
-        height = HeightGenerator().generate(recipe)
+        progress(5, "height", "preview")
+        height = HeightGenerator().generate(recipe, progress=progress)
+        progress(70, "classify", "starting")
         masks  = MaterialClassifier().classify(height, recipe)
+        progress(85, "burnin", "rendering")
         burnin = BurninRenderer().render(masks, recipe, BIOMES[recipe.biome])
+        progress(95, "saving", "")
         make_preview(burnin).save(str(out / f"{recipe.name}.preview.png"))
+        progress(100, "done", "")
         print(f"  {recipe.name}.preview.png (preview)")
         print("Done.")
         return
