@@ -1,6 +1,7 @@
 # tools/terrain_gen/burnin_renderer.py
 from __future__ import annotations
 
+import os
 import numpy as np
 from PIL import Image, ImageFilter
 from opensimplex import OpenSimplex
@@ -8,6 +9,23 @@ from opensimplex import OpenSimplex
 from terrain_gen.terrain_recipe import TerrainRecipe
 from terrain_gen.material_classifier import TerrainMasks
 from terrain_gen.biome_presets import BiomePreset
+
+
+def _load_tiled(path: str, scale: float, res: int) -> "np.ndarray | None":
+    """Load a texture and tile it to (res, res, 3) float32 in [0,1].
+
+    scale = repeats across the full map width. Missing/empty path -> None
+    (caller falls back to flat palette tint). Warns once on a missing file."""
+    if not path:
+        return None
+    if not os.path.exists(path):
+        print(f"WARNING: texture not found, palette fallback: {path}", flush=True)
+        return None
+    tile = max(8, int(round(res / max(1.0, scale))))
+    img = Image.open(path).convert('RGB').resize((tile, tile), Image.BILINEAR)
+    a = np.asarray(img, dtype=np.float32) / np.float32(255.0)
+    reps = res // tile + 1
+    return np.tile(a, (reps, reps, 1))[:res, :res, :]
 
 
 class BurninRenderer:
@@ -55,14 +73,34 @@ class BurninRenderer:
         def to_f(rgb):
             return np.array([v / 255.0 for v in rgb], dtype=np.float32)
 
+        # Phase 3: optional tiled detail textures. Each configured texture is tiled
+        # to (res,res,3) and multiplied by the palette color (tint). Unset -> flat
+        # palette color (identical to the pre-texture render). Textures are loaded at
+        # the shading `res` so they upscale with the burnin if res != target_res.
+        tx = getattr(recipe, "textures", None)
+        if tx is not None:
+            t_grass  = _load_tiled(tx.grass,        tx.grass_scale,        res)
+            t_rock   = _load_tiled(tx.rock,         tx.rock_scale,         res)
+            t_dirt   = _load_tiled(tx.dirt,         tx.dirt_scale,         res)
+            t_mud    = _load_tiled(tx.mud,          tx.mud_scale,          res)
+            t_snow   = _load_tiled(tx.snow,         tx.snow_scale,         res)
+            t_forest = _load_tiled(tx.forest_floor, tx.forest_floor_scale, res)
+        else:
+            t_grass = t_rock = t_dirt = t_mud = t_snow = t_forest = None
+
+        def layer(tint, tex):
+            # tex*tint (textured) or flat tint; both broadcast against w[...,None].
+            return tex * tint if tex is not None else tint
+
+        rock_tint = to_f(p.rock) * 0.6 + to_f(p.dark_rock) * 0.4
+
         color = (
-            to_f(p.grass)        * w_grass[..., None]  +
-            to_f(p.dirt)         * w_dirt[..., None]   +
-            to_f(p.mud)          * w_mud[..., None]    +
-            to_f(p.forest_floor) * w_forest[..., None] +
-            to_f(p.rock)         * w_rock[..., None] * 0.6 +
-            to_f(p.dark_rock)    * w_rock[..., None] * 0.4 +
-            to_f(p.snow)         * w_snow[..., None]   +
+            layer(to_f(p.grass),        t_grass)  * w_grass[..., None]  +
+            layer(to_f(p.dirt),         t_dirt)   * w_dirt[..., None]   +
+            layer(to_f(p.mud),          t_mud)    * w_mud[..., None]    +
+            layer(to_f(p.forest_floor), t_forest) * w_forest[..., None] +
+            layer(rock_tint,            t_rock)   * w_rock[..., None]   +
+            layer(to_f(p.snow),         t_snow)   * w_snow[..., None]   +
             to_f(p.water)        * w_water[..., None]
         )
         color = np.clip(color, 0, 1)

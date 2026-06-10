@@ -33,6 +33,27 @@ class MaterialParams:
 
 
 @dataclass
+class TextureParams:
+    """Optional tiled detail textures per material (Phase 3, Landscape Material Lite).
+
+    Each field is a file path ("" = unset -> palette-only fallback for that layer).
+    Textures are tiled across the map and multiplied by the palette color (tint).
+    *_scale = number of texture repeats across the full map width."""
+    grass:        str = ""
+    rock:         str = ""
+    dirt:         str = ""
+    mud:          str = ""
+    snow:         str = ""
+    forest_floor: str = ""
+    grass_scale:        float = 16.0
+    rock_scale:         float = 16.0
+    dirt_scale:         float = 16.0
+    mud_scale:          float = 16.0
+    snow_scale:         float = 16.0
+    forest_floor_scale: float = 16.0
+
+
+@dataclass
 class BurninParams:
     ao_strength:     float = 0.35
     slope_shading:   float = 0.25
@@ -50,6 +71,7 @@ class TerrainRecipe:
     height:    HeightParams   = field(default_factory=HeightParams)
     materials: MaterialParams = field(default_factory=MaterialParams)
     burnin:    BurninParams   = field(default_factory=BurninParams)
+    textures:  TextureParams  = field(default_factory=TextureParams)
 
     def __post_init__(self):
         if not (60 <= self.size <= 2048):
@@ -100,6 +122,7 @@ class TerrainRecipe:
         height    = HeightParams(**d.get('height', {}))
         materials = MaterialParams(**d.get('materials', {}))
         burnin    = BurninParams(**d.get('burnin', {}))
+        textures  = TextureParams(**d.get('textures', {}))
         r = cls(
             version=d.get('version', 1),
             name=d.get('name', 'unnamed'),
@@ -109,6 +132,7 @@ class TerrainRecipe:
             height=height,
             materials=materials,
             burnin=burnin,
+            textures=textures,
         )
         # Record explicitly-provided height/materials keys so apply_biome() won't
         # overwrite them (editor Map Generator dialog sends these as overrides).
