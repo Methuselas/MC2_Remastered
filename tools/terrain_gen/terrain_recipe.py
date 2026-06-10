@@ -72,6 +72,7 @@ class TerrainRecipe:
     materials: MaterialParams = field(default_factory=MaterialParams)
     burnin:    BurninParams   = field(default_factory=BurninParams)
     textures:  TextureParams  = field(default_factory=TextureParams)
+    foliage:   list           = field(default_factory=list)  # raw rule dicts (Phase 4 PCG)
 
     def __post_init__(self):
         if not (60 <= self.size <= 2048):
@@ -133,6 +134,7 @@ class TerrainRecipe:
             materials=materials,
             burnin=burnin,
             textures=textures,
+            foliage=d.get('foliage', []),
         )
         # Record explicitly-provided height/materials keys so apply_biome() won't
         # overwrite them (editor Map Generator dialog sends these as overrides).

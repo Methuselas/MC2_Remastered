@@ -1,0 +1,30 @@
+{
+  "foliage": [
+    {
+      "asset": "tree_pine_a",
+      "kind": "tree",
+      "density": 0.05,
+      "min_altitude": 0.12,
+      "max_altitude": 0.72,
+      "max_slope": 0.35,
+      "avoid_water": true,
+      "terrain_types": ["GRASS", "FOREST_FLOOR", "MOSS"],
+      "noise_threshold": 0.0,
+      "min_spacing": 384,
+      "scale_min": 0.85,
+      "scale_max": 1.25
+    },
+    {
+      "asset": "rock_small_a",
+      "kind": "rock",
+      "density": 0.02,
+      "min_altitude": 0.4,
+      "max_altitude": 1.0,
+      "max_slope": 1.0,
+      "avoid_water": true,
+      "min_spacing": 256,
+      "scale_min": 0.7,
+      "scale_max": 1.4
+    }
+  ]
+}

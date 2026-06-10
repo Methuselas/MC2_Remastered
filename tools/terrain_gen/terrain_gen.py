@@ -155,6 +155,12 @@ def main() -> None:
     parser.add_argument('--cancel-file',
                         help='If this path appears mid-generation, abort cleanly '
                              '(exit 2, prints CANCELLED). Editor cancel button writes it.')
+    parser.add_argument('--generate-foliage', action='store_true',
+                        help='Emit {name}.foliage.json from PCG rules (recipe.foliage '
+                             'or --foliage-rules). No rules = no file.')
+    parser.add_argument('--foliage-rules',
+                        help='JSON file of foliage rules (list or {"foliage":[...]}). '
+                             'Overrides recipe.foliage.')
     args = parser.parse_args()
 
     # Resolve quality preset -> legacy flags/caps. Only when --quality is passed,
@@ -300,6 +306,21 @@ def main() -> None:
 
     recipe.to_json(out / f"{name}.recipe.json")
     print(f"  {name}.recipe.json")
+
+    # Phase 4: PCG foliage sidecar. Sources rules from --foliage-rules (file) or
+    # recipe.foliage; no rules -> no file. Independent of the elev/burnin contract.
+    if args.generate_foliage:
+        from terrain_gen.foliage_generator import FoliageGenerator, load_rules, write_foliage
+        rules = load_rules(args.foliage_rules) if args.foliage_rules else recipe.foliage
+        if not rules:
+            print("  (no foliage rules -> no .foliage.json)")
+        else:
+            progress(92, "foliage", "placing")
+            result = FoliageGenerator().generate(height, masks, recipe, rules,
+                                                 superchunk_chunks=args.superchunk_chunks,
+                                                 progress=progress)
+            write_foliage(result, out / f"{name}.foliage.json")
+            print(f"  {name}.foliage.json  ({len(result['instances'])} instances)")
 
     if args.template_pak:
         if not _PAK_AVAILABLE:
