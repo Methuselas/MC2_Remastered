@@ -74,6 +74,7 @@
 #include "MapGeneratorDialog.h"
 #include "MissionValidation.h"
 #include "EditorTaskRunner.h"
+#include "EditorDebugOverlay.h"
 #include "gameplay_pick.h"  // tryGameplayPick: shared pick spine, no game-object deps
 #include "gameos.hpp"       // gos_GetViewport, Environment (drawableWidth/Height)
 #include "gos_render.h"     // graphics::make_current_context
@@ -2574,6 +2575,10 @@ void EditorInterface::render()
 	// terrain. Pure visual overlay -- no terrain/save/load state touched.
 	FoliageRender::Render( eye );
 
+	// Phase 2: diagnostic world overlays (chunk/superchunk grid, water bounds).
+	// Pure visual; same frame/projection context as the foliage preview.
+	EditorDebugOverlay::RenderWorldOverlay( eye );
+
 	ModifyStyle( 0, WS_HSCROLL | WS_VSCROLL );
 
 	Stuff::Vector3D worldPos;
@@ -4521,6 +4526,9 @@ void EditorInterface::renderToolbarImGui()
 
 	// Async task monitor (terrain gen progress/cancel/log). Own window; no-op empty.
 	EditorTaskRunner::RenderImGui();
+
+	// Debug overlay control panel (chunk/superchunk grid toggles + stats).
+	EditorDebugOverlay::RenderImGui();
 
 	ImGui::Separator();
 
