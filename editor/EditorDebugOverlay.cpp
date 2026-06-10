@@ -229,7 +229,11 @@ namespace
 				{
 					const PostcompVertex& v = verts[i];
 					if ( v.elevation == v.elevation ) statsAccum( s_probe.mesh, v.elevation );
-					if ( v.water ) ++s_probe.waterVerts; else ++s_probe.dryVerts;
+					// PostcompVertex.water is a BITFIELD: bit0 = actually wet (the test
+					// the renderer uses, quad.cpp `water & 1`); bits 0x40/0x80 are random
+					// dither/edge MARKERS set by recalcWater. Counting `if (water)` (the
+					// original trace's mistake) counts markers as wet -> false ~70%.
+					if ( v.water & 0x01 ) ++s_probe.waterVerts; else ++s_probe.dryVerts;
 				}
 				statsFinish( s_probe.mesh );
 			}
@@ -315,6 +319,11 @@ void RenderWorldOverlay( Camera* eye )
 	// Restore state for subsequent editor overlays (selection/brush quads).
 	gos_SetRenderState( gos_State_ZCompare, 1 );
 	gos_SetRenderState( gos_State_ZWrite,   1 );
+}
+
+void RunProbeOnce()
+{
+	rescanTerrainHeights();   // computes stats + emits the TERRAIN_PROBE log line
 }
 
 #ifdef MC2_IMGUI

@@ -26,6 +26,12 @@ namespace EditorDebugOverlay
 	// enabled or no terrain is loaded.  Safe with a null camera.
 	void RenderWorldOverlay( Camera* eye );
 
+	// Run the terrain height/water probe once and emit the machine-readable
+	// "TERRAIN_PROBE ..." line to the trace log. Headless-safe (no ImGui): lets a
+	// -gen-map smoke run capture same-session before/after evidence. No-op if no
+	// terrain is loaded.
+	void RunProbeOnce();
+
 #ifdef MC2_IMGUI
 	// Draw the "Debug Overlays" ImGui panel (toggles + tunables + stats).
 	void RenderImGui();
