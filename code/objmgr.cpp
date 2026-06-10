@@ -157,6 +157,20 @@ static bool mc2SkipStaticNaturalEnabled (void)
 	return(cached != 0);
 }
 
+static bool mc2SkipStaticBuildingsEnabled (void)
+{
+	// DEFAULT-OFF (opt-in): skip all static BUILDING-class objects, not just
+	// Pine-named ones.  This is new/unproven — leave OFF unless explicitly set.
+	// Set MC2_SKIP_STATIC_BUILDINGS=1 (or any non-"0" value) to enable.
+	// With this unset the binary is BYTE-IDENTICAL to the pre-broadening path.
+	static int cached = -1;
+	if (cached < 0) {
+		const char* v = getenv("MC2_SKIP_STATIC_BUILDINGS");
+		cached = (v && v[0] != '\0' && !(v[0] == '0' && v[1] == '\0')) ? 1 : 0;
+	}
+	return(cached != 0);
+}
+
 static bool mc2SkipStaticNaturalDiagEnabled (void)
 {
 	static int cached = -1;
@@ -2197,7 +2211,11 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 		long missJustCreated = 0;
 		long nonNaturalUpdated = 0;
 		long unknownUpdated = 0;
+		long staticBuildingCandidates = 0;
+		long skippedStaticBuildings = 0;
+		long missBuildingNotStaticNow = 0;
 		const bool skipStaticNatural = mc2SkipStaticNaturalEnabled();
+		const bool skipStaticBuildings = mc2SkipStaticBuildingsEnabled();
 		const bool skipStaticNaturalDiag = mc2SkipStaticNaturalDiagEnabled();
 		const uint32_t staticDiagFrame = g_mc2FrameCounter;
 		const bool emitStaticDiagThisFrame = skipStaticNaturalDiag &&
@@ -2328,7 +2346,7 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 								TerrainObjectTypePtr terrainType = (TerrainObjectTypePtr)objType;
 								isTreeCandidate = (terrainType->subType == TERROBJ_TREE);
 							}
-							else if ((objectClass == BUILDING) && isPineAppearance)
+							else if ((objectClass == BUILDING) && (isPineAppearance || skipStaticBuildings))
 							{
 								BuildingPtr building = dynamic_cast<Building*>(obj);
 								BuildingTypePtr bldgType = dynamic_cast<BuildingTypePtr>(objType);
@@ -2341,6 +2359,7 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 									pineSensor = (bldgType->sensorRange > 0.0f) ? 1L : 0L;
 									pinePowerSource = bldgType->powerSource ? 1L : 0L;
 									isPineStaticBuildingCandidate =
+										isPineAppearance &&
 										!pineSpecialBuilding &&
 										!pinePerimeterAlarm &&
 										!pineLookout &&
@@ -2389,6 +2408,15 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 							const long staticNow = appearance ? (appearance->IsStaticNow() ? 1L : 0L) : 0L;
 							if (skipStaticNatural && (turn >= 3) && staticNow && !isFalling && !isJustCreated)
 							{
+								// Power-out propagation must run even for skipped buildings.
+								// Replicates bldng.cpp:889 with an added null guard.
+								BuildingPtr __skipBldg = dynamic_cast<Building*>(obj);
+								if (__skipBldg && __skipBldg->powerSupply && appearance)
+								{
+									GameObjectPtr __powerObj = ObjectManager->getByWatchID(__skipBldg->powerSupply);
+									if (__powerObj && __powerObj->getStatus() == OBJECT_STATUS_DESTROYED)
+										appearance->setLightsOut(true);
+								}
 								skippedStaticNatural++;
 								continue;
 							}
@@ -2476,6 +2504,47 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 									missStaticOther++;
 							}
 						}
+						else if (skipStaticBuildings && !isPineStaticBuildingCandidate &&
+						         (objType && objType->getObjectClass() == BUILDING))
+						{
+							// Broadened static-building skip: all BUILDING-class objects that are
+							// NOT already handled by the Pine path above (isPineStaticBuildingCandidate
+							// covered those).  Only active when MC2_SKIP_STATIC_BUILDINGS=1.
+							// mustUpdate exclusion set mirrors the Pine candidacy check above.
+							BuildingPtr building = dynamic_cast<Building*>(obj);
+							BuildingTypePtr bldgType = dynamic_cast<BuildingTypePtr>(objType);
+							if (building && bldgType)
+							{
+								const bool mustUpdate =
+									building->isSpecialBuilding() ||
+									((bldgType->perimeterAlarmRange > 0.0f) && (bldgType->perimeterAlarmTimer > 0.0f)) ||
+									(bldgType->lookoutTowerRange > 0.0f) ||
+									(bldgType->sensorRange > 0.0f) ||
+									bldgType->powerSource ||
+									obj->getFlag(OBJECT_FLAG_CONTROLBUILDING) ||
+									obj->getFlag(OBJECT_FLAG_MECHBAY);
+								if (!mustUpdate)
+								{
+									staticBuildingCandidates++;
+									const long staticNow = appearance ? (appearance->IsStaticNow() ? 1L : 0L) : 0L;
+									if ((turn >= 3) && staticNow && !isFalling && !isJustCreated)
+									{
+										// Power-out propagation must run even for skipped buildings.
+										// Replicates bldng.cpp:889 with an added null guard.
+										if (building->powerSupply && appearance)
+										{
+											GameObjectPtr __powerObj = ObjectManager->getByWatchID(building->powerSupply);
+											if (__powerObj && __powerObj->getStatus() == OBJECT_STATUS_DESTROYED)
+												appearance->setLightsOut(true);
+										}
+										skippedStaticBuildings++;
+										continue;
+									}
+									if (!staticNow)
+										missBuildingNotStaticNow++;
+								}
+							}
+						}
 						// Per-object sample lines removed — use MC2_SKIP_STATIC_TREES_DIAG summary instead.
 
 						if (isPineAppearance && !isPineStaticBuildingCandidate)
@@ -2551,7 +2620,7 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 				if (staticDiagFrame != lastStaticSkipFrame) {
 					lastStaticSkipFrame = staticDiagFrame;
 					std::fprintf(stderr,
-					             "[STATIC_NATURAL_SKIP] frame=%u eligible=%ld natural=%ld skipped=%ld falling=%ld justCreated=%ld miss_notStaticNow=%ld miss_static_unregistered=%ld miss_static_shape=%ld miss_static_fullBake=%ld miss_static_other=%ld miss_unreg_treeAppr=%ld miss_unreg_bldgAppr=%ld miss_unreg_otherAppr=%ld miss_unreg_objTree=%ld miss_unreg_objTerrain=%ld miss_unreg_objBuilding=%ld miss_unreg_objOther=%ld miss_special=%ld miss_alarm=%ld miss_lookout=%ld miss_sensor=%ld miss_power=%ld miss_control=%ld miss_mechBay=%ld miss_falling=%ld miss_justCreated=%ld nonNatural=%ld unknown=%ld updated=%ld\n",
+					             "[STATIC_NATURAL_SKIP] frame=%u eligible=%ld natural=%ld skipped=%ld falling=%ld justCreated=%ld miss_notStaticNow=%ld miss_static_unregistered=%ld miss_static_shape=%ld miss_static_fullBake=%ld miss_static_other=%ld miss_unreg_treeAppr=%ld miss_unreg_bldgAppr=%ld miss_unreg_otherAppr=%ld miss_unreg_objTree=%ld miss_unreg_objTerrain=%ld miss_unreg_objBuilding=%ld miss_unreg_objOther=%ld miss_special=%ld miss_alarm=%ld miss_lookout=%ld miss_sensor=%ld miss_power=%ld miss_control=%ld miss_mechBay=%ld miss_falling=%ld miss_justCreated=%ld nonNatural=%ld unknown=%ld updated=%ld bldg_candidates=%ld bldg_skipped=%ld bldg_miss_notStaticNow=%ld\n",
 					             staticDiagFrame, eligibleStaticNatural, staticNaturalCandidates, skippedStaticNatural,
 					             fallingNaturalUpdated, justCreatedNaturalUpdated,
 					             missNotStaticNow, missStaticNotRegistered, missStaticShapeMismatch,
@@ -2560,7 +2629,8 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 					             missStaticUnregObjTree, missStaticUnregObjTerrain, missStaticUnregObjBuilding, missStaticUnregObjOther,
 					             missSpecial, missAlarm, missLookout, missSensor,
 					             missPower, missControl, missMechBay, missFalling, missJustCreated,
-					             nonNaturalUpdated, unknownUpdated, terrainObjectsUpdated);
+					             nonNaturalUpdated, unknownUpdated, terrainObjectsUpdated,
+					             staticBuildingCandidates, skippedStaticBuildings, missBuildingNotStaticNow);
 					if (!missStaticUnregTypeCounts.empty())
 					{
 						std::vector<std::pair<std::string, long>> topUnregTypes(
