@@ -317,7 +317,25 @@ Note: `DEBUGWINS_print` is already used throughout `code/` (e.g. `code/ablmc2.cp
 
 In `code/missiongui.cpp`, add `#include "tacticaloverview.h"` near the other includes.
 
-At BOTH wheel sites (the `cameraClicked` branch ~3870 and the plain branch ~3896), BEFORE the existing `zoomChoiceOut()/zoomChoiceIn()` calls, forward to the controller. Use the existing zoom-ceiling signal — `eye` is at max zoom-out when a further `ZoomOut` is clamped; for T1 pass `atCeiling=true` unconditionally (refined in Task 3). Example at ~3896:
+**WHEEL-SIGN CONTRACT — verify before wiring (do not change existing zoom direction):**
+```
+Before wiring TacticalOverview::onWheel, verify the existing missiongui wheel sign:
+- which sign currently calls zoomChoiceOut()  (current code: delta > 0)
+- which sign currently calls zoomChoiceIn()   (current code: delta < 0)
+
+Do not change existing wheel zoom direction — keep the zoomChoiceOut/In calls
+exactly as they are.
+
+TacticalOverviewState semantic (canonical, keep the doctest as written):
+  negative delta = zoom out / ENTER overview (raise t)
+  positive delta = zoom in  / EXIT  overview (lower t)
+
+If GameOS getMouseWheelDelta() reports the OPPOSITE sign at this site
+(i.e. delta > 0 is the zoom-OUT notch, since current code calls zoomChoiceOut on
+delta > 0), translate the sign ONCE at the missiongui boundary before calling
+onWheel — pass `-mouseWheelDelta`. Do NOT flip the state-module convention.
+```
+At BOTH wheel sites (the `cameraClicked` branch ~3870 and the plain branch ~3896), BEFORE the existing `zoomChoiceOut()/zoomChoiceIn()` calls, forward to the controller. **In T1, pass `atCeiling=false`** — the real ceiling test does not exist until Task 3, and faking `atCeiling=true` would let wheel-past-ceiling mutate `t` with the flag on before the gate is real. With `atCeiling=false`, T1 wheel is inert; only the hotkey/debug path exercises `t`. Example at ~3896 (note the boundary sign-translate — adjust per the verified sign above):
 ```cpp
     long mouseWheelDelta = userInput->getMouseWheelDelta();
     if (mouseWheelDelta)
@@ -325,7 +343,10 @@ At BOTH wheel sites (the `cameraClicked` branch ~3870 and the plain branch ~3896
         // Tactical overview: feed the blend-state. worldOwnsWheel is true here
         // because this branch runs only when mission world input owns the wheel
         // (UI panels consume the wheel before reaching this handler).
-        g_tacticalOverview.onWheel(mouseWheelDelta, /*atCeiling=*/true,
+        // Sign: current code calls zoomChoiceOut() on delta > 0, so the zoom-OUT
+        // notch is positive here; negate to match the state convention
+        // (negative = zoom out = enter overview). T1: atCeiling=false (inert).
+        g_tacticalOverview.onWheel(-mouseWheelDelta, /*atCeiling=*/false,
                                    frameLength, /*worldOwnsWheel=*/true);
         if (mouseWheelDelta > 0) zoomChoiceOut(); else zoomChoiceIn();
         ...
@@ -394,6 +415,8 @@ private:
         bool  valid = false;
         float altitude = 0.0f;
         float rotation = 0.0f;
+        float tilt     = 0.0f;   // captured gameplay tilt — REQUIRED; tilt lerps
+                                 // from this toward overview tilt, never from 0.
         // position captured via Camera::getPosition(); stored as 3 floats to
         // keep this header engine-free.
         float posX = 0.0f, posY = 0.0f, posZ = 0.0f;
@@ -425,6 +448,7 @@ void TacticalOverview::driveCamera(Camera* eye) {
         returnSnap_.valid = true;
         returnSnap_.altitude = eye->getCameraAltitude();
         returnSnap_.rotation = eye->getCameraRotation();
+        returnSnap_.tilt     = eye->getCameraTilt();   // capture gameplay tilt too
         Stuff::Vector3D p = eye->getPosition();
         returnSnap_.posX = p.x; returnSnap_.posY = p.y; returnSnap_.posZ = p.z;
         userPannedInOverview_ = false;
@@ -435,13 +459,17 @@ void TacticalOverview::driveCamera(Camera* eye) {
         float baseAlt = returnSnap_.altitude;
         float alt = baseAlt + (kOverviewAltitude - baseAlt) * t;
         eye->setCameraAltitude(alt);          // existing setter; clamps internally
-        // Tilt: lerp via the existing tilt API toward steep. Use setCameraTilt if
-        // present; otherwise nudge with tiltUp/tiltDown toward target each frame.
-        eye->setCameraTilt(kOverviewTiltDeg * t);   // confirm exact setter name
+        // Tilt: lerp from the CAPTURED gameplay tilt toward overview tilt.
+        // Do NOT use overviewTilt * t — that starts from 0 and loses the
+        // player's current tilt at t==0+.
+        float baseTilt = returnSnap_.tilt;
+        float tilt = baseTilt + (kOverviewTiltDeg - baseTilt) * t;
+        eye->setCameraTilt(tilt);             // confirm exact setter name
     } else if (returnSnap_.valid) {
         // Fully exited: restore the snapshot unless the user panned in overview.
         if (!userPannedInOverview_) {
             eye->setCameraAltitude(returnSnap_.altitude);
+            eye->setCameraTilt(returnSnap_.tilt);
             eye->setCameraRotation(returnSnap_.rotation, returnSnap_.rotation);
             Stuff::Vector3D p; p.x = returnSnap_.posX; p.y = returnSnap_.posY; p.z = returnSnap_.posZ;
             eye->setPosition(p, /*swoopy=*/false);
@@ -455,7 +483,7 @@ Note: confirm exact camera setter names by grepping `mclib/camera.h` (`setCamera
 
 - [ ] **Step 3: Compute real `atCeiling` and call `driveCamera`**
 
-In `code/missiongui.cpp`, replace the T1 placeholder `atCeiling=true` with a real test (camera at/above its max zoom-out). Grep `mclib/camera.h` for the max-zoom/altitude query; e.g. `eye->getCameraAltitude() >= eye->getMaxCameraAltitude() - epsilon`. Then after the per-frame `advance`, call:
+In `code/missiongui.cpp`, replace the T1 inert `atCeiling=false` with a real test (camera at/above its max zoom-out). Grep `mclib/camera.h` for the max-zoom/altitude query; e.g. `eye->getCameraAltitude() >= eye->getMaxCameraAltitude() - epsilon`. Keep the boundary sign-translate from Task 2 (`-mouseWheelDelta` or as verified). Then after the per-frame `advance`, call:
 ```cpp
     g_tacticalOverview.advance(frameLength);
     g_tacticalOverview.driveCamera(eye);
@@ -746,5 +774,5 @@ git commit -m "feat(overview): default-on cutover after visual gate (T7)"
 ## Self-review notes
 
 - **Spec coverage:** hybrid cross-fade (Tasks 1,3,5), wheel+hotkey activation (Tasks 1–3), unit icons (Task 5), sensor fog+contacts (Task 4 reuses contact-status walk), objectives+nav (Task 4 reuses existing markers), friendly-coverage tint (Task 6), steep-perspective no-ortho (Task 3 envelope), camera-return contract (Task 3), UI-exclusion (Tasks 1–2), read-only enumeration contract (Task 4), tint kill switch (Task 6), perf budget (Task 7), screenshot oracle (Tasks 5–6), env flags + default-OFF→ON (Tasks 2,8), no model fade v1 (kept out of all tasks). All covered.
-- **Open confirmations (grep before coding):** exact camera setter names (`setCameraAltitude`/`setCameraTilt`/`getCameraAltitude`/`getCameraRotation`/max-zoom query) in `mclib/camera.h`; the HUD render call site in `code/missiongui.cpp`; the game CMake source list that names `code/missiongui.cpp`; the `DEBUGWINS_print` header. These are integration lookups, not design gaps.
+- **Open confirmations (grep before coding):** exact camera accessor names (`setCameraAltitude`/`getCameraAltitude`/`setCameraTilt`/`getCameraTilt`/`getCameraRotation`/max-zoom query) in `mclib/camera.h` — if a direct altitude/tilt setter is absent, drive toward target via the existing `ZoomIn/ZoomOut` + `tiltUp/tiltDown` deltas (public-API-only rule holds); the **mouse-wheel sign** at the real missiongui site (Task 2 contract); the HUD render call site in `code/missiongui.cpp`; the game CMake source list that names `code/missiongui.cpp`; the `DEBUGWINS_print` header. These are integration lookups, not design gaps.
 - **Type consistency:** `TacticalOverviewState` API (`t/applyWheel/toggleHotkey/update/iconAlpha/active`) is identical across Tasks 1–3; `TacBlip`/`enumerateTacticalBlips` identical across Tasks 4–6.
