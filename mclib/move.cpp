@@ -26,6 +26,7 @@
 
 #include"gos_profiler.h"
 #include"../GameOS/gameos/gos_terrain_indirect.h"  // PR2c Stage 1c — MarkMineDirty
+#include"move_recon.h"  // MC2_MOVE_RECON per-frame pathfinding cost instrumentation
 
 //---------------------------------------------------------------------------
 // Bounded readPacket helper for GlobalMap::init — refuses to read a packet
@@ -3629,6 +3630,9 @@ long GlobalMap::calcPath (long startArea,
 						  long goalRow,
 						  long goalCol) {
 
+	MoveReconScope _recon_ag(&g_moveRecon_astar_global_ns, &g_moveRecon_frame_astar_global_ns);
+	if (g_moveReconEnabled) g_moveRecon_astar_global_calls++;
+
 	#ifdef _DEBUG
 	//systemHeap->walkHeap(false,false,"GlobalMap:calc BAD HEAP1\n");
 	#endif
@@ -3673,6 +3677,15 @@ long GlobalMap::calcPath (long startArea,
 	const long startDoor = numDoors + DOOR_OFFSET_START;
 	const long goalDoor = numDoors + DOOR_OFFSET_GOAL;
 
+	// MC2_MOVE_RECON: size the per-call FIXED reinit (door-clear O(numDoors) +
+	// gate-scan O(numAreas)) vs the A* search. Default OFF.
+	std::chrono::steady_clock::time_point _ag_pro0;
+	if (g_moveReconEnabled) {
+		_ag_pro0 = std::chrono::steady_clock::now();
+		if ((uint64_t)numDoors > g_moveRecon_ag_maxNumDoors) g_moveRecon_ag_maxNumDoors = (uint64_t)numDoors;
+		if ((uint64_t)numAreas > g_moveRecon_ag_maxNumAreas) g_moveRecon_ag_maxNumAreas = (uint64_t)numAreas;
+	}
+
 	//---------------------------------------------
 	// Clear the doors and prep 'em for the calc...
 	long initHPrime = ZeroHPrime ? 0 : HPRIME_NOT_CALCED;
@@ -3699,6 +3712,7 @@ long GlobalMap::calcPath (long startArea,
 
 	for (long i = 0; i < numAreas; i++)
 		if (areas[i].type == AREA_TYPE_GATE) {
+			if (g_moveReconEnabled) g_moveRecon_ag_gatesScanned++;
 			if ((areas[i].teamID == moverTeamID) || (areas[i].teamID == -1)) {
 				if (areas[i].ownerWID > 0) {
 					if (isGateDisabledCallback(areas[i].ownerWID))
@@ -3721,6 +3735,16 @@ long GlobalMap::calcPath (long startArea,
 
 	//-----------------------------------------------
 	// Put the START vertex on the empty OPEN list...
+	// MC2_MOVE_RECON: close prologue, open search timer.
+	std::chrono::steady_clock::time_point _ag_srch0;
+	if (g_moveReconEnabled) {
+		auto _now = std::chrono::steady_clock::now();
+		uint64_t _pro = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(_now - _ag_pro0).count();
+		g_moveRecon_ag_prologue_ns += _pro;
+		if (_pro > g_moveRecon_ag_max_prologue_ns) g_moveRecon_ag_max_prologue_ns = _pro;
+		_ag_srch0 = _now;
+	}
+
 	PQNode initialVertex;
 	initialVertex.key = 0;
 	initialVertex.id = startDoor;
@@ -3743,6 +3767,7 @@ long GlobalMap::calcPath (long startArea,
 		// Grab the best node...
 		PQNode bestPQNode;
 		openList->remove(bestPQNode);
+		if (g_moveReconEnabled) g_moveRecon_ag_nodesPopped++;
 		long bestDoor = bestPQNode.id;
 		GlobalMapDoorPtr bestMapDoor = &doors[bestDoor];
 		const DoorInfoLinksPtr& bestMapDoor_links = doors_links[bestDoor];
@@ -3886,6 +3911,14 @@ long GlobalMap::calcPath (long startArea,
 				}
 			}
 		}
+	}
+
+	// MC2_MOVE_RECON: close search timer.
+	if (g_moveReconEnabled) {
+		uint64_t _srch = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(
+			std::chrono::steady_clock::now() - _ag_srch0).count();
+		g_moveRecon_ag_search_ns += _srch;
+		if (_srch > g_moveRecon_ag_max_search_ns) g_moveRecon_ag_max_search_ns = _srch;
 	}
 
 	resetStartDoor(startArea);
@@ -5223,6 +5256,9 @@ inline void MoveMap::propogateCostJUMP (long r, long c, long cost, long g) {
 //#define DEBUG_MOVE_MAP
 
 long MoveMap::calcPath (MovePathPtr path, Stuff::Vector3D* goalWorldPos, int* goalCell) {
+
+	MoveReconScope _recon_al(&g_moveRecon_astar_local_ns, &g_moveRecon_frame_astar_local_ns);
+	if (g_moveReconEnabled) g_moveRecon_astar_local_calls++;
 
 	#ifdef TIME_PATH
 		L_INTEGER calcStart, calcStop;
