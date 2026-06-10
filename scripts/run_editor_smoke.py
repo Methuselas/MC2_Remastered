@@ -40,6 +40,9 @@ import time
 from pathlib import Path
 
 DEFAULT_EXE = r"A:\Games\mc2-opengl\mc2-win64-0.4c\Mission Editor.exe"
+
+# Run the editor window minimized/non-activating during smoke (set from --minimized).
+MINIMIZED = True
 # Strong crash signatures only -- the editor trace log is verbose, so weak tokens
 # like "FAILED"/"assert"/"STOP(" would false-positive. A load failure is already
 # caught by rc!=0 (the editor exit(1)s under -exit-on-load-fail).
@@ -108,11 +111,22 @@ def run_case(name: str, exe: Path, deploy: Path, exit_sec: int, timeout: int,
     env = dict(os.environ)
     env["MC2_EDITOR_TRACE"] = "1"
 
-    print(f"[case {name}] launch: {' '.join(extra_flags) or '(gen-map only)'}  exit_sec={exit_sec}")
+    # Launch minimized + non-activating so the smoke does not steal focus or pop a
+    # window over the user's work. The editor's MFC main frame honors nCmdShow from
+    # the process STARTUPINFO on its first ShowWindow, and the GL viewport is a child
+    # of that frame, so the whole editor comes up minimized.
+    startupinfo = None
+    if MINIMIZED and os.name == "nt":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = 7  # SW_SHOWMINNOACTIVE
+
+    print(f"[case {name}] launch: {' '.join(extra_flags) or '(gen-map only)'}  exit_sec={exit_sec}"
+          f"{'  [minimized]' if startupinfo else ''}")
     t0 = time.time()
     timed_out = False
     try:
-        proc = subprocess.Popen(argv, cwd=str(deploy), env=env,
+        proc = subprocess.Popen(argv, cwd=str(deploy), env=env, startupinfo=startupinfo,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         try:
             out, _ = proc.communicate(timeout=timeout)
@@ -214,7 +228,14 @@ def main() -> int:
     ap.add_argument("--timeout", type=int, default=180, help="per-case timeout seconds (hard backstop)")
     ap.add_argument("--case", action="append", help="run only these cases (repeatable)")
     ap.add_argument("--keep-logs", action="store_true", help="copy each case's editor-startup.log into the report dir")
+    ap.add_argument("--minimized", dest="minimized", action="store_true", default=True,
+                    help="launch the editor minimized/non-activating (default; Windows only)")
+    ap.add_argument("--no-minimized", dest="minimized", action="store_false",
+                    help="launch the editor with a normal visible window")
     args = ap.parse_args()
+
+    global MINIMIZED
+    MINIMIZED = args.minimized
 
     exe = Path(args.exe)
     deploy = exe.parent
