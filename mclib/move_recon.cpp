@@ -70,10 +70,103 @@ uint64_t g_rect1_nodes        = 0;
 uint64_t g_rect2_nodes        = 0;
 uint64_t g_rect_maxReductPct1 = 0;
 
+uint64_t g_pcache_calls               = 0;
+uint64_t g_pcache_would_hits          = 0;
+uint64_t g_pcache_nodes_total         = 0;
+uint64_t g_pcache_nodes_saved         = 0;
+uint64_t g_pcache_max_burst_saved     = 0;
+uint64_t g_pcache_same_path_hits      = 0;
+uint64_t g_pcache_path_mismatch       = 0;
+uint64_t g_pcache_mover_here_touched  = 0;
+uint64_t g_pcache_mover_here_diverged = 0;
+uint64_t g_pcache_max_frame_gap       = 0;
+
 // Threshold: only sample the expensive tail (the 2ms Warrior.Path calls).
 static const int CHUNK_SHADOW_MIN_NODES = 200;
 static const int CHUNK_SHADOW_CHUNK_SIZE = 16;
 static int s_chunkShadowSamplePrints = 0;  // cap verbose per-call lines
+
+// Recent finished-search cache (key = start+goal cells). Exact key compare;
+// hash only summarizes the path for divergence checks.
+namespace {
+    struct PCacheEntry {
+        int sr, sc, gr, gc;
+        uint64_t pathHash, moverHereHash, nodes, frame;
+        bool valid;
+    };
+    static const int PCACHE_SIZE = 128;
+    static PCacheEntry s_pcache[PCACHE_SIZE];
+    // Burst tracking: consecutive same-key calls.
+    static int s_pcLastSr = -1, s_pcLastSc = -1, s_pcLastGr = -1, s_pcLastGc = -1;
+    static uint64_t s_pcBurstSaved = 0;
+    static int s_pcBurstPrints = 0;
+}
+
+void moveReconPathCacheSample(int startR, int startC, int goalR, int goalC,
+                             int pathLen, unsigned long long nodes,
+                             unsigned long long pathHash, unsigned long long moverHereHash,
+                             unsigned long long frame)
+{
+    if (!g_moveReconEnabled || nodes < (unsigned long long)CHUNK_SHADOW_MIN_NODES || pathLen <= 0)
+        return;
+
+    g_pcache_calls++;
+    g_pcache_nodes_total += nodes;
+
+    // Lookup exact (start,goal) key.
+    int slot = -1, freeSlot = -1;
+    for (int i = 0; i < PCACHE_SIZE; i++) {
+        if (!s_pcache[i].valid) { if (freeSlot < 0) freeSlot = i; continue; }
+        if (s_pcache[i].sr == startR && s_pcache[i].sc == startC &&
+            s_pcache[i].gr == goalR && s_pcache[i].gc == goalC) { slot = i; break; }
+    }
+
+    bool sameKeyAsLast = (startR == s_pcLastSr && startC == s_pcLastSc &&
+                          goalR == s_pcLastGr && goalC == s_pcLastGc);
+
+    if (slot >= 0) {
+        // Would-be cache hit.
+        g_pcache_would_hits++;
+        g_pcache_nodes_saved += nodes;  // a hit skips THIS search's work
+        g_pcache_mover_here_touched++;  // path always crosses cells we read occupancy on
+        if (pathHash == s_pcache[slot].pathHash) g_pcache_same_path_hits++;
+        else                                     g_pcache_path_mismatch++;
+        if (moverHereHash != s_pcache[slot].moverHereHash) g_pcache_mover_here_diverged++;
+        uint64_t gap = (frame >= s_pcache[slot].frame) ? (frame - s_pcache[slot].frame) : 0;
+        if (gap > g_pcache_max_frame_gap) g_pcache_max_frame_gap = gap;
+
+        if (sameKeyAsLast) {
+            s_pcBurstSaved += nodes;
+            if (s_pcBurstSaved > g_pcache_max_burst_saved) g_pcache_max_burst_saved = s_pcBurstSaved;
+        } else {
+            s_pcBurstSaved = nodes;
+        }
+        if (s_pcBurstPrints < 30) {
+            s_pcBurstPrints++;
+            std::printf("[MOVE_PATH_CACHE_BURST v1] frame=%llu key=(%d,%d)->(%d,%d) "
+                "nodes_repeated=%llu would_saved=%llu path_match=%d mover_diverged=%d frame_gap=%llu\n",
+                frame, startR, startC, goalR, goalC, nodes, (unsigned long long)s_pcBurstSaved,
+                (pathHash == s_pcache[slot].pathHash) ? 1 : 0,
+                (moverHereHash != s_pcache[slot].moverHereHash) ? 1 : 0, (unsigned long long)gap);
+            std::fflush(stdout);
+        }
+    } else {
+        s_pcBurstSaved = 0;  // miss resets the burst
+        if (slot < 0 && freeSlot < 0) freeSlot = (int)(g_pcache_calls % PCACHE_SIZE);  // evict
+        slot = freeSlot;
+    }
+
+    // Insert / refresh entry.
+    s_pcache[slot].sr = startR; s_pcache[slot].sc = startC;
+    s_pcache[slot].gr = goalR;  s_pcache[slot].gc = goalC;
+    s_pcache[slot].pathHash = pathHash;
+    s_pcache[slot].moverHereHash = moverHereHash;
+    s_pcache[slot].nodes = nodes;
+    s_pcache[slot].frame = frame;
+    s_pcache[slot].valid = true;
+
+    s_pcLastSr = startR; s_pcLastSc = startC; s_pcLastGr = goalR; s_pcLastGc = goalC;
+}
 
 void moveReconChunkSample(int startR, int startC, int goalR, int goalC,
                           unsigned long long nodes, int pathLen,
@@ -284,6 +377,28 @@ void moveReconEmit()
         (unsigned long long)g_chunkShadow_inside2, (unsigned long long)g_rect2_nodes, (unsigned long long)red2, (unsigned long long)fb2,
         (unsigned long long)g_rect_maxReductPct1);
     std::fflush(stdout);
+
+    uint64_t hitRate = (g_pcache_calls ? g_pcache_would_hits * 100 / g_pcache_calls : 0);
+    std::printf(
+        "[MOVE_PATH_CACHE_SHADOW v1] event=shutdown"
+        " calls=%llu would_hits=%llu would_hit_rate_pct=%llu"
+        " nodes_total=%llu nodes_saved=%llu max_burst_saved=%llu"
+        " same_path_hits=%llu path_mismatch=%llu"
+        " mover_here_touched=%llu mover_here_diverged=%llu"
+        " max_frame_gap=%llu (node_threshold=%d cache_size=%d)\n",
+        (unsigned long long)g_pcache_calls,
+        (unsigned long long)g_pcache_would_hits,
+        (unsigned long long)hitRate,
+        (unsigned long long)g_pcache_nodes_total,
+        (unsigned long long)g_pcache_nodes_saved,
+        (unsigned long long)g_pcache_max_burst_saved,
+        (unsigned long long)g_pcache_same_path_hits,
+        (unsigned long long)g_pcache_path_mismatch,
+        (unsigned long long)g_pcache_mover_here_touched,
+        (unsigned long long)g_pcache_mover_here_diverged,
+        (unsigned long long)g_pcache_max_frame_gap,
+        CHUNK_SHADOW_MIN_NODES, PCACHE_SIZE);
+    std::fflush(stdout);
 }
 
 // -----------------------------------------------------------------------
@@ -296,10 +411,12 @@ void moveReconFrameTick()
     if (!s_initialized) {
         s_initialized = true;
         const char* env = std::getenv("MC2_MOVE_RECON");
-        const char* env2 = std::getenv("MC2_MOVE_CHUNK_SHADOW");  // alt enable
+        const char* env2 = std::getenv("MC2_MOVE_CHUNK_SHADOW");       // alt enable
+        const char* env3 = std::getenv("MC2_MOVE_PATH_CACHE_SHADOW");  // alt enable
         g_moveReconEnabled =
             (env  != nullptr && env[0]  != '\0' && env[0]  != '0') ||
-            (env2 != nullptr && env2[0] != '\0' && env2[0] != '0');
+            (env2 != nullptr && env2[0] != '\0' && env2[0] != '0') ||
+            (env3 != nullptr && env3[0] != '\0' && env3[0] != '0');
         if (g_moveReconEnabled && !s_atexitRegistered) {
             std::atexit(moveReconEmit);
             s_atexitRegistered = true;

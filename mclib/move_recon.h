@@ -111,6 +111,32 @@ void moveReconFrameTick();
 // atexit handler — prints shutdown summary to stdout.
 void moveReconEmit();
 
+// SAME-QUERY-CACHE SHADOW (recon only, no behavior change). The expensive wave
+// is the SAME local path recomputed 5-6x (lance replan burst). This measures the
+// would-be cache hit-rate + nodes saved, and probes correctness: whether the
+// MOVER_HERE (dynamic occupancy) signature along the path DIVERGED between two
+// same-key calls -- if it never diverges, a (start,goal,passGen)-keyed cache is
+// safe; if it does, dynamic occupancy must be in the key (or paths that touched
+// it excluded). Never returns a cached result. Threshold-filtered to the tail.
+extern uint64_t g_pcache_calls;             // expensive local calls seen
+extern uint64_t g_pcache_would_hits;        // key matched a prior entry
+extern uint64_t g_pcache_nodes_total;       // sum nodes (expensive)
+extern uint64_t g_pcache_nodes_saved;       // sum nodes a hit would have skipped
+extern uint64_t g_pcache_max_burst_saved;   // most nodes saved in one key-burst
+extern uint64_t g_pcache_same_path_hits;    // hit AND identical path bytes
+extern uint64_t g_pcache_path_mismatch;     // hit BUT path differed (same key!)
+extern uint64_t g_pcache_mover_here_touched;// hits where path crossed MOVER_HERE
+extern uint64_t g_pcache_mover_here_diverged;// hits where MOVER_HERE sig changed
+extern uint64_t g_pcache_max_frame_gap;     // worst staleness (frames) of a hit
+
+// Sample one finished local search for the cache shadow. pathHash = FNV of path
+// cells; moverHereHash = FNV of (cell, MOVER_HERE bit) along the path; frame =
+// g_moveRecon_frames. No-op when off / below threshold / no path (pathLen<=0).
+void moveReconPathCacheSample(int startR, int startC, int goalR, int goalC,
+                             int pathLen, unsigned long long nodes,
+                             unsigned long long pathHash, unsigned long long moverHereHash,
+                             unsigned long long frame);
+
 // Return-safe per-call local-A* node counter. Increment .n per node popped;
 // on destruction folds the count into the totals + rolling max. No-op when off.
 struct MoveReconNodeCounter {

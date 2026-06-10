@@ -5554,6 +5554,10 @@ long MoveMap::calcPath (MovePathPtr path, Stuff::Vector3D* goalWorldPos, int* go
 		int numCells = 0;
 		// MOVE_CHUNK_SHADOW: final-path cell bbox (seed at goal end).
 		int _shFMinR = bestRow, _shFMaxR = bestRow, _shFMinC = bestCol, _shFMaxC = bestCol;
+		// MOVE_PATH_CACHE_SHADOW: FNV-1a hashes of the path cells and the
+		// MOVER_HERE (dynamic occupancy) bit along the path.
+		unsigned long long _shPathHash = 14695981039346656037ull;
+		unsigned long long _shMoverHash = 14695981039346656037ull;
 		while ((curRow != startR) || (curCol != startC)) {
 			numCells += 1;
 			int cellOffsetIndex = (map[mapRowStartTable[curRow] + curCol].parent << 1);
@@ -5564,16 +5568,23 @@ long MoveMap::calcPath (MovePathPtr path, Stuff::Vector3D* goalWorldPos, int* go
 			if (g_moveReconEnabled) {
 				if (curRow < _shFMinR) _shFMinR = curRow; else if (curRow > _shFMaxR) _shFMaxR = curRow;
 				if (curCol < _shFMinC) _shFMinC = curCol; else if (curCol > _shFMaxC) _shFMaxC = curCol;
+				unsigned long long cellKey = ((unsigned long long)(unsigned)curRow << 16) ^ (unsigned)curCol;
+				_shPathHash = (_shPathHash ^ cellKey) * 1099511628211ull;
+				unsigned long long mh = (map[mapRowStartTable[curRow] + curCol].flags & MOVEFLAG_MOVER_HERE) ? 1ull : 0ull;
+				_shMoverHash = (_shMoverHash ^ (cellKey * 2 + mh)) * 1099511628211ull;
 			}
 		}
 
 		// MOVE_CHUNK_SHADOW: test whether this final path fits a coarse chunk
 		// corridor (rectangular proxy). No-op when off / below node threshold.
-		if (g_moveReconEnabled)
+		if (g_moveReconEnabled) {
 			moveReconChunkSample(startR, startC, goalR, goalC, _aln.n, numCells,
 				_shPMinR, _shPMaxR, _shPMinC, _shPMaxC,
 				_shFMinR, _shFMaxR, _shFMinC, _shFMaxC,
 				_shInRect0, _shInRect1, _shInRect2);
+			moveReconPathCacheSample(startR, startC, goalR, goalC, numCells, _aln.n,
+				_shPathHash, _shMoverHash, g_moveRecon_frames);
+		}
 
 		//---------------------------------------------------------------
 		// If our goal is a door, the path will be one step longer, since
