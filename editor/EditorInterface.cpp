@@ -77,6 +77,7 @@
 #include "EditorDebugOverlay.h"
 #include "SceneOutliner.h"
 #include "InspectorPanel.h"
+#include "AssetBrowser.h"
 #include "gameplay_pick.h"  // tryGameplayPick: shared pick spine, no game-object deps
 #include "gameos.hpp"       // gos_GetViewport, Environment (drawableWidth/Height)
 #include "gos_render.h"     // graphics::make_current_context
@@ -4564,6 +4565,11 @@ void EditorInterface::renderToolbarImGui()
 	if (ImGui::Button("Inspector", ImVec2(-1.f, 0.f)))
 		InspectorPanel::Toggle();
 	InspectorPanel::Draw();
+
+	// Asset Browser Lite — searchable object catalog; click to start placing.
+	if (ImGui::Button("Asset Browser", ImVec2(-1.f, 0.f)))
+		AssetBrowser::Toggle();
+	AssetBrowser::Draw();
 
 	ImGui::Separator();
 
