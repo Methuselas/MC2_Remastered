@@ -417,6 +417,7 @@
 #define ID_CA_SAVE_AS_BUTTON            2030
 #define IDC_MI_SELECTION_SCREEN         2030
 #define IDC_MI_MOD_COMBO                1465
+#define IDC_MI_RECENT_COMBO             1466
 #define ID_CA_EXIT                      2031
 #define IDC_GR_LABEL_EDIT               2032
 #define ID_CA_SAVE_BUTTON               2032

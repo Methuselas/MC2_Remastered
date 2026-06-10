@@ -75,7 +75,17 @@ void AppearanceType::init (const char *fileName)
 	FitIniFile iniFile;
 	long result = iniFile.open(iniName);
 	if (result != NO_ERR)
-		STOP(("Could not find appearance INI file %s",iniName));
+	{
+		// Missing appearance INI (e.g. a mod mission referencing an asset not in the
+		// active install). STOP() is a NO-OP in RelWithDebInfo, so the old code fell
+		// through into seekBlock()/readIdLong() on an UNOPENED FitIniFile and CTD'd.
+		// Bail with default type bounds instead of crashing -- the editor stays alive
+		// and the appearance just gets default selection bounds. (Game ships all
+		// assets, so it never reaches this; game behavior unchanged.)
+		designerTypeBounds = false;
+		PAUSE(("AppearanceType: missing appearance INI %s -- using default bounds", (const char*)iniName));
+		return;
+	}
 		
 	result = iniFile.seekBlock("3DBounds");
 	if (result == NO_ERR)
@@ -133,7 +143,17 @@ void AppearanceType::reinit (void)
 	FitIniFile iniFile;
 	long result = iniFile.open(iniName);
 	if (result != NO_ERR)
-		STOP(("Could not find appearance INI file %s",iniName));
+	{
+		// Missing appearance INI (e.g. a mod mission referencing an asset not in the
+		// active install). STOP() is a NO-OP in RelWithDebInfo, so the old code fell
+		// through into seekBlock()/readIdLong() on an UNOPENED FitIniFile and CTD'd.
+		// Bail with default type bounds instead of crashing -- the editor stays alive
+		// and the appearance just gets default selection bounds. (Game ships all
+		// assets, so it never reaches this; game behavior unchanged.)
+		designerTypeBounds = false;
+		PAUSE(("AppearanceType: missing appearance INI %s -- using default bounds", (const char*)iniName));
+		return;
+	}
 		
 	result = iniFile.seekBlock("3DBounds");
 	if (result == NO_ERR)

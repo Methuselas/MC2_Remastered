@@ -76,6 +76,7 @@
 #include "EditorTaskRunner.h"
 #include "EditorDebugOverlay.h"
 #include "ModPicker.h"
+#include "EditorRecent.h"
 #include "SceneOutliner.h"
 #include "InspectorPanel.h"
 #include "AssetBrowser.h"
@@ -431,6 +432,25 @@ void Editor::init( char* loader )
 				else
 				{
 					resolved = true;
+
+					// Recent-mission shortcut: the startup dialog put the chosen path
+					// here, so load it directly and skip the file browser. Falls back to
+					// browse when empty.
+					extern std::string g_editorPreselectMission;
+					if ( !g_editorPreselectMission.empty() )
+					{
+						std::string preset = g_editorPreselectMission;
+						g_editorPreselectMission.clear();
+						if (EditorInterface::instance()) EditorInterface::instance()->SetBusyMode();
+						bOK = EditorData::initTerrainFromPCV( preset.c_str() );
+						if (EditorInterface::instance()) EditorInterface::instance()->UnsetBusyMode();
+						if ( bOK )
+							EditorRecent::Push( preset.c_str() );
+						else
+							resolved = false;   // re-show the startup dialog on failure
+					}
+					else
+					{
 					CFileDialog fileDlg( 1,  "pak", NULL, OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR, szPAKFilter );
 					fileDlg.m_ofn.lpstrInitialDir = missionPath;
 
@@ -446,7 +466,7 @@ void Editor::init( char* loader )
 								else
 								{
 								}
-							const char* pFile = fileDlg.m_ofn.lpstrFile;		
+							const char* pFile = fileDlg.m_ofn.lpstrFile;
 							bOK = EditorData::initTerrainFromPCV( pFile );
 							if (EditorInterface::instance())
 								{
@@ -455,12 +475,15 @@ void Editor::init( char* loader )
 								else
 								{
 								}
+							if ( bOK )
+								EditorRecent::Push( pFile );
 						}
 						else
-						{	
+						{
 							resolved = false;
 							break;
 						}
+					}
 					}
 				}
 			}
@@ -4606,6 +4629,29 @@ void EditorInterface::renderToolbarImGui()
 
 	// Debug overlay control panel (chunk/superchunk grid toggles + stats).
 	EditorDebugOverlay::RenderImGui();
+
+	// Always-on status HUD (top-left): at-a-glance editor state. No input, click-through.
+	{
+		ImGui::SetNextWindowPos( ImVec2( 8.f, 8.f ), ImGuiCond_Always );
+		ImGui::SetNextWindowBgAlpha( 0.35f );
+		ImGuiWindowFlags hudFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoNav |
+			ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+			ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoInputs;
+		if ( ImGui::Begin( "##statushud", nullptr, hudFlags ) )
+		{
+			const char* mod = ModPicker::ActiveMod();
+			ImGui::Text( "Mod: %s", ( mod && mod[0] ) ? mod : "None (stock)" );
+			if ( land && Terrain::realVerticesMapSide > 1 )
+				ImGui::Text( "Terrain: %ld x %ld", Terrain::realVerticesMapSide, Terrain::realVerticesMapSide );
+			else
+				ImGui::TextDisabled( "Terrain: (none)" );
+			int selCount = EditorObjectMgr::instance() ? EditorObjectMgr::instance()->getSelectionCount() : 0;
+			ImGui::Text( "Selected: %d", selCount );
+			ImGui::Text( "Foliage: %d", FoliageRender::Count() );
+			ImGui::Text( "%.0f fps", ImGui::GetIO().Framerate );
+		}
+		ImGui::End();
+	}
 
 	// Scene Outliner Lite — read-only list of placed objects, click-to-select.
 	if (ImGui::Button("Scene Outliner", ImVec2(-1.f, 0.f)))

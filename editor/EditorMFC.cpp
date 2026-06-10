@@ -187,6 +187,7 @@ static void EarlyTraceBegin()
 #include "InspectorPanel.h"
 #include "AssetBrowser.h"
 #include "MissionValidation.h"
+#include "ModPicker.h"
 #include "resource.h"   // ID_FOLIAGE_* for the -smoke-foliage-menu WM_COMMAND drive
 
 // -- S-CLI parser ------------------------------------------------------------
@@ -404,6 +405,32 @@ BOOL EditorMFCApp::InitInstance()
 	fprintf(stderr, "[EDITOR_CLI v1] event=parsed mission=\"%s\" frames=%ld exit_on_load_fail=%d\n",
 		g_cliMissionPath.c_str(), g_cliFramesLimit, g_cliExitOnLoadFail ? 1 : 0);
 	fflush(stderr);
+
+	// Empty-install guard: an editor run from an asset-less install (no data/tgl/*.ini)
+	// with no mod active will CTD the moment it loads any real mission's mechs/objects.
+	// Warn up front instead of letting the user chase a mysterious crash (this exact
+	// trap cost a long debug detour: the 0.4c editor install ships 0 tgl appearances).
+	{
+		const char* am = ModPicker::ActiveMod();
+		bool modActive = (am && am[0]);
+
+		WIN32_FIND_DATAA fd;
+		HANDLE h = FindFirstFileA("data\\tgl\\*.ini", &fd);
+		bool hasTgl = (h != INVALID_HANDLE_VALUE);
+		if (h != INVALID_HANDLE_VALUE) FindClose(h);
+
+		if (!hasTgl && !modActive)
+		{
+			EarlyTrace("InitInstance: WARNING data/tgl is empty and no mod active -- mission loads will likely CTD");
+			if (g_cliExitAfterSec <= 0)   // interactive only; never block a headless smoke
+				::MessageBoxA(NULL,
+					"This install has no game assets in data\\tgl.\n\n"
+					"Loading a stock mission will crash. Either run the editor from a "
+					"complete install, or pick a Mod in the startup dialog so its assets "
+					"are mounted.",
+					"Mission Editor -- no assets found", MB_OK | MB_ICONWARNING);
+		}
+	}
 
 	// Start the smoke driver thread NOW (before the blocking init/gen/save on the
 	// main thread) so it can auto-dismiss modals throughout and enforce the timed

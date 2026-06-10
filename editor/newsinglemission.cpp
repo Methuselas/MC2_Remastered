@@ -9,6 +9,13 @@
 #include "resource.h"
 #include "newsinglemission.h"
 #include "ModPicker.h"
+#include "EditorRecent.h"
+#include <string>
+
+// When the user picks a Recent mission and clicks Edit Mission, this holds the path
+// so EditorInterface loads it directly instead of popping the file dialog. Empty =
+// browse as before. Read+cleared by the ID_LOAD_MISSION branch in EditorInterface.cpp.
+std::string g_editorPreselectMission;
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -74,6 +81,24 @@ BOOL NewSingleMission::OnInitDialog()
 		}
 		combo->SetCurSel( sel );
 	}
+
+	// Recent missions: index 0 = "(browse...)", then most-recent first.
+	CComboBox* recent = (CComboBox*)GetDlgItem( IDC_MI_RECENT_COMBO );
+	if ( recent )
+	{
+		recent->ResetContent();
+		recent->AddString( "(browse for file...)" );
+		for ( int i = 0; i < EditorRecent::Count(); ++i )
+		{
+			const char* p = EditorRecent::Path( i );
+			// Show the file name (after the last slash) to keep the combo readable.
+			const char* base = p;
+			for ( const char* c = p; *c; ++c )
+				if ( *c == '\\' || *c == '/' ) base = c + 1;
+			recent->AddString( base );
+		}
+		recent->SetCurSel( 0 );
+	}
 	return TRUE;
 }
 
@@ -92,6 +117,21 @@ void NewSingleMission::applySelectedMod()
 void NewSingleMission::OnLoadMission()
 {
 	applySelectedMod();
+
+	// If a Recent (index > 0) is chosen, hand its full path to EditorInterface so it
+	// loads directly; otherwise leave empty -> the file-browse dialog runs as before.
+	g_editorPreselectMission.clear();
+	CComboBox* recent = (CComboBox*)GetDlgItem( IDC_MI_RECENT_COMBO );
+	if ( recent )
+	{
+		int sel = recent->GetCurSel();
+		if ( sel > 0 )   // 0 == "(browse...)"
+		{
+			const char* p = EditorRecent::Path( sel - 1 );
+			if ( p && p[0] ) g_editorPreselectMission = p;
+		}
+	}
+
 	EndDialog( ID_LOAD_MISSION );
 }
 
