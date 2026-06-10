@@ -403,12 +403,20 @@ class UserInput
 			mouseDragThreshold = distance;
 		}
 
-		// All mouse position accessors return raw physical screen pixels.
-		// gos_HudInverseMousePoint is intentionally NOT applied here: widget
-		// bounds are stored in physical pixel coords, so raw coords are correct
-		// for both hit-testing and cursor rendering.
-		long getMouseX (void)    { return float2long(mouseXPosition * viewMulX); }
-		long getMouseY (void)    { return float2long(mouseYPosition * viewMulY); }
+		// HIT-TEST accessors (getMouseX/Y): return the AUTHORED pixel coord by
+		// applying gos_HudInverseMousePoint, the inverse of the bottom-band HUD
+		// shrink (s_hud_scale) done in flushHUDBatch. Widget hit-rects are stored
+		// in authored (100%) coords, but the widgets are DRAWN shrunk toward the
+		// bottom-center anchor; without this inverse the user has to click the
+		// un-shrunk corner position instead of where the button is drawn. The
+		// inverse is a no-op outside the rendered bottom band and when the HUD
+		// scale is inactive/1.0, so terrain picking in the upper screen and all
+		// menu/logistics hit-testing are unaffected.
+		long getMouseX (void)    { float x = mouseXPosition * viewMulX, y = mouseYPosition * viewMulY; gos_HudInverseMousePoint(x, y); return float2long(x); }
+		long getMouseY (void)    { float x = mouseXPosition * viewMulX, y = mouseYPosition * viewMulY; gos_HudInverseMousePoint(x, y); return float2long(y); }
+		// RAW accessors (getRawMouseX/Y): true physical screen pixel, never
+		// HUD-inverse-corrected. Used for the cursor sprite draw so the pointer
+		// always sits exactly under the user's hand.
 		long getRawMouseX (void) { return float2long(mouseXPosition * viewMulX); }
 		long getRawMouseY (void) { return float2long(mouseYPosition * viewMulY); }
 		float realMouseX (void)  { return mouseXPosition * viewMulX; }
