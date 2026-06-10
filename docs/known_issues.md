@@ -50,8 +50,14 @@ them. Add new findings as new bullets; remove fixed ones outright (don't append
 - **DEFAULT-ON since 2026-06-09 (`a7b090be`).** The chunk path is now the default
   terrain renderer (single-source gate `mc2TerrainLodChunkEnabled()`); full tier1
   5/5 PASS on the no-flag chunk path. Set `MC2_TERRAIN_LOD_CHUNK=0` for the legacy
-  tessellated path. **EDITOR:** the chunk path in the editor is UNVERIFIED — if it
-  misbehaves, launch the editor with `MC2_TERRAIN_LOD_CHUNK=0`.
+  tessellated path. **EDITOR:** now on the chunk path and rendering correctly (fixed
+  2026-06-10) — the editor frame loop was building the chunk draw commands
+  (`land->render()`) but never submitting them: `Terrain::flushDrawCommands()` lived
+  only in `code/gamecam.cpp:388`, so under the default-on chunk path (which suppresses
+  the legacy per-quad draw) terrain rendered BLACK (only overlays drew). Fixed by
+  mirroring the game's flush in `EditorCamera::render` (after shadow/compass, before
+  `renderLists()`). If terrain misbehaves, `MC2_TERRAIN_LOD_CHUNK=0` still falls back
+  to legacy.
 - The chunk path reached parity with legacy (stitching/shadows/smooth-normal/
   material+colour/concrete+cement-atlas + all ImGui tunables). Full record + the
   3 load-bearing depth/MVP rules:
@@ -63,8 +69,9 @@ them. Add new findings as new bullets; remove fixed ones outright (don't append
   `IsFrameSolidArmed()?getDispatchMvp16():live` — frame N-1 — that water-cull/decals
   use, else a 1-frame offset), and the early-Z violation (bias PRE-DIVIDE in the
   vert, never frag `gl_FragDepth`). All fixed (`4da9cfb1`,`67e4f5e4`).
-- Editor remains on the legacy path (flag-off self-skip); interactive gameplay
-  sanity (picking/gates/turrets) is a pre-cutover check.
+- Editor is now on the chunk path (see EDITOR note above, fixed 2026-06-10);
+  interactive gameplay sanity (picking/gates/turrets) in the editor is still a
+  worthwhile manual check.
 
 ## First-launch / startup
 
