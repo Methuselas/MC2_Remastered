@@ -70,13 +70,29 @@ Implementation notes (load-bearing, learned the hard way):
 - atexit is registered from inside `render()` (a guaranteed-run path), NOT a static-init object — an anonymous-namespace static with only a registration side effect can be elided by MSVC `/OPT:REF`.
 - `MC2_FX_COUNT_LOG` had to be added to the `run_smoke.py` env-propagation whitelist (~line 285) — Popen replaces the child env, so non-whitelisted vars never reach `mc2.exe`.
 
-**Baseline under smoke = all zeros, and that is expected:** the smoke missions are scripted
-idle fly-throughs — player mechs do not walk, jump, or fire, so none of the 11 effect sites
-trigger. Verified mc2_01 AND mc2_24 both → `total=0`. **The FX counter is therefore an oracle for
-INTERACTIVE / combat sessions, not headless smoke.** To capture a non-zero effect baseline, run an
-interactive game session (or a mission script that drives movement + weapons fire) with
-`MC2_FX_COUNT_LOG=1` and read the `event=shutdown` line. The headless smoke value (all-zero) still
-serves as a no-effect regression tripwire on the idle path.
+**Short idle smoke = all zeros (expected):** the default 30s smoke is a near-idle fly-through —
+mechs barely move, so no effect site triggers. Verified mc2_01 + mc2_24 (30s) + mc2_10 (60s) all
+→ `total=0`. The mech-appearance sites only fire on specific states: dust=walking footfall,
+jumpJet=jumping, shoulderBoom/armSmoke=arm blown off, critSmoke/smoke=mech damaged, wake=in water.
+Building/terrain/weapon-impact "fires" go through Carnage/WeaponBolt, NOT these 11 sites.
+
+**REAL non-zero baseline — mc2_17 @ 150s (mech fight starts ~2min):**
+```
+[FX_COUNT v1] event=shutdown total=1307 rDust=0 lDust=0 jump=0 lBoom=0 rBoom=0
+              critSmoke=0 smoke=0 wake=349 heliDust=0 rArmSmoke=0 lArmSmoke=958
+```
+Fight blew left arms off (lArmSmoke=958) + mechs waded water (wake=349). 10593 frames, parity
+intact throughout (MECH_MATERIAL_GPU mechs=34 mismatches=0, RENDER_SNAPSHOT all 0, TEX_RESOLVE 0/0).
+
+Capture recipe for an effect baseline:
+```bash
+MC2_FX_COUNT_LOG=1 py -3 scripts/run_smoke.py --mission mc2_17 --duration 150 --keep-logs
+# mc2_17: mech fight ~2min in (arm-blow + water effects). >2min duration required.
+```
+NOTE: long-duration runs (>30s) report `engine_reported_fail` when the unattended AI **loses the
+mission** — this is a GAMEPLAY outcome, not a renderer regression (verify Δdestroys + parity
+counters, which stay clean). Re-capture after any S1/S2/S6 effect slice; a per-site count
+diverging on the same mission/duration = effect regression.
 
 ## User-visual gate (NOT agent-checkable — needs eyes; smoke emits no screenshots)
 
