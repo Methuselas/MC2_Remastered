@@ -64,6 +64,16 @@ if [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; then
   exit 2
 fi
 
+# The editor targets require MC2_IMGUI=ON (Map Generator dialog + MissionValidator
+# are ImGui-gated and used unconditionally). A build dir configured OFF is the
+# silent-invalid-config trap. Fail early with the fix instead of a confusing
+# mid-compile error.
+if grep -q '^MC2_IMGUI:BOOL=OFF' "$BUILD_DIR/CMakeCache.txt" 2>/dev/null; then
+  echo "check-editor-build: ERROR — '$BUILD_DIR' is configured MC2_IMGUI=OFF; the editor needs ON." >&2
+  echo "  Reconfigure: \"\$CMAKE\" -S . -B $BUILD_DIR -DMC2_IMGUI=ON" >&2
+  exit 2
+fi
+
 echo "check-editor-build: building [${TARGETS[*]}] in '$BUILD_DIR' ($CONFIG)"
 if "$CMAKE" --build "$BUILD_DIR" --config "$CONFIG" --target "${TARGETS[@]}"; then
   echo "check-editor-build: PASS — editor targets compile + link"

@@ -32,6 +32,15 @@ foreach(_editor_bridge_source IN LISTS EDITOR_BRIDGE_SOURCES)
     endif()
 endforeach()
 
+# The editor's Map Generator dialog + MissionValidator are ImGui-gated and used
+# UNCONDITIONALLY in EditorInterface.cpp, so EditRel cannot build with MC2_IMGUI
+# OFF. This is the silent-invalid-config trap (build64 was configured OFF and the
+# editor target simply did not compile). Fail loudly at configure time instead.
+if(NOT MC2_IMGUI)
+    message(FATAL_ERROR
+        "Editor (EditRel) requires MC2_IMGUI=ON. Re-run cmake with -DMC2_IMGUI=ON.")
+endif()
+
 add_executable(EditRel WIN32
     ${EDITOR_SOURCES}
     ${EDITOR_HEADERS}
