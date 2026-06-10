@@ -284,6 +284,14 @@ void Editor::init( char* loader )
 		mPath.init("", g_cliMissionPath.c_str(), "");
 	}
 
+	// CLI auto-generate paths (-gen-map / -new-map) leave g_cliMissionPath empty,
+	// so without this they fall into the interactive NewSingleMission chooser below
+	// -- a modal with its own message pump that OnIdle never breaks out of, hanging
+	// any headless/automated launch. Skip the chooser and let the OnIdle auto-load
+	// hook (EditorMFC.cpp) run generateMission/initTerrainFromTGA on first idle.
+	extern bool g_cliGenMap;
+	extern bool g_cliNewMap;
+
 	bool bCanceled = false;
 	if (!justResaveAllMaps)
 	{
@@ -293,7 +301,11 @@ void Editor::init( char* loader )
 		{
 			bOK = EditorData::initTerrainFromPCV(mPath);
 		}
-		else 
+		else if (g_cliGenMap || g_cliNewMap)
+		{
+			bOK = true;   // defer to the OnIdle auto-generate hook; no modal
+		}
+		else
 		{
 			NewSingleMission dlg;
 			bool resolved = false;

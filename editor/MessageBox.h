@@ -30,8 +30,17 @@ MessageBox:
 **************************************************************************************************/
 extern HSTRRES gameResourceHandle;
 
+// Smoke/headless mode (EditorMFC.cpp). When set, every editor modal is suppressed
+// and answered IDOK -- a headless run has no one to click, and the save path in
+// particular raises validation warnings (no units / no players) that would hang
+// it forever. This is the single-point gate for all EMessageBox callers.
+extern bool g_cliSuppressModals;
+
 inline int EMessageBox(int MessageID, int CaptionID,DWORD dwS )
 {
+	if (g_cliSuppressModals)
+		return IDOK;
+
 	char buffer[512];
 	char bufferCaption[512];
 

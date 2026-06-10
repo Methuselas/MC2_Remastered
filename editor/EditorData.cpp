@@ -110,6 +110,10 @@ extern bool justResaveAllMaps;
 
 EditorData* EditorData::instance = NULL;
 
+// Set by the smoke CLI (EditorMFC.cpp). When true, auto-run-path failure modals
+// are suppressed (logged instead) so a headless run cannot hang on AfxMessageBox.
+extern bool g_cliSuppressModals;
+
 char missionScriptName[1024]="M0101";
 
 bool MissionSettings::save( FitIniFile* file )
@@ -378,7 +382,7 @@ bool EditorData::initTerrainFromPCV( const char* fileName )
 		sprintf( buffer2, buffer, lowerFileName );
 		//MessageBox( NULL, buffer2, NULL, MB_OK );
 		/*I think MessageBox() would not be modal wrt the application.*/
-		AfxMessageBox(buffer2);
+		if (!g_cliSuppressModals) AfxMessageBox(buffer2);
 		EditorInterface::instance()->UnsetBusyMode();
 		bIsLoading = false;
 		return false;
@@ -405,7 +409,7 @@ bool EditorData::initTerrainFromPCV( const char* fileName )
 		sprintf( buffer2, buffer, camFileName );
 		//MessageBox( NULL, buffer2, NULL, MB_OK );
 		/*I think MessageBox() would not be modal wrt the application.*/
-		AfxMessageBox(buffer2);
+		if (!g_cliSuppressModals) AfxMessageBox(buffer2);
 		EditorInterface::instance()->UnsetBusyMode();
 		bIsLoading = false;
 		return false;
@@ -1273,7 +1277,7 @@ bool EditorData::generateMission( int mapSize, int terrain, unsigned long seed )
 	FILE* rf = fopen( recipePath, "wb" );
 	if ( !rf )
 	{
-		AfxMessageBox( "Generate Mission: could not write recipe file." );
+		if (!g_cliSuppressModals) AfxMessageBox( "Generate Mission: could not write recipe file." );
 		return false;
 	}
 	fprintf( rf, "{\"version\":1,\"name\":\"%s\",\"size\":%d,\"biome\":\"%s\",\"seed\":%lu}\n",
@@ -1289,7 +1293,7 @@ bool EditorData::generateMission( int mapSize, int terrain, unsigned long seed )
 	EditorDataTrace( "generateMission: generator rc=%d", rc );
 	if ( rc != 0 )
 	{
-		AfxMessageBox( "Terrain generator failed.\n\nNeeds Python 3 on PATH with numpy, Pillow and opensimplex installed\n(pip install -r tools\\terrain_gen\\requirements.txt)." );
+		if (!g_cliSuppressModals) AfxMessageBox( "Terrain generator failed.\n\nNeeds Python 3 on PATH with numpy, Pillow and opensimplex installed\n(pip install -r tools\\terrain_gen\\requirements.txt)." );
 		return false;
 	}
 
@@ -2157,7 +2161,7 @@ bool EditorData::save( const char* fileName, bool quickSave )
 		sprintf( buffer2, buffer, path );
 		//MessageBox( NULL, buffer2, NULL, MB_OK );
 		/*I think MessageBox() would not be modal wrt the application.*/
-		AfxMessageBox(buffer2);
+		if (!g_cliSuppressModals) AfxMessageBox(buffer2);
 		EditorInterface::instance()->UnsetBusyMode();
 		return false;
 	}
@@ -2236,7 +2240,7 @@ bool EditorData::save( const char* fileName, bool quickSave )
 		sprintf( buffer2, buffer, path );
 		//MessageBox( NULL, buffer2, NULL, MB_OK );
 		/*I think MessageBox() would not be modal wrt the application.*/
-		AfxMessageBox(buffer2);
+		if (!g_cliSuppressModals) AfxMessageBox(buffer2);
 		EditorInterface::instance()->UnsetBusyMode();
 		return false;
 	}

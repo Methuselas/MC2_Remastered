@@ -42,6 +42,44 @@ bool        g_cliGenMap          = false;
 int         g_cliNewMapSize      = 0;
 int         g_cliNewMapTerrain   = 0;
 
+// -smoke-foliage[=PATH]: after the map auto-loads, exercise the Phase 5 foliage
+// preview (FoliageRender::Load + Toggle) under the live frame loop. A missing or
+// malformed JSON / missing sprite texture must load to 0 instances WITHOUT
+// crashing -- that is the whole point of the foliage smoke. Default path is the
+// generator's genmap sidecar. Reported as facts in the [ESMOKE v1] summary; the
+// Python runner (run_editor_smoke.py) applies the pass/fail verdict.
+bool        g_cliSmokeFoliage    = false;
+std::string g_cliSmokeFoliagePath;
+bool        g_cliSmokeFoliageFired = false;
+int         g_cliSmokeFoliageCount = -1;   // -1 = not attempted, >=0 = Load() ran
+
+// -smoke-exit-sec N: time-based auto-exit. The -frames path (EditorCamera::render
+// counter) is unreliable -- that render does not tick every frame and a WM_CLOSE
+// can stall on a "save changes?" modal in a headless run. Instead, N seconds after
+// the engine is up we emit the [ESMOKE v1] summary and hard exit(0): guaranteed
+// termination + rc 0 + a parseable summary, which is all a smoke needs.
+int          g_cliExitAfterSec    = 0;     // 0 = disabled
+unsigned int g_cliExitDeadlineMs  = 0;     // GetTickCount() target, set on first post-init idle
+bool         g_cliEsmokeEmitted   = false;
+
+// Smoke mode suppresses the auto-run-path AfxMessageBox modals (generate/load
+// failures) that would otherwise hang a headless run with no one to click OK.
+// Read by EditorData.cpp via extern. Derived from the smoke flags at end of parse.
+bool         g_cliSuppressModals  = false;
+
+// -smoke-save[=PATH]: after the map auto-generates, save it programmatically to a
+// .pak so a second run can load it (the generate->save->load gate, driven through
+// the editor). Default path lives under terrain_gen_out so it deploys with tools.
+bool         g_cliSmokeSave       = false;
+std::string  g_cliSmokeSavePath;
+int          g_cliSmokeSaveOk     = -1;    // -1 = not attempted, 0/1 = save() result
+
+// Set true after the auto-load block finishes ALL its work (generate + optional
+// foliage + optional save). The smoke exit countdown starts from THIS, not from
+// g_cliAutoLoadFired (which is set at block ENTRY) -- otherwise a slow generation
+// or save can be cut off mid-flight by the timed ExitProcess.
+bool         g_cliSmokeWorkDone   = false;
+
 static void editor_set_default_env_vars()
 {
     // Bake editor-preferred defaults so RenderDoc and other tools can launch
@@ -93,6 +131,7 @@ static void EarlyTraceBegin()
 #include "editorinterface.h"
 #include "EditorVersion.h"
 #include "EditorData.h"
+#include "FoliageRender.h"
 
 // -- S-CLI parser ------------------------------------------------------------
 // Accepts: -mission/--mission PATH (or =PATH), -frames/--frames N (or =N),
@@ -182,7 +221,41 @@ static void s_cli_parse(const char* cmd)
 			const char* comma = strchr(rest, ',');
 			if (comma) g_cliNewMapTerrain = atol(comma + 1);
 		}
+		else if (s_cli_flag_match(tok, "-smoke-foliage", "--smoke-foliage"))
+		{
+			g_cliSmokeFoliage = true;
+			g_cliSmokeFoliagePath = "terrain_gen_out\\genmap.foliage.json";
+		}
+		else if (s_cli_starts_with(tok, "-smoke-foliage=", &rest) ||
+		         s_cli_starts_with(tok, "--smoke-foliage=", &rest))
+		{
+			g_cliSmokeFoliage = true;
+			g_cliSmokeFoliagePath = rest;
+		}
+		else if (s_cli_flag_match(tok, "-smoke-exit-sec", "--smoke-exit-sec"))
+		{
+			if (i + 1 < argv.size()) { g_cliExitAfterSec = atoi(argv[++i].c_str()); }
+		}
+		else if (s_cli_starts_with(tok, "-smoke-exit-sec=", &rest) ||
+		         s_cli_starts_with(tok, "--smoke-exit-sec=", &rest))
+		{
+			g_cliExitAfterSec = atoi(rest);
+		}
+		else if (s_cli_flag_match(tok, "-smoke-save", "--smoke-save"))
+		{
+			g_cliSmokeSave = true;
+			g_cliSmokeSavePath = "terrain_gen_out\\smoke_saved.pak";
+		}
+		else if (s_cli_starts_with(tok, "-smoke-save=", &rest) ||
+		         s_cli_starts_with(tok, "--smoke-save=", &rest))
+		{
+			g_cliSmokeSave = true;
+			g_cliSmokeSavePath = rest;
+		}
 	}
+
+	// Any smoke flag implies headless -> suppress the auto-run-path failure modals.
+	g_cliSuppressModals = (g_cliExitAfterSec > 0) || g_cliSmokeFoliage || g_cliSmokeSave;
 }
 
 // Forward declaration — defined in EditorGameOS.cpp.
@@ -218,6 +291,8 @@ EditorMFCApp theApp;
 /////////////////////////////////////////////////////////////////////////////
 // EditorMFCApp initialization
 
+static DWORD WINAPI s_smoke_thread(LPVOID);   // smoke driver: defined below
+
 BOOL EditorMFCApp::InitInstance()
 {
 	editor_set_default_env_vars();
@@ -234,6 +309,15 @@ BOOL EditorMFCApp::InitInstance()
 	fprintf(stderr, "[EDITOR_CLI v1] event=parsed mission=\"%s\" frames=%ld exit_on_load_fail=%d\n",
 		g_cliMissionPath.c_str(), g_cliFramesLimit, g_cliExitOnLoadFail ? 1 : 0);
 	fflush(stderr);
+
+	// Start the smoke driver thread NOW (before the blocking init/gen/save on the
+	// main thread) so it can auto-dismiss modals throughout and enforce the timed
+	// exit. Defined below; forward-declared above InitInstance.
+	if (g_cliExitAfterSec > 0)
+	{
+		EarlyTrace("InitInstance: starting smoke driver thread");
+		::CreateThread(NULL, 0, s_smoke_thread, NULL, 0, NULL);
+	}
 
 #ifdef _AFXDLL
 	// Enable3dControls() is deprecated and no-op on modern MSVC -- removed per C4996
@@ -427,7 +511,61 @@ void EditorMFCApp::OnAppAbout()
 // EditorMFCApp message handlers
 
 
-BOOL EditorMFCApp::OnIdle(LONG lCount) 
+// Emit the machine-readable smoke summary exactly once (idempotent). Written to
+// both the inherited stderr pipe and editor-startup.log (the reliable IPC channel
+// for a WIN32-subsystem app). The Python runner turns these facts into a verdict.
+static void s_emit_esmoke(const char* how)
+{
+	if (g_cliEsmokeEmitted) return;
+	g_cliEsmokeEmitted = true;
+	char esmoke[256];
+	_snprintf(esmoke, sizeof(esmoke),
+		"[ESMOKE v1] event=summary how=%s clean_exit=1 frames=%ld autoload=%d gen_map=%d "
+		"foliage_smoke=%d foliage_count=%d saved=%d",
+		how, g_cliFrameCounter, g_cliAutoLoadFired ? 1 : 0, g_cliGenMap ? 1 : 0,
+		g_cliSmokeFoliageFired ? 1 : 0, g_cliSmokeFoliageCount, g_cliSmokeSaveOk);
+	esmoke[sizeof(esmoke) - 1] = '\0';
+	fprintf(stderr, "%s\n", esmoke);
+	fflush(stderr);
+	EarlyTrace(esmoke);
+}
+
+// Auto-dismiss any modal dialog (#32770 = standard dialog/MessageBox class) owned
+// by this process. Headless smoke runs have no one to click OK, and modals appear
+// from many scattered places (startup, generate, and especially SAVE validation
+// warnings that are built from resource keys and impossible to gate individually).
+// We post IDOK + WM_CLOSE so both OK-only and OK/Cancel boxes go away.
+// Single smoke driver thread, started at InitInstance. Once the auto-load work
+// (generate + optional foliage + optional save) is done, it counts down
+// g_cliExitAfterSec, emits the summary, and hard ExitProcess(0)s. A dedicated
+// thread is immune to the editor's WM_TIMER render pump starving CWinApp::OnIdle.
+// Modals are suppressed AT SOURCE (EMessageBox / EditorData AfxMessageBox gates on
+// g_cliSuppressModals), so no fragile external dialog-dismissal is needed -- that
+// approach (PostMessage WM_CLOSE) crashed the editor by hitting non-modal panels.
+// An absolute backstop fires if the load step never completes.
+static DWORD WINAPI s_smoke_thread(LPVOID)
+{
+	DWORD start = ::GetTickCount();
+	DWORD loadTick = 0;
+	DWORD sec = (DWORD)(g_cliExitAfterSec > 0 ? g_cliExitAfterSec : 12);
+	for (;;)
+	{
+		DWORD now = ::GetTickCount();
+		if (g_cliSmokeWorkDone && loadTick == 0)
+			loadTick = now;
+		bool loadedDone = (loadTick != 0 && (now - loadTick) >= sec * 1000u);
+		bool absBackstop = (now - start) >= 180000u;   // never-loaded safety exit
+		if (loadedDone || absBackstop)
+		{
+			s_emit_esmoke(loadedDone ? "smoke_thread" : "abs_backstop");
+			::ExitProcess(0);
+		}
+		::Sleep(200);
+	}
+	return 0;
+}
+
+BOOL EditorMFCApp::OnIdle(LONG lCount)
 {
 	CWinApp::OnIdle(lCount);
 
@@ -483,6 +621,46 @@ BOOL EditorMFCApp::OnIdle(LONG lCount)
 			fflush(stderr);
 			exit(1);
 		}
+
+		// -smoke-foliage: exercise the foliage preview once the map is up. Load()
+		// is failure-tolerant (missing/garbage JSON -> false, 0 instances), so this
+		// must never crash; Toggle() flips visibility so the render path runs both
+		// states over the remaining frames. Facts only -> [ESMOKE v1] at exit.
+		if (g_cliSmokeFoliage)
+		{
+			bool floaded = FoliageRender::Load(g_cliSmokeFoliagePath.c_str());
+			g_cliSmokeFoliageCount = FoliageRender::Count();
+			FoliageRender::Toggle();   // exercise hidden state too
+			FoliageRender::Toggle();   // ...and back to visible for the frame loop
+			g_cliSmokeFoliageFired = true;
+			fprintf(stderr, "[EDITOR_CLI v1] event=foliage loaded=%d count=%d path=\"%s\"\n",
+				floaded ? 1 : 0, g_cliSmokeFoliageCount, g_cliSmokeFoliagePath.c_str());
+			fflush(stderr);
+			EarlyTrace(floaded ? "OnIdle: smoke-foliage Load OK" : "OnIdle: smoke-foliage Load returned false (tolerated)");
+		}
+
+		// -smoke-save: persist the generated map to a .pak so a follow-up -mission
+		// run can load it (generate->save->load gate through the editor itself).
+		// EditorData::instance is the live document singleton; save() bypasses the
+		// interactive Save-As file dialog because we pass an explicit path.
+		if (g_cliSmokeSave && ok && EditorData::instance)
+		{
+			// quickSave=true skips the heavy non-quickSave tail (updateTacMap +
+			// MOVE rebuild + tac-map packet) that stalls headless on large maps. The
+			// .pak still carries the terrain + object packets, so it reloads fine in
+			// the editor (the load-back phase of the smoke).
+			bool saved = EditorData::instance->save((char*)g_cliSmokeSavePath.c_str(), true);
+			g_cliSmokeSaveOk = saved ? 1 : 0;
+			fprintf(stderr, "[EDITOR_CLI v1] event=save ok=%d path=\"%s\"\n",
+				saved ? 1 : 0, g_cliSmokeSavePath.c_str());
+			fflush(stderr);
+			EarlyTrace(saved ? "OnIdle: smoke-save OK" : "OnIdle: smoke-save FAILED");
+		}
+
+		// All auto-load work (generate + foliage + save) is complete -> arm the
+		// smoke exit countdown from here.
+		g_cliSmokeWorkDone = true;
+		EarlyTrace("OnIdle: smoke work done");
 	}
 
 	EditorInterface* pEditor = EditorInterface::instance();
@@ -499,8 +677,12 @@ BOOL EditorMFCApp::OnIdle(LONG lCount)
 }
 
 
-int EditorMFCApp::ExitInstance() 
+int EditorMFCApp::ExitInstance()
 {
+	// Machine-readable smoke summary for the non-smoke-exit path (e.g. -frames or a
+	// real user close). Idempotent with the OnIdle deadline emit.
+	s_emit_esmoke("exit_instance");
+
 	{
 		Environment.TerminateGameEngine();
 		gos_PushCurrentHeap(0); // TerminateGameEngine() forgets to do this
