@@ -127,8 +127,10 @@ void ForceGroupBar::update( )
 		bSelect = 0;
 
 	Stuff::Vector2DOf<long> screen;
-	screen.x = userInput->getMouseX();
-	screen.y = userInput->getMouseY();
+	// Force-group icons draw shrunk by s_hud_scale -> hit-test in HUD-inverse
+	// space so clicks land on the drawn-inward icons. (No-op when scale off.)
+	screen.x = userInput->getMouseHudX();
+	screen.y = userInput->getMouseHudY();
 
 	 if ( screen.x > FORCEGROUP_LEFT && screen.x < FORCEGROUP_LEFT + FORCEGROUP_WIDTH
 		  && screen.y > FORCEGROUP_TOP )

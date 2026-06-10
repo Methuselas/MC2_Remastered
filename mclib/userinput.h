@@ -403,22 +403,25 @@ class UserInput
 			mouseDragThreshold = distance;
 		}
 
-		// HIT-TEST accessors (getMouseX/Y): return the AUTHORED pixel coord by
-		// applying gos_HudInverseMousePoint, the inverse of the bottom-band HUD
-		// shrink (s_hud_scale) done in flushHUDBatch. Widget hit-rects are stored
-		// in authored (100%) coords, but the widgets are DRAWN shrunk toward the
-		// bottom-center anchor; without this inverse the user has to click the
-		// un-shrunk corner position instead of where the button is drawn. The
-		// inverse is a no-op outside the rendered bottom band and when the HUD
-		// scale is inactive/1.0, so terrain picking in the upper screen and all
-		// menu/logistics hit-testing are unaffected.
-		long getMouseX (void)    { float x = mouseXPosition * viewMulX, y = mouseYPosition * viewMulY; gos_HudInverseMousePoint(x, y); return float2long(x); }
-		long getMouseY (void)    { float x = mouseXPosition * viewMulX, y = mouseYPosition * viewMulY; gos_HudInverseMousePoint(x, y); return float2long(y); }
-		// RAW accessors (getRawMouseX/Y): true physical screen pixel, never
-		// HUD-inverse-corrected. Used for the cursor sprite draw so the pointer
-		// always sits exactly under the user's hand.
+		// getMouseX/Y return the RAW screen pixel. These feed BOTH world-space
+		// interactions (terrain pick, drag-select box, move commands) AND HUD
+		// widget hit-tests, so they must stay raw -- applying the HUD-shrink
+		// inverse here corrupts the world-space drag anchor (it is discontinuous
+		// at the band edge and divides about the bottom-center anchor, throwing
+		// the drag start toward a corner). HUD widgets that are DRAWN shrunk by
+		// s_hud_scale instead call the dedicated getMouseHudX/Y below.
+		long getMouseX (void)    { return float2long(mouseXPosition * viewMulX); }
+		long getMouseY (void)    { return float2long(mouseYPosition * viewMulY); }
 		long getRawMouseX (void) { return float2long(mouseXPosition * viewMulX); }
 		long getRawMouseY (void) { return float2long(mouseYPosition * viewMulY); }
+		// HUD-widget hit-test accessors: raw screen point run through
+		// gos_HudInverseMousePoint (inverse of the bottom-band s_hud_scale shrink
+		// in flushHUDBatch). Use ONLY for hit-testing widgets that are drawn
+		// shrunk (the in-mission command bar + force-group icons) so a click on
+		// the drawn-inward button maps back to its authored hit-rect. No-op
+		// outside the rendered bottom band / when the HUD scale is inactive.
+		long getMouseHudX (void) { float x = mouseXPosition * viewMulX, y = mouseYPosition * viewMulY; gos_HudInverseMousePoint(x, y); return float2long(x); }
+		long getMouseHudY (void) { float x = mouseXPosition * viewMulX, y = mouseYPosition * viewMulY; gos_HudInverseMousePoint(x, y); return float2long(y); }
 		float realMouseX (void)  { return mouseXPosition * viewMulX; }
 		float realMouseY (void)  { return mouseYPosition * viewMulY; }
 		
@@ -490,6 +493,23 @@ class UserInput
 		float getMouseDragY (void)
 		{
 			return mouseDragY * viewMulY;
+		}
+
+		// HUD-corrected drag-anchor (mirror of getMouseHudX/Y): for hit-testing the
+		// shrunk in-mission HUD widgets (e.g. the unit-info scroll bar) whose rects
+		// are authored 100% coords. No-op outside the rendered bottom band.
+		float getMouseDragHudX (void)
+		{
+			float x = mouseDragX * viewMulX, y = mouseDragY * viewMulY;
+			gos_HudInverseMousePoint(x, y);
+			return x;
+		}
+
+		float getMouseDragHudY (void)
+		{
+			float x = mouseDragX * viewMulX, y = mouseDragY * viewMulY;
+			gos_HudInverseMousePoint(x, y);
+			return y;
 		}
 
 		bool isLeftClick (void) {

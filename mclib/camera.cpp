@@ -965,8 +965,9 @@ bool Camera::screenToGroundPlaneApprox (long screenX, long screenY, Stuff::Vecto
 		Stuff::Vector3D r; r.x = -g.x; r.y = g.z; r.z = g.y; return r;
 	};
 
-	Stuff::Vector3D ro = glToMC2(unprojectNDC(-1.0f));   // near
-	Stuff::Vector3D rf = glToMC2(unprojectNDC( 1.0f));   // far
+	// REVERSE-Z, ZERO_TO_ONE: near plane is NDC z=1, far is z=0 (see inverseProject).
+	Stuff::Vector3D ro = glToMC2(unprojectNDC(1.0f));    // near
+	Stuff::Vector3D rf = glToMC2(unprojectNDC( 0.0f));   // far
 
 	const float dz = rf.z - ro.z;
 	if (fabsf(dz) < 1e-6f) { outWorld = ro; outWorld.z = 0.0f; return false; }
@@ -995,7 +996,15 @@ unsigned long Camera::inverseProject (Stuff::Vector2DOf<long> &screenPos, Stuff:
 	// and fire it against the full-resolution PostcompVertex heightfield.
 	// Object picking (findObjectByMouse) is UNAFFECTED — this replaces only
 	// the terrain-surface portion of inverseProject.
-	static const bool s_lodChunkPick = (mc2TerrainLodChunkEnabled());
+	// DECOUPLED FROM CHUNK RENDER: the chunk heightfield-raycast picker's
+	// screen->world ray is broken (getPosition() returns the camera GROUND-FOCUS
+	// point not the eye, and the worldToClipGL inverse collapses the X response),
+	// so every click hit a near-constant cell -> move orders teleported across the
+	// map. The legacy forward-projection quadList picker below is correct
+	// (projectForSelectionPicking uses the same matrix the GPU renders with), so
+	// picking uses IT even when the chunk RENDER path is on (MC2_TERRAIN_LOD_CHUNK).
+	// Opt back into the raycast picker with MC2_TERRAIN_RAYCAST_PICK to debug it.
+	static const bool s_lodChunkPick = (std::getenv("MC2_TERRAIN_RAYCAST_PICK") != nullptr);
 	// PARITY DIAGNOSTIC: when MC2_TERRAIN_PICK_PARITY is set we compute BOTH
 	// the heightfield raycast hit AND the legacy quadList result for the same
 	// screen coords, log the delta, and still return exactly what the active
@@ -1036,13 +1045,14 @@ unsigned long Camera::inverseProject (Stuff::Vector2DOf<long> &screenPos, Stuff:
 			return v;
 		};
 
-		Stuff::Vector3D nearPt = unprojectNDC(ndcX, ndcY, -1.0f);
-		Stuff::Vector3D farPt  = unprojectNDC(ndcX, ndcY,  1.0f);
+		// REVERSE-Z, ZERO_TO_ONE clip depth (glClipControl + glClearDepth(0)):
+		// the NEAR plane is NDC z=1. The FAR plane (z=0) unproject is unreliable
+		// here (it came out ABOVE the camera, inverting the ray), so we do NOT use
+		// it. Instead build the ray from the known camera eye position (MC2 world)
+		// toward the well-conditioned near-plane point.
+		Stuff::Vector3D nearPt = unprojectNDC(ndcX, ndcY, 1.0f);
 
-		// worldToClipGL uses the GL axis swap (x'=-x, y'=z, z'=y).
-		// The unprojected world positions are in GL-swapped space:
-		//   glX = -mc2X,  glY = mc2Z,  glZ = mc2Y
-		// Invert to recover MC2 world coords:
+		// worldToClipGL uses the GL axis swap (x'=-x, y'=z, z'=y); invert it:
 		//   mc2X = -glX,  mc2Y = glZ,  mc2Z = glY
 		auto glToMC2 = [](const Stuff::Vector3D& g) -> Stuff::Vector3D {
 			Stuff::Vector3D r;
@@ -1051,12 +1061,14 @@ unsigned long Camera::inverseProject (Stuff::Vector2DOf<long> &screenPos, Stuff:
 			r.z =  g.y;
 			return r;
 		};
-		Stuff::Vector3D ro = glToMC2(nearPt);
-		Stuff::Vector3D rd_raw = glToMC2(farPt);
+		Stuff::Vector3D nearMc = glToMC2(nearPt);
 
-		float rdx = rd_raw.x - ro.x;
-		float rdy = rd_raw.y - ro.y;
-		float rdz = rd_raw.z - ro.z;
+		// Origin = camera eye (the matrix the GPU renders with is built from this);
+		// direction = eye -> near-plane point (on the pixel ray, in front of eye).
+		Stuff::Vector3D ro = getPosition();
+		float rdx = nearMc.x - ro.x;
+		float rdy = nearMc.y - ro.y;
+		float rdz = nearMc.z - ro.z;
 		const float rlen = sqrtf(rdx*rdx + rdy*rdy + rdz*rdz);
 		if (rlen > 1e-6f)
 		{

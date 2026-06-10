@@ -775,7 +775,9 @@ void MissionInterfaceManager::update (void)
 	bool bGui = false;
 
 	// check and see if its in the control area
-	if ( controlGui.inRegion( mouseX, mouseY, isPaused() && !isPausedWithoutMenu() ) )
+	// HUD command bar draws shrunk -> test the region in HUD-inverse space (the
+	// raw mouseX/mouseY locals stay raw for terrain inverseProject below).
+	if ( controlGui.inRegion( userInput->getMouseHudX(), userInput->getMouseHudY(), isPaused() && !isPausedWithoutMenu() ) )
 	{
 		bGui = true;
 		if ( userInput->isLeftClick() && !userInput->isLeftDrag() )
@@ -816,15 +818,17 @@ void MissionInterfaceManager::update (void)
 	{
 		MifScope _mInv(MF_INVPROJ);
 		if (s_mfOn) ++s_mfInvWalks;
-		// PERF (1K-map fix): the per-frame cursor-world projection feeding the
-		// status bar + target preview was Camera::inverseProject, which walks
-		// EVERY quad (O(quads)) and cache-misses every frame under camera motion
-		// -> 46ms/frame on the oversized 1K map (80% of frame). Swap to the O(1)
-		// inverse-clip ray/z=0 ground-plane unproject the editor already uses for
-		// its continuous tac-map cursor (camera.cpp screenToGroundPlaneApprox).
-		// Cell-precision (x,y) is exact; z is ground-plane (fine for the status
-		// bar + cell/area readout). Discrete clicks still use inverseProject.
-		eye->screenToGroundPlaneApprox(mouseXY.x, mouseXY.y, wPos);
+		// Per-frame cursor world position. screenToGroundPlaneApprox (the O(1)
+		// inverse-clip/z=0 unproject) shares the same broken worldToClipGL inverse
+		// as the chunk raycast picker (collapsed X response / wrong eye), so it
+		// returned a near-constant garbage world point -> the hover passability
+		// check flagged walkable terrain as a red-X "dead area" across the screen,
+		// and dragStart (= wPos) anchored the select box off-screen. Use the
+		// legacy forward-projection inverseProject instead (correct, same picker
+		// the discrete move click uses). The delta-cache above limits this to
+		// cursor/camera-change frames; the O(quads) cost only matters on the
+		// oversized 1K map (a separate, known perf concern), not normal maps.
+		eye->inverseProject(mouseXY, wPos);
 		prevMouseX = mouseX;
 		prevMouseY = mouseY;
 		cachedWPos = wPos;
@@ -1797,8 +1801,20 @@ void MissionInterfaceManager::updateAOEStyle(bool shiftDn, bool altDn, bool ctrl
 
 	if ( userInput->rightMouseReleased() && !userInput->wasRightDrag() && !bGui) // move on the mouse ups
 	{
+		// Discrete-click precision fix, mirror of updateOldStyle (438e0117): the
+		// per-frame wPos is screenToGroundPlaneApprox (z=0 ground-plane point that
+		// drifts ~elevation in XY on hilly terrain / oblique camera pitch -> move
+		// orders landed on the "other side of the map"). For this discrete right-
+		// click move/place/recover action recompute wPos once via inverseProject
+		// (the real terrain-surface hit). Click-only, so its O(quads) cost is fine.
+		{
+			Stuff::Vector2DOf<long> clickXY;
+			clickXY.x = mouseX;
+			clickXY.y = mouseY;
+			eye->inverseProject(clickXY, wPos);
+		}
 
-		if ( (controlGui.isAddingVehicle() && !paintingVtol[commanderID] && canAddVehicle( wPos )) || 
+		if ( (controlGui.isAddingVehicle() && !paintingVtol[commanderID] && canAddVehicle( wPos )) ||
 			(controlGui.isAddingSalvage() && !paintingVtol[commanderID] && canRecover( wPos )))
 		{
 			// Target has already been confirmed  as a mover(BattleMech) by canRecover

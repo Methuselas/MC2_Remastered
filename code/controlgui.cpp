@@ -958,8 +958,11 @@ void ControlGui::update( bool bPaused, bool bLOS )
 		getButton( idToUnPress )->press( false );
 	}
 
-	float mouseX = userInput->getMouseX();
-	float mouseY = userInput->getMouseY();
+	// HUD command buttons draw shrunk by s_hud_scale -> hit-test in HUD-inverse
+	// space so a click on the drawn-inward button maps to its authored rect.
+	// (getMouseHudX/Y is a no-op when the HUD scale is off / outside the band.)
+	float mouseX = userInput->getMouseHudX();
+	float mouseY = userInput->getMouseHudY();
 
 	
 	// also going to initialize buttons here

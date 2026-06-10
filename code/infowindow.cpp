@@ -490,8 +490,11 @@ void InfoWindow::update()
 		return;
 	}
 
-	long mouseX = userInput->getMouseX();
-	long mouseY = userInput->getMouseY();
+	// HUD-corrected: the unit-info panel + scroll bar draw shrunk by s_hud_scale,
+	// so hit-test in HUD-inverse space to match the drawn (shrunk) widgets. No-op
+	// when the HUD scale is off / outside the rendered bottom band.
+	long mouseX = userInput->getMouseHudX();
+	long mouseY = userInput->getMouseHudY();
 
 
 
@@ -517,8 +520,8 @@ void InfoWindow::update()
 	{
 		if ( lastYClick != -1.f )
 		{
-			int tmpLastY = mouseY; 
-			tmpLastY -= userInput->getMouseDragY();
+			int tmpLastY = mouseY;
+			tmpLastY -= userInput->getMouseDragHudY();
 			setScrollPos( lastYClick + tmpLastY );
 			return;
 		}
@@ -528,8 +531,8 @@ void InfoWindow::update()
 	else if ( mouseX > SCROLLLEFT && mouseX < SCROLLRIGHT
 				&& mouseY > SCROLLTOP && mouseY < SCROLLBOTTOM 
 				&&  buttons[0].isEnabled() 
-				&& userInput->getMouseDragX() > SCROLLLEFT && userInput->getMouseDragX() < SCROLLRIGHT
-				&& userInput->getMouseDragY() > SCROLLTOP && userInput->getMouseDragY() < SCROLLBOTTOM 
+				&& userInput->getMouseDragHudX() > SCROLLLEFT && userInput->getMouseDragHudX() < SCROLLRIGHT
+				&& userInput->getMouseDragHudY() > SCROLLTOP && userInput->getMouseDragHudY() < SCROLLBOTTOM
 				)
 		{
 

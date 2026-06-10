@@ -282,8 +282,15 @@ void UserInput::update (void)
 			mouseLeftUpTime = 0.001f;			
 		}
 
-		mouseDragX = lastMouseXPosition;
-		mouseDragY = lastMouseYPosition;
+		// Anchor the drag at the CURRENT (this-frame) click position, not
+		// lastMouseXPosition (the PREVIOUS frame's position). The press is
+		// detected after this frame's poll, so mouseXPosition IS the click
+		// point; lastMouseXPosition lags one frame. Using the stale value made
+		// a click issued mid-motion (the normal case: move to target, click)
+		// measure ~a frame of approach travel on the next held frame and trip a
+		// phantom drag/band-select over the threshold. (Was lastMouseX/YPosition.)
+		mouseDragX = mouseXPosition;
+		mouseDragY = mouseYPosition;
 
 		leftMouseDrag = 0;
 		
@@ -342,8 +349,15 @@ void UserInput::update (void)
 		else
 			rightClick = true;
 
-		mouseDragX = lastMouseXPosition;
-		mouseDragY = lastMouseYPosition;
+		// Anchor the drag at the CURRENT (this-frame) click position, not
+		// lastMouseXPosition (the PREVIOUS frame's position). The press is
+		// detected after this frame's poll, so mouseXPosition IS the click
+		// point; lastMouseXPosition lags one frame. Using the stale value made
+		// a click issued mid-motion (the normal case: move to target, click)
+		// measure ~a frame of approach travel on the next held frame and trip a
+		// phantom drag/band-select over the threshold. (Was lastMouseX/YPosition.)
+		mouseDragX = mouseXPosition;
+		mouseDragY = mouseYPosition;
 
 		rightMouseDrag = 0;
 	}
