@@ -254,6 +254,16 @@ def run_case(name: str, exe: Path, deploy: Path, exit_sec: int, timeout: int,
                 bucket = "edit_not_applied"; detail = f"transform did not move object, applied={ea}"
             elif eu != "1":
                 bucket = "edit_undo_failed"; detail = f"undo did not restore position, undo={eu}"
+        if expect == "asset_browser":
+            # The browser enumerated the existing object catalog and activated the
+            # first placeable object through the existing placement path. Expect a
+            # non-empty catalog and a brush activation.
+            ag = esmoke.get("asset_groups")
+            aa = esmoke.get("asset_activated")
+            if not (ag and ag.lstrip("-").isdigit() and int(ag) >= 1):
+                bucket = "asset_no_groups"; detail = f"expected groups>=1, got {ag}"
+            elif aa != "1":
+                bucket = "asset_not_activated"; detail = f"placement not activated, activated={aa}"
 
     passed = (bucket == "")
     return dict(name=name, passed=passed, bucket=bucket, detail=detail,
@@ -321,6 +331,7 @@ def build_suite(deploy: Path):
         "inspector":       (["-gen-map=0,0", "-smoke-inspector"], "inspector"),  # read-only Inspector
         "validate":        (["-gen-map=0,0", "-smoke-validate"], "validate"),  # live Mission validator
         "inspector_edit":  (["-gen-map=0,0", "-smoke-inspector-edit"], "inspector_edit"),  # transform+undo
+        "asset_browser":   (["-gen-map=0,0", "-smoke-asset-browser"], "asset_browser"),  # catalog + activate
         # gen_save_load is handled specially (two phases) in main().
     }
     return cases

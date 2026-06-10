@@ -108,6 +108,13 @@ bool         g_cliSmokeInspectorEdit     = false;
 int          g_cliEditApplied            = -1;  // -1 = not attempted, 0/1 = transform moved object
 int          g_cliEditUndo               = -1;  // -1 = not attempted, 0/1 = undo restored position
 
+// -smoke-asset-browser: after the map auto-loads, tally the object catalog and
+// activate the first placeable object through the existing placement path.
+// Reported in [ESMOKE v1]. (Runtime validation deferred while map-load is broken.)
+bool         g_cliSmokeAssetBrowser       = false;
+int          g_cliAssetGroups             = -1;  // -1 = not attempted, >=0 = catalog group count
+int          g_cliAssetActivated          = -1;  // -1 = not attempted, 0/1 = placement brush activated
+
 // Set true after the auto-load block finishes ALL its work (generate + optional
 // foliage + optional save). The smoke exit countdown starts from THIS, not from
 // g_cliAutoLoadFired (which is set at block ENTRY) -- otherwise a slow generation
@@ -178,6 +185,7 @@ static void EarlyTraceBegin()
 #include "FoliageRender.h"
 #include "SceneOutliner.h"
 #include "InspectorPanel.h"
+#include "AssetBrowser.h"
 #include "MissionValidation.h"
 #include "resource.h"   // ID_FOLIAGE_* for the -smoke-foliage-menu WM_COMMAND drive
 
@@ -323,12 +331,16 @@ static void s_cli_parse(const char* cmd)
 		{
 			g_cliSmokeInspectorEdit = true;
 		}
+		else if (s_cli_flag_match(tok, "-smoke-asset-browser", "--smoke-asset-browser"))
+		{
+			g_cliSmokeAssetBrowser = true;
+		}
 	}
 
 	// Any smoke flag implies headless -> suppress the auto-run-path failure modals.
 	g_cliSuppressModals = (g_cliExitAfterSec > 0) || g_cliSmokeFoliage || g_cliSmokeSave
 	                      || g_cliSmokeOutliner || g_cliSmokeInspector || g_cliSmokeValidate
-	                      || g_cliSmokeInspectorEdit;
+	                      || g_cliSmokeInspectorEdit || g_cliSmokeAssetBrowser;
 }
 
 // Forward declaration — defined in EditorGameOS.cpp.
@@ -599,6 +611,7 @@ static void s_emit_esmoke(const char* how)
 		"inspector_selected=%d inspector_type=%s "
 		"validate_blocking=%d validate_warning=%d validate_info=%d validate_units_warn=%d "
 		"inspector_edit_applied=%d inspector_edit_undo=%d "
+		"asset_groups=%d asset_activated=%d "
 		"menu_vis0=%d menu_vis1=%d menu_vis2=%d menu_clear=%d menu_reload=%d",
 		how, g_cliFrameCounter, g_cliAutoLoadFired ? 1 : 0, g_cliGenMap ? 1 : 0,
 		g_cliSmokeFoliageFired ? 1 : 0, g_cliSmokeFoliageCount, g_cliSmokeSaveOk,
@@ -606,6 +619,7 @@ static void s_emit_esmoke(const char* how)
 		g_cliSmokeInspectorSel, g_cliSmokeInspectorType,
 		g_cliValidateBlock, g_cliValidateWarn, g_cliValidateInfo, g_cliValidateUnitsWarn,
 		g_cliEditApplied, g_cliEditUndo,
+		g_cliAssetGroups, g_cliAssetActivated,
 		g_menuVis0, g_menuVis1, g_menuVis2, g_menuClearCount, g_menuReloadCount);
 	esmoke[sizeof(esmoke) - 1] = '\0';
 	fprintf(stderr, "%s\n", esmoke);
@@ -837,6 +851,20 @@ BOOL EditorMFCApp::OnIdle(LONG lCount)
 				(r >= 0) ? 1 : 0, g_cliEditApplied, g_cliEditUndo);
 			fflush(stderr);
 			EarlyTrace("OnIdle: smoke-inspector-edit done");
+		}
+
+		// -smoke-asset-browser: tally the existing object catalog and activate the
+		// first placeable object through the existing placement path. Facts ->
+		// [ESMOKE v1]. (Runtime validation deferred while map-load is broken.)
+		if (g_cliSmokeAssetBrowser)
+		{
+			AssetBrowser::Open();
+			g_cliAssetGroups    = AssetBrowser::GroupCount();
+			g_cliAssetActivated = AssetBrowser::ActivateFirstObject() ? 1 : 0;
+			fprintf(stderr, "[EDITOR_CLI v1] event=asset_browser groups=%d activated=%d\n",
+				g_cliAssetGroups, g_cliAssetActivated);
+			fflush(stderr);
+			EarlyTrace("OnIdle: smoke-asset-browser done");
 		}
 
 		// All auto-load work (generate + foliage + save) is complete -> arm the
