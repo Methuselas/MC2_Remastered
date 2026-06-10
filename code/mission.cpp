@@ -332,9 +332,12 @@ extern bool 			invulnerableON;		//Used for tutorials so mechs can take damage, b
 namespace {
 	static const bool s_misSplit = (getenv("MC2_MISSION_SPLIT") != nullptr);
 	enum { MS_LAND_UPDATE=0, MS_PATHMGR, MS_CLEAR_BLOCKS, MS_CLEAR_VERTS,
-	       MS_TERRAIN_TEX, MS_GEOMETRY, MS_OBJMGR, MS_COUNT };
+	       MS_TERRAIN_TEX, MS_GEOMETRY, MS_OBJMGR,
+	       MS_TOTAL, MS_CLEARARRAYS, MS_INTERFACE, MS_CAMERA, MS_VTOL, MS_WEATHER, MS_WAYPOINTS,
+	       MS_COUNT };
 	static const char* s_misNames[MS_COUNT] = {
-		"land_update","pathmgr","clearBlocks","clearVerts","terrainTex","geometry","objmgr" };
+		"land_update","pathmgr","clearBlocks","clearVerts","terrainTex","geometry","objmgr",
+		"TOTAL","clearArrays","interface","camera","vtol","weather","waypoints" };
 	static unsigned long long s_misNs[MS_COUNT]  = {0};
 	static unsigned long long s_misMax[MS_COUNT] = {0};
 	static unsigned long long s_misFrames = 0;
@@ -372,6 +375,7 @@ long Mission::update (void)
 		if (!s_misAtexit) { s_misAtexit = true; std::atexit(misEmit); }
 		++s_misFrames;
 	}
+	MisScope _msTotal(MS_TOTAL);  // whole Mission::update; TOTAL - sum(subcalls) = unbracketed
 	if (active)
 	{
 		turn++;
@@ -577,22 +581,22 @@ long Mission::update (void)
 #endif
 
 		ZoneScopedN("GameLogic.Mission.Update");
-		{ ZoneScopedN("Mission.clearArrays"); mcTextureManager->clearArrays(); }
+		{ ZoneScopedN("Mission.clearArrays"); MisScope _ms(MS_CLEARARRAYS); mcTextureManager->clearArrays(); }
 
 		if (missionInterface)
-			{ ZoneScopedN("GameLogic.Mission.Interface"); missionInterface->update(); }
+			{ ZoneScopedN("GameLogic.Mission.Interface"); MisScope _ms(MS_INTERFACE); missionInterface->update(); }
 
-		{ ZoneScopedN("GameLogic.Mission.Camera"); eye->update(); }
+		{ ZoneScopedN("GameLogic.Mission.Camera"); MisScope _ms(MS_CAMERA); eye->update(); }
 
-		{ ZoneScopedN("GameLogic.Mission.VTol"); missionInterface->updateVTol(); }
+		{ ZoneScopedN("GameLogic.Mission.VTol"); MisScope _ms(MS_VTOL); missionInterface->updateVTol(); }
 
 		{ ZoneScopedN("GameLogic.Mission.Terrain"); MisScope _ms(MS_LAND_UPDATE); land->update(); }
 
 		//ALWAYS update weather AFTER the camera.  May change the lights!
 		if (useNonWeaponEffects)
-			{ ZoneScopedN("GameLogic.Mission.Weather"); weather->update(); }		//Should the rain fall during a pause?
-		
-		{ ZoneScopedN("GameLogic.Mission.Waypoints"); missionInterface->updateWaypoints(); }
+			{ ZoneScopedN("GameLogic.Mission.Weather"); MisScope _ms(MS_WEATHER); weather->update(); }		//Should the rain fall during a pause?
+
+		{ ZoneScopedN("GameLogic.Mission.Waypoints"); MisScope _ms(MS_WAYPOINTS); missionInterface->updateWaypoints(); }
 
 #ifdef USE_PATH_COST_TABLE
 		GlobalMoveMap[0]->resetPathCostTable();
