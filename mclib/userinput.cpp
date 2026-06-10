@@ -205,6 +205,25 @@ void UserInput::update (void)
 	DWORD buttonStates;
 	gos_GetMouseInfo(&mouseXPosition,&mouseYPosition,(int *)&mouseXDelta,(int *)&mouseYDelta,(int *)&mouseWheelDelta,&buttonStates);
 
+	// MC2_MOUSE_RECON downstream probe: shows the FINAL cursor/pick pixel the
+	// mission code consumes (norm * viewMul) plus the viewMul itself. If a dead
+	// zone persists, this tells us whether the final pixel actually reaches the
+	// bottom/right edge or saturates early -- isolating cursor-draw vs pick.
+	if (getenv("MC2_MOUSE_RECON"))
+	{
+		static float s_lx = -1.0f, s_ly = -1.0f;
+		const float ddx = mouseXPosition - s_lx, ddy = mouseYPosition - s_ly;
+		if (ddx*ddx + ddy*ddy > 0.0001f)
+		{
+			s_lx = mouseXPosition; s_ly = mouseYPosition;
+			printf("[MOUSE_RECON_DS v1] norm=(%.3f,%.3f) viewMul=(%.1f,%.1f) "
+			       "finalPixel=(%ld,%ld)\n",
+			       mouseXPosition, mouseYPosition, viewMulX, viewMulY,
+			       float2long(mouseXPosition * viewMulX),
+			       float2long(mouseYPosition * viewMulY));
+		}
+	}
+
     // sebi: actually use gos
 	leftMouseButtonState = buttonStates & 1 ?           MC2_MOUSE_DOWN : MC2_MOUSE_UP;
 	middleMouseButtonState = (buttonStates & 2) >> 1 ?  MC2_MOUSE_DOWN : MC2_MOUSE_UP;

@@ -32,18 +32,15 @@
 ////////////////////////////////////////////////////////////////////////////////
 void __stdcall gos_GetMouseInfo( float* pXPosition, float* pYPosition, int* pXDelta, int* pYDelta, int* pWheelDelta, DWORD* pButtonsPressed )
 {
-    // MOUSE-GL-COORD fix: normalize by the LOGICAL window size, not the
-    // drawable (physical) size. SDL mouse-motion events (mi->x_/y_) arrive in
-    // window/logical coords (SDL_GetWindowSize space == Environment.screenWidth).
-    // The whole downstream chain -- getMouseX = norm * viewMul (viewMul uses the
-    // logical gosRenderer width_), the 2D UI/cursor projection_ (2/width_), and
-    // Camera::inverseProject (screenResolution = viewMul) -- is all in logical
-    // pixel space. Dividing by drawableWidth/Height (physical) under Windows
-    // display-scaling >100% (drawable > logical) made the normalized coord max
-    // out below 1.0, compressing the cursor toward the top-left and leaving a
-    // dead zone along the bottom and right edges. (Was Environment.drawableWidth.)
-    const float w = (float)Environment.screenWidth;
-    const float h = (float)Environment.screenHeight;
+    // MOUSE-GL-COORD: normalize raw mouse by the DRAWABLE (physical) size.
+    // Empirically (MC2_MOUSE_RECON) SDL delivers mouse-motion in PHYSICAL pixels
+    // on this fullscreen path: raw spans [0,1920]x[0,1080] = drawable, while the
+    // logical window is 800x600. So raw/drawable is the correct 0..1 normalize
+    // (norm_drawable hit ~0.999 at the edges); dividing by the logical size
+    // overshot to ~2.4. The mission cursor dead-zone is NOT here -- it is a
+    // downstream cursor-vs-pick divergence (see camera screenResolution / viewMul).
+    const float w = (float)Environment.drawableWidth;
+    const float h = (float)Environment.drawableHeight;
 
     const input::MouseInfo* mi = input::getMouseInfo();
 
@@ -111,16 +108,13 @@ void __stdcall gos_SetMousePosition( float XPosition, float YPosition )
 {
     if(g_sdl_window) {
         // XPosition/YPosition arrive as normalized 0..1 coordinates — the
-        // write side of the contract established by gos_GetMouseInfo. Callers
-        // reach this via UserInput::setMousePos, which divides pixel-space
-        // targets by viewMulX/viewMulY to normalize. SDL_WarpMouseInWindow
-        // takes WINDOW/LOGICAL pixels, so multiply back out by the logical
-        // window size (Environment.screenWidth/Height) to match. MUST use the
-        // SAME denominator as the read side (gos_GetMouseInfo) or the
-        // read/write round-trip drifts; using drawable (physical) here put the
-        // warp target off by the display-scale factor on HiDPI/scaled monitors.
-        const float w = (float)Environment.screenWidth;
-        const float h = (float)Environment.screenHeight;
+        // write side of the contract established by gos_GetMouseInfo. Must use
+        // the SAME denominator as the read side: DRAWABLE (physical) pixels,
+        // because SDL mouse coords are physical on this path (confirmed via
+        // MC2_MOUSE_RECON: raw spans the drawable 1920x1080, not the logical
+        // 800x600). SDL_WarpMouseInWindow consumes the same physical space here.
+        const float w = (float)Environment.drawableWidth;
+        const float h = (float)Environment.drawableHeight;
         SDL_WarpMouseInWindow(g_sdl_window,
                               (int)(XPosition * w),
                               (int)(YPosition * h));
