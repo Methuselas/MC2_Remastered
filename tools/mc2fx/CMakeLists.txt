@@ -39,6 +39,7 @@ list(REMOVE_ITEM MC2FX_STUFF_SRC
 
 add_executable(mc2fx
     main.cpp
+    mc2fx_core.cpp
     mc2fx_stubs.cpp
     ${MC2FX_GOSFX_SRC}
     ${MC2FX_MLR_SRC}
@@ -50,6 +51,24 @@ add_executable(mc2fx
 )
 
 target_compile_features(mc2fx PRIVATE cxx_std_17)
+
+# ---------------------------------------------------------------------------
+# Optional AddressSanitizer variant (diagnostic). Gate behind -DMC2FX_ASAN=ON
+# so the normal build is unaffected. MSVC cl supports /fsanitize=address
+# (compile + link). Disable edit-and-continue / RTC which conflict with ASan.
+# ---------------------------------------------------------------------------
+option(MC2FX_ASAN "Build mc2fx with AddressSanitizer (/fsanitize=address)" OFF)
+if(MC2FX_ASAN)
+    if(MSVC)
+        target_compile_options(mc2fx PRIVATE /fsanitize=address /Zi)
+        # ASan is incompatible with RTC and incremental/EnC linking.
+        target_compile_options(mc2fx PRIVATE /wd5072)
+        target_link_options(mc2fx PRIVATE /INCREMENTAL:NO)
+    else()
+        target_compile_options(mc2fx PRIVATE -fsanitize=address -g)
+        target_link_options(mc2fx PRIVATE -fsanitize=address)
+    endif()
+endif()
 
 target_compile_definitions(mc2fx PRIVATE
     PLATFORM_WINDOWS

@@ -70,7 +70,13 @@ void SpecLibrary::Load(Stuff::MemoryStream* stream)
 void SpecLibrary::Save(Stuff::MemoryStream* stream)
 {
     gosFX::WriteGFXVersion(stream);
-    *stream << m_effects.GetLength();
+    // 64-bit port fix: GetLength() returns size_t (8 bytes on x64), but the
+    // read side (Load: `*stream >> len` with `unsigned len`) consumes only 4.
+    // The original 32-bit MC2 had size_t==unsigned so this was symmetric; on
+    // x64 the unchecked 8-byte write injected a stray high-dword of zeros after
+    // the count, desyncing every following spec and producing an unloadable
+    // blob. Cast to the same 32-bit width the loader reads.
+    *stream << static_cast<unsigned>(m_effects.GetLength());
     for (unsigned i = 0; i < m_effects.GetLength(); ++i) {
         Check_Object(m_effects[i]);
         m_effects[i]->Save(stream);

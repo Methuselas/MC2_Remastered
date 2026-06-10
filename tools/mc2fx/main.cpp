@@ -2,24 +2,13 @@
 //
 // mc2fx — standalone gosFX effect-blob (.fx) inspector / round-trip tool.
 //
-// SLICE 1 (this file): `dump` only.
-//   mc2fx dump <mc2.fx> [out.json]
-//   - Reads the .fx blob bytes (loose file, CRT fopen — mc2.fx loads loose in
-//     the engine: code/mechcmd2.cpp:1672-1686, no FastFile/pak involved).
-//   - Wraps bytes in a Stuff::MemoryStream and runs the live gosFX loader
-//     (SpecLibrary::Load -> Effect::Specification::Create factory dispatch).
-//   - Emits shallow JSON: { version, count, effects:[{index,effectID,name,classID}] }.
+// Thin arg dispatcher over mc2fx_core (initEngineHeadless/loadBlob/
+// dumpCatalogJson/saveBlob). Subcommands:
+//   mc2fx dump    <mc2.fx> [out.json]   dump effect catalog to JSON
+//   mc2fx rebuild <in.fx>  <out.fx>     Load -> Save round-trip + byte-compare
 //
-// This proves: the curated link is game-free, the loader runs headless (no GL,
-// no device — MLRState::Load is metadata-only), and the spec catalog round-trips
-// to a readable form. SLICE 2 will add per-curve depth + a `build` (Save) path
-// that re-emits the blob via the already-complete EffectLibrary::Save API.
-//
-// Init order (load path requirements, per gosfx-modder-dropin recon):
-//   1. install a heap-aware allocator (slim gos_* stubs, CRT-backed)
-//   2. MidLevelRenderer::InitializeClasses(...)  -> constructs MLRTexturePool::Instance
-//   3. gosFX::InitializeClasses()                -> registers spec factories + gosFX::Heap
-//   4. push gosFX::Heap, Load, walk, pop.
+// `rebuild` is the Save-fidelity gate: it re-emits the blob via SpecLibrary::
+// Save and byte-compares against the input, reporting the first divergence.
 
 #define _CRT_SECURE_NO_WARNINGS
 #include <cstdio>
@@ -28,14 +17,8 @@
 #include <string>
 #include <vector>
 
-#include "gosfxheaders.hpp"          // pulls gosfx.hpp + Stuff + MLR
-#include "particles/spec_library.h"
-#include "mlr/mlr.hpp"
-#include "mlr/mlrtexturepool.hpp"    // MLRTexturePool::Instance (texture-name resolve)
-#include "mlr/gosimagepool.hpp"      // TGAFilePool (GOSImagePool subclass)
-
-// Forward decl for the heap installer provided by mc2fx_stubs.cpp.
-extern void InstallMc2fxHeaps();
+#include "mc2fx_core.h"
+#include "particles/spec_library.h"   // SpecLibrary (for the returned handle)
 
 namespace {
 
@@ -53,19 +36,13 @@ bool readFileBytes(const char* path, std::vector<unsigned char>& out)
     return got == out.size();
 }
 
-// Minimal JSON string escaper (names are ASCII identifiers in practice).
-std::string jsonEscape(const char* s)
+bool writeFileBytes(const char* path, const unsigned char* data, size_t n)
 {
-    std::string r;
-    if (!s) return r;
-    for (const char* p = s; *p; ++p) {
-        char c = *p;
-        if (c == '"' || c == '\\') { r.push_back('\\'); r.push_back(c); }
-        else if (c == '\n') r += "\\n";
-        else if (c == '\t') r += "\\t";
-        else r.push_back(c);
-    }
-    return r;
+    FILE* f = std::fopen(path, "wb");
+    if (!f) return false;
+    size_t put = std::fwrite(data, 1, n, f);
+    std::fclose(f);
+    return put == n;
 }
 
 int cmdDump(const char* inPath, const char* outPath)
@@ -75,65 +52,74 @@ int cmdDump(const char* inPath, const char* outPath)
         std::fprintf(stderr, "mc2fx: cannot read '%s'\n", inPath);
         return 2;
     }
-
-    // --- engine bring-up (headless) ---
-    InstallMc2fxHeaps();
-    // Stuff master class registry MUST init first (engine: logmain.cpp:465,
-    // mechcmd2.cpp:1647). Without it RegisteredClass::FindClassData — which the
-    // gosFX spec factory dispatch uses — reads an uninitialized registry and
-    // segfaults inside SpecLibrary::Load.
-    Stuff::InitializeClasses();
-    // MLR limits mirror the engine's gameos init; values are not load-critical
-    // (Load only touches MLRState metadata), just need a constructed pool.
-    MidLevelRenderer::InitializeClasses(64u * 1024u, 16u * 1024u, 1024u, 4096u, true);
-    // MLRState::Load resolves texture NAMES through MLRTexturePool::Instance,
-    // which the engine creates in txmmgr.cpp:553 (renderer init we don't run).
-    // Build it headless: a TGAFilePool (GOSImagePool subclass) + the pool, under
-    // MLR::Heap. No GL — GOSImage ctors hit the no-op mcTextureManager stub. The
-    // path string only seeds the (unused) texture base dir.
-    gos_PushCurrentHeap(MidLevelRenderer::Heap);
-    MidLevelRenderer::MLRTexturePool::Instance =
-        new MidLevelRenderer::MLRTexturePool(
-            new MidLevelRenderer::TGAFilePool("data\\tgl\\128\\"));
-    gos_PopCurrentHeap();
-
-    gosFX::InitializeClasses();
-
-    // --- load ---
-    gos_PushCurrentHeap(gosFX::Heap);
-    Stuff::MemoryStream stream(bytes.data(), static_cast<int>(bytes.size()));
-    mc2::particles::SpecLibrary* lib = mc2::particles::SpecLibrary::Instance();
-    lib->Load(&stream);
-    unsigned count = lib->Count();
-
-    // --- emit JSON ---
-    std::string out;
-    out.reserve(count * 64 + 128);
-    char line[256];
-    std::snprintf(line, sizeof line, "{\n  \"count\": %u,\n  \"effects\": [\n", count);
-    out += line;
-    for (unsigned i = 0; i < count; ++i) {
-        gosFX::Effect::Specification* spec = lib->At(i);
-        const char* name = (spec && spec->m_name) ? static_cast<const char*>(spec->m_name) : "";
-        unsigned classID = spec ? static_cast<unsigned>(spec->GetClassID()) : 0u;
-        unsigned effectID = spec ? spec->m_effectID : 0u;
-        std::snprintf(line, sizeof line,
-            "    { \"index\": %u, \"effectID\": %u, \"classID\": %u, \"name\": \"%s\" }%s\n",
-            i, effectID, classID, jsonEscape(name).c_str(), (i + 1 < count) ? "," : "");
-        out += line;
-    }
-    out += "  ]\n}\n";
-    gos_PopCurrentHeap();
+    mc2fx::initEngineHeadless();
+    mc2::particles::SpecLibrary* lib = mc2fx::loadBlob(bytes.data(), bytes.size());
+    if (!lib) { std::fprintf(stderr, "mc2fx: load failed\n"); return 4; }
+    std::string out = mc2fx::dumpCatalogJson(lib);
 
     if (outPath) {
-        FILE* of = std::fopen(outPath, "wb");
-        if (!of) { std::fprintf(stderr, "mc2fx: cannot write '%s'\n", outPath); return 3; }
-        std::fwrite(out.data(), 1, out.size(), of);
-        std::fclose(of);
-        std::fprintf(stderr, "mc2fx: dumped %u effects -> %s\n", count, outPath);
+        if (!writeFileBytes(outPath, reinterpret_cast<const unsigned char*>(out.data()), out.size())) {
+            std::fprintf(stderr, "mc2fx: cannot write '%s'\n", outPath); return 3;
+        }
+        std::fprintf(stderr, "mc2fx: dumped %u effects -> %s\n", lib->Count(), outPath);
     } else {
         std::fwrite(out.data(), 1, out.size(), stdout);
     }
+    return 0;
+}
+
+int cmdRebuild(const char* inPath, const char* outPath)
+{
+    std::vector<unsigned char> inBytes;
+    if (!readFileBytes(inPath, inBytes)) {
+        std::fprintf(stderr, "mc2fx: cannot read '%s'\n", inPath);
+        return 2;
+    }
+    mc2fx::initEngineHeadless();
+    mc2::particles::SpecLibrary* lib = mc2fx::loadBlob(inBytes.data(), inBytes.size());
+    if (!lib) { std::fprintf(stderr, "mc2fx: load failed\n"); return 4; }
+
+    std::vector<unsigned char> outBytes;
+    // Pre-size the Save stream from the input: the engine's Save writer never
+    // grows its buffer (size_t/DWORD virtual-override mismatch), so the stream
+    // must be born big enough. 4x input + 1MiB headroom covers any re-emit growth.
+    size_t reserveHint = inBytes.size() * 4 + (1u << 20);
+    if (!mc2fx::saveBlob(lib, outBytes, reserveHint)) {
+        std::fprintf(stderr, "mc2fx: save failed (no terminating size found)\n");
+        return 5;
+    }
+    if (!writeFileBytes(outPath, outBytes.data(), outBytes.size())) {
+        std::fprintf(stderr, "mc2fx: cannot write '%s'\n", outPath); return 3;
+    }
+
+    // --- byte-compare ---
+    std::fprintf(stderr, "mc2fx rebuild: in=%zu bytes  out=%zu bytes\n",
+                 inBytes.size(), outBytes.size());
+    size_t n = inBytes.size() < outBytes.size() ? inBytes.size() : outBytes.size();
+    size_t firstDiff = (size_t)-1;
+    for (size_t i = 0; i < n; ++i) {
+        if (inBytes[i] != outBytes[i]) { firstDiff = i; break; }
+    }
+    if (firstDiff == (size_t)-1 && inBytes.size() == outBytes.size()) {
+        std::fprintf(stderr, "mc2fx rebuild: IDENTICAL (byte-exact round-trip)\n");
+        std::printf("IDENTICAL\n");
+        return 0;
+    }
+    if (firstDiff == (size_t)-1) {
+        // common prefix matches but lengths differ
+        firstDiff = n;
+    }
+    std::fprintf(stderr, "mc2fx rebuild: DIFFER at offset %zu\n", firstDiff);
+    auto hexDump = [](const char* label, const std::vector<unsigned char>& b, size_t off) {
+        std::fprintf(stderr, "  %s:", label);
+        for (size_t i = off; i < off + 16 && i < b.size(); ++i)
+            std::fprintf(stderr, " %02X", b[i]);
+        std::fprintf(stderr, "\n");
+    };
+    size_t ctx = firstDiff >= 4 ? firstDiff - 4 : 0;
+    hexDump("in ", inBytes, ctx);
+    hexDump("out", outBytes, ctx);
+    std::printf("DIFFER@%zu in=%zu out=%zu\n", firstDiff, inBytes.size(), outBytes.size());
     return 0;
 }
 
@@ -141,7 +127,8 @@ void usage()
 {
     std::fprintf(stderr,
         "mc2fx — gosFX effect blob inspector\n"
-        "  mc2fx dump <mc2.fx> [out.json]   dump effect catalog to JSON (stdout if no out)\n");
+        "  mc2fx dump    <mc2.fx> [out.json]   dump effect catalog to JSON (stdout if no out)\n"
+        "  mc2fx rebuild <in.fx>  <out.fx>     Load->Save round-trip + byte-compare\n");
 }
 
 }  // namespace
@@ -152,6 +139,10 @@ int main(int argc, char** argv)
     std::string cmd = argv[1];
     if (cmd == "dump") {
         return cmdDump(argv[2], argc >= 4 ? argv[3] : nullptr);
+    }
+    if (cmd == "rebuild") {
+        if (argc < 4) { usage(); return 1; }
+        return cmdRebuild(argv[2], argv[3]);
     }
     usage();
     return 1;
