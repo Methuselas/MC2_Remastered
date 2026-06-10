@@ -3890,11 +3890,78 @@ static bool EditorInterface_ShouldOpenSettingsForClick(int screenX, int screenY)
 }
 
 
-LRESULT EditorInterface::WindowProc(UINT message, WPARAM wParam, LPARAM lParam) 
+#ifdef MC2_IMGUI
+// Minimal Win32 virtual-key -> ImGuiKey map for the keys an ImGui text field needs
+// (editing/navigation + the letters/digits used in Ctrl+ shortcuts). Printable text
+// itself arrives via WM_CHAR -> AddInputCharacter, not through this map.
+static ImGuiKey EditorInterface_VkToImGuiKey(int vk)
+{
+	switch (vk)
+	{
+	case VK_TAB:        return ImGuiKey_Tab;
+	case VK_LEFT:       return ImGuiKey_LeftArrow;
+	case VK_RIGHT:      return ImGuiKey_RightArrow;
+	case VK_UP:         return ImGuiKey_UpArrow;
+	case VK_DOWN:       return ImGuiKey_DownArrow;
+	case VK_PRIOR:      return ImGuiKey_PageUp;
+	case VK_NEXT:       return ImGuiKey_PageDown;
+	case VK_HOME:       return ImGuiKey_Home;
+	case VK_END:        return ImGuiKey_End;
+	case VK_INSERT:     return ImGuiKey_Insert;
+	case VK_DELETE:     return ImGuiKey_Delete;
+	case VK_BACK:       return ImGuiKey_Backspace;
+	case VK_SPACE:      return ImGuiKey_Space;
+	case VK_RETURN:     return ImGuiKey_Enter;
+	case VK_ESCAPE:     return ImGuiKey_Escape;
+	case VK_CONTROL:    return ImGuiKey_LeftCtrl;
+	case VK_SHIFT:      return ImGuiKey_LeftShift;
+	case VK_MENU:       return ImGuiKey_LeftAlt;
+	case VK_OEM_MINUS:  return ImGuiKey_Minus;
+	case VK_OEM_PERIOD: return ImGuiKey_Period;
+	default:
+		if (vk >= 'A' && vk <= 'Z') return (ImGuiKey)(ImGuiKey_A + (vk - 'A'));
+		if (vk >= '0' && vk <= '9') return (ImGuiKey)(ImGuiKey_0 + (vk - '0'));
+		return ImGuiKey_None;
+	}
+}
+#endif
+
+LRESULT EditorInterface::WindowProc(UINT message, WPARAM wParam, LPARAM lParam)
 {
 	//We're not ready to draw anything.
 	// If you let an event through it'll probably crash!
 	//
+#ifdef MC2_IMGUI
+	// Route the keyboard to ImGui ONLY while a text field is active (WantTextInput),
+	// and CONSUME the message so editor single-key shortcuts (handleKeyDown) and the
+	// GameOS input path do not also fire while the user is typing in a search/text
+	// box. When no field is focused, WantTextInput is false and keys flow normally.
+	if (ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput)
+	{
+		ImGuiIO& io = ImGui::GetIO();
+		switch (message)
+		{
+		case WM_CHAR:
+			if (wParam > 0 && wParam < 0x10000)
+				io.AddInputCharacterUTF16((unsigned short)wParam);
+			return 0;
+		case WM_KEYDOWN:
+		case WM_SYSKEYDOWN:
+		case WM_KEYUP:
+		case WM_SYSKEYUP:
+		{
+			const bool down = (message == WM_KEYDOWN || message == WM_SYSKEYDOWN);
+			ImGuiKey key = EditorInterface_VkToImGuiKey((int)wParam);
+			if (key != ImGuiKey_None)
+				io.AddKeyEvent(key, down);
+			return 0;
+		}
+		default:
+			break;
+		}
+	}
+#endif
+
 	if ( message == WM_KEYDOWN )
 		handleKeyDown( wParam );
 
