@@ -83,6 +83,34 @@ static const char* k_biomeKeys[5] = {
     "rocky_badlands",
 };
 
+// Per-biome foliage character (indexed by biomeIndex, same order as the labels).
+// The editor renders foliage by KIND (tree/rock/bush colored billboards -- no
+// per-species art ships), so "species" here = biome-appropriate placement +
+// kind mix + the asset name carried in the JSON (consumed by the game later).
+// The user's Tree Density / Tree Line / rocks controls tune these per-biome bases.
+struct BiomeFoliageDef {
+    const char* treeAsset;    // recorded in foliage.json (kind stays "tree")
+    float       treeDensMul;  // multiplies the user density for trees
+    float       treeNoise;    // noise_threshold: >0 clusters trees into clumps
+    bool        treesAvoidWater;
+    bool        bushes;       // emit a bush rule for this biome
+    const char* bushAsset;
+    float       bushDensMul;
+    float       rockDensMul;  // multiplies rock density when rocks are enabled
+};
+static const BiomeFoliageDef k_biomeFoliage[5] = {
+    // Temperate Forest: lush, clumped pines + bushes, some rocks.
+    { "tree_pine_a",      1.00f, 0.45f, true,  true,  "bush_leafy_a",  0.60f, 0.40f },
+    // Desert: sparse palms, no clumping, cactus bushes, lots of rock.
+    { "tree_palm_a",      0.25f, 0.00f, true,  true,  "bush_cactus_a", 0.30f, 0.85f },
+    // Tundra / Snow: scattered snow pines (tree line low), no bushes, rocks.
+    { "tree_pine_snow_a", 0.50f, 0.20f, true,  false, "bush_leafy_a",  0.00f, 0.70f },
+    // Rocky Badlands: very sparse scrub, scrub bushes, heavy rock.
+    { "tree_scrub_a",     0.30f, 0.15f, true,  true,  "bush_scrub_a",  0.40f, 1.00f },
+    // Volcanic: near-barren dead snags, no bushes, dense rock.
+    { "tree_dead_a",      0.15f, 0.10f, true,  false, "bush_scrub_a",  0.00f, 1.25f },
+};
+
 // MapSize index -> cell side (quads per side, user-facing label).  Always multiples of 20.
 // Use EditorData::MapSizeToCellSide() / MapSizeToVertexSide() for conversions instead of
 // indexing this array directly — it is kept here only for the preset dir name and recipe.
@@ -220,31 +248,49 @@ static std::string BuildRecipeJSON(bool preview) {
 
     std::string recipe(buf);
 
-    // Optional foliage rules: trees on non-water below the tree line, plus rocks
-    // on slopes. Density slider [0..1] -> rule density [0.004..0.030].
+    // Per-biome foliage rules: a tree rule (biome species + clustering), an
+    // optional biome bush rule, and an optional rock rule. The user's Tree
+    // Density / Tree Line / rocks controls tune the per-biome bases.
     if (s_state.generateFoliage) {
-        float treeD = 0.004f + s_state.treeDensity * 0.026f;
-        float treeMaxAlt = s_state.treeLine;
-        char fol[1024];
-        int n = snprintf(fol, sizeof(fol),
-            ",\n  \"foliage\": [\n"
-            "    { \"asset\": \"tree_pine_a\", \"kind\": \"tree\", \"density\": %.4f,\n"
-            "      \"avoid_water\": true, \"max_altitude\": %.3f, \"max_slope\": 0.55,\n"
-            "      \"min_spacing\": 256.0, \"scale_min\": 0.8, \"scale_max\": 1.25 }",
-            (double)treeD, (double)treeMaxAlt);
-        recipe += fol;
-        if (s_state.placeRocks) {
-            char rk[768];
-            snprintf(rk, sizeof(rk),
-                ",\n"
-                "    { \"asset\": \"rock_a\", \"kind\": \"rock\", \"density\": %.4f,\n"
-                "      \"avoid_water\": true, \"min_altitude\": 0.20, \"max_slope\": 1.0,\n"
-                "      \"min_spacing\": 320.0, \"scale_min\": 0.7, \"scale_max\": 1.4 }",
-                (double)(treeD * 0.3f));
-            recipe += rk;
+        const BiomeFoliageDef& bf = k_biomeFoliage[s_state.biomeIndex];
+        const float baseD = 0.004f + s_state.treeDensity * 0.026f;   // [0.004..0.030]
+        const float treeD = baseD * bf.treeDensMul;
+        const float bushD = baseD * 0.5f * bf.bushDensMul;
+        const float rockD = (0.002f + s_state.treeDensity * 0.010f) * bf.rockDensMul;
+        const float treeMaxAlt = s_state.treeLine;
+
+        std::string rules;
+        char b[1024];
+
+        snprintf(b, sizeof(b),
+            "    { \"asset\": \"%s\", \"kind\": \"tree\", \"density\": %.4f,\n"
+            "      \"avoid_water\": %s, \"max_altitude\": %.3f, \"max_slope\": 0.55,\n"
+            "      \"noise_threshold\": %.3f, \"min_spacing\": 256.0, \"scale_min\": 0.8, \"scale_max\": 1.25 }",
+            bf.treeAsset, (double)treeD, bf.treesAvoidWater ? "true" : "false",
+            (double)treeMaxAlt, (double)bf.treeNoise);
+        rules += b;
+
+        if (bf.bushes) {
+            snprintf(b, sizeof(b),
+                ",\n    { \"asset\": \"%s\", \"kind\": \"bush\", \"density\": %.4f,\n"
+                "      \"avoid_water\": true, \"max_altitude\": %.3f, \"max_slope\": 0.70,\n"
+                "      \"min_spacing\": 192.0, \"scale_min\": 0.7, \"scale_max\": 1.2 }",
+                bf.bushAsset, (double)bushD, (double)treeMaxAlt);
+            rules += b;
         }
+
+        if (s_state.placeRocks) {
+            snprintf(b, sizeof(b),
+                ",\n    { \"asset\": \"rock_a\", \"kind\": \"rock\", \"density\": %.4f,\n"
+                "      \"avoid_water\": true, \"min_altitude\": 0.15, \"max_slope\": 1.0,\n"
+                "      \"min_spacing\": 320.0, \"scale_min\": 0.7, \"scale_max\": 1.4 }",
+                (double)rockD);
+            rules += b;
+        }
+
+        recipe += ",\n  \"foliage\": [\n";
+        recipe += rules;
         recipe += "\n  ]";
-        (void)n;
     }
 
     recipe += "\n}\n";
@@ -452,7 +498,8 @@ void MapGeneratorDialog::Draw() {
         ImGui::SetNextItemWidth(280.f * sc);
         ImGui::SliderFloat("Tree Line (max altitude)", &s_state.treeLine, 0.f, 1.f, "%.2f");
         ImGui::Checkbox("Scatter rocks on slopes", &s_state.placeRocks);
-        ImGui::TextDisabled("Trees apply on full Generate (not the fast Preview).");
+        ImGui::TextDisabled("Species/mix vary by biome (e.g. desert palms, snow pines).");
+        ImGui::TextDisabled("Applies on full Generate (not the fast Preview).");
     }
     ImGui::Unindent();
 
