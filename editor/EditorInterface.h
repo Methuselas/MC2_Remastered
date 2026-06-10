@@ -198,6 +198,10 @@ public:
 	afx_msg void OnDestroy();
 	afx_msg void OnForestTool();
 	afx_msg void OnOtherEditforests();
+	afx_msg void OnFoliageGenerate();
+	afx_msg void OnFoliageRegenSel();
+	afx_msg void OnFoliageClear();
+	afx_msg void OnFoliageToggle();
 	afx_msg void OnViewOrthographiccamera();
 	afx_msg void OnViewShowpassabilitymap();
 	afx_msg void OnMButtonUp(UINT nFlags, CPoint point);

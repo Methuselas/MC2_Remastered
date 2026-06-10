@@ -91,6 +91,7 @@ extern graphics::RenderContextHandle EditorGameOS_GetRenderContext();
 #include "HeightBrush.h"
 #include "ScatterBrush.h"
 #include "StampBrush.h"
+#include "FoliageRender.h"
 #include "object_recent_ring.h"
 #include "../GameOS/gameos/gos_terrain_water_stream.h"
 #endif
@@ -809,6 +810,10 @@ BEGIN_MESSAGE_MAP(EditorInterface,CWnd )
 	ON_WM_DESTROY()
 	ON_COMMAND(ID_FOREST_TOOL, OnForestTool)
 	ON_COMMAND(ID_OTHER_EDITFORESTS, OnOtherEditforests)
+	ON_COMMAND(ID_FOLIAGE_GENERATE, OnFoliageGenerate)
+	ON_COMMAND(ID_FOLIAGE_REGENSEL, OnFoliageRegenSel)
+	ON_COMMAND(ID_FOLIAGE_CLEAR, OnFoliageClear)
+	ON_COMMAND(ID_FOLIAGE_TOGGLE, OnFoliageToggle)
 	ON_COMMAND(ID_VIEW_ORTHOGRAPHICCAMERA, OnViewOrthographiccamera)
 	ON_COMMAND(ID_VIEW_SHOWPASSABILITYMAP, OnViewShowpassabilitymap)
 	ON_WM_MBUTTONUP()
@@ -2550,6 +2555,10 @@ void EditorInterface::render()
 	// Poll keyboard + mouse-edge every render frame so camera responds at render rate
 	// (~100 fps) rather than WM_KEYDOWN key-repeat rate (~30 Hz).
 	updateCameraInput();
+
+	// Phase 5: PCG foliage billboard preview, drawn over the already-rendered
+	// terrain. Pure visual overlay -- no terrain/save/load state touched.
+	FoliageRender::Render( eye );
 
 	ModifyStyle( 0, WS_HSCROLL | WS_VSCROLL );
 
@@ -5362,7 +5371,60 @@ void EditorInterface::OnDestroy()
 
 #pragma warning( default:4244 )
 
-void EditorInterface::OnForestTool() 
+//-------------------------------------------------------------------------------------------------
+// Phase 5 PCG foliage commands. Generate runs the Python generator's foliage pass
+// on the current generated-map recipe and loads the resulting sidecar; the rest
+// are pure overlay-state toggles. None touch terrain/save/load.
+//-------------------------------------------------------------------------------------------------
+void EditorInterface::OnFoliageGenerate()
+{
+	const char* recipe = "terrain_gen_out\\genmap_recipe.json";
+	if ( GetFileAttributes( recipe ) == INVALID_FILE_ATTRIBUTES )
+	{
+		AfxMessageBox( "No generated-map recipe found.\nUse the Map Generator first, then Generate Foliage." );
+		return;
+	}
+	char cmd[1024];
+	sprintf( cmd,
+		"py -3 tools\\terrain_gen\\terrain_gen.py \"%s\" --out terrain_gen_out "
+		"--generate-foliage --foliage-rules tools\\terrain_gen\\recipes\\foliage_rules_example.json",
+		recipe );
+	int rc = system( cmd );
+	if ( rc != 0 )
+	{
+		AfxMessageBox( "Foliage generation failed.\nNeeds Python 3 + tools\\terrain_gen on the editor's working dir." );
+		return;
+	}
+	if ( FoliageRender::Load( "terrain_gen_out\\genmap.foliage.json" ) )
+	{
+		char msg[128];
+		sprintf( msg, "Foliage generated: %d instances.", FoliageRender::Count() );
+		AfxMessageBox( msg );
+	}
+	else
+	{
+		AfxMessageBox( "Foliage generated but no instances were placed (check rules / map)." );
+	}
+}
+
+void EditorInterface::OnFoliageRegenSel()
+{
+	// v1: selected-superchunk regeneration is not yet wired; regenerate the full
+	// foliage set deterministically (same per-superchunk seeds -> stable result).
+	OnFoliageGenerate();
+}
+
+void EditorInterface::OnFoliageClear()
+{
+	FoliageRender::Clear();
+}
+
+void EditorInterface::OnFoliageToggle()
+{
+	FoliageRender::Toggle();
+}
+
+void EditorInterface::OnForestTool()
 {
 	if (EditorInterface::instance()->ObjectSelectOnlyMode())
 	{

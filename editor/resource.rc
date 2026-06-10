@@ -1111,6 +1111,11 @@ BEGIN
                                                 ID_OTHER_REFRACTALIZETERRAIN
         MENUITEM "Forest &Tool\tT",             ID_FOREST_TOOL
         MENUITEM "Edit Fore&sts",               ID_OTHER_EDITFORESTS
+        MENUITEM SEPARATOR
+        MENUITEM "Generate Foliage",            ID_FOLIAGE_GENERATE
+        MENUITEM "Regenerate Foliage (Selected)", ID_FOLIAGE_REGENSEL
+        MENUITEM "Clear Foliage",               ID_FOLIAGE_CLEAR
+        MENUITEM "Toggle Foliage",              ID_FOLIAGE_TOGGLE
     END
     POPUP "&Select"
     BEGIN
