@@ -233,10 +233,12 @@ public:
 
 	typedef EList< EditorObject*, EditorObject*>  BUILDING_LIST;	// buildings on the map
 	typedef EList< Unit*, Unit* > UNIT_LIST;
+	typedef EList< DropZone*, DropZone* > DROPZONE_LIST;
 
 	void getSelectedUnits( UNIT_LIST& );
 	UNIT_LIST getUnits() { return units; }
 	BUILDING_LIST getBuildings() { return buildings; }
+	DROPZONE_LIST getDropZones() { return dropZones; } // read-only snapshot (Scene Outliner)
 
 	unsigned long getNextAvailableSquadNum() { return nextAvailableSquadNum; }
 	void registerSquadNum(unsigned long squadNum);

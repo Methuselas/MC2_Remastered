@@ -75,6 +75,7 @@
 #include "MissionValidation.h"
 #include "EditorTaskRunner.h"
 #include "EditorDebugOverlay.h"
+#include "SceneOutliner.h"
 #include "gameplay_pick.h"  // tryGameplayPick: shared pick spine, no game-object deps
 #include "gameos.hpp"       // gos_GetViewport, Environment (drawableWidth/Height)
 #include "gos_render.h"     // graphics::make_current_context
@@ -4534,6 +4535,11 @@ void EditorInterface::renderToolbarImGui()
 
 	// Debug overlay control panel (chunk/superchunk grid toggles + stats).
 	EditorDebugOverlay::RenderImGui();
+
+	// Scene Outliner Lite — read-only list of placed objects, click-to-select.
+	if (ImGui::Button("Scene Outliner", ImVec2(-1.f, 0.f)))
+		SceneOutliner::Toggle();
+	SceneOutliner::Draw();
 
 	ImGui::Separator();
 
