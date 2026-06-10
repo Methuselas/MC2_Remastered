@@ -286,6 +286,7 @@ def main():
                    if k in ("MC2_FX_COUNT_LOG",
                             "MC2_SCREENSHOT_AT_FRAME",
                             "MC2_SCREENSHOT_PATH",
+                            "MC2_OBJECT_RECON_TRACY",
                             "MC2_MODERN_TERRAIN_SURFACE",
                             "MC2_MODERN_TERRAIN_PATCHES",
                             "MC2_SHAPE_C_PARITY_CHECK",
@@ -593,7 +594,11 @@ def main():
                             # fast path that skips fillStaticPropSlots + WriteLoop
                             # and memcpy's cached rows into the snapshot arena.
                             # Default-OFF; =1 enables the dirty-only path.
-                            "MC2_STATIC_PROP_SNAPSHOT_FILL_DIRTYONLY")},
+                            "MC2_STATIC_PROP_SNAPSHOT_FILL_DIRTYONLY",
+                            # Terrain fast-path drop transition log (default-OFF).
+                            # MC2_FASTPATH_DROP_LOG=1 emits [FASTPATH_DROP] on
+                            # armed<->fallback transitions in terrain.cpp geometry().
+                            "MC2_FASTPATH_DROP_LOG")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission

@@ -514,3 +514,44 @@ Until this is decided, "preserve visual output" is unfalsifiable. Recommend (a) 
 
 **Verdict:** Execute Stage 0 now as a measured GO/NO-GO. Resolve Blocker 2 before writing Stage 2 code.
 No implementation beyond Stage 0 instrumentation until both blockers clear.
+
+---
+
+## 9. STAGE 0 RESULTS — Measured 2026-06-09 → **NO-GO for S2 as a perf win**
+
+Measured `TG_Shape::MultiTransformShape` (the CPU clip-space vertex bake) via the pre-existing
+`MC2_OBJECT_RECON_TRACY` per-frame `shape={ns,calls}` accumulator (it already instruments this exact
+function; my added `MC2_TG_XFORM_STATS` counter did not emit — minor bug, OBJECT_RECON supersedes it).
+All runs: tier1 5/5 PASS with the flag on, Δdestroys=0 → instrumentation is behavior-neutral.
+
+Per-frame `MultiTransformShape` cost (peak across the run):
+
+| Mission | peak/frame | typical | peak shape calls | fps | % of ~14ms frame |
+|---------|-----------|---------|------------------|-----|------------------|
+| 1kbasicmap (1K map) | **0.018 ms** | 0.016 ms | 2 | **18 (55ms/frame)** | **0.03%** |
+| mc2_17 (mech combat) | 0.159 ms | ~0.03 ms | 184 | 74 | ~1% |
+| mc2_10 (densest objects) | 1.19 ms | ~0.5 ms | 262 | 69 | 3.5–8% (peak only) |
+| mc2_03 | 0.34 ms | ~0.2 ms | 205 | 71 | ~2.4% |
+| mc2_01 / mc2_24 | ~0.002 ms | 0.002 ms | 2 | 82 / 72 | ~0% |
+
+### Conclusion (Blocker 1 → NO-GO)
+- **The CPU clip-space bake is NOT a dominant hotspot.** Worst case is ~1.2ms in a *peak* frame on the
+  single most object-dense normal map (mc2_10, 262 buildings+mechs); typically ~0.5ms; negligible
+  (<0.16ms) everywhere else.
+- **The 1K map disproves the original premise outright:** at 18fps / 55ms-per-frame it spends 0.018ms
+  (2 dynamic shapes) in MultiTransformShape. The 1K slowness is terrain-bound, not TG-dynamic-bound.
+  (The terrain per-vertex cost was a *different* system — slimReduce — already addressed by the
+  TerrainLOD chunk arc.)
+- Best realistic S2 saving: ~0.5–1ms on the densest object map, ~0 elsewhere. Against the migration's
+  real risks (highlight regression, CPU↔GPU lighting parity, multi-texture FIXME, all-families blast
+  radius), **the payoff does not justify the work.**
+
+### Recommendation
+1. **Do NOT proceed to Stage 1/2.** S2 drops in priority (same outcome as S1).
+2. If perf is the goal, the measured hotspot is **elsewhere** — the 1K map's 55ms/frame is terrain/
+   present-bound. Profile terrain + SwapWindow/present (a ~45ms present stall is noted at
+   gameosmain.cpp:1544) before any dynamic-object render rework.
+3. Keep Stage 0 instrumentation as a cheap diagnostic OR revert it (OBJECT_RECON already covers the
+   measurement) — disposition TBD by user.
+4. The GPU-VB/`TG_RenderShape` dead-code path remains available if a *correctness* (not perf) reason to
+   activate it appears later (e.g. unifying the draw path), but that is not S2's current justification.
