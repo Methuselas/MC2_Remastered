@@ -612,6 +612,226 @@ bool MapGeneratorDialog::IsTaskActive() {
     return EditorTaskRunner::HasActiveTasks();
 }
 
+// ===========================================================================
+// Foliage Detail panel
+// ===========================================================================
+namespace {
+
+struct FoliageState {
+    bool  open          = false;
+    float treeDensity   = 0.5f;
+    float clumpiness    = 0.45f; // -> noise_threshold (forests in patches)
+    float bushDensity   = 0.5f;
+    float treeLine      = 0.85f; // max_altitude for trees/bushes
+    float scaleVar      = 0.25f; // +/- fraction on instance scale
+    float spacing       = 256.f; // world units between instances
+    bool  shoreline     = false; // reeds at the water's edge
+    bool  rocks         = true;
+    char  status[192]   = "";
+};
+static FoliageState s_fol;
+
+static const char* k_recipePath    = "terrain_gen_out\\genmap_recipe.json";
+static const char* k_folRulesPath  = "terrain_gen_out\\foliage_rules.json";
+static const char* k_folJsonPath   = "terrain_gen_out\\genmap.foliage.json";
+
+// Pull the biome index from the saved recipe so the foliage species match the
+// terrain. Falls back to 0 (Temperate Forest) if not found.
+static int ReadRecipeBiomeIndex() {
+    FILE* f = fopen(k_recipePath, "rb");
+    if (!f) return 0;
+    char buf[4096];
+    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    buf[n] = '\0';
+    const char* p = strstr(buf, "\"biome\"");
+    if (!p) return 0;
+    p = strchr(p, ':');
+    if (!p) return 0;
+    p = strchr(p, '"');
+    if (!p) return 0;
+    const char* q = strchr(p + 1, '"');
+    if (!q) return 0;
+    std::string key(p + 1, q - (p + 1));
+    for (int i = 0; i < 5; ++i)
+        if (key == k_biomeKeys[i]) return i;
+    return 0;
+}
+
+// Build a {"foliage":[...]} rules file from the knobs + the biome species table.
+static std::string BuildFoliageRulesJSON(int biomeIndex) {
+    if (biomeIndex < 0 || biomeIndex > 4) biomeIndex = 0;
+    const BiomeFoliageDef& bf = k_biomeFoliage[biomeIndex];
+
+    const float baseD = 0.004f + s_fol.treeDensity * 0.026f;
+    const float treeD = baseD * bf.treeDensMul;
+    const float bushD = (0.004f + s_fol.bushDensity * 0.026f) * 0.6f * (bf.bushes ? 1.0f : 0.6f);
+    const float rockD = (0.002f + s_fol.treeDensity * 0.010f) * bf.rockDensMul;
+    const float noise = s_fol.clumpiness * 0.7f;
+    const float sMin  = 1.0f - 0.4f * s_fol.scaleVar;
+    const float sMax  = 1.0f + 0.4f * s_fol.scaleVar;
+
+    std::string out = "{\n  \"foliage\": [\n";
+    char b[1024];
+
+    snprintf(b, sizeof(b),
+        "    { \"asset\": \"%s\", \"kind\": \"tree\", \"density\": %.4f,\n"
+        "      \"avoid_water\": %s, \"max_altitude\": %.3f, \"max_slope\": 0.55,\n"
+        "      \"noise_threshold\": %.3f, \"min_spacing\": %.1f, \"scale_min\": %.2f, \"scale_max\": %.2f }",
+        bf.treeAsset, (double)treeD, bf.treesAvoidWater ? "true" : "false",
+        (double)s_fol.treeLine, (double)noise, (double)s_fol.spacing, (double)sMin, (double)sMax);
+    out += b;
+
+    if (s_fol.bushDensity > 0.01f) {
+        snprintf(b, sizeof(b),
+            ",\n    { \"asset\": \"%s\", \"kind\": \"bush\", \"density\": %.4f,\n"
+            "      \"avoid_water\": true, \"max_altitude\": %.3f, \"max_slope\": 0.70,\n"
+            "      \"min_spacing\": %.1f, \"scale_min\": %.2f, \"scale_max\": %.2f }",
+            bf.bushAsset, (double)bushD, (double)s_fol.treeLine,
+            (double)(s_fol.spacing * 0.75f), (double)sMin, (double)sMax);
+        out += b;
+    }
+
+    if (s_fol.shoreline) {
+        snprintf(b, sizeof(b),
+            ",\n    { \"asset\": \"reed_a\", \"kind\": \"bush\", \"density\": 0.020,\n"
+            "      \"avoid_water\": false, \"min_altitude\": 0.0, \"max_altitude\": 0.06,\n"
+            "      \"max_slope\": 0.30, \"min_spacing\": 160.0, \"scale_min\": 0.7, \"scale_max\": 1.1 }");
+        out += b;
+    }
+
+    if (s_fol.rocks) {
+        snprintf(b, sizeof(b),
+            ",\n    { \"asset\": \"rock_a\", \"kind\": \"rock\", \"density\": %.4f,\n"
+            "      \"avoid_water\": true, \"min_altitude\": 0.15, \"max_slope\": 1.0,\n"
+            "      \"min_spacing\": 320.0, \"scale_min\": 0.7, \"scale_max\": 1.4 }",
+            (double)rockD);
+        out += b;
+    }
+
+    out += "\n  ]\n}\n";
+    return out;
+}
+
+// Kick off the fast foliage-only generation on the current map's recipe.
+static void RunFoliageGenerate() {
+    if (EditorTaskRunner::HasActiveTasks()) {
+        snprintf(s_fol.status, sizeof(s_fol.status), "A generation task is already running.");
+        return;
+    }
+    if (GetFileAttributesA(k_recipePath) == INVALID_FILE_ATTRIBUTES) {
+        snprintf(s_fol.status, sizeof(s_fol.status),
+            "No generated-map recipe. Use Generate Map first.");
+        return;
+    }
+
+    std::string rules = BuildFoliageRulesJSON(ReadRecipeBiomeIndex());
+    CreateDirectoryA("terrain_gen_out", NULL);
+    FILE* f = fopen(k_folRulesPath, "w");
+    if (!f) {
+        snprintf(s_fol.status, sizeof(s_fol.status), "Could not write foliage rules.");
+        return;
+    }
+    fputs(rules.c_str(), f);
+    fclose(f);
+
+    char cmd[1100];
+    snprintf(cmd, sizeof(cmd),
+        "py -3 -u tools\\terrain_gen\\terrain_gen.py \"%s\" --out terrain_gen_out "
+        "--foliage-only --foliage-rules \"%s\"",
+        k_recipePath, k_folRulesPath);
+
+    EditorTaskRunner::TaskSpec spec;
+    spec.name        = "Foliage";
+    spec.commandLine = cmd;
+    spec.onSuccessMainThread = [](const EditorTaskRunner::TaskResult&) {
+        if (FoliageRender::Load(k_folJsonPath)) {
+            if (!FoliageRender::Visible())
+                FoliageRender::Toggle();
+            snprintf(s_fol.status, sizeof(s_fol.status),
+                "Placed %d foliage instances.", FoliageRender::Count());
+        } else {
+            snprintf(s_fol.status, sizeof(s_fol.status),
+                "Foliage ran but no instances were placed.");
+        }
+    };
+    spec.onFailureMainThread = [](const EditorTaskRunner::TaskResult& r) {
+        snprintf(s_fol.status, sizeof(s_fol.status),
+            "Foliage failed (exit %d). See Task Monitor log.", r.exitCode);
+    };
+    EditorTaskRunner::StartTask(spec);
+    snprintf(s_fol.status, sizeof(s_fol.status), "Generating foliage...");
+}
+
+} // anonymous namespace
+
+void MapGeneratorDialog::ToggleFoliagePanel() { s_fol.open = !s_fol.open; }
+bool MapGeneratorDialog::FoliagePanelOpen()   { return s_fol.open; }
+
+void MapGeneratorDialog::DrawFoliagePanel() {
+    if (!s_fol.open)
+        return;
+
+    const ImGuiIO& io = ImGui::GetIO();
+    const float sc = io.DisplaySize.x / 1280.f;
+
+    ImGui::SetNextWindowSize(ImVec2(320.f * sc, 0.f), ImGuiCond_FirstUseEver);
+    bool open = s_fol.open;
+    if (!ImGui::Begin("Foliage Detail", &open,
+                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::End();
+        s_fol.open = open;
+        return;
+    }
+    s_fol.open = open;
+
+    const bool haveRecipe =
+        (GetFileAttributesA(k_recipePath) != INVALID_FILE_ATTRIBUTES);
+    if (!haveRecipe) {
+        ImGui::TextDisabled("Generate a base map first (Generate Map),");
+        ImGui::TextDisabled("then add trees/rocks here.");
+        ImGui::End();
+        return;
+    }
+
+    ImGui::TextDisabled("Detail the visible map. Fast foliage-only regen.");
+    ImGui::Separator();
+
+    ImGui::SetNextItemWidth(200.f * sc);
+    ImGui::SliderFloat("Tree Density",  &s_fol.treeDensity, 0.f, 1.f, "%.2f");
+    ImGui::SetNextItemWidth(200.f * sc);
+    ImGui::SliderFloat("Clumpiness",    &s_fol.clumpiness,  0.f, 1.f, "%.2f");
+    ImGui::SetNextItemWidth(200.f * sc);
+    ImGui::SliderFloat("Bush Density",  &s_fol.bushDensity, 0.f, 1.f, "%.2f");
+    ImGui::SetNextItemWidth(200.f * sc);
+    ImGui::SliderFloat("Tree Line",     &s_fol.treeLine,    0.f, 1.f, "%.2f");
+    ImGui::SetNextItemWidth(200.f * sc);
+    ImGui::SliderFloat("Size Variation",&s_fol.scaleVar,    0.f, 1.f, "%.2f");
+    ImGui::SetNextItemWidth(200.f * sc);
+    ImGui::SliderFloat("Spacing",       &s_fol.spacing,     96.f, 512.f, "%.0f");
+    ImGui::Checkbox("Shoreline reeds",  &s_fol.shoreline);
+    ImGui::Checkbox("Scatter rocks",    &s_fol.rocks);
+
+    ImGui::Separator();
+
+    const bool busy = EditorTaskRunner::HasActiveTasks();
+    if (busy) ImGui::BeginDisabled();
+    if (ImGui::Button("Generate Foliage", ImVec2(-1.f, 0.f)))
+        RunFoliageGenerate();
+    if (busy) ImGui::EndDisabled();
+
+    if (ImGui::Button("Clear", ImVec2(150.f * sc, 0.f)))
+        FoliageRender::Clear();
+    ImGui::SameLine();
+    if (ImGui::Button(FoliageRender::Visible() ? "Hide" : "Show", ImVec2(150.f * sc, 0.f)))
+        FoliageRender::Toggle();
+
+    if (s_fol.status[0])
+        ImGui::TextColored(ImVec4(0.6f, 0.9f, 0.6f, 1.f), "%s", s_fol.status);
+
+    ImGui::End();
+}
+
 bool MapGeneratorDialog::GenerateReady() {
     return s_generateReady;
 }

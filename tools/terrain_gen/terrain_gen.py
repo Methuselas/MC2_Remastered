@@ -161,6 +161,11 @@ def main() -> None:
     parser.add_argument('--foliage-rules',
                         help='JSON file of foliage rules (list or {"foliage":[...]}). '
                              'Overrides recipe.foliage.')
+    parser.add_argument('--foliage-only', action='store_true',
+                        help='Regenerate ONLY the foliage sidecar against the recipe '
+                             'terrain (height+masks), skipping the burnin/elev/preview '
+                             'outputs. Fast path for iterative in-editor foliage authoring. '
+                             'Implies --generate-foliage.')
     args = parser.parse_args()
 
     # Resolve quality preset -> legacy flags/caps. Only when --quality is passed,
@@ -261,51 +266,60 @@ def main() -> None:
     masks = MaterialClassifier().classify(height, recipe)
     progress(80, "classify", "done")
 
-    progress(85, "burnin", "rendering")
-    burnin = BurninRenderer().render(masks, recipe, BIOMES[recipe.biome])
-    progress(92, "burnin", "done")
-
     name = recipe.name
-    print(f"Saving to {out}/")
 
-    # Primary colormap: JPEG q95 (terrtxm2 prefers <name>.burnin.jpg). Also keep
-    # .burnin.tga for the editor staging path (EditorData.cpp initTerrainFromTGA),
-    # until that path is migrated to jpg. --burnin-format controls which are written.
-    fmt = args.burnin_format
-    if fmt in ("jpg", "both"):
-        _save_jpg(burnin, out / f"{name}.burnin.jpg", quality=args.burnin_quality)
-        jpg_kb = (out / f"{name}.burnin.jpg").stat().st_size // 1024
-        print(f"  {name}.burnin.jpg  ({burnin.size[0]}x{burnin.size[1]}, q{args.burnin_quality}, {jpg_kb} KB)")
-    if fmt in ("tga", "both"):
-        _save_tga(burnin, out / f"{name}.burnin.tga")
-        print(f"  {name}.burnin.tga  ({burnin.size[0]}x{burnin.size[1]})")
+    # --foliage-only: skip the burnin/elev/preview/fit outputs and go straight to
+    # the foliage sidecar (the editor already has the terrain; only the trees
+    # change). Implies --generate-foliage.
+    foliage_only = getattr(args, 'foliage_only', False)
+    if foliage_only:
+        args.generate_foliage = True
 
-    # Editor (Path B) elevation export: raw float32 world-unit elevations,
-    # row-major (y outer, x inner) matching PostcompVertex order. The editor
-    # reads this straight into setVertexHeight; no pak round-trip needed.
-    # elevation = height[0,1] * max_elevation + min_elevation (same as PakExporter).
-    h_p = recipe.height
-    elev = (height.astype(np.float32) * np.float32(h_p.max_elevation)
-            + np.float32(h_p.min_elevation)).astype('<f4')
-    elev.tofile(str(out / f"{name}.elev.r32"))
-    print(f"  {name}.elev.r32  ({recipe.size}x{recipe.size} float32)")
+    if not foliage_only:
+        progress(85, "burnin", "rendering")
+        burnin = BurninRenderer().render(masks, recipe, BIOMES[recipe.biome])
+        progress(92, "burnin", "done")
 
-    make_preview(burnin).save(str(out / f"{name}.preview.png"))
-    print(f"  {name}.preview.png")
+        print(f"Saving to {out}/")
 
-    if args.debug_assets:
-        make_contact_sheet(height, masks, burnin).save(str(out / "contact_sheet.png"))
-        print(f"  contact_sheet.png")
+        # Primary colormap: JPEG q95 (terrtxm2 prefers <name>.burnin.jpg). Also keep
+        # .burnin.tga for the editor staging path (EditorData.cpp initTerrainFromTGA),
+        # until that path is migrated to jpg. --burnin-format controls which are written.
+        fmt = args.burnin_format
+        if fmt in ("jpg", "both"):
+            _save_jpg(burnin, out / f"{name}.burnin.jpg", quality=args.burnin_quality)
+            jpg_kb = (out / f"{name}.burnin.jpg").stat().st_size // 1024
+            print(f"  {name}.burnin.jpg  ({burnin.size[0]}x{burnin.size[1]}, q{args.burnin_quality}, {jpg_kb} KB)")
+        if fmt in ("tga", "both"):
+            _save_tga(burnin, out / f"{name}.burnin.tga")
+            print(f"  {name}.burnin.tga  ({burnin.size[0]}x{burnin.size[1]})")
 
-        _save_gray(height,         out / "height.png")
-        _save_gray(masks.slope,    out / "slope.png")
-        _save_gray(masks.altitude, out / "altitude.png")
-        _save_gray(masks.valley,   out / "valley.png")
-        _save_terrain_type(masks.terrain_type, out / "terrain_type.png")
-        print("  height.png  slope.png  altitude.png  valley.png  terrain_type.png")
+        # Editor (Path B) elevation export: raw float32 world-unit elevations,
+        # row-major (y outer, x inner) matching PostcompVertex order. The editor
+        # reads this straight into setVertexHeight; no pak round-trip needed.
+        # elevation = height[0,1] * max_elevation + min_elevation (same as PakExporter).
+        h_p = recipe.height
+        elev = (height.astype(np.float32) * np.float32(h_p.max_elevation)
+                + np.float32(h_p.min_elevation)).astype('<f4')
+        elev.tofile(str(out / f"{name}.elev.r32"))
+        print(f"  {name}.elev.r32  ({recipe.size}x{recipe.size} float32)")
 
-    recipe.to_json(out / f"{name}.recipe.json")
-    print(f"  {name}.recipe.json")
+        make_preview(burnin).save(str(out / f"{name}.preview.png"))
+        print(f"  {name}.preview.png")
+
+        if args.debug_assets:
+            make_contact_sheet(height, masks, burnin).save(str(out / "contact_sheet.png"))
+            print(f"  contact_sheet.png")
+
+            _save_gray(height,         out / "height.png")
+            _save_gray(masks.slope,    out / "slope.png")
+            _save_gray(masks.altitude, out / "altitude.png")
+            _save_gray(masks.valley,   out / "valley.png")
+            _save_terrain_type(masks.terrain_type, out / "terrain_type.png")
+            print("  height.png  slope.png  altitude.png  valley.png  terrain_type.png")
+
+        recipe.to_json(out / f"{name}.recipe.json")
+        print(f"  {name}.recipe.json")
 
     # Phase 4: PCG foliage sidecar. Sources rules from --foliage-rules (file) or
     # recipe.foliage; no rules -> no file. Independent of the elev/burnin contract.

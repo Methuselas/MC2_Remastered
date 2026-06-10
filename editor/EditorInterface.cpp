@@ -4686,6 +4686,11 @@ void EditorInterface::renderToolbarImGui()
 	// Draw the Map Generator dialog (no-op when closed).
 	MapGeneratorDialog::Draw();
 
+	// Foliage Detail — add/tweak trees, rocks, bushes on the generated map.
+	if (ImGui::Button("Foliage Detail", ImVec2(-1.f, 0.f)))
+		MapGeneratorDialog::ToggleFoliagePanel();
+	MapGeneratorDialog::DrawFoliagePanel();
+
 	// Mission Save Checklist — shows why .pak save is ready/blocked + warnings.
 	if (ImGui::Button("Mission Checklist", ImVec2(-1.f, 0.f)))
 		MissionValidator::Open();

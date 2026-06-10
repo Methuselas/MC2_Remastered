@@ -66,6 +66,17 @@ namespace MapGeneratorDialog {
     // True while an async generate/preview task is in flight (disables re-entry).
     bool IsTaskActive();
 
+    // ---------------------------------------------------------------------------
+    // Foliage Detail panel (separate from the base Generate). Works on the map you
+    // already generated this session: tweak tree/rock/bush/clumpiness/shoreline
+    // knobs and regenerate ONLY the foliage (fast --foliage-only path) onto the
+    // visible terrain, iteratively. Requires a genmap_recipe.json from a prior
+    // Generate. Toggled from the Tools palette; drawn each frame.
+    // ---------------------------------------------------------------------------
+    void ToggleFoliagePanel();
+    bool FoliagePanelOpen();
+    void DrawFoliagePanel();
+
 } // namespace MapGeneratorDialog
 
 #endif // MAP_GENERATOR_DIALOG_H
