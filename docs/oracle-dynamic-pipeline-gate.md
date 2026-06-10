@@ -94,16 +94,38 @@ mission** — this is a GAMEPLAY outcome, not a renderer regression (verify Δde
 counters, which stay clean). Re-capture after any S1/S2/S6 effect slice; a per-site count
 diverging on the same mission/duration = effect regression.
 
-## User-visual gate (NOT agent-checkable — needs eyes; smoke emits no screenshots)
+## Pixel oracle — deterministic headless screenshot (NEW)
 
-Capture these by eye on the baseline before touching S2+, re-check after. No counter exists.
+The smoke window runs minimized, so the default framebuffer (FBO 0) reads black.
+The capture reads the **offscreen post-process scene FBO** instead (always valid):
+
+```bash
+MC2_SCREENSHOT_AT_FRAME=<N> MC2_SCREENSHOT_PATH=<abs.tga> \
+  py -3 scripts/run_smoke.py --mission mc2_17 --duration <s> --keep-logs
+```
+- Hook: gameosmain.cpp, just before SwapWindow. Reads `getGosPostProcess()->getSceneFBO()`
+  (RGBA16F, full render res) via glReadPixels → TGA, once when frame counter hits N. Default OFF.
+- The TGA is **pre-tonemap HDR clamped to 8-bit** → dim. For viewing, apply exposure+gamma
+  (`clip(rgb*4,0,1)**(1/2.2)`), or just view straight for bright frames.
+- Convert TGA→PNG (PIL) to view. `[SCREENSHOT v1] frame=N wrote ... (WxH, sceneFBO)` confirms.
+- **Framing matters:** the smoke fly-through camera points wherever the mission script puts it.
+  mc2_17 @ frame 600 (mission start) frames the player lance → mech + paint + props visible
+  (`tests/smoke/artifacts/oracle_mc2_17_f600.tga`). Later frames (8000) drift to terrain/water.
+  Pick a frame that frames the subject you're regressing.
+
+This turns the user-visual items below into **agent-checkable pixel diffs** (capture baseline frame N,
+re-capture after a slice, diff). Absolute color correctness still benefits from one human confirmation.
+
+## User-visual items (now pixel-capturable per above)
+
+Capture the same mission+frame before touching S2+, re-check after.
 
 | # | Item | What to look for |
 |---|------|------------------|
 | 1 | Selection highlight | click a mech → correct ARGB highlight overlay; clears on deselect |
 | 2 | Turret/barrel rotation | smooth interpolation to heading, no snapping/jitter |
 | 3 | Effect *positions* (count is agent-checkable; placement is not) | weapon-fire muzzle origin, jump-jet at foot/leg nodes, dust at foot contact, wake at waterline |
-| 4 | Faction color *appearance* (parity is agent-checkable; absolute correctness once) | IS vs Clan vs merc visually distinct + correct team colors |
+| 4 | Mech paint / faction color | team color on mech hull (mc2_17 f600 shows a green/teal lance mech); IS vs Clan distinct |
 
 ## Headless limitations
 
