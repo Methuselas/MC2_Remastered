@@ -209,25 +209,27 @@ void BuildingBrush::render( int ScreenMouseX, int ScreenMouseY )
 {
 	if ( !pCursor )
 		return;
-	
-	/*
+
+	// Position the preview cursor at the mouse's ground point EVERY frame. This was
+	// commented out historically ("may cause cursor to lag") -- but with the static-
+	// prop draw on the live builder, a cursor left at a stale position renders as a
+	// persistent DUPLICATE prop "elsewhere on the map". Updating position + bounds +
+	// visibility per frame makes the cursor track the mouse instead of ghosting.
 	Stuff::Vector3D pos;
 	Stuff::Vector2DOf<long> pt;
 	pt.x = ScreenMouseX;
 	pt.y = ScreenMouseY;
 	eye->inverseProject( pt, pos );
-	
-	if ( !EditorObjectMgr::instance()->canAddBuilding( pos, group, indexInGroup ) )
+
+	if ( !EditorObjectMgr::instance()->canAddBuilding( pos, pCursor->rotation, group, indexInGroup ) )
 		pCursor->setHighlightColor( 0x00400000 );
 	else
 		pCursor->setHighlightColor( 0x00004000 );
 
 	pCursor->position = pos;
 	pCursor->recalcBounds();
-	pCursor->update();			//Safe tp call here now because we run the first update in the constructor which caches in texture
-								//NOT TRUE WITH RIA CODE!!!!!  Must have a separate update or NO Triangles get added!!!
+	pCursor->update();
 	pCursor->setVisibility( true, true );
-	*/		//This may cause cursor to lag.  Check it and see.
 	pCursor->render();
 }
 
