@@ -66,6 +66,10 @@ them. Add new findings as new bullets; remove fixed ones outright (don't append
 
 - **First-launch black terrain intermittency** — tier1 first mission occasionally renders black; second normal. Suspected: GPU/shader state dirty from previous mission teardown. Repro: tier1 with `--fail-fast`.
 
+## Editor smoke
+
+- **Editor smoke launch flake (`0xC0000005`)** — `foliage_present` and `foliage_menu_commands` occasionally crash with `STATUS_ACCESS_VIOLATION` (`0xC0000005`, rc `3221225477`) ~1s into a **back-to-back full-suite** `run_editor_smoke.py` run, but PASS reliably **in isolation**. Suspected editor process teardown/startup contention or a deployed asset/runtime-state race (sibling of the first-launch black-terrain teardown intermittency above). **NOT introduced by the Scene Outliner / Inspector work** — those cases pass in the same runs. Policy (`run_case_with_retry`, visible quarantine): an `0xC0000005` failure is retried **once**; crash-then-pass → reported as `FLAKY_PASS` and the suite header is starred (`result=PASS* (.., N flaky-pass)`) so the run is never read as strictly clean; a double `0xC0000005` stays a hard FAIL. Only `0xC0000005` is retried. If it reappears outside foliage cases or as a double-fail, investigate teardown — do not raise the retry count. Memory: `memory/editor_smoke_foliage_launch_flake.md`.
+
 ## Options / config
 
 - **Options menu writes bad ResolutionX/Y to options.cfg** (observed 4096x2160 on 4K). Engine UI canvas is 800x600 and self-scales; other values break HUD scale + video positioning. Diagnostic: `memory/options_cfg_resolution_drift.md`.
