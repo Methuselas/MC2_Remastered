@@ -7,6 +7,8 @@
 #include "stdafx.h"
 #include "MissionValidation.h"
 #include "EditorData.h"
+#include "EditorObjectMgr.h"   // live unit list for staffing checks
+#include "EditorObjects.h"
 #include "MCLib.h"        // extern TerrainPtr land
 
 #ifdef MC2_IMGUI
@@ -139,7 +141,135 @@ std::vector<MissionCheck> MissionValidator::ValidateForPakSave() {
                "Open Mission > Teams, select the objective, and add at least one condition.  "
                "Or remove objectives that are not yet ready.");
 
+    // 5. Unit staffing -- WARNING (mirrors the save-time EMessageBox warnings in
+    //    EditorObjectMgr::saveMechs: no enemy units / no player units / players
+    //    with no units / too many pilots). These are surfaced live here so modders
+    //    see them before Save instead of as a modal mid-save. Non-blocking: a save
+    //    still works; the mission just may not be playable as intended.
+    //
+    //    Units bucket to a player by alignment (0..7), exactly as saveMechs does.
+    {
+        int perPlayer[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+        int totalUnits = 0;
+        if (EditorObjectMgr::instance()) {
+            EditorObjectMgr::UNIT_LIST units = EditorObjectMgr::instance()->getUnits();
+            for (EditorObjectMgr::UNIT_LIST::EIterator it = units.Begin(); !it.IsDone(); it++) {
+                Unit* u = (*it);
+                if (!u || !u->appearance())   // alignment read is unsafe without appearance
+                    continue;
+                ++totalUnits;
+                int a = u->getAlignment();
+                if (a >= 0 && a < 8)
+                    ++perPlayer[a];
+            }
+        }
+
+        const bool singlePlayer = EditorData::instance && EditorData::instance->IsSinglePlayer();
+
+        if (singlePlayer) {
+            // Enemy units: any non-user player (default team != user's team 0) with >0 units.
+            bool enemyFound = false;
+            if (EditorData::instance) {
+                for (int p = 1; p < 8; ++p) {
+                    if (EditorData::instance->PlayersRef().PlayerRef(p).DefaultTeam() != 0
+                        && perPlayer[p] > 0) {
+                        enemyFound = true;
+                        break;
+                    }
+                }
+            }
+            push("enemy_units",
+                 "Mission has enemy units",
+                 MissionCheckSeverity::Warning,
+                 enemyFound,
+                 ChecklistAction::None,
+                 enemyFound
+                     ? "At least one enemy (non-player-team) unit is placed."
+                     : "No enemy units are placed.  A single-player mission with no enemies "
+                       "has nothing to fight.  Place units for a player whose default team is "
+                       "not the player's team.");
+
+            const bool playerStaffed = (perPlayer[0] > 0);
+            push("player_units",
+                 "Player has units",
+                 MissionCheckSeverity::Warning,
+                 playerStaffed,
+                 ChecklistAction::None,
+                 playerStaffed
+                     ? "The player (team 0) has at least one unit."
+                     : "The player (team 0) has no units.  The mission will start with nothing "
+                       "for the player to command.  Place at least one player unit.");
+        } else {
+            // Multiplayer: every active player (0 .. MaxPlayers-1) should be staffed.
+            int maxPlayers = EditorData::instance ? EditorData::instance->MaxPlayers() : 0;
+            int firstEmpty = -1;
+            for (int p = 0; p < maxPlayers && p < 8; ++p) {
+                if (perPlayer[p] < 1) { firstEmpty = p; break; }
+            }
+            const bool allStaffed = (firstEmpty < 0);
+            char details[256];
+            if (allStaffed) {
+                snprintf(details, sizeof(details),
+                    "All %d active players have at least one unit.", maxPlayers);
+            } else {
+                snprintf(details, sizeof(details),
+                    "Player %d has no units.  Every active player in a multiplayer mission "
+                    "should have at least one unit, or that player starts with nothing.",
+                    firstEmpty);
+            }
+            push("players_staffed",
+                 "All players have units",
+                 MissionCheckSeverity::Warning,
+                 allStaffed,
+                 ChecklistAction::None,
+                 details);
+        }
+
+        // Too many pilots -- the save warns above 104 units (engine pilot cap).
+        const bool pilotCountOk = (totalUnits <= 104);
+        char pdetails[256];
+        snprintf(pdetails, sizeof(pdetails),
+            pilotCountOk
+                ? "Unit count: %d (within the 104-pilot limit)."
+                : "Unit count: %d exceeds the 104-pilot limit.  The engine cannot load more "
+                  "than 104 pilots; remove units before saving.",
+            totalUnits);
+        push("pilot_count",
+             "Unit count within pilot limit",
+             MissionCheckSeverity::Warning,
+             pilotCountOk,
+             ChecklistAction::None,
+             pdetails);
+    }
+
     return checks;
+}
+
+// ---------------------------------------------------------------------------
+// Issue tallies + targeted helpers (used by the in-panel summary and -smoke-validate)
+// ---------------------------------------------------------------------------
+
+/*static*/ void MissionValidator::GetIssueCounts(int& blocking, int& warning, int& info) {
+    blocking = warning = info = 0;
+    for (const auto& c : ValidateForPakSave()) {
+        if (c.passed) continue;
+        switch (c.severity) {
+            case MissionCheckSeverity::Blocking: ++blocking; break;
+            case MissionCheckSeverity::Warning:  ++warning;  break;
+            default:                             ++info;     break;
+        }
+    }
+}
+
+/*static*/ bool MissionValidator::HasUnitStaffingWarning() {
+    for (const auto& c : ValidateForPakSave()) {
+        if (c.passed || c.severity != MissionCheckSeverity::Warning)
+            continue;
+        if (strcmp(c.id, "enemy_units") == 0 || strcmp(c.id, "player_units") == 0
+            || strcmp(c.id, "players_staffed") == 0 || strcmp(c.id, "pilot_count") == 0)
+            return true;
+    }
+    return false;
 }
 
 // ---------------------------------------------------------------------------

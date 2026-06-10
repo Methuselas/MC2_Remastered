@@ -56,6 +56,14 @@ public:
     static bool HasBlockingFailures();   // re-validates inline
     static bool HasWarnings();           // re-validates inline
 
+    // Tally failing checks by severity (re-validates inline). Used by the panel
+    // summary and the -smoke-validate case.
+    static void GetIssueCounts(int& blocking, int& warning, int& info);
+
+    // True if any unit-staffing warning is failing (no enemy units / no player
+    // units / players with no units / too many pilots). Used by smoke.
+    static bool HasUnitStaffingWarning();
+
     // ---------------------------------------------------------------------------
     // ImGui panel
     // ---------------------------------------------------------------------------
