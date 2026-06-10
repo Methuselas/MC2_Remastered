@@ -37,9 +37,27 @@
 
 set -uo pipefail
 
-BUILD_DIR="${1:-build64}"
+# Modes (default = build-only; do NOT run minutes of smoke on every local compile):
+#   --build-only   compile + link gate only (default)
+#   --smoke-fast   + deploy editor + fast runtime smoke (gen_map_basic, foliage
+#                  missing/garbage) -- launch/generate/render/tolerance, ~1 min
+#   --smoke-full   + full runtime smoke incl. gen_save_load (random terrain/size
+#                  -> save -> load). Highest value, heavier -> pre-merge/release.
+MODE="build-only"
+BUILD_DIR="build64"
+for arg in "$@"; do
+  case "$arg" in
+    --build-only) MODE="build-only" ;;
+    --smoke-fast) MODE="smoke-fast" ;;
+    --smoke-full) MODE="smoke-full" ;;
+    -*) echo "check-editor-build: unknown flag '$arg'" >&2; exit 2 ;;
+    *)  BUILD_DIR="$arg" ;;   # positional build dir
+  esac
+done
 CONFIG="${MC2_EDITOR_BUILD_CONFIG:-RelWithDebInfo}"
 TARGETS=(EditRel mc2_asset_viewer)
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+SMOKE_DEPLOY="${MC2_EDITOR_DEPLOY:-A:/Games/mc2-opengl/mc2-win64-0.4c}"
 
 # --- resolve cmake: $CMAKE > PATH > VS 2022 BuildTools fallback ---------------
 CMAKE="${CMAKE:-}"
@@ -74,11 +92,34 @@ if grep -q '^MC2_IMGUI:BOOL=OFF' "$BUILD_DIR/CMakeCache.txt" 2>/dev/null; then
   exit 2
 fi
 
-echo "check-editor-build: building [${TARGETS[*]}] in '$BUILD_DIR' ($CONFIG)"
-if "$CMAKE" --build "$BUILD_DIR" --config "$CONFIG" --target "${TARGETS[@]}"; then
-  echo "check-editor-build: PASS — editor targets compile + link"
+echo "check-editor-build: building [${TARGETS[*]}] in '$BUILD_DIR' ($CONFIG)  mode=$MODE"
+if ! "$CMAKE" --build "$BUILD_DIR" --config "$CONFIG" --target "${TARGETS[@]}"; then
+  echo "check-editor-build: FAIL — editor build broken (engine API drift? see header)" >&2
+  exit 1
+fi
+echo "check-editor-build: PASS — editor targets compile + link"
+
+if [ "$MODE" = "build-only" ]; then
+  exit 0
+fi
+
+# --- runtime smoke (smoke-fast / smoke-full) --------------------------------
+echo "check-editor-build: deploying editor to $SMOKE_DEPLOY"
+if ! DEPLOY="$SMOKE_DEPLOY" bash "$REPO/scripts/deploy-editor.sh"; then
+  echo "check-editor-build: FAIL — editor deploy failed (cannot run runtime smoke)" >&2
+  exit 1
+fi
+
+SMOKE_ARGS=(--exit-sec 10 --timeout 120 --exe "$SMOKE_DEPLOY/Mission Editor.exe")
+if [ "$MODE" = "smoke-fast" ]; then
+  SMOKE_ARGS+=(--case gen_map_basic --case foliage_missing --case foliage_garbage)
+fi   # smoke-full runs all cases (no --case filter)
+
+echo "check-editor-build: running $MODE runtime smoke"
+if py -3 "$REPO/scripts/run_editor_smoke.py" "${SMOKE_ARGS[@]}"; then
+  echo "check-editor-build: PASS — $MODE runtime smoke green"
   exit 0
 else
-  echo "check-editor-build: FAIL — editor build broken (engine API drift? see header)" >&2
+  echo "check-editor-build: FAIL — $MODE runtime smoke failed (see tests/smoke/editor/<ts>/report.md)" >&2
   exit 1
 fi

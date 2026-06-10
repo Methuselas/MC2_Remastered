@@ -80,6 +80,16 @@ int          g_cliSmokeSaveOk     = -1;    // -1 = not attempted, 0/1 = save() r
 // or save can be cut off mid-flight by the timed ExitProcess.
 bool         g_cliSmokeWorkDone   = false;
 
+// -smoke-foliage-menu: drive the foliage MENU commands (Toggle/Clear/Generate)
+// via WM_COMMAND -- the actual command path, not just the load hook. Records the
+// visibility/count at each step into the [ESMOKE v1] summary for the runner to
+// verify. Implies -smoke-foliage (so there is foliage loaded to toggle first).
+bool         g_cliSmokeFoliageMenu = false;
+void*        g_smokeMainHwnd       = NULL;   // HWND (typed void* -- declared before windows.h)
+int          g_menuVis0 = -1, g_menuVis1 = -1, g_menuVis2 = -1;   // visibility across two toggles
+int          g_menuClearCount = -1;          // Count() after Clear (expect 0)
+int          g_menuReloadCount = -1;         // Count() after Generate/reload (expect >0)
+
 static void editor_set_default_env_vars()
 {
     // Bake editor-preferred defaults so RenderDoc and other tools can launch
@@ -132,6 +142,7 @@ static void EarlyTraceBegin()
 #include "EditorVersion.h"
 #include "EditorData.h"
 #include "FoliageRender.h"
+#include "resource.h"   // ID_FOLIAGE_* for the -smoke-foliage-menu WM_COMMAND drive
 
 // -- S-CLI parser ------------------------------------------------------------
 // Accepts: -mission/--mission PATH (or =PATH), -frames/--frames N (or =N),
@@ -240,6 +251,13 @@ static void s_cli_parse(const char* cmd)
 		         s_cli_starts_with(tok, "--smoke-exit-sec=", &rest))
 		{
 			g_cliExitAfterSec = atoi(rest);
+		}
+		else if (s_cli_flag_match(tok, "-smoke-foliage-menu", "--smoke-foliage-menu"))
+		{
+			g_cliSmokeFoliageMenu = true;
+			g_cliSmokeFoliage = true;   // need foliage loaded before driving the menu
+			if (g_cliSmokeFoliagePath.empty())
+				g_cliSmokeFoliagePath = "terrain_gen_out\\genmap.foliage.json";
 		}
 		else if (s_cli_flag_match(tok, "-smoke-save", "--smoke-save"))
 		{
@@ -518,12 +536,14 @@ static void s_emit_esmoke(const char* how)
 {
 	if (g_cliEsmokeEmitted) return;
 	g_cliEsmokeEmitted = true;
-	char esmoke[256];
+	char esmoke[512];
 	_snprintf(esmoke, sizeof(esmoke),
 		"[ESMOKE v1] event=summary how=%s clean_exit=1 frames=%ld autoload=%d gen_map=%d "
-		"foliage_smoke=%d foliage_count=%d saved=%d",
+		"foliage_smoke=%d foliage_count=%d saved=%d "
+		"menu_vis0=%d menu_vis1=%d menu_vis2=%d menu_clear=%d menu_reload=%d",
 		how, g_cliFrameCounter, g_cliAutoLoadFired ? 1 : 0, g_cliGenMap ? 1 : 0,
-		g_cliSmokeFoliageFired ? 1 : 0, g_cliSmokeFoliageCount, g_cliSmokeSaveOk);
+		g_cliSmokeFoliageFired ? 1 : 0, g_cliSmokeFoliageCount, g_cliSmokeSaveOk,
+		g_menuVis0, g_menuVis1, g_menuVis2, g_menuClearCount, g_menuReloadCount);
 	esmoke[sizeof(esmoke) - 1] = '\0';
 	fprintf(stderr, "%s\n", esmoke);
 	fflush(stderr);
@@ -548,6 +568,39 @@ static DWORD WINAPI s_smoke_thread(LPVOID)
 	DWORD start = ::GetTickCount();
 	DWORD loadTick = 0;
 	DWORD sec = (DWORD)(g_cliExitAfterSec > 0 ? g_cliExitAfterSec : 12);
+	// -smoke-foliage-menu: once foliage is loaded, drive the real menu commands via
+	// WM_COMMAND (the same path a click takes) with renders in between, recording
+	// visibility/count at each step. PostMessage from this thread queues onto the
+	// main thread, which runs the handler between render frames.
+	if (g_cliSmokeFoliageMenu)
+	{
+		while (!(g_cliSmokeWorkDone && g_smokeMainHwnd) && (::GetTickCount() - start) < 120000u)
+			::Sleep(100);
+		HWND w = (HWND)g_smokeMainHwnd;
+		if (w)
+		{
+			::Sleep(700);
+			g_menuVis0 = FoliageRender::Visible() ? 1 : 0;
+			::PostMessageA(w, WM_COMMAND, MAKEWPARAM(ID_FOLIAGE_TOGGLE, 0), 0);  // off
+			::Sleep(900);
+			g_menuVis1 = FoliageRender::Visible() ? 1 : 0;
+			::PostMessageA(w, WM_COMMAND, MAKEWPARAM(ID_FOLIAGE_TOGGLE, 0), 0);  // on
+			::Sleep(900);
+			g_menuVis2 = FoliageRender::Visible() ? 1 : 0;
+			::PostMessageA(w, WM_COMMAND, MAKEWPARAM(ID_FOLIAGE_CLEAR, 0), 0);   // clear
+			::Sleep(900);
+			g_menuClearCount = FoliageRender::Count();
+			::PostMessageA(w, WM_COMMAND, MAKEWPARAM(ID_FOLIAGE_GENERATE, 0), 0); // reload (shells generator)
+			// Generate re-runs the generator synchronously on the main thread; poll
+			// for the reloaded instance count.
+			for (int i = 0; i < 60 && FoliageRender::Count() <= 0; ++i)
+				::Sleep(500);
+			g_menuReloadCount = FoliageRender::Count();
+		}
+		s_emit_esmoke("foliage_menu");
+		::ExitProcess(0);
+	}
+
 	for (;;)
 	{
 		DWORD now = ::GetTickCount();
@@ -671,6 +724,11 @@ BOOL EditorMFCApp::OnIdle(LONG lCount)
 		// starves the viewport when focus is inside a child/control.
 		::InvalidateRect(pEditor->m_hWnd, NULL, FALSE);
 	}
+
+	// Capture the main frame HWND on the main thread so the smoke driver thread can
+	// PostMessage WM_COMMAND foliage-menu commands to it (-smoke-foliage-menu).
+	if (g_cliSmokeFoliageMenu && g_smokeMainHwnd == NULL && AfxGetMainWnd())
+		g_smokeMainHwnd = AfxGetMainWnd()->GetSafeHwnd();
 
 	Sleep(2/*milliseconds*/); /* limits the framerate to 500fps */
 	return 1;

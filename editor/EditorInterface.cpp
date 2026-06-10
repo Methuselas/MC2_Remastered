@@ -5395,10 +5395,11 @@ void EditorInterface::OnDestroy()
 //-------------------------------------------------------------------------------------------------
 void EditorInterface::OnFoliageGenerate()
 {
+	extern bool g_cliSuppressModals;   // smoke/headless: skip the modal feedback below
 	const char* recipe = "terrain_gen_out\\genmap_recipe.json";
 	if ( GetFileAttributes( recipe ) == INVALID_FILE_ATTRIBUTES )
 	{
-		AfxMessageBox( "No generated-map recipe found.\nUse the Map Generator first, then Generate Foliage." );
+		if (!g_cliSuppressModals) AfxMessageBox( "No generated-map recipe found.\nUse the Map Generator first, then Generate Foliage." );
 		return;
 	}
 	char cmd[1024];
@@ -5409,18 +5410,18 @@ void EditorInterface::OnFoliageGenerate()
 	int rc = system( cmd );
 	if ( rc != 0 )
 	{
-		AfxMessageBox( "Foliage generation failed.\nNeeds Python 3 + tools\\terrain_gen on the editor's working dir." );
+		if (!g_cliSuppressModals) AfxMessageBox( "Foliage generation failed.\nNeeds Python 3 + tools\\terrain_gen on the editor's working dir." );
 		return;
 	}
 	if ( FoliageRender::Load( "terrain_gen_out\\genmap.foliage.json" ) )
 	{
 		char msg[128];
 		sprintf( msg, "Foliage generated: %d instances.", FoliageRender::Count() );
-		AfxMessageBox( msg );
+		if (!g_cliSuppressModals) AfxMessageBox( msg );
 	}
 	else
 	{
-		AfxMessageBox( "Foliage generated but no instances were placed (check rules / map)." );
+		if (!g_cliSuppressModals) AfxMessageBox( "Foliage generated but no instances were placed (check rules / map)." );
 	}
 }
 

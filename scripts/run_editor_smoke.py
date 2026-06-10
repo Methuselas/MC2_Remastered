@@ -165,6 +165,18 @@ def run_case(name: str, exe: Path, deploy: Path, exit_sec: int, timeout: int,
                 bucket = "foliage_not_run"; detail = "foliage smoke step did not run"
         if expect == "saved" and esmoke.get("saved") != "1":
             bucket = "save_failed"; detail = f"expected saved=1, got {esmoke.get('saved')}"
+        if expect == "menu":
+            # Drove the foliage menu commands via WM_COMMAND: visibility must toggle
+            # off (vis1) then back on (vis2), Clear must drop the count to 0, and
+            # Generate/reload must place instances again (>0).
+            v0, v1, v2 = esmoke.get("menu_vis0"), esmoke.get("menu_vis1"), esmoke.get("menu_vis2")
+            clr, rld = esmoke.get("menu_clear"), esmoke.get("menu_reload")
+            if not (v0 == "1" and v1 == "0" and v2 == "1"):
+                bucket = "menu_toggle_bad"; detail = f"visibility {v0}->{v1}->{v2} (want 1,0,1)"
+            elif clr != "0":
+                bucket = "menu_clear_bad"; detail = f"count after Clear = {clr} (want 0)"
+            elif not (rld and rld.lstrip("-").isdigit() and int(rld) > 0):
+                bucket = "menu_reload_bad"; detail = f"count after reload = {rld} (want >0)"
 
     passed = (bucket == "")
     return dict(name=name, passed=passed, bucket=bucket, detail=detail,
@@ -188,6 +200,7 @@ def build_suite(deploy: Path):
         "foliage_present": (["-gen-map=0,0", "-smoke-foliage"], "foliage_present"),
         "foliage_missing": (["-gen-map=0,0", "-smoke-foliage=terrain_gen_out\\__does_not_exist__.json"], "foliage_tolerated"),
         "foliage_garbage": (["-gen-map=0,0", "-smoke-foliage=terrain_gen_out\\garbage.foliage.json"], "foliage_tolerated"),
+        "foliage_menu_commands": (["-gen-map=0,0", "-smoke-foliage-menu"], "menu"),
         # gen_save_load is handled specially (two phases) in main().
     }
     return cases
@@ -218,10 +231,10 @@ def main() -> int:
             return 2
 
     # Setup fixtures
-    need_present = "foliage_present" in selected
+    need_present = ("foliage_present" in selected) or ("foliage_menu_commands" in selected)
     need_garbage = "foliage_garbage" in selected
     if need_present:
-        _gen_foliage_json(deploy, instances=True)
+        _gen_foliage_json(deploy, instances=True)   # initial genmap.foliage.json to toggle/clear/reload
     if need_garbage:
         _write_garbage(deploy)
 
