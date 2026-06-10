@@ -2525,6 +2525,14 @@ float MapData::terrainElevation (const Stuff::Vector3D &position)
 //---------------------------------------------------------------------------
 void MapData::unselectAll()
 {
+	// Teardown-safe: at editor shutdown the SelectionBrush dtor calls land->unselectAll()
+	// after the MapData blocks have been freed (blocks==NULL) -> a WRITE at a bad
+	// address. Guard the loop. (realVerticesMapSide can also be stale at this point.)
+	if ( !blocks || Terrain::realVerticesMapSide <= 0 )
+	{
+		hasSelection = 0;
+		return;
+	}
 	for ( int i = 0; i < Terrain::realVerticesMapSide * Terrain::realVerticesMapSide; ++i )
 	{
 		blocks[i].selected = false;
@@ -2536,6 +2544,8 @@ void MapData::unselectAll()
 //---------------------------------------------------------------------------
 void MapData::unhighlightAll()
 {
+	if ( !blocks || Terrain::realVerticesMapSide <= 0 )
+		return;
 	for ( int i = 0; i < Terrain::realVerticesMapSide * Terrain::realVerticesMapSide; ++i )
 	{
 		blocks[i].highlighted = false;
