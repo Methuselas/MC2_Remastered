@@ -3659,6 +3659,67 @@ void Terrain::geometry (void)
 			!drawTerrainGrid &&
 			WaterStream::NarrowEnabled();
 		const bool skipSetup = s_armedSkipOn && fullyArmed;
+
+		// [FASTPATH_DROP] transition log. Default OFF (MC2_FASTPATH_DROP_LOG=1 to enable).
+		// OBSERVATIONAL ONLY — reads existing state, no rendering change.
+		// Emits exactly one line per armed<->fallback transition; silent every other frame.
+		{
+			static const bool s_fastpathDropLog = []() {
+				const char* v = getenv("MC2_FASTPATH_DROP_LOG");
+				return v != nullptr && v[0] != '0';
+			}();
+			if (s_fastpathDropLog)
+			{
+				static unsigned long s_dropFrame = 0;
+				++s_dropFrame;
+				// prevArmed: true = was armed last frame, false = was in fallback.
+				// Initialise to armed so that the very first fallback (warmup) is
+				// reported; a first-frame armed start is NOT reported (no transition).
+				static bool s_prevArmed = true;
+				const bool nowArmed = fullyArmed; // s_armedSkipOn is the outer gate; log the inner predicate only
+
+				if (nowArmed != s_prevArmed)
+				{
+					// Determine which conjunct failed first (short-circuit order = T-table order).
+					const char* reason = "UNKNOWN";
+					if (!nowArmed)
+					{
+						// Falling from armed -> fallback: name the first failing gate.
+						using namespace gos_terrain_indirect;
+						if (!IsFrameSolidArmed() || !IsFrameOverlayArmed())
+							reason = "T7_SOLID_OR_OVERLAY_NOT_ARMED";
+						else if (!IsFrameMineArmed())
+							reason = "T17_MINE_NOT_ARMED";
+						else if (!WaterFastPathOwnsArmedDraw())
+							reason = "T9_OR_T10_WATER_NOT_ARMED";
+						else if (Terrain::terrainTextures2 == NULL)
+							reason = "T11_NO_TEXTURES2";
+						else if (drawTerrainGrid)
+							reason = "T13_DRAW_TERRAIN_GRID";
+						else if (!WaterStream::NarrowEnabled())
+							reason = "T14_NARROW_DISABLED";
+						else
+							reason = "T15_OR_OTHER_SKIP_OFF";
+					}
+					else
+					{
+						reason = "RECOVERY";
+					}
+					printf("[FASTPATH_DROP] frame=%lu transition=%s reason=%s chunk=%d water=%d solid=%d overlay=%d editor=%d\n",
+						s_dropFrame,
+						nowArmed ? "FALLBACK_TO_ARMED" : "ARMED_TO_FALLBACK",
+						reason,
+						(int)mc2TerrainLodChunkEnabled(),
+						(int)gos_terrain_indirect::WaterFastPathOwnsArmedDraw(),
+						(int)gos_terrain_indirect::IsFrameSolidArmed(),
+						(int)gos_terrain_indirect::IsFrameOverlayArmed(),
+						(int)drawTerrainGrid);
+					fflush(stdout);
+					s_prevArmed = nowArmed;
+				}
+			}
+		}
+
 		long quadsSkipped = 0;
 		long waterCandidates = 0;
 		// Both per-quad bodies are no-ops in the default-ON steady state (Slice A

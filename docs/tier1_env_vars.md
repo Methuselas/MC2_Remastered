@@ -103,6 +103,10 @@
 - `MC2_DEBUG_STATE_DUMP_DIR=<path>` — override output dir.
 - `MC2_DEBUG_STATE_DUMP_HISTORY=1` — rolling 8-slot history ring. Requires `MC2_DEBUG_STATE_DUMP=1`.
 
+## Terrain fast-path drop log
+
+- `MC2_FASTPATH_DROP_LOG=1` — log terrain fast-path -> legacy setupTextures transitions (transition-only, `[FASTPATH_DROP]`). Default **OFF**.
+
 ## Terrain gates
 
 ### MC2_TERRAIN_NORMAL_ARRAY
