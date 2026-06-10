@@ -283,7 +283,8 @@ def main():
                 # subprocess.Popen's env arg replaces the inherited env
                 # entirely, so vars not explicitly listed get dropped.
                 **{k: v for k, v in os.environ.items()
-                   if k in ("MC2_MODERN_TERRAIN_SURFACE",
+                   if k in ("MC2_FX_COUNT_LOG",
+                            "MC2_MODERN_TERRAIN_SURFACE",
                             "MC2_MODERN_TERRAIN_PATCHES",
                             "MC2_SHAPE_C_PARITY_CHECK",
                             "MC2_PATCH_STREAM_TRACE",

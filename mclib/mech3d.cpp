@@ -62,6 +62,55 @@ static unsigned long s_spotDiagMechOverflows  = 0;
 static unsigned long s_spotDiagMechActors     = 0;
 static unsigned long s_spotDiagMechCalls      = 0;
 
+// MC2_FX_COUNT_LOG=1: env-gated per-effect-site GOSFX draw counter for the
+// Mech3DAppearance::render() effect sites. Default OFF, zero behavior change.
+// Counts draw attempts (control reaching the site); emits a [FX_COUNT v1]
+// summary line every 9000 ticks. Agent-checkable oracle for effect counts.
+static const bool s_fxCountLog = (getenv("MC2_FX_COUNT_LOG") != nullptr);
+namespace {
+	enum FxSite {
+		FX_RDUST=0, FX_LDUST, FX_JUMP, FX_LBOOM, FX_RBOOM,
+		FX_CSMOKE, FX_SMOKE, FX_WAKE, FX_HELIDUST, FX_RARMSMOKE, FX_LARMSMOKE,
+		FX_SITE_COUNT
+	};
+	static unsigned long long s_fxDrawCounts[FX_SITE_COUNT] = {0};
+	static unsigned long long s_fxTotalDraws = 0;
+	static void fxCountTick(int site) {
+		++s_fxDrawCounts[site];
+		if ((++s_fxTotalDraws % 9000ULL) == 0ULL) {
+			std::printf(
+				"[FX_COUNT v1] event=summary total=%llu rDust=%llu lDust=%llu jump=%llu "
+				"lBoom=%llu rBoom=%llu critSmoke=%llu smoke=%llu wake=%llu heliDust=%llu "
+				"rArmSmoke=%llu lArmSmoke=%llu\n",
+				s_fxTotalDraws,
+				s_fxDrawCounts[FX_RDUST], s_fxDrawCounts[FX_LDUST], s_fxDrawCounts[FX_JUMP],
+				s_fxDrawCounts[FX_LBOOM], s_fxDrawCounts[FX_RBOOM], s_fxDrawCounts[FX_CSMOKE],
+				s_fxDrawCounts[FX_SMOKE], s_fxDrawCounts[FX_WAKE], s_fxDrawCounts[FX_HELIDUST],
+				s_fxDrawCounts[FX_RARMSMOKE], s_fxDrawCounts[FX_LARMSMOKE]);
+		}
+	}
+	// Shutdown emit via atexit() — mirrors the proven shutdownTexResolveTable
+	// pattern (tex_resolve_table.cpp:78). A static with a CONSTRUCTOR side
+	// effect runs reliably at dynamic-init; the registered handler fires at
+	// clean process exit and always prints final per-site totals (even total=0
+	// if a short/idle mission drew no effects — proves the chain end to end).
+	static void fxCountEmit() {
+		if (!s_fxCountLog) return;
+		std::printf(
+			"[FX_COUNT v1] event=shutdown total=%llu rDust=%llu lDust=%llu jump=%llu "
+			"lBoom=%llu rBoom=%llu critSmoke=%llu smoke=%llu wake=%llu heliDust=%llu "
+			"rArmSmoke=%llu lArmSmoke=%llu\n",
+			s_fxTotalDraws,
+			s_fxDrawCounts[FX_RDUST], s_fxDrawCounts[FX_LDUST], s_fxDrawCounts[FX_JUMP],
+			s_fxDrawCounts[FX_LBOOM], s_fxDrawCounts[FX_RBOOM], s_fxDrawCounts[FX_CSMOKE],
+			s_fxDrawCounts[FX_SMOKE], s_fxDrawCounts[FX_WAKE], s_fxDrawCounts[FX_HELIDUST],
+			s_fxDrawCounts[FX_RARMSMOKE], s_fxDrawCounts[FX_LARMSMOKE]);
+		std::fflush(stdout);
+	}
+	// atexit registration happens once from Mech3DAppearance::render() (a code
+	// path guaranteed to run), not from a discardable anon-namespace static.
+}
+
 #ifndef CAMERA_H
 #include"camera.h"
 #endif
@@ -1215,6 +1264,18 @@ void Mech3DAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 	
 	if (mechType)
 	{
+		// Re-register all LODs with the GPU mech batcher. GpuMechBatcher::onMapLoad()
+		// clears s_typeLodIndex between sessions, but AppearanceTypeList caches the
+		// Mech3DAppearanceType so Mech3DAppearanceType::init() (which calls
+		// registerTypeLod) is never called again for cached types. Without this,
+		// submitActor() finds the type absent from s_typeLodIndex and returns false,
+		// causing invisible mechs on any map after the first session. registerTypeLod
+		// is idempotent (no-op if already registered in this session).
+		for (int _lod = 0; _lod < MAX_LODS; ++_lod) {
+			if (mechType->mechShape[_lod])
+				GpuMechBatcher::instance().registerTypeLod(mechType, _lod);
+		}
+
 		mechShape = mechType->mechShape[0]->CreateFrom();
 		
 		sensorTriangleShape = GVAppearanceType::SensorTriangleShape->CreateFrom();
@@ -2510,6 +2571,19 @@ bool Mech3DAppearance::recalcBounds (void)
 //-----------------------------------------------------------------------------
 long Mech3DAppearance::render (long depthFixup)
 {
+	// FX_COUNT one-time init: register the shutdown emit from a code path that
+	// is guaranteed to run (a discardable anon-namespace static can be elided
+	// by /OPT:REF). Unconditional init print proves render() runs + flag state.
+	{
+		static bool s_fxInitDone = false;
+		if (!s_fxInitDone) {
+			s_fxInitDone = true;
+			std::printf("[FX_COUNT v1] event=init flag=%d\n", s_fxCountLog ? 1 : 0);
+			std::fflush(stdout);
+			if (s_fxCountLog) std::atexit(&fxCountEmit);
+		}
+	}
+
 	// Force textures to reload due to unique instance.
 	mechShape->SetTextureHandle(0,localTextureHandle);
 
@@ -2795,7 +2869,7 @@ long Mech3DAppearance::render (long depthFixup)
 							drawInfo.m_parentToWorld = &shapeOrigin;
 					 
 							if (!MLRVertexLimitReached)
-								rightDustPoofEffect[i]->Draw(&drawInfo);
+								rightDustPoofEffect[i]->Draw(&drawInfo); if (s_fxCountLog) fxCountTick(FX_RDUST);
 						}
 						
 						if (leftFootPoofDraw[i] && leftDustPoofEffect[i] && leftDustPoofEffect[i]->IsExecuted())
@@ -2809,7 +2883,7 @@ long Mech3DAppearance::render (long depthFixup)
 							drawInfo.m_parentToWorld = &shapeOrigin;
 					 
 							if (!MLRVertexLimitReached)
-								leftDustPoofEffect[i]->Draw(&drawInfo);
+								leftDustPoofEffect[i]->Draw(&drawInfo); if (s_fxCountLog) fxCountTick(FX_LDUST);
 						}
 					}
 				}
@@ -2838,7 +2912,7 @@ long Mech3DAppearance::render (long depthFixup)
 					
  					drawInfo.m_parentToWorld = &localResult;
 					if (!MLRVertexLimitReached)
-						jumpJetEffect->Draw(&drawInfo);
+						jumpJetEffect->Draw(&drawInfo); if (s_fxCountLog) fxCountTick(FX_JUMP);
 				}
 						
 				//----------------------------------------------------------------
@@ -2867,7 +2941,7 @@ long Mech3DAppearance::render (long depthFixup)
 					
  					drawInfo.m_parentToWorld = &localResult;
 					if (!MLRVertexLimitReached)
-						leftShoulderBoom->Draw(&drawInfo);
+						leftShoulderBoom->Draw(&drawInfo); if (s_fxCountLog) fxCountTick(FX_LBOOM);
 				}
 				
 				if (rightShoulderBoom)
@@ -2894,7 +2968,7 @@ long Mech3DAppearance::render (long depthFixup)
 					
  					drawInfo.m_parentToWorld = &localResult;
 					if (!MLRVertexLimitReached)
-						rightShoulderBoom->Draw(&drawInfo);
+						rightShoulderBoom->Draw(&drawInfo); if (s_fxCountLog) fxCountTick(FX_RBOOM);
 				}
 				
 				//------------------------------------------------
@@ -2918,12 +2992,12 @@ long Mech3DAppearance::render (long depthFixup)
 					{
 						//Loops until told to stop.
 						if (!MLRVertexLimitReached)
-							criticalSmoke->Draw(&drawInfo);
+							criticalSmoke->Draw(&drawInfo); if (s_fxCountLog) fxCountTick(FX_CSMOKE);
 					}
 					else
 					{
 						if (!MLRVertexLimitReached)
-							smokeEffect->Draw(&drawInfo);
+							smokeEffect->Draw(&drawInfo); if (s_fxCountLog) fxCountTick(FX_SMOKE);
 					}
 				}
 				
@@ -2953,7 +3027,7 @@ long Mech3DAppearance::render (long depthFixup)
 		
  					drawInfo.m_parentToWorld = &localResult;
 					if (!MLRVertexLimitReached)
-						waterWake->Draw(&drawInfo);
+						waterWake->Draw(&drawInfo); if (s_fxCountLog) fxCountTick(FX_WAKE);
 				}
 				
 				if (isDusting && helicopterDustCloud)
@@ -2979,7 +3053,7 @@ long Mech3DAppearance::render (long depthFixup)
 		
  					drawInfo.m_parentToWorld = &shapeOrigin;
 					if (!MLRVertexLimitReached)
-						helicopterDustCloud->Draw(&drawInfo);
+						helicopterDustCloud->Draw(&drawInfo); if (s_fxCountLog) fxCountTick(FX_HELIDUST);
 				}
 			}
 				   
@@ -3143,7 +3217,7 @@ long Mech3DAppearance::render (long depthFixup)
 			
 			drawInfo.m_parentToWorld = &localResult;
 			if (!MLRVertexLimitReached)
-				rightArmSmoke->Draw(&drawInfo);
+				rightArmSmoke->Draw(&drawInfo); if (s_fxCountLog) fxCountTick(FX_RARMSMOKE);
 		}
 	}
  	
@@ -3185,7 +3259,7 @@ long Mech3DAppearance::render (long depthFixup)
 			
 			drawInfo.m_parentToWorld = &localResult;
 			if (!MLRVertexLimitReached)
-				leftArmSmoke->Draw(&drawInfo);
+				leftArmSmoke->Draw(&drawInfo); if (s_fxCountLog) fxCountTick(FX_LARMSMOKE);
 		}
 	}
 	
