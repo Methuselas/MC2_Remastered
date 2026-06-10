@@ -103,6 +103,18 @@ void EndFrame(uint32_t frame, double dtMs) {
             "[HITCH_WATER] called=%u waterPresent=%u earlyOut=%u glCalls=%u\n",
             (unsigned)a.waterCalled, (unsigned)a.waterPresent,
             (unsigned)a.waterEarlyOut, a.waterGlCalls);
+        // H1b detail — only when water actually ran with measurable time
+        if (a.waterMs > 0.5) {
+            fprintf(stderr,
+                "[HITCH_WATER_DETAIL] waterMs=%.2f guards=%.2f recipe=%.2f"
+                " buildWindow=%.2f upload=%.2f dispatch=%.2f"
+                " recipes=%u window=%u narrow=%u recipeUploaded=%u\n",
+                a.waterMs,
+                a.waterGuardsMs, a.waterRecipeMs,
+                a.waterBuildWindowMs, a.waterUploadMs, a.waterDispatchMs,
+                a.waterRecipeCount, a.waterWindowCount,
+                a.waterNarrowCount, a.waterRecipeUploaded);
+        }
     }
 
     // Detail line: GL totals.
@@ -125,6 +137,20 @@ void EndFrame(uint32_t frame, double dtMs) {
         a.glClientWaitSyncCalls, a.glClientWaitSyncSignaled, a.glClientWaitSyncTimedOut,
         a.glFenceSyncCalls, a.glFinishCalls, a.glFlushCalls);
 
+    // H1c frame-phase attribution line.
+    {
+        const double h1aKnown = a.terrainSolidMs + a.staticFlushMs + a.staticSnapshotMs + a.waterMs;
+        const double phaseTotal = a.phaseLogicMs + a.phaseRenderMs + a.phasePresentMs + a.phaseCapMs;
+        const double unknown = (dtMs > phaseTotal + h1aKnown) ? (dtMs - phaseTotal - h1aKnown) : 0.0;
+        fprintf(stderr,
+            "[HITCH_PHASE] frame=%u dt=%.2f"
+            " logic=%.2f render=%.2f present=%.2f cap=%.2f"
+            " h1aKnown=%.2f unknown=%.2f\n",
+            frame, dtMs,
+            a.phaseLogicMs, a.phaseRenderMs, a.phasePresentMs, a.phaseCapMs,
+            h1aKnown, unknown);
+    }
+
     fflush(stderr);
 }
 
@@ -143,6 +169,15 @@ void SpanEnd(HitchSpanKind kind) {
         case HitchSpanKind::GpuStaticPropsFlush:    g_mc2HitchAccum.staticFlushMs    += dt; break;
         case HitchSpanKind::GpuStaticPropsSnapshot: g_mc2HitchAccum.staticSnapshotMs += dt; break;
         case HitchSpanKind::WaterFastPath:          g_mc2HitchAccum.waterMs          += dt; break;
+        case HitchSpanKind::PhaseGameLogic:         g_mc2HitchAccum.phaseLogicMs     += dt; break;
+        case HitchSpanKind::PhaseRender:            g_mc2HitchAccum.phaseRenderMs    += dt; break;
+        case HitchSpanKind::PhasePresent:           g_mc2HitchAccum.phasePresentMs   += dt; break;
+        case HitchSpanKind::PhaseCap:               g_mc2HitchAccum.phaseCapMs       += dt; break;
+        case HitchSpanKind::WaterGuards:            g_mc2HitchAccum.waterGuardsMs      += dt; break;
+        case HitchSpanKind::WaterRecipe:            g_mc2HitchAccum.waterRecipeMs      += dt; break;
+        case HitchSpanKind::WaterBuildWindow:       g_mc2HitchAccum.waterBuildWindowMs += dt; break;
+        case HitchSpanKind::WaterUpload:            g_mc2HitchAccum.waterUploadMs      += dt; break;
+        case HitchSpanKind::WaterDispatch:          g_mc2HitchAccum.waterDispatchMs    += dt; break;
         default: break;
     }
 }

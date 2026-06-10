@@ -1196,47 +1196,51 @@ static uint32_t BuildQuadWindowSSBO() {
 
     g_quadWindowStaging.clear();
 
-    if (gos_terrain_indirect::IsFrameSolidArmed()) {
-        // Armed path: narrow list populated by terrain.cpp via clipInfo gate.
-        // No waterHandle check — GPU pz gate (gpu_driven_water.comp:236) handles it.
-        const long iterCount = (long)g_narrowQuadsThisFrame.size();
-        g_quadWindowStaging.reserve((size_t)iterCount);
-        for (long i = 0; i < iterCount; ++i) {
-            const TerrainQuad& q = *g_narrowQuadsThisFrame[(size_t)i];
-            if (!q.vertices[0] || q.vertices[0]->vertexNum < 0) continue;
-            const uint32_t topLeftVN = (uint32_t)q.vertices[0]->vertexNum;
-            auto it = g_vertexNumToRecipe.find(topLeftVN);
-            if (it == g_vertexNumToRecipe.end()) continue;
-            g_quadWindowStaging.push_back(it->second);
+    // H1b: time the CPU hash-lookup loop separately from the GPU upload.
+    {
+        mc2_hitch::HitchScope _hBuild(mc2_hitch::HitchSpanKind::WaterBuildWindow);
+        if (gos_terrain_indirect::IsFrameSolidArmed()) {
+            // Armed path: narrow list populated by terrain.cpp via clipInfo gate.
+            // No waterHandle check — GPU pz gate (gpu_driven_water.comp:236) handles it.
+            const long iterCount = (long)g_narrowQuadsThisFrame.size();
+            g_quadWindowStaging.reserve((size_t)iterCount);
+            for (long i = 0; i < iterCount; ++i) {
+                const TerrainQuad& q = *g_narrowQuadsThisFrame[(size_t)i];
+                if (!q.vertices[0] || q.vertices[0]->vertexNum < 0) continue;
+                const uint32_t topLeftVN = (uint32_t)q.vertices[0]->vertexNum;
+                auto it = g_vertexNumToRecipe.find(topLeftVN);
+                if (it == g_vertexNumToRecipe.end()) continue;
+                g_quadWindowStaging.push_back(it->second);
+            }
+        } else {
+            const TerrainPtr terrainPtr = land;
+            const TerrainQuadPtr quads  = terrainPtr ? terrainPtr->getQuadList()  : nullptr;
+            const long total            = terrainPtr ? terrainPtr->getNumQuads()  : 0;
+            if (!quads || total <= 0) return 0;
+
+            const bool narrow   = NarrowEnabledImpl();
+            const TerrainQuadPtr* narrowArr = narrow && !g_narrowQuadsThisFrame.empty()
+                                              ? g_narrowQuadsThisFrame.data() : nullptr;
+            const long iterCount = narrow ? (long)g_narrowQuadsThisFrame.size() : total;
+
+            g_quadWindowStaging.reserve((size_t)iterCount);
+
+            for (long i = 0; i < iterCount; ++i) {
+                const TerrainQuad& q = narrowArr ? *narrowArr[i] : quads[i];
+                if (!q.vertices[0] || !q.vertices[1] ||
+                    !q.vertices[2] || !q.vertices[3]) continue;
+                if (q.vertices[0]->vertexNum < 0 || q.vertices[1]->vertexNum < 0 ||
+                    q.vertices[2]->vertexNum < 0 || q.vertices[3]->vertexNum < 0) continue;
+                if (q.waterHandle == 0xffffffffu) continue;
+
+                const uint32_t topLeftVN = (uint32_t)q.vertices[0]->vertexNum;
+                auto it = g_vertexNumToRecipe.find(topLeftVN);
+                if (it == g_vertexNumToRecipe.end()) continue;
+
+                g_quadWindowStaging.push_back(it->second);
+            }
         }
-    } else {
-        const TerrainPtr terrainPtr = land;
-        const TerrainQuadPtr quads  = terrainPtr ? terrainPtr->getQuadList()  : nullptr;
-        const long total            = terrainPtr ? terrainPtr->getNumQuads()  : 0;
-        if (!quads || total <= 0) return 0;
-
-        const bool narrow   = NarrowEnabledImpl();
-        const TerrainQuadPtr* narrowArr = narrow && !g_narrowQuadsThisFrame.empty()
-                                          ? g_narrowQuadsThisFrame.data() : nullptr;
-        const long iterCount = narrow ? (long)g_narrowQuadsThisFrame.size() : total;
-
-        g_quadWindowStaging.reserve((size_t)iterCount);
-
-        for (long i = 0; i < iterCount; ++i) {
-            const TerrainQuad& q = narrowArr ? *narrowArr[i] : quads[i];
-            if (!q.vertices[0] || !q.vertices[1] ||
-                !q.vertices[2] || !q.vertices[3]) continue;
-            if (q.vertices[0]->vertexNum < 0 || q.vertices[1]->vertexNum < 0 ||
-                q.vertices[2]->vertexNum < 0 || q.vertices[3]->vertexNum < 0) continue;
-            if (q.waterHandle == 0xffffffffu) continue;
-
-            const uint32_t topLeftVN = (uint32_t)q.vertices[0]->vertexNum;
-            auto it = g_vertexNumToRecipe.find(topLeftVN);
-            if (it == g_vertexNumToRecipe.end()) continue;
-
-            g_quadWindowStaging.push_back(it->second);
-        }
-    }
+    } // end WaterBuildWindow scope
 
     const uint32_t windowCount = (uint32_t)g_quadWindowStaging.size();
     if (windowCount == 0) return 0;
@@ -1260,11 +1264,15 @@ static uint32_t BuildQuadWindowSSBO() {
         g_quadWindowSsboCapacity = cap;
     }
 
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_quadWindowSsbo);
-    MC2_GL_BufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-                    (GLsizeiptr)(windowCount * sizeof(uint32_t)),
-                    g_quadWindowStaging.data());
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    // H1b: time the GPU upload separately.
+    {
+        mc2_hitch::HitchScope _hUpload(mc2_hitch::HitchSpanKind::WaterUpload);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_quadWindowSsbo);
+        MC2_GL_BufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                        (GLsizeiptr)(windowCount * sizeof(uint32_t)),
+                        g_quadWindowStaging.data());
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    } // end WaterUpload scope
 
     return windowCount;
 }
@@ -1277,13 +1285,15 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
         g_mc2HitchAccum.waterPresent = g_recipes.empty() ? 0u : 1u;
     }
 
-    if (!gpu_driven::IsWaterEnabled()) {
-        if (g_mc2HitchEnabled) ++g_mc2HitchAccum.waterEarlyOut;
-        return false;
-    }
+    {
+        mc2_hitch::HitchScope _hGuards(mc2_hitch::HitchSpanKind::WaterGuards);
+        if (!gpu_driven::IsWaterEnabled()) {
+            if (g_mc2HitchEnabled) ++g_mc2HitchAccum.waterEarlyOut;
+            return false;
+        }
 
-    // Lazy-build compute programs and GPU resources on first call.
-    if (g_waterComputeProgram == 0) {
+        // Lazy-build compute programs and GPU resources on first call.
+        if (g_waterComputeProgram == 0) {
         g_waterComputeProgram = gpu_driven::BuildComputeProgramFromFile(
             "shaders/gpu_driven_water.comp", nullptr, 0, "gpu_driven_water");
         g_cmdPatchProgram = gpu_driven::BuildComputeProgramFromFile(
@@ -1308,9 +1318,16 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
         MC2_GL_BufferData(GL_DRAW_INDIRECT_BUFFER, 32, nullptr, GL_DYNAMIC_DRAW);
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
     }
+    } // end WaterGuards scope
 
     // Ensure recipe SSBO is ready.
-    if (!EnsureRecipeBufferUploaded()) { if (g_mc2HitchEnabled) ++g_mc2HitchAccum.waterEarlyOut; return false; }
+    uint32_t recipeUploadedCount = 0;
+    {
+        mc2_hitch::HitchScope _hRecipe(mc2_hitch::HitchSpanKind::WaterRecipe);
+        recipeUploadedCount = EnsureRecipeBufferUploaded();
+    }
+    if (g_mc2HitchEnabled) g_mc2HitchAccum.waterRecipeUploaded = recipeUploadedCount;
+    if (!recipeUploadedCount) { if (g_mc2HitchEnabled) ++g_mc2HitchAccum.waterEarlyOut; return false; }
     if (g_recipeBuffer == 0) { if (g_mc2HitchEnabled) ++g_mc2HitchAccum.waterEarlyOut; return false; }
 
     // Ensure thin-record SSBO is allocated (UploadAndBindThinRecords creates it lazily;
@@ -1361,6 +1378,13 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
     const uint32_t dispatchCount = fullRecipeAuth ? maxThinRecords : windowCount;
     if (dispatchCount == 0) { if (g_mc2HitchEnabled) ++g_mc2HitchAccum.waterEarlyOut; return false; }
 
+    // H1b stats: populate after build, before dispatch.
+    if (g_mc2HitchEnabled) {
+        g_mc2HitchAccum.waterWindowCount = dispatchCount;
+        g_mc2HitchAccum.waterNarrowCount = (uint32_t)g_narrowQuadsThisFrame.size();
+        g_mc2HitchAccum.waterRecipeCount = (uint32_t)g_recipes.size();
+    }
+
     // Advance ring slot so GPU write doesn't stomp a slot the GPU is still consuming.
     // Must happen AFTER the windowCount==0 early-return so we don't burn a slot
     // on frames where no water quads are visible (stale-data draw on the next frame).
@@ -1384,6 +1408,8 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
     // DISPATCH 1: cull/pack (gpu_driven_water.comp)
     // Bindings: 0=recipe, 1=lighting, 2=quadWindow, 3=thin, 6=header
     // ------------------------------------------------------------------
+    // H1b: time both dispatch + barrier phases together.
+    mc2_hitch::HitchScope _hDispatch(mc2_hitch::HitchSpanKind::WaterDispatch);
     glUseProgram(g_waterComputeProgram);
 
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, g_recipeBuffer);

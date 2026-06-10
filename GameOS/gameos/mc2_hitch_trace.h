@@ -39,6 +39,24 @@ struct HitchFrameAccum {
     uint8_t  waterEarlyOut      = 0;
     uint32_t waterGlCalls       = 0;   // total MC2_GL_* hits inside water scope
 
+    // H1b water CPU sub-spans (ms). Only populated when waterMs is significant.
+    double waterGuardsMs      = 0.0;  // early-out checks + lazy init
+    double waterRecipeMs      = 0.0;  // EnsureRecipeBufferUploaded
+    double waterBuildWindowMs = 0.0;  // BuildQuadWindowSSBO (CPU loop + hash lookup)
+    double waterUploadMs      = 0.0;  // glBufferSubData for quad window SSBO
+    double waterDispatchMs    = 0.0;  // compute dispatch + glMemoryBarrier calls
+    // H1b water stats
+    uint32_t waterRecipeCount    = 0;  // g_recipes.size() at dispatch time
+    uint32_t waterWindowCount    = 0;  // windowCount / dispatchCount
+    uint32_t waterNarrowCount    = 0;  // g_narrowQuadsThisFrame.size()
+    uint32_t waterRecipeUploaded = 0;  // whether a recipe upload happened this frame
+
+    // H1c frame-phase spans (ms). Populated by HitchScope in gameosmain.cpp.
+    double phaseLogicMs      = 0.0;  // GameLogic (DoGameLogic)
+    double phaseRenderMs     = 0.0;  // DrawScreen (draw_screen)
+    double phasePresentMs    = 0.0;  // SwapWindow (SDL_GL_SwapWindow + any preFinish)
+    double phaseCapMs        = 0.0;  // Frame cap sleep
+
     // GL call counts (all instrumented TUs combined)
     uint32_t glBufferDataCalls        = 0;
     uint64_t glBufferDataBytes        = 0;
@@ -67,6 +85,15 @@ enum class HitchSpanKind : uint8_t {
     GpuStaticPropsFlush     = 1,
     GpuStaticPropsSnapshot  = 2,
     WaterFastPath           = 3,
+    PhaseGameLogic          = 4,
+    PhaseRender             = 5,
+    PhasePresent            = 6,
+    PhaseCap                = 7,
+    WaterGuards             = 8,
+    WaterRecipe             = 9,
+    WaterBuildWindow        = 10,
+    WaterUpload             = 11,
+    WaterDispatch           = 12,
     kCount
 };
 
