@@ -4372,7 +4372,13 @@ BOOL EditorInterface::OnMouseWheel(UINT nFlags, short zDelta, CPoint pt)
 			tacMap.Invalidate(FALSE);  // async/coalesced — avoid synchronous per-event minimap repaint storm
 			return TRUE;
 		}
-		else if ( EditorObjectMgr::instance()->getSelectionCount() > 0 )
+		// Null-guard the singleton: EditorObjectMgr::instance() is NULL before a map
+		// is loaded (or after a failed load). An unguarded deref here READ-violated at
+		// 0x100 (this+offset) on a mouse wheel with no/partly-loaded map
+		// (syncSelectedObjectPointerList <- getSelectionCount <- here). Fall through to
+		// camera zoom when there is no object manager / nothing to rotate.
+		else if ( EditorObjectMgr::instance() &&
+		          EditorObjectMgr::instance()->getSelectionCount() > 0 )
 		{
 			rotateSelectedObjectsDegrees( deg );
 			tacMap.Invalidate(FALSE);  // async/coalesced — avoid synchronous per-event minimap repaint storm
