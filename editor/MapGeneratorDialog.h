@@ -52,9 +52,16 @@ namespace MapGeneratorDialog {
     // Checks terrain_gen_presets/<biome>_<sizeN>/ for pre-generated files.
     void ExecuteLoadPreset();
 
-    // True exactly once after an async Generate has successfully applied terrain,
-    // so EditorInterface::update() can re-seat the camera + rebuild UI. Clears on read.
-    bool TakePostGenerateApplied();
+    // True once an async Generate task has finished and the terrain apply is pending.
+    // EditorInterface::update() must, in order: eye->reset() -> ApplyPendingGenerate()
+    // -> eye->setPosition(). The reset-before-apply order is load-bearing: the apply
+    // primes the terrain face cache against the camera, so resetting afterwards would
+    // leave the terrain culled/black.
+    bool GenerateReady();
+
+    // Perform the deferred terrain apply (main thread; camera must already be reset).
+    // Returns true on a clean apply (then closes the dialog).
+    bool ApplyPendingGenerate();
 
     // True while an async generate/preview task is in flight (disables re-entry).
     bool IsTaskActive();

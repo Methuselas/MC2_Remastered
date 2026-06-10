@@ -76,6 +76,7 @@
 #include "EditorTaskRunner.h"
 #include "EditorDebugOverlay.h"
 #include "SceneOutliner.h"
+#include "InspectorPanel.h"
 #include "gameplay_pick.h"  // tryGameplayPick: shared pick spine, no game-object deps
 #include "gameos.hpp"       // gos_GetViewport, Environment (drawableWidth/Height)
 #include "gos_render.h"     // graphics::make_current_context
@@ -2413,28 +2414,32 @@ void EditorInterface::update()
 	EditorTaskRunner::PumpMainThread();
 
 #ifdef MC2_IMGUI
-	// An async Generate just applied new terrain (inside PumpMainThread above) ->
-	// re-seat the camera to the terrain centre and rebuild dependent UI. Same work
-	// the old blocking Generate path did inline; deferred here to the main thread.
-	if ( MapGeneratorDialog::TakePostGenerateApplied() )
+	// An async Generate task has finished -> apply the terrain here on the main thread
+	// in the EXACT order the old blocking Generate path (and LoadPreset) used.
+	if ( MapGeneratorDialog::GenerateReady() )
 	{
-		// Reset the camera FIRST (zoom/rotation/frustum back to defaults), exactly
-		// as the old synchronous Generate path and the LoadPreset path do. Without
-		// this the camera keeps its prior zoom/orientation and the freshly generated
-		// terrain renders tiny/far ("white square") with a mismatched-scale horizon.
+		//   1. eye->reset()  -- camera zoom/rotation/frustum back to defaults FIRST.
+		//   2. apply         -- generateFromDialogParams primes the terrain face cache
+		//                       against the CURRENT camera; priming after reset culls
+		//                       against the final view. Priming BEFORE reset (the old
+		//                       async bug) left the whole terrain culled -> empty/black,
+		//                       only the debug grid visible.
+		//   3. setPosition() -- derives z from getTerrainElevation, lifting the camera
+		//                       above the generated surface.
 		eye->reset();
-		// setPosition() derives z from land->getTerrainElevation(), placing the
-		// camera above the generated surface (blank-terrain y=0 is underground on
-		// hilly maps -> sky sphere at ground level + bad inverseProject picks).
-		if ( land )
+		bool applied = MapGeneratorDialog::ApplyPendingGenerate();
+		if ( applied && land )
 		{
 			eye->setPosition( Stuff::Vector3D(0.0f, 0.0f, 0.0f), false );
 			addBuildingsToNewMenu();
 			syncScrollBars();
 			initTacMap();
 		}
-		tacMap.UpdateMap();
-		PlaySound("SystemDefault", NULL, SND_ASYNC);
+		if ( applied )
+		{
+			tacMap.UpdateMap();
+			PlaySound("SystemDefault", NULL, SND_ASYNC);
+		}
 	}
 #endif
 
@@ -4540,6 +4545,11 @@ void EditorInterface::renderToolbarImGui()
 	if (ImGui::Button("Scene Outliner", ImVec2(-1.f, 0.f)))
 		SceneOutliner::Toggle();
 	SceneOutliner::Draw();
+
+	// Inspector Lite — read-only details of the current selection.
+	if (ImGui::Button("Inspector", ImVec2(-1.f, 0.f)))
+		InspectorPanel::Toggle();
+	InspectorPanel::Draw();
 
 	ImGui::Separator();
 
