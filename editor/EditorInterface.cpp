@@ -788,11 +788,17 @@ void Editor::update()
 		// S2.13-surgical: hoist camera projection-state refresh from
 		// EditorCamera::render() to BEFORE land->geometry().
 		{
-			float viewMulX, viewMulY, viewAddX, viewAddY;
-			gos_GetViewport(&viewMulX, &viewMulY, &viewAddX, &viewAddY);
+			// Use the SCENE viewport size (Environment.drawable*), NOT gos_GetViewport's
+			// viewMul*. With the docked map-resize, the GL scene renders into a centralW
+			// sub-region (Environment.drawableWidth) while the GOS viewport width stays
+			// the full window -> camera projection + inverseProject picking would use
+			// fullW while the render uses centralW, so the cursor and the picked point
+			// diverge increasingly toward the right. Driving screenResolution from the
+			// scene size unifies render + projection + picking. (Equal to viewMul* when
+			// not docked, so undocked behavior is unchanged.)
 			Stuff::Vector3D newRes;
-			newRes.x = viewMulX;
-			newRes.y = viewMulY;
+			newRes.x = (float)Environment.drawableWidth;
+			newRes.y = (float)Environment.drawableHeight;
 			newRes.z = 0.0f;
 			eye->changeResolution(newRes);
 		}
