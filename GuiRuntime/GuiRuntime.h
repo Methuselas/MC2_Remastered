@@ -22,6 +22,10 @@ namespace GuiRuntime {
     // frame after compositing+blit. Picking offsets client mouse by the rect origin.
     bool RttEnabled();                              // MC2_EDITOR_RTT (default ON)
     void SetViewportTexture(unsigned int glTex);    // GLuint; called pre-Render()
+    // Fixed-layout scene rect (client/screen pixels, left-anchored). When set (w>0),
+    // the dockspace paints the RTT texture into THIS rect instead of the dynamic
+    // central node, and the pick offset uses it. Set each frame by EditorGameOS.
+    void SetFixedViewportRect(int x, int y, int w, int h);
     // Central-node screen rect (ImGui DisplaySize space == GL-child client coords).
     int  ViewportRectX();
     int  ViewportRectY();

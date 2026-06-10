@@ -37,6 +37,7 @@
 #include <gameos.hpp>          // gos_RendererBeginFrame / EndFrame / HandleEvents
 #include "gos_render.h"        // graphics::make_current_context etc.
 #include "gos_input.h"         // input::beginUpdateMouseState etc.
+#include "camera.h"            // extern eye + fgetScreenResX (pick-cache coherence diag)
 #include "gos_postprocess.h"   // gosPostProcess + getGosPostProcess() — needed for
                                // beginScene/endScene so props render into the scene FBO
                                // with MRT (COLOR_ATTACHMENT2 = object IDs) enabled.
@@ -460,41 +461,79 @@ DWORD __stdcall RunGameOSLogic()
         // scene is left-anchored at (0,0) so mouse-pick coords still map 1:1.
         // MC2_EDITOR_DOCK_RESIZE=0 disables (scene stays full-window behind panels).
         {
-            // DEFAULT OFF (2026-06-10): the scene-shrink map-resize has an unresolved
-            // pick-coordinate divergence with docked panels (cursor vs placement drift
-            // right; see memory/editor_dock_resize_pick_divergence.md). Until that's
-            // fixed, default to full-window scene (panels overlay) so picking is exact.
-            // Opt in for experiments with MC2_EDITOR_DOCK_RESIZE=1.
-            static int s_resizeOn = -1;
-            if (s_resizeOn < 0) {
-                const char* r = std::getenv("MC2_EDITOR_DOCK_RESIZE");
-                s_resizeOn = (r && strcmp(r, "1") == 0) ? 1 : 0;
+            // FIXED-LAYOUT viewport (2026-06-10, replaces the dynamic central-node
+            // shrink). Per user direction: reserve a FIXED, DPI-scaled panel column on
+            // the right; the scene viewport is the rest of the window, LEFT-ANCHORED at
+            // (0,0). Computing the size DIRECTLY from the client rect (not the ImGui
+            // central node) removes the one-frame lag AND the moving-target coordinate
+            // space that drove the pick divergence -- the scene size is a single known
+            // value fed to glViewport + Environment + (via the camera) every width
+            // cache. Picking is then exact by construction: mouse - (0,0), normalised
+            // by the same fixed width the camera projects with.
+            // MC2_EDITOR_RTT=0 disables (full-window scene, panels overlay).
+            static int s_panelLogical = -1;   // logical (96-dpi) panel width
+            if (s_panelLogical < 0) {
+                const char* p = std::getenv("MC2_EDITOR_PANEL_W");
+                s_panelLogical = (p && atoi(p) > 0) ? atoi(p) : 320;
             }
-            // RTT also shrinks the scene to the central node — but unlike the legacy
-            // DOCK_RESIZE path, the scene is painted into the central node's exact
-            // screen rect (background draw list) and picking is offset by that rect,
-            // so the old pick-coordinate divergence does not apply. RTT default ON.
-            const bool shrink = (s_resizeOn != 0) || GuiRuntime::RttEnabled();
-            int sw = GuiRuntime::SceneViewportWidth();
-            int sh = GuiRuntime::SceneViewportHeight();
-            if (shrink && w > 0 && h > 0 && sw >= 64 && sh >= 64 && sw <= w && sh <= h)
-            {
+            int sw = w, sh = h;
+            if (GuiRuntime::RttEnabled() && w > 0 && h > 0) {
+                // DPI scale from the GL-child window (1.0 at 96 dpi).
+                UINT dpi = ::GetDpiForWindow(hwnd);
+                float dpiScale = (dpi > 0) ? (float)dpi / 96.0f : 1.0f;
+                int panelPx = (int)(s_panelLogical * dpiScale + 0.5f);
+                if (panelPx > w - 256) panelPx = w - 256;   // keep a sane minimum scene
+                if (panelPx < 0) panelPx = 0;
+                sw = w - panelPx;
+                sh = h;
                 Environment.screenWidth    = sw;
                 Environment.drawableWidth  = sw;
                 Environment.screenHeight   = sh;
                 Environment.drawableHeight = sh;
+                // Publish the fixed scene rect (left-anchored) so GuiRuntime paints the
+                // RTT texture there and the pick offset uses the same rect.
+                GuiRuntime::SetFixedViewportRect(0, 0, sw, sh);
+
+                // SINGLE SOURCE OF TRUTH: set the GOS projection viewport to the scene
+                // sub-rect. gos_GetViewport feeds Camera::update/render -> viewMulX/Y +
+                // TG_Shape + userInput + projectZ (the forward-projection every cursor
+                // and object pick uses). Patching the per-frame copies one at a time
+                // always left one reading the full window (the residual scale/offset).
+                // setupViewport only STORES the projection fractions; it does NOT touch
+                // the GL render viewport (we set that explicitly via glViewport below),
+                // so the render stays scene-sized while ALL projections become coherent.
+                // Fractions are relative to the GOS BACKBUFFER width (full window),
+                // which differs from the MFC client width. Reading gos_GetViewport
+                // after we shrink would feed back the shrunk value (sw/sw=1 -> reset),
+                // so capture the TRUE full backbuffer dims once (and re-capture on
+                // resize) by restoring the full fraction, reading, then applying scene.
+                static float s_gosFullW = 0.0f, s_gosFullH = 0.0f;
+                static int s_gosTrackW = -1, s_gosTrackH = -1;
+                if (s_gosFullW <= 0.0f || s_gosTrackW != w || s_gosTrackH != h) {
+                    gos_SetupViewport(false, 0.0f, false, 0, 0.0f, 0.0f, 1.0f, 1.0f);
+                    float a = 0, b = 0, c = 0, d = 0;
+                    gos_GetViewport(&a, &b, &c, &d);
+                    s_gosFullW = a; s_gosFullH = b;
+                    s_gosTrackW = w; s_gosTrackH = h;
+                }
+                if (s_gosFullW > 0.0f && s_gosFullH > 0.0f) {
+                    // top, left, bottom, right as backbuffer fractions; left-anchored.
+                    gos_SetupViewport(false, 0.0f, false, 0,
+                        0.0f, 0.0f, (float)sh / s_gosFullH, (float)sw / s_gosFullW);
+                }
             }
 
-            // One-shot width diagnostic: client (mouse coord space) vs ImGui DisplaySize
-            // (where the dockspace central node is measured) vs the scene dims we set.
-            // If client != DisplaySize, HiDPI is splitting the mouse space from the
-            // render space -> pick divergence.
             static int s_pwDiag = 0;
-            if ((s_pwDiag++ % 600) == 1) {
-                ImGuiIO& io = ImGui::GetIO();
-                EditorGameOSTrace("PICKW: client=%dx%d displaySize=%.0fx%.0f sceneVP=%dx%d drawable=%dx%d",
-                    w, h, io.DisplaySize.x, io.DisplaySize.y, sw, sh,
-                    Environment.drawableWidth, Environment.drawableHeight);
+            if ((s_pwDiag++ % 300) == 1) {
+                // FULL camera-cache coherence dump (captured log). Every value here
+                // MUST equal sw to get exact picking. If any reads the full window
+                // (=w), that cache is the remaining leak.
+                float vmx = 0, vmy = 0, vax = 0, vay = 0;
+                gos_GetViewport(&vmx, &vmy, &vax, &vay);
+                float crx = eye ? eye->fgetScreenResX() : -1.0f;
+                EditorGameOSTrace("PICKW: client=%dx%d scene=%dx%d drawable=%dx%d gosViewMul=%.0fx%.0f camScrRes=%.0f",
+                    w, h, sw, sh, Environment.drawableWidth, Environment.drawableHeight,
+                    vmx, vmy, crx);
             }
         }
 #endif
@@ -669,6 +708,21 @@ DWORD __stdcall RunGameOSLogic()
                           GL_COLOR_BUFFER_BIT, GL_NEAREST);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         GuiRuntime::SetViewportTexture(s_presentTex);
+        static int s_rttTrace = 0;
+        if ((s_rttTrace++ % 600) == 1)
+            EditorGameOSTrace("RTT: capture presentTex=%u %dx%d vpRect=%d,%d %dx%d",
+                s_presentTex, viewport_w, viewport_h,
+                GuiRuntime::ViewportRectX(), GuiRuntime::ViewportRectY(),
+                GuiRuntime::ViewportRectW(), GuiRuntime::ViewportRectH());
+    }
+    else {
+        static bool s_rttOffTrace = false;
+        if (!s_rttOffTrace) {
+            s_rttOffTrace = true;
+            EditorGameOSTrace("RTT: NOT capturing (imgui=%d rtt=%d vw=%d vh=%d)",
+                g_imguiInitialized ? 1 : 0, GuiRuntime::RttEnabled() ? 1 : 0,
+                viewport_w, viewport_h);
+        }
     }
 
     if (g_imguiInitialized) {

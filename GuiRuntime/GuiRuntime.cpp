@@ -78,8 +78,10 @@ int GuiRuntime::SceneViewportHeight() { return s_sceneViewH; }
 
 // --- Render-to-texture viewport ---------------------------------------------------
 static unsigned int s_rttTex = 0;          // GLuint of the editor present texture
-static int s_vpX = 0, s_vpY = 0;           // central-node screen rect (DisplaySize space)
+static int s_vpX = 0, s_vpY = 0;           // scene screen rect (client/DisplaySize space)
 static int s_vpW = 0, s_vpH = 0;
+static int s_fixedX = 0, s_fixedY = 0;     // fixed-layout rect from EditorGameOS
+static int s_fixedW = 0, s_fixedH = 0;     // (w>0 => override the dynamic central node)
 
 bool GuiRuntime::RttEnabled() {
     static int s_on = -1;
@@ -90,6 +92,9 @@ bool GuiRuntime::RttEnabled() {
     return s_on != 0;
 }
 void GuiRuntime::SetViewportTexture(unsigned int glTex) { s_rttTex = glTex; }
+void GuiRuntime::SetFixedViewportRect(int x, int y, int w, int h) {
+    s_fixedX = x; s_fixedY = y; s_fixedW = w; s_fixedH = h;
+}
 int  GuiRuntime::ViewportRectX() { return s_vpX; }
 int  GuiRuntime::ViewportRectY() { return s_vpY; }
 int  GuiRuntime::ViewportRectW() { return s_vpW; }
@@ -144,18 +149,32 @@ static void BuildEditorDockspace() {
         // over the scene, so picking/camera input still reach the GameOS path
         // (identical to the PassthruCentralNode behavior). The texture is filled
         // by EditorGameOS (composite -> blit) before GuiRuntime::Render samples it.
-        s_vpX = (int)central->Pos.x;
-        s_vpY = (int)central->Pos.y;
-        s_vpW = (int)central->Size.x;
-        s_vpH = (int)central->Size.y;
+        // Fixed-layout rect (from EditorGameOS) overrides the dynamic central node so
+        // the scene rect, the camera viewport, and the pick offset are ONE known value.
+        const bool useFixed = (s_fixedW > 0 && s_fixedH > 0);
+        s_vpX = useFixed ? s_fixedX : (int)central->Pos.x;
+        s_vpY = useFixed ? s_fixedY : (int)central->Pos.y;
+        s_vpW = useFixed ? s_fixedW : (int)central->Size.x;
+        s_vpH = useFixed ? s_fixedH : (int)central->Size.y;
         if (GuiRuntime::RttEnabled() && s_rttTex != 0) {
-            const ImVec2 p0 = central->Pos;
-            const ImVec2 p1 = ImVec2(central->Pos.x + central->Size.x,
-                                     central->Pos.y + central->Size.y);
+            const ImVec2 p0 = ImVec2((float)s_vpX, (float)s_vpY);
+            const ImVec2 p1 = ImVec2((float)(s_vpX + s_vpW),
+                                     (float)(s_vpY + s_vpH));
             // GL texture origin is bottom-left; flip V so the scene is upright.
             ImGui::GetBackgroundDrawList()->AddImage(
                 (ImTextureID)(intptr_t)s_rttTex, p0, p1,
                 ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+            static int s_imgTrace = 0;
+            if ((s_imgTrace++ % 600) == 1)
+                fprintf(stderr, "[RTT image] tex=%u rect=(%d,%d)+(%dx%d) fixed=%d\n",
+                    s_rttTex, s_vpX, s_vpY, s_vpW, s_vpH, useFixed ? 1 : 0);
+        } else {
+            static bool s_noImg = false;
+            if (!s_noImg) {
+                s_noImg = true;
+                fprintf(stderr, "[RTT image] NOT drawn (rtt=%d tex=%u)\n",
+                    GuiRuntime::RttEnabled() ? 1 : 0, s_rttTex);
+            }
         }
     }
 }

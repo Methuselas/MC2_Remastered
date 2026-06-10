@@ -1019,6 +1019,21 @@ class Camera
 		void changeResolution (Stuff::Vector3D newRes)
 		{
 			screenResolution = newRes;
+			// The pixel-space scale (viewMulX/Y) is what projectZ() and the legacy
+			// inverseProject tile-scan actually multiply NDC by — it is NOT updated
+			// by setting screenResolution alone. Camera::render() sources it from
+			// gos_GetViewport (the FULL window), so in the editor's shrunk-viewport
+			// path that leaves viewMulX pinned at the full-window width while
+			// screenResolution + the clip matrix are shrunk -> picks divide by the
+			// shrunk width but project by the full width => a fullW/shrunkW (~2x)
+			// divergence (placement cursor drifts toward center at the map edge).
+			// Re-apply the scale from newRes so all three (screenResolution, clip
+			// matrix, pixel scale) agree. changeResolution is editor-only (no game
+			// caller), so this cannot affect the game's Camera::render() path.
+			viewMulX = newRes.x;
+			viewMulY = newRes.y;
+			viewAddX = 0.0f;
+			viewAddY = 0.0f;
 			calculateProjectionConstants();
 		}
 
