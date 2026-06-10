@@ -460,10 +460,15 @@ DWORD __stdcall RunGameOSLogic()
         // scene is left-anchored at (0,0) so mouse-pick coords still map 1:1.
         // MC2_EDITOR_DOCK_RESIZE=0 disables (scene stays full-window behind panels).
         {
+            // DEFAULT OFF (2026-06-10): the scene-shrink map-resize has an unresolved
+            // pick-coordinate divergence with docked panels (cursor vs placement drift
+            // right; see memory/editor_dock_resize_pick_divergence.md). Until that's
+            // fixed, default to full-window scene (panels overlay) so picking is exact.
+            // Opt in for experiments with MC2_EDITOR_DOCK_RESIZE=1.
             static int s_resizeOn = -1;
             if (s_resizeOn < 0) {
                 const char* r = std::getenv("MC2_EDITOR_DOCK_RESIZE");
-                s_resizeOn = (!r || strcmp(r, "0") != 0) ? 1 : 0;
+                s_resizeOn = (r && strcmp(r, "1") == 0) ? 1 : 0;
             }
             int sw = GuiRuntime::SceneViewportWidth();
             int sh = GuiRuntime::SceneViewportHeight();
@@ -473,6 +478,18 @@ DWORD __stdcall RunGameOSLogic()
                 Environment.drawableWidth  = sw;
                 Environment.screenHeight   = sh;
                 Environment.drawableHeight = sh;
+            }
+
+            // One-shot width diagnostic: client (mouse coord space) vs ImGui DisplaySize
+            // (where the dockspace central node is measured) vs the scene dims we set.
+            // If client != DisplaySize, HiDPI is splitting the mouse space from the
+            // render space -> pick divergence.
+            static int s_pwDiag = 0;
+            if ((s_pwDiag++ % 600) == 1) {
+                ImGuiIO& io = ImGui::GetIO();
+                EditorGameOSTrace("PICKW: client=%dx%d displaySize=%.0fx%.0f sceneVP=%dx%d drawable=%dx%d",
+                    w, h, io.DisplaySize.x, io.DisplaySize.y, sw, sh,
+                    Environment.drawableWidth, Environment.drawableHeight);
             }
         }
 #endif
