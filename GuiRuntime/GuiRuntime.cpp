@@ -2,6 +2,7 @@
 #include "EditorInspector.h"
 #include "GraphicsOptionsWindow.h"
 #include "imgui.h"
+#include "imgui_internal.h"   // DockBuilder* + ImGuiDockNode (docking branch)
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_opengl3.h"
 #include <cstdlib>   // getenv
@@ -42,11 +43,14 @@ void GuiRuntime::Init() {
     // its own in-game cursor sprite; without this flag the ImGui menu re-shows
     // the Windows arrow on top of the in-game cursor.
     io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
-    // NOTE: the vendored ImGui (1.91.8) is the NON-docking build, so true docking
-    // (ImGuiConfigFlags_DockingEnable / DockBuilder) is unavailable. We instead
-    // reserve a fixed right-side panel strip and shrink the scene viewport to the
-    // left region (see BuildEditorDockspace + EditorGameOS). Swapping to the ImGui
-    // docking branch would upgrade this to real drag-redock docking.
+    // Docking (vendored ImGui swapped to v1.91.8-docking): floating editor panels ->
+    // real dockable layout, default-docked into a right-side column on first run (see
+    // BuildEditorDockspace). Layout persists via imgui.ini. Opt out: MC2_EDITOR_DOCK=0.
+    {
+        const char* d = std::getenv("MC2_EDITOR_DOCK");
+        if (!d || strcmp(d, "0") != 0)
+            io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    }
 
     ImGui::StyleColorsDark();
 
@@ -76,22 +80,44 @@ static bool dockEnabled() {
     return (!d || strcmp(d, "0") != 0);
 }
 
-// Reserve a fixed right-side panel strip and report the LEFT region size so the editor
-// shrinks its scene viewport to it (the map fills the left, panels sit in the right
-// strip). No-op (size 0) when docking is off or the window is too small. (Real
-// drag-redock docking would need the ImGui docking-branch sources.)
-static const int kRightPanelStripW = 360;
-
+// Build (first run) + drive the editor dockspace each frame. PassthruCentralNode keeps
+// the central region transparent + mouse-passthrough so the GL scene + picking work
+// there; panels default to a right-side column. Records the central node size so
+// EditorGameOS shrinks the scene viewport to it (one-frame lag, harmless), making the
+// map fill exactly the un-docked region. Layout (incl. user re-docks) persists in imgui.ini.
 static void BuildEditorDockspace() {
     if (!dockEnabled()) { s_sceneViewW = s_sceneViewH = 0; return; }
-    ImGuiIO& io = ImGui::GetIO();
-    const int W = (int)io.DisplaySize.x;
-    const int H = (int)io.DisplaySize.y;
-    if (W > kRightPanelStripW + 240 && H > 120) {
-        s_sceneViewW = W - kRightPanelStripW;
-        s_sceneViewH = H;
-    } else {
-        s_sceneViewW = s_sceneViewH = 0;
+
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGuiID dockId = ImGui::DockSpaceOverViewport(0, vp, ImGuiDockNodeFlags_PassthruCentralNode);
+
+    // First run only: split a right column and dock the known editor panels into it.
+    // (Skipped once imgui.ini exists so the user's saved layout wins.)
+    static bool s_built = false;
+    if (!s_built) {
+        s_built = true;
+        if (ImGui::DockBuilderGetNode(dockId) == nullptr ||
+            ImGui::DockBuilderGetNode(dockId)->IsLeafNode())   // not yet laid out by a saved ini
+        {
+            ImGui::DockBuilderRemoveNode(dockId);
+            ImGui::DockBuilderAddNode(dockId, ImGuiDockNodeFlags_DockSpace | ImGuiDockNodeFlags_PassthruCentralNode);
+            ImGui::DockBuilderSetNodeSize(dockId, vp->Size);
+            ImGuiID rightId = 0, centerId = 0;
+            ImGui::DockBuilderSplitNode(dockId, ImGuiDir_Right, 0.26f, &rightId, &centerId);
+            static const char* kPanels[] = {
+                "Tools", "Map Generator", "Debug Overlays", "Task Monitor",
+                "Mission Checklist", "Editor Inspector", "Scene Outliner",
+                "Inspector", "Asset Browser", "Graphics Options"
+            };
+            for (int i = 0; i < (int)(sizeof(kPanels) / sizeof(kPanels[0])); ++i)
+                ImGui::DockBuilderDockWindow(kPanels[i], rightId);
+            ImGui::DockBuilderFinish(dockId);
+        }
+    }
+
+    if (ImGuiDockNode* central = ImGui::DockBuilderGetCentralNode(dockId)) {
+        s_sceneViewW = (int)central->Size.x;
+        s_sceneViewH = (int)central->Size.y;
     }
 }
 
