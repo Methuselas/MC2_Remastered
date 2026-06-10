@@ -606,6 +606,9 @@ def main():
                             # cost instrumentation (move_recon.h/cpp). Default-OFF.
                             # Popen replaces env — must be in allowlist.
                             "MC2_MOVE_RECON",
+                            # MC2_MOVE_CHUNK_SHADOW=1: alt-enable for the local-A*
+                            # chunk/rect-corridor shadow (move_recon.cpp). Default-OFF.
+                            "MC2_MOVE_CHUNK_SHADOW",
                             # MC2_MISSION_SPLIT=1: wall-ms split of Mission::update
                             # sub-calls (land_update/pathmgr/clearVerts/geometry/
                             # objmgr...) to locate the 1K-map logic hotspot.

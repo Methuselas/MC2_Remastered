@@ -5259,10 +5259,28 @@ long MoveMap::calcPath (MovePathPtr path, Stuff::Vector3D* goalWorldPos, int* go
 
 	MoveReconScope _recon_al(&g_moveRecon_astar_local_ns, &g_moveRecon_frame_astar_local_ns);
 	MoveReconNodeCounter _aln;  // per-call local node-expansion size (Warrior.Path 2ms layer)
-	// MOVE_CHUNK_SHADOW: popped-cell bbox (over-exploration vs final path).
+	// MOVE_CHUNK_SHADOW: popped-cell bbox (over-exploration vs final path) +
+	// RECT_CORRIDOR_SHADOW: count popped nodes inside the start<->goal chunk
+	// rectangle dilated by 0/1/2 chunks (upper bound on a constrained search).
 	int _shPMinR = 0, _shPMaxR = 0, _shPMinC = 0, _shPMaxC = 0;
 	bool _shPFirst = true;
-	if (g_moveReconEnabled) g_moveRecon_astar_local_calls++;
+	unsigned long long _shInRect0 = 0, _shInRect1 = 0, _shInRect2 = 0;
+	int _shRLo[3] = {0,0,0}, _shRHi[3] = {0,0,0}, _shCLo[3] = {0,0,0}, _shCHi[3] = {0,0,0};
+	if (g_moveReconEnabled) {
+		g_moveRecon_astar_local_calls++;
+		const int cs = 16;
+		int chMinR = (startR < goalR ? startR : goalR) / cs;
+		int chMaxR = (startR > goalR ? startR : goalR) / cs;
+		int chMinC = (startC < goalC ? startC : goalC) / cs;
+		int chMaxC = (startC > goalC ? startC : goalC) / cs;
+		for (int p = 0; p < 3; p++) {
+			int lo;
+			lo = (chMinR - p) * cs;            _shRLo[p] = (lo < 0 ? 0 : lo);
+			_shRHi[p] = (chMaxR + p) * cs + cs - 1; if (_shRHi[p] > height - 1) _shRHi[p] = height - 1;
+			lo = (chMinC - p) * cs;            _shCLo[p] = (lo < 0 ? 0 : lo);
+			_shCHi[p] = (chMaxC + p) * cs + cs - 1; if (_shCHi[p] > width - 1) _shCHi[p] = width - 1;
+		}
+	}
 
 	#ifdef TIME_PATH
 		L_INTEGER calcStart, calcStop;
@@ -5358,6 +5376,9 @@ long MoveMap::calcPath (MovePathPtr path, Stuff::Vector3D* goalWorldPos, int* go
 				if (bestRow < _shPMinR) _shPMinR = bestRow; else if (bestRow > _shPMaxR) _shPMaxR = bestRow;
 				if (bestCol < _shPMinC) _shPMinC = bestCol; else if (bestCol > _shPMaxC) _shPMaxC = bestCol;
 			}
+			if (bestRow >= _shRLo[0] && bestRow <= _shRHi[0] && bestCol >= _shCLo[0] && bestCol <= _shCHi[0]) _shInRect0++;
+			if (bestRow >= _shRLo[1] && bestRow <= _shRHi[1] && bestCol >= _shCLo[1] && bestCol <= _shCHi[1]) _shInRect1++;
+			if (bestRow >= _shRLo[2] && bestRow <= _shRHi[2] && bestCol >= _shCLo[2] && bestCol <= _shCHi[2]) _shInRect2++;
 		}
 		MoveMapNodePtr bestMapNode = &map[bestPQNode.id];
 		bestMapNode->clearFlag(MOVEFLAG_OPEN);
@@ -5551,7 +5572,8 @@ long MoveMap::calcPath (MovePathPtr path, Stuff::Vector3D* goalWorldPos, int* go
 		if (g_moveReconEnabled)
 			moveReconChunkSample(startR, startC, goalR, goalC, _aln.n, numCells,
 				_shPMinR, _shPMaxR, _shPMinC, _shPMaxC,
-				_shFMinR, _shFMaxR, _shFMinC, _shFMaxC);
+				_shFMinR, _shFMaxR, _shFMinC, _shFMaxC,
+				_shInRect0, _shInRect1, _shInRect2);
 
 		//---------------------------------------------------------------
 		// If our goal is a door, the path will be one step longer, since

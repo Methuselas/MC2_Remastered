@@ -61,6 +61,14 @@ uint64_t g_chunkShadow_sum_pathBox    = 0;
 uint64_t g_chunkShadow_sum_nodes      = 0;
 uint64_t g_chunkShadow_sum_pathLen    = 0;
 uint64_t g_chunkShadow_maxOverflow    = 0;
+uint64_t g_chunkShadow_worstNodes     = 0;
+uint64_t g_chunkShadow_worstOverflow  = 0;
+
+uint64_t g_rect_full_nodes    = 0;
+uint64_t g_rect0_nodes        = 0;
+uint64_t g_rect1_nodes        = 0;
+uint64_t g_rect2_nodes        = 0;
+uint64_t g_rect_maxReductPct1 = 0;
 
 // Threshold: only sample the expensive tail (the 2ms Warrior.Path calls).
 static const int CHUNK_SHADOW_MIN_NODES = 200;
@@ -70,7 +78,9 @@ static int s_chunkShadowSamplePrints = 0;  // cap verbose per-call lines
 void moveReconChunkSample(int startR, int startC, int goalR, int goalC,
                           unsigned long long nodes, int pathLen,
                           int poppedMinR, int poppedMaxR, int poppedMinC, int poppedMaxC,
-                          int pathMinR, int pathMaxR, int pathMinC, int pathMaxC)
+                          int pathMinR, int pathMaxR, int pathMinC, int pathMaxC,
+                          unsigned long long inRect0, unsigned long long inRect1,
+                          unsigned long long inRect2)
 {
     if (!g_moveReconEnabled || nodes < (unsigned long long)CHUNK_SHADOW_MIN_NODES)
         return;
@@ -111,15 +121,37 @@ void moveReconChunkSample(int startR, int startC, int goalR, int goalC,
         if (overflow <= 2) g_chunkShadow_inside2++;
         if ((uint64_t)overflow > g_chunkShadow_maxOverflow) g_chunkShadow_maxOverflow = (uint64_t)overflow;
     }
+    // Track the worst (max-node) call and its overflow.
+    if (nodes > g_chunkShadow_worstNodes) {
+        g_chunkShadow_worstNodes = nodes;
+        g_chunkShadow_worstOverflow = (overflow >= 0 ? (uint64_t)overflow : 0);
+    }
+
+    // RECT_CORRIDOR_SHADOW projection: constrained nodes <= popped-in-corridor.
+    g_rect_full_nodes += nodes;
+    g_rect0_nodes += inRect0;
+    g_rect1_nodes += inRect1;
+    g_rect2_nodes += inRect2;
+    if (nodes > 0) {
+        uint64_t reduct1 = (nodes > inRect1) ? ((nodes - inRect1) * 100 / nodes) : 0;
+        if (reduct1 > g_rect_maxReductPct1) g_rect_maxReductPct1 = reduct1;
+    }
 
     if (s_chunkShadowSamplePrints < 40) {
         s_chunkShadowSamplePrints++;
+        // found/same at pad N is GUARANTEED iff overflow<=N (A* optimality on a
+        // domain containing the optimal path). nodes_padN = popped-in-corridor.
         std::printf("[MOVE_CHUNK_SHADOW v1] call=%llu start=(%d,%d) goal=(%d,%d) "
             "cell_nodes=%llu cell_path_len=%d popped_box=%llu path_box=%llu "
-            "chunk_size=%d overflow_chunks=%d\n",
+            "chunk_size=%d overflow_chunks=%d "
+            "rect0_same=%d rect0_nodes=%llu rect1_same=%d rect1_nodes=%llu "
+            "rect2_same=%d rect2_nodes=%llu\n",
             (unsigned long long)g_chunkShadow_calls, startR, startC, goalR, goalC,
             nodes, pathLen, (unsigned long long)poppedBox, (unsigned long long)pathBox,
-            cs, overflow);
+            cs, overflow,
+            (overflow >= 0 && overflow <= 0) ? 1 : 0, (unsigned long long)inRect0,
+            (overflow >= 0 && overflow <= 1) ? 1 : 0, (unsigned long long)inRect1,
+            (overflow >= 0 && overflow <= 2) ? 1 : 0, (unsigned long long)inRect2);
         std::fflush(stdout);
     }
 }
@@ -214,6 +246,7 @@ void moveReconEmit()
         " max_overflow_chunks=%llu"
         " sum_popped_box=%llu sum_path_box=%llu"
         " sum_nodes=%llu sum_path_len=%llu"
+        " worst_call_nodes=%llu worst_call_overflow=%llu"
         " (chunk_size=%d node_threshold=%d)\n",
         (unsigned long long)g_chunkShadow_calls,
         (unsigned long long)g_chunkShadow_inside0,
@@ -224,7 +257,32 @@ void moveReconEmit()
         (unsigned long long)g_chunkShadow_sum_pathBox,
         (unsigned long long)g_chunkShadow_sum_nodes,
         (unsigned long long)g_chunkShadow_sum_pathLen,
+        (unsigned long long)g_chunkShadow_worstNodes,
+        (unsigned long long)g_chunkShadow_worstOverflow,
         CHUNK_SHADOW_CHUNK_SIZE, CHUNK_SHADOW_MIN_NODES);
+    std::fflush(stdout);
+
+    // RECT_CORRIDOR_SHADOW: provable constrained-A* projection (no re-run).
+    // rectN_same == inside(N) (A* optimality); rectN_nodes is an UPPER BOUND on
+    // the constrained search's expansions; fallbackN = calls with overflow>N.
+    uint64_t fb0 = (g_chunkShadow_calls > g_chunkShadow_inside0) ? (g_chunkShadow_calls - g_chunkShadow_inside0) : 0;
+    uint64_t fb1 = (g_chunkShadow_calls > g_chunkShadow_inside1) ? (g_chunkShadow_calls - g_chunkShadow_inside1) : 0;
+    uint64_t fb2 = (g_chunkShadow_calls > g_chunkShadow_inside2) ? (g_chunkShadow_calls - g_chunkShadow_inside2) : 0;
+    uint64_t red0 = (g_rect_full_nodes > g_rect0_nodes) ? ((g_rect_full_nodes - g_rect0_nodes) * 100 / g_rect_full_nodes) : 0;
+    uint64_t red1 = (g_rect_full_nodes > g_rect1_nodes) ? ((g_rect_full_nodes - g_rect1_nodes) * 100 / g_rect_full_nodes) : 0;
+    uint64_t red2 = (g_rect_full_nodes > g_rect2_nodes) ? ((g_rect_full_nodes - g_rect2_nodes) * 100 / g_rect_full_nodes) : 0;
+    std::printf(
+        "[RECT_CORRIDOR_SHADOW v1] event=shutdown"
+        " calls=%llu full_nodes=%llu"
+        " rect0_same=%llu rect0_nodes=%llu rect0_reduct_pct=%llu fallback0=%llu"
+        " rect1_same=%llu rect1_nodes=%llu rect1_reduct_pct=%llu fallback1=%llu"
+        " rect2_same=%llu rect2_nodes=%llu rect2_reduct_pct=%llu fallback2=%llu"
+        " max_node_reduction_pct_pad1=%llu (nodes are UPPER-BOUND; same is PROVEN)\n",
+        (unsigned long long)g_chunkShadow_calls, (unsigned long long)g_rect_full_nodes,
+        (unsigned long long)g_chunkShadow_inside0, (unsigned long long)g_rect0_nodes, (unsigned long long)red0, (unsigned long long)fb0,
+        (unsigned long long)g_chunkShadow_inside1, (unsigned long long)g_rect1_nodes, (unsigned long long)red1, (unsigned long long)fb1,
+        (unsigned long long)g_chunkShadow_inside2, (unsigned long long)g_rect2_nodes, (unsigned long long)red2, (unsigned long long)fb2,
+        (unsigned long long)g_rect_maxReductPct1);
     std::fflush(stdout);
 }
 
@@ -238,7 +296,10 @@ void moveReconFrameTick()
     if (!s_initialized) {
         s_initialized = true;
         const char* env = std::getenv("MC2_MOVE_RECON");
-        g_moveReconEnabled = (env != nullptr && env[0] != '\0' && env[0] != '0');
+        const char* env2 = std::getenv("MC2_MOVE_CHUNK_SHADOW");  // alt enable
+        g_moveReconEnabled =
+            (env  != nullptr && env[0]  != '\0' && env[0]  != '0') ||
+            (env2 != nullptr && env2[0] != '\0' && env2[0] != '0');
         if (g_moveReconEnabled && !s_atexitRegistered) {
             std::atexit(moveReconEmit);
             s_atexitRegistered = true;

@@ -65,14 +65,31 @@ extern uint64_t g_chunkShadow_sum_pathBox;   // sum of path-bbox cell areas
 extern uint64_t g_chunkShadow_sum_nodes;     // sum nodes popped (expensive only)
 extern uint64_t g_chunkShadow_sum_pathLen;   // sum path lengths
 extern uint64_t g_chunkShadow_maxOverflow;   // worst single-call chunk overflow
+extern uint64_t g_chunkShadow_worstNodes;    // node count of the worst (max-node) call
+extern uint64_t g_chunkShadow_worstOverflow; // overflow of that worst-node call
+
+// RECT_CORRIDOR_SHADOW: provable constrained-A* projection without re-running A*.
+// By A* optimality, a corridor that contains the full optimal path yields the
+// SAME path; nodes the constrained search would expand are a subset of the full
+// search's popped nodes that lie inside the corridor. So "same" == (overflow<=N)
+// and constrained-nodes <= popped-in-corridor (an upper bound). No re-run, no
+// map-state corruption risk.
+extern uint64_t g_rect_full_nodes;   // sum popped, expensive calls (== sum_nodes)
+extern uint64_t g_rect0_nodes;       // sum popped INSIDE start-goal chunk rect +/-0
+extern uint64_t g_rect1_nodes;       // ... +/-1 chunk
+extern uint64_t g_rect2_nodes;       // ... +/-2 chunks
+extern uint64_t g_rect_maxReductPct1;// best single-call node reduction % at pad1
 
 // Sample one local-A* call. No-op when off or nodes below threshold. Coords are
 // LOCAL move-map cell indices (consistent within a call). pathLen<=0 = goal
-// missed (no path; path bbox ignored).
+// missed (no path; path bbox ignored). inRect0/1/2 = popped nodes that fell
+// inside the start-goal chunk rectangle dilated by 0/1/2 chunks.
 void moveReconChunkSample(int startR, int startC, int goalR, int goalC,
                           unsigned long long nodes, int pathLen,
                           int poppedMinR, int poppedMaxR, int poppedMinC, int poppedMaxC,
-                          int pathMinR, int pathMaxR, int pathMinC, int pathMaxC);
+                          int pathMinR, int pathMaxR, int pathMinC, int pathMaxC,
+                          unsigned long long inRect0, unsigned long long inRect1,
+                          unsigned long long inRect2);
 
 // Per-frame accumulators (reset each frame by moveReconFrameTick).
 extern uint64_t g_moveRecon_frame_ctrl_ns;
