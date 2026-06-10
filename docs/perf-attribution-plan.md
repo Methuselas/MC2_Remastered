@@ -156,3 +156,46 @@ visible in `Render.TerrainSolid`/`Shadow.*` Tracy zones). Vsync/windowing → le
 
 **Bottom line:** measure submit/renderLists and present *before* writing renderer code. Keep the 1.2ms
 on the board as a candidate for a *small* fix, not a migration.
+
+---
+
+## R0 RESULTS — Measured 2026-06-09 (`MC2_HITCH_TRACE`, zero new code)
+
+`[HITCH_PHASE]` per-frame wall-ms split (steady-state samples):
+
+| Mission | dt (ms) | logic | render | present | unknown | object-update (OBJECT_RECON) |
+|---------|--------:|------:|-------:|--------:|--------:|------------------------------|
+| mc2_10 (normal) | 14.0 | 1.98 | 1.28 | 0.29 | 9.73 | bldg 0.026 / shape 0.067 ms |
+| **1kbasicmap (1K)** | **61.0** | **50.72** | **0.45** | 0.04 | 9.72 | bldg 0.056 / shape 0.004 ms |
+
+### Findings (decisive redirect)
+1. **The 1K-map 18fps/61ms is GAME-LOGIC-bound: logic=50.7ms = 83% of the frame.** Render is 0.45ms,
+   present 0.04ms. Rendering is NOT the bottleneck on large maps.
+2. **The 50ms logic is NOT object/appearance update** — OBJECT_RECON accounts for only ~0.072ms of it.
+   The remaining ~50.6ms is uninstrumented game logic: **AI / pathfinding / MOVE-map / GlobalMap**
+   over the oversized 1K grid (`ObjectManager::update`, `MoverGroup::calcMoveGoals`,
+   `GoalManager::calcRegions`, movement/region calcs that scale with map size).
+3. **`unknown≈9.7ms` is constant across both maps** → a fixed per-frame overhead, almost certainly the
+   **minimized-window SDL throttle** (~100fps floor in smoke), i.e. a measurement artifact, not a cost.
+4. **Normal maps (mc2_10) have no real bottleneck:** logic 2ms + render 1.3ms + present 0.3ms = ~3.6ms
+   real work; the rest is throttle/cap. 64fps is the minimized-throttle artifact, not a perf problem.
+
+### Consequence for the S-arc and R-plan
+- **The entire render-side arc (S1, S2/S2a/S2b, S4, S5, S6) is irrelevant to the only real
+  bottleneck.** All of it attacks the ≤1.3ms render phase. R1 (TG submit split) and S2b (transform
+  elimination) would optimize a phase that is 0.45–1.3ms.
+- **R3 (present) is also moot** here — present is 0.04–0.29ms; the `unknown` is throttle, not a present
+  stall (the earlier "~45ms present stall" note was about a different/visible-window scenario or is
+  superseded by this measurement; PhasePresent is tiny in smoke).
+- **The real target — IF large-map perf matters — is the game-logic / AI / pathfinding / MOVE
+  subsystem**, a completely different area from this whole arc. Next step there would be an R0-style
+  split *inside* `Environment.DoGameLogic()` / `ObjectManager::update()` (sub-phase timers around
+  pathfinding, MOVE/region calcs, AI) to find which calc is the 50ms on the 1K grid.
+
+### Open product question (for the user)
+The 50ms-logic problem is **specific to the oversized 1K fixture map**; normal mission maps are fine.
+Decide: does large-/oversized-map gameplay perf matter for the project? 
+- **Yes** → pivot to a game-logic/pathfinding attribution + optimization arc (new; not S1–S6, not
+  rendering). The MOVE-grid pathfinding scaling is the prime suspect.
+- **No** → there is no current perf bottleneck worth chasing; the render arc closes, and the oracle
+  infrastructure (counters + screenshot) remains for future *correctness* work.
