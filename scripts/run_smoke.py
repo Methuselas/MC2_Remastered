@@ -601,7 +601,15 @@ def main():
                             # Terrain fast-path drop transition log (default-OFF).
                             # MC2_FASTPATH_DROP_LOG=1 emits [FASTPATH_DROP] on
                             # armed<->fallback transitions in terrain.cpp geometry().
-                            "MC2_FASTPATH_DROP_LOG")},
+                            "MC2_FASTPATH_DROP_LOG",
+                            # MC2_MOVE_RECON=1: per-frame + atexit pathfinding
+                            # cost instrumentation (move_recon.h/cpp). Default-OFF.
+                            # Popen replaces env — must be in allowlist.
+                            "MC2_MOVE_RECON",
+                            # MC2_MISSION_SPLIT=1: wall-ms split of Mission::update
+                            # sub-calls (land_update/pathmgr/clearVerts/geometry/
+                            # objmgr...) to locate the 1K-map logic hotspot.
+                            "MC2_MISSION_SPLIT")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission

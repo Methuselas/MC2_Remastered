@@ -322,11 +322,56 @@ float forcedFrameRate = -1.0f;
 extern bool 			invulnerableON;		//Used for tutorials so mechs can take damage, but look like they are taking damage!  Otherwise, I'd just use NOPAIN!!
 
 #define DEFAULT_SKY			1
+
+// ---- MC2_MISSION_SPLIT: wall-ms split of the Mission::update sub-calls -----
+// Locate which logic sub-call owns the 1K-map ~50ms (HITCH logic phase). Default
+// OFF, zero behavior change. Emits per-call ns totals + averages at exit (stdout).
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+namespace {
+	static const bool s_misSplit = (getenv("MC2_MISSION_SPLIT") != nullptr);
+	enum { MS_LAND_UPDATE=0, MS_PATHMGR, MS_CLEAR_BLOCKS, MS_CLEAR_VERTS,
+	       MS_TERRAIN_TEX, MS_GEOMETRY, MS_OBJMGR, MS_COUNT };
+	static const char* s_misNames[MS_COUNT] = {
+		"land_update","pathmgr","clearBlocks","clearVerts","terrainTex","geometry","objmgr" };
+	static unsigned long long s_misNs[MS_COUNT]  = {0};
+	static unsigned long long s_misMax[MS_COUNT] = {0};
+	static unsigned long long s_misFrames = 0;
+	static bool s_misAtexit = false;
+	static void misEmit() {
+		if (!s_misSplit) return;
+		std::printf("[MISSION_SPLIT v1] event=shutdown frames=%llu", s_misFrames);
+		for (int i = 0; i < MS_COUNT; i++)
+			std::printf(" %s={avg_us:%.1f,max_us:%.1f}", s_misNames[i],
+				s_misFrames ? (double)s_misNs[i]/s_misFrames/1000.0 : 0.0,
+				(double)s_misMax[i]/1000.0);
+		std::printf("\n"); std::fflush(stdout);
+	}
+	struct MisScope {
+		int idx; std::chrono::steady_clock::time_point t0;
+		explicit MisScope(int i) : idx(i) {
+			if (s_misSplit) t0 = std::chrono::steady_clock::now();
+		}
+		~MisScope() {
+			if (!s_misSplit) return;
+			unsigned long long ns = (unsigned long long)
+				std::chrono::duration_cast<std::chrono::nanoseconds>(
+					std::chrono::steady_clock::now() - t0).count();
+			s_misNs[idx] += ns;
+			if (ns > s_misMax[idx]) s_misMax[idx] = ns;
+		}
+	};
+}
 //----------------------------------------------------------------------------------
 // class Mission
 long Mission::update (void)
 {
 	ZoneScopedN("Mission::update");
+	if (s_misSplit) {
+		if (!s_misAtexit) { s_misAtexit = true; std::atexit(misEmit); }
+		++s_misFrames;
+	}
 	if (active)
 	{
 		turn++;
@@ -541,7 +586,7 @@ long Mission::update (void)
 
 		{ ZoneScopedN("GameLogic.Mission.VTol"); missionInterface->updateVTol(); }
 
-		{ ZoneScopedN("GameLogic.Mission.Terrain"); land->update(); }
+		{ ZoneScopedN("GameLogic.Mission.Terrain"); MisScope _ms(MS_LAND_UPDATE); land->update(); }
 
 		//ALWAYS update weather AFTER the camera.  May change the lights!
 		if (useNonWeaponEffects)
@@ -552,7 +597,7 @@ long Mission::update (void)
 #ifdef USE_PATH_COST_TABLE
 		GlobalMoveMap[0]->resetPathCostTable();
 #endif
-		{ ZoneScopedN("GameLogic.PathManager"); PathManager->update(); }
+		{ ZoneScopedN("GameLogic.PathManager"); MisScope _ms(MS_PATHMGR); PathManager->update(); }
 
 		if (KillAmbientLight) {
 	//		ambientRed<<16)+(ambientGreen<<8)+ambientBlue;
@@ -562,11 +607,11 @@ long Mission::update (void)
 		// Lastly, process the terrain geometry which loads textures
 		// Must do this to keep from Locking during the updateRenders phase
 		// Also reset the object flags because we recalc those during geometry!
-		{ ZoneScopedN("Mission::update clearObjBlocksActive"); land->clearObjBlocksActive(); }
-		{ ZoneScopedN("Mission::update clearObjVerticesActive"); land->clearObjVerticesActive(); }
-		{ ZoneScopedN("Mission::update terrainTextures->update"); land->terrainTextures->update(); }
+		{ ZoneScopedN("Mission::update clearObjBlocksActive"); MisScope _ms(MS_CLEAR_BLOCKS); land->clearObjBlocksActive(); }
+		{ ZoneScopedN("Mission::update clearObjVerticesActive"); MisScope _ms(MS_CLEAR_VERTS); land->clearObjVerticesActive(); }
+		{ ZoneScopedN("Mission::update terrainTextures->update"); MisScope _ms(MS_TERRAIN_TEX); land->terrainTextures->update(); }
 
-		{ ZoneScopedN("GameLogic.Mission.TerrainGeometry"); land->geometry(); }
+		{ ZoneScopedN("GameLogic.Mission.TerrainGeometry"); MisScope _ms(MS_GEOMETRY); land->geometry(); }
 
 		// 2026-05-13: begin GPU cull substrate frame BEFORE the pause-branch.
 		// Was inside GameObjectManager::update (objmgr.cpp), which is
@@ -586,7 +631,7 @@ long Mission::update (void)
 		if ( missionInterface->isPaused() && !MPlayer )
 			ObjectManager->updateAppearancesOnly( true, true, true );
 		else
-			ObjectManager->update(true, true, true);
+			{ MisScope _ms(MS_OBJMGR); ObjectManager->update(true, true, true); }
 
 		// C1b GPU authority flip: compute_dispatch() has been MOVED to txmmgr.cpp
 		// (between GpuStaticPropRegistry::flush() and GpuStaticPropBatcher::flush())
