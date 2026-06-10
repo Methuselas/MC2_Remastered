@@ -1217,6 +1217,7 @@ struct HudDrawCall {
     mat4                     projection;
     DWORD                    fontTexId;       // kHudTextQuadBatch only
     DWORD                    foregroundColor; // kHudTextQuadBatch only
+    bool                     scaleExempt = false; // skip s_hud_scale shrink (cursor, modal dialogs)
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -4302,6 +4303,14 @@ bool gos_terrain_bridge_drawDecalStatic(unsigned int               vboGL,
 static GLuint gVAO = 0;
 static float  s_hud_scale = 0.85f;  // default while iterating; RAlt+5 cycles
 static bool   s_hud_scale_active = false;  // gated: only shrink during mission
+// When set, HUD draw calls recorded while it is on are tagged scaleExempt and
+// are NOT shrunk by the bottom-band s_hud_scale transform in flushHUDBatch.
+// Bracketed around the mouse cursor sprite and modal dialogs (quit prompt, etc.)
+// so the HUD-fit shrink only ever moves the in-game HUD chrome -- never the
+// pointer or a popup. Without this the cursor snapped from unscaled to 0.85x as
+// it crossed the 60%-height centroid gate (jump-at-center + 0.9x drift) and
+// dialogs straddling the gate tore at the seam.
+static bool   s_hud_scale_exempt = false;
 
 
 void gosRenderer::init() {
@@ -5227,6 +5236,7 @@ void gosRenderer::drawQuads(gos_VERTEX* vertices, int count) {
         call.projection = projection_;
         call.fontTexId = 0;
         call.foregroundColor = 0;
+        call.scaleExempt = s_hud_scale_exempt;
         hudBatch_.push_back(std::move(call));
         return;
     }
@@ -5289,6 +5299,7 @@ void gosRenderer::drawLines(gos_VERTEX* vertices, int count) {
         call.projection = projection_;
         call.fontTexId = 0;
         call.foregroundColor = 0;
+        call.scaleExempt = s_hud_scale_exempt;
         hudBatch_.push_back(std::move(call));
         return;
     }
@@ -5359,6 +5370,7 @@ void gosRenderer::drawTris(gos_VERTEX* vertices, int count) {
         call.projection = projection_;
         call.fontTexId = 0;
         call.foregroundColor = 0;
+        call.scaleExempt = s_hud_scale_exempt;
         hudBatch_.push_back(std::move(call));
         return;
     }
@@ -6632,6 +6644,7 @@ void gosRenderer::drawText(const char* text) {
             call.projection = projection_;
             call.fontTexId = tex_id;
             call.foregroundColor = ta.Foreground;
+            call.scaleExempt = s_hud_scale_exempt;
             hudBatch_.push_back(std::move(call));
         } else if (hudFlushed_) {
             SPEW(("GRAPHICS", "[HUD] Late drawText discarded (after flushHUDBatch)\n"));
@@ -6753,6 +6766,7 @@ void gosRenderer::flushHUDBatch()
         const float ay = sh;
         for (HudDrawCall& call : hudBatch_) {
             if (call.vertices.empty()) continue;
+            if (call.scaleExempt) continue;   // cursor + modal dialogs: never shrink
             float cy = 0.0f;
             for (const gos_VERTEX& v : call.vertices) cy += v.y;
             cy /= (float)call.vertices.size();
@@ -6801,6 +6815,11 @@ void gosRenderer::flushHUDBatch()
     memcpy(renderStates_, priorState, sizeof(priorState));
     projection_ = priorProjection;
     hudFlushed_ = true;
+
+    // Auto-clear the scale-exemption latch each frame so it can never leak into
+    // the next frame's non-exempt HUD recording. Callers (cursor sprite, modal
+    // dialogs) set it true around their own draws; this is the single reset.
+    s_hud_scale_exempt = false;
 }
 
 void gosRenderer::flush()
@@ -8374,6 +8393,12 @@ float gos_GetHudScale() { return s_hud_scale; }
 
 void gos_SetHudScaleActive(bool on) { s_hud_scale_active = on; }
 bool gos_GetHudScaleActive()        { return s_hud_scale_active; }
+
+// HUD-scale exemption: while set, HUD draw calls recorded are tagged scaleExempt
+// and skip the bottom-band shrink in flushHUDBatch. Bracket the cursor sprite
+// and modal dialogs so the HUD-fit shrink never moves the pointer or a popup.
+void gos_SetHudScaleExempt(bool on) { s_hud_scale_exempt = on; }
+bool gos_GetHudScaleExempt()        { return s_hud_scale_exempt; }
 
 void gos_HudInverseMousePoint(float& x, float& y) {
     // Inverse of the single-anchor bottom-center HUD transform. Must stay in

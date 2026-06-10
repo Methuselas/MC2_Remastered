@@ -893,7 +893,8 @@ void UserInput::render (void)						//Last thing rendered.  Draws Mouse.
 	{
 		if (drawMouse && mouseState != -1)
 		{
-			// Cursor renders at raw physical pixel position, not HUD-logical coords.
+			gos_SetHudScaleExempt(true);   // cursor sprite never shrunk by the HUD-fit scale
+				// Cursor renders at raw physical pixel position, not HUD-logical coords.
 			// HUD-inverse transform belongs only on the click-reception side.
 			long mouseX = getRawMouseX();
 			long mouseY = getRawMouseY();

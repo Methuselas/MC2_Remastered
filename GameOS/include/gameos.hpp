@@ -2414,6 +2414,14 @@ float gos_GetHudScale();
 void  gos_SetHudScaleActive(bool on);
 bool  gos_GetHudScaleActive();
 
+// HUD-scale exemption. While set true, HUD draw calls recorded are NOT shrunk by
+// the bottom-band s_hud_scale transform. Bracket around the mouse cursor sprite
+// and modal dialogs (quit prompt etc.) so the HUD-fit shrink only moves in-game
+// HUD chrome -- never the pointer or a popup (which otherwise jump/tear at the
+// 60%-height gate). Set true before the draw, false after.
+void  gos_SetHudScaleExempt(bool on);
+bool  gos_GetHudScaleExempt();
+
 // Inverse of the 9-slice HUD transform. Given a screen-pixel point the user
 // clicked on, returns the "authored" pixel coord where the game logic placed
 // the HUD element. No-op when scale == 1.0. Safe to call every frame.

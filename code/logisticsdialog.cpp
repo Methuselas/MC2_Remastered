@@ -84,6 +84,11 @@ void LogisticsDialog::setFont( int newFontResID )
 
 void		LogisticsDialog::render()
 {
+	// Modal dialogs (incl. the in-mission quit prompt) must NOT be shrunk by the
+	// bottom-band HUD-fit scale: the dialog body sits above the 60%-height gate
+	// and the buttons below it, so the gate tore the dialog at the seam. Exempt
+	// every draw recorded by this render. (No-op in logistics where scale is off.)
+	gos_SetHudScaleExempt(true);
 
 		float color = 0x7f000000;
 
@@ -128,6 +133,8 @@ void		LogisticsDialog::render()
 	}
 
 	LogisticsScreen::render( (int)xOffset, (int)yOffset );
+
+	gos_SetHudScaleExempt(false);
 }
 
 
