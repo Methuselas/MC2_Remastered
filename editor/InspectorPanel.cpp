@@ -15,6 +15,7 @@
 
 #include "EditorObjectMgr.h"
 #include "EditorObjects.h"
+#include "EditorInterface.h"   // applyObjectTransform (existing undo path)
 #include "Forest.h"
 
 #include <cstdio>
@@ -253,6 +254,60 @@ void InspectorPanel::Draw()
         {
             ImGui::Text("Forest:   member of forest %ld", obj->getForestID());
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Editable transform (v1: position XY + yaw, terrain-locked Z).
+    // Apply/Revert -- NOT live-drag -- so each commit is exactly one undo entry
+    // pushed through the existing ModifyBuildingAction path. Fields auto-reload
+    // when the selected object changes.
+    // -----------------------------------------------------------------------
+    ImGui::Separator();
+    ImGui::TextUnformatted("Transform");
+
+    const bool transformSupported = (app != NULL) && (obj->getForestID() == -1);
+
+    // Per-target edit buffers; reload whenever the selected object changes.
+    static EditorObject* s_editTarget = NULL;
+    static float s_ex = 0.f, s_ey = 0.f, s_ez = 0.f, s_eyaw = 0.f;
+
+    auto reloadFields = [&]() {
+        if (app) {
+            s_ex   = app->position.x;
+            s_ey   = app->position.y;
+            s_ez   = app->position.z;
+            s_eyaw = app->rotation;
+        }
+        s_editTarget = obj;
+    };
+
+    if (obj != s_editTarget)
+        reloadFields();
+
+    if (!transformSupported)
+    {
+        ImGui::TextDisabled("Read-only selection type (transform unsupported in v1).");
+    }
+    else
+    {
+        ImGui::InputFloat("X##posx", &s_ex);
+        ImGui::InputFloat("Y##posy", &s_ey);
+        ImGui::BeginDisabled();
+        ImGui::InputFloat("Z (terrain)##posz", &s_ez);
+        ImGui::EndDisabled();
+        ImGui::InputFloat("Yaw (deg)##yaw", &s_eyaw);
+
+        if (ImGui::Button("Apply Transform"))
+        {
+            EditorInterface* ei = EditorInterface::instance();
+            if (ei && ei->applyObjectTransform(obj, s_ex, s_ey, s_eyaw))
+                reloadFields();   // pull back terrain-locked Z + committed values
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Revert"))
+            reloadFields();
+
+        ImGui::TextDisabled("Apply pushes one undoable action (Ctrl+Z to undo).");
     }
 
     ImGui::End();
