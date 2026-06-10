@@ -638,18 +638,25 @@ class MissionMap {
 		bool getPassable (Stuff::Vector3D cellPosition);
 
 		bool getPathlock (long level, long row, long col) {
+			if (!inBounds(row, col)) return(false);
 			return(map[row * width + col].getPathlock(level));
 		}
 
 		void setPathlock (long level, long row, long col, bool pathlock) {
+			// Oversized maps have a MOVE grid smaller than the terrain grid, so a
+			// mover's cellPositionRow/Col can exceed width/height -> map[] OOB
+			// READ-AV (mover.cpp:5327, Mover::updatePathLock on 1kbasicmap).
+			if (!inBounds(row, col)) return;
 			map[row * width + col].setPathlock(level, pathlock);
 		}
 
 		unsigned long getMine (long row, long col) {
+			if (!inBounds(row, col)) return(0);
 			return(map[row * width + col].getMine());
 		}
 
 		void setMine (long row, long col, unsigned long mine) {
+			if (!inBounds(row, col)) return;
 			MapCellPtr cell = &map[row * width + col];
 			const unsigned long oldMine = cell->getMine();
 			cell->setMine(mine);
@@ -685,18 +692,22 @@ class MissionMap {
 		void rebuildTileMineCounts (void);
 
 		bool getPreserved (long row, long col) {
+			if (!inBounds(row, col)) return(false);
 			return(map[row * width + col].getPreserved());
 		}
 
 		void setPreserved (long row, long col, bool preserved) {
+			if (!inBounds(row, col)) return;
 			map[row * width + col].setPreserved(preserved);
 		}
 
 		void setLocalHeight (long row, long col, DWORD localElevation) {
+			if (!inBounds(row, col)) return;
 			map[row * width + col].setLocalHeight(localElevation);
 		}
 
 		DWORD getLocalHeight (long row, long col) {
+			if (!inBounds(row, col)) return(0);
 			return(map[row * width + col].getLocalHeight());
 		}
 
@@ -760,90 +771,113 @@ class MissionMap {
 		}
 
 		DWORD getCellDebug (long row, long col) {
+			if (!inBounds(row, col)) return(0);
 			return(map[row * width + col].getDebug());
 		}
 
 		bool getWall (long row, long col) {
+			if (!inBounds(row, col)) return(false);
 			return(map[row * width + col].getWall());
 		}
 
 		void setWall (long row, long col, bool wallHere) {
+			if (!inBounds(row, col)) return;
 			map[row * width + col].setWall(wallHere);
 		}
 
 		bool getRoad (long row, long col) {
+			if (!inBounds(row, col)) return(false);
 			return(map[row * width + col].getRoad());
 		}
 
 		void setRoad (long row, long col, bool roadHere) {
+			if (!inBounds(row, col)) return;
 			map[row * width + col].setRoad(roadHere);
 		}
 
 		bool getShallowWater (long row, long col) {
+			if (!inBounds(row, col)) return(false);
 			return(map[row * width + col].getShallowWater());
 		}
 
 		void setShallowWater (long row, long col, bool shallowWaterHere) {
+			if (!inBounds(row, col)) return;
 			map[row * width + col].setShallowWater(shallowWaterHere);
 		}
 
 		bool getDeepWater (long row, long col) {
+			if (!inBounds(row, col)) return(false);
 			return(map[row * width + col].getDeepWater());
 		}
 
 		void setDeepWater (long row, long col, bool deepWaterHere) {
+			if (!inBounds(row, col)) return;
 			map[row * width + col].setDeepWater(deepWaterHere);
 		}
 
 		bool getBuildGate (long row, long col) {
+			if (!inBounds(row, col)) return(false);
 			return(map[row * width + col].getBuildGate());
 		}
 
 		void setBuildGate (long row, long col, bool set) {
+			if (!inBounds(row, col)) return;
 			map[row * width + col].setBuildGate(set);
 		}
-		
+
 		bool getBuildWall (long row, long col) {
+			if (!inBounds(row, col)) return(false);
 			return(map[row * width + col].getBuildWall());
 		}
 
 		void setBuildWall (long row, long col, bool set) {
+			if (!inBounds(row, col)) return;
 			map[row * width + col].setBuildWall(set);
 		}
 
 		bool getBuildLandBridge (long row, long col) {
+			if (!inBounds(row, col)) return(false);
 			return(map[row * width + col].getBuildLandBridge());
 		}
 
 		void setBuildLandBridge (long row, long col, bool set) {
+			if (!inBounds(row, col)) return;
 			map[row * width + col].setBuildLandBridge(set);
 		}
-		
+
 		bool getForest (long row, long col) {
+			if (!inBounds(row, col)) return(false);
 			return(map[row * width + col].getForest());
 		}
 
 		void setForest (long row, long col, bool set) {
+			if (!inBounds(row, col)) return;
 			map[row * width + col].setForest(set);
 		}
 
 		bool getOffMap (long row, long col) {
+			// Off the grid IS off-map -> true is the correct answer here.
+			if (!inBounds(row, col)) return(true);
 			return(map[row * width + col].getOffMap());
 		}
 
 		void setOffMap (long row, long col, bool set) {
+			if (!inBounds(row, col)) return;
 			map[row * width + col].setOffMap(set);
 		}
 
 		bool getBuildSpecial (long row, long col) {
+			if (!inBounds(row, col)) return(false);
 			return(map[row * width + col].getBuildSpecial());
 		}
 
 		bool getBuildNotSet (long row, long col) {
+			if (!inBounds(row, col)) return(false);
 			return(map[row * width + col].getBuildNotSet());
 		}
 
 		void setBuildNotSet (long row, long col, bool set) {
+			if (!inBounds(row, col)) return;
 			map[row * width + col].setBuildNotSet(set);
 		}
 
@@ -865,6 +899,7 @@ class MissionMap {
 		}
 
 		void preserveCell (long row, long col) {
+			if (!inBounds(row, col)) return;
 			preservedCells[numPreservedCells].data = map[row * width + col].data;
 			preservedCells[numPreservedCells].row = row;
 			preservedCells[numPreservedCells].col = col;
@@ -1659,12 +1694,17 @@ class MoveMap {
 		void setTarget (Stuff::Vector3D targetPos);
 
 		char getCost (long row, long col) {
+			// Off-map: return a high (avoid) cost rather than indexing map[] OOB.
+			// Real paths are inBounds-gated elsewhere, so this only guards stray
+			// off-grid queries on oversized maps (MOVE grid < terrain grid).
+			if (!inBounds(row, col)) return((char)127);
 			return(map[row * width + col].cost);
 		}
 
 		void setCost (long row, long col, long newCost);
 
 		void adjustCost (long row, long col, long costAdj) {
+			if (!inBounds(row, col)) return;
 			long index = row * width + col;
 			long cost = map[index].cost + costAdj;
 			if (cost < 1)
