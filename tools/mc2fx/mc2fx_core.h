@@ -16,6 +16,49 @@ namespace mc2 { namespace particles { class SpecLibrary; } }
 
 namespace mc2fx {
 
+// ---- shared curve sampling (used by `dump --full` AND the GUI previewer) ----
+// One named curve, sampled across particle age in [0,1]. `type` is a short
+// human label ("constant"/"linear"/"spline"/"complex"/"seeded"). `samples`
+// holds N evenly-spaced values: samples[k] = curve(age = k/(N-1), seed).
+struct SampledCurve {
+    std::string name;                 // member name, e.g. "m_pAlpha"
+    std::string type;                 // curve-kind label
+    std::string group;               // "color" | "scale" | "lifetime" | "emission" | "seed" | "base"
+    bool        constant = false;     // true if the age curve is a flat constant
+    float       constValue = 0.0f;    // the value if constant (else samples[0])
+    std::vector<float> samples;       // N sampled values over age 0..1
+};
+
+// Sample ALL decodable curves of the spec at `index` in `lib` over `count` ages
+// in [0,1] at fixed `seed`. typeName (classIdName) returned via *typeNameOut if
+// non-null; *nameOut receives the effect's m_name. Specs whose subclass has no
+// decodable curves return only the base curves (lifeSpan/child-seed). Never
+// crashes on an unknown type. Single source of truth shared by dumpFullJson and
+// the GUI previewer.
+std::vector<SampledCurve> sampleEffectCurves(mc2::particles::SpecLibrary* lib,
+                                             unsigned index,
+                                             int count = 128, float seed = 0.5f,
+                                             const char** typeNameOut = nullptr,
+                                             const char** nameOut = nullptr);
+
+// classID int -> human type name (e.g. "Card", "ParticleCloud", "Unknown").
+const char* effectClassName(unsigned classID);
+
+// One catalog row (index/name/type) without exposing gosFX headers to callers.
+struct CatalogEntry {
+    unsigned    index;
+    unsigned    classID;
+    std::string name;
+    std::string typeName;
+};
+
+// Flat catalog of all effects in `lib` (index/name/classID/typeName). Lets the
+// GUI build its effect list without including any gosFX/engine header.
+std::vector<CatalogEntry> effectCatalog(mc2::particles::SpecLibrary* lib);
+
+// Effect count (thin wrapper so callers need no SpecLibrary header).
+unsigned effectCount(mc2::particles::SpecLibrary* lib);
+
 // One-time headless engine bring-up (Stuff -> MLR -> MLRTexturePool -> gosFX).
 // Idempotent: safe to call more than once; only the first call does work.
 void initEngineHeadless();

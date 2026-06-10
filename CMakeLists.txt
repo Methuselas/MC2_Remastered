@@ -292,6 +292,10 @@ endif()
 if(ENABLE_MC2FX AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/mc2fx/CMakeLists.txt")
     add_subdirectory("./tools/mc2fx" "./out/tools/mc2fx")
 endif()
+# mc2fx_preview — GUI curve previewer (SDL2+GL+ImGui; reuses mc2fx_core).
+if(ENABLE_MC2FX_PREVIEW AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/mc2fx_preview/CMakeLists.txt")
+    add_subdirectory("./tools/mc2fx_preview" "./out/tools/mc2fx_preview")
+endif()
 
 
 set(SOURCES 

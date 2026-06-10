@@ -192,7 +192,141 @@ unsigned trySaveSpec(gosFX::Effect::Specification* spec, size_t* outBytes, void*
     return code;
 }
 
+// --- curve type label ------------------------------------------------------
+template <class C> const char* curveTypeLabel(C&) { return "curve"; }
+const char* curveTypeLabel(gosFX::ConstantCurve&) { return "constant"; }
+const char* curveTypeLabel(gosFX::LinearCurve&)   { return "linear"; }
+const char* curveTypeLabel(gosFX::SplineCurve&)   { return "spline"; }
+const char* curveTypeLabel(gosFX::ComplexCurve&)  { return "complex"; }
+
+// Is a curve a flat constant? (ConstantCurve is; others only if degenerate.)
+bool curveIsConstant(gosFX::ConstantCurve&) { return true; }
+bool curveIsConstant(gosFX::LinearCurve& c) { return c.m_slope == 0.0f; }
+bool curveIsConstant(gosFX::SplineCurve& c) {
+    return c.m_slope == 0.0f && c.m_a == 0.0f && c.m_b == 0.0f;
+}
+bool curveIsConstant(gosFX::ComplexCurve& c) { return c.GetKeyCount() <= 1; }
+
+// Sample one plain (non-seeded) age curve across [0,1].
+template <class C>
+mc2fx::SampledCurve samplePlain(const char* name, const char* group, C& curve,
+                                int count)
+{
+    mc2fx::SampledCurve sc;
+    sc.name = name; sc.group = group;
+    sc.type = curveTypeLabel(curve);
+    sc.constant = curveIsConstant(curve);
+    sc.samples.resize(count);
+    for (int k = 0; k < count; ++k) {
+        float age = (count > 1) ? float(k) / float(count - 1) : 0.0f;
+        sc.samples[k] = (float)curve.ComputeValue(age, 0.0f);
+    }
+    sc.constValue = count ? sc.samples[0] : 0.0f;
+    return sc;
+}
+
+// Sample one SeededCurveOf<...> across [0,1] at fixed seed. Reports the AGE
+// curve's type (the editable part), and marks constant from the age curve.
+template <class C, class S, gosFX::Curve::CurveType T>
+mc2fx::SampledCurve sampleSeeded(const char* name, const char* group,
+                                 gosFX::SeededCurveOf<C, S, T>& curve,
+                                 int count, float seed)
+{
+    mc2fx::SampledCurve sc;
+    sc.name = name; sc.group = group;
+    sc.type = std::string("seeded(") + curveTypeLabel(curve.m_ageCurve) + ")";
+    sc.constant = curveIsConstant(curve.m_ageCurve) && !curve.m_seeded;
+    sc.samples.resize(count);
+    for (int k = 0; k < count; ++k) {
+        float age = (count > 1) ? float(k) / float(count - 1) : 0.0f;
+        sc.samples[k] = (float)curve.ComputeValue(age, seed);
+    }
+    sc.constValue = count ? sc.samples[0] : 0.0f;
+    return sc;
+}
+
 }  // namespace
+
+std::vector<SampledCurve> sampleEffectCurves(mc2::particles::SpecLibrary* lib,
+                                             unsigned index, int count, float seed,
+                                             const char** typeNameOut,
+                                             const char** nameOut)
+{
+    std::vector<SampledCurve> out;
+    if (!lib || index >= lib->Count() || count < 1) return out;
+    gosFX::Effect::Specification* spec = lib->At(index);
+    if (!spec) return out;
+    unsigned classID = static_cast<unsigned>(spec->GetClassID());
+    if (typeNameOut) *typeNameOut = classIdName(classID);
+    if (nameOut) *nameOut = (spec->m_name) ? static_cast<const char*>(spec->m_name) : "";
+
+    // Base curves — present on every spec.
+    out.push_back(samplePlain("m_lifeSpan", "lifetime", spec->m_lifeSpan, count));
+    out.push_back(samplePlain("m_minimumChildSeed", "seed", spec->m_minimumChildSeed, count));
+    out.push_back(samplePlain("m_maximumChildSeed", "seed", spec->m_maximumChildSeed, count));
+
+    if (classID == gosFX::SingletonClassID || classID == gosFX::CardClassID ||
+        classID == gosFX::ShapeClassID) {
+        gosFX::Singleton__Specification* s =
+            static_cast<gosFX::Singleton__Specification*>(spec);
+        out.push_back(sampleSeeded("m_red",   "color", s->m_red,   count, seed));
+        out.push_back(sampleSeeded("m_green", "color", s->m_green, count, seed));
+        out.push_back(sampleSeeded("m_blue",  "color", s->m_blue,  count, seed));
+        out.push_back(sampleSeeded("m_alpha", "color", s->m_alpha, count, seed));
+        out.push_back(sampleSeeded("m_scale", "scale", s->m_scale, count, seed));
+        if (classID == gosFX::CardClassID) {
+            gosFX::Card__Specification* cs =
+                static_cast<gosFX::Card__Specification*>(spec);
+            out.push_back(sampleSeeded("m_halfHeight",  "scale", cs->m_halfHeight,  count, seed));
+            out.push_back(sampleSeeded("m_aspectRatio", "scale", cs->m_aspectRatio, count, seed));
+            out.push_back(sampleSeeded("m_index",       "base",  cs->m_index,       count, seed));
+        }
+    } else if (classID == gosFX::ParticleCloudClassID ||
+               classID == gosFX::PointCloudClassID ||
+               classID == gosFX::SpinningCloudClassID ||
+               classID == gosFX::ShardCloudClassID ||
+               classID == gosFX::PertCloudClassID ||
+               classID == gosFX::CardCloudClassID ||
+               classID == gosFX::ShapeCloudClassID ||
+               classID == gosFX::EffectCloudClassID) {
+        gosFX::ParticleCloud__Specification* p =
+            static_cast<gosFX::ParticleCloud__Specification*>(spec);
+        out.push_back(samplePlain ("m_particlesPerSecond", "emission", p->m_particlesPerSecond, count));
+        out.push_back(sampleSeeded("m_startingSpeed", "base",     p->m_startingSpeed, count, seed));
+        out.push_back(sampleSeeded("m_pLifeSpan",     "lifetime", p->m_pLifeSpan,     count, seed));
+        out.push_back(sampleSeeded("m_pRed",   "color", p->m_pRed,   count, seed));
+        out.push_back(sampleSeeded("m_pGreen", "color", p->m_pGreen, count, seed));
+        out.push_back(sampleSeeded("m_pBlue",  "color", p->m_pBlue,  count, seed));
+        out.push_back(sampleSeeded("m_pAlpha", "color", p->m_pAlpha, count, seed));
+    }
+    // else: base-only (DebrisCloud/Tube/PointLight/Effect/unknown).
+    return out;
+}
+
+const char* effectClassName(unsigned classID) { return classIdName(classID); }
+
+unsigned effectCount(mc2::particles::SpecLibrary* lib)
+{
+    return lib ? lib->Count() : 0u;
+}
+
+std::vector<CatalogEntry> effectCatalog(mc2::particles::SpecLibrary* lib)
+{
+    std::vector<CatalogEntry> out;
+    if (!lib) return out;
+    unsigned n = lib->Count();
+    out.reserve(n);
+    for (unsigned i = 0; i < n; ++i) {
+        gosFX::Effect::Specification* spec = lib->At(i);
+        CatalogEntry e;
+        e.index = i;
+        e.classID = spec ? static_cast<unsigned>(spec->GetClassID()) : 0u;
+        e.typeName = classIdName(e.classID);
+        e.name = (spec && spec->m_name) ? static_cast<const char*>(spec->m_name) : "";
+        out.push_back(std::move(e));
+    }
+    return out;
+}
 
 void initEngineHeadless()
 {
