@@ -5,6 +5,9 @@
 #include "utils/vec.h"
 
 #include<string.h>
+#include<stdlib.h>
+#include<stdio.h>
+#include<cstdlib>
 
 //
 // The mouse position and buttons are read once a frame.
@@ -29,11 +32,18 @@
 ////////////////////////////////////////////////////////////////////////////////
 void __stdcall gos_GetMouseInfo( float* pXPosition, float* pYPosition, int* pXDelta, int* pYDelta, int* pWheelDelta, DWORD* pButtonsPressed )
 {
-    //const float w = (float)Environment.screenWidth;
-    //const float h = (float)Environment.screenHeight;
-
-    const float w = (float)Environment.drawableWidth;
-    const float h = (float)Environment.drawableHeight;
+    // MOUSE-GL-COORD fix: normalize by the LOGICAL window size, not the
+    // drawable (physical) size. SDL mouse-motion events (mi->x_/y_) arrive in
+    // window/logical coords (SDL_GetWindowSize space == Environment.screenWidth).
+    // The whole downstream chain -- getMouseX = norm * viewMul (viewMul uses the
+    // logical gosRenderer width_), the 2D UI/cursor projection_ (2/width_), and
+    // Camera::inverseProject (screenResolution = viewMul) -- is all in logical
+    // pixel space. Dividing by drawableWidth/Height (physical) under Windows
+    // display-scaling >100% (drawable > logical) made the normalized coord max
+    // out below 1.0, compressing the cursor toward the top-left and leaving a
+    // dead zone along the bottom and right edges. (Was Environment.drawableWidth.)
+    const float w = (float)Environment.screenWidth;
+    const float h = (float)Environment.screenHeight;
 
     const input::MouseInfo* mi = input::getMouseInfo();
 
@@ -41,6 +51,28 @@ void __stdcall gos_GetMouseInfo( float* pXPosition, float* pYPosition, int* pXDe
         *pXPosition = mi->x_ / w;
     if(pYPosition)
         *pYPosition = mi->y_ / h;
+
+    // MC2_MOUSE_RECON: env-gated one-shot-ish confirm log. Prints the raw mouse,
+    // both candidate denominators, and the resulting normalized coord so the
+    // logical-vs-drawable divergence (the dead-zone root cause) is visible in a
+    // pasted console log. Throttled to "moved > 8px" to avoid flooding.
+    if (getenv("MC2_MOUSE_RECON"))
+    {
+        static float s_lastX = -1.0f, s_lastY = -1.0f;
+        const float dx = mi->x_ - s_lastX, dy = mi->y_ - s_lastY;
+        if (dx*dx + dy*dy > 64.0f)
+        {
+            s_lastX = mi->x_; s_lastY = mi->y_;
+            printf("[MOUSE_RECON v1] raw=(%.0f,%.0f) logical=(%dx%d) drawable=(%dx%d) "
+                   "norm_logical=(%.3f,%.3f) norm_drawable=(%.3f,%.3f)\n",
+                   mi->x_, mi->y_,
+                   Environment.screenWidth, Environment.screenHeight,
+                   Environment.drawableWidth, Environment.drawableHeight,
+                   mi->x_ / w, mi->y_ / h,
+                   mi->x_ / (float)Environment.drawableWidth,
+                   mi->y_ / (float)Environment.drawableHeight);
+        }
+    }
 
 	// as percentage of screen size
     
@@ -79,15 +111,16 @@ void __stdcall gos_SetMousePosition( float XPosition, float YPosition )
 {
     if(g_sdl_window) {
         // XPosition/YPosition arrive as normalized 0..1 coordinates — the
-        // write side of the contract established by gos_GetMouseInfo, which
-        // stores the cursor as physical_pixel / drawable_size. Callers reach
-        // this via UserInput::setMousePos, which divides pixel-space targets
-        // by viewMulX/viewMulY to normalize. SDL_WarpMouseInWindow wants
-        // window pixels, so multiply back out before handing over. Without
-        // this, a 0.5-ish normalized value casts to (int)0 and the cursor
-        // lands near the origin on every recenter.
-        const float w = (float)Environment.drawableWidth;
-        const float h = (float)Environment.drawableHeight;
+        // write side of the contract established by gos_GetMouseInfo. Callers
+        // reach this via UserInput::setMousePos, which divides pixel-space
+        // targets by viewMulX/viewMulY to normalize. SDL_WarpMouseInWindow
+        // takes WINDOW/LOGICAL pixels, so multiply back out by the logical
+        // window size (Environment.screenWidth/Height) to match. MUST use the
+        // SAME denominator as the read side (gos_GetMouseInfo) or the
+        // read/write round-trip drifts; using drawable (physical) here put the
+        // warp target off by the display-scale factor on HiDPI/scaled monitors.
+        const float w = (float)Environment.screenWidth;
+        const float h = (float)Environment.screenHeight;
         SDL_WarpMouseInWindow(g_sdl_window,
                               (int)(XPosition * w),
                               (int)(YPosition * h));
