@@ -4525,6 +4525,12 @@ void EditorInterface::setStampBrush( int type )
 static bool s_placePanelOpen   = false;
 static bool s_missionToolsOpen = false;
 
+// Global ImGui UI scale (drives io.FontGlobalScale so every panel scales at once).
+// Initialised once from the editor window's DPI so HiDPI displays are readable by
+// default; the user can override it from the Tools palette. Persists for the run.
+static float s_uiScale     = 1.0f;
+static bool  s_uiScaleInit = false;
+
 // Floating tool palette (Photoshop-style). Buttons re-post the same WM_COMMAND
 // the menu items use, so they share the existing tool-switch handlers. The active
 // tool is highlighted. Drawn each frame from EditorGameOS.cpp's ImGui block.
@@ -4541,11 +4547,40 @@ void EditorInterface::renderToolbarImGui()
 	};
 
 	ImGuiIO& io = ImGui::GetIO();
-	const float toolbarW = 195.0f;
+
+	// One-time DPI-aware default: scale the whole UI by the editor window's DPI
+	// (96 dpi = 1.0x). Keeps panels readable on HiDPI displays out of the box.
+	if (!s_uiScaleInit)
+	{
+		s_uiScaleInit = true;
+		UINT dpi = 96;
+		if (m_hWnd && ::IsWindow(m_hWnd))
+			dpi = ::GetDpiForWindow(m_hWnd);
+		float guess = (dpi > 0 ? (float)dpi / 96.0f : 1.0f);
+		// Bias up a touch (these panels read small even at 100%) and clamp.
+		guess *= 1.25f;
+		s_uiScale = (guess < 1.0f) ? 1.0f : (guess > 3.0f ? 3.0f : guess);
+	}
+	// Apply the master scale before any window is drawn this frame.
+	io.FontGlobalScale = s_uiScale;
+
+	const float toolbarW = 195.0f * s_uiScale;
 	ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - toolbarW - 16.0f, 16.0f), ImGuiCond_Once);
 	ImGui::SetNextWindowSize(ImVec2(toolbarW, 0.f), ImGuiCond_Once);
 	ImGui::Begin("Tools", nullptr, ImGuiWindowFlags_NoScrollbar);
-	ImGui::SetWindowFontScale(1.5f);
+
+	// UI scale control — affects every editor panel (FontGlobalScale). +/- and a
+	// slider; the value persists for the session.
+	ImGui::TextUnformatted("UI Scale");
+	if (ImGui::SmallButton("-")) s_uiScale -= 0.1f;
+	ImGui::SameLine();
+	if (ImGui::SmallButton("+")) s_uiScale += 0.1f;
+	ImGui::SameLine();
+	ImGui::SetNextItemWidth(-1.f);
+	ImGui::SliderFloat("##uiscale", &s_uiScale, 0.8f, 3.0f, "%.1fx");
+	if (s_uiScale < 0.8f) s_uiScale = 0.8f;
+	if (s_uiScale > 3.0f) s_uiScale = 3.0f;
+	ImGui::Separator();
 
 	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.30f, 1.0f));
 	if (ImGui::Button("Generate Map", ImVec2(-1.f, 0.f)))
