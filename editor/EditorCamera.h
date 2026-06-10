@@ -436,6 +436,32 @@ public:
 		
 		long result = Camera::update();
 
+		// Camera::update() re-sets screenResolution from gos_GetViewport (the FULL
+		// window width), clobbering the scene-size value set earlier in
+		// EditorInterface. With the docked map-resize the GL scene renders into a
+		// centralW sub-region (Environment.drawableWidth), so projection +
+		// inverseProject picking must use centralW too -- otherwise the placement
+		// cursor and the picked point diverge increasingly toward the right. Re-apply
+		// the scene size as the LAST word before this frame's render + the next
+		// mouse-pick. (Equal to the gos width when undocked, so no-op there.)
+		{
+			Stuff::Vector3D sceneRes;
+			sceneRes.x = (float)Environment.drawableWidth;
+			sceneRes.y = (float)Environment.drawableHeight;
+			sceneRes.z = 0.0f;
+			changeResolution(sceneRes);
+
+			static int s_resDiag = 0;
+			if ((++s_resDiag % 600) == 1) {
+				GLint vp[4] = {0,0,0,0};
+				glGetIntegerv(GL_VIEWPORT, vp);
+				fprintf(stderr, "[PICKW v1] drawable=%dx%d screenRes=%.0fx%.0f glViewport=%d,%d,%d,%d\n",
+					Environment.drawableWidth, Environment.drawableHeight,
+					screenResolution.x, screenResolution.y, vp[0], vp[1], vp[2], vp[3]);
+				fflush(stderr);
+			}
+		}
+
 		if ((cameraLineChanged + 10) < turn)
 		{
 			if (userInput->getKeyDown(KEY_BACKSLASH) && !userInput->ctrl() && !userInput->alt() && !userInput->shift())
