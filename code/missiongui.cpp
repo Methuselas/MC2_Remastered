@@ -1442,8 +1442,21 @@ void MissionInterfaceManager::updateOldStyle( bool shiftDn, bool altDn, bool ctr
 
 	if ( userInput->leftMouseReleased() && !userInput->wasLeftDrag() && !bGui && !lastUpdateDoubleClick) // move on the mouse ups
 	{
+		// PRECISION (companion to the per-frame O(1) approx at update():~778):
+		// the per-frame wPos uses screenToGroundPlaneApprox (fast preview/status
+		// bar, but a z=0 ground-plane point that drifts ~elevation in XY on hilly
+		// terrain). For the DISCRETE move/place/recover action below we need the
+		// real terrain-surface hit, so recompute wPos once here via inverseProject
+		// (its actual job — terrain-surface/placement-Z). Runs only on click, so
+		// its O(quads) cost is fine; move-orders land on the correct elevated cell.
+		{
+			Stuff::Vector2DOf<long> clickXY;
+			clickXY.x = mouseX;
+			clickXY.y = mouseY;
+			eye->inverseProject(clickXY, wPos);
+		}
 
-		if ( (controlGui.isAddingVehicle() && !paintingVtol[commanderID] && canAddVehicle( wPos )) || 
+		if ( (controlGui.isAddingVehicle() && !paintingVtol[commanderID] && canAddVehicle( wPos )) ||
 			(controlGui.isAddingSalvage() && !paintingVtol[commanderID] && canRecover( wPos )))
 		{
 			// Target has already been confirmed  as a mover(BattleMech) by canRecover
