@@ -302,6 +302,17 @@ public:
 					compass->render(-1);		//Force this to zBuffer in front of everything
 			}
 
+			// Terrain LOD chunk flush — submit the GPU draw commands that land->render()
+			// (step 3) built into s_drawCmds[]. The editor previously NEVER called this
+			// (it lived only in gamecam.cpp:388), so under the default-on chunk path the
+			// command buffer was built every frame and silently discarded while the legacy
+			// per-quad draw was suppressed -> BLACK terrain (only overlays drew). Mirror
+			// gamecam.cpp:388 placement: after shadow/compass, before renderLists() so
+			// chunk terrain is fully drawn before post-process. No-op when the chunk path
+			// is off (s_blockMeta == nullptr).
+			Terrain::flushDrawCommands();
+			EditorGpuTimer_Mark("terrainFlush");
+
 			/* The editor interface needs to be drawn last, as it draws things "on top" of the
 			rendered scene. */
 			if ( EditorInterface::instance() )
