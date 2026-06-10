@@ -11,10 +11,17 @@
 
 #include "gosfxheaders.hpp"          // pulls gosfx.hpp + Stuff + MLR
 #include "particles/spec_library.h"
+#include "gosfx/effect.hpp"
+#include "gosfx/singleton.hpp"
+#include "gosfx/card.hpp"
+#include "gosfx/particlecloud.hpp"
 #include "mlr/mlr.hpp"
 #include "mlr/mlrtexturepool.hpp"
 #include "mlr/gosimagepool.hpp"
 #include <windows.h>
+
+#include <cstdlib>
+#include <cmath>
 
 // Heap installer provided by mc2fx_stubs.cpp.
 extern void InstallMc2fxHeaps();
@@ -37,6 +44,116 @@ std::string jsonEscape(const char* s)
         else r.push_back(c);
     }
     return r;
+}
+
+// classID int -> human type name (gosfx.hpp ClassID enum order).
+const char* classIdName(unsigned id)
+{
+    switch (id) {
+        case gosFX::EffectClassID:        return "Effect";
+        case gosFX::ParticleCloudClassID: return "ParticleCloud";
+        case gosFX::PointCloudClassID:    return "PointCloud";
+        case gosFX::SpinningCloudClassID: return "SpinningCloud";
+        case gosFX::ShardCloudClassID:    return "ShardCloud";
+        case gosFX::PertCloudClassID:     return "PertCloud";
+        case gosFX::CardCloudClassID:     return "CardCloud";
+        case gosFX::ShapeCloudClassID:    return "ShapeCloud";
+        case gosFX::EffectCloudClassID:   return "EffectCloud";
+        case gosFX::SingletonClassID:     return "Singleton";
+        case gosFX::CardClassID:          return "Card";
+        case gosFX::ShapeClassID:         return "Shape";
+        case gosFX::TubeClassID:          return "Tube";
+        case gosFX::DebrisCloudClassID:   return "DebrisCloud";
+        case gosFX::PointLightClassID:    return "PointLight";
+        default:                          return "Unknown";
+    }
+}
+
+// JSON-format a finite scalar (avoid "nan"/"inf" in output).
+void emitNum(std::string& out, double v)
+{
+    char b[64];
+    if (!std::isfinite(v)) { out += "0.0"; return; }
+    std::snprintf(b, sizeof b, "%.6g", v);
+    out += b;
+}
+
+// --- curve value emitters -------------------------------------------------
+// Each emits a JSON object describing the curve's type + stored values. All
+// Curve subclass value members (m_value/m_slope/m_a/m_b, ComplexCurve keys via
+// public GetKeyCount/operator[]) are public, so no engine edit is needed.
+
+void emitConstant(std::string& out, gosFX::ConstantCurve& c)
+{
+    out += "{ \"type\": \"constant\", \"value\": ";
+    emitNum(out, c.m_value);
+    out += " }";
+}
+
+void emitLinear(std::string& out, gosFX::LinearCurve& c)
+{
+    out += "{ \"type\": \"linear\", \"value\": ";
+    emitNum(out, c.m_value);
+    out += ", \"slope\": ";
+    emitNum(out, c.m_slope);
+    out += " }";
+}
+
+void emitSpline(std::string& out, gosFX::SplineCurve& c)
+{
+    out += "{ \"type\": \"spline\", \"value\": ";
+    emitNum(out, c.m_value);
+    out += ", \"slope\": ";
+    emitNum(out, c.m_slope);
+    out += ", \"a\": ";
+    emitNum(out, c.m_a);
+    out += ", \"b\": ";
+    emitNum(out, c.m_b);
+    out += " }";
+}
+
+void emitComplex(std::string& out, gosFX::ComplexCurve& c)
+{
+    out += "{ \"type\": \"complex\", \"keys\": [";
+    int n = c.GetKeyCount();
+    for (int i = 0; i < n; ++i) {
+        gosFX::CurveKey& k = c[i];
+        if (i) out += ",";
+        out += " { \"time\": ";
+        emitNum(out, k.m_time);
+        out += ", \"value\": ";
+        emitNum(out, k.m_value);
+        out += ", \"slope\": ";
+        emitNum(out, k.m_slope);
+        out += " }";
+    }
+    out += " ] }";
+}
+
+// SeededCurveOf<C,S,type>: emit { seeded, age:<curve>, seed:<curve> }.
+template <class C, class S, gosFX::Curve::CurveType T>
+void emitSeeded(std::string& out, gosFX::SeededCurveOf<C, S, T>& c,
+                void (*ageEmit)(std::string&, C&),
+                void (*seedEmit)(std::string&, S&))
+{
+    out += "{ \"type\": \"seeded\", \"seeded\": ";
+    out += c.m_seeded ? "true" : "false";
+    out += ", \"age\": ";
+    ageEmit(out, c.m_ageCurve);
+    out += ", \"seed\": ";
+    seedEmit(out, c.m_seedCurve);
+    out += " }";
+}
+
+// emit a `"field": <curve>,` line with indent.
+void emitField(std::string& out, const char* name, const std::string& curveJson,
+               bool trailingComma)
+{
+    out += "        \"";
+    out += name;
+    out += "\": ";
+    out += curveJson;
+    out += trailingComma ? ",\n" : "\n";
 }
 
 // SEH probe helper — MUST be its own function (no C++ unwinding objects in
@@ -127,6 +244,91 @@ std::string dumpCatalogJson(mc2::particles::SpecLibrary* lib)
     return out;
 }
 
+std::string dumpFullJson(mc2::particles::SpecLibrary* lib)
+{
+    std::string out;
+    if (!lib) return out;
+    unsigned count = lib->Count();
+    out.reserve(count * 256 + 128);
+    char line[256];
+    std::snprintf(line, sizeof line, "{\n  \"count\": %u,\n  \"effects\": [\n", count);
+    out += line;
+
+    for (unsigned i = 0; i < count; ++i) {
+        gosFX::Effect::Specification* spec = lib->At(i);
+        unsigned classID = spec ? static_cast<unsigned>(spec->GetClassID()) : 0u;
+        const char* name = (spec && spec->m_name) ? static_cast<const char*>(spec->m_name) : "";
+        const char* tn = classIdName(classID);
+
+        out += "    {\n";
+        std::snprintf(line, sizeof line,
+            "      \"index\": %u, \"effectID\": %u, \"classID\": %u,\n"
+            "      \"typeName\": \"%s\", \"name\": \"%s\",\n",
+            i, spec ? spec->m_effectID : 0u, classID, tn, jsonEscape(name).c_str());
+        out += line;
+
+        // Base Effect__Specification curves — present on every spec.
+        out += "      \"decoded\": true,\n      \"fields\": {\n";
+        std::string c;
+        c.clear(); emitConstant(c, spec->m_lifeSpan);          emitField(out, "m_lifeSpan", c, true);
+        c.clear(); emitSpline(c, spec->m_minimumChildSeed);    emitField(out, "m_minimumChildSeed", c, true);
+        c.clear(); emitSpline(c, spec->m_maximumChildSeed);    emitField(out, "m_maximumChildSeed", c, false);
+
+        // Billboard subclass curves.
+        if (classID == gosFX::SingletonClassID || classID == gosFX::CardClassID ||
+            classID == gosFX::ShapeClassID) {
+            // Singleton + its subclasses (Card, Shape) share the color/scale block.
+            gosFX::Singleton__Specification* s =
+                static_cast<gosFX::Singleton__Specification*>(spec);
+            out.erase(out.size() - 1);  // turn last "\n" into ",\n"
+            out += ",\n";
+            c.clear(); emitSeeded(c, s->m_red,   emitComplex, emitLinear); emitField(out, "m_red",   c, true);
+            c.clear(); emitSeeded(c, s->m_green, emitComplex, emitLinear); emitField(out, "m_green", c, true);
+            c.clear(); emitSeeded(c, s->m_blue,  emitComplex, emitLinear); emitField(out, "m_blue",  c, true);
+            c.clear(); emitSeeded(c, s->m_alpha, emitComplex, emitLinear); emitField(out, "m_alpha", c, true);
+            c.clear(); emitSeeded(c, s->m_scale, emitComplex, emitComplex);
+            emitField(out, "m_scale", c, classID == gosFX::CardClassID);
+
+            if (classID == gosFX::CardClassID) {
+                gosFX::Card__Specification* cs =
+                    static_cast<gosFX::Card__Specification*>(spec);
+                c.clear(); emitSeeded(c, cs->m_halfHeight,  emitConstant, emitComplex); emitField(out, "m_halfHeight",  c, true);
+                c.clear(); emitSeeded(c, cs->m_aspectRatio, emitConstant, emitComplex); emitField(out, "m_aspectRatio", c, true);
+                c.clear(); emitSeeded(c, cs->m_index,       emitComplex,  emitSpline);  emitField(out, "m_index",       c, false);
+            }
+        } else if (classID == gosFX::ParticleCloudClassID ||
+                   classID == gosFX::PointCloudClassID ||
+                   classID == gosFX::SpinningCloudClassID ||
+                   classID == gosFX::ShardCloudClassID ||
+                   classID == gosFX::PertCloudClassID ||
+                   classID == gosFX::CardCloudClassID ||
+                   classID == gosFX::ShapeCloudClassID ||
+                   classID == gosFX::EffectCloudClassID) {
+            // All derive (transitively) from ParticleCloud__Specification.
+            // NOTE: DebrisCloud/Tube/PointLight do NOT — they derive directly
+            // from Effect__Specification, so they get base fields only.
+            gosFX::ParticleCloud__Specification* p =
+                static_cast<gosFX::ParticleCloud__Specification*>(spec);
+            out.erase(out.size() - 1);
+            out += ",\n";
+            c.clear(); emitComplex(c, p->m_particlesPerSecond);                  emitField(out, "m_particlesPerSecond", c, true);
+            c.clear(); emitSeeded(c, p->m_startingSpeed, emitComplex, emitComplex); emitField(out, "m_startingSpeed", c, true);
+            c.clear(); emitSeeded(c, p->m_pLifeSpan, emitComplex, emitSpline);    emitField(out, "m_pLifeSpan", c, true);
+            c.clear(); emitSeeded(c, p->m_pRed,   emitComplex, emitLinear);       emitField(out, "m_pRed",   c, true);
+            c.clear(); emitSeeded(c, p->m_pGreen, emitComplex, emitLinear);       emitField(out, "m_pGreen", c, true);
+            c.clear(); emitSeeded(c, p->m_pBlue,  emitComplex, emitLinear);       emitField(out, "m_pBlue",  c, true);
+            c.clear(); emitSeeded(c, p->m_pAlpha, emitComplex, emitLinear);       emitField(out, "m_pAlpha", c, false);
+        }
+        // else: base-only fields already emitted; not a decoded subclass but
+        // base curves are still valid. Mark partial via "subclassDecoded".
+
+        out += "      }\n";
+        out += (i + 1 < count) ? "    },\n" : "    }\n";
+    }
+    out += "  ]\n}\n";
+    return out;
+}
+
 bool saveBlob(mc2::particles::SpecLibrary* lib, std::vector<unsigned char>& out,
               size_t reserveHint)
 {
@@ -169,6 +371,247 @@ bool saveBlob(mc2::particles::SpecLibrary* lib, std::vector<unsigned char>& out,
     }
     gos_PopCurrentHeap();
     return ok;
+}
+
+// ---------------------------------------------------------------------------
+// build / patch
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Minimal JSON scanner for the fixed patch schema:
+//   { "edits": [ { "effect": "...", "set": { "<field>": { "type":"constant",
+//                  "value": <num> }, ... } }, ... ] }
+// Tolerant of whitespace; does NOT validate the whole grammar — it pulls the
+// string/number tokens it needs in document order. Sufficient for slice 1.
+struct Scanner {
+    const char* p;
+    const char* end;
+    explicit Scanner(const std::string& s) : p(s.c_str()), end(s.c_str() + s.size()) {}
+    void skipWs() { while (p < end && (*p==' '||*p=='\t'||*p=='\n'||*p=='\r')) ++p; }
+    bool eof() { skipWs(); return p >= end; }
+    char peek() { skipWs(); return p < end ? *p : '\0'; }
+    bool eat(char c) { skipWs(); if (p < end && *p == c) { ++p; return true; } return false; }
+    bool parseString(std::string& out) {
+        skipWs();
+        if (p >= end || *p != '"') return false;
+        ++p; out.clear();
+        while (p < end && *p != '"') {
+            if (*p == '\\' && p + 1 < end) {
+                ++p;
+                switch (*p) {
+                    case 'n': out.push_back('\n'); break;
+                    case 't': out.push_back('\t'); break;
+                    default:  out.push_back(*p);   break;
+                }
+            } else out.push_back(*p);
+            ++p;
+        }
+        if (p >= end) return false;
+        ++p;  // closing quote
+        return true;
+    }
+    bool parseNumber(double& out) {
+        skipWs();
+        char* e = nullptr;
+        out = std::strtod(p, &e);
+        if (e == p) return false;
+        p = e;
+        return true;
+    }
+};
+
+}  // namespace
+
+bool parsePatchJson(const std::string& text, std::vector<PatchEdit>& edits,
+                    std::string& err)
+{
+    Scanner sc(text);
+    if (!sc.eat('{')) { err = "expected '{' at start"; return false; }
+    // find "edits"
+    bool foundEdits = false;
+    while (!sc.eof()) {
+        std::string key;
+        if (!sc.parseString(key)) { err = "expected key string"; return false; }
+        if (!sc.eat(':')) { err = "expected ':' after key"; return false; }
+        if (key == "edits") { foundEdits = true; break; }
+        // skip an unknown top-level value crudely: only objects/arrays/strings
+        // are expected; bail if encountered.
+        err = "unexpected top-level key '" + key + "' before 'edits'";
+        return false;
+    }
+    if (!foundEdits) { err = "no 'edits' array"; return false; }
+    if (!sc.eat('[')) { err = "expected '[' for edits array"; return false; }
+    if (sc.peek() == ']') { sc.eat(']'); return true; }  // empty
+
+    for (;;) {
+        if (!sc.eat('{')) { err = "expected '{' for edit object"; return false; }
+        std::string effect;
+        bool haveSet = false;
+        std::vector<PatchEdit> localFields;
+        for (;;) {
+            std::string key;
+            if (!sc.parseString(key)) { err = "expected key in edit object"; return false; }
+            if (!sc.eat(':')) { err = "expected ':' in edit object"; return false; }
+            if (key == "effect") {
+                if (!sc.parseString(effect)) { err = "effect must be string"; return false; }
+            } else if (key == "set") {
+                haveSet = true;
+                if (!sc.eat('{')) { err = "expected '{' for set"; return false; }
+                if (sc.peek() != '}') {
+                    for (;;) {
+                        std::string field;
+                        if (!sc.parseString(field)) { err = "expected field name in set"; return false; }
+                        if (!sc.eat(':')) { err = "expected ':' after field"; return false; }
+                        if (!sc.eat('{')) { err = "field value must be a curve object"; return false; }
+                        PatchEdit pe; pe.field = field; pe.curveType = "constant"; pe.value = 0.0;
+                        bool haveVal = false;
+                        for (;;) {
+                            std::string ck;
+                            if (!sc.parseString(ck)) { err = "expected key in curve object"; return false; }
+                            if (!sc.eat(':')) { err = "expected ':' in curve object"; return false; }
+                            if (ck == "type") {
+                                if (!sc.parseString(pe.curveType)) { err = "type must be string"; return false; }
+                            } else if (ck == "value") {
+                                if (!sc.parseNumber(pe.value)) { err = "value must be number"; return false; }
+                                haveVal = true;
+                            } else {
+                                // skip unknown scalar value
+                                double dummy; std::string ds;
+                                if (sc.peek() == '"') sc.parseString(ds);
+                                else sc.parseNumber(dummy);
+                            }
+                            if (sc.eat(',')) continue;
+                            if (sc.eat('}')) break;
+                            err = "malformed curve object"; return false;
+                        }
+                        (void)haveVal;
+                        localFields.push_back(pe);
+                        if (sc.eat(',')) continue;
+                        if (sc.eat('}')) break;
+                        err = "malformed set object"; return false;
+                    }
+                } else {
+                    sc.eat('}');
+                }
+            } else {
+                err = "unexpected key '" + key + "' in edit object"; return false;
+            }
+            if (sc.eat(',')) continue;
+            if (sc.eat('}')) break;
+            err = "malformed edit object"; return false;
+        }
+        if (!haveSet) { err = "edit missing 'set'"; return false; }
+        for (auto& f : localFields) { f.effect = effect; edits.push_back(f); }
+        if (sc.eat(',')) continue;
+        if (sc.eat(']')) break;
+        err = "malformed edits array"; return false;
+    }
+    return true;
+}
+
+namespace {
+
+// Set the stored value of a base/billboard curve member by name. Returns:
+//   1 = applied, 0 = field not found on this spec, -1 = unsupported curve kind.
+// For ConstantCurve we set m_value directly. For Spline/Linear we set m_value
+// (the constant term) and zero the higher coefficients so the curve becomes a
+// constant. For SeededCurveOf<...> we collapse the age curve to the constant.
+int setCurveByName(gosFX::Effect::Specification* spec, unsigned classID,
+                   const std::string& field, double v)
+{
+    Stuff::Scalar val = static_cast<Stuff::Scalar>(v);
+
+    auto setConst = [&](gosFX::ConstantCurve& c) { c.m_value = val; };
+    auto setSpline = [&](gosFX::SplineCurve& c) {
+        c.m_value = val; c.m_slope = 0.0f; c.m_a = 0.0f; c.m_b = 0.0f;
+    };
+    // Collapse a ComplexCurve age curve to a single constant key. SetCurve(v)
+    // sets one flat key (public on ComplexCurve).
+    auto setComplex = [&](gosFX::ComplexCurve& c) { c.SetCurve(val); };
+
+    // --- base fields (every spec) ---
+    if (field == "m_lifeSpan")         { setConst(spec->m_lifeSpan);        return 1; }
+    if (field == "m_minimumChildSeed") { setSpline(spec->m_minimumChildSeed); return 1; }
+    if (field == "m_maximumChildSeed") { setSpline(spec->m_maximumChildSeed); return 1; }
+
+    if (classID == gosFX::SingletonClassID || classID == gosFX::CardClassID ||
+        classID == gosFX::ShapeClassID) {
+        gosFX::Singleton__Specification* s =
+            static_cast<gosFX::Singleton__Specification*>(spec);
+        // age curve of these color/scale members is a ComplexCurve.
+        if (field == "m_red")   { setComplex(s->m_red.m_ageCurve);   return 1; }
+        if (field == "m_green") { setComplex(s->m_green.m_ageCurve); return 1; }
+        if (field == "m_blue")  { setComplex(s->m_blue.m_ageCurve);  return 1; }
+        if (field == "m_alpha") { setComplex(s->m_alpha.m_ageCurve); return 1; }
+        if (field == "m_scale") { setComplex(s->m_scale.m_ageCurve); return 1; }
+        if (classID == gosFX::CardClassID) {
+            gosFX::Card__Specification* cs =
+                static_cast<gosFX::Card__Specification*>(spec);
+            if (field == "m_halfHeight")  { setConst(cs->m_halfHeight.m_ageCurve);  return 1; }
+            if (field == "m_aspectRatio") { setConst(cs->m_aspectRatio.m_ageCurve); return 1; }
+            if (field == "m_index")       { setComplex(cs->m_index.m_ageCurve);     return 1; }
+        }
+    } else if (classID == gosFX::ParticleCloudClassID ||
+               classID == gosFX::PointCloudClassID ||
+               classID == gosFX::SpinningCloudClassID ||
+               classID == gosFX::ShardCloudClassID ||
+               classID == gosFX::PertCloudClassID ||
+               classID == gosFX::CardCloudClassID ||
+               classID == gosFX::ShapeCloudClassID ||
+               classID == gosFX::EffectCloudClassID) {
+        gosFX::ParticleCloud__Specification* p =
+            static_cast<gosFX::ParticleCloud__Specification*>(spec);
+        if (field == "m_particlesPerSecond") { setComplex(p->m_particlesPerSecond);    return 1; }
+        if (field == "m_startingSpeed")      { setComplex(p->m_startingSpeed.m_ageCurve); return 1; }
+        if (field == "m_pLifeSpan")          { setComplex(p->m_pLifeSpan.m_ageCurve);   return 1; }
+        if (field == "m_pRed")   { setComplex(p->m_pRed.m_ageCurve);   return 1; }
+        if (field == "m_pGreen") { setComplex(p->m_pGreen.m_ageCurve); return 1; }
+        if (field == "m_pBlue")  { setComplex(p->m_pBlue.m_ageCurve);  return 1; }
+        if (field == "m_pAlpha") { setComplex(p->m_pAlpha.m_ageCurve); return 1; }
+    }
+    return 0;  // field not recognized for this spec
+}
+
+}  // namespace
+
+unsigned applyPatch(mc2::particles::SpecLibrary* lib,
+                    const std::vector<PatchEdit>& edits, std::string& report)
+{
+    unsigned applied = 0;
+    char line[512];
+    for (const auto& e : edits) {
+        if (e.curveType != "constant") {
+            std::snprintf(line, sizeof line,
+                "  UNSUPPORTED curve type '%s' for %s.%s (only 'constant')\n",
+                e.curveType.c_str(), e.effect.c_str(), e.field.c_str());
+            report += line;
+            continue;
+        }
+        gosFX::Effect::Specification* spec = lib->Find(e.effect.c_str());
+        if (!spec) {
+            std::snprintf(line, sizeof line,
+                "  NOT-FOUND effect '%s' (field %s skipped)\n",
+                e.effect.c_str(), e.field.c_str());
+            report += line;
+            continue;
+        }
+        unsigned classID = static_cast<unsigned>(spec->GetClassID());
+        int r = setCurveByName(spec, classID, e.field, e.value);
+        if (r == 1) {
+            std::snprintf(line, sizeof line,
+                "  OK %s.%s = %g (classID %u %s)\n",
+                e.effect.c_str(), e.field.c_str(), e.value, classID, classIdName(classID));
+            report += line;
+            ++applied;
+        } else {
+            std::snprintf(line, sizeof line,
+                "  UNSUPPORTED field '%s' on effect '%s' (classID %u %s)\n",
+                e.field.c_str(), e.effect.c_str(), classID, classIdName(classID));
+            report += line;
+        }
+    }
+    return applied;
 }
 
 }  // namespace mc2fx

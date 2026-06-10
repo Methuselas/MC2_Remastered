@@ -45,7 +45,7 @@ bool writeFileBytes(const char* path, const unsigned char* data, size_t n)
     return put == n;
 }
 
-int cmdDump(const char* inPath, const char* outPath)
+int cmdDump(const char* inPath, const char* outPath, bool full)
 {
     std::vector<unsigned char> bytes;
     if (!readFileBytes(inPath, bytes)) {
@@ -55,7 +55,7 @@ int cmdDump(const char* inPath, const char* outPath)
     mc2fx::initEngineHeadless();
     mc2::particles::SpecLibrary* lib = mc2fx::loadBlob(bytes.data(), bytes.size());
     if (!lib) { std::fprintf(stderr, "mc2fx: load failed\n"); return 4; }
-    std::string out = mc2fx::dumpCatalogJson(lib);
+    std::string out = full ? mc2fx::dumpFullJson(lib) : mc2fx::dumpCatalogJson(lib);
 
     if (outPath) {
         if (!writeFileBytes(outPath, reinterpret_cast<const unsigned char*>(out.data()), out.size())) {
@@ -123,12 +123,56 @@ int cmdRebuild(const char* inPath, const char* outPath)
     return 0;
 }
 
+int cmdBuild(const char* basePath, const char* patchPath, const char* outPath)
+{
+    std::vector<unsigned char> baseBytes;
+    if (!readFileBytes(basePath, baseBytes)) {
+        std::fprintf(stderr, "mc2fx: cannot read base '%s'\n", basePath); return 2;
+    }
+    std::vector<unsigned char> patchBytes;
+    if (!readFileBytes(patchPath, patchBytes)) {
+        std::fprintf(stderr, "mc2fx: cannot read patch '%s'\n", patchPath); return 2;
+    }
+    std::string patchText(reinterpret_cast<const char*>(patchBytes.data()), patchBytes.size());
+
+    std::vector<mc2fx::PatchEdit> edits;
+    std::string err;
+    if (!mc2fx::parsePatchJson(patchText, edits, err)) {
+        std::fprintf(stderr, "mc2fx: patch parse error: %s\n", err.c_str()); return 6;
+    }
+
+    mc2fx::initEngineHeadless();
+    mc2::particles::SpecLibrary* lib = mc2fx::loadBlob(baseBytes.data(), baseBytes.size());
+    if (!lib) { std::fprintf(stderr, "mc2fx: load failed\n"); return 4; }
+
+    std::string report;
+    unsigned applied = mc2fx::applyPatch(lib, edits, report);
+    std::fprintf(stderr, "mc2fx build: %u edit(s) parsed, %u applied:\n%s",
+                 (unsigned)edits.size(), applied, report.c_str());
+
+    std::vector<unsigned char> outBytes;
+    size_t reserveHint = baseBytes.size() * 4 + (1u << 20);
+    if (!mc2fx::saveBlob(lib, outBytes, reserveHint)) {
+        std::fprintf(stderr, "mc2fx: save failed\n"); return 5;
+    }
+    if (!writeFileBytes(outPath, outBytes.data(), outBytes.size())) {
+        std::fprintf(stderr, "mc2fx: cannot write '%s'\n", outPath); return 3;
+    }
+    std::fprintf(stderr, "mc2fx build: wrote %zu bytes -> %s\n", outBytes.size(), outPath);
+    return 0;
+}
+
 void usage()
 {
     std::fprintf(stderr,
         "mc2fx — gosFX effect blob inspector\n"
-        "  mc2fx dump    <mc2.fx> [out.json]   dump effect catalog to JSON (stdout if no out)\n"
-        "  mc2fx rebuild <in.fx>  <out.fx>     Load->Save round-trip + byte-compare\n");
+        "  mc2fx dump    [--full] <mc2.fx> [out.json]   dump catalog (--full = per-curve values)\n"
+        "  mc2fx rebuild <in.fx>  <out.fx>              Load->Save round-trip + byte-compare\n"
+        "  mc2fx build   <base.fx> <patch.json> <out.fx> apply JSON edits + re-emit\n"
+        "\n"
+        "  patch.json schema:\n"
+        "    { \"edits\": [ { \"effect\": \"PPC_Trail\",\n"
+        "                     \"set\": { \"m_lifeSpan\": { \"type\": \"constant\", \"value\": 7.5 } } } ] }\n");
 }
 
 }  // namespace
@@ -138,11 +182,22 @@ int main(int argc, char** argv)
     if (argc < 3) { usage(); return 1; }
     std::string cmd = argv[1];
     if (cmd == "dump") {
-        return cmdDump(argv[2], argc >= 4 ? argv[3] : nullptr);
+        // dump [--full] <in.fx> [out.json]
+        bool full = false;
+        int ai = 2;
+        if (std::string(argv[ai]) == "--full") { full = true; ++ai; }
+        if (ai >= argc) { usage(); return 1; }
+        const char* inPath = argv[ai++];
+        const char* outPath = (ai < argc) ? argv[ai] : nullptr;
+        return cmdDump(inPath, outPath, full);
     }
     if (cmd == "rebuild") {
         if (argc < 4) { usage(); return 1; }
         return cmdRebuild(argv[2], argv[3]);
+    }
+    if (cmd == "build") {
+        if (argc < 5) { usage(); return 1; }
+        return cmdBuild(argv[2], argv[3], argv[4]);
     }
     usage();
     return 1;

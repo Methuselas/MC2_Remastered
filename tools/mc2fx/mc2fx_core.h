@@ -29,6 +29,36 @@ mc2::particles::SpecLibrary* loadBlob(const unsigned char* bytes, size_t n);
 // Shallow effect-catalog JSON (index/effectID/classID/name) for a loaded lib.
 std::string dumpCatalogJson(mc2::particles::SpecLibrary* lib);
 
+// Rich per-effect JSON (`dump --full`): decodes the editable base curves
+// (m_lifeSpan, m_minimumChildSeed, m_maximumChildSeed) plus the common billboard
+// subclass curves (Singleton/Card colors+scale, Card halfHeight/aspectRatio/index,
+// ParticleCloud family particlesPerSecond/pLifeSpan/p-colors/startingSpeed). Each
+// curve emits its type + stored values. Unknown subclasses get a decoded:false
+// marker; never crashes on an unknown type.
+std::string dumpFullJson(mc2::particles::SpecLibrary* lib);
+
+// ---- build / patch ----------------------------------------------------------
+// One field edit parsed from a patch.json. `curveType` is "constant" (only type
+// supported in slice 1). `value` is the scalar to store.
+struct PatchEdit {
+    std::string effect;     // effect name to match (m_name)
+    std::string field;      // member name, e.g. "m_lifeSpan", "m_scale"
+    std::string curveType;  // "constant"
+    double      value;
+};
+
+// Parse a patch.json (limited schema, see main.cpp/usage) into a flat edit list.
+// Returns false + fills `err` on a parse error. Tiny hand parser; no nlohmann.
+bool parsePatchJson(const std::string& text, std::vector<PatchEdit>& edits,
+                    std::string& err);
+
+// Apply edits to a loaded library in place. For each edit, locate the named curve
+// member on the matched effect and overwrite its stored constant value. Appends a
+// human-readable line per edit (applied / not-found / unsupported) to `report`.
+// Returns the number of edits actually applied.
+unsigned applyPatch(mc2::particles::SpecLibrary* lib,
+                    const std::vector<PatchEdit>& edits, std::string& report);
+
 // Re-emit the loaded library to a byte blob via SpecLibrary::Save. Returns true
 // on success; `out` receives exactly the bytes the Save path wrote.
 //
