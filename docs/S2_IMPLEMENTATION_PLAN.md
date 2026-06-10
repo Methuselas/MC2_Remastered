@@ -1,3 +1,11 @@
+> **SUPERSEDED / RE-SCOPED (2026-06-09):** Stage 0 (§9) measured `MultiTransformShape` at ≤1.2ms
+> peak. This plan activates the GPU color-submit path but **keeps `MultiTransformShape` running** —
+> so it does NOT remove the measured cost. S2 is re-scoped into **S2a (measure the submit/renderLists
+> path)** and **S2b (true `MultiTransformShape` elimination, only if justified)**. Do NOT implement
+> the Stage 1/2 below as written. See **`docs/perf-attribution-plan.md`** for the revised R0–R3 plan
+> (frame-time attribution first; present + renderLists are the prime suspects now that terrain is
+> <100µs). The staged plan below is retained as reference for the GPU-VB dead-code path it documents.
+
 # S2 Implementation Plan — TG Dynamic Shape GPU Transform Migration
 
 **Date:** 2026-06-09  
