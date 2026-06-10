@@ -73,4 +73,44 @@ unsigned applyPatch(mc2::particles::SpecLibrary* lib,
 bool saveBlob(mc2::particles::SpecLibrary* lib, std::vector<unsigned char>& out,
               size_t reserveHint = 0);
 
+// ---- authoring (clone / new) ------------------------------------------------
+// These author NEW specs by STREAM-SPLICE. The SpecLibrary's m_effects array is
+// private and frozen after Load (no public Append), so instead of mutating it we
+// (a) serialize a new spec on its own, and (b) splice it onto the saved base blob
+// while bumping the spec-count field. The loader then reads count+1 specs. No
+// SpecLibrary internals are touched.
+
+// Serialize ONE spec to its own byte stream exactly as SpecLibrary::Save would
+// emit it inside the spec loop (classID + name + curves + MLR state). `out`
+// receives those bytes. Returns true on success. The virtual Save dispatches to
+// the correct subclass, so the result is a fully-formed spec record.
+bool saveOneSpecBytes(mc2::particles::SpecLibrary* lib, unsigned index,
+                      std::vector<unsigned char>& out);
+
+// CLONE: duplicate the spec named `srcName` under `newName`. Strategy: Save the
+// src spec alone, RE-PARSE those bytes via Effect__Specification::Create (the
+// loader's own path -> exact correct subclass, fully type-agnostic, no per-class
+// Copy plumbing), overwrite m_name, then Save the clone. `out` receives the new
+// spec's record bytes. Returns 0 on success; nonzero error code:
+//   1 = src not found, 2 = newName already exists, 3 = save/reparse failure.
+int cloneSpecBytes(mc2::particles::SpecLibrary* lib, const char* srcName,
+                   const char* newName, std::vector<unsigned char>& out);
+
+// NEW: construct a blank spec of `typeName` (e.g. "Card", "ParticleCloud"),
+// call BuildDefaults(), set m_name=newName, then Save. `out` receives the record
+// bytes. Returns 0 on success; nonzero error:
+//   1 = newName already exists, 2 = unsupported/unconstructable type headless,
+//   3 = BuildDefaults/Save fault. On fault, `err` describes where.
+int newSpecBytes(mc2::particles::SpecLibrary* lib, const char* typeName,
+                 const char* newName, std::vector<unsigned char>& out,
+                 std::string& err);
+
+// Splice `newSpecBytes` onto `baseBlob` (a full SpecLibrary::Save blob): bump the
+// 32-bit spec count (read side: 4 bytes right after the GFX header) by +1 and
+// append the new record. `countByteOffset` is where the uint32 count lives in the
+// saved blob (determined by probing the header). Returns the spliced blob.
+std::vector<unsigned char> spliceSpec(const std::vector<unsigned char>& baseBlob,
+                                      const std::vector<unsigned char>& newRecord,
+                                      size_t countByteOffset, unsigned newCount);
+
 }  // namespace mc2fx

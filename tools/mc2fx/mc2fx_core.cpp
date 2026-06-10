@@ -15,6 +15,14 @@
 #include "gosfx/singleton.hpp"
 #include "gosfx/card.hpp"
 #include "gosfx/particlecloud.hpp"
+#include "gosfx/pointcloud.hpp"
+#include "gosfx/spinningcloud.hpp"
+#include "gosfx/shardcloud.hpp"
+#include "gosfx/cardcloud.hpp"
+#include "gosfx/effectcloud.hpp"
+#include "gosfx/tube.hpp"
+#include "gosfx/debriscloud.hpp"
+#include "gosfx/pointlight.hpp"
 #include "mlr/mlr.hpp"
 #include "mlr/mlrtexturepool.hpp"
 #include "mlr/gosimagepool.hpp"
@@ -371,6 +379,185 @@ bool saveBlob(mc2::particles::SpecLibrary* lib, std::vector<unsigned char>& out,
     }
     gos_PopCurrentHeap();
     return ok;
+}
+
+// ---------------------------------------------------------------------------
+// authoring (clone / new) — stream-splice
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// classID for a human type name (inverse of classIdName). 0 = unknown.
+unsigned classIdForName(const std::string& t)
+{
+    if (t == "Effect")        return gosFX::EffectClassID;
+    if (t == "ParticleCloud") return gosFX::ParticleCloudClassID;
+    if (t == "PointCloud")    return gosFX::PointCloudClassID;
+    if (t == "SpinningCloud") return gosFX::SpinningCloudClassID;
+    if (t == "ShardCloud")    return gosFX::ShardCloudClassID;
+    if (t == "PertCloud")     return gosFX::PertCloudClassID;
+    if (t == "CardCloud")     return gosFX::CardCloudClassID;
+    if (t == "ShapeCloud")    return gosFX::ShapeCloudClassID;
+    if (t == "EffectCloud")   return gosFX::EffectCloudClassID;
+    if (t == "Singleton")     return gosFX::SingletonClassID;
+    if (t == "Card")          return gosFX::CardClassID;
+    if (t == "Shape")         return gosFX::ShapeClassID;
+    if (t == "Tube")          return gosFX::TubeClassID;
+    if (t == "DebrisCloud")   return gosFX::DebrisCloudClassID;
+    if (t == "PointLight")    return gosFX::PointLightClassID;
+    return 0u;
+}
+
+// Save a single spec to its own DynamicMemoryStream (born-large; the base
+// WriteBytes never grows — see saveBlob note). Returns the record bytes. SEH-free
+// here; callers that fear a fault should route through the build path's existing
+// SEH probe. Returns false on empty output.
+bool saveSpecToBytes(gosFX::Effect::Specification* spec, std::vector<unsigned char>& out)
+{
+    if (!spec) return false;
+    gos_PushCurrentHeap(gosFX::Heap);
+    Stuff::DynamicMemoryStream stream(8u * 1024u * 1024u);
+    stream.Rewind();
+    spec->Save(&stream);
+    size_t used = stream.GetBytesUsed();
+    bool ok = false;
+    if (used > 0) {
+        stream.Rewind();
+        const unsigned char* base = static_cast<const unsigned char*>(stream.GetPointer());
+        out.assign(base, base + used);
+        ok = true;
+    }
+    gos_PopCurrentHeap();
+    return ok;
+}
+
+// Re-parse a saved single-spec record back into a fresh spec object via the
+// loader's own Create() path (exact subclass, type-agnostic). Caller owns/leaks
+// the returned object (diagnostic tool; process is short-lived).
+gosFX::Effect::Specification* reparseSpec(const std::vector<unsigned char>& rec)
+{
+    gos_PushCurrentHeap(gosFX::Heap);
+    Stuff::MemoryStream stream(const_cast<unsigned char*>(rec.data()),
+                               static_cast<DWORD>(rec.size()));
+    gosFX::Effect::Specification* spec =
+        gosFX::Effect::Specification::Create(&stream, gosFX::CurrentGFXVersion);
+    gos_PopCurrentHeap();
+    return spec;
+}
+
+}  // namespace
+
+bool saveOneSpecBytes(mc2::particles::SpecLibrary* lib, unsigned index,
+                      std::vector<unsigned char>& out)
+{
+    if (!lib || index >= lib->Count()) return false;
+    return saveSpecToBytes(lib->At(index), out);
+}
+
+int cloneSpecBytes(mc2::particles::SpecLibrary* lib, const char* srcName,
+                   const char* newName, std::vector<unsigned char>& out)
+{
+    if (!lib || !srcName || !newName) return 3;
+    gosFX::Effect::Specification* src = lib->Find(srcName);
+    if (!src) return 1;
+    if (lib->Find(newName)) return 2;
+
+    // Save src alone -> reparse via Create (correct subclass, all curves) ->
+    // rename -> re-save. Fully type-agnostic; no per-class Copy plumbing.
+    std::vector<unsigned char> srcRec;
+    if (!saveSpecToBytes(src, srcRec)) return 3;
+    gosFX::Effect::Specification* clone = reparseSpec(srcRec);
+    if (!clone) return 3;
+    gos_PushCurrentHeap(gosFX::Heap);
+    clone->m_name = newName;
+    gos_PopCurrentHeap();
+    if (!saveSpecToBytes(clone, out)) return 3;
+    return 0;
+}
+
+int newSpecBytes(mc2::particles::SpecLibrary* lib, const char* typeName,
+                 const char* newName, std::vector<unsigned char>& out,
+                 std::string& err)
+{
+    if (!lib || !typeName || !newName) { err = "null arg"; return 3; }
+    if (lib->Find(newName)) { err = "name exists"; return 1; }
+    unsigned classID = classIdForName(typeName);
+    if (classID == 0u) { err = std::string("unknown type '") + typeName + "'"; return 2; }
+
+    // ParticleCloud / SpinningCloud / Singleton are INTERMEDIATE base classes:
+    // their classID has no concrete `__Specification::Make` factory, so a blank
+    // spec of those types reloads via Create() -> fault. They exist only to be
+    // subclassed (PointCloud/ShardCloud/.../Card). Reject up front with guidance.
+    if (classID == gosFX::ParticleCloudClassID ||
+        classID == gosFX::SpinningCloudClassID ||
+        classID == gosFX::SingletonClassID) {
+        err = std::string("type '") + typeName +
+              "' is an abstract base class (no concrete factory; unloadable). "
+              "Use a concrete leaf type (PointCloud/ShardCloud/CardCloud/"
+              "EffectCloud/Card/Tube/DebrisCloud/PointLight).";
+        return 2;
+    }
+
+    gos_PushCurrentHeap(gosFX::Heap);
+    gosFX::Effect::Specification* spec = nullptr;
+    // Only concrete leaf types with a headless-constructable ctor (no MLRShape/
+    // asset needed).
+    switch (classID) {
+        case gosFX::PointCloudClassID:
+            spec = new gosFX::PointCloud__Specification();
+            break;
+        case gosFX::ShardCloudClassID:
+            spec = new gosFX::ShardCloud__Specification();
+            break;
+        case gosFX::CardCloudClassID:
+            spec = new gosFX::CardCloud__Specification();
+            break;
+        case gosFX::EffectCloudClassID:
+            spec = new gosFX::EffectCloud__Specification();
+            break;
+        case gosFX::CardClassID:
+            spec = new gosFX::Card__Specification();
+            break;
+        case gosFX::TubeClassID:
+            spec = new gosFX::Tube__Specification();
+            break;
+        case gosFX::DebrisCloudClassID:
+            spec = new gosFX::DebrisCloud__Specification();
+            break;
+        case gosFX::PointLightClassID:
+            spec = new gosFX::PointLight__Specification();
+            break;
+        default:
+            // PertCloud(sides) / ShapeCloud(MLRShape*) / Shape(MLRShape*) /
+            // Effect(base) need an asset or arg -> not authored blank headless.
+            gos_PopCurrentHeap();
+            err = std::string("type '") + typeName +
+                  "' not constructable headless (needs asset/arg)";
+            return 2;
+    }
+    if (!spec) { gos_PopCurrentHeap(); err = "ctor returned null"; return 3; }
+    spec->BuildDefaults();
+    spec->m_name = newName;
+    gos_PopCurrentHeap();
+
+    if (!saveSpecToBytes(spec, out)) { err = "Save produced no bytes"; return 3; }
+    return 0;
+}
+
+std::vector<unsigned char> spliceSpec(const std::vector<unsigned char>& baseBlob,
+                                      const std::vector<unsigned char>& newRecord,
+                                      size_t countByteOffset, unsigned newCount)
+{
+    std::vector<unsigned char> out = baseBlob;
+    // overwrite the little-endian uint32 count in place
+    if (countByteOffset + 4 <= out.size()) {
+        out[countByteOffset + 0] = static_cast<unsigned char>(newCount & 0xFF);
+        out[countByteOffset + 1] = static_cast<unsigned char>((newCount >> 8) & 0xFF);
+        out[countByteOffset + 2] = static_cast<unsigned char>((newCount >> 16) & 0xFF);
+        out[countByteOffset + 3] = static_cast<unsigned char>((newCount >> 24) & 0xFF);
+    }
+    out.insert(out.end(), newRecord.begin(), newRecord.end());
+    return out;
 }
 
 // ---------------------------------------------------------------------------

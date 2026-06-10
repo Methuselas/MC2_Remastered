@@ -162,6 +162,75 @@ int cmdBuild(const char* basePath, const char* patchPath, const char* outPath)
     return 0;
 }
 
+// Shared tail for clone/new: base already loaded, `record` holds the new spec's
+// serialized bytes and `newCount` the post-splice count. Saves base, splices,
+// writes out.
+int spliceAndWrite(mc2::particles::SpecLibrary* lib,
+                   const std::vector<unsigned char>& baseBytes,
+                   const std::vector<unsigned char>& record,
+                   const char* outPath)
+{
+    std::vector<unsigned char> baseBlob;
+    size_t reserveHint = baseBytes.size() * 4 + (1u << 20);
+    if (!mc2fx::saveBlob(lib, baseBlob, reserveHint)) {
+        std::fprintf(stderr, "mc2fx: base save failed\n"); return 5;
+    }
+    // Header = [int fourcc][int version][uint32 count]; count at byte offset 8.
+    const size_t kCountOffset = 8;
+    unsigned newCount = lib->Count() + 1u;
+    std::vector<unsigned char> blob =
+        mc2fx::spliceSpec(baseBlob, record, kCountOffset, newCount);
+    if (!writeFileBytes(outPath, blob.data(), blob.size())) {
+        std::fprintf(stderr, "mc2fx: cannot write '%s'\n", outPath); return 3;
+    }
+    std::fprintf(stderr, "mc2fx: wrote %zu specs (%zu bytes) -> %s\n",
+                 (size_t)newCount, blob.size(), outPath);
+    return 0;
+}
+
+int cmdClone(const char* basePath, const char* srcName, const char* newName,
+             const char* outPath)
+{
+    std::vector<unsigned char> baseBytes;
+    if (!readFileBytes(basePath, baseBytes)) {
+        std::fprintf(stderr, "mc2fx: cannot read base '%s'\n", basePath); return 2;
+    }
+    mc2fx::initEngineHeadless();
+    mc2::particles::SpecLibrary* lib = mc2fx::loadBlob(baseBytes.data(), baseBytes.size());
+    if (!lib) { std::fprintf(stderr, "mc2fx: load failed\n"); return 4; }
+
+    std::vector<unsigned char> record;
+    int rc = mc2fx::cloneSpecBytes(lib, srcName, newName, record);
+    if (rc == 1) { std::fprintf(stderr, "mc2fx clone: src '%s' not found\n", srcName); return 7; }
+    if (rc == 2) { std::fprintf(stderr, "mc2fx clone: name '%s' already exists (abort)\n", newName); return 7; }
+    if (rc != 0) { std::fprintf(stderr, "mc2fx clone: serialize/reparse failed\n"); return 5; }
+    std::fprintf(stderr, "mc2fx clone: '%s' -> '%s' (record %zu bytes, route A object-reparse)\n",
+                 srcName, newName, record.size());
+    return spliceAndWrite(lib, baseBytes, record, outPath);
+}
+
+int cmdNew(const char* basePath, const char* type, const char* newName,
+           const char* outPath)
+{
+    std::vector<unsigned char> baseBytes;
+    if (!readFileBytes(basePath, baseBytes)) {
+        std::fprintf(stderr, "mc2fx: cannot read base '%s'\n", basePath); return 2;
+    }
+    mc2fx::initEngineHeadless();
+    mc2::particles::SpecLibrary* lib = mc2fx::loadBlob(baseBytes.data(), baseBytes.size());
+    if (!lib) { std::fprintf(stderr, "mc2fx: load failed\n"); return 4; }
+
+    std::vector<unsigned char> record;
+    std::string err;
+    int rc = mc2fx::newSpecBytes(lib, type, newName, record, err);
+    if (rc == 1) { std::fprintf(stderr, "mc2fx new: name '%s' already exists (abort)\n", newName); return 7; }
+    if (rc == 2) { std::fprintf(stderr, "mc2fx new: %s\n", err.c_str()); return 7; }
+    if (rc != 0) { std::fprintf(stderr, "mc2fx new: %s\n", err.c_str()); return 5; }
+    std::fprintf(stderr, "mc2fx new: type '%s' name '%s' (defaults built, record %zu bytes)\n",
+                 type, newName, record.size());
+    return spliceAndWrite(lib, baseBytes, record, outPath);
+}
+
 void usage()
 {
     std::fprintf(stderr,
@@ -169,6 +238,12 @@ void usage()
         "  mc2fx dump    [--full] <mc2.fx> [out.json]   dump catalog (--full = per-curve values)\n"
         "  mc2fx rebuild <in.fx>  <out.fx>              Load->Save round-trip + byte-compare\n"
         "  mc2fx build   <base.fx> <patch.json> <out.fx> apply JSON edits + re-emit\n"
+        "  mc2fx clone   <base.fx> <srcName> <newName> <out.fx>  duplicate+rename an effect\n"
+        "  mc2fx new     <base.fx> <type> <newName> <out.fx>     blank effect from a type\n"
+        "    concrete types: PointCloud ShardCloud CardCloud EffectCloud\n"
+        "                    Card Tube DebrisCloud PointLight\n"
+        "    (ParticleCloud/SpinningCloud/Singleton are abstract bases; Shape/\n"
+        "     ShapeCloud/PertCloud need an asset/arg -> not authorable blank headless)\n"
         "\n"
         "  patch.json schema:\n"
         "    { \"edits\": [ { \"effect\": \"PPC_Trail\",\n"
@@ -198,6 +273,14 @@ int main(int argc, char** argv)
     if (cmd == "build") {
         if (argc < 5) { usage(); return 1; }
         return cmdBuild(argv[2], argv[3], argv[4]);
+    }
+    if (cmd == "clone") {
+        if (argc < 6) { usage(); return 1; }
+        return cmdClone(argv[2], argv[3], argv[4], argv[5]);
+    }
+    if (cmd == "new") {
+        if (argc < 6) { usage(); return 1; }
+        return cmdNew(argv[2], argv[3], argv[4], argv[5]);
     }
     usage();
     return 1;
