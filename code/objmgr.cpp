@@ -142,9 +142,18 @@ inline bool MC2_GOM_RECON_ENABLED() { return s_gomReconEnabled; }
 
 static bool mc2SkipStaticNaturalEnabled (void)
 {
+	// DEFAULT-ON (opt-out kill switch): the pure-static-natural update skip is the
+	// validated R2b fast path (~4977 -> ~145 terrain-object updates on dense maps).
+	// Only literal "0" opts out (bisection / revert escape hatch); unset or any other
+	// value enables it. Same idiom as MC2_QUADSETUP_ARMED_SKIP / MC2_TERRAIN_LOD_CHUNK.
+	// Gameplay-critical objects (gates/turrets/spotlights/special buildings with
+	// alarm/lookout/sensor/power) are excluded from the skip set at the call sites,
+	// so they still tick every frame regardless of this gate.
 	static int cached = -1;
-	if (cached < 0)
-		cached = (getenv("MC2_SKIP_STATIC_TREES") != nullptr) ? 1 : 0;
+	if (cached < 0) {
+		const char* v = getenv("MC2_SKIP_STATIC_TREES");
+		cached = (v && v[0] == '0' && v[1] == '\0') ? 0 : 1;
+	}
 	return(cached != 0);
 }
 

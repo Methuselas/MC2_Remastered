@@ -75,7 +75,7 @@
 - VFX no objectId: `sh scripts/check-vfx-no-objectid.sh`
 
 ## Material / static prop gates
-- `MC2_SKIP_STATIC_TREES=1` â€” enable pure static natural-prop update skip. Default **OFF**.
+- `MC2_SKIP_STATIC_TREES` — pure static-natural update skip (R2b, ~4977→~145 terrain-object updates on dense maps). **Default ON** (opt-out: only `=0` disables; gameplay-critical gates/turrets/special-buildings are excluded from the skip set and still tick every frame).
 
 - `MC2_MATERIAL_KTX=1` — KTX2 sidecar loader for static-prop tex array. Default **OFF**.
 - `MC2_MATERIAL_GPU` — MaterialGpu table upload + SSBO bind. Default **ON**.
