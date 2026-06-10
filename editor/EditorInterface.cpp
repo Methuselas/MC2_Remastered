@@ -73,6 +73,7 @@
 #include "imgui.h"
 #include "MapGeneratorDialog.h"
 #include "MissionValidation.h"
+#include "EditorTaskRunner.h"
 #include "gameplay_pick.h"  // tryGameplayPick: shared pick spine, no game-object deps
 #include "gameos.hpp"       // gos_GetViewport, Environment (drawableWidth/Height)
 #include "gos_render.h"     // graphics::make_current_context
@@ -2405,6 +2406,31 @@ void EditorInterface::update()
 	if ( !bThisIsInitialized )
 		return;
 
+	// Drain finished async editor tasks (terrain gen, etc.) and fire their
+	// main-thread result callbacks.  MUST run on the main thread; this is it.
+	EditorTaskRunner::PumpMainThread();
+
+#ifdef MC2_IMGUI
+	// An async Generate just applied new terrain (inside PumpMainThread above) ->
+	// re-seat the camera to the terrain centre and rebuild dependent UI. Same work
+	// the old blocking Generate path did inline; deferred here to the main thread.
+	if ( MapGeneratorDialog::TakePostGenerateApplied() )
+	{
+		// setPosition() derives z from land->getTerrainElevation(), placing the
+		// camera above the generated surface (blank-terrain y=0 is underground on
+		// hilly maps -> sky sphere at ground level + bad inverseProject picks).
+		if ( land )
+		{
+			eye->setPosition( Stuff::Vector3D(0.0f, 0.0f, 0.0f), false );
+			addBuildingsToNewMenu();
+			syncScrollBars();
+			initTacMap();
+		}
+		tacMap.UpdateMap();
+		PlaySound("SystemDefault", NULL, SND_ASYNC);
+	}
+#endif
+
 	// Deferred "Generate Map" (legacy MFC path — kept for non-ImGui builds).
 	if ( m_pendGenerateMission )
 	{
@@ -2420,39 +2446,15 @@ void EditorInterface::update()
 		MapGeneratorDialog::PendingAction act = MapGeneratorDialog::TakeAction();
 		if (act == MapGeneratorDialog::PendingAction::Preview)
 		{
-			SetBusyMode();
+			// Async: starts a background task and returns immediately (no UI block).
 			MapGeneratorDialog::ExecutePreview();
-			UnsetBusyMode();
-			// Don't return — let the rest of update() run.
 		}
 		else if (act == MapGeneratorDialog::PendingAction::Generate)
 		{
-			SetBusyMode();
-			eye->reset();
+			// Async: starts a background task and returns immediately. The terrain
+			// apply + camera/UI re-seat happen later via TakePostGenerateApplied()
+			// once the subprocess succeeds (see below).
 			MapGeneratorDialog::ExecuteGenerate();
-			UnsetBusyMode();
-			if (!MapGeneratorDialog::IsOpen())
-			{
-				// Re-seat camera to terrain center after generate.
-				// cameras.fit is absent for newly generated maps so the prior
-				// eye->init() approach was a silent no-op. setPosition() derives
-				// position.z from land->getTerrainElevation(), putting the camera
-				// above the generated terrain surface instead of at blank-terrain
-				// y=0 (which is underground on hilly generated maps). This fixes
-				// the sky sphere rendering at ground level and mech placement
-				// picks using incorrect inverseProject results.
-				if ( land )
-					eye->setPosition( Stuff::Vector3D(0.0f, 0.0f, 0.0f), false );
-				if ( land )
-				{
-					addBuildingsToNewMenu();
-					syncScrollBars();
-					initTacMap();
-				}
-				tacMap.UpdateMap();
-				PlaySound("SystemDefault", NULL, SND_ASYNC);
-			}
-			return;
 		}
 		else if (act == MapGeneratorDialog::PendingAction::LoadPreset)
 		{
@@ -4516,6 +4518,9 @@ void EditorInterface::renderToolbarImGui()
 	if (ImGui::Button("Mission Checklist", ImVec2(-1.f, 0.f)))
 		MissionValidator::Open();
 	MissionValidator::Draw();
+
+	// Async task monitor (terrain gen progress/cancel/log). Own window; no-op empty.
+	EditorTaskRunner::RenderImGui();
 
 	ImGui::Separator();
 

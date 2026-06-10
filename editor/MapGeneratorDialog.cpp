@@ -53,6 +53,7 @@
 
 #include "MapGeneratorDialog.h"
 #include "EditorData.h"    // EditorData::generateFromDialogParams declaration
+#include "EditorTaskRunner.h"  // async subprocess (Phase 1: no UI-thread blocking)
 
 #include <cstdio>
 #include <cstdlib>
@@ -110,10 +111,12 @@ struct DialogState {
 
     float maxElevation   = 600.f;
     float minElevation   = 0.f;
+    float meanHeight     = 0.5f; // 0..1 slider: controls elevation baseline
+    float variation      = 0.5f; // 0..1 slider: controls mountain + ridged amount
     float mountainAmount = 0.5f; // 0..1 slider; mapped to recipe [0.1..0.9]
     float ridgedAmount   = 0.3f; // 0..1 slider
     float grassLowland   = 0.5f;
-    float snowLine       = 0.7f;
+    float snowLine       = 1.0f; // Default to 1.0 (snow only at very top)
 
     unsigned long seed   = 0;    // 0 = randomise each run
     bool  randomSeed     = true;
@@ -131,6 +134,10 @@ struct DialogState {
 };
 
 static DialogState s_state;
+
+// Set true by the async Generate success callback (main thread) once terrain has
+// been applied; consumed once by EditorInterface::update() to re-seat camera + UI.
+static bool s_postGenerateApplied = false;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -158,8 +165,13 @@ static std::string BuildRecipeJSON(bool preview) {
 
     // Recipe "size" is the VERTEX count so the generator produces the right grid.
     int sideN    = EditorData::MapSizeToVertexSide(s_state.mapSizeIndex);
-    float mnt    = SliderToMountainAmount(s_state.mountainAmount);
-    float ridged = SliderToRidgedAmount(s_state.ridgedAmount);
+
+    // Derive mountain and ridged amounts from variation slider
+    float mnt    = SliderToMountainAmount(s_state.variation);
+    float ridged = SliderToRidgedAmount(s_state.variation);
+
+    // Derive minElevation from meanHeight slider (0..1 maps to 0..500)
+    float minElev = s_state.meanHeight * 500.f;
 
     char buf[2048];
     snprintf(buf, sizeof(buf),
@@ -184,7 +196,7 @@ static std::string BuildRecipeJSON(bool preview) {
         k_biomeKeys[s_state.biomeIndex],
         seed,
         (double)s_state.maxElevation,
-        (double)s_state.minElevation,
+        (double)minElev,
         (double)mnt,
         (double)ridged,
         (double)s_state.grassLowland,
@@ -205,23 +217,17 @@ static bool WriteRecipeFile(const std::string& json) {
     return true;
 }
 
-// Run the terrain generator (blocking).
-// preview=true adds --preview flag (fast, ~2-3s).
-// Returns true if the process exited 0.
-static bool RunTerrainGen(bool preview) {
+// Build the terrain-generator command line.  Launches Python UNBUFFERED (-u) so
+// PROGRESS lines reach the task runner's pipe immediately instead of being held in
+// stdio buffers until exit.  preview=true adds --preview (fast, ~2-3s).
+static std::string BuildTerrainGenCmd(bool preview) {
     const char* recipeArg = "terrain_gen_out\\genmap_recipe.json";
     const char* outArg    = "terrain_gen_out";
     char cmd[1024];
-    if (preview) {
-        snprintf(cmd, sizeof(cmd),
-            "py -3 tools\\terrain_gen\\terrain_gen.py \"%s\" --out \"%s\" --preview",
-            recipeArg, outArg);
-    } else {
-        snprintf(cmd, sizeof(cmd),
-            "py -3 tools\\terrain_gen\\terrain_gen.py \"%s\" --out \"%s\"",
-            recipeArg, outArg);
-    }
-    return (system(cmd) == 0);
+    snprintf(cmd, sizeof(cmd),
+        "py -3 -u tools\\terrain_gen\\terrain_gen.py \"%s\" --out \"%s\"%s",
+        recipeArg, outArg, preview ? " --preview" : "");
+    return std::string(cmd);
 }
 
 // Free the existing preview texture (if any).
@@ -369,17 +375,12 @@ void MapGeneratorDialog::Draw() {
     ImGui::Indent();
 
     ImGui::SetNextItemWidth(280.f * sc);
-    ImGui::SliderFloat("Min Elevation",  &s_state.minElevation, 0.f, 500.f, "%.0f");
+    ImGui::SliderFloat("Mean Height (baseline)",  &s_state.meanHeight, 0.f, 1.f, "%.2f");
     ImGui::SetNextItemWidth(280.f * sc);
-    ImGui::SliderFloat("Max Elevation",  &s_state.maxElevation, 0.f, 500.f, "%.0f");
-    // Keep min <= max
-    if (s_state.minElevation > s_state.maxElevation)
-        s_state.minElevation = s_state.maxElevation;
+    ImGui::SliderFloat("Peak Height (max)",  &s_state.maxElevation, 100.f, 600.f, "%.0f");
 
     ImGui::SetNextItemWidth(280.f * sc);
-    ImGui::SliderFloat("Flat <-> Mountainous", &s_state.mountainAmount, 0.f, 1.f, "%.2f");
-    ImGui::SetNextItemWidth(280.f * sc);
-    ImGui::SliderFloat("Ridged Noise",   &s_state.ridgedAmount,   0.f, 1.f, "%.2f");
+    ImGui::SliderFloat("Variation (flat to mountainous)", &s_state.variation, 0.f, 1.f, "%.2f");
     ImGui::Unindent();
 
     ImGui::Separator();
@@ -469,16 +470,21 @@ void MapGeneratorDialog::Draw() {
         }
     }
 
+    // Disable Preview/Generate while an async generation task is in flight so the
+    // user cannot launch a second overlapping run (apply order would be ambiguous).
+    const bool taskBusy = EditorTaskRunner::HasActiveTasks();
+    if (taskBusy) ImGui::BeginDisabled();
     ImGui::SameLine();
     if (ImGui::Button("Preview (~3s)", ImVec2(120.f * sc, 0))) {
-        snprintf(s_state.statusMsg, sizeof(s_state.statusMsg), "Running preview...");
+        snprintf(s_state.statusMsg, sizeof(s_state.statusMsg), "Queuing preview...");
         s_state.pendingAction = PendingAction::Preview;
     }
     ImGui::SameLine();
     if (ImGui::Button("Generate", ImVec2(100.f * sc, 0))) {
-        snprintf(s_state.statusMsg, sizeof(s_state.statusMsg), "Generating (please wait)...");
+        snprintf(s_state.statusMsg, sizeof(s_state.statusMsg), "Queuing generate...");
         s_state.pendingAction = PendingAction::Generate;
     }
+    if (taskBusy) ImGui::EndDisabled();
     ImGui::SameLine();
     if (ImGui::Button("Cancel", ImVec2(80.f * sc, 0))) {
         Close();
@@ -491,51 +497,101 @@ void MapGeneratorDialog::Draw() {
 // Deferred execution (called from EditorInterface::update, not inside ImGui)
 // ---------------------------------------------------------------------------
 
+bool MapGeneratorDialog::IsTaskActive() {
+    return EditorTaskRunner::HasActiveTasks();
+}
+
+bool MapGeneratorDialog::TakePostGenerateApplied() {
+    bool v = s_postGenerateApplied;
+    s_postGenerateApplied = false;
+    return v;
+}
+
+// Preview: run the generator (async) then load the thumbnail PNG on success.
+// The success callback runs on the MAIN thread (glGenTextures is main-thread only).
 void MapGeneratorDialog::ExecutePreview() {
+    if (EditorTaskRunner::HasActiveTasks()) {
+        snprintf(s_state.statusMsg, sizeof(s_state.statusMsg),
+            "A generation task is already running.");
+        return;
+    }
     std::string json = BuildRecipeJSON(/*preview=*/true);
     if (!WriteRecipeFile(json)) {
         snprintf(s_state.statusMsg, sizeof(s_state.statusMsg),
             "Preview failed: could not write recipe JSON");
         return;
     }
-    bool ok = RunTerrainGen(/*preview=*/true);
-    if (!ok) {
+
+    EditorTaskRunner::TaskSpec spec;
+    spec.name        = "Preview terrain";
+    spec.commandLine = BuildTerrainGenCmd(/*preview=*/true);
+    spec.onSuccessMainThread = [](const EditorTaskRunner::TaskResult&) {
+        LoadPreviewPNG();   // main thread: creates GL texture, sets statusMsg
+    };
+    spec.onFailureMainThread = [](const EditorTaskRunner::TaskResult& r) {
         snprintf(s_state.statusMsg, sizeof(s_state.statusMsg),
-            "Preview failed: terrain_gen.py returned error "
-            "(needs py -3 + tools/terrain_gen/ available)");
-        return;
-    }
-    LoadPreviewPNG();
+            "Preview failed (exit %d). See Task Monitor log.", r.exitCode);
+    };
+    spec.onCancelMainThread = []() {
+        snprintf(s_state.statusMsg, sizeof(s_state.statusMsg), "Preview cancelled.");
+    };
+    EditorTaskRunner::StartTask(spec);
+    snprintf(s_state.statusMsg, sizeof(s_state.statusMsg),
+        "Running preview in background... (Task Monitor)");
 }
 
+// Generate: run the generator (async); on success apply terrain to the editor on
+// the MAIN thread (generateFromDialogParams touches GL/editor state).  Outputs are
+// applied ONLY when the subprocess exits 0 -- cancel/failure leaves the map untouched.
+//
+// TODO(phase1-atomicity): the generator writes directly into terrain_gen_out/.
+// A cancel mid-write can leave partial files there, but they are never APPLIED (no
+// success callback), and the next successful run overwrites them.  A future pass
+// should generate into a temp dir and atomic-rename into terrain_gen_out/ on success.
 void MapGeneratorDialog::ExecuteGenerate() {
+    if (EditorTaskRunner::HasActiveTasks()) {
+        snprintf(s_state.statusMsg, sizeof(s_state.statusMsg),
+            "A generation task is already running.");
+        return;
+    }
     std::string json = BuildRecipeJSON(/*preview=*/false);
     if (!WriteRecipeFile(json)) {
         snprintf(s_state.statusMsg, sizeof(s_state.statusMsg),
             "Generate failed: could not write recipe JSON");
         return;
     }
-    bool ok = RunTerrainGen(/*preview=*/false);
-    if (!ok) {
-        snprintf(s_state.statusMsg, sizeof(s_state.statusMsg),
-            "Generate failed: terrain_gen.py returned error");
-        return;
-    }
-    // Apply to editor via EditorData.  mapSizeIndex maps 1:1 with
-    // genMapSizeToN() indices in EditorData.cpp; terrain=0 is unused when
-    // s_genColormapName is set (the generator writes its own burnin colormap).
-    bool applied = EditorData::generateFromDialogParams(
-        s_state.mapSizeIndex,
-        k_biomeKeys[s_state.biomeIndex]);
-    if (!applied) {
-        snprintf(s_state.statusMsg, sizeof(s_state.statusMsg),
-            "Generate succeeded but terrain apply failed.");
-    } else {
-        // Mark MOVE dirty — rebuild fires in EditorInterface::update() after this
-        // frame, once terrain/overlay/object state has fully settled.
+
+    // Snapshot the params NOW so later slider changes can't alter this run's apply.
+    const int   sizeIdx = s_state.mapSizeIndex;
+    std::string biome   = k_biomeKeys[s_state.biomeIndex];
+
+    EditorTaskRunner::TaskSpec spec;
+    spec.name        = "Generate terrain";
+    spec.commandLine = BuildTerrainGenCmd(/*preview=*/false);
+    spec.onSuccessMainThread = [sizeIdx, biome](const EditorTaskRunner::TaskResult&) {
+        // mapSizeIndex maps 1:1 with genMapSizeToN() indices in EditorData.cpp;
+        // the generator wrote its own burnin colormap into terrain_gen_out/.
+        bool applied = EditorData::generateFromDialogParams(sizeIdx, biome.c_str());
+        if (!applied) {
+            snprintf(s_state.statusMsg, sizeof(s_state.statusMsg),
+                "Generate succeeded but terrain apply failed.");
+            return;
+        }
         EditorData::MarkMoveDataDirty();
+        s_postGenerateApplied = true;   // EditorInterface::update() reseats camera/UI
         Close();
-    }
+    };
+    spec.onFailureMainThread = [](const EditorTaskRunner::TaskResult& r) {
+        snprintf(s_state.statusMsg, sizeof(s_state.statusMsg),
+            "Generate failed (exit %d). See Task Monitor log.", r.exitCode);
+    };
+    spec.onCancelMainThread = []() {
+        snprintf(s_state.statusMsg, sizeof(s_state.statusMsg),
+            "Generate cancelled (map unchanged).");
+    };
+    EditorTaskRunner::StartTask(spec);
+    snprintf(s_state.statusMsg, sizeof(s_state.statusMsg),
+        "Generating in background... (Task Monitor)");
 }
 
 // Load a pre-baked flat preset produced by tools/terrain_gen/gen_presets.py.

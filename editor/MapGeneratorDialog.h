@@ -43,11 +43,21 @@ namespace MapGeneratorDialog {
     PendingAction TakeAction();
 
     // Execute the pending action (called from update(), outside ImGui pass).
+    // Preview/Generate START an async EditorTaskRunner task and return immediately;
+    // the terrain apply runs later on the main thread from the task's success
+    // callback (drained by EditorTaskRunner::PumpMainThread()).
     void ExecutePreview();
     void ExecuteGenerate();
     // Load a pre-baked flat preset (no Python run).
     // Checks terrain_gen_presets/<biome>_<sizeN>/ for pre-generated files.
     void ExecuteLoadPreset();
+
+    // True exactly once after an async Generate has successfully applied terrain,
+    // so EditorInterface::update() can re-seat the camera + rebuild UI. Clears on read.
+    bool TakePostGenerateApplied();
+
+    // True while an async generate/preview task is in flight (disables re-entry).
+    bool IsTaskActive();
 
 } // namespace MapGeneratorDialog
 
