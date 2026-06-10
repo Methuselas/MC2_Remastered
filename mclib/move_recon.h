@@ -48,6 +48,32 @@ extern uint64_t g_moveRecon_al_maxNodes;      // worst single-call node count
 extern uint64_t g_moveRecon_al_goalFound;     // local searches that found goal
 extern uint64_t g_moveRecon_al_goalMissed;    // local searches that flooded to cutoff
 
+// MOVE-CHUNK-PATH SHADOW (recon only, no behavior change). For each expensive
+// local A* call, tests the HPA* premise: does the final cell path stay inside a
+// coarse chunk corridor? Cheap rectangular proxy first (no chunk graph yet):
+// compares the popped-cell bbox vs the final-path bbox (over-exploration ratio)
+// and measures how many chunks the path strays beyond the start<->goal chunk
+// rectangle (overflow). overflow==0 => a trivial rectangle corridor already
+// contains the path; large overflow => a real chunk A* corridor is needed.
+// Gated on g_moveReconEnabled; threshold-filtered to the expensive tail.
+extern uint64_t g_chunkShadow_calls;       // expensive local calls sampled
+extern uint64_t g_chunkShadow_inside0;     // path within start-goal chunk rect
+extern uint64_t g_chunkShadow_inside1;     // ... within rect +/-1 chunk
+extern uint64_t g_chunkShadow_inside2;     // ... within rect +/-2 chunks
+extern uint64_t g_chunkShadow_sum_poppedBox; // sum of popped-bbox cell areas
+extern uint64_t g_chunkShadow_sum_pathBox;   // sum of path-bbox cell areas
+extern uint64_t g_chunkShadow_sum_nodes;     // sum nodes popped (expensive only)
+extern uint64_t g_chunkShadow_sum_pathLen;   // sum path lengths
+extern uint64_t g_chunkShadow_maxOverflow;   // worst single-call chunk overflow
+
+// Sample one local-A* call. No-op when off or nodes below threshold. Coords are
+// LOCAL move-map cell indices (consistent within a call). pathLen<=0 = goal
+// missed (no path; path bbox ignored).
+void moveReconChunkSample(int startR, int startC, int goalR, int goalC,
+                          unsigned long long nodes, int pathLen,
+                          int poppedMinR, int poppedMaxR, int poppedMinC, int poppedMaxC,
+                          int pathMinR, int pathMaxR, int pathMinC, int pathMaxC);
+
 // Per-frame accumulators (reset each frame by moveReconFrameTick).
 extern uint64_t g_moveRecon_frame_ctrl_ns;
 extern uint64_t g_moveRecon_frame_pathlock_ns;

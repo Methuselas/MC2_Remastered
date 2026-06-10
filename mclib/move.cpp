@@ -5259,6 +5259,9 @@ long MoveMap::calcPath (MovePathPtr path, Stuff::Vector3D* goalWorldPos, int* go
 
 	MoveReconScope _recon_al(&g_moveRecon_astar_local_ns, &g_moveRecon_frame_astar_local_ns);
 	MoveReconNodeCounter _aln;  // per-call local node-expansion size (Warrior.Path 2ms layer)
+	// MOVE_CHUNK_SHADOW: popped-cell bbox (over-exploration vs final path).
+	int _shPMinR = 0, _shPMaxR = 0, _shPMinC = 0, _shPMaxC = 0;
+	bool _shPFirst = true;
 	if (g_moveReconEnabled) g_moveRecon_astar_local_calls++;
 
 	#ifdef TIME_PATH
@@ -5349,6 +5352,13 @@ long MoveMap::calcPath (MovePathPtr path, Stuff::Vector3D* goalWorldPos, int* go
 		_aln.n++;
 		bestRow = bestPQNode.row;
 		bestCol = bestPQNode.col;
+		if (g_moveReconEnabled) {
+			if (_shPFirst) { _shPMinR = _shPMaxR = bestRow; _shPMinC = _shPMaxC = bestCol; _shPFirst = false; }
+			else {
+				if (bestRow < _shPMinR) _shPMinR = bestRow; else if (bestRow > _shPMaxR) _shPMaxR = bestRow;
+				if (bestCol < _shPMinC) _shPMinC = bestCol; else if (bestCol > _shPMaxC) _shPMaxC = bestCol;
+			}
+		}
 		MoveMapNodePtr bestMapNode = &map[bestPQNode.id];
 		bestMapNode->clearFlag(MOVEFLAG_OPEN);
 
@@ -5521,6 +5531,8 @@ long MoveMap::calcPath (MovePathPtr path, Stuff::Vector3D* goalWorldPos, int* go
 		int curRow = goalCell[0] = bestRow;
 		int curCol = goalCell[1] = bestCol;
 		int numCells = 0;
+		// MOVE_CHUNK_SHADOW: final-path cell bbox (seed at goal end).
+		int _shFMinR = bestRow, _shFMaxR = bestRow, _shFMinC = bestCol, _shFMaxC = bestCol;
 		while ((curRow != startR) || (curCol != startC)) {
 			numCells += 1;
 			int cellOffsetIndex = (map[mapRowStartTable[curRow] + curCol].parent << 1);
@@ -5528,7 +5540,18 @@ long MoveMap::calcPath (MovePathPtr path, Stuff::Vector3D* goalWorldPos, int* go
 			//	OutputDebugString("PathFinder: whoops\n");
 			curRow += cellShift[cellOffsetIndex++];
 			curCol += cellShift[cellOffsetIndex];
+			if (g_moveReconEnabled) {
+				if (curRow < _shFMinR) _shFMinR = curRow; else if (curRow > _shFMaxR) _shFMaxR = curRow;
+				if (curCol < _shFMinC) _shFMinC = curCol; else if (curCol > _shFMaxC) _shFMaxC = curCol;
+			}
 		}
+
+		// MOVE_CHUNK_SHADOW: test whether this final path fits a coarse chunk
+		// corridor (rectangular proxy). No-op when off / below node threshold.
+		if (g_moveReconEnabled)
+			moveReconChunkSample(startR, startC, goalR, goalC, _aln.n, numCells,
+				_shPMinR, _shPMaxR, _shPMinC, _shPMaxC,
+				_shFMinR, _shFMaxR, _shFMinC, _shFMaxC);
 
 		//---------------------------------------------------------------
 		// If our goal is a door, the path will be one step longer, since
