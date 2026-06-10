@@ -14,12 +14,16 @@
 #include "Camera.h"
 #include "Terrain.h"
 #include "FoliageRender.h"
+#include "vertex.h"                                   // PostcompVertex (.elevation/.water)
+#include "../GameOS/gameos/gos_terrain_indirect.h"    // IsDenseRecipeReady()
 
 #ifdef MC2_IMGUI
 #include "imgui.h"
 #endif
 
 #include <math.h>
+#include <float.h>
+#include <stdio.h>
 #include <vector>
 
 // The editor's terrain instance (same global ScatterBrush/StampBrush use).
@@ -144,6 +148,115 @@ namespace
 		}
 	}
 
+	// --- Terrain Probe (read-only instrumentation) ------------------------------
+	// Proves WHERE generated elevations are lost by comparing, in the SAME running
+	// editor session, three independent height sources + the water classification.
+	struct HeightStats { bool valid; long count; float mn, mx, mean; };
+	struct ProbeData
+	{
+		bool        scanned       = false;
+		long        side          = 0;       // realVerticesMapSide
+		long        expectVerts   = 0;       // side*side
+		// (1) the generator's elevation file (if present on disk)
+		bool        fileFound     = false;
+		HeightStats file          = { false, 0, 0, 0, 0 };
+		// (2) terrain vertex storage written by setVertexHeight (land->getVertexHeight)
+		HeightStats vert          = { false, 0, 0, 0, 0 };
+		// (3) the postcomp render/water mesh the renderer + recalcWater read
+		HeightStats mesh          = { false, 0, 0, 0, 0 };
+		long        waterVerts    = 0;
+		long        dryVerts      = 0;
+		float       waterElev     = 0.0f;
+		// readiness flags
+		bool        hasColormap   = false;   // land->terrainTextures2 != NULL
+		bool        recipeReady   = false;   // gos_terrain_indirect::IsDenseRecipeReady()
+	};
+	ProbeData s_probe;
+	const char* kProbeElevPath = "terrain_gen_out\\genmap.elev.r32";
+
+	void statsAccum( HeightStats& s, float v )
+	{
+		if ( !s.valid ) { s.valid = true; s.mn = s.mx = v; s.mean = 0.f; s.count = 0; }
+		if ( v < s.mn ) s.mn = v;
+		if ( v > s.mx ) s.mx = v;
+		s.mean += v;          // sum; divided at the end
+		++s.count;
+	}
+	void statsFinish( HeightStats& s ) { if ( s.valid && s.count > 0 ) s.mean /= (float)s.count; }
+
+	void rescanTerrainHeights()
+	{
+		s_probe = ProbeData();
+		s_probe.scanned = true;
+		if ( !terrainLoaded() )
+			return;
+
+		const long side = Terrain::realVerticesMapSide;
+		const long n    = side * side;
+		s_probe.side        = side;
+		s_probe.expectVerts = n;
+		s_probe.waterElev   = Terrain::waterElevation;
+		s_probe.hasColormap = ( land->terrainTextures2 != NULL );
+		s_probe.recipeReady = gos_terrain_indirect::IsDenseRecipeReady();
+
+		// (1) elevation file on disk (the last generated one, if present).
+		if ( FILE* ef = fopen( kProbeElevPath, "rb" ) )
+		{
+			s_probe.fileFound = true;
+			float buf;
+			while ( fread( &buf, sizeof(float), 1, ef ) == 1 )
+				if ( buf == buf )                       // NaN guard
+					statsAccum( s_probe.file, buf );
+			statsFinish( s_probe.file );
+			fclose( ef );
+		}
+
+		// (2) terrain vertex storage (what setVertexHeight wrote).
+		for ( long i = 0; i < n; ++i )
+		{
+			float h = land->getVertexHeight( (int)i );
+			if ( h == h ) statsAccum( s_probe.vert, h );
+		}
+		statsFinish( s_probe.vert );
+
+		// (3) postcomp render/water mesh (what the renderer + recalcWater read).
+		if ( Terrain::mapData )
+		{
+			PostcompVertexPtr verts = Terrain::mapData->getData();
+			if ( verts )
+			{
+				for ( long i = 0; i < n; ++i )
+				{
+					const PostcompVertex& v = verts[i];
+					if ( v.elevation == v.elevation ) statsAccum( s_probe.mesh, v.elevation );
+					if ( v.water ) ++s_probe.waterVerts; else ++s_probe.dryVerts;
+				}
+				statsFinish( s_probe.mesh );
+			}
+		}
+
+		// Machine-readable line (smoke/DbgView). One per rescan; cheap.
+		char line[512];
+		snprintf( line, sizeof(line),
+			"TERRAIN_PROBE side=%ld expect=%ld "
+			"file_found=%d file_min=%.1f file_max=%.1f file_mean=%.1f file_n=%ld "
+			"vert_min=%.1f vert_max=%.1f vert_mean=%.1f "
+			"mesh_min=%.1f mesh_max=%.1f mesh_mean=%.1f "
+			"water=%ld dry=%ld waterElev=%.1f colormap=%d recipeReady=%d\n",
+			s_probe.side, s_probe.expectVerts,
+			s_probe.fileFound ? 1 : 0,
+			s_probe.file.valid ? s_probe.file.mn : 0.f, s_probe.file.valid ? s_probe.file.mx : 0.f,
+			s_probe.file.valid ? s_probe.file.mean : 0.f, s_probe.file.count,
+			s_probe.vert.valid ? s_probe.vert.mn : 0.f, s_probe.vert.valid ? s_probe.vert.mx : 0.f,
+			s_probe.vert.valid ? s_probe.vert.mean : 0.f,
+			s_probe.mesh.valid ? s_probe.mesh.mn : 0.f, s_probe.mesh.valid ? s_probe.mesh.mx : 0.f,
+			s_probe.mesh.valid ? s_probe.mesh.mean : 0.f,
+			s_probe.waterVerts, s_probe.dryVerts, s_probe.waterElev,
+			s_probe.hasColormap ? 1 : 0, s_probe.recipeReady ? 1 : 0 );
+		printf( "%s", line ); fflush( stdout );
+		OutputDebugStringA( line );
+	}
+
 	// Water-plane bounds rectangle (4 edges) at exactly waterElevation.
 	void drawWaterBounds( Camera* eye )
 	{
@@ -248,6 +361,64 @@ void RenderImGui()
 		ImGui::Separator();
 		ImGui::Text( "Foliage instances: %d", FoliageRender::Count() );
 		ImGui::Text( "Foliage preview: %s", FoliageRender::Visible() ? "visible" : "hidden" );
+	}
+
+	// --- Terrain Probe ----------------------------------------------------------
+	// Read-only: compares the three height sources in the SAME session so we can see
+	// exactly where generated elevations are lost (file -> vertex store -> render mesh).
+	ImGui::Separator();
+	if ( ImGui::CollapsingHeader( "Terrain Probe" ) )
+	{
+		// Manual rescan + auto-refresh once per second while expanded.
+		bool doScan = ImGui::Button( "Rescan Terrain Heights" );
+		static double s_lastScan = -1.0;
+		double now = ImGui::GetTime();
+		if ( !s_probe.scanned || now - s_lastScan > 1.0 ) { doScan = true; }
+		if ( doScan ) { rescanTerrainHeights(); s_lastScan = now; }
+
+		auto row = []( const char* label, const HeightStats& s ) {
+			if ( s.valid )
+				ImGui::Text( "%-18s min=%.1f  max=%.1f  mean=%.1f  n=%ld",
+					label, s.mn, s.mx, s.mean, s.count );
+			else
+				ImGui::TextDisabled( "%-18s (n/a)", label );
+		};
+
+		if ( !s_probe.scanned || s_probe.side == 0 )
+		{
+			ImGui::TextDisabled( "(no terrain loaded)" );
+		}
+		else
+		{
+			ImGui::Text( "Recipe/grid side: %ld   expect verts: %ld",
+				s_probe.side, s_probe.expectVerts );
+			ImGui::Text( "Elev file: %s%s", kProbeElevPath,
+				s_probe.fileFound ? "" : "  (NOT FOUND)" );
+			row( "1 file elev",   s_probe.file );
+			row( "2 vertex store", s_probe.vert );
+			row( "3 render mesh",  s_probe.mesh );
+			ImGui::Text( "Water elev: %.1f   water verts: %ld   dry verts: %ld",
+				s_probe.waterElev, s_probe.waterVerts, s_probe.dryVerts );
+			ImGui::Text( "colormap set: %s   recipe ready: %s",
+				s_probe.hasColormap ? "yes" : "NO",
+				s_probe.recipeReady ? "yes" : "NO" );
+
+			// Inline verdict hint -- where the chain first diverges.
+			if ( s_probe.file.valid && s_probe.vert.valid &&
+			     ( fabsf( s_probe.file.mx - s_probe.vert.mx ) > 2.0f ||
+			       fabsf( s_probe.file.mn - s_probe.vert.mn ) > 2.0f ) )
+				ImGui::TextColored( ImVec4(1,0.5f,0.5f,1),
+					"-> lost BEFORE vertex store (file != getVertexHeight)" );
+			else if ( s_probe.vert.valid && s_probe.mesh.valid &&
+			          ( fabsf( s_probe.vert.mx - s_probe.mesh.mx ) > 2.0f ||
+			            fabsf( s_probe.vert.mn - s_probe.mesh.mn ) > 2.0f ) )
+				ImGui::TextColored( ImVec4(1,0.5f,0.5f,1),
+					"-> lost BETWEEN vertex store and render mesh" );
+			else if ( s_probe.mesh.valid && s_probe.waterElev > s_probe.mesh.mn - 0.5f &&
+			          s_probe.waterVerts > 0 && s_probe.mesh.mn > s_probe.waterElev + 1.0f )
+				ImGui::TextColored( ImVec4(1,0.5f,0.5f,1),
+					"-> heights OK but water flags wrong (recalcWater source/units)" );
+		}
 	}
 
 	ImGui::End();
