@@ -588,41 +588,6 @@ extern "C" void gos_tube_ribbon_flush_deferred(void) {
         return;
     }
 
-    // MC2_TUBE_DEFER_PROBE=1: one-shot dump of the inherited GL state at the
-    // deferred-flush point (diagnostics for the "tubes draw but invisible" bug).
-    {
-        static bool s_probed = false;
-        const char* pe = std::getenv("MC2_TUBE_DEFER_PROBE");
-        if (!s_probed && pe && pe[0] == '1') {
-            s_probed = true;
-            GLint fbo = 0; glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fbo);
-            GLint dbN = 0, db0 = 0;
-            for (int i = 0; i < 8; ++i) {
-                GLint d = GL_NONE; glGetIntegerv(GL_DRAW_BUFFER0 + i, &d);
-                if (i == 0) db0 = d;
-                if (d != GL_NONE) ++dbN;
-            }
-            const float* mvp = gos_GetTerrainMVPMat4();
-            GLint df = 0; glGetIntegerv(GL_DEPTH_FUNC, &df);
-            GLboolean dt = glIsEnabled(GL_DEPTH_TEST);
-            GLint dm = 0; glGetIntegerv(GL_DEPTH_WRITEMASK, &dm);
-            GLint vp[4] = {0,0,0,0}; glGetIntegerv(GL_VIEWPORT, vp);
-            GLboolean cm[4] = {0,0,0,0}; glGetBooleanv(GL_COLOR_WRITEMASK, cm);
-            GLboolean sc = glIsEnabled(GL_SCISSOR_TEST);
-            GLboolean bl = glIsEnabled(GL_BLEND);
-            std::fprintf(stderr,
-                "[TUBE_DEFER_PROBE] fbo=%d drawBufs=%d db0=0x%X mvp=%p "
-                "row0=[%g %g %g %g] depthTest=%d depthFunc=0x%X depthMask=%d "
-                "viewport=[%d %d %d %d] colorMask=[%d%d%d%d] scissor=%d blend=%d queueN=%zu\n",
-                fbo, dbN, (unsigned)db0, (const void*)mvp,
-                mvp ? mvp[0] : 0.f, mvp ? mvp[1] : 0.f, mvp ? mvp[2] : 0.f, mvp ? mvp[3] : 0.f,
-                (int)dt, (unsigned)df, (int)dm, vp[0], vp[1], vp[2], vp[3],
-                (int)cm[0], (int)cm[1], (int)cm[2], (int)cm[3], (int)sc, (int)bl,
-                s_ribbonQueue.size());
-            std::fflush(stderr);
-        }
-    }
-
     // ── State save (same set as the immediate flush) ───────────────────
     GLint savedProgram   = 0; glGetIntegerv(GL_CURRENT_PROGRAM, &savedProgram);
     GLint savedVAO       = 0; glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &savedVAO);

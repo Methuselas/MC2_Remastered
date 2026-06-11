@@ -6,6 +6,9 @@
 #include"particles/spawn.h"
 
 #include<cstdio>   // VFX-TUBE-PROFILE-ORACLE-1 diagnostics
+#include<cstdlib>  // MC2_TUBE_PROFILE_LOG getenv
+#include<map>      // MC2_TUBE_PROFILE_LOG per-spec peak tracking
+#include<string>
 
 // MC2_VFX_ORACLE_TUBE slice 1: ribbon mesh submit bridge (GameOS-side GL).
 // Declared extern "C" here to avoid pulling GameOS headers into mclib.
@@ -1356,6 +1359,28 @@ void gosFX::Tube::Draw(DrawInfo *info)
 		MidLevelRenderer::DrawEffectInformation dInfo;
 		dInfo.effect = m_mesh;
 		Specification *spec = GetSpecification();
+
+		// MC2_TUBE_PROFILE_LOG=1: log each tube spec's PEAK m_activeProfileCount.
+		// Placed BEFORE the oracle/legacy split so the count is path-independent —
+		// run oracle ON vs OFF and compare to test whether enabling the oracle
+		// changes profile growth (execution interaction) vs pure rendering diff.
+		{
+			static const bool s_tpOn = (std::getenv("MC2_TUBE_PROFILE_LOG") != nullptr);
+			if (s_tpOn) {
+				static std::map<std::string,int> s_maxBySpec;
+				const char* nm = (const char*)spec->m_name;
+				std::string key = nm ? nm : "?";
+				int& mx = s_maxBySpec[key];
+				if (m_activeProfileCount > mx) {
+					mx = m_activeProfileCount;
+					std::fprintf(stderr,
+						"[TUBE_PROFILE] spec=%s type=%d activeMax=%d maxProf=%d\n",
+						key.c_str(), (int)spec->m_profileType,
+						m_activeProfileCount, (int)spec->m_maxProfileCount);
+					std::fflush(stderr);
+				}
+			}
+		}
 		Check_Object(spec);
 		dInfo.state.Combine(info->m_state, spec->m_state);
 		dInfo.clippingFlags = info->m_clippingFlags;
