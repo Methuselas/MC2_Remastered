@@ -3808,7 +3808,15 @@ void Terrain::geometry (void)
 			if (skipSetup)
 				++quadsSkipped;
 			else
+#ifdef MC2_IS_EDITOR
 				currentQuad->setupTextures();
+#else
+				// 8z-B: setupTextures is compiled out of the game build. The GPU path
+				// is armed from frame 1 (so !skipSetup is effectively never reached in
+				// production); if it ever is, there is intentionally no legacy fallback
+				// (the loud-fail T16/T19 path surfaces a real GL/init failure).
+				++quadsSkipped;
+#endif
 			if (s_waterNarrowOn) {
 				const TerrainQuad& q = *currentQuad;
 				if (q.vertices[0] && q.vertices[1] &&

@@ -703,6 +703,13 @@ void TerrainQuad::initMineTextureHandles (void)
 	}
 }
 
+#ifdef MC2_IS_EDITOR
+// 8z-B editor quarantine: the legacy per-quad texture setup is retained ONLY in the
+// editor build (it backs the passability-grid drawLine path via clipInfo). The game
+// build compiles it out -- the GPU-indirect/chunk terrain path is armed from frame 1
+// (FASTPATH proof: 0 warmup drops), so there is no legacy fallback to draw, and a hard
+// GL/init failure is surfaced loudly by ForceDisableArmingForProcess (T16/T19 loud-fail).
+// Mine texture handles load independently via TerrainQuad::initMineTextureHandles (A5).
 void TerrainQuad::setupTextures (void)
 {
 	CostSplitSetupTotalScope _csSetup; // 1A-alt Slice 0 follow-up — full-function bucket
@@ -1327,6 +1334,7 @@ void TerrainQuad::setupTextures (void)
 	}
 	} // close CostSplitWaterVertProjScope (1A-alt Slice 0)
 }
+#endif // MC2_IS_EDITOR (8z-B: setupTextures gated to editor build)
 
 // Terrain/water NDC depth bias: SINGLE SOURCE OF TRUTH is now
 // mclib/terrain_depth_bias.h (+ its lockstep GLSL sibling). These legacy
