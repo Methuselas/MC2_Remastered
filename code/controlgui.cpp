@@ -7,6 +7,7 @@ controlGui.cpp			: Implementation of the controlGui component.
 
 #include"controlgui.h"
 #include"tacticaloverview.h"  // Tactical Overview: strategic-icon overlay
+#include"contact.h"           // Tactical Overview: friendly sensor coverage tint
 #include"team.h"
 #include"gamesound.h"
 #include"comndr.h"
@@ -306,6 +307,79 @@ bool ControlGui::animateTacMap (int buttonId,float timeToScroll,long numFlashes)
 	return tacMap.animate(abs(buttonId), numFlashes);
 }
 
+// Tactical Overview friendly-coverage tint: darken the whole battlefield
+// slightly EXCEPT where friendly sensors have line of sight (inverted fog).
+// Screen-cell grid; each cell maps to a ground point via the O(1)
+// screenToGroundPlaneApprox, tested in WORLD space against friendly sensor
+// ranges. Reliable (plain dark quads), no stencil / RTT.
+static void renderOverviewCoverageTint( Camera* eye, float alpha )
+{
+	if ( !eye || alpha <= 0.0f || !Team::home )
+		return;
+
+	struct Cov { float x, y, r; };
+	Cov cov[256];
+	int nc = 0;
+	TeamSensorSystem* sys = SensorManager ? SensorManager->getTeamSensor( Team::home->getId() ) : 0;
+	if ( sys )
+		for ( int j = 0; j < sys->numSensors && nc < 256; ++j )
+		{
+			SensorSystem* ps = sys->sensors[j];
+			if ( !ps || ps->broken ) continue;
+			float r = ps->getRange();
+			if ( r < 1.0f || !ps->owner || ps->owner->isDestroyed() ) continue;
+			Stuff::Vector3D p = ps->owner->getPosition();
+			cov[nc].x = p.x; cov[nc].y = p.y; cov[nc].r = r; nc++;
+		}
+
+	const float D    = 0.30f * alpha;	// max darkness in unsighted areas
+	const int   sw   = Environment.screenWidth;
+	const int   sh   = Environment.screenHeight;
+	const int   cell = 28;
+
+	gos_SetRenderState( gos_State_Texture, 0 );
+	gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_AlphaInvAlpha );
+	gos_SetRenderState( gos_State_AlphaTest, 0 );
+	gos_SetRenderState( gos_State_ZCompare, 0 );
+	gos_SetRenderState( gos_State_ZWrite, 0 );
+
+	bool prevExempt = gos_GetHudScaleExempt();
+	gos_SetHudScaleExempt( true );
+
+	for ( int gy = 0; gy < sh; gy += cell )
+		for ( int gx = 0; gx < sw; gx += cell )
+		{
+			Stuff::Vector3D w;
+			if ( !eye->screenToGroundPlaneApprox( gx + cell / 2, gy + cell / 2, w ) )
+				continue;	// not ground (sky) — leave untouched
+
+			float coverage = 0.0f;	// 0 = unsighted, 1 = fully inside friendly LOS
+			for ( int k = 0; k < nc; ++k )
+			{
+				float dx = w.x - cov[k].x, dy = w.y - cov[k].y;
+				float dist = sqrtf( dx * dx + dy * dy );
+				float feather = cov[k].r * 0.18f + 1.0f;
+				float c = ( cov[k].r - dist ) / feather;	// soft edge
+				if ( c > coverage ) coverage = c;
+				if ( coverage >= 1.0f ) { coverage = 1.0f; break; }
+			}
+			if ( coverage < 0.0f ) coverage = 0.0f;
+
+			float a = D * ( 1.0f - coverage );
+			if ( a <= 0.003f ) continue;	// fully sighted: full brightness
+			unsigned long aB = (unsigned long)( a * 255.0f ); if ( aB > 255 ) aB = 255;
+			unsigned long col = ( aB << 24 );	// black veil
+
+			gos_VERTEX q[4];
+			float l = (float)gx, r = (float)( gx + cell ), t = (float)gy, b = (float)( gy + cell );
+			for ( int v = 0; v < 4; ++v ) { q[v].z = 0; q[v].rhw = .5f; q[v].argb = col; q[v].frgb = 0; q[v].u = q[v].v = 0; }
+			q[0].x = l; q[0].y = t; q[1].x = l; q[1].y = b; q[2].x = r; q[2].y = b; q[3].x = r; q[3].y = t;
+			gos_DrawQuads( q, 4 );
+		}
+
+	gos_SetHudScaleExempt( prevExempt );
+}
+
 void ControlGui::render( bool bPaused )
 {
 	if (drawGUIOn)
@@ -328,6 +402,9 @@ void ControlGui::render( bool bPaused )
 		if ( g_tacticalOverview.active() )
 		{
 			float ovAlpha = g_tacticalOverview.iconAlpha();
+			// Friendly-coverage tint first (under the icons/markers).
+			if ( TacticalOverview::tintEnabled() )
+				renderOverviewCoverageTint( eye, ovAlpha );
 			forceGroupBar.renderOverviewIcons( eye, ovAlpha );
 			if ( Team::home )
 				for ( EList< CObjective*, CObjective* >::EIterator it = Team::home->objectives.Begin();
