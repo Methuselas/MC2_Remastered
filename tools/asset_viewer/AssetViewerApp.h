@@ -54,6 +54,7 @@ public:
     static int runSmokeBackendACompile(const char* shaderRoot); // Backend-A v2
     static int runSmokeBackendARender(const char* deployDir, const char* shaderRoot); // Backend-A v2 Task 5
     static int runSmokeBackendAFallback(const char* deployDir);  // Backend-A v2
+    static int runSmokeBackendAUvv(const char* deployDir, const char* shaderRoot);   // Backend-A v2 Task 8: UV-V orientation A/B check
 private:
     FileBrowser browser_;
     AssetTypeSidebar sidebar_;
