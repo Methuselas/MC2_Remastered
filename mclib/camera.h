@@ -1010,11 +1010,14 @@ class Camera
 
 		// screenToTerrainApprox: screenToGroundPlaneApprox refined onto the
 		// terrain surface by iterating the plane height (fixed 3 steps, O(1),
-		// no quad scan). On elevated terrain the z=0 plane hit drifts
-		// ~elevation/tan(tilt) in XY and sits below the surface; this variant
-		// returns a point on (approximately) the visible ground under the
-		// pixel. Use for screen-anchored world overlays (formation line).
-		// Still NOT a precise pick: cliffs/overhangs may need inverseProject.
+		// no quad scan).
+		// WARNING (2026-06-11): BOTH approx unprojectors ride
+		// Matrix4D::Invert(worldToClipGL()), which is UNRELIABLE in the game
+		// camera - far-plane unproject lands above the camera (ray inverts)
+		// and the X response collapses (see the Phase 7B raycast-picker notes
+		// in inverseProject). Round-trip-verified broken via MC2_FL_TRACE.
+		// For screen->world in game use inverseProject (production picker).
+		// These remain only for the editor paths that already depend on them.
 		bool screenToTerrainApprox (long screenX, long screenY, Stuff::Vector3D &outWorld);
 
 		// getClosestVertex: screen-click -> terrain vertex (row,col).
