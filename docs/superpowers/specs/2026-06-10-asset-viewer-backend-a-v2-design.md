@@ -162,6 +162,16 @@ on a readable `shaders/` root (deploy `shaders/` or the repo `shaders/`) — sur
 contract report if absent. No new link against RenderCore/engine TUs (shaders are loaded
 as text, not linked).
 
+## Hard constraint — no shader edits
+
+**Do NOT modify `shaders/static_prop.vert` or `shaders/static_prop.frag` (or their shared
+includes) to make the asset viewer compile.** The engine shaders are the fidelity anchor;
+bending them around the tool defeats the purpose and risks the in-game path. If a shader
+genuinely needs a new standalone-friendly branch to compile under the minimal config,
+**stop and escalate** — do not patch the shader. The only permitted lever is the set of
+`#define`s prepended at compile time (the minimal config) and the stub bindings the tool
+provides.
+
 ## Out of scope
 
 - Linking RenderCore PipelineRegistry/`pipeline_binder`/`gos_static_prop_batcher` (state replicated, not linked).
