@@ -74,6 +74,7 @@
 #include "MapGeneratorDialog.h"
 #include "MissionValidation.h"
 #include "EditorTaskRunner.h"
+#include "EditorPlaytest.h"
 #include "EditorDebugOverlay.h"
 #include "ModPicker.h"
 #include "EditorRecent.h"
@@ -4881,6 +4882,32 @@ void EditorInterface::renderToolbarImGui()
 	if (ImGui::Button("Mission Tools", ImVec2(-1.f, 0.f)))
 		s_missionToolsOpen = !s_missionToolsOpen;
 	renderMissionToolsImGui();
+
+	// Playtest in Game (Slice 1): one-click save -> launch mc2.exe -> capture log.
+	// Stop while running; status (state / exit code / last line) below the button.
+	{
+		const bool running = EditorPlaytest::IsRunning();
+		if (running)
+		{
+			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.25f, 0.25f, 1.0f));
+			if (ImGui::Button("Stop Playtest", ImVec2(-1.f, 0.f)))
+				EditorPlaytest::Stop();
+			ImGui::PopStyleColor();
+		}
+		else
+		{
+			const bool can = EditorPlaytest::CanPlaytest();
+			if (!can) ImGui::BeginDisabled();
+			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.30f, 1.0f));
+			if (ImGui::Button("Playtest", ImVec2(-1.f, 0.f)))
+				EditorPlaytest::Start();
+			ImGui::PopStyleColor();
+			if (!can) ImGui::EndDisabled();
+			if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !can)
+				ImGui::SetTooltip("Load + save a mission first.");
+		}
+		ImGui::TextWrapped("%s", EditorPlaytest::StatusLine());
+	}
 
 	ImGui::Separator();
 
