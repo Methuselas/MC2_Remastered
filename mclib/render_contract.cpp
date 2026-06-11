@@ -507,4 +507,71 @@ void assertPassContract(PassIdentity id, const char* hint) {
     }
 }
 
+// ---- [RENDER_PASS v1] telemetry (slice D1) ----------------------------------
+//
+// Advisory, log-only, env-gated (MC2_RENDER_PASS_TELEMETRY=1). When OFF the
+// hot-path cost is a single cached-bool branch. When ON, emission is
+// rate-limited to one line per pass per sampled frame; a frame is sampled
+// every kTelemetryFrameInterval frames (300, matching debug_state_dump
+// cadence). GL queries (FBO binding, viewport, draw-buffer count) run only
+// on sampled frames at pass-begin points.
+//
+// D2 (deferred): per-pass draw-call/triangle/texture-bind counters + GPU
+// timing — those need counter feeds at centralized draw-submission sites.
+
+namespace {
+
+constexpr std::uint64_t kTelemetryFrameInterval = 300;
+
+bool          s_telemetryEnabled = false;
+std::uint64_t s_telemetryFrame   = 0;
+std::uint64_t s_telemetryLastEmitFrame[16] = {};  // index = (uint8)PassIdentity; 0 sentinel handled below
+bool          s_telemetryEverEmitted[16]   = {};
+
+} // namespace
+
+void initRenderPassTelemetry() {
+    const char* v = ::getenv("MC2_RENDER_PASS_TELEMETRY");
+    s_telemetryEnabled = (v != nullptr && v[0] == '1');
+    if (s_telemetryEnabled) {
+        printf("[RENDER_PASS v1] telemetry ACTIVE (sample every %u frames)\n",
+               (unsigned)kTelemetryFrameInterval);
+        fflush(stdout);
+    }
+}
+
+void renderPassTelemetryFrameTick() {
+    if (!s_telemetryEnabled) return;
+    ++s_telemetryFrame;
+}
+
+void noteRenderPass(PassIdentity id, const char* callerHint) {
+    if (!s_telemetryEnabled) return;
+    // Sample frame 1 (first full frame) then every kTelemetryFrameInterval.
+    if (s_telemetryFrame % kTelemetryFrameInterval != 1) return;
+
+    const unsigned idx = static_cast<unsigned>(id) & 15u;
+    if (s_telemetryEverEmitted[idx] && s_telemetryLastEmitFrame[idx] == s_telemetryFrame)
+        return;  // already emitted for this pass this sampled frame
+    s_telemetryEverEmitted[idx]   = true;
+    s_telemetryLastEmitFrame[idx] = s_telemetryFrame;
+
+    GLint fbo = 0;
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fbo);
+    GLint vp[4] = {0, 0, 0, 0};
+    glGetIntegerv(GL_VIEWPORT, vp);
+    int drawBuffers = 0;
+    for (int i = 0; i < 8; ++i) {
+        GLint buf = 0;
+        glGetIntegerv(GL_DRAW_BUFFER0 + i, &buf);
+        if (buf != GL_NONE) ++drawBuffers;
+    }
+
+    printf("[RENDER_PASS v1] frame=%llu pass=%s fbo=%d viewport=%d,%d,%d,%d drawbuffers=%d phase=begin hint=%s\n",
+           (unsigned long long)s_telemetryFrame, passIdentityName(id), (int)fbo,
+           (int)vp[0], (int)vp[1], (int)vp[2], (int)vp[3], drawBuffers,
+           callerHint ? callerHint : "?");
+    fflush(stdout);
+}
+
 } // namespace render_contract

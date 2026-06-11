@@ -398,10 +398,21 @@ void GameTacMap::worldToTacMap( Stuff::Vector3D& world, gos_VERTEX& tac )
 }	
 void GameTacMap::initBuildings( unsigned char* data, int size )
 {
-	if ( data )
+	if ( data && size >= (int)sizeof(int32_t) )
 	{
 		int32_t* pData = (int32_t*)data;
 		buildingCount = *pData++;
+
+		// Bound the count by what the packet actually holds (2 int32s per
+		// building); a corrupt/short-read packet must not drive the walk
+		// below off the end of the buffer.
+		const int32_t maxCount = (size - (int)sizeof(int32_t)) / (2 * (int)sizeof(int32_t));
+		if ( buildingCount < 0 || buildingCount > maxCount )
+		{
+			printf("[TACMAP] initBuildings: buildingCount=%d exceeds packet capacity %d (size=%d) -- clamping to 0\n",
+				(int)buildingCount, (int)maxCount, size);
+			buildingCount = 0;
+		}
 
 		if (buildingCount)
 		{

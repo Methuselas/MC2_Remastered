@@ -2,6 +2,7 @@
 #include "utils/gl_utils.h"
 #include "utils/shader_builder.h"
 #include "gos_postprocess.h"   // Phase 10 Step 1c: shadow textures + light matrices
+#include "../../mclib/render_contract.h"  // [RENDER_PASS v1] noteRenderPass
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
@@ -450,6 +451,11 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     if (count == 0) return;
     if (s_terrainProgram == 0 || s_heightSsbo == 0) return;
     if (s_patchVao == 0) return;
+
+    // [RENDER_PASS v1] advisory telemetry (env-gated, rate-limited).
+    // Chunk path is the default-on production terrain draw (8z cutover).
+    render_contract::noteRenderPass(render_contract::PassIdentity::TerrainBase,
+                                    "gos_TerrainLodChunk_SubmitDrawCommands");
 
     // Match the water-cull / decal frame-of-reference: use the baked dispatch MVP
     // when the solid pass is armed (== what the legacy terrain draw used), else

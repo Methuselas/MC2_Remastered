@@ -29,6 +29,7 @@
 #include "gos_profiler.h"
 #include "gos_validate.h"  // drainGLErrors (Tier-1 instr §4)
 #include "../../mclib/cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline
+#include "../../mclib/render_contract.h"      // [RENDER_PASS v1] noteRenderPass
 #include "Stuff/Stuff.hpp"                     // Stuff::Matrix4D for gos_SetWorldToClipGL (full chain required; matrix.hpp alone creates circular include ordering)
 
 // [B1 C16] (diagnostic) gosFX heap + child accumulation counters; env-gated on
@@ -6311,6 +6312,8 @@ void gosRenderer::drawIndexedTris(gos_VERTEX* vertices, int num_vertices, WORD* 
         tmat->setFogColor(fog_color_);
         // terrainMVP uploaded via direct GL in terrainDrawIndexedPatches
         // [RENDER_CONTRACT:Pass=TerrainBase id=gosRenderer_terrainDrawIndexedPatches]
+        render_contract::noteRenderPass(render_contract::PassIdentity::TerrainBase,
+                                        "gosRenderer_terrainDrawIndexedPatches");
         terrainDrawIndexedPatches(tmat, indexed_tris_);
         // Mark terrain drawn so post-process effects know to run (god rays, shorelines)
         { gosPostProcess* pp = getGosPostProcess(); if (pp) pp->markTerrainDrawn(); }
@@ -8561,6 +8564,9 @@ void gosRenderer::drawTerrainOverlays()
         return;
     }
 
+    render_contract::noteRenderPass(render_contract::PassIdentity::TerrainOverlay,
+                                    "gosRenderer_drawTerrainOverlays");
+
     glBindBuffer(GL_ARRAY_BUFFER, terrainOverlayBatch_.vbo);
     glBufferData(GL_ARRAY_BUFFER,
         (GLsizeiptr)(terrainOverlayBatch_.verts.size() * sizeof(WorldOverlayVert)),
@@ -8737,6 +8743,9 @@ void gosRenderer::drawDecals()
         decalBatch_.draws.clear();
         return;
     }
+
+    render_contract::noteRenderPass(render_contract::PassIdentity::TerrainDecal,
+                                    "gosRenderer_drawDecals");
 
     glBindBuffer(GL_ARRAY_BUFFER, decalBatch_.vbo);
     glBufferData(GL_ARRAY_BUFFER,

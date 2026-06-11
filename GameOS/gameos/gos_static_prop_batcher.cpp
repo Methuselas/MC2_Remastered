@@ -20,6 +20,7 @@
 #include "gpu_cull_substrate.h"          // 2026-05-10: substrate_appendStaticPropRecord
 #include "gpu_cull_record.h"             // 2026-05-10: GpuActorRecord, Cat_StaticProp
 #include "../../mclib/terrain.h"         // C1b temporal-superset: Terrain::worldToBlockIdx()
+#include "../../mclib/render_contract.h" // [RENDER_PASS v1] noteRenderPass
 #include "gameos.hpp"
 #include "utils/shader_builder.h"
 #include "tgl.h"  // TG_Shape::s_worldToClip
@@ -5173,6 +5174,10 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
         gos_object_parity::ParityFrameTick();
         return;
     }
+
+    // [RENDER_PASS v1] advisory telemetry (env-gated, rate-limited).
+    render_contract::noteRenderPass(render_contract::PassIdentity::StaticProp,
+                                    "GpuStaticPropBatcher_flush");
     // Program compile/link latch. submitMultiShape already gates submissions
     // on this, so reaching here with an empty program is a logic bug — but
     // guard anyway so we never pump uniform calls against a null program.

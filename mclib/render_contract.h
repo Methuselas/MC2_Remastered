@@ -119,6 +119,19 @@ const char*                 passIdentityName(PassIdentity);
 void initRenderContractAssert();
 void assertPassContract(PassIdentity id, const char* callerHint = nullptr);
 
+// [RENDER_PASS v1] advisory telemetry (slice D1). Gated by
+// MC2_RENDER_PASS_TELEMETRY=1 (cached bool; zero log lines and near-zero
+// cost when unset). noteRenderPass() is called at a pass's begin point and
+// emits one line per pass per sampled frame (every 300 frames, matching
+// debug_state_dump cadence):
+//   [RENDER_PASS v1] frame=N pass=TerrainBase fbo=3 viewport=0,0,1600,900 drawbuffers=2 phase=begin
+// Advisory/log-only: no verdict, no behavior change. Timing + draw-call
+// counters are deferred to D2 (would require scattering counters across
+// draw-submission sites).
+void initRenderPassTelemetry();              // reads env; call once after GL init
+void renderPassTelemetryFrameTick();         // call once per presented frame
+void noteRenderPass(PassIdentity id, const char* callerHint = nullptr);
+
 } // namespace render_contract
 
 #endif // MC2_RENDER_CONTRACT_H

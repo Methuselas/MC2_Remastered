@@ -601,6 +601,13 @@ def main():
                             # MC2_RENDER_CONTRACT_ASSERT=1 enables runtime GL state
                             # validation against declared render_contract expectations.
                             "MC2_RENDER_CONTRACT_ASSERT",
+                            # [RENDER_PASS v1] advisory per-pass telemetry
+                            # (slice D1). Default-OFF; =1 emits one
+                            # [RENDER_PASS v1] line per pass every 300 frames.
+                            # Log-only; never affects verdicts. (Allowlist
+                            # entry is convention/documentation — runner.py
+                            # inherits the parent env via os.environ.copy().)
+                            "MC2_RENDER_PASS_TELEMETRY",
                             # DEBUG-STATE-DUMP-1: JSON render-state snapshots.
                             # Default-OFF; =1 writes debug_state/latest_render_state.json.
                             "MC2_DEBUG_STATE_DUMP",
