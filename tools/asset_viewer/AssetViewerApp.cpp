@@ -1292,6 +1292,9 @@ int AssetViewerApp::runSmokeSpotlight(const char* deployDir)
 #include "AppearanceRoster.h"
 #include "WorkbenchValidation.h"
 #include "BundleExport.h"
+#include "CentralManifestMerge.h"
+#include <fstream>
+#include <sstream>
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
@@ -1495,6 +1498,55 @@ int AssetViewerApp::runSmokeLodEditValidate() {
         ok &= countCode(sm,"lod-first-distance",WarnSeverity::Warn)==1;
     }
     printf("[smoke] lod-edit-validate %s\n", ok ? "PASS" : "FAIL");
+    return ok ? 0 : 1;
+}
+
+int AssetViewerApp::runSmokeCentralMergePreserve(const char* fixtureDir, const char* tmpDir) {
+    namespace fs = std::filesystem;
+    fs::path src = fs::path(fixtureDir) / "central" / "models.json";
+    fs::path dir = fs::path(tmpDir) / "central_merge_smoke";
+    std::error_code ec; fs::create_directories(dir, ec);
+    fs::path dst = dir / "models.json";
+    fs::copy_file(src, dst, fs::copy_options::overwrite_existing, ec);
+    if (ec) { printf("[smoke] central-merge-preserve FAIL (fixture copy: %s)\n", ec.message().c_str()); return 1; }
+
+    auto mk = [](const char* cls, const char* app, const char* source){
+        WorkbenchOverride r; r.overrideClass=cls; r.appearanceName=app;
+        r.appearanceVerified=true; r.sourceRelPath=source; return r;
+    };
+    bool ok = true;
+    // Merge C (new) -> A,B,C present.
+    auto rC = MergeIntoCentralManifest(dst.string(), mk("staticProp","propC","c.glb"));
+    ok &= rC.ok && rC.recordCount==3 && !rC.replacedExisting;
+    {
+        ModelOverrideRegistry g; g.loadFromFile(dst.string(), dir.string());
+        ok &= g.count()==3;
+        ok &= g.resolve("staticProp","propA")!=nullptr;
+        ok &= g.resolve("tree","propB")!=nullptr;
+        ok &= g.resolve("staticProp","propC")!=nullptr;
+    }
+    // Merge B replacement (new source) -> A,new-B,C; count stays 3.
+    auto rB = MergeIntoCentralManifest(dst.string(), mk("tree","propB","b2.glb"));
+    ok &= rB.ok && rB.recordCount==3 && rB.replacedExisting;
+    {
+        ModelOverrideRegistry g; g.loadFromFile(dst.string(), dir.string());
+        ok &= g.count()==3;
+        const auto* b = g.resolve("tree","propB");
+        ok &= (b && b->sourceRelPath=="b2.glb");
+        ok &= g.resolve("staticProp","propA")!=nullptr;
+        ok &= g.resolve("staticProp","propC")!=nullptr;
+    }
+    // .bak exists after writes.
+    ok &= fs::exists(dst.string()+".bak");
+    // Failure path: a BLOCK-invalid record (unverified appearance) leaves file intact.
+    {
+        std::string before; { std::ifstream f(dst); std::stringstream s; s<<f.rdbuf(); before=s.str(); }
+        WorkbenchOverride bad = mk("staticProp","propD","d.glb"); bad.appearanceVerified=false;
+        auto rBad = MergeIntoCentralManifest(dst.string(), bad);
+        std::string after; { std::ifstream f(dst); std::stringstream s; s<<f.rdbuf(); after=s.str(); }
+        ok &= !rBad.ok && (before==after);
+    }
+    printf("[smoke] central-merge-preserve %s\n", ok ? "PASS" : "FAIL");
     return ok ? 0 : 1;
 }
 

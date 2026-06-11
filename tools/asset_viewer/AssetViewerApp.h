@@ -48,6 +48,7 @@ public:
     static int runSmokeAppearanceRoster(const char* fixtureDir);  // S5
     static int runSmokeTextureMissingWarn(const char* fixtureDir);  // S5
     static int runSmokeLodEditValidate();  // S5
+    static int runSmokeCentralMergePreserve(const char* fixtureDir, const char* tmpDir);  // S5
 private:
     FileBrowser browser_;
     AssetTypeSidebar sidebar_;
