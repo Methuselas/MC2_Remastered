@@ -8,6 +8,8 @@ controlGui.cpp			: Implementation of the controlGui component.
 #include"controlgui.h"
 #include"tacticaloverview.h"  // Tactical Overview: strategic-icon overlay
 #include"contact.h"           // Tactical Overview: friendly sensor coverage tint
+#include"objmgr.h"            // Tactical Overview: enemy/contact marker scan
+#include"mover.h"
 #include"team.h"
 #include"gamesound.h"
 #include"comndr.h"
@@ -380,6 +382,71 @@ static void renderOverviewCoverageTint( Camera* eye, float alpha )
 	gos_SetHudScaleExempt( prevExempt );
 }
 
+// Tactical Overview: red chevron markers for DETECTED enemy/neutral units
+// (friendlies are drawn as icons by ForceGroupBar). Honors the same fog/ECM/
+// signature/shutdown gating the tac map uses.
+static void renderOverviewEnemyMarkers( Camera* eye, float alpha )
+{
+	if ( !eye || alpha <= 0.0f || !Team::home )
+		return;
+
+	unsigned long aB = (unsigned long)( alpha * 255.0f );
+	if ( aB > 255 ) aB = 255;
+	const unsigned long aBits = aB << 24;
+	const float w = 8.0f, h = 12.0f;
+
+	gos_SetRenderState( gos_State_Texture, 0 );
+	gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_AlphaInvAlpha );
+	gos_SetRenderState( gos_State_AlphaTest, 0 );
+	gos_SetRenderState( gos_State_ZCompare, 0 );
+	gos_SetRenderState( gos_State_ZWrite, 0 );
+
+	bool prevExempt = gos_GetHudScaleExempt();
+	gos_SetHudScaleExempt( true );
+
+	for ( int i = 0; i < ObjectManager->numMovers; i++ )
+	{
+		MoverPtr mover = ObjectManager->getMover( i );
+		if ( !(mover && mover->getExists() && !(mover->isDestroyed() || mover->isDisabled())) )
+			continue;
+		if ( mover->getTeamId() == Team::home->id )
+			continue;	// friendlies are the icon overlay
+
+		long contactStatus = mover->getContactStatus( Team::home->getId(), true );
+		if ( !( (contactStatus != CONTACT_NONE)
+		        && (mover->getStatus() != OBJECT_STATUS_SHUTDOWN)
+		        && (!mover->hasNullSignature())
+		        && (mover->getEcmRange() <= 0.0f) ) )
+			continue;	// undetected / ECM / null-sig / shut down
+
+		unsigned long rgb = 0x00ff0000;	// enemy red
+		if ( mover->getTeam() && mover->getTeam()->isNeutral( Team::home ) )
+			rgb = 0x000000ff;		// neutral blue
+		if ( mover->getSelected() )
+			rgb |= 0x003f3f3f;		// brighten when selected
+		unsigned long col = aBits | rgb;
+
+		Stuff::Vector3D wp = mover->getPosition();
+		ModernClipResult r = eye->projectModernClipGL( wp );
+		if ( !r.admit || r.clip.w <= 0.05f )
+			continue;
+		float vmx, vmy, vax, vay;
+		gos_GetViewport( &vmx, &vmy, &vax, &vay );
+		float cx = vax + ( r.clip.x / r.clip.w * 0.5f + 0.5f ) * vmx;
+		float cy = vay + ( 1.0f - ( r.clip.y / r.clip.w * 0.5f + 0.5f ) ) * vmy;
+
+		// Downward chevron, apex on the unit.
+		gos_VERTEX tri[3];
+		for ( int k = 0; k < 3; ++k ) { tri[k].z = 0; tri[k].rhw = .5f; tri[k].argb = col; tri[k].frgb = 0; tri[k].u = tri[k].v = 0; }
+		tri[0].x = cx;     tri[0].y = cy;
+		tri[1].x = cx - w; tri[1].y = cy - h;
+		tri[2].x = cx + w; tri[2].y = cy - h;
+		gos_DrawTriangles( tri, 3 );
+	}
+
+	gos_SetHudScaleExempt( prevExempt );
+}
+
 void ControlGui::render( bool bPaused )
 {
 	if (drawGUIOn)
@@ -405,6 +472,7 @@ void ControlGui::render( bool bPaused )
 			// Friendly-coverage tint first (under the icons/markers).
 			if ( TacticalOverview::tintEnabled() )
 				renderOverviewCoverageTint( eye, ovAlpha );
+			renderOverviewEnemyMarkers( eye, ovAlpha );
 			forceGroupBar.renderOverviewIcons( eye, ovAlpha );
 			if ( Team::home )
 				for ( EList< CObjective*, CObjective* >::EIterator it = Team::home->objectives.Begin();
