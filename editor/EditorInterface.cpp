@@ -83,6 +83,7 @@
 #include "InspectorPanel.h"
 #include "AssetBrowser.h"
 #include "GameplayDebugger.h"
+#include "EditorPlaytestResults.h"
 #include "UndoHistoryPanel.h"
 #include "CommandPalette.h"
 #include "gameplay_pick.h"  // tryGameplayPick: shared pick spine, no game-object deps
@@ -4916,6 +4917,13 @@ void EditorInterface::renderToolbarImGui()
 	if (ImGui::Button("Gameplay Debugger", ImVec2(-1.f, 0.f)))
 		GameplayDebugger::Toggle();
 	GameplayDebugger::Draw();
+
+	// Playtest Results — read-only summary of the most recent playtest's archived
+	// stdout (status chip, child exit, SMOKE verdict, PERF p50/p99, mover counts,
+	// warning/fatal markers). Pure post-hoc log reader; no engine telemetry.
+	if (ImGui::Button("Playtest Results", ImVec2(-1.f, 0.f)))
+		EditorPlaytestResults::Toggle();
+	EditorPlaytestResults::Draw();
 
 	// Undo History — display-only list of undo actions with the current cursor.
 	if (ImGui::Button("Undo History", ImVec2(-1.f, 0.f)))

@@ -33,6 +33,7 @@
 #include "stdafx.h"   // MFC / <windows.h>
 
 #include "EditorPlaytest.h"
+#include "EditorPlaytestResults.h"
 #include "EditorTaskRunner.h"
 #include "EditorData.h"
 #include "EditorModProject.h"
@@ -487,6 +488,13 @@ void OnFinished(const EditorTaskRunner::TaskResult& res)
 	s_lastExitCode = res.exitCode;
 	s_lastLogPath  = logPath;
 
+	// Playtest Results panel: parse the just-archived log (we have the exact body in hand,
+	// so parse the text directly rather than re-reading the file we just wrote). Pure read;
+	// no engine telemetry added. Skipped only when the archive write failed (no path).
+	EditorPlaytestResults::SetResult(
+		EditorPlaytestResults::ParseLogText(logBody,
+			logPath.empty() ? NULL : logPath.c_str()));
+
 	char modTag[160] = "";
 	if (s_modActive)
 		snprintf(modTag, sizeof(modTag), "mod: %s  ", s_modId.c_str());
@@ -863,6 +871,21 @@ void Start()
 		size_t cur = strlen(cmd);
 		if (cur + strlen(tail) < sizeof(cmd))
 			strcat(cmd, tail);
+
+		// ACTIVE-SIM SMOKE (bridge fixtures): when MC2_SMOKE_ACTIVE=1 is set, append
+		// gos_smoke's `--smoke-active` so the scenario clock advances and live movers
+		// tick -- required for the [MOVER v1] runtime-bridge telemetry the --assert-bridge
+		// harness verifies. Passive smoke (the default) is a frozen-scenario fly-through
+		// and emits no mover state. This only forwards an existing engine flag; it adds
+		// no new telemetry.
+		char actEnv[8] = "";
+		if (GetEnvironmentVariableA("MC2_SMOKE_ACTIVE", actEnv, sizeof(actEnv)) > 0 &&
+			actEnv[0] && actEnv[0] != '0')
+		{
+			const char* act = " --smoke-active";
+			if (strlen(cmd) + strlen(act) < sizeof(cmd))
+				strcat(cmd, act);
+		}
 	}
 	spec.commandLine     = cmd;
 	spec.workingDirectory = exeDir;
