@@ -554,6 +554,137 @@ static void renderOverviewEnemyMarkers( Camera* eye, float alpha )
 	gos_SetHudScaleExempt( prevExempt );
 }
 
+// Weapon view: standalone toggle (F8). Per friendly unit, one ring per weapon
+// range BAND present (short/medium/long) — so duplicate weapons share a ring.
+bool g_weaponViewOn = false;
+extern float WeaponRanges[5][2];	// [SHORT/MEDIUM/LONG/...][min,max], from game data
+
+// Thick screen-space line segment (a quad), half-width hw.
+static void csgThickSeg( float x0, float y0, float x1, float y1, float hw, unsigned long c )
+{
+	float dx = x1 - x0, dy = y1 - y0, len = sqrtf( dx * dx + dy * dy );
+	if ( len < 0.001f ) return;
+	float nx = -dy / len * hw, ny = dx / len * hw;
+	gos_VERTEX q[4];
+	for ( int v = 0; v < 4; ++v ) { q[v].z = 0; q[v].rhw = .5f; q[v].argb = c; q[v].frgb = 0; q[v].u = q[v].v = 0; }
+	q[0].x = x0 + nx; q[0].y = y0 + ny; q[1].x = x1 + nx; q[1].y = y1 + ny;
+	q[2].x = x1 - nx; q[2].y = y1 - ny; q[3].x = x0 - nx; q[3].y = y0 - ny;
+	gos_DrawQuads( q, 4 );
+}
+
+// Draw the UNION outline of N equal-radius ground circles (centers/sel arrays):
+// a circle-point is on the boundary only if it is NOT inside any OTHER circle,
+// so overlapping interior arcs are culled (figure-eight). Selected units' arcs
+// are bolded.
+static void drawWeaponBandUnion( Camera* eye, const Stuff::Vector3D* centers,
+                                 const bool* sel, int n, float R,
+                                 unsigned long rgb, unsigned long aBits )
+{
+	if ( n <= 0 || R < 1.0f ) return;
+	const unsigned long col = aBits | rgb;
+	const int N = 72;
+	const float R2 = R * R * 0.997f;	// epsilon so shared boundaries aren't double-culled
+	float vmx, vmy, vax, vay;
+	gos_GetViewport( &vmx, &vmy, &vax, &vay );
+
+	for ( int i = 0; i < n; i++ )
+	{
+		bool havePrev = false; float ppx = 0, ppy = 0;
+		const float hw = sel[i] ? 2.0f : 1.0f;	// bold the selected mech's arc
+		for ( int k = 0; k <= N; k++ )
+		{
+			float a = ( 2.0f * 3.14159265f ) * (float)( k % N ) / (float)N;
+			Stuff::Vector3D p;
+			p.x = centers[i].x + cosf( a ) * R;
+			p.y = centers[i].y + sinf( a ) * R;
+			p.z = land ? land->getTerrainElevation( p ) : 0.0f;
+
+			bool interior = false;	// inside another circle of this band?
+			for ( int j = 0; j < n; j++ )
+			{
+				if ( j == i ) continue;
+				float ddx = p.x - centers[j].x, ddy = p.y - centers[j].y;
+				if ( ddx * ddx + ddy * ddy < R2 ) { interior = true; break; }
+			}
+			if ( interior ) { havePrev = false; continue; }
+
+			ModernClipResult r = eye->projectModernClipGL( p );
+			if ( r.clip.w <= 0.05f ) { havePrev = false; continue; }
+			float sx = vax + ( r.clip.x / r.clip.w * 0.5f + 0.5f ) * vmx;
+			float sy = vay + ( 1.0f - ( r.clip.y / r.clip.w * 0.5f + 0.5f ) ) * vmy;
+			if ( havePrev ) csgThickSeg( ppx, ppy, sx, sy, hw, col );
+			ppx = sx; ppy = sy; havePrev = true;
+		}
+	}
+
+	// One range label per cluster: each circle's top rim point, if on the boundary.
+	for ( int i = 0; i < n; i++ )
+	{
+		Stuff::Vector3D p;
+		p.x = centers[i].x; p.y = centers[i].y + R;
+		p.z = land ? land->getTerrainElevation( p ) : 0.0f;
+		bool interior = false;
+		for ( int j = 0; j < n; j++ )
+		{
+			if ( j == i ) continue;
+			float ddx = p.x - centers[j].x, ddy = p.y - centers[j].y;
+			if ( ddx * ddx + ddy * ddy < R2 ) { interior = true; break; }
+		}
+		if ( interior ) continue;
+		ModernClipResult r = eye->projectModernClipGL( p );
+		if ( r.clip.w <= 0.05f ) continue;
+		float sx = vax + ( r.clip.x / r.clip.w * 0.5f + 0.5f ) * vmx;
+		float sy = vay + ( 1.0f - ( r.clip.y / r.clip.w * 0.5f + 0.5f ) ) * vmy;
+		if ( gosFontHandle )
+		{
+			char buf[16];
+			sprintf( buf, "%.0fm", R / worldUnitsPerMeter );
+			gos_TextSetAttributes( gosFontHandle, aBits | 0x00000000, 1.0f, false, true, false, false );
+			gos_TextSetPosition( (int)sx + 1, (int)sy + 1 ); gos_TextDraw( buf );
+			gos_TextSetAttributes( gosFontHandle, aBits | rgb, 1.0f, false, true, false, false );
+			gos_TextSetPosition( (int)sx, (int)sy ); gos_TextDraw( buf );
+		}
+	}
+}
+
+static void renderWeaponView( Camera* eye )
+{
+	if ( !eye || !Team::home || !ObjectManager ) return;
+	static const unsigned long kBandColor[3] = { 0x00ffe24b, 0x00ff9b30, 0x00ff5a3a }; // S/M/L
+	static const int kBandWR[3] = { 0 /*SHORT*/, 1 /*MEDIUM*/, 2 /*LONG*/ };
+	const unsigned long aBits = 0xb0000000;
+
+	// Bucket friendly units into the 3 weapon bands they have.
+	const int kMax = 64;
+	Stuff::Vector3D centers[3][kMax];
+	bool sel[3][kMax];
+	int n[3] = { 0, 0, 0 };
+	for ( int i = 0; i < ObjectManager->numMovers; i++ )
+	{
+		MoverPtr m = ObjectManager->getMover( i );
+		if ( !m || !m->getExists() || m->isDestroyed() || m->isDisabled() ) continue;
+		if ( m->getTeamId() != Team::home->id ) continue;
+		bool band[3];
+		m->getWeaponBandsPresent( band );
+		for ( int b = 0; b < 3; b++ )
+			if ( band[b] && n[b] < kMax )
+			{
+				centers[b][n[b]] = m->getPosition();
+				sel[b][n[b]] = m->getSelected();
+				n[b]++;
+			}
+	}
+
+	bool prevExempt = gos_GetHudScaleExempt();
+	gos_SetHudScaleExempt( true );
+	for ( int b = 0; b < 3; b++ )
+	{
+		float R = WeaponRanges[kBandWR[b]][1] * worldUnitsPerMeter;
+		drawWeaponBandUnion( eye, centers[b], sel[b], n[b], R, kBandColor[b], aBits );
+	}
+	gos_SetHudScaleExempt( prevExempt );
+}
+
 void ControlGui::render( bool bPaused )
 {
 	if (drawGUIOn)
@@ -573,9 +704,11 @@ void ControlGui::render( bool bPaused )
 
 		// Tactical Overview: draw each unit's HUD icon over its world position on
 		// the main screen whenever the overview is active, plus objective markers.
-		// Sensor view: standalone overlay (F7), independent of the overview zoom.
+		// Sensor view (F7) + weapon view (F8): standalone overlays, any zoom.
 		if ( g_sensorViewOn )
 			renderSensorView( eye );
+		if ( g_weaponViewOn )
+			renderWeaponView( eye );
 
 		if ( g_tacticalOverview.active() )
 		{

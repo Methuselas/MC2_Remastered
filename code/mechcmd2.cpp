@@ -2253,6 +2253,16 @@ void __stdcall DoGameLogic()
 				s_f7Was = f7Down;
 			}
 
+			// Weapon view toggle (F8).
+			{
+				extern bool g_weaponViewOn;
+				static bool s_f8Was = false;
+				bool f8Down = userInput->getKeyDown(KEY_F8);
+				if (f8Down && !s_f8Was)
+					g_weaponViewOn = !g_weaponViewOn;
+				s_f8Was = f8Down;
+			}
+
 			if ((true == bInvokeOptionsScreenFlag)
 				|| (userInput->getKeyDown(KEY_O) && userInput->ctrl() && !userInput->alt() && !userInput->shift()))
 			{
