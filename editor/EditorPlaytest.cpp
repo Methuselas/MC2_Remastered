@@ -94,17 +94,21 @@ void ResolveExe()
 		}
 	}
 
-	// Nothing found: leave the default probe path so the user can see/edit it.
+	// Nothing found: leave the default probe path so the user can see/edit it, but do NOT
+	// latch s_exeResolved -- the exe may be deployed between now and the next Start(), so a
+	// later call must re-probe instead of being short-circuited by the early-return above.
 	if (!s_exePath[0])
 	{
 		strncpy(s_exePath, candidates[0], sizeof(s_exePath) - 1);
 		s_exePath[sizeof(s_exePath) - 1] = 0;
 	}
-	s_exeResolved = true;
 }
 
 // Archive the captured log next to the mission.  Returns the written path (empty on fail).
-std::string ArchiveLog(const std::string& missionPak, const std::string& log)
+// `prefix` is prepended to the timestamped filename (e.g. "stopped-") to distinguish a
+// user-terminated run from a natural exit.
+std::string ArchiveLog(const std::string& missionPak, const std::string& log,
+	const char* prefix = "")
 {
 	std::string dir, base;
 	SplitPath(missionPak, dir, base);
@@ -119,7 +123,7 @@ std::string ArchiveLog(const std::string& missionPak, const std::string& log)
 	snprintf(stamp, sizeof(stamp), "%04d%02d%02d-%02d%02d%02d",
 		lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday, lt.tm_hour, lt.tm_min, lt.tm_sec);
 
-	std::string logPath = logDir + "/" + stamp + ".log";
+	std::string logPath = logDir + "/" + (prefix ? prefix : "") + stamp + ".log";
 	FILE* f = NULL;
 	if (fopen_s(&f, logPath.c_str(), "wb") == 0 && f)
 	{
@@ -263,6 +267,23 @@ void Stop()
 {
 	if (!IsRunning() || s_task == EditorTaskRunner::kInvalidTask)
 		return;
+
+	// The worker's captured process log is private to EditorTaskRunner and there is no
+	// public accessor (and we must not modify EditorTaskRunner here), so the natural-exit
+	// archive in OnFinished cannot run for a cancelled task -- PumpMainThread routes cancels
+	// to OnCancelMainThread (which carries no TaskResult/log).  Archive a "stopped-" marker
+	// note now, BEFORE CancelTask, so a user-terminated run still leaves a breadcrumb next
+	// to the mission instead of dropping the record entirely.
+	const char* missionPath = EditorData::instance ? EditorData::instance->getMapName() : 0;
+	if (missionPath && missionPath[0])
+	{
+		std::string note = "Playtest STOPPED by user (process terminated).\n";
+		note += "Status at stop: ";
+		note += s_status;
+		note += "\n(Full process stdout/stderr is not retained on user-stop.)\n";
+		ArchiveLog(missionPath, note, "stopped-");
+	}
+
 	EditorTaskRunner::CancelTask(s_task);
 	// State transition happens in OnCancelled via PumpMainThread.
 }
