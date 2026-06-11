@@ -3,6 +3,7 @@
 #pragma once
 #include "ModWorkbench.h"
 #include "MeshPreview3D.h"
+#include "AppearanceRoster.h"
 #include <cstdint>
 #include <string>
 
@@ -20,4 +21,7 @@ private:
     MeshPreview3D overridePreview_;
     uint64_t      lastSyncedGen_ = (uint64_t)-1;
     char          appe_[128] = {0};   // appearance-key edit buffer; reprimed on generation change
+    AppearanceRoster roster_;
+    char             apFilter_[128] = {0};   // appearance combo filter
+    std::string      deployDir_ = ".";       // remembered for roster load/refresh
 };
