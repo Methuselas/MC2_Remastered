@@ -1452,6 +1452,52 @@ int AssetViewerApp::runSmokeTextureMissingWarn(const char* fixtureDir) {
     return ok ? 0 : 1;
 }
 
+int AssetViewerApp::runSmokeLodEditValidate() {
+    auto countCode = [](const std::vector<Warning>& ws, const char* code, WarnSeverity sev){
+        int n=0; for (auto& w: ws) if (w.code==std::string(code) && w.severity==sev) ++n; return n;
+    };
+    bool ok = true;
+    // Case A: ascending lods, first entry distance 0 -> no lod-order BLOCK, no first-distance WARN, no lod0-only.
+    {
+        WorkbenchOverride r; r.overrideClass="staticProp"; r.appearanceName="p";
+        r.appearanceVerified=true; r.sourceRelPath="model.glb";
+        r.lods = {{1,"lod1.glb",0.0f},{2,"lod2.glb",50.0f}};
+        auto br = ValidateRecordRules(r);
+        SemanticInputs si; si.hasImpostorLod = !r.lods.empty();
+        auto sm = ValidateSemantics(r, si);
+        ok &= countCode(br,"lod-order",WarnSeverity::Block)==0;
+        ok &= countCode(sm,"lod-first-distance",WarnSeverity::Warn)==0;
+        ok &= countCode(sm,"lod0-only",WarnSeverity::Warn)==0;
+    }
+    // Case B: non-ascending -> lod-order BLOCK fires.
+    {
+        WorkbenchOverride r; r.overrideClass="staticProp"; r.appearanceName="p";
+        r.appearanceVerified=true; r.sourceRelPath="model.glb";
+        r.lods = {{2,"lod2.glb",50.0f},{1,"lod1.glb",10.0f}};
+        auto br = ValidateRecordRules(r);
+        ok &= countCode(br,"lod-order",WarnSeverity::Block)>=1;
+    }
+    // Case C: LOD0-only (no entries) -> lod0-only WARN.
+    {
+        WorkbenchOverride r; r.overrideClass="staticProp"; r.appearanceName="p";
+        r.appearanceVerified=true; r.sourceRelPath="model.glb";
+        SemanticInputs si; si.hasImpostorLod = !r.lods.empty();
+        auto sm = ValidateSemantics(r, si);
+        ok &= countCode(sm,"lod0-only",WarnSeverity::Warn)==1;
+    }
+    // Case D: ascending but first entry distance != 0 -> lod-first-distance WARN.
+    {
+        WorkbenchOverride r; r.overrideClass="staticProp"; r.appearanceName="p";
+        r.appearanceVerified=true; r.sourceRelPath="model.glb";
+        r.lods = {{1,"lod1.glb",10.0f},{2,"lod2.glb",50.0f}};
+        SemanticInputs si; si.hasImpostorLod = !r.lods.empty();
+        auto sm = ValidateSemantics(r, si);
+        ok &= countCode(sm,"lod-first-distance",WarnSeverity::Warn)==1;
+    }
+    printf("[smoke] lod-edit-validate %s\n", ok ? "PASS" : "FAIL");
+    return ok ? 0 : 1;
+}
+
 void AssetViewerApp::onFileDropped(const char* path){
     if (!path) return;
     std::string p = path, low = p; for (char& c: low) c=(char)tolower((unsigned char)c);
