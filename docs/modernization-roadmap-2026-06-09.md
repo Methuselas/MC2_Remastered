@@ -1,8 +1,23 @@
 # MC2-OpenGL Modernization Roadmap
 
-**Date:** 2026-06-09
+> ## ⭐ MILESTONE — 2026-06-10: TERRAIN 8z PRODUCTION CLOSEOUT — FUNCTIONALLY COMPLETE
+>
+> **The production game terrain renderer is now chunk/GPU-only.** State transition (future sessions: read this first):
+> - **production game path:** chunk/GPU only (legacy retired from the production link)
+> - **`setupTextures`:** editor-gated (`#ifdef MC2_IS_EDITOR`, commit `006800e5`) — game build has NO legacy fallback
+> - **`slimReduce` / `MC2_TERRAIN_ACTIVE_AB`:** DELETED (~430 lines; commits `126a299a` / `11bba3f6`)
+> - **tier1:** 5/5 PASS on the 8z build (FATAL=0, FASTPATH_DROP=0, terrain renders via chunk path)
+> - **game + editor builds:** both GREEN
+> - **A2 (delete makeLists) / A4 (delete `TerrainQuad::draw()`):** DEFERRED by explicit kill-switch (`MC2_TERRAIN_LOD_CHUNK=0` opt-out) / overlay-policy (`MC2_TERRAIN_INDIRECT_OVERLAY=0` regression guard) decisions — **NOT terrain-closeout blockers**
+> - **Supporting commits:** `4f520eae` T16/T19 loud-fail · `6f5d243a` A5 mine-handle init · `9dd853dc` createWeaponBolt guard · `98af2c80` static-building skip (default-off) · `ad6cff3c` R2b trees default-on · `202a04fb` R2b rename
+> - **Verified build:** the full game+editor 8z build is deployed + tier1-verified at **`A:/Games/mc2-opengl/mc2-win64-0.4c`** (the verified terrain-closeout build). v0.4 deploy left pending (convenience, not a gate).
+>
+> **NEXT GATE → Baseline A** (off 0.4c): golden frames · per-pass timings · FASTPATH_DROP=0 · terrain/path snapshot · oracle counters — captured **post-8z, pre-GlStateGuard / pre-visual-lanes**. That baseline gates opening the modernization backlog.
+> **Do NOT yet:** merge Tube to mainline · start GlStateGuard · widen static-building/service-lane. Baseline A first.
+
+**Date:** 2026-06-09 (milestone updated 2026-06-10)
 **Worktree:** `.claude/worktrees/nifty-mendeleev`
-**Status:** Planning / recon synthesis only — no code changes proposed inline.
+**Status:** Planning + terrain-closeout execution record. Terrain 8z closeout COMPLETE (see milestone above).
 **Author role:** Senior engine-architecture planner.
 
 Primary asset to protect: **the game runs well today.** Every recommendation below is
