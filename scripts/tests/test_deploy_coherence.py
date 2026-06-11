@@ -170,3 +170,49 @@ def test_staleness_warn_against_real_repo(deploy):
     mpath.write_text(json.dumps(data))
     n, text = _warns(deploy, repo)
     assert "STALE" in text
+
+
+def _write_csv_manifest(d: Path, head: str = "deadbeef" * 5) -> Path:
+    """Emulate deploy_payload.py manifest v1 for files in the fake deploy."""
+    import csv as _csv
+    mpath = d / checker.CSV_MANIFEST_NAME
+    rows = []
+    for rel in ("mc2.exe", "shaders/gos_terrain.frag"):
+        p = d / rel
+        rows.append([rel, checker._sha256(p), p.stat().st_size,
+                     head, "2026-06-11T12:00:00"])
+    with open(mpath, "w", newline="") as f:
+        w = _csv.writer(f)
+        w.writerow(["manifest_version", "v1", "", "", ""])
+        w.writerow(["relpath", "sha256", "bytes", "src_commit", "timestamp"])
+        w.writerows(rows)
+    return mpath
+
+
+def test_csv_manifest_fresh_ok(deploy, tmp_path):
+    (deploy / checker.MANIFEST_NAME).unlink()  # csv only
+    _write_csv_manifest(deploy)
+    n, text = _warns(deploy, tmp_path)
+    # head not in tmp_path repo -> exactly the not-found warn, no drift warns
+    assert "hash drift" not in text and "size drift" not in text
+    assert "deployed file missing" not in text
+
+
+def test_csv_manifest_detects_exe_mutation(deploy, tmp_path):
+    (deploy / checker.MANIFEST_NAME).unlink()
+    _write_csv_manifest(deploy)
+    (deploy / "mc2.exe").write_bytes(b"MUTATED" * 999)
+    n, text = _warns(deploy, tmp_path)
+    assert "drift" in text and "mc2.exe" in text
+
+
+def test_newest_manifest_wins(deploy, tmp_path):
+    import os
+    # json exists (from fixture); csv written later -> csv must be chosen
+    mpath = _write_csv_manifest(deploy)
+    json_path = deploy / checker.MANIFEST_NAME
+    os.utime(json_path, (1, 1))  # force json ancient
+    picked = checker._newest_manifest(deploy)
+    assert picked.name == checker.CSV_MANIFEST_NAME
+    n, text = _warns(deploy, tmp_path)
+    assert "deploy_payload.py" in text
