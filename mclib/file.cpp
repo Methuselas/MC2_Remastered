@@ -626,8 +626,9 @@ void InitModSearchPaths(const char* modsRoot) {
             bool isNum = true;
             for (const char* p = envLevel; *p; ++p)
                 if (*p < '0' || *p > '9') { isNum = false; break; }
+            // Numeric value taken literally (so "0" means OFF); any
+            // non-numeric legacy value ("true", "on", ...) maps to level 1.
             logFileResolve = isNum ? atoi(envLevel) : 1;
-            if (logFileResolve == 0 && envLevel[0]) logFileResolve = 1; // non-empty non-numeric
         }
     }
 
@@ -1019,7 +1020,13 @@ long File::open (const char* fName, FileMode _mode, long numChild, bool doNotLow
 
 						DWORD findCD = fileExists(testCDPath);
 						if (findCD == 1)	//File exists. CD is in drive.  Return 2 to indicate file not found.
+						{
+							if (logFileResolve >= 2) {
+								std::string key = NormalizeKey(fileName);
+								EmitResolveRecord(key.c_str(), fName, "MISS", "", nullptr);
+							}
 							return 2;
+						}
 
 						EnterWindowMode();
 		
