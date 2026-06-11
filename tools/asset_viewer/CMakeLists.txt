@@ -185,6 +185,8 @@ set(ASSET_VIEWER_SOURCES
     WorkbenchValidation.cpp
     # S4: bundle export + registry round-trip gate
     BundleExport.cpp
+    # S5: safe reversible central models.json merge
+    CentralManifestMerge.cpp
 )
 
 add_executable(mc2_asset_viewer ${ASSET_VIEWER_SOURCES})

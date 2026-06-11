@@ -2,8 +2,9 @@
 // S2: stock vs override side-by-side panel with generation-sync.
 // S3: warnings panel + appearance-verify control.
 // S4: export draft bundle button.
-// S5: LOD-chain table panel.
+// S5: LOD-chain table panel + central manifest merge.
 #include "ModWorkbenchPanel.h"
+#include "CentralManifestMerge.h"
 #include "imgui.h"
 #include <cctype>
 #include <cfloat>
@@ -194,4 +195,17 @@ void ModWorkbenchPanel::draw(ModWorkbench& wb, const ImVec2& avail) {
     ImGui::EndDisabled();
     if (!exportMsg.empty()) ImGui::TextWrapped("%s", exportMsg.c_str());
     ImGui::TextDisabled("Writes <out>/<id>/{model.glb, models.generated.json}. Does NOT edit your central models.json.");
+
+    ImGui::Separator();
+    static char centralPath[260] = "data/model_overrides/models.json";
+    static std::string mergeMsg;
+    ImGui::InputText("Central models.json", centralPath, sizeof(centralPath));
+    ImGui::BeginDisabled(wb.hasBlocking());
+    if (ImGui::Button("Append/Merge to Central models.json")) {
+        MergeResult r = MergeIntoCentralManifest(centralPath, wb.record());
+        mergeMsg = (r.ok ? "OK: " : "FAILED: ") + r.message;
+    }
+    ImGui::EndDisabled();
+    if (!mergeMsg.empty()) ImGui::TextWrapped("%s", mergeMsg.c_str());
+    ImGui::TextDisabled("Writes a .bak first, preserves your other overrides, round-trip verified. Draft export above stays available.");
 }

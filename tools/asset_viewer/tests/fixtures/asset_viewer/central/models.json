@@ -1,0 +1,6 @@
+{
+  "overrides": [
+    {"type":"model","class":"staticProp","replaces":"staticProp:propA","source":"a.glb","renderOnly":true,"scale":1.0,"fallback":"stock"},
+    {"type":"model","class":"tree","replaces":"tree:propB","source":"b.glb","renderOnly":true,"scale":1.0,"fallback":"stock"}
+  ]
+}
