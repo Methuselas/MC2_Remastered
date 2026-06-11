@@ -27,6 +27,8 @@
 #include <cstring>
 #include <ctime>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace EditorPlaytest
 {
@@ -38,7 +40,18 @@ char         s_status[512] = "Idle -- load + save a mission, then Playtest.";
 char         s_exePath[512] = "";
 bool         s_exeResolved = false;
 
+// Mod context captured at Start() time, consumed by the completion callbacks so the log
+// is archived under the mod's .modproject tree (set only when the mission lives in a mod).
+bool         s_modActive = false;
+std::string  s_modRoot;      // `...\mods\<id>` absolute dir
+std::string  s_modId;
+std::string  s_runStamp;     // shared timestamp for this run's archive subdir
+
 // --- helpers --------------------------------------------------------------------------
+
+// Forward decls (definitions below; ArchiveLog uses these before their point of def).
+std::string TimeStamp();
+void MakeDirTree(const std::string& dir);
 
 // Split a full file path into directory + filename-base (no extension).
 void SplitPath(const std::string& full, std::string& dir, std::string& base)
@@ -141,20 +154,28 @@ void ResolveExe()
 std::string ArchiveLog(const std::string& missionPak, const std::string& log,
 	const char* prefix = "")
 {
-	std::string dir, base;
-	SplitPath(missionPak, dir, base);
+	std::string logDir;
+	std::string fileName;
 
-	std::string logDir = dir + "/playtest-logs";
-	CreateDirectoryA(logDir.c_str(), NULL);   // ignore "already exists"
+	if (s_modActive)
+	{
+		// Mod-aware: <modRoot>\.modproject\playtest\<stamp>\<prefix>playtest.log
+		std::string stamp = s_runStamp.empty() ? TimeStamp() : s_runStamp;
+		logDir = s_modRoot + "\\.modproject\\playtest\\" + stamp;
+		MakeDirTree(logDir);
+		fileName = std::string(prefix ? prefix : "") + "playtest.log";
+	}
+	else
+	{
+		// Legacy: <missionDir>\playtest-logs\<prefix><stamp>.log
+		std::string dir, base;
+		SplitPath(missionPak, dir, base);
+		logDir = dir + "/playtest-logs";
+		CreateDirectoryA(logDir.c_str(), NULL);   // ignore "already exists"
+		fileName = std::string(prefix ? prefix : "") + TimeStamp() + ".log";
+	}
 
-	time_t t = time(NULL);
-	struct tm lt;
-	localtime_s(&lt, &t);
-	char stamp[32];
-	snprintf(stamp, sizeof(stamp), "%04d%02d%02d-%02d%02d%02d",
-		lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday, lt.tm_hour, lt.tm_min, lt.tm_sec);
-
-	std::string logPath = logDir + "/" + (prefix ? prefix : "") + stamp + ".log";
+	std::string logPath = logDir + "/" + fileName;
 	FILE* f = NULL;
 	if (fopen_s(&f, logPath.c_str(), "wb") == 0 && f)
 	{
@@ -163,6 +184,75 @@ std::string ArchiveLog(const std::string& missionPak, const std::string& log,
 		return logPath;
 	}
 	return std::string();
+}
+
+// Format the current local time as yyyymmdd-hhmmss.
+std::string TimeStamp()
+{
+	time_t t = time(NULL);
+	struct tm lt;
+	localtime_s(&lt, &t);
+	char stamp[32];
+	snprintf(stamp, sizeof(stamp), "%04d%02d%02d-%02d%02d%02d",
+		lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday, lt.tm_hour, lt.tm_min, lt.tm_sec);
+	return std::string(stamp);
+}
+
+// Create a directory tree (mkdir -p) for an absolute path.  Single-level
+// CreateDirectoryA only, so walk each separator and create as we go.
+void MakeDirTree(const std::string& dir)
+{
+	std::string acc;
+	for (size_t i = 0; i < dir.size(); ++i)
+	{
+		char c = dir[i];
+		acc.push_back(c);
+		if (c == '\\' || c == '/')
+			CreateDirectoryA(acc.c_str(), NULL);
+	}
+	CreateDirectoryA(acc.c_str(), NULL);
+}
+
+// --- mod-root detection ----------------------------------------------------------------
+// Walk the saved mission's absolute path upward looking for a `...\mods\<id>\...` layout
+// (case-insensitive match on a "mods" path component).  On success fills modRoot (the
+// `...\mods\<id>` absolute dir) + modId and returns true; else returns false (no mod).
+bool DetectModRoot(const std::string& missionAbs, std::string& modRoot, std::string& modId)
+{
+	// Tokenize on both separators, remembering each token's end offset so we can rebuild
+	// the absolute prefix up to and including the <id> component.
+	std::vector<std::pair<std::string, size_t>> comps;   // (lowercased token, endOffset)
+	size_t start = 0;
+	for (size_t i = 0; i <= missionAbs.size(); ++i)
+	{
+		if (i == missionAbs.size() || missionAbs[i] == '\\' || missionAbs[i] == '/')
+		{
+			if (i > start)
+			{
+				std::string tok = missionAbs.substr(start, i - start);
+				std::string low = tok;
+				for (char& c : low) c = (char)tolower((unsigned char)c);
+				comps.push_back(std::make_pair(low, i));
+			}
+			start = i + 1;
+		}
+	}
+
+	// Find a "mods" component that has at least one component after it (the <id>).
+	for (size_t i = 0; i + 1 < comps.size(); ++i)
+	{
+		if (comps[i].first == "mods")
+		{
+			// <id> = the original-case token right after "mods".
+			size_t idEnd = comps[i + 1].second;
+			modRoot = missionAbs.substr(0, idEnd);   // `...\mods\<id>`
+			// Recover original-case id from modRoot's last component.
+			size_t slash = modRoot.find_last_of("/\\");
+			modId = (slash != std::string::npos) ? modRoot.substr(slash + 1) : modRoot;
+			return true;
+		}
+	}
+	return false;
 }
 
 // Pull the last non-empty line of the captured log for the status string.
@@ -189,8 +279,13 @@ void OnFinished(const EditorTaskRunner::TaskResult& res)
 	const bool pass = (res.exitCode == 0);
 	std::string last = LastLine(res.log);
 
+	char modTag[160] = "";
+	if (s_modActive)
+		snprintf(modTag, sizeof(modTag), "mod: %s  ", s_modId.c_str());
+
 	snprintf(s_status, sizeof(s_status),
-		"%s (exit %d). Log: %s%s%s",
+		"%s%s (exit %d). Log: %s%s%s",
+		modTag,
 		pass ? "PASS" : "FAIL",
 		res.exitCode,
 		logPath.empty() ? "(write failed)" : logPath.c_str(),
@@ -256,6 +351,20 @@ void Start()
 	if (EditorData::instance->getMapName())
 		savedPak = EditorData::instance->getMapName();
 
+	// --- mod-root detection (Slice 2) -------------------------------------------------
+	// Reset per-run mod context, then detect whether the saved mission lives inside a
+	// `...\mods\<id>\...` layout.  When it does, the child gets MC2_ACTIVE_MOD + state
+	// dump, and logs archive under the mod's .modproject tree.
+	s_modActive = false;
+	s_modRoot.clear();
+	s_modId.clear();
+	s_runStamp = TimeStamp();
+	{
+		std::string missionAbs = AbsPath(savedPak);
+		if (DetectModRoot(missionAbs, s_modRoot, s_modId) && !s_modId.empty())
+			s_modActive = true;
+	}
+
 	ResolveExe();
 	if (!FileExists(s_exePath))
 	{
@@ -287,10 +396,25 @@ void Start()
 		return;
 	}
 
+	// Bridge destination.  Default = the game's base mission dir.  For a MOD mission the
+	// engine mounts mods\<id>\data\missions\ (via MC2_ACTIVE_MOD), so bridge there instead
+	// -- BUT only if the detected mod root is NOT already under exeDir (i.e. an editor-side
+	// mods folder distinct from the game install).  If the mod root IS under exeDir, the
+	// engine's own mods\<id>\data\missions\ already holds the file (same-file skip handles it).
 	std::string dstDir = exeDir + "\\data\\missions";
-	// Create data\ then data\missions (CreateDirectoryA is single-level only).
-	CreateDirectoryA((exeDir + "\\data").c_str(), NULL);
-	CreateDirectoryA(dstDir.c_str(), NULL);
+	std::string exeDirAbsLow = AbsPath(exeDir);
+	for (char& c : exeDirAbsLow) c = (char)tolower((unsigned char)c);
+	std::string modRootAbsLow = AbsPath(s_modRoot);
+	for (char& c : modRootAbsLow) c = (char)tolower((unsigned char)c);
+	bool modUnderExe = s_modActive &&
+		(modRootAbsLow.compare(0, exeDirAbsLow.size(), exeDirAbsLow) == 0);
+
+	if (s_modActive && !modUnderExe)
+	{
+		// Editor-side mod: target the game install's mod mount so MC2_ACTIVE_MOD finds it.
+		dstDir = exeDir + "\\mods\\" + s_modId + "\\data\\missions";
+	}
+	MakeDirTree(dstDir);
 
 	// Normalize all four paths to absolute so the same-file check is reliable (the mission
 	// may have been opened FROM the game install, making src == dst via a relative `..\`
@@ -335,6 +459,13 @@ void Start()
 	spec.onFailureMainThread = &OnFinished;
 	spec.onCancelMainThread  = &OnCancelled;
 
+	// Mod-aware env: when the mission lives in a mod, mount it + ask for a state dump.
+	if (s_modActive)
+	{
+		spec.envExtra.push_back(std::make_pair(std::string("MC2_ACTIVE_MOD"), s_modId));
+		spec.envExtra.push_back(std::make_pair(std::string("MC2_DEBUG_STATE_DUMP"), std::string("1")));
+	}
+
 	s_task = EditorTaskRunner::StartTask(spec);
 	if (s_task == EditorTaskRunner::kInvalidTask)
 	{
@@ -344,8 +475,13 @@ void Start()
 	}
 
 	s_state = State::Running;
-	snprintf(s_status, sizeof(s_status), "%sRunning: -mission %s  (bridged to %s)",
-		stalePrefix.c_str(), stem.c_str(), dstDir.c_str());
+	if (s_modActive)
+		snprintf(s_status, sizeof(s_status),
+			"%sRunning: mod: %s  -mission %s  (bridged to %s)",
+			stalePrefix.c_str(), s_modId.c_str(), stem.c_str(), dstDir.c_str());
+	else
+		snprintf(s_status, sizeof(s_status), "%sRunning: -mission %s  (bridged to %s)",
+			stalePrefix.c_str(), stem.c_str(), dstDir.c_str());
 }
 
 void Stop()

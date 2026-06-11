@@ -22,6 +22,8 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace EditorTaskRunner
 {
@@ -46,6 +48,12 @@ namespace EditorTaskRunner
 		std::string commandLine;      // full command (launch python with -u!)
 		std::string workingDirectory; // cwd for the child ("" = inherit)
 		std::string cancelFile;       // optional: touched on cancel (cooperative kill)
+
+		// Optional environment additions for the child.  When non-empty, the worker
+		// builds a FULL ANSI environment block = parent env (GetEnvironmentStrings)
+		// with these K=V pairs appended/overriding, and passes it to CreateProcessA.
+		// When empty, the child inherits the parent env (env param = NULL), as before.
+		std::vector<std::pair<std::string, std::string>> envExtra;
 
 		// All three run on the MAIN thread, drained by PumpMainThread(), exactly once.
 		std::function<void(const TaskResult&)> onSuccessMainThread; // exit code 0

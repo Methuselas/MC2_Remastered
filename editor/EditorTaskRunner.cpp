@@ -15,10 +15,13 @@
 #endif
 
 #include <atomic>
+#include <cctype>
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace EditorTaskRunner
@@ -52,6 +55,9 @@ struct Task
 static std::mutex                         s_mutex;
 static std::vector<std::shared_ptr<Task>> s_tasks;
 static TaskId                             s_nextId = 1;
+
+static std::vector<char> BuildEnvBlock(
+	const std::vector<std::pair<std::string, std::string>>& extra);
 
 // Append to the task log under lock, trimming to the tail if oversized.
 static void AppendLog(Task* t, const char* data, size_t len)
@@ -127,10 +133,15 @@ static void WorkerMain(std::shared_ptr<Task> t)
 	cmd.push_back('\0');
 	const char* cwd = t->spec.workingDirectory.empty() ? NULL : t->spec.workingDirectory.c_str();
 
+	// Build a full ANSI env block only when envExtra is set; else pass NULL (inherit).
+	std::vector<char> envBlock = BuildEnvBlock(t->spec.envExtra);
+	LPVOID envPtr = envBlock.empty() ? NULL : (LPVOID)envBlock.data();
+
 	BOOL ok = CreateProcessA(
 		NULL, cmd.data(), NULL, NULL,
 		TRUE,                              // inherit handles (the pipe write end)
-		CREATE_NO_WINDOW, NULL, cwd, &si, &pi);
+		CREATE_NO_WINDOW,                  // ANSI block -> do NOT set CREATE_UNICODE_ENVIRONMENT
+		envPtr, cwd, &si, &pi);
 
 	// Parent never writes the pipe; close its copy so ReadFile sees EOF at child exit.
 	CloseHandle(hWrite);
@@ -198,6 +209,76 @@ static void WorkerMain(std::shared_ptr<Task> t)
 	CloseHandle(pi.hThread);
 
 	t->workerDone = true;
+}
+
+// Build a FULL ANSI environment block = parent env + envExtra (appended/overriding).
+//
+// A Win32 environment block is a sequence of "NAME=VALUE\0" strings terminated by an
+// extra '\0' (double-NUL).  CreateProcessA without CREATE_UNICODE_ENVIRONMENT expects
+// an ANSI block.  We start from the parent's GetEnvironmentStringsA(), then for each
+// extra we override any existing same-named entry (case-insensitive name compare, as
+// Windows env names are case-insensitive) or append it.  Returns the block bytes; an
+// empty return means "use NULL" (caller inherits parent env).
+static std::vector<char> BuildEnvBlock(
+	const std::vector<std::pair<std::string, std::string>>& extra)
+{
+	std::vector<char> block;
+	if (extra.empty())
+		return block;   // empty -> caller passes NULL (inherit parent env)
+
+	// Collect parent entries as "NAME=VALUE" strings.
+	std::vector<std::string> entries;
+	LPCH parent = GetEnvironmentStringsA();
+	if (parent)
+	{
+		for (const char* p = parent; *p; )
+		{
+			std::string e(p);
+			// Skip the leading "=::=::\" style drive-cwd entries' empty names gracefully;
+			// keep them verbatim (they have a leading '=' and must be preserved).
+			entries.push_back(e);
+			p += e.size() + 1;
+		}
+		FreeEnvironmentStringsA(parent);
+	}
+
+	// Helper: case-insensitive compare of the NAME part (before first '=', ignoring a
+	// possible leading '=' used by the special "=C:=..." drive entries).
+	auto nameOf = [](const std::string& kv) -> std::string {
+		size_t start = (!kv.empty() && kv[0] == '=') ? 1 : 0;
+		size_t eq = kv.find('=', start);
+		std::string n = kv.substr(0, (eq == std::string::npos) ? kv.size() : eq);
+		for (char& c : n) c = (char)tolower((unsigned char)c);
+		return n;
+	};
+
+	for (const auto& kv : extra)
+	{
+		std::string newEntry = kv.first + "=" + kv.second;
+		std::string newName = kv.first;
+		for (char& c : newName) c = (char)tolower((unsigned char)c);
+
+		bool overrode = false;
+		for (auto& existing : entries)
+		{
+			if (nameOf(existing) == newName)
+			{
+				existing = newEntry;
+				overrode = true;
+				break;
+			}
+		}
+		if (!overrode)
+			entries.push_back(newEntry);
+	}
+
+	for (const auto& e : entries)
+	{
+		block.insert(block.end(), e.begin(), e.end());
+		block.push_back('\0');
+	}
+	block.push_back('\0');   // double-NUL terminator
+	return block;
 }
 
 static std::shared_ptr<Task> FindTask(TaskId id)
