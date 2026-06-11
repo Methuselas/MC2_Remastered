@@ -3,8 +3,19 @@
 //
 // Wraps EditorTaskRunner (process + combined stdout/stderr pipe + exit code) with the
 // playtest-specific glue: save the mission in place, resolve/validate the game exe,
-// stale-deploy mtime warning, launch with `-mission <pak>` (cwd = exe dir), and on exit
+// stale-deploy mtime warning, launch with `-mission <stem>` (cwd = exe dir), and on exit
 // archive the full captured log to <missionDir>/playtest-logs/<timestamp>.log.
+//
+// STEM + COPY BRIDGE CONTRACT (the load-bearing detail):
+//   mc2.exe `-mission` takes a bare STEM, NOT a path.  The engine resolves the file as
+//   `missionPath + stem + ".fit"/".pak"` where missionPath comes from system.cfg and is
+//   effectively `data\missions\` relative to the game's cwd (mission.cpp:1500/1904/2166).
+//   Passing a full saved path produced the mangled `data/missions/<abspath>.fit`, a missing
+//   .fit, and the "Could not find Teams Block" fail-fast (mission.cpp:1985 -> exit 0xC0000409).
+//   So we (1) derive the stem from the saved pak filename, (2) COPY both `<stem>.pak` and the
+//   sibling `<stem>.fit` (they are saved next to each other) into the GAME install's
+//   `<exeDir>\data\missions\` -- the game install may differ from the editor's, which is the
+//   whole point of the bridge -- and (3) launch `-mission <stem>` with cwd = exeDir.
 //-------------------------------------------------------------------------------------------------
 #include "stdafx.h"   // MFC / <windows.h>
 
@@ -236,14 +247,60 @@ void Start()
 	std::string exeDir, exeBase;
 	SplitPath(s_exePath, exeDir, exeBase);
 
+	// --- STEM + COPY BRIDGE (see file header) -----------------------------------------
+	// The engine resolves `-mission <stem>` as data\missions\<stem>.fit/.pak relative to the
+	// game's cwd (= exeDir).  Derive the stem and bridge BOTH the .pak and its sibling .fit
+	// into the game install's data\missions\, since the game install may differ from ours.
+	std::string srcDir, srcBase;
+	SplitPath(savedPak, srcDir, srcBase);
+	std::string stem = srcBase;
+
+	std::string srcPak = srcDir + "\\" + stem + ".pak";
+	std::string srcFit = srcDir + "\\" + stem + ".fit";
+	if (!FileExists(srcPak.c_str()))
+		srcPak = savedPak;   // fall back to whatever save() actually wrote
+	if (!FileExists(srcFit.c_str()))
+	{
+		snprintf(s_status, sizeof(s_status),
+			"Mission .fit not found next to pak (%s) -- cannot bridge to game; aborting.",
+			srcFit.c_str());
+		return;
+	}
+
+	std::string dstDir = exeDir + "\\data\\missions";
+	// Create data\ then data\missions (CreateDirectoryA is single-level only).
+	CreateDirectoryA((exeDir + "\\data").c_str(), NULL);
+	CreateDirectoryA(dstDir.c_str(), NULL);
+
+	std::string dstPak = dstDir + "\\" + stem + ".pak";
+	std::string dstFit = dstDir + "\\" + stem + ".fit";
+	if (!CopyFileA(srcPak.c_str(), dstPak.c_str(), FALSE))
+	{
+		snprintf(s_status, sizeof(s_status),
+			"Failed to copy pak into game (%s -> %s), err %lu; aborting.",
+			srcPak.c_str(), dstPak.c_str(), GetLastError());
+		return;
+	}
+	if (!CopyFileA(srcFit.c_str(), dstFit.c_str(), FALSE))
+	{
+		snprintf(s_status, sizeof(s_status),
+			"Failed to copy fit into game (%s -> %s), err %lu; aborting.",
+			srcFit.c_str(), dstFit.c_str(), GetLastError());
+		return;
+	}
+
 	std::string stalePrefix;
 	if (ExeIsStale(s_exePath))
 		stalePrefix = "WARNING: game exe is >24h old (possible stale deploy).\n";
 
+	// Quote the stem only when it contains spaces (engine treats the token as the bare stem).
+	bool stemHasSpace = (stem.find(' ') != std::string::npos);
+
 	EditorTaskRunner::TaskSpec spec;
 	spec.name = "Playtest";
 	char cmd[1200];
-	snprintf(cmd, sizeof(cmd), "\"%s\" -mission \"%s\"", s_exePath, savedPak.c_str());
+	snprintf(cmd, sizeof(cmd), stemHasSpace ? "\"%s\" -mission \"%s\"" : "\"%s\" -mission %s",
+		s_exePath, stem.c_str());
 	spec.commandLine     = cmd;
 	spec.workingDirectory = exeDir;
 	spec.onSuccessMainThread = &OnFinished;
@@ -259,8 +316,8 @@ void Start()
 	}
 
 	s_state = State::Running;
-	snprintf(s_status, sizeof(s_status), "%sRunning: %s -mission %s",
-		stalePrefix.c_str(), s_exePath, savedPak.c_str());
+	snprintf(s_status, sizeof(s_status), "%sRunning: -mission %s  (bridged to %s)",
+		stalePrefix.c_str(), stem.c_str(), dstDir.c_str());
 }
 
 void Stop()
