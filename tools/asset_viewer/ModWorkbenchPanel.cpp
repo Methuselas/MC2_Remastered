@@ -2,12 +2,14 @@
 // S2: stock vs override side-by-side panel with generation-sync.
 // S3: warnings panel + appearance-verify control.
 // S4: export draft bundle button.
+// S5: LOD-chain table panel.
 #include "ModWorkbenchPanel.h"
 #include "imgui.h"
 #include <cctype>
 #include <cfloat>
 #include <cstring>
 #include <string>
+#include <utility>
 
 void ModWorkbenchPanel::setDeployDir(const std::string& d) {
     stockPreview_.setDeployDir(d);
@@ -120,6 +122,46 @@ void ModWorkbenchPanel::draw(ModWorkbench& wb, const ImVec2& avail) {
         bool blk = w.severity==WarnSeverity::Block;
         ImGui::TextColored(blk?ImVec4(1,0.4f,0.4f,1):ImVec4(1,0.8f,0.3f,1),
                            "  [%s] %s", blk?"BLOCK (mirror, advisory)":"WARN", w.message.c_str());
+    }
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("LOD chain (LOD0 = the dropped GLB; add lower-detail entries):");
+    {
+        auto& lods = rec.lods;
+        if (ImGui::BeginTable("lods", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+            ImGui::TableSetupColumn("LOD"); ImGui::TableSetupColumn("Source GLB");
+            ImGui::TableSetupColumn("Distance"); ImGui::TableSetupColumn("Status");
+            ImGui::TableSetupColumn("");
+            ImGui::TableHeadersRow();
+            int removeIdx = -1, moveUp = -1, moveDown = -1;
+            for (int i = 0; i < (int)lods.size(); ++i) {
+                ImGui::PushID(i);
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0); ImGui::Text("%d", lods[i].lod);
+                ImGui::TableSetColumnIndex(1);
+                char sb[260]; strncpy(sb, lods[i].sourceRelPath.c_str(), sizeof(sb)-1); sb[sizeof(sb)-1]='\0';
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                if (ImGui::InputText("##src", sb, sizeof(sb))) lods[i].sourceRelPath = sb;
+                ImGui::TableSetColumnIndex(2);
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                ImGui::InputFloat("##dist", &lods[i].distance, 0,0,"%.1f");
+                ImGui::TableSetColumnIndex(3);
+                bool ascOk = (i == 0) || (lods[i].distance > lods[i-1].distance);
+                ImGui::TextColored(ascOk?ImVec4(0.6f,1,0.6f,1):ImVec4(1,0.5f,0.5f,1), ascOk?"ok":"order");
+                ImGui::TableSetColumnIndex(4);
+                if (ImGui::SmallButton("Up"))   moveUp = i; ImGui::SameLine();
+                if (ImGui::SmallButton("Dn"))   moveDown = i; ImGui::SameLine();
+                if (ImGui::SmallButton("X"))    removeIdx = i;
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+            if (removeIdx >= 0) lods.erase(lods.begin()+removeIdx);
+            if (moveUp > 0)               std::swap(lods[moveUp], lods[moveUp-1]);
+            if (moveDown >= 0 && moveDown+1 < (int)lods.size()) std::swap(lods[moveDown], lods[moveDown+1]);
+            // Reindex lod by row order: entries start at 1 (LOD0 = record.source).
+            for (int i = 0; i < (int)lods.size(); ++i) lods[i].lod = i + 1;
+        }
+        if (ImGui::Button("Add LOD")) rec.lods.push_back({(int)rec.lods.size()+1, "", 0.0f});
     }
 
     ImGui::Separator();

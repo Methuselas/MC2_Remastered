@@ -100,6 +100,9 @@ int main(int argc, char* argv[])
     if (argc >= 2 && strcmp(argv[1], "--smoke-texture-missing-warn") == 0)
         return AssetViewerApp::runSmokeTextureMissingWarn(argc >= 3 ? argv[2] : ".");
 
+    if (argc >= 2 && strcmp(argv[1], "--smoke-lod-edit-validate") == 0)
+        return AssetViewerApp::runSmokeLodEditValidate();
+
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0)
     {
         printf("SDL_Init error: %s\n", SDL_GetError());
