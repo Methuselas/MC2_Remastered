@@ -316,6 +316,7 @@ bool s_tubeInitFailed  = false;
 
 GLint s_tloc_worldToClipGL = -2;
 GLint s_tloc_uAtlas        = -2;
+GLint s_tloc_uAdditive     = -2;  // blend-aware discard: 1=additive (PPC), 0=alpha ribbon
 
 GLsizei s_tubePosCap = 0, s_tubeColCap = 0, s_tubeUvCap = 0, s_tubeIdxCap = 0;
 
@@ -352,6 +353,7 @@ void tubeEnsureInitialized() {
         std::fflush(stderr);
         s_tloc_worldToClipGL = glGetUniformLocation(s_tubeProg->shp_, "u_worldToClipGL");
         s_tloc_uAtlas        = glGetUniformLocation(s_tubeProg->shp_, "uAtlas");
+        s_tloc_uAdditive     = glGetUniformLocation(s_tubeProg->shp_, "uAdditive");
     }
 }
 
@@ -484,6 +486,11 @@ extern "C" void gos_tube_ribbon_flush(const float*          positions,
             glUniformMatrix4fv(s_tloc_worldToClipGL, 1, GL_FALSE, mvp);
     }
     if (s_tloc_uAtlas >= 0) glUniform1i(s_tloc_uAtlas, 0);
+    // Blend-aware fragment discard: additive (PPC/ER-PPC) ribbons carry low/zero
+    // per-vertex alpha (additive uses RGB, not alpha coverage), so the alpha
+    // discard written for alpha ribbons must NOT apply to them. blendMode 1 =
+    // additive (GL_SRC_ALPHA,GL_ONE below), 0 = alpha.
+    if (s_tloc_uAdditive >= 0) glUniform1i(s_tloc_uAdditive, blendMode == 1 ? 1 : 0);
 
     // ── Texture + sampler on unit 0 ────────────────────────────────────
     glActiveTexture(GL_TEXTURE0);
