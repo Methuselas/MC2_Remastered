@@ -56,6 +56,24 @@ bool FileExists(const char* p)
 	return (a != INVALID_FILE_ATTRIBUTES) && !(a & FILE_ATTRIBUTE_DIRECTORY);
 }
 
+// Normalize a (possibly relative / `..`-laden) path to a full absolute path.
+// On failure returns the input unchanged so callers still have something usable.
+std::string AbsPath(const std::string& in)
+{
+	char buf[1024];
+	DWORD n = GetFullPathNameA(in.c_str(), sizeof(buf), buf, NULL);
+	if (n > 0 && n < sizeof(buf))
+		return std::string(buf);
+	return in;
+}
+
+// Case-insensitive path equality (after normalization the caller should already
+// have run AbsPath on both sides; Windows paths are case-insensitive).
+bool SamePath(const std::string& a, const std::string& b)
+{
+	return _stricmp(a.c_str(), b.c_str()) == 0;
+}
+
 // Returns true if the exe was last written more than 24h ago (stale-deploy guard).
 bool ExeIsStale(const char* p)
 {
@@ -82,7 +100,8 @@ void ResolveExe()
 	DWORD n = GetEnvironmentVariableA("MC2_PLAYTEST_EXE", envBuf, sizeof(envBuf));
 	if (n > 0 && n < sizeof(envBuf) && envBuf[0])
 	{
-		strncpy(s_exePath, envBuf, sizeof(s_exePath) - 1);
+		std::string abs = AbsPath(envBuf);
+		strncpy(s_exePath, abs.c_str(), sizeof(s_exePath) - 1);
 		s_exePath[sizeof(s_exePath) - 1] = 0;
 		s_exeResolved = true;
 		return;
@@ -98,7 +117,8 @@ void ResolveExe()
 	{
 		if (FileExists(candidates[i]))
 		{
-			strncpy(s_exePath, candidates[i], sizeof(s_exePath) - 1);
+			std::string abs = AbsPath(candidates[i]);
+			strncpy(s_exePath, abs.c_str(), sizeof(s_exePath) - 1);
 			s_exePath[sizeof(s_exePath) - 1] = 0;
 			s_exeResolved = true;
 			return;
@@ -272,16 +292,24 @@ void Start()
 	CreateDirectoryA((exeDir + "\\data").c_str(), NULL);
 	CreateDirectoryA(dstDir.c_str(), NULL);
 
-	std::string dstPak = dstDir + "\\" + stem + ".pak";
-	std::string dstFit = dstDir + "\\" + stem + ".fit";
-	if (!CopyFileA(srcPak.c_str(), dstPak.c_str(), FALSE))
+	// Normalize all four paths to absolute so the same-file check is reliable (the mission
+	// may have been opened FROM the game install, making src == dst via a relative `..\`
+	// dest) and so status/launch never leak confusing relative paths.
+	srcPak = AbsPath(srcPak);
+	srcFit = AbsPath(srcFit);
+	std::string dstPak = AbsPath(dstDir + "\\" + stem + ".pak");
+	std::string dstFit = AbsPath(dstDir + "\\" + stem + ".fit");
+
+	// Per-file: if src and dst resolve to the same file, it is already in place -- skip the
+	// copy silently (copying a file onto itself fails with sharing-violation err 32).
+	if (!SamePath(srcPak, dstPak) && !CopyFileA(srcPak.c_str(), dstPak.c_str(), FALSE))
 	{
 		snprintf(s_status, sizeof(s_status),
 			"Failed to copy pak into game (%s -> %s), err %lu; aborting.",
 			srcPak.c_str(), dstPak.c_str(), GetLastError());
 		return;
 	}
-	if (!CopyFileA(srcFit.c_str(), dstFit.c_str(), FALSE))
+	if (!SamePath(srcFit, dstFit) && !CopyFileA(srcFit.c_str(), dstFit.c_str(), FALSE))
 	{
 		snprintf(s_status, sizeof(s_status),
 			"Failed to copy fit into game (%s -> %s), err %lu; aborting.",
