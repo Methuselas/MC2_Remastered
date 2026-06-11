@@ -4,12 +4,16 @@
 // S4: export draft bundle button.
 #include "ModWorkbenchPanel.h"
 #include "imgui.h"
+#include <cctype>
+#include <cfloat>
 #include <cstring>
 #include <string>
 
 void ModWorkbenchPanel::setDeployDir(const std::string& d) {
     stockPreview_.setDeployDir(d);
     overridePreview_.setDeployDir(d);
+    deployDir_ = d;
+    roster_.load(d);
 }
 
 void ModWorkbenchPanel::syncMeshes(ModWorkbench& wb) {
@@ -69,9 +73,33 @@ void ModWorkbenchPanel::draw(ModWorkbench& wb, const ImVec2& avail) {
 
     auto& rec = wb.record();
     if (appe_[0]=='\0' && !rec.appearanceName.empty()) strncpy(appe_, rec.appearanceName.c_str(), sizeof(appe_)-1);
-    ImGui::InputText("Appearance key", appe_, sizeof(appe_));
-    rec.appearanceName = appe_;
-    ImGui::Checkbox("Appearance key verified (matches engine)", &rec.appearanceVerified);
+    // Free-type field; verified state is DERIVED (roster pick or roster match = true).
+    if (ImGui::InputText("Appearance key", appe_, sizeof(appe_))) {
+        rec.appearanceName = appe_;
+        rec.appearanceVerified = roster_.contains(rec.appearanceName);
+    } else {
+        rec.appearanceName = appe_;
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Refresh roster")) roster_.refresh(deployDir_);
+    ImGui::TextDisabled("appearance source: %d data/tgl/*.ini scanned, %zu keys%s",
+        roster_.scannedFileCount(), roster_.names().size(),
+        rec.appearanceVerified ? "  [verified: roster match]" : "  [unverified: not in roster]");
+    // Filterable roster picker.
+    ImGui::InputText("filter##appearance", apFilter_, sizeof(apFilter_));
+    if (ImGui::BeginListBox("##appearance_roster", ImVec2(-FLT_MIN, 120))) {
+        std::string lf; for (char* p = apFilter_; *p; ++p) lf += (char)std::tolower((unsigned char)*p);
+        for (const auto& n : roster_.names()) {
+            std::string ln; for (char c : n) ln += (char)std::tolower((unsigned char)c);
+            if (!lf.empty() && ln.find(lf) == std::string::npos) continue;
+            if (ImGui::Selectable(n.c_str(), n == rec.appearanceName)) {
+                strncpy(appe_, n.c_str(), sizeof(appe_)-1); appe_[sizeof(appe_)-1]='\0';
+                rec.appearanceName = n;
+                rec.appearanceVerified = true;          // explicit roster pick
+            }
+        }
+        ImGui::EndListBox();
+    }
     wb.revalidate();
     ImGui::Separator(); ImGui::TextUnformatted("Warnings:");
     if (wb.warnings().empty()) ImGui::TextDisabled("  none");
