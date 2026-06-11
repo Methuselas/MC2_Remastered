@@ -3082,8 +3082,14 @@ bool BldgAppearance::isStaticEligible() const
 	// is an override-backed type with no real animations, the cached recipe is a
 	// faithful representation regardless of bdAnimationState, so skip the guard.
 	// Strictly scoped to bldgRenderShape!=nullptr: stock path byte-identical.
+	// Also require no rotational node: turrets/radars rotate via rotationalNodeId
+	// (code-driven), not bdAnimData, so bldgTypeHasAnimations() misses them.
+	// A renderOnly static .glb cannot represent a rotating part -> never admit.
+	const bool hasRotationalNode =
+		appearType->rotationalNodeId[0] != '\0'
+		&& S_stricmp(appearType->rotationalNodeId, "NONE") != 0;
 	const bool overrideStatic =
-		appearType->bldgRenderShape && !bldgTypeHasAnimations(appearType);
+		appearType->bldgRenderShape && !bldgTypeHasAnimations(appearType) && !hasRotationalNode;
 	const bool activeGestureHasAnimation =
 		bdAnimationState != -1 && bldgGestureHasAnimation(appearType, bdAnimationState);
 	if (activeGestureHasAnimation && !overrideStatic) return false;  // currently animating
