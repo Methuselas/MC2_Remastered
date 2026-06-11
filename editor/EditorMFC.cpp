@@ -490,17 +490,21 @@ BOOL EditorMFCApp::InitInstance()
 	// Warn up front instead of letting the user chase a mysterious crash (this exact
 	// trap cost a long debug detour: the 0.4c editor install ships 0 tgl appearances).
 	{
-		const char* am = ModPicker::ActiveMod();
-		bool modActive = (am && am[0]);
+		// Probe REAL asset resolution rather than just loose data\tgl\*.ini files.
+		// Stock installs ship tgl appearances as data/tgl/<name>.tgl packed inside
+		// the tgl.fst FastFile (and/or under an active mod overlay), so the loose-dir
+		// scan reported a false "no assets" warning even though missions render fine.
+		// fileExists() walks the SAME priority chain a real load uses:
+		//   active mod  ->  base data/  ->  FastFile (tgl.fst).
+		// Use forward slashes -- FST keys are stored slash-normalized (file.cpp:746).
+		// 'anubis' is a canonical Clan-mech appearance present in every install.
+		extern long fileExists(const char* fName, long destination_mask);
+		const long kFileOnDiskOrFst = 1 /*FILE_ON_DISK*/ | 2 /*FILE_ON_FST*/;
+		bool canResolveTgl = (fileExists("data/tgl/anubis.tgl", kFileOnDiskOrFst) != 0);
 
-		WIN32_FIND_DATAA fd;
-		HANDLE h = FindFirstFileA("data\\tgl\\*.ini", &fd);
-		bool hasTgl = (h != INVALID_HANDLE_VALUE);
-		if (h != INVALID_HANDLE_VALUE) FindClose(h);
-
-		if (!hasTgl && !modActive)
+		if (!canResolveTgl)
 		{
-			EarlyTrace("InitInstance: WARNING data/tgl is empty and no mod active -- mission loads will likely CTD");
+			EarlyTrace("InitInstance: WARNING tgl appearances unresolvable (no loose data/tgl, no tgl.fst, no mod) -- mission loads will likely CTD");
 			// Non-blocking: surface as a persistent dismissable ImGui banner in the
 			// editor HUD instead of a modal the user must click OK on every launch.
 			extern void EditorSetStartupWarning(const char* text);
