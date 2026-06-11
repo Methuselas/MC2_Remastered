@@ -9,6 +9,7 @@
 
 // MC2_VFX_ORACLE_TUBE slice 1: ribbon mesh submit bridge (GameOS-side GL).
 // Declared extern "C" here to avoid pulling GameOS headers into mclib.
+// Immediate flush (kept intact; used only if a caller bypasses the deferred path).
 extern "C" void gos_tube_ribbon_flush(const float*          positions,
                                       const float*          colors,
                                       const float*          uvs,
@@ -17,6 +18,16 @@ extern "C" void gos_tube_ribbon_flush(const float*          positions,
                                       unsigned int          numIndices,
                                       unsigned int          gosHandle,
                                       int                   blendMode);
+// TUBE-DEFERRED-FLUSH-1: enqueue for post-renderLists composite.
+// gosHandle==0 must NOT be enqueued (caller must leave ribbonSubmitted=false).
+extern "C" void gos_tube_ribbon_enqueue(const float*          positions,
+                                        const float*          colors,
+                                        const float*          uvs,
+                                        unsigned int          numVerts,
+                                        const unsigned short* indices,
+                                        unsigned int          numIndices,
+                                        unsigned int          gosHandle,
+                                        int                   blendMode);
 
 //==========================================================================//
 // File:	 gosFX_Tube.cpp										            //
@@ -1551,20 +1562,31 @@ void gosFX::Tube::Draw(DrawInfo *info)
 				const uint32_t gosHandle =
 					static_cast<uint32_t>(spec->m_state.GetTextureHandle());
 
-				gos_tube_ribbon_flush(
-					&s_worldPos[0],
-					reinterpret_cast<const float*>(m_P_colors),
-					reinterpret_cast<const float*>(m_P_uvs),
-					numVerts,
-					m_P_indices,
-					numIndices,
-					gosHandle,
-					blendMode);  // 0=alpha, 1=additive (PPC bolts)
-
-				ribbonSubmitted = true;
-				if (isPolygonKind)    ++s_subPolygon;
-				else if (isAdditive)  ++s_subAddRibbon;
-				else                  ++s_subAlphaRibbon;
+				// TUBE-DEFERRED-FLUSH-1: if the Tube has a real texture handle,
+				// enqueue into the deferred ribbon queue (drawn post-renderLists
+				// via gos_tube_ribbon_flush_deferred in gamecam.cpp).
+				// If gosHandle==0 (untextured / gauss case), do NOT enqueue —
+				// leave ribbonSubmitted=false so the legacy MLR DrawEffect runs
+				// (it is correctly phased via the MLR sorter after renderLists).
+				if (gosHandle != 0) {
+					gos_tube_ribbon_enqueue(
+						&s_worldPos[0],
+						reinterpret_cast<const float*>(m_P_colors),
+						reinterpret_cast<const float*>(m_P_uvs),
+						numVerts,
+						m_P_indices,
+						numIndices,
+						gosHandle,
+						blendMode);  // 0=alpha, 1=additive (PPC bolts)
+					ribbonSubmitted = true;
+				}
+				// gosHandle==0: ribbonSubmitted stays false → DrawEffect below.
+				// Only count oracle submissions that actually enqueued.
+				if (ribbonSubmitted) {
+					if (isPolygonKind)    ++s_subPolygon;
+					else if (isAdditive)  ++s_subAddRibbon;
+					else                  ++s_subAlphaRibbon;
+				}
 			}
 			else
 			{

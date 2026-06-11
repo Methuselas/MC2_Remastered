@@ -534,6 +534,197 @@ extern "C" void gos_tube_ribbon_flush(const float*          positions,
     gos_InvalidateRenderStateCache();
 }
 
+// ── TUBE-DEFERRED-FLUSH-1: per-frame ribbon queue ─────────────────────────
+// Records are deep-copied at enqueue time (mclib pointers are transient).
+// Positions are already in MC2 WORLD space (local_to_world applied by caller).
+// The queue is drained once per frame from gos_tube_ribbon_flush_deferred().
+namespace {
+
+struct RibbonRecord {
+    std::vector<float>          positions;   // numVerts * 3 floats, MC2 world space
+    std::vector<float>          colors;      // numVerts * 4 floats RGBA
+    std::vector<float>          uvs;         // numVerts * 2 floats
+    std::vector<unsigned short> indices;     // numIndices uint16
+    unsigned int                gosHandle;
+    int                         blendMode;   // 0=alpha, 1=additive
+};
+
+std::vector<RibbonRecord> s_ribbonQueue;
+
+}  // namespace (tube deferred queue)
+
+extern "C" void gos_tube_ribbon_enqueue(const float*          positions,
+                                        const float*          colors,
+                                        const float*          uvs,
+                                        unsigned int          numVerts,
+                                        const unsigned short* indices,
+                                        unsigned int          numIndices,
+                                        unsigned int          gosHandle,
+                                        int                   blendMode) {
+    // gosHandle==0 must NOT be enqueued: untextured ribbons belong to the legacy
+    // MLR path (DrawEffect via the MLR sorter, which is correctly post-renderLists).
+    // The caller leaves ribbonSubmitted=false in that case so DrawEffect runs.
+    if (gosHandle == 0) return;
+    if (numVerts == 0 || numIndices == 0 ||
+        positions == nullptr || colors == nullptr ||
+        uvs == nullptr || indices == nullptr) return;
+
+    RibbonRecord rec;
+    rec.gosHandle  = gosHandle;
+    rec.blendMode  = blendMode;
+    rec.positions.assign(positions, positions + (size_t)numVerts * 3u);
+    rec.colors.assign   (colors,    colors    + (size_t)numVerts * 4u);
+    rec.uvs.assign      (uvs,       uvs       + (size_t)numVerts * 2u);
+    rec.indices.assign  (indices,   indices   + (size_t)numIndices);
+    s_ribbonQueue.push_back(std::move(rec));
+}
+
+extern "C" void gos_tube_ribbon_flush_deferred(void) {
+    if (s_ribbonQueue.empty()) return;
+
+    tubeEnsureInitialized();
+    if (s_tubeInitFailed || s_tubeProg == nullptr || s_tubeProg->shp_ == 0) {
+        s_ribbonQueue.clear();
+        return;
+    }
+
+    // ── State save (same set as the immediate flush) ───────────────────
+    GLint savedProgram   = 0; glGetIntegerv(GL_CURRENT_PROGRAM, &savedProgram);
+    GLint savedVAO       = 0; glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &savedVAO);
+    GLint savedSrcRGB    = 0; glGetIntegerv(GL_BLEND_SRC_RGB, &savedSrcRGB);
+    GLint savedDstRGB    = 0; glGetIntegerv(GL_BLEND_DST_RGB, &savedDstRGB);
+    GLboolean savedBlend    = glIsEnabled(GL_BLEND);
+    GLboolean savedDepthTest = glIsEnabled(GL_DEPTH_TEST);
+    GLint savedDepthFunc = 0; glGetIntegerv(GL_DEPTH_FUNC, &savedDepthFunc);
+    GLint savedDepthMask = 0; glGetIntegerv(GL_DEPTH_WRITEMASK, &savedDepthMask);
+    GLint savedSampler   = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, 0, &savedSampler);
+    GLint savedActiveTex = 0; glGetIntegerv(GL_ACTIVE_TEXTURE, &savedActiveTex);
+    GLint savedTex2D0    = 0;
+    glActiveTexture(GL_TEXTURE0);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &savedTex2D0);
+    GLboolean savedCullFace = glIsEnabled(GL_CULL_FACE);
+
+    // ── Bind VAO (trap #4: AMD drops draws on VAO=0) ───────────────────
+    glBindVertexArray(s_tubeVao);
+
+    // ── Program + shared uniforms (set ONCE for the whole batch) ──────
+    glUseProgram(s_tubeProg->shp_);
+    {
+        const float* mvp = gos_GetTerrainMVPMat4();
+        if (mvp && s_tloc_worldToClipGL >= 0)
+            glUniformMatrix4fv(s_tloc_worldToClipGL, 1, GL_FALSE, mvp);
+    }
+    if (s_tloc_uAtlas >= 0) glUniform1i(s_tloc_uAtlas, 0);
+
+    // ── Shared depth + blend state; per-record blend overridden in loop ─
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_GEQUAL);  // reverse-Z convention
+    glDepthMask(GL_FALSE);
+    glEnable(GL_BLEND);
+    glDisable(GL_CULL_FACE); // ribbon is double-sided
+
+    glBindSampler(0, s_tubeSampler);
+
+    // First-deferred-flush banner (once).
+    {
+        static bool s_banner = false;
+        if (!s_banner) {
+            s_banner = true;
+            std::fprintf(stderr,
+                "[VFX_ORACLE_TUBE deferred] enabled=1 queue=%u\n",
+                (unsigned)s_ribbonQueue.size());
+            std::fflush(stderr);
+        }
+    }
+
+    // ── Per-record draw loop ───────────────────────────────────────────
+    for (const RibbonRecord& rec : s_ribbonQueue) {
+        const unsigned numVerts   = (unsigned)(rec.positions.size() / 3u);
+        const unsigned numIndices = (unsigned)(rec.indices.size());
+        if (numVerts == 0 || numIndices == 0) continue;
+
+        // Resolve texture; skip records whose handle won't resolve at draw time
+        // (rare edge — dominant untextured gosHandle==0 case already blocked at
+        // enqueue; non-zero handle that vanished is acceptable to skip).
+        const GLuint glTex = (GLuint)gos_GetGLTextureName(rec.gosHandle);
+        if (glTex == 0) continue;
+
+        // Ensure SSBOs and IBO are large enough, then upload.
+        tubeEnsureBuffer(s_tubePosSsbo, s_tubePosCap, GL_SHADER_STORAGE_BUFFER,
+                         (GLsizei)(numVerts * 4u * sizeof(float)), 0);
+        tubeEnsureBuffer(s_tubeColSsbo, s_tubeColCap, GL_SHADER_STORAGE_BUFFER,
+                         (GLsizei)(numVerts * 4u * sizeof(float)), 0);
+        tubeEnsureBuffer(s_tubeUvSsbo,  s_tubeUvCap,  GL_SHADER_STORAGE_BUFFER,
+                         (GLsizei)(numVerts * 2u * sizeof(float)), 0);
+        tubeEnsureBuffer(s_tubeIbo,     s_tubeIdxCap, GL_ELEMENT_ARRAY_BUFFER,
+                         (GLsizei)(numIndices * sizeof(unsigned short)), 0);
+
+        // Positions arrive as 3 floats/vert; expand to vec4 (w=1) for std430 vec4.
+        {
+            std::vector<float> pos4((size_t)numVerts * 4u);
+            for (unsigned i = 0; i < numVerts; ++i) {
+                pos4[i*4+0] = rec.positions[i*3+0];
+                pos4[i*4+1] = rec.positions[i*3+1];
+                pos4[i*4+2] = rec.positions[i*3+2];
+                pos4[i*4+3] = 1.0f;
+            }
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_tubePosSsbo);
+            glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                            (GLsizeiptr)(pos4.size() * sizeof(float)), pos4.data());
+        }
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_tubeColSsbo);
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                        (GLsizeiptr)(numVerts * 4u * sizeof(float)), rec.colors.data());
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_tubeUvSsbo);
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                        (GLsizeiptr)(numVerts * 2u * sizeof(float)), rec.uvs.data());
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_tubeIbo);
+        glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0,
+                        (GLsizeiptr)(numIndices * sizeof(unsigned short)),
+                        rec.indices.data());
+
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 14, s_tubePosSsbo);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 15, s_tubeColSsbo);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 16, s_tubeUvSsbo);
+
+        // Blend-aware fragment discard uniform (per-record, matches immediate path).
+        if (s_tloc_uAdditive >= 0)
+            glUniform1i(s_tloc_uAdditive, rec.blendMode == 1 ? 1 : 0);
+
+        // Per-record blend func (alpha vs additive).
+        if (rec.blendMode == 1) glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+        else                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+        glBindTexture(GL_TEXTURE_2D, glTex);
+        glDrawElements(GL_TRIANGLES, (GLsizei)numIndices, GL_UNSIGNED_SHORT, (const void*)0);
+    }
+
+    // ── Unbind SSBO/IBO slots ──────────────────────────────────────────
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 14, 0u);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 15, 0u);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 16, 0u);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+
+    // ── Restore state ──────────────────────────────────────────────────
+    if (savedCullFace) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)savedTex2D0);
+    glBindSampler(0, (GLuint)savedSampler);
+    if (savedActiveTex != GL_TEXTURE0) glActiveTexture((GLenum)savedActiveTex);
+    glDepthMask((GLboolean)savedDepthMask);
+    glDepthFunc((GLenum)savedDepthFunc);
+    if (!savedDepthTest) glDisable(GL_DEPTH_TEST);
+    glBlendFunc((GLenum)savedSrcRGB, (GLenum)savedDstRGB);
+    if (!savedBlend) glDisable(GL_BLEND);
+    glUseProgram((GLuint)savedProgram);
+    glBindVertexArray((GLuint)savedVAO);
+
+    extern void __stdcall gos_InvalidateRenderStateCache();
+    gos_InvalidateRenderStateCache();
+
+    s_ribbonQueue.clear();
+}
+
 extern "C" void gos_SetActiveCamera(const float right_xyz[3], const float up_xyz[3])
 {
     for (int i = 0; i < 3; ++i) {

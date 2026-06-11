@@ -443,6 +443,15 @@ void GameCamera::render (void)
 				::mc2::particles::Batcher::Instance().ResolveTextures();  // resolve MLR->GOS after renderLists
 				::mc2::particles::Batcher::Instance().Flush();
 
+				// TUBE-DEFERRED-FLUSH-1: drain the ribbon queue enqueued by
+				// gosFX::Tube::Draw during the effect-render phase.  MUST run
+				// here (post-renderLists) so the depth buffer is fully populated
+				// before alpha-blended ribbons composite on top.  Same phase
+				// rationale as Batcher::Flush() above.
+				// No-op when MC2_VFX_ORACLE_TUBE is unset (queue stays empty).
+				// Declared in gos_particle_bridge.h (already included above).
+				gos_tube_ribbon_flush_deferred();
+
 				gos_ClearActiveCamera();
 			}
 		}

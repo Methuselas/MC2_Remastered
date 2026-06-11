@@ -56,6 +56,33 @@ extern "C" void gos_tube_ribbon_flush(const float*          positions,
                                       unsigned int          gosHandle,
                                       int                   blendMode);
 
+/* TUBE-DEFERRED-FLUSH-1: deferred ribbon draw path.
+ *
+ * gos_tube_ribbon_enqueue — called from gosFX::Tube::Draw DURING the
+ *   effect-render phase (before renderLists).  Deep-copies the mesh data
+ *   (positions already in MC2 WORLD space; caller pre-multiplies by
+ *   local_to_world before enqueuing) into an internal per-frame queue.
+ *   No GL work.  Returns void.
+ *   gosHandle==0 must NOT be enqueued (untextured → legacy MLR path is
+ *   correct-phase via the MLR sorter; the caller must skip enqueue and
+ *   leave ribbonSubmitted=false so DrawEffect runs).
+ *
+ * gos_tube_ribbon_flush_deferred — called ONCE from code/gamecam.cpp
+ *   immediately after Batcher::Instance().Flush() (post-renderLists).
+ *   Drains the queue: sets up shared GL state once, loops records,
+ *   issues one glDrawElements per record, restores state, clears queue.
+ */
+extern "C" void gos_tube_ribbon_enqueue(const float*          positions,
+                                        const float*          colors,
+                                        const float*          uvs,
+                                        unsigned int          numVerts,
+                                        const unsigned short* indices,
+                                        unsigned int          numIndices,
+                                        unsigned int          gosHandle,
+                                        int                   blendMode);
+
+extern "C" void gos_tube_ribbon_flush_deferred(void);
+
 /* B2: active camera bridge — temporary stop-gap until RenderFrameContext lands.
  * Set by GameCamera::render() immediately before particle flush; cleared after.
  * If never set this frame, accessors return last-known basis (identity at boot).
