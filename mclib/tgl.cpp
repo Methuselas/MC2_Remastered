@@ -11,6 +11,7 @@
 #ifndef TGL_H
 #include"tgl.h"
 #include "gos_crashbundle.h"
+#include "render_contract.h"  // [RENDER_PASS v1] noteRenderPass
 #include "gos_object_recon_tracy.h"  // [OBJECT_RECON v1] slice-2 recon-zero accumulators
 #endif
 
@@ -2946,6 +2947,13 @@ void TG_Shape::Render (float forceZ, bool isHudElement, BYTE alphaValue, bool is
 		!listOfVisibleShadows ||
 		(/*(lastTurnTransformed != (turn-1)) &&*/ (lastTurnTransformed != turn)))
 		return;
+
+	// [RENDER_PASS v1] advisory telemetry (env-gated, rate-limited; dedupes
+	// per pass per sampled frame so per-shape calls emit at most one line).
+	// NOTE: this is the ENQUEUE point (gos_DrawTriangle batches; submit is
+	// later in renderLists flush) — FBO/viewport facts are enqueue-time.
+	render_contract::noteRenderPass(render_contract::PassIdentity::OpaqueObject,
+	                                "TG_Shape_Render(enqueue)");
 
 	if (fogColor != 0xffffffff)
 	{

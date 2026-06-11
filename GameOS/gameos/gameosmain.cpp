@@ -600,6 +600,8 @@ static void draw_screen( void )
 
     // Composite post-processed scene to default framebuffer
     if (pp) {
+        render_contract::noteRenderPass(render_contract::PassIdentity::PostProcess,
+                                        "gosPostProcess_endScene");
         pp->endScene();
     }
 
@@ -1026,6 +1028,7 @@ int main(int argc, char** argv)
     }
 
     render_contract::initRenderContractAssert();
+    render_contract::initRenderPassTelemetry();   // [RENDER_PASS v1] (MC2_RENDER_PASS_TELEMETRY=1)
 
     if (GLEW_ARB_parallel_shader_compile) {
         glMaxShaderCompilerThreadsARB(0xFFFFFFFF);
@@ -1589,6 +1592,7 @@ int main(int argc, char** argv)
                 if (s_preSwapFinish) { ZoneScopedN("SwapWindow.PreFinish"); glFinish(); }
             }
             { ZoneScopedN("SwapWindow.SDL"); graphics::swap_window(win); }
+            render_contract::renderPassTelemetryFrameTick();  // [RENDER_PASS v1] frame boundary
             static bool s_first_frame_logged = false;
             if (!s_first_frame_logged) {
                 s_first_frame_logged = true;
