@@ -109,6 +109,7 @@
 
 #ifndef COMNDR_H
 #include"comndr.h"
+#include"tacticaloverview.h"  // maskWorldBars: hide health bars in overview
 #endif
 
 #include "../resource.h"
@@ -3262,7 +3263,7 @@ long GroundVehicle::update (void)
 				relationship = 2;
 			}
 
-			appearance->setObjectParameters(position, rotation, drawFlags, teamId,relationship);
+			appearance->setObjectParameters(position, rotation, TacticalOverview::maskWorldBars(drawFlags), teamId,relationship);
 			appearance->setMoverParameters(turretRotation,dRot.x,dRot.z,!pathLocks);
 			inView = appearance->recalcBounds();
 			appearance->setObjStatus(getStatus());
@@ -3313,7 +3314,7 @@ long GroundVehicle::update (void)
 					relationship = 2;
 				}
 
-				appearance->setObjectParameters(position, rotation, drawFlags, teamId,relationship);
+				appearance->setObjectParameters(position, rotation, TacticalOverview::maskWorldBars(drawFlags), teamId,relationship);
 				appearance->setMoverParameters(turretRotation,dRot.x,dRot.z,!pathLocks);
 				inView = appearance->recalcBounds();
 				appearance->setObjStatus(getStatus());
@@ -3707,7 +3708,7 @@ long GroundVehicle::update (void)
 				relationship = 2;
 			}
 
-			appearance->setObjectParameters(position, rotation, drawFlags, teamId,relationship);
+			appearance->setObjectParameters(position, rotation, TacticalOverview::maskWorldBars(drawFlags), teamId,relationship);
 			appearance->setMoverParameters(turretRotation,0.0f,0.0f,!pathLocks);
 			inView = appearance->recalcBounds();
 			appearance->setObjStatus(getStatus());

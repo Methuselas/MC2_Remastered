@@ -6,8 +6,16 @@
 // Use OutputDebugStringA as the debug log sink for this TU.
 #include <windows.h>
 #include "../mclib/camera.h"
+#include "../mclib/appear.h"   // DRAW_BARS (maskWorldBars)
 
 TacticalOverview g_tacticalOverview;
+
+unsigned long TacticalOverview::maskWorldBars( unsigned long drawFlags )
+{
+    if ( g_tacticalOverview.active() )
+        drawFlags &= ~(unsigned long)DRAW_BARS;
+    return drawFlags;
+}
 
 // Overview camera envelope. The engine clamps cameraAltitude to testMax (derived
 // from AltitudeMaximumLo/Hi) every frame in GameCamera::update(), so to pull back

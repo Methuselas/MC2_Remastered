@@ -67,6 +67,11 @@ public:
     const Stuff::Vector3D& flEnd()   const { return flEnd_; }
     // Evenly spaced slots start->end inclusive; N==1 -> midpoint. Returns count.
     int flComputeSlots( Stuff::Vector3D* outSlots, int maxSlots ) const;
+    // World health bars are replaced by icons/cards while the overview is up.
+    // Game code masks DRAW_BARS through this at the game->appearance handoff
+    // (mech/vehicle setObjectParameters, turret render).
+    static unsigned long maskWorldBars( unsigned long drawFlags );
+
     void flSetMovers( Mover* const* movers, int n );
     int  flMoverCount() const { return flMoverCount_; }
     Mover* flMover( int i ) const { return ( i >= 0 && i < flMoverCount_ ) ? flMovers_[i] : 0; }

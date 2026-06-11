@@ -4065,6 +4065,17 @@ bool MissionInterfaceManager::canJumpToWPos()
 
 void MissionInterfaceManager::doDrag(bool bGui)
 {
+	// Formation line draw mode owns the left-drag gesture: no select box and
+	// no drag-select while armed or drawing.
+	if ( TacticalOverview::formationLineEnabled()
+		&& g_tacticalOverview.flState() != TacticalOverview::FL_IDLE )
+	{
+		dragStart.Zero();
+		dragEnd.Zero();
+		isDragging = FALSE;
+		return;
+	}
+
 	//---------------------------------------------------------------------------
 	// Check if we wanted to select all visible.  If so, do it!
 //	if ( ((GetAsyncKeyState( VK_LBUTTON ))) && !bGui && !cameraClicked )
