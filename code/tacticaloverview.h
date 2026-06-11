@@ -99,7 +99,7 @@ private:
     Stuff::Vector3D    flStart_;
     Stuff::Vector3D    flEnd_;
     static const int   kFlMaxMovers = 32;
-    Mover*             flMovers_[kFlMaxMovers];   // snapshot at drag start
+    Mover*             flMovers_[kFlMaxMovers] = {};   // snapshot at drag start
     int                flMoverCount_ = 0;
 };
 
