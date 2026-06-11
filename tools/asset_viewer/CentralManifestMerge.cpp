@@ -37,21 +37,29 @@ MergeResult MergeIntoCentralManifest(const std::string& manifestPath,
     json oneRoot;
     try { oneRoot = json::parse(ToModelsJson(std::vector<WorkbenchOverride>{rec})); }
     catch (...) { out.message = "internal: failed to serialize record"; return out; }
+    if (!oneRoot.contains("overrides") || !oneRoot["overrides"].is_array() || oneRoot["overrides"].empty()) {
+        out.message = "internal: serializer produced no record"; return out;
+    }
     json newObj = oneRoot["overrides"][0];
 
     // 4. Splice by key: replace same "replaces", else append.
     bool replaced = false;
     for (auto& e : root["overrides"]) {
-        if (e.contains("replaces") && lower(e["replaces"].get<std::string>()) == key) {
-            e = newObj; replaced = true; break;
+        // Skip malformed entries defensively (replaces missing or non-string) — never throw.
+        if (e.is_object() && e.contains("replaces") && e["replaces"].is_string()
+            && lower(e["replaces"].get<std::string>()) == key) {
+            e = newObj; replaced = true; break;   // NOTE: replaced entry is rewritten from the
+                                                  // workbench record; any non-MVP JSON fields on it
+                                                  // are intentionally dropped (workbench-origin record).
         }
     }
     if (!replaced) root["overrides"].push_back(newObj);
 
     // 5. .bak (if a file exists), then atomic temp -> rename.
     std::error_code ec;
-    if (fs::exists(manifestPath)) fs::copy_file(manifestPath, manifestPath + ".bak",
-                                                fs::copy_options::overwrite_existing, ec);
+    const bool preExisted = fs::exists(manifestPath);
+    if (preExisted) fs::copy_file(manifestPath, manifestPath + ".bak",
+                                  fs::copy_options::overwrite_existing, ec);
     std::string tmp = manifestPath + ".tmp";
     { std::ofstream o(tmp, std::ios::binary);
       if (!o) { out.message = "cannot open temp for write"; return out; }
@@ -64,10 +72,15 @@ MergeResult MergeIntoCentralManifest(const std::string& manifestPath,
     ModelOverrideRegistry g;
     g.loadFromFile(manifestPath, fs::path(manifestPath).parent_path().string());
     if (g.resolve(rec.overrideClass.c_str(), rec.appearanceName.c_str()) == nullptr) {
-        if (fs::exists(manifestPath + ".bak"))
+        if (preExisted && fs::exists(manifestPath + ".bak")) {
             fs::copy_file(manifestPath + ".bak", manifestPath,
                           fs::copy_options::overwrite_existing, ec);
-        out.message = "round-trip verify failed — rolled back to .bak";
+            out.message = "round-trip verify failed — rolled back to .bak";
+        } else {
+            // No prior file existed; remove the freshly-written broken manifest.
+            fs::remove(manifestPath, ec);
+            out.message = "round-trip verify failed — removed new (no prior file to restore)";
+        }
         return out;
     }
 
