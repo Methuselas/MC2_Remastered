@@ -19,6 +19,7 @@
 #ifdef MC2_IMGUI
 #include "imgui.h"
 #include <shlobj.h>   // SHBrowseForFolder
+#include "EditorInterface.h"   // EditorInterface::instance()->OpenMissionByPath
 #endif
 
 #include <windows.h>
@@ -361,6 +362,87 @@ bool CreateNew(const char* parentDir, const char* id)
 	return true;
 }
 
+bool ImportMission(const char* srcPakPath, bool overwriteOk, std::string* outImportedPak)
+{
+	if (!s_active)
+	{
+		snprintf(s_status, sizeof(s_status), "Import Mission: no project open.");
+		return false;
+	}
+	if (!srcPakPath || !srcPakPath[0])
+	{
+		snprintf(s_status, sizeof(s_status), "Import Mission: empty source path.");
+		return false;
+	}
+
+	std::string src = AbsPath(srcPakPath);
+	if (!FileExists(src.c_str()))
+	{
+		snprintf(s_status, sizeof(s_status), "Import Mission: file not found (%s).", src.c_str());
+		return false;
+	}
+
+	// Split <dir>, <stem> from the source .pak.
+	char drive[8], dir[1024], stem[256], ext[64];
+	_splitpath(src.c_str(), drive, dir, stem, ext);
+	std::string srcDir = std::string(drive) + dir;   // includes trailing sep
+	srcDir = TrimTrailingSep(srcDir);
+
+	std::string destDir = s_root + "\\data\\missions";
+	MakeDirTree(destDir);
+
+	// Sibling set: .pak (required), .fit (required if present), _purchase.fit (optional).
+	struct Sib { std::string srcName; std::string dstName; bool optional; };
+	std::vector<Sib> sibs;
+	sibs.push_back({ std::string(stem) + ".pak",          std::string(stem) + ".pak",          false });
+	sibs.push_back({ std::string(stem) + ".fit",          std::string(stem) + ".fit",          true  });
+	sibs.push_back({ std::string(stem) + "_purchase.fit", std::string(stem) + "_purchase.fit", true  });
+
+	// First pass: existence + overwrite check.
+	for (const Sib& sb : sibs)
+	{
+		std::string s = srcDir + "\\" + sb.srcName;
+		if (!FileExists(s.c_str()))
+			continue;  // optional sibling absent -> skip; .pak presence already verified above
+		std::string d = destDir + "\\" + sb.dstName;
+		if (FileExists(d.c_str()) && !overwriteOk)
+		{
+			snprintf(s_status, sizeof(s_status),
+				"Import Mission: '%s' already exists in the project. Confirm to overwrite.",
+				sb.dstName.c_str());
+			return false;
+		}
+	}
+
+	// Second pass: copy.
+	int copied = 0;
+	std::string importedPak;
+	for (const Sib& sb : sibs)
+	{
+		std::string s = srcDir + "\\" + sb.srcName;
+		if (!FileExists(s.c_str()))
+			continue;
+		std::string d = destDir + "\\" + sb.dstName;
+		SetFileAttributesA(d.c_str(), FILE_ATTRIBUTE_NORMAL);
+		if (!CopyFileA(s.c_str(), d.c_str(), FALSE))
+		{
+			snprintf(s_status, sizeof(s_status),
+				"Import Mission: copy failed for '%s' (err %lu).", sb.dstName.c_str(), GetLastError());
+			return false;
+		}
+		++copied;
+		if (sb.srcName == std::string(stem) + ".pak")
+			importedPak = d;
+	}
+
+	if (outImportedPak)
+		*outImportedPak = importedPak;
+
+	snprintf(s_status, sizeof(s_status),
+		"Imported '%s' (%d file%s) into data\\missions.", stem, copied, copied == 1 ? "" : "s");
+	return true;
+}
+
 void Close()
 {
 	s_active = false;
@@ -416,6 +498,32 @@ std::string PickFolder(const char* title)
 	}
 	return result;
 }
+
+// Modal MFC file picker for an existing .pak. Returns selected path or "" on cancel.
+std::string PickPakFile()
+{
+	CFileDialog dlg(TRUE /*open*/, "pak", NULL,
+		OFN_FILEMUSTEXIST | OFN_HIDEREADONLY | OFN_NOCHANGEDIR,
+		"Mission Packs (*.pak)\0*.pak\0All Files (*.*)\0*.*\0\0");
+	if (dlg.DoModal() != IDOK)
+		return std::string();
+	return std::string((const char*)dlg.GetPathName());
+}
+
+// Pending-import state for the overwrite-confirm popup.
+std::string s_pendingImportPak;
+bool        s_openImportConfirm = false;
+
+// Run the import; on success open the imported copy in the editor.
+void DoImport(const std::string& srcPak, bool overwriteOk)
+{
+	std::string importedPak;
+	if (ImportMission(srcPak.c_str(), overwriteOk, &importedPak))
+	{
+		if (EditorInterface::instance() && !importedPak.empty())
+			EditorInterface::instance()->OpenMissionByPath(importedPak.c_str());
+	}
+}
 } // anonymous namespace
 
 void Toggle() { s_panelOpen = !s_panelOpen; }
@@ -455,10 +563,62 @@ void Draw()
 	if (ImGui::Button("New Mod Project...", ImVec2(-1.f, 0.f)))
 		s_openNewPopup = true;
 
+	// Import a stock mission into the project (enabled only with an active project) so it can
+	// be edited without touching base data\missions.
+	if (!s_active) ImGui::BeginDisabled();
+	if (ImGui::Button("Import Mission into Project...", ImVec2(-1.f, 0.f)))
+	{
+		std::string srcPak = PickPakFile();
+		if (!srcPak.empty())
+		{
+			s_pendingImportPak = srcPak;
+			// First attempt without overwrite: ImportMission reports a conflict if any
+			// destination file already exists, which raises the confirm popup below.
+			std::string importedPak;
+			if (ImportMission(srcPak.c_str(), /*overwriteOk=*/false, &importedPak))
+			{
+				if (EditorInterface::instance() && !importedPak.empty())
+					EditorInterface::instance()->OpenMissionByPath(importedPak.c_str());
+				s_pendingImportPak.clear();
+			}
+			else
+			{
+				// Conflict (or hard error) -- if a copy already exists, offer overwrite.
+				s_openImportConfirm = true;
+			}
+		}
+	}
+	if (!s_active) ImGui::EndDisabled();
+
 	if (s_active)
 	{
 		if (ImGui::Button("Close Project", ImVec2(-1.f, 0.f)))
 			Close();
+	}
+
+	if (s_openImportConfirm)
+	{
+		ImGui::OpenPopup("Confirm Import Overwrite");
+		s_openImportConfirm = false;
+	}
+	if (ImGui::BeginPopupModal("Confirm Import Overwrite", NULL, ImGuiWindowFlags_AlwaysAutoResize))
+	{
+		ImGui::TextWrapped("%s", s_status);
+		ImGui::TextUnformatted("Overwrite the existing copy in data\\missions?");
+		ImGui::Separator();
+		if (ImGui::Button("Overwrite", ImVec2(120.f, 0.f)))
+		{
+			DoImport(s_pendingImportPak, /*overwriteOk=*/true);
+			s_pendingImportPak.clear();
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel", ImVec2(120.f, 0.f)))
+		{
+			s_pendingImportPak.clear();
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::EndPopup();
 	}
 
 	if (s_openNewPopup)

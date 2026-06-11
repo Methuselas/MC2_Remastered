@@ -53,6 +53,15 @@ namespace EditorModProject
 	// success.
 	bool CreateNew(const char* parentDir, const char* id);
 
+	// Import a stock (or any) mission into the active project's data\missions tree so it can
+	// be edited without touching base data\missions (deploy hygiene).  Given a `<stem>.pak`
+	// path, copies <stem>.pak + <stem>.fit (+ <stem>_purchase.fit when present) into
+	// <root>\data\missions\.  When a destination file already exists and overwriteOk is false,
+	// fills the status line and returns false (caller re-invokes with overwriteOk=true after
+	// confirming).  On success, `outImportedPak` (optional) receives the absolute path of the
+	// copied .pak so the caller can open it.  Requires an active project.
+	bool ImportMission(const char* srcPakPath, bool overwriteOk, std::string* outImportedPak);
+
 	// Close the active project (unbinds state, leaves files untouched).  Does NOT change the
 	// mounted mod (switching back to stock mid-session is the user's call via the mod picker).
 	void Close();

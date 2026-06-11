@@ -1563,6 +1563,20 @@ int EditorInterface::FileOpen()
 
 //--------------------------------------------------------------------------------------
 
+void EditorInterface::OpenMissionByPath( const char* pakPath )
+{
+	if ( !pakPath || !pakPath[0] )
+		return;
+	SetBusyMode();
+	EditorData::initTerrainFromPCV( pakPath );
+	tacMap.UpdateMap();
+	syncScrollBars();
+	PlaySound("SystemDefault",NULL,SND_ASYNC);
+	UnsetBusyMode();
+}
+
+//--------------------------------------------------------------------------------------
+
 void EditorInterface::handleLeftButtonDown( int PosX, int PosY )
 {
 	if ( !eye || !eye->active  )

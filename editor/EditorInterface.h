@@ -84,6 +84,9 @@ private:
 public:
 
 	static EditorInterface* instance(){ return s_instance; }
+	// Open a mission by explicit .pak path (same load path as FileOpen's success branch,
+	// minus the file dialog). Used by the Mod Project "Import Mission" flow.
+	void OpenMissionByPath(const char* pakPath);
 	void renderToolbarImGui();
 	void renderObjectCompanionPanel();
 
