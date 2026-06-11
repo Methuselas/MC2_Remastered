@@ -16,6 +16,7 @@ extern HGOSFONT3D gosFontHandle;   // global font for sensor-view range labels
 extern float worldUnitsPerMeter;   // sensor range is in world units; /this = meters
 #include"team.h"
 #include"gamesound.h"
+#include"sounds.h"        // BUTTON5 (formation line release sfx)
 #include"comndr.h"
 
 #ifndef MULTPLYR_H
@@ -685,6 +686,186 @@ static void renderWeaponView( Camera* eye )
 	gos_SetHudScaleExempt( prevExempt );
 }
 
+// Formation line (MC2_TACMAP_FORMATION_LINE): per-frame drag tracking, ghost
+// line + slot pips, and order issuance on release. Runs only while the F6
+// overview is active; input arming/cancel is polled in mechcmd2.cpp.
+static void updateAndRenderFormationLine( Camera* eye )
+{
+	if ( !eye || !Team::home || !TacticalOverview::formationLineEnabled() )
+		return;
+	TacticalOverview::FormationLineState st = g_tacticalOverview.flState();
+	if ( st == TacticalOverview::FL_IDLE )
+		return;
+
+	long mx = userInput->getMouseX();
+	long my = userInput->getMouseY();
+
+	// --- state advance ---
+	if ( st == TacticalOverview::FL_ARMED )
+	{
+		if ( userInput->getMouseLeftButtonState() == MC2_MOUSE_DOWN )
+		{
+			Stuff::Vector3D w;
+			if ( eye->screenToGroundPlaneApprox( mx, my, w ) )
+			{
+				// Snapshot selected friendly movers at drag start.
+				Mover* movers[32];
+				int   nm = 0;
+				Team* pTeam = Team::home;
+				for ( long i = 0; i < pTeam->getRosterSize() && nm < 32; i++ )
+				{
+					Mover* pMover = (Mover*)pTeam->getMover( i );
+					if ( pMover && pMover->isSelected()
+						&& pMover->getCommander()->getId() == Commander::home->getId()
+						&& pMover->getExists() && !pMover->isDestroyed() && !pMover->isDisabled() )
+						movers[nm++] = pMover;
+				}
+				if ( nm == 0 )
+				{
+					g_tacticalOverview.flOnCancel();	// nothing selected: cancel
+					return;
+				}
+				g_tacticalOverview.flSetMovers( movers, nm );
+				g_tacticalOverview.flOnDragStart( w );
+				st = g_tacticalOverview.flState();
+			}
+		}
+	}
+	if ( st == TacticalOverview::FL_DRAGGING )
+	{
+		Stuff::Vector3D w;
+		if ( eye->screenToGroundPlaneApprox( mx, my, w ) )
+			g_tacticalOverview.flOnDragMove( w );
+
+		if ( userInput->leftMouseReleased() )
+		{
+			// Accidental click guard: tiny line = cancel, no orders.
+			const float kMinLineLenWorld = 50.0f;	// tune later
+			float ldx = g_tacticalOverview.flEnd().x - g_tacticalOverview.flStart().x;
+			float ldy = g_tacticalOverview.flEnd().y - g_tacticalOverview.flStart().y;
+			if ( ldx * ldx + ldy * ldy < kMinLineLenWorld * kMinLineLenWorld )
+			{
+				g_tacticalOverview.flOnCancel();
+				return;
+			}
+			// --- issue orders: v1 assignment = iterate snapshot order, each
+			// mover takes nearest free slot. Compute/order FIRST, then
+			// flOnRelease (release clears the snapshot).
+			Stuff::Vector3D slots[32];
+			int ns = g_tacticalOverview.flComputeSlots( slots, 32 );
+			bool slotUsed[32] = { false };
+			int nm = g_tacticalOverview.flMoverCount();
+			for ( int i = 0; i < nm; i++ )
+			{
+				Mover* pMover = g_tacticalOverview.flMover( i );
+				// Revalidate: mover may have died mid-drag.
+				if ( !pMover || !pMover->getExists()
+					|| pMover->isDestroyed() || pMover->isDisabled() )
+					continue;
+				// Nearest free slot to this mover.
+				int   best = -1;
+				float bestD2 = 0.0f;
+				Stuff::Vector3D mp = pMover->getPosition();
+				for ( int s = 0; s < ns; s++ )
+				{
+					if ( slotUsed[s] ) continue;
+					float dx = slots[s].x - mp.x, dy = slots[s].y - mp.y;
+					float d2 = dx * dx + dy * dy;
+					if ( best < 0 || d2 < bestD2 ) { best = s; bestD2 = d2; }
+				}
+				if ( best < 0 ) break;
+				slotUsed[best] = true;
+
+				LocationNode path;
+				path.location = slots[best];
+				path.run = true;
+				path.next = NULL;
+				TacticalOrder tacOrder;
+				tacOrder.init( ORDER_ORIGIN_PLAYER, TACTICAL_ORDER_MOVETO_POINT, false );
+				tacOrder.initWayPath( &path );
+				tacOrder.moveParams.wait = false;
+				tacOrder.moveParams.wayPath.mode[0] = TRAVEL_MODE_FAST;
+				tacOrder.pack( NULL, NULL );
+				// Single-unit dispatch on purpose: handleOrders/calcMoveGoals
+				// would re-cluster the slots and defeat the line.
+				pMover->handleTacticalOrder( tacOrder );
+			}
+			g_tacticalOverview.flOnRelease();
+			soundSystem->playDigitalSample( BUTTON5 );
+			return;		// nothing to draw this frame
+		}
+	}
+
+	// --- render ---
+	bool prevExempt = gos_GetHudScaleExempt();
+	gos_SetHudScaleExempt( true );
+	gos_SetRenderState( gos_State_Texture, 0 );
+	gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_AlphaInvAlpha );
+	gos_SetRenderState( gos_State_AlphaTest, 0 );
+	gos_SetRenderState( gos_State_ZCompare, 0 );
+	gos_SetRenderState( gos_State_ZWrite, 0 );
+
+	const unsigned long aBits = 0xcc000000;
+	const unsigned long kGreen = 0x0000cc00;
+
+	if ( st == TacticalOverview::FL_ARMED )
+	{
+		// Cursor hint while armed.
+		if ( gosFontHandle )
+		{
+			gos_TextSetAttributes( gosFontHandle, aBits | kGreen, 1.0f, false, true, false, false );
+			gos_TextSetPosition( (int)mx + 14, (int)my + 14 );
+			gos_TextDraw( "DRAW FORMATION LINE" );
+		}
+	}
+	else if ( st == TacticalOverview::FL_DRAGGING )
+	{
+		float vmx, vmy, vax, vay;
+		gos_GetViewport( &vmx, &vmy, &vax, &vay );
+
+		// Ghost line: project both world endpoints (w>0 cull only).
+		ModernClipResult r0 = eye->projectModernClipGL( g_tacticalOverview.flStart() );
+		ModernClipResult r1 = eye->projectModernClipGL( g_tacticalOverview.flEnd() );
+		if ( r0.clip.w > 0.05f && r1.clip.w > 0.05f )
+		{
+			float x0 = vax + ( r0.clip.x / r0.clip.w * 0.5f + 0.5f ) * vmx;
+			float y0 = vay + ( 1.0f - ( r0.clip.y / r0.clip.w * 0.5f + 0.5f ) ) * vmy;
+			float x1 = vax + ( r1.clip.x / r1.clip.w * 0.5f + 0.5f ) * vmx;
+			float y1 = vay + ( 1.0f - ( r1.clip.y / r1.clip.w * 0.5f + 0.5f ) ) * vmy;
+			csgThickSeg( x0, y0, x1, y1, 1.5f, aBits | kGreen );
+		}
+
+		// Slot pips: small filled quads at each slot.
+		Stuff::Vector3D slots[32];
+		int ns = g_tacticalOverview.flComputeSlots( slots, 32 );
+		for ( int s = 0; s < ns; s++ )
+		{
+			ModernClipResult r = eye->projectModernClipGL( slots[s] );
+			if ( r.clip.w <= 0.05f ) continue;
+			float cx = vax + ( r.clip.x / r.clip.w * 0.5f + 0.5f ) * vmx;
+			float cy = vay + ( 1.0f - ( r.clip.y / r.clip.w * 0.5f + 0.5f ) ) * vmy;
+			const float hp = 3.0f;
+			gos_VERTEX q[4];
+			for ( int v = 0; v < 4; ++v ) { q[v].z = 0; q[v].rhw = .5f; q[v].argb = aBits | kGreen; q[v].frgb = 0; q[v].u = q[v].v = 0; }
+			q[0].x = cx - hp; q[0].y = cy - hp; q[1].x = cx - hp; q[1].y = cy + hp;
+			q[2].x = cx + hp; q[2].y = cy + hp; q[3].x = cx + hp; q[3].y = cy - hp;
+			gos_DrawQuads( q, 4 );
+		}
+
+		// Selected-unit count at the cursor.
+		if ( gosFontHandle )
+		{
+			char buf[16];
+			sprintf( buf, "%d", g_tacticalOverview.flMoverCount() );
+			gos_TextSetAttributes( gosFontHandle, aBits | kGreen, 1.0f, false, true, false, false );
+			gos_TextSetPosition( (int)mx + 14, (int)my + 14 );
+			gos_TextDraw( buf );
+		}
+	}
+
+	gos_SetHudScaleExempt( prevExempt );
+}
+
 void ControlGui::render( bool bPaused )
 {
 	if (drawGUIOn)
@@ -712,6 +893,9 @@ void ControlGui::render( bool bPaused )
 
 		if ( g_tacticalOverview.active() )
 		{
+			// Formation line ghost + pips + order issuance (env-gated, no-op IDLE).
+			updateAndRenderFormationLine( eye );
+
 			// Altitude-driven overlay stages (independent of the abstract blend t):
 			//   - icons roll in hard over alt 6000 -> 6500 (just past gameplay cap)
 			//   - squad cards take over above alt 12000 (full by 14000)
