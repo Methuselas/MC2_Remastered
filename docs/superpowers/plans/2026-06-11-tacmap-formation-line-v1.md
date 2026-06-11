@@ -78,9 +78,11 @@ And in the private section, after `bool suppressRelease_ = false;`:
     Stuff::Vector3D    flStart_;
     Stuff::Vector3D    flEnd_;
     static const int   kFlMaxMovers = 32;
-    void*              flMovers_[kFlMaxMovers];   // MoverPtr snapshot (void* keeps header engine-free)
+    Mover*             flMovers_[kFlMaxMovers];   // snapshot at drag start
     int                flMoverCount_ = 0;
 ```
+
+Add `class Mover;` forward declaration at the top of the header next to `class Camera;`.
 
 `tacticaloverview.h` includes only `tacticaloverview_state.h` — keep it that way. `Stuff::Vector3D` needs a forward include: check top of file; if `Stuff` types are not visible, add `#include <stuff/vector.hpp>` matching whatever `tacticaloverview.cpp` already includes (grep `#include` in tacticaloverview.cpp first and reuse its vector header). If pulling Stuff into the header is ugly, store floats (`flStartX_/flStartY_/flStartZ_` etc.) instead — executor's choice, keep header light.
 
@@ -160,15 +162,15 @@ int TacticalOverview::flComputeSlots( Stuff::Vector3D* outSlots, int maxSlots ) 
 The mover snapshot needs a setter; add to the header public block:
 
 ```cpp
-    void flSetMovers( void* const* movers, int n );
+    void flSetMovers( Mover* const* movers, int n );
     int  flMoverCount() const { return flMoverCount_; }
-    void* flMover( int i ) const { return ( i >= 0 && i < flMoverCount_ ) ? flMovers_[i] : 0; }
+    Mover* flMover( int i ) const { return ( i >= 0 && i < flMoverCount_ ) ? flMovers_[i] : 0; }
 ```
 
 and impl:
 
 ```cpp
-void TacticalOverview::flSetMovers( void* const* movers, int n )
+void TacticalOverview::flSetMovers( Mover* const* movers, int n )
 {
     if ( n > kFlMaxMovers ) n = kFlMaxMovers;
     for ( int i = 0; i < n; i++ )
@@ -177,17 +179,15 @@ void TacticalOverview::flSetMovers( void* const* movers, int n )
 }
 ```
 
-`flOnRelease()` is implemented in Task 3 (order issuance lives game-side). For now stub it:
+`flOnRelease()` resets fully — Task 3's issuer reads the snapshot BEFORE calling it (compute/order first, then release; no stale mover pointers survive):
 
 ```cpp
 void TacticalOverview::flOnRelease()
 {
-    // Order issuance wired in controlgui/mechcmd2 (Task 3); state reset here.
     flState_ = FL_IDLE;
+    flMoverCount_ = 0;
 }
 ```
-
-Note: do NOT reset `flMoverCount_` in `flOnRelease` — Task 3's issuer reads the snapshot after calling it. Reset only in `flOnCancel`.
 
 - [ ] **Step 3: Also cancel formation line on F6 exit**
 
@@ -301,7 +301,7 @@ static void updateAndRenderFormationLine( Camera* eye )
 			if ( eye->screenToGroundPlaneApprox( mx, my, w ) )
 			{
 				// Snapshot selected friendly movers at drag start.
-				void* movers[32];
+				Mover* movers[32];
 				int   nm = 0;
 				Team* pTeam = Team::home;
 				for ( long i = 0; i < pTeam->getRosterSize() && nm < 32; i++ )
@@ -331,14 +331,26 @@ static void updateAndRenderFormationLine( Camera* eye )
 
 		if ( userInput->leftMouseReleased() )
 		{
-			// --- issue orders: greedy nearest mover->slot, one MOVETO each ---
+			// Accidental click guard: tiny line = cancel, no orders.
+			const float kMinLineLenWorld = 50.0f;	// tune later
+			float ldx = g_tacticalOverview.flEnd().x - g_tacticalOverview.flStart().x;
+			float ldy = g_tacticalOverview.flEnd().y - g_tacticalOverview.flStart().y;
+			if ( ldx * ldx + ldy * ldy < kMinLineLenWorld * kMinLineLenWorld )
+			{
+				g_tacticalOverview.flOnCancel();
+				return;
+			}
+			// --- issue orders: v1 assignment = iterate snapshot order, each
+			// mover takes nearest free slot. (True distance-to-line sort is a
+			// later slice if it matters.) Compute/order FIRST, then flOnRelease
+			// (release clears the snapshot).
 			Stuff::Vector3D slots[32];
 			int ns = g_tacticalOverview.flComputeSlots( slots, 32 );
 			bool slotUsed[32] = { false };
 			int nm = g_tacticalOverview.flMoverCount();
 			for ( int i = 0; i < nm; i++ )
 			{
-				Mover* pMover = (Mover*)g_tacticalOverview.flMover( i );
+				Mover* pMover = g_tacticalOverview.flMover( i );
 				// Revalidate: mover may have died mid-drag.
 				if ( !pMover || !pMover->getExists()
 					|| pMover->isDestroyed() || pMover->isDisabled() )
@@ -508,5 +520,7 @@ Interactive acceptance (USER, env ON, in v0.4 deploy):
 ## Self-review notes
 
 - Spec coverage: gate (T1), scope (all tasks minimal), input/state machine (T1+T2), world mapping via screenToGroundPlaneApprox (T3), unit snapshot at drag start + revalidate on release (T3), slot gen N==0/1/N (T1), greedy nearest (T3), single-unit orders bypassing handleOrders (T3), visuals incl. ARMED hint + pips + count + 3 projection rules (T3), forbidden files untouched (no mclib/pathfinding edits; userinput.h read-only), acceptance (T4). 
-- Type consistency: `flState()/flOnHotkeyL/flOnCancel/flOnDragStart/flOnDragMove/flOnRelease/flComputeSlots/flSetMovers/flMover/flMoverCount` used identically in T1 declarations and T2/T3 call sites.
+- Type consistency: `flState()/flOnHotkeyL/flOnCancel/flOnDragStart/flOnDragMove/flOnRelease/flComputeSlots/flSetMovers/flMover/flMoverCount` used identically in T1 declarations and T2/T3 call sites. Mover* typed throughout (fwd-decl in header), no void* casts.
+- Review fixes applied (2026-06-11): flOnRelease resets snapshot + issuer reads before release; Mover* fwd-decl replaces void*; v1 slot assignment documented as snapshot-order iterate (not distance-to-line sort); min-line-length guard (kMinLineLenWorld=50) cancels accidental clicks.
+- Branch: `claude/tacmap-formation-line-v1` off the nifty worktree branch.
 - Known deviation risks called out inline: MC2_MOUSE_DOWN constant name, LocationNode include, Stuff::Vector3D in header, card-press overlap. Executor verifies each with grep before use.
