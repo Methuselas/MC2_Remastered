@@ -16,6 +16,9 @@ static bool readFile(const fs::path& p, std::string& out) {
 static std::string includePath(const std::string& line) {
     size_t h = line.find('#');
     if (h == std::string::npos) return "";
+    // Ignore if a // comment precedes the # on this line.
+    size_t cmt = line.find("//");
+    if (cmt != std::string::npos && cmt < h) return "";
     size_t inc = line.find("include", h);
     if (inc == std::string::npos) return "";
     size_t lt = line.find_first_of("<\"", inc);
@@ -39,7 +42,14 @@ static bool inlineFile(const fs::path& root, const fs::path& file,
     while (std::getline(in, line)) {
         std::string inc = includePath(line);
         if (!inc.empty()) {
+            // Primary path: root/inc (e.g. shaders/include/lighting.hglsl)
             fs::path target = root / inc;
+            // Fallback: root/include/bare-name (mirrors the engine's GL_ARB_shading_language_include
+            // search path which has shaders/include/ mounted as a secondary root).
+            if (!fs::exists(target)) {
+                fs::path fallback = root / "include" / fs::path(inc).filename();
+                if (fs::exists(fallback)) target = fallback;
+            }
             if (!inlineFile(root, target, out, stack, res)) {
                 if (!res.error.empty()) return false;
                 out += "// [unresolved include: " + inc + "]\n";

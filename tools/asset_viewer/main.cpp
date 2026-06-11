@@ -110,6 +110,9 @@ int main(int argc, char* argv[])
     if (argc >= 2 && strcmp(argv[1], "--smoke-shader-include") == 0)
         return AssetViewerApp::runSmokeShaderInclude(argc >= 3 ? argv[2] : ".");
 
+    if (argc >= 2 && strcmp(argv[1], "--smoke-backend-a-compile") == 0)
+        return AssetViewerApp::runSmokeBackendACompile(argc >= 3 ? argv[2] : "shaders");
+
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0)
     {
         printf("SDL_Init error: %s\n", SDL_GetError());
