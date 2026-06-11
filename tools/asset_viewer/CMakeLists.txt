@@ -189,6 +189,8 @@ set(ASSET_VIEWER_SOURCES
     CentralManifestMerge.cpp
     # Backend-A v2: GLSL #include inliner for engine shader compilation
     ShaderIncludeResolver.cpp
+    # Backend-A v2 Task 3: shader contract report model + ImGui view
+    ShaderContractReport.cpp
 )
 
 add_executable(mc2_asset_viewer ${ASSET_VIEWER_SOURCES})
