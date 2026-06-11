@@ -173,18 +173,23 @@ bool Batcher::is_gpu_sim_compare_enabled() {
 }
 
 // MC2_VFX_ORACLE_TUBE slice 1: Tube swept-quad ribbon oracle gate.
-// Default-ON after validated parity (MissileSmoke, PPC additive, polygon Tube
-// trails). Absent or any value except "0" = enabled; MC2_VFX_ORACLE_TUBE=0 is
-// the legacy MLR kill-switch. Read once, process-lifetime. Mirrors the
-// MC2_VFX_ORACLE_RENDER default-ON idiom.
+// STOPGAP 2026-06-11: flipped to DEFAULT-OFF. The oracle's immediate-mode GL
+// draw (gos_tube_ribbon_flush) renders NOTHING on the current RenderWorld-arc
+// base — it submits (addRibbon=83538) but its pixels never reach the composited
+// frame, so PPC/gauss/AC weapon FX are invisible. Legacy MLR renders them all
+// correctly (verified interactive tube-control A/B + screenshot). Until the
+// RenderWorld<->immediate-draw render-target/pass-order regression is fixed,
+// default to legacy MLR. Opt back IN with MC2_VFX_ORACLE_TUBE=1 (only =1 enables);
+// absent or any other value = legacy. Re-flip to default-ON once the oracle
+// render path is repaired.
 bool Batcher::is_oracle_tube_enabled() {
     static bool s_init = false;
     static bool s_val  = false;
     if (!s_init) {
         const char* v = std::getenv("MC2_VFX_ORACLE_TUBE");
-        s_val  = !(v && v[0] == '0');
+        s_val  = (v && v[0] == '1');   // STOPGAP: default-OFF; only =1 enables
         s_init = true;
-        std::fprintf(stderr, "[VFX_ORACLE_TUBE v1] gate=%s\n",
+        std::fprintf(stderr, "[VFX_ORACLE_TUBE v1] gate=%s (stopgap default-off)\n",
                      s_val ? "on" : "off");
         std::fflush(stderr);
     }
