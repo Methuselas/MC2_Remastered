@@ -77,6 +77,7 @@
 #include "EditorPlaytest.h"
 #include "EditorDebugOverlay.h"
 #include "ModPicker.h"
+#include "EditorModProject.h"
 #include "EditorRecent.h"
 #include "SceneOutliner.h"
 #include "InspectorPanel.h"
@@ -475,7 +476,9 @@ void Editor::init( char* loader )
 					else
 					{
 					CFileDialog fileDlg( 1,  "pak", NULL, OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR, szPAKFilter );
-					fileDlg.m_ofn.lpstrInitialDir = missionPath;
+					// When a Mod Project is open, default to <root>\data\missions; else unchanged.
+					{ const char* pd = EditorModProject::SaveDirOverride();
+					  fileDlg.m_ofn.lpstrInitialDir = pd ? pd : missionPath; }
 
 					bOK = false;
 					while ( !bOK )
@@ -1539,7 +1542,9 @@ int EditorInterface::FileOpen()
 	}
 
 	CFileDialog fileDlg( 1,  "pak", NULL, OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR, szPAKFilter );
-	fileDlg.m_ofn.lpstrInitialDir = missionPath;
+	// When a Mod Project is open, default to <root>\data\missions; else unchanged.
+	{ const char* pd = EditorModProject::SaveDirOverride();
+	  fileDlg.m_ofn.lpstrInitialDir = pd ? pd : missionPath; }
 
 	if (  IDOK == fileDlg.DoModal() )
 	{
@@ -2247,7 +2252,9 @@ int EditorInterface::SaveAs()
 		}
 	}
 
-	fileDlg.m_ofn.lpstrInitialDir = missionPath;
+	// When a Mod Project is open, default the Save As dialog to <root>\data\missions.
+	{ const char* pd = EditorModProject::SaveDirOverride();
+	  fileDlg.m_ofn.lpstrInitialDir = pd ? pd : missionPath; }
 	retVal = fileDlg.DoModal();
 	if (  IDOK == retVal )
 	{
@@ -4759,6 +4766,8 @@ void EditorInterface::renderToolbarImGui()
 		{
 			const char* mod = ModPicker::ActiveMod();
 			ImGui::Text( "Mod: %s", ( mod && mod[0] ) ? mod : "None (stock)" );
+			if ( EditorModProject::IsActive() )
+				ImGui::Text( "Project: %s", EditorModProject::Id() );
 			if ( land && Terrain::realVerticesMapSide > 1 )
 				ImGui::Text( "Terrain: %ld x %ld", Terrain::realVerticesMapSide, Terrain::realVerticesMapSide );
 			else
@@ -4813,6 +4822,15 @@ void EditorInterface::renderToolbarImGui()
 	// Pre-load mod selector: mount a mod's content BEFORE loading a mission (default
 	// None = stock). Above the load/generate actions so it's set first.
 	ModPicker::Draw();
+	ImGui::Separator();
+
+	// Mod Project — bind the session to a mods/<id> folder (Open/New/Close). When active,
+	// File save dialogs default to <root>\data\missions and the mod is mounted for assets.
+	if (ImGui::Button("Mod Project", ImVec2(-1.f, 0.f)))
+		EditorModProject::Toggle();
+	EditorModProject::Draw();
+	if (EditorModProject::IsActive())
+		ImGui::TextDisabled("Project: %s", EditorModProject::Id());
 	ImGui::Separator();
 
 	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.30f, 1.0f));

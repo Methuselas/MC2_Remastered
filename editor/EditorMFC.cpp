@@ -238,6 +238,7 @@ static void EarlyTraceBegin()
 #include "UndoHistoryPanel.h"
 #include "Action.h"            // ActionUndoMgr::instance (undo-history smoke)
 #include "ModPicker.h"
+#include "EditorModProject.h"
 #include "EditorPlaytest.h"   // -playtest end-to-end smoke
 #include "resource.h"   // ID_FOLIAGE_* for the -smoke-foliage-menu WM_COMMAND drive
 
@@ -509,6 +510,11 @@ BOOL EditorMFCApp::InitInstance()
 					"Mission Editor -- no assets found", MB_OK | MB_ICONWARNING);
 		}
 	}
+
+	// Auto-reopen the last Mod Project (interactive only -- never in a headless smoke, and
+	// ReopenLastIfAny opens NO dialogs regardless). Binds save-dir default + remounts the mod.
+	if (g_cliExitAfterSec <= 0)
+		EditorModProject::ReopenLastIfAny();
 
 	// Start the smoke driver thread NOW (before the blocking init/gen/save on the
 	// main thread) so it can auto-dismiss modals throughout and enforce the timed

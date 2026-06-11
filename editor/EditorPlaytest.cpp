@@ -35,6 +35,7 @@
 #include "EditorPlaytest.h"
 #include "EditorTaskRunner.h"
 #include "EditorData.h"
+#include "EditorModProject.h"
 
 #include <cstdio>
 #include <cstring>
@@ -597,9 +598,20 @@ void Start()
 	s_modId.clear();
 	s_runStamp = TimeStamp();
 	{
-		std::string missionAbs = AbsPath(savedPak);
-		if (DetectModRoot(missionAbs, s_modRoot, s_modId) && !s_modId.empty())
+		// Prefer the active Mod Project's id/root (explicit binding wins over path sniffing);
+		// fall back to path-derived `...\mods\<id>\...` detection when no project is open.
+		if (EditorModProject::IsActive() && EditorModProject::Id()[0])
+		{
+			s_modId   = EditorModProject::Id();
+			s_modRoot = EditorModProject::RootPath();
 			s_modActive = true;
+		}
+		else
+		{
+			std::string missionAbs = AbsPath(savedPak);
+			if (DetectModRoot(missionAbs, s_modRoot, s_modId) && !s_modId.empty())
+				s_modActive = true;
+		}
 	}
 
 	ResolveExe();
