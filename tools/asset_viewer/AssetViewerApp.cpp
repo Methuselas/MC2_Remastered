@@ -1289,6 +1289,7 @@ int AssetViewerApp::runSmokeSpotlight(const char* deployDir)
 
 #include "GlbMeshLoader.h"
 #include "model_override_registry.h"
+#include "AppearanceRoster.h"
 #include "WorkbenchValidation.h"
 #include "BundleExport.h"
 #include <assimp/Importer.hpp>
@@ -1411,6 +1412,22 @@ int AssetViewerApp::runSmokeWorkbenchReload(const char* fixtureDir){
     if (!wb.record().lods.empty())           return smokeFail("reload: lods not cleared");
     std::printf("[smoke] PASS workbench-reload (override state reset on reload)\n");
     return 0;
+}
+
+int AssetViewerApp::runSmokeAppearanceRoster(const char* fixtureDir) {
+    AppearanceRoster r;
+    std::string dir = std::string(fixtureDir) + "/tgl_ini";
+    r.load(dir);
+    const auto& n = r.names();
+    bool ok = (n.size() == 2)
+           && (n[0] == "atlas_building")
+           && (n[1] == "Tree_Oak")
+           && r.contains("TREE_OAK")
+           && !r.contains("nonexistent")
+           && r.scannedFileCount() == 4;
+    printf("[smoke] appearance-roster %s (names=%zu files=%d)\n",
+           ok ? "PASS" : "FAIL", n.size(), r.scannedFileCount());
+    return ok ? 0 : 1;
 }
 
 void AssetViewerApp::onFileDropped(const char* path){
