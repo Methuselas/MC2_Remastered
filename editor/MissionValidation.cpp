@@ -243,6 +243,135 @@ std::vector<MissionCheck> MissionValidator::ValidateForPakSave() {
              pdetails);
     }
 
+    // 6. Missing appearance -- BLOCKING
+    //    EditorObjects.h:68: getPosition() = appearance()->position — derefs appearance().
+    //    EditorObjectMgr::saveMechs() calls appearance() without null check on every
+    //    placed object; a null crashes on save.  Check buildings and units separately.
+    //    Guard: never deref appearance() to test for null — test the pointer itself first.
+    {
+        int nullAppCount = 0;
+
+        if (EditorObjectMgr::instance()) {
+            // Buildings
+            EditorObjectMgr::BUILDING_LIST buildings = EditorObjectMgr::instance()->getBuildings();
+            for (EditorObjectMgr::BUILDING_LIST::EIterator it = buildings.Begin(); !it.IsDone(); it++) {
+                EditorObject* b = (*it);
+                if (b && !b->appearance())
+                    ++nullAppCount;
+            }
+
+            // Units (reuse already-iterated pattern from pilot_count above)
+            EditorObjectMgr::UNIT_LIST units2 = EditorObjectMgr::instance()->getUnits();
+            for (EditorObjectMgr::UNIT_LIST::EIterator it = units2.Begin(); !it.IsDone(); it++) {
+                Unit* u = (*it);
+                if (u && !u->appearance())
+                    ++nullAppCount;
+            }
+        }
+
+        const bool appOk = (nullAppCount == 0);
+        char adetails[256];
+        snprintf(adetails, sizeof(adetails),
+            appOk
+                ? "All placed objects have a valid appearance pointer."
+                : "%d placed object(s) have a null appearance.  saveMechs() will crash when "
+                  "writing these objects.  Remove or replace them before saving.",
+            nullAppCount);
+        push("missing_appearance",
+             "All placed objects have appearances",
+             MissionCheckSeverity::Blocking,
+             appOk,
+             ChecklistAction::None,
+             adetails);
+    }
+
+    // 7. Object out of bounds -- WARNING
+    //    Terrain::worldUnitsMapSide (mclib/terrain.h:189) is the total world-unit span.
+    //    Half-extent = worldUnitsMapSide / 2, matching Camera::setPosition bound
+    //    (mclib/camera.cpp:2867: `(Terrain::worldUnitsMapSide / 2) - ...`).
+    //    Position is in appearance()->position; skip any object whose appearance is null
+    //    (already flagged by check 6).
+    {
+        int oobCount = 0;
+        const float halfExtent = Terrain::worldUnitsMapSide * 0.5f;
+
+        if (EditorObjectMgr::instance() && halfExtent > 0.f) {
+            // Buildings
+            EditorObjectMgr::BUILDING_LIST buildings = EditorObjectMgr::instance()->getBuildings();
+            for (EditorObjectMgr::BUILDING_LIST::EIterator it = buildings.Begin(); !it.IsDone(); it++) {
+                EditorObject* b = (*it);
+                if (!b || !b->appearance()) continue;
+                const Stuff::Vector3D& pos = b->getPosition();
+                if (pos.x < -halfExtent || pos.x > halfExtent ||
+                    pos.y < -halfExtent || pos.y > halfExtent)
+                    ++oobCount;
+            }
+
+            // Units
+            EditorObjectMgr::UNIT_LIST units3 = EditorObjectMgr::instance()->getUnits();
+            for (EditorObjectMgr::UNIT_LIST::EIterator it = units3.Begin(); !it.IsDone(); it++) {
+                Unit* u = (*it);
+                if (!u || !u->appearance()) continue;
+                const Stuff::Vector3D& pos = u->getPosition();
+                if (pos.x < -halfExtent || pos.x > halfExtent ||
+                    pos.y < -halfExtent || pos.y > halfExtent)
+                    ++oobCount;
+            }
+        }
+
+        const bool boundsOk = (oobCount == 0);
+        char bdetails[256];
+        snprintf(bdetails, sizeof(bdetails),
+            boundsOk
+                ? "All placed objects are within the terrain extent (+/-%.0f world units)."
+                : "%d placed object(s) are outside the terrain extent (+/-%.0f world units).  "
+                  "Out-of-bounds objects may corrupt cell lookups on save or load.",
+            halfExtent, halfExtent);
+        push("object_out_of_bounds",
+             "All objects are within terrain bounds",
+             MissionCheckSeverity::Warning,
+             boundsOk,
+             ChecklistAction::None,
+             bdetails);
+    }
+
+    // 8. Invalid alignment -- WARNING
+    //    EditorObjects.h:48: getAlignment() = appearInfo->appearance->teamId.
+    //    saveMechs buckets units by alignment into perPlayer[0..7]; an out-of-range
+    //    value (< 0 or >= 8) skips the tally entirely (existing guard in check 5),
+    //    silently producing wrong player counts in the saved .pak.
+    //    No auto-fix: the fix pattern in this file has no mutation hook.
+    {
+        int badAlignCount = 0;
+
+        if (EditorObjectMgr::instance()) {
+            EditorObjectMgr::UNIT_LIST units4 = EditorObjectMgr::instance()->getUnits();
+            for (EditorObjectMgr::UNIT_LIST::EIterator it = units4.Begin(); !it.IsDone(); it++) {
+                Unit* u = (*it);
+                if (!u || !u->appearance()) continue;   // null appearance already flagged
+                const int a = u->getAlignment();
+                if (a < 0 || a >= 8)
+                    ++badAlignCount;
+            }
+        }
+
+        const bool alignOk = (badAlignCount == 0);
+        char ldetails[256];
+        snprintf(ldetails, sizeof(ldetails),
+            alignOk
+                ? "All unit alignments are in the valid range [0..7]."
+                : "%d unit(s) have an alignment outside [0..7].  These units are silently "
+                  "excluded from the per-player tally on save, producing incorrect staffing "
+                  "data.  Open the unit settings dialog and set alignment to 0-7.",
+            badAlignCount);
+        push("invalid_alignment",
+             "All unit alignments are valid (0-7)",
+             MissionCheckSeverity::Warning,
+             alignOk,
+             ChecklistAction::None,
+             ldetails);
+    }
+
     return checks;
 }
 
