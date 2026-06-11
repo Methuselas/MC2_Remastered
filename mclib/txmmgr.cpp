@@ -16,6 +16,7 @@
 #include"txmmgr.h"
 #include "gos_crashbundle.h"
 #endif
+#include "render_contract.h"  // [RENDER_PASS v1] noteRenderPass
 #include"tex_resolve_table.h"
 
 #ifndef TGAINFO_H
@@ -1953,6 +1954,11 @@ void GatherLightsParameters(TG_HWLightsData* lights)
 void MC_TextureManager::renderLists (void)
 {
 	ZoneScopedN("textureManagerRenderLists");
+	// [RENDER_PASS v1] advisory telemetry (env-gated, rate-limited).
+	// renderLists is the SUBMIT point for TGL-enqueued object geometry
+	// (mechs/vehicles/buildings) — FBO/viewport facts here are draw-time.
+	render_contract::noteRenderPass(render_contract::PassIdentity::OpaqueObject,
+	                                "MC_TextureManager_renderLists(submit)");
 	static bool bSkip = true; // used across preamble and Render.3DObjects
 	{
 	ZoneScopedN("RenderLists.Preamble");
