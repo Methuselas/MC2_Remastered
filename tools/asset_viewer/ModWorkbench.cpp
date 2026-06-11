@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cctype>
 #include <string>
+#include <filesystem>
 
 // Extract basename without extension (lowercase) from a path.
 static std::string basenameNoExt(const std::string& path){
@@ -70,6 +71,16 @@ void ModWorkbench::revalidate(const std::vector<std::string>& missing){
     si.pivotOffsetXZ=std::sqrt(d.pivotOffset[0]*d.pivotOffset[0]+d.pivotOffset[2]*d.pivotOffset[2]);
     si.pivotOffsetY=d.pivotOffset[1]; si.missingTextures=missing; si.hasImpostorLod=!record_.lods.empty();
     auto s=ValidateSemantics(record_,si); warnings_.insert(warnings_.end(),s.begin(),s.end());
+}
+
+void ModWorkbench::revalidateWithTextures() {
+    std::vector<std::string> missing;
+    for (const auto& s : textureSlots_) {
+        if (s.path.empty()) continue;
+        std::error_code ec;
+        if (!std::filesystem::exists(s.path, ec)) missing.push_back(s.path);
+    }
+    revalidate(missing);
 }
 
 bool ModWorkbench::hasBlocking() const {
