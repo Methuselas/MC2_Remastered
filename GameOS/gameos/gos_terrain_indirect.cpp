@@ -2395,7 +2395,15 @@ bool WasEverFrameSolidArmed() {
 
 void ForceDisableArmingForProcess() {
     if (!s_processArmingDisabled) {
-        fprintf(stderr, "[TERRAIN_INDIRECT v1] event=arming_disabled_process_sticky\n");
+        // Loud-fail (T16/T19): a hard GL/init failure has PERMANENTLY disabled the GPU
+        // terrain path for this process. The only backstop is the legacy setupTextures
+        // fallback, which Phase 8z removes -- after 8z this condition renders NO terrain
+        // (black) with no recovery. State it prominently; the preceding event=error line
+        // carries the actual cause.
+        fprintf(stderr,
+            "[TERRAIN_INDIRECT v1] FATAL event=arming_disabled_process_sticky "
+            "msg=GPU_terrain_path_PERMANENTLY_DISABLED_after_hard_GL_or_init_failure "
+            "(post-8z: terrain will NOT render -- see preceding event=error line)\n");
         fflush(stderr);
     }
     s_processArmingDisabled = true;
@@ -2473,7 +2481,19 @@ bool ComputePreflight() {
     s_frameSolidCmdCount             = 0;
     s_solidGpuDispatchRanThisFrame   = false;
 
-    if (s_processArmingDisabled) return false;  // ForceDisableArmingForProcess already printed
+    if (s_processArmingDisabled) {
+        // Loud-fail (T16/T19): the one-shot disable line is easy to miss, and post-8z
+        // this is a silent black-terrain state with no fallback. Re-warn periodically so
+        // the condition is unmissable in logs for the whole session it persists.
+        static unsigned long s_disabledTicks = 0;
+        if ((s_disabledTicks++ % 300u) == 0u) {
+            fprintf(stderr,
+                "[TERRAIN_INDIRECT v1] FATAL arming still disabled (tick %lu) -- "
+                "GPU terrain not rendering; no fallback post-8z.\n", s_disabledTicks);
+            fflush(stderr);
+        }
+        return false;  // ForceDisableArmingForProcess already printed the initial cause
+    }
     if (!IsEnabled()) {
         static bool s_warnedEnabled = false;
         if (!s_warnedEnabled) {
