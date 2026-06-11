@@ -4758,10 +4758,16 @@ void EditorInterface::renderToolbarImGui()
 	{
 		ImGui::SetNextWindowPos( ImVec2( 8.f, 8.f ), ImGuiCond_Always );
 		ImGui::SetNextWindowBgAlpha( 0.35f );
+		extern const char* EditorStartupWarning();
+		extern void EditorClearStartupWarning();
+		const bool hudHasWarning = ( EditorStartupWarning() != nullptr );
 		ImGuiWindowFlags hudFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoNav |
 			ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize |
-			ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
-			ImGuiWindowFlags_NoInputs;
+			ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing;
+		// Accept input only while the dismissable warning banner is showing (its "x"
+		// button must be clickable); otherwise the HUD is a passthrough overlay.
+		if ( !hudHasWarning )
+			hudFlags |= ImGuiWindowFlags_NoInputs;
 		if ( ImGui::Begin( "##statushud", nullptr, hudFlags ) )
 		{
 			const char* mod = ModPicker::ActiveMod();
@@ -4776,6 +4782,22 @@ void EditorInterface::renderToolbarImGui()
 			ImGui::Text( "Selected: %d", selCount );
 			ImGui::Text( "Foliage: %d", FoliageRender::Count() );
 			ImGui::Text( "%.0f fps", ImGui::GetIO().Framerate );
+
+			// Non-blocking startup warning (e.g. empty-install / no assets). Yellow,
+			// wrapped, with a dismiss "x" that clears it for the session. Replaces the
+			// old blocking ::MessageBoxA the user had to OK on every launch.
+			if ( const char* warn = EditorStartupWarning() )
+			{
+				ImGui::Separator();
+				ImGui::PushStyleColor( ImGuiCol_Text, ImVec4( 1.0f, 0.78f, 0.20f, 1.0f ) );
+				if ( ImGui::SmallButton( "x##startupwarn" ) )
+					EditorClearStartupWarning();
+				ImGui::SameLine();
+				ImGui::PushTextWrapPos( ImGui::GetCursorPosX() + 320.f );
+				ImGui::TextUnformatted( warn );
+				ImGui::PopTextWrapPos();
+				ImGui::PopStyleColor();
+			}
 		}
 		ImGui::End();
 	}

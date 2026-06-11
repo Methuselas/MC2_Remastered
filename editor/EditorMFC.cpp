@@ -501,13 +501,12 @@ BOOL EditorMFCApp::InitInstance()
 		if (!hasTgl && !modActive)
 		{
 			EarlyTrace("InitInstance: WARNING data/tgl is empty and no mod active -- mission loads will likely CTD");
-			if (g_cliExitAfterSec <= 0)   // interactive only; never block a headless smoke
-				::MessageBoxA(NULL,
-					"This install has no game assets in data\\tgl.\n\n"
-					"Loading a stock mission will crash. Either run the editor from a "
-					"complete install, or pick a Mod in the startup dialog so its assets "
-					"are mounted.",
-					"Mission Editor -- no assets found", MB_OK | MB_ICONWARNING);
+			// Non-blocking: surface as a persistent dismissable ImGui banner in the
+			// editor HUD instead of a modal the user must click OK on every launch.
+			extern void EditorSetStartupWarning(const char* text);
+			EditorSetStartupWarning(
+				"No game assets in data\\tgl -- stock missions will crash. "
+				"Open a Mod Project or run from a complete install.");
 		}
 	}
 
@@ -781,6 +780,31 @@ void EditorSmokeLogSuppressedModal(const char* text, const char* caption)
 	fprintf(stderr, "%s\n", line);
 	fflush(stderr);
 	EarlyTrace(line);
+}
+
+// --- Non-blocking startup warning banner ----------------------------------
+// Set once during InitInstance (e.g. empty-install guard). Rendered as a
+// dismissable yellow banner in the EditorInterface HUD; cleared for the
+// session when the user clicks the banner's "x". Stays set even if the
+// underlying condition later resolves (kept simple — dismiss is manual).
+static char s_editorStartupWarning[512] = "";
+
+void EditorSetStartupWarning(const char* text)
+{
+	if (!text) text = "";
+	_snprintf(s_editorStartupWarning, sizeof(s_editorStartupWarning), "%s", text);
+	s_editorStartupWarning[sizeof(s_editorStartupWarning) - 1] = '\0';
+}
+
+// Returns the active warning text, or NULL/empty if none / dismissed.
+const char* EditorStartupWarning()
+{
+	return s_editorStartupWarning[0] ? s_editorStartupWarning : nullptr;
+}
+
+void EditorClearStartupWarning()
+{
+	s_editorStartupWarning[0] = '\0';
 }
 
 // Auto-dismiss any modal dialog (#32770 = standard dialog/MessageBox class) owned
