@@ -177,6 +177,7 @@ set(ASSET_VIEWER_SOURCES
     # S1: glTF/GLB loader, mod workbench, override manifest
     GlbMeshLoader.cpp
     ModWorkbench.cpp
+    AppearanceRoster.cpp
     OverrideManifest.cpp
     # S2: mod workbench side-by-side panel
     ModWorkbenchPanel.cpp
