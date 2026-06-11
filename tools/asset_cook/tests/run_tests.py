@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
-"""tools/asset_cook/tests/run_tests.py — G3a manifest-schema TDD harness.
+"""tools/asset_cook/tests/run_tests.py — manifest-schema TDD harness.
 
-Asserts the golden mc2-asset-manifest-v1 VALIDATES and every broken fixture is
-REJECTED for its intended reason. Pure data/validation — no cook, no engine.
+Asserts:
+  - Cook golden (mc2-asset-manifest-v1): VALIDATES
+  - Cook broken fixtures: REJECTED for the intended reason
+  - Authoring golden (authoring format): VALIDATES
+  - Authoring broken (material_fail_*): REJECTED for the intended reason
+
+Pure data/validation — no cook, no engine. (C1: single canonical validator)
 
   py -3 tools/asset_cook/tests/run_tests.py
 
@@ -20,12 +25,20 @@ VALIDATOR = HERE.parent / "validate_asset_manifest.py"
 # (path, expected_exit, must_mention) — must_mention asserts the failure is for
 # the INTENDED reason, not an incidental schema slip.
 CASES = [
+    # FORMAT A: Cook manifests (mc2-asset-manifest-v1)
     (HERE / "golden" / "bigbox" / "manifest.json", 0, None),
     (HERE / "broken" / "broken_class_camelcase.json", 1, "class"),
     (HERE / "broken" / "broken_slot_index.json", 1, "slot"),
     (HERE / "broken" / "broken_replaces_mismatch.json", 1, "replaces"),
     (HERE / "broken" / "broken_scale.json", 1, "scale"),
     (HERE / "broken" / "broken_alphaclass.json", 1, "alphaClass"),
+    # FORMAT B: Authoring manifests (scaffold format, ported per ruling C1)
+    (HERE / "golden" / "authoring" / "minimal_asset_manifest.json", 0, None),
+    (HERE / "golden" / "authoring" / "material_validation_pass.json", 0, None),
+    (HERE / "golden" / "authoring" / "extended_asset_manifest.json", 0, None),
+    (HERE / "broken" / "material_fail_alphamode.json", 1, "alphaMode"),
+    (HERE / "broken" / "material_fail_colorspace.json", 1, "colorSpace"),
+    (HERE / "broken" / "material_fail_normal_no_tangents.json", 1, "hasTangents"),
 ]
 
 
@@ -53,7 +66,10 @@ def main() -> int:
             for line in out.splitlines():
                 print(f"      | {line}")
     print("-" * 64)
-    print(f"schema: {len(CASES) - failures}/{len(CASES)} cases as expected")
+    cook_cases = sum(1 for p, _, _ in CASES if "authoring" not in str(p) and "material_fail" not in p.name)
+    auth_cases = len(CASES) - cook_cases
+    print(f"schema: {len(CASES) - failures}/{len(CASES)} cases as expected "
+          f"({cook_cases} cook + {auth_cases} authoring)")
 
     # G1 stage geometry gate
     for sub_test in ("test_g1_stage.py", "test_g2_textures.py", "test_g3b_assemble.py",
@@ -67,7 +83,8 @@ def main() -> int:
     if failures:
         print(f"{failures} check(s) FAILED")
         return 1
-    print(f"ALL PASS -- schema {len(CASES)}/{len(CASES)} (golden + 5 broken-for-cause) "
+    print(f"ALL PASS -- schema {len(CASES)}/{len(CASES)} "
+          f"(cook: 1 golden + 5 broken; authoring: 3 golden + 3 material_fail) "
           f"+ G1 stage + G2 cook + G3b assemble/projection/no-central-write")
     return 0
 

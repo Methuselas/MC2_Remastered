@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """check-asset-manifests.py -- CI gate for asset-manifest fixtures.
 
-Part of TRACKG-ASSET-PIPELINE-PROBE-OPUS-1. Runs tools/validate_asset_manifest.py
-over the committed fixtures:
+Runs tools/asset_cook/validate_asset_manifest.py (canonical, single validator
+per ruling C1 / asset-cook-pipeline-architecture.md §12.1) over the committed
+fixtures:
 
   tests/fixtures/assets/*.json          -> must VALIDATE   (exit 0)
   tests/fixtures/assets/invalid/*.json  -> must be REJECTED (validator exit 1)
@@ -19,7 +20,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-VALIDATOR = REPO / "tools" / "validate_asset_manifest.py"
+VALIDATOR = REPO / "tools" / "asset_cook" / "validate_asset_manifest.py"
 ASSETS = REPO / "tests" / "fixtures" / "assets"
 PREFIX = "[check-asset-manifests]"
 

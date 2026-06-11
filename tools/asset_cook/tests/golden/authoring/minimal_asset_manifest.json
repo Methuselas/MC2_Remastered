@@ -1,0 +1,20 @@
+{
+  "assetId": "prop_crate_01",
+  "source": "mc2srcdata/objects/crate_01.fbx",
+  "kind": "prop",
+  "materials": [
+    { "name": "crate_diffuse", "shader": "static_prop" }
+  ],
+  "capabilities": {
+    "hasNormals": true,
+    "hasTangents": false,
+    "hasLods": false,
+    "hasImpostor": false,
+    "castsShadow": true,
+    "supportsObjectId": true
+  },
+  "lods": [],
+  "textureRefs": [
+    { "slot": "albedo", "path": "mc2srcdata/textures/crate_01_d.tga" }
+  ]
+}

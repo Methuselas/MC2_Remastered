@@ -1,0 +1,52 @@
+{
+  "assetId": "prop_crate_01_extended",
+  "source": "mc2srcdata/objects/crate_01.fbx",
+  "kind": "prop",
+  "materials": [
+    { "name": "crate_diffuse", "shader": "static_prop" }
+  ],
+  "capabilities": {
+    "hasNormals": true,
+    "hasTangents": false,
+    "hasLods": true,
+    "hasImpostor": false,
+    "castsShadow": true,
+    "supportsObjectId": true
+  },
+  "geometry": {
+    "meshCount": 1,
+    "vertexCount": 24,
+    "indexCount": 36,
+    "materialSlotCount": 1,
+    "hasNormals": true,
+    "hasTangents": false,
+    "bounds": {
+      "min": [-1.0, -1.0, -1.0],
+      "max": [1.0, 1.0, 1.0],
+      "radius": 1.7320508
+    }
+  },
+  "lods": [
+    { "level": 0, "vertexCount": 24, "triangleCount": 12, "error": 0.0 },
+    { "level": 1, "vertexCount": 14, "triangleCount": 6, "error": 0.041 }
+  ],
+  "textureRefs": [
+    {
+      "slot": "albedo",
+      "path": "mc2srcdata/textures/crate_01_d.tga",
+      "format": "ktx2",
+      "vkFormat": 43,
+      "mips": 8,
+      "dims": [256, 256]
+    }
+  ],
+  "provenance": {
+    "tool": "asset-pipeline-probe-opus-1",
+    "toolVersion": "0",
+    "generatedAt": "2026-05-29",
+    "sourceHash": "deadbeef"
+  },
+  "generatedOutputs": [
+    { "path": "out/asset-pipeline-probe/crate_01_d.ktx2", "kind": "ktx2-texture" }
+  ]
+}

@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
-"""check-asset-manifest-fixtures.py -- run the asset-manifest validator over the
-positive + negative fixture corpus and assert each one's expected verdict.
+"""check-asset-manifest-fixtures.py -- run the canonical asset-manifest
+validator over the positive + negative fixture corpus and assert each one's
+expected verdict.
 
-ASSET-MANIFEST-NEGATIVE-FIXTURES-1 (TRACKV-SONNET-HYGIENE-BATCH-1).
-
-`tools/validate_asset_manifest.py` validates ONE manifest per invocation. This
-wrapper drives it over the whole fixture set so a future asset-pipeline change
-that accidentally WEAKENS the schema (e.g. drops a required-field check) is
-caught by CI:
+Uses tools/asset_cook/validate_asset_manifest.py (canonical, single validator
+per ruling C1 / asset-cook-pipeline-architecture.md §12.1). The scaffold copy
+(tools/validate_asset_manifest.py) has been deleted.
 
   * the canonical valid fixture must PASS (exit 0)
   * every file under tests/fixtures/assets/invalid/ must FAIL (exit nonzero)
@@ -29,7 +27,7 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent
-VALIDATOR = ROOT / "tools" / "validate_asset_manifest.py"
+VALIDATOR = ROOT / "tools" / "asset_cook" / "validate_asset_manifest.py"
 VALID_FIXTURE = ROOT / "tests" / "fixtures" / "assets" / "minimal_asset_manifest.json"
 INVALID_DIR = ROOT / "tests" / "fixtures" / "assets" / "invalid"
 

@@ -1,0 +1,18 @@
+{
+  "assetId": "bad_alphamode",
+  "source": "mc2srcdata/objects/bad_03.fbx",
+  "kind": "prop",
+  "materials": [
+    { "name": "m1", "shader": "static_prop", "alphaMode": "dither" }
+  ],
+  "capabilities": {
+    "hasNormals": true,
+    "hasTangents": false,
+    "hasLods": false,
+    "hasImpostor": false,
+    "castsShadow": true,
+    "supportsObjectId": false
+  },
+  "lods": [],
+  "textureRefs": []
+}

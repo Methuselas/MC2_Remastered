@@ -1,0 +1,33 @@
+{
+  "assetId": "prop_metal_crate_01",
+  "source": "mc2srcdata/objects/crate_metal_01.fbx",
+  "kind": "prop",
+  "materials": [
+    {
+      "name": "metal_panel",
+      "shader": "static_prop",
+      "alphaMode": "alphaTest",
+      "alphaTestThreshold": 0.5,
+      "doubleSided": false,
+      "pbr": {
+        "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
+        "metallicFactor": 0.8,
+        "roughnessFactor": 0.3
+      }
+    }
+  ],
+  "capabilities": {
+    "hasNormals": true,
+    "hasTangents": true,
+    "hasLods": false,
+    "hasImpostor": false,
+    "castsShadow": true,
+    "supportsObjectId": true
+  },
+  "lods": [],
+  "textureRefs": [
+    { "slot": "albedo", "path": "mc2srcdata/textures/metal_panel_d.tga", "colorSpace": "srgb" },
+    { "slot": "orm", "path": "mc2srcdata/textures/metal_panel_orm.tga", "colorSpace": "linear" },
+    { "slot": "normal", "path": "mc2srcdata/textures/metal_panel_n.tga", "colorSpace": "linear" }
+  ]
+}

@@ -2,7 +2,7 @@
 //
 // OFFLINE host tool. Links ONLY assimp::assimp (no mclib, no gameos, no
 // renderer). Imports a model via Assimp and emits a geometry-summary JSON
-// matching the manifest `geometry` section that tools/validate_asset_manifest.py
+// matching the manifest `geometry` section that tools/asset_cook/validate_asset_manifest.py
 // accepts.
 //
 // Usage:
