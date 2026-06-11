@@ -838,43 +838,51 @@ static void updateAndRenderFormationLine( Camera* eye )
 		float vmx, vmy, vax, vay;
 		gos_GetViewport( &vmx, &vmy, &vax, &vay );
 
-		// Ghost line: project both world endpoints (w>0 cull only).
-		ModernClipResult r0 = eye->projectModernClipGL( g_tacticalOverview.flStart() );
-		ModernClipResult r1 = eye->projectModernClipGL( g_tacticalOverview.flEnd() );
-		if ( r0.clip.w > 0.05f && r1.clip.w > 0.05f )
-		{
-			float x0 = vax + ( r0.clip.x / r0.clip.w * 0.5f + 0.5f ) * vmx;
-			float y0 = vay + ( 1.0f - ( r0.clip.y / r0.clip.w * 0.5f + 0.5f ) ) * vmy;
-			float x1 = vax + ( r1.clip.x / r1.clip.w * 0.5f + 0.5f ) * vmx;
-			float y1 = vay + ( 1.0f - ( r1.clip.y / r1.clip.w * 0.5f + 0.5f ) ) * vmy;
-			csgThickSeg( x0, y0, x1, y1, 1.5f, aBits | kGreen );
-		}
-
-		// Slot pips: small filled quads at each slot, dropped onto the terrain
-		// surface (interpolated z floats over dips between the endpoints).
+		// Compute the slots first (they already reflect the spacing factor);
+		// drop each onto the terrain surface so it does not float over dips.
 		Stuff::Vector3D slots[32];
 		int ns = g_tacticalOverview.flComputeSlots( slots, 32 );
 		for ( int s = 0; s < ns; s++ )
-		{
 			if ( land )
 				slots[s].z = land->getTerrainElevation( slots[s] );
+
+		// Project all slots to screen once.
+		float sxArr[32], syArr[32];
+		bool  okArr[32];
+		for ( int s = 0; s < ns; s++ )
+		{
 			ModernClipResult r = eye->projectModernClipGL( slots[s] );
-			if ( r.clip.w <= 0.05f ) continue;
-			float cx = vax + ( r.clip.x / r.clip.w * 0.5f + 0.5f ) * vmx;
-			float cy = vay + ( 1.0f - ( r.clip.y / r.clip.w * 0.5f + 0.5f ) ) * vmy;
+			okArr[s] = ( r.clip.w > 0.05f );
+			if ( okArr[s] )
+			{
+				sxArr[s] = vax + ( r.clip.x / r.clip.w * 0.5f + 0.5f ) * vmx;
+				syArr[s] = vay + ( 1.0f - ( r.clip.y / r.clip.w * 0.5f + 0.5f ) ) * vmy;
+			}
+		}
+
+		// Ghost line spans the OUTERMOST slots (WYSIWYG: the line = where the
+		// squad lands, already scaled by the spacing wheel).
+		if ( ns >= 2 && okArr[0] && okArr[ns - 1] )
+			csgThickSeg( sxArr[0], syArr[0], sxArr[ns - 1], syArr[ns - 1], 1.5f, aBits | kGreen );
+
+		// Slot pips.
+		for ( int s = 0; s < ns; s++ )
+		{
+			if ( !okArr[s] ) continue;
 			const float hp = 3.0f;
 			gos_VERTEX q[4];
 			for ( int v = 0; v < 4; ++v ) { q[v].z = 0; q[v].rhw = .5f; q[v].argb = aBits | kGreen; q[v].frgb = 0; q[v].u = q[v].v = 0; }
-			q[0].x = cx - hp; q[0].y = cy - hp; q[1].x = cx - hp; q[1].y = cy + hp;
-			q[2].x = cx + hp; q[2].y = cy + hp; q[3].x = cx + hp; q[3].y = cy - hp;
+			q[0].x = sxArr[s] - hp; q[0].y = syArr[s] - hp; q[1].x = sxArr[s] - hp; q[1].y = syArr[s] + hp;
+			q[2].x = sxArr[s] + hp; q[2].y = syArr[s] + hp; q[3].x = sxArr[s] + hp; q[3].y = syArr[s] - hp;
 			gos_DrawQuads( q, 4 );
 		}
 
-		// Selected-unit count at the cursor.
+		// Unit count + spacing percent at the cursor.
 		if ( gosFontHandle )
 		{
-			char buf[16];
-			sprintf( buf, "%d", g_tacticalOverview.flMoverCount() );
+			char buf[32];
+			sprintf( buf, "%d  %.0f%%", g_tacticalOverview.flMoverCount(),
+			         g_tacticalOverview.flSpacing() * 100.0f );
 			gos_TextSetAttributes( gosFontHandle, aBits | kGreen, 1.0f, false, true, false, false );
 			gos_TextSetPosition( (int)mx + 14, (int)my + 14 );
 			gos_TextDraw( buf );

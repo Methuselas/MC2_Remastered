@@ -187,25 +187,43 @@ void TacticalOverview::flSetMovers( Mover* const* movers, int n )
     flMoverCount_ = n;
 }
 
+void TacticalOverview::flAdjustSpacing( long wheelDelta )
+{
+    if ( wheelDelta == 0 )
+        return;
+    const float kStep = 0.15f, kMin = 0.30f, kMax = 2.50f;
+    flSpacing_ += ( wheelDelta > 0 ) ? kStep : -kStep;
+    if ( flSpacing_ < kMin ) flSpacing_ = kMin;
+    if ( flSpacing_ > kMax ) flSpacing_ = kMax;
+}
+
 int TacticalOverview::flComputeSlots( Stuff::Vector3D* outSlots, int maxSlots ) const
 {
     int n = flMoverCount_;
     if ( n <= 0 || maxSlots <= 0 )
         return 0;
     if ( n > maxSlots ) n = maxSlots;
+    // Midpoint of the drawn line; slots scale about it by flSpacing_.
+    const float midX = ( flStart_.x + flEnd_.x ) * 0.5f;
+    const float midY = ( flStart_.y + flEnd_.y ) * 0.5f;
+    const float midZ = ( flStart_.z + flEnd_.z ) * 0.5f;
     if ( n == 1 )
     {
-        outSlots[0].x = ( flStart_.x + flEnd_.x ) * 0.5f;
-        outSlots[0].y = ( flStart_.y + flEnd_.y ) * 0.5f;
-        outSlots[0].z = ( flStart_.z + flEnd_.z ) * 0.5f;
+        outSlots[0].x = midX;
+        outSlots[0].y = midY;
+        outSlots[0].z = midZ;
         return 1;
     }
     for ( int i = 0; i < n; i++ )
     {
         float t = (float)i / (float)( n - 1 );
-        outSlots[i].x = flStart_.x + ( flEnd_.x - flStart_.x ) * t;
-        outSlots[i].y = flStart_.y + ( flEnd_.y - flStart_.y ) * t;
-        outSlots[i].z = flStart_.z + ( flEnd_.z - flStart_.z ) * t;
+        // Raw evenly spaced point, then stretch about the midpoint.
+        float rx = flStart_.x + ( flEnd_.x - flStart_.x ) * t;
+        float ry = flStart_.y + ( flEnd_.y - flStart_.y ) * t;
+        float rz = flStart_.z + ( flEnd_.z - flStart_.z ) * t;
+        outSlots[i].x = midX + ( rx - midX ) * flSpacing_;
+        outSlots[i].y = midY + ( ry - midY ) * flSpacing_;
+        outSlots[i].z = midZ + ( rz - midZ ) * flSpacing_;
     }
     return n;
 }

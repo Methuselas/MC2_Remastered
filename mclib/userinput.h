@@ -455,6 +455,14 @@ class UserInput
 			return mouseWheelDelta;
 		}
 
+		// Consume the wheel for this frame so later handlers in the same frame
+		// skip it (e.g. the formation-line spacing wheel must stop the overview
+		// zoom from also firing). Mirrors clearLeftClick().
+		void clearMouseWheelDelta (void)
+		{
+			mouseWheelDelta = 0;
+		}
+
 		long getMouseLeftButtonState (void)
 		{
 			return leftMouseButtonState;

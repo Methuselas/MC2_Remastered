@@ -65,8 +65,13 @@ public:
     FormationLineState flState() const { return flState_; }
     const Stuff::Vector3D& flStart() const { return flStart_; }
     const Stuff::Vector3D& flEnd()   const { return flEnd_; }
-    // Evenly spaced slots start->end inclusive; N==1 -> midpoint. Returns count.
+    // Evenly spaced slots start->end inclusive, scaled by the spacing factor
+    // about the line midpoint; N==1 -> midpoint. Returns count.
     int flComputeSlots( Stuff::Vector3D* outSlots, int maxSlots ) const;
+    // Spacing wheel: stretch/compress the squad spread about the line
+    // midpoint. Persists across lines (the player's preferred spread).
+    float flSpacing() const { return flSpacing_; }
+    void  flAdjustSpacing( long wheelDelta );  // wheel up = wider
     // World health bars are replaced by icons/cards while the overview is up.
     // Game code masks DRAW_BARS through this at the game->appearance handoff
     // (mech/vehicle setObjectParameters, turret render).
@@ -106,6 +111,7 @@ private:
     static const int   kFlMaxMovers = 32;
     Mover*             flMovers_[kFlMaxMovers] = {};   // snapshot at drag start
     int                flMoverCount_ = 0;
+    float              flSpacing_ = 1.0f;   // persists across lines (NOT reset)
 };
 
 extern TacticalOverview g_tacticalOverview;

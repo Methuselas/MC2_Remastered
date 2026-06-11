@@ -749,6 +749,16 @@ void MissionInterfaceManager::update (void)
 			eye->inverseProject( sXY, w );
 			g_tacticalOverview.flOnDragMove( w );
 
+				// Spacing wheel: stretches/tightens the squad spread while
+				// drawing. Consume it so the overview zoom-on-wheel (later this
+				// frame) does not also fire.
+				long flWheel = userInput->getMouseWheelDelta();
+				if ( flWheel != 0 )
+				{
+					g_tacticalOverview.flAdjustSpacing( flWheel );
+					userInput->clearMouseWheelDelta();
+				}
+
 			// MC2_FL_TRACE=1: per-drag-frame coord audit. Round-trips the
 			// unprojected world point back through the render projection; if
 			// rx,ry != fmx,fmy the unproject/render matrix or pixel spaces
