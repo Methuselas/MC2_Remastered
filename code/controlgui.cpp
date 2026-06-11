@@ -686,9 +686,10 @@ static void renderWeaponView( Camera* eye )
 	gos_SetHudScaleExempt( prevExempt );
 }
 
-// Formation line (MC2_TACMAP_FORMATION_LINE): per-frame drag tracking, ghost
-// line + slot pips, and order issuance on release. Runs only while the F6
-// overview is active; input arming/cancel is polled in mechcmd2.cpp.
+// Formation line (MC2_TACMAP_FORMATION_LINE): RENDER ONLY — ghost line, slot
+// pips, armed cursor hint. Input/state advance + order issuance live in
+// MissionInterfaceManager::update (missiongui.cpp), BEFORE the world mouse
+// handlers, so the press/release cannot leak into select/move.
 static void updateAndRenderFormationLine( Camera* eye )
 {
 	if ( !eye || !Team::home || !TacticalOverview::formationLineEnabled() )
@@ -699,111 +700,6 @@ static void updateAndRenderFormationLine( Camera* eye )
 
 	long mx = userInput->getMouseX();
 	long my = userInput->getMouseY();
-
-	// --- state advance ---
-	if ( st == TacticalOverview::FL_ARMED )
-	{
-		// Down-EDGE only (isLeftClick), not level: a button already held when L
-		// armed the mode must not start a phantom drag.
-		if ( userInput->isLeftClick() )
-		{
-			Stuff::Vector3D w;
-			if ( eye->screenToGroundPlaneApprox( mx, my, w ) )
-			{
-				// Snapshot selected friendly movers at drag start.
-				Mover* movers[32];
-				int   nm = 0;
-				Team* pTeam = Team::home;
-				for ( long i = 0; i < pTeam->getRosterSize() && nm < 32; i++ )
-				{
-					Mover* pMover = (Mover*)pTeam->getMover( i );
-					if ( pMover && pMover->isSelected()
-						&& pMover->getCommander()->getId() == Commander::home->getId()
-						&& pMover->getExists() && !pMover->isDestroyed() && !pMover->isDisabled() )
-						movers[nm++] = pMover;
-				}
-				if ( nm == 0 )
-				{
-					g_tacticalOverview.flOnCancel();	// nothing selected: cancel
-					return;
-				}
-				g_tacticalOverview.flSetMovers( movers, nm );
-				g_tacticalOverview.flOnDragStart( w );
-				st = g_tacticalOverview.flState();
-			}
-		}
-	}
-	if ( st == TacticalOverview::FL_DRAGGING )
-	{
-		Stuff::Vector3D w;
-		if ( eye->screenToGroundPlaneApprox( mx, my, w ) )
-			g_tacticalOverview.flOnDragMove( w );
-
-		if ( userInput->leftMouseReleased() )
-		{
-			// Accidental click guard: tiny line = cancel, no orders.
-			const float kMinLineLenWorld = 50.0f;	// tune later
-			float ldx = g_tacticalOverview.flEnd().x - g_tacticalOverview.flStart().x;
-			float ldy = g_tacticalOverview.flEnd().y - g_tacticalOverview.flStart().y;
-			if ( ldx * ldx + ldy * ldy < kMinLineLenWorld * kMinLineLenWorld )
-			{
-				// Suppress the world click too: an accidental tap in draw mode
-				// must not fall through to a normal move order.
-				g_tacticalOverview.armReleaseSuppression();
-				g_tacticalOverview.flOnCancel();
-				return;
-			}
-			// --- issue orders: v1 assignment = iterate snapshot order, each
-			// mover takes nearest free slot. Compute/order FIRST, then
-			// flOnRelease (release clears the snapshot).
-			Stuff::Vector3D slots[32];
-			int ns = g_tacticalOverview.flComputeSlots( slots, 32 );
-			bool slotUsed[32] = { false };
-			int nm = g_tacticalOverview.flMoverCount();
-			for ( int i = 0; i < nm; i++ )
-			{
-				Mover* pMover = g_tacticalOverview.flMover( i );
-				// Revalidate: mover may have died mid-drag.
-				if ( !pMover || !pMover->getExists()
-					|| pMover->isDestroyed() || pMover->isDisabled() )
-					continue;
-				// Nearest free slot to this mover.
-				int   best = -1;
-				float bestD2 = 0.0f;
-				Stuff::Vector3D mp = pMover->getPosition();
-				for ( int s = 0; s < ns; s++ )
-				{
-					if ( slotUsed[s] ) continue;
-					float dx = slots[s].x - mp.x, dy = slots[s].y - mp.y;
-					float d2 = dx * dx + dy * dy;
-					if ( best < 0 || d2 < bestD2 ) { best = s; bestD2 = d2; }
-				}
-				if ( best < 0 ) break;
-				slotUsed[best] = true;
-
-				LocationNode path;
-				path.location = slots[best];
-				path.run = true;
-				path.next = NULL;
-				TacticalOrder tacOrder;
-				tacOrder.init( ORDER_ORIGIN_PLAYER, TACTICAL_ORDER_MOVETO_POINT, false );
-				tacOrder.initWayPath( &path );
-				tacOrder.moveParams.wait = false;
-				tacOrder.moveParams.wayPath.mode[0] = TRAVEL_MODE_FAST;
-				tacOrder.pack( NULL, NULL );
-				// Single-unit dispatch on purpose: handleOrders/calcMoveGoals
-				// would re-cluster the slots and defeat the line.
-				pMover->handleTacticalOrder( tacOrder );
-			}
-			// Explicitly suppress missiongui's move-on-release for this same
-			// frame (same pattern as squad-card clicks) instead of relying on
-			// wasLeftDrag() implicitly being true.
-			g_tacticalOverview.armReleaseSuppression();
-			g_tacticalOverview.flOnRelease();
-			soundSystem->playDigitalSample( BUTTON5 );
-			return;		// nothing to draw this frame
-		}
-	}
 
 	// --- render ---
 	bool prevExempt = gos_GetHudScaleExempt();

@@ -686,6 +686,119 @@ void MissionInterfaceManager::update (void)
 		}
 	}
 
+	// Formation line draw mode (MC2_TACMAP_FORMATION_LINE): owns LMB while
+	// armed/dragging. Runs BEFORE the world mouse handlers below so the press
+	// cannot select/deselect and the release cannot fire a normal move.
+	// Rendering (ghost line + pips) stays in controlgui.
+	if ( TacticalOverview::formationLineEnabled()
+		&& g_tacticalOverview.flState() != TacticalOverview::FL_IDLE
+		&& eye && Team::home )
+	{
+		long fmx = userInput->getMouseX();
+		long fmy = userInput->getMouseY();
+
+		if ( g_tacticalOverview.flState() == TacticalOverview::FL_ARMED )
+		{
+			if ( userInput->isLeftClick() )
+			{
+				Stuff::Vector3D w;
+				if ( eye->screenToGroundPlaneApprox( fmx, fmy, w ) )
+				{
+					// Snapshot selected friendly movers at drag start.
+					Mover* flMovers[32];
+					int nm = 0;
+					Team* pTeam = Team::home;
+					for ( long i = 0; i < pTeam->getRosterSize() && nm < 32; i++ )
+					{
+						Mover* pMover = (Mover*)pTeam->getMover( i );
+						if ( pMover && pMover->isSelected()
+							&& pMover->getCommander()->getId() == Commander::home->getId()
+							&& pMover->getExists() && !pMover->isDestroyed() && !pMover->isDisabled() )
+							flMovers[nm++] = pMover;
+					}
+					if ( nm == 0 )
+					{
+						g_tacticalOverview.flOnCancel();	// nothing selected
+					}
+					else
+					{
+						g_tacticalOverview.flSetMovers( flMovers, nm );
+						g_tacticalOverview.flOnDragStart( w );
+					}
+					// Either way this press belongs to draw mode, not the
+					// world: consume the click now and eat the matching
+					// release later (suppression persists until consumed).
+					userInput->clearLeftClick();
+					g_tacticalOverview.armReleaseSuppression();
+				}
+			}
+		}
+		else // FL_DRAGGING
+		{
+			Stuff::Vector3D w;
+			if ( eye->screenToGroundPlaneApprox( fmx, fmy, w ) )
+				g_tacticalOverview.flOnDragMove( w );
+
+			if ( userInput->leftMouseReleased() )
+			{
+				// Accidental click guard: tiny line = cancel, no orders.
+				const float kMinLineLenWorld = 50.0f;	// tune later
+				float ldx = g_tacticalOverview.flEnd().x - g_tacticalOverview.flStart().x;
+				float ldy = g_tacticalOverview.flEnd().y - g_tacticalOverview.flStart().y;
+				if ( ldx * ldx + ldy * ldy < kMinLineLenWorld * kMinLineLenWorld )
+				{
+					g_tacticalOverview.flOnCancel();
+				}
+				else
+				{
+					// v1 assignment: iterate snapshot order, each mover takes
+					// nearest free slot. Orders FIRST, then flOnRelease
+					// (release clears the snapshot).
+					Stuff::Vector3D slots[32];
+					int ns = g_tacticalOverview.flComputeSlots( slots, 32 );
+					bool slotUsed[32] = { false };
+					int nm = g_tacticalOverview.flMoverCount();
+					for ( int i = 0; i < nm; i++ )
+					{
+						Mover* pMover = g_tacticalOverview.flMover( i );
+						// Revalidate: mover may have died mid-drag.
+						if ( !pMover || !pMover->getExists()
+							|| pMover->isDestroyed() || pMover->isDisabled() )
+							continue;
+						int   best = -1;
+						float bestD2 = 0.0f;
+						Stuff::Vector3D mp = pMover->getPosition();
+						for ( int s = 0; s < ns; s++ )
+						{
+							if ( slotUsed[s] ) continue;
+							float dx = slots[s].x - mp.x, dy = slots[s].y - mp.y;
+							float d2 = dx * dx + dy * dy;
+							if ( best < 0 || d2 < bestD2 ) { best = s; bestD2 = d2; }
+						}
+						if ( best < 0 ) break;
+						slotUsed[best] = true;
+
+						LocationNode path;
+						path.location = slots[best];
+						path.run = true;
+						path.next = NULL;
+						TacticalOrder tacOrder;
+						tacOrder.init( ORDER_ORIGIN_PLAYER, TACTICAL_ORDER_MOVETO_POINT, false );
+						tacOrder.initWayPath( &path );
+						tacOrder.moveParams.wait = false;
+						tacOrder.moveParams.wayPath.mode[0] = TRAVEL_MODE_FAST;
+						tacOrder.pack( NULL, NULL );
+						// Single-unit dispatch on purpose: handleOrders/
+						// calcMoveGoals would re-cluster the slots.
+						pMover->handleTacticalOrder( tacOrder );
+					}
+					g_tacticalOverview.flOnRelease();
+					soundSystem->playDigitalSample( BUTTON5 );
+				}
+			}
+		}
+	}
+
 	//---------------------------------------------------
 	// Per Andy G.  One check per frame saves log file!
 	bool shiftDn = userInput->shift();
