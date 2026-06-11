@@ -119,3 +119,84 @@ Light controls to orbit, zoom, and rotate the directional light.
 > renders with a self-contained Cook-Torrance shader (Backend B). MC2 has no
 > standalone ORM material shader to mirror, so this preview is approximate and
 > must not be treated as pixel-exact to in-game rendering.
+
+## Mod Workbench S5 panels
+
+S5 extends the Mod Workbench with a stock-roster picker, appearance-key roster,
+LOD-chain panel, texture-set panel, a record/health strip, and two export paths.
+
+### Stock roster picker
+
+A filterable list of every `.tgl` entry in `tgl.fst` (sourced via ModelBrowser).
+Click any row to bind that stock model as the workbench reference; hover a row
+to see its full resolved path in a tooltip. The bound stock model renders in the
+left (reference) half of the side-by-side preview.
+
+### Appearance-key roster
+
+Source: unique `st FileName` / `st FileNameN` values scanned from
+`<deploy>/data/tgl/*.ini`. The roster is built on first open and rebuilt by the
+**Refresh roster** button. A filterable combo-box lets you pick the appearance
+key that this record will register under.
+
+The **Verified** indicator is derived, not a manual checkbox. It shows green when
+the selected key matches a roster entry (scanned from the ini files) or matches
+an explicit stock-picker selection; it is amber otherwise. The intent is to flag
+records whose appearance key was typed by hand and does not correspond to any
+deployed asset ini, which may indicate a typo or a key that is not yet in the
+deploy tree.
+
+### LOD-chain panel
+
+A table with one row per LOD level. Columns: LOD index / Source GLB path /
+Transition distance / Status / row-order controls (Up / Down / Remove). The
+**Add LOD** button appends a new empty row. Row order drives the LOD index: rows
+are automatically re-indexed by their table position, so reordering via Up/Down
+is enough to renumber all LODs.
+
+Advisory WARNs (non-blocking) are raised for:
+
+- Transition distances that are not strictly ascending (LOD N switches closer
+  than LOD N-1).
+- The first LOD's distance not being 0 (LOD0 should activate at distance 0).
+- LOD0-only records (no coarser fallback; flagged as informational).
+
+### Texture-set panel
+
+Four named slots: **Base Color** (sRGB), **Normal** (linear), **ORM** (linear;
+R=AO, G=Roughness, B=Metallic), **Emissive** (sRGB). Each slot has a Browse
+button and shows the file's resolved path. An unresolved or missing path raises
+a `texture-missing` WARN in the validation summary. Texture WARNs are advisory
+and never block export.
+
+### Record/health strip
+
+A single summary line shown at the top of the workbench panel:
+
+```
+key:<key>  stock:<name>  appearance:<verified|unverified>  LODs:<n>  BLOCKs:<n>  WARNs:<n>
+```
+
+Tokens use ASCII only. The strip is a quick at-a-glance health indicator;
+details (per-field messages) are shown in the full validation list below it.
+
+### Export paths
+
+Two export paths are available simultaneously; neither is gated on the other.
+
+**Export Draft Bundle** writes `<out_dir>/<id>/model.glb` and
+`<out_dir>/<id>/models.generated.json`. It never touches the central manifest.
+Use this to produce a self-contained draft bundle for inspection, redistribution,
+or manual review before committing to the central registry.
+
+**Append/Merge to Central models.json** merges the current record into the
+shared `models.json` at the deploy root. The merge logic: existing records for
+other IDs are preserved exactly; the record for the current ID is replaced (or
+appended if absent). A `.bak` copy of the previous models.json is written before
+any mutation. The write is atomic (temp-file + rename). After writing, the file
+is round-trip parsed to verify the JSON is valid. The operation is safe and
+reversible: restore the `.bak` to undo.
+
+> **Backend-A v2 (engine-faithful render) is deferred.** The side-by-side
+> preview uses the Backend-B approximate phong/albedo shader. Pixel-accurate
+> parity with the MC2 static-prop batcher is not yet implemented.
