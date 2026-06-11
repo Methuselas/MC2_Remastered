@@ -363,6 +363,8 @@ def main():
                             # Shadow-lane gated features (smoke coverage for the
                             # dynamic sun-shadow caster path + static building map).
                             "MC2_SHADOW_ENABLE",
+                            # SHADOW-STABILITY-1: per-pass GL-state trace gate.
+                            "MC2_SHADOW_STATE_TRACE",
                             "MC2_STATIC_PROP_BUILDING_SHADOW",
                             "MC2_SHADOW_DYNAMIC_PROP_CASTERS",
                             "MC2_SHADOW_BOUNDED_NEAR_FIT",
