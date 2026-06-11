@@ -37,6 +37,15 @@ namespace EditorPlaytest
 		long        orderVal  = -1;
 		std::string orderName;
 		long        target    = -1;
+		// v2 brain/path/target detail ([MOVER v2]). Defaults match the engine's
+		// "absent" sentinels so a v1-only stream (older game exe) reads cleanly.
+		long        brain     = -1;            // ABL brain FSM state index (opaque)
+		long        moveState = -1;            // moveOrders.moveState
+		float       gx = 0.f, gy = 0.f, gz = 0.f;  // active-path world goal
+		long        pathStep  = -1;            // current step index
+		long        pathSteps = 0;             // total steps in active path
+		long        pathCost  = -1;            // A* total path cost
+		float       tx = 0.f, ty = 0.f, tz = 0.f;  // current target world pos
 	};
 
 	// Live movers from the most recent telemetry burst (empty until the running

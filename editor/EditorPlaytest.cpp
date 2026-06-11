@@ -400,28 +400,38 @@ std::string LastLine(const std::string& log)
 	return log.substr(start, end - start + 1);
 }
 
-// --- [MOVER v1] stdout parser (runtime bridge v0) --------------------------------------
-// Tolerant key=value scanner over a single output line. Recognizes the burst delimiter
-// "[MOVER v1 begin]" (publishes the prior complete burst, then resets) and per-mover
-// "[MOVER v1] id=.. name=.. team=.. pos=x,y,z hp=.. pilot=.. order=val/name target=.."
-// lines. Unknown/garbled lines are ignored. Runs on the MAIN thread.
+// --- [MOVER vN] stdout parser (runtime bridge) -----------------------------------------
+// Tolerant key=value scanner over a single output line. Version-agnostic: matches any
+// "[MOVER v<N>" tag so a v1-only game exe (no brain/path fields) and the current v2 stream
+// both parse. Recognizes the burst delimiter "[MOVER v<N> begin]" (publishes the prior
+// complete burst, then resets) and per-mover lines:
+//   "[MOVER v2] id=.. name=.. team=.. pos=x,y,z hp=.. pilot=.. order=val/name target=.. \
+//    brain=.. mstate=.. pgoal=x,y,z pstep=cur/total pcost=.. tgtpos=x,y,z"
+// Keys absent in older streams keep the MoverSnapshot defaults. Unknown keys ignored.
+// Runs on the MAIN thread.
 void BridgeParseLine(const std::string& line)
 {
-	// Burst boundary: publish what we accumulated, start fresh.
-	if (line.compare(0, 16, "[MOVER v1 begin]") == 0)
+	// Any-version tag match. "[MOVER v" then digits, then either " begin]" or "] payload".
+	if (line.compare(0, 8, "[MOVER v") != 0)
+		return;
+	size_t close = line.find(']');
+	if (close == std::string::npos)
+		return;
+
+	// Burst boundary: publish what we accumulated, start fresh. The token before ']' is
+	// " begin" for delimiters.
+	if (line.find(" begin]") != std::string::npos)
 	{
 		s_liveMovers      = s_burstMovers;
 		s_liveMoversStamp = GetTickCount();
 		s_burstMovers.clear();
 		return;
 	}
-	if (line.compare(0, 11, "[MOVER v1] ") != 0)
-		return;
 
 	EditorPlaytest::MoverSnapshot m;
-	// Walk space-separated key=value tokens. name/pilot may contain no spaces
-	// (engine names are single tokens); we treat the token up to the next space.
-	const char* p = line.c_str() + 11;
+	// Walk space-separated key=value tokens after the "] ". name/pilot are single tokens.
+	const char* p = line.c_str() + close + 1;
+	while (*p == ' ') ++p;
 	while (*p)
 	{
 		while (*p == ' ') ++p;
@@ -453,6 +463,29 @@ void BridgeParseLine(const std::string& line)
 			m.orderVal = atol(val.c_str());
 			size_t slash = val.find('/');
 			m.orderName = (slash != std::string::npos) ? val.substr(slash + 1) : val;
+		}
+		// --- v2 fields ---
+		else if (key == "brain")  m.brain     = atol(val.c_str());
+		else if (key == "mstate") m.moveState = atol(val.c_str());
+		else if (key == "pgoal")
+		{
+			float x = 0, y = 0, z = 0;
+			sscanf_s(val.c_str(), "%f,%f,%f", &x, &y, &z);
+			m.gx = x; m.gy = y; m.gz = z;
+		}
+		else if (key == "pstep")
+		{
+			// "cur/total"
+			m.pathStep = atol(val.c_str());
+			size_t slash = val.find('/');
+			m.pathSteps = (slash != std::string::npos) ? atol(val.c_str() + slash + 1) : 0;
+		}
+		else if (key == "pcost")  m.pathCost = atol(val.c_str());
+		else if (key == "tgtpos")
+		{
+			float x = 0, y = 0, z = 0;
+			sscanf_s(val.c_str(), "%f,%f,%f", &x, &y, &z);
+			m.tx = x; m.ty = y; m.tz = z;
 		}
 	}
 	if (m.id != -1)
