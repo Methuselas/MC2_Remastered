@@ -163,6 +163,12 @@ std::string ArchiveLog(const std::string& missionPak, const std::string& log,
 		std::string stamp = s_runStamp.empty() ? TimeStamp() : s_runStamp;
 		logDir = s_modRoot + "\\.modproject\\playtest\\" + stamp;
 		MakeDirTree(logDir);
+		if (GetFileAttributesA(logDir.c_str()) == INVALID_FILE_ATTRIBUTES)
+		{
+			snprintf(s_status, sizeof(s_status),
+				"MakeDirTree failed for log dir (%s), err %lu -- log archive will fail.",
+				logDir.c_str(), GetLastError());
+		}
 		fileName = std::string(prefix ? prefix : "") + "playtest.log";
 	}
 	else
@@ -406,8 +412,14 @@ void Start()
 	for (char& c : exeDirAbsLow) c = (char)tolower((unsigned char)c);
 	std::string modRootAbsLow = AbsPath(s_modRoot);
 	for (char& c : modRootAbsLow) c = (char)tolower((unsigned char)c);
+	// Require a real path-component boundary so "C:\games\mc2" does not spuriously prefix
+	// "C:\games\mc2-mods\...": modRoot must be strictly longer than exeDir AND the next
+	// char must be a path separator.
 	bool modUnderExe = s_modActive &&
-		(modRootAbsLow.compare(0, exeDirAbsLow.size(), exeDirAbsLow) == 0);
+		modRootAbsLow.size() > exeDirAbsLow.size() &&
+		modRootAbsLow.compare(0, exeDirAbsLow.size(), exeDirAbsLow) == 0 &&
+		(modRootAbsLow[exeDirAbsLow.size()] == '\\' ||
+		 modRootAbsLow[exeDirAbsLow.size()] == '/');
 
 	if (s_modActive && !modUnderExe)
 	{

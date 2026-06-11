@@ -203,9 +203,13 @@ static void WorkerMain(std::shared_ptr<Task> t)
 		if (t->cancelRequested.load())      t->status = Status::Cancelled;
 		else if (code == 0)               { t->status = Status::Succeeded; t->progress = 100; }
 		else                                t->status = Status::Failed;
+		// Close the process handle while still holding the lock, after nulling t->hProcess,
+		// so CancelTask/ImGui (which read t->hProcess under the same lock) can never observe
+		// a stale handle and TerminateProcess a closed/recycled handle (TOCTOU).
+		HANDLE h = t->hProcess;
 		t->hProcess = NULL;
+		if (h) CloseHandle(h);
 	}
-	CloseHandle(pi.hProcess);
 	CloseHandle(pi.hThread);
 
 	t->workerDone = true;
@@ -255,7 +259,13 @@ static std::vector<char> BuildEnvBlock(
 	for (const auto& kv : extra)
 	{
 		std::string newEntry = kv.first + "=" + kv.second;
+		// Mirror nameOf()'s leading-'=' skip so a key like "=C:" matches the parent's
+		// "=C:=..." drive entry instead of always appending a duplicate.
 		std::string newName = kv.first;
+		{
+			size_t start = (!newName.empty() && newName[0] == '=') ? 1 : 0;
+			newName = newName.substr(start);
+		}
 		for (char& c : newName) c = (char)tolower((unsigned char)c);
 
 		bool overrode = false;
