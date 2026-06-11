@@ -328,6 +328,9 @@ def main():
                             "MC2_OBJECT_RECON_TRACY",
                             "MC2_HITCH_TRACE",
                             "MC2_HITCH_MS",
+                            # [RENDER_PASS_TIME v1] coarse per-pass GPU timers
+                            "MC2_RENDER_PASS_TIME",
+                            "MC2_RENDER_PASS_TIME_EVERY",
                             "MC2_PRESWAP_FINISH",
                             "MC2_MODERN_TERRAIN_SURFACE",
                             "MC2_MODERN_TERRAIN_PATCHES",

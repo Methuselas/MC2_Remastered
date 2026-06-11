@@ -74,6 +74,7 @@
 #include "../GameOS/gameos/gos_validate.h"  // drainGLErrors (Tier-1 instr §4)
 #include "../GameOS/gameos/gos_terrain_patch_stream.h"
 #include "../GameOS/gameos/gos_terrain_indirect.h"
+#include "../GameOS/gameos/gos_render_pass_timer.h"
 #include "../GameOS/gameos/gos_terrain_bridge.h"   // [TERRAIN_SURFACE] PR-2 surface validation draw
 #include "../GameOS/gameos/gos_terrain_mask_dispatch.h"  // B4 Stage 1b: mask-SOLID draw
 #include "../GameOS/gameos/gpu_cull_compute.h"  // C1b: compute_dispatch() moved here from mission.cpp
@@ -2076,6 +2077,7 @@ void MC_TextureManager::renderLists (void)
 	{
 		ZoneScopedN("Render.3DObjects");
 		TracyGpuZone("Render.3DObjects");
+		gos_render_pass_timer::Begin(gos_render_pass_timer::Pass_Obj3d);
 	for (size_t i = 0; i<nextAvailableHardwareVertexNode; i++)
 	{
 		if ((masterHardwareVertexNodes[i].flags & MC2_DRAWSOLID) &&
@@ -2133,6 +2135,7 @@ void MC_TextureManager::renderLists (void)
 			//masterHardwareVertexNodes[i].numShapes = 0;
 		}
 	}
+	gos_render_pass_timer::End(gos_render_pass_timer::Pass_Obj3d);
 	} // end Render.3DObjects zone
 	drainGLErrors("objects_3d");
 
@@ -2170,6 +2173,7 @@ void MC_TextureManager::renderLists (void)
 	    Terrain::mapData) {
 		ZoneScopedN("Shadow.StaticFullMapBuild");
 		TracyGpuZone("Shadow.StaticFullMapBuild");
+		gos_render_pass_timer::Begin(gos_render_pass_timer::Pass_ShadowStatic);
 
 		gos_BuildStaticLightMatrix();   // world-fixed, camera-independent
 		gos_MarkStaticLightMatrixBuilt();
@@ -2225,6 +2229,7 @@ void MC_TextureManager::renderLists (void)
 				}
 			}
 		}
+		gos_render_pass_timer::End(gos_render_pass_timer::Pass_ShadowStatic);
 	}
 	// STATIC-PROP SHADOW-ORDER FIX (2026-05-29): inject static-registry instances
 	// into batcher buckets BEFORE flushShadow() below. flushShadow() calls
@@ -2262,6 +2267,7 @@ void MC_TextureManager::renderLists (void)
 	// off-screen-caster low-sun shadow is the documented Phase-2 gap).
 	{
 		ZoneScopedN("RenderLists.DynamicShadowPass");
+		gos_render_pass_timer::Begin(gos_render_pass_timer::Pass_ShadowDyn);
 		extern bool g_useGpuObjects;
 		extern bool g_useGpuMechs;
 		if (gos_IsTerrainTessellationActive() && (g_useGpuObjects || g_useGpuMechs)) {
@@ -2464,6 +2470,7 @@ void MC_TextureManager::renderLists (void)
 			GpuMechBatcher::instance().flushShadow();
 			gos_EndDynamicShadowPass();
 		}
+		gos_render_pass_timer::End(gos_render_pass_timer::Pass_ShadowDyn);
 	}
 	g_numShadowShapes = 0;
 
@@ -2472,6 +2479,7 @@ void MC_TextureManager::renderLists (void)
 	{
 		ZoneScopedN("Render.TerrainSolid");
 		TracyGpuZone("Render.TerrainSolid");
+		gos_render_pass_timer::Begin(gos_render_pass_timer::Pass_TerrainSolid);
 
 		// Modern path. flush() returns true on success and false on overflow
 		// / not-ready / not-killswitched. On false we fall through to the
@@ -2609,6 +2617,7 @@ void MC_TextureManager::renderLists (void)
 		if (s_bucketCensusOn) {
 			TerrainPatchStream::emitCensus(legacyEligible);
 		}
+		gos_render_pass_timer::End(gos_render_pass_timer::Pass_TerrainSolid);
 	}   // end Render.TerrainSolid zone
 	drainGLErrors("terrain");
 
@@ -2620,6 +2629,7 @@ void MC_TextureManager::renderLists (void)
 	{
 		ZoneScopedN("Render.GpuStaticProps");
 		TracyGpuZone("Render.GpuStaticProps");
+		gos_render_pass_timer::Begin(gos_render_pass_timer::Pass_SpColor);
 		extern bool g_useGpuStaticProps;
 		extern bool g_useGpuObjects;
 		if (g_useGpuStaticProps || g_useGpuObjects) {
@@ -2715,6 +2725,9 @@ void MC_TextureManager::renderLists (void)
 				GpuStaticPropBatcher::instance().flush(getLastRenderSnapshot());
 			}
 		}
+		// Pass_SpColor ends BEFORE the GpuMechs block below: GL_TIME_ELAPSED
+		// scopes cannot nest, so mechs get their own disjoint scope.
+		gos_render_pass_timer::End(gos_render_pass_timer::Pass_SpColor);
 
 		// GPU mech batcher Slice A flush — runs after static-prop flush,
 		// inside renderLists() so terrain has already been emitted by the
@@ -2724,7 +2737,9 @@ void MC_TextureManager::renderLists (void)
 		{
 			ZoneScopedN("Render.GpuMechs");
 			TracyGpuZone("Render.GpuMechs");
+			gos_render_pass_timer::Begin(gos_render_pass_timer::Pass_Mechs);
 			GpuMechBatcher::instance().flush();
+			gos_render_pass_timer::End(gos_render_pass_timer::Pass_Mechs);
 		}
 	}
 
@@ -2735,6 +2750,9 @@ void MC_TextureManager::renderLists (void)
 	// in Stage 1b — both run; parity comparator validates the masks match).
 	// Default-off: IsFrameMaskSolidArmed() returns false unless
 	// MC2_TERRAIN_MASK_DISPATCH=1 AND MC2_TERRAIN_MASK_DISPATCH_SOLID != "0".
+	// Pass_Overlays = one coarse scope spanning Render.TerrainMask.Solid
+	// through Render.Decals (sub-zones stay Tracy-only).
+	gos_render_pass_timer::Begin(gos_render_pass_timer::Pass_Overlays);
 	{
 		ZoneScopedN("Render.TerrainMask.Solid");
 		TracyGpuZone("Render.TerrainMask.Solid");
@@ -2785,6 +2803,7 @@ void MC_TextureManager::renderLists (void)
 		TracyGpuZone("Render.Decals");
 		gos_DrawDecals();
 	}
+	gos_render_pass_timer::End(gos_render_pass_timer::Pass_Overlays);
 	// ── End new world-space overlay batches ───────────────────────────────────
 
 	{
@@ -2804,6 +2823,7 @@ void MC_TextureManager::renderLists (void)
     // sebi: split in 2 parts, first draw objects which have alpha test off, then with alpha test on
 	{
 	ZoneScopedN("RenderLists.TerrainAlphaWaterLoops");
+	gos_render_pass_timer::Begin(gos_render_pass_timer::Pass_Water);
     for(int states = 0; states < 2; ++states)
     {
         gos_SetRenderState( gos_State_AlphaTest, states);
@@ -2870,6 +2890,7 @@ void MC_TextureManager::renderLists (void)
     }
     //reset alpha test at the end
     gos_SetRenderState( gos_State_AlphaTest, 0);
+	gos_render_pass_timer::End(gos_render_pass_timer::Pass_Water);
 	} // end RenderLists.TerrainAlphaWaterLoops
 
 
@@ -2940,6 +2961,7 @@ void MC_TextureManager::renderLists (void)
 
 	{
 	ZoneScopedN("RenderLists.ShadowBlobs");
+	gos_render_pass_timer::Begin(gos_render_pass_timer::Pass_Blobs);
 	if (Environment.Renderer == 3)
 	{
 		gos_SetRenderState( gos_State_TextureAddress, gos_TextureWrap );
@@ -3005,11 +3027,13 @@ void MC_TextureManager::renderLists (void)
 			}
 		}
 	}
+	gos_render_pass_timer::End(gos_render_pass_timer::Pass_Blobs);
 	} // end RenderLists.ShadowBlobs
 
 
 	{
 	ZoneScopedN("RenderLists.NonTerrainAlphaLoops");
+	gos_render_pass_timer::Begin(gos_render_pass_timer::Pass_AlphaVfx);
 	gos_SetRenderState( gos_State_ZCompare, 1);
 	if (Environment.Renderer != 3)
 	{
@@ -3078,10 +3102,12 @@ void MC_TextureManager::renderLists (void)
 		// inherit render state from this block).
 		gos_SetRenderState(	gos_State_ZWrite, 1);
 	}
+	gos_render_pass_timer::End(gos_render_pass_timer::Pass_AlphaVfx);
 	} // end RenderLists.NonTerrainAlphaLoops
 
 	{
 	ZoneScopedN("RenderLists.VfxHudSubmit");
+	gos_render_pass_timer::Begin(gos_render_pass_timer::Pass_Hud);
 	if (Environment.Renderer == 3)
 	{
 		gos_SetRenderState( gos_State_ShadeMode, gos_ShadeGouraud);
@@ -3291,6 +3317,7 @@ void MC_TextureManager::renderLists (void)
 
 	// Reset terrain extra buffer after rendering — will be re-filled during next frame's TerrainQuad::draw() calls
 	gos_TerrainExtraReset();
+	gos_render_pass_timer::End(gos_render_pass_timer::Pass_Hud);
 	} // end RenderLists.VfxHudSubmit
 	} // end Render.Overlays zone
 }
