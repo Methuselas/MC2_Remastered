@@ -76,6 +76,8 @@ void ModelBrowser::draw()
             selectionPath_ = filtered_[i];
             hasSelection_  = true;
         }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", filtered_[i].c_str());
     }
     ImGui::EndChild();
 }
