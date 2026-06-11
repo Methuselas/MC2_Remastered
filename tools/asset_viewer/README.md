@@ -103,10 +103,75 @@ The prop is rendered with its real albedo texture (looked up from the deploy roo
 via TglMeshLoader). Use the orbit and zoom controls to inspect the model from any
 angle.
 
-> **Preview mode: approximate (Backend B).** The viewer renders with a
-> self-contained phong/albedo shader, not the in-game static-prop batcher.
-> Pixel-faithful Backend A (matching the MC2 GPU pipeline) is deferred. Mechs,
-> vehicles, trees, and other asset types are also deferred.
+> **Default preview mode: approximate (Backend B).** The viewer renders with a
+> self-contained phong/albedo shader. Backend A (engine shader preview, v2) is
+> available via the Backend toggle in the panel header — see
+> "Backend-A: Engine Shader preview (v2)" below. Mechs, vehicles, trees, and other
+> asset types are deferred.
+
+## Backend-A: Engine Shader preview (v2)
+
+Backend-A is an opt-in rendering mode for the Static Props panel that compiles and
+runs the real engine shaders (`shaders/static_prop.vert` and
+`shaders/static_prop.frag`) directly inside the viewer. The shaders are referenced
+from the repo or deploy `shaders/` directory — not copied or modified. Backend-B
+(the approximate phong/albedo shader) remains the default; Backend-A is activated
+via the **Backend** toggle in the Static Props panel header.
+
+### What it is
+
+Backend-A (class `ModelPreviewEngineShader`) compiles the actual engine GLSL at
+startup, binds the same uniform blocks and SSBOs that the MC2 static-prop batcher
+uses, and renders the prop through that pipeline. The shader contract — every
+uniform, SSBO block, and sampler binding — is captured in
+`docs/asset-viewer-backend-a-shader-contract.md` (regenerate with
+`--smoke-backend-a-compile shaders`).
+
+UV-V orientation parity between Backend-A and Backend-B is documented in
+`docs/asset-viewer-backend-a-uvv-check.md`. Structural consistency is confirmed;
+in-game pixel parity is a pending user visual check.
+
+### What it is not
+
+Backend-A is not pixel-exact to in-game rendering. The following scene inputs are
+absent or stubbed in `StandaloneSceneStubs` (the v3 swap point):
+
+- Mission lights and the per-mission ambient term.
+- Shadow cascade (no depth map; NdotL shading only).
+- Fog parameters (stubbed to no-fog values).
+- Hot-window lights (the engine's SSBO light list is empty).
+- Per-type GPU parity write-back (parity SSBO is a null stub).
+
+No pixel-parity claim is made or implied. Backend-A is useful for confirming that
+the real engine shaders compile cleanly against the prop's materials and that basic
+lighting and UV mapping behave as expected.
+
+### Fail-open behaviour
+
+If the engine shaders fail to compile or link (for example, because the `shaders/`
+root is missing or the shader source has a syntax error), Backend-A reports the
+error in the **Shader Contract** panel and automatically falls back to rendering
+Backend-B. The viewer never crashes on a shader failure; the error is surfaced as
+text and the prop continues to render via the approximate backend.
+
+### Dependency
+
+Backend-A requires a readable `shaders/` root. This is satisfied by running the
+viewer from the repo worktree root (where `shaders/` is checked in) or from a
+deploy directory that contains a `shaders/` subtree. If neither is present the
+compile fails and the fail-open fallback activates.
+
+### Smoke tests
+
+The five Backend-A smokes are part of the standard regression sweep:
+
+| Smoke flag | What it checks |
+|---|---|
+| `--smoke-shader-include <fx>` | GLSL `#include` resolver resolves nested includes |
+| `--smoke-backend-a-compile <shaders>` | Engine shaders compile; contract uniforms/SSBOs printed |
+| `--smoke-backend-a-render <deploy> <shaders>` | Compiled shaders render a non-empty prop frame |
+| `--smoke-backend-a-fallback <deploy>` | Broken shaders fall back to Backend-B (non-empty frame) |
+| `--smoke-backend-a-uvv <deploy> <shaders>` | UV-V A/B luminance orientation check; inconclusive = PASS |
 
 ## Materials (Stage 2)
 
@@ -197,6 +262,7 @@ any mutation. The write is atomic (temp-file + rename). After writing, the file
 is round-trip parsed to verify the JSON is valid. The operation is safe and
 reversible: restore the `.bak` to undo.
 
-> **Backend-A v2 (engine-faithful render) is deferred.** The side-by-side
-> preview uses the Backend-B approximate phong/albedo shader. Pixel-accurate
-> parity with the MC2 static-prop batcher is not yet implemented.
+> **Side-by-side preview uses Backend-B (approximate) by default.** Backend-A
+> (engine shader preview, v2) is available via the Backend toggle in the Static
+> Props panel; see "Backend-A: Engine Shader preview (v2)" for scope and
+> limitations.
