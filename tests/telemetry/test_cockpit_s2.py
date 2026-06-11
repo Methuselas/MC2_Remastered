@@ -76,7 +76,7 @@ def _assert(cond, msg):
 # Test 1: normal operation
 # ---------------------------------------------------------------------------
 
-def test_normal(tmp: Path, golden: Path):
+def check_normal(tmp: Path, golden: Path):
     art = _make_fake_artifact_dir(tmp, golden)
     exe = _make_fake_exe(tmp)
 
@@ -144,7 +144,7 @@ def test_normal(tmp: Path, golden: Path):
 # Test 2: fault injection -- lifter raises, error swallowed
 # ---------------------------------------------------------------------------
 
-def test_fault_injection(tmp: Path, golden: Path):
+def check_fault_injection(tmp: Path, golden: Path):
     art = _make_fake_artifact_dir(tmp, golden)
     exe = _make_fake_exe(tmp)
 
@@ -213,18 +213,18 @@ def main():
 
         if golden_available:
             print("\n--- Test 1: normal operation ---")
-            test_normal(tmp, golden)
+            check_normal(tmp, golden)
 
         print("\n--- Test 2: fault injection ---")
         # For fault injection we still need some dir with at least one .log file.
         if golden_available:
-            test_fault_injection(tmp, golden)
+            check_fault_injection(tmp, golden)
         else:
             # Create a minimal fake artifact dir with an empty log.
             fake_golden = tmp / "fake_golden"
             fake_golden.mkdir()
             (fake_golden / "mc2_01.log").write_text("", encoding="utf-8")
-            test_fault_injection(tmp, fake_golden)
+            check_fault_injection(tmp, fake_golden)
 
     print("\nAll S2 cockpit tests PASSED.")
     sys.exit(0)
