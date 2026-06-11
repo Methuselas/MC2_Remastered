@@ -60,6 +60,17 @@ std::string  s_modRoot;      // `...\mods\<id>` absolute dir
 std::string  s_modId;
 std::string  s_runStamp;     // shared timestamp for this run's archive subdir
 
+// Completion record for the headless `-playtest` CLI smoke (read via accessors
+// after IsIdle() goes true). Written on the main thread by OnFinished.
+int          s_lastExitCode = -1;
+std::string  s_lastLogPath;
+
+// Smoke-child mode (set by SetSmokeChildEnv before Start()): when true the
+// launched game gets MC2_SMOKE_MODE=1 + `--mission <stem> --duration <sec>` so
+// it auto-quits. Interactive playtest never sets this.
+bool         s_smokeChild        = false;
+int          s_smokeChildSeconds = 30;
+
 // --- helpers --------------------------------------------------------------------------
 
 // Forward decls (definitions below; ArchiveLog uses these before their point of def).
@@ -401,6 +412,10 @@ void OnFinished(const EditorTaskRunner::TaskResult& res)
 		: std::string();
 	std::string last = LastLine(res.log);
 
+	// Completion record for the headless `-playtest` CLI smoke accessors.
+	s_lastExitCode = res.exitCode;
+	s_lastLogPath  = logPath;
+
 	char modTag[160] = "";
 	if (s_modActive)
 		snprintf(modTag, sizeof(modTag), "mod: %s  ", s_modId.c_str());
@@ -434,6 +449,33 @@ bool IsRunning()
 	return s_state == State::Running;
 }
 
+bool IsIdle()
+{
+	return s_state == State::Idle;
+}
+
+int LastExitCode()
+{
+	return s_lastExitCode;
+}
+
+const char* LastLogPath()
+{
+	return s_lastLogPath.c_str();
+}
+
+const char* LastModId()
+{
+	return s_modId.c_str();
+}
+
+void SetSmokeChildEnv(bool enabled, int seconds)
+{
+	s_smokeChild        = enabled;
+	if (seconds > 0)
+		s_smokeChildSeconds = seconds;
+}
+
 bool CanPlaytest()
 {
 	if (IsRunning())
@@ -446,6 +488,11 @@ void Start()
 {
 	if (IsRunning())
 		return;
+
+	// Clear the prior run's completion record so the `-playtest` CLI accessors do
+	// not read a stale exit code/log path before this run finishes.
+	s_lastExitCode = -1;
+	s_lastLogPath.clear();
 
 	if (!EditorData::instance)
 	{
@@ -702,6 +749,24 @@ void Start()
 	char cmd[1200];
 	snprintf(cmd, sizeof(cmd), stemHasSpace ? "\"%s\" -mission \"%s\"" : "\"%s\" -mission %s",
 		s_exePath, stem.c_str());
+
+	// SMOKE-CHILD MODE (headless `-playtest` CLI only): append gos_smoke's argv so
+	// the game auto-quits after s_smokeChildSeconds. gos_smoke requires the
+	// double-dash `--mission <stem>` form (separate from the engine's `-mission`
+	// loader above) whenever MC2_SMOKE_MODE is set, plus `--duration <sec>`.
+	if (s_smokeChild)
+	{
+		int secs = s_smokeChildSeconds;
+		if (secs < 1)   secs = 1;
+		if (secs > 600) secs = 600;
+		char tail[256];
+		snprintf(tail, sizeof(tail),
+			stemHasSpace ? " --mission \"%s\" --duration %d" : " --mission %s --duration %d",
+			stem.c_str(), secs);
+		size_t cur = strlen(cmd);
+		if (cur + strlen(tail) < sizeof(cmd))
+			strcat(cmd, tail);
+	}
 	spec.commandLine     = cmd;
 	spec.workingDirectory = exeDir;
 	spec.onSuccessMainThread = &OnFinished;
@@ -714,6 +779,12 @@ void Start()
 		spec.envExtra.push_back(std::make_pair(std::string("MC2_ACTIVE_MOD"), s_modId));
 		spec.envExtra.push_back(std::make_pair(std::string("MC2_DEBUG_STATE_DUMP"), std::string("1")));
 	}
+
+	// SMOKE-CHILD env: gos_smoke enables itself when MC2_SMOKE_MODE is present.
+	// Paired with the `--mission/--duration` argv appended above so the child
+	// auto-quits cleanly (exit 0) instead of running until the timeout.
+	if (s_smokeChild)
+		spec.envExtra.push_back(std::make_pair(std::string("MC2_SMOKE_MODE"), std::string("1")));
 
 	s_task = EditorTaskRunner::StartTask(spec);
 	if (s_task == EditorTaskRunner::kInvalidTask)

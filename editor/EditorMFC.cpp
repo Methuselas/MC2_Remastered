@@ -136,6 +136,23 @@ int          g_cliUndoCursor              = -2;   // -2 = not attempted, >=-1 = 
 bool         g_cliSmokePlaceOob           = false;
 int          g_cliPlaceOobSurvived        = -1;   // -1 = not attempted, 0/1 = survived all updates
 
+// -playtest [-playtest-timeout-sec N]: the END-TO-END playtest smoke. After the
+// mission auto-loads, run a few frames then trigger the REAL Playtest path
+// (EditorPlaytest::Start(), exactly what the toolbar button does), with the
+// launched game in smoke mode so it auto-quits. Poll EditorPlaytest::IsIdle()
+// from the main-thread OnIdle until the child completes (PASS) or the timeout
+// fires (Stop() + FAIL). On completion emit `[ESMOKE v1] event=playtest ...` and
+// exit with 0 iff the child exited 0, else a distinct nonzero code:
+//   2 = launch/bridge/save abort (Start() never went Running)
+//   3 = child exited nonzero (game crash / content fail)
+//   4 = timeout (child never completed within the window)
+bool         g_cliPlaytest          = false;
+int          g_cliPlaytestTimeout   = 120;  // seconds; -playtest-timeout-sec N
+bool         g_cliPlaytestStarted   = false; // one-shot: Start() has been called
+unsigned int g_cliPlaytestDeadline  = 0;     // GetTickCount() target once started
+int          g_cliPlaytestWarmFrames = 0;    // frames rendered since auto-load done
+bool         g_cliPlaytestDone       = false; // verdict emitted; guards the exit
+
 // Set true after the auto-load block finishes ALL its work (generate + optional
 // foliage + optional save). The smoke exit countdown starts from THIS, not from
 // g_cliAutoLoadFired (which is set at block ENTRY) -- otherwise a slow generation
@@ -221,6 +238,7 @@ static void EarlyTraceBegin()
 #include "UndoHistoryPanel.h"
 #include "Action.h"            // ActionUndoMgr::instance (undo-history smoke)
 #include "ModPicker.h"
+#include "EditorPlaytest.h"   // -playtest end-to-end smoke
 #include "resource.h"   // ID_FOLIAGE_* for the -smoke-foliage-menu WM_COMMAND drive
 
 // -- S-CLI parser ------------------------------------------------------------
@@ -381,6 +399,19 @@ static void s_cli_parse(const char* cmd)
 		{
 			g_cliSmokePlaceOob = true;
 		}
+		else if (s_cli_flag_match(tok, "-playtest", "--playtest"))
+		{
+			g_cliPlaytest = true;
+		}
+		else if (s_cli_flag_match(tok, "-playtest-timeout-sec", "--playtest-timeout-sec"))
+		{
+			if (i + 1 < argv.size()) { g_cliPlaytestTimeout = atoi(argv[++i].c_str()); }
+		}
+		else if (s_cli_starts_with(tok, "-playtest-timeout-sec=", &rest) ||
+		         s_cli_starts_with(tok, "--playtest-timeout-sec=", &rest))
+		{
+			g_cliPlaytestTimeout = atoi(rest);
+		}
 	}
 
 	// Any smoke flag implies headless -> suppress the auto-run-path failure modals.
@@ -388,7 +419,7 @@ static void s_cli_parse(const char* cmd)
 	                      || g_cliSmokeOutliner || g_cliSmokeInspector || g_cliSmokeValidate
 	                      || g_cliSmokeInspectorEdit || g_cliSmokeAssetBrowser
 	                      || g_cliSmokeGameplayDbgr || g_cliSmokeUndoHistory
-	                      || g_cliSmokePlaceOob;
+	                      || g_cliSmokePlaceOob || g_cliPlaytest;
 }
 
 // Forward declaration — defined in EditorGameOS.cpp.
@@ -1021,6 +1052,85 @@ BOOL EditorMFCApp::OnIdle(LONG lCount)
 	// PostMessage WM_COMMAND foliage-menu commands to it (-smoke-foliage-menu).
 	if (g_cliSmokeFoliageMenu && g_smokeMainHwnd == NULL && AfxGetMainWnd())
 		g_smokeMainHwnd = AfxGetMainWnd()->GetSafeHwnd();
+
+	// -playtest END-TO-END SMOKE driver (main thread). Runs once the auto-load
+	// work is done. Warms a few frames, fires the REAL EditorPlaytest::Start()
+	// (the toolbar button path) with the child in smoke mode, then polls
+	// EditorPlaytest::IsIdle() (the task completion is drained by
+	// EditorTaskRunner::PumpMainThread() inside EditorInterface::update()).
+	if (g_cliPlaytest && g_cliSmokeWorkDone && !g_cliPlaytestDone)
+	{
+		if (!g_cliPlaytestStarted)
+		{
+			// Let a few frames render so GL / asset / texture state settles before
+			// the in-place save + child launch.
+			if (g_cliPlaytestWarmFrames < 30)
+			{
+				++g_cliPlaytestWarmFrames;
+			}
+			else
+			{
+				int secs = g_cliPlaytestTimeout > 0 ? g_cliPlaytestTimeout : 120;
+				// Child auto-quit window: a bit shorter than the editor timeout so a
+				// healthy child exits on its own before we declare a timeout.
+				int childSecs = secs > 40 ? 30 : (secs > 10 ? secs - 8 : secs);
+				EditorPlaytest::SetSmokeChildEnv(true, childSecs);
+				EarlyTrace("OnIdle: -playtest Start()");
+				EditorPlaytest::Start();
+				g_cliPlaytestStarted = true;
+				g_cliPlaytestDeadline = ::GetTickCount() + (unsigned int)secs * 1000u;
+
+				if (!EditorPlaytest::IsRunning())
+				{
+					// Start() aborted pre-launch (no mission / save / bridge / exe).
+					g_cliPlaytestDone = true;
+					fprintf(stderr,
+						"[ESMOKE v1] event=playtest exit=-1 log= mod=%s status=launch_abort\n",
+						(EditorPlaytest::LastModId()[0] ? EditorPlaytest::LastModId() : "none"));
+					fprintf(stderr, "[EDITOR_CLI v1] event=playtest_abort status=\"%s\"\n",
+						EditorPlaytest::StatusLine());
+					fflush(stderr);
+					EarlyTrace("OnIdle: -playtest launch abort");
+					EarlyTrace(EditorPlaytest::StatusLine());
+					::ExitProcess(2);
+				}
+			}
+		}
+		else
+		{
+			// Running: wait for the child to complete (IsIdle) or the timeout.
+			if (EditorPlaytest::IsIdle())
+			{
+				g_cliPlaytestDone = true;
+				int childExit = EditorPlaytest::LastExitCode();
+				const char* logp = EditorPlaytest::LastLogPath();
+				const char* modId = EditorPlaytest::LastModId();
+				fprintf(stderr,
+					"[ESMOKE v1] event=playtest exit=%d log=%s mod=%s\n",
+					childExit,
+					(logp && logp[0]) ? logp : "(none)",
+					(modId && modId[0]) ? modId : "none");
+				fprintf(stderr, "[EDITOR_CLI v1] event=playtest_done child_exit=%d\n", childExit);
+				fflush(stderr);
+				EarlyTrace("OnIdle: -playtest child completed");
+				EarlyTrace(EditorPlaytest::StatusLine());
+				::ExitProcess(childExit == 0 ? 0 : 3);
+			}
+			else if (::GetTickCount() >= g_cliPlaytestDeadline)
+			{
+				g_cliPlaytestDone = true;
+				EarlyTrace("OnIdle: -playtest TIMEOUT -> Stop()");
+				EditorPlaytest::Stop();
+				const char* modId = EditorPlaytest::LastModId();
+				fprintf(stderr,
+					"[ESMOKE v1] event=playtest exit=-1 log=%s mod=%s status=timeout\n",
+					(EditorPlaytest::LastLogPath()[0] ? EditorPlaytest::LastLogPath() : "(none)"),
+					(modId && modId[0]) ? modId : "none");
+				fflush(stderr);
+				::ExitProcess(4);
+			}
+		}
+	}
 
 	Sleep(2/*milliseconds*/); /* limits the framerate to 500fps */
 	return 1;

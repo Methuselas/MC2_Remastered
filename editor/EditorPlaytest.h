@@ -29,6 +29,31 @@ namespace EditorPlaytest
 	// True while a launched playtest child process is still alive.
 	bool IsRunning();
 
+	// True when no playtest child is running (the inverse of IsRunning()).
+	// The headless `-playtest` CLI smoke polls this after Start() to detect
+	// completion (the child exited and OnFinished/OnCancelled has run).
+	bool IsIdle();
+
+	// Exit code of the most recently completed playtest child, or -1 if none has
+	// completed yet (or the launch was cancelled/never started). Valid once
+	// IsIdle() is true after a Start(). Set on the main thread by OnFinished.
+	int LastExitCode();
+
+	// Archived log path of the most recently completed playtest child ("" if the
+	// archive write failed or no run has completed). Valid once IsIdle() is true.
+	const char* LastLogPath();
+
+	// Detected mod id for the most recent run, or "" when the mission is not in a
+	// mod. Valid once Start() has run.
+	const char* LastModId();
+
+	// SMOKE CHILD ENV (headless `-playtest` CLI only -- interactive playtest is
+	// unchanged). When enabled, the next Start() appends gos_smoke's argv
+	// (`--mission <stem> --duration <sec>`) AND sets MC2_SMOKE_MODE=1 in the
+	// child env so the launched game auto-quits cleanly after <sec> seconds
+	// instead of running forever. `seconds` clamps to [1, 600]; default 30.
+	void SetSmokeChildEnv(bool enabled, int seconds);
+
 	// Begin a playtest: save mission in place, resolve game exe, launch child.
 	// On any pre-launch failure (no mission, exe missing) sets an error status and
 	// returns without launching.  Safe to call only when CanPlaytest() is true.
