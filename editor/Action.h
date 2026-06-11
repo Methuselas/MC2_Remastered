@@ -207,6 +207,12 @@ public:
     void NoteThatASaveHasJustOccurred();
     bool ThereHasBeenANetChangeFromWhenLastSaved();
 
+    // Read-only accessors for display panels (e.g. UndoHistoryPanel).
+    // These are const and side-effect-free; they do NOT alter undo/redo state.
+    int GetActionCount() const;
+    const char* GetActionDescription( int index ) const;
+    int GetCurrentPosition() const;
+
     static ActionUndoMgr* instance;
 
 private:

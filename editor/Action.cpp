@@ -252,6 +252,59 @@ bool ActionUndoMgr::ThereHasBeenANetChangeFromWhenLastSaved()
     }
 }
 
+//************************************************************************
+// Function:    GetActionCount
+// ParamsIn:    none
+// ParamsOut:   none
+// Returns:     number of actions currently in the undo list
+// Description: Read-only accessor for display panels.
+//************************************************************************
+int ActionUndoMgr::GetActionCount() const
+{
+    return (int)m_listUndoActions.Count();
+}
+
+//************************************************************************
+// Function:    GetActionDescription
+// ParamsIn:    index -- 0-based index into the undo list
+// ParamsOut:   none
+// Returns:     description string of the action at that index, or "" on
+//              out-of-range. Never returns NULL.
+// Description: Read-only accessor for display panels.
+//              Uses the same EIterator/Begin()/IsDone() pattern as the
+//              rest of Action.cpp.
+//************************************************************************
+const char* ActionUndoMgr::GetActionDescription( int index ) const
+{
+    if ( index < 0 || index >= (int)m_listUndoActions.Count() )
+        return "";
+
+    int i = 0;
+    for ( ACTION_LIST::EConstIterator iter = m_listUndoActions.Begin();
+          !iter.IsDone(); iter++, ++i )
+    {
+        if ( i == index )
+        {
+            const char* desc = (*iter)->getDescription();
+            return desc ? desc : "";
+        }
+    }
+
+    return "";
+}
+
+//************************************************************************
+// Function:    GetCurrentPosition
+// ParamsIn:    none
+// ParamsOut:   none
+// Returns:     current undo cursor position (m_CurrentPos); -1 when empty
+// Description: Read-only accessor for display panels.
+//************************************************************************
+int ActionUndoMgr::GetCurrentPosition() const
+{
+    return (int)m_CurrentPos;
+}
+
 //-----------------------------------------------------------------------
 // Function:    ActionPaintTile::Redo
 // ParamsIn:    none
