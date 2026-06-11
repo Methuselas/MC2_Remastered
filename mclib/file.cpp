@@ -67,7 +67,7 @@
 //
 // Priority: active mod > dependency N..0 > base data/ > FastFiles > CD
 // File lookup: O(1) hash, no per-file disk probing.
-// Diagnostics: MC2_LOG_FILE_RESOLVE=1
+// Diagnostics: MC2_LOG_FILE_RESOLVE=1 (level-1 tags) or =2 (level-1 + JSONL trace)
 
 #include <unordered_map>
 #include <string>
@@ -79,8 +79,105 @@ struct ModFileEntry {
 };
 
 static std::unordered_map<std::string, ModFileEntry> g_modIndex;
+// Shadowed-by map: key -> list of mod ids that were overridden at index time.
+// Built alongside g_modIndex in IndexModData; queried at level-2 emit.
+static std::unordered_map<std::string, std::vector<std::string>> g_shadowedBy;
 static std::string g_activeModId;
-static bool logFileResolve = false;
+// logFileResolve: 0=off, 1=level-1 stdout tags, 2=level-1+JSONL trace
+static int logFileResolve = 0;
+
+// Level-2 JSONL trace state (all guarded by logFileResolve >= 2).
+static FILE* g_traceFile = nullptr;
+static LARGE_INTEGER g_startQPC;   // QueryPerformanceCounter at init
+static LARGE_INTEGER g_qpcFreq;    // QueryPerformanceFrequency result
+
+// Return elapsed seconds since InitModSearchPaths, using QPC.
+// Returns 0.0 when QPC unavailable (should never happen on Win Vista+).
+static double TraceElapsedSec() {
+    LARGE_INTEGER now;
+    if (!QueryPerformanceCounter(&now)) return 0.0;
+    if (g_qpcFreq.QuadPart == 0) return 0.0;
+    return static_cast<double>(now.QuadPart - g_startQPC.QuadPart) /
+           static_cast<double>(g_qpcFreq.QuadPart);
+}
+
+// JSON-escape a string into buf (NUL-terminated).  buf must be at least 3×srcLen+3.
+// Only escapes the characters required by RFC 8259 (backslash, quote, control chars).
+static void JsonEscape(const char* src, char* buf, size_t bufSize) {
+    size_t out = 0;
+    buf[out++] = '"';
+    for (const char* p = src; *p && out + 4 < bufSize; ++p) {
+        unsigned char c = (unsigned char)*p;
+        if (c == '\\') { buf[out++] = '\\'; buf[out++] = '\\'; }
+        else if (c == '"') { buf[out++] = '\\'; buf[out++] = '"'; }
+        else if (c < 0x20) {
+            // write \uXXXX
+            char esc[8];
+            _snprintf(esc, sizeof(esc), "\\u%04x", (unsigned)c);
+            for (int i = 0; esc[i] && out + 1 < bufSize; ++i)
+                buf[out++] = esc[i];
+        } else {
+            buf[out++] = (char)c;
+        }
+    }
+    if (out + 2 <= bufSize) { buf[out++] = '"'; buf[out] = '\0'; }
+    else { buf[bufSize - 1] = '\0'; }
+}
+
+// Emit one JSONL record to g_traceFile.
+// layer: "mod:<id>", "base-loose", "base-strip", "fastfile", "cd", or "MISS"
+// path:  absolute or logical path (empty string for MISS / fastfile)
+// key:   NormalizeKey(fileName)
+// req:   original fileName as received by the caller
+// shadowed: may be nullptr (omit field) or a vector of strings
+static void EmitResolveRecord(
+    const char* key,
+    const char* req,
+    const char* layer,
+    const char* path,
+    const std::vector<std::string>* shadowed
+) {
+    if (!g_traceFile) return;
+
+    double t = TraceElapsedSec();
+
+    // Scratch buffers sized for MAX_PATH strings.
+    char keyJ[MAX_PATH * 4], reqJ[MAX_PATH * 4], layerJ[256], pathJ[MAX_PATH * 4];
+    JsonEscape(key    ? key    : "", keyJ,   sizeof(keyJ));
+    JsonEscape(req    ? req    : "", reqJ,   sizeof(reqJ));
+    JsonEscape(layer  ? layer  : "", layerJ, sizeof(layerJ));
+    JsonEscape(path   ? path   : "", pathJ,  sizeof(pathJ));
+
+    // Build shadowed array inline.
+    char shadowBuf[4096];
+    shadowBuf[0] = '\0';
+    if (shadowed) {
+        size_t pos = 0;
+        shadowBuf[pos++] = '[';
+        for (size_t i = 0; i < shadowed->size() && pos + 256 < sizeof(shadowBuf); ++i) {
+            if (i > 0) { shadowBuf[pos++] = ','; }
+            char sv[256];
+            JsonEscape((*shadowed)[i].c_str(), sv, sizeof(sv));
+            size_t svLen = strlen(sv);
+            if (pos + svLen + 2 < sizeof(shadowBuf)) {
+                memcpy(shadowBuf + pos, sv, svLen);
+                pos += svLen;
+            }
+        }
+        shadowBuf[pos++] = ']';
+        shadowBuf[pos]   = '\0';
+    }
+
+    if (shadowed) {
+        fprintf(g_traceFile,
+            "{\"v\":1,\"t\":%.3f,\"key\":%s,\"req\":%s,\"layer\":%s,\"path\":%s,\"shadowed\":%s}\n",
+            t, keyJ, reqJ, layerJ, pathJ, shadowBuf);
+    } else {
+        fprintf(g_traceFile,
+            "{\"v\":1,\"t\":%.3f,\"key\":%s,\"req\":%s,\"layer\":%s,\"path\":%s}\n",
+            t, keyJ, reqJ, layerJ, pathJ);
+    }
+}
 
 static bool IsAbsolutePath(const char* p) {
     if (!p || !p[0]) return false;
@@ -110,8 +207,10 @@ static std::string NormalizeKey(const char* p) {
 
 // Index all files under dataDir (absolute, trailing '/') into idx (first-wins).
 // relBase should be "data/" so keys come out like "data/missions/foo.fit".
+// shadowed: parallel map recording which mod ids lost for each key (populated at level 2).
 static void IndexModData(
     std::unordered_map<std::string, ModFileEntry>& idx,
+    std::unordered_map<std::string, std::vector<std::string>>& shadowed,
     const char* dataDir, const char* relBase, const char* modId
 ) {
     char pattern[MAX_PATH];
@@ -137,16 +236,22 @@ static void IndexModData(
             _snprintf(relSub,  sizeof(relSub),  "%s/", relChild);
             fullSub[sizeof(fullSub) - 1] = '\0';
             relSub[sizeof(relSub) - 1]   = '\0';
-            IndexModData(idx, fullSub, relSub, modId);
+            IndexModData(idx, shadowed, fullSub, relSub, modId);
         } else {
             std::string key = NormalizeKey(relChild);
             auto existing = idx.find(key);
             if (existing == idx.end()) {
                 idx[key] = { fullChild, modId };
-            } else if (logFileResolve) {
-                printf("[mod-dup] %s  winner=[%s]  loser=[%s]\n",
-                       key.c_str(), existing->second.modId.c_str(), modId);
-                fflush(stdout);
+            } else {
+                if (logFileResolve) {
+                    printf("[mod-dup] %s  winner=[%s]  loser=[%s]\n",
+                           key.c_str(), existing->second.modId.c_str(), modId);
+                    fflush(stdout);
+                }
+                // Track for level-2 shadowed[] field (built regardless of log level so
+                // the map is ready when a level-2 run starts; overhead is one vector push
+                // per dup which is rare — only fires when two mods ship the same file).
+                shadowed[key].push_back(modId);
             }
         }
     } while (FindNextFileA(h, &fd));
@@ -319,6 +424,7 @@ static bool TryLoadModCache(
 // Build fresh index for one mod layer and write cache.
 static void IndexModDataCached(
     std::unordered_map<std::string, ModFileEntry>& idx,
+    std::unordered_map<std::string, std::vector<std::string>>& shadowed,
     const char* absModRoot,
     const char* modId,
     const char* dataDir,
@@ -326,7 +432,13 @@ static void IndexModDataCached(
 ) {
     // Snapshot keys before to identify newly added entries after the walk.
     std::unordered_map<std::string, ModFileEntry> layer;
-    IndexModData(layer, dataDir, relBase, modId);
+    std::unordered_map<std::string, std::vector<std::string>> layerShadowed;
+    IndexModData(layer, layerShadowed, dataDir, relBase, modId);
+
+    // Merge layer shadowed into global shadowed.
+    for (auto& kv : layerShadowed)
+        for (auto& s : kv.second)
+            shadowed[kv.first].push_back(s);
 
     // Merge into idx (first-wins).
     for (auto& kv : layer)
@@ -409,13 +521,16 @@ static bool ReadModJson(const char* jsonPath,
 }
 
 // O(1) lookup. Returns false immediately when no mod active (g_modIndex empty).
-static bool TryModOpen(const char* fileName, int* outHandle) {
+// req: original filename as requested by caller (before lowercasing), used for level-2 trace.
+//      May be nullptr — falls back to fileName.
+static bool TryModOpen(const char* fileName, int* outHandle, const char* req = nullptr) {
     if (g_modIndex.empty()) return false;
     if (!ShouldSearchMods(fileName)) return false;
     std::string key = NormalizeKey(fileName);
     auto it = g_modIndex.find(key);
     if (it == g_modIndex.end()) {
         if (logFileResolve) { printf("[mod-miss] %s\n", key.c_str()); fflush(stdout); }
+        // MISS record emitted by the caller after the full ladder, not here.
         return false;
     }
     int h = _open(it->second.path.c_str(), _O_RDONLY | _O_BINARY);
@@ -424,6 +539,18 @@ static bool TryModOpen(const char* fileName, int* outHandle) {
         printf("[mod-hit] [%s] %s -> %s\n",
                it->second.modId.c_str(), key.c_str(), it->second.path.c_str());
         fflush(stdout);
+    }
+    if (logFileResolve >= 2) {
+        // Build layer string "mod:<id>".
+        char layer[256];
+        _snprintf(layer, sizeof(layer), "mod:%s", it->second.modId.c_str());
+        layer[sizeof(layer)-1] = '\0';
+        // Lookup shadowed list for this key.
+        auto sit = g_shadowedBy.find(key);
+        const std::vector<std::string>* sh = (sit != g_shadowedBy.end()) ? &sit->second : nullptr;
+        static const std::vector<std::string> emptyShadow;
+        const std::vector<std::string>* shOut = sh ? sh : &emptyShadow;
+        EmitResolveRecord(key.c_str(), req ? req : fileName, layer, it->second.path.c_str(), shOut);
     }
     *outHandle = h;
     return true;
@@ -485,8 +612,38 @@ void EnumerateModFitFiles(const char* keyPrefix, ModFitCallback cb, void* userDa
 
 void InitModSearchPaths(const char* modsRoot) {
     g_modIndex.clear();
+    g_shadowedBy.clear();
     g_activeModId.clear();
-    logFileResolve = (getenv("MC2_LOG_FILE_RESOLVE") != nullptr);
+
+    // Parse MC2_LOG_FILE_RESOLVE: absent/empty -> 0; any non-numeric non-empty -> 1 (compat);
+    // numeric -> atoi (so "1" -> 1, "2" -> 2).
+    {
+        const char* envLevel = getenv("MC2_LOG_FILE_RESOLVE");
+        if (!envLevel || !envLevel[0]) {
+            logFileResolve = 0;
+        } else {
+            // Check if purely numeric.
+            bool isNum = true;
+            for (const char* p = envLevel; *p; ++p)
+                if (*p < '0' || *p > '9') { isNum = false; break; }
+            logFileResolve = isNum ? atoi(envLevel) : 1;
+            if (logFileResolve == 0 && envLevel[0]) logFileResolve = 1; // non-empty non-numeric
+        }
+    }
+
+    // Level-2 trace file setup.
+    if (g_traceFile) { fclose(g_traceFile); g_traceFile = nullptr; }
+    if (logFileResolve >= 2) {
+        QueryPerformanceFrequency(&g_qpcFreq);
+        QueryPerformanceCounter(&g_startQPC);
+        const char* tracePath = getenv("MC2_RESOLVE_TRACE_FILE");
+        if (tracePath && tracePath[0]) {
+            g_traceFile = fopen(tracePath, "a");
+            if (!g_traceFile)
+                printf("[mod] warning: MC2_RESOLVE_TRACE_FILE=%s could not be opened for append\n", tracePath);
+        }
+        // If MC2_RESOLVE_TRACE_FILE unset at level 2: skip JSONL (per spec).
+    }
 
     const char* envMod = getenv("MC2_ACTIVE_MOD");
     if (!envMod || !envMod[0]) {
@@ -539,7 +696,7 @@ void InitModSearchPaths(const char* modsRoot) {
     if (GetFileAttributesA(activeDataDir) != INVALID_FILE_ATTRIBUTES) {
         size_t before = g_modIndex.size();
         if (!TryLoadModCache(g_modIndex, absRoot, modId.c_str(), activeDataDir))
-            IndexModDataCached(g_modIndex, absRoot, modId.c_str(), activeDataDir, "data/");
+            IndexModDataCached(g_modIndex, g_shadowedBy, absRoot, modId.c_str(), activeDataDir, "data/");
         printf("[mod] [1/%zu] active '%s': %zu files\n",
                deps.size()+1, envMod, g_modIndex.size() - before);
     }
@@ -557,7 +714,7 @@ void InitModSearchPaths(const char* modsRoot) {
         }
         size_t before = g_modIndex.size();
         if (!TryLoadModCache(g_modIndex, absRoot, dep.c_str(), depDataDir))
-            IndexModDataCached(g_modIndex, absRoot, dep.c_str(), depDataDir, "data/");
+            IndexModDataCached(g_modIndex, g_shadowedBy, absRoot, dep.c_str(), depDataDir, "data/");
         printf("[mod] [%zu/%zu] dep '%s': %zu new files\n",
                i+2, deps.size()+1, dep.c_str(), g_modIndex.size() - before);
     }
@@ -769,7 +926,8 @@ long File::open (const char* fName, FileMode _mode, long numChild, bool doNotLow
 		//-- Active mod wins; falls back to base data/.
 		{
 			int modHandle = -1;
-			if (TryModOpen(fileName, &modHandle))
+			// Pass original fName as req so level-2 trace shows pre-lowercase casing.
+			if (TryModOpen(fileName, &modHandle, fName))
 			{
 				handle = modHandle;
 				if (getenv("MC2_LOG_MECH_ICON") && strstr(fileName, "mechicon"))
@@ -780,6 +938,10 @@ long File::open (const char* fName, FileMode _mode, long numChild, bool doNotLow
 				handle = _open(fileName, _O_RDONLY | _O_BINARY);
 				if (getenv("MC2_LOG_MECH_ICON") && strstr(fileName, "mechicon") && handle != INVALID_HANDLE_VALUE)
 					printf("[MECHICON] File::open LOOSE: %s\n", fileName);
+				if (handle != INVALID_HANDLE_VALUE && logFileResolve >= 2) {
+					std::string key = NormalizeKey(fileName);
+					EmitResolveRecord(key.c_str(), fName, "base-loose", fileName, nullptr);
+				}
 			}
 		}
 
@@ -799,6 +961,10 @@ long File::open (const char* fName, FileMode _mode, long numChild, bool doNotLow
 						memcpy(stripped, fileName, prefixLen);
 						strcpy(stripped + prefixLen, suffix);
 						handle = _open(stripped, _O_RDONLY | _O_BINARY);
+						if (handle != INVALID_HANDLE_VALUE && logFileResolve >= 2) {
+							std::string key = NormalizeKey(fileName);
+							EmitResolveRecord(key.c_str(), fName, "base-strip", stripped, nullptr);
+						}
 					}
 					break;
 				}
@@ -814,10 +980,19 @@ long File::open (const char* fName, FileMode _mode, long numChild, bool doNotLow
 			fastFile = FastFileFind(fileName,fastFileHandle);
 			if (getenv("MC2_LOG_MECH_ICON") && fastFile && strstr(fileName, "mechicon"))
 				printf("[MECHICON] File::open FST-HIT: %s\n", fileName);
+			if (fastFile && logFileResolve >= 2) {
+				std::string key = NormalizeKey(fileName);
+				EmitResolveRecord(key.c_str(), fName, "fastfile", "", nullptr);
+			}
 			if (!fastFile)
 			{
-                if(!Environment.checkCDForFiles)
+                if(!Environment.checkCDForFiles) {
+                    if (logFileResolve >= 2) {
+                        std::string key = NormalizeKey(fileName);
+                        EmitResolveRecord(key.c_str(), fName, "MISS", "", nullptr);
+                    }
                     return 2;
+                }
 
 				//Not in main installed directory and not in fastfile.  Look on CD.
 
@@ -865,6 +1040,10 @@ long File::open (const char* fName, FileMode _mode, long numChild, bool doNotLow
 				}
 				else
 				{
+					if (logFileResolve >= 2 && handle != INVALID_HANDLE_VALUE) {
+						std::string key = NormalizeKey(fileName);
+						EmitResolveRecord(key.c_str(), fName, "cd", actualPath, nullptr);
+					}
 					if (logFileTraffic && (handle != INVALID_HANDLE_VALUE))
 					{
 						if (!fileTrafficLog)
