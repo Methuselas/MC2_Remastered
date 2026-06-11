@@ -366,6 +366,113 @@ namespace {
 		}
 	};
 }
+
+//----------------------------------------------------------------------------------
+// MC2_BRIDGE_MOVER_STATE -- runtime-bridge v0 (mover.state over stdout).
+//
+// When env MC2_BRIDGE_MOVER_STATE=1, emit one [MOVER v1] line per live mover
+// every MC2_BRIDGE_MOVER_PERIOD_SEC seconds (default 2). Strictly READ-ONLY:
+// only getters, every deref null-guarded. Zero cost when the env is unset
+// (single getenv at startup; the per-frame check is one bool + one float
+// compare). Consumed by the editor's GameplayDebugger live table; see
+// docs/superpowers/strategy/runtime-bridge-architecture.md Phase 3 sec 11.
+//----------------------------------------------------------------------------------
+namespace {
+	static const bool  s_bridgeMoverState =
+		(getenv("MC2_BRIDGE_MOVER_STATE") != nullptr);
+	static float s_bridgeNextEmitTime = 0.0f;   // scenarioTime of next burst
+	static float bridgeMoverPeriodSec() {
+		const char* e = getenv("MC2_BRIDGE_MOVER_PERIOD_SEC");
+		float p = e ? (float)atof(e) : 2.0f;
+		if (p < 0.25f) p = 0.25f;
+		return p;
+	}
+
+	// Short name for the warrior status enum (see warrior.h WARRIOR_STATUS_*).
+	static const char* bridgeWarriorStatusName(long s) {
+		switch (s) {
+			case WARRIOR_STATUS_NORMAL:      return "normal";
+			case WARRIOR_STATUS_WITHDRAWING: return "withdrawing";
+			case WARRIOR_STATUS_WITHDRAWN:   return "withdrawn";
+			case WARRIOR_STATUS_EJECTED:     return "ejected";
+			case WARRIOR_STATUS_DEAD:        return "dead";
+			case WARRIOR_STATUS_MIA:         return "mia";
+			case WARRIOR_STATUS_CAPTURED:    return "captured";
+			case WARRIOR_STATUS_BASECAMP:    return "basecamp";
+			default:                         return "unk";
+		}
+	}
+
+	// Copy src into dst (cap chars) replacing spaces/'='/control with '_' so the
+	// key=value [MOVER v1] line stays parseable even for names with spaces. Always
+	// NUL-terminates; emits "?" for null/empty input.
+	static void bridgeSanitize(char* dst, size_t cap, const char* src) {
+		if (cap == 0) return;
+		if (!src || !src[0]) { strncpy(dst, "?", cap - 1); dst[cap - 1] = 0; return; }
+		size_t j = 0;
+		for (size_t i = 0; src[i] && j + 1 < cap; ++i) {
+			char c = src[i];
+			if (c == ' ' || c == '=' || c == '\t' || c == '\r' || c == '\n')
+				c = '_';
+			dst[j++] = c;
+		}
+		dst[j] = 0;
+	}
+
+	// Emit [MOVER v1] lines for up to kCap live movers. Read-only; defensive.
+	static void bridgeEmitMoverState(float scenarioTimeNow) {
+		if (!s_bridgeMoverState || !ObjectManager)
+			return;
+		if (scenarioTimeNow < s_bridgeNextEmitTime)
+			return;
+		s_bridgeNextEmitTime = scenarioTimeNow + bridgeMoverPeriodSec();
+
+		const long kCap = 64;
+		long total = ObjectManager->getNumMovers();
+		long emitted = 0;
+		printf("[MOVER v1 begin] t=%.1f count=%ld\n", scenarioTimeNow, total);
+		for (long i = 0; i < total && emitted < kCap; ++i) {
+			MoverPtr mover = ObjectManager->getMover(i);
+			if (!mover)
+				continue;
+
+			long              partId = mover->getPartId();
+			char              name[64];
+			bridgeSanitize(name, sizeof(name), mover->getName());
+			long              team   = mover->getTeamId();
+			Stuff::Vector3D   pos    = mover->getPosition();
+
+			// HP as a 0..1 damage-derived fraction (getDamageLevel is the only
+			// HP signal reachable without poking per-location body arrays).
+			float dmg = mover->getDamageLevel();
+			float hpFrac = 1.0f - dmg;
+			if (hpFrac < 0.0f) hpFrac = 0.0f;
+			if (hpFrac > 1.0f) hpFrac = 1.0f;
+
+			char              pilotName[64];
+			bridgeSanitize(pilotName, sizeof(pilotName), 0);   // default "?"
+			long              orderVal  = -1;
+			const char*       orderName = "none";
+			long              targetId  = -1;
+			MechWarriorPtr    pilot     = mover->getPilot();
+			if (pilot) {
+				bridgeSanitize(pilotName, sizeof(pilotName), pilot->getName());
+				orderVal  = pilot->getStatus();
+				orderName = bridgeWarriorStatusName(orderVal);
+				GameObjectPtr tgt = pilot->getCurrentTarget();
+				if (tgt) targetId = tgt->getPartId();
+			}
+
+			printf("[MOVER v1] id=%ld name=%s team=%ld pos=%.1f,%.1f,%.1f "
+				"hp=%.2f pilot=%s order=%ld/%s target=%ld\n",
+				partId, name, team, pos.x, pos.y, pos.z,
+				hpFrac, pilotName, orderVal, orderName, targetId);
+			++emitted;
+		}
+		fflush(stdout);
+	}
+} // namespace
+
 //----------------------------------------------------------------------------------
 // class Mission
 long Mission::update (void)
@@ -674,6 +781,12 @@ long Mission::update (void)
 					terminationResult = missionResult;
 			}
 		}
+
+		// Runtime-bridge v0: emit [MOVER v1] mover.state to stdout (env-gated,
+		// throttled to MC2_BRIDGE_MOVER_PERIOD_SEC). Read-only; no-op unless
+		// MC2_BRIDGE_MOVER_STATE=1.
+		if (s_bridgeMoverState)
+			bridgeEmitMoverState(scenarioTime);
 
 		//----------------------------------------------------
 		// Check is all player forces dead/disabled.
