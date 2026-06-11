@@ -182,6 +182,28 @@ void BuildingBrush::BuildingAction::addBuildingInfo(EditorObject& info)
 	objInfoPtrList.Append(pCopy);
 }
 
+// WYSIWYG placement snap: convert a world position to the cell addBuilding()
+// will commit to, then back to that cell's centre. worldToCell() is UNCLAMPED:
+// a cursor that projects off the map (especially west/north of it) yields
+// negative cell indices, and getCellPos()->getTerrainElevation()->terrainElevation()
+// has NO lower-bound guard (only an upper one), so it reads blocks[negative]
+// out of bounds -> 0xC0000005. Clamp to the valid cell grid before snapping.
+// Shared by update() and the -smoke-place-oob regression test so both exercise
+// the identical guard.
+void BuildingBrush::snapToTerrainCell( Terrain* terr, Stuff::Vector3D& pos )
+{
+	if ( !terr )
+		return;
+	int cr = 0, cc = 0;
+	terr->worldToCell( pos, cr, cc );
+	const int maxCell = (int)( ( Terrain::realVerticesMapSide - 1 ) * 3 ) - 1;
+	if ( maxCell < 0 )
+		return;
+	if ( cr < 0 ) cr = 0; else if ( cr > maxCell ) cr = maxCell;
+	if ( cc < 0 ) cc = 0; else if ( cc > maxCell ) cc = maxCell;
+	terr->getCellPos( cr, cc, pos );
+}
+
 void BuildingBrush::update( int ScreenMouseX, int ScreenMouseY )
 {
 	if ( !pCursor )
@@ -196,9 +218,7 @@ void BuildingBrush::update( int ScreenMouseX, int ScreenMouseY )
 	// WYSIWYG: snap to the cell addBuilding() will commit to (see render()).
 	if ( land )
 	{
-		int cr = 0, cc = 0;
-		land->worldToCell( pos, cr, cc );
-		land->getCellPos( cr, cc, pos );
+		snapToTerrainCell( land, pos );
 	}
 
 	if ( !EditorObjectMgr::instance()->canAddBuilding( pos, pCursor->rotation, group, indexInGroup ) )

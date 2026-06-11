@@ -674,6 +674,80 @@ void ModifyBuildingAction::addBuildingInfo(EditorObject& info)
     buildingIDs.Append(id);
 }
 
+// ---------------------------------------------------------------------------
+// ForestAction
+// ---------------------------------------------------------------------------
+
+#ifndef FOREST_H
+#include "Forest.h"
+#endif
+
+ForestAction::ForestAction( const Forest& capturedForest )
+    : Action( "Place Forest" )
+    , m_forest( new Forest( capturedForest ) )
+{
+    // m_forest is a heap copy of the Forest that was just created (held by
+    // pointer so Action.h can forward-declare Forest and avoid pulling in
+    // Forest.h's winsock-tainted include chain).  Its ID is the handle
+    // EditorObjectMgr assigned; we use it in undo() to find and remove the same
+    // forest, and pass the whole struct to createForest() in redo() so it can
+    // be reproduced faithfully.
+    //
+    // AddAction() does NOT call redo() — the initial create has already
+    // happened at the call site before AddAction is invoked.  redo() is
+    // therefore only ever called by ActionUndoMgr::Redo() (i.e. after a
+    // preceding undo), so there is no double-create risk.
+}
+
+ForestAction::~ForestAction()
+{
+    delete m_forest;
+}
+
+bool ForestAction::undo()
+{
+    // removeForest() identifies the entry by forest.getID() and deletes all
+    // associated building objects.  selectForest() is for visual highlighting
+    // only and is not required for removal.
+    if ( m_forest )
+        EditorObjectMgr::instance()->removeForest( *m_forest );
+    return true;
+}
+
+bool ForestAction::redo()
+{
+    // Re-create using the captured params.  createForest() assigns a new
+    // internal ID each time; we must update m_forest.ID so the next undo()
+    // targets the right entry.
+    //
+    // Forest::ID is private with no public setter and ForestAction is not a
+    // friend of Forest (we cannot edit Forest.h per task scope).  Work around
+    // by fetching the live Forest pointer back from EditorObjectMgr after
+    // creation and doing a full copy — getForests fills a caller-supplied
+    // pointer array with up to `count` entries.  Forests are few (dozens at
+    // most), so a small stack array is safe; we size conservatively at 256.
+    if ( !m_forest )
+        return true;
+    long newID = EditorObjectMgr::instance()->createForest( *m_forest );
+
+    const long kMaxForests = 256;
+    Forest* forestPtrs[kMaxForests];
+    long count = kMaxForests;
+    long got = EditorObjectMgr::instance()->getForests( forestPtrs, count );
+    if ( got > 0 )
+    {
+        for ( long i = 0; i < got; ++i )
+        {
+            if ( forestPtrs[i] && forestPtrs[i]->getID() == newID )
+            {
+                *m_forest = *forestPtrs[i]; // copies ID + all params
+                break;
+            }
+        }
+    }
+    return true;
+}
+
 void ModifyBuildingAction::updateNotedObjectPositions()
 {
     OBJ_ID_LIST::EIterator iter4 = buildingIDs.Begin();

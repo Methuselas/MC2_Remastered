@@ -130,6 +130,12 @@ bool         g_cliSmokeUndoHistory        = false;
 int          g_cliUndoCount               = -1;   // -1 = not attempted, >=0 = action count
 int          g_cliUndoCursor              = -2;   // -2 = not attempted, >=-1 = cursor position
 
+// -smoke-place-oob: drive a BuildingBrush placement cursor off the map edge to
+// exercise the worldToCell OOB clamp (regression guard for the terrainElevation
+// 0xC0000005 crash). survived=1 -> the clamp held; a crash here is the bug.
+bool         g_cliSmokePlaceOob           = false;
+int          g_cliPlaceOobSurvived        = -1;   // -1 = not attempted, 0/1 = survived all updates
+
 // Set true after the auto-load block finishes ALL its work (generate + optional
 // foliage + optional save). The smoke exit countdown starts from THIS, not from
 // g_cliAutoLoadFired (which is set at block ENTRY) -- otherwise a slow generation
@@ -371,13 +377,18 @@ static void s_cli_parse(const char* cmd)
 		{
 			g_cliSmokeUndoHistory = true;
 		}
+		else if (s_cli_flag_match(tok, "-smoke-place-oob", "--smoke-place-oob"))
+		{
+			g_cliSmokePlaceOob = true;
+		}
 	}
 
 	// Any smoke flag implies headless -> suppress the auto-run-path failure modals.
 	g_cliSuppressModals = (g_cliExitAfterSec > 0) || g_cliSmokeFoliage || g_cliSmokeSave
 	                      || g_cliSmokeOutliner || g_cliSmokeInspector || g_cliSmokeValidate
 	                      || g_cliSmokeInspectorEdit || g_cliSmokeAssetBrowser
-	                      || g_cliSmokeGameplayDbgr || g_cliSmokeUndoHistory;
+	                      || g_cliSmokeGameplayDbgr || g_cliSmokeUndoHistory
+	                      || g_cliSmokePlaceOob;
 }
 
 // Forward declaration — defined in EditorGameOS.cpp.
@@ -676,7 +687,7 @@ static void s_emit_esmoke(const char* how)
 {
 	if (g_cliEsmokeEmitted) return;
 	g_cliEsmokeEmitted = true;
-	char esmoke[640];
+	char esmoke[720];
 	_snprintf(esmoke, sizeof(esmoke),
 		"[ESMOKE v1] event=summary how=%s clean_exit=1 frames=%ld autoload=%d gen_map=%d "
 		"foliage_smoke=%d foliage_count=%d saved=%d "
@@ -685,7 +696,8 @@ static void s_emit_esmoke(const char* how)
 		"validate_blocking=%d validate_warning=%d validate_info=%d validate_units_warn=%d "
 		"inspector_edit_applied=%d inspector_edit_undo=%d "
 		"asset_groups=%d asset_activated=%d "
-		"menu_vis0=%d menu_vis1=%d menu_vis2=%d menu_clear=%d menu_reload=%d",
+		"menu_vis0=%d menu_vis1=%d menu_vis2=%d menu_clear=%d menu_reload=%d "
+		"place_oob_survived=%d",
 		how, g_cliFrameCounter, g_cliAutoLoadFired ? 1 : 0, g_cliGenMap ? 1 : 0,
 		g_cliSmokeFoliageFired ? 1 : 0, g_cliSmokeFoliageCount, g_cliSmokeSaveOk,
 		g_cliSmokeOutlinerCount, g_cliSmokeOutlinerSel,
@@ -693,7 +705,8 @@ static void s_emit_esmoke(const char* how)
 		g_cliValidateBlock, g_cliValidateWarn, g_cliValidateInfo, g_cliValidateUnitsWarn,
 		g_cliEditApplied, g_cliEditUndo,
 		g_cliAssetGroups, g_cliAssetActivated,
-		g_menuVis0, g_menuVis1, g_menuVis2, g_menuClearCount, g_menuReloadCount);
+		g_menuVis0, g_menuVis1, g_menuVis2, g_menuClearCount, g_menuReloadCount,
+		g_cliPlaceOobSurvived);
 	esmoke[sizeof(esmoke) - 1] = '\0';
 	fprintf(stderr, "%s\n", esmoke);
 	fflush(stderr);
@@ -742,8 +755,11 @@ static DWORD WINAPI s_smoke_thread(LPVOID)
 			g_menuClearCount = FoliageRender::Count();
 			::PostMessageA(w, WM_COMMAND, MAKEWPARAM(ID_FOLIAGE_GENERATE, 0), 0); // reload (shells generator)
 			// Generate re-runs the generator synchronously on the main thread; poll
-			// for the reloaded instance count.
-			for (int i = 0; i < 60 && FoliageRender::Count() <= 0; ++i)
+			// for the reloaded instance count. The regen time scales with the random
+			// map's foliage density (a heavy map can place >20k instances, ~30s+), so
+			// the poll window is generous (180 * 500ms = 90s) to avoid a false
+			// reload=0 when the synchronous regen simply hasn't returned yet.
+			for (int i = 0; i < 180 && FoliageRender::Count() <= 0; ++i)
 				::Sleep(500);
 			g_menuReloadCount = FoliageRender::Count();
 		}
@@ -971,6 +987,19 @@ BOOL EditorMFCApp::OnIdle(LONG lCount)
 				g_cliUndoCount, g_cliUndoCursor);
 			fflush(stderr);
 			EarlyTrace("OnIdle: smoke-undo-history done");
+		}
+
+		// -smoke-place-oob: drive a BuildingBrush cursor off the map edge. If the
+		// worldToCell OOB clamp is missing this crashes in MapData::terrainElevation;
+		// survived=1 proves the regression guard holds. Facts -> [ESMOKE v1].
+		if (g_cliSmokePlaceOob && EditorInterface::instance())
+		{
+			int r = EditorInterface::instance()->runPlaceOobSmoke();
+			g_cliPlaceOobSurvived = (r == 1) ? 1 : 0;
+			fprintf(stderr, "[EDITOR_CLI v1] event=place_oob setup=%d survived=%d\n",
+				(r >= 0) ? 1 : 0, g_cliPlaceOobSurvived);
+			fflush(stderr);
+			EarlyTrace("OnIdle: smoke-place-oob done");
 		}
 
 		// All auto-load work (generate + foliage + save) is complete -> arm the

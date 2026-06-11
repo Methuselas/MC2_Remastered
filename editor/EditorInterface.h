@@ -108,6 +108,11 @@ public:
 	// Returns -1 if setup failed (no terrain / object-mgr).
 	int runInspectorEditSmoke();
 
+	// Smoke-only (-smoke-place-oob): activate a BuildingBrush and drive its
+	// update() at off-map screen points to exercise the worldToCell OOB clamp.
+	// Returns 1 if all updates survived, -1 if setup failed. Read-only.
+	int runPlaceOobSmoke();
+
 	// Frame/focus the camera on the current selection: recenters the camera's
 	// ground anchor on the centroid of the selected objects' XY positions.
 	// Read-only — no object mutation, no undo entry, no mission-dirty. No-op

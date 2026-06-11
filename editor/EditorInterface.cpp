@@ -82,6 +82,7 @@
 #include "AssetBrowser.h"
 #include "GameplayDebugger.h"
 #include "UndoHistoryPanel.h"
+#include "CommandPalette.h"
 #include "gameplay_pick.h"  // tryGameplayPick: shared pick spine, no game-object deps
 #include "gameos.hpp"       // gos_GetViewport, Environment (drawableWidth/Height)
 #include "gos_render.h"     // graphics::make_current_context
@@ -1892,6 +1893,12 @@ void EditorInterface::handleKeyDown( int Key )
 		if ( Key == KEY_F && !shiftDn && !ctrlDn && !altDn )
 		{
 			frameSelectedObjects();
+		}
+
+		// Ctrl+P — toggle the Command Palette (Ctrl+Alt+P is ortho camera below).
+		if ( Key == KEY_P && ctrlDn && !altDn && !shiftDn )
+		{
+			CommandPalette::Toggle();
 		}
 
 		if ( Key == KEY_ESCAPE)
@@ -4860,6 +4867,11 @@ void EditorInterface::renderToolbarImGui()
 		UndoHistoryPanel::Toggle();
 	UndoHistoryPanel::Draw();
 
+	// Command Palette — searchable list of editor commands (also Ctrl+P).
+	if (ImGui::Button("Command Palette", ImVec2(-1.f, 0.f)))
+		CommandPalette::Toggle();
+	CommandPalette::Draw();
+
 	// Place Tool — scatter mode + params + active brush (wraps existing brushes).
 	if (ImGui::Button("Place Tool", ImVec2(-1.f, 0.f)))
 		s_placePanelOpen = !s_placePanelOpen;
@@ -5971,6 +5983,59 @@ int EditorInterface::runInspectorEditSmoke()
 	return result;
 }
 
+// -smoke-place-oob: reproduce (and now guard) the off-map placement crash.
+// Activates a real BuildingBrush and drives its update() at off-map screen
+// points (top edge = horizon -> projects off any finite map; corners + extreme
+// out-of-viewport coords cover the OOB cell range). Before the BuildingBrush
+// worldToCell clamp, the first off-map point read the heightmap out of bounds
+// in MapData::terrainElevation (0xC0000005). Returns 1 if all updates survived,
+// -1 if setup failed (no terrain / catalog / camera).
+int EditorInterface::runPlaceOobSmoke()
+{
+	if ( !land )
+		return -1;
+
+	// terrainElevation() guards only the UPPER cell bound; a position WEST/NORTH
+	// of the map yields a negative mesh offset and reads blocks[<0] out of bounds
+	// (0xC0000005). The interactive crash was exactly this. Drive far-off-map
+	// world positions through the production guard BuildingBrush::snapToTerrainCell
+	// (the same call BuildingBrush::update makes). Without the clamp these crash;
+	// with it they snap to an in-range edge cell.
+	const float wupv = Terrain::worldUnitsPerVertex;
+	const float farW = land->mapTopLeft3d.x - 100000.0f * wupv; // far west  -> cc << 0
+	const float farN = land->mapTopLeft3d.y + 100000.0f * wupv; // far north -> cr << 0
+	const float farE = land->mapTopLeft3d.x + 100000.0f * wupv; // far east  -> cc >> max
+	const float farS = land->mapTopLeft3d.y - 100000.0f * wupv; // far south -> cr >> max
+
+	const float px[] = { farW, land->mapTopLeft3d.x, farW, farE, farW };
+	const float py[] = { land->mapTopLeft3d.y, farN, farN, farS, farS };
+
+	// Postcondition check (deterministic — the raw OOB read only *faults* on an
+	// unmapped page, which is heap-dependent and unreliable to trigger headless).
+	// After snapToTerrainCell, the result MUST land on a valid in-grid cell. Run
+	// it back through worldToCell and assert the indices are in range. Without the
+	// clamp the snapped position is still off-map -> out-of-range -> returns 0.
+	const int maxCell = (int)( ( Terrain::realVerticesMapSide - 1 ) * 3 ) - 1;
+	if ( maxCell < 0 )
+		return -1;
+
+	for ( int i = 0; i < (int)( sizeof( px ) / sizeof( px[0] ) ); ++i )
+	{
+		Stuff::Vector3D p;
+		p.x = px[i];
+		p.y = py[i];
+		p.z = 0.0f;
+		BuildingBrush::snapToTerrainCell( land, p );  // production guard under test
+
+		int cr = 0, cc = 0;
+		land->worldToCell( p, cr, cc );
+		if ( cr < 0 || cc < 0 || cr > maxCell || cc > maxCell )
+			return 0;  // guard FAILED: snapped result is still off the cell grid
+	}
+
+	return 1; // every off-map input snapped back onto the valid cell grid
+}
+
 static void UpdateMissionPlayerPlayer(int player, CCmdUI* pCmdUI)
 {
 	if (EditorData::instance->MaxPlayers() < player) {
@@ -6192,9 +6257,23 @@ void EditorInterface::OnForestTool()
 
 	if ( IDOK == dlg.DoModal() )
 	{
-		EditorObjectMgr::instance()->createForest( dlg.forest );
+		long forestID = EditorObjectMgr::instance()->createForest( dlg.forest );
+		// Register an undo action. createForest assigns the real ID; fetch the
+		// live Forest back so ForestAction snapshots it with that ID.
+		const long kMaxForests = 256;
+		Forest* forestPtrs[kMaxForests];
+		long count = kMaxForests;
+		EditorObjectMgr::instance()->getForests( forestPtrs, count );
+		for ( long i = 0; i < count; ++i )
+		{
+			if ( forestPtrs[i] && forestPtrs[i]->getID() == forestID )
+			{
+				ActionUndoMgr::instance->AddAction( new ForestAction( *forestPtrs[i] ) );
+				break;
+			}
+		}
 	}
-	
+
 }
 
 void EditorInterface::OnOtherEditforests() 
