@@ -115,6 +115,21 @@ bool         g_cliSmokeAssetBrowser       = false;
 int          g_cliAssetGroups             = -1;  // -1 = not attempted, >=0 = catalog group count
 int          g_cliAssetActivated          = -1;  // -1 = not attempted, 0/1 = placement brush activated
 
+// -smoke-gameplay-debugger: open the read-only Gameplay Debugger, select the
+// first object, and run its null-guarded selection probe (ImGui-free). The
+// editor has no live sim, so this exercises the static-data fallback path only.
+// Safe on an empty map (selected=0, type=none). Facts -> [ESMOKE v1] at exit.
+bool         g_cliSmokeGameplayDbgr       = false;
+int          g_cliGameplayDbgrSel         = -1;   // -1 = not attempted, 0/1 = had selection
+char         g_cliGameplayDbgrType[32]    = "none";
+
+// -smoke-undo-history: open the display-only Undo History panel and read the
+// ActionUndoMgr accessors (count + cursor) added for it. Read-only. A freshly
+// generated map has an empty undo stack (count 0, cursor -1) -> valid PASS.
+bool         g_cliSmokeUndoHistory        = false;
+int          g_cliUndoCount               = -1;   // -1 = not attempted, >=0 = action count
+int          g_cliUndoCursor              = -2;   // -2 = not attempted, >=-1 = cursor position
+
 // Set true after the auto-load block finishes ALL its work (generate + optional
 // foliage + optional save). The smoke exit countdown starts from THIS, not from
 // g_cliAutoLoadFired (which is set at block ENTRY) -- otherwise a slow generation
@@ -196,6 +211,9 @@ static void EarlyTraceBegin()
 #include "InspectorPanel.h"
 #include "AssetBrowser.h"
 #include "MissionValidation.h"
+#include "GameplayDebugger.h"
+#include "UndoHistoryPanel.h"
+#include "Action.h"            // ActionUndoMgr::instance (undo-history smoke)
 #include "ModPicker.h"
 #include "resource.h"   // ID_FOLIAGE_* for the -smoke-foliage-menu WM_COMMAND drive
 
@@ -345,12 +363,21 @@ static void s_cli_parse(const char* cmd)
 		{
 			g_cliSmokeAssetBrowser = true;
 		}
+		else if (s_cli_flag_match(tok, "-smoke-gameplay-debugger", "--smoke-gameplay-debugger"))
+		{
+			g_cliSmokeGameplayDbgr = true;
+		}
+		else if (s_cli_flag_match(tok, "-smoke-undo-history", "--smoke-undo-history"))
+		{
+			g_cliSmokeUndoHistory = true;
+		}
 	}
 
 	// Any smoke flag implies headless -> suppress the auto-run-path failure modals.
 	g_cliSuppressModals = (g_cliExitAfterSec > 0) || g_cliSmokeFoliage || g_cliSmokeSave
 	                      || g_cliSmokeOutliner || g_cliSmokeInspector || g_cliSmokeValidate
-	                      || g_cliSmokeInspectorEdit || g_cliSmokeAssetBrowser;
+	                      || g_cliSmokeInspectorEdit || g_cliSmokeAssetBrowser
+	                      || g_cliSmokeGameplayDbgr || g_cliSmokeUndoHistory;
 }
 
 // Forward declaration — defined in EditorGameOS.cpp.
@@ -911,6 +938,39 @@ BOOL EditorMFCApp::OnIdle(LONG lCount)
 				g_cliAssetGroups, g_cliAssetActivated);
 			fflush(stderr);
 			EarlyTrace("OnIdle: smoke-asset-browser done");
+		}
+
+		// -smoke-gameplay-debugger: open the read-only Gameplay Debugger, select
+		// the first object, and run its ImGui-free probe (static-data path; the
+		// editor has no live sim). Safe on empty map. Facts -> [ESMOKE v1].
+		if (g_cliSmokeGameplayDbgr)
+		{
+			SceneOutliner::SelectFirstObject();   // no-op/false on empty map
+			GameplayDebugger::Open();
+			bool had = GameplayDebugger::SmokeProbe(
+				g_cliGameplayDbgrType, sizeof(g_cliGameplayDbgrType));
+			g_cliGameplayDbgrSel = had ? 1 : 0;
+			fprintf(stderr, "[EDITOR_CLI v1] event=gameplay_debugger selected=%d type=%s\n",
+				g_cliGameplayDbgrSel, g_cliGameplayDbgrType);
+			fflush(stderr);
+			EarlyTrace("OnIdle: smoke-gameplay-debugger done");
+		}
+
+		// -smoke-undo-history: open the display-only Undo History panel and read
+		// the ActionUndoMgr accessors added for it. Read-only; empty stack on a
+		// fresh map (count 0, cursor -1). Facts -> [ESMOKE v1].
+		if (g_cliSmokeUndoHistory)
+		{
+			UndoHistoryPanel::Open();
+			if (ActionUndoMgr::instance)
+			{
+				g_cliUndoCount  = ActionUndoMgr::instance->GetActionCount();
+				g_cliUndoCursor = ActionUndoMgr::instance->GetCurrentPosition();
+			}
+			fprintf(stderr, "[EDITOR_CLI v1] event=undo_history count=%d cursor=%d\n",
+				g_cliUndoCount, g_cliUndoCursor);
+			fflush(stderr);
+			EarlyTrace("OnIdle: smoke-undo-history done");
 		}
 
 		// All auto-load work (generate + foliage + save) is complete -> arm the

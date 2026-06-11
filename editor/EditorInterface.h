@@ -108,6 +108,13 @@ public:
 	// Returns -1 if setup failed (no terrain / object-mgr).
 	int runInspectorEditSmoke();
 
+	// Frame/focus the camera on the current selection: recenters the camera's
+	// ground anchor on the centroid of the selected objects' XY positions.
+	// Read-only — no object mutation, no undo entry, no mission-dirty. No-op
+	// when nothing is selected. Driven by the Scene Outliner (double-click) and
+	// the 'F' hotkey. Z stays terrain-locked (derived by Camera::setPosition).
+	static void frameSelectedObjects();
+
 	// Object placement: shared by the Objects menu and the companion panel.
 	bool selectBuildingObject( int group, int indexInGroup );
 	int  currentAlignmentFromMenu();

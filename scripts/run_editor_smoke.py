@@ -332,6 +332,8 @@ def build_suite(deploy: Path):
         "validate":        (["-gen-map=0,0", "-smoke-validate"], "validate"),  # live Mission validator
         "inspector_edit":  (["-gen-map=0,0", "-smoke-inspector-edit"], "inspector_edit"),  # transform+undo
         "asset_browser":   (["-gen-map=0,0", "-smoke-asset-browser"], "asset_browser"),  # catalog + activate
+        "gameplay_debugger": (["-gen-map=0,0", "-smoke-gameplay-debugger"], None),  # read-only debugger (no-crash)
+        "undo_history":    (["-gen-map=0,0", "-smoke-undo-history"], None),  # display-only undo panel (no-crash)
         # gen_save_load is handled specially (two phases) in main().
     }
     return cases

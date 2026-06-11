@@ -16,6 +16,7 @@
 
 #include "EditorObjectMgr.h"
 #include "EditorObjects.h"
+#include "EditorInterface.h"  // EditorInterface::frameSelectedObjects (double-click)
 #include "Forest.h"
 
 #include "terrain.h"   // extern TerrainPtr land (selection clear parity)
@@ -110,6 +111,17 @@ static void outlinerSelectObject(EditorObject* obj)
         return;
     outlinerClearSelection();
     EditorObjectMgr::instance()->select(*obj, true);
+}
+
+// Call immediately after an outliner row's Selectable: frame the camera on the
+// current selection when that row was double-clicked. The double-click's first
+// click already ran outlinerSelectObject (Selectable returns true on each
+// click), so the selection is the intended object by the time we frame it.
+// Pure camera move — no object mutation, no undo, no mission-dirty.
+static void outlinerFrameOnDoubleClick()
+{
+    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+        EditorInterface::frameSelectedObjects();
 }
 
 // Build a readable, pointer-safe row label into buf.
@@ -237,6 +249,7 @@ static void outlinerDrawObjectGroup(const char* groupLabel, int count,
         const bool selected = obj && obj->isSelected();
         if (ImGui::Selectable(label, selected))
             outlinerSelectObject(obj);
+        outlinerFrameOnDoubleClick();
         ImGui::PopID();
     }
 }
@@ -286,6 +299,7 @@ void SceneOutliner::Draw()
                 ImGui::PushID(obj);
                 if (ImGui::Selectable(label, obj && obj->isSelected()))
                     outlinerSelectObject(obj);
+                outlinerFrameOnDoubleClick();
                 ImGui::PopID();
             }
         }
@@ -318,6 +332,7 @@ void SceneOutliner::Draw()
                 ImGui::PushID(dz);
                 if (ImGui::Selectable(label, dz && dz->isSelected()))
                     outlinerSelectObject(dz);
+                outlinerFrameOnDoubleClick();
                 ImGui::PopID();
             }
         }
@@ -349,8 +364,10 @@ void SceneOutliner::Draw()
         }
     }
 
-    // TODO(modder-editor Phase 1): double-click to frame camera on object once a
-    // safe existing "center camera on world position" API is identified.
+    // Double-click any unit / building / nav-marker / drop-zone row to frame the
+    // camera on it (EditorInterface::frameSelectedObjects via setPosition). Forests
+    // select through selectForest() (ID-based, not in getSelectedObjectList) and are
+    // not framed in this pass.
 
     ImGui::End();
 }

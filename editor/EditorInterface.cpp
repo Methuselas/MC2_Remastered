@@ -80,6 +80,8 @@
 #include "SceneOutliner.h"
 #include "InspectorPanel.h"
 #include "AssetBrowser.h"
+#include "GameplayDebugger.h"
+#include "UndoHistoryPanel.h"
 #include "gameplay_pick.h"  // tryGameplayPick: shared pick spine, no game-object deps
 #include "gameos.hpp"       // gos_GetViewport, Environment (drawableWidth/Height)
 #include "gos_render.h"     // graphics::make_current_context
@@ -1883,6 +1885,15 @@ void EditorInterface::handleKeyDown( int Key )
 
 	if ( lastKey != Key ) // only want to do these if something has changed
 	{
+		// Frame camera on the current selection (UE-style 'F'). Plain key, no
+		// modifiers (Ctrl+Alt+F is the fog toggle below). WantTextInput already
+		// consumed keystrokes when an ImGui field is focused, so the Outliner
+		// search box won't trigger this.
+		if ( Key == KEY_F && !shiftDn && !ctrlDn && !altDn )
+		{
+			frameSelectedObjects();
+		}
+
 		if ( Key == KEY_ESCAPE)
 		{
 			Select();
@@ -4837,6 +4848,18 @@ void EditorInterface::renderToolbarImGui()
 		AssetBrowser::Toggle();
 	AssetBrowser::Draw();
 
+	// Gameplay Debugger — read-only runtime state for the selection. Editor has
+	// no live sim (ObjectManager is null), so it shows static editor data + a
+	// "not simulating" notice; wired now for when a sim path exists.
+	if (ImGui::Button("Gameplay Debugger", ImVec2(-1.f, 0.f)))
+		GameplayDebugger::Toggle();
+	GameplayDebugger::Draw();
+
+	// Undo History — display-only list of undo actions with the current cursor.
+	if (ImGui::Button("Undo History", ImVec2(-1.f, 0.f)))
+		UndoHistoryPanel::Toggle();
+	UndoHistoryPanel::Draw();
+
 	// Place Tool — scatter mode + params + active brush (wraps existing brushes).
 	if (ImGui::Button("Place Tool", ImVec2(-1.f, 0.f)))
 		s_placePanelOpen = !s_placePanelOpen;
@@ -5785,6 +5808,50 @@ void EditorInterface::rotateSelectedObjects( int direction )
 
 	undoMgr.AddAction(pAction);
 	pAction = NULL;
+}
+
+// Frame the camera on the current selection. Recenters the camera's ground
+// anchor on the centroid of the selected objects' XY positions. Read-only:
+// touches no object, pushes no undo action, does not mark the mission dirty.
+// No-op when nothing is selected. setPosition() clamps the target to the map
+// and derives the camera Z from terrain elevation (swoopy z-glide) — the same
+// path every other editor camera move uses. (setGoalPosition() alone is inert
+// here: updateGoalPosition() resets it to the current pos unless goalPosTime is
+// primed, which the editor never does.)
+void EditorInterface::frameSelectedObjects()
+{
+	if ( !eye )
+		return;
+
+	EditorObjectMgr* mgr = EditorObjectMgr::instance();
+	if ( !mgr )
+		return;
+
+	EditorObjectMgr::EDITOR_OBJECT_LIST selectedObjects = mgr->getSelectedObjectList();
+	Stuff::Vector3D centroid;
+	centroid.x = centroid.y = centroid.z = 0.0f;
+	int count = 0;
+	for ( EditorObjectMgr::EDITOR_OBJECT_LIST::EIterator iter = selectedObjects.Begin();
+	      !iter.IsDone(); iter++ )
+	{
+		if ( !(*iter) )
+			continue;
+		const Stuff::Vector3D& p = (*iter)->getPosition();
+		centroid.x += p.x;
+		centroid.y += p.y;
+		centroid.z += p.z;
+		count++;
+	}
+
+	if ( count == 0 )
+		return;  // no selection -> no-op
+
+	float inv = 1.0f / (float)count;
+	centroid.x *= inv;
+	centroid.y *= inv;
+	centroid.z *= inv;
+
+	eye->setPosition( centroid, true );  // xy clamped to map, z terrain-locked
 }
 
 // Continuous-angle rotation of the current selection, used by the mouse wheel.
