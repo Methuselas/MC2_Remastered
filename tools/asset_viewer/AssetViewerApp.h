@@ -10,6 +10,7 @@
 #include "MaterialPreviewPBR.h"
 #include "MaterialSlots.h"
 #include "MeshPreview3D.h"
+#include "ModelPreviewEngineShader.h"
 #include "ModelBrowser.h"
 #include "ModWorkbench.h"
 #include "ModWorkbenchPanel.h"
@@ -59,7 +60,9 @@ private:
     TexturePreview2D surface_;
     MaterialPreviewPBR materialSurface_;
     MaterialSlots      materialSlots_;
-    MeshPreview3D      meshSurface_;
+    MeshPreview3D             meshSurface_;
+    ModelPreviewEngineShader  engineShaderPreview_;
+    int                       backend_ = 0;   // 0=Backend-B (default), 1=Backend-A
     ModelBrowser       modelBrowser_;
     ModWorkbench       workbench_;
     ModWorkbenchPanel  workbenchPanel_;

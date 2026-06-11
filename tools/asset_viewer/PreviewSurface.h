@@ -2,8 +2,10 @@
 #include <string>
 #include "imgui.h"   // ImVec2
 // The render-backend-agnostic preview seam. Stage 1 has one impl (TexturePreview2D).
-// Stage 2 adds MaterialPreviewPBR; stage 3 adds ModelPreviewRenderCore. The app and
-// inspector panel depend ONLY on this interface.
+// Stage 2 adds MaterialPreviewPBR; Backend-A v2 adds ModelPreviewEngineShader
+// (shader + pipeline-state faithful — real static_prop shaders, matching
+// depth/blend/cull — NOT full engine scene render: no batcher, no mission lights,
+// no shadow cascade). The app and inspector panel depend ONLY on this interface.
 class PreviewSurface {
 public:
     virtual ~PreviewSurface() = default;
