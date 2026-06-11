@@ -175,6 +175,20 @@ def main():
     if args.gl_debug_fatal:
         os.environ["MC2_GL_DEBUG_FATAL"] = "1"
 
+    # Deploy-coherence advisory (scripts/check-deploy-coherence.py): detects
+    # a stale deployed exe (fix built but never copied to the run dir).
+    # STRICTLY advisory: never changes verdict, exit code, or gate behavior.
+    try:
+        _coh = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "check-deploy-coherence.py"),
+             str(Path(args.exe).resolve().parent), "--worktree", str(ROOT)],
+            capture_output=True, text=True, timeout=30)
+        for _line in ((_coh.stdout or "") + (_coh.stderr or "")).splitlines():
+            if _line.strip():
+                print(f"[runner] {_line}", file=sys.stderr)
+    except Exception as _e:
+        print(f"[runner] [DEPLOY_COHERENCE] check skipped: {_e}", file=sys.stderr)
+
     # F1 unified-projection: forbid MC2_DISABLE_GOSFX=0 in smoke runs.
     # Visual regression accepted only in dev-override sessions; smoke must
     # represent shipped default state.
