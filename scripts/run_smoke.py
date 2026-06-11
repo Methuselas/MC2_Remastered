@@ -33,6 +33,12 @@ try:
     from scripts.smoke_lib import cockpit as _cockpit
 except Exception:
     _cockpit = None
+# Deploy-fingerprint check (advisory by default; MC2_SMOKE_REQUIRE_FINGERPRINT=1
+# = hard fail). Import-safe: a broken module degrades to "check skipped".
+try:
+    from scripts.smoke_lib import fingerprint as _fingerprint
+except Exception:
+    _fingerprint = None
 
 DEFAULT_EXE = Path(r"A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe")
 ARTIFACT_ROOT = ROOT / "tests" / "smoke" / "artifacts"
@@ -283,6 +289,19 @@ def main():
         if menu_canary_rc != 0 and args.fail_fast:
             print("[runner] --fail-fast: stopping after menu canary failure", file=sys.stderr)
             sys.exit(menu_canary_rc)
+
+    # Deploy-fingerprint: expected sha = HEAD of the worktree this runner
+    # lives in. Computed once; compared against the exe's startup banner.
+    _fp_expected_sha = None
+    _fp_hard_fail = False
+    _fp_require = os.environ.get("MC2_SMOKE_REQUIRE_FINGERPRINT") == "1"
+    if _fingerprint is not None:
+        try:
+            _fp_expected_sha = subprocess.check_output(
+                ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+                text=True, stderr=subprocess.DEVNULL, timeout=15).strip()
+        except Exception:
+            _fp_expected_sha = None
 
     rows: list[report.Row] = []
     for e in selected:
@@ -664,6 +683,19 @@ def main():
               file=sys.stderr)
         result = run_one(cfg)
 
+        # Deploy-fingerprint scan of the captured log (advisory by default;
+        # never touches the mission verdict — see _fp_require at the end).
+        if _fingerprint is not None:
+            try:
+                _fp = _fingerprint.parse_fingerprint(result.stdout_text)
+                _fp_lines, _fp_bad = _fingerprint.check_fingerprint(_fp, _fp_expected_sha)
+                _fp_hard_fail = _fp_hard_fail or _fp_bad
+                for _l in _fp_lines:
+                    print(f"[runner] {_l}", file=sys.stderr)
+            except Exception as _fpe:
+                print(f"[runner] [DEPLOY_FINGERPRINT] check skipped: {_fpe}",
+                      file=sys.stderr)
+
         key = baselines.key(cfg.profile, e.stem, tier, duration)
         delta = baselines.destroys_delta(baseline_data, key, result.summary.destroys)
 
@@ -714,6 +746,13 @@ def main():
     sys.stdout.buffer.write(b"\n")
     sys.stdout.buffer.flush()
     passed = all(r.verdict.passed for r in rows) and (menu_canary_rc in (None, 0))
+
+    # MC2_SMOKE_REQUIRE_FINGERPRINT=1: promote fingerprint mismatch/absence to
+    # a hard failure. Default (unset) keeps the verdict untouched (advisory).
+    if _fp_require and _fp_hard_fail:
+        print("[runner] [DEPLOY_FINGERPRINT] HARD FAIL: fingerprint mismatch or "
+              "absent and MC2_SMOKE_REQUIRE_FINGERPRINT=1", file=sys.stderr)
+        passed = False
 
     # Post-verdict cockpit hook (S2).  Verdict is already frozen above.
     # Any exception here is swallowed by cockpit.write_cockpit_artifacts;

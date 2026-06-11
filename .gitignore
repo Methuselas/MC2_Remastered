@@ -143,3 +143,6 @@ ucrt-list.txt
 !tools/terrain_gen/**
 terrain_out/
 tools/terrain_gen/__pycache__/
+
+# build-time generated cmake scripts are real sources
+!cmake/*.cmake
