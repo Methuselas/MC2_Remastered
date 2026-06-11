@@ -14,6 +14,17 @@
 >
 > **NEXT GATE → Baseline A** (off 0.4c): golden frames · per-pass timings · FASTPATH_DROP=0 · terrain/path snapshot · oracle counters — captured **post-8z, pre-GlStateGuard / pre-visual-lanes**. That baseline gates opening the modernization backlog.
 > **Do NOT yet:** merge Tube to mainline · start GlStateGuard · widen static-building/service-lane. Baseline A first.
+>
+> ### ✅ STATUS FOLD — 2026-06-10 (backlog now legitimately OPEN)
+> - **Terrain closeout:** COMPLETE / verified (above).
+> - **Baseline A:** CAPTURED + committed as **`82add3ca`** (`docs/baseline-A-post-8z.md`). 5/5 tier1, FASTPATH_DROP=0, slimVerts=0, terrain gpu-armed, render oracles clean.
+> - **Oracle + perf-budget harness:** SHIPPED (`scripts/smoke_lib/oracleparse.py`, `scripts/oracle_report.py`, `docs/perf-budget.{md,json}`) — the shared parser/budget vocabulary that makes future runs comparable to Baseline A. OBJBATCHER late-register classified (benign WARN), not panicked.
+> - **S2b:** CLOSED — mech bodies already GPU.
+> - **gosFX Tube:** live **residual legacy lane** (A/B validation pending; merge decision deferred — not before harness).
+> - **PertCloud:** DEAD.
+> - **Per-pass GPU timings:** still **OPEN** (headless = no Tracy; needs interactive Tracy/RGP fill — see Baseline A §6 + perf-budget "Open residual").
+>
+> **Disciplined next order:** (1) harness ✅ → (2) interactive per-pass Tracy/RGP fill for Baseline A → (3) GlStateGuard slice 1 (measured vs budget) → (4) Tube A/B + merge decision → (5) HZB or asset-cook lane.
 
 **Date:** 2026-06-09 (milestone updated 2026-06-10)
 **Worktree:** `.claude/worktrees/nifty-mendeleev`
