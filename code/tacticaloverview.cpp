@@ -8,12 +8,14 @@
 
 TacticalOverview g_tacticalOverview;
 
-// Overview camera envelope. Conservative for v1: altitude near the existing
-// gameplay max (keeps Camera::newScaleFactor >= 0; ceiling-raise is a T7 tuning
-// step) and a steep — but not singular (88) — perspective angle for a near-top-
-// down map read. projectionAngle: 10=shallow .. 35=normal .. 88=max top-down.
-static const float kOverviewAltitude = 6000.0f;
-static const float kOverviewTiltAngle = 80.0f;
+// Overview camera envelope. The engine clamps cameraAltitude to testMax (derived
+// from AltitudeMaximumLo/Hi) every frame in GameCamera::update(), so to pull back
+// past the normal zoom-out stop we must RAISE that ceiling while active and drive
+// the altitude well above the gameplay cap (~6400). projectionAngle: 10=shallow ..
+// 35=normal .. 88=max top-down; we hold a steep near-top-down read.
+static const float kOverviewAltitude = 28000.0f;  // target pull-back altitude
+static const float kOverviewCeiling  = 32000.0f;  // raised AltitudeMaximum* while active (> altitude)
+static const float kOverviewTiltAngle = 85.0f;    // steep, just under singular 88
 
 static inline float lerpf(float a, float b, float t) { return a + (b - a) * t; }
 
@@ -40,6 +42,7 @@ void TacticalOverview::onWheel(long delta, bool atCeiling, float dt, bool worldO
 
 void TacticalOverview::onHotkey() {
     if (!enabled()) return;
+    ++hotkeyFires_;
     state_.toggleHotkey();
 }
 
@@ -58,22 +61,33 @@ void TacticalOverview::driveCamera(Camera* eye) {
     if (!enabled() || !eye) return;
     const float t = state_.t();
 
-    // Capture the gameplay altitude + tilt exactly once, on first activation.
+    // Capture the gameplay altitude + tilt + zoom-out ceiling exactly once, on
+    // first activation.
     if (t > 0.0f && !returnSnap_.valid) {
         returnSnap_.valid    = true;
         returnSnap_.altitude = eye->getCameraAltitude();
         returnSnap_.tilt     = eye->getProjectionAngle();
+        returnSnap_.maxAltLo = Camera::AltitudeMaximumLo;
+        returnSnap_.maxAltHi = Camera::AltitudeMaximumHi;
         userPannedInOverview_ = false;
     }
 
     if (t > 0.0f) {
+        // Raise the altitude ceiling so GameCamera::update() won't clamp our
+        // pulled-back altitude back down to the gameplay testMax. Setting both
+        // Lo and Hi to the overview ceiling makes testMax == ceiling at any tilt.
+        Camera::AltitudeMaximumLo = kOverviewCeiling;
+        Camera::AltitudeMaximumHi = kOverviewCeiling;
         // Lerp altitude + tilt FROM the captured gameplay values toward overview.
         // Never from zero — that would discard the player's current framing.
         eye->zoomValue(lerpf(returnSnap_.altitude, kOverviewAltitude, t));
         eye->tiltValue(lerpf(returnSnap_.tilt,     kOverviewTiltAngle, t));
     } else if (returnSnap_.valid) {
-        // Fully exited (t == 0): restore gameplay altitude + tilt unless the user
-        // manually re-tilted in overview. Position/rotation were never touched.
+        // Fully exited (t == 0): restore the gameplay ceiling always, and restore
+        // altitude + tilt unless the user manually re-framed in overview.
+        // Position/rotation were never touched.
+        Camera::AltitudeMaximumLo = returnSnap_.maxAltLo;
+        Camera::AltitudeMaximumHi = returnSnap_.maxAltHi;
         if (!userPannedInOverview_) {
             eye->zoomValue(returnSnap_.altitude);
             eye->tiltValue(returnSnap_.tilt);

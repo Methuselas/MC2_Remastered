@@ -14,6 +14,7 @@ public:
     static constexpr float kHotkeyRate  = 4.0f;
 
     float t() const { return t_; }
+    float setpoint() const { return setpoint_; }   // diagnostic
 
     // Wheel input. delta<0 = zoom out (raise t) only when atCeiling.
     // delta>0 = zoom in (lower t). worldOwnsWheel gates UI exclusion.
@@ -33,9 +34,9 @@ public:
 
 private:
     void setT(float v);
-    float t_        = 0.0f;
-    float setpoint_ = 0.0f;   // hotkey target; <0 means "no hotkey override"
-    bool  hotkeyOn_ = false;
+    void setSetpoint(float v);
+    float t_        = 0.0f;   // current eased blend (drives the camera)
+    float setpoint_ = 0.0f;   // persistent desired overview level [0,1]
 };
 
 #endif // TACTICALOVERVIEW_STATE_H

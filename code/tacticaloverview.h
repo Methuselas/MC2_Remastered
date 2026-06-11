@@ -29,6 +29,8 @@ public:
     void notifyUserPan() { if (state_.active()) userPannedInOverview_ = true; }
 
     float blend() const { return state_.t(); }
+    float setpoint() const { return state_.setpoint(); }   // diagnostic
+    int   hotkeyFires() const { return hotkeyFires_; }      // diagnostic
     bool  active() const { return state_.active(); }
 
 private:
@@ -41,11 +43,14 @@ private:
         bool  valid    = false;
         float altitude = 0.0f;   // cameraAltitude (set via zoomValue)
         float tilt     = 0.0f;   // projectionAngle (set via tiltValue) — lerp FROM this
+        float maxAltLo = 0.0f;   // Camera::AltitudeMaximumLo — the zoom-out ceiling
+        float maxAltHi = 0.0f;   // Camera::AltitudeMaximumHi — raised so we can pull back
     };
 
     TacticalOverviewState state_;
     CamSnapshot returnSnap_;
     bool        userPannedInOverview_ = false;
+    int         hotkeyFires_ = 0;   // diagnostic: count of onHotkey() calls
 };
 
 extern TacticalOverview g_tacticalOverview;

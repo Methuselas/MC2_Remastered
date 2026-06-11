@@ -226,7 +226,6 @@ MissionInterfaceManager::Command		MissionInterfaceManager::commands[MAX_COMMAND]
 		KEY_E,				-1,	-1,						false,		&MissionInterfaceManager::selectVisible, 0, 43209,
 		KEY_F,				-1,	-1,						false,		&MissionInterfaceManager::forceShot, 0, 43210,
 		KEY_HOME,				-1,	-1,						true,		&MissionInterfaceManager::cameraNormal,0, -1,
-		KEY_O,					-1,	-1,						true,		&MissionInterfaceManager::toggleTacticalOverview, 0, -1,
 		KEY_F2,				-1,		-1,					true,		&MissionInterfaceManager::cameraDefault,0, -1,
 		KEY_F3,				-1,		-1,					true,		&MissionInterfaceManager::cameraMaxIn,0, -1,
 		KEY_F4,				-1,		-1,					true,		&MissionInterfaceManager::cameraMaxOut,0, -1,
@@ -650,8 +649,9 @@ void MissionInterfaceManager::update (void)
 	}
 
 	//---------------------------------------------------
-	// Tactical overview: per-frame blend-state advance, then drive the camera
-	// from the current blend (captures/restores a return snapshot internally).
+	// Tactical overview: advance the blend-state and drive the camera from the
+	// current blend. Hotkey detection lives in GameCamera::update (a proven
+	// per-frame path with input already polled this frame).
 	g_tacticalOverview.advance(frameLength);
 	g_tacticalOverview.driveCamera(eye);
 
@@ -2864,11 +2864,6 @@ int MissionInterfaceManager::cameraNormal()
 	return 1;
 }
 
-int MissionInterfaceManager::toggleTacticalOverview()
-{
-	g_tacticalOverview.onHotkey();
-	return 1;
-}
 
 int MissionInterfaceManager::cameraDefault()
 {
@@ -3890,7 +3885,7 @@ bool MissionInterfaceManager::moveCameraAround( bool lineOfSight, bool passable,
 		if (mouseWheelDelta)
 		{
 			g_tacticalOverview.onWheel(-mouseWheelDelta,
-			                           /*atCeiling=*/eye->getCameraAltitude() >= eye->getMaximumCameraAltitude() - 1.0f,
+			                           /*atCeiling=*/(g_tacticalOverview.setpoint() > 0.0f) || (eye->getCameraAltitude() >= 5900.0f),
 			                           frameLength, /*worldOwnsWheel=*/true);
 			//Mouse wheel just picks zooms now.
 			//float actualZoom = zoomInc * abs(mouseWheelDelta) * 0.0001f * eye->getScaleFactor();
@@ -3919,7 +3914,7 @@ bool MissionInterfaceManager::moveCameraAround( bool lineOfSight, bool passable,
 	if (mouseWheelDelta)
 	{
 		g_tacticalOverview.onWheel(-mouseWheelDelta,
-		                           /*atCeiling=*/eye->getCameraAltitude() >= eye->getMaximumCameraAltitude() - 1.0f,
+		                           /*atCeiling=*/(g_tacticalOverview.setpoint() > 0.0f) || (eye->getCameraAltitude() >= 5900.0f),
 		                           frameLength, /*worldOwnsWheel=*/true);
 		//Mouse wheel just picks zooms now.
 		//float actualZoom = zoomInc * abs(mouseWheelDelta) * 0.0001f * eye->getScaleFactor();

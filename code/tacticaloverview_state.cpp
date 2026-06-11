@@ -5,21 +5,26 @@ static inline float clamp01(float v) {
 }
 
 void TacticalOverviewState::setT(float v) { t_ = clamp01(v); }
+void TacticalOverviewState::setSetpoint(float v) { setpoint_ = clamp01(v); }
 
+// Wheel and hotkey both move the PERSISTENT setpoint_ (the desired overview
+// level). t_ then eases toward setpoint_ in update(). This keeps the two input
+// drivers from fighting — previously the wheel moved t_ directly while update()
+// dragged t_ back toward setpoint_, so wheel-driven overview snapped back.
 void TacticalOverviewState::applyWheel(long delta, bool atCeiling, float /*dt*/,
                                        bool worldOwnsWheel) {
     if (!worldOwnsWheel) return;
     float notches = (float)delta / 120.0f;        // GameOS wheel granularity
     if (delta < 0) {                              // zoom out
-        if (atCeiling) setT(t_ + (-notches) * kWheelGain);
+        if (atCeiling) setSetpoint(setpoint_ + (-notches) * kWheelGain);
     } else if (delta > 0) {                       // zoom in
-        setT(t_ - notches * kWheelGain);
+        setSetpoint(setpoint_ - notches * kWheelGain);
     }
 }
 
 void TacticalOverviewState::toggleHotkey() {
-    hotkeyOn_ = !hotkeyOn_;
-    setpoint_ = hotkeyOn_ ? 1.0f : 0.0f;
+    // Toggle between full overview and gameplay based on the current setpoint.
+    setpoint_ = (setpoint_ > 0.5f) ? 0.0f : 1.0f;
 }
 
 void TacticalOverviewState::update(float dt) {

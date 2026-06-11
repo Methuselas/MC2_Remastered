@@ -82,6 +82,7 @@ extern CPrefs prefs;
 #include "gos_profiler.h"
 #include "../GameOS/gameos/gos_smoke.h"
 #include "../GameOS/gameos/MC2Strings.h"
+#include "tacticaloverview.h"  // Tactical Overview F6 toggle (main-loop input)
 
 //------------------------------------------------------------------------------------------------------------
 // MechCmdr2 Global Instances of Things
@@ -2230,7 +2231,18 @@ void __stdcall DoGameLogic()
 					logistics->stop();
 				}
 			}
-	
+
+			// Tactical Overview toggle (F6). Detected here in the main loop where
+			// input is freshly polled (userInput->update() above); the mission
+			// command table did not dispatch it. Edge-latch: one press = one toggle.
+			{
+				static bool s_tacOvF6Was = false;
+				bool f6Down = userInput->getKeyDown(KEY_F6);
+				if (f6Down && !s_tacOvF6Was)
+					g_tacticalOverview.onHotkey();
+				s_tacOvF6Was = f6Down;
+			}
+
 			if ((true == bInvokeOptionsScreenFlag)
 				|| (userInput->getKeyDown(KEY_O) && userInput->ctrl() && !userInput->alt() && !userInput->shift()))
 			{
