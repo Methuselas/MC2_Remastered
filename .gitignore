@@ -103,7 +103,11 @@ tests/smoke/artifacts/
 tests/smoke/captures/
 
 # Internal planning + observation docs (process noise, not shipped)
-docs/superpowers/
+# superpowers scratch ignored by default, but strategy docs are canonical architecture records
+docs/superpowers/*
+!docs/superpowers/strategy/
+docs/superpowers/strategy/*
+!docs/superpowers/strategy/*.md
 docs/observations/
 docs/beta/
 docs/micro_scene_spec.md
