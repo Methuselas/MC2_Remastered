@@ -91,4 +91,12 @@ if [ -d "$REPO/tools/terrain_gen" ]; then
     done
 fi
 
+# Deploy-coherence manifest (advisory; see scripts/check-deploy-coherence.py).
+# --merge so the game's manifest entries in the shared install survive.
+# Best-effort: never fail the deploy over manifest bookkeeping.
+if ! py -3 "$REPO/scripts/write-deploy-manifest.py" "$DEPLOY" \
+        "Mission Editor.exe" --merge --worktree "$REPO"; then
+    echo "  (warn) deploy manifest write failed (advisory only)"
+fi
+
 echo "[deploy-editor] done"

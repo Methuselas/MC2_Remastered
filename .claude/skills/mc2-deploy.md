@@ -48,6 +48,21 @@ bash "<worktree>/scripts/deploy-mc2fx-tools.sh"
 # default targets BOTH v0.4 (game) and 0.4c (editor); override with DEPLOY=...
 ```
 
+7. **Write the deploy-coherence manifest** (LAST step, after all copies verified).
+   Records what was just deployed (git HEAD, per-file sha256) so
+   `scripts/check-deploy-coherence.py` (run automatically at smoke start, advisory
+   only) can flag a stale deployed exe later. Use `--merge` so editor/game entries
+   in the shared install coexist:
+```bash
+py -3 "<worktree>/scripts/write-deploy-manifest.py" "A:/Games/mc2-opengl/mc2-win64-v0.4" \
+    mc2.exe mc2.pdb --merge --worktree "<worktree>" \
+    --glob "*.dll" --glob "shaders/*.vert" --glob "shaders/*.frag" \
+    --glob "shaders/*.tesc" --glob "shaders/*.tese" --glob "shaders/include/*"
+```
+   If you deploy to BOTH v0.4 and 0.4c, write a manifest into EACH target —
+   that is the whole point (the v0.4-vs-0.4c stale-exe trap).
+   `scripts/deploy-editor.sh` already writes its own entry automatically.
+
 ## Critical Rules
 - **NEVER use `cp -r`** — it does not overwrite existing files on Windows/MSYS2. This has caused hours of debugging from stale shaders.
 - **ALWAYS verify with `diff -q`** after copying
