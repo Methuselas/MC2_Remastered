@@ -2243,6 +2243,26 @@ void __stdcall DoGameLogic()
 				s_tacOvF6Was = f6Down;
 			}
 
+			// Sensor view toggle (F7) — same proven input site.
+			{
+				extern bool g_sensorViewOn;
+				static bool s_f7Was = false;
+				bool f7Down = userInput->getKeyDown(KEY_F7);
+				if (f7Down && !s_f7Was)
+					g_sensorViewOn = !g_sensorViewOn;
+				s_f7Was = f7Down;
+			}
+
+			// Weapon view toggle (F8).
+			{
+				extern bool g_weaponViewOn;
+				static bool s_f8Was = false;
+				bool f8Down = userInput->getKeyDown(KEY_F8);
+				if (f8Down && !s_f8Was)
+					g_weaponViewOn = !g_weaponViewOn;
+				s_f8Was = f8Down;
+			}
+
 			if ((true == bInvokeOptionsScreenFlag)
 				|| (userInput->getKeyDown(KEY_O) && userInput->ctrl() && !userInput->alt() && !userInput->shift()))
 			{
