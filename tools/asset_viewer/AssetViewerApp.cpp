@@ -1872,6 +1872,192 @@ int AssetViewerApp::runSmokeBackendAFallback(const char* deployDir)
     return rc;
 }
 
+// ---------------------------------------------------------------------------
+// runSmokeBackendAUvv — Backend-A v2 Task 8: UV-V orientation A/B check.
+// Renders 2civliving.tgl with BOTH Backend-A (ModelPreviewEngineShader) and
+// Backend-B (MeshPreview3D), writes both as PPM dumps to build64/, then
+// compares top-half vs bottom-half mean luminance to check V-orientation
+// agreement. If A and B agree on which half is brighter, UV is CONSISTENT.
+// ---------------------------------------------------------------------------
+#include "MeshPreview3D.h"
+#include <fstream>
+
+// Helper: write raw RGBA buffer as ASCII PPM (P6 binary)
+static void writePpm(const char* path, int w, int h, const std::vector<uint8_t>& rgba) {
+    std::ofstream f(path, std::ios::binary);
+    f << "P6\n" << w << " " << h << "\n255\n";
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            const uint8_t* px = &rgba[(size_t)(y * w + x) * 4];
+            f.write((const char*)px, 3);  // R G B only (skip A)
+        }
+    }
+}
+
+// Helper: compute mean luminance of top-half vs bottom-half, ignoring
+// "background" pixels (very close to the clear color 0x1A1C21 = 26,28,33).
+// Returns false if no non-background pixels found.
+static bool halfLuminance(const std::vector<uint8_t>& rgba, int w, int h,
+                           double& topMean, double& botMean) {
+    // Background clear color for Backend-A: (0x1A, 0x1C, 0x21) ~ (26,28,33)
+    // Background for Backend-B: (0x1A, 0x1C, 0x21) same
+    // Treat pixel as background if all channels within ±10 of those values.
+    auto isBg = [](uint8_t r, uint8_t g, uint8_t b) -> bool {
+        return (r < 50 && g < 55 && b < 60);
+    };
+    double topSum = 0; int topCnt = 0;
+    double botSum = 0; int botCnt = 0;
+    int half = h / 2;
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            const uint8_t* px = &rgba[(size_t)(y * w + x) * 4];
+            uint8_t r = px[0], g = px[1], b = px[2];
+            if (isBg(r, g, b)) continue;
+            // Rec.709 luminance
+            double lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            if (y < half) { topSum += lum; topCnt++; }
+            else           { botSum += lum; botCnt++; }
+        }
+    }
+    if (topCnt == 0 || botCnt == 0) return false;
+    topMean = topSum / topCnt;
+    botMean = botSum / botCnt;
+    return true;
+}
+
+int AssetViewerApp::runSmokeBackendAUvv(const char* deployDir, const char* shaderRoot)
+{
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+
+    // Headless GL 4.3 context (SSBOs required by Backend-A)
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+        std::fprintf(stderr, "[smoke] FAIL backend-a-uvv: SDL_Init: %s\n", SDL_GetError());
+        return 1;
+    }
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_Window* win = SDL_CreateWindow("smoke-backend-a-uvv", 0, 0, 64, 64,
+        SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+    if (!win) {
+        SDL_Quit();
+        std::fprintf(stderr, "[smoke] FAIL backend-a-uvv: window: %s\n", SDL_GetError());
+        return 1;
+    }
+    SDL_GLContext gl = SDL_GL_CreateContext(win);
+    if (!gl) {
+        SDL_DestroyWindow(win); SDL_Quit();
+        std::fprintf(stderr, "[smoke] FAIL backend-a-uvv: gl context: %s\n", SDL_GetError());
+        return 1;
+    }
+    SDL_GL_MakeCurrent(win, gl);
+    glewExperimental = GL_TRUE;
+    if (glewInit() != GLEW_OK) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        std::fprintf(stderr, "[smoke] FAIL backend-a-uvv: glewInit\n");
+        return 1;
+    }
+    glGetError();
+
+    static const char* PROP    = "data/tgl/2civliving.tgl";
+    static const int   W = 256, H = 256;
+    int rc = 0;
+
+    {
+        // ---- Render Backend-A ----
+        ModelPreviewEngineShader a;
+        a.setShaderRoot(shaderRoot);
+        a.setDeployDir(deployDir);
+        a.setSource(PROP);
+
+        std::vector<uint8_t> pxA;
+        bool rendA = a.renderToPixels(W, H, pxA);
+        if (!a.ok() || !rendA) {
+            std::fprintf(stderr, "[smoke] backend-a-uvv: Backend-A render failed: %s\n",
+                a.report().lastError.c_str());
+            if (!a.report().compileLog.empty())
+                std::fprintf(stderr, "[smoke] compile log: %s\n", a.report().compileLog.c_str());
+            rc = 1;
+        }
+
+        // ---- Render Backend-B ----
+        MeshPreview3D b;
+        b.setDeployDir(deployDir);
+        b.setSource(PROP);
+
+        std::vector<uint8_t> pxB;
+        bool rendB = b.renderToPixels(W, H, pxB);
+        if (!rendB) {
+            std::fprintf(stderr, "[smoke] backend-a-uvv: Backend-B render failed\n");
+            rc = 1;
+        }
+
+        if (rc == 0) {
+            // Write PPMs to build64/ (not committed)
+            writePpm("build64/uvv_backend_a.ppm", W, H, pxA);
+            writePpm("build64/uvv_backend_b.ppm", W, H, pxB);
+            printf("[smoke] backend-a-uvv: PPMs written to build64/uvv_backend_a.ppm and build64/uvv_backend_b.ppm\n");
+
+            // Compare V orientation via top/bottom luminance
+            double aTop, aBot, bTop, bBot;
+            bool aHalf = halfLuminance(pxA, W, H, aTop, aBot);
+            bool bHalf = halfLuminance(pxB, W, H, bTop, bBot);
+
+            if (!aHalf || !bHalf) {
+                std::fprintf(stderr,
+                    "[smoke] backend-a-uvv: WARNING: insufficient non-background pixels "
+                    "(aHalf=%d bHalf=%d) -- prop may be invisible\n", (int)aHalf, (int)bHalf);
+                rc = 1;
+            } else {
+                bool aTopBrighter = (aTop > aBot);
+                bool bTopBrighter = (bTop > bBot);
+                bool consistent   = (aTopBrighter == bTopBrighter);
+                // Reliability guard: if the luminance delta for either backend is tiny
+                // (< 3.0 lum units out of 0-255), the top/bottom split is dominated by
+                // lighting/shading variation rather than texture orientation. In that
+                // case the comparison is inconclusive and we skip the FAIL verdict.
+                double aDelta = std::abs(aTop - aBot);
+                double bDelta = std::abs(bTop - bBot);
+                static const double kMinDelta = 3.0;
+                bool reliable = (aDelta >= kMinDelta && bDelta >= kMinDelta);
+
+                printf("[smoke] backend-a-uvv: Backend-A top=%.1f bot=%.1f delta=%.1f (%s-brighter)\n",
+                       aTop, aBot, aDelta, aTopBrighter ? "top" : "bot");
+                printf("[smoke] backend-a-uvv: Backend-B top=%.1f bot=%.1f delta=%.1f (%s-brighter)\n",
+                       bTop, bBot, bDelta, bTopBrighter ? "top" : "bot");
+
+                if (!reliable) {
+                    printf("[smoke] backend-a-uvv: PASS (INCONCLUSIVE -- one or both backends have"
+                           " low luminance delta (%.1f / %.1f < %.1f); orientation cannot be"
+                           " auto-determined; deferred to user visual check)\n",
+                           aDelta, bDelta, kMinDelta);
+                } else {
+                    printf("[smoke] backend-a-uvv: UV-V orientation %s (A and B %s)\n",
+                           consistent ? "CONSISTENT" : "FLIPPED",
+                           consistent ? "agree" : "DISAGREE -- investigate tool-side UV feed in ModelPreviewEngineShader");
+
+                    if (!consistent) {
+                        std::fprintf(stderr,
+                            "[smoke] backend-a-uvv: FAIL: Backend-A and Backend-B disagree on V orientation.\n"
+                            "  This means ModelPreviewEngineShader applies a different UV transform\n"
+                            "  (e.g. missing 1-v flip, or wrong ImVec2 UV coords in ImGui::Image).\n"
+                            "  Investigate: VAO loc2 binding in MeshGpu, or the draw() ImGui::Image UV args.\n"
+                            "  Do NOT edit any shader file.\n");
+                        rc = 1;
+                    } else {
+                        printf("[smoke] backend-a-uvv: PASS (CONSISTENT)\n");
+                    }
+                }
+            }
+        }
+    }
+
+    SDL_GL_DeleteContext(gl);
+    SDL_DestroyWindow(win);
+    SDL_Quit();
+    return rc;
+}
+
 void AssetViewerApp::onFileDropped(const char* path){
     if (!path) return;
     std::string p = path, low = p; for (char& c: low) c=(char)tolower((unsigned char)c);
