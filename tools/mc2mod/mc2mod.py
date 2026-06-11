@@ -1,0 +1,609 @@
+"""
+tools/mc2mod/mc2mod.py -- MC2 mod packager / installer (Slice S8 v1)
+=====================================================================
+Subcommands
+-----------
+  pack   <mod-dir> --out <dir>
+      Produce <id>-<version>.mc2mod (zip) with embedded package.json.
+      Dot-prefixed entries excluded (ruling C4).
+
+  verify-lite <package>
+      Re-hash every member vs package.json; schema check; exit nonzero on mismatch.
+
+  install <package> --deploy <dir>
+      Extract to <deploy>/mods/<id>/, write <deploy>/mods/<id>/.install-receipt.json.
+      Refuses to write to canonical deploy roots (hard-coded guard).
+      Prints matched-tuple advisory on success.
+
+  uninstall <id> --deploy <dir>
+      Remove installed files + empty dirs + receipt using receipt as ground-truth.
+      Refuses if any installed file's hash differs from receipt (unless --force).
+
+Contract refs:
+  - mod-packaging-deploy-architecture.md §3 (package.json schema)
+  - mod-packaging-deploy-architecture.md §4 (install flow)
+  - mod-packaging-deploy-architecture.md §5 (receipt, rollback)
+  - superpowers-execution-roadmap.md §5 S8 + ruling C6
+  - ruling C4: unified dot-prefix exclusion from mod index / packages
+
+Python 3 stdlib only.  No emoji.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime
+import hashlib
+import json
+import os
+import shutil
+import sys
+import zipfile
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+PACKAGE_SCHEMA = "mc2-package/1"
+RECEIPT_SCHEMA = "mc2-install-receipt/1"
+PACKAGE_EXT = ".mc2mod"
+
+# Canonical deploy roots that the installer refuses to touch (ruling: canonical
+# guard -- overridable only by --i-know-this-is-canonical which v1 does NOT
+# implement).
+_CANONICAL_DEPLOY_ROOTS: List[str] = [
+    "a:/games/mc2-opengl/mc2-win64-v0.4",
+    "a:/games/mc2-opengl/mc2-win64-0.4c",
+]
+
+# ---------------------------------------------------------------------------
+# Hashing helpers
+# ---------------------------------------------------------------------------
+
+def _sha256_file(path: str) -> str:
+    """Return hex SHA-256 of the file at path."""
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 16), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Canonical guard
+# ---------------------------------------------------------------------------
+
+def _is_canonical_deploy(deploy_dir: str) -> bool:
+    """
+    Return True if deploy_dir resolves to one of the canonical game deploys
+    that must never be written to by the installer.
+    """
+    try:
+        resolved = Path(deploy_dir).resolve().as_posix().lower()
+    except Exception:
+        resolved = deploy_dir.replace("\\", "/").lower().rstrip("/")
+    for canonical in _CANONICAL_DEPLOY_ROOTS:
+        if resolved == canonical.rstrip("/"):
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# mod.json reader (minimal -- only id + name + version extracted)
+# ---------------------------------------------------------------------------
+
+def _read_mod_json(mod_dir: str) -> Tuple[str, str, str]:
+    """
+    Return (id, name, version) from <mod_dir>/mod.json.
+    version defaults to "0.0.0" if absent (most mods omit it).
+    """
+    json_path = os.path.join(mod_dir, "mod.json")
+    try:
+        with open(json_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        mod_id = str(data.get("id", "")).strip()
+        name = str(data.get("name", "")).strip()
+        version = str(data.get("version", "0.0.0")).strip()
+        if not mod_id:
+            mod_id = Path(mod_dir).name
+        return mod_id, name, version
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"ERROR: cannot read {json_path}: {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: pack
+# ---------------------------------------------------------------------------
+
+def _collect_mod_files(mod_dir: str) -> List[Tuple[str, str]]:
+    """
+    Walk mod_dir, excluding:
+      - dot-prefixed files and directories (ruling C4)
+      - src/ directory (cook sources, never packaged)
+      - out/ directory (regeneratable cook artifacts)
+    Returns list of (abs_path, rel_path_forward_slash) sorted by rel_path.
+    """
+    results: List[Tuple[str, str]] = []
+    excluded_dirs = {"src", "out"}
+    base = Path(mod_dir)
+
+    for root, dirs, files in os.walk(str(base)):
+        root_rel = Path(root).relative_to(base)
+        # Prune excluded top-level dirs and all dot-prefixed dirs (ruling C4)
+        dirs[:] = [
+            d for d in dirs
+            if not d.startswith(".")
+            and not (root_rel == Path(".") and d in excluded_dirs)
+        ]
+
+        for fname in files:
+            if fname.startswith("."):
+                continue  # ruling C4: exclude dot-prefixed files
+            abs_path = os.path.join(root, fname)
+            rel = Path(abs_path).relative_to(base)
+            rel_fwd = rel.as_posix()
+            results.append((abs_path, rel_fwd))
+
+    results.sort(key=lambda x: x[1])
+    return results
+
+
+def cmd_pack(args: argparse.Namespace) -> int:
+    mod_dir = str(Path(args.mod_dir).resolve())
+    if not os.path.isdir(mod_dir):
+        print(f"ERROR: mod directory not found: {mod_dir}", file=sys.stderr)
+        return 1
+
+    mod_id, name, version = _read_mod_json(mod_dir)
+    out_dir = Path(args.out).resolve() if args.out else Path(mod_dir).parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    package_filename = f"{mod_id}-{version}{PACKAGE_EXT}"
+    package_path = out_dir / package_filename
+
+    files_meta: List[Dict[str, Any]] = []
+    collected = _collect_mod_files(mod_dir)
+
+    # Collect file metadata (before writing zip, skip package.json from mod dir
+    # if it exists -- we generate a fresh one)
+    for abs_path, rel_fwd in collected:
+        if rel_fwd == "package.json":
+            continue  # will be replaced by generated one
+        size = os.path.getsize(abs_path)
+        sha = _sha256_file(abs_path)
+        files_meta.append({"path": rel_fwd, "sha256": sha, "size": size})
+
+    package_json_obj: Dict[str, Any] = {
+        "schema": PACKAGE_SCHEMA,
+        "id": mod_id,
+        "name": name,
+        "version": version,
+        "files": files_meta,
+        "dependencies": [],
+    }
+    package_json_bytes = json.dumps(package_json_obj, indent=2).encode("utf-8")
+
+    # Write zip
+    with zipfile.ZipFile(str(package_path), "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        # Write generated package.json first
+        zf.writestr("package.json", package_json_bytes)
+        # Write all other mod files
+        for abs_path, rel_fwd in collected:
+            if rel_fwd == "package.json":
+                continue  # replaced above
+            zf.write(abs_path, rel_fwd)
+
+    package_sha = _sha256_file(str(package_path))
+    file_count = len(files_meta)
+    print(f"pack: {package_path}")
+    print(f"  id={mod_id}  version={version}  files={file_count}  sha256={package_sha}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: verify-lite
+# ---------------------------------------------------------------------------
+
+def _load_package_json_from_zip(zf: zipfile.ZipFile) -> Dict[str, Any]:
+    """Extract and parse package.json from an open ZipFile."""
+    try:
+        raw = zf.read("package.json")
+    except KeyError:
+        raise SystemExit("ERROR: package.json missing from archive")
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"ERROR: package.json is malformed JSON: {exc}") from exc
+
+
+def cmd_verify_lite(args: argparse.Namespace) -> int:
+    pkg_path = args.package
+    if not os.path.isfile(pkg_path):
+        print(f"ERROR: package not found: {pkg_path}", file=sys.stderr)
+        return 1
+
+    errors: List[str] = []
+
+    with zipfile.ZipFile(pkg_path, "r") as zf:
+        pkg = _load_package_json_from_zip(zf)
+
+        # Schema check
+        schema = pkg.get("schema", "")
+        if schema != PACKAGE_SCHEMA:
+            errors.append(f"schema mismatch: got '{schema}', want '{PACKAGE_SCHEMA}'")
+
+        required_fields = ("id", "name", "version", "files")
+        for field in required_fields:
+            if field not in pkg:
+                errors.append(f"missing required field: '{field}'")
+
+        files_list = pkg.get("files", [])
+        if not isinstance(files_list, list):
+            errors.append("'files' is not a list")
+            files_list = []
+
+        # Re-hash every declared member
+        zip_names = set(zf.namelist())
+        for entry in files_list:
+            rel = entry.get("path", "")
+            declared_sha = entry.get("sha256", "")
+            declared_size = entry.get("size", -1)
+
+            if rel not in zip_names:
+                errors.append(f"declared file missing from archive: {rel}")
+                continue
+
+            data = zf.read(rel)
+            actual_sha = _sha256_bytes(data)
+            actual_size = len(data)
+
+            if actual_sha != declared_sha:
+                errors.append(
+                    f"sha256 mismatch for {rel}: declared={declared_sha[:16]}... "
+                    f"actual={actual_sha[:16]}..."
+                )
+            if actual_size != declared_size:
+                errors.append(
+                    f"size mismatch for {rel}: declared={declared_size} actual={actual_size}"
+                )
+
+        # Check for members not declared in files[] (package.json itself is excluded)
+        declared_paths = {e.get("path", "") for e in files_list}
+        for name in zip_names:
+            if name == "package.json":
+                continue
+            if name not in declared_paths:
+                errors.append(f"archive member not declared in files[]: {name}")
+
+    if errors:
+        print(f"verify-lite FAILED: {len(errors)} error(s)")
+        for err in errors:
+            print(f"  ERROR: {err}")
+        return 1
+
+    pkg_sha = _sha256_file(pkg_path)
+    print(
+        f"verify-lite PASS: id={pkg.get('id')}  version={pkg.get('version')}  "
+        f"files={len(files_list)}  pkg_sha256={pkg_sha}"
+    )
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Matched-tuple advisory
+# ---------------------------------------------------------------------------
+
+def _print_advisory(deploy_dir: str, mod_id: str, pkg_sha: str, pkg: Dict[str, Any]) -> None:
+    """
+    Print the matched-tuple advisory after a successful install.
+    Advisory only -- never blocks.
+    """
+    print("")
+    print("=== MATCHED-TUPLE ADVISORY ===")
+
+    # exe sha256
+    exe_path = os.path.join(deploy_dir, "mc2.exe")
+    if os.path.isfile(exe_path):
+        exe_sha = _sha256_file(exe_path)
+        print(f"  exe_sha256     : {exe_sha}  ({exe_path})")
+    else:
+        print(f"  exe_sha256     : ABSENT ({exe_path})")
+
+    # shader payload check
+    shaders_dir = os.path.join(deploy_dir, "shaders")
+    if os.path.isdir(shaders_dir):
+        shader_files = [
+            f for f in os.listdir(shaders_dir)
+            if os.path.isfile(os.path.join(shaders_dir, f))
+        ]
+        shader_count = len(shader_files)
+        if shader_files:
+            newest_mtime = max(
+                os.path.getmtime(os.path.join(shaders_dir, f)) for f in shader_files
+            )
+            newest_dt = datetime.datetime.utcfromtimestamp(newest_mtime).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+        else:
+            newest_dt = "N/A"
+        print(f"  shaders        : {shader_count} files, newest_mtime={newest_dt}")
+    else:
+        print(f"  shaders        : ABSENT ({shaders_dir})")
+
+    # active mod
+    print(f"  active_mod_id  : {mod_id}")
+
+    # package sha256
+    print(f"  package_sha256 : {pkg_sha}")
+
+    # registry index
+    registry_path = os.path.join(deploy_dir, ".registry", "registry-index.json")
+    if os.path.isfile(registry_path):
+        reg_sha = _sha256_file(registry_path)
+        reg_mtime = datetime.datetime.utcfromtimestamp(
+            os.path.getmtime(registry_path)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        print(f"  registry_index : present  mtime={reg_mtime}  sha256={reg_sha[:16]}...")
+    else:
+        print(f"  registry_index : absent")
+
+    print("==============================")
+    print("")
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: install
+# ---------------------------------------------------------------------------
+
+def cmd_install(args: argparse.Namespace) -> int:
+    pkg_path = args.package
+    deploy_dir = str(Path(args.deploy).resolve())
+
+    if not os.path.isfile(pkg_path):
+        print(f"ERROR: package not found: {pkg_path}", file=sys.stderr)
+        return 1
+
+    # Canonical guard
+    if _is_canonical_deploy(deploy_dir):
+        print(
+            f"ERROR: refusing to install into canonical deploy root: {deploy_dir}",
+            file=sys.stderr,
+        )
+        print(
+            "  Canonical deploy roots are read-only targets for the installer.",
+            file=sys.stderr,
+        )
+        print(
+            "  Use a separate temp/staging deploy directory.",
+            file=sys.stderr,
+        )
+        return 1
+
+    pkg_sha = _sha256_file(pkg_path)
+
+    with zipfile.ZipFile(pkg_path, "r") as zf:
+        pkg = _load_package_json_from_zip(zf)
+
+        schema = pkg.get("schema", "")
+        if schema != PACKAGE_SCHEMA:
+            print(
+                f"ERROR: unsupported package schema '{schema}' (expected '{PACKAGE_SCHEMA}')",
+                file=sys.stderr,
+            )
+            return 1
+
+        mod_id = pkg.get("id", "")
+        if not mod_id:
+            print("ERROR: package.json missing 'id' field", file=sys.stderr)
+            return 1
+
+        install_root = os.path.join(deploy_dir, "mods", mod_id)
+        os.makedirs(install_root, exist_ok=True)
+
+        files_list: List[Dict[str, Any]] = pkg.get("files", [])
+
+        # Extract all declared files
+        for entry in files_list:
+            rel = entry["path"]
+            dest = os.path.join(install_root, rel.replace("/", os.sep))
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            data = zf.read(rel)
+            with open(dest, "wb") as fh:
+                fh.write(data)
+
+        # Also extract package.json itself (it describes what is installed)
+        pkg_json_dest = os.path.join(install_root, "package.json")
+        pkg_json_bytes = json.dumps(pkg, indent=2).encode("utf-8")
+        with open(pkg_json_dest, "wb") as fh:
+            fh.write(pkg_json_bytes)
+
+    # Write receipt (C6: receipt records what was installed when from which
+    # package hash -- NOT a copy of package.json)
+    install_time = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    receipt: Dict[str, Any] = {
+        "schema": RECEIPT_SCHEMA,
+        "id": mod_id,
+        "version": pkg.get("version", ""),
+        "installed_at": install_time,
+        "package_sha256": pkg_sha,
+        "install_root": install_root.replace("\\", "/"),
+        "files": [
+            {
+                "path": e["path"],
+                "sha256": e["sha256"],
+                "size": e["size"],
+            }
+            for e in files_list
+        ],
+    }
+    receipt_path = os.path.join(install_root, ".install-receipt.json")
+    with open(receipt_path, "w", encoding="utf-8") as fh:
+        json.dump(receipt, fh, indent=2)
+
+    print(f"install: {mod_id} v{pkg.get('version', '')} -> {install_root}")
+    print(f"  files installed : {len(files_list)}")
+    print(f"  receipt         : {receipt_path}")
+
+    _print_advisory(deploy_dir, mod_id, pkg_sha, pkg)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: uninstall
+# ---------------------------------------------------------------------------
+
+def cmd_uninstall(args: argparse.Namespace) -> int:
+    mod_id = args.id
+    deploy_dir = str(Path(args.deploy).resolve())
+    force = getattr(args, "force", False)
+
+    install_root = os.path.join(deploy_dir, "mods", mod_id)
+    receipt_path = os.path.join(install_root, ".install-receipt.json")
+
+    if not os.path.isfile(receipt_path):
+        print(f"ERROR: no install receipt found at {receipt_path}", file=sys.stderr)
+        print("  Nothing to uninstall (or receipt was deleted).", file=sys.stderr)
+        return 1
+
+    with open(receipt_path, "r", encoding="utf-8") as fh:
+        receipt = json.load(fh)
+
+    schema = receipt.get("schema", "")
+    if schema != RECEIPT_SCHEMA:
+        print(
+            f"ERROR: unrecognized receipt schema '{schema}'", file=sys.stderr
+        )
+        return 1
+
+    files_list: List[Dict[str, Any]] = receipt.get("files", [])
+
+    # Check for modifications unless --force
+    modified: List[str] = []
+    missing: List[str] = []
+    for entry in files_list:
+        rel = entry["path"]
+        dest = os.path.join(install_root, rel.replace("/", os.sep))
+        if not os.path.isfile(dest):
+            missing.append(rel)
+            continue
+        actual_sha = _sha256_file(dest)
+        if actual_sha != entry["sha256"]:
+            modified.append(rel)
+
+    if (modified or missing) and not force:
+        print(
+            f"ERROR: {len(modified)} modified and {len(missing)} missing files since install.",
+            file=sys.stderr,
+        )
+        if modified:
+            for p in modified[:5]:
+                print(f"  MODIFIED: {p}", file=sys.stderr)
+            if len(modified) > 5:
+                print(f"  ... and {len(modified) - 5} more", file=sys.stderr)
+        if missing:
+            for p in missing[:5]:
+                print(f"  MISSING: {p}", file=sys.stderr)
+        print("  Use --force to uninstall anyway.", file=sys.stderr)
+        return 1
+
+    # Remove installed files
+    removed_files = 0
+    for entry in files_list:
+        rel = entry["path"]
+        dest = os.path.join(install_root, rel.replace("/", os.sep))
+        if os.path.isfile(dest):
+            os.remove(dest)
+            removed_files += 1
+
+    # Remove package.json written by installer
+    pkg_json_in_install = os.path.join(install_root, "package.json")
+    if os.path.isfile(pkg_json_in_install):
+        os.remove(pkg_json_in_install)
+
+    # Remove receipt
+    if os.path.isfile(receipt_path):
+        os.remove(receipt_path)
+
+    # Remove empty directories bottom-up
+    removed_dirs = 0
+    for root, dirs, files in os.walk(install_root, topdown=False):
+        if root == install_root:
+            continue
+        try:
+            os.rmdir(root)
+            removed_dirs += 1
+        except OSError:
+            pass  # not empty, leave it
+
+    # Remove install root if empty
+    try:
+        os.rmdir(install_root)
+        removed_dirs += 1
+    except OSError:
+        pass
+
+    print(f"uninstall: {mod_id} from {deploy_dir}")
+    print(f"  files removed   : {removed_files}")
+    print(f"  dirs removed    : {removed_dirs}")
+    if modified and force:
+        print(f"  WARNING: {len(modified)} modified files were force-removed")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="mc2mod",
+        description="MC2 mod packager / installer (S8 v1)",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    # pack
+    p_pack = sub.add_parser("pack", help="Pack a mod directory into a .mc2mod archive")
+    p_pack.add_argument("mod_dir", help="Path to the mod project directory")
+    p_pack.add_argument("--out", metavar="DIR", help="Output directory (default: parent of mod_dir)")
+
+    # verify-lite
+    p_verify = sub.add_parser("verify-lite", help="Verify archive integrity vs embedded package.json")
+    p_verify.add_argument("package", help="Path to .mc2mod archive")
+
+    # install
+    p_install = sub.add_parser("install", help="Install a .mc2mod package into a deploy directory")
+    p_install.add_argument("package", help="Path to .mc2mod archive")
+    p_install.add_argument("--deploy", required=True, metavar="DIR", help="Deploy root directory")
+
+    # uninstall
+    p_uninstall = sub.add_parser("uninstall", help="Uninstall a mod from a deploy directory")
+    p_uninstall.add_argument("id", help="Mod id to uninstall")
+    p_uninstall.add_argument("--deploy", required=True, metavar="DIR", help="Deploy root directory")
+    p_uninstall.add_argument("--force", action="store_true", help="Remove even if files were modified")
+
+    return parser
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    dispatch = {
+        "pack": cmd_pack,
+        "verify-lite": cmd_verify_lite,
+        "install": cmd_install,
+        "uninstall": cmd_uninstall,
+    }
+    fn = dispatch.get(args.command)
+    if fn is None:
+        print(f"ERROR: unknown command '{args.command}'", file=sys.stderr)
+        return 1
+    return fn(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
