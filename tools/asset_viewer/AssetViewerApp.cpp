@@ -1546,6 +1546,16 @@ int AssetViewerApp::runSmokeCentralMergePreserve(const char* fixtureDir, const c
         std::string after; { std::ifstream f(dst); std::stringstream s; s<<f.rdbuf(); after=s.str(); }
         ok &= !rBad.ok && (before==after);
     }
+    // Case E: first write to a NEW path -> file created with 1 record, no crash.
+    {
+        fs::path freshDir = fs::path(tmpDir) / "central_merge_fresh";
+        fs::remove_all(freshDir, ec); fs::create_directories(freshDir, ec);
+        fs::path fresh = freshDir / "models.json";
+        auto rNew = MergeIntoCentralManifest(fresh.string(), mk("staticProp","propFresh","f.glb"));
+        ok &= rNew.ok && rNew.recordCount==1 && !rNew.replacedExisting;
+        ModelOverrideRegistry g; g.loadFromFile(fresh.string(), freshDir.string());
+        ok &= g.count()==1 && g.resolve("staticProp","propFresh")!=nullptr;
+    }
     printf("[smoke] central-merge-preserve %s\n", ok ? "PASS" : "FAIL");
     return ok ? 0 : 1;
 }
