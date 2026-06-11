@@ -650,8 +650,10 @@ void MissionInterfaceManager::update (void)
 	}
 
 	//---------------------------------------------------
-	// Tactical overview: per-frame blend-state advance.
+	// Tactical overview: per-frame blend-state advance, then drive the camera
+	// from the current blend (captures/restores a return snapshot internally).
 	g_tacticalOverview.advance(frameLength);
+	g_tacticalOverview.driveCamera(eye);
 
 	//---------------------------------------------------
 	// Per Andy G.  One check per frame saves log file!
@@ -3876,14 +3878,19 @@ bool MissionInterfaceManager::moveCameraAround( bool lineOfSight, bool passable,
 			bRetVal = 1;
 	
 		}
+		// Manual right-drag rotate/tilt while overview is active = the user took
+		// over the camera; suppress the auto-return on exit.
+		if (mouseXDelta || mouseYDelta)
+			g_tacticalOverview.notifyUserPan();
 		userInput->setMouseCursor( mState_ROTATE_CAMERA );
-		
+
 		//--------------------------------------------------
 		// Zoom Camera based on Mouse Wheel input.
 		long mouseWheelDelta = userInput->getMouseWheelDelta();
 		if (mouseWheelDelta)
 		{
-			g_tacticalOverview.onWheel(-mouseWheelDelta, /*atCeiling=*/false,
+			g_tacticalOverview.onWheel(-mouseWheelDelta,
+			                           /*atCeiling=*/eye->getCameraAltitude() >= eye->getMaximumCameraAltitude() - 1.0f,
 			                           frameLength, /*worldOwnsWheel=*/true);
 			//Mouse wheel just picks zooms now.
 			//float actualZoom = zoomInc * abs(mouseWheelDelta) * 0.0001f * eye->getScaleFactor();
@@ -3911,7 +3918,8 @@ bool MissionInterfaceManager::moveCameraAround( bool lineOfSight, bool passable,
 	long mouseWheelDelta = userInput->getMouseWheelDelta();
 	if (mouseWheelDelta)
 	{
-		g_tacticalOverview.onWheel(-mouseWheelDelta, /*atCeiling=*/false,
+		g_tacticalOverview.onWheel(-mouseWheelDelta,
+		                           /*atCeiling=*/eye->getCameraAltitude() >= eye->getMaximumCameraAltitude() - 1.0f,
 		                           frameLength, /*worldOwnsWheel=*/true);
 		//Mouse wheel just picks zooms now.
 		//float actualZoom = zoomInc * abs(mouseWheelDelta) * 0.0001f * eye->getScaleFactor();

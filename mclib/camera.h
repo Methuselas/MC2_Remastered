@@ -449,7 +449,12 @@ class Camera
 		{
 			return(projectionAngle);
 		}
-			
+
+		float getCameraAltitude (void)
+		{
+			return(cameraAltitude);
+		}
+
 		void setCameraRotation (float angle, float angleWorld);
 		float getCameraRotation (void);
 

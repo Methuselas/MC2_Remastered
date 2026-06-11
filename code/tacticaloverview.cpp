@@ -4,8 +4,18 @@
 // DEBUGWINS_print is defined in code/ablmc2.cpp (not exported via a header).
 // Use OutputDebugStringA as the debug log sink for this TU.
 #include <windows.h>
+#include "../mclib/camera.h"
 
 TacticalOverview g_tacticalOverview;
+
+// Overview camera envelope. Conservative for v1: altitude near the existing
+// gameplay max (keeps Camera::newScaleFactor >= 0; ceiling-raise is a T7 tuning
+// step) and a steep — but not singular (88) — perspective angle for a near-top-
+// down map read. projectionAngle: 10=shallow .. 35=normal .. 88=max top-down.
+static const float kOverviewAltitude = 6000.0f;
+static const float kOverviewTiltAngle = 80.0f;
+
+static inline float lerpf(float a, float b, float t) { return a + (b - a) * t; }
 
 bool TacticalOverview::enabled() {
     static int cached = -1;
@@ -41,5 +51,34 @@ void TacticalOverview::advance(float dt) {
         char buf[96];
         sprintf_s(buf, sizeof(buf), "[TacOverview] t=%.3f iconA=%.3f", state_.t(), state_.iconAlpha());
         OutputDebugStringA(buf);
+    }
+}
+
+void TacticalOverview::driveCamera(Camera* eye) {
+    if (!enabled() || !eye) return;
+    const float t = state_.t();
+
+    // Capture the gameplay altitude + tilt exactly once, on first activation.
+    if (t > 0.0f && !returnSnap_.valid) {
+        returnSnap_.valid    = true;
+        returnSnap_.altitude = eye->getCameraAltitude();
+        returnSnap_.tilt     = eye->getProjectionAngle();
+        userPannedInOverview_ = false;
+    }
+
+    if (t > 0.0f) {
+        // Lerp altitude + tilt FROM the captured gameplay values toward overview.
+        // Never from zero — that would discard the player's current framing.
+        eye->zoomValue(lerpf(returnSnap_.altitude, kOverviewAltitude, t));
+        eye->tiltValue(lerpf(returnSnap_.tilt,     kOverviewTiltAngle, t));
+    } else if (returnSnap_.valid) {
+        // Fully exited (t == 0): restore gameplay altitude + tilt unless the user
+        // manually re-tilted in overview. Position/rotation were never touched.
+        if (!userPannedInOverview_) {
+            eye->zoomValue(returnSnap_.altitude);
+            eye->tiltValue(returnSnap_.tilt);
+        }
+        returnSnap_.valid = false;
+        userPannedInOverview_ = false;
     }
 }
