@@ -28,6 +28,25 @@ import tglmeshdump_to_glb as t2g    # noqa: E402
 TIERS = (128, 256, 512, 1024)
 
 
+def collect_animated_ids(deploy_root: Path) -> set:
+    """Scan data/tgl/*.ini for AnimationNodeId != NONE. Returns set of lowercase appearance names."""
+    animated: set = set()
+    tgl_dir = deploy_root / "data" / "tgl"
+    if not tgl_dir.is_dir():
+        return animated
+    for ini in tgl_dir.glob("*.ini"):
+        try:
+            txt = ini.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line in txt.splitlines():
+            m = re.match(r'\s*st\s+AnimationNodeId\s*=\s*"([^"]+)"', line)
+            if m and m.group(1).upper() != "NONE":
+                animated.add(ini.stem.lower())
+                break
+    return animated
+
+
 def sanitize_texname(tn: str) -> str:
     """Mirror DeriveMC2TextureName: strip dir+ext, lowercase, [a-z0-9_-] -> _."""
     stem = Path(tn).stem.lower()
@@ -56,13 +75,22 @@ def main() -> int:
     if args.limit:
         dumps = dumps[:args.limit]
 
+    animated_ids = collect_animated_ids(args.deploy_root)
+    if animated_ids:
+        print(f"animated exclusion: {len(animated_ids)} appearance(s) will be skipped "
+              f"(sample: {sorted(animated_ids)[:5]})")
+
     n_total = len(dumps)
-    n_glb = n_staged = n_manifest = n_geomonly = n_err = 0
+    n_glb = n_staged = n_manifest = n_geomonly = n_animated_skipped = n_err = 0
     n_multisubmesh = 0
     errors = []
 
     for i, dp in enumerate(dumps):
         asset_id = dp.name[:-len(".meshdump.json")]
+        if asset_id.lower() in animated_ids:
+            n_animated_skipped += 1
+            print(f"  skipped animated appearance: {asset_id}")
+            continue
         bundle = args.out / asset_id
         try:
             dump = json.loads(dp.read_text(encoding="utf-8"))
@@ -127,6 +155,7 @@ def main() -> int:
     report = {
         "total_meshdumps": n_total, "glb_built": n_glb, "staged": n_staged,
         "full_manifest": n_manifest, "geometry_only_untextured": n_geomonly,
+        "animated_skipped": n_animated_skipped,
         "errors": n_err, "multi_submesh": n_multisubmesh,
         "error_samples": errors[:20],
     }
