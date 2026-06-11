@@ -279,16 +279,51 @@ def verify_only(target_dir, strict):
     return 0
 
 
+# Canned target presets (--target). Presets only SET DEFAULTS; explicit
+# positional target / --build-dir / --exe-name always override.
+#   game   -> live game install   A:/Games/mc2-opengl/mc2-win64-v0.4, mc2.exe,
+#             build64/RelWithDebInfo
+#   editor -> live editor install A:/Games/mc2-opengl/mc2-win64-0.4c,
+#             "Mission Editor.exe", build64/out/editor/RelWithDebInfo (EditRel)
+TARGET_PRESETS = {
+    "game": {
+        "target_dir": "A:/Games/mc2-opengl/mc2-win64-v0.4",
+        "exe_name": "mc2.exe",
+        "build_subdir": os.path.join("build64", "RelWithDebInfo"),
+    },
+    "editor": {
+        "target_dir": "A:/Games/mc2-opengl/mc2-win64-0.4c",
+        "exe_name": "Mission Editor.exe",
+        "build_subdir": os.path.join("build64", "out", "editor", "RelWithDebInfo"),
+    },
+}
+
+
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("target", help="deploy target dir (e.g. "
-                    "A:/Games/mc2-opengl/mc2-win64-v0.4)")
+    ap = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0],
+        epilog="Presets: --target game   = A:/Games/mc2-opengl/mc2-win64-v0.4 "
+               "(mc2.exe, build64/RelWithDebInfo); "
+               "--target editor = A:/Games/mc2-opengl/mc2-win64-0.4c "
+               "(\"Mission Editor.exe\", build64/out/editor/RelWithDebInfo). "
+               "Explicit target dir / --build-dir / --exe-name override preset "
+               "defaults.")
+    ap.add_argument("target_dir", nargs="?", default=None,
+                    help="deploy target dir (e.g. "
+                    "A:/Games/mc2-opengl/mc2-win64-v0.4); optional when "
+                    "--target preset is given (and then overrides the preset dir)")
+    ap.add_argument("--target", choices=sorted(TARGET_PRESETS),
+                    help="canned target preset: 'game' (v0.4, mc2.exe) or "
+                    "'editor' (0.4c, Mission Editor.exe, EditRel build dir). "
+                    "Sets defaults only; explicit flags still override.")
     ap.add_argument("--source-root", default=repo_root(),
                     help="source worktree root (default: this script's repo)")
     ap.add_argument("--build-dir", default=None,
-                    help="build output dir (default: <source-root>/build64/RelWithDebInfo)")
-    ap.add_argument("--exe-name", default="mc2.exe",
-                    help="exe filename (default mc2.exe; editor lane differs)")
+                    help="build output dir (default: <source-root>/build64/RelWithDebInfo, "
+                    "or the preset's build dir with --target)")
+    ap.add_argument("--exe-name", default=None,
+                    help="exe filename (default mc2.exe, or the preset's exe "
+                    "with --target)")
     ap.add_argument("--allow-stale-pdb", action="store_true",
                     help="downgrade PDB staleness to a warning")
     ap.add_argument("--verify-only", action="store_true",
@@ -297,7 +332,17 @@ def main():
                     help="with --verify-only: drift = nonzero exit")
     args = ap.parse_args()
 
-    target = os.path.abspath(args.target)
+    preset = TARGET_PRESETS.get(args.target) if args.target else None
+    target_dir = args.target_dir or (preset and preset["target_dir"])
+    if not target_dir:
+        ap.error("a target dir is required: pass it positionally or via "
+                 "--target game|editor")
+    exe_name = args.exe_name or (preset["exe_name"] if preset else "mc2.exe")
+    if preset:
+        log(f"preset '{args.target}': target {preset['target_dir']}, "
+            f"exe {preset['exe_name']}, build {preset['build_subdir']}")
+
+    target = os.path.abspath(target_dir)
     if args.verify_only:
         sys.exit(verify_only(target, args.strict))
 
@@ -306,15 +351,17 @@ def main():
              "targets — wrong-target trap, Mistake C)")
 
     src_root = os.path.abspath(args.source_root)
-    build_dir = args.build_dir or os.path.join(src_root, "build64", "RelWithDebInfo")
-    pdb_name = os.path.splitext(args.exe_name)[0] + ".pdb"
+    default_subdir = (preset["build_subdir"] if preset
+                      else os.path.join("build64", "RelWithDebInfo"))
+    build_dir = args.build_dir or os.path.join(src_root, default_subdir)
+    pdb_name = os.path.splitext(exe_name)[0] + ".pdb"
 
     log(f"source root: {src_root}")
     log(f"build dir:   {build_dir}")
     log(f"target:      {target}")
 
-    check_locks(target, args.exe_name)
-    items = enumerate_payload(src_root, build_dir, args.exe_name, pdb_name)
+    check_locks(target, exe_name)
+    items = enumerate_payload(src_root, build_dir, exe_name, pdb_name)
     log(f"payload: {len(items)} files "
         f"({sum(1 for *_x, k in items if k == 'shader')} shaders)")
     hashes = deploy(items, target, args.allow_stale_pdb)
