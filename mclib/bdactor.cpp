@@ -3040,6 +3040,26 @@ namespace {
 		if (gestureId < 0 || gestureId >= MAX_BD_ANIMATIONS) return false;
 		return t->bdAnimData[gestureId] != nullptr;
 	}
+
+	// Type-level "has continuous IDLE motion that bypasses bdAnimationState".
+	// These move even at bdAnimationState==-1, so the per-gesture guard in
+	// isStaticEligible() (which only inspects the CURRENT gesture) misses them
+	// and the type would wrongly freeze. Two sources:
+	//   - rotationalNodeId != "NONE": a turret/dish node spun every update via
+	//     SetNodeRotation, independent of gesture state.
+	//   - a LOOPING bdAnimData slot: ambient loops (generator spin, blinking
+	//     lights) run continuously. Non-looping slots are one-shot gestures
+	//     (gate open/close) that idle at state -1 and stay static-eligible.
+	// Destruct is NOT here: destruction is a separate destructFX GOSFX (already
+	// disqualified in isStaticEligible) that wakes the building on death.
+	bool bldgTypeHasContinuousIdle(const BldgAppearanceType* t) {
+		if (!t) return false;
+		if (S_stricmp(t->rotationalNodeId, "NONE") != 0) return true;
+		for (long i = 0; i < MAX_BD_ANIMATIONS; ++i) {
+			if (t->bdAnimData[i] != nullptr && t->bdAnimLoop[i]) return true;
+		}
+		return false;
+	}
 } // anon namespace
 
 bool BldgAppearance::isStaticEligible() const
@@ -3047,6 +3067,14 @@ bool BldgAppearance::isStaticEligible() const
 	// Type-level disqualifiers.
 	if (!appearType)        return false;
 	if (appearType->spinMe) return false;
+	// STATIC-IDLE-ANIM-FIX-1 (nifty): continuous idle motion that bypasses the
+	// per-gesture guard below — turret/dish node rotation (rotationalNodeId) or
+	// a looping ambient anim slot (generator spin, blinking lights). These run
+	// at bdAnimationState==-1, so the gesture check misses them and the type
+	// would wrongly freeze. Always-on correctness gate (closes the under-freeze
+	// gap that bldgTypeHasAnimations over-covered): one-shot-gesture buildings
+	// (gates, doors) stay static-eligible; genuinely-idle-animated ones do not.
+	if (bldgTypeHasContinuousIdle(appearType)) return false;
 	// BLDG-TYPE-ANIM-GATE-FIX-1 (nifty): legacy type-level animation-capacity
 	// check. Kill-switch MC2_BLDG_TYPE_ANIM_STATIC_ELIGIBLE=0 restores old
 	// behaviour. When enabled (default), the bdAnimationState guard below is
