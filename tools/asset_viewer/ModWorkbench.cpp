@@ -89,7 +89,8 @@ bool ModWorkbench::hasBlocking() const {
 }
 
 ExportResult ModWorkbench::exportBundle(const std::string& outRoot, const std::string& bundleId){
-    revalidate();
+    revalidateWithTextures();   // texture-aware gate, consistent with the panel
+
     if (hasBlocking()){ ExportResult r; r.message="fix BLOCK warnings before export"; return r; }
     return ExportBundle(outRoot, bundleId, overridePath_, record_);
 }
