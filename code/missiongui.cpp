@@ -3535,7 +3535,14 @@ void MissionInterfaceManager::initTacMap( PacketFile* file, int packet )
 	int size = file->getPacketSize( );
 	BYTE* mem = new BYTE[size];
 
-	file->readPacket( packet, mem );
+	// readPacket can return short on a transient _read failure; consuming the
+	// uninitialized buffer then walks a garbage buildingCount off the heap
+	// (one-off crash 2026-06-11, GameTacMap::initBuildings READ AV).
+	if ( file->readPacket( packet, mem ) != size )
+	{
+		printf("[TACMAP] readPacket(%d) short read (expected %d) -- zeroing buffer\n", packet, size);
+		memset( mem, 0, size );
+	}
 
 	controlGui.initTacMapBuildings( mem, size );
 	delete[] mem;
@@ -3544,7 +3551,11 @@ void MissionInterfaceManager::initTacMap( PacketFile* file, int packet )
 	size = file->getPacketSize( );
 	mem = new BYTE[size];
 
-	file->readPacket( packet + 1, mem );
+	if ( file->readPacket( packet + 1, mem ) != size )
+	{
+		printf("[TACMAP] readPacket(%d) short read (expected %d) -- zeroing buffer\n", packet + 1, size);
+		memset( mem, 0, size );
+	}
 
 	controlGui.initTacMap( mem, size );
 	delete[] mem;
