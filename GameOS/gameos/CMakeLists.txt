@@ -16,6 +16,7 @@ set(SOURCES ${SOURCES}
     gos_static_prop_batcher.cpp
     gos_static_prop_registry.cpp
     gos_particle_bridge.cpp
+    gos_vfx_mesh_bridge.cpp
     gos_cardcloud_sim.cpp
     gos_mech_batcher.cpp
     gos_object_recon_tracy.cpp

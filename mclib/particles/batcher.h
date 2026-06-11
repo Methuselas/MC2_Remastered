@@ -90,6 +90,14 @@ class Batcher {
     static bool is_oracle_tube_enabled();
     // MC2_VFX_ORACLE_TUBE_LOG: per-Tube ribbon submit counters (default OFF).
     static bool is_oracle_tube_log_enabled();
+    // MC2_VFX_ORACLE_SHAPE (default OFF). When ON, gosFX::Shape::Draw harvests
+    // its single rigid MLRShape (model-space verts/UVs/indices + per-primitive
+    // texture + alpha mode) and submits through the persistent-mesh VFX bridge
+    // (gos_vfx_mesh_flush) instead of MLRClipper::DrawScalableShape. Opt-in =1;
+    // any other / absent value = legacy path unchanged. Shape class ONLY.
+    static bool is_oracle_shape_enabled();
+    // MC2_VFX_ORACLE_SHAPE_LOG=1 — FIRST_HARVEST line + 240-call summary.
+    static bool is_oracle_shape_log_enabled();
 
     // Open a new texture group before emitting a batch of particles that
     // share the same texture and UV sub-rect. Must be called at least once

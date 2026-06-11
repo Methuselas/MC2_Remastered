@@ -191,11 +191,39 @@ bool Batcher::is_oracle_tube_enabled() {
     return s_val;
 }
 
+// MC2_VFX_ORACLE_SHAPE: GPU mesh-effect substrate for gosFX::Shape (default
+// OFF). Opt-in =1. Read once, process-lifetime (debug_instrumentation_rule.md
+// idiom — same as is_oracle_render_enabled but DEFAULT OFF this slice).
+bool Batcher::is_oracle_shape_enabled() {
+    static bool s_init = false;
+    static bool s_val  = false;
+    if (!s_init) {
+        const char* v = std::getenv("MC2_VFX_ORACLE_SHAPE");
+        s_val  = (v && v[0] == '1');
+        s_init = true;
+        std::fprintf(stderr, "[VFX_MESH v1] oracle_shape=%s\n",
+                     s_val ? "on" : "off");
+        std::fflush(stderr);
+    }
+    return s_val;
+}
+
 bool Batcher::is_oracle_tube_log_enabled() {
     static bool s_init = false;
     static bool s_val  = false;
     if (!s_init) {
         const char* v = std::getenv("MC2_VFX_ORACLE_TUBE_LOG");
+        s_val  = (v && v[0] == '1');
+        s_init = true;
+    }
+    return s_val;
+}
+
+bool Batcher::is_oracle_shape_log_enabled() {
+    static bool s_init = false;
+    static bool s_val  = false;
+    if (!s_init) {
+        const char* v = std::getenv("MC2_VFX_ORACLE_SHAPE_LOG");
         s_val  = (v && v[0] == '1');
         s_init = true;
     }
