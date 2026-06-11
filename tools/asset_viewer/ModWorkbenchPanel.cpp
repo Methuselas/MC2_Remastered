@@ -34,9 +34,14 @@ void ModWorkbenchPanel::draw(ModWorkbench& wb, const ImVec2& avail) {
 
     ImGui::Text("Override: %s", wb.overridePath().c_str());
 
-    static char tgl[256] = "data/tgl/2civliving.tgl";
-    ImGui::InputText("Stock .tgl", tgl, sizeof(tgl));
-    if (ImGui::Button("Bind stock")) wb.bindStock(tgl);
+    ImGui::TextUnformatted("Stock prop (click to bind):");
+    stockBrowser_.draw();   // filter box + scrollable .tgl list; tooltip shows full path
+    if (stockBrowser_.hasSelection()) {
+        std::string pick = stockBrowser_.takeSelection();
+        wb.bindStock(pick);
+    }
+    if (wb.hasStock())
+        ImGui::TextDisabled("bound stock: %s", wb.stockMesh().ok ? "ok" : "--");
 
     if (wb.generation() != lastSyncedGen_) {
         syncMeshes(wb);

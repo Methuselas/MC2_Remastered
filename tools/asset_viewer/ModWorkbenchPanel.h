@@ -4,6 +4,7 @@
 #include "ModWorkbench.h"
 #include "MeshPreview3D.h"
 #include "AppearanceRoster.h"
+#include "ModelBrowser.h"
 #include <cstdint>
 #include <string>
 
@@ -24,4 +25,5 @@ private:
     AppearanceRoster roster_;
     char             apFilter_[128] = {0};   // appearance combo filter
     std::string      deployDir_ = ".";       // remembered for roster load/refresh
+    ModelBrowser     stockBrowser_;
 };
