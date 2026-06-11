@@ -141,6 +141,12 @@ class TerrainQuad
 		// !IsFrameMineArmed(). Writes quad.mineResult and reserves addTriangleBulk
 		// slots for all mine-bearing tiles in the visible quadList.
 		static void enqueueMinesFromGrid (TerrainQuadPtr quadList, long count);
+
+		// A5 / R7 fix: load the mine + scorch texture handles (mineTextureHandle /
+		// blownTextureHandle) at mission-prime time, independent of setupTextures()
+		// which Phase 8z removes. Idempotent (0xffffffff-guarded). Called once from
+		// Terrain::primeMissionTerrainCache.
+		static void initMineTextureHandles (void);
 };
 
 //---------------------------------------------------------------------------

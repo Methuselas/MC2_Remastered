@@ -681,6 +681,28 @@ static void addTerrainTriangles(const TerrainRecipe& r)
 	}
 }
 
+void TerrainQuad::initMineTextureHandles (void)
+{
+	// A5 / R7: ensure the mine + scorch texture handles are loaded at mission-prime
+	// time so they are valid even when TerrainQuad::setupTextures never runs (Phase 8z
+	// removes setupTextures; its inline lazy-load was the ONLY loader, so deleting it
+	// would leave the handles at 0xffffffff -> BuildMineTextureArray bails -> mine
+	// tiles render black forever). The 0xffffffff guards make this idempotent.
+	if (mineTextureHandle == 0xffffffff)
+	{
+		FullPathFileName mineTextureName;
+		mineTextureName.init(texturePath,"defaults" PATH_SEPARATOR "mine_00",".tga");
+		mineTextureHandle = mcTextureManager->loadTexture(mineTextureName,gos_Texture_Alpha,gosHint_DisableMipmap | gosHint_DontShrink, 0, 0x1);
+	}
+
+	if (blownTextureHandle == 0xffffffff)
+	{
+		FullPathFileName mineTextureName;
+		mineTextureName.init(texturePath,"defaults" PATH_SEPARATOR "minescorch_00",".tga");
+		blownTextureHandle = mcTextureManager->loadTexture(mineTextureName,gos_Texture_Alpha,gosHint_DisableMipmap | gosHint_DontShrink, 0, 0x1);
+	}
+}
+
 void TerrainQuad::setupTextures (void)
 {
 	CostSplitSetupTotalScope _csSetup; // 1A-alt Slice 0 follow-up — full-function bucket

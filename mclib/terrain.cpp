@@ -970,6 +970,11 @@ void Terrain::primeMissionTerrainCache (volatile float& progress, float progress
 	// cycle).
 	gos_terrain_indirect::ResetMineStaticVBO();
 	gos_terrain_indirect::ResetMineTextureArray();
+	// A5 / R7 fix: load the mine + scorch texture HANDLES now (NOT the VBO — that stays
+	// deferred per the comment above to avoid the R7 build-timing trap). This decouples
+	// handle availability from TerrainQuad::setupTextures so mines still render after
+	// Phase 8z removes the per-quad setupTextures load. Idempotent (0xffffffff-guarded).
+	TerrainQuad::initMineTextureHandles();
 
 	// Slice A — cement-overlay static-bake lifecycle. CPU-clear only; do NOT
 	// build here. Mirrors the mine R7 timing-trap mitigation EXACTLY: the
