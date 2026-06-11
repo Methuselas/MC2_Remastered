@@ -18,6 +18,167 @@ ForceGroupBar.cpp			: Implementation of the ForceGroupBar component.
 #include"comndr.h"
 #include"prefs.h"
 #include"gamesound.h"
+#include"gamecam.h"   // Camera::projectForScreenXY for the overview icon overlay
+
+// Draw one source cell of the force-bar icon atlas into a screen rect, using a
+// LOCAL vertex buffer (never ForceGroupIcon::bmpLocation — touching that shared
+// HUD buffer makes the real force-bar icons draw in the wrong place). Replicates
+// the UV math from ForceGroupIcon::renderUnitIcon / renderUnitIconBack.
+static void drawOverviewIconCell( int xIndex, int yIndex, unsigned long texHandle,
+                                  float uIX, float uIY, float texW, float texH,
+                                  float l, float t, float r, float b, unsigned long argb )
+{
+	const float u  = xIndex * uIX / texW + (0.1f / 256.f);
+	const float v  = yIndex * uIY / texH + (0.1f / 256.f);
+	const float uD = uIX / texW + (0.1f / 256.f);
+	const float vD = uIY / texH + (0.1f / 256.f);
+
+	gos_SetRenderState( gos_State_Texture, texHandle );
+	// Additive blend keys out the icon's black background (black adds nothing);
+	// the mech silhouette adds onto the scene. Vertex RGB scales the texel, so
+	// the caller fades by scaling argb's RGB channels.
+	gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_OneOne );
+	gos_SetRenderState( gos_State_Filter, gos_FilterNone );
+	gos_SetRenderState( gos_State_AlphaTest, false );
+
+	gos_VERTEX vv[5];
+	for ( int k = 0; k < 5; ++k ) { vv[k].argb = argb; vv[k].frgb = 0; vv[k].z = 0; vv[k].rhw = .5f; }
+	vv[0].u = vv[1].u = u;        vv[2].u = vv[3].u = u + uD;
+	vv[0].v = vv[3].v = v;        vv[1].v = vv[2].v = v + vD;
+	vv[0].x = vv[1].x = l;        vv[2].x = vv[3].x = r;
+	vv[0].y = vv[3].y = t;        vv[1].y = vv[2].y = b;
+	vv[4] = vv[0];
+	gos_DrawTriangles( vv, 3 );
+	gos_DrawTriangles( &vv[2], 3 );
+}
+
+void ForceGroupBar::renderOverviewIcons( Camera* eye, float alpha )
+{
+	if ( !eye || alpha <= 0.0f || !ForceGroupIcon::s_textureMemory )
+		return;
+
+	// Collect visible units: true projected point (tx,ty) + working chip center.
+	struct OvChip { ForceGroupIcon* ic; float tx, ty, cx, cy; };
+	OvChip chip[MAX_ICONS];
+	int n = 0;
+	for ( int i = 0; i < iconCount && n < MAX_ICONS; i++ )
+	{
+		ForceGroupIcon* ic = icons[i];
+		if ( !ic || !ic->unit ) continue;
+		if ( ic->unit->isDestroyed() || ic->unit->isDisabled() ) continue;
+		Stuff::Vector3D wp = ic->unit->getPosition();
+		// Project through the SAME GL clip matrix the GPU renders the mechs with
+		// (worldToClipGL). The default projectForScreenXY routes through the
+		// legacy projectZ/cameraToClip path, which disagrees with the GL render
+		// under camera motion (D3D<->GL split-brain) and made the icons lag/tear
+		// while panning. projectModernClipGL + manual viewport remap stays locked
+		// to the rendered units.
+		ModernClipResult r = eye->projectModernClipGL( wp );
+		if ( !r.admit || r.clip.w <= 0.05f ) continue;	// behind near plane / outside frustum
+		float vmx, vmy, vax, vay;
+		gos_GetViewport( &vmx, &vmy, &vax, &vay );
+		float ndcX = r.clip.x / r.clip.w;
+		float ndcY = r.clip.y / r.clip.w;
+		float sx = vax + ( ndcX * 0.5f + 0.5f ) * vmx;
+		float sy = vay + ( 1.0f - ( ndcY * 0.5f + 0.5f ) ) * vmy;
+		chip[n].ic = ic; chip[n].tx = chip[n].cx = sx; chip[n].ty = chip[n].cy = sy;
+		n++;
+	}
+	if ( n == 0 ) return;
+
+	// De-overlap: iteratively push apart chips whose rects collide. Resolve along
+	// the axis of smaller penetration so chips slide minimally off their units.
+	const float chipW = 36.0f, chipH = 32.0f;
+	const float sepX = chipW + 6.0f, sepY = chipH + 14.0f; // extra Y for the label
+	for ( int pass = 0; pass < 16; ++pass )
+		for ( int a = 0; a < n; a++ )
+			for ( int b = a + 1; b < n; b++ )
+			{
+				float dx = chip[b].cx - chip[a].cx, dy = chip[b].cy - chip[a].cy;
+				float adx = dx < 0 ? -dx : dx, ady = dy < 0 ? -dy : dy;
+				float ox = sepX - adx, oy = sepY - ady;
+				if ( ox > 0 && oy > 0 )
+				{
+					if ( ox < oy ) { float p = (ox * 0.5f + 0.5f) * (dx < 0 ? -1.f : 1.f); chip[a].cx -= p; chip[b].cx += p; }
+					else           { float p = (oy * 0.5f + 0.5f) * (dy < 0 ? -1.f : 1.f); chip[a].cy -= p; chip[b].cy += p; }
+				}
+			}
+
+	unsigned long aByte = (unsigned long)(alpha * 255.0f);
+	if ( aByte > 255 ) aByte = 255;
+	const unsigned long aBits = aByte << 24;
+
+	// These icons are world-anchored (true screen positions from the GL
+	// projection), NOT bottom-band HUD chrome — exempt them from the s_hud_scale
+	// shrink that flushHUDBatch applies below 0.6*height. Without this, icons in
+	// the lower screen jump/scale at that boundary while panning (same HUD-fit
+	// boundary the cursor/dialogs are exempted from).
+	const bool prevHudExempt = gos_GetHudScaleExempt();
+	gos_SetHudScaleExempt( true );
+
+	// Leader lines from the true unit position to displaced chips.
+	gos_SetRenderState( gos_State_Texture, 0 );
+	gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_AlphaInvAlpha );
+	gos_SetRenderState( gos_State_AlphaTest, 0 );
+	gos_SetRenderState( gos_State_ZCompare, 0 );
+	gos_SetRenderState( gos_State_ZWrite, 0 );
+	for ( int i = 0; i < n; i++ )
+	{
+		float ddx = chip[i].cx - chip[i].tx, ddy = chip[i].cy - chip[i].ty;
+		if ( ddx * ddx + ddy * ddy < 16.0f ) continue;	// not displaced
+		unsigned long lc = aBits | ( chip[i].ic->unit->getSelected() ? 0x004bff4b : 0x0000aa00 );
+		gos_VERTEX ln[2];
+		for ( int k = 0; k < 2; ++k ) { ln[k].z = 0; ln[k].rhw = .5f; ln[k].argb = lc; ln[k].frgb = 0; ln[k].u = ln[k].v = 0; }
+		ln[0].x = chip[i].tx; ln[0].y = chip[i].ty;
+		ln[1].x = chip[i].cx; ln[1].y = chip[i].cy + chipH * 0.5f;
+		gos_DrawLines( ln, 2 );
+	}
+
+	// Icon chips (back frame + unit icon) replicated into local verts.
+	const float texW = (float)ForceGroupIcon::s_textureMemory->width;
+	const float texH = (float)ForceGroupIcon::s_textureMemory->height;
+	const float uIX  = ForceGroupIcon::unitIconX;
+	const float uIY  = ForceGroupIcon::unitIconY;
+	const int perLine     = (int)( texW / uIX );
+	const int iconsPerPage = (int)( texW / uIY );
+	// Additive: RGB scales the texel, so encode the cross-fade in RGB (not alpha).
+	const unsigned long iconArgb = 0xff000000 | (aByte << 16) | (aByte << 8) | aByte;
+
+	HGOSFONT3D font = ForceGroupIcon::gosFontHandle ? ForceGroupIcon::gosFontHandle->getTempHandle() : 0;
+
+	for ( int i = 0; i < n; i++ )
+	{
+		const float l = chip[i].cx - chipW * 0.5f, r = chip[i].cx + chipW * 0.5f;
+		const float t = chip[i].cy - chipH * 0.5f, b = chip[i].cy + chipH * 0.5f;
+
+		// Back frame omitted: it is the solid black box. With additive blending
+		// the black would be invisible anyway, and skipping it keeps the overlay
+		// clean (just the mech silhouette over the terrain).
+
+		// Unit icon (may live on a later atlas page).
+		int di = chip[i].ic->damageIconIndex;
+		int yIndex = di / perLine, texIndex = 0;
+		if ( yIndex >= iconsPerPage ) { texIndex = yIndex / iconsPerPage; yIndex = yIndex % iconsPerPage; }
+		drawOverviewIconCell( di % perLine, yIndex, ForceGroupIcon::s_textureHandle[texIndex],
+		                      uIX, uIY, texW, texH, l, t, r, b, iconArgb );
+
+		// Short name label under the chip (de-overlapped already).
+		const char* nm = chip[i].ic->unit->getName();
+		if ( font && nm && nm[0] )
+		{
+			const int lx = (int)( chip[i].cx - chipW * 0.5f );
+			const int ly = (int)( b + 1.0f );
+			gos_TextSetAttributes( font, aBits | 0x00000000, 1.0f, false, true, false, false );
+			gos_TextSetPosition( lx + 1, ly + 1 );
+			gos_TextDraw( nm );
+			gos_TextSetAttributes( font, aBits | 0x00ffffff, 1.0f, false, true, false, false );
+			gos_TextSetPosition( lx, ly );
+			gos_TextDraw( nm );
+		}
+	}
+
+	gos_SetHudScaleExempt( prevHudExempt );
+}
 
 float ForceGroupBar::iconWidth = 48;
 float ForceGroupBar::iconHeight = 42;

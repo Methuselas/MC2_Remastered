@@ -17,6 +17,7 @@ class ForceGroupIcon;
 class Mover;
 class MechWarrior;
 class StaticInfo;
+class Camera;
 
 #define MAX_ICONS 16
 
@@ -41,6 +42,10 @@ class ForceGroupBar
 		void removeMover (Mover* mover);
 		void update();
 		void render();
+
+		// Tactical Overview: draw each unit's HUD icon over its world position on
+		// the main 3D screen. alpha is the overview cross-fade [0,1].
+		void renderOverviewIcons( Camera* eye, float alpha );
 
 		void removeAll();
 

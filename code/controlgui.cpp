@@ -6,6 +6,7 @@ controlGui.cpp			: Implementation of the controlGui component.
 \*************************************************************************************************/
 
 #include"controlgui.h"
+#include"tacticaloverview.h"  // Tactical Overview: strategic-icon overlay
 #include"team.h"
 #include"gamesound.h"
 #include"comndr.h"
@@ -321,6 +322,11 @@ void ControlGui::render( bool bPaused )
 		{
 			drawRect( rectInfos[i].rect, rectInfos[i].color );
 		}
+
+		// Tactical Overview: draw each unit's HUD icon over its world position on
+		// the main screen whenever the overview is active.
+		if ( g_tacticalOverview.active() )
+			forceGroupBar.renderOverviewIcons( eye, g_tacticalOverview.iconAlpha() );
 
 		if ( getButton( TACMAP_TAB )->state & ControlButton::PRESSED )
 			tacMap.render();

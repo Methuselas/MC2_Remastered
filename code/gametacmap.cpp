@@ -395,7 +395,8 @@ void GameTacMap::render()
 void GameTacMap::worldToTacMap( Stuff::Vector3D& world, gos_VERTEX& tac )
 {
 	TacMap::worldToTacMap( world, left, top, right - left, bottom - top, tac );
-}	
+}
+
 void GameTacMap::initBuildings( unsigned char* data, int size )
 {
 	if ( data )

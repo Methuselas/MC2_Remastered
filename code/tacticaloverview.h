@@ -29,6 +29,7 @@ public:
     void notifyUserPan() { if (state_.active()) userPannedInOverview_ = true; }
 
     float blend() const { return state_.t(); }
+    float iconAlpha() const { return state_.iconAlpha(); }  // overlay fade
     float setpoint() const { return state_.setpoint(); }   // diagnostic
     int   hotkeyFires() const { return hotkeyFires_; }      // diagnostic
     bool  active() const { return state_.active(); }
