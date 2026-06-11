@@ -1795,6 +1795,83 @@ int AssetViewerApp::runSmokeBackendARender(const char* deployDir, const char* sh
     return rc;
 }
 
+// ---------------------------------------------------------------------------
+// runSmokeBackendAFallback — Backend-A v2 Task 7: fail-open guarantee.
+// Forces Backend-A shader build to fail (nonexistent shader root), then proves
+// Backend-B (MeshPreview3D) still renders a non-empty frame on the same prop.
+// ---------------------------------------------------------------------------
+int AssetViewerApp::runSmokeBackendAFallback(const char* deployDir)
+{
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+
+    // Headless GL 4.3 context (copy from runSmokeBackendARender)
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+        std::fprintf(stderr, "[smoke] FAIL backend-a-fallback: SDL_Init: %s\n", SDL_GetError());
+        return 1;
+    }
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_Window* win = SDL_CreateWindow("smoke-backend-a-fallback", 0, 0, 64, 64,
+        SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+    if (!win) {
+        SDL_Quit();
+        std::fprintf(stderr, "[smoke] FAIL backend-a-fallback: hidden window: %s\n", SDL_GetError());
+        return 1;
+    }
+    SDL_GLContext gl = SDL_GL_CreateContext(win);
+    if (!gl) {
+        SDL_DestroyWindow(win); SDL_Quit();
+        std::fprintf(stderr, "[smoke] FAIL backend-a-fallback: gl context: %s\n", SDL_GetError());
+        return 1;
+    }
+    SDL_GL_MakeCurrent(win, gl);
+    glewExperimental = GL_TRUE;
+    if (glewInit() != GLEW_OK) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        std::fprintf(stderr, "[smoke] FAIL backend-a-fallback: glewInit\n");
+        return 1;
+    }
+    glGetError(); // consume glew's spurious error
+
+    const char* PROP = "data/tgl/2civliving.tgl";
+
+    int rc = 0;
+    {
+        ModelPreviewEngineShader a;
+        a.setShaderRoot("___nonexistent_shader_root___");   // force resolve/compile failure
+        a.setDeployDir(deployDir);
+        a.setSource(PROP);
+        std::vector<uint8_t> apx;
+        a.renderToPixels(128, 128, apx);
+        bool aFailed = !a.ok() && !a.report().lastError.empty();   // A failed AND recorded it
+
+        MeshPreview3D b;                                            // the fail-open target
+        b.setDeployDir(deployDir);
+        b.setSource(PROP);
+        std::vector<uint8_t> bpx;
+        bool bRendered = b.renderToPixels(128, 128, bpx);
+        bool bNonEmpty = false;
+        for (size_t i = 4; bRendered && i + 3 < bpx.size(); i += 4)
+            if (bpx[i] != bpx[0] || bpx[i+1] != bpx[1] || bpx[i+2] != bpx[2]) {
+                bNonEmpty = true; break;
+            }
+
+        bool ok = aFailed && bRendered && bNonEmpty;
+        printf("[smoke] backend-a-fallback %s (aFailed=%d bNonEmpty=%d)\n",
+               ok ? "PASS" : "FAIL", (int)aFailed, (int)bNonEmpty);
+        if (!a.report().lastError.empty())
+            std::fprintf(stderr, "[smoke] backend-a error (expected): %s\n",
+                         a.report().lastError.c_str());
+        rc = ok ? 0 : 1;
+    }
+
+    SDL_GL_DeleteContext(gl);
+    SDL_DestroyWindow(win);
+    SDL_Quit();
+    return rc;
+}
+
 void AssetViewerApp::onFileDropped(const char* path){
     if (!path) return;
     std::string p = path, low = p; for (char& c: low) c=(char)tolower((unsigned char)c);
