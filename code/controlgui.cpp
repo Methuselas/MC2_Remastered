@@ -12,6 +12,8 @@ controlGui.cpp			: Implementation of the controlGui component.
 #include"mover.h"
 // Squad-level overview move arrow (defined in warrior.cpp).
 void drawOverviewArrowWorld( const Stuff::Vector3D& from, const Stuff::Vector3D& to, unsigned long color );
+extern HGOSFONT3D gosFontHandle;   // global font for sensor-view range labels
+extern float worldUnitsPerMeter;   // sensor range is in world units; /this = meters
 #include"team.h"
 #include"gamesound.h"
 #include"comndr.h"
@@ -311,6 +313,109 @@ bool ControlGui::animateTacMap (int buttonId,float timeToScroll,long numFlashes)
 	return tacMap.animate(abs(buttonId), numFlashes);
 }
 
+// Sensor view: standalone toggle (F7), works at all zooms. Draws sensor coverage
+// rings on the ground — green = friendly, red = enemy — with the range labeled
+// on the rim.
+bool g_sensorViewOn = true;   // default ON (toggle with F7)
+
+static void drawSensorRing( Camera* eye, const Stuff::Vector3D& center, float radius,
+                            unsigned long rgb, unsigned long aBits )
+{
+	if ( radius < 1.0f ) return;
+	const int N = 48;
+	float px[N + 1], py[N + 1];
+	bool  ok[N + 1];
+	float vmx, vmy, vax, vay;
+	gos_GetViewport( &vmx, &vmy, &vax, &vay );
+
+	int firstOk = -1;
+	for ( int i = 0; i <= N; i++ )
+	{
+		float a = ( 2.0f * 3.14159265f ) * (float)( i % N ) / (float)N;
+		Stuff::Vector3D p;
+		p.x = center.x + cosf( a ) * radius;
+		p.y = center.y + sinf( a ) * radius;
+		p.z = land ? land->getTerrainElevation( p ) : 0.0f;
+		ModernClipResult r = eye->projectModernClipGL( p );
+		// Only require "in front of camera" (w>0), NOT frustum admission — a
+		// large ring is bigger than the view, so most points are off-screen but
+		// the on-screen arc must still draw (the GPU clips the line segments).
+		ok[i] = ( r.clip.w > 0.05f );
+		if ( ok[i] )
+		{
+			px[i] = vax + ( r.clip.x / r.clip.w * 0.5f + 0.5f ) * vmx;
+			py[i] = vay + ( 1.0f - ( r.clip.y / r.clip.w * 0.5f + 0.5f ) ) * vmy;
+			if ( firstOk < 0 ) firstOk = i;
+		}
+	}
+	if ( firstOk < 0 ) return;
+
+	unsigned long col = aBits | rgb;
+	gos_SetRenderState( gos_State_Texture, 0 );
+	gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_AlphaInvAlpha );
+	gos_SetRenderState( gos_State_AlphaTest, 0 );
+	gos_SetRenderState( gos_State_ZCompare, 0 );
+	gos_SetRenderState( gos_State_ZWrite, 0 );
+	for ( int i = 0; i < N; i++ )
+	{
+		if ( !ok[i] || !ok[i + 1] ) continue;
+		gos_VERTEX ln[2];
+		for ( int v = 0; v < 2; ++v ) { ln[v].z = 0; ln[v].rhw = .5f; ln[v].argb = col; ln[v].frgb = 0; ln[v].u = ln[v].v = 0; }
+		ln[0].x = px[i];     ln[0].y = py[i];
+		ln[1].x = px[i + 1]; ln[1].y = py[i + 1];
+		gos_DrawLines( ln, 2 );
+	}
+
+	// Range label on the rim (top of the circle, ring index N/4 = +y).
+	int li = N / 4;
+	if ( ok[li] && gosFontHandle )
+	{
+		char buf[16];
+		sprintf( buf, "%.0fm", radius / worldUnitsPerMeter );	// world units -> meters
+		gos_TextSetAttributes( gosFontHandle, aBits | 0x00000000, 1.0f, false, true, false, false );
+		gos_TextSetPosition( (int)px[li] + 1, (int)py[li] + 1 );
+		gos_TextDraw( buf );
+		gos_TextSetAttributes( gosFontHandle, aBits | rgb, 1.0f, false, true, false, false );
+		gos_TextSetPosition( (int)px[li], (int)py[li] );
+		gos_TextDraw( buf );
+	}
+}
+
+static void renderSensorView( Camera* eye )
+{
+	if ( !eye || !Team::home || !ObjectManager ) return;
+	const unsigned long aBits = 0xcc000000;	// ~80% alpha
+	bool prevExempt = gos_GetHudScaleExempt();
+	gos_SetHudScaleExempt( true );
+
+	// One ring per unit, from its own sensor (same data the minimap uses):
+	// green = friendly, red = detected enemy. Radius is the world-unit range.
+	for ( int i = 0; i < ObjectManager->numMovers; i++ )
+	{
+		MoverPtr m = ObjectManager->getMover( i );
+		if ( !m || !m->getExists() || m->isDestroyed() || m->isDisabled() ) continue;
+		SensorSystem* es = m->getSensorSystem();
+		float rangeMeters = es ? es->getRange() : 0.0f;	// sensor range, in meters
+		if ( rangeMeters < 10.0f || es->broken ) continue;	// suppress units with no real sensor
+		if ( m->getStatus() == OBJECT_STATUS_SHUTDOWN ) continue;
+
+		float radiusWorld = rangeMeters * worldUnitsPerMeter;	// ground ring radius (world units)
+
+		if ( m->getTeamId() == Team::home->id )
+		{
+			drawSensorRing( eye, m->getPosition(), radiusWorld, 0x0000cc00, aBits );	// friendly green
+		}
+		else
+		{
+			long contactStatus = m->getContactStatus( Team::home->getId(), true );
+			if ( contactStatus == CONTACT_NONE ) continue;	// only detected enemies
+			drawSensorRing( eye, m->getPosition(), radiusWorld, 0x00ff2020, aBits );	// enemy red
+		}
+	}
+
+	gos_SetHudScaleExempt( prevExempt );
+}
+
 // Tactical Overview friendly-coverage tint: darken the whole battlefield
 // slightly EXCEPT where friendly sensors have line of sight (inverted fog).
 // Screen-cell grid; each cell maps to a ground point via the O(1)
@@ -468,6 +573,10 @@ void ControlGui::render( bool bPaused )
 
 		// Tactical Overview: draw each unit's HUD icon over its world position on
 		// the main screen whenever the overview is active, plus objective markers.
+		// Sensor view: standalone overlay (F7), independent of the overview zoom.
+		if ( g_sensorViewOn )
+			renderSensorView( eye );
+
 		if ( g_tacticalOverview.active() )
 		{
 			// Altitude-driven overlay stages (independent of the abstract blend t):
