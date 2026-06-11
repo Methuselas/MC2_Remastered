@@ -49,6 +49,7 @@ public:
     static int runSmokeTextureMissingWarn(const char* fixtureDir);  // S5
     static int runSmokeLodEditValidate();  // S5
     static int runSmokeCentralMergePreserve(const char* fixtureDir, const char* tmpDir);  // S5
+    static int runSmokeShaderInclude(const char* fixtureDir);  // Backend-A v2
 private:
     FileBrowser browser_;
     AssetTypeSidebar sidebar_;

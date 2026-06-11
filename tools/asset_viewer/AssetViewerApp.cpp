@@ -24,6 +24,7 @@
 #include "TextureMetadata.h"
 #include "TexturePreview2D.h"
 #include "Ktx2Decoder.h"
+#include "ShaderIncludeResolver.h"
 #include <SDL.h>
 #include <GL/glew.h>
 #include <cmath>
@@ -1557,6 +1558,22 @@ int AssetViewerApp::runSmokeCentralMergePreserve(const char* fixtureDir, const c
         ok &= g.count()==1 && g.resolve("staticProp","propFresh")!=nullptr;
     }
     printf("[smoke] central-merge-preserve %s\n", ok ? "PASS" : "FAIL");
+    return ok ? 0 : 1;
+}
+
+int AssetViewerApp::runSmokeShaderInclude(const char* fixtureDir) {
+    std::string root = std::string(fixtureDir) + "/shaderinc";
+    ShaderResolveResult r = ResolveShaderIncludes(root, "root.glsl");
+    bool ok = r.ok
+           && r.source.find("#include") == std::string::npos
+           && r.source.find("b_val") != std::string::npos
+           && r.source.find("a_val") != std::string::npos
+           && r.includedFiles.size() == 3
+           && r.unresolved.empty();
+    ShaderResolveResult c = ResolveShaderIncludes(root, "inc/cycle.hglsl");
+    ok &= (!c.error.empty());
+    printf("[smoke] shader-include %s (includes=%zu)\n", ok ? "PASS" : "FAIL",
+           r.includedFiles.size());
     return ok ? 0 : 1;
 }
 
