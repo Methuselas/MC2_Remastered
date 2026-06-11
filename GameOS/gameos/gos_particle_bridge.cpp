@@ -588,6 +588,41 @@ extern "C" void gos_tube_ribbon_flush_deferred(void) {
         return;
     }
 
+    // MC2_TUBE_DEFER_PROBE=1: one-shot dump of the inherited GL state at the
+    // deferred-flush point (diagnostics for the "tubes draw but invisible" bug).
+    {
+        static bool s_probed = false;
+        const char* pe = std::getenv("MC2_TUBE_DEFER_PROBE");
+        if (!s_probed && pe && pe[0] == '1') {
+            s_probed = true;
+            GLint fbo = 0; glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fbo);
+            GLint dbN = 0, db0 = 0;
+            for (int i = 0; i < 8; ++i) {
+                GLint d = GL_NONE; glGetIntegerv(GL_DRAW_BUFFER0 + i, &d);
+                if (i == 0) db0 = d;
+                if (d != GL_NONE) ++dbN;
+            }
+            const float* mvp = gos_GetTerrainMVPMat4();
+            GLint df = 0; glGetIntegerv(GL_DEPTH_FUNC, &df);
+            GLboolean dt = glIsEnabled(GL_DEPTH_TEST);
+            GLint dm = 0; glGetIntegerv(GL_DEPTH_WRITEMASK, &dm);
+            GLint vp[4] = {0,0,0,0}; glGetIntegerv(GL_VIEWPORT, vp);
+            GLboolean cm[4] = {0,0,0,0}; glGetBooleanv(GL_COLOR_WRITEMASK, cm);
+            GLboolean sc = glIsEnabled(GL_SCISSOR_TEST);
+            GLboolean bl = glIsEnabled(GL_BLEND);
+            std::fprintf(stderr,
+                "[TUBE_DEFER_PROBE] fbo=%d drawBufs=%d db0=0x%X mvp=%p "
+                "row0=[%g %g %g %g] depthTest=%d depthFunc=0x%X depthMask=%d "
+                "viewport=[%d %d %d %d] colorMask=[%d%d%d%d] scissor=%d blend=%d queueN=%zu\n",
+                fbo, dbN, (unsigned)db0, (const void*)mvp,
+                mvp ? mvp[0] : 0.f, mvp ? mvp[1] : 0.f, mvp ? mvp[2] : 0.f, mvp ? mvp[3] : 0.f,
+                (int)dt, (unsigned)df, (int)dm, vp[0], vp[1], vp[2], vp[3],
+                (int)cm[0], (int)cm[1], (int)cm[2], (int)cm[3], (int)sc, (int)bl,
+                s_ribbonQueue.size());
+            std::fflush(stderr);
+        }
+    }
+
     // ── State save (same set as the immediate flush) ───────────────────
     GLint savedProgram   = 0; glGetIntegerv(GL_CURRENT_PROGRAM, &savedProgram);
     GLint savedVAO       = 0; glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &savedVAO);
@@ -624,6 +659,27 @@ extern "C" void gos_tube_ribbon_flush_deferred(void) {
     glDisable(GL_CULL_FACE); // ribbon is double-sided
 
     glBindSampler(0, s_tubeSampler);
+
+    // MRT FIX (root cause of "tubes draw but invisible"): the scene FBO has
+    // multiple active draw buffers (color + normal + R32UI objectId — the 3rd
+    // attachment landed with the RenderWorld arc, which is exactly when the
+    // oracle broke). tube_ribbon.frag writes only location 0; with GL_BLEND
+    // enabled AND an integer (R32UI) attachment in the active draw-buffer list,
+    // AMD suppresses the COLOR0 write -> ribbons invisible. Probe confirmed
+    // drawBufs=3 at draw time. Force a single COLOR_ATTACHMENT0 draw buffer for
+    // the ribbon draws (tubes are transparent VFX — they must not write normal
+    // or objectId anyway), restore the full MRT list after.
+    GLenum savedDrawBufs[8];
+    int    nSavedDrawBufs = 0;
+    for (int i = 0; i < 8; ++i) {
+        GLint d = GL_NONE; glGetIntegerv(GL_DRAW_BUFFER0 + i, &d);
+        savedDrawBufs[i] = (GLenum)d;
+        if (d != GL_NONE) nSavedDrawBufs = i + 1;
+    }
+    {
+        const GLenum single[1] = { GL_COLOR_ATTACHMENT0 };
+        glDrawBuffers(1, single);
+    }
 
     // First-deferred-flush banner (once).
     {
@@ -705,6 +761,9 @@ extern "C" void gos_tube_ribbon_flush_deferred(void) {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 15, 0u);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 16, 0u);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+
+    // MRT FIX: restore the scene's full MRT draw-buffer list.
+    if (nSavedDrawBufs > 0) glDrawBuffers(nSavedDrawBufs, savedDrawBufs);
 
     // ── Restore state ──────────────────────────────────────────────────
     if (savedCullFace) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
