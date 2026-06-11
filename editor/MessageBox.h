@@ -36,18 +36,29 @@ extern HSTRRES gameResourceHandle;
 // it forever. This is the single-point gate for all EMessageBox callers.
 extern bool g_cliSuppressModals;
 
+// Emit a suppressed-modal record so the smoke harness captures what a user would
+// otherwise have had to click through. One line per suppressed modal, to BOTH the
+// inherited stderr pipe and editor-startup.log. Defined in EditorMFC.cpp.
+void EditorSmokeLogSuppressedModal(const char* text, const char* caption);
+
 inline int EMessageBox(int MessageID, int CaptionID,DWORD dwS )
 {
-	if (g_cliSuppressModals)
-		return IDOK;
-
 	char buffer[512];
 	char bufferCaption[512];
 
 	EditorSafeLoadString( MessageID, buffer, 512, gameResourceHandle );
 
 	EditorSafeLoadString( CaptionID, bufferCaption, 512, gameResourceHandle );
-	
+
+	if (g_cliSuppressModals)
+	{
+		// Headless smoke: record the text, then answer the safe continue default.
+		// These EMessageBox callers are all MB_OK / warning class -- IDOK is the
+		// only and non-destructive response, so continuing is correct.
+		EditorSmokeLogSuppressedModal( buffer, bufferCaption );
+		return IDOK;
+	}
+
 	if (EditorInterface::instance() && EditorInterface::instance()->ThisIsInitialized())
 	{
 		return EditorInterface::instance()->MessageBoxA( buffer, bufferCaption, dwS );

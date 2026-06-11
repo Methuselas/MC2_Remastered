@@ -744,6 +744,39 @@ static void s_emit_esmoke(const char* how)
 	EarlyTrace(esmoke);
 }
 
+// Smoke modal capture: when g_cliSuppressModals is set the editor answers every
+// validation/warning modal with its safe continue-default (IDOK/IDYES) instead of
+// blocking a headless run. We still want the harness to record what a real user
+// would have had to click through, so each suppressed modal emits a parseable line
+// to BOTH the inherited stderr pipe and editor-startup.log. Caption may be NULL/empty.
+// Quotes inside the text are escaped so the `text="..."` field stays parseable.
+void EditorSmokeLogSuppressedModal(const char* text, const char* caption)
+{
+	if (!text) text = "";
+	if (!caption) caption = "";
+
+	// Flatten newlines and escape quotes/backslashes into a single-line field.
+	char clean[600];
+	size_t o = 0;
+	for (const char* p = text; *p && o + 2 < sizeof(clean); ++p)
+	{
+		char c = *p;
+		if (c == '\r') continue;
+		if (c == '\n' || c == '\t') { clean[o++] = ' '; continue; }
+		if (c == '"' || c == '\\') { clean[o++] = '\\'; if (o + 1 >= sizeof(clean)) break; }
+		clean[o++] = c;
+	}
+	clean[o] = '\0';
+
+	char line[760];
+	_snprintf(line, sizeof(line),
+		"[ESMOKE v1] event=modal caption=\"%s\" text=\"%s\"", caption, clean);
+	line[sizeof(line) - 1] = '\0';
+	fprintf(stderr, "%s\n", line);
+	fflush(stderr);
+	EarlyTrace(line);
+}
+
 // Auto-dismiss any modal dialog (#32770 = standard dialog/MessageBox class) owned
 // by this process. Headless smoke runs have no one to click OK, and modals appear
 // from many scattered places (startup, generate, and especially SAVE validation
