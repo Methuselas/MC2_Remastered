@@ -1,0 +1,179 @@
+"""
+MC2 FastFile (.fst) Listing Generator (S4b)
+============================================
+Reads binary .fst FastFile archives and emits text listing side-cars
+(one normalized member key per line) that resolver.py / parity_smoke.py
+consume for FastFile-layer parity.
+
+Read-only with respect to the archives: .fst files are parsed, never
+modified.  No engine code or FastFile ABI is touched.
+
+Binary format (ground truth: mclib/ffile.h + FastFile::open, ffile.cpp:140):
+  offset 0   u32  version       0xCADDECAF (zlib) or 0xFADDECAF (LZSS)
+  offset 4   u32  numFiles
+  offset 8   FILEENTRY[numFiles], #pragma pack(1), 266 bytes each:
+      u32  offset        byte offset of the (compressed) payload
+      u32  size          compressed size
+      u32  realSize      uncompressed size
+      u32  hash          elfHash(name)
+      char name[250]     NUL-terminated member path
+
+Member names are stored with forward slashes and (in practice) lowercase;
+the listing emits normalize_key(name) (lowercase, forward slashes) so it
+matches the engine's File::open lookup key exactly (file.cpp lowercases +
+forward-slashes fileName before FastFileFind).
+
+Side-car naming: <archive>.fst -> <archive>.fst.txt in the same directory
+(or --out-dir).  This is the pattern resolver._discover_fst_listings()
+auto-discovers, so parity_smoke.py picks the listings up with no extra flags.
+
+USAGE
+-----
+    python fst_listing.py <deploy_dir | archive.fst> [more paths ...]
+                          [--out-dir DIR] [--json] [--dry-run]
+
+  A directory argument expands to every *.fst directly inside it.
+  --json writes <archive>.fst.json (list of {name, offset, size, realSize,
+  hash}) instead of the plain text listing; parity only needs the text form.
+
+EXIT CODES: 0 = all archives parsed and listings written; 1 = any failure.
+
+Python 3 stdlib only.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import struct
+import sys
+from pathlib import Path
+from typing import List
+
+FASTFILE_VERSION = 0xCADDECAF
+FASTFILE_VERSION_LZ = 0xFADDECAF
+MAX_FILENAME_SIZE = 250
+ENTRY_SIZE = 4 + 4 + 4 + 4 + MAX_FILENAME_SIZE  # 266, #pragma pack(1)
+ENTRY_TABLE_START = 8
+_ENTRY_STRUCT = struct.Struct("<IIII250s")
+
+
+def normalize_key(path: str) -> str:
+    """Match resolver.normalize_key: backslash -> slash, ASCII lowercase."""
+    return path.replace("\\", "/").lower()
+
+
+def parse_fst(archive_path: str) -> List[dict]:
+    """
+    Parse a binary .fst archive and return its entry table as a list of
+    {"name", "offset", "size", "realSize", "hash"} dicts (name as stored,
+    not normalized).  Raises ValueError on a malformed archive.
+    """
+    with open(archive_path, "rb") as f:
+        header = f.read(ENTRY_TABLE_START)
+        if len(header) != ENTRY_TABLE_START:
+            raise ValueError(f"truncated header ({len(header)} bytes)")
+        version, num_files = struct.unpack("<II", header)
+        if version not in (FASTFILE_VERSION, FASTFILE_VERSION_LZ):
+            raise ValueError(f"bad version 0x{version:08X} (not a FastFile archive)")
+
+        table = f.read(ENTRY_SIZE * num_files)
+        if len(table) != ENTRY_SIZE * num_files:
+            raise ValueError(
+                f"truncated entry table: expected {ENTRY_SIZE * num_files} bytes, "
+                f"got {len(table)} (numFiles={num_files})"
+            )
+
+    archive_size = os.path.getsize(archive_path)
+    entries: List[dict] = []
+    for i in range(num_files):
+        off, size, real_size, hash_, raw_name = _ENTRY_STRUCT.unpack_from(
+            table, i * ENTRY_SIZE
+        )
+        name = raw_name.split(b"\x00", 1)[0].decode("ascii", errors="replace")
+        if not name:
+            raise ValueError(f"entry {i}: empty name")
+        if off < ENTRY_TABLE_START + ENTRY_SIZE * num_files or off + size > archive_size:
+            raise ValueError(
+                f"entry {i} ({name!r}): payload [{off}, {off + size}) outside "
+                f"archive of {archive_size} bytes"
+            )
+        entries.append(
+            {"name": name, "offset": off, "size": size, "realSize": real_size, "hash": hash_}
+        )
+    return entries
+
+
+def listing_path_for(archive_path: str, out_dir: str | None, as_json: bool) -> str:
+    base = os.path.basename(archive_path) + (".json" if as_json else ".txt")
+    return os.path.join(out_dir or os.path.dirname(archive_path) or ".", base)
+
+
+def write_listing(archive_path: str, out_dir: str | None, as_json: bool, dry_run: bool) -> int:
+    """Parse one archive and write its side-car.  Returns entry count."""
+    entries = parse_fst(archive_path)
+    out_path = listing_path_for(archive_path, out_dir, as_json)
+    if not dry_run:
+        with open(out_path, "w", encoding="utf-8", newline="\n") as f:
+            if as_json:
+                json.dump(entries, f, indent=1)
+                f.write("\n")
+            else:
+                f.write(f"# generated by fst_listing.py from {os.path.basename(archive_path)}\n")
+                for e in entries:
+                    f.write(normalize_key(e["name"]) + "\n")
+    print(f"[fst_listing] {archive_path}: {len(entries)} entries -> {out_path}"
+          f"{' (dry-run)' if dry_run else ''}")
+    return len(entries)
+
+
+def expand_targets(args_paths: List[str]) -> List[str]:
+    targets: List[str] = []
+    for p in args_paths:
+        path = Path(p)
+        if path.is_dir():
+            found = sorted(str(f) for f in path.glob("*.fst"))
+            if not found:
+                print(f"[fst_listing] WARNING: no .fst archives in {p}", file=sys.stderr)
+            targets.extend(found)
+        else:
+            targets.append(str(path))
+    return targets
+
+
+def main(argv: List[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument("paths", nargs="+",
+                        help="Deploy dir(s) and/or .fst archive path(s).")
+    parser.add_argument("--out-dir", default=None,
+                        help="Write side-cars here instead of next to each archive.")
+    parser.add_argument("--json", action="store_true",
+                        help="Emit <archive>.fst.json entry tables instead of text listings.")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Parse and report only; write nothing.")
+    args = parser.parse_args(argv)
+
+    targets = expand_targets(args.paths)
+    if not targets:
+        print("[fst_listing] ERROR: no .fst archives to process.", file=sys.stderr)
+        return 1
+
+    failures = 0
+    total = 0
+    for archive in targets:
+        try:
+            total += write_listing(archive, args.out_dir, args.json, args.dry_run)
+        except (OSError, ValueError) as e:
+            print(f"[fst_listing] ERROR: {archive}: {e}", file=sys.stderr)
+            failures += 1
+
+    print(f"[fst_listing] done: {len(targets) - failures}/{len(targets)} archives, "
+          f"{total} total entries")
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
