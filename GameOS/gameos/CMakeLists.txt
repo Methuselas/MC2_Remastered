@@ -46,6 +46,7 @@ set(SOURCES ${SOURCES}
     gpu_cull_compute.cpp
     gpu_cull_readback.cpp
     render_snapshot.cpp
+    gos_render_pass_timer.cpp
     draw_packet_emitter.cpp
     pipeline_binder.cpp
     view_uniforms_gl.cpp
