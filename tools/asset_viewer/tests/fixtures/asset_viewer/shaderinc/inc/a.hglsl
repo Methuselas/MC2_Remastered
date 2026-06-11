@@ -1,0 +1,3 @@
+// a
+#include <inc/b.hglsl>
+int a_val() { return 1 + b_val(); }

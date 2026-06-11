@@ -1,0 +1,1 @@
+int b_val() { return 10; }

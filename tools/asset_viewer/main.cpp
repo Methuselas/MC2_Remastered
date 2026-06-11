@@ -107,6 +107,9 @@ int main(int argc, char* argv[])
         return AssetViewerApp::runSmokeCentralMergePreserve(
             argc >= 3 ? argv[2] : ".", argc >= 4 ? argv[3] : ".");
 
+    if (argc >= 2 && strcmp(argv[1], "--smoke-shader-include") == 0)
+        return AssetViewerApp::runSmokeShaderInclude(argc >= 3 ? argv[2] : ".");
+
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0)
     {
         printf("SDL_Init error: %s\n", SDL_GetError());

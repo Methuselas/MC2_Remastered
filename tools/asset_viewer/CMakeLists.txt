@@ -187,6 +187,8 @@ set(ASSET_VIEWER_SOURCES
     BundleExport.cpp
     # S5: safe reversible central models.json merge
     CentralManifestMerge.cpp
+    # Backend-A v2: GLSL #include inliner for engine shader compilation
+    ShaderIncludeResolver.cpp
 )
 
 add_executable(mc2_asset_viewer ${ASSET_VIEWER_SOURCES})
