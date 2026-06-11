@@ -641,6 +641,27 @@ int32_t ABLi_preProcess (const char* sourceFileName, long* numErrors, long* numL
 	getToken();
 
 	SymTableNodePtr moduleIdPtr = moduleHeader();
+
+	//------------------------------------------------------------------------------------
+	// FAIL LOUD ON MISSING/INVALID ABL FILE (2026-06-11, missing-ABL-file playtest incident):
+	// A NULL moduleIdPtr means the source opened but parsed no module identifier -- the file is
+	// missing or its content is invalid (the open-callback's STOP() is a no-op in RelWithDebInfo,
+	// so a genuinely-missing file slips through openSourceFile with garbage in the buffer).
+	// Continuing here dereferences NULL through declarations()/analyzeBlock() (the WRITE AV at
+	// moduleHeader:1223 was this exact path).  Rather than corrupt-then-crash, emit one clear
+	// line and exit cleanly so the failure is diagnosable instead of an opaque AV.
+	if (moduleIdPtr == NULL)
+	{
+		fprintf(stderr,
+			"[PLAYTEST] FATAL: missing or invalid ABL file '%s' -- cannot preprocess module.\n",
+			source_fn ? source_fn : "(null)");
+		fflush(stderr);
+		closeSourceFile();
+		if (source_fn)
+			free(source_fn);
+		exit(0xAB1F11E);   // distinctive code: "ABL FILE" -- clean exit, no NULL-deref AV
+	}
+
 	CurModuleIdPtr = moduleIdPtr;
 	CurRoutineIdPtr = moduleIdPtr;
 
@@ -1217,6 +1238,17 @@ SymTableNodePtr moduleHeader (void) {
 	//	functionIdPtr->defn.info.routine.totalParamSize = 0;
 	//	functionIdPtr->defn.info.routine.params = NULL;
 	//}
+
+	//-----------------------------
+	// ROBUSTNESS GUARD (2026-06-11, missing-ABL-file playtest incident):
+	// moduleIdPtr is only assigned inside the `curToken == TKN_IDENTIFIER` branch above.
+	// When the source file opened but holds invalid/garbage content (e.g. a missing
+	// warriors/nop.abl whose open silently failed -- ablFileOpenCB's STOP() is a no-op in
+	// RelWithDebInfo -- so getToken() scans junk), curToken is never TKN_IDENTIFIER and
+	// moduleIdPtr stays NULL.  The writes below would then be a WRITE AV at offset 0x70.
+	// Bail out cleanly so the caller (ABLi_preProcess) can fail loud instead of crashing.
+	if (moduleIdPtr == NULL)
+		return(NULL);
 
 	//-----------------------------
 	// Now, check if return type...
