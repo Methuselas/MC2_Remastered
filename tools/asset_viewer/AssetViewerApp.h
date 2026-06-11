@@ -53,6 +53,7 @@ public:
     static int runSmokeShaderInclude(const char* fixtureDir);  // Backend-A v2
     static int runSmokeBackendACompile(const char* shaderRoot); // Backend-A v2
     static int runSmokeBackendARender(const char* deployDir, const char* shaderRoot); // Backend-A v2 Task 5
+    static int runSmokeBackendAFallback(const char* deployDir);  // Backend-A v2
 private:
     FileBrowser browser_;
     AssetTypeSidebar sidebar_;
