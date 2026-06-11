@@ -7410,6 +7410,16 @@ void GpuStaticPropBatcher::drawStaticBuildingShadows(
     }
 }
 
+// SHADOW-STABILITY-1: read-only accessor so the shadow-pass state trace
+// (gameos_graphics.cpp) can emit registry-driven static-building caster
+// counts without duplicating the per-element counting. Reuses the latched
+// totals from the last drawStaticBuildingShadows; zero when the gate is off.
+void gos_GetStaticBuildingShadowCounts(int& types, int& inst, int& draws) {
+    types = s_staticBldgShadowTypes;
+    inst  = s_staticBldgShadowInst;
+    draws = s_staticBldgShadowDraws;
+}
+
 // ---------------------------------------------------------------------------
 // SHADOW-DYNAMIC-PROP-CASTERS-1: depth-only draw of registry-supplied NON-building
 // prop leaves into the currently-bound DYNAMIC shadow FBO, using the per-frame
