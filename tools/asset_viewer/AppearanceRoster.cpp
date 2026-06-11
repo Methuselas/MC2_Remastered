@@ -4,6 +4,7 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <unordered_set>
 
 namespace fs = std::filesystem;
 
@@ -30,7 +31,10 @@ void AppearanceRoster::load(const std::string& deployDir) {
     std::error_code ec;
     if (!fs::is_directory(tglDir, ec)) return;
 
-    std::vector<std::string> seenLower;
+    // One .ini contributes multiple FileName values by design (FileName0=base,
+    // FileName1=LOD1, FileName=damaged, etc.). The roster is an inclusive superset
+    // of every shape name reachable via the engine's override key (bdactor.cpp:288-340).
+    std::unordered_set<std::string> seenLower;
     for (auto& de : fs::directory_iterator(tglDir, ec)) {
         if (ec) break;
         if (!de.is_regular_file()) continue;
@@ -42,14 +46,21 @@ void AppearanceRoster::load(const std::string& deployDir) {
             auto eq = line.find('=');
             if (eq == std::string::npos) continue;
             std::string key = lower(trimmed(line.substr(0, eq)));
-            if (key != "filename") continue;
+            // FIT-ini typed keys look like `st FileName0` — strip the `st ` prefix.
+            if (key.rfind("st ", 0) == 0) key = trimmed(key.substr(3));
+            // Accept "filename" or "filename<N>" (LOD/damage shape names). The roster
+            // is an inclusive superset of the engine override key (bdactor.cpp:288-340);
+            // the modder picks the right base name.
+            if (key.compare(0, 8, "filename") != 0) continue;
+            bool ok = true;
+            for (size_t k = 8; k < key.size(); ++k) if (!std::isdigit((unsigned char)key[k])) { ok = false; break; }
+            if (!ok) continue;
             std::string val = trimmed(line.substr(eq + 1));
             if (val.empty()) continue;
             std::string lv = lower(val);
-            if (std::find(seenLower.begin(), seenLower.end(), lv) != seenLower.end()) break;
-            seenLower.push_back(lv);
+            if (seenLower.count(lv)) continue;
+            seenLower.insert(lv);
             names_.push_back(val);
-            break;
         }
     }
     std::sort(names_.begin(), names_.end(),

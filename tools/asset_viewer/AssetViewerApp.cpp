@@ -1419,9 +1419,11 @@ int AssetViewerApp::runSmokeAppearanceRoster(const char* fixtureDir) {
     std::string dir = std::string(fixtureDir) + "/tgl_ini";
     r.load(dir);
     const auto& n = r.names();
-    bool ok = (n.size() == 2)
+    bool ok = (n.size() == 4)
            && (n[0] == "atlas_building")
            && (n[1] == "Tree_Oak")
+           && (n[2] == "Tree_Oakdam")
+           && (n[3] == "Tree_OakL1")
            && r.contains("TREE_OAK")
            && !r.contains("nonexistent")
            && r.scannedFileCount() == 4;
