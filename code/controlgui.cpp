@@ -633,9 +633,9 @@ static void drawWeaponBandUnion( Camera* eye, const Stuff::Vector3D* centers,
 	for ( int i = 0; i < n; i++ )
 	{
 		bool havePrev = false; float ppx = 0, ppy = 0;
-		// Hairline arcs like the sensor rings; selected mech gets a modest
-		// 1px-half-width quad seg instead of the old 2px slab.
-		const bool bold = sel[i];
+		// Hairline arcs like the sensor rings for everyone; the selected
+		// mech's arc is brightened instead of thickened.
+		const unsigned long arcCol = sel[i] ? ( col | 0x003f3f3f ) : col;
 		for ( int k = 0; k <= N; k++ )
 		{
 			float a = ( 2.0f * 3.14159265f ) * (float)( k % N ) / (float)N;
@@ -659,16 +659,11 @@ static void drawWeaponBandUnion( Camera* eye, const Stuff::Vector3D* centers,
 			float sy = vay + ( 1.0f - ( r.clip.y / r.clip.w * 0.5f + 0.5f ) ) * vmy;
 			if ( havePrev )
 			{
-				if ( bold )
-					csgThickSeg( ppx, ppy, sx, sy, 1.0f, col );
-				else
-				{
-					gos_VERTEX ln[2];
-					for ( int v = 0; v < 2; ++v ) { ln[v].z = 0; ln[v].rhw = .5f; ln[v].argb = col; ln[v].frgb = 0; ln[v].u = ln[v].v = 0; }
-					ln[0].x = ppx; ln[0].y = ppy;
-					ln[1].x = sx;  ln[1].y = sy;
-					gos_DrawLines( ln, 2 );
-				}
+				gos_VERTEX ln[2];
+				for ( int v = 0; v < 2; ++v ) { ln[v].z = 0; ln[v].rhw = .5f; ln[v].argb = arcCol; ln[v].frgb = 0; ln[v].u = ln[v].v = 0; }
+				ln[0].x = ppx; ln[0].y = ppy;
+				ln[1].x = sx;  ln[1].y = sy;
+				gos_DrawLines( ln, 2 );
 			}
 			ppx = sx; ppy = sy; havePrev = true;
 		}
