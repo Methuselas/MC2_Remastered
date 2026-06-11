@@ -1461,12 +1461,23 @@ void gosFX::Tube::Draw(DrawInfo *info)
 
 		//
 		//-----------------------------------------------------------------
-		// MC2_VFX_ORACLE_TUBE slice 1: if the gate is ON and this Tube is a
-		// supported kind (alpha-blend ribbon, vertex_count==2 — MissileSmoke
-		// and friends), submit the already-built swept-quad ribbon mesh to the
-		// GPU ribbon bridge instead of the legacy MLR DrawEffect. Unsupported
-		// kinds (additive PPC, polygon profiles vertex_count>2) fall through to
-		// legacy MLR unchanged below.
+		// MC2_VFX_ORACLE_TUBE: if the gate is ON and this Tube is a supported
+		// kind, submit the already-built swept-quad/polygon-tube mesh to the
+		// GPU ribbon bridge instead of the legacy MLR DrawEffect.
+		//
+		// Slice 1: alpha-blend ribbon, vertex_count==2 (MissileSmoke).
+		// Slice 2 widens coverage to the remaining live Tube kinds, SAME gate:
+		//   A. Additive bolt trails (PPC / ER-PPC): OneOneMode / AlphaOneMode.
+		//      Carried through as blendMode=1 -> the bridge uses additive GL
+		//      blend (GL_SRC_ALPHA, GL_ONE), same indexed ribbon mesh, NO card-
+		//      per-profile billboards (the old "white squares" came from the
+		//      billboard topology, not the ribbon swept-quad).
+		//   B. Polygon profile tubes (vertex_count 3..7 — triangle/square/
+		//      pentagon/hexagon/cross). BuildMesh already emits the full ring's
+		//      panel quads (incl. the cross special-case) into m_P_indices with
+		//      the correct insideOut winding; we just submit the full
+		//      m_triangleCount*3 index range that BuildMesh built.
+		// Truly unsupported / edge kinds still fall through to legacy MLR.
 		//-----------------------------------------------------------------
 		//
 		bool ribbonSubmitted = false;
@@ -1479,16 +1490,37 @@ void gosFX::Tube::Draw(DrawInfo *info)
 				 spec->m_profileType == Specification::e_VerticalRibbon);
 			const MidLevelRenderer::MLRState::AlphaMode am =
 				spec->m_state.GetAlphaMode();
-			// Slice 1 supports alpha-blend ribbons only. Additive modes
-			// (OneOneMode / AlphaOneMode — PPC bolts) are NOT supported.
+			// Alpha-blend (smoke ribbons) vs additive (PPC bolts). Same
+			// classification convention as the billboard bridge / spawn_*.cpp:
+			// OneOneMode / AlphaOneMode = additive; everything else = alpha.
+			const bool isAdditive =
+				(am == MidLevelRenderer::MLRState::OneOneMode ||
+				 am == MidLevelRenderer::MLRState::AlphaOneMode);
 			const bool isAlphaBlend =
 				(am == MidLevelRenderer::MLRState::AlphaInvAlphaMode ||
 				 am == MidLevelRenderer::MLRState::OneInvAlphaMode  ||
 				 am == MidLevelRenderer::MLRState::OneAlphaMode);
-			const bool supported = isRibbonKind && (vc == 2) && isAlphaBlend;
 
-			static unsigned long long s_tubeCalls = 0, s_subTotal = 0,
-			                          s_fallbackTotal = 0, s_unsupTotal = 0;
+			// Slice 2 widens the kind classifier:
+			//  - ribbon kinds (vc==2): alpha OR additive (was alpha-only).
+			//  - polygon profiles (vc 3..7): triangle/square/pentagon/hexagon/
+			//    cross. m_triangleCount and m_P_indices already encode the full
+			//    ring (BuildMesh, incl. the vc==5 cross special-case) with the
+			//    spec's insideOut winding — submit exactly what BuildMesh built.
+			const bool isPolygonKind = (vc >= 3 && vc <= 7);
+			const bool isSupportedBlend = isAlphaBlend || isAdditive;
+			// Both ribbon and polygon tubes route through the same indexed mesh
+			// submit. (Ribbon == vc 2 swept quad; polygon == vc>=3 ring panels.)
+			const bool supported =
+				isSupportedBlend && (vc >= 2) && (isRibbonKind || isPolygonKind);
+			const int blendMode = isAdditive ? 1 : 0;
+
+			static unsigned long long s_tubeCalls = 0,
+			                          s_subAlphaRibbon   = 0,  // alpha ribbon (vc==2)
+			                          s_subAddRibbon     = 0,  // additive ribbon (vc==2)
+			                          s_subPolygon       = 0,  // polygon profile (vc>=3)
+			                          s_fallbackTotal    = 0,  // supported kind, no index buf
+			                          s_unsupTotal       = 0;  // unsupported kind/blend
 			const bool tubeLog = mc2::particles::Batcher::is_oracle_tube_log_enabled();
 
 			if (supported && m_P_indices)
@@ -1496,11 +1528,12 @@ void gosFX::Tube::Draw(DrawInfo *info)
 				// Live, compacted mesh: profiles 0..m_activeProfileCount are
 				// contiguous in m_P_vertices/colors/uvs (AnimateProfile writes
 				// vertex_index = profile_count*vc). Index range = the first
-				// m_triangleCount triangles of the BuildMesh stencil.
+				// m_triangleCount triangles of the BuildMesh stencil — for both
+				// the vc==2 ribbon and the vc>=3 polygon ring (cross included).
 				const unsigned numVerts   = m_activeProfileCount * vc;
 				const unsigned numIndices = static_cast<unsigned>(m_triangleCount) * 3u;
 
-				// Transform local-space ribbon verts to MC2/Stuff world space.
+				// Transform local-space verts to MC2/Stuff world space.
 				// (m_P_vertices are effect-local; the ribbon VS applies the GL
 				// axis swap, so we hand it MC2 world unswapped.)
 				static Stuff::DynamicArrayOf<float> s_worldPos;
@@ -1526,15 +1559,17 @@ void gosFX::Tube::Draw(DrawInfo *info)
 					m_P_indices,
 					numIndices,
 					gosHandle,
-					/*blendMode=*/0);  // slice 1 = alpha only
+					blendMode);  // 0=alpha, 1=additive (PPC bolts)
 
 				ribbonSubmitted = true;
-				++s_subTotal;
+				if (isPolygonKind)    ++s_subPolygon;
+				else if (isAdditive)  ++s_subAddRibbon;
+				else                  ++s_subAlphaRibbon;
 			}
 			else
 			{
 				if (supported) ++s_fallbackTotal;  // supported but no indices
-				else           ++s_unsupTotal;     // unsupported kind
+				else           ++s_unsupTotal;     // unsupported kind/blend
 			}
 
 			if (tubeLog)
@@ -1543,10 +1578,11 @@ void gosFX::Tube::Draw(DrawInfo *info)
 				if (!s_first && ribbonSubmitted) {
 					s_first = true;
 					std::fprintf(stderr,
-						"[VFX_ORACLE_TUBE v1] class=Tube FIRST_HARVEST spec=\"%s\" "
-						"profileType=%d vc=%u activeProfiles=%d verts=%u indices=%u\n",
+						"[VFX_ORACLE_TUBE v2] class=Tube FIRST_HARVEST spec=\"%s\" "
+						"profileType=%d vc=%u blend=%s activeProfiles=%d verts=%u indices=%u\n",
 						static_cast<const char*>(spec->m_name),
 						(int)spec->m_profileType, vertex_count,
+						isAdditive ? "additive" : "alpha",
 						m_activeProfileCount,
 						m_activeProfileCount * vertex_count,
 						(unsigned)m_triangleCount * 3u);
@@ -1554,9 +1590,10 @@ void gosFX::Tube::Draw(DrawInfo *info)
 				}
 				if ((++s_tubeCalls % 240ull) == 0ull) {
 					std::fprintf(stderr,
-						"[VFX_ORACLE_TUBE v1] calls=%llu submittedTotal=%llu "
-						"fallbackTotal=%llu unsupportedTotal=%llu\n",
-						s_tubeCalls, s_subTotal, s_fallbackTotal, s_unsupTotal);
+						"[VFX_ORACLE_TUBE v2] calls=%llu alphaRibbon=%llu "
+						"addRibbon=%llu polygon=%llu fallback=%llu unsupported=%llu\n",
+						s_tubeCalls, s_subAlphaRibbon, s_subAddRibbon,
+						s_subPolygon, s_fallbackTotal, s_unsupTotal);
 					std::fflush(stderr);
 				}
 			}
