@@ -23,9 +23,11 @@ editor-startup.log (opened "w" at process start, under the deploy dir) is the
 reliable IPC channel for a WIN32-subsystem app; stdout is also captured via an
 inherited pipe.
 
-SINGLE-INSTANCE GUARD (run_smoke.py lock philosophy): the playtest spawns a real
-mc2.exe child. If an mc2.exe is ALREADY running we refuse to start, so we never
-fight a concurrent game/smoke for the deployed exe + data\missions bridge.
+PER-INSTALL GUARD (run_smoke.py lock philosophy, scoped): the playtest spawns a
+real mc2.exe child from ONE install dir (MC2_PLAYTEST_EXE, else
+..\mc2-win64-v0.4\mc2.exe relative to the editor exe). Multiple mc2 smokes may
+run concurrently from DIFFERENT installs; we only refuse when a live mc2.exe's
+image path lives inside the SAME install dir this harness would launch from.
 
 Usage:
   py -3 scripts/run_editor_playtest_smoke.py --mission <pak path> [--timeout SEC]
@@ -49,21 +51,74 @@ ARTIFACT_ROOT = REPO / "tests" / "smoke" / "editor"
 CRASH_TOKENS = ("unhandled exception", "access violation", "stack overflow", "fatal error")
 
 
-def _running_mc2() -> list[int]:
-    """PIDs of any live mc2.exe (the game the playtest will spawn)."""
+def _running_mc2() -> list[tuple[int, str]]:
+    """(pid, image_path) of any live mc2.exe (path may be '' if unqueryable)."""
+    # Primary: wmic gives pid + full image path in one shot.
     try:
         out = subprocess.check_output(
-            ["tasklist", "/FI", "IMAGENAME eq mc2.exe", "/NH", "/FO", "CSV"],
+            ["wmic", "process", "where", "name='mc2.exe'",
+             "get", "ProcessId,ExecutablePath", "/FORMAT:CSV"],
             text=True, stderr=subprocess.DEVNULL)
+        procs = []
+        for line in out.splitlines():
+            parts = line.strip().split(",")
+            # CSV: Node,ExecutablePath,ProcessId
+            if len(parts) >= 3 and parts[-1].isdigit():
+                procs.append((int(parts[-1]), parts[1].strip()))
+        return procs
+    except Exception:
+        pass
+    # Fallback: PowerShell (wmic removed on newer Windows).
+    try:
+        out = subprocess.check_output(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-Process mc2 -ErrorAction SilentlyContinue | "
+             "ForEach-Object { \"$($_.Id)|$($_.Path)\" }"],
+            text=True, stderr=subprocess.DEVNULL)
+        procs = []
+        for line in out.splitlines():
+            if "|" in line:
+                pid_s, path = line.split("|", 1)
+                if pid_s.strip().isdigit():
+                    procs.append((int(pid_s.strip()), path.strip()))
+        return procs
     except Exception:
         return []
-    pids = []
-    for line in out.splitlines():
-        if "mc2.exe" in line:
-            parts = [p.strip('"') for p in line.split(",")]
-            if len(parts) > 1 and parts[1].isdigit():
-                pids.append(int(parts[1]))
-    return pids
+
+
+def _norm_dir(p: str | Path) -> str:
+    """Normalized directory key for install-dir comparison."""
+    return os.path.normcase(os.path.normpath(str(p)))
+
+
+def _playtest_game_dir(editor_exe: Path) -> Path:
+    """Install dir of the game exe the editor's playtest would launch
+    (mirrors EditorPlaytest::ResolveExe: MC2_PLAYTEST_EXE env override, else
+    probes ..\\mc2-win64-v0.4\\mc2.exe then .\\mc2.exe relative to the editor
+    cwd = deploy dir)."""
+    override = os.environ.get("MC2_PLAYTEST_EXE")
+    if override:
+        return Path(override).resolve().parent
+    deploy = editor_exe.parent
+    for cand in (deploy.parent / "mc2-win64-v0.4" / "mc2.exe",
+                 deploy / "mc2.exe"):
+        if cand.exists():
+            return cand.resolve().parent
+    return (deploy.parent / "mc2-win64-v0.4").resolve()
+
+
+def _conflicting_mc2(editor_exe: Path) -> tuple[list[tuple[int, str]], list[tuple[int, str]]]:
+    """Split running mc2.exe processes into (conflicting, other) by whether
+    their image path is inside the install dir this harness would launch from.
+    Processes with unknown paths are treated as conflicting (safe default)."""
+    game_dir = _norm_dir(_playtest_game_dir(editor_exe))
+    conflicting, other = [], []
+    for pid, path in _running_mc2():
+        if path and _norm_dir(Path(path).parent) != game_dir:
+            other.append((pid, path))
+        else:
+            conflicting.append((pid, path or "(path unavailable)"))
+    return conflicting, other
 
 
 def _parse_playtest(text: str) -> dict:
@@ -105,14 +160,20 @@ def main() -> int:
         print(f"ERROR: mission pak not found: {mission}")
         return 2
 
-    # SINGLE-INSTANCE GUARD: refuse if a game is already running (the playtest
-    # spawns its own mc2.exe and bridges into the deployed data\missions).
-    pids = _running_mc2()
-    if pids:
-        print(f"ERROR: mc2.exe already running (pids {pids}); refusing to run the "
-              f"playtest smoke (it would fight for the deployed exe / mission bridge).\n"
-              f"  Close the game first.")
+    # PER-INSTALL GUARD: refuse only if a running mc2.exe lives in the SAME
+    # install dir the playtest would launch from (concurrent smokes from other
+    # worktrees/deploys are fine).
+    conflicting, other = _conflicting_mc2(exe)
+    if conflicting:
+        plist = "\n".join(f"  pid {pid}: {path}" for pid, path in conflicting)
+        print(f"ERROR: mc2.exe already running from this playtest's install dir "
+              f"({_playtest_game_dir(exe)}); refusing to run (it would fight for "
+              f"the deployed exe / mission bridge).\n{plist}\n  Close that game first.")
         return 3
+    if other:
+        plist = "; ".join(f"pid {pid} ({path})" for pid, path in other)
+        print(f"[playtest] note: unrelated mc2.exe running from other installs, "
+              f"proceeding: {plist}")
 
     log = deploy / "editor-startup.log"
     try:
@@ -207,6 +268,17 @@ def main() -> int:
     if m:
         esmoke_line = m.group(0)
 
+    # Child SMOKE summary: surface a fail verdict from the game's own summary
+    # line as a WARNING when the exit code said pass (does NOT change verdict).
+    smoke_warning = ""
+    sm = None
+    for sm in re.finditer(r"\[SMOKE v1\] event=summary result=(\S+)(?:\s+reason=(\S*))?",
+                          combined):
+        pass  # last match wins
+    if sm and sm.group(1) == "fail" and passed:
+        smoke_warning = (f"WARNING: child smoke summary reported result=fail "
+                         f"(reason={sm.group(2) or '-'}) despite exit code 0")
+
     lines = [
         f"# Editor playtest smoke {ts}  result={verdict}",
         "",
@@ -217,6 +289,10 @@ def main() -> int:
         f"- archived log: {pt.get('log', '-')}",
         f"- bucket: {bucket or '-'}",
         f"- wall seconds: {dt}",
+    ]
+    if smoke_warning:
+        lines += ["", f"**{smoke_warning}**"]
+    lines += [
         "",
         "## ESMOKE line",
         "",
@@ -231,6 +307,8 @@ def main() -> int:
     (rptdir / "editor-stdout.txt").write_text(out or "", encoding="utf-8", errors="replace")
 
     print("\n" + report)
+    if smoke_warning:
+        print(smoke_warning)
     print(f"report: {rptdir / 'report.md'}")
 
     return 0 if passed else 1
