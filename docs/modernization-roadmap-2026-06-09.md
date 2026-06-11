@@ -24,7 +24,9 @@
 > - **PertCloud:** DEAD.
 > - **Per-pass timings:** **CPU attribution FILLED** via smoke cost-split (Baseline A §6a — MISSION_SPLIT / GEOM_PHASE_SPLIT / MIF_SPLIT; slim=0µs re-confirms slimReduce dead). **GPU per-pass still OPEN** (§6b) — scoped to a small per-pass GL `TIME_ELAPSED` instrumentation lane (only gpu_cull+water timed today), NOT a headless dead-end.
 >
-> **Disciplined next order:** (1) harness ✅ → (2) per-pass timing fill: CPU ✅ (cost-split smoke), GPU = small GL-timer lane (§6b) → (3) GlStateGuard slice 1 (comparator = §6a CPU attribution + p99_ms budget today; §6b sharpens) → (4) Tube A/B + merge decision → (5) HZB or asset-cook lane.
+> - **GlStateGuard slice 1:** ✅ **ACCEPTED** — branch `claude/glstateguard-slice1`, commits `36a51bcf` (+ `f698e806` log-caveat). Target = GPU_CULL SSBO binding slots 7/15 via RAII `mc2gl::GlScopedSsboBinding` (compute pass, no depth/blend/cull → split-brain-safe). build green + `oracle_report --strict` EXIT 0 + perf at/above Baseline A. **Merge to nifty PENDING** branch-integration window (cherry-pick → tier1 + oracle_report --strict on nifty). Risk low. The structural loop (Baseline A → oracle_report --strict → perf budget → commit alone) is proven.
+>
+> **Disciplined next order:** (1) harness ✅ → (2) per-pass timing: CPU ✅, GPU = §6b GL-timer lane → (3) GlStateGuard slice 1 ✅ → (4) **merge slice 1 to nifty** (+ tier1/oracle re-check) → (5) **slice 2 recon = gosFX Tube ribbon bridge** (real render state: blend/depth/program/VAO — fresh recon + eyes-on validation; NOT "more guard because slice 1 worked") → (6) TerrainLOD indirect/submit (the scary pass, after Tube) → (7) HZB or asset-cook lane.
 
 **Date:** 2026-06-09 (milestone updated 2026-06-10)
 **Worktree:** `.claude/worktrees/nifty-mendeleev`
