@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include "gos_render_pass_timer.h"
+#include "gos_frame_pass_stats.h"
 
 namespace gos_render_pass_timer {
 
@@ -146,6 +147,12 @@ bool QueryActive()
 
 void Begin(Pass p)
 {
+    // FramePassStats v1 shares the pass boundaries but is independently gated:
+    // capture per-pass GL state even when the GPU timer is OFF (own env check,
+    // OFF=zero cost). Done first so the state reflects exactly what the pass
+    // is about to render with.
+    gos_frame_pass_stats::RecordPassBegin(p);
+
     if (!Enabled()) return;
     if (p < 0 || p >= Pass_Count) return;
     if (s_openPass >= 0) {

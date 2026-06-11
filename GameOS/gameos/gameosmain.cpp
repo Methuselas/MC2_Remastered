@@ -171,6 +171,7 @@ static LONG WINAPI mc2_unhandled_exception_filter(EXCEPTION_POINTERS* ep)
 #endif
 #include "mc2_hitch_trace.h"
 #include "gos_render_pass_timer.h"
+#include "gos_frame_pass_stats.h"   // [FRAME_PASS_STATS v1] collector
 
 // Tier-1 instrumentation (stability spec §5.1): single source of truth for
 // the frame=... field used by TGL_POOL, DESTROY, and GL_ERROR log lines.
@@ -1524,6 +1525,33 @@ int main(int argc, char** argv)
             }
             #endif // MC2_IMGUI
 
+            // [FRAME_PASS_STATS v1] frame-level aggregates + per-pass draw/
+            // instance counts, pulled from already-computed counters (no
+            // hot-loop counting). OFF=zero cost (every Set* early-returns).
+            // Counters reflect the prior frame's flush (this seam runs before
+            // draw_screen); advisory, not gated.
+            if (gos_frame_pass_stats::Enabled()) {
+                extern uint64_t batcher_getLastFlushSubmitCount(); // gos_mech_batcher
+                const uint32_t mechInst = (uint32_t)batcher_getLastFlushSubmitCount();
+                const uint32_t spSlots  = batcher_getDrawSlotCount();
+
+                gos_frame_pass_stats::FrameAggregates agg;
+                agg.visibleTerrainChunks = 0u; // set by terrain flush producer
+                agg.staticPropBatches    = spSlots;
+                agg.mechBatchInstances   = mechInst;
+                agg.vfxCount             = 0u; // per-frame VFX count deferred (VFX-SPINE-0)
+                gos_frame_pass_stats::SetFrameAggregates(agg);
+
+                gos_frame_pass_stats::SetPassCounts(
+                    gos_render_pass_timer::Pass_Mechs, mechInst, mechInst);
+                gos_frame_pass_stats::SetPassCounts(
+                    gos_render_pass_timer::Pass_SpColor, spSlots, spSlots);
+                gos_frame_pass_stats::SetPassCounts(
+                    gos_render_pass_timer::Pass_ShadowDyn,
+                    gos_getMechShadowInstDrawn() + gos_getStaticPropShadowInstDrawn(),
+                    gos_getMechShadowInstDrawn() + gos_getStaticPropShadowInstDrawn());
+            }
+
         }
 
         {
@@ -1590,6 +1618,11 @@ int main(int argc, char** argv)
         // the oldest pending slot (never blocks), emit the aggregated line at
         // cadence. Placed before swap so the frame's queries are all closed.
         gos_render_pass_timer::FrameEnd();
+
+        // [FRAME_PASS_STATS v1] frame boundary: promote this frame's per-pass
+        // rows + aggregates, emit the summary line at cadence, reset. Placed
+        // after the timer FrameEnd; advisory, OFF=zero cost.
+        gos_frame_pass_stats::FrameEnd((unsigned long)g_mc2FrameCounter);
 
         {
             ZoneScopedN("SwapWindow");
