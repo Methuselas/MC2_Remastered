@@ -245,6 +245,85 @@ void MakeDirTree(const std::string& dir)
 	CreateDirectoryA(acc.c_str(), NULL);
 }
 
+// Returns the last-write FILETIME of a file as a 64-bit value, or 0 if missing.
+unsigned long long FileMTime(const char* p)
+{
+	WIN32_FILE_ATTRIBUTE_DATA fad;
+	if (!GetFileAttributesExA(p, GetFileExInfoStandard, &fad))
+		return 0;
+	ULARGE_INTEGER t;
+	t.LowPart  = fad.ftLastWriteTime.dwLowDateTime;
+	t.HighPart = fad.ftLastWriteTime.dwHighDateTime;
+	return t.QuadPart;
+}
+
+// Incremental file copy: copy src -> dst only when dst is missing or src is strictly newer.
+// Returns: 1 = copied, 0 = skipped (already up to date), -1 = copy FAILED.
+int CopyFileIncremental(const std::string& src, const std::string& dst)
+{
+	unsigned long long sM = FileMTime(src.c_str());
+	unsigned long long dM = FileMTime(dst.c_str());
+	const bool dstExists = (dM != 0) || FileExists(dst.c_str());
+	if (dstExists && sM != 0 && sM <= dM)
+		return 0;   // up to date -- skip
+	if (SamePath(AbsPath(src), AbsPath(dst)))
+		return 0;   // same file (CopyFile onto itself fails err 32) -- nothing to do
+	if (!CopyFileA(src.c_str(), dst.c_str(), FALSE))
+		return -1;
+	return 1;
+}
+
+// Recursively mirror srcDir -> dstDir (incremental).  Creates dstDir as needed.  Skips any
+// component named ".modproject" (editor-only project state, must not ship into the game).
+// On success returns true and adds the count of files actually copied to *copied.  On the
+// FIRST copy failure sets *failSrc/*failDst and returns false (caller aborts the launch).
+bool MirrorTreeIncremental(const std::string& srcDir, const std::string& dstDir,
+	int* copied, std::string* failSrc, std::string* failDst)
+{
+	MakeDirTree(dstDir);
+
+	WIN32_FIND_DATAA fd;
+	std::string pattern = srcDir + "\\*";
+	HANDLE h = FindFirstFileA(pattern.c_str(), &fd);
+	if (h == INVALID_HANDLE_VALUE)
+		return true;   // empty/absent dir -- nothing to mirror (not an error)
+
+	bool ok = true;
+	do {
+		const char* nm = fd.cFileName;
+		if (strcmp(nm, ".") == 0 || strcmp(nm, "..") == 0)
+			continue;
+		std::string srcChild = srcDir + "\\" + nm;
+		std::string dstChild = dstDir + "\\" + nm;
+		if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+		{
+			if (_stricmp(nm, ".modproject") == 0)
+				continue;   // never copy editor project state into the game
+			if (!MirrorTreeIncremental(srcChild, dstChild, copied, failSrc, failDst))
+			{
+				ok = false;
+				break;
+			}
+		}
+		else
+		{
+			int r = CopyFileIncremental(srcChild, dstChild);
+			if (r < 0)
+			{
+				if (failSrc) *failSrc = srcChild;
+				if (failDst) *failDst = dstChild;
+				ok = false;
+				break;
+			}
+			if (r > 0 && copied)
+				++(*copied);
+		}
+	} while (FindNextFileA(h, &fd));
+
+	FindClose(h);
+	return ok;
+}
+
 // --- mod-root detection ----------------------------------------------------------------
 // Walk the saved mission's absolute path upward looking for a `...\mods\<id>\...` layout
 // (case-insensitive match on a "mods" path component).  On success fills modRoot (the
@@ -526,39 +605,88 @@ void Start()
 		(modRootAbsLow[exeDirAbsLow.size()] == '\\' ||
 		 modRootAbsLow[exeDirAbsLow.size()] == '/');
 
+	std::string bridgeNote;          // appended to Running status (file-count breadcrumb)
+
 	if (s_modActive && !modUnderExe)
 	{
-		// Editor-side mod: target the game install's mod mount so MC2_ACTIVE_MOD finds it.
-		dstDir = exeDir + "\\mods\\" + s_modId + "\\data\\missions";
-	}
-	MakeDirTree(dstDir);
+		// --- EDITOR-SIDE MOD: mirror the WHOLE mod data tree, not just pak+fit ---------
+		// The half-empty-mod incident (DarkRain area16): copying only <stem>.pak/.fit left the
+		// game mounting a mod missing its scripts (warriors/nop.abl, tgl stubs, ...) -> the
+		// engine STOP()'d (a no-op in release) then NULL-deref-crashed.  Mirror the entire mod
+		// `data\` tree into the game install's mods\<id>\data\ so MC2_ACTIVE_MOD sees a complete
+		// mod.  Incremental (copy only when dst missing or src newer) so re-runs over a multi-MB
+		// texture tree stay cheap.  On any copy failure: loud error + abort launch.
+		std::string modDstRoot = exeDir + "\\mods\\" + s_modId;
+		std::string srcDataDir = s_modRoot + "\\data";
+		std::string dstDataDir = modDstRoot + "\\data";
 
-	// Normalize all four paths to absolute so the same-file check is reliable (the mission
-	// may have been opened FROM the game install, making src == dst via a relative `..\`
-	// dest) and so status/launch never leak confusing relative paths.
-	srcPak = AbsPath(srcPak);
-	srcFit = AbsPath(srcFit);
-	std::string dstPak = AbsPath(dstDir + "\\" + stem + ".pak");
-	std::string dstFit = AbsPath(dstDir + "\\" + stem + ".fit");
+		int copied = 0;
+		std::string failSrc, failDst;
+		if (!MirrorTreeIncremental(srcDataDir, dstDataDir, &copied, &failSrc, &failDst))
+		{
+			snprintf(s_status, sizeof(s_status),
+				"Failed bridging mod data (%s -> %s), err %lu; aborting playtest.",
+				failSrc.c_str(), failDst.c_str(), GetLastError());
+			return;
+		}
 
-	// Per-file: if src and dst resolve to the same file, it is already in place -- skip the
-	// copy silently (copying a file onto itself fails with sharing-violation err 32).
-	if (!SamePath(srcPak, dstPak) && !CopyFileA(srcPak.c_str(), dstPak.c_str(), FALSE))
-	{
-		snprintf(s_status, sizeof(s_status),
-			"Failed to copy pak into game (%s -> %s), err %lu; aborting.",
-			srcPak.c_str(), dstPak.c_str(), GetLastError());
-		return;
+		// Also bridge the mod manifest (mod.json) when present -- the engine reads it to set up
+		// the mount.  Missing manifest is not fatal (treat absent source as nothing to do).
+		std::string srcModJson = s_modRoot + "\\mod.json";
+		if (FileExists(srcModJson.c_str()))
+		{
+			MakeDirTree(modDstRoot);
+			int r = CopyFileIncremental(srcModJson, modDstRoot + "\\mod.json");
+			if (r < 0)
+			{
+				snprintf(s_status, sizeof(s_status),
+					"Failed bridging mod.json into game (%s), err %lu; aborting playtest.",
+					srcModJson.c_str(), GetLastError());
+				return;
+			}
+			if (r > 0)
+				++copied;
+		}
+
+		char nb[96];
+		snprintf(nb, sizeof(nb), "bridged mod data (%d files copied)\n", copied);
+		bridgeNote = nb;
 	}
-	if (!SamePath(srcFit, dstFit) && !CopyFileA(srcFit.c_str(), dstFit.c_str(), FALSE))
+	else
 	{
-		snprintf(s_status, sizeof(s_status),
-			"Failed to copy fit into game (%s -> %s), err %lu; aborting.",
-			srcFit.c_str(), dstFit.c_str(), GetLastError());
-		return;
+		// Non-mod mission (or a mod already living under the game install): just bridge the
+		// single mission's pak + fit into the game's mission dir (the original behaviour).
+		MakeDirTree(dstDir);
+
+		// Normalize all four paths to absolute so the same-file check is reliable (the mission
+		// may have been opened FROM the game install, making src == dst via a relative `..\`
+		// dest) and so status/launch never leak confusing relative paths.
+		srcPak = AbsPath(srcPak);
+		srcFit = AbsPath(srcFit);
+		std::string dstPak = AbsPath(dstDir + "\\" + stem + ".pak");
+		std::string dstFit = AbsPath(dstDir + "\\" + stem + ".fit");
+
+		// Per-file: if src and dst resolve to the same file, it is already in place -- skip the
+		// copy silently (copying a file onto itself fails with sharing-violation err 32).
+		if (!SamePath(srcPak, dstPak) && !CopyFileA(srcPak.c_str(), dstPak.c_str(), FALSE))
+		{
+			snprintf(s_status, sizeof(s_status),
+				"Failed to copy pak into game (%s -> %s), err %lu; aborting.",
+				srcPak.c_str(), dstPak.c_str(), GetLastError());
+			return;
+		}
+		if (!SamePath(srcFit, dstFit) && !CopyFileA(srcFit.c_str(), dstFit.c_str(), FALSE))
+		{
+			snprintf(s_status, sizeof(s_status),
+				"Failed to copy fit into game (%s -> %s), err %lu; aborting.",
+				srcFit.c_str(), dstFit.c_str(), GetLastError());
+			return;
+		}
 	}
 
 	std::string stalePrefix;
+	if (!bridgeNote.empty())
+		stalePrefix += bridgeNote;
 	if (snapTookThisRun)
 		stalePrefix += "Pristine snapshot saved (.playtest-orig.pak/.fit) -- original preserved.\n";
 	if (!snapShrinkWarn.empty())
