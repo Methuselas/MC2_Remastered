@@ -427,6 +427,7 @@ public:
 		int snsAirStrike();
 		
 		int cameraNormal();
+		int toggleTacticalOverview();
 		int cameraDefault();
 		int cameraMaxIn();
 		int cameraMaxOut();

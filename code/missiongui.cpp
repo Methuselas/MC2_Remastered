@@ -27,6 +27,7 @@
 #ifndef MISSIONGUI_H
 #include"missiongui.h"
 #endif
+#include "tacticaloverview.h"
 
 // M1.6 + M2.6: IsStaticPropPickEnabled, lookupAtPixel, setLastGameplayPick,
 // clearLastGameplayPick, getLastGameplayPick, IsObjectIdBufferEnabled,
@@ -225,6 +226,7 @@ MissionInterfaceManager::Command		MissionInterfaceManager::commands[MAX_COMMAND]
 		KEY_E,				-1,	-1,						false,		&MissionInterfaceManager::selectVisible, 0, 43209,
 		KEY_F,				-1,	-1,						false,		&MissionInterfaceManager::forceShot, 0, 43210,
 		KEY_HOME,				-1,	-1,						true,		&MissionInterfaceManager::cameraNormal,0, -1,
+		KEY_O,					-1,	-1,						true,		&MissionInterfaceManager::toggleTacticalOverview, 0, -1,
 		KEY_F2,				-1,		-1,					true,		&MissionInterfaceManager::cameraDefault,0, -1,
 		KEY_F3,				-1,		-1,					true,		&MissionInterfaceManager::cameraMaxIn,0, -1,
 		KEY_F4,				-1,		-1,					true,		&MissionInterfaceManager::cameraMaxOut,0, -1,
@@ -646,6 +648,10 @@ void MissionInterfaceManager::update (void)
 		controlGui.update( isPaused() && !isPausedWithoutMenu(), false );
 		return;
 	}
+
+	//---------------------------------------------------
+	// Tactical overview: per-frame blend-state advance.
+	g_tacticalOverview.advance(frameLength);
 
 	//---------------------------------------------------
 	// Per Andy G.  One check per frame saves log file!
@@ -2852,9 +2858,16 @@ int MissionInterfaceManager::cameraNormal()
 {
 	if (eye)
 		eye->allNormal();
-		
+
 	return 1;
 }
+
+int MissionInterfaceManager::toggleTacticalOverview()
+{
+	g_tacticalOverview.onHotkey();
+	return 1;
+}
+
 int MissionInterfaceManager::cameraDefault()
 {
 	if (eye)
@@ -3870,6 +3883,8 @@ bool MissionInterfaceManager::moveCameraAround( bool lineOfSight, bool passable,
 		long mouseWheelDelta = userInput->getMouseWheelDelta();
 		if (mouseWheelDelta)
 		{
+			g_tacticalOverview.onWheel(-mouseWheelDelta, /*atCeiling=*/false,
+			                           frameLength, /*worldOwnsWheel=*/true);
 			//Mouse wheel just picks zooms now.
 			//float actualZoom = zoomInc * abs(mouseWheelDelta) * 0.0001f * eye->getScaleFactor();
 			if (mouseWheelDelta > 0)
@@ -3880,14 +3895,14 @@ bool MissionInterfaceManager::moveCameraAround( bool lineOfSight, bool passable,
 			{
 				zoomChoiceIn();
 			}
-	
+
 			if ( target )
 				userInput->setMouseCursor( makeTargetCursor( lineOfSight, moverCount, nonMoverCount ) );
 			else
 				userInput->setMouseCursor( makeNoTargetCursor( passable, lineOfSight, ctrl, bGui, moverCount, nonMoverCount ) );
 			bRetVal = 1;
 		}
-			
+
 		return bRetVal;
 	}
 	
@@ -3896,6 +3911,8 @@ bool MissionInterfaceManager::moveCameraAround( bool lineOfSight, bool passable,
 	long mouseWheelDelta = userInput->getMouseWheelDelta();
 	if (mouseWheelDelta)
 	{
+		g_tacticalOverview.onWheel(-mouseWheelDelta, /*atCeiling=*/false,
+		                           frameLength, /*worldOwnsWheel=*/true);
 		//Mouse wheel just picks zooms now.
 		//float actualZoom = zoomInc * abs(mouseWheelDelta) * 0.0001f * eye->getScaleFactor();
 		if (mouseWheelDelta > 0)
