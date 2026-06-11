@@ -19,6 +19,7 @@
 #include "gos_profiler.h"   // ZoneScopedN / TracyGpuZone (cull-dispatch split)
 #include "gos_static_prop_killswitch.h"   // gos_GetTerrainMVPMat4()
 #include "gos_static_prop_batcher.h"      // batcher_getTypeCount(), batcher_getTypeDrawInfo()
+#include "gl_state_guard.h"               // GlStateGuard slice 1: mc2gl::GlScopedSsboBinding
 
 #include <GL/glew.h>
 #include <gameos.hpp>                     // STOP()
@@ -1167,16 +1168,22 @@ void compute_dispatch() {
             // the post-patch barrier below cover bucketCountData[] /
             // cmds[].instanceCount cross-dispatch ordering; do not add a
             // GL_BUFFER_UPDATE_BARRIER_BIT for permutation.
-            GLint prevSsbo15 = 0;
-            glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 15, &prevSsbo15);
+            // GlStateGuard slice 1: scoped restore of slot 15 (was hand-rolled
+            // prevSsbo15 glGetIntegeri_v + rebind at block end). Destructs at the
+            // enclosing block's '}' — same restore point, same value, no behavior
+            // change.
+            mc2gl::GlScopedSsboBinding guardSsbo15(15);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 15, batcher_getPermutationSsbo());
 
             // 2026-05-11 per-packet rework: bind cmd_to_bucket SSBO at
             // binding 7 and run patch in per-packet mode when batcher's
             // packet-layout is built. Falls back to legacy per-type when
             // unavailable (coalesce-disarmed flow).
-            GLint prevSsbo7 = 0;
-            glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 7, &prevSsbo7);
+            // GlStateGuard slice 1: scoped restore of slot 7. Captures the
+            // current binding unconditionally; the original only restored slot 7
+            // when perPacketPatch rebound it, but restoring an unchanged slot to
+            // its captured value is a no-op rebind — GL-identical.
+            mc2gl::GlScopedSsboBinding guardSsbo7(7);
             const GLuint cmdToBucketSsbo = batcher_getCmdToBucketSsbo();
             const uint32_t pktCmdCount   = batcher_getSortedPacketCount();
             const bool perPacketPatch    = (cmdToBucketSsbo != 0u && pktCmdCount > 0u);
@@ -1214,10 +1221,9 @@ void compute_dispatch() {
 
             batcher_unbindBaseInstanceByCmdSsboForPatch();  // restore slot 16
 
-            if (perPacketPatch) {
-                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, (GLuint)prevSsbo7);
-            }
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 15, (GLuint)prevSsbo15);
+            // Slots 7 and 15 are restored here by guardSsbo7 / guardSsbo15
+            // destructing at this closing brace (reverse construction order:
+            // 7 then 15 — same order as the prior hand-rolled restores).
         }
 
         // 5. Barrier: indirect command buffer ready for draw + SSBO writes visible.

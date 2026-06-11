@@ -953,6 +953,18 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "(invalidates, registrations, recipe_rebuilds, light_writes). "
         "TSC calibrated once at first use (~1ms spin). Default-OFF; =1 enables. ZERO behavior change."
     },
+    // GLSTATEGUARD-SLICE-1
+    {
+        "MC2_GLSTATEGUARD_LOG",
+        "MC2_GLSTATEGUARD_LOG",
+        EnvVarKind::Trace,
+        false,
+        "GLSTATEGUARD-SLICE-1: leak-visibility for mc2gl::GlScopedSsboBinding (gl_state_guard.h). "
+        "Default-OFF; set to any non-null value to enable. Emits [GLSTATEGUARD v1] one-liner whenever a "
+        "guarded SHADER_STORAGE_BUFFER binding-base slot was actually changed inside the guarded region "
+        "(i.e. the RAII restore is load-bearing). OBSERVATION-ONLY: the RAII save/restore itself is "
+        "structural and always-on, independent of this var — the log only reports it. ZERO behavior change."
+    },
 };
 
 // ---------------------------------------------------------------------------
