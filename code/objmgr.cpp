@@ -3967,7 +3967,14 @@ WeaponBoltPtr GameObjectManager::createWeaponBolt (long effectId)
 		ObjectTypeNumber weaponBoltObjTypeHandle = weaponEffects->GetEffectObjNum(effectId);
 		ObjectTypePtr objectType = getObjectType(weaponBoltObjTypeHandle);
 		if (!objectType)
+		{
 			STOP(("Object Type for a weapon Bolt was NULL.  EffectId: %d  ObjType: %d",effectId, weaponBoltObjTypeHandle));
+			// STOP is a no-op in RelWithDebInfo, so guard the null-deref below
+			// explicitly: drop the effect (caller handles a NULL weaponFX) instead
+			// of crashing on objectType->getObjectClass() when an effect type has
+			// no registered WEAPONBOLT object (e.g. asset gap on a given map).
+			return(NULL);
+		}
 		if (objectType->getObjectClass() != WEAPONBOLT)
 			return(NULL);
 		//ALWAYS CALL IN THIS ORDER OR NO EFFECT!!!!!!!!!!!!!!!!!!!!
