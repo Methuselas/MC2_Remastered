@@ -27,6 +27,7 @@ sys.path.insert(0, str(ROOT))
 
 from scripts.smoke_lib import baselines, manifest, report
 from scripts.smoke_lib.runner import RunConfig, run_one
+from scripts.smoke_lib import cockpit as _cockpit
 
 DEFAULT_EXE = Path(r"A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe")
 ARTIFACT_ROOT = ROOT / "tests" / "smoke" / "artifacts"
@@ -687,6 +688,21 @@ def main():
     sys.stdout.buffer.write(b"\n")
     sys.stdout.buffer.flush()
     passed = all(r.verdict.passed for r in rows) and (menu_canary_rc in (None, 0))
+
+    # Post-verdict cockpit hook (S2).  Verdict is already frozen above.
+    # Any exception here is swallowed by cockpit.write_cockpit_artifacts;
+    # it never changes the exit code.
+    _cockpit.write_cockpit_artifacts(
+        artifact_dir,
+        exe_path=args.exe,
+        tier=args.tier or "adhoc",
+        profile=args.profile,
+        missions=[r.stem for r in rows],
+        durations={r.stem: (args.duration or 120) for r in rows},
+        result="PASS" if passed else "FAIL",
+        source="smoke",
+    )
+
     sys.exit(0 if passed else 1)
 
 
