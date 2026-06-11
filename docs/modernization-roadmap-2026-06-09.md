@@ -22,9 +22,9 @@
 > - **S2b:** CLOSED — mech bodies already GPU.
 > - **gosFX Tube:** live **residual legacy lane** (A/B validation pending; merge decision deferred — not before harness).
 > - **PertCloud:** DEAD.
-> - **Per-pass GPU timings:** still **OPEN** (headless = no Tracy; needs interactive Tracy/RGP fill — see Baseline A §6 + perf-budget "Open residual").
+> - **Per-pass timings:** **CPU attribution FILLED** via smoke cost-split (Baseline A §6a — MISSION_SPLIT / GEOM_PHASE_SPLIT / MIF_SPLIT; slim=0µs re-confirms slimReduce dead). **GPU per-pass still OPEN** (§6b) — scoped to a small per-pass GL `TIME_ELAPSED` instrumentation lane (only gpu_cull+water timed today), NOT a headless dead-end.
 >
-> **Disciplined next order:** (1) harness ✅ → (2) interactive per-pass Tracy/RGP fill for Baseline A → (3) GlStateGuard slice 1 (measured vs budget) → (4) Tube A/B + merge decision → (5) HZB or asset-cook lane.
+> **Disciplined next order:** (1) harness ✅ → (2) per-pass timing fill: CPU ✅ (cost-split smoke), GPU = small GL-timer lane (§6b) → (3) GlStateGuard slice 1 (comparator = §6a CPU attribution + p99_ms budget today; §6b sharpens) → (4) Tube A/B + merge decision → (5) HZB or asset-cook lane.
 
 **Date:** 2026-06-09 (milestone updated 2026-06-10)
 **Worktree:** `.claude/worktrees/nifty-mendeleev`

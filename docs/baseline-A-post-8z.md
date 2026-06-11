@@ -87,24 +87,58 @@ Per-mission, end-of-run / last-dump values:
 
 ---
 
-## 6. Per-pass timings — LIMITATION (honest note)
+## 6. Per-pass timings
 
-**Tracy per-pass GPU zones (terrain solid / shadow / 3D objects / post / present) are NOT captured in this baseline.** Tracy is compiled in (`TRACY_ENABLE`) but requires a live Tracy profiler client attached to a windowed session; the headless smoke harness has no profiler connection and the state-dump JSON exposes no per-pass timer. Per-pass GPU timings must be captured in a separate **interactive** session (windowed `mc2.exe` + Radeon Developer Panel / Tracy) and appended here before they can gate timing-sensitive lanes.
+Two layers, captured two ways. **Measurement source is marked on every number** — do not mix CPU cost-split with GPU pass time.
 
-The only per-pass timing signal exposed by the headless dump/log is the GPU-cull indirect submit cost:
+### 6a. CPU per-pass attribution — FILLED (smoke + RDTSC cost-split)
 
-| Mission | `GPU_CULL indirect_draw elapsed_us` (typical) |
-|---------|-----------------------------------------------|
-| mc2_01  | 11–13 |
-| mc2_03  | 11–13 |
-| mc2_10  | 11–14 |
-| mc2_17  | 12–13 |
-| mc2_24  | 11    |
+Source: **smoke cost-split**, env-gated RDTSC accumulators (`MC2_*_COST_SPLIT` / `MC2_*_SPLIT`), captured headless off 0.4c on mc2_01 (lightest) + mc2_24 (heaviest), 30s each, ~2000–2500 frames. Values are **per-frame average µs** (the `avg_us` field). `max_us` is discarded — it is load/first-frame hitch (100–160 ms), same artifact as `peak_ms`. Archive: `.claude/baseline-A-costsplit/`.
 
-`buckets=374, overflow=0, flush=600` — terrain/static indirect draw submit is ~11–14 µs CPU. This is a CPU-submit proxy, **not** a GPU pass time. Frame-count avg FPS (§1) is the only whole-frame timing reference in this baseline.
+**CPU update split** (`MISSION_SPLIT v1`, the per-frame sim+build work, not GPU submit):
+
+| Subsystem (avg µs/frame) | mc2_01 | mc2_24 |
+|---|---|---|
+| objmgr (terrain-object update) | 429 | 961 |
+| land_update (terrain) | 511 | 357 |
+| geometry (terrain geom phase) | 338 | 363 |
+| interface (HUD/mission UI) | 259 | 369 |
+| camera | 39 | 78 |
+| pathmgr | 0.2 | 70 |
+| **TOTAL update** | **1793** | **2610** |
+
+**Terrain geom-phase breakdown** (`GEOM_PHASE_SPLIT v1`, avg µs/frame):
+
+| Phase | mc2_01 | mc2_24 |
+|---|---|---|
+| chunkProd (chunk producer) | 67 | 72 |
+| quadSetup | 151 | 152 |
+| lightingPack | 24 | 28 |
+| lightingCopy | 21 | 23 |
+| indirectCompute | 20 | 24 |
+| **slim** (legacy slimReduce) | **0.0** | **0.0** |
+| total | 302 | 322 |
+
+`slim=0.0 µs` is the **runtime confirmation** that `slimReduce` is retired (corroborates §4 `slimVerts=0`).
+
+**HUD split** (`MIF_SPLIT v1`, avg µs/frame): mc2_01 TOTAL 485 (invProj **399**, updateTarget 53, controlGui 18); mc2_24 TOTAL 369 (invProj **205**, updateTarget 120). `invProj` (cursor-pick `inverseProject`) is the dominant HUD cost — the known pick hotspot, recorded here as baseline, not a new finding.
+
+**Static-prop flush** (`SPFLUSH_COST_SPLIT v1`, cached path): mc2_01 total ≈9.5 µs, mc2_24 ≈3.5 µs over 10 frames — negligible (snapshot cache hit, no per-frame rebuild).
+
+### 6b. GPU per-pass times — STILL OPEN (precisely scoped)
+
+Source available headless: **GL `TIME_ELAPSED` query** — but the engine only wraps **two** passes in a GL timer: `gpu_cull_compute` and `gos_terrain_water_stream`. There is **no** GL timer around terrain-solid, shadow, 3D-objects, post-process, or present.
+
+| GPU pass | source | mc2_01 | mc2_24 |
+|---|---|---|---|
+| GPU-cull indirect submit | `GPU_CULL indirect_draw elapsed_us` | 11–13 | 10–11 |
+| Water stream | `TIME_ELAPSED` | (no water in mission) | (no water in mission) |
+| Terrain solid / shadow / 3D / post / present | — | **not instrumented** | **not instrumented** |
+
+**Why still open, and the fix:** this is NOT a headless dead-end (smokes already pull the two timers that exist). The gap is missing instrumentation — there is no per-pass GL `TIME_ELAPSED` wrapper around the main passes. Closing 6b = a small, bounded code lane: add a coarse per-pass GL timer (one `glBeginQuery(GL_TIME_ELAPSED)` per pass, summary-emit like `GPU_CULL`) and re-run the cost-split smoke. Until then, GPU per-pass cost is inferred only from whole-frame `p50_ms` (6.6 µs… 6.9 ms, §1) minus the CPU update TOTAL above. A live Tracy/RGP GUI session remains the alternative for an interactive snapshot, but the per-pass GL timer is the *repeatable, smoke-capturable* path and is preferred.
 
 ---
 
 ## Gate
 
-Baseline A captured. Tier1 5/5 pass, FATAL=0, FASTPATH_DROP=0, all correctness oracles clean (terrain chunk-only + armed, parity MATCH), OBJBATCHER late-register skips recorded as known non-zero. **Per-pass GPU timings remain OPEN** (headless limitation) and must be filled from an interactive Tracy/RGP session. With that caveat noted, this freezes the post-8z reference; the modernization backlog (GlStateGuard, visual lanes, Tube merge) may open against it.
+Baseline A captured. Tier1 5/5 pass, FATAL=0, FASTPATH_DROP=0, all correctness oracles clean (terrain chunk-only + armed, parity MATCH), OBJBATCHER late-register skips recorded as known non-zero. **CPU per-pass attribution FILLED** (§6a, cost-split). **GPU per-pass times remain OPEN** (§6b) — scoped to a small per-pass GL-timer instrumentation lane, not a headless limitation. With that caveat noted, this freezes the post-8z reference; the modernization backlog (GlStateGuard, visual lanes, Tube merge) may open against it. GlStateGuard slice 1 can use §6a CPU attribution + the whole-frame `p99_ms` budget as its before/after comparator today; 6b sharpens it.

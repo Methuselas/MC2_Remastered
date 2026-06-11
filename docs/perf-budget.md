@@ -74,12 +74,29 @@ after the batch window), not real geometry on the CPU path.
 This is the structural answer to "OBJBATCHER cpu_fallback needs classification,
 not panic": the harness encodes the classification so future runs auto-distinguish.
 
+## Cost-split drill-down (CPU per-pass)
+
+When a whole-frame budget regression fires (`avg_fps`/`p99_ms`/`p1low_fps`),
+re-run the mission with the RDTSC cost-split env gates to attribute it to a CPU
+subsystem — no Tracy needed, smoke-captured:
+
+```bat
+set MC2_MISSION_SPLIT=1 & set MC2_GEOM_PHASE_SPLIT=1 & set MC2_MIF_SPLIT=1
+set MC2_TERRAIN_COST_SPLIT=1 & set MC2_STATIC_PROP_FLUSH_COST_SPLIT=1
+set MC2_TOBJ_COST_SPLIT=1 & set MC2_LIGHT_COST_SPLIT=1
+mc2.exe --profile stock --mission <stem> --duration 30   (+ MC2_SMOKE_MODE=1)
+```
+
+Read the `event=summary`/`event=shutdown` `avg_us` fields (ignore `max_us` —
+load-hitch). Baseline A §6a holds the filled mc2_01/mc2_24 reference numbers.
+
 ## Open residual
 
-**Per-pass GPU timings (terrain solid / shadow / 3D / post / present) are NOT in
-this budget** — headless smoke has no Tracy client. The only per-pass proxy
-parsed is `GPU_CULL indirect_draw elapsed_us` (~11–14 µs CPU submit). True
-per-pass GPU times must come from an interactive Tracy/RGP session and be folded
-in as a second budget tier before they can gate timing-sensitive lanes. Until
-then this budget gates **correctness oracles + whole-frame perf**, which is
+**GPU per-pass times (terrain solid / shadow / 3D / post / present) are NOT in
+this budget.** Not a headless limit — the engine only wraps `gpu_cull` + water
+in a GL `TIME_ELAPSED` query; the main passes have no per-pass timer. Closing it
+= a small instrumentation lane (one coarse `glBeginQuery(GL_TIME_ELAPSED)` per
+pass, summary-emit like `GPU_CULL`), then re-run the cost-split smoke and fold a
+second (GPU) budget tier. See Baseline A §6b. Until then this budget gates
+**correctness oracles + whole-frame perf + CPU per-pass attribution**, which is
 enough to make GlStateGuard / Tube / HZB before-after comparable.
