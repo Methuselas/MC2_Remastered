@@ -24,6 +24,7 @@
 #include <cstdio>
 #include <cstdlib>   // std::getenv, std::atoi (MC2_VFX_DEBUG_MODE)
 #include <unordered_set>
+#include <vector>    // MC2_VFX_ORACLE_TUBE: pos3->vec4 staging
 
 // terrainMVP getter — same accessor used by gos_terrain_bridge_renderWaterFast
 // at gameos_graphics.cpp:2171. C linkage upstream.
@@ -297,6 +298,234 @@ void ensureSsboCapacity(GLsizei needRecords) {
 }
 
 }  // namespace
+
+// ── MC2_VFX_ORACLE_TUBE slice 1: ribbon mesh bridge state ─────────────────
+// Separate program + 3 SSBOs (pos/color/uv) + element buffer. Shares NOTHING
+// with the billboard path above; the ribbon is an indexed swept-quad mesh, not
+// gl_VertexID-expanded cards.
+namespace {
+
+GLuint s_tubePosSsbo   = 0;   // binding=14: vec4 worldpos
+GLuint s_tubeColSsbo   = 0;   // binding=15: vec4 rgba
+GLuint s_tubeUvSsbo    = 0;   // binding=16: vec2 uv
+GLuint s_tubeIbo       = 0;   // GL_ELEMENT_ARRAY_BUFFER (unsigned short)
+GLuint s_tubeVao       = 0;   // VAO owning the IBO binding
+GLuint s_tubeSampler   = 0;   // CLAMP_TO_EDGE + LINEAR
+const ::glsl_program* s_tubeProg = nullptr;
+bool s_tubeInitFailed  = false;
+
+GLint s_tloc_worldToClipGL = -2;
+GLint s_tloc_uAtlas        = -2;
+
+GLsizei s_tubePosCap = 0, s_tubeColCap = 0, s_tubeUvCap = 0, s_tubeIdxCap = 0;
+
+void tubeEnsureInitialized() {
+    if (s_tubeInitFailed) return;
+    if (s_tubeProg && s_tubeVao && s_tubeSampler) return;
+
+    if (s_tubeVao == 0) glGenVertexArrays(1, &s_tubeVao);
+    if (s_tubeSampler == 0) {
+        glGenSamplers(1, &s_tubeSampler);
+        glSamplerParameteri(s_tubeSampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glSamplerParameteri(s_tubeSampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glSamplerParameteri(s_tubeSampler, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glSamplerParameteri(s_tubeSampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    }
+    if (s_tubeProg == nullptr) {
+        static const char* kPrefix = "#version 430\n";
+        s_tubeProg = ::glsl_program::makeProgram(
+            "tube_ribbon",
+            "shaders/tube_ribbon.vert",
+            "shaders/tube_ribbon.frag",
+            kPrefix);
+        if (!s_tubeProg || !s_tubeProg->shp_) {
+            s_tubeInitFailed = true;
+            std::fprintf(stderr,
+                "[VFX_ORACLE_TUBE v1] event=prog_compile_fail — ribbon bridge disabled\n");
+            std::fflush(stderr);
+            s_tubeProg = nullptr;
+            return;
+        }
+        std::fprintf(stderr,
+            "[VFX_ORACLE_TUBE v1] event=prog_compiled prog=%u\n",
+            (unsigned)s_tubeProg->shp_);
+        std::fflush(stderr);
+        s_tloc_worldToClipGL = glGetUniformLocation(s_tubeProg->shp_, "u_worldToClipGL");
+        s_tloc_uAtlas        = glGetUniformLocation(s_tubeProg->shp_, "uAtlas");
+    }
+}
+
+void tubeEnsureBuffer(GLuint& buf, GLsizei& cap, GLenum target,
+                      GLsizei needBytes, GLenum binding /*0=none*/) {
+    if (buf == 0) glGenBuffers(1, &buf);
+    if (needBytes > cap) {
+        GLsizei newCap = (needBytes < 4096) ? 4096 : needBytes;
+        glBindBuffer(target, buf);
+        glBufferData(target, (GLsizeiptr)newCap, nullptr, GL_DYNAMIC_DRAW);
+        glBindBuffer(target, 0);
+        cap = newCap;
+    }
+    (void)binding;
+}
+
+}  // namespace (tube ribbon)
+
+extern "C" void gos_tube_ribbon_flush(const float*          positions,
+                                      const float*          colors,
+                                      const float*          uvs,
+                                      unsigned int          numVerts,
+                                      const unsigned short* indices,
+                                      unsigned int          numIndices,
+                                      unsigned int          gosHandle,
+                                      int                   blendMode) {
+    if (numVerts == 0 || numIndices == 0 ||
+        positions == nullptr || colors == nullptr ||
+        uvs == nullptr || indices == nullptr) return;
+
+    tubeEnsureInitialized();
+    if (s_tubeInitFailed || s_tubeProg == nullptr || s_tubeProg->shp_ == 0) {
+        static bool s_failLogged = false;
+        if (!s_failLogged) {
+            s_failLogged = true;
+            std::fprintf(stderr, "[VFX_ORACLE_TUBE v1] ERROR ribbon_init_failed\n");
+            std::fflush(stderr);
+        }
+        return;
+    }
+
+    // Resolve the gos texture handle to a GL name; skip if not resident.
+    const GLuint glTex = (gosHandle != 0) ? (GLuint)gos_GetGLTextureName(gosHandle) : 0u;
+    if (glTex == 0) {
+        if (groupLogEnabled()) {
+            static std::unordered_set<uint32_t> s_loggedMissing;
+            if (s_loggedMissing.insert(gosHandle).second) {
+                std::fprintf(stderr,
+                    "[VFX_ORACLE_TUBE v1] skip missing_texture handle=%u\n", gosHandle);
+                std::fflush(stderr);
+            }
+        }
+        return;
+    }
+
+    // First-flush banner.
+    {
+        static bool s_banner = false;
+        if (!s_banner) {
+            s_banner = true;
+            std::fprintf(stderr,
+                "[VFX_ORACLE_TUBE v1] enabled=1 verts=%u indices=%u tex=%u blend=%s\n",
+                numVerts, numIndices, gosHandle,
+                blendMode == 1 ? "additive" : "alpha");
+            std::fflush(stderr);
+        }
+    }
+
+    // ── State save (mirror gos_particle_bridge_flush) ──────────────────
+    GLint savedProgram   = 0; glGetIntegerv(GL_CURRENT_PROGRAM, &savedProgram);
+    GLint savedVAO       = 0; glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &savedVAO);
+    GLint savedSrcRGB    = 0; glGetIntegerv(GL_BLEND_SRC_RGB, &savedSrcRGB);
+    GLint savedDstRGB    = 0; glGetIntegerv(GL_BLEND_DST_RGB, &savedDstRGB);
+    GLboolean savedBlend = glIsEnabled(GL_BLEND);
+    GLboolean savedDepthTest = glIsEnabled(GL_DEPTH_TEST);
+    GLint savedDepthFunc = 0; glGetIntegerv(GL_DEPTH_FUNC, &savedDepthFunc);
+    GLint savedDepthMask = 0; glGetIntegerv(GL_DEPTH_WRITEMASK, &savedDepthMask);
+    GLint savedSampler   = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, 0, &savedSampler);
+    GLint savedActiveTex = 0; glGetIntegerv(GL_ACTIVE_TEXTURE, &savedActiveTex);
+    GLint savedTex2D0    = 0;
+    glActiveTexture(GL_TEXTURE0);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &savedTex2D0);
+    GLboolean savedCullFace = glIsEnabled(GL_CULL_FACE);
+
+    // ── Bind VAO + IBO (trap #4: AMD drops draws on VAO=0) ─────────────
+    glBindVertexArray(s_tubeVao);
+
+    // ── Upload mesh into the 3 SSBOs + the element buffer ──────────────
+    tubeEnsureBuffer(s_tubePosSsbo, s_tubePosCap, GL_SHADER_STORAGE_BUFFER,
+                     (GLsizei)(numVerts * 4u * sizeof(float)), 0);
+    tubeEnsureBuffer(s_tubeColSsbo, s_tubeColCap, GL_SHADER_STORAGE_BUFFER,
+                     (GLsizei)(numVerts * 4u * sizeof(float)), 0);
+    tubeEnsureBuffer(s_tubeUvSsbo,  s_tubeUvCap,  GL_SHADER_STORAGE_BUFFER,
+                     (GLsizei)(numVerts * 2u * sizeof(float)), 0);
+    tubeEnsureBuffer(s_tubeIbo,     s_tubeIdxCap, GL_ELEMENT_ARRAY_BUFFER,
+                     (GLsizei)(numIndices * sizeof(unsigned short)), 0);
+
+    // Positions arrive as 3 floats/vert; expand to vec4 (w=1) for std430 vec4.
+    {
+        std::vector<float> pos4((size_t)numVerts * 4u);
+        for (unsigned i = 0; i < numVerts; ++i) {
+            pos4[i*4+0] = positions[i*3+0];
+            pos4[i*4+1] = positions[i*3+1];
+            pos4[i*4+2] = positions[i*3+2];
+            pos4[i*4+3] = 1.0f;
+        }
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_tubePosSsbo);
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                        (GLsizeiptr)(pos4.size()*sizeof(float)), pos4.data());
+    }
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_tubeColSsbo);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                    (GLsizeiptr)(numVerts * 4u * sizeof(float)), colors);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_tubeUvSsbo);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                    (GLsizeiptr)(numVerts * 2u * sizeof(float)), uvs);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_tubeIbo);
+    glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0,
+                    (GLsizeiptr)(numIndices * sizeof(unsigned short)), indices);
+
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 14, s_tubePosSsbo);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 15, s_tubeColSsbo);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 16, s_tubeUvSsbo);
+
+    // ── Program + uniforms ─────────────────────────────────────────────
+    glUseProgram(s_tubeProg->shp_);
+    {
+        const float* mvp = gos_GetTerrainMVPMat4();  // row-major direct (GL_FALSE)
+        if (mvp && s_tloc_worldToClipGL >= 0)
+            glUniformMatrix4fv(s_tloc_worldToClipGL, 1, GL_FALSE, mvp);
+    }
+    if (s_tloc_uAtlas >= 0) glUniform1i(s_tloc_uAtlas, 0);
+
+    // ── Texture + sampler on unit 0 ────────────────────────────────────
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, glTex);
+    glBindSampler(0, s_tubeSampler);
+
+    // ── Depth + blend (depth-test ON, depth-write OFF; alpha blend) ────
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_GEQUAL);  // reverse-Z convention
+    glDepthMask(GL_FALSE);
+    glEnable(GL_BLEND);
+    if (blendMode == 1) glBlendFunc(GL_SRC_ALPHA, GL_ONE);          // (slice 1 never uses this)
+    else                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    // Ribbon is a swept double-sided strip; disable face culling so it shows
+    // from both sides regardless of profile winding.
+    glDisable(GL_CULL_FACE);
+
+    glDrawElements(GL_TRIANGLES, (GLsizei)numIndices, GL_UNSIGNED_SHORT, (const void*)0);
+
+    // ── Unbind SSBO slots (mirror billboard flush hygiene) ─────────────
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 14, 0u);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 15, 0u);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 16, 0u);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+
+    // ── Restore state ──────────────────────────────────────────────────
+    if (savedCullFace) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)savedTex2D0);
+    glBindSampler(0, (GLuint)savedSampler);
+    if (savedActiveTex != GL_TEXTURE0) glActiveTexture((GLenum)savedActiveTex);
+    glDepthMask((GLboolean)savedDepthMask);
+    glDepthFunc((GLenum)savedDepthFunc);
+    if (!savedDepthTest) glDisable(GL_DEPTH_TEST);
+    glBlendFunc((GLenum)savedSrcRGB, (GLenum)savedDstRGB);
+    if (!savedBlend) glDisable(GL_BLEND);
+    glUseProgram((GLuint)savedProgram);
+    glBindVertexArray((GLuint)savedVAO);
+
+    extern void __stdcall gos_InvalidateRenderStateCache();
+    gos_InvalidateRenderStateCache();
+}
 
 extern "C" void gos_SetActiveCamera(const float right_xyz[3], const float up_xyz[3])
 {

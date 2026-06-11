@@ -27,6 +27,35 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
                                           const mc2::particles::GroupInfo*   groups,
                                           unsigned int                       numGroups);
 
+/* MC2_VFX_ORACLE_TUBE slice 1: gosFX Tube swept-quad ribbon submit.
+ *
+ * Renders the CPU Tube sim's already-built swept-quad ribbon mesh (one oriented
+ * quad per consecutive profile pair) as an indexed triangle list. This is NOT a
+ * billboard/card path — it shares no state with gos_particle_bridge_flush.
+ *
+ *   positions : numVerts * 3 floats, MC2/Stuff WORLD space (axis swap applied
+ *               in-shader, matching the billboard VS convention).
+ *   colors    : numVerts * 4 floats RGBA (per-vertex animated color).
+ *   uvs       : numVerts * 2 floats (U along spine, V around cross-section).
+ *   indices   : numIndices unsigned shorts (subset of the BuildMesh stencil for
+ *               the live profile range).
+ *   gosHandle : gos texture handle for this Tube's MLR texture (0 = untextured;
+ *               draw is skipped if it cannot be resolved).
+ *   blendMode : 0 = alpha (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA). Slice 1 only
+ *               ever passes alpha; additive Tubes fall through to legacy MLR.
+ *
+ * Depth-test ON, depth-write OFF (matches legacy MissileSmoke). No object-ID
+ * writes (pure FX geometry).
+ */
+extern "C" void gos_tube_ribbon_flush(const float*          positions,
+                                      const float*          colors,
+                                      const float*          uvs,
+                                      unsigned int          numVerts,
+                                      const unsigned short* indices,
+                                      unsigned int          numIndices,
+                                      unsigned int          gosHandle,
+                                      int                   blendMode);
+
 /* B2: active camera bridge — temporary stop-gap until RenderFrameContext lands.
  * Set by GameCamera::render() immediately before particle flush; cleared after.
  * If never set this frame, accessors return last-known basis (identity at boot).

@@ -7,6 +7,17 @@
 
 #include<cstdio>   // VFX-TUBE-PROFILE-ORACLE-1 diagnostics
 
+// MC2_VFX_ORACLE_TUBE slice 1: ribbon mesh submit bridge (GameOS-side GL).
+// Declared extern "C" here to avoid pulling GameOS headers into mclib.
+extern "C" void gos_tube_ribbon_flush(const float*          positions,
+                                      const float*          colors,
+                                      const float*          uvs,
+                                      unsigned int          numVerts,
+                                      const unsigned short* indices,
+                                      unsigned int          numIndices,
+                                      unsigned int          gosHandle,
+                                      int                   blendMode);
+
 //==========================================================================//
 // File:	 gosFX_Tube.cpp										            //
 // Contents: Base gosFX::Tube Component									    //
@@ -597,6 +608,8 @@ gosFX::Tube::Tube(
 	m_P_uvs = Cast_Pointer(Stuff::Vector2DOf<Stuff::Scalar>*, &m_data[size]);
 	size += spec->m_maxProfileCount*vertex_count*sizeof(Stuff::Vector2DOf<Stuff::Scalar>);
 	unsigned short *mesh_indices = Cast_Pointer(unsigned short*, &m_data[size]);
+	// MC2_VFX_ORACLE_TUBE: remember the index stencil for the ribbon bridge.
+	m_P_indices = mesh_indices;
 	m_mesh->SetData(
 		&m_triangleCount,
 		&m_vertexCount,
@@ -1447,11 +1460,116 @@ void gosFX::Tube::Draw(DrawInfo *info)
 		}
 
 		//
+		//-----------------------------------------------------------------
+		// MC2_VFX_ORACLE_TUBE slice 1: if the gate is ON and this Tube is a
+		// supported kind (alpha-blend ribbon, vertex_count==2 — MissileSmoke
+		// and friends), submit the already-built swept-quad ribbon mesh to the
+		// GPU ribbon bridge instead of the legacy MLR DrawEffect. Unsupported
+		// kinds (additive PPC, polygon profiles vertex_count>2) fall through to
+		// legacy MLR unchanged below.
+		//-----------------------------------------------------------------
+		//
+		bool ribbonSubmitted = false;
+		if (mc2::particles::Batcher::is_oracle_tube_enabled())
+		{
+			const unsigned vc = vertex_count;  // captured above
+			const bool isRibbonKind =
+				(spec->m_profileType == Specification::e_Ribbon ||
+				 spec->m_profileType == Specification::e_AlignedRibbon ||
+				 spec->m_profileType == Specification::e_VerticalRibbon);
+			const MidLevelRenderer::MLRState::AlphaMode am =
+				spec->m_state.GetAlphaMode();
+			// Slice 1 supports alpha-blend ribbons only. Additive modes
+			// (OneOneMode / AlphaOneMode — PPC bolts) are NOT supported.
+			const bool isAlphaBlend =
+				(am == MidLevelRenderer::MLRState::AlphaInvAlphaMode ||
+				 am == MidLevelRenderer::MLRState::OneInvAlphaMode  ||
+				 am == MidLevelRenderer::MLRState::OneAlphaMode);
+			const bool supported = isRibbonKind && (vc == 2) && isAlphaBlend;
+
+			static unsigned long long s_tubeCalls = 0, s_subTotal = 0,
+			                          s_fallbackTotal = 0, s_unsupTotal = 0;
+			const bool tubeLog = mc2::particles::Batcher::is_oracle_tube_log_enabled();
+
+			if (supported && m_P_indices)
+			{
+				// Live, compacted mesh: profiles 0..m_activeProfileCount are
+				// contiguous in m_P_vertices/colors/uvs (AnimateProfile writes
+				// vertex_index = profile_count*vc). Index range = the first
+				// m_triangleCount triangles of the BuildMesh stencil.
+				const unsigned numVerts   = m_activeProfileCount * vc;
+				const unsigned numIndices = static_cast<unsigned>(m_triangleCount) * 3u;
+
+				// Transform local-space ribbon verts to MC2/Stuff world space.
+				// (m_P_vertices are effect-local; the ribbon VS applies the GL
+				// axis swap, so we hand it MC2 world unswapped.)
+				static Stuff::DynamicArrayOf<float> s_worldPos;
+				if (static_cast<unsigned>(s_worldPos.GetLength()) < numVerts*3u)
+					s_worldPos.SetLength(numVerts*3u);
+				for (unsigned vi = 0; vi < numVerts; ++vi)
+				{
+					Stuff::Point3D wp;
+					wp.Multiply(m_P_vertices[vi], local_to_world);
+					s_worldPos[vi*3+0] = wp.x;
+					s_worldPos[vi*3+1] = wp.y;
+					s_worldPos[vi*3+2] = wp.z;
+				}
+
+				const uint32_t gosHandle =
+					static_cast<uint32_t>(spec->m_state.GetTextureHandle());
+
+				gos_tube_ribbon_flush(
+					&s_worldPos[0],
+					reinterpret_cast<const float*>(m_P_colors),
+					reinterpret_cast<const float*>(m_P_uvs),
+					numVerts,
+					m_P_indices,
+					numIndices,
+					gosHandle,
+					/*blendMode=*/0);  // slice 1 = alpha only
+
+				ribbonSubmitted = true;
+				++s_subTotal;
+			}
+			else
+			{
+				if (supported) ++s_fallbackTotal;  // supported but no indices
+				else           ++s_unsupTotal;     // unsupported kind
+			}
+
+			if (tubeLog)
+			{
+				static bool s_first = false;
+				if (!s_first && ribbonSubmitted) {
+					s_first = true;
+					std::fprintf(stderr,
+						"[VFX_ORACLE_TUBE v1] class=Tube FIRST_HARVEST spec=\"%s\" "
+						"profileType=%d vc=%u activeProfiles=%d verts=%u indices=%u\n",
+						static_cast<const char*>(spec->m_name),
+						(int)spec->m_profileType, vertex_count,
+						m_activeProfileCount,
+						m_activeProfileCount * vertex_count,
+						(unsigned)m_triangleCount * 3u);
+					std::fflush(stderr);
+				}
+				if ((++s_tubeCalls % 240ull) == 0ull) {
+					std::fprintf(stderr,
+						"[VFX_ORACLE_TUBE v1] calls=%llu submittedTotal=%llu "
+						"fallbackTotal=%llu unsupportedTotal=%llu\n",
+						s_tubeCalls, s_subTotal, s_fallbackTotal, s_unsupTotal);
+					std::fflush(stderr);
+				}
+			}
+		}
+
+		//
 		//--------------------
-		// Now draw the effect
+		// Now draw the effect (legacy MLR) — skipped when the ribbon oracle
+		// submitted this Tube above.
 		//--------------------
 		//
-	 	info->m_clipper->DrawEffect(&dInfo);
+		if (!ribbonSubmitted)
+	 		info->m_clipper->DrawEffect(&dInfo);
 	}
 
 	Effect::Draw(info);

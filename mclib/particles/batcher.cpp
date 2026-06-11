@@ -172,6 +172,34 @@ bool Batcher::is_gpu_sim_compare_enabled() {
     return s_val;
 }
 
+// MC2_VFX_ORACLE_TUBE slice 1: Tube swept-quad ribbon oracle gate.
+// Default OFF (absent or !="1" -> legacy MLR path unchanged). Read once,
+// process-lifetime. Mirrors the MC2_VFX_GPU_SIM_* default-OFF idiom.
+bool Batcher::is_oracle_tube_enabled() {
+    static bool s_init = false;
+    static bool s_val  = false;
+    if (!s_init) {
+        const char* v = std::getenv("MC2_VFX_ORACLE_TUBE");
+        s_val  = (v && v[0] == '1');
+        s_init = true;
+        std::fprintf(stderr, "[VFX_ORACLE_TUBE v1] gate=%s\n",
+                     s_val ? "on" : "off");
+        std::fflush(stderr);
+    }
+    return s_val;
+}
+
+bool Batcher::is_oracle_tube_log_enabled() {
+    static bool s_init = false;
+    static bool s_val  = false;
+    if (!s_init) {
+        const char* v = std::getenv("MC2_VFX_ORACLE_TUBE_LOG");
+        s_val  = (v && v[0] == '1');
+        s_init = true;
+    }
+    return s_val;
+}
+
 Batcher::Batcher(unsigned int perFrameBudget)
     : impl_(new Impl(perFrameBudget)) {}
 

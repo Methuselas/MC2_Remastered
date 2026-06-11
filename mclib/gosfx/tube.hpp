@@ -179,6 +179,11 @@ namespace gosFX
 			*m_P_colors;
 		Stuff::Vector2DOf<Stuff::Scalar>
 			*m_P_uvs;
+		// MC2_VFX_ORACLE_TUBE slice 1: cached pointer to the BuildMesh index
+		// stencil (lives inside m_data) so Tube::Draw can submit the live
+		// profile index range to the ribbon bridge. NULL until constructed.
+		unsigned short
+			*m_P_indices;
 
 		void
 			BuildMesh(unsigned short *indices);
