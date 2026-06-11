@@ -240,6 +240,7 @@ static void EarlyTraceBegin()
 #include "ModPicker.h"
 #include "EditorModProject.h"
 #include "EditorPlaytest.h"   // -playtest end-to-end smoke
+#include "EditorTaskRunner.h" // ShutdownKillRunning() on editor exit
 #include "resource.h"   // ID_FOLIAGE_* for the -smoke-foliage-menu WM_COMMAND drive
 
 // -- S-CLI parser ------------------------------------------------------------
@@ -1209,6 +1210,12 @@ int EditorMFCApp::ExitInstance()
 	// Machine-readable smoke summary for the non-smoke-exit path (e.g. -frames or a
 	// real user close). Idempotent with the OnIdle deadline emit.
 	s_emit_esmoke("exit_instance");
+
+	// Failsafe: kill any still-running playtest / cook child this editor launched so it
+	// is not orphaned when the editor exits. Terminates ONLY our own children (by stored
+	// HANDLE) -- concurrent smoke / standalone mc2.exe instances are untouched. The Job
+	// Object (kill-on-job-close) is the crash-path backstop; this is the clean-exit path.
+	EditorTaskRunner::ShutdownKillRunning();
 
 	{
 		Environment.TerminateGameEngine();

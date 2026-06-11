@@ -81,6 +81,13 @@ namespace EditorTaskRunner
 	// True while any task is Pending or Running.
 	bool HasActiveTasks();
 
+	// Editor-shutdown failsafe: terminate every still-Running task's child process
+	// (by stored process HANDLE only -- never by image name, so concurrent smoke /
+	// standalone mc2.exe instances are untouched). Call from the editor teardown
+	// path (ExitInstance / WM_DESTROY). Belt-and-suspenders to the Job Object, which
+	// already kills children if the editor dies uncleanly (crash). MAIN THREAD.
+	void ShutdownKillRunning();
+
 #ifdef MC2_IMGUI
 	// Draw the Task Monitor window.  Call from the ImGui render pass.
 	void RenderImGui();

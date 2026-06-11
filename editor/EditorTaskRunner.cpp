@@ -61,6 +61,35 @@ static std::mutex                         s_mutex;
 static std::vector<std::shared_ptr<Task>> s_tasks;
 static TaskId                             s_nextId = 1;
 
+// Job Object owning every child we launch. Created with
+// JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE so that when the editor process dies for ANY
+// reason -- clean exit OR crash -- the OS closes this handle and terminates all
+// assigned children. This is the crash-robust failsafe; ShutdownKillRunning() is
+// the clean-exit belt-and-suspenders. Children are killed only because they are
+// OUR children in OUR job -- never by image name, so concurrent smoke / standalone
+// mc2.exe instances (not in this job) are never touched.
+static HANDLE s_jobObject = NULL;
+
+// Lazily create the kill-on-close job. Caller holds s_mutex. NULL job is tolerated
+// (assignment simply skipped) -- the ShutdownKillRunning sweep still covers clean exit.
+static void EnsureJobObject_locked()
+{
+	if (s_jobObject != NULL)
+		return;
+	HANDLE job = CreateJobObjectA(NULL, NULL);
+	if (!job)
+		return;
+	JOBOBJECT_EXTENDED_LIMIT_INFORMATION info{};
+	info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+	if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation,
+	                             &info, sizeof(info)))
+	{
+		CloseHandle(job);
+		return;
+	}
+	s_jobObject = job;
+}
+
 static std::vector<char> BuildEnvBlock(
 	const std::vector<std::pair<std::string, std::string>>& extra);
 
@@ -180,6 +209,14 @@ static void WorkerMain(std::shared_ptr<Task> t)
 		std::lock_guard<std::mutex> lk(s_mutex);
 		t->status   = Status::Running;
 		t->hProcess = pi.hProcess;
+
+		// Assign the child to our kill-on-job-close job so it dies with the editor
+		// even on an editor crash. Best-effort: if the job can't be created/assigned
+		// (older OS, child already in a non-nestable job), the clean-exit
+		// ShutdownKillRunning() sweep is the fallback.
+		EnsureJobObject_locked();
+		if (s_jobObject)
+			AssignProcessToJobObject(s_jobObject, pi.hProcess);
 	}
 
 	// Read the combined pipe, splitting on newlines.
@@ -439,6 +476,30 @@ bool HasActiveTasks()
 		if (t->status == Status::Pending || t->status == Status::Running)
 			return true;
 	return false;
+}
+
+void ShutdownKillRunning()
+{
+	// Terminate every still-Running child by its stored HANDLE under the lock,
+	// honoring the handle-lifetime rule: WorkerMain nulls + closes t->hProcess under
+	// s_mutex on child exit, so a handle observed here is live (never stale/recycled).
+	// Cook/asset python children are killed too -- an orphaned generator outliving its
+	// editor is also undesirable. Image-name kills are deliberately avoided so
+	// concurrent smoke / standalone mc2.exe instances survive.
+	std::lock_guard<std::mutex> lk(s_mutex);
+	for (auto& t : s_tasks)
+	{
+		if (t->status != Status::Running)
+			continue;
+		t->cancelRequested.store(true);
+		if (t->hProcess)
+			TerminateProcess(t->hProcess, 1);
+	}
+
+	// Closing the job handle is redundant after the explicit terminates above, but if
+	// any child slipped in between, kill-on-close finishes the job. Leave the handle to
+	// be reaped at process exit (closing it now would kill children we may still want
+	// to report on); the OS closes it when the editor exits regardless.
 }
 
 #ifdef MC2_IMGUI
