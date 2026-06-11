@@ -1,6 +1,7 @@
 #include "tacticaloverview.h"
 #include <cstdlib>
 #include <cstdio>
+#include <cmath>
 // DEBUGWINS_print is defined in code/ablmc2.cpp (not exported via a header).
 // Use OutputDebugStringA as the debug log sink for this TU.
 #include <windows.h>
@@ -20,8 +21,12 @@ static const float kOverviewTiltAngle = 85.0f;    // steep, just under singular 
 static inline float lerpf(float a, float b, float t) { return a + (b - a) * t; }
 
 bool TacticalOverview::enabled() {
+    // Default ON; opt out with MC2_TACTICAL_OVERVIEW=0.
     static int cached = -1;
-    if (cached < 0) cached = (getenv("MC2_TACTICAL_OVERVIEW") != nullptr) ? 1 : 0;
+    if (cached < 0) {
+        const char* v = getenv("MC2_TACTICAL_OVERVIEW");
+        cached = (v && v[0] == '0') ? 0 : 1;
+    }
     return cached != 0;
 }
 
@@ -44,6 +49,20 @@ void TacticalOverview::onHotkey() {
     if (!enabled()) return;
     ++hotkeyFires_;
     state_.toggleHotkey();
+}
+
+void TacticalOverview::setCardHits(const CardHit* hits, int n) {
+    if (n < 0) n = 0;
+    if (n > kMaxCardHits) n = kMaxCardHits;
+    for (int i = 0; i < n; ++i) cardHit_[i] = hits[i];
+    cardHitCount_ = n;
+}
+
+const TacticalOverview::CardHit* TacticalOverview::cardHitAt(float x, float y) const {
+    for (int i = 0; i < cardHitCount_; ++i)
+        if (x >= cardHit_[i].l && x <= cardHit_[i].r && y >= cardHit_[i].t && y <= cardHit_[i].b)
+            return &cardHit_[i];
+    return 0;
 }
 
 void TacticalOverview::advance(float dt) {
@@ -78,9 +97,12 @@ void TacticalOverview::driveCamera(Camera* eye) {
         // Lo and Hi to the overview ceiling makes testMax == ceiling at any tilt.
         Camera::AltitudeMaximumLo = kOverviewCeiling;
         Camera::AltitudeMaximumHi = kOverviewCeiling;
-        // Lerp altitude + tilt FROM the captured gameplay values toward overview.
-        // Never from zero — that would discard the player's current framing.
-        eye->zoomValue(lerpf(returnSnap_.altitude, kOverviewAltitude, t));
+        // EXPONENTIAL altitude blend: alt = a0 * (target/a0)^t. Linear t steps
+        // (uniform wheel notches) multiply altitude by a constant factor, so the
+        // zoom feels the same rate at 6k and at 28k — no sensitivity jump.
+        float a0 = returnSnap_.altitude < 60.0f ? 60.0f : returnSnap_.altitude;
+        float alt = a0 * powf(kOverviewAltitude / a0, t);
+        eye->zoomValue(alt);
         eye->tiltValue(lerpf(returnSnap_.tilt,     kOverviewTiltAngle, t));
     } else if (returnSnap_.valid) {
         // Fully exited (t == 0): restore the gameplay ceiling always, and restore

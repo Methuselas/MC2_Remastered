@@ -10,6 +10,8 @@ controlGui.cpp			: Implementation of the controlGui component.
 #include"contact.h"           // Tactical Overview: friendly sensor coverage tint
 #include"objmgr.h"            // Tactical Overview: enemy/contact marker scan
 #include"mover.h"
+// Squad-level overview move arrow (defined in warrior.cpp).
+void drawOverviewArrowWorld( const Stuff::Vector3D& from, const Stuff::Vector3D& to, unsigned long color );
 #include"team.h"
 #include"gamesound.h"
 #include"comndr.h"
@@ -468,16 +470,86 @@ void ControlGui::render( bool bPaused )
 		// the main screen whenever the overview is active, plus objective markers.
 		if ( g_tacticalOverview.active() )
 		{
-			float ovAlpha = g_tacticalOverview.iconAlpha();
+			// Altitude-driven overlay stages (independent of the abstract blend t):
+			//   - icons roll in hard over alt 6000 -> 6500 (just past gameplay cap)
+			//   - squad cards take over above alt 12000 (full by 14000)
+			const float alt = eye->getCameraAltitude();
+			float iconViz = ( alt - 6000.0f ) / 500.0f;
+			if ( iconViz < 0.0f ) iconViz = 0.0f; else if ( iconViz > 1.0f ) iconViz = 1.0f;
+			float cardViz = ( alt - 12000.0f ) / 2000.0f;
+			if ( cardViz < 0.0f ) cardViz = 0.0f; else if ( cardViz > 1.0f ) cardViz = 1.0f;
+			float iconW = iconViz * ( 1.0f - cardViz );
+			float markerA = iconViz;
+
 			// Friendly-coverage tint first (under the icons/markers).
 			if ( TacticalOverview::tintEnabled() )
-				renderOverviewCoverageTint( eye, ovAlpha );
-			renderOverviewEnemyMarkers( eye, ovAlpha );
-			forceGroupBar.renderOverviewIcons( eye, ovAlpha );
+				renderOverviewCoverageTint( eye, markerA );
+
+			// Move-path arrows, colored by squad. At icon zoom: one per mech.
+			// At squad-card zoom: a single arrow per squad (centroid -> avg dest).
+			static const unsigned long kSquadColors[10] = {
+				0x004bff4b, 0x004b9bff, 0x00ffd24b, 0x00ff7b4b, 0x00c77bff,
+				0x004bffe0, 0x00ff4b9b, 0x009bff4b, 0x00b0b0ff, 0x00ffffff };
 			if ( Team::home )
+			{
+				// Per-mech arrows fade with the icon stage.
+				if ( iconW > 0.01f )
+				{
+					unsigned long pa = (unsigned long)( iconW * 255.0f ) << 24;
+					for ( long i = 0; i < Team::home->getRosterSize(); i++ )
+					{
+						Mover* m = (Mover*)Team::home->getMover( i );
+						if ( !m || !m->isOnGUI() || m->isDestroyed() || m->isDisabled() ) continue;
+						if ( m->getCommander()->getId() != Commander::home->getId() ) continue;
+						int g = -1;
+						for ( int j = 0; j < 10; ++j ) if ( m->isInUnitGroup( j ) ) { g = j; break; }
+						m->drawOverviewMovePath( pa | ( ( g >= 0 ) ? kSquadColors[g] : 0x0000cc00 ) );
+					}
+				}
+				// Single squad arrow per force group, fading with the card stage:
+				// trace the LEADER's (first moving member's) real path. Averaging
+				// curved routes gets mushy, so pick one representative.
+				if ( cardViz > 0.01f )
+				{
+					unsigned long pa = (unsigned long)( cardViz * 255.0f ) << 24;
+					for ( int g = 0; g < 10; ++g )
+					{
+						for ( long i = 0; i < Team::home->getRosterSize(); i++ )
+						{
+							Mover* m = (Mover*)Team::home->getMover( i );
+							if ( !m || !m->isOnGUI() || m->isDestroyed() || m->isDisabled() ) continue;
+							if ( m->getCommander()->getId() != Commander::home->getId() ) continue;
+							if ( !m->isInUnitGroup( g ) ) continue;
+							Stuff::Vector3D d;
+							if ( m->getMoveDestination( d ) )	// this member has a move
+							{
+								m->drawOverviewMovePath( pa | kSquadColors[g] );
+								break;	// only the leader's path for the squad
+							}
+						}
+					}
+				}
+			}
+
+			renderOverviewEnemyMarkers( eye, markerA );
+			if ( iconW > 0.01f )
+				forceGroupBar.renderOverviewIcons( eye, iconW );
+			ForceGroupBar::OverviewCardHit raw[32];
+			int nh = ( cardViz > 0.01f )
+			         ? forceGroupBar.renderOverviewSquadCards( eye, cardViz, raw, 32 ) : 0;
+			TacticalOverview::CardHit hits[32];
+			for ( int hI = 0; hI < nh; ++hI )
+			{
+				hits[hI].forceGroup = raw[hI].forceGroup;
+				hits[hI].unit = raw[hI].unit;
+				hits[hI].l = raw[hI].l; hits[hI].t = raw[hI].t;
+				hits[hI].r = raw[hI].r; hits[hI].b = raw[hI].b;
+			}
+			g_tacticalOverview.setCardHits( hits, nh );
+			if ( markerA > 0.01f && Team::home )
 				for ( EList< CObjective*, CObjective* >::EIterator it = Team::home->objectives.Begin();
 				      !it.IsDone(); it++ )
-					(*it)->RenderOverviewMarker( eye, ovAlpha );
+					(*it)->RenderOverviewMarker( eye, markerA );
 		}
 
 		if ( getButton( TACMAP_TAB )->state & ControlButton::PRESSED )

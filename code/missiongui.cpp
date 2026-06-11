@@ -655,6 +655,37 @@ void MissionInterfaceManager::update (void)
 	g_tacticalOverview.advance(frameLength);
 	g_tacticalOverview.driveCamera(eye);
 
+	// Overview squad-card click: select that force group and consume the click so
+	// the world-pick under the card doesn't also fire. Runs before the mouse
+	// handling below. Cards draw at raw screen coords (HUD-scale exempt).
+	if ( g_tacticalOverview.active() && userInput->isLeftClick() && !userInput->isLeftDrag() )
+	{
+		const TacticalOverview::CardHit* hit = g_tacticalOverview.cardHitAt(
+		             (float)userInput->getRawMouseX(), (float)userInput->getRawMouseY() );
+		if ( hit )
+		{
+			if ( hit->forceGroup >= 0 )
+			{
+				selectForceGroup( hit->forceGroup, true );
+			}
+			else if ( hit->unit )
+			{
+				// Singleton card: select just that unit (deselect the rest).
+				Team* pTeam = Team::home;
+				if ( pTeam )
+					for ( long i = 0; i < pTeam->getRosterSize(); i++ )
+					{
+						Mover* m = (Mover*)pTeam->getMover( i );
+						if ( m && m->isOnGUI() && m->getCommander()->getId() == Commander::home->getId() )
+							m->setSelected( 0 );
+					}
+				((Mover*)hit->unit)->setSelected( 1 );
+			}
+			userInput->clearLeftClick();
+			g_tacticalOverview.armReleaseSuppression();	// stop the move on mouse-up
+		}
+	}
+
 	//---------------------------------------------------
 	// Per Andy G.  One check per frame saves log file!
 	bool shiftDn = userInput->shift();
@@ -1452,7 +1483,13 @@ void MissionInterfaceManager::updateOldStyle( bool shiftDn, bool altDn, bool ctr
 		userInput->setMouseCursor( makeNoTargetCursor( passable, lineOfSight, ctrlDn, bGui, moverCount, nonMoverCount ) );
 	}
 
-	if ( userInput->leftMouseReleased() && !userInput->wasLeftDrag() && !bGui && !lastUpdateDoubleClick) // move on the mouse ups
+	// Suppress the move-on-release when this click landed on an overview squad
+	// card (it already selected the squad; don't also move under the card).
+	if ( userInput->leftMouseReleased() && g_tacticalOverview.consumeReleaseSuppression() )
+	{
+		// consumed: skip the world move for this release
+	}
+	else if ( userInput->leftMouseReleased() && !userInput->wasLeftDrag() && !bGui && !lastUpdateDoubleClick) // move on the mouse ups
 	{
 		// PRECISION (companion to the per-frame O(1) approx at update():~778):
 		// the per-frame wPos uses screenToGroundPlaneApprox (fast preview/status
@@ -3031,14 +3068,14 @@ int MissionInterfaceManager::zoomIn()
 int MissionInterfaceManager::zoomChoiceOut()
 {
 	float frameFactor = frameLength / baseFrameLength;
-	eye->ZoomOut(zoomInc * frameFactor * 5.0f * eye->getScaleFactor());
+	eye->ZoomOut(zoomInc * frameFactor * 18.0f * eye->getScaleFactor());
 
 	return 1;
 }
 int MissionInterfaceManager::zoomChoiceIn()
 {
 	float frameFactor = frameLength / baseFrameLength;
-	eye->ZoomIn(zoomInc * frameFactor * 5.0f * eye->getScaleFactor());
+	eye->ZoomIn(zoomInc * frameFactor * 18.0f * eye->getScaleFactor());
  	return 1;
 }
 int MissionInterfaceManager::rotateLeft()

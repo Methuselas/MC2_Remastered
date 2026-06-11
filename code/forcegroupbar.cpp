@@ -19,6 +19,57 @@ ForceGroupBar.cpp			: Implementation of the ForceGroupBar component.
 #include"prefs.h"
 #include"gamesound.h"
 #include"gamecam.h"   // Camera::projectForScreenXY for the overview icon overlay
+#include"warrior.h"   // pilot order state for the squad status indicator
+#include"tacordr.h"
+
+// Squad status: one short word for a mech's current activity, and a rank so a
+// squad card can show the highest-priority member status.
+static const char* moverStatusStr( Mover* m )
+{
+	if ( !m ) return "IDLE";
+	MechWarrior* w = m->getPilot();
+	if ( !w ) return "IDLE";
+	if ( w->getCurrentTarget() ) return "ENGAGING";
+	TacticalOrderPtr o = w->getCurTacOrder();
+	if ( !o ) return "IDLE";
+	switch ( o->code )
+	{
+		case TACTICAL_ORDER_MOVETO_POINT:
+		case TACTICAL_ORDER_MOVETO_OBJECT:
+		case TACTICAL_ORDER_JUMPTO_POINT:
+		case TACTICAL_ORDER_JUMPTO_OBJECT:
+		case TACTICAL_ORDER_TRAVERSE_PATH:
+		case TACTICAL_ORDER_FOLLOW:
+		case TACTICAL_ORDER_ESCORT:        return "MOVING";
+		case TACTICAL_ORDER_PATROL_PATH:   return "PATROL";
+		case TACTICAL_ORDER_GUARD:         return "DEFENDING";
+		case TACTICAL_ORDER_ATTACK_OBJECT:
+		case TACTICAL_ORDER_ATTACK_POINT:  return "ENGAGING";
+		case TACTICAL_ORDER_WITHDRAW:      return "WITHDRAW";
+		default:                           return "IDLE";
+	}
+}
+
+static int statusRank( const char* s )
+{
+	if ( !strcmp( s, "ENGAGING" ) )  return 5;
+	if ( !strcmp( s, "WITHDRAW" ) )  return 4;
+	if ( !strcmp( s, "MOVING" ) )    return 3;
+	if ( !strcmp( s, "PATROL" ) )    return 2;
+	if ( !strcmp( s, "DEFENDING" ) ) return 1;
+	return 0; // IDLE
+}
+
+// Color for a status word (ARGB without alpha).
+static unsigned long statusColor( const char* s )
+{
+	if ( !strcmp( s, "ENGAGING" ) )  return 0x00ff5050;
+	if ( !strcmp( s, "WITHDRAW" ) )  return 0x00ff9b4b;
+	if ( !strcmp( s, "MOVING" ) )    return 0x005fd2ff;
+	if ( !strcmp( s, "PATROL" ) )    return 0x00d2b04b;
+	if ( !strcmp( s, "DEFENDING" ) ) return 0x009bff9b;
+	return 0x00a9c3d2; // IDLE — muted
+}
 
 // Draw one source cell of the force-bar icon atlas into a screen rect, using a
 // LOCAL vertex buffer (never ForceGroupIcon::bmpLocation — touching that shared
@@ -178,6 +229,190 @@ void ForceGroupBar::renderOverviewIcons( Camera* eye, float alpha )
 	}
 
 	gos_SetHudScaleExempt( prevHudExempt );
+}
+
+int ForceGroupBar::renderOverviewSquadCards( Camera* eye, float alpha,
+                                             OverviewCardHit* hitsOut, int maxHits )
+{
+	if ( !eye || alpha <= 0.0f || !ForceGroupIcon::s_textureMemory )
+		return 0;
+
+	const int MAXG = 10;
+
+	// Project a unit to screen; returns false if off/behind.
+	float vmx, vmy, vax, vay;
+	gos_GetViewport( &vmx, &vmy, &vax, &vay );
+
+	// One card per non-empty force group; ungrouped units each get a singleton.
+	struct Card { int fg; int mem[MAX_ICONS]; int nm; float cx, cy; float w, h; };
+	Card cards[MAXG + MAX_ICONS];
+	int nCards = 0;
+
+	// Group buckets.
+	int gMem[MAXG][MAX_ICONS]; int gCnt[MAXG];
+	for ( int g = 0; g < MAXG; ++g ) gCnt[g] = 0;
+	int singles[MAX_ICONS]; int nS = 0;
+
+	for ( int i = 0; i < iconCount; i++ )
+	{
+		ForceGroupIcon* ic = icons[i];
+		if ( !ic || !ic->unit ) continue;
+		if ( ic->unit->isDestroyed() || ic->unit->isDisabled() ) continue;
+		int g = -1;
+		for ( int j = 0; j < MAXG; ++j ) if ( ic->unit->isInUnitGroup( j ) ) { g = j; break; }
+		if ( g >= 0 ) gMem[g][gCnt[g]++] = i;
+		else singles[nS++] = i;
+	}
+
+	// Build cards (centroid of projected member positions).
+	for ( int g = 0; g < MAXG; ++g )
+	{
+		if ( gCnt[g] == 0 ) continue;
+		float sx = 0, sy = 0; int proj = 0; int nm = 0;
+		Card& c = cards[nCards];
+		c.fg = g;
+		for ( int k = 0; k < gCnt[g]; ++k )
+		{
+			int ii = gMem[g][k];
+			c.mem[nm++] = ii;
+			ModernClipResult r = eye->projectModernClipGL( icons[ii]->unit->getPosition() );
+			if ( r.admit && r.clip.w > 0.05f )
+			{
+				sx += vax + ( r.clip.x / r.clip.w * 0.5f + 0.5f ) * vmx;
+				sy += vay + ( 1.0f - ( r.clip.y / r.clip.w * 0.5f + 0.5f ) ) * vmy;
+				proj++;
+			}
+		}
+		if ( proj == 0 ) continue;
+		c.nm = nm; c.cx = sx / proj; c.cy = sy / proj;
+		nCards++;
+	}
+	for ( int s = 0; s < nS; ++s )
+	{
+		int ii = singles[s];
+		ModernClipResult r = eye->projectModernClipGL( icons[ii]->unit->getPosition() );
+		if ( !r.admit || r.clip.w <= 0.05f ) continue;
+		Card& c = cards[nCards];
+		c.fg = -1; c.nm = 1; c.mem[0] = ii;
+		c.cx = vax + ( r.clip.x / r.clip.w * 0.5f + 0.5f ) * vmx;
+		c.cy = vay + ( 1.0f - ( r.clip.y / r.clip.w * 0.5f + 0.5f ) ) * vmy;
+		nCards++;
+	}
+	if ( nCards == 0 ) return 0;
+
+	// Card box sizes + de-overlap.
+	const float cellW = 30.0f, cellH = 26.0f, pad = 6.0f, titleH = 12.0f;
+	for ( int i = 0; i < nCards; i++ )
+	{
+		float iconRow = cards[i].nm * cellW + ( cards[i].nm - 1 ) * 2;
+		float wNeeded = iconRow > 72.0f ? iconRow : 72.0f;	// fit "SQUAD N" + status
+		cards[i].w = pad * 2 + wNeeded;
+		cards[i].h = pad * 2 + titleH + cellH + titleH;		// title + icons + status row
+	}
+	for ( int pass = 0; pass < 16; ++pass )
+		for ( int a = 0; a < nCards; a++ )
+			for ( int b = a + 1; b < nCards; b++ )
+			{
+				float dx = cards[b].cx - cards[a].cx, dy = cards[b].cy - cards[a].cy;
+				float adx = dx < 0 ? -dx : dx, ady = dy < 0 ? -dy : dy;
+				float sepX = ( cards[a].w + cards[b].w ) * 0.5f + 6.0f;
+				float sepY = ( cards[a].h + cards[b].h ) * 0.5f + 6.0f;
+				float ox = sepX - adx, oy = sepY - ady;
+				if ( ox > 0 && oy > 0 )
+				{
+					if ( ox < oy ) { float p = ( ox * 0.5f + 0.5f ) * ( dx < 0 ? -1.f : 1.f ); cards[a].cx -= p; cards[b].cx += p; }
+					else           { float p = ( oy * 0.5f + 0.5f ) * ( dy < 0 ? -1.f : 1.f ); cards[a].cy -= p; cards[b].cy += p; }
+				}
+			}
+
+	unsigned long aB = (unsigned long)( alpha * 255.0f ); if ( aB > 255 ) aB = 255;
+	const unsigned long aBits = aB << 24;
+	const float texW = (float)ForceGroupIcon::s_textureMemory->width;
+	const float texH = (float)ForceGroupIcon::s_textureMemory->height;
+	const float uIX = ForceGroupIcon::unitIconX, uIY = ForceGroupIcon::unitIconY;
+	const int perLine = (int)( texW / uIX ), iconsPerPage = (int)( texW / uIY );
+	HGOSFONT3D font = ForceGroupIcon::gosFontHandle ? ForceGroupIcon::gosFontHandle->getTempHandle() : 0;
+	const unsigned long iconArgb = 0xff000000 | ( aB << 16 ) | ( aB << 8 ) | aB;
+
+	bool prevExempt = gos_GetHudScaleExempt();
+	gos_SetHudScaleExempt( true );
+
+	int nHits = 0;
+	for ( int i = 0; i < nCards; i++ )
+	{
+		float l = cards[i].cx - cards[i].w * 0.5f, r = cards[i].cx + cards[i].w * 0.5f;
+		float t = cards[i].cy - cards[i].h * 0.5f, b = cards[i].cy + cards[i].h * 0.5f;
+
+		// Translucent dark-teal panel.
+		gos_SetRenderState( gos_State_Texture, 0 );
+		gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_AlphaInvAlpha );
+		gos_SetRenderState( gos_State_AlphaTest, 0 );
+		gos_SetRenderState( gos_State_ZCompare, 0 );
+		gos_SetRenderState( gos_State_ZWrite, 0 );
+		unsigned long panel = ( (unsigned long)( alpha * 0.70f * 255.0f ) << 24 ) | 0x000c2230;
+		gos_VERTEX q[4];
+		for ( int v = 0; v < 4; ++v ) { q[v].z = 0; q[v].rhw = .5f; q[v].argb = panel; q[v].frgb = 0; q[v].u = q[v].v = 0; }
+		q[0].x = l; q[0].y = t; q[1].x = l; q[1].y = b; q[2].x = r; q[2].y = b; q[3].x = r; q[3].y = t;
+		gos_DrawQuads( q, 4 );
+
+		// Bright border.
+		unsigned long border = aBits | 0x005fa2c2;
+		gos_VERTEX ln[2];
+		float bx[5] = { l, r, r, l, l }, by[5] = { t, t, b, b, t };
+		for ( int e = 0; e < 4; ++e )
+		{
+			ln[0].x = bx[e];   ln[0].y = by[e];
+			ln[1].x = bx[e+1]; ln[1].y = by[e+1];
+			for ( int v = 0; v < 2; ++v ) { ln[v].z = 0; ln[v].rhw = .5f; ln[v].argb = border; ln[v].frgb = 0; ln[v].u = ln[v].v = 0; }
+			gos_DrawLines( ln, 2 );
+		}
+
+		// Title.
+		if ( font )
+		{
+			char title[24];
+			if ( cards[i].fg >= 0 ) sprintf( title, "SQUAD %d", cards[i].fg );
+			else { const char* nm = icons[cards[i].mem[0]]->unit->getName(); strncpy( title, nm ? nm : "UNIT", 20 ); title[20] = 0; }
+			gos_TextSetAttributes( font, aBits | 0x00eaf6ff, 1.0f, false, true, false, false );
+			gos_TextSetPosition( (int)( l + pad ), (int)( t + 2 ) );
+			gos_TextDraw( title );
+
+			// Squad status (highest-priority member activity), bottom row.
+			const char* best = "IDLE"; int bestRank = -1;
+			for ( int m = 0; m < cards[i].nm; m++ )
+			{
+				const char* s = moverStatusStr( icons[cards[i].mem[m]]->unit );
+				int rk = statusRank( s );
+				if ( rk > bestRank ) { bestRank = rk; best = s; }
+			}
+			gos_TextSetAttributes( font, aBits | statusColor( best ), 1.0f, false, true, false, false );
+			gos_TextSetPosition( (int)( l + pad ), (int)( b - titleH - 1 ) );
+			gos_TextDraw( best );
+		}
+
+		// Member icons tiled (additive, keys out black bg).
+		float ix = l + pad, iy = t + pad + titleH;
+		for ( int m = 0; m < cards[i].nm; m++ )
+		{
+			ForceGroupIcon* ic = icons[cards[i].mem[m]];
+			int di = ic->damageIconIndex, yIndex = di / perLine, texIndex = 0;
+			if ( yIndex >= iconsPerPage ) { texIndex = yIndex / iconsPerPage; yIndex = yIndex % iconsPerPage; }
+			drawOverviewIconCell( di % perLine, yIndex, ForceGroupIcon::s_textureHandle[texIndex],
+			                      uIX, uIY, texW, texH, ix, iy, ix + cellW, iy + cellH, iconArgb );
+			ix += cellW + 2;
+		}
+
+		if ( hitsOut && nHits < maxHits )
+		{
+			hitsOut[nHits].forceGroup = cards[i].fg;
+			hitsOut[nHits].unit = ( cards[i].fg < 0 ) ? (void*)icons[cards[i].mem[0]]->unit : 0;
+			hitsOut[nHits].l = l; hitsOut[nHits].t = t; hitsOut[nHits].r = r; hitsOut[nHits].b = b;
+			nHits++;
+		}
+	}
+
+	gos_SetHudScaleExempt( prevExempt );
+	return nHits;
 }
 
 float ForceGroupBar::iconWidth = 48;

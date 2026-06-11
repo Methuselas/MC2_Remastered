@@ -1076,6 +1076,8 @@ class Mover : public GameObject {
 		}
 
 		void drawWaypointPath();
+		void drawOverviewMovePath( unsigned long color );
+		bool getMoveDestination( Stuff::Vector3D& out );
 
 		void updateDrawWaypointPath();
 		

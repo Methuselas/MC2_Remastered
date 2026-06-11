@@ -34,6 +34,21 @@ public:
     int   hotkeyFires() const { return hotkeyFires_; }      // diagnostic
     bool  active() const { return state_.active(); }
 
+    // Squad-card click targets (screen space). Set each frame by the overview
+    // renderer; queried by the mission click handler to map a click to a force
+    // group. forceGroupAtScreen returns the group, or kNoForceGroup if none.
+    static const int kNoForceGroup = -9999;
+    struct CardHit { int forceGroup; void* unit; float l, t, r, b; };
+    void setCardHits( const CardHit* hits, int n );
+    // Returns the card under (x,y) in screen space, or null if none.
+    const CardHit* cardHitAt( float x, float y ) const;
+
+    // A card click is consumed on the press frame, but the world MOVE order fires
+    // on the later mouse-RELEASE frame. Arm suppression on the card press; the
+    // release handler consumes it so the move under the card doesn't also fire.
+    void armReleaseSuppression() { suppressRelease_ = true; }
+    bool consumeReleaseSuppression() { bool s = suppressRelease_; suppressRelease_ = false; return s; }
+
 private:
     // Engine-free snapshot of the gameplay camera, captured once on entry.
     // Only altitude + tilt are captured/restored: those are the ONLY fields
@@ -52,6 +67,11 @@ private:
     CamSnapshot returnSnap_;
     bool        userPannedInOverview_ = false;
     int         hotkeyFires_ = 0;   // diagnostic: count of onHotkey() calls
+
+    static const int kMaxCardHits = 32;
+    CardHit cardHit_[kMaxCardHits];
+    int     cardHitCount_ = 0;
+    bool    suppressRelease_ = false;
 };
 
 extern TacticalOverview g_tacticalOverview;

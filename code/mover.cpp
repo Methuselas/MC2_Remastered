@@ -6949,6 +6949,17 @@ void Mover::drawWaypointPath()
 	getPilot()->drawWaypointPath();
 }
 
+void Mover::drawOverviewMovePath( unsigned long color )
+{
+	if ( getPilot() )
+		getPilot()->drawOverviewMovePath( color );
+}
+
+bool Mover::getMoveDestination( Stuff::Vector3D& out )
+{
+	return getPilot() ? getPilot()->getMoveDestination( out ) : false;
+}
+
 //---------------------------------------------------------------------------
 
 void Mover::updateDrawWaypointPath()

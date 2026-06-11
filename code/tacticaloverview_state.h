@@ -9,7 +9,9 @@ public:
     static constexpr float kIconFadeLo  = 0.40f;
     static constexpr float kIconFadeHi  = 0.70f;
     // Wheel sensitivity: t units per wheel "notch" (delta normalized by 120).
-    static constexpr float kWheelGain   = 0.15f;
+    // Small, because the altitude mapping is exponential (driveCamera): each
+    // notch multiplies altitude by a constant factor for a uniform zoom feel.
+    static constexpr float kWheelGain   = 0.03f;
     // Hotkey animation rate: t units per second toward the setpoint.
     static constexpr float kHotkeyRate  = 4.0f;
 
