@@ -137,6 +137,7 @@ static LONG WINAPI mc2_unhandled_exception_filter(EXCEPTION_POINTERS* ep)
 #include "gos_postprocess.h"
 #include "gos_validate.h"
 #include "gos_screenshot.h"   // deterministic backbuffer->TGA capture (oracle)
+#include "gos_visual_capture.h"  // [VISUAL_CAPTURE v1] S9 PNG+sidecar + bookmark replay
 #include "gos_static_prop_killswitch.h"
 #include "gos_static_prop_registry.h"  // Stage 3.C: isEnabled() for [INSTR v1]
 #include "../../RenderWorld/RenderWorld.h"  // M1 Task 14
@@ -1610,6 +1611,28 @@ int main(int argc, char** argv)
                     fprintf(stderr, "[SCREENSHOT v1] frame=%u wrote %s (%dx%d, sceneFBO)\n",
                             g_mc2FrameCounter, s_ssPath, ssW, ssH);
                     fflush(stderr);
+                }
+            }
+        }
+
+        {
+            // [VISUAL_CAPTURE v1] S9: deterministic PNG + capture-tuple sidecar,
+            // and bookmark teleport/settle/capture replay. Reuses the same
+            // offscreen scene FBO source as [SCREENSHOT v1] above (robust to a
+            // minimized window). Default-OFF: onPostRenderFrame early-returns on
+            // a single int/pointer check with no allocation when neither
+            // MC2_VISUAL_CAPTURE_FRAME nor MC2_VISUAL_BOOKMARK_CAPTURE is set,
+            // so we resolve the FBO lazily only when one of them is active.
+            if (gos::visual_capture::active()) {
+                gosPostProcess* ppVc = getGosPostProcess();
+                GLuint vcFbo = ppVc ? ppVc->getSceneFBO() : 0;
+                int vcW = ppVc ? ppVc->getWidth()  : 0;
+                int vcH = ppVc ? ppVc->getHeight() : 0;
+                if (vcFbo && vcW > 0 && vcH > 0) {
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, vcFbo);
+                    glReadBuffer(GL_COLOR_ATTACHMENT0);
+                    gos::visual_capture::onPostRenderFrame(g_mc2FrameCounter, vcW, vcH);
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
                 }
             }
         }

@@ -31,6 +31,7 @@ set(SOURCES ${SOURCES}
     gos_object_parity.cpp
     gos_validate.cpp
     gos_screenshot.cpp
+    gos_visual_capture.cpp
     gos_visual_diff.cpp
     gos_rdoc_capture.cpp
     gos_crashbundle.cpp
