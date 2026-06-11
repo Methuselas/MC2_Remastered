@@ -49,6 +49,8 @@ void TacticalOverview::onHotkey() {
     if (!enabled()) return;
     ++hotkeyFires_;
     state_.toggleHotkey();
+    // Formation line never survives an overview toggle.
+    flOnCancel();
 }
 
 void TacticalOverview::setCardHits(const CardHit* hits, int n) {
@@ -117,4 +119,84 @@ void TacticalOverview::driveCamera(Camera* eye) {
         returnSnap_.valid = false;
         userPannedInOverview_ = false;
     }
+}
+
+// Formation line env gate (MC2_TACMAP_FORMATION_LINE=1), cached on first call.
+bool TacticalOverview::formationLineEnabled()
+{
+    static int cached = -1;
+    if ( cached < 0 )
+    {
+        const char* v = getenv( "MC2_TACMAP_FORMATION_LINE" );
+        cached = ( v && v[0] == '1' ) ? 1 : 0;
+    }
+    return cached == 1;
+}
+
+void TacticalOverview::flOnHotkeyL()
+{
+    if ( !formationLineEnabled() || !state_.active() )
+        return;
+    if ( flState_ == FL_IDLE )
+        flState_ = FL_ARMED;
+    else
+        flState_ = FL_IDLE;     // L again disarms
+}
+
+void TacticalOverview::flOnCancel()
+{
+    flState_ = FL_IDLE;
+    flMoverCount_ = 0;
+}
+
+void TacticalOverview::flOnDragStart( const Stuff::Vector3D& worldStart )
+{
+    if ( flState_ != FL_ARMED )
+        return;
+    flStart_ = worldStart;
+    flEnd_   = worldStart;
+    flState_ = FL_DRAGGING;
+}
+
+void TacticalOverview::flOnDragMove( const Stuff::Vector3D& worldEnd )
+{
+    if ( flState_ == FL_DRAGGING )
+        flEnd_ = worldEnd;
+}
+
+void TacticalOverview::flOnRelease()
+{
+    flState_ = FL_IDLE;
+    flMoverCount_ = 0;
+}
+
+void TacticalOverview::flSetMovers( Mover* const* movers, int n )
+{
+    if ( n > kFlMaxMovers ) n = kFlMaxMovers;
+    for ( int i = 0; i < n; i++ )
+        flMovers_[i] = movers[i];
+    flMoverCount_ = n;
+}
+
+int TacticalOverview::flComputeSlots( Stuff::Vector3D* outSlots, int maxSlots ) const
+{
+    int n = flMoverCount_;
+    if ( n <= 0 || maxSlots <= 0 )
+        return 0;
+    if ( n > maxSlots ) n = maxSlots;
+    if ( n == 1 )
+    {
+        outSlots[0].x = ( flStart_.x + flEnd_.x ) * 0.5f;
+        outSlots[0].y = ( flStart_.y + flEnd_.y ) * 0.5f;
+        outSlots[0].z = ( flStart_.z + flEnd_.z ) * 0.5f;
+        return 1;
+    }
+    for ( int i = 0; i < n; i++ )
+    {
+        float t = (float)i / (float)( n - 1 );
+        outSlots[i].x = flStart_.x + ( flEnd_.x - flStart_.x ) * t;
+        outSlots[i].y = flStart_.y + ( flEnd_.y - flStart_.y ) * t;
+        outSlots[i].z = flStart_.z + ( flEnd_.z - flStart_.z ) * t;
+    }
+    return n;
 }
