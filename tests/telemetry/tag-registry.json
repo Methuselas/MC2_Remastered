@@ -1,0 +1,609 @@
+{
+  "schema_v": 1,
+  "description": "MC2 telemetry tag registry v1. Maps every known [TAG vN] bracket to its kind, owning doc, oracle fields that must be zero, and an optional modder-facing error template. Authoritative spec: docs/superpowers/strategy/telemetry-oracle-cockpit-architecture.md S13.1.",
+  "tags": [
+    {
+      "tag": "MECH_MATERIAL_GPU",
+      "version": 1,
+      "kind": "oracle",
+      "gate": true,
+      "oracle_fields_must_be_zero": ["mismatches"],
+      "counter_fields": ["mechs", "mismatches"],
+      "doc": "docs/oracle-dynamic-pipeline-gate.md",
+      "notes": "Mech paint / team-color GPU path self-check. Emitted per-session-end (atexit). mismatches=0 means the fast GPU path and CPU reference agree on every mech draw."
+    },
+    {
+      "tag": "MATERIAL_GPU",
+      "version": 4,
+      "kind": "oracle",
+      "gate": true,
+      "oracle_fields_must_be_zero": ["mismatches"],
+      "counter_fields": ["emitted", "mismatches"],
+      "doc": "docs/oracle-dynamic-pipeline-gate.md",
+      "notes": "Material / texture bind GPU path self-check. Emitted per-session-end."
+    },
+    {
+      "tag": "TEX_RESOLVE",
+      "version": 1,
+      "kind": "oracle",
+      "gate": true,
+      "oracle_fields_must_be_zero": ["mismatches", "oob"],
+      "counter_fields": ["mismatches", "oob"],
+      "doc": "docs/oracle-dynamic-pipeline-gate.md",
+      "notes": "Texture-handle resolution self-check. oob=out-of-bounds slot access. Both must stay 0."
+    },
+    {
+      "tag": "RENDER_SNAPSHOT",
+      "version": 3,
+      "kind": "oracle",
+      "gate": true,
+      "oracle_fields_must_be_zero": ["count_mismatch", "pkt_mismatch", "meta_mismatch", "fallback"],
+      "counter_fields": ["count_mismatch", "pkt_mismatch", "meta_mismatch", "fallback", "using_snapshot"],
+      "doc": "docs/oracle-dynamic-pipeline-gate.md",
+      "notes": "Static-prop snapshot render correctness. using_snapshot=1 required. All four mismatch fields must be 0."
+    },
+    {
+      "tag": "VISIBILITY",
+      "version": 1,
+      "kind": "oracle",
+      "gate": true,
+      "oracle_fields_must_be_zero": [],
+      "oracle_fields_must_be_one": ["mech_valid", "sp_valid", "view_valid"],
+      "counter_fields": ["mech_valid", "sp_valid", "view_valid"],
+      "doc": "docs/oracle-dynamic-pipeline-gate.md",
+      "notes": "Visibility culling validity flags. All three _valid flags must be 1."
+    },
+    {
+      "tag": "TERRAIN_INDIRECT_PARITY",
+      "version": 1,
+      "kind": "oracle",
+      "gate": true,
+      "oracle_fields_must_be_zero": ["total_mismatches"],
+      "counter_fields": ["total_mismatches"],
+      "doc": "docs/oracle-dynamic-pipeline-gate.md",
+      "notes": "Terrain indirect draw parity check between legacy and GPU-indirect paths. Must not break across dynamic-pipeline slices."
+    },
+    {
+      "tag": "FX_COUNT",
+      "version": 1,
+      "kind": "counter",
+      "gate": false,
+      "counter_fields": ["total", "rDust", "lDust", "jump", "lBoom", "rBoom", "critSmoke", "smoke", "wake", "heliDust", "rArmSmoke", "lArmSmoke"],
+      "event_kinds": ["init", "shutdown"],
+      "doc": "docs/oracle-dynamic-pipeline-gate.md",
+      "notes": "GOSFX draw-attempt counts across the 11 Mech3DAppearance::render() sites. Requires MC2_FX_COUNT_LOG=1. All zeros expected in idle 30s smokes (fly-through, no mech combat). Non-zero baseline requires mc2_17 at >= 150s.",
+      "modder_text": "Effect draw counts (FX_COUNT) are zero in idle smoke runs and non-zero only when mechs are actively fighting (mc2_17 at 150s+). A site unexpectedly dropping to zero after an S2+ slice indicates an effect regression."
+    },
+    {
+      "tag": "SCREENSHOT",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["frame", "path", "width", "height"],
+      "event_kinds": ["capture"],
+      "doc": "docs/oracle-dynamic-pipeline-gate.md",
+      "notes": "Pixel oracle screenshot capture event. Emitted by gameosmain.cpp when MC2_SCREENSHOT_AT_FRAME=N triggers. Reads offscreen post-process scene FBO (RGBA16F) via glReadPixels -> TGA. Appears as a single event per run."
+    },
+    {
+      "tag": "SNAPSHOT_BRIDGE_COMPARE",
+      "version": 1,
+      "kind": "oracle",
+      "gate": false,
+      "oracle_fields_must_be_zero": ["immutableMismatch", "rowCountMismatch", "hasCullMismatch"],
+      "counter_fields": ["path", "regGen", "cullVer", "rowCount", "oracleCount", "rowCountMismatch", "immutableMismatch", "hasCullMismatch"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Static-prop snapshot bridge compare oracle. Requires MC2_STATIC_PROP_SNAPSHOT_BRIDGE_COMPARE=1. Emitted per frame with path=DIRTY|CLEAN. gate=false: advisory only until promoted per cockpit promotion rule."
+    },
+    {
+      "tag": "FASTPATH_DROP",
+      "version": 0,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["frame", "transition", "reason"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Terrain fast-path drop event (mclib/terrain.cpp). Unversioned tag (tag_v=0). Emitted on each fast-path state transition with reason. Env-gated diagnostic. Appears in Event Timeline.",
+      "modder_text": "FASTPATH_DROP means the terrain renderer fell back from the optimized path. This is a diagnostic event; it does not cause visual regression. If you see repeated drops, check terrain complexity and LOD settings."
+    },
+    {
+      "tag": "OBJBATCHER",
+      "version": 1,
+      "kind": "counter",
+      "gate": false,
+      "counter_fields": ["frames", "event"],
+      "event_kinds": ["summary", "legacy_toggle_blocked"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Object batcher summary counter. event=summary emits per-period frame counts. event=legacy_toggle_blocked emits when a runtime toggle is rejected (gameosmain.cpp:389). Informational; no oracle fields.",
+      "modder_text": "OBJBATCHER legacy_toggle_blocked means the object batcher could not switch to legacy mode at runtime. This is informational and does not affect gameplay or rendering."
+    },
+    {
+      "tag": "GPU_CULL",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event", "fallback_n2", "fallback_conservative", "readback_stale_reset"],
+      "event_kinds": ["readback_ok", "lifecycle_snapshot", "motion_tolerance", "fallback_n2", "fallback_conservative", "readback_stale_reset"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "GPU cull readback diagnostics (gos_static_prop_batcher.cpp). Most events require MC2_GPU_CULL_READBACK_TRACE=1. readback_stale_reset is unconditional (signals real error: 10-frame miss -> slot abandon). Appears in Event Timeline."
+    },
+    {
+      "tag": "SPFLUSH_COST_SPLIT",
+      "version": 1,
+      "kind": "counter",
+      "gate": false,
+      "counter_fields": ["event", "submit_loop", "inst_build", "map_lookup", "color_fill", "actor_record", "world_to_block", "substrate_append", "baseinstance_upload", "invalidates", "registrations", "rebuilds", "light_writes"],
+      "event_kinds": ["summary"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "StaticPropRegistryFlush RDTSC cost-split decomposition. Requires MC2_STATIC_PROP_FLUSH_COST_SPLIT=1. Emits event=summary every 10 frames with per-bucket ns averages. Feeds Counter Trends panel and budget tracking.",
+      "modder_text": "SPFLUSH_COST_SPLIT is a performance diagnostic for the static prop flush path. Values are per-bucket nanosecond averages. Elevated submit_loop or inst_build ns may indicate a complex or dense prop scene."
+    },
+    {
+      "tag": "TIMING",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event", "ms"],
+      "event_kinds": ["mission_ready", "first_frame", "load_start"],
+      "doc": "docs/superpowers/strategy/telemetry-oracle-cockpit-architecture.md",
+      "notes": "Mission lifecycle timing events from the bridge protocol (runtime-bridge-architecture.md). event=mission_ready marks the first renderable frame. Appears in Event Timeline for attribution."
+    },
+    {
+      "tag": "ABL",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "ABL script execution lifecycle event. Versioned emit in golden artifact log."
+    },
+    {
+      "tag": "ANIM_GATE",
+      "version": 1,
+      "kind": "counter",
+      "gate": false,
+      "counter_fields": ["event", "enabled", "count"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Animation gate status emit. BLDG-TYPE-ANIM-GATE-FIX-1 subsystem."
+    },
+    {
+      "tag": "APPEAR_ROUTE",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Appearance routing diagnostic emit."
+    },
+    {
+      "tag": "ASSET_SCALE",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Asset scale validation emit (UI icon atlas check; see scripts/check-asset-scale-callers.sh)."
+    },
+    {
+      "tag": "BLOOM",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Bloom post-process feature init emit."
+    },
+    {
+      "tag": "CAMERA_MOTION",
+      "version": 1,
+      "kind": "counter",
+      "gate": false,
+      "counter_fields": ["event", "dx", "dy", "dz"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Camera motion diagnostic emit."
+    },
+    {
+      "tag": "CEMENT_ATLAS",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Cement texture atlas build/bind event."
+    },
+    {
+      "tag": "COALESCE",
+      "version": 1,
+      "kind": "counter",
+      "gate": false,
+      "counter_fields": ["event", "count"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Draw-call coalescing diagnostic emit."
+    },
+    {
+      "tag": "ENGINE_VIEW",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Engine view state emit (camera/frustum parameters)."
+    },
+    {
+      "tag": "ENGINE_VIEW_REGISTRY",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Engine view registry state emit."
+    },
+    {
+      "tag": "GAMEPLAY_PICK",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Gameplay pick self-test emit (M2-pre spine validator, MC2_GAMEPLAY_PICK_SELFTEST=1)."
+    },
+    {
+      "tag": "GPU_PARTICLES",
+      "version": 1,
+      "kind": "counter",
+      "gate": false,
+      "counter_fields": ["event", "count"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "GPU particle system diagnostic emit."
+    },
+    {
+      "tag": "HDRI_SKY",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "HDRI sky feature init emit."
+    },
+    {
+      "tag": "HDR_POST",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "HDR post-process feature init emit."
+    },
+    {
+      "tag": "HZB_BUILD",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Hierarchical Z-buffer build event."
+    },
+    {
+      "tag": "HZB_PROBE",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "HZB probe diagnostic emit."
+    },
+    {
+      "tag": "INSTR",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Instrumentation lifecycle event (run_smoke instrumentation_missing gate sentinel)."
+    },
+    {
+      "tag": "LIGHTBAKE",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Light bake / permanent light data event (MC2_LIGHTBAKE_STABILITY, MC2_LIGHTBAKE_PARITY)."
+    },
+    {
+      "tag": "LIGHTBRIDGE",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Light bridge upload diagnostic emit."
+    },
+    {
+      "tag": "MECHBATCHER",
+      "version": 1,
+      "kind": "counter",
+      "gate": false,
+      "counter_fields": ["event", "count"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Mech batcher (GpuMechBatcher) summary emit."
+    },
+    {
+      "tag": "MECH_OBJECT_ID_SELFTEST",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Mech object-ID self-test emit (M2.5 validator, MC2_MECH_OBJECT_ID_SELFTEST=1)."
+    },
+    {
+      "tag": "MVP_DIAG",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "MVP matrix diagnostic emit (ring-MVP baked dispatch)."
+    },
+    {
+      "tag": "OBJECT_ADMISSION_PREDICATE",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Object admission predicate diagnostic emit."
+    },
+    {
+      "tag": "OBJECT_ID",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Object ID buffer feature emit (MC2_OBJECT_ID_BUFFER=1, R32_UINT MRT M1.5)."
+    },
+    {
+      "tag": "PATCH_STREAM",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Terrain patch stream diagnostic emit."
+    },
+    {
+      "tag": "PERF",
+      "version": 1,
+      "kind": "counter",
+      "gate": false,
+      "counter_fields": ["event", "ms"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Generic performance counter emit."
+    },
+    {
+      "tag": "QUADSETUP_SKIP",
+      "version": 1,
+      "kind": "counter",
+      "gate": false,
+      "counter_fields": ["event", "count"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Terrain quad-setup skip counter emit."
+    },
+    {
+      "tag": "RENDER_STATES",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Render state diagnostic emit (MC2_RENDER_CONTRACT_ASSERT=1 / render-contract.md)."
+    },
+    {
+      "tag": "RENDER_WORLD",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "RenderWorld arc event emit (MC2_RENDER_WORLD_TRACE=1)."
+    },
+    {
+      "tag": "RING_MVP",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Ring-buffer MVP baked-dispatch diagnostic emit."
+    },
+    {
+      "tag": "RING_SINK",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Ring-buffer sink diagnostic emit."
+    },
+    {
+      "tag": "SMOKE",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Smoke-mode lifecycle event emitted by gos_smoke.cpp. Signals run_smoke.py that MC2_SMOKE_MODE reached the engine."
+    },
+    {
+      "tag": "SPOTLIGHT_REAL_TRACE",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Spotlight real-path trace diagnostic emit."
+    },
+    {
+      "tag": "SPOT_DIAG",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Spotlight diagnostic emit."
+    },
+    {
+      "tag": "SSAO",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "SSAO post-process feature init emit."
+    },
+    {
+      "tag": "STATIC_FIRST_FRAME",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Static prop registry first-frame warm-up event."
+    },
+    {
+      "tag": "STATIC_PROP_PACKET_DISPATCH",
+      "version": 8,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Static prop draw-packet dispatch version emit (DrawPacket v8). MC2_STATIC_PROP_LEGACY_DISPATCH=1 reverts to v7."
+    },
+    {
+      "tag": "STATIC_PROP_REG",
+      "version": 1,
+      "kind": "counter",
+      "gate": false,
+      "counter_fields": ["event", "count"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Static prop registry diagnostic emit."
+    },
+    {
+      "tag": "STATIC_UPDATE",
+      "version": 1,
+      "kind": "counter",
+      "gate": false,
+      "counter_fields": ["event", "count"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Terrain static-object update counter emit (MC2_SKIP_STATIC_TREES R2b gate)."
+    },
+    {
+      "tag": "TERRAIN_ADMISSION",
+      "version": 1,
+      "kind": "counter",
+      "gate": false,
+      "counter_fields": ["event", "count"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Terrain object admission diagnostic emit."
+    },
+    {
+      "tag": "TERRAIN_INDIRECT",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Terrain indirect draw feature init / summary emit."
+    },
+    {
+      "tag": "TERRAIN_LIGHTING_GPU",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Terrain GPU lighting feature init emit."
+    },
+    {
+      "tag": "TERRAIN_SURFACE",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Terrain surface feature init emit."
+    },
+    {
+      "tag": "TGL_POOL",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "TGL pool NULL trace event (MC2_TGL_POOL_TRACE=1). Signals a TGL resource pool exhaustion."
+    },
+    {
+      "tag": "TONEMAP_ACES",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "ACES tonemapper post-process feature init emit."
+    },
+    {
+      "tag": "TXM",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Texture manager (txmmgr.cpp) diagnostic emit."
+    },
+    {
+      "tag": "VIEWMODE",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "View mode selection emit."
+    },
+    {
+      "tag": "VIEWMODE_LOWLIGHT",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Low-light view mode emit."
+    },
+    {
+      "tag": "VIEW_UNIFORMS",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "ViewUniforms UBO feature init emit (MC2_VIEW_UNIFORMS)."
+    },
+    {
+      "tag": "WATER_FULL_RECIPE_AUTH",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Water full-recipe authority diagnostic emit."
+    },
+    {
+      "tag": "WATER_MDI",
+      "version": 1,
+      "kind": "event",
+      "gate": false,
+      "counter_fields": ["event"],
+      "doc": "docs/tier1_env_vars.md",
+      "notes": "Water multi-draw-indirect feature emit."
+    }
+  ]
+}
