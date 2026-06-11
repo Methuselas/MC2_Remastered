@@ -194,6 +194,8 @@ set(ASSET_VIEWER_SOURCES
     ShaderContractReport.cpp
     # Backend-A v2 Task 4: standalone scene stubs (SSBO seam; v3 swap point)
     StandaloneSceneStubs.cpp
+    # Backend-A v2 Task 5: engine-shader preview surface
+    ModelPreviewEngineShader.cpp
 )
 
 add_executable(mc2_asset_viewer ${ASSET_VIEWER_SOURCES})
