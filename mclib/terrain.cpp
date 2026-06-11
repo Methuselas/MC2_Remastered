@@ -45,6 +45,7 @@
 #include"../GameOS/gameos/gos_terrain_lighting.h"
 #include"../GameOS/gameos/gos_terrain_height_tex.h"  // TERRAIN-NORMALS-FROM-HEIGHT-1
 #include"../GameOS/gameos/gos_terrain_lod_chunk.h"   // Terrain LOD chunk Phase 1
+#include"../GameOS/gameos/gos_render_pass_timer.h"   // [RENDER_PASS_TIME v1] chunk-terrain scope
 #include"../GameOS/gameos/utils/logging.h"            // Terrain LOD chunk Phase 2: throttled false-negative log
 #include"terrain_admission_mode.h"  // F6 T2: shared isModern() flag for terrain.cpp + quad.cpp
 
@@ -2455,10 +2456,13 @@ void Terrain::flushDrawCommands (void)
 		fflush(stdout);
 	}
 
-	if (s_blockMeta && s_cmdCount > 0)
+	if (s_blockMeta && s_cmdCount > 0) {
+		gos_render_pass_timer::Begin(gos_render_pass_timer::Pass_TerrainChunk);
 		gos_TerrainLodChunk_SubmitDrawCommands(s_drawCmds, s_skirtDepths,
 			s_skirtEdgeMaskVec.empty() ? nullptr : s_skirtEdgeMaskVec.data(),
 			s_stitchStepVec.empty() ? nullptr : s_stitchStepVec.data(), s_cmdCount);
+		gos_render_pass_timer::End(gos_render_pass_timer::Pass_TerrainChunk);
+	}
 }
 
 //---------------------------------------------------------------------------

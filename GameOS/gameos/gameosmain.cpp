@@ -170,6 +170,7 @@ static LONG WINAPI mc2_unhandled_exception_filter(EXCEPTION_POINTERS* ep)
 #include "imgui_impl_sdl2.h"
 #endif
 #include "mc2_hitch_trace.h"
+#include "gos_render_pass_timer.h"
 
 // Tier-1 instrumentation (stability spec §5.1): single source of truth for
 // the frame=... field used by TGL_POOL, DESTROY, and GL_ERROR log lines.
@@ -602,7 +603,12 @@ static void draw_screen( void )
     if (pp) {
         render_contract::noteRenderPass(render_contract::PassIdentity::PostProcess,
                                         "gosPostProcess_endScene");
+        // [RENDER_PASS_TIME v1] post = whole endScene chain (HZB/SSAO/screen
+        // shadow/shoreline/godrays/bloom/composite). Single outer scope: the
+        // inner stages call each other, and GL_TIME_ELAPSED cannot nest.
+        gos_render_pass_timer::Begin(gos_render_pass_timer::Pass_Post);
         pp->endScene();
+        gos_render_pass_timer::End(gos_render_pass_timer::Pass_Post);
     }
 
     // Stage 2.E visual-diff capture hook. Must fire AFTER pp->endScene() so the
@@ -1579,6 +1585,11 @@ int main(int argc, char** argv)
                 }
             }
         }
+
+        // [RENDER_PASS_TIME v1] frame boundary: advance the query ring, poll
+        // the oldest pending slot (never blocks), emit the aggregated line at
+        // cadence. Placed before swap so the frame's queries are all closed.
+        gos_render_pass_timer::FrameEnd();
 
         {
             ZoneScopedN("SwapWindow");

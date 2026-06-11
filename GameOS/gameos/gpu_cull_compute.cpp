@@ -20,6 +20,7 @@
 #include "gos_static_prop_killswitch.h"   // gos_GetTerrainMVPMat4()
 #include "gos_static_prop_batcher.h"      // batcher_getTypeCount(), batcher_getTypeDrawInfo()
 #include "gl_state_guard.h"               // GlStateGuard slice 1: mc2gl::GlScopedSsboBinding
+#include "gos_render_pass_timer.h"        // [RENDER_PASS_TIME v1] nesting guard (QueryActive)
 
 #include <GL/glew.h>
 #include <gameos.hpp>                     // STOP()
@@ -985,7 +986,13 @@ void compute_dispatch() {
             s_timerPending = false;
         }
     }
-    glBeginQuery(GL_TIME_ELAPSED, s_timerQuery);
+    // [RENDER_PASS_TIME v1] coexistence: GL_TIME_ELAPSED cannot nest, and this
+    // dispatch runs inside the Pass_SpColor scope when MC2_RENDER_PASS_TIME=1.
+    // Yield the local spike query in that case (s_lastDispatchNs goes stale —
+    // telemetry-only, acceptable).
+    const bool rptOwnsTimer = gos_render_pass_timer::QueryActive();
+    if (!rptOwnsTimer)
+        glBeginQuery(GL_TIME_ELAPSED, s_timerQuery);
 
     const uint32_t cullGroups = (recordCount + 63u) / 64u;
 
@@ -1301,8 +1308,10 @@ void compute_dispatch() {
         // For immediate detection, log synchronously every 600 frames.
         ++s_dispatchFrames;
 
-        glEndQuery(GL_TIME_ELAPSED);
-        s_timerPending = true;
+        if (!rptOwnsTimer) {
+            glEndQuery(GL_TIME_ELAPSED);
+            s_timerPending = true;
+        }
 
         // Overflow logging (async readback, deferred to emitParitySummary).
         COMPUTE_TRACE("event=dispatch_ok mode=c1b dispatched=%u buckets=%u", recordCount, s_bucketCount);
@@ -1345,8 +1354,10 @@ void compute_dispatch() {
 
         ++s_dispatchFrames;
 
-        glEndQuery(GL_TIME_ELAPSED);
-        s_timerPending = true;
+        if (!rptOwnsTimer) {
+            glEndQuery(GL_TIME_ELAPSED);
+            s_timerPending = true;
+        }
 
         COMPUTE_TRACE("event=dispatch recordCount=%u groups=%u", recordCount, cullGroups);
     }

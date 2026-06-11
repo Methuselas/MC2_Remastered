@@ -21,6 +21,7 @@
 #include "gos_terrain_lighting.h"
 #include "gos_static_prop_killswitch.h"  // gos_GetTerrainMVPMat4()
 #include "gos_terrain_indirect.h"        // IsFrameSolidArmed()
+#include "gos_render_pass_timer.h"       // [RENDER_PASS_TIME v1] nesting guard (QueryActive)
 #include <algorithm>                     // std::sort -- surfaced by MC2_ASAN build (Tracy-disabled config drops the transitive include)
 #include <cassert>
 
@@ -1706,10 +1707,14 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
         if (!s_qSpike) glGenQueries(1, &s_qSpike);
     }
 
+    // [RENDER_PASS_TIME v1] coexistence: GL_TIME_ELAPSED cannot nest. This
+    // dispatch can run inside a render-pass-timer scope, so the spike query
+    // (and its readback below) yields while one of those scopes is open.
+    const bool spikeQ = s_spikeOn && !gos_render_pass_timer::QueryActive();
     const uint32_t groups = (dispatchCount + 63u) / 64u;   // 1B: full recipe set when authoritative
-    if (s_spikeOn) glBeginQuery(GL_TIME_ELAPSED, s_qCand);
+    if (spikeQ) glBeginQuery(GL_TIME_ELAPSED, s_qCand);
     glDispatchCompute(groups, 1, 1);   // AUTHORITATIVE dispatch (feeds draw): full-recipe (1B) or candidate (1A/legacy)
-    if (s_spikeOn) glEndQuery(GL_TIME_ELAPSED);
+    if (spikeQ) glEndQuery(GL_TIME_ELAPSED);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
     // 1B sanity telemetry: confirm the authoritative full-recipe dispatch actually
@@ -1751,9 +1756,9 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
         glUniform1i(locFullMode, 1);
         glUniform1i(locWindowCount, (int)recipeCount);  // dispatch bound = full recipe set
         const uint32_t frGroups = (recipeCount + 63u) / 64u;
-        if (s_spikeOn) glBeginQuery(GL_TIME_ELAPSED, s_qSpike);
+        if (spikeQ) glBeginQuery(GL_TIME_ELAPSED, s_qSpike);
         glDispatchCompute(frGroups, 1, 1);
-        if (s_spikeOn) glEndQuery(GL_TIME_ELAPSED);
+        if (spikeQ) glEndQuery(GL_TIME_ELAPSED);
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
         // Restore window mode + release scratch bindings (final rebind below fixes 6).
         glUniform1i(locFullMode, 0);
@@ -1766,7 +1771,7 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
         glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, 4, &frOut);
 
         // ---- Spike timer log (MC2_WATER_FULL_RECIPE_SPIKE only) ----
-        if (s_spikeOn) {
+        if (spikeQ) {
             GLuint64 nsCand = 0, nsSpike = 0;
             glGetQueryObjectui64v(s_qCand,  GL_QUERY_RESULT, &nsCand);
             glGetQueryObjectui64v(s_qSpike, GL_QUERY_RESULT, &nsSpike);
