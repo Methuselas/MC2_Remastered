@@ -208,10 +208,13 @@ static std::string NormalizeKey(const char* p) {
 // Index all files under dataDir (absolute, trailing '/') into idx (first-wins).
 // relBase should be "data/" so keys come out like "data/missions/foo.fit".
 // shadowed: parallel map recording which mod ids lost for each key (populated at level 2).
+// skippedDotCount: if non-null, incremented for each dot-prefixed entry skipped at any
+//   level of recursion.  Used by IndexModDataCached for the optional summary log.
 static void IndexModData(
     std::unordered_map<std::string, ModFileEntry>& idx,
     std::unordered_map<std::string, std::vector<std::string>>& shadowed,
-    const char* dataDir, const char* relBase, const char* modId
+    const char* dataDir, const char* relBase, const char* modId,
+    int* skippedDotCount = nullptr
 ) {
     char pattern[MAX_PATH];
     _snprintf(pattern, sizeof(pattern), "%s*", dataDir);
@@ -222,7 +225,19 @@ static void IndexModData(
     if (h == INVALID_HANDLE_VALUE) return;
 
     do {
-        if (fd.cFileName[0] == '.') continue;
+        // Unified dot-dir/dot-file skip rule (ruling C4 in
+        // docs/superpowers/strategy/superpowers-execution-roadmap.md):
+        // Any entry whose name starts with '.' is skipped from g_modIndex
+        // indexing.  This replaces four ad-hoc carve-outs (.scratch/,
+        // .modproject/, .playtest/, .modindex-cache) -- none of those dirs
+        // may ship their own per-dir skip logic.  Applies to both directories
+        // and files so that dot-files (e.g. .gitignore) inside a mod's data/
+        // tree are also excluded; no deployed mod (mods/mc2x-compat) relies
+        // on a dot-file being indexed.
+        if (fd.cFileName[0] == '.') {
+            if (skippedDotCount) ++(*skippedDotCount);
+            continue;
+        }
 
         char fullChild[MAX_PATH], relChild[MAX_PATH];
         _snprintf(fullChild, sizeof(fullChild), "%s%s", dataDir, fd.cFileName);
@@ -236,7 +251,7 @@ static void IndexModData(
             _snprintf(relSub,  sizeof(relSub),  "%s/", relChild);
             fullSub[sizeof(fullSub) - 1] = '\0';
             relSub[sizeof(relSub) - 1]   = '\0';
-            IndexModData(idx, shadowed, fullSub, relSub, modId);
+            IndexModData(idx, shadowed, fullSub, relSub, modId, skippedDotCount);
         } else {
             std::string key = NormalizeKey(relChild);
             auto existing = idx.find(key);
@@ -433,7 +448,8 @@ static void IndexModDataCached(
     // Snapshot keys before to identify newly added entries after the walk.
     std::unordered_map<std::string, ModFileEntry> layer;
     std::unordered_map<std::string, std::vector<std::string>> layerShadowed;
-    IndexModData(layer, layerShadowed, dataDir, relBase, modId);
+    int skippedDot = 0;
+    IndexModData(layer, layerShadowed, dataDir, relBase, modId, &skippedDot);
 
     // Merge layer shadowed into global shadowed.
     for (auto& kv : layerShadowed)
@@ -453,6 +469,9 @@ static void IndexModDataCached(
     cachePath[sizeof(cachePath)-1] = '\0';
     WriteModIndexCache(cachePath, modId, fresh);
     printf("[mod-cache] miss modid='%s' indexed=%zu wrote cache\n", modId, fresh.size());
+    if (logFileResolve >= 1 && skippedDot > 0)
+        printf("[mod] [%s] skipped %d dot-entr%s (ruling C4)\n",
+               modId, skippedDot, skippedDot == 1 ? "y" : "ies");
     fflush(stdout);
 }
 

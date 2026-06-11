@@ -138,21 +138,29 @@ def _index_mod_layer(
 ) -> None:
     """
     Walk mod_data_dir recursively and insert entries into index (first-wins).
-    Mirrors IndexModData (file.cpp:127-157).
+    Mirrors IndexModData (file.cpp:208-272).
 
-    Dot-prefixed directories under mods/<id>/ are skipped (C5 ruling: skip ALL
-    dot-prefixed entries; this catches .modindex-cache, .scratch/, .modproject/,
-    .playtest/).  See mod-virtual-filesystem-design.md §14 and roadmap C5.
+    Unified dot-dir/dot-file skip rule (ruling C4 in
+    docs/superpowers/strategy/superpowers-execution-roadmap.md):
+    Any entry whose name starts with '.' is skipped from the index.  This
+    replaces four ad-hoc carve-outs (.scratch/, .modproject/, .playtest/,
+    .modindex-cache) -- none of those dirs may ship their own per-dir skip
+    logic.  Applies to both directories and files, matching the engine's
+    fd.cFileName[0] == '.' guard at file.cpp:225 which covers both.
+    No deployed mod (mods/mc2x-compat) relies on a dot-file being indexed.
     """
     data_dir = Path(mod_data_dir)
     if not data_dir.is_dir():
         return
 
     for root, dirs, files in os.walk(str(data_dir)):
-        # Skip dot-prefixed directories (C5 ruling)
+        # Skip dot-prefixed directories (ruling C4 -- mirrors file.cpp:225)
         dirs[:] = [d for d in dirs if not d.startswith(".")]
 
         for fname in files:
+            # Skip dot-prefixed files (ruling C4 -- mirrors file.cpp:225)
+            if fname.startswith("."):
+                continue
             abs_path = os.path.join(root, fname)
             # Compute relative path from the parent of data_dir so it starts "data/..."
             # data_dir itself is mods/<id>/data/; its parent is mods/<id>/
