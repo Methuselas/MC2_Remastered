@@ -72,6 +72,17 @@ std::string  s_lastLogPath;
 bool         s_smokeChild        = false;
 int          s_smokeChildSeconds = 30;
 
+// --- Runtime bridge v0 (mover.state) ---------------------------------------------------
+// Records parsed from the running child's [MOVER v1] stdout lines. Each burst is
+// bracketed by "[MOVER v1 begin] ..." then N "[MOVER v1] id=..." lines; on begin we
+// reset the accumulator, then publish it as s_liveMovers when the next burst begins (or
+// on the first record after a begin). Simpler/robust: accumulate into s_burstMovers and
+// publish on EACH begin (so the panel sees the PREVIOUS complete burst). Main-thread only
+// (driven by EditorTaskRunner::PumpMainThread via onLineMainThread).
+std::vector<EditorPlaytest::MoverSnapshot> s_liveMovers;    // published (last complete burst)
+std::vector<EditorPlaytest::MoverSnapshot> s_burstMovers;   // accumulating current burst
+unsigned long s_liveMoversStamp = 0;
+
 // --- helpers --------------------------------------------------------------------------
 
 // Forward decls (definitions below; ArchiveLog uses these before their point of def).
@@ -388,6 +399,65 @@ std::string LastLine(const std::string& log)
 	return log.substr(start, end - start + 1);
 }
 
+// --- [MOVER v1] stdout parser (runtime bridge v0) --------------------------------------
+// Tolerant key=value scanner over a single output line. Recognizes the burst delimiter
+// "[MOVER v1 begin]" (publishes the prior complete burst, then resets) and per-mover
+// "[MOVER v1] id=.. name=.. team=.. pos=x,y,z hp=.. pilot=.. order=val/name target=.."
+// lines. Unknown/garbled lines are ignored. Runs on the MAIN thread.
+void BridgeParseLine(const std::string& line)
+{
+	// Burst boundary: publish what we accumulated, start fresh.
+	if (line.compare(0, 16, "[MOVER v1 begin]") == 0)
+	{
+		s_liveMovers      = s_burstMovers;
+		s_liveMoversStamp = GetTickCount();
+		s_burstMovers.clear();
+		return;
+	}
+	if (line.compare(0, 11, "[MOVER v1] ") != 0)
+		return;
+
+	EditorPlaytest::MoverSnapshot m;
+	// Walk space-separated key=value tokens. name/pilot may contain no spaces
+	// (engine names are single tokens); we treat the token up to the next space.
+	const char* p = line.c_str() + 11;
+	while (*p)
+	{
+		while (*p == ' ') ++p;
+		if (!*p) break;
+		const char* keyStart = p;
+		while (*p && *p != '=' && *p != ' ') ++p;
+		std::string key(keyStart, p);
+		if (*p != '=') { while (*p && *p != ' ') ++p; continue; }
+		++p; // skip '='
+		const char* valStart = p;
+		while (*p && *p != ' ') ++p;
+		std::string val(valStart, p);
+
+		if      (key == "id")    m.id   = atol(val.c_str());
+		else if (key == "name")  m.name = val;
+		else if (key == "team")  m.team = atol(val.c_str());
+		else if (key == "hp")    m.hp   = (float)atof(val.c_str());
+		else if (key == "pilot") m.pilot = val;
+		else if (key == "target")m.target = atol(val.c_str());
+		else if (key == "pos")
+		{
+			float x = 0, y = 0, z = 0;
+			sscanf_s(val.c_str(), "%f,%f,%f", &x, &y, &z);
+			m.x = x; m.y = y; m.z = z;
+		}
+		else if (key == "order")
+		{
+			// "val/name"
+			m.orderVal = atol(val.c_str());
+			size_t slash = val.find('/');
+			m.orderName = (slash != std::string::npos) ? val.substr(slash + 1) : val;
+		}
+	}
+	if (m.id != -1)
+		s_burstMovers.push_back(m);
+}
+
 // Shared completion handler (success or failure both archive the log + report exit code).
 void OnFinished(const EditorTaskRunner::TaskResult& res)
 {
@@ -470,6 +540,16 @@ const char* LastModId()
 	return s_modId.c_str();
 }
 
+const std::vector<MoverSnapshot>& LiveMovers()
+{
+	return s_liveMovers;
+}
+
+unsigned long LiveMoversStamp()
+{
+	return s_liveMoversStamp;
+}
+
 void SetSmokeChildEnv(bool enabled, int seconds)
 {
 	s_smokeChild        = enabled;
@@ -494,6 +574,11 @@ void Start()
 	// not read a stale exit code/log path before this run finishes.
 	s_lastExitCode = -1;
 	s_lastLogPath.clear();
+
+	// Reset runtime-bridge telemetry for the new run.
+	s_liveMovers.clear();
+	s_burstMovers.clear();
+	s_liveMoversStamp = 0;
 
 	if (!EditorData::instance)
 	{
@@ -784,6 +869,13 @@ void Start()
 	spec.onSuccessMainThread = &OnFinished;
 	spec.onFailureMainThread = &OnFinished;
 	spec.onCancelMainThread  = &OnCancelled;
+	spec.onLineMainThread    = &BridgeParseLine;   // runtime bridge v0 (mover.state)
+
+	// Runtime bridge v0: always ask the child to emit [MOVER v1] mover.state. The
+	// emission is throttled game-side (~2s) and read-only, so the cost is negligible;
+	// the editor consumes it for the Gameplay Debugger live table.
+	spec.envExtra.push_back(std::make_pair(
+		std::string("MC2_BRIDGE_MOVER_STATE"), std::string("1")));
 
 	// Mod-aware env: when the mission lives in a mod, mount it + ask for a state dump.
 	if (s_modActive)

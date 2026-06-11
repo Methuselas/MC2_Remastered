@@ -48,6 +48,11 @@ struct Task
 	std::atomic<bool> workerDone{ false };   // worker thread finished
 	bool         callbackFired = false;      // main thread fired result once
 
+	// Output lines awaiting the main-thread onLineMainThread callback (queued by the
+	// worker under s_mutex, drained in PumpMainThread). Only populated when
+	// spec.onLineMainThread is set, so non-bridge tasks pay nothing.
+	std::deque<std::string> pendingLines;
+
 	HANDLE       hProcess = NULL;            // valid while running (guard with s_mutex)
 	std::thread  worker;
 };
@@ -73,6 +78,17 @@ static void HandleLine(Task* t, const std::string& line)
 {
 	AppendLog(t, line.data(), line.size());
 	AppendLog(t, "\n", 1);
+
+	// Queue the raw line for the main-thread per-line callback (runtime bridge).
+	// Bounded so a chatty child can't grow this unboundedly if the main thread
+	// stalls; oldest lines drop first (telemetry is periodic, latest matters).
+	if (t->spec.onLineMainThread)
+	{
+		t->pendingLines.push_back(line);
+		const size_t kMaxPendingLines = 4096;
+		while (t->pendingLines.size() > kMaxPendingLines)
+			t->pendingLines.pop_front();
+	}
 
 	if (line.compare(0, 9, "PROGRESS ") != 0)
 		return;
@@ -351,6 +367,29 @@ void PumpMainThread()
 	// editor / GL and may take time).
 	struct Pending { std::shared_ptr<Task> task; };
 	std::vector<std::shared_ptr<Task>> ready;
+
+	// Drain queued output lines and fire the per-line callback on THIS (main) thread.
+	// Snapshot (callback + lines) under the lock, then invoke outside it -- the
+	// callback parses telemetry / touches editor state and must not hold s_mutex.
+	{
+		std::vector<std::pair<std::function<void(const std::string&)>,
+			std::vector<std::string>>> lineBatches;
+		{
+			std::lock_guard<std::mutex> lk(s_mutex);
+			for (auto& t : s_tasks)
+			{
+				if (!t->spec.onLineMainThread || t->pendingLines.empty())
+					continue;
+				std::vector<std::string> drained(
+					t->pendingLines.begin(), t->pendingLines.end());
+				t->pendingLines.clear();
+				lineBatches.emplace_back(t->spec.onLineMainThread, std::move(drained));
+			}
+		}
+		for (auto& batch : lineBatches)
+			for (auto& ln : batch.second)
+				batch.first(ln);
+	}
 
 	{
 		std::lock_guard<std::mutex> lk(s_mutex);

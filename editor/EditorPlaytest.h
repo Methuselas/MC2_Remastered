@@ -18,10 +18,34 @@
 #define EDITOR_PLAYTEST_H
 
 #include <string>
+#include <vector>
 
 namespace EditorPlaytest
 {
 	enum class State { Idle, Running };
+
+	// One parsed [MOVER v1] telemetry record from the running playtest child.
+	// Populated by the runtime bridge v0 (stdout); see EditorPlaytest.cpp parser.
+	struct MoverSnapshot
+	{
+		long        id        = -1;
+		std::string name;
+		long        team      = 0;
+		float       x = 0.f, y = 0.f, z = 0.f;
+		float       hp        = 0.f;   // 0..1 (1 = undamaged)
+		std::string pilot;
+		long        orderVal  = -1;
+		std::string orderName;
+		long        target    = -1;
+	};
+
+	// Live movers from the most recent telemetry burst (empty until the running
+	// child emits [MOVER v1] lines). Replaced wholesale each burst. Main-thread only.
+	const std::vector<MoverSnapshot>& LiveMovers();
+
+	// Wall-clock tick (GetTickCount) of the last completed telemetry burst, or 0
+	// if none received this run. Lets the panel show staleness.
+	unsigned long LiveMoversStamp();
 
 	// True when a mission is loaded/saved-able AND no playtest is currently running.
 	bool CanPlaytest();

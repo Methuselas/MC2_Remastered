@@ -23,6 +23,7 @@
 
 #include "EditorObjectMgr.h"
 #include "EditorObjects.h"
+#include "EditorPlaytest.h"
 
 #include <cstdio>
 
@@ -91,21 +92,79 @@ void GameplayDebugger::Draw()
     if (!s_open)
         return;
 
-    ImGui::SetNextWindowSize(ImVec2(340.f, 420.f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(560.f, 460.f), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Gameplay Debugger", &s_open))
     {
         ImGui::End();
         return;
     }
 
-    // ---- Runtime availability notice (always shown) ----------------------
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.75f, 0.2f, 1.0f));
-    ImGui::TextWrapped(
-        "No runtime objects (editor is not simulating).\n"
-        "Brain/path/combat state requires a live game session.\n"
-        "Static placement data is shown below.");
-    ImGui::PopStyleColor();
-    ImGui::Separator();
+    // ---- LIVE runtime telemetry (runtime bridge v0) ----------------------
+    // When a playtest child is running and has emitted [MOVER v1] mover.state
+    // bursts, show the live table instead of the "no runtime objects" notice.
+    const std::vector<EditorPlaytest::MoverSnapshot>& live = EditorPlaytest::LiveMovers();
+    const bool liveActive = EditorPlaytest::IsRunning() && !live.empty();
+
+    if (liveActive)
+    {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 1.0f, 0.5f, 1.0f));
+        unsigned long ageMs = GetTickCount() - EditorPlaytest::LiveMoversStamp();
+        ImGui::Text("LIVE from playtest  (%d movers, %.1fs ago)",
+            (int)live.size(), ageMs / 1000.0f);
+        ImGui::PopStyleColor();
+        ImGui::Separator();
+
+        ImGuiTableFlags tflags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+            ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
+        if (ImGui::BeginTable("##livemovers", 7, tflags, ImVec2(0.f, 240.f)))
+        {
+            ImGui::TableSetupScrollFreeze(0, 1);
+            ImGui::TableSetupColumn("id");
+            ImGui::TableSetupColumn("name");
+            ImGui::TableSetupColumn("tm");
+            ImGui::TableSetupColumn("hp");
+            ImGui::TableSetupColumn("pilot");
+            ImGui::TableSetupColumn("order");
+            ImGui::TableSetupColumn("tgt");
+            ImGui::TableHeadersRow();
+            for (size_t i = 0; i < live.size(); ++i)
+            {
+                const EditorPlaytest::MoverSnapshot& m = live[i];
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0); ImGui::Text("%ld", m.id);
+                ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(m.name.c_str());
+                ImGui::TableSetColumnIndex(2); ImGui::Text("%ld", m.team);
+                ImGui::TableSetColumnIndex(3); ImGui::Text("%.0f%%", m.hp * 100.f);
+                ImGui::TableSetColumnIndex(4);
+                ImGui::TextUnformatted(m.pilot.empty() ? "?" : m.pilot.c_str());
+                ImGui::TableSetColumnIndex(5);
+                ImGui::TextUnformatted(m.orderName.empty() ? "?" : m.orderName.c_str());
+                ImGui::TableSetColumnIndex(6);
+                if (m.target >= 0) ImGui::Text("%ld", m.target);
+                else               ImGui::TextDisabled("--");
+            }
+            ImGui::EndTable();
+        }
+        ImGui::Spacing();
+        ImGui::TextDisabled("Static placement data below.");
+        ImGui::Separator();
+    }
+    else
+    {
+        // ---- Runtime availability notice (no live session) ----------------
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.75f, 0.2f, 1.0f));
+        if (EditorPlaytest::IsRunning())
+            ImGui::TextWrapped(
+                "Playtest running -- waiting for [MOVER v1] telemetry...\n"
+                "Static placement data is shown below.");
+        else
+            ImGui::TextWrapped(
+                "No runtime objects (editor is not simulating).\n"
+                "Brain/path/combat state requires a live game session.\n"
+                "Static placement data is shown below.");
+        ImGui::PopStyleColor();
+        ImGui::Separator();
+    }
 
     // ---- Selected object -------------------------------------------------
     EditorObjectMgr* mgr = EditorObjectMgr::instance();

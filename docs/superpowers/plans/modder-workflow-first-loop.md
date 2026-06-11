@@ -111,3 +111,23 @@ Goal: File > Open Mod Project picks `mods/<id>/` folder; editor session binds to
 ## Sequencing gate
 
 Slice 1 → build+smoke pass → USER visual approval → Slice 2 → tier1 gate if engine touched → USER approval → Slice 3. One slice in flight at a time.
+
+---
+
+## Bridge v0 — mover.state (SHIPPED)
+
+First runtime-bridge slice: the editor now shows LIVE mover state from a running playtest, over the existing stdout pipe (no sockets, no engine refactor). Ref: `docs/superpowers/strategy/runtime-bridge-architecture.md` Phase 3 §11.
+
+### Game side (env-gated, zero cost off)
+- `code/mission.cpp` `Mission::update()`: when `MC2_BRIDGE_MOVER_STATE=1`, emit a burst once per `MC2_BRIDGE_MOVER_PERIOD_SEC` seconds (default 2, min 0.25), throttled on `scenarioTime`. One `[MOVER v1 begin] t=.. count=..` header then up to 64 `[MOVER v1] ...` lines. Strictly read-only — only getters, every deref null-guarded. Off = one `getenv` at startup + a bool/float compare per frame.
+- Fields per mover: `id` (partId), `name`, `team` (teamId), `pos=x,y,z`, `hp` (0..1 from `getDamageLevel`), `pilot` (warrior name), `order=val/name` (warrior status enum), `target` (pilot's current-target partId, or -1).
+
+### Editor side
+- `editor/EditorTaskRunner.{h,cpp}`: new optional `TaskSpec::onLineMainThread` callback. Worker queues raw lines under the mutex (bounded 4096, oldest-drop); `PumpMainThread()` drains + fires the callback on the MAIN thread — keeps the parser off the GL/MFC thread per the runner's threading contract.
+- `editor/EditorPlaytest.{h,cpp}`: always sets `MC2_BRIDGE_MOVER_STATE=1` in the child env; registers a tolerant `[MOVER v1]` key=value parser. Burst-published ring (`s_burstMovers` accumulates, published to `s_liveMovers` on each `begin`). Accessors `LiveMovers()` + `LiveMoversStamp()`.
+- `editor/GameplayDebugger.cpp`: when a playtest is Running and `LiveMovers()` is non-empty, renders a live table (id/name/team/hp/pilot/order/target) under a green "LIVE from playtest" banner; otherwise keeps the static-placement view (now with a "waiting for telemetry" hint while running).
+
+### Verification
+- Game + editor build exit 0; mc2.exe + editor deployed to v0.4 and 0.4c.
+- tier1 5/5 (`--duration 30`).
+- Playtest smoke (`run_editor_playtest_smoke.py`, torrin) green; archived playtest log contains `[MOVER v1]` lines (E2E bridge proof).
