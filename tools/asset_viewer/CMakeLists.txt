@@ -1,3 +1,4 @@
+cmake_minimum_required(VERSION 3.20)
 # MC2 Asset Viewer standalone target.
 #
 # Keep SDL include resolution local to this target. The ImGui SDL backend
@@ -191,6 +192,8 @@ set(ASSET_VIEWER_SOURCES
     ShaderIncludeResolver.cpp
     # Backend-A v2 Task 3: shader contract report model + ImGui view
     ShaderContractReport.cpp
+    # Backend-A v2 Task 4: standalone scene stubs (SSBO seam; v3 swap point)
+    StandaloneSceneStubs.cpp
 )
 
 add_executable(mc2_asset_viewer ${ASSET_VIEWER_SOURCES})
