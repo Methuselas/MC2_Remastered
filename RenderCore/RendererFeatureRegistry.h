@@ -583,6 +583,21 @@ static_assert(
 // The enforcement script greps BOTH tables for "MC2_" string literals.
 
 static constexpr EnvVarDesc kAuxEnvVars[] = {
+    // GOSFX-TUBE-RIBBON-1: gosFX Tube swept-quad ribbon oracle.
+    {
+        "MC2_VFX_ORACLE_TUBE",
+        "MC2_VFX_ORACLE_TUBE",
+        EnvVarKind::Feature,
+        true,
+        "GOSFX-TUBE-RIBBON-1: route supported gosFX Tube trails (MissileSmoke alpha, PPC additive, polygon) through the swept-quad ribbon oracle submit path instead of legacy MLR. Default-ON; =0 = legacy MLR kill-switch. Unsupported Tube classes fall back to MLR. No object-ID writes."
+    },
+    {
+        "MC2_VFX_ORACLE_TUBE_LOG",
+        "MC2_VFX_ORACLE_TUBE_LOG",
+        EnvVarKind::Trace,
+        false,
+        "GOSFX-TUBE-RIBBON-1: per-Tube ribbon submit counters (FIRST_HARVEST / v2 vertex+index tallies, unsupported->MLR fallbacks). Default-OFF; =1 enables. Diagnostic only, no behavior change."
+    },
     // STATICPROP-PERMANENT-INSTANCE-LIGHTS-1 (Slice 1)
     {
         "MC2_TRACE_LIGHTBAKE_STABILITY",
