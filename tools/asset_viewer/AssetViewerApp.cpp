@@ -1577,6 +1577,124 @@ int AssetViewerApp::runSmokeShaderInclude(const char* fixtureDir) {
     return ok ? 0 : 1;
 }
 
+// ---------------------------------------------------------------------------
+// runSmokeBackendACompile — Backend-A v2 Task 2: compile+link the real engine
+// shaders shaders/static_prop.{vert,frag} on a headless GL 4.3 context and
+// report the active uniform and SSBO interface. Pass = DONE. Blocked = STOP.
+// ---------------------------------------------------------------------------
+int AssetViewerApp::runSmokeBackendACompile(const char* shaderRoot)
+{
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+
+    // Headless GL context: reuse same pattern as runSmokeMeshRender.
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+        std::fprintf(stderr, "[smoke] FAIL backend-a-compile: SDL_Init: %s\n", SDL_GetError());
+        return 1;
+    }
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_Window* win = SDL_CreateWindow("smoke-backend-a-compile", 0, 0, 64, 64,
+        SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+    if (!win) {
+        SDL_Quit();
+        std::fprintf(stderr, "[smoke] FAIL backend-a-compile: hidden window: %s\n", SDL_GetError());
+        return 1;
+    }
+    SDL_GLContext gl = SDL_GL_CreateContext(win);
+    if (!gl) {
+        SDL_DestroyWindow(win); SDL_Quit();
+        std::fprintf(stderr, "[smoke] FAIL backend-a-compile: gl context: %s\n", SDL_GetError());
+        return 1;
+    }
+    SDL_GL_MakeCurrent(win, gl);
+    glewExperimental = GL_TRUE;
+    if (glewInit() != GLEW_OK) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        std::fprintf(stderr, "[smoke] FAIL backend-a-compile: glewInit\n");
+        return 1;
+    }
+    glGetError(); // consume glew's spurious error
+
+    auto buildStage = [&](const char* file, GLenum type, std::string& logOut,
+                          std::vector<std::string>& incOut) -> unsigned {
+        ShaderResolveResult r = ResolveShaderIncludes(shaderRoot, file);
+        incOut = r.includedFiles;
+        if (!r.ok) {
+            logOut = "resolve failed: " + r.error +
+                (r.unresolved.empty() ? std::string() : (" unresolved=" + r.unresolved.front()));
+            return 0;
+        }
+        std::string defs =
+            "#version 430\n"
+            "// Backend-A minimal config: legacy lane, no view-uniforms/coalesce/PBR-slots.\n";
+        std::string src = defs + r.source;
+        unsigned sh = glCreateShader(type);
+        const char* p = src.c_str();
+        glShaderSource(sh, 1, &p, nullptr);
+        glCompileShader(sh);
+        GLint ok = 0; glGetShaderiv(sh, GL_COMPILE_STATUS, &ok);
+        GLint len = 0; glGetShaderiv(sh, GL_INFO_LOG_LENGTH, &len);
+        if (len > 1) {
+            std::string l(len, '\0');
+            glGetShaderInfoLog(sh, len, nullptr, l.data());
+            logOut = l;
+        }
+        if (!ok) { glDeleteShader(sh); return 0; }
+        return sh;
+    };
+
+    std::string vlog, flog;
+    std::vector<std::string> vinc, finc;
+    unsigned vs = buildStage("static_prop.vert", GL_VERTEX_SHADER,   vlog, vinc);
+    unsigned fs = buildStage("static_prop.frag", GL_FRAGMENT_SHADER, flog, finc);
+    unsigned prog = 0;
+    std::string linkLog;
+    bool linked = false;
+    if (vs && fs) {
+        prog = glCreateProgram();
+        glAttachShader(prog, vs);
+        glAttachShader(prog, fs);
+        glLinkProgram(prog);
+        GLint ok = 0; glGetProgramiv(prog, GL_LINK_STATUS, &ok); linked = ok != 0;
+        GLint len = 0; glGetProgramiv(prog, GL_INFO_LOG_LENGTH, &len);
+        if (len > 1) {
+            std::string l(len, '\0');
+            glGetProgramInfoLog(prog, len, nullptr, l.data());
+            linkLog = l;
+        }
+    }
+
+    if (linked) {
+        GLint nu = 0; glGetProgramiv(prog, GL_ACTIVE_UNIFORMS, &nu);
+        for (GLint i = 0; i < nu; ++i) {
+            char nm[128]; GLint sz; GLenum tp; GLsizei wr;
+            glGetActiveUniform(prog, i, sizeof nm, &wr, &sz, &tp, nm);
+            printf("[contract] uniform %s\n", nm);
+        }
+        GLint nb = 0;
+        glGetProgramInterfaceiv(prog, GL_SHADER_STORAGE_BLOCK, GL_ACTIVE_RESOURCES, &nb);
+        for (GLint i = 0; i < nb; ++i) {
+            char nm[128]; GLsizei wr;
+            glGetProgramResourceName(prog, GL_SHADER_STORAGE_BLOCK, i, sizeof nm, &wr, nm);
+            printf("[contract] ssbo-block %s\n", nm);
+        }
+    }
+
+    if (!vs) printf("[contract] VERT FAIL log:\n%s\n", vlog.c_str());
+    if (!fs) printf("[contract] FRAG FAIL log:\n%s\n", flog.c_str());
+    if (vs && fs && !linked) printf("[contract] LINK FAIL log:\n%s\n", linkLog.c_str());
+    printf("[smoke] backend-a-compile %s\n", linked ? "PASS" : "FAIL");
+
+    if (prog) glDeleteProgram(prog);
+    if (vs)   glDeleteShader(vs);
+    if (fs)   glDeleteShader(fs);
+    SDL_GL_DeleteContext(gl);
+    SDL_DestroyWindow(win);
+    SDL_Quit();
+    return linked ? 0 : 1;
+}
+
 void AssetViewerApp::onFileDropped(const char* path){
     if (!path) return;
     std::string p = path, low = p; for (char& c: low) c=(char)tolower((unsigned char)c);
