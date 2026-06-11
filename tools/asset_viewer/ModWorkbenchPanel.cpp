@@ -29,6 +29,22 @@ void ModWorkbenchPanel::draw(ModWorkbench& wb, const ImVec2& avail) {
         "Preview validates geometry/package. In-game lighting/material may differ (Backend A = v2).");
     ImGui::Separator();
 
+    {
+        auto& hrec = wb.record();
+        int hblocks = 0, hwarns = 0;
+        for (const auto& w : wb.warnings())
+            (w.severity == WarnSeverity::Block ? hblocks : hwarns)++;
+        ImGui::TextUnformatted("Health:");
+        ImGui::SameLine();
+        ImGui::Text("Key: %s:%s  Stock: %s  Appearance: %s  LODs: %zu  Validation: %d[B] %d[W]",
+            hrec.overrideClass.c_str(),
+            hrec.appearanceName.empty()? "--" : hrec.appearanceName.c_str(),
+            wb.hasStock()? "ok" : "--",
+            hrec.appearanceName.empty()? "--" : (hrec.appearanceVerified? "roster" : "free"),
+            hrec.lods.size(), hblocks, hwarns);
+        ImGui::Separator();
+    }
+
     if (!wb.hasOverride()) {
         ImGui::TextDisabled("No override loaded. %s", wb.lastError().c_str());
         return;
