@@ -1432,6 +1432,26 @@ int AssetViewerApp::runSmokeAppearanceRoster(const char* fixtureDir) {
     return ok ? 0 : 1;
 }
 
+int AssetViewerApp::runSmokeTextureMissingWarn(const char* fixtureDir) {
+    ModWorkbench wb;
+    auto& rec = wb.record();
+    rec.overrideClass = "staticProp";
+    rec.appearanceName = "smoke_prop";
+    rec.appearanceVerified = true;
+    rec.sourceRelPath = "model.glb";
+    wb.textureSlots()[0].path = std::string(fixtureDir) + "/does_not_exist_basecolor.png";
+    wb.revalidateWithTextures();
+    int missingWarns = 0, blocks = 0;
+    for (const auto& w : wb.warnings()) {
+        if (w.code == std::string("texture-missing")) ++missingWarns;
+        if (w.severity == WarnSeverity::Block) ++blocks;
+    }
+    bool ok = (missingWarns == 1) && (blocks == 0);
+    printf("[smoke] texture-missing-warn %s (missing=%d blocks=%d)\n",
+           ok ? "PASS" : "FAIL", missingWarns, blocks);
+    return ok ? 0 : 1;
+}
+
 void AssetViewerApp::onFileDropped(const char* path){
     if (!path) return;
     std::string p = path, low = p; for (char& c: low) c=(char)tolower((unsigned char)c);

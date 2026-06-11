@@ -46,6 +46,7 @@ public:
     static int runSmokeWorkbenchExport(const char* fixtureDir, const char* tmpDir);  // S4
     static int runSmokeWorkbenchReload(const char* fixtureDir);  // review: override-state reset on reload
     static int runSmokeAppearanceRoster(const char* fixtureDir);  // S5
+    static int runSmokeTextureMissingWarn(const char* fixtureDir);  // S5
 private:
     FileBrowser browser_;
     AssetTypeSidebar sidebar_;

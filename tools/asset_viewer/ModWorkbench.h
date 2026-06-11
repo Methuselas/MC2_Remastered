@@ -36,6 +36,11 @@ public:
     void revalidate(const std::vector<std::string>& missingTextures = {});
     ExportResult exportBundle(const std::string& outRoot, const std::string& bundleId);
 
+    // S5: texture-set slots a modder assigns; unresolved paths feed missing-texture WARNs.
+    struct TextureSlot { std::string label; std::string path; };
+    std::vector<TextureSlot>& textureSlots() { return textureSlots_; }
+    void revalidateWithTextures();   // recompute warnings, missing = slot paths not on disk
+
 private:
     std::string overridePath_;
     MeshData    overrideMesh_;
@@ -48,4 +53,6 @@ private:
 
     WorkbenchOverride        record_;
     std::vector<Warning>     warnings_;
+    std::vector<TextureSlot> textureSlots_{
+        {"Base Color", ""}, {"Normal", ""}, {"ORM", ""}, {"Emissive", ""}};
 };

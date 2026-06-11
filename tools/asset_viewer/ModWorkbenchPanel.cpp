@@ -105,7 +105,15 @@ void ModWorkbenchPanel::draw(ModWorkbench& wb, const ImVec2& avail) {
         }
         ImGui::EndListBox();
     }
-    wb.revalidate();
+    ImGui::Separator();
+    ImGui::TextUnformatted("Textures (assign to surface missing-texture warnings):");
+    for (auto& slot : wb.textureSlots()) {
+        char buf[260]; strncpy(buf, slot.path.c_str(), sizeof(buf)-1); buf[sizeof(buf)-1]='\0';
+        ImGui::PushID(slot.label.c_str());
+        if (ImGui::InputText(slot.label.c_str(), buf, sizeof(buf))) slot.path = buf;
+        ImGui::PopID();
+    }
+    wb.revalidateWithTextures();
     ImGui::Separator(); ImGui::TextUnformatted("Warnings:");
     if (wb.warnings().empty()) ImGui::TextDisabled("  none");
     for (const auto& w : wb.warnings()){
