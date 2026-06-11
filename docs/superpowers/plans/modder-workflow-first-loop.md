@@ -51,6 +51,9 @@ Goal: button in editor → auto-save shadow mission → launch mc2.exe → captu
 - Compile-only gate sufficient + existing editor CLI smoke (`-mission ... -frames N`) must still pass.
 - Manual visual gate (USER): click Playtest on loaded mission → game launches into that mission → close → log file appears, status shows exit code.
 
+### Known issues
+- **In-place save can lose campaign mission content (torrin incident 2026-06-11).** The Slice-1 compromise saves the mission IN PLACE (no shadow copy — see `EditorPlaytest::Start()` header). Clicking Playtest on `torrin.pak` (an original campaign mission) re-saved it with dropped content: `.fit` shrank 80074→56213 bytes, mech spawns + buildings gone (game A/B: destroyed 48→0, submit_buildings 9228→0). The `.pak.old` backup chain was overwritten by repeat saves; the original survived only via an unrelated mod copy. Mitigations added (`EditorPlaytest.cpp`): (1) **pristine snapshot** — one-time never-overwritten `<stem>.playtest-orig.pak/.fit` copied before the first in-place save; snapshot-copy failure ABORTS the playtest; (2) **save-shrink tripwire** — loud non-blocking warning if the new `.fit` is < 60% of the snapshot `.fit`; (3) **crash-log guarantee** — log archived on both PASS and FAIL exits, with the exit code appended into the archived log. **Real fix = shadow save (future slice)** so the original is never touched at all.
+
 ### Rollback
 - Single commit (or 2: TaskRunner Cancel + Playtest feature). `git revert` clean — all new files + small ImGui hook. No engine/game changes.
 

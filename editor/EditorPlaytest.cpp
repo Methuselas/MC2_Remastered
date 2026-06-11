@@ -16,6 +16,19 @@
 //   sibling `<stem>.fit` (they are saved next to each other) into the GAME install's
 //   `<exeDir>\data\missions\` -- the game install may differ from the editor's, which is the
 //   whole point of the bridge -- and (3) launch `-mission <stem>` with cwd = exeDir.
+//
+// PLAYTEST SAFETY (added 2026-06-11, torrin in-place-save incident):
+//   The Slice-1 compromise saves the mission IN PLACE.  This destroyed an original campaign
+//   mission (torrin.pak/.fit) when its content was dropped on re-save (the .old backup chain
+//   was overwritten by repeat saves).  Until the real fix (shadow save, future slice) lands,
+//   Start() guards the original three ways:
+//     (1) PRISTINE SNAPSHOT -- one-time, never-overwritten copy of the pre-first-playtest
+//         `<stem>.pak`+`.fit` to `<stem>.playtest-orig.pak`+`.fit`.  If the snapshot copy
+//         fails the playtest ABORTS (we refuse to risk the in-place save with no backup).
+//     (2) SAVE-SHRINK TRIPWIRE -- after the in-place save, if the new .fit is < 60% of the
+//         snapshot .fit it loudly warns "save dropped content?" (non-blocking).
+//     (3) CRASH-LOG GUARANTEE -- OnFinished archives on BOTH success and failure exits, and
+//         appends the exit code into the archived log itself.
 //-------------------------------------------------------------------------------------------------
 #include "stdafx.h"   // MFC / <windows.h>
 
@@ -67,6 +80,19 @@ bool FileExists(const char* p)
 {
 	DWORD a = GetFileAttributesA(p);
 	return (a != INVALID_FILE_ATTRIBUTES) && !(a & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+// File size in bytes, or 0 if the file is missing/unreadable (used by the shrink tripwire,
+// where 0 means "no comparison possible" -> tripwire silently skips).
+unsigned long long FileSizeBytes(const char* p)
+{
+	WIN32_FILE_ATTRIBUTE_DATA fad;
+	if (!GetFileAttributesExA(p, GetFileExInfoStandard, &fad))
+		return 0;
+	ULARGE_INTEGER sz;
+	sz.LowPart  = fad.nFileSizeLow;
+	sz.HighPart = fad.nFileSizeHigh;
+	return sz.QuadPart;
 }
 
 // Normalize a (possibly relative / `..`-laden) path to a full absolute path.
@@ -277,12 +303,23 @@ void OnFinished(const EditorTaskRunner::TaskResult& res)
 	s_state = State::Idle;
 	s_task  = EditorTaskRunner::kInvalidTask;
 
+	const bool pass = (res.exitCode == 0);
+
+	// CRASH-LOG GUARANTEE: archive on BOTH success and failure (onSuccess + onFailure both
+	// route here).  Append the exit-code verdict INTO the archived log itself so a crash
+	// (nonzero exit) is self-documenting even when read in isolation.
+	std::string logBody = res.log;
+	{
+		char tail[96];
+		snprintf(tail, sizeof(tail), "\n[playtest] exit code %d (%s)\n",
+			res.exitCode, pass ? "PASS" : "FAIL");
+		logBody += tail;
+	}
+
 	const char* missionPath = EditorData::instance ? EditorData::instance->getMapName() : 0;
 	std::string logPath = (missionPath && missionPath[0])
-		? ArchiveLog(missionPath, res.log)
+		? ArchiveLog(missionPath, logBody)
 		: std::string();
-
-	const bool pass = (res.exitCode == 0);
 	std::string last = LastLine(res.log);
 
 	char modTag[160] = "";
@@ -344,6 +381,54 @@ void Start()
 		return;
 	}
 
+	// --- PRISTINE SNAPSHOT (playtest safety, torrin incident 2026-06-11) ----------------
+	// BEFORE the in-place save can mutate anything, make a one-time never-overwritten copy of
+	// the pre-first-playtest .pak + .fit.  If the snapshot exists already we keep it as-is
+	// (preserves the true original across repeat playtests).  If we have an original to copy
+	// but the copy FAILS, we ABORT -- never risk the destructive in-place save with no backup.
+	std::string snapShrinkWarn;            // appended to Running status if the tripwire trips
+	unsigned long long snapFitBytes = 0;   // original .fit size for the shrink tripwire
+	bool snapTookThisRun = false;
+	{
+		std::string origDir, origBase;
+		SplitPath(missionPath, origDir, origBase);
+		std::string origPak  = origDir + "\\" + origBase + ".pak";
+		std::string origFit  = origDir + "\\" + origBase + ".fit";
+		std::string snapPak  = origDir + "\\" + origBase + ".playtest-orig.pak";
+		std::string snapFit  = origDir + "\\" + origBase + ".playtest-orig.fit";
+
+		if (!FileExists(snapPak.c_str()) || !FileExists(snapFit.c_str()))
+		{
+			// First playtest of this mission -- take the snapshot now (only the files that
+			// actually exist; a brand-new unsaved mission may have neither yet).
+			bool anyOrig = FileExists(origPak.c_str()) || FileExists(origFit.c_str());
+			if (anyOrig)
+			{
+				if (FileExists(origPak.c_str()) &&
+					!CopyFileA(origPak.c_str(), snapPak.c_str(), TRUE) &&
+					GetLastError() != ERROR_FILE_EXISTS)
+				{
+					snprintf(s_status, sizeof(s_status),
+						"Pristine snapshot FAILED (%s -> %s, err %lu) -- aborting playtest to "
+						"protect the original.", origPak.c_str(), snapPak.c_str(), GetLastError());
+					return;
+				}
+				if (FileExists(origFit.c_str()) &&
+					!CopyFileA(origFit.c_str(), snapFit.c_str(), TRUE) &&
+					GetLastError() != ERROR_FILE_EXISTS)
+				{
+					snprintf(s_status, sizeof(s_status),
+						"Pristine snapshot FAILED (%s -> %s, err %lu) -- aborting playtest to "
+						"protect the original.", origFit.c_str(), snapFit.c_str(), GetLastError());
+					return;
+				}
+				snapTookThisRun = true;
+			}
+		}
+		// Record snapshot .fit size for the post-save shrink tripwire (0 = skip comparison).
+		snapFitBytes = FileSizeBytes(snapFit.c_str());
+	}
+
 	// COMPROMISE (see header): save IN PLACE.  EditorData::save() mutates path state
 	// (setMapName) + writes .old backups; a non-mutating shadow copy to .playtest/ would
 	// need a >50-line EditorData refactor -- out of slice budget.  We launch the saved pak.
@@ -356,6 +441,26 @@ void Start()
 	// save() may rewrite mapName; re-read to launch exactly what was written.
 	if (EditorData::instance->getMapName())
 		savedPak = EditorData::instance->getMapName();
+
+	// --- SAVE-SHRINK TRIPWIRE (playtest safety) ---------------------------------------
+	// If the just-saved .fit is < 60% of the pristine snapshot .fit, the in-place save likely
+	// dropped content (the torrin failure mode: mech spawns + buildings vanished).  Loud but
+	// NON-blocking -- the snapshot still holds the original, so let the user see the run.
+	if (snapFitBytes > 0)
+	{
+		std::string newDir, newBase;
+		SplitPath(savedPak, newDir, newBase);
+		std::string newFit = newDir + "\\" + newBase + ".fit";
+		unsigned long long newFitBytes = FileSizeBytes(newFit.c_str());
+		if (newFitBytes > 0 && newFitBytes * 100ULL < snapFitBytes * 60ULL)
+		{
+			char warn[256];
+			snprintf(warn, sizeof(warn),
+				"WARNING: save dropped content? fit shrank %llu->%llu bytes.\n",
+				snapFitBytes, newFitBytes);
+			snapShrinkWarn = warn;
+		}
+	}
 
 	// --- mod-root detection (Slice 2) -------------------------------------------------
 	// Reset per-run mod context, then detect whether the saved mission lives inside a
@@ -454,8 +559,12 @@ void Start()
 	}
 
 	std::string stalePrefix;
+	if (snapTookThisRun)
+		stalePrefix += "Pristine snapshot saved (.playtest-orig.pak/.fit) -- original preserved.\n";
+	if (!snapShrinkWarn.empty())
+		stalePrefix += snapShrinkWarn;
 	if (ExeIsStale(s_exePath))
-		stalePrefix = "WARNING: game exe is >24h old (possible stale deploy).\n";
+		stalePrefix += "WARNING: game exe is >24h old (possible stale deploy).\n";
 
 	// Quote the stem only when it contains spaces (engine treats the token as the bare stem).
 	bool stemHasSpace = (stem.find(' ') != std::string::npos);
