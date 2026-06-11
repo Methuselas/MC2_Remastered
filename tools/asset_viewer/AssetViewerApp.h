@@ -51,6 +51,7 @@ public:
     static int runSmokeCentralMergePreserve(const char* fixtureDir, const char* tmpDir);  // S5
     static int runSmokeShaderInclude(const char* fixtureDir);  // Backend-A v2
     static int runSmokeBackendACompile(const char* shaderRoot); // Backend-A v2
+    static int runSmokeBackendARender(const char* deployDir, const char* shaderRoot); // Backend-A v2 Task 5
 private:
     FileBrowser browser_;
     AssetTypeSidebar sidebar_;

@@ -1695,6 +1695,83 @@ int AssetViewerApp::runSmokeBackendACompile(const char* shaderRoot)
     return linked ? 0 : 1;
 }
 
+// ---------------------------------------------------------------------------
+// runSmokeBackendARender — Backend-A v2 Task 5: ModelPreviewEngineShader renders
+// a prop with the real engine shaders; model must be distinct from background.
+// ---------------------------------------------------------------------------
+#include "ModelPreviewEngineShader.h"
+
+int AssetViewerApp::runSmokeBackendARender(const char* deployDir, const char* shaderRoot)
+{
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+
+    // Headless GL 4.3 context (SSBOs require GL 4.3)
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+        std::fprintf(stderr, "[smoke] FAIL backend-a-render: SDL_Init: %s\n", SDL_GetError());
+        return 1;
+    }
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_Window* win = SDL_CreateWindow("smoke-backend-a-render", 0, 0, 64, 64,
+        SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+    if (!win) {
+        SDL_Quit();
+        std::fprintf(stderr, "[smoke] FAIL backend-a-render: hidden window: %s\n", SDL_GetError());
+        return 1;
+    }
+    SDL_GLContext gl = SDL_GL_CreateContext(win);
+    if (!gl) {
+        SDL_DestroyWindow(win); SDL_Quit();
+        std::fprintf(stderr, "[smoke] FAIL backend-a-render: gl context: %s\n", SDL_GetError());
+        return 1;
+    }
+    SDL_GL_MakeCurrent(win, gl);
+    glewExperimental = GL_TRUE;
+    if (glewInit() != GLEW_OK) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        std::fprintf(stderr, "[smoke] FAIL backend-a-render: glewInit\n");
+        return 1;
+    }
+    glGetError(); // consume glew's spurious error
+
+    int rc = 0;
+    {
+        ModelPreviewEngineShader p;
+        p.setShaderRoot(shaderRoot);
+        p.setDeployDir(deployDir);
+        p.setSource("data/tgl/2civliving.tgl");
+
+        std::vector<uint8_t> px;
+        bool rendered = p.renderToPixels(128, 128, px);
+
+        bool nonEmpty = false;
+        if (rendered && px.size() >= 4) {
+            for (size_t i = 4; i + 3 < px.size(); i += 4)
+                if (px[i] != px[0] || px[i+1] != px[1] || px[i+2] != px[2]) {
+                    nonEmpty = true; break;
+                }
+        }
+
+        bool ok = p.ok() && rendered && nonEmpty;
+        printf("[smoke] backend-a-render %s (compiled=%d nonEmpty=%d)\n",
+               ok ? "PASS" : "FAIL", (int)p.ok(), (int)nonEmpty);
+        if (!p.ok() && !p.report().lastError.empty())
+            std::fprintf(stderr, "[smoke] backend-a-render error: %s\n",
+                         p.report().lastError.c_str());
+        if (!p.report().compileLog.empty())
+            std::fprintf(stderr, "[smoke] compile log: %s\n", p.report().compileLog.c_str());
+        if (!p.report().linkLog.empty())
+            std::fprintf(stderr, "[smoke] link log: %s\n", p.report().linkLog.c_str());
+        rc = ok ? 0 : 1;
+    }
+
+    SDL_GL_DeleteContext(gl);
+    SDL_DestroyWindow(win);
+    SDL_Quit();
+    return rc;
+}
+
 void AssetViewerApp::onFileDropped(const char* path){
     if (!path) return;
     std::string p = path, low = p; for (char& c: low) c=(char)tolower((unsigned char)c);
