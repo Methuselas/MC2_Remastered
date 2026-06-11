@@ -92,6 +92,11 @@ void harvest(Slot& s)
 void emitWindow()
 {
     if (s_frames == 0) {
+        // No slot harvested this window (GPU results never became available).
+        // Still emit a heartbeat so silence is diagnosable, then reset.
+        std::printf("[RENDER_PASS_TIME v1] frame=%lu n=0 dropped=%u\n",
+            s_frameNo, s_dropped);
+        std::fflush(stdout);
         s_dropped = 0;
         return;
     }
@@ -125,6 +130,11 @@ bool Enabled()
         const char* v = std::getenv("MC2_RENDER_PASS_TIME");
         s_on = (v && v[0] == '1' && v[1] == '\0');
         s_inited = true;
+        if (s_on) {
+            std::printf("[RENDER_PASS_TIME v1] armed every=%d ring=%d\n",
+                emitEvery(), kRing);
+            std::fflush(stdout);
+        }
     }
     return s_on;
 }
