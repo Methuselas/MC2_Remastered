@@ -3,7 +3,7 @@
 // Engine glue for the Tactical Overview camera. Owns the pure blend-state,
 // reads env flags, drives the Camera via its public API, draws the 2D overlay.
 #include "tacticaloverview_state.h"
-#include "../mclib/camera.h"
+#include <stuff/stuff.hpp>
 
 class Camera;
 class Mover;
@@ -61,7 +61,7 @@ public:
     void flOnCancel();                         // Esc / right-click / F6 exit
     void flOnDragStart( const Stuff::Vector3D& worldStart );
     void flOnDragMove( const Stuff::Vector3D& worldEnd );
-    void flOnRelease();                        // resets state + snapshot
+    void flOnRelease();                        // resets state + count
     FormationLineState flState() const { return flState_; }
     const Stuff::Vector3D& flStart() const { return flStart_; }
     const Stuff::Vector3D& flEnd()   const { return flEnd_; }
