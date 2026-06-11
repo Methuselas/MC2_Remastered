@@ -2263,6 +2263,30 @@ void __stdcall DoGameLogic()
 				s_f8Was = f8Down;
 			}
 
+			// Formation line (MC2_TACMAP_FORMATION_LINE): L arms while F6
+			// overview active; LMB drag draws; release issues orders (handled
+			// in ControlGui::render where eye/selection live); Esc/RMB cancels.
+			if ( TacticalOverview::formationLineEnabled() )
+			{
+				static bool s_flLWas = false;
+				bool lDown = userInput->getKeyDown( KEY_L )
+					&& !userInput->ctrl() && !userInput->alt() && !userInput->shift();
+				if ( lDown && !s_flLWas )
+					g_tacticalOverview.flOnHotkeyL();
+				s_flLWas = lDown;
+
+				if ( g_tacticalOverview.flState() != TacticalOverview::FL_IDLE )
+				{
+					static bool s_flEscWas = false;
+					bool escDown = userInput->getKeyDown( KEY_ESCAPE );
+					if ( escDown && !s_flEscWas )
+						g_tacticalOverview.flOnCancel();
+					s_flEscWas = escDown;
+					if ( userInput->rightMouseReleased() )
+						g_tacticalOverview.flOnCancel();
+				}
+			}
+
 			if ((true == bInvokeOptionsScreenFlag)
 				|| (userInput->getKeyDown(KEY_O) && userInput->ctrl() && !userInput->alt() && !userInput->shift()))
 			{
