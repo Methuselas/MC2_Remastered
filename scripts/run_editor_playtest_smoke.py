@@ -148,6 +148,11 @@ def main() -> int:
                     help="copy editor-startup.log into the report dir")
     ap.add_argument("--minimized", dest="minimized", action="store_true", default=True)
     ap.add_argument("--no-minimized", dest="minimized", action="store_false")
+    ap.add_argument("--assert-bridge", action="store_true",
+                    help="fixture assertion (mc2_01 green-path): FAIL unless the run emitted "
+                         ">0 [MOVER v1] lines, >=2 distinct team= values, AND a [SMOKE v1] "
+                         "summary result=pass. Verifies the editor->game runtime bridge end "
+                         "to end (movers reached the game + the smoke ran clean).")
     args = ap.parse_args()
 
     exe = Path(args.exe)
@@ -190,6 +195,13 @@ def main() -> int:
             f"-mission={mission}", "-exit-on-load-fail"]
     env = dict(os.environ)
     env["MC2_EDITOR_TRACE"] = "1"
+
+    # BRIDGE FIXTURE: run the smoke child in ACTIVE-sim mode so the scenario clock
+    # advances and live movers tick -> the editor forwards this as gos_smoke's
+    # `--smoke-active`. Passive smoke (default) freezes the scenario and emits no
+    # [MOVER v1] telemetry, so the bridge assertions could never pass.
+    if args.assert_bridge:
+        env["MC2_SMOKE_ACTIVE"] = "1"
 
     # Mount the mod so the editor can load the mission's mech/object appearances.
     # Auto-detect mods/<id>/ in the mission path unless explicitly overridden.
@@ -256,6 +268,53 @@ def main() -> int:
                     break
 
     passed = (bucket == "") and rc == 0
+
+    # --- BRIDGE FIXTURE ASSERTIONS (--assert-bridge, mc2_01 green-path) -----------
+    # Verify the editor->game runtime bridge carried real mover state into the game:
+    # >0 [MOVER v1] lines, >=2 distinct team= values (player + OpFor), and a
+    # [SMOKE v1] summary result=pass. The archived log is the source of truth; the
+    # editor mirrors the child's stdout into it, and `combined` includes it.
+    bridge = {}
+    if args.assert_bridge:
+        # The child's stdout (incl. [MOVER v1] / [SMOKE v1]) is captured by the
+        # editor and written to the ARCHIVED log, not the editor's own stdout/
+        # startup log. Read that file (path from the ESMOKE `log=` field); fall
+        # back to `combined` if the archive path is unavailable.
+        bridge_text = combined
+        archived = pt.get("log", "")
+        if archived and archived not in ("-", "none"):
+            try:
+                ap_ = Path(archived)
+                if ap_.exists():
+                    bridge_text = ap_.read_text(errors="replace")
+            except OSError:
+                pass
+        mover_lines = re.findall(r"^\[MOVER v1\] (.+)$", bridge_text, re.MULTILINE)
+        teams = set()
+        for ml in mover_lines:
+            tm = re.search(r"(?:^|\s)team=(\S+)", ml)
+            if tm:
+                teams.add(tm.group(1))
+        smoke_results = re.findall(
+            r"\[SMOKE v1\] event=summary result=(\S+)", bridge_text)
+        smoke_pass = bool(smoke_results) and smoke_results[-1] == "pass"
+        bridge = {
+            "mover_lines": len(mover_lines),
+            "team_values": sorted(teams),
+            "smoke_pass": smoke_pass,
+        }
+        failures = []
+        if len(mover_lines) <= 0:
+            failures.append("no [MOVER v1] lines (bridge produced no mover state)")
+        if len(teams) < 2:
+            failures.append(f"only {len(teams)} distinct team= value(s) (need >=2): "
+                            f"{sorted(teams)}")
+        if not smoke_pass:
+            failures.append("[SMOKE v1] summary result!=pass")
+        if failures:
+            passed = False
+            bucket = bucket or ("bridge_assert:" + "; ".join(failures))
+
     verdict = "PASS" if passed else "FAIL"
 
     # Report ---------------------------------------------------------------------
@@ -290,6 +349,15 @@ def main() -> int:
         f"- bucket: {bucket or '-'}",
         f"- wall seconds: {dt}",
     ]
+    if args.assert_bridge:
+        lines += [
+            "",
+            "## bridge assertions",
+            "",
+            f"- mover lines: {bridge.get('mover_lines', 0)}",
+            f"- distinct team= values: {bridge.get('team_values', [])}",
+            f"- SMOKE result=pass: {bridge.get('smoke_pass', False)}",
+        ]
     if smoke_warning:
         lines += ["", f"**{smoke_warning}**"]
     lines += [
@@ -307,6 +375,11 @@ def main() -> int:
     (rptdir / "editor-stdout.txt").write_text(out or "", encoding="utf-8", errors="replace")
 
     print("\n" + report)
+    if args.assert_bridge:
+        print(f"[bridge] mover_lines={bridge.get('mover_lines', 0)} "
+              f"teams={bridge.get('team_values', [])} "
+              f"smoke_pass={bridge.get('smoke_pass', False)} "
+              f"-> {'OK' if (bucket == '' or not bucket.startswith('bridge_assert')) and passed else 'FAIL'}")
     if smoke_warning:
         print(smoke_warning)
     print(f"report: {rptdir / 'report.md'}")
