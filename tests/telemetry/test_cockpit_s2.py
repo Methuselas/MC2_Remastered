@@ -21,9 +21,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-# Ensure repo root on path.
+# Ensure repo root and scripts/ on path (telemetry_lift lives in scripts/
+# and must be importable even when test 1 is skipped and cockpit's lazy
+# sys.path insert never runs).
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from scripts.smoke_lib import cockpit
 
@@ -45,6 +48,12 @@ def _find_golden():
     for p in (GOLDEN_ARTIFACT, ALT_GOLDEN_ARTIFACT):
         if p.is_dir() and any(p.glob("*.log")):
             return p
+    # Last resort: newest local artifact dir that has logs (any worktree).
+    root = REPO_ROOT / "tests" / "smoke" / "artifacts"
+    if root.is_dir():
+        for d in sorted(root.iterdir(), reverse=True):
+            if d.is_dir() and any(d.glob("*.log")):
+                return d
     return None
 
 
