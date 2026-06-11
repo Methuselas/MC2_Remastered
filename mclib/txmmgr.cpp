@@ -3008,7 +3008,10 @@ void MC_TextureManager::renderLists (void)
 	if (Environment.Renderer != 3)
 	{
 		gos_SetRenderState( gos_State_ShadeMode, gos_ShadeGouraud);
-		gos_SetRenderState(	gos_State_ZWrite, 1);
+		// Blended alpha must not write depth: these are sorted-alpha nodes,
+		// not the opaque/masked prepass. Applies to both the pure-blend
+		// (states=0) and alpha-test cutout (states=1) loops, conservatively.
+		gos_SetRenderState(	gos_State_ZWrite, 0);
 	}
 
     // sebi: split in 2 parts, first draw objects which have alpha test off, then with alpha test on
@@ -3063,6 +3066,12 @@ void MC_TextureManager::renderLists (void)
     }
     //reset alpha test at the end
     gos_SetRenderState( gos_State_AlphaTest, 0);
+	if (Environment.Renderer != 3)
+	{
+		// Restore legacy depth-write state for downstream passes (they
+		// inherit render state from this block).
+		gos_SetRenderState(	gos_State_ZWrite, 1);
+	}
 	} // end RenderLists.NonTerrainAlphaLoops
 
 	{
@@ -3132,8 +3141,11 @@ void MC_TextureManager::renderLists (void)
 		}
 	}
 	
-	gos_SetRenderState(	gos_State_ZWrite, 1);
-	
+	// Spotlight cones are blended/additive: no depth writes during the draw.
+	// Downstream state is unchanged -- the post-loop reset below already
+	// sets ZWrite 0 (legacy behavior).
+	gos_SetRenderState(	gos_State_ZWrite, 0);
+
 	for (int i=0;i<nextAvailableVertexNode;i++)
 	{
 		if ((masterVertexNodes[i].flags & MC2_ISSPOTLGT) &&
