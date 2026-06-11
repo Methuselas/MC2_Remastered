@@ -702,7 +702,7 @@ void MissionInterfaceManager::update (void)
 			if ( userInput->isLeftClick() )
 			{
 				Stuff::Vector3D w;
-				if ( eye->screenToGroundPlaneApprox( fmx, fmy, w ) )
+				if ( eye->screenToTerrainApprox( fmx, fmy, w ) )
 				{
 					// Snapshot selected friendly movers at drag start.
 					Mover* flMovers[32];
@@ -736,7 +736,7 @@ void MissionInterfaceManager::update (void)
 		else // FL_DRAGGING
 		{
 			Stuff::Vector3D w;
-			if ( eye->screenToGroundPlaneApprox( fmx, fmy, w ) )
+			if ( eye->screenToTerrainApprox( fmx, fmy, w ) )
 				g_tacticalOverview.flOnDragMove( w );
 
 			if ( userInput->leftMouseReleased() )
@@ -756,6 +756,11 @@ void MissionInterfaceManager::update (void)
 					// (release clears the snapshot).
 					Stuff::Vector3D slots[32];
 					int ns = g_tacticalOverview.flComputeSlots( slots, 32 );
+					// Endpoints sit on the terrain; interpolated slots can
+					// float over dips - drop each onto the surface.
+					if ( land )
+						for ( int s = 0; s < ns; s++ )
+							slots[s].z = land->getTerrainElevation( slots[s] );
 					bool slotUsed[32] = { false };
 					int nm = g_tacticalOverview.flMoverCount();
 					for ( int i = 0; i < nm; i++ )

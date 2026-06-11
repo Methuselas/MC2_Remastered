@@ -980,6 +980,71 @@ bool Camera::screenToGroundPlaneApprox (long screenX, long screenY, Stuff::Vecto
 }
 
 //---------------------------------------------------------------------------
+bool Camera::screenToTerrainApprox (long screenX, long screenY, Stuff::Vector3D &outWorld)
+{
+	outWorld.x = outWorld.y = outWorld.z = 0.0f;
+	if (turn < 4)
+		return false;
+
+	Stuff::Matrix4D M = worldToClipGL();
+	Stuff::Matrix4D Minv;
+	Minv.Invert(M);
+
+	const float w = screenResolution.x;
+	const float h = screenResolution.y;
+	if (w <= 0.0f || h <= 0.0f)
+		return false;
+
+	const float ndcX =  2.0f * (float(screenX) / w) - 1.0f;
+	const float ndcY =  1.0f - 2.0f * (float(screenY) / h);
+
+	auto unprojectNDC = [&](float nz) -> Stuff::Vector3D {
+		float wx = ndcX*Minv(0,0) + ndcY*Minv(1,0) + nz*Minv(2,0) + Minv(3,0);
+		float wy = ndcX*Minv(0,1) + ndcY*Minv(1,1) + nz*Minv(2,1) + Minv(3,1);
+		float wz = ndcX*Minv(0,2) + ndcY*Minv(1,2) + nz*Minv(2,2) + Minv(3,2);
+		float ww = ndcX*Minv(0,3) + ndcY*Minv(1,3) + nz*Minv(2,3) + Minv(3,3);
+		const float invW = (fabsf(ww) > 1e-8f) ? (1.0f / ww) : 0.0f;
+		Stuff::Vector3D v; v.x = wx*invW; v.y = wy*invW; v.z = wz*invW;
+		return v;
+	};
+	auto glToMC2 = [](const Stuff::Vector3D& g) -> Stuff::Vector3D {
+		Stuff::Vector3D r; r.x = -g.x; r.y = g.z; r.z = g.y; return r;
+	};
+
+	// REVERSE-Z, ZERO_TO_ONE: near plane is NDC z=1, far is z=0.
+	Stuff::Vector3D ro = glToMC2(unprojectNDC(1.0f));    // near
+	Stuff::Vector3D rf = glToMC2(unprojectNDC( 0.0f));   // far
+
+	const float dz = rf.z - ro.z;
+	if (fabsf(dz) < 1e-6f) { outWorld = ro; return false; }
+
+	// Fixed-point iteration: intersect the ray with the horizontal plane at
+	// the terrain height of the previous hit. Converges in 2-3 steps on any
+	// terrain a camera ray can see (slope bounded by the tilt).
+	float planeZ = 0.0f;
+	Stuff::Vector3D hit;
+	hit.x = hit.y = hit.z = 0.0f;
+	for (int iter = 0; iter < 3; ++iter)
+	{
+		const float t = (planeZ - ro.z) / dz;
+		hit.x = ro.x + t * (rf.x - ro.x);
+		hit.y = ro.y + t * (rf.y - ro.y);
+		hit.z = planeZ;
+		if (!land)
+			break;
+		const float e = land->getTerrainElevation(hit);
+		if (fabsf(e - planeZ) < 1.0f)
+		{
+			hit.z = e;
+			break;
+		}
+		planeZ = e;
+	}
+	outWorld = hit;
+	return true;
+}
+
+//---------------------------------------------------------------------------
 unsigned long Camera::inverseProject (Stuff::Vector2DOf<long> &screenPos, Stuff::Vector3D &point)
 {
 	if (turn < 4)

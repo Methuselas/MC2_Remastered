@@ -855,11 +855,14 @@ static void updateAndRenderFormationLine( Camera* eye )
 			csgThickSeg( x0, y0, x1, y1, 1.5f, aBits | kGreen );
 		}
 
-		// Slot pips: small filled quads at each slot.
+		// Slot pips: small filled quads at each slot, dropped onto the terrain
+		// surface (interpolated z floats over dips between the endpoints).
 		Stuff::Vector3D slots[32];
 		int ns = g_tacticalOverview.flComputeSlots( slots, 32 );
 		for ( int s = 0; s < ns; s++ )
 		{
+			if ( land )
+				slots[s].z = land->getTerrainElevation( slots[s] );
 			ModernClipResult r = eye->projectModernClipGL( slots[s] );
 			if ( r.clip.w <= 0.05f ) continue;
 			float cx = vax + ( r.clip.x / r.clip.w * 0.5f + 0.5f ) * vmx;

@@ -1008,6 +1008,15 @@ class Camera
 		// inverseProject() when a real terrain hit is required.
 		bool screenToGroundPlaneApprox (long screenX, long screenY, Stuff::Vector3D &outWorld);
 
+		// screenToTerrainApprox: screenToGroundPlaneApprox refined onto the
+		// terrain surface by iterating the plane height (fixed 3 steps, O(1),
+		// no quad scan). On elevated terrain the z=0 plane hit drifts
+		// ~elevation/tan(tilt) in XY and sits below the surface; this variant
+		// returns a point on (approximately) the visible ground under the
+		// pixel. Use for screen-anchored world overlays (formation line).
+		// Still NOT a precise pick: cliffs/overhangs may need inverseProject.
+		bool screenToTerrainApprox (long screenX, long screenY, Stuff::Vector3D &outWorld);
+
 		// getClosestVertex: screen-click -> terrain vertex (row,col).
 		// Reinstated 2026-05-24 for the EditRel Mission Editor (sole caller
 		// editor/TerrainBrush.h). Thin adapter over Camera::inverseProject +
