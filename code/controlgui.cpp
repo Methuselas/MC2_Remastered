@@ -703,7 +703,9 @@ static void updateAndRenderFormationLine( Camera* eye )
 	// --- state advance ---
 	if ( st == TacticalOverview::FL_ARMED )
 	{
-		if ( userInput->getMouseLeftButtonState() == MC2_MOUSE_DOWN )
+		// Down-EDGE only (isLeftClick), not level: a button already held when L
+		// armed the mode must not start a phantom drag.
+		if ( userInput->isLeftClick() )
 		{
 			Stuff::Vector3D w;
 			if ( eye->screenToGroundPlaneApprox( mx, my, w ) )
@@ -745,6 +747,9 @@ static void updateAndRenderFormationLine( Camera* eye )
 			float ldy = g_tacticalOverview.flEnd().y - g_tacticalOverview.flStart().y;
 			if ( ldx * ldx + ldy * ldy < kMinLineLenWorld * kMinLineLenWorld )
 			{
+				// Suppress the world click too: an accidental tap in draw mode
+				// must not fall through to a normal move order.
+				g_tacticalOverview.armReleaseSuppression();
 				g_tacticalOverview.flOnCancel();
 				return;
 			}
@@ -790,6 +795,10 @@ static void updateAndRenderFormationLine( Camera* eye )
 				// would re-cluster the slots and defeat the line.
 				pMover->handleTacticalOrder( tacOrder );
 			}
+			// Explicitly suppress missiongui's move-on-release for this same
+			// frame (same pattern as squad-card clicks) instead of relying on
+			// wasLeftDrag() implicitly being true.
+			g_tacticalOverview.armReleaseSuppression();
 			g_tacticalOverview.flOnRelease();
 			soundSystem->playDigitalSample( BUTTON5 );
 			return;		// nothing to draw this frame
