@@ -129,6 +129,7 @@
 #include "../resource.h"
 #include "../GameOS/gameos/gpu_cull_readback.h"  // C3: GPU visibility queries
 #include "../GameAdapters/MechRenderAdapter.h"  // M2: mech spawn/destroy adapter
+#include "move_recon.h"  // MC2_MOVE_RECON per-frame pathfinding cost instrumentation
 
 // C3: env-gated lifecycle routing killswitch (same env var as objmgr.cpp).
 // MC2_GPU_CULL_LIFECYCLE=1 routes AI canBeSeen() combat gates to GPU-lagged visibility.
@@ -5914,7 +5915,10 @@ long BattleMech::update (void)
 			setTargeted(false);
 		}
 
+		if (g_moveReconEnabled) { g_moveRecon_movers_total++; g_moveRecon_frame_movers++; }
+		{ MoveReconScope _recon_ctrl(&g_moveRecon_ctrl_ns, &g_moveRecon_frame_ctrl_ns);
 		control.update(this);
+		}
 
 		if (!getAwake()) {
 			appearance->setGestureGoal(MECH_STATE_PARKED);

@@ -133,13 +133,16 @@ uniform PREC vec4  matNormalBoost;     // [rock, grass, dirt, concrete]; default
 // lowered from 12→2 to reduce excessive normal-map repetition at PBR zoom.
 uniform PREC vec4  matTiling;          // [rock, grass, dirt, concrete]; default (3, 2, 1, 6)
 uniform PREC float matTilingSnow;      // snow tiling; default 1.0
-// TERRAIN-CLASSIFY-TUNING-1: colormap HSV classifier thresholds. Defaults match
-// the pre-ImGui hardcoded values; Sand_M24 profile writes dirt sat via
-// gos_SetTerrainClassDirt at mission start, then visual_tuning can override.
-//   grass = (hLo, hHi, sLo, sHi): smoothstep(x,y,h)*smoothstep(z,w,s)
-//   dirt  = (hHi, hLo, satLo, satHi): reversed-hue smoothstep (higher H = less dirt)
-uniform PREC vec4  terrainClassGrass;  // default (0.10, 0.20, 0.10, 0.32)
-uniform PREC vec4  terrainClassDirt;   // default (0.17, 0.11, 0.10, 0.32)
+// TERRAIN-CLASSIFY-TUNING-1: colormap RGB channel-delta classifier thresholds.
+// Sand_M24 profile widens the dirt gate via gos_SetTerrainClassDirt at mission start.
+//   grass = (gMinusRLo, gMinusRHi, gBrightLo, gBrightHi): G-R delta + G brightness
+//   dirt  = (rMinusGLo, rMinusGHi, rBrightLo, rBrightHi): R-G delta + R brightness
+uniform PREC vec4  terrainClassGrass;  // default (-0.02, 0.06, 0.22, 0.40)
+uniform PREC vec4  terrainClassDirt;   // default (-0.02, 0.06, 0.22, 0.45)
+// TERRAIN-TINT-UI-1: material base tint colors (tunable via ImGui).
+uniform PREC vec3  tintRock;   // default (0.36, 0.37, 0.40)
+uniform PREC vec3  tintGrass;  // default (0.35, 0.42, 0.25)
+uniform PREC vec3  tintDirt;   // default (0.48, 0.42, 0.33)
 uniform PREC float tintStrengthScale;  // 0=colormap passthrough, 1=full material tint; default 1.0
 
 // TERRAIN-NORMALS-FROM-HEIGHT-1 / TERRAIN-LIGHTING-1/2 uniforms +
@@ -218,33 +221,29 @@ PREC vec3 rgb2hsv(PREC vec3 c) {
     return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
 }
 
-// MC2 terrain palette — tuned from actual screenshot analysis.
-// C1 tactical: dirt's saturation gate is profile-aware so mc2_24 sand
-// (which spans s ≈ 0.20–0.40) routes uniformly into slot 2 (dirt) rather
-// than splitting between rock (low-sat) and dirt (high-sat). LEGACY
-// profile keeps the pre-C1 thresholds verbatim.
+// MC2 terrain palette — RGB channel-delta classifier.
+// grass = (gMinusRLo, gMinusRHi, gBrightLo, gBrightHi): G beats R → green tilt
+// dirt  = (rMinusGLo, rMinusGHi, rBrightLo, rBrightHi): R beats G → warm tilt
+// rock  = fallback; concrete weight comes from TerrainType (cement vertices) in main().
+// Thresholds are uniforms (tunable via ImGui + visual_tuning.json).
 PREC vec4 getColorWeights(PREC vec3 color) {
-    PREC vec3 hsv = rgb2hsv(color);
-    PREC float h = hsv.x;
-    PREC float s = hsv.y;
-    PREC float v = hsv.z;
-
     PREC vec4 w = vec4(0.0);
 
-    // Green → grass, brown → dirt, everything else → rock.
-    // Concrete weight comes only from TerrainType (cement vertices) later in main();
-    // never from colormap, so snow/overlay-whitened tiles fall through to rock.
-    // Thresholds come from terrainClassGrass/Dirt uniforms (tunable via ImGui +
-    // visual_tuning.json). Sand_M24 profile resets dirt sat to (0.04, 0.20) at
-    // mission start via gos_SetTerrainClassDirt (replaces the old profile branch).
-    w.y = smoothstep(terrainClassGrass.x, terrainClassGrass.y, h)
-        * smoothstep(terrainClassGrass.z, terrainClassGrass.w, s);  // grass
-    w.z = smoothstep(terrainClassDirt.x,  terrainClassDirt.y,  h)
-        * smoothstep(terrainClassDirt.z,  terrainClassDirt.w,  s);  // dirt
-    w.x = 1.0 - max(w.y, w.z);                                             // everything else → rock
+    // Grass: G channel beats R (green tilt), sufficient green brightness
+    PREC float gMinusR = color.g - color.r;
+    w.y = smoothstep(terrainClassGrass.x, terrainClassGrass.y, gMinusR)
+        * smoothstep(terrainClassGrass.z, terrainClassGrass.w, color.g);
+
+    // Dirt: R channel beats G (warm tilt), sufficient red brightness
+    PREC float rMinusG = color.r - color.g;
+    w.z = smoothstep(terrainClassDirt.x, terrainClassDirt.y, rMinusG)
+        * smoothstep(terrainClassDirt.z, terrainClassDirt.w, color.r);
+
+    w.x = 1.0 - max(w.y, w.z);  // everything else → rock
     w.w = 0.0;
 
-    PREC float isWater = smoothstep(0.35, 0.45, h);
+    // Water: both G and B exceed R (teal/cyan/blue tint) → push toward rock
+    PREC float isWater = smoothstep(0.0, 0.08, min(color.g, color.b) - color.r);
     w.x += isWater;
     w.y *= (1.0 - isWater);
     w.z *= (1.0 - isWater);
@@ -715,9 +714,7 @@ void main(void)
     PREC float diffuse = clamp(NdotL, 0.02, 1.0);
 
     // --- Material color tinting ---
-    const PREC vec3 tintRock     = vec3(0.36, 0.37, 0.40);
-    const PREC vec3 tintGrass    = vec3(0.35, 0.42, 0.25);
-    const PREC vec3 tintDirt     = vec3(0.48, 0.42, 0.33);
+    // tintRock/tintGrass/tintDirt are uniforms (TERRAIN-TINT-UI-1, tunable via ImGui).
     const PREC vec3 tintConcrete = vec3(0.55, 0.53, 0.50);
     const PREC vec3 tintSnow     = vec3(0.75, 0.78, 0.84);  // dimmed cool grey-white
 

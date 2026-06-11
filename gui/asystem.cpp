@@ -128,6 +128,12 @@ void aObject::init(FitIniFile* file, const char* blockName, DWORD neverFlush)
 				strcat( buffer, ".tga" );
 			int ID = mcTextureManager->loadTexture( buffer, bAlpha ? gos_Texture_Alpha : gos_Texture_Keyed, 0, 0, neverFlush);
 			textureHandle = ID;
+			if ( getenv("MC2_LOG_MECH_ICON") && strstr(buffer, "mechicon") )
+			{
+				printf("[mechicon-load] aObject::init loading '%s' (blockName='%s')\n",
+				       buffer, blockName);
+				fflush(stdout);
+			}
 			DWORD logicalWidth = 0;
 			DWORD logicalHeight = 0;
 			if ( mcTextureManager->tryGetTextureLogicalSize( ID, logicalWidth, logicalHeight ) )
@@ -485,11 +491,15 @@ void	aObject::render(long x, long y)
 	
 void	aObject::setTexture( const char* fileName )
 {
-	
+	if ( getenv("MC2_LOG_MECH_ICON") && strstr(fileName, "mechicon") )
+	{
+		printf("[mechicon-load] aObject::setTexture '%s'\n", fileName);
+		fflush(stdout);
+	}
 	if ( textureHandle )
 	{
 		int gosID = mcTextureManager->get_gosTextureHandle( textureHandle );
-		if ( gosID > 0 )	
+		if ( gosID > 0 )
 			mcTextureManager->removeTexture( gosID );
 	}
 	textureHandle = mcTextureManager->loadTexture( fileName, gos_Texture_Keyed, 0, 0, 0x2);

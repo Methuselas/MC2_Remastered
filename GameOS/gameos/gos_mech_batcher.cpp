@@ -1414,6 +1414,8 @@ bool GpuMechBatcher::submitActor(const GpuMechSubmitDesc& desc) {
 // flush (Task 7) — bucket-sorted compaction + draw loop
 // ---------------------------------------------------------------------------
 void GpuMechBatcher::flush() {
+    finalizePending();
+
     // V1A: latch BEFORE any early-return guard clears s_pendingSubmits.
     // Counts GpuMechBatcher submits only (not MLR fallback, not alive count).
     s_lastFlushSubmitCount = static_cast<uint64_t>(s_pendingSubmits.size());

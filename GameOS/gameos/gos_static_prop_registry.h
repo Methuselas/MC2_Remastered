@@ -112,6 +112,10 @@ uint64_t getStaticFirstFrameSkipCount();
 // [RENDER_WORLD v1] objects=N. Read-only; reflects current tombstone-
 // adjusted active recipe slot count.
 uint32_t getActiveCount();
+uint32_t getRecipeRangeSlotCount();
+uint32_t getRecipeRangeSlotCapacity();
+uint32_t getRecipeLeafCount();
+uint32_t getRecipeLeafCapacity();
 
 // V1A (VisibilityRequest v1A): per-frame visible range count latched at
 // flush() entry. Returns 0 before the first flush (mission not yet loaded).

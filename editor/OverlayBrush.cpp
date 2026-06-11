@@ -473,6 +473,41 @@ static int connectivityMaskBasedOnAdjacentTiles(  int tileR,  int tileC ) {
 	return iConnectivityMask;
 }
 
+// Paint a single road-connectivity step from (fromR,fromC) to (toR,toC) where the
+// two tiles are exactly 1 tile apart orthogonally and dir = the direction of motion.
+// Shared by both the single-step and line-walk paths.
+static void paintRoadStep( int fromR, int fromC, int toR, int toC, int dir,
+                            Overlays roadType, ActionPaintTile* pAction )
+{
+	pAction->addChangedVertexInfo( toR, toC );    // for undo
+	pAction->addChangedVertexInfo( fromR, fromC ); // for undo
+
+	Overlays tmpType;
+	int tmpOffset;
+
+	/* update from-tile: add outgoing connection toward toTile */
+	int fromCM = connectivityMask();
+	boundSafeGetOverlay( fromR, fromC, tmpType, tmpOffset );
+	fromCM = TextureToConnectivityMaskMapping( texture(tmpType, tmpOffset) );
+	int adjCM = connectivityMaskBasedOnAdjacentTiles( fromR, fromC );
+	for (int i = 0; i < 4; i++) {
+		if (overlayType(fromCM, i) != overlayType(adjCM, i))
+			setOverlayType(fromCM, i, INVALID_OVERLAY);
+	}
+	setOverlayType(fromCM, dir, roadType);
+	int newFromTex = ConnectivityMaskToTextureMapping(fromCM, roadType);
+	land->setOverlay( fromR, fromC,
+	                  overlayTypeFromTexture(newFromTex),
+	                  indexOffsetFromTexture(newFromTex) );
+
+	/* update to-tile: derive connectivity purely from what's now in the terrain */
+	int toCM = connectivityMaskBasedOnAdjacentTiles( toR, toC );
+	int newToTex = ConnectivityMaskToTextureMapping(toCM, roadType);
+	land->setOverlay( toR, toC,
+	                  overlayTypeFromTexture(newToTex),
+	                  indexOffsetFromTexture(newToTex) );
+}
+
 bool OverlayBrush::paint( Stuff::Vector3D& worldPos, int screenX, int screenY )
 {
 	 int tileC;
@@ -480,7 +515,7 @@ bool OverlayBrush::paint( Stuff::Vector3D& worldPos, int screenX, int screenY )
 
 	land->worldToTile( worldPos, tileR, tileC );
 
-	if ( tileR < Terrain::realVerticesMapSide && tileR > -1 
+	if ( tileR < Terrain::realVerticesMapSide && tileR > -1
 		&& tileC < Terrain::realVerticesMapSide && tileC > -1 )
 	{
 		if ((DIRT_ROAD == type) || (PAVED_ROAD == type) || (TWO_LANE_DIRT_ROAD == type) || (DAMAGED_ROAD == type) || (RUNWAY == type) || (OBRIDGE == type) || (DAMAGED_BRIDGE == type)
@@ -488,60 +523,59 @@ bool OverlayBrush::paint( Stuff::Vector3D& worldPos, int screenX, int screenY )
 			if (-1 == lastTileR) { /* lastTile has not been set yet */
 				lastTileR = tileR;
 				lastTileC = tileC;
+				// Paint an initial stub at the click position so the user sees
+				// immediate road feedback on mouse-down (before any drag movement).
+				// An isolated tile with no road neighbors has all-INVALID connectivity
+				// → nonTransitionMask=0 → ConnectivityMaskToIndexOffsetMapping[0]=6
+				// (4-way intersection) via the no-op gosASSERT in RelWithDebInfo.
+				// This temporary shape is corrected to the proper dead-end on first drag.
+				pAction->addChangedVertexInfo( tileR, tileC );
+				int initCM = connectivityMaskBasedOnAdjacentTiles( tileR, tileC );
+				int initTex = ConnectivityMaskToTextureMapping( initCM, type );
+				Overlays initType = overlayTypeFromTexture( initTex );
+				int initOffset   = indexOffsetFromTexture( initTex );
+				if ( initType == INVALID_OVERLAY ) {
+					// No adjacent roads — use the stub offset (index 6 = all-directions,
+					// will be reshaped to a proper dead-end on first drag step).
+					initType   = type;
+					initOffset = 6;
+				}
+				land->setOverlay( tileR, tileC, initType, initOffset );
 			}
 			if ((lastTileR != tileR) || (lastTileC != tileC)) {
-				int brushMotionDirection = -1;
-				if (lastTileR == tileR) {
-					if (lastTileC + 1 == tileC) {
-						brushMotionDirection = RIGHT;
-					} else if (lastTileC - 1 == tileC) {
-						brushMotionDirection = LEFT;
+				// Walk from lastTile to currentTile one orthogonal step at a time.
+				// This handles diagonal mouse movement and fast drags that skip tiles —
+				// the original code only painted when the brush moved exactly 1 tile in
+				// a cardinal direction, producing disconnected parallel segments.
+				// We now walk a Manhattan path: at each step prefer the axis with the
+				// larger remaining delta so the road stays as straight as possible.
+				int stepR = lastTileR, stepC = lastTileC;
+				while (stepR != tileR || stepC != tileC) {
+					int dR = tileR - stepR;
+					int dC = tileC - stepC;
+					int nextR = stepR, nextC = stepC;
+					int dir = -1;
+					if (dR != 0 && (dC == 0 || (dR < 0 ? -dR : dR) >= (dC < 0 ? -dC : dC))) {
+						nextR += (dR > 0) ? 1 : -1;
+						dir    = (dR > 0) ? DOWN : UP;
+					} else if (dC != 0) {
+						nextC += (dC > 0) ? 1 : -1;
+						dir    = (dC > 0) ? RIGHT : LEFT;
+					} else {
+						break; // no more steps
 					}
-				} else if (lastTileC == tileC) {
-					if (lastTileR + 1 == tileR) {
-						brushMotionDirection = DOWN;
-					} else if (lastTileR - 1 == tileR) {
-						brushMotionDirection = UP;
+					// Clamp to valid map range before painting
+					if (nextR >= 0 && nextR < Terrain::realVerticesMapSide &&
+					    nextC >= 0 && nextC < Terrain::realVerticesMapSide) {
+						paintRoadStep( stepR, stepC, nextR, nextC, dir, type, pAction );
 					}
-				}
-
-				if (-1 != brushMotionDirection) {
-					/* the brush has been dragged to one of the four adjacent tiles */
-					pAction->addChangedVertexInfo( tileR, tileC );	// for undo
-					pAction->addChangedVertexInfo( lastTileR, lastTileC );	// for undo
-
-					Overlays tmpType;
-					int tmpOffset;
-
-					/* update last tile */
-					int lastTileConnectivityMask = connectivityMask();
-					boundSafeGetOverlay( lastTileR, lastTileC, tmpType, tmpOffset );
-					int iTexture = texture(tmpType, tmpOffset);
-					lastTileConnectivityMask = TextureToConnectivityMaskMapping(iTexture);
-					int tmpCM = connectivityMaskBasedOnAdjacentTiles( lastTileR, lastTileC );
-					int i;
-					for (i = 0; i < 4; i++) {
-						if (overlayType(lastTileConnectivityMask, i) != overlayType(tmpCM, i)) {
-							setOverlayType(lastTileConnectivityMask, i, INVALID_OVERLAY);
-						}
-					}
-					setOverlayType(lastTileConnectivityMask, brushMotionDirection, type);
-					int newLastTileTexture = ConnectivityMaskToTextureMapping(lastTileConnectivityMask, type);
-					Overlays newLastTileType = overlayTypeFromTexture(newLastTileTexture);
-					int newLastTileIndexOffset = indexOffsetFromTexture(newLastTileTexture);
-					land->setOverlay( lastTileR, lastTileC, newLastTileType, newLastTileIndexOffset);
-
-					/* update current tile */
-					int tileConnectivityMask = connectivityMaskBasedOnAdjacentTiles( tileR, tileC );
-					int newTileTexture = ConnectivityMaskToTextureMapping(tileConnectivityMask, type);
-					Overlays newTileType = overlayTypeFromTexture(newTileTexture);
-					int newTileIndexOffset = indexOffsetFromTexture(newTileTexture);
-					land->setOverlay( tileR, tileC, newTileType, newTileIndexOffset);
+					stepR = nextR;
+					stepC = nextC;
 				}
 			}
 		} else {
 			pAction->addChangedVertexInfo( tileR, tileC );	// for undo
-			land->setOverlay( tileR, tileC, type, offset );		
+			land->setOverlay( tileR, tileC, type, offset );
 		}
 	} else {
 		gosASSERT( false );

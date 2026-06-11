@@ -258,7 +258,7 @@ private:
 	void initPilots();
 	void initVariants();
 
-	void addVehicle( long fitID, PacketFile& objectFile, float scale );
+	void addVehicle( long fitID, PacketFile& objectFile, float scale, long nameID = 0 );
 	int  addBuilding( long fitID, PacketFile& objectFile, float scale );
 	void removeDeadWeight();
 	void clearVariants();

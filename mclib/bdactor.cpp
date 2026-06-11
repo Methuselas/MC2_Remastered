@@ -1979,6 +1979,143 @@ extern void mc2LightBakeParityCheck(int32_t recipeIndex, const TG_HWLightsData* 
 // free fns (defined mclib/txmmgr.cpp).
 // ============================================================================
 extern uint32_t g_mc2FrameCounter;  // mclib/tgl.cpp
+// Env bool parser: unset returns `def`; "0"/"false"/"off"/"no" disable;
+// everything else enables. Keep local to this TU so the diagnostics below
+// can stay self-contained.
+static bool ParseEnvBool(const char* name, bool def = false) {
+    const char* v = getenv(name);
+    if (!v || !*v) return def;
+    if (v[0]=='0' && !v[1]) return false;
+    if (!_stricmp(v, "false") || !_stricmp(v, "off") || !_stricmp(v, "no")) return false;
+    return true;
+}
+
+static bool mc2StableLightSkipEnabled() {
+    static const bool s_enabled = ParseEnvBool("MC2_STABLE_LIGHT_SKIP");
+    return s_enabled;
+}
+
+static bool mc2StableLightSkipDiagEnabled() {
+    static const bool s_enabled = ParseEnvBool("MC2_STABLE_LIGHT_SKIP_DIAG");
+    return s_enabled;
+}
+
+static uint64_t mc2StaticLightEnvironmentGeneration(const Camera* eye) {
+    (void)eye;
+    // L1b: intentionally coarse. Global mission lighting is effectively stable.
+    // This stays default-off and is only used for bounded diagnostics here.
+    return 0;
+}
+
+namespace {
+struct StableLightSkipDiag {
+    bool enabled = false;
+    bool envPrinted = false;
+    bool initialized = false;
+    uint32_t frame = 0xFFFFFFFFu;
+    uint64_t armed = 0;
+    uint64_t eligible = 0;
+    uint64_t skip = 0;
+    uint64_t emit = 0;
+    uint64_t miss_notRegistered = 0;
+    uint64_t miss_noValidLight = 0;
+    uint64_t miss_envGen = 0;
+    uint64_t miss_needsFullBake = 0;
+    uint64_t miss_invalidLightIdx = 0;
+};
+
+static StableLightSkipDiag s_stableLightSkipDiag;
+
+static void flushStableLightSkipDiag(uint32_t completedFrame)
+{
+    if (!s_stableLightSkipDiag.enabled)
+        return;
+    if (!(completedFrame < 5 || (completedFrame % 60u) == 0u))
+        return;
+
+    std::fprintf(stderr,
+        "[STABLE_LIGHT_SKIP] armed=%llu eligible=%llu skip=%llu emit=%llu "
+        "miss_notRegistered=%llu miss_noValidLight=%llu miss_envGen=%llu "
+        "miss_needsFullBake=%llu miss_invalidLightIdx=%llu\n",
+        (unsigned long long)s_stableLightSkipDiag.armed,
+        (unsigned long long)s_stableLightSkipDiag.eligible,
+        (unsigned long long)s_stableLightSkipDiag.skip,
+        (unsigned long long)s_stableLightSkipDiag.emit,
+        (unsigned long long)s_stableLightSkipDiag.miss_notRegistered,
+        (unsigned long long)s_stableLightSkipDiag.miss_noValidLight,
+        (unsigned long long)s_stableLightSkipDiag.miss_envGen,
+        (unsigned long long)s_stableLightSkipDiag.miss_needsFullBake,
+        (unsigned long long)s_stableLightSkipDiag.miss_invalidLightIdx);
+    std::fflush(stderr);
+}
+
+static void noteStableLightSkipFrame(uint32_t frame)
+{
+    if (!s_stableLightSkipDiag.enabled)
+        return;
+
+    if (!s_stableLightSkipDiag.initialized) {
+        s_stableLightSkipDiag.initialized = true;
+        s_stableLightSkipDiag.frame = frame;
+        if (!s_stableLightSkipDiag.envPrinted) {
+            const char* v = getenv("MC2_STABLE_LIGHT_SKIP");
+            std::fprintf(stderr, "[STABLE_LIGHT_SKIP] MC2_STABLE_LIGHT_SKIP=%s\n",
+                (v && *v) ? v : "(unset)");
+            std::fflush(stderr);
+            s_stableLightSkipDiag.envPrinted = true;
+        }
+        return;
+    }
+
+    if (frame == s_stableLightSkipDiag.frame)
+        return;
+
+    flushStableLightSkipDiag(s_stableLightSkipDiag.frame);
+    s_stableLightSkipDiag.frame = frame;
+    s_stableLightSkipDiag.armed = 0;
+    s_stableLightSkipDiag.eligible = 0;
+    s_stableLightSkipDiag.skip = 0;
+    s_stableLightSkipDiag.emit = 0;
+    s_stableLightSkipDiag.miss_notRegistered = 0;
+    s_stableLightSkipDiag.miss_noValidLight = 0;
+    s_stableLightSkipDiag.miss_envGen = 0;
+    s_stableLightSkipDiag.miss_needsFullBake = 0;
+    s_stableLightSkipDiag.miss_invalidLightIdx = 0;
+}
+
+static inline void recordStableLightSkipDiag(bool armed, bool eligible,
+    bool notRegistered, bool noValidLight, bool envGenMiss, bool needsFullBake,
+    bool invalidLightIdx)
+{
+    if (!mc2StableLightSkipDiagEnabled())
+        return;
+
+    s_stableLightSkipDiag.enabled = true;
+    noteStableLightSkipFrame(g_mc2FrameCounter);
+
+    if (armed)
+        ++s_stableLightSkipDiag.armed;
+    if (eligible)
+        ++s_stableLightSkipDiag.eligible;
+
+    if (armed && eligible) {
+        ++s_stableLightSkipDiag.skip;
+    } else {
+        ++s_stableLightSkipDiag.emit;
+        if (armed && notRegistered)
+            ++s_stableLightSkipDiag.miss_notRegistered;
+        if (armed && noValidLight)
+            ++s_stableLightSkipDiag.miss_noValidLight;
+        if (armed && envGenMiss)
+            ++s_stableLightSkipDiag.miss_envGen;
+        if (armed && needsFullBake)
+            ++s_stableLightSkipDiag.miss_needsFullBake;
+        if (armed && invalidLightIdx)
+            ++s_stableLightSkipDiag.miss_invalidLightIdx;
+    }
+}
+} // namespace
+
 // [LIGHTSLOT v1] accessor free fns (defined mclib/txmmgr.cpp, global scope).
 extern uint32_t mc2LightSlotBakedHighWater();
 extern uint64_t mc2LightSlotDedupHits();
@@ -2955,9 +3092,15 @@ void BldgAppearance::registerStatic() {
 			appearType->name, (int)staticReg.registered, (int)(bldgShape!=NULL),
 			(int)GpuStaticPropRegistry::isEnabled(), (int)isStaticEligible(),
 			(void*)appearType->bldgRenderShape), fflush(stderr);
-	if (staticReg.registered) return;
-	if (!bldgShape)           return;
-	if (!GpuStaticPropRegistry::isEnabled()) return;
+	if (staticReg.registered) {
+		return;
+	}
+	if (!bldgShape) {
+		return;
+	}
+	if (!GpuStaticPropRegistry::isEnabled()) {
+		return;
+	}
 	if (!isStaticEligible()) {
 		if (seamProbe) fprintf(stderr, "[SEAMPROBE] bldg registerStatic ABORT name=%s reason=!isStaticEligible\n", appearType->name), fflush(stderr);
 		return;
@@ -3071,7 +3214,9 @@ void BldgAppearance::registerStatic() {
 		(void)diag_total; (void)diag_skip_processMe; (void)diag_skip_helper;
 		(void)diag_skip_unreg; (void)diag_added;
 	}
-	if (batch.empty()) return;
+	if (batch.empty()) {
+		return;
+	}
 
 	int32_t regIdx = -1;
 	(void)GameAdapters::StaticProp::syncStaticProp(
@@ -3125,8 +3270,8 @@ void BldgAppearance::registerStatic() {
 				mc2SetBakedStaticLight(regIdx, fallback);
 				mc2WriteStaticLightSlot(regIdx, fallback);
 			}
-		}
 	}
+}
 }
 
 bool BldgAppearance::isStaticRegistered() const { return staticReg.registered; }
@@ -3153,6 +3298,24 @@ void BldgAppearance::touch()
 	// MC2_STATIC_UPDATE_SKIP defaults TRUE (terrobj.cpp:92); touch() is the
 	// DEFAULT path. update() runs only when the env var is explicitly cleared.
 	if (bldgShape) {
+		const bool stableLightSkipArmed = mc2StableLightSkipEnabled();
+		const uint64_t currentLightEnvGen = mc2StaticLightEnvironmentGeneration(eye);
+		const bool stableLightSkipEligible =
+			staticReg.registered &&
+			staticReg.recipeIndex >= 0 &&
+			staticReg.hasValidStaticLight &&
+			staticReg.lightDataIndex != 0xFFFFFFFFu &&
+			staticReg.lastLightEnvGen == currentLightEnvGen &&
+			!needsFullBakeNextFrame;
+		recordStableLightSkipDiag(
+			stableLightSkipArmed,
+			stableLightSkipEligible,
+			!staticReg.registered || staticReg.recipeIndex < 0,
+			!staticReg.hasValidStaticLight,
+			staticReg.hasValidStaticLight && (staticReg.lastLightEnvGen != currentLightEnvGen),
+			needsFullBakeNextFrame,
+			staticReg.lightDataIndex == 0xFFFFFFFFu);
+
 		// [LIGHTBRIDGE v1] C6 retirement: repoint to the primed 38d8720 slot
 		// (zero FNV/memcmp; cachedFrame_ stamped). MISS keeps the legacy
 		// resubmit (NOT CacheGpuLightData -- terrain-color-staleness,
@@ -3171,6 +3334,8 @@ void BldgAppearance::touch()
 		// for THIS actor before sibling instances of the same multi-type
 		// overwrite multi->cachedGpuLightIndex_ in the same update phase.
 		staticReg.lightDataIndex = bldgShape->getCachedGpuLightIndex();
+		staticReg.hasValidStaticLight = (staticReg.lightDataIndex != 0xFFFFFFFFu);
+		staticReg.lastLightEnvGen = currentLightEnvGen;
 		bldgShape->Touch();
 	}
 }

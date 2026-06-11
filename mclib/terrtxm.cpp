@@ -82,16 +82,23 @@ long TerrainTextures::init (const char *fileName, const char *baseName)
 		long result = listFile.open(listPath);
 		if (result == NO_ERR)
 		{
+			// Empty .lst means pre-cooked TXM set was never generated for this mission.
+			// Treat it the same as a missing .lst so initMask() loads mask data and
+			// createTransition() can generate + cache the .txm files on first load.
+			bool anyListed = false;
 			while (!listFile.eof())
 			{
 				char listName[1024];
 				listFile.readString((MemoryPtr)listName);
+				anyListed = true;
 				if (!fileExists(listName))
 				{
 					quickLoad = false;
 					break;
 				}
 			}
+			if (!anyListed)
+				quickLoad = false;
 		}
 		else
 		{

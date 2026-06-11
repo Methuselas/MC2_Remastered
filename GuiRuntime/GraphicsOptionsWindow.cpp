@@ -22,6 +22,13 @@ void  gos_SetTerrainMatTiling(float rock, float grass, float dirt, float concret
 void  gos_GetTerrainMatTiling(float* rock, float* grass, float* dirt, float* concrete, float* snow);
 void  gos_SetTerrainTintStrengthScale(float s);
 float gos_GetTerrainTintStrengthScale();
+// TERRAIN-TINT-UI-1: material base tint colors.
+void  gos_SetTerrainTintRock(float r, float g, float b);
+void  gos_GetTerrainTintRock(float* r, float* g, float* b);
+void  gos_SetTerrainTintGrass(float r, float g, float b);
+void  gos_GetTerrainTintGrass(float* r, float* g, float* b);
+void  gos_SetTerrainTintDirt(float r, float g, float b);
+void  gos_GetTerrainTintDirt(float* r, float* g, float* b);
 // TERRAIN-TUNING-UI-1 / TERRAIN-LIGHTING-1 — consolidated tunables (the
 // Object Inspector "Terrain Pass" panel used to mirror these; they live
 // here now alongside the rest of the terrain tuning stack).
@@ -69,11 +76,11 @@ extern "C" {
     int  __stdcall gos_terrainHeightResampleFactor(void);
     void __stdcall gos_setTerrainHeightResampleFactor(int factor);
 }
-// TERRAIN-CLASSIFY-TUNING-1: colormap HSV classifier thresholds (gameos_graphics.cpp).
-void gos_SetTerrainClassGrass(float hLo, float hHi, float sLo, float sHi);
-void gos_GetTerrainClassGrass(float* hLo, float* hHi, float* sLo, float* sHi);
-void gos_SetTerrainClassDirt(float hHi, float hLo, float satLo, float satHi);
-void gos_GetTerrainClassDirt(float* hHi, float* hLo, float* satLo, float* satHi);
+// TERRAIN-CLASSIFY-TUNING-1: colormap RGB classifier thresholds (gameos_graphics.cpp).
+void gos_SetTerrainClassGrass(float gMinusRLo, float gMinusRHi, float gBrightLo, float gBrightHi);
+void gos_GetTerrainClassGrass(float* gMinusRLo, float* gMinusRHi, float* gBrightLo, float* gBrightHi);
+void gos_SetTerrainClassDirt(float rMinusGLo, float rMinusGHi, float rBrightLo, float rBrightHi);
+void gos_GetTerrainClassDirt(float* rMinusGLo, float* rMinusGHi, float* rBrightLo, float* rBrightHi);
 // MECH-LIGHTING-UI-1: mech ambient + specular + PBR roughness (gos_mech_batcher.cpp).
 extern "C" int   batcher_getMechAmbientEnabled(void);
 extern "C" void  batcher_setMechAmbientEnabled(int on);
@@ -341,6 +348,45 @@ static void drawTerrainTuningSection() {
         gos_SetTerrainDetailParams(1.0f, 4.0f);
     }
 
+    // ── Material tint colors ──────────────────────────────────────────────────
+    ImGui::SeparatorText("Material Tint Colors");
+    ImGui::TextDisabled("Base color per material. Mixed with colormap by Tint Strength above.");
+
+    static float s_tintRock[3]  = { 0.36f, 0.37f, 0.40f };
+    static float s_tintGrass[3] = { 0.35f, 0.42f, 0.25f };
+    static float s_tintDirt[3]  = { 0.48f, 0.42f, 0.33f };
+    static bool  s_tintInited   = false;
+    if (!s_tintInited) {
+        gos_GetTerrainTintRock( &s_tintRock[0],  &s_tintRock[1],  &s_tintRock[2]);
+        gos_GetTerrainTintGrass(&s_tintGrass[0], &s_tintGrass[1], &s_tintGrass[2]);
+        gos_GetTerrainTintDirt( &s_tintDirt[0],  &s_tintDirt[1],  &s_tintDirt[2]);
+        s_tintInited = true;
+    }
+
+    if (ImGui::ColorEdit3("Rock##tc",  s_tintRock,  ImGuiColorEditFlags_Float))
+        gos_SetTerrainTintRock(s_tintRock[0], s_tintRock[1], s_tintRock[2]);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Reset##tcr")) {
+        s_tintRock[0] = 0.36f; s_tintRock[1] = 0.37f; s_tintRock[2] = 0.40f;
+        gos_SetTerrainTintRock(0.36f, 0.37f, 0.40f);
+    }
+
+    if (ImGui::ColorEdit3("Grass##tc", s_tintGrass, ImGuiColorEditFlags_Float))
+        gos_SetTerrainTintGrass(s_tintGrass[0], s_tintGrass[1], s_tintGrass[2]);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Reset##tcg")) {
+        s_tintGrass[0] = 0.35f; s_tintGrass[1] = 0.42f; s_tintGrass[2] = 0.25f;
+        gos_SetTerrainTintGrass(0.35f, 0.42f, 0.25f);
+    }
+
+    if (ImGui::ColorEdit3("Dirt##tc",  s_tintDirt,  ImGuiColorEditFlags_Float))
+        gos_SetTerrainTintDirt(s_tintDirt[0], s_tintDirt[1], s_tintDirt[2]);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Reset##tcd")) {
+        s_tintDirt[0] = 0.48f; s_tintDirt[1] = 0.42f; s_tintDirt[2] = 0.33f;
+        gos_SetTerrainTintDirt(0.48f, 0.42f, 0.33f);
+    }
+
     // ── Per-material normal boost ─────────────────────────────────────────────
     ImGui::SeparatorText("Per-Material Normal Boost");
     ImGui::TextDisabled("Scales the shader's per-material normal strength (on top of global Strength above).");
@@ -603,66 +649,64 @@ static void drawTerrainTuningSection() {
     ImGui::SeparatorText("Material Color Classifier");
     ImGui::TextDisabled("HSV thresholds: colormap pixel → rock / grass / dirt");
 
-    static float s_grassHLo = 0.10f, s_grassHHi = 0.20f;
-    static float s_grassSLo = 0.10f, s_grassSHi = 0.32f;
-    static float s_dirtHHi  = 0.17f, s_dirtHLo  = 0.11f;
-    static float s_dirtSLo  = 0.10f, s_dirtSHi  = 0.32f;
+    static float s_grassGmRLo = -0.02f, s_grassGmRHi = 0.06f;
+    static float s_grassBrLo  =  0.22f, s_grassBrHi  = 0.40f;
+    static float s_dirtRmGLo  = -0.02f, s_dirtRmGHi  = 0.06f;
+    static float s_dirtBrLo   =  0.22f, s_dirtBrHi   = 0.45f;
     static bool  s_classInited = false;
     if (!s_classInited) {
-        gos_GetTerrainClassGrass(&s_grassHLo, &s_grassHHi, &s_grassSLo, &s_grassSHi);
-        gos_GetTerrainClassDirt(&s_dirtHHi, &s_dirtHLo, &s_dirtSLo, &s_dirtSHi);
+        gos_GetTerrainClassGrass(&s_grassGmRLo, &s_grassGmRHi, &s_grassBrLo, &s_grassBrHi);
+        gos_GetTerrainClassDirt(&s_dirtRmGLo, &s_dirtRmGHi, &s_dirtBrLo, &s_dirtBrHi);
         s_classInited = true;
     }
 
-    // Grass — show a representative swatch for the target hue/sat center
+    // Grass swatch: approximate green from mid-brightness
     {
-        float r, g, b;
-        float hc = (s_grassHLo + s_grassHHi) * 0.5f;
-        float sc = (s_grassSLo + s_grassSHi) * 0.5f;
-        ImGui::ColorConvertHSVtoRGB(hc, sc, 0.55f, r, g, b);
-        ImGui::ColorButton("##gc", ImVec4(r, g, b, 1.0f), ImGuiColorEditFlags_NoTooltip, ImVec2(14, 14));
+        float gc = (s_grassBrLo + s_grassBrHi) * 0.5f;
+        ImGui::ColorButton("##gc", ImVec4(gc * 0.70f, gc * 1.10f, gc * 0.50f, 1.0f),
+                           ImGuiColorEditFlags_NoTooltip, ImVec2(14, 14));
         ImGui::SameLine();
-        ImGui::TextUnformatted("Grass");
+        ImGui::TextUnformatted("Grass  (G-R delta → green tilt)");
     }
     bool grassChanged = false;
-    grassChanged |= ImGui::SliderFloat("H lo##gc", &s_grassHLo, 0.0f, 0.5f, "%.3f");
-    grassChanged |= ImGui::SliderFloat("H hi##gc", &s_grassHHi, 0.0f, 0.5f, "%.3f");
-    grassChanged |= ImGui::SliderFloat("S lo##gc", &s_grassSLo, 0.0f, 1.0f, "%.3f");
-    grassChanged |= ImGui::SliderFloat("S hi##gc", &s_grassSHi, 0.0f, 1.0f, "%.3f");
+    grassChanged |= ImGui::SliderFloat("G-R lo##gc", &s_grassGmRLo, -0.3f, 0.3f, "%.3f");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("G minus R lower bound: -0.02 = slight warm still ok");
+    grassChanged |= ImGui::SliderFloat("G-R hi##gc", &s_grassGmRHi, -0.3f, 0.3f, "%.3f");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("G minus R upper bound: 0.06 = clearly green");
+    grassChanged |= ImGui::SliderFloat("G bright lo##gc", &s_grassBrLo, 0.0f, 1.0f, "%.3f");
+    grassChanged |= ImGui::SliderFloat("G bright hi##gc", &s_grassBrHi, 0.0f, 1.0f, "%.3f");
     if (grassChanged)
-        gos_SetTerrainClassGrass(s_grassHLo, s_grassHHi, s_grassSLo, s_grassSHi);
+        gos_SetTerrainClassGrass(s_grassGmRLo, s_grassGmRHi, s_grassBrLo, s_grassBrHi);
     ImGui::SameLine();
     if (ImGui::SmallButton("Reset##gc")) {
-        s_grassHLo = 0.10f; s_grassHHi = 0.20f; s_grassSLo = 0.10f; s_grassSHi = 0.32f;
-        gos_SetTerrainClassGrass(0.10f, 0.20f, 0.10f, 0.32f);
+        s_grassGmRLo = -0.02f; s_grassGmRHi = 0.06f; s_grassBrLo = 0.22f; s_grassBrHi = 0.40f;
+        gos_SetTerrainClassGrass(-0.02f, 0.06f, 0.22f, 0.40f);
     }
 
     ImGui::Spacing();
 
-    // Dirt — hHi/hLo are REVERSED: smoothstep(hHi→hLo, h) decreases with rising h
+    // Dirt swatch: approximate warm brown from mid-brightness
     {
-        float r, g, b;
-        float hc = (s_dirtHLo + s_dirtHHi) * 0.5f;
-        float sc = (s_dirtSLo + s_dirtSHi) * 0.5f;
-        ImGui::ColorConvertHSVtoRGB(hc, sc, 0.45f, r, g, b);
-        ImGui::ColorButton("##dc", ImVec4(r, g, b, 1.0f), ImGuiColorEditFlags_NoTooltip, ImVec2(14, 14));
+        float rc = (s_dirtBrLo + s_dirtBrHi) * 0.5f;
+        ImGui::ColorButton("##dc", ImVec4(rc * 1.15f, rc * 0.88f, rc * 0.65f, 1.0f),
+                           ImGuiColorEditFlags_NoTooltip, ImVec2(14, 14));
         ImGui::SameLine();
-        ImGui::TextUnformatted("Dirt  (H hi→lo reversed: higher hue = less dirt)");
+        ImGui::TextUnformatted("Dirt  (R-G delta → warm tilt)");
     }
     bool dirtChanged = false;
-    dirtChanged |= ImGui::SliderFloat("H hi##dc", &s_dirtHHi, 0.0f, 0.5f, "%.3f");
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Upper hue bound (smoothstep is reversed)");
-    dirtChanged |= ImGui::SliderFloat("H lo##dc", &s_dirtHLo, 0.0f, 0.5f, "%.3f");
-    dirtChanged |= ImGui::SliderFloat("Sat lo##dc", &s_dirtSLo, 0.0f, 1.0f, "%.3f");
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sand_M24 default: 0.04 (wider for washed-out sand)");
-    dirtChanged |= ImGui::SliderFloat("Sat hi##dc", &s_dirtSHi, 0.0f, 1.0f, "%.3f");
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sand_M24 default: 0.20");
+    dirtChanged |= ImGui::SliderFloat("R-G lo##dc", &s_dirtRmGLo, -0.3f, 0.3f, "%.3f");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("R minus G lower bound: -0.02 = slight cool still ok");
+    dirtChanged |= ImGui::SliderFloat("R-G hi##dc", &s_dirtRmGHi, -0.3f, 0.3f, "%.3f");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("R minus G upper bound. Sand_M24: ~0.12 for washed-out sand");
+    dirtChanged |= ImGui::SliderFloat("R bright lo##dc", &s_dirtBrLo, 0.0f, 1.0f, "%.3f");
+    dirtChanged |= ImGui::SliderFloat("R bright hi##dc", &s_dirtBrHi, 0.0f, 1.0f, "%.3f");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sand_M24: raise to ~0.80 for bright sun-lit sand");
     if (dirtChanged)
-        gos_SetTerrainClassDirt(s_dirtHHi, s_dirtHLo, s_dirtSLo, s_dirtSHi);
+        gos_SetTerrainClassDirt(s_dirtRmGLo, s_dirtRmGHi, s_dirtBrLo, s_dirtBrHi);
     ImGui::SameLine();
     if (ImGui::SmallButton("Reset##dc")) {
-        s_dirtHHi = 0.17f; s_dirtHLo = 0.11f; s_dirtSLo = 0.10f; s_dirtSHi = 0.32f;
-        gos_SetTerrainClassDirt(0.17f, 0.11f, 0.10f, 0.32f);
+        s_dirtRmGLo = -0.02f; s_dirtRmGHi = 0.06f; s_dirtBrLo = 0.22f; s_dirtBrHi = 0.45f;
+        gos_SetTerrainClassDirt(-0.02f, 0.06f, 0.22f, 0.45f);
     }
 
     ImGui::TextDisabled("Save via Visual Tuning Profile > Set as Mission Defaults");

@@ -41,6 +41,11 @@ namespace MC2Strings
     bool Load();
     bool IsLoaded();
 
+    // Inject mod-overlay text FITs into the already-loaded catalog.
+    // Call this from mechcmd2.cpp after InitModSearchPaths() has populated the
+    // mod index — MC2Strings::Load() may have fired first with an empty index.
+    void LoadModFits();
+
     const char* Get(const char* key);
 
     /*

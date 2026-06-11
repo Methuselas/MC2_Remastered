@@ -55,24 +55,46 @@ from terrain_gen.preview import make_preview
 # ---------------------------------------------------------------------------
 
 ALL_BIOMES: list[str] = list(BIOMES.keys())
-# 0=60, 1=80, 2=100, 3=120, 4=260, 5=520, 6=1020  (matches EditorData.cpp)
-ALL_SIZES:  list[int] = [60, 80, 100, 120, 260, 520, 1020]
+
+# ALL_SIZES lists CELL sides (quads per side) — the user-facing dimension used for
+# preset directory names (e.g. desert_60) and editor labels ("60x60").
+#
+# Three-layer model (mirrors EditorData::MapSizeToCellSide / MapSizeToVertexSide):
+#   cellSide   = value in this list  (multiples of 20: 60,80,...,1020)
+#   vertexSide = cellSide + 1        (terrain vertex array dim; (N-1)%20==0 ✓)
+#   moveSide   = cellSide * 3        (MOVE grid dim; moveSide%30==0 ✓)
+#
+# index:       0    1    2    3    4    5     6
+ALL_SIZES: list[int] = [60, 80, 100, 120, 260, 520, 1020]
 
 
 # ---------------------------------------------------------------------------
 # Flat preset generator
 # ---------------------------------------------------------------------------
 
-def generate_flat_preset(biome: str, size_n: int, out_dir: Path) -> None:
-    """Generate one flat-terrain preset pair and write to out_dir."""
+def generate_flat_preset(biome: str, cell_side: int, out_dir: Path) -> None:
+    """Generate one flat-terrain preset pair and write to out_dir.
+
+    Args:
+        biome:     biome key string (e.g. "desert")
+        cell_side: CELL count per side (e.g. 60).  Directory is named biome_60.
+                   vertexSide = cell_side + 1 is used for actual array dimensions.
+        out_dir:   output directory (created if absent)
+    """
+    vertex_side = cell_side + 1   # actual terrain vertex count per side
+    move_side   = cell_side * 3   # MOVE grid dimension (move_side % 30 == 0)
+    assert (cell_side % 20) == 0,  f"cellSide={cell_side} must be a multiple of 20"
+    assert (move_side % 30) == 0,  f"moveSide={move_side} must be a multiple of 30"
+
     out_dir.mkdir(parents=True, exist_ok=True)
 
     t0 = time.time()
 
-    # Build a minimal recipe (height params don't matter — we skip HeightGenerator)
+    # Build a minimal recipe.  "size" in the recipe is the VERTEX count so the
+    # terrain generator produces the right vertex-sized heightmap and burnin.
     recipe_json = (
         '{"version":1,"name":"genmap",'
-        f'"size":{size_n},"biome":"{biome}","seed":1,'
+        f'"size":{vertex_side},"biome":"{biome}","seed":1,'
         '"height":{"max_elevation":0.0,"min_elevation":0.0,"mountain_amount":0.0,"ridged_amount":0.0},'
         '"materials":{"grass_lowland":0.8,"snow_line":1.0,"water_level":0.0}}'
     )
@@ -85,19 +107,17 @@ def generate_flat_preset(biome: str, size_n: int, out_dir: Path) -> None:
     recipe.materials.snow_line   = 1.0    # no snow on flat ground
     recipe.materials.grass_lowland = 0.8  # mostly grass/ground
 
-    # Flat height field: constant 0 in [0,1] range.
-    # MaterialClassifier uses altitude thresholds against this value.
-    # At altitude=0 everything is "lowland" -> grass / biome ground.
-    height = np.zeros((size_n, size_n), dtype=np.float32)
+    # Flat height field sized to VERTEX grid so MaterialClassifier sees the right shape.
+    height = np.zeros((vertex_side, vertex_side), dtype=np.float32)
 
-    # Material classification and burnin
+    # Material classification and burnin (burnin is a colormap texture; pixel dims
+    # do not need to match vertex count exactly, but vertex-sized is cleanest).
     masks  = MaterialClassifier().classify(height, recipe)
     burnin = BurninRenderer().render(masks, recipe, BIOMES[biome])
 
-    # --- elev.r32: raw float32 world-unit elevations, all at min_elevation ---
-    # initTerrainFromTGA reads: setVertexHeight(vertNum, *(ptr+vertNum))
-    # For a flat map at elevation 0 wu we want all values = 0.
-    elev = np.zeros((size_n, size_n), dtype='<f4')
+    # --- elev.r32: raw float32 world-unit elevations (vertexSide × vertexSide) ---
+    # initTerrainFromTGA reads exactly vertexSide*vertexSide floats via fread.
+    elev = np.zeros((vertex_side, vertex_side), dtype='<f4')
     elev.tofile(str(out_dir / "genmap.elev.r32"))
 
     # --- burnin.tga ---
@@ -106,19 +126,23 @@ def generate_flat_preset(biome: str, size_n: int, out_dir: Path) -> None:
     # --- preview.png ---
     make_preview(burnin).save(str(out_dir / "genmap.preview.png"))
 
-    # --- manifest.json (written last so its presence == all files complete) ---
+    # --- manifest.json (written last; presence == all files complete) ---
+    # Include all three layers so any reader can verify consistency.
     manifest = {
-        "version": 1,
+        "version": 2,
         "type": "flat_terrain_preset",
         "biome": biome,
-        "size": size_n,
+        "cellSide":   cell_side,    # quads per side (user-facing, dir name)
+        "vertexSide": vertex_side,  # terrain vertex array dim (cellSide + 1)
+        "moveSide":   move_side,    # MOVE grid dim (cellSide * 3)
         "files": ["genmap.elev.r32", "genmap.burnin.tga", "genmap.preview.png"],
         "complete": True,
     }
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
 
     dt = time.time() - t0
-    print(f"  [{biome:20s} {size_n:5d}x{size_n}]  -> {out_dir}  ({dt:.1f}s)")
+    print(f"  [{biome:20s} cell={cell_side:4d} vertex={vertex_side:4d} move={move_side:4d}]"
+          f"  -> {out_dir}  ({dt:.1f}s)")
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +154,7 @@ def main() -> None:
     parser.add_argument('--biomes', nargs='+', default=ALL_BIOMES,
                         help=f"Biomes to generate (default: all). Choices: {ALL_BIOMES}")
     parser.add_argument('--sizes',  nargs='+', type=int, default=ALL_SIZES,
-                        help=f"Map sizes (vertex count) to generate (default: all). Choices: {ALL_SIZES}")
+                        help=f"Map sizes (CELL count per side) to generate (default: all). Choices: {ALL_SIZES}")
     parser.add_argument('--out', default='terrain_gen_presets',
                         help='Output root directory (default: terrain_gen_presets)')
     args = parser.parse_args()
@@ -156,19 +180,20 @@ def main() -> None:
     t_all = time.time()
     done  = 0
     for biome in args.biomes:
-        for size_n in args.sizes:
-            subdir = out_root / f"{biome}_{size_n}"
-            generate_flat_preset(biome, size_n, subdir)
+        for cell_side in args.sizes:
+            subdir = out_root / f"{biome}_{cell_side}"   # dir name = cell side (user-facing)
+            generate_flat_preset(biome, cell_side, subdir)
             done += 1
 
     # Write root catalog manifest after all presets are done.
     catalog = {
-        "version": 1,
+        "version": 2,
         "type": "terrain_preset_catalog",
         "biomes": list(args.biomes),
-        "sizes": list(args.sizes),
+        "cellSides": list(args.sizes),   # cell sides (user-facing); vertexSide = each + 1
         "presets": [
-            {"biome": b, "size": s, "dir": f"{b}_{s}"}
+            {"biome": b, "cellSide": s, "vertexSide": s + 1, "moveSide": s * 3,
+             "dir": f"{b}_{s}"}
             for b in args.biomes for s in args.sizes
         ],
     }

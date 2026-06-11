@@ -221,6 +221,8 @@ class BldgAppearance : public ObjectAppearance
 			bool             registered;   // true iff recipeIndex is valid
 			TG_MultiShapePtr shape;        // bldgShape at registration time; detects swap
 			int32_t          recipeIndex;  // index into GpuStaticPropRegistry s_recipeRanges
+			bool             hasValidStaticLight = false;  // diagnostic-only cache validity
+			uint64_t         lastLightEnvGen = 0;          // coarse mission light generation
 			// 2026-05-11: captured at update/touch time, immediately after
 			// CacheGpuLightData / ResubmitCachedGpuLightData write multi's
 			// per-type cachedGpuLightIndex_ — before sibling instances of the
@@ -691,5 +693,4 @@ class TreeAppearance : public ObjectAppearance
 
 
 #endif
-
 

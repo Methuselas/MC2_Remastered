@@ -69,6 +69,10 @@ uniform vec3  u_cameraWorldPos;
 uniform float g_minHazeDistance;
 uniform float g_maxClipDistance;
 uniform float g_distanceFactor;
+// Visible-window dispatch range: first vertex in [packMinVN,packMaxVN].
+// The C++ side dispatches (packMaxVN-packMinVN+1) invocations with this offset,
+// limiting GPU work to the ~200x200 visible window instead of the full terrain.
+uniform int   u_vertexOffset;
 
 // getLightChannel mirrors Camera::getLightRed/Green/Blue (camera.cpp:3065-3110).
 // Formula: if (intensity > 0) result = clamp(int(lightChan * intensity + ambientChan), 0, 255)
@@ -179,7 +183,8 @@ uint float2long_u(float v) {
 }
 
 void main() {
-    uint vn = gl_GlobalInvocationID.x;
+    // Offset by packMinVN so each invocation maps to a vertex in [packMinVN,packMaxVN].
+    uint vn = gl_GlobalInvocationID.x + uint(u_vertexOffset);
     if (vn >= uint(u_numVertices)) return;
 
     GpuTerrainVertexInput v = vertices[vn];

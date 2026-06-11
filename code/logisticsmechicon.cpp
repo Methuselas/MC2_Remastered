@@ -127,9 +127,7 @@ void LogisticsMechIcon::setMech( LogisticsMech* pNewMech )
 	{
 		// need to set the uv's of the mech icon
 		// Icon atlas (mcui_gn_mechicons.tga) uses 25x30px cells at setFileWidth(256).
-		// Overriding the texture to mc2x_mechicons.tga (512px) with setFileWidth(256) gave
-		// broken UVs (wrong half of atlas). Revert to base IS atlas for all mechs;
-		// clan mech icons at high indices show IS-atlas fallback (pre-existing limitation).
+		// See MC2_LOG_MECH_ICON env var for per-mech UV diagnostics.
 		long index = pMech->getIconIndex();
 		long xIndex = index % 10;
 		long yIndex = index / 10;
@@ -151,6 +149,18 @@ void LogisticsMechIcon::setMech( LogisticsMech* pNewMech )
 
 		icon.setFileWidth( 256.f );
 		icon.setUVs( u, v, u2, v2 );
+
+		if ( getenv("MC2_LOG_MECH_ICON") )
+		{
+			printf("[mechicon-logi] mech=ID:%ld iconIndex=%ld row=%ld col=%ld "
+			       "widgetW=%.0f widgetH=%.0f u=[%.1f,%.1f] v=[%.1f,%.1f] "
+			       "fileWidth=256 uvX=[%.3f,%.3f] uvY=[%.3f,%.3f]\n",
+			       pMech->getChassisName(), index, yIndex, xIndex,
+			       width, height,
+			       u, u2, v, v2,
+			       u/256.f, u2/256.f, v/256.f, v2/256.f);
+			fflush(stdout);
+		}
 
 		chassisName.setText( pMech->getChassisName() );
 

@@ -72,9 +72,15 @@ void InitModSearchPaths(const char* modsRoot);
 void ActivateCampaignMod(const char* campaignFitName);
 void ActivateModForMission(const char* missionFitKey);
 void DeactivateMod();
+// Diagnostic: returns owning mod id for a data path, or nullptr if not in mod index.
+const char* LookupModOwner(const char* dataPath);
 // Enumerate data/campaign/*.fit files from the active mod (for campaign list UI).
 typedef void (*ModCampaignCallback)(const char* fitFileName, const char* fullPath, void* userData);
 void EnumerateModCampaignFiles(ModCampaignCallback cb, void* userData);
+// Enumerate mod-indexed .fit files whose key starts with keyPrefix (e.g. "data/defs/text/en_us/").
+// Appends absolute paths to out, sorted by filename. Used by MC2Strings to pick up mod text FITs.
+typedef void (*ModFitCallback)(const char* absPath, void* userData);
+void EnumerateModFitFiles(const char* keyPrefix, ModFitCallback cb, void* userData);
 
 //---------------------------------------------------------------------------
 // Macro Definitions

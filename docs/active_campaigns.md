@@ -35,6 +35,19 @@
 - **Water reflection** (merged 68343329): SH-L2 sky, default-OFF. MC2_WATER_REFLECTION=1.
 - **C++17** (CMAKE_CXX_STANDARD 17 in root CMakeLists).
 
+## Hitch stability track (H-series)
+
+H-series is recon/diagnostic only — no behavior changes. Must complete before Phase 8z deletion.
+
+| Slice | Status | Detail |
+|---|---|---|
+| H1a — GL/resource attribution | **SHIPPED** `30dfd015` | `[HITCH]` / `[HITCH_GL]` / `[HITCH_TERRAIN_TEX]` / `[HITCH_STATIC_FLUSH]` / `[HITCH_WATER]` |
+| H1b — WaterFastPath CPU sub-scopes | **SHIPPED** (2026-06-09) | `[HITCH_WATER_DETAIL]` guards/recipe/buildWindow/upload/dispatch sub-times |
+| H1c — Broad frame-phase attribution | **QUEUED** | `[HITCH_PHASE]` logic/render/present/sleep/unknown; explains Category 5 unattributed hitches |
+| H2 — Fast-path disruption / setupTextures guard | **RECON** | See `docs/superpowers/specs/2026-06-09-h2-fastpath-disruption-recon.md` |
+
+**H2 priority:** run before Phase 8z (legacy terrain deletion). Reason: 8z deletes `setupTextures`/makeLists; H2 must confirm no runtime path still depends on them being resurrected, especially water and editor fallback.
+
 ## Unstarted campaigns (queued)
 
 - **Terrain continuous surface** (all forks ruled 2026-05-18, design complete): see `terrain_continuous_surface_forks_ruled_option1_killlegacy.md`

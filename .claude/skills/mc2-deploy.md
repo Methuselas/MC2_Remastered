@@ -40,8 +40,17 @@ done
    - Files that exist in source but not in deploy (new files that need copying)
    - Files that exist in deploy but not in source (stale files from old branches)
 
+6. **Deploy mod tools (if built)**: if the gosFX effect tools were built
+   (`-DENABLE_MC2FX=ON -DENABLE_MC2FX_PREVIEW=ON`), copy them into the install's
+   `tools/` folder. Idempotent (copy-if-different); soft-skips if the exes don't exist:
+```bash
+bash "<worktree>/scripts/deploy-mc2fx-tools.sh"
+# default targets BOTH v0.4 (game) and 0.4c (editor); override with DEPLOY=...
+```
+
 ## Critical Rules
 - **NEVER use `cp -r`** — it does not overwrite existing files on Windows/MSYS2. This has caused hours of debugging from stale shaders.
 - **ALWAYS verify with `diff -q`** after copying
 - Deploy shaders ONE FILE AT A TIME with `cp -f`
 - Report stale files in deploy dir that don't exist in source
+- mc2fx mod tools deploy via `scripts/deploy-mc2fx-tools.sh` (single source of truth for the `tools/` payload; launcher `.bat`s in `tools/mc2fx/dist/`, guide in `tools/mc2fx/README.md`).

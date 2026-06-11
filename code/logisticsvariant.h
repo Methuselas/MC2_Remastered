@@ -34,6 +34,7 @@ public:
 	LogisticsChassis( );
 	int				init( CSVFile* fileName, int chassisID );
 	void			setFitID( int id ){ fitID = id; }
+	void			setNameID( long id ){ chassisNameID = id; }
 	int				getNameID() const { return chassisNameID; }
 	int				getEncyclopediaID() const { return encyclopediaID; }
 	const EString& getFileName() const { return fileName; }

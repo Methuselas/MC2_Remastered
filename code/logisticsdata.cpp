@@ -254,6 +254,8 @@ void LogisticsData::initVariants()
 	while( true )
 	{
 		long fitID;
+		long nameID = 0;
+		variantFile.readLong( i, 3, nameID );
 
 		int retVal = variantFile.readString( i, 4, tmpStr, 256 );
 		
@@ -267,7 +269,7 @@ void LogisticsData::initVariants()
 			if ( scale )
 			{
 				variantFile.readLong( i, 5, fitID );
-				addVehicle( fitID, pakFile, scale);
+				addVehicle( fitID, pakFile, scale, nameID );
 			}
 			i++;
 			continue;
@@ -334,7 +336,7 @@ void LogisticsData::initVariants()
 	}
 }
 
-void LogisticsData::addVehicle( long fitID, PacketFile& objectFile, float scale )
+void LogisticsData::addVehicle( long fitID, PacketFile& objectFile, float scale, long nameID )
 {
 	if ( NO_ERR != objectFile.seekPacket(fitID) )
 		return;
@@ -350,6 +352,7 @@ void LogisticsData::addVehicle( long fitID, PacketFile& objectFile, float scale 
 
 		pVehicle->init( file );
 		pVehicle->setScale( scale );
+			if ( nameID ) pVehicle->setNameID( nameID );
 		vehicles.Append( pVehicle );
 	}
 }
@@ -2278,6 +2281,8 @@ void				LogisticsData::startNewCampaign( const char* fileName )
 	resourcePoints = 0;
 	pilots.Clear();
 	initPilots();
+
+	ActivateCampaignMod(fileName);
 
 	FitIniFile file;
 

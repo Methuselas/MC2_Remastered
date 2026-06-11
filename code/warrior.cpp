@@ -109,6 +109,7 @@
 #include"platform_windows.h"
 #include "../GameOS/gameos/gos_static_prop_registry.h"  // Task 6: late-spawn registerStaticProp
 #include "../GameAdapters/StaticPropRenderAdapter.h"  // M1 Task 12
+#include "move_recon.h"  // MC2_MOVE_RECON per-frame pathfinding cost instrumentation
 
 enum {
 	T_A = 0,
@@ -2748,6 +2749,7 @@ void MechWarrior::requestMovePath (long selectionIndex, unsigned long moveParams
 
 long MechWarrior::calcMovePath (long selectionIndex, unsigned long moveParams) {
 
+	if (g_moveReconEnabled) g_moveRecon_calcMovePath_calls++;
 	ZoneScopedN("GameLogic.Warrior.Path");
 
 

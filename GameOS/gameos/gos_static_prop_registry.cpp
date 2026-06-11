@@ -463,6 +463,22 @@ uint32_t getActiveCount() {
     return n;
 }
 
+uint32_t getRecipeRangeSlotCount() {
+    return static_cast<uint32_t>(s_recipeRanges.size());
+}
+
+uint32_t getRecipeRangeSlotCapacity() {
+    return static_cast<uint32_t>(s_recipeRanges.capacity());
+}
+
+uint32_t getRecipeLeafCount() {
+    return static_cast<uint32_t>(s_recipes.size());
+}
+
+uint32_t getRecipeLeafCapacity() {
+    return static_cast<uint32_t>(s_recipes.capacity());
+}
+
 uint64_t getLastFlushLiveCount() {
     // V1A: per-frame visible range count latched at flush() entry.
     // Returns 0 before the first flush (mission not yet loaded).

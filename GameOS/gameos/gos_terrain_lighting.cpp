@@ -142,7 +142,10 @@ static constexpr int TL_UNI_CAM_WORLD_POS   = 19;
 static constexpr int TL_UNI_MIN_HAZE        = 20;
 static constexpr int TL_UNI_MAX_CLIP        = 21;
 static constexpr int TL_UNI_DIST_FACTOR     = 22;
-static constexpr int TL_UNI_COUNT           = 23;
+// Visible-window dispatch: offset (packMinVN) added to gl_GlobalInvocationID.x in shader.
+// Limits dispatch groups to the ~200x200 camera window instead of the full terrain.
+static constexpr int TL_UNI_VERTEX_OFFSET   = 23;
+static constexpr int TL_UNI_COUNT           = 24;
 
 // Runtime-resolved uniform locations (populated once after shader compile).
 static GLint s_uniformLocs[TL_UNI_COUNT];
@@ -385,6 +388,7 @@ void mission_init(uint32_t numVertices, uint32_t maxLights) {
         s_uniformLocs[TL_UNI_MIN_HAZE]        = glGetUniformLocation(s_program, "g_minHazeDistance");
         s_uniformLocs[TL_UNI_MAX_CLIP]        = glGetUniformLocation(s_program, "g_maxClipDistance");
         s_uniformLocs[TL_UNI_DIST_FACTOR]     = glGetUniformLocation(s_program, "g_distanceFactor");
+        s_uniformLocs[TL_UNI_VERTEX_OFFSET]   = glGetUniformLocation(s_program, "u_vertexOffset");
         // Always-on diagnostic: print all resolved locations so black-terrain debug
         // can immediately see which (if any) came back -1 (uniform not found).
         printf("[TERRAIN_LIGHTING_GPU v1] event=uniform_locs "
@@ -394,7 +398,7 @@ void mission_init(uint32_t numVertices, uint32_t maxLights) {
                "baseR=%d baseG=%d baseB=%d "
                "rain=%d lightning=%d fogStart=%d fogFull=%d "
                "useFog=%d rendSW=%d "
-               "playArea=%d camWorldPos=%d minHaze=%d maxClip=%d distFactor=%d\n",
+               "playArea=%d camWorldPos=%d minHaze=%d maxClip=%d distFactor=%d vertexOffset=%d\n",
                s_uniformLocs[TL_UNI_NUM_VERTICES],
                s_uniformLocs[TL_UNI_NUM_LIGHTS],
                s_uniformLocs[TL_UNI_SUN_LIGHT_DIR],
@@ -417,7 +421,8 @@ void mission_init(uint32_t numVertices, uint32_t maxLights) {
                s_uniformLocs[TL_UNI_CAM_WORLD_POS],
                s_uniformLocs[TL_UNI_MIN_HAZE],
                s_uniformLocs[TL_UNI_MAX_CLIP],
-               s_uniformLocs[TL_UNI_DIST_FACTOR]);
+               s_uniformLocs[TL_UNI_DIST_FACTOR],
+               s_uniformLocs[TL_UNI_VERTEX_OFFSET]);
         fflush(stdout);
     }
     if (s_shaderBad) return;
@@ -561,6 +566,12 @@ void PackAndDispatch() {
     // Walk the camera-windowed vertex list (land->vertexList, numberVertices entries).
     // For each vertex, slot it at inputs[vertexNum] (dense map-stable index).
     // Zero-initialize the pack buffer each frame so unreached slots are clean.
+    //
+    // packMinVN/packMaxVN hoisted to function scope: the dispatch section below uses
+    // them to limit glDispatchCompute to only the visible window range.
+    uint32_t packMinVN = s_numVertices;   // sentinel: will be lowered to min written vn
+    uint32_t packMaxVN = 0;               // sentinel: will be raised to max written vn
+
     if (land && land->getVertexList() && land->getNumVertices() > 0) {
         const int nv = land->getNumVertices();
         const VertexPtr vlist = land->getVertexList();
@@ -575,8 +586,6 @@ void PackAndDispatch() {
         // For the full-range fallback (s_solidUseWindow=0), off-screen quads have stale
         // lighting but are frustum-culled by the compute shader before reaching the draw
         // command, so correctness is maintained in both modes.
-        uint32_t packMinVN = s_numVertices;   // sentinel: will be lowered to min written vn
-        uint32_t packMaxVN = 0;               // will be raised to max written vn
 
         // Step 7: MC2_HAZE_PARITY — per-frame accumulators (first ~256 verts).
         int    hpProbed = 0;
@@ -781,21 +790,33 @@ void PackAndDispatch() {
         glUniform1f(s_uniformLocs[TL_UNI_DIST_FACTOR], Camera::DistanceFactor);
     }
 
-    // Dispatch: ceil(numVertices / 64) workgroups
-    const uint32_t numGroups = (s_numVertices + 63u) / 64u;
-    glDispatchCompute(numGroups, 1, 1);
+    // PERF-FIX: limit dispatch to the visible window [packMinVN, packMaxVN].
+    // Previously dispatched for all s_numVertices (e.g. 16,257 groups for a 1020-map).
+    // Now dispatches only for the ~200x200 visible window range (~3,200 groups, 5x fewer).
+    // The shader adds u_vertexOffset to gl_GlobalInvocationID.x so it still maps to the
+    // correct SSBO indices.  u_numVertices remains the absolute upper-bound guard.
+    const uint32_t dispatchStart = (packMinVN <= packMaxVN) ? packMinVN : 0u;
+    const uint32_t dispatchCount = (packMinVN <= packMaxVN) ? (packMaxVN - packMinVN + 1u) : 0u;
+    const uint32_t numGroups     = (dispatchCount + 63u) / 64u;
+
+    if (numGroups > 0) {
+        glUniform1i(s_uniformLocs[TL_UNI_VERTEX_OFFSET], static_cast<GLint>(dispatchStart));
+        glDispatchCompute(numGroups, 1, 1);
+    }
 
     glUseProgram(0);
 
-    TL_TRACE("event=dispatch frame=%llu verts=%u lights=%u groups=%u",
-             (unsigned long long)s_frameIndex, s_numVertices, numLights, numGroups);
+    TL_TRACE("event=dispatch frame=%llu totalVerts=%u dispatchRange=[%u,%u] groups=%u lights=%u",
+             (unsigned long long)s_frameIndex, s_numVertices,
+             dispatchStart, dispatchStart + dispatchCount, numGroups, numLights);
     // First-frame always-on diagnostic — prints once per process to confirm
-    // ambient/light values are non-zero and numVerts > 0.
+    // ambient/light values are non-zero and the range-dispatch looks sane.
     if (s_frameIndex <= 1) {
         printf("[TERRAIN_LIGHTING_GPU v1] event=first_dispatch "
-               "frame=%llu numVerts=%u numGroups=%u "
+               "frame=%llu totalVerts=%u dispatchRange=[%u,%u] numGroups=%u "
                "eye=%s ambR=%d ambG=%d ambB=%d lightR=%d lightG=%d lightB=%d\n",
-               (unsigned long long)s_frameIndex, s_numVertices, numGroups,
+               (unsigned long long)s_frameIndex, s_numVertices,
+               dispatchStart, dispatchStart + dispatchCount, numGroups,
                eye ? "ok" : "NULL",
                eye ? (int)eye->ambientRed   : -1,
                eye ? (int)eye->ambientGreen : -1,

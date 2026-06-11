@@ -3493,6 +3493,8 @@ DWORD MC_TextureManager::loadTexture (const char *textureFullPathName, gos_Textu
 		{
 			if (uniqueInstance == masterTextureNodes[i].uniqueInstance)
 			{
+				if (getenv("MC2_LOG_MECH_ICON") && strstr(textureFullPathName, "mechicon"))
+					printf("[MECHICON] loadTexture CACHE-HIT id=%ld: %s\n", i, textureFullPathName);
 				masterTextureNodes[i].numUsers++;
 				return(i);							//Return the texture Node Id Now.
 			}
@@ -3528,7 +3530,9 @@ DWORD MC_TextureManager::loadTexture (const char *textureFullPathName, gos_Textu
 		key = gos_Texture_Keyed;
 	}
 
- 	//--------------------------------------------------------
+ 	if (getenv("MC2_LOG_MECH_ICON") && strstr(textureFullPathName, "mechicon"))
+		printf("[MECHICON] loadTexture FRESH id=%ld: %s\n", i, textureFullPathName);
+	//--------------------------------------------------------
 	// New Method.  Just store memory footprint of texture.
 	// DO NOT create GOS handle until we need it.
  	masterTextureNodes[i].gosTextureHandle = CACHED_OUT_HANDLE;

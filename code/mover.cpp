@@ -122,6 +122,8 @@
 #include"logisticspilot.h"
 #endif
 
+#include "move_recon.h"  // MC2_MOVE_RECON per-frame pathfinding cost instrumentation
+
 //--------
 // DEFINES
 #define	GOALMAP_CELL_DIM	61
@@ -5312,8 +5314,10 @@ long Mover::setPathRangeLock (bool set, long range) {
 
 //---------------------------------------------------------------------------
 
-void Mover::updatePathLock (bool set) 
+void Mover::updatePathLock (bool set)
 {
+	MoveReconScope _recon_pl(&g_moveRecon_pathlock_ns, &g_moveRecon_frame_pathlock_ns);
+
 	if (getObjectClass() == BATTLEMECH)
 		if (((BattleMechPtr)this)->inJump)
 			return;

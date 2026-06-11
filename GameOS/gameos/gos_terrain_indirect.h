@@ -387,6 +387,7 @@ bool IsDenseRecipeReady();
 const ::TerrainQuadRecipe* RecipeForVertexNum(int32_t vn);  // nullptr for vn<0 or out-of-range
 void InvalidateRecipeForVertexNum(int32_t vn);             // precise; CPU recompute + mark dirty
 void InvalidateAllRecipes();                               // whole-map; rebuild all slots + mark dirty
+void RebuildCementAtlas();                                 // (re)build GPU cement atlas from textures[]
 
 // Internal helper used by Stage 3's preflight too
 void FlushDirtyRecipeSlotsToGPU();  // glBufferSubData per dirty slot

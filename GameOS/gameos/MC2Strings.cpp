@@ -32,6 +32,11 @@
 #include <string>
 #include <vector>
 
+// Forward-declare mod file enumeration from mclib/file.cpp.
+// MC2Strings must not pull in all of file.h; this thin seam is intentional.
+typedef void (*ModFitCallback)(const char* absPath, void* userData);
+void EnumerateModFitFiles(const char* keyPrefix, ModFitCallback cb, void* userData);
+
 #ifdef PLATFORM_WINDOWS
 #include <windows.h>
 #else
@@ -860,6 +865,17 @@ namespace MC2Strings
         for (std::vector<std::string>::const_iterator it = dirs.begin(); it != dirs.end(); ++it)
             TryLoadDirectory(*it);
 
+        // Load mod-overlay text FITs (e.g. mods/cveg/data/defs/text/en_us/*.fit).
+        // These are NOT discoverable via raw filesystem scan (only the base data/ dir is on-disk).
+        // EnumerateModFitFiles returns them sorted by filename — last-write-wins for aliases.
+        {
+            struct Loader { static void cb(const char* absPath, void* /*ud*/) {
+                LoadFile(absPath);
+            }};
+            std::string prefix = std::string("data/defs/text/") + locale + "/";
+            EnumerateModFitFiles(prefix.c_str(), Loader::cb, nullptr);
+        }
+
         state.loaded = !state.byKey.empty();
 
         Trace("string catalog loaded=%d keys=%u legacyIds=%u resourceIds=%u resourceSymbols=%u menuBindings=%u",
@@ -1023,5 +1039,35 @@ namespace MC2Strings
     {
         const std::string key = MenuBindingKey(menuId, commandId);
         return MissingMarker("menu", key.c_str());
+    }
+
+    void LoadModFits()
+    {
+        // Inject mod-overlay text FITs after InitModSearchPaths() has run.
+        // MC2Strings::Load() fires lazily on the first string lookup, which may
+        // happen before mod paths are indexed — at that point EnumerateModFitFiles
+        // returns nothing because g_modIndex is empty.  This function bypasses the
+        // one-shot attempted-guard and loads the mod FITs unconditionally.
+        // Last-write-wins: z_cveg_aliases.fit (sorted after mechlopedia_legacy_aliases.fit)
+        // will overwrite any wrong keyByLegacyAlias entries with correct cveg keys.
+        const char* locale = ActiveLocale();
+        struct Loader {
+            static void cb(const char* absPath, void* /*ud*/) {
+                LoadFile(absPath);
+            }
+        };
+        std::string prefix = std::string("data/defs/text/") + locale + "/";
+        EnumerateModFitFiles(prefix.c_str(), Loader::cb, nullptr);
+
+        // Refresh loaded flag in case catalog was previously empty
+        State().loaded = !State().byKey.empty();
+
+        if (getenv("MC2_LOG_STRINGS")) {
+            printf("[strings] LoadModFits prefix=%s keys=%u legacyAliases=%u\n",
+                   prefix.c_str(),
+                   (unsigned)State().byKey.size(),
+                   (unsigned)State().keyByLegacyAlias.size());
+            fflush(stdout);
+        }
     }
 }

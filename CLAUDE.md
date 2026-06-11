@@ -1,8 +1,6 @@
 # MC2 OpenGL — nifty-mendeleev (canonical worktree)
 
-MC2 OpenGL port: tessellated terrain, PBR splatting, shadow maps, post-processing. Active branch `claude/nifty-mendeleev` (0.4 gpu-driven-rendering arc merged 2026-05-18). Root checkout `terrain-pbr-mod` is older — do NOT use.
-
-**Router.** Detail in `docs/`, memory under `~/.claude/projects/A--Games-mc2-opengl-src/memory/`, planning under `docs/superpowers/`. Keep under 100 lines.
+MC2 OpenGL port: tessellated terrain, PBR splatting, shadow maps, post-processing. Active branch `claude/nifty-mendeleev` (0.4 gpu-driven-rendering arc merged 2026-05-18). Root `terrain-pbr-mod` = STALE, do NOT use. Detail in `docs/`, memory in `~/.claude/projects/A--Games-mc2-opengl-src/memory/`, planning in `docs/superpowers/`.
 
 ## Topic tree (read relevant branch before starting work)
 
@@ -41,14 +39,13 @@ CLAUDE.md (this file)
 
 ## Orientation (where to look first)
 
-- **Project direction:** `.planning/PROJECT.md` (north stars + out-of-scope)
+- **Project direction:** `.planning/PROJECT.md`
 - **Codebase maps:** `.planning/codebase/{ARCHITECTURE,STRUCTURE,STACK,INTEGRATIONS}.md` (2026-05-14; grep before quoting line numbers)
-- **Advisor routing:** `.claude/agents/DOMAINS.md` (12 MC2 advisor subagents + classification + gaps)
-- **Perf state:** `docs/render-perf-snapshot.md` (bucket map + slice state + deps)
-- **Render contract:** `docs/render-contract.md` (design) + `mclib/render_contract.*` (impl, Phase 2 active under `MC2_RENDER_CONTRACT_ASSERT=1`)
-- **Meta-prompts:** `.claude/prompts/distill-session-into-advisor-agent.md`, `.claude/prompts/dump-render-observations.md`
+- **Advisor routing:** `.claude/agents/DOMAINS.md` (12 MC2 advisor subagents)
+- **Perf state:** `docs/render-perf-snapshot.md`
+- **Render contract:** `docs/render-contract.md` + `mclib/render_contract.*` (Phase 2: `MC2_RENDER_CONTRACT_ASSERT=1`)
 - **Skills:** `.claude/skills/` — `/mc2-build`, `/mc2-deploy`, `/mc2-build-deploy`, `/mc2-check`, `/mc2-shader-diff`, `/mc2-amd-shader-review`, `/mc2-validate`, `/mc2-render-spine-advisor`, `/mc2-gsd-planner-executor`, `adversarial-plan-review`, `greybeard`, `cost-split-recon-bucket-design`
-- **Steering:** `A:/Games/mc2-opengl-src/.claude/STEERING.md` (`sh A:/Games/mc2-opengl-src/.claude/steer.sh "..."` blocks next Bash/Agent; agent runs `ack-steering.sh` to clear)
+- **Steering:** `A:/Games/mc2-opengl-src/.claude/STEERING.md` (`sh .claude/steer.sh "..."` blocks next Bash/Agent; agent runs `ack-steering.sh` to clear)
 
 ## Key paths
 
@@ -56,6 +53,12 @@ CLAUDE.md (this file)
 - Build:   `A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/build64/` — root `build64/` is STALE; do NOT use
 - Deploy:  `A:/Games/mc2-opengl/mc2-win64-v0.4/`
 - CMake:   `C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe`
+
+## Shell/tooling note
+
+- PowerShell sessions here may load a blocked profile script and print an execution-policy error. Use `powershell -NoProfile` for shell commands that need a clean startup.
+- `cmake` may not be on PATH in this environment. Prefer the explicit Visual Studio or CMake full path from the toolchain when invoking builds.
+- If a tool is missing from PATH, use the full executable path instead of assuming shell resolution.
 
 ## Smoke gate
 
@@ -89,16 +92,22 @@ Tracy compiled in (`TRACY_ENABLE`). GPU zones on shadow/terrain/3D/post-process.
 
 ## Model routing
 
-- **haiku:** lookups, summaries, simple edits, renaming, formatting
-- **sonnet:** standard impl, debugging, code review. Diff changes from haiku.
-- **opus:** architecture, deep analysis, complex refactors only. Diff from sonnet/haiku. Give isolated context.
+- **haiku:** lookups, summaries, simple edits. **sonnet:** impl, debug, review. **opus:** architecture, deep analysis only — give isolated context.
 
 ## Memory & CLAUDE.md discipline
 
 - Auto-memory index: `~/.claude/projects/A--Games-mc2-opengl-src/memory/MEMORY.md`
 - No session narratives in CLAUDE.md. Dated logs → commit messages or memory files.
-- Root CLAUDE.md = thin pointer only. This worktree CLAUDE.md is authoritative. Enforced by `scripts/check-claude-md-pointer.sh`.
-- New durable finding → memory file + INDEX-TOPIC.md entry. Unlinked = invisible.
-- Superseded facts → update or delete, don't append.
-- Before new memory: `grep -i <keyword> memory/*.md` to dedupe.
-- Keep under 100 lines. Growth → extract to `docs/` topic doc + update topic tree.
+- Root CLAUDE.md = thin pointer only (enforced: `scripts/check-claude-md-pointer.sh`). This file is authoritative.
+- New finding → memory file + INDEX-TOPIC.md. Before adding: `grep -i <keyword> memory/*.md` to dedupe. Superseded → update or delete.
+- Keep under 100 lines. Growth → extract to `docs/` + update topic tree.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).

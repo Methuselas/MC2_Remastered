@@ -84,6 +84,7 @@ set(SOURCES ${SOURCES}
     mech3d.cpp
     soundsys.cpp
     move.cpp
+    move_recon.cpp
     echarstring.cpp
     estring.cpp
     ewcharstring.cpp
