@@ -341,6 +341,8 @@ set(SOURCES
     "code/keyboardref.cpp"
     "code/mechicon.cpp"
     "code/missiongui.cpp"
+    "code/tacticaloverview_state.cpp"
+    "code/tacticaloverview.cpp"
     "code/gameplay_pick.cpp"
     "code/mpconnectiontype.cpp"
     "code/mpgamebrowser.cpp"

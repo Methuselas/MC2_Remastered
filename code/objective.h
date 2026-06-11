@@ -23,6 +23,7 @@ Objective.h			: Interface for the Objective component.
 class FitIniFile;
 
 class aFont;
+class Camera;
 
 //*************************************************************************************************
 
@@ -765,6 +766,10 @@ public:
 	double ActivationTime() { return m_activationTime; }
 	void Render( unsigned long xPos, unsigned long yPos, HGOSFONT3D );
 	bool RenderMarkers (GameTacMap *tacMap, bool blink);		//TacMap calls this to draw objective markers on tacMap.
+
+	// Tactical Overview: draw this objective's marker text projected over its
+	// world location on the main 3D screen (like the tac map, but in the world).
+	void RenderOverviewMarker (Camera* eye, float alpha);
 
 	friend class Mission;
 };

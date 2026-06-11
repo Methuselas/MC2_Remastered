@@ -27,6 +27,7 @@
 #ifndef MISSIONGUI_H
 #include"missiongui.h"
 #endif
+#include "tacticaloverview.h"
 
 // M1.6 + M2.6: IsStaticPropPickEnabled, lookupAtPixel, setLastGameplayPick,
 // clearLastGameplayPick, getLastGameplayPick, IsObjectIdBufferEnabled,
@@ -645,6 +646,44 @@ void MissionInterfaceManager::update (void)
 		userInput->setMousePos(Environment.screenWidth * 0.5f,Environment.screenHeight * 0.5f);
 		controlGui.update( isPaused() && !isPausedWithoutMenu(), false );
 		return;
+	}
+
+	//---------------------------------------------------
+	// Tactical overview: advance the blend-state and drive the camera from the
+	// current blend. Hotkey detection lives in GameCamera::update (a proven
+	// per-frame path with input already polled this frame).
+	g_tacticalOverview.advance(frameLength);
+	g_tacticalOverview.driveCamera(eye);
+
+	// Overview squad-card click: select that force group and consume the click so
+	// the world-pick under the card doesn't also fire. Runs before the mouse
+	// handling below. Cards draw at raw screen coords (HUD-scale exempt).
+	if ( g_tacticalOverview.active() && userInput->isLeftClick() && !userInput->isLeftDrag() )
+	{
+		const TacticalOverview::CardHit* hit = g_tacticalOverview.cardHitAt(
+		             (float)userInput->getRawMouseX(), (float)userInput->getRawMouseY() );
+		if ( hit )
+		{
+			if ( hit->forceGroup >= 0 )
+			{
+				selectForceGroup( hit->forceGroup, true );
+			}
+			else if ( hit->unit )
+			{
+				// Singleton card: select just that unit (deselect the rest).
+				Team* pTeam = Team::home;
+				if ( pTeam )
+					for ( long i = 0; i < pTeam->getRosterSize(); i++ )
+					{
+						Mover* m = (Mover*)pTeam->getMover( i );
+						if ( m && m->isOnGUI() && m->getCommander()->getId() == Commander::home->getId() )
+							m->setSelected( 0 );
+					}
+				((Mover*)hit->unit)->setSelected( 1 );
+			}
+			userInput->clearLeftClick();
+			g_tacticalOverview.armReleaseSuppression();	// stop the move on mouse-up
+		}
 	}
 
 	//---------------------------------------------------
@@ -1444,7 +1483,13 @@ void MissionInterfaceManager::updateOldStyle( bool shiftDn, bool altDn, bool ctr
 		userInput->setMouseCursor( makeNoTargetCursor( passable, lineOfSight, ctrlDn, bGui, moverCount, nonMoverCount ) );
 	}
 
-	if ( userInput->leftMouseReleased() && !userInput->wasLeftDrag() && !bGui && !lastUpdateDoubleClick) // move on the mouse ups
+	// Suppress the move-on-release when this click landed on an overview squad
+	// card (it already selected the squad; don't also move under the card).
+	if ( userInput->leftMouseReleased() && g_tacticalOverview.consumeReleaseSuppression() )
+	{
+		// consumed: skip the world move for this release
+	}
+	else if ( userInput->leftMouseReleased() && !userInput->wasLeftDrag() && !bGui && !lastUpdateDoubleClick) // move on the mouse ups
 	{
 		// PRECISION (companion to the per-frame O(1) approx at update():~778):
 		// the per-frame wPos uses screenToGroundPlaneApprox (fast preview/status
@@ -2852,9 +2897,11 @@ int MissionInterfaceManager::cameraNormal()
 {
 	if (eye)
 		eye->allNormal();
-		
+
 	return 1;
 }
+
+
 int MissionInterfaceManager::cameraDefault()
 {
 	if (eye)
@@ -3021,14 +3068,14 @@ int MissionInterfaceManager::zoomIn()
 int MissionInterfaceManager::zoomChoiceOut()
 {
 	float frameFactor = frameLength / baseFrameLength;
-	eye->ZoomOut(zoomInc * frameFactor * 5.0f * eye->getScaleFactor());
+	eye->ZoomOut(zoomInc * frameFactor * 18.0f * eye->getScaleFactor());
 
 	return 1;
 }
 int MissionInterfaceManager::zoomChoiceIn()
 {
 	float frameFactor = frameLength / baseFrameLength;
-	eye->ZoomIn(zoomInc * frameFactor * 5.0f * eye->getScaleFactor());
+	eye->ZoomIn(zoomInc * frameFactor * 18.0f * eye->getScaleFactor());
  	return 1;
 }
 int MissionInterfaceManager::rotateLeft()
@@ -3863,13 +3910,20 @@ bool MissionInterfaceManager::moveCameraAround( bool lineOfSight, bool passable,
 			bRetVal = 1;
 	
 		}
+		// Manual right-drag rotate/tilt while overview is active = the user took
+		// over the camera; suppress the auto-return on exit.
+		if (mouseXDelta || mouseYDelta)
+			g_tacticalOverview.notifyUserPan();
 		userInput->setMouseCursor( mState_ROTATE_CAMERA );
-		
+
 		//--------------------------------------------------
 		// Zoom Camera based on Mouse Wheel input.
 		long mouseWheelDelta = userInput->getMouseWheelDelta();
 		if (mouseWheelDelta)
 		{
+			g_tacticalOverview.onWheel(-mouseWheelDelta,
+			                           /*atCeiling=*/(g_tacticalOverview.setpoint() > 0.0f) || (eye->getCameraAltitude() >= 5900.0f),
+			                           frameLength, /*worldOwnsWheel=*/true);
 			//Mouse wheel just picks zooms now.
 			//float actualZoom = zoomInc * abs(mouseWheelDelta) * 0.0001f * eye->getScaleFactor();
 			if (mouseWheelDelta > 0)
@@ -3880,14 +3934,14 @@ bool MissionInterfaceManager::moveCameraAround( bool lineOfSight, bool passable,
 			{
 				zoomChoiceIn();
 			}
-	
+
 			if ( target )
 				userInput->setMouseCursor( makeTargetCursor( lineOfSight, moverCount, nonMoverCount ) );
 			else
 				userInput->setMouseCursor( makeNoTargetCursor( passable, lineOfSight, ctrl, bGui, moverCount, nonMoverCount ) );
 			bRetVal = 1;
 		}
-			
+
 		return bRetVal;
 	}
 	
@@ -3896,6 +3950,9 @@ bool MissionInterfaceManager::moveCameraAround( bool lineOfSight, bool passable,
 	long mouseWheelDelta = userInput->getMouseWheelDelta();
 	if (mouseWheelDelta)
 	{
+		g_tacticalOverview.onWheel(-mouseWheelDelta,
+		                           /*atCeiling=*/(g_tacticalOverview.setpoint() > 0.0f) || (eye->getCameraAltitude() >= 5900.0f),
+		                           frameLength, /*worldOwnsWheel=*/true);
 		//Mouse wheel just picks zooms now.
 		//float actualZoom = zoomInc * abs(mouseWheelDelta) * 0.0001f * eye->getScaleFactor();
 		if (mouseWheelDelta > 0)

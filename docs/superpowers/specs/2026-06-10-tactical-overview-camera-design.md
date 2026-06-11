@@ -159,3 +159,26 @@ movement except a debug log. Second patch = camera blend only. Third patch = ico
 
 Ortho projection, threat/enemy zone aggregation, model-mesh replacement, per-object model
 fade (v2), minimap changes beyond the shared-enumerate refactor.
+
+---
+
+## Deferred follow-ups (post-v1, captured 2026-06-10)
+
+### Squad-card roster at full overview
+At **full overview** (t≈1), replace the per-unit floating icons with a **boxed
+"squad card"**: a closed panel titled e.g. "Squad 1" containing the unit icons
+tiled in a row `[ mech1 | mech2 | mech3 ]`. As the player zooms back toward
+**mid level**, the card dissolves into the current behavior — individual icon
+chips floating over each unit's world position (de-overlapped, leader lines).
+
+Rationale: few units, all important — a roster card reads cleaner than scattered
+icons when fully zoomed out, while the floating-over-unit view is better for
+spatial awareness at mid altitude. Drive the card-vs-floating blend off the same
+`t` (e.g. card fades in above some t threshold, icons fade out).
+
+Implementation notes: the icon-cell draw (`drawOverviewIconCell` in
+`forcegroupbar.cpp`) is already reusable for a tiled card layout. The card is a
+fixed screen-space panel (no projection) — anchor it, draw a framed background +
+title + tiled cells. Group/squad identity: there is no explicit "squad" concept
+yet; v1 could treat the whole player force as one card, or group by selected
+force-group (Ctrl+number groups already exist in the command system).

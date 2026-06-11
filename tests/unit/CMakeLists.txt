@@ -38,12 +38,14 @@ add_executable(mc2_tests
     test_frame_arena.cpp    # FRAME-ARENA-1: FrameArena typed L2 allocator invariants
     test_depth_hzb.cpp      # HZB-DEPTH-CONVENTION-TESTS-1: reverse-Z / HZB reduction contract
     test_host_services.cpp  # ENGINE-HOST-SERVICES-0: host-service contract + default impls
+    test_tactical_overview.cpp   # TACTICAL-OVERVIEW-1: blend-state pure logic
 
     # Leaf-TU engine sources (no transitive engine include drag).
     ${MC2_WORKTREE_ROOT}/mclib/fst_hash.cpp
     ${MC2_WORKTREE_ROOT}/RenderCore/RenderResourceRegistry.cpp
     ${MC2_WORKTREE_ROOT}/RenderCore/RenderDebugView.cpp
     ${MC2_WORKTREE_ROOT}/HostServices/DefaultHostServices.cpp  # ENGINE-HOST-SERVICES-0
+    ${MC2_WORKTREE_ROOT}/code/tacticaloverview_state.cpp  # TACTICAL-OVERVIEW-1
 )
 
 target_include_directories(mc2_tests PRIVATE

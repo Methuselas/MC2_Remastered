@@ -6,6 +6,12 @@ controlGui.cpp			: Implementation of the controlGui component.
 \*************************************************************************************************/
 
 #include"controlgui.h"
+#include"tacticaloverview.h"  // Tactical Overview: strategic-icon overlay
+#include"contact.h"           // Tactical Overview: friendly sensor coverage tint
+#include"objmgr.h"            // Tactical Overview: enemy/contact marker scan
+#include"mover.h"
+// Squad-level overview move arrow (defined in warrior.cpp).
+void drawOverviewArrowWorld( const Stuff::Vector3D& from, const Stuff::Vector3D& to, unsigned long color );
 #include"team.h"
 #include"gamesound.h"
 #include"comndr.h"
@@ -305,6 +311,144 @@ bool ControlGui::animateTacMap (int buttonId,float timeToScroll,long numFlashes)
 	return tacMap.animate(abs(buttonId), numFlashes);
 }
 
+// Tactical Overview friendly-coverage tint: darken the whole battlefield
+// slightly EXCEPT where friendly sensors have line of sight (inverted fog).
+// Screen-cell grid; each cell maps to a ground point via the O(1)
+// screenToGroundPlaneApprox, tested in WORLD space against friendly sensor
+// ranges. Reliable (plain dark quads), no stencil / RTT.
+static void renderOverviewCoverageTint( Camera* eye, float alpha )
+{
+	if ( !eye || alpha <= 0.0f || !Team::home )
+		return;
+
+	struct Cov { float x, y, r; };
+	Cov cov[256];
+	int nc = 0;
+	TeamSensorSystem* sys = SensorManager ? SensorManager->getTeamSensor( Team::home->getId() ) : 0;
+	if ( sys )
+		for ( int j = 0; j < sys->numSensors && nc < 256; ++j )
+		{
+			SensorSystem* ps = sys->sensors[j];
+			if ( !ps || ps->broken ) continue;
+			float r = ps->getRange();
+			if ( r < 1.0f || !ps->owner || ps->owner->isDestroyed() ) continue;
+			Stuff::Vector3D p = ps->owner->getPosition();
+			cov[nc].x = p.x; cov[nc].y = p.y; cov[nc].r = r; nc++;
+		}
+
+	const float D    = 0.30f * alpha;	// max darkness in unsighted areas
+	const int   sw   = Environment.screenWidth;
+	const int   sh   = Environment.screenHeight;
+	const int   cell = 28;
+
+	gos_SetRenderState( gos_State_Texture, 0 );
+	gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_AlphaInvAlpha );
+	gos_SetRenderState( gos_State_AlphaTest, 0 );
+	gos_SetRenderState( gos_State_ZCompare, 0 );
+	gos_SetRenderState( gos_State_ZWrite, 0 );
+
+	bool prevExempt = gos_GetHudScaleExempt();
+	gos_SetHudScaleExempt( true );
+
+	for ( int gy = 0; gy < sh; gy += cell )
+		for ( int gx = 0; gx < sw; gx += cell )
+		{
+			Stuff::Vector3D w;
+			if ( !eye->screenToGroundPlaneApprox( gx + cell / 2, gy + cell / 2, w ) )
+				continue;	// not ground (sky) — leave untouched
+
+			float coverage = 0.0f;	// 0 = unsighted, 1 = fully inside friendly LOS
+			for ( int k = 0; k < nc; ++k )
+			{
+				float dx = w.x - cov[k].x, dy = w.y - cov[k].y;
+				float dist = sqrtf( dx * dx + dy * dy );
+				float feather = cov[k].r * 0.18f + 1.0f;
+				float c = ( cov[k].r - dist ) / feather;	// soft edge
+				if ( c > coverage ) coverage = c;
+				if ( coverage >= 1.0f ) { coverage = 1.0f; break; }
+			}
+			if ( coverage < 0.0f ) coverage = 0.0f;
+
+			float a = D * ( 1.0f - coverage );
+			if ( a <= 0.003f ) continue;	// fully sighted: full brightness
+			unsigned long aB = (unsigned long)( a * 255.0f ); if ( aB > 255 ) aB = 255;
+			unsigned long col = ( aB << 24 );	// black veil
+
+			gos_VERTEX q[4];
+			float l = (float)gx, r = (float)( gx + cell ), t = (float)gy, b = (float)( gy + cell );
+			for ( int v = 0; v < 4; ++v ) { q[v].z = 0; q[v].rhw = .5f; q[v].argb = col; q[v].frgb = 0; q[v].u = q[v].v = 0; }
+			q[0].x = l; q[0].y = t; q[1].x = l; q[1].y = b; q[2].x = r; q[2].y = b; q[3].x = r; q[3].y = t;
+			gos_DrawQuads( q, 4 );
+		}
+
+	gos_SetHudScaleExempt( prevExempt );
+}
+
+// Tactical Overview: red chevron markers for DETECTED enemy/neutral units
+// (friendlies are drawn as icons by ForceGroupBar). Honors the same fog/ECM/
+// signature/shutdown gating the tac map uses.
+static void renderOverviewEnemyMarkers( Camera* eye, float alpha )
+{
+	if ( !eye || alpha <= 0.0f || !Team::home )
+		return;
+
+	unsigned long aB = (unsigned long)( alpha * 255.0f );
+	if ( aB > 255 ) aB = 255;
+	const unsigned long aBits = aB << 24;
+	const float w = 8.0f, h = 12.0f;
+
+	gos_SetRenderState( gos_State_Texture, 0 );
+	gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_AlphaInvAlpha );
+	gos_SetRenderState( gos_State_AlphaTest, 0 );
+	gos_SetRenderState( gos_State_ZCompare, 0 );
+	gos_SetRenderState( gos_State_ZWrite, 0 );
+
+	bool prevExempt = gos_GetHudScaleExempt();
+	gos_SetHudScaleExempt( true );
+
+	for ( int i = 0; i < ObjectManager->numMovers; i++ )
+	{
+		MoverPtr mover = ObjectManager->getMover( i );
+		if ( !(mover && mover->getExists() && !(mover->isDestroyed() || mover->isDisabled())) )
+			continue;
+		if ( mover->getTeamId() == Team::home->id )
+			continue;	// friendlies are the icon overlay
+
+		long contactStatus = mover->getContactStatus( Team::home->getId(), true );
+		if ( !( (contactStatus != CONTACT_NONE)
+		        && (mover->getStatus() != OBJECT_STATUS_SHUTDOWN)
+		        && (!mover->hasNullSignature())
+		        && (mover->getEcmRange() <= 0.0f) ) )
+			continue;	// undetected / ECM / null-sig / shut down
+
+		unsigned long rgb = 0x00ff0000;	// enemy red
+		if ( mover->getTeam() && mover->getTeam()->isNeutral( Team::home ) )
+			rgb = 0x000000ff;		// neutral blue
+		if ( mover->getSelected() )
+			rgb |= 0x003f3f3f;		// brighten when selected
+		unsigned long col = aBits | rgb;
+
+		Stuff::Vector3D wp = mover->getPosition();
+		ModernClipResult r = eye->projectModernClipGL( wp );
+		if ( !r.admit || r.clip.w <= 0.05f )
+			continue;
+		float vmx, vmy, vax, vay;
+		gos_GetViewport( &vmx, &vmy, &vax, &vay );
+		float cx = vax + ( r.clip.x / r.clip.w * 0.5f + 0.5f ) * vmx;
+		float cy = vay + ( 1.0f - ( r.clip.y / r.clip.w * 0.5f + 0.5f ) ) * vmy;
+
+		// Downward chevron, apex on the unit.
+		gos_VERTEX tri[3];
+		for ( int k = 0; k < 3; ++k ) { tri[k].z = 0; tri[k].rhw = .5f; tri[k].argb = col; tri[k].frgb = 0; tri[k].u = tri[k].v = 0; }
+		tri[0].x = cx;     tri[0].y = cy;
+		tri[1].x = cx - w; tri[1].y = cy - h;
+		tri[2].x = cx + w; tri[2].y = cy - h;
+		gos_DrawTriangles( tri, 3 );
+	}
+
+	gos_SetHudScaleExempt( prevExempt );
+}
+
 void ControlGui::render( bool bPaused )
 {
 	if (drawGUIOn)
@@ -320,6 +464,92 @@ void ControlGui::render( bool bPaused )
 		for ( int i = 0; i < rectCount; i++ )
 		{
 			drawRect( rectInfos[i].rect, rectInfos[i].color );
+		}
+
+		// Tactical Overview: draw each unit's HUD icon over its world position on
+		// the main screen whenever the overview is active, plus objective markers.
+		if ( g_tacticalOverview.active() )
+		{
+			// Altitude-driven overlay stages (independent of the abstract blend t):
+			//   - icons roll in hard over alt 6000 -> 6500 (just past gameplay cap)
+			//   - squad cards take over above alt 12000 (full by 14000)
+			const float alt = eye->getCameraAltitude();
+			float iconViz = ( alt - 6000.0f ) / 500.0f;
+			if ( iconViz < 0.0f ) iconViz = 0.0f; else if ( iconViz > 1.0f ) iconViz = 1.0f;
+			float cardViz = ( alt - 12000.0f ) / 2000.0f;
+			if ( cardViz < 0.0f ) cardViz = 0.0f; else if ( cardViz > 1.0f ) cardViz = 1.0f;
+			float iconW = iconViz * ( 1.0f - cardViz );
+			float markerA = iconViz;
+
+			// Friendly-coverage tint first (under the icons/markers).
+			if ( TacticalOverview::tintEnabled() )
+				renderOverviewCoverageTint( eye, markerA );
+
+			// Move-path arrows, colored by squad. At icon zoom: one per mech.
+			// At squad-card zoom: a single arrow per squad (centroid -> avg dest).
+			static const unsigned long kSquadColors[10] = {
+				0x004bff4b, 0x004b9bff, 0x00ffd24b, 0x00ff7b4b, 0x00c77bff,
+				0x004bffe0, 0x00ff4b9b, 0x009bff4b, 0x00b0b0ff, 0x00ffffff };
+			if ( Team::home )
+			{
+				// Per-mech arrows fade with the icon stage.
+				if ( iconW > 0.01f )
+				{
+					unsigned long pa = (unsigned long)( iconW * 255.0f ) << 24;
+					for ( long i = 0; i < Team::home->getRosterSize(); i++ )
+					{
+						Mover* m = (Mover*)Team::home->getMover( i );
+						if ( !m || !m->isOnGUI() || m->isDestroyed() || m->isDisabled() ) continue;
+						if ( m->getCommander()->getId() != Commander::home->getId() ) continue;
+						int g = -1;
+						for ( int j = 0; j < 10; ++j ) if ( m->isInUnitGroup( j ) ) { g = j; break; }
+						m->drawOverviewMovePath( pa | ( ( g >= 0 ) ? kSquadColors[g] : 0x0000cc00 ) );
+					}
+				}
+				// Single squad arrow per force group, fading with the card stage:
+				// trace the LEADER's (first moving member's) real path. Averaging
+				// curved routes gets mushy, so pick one representative.
+				if ( cardViz > 0.01f )
+				{
+					unsigned long pa = (unsigned long)( cardViz * 255.0f ) << 24;
+					for ( int g = 0; g < 10; ++g )
+					{
+						for ( long i = 0; i < Team::home->getRosterSize(); i++ )
+						{
+							Mover* m = (Mover*)Team::home->getMover( i );
+							if ( !m || !m->isOnGUI() || m->isDestroyed() || m->isDisabled() ) continue;
+							if ( m->getCommander()->getId() != Commander::home->getId() ) continue;
+							if ( !m->isInUnitGroup( g ) ) continue;
+							Stuff::Vector3D d;
+							if ( m->getMoveDestination( d ) )	// this member has a move
+							{
+								m->drawOverviewMovePath( pa | kSquadColors[g] );
+								break;	// only the leader's path for the squad
+							}
+						}
+					}
+				}
+			}
+
+			renderOverviewEnemyMarkers( eye, markerA );
+			if ( iconW > 0.01f )
+				forceGroupBar.renderOverviewIcons( eye, iconW );
+			ForceGroupBar::OverviewCardHit raw[32];
+			int nh = ( cardViz > 0.01f )
+			         ? forceGroupBar.renderOverviewSquadCards( eye, cardViz, raw, 32 ) : 0;
+			TacticalOverview::CardHit hits[32];
+			for ( int hI = 0; hI < nh; ++hI )
+			{
+				hits[hI].forceGroup = raw[hI].forceGroup;
+				hits[hI].unit = raw[hI].unit;
+				hits[hI].l = raw[hI].l; hits[hI].t = raw[hI].t;
+				hits[hI].r = raw[hI].r; hits[hI].b = raw[hI].b;
+			}
+			g_tacticalOverview.setCardHits( hits, nh );
+			if ( markerA > 0.01f && Team::home )
+				for ( EList< CObjective*, CObjective* >::EIterator it = Team::home->objectives.Begin();
+				      !it.IsDone(); it++ )
+					(*it)->RenderOverviewMarker( eye, markerA );
 		}
 
 		if ( getButton( TACMAP_TAB )->state & ControlButton::PRESSED )
