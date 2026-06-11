@@ -701,8 +701,16 @@ void MissionInterfaceManager::update (void)
 		{
 			if ( userInput->isLeftClick() )
 			{
+				// Legacy quadList picker: the worldToClipGL INVERSE is broken in
+				// the game camera (far-plane unproject lands above the camera,
+				// X response collapses - see inverseProject Phase 7B notes), so
+				// the approx unprojectors cannot be used here. inverseProject is
+				// the production picker; its O(quads) cost only runs during an
+				// active formation drag.
+				Stuff::Vector2DOf<long> sXY;
+				sXY.x = fmx; sXY.y = fmy;
 				Stuff::Vector3D w;
-				if ( eye->screenToTerrainApprox( fmx, fmy, w ) )
+				eye->inverseProject( sXY, w );
 				{
 					// Snapshot selected friendly movers at drag start.
 					Mover* flMovers[32];
@@ -735,9 +743,11 @@ void MissionInterfaceManager::update (void)
 		}
 		else // FL_DRAGGING
 		{
+			Stuff::Vector2DOf<long> sXY;
+			sXY.x = fmx; sXY.y = fmy;
 			Stuff::Vector3D w;
-			if ( eye->screenToTerrainApprox( fmx, fmy, w ) )
-				g_tacticalOverview.flOnDragMove( w );
+			eye->inverseProject( sXY, w );
+			g_tacticalOverview.flOnDragMove( w );
 
 			// MC2_FL_TRACE=1: per-drag-frame coord audit. Round-trips the
 			// unprojected world point back through the render projection; if
