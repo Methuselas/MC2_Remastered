@@ -1,0 +1,109 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "mc2-material-manifest-v1",
+  "title": "MC2 Material Manifest",
+  "description": "Offline cook manifest for GPU material table. Each entry maps a material slot to KTX2 texture paths and scalar parameters. Slot indices match MaterialHandle::index() at runtime.",
+  "type": "object",
+  "required": ["version", "materials"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version. Bump when any field is added, removed, or reinterpreted."
+    },
+    "comment": {
+      "type": "string",
+      "description": "Optional human note. Not consumed by the cook tool."
+    },
+    "materials": {
+      "type": "array",
+      "description": "Ordered list. materials[N] cooks into MaterialGpu table slot N.",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/MaterialEntry"
+      }
+    }
+  },
+  "definitions": {
+    "MaterialEntry": {
+      "type": "object",
+      "required": ["slot", "albedo_ktx2"],
+      "additionalProperties": false,
+      "properties": {
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Expected slot index. Cook tool validates materials[i].slot == i (no gaps, no reorder)."
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable debug label. Not stored in MaterialGpu; surfaced in cook errors."
+        },
+        "albedo_ktx2": {
+          "type": "string",
+          "description": "Path to albedo/diffuse KTX2 (required). Relative to manifest file. Cooks into MaterialGpu.albedoTex."
+        },
+        "normal_ktx2": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "Tangent-space normal map KTX2. null = kMaterialTexAbsent; kMatFlagNormalMap NOT set. Cooks into MaterialGpu.normalTex."
+        },
+        "metallic_roughness_ktx2": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "R=AO G=roughness B=metalness KTX2. null = kMaterialTexAbsent; kMatFlagMetallicRoughness NOT set. Cooks into MaterialGpu.metallicRoughnessTex."
+        },
+        "emissive_ktx2": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "Emissive color KTX2. null = kMaterialTexAbsent; kMatFlagEmissive NOT set. Cooks into MaterialGpu.emissiveTex."
+        },
+        "base_color_factor": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 1.0,
+          "description": "Albedo tint/brightness multiplier [0,1]. Cooks into MaterialGpu.baseColorFactor."
+        },
+        "metallic_factor": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.0,
+          "description": "Metalness override/multiplier [0,1]. When metallic_roughness_ktx2 is present, multiplies the B channel. Cooks into MaterialGpu.metallicFactor."
+        },
+        "roughness_factor": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 1.0,
+          "description": "Roughness override/multiplier [0,1]. When metallic_roughness_ktx2 is present, multiplies the G channel. Cooks into MaterialGpu.roughnessFactor."
+        },
+        "flags": {
+          "type": "object",
+          "description": "Material flags. Cook tool derives MaterialGpu.flags from these booleans.",
+          "additionalProperties": false,
+          "default": {},
+          "properties": {
+            "alpha_test": {
+              "type": "boolean",
+              "default": false,
+              "description": "kMatFlagAlphaTest: discard fragments with alpha < 0.5. Cook tool validates albedo has alpha channel."
+            },
+            "double_sided": {
+              "type": "boolean",
+              "default": false,
+              "description": "kMatFlagDoubleSided: disable back-face culling for this material."
+            },
+            "window": {
+              "type": "boolean",
+              "default": false,
+              "description": "kMatFlagWindow: hot-color magic applies; sun/ambient lighting skipped (mirrors inst.flags bit 1)."
+            }
+          }
+        }
+      }
+    }
+  }
+}

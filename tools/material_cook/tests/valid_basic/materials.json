@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "comment": "Test fixture: minimal valid manifest with one opaque material and one alpha-test material.",
+  "materials": [
+    {
+      "slot": 0,
+      "name": "building_concrete",
+      "albedo_ktx2": "stub_albedo.ktx2",
+      "metallic_roughness_ktx2": "stub_pbr.ktx2",
+      "base_color_factor": 1.0,
+      "metallic_factor": 0.0,
+      "roughness_factor": 0.9,
+      "flags": {
+        "alpha_test": false,
+        "double_sided": false
+      }
+    },
+    {
+      "slot": 1,
+      "name": "tree_foliage",
+      "albedo_ktx2": "stub_albedo_alpha.ktx2",
+      "base_color_factor": 1.0,
+      "metallic_factor": 0.0,
+      "roughness_factor": 1.0,
+      "flags": {
+        "alpha_test": true,
+        "double_sided": true
+      }
+    }
+  ]
+}

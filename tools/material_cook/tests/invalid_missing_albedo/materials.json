@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "comment": "Test fixture: invalid manifest — slot 0 is missing required albedo_ktx2. Validator must exit 1.",
+  "materials": [
+    {
+      "slot": 0,
+      "name": "broken_material",
+      "metallic_roughness_ktx2": "some_pbr.ktx2",
+      "roughness_factor": 0.5
+    }
+  ]
+}
