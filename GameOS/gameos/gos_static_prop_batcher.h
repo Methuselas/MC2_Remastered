@@ -15,6 +15,12 @@
 namespace RenderCore { struct MaterialGpu; }
 namespace RenderCore { struct StaticPropTypeDesc; }
 
+// SHADOW-STABILITY-1: read-only accessor for the last static-building shadow
+// caster counts (types/instances/draw-calls). Zero unless
+// MC2_STATIC_PROP_BUILDING_SHADOW drew this mission. Consumed by the shadow
+// state trace in gameos_graphics.cpp.
+void gos_GetStaticBuildingShadowCounts(int& types, int& inst, int& draws);
+
 // Per-instance shader-visible struct.
 // Layout mirror of the GLSL std430 struct in shaders/static_prop.vert.
 // CHANGING THIS STRUCT REQUIRES CHANGING THE SHADER IN LOCKSTEP.

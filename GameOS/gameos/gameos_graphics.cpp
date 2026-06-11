@@ -5408,6 +5408,141 @@ void gosRenderer::drawTris(gos_VERTEX* vertices, int count) {
     afterDrawCall();
 }
 
+// ---------------------------------------------------------------------------
+// SHADOW-STABILITY-1: explicit shadow-pass GL-state brackets + env-gated trace.
+//
+// The shadow passes are FORWARD-Z (glClearDepth(1), GL_LESS) bolted onto the
+// main REVERSE-Z scene (glClearDepth(0), GL_GEQUAL). The boundary is a manual
+// glClearDepth swap with no guard — same state-leak bug class as the
+// transparency depth-write fix and the 10.3 terrain-transparency saga. These
+// helpers capture the caller's GL state at pass entry, let the pass set what it
+// needs, then RESTORE the captured values at exit so nothing leaks into the
+// reverse-Z scene pass. They do NOT introduce a GlStateGuard framework — they
+// only read/restore via raw GL queries at the four pass boundaries.
+//
+// (declared in gos_static_prop_batcher.h; forward-declared here to avoid
+//  pulling that header into this TU)
+void gos_GetStaticBuildingShadowCounts(int& types, int& inst, int& draws);
+//
+// Trace is gated on MC2_SHADOW_STATE_TRACE=1: default OFF = zero lines, and the
+// capture/restore is a handful of glGetIntegerv/glIs* per pass (no hot-loop or
+// per-element cost). restored=1 means entry-state == exit-state for every
+// tracked field; restored=0 flags a real state leak.
+// ---------------------------------------------------------------------------
+namespace {
+struct ShadowPassGLState {
+    GLint    fbo = 0;
+    GLint    viewport[4] = {0,0,0,0};
+    GLfloat  clearDepth = 0.0f;
+    GLboolean depthTest = GL_FALSE;
+    GLint    depthFunc = 0;
+    GLboolean depthMask = GL_TRUE;
+    GLboolean colorMask[4] = {GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE};
+    GLboolean cullEnabled = GL_FALSE;
+    GLint    cullFace = 0;
+    GLint    frontFace = 0;
+};
+
+// Entry-state captures for the two (non-nesting) shadow passes, held across
+// begin->end so the exit can restore + verify against the matching entry.
+static ShadowPassGLState s_staticPassEntry;
+static ShadowPassGLState s_dynamicPassEntry;
+
+static bool shadowStateTraceEnabled() {
+    static int s_on = -1;
+    if (s_on < 0) {
+        const char* v = std::getenv("MC2_SHADOW_STATE_TRACE");
+        s_on = (v && v[0] && v[0] != '0') ? 1 : 0;
+    }
+    return s_on != 0;
+}
+
+static void captureShadowGLState(ShadowPassGLState& s) {
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &s.fbo);
+    glGetIntegerv(GL_VIEWPORT, s.viewport);
+    glGetFloatv(GL_DEPTH_CLEAR_VALUE, &s.clearDepth);
+    s.depthTest = glIsEnabled(GL_DEPTH_TEST);
+    glGetIntegerv(GL_DEPTH_FUNC, &s.depthFunc);
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &s.depthMask);
+    glGetBooleanv(GL_COLOR_WRITEMASK, s.colorMask);
+    s.cullEnabled = glIsEnabled(GL_CULL_FACE);
+    glGetIntegerv(GL_CULL_FACE_MODE, &s.cullFace);
+    glGetIntegerv(GL_FRONT_FACE, &s.frontFace);
+}
+
+// Restore every tracked field to the captured values. Called at pass exit so
+// the reverse-Z scene pass inherits exactly what it had before the shadow pass.
+static void restoreShadowGLState(const ShadowPassGLState& s) {
+    glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)s.fbo);
+    glViewport(s.viewport[0], s.viewport[1], s.viewport[2], s.viewport[3]);
+    glClearDepth(s.clearDepth);
+    if (s.depthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+    glDepthFunc((GLenum)s.depthFunc);
+    glDepthMask(s.depthMask);
+    glColorMask(s.colorMask[0], s.colorMask[1], s.colorMask[2], s.colorMask[3]);
+    if (s.cullEnabled) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
+    glCullFace((GLenum)s.cullFace);
+    glFrontFace((GLenum)s.frontFace);
+}
+
+static const char* depthFuncName(GLint f) {
+    switch (f) {
+        case GL_NEVER: return "NEVER"; case GL_LESS: return "LESS";
+        case GL_EQUAL: return "EQUAL"; case GL_LEQUAL: return "LEQUAL";
+        case GL_GREATER: return "GREATER"; case GL_NOTEQUAL: return "NOTEQUAL";
+        case GL_GEQUAL: return "GEQUAL"; case GL_ALWAYS: return "ALWAYS";
+        default: return "?";
+    }
+}
+
+static bool sameShadowGLState(const ShadowPassGLState& a, const ShadowPassGLState& b) {
+    return a.fbo == b.fbo &&
+           a.viewport[0]==b.viewport[0] && a.viewport[1]==b.viewport[1] &&
+           a.viewport[2]==b.viewport[2] && a.viewport[3]==b.viewport[3] &&
+           a.clearDepth == b.clearDepth &&
+           a.depthTest == b.depthTest && a.depthFunc == b.depthFunc &&
+           a.depthMask == b.depthMask &&
+           a.colorMask[0]==b.colorMask[0] && a.colorMask[1]==b.colorMask[1] &&
+           a.colorMask[2]==b.colorMask[2] && a.colorMask[3]==b.colorMask[3] &&
+           a.cullEnabled == b.cullEnabled && a.cullFace == b.cullFace &&
+           a.frontFace == b.frontFace;
+}
+
+// Emit one [SHADOW_STATE v1] line describing the state the pass ran WITH (the
+// `pass` capture) plus the restored-OK check (entry == exit). For the static
+// pass, building caster counts are appended (registry-driven, gate-dependent).
+static void traceShadowPass(const char* passName,
+                            const ShadowPassGLState& pass,
+                            const ShadowPassGLState& entry,
+                            const ShadowPassGLState& exitState,
+                            bool includeBldgCounts) {
+    if (!shadowStateTraceEnabled()) return;
+    const bool restored = sameShadowGLState(entry, exitState);
+    char bldg[96] = {0};
+    if (includeBldgCounts) {
+        int t=0,i=0,d=0;
+        gos_GetStaticBuildingShadowCounts(t, i, d);
+        snprintf(bldg, sizeof(bldg), " bldg=%d/%d/%d(types/inst/draws)", t, i, d);
+    }
+    fprintf(stderr,
+        "[SHADOW_STATE v1] pass=%s fbo=%d vp=%d,%d,%d,%d clearDepth=%g "
+        "depthTest=%d depthFunc=%s depthMask=%d colorMask=%d%d%d%d "
+        "cull=%s/%s/%s restored=%d%s\n",
+        passName, pass.fbo,
+        pass.viewport[0], pass.viewport[1], pass.viewport[2], pass.viewport[3],
+        (double)pass.clearDepth,
+        pass.depthTest ? 1 : 0, depthFuncName(pass.depthFunc),
+        pass.depthMask ? 1 : 0,
+        pass.colorMask[0]?1:0, pass.colorMask[1]?1:0,
+        pass.colorMask[2]?1:0, pass.colorMask[3]?1:0,
+        pass.cullEnabled ? "on" : "off",
+        pass.cullFace == GL_FRONT ? "front" : "back",
+        pass.frontFace == GL_CW ? "CW" : "CCW",
+        restored ? 1 : 0, bldg);
+    fflush(stderr);
+}
+}  // namespace
+
 // --- Shadow pre-pass: renders ALL terrain batches to shadow map before any shading ---
 // This eliminates per-batch seams where early batches couldn't see later batches' shadows.
 
@@ -5417,6 +5552,11 @@ void gosRenderer::beginShadowPrePass(bool clearDepth) {
 
     ZoneScopedN("Shadow.StaticPrePass");
     TracyGpuZone("Shadow.StaticPrePass");
+
+    // SHADOW-STABILITY-1: capture the caller's full GL state so endShadowPrePass
+    // can restore it (forward-Z shadow state must not leak into the reverse-Z
+    // scene pass). Captured before we mutate anything below.
+    captureShadowGLState(s_staticPassEntry);
 
     // Save current FBO and viewport
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &shadow_prepass_prev_fbo_);
@@ -5626,13 +5766,25 @@ void gosRenderer::endShadowPrePass() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    // Restore previous FBO and viewport
-    glBindFramebuffer(GL_FRAMEBUFFER, shadow_prepass_prev_fbo_);
-    glViewport(shadow_prepass_prev_viewport_[0], shadow_prepass_prev_viewport_[1],
-               shadow_prepass_prev_viewport_[2], shadow_prepass_prev_viewport_[3]);
+    // SHADOW-STABILITY-1: snapshot the state the pass actually ran with (for
+    // the trace), then explicitly RESTORE the captured entry state so the
+    // forward-Z shadow config (clearDepth/depthFunc/depthMask/colorMask/cull)
+    // cannot leak into the reverse-Z scene pass. This supersedes the old
+    // FBO+viewport-only restore.
+    ShadowPassGLState passState;
+    captureShadowGLState(passState);
+    restoreShadowGLState(s_staticPassEntry);
 
     active_light_space_matrix_ = nullptr;
     shadow_prepass_active_ = false;
+
+    // Verify restored-OK (entry == exit) and emit the trace line (gated).
+    if (shadowStateTraceEnabled()) {
+        ShadowPassGLState exitState;
+        captureShadowGLState(exitState);
+        traceShadowPass("static", passState, s_staticPassEntry, exitState,
+                        /*includeBldgCounts=*/true);
+    }
 
     // RENDER_STATES v1: shadow prepass disturbed program/depth/buffers via direct
     // GL calls. Invalidate cache so next applyRenderStates does a full re-apply.
@@ -5646,6 +5798,9 @@ void gosRenderer::beginDynamicShadowPass() {
     if (!pp || !pp->shadowsEnabled_ || !shadow_terrain_material_ || !pp->getDynamicShadowFBO()) return;
 
     ZoneScopedN("Shadow.DynBegin");
+
+    // SHADOW-STABILITY-1: capture caller GL state for restore at pass exit.
+    captureShadowGLState(s_dynamicPassEntry);
 
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &shadow_prepass_prev_fbo_);
     glGetIntegerv(GL_VIEWPORT, shadow_prepass_prev_viewport_);
@@ -5695,12 +5850,22 @@ void gosRenderer::endDynamicShadowPass() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    glBindFramebuffer(GL_FRAMEBUFFER, shadow_prepass_prev_fbo_);
-    glViewport(shadow_prepass_prev_viewport_[0], shadow_prepass_prev_viewport_[1],
-               shadow_prepass_prev_viewport_[2], shadow_prepass_prev_viewport_[3]);
+    // SHADOW-STABILITY-1: snapshot pass state for the trace, then explicitly
+    // restore the captured entry state (forward-Z dynamic config must not leak
+    // into the reverse-Z scene). Supersedes the FBO+viewport-only restore.
+    ShadowPassGLState passState;
+    captureShadowGLState(passState);
+    restoreShadowGLState(s_dynamicPassEntry);
 
     active_light_space_matrix_ = nullptr;
     shadow_prepass_active_ = false;
+
+    if (shadowStateTraceEnabled()) {
+        ShadowPassGLState exitState;
+        captureShadowGLState(exitState);
+        traceShadowPass("dynamic", passState, s_dynamicPassEntry, exitState,
+                        /*includeBldgCounts=*/false);
+    }
 
     // RENDER_STATES v1: dynamic shadow pass disturbed program/depth/buffers.
     invalidateRenderStateCache();
