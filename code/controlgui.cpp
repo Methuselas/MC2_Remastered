@@ -324,9 +324,16 @@ void ControlGui::render( bool bPaused )
 		}
 
 		// Tactical Overview: draw each unit's HUD icon over its world position on
-		// the main screen whenever the overview is active.
+		// the main screen whenever the overview is active, plus objective markers.
 		if ( g_tacticalOverview.active() )
-			forceGroupBar.renderOverviewIcons( eye, g_tacticalOverview.iconAlpha() );
+		{
+			float ovAlpha = g_tacticalOverview.iconAlpha();
+			forceGroupBar.renderOverviewIcons( eye, ovAlpha );
+			if ( Team::home )
+				for ( EList< CObjective*, CObjective* >::EIterator it = Team::home->objectives.Begin();
+				      !it.IsDone(); it++ )
+					(*it)->RenderOverviewMarker( eye, ovAlpha );
+		}
 
 		if ( getButton( TACMAP_TAB )->state & ControlButton::PRESSED )
 			tacMap.render();
