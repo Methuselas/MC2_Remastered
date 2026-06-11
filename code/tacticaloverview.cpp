@@ -140,7 +140,7 @@ void TacticalOverview::flOnHotkeyL()
     if ( flState_ == FL_IDLE )
         flState_ = FL_ARMED;
     else
-        flState_ = FL_IDLE;     // L again disarms
+        flOnCancel();           // L again disarms (covers ARMED and mid-drag)
 }
 
 void TacticalOverview::flOnCancel()
@@ -172,6 +172,7 @@ void TacticalOverview::flOnRelease()
 
 void TacticalOverview::flSetMovers( Mover* const* movers, int n )
 {
+    if ( n < 0 ) n = 0;
     if ( n > kFlMaxMovers ) n = kFlMaxMovers;
     for ( int i = 0; i < n; i++ )
         flMovers_[i] = movers[i];
