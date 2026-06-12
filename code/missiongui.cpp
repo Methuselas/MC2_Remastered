@@ -686,6 +686,162 @@ void MissionInterfaceManager::update (void)
 		}
 	}
 
+	// Formation line draw mode (MC2_TACMAP_FORMATION_LINE): owns LMB while
+	// armed/dragging. Runs BEFORE the world mouse handlers below so the press
+	// cannot select/deselect and the release cannot fire a normal move.
+	// Rendering (ghost line + pips) stays in controlgui.
+	if ( TacticalOverview::formationLineEnabled()
+		&& g_tacticalOverview.flState() != TacticalOverview::FL_IDLE
+		&& eye && Team::home )
+	{
+		long fmx = userInput->getMouseX();
+		long fmy = userInput->getMouseY();
+
+		if ( g_tacticalOverview.flState() == TacticalOverview::FL_ARMED )
+		{
+			if ( userInput->isLeftClick() )
+			{
+				// Legacy quadList picker: the worldToClipGL INVERSE is broken in
+				// the game camera (far-plane unproject lands above the camera,
+				// X response collapses - see inverseProject Phase 7B notes), so
+				// the approx unprojectors cannot be used here. inverseProject is
+				// the production picker; its O(quads) cost only runs during an
+				// active formation drag.
+				Stuff::Vector2DOf<long> sXY;
+				sXY.x = fmx; sXY.y = fmy;
+				Stuff::Vector3D w;
+				eye->inverseProject( sXY, w );
+				{
+					// Snapshot selected friendly movers at drag start.
+					Mover* flMovers[32];
+					int nm = 0;
+					Team* pTeam = Team::home;
+					for ( long i = 0; i < pTeam->getRosterSize() && nm < 32; i++ )
+					{
+						Mover* pMover = (Mover*)pTeam->getMover( i );
+						if ( pMover && pMover->isSelected()
+							&& pMover->getCommander()->getId() == Commander::home->getId()
+							&& pMover->getExists() && !pMover->isDestroyed() && !pMover->isDisabled() )
+							flMovers[nm++] = pMover;
+					}
+					if ( nm == 0 )
+					{
+						g_tacticalOverview.flOnCancel();	// nothing selected
+					}
+					else
+					{
+						g_tacticalOverview.flSetMovers( flMovers, nm );
+						g_tacticalOverview.flOnDragStart( w );
+					}
+					// Either way this press belongs to draw mode, not the
+					// world: consume the click now and eat the matching
+					// release later (suppression persists until consumed).
+					userInput->clearLeftClick();
+					g_tacticalOverview.armReleaseSuppression();
+				}
+			}
+		}
+		else // FL_DRAGGING
+		{
+			Stuff::Vector2DOf<long> sXY;
+			sXY.x = fmx; sXY.y = fmy;
+			Stuff::Vector3D w;
+			eye->inverseProject( sXY, w );
+			g_tacticalOverview.flOnDragMove( w );
+
+			// MC2_FL_TRACE=1: per-drag-frame coord audit. Round-trips the
+			// unprojected world point back through the render projection; if
+			// rx,ry != fmx,fmy the unproject/render matrix or pixel spaces
+			// disagree (split-brain), if they match but the line looks wrong
+			// the mouse coords themselves are off.
+			{
+				static const bool s_flTrace = ( getenv( "MC2_FL_TRACE" ) != NULL );
+				if ( s_flTrace )
+				{
+					ModernClipResult rr = eye->projectModernClipGL( w );
+					float vmx, vmy, vax, vay;
+					gos_GetViewport( &vmx, &vmy, &vax, &vay );
+					float rx = 0.0f, ry = 0.0f;
+					if ( rr.clip.w > 0.0001f )
+					{
+						rx = vax + ( rr.clip.x / rr.clip.w * 0.5f + 0.5f ) * vmx;
+						ry = vay + ( 1.0f - ( rr.clip.y / rr.clip.w * 0.5f + 0.5f ) ) * vmy;
+					}
+					fprintf( stderr, "[FLTRACE] mouse=(%ld,%ld) raw01=(%.4f,%.4f) world=(%.1f,%.1f,%.1f) reproj=(%.1f,%.1f) vp=(%.0f,%.0f,%.0f,%.0f) env=(%ld,%ld)\n",
+						fmx, fmy,
+						userInput->realMouseX() / ( vmx > 1.0f ? vmx : 1.0f ),
+						userInput->realMouseY() / ( vmy > 1.0f ? vmy : 1.0f ),
+						w.x, w.y, w.z, rx, ry, vmx, vmy, vax, vay,
+						(long)Environment.screenWidth, (long)Environment.screenHeight );
+					fflush( stderr );
+				}
+			}
+
+			if ( userInput->leftMouseReleased() )
+			{
+				// Accidental click guard: tiny line = cancel, no orders.
+				const float kMinLineLenWorld = 50.0f;	// tune later
+				float ldx = g_tacticalOverview.flEnd().x - g_tacticalOverview.flStart().x;
+				float ldy = g_tacticalOverview.flEnd().y - g_tacticalOverview.flStart().y;
+				if ( ldx * ldx + ldy * ldy < kMinLineLenWorld * kMinLineLenWorld )
+				{
+					g_tacticalOverview.flOnCancel();
+				}
+				else
+				{
+					// v1 assignment: iterate snapshot order, each mover takes
+					// nearest free slot. Orders FIRST, then flOnRelease
+					// (release clears the snapshot).
+					Stuff::Vector3D slots[32];
+					int ns = g_tacticalOverview.flComputeSlots( slots, 32 );
+					// Endpoints sit on the terrain; interpolated slots can
+					// float over dips - drop each onto the surface.
+					if ( land )
+						for ( int s = 0; s < ns; s++ )
+							slots[s].z = land->getTerrainElevation( slots[s] );
+					bool slotUsed[32] = { false };
+					int nm = g_tacticalOverview.flMoverCount();
+					for ( int i = 0; i < nm; i++ )
+					{
+						Mover* pMover = g_tacticalOverview.flMover( i );
+						// Revalidate: mover may have died mid-drag.
+						if ( !pMover || !pMover->getExists()
+							|| pMover->isDestroyed() || pMover->isDisabled() )
+							continue;
+						int   best = -1;
+						float bestD2 = 0.0f;
+						Stuff::Vector3D mp = pMover->getPosition();
+						for ( int s = 0; s < ns; s++ )
+						{
+							if ( slotUsed[s] ) continue;
+							float dx = slots[s].x - mp.x, dy = slots[s].y - mp.y;
+							float d2 = dx * dx + dy * dy;
+							if ( best < 0 || d2 < bestD2 ) { best = s; bestD2 = d2; }
+						}
+						if ( best < 0 ) break;
+						slotUsed[best] = true;
+
+						LocationNode path;
+						path.location = slots[best];
+						path.run = true;
+						path.next = NULL;
+						TacticalOrder tacOrder;
+						tacOrder.init( ORDER_ORIGIN_PLAYER, TACTICAL_ORDER_MOVETO_POINT, false );
+						tacOrder.initWayPath( &path );
+						tacOrder.moveParams.wait = false;
+						tacOrder.moveParams.wayPath.mode[0] = TRAVEL_MODE_FAST;
+						tacOrder.pack( NULL, NULL );
+						// Single-unit dispatch on purpose: handleOrders/
+						// calcMoveGoals would re-cluster the slots.
+						pMover->handleTacticalOrder( tacOrder );
+					}
+					g_tacticalOverview.flOnRelease();
+					soundSystem->playDigitalSample( BUTTON5 );
+				}
+			}
+		}
+	}
+
 	//---------------------------------------------------
 	// Per Andy G.  One check per frame saves log file!
 	bool shiftDn = userInput->shift();
@@ -4076,6 +4232,17 @@ bool MissionInterfaceManager::canJumpToWPos()
 
 void MissionInterfaceManager::doDrag(bool bGui)
 {
+	// Formation line draw mode owns the left-drag gesture: no select box and
+	// no drag-select while armed or drawing.
+	if ( TacticalOverview::formationLineEnabled()
+		&& g_tacticalOverview.flState() != TacticalOverview::FL_IDLE )
+	{
+		dragStart.Zero();
+		dragEnd.Zero();
+		isDragging = FALSE;
+		return;
+	}
+
 	//---------------------------------------------------------------------------
 	// Check if we wanted to select all visible.  If so, do it!
 //	if ( ((GetAsyncKeyState( VK_LBUTTON ))) && !bGui && !cameraClicked )

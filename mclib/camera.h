@@ -1008,6 +1008,18 @@ class Camera
 		// inverseProject() when a real terrain hit is required.
 		bool screenToGroundPlaneApprox (long screenX, long screenY, Stuff::Vector3D &outWorld);
 
+		// screenToTerrainApprox: screenToGroundPlaneApprox refined onto the
+		// terrain surface by iterating the plane height (fixed 3 steps, O(1),
+		// no quad scan).
+		// WARNING (2026-06-11): BOTH approx unprojectors ride
+		// Matrix4D::Invert(worldToClipGL()), which is UNRELIABLE in the game
+		// camera - far-plane unproject lands above the camera (ray inverts)
+		// and the X response collapses (see the Phase 7B raycast-picker notes
+		// in inverseProject). Round-trip-verified broken via MC2_FL_TRACE.
+		// For screen->world in game use inverseProject (production picker).
+		// These remain only for the editor paths that already depend on them.
+		bool screenToTerrainApprox (long screenX, long screenY, Stuff::Vector3D &outWorld);
+
 		// getClosestVertex: screen-click -> terrain vertex (row,col).
 		// Reinstated 2026-05-24 for the EditRel Mission Editor (sole caller
 		// editor/TerrainBrush.h). Thin adapter over Camera::inverseProject +

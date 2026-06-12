@@ -2233,10 +2233,15 @@ float MapData::terrainElevation (const Stuff::Vector3D &position)
 	meshOffset.x += (verticesMapSide>>1);
 	meshOffset.y = (verticesMapSide>>1) - meshOffset.y;
 
-	if ((meshOffset.x >= (verticesMapSide-1)))
+	// Bounds guard for blocks[] (sized realVerticesMapSide^2). The legacy guard
+	// checked only the UPPER bound, so an off-map position (cursor west/north of
+	// the map -> negative meshOffset) read blocks[<0] out of bounds -> 0xC0000005
+	// in editor building placement. Guard the lower bound too; off-map queries
+	// return 0 elevation instead of faulting.
+	if ((meshOffset.x < 0) || (meshOffset.x >= (verticesMapSide-1)))
 		return 0.0f;
 
-	if ((meshOffset.y >= (verticesMapSide-1)))
+	if ((meshOffset.y < 0) || (meshOffset.y >= (verticesMapSide-1)))
 		return 0.0f;
 
 	PostcompVertexPtr pVertex1 = &blocks[meshOffset.x     + (meshOffset.y     * Terrain::realVerticesMapSide)];

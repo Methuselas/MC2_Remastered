@@ -16,6 +16,7 @@ extern HGOSFONT3D gosFontHandle;   // global font for sensor-view range labels
 extern float worldUnitsPerMeter;   // sensor range is in world units; /this = meters
 #include"team.h"
 #include"gamesound.h"
+#include"sounds.h"        // BUTTON5 (formation line release sfx)
 #include"comndr.h"
 
 #ifndef MULTPLYR_H
@@ -381,6 +382,27 @@ static void drawSensorRing( Camera* eye, const Stuff::Vector3D& center, float ra
 	}
 }
 
+// Tiny radio-tower glyph: A-frame mast + crossbar, apex up, base on the spot.
+static void drawTowerGlyph( Camera* eye, const Stuff::Vector3D& wp, unsigned long col )
+{
+	ModernClipResult r = eye->projectModernClipGL( wp );
+	if ( r.clip.w <= 0.05f ) return;
+	float vmx, vmy, vax, vay;
+	gos_GetViewport( &vmx, &vmy, &vax, &vay );
+	float cx = vax + ( r.clip.x / r.clip.w * 0.5f + 0.5f ) * vmx;
+	float cy = vay + ( 1.0f - ( r.clip.y / r.clip.w * 0.5f + 0.5f ) ) * vmy;
+	gos_VERTEX ln[2];
+	for ( int v = 0; v < 2; ++v ) { ln[v].z = 0; ln[v].rhw = .5f; ln[v].argb = col; ln[v].frgb = 0; ln[v].u = ln[v].v = 0; }
+	// left leg
+	ln[0].x = cx - 5.0f; ln[0].y = cy;        ln[1].x = cx; ln[1].y = cy - 12.0f; gos_DrawLines( ln, 2 );
+	// right leg
+	ln[0].x = cx + 5.0f; ln[0].y = cy;        ln[1].x = cx; ln[1].y = cy - 12.0f; gos_DrawLines( ln, 2 );
+	// crossbar
+	ln[0].x = cx - 2.5f; ln[0].y = cy - 6.0f; ln[1].x = cx + 2.5f; ln[1].y = cy - 6.0f; gos_DrawLines( ln, 2 );
+	// signal tick above the apex
+	ln[0].x = cx; ln[0].y = cy - 13.0f;       ln[1].x = cx; ln[1].y = cy - 16.0f; gos_DrawLines( ln, 2 );
+}
+
 static void renderSensorView( Camera* eye )
 {
 	if ( !eye || !Team::home || !ObjectManager ) return;
@@ -410,6 +432,27 @@ static void renderSensorView( Camera* eye )
 			long contactStatus = m->getContactStatus( Team::home->getId(), true );
 			if ( contactStatus == CONTACT_NONE ) continue;	// only detected enemies
 			drawSensorRing( eye, m->getPosition(), radiusWorld, 0x00ff2020, aBits );	// enemy red
+		}
+	}
+
+	// Friendly NON-MOVER sensors (sensor towers etc.): same team-sensor list
+	// the coverage tint reads. Cyan ring + tower glyph so the source reads on
+	// the tac map.
+	TeamSensorSystem* sys = SensorManager ? SensorManager->getTeamSensor( Team::home->getId() ) : 0;
+	if ( sys )
+	{
+		const unsigned long kTowerCyan = 0x0033ddff;
+		for ( int j = 0; j < sys->numSensors; ++j )
+		{
+			SensorSystem* ps = sys->sensors[j];
+			if ( !ps || ps->broken || !ps->owner ) continue;
+			if ( ps->owner->isMover() ) continue;	// movers handled above
+			if ( ps->owner->isDestroyed() ) continue;
+			float rangeMeters = ps->getRange();
+			if ( rangeMeters < 10.0f ) continue;
+			Stuff::Vector3D tp = ps->owner->getPosition();
+			drawSensorRing( eye, tp, rangeMeters * worldUnitsPerMeter, kTowerCyan, aBits );
+			drawTowerGlyph( eye, tp, aBits | kTowerCyan );
 		}
 	}
 
@@ -590,7 +633,9 @@ static void drawWeaponBandUnion( Camera* eye, const Stuff::Vector3D* centers,
 	for ( int i = 0; i < n; i++ )
 	{
 		bool havePrev = false; float ppx = 0, ppy = 0;
-		const float hw = sel[i] ? 2.0f : 1.0f;	// bold the selected mech's arc
+		// Hairline arcs like the sensor rings for everyone; the selected
+		// mech's arc is brightened instead of thickened.
+		const unsigned long arcCol = sel[i] ? ( col | 0x003f3f3f ) : col;
 		for ( int k = 0; k <= N; k++ )
 		{
 			float a = ( 2.0f * 3.14159265f ) * (float)( k % N ) / (float)N;
@@ -612,12 +657,19 @@ static void drawWeaponBandUnion( Camera* eye, const Stuff::Vector3D* centers,
 			if ( r.clip.w <= 0.05f ) { havePrev = false; continue; }
 			float sx = vax + ( r.clip.x / r.clip.w * 0.5f + 0.5f ) * vmx;
 			float sy = vay + ( 1.0f - ( r.clip.y / r.clip.w * 0.5f + 0.5f ) ) * vmy;
-			if ( havePrev ) csgThickSeg( ppx, ppy, sx, sy, hw, col );
+			if ( havePrev )
+			{
+				gos_VERTEX ln[2];
+				for ( int v = 0; v < 2; ++v ) { ln[v].z = 0; ln[v].rhw = .5f; ln[v].argb = arcCol; ln[v].frgb = 0; ln[v].u = ln[v].v = 0; }
+				ln[0].x = ppx; ln[0].y = ppy;
+				ln[1].x = sx;  ln[1].y = sy;
+				gos_DrawLines( ln, 2 );
+			}
 			ppx = sx; ppy = sy; havePrev = true;
 		}
 	}
 
-	// One range label per cluster: each circle's top rim point, if on the boundary.
+	// One range label per BAND (first boundary rim point found), not per circle.
 	for ( int i = 0; i < n; i++ )
 	{
 		Stuff::Vector3D p;
@@ -643,6 +695,7 @@ static void drawWeaponBandUnion( Camera* eye, const Stuff::Vector3D* centers,
 			gos_TextSetPosition( (int)sx + 1, (int)sy + 1 ); gos_TextDraw( buf );
 			gos_TextSetAttributes( gosFontHandle, aBits | rgb, 1.0f, false, true, false, false );
 			gos_TextSetPosition( (int)sx, (int)sy ); gos_TextDraw( buf );
+			break;	// one label per band is plenty
 		}
 	}
 }
@@ -664,6 +717,9 @@ static void renderWeaponView( Camera* eye )
 		MoverPtr m = ObjectManager->getMover( i );
 		if ( !m || !m->getExists() || m->isDestroyed() || m->isDisabled() ) continue;
 		if ( m->getTeamId() != Team::home->id ) continue;
+		// Own units only: allied/neutral same-team units (e.g. mission objects
+		// far off in the fog) must not leak their firing ranges onto the map.
+		if ( !m->getCommander() || m->getCommander()->getId() != Commander::home->getId() ) continue;
 		bool band[3];
 		m->getWeaponBandsPresent( band );
 		for ( int b = 0; b < 3; b++ )
@@ -677,11 +733,154 @@ static void renderWeaponView( Camera* eye )
 
 	bool prevExempt = gos_GetHudScaleExempt();
 	gos_SetHudScaleExempt( true );
+	gos_SetRenderState( gos_State_Texture, 0 );
+	gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_AlphaInvAlpha );
+	gos_SetRenderState( gos_State_AlphaTest, 0 );
+	gos_SetRenderState( gos_State_ZCompare, 0 );
+	gos_SetRenderState( gos_State_ZWrite, 0 );
 	for ( int b = 0; b < 3; b++ )
 	{
 		float R = WeaponRanges[kBandWR[b]][1] * worldUnitsPerMeter;
 		drawWeaponBandUnion( eye, centers[b], sel[b], n[b], R, kBandColor[b], aBits );
 	}
+	gos_SetHudScaleExempt( prevExempt );
+}
+
+// Friendly unit markers for the standalone sensor/weapon views: small blue
+// chevron over each own-commander mover so friendlies read at a glance
+// (mirrors the overview's red enemy chevrons; overview itself draws full
+// force-bar icons instead, so this only runs when the overview is NOT up).
+static void renderFriendlyMarkers( Camera* eye )
+{
+	if ( !eye || !Team::home || !ObjectManager ) return;
+	const unsigned long aBits = 0xcc000000;
+	const unsigned long kBlue = 0x003f8cff;
+	const float w = 7.0f, h = 10.0f;
+
+	gos_SetRenderState( gos_State_Texture, 0 );
+	gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_AlphaInvAlpha );
+	gos_SetRenderState( gos_State_AlphaTest, 0 );
+	gos_SetRenderState( gos_State_ZCompare, 0 );
+	gos_SetRenderState( gos_State_ZWrite, 0 );
+
+	bool prevExempt = gos_GetHudScaleExempt();
+	gos_SetHudScaleExempt( true );
+
+	float vmx, vmy, vax, vay;
+	gos_GetViewport( &vmx, &vmy, &vax, &vay );
+
+	for ( int i = 0; i < ObjectManager->numMovers; i++ )
+	{
+		MoverPtr m = ObjectManager->getMover( i );
+		if ( !m || !m->getExists() || m->isDestroyed() || m->isDisabled() ) continue;
+		if ( m->getTeamId() != Team::home->id ) continue;
+		if ( !m->getCommander() || m->getCommander()->getId() != Commander::home->getId() ) continue;
+
+		unsigned long col = aBits | ( m->getSelected() ? ( kBlue | 0x003f3f3f ) : kBlue );
+
+		Stuff::Vector3D wp = m->getPosition();
+		ModernClipResult r = eye->projectModernClipGL( wp );
+		if ( !r.admit || r.clip.w <= 0.05f ) continue;
+		float cx = vax + ( r.clip.x / r.clip.w * 0.5f + 0.5f ) * vmx;
+		float cy = vay + ( 1.0f - ( r.clip.y / r.clip.w * 0.5f + 0.5f ) ) * vmy;
+
+		// Downward chevron, apex on the unit (same silhouette as enemy markers).
+		gos_VERTEX tri[3];
+		for ( int k = 0; k < 3; ++k ) { tri[k].z = 0; tri[k].rhw = .5f; tri[k].argb = col; tri[k].frgb = 0; tri[k].u = tri[k].v = 0; }
+		tri[0].x = cx;     tri[0].y = cy;
+		tri[1].x = cx - w; tri[1].y = cy - h;
+		tri[2].x = cx + w; tri[2].y = cy - h;
+		gos_DrawTriangles( tri, 3 );
+	}
+
+	gos_SetHudScaleExempt( prevExempt );
+}
+
+// Formation line (MC2_TACMAP_FORMATION_LINE): RENDER ONLY — ghost line, slot
+// pips, armed cursor hint. Input/state advance + order issuance live in
+// MissionInterfaceManager::update (missiongui.cpp), BEFORE the world mouse
+// handlers, so the press/release cannot leak into select/move.
+static void updateAndRenderFormationLine( Camera* eye )
+{
+	if ( !eye || !Team::home || !TacticalOverview::formationLineEnabled() )
+		return;
+	TacticalOverview::FormationLineState st = g_tacticalOverview.flState();
+	if ( st == TacticalOverview::FL_IDLE )
+		return;
+
+	long mx = userInput->getMouseX();
+	long my = userInput->getMouseY();
+
+	// --- render ---
+	bool prevExempt = gos_GetHudScaleExempt();
+	gos_SetHudScaleExempt( true );
+	gos_SetRenderState( gos_State_Texture, 0 );
+	gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_AlphaInvAlpha );
+	gos_SetRenderState( gos_State_AlphaTest, 0 );
+	gos_SetRenderState( gos_State_ZCompare, 0 );
+	gos_SetRenderState( gos_State_ZWrite, 0 );
+
+	const unsigned long aBits = 0xcc000000;
+	const unsigned long kGreen = 0x0000cc00;
+
+	if ( st == TacticalOverview::FL_ARMED )
+	{
+		// Cursor hint while armed.
+		if ( gosFontHandle )
+		{
+			gos_TextSetAttributes( gosFontHandle, aBits | kGreen, 1.0f, false, true, false, false );
+			gos_TextSetPosition( (int)mx + 14, (int)my + 14 );
+			gos_TextDraw( "DRAW FORMATION LINE" );
+		}
+	}
+	else if ( st == TacticalOverview::FL_DRAGGING )
+	{
+		float vmx, vmy, vax, vay;
+		gos_GetViewport( &vmx, &vmy, &vax, &vay );
+
+		// Ghost line: project both world endpoints (w>0 cull only).
+		ModernClipResult r0 = eye->projectModernClipGL( g_tacticalOverview.flStart() );
+		ModernClipResult r1 = eye->projectModernClipGL( g_tacticalOverview.flEnd() );
+		if ( r0.clip.w > 0.05f && r1.clip.w > 0.05f )
+		{
+			float x0 = vax + ( r0.clip.x / r0.clip.w * 0.5f + 0.5f ) * vmx;
+			float y0 = vay + ( 1.0f - ( r0.clip.y / r0.clip.w * 0.5f + 0.5f ) ) * vmy;
+			float x1 = vax + ( r1.clip.x / r1.clip.w * 0.5f + 0.5f ) * vmx;
+			float y1 = vay + ( 1.0f - ( r1.clip.y / r1.clip.w * 0.5f + 0.5f ) ) * vmy;
+			csgThickSeg( x0, y0, x1, y1, 1.5f, aBits | kGreen );
+		}
+
+		// Slot pips: small filled quads at each slot, dropped onto the terrain
+		// surface (interpolated z floats over dips between the endpoints).
+		Stuff::Vector3D slots[32];
+		int ns = g_tacticalOverview.flComputeSlots( slots, 32 );
+		for ( int s = 0; s < ns; s++ )
+		{
+			if ( land )
+				slots[s].z = land->getTerrainElevation( slots[s] );
+			ModernClipResult r = eye->projectModernClipGL( slots[s] );
+			if ( r.clip.w <= 0.05f ) continue;
+			float cx = vax + ( r.clip.x / r.clip.w * 0.5f + 0.5f ) * vmx;
+			float cy = vay + ( 1.0f - ( r.clip.y / r.clip.w * 0.5f + 0.5f ) ) * vmy;
+			const float hp = 3.0f;
+			gos_VERTEX q[4];
+			for ( int v = 0; v < 4; ++v ) { q[v].z = 0; q[v].rhw = .5f; q[v].argb = aBits | kGreen; q[v].frgb = 0; q[v].u = q[v].v = 0; }
+			q[0].x = cx - hp; q[0].y = cy - hp; q[1].x = cx - hp; q[1].y = cy + hp;
+			q[2].x = cx + hp; q[2].y = cy + hp; q[3].x = cx + hp; q[3].y = cy - hp;
+			gos_DrawQuads( q, 4 );
+		}
+
+		// Selected-unit count at the cursor.
+		if ( gosFontHandle )
+		{
+			char buf[16];
+			sprintf( buf, "%d", g_tacticalOverview.flMoverCount() );
+			gos_TextSetAttributes( gosFontHandle, aBits | kGreen, 1.0f, false, true, false, false );
+			gos_TextSetPosition( (int)mx + 14, (int)my + 14 );
+			gos_TextDraw( buf );
+		}
+	}
+
 	gos_SetHudScaleExempt( prevExempt );
 }
 
@@ -709,9 +908,16 @@ void ControlGui::render( bool bPaused )
 			renderSensorView( eye );
 		if ( g_weaponViewOn )
 			renderWeaponView( eye );
+		// Blue friendly chevrons whenever a tac view is up (the overview draws
+		// full force-bar icons itself, so skip while it is active).
+		if ( ( g_sensorViewOn || g_weaponViewOn ) && !g_tacticalOverview.active() )
+			renderFriendlyMarkers( eye );
 
 		if ( g_tacticalOverview.active() )
 		{
+			// Formation line ghost + pips + order issuance (env-gated, no-op IDLE).
+			updateAndRenderFormationLine( eye );
+
 			// Altitude-driven overlay stages (independent of the abstract blend t):
 			//   - icons roll in hard over alt 6000 -> 6500 (just past gameplay cap)
 			//   - squad cards take over above alt 12000 (full by 14000)

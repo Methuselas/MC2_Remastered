@@ -22,6 +22,8 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace EditorTaskRunner
 {
@@ -47,10 +49,22 @@ namespace EditorTaskRunner
 		std::string workingDirectory; // cwd for the child ("" = inherit)
 		std::string cancelFile;       // optional: touched on cancel (cooperative kill)
 
+		// Optional environment additions for the child.  When non-empty, the worker
+		// builds a FULL ANSI environment block = parent env (GetEnvironmentStrings)
+		// with these K=V pairs appended/overriding, and passes it to CreateProcessA.
+		// When empty, the child inherits the parent env (env param = NULL), as before.
+		std::vector<std::pair<std::string, std::string>> envExtra;
+
 		// All three run on the MAIN thread, drained by PumpMainThread(), exactly once.
 		std::function<void(const TaskResult&)> onSuccessMainThread; // exit code 0
 		std::function<void(const TaskResult&)> onFailureMainThread; // nonzero / launch fail
 		std::function<void()>                  onCancelMainThread;   // user cancelled
+
+		// Optional: fired on the MAIN thread (via PumpMainThread) once per output
+		// line of the running child, in order. The worker queues lines under the
+		// mutex; the main thread drains + invokes this. Used by the runtime bridge
+		// to parse [MOVER v1] telemetry off the editor's single GL/MFC thread.
+		std::function<void(const std::string&)> onLineMainThread;
 	};
 
 	// Start a task.  Returns kInvalidTask if the process could not be launched.
@@ -66,6 +80,13 @@ namespace EditorTaskRunner
 
 	// True while any task is Pending or Running.
 	bool HasActiveTasks();
+
+	// Editor-shutdown failsafe: terminate every still-Running task's child process
+	// (by stored process HANDLE only -- never by image name, so concurrent smoke /
+	// standalone mc2.exe instances are untouched). Call from the editor teardown
+	// path (ExitInstance / WM_DESTROY). Belt-and-suspenders to the Job Object, which
+	// already kills children if the editor dies uncleanly (crash). MAIN THREAD.
+	void ShutdownKillRunning();
 
 #ifdef MC2_IMGUI
 	// Draw the Task Monitor window.  Call from the ImGui render pass.

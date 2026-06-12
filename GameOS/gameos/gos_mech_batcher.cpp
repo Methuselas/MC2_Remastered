@@ -69,6 +69,10 @@ bool g_drawMechs = true;
 // Opt-out: MC2_GPU_MECHS=0
 bool g_useGpuMechs = envFlagDefaultOn("MC2_GPU_MECHS");
 
+// SimpleCamera UI preview-render context depth (Mech Bay / Mech Purchase).
+// See gos_mech_killswitch.h. Zero during tactical/world rendering.
+int g_mechPreviewRenderDepth = 0;
+
 // Slice B1: enables calc_light() in mech.vert. Requires g_useGpuMechs=true
 // to take effect (the calc_light branch is inside the GPU mech draw path).
 // Opt-out: MC2_GPU_MECH_LIGHTING=0

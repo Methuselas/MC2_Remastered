@@ -2706,7 +2706,17 @@ bool EditorData::saveObjectives( FitIniFile* file )
 	TeamsRef().Save( file );
 	if (!justResaveAllMaps) {
 		if (TeamsRef().ThereAreObjectivesWithNoConditions()) {
-			AfxMessageBox(IDS_OBJECTIVES_WITH_NO_CONDITIONS);
+			// Non-blocking save-validation warning (objectives missing conditions).
+			// Headless smoke: suppress + capture the text instead of hanging on a
+			// modal with no one to click OK. Continue is the only/safe response.
+			if (g_cliSuppressModals) {
+				extern void EditorSmokeLogSuppressedModal(const char* text, const char* caption);
+				char buffer[512];
+				EditorSafeLoadString( IDS_OBJECTIVES_WITH_NO_CONDITIONS, buffer, 512, gameResourceHandle );
+				EditorSmokeLogSuppressedModal( buffer, "Warning" );
+			} else {
+				AfxMessageBox(IDS_OBJECTIVES_WITH_NO_CONDITIONS);
+			}
 		}
 	}
 	return true;

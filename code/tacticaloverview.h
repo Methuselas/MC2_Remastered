@@ -3,8 +3,10 @@
 // Engine glue for the Tactical Overview camera. Owns the pure blend-state,
 // reads env flags, drives the Camera via its public API, draws the 2D overlay.
 #include "tacticaloverview_state.h"
+#include <stuff/stuff.hpp>
 
 class Camera;
+class Mover;
 
 class TacticalOverview {
 public:
@@ -49,6 +51,31 @@ public:
     void armReleaseSuppression() { suppressRelease_ = true; }
     bool consumeReleaseSuppression() { bool s = suppressRelease_; suppressRelease_ = false; return s; }
 
+    // --- Formation line (MC2_TACMAP_FORMATION_LINE, default OFF) ---
+    // Draw a line in F6 overview; selected squad gets one move order per
+    // evenly spaced slot. State machine: IDLE -> ARMED (L) -> DRAGGING (LMB)
+    // -> issue on release. Esc / RMB / exiting F6 cancels.
+    enum FormationLineState { FL_IDLE = 0, FL_ARMED, FL_DRAGGING };
+    static bool formationLineEnabled();        // env gate, cached
+    void flOnHotkeyL();                        // L pressed while F6 active
+    void flOnCancel();                         // Esc / right-click / F6 exit
+    void flOnDragStart( const Stuff::Vector3D& worldStart );
+    void flOnDragMove( const Stuff::Vector3D& worldEnd );
+    void flOnRelease();                        // resets state + count
+    FormationLineState flState() const { return flState_; }
+    const Stuff::Vector3D& flStart() const { return flStart_; }
+    const Stuff::Vector3D& flEnd()   const { return flEnd_; }
+    // Evenly spaced slots start->end inclusive; N==1 -> midpoint. Returns count.
+    int flComputeSlots( Stuff::Vector3D* outSlots, int maxSlots ) const;
+    // World health bars are replaced by icons/cards while the overview is up.
+    // Game code masks DRAW_BARS through this at the game->appearance handoff
+    // (mech/vehicle setObjectParameters, turret render).
+    static unsigned long maskWorldBars( unsigned long drawFlags );
+
+    void flSetMovers( Mover* const* movers, int n );
+    int  flMoverCount() const { return flMoverCount_; }
+    Mover* flMover( int i ) const { return ( i >= 0 && i < flMoverCount_ ) ? flMovers_[i] : 0; }
+
 private:
     // Engine-free snapshot of the gameplay camera, captured once on entry.
     // Only altitude + tilt are captured/restored: those are the ONLY fields
@@ -72,6 +99,13 @@ private:
     CardHit cardHit_[kMaxCardHits];
     int     cardHitCount_ = 0;
     bool    suppressRelease_ = false;
+
+    FormationLineState flState_ = FL_IDLE;
+    Stuff::Vector3D    flStart_;
+    Stuff::Vector3D    flEnd_;
+    static const int   kFlMaxMovers = 32;
+    Mover*             flMovers_[kFlMaxMovers] = {};   // snapshot at drag start
+    int                flMoverCount_ = 0;
 };
 
 extern TacticalOverview g_tacticalOverview;

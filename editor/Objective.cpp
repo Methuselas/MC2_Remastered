@@ -1566,12 +1566,26 @@ bool CObjective::Save( FitIniFile* file, int objectiveNum )
 	if ( m_modelID != -1 )
 	{
 		unsigned long ulGroup, ulIndex;
-		EditorObjectMgr::instance()->getBuildingFromID( m_modelID, ulGroup, ulIndex, true);
-		int ID = EditorObjectMgr::instance()->getID( ulGroup, ulIndex );
-		pName = EditorObjectMgr::instance()->getFileName( ID );
-		type = (ID >> 24) & 0xff;
-		scale = EditorObjectMgr::instance()->getScale( ID );
-
+		// getBuildingFromID returns false when m_modelID references a building not
+		// present in the editor object catalog (e.g. a mission authored against a
+		// different/mod object set). On failure it leaves ulGroup past the end of the
+		// groups array, so getID()/getFileName()/getScale() would index out of bounds
+		// and read a garbage fileName pointer (AV at Objective.cpp). Guard it: skip the
+		// model fields and serialize defaults rather than crash.
+		if ( EditorObjectMgr::instance()->getBuildingFromID( m_modelID, ulGroup, ulIndex, true) )
+		{
+			int ID = EditorObjectMgr::instance()->getID( ulGroup, ulIndex );
+			const char* pFileName = EditorObjectMgr::instance()->getFileName( ID );
+			pName = pFileName ? pFileName : "";
+			type = (ID >> 24) & 0xff;
+			scale = EditorObjectMgr::instance()->getScale( ID );
+		}
+		else
+		{
+			char warnBuf[160];
+			sprintf( warnBuf, "CObjective::Save: objective model ID %ld not found in editor object catalog; writing default model\n", (long)m_modelID );
+			OutputDebugString( warnBuf );
+		}
 	}
 	file->writeIdString( "ObjectiveModel", pName );
 	file->writeIdLong( "ModelType", type );

@@ -186,6 +186,31 @@ private:
     OBJ_ID_LIST buildingIDs;
 };
 
+// Forward-declared only — do NOT #include "Forest.h" here. Forest.h transitively
+// pulls <winsock2.h> after <windows.h>, and Action.h is included by every brush
+// TU (FlattenBrush.h etc.), so including it here breaks their winsock ordering.
+// The full Forest type is needed only in Action.cpp, which includes Forest.h.
+class Forest;
+
+// Undo/redo action for EditorObjectMgr::createForest().
+// undo()  -- removes the forest that was just created (by captured ID).
+// redo()  -- re-creates it from the captured Forest params.
+// NOTE: foliage-layer (FoliageRender PCG) undo is out of scope and deferred.
+class ForestAction : public Action
+{
+public:
+    // capturedForest must be the Forest value AFTER createForest() returns
+    // (so its ID field is the one assigned by EditorObjectMgr).
+    explicit ForestAction( const Forest& capturedForest );
+    virtual ~ForestAction();
+
+    virtual bool redo();
+    virtual bool undo();
+
+private:
+    Forest* m_forest; // heap copy of the snapshot (ID + all placement params)
+};
+
 // this mgr holds all the actions
 class ActionUndoMgr
 {
@@ -206,6 +231,12 @@ public:
 
     void NoteThatASaveHasJustOccurred();
     bool ThereHasBeenANetChangeFromWhenLastSaved();
+
+    // Read-only accessors for display panels (e.g. UndoHistoryPanel).
+    // These are const and side-effect-free; they do NOT alter undo/redo state.
+    int GetActionCount() const;
+    const char* GetActionDescription( int index ) const;
+    int GetCurrentPosition() const;
 
     static ActionUndoMgr* instance;
 

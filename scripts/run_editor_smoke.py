@@ -264,6 +264,15 @@ def run_case(name: str, exe: Path, deploy: Path, exit_sec: int, timeout: int,
                 bucket = "asset_no_groups"; detail = f"expected groups>=1, got {ag}"
             elif aa != "1":
                 bucket = "asset_not_activated"; detail = f"placement not activated, activated={aa}"
+        if expect == "place_oob":
+            # Off-map BuildingBrush placement must be clamped to the valid cell
+            # grid (regression guard for the terrainElevation 0xC0000005 crash).
+            # survived=1 means every far-off-map probe snapped back in-grid; the
+            # unguarded build returns 0 (snapped result still off the grid).
+            so = esmoke.get("place_oob_survived")
+            if so != "1":
+                bucket = "place_oob_unguarded"
+                detail = f"off-map placement not clamped, survived={so} (want 1)"
 
     passed = (bucket == "")
     return dict(name=name, passed=passed, bucket=bucket, detail=detail,
@@ -332,6 +341,9 @@ def build_suite(deploy: Path):
         "validate":        (["-gen-map=0,0", "-smoke-validate"], "validate"),  # live Mission validator
         "inspector_edit":  (["-gen-map=0,0", "-smoke-inspector-edit"], "inspector_edit"),  # transform+undo
         "asset_browser":   (["-gen-map=0,0", "-smoke-asset-browser"], "asset_browser"),  # catalog + activate
+        "gameplay_debugger": (["-gen-map=0,0", "-smoke-gameplay-debugger"], None),  # read-only debugger (no-crash)
+        "undo_history":    (["-gen-map=0,0", "-smoke-undo-history"], None),  # display-only undo panel (no-crash)
+        "place_oob":       (["-gen-map=0,0", "-smoke-place-oob"], "place_oob"),  # off-map placement OOB crash guard
         # gen_save_load is handled specially (two phases) in main().
     }
     return cases

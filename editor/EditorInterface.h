@@ -84,6 +84,9 @@ private:
 public:
 
 	static EditorInterface* instance(){ return s_instance; }
+	// Open a mission by explicit .pak path (same load path as FileOpen's success branch,
+	// minus the file dialog). Used by the Mod Project "Import Mission" flow.
+	void OpenMissionByPath(const char* pakPath);
 	void renderToolbarImGui();
 	void renderObjectCompanionPanel();
 
@@ -107,6 +110,18 @@ public:
 	// bitmask: bit0 = transform moved the object, bit1 = undo restored it.
 	// Returns -1 if setup failed (no terrain / object-mgr).
 	int runInspectorEditSmoke();
+
+	// Smoke-only (-smoke-place-oob): activate a BuildingBrush and drive its
+	// update() at off-map screen points to exercise the worldToCell OOB clamp.
+	// Returns 1 if all updates survived, -1 if setup failed. Read-only.
+	int runPlaceOobSmoke();
+
+	// Frame/focus the camera on the current selection: recenters the camera's
+	// ground anchor on the centroid of the selected objects' XY positions.
+	// Read-only — no object mutation, no undo entry, no mission-dirty. No-op
+	// when nothing is selected. Driven by the Scene Outliner (double-click) and
+	// the 'F' hotkey. Z stays terrain-locked (derived by Camera::setPosition).
+	static void frameSelectedObjects();
 
 	// Object placement: shared by the Objects menu and the companion panel.
 	bool selectBuildingObject( int group, int indexInGroup );

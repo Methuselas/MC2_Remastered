@@ -10,6 +10,7 @@ SimpleCamera.cpp	: Implementation of the SimpleCamera component.
 #include"mclib.h"
 #include"mech3d.h"
 #include"mission.h"
+#include "../GameOS/gameos/gos_mech_killswitch.h"  // MechPreviewRenderScope (preview-fix)
 #include"bdactor.h"
 
 // sebi: !NB remove when assert(0 && "test") is removed below
@@ -113,6 +114,11 @@ void SimpleCamera::render(long xOffset, long yOffset)
 
 	if ( pObject )
 	{
+		// PREVIEW-FIX: mark this as a UI preview render so Mech3DAppearance::render
+		// bypasses the GPU mech batcher (whose flush uses the world snapshot/terrain
+		// MVP) and takes the CPU MLR draw, which honors THIS SimpleCamera. Scoped:
+		// world/tactical rendering never sees a nonzero depth.
+		MechPreviewRenderScope _previewScope;
 
 		if ( bIsComponent )
 		{
@@ -243,6 +249,13 @@ long SimpleCamera::update()
 {
 	if ( pObject )
 	{
+		// PREVIEW-FIX: the geometry consumed by the CPU MLR preview draw is built
+		// here (pObject->update() -> updateGeometry -> TransformMultiShape). Mark
+		// the preview context for this whole update so updateGeometry runs the
+		// FULL transform (populating listOfVertices) instead of the GPU
+		// _PositionsOnly fast path, which would leave the preview blank.
+		MechPreviewRenderScope _previewScope;
+
 		turn++;			//Must increment this now or matrices NEVER change!!
 
 		//reset the TGL RAM pools.

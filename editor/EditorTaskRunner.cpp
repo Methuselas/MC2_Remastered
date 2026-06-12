@@ -15,10 +15,13 @@
 #endif
 
 #include <atomic>
+#include <cctype>
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace EditorTaskRunner
@@ -45,6 +48,11 @@ struct Task
 	std::atomic<bool> workerDone{ false };   // worker thread finished
 	bool         callbackFired = false;      // main thread fired result once
 
+	// Output lines awaiting the main-thread onLineMainThread callback (queued by the
+	// worker under s_mutex, drained in PumpMainThread). Only populated when
+	// spec.onLineMainThread is set, so non-bridge tasks pay nothing.
+	std::deque<std::string> pendingLines;
+
 	HANDLE       hProcess = NULL;            // valid while running (guard with s_mutex)
 	std::thread  worker;
 };
@@ -52,6 +60,38 @@ struct Task
 static std::mutex                         s_mutex;
 static std::vector<std::shared_ptr<Task>> s_tasks;
 static TaskId                             s_nextId = 1;
+
+// Job Object owning every child we launch. Created with
+// JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE so that when the editor process dies for ANY
+// reason -- clean exit OR crash -- the OS closes this handle and terminates all
+// assigned children. This is the crash-robust failsafe; ShutdownKillRunning() is
+// the clean-exit belt-and-suspenders. Children are killed only because they are
+// OUR children in OUR job -- never by image name, so concurrent smoke / standalone
+// mc2.exe instances (not in this job) are never touched.
+static HANDLE s_jobObject = NULL;
+
+// Lazily create the kill-on-close job. Caller holds s_mutex. NULL job is tolerated
+// (assignment simply skipped) -- the ShutdownKillRunning sweep still covers clean exit.
+static void EnsureJobObject_locked()
+{
+	if (s_jobObject != NULL)
+		return;
+	HANDLE job = CreateJobObjectA(NULL, NULL);
+	if (!job)
+		return;
+	JOBOBJECT_EXTENDED_LIMIT_INFORMATION info{};
+	info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+	if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation,
+	                             &info, sizeof(info)))
+	{
+		CloseHandle(job);
+		return;
+	}
+	s_jobObject = job;
+}
+
+static std::vector<char> BuildEnvBlock(
+	const std::vector<std::pair<std::string, std::string>>& extra);
 
 // Append to the task log under lock, trimming to the tail if oversized.
 static void AppendLog(Task* t, const char* data, size_t len)
@@ -67,6 +107,17 @@ static void HandleLine(Task* t, const std::string& line)
 {
 	AppendLog(t, line.data(), line.size());
 	AppendLog(t, "\n", 1);
+
+	// Queue the raw line for the main-thread per-line callback (runtime bridge).
+	// Bounded so a chatty child can't grow this unboundedly if the main thread
+	// stalls; oldest lines drop first (telemetry is periodic, latest matters).
+	if (t->spec.onLineMainThread)
+	{
+		t->pendingLines.push_back(line);
+		const size_t kMaxPendingLines = 4096;
+		while (t->pendingLines.size() > kMaxPendingLines)
+			t->pendingLines.pop_front();
+	}
 
 	if (line.compare(0, 9, "PROGRESS ") != 0)
 		return;
@@ -127,10 +178,15 @@ static void WorkerMain(std::shared_ptr<Task> t)
 	cmd.push_back('\0');
 	const char* cwd = t->spec.workingDirectory.empty() ? NULL : t->spec.workingDirectory.c_str();
 
+	// Build a full ANSI env block only when envExtra is set; else pass NULL (inherit).
+	std::vector<char> envBlock = BuildEnvBlock(t->spec.envExtra);
+	LPVOID envPtr = envBlock.empty() ? NULL : (LPVOID)envBlock.data();
+
 	BOOL ok = CreateProcessA(
 		NULL, cmd.data(), NULL, NULL,
 		TRUE,                              // inherit handles (the pipe write end)
-		CREATE_NO_WINDOW, NULL, cwd, &si, &pi);
+		CREATE_NO_WINDOW,                  // ANSI block -> do NOT set CREATE_UNICODE_ENVIRONMENT
+		envPtr, cwd, &si, &pi);
 
 	// Parent never writes the pipe; close its copy so ReadFile sees EOF at child exit.
 	CloseHandle(hWrite);
@@ -153,6 +209,14 @@ static void WorkerMain(std::shared_ptr<Task> t)
 		std::lock_guard<std::mutex> lk(s_mutex);
 		t->status   = Status::Running;
 		t->hProcess = pi.hProcess;
+
+		// Assign the child to our kill-on-job-close job so it dies with the editor
+		// even on an editor crash. Best-effort: if the job can't be created/assigned
+		// (older OS, child already in a non-nestable job), the clean-exit
+		// ShutdownKillRunning() sweep is the fallback.
+		EnsureJobObject_locked();
+		if (s_jobObject)
+			AssignProcessToJobObject(s_jobObject, pi.hProcess);
 	}
 
 	// Read the combined pipe, splitting on newlines.
@@ -192,12 +256,92 @@ static void WorkerMain(std::shared_ptr<Task> t)
 		if (t->cancelRequested.load())      t->status = Status::Cancelled;
 		else if (code == 0)               { t->status = Status::Succeeded; t->progress = 100; }
 		else                                t->status = Status::Failed;
+		// Close the process handle while still holding the lock, after nulling t->hProcess,
+		// so CancelTask/ImGui (which read t->hProcess under the same lock) can never observe
+		// a stale handle and TerminateProcess a closed/recycled handle (TOCTOU).
+		HANDLE h = t->hProcess;
 		t->hProcess = NULL;
+		if (h) CloseHandle(h);
 	}
-	CloseHandle(pi.hProcess);
 	CloseHandle(pi.hThread);
 
 	t->workerDone = true;
+}
+
+// Build a FULL ANSI environment block = parent env + envExtra (appended/overriding).
+//
+// A Win32 environment block is a sequence of "NAME=VALUE\0" strings terminated by an
+// extra '\0' (double-NUL).  CreateProcessA without CREATE_UNICODE_ENVIRONMENT expects
+// an ANSI block.  We start from the parent's GetEnvironmentStringsA(), then for each
+// extra we override any existing same-named entry (case-insensitive name compare, as
+// Windows env names are case-insensitive) or append it.  Returns the block bytes; an
+// empty return means "use NULL" (caller inherits parent env).
+static std::vector<char> BuildEnvBlock(
+	const std::vector<std::pair<std::string, std::string>>& extra)
+{
+	std::vector<char> block;
+	if (extra.empty())
+		return block;   // empty -> caller passes NULL (inherit parent env)
+
+	// Collect parent entries as "NAME=VALUE" strings.
+	std::vector<std::string> entries;
+	LPCH parent = GetEnvironmentStringsA();
+	if (parent)
+	{
+		for (const char* p = parent; *p; )
+		{
+			std::string e(p);
+			// Skip the leading "=::=::\" style drive-cwd entries' empty names gracefully;
+			// keep them verbatim (they have a leading '=' and must be preserved).
+			entries.push_back(e);
+			p += e.size() + 1;
+		}
+		FreeEnvironmentStringsA(parent);
+	}
+
+	// Helper: case-insensitive compare of the NAME part (before first '=', ignoring a
+	// possible leading '=' used by the special "=C:=..." drive entries).
+	auto nameOf = [](const std::string& kv) -> std::string {
+		size_t start = (!kv.empty() && kv[0] == '=') ? 1 : 0;
+		size_t eq = kv.find('=', start);
+		std::string n = kv.substr(0, (eq == std::string::npos) ? kv.size() : eq);
+		for (char& c : n) c = (char)tolower((unsigned char)c);
+		return n;
+	};
+
+	for (const auto& kv : extra)
+	{
+		std::string newEntry = kv.first + "=" + kv.second;
+		// Mirror nameOf()'s leading-'=' skip so a key like "=C:" matches the parent's
+		// "=C:=..." drive entry instead of always appending a duplicate.
+		std::string newName = kv.first;
+		{
+			size_t start = (!newName.empty() && newName[0] == '=') ? 1 : 0;
+			newName = newName.substr(start);
+		}
+		for (char& c : newName) c = (char)tolower((unsigned char)c);
+
+		bool overrode = false;
+		for (auto& existing : entries)
+		{
+			if (nameOf(existing) == newName)
+			{
+				existing = newEntry;
+				overrode = true;
+				break;
+			}
+		}
+		if (!overrode)
+			entries.push_back(newEntry);
+	}
+
+	for (const auto& e : entries)
+	{
+		block.insert(block.end(), e.begin(), e.end());
+		block.push_back('\0');
+	}
+	block.push_back('\0');   // double-NUL terminator
+	return block;
 }
 
 static std::shared_ptr<Task> FindTask(TaskId id)
@@ -261,6 +405,29 @@ void PumpMainThread()
 	struct Pending { std::shared_ptr<Task> task; };
 	std::vector<std::shared_ptr<Task>> ready;
 
+	// Drain queued output lines and fire the per-line callback on THIS (main) thread.
+	// Snapshot (callback + lines) under the lock, then invoke outside it -- the
+	// callback parses telemetry / touches editor state and must not hold s_mutex.
+	{
+		std::vector<std::pair<std::function<void(const std::string&)>,
+			std::vector<std::string>>> lineBatches;
+		{
+			std::lock_guard<std::mutex> lk(s_mutex);
+			for (auto& t : s_tasks)
+			{
+				if (!t->spec.onLineMainThread || t->pendingLines.empty())
+					continue;
+				std::vector<std::string> drained(
+					t->pendingLines.begin(), t->pendingLines.end());
+				t->pendingLines.clear();
+				lineBatches.emplace_back(t->spec.onLineMainThread, std::move(drained));
+			}
+		}
+		for (auto& batch : lineBatches)
+			for (auto& ln : batch.second)
+				batch.first(ln);
+	}
+
 	{
 		std::lock_guard<std::mutex> lk(s_mutex);
 		for (auto& t : s_tasks)
@@ -309,6 +476,30 @@ bool HasActiveTasks()
 		if (t->status == Status::Pending || t->status == Status::Running)
 			return true;
 	return false;
+}
+
+void ShutdownKillRunning()
+{
+	// Terminate every still-Running child by its stored HANDLE under the lock,
+	// honoring the handle-lifetime rule: WorkerMain nulls + closes t->hProcess under
+	// s_mutex on child exit, so a handle observed here is live (never stale/recycled).
+	// Cook/asset python children are killed too -- an orphaned generator outliving its
+	// editor is also undesirable. Image-name kills are deliberately avoided so
+	// concurrent smoke / standalone mc2.exe instances survive.
+	std::lock_guard<std::mutex> lk(s_mutex);
+	for (auto& t : s_tasks)
+	{
+		if (t->status != Status::Running)
+			continue;
+		t->cancelRequested.store(true);
+		if (t->hProcess)
+			TerminateProcess(t->hProcess, 1);
+	}
+
+	// Closing the job handle is redundant after the explicit terminates above, but if
+	// any child slipped in between, kill-on-close finishes the job. Leave the handle to
+	// be reaped at process exit (closing it now would kill children we may still want
+	// to report on); the OS closes it when the editor exits regardless.
 }
 
 #ifdef MC2_IMGUI
