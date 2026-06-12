@@ -5,6 +5,7 @@
 #include "gos_hdri.h"
 #include "gos_profiler.h"
 #include "gos_validate.h"  // drainGLErrors (Tier-1 instr §4)
+#include "gos_smoke.h"     // S9E: SmokeMode fixed deterministic render-shader clock
 #include "gameos.hpp"      // gos_InvalidateRenderStateCache (RENDER_STATES v1)
 #include "../../RenderWorld/RenderWorld.h"  // M1.5: IsObjectIdBufferEnabled
 #include "../../RenderCore/RenderResourceRegistry.h"
@@ -1615,7 +1616,9 @@ void gosPostProcess::runScreenShadow()
     screenShadowProg_->setInt("debugMode", screenShadowDebug_);
     float screenSz[2] = { (float)width_, (float)height_ };
     screenShadowProg_->setFloat2("screenSize", screenSz);
-    screenShadowProg_->setFloat("time", (float)SDL_GetTicks() * 0.001f);
+    screenShadowProg_->setFloat("time", SmokeMode::fixedTimestepEnabled()
+                                            ? (float)SmokeMode::fixedClockSeconds()
+                                            : (float)SDL_GetTicks() * 0.001f);
     screenShadowProg_->apply();
 
     // Upload matrices via direct GL (after apply binds the program)
@@ -1677,7 +1680,9 @@ void gosPostProcess::runGodRays()
     glDisable(GL_CULL_FACE);
     glDepthMask(GL_FALSE);
 
-    float elapsed = (float)SDL_GetTicks() / 1000.0f;
+    float elapsed = SmokeMode::fixedTimestepEnabled()
+                        ? (float)SmokeMode::fixedClockSeconds()
+                        : (float)SDL_GetTicks() / 1000.0f;
 
     godrayProg_->setInt("sceneDepthTex", 0);
     godrayProg_->setInt("sceneColorTex", 1);
@@ -1745,7 +1750,9 @@ void gosPostProcess::runShoreline()
     shorelineProg_->setInt("sceneNormalTex", 1);
     float screenSz[2] = { (float)width_, (float)height_ };
     shorelineProg_->setFloat2("screenSize", screenSz);
-    float elapsed = (float)SDL_GetTicks() / 1000.0f;
+    float elapsed = SmokeMode::fixedTimestepEnabled()
+                        ? (float)SmokeMode::fixedClockSeconds()
+                        : (float)SDL_GetTicks() / 1000.0f;
     shorelineProg_->setFloat("time", elapsed);
     shorelineProg_->apply();
 
