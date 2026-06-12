@@ -27,6 +27,7 @@
 
 #ifndef DBASEGUI_H
 #include"dbasegui.h"
+#include"tacticaloverview.h"  // suppress world health bars in the overview
 #endif
 
 //-----------------------------------------------------------------------------
@@ -398,7 +399,8 @@ long VFXAppearance::render (long depthFixup)
 
 	gosASSERT(shapesOK);
 
-	if (selected)
+	// Suppress world health bars while the tactical overview is up.
+	if (selected && !g_tacticalOverview.active())
 		drawBars();
 
  	//------------------------------------------------------------------------

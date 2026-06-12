@@ -11,6 +11,8 @@ gameTacMap.h			: Interface for the gameTacMap component.
 #include"tacmap.h"
 #endif
 
+class Camera;
+
 //*************************************************************************************************
 
 /**************************************************************************************************
@@ -34,7 +36,7 @@ class GameTacMap: public TacMap
 	void init( unsigned char* bitmapData, int dataSize );
 	void update(); // do not call these two functions from editor
 	void render();
-	
+
 	bool animate (long objectiveId, long nFlashes);
 
 	// if the world coords do not lie on the map, they will be changed.

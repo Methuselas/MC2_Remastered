@@ -516,6 +516,13 @@ class UserInput
 			return(leftClick);
 		}
 
+		// Consume the current left-click so later handlers in the same frame skip
+		// it (e.g. the Tactical Overview squad-card click selects a group and must
+		// stop the world-pick from also firing under the card).
+		void clearLeftClick (void) {
+			leftClick = false;
+		}
+
 		bool isRightClick (void) {
 			return(rightClick);
 		}

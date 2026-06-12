@@ -7,6 +7,7 @@ Objective.cpp			: Implementation of the Objective component.
 \*************************************************************************************************/
 
 #include"terrain.h"
+#include"gamecam.h"   // Camera::projectModernClipGL for the overview marker overlay
 
 #include"objective.h"
 
@@ -2303,6 +2304,51 @@ bool CObjective::RenderMarkers(GameTacMap *tacMap, bool blink )
 	}
 
 	return bRetVal;
+}
+
+void CObjective::RenderOverviewMarker( Camera* eye, float alpha )
+{
+	if ( !eye || alpha <= 0.0f )
+		return;
+	if ( m_resolved || !m_displayMarker || !m_isActive )
+		return;
+	if ( !m_markerText[0] || !s_markerFont )
+		return;
+
+	// World position of the marker, lifted to the terrain surface so it projects
+	// onto the ground at altitude (objectives are authored at z=0).
+	Stuff::Vector3D wp;
+	wp.x = m_markerX;
+	wp.y = m_markerY;
+	wp.z = 0.0f;
+	if ( land )
+		wp.z = land->getTerrainElevation( wp );
+
+	// Project through the GL clip matrix the scene renders with (matches the unit
+	// icon overlay; avoids the legacy projectZ split-brain lag under motion).
+	ModernClipResult r = eye->projectModernClipGL( wp );
+	if ( !r.admit || r.clip.w <= 0.05f )
+		return;
+	float vmx, vmy, vax, vay;
+	gos_GetViewport( &vmx, &vmy, &vax, &vay );
+	float sx = vax + ( r.clip.x / r.clip.w * 0.5f + 0.5f ) * vmx;
+	float sy = vay + ( 1.0f - ( r.clip.y / r.clip.w * 0.5f + 0.5f ) ) * vmy;
+
+	unsigned long aByte = (unsigned long)( alpha * 255.0f );
+	if ( aByte > 255 ) aByte = 255;
+	const unsigned long fg = ( aByte << 24 ) | 0x00ffe600; // warm yellow, cross-faded
+	const unsigned long bg = ( aByte << 24 ) | 0x00000000; // black shadow
+
+	unsigned long width  = s_markerFont->width( m_markerText );
+	unsigned long height = s_markerFont->height();
+
+	// Exempt from the bottom-band HUD shrink (world-anchored, like the icons).
+	bool prevExempt = gos_GetHudScaleExempt();
+	gos_SetHudScaleExempt( true );
+	drawShadowText( fg, bg, s_markerFont->getTempHandle(),
+	                (long)( sx - width / 2 ), (long)( sy - height / 2 ),
+	                true, m_markerText, 0, s_markerFont->getSize(), -2, 2 );
+	gos_SetHudScaleExempt( prevExempt );
 }
 
 

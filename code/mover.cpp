@@ -6949,6 +6949,36 @@ void Mover::drawWaypointPath()
 	getPilot()->drawWaypointPath();
 }
 
+void Mover::drawOverviewMovePath( unsigned long color )
+{
+	if ( getPilot() )
+		getPilot()->drawOverviewMovePath( color );
+}
+
+bool Mover::getMoveDestination( Stuff::Vector3D& out )
+{
+	return getPilot() ? getPilot()->getMoveDestination( out ) : false;
+}
+
+void Mover::getWeaponBandsPresent( bool present[3] )
+{
+	present[0] = present[1] = present[2] = false;	// short / medium / long
+	int total = (int)numOther + (int)numWeapons + (int)numAmmos;
+	if ( total > MAX_MOVER_INVENTORY_ITEMS ) total = MAX_MOVER_INVENTORY_ITEMS;
+	for ( int j = 0; j < total; j++ )
+	{
+		MasterComponent& mc = MasterComponent::masterList[inventory[j].masterID];
+		ComponentFormType f = mc.getForm();
+		if ( f < COMPONENT_FORM_WEAPON || f > COMPONENT_FORM_WEAPON_MISSILE )
+			continue;
+		long rt = mc.getWeaponRange();
+		int b = ( rt == WEAPON_RANGE_SHORT ) ? 0
+		      : ( rt == WEAPON_RANGE_MEDIUM || rt == WEAPON_RANGE_SHORT_MEDIUM ) ? 1
+		      : 2;	// LONG or MEDIUM_LONG
+		present[b] = true;
+	}
+}
+
 //---------------------------------------------------------------------------
 
 void Mover::updateDrawWaypointPath()

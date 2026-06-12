@@ -85,6 +85,7 @@ extern CPrefs prefs;
 #include "gos_profiler.h"
 #include "../GameOS/gameos/gos_smoke.h"
 #include "../GameOS/gameos/MC2Strings.h"
+#include "tacticaloverview.h"  // Tactical Overview F6 toggle (main-loop input)
 
 //------------------------------------------------------------------------------------------------------------
 // MechCmdr2 Global Instances of Things
@@ -2245,7 +2246,38 @@ void __stdcall DoGameLogic()
 					logistics->stop();
 				}
 			}
-	
+
+			// Tactical Overview toggle (F6). Detected here in the main loop where
+			// input is freshly polled (userInput->update() above); the mission
+			// command table did not dispatch it. Edge-latch: one press = one toggle.
+			{
+				static bool s_tacOvF6Was = false;
+				bool f6Down = userInput->getKeyDown(KEY_F6);
+				if (f6Down && !s_tacOvF6Was)
+					g_tacticalOverview.onHotkey();
+				s_tacOvF6Was = f6Down;
+			}
+
+			// Sensor view toggle (F7) — same proven input site.
+			{
+				extern bool g_sensorViewOn;
+				static bool s_f7Was = false;
+				bool f7Down = userInput->getKeyDown(KEY_F7);
+				if (f7Down && !s_f7Was)
+					g_sensorViewOn = !g_sensorViewOn;
+				s_f7Was = f7Down;
+			}
+
+			// Weapon view toggle (F8).
+			{
+				extern bool g_weaponViewOn;
+				static bool s_f8Was = false;
+				bool f8Down = userInput->getKeyDown(KEY_F8);
+				if (f8Down && !s_f8Was)
+					g_weaponViewOn = !g_weaponViewOn;
+				s_f8Was = f8Down;
+			}
+
 			if ((true == bInvokeOptionsScreenFlag)
 				|| (userInput->getKeyDown(KEY_O) && userInput->ctrl() && !userInput->alt() && !userInput->shift()))
 			{

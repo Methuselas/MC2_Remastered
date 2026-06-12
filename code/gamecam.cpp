@@ -50,6 +50,7 @@
 #include "../GameAdapters/SkyRenderAdapter.h"  // HDRI-SKY-1: firewall-clean sky rendering
 #include "../GameOS/gameos/view_uniforms_gl.h"  // F1-3A: ViewUniforms UBO upload
 #include "../GameOS/gameos/gos_static_prop_killswitch.h"  // F1-3C: gos_GetTerrainMVPMat4 compare probe
+#include "tacticaloverview.h"  // Tactical Overview diagnostic HUD + blend state
 // WATER-TERRAIN-REFLECTION-1: mirrored terrain reflection pass (engine-side;
 // raw GL lives in gos_terrain_indirect.cpp, this is a plain call -> firewall OK).
 namespace gos_terrain_indirect { void RenderWaterReflectionPass(); }
@@ -923,6 +924,23 @@ long GameCamera::update (void)
 		moveHere.w = height;
 
 		globalFloatHelp->setFloatHelp(text,moveHere,SD_GREEN,SD_BLACK,1.0f,true,false,false,false);
+	}
+
+	// Tactical Overview diagnostic HUD — only under MC2_TACTICAL_OVERVIEW_DEBUG.
+	// Shows blend t / setpoint / altitude for tuning; off in normal play.
+	if (TacticalOverview::enabled() && getenv("MC2_TACTICAL_OVERVIEW_DEBUG"))
+	{
+		char ovtext[256];
+		sprintf(ovtext,"[TacOverview] t=%.3f setpt=%.2f fires=%d | tilt=%.1f alt=%.0f maxLo=%.0f  (F6=toggle, wheel=zoom)",
+			g_tacticalOverview.blend(), g_tacticalOverview.setpoint(),
+			g_tacticalOverview.hotkeyFires(), projectionAngle, cameraAltitude,
+			Camera::AltitudeMaximumLo);
+		Stuff::Vector4D ovPos; ovPos.x = 10.0f; ovPos.y = 40.0f;
+		DWORD ow, oh;
+		gos_TextSetAttributes(gosFontHandle, 0, gosFontScale, false, true, false, false);
+		gos_TextStringLength(&ow,&oh,ovtext);
+		ovPos.z = ow; ovPos.w = oh;
+		globalFloatHelp->setFloatHelp(ovtext,ovPos,SD_YELLOW,SD_BLACK,1.0f,true,false,false,false);
 	}
 
 	if (!compass)	//Create it!
