@@ -48,25 +48,108 @@ DEFAULT_MENU_SCRIPT = ROOT / "tests" / "smoke" / "menu_canary_first_mission.txt"
 GAME_AUTO = ROOT / "scripts" / "game_auto.py"
 
 
-def _running_mc2() -> list[int]:
+def _norm_path(p: str) -> str:
+    """Normalize an exe path for comparison: resolve, forward-slash, casefold.
+    Windows paths are case-insensitive and may mix slashes; an unresolvable
+    string (e.g. empty ExecutablePath) yields ''."""
+    if not p:
+        return ""
+    try:
+        return str(Path(p).resolve()).replace("\\", "/").casefold()
+    except Exception:
+        return p.replace("\\", "/").casefold()
+
+
+def _enum_mc2_processes() -> list[tuple[int, str, str]]:
+    """Return (pid, exe_path, command_line) for every running mc2.exe via
+    Win32_Process metadata. ExecutablePath/CommandLine may be empty on PIDs
+    we lack rights to query; callers fall back to CommandLine matching.
+
+    This is the impure half (shells PowerShell). The pure path-discrimination
+    logic lives in _same_path_mc2 below, which is what the unit test exercises."""
+    ps = (
+        "Get-CimInstance Win32_Process -Filter \"Name='mc2.exe'\" | "
+        "ForEach-Object { "
+        "[pscustomobject]@{pid=$_.ProcessId;path=$_.ExecutablePath;cmd=$_.CommandLine} } | "
+        "ConvertTo-Json -Compress"
+    )
     try:
         out = subprocess.check_output(
-            ["tasklist", "/FI", "IMAGENAME eq mc2.exe", "/NH", "/FO", "CSV"],
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
             text=True, stderr=subprocess.DEVNULL)
     except Exception:
         return []
-    pids = []
-    for line in out.splitlines():
-        if "mc2.exe" in line:
-            parts = [p.strip('"') for p in line.split(",")]
-            if len(parts) > 1 and parts[1].isdigit():
-                pids.append(int(parts[1]))
-    return pids
+    out = (out or "").strip()
+    if not out:
+        return []
+    try:
+        data = json.loads(out)
+    except Exception:
+        return []
+    if isinstance(data, dict):
+        data = [data]
+    procs = []
+    for d in data:
+        try:
+            pid = int(d.get("pid"))
+        except Exception:
+            continue
+        procs.append((pid, d.get("path") or "", d.get("cmd") or ""))
+    return procs
 
 
-def _taskkill_mc2():
-    subprocess.run(["taskkill", "/F", "/IM", "mc2.exe"],
-                   stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+# Backwards-compat alias (older callers / tooling may import this name).
+_all_mc2_procs = _enum_mc2_processes
+
+
+def _same_path_mc2(procs: list[tuple[int, str, str]],
+                   target_exe) -> list[tuple[int, str]]:
+    """PURE filter: given (pid, exe_path, cmd) tuples, return only those PIDs
+    whose exe was launched from OUR target_exe path.
+
+    Normalizes both sides (resolve -> forward-slash -> casefold). For PIDs with
+    an empty ExecutablePath (access-denied), falls back to a CommandLine
+    substring match on the resolved target exe path OR its deploy directory.
+    If a null-path PID has no CommandLine hint either, it is treated as FOREIGN
+    (NOT blocked) -- safer for overlap: we never block on an unknown process.
+    Foreign mc2.exe (a different deploy path) are never returned.
+
+    Takes the process list as an argument so it can be unit-tested with
+    synthetic inputs without launching anything."""
+    tgt = _norm_path(str(target_exe))
+    try:
+        tgt_dir = _norm_path(str(Path(target_exe).resolve().parent))
+    except Exception:
+        tgt_dir = ""
+    matched = []
+    for pid, path, cmd in procs:
+        npath = _norm_path(path)
+        if npath:
+            if npath == tgt:
+                matched.append((pid, path))
+            continue
+        # ExecutablePath empty -> fall back to CommandLine substring match.
+        ncmd = (cmd or "").replace("\\", "/").casefold()
+        if tgt and tgt in ncmd:
+            matched.append((pid, cmd))
+        elif tgt_dir and tgt_dir in ncmd:
+            matched.append((pid, cmd))
+        # else: null path + no cmdline hint -> FOREIGN (not blocked).
+    return matched
+
+
+def _running_mc2(target_exe: Path) -> list[tuple[int, str]]:
+    """PIDs of mc2.exe instances launched from OUR target exe path.
+    Thin wrapper = filter(enum()). Path-discrimination lives in _same_path_mc2."""
+    return _same_path_mc2(_enum_mc2_processes(), target_exe)
+
+
+def _taskkill_mc2(pids: list[int]):
+    """Kill ONLY the given PIDs (never /IM image-name kill, which would also
+    nuke foreign mc2.exe from a different deploy path)."""
+    for pid in pids:
+        subprocess.run(["taskkill", "/F", "/PID", str(pid)],
+                       stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
 
 
 def _run_menu_canary(exe: Path, script_path: Path, artifact_dir: Path,
@@ -170,6 +253,13 @@ def main():
     ap.add_argument("--keep-logs", action="store_true")
     ap.add_argument("--baseline-update", action="store_true")
     ap.add_argument("--kill-existing", action="store_true")
+    # Safety hatch: restore old global-block behavior (ANY mc2.exe, regardless
+    # of deploy path, blocks the run). Default is path-aware (foreign exes are
+    # ignored with an advisory).
+    ap.add_argument("--block-any-mc2", action="store_true",
+                    help="block on any running mc2.exe regardless of its deploy "
+                         "path (legacy global-block behavior; default is "
+                         "path-aware)")
     ap.add_argument("--duration", type=int)
     ap.add_argument("--profile", default="stock")
     ap.add_argument("--exe", default=str(DEFAULT_EXE))
@@ -177,9 +267,73 @@ def main():
     # GL_DEBUG_SEVERITY_HIGH from a silent log to abort(). Off by default.
     ap.add_argument("--gl-debug-fatal", action="store_true",
                     help="set MC2_GL_DEBUG_FATAL=1 (abort on GL_DEBUG_SEVERITY_HIGH)")
+    # Deploy-coherence preflight (reuses deploy_payload.py --verify-only; does
+    # NOT reimplement hashing). --verify-only = pure preflight (no mission, no
+    # lock, no artifacts), advisory unless --strict. --verify-preflight = run
+    # the verify THEN proceed to the normal smoke only if it passes.
+    ap.add_argument("--verify-only", action="store_true",
+                    help="reconcile the deploy target against its manifest and "
+                         "exit; no mission launch (advisory unless --strict)")
+    ap.add_argument("--verify-preflight", action="store_true",
+                    help="run --verify-only as a gate, then proceed to the "
+                         "normal smoke only if verify passes (implies --strict)")
+    ap.add_argument("--strict", action="store_true",
+                    help="with --verify-only/--verify-preflight: a hard "
+                         "mismatch (stale/missing) exits 1 instead of advisory")
     args = ap.parse_args()
     if args.gl_debug_fatal:
         os.environ["MC2_GL_DEBUG_FATAL"] = "1"
+
+    # ----- Deploy-coherence verify (preflight) ---------------------------
+    # The target dir run_smoke would launch from = parent of --exe. We call
+    # deploy_payload.py --verify-only against THAT dir, reusing its sha256
+    # reconciliation (no hashing reimplemented here). This block runs BEFORE
+    # the concurrency lock / mission setup, so --verify-only takes no lock,
+    # launches nothing, and writes nothing into the smoke artifact tree.
+    def _run_verify(strict: bool) -> int:
+        verify_target = str(Path(args.exe).resolve().parent)
+        cmd = [sys.executable, str(ROOT / "scripts" / "deploy_payload.py"),
+               verify_target, "--verify-only"]
+        if strict:
+            cmd.append("--strict")
+        print(f"[runner] [VERIFY] reconciling deploy target {verify_target} "
+              f"(strict={str(strict).lower()})", file=sys.stderr)
+        try:
+            _v = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        except Exception as _ve:
+            print(f"[runner] [VERIFY] check error: {_ve}", file=sys.stderr)
+            return 2
+        for _line in ((_v.stdout or "") + (_v.stderr or "")).splitlines():
+            if _line.strip():
+                print(f"[runner] [VERIFY] {_line}", file=sys.stderr)
+        # deploy_payload.py exit codes: 0 = clean OR advisory-clean (no
+        # manifest / drift-without-strict); nonzero = hard mismatch under
+        # --strict or bad config (we surface as 1).
+        return 0 if _v.returncode == 0 else 1
+
+    if args.verify_only:
+        if args.verify_preflight:
+            ap.error("--verify-only and --verify-preflight are mutually exclusive")
+        rc = _run_verify(args.strict)
+        if rc == 0:
+            print("[runner] [VERIFY] preflight OK (advisory clean or match)"
+                  if not args.strict else "[runner] [VERIFY] preflight OK (strict)",
+                  file=sys.stderr)
+        else:
+            print("[runner] [VERIFY] preflight reported a hard mismatch "
+                  "(--strict)", file=sys.stderr)
+        sys.exit(rc)
+
+    if args.verify_preflight:
+        # Strict gate: verify must pass, else abort BEFORE any lock/mission.
+        # On pass, fall through to the byte-identical normal smoke path.
+        rc = _run_verify(strict=True)
+        if rc != 0:
+            print("[runner] [VERIFY] --verify-preflight gate FAILED; not "
+                  "launching smoke.", file=sys.stderr)
+            sys.exit(1)
+        print("[runner] [VERIFY] --verify-preflight gate PASSED; proceeding "
+              "to normal smoke.", file=sys.stderr)
 
     # Deploy-coherence advisory (scripts/check-deploy-coherence.py): detects
     # a stale deployed exe (fix built but never copied to the run dir).
@@ -237,14 +391,36 @@ def main():
         _lf.flush()
         atexit.register(lambda: _LOCK_PATH.unlink(missing_ok=True))
 
-    # Existing-process safety.
-    pids = _running_mc2()
-    if pids:
+    # Existing-process safety (path-aware). Only mc2.exe launched from OUR
+    # target exe path blocks the run; foreign mc2.exe from a different deploy
+    # path are advised and ignored. --block-any-mc2 restores global blocking.
+    _target_exe = Path(args.exe)
+    _all_procs = _enum_mc2_processes()
+    same_path = _same_path_mc2(_all_procs, _target_exe)
+    foreign = []
+    _same_pids = {p for p, _ in same_path}
+    for pid, path, cmd in _all_procs:
+        if pid in _same_pids:
+            continue
+        foreign.append((pid, path or cmd))
+    for pid, path in foreign:
+        print(f"[runner] ignoring foreign mc2.exe PID {pid} at {path}",
+              file=sys.stderr)
+    if args.block_any_mc2:
+        blockers = same_path + foreign
+    else:
+        blockers = same_path
+    if blockers:
+        block_pids = [p for p, _ in blockers]
         if args.kill_existing:
-            print(f"[runner] killing existing mc2.exe PIDs {pids}", file=sys.stderr)
-            _taskkill_mc2()
+            # Kill ONLY same-path PIDs even under --block-any-mc2 we still only
+            # taskkill same-path here unless legacy block selected the foreign.
+            kill_pids = block_pids if args.block_any_mc2 else [p for p, _ in same_path]
+            print(f"[runner] killing existing mc2.exe PIDs {kill_pids}",
+                  file=sys.stderr)
+            _taskkill_mc2(kill_pids)
         else:
-            print(f"[runner] ERROR: mc2.exe already running (PIDs {pids}); "
+            print(f"[runner] ERROR: mc2.exe already running (PIDs {block_pids}); "
                   f"pass --kill-existing to override.", file=sys.stderr)
             sys.exit(4)
 
