@@ -3605,11 +3605,17 @@ DWORD MC_TextureManager::loadTexture (const char *textureFullPathName, gos_Textu
 	// /128 .tga was deleted), source dims + RGBA8 from the BC7 .ktx2 sidecar
 	// via the CPU decoder and build a MEM_RAW node (cf. textureFromMemoryRaw).
 	// Proves the decoder integration; lets a .ktx2 stand alone without a .tga.
-	if (textureFileOpenResult != NO_ERR)
+	// MC2_TEXMGR_KTX_PRIMARY mode: 0=off, 1=fallback (decode the ktx2 only when
+	// the .tga is absent -- the real feature, prerequisite for deleting redundant
+	// /128 .tgas), 2=force (prefer the ktx2 even when the .tga exists -- A/B test
+	// path, since the fst still serves every /128 .tga so mode 1 can't be
+	// triggered in-situ without repacking tgl.fst).
+	static const int s_ktxPrimaryMode = [](){
+		const char* v = getenv("MC2_TEXMGR_KTX_PRIMARY");
+		return (v && v[0]) ? atoi(v) : 0;
+	}();
+	if (s_ktxPrimaryMode == 2 || (s_ktxPrimaryMode == 1 && textureFileOpenResult != NO_ERR))
 	{
-		static const bool s_ktxPrimary =
-			(getenv("MC2_TEXMGR_KTX_PRIMARY") && getenv("MC2_TEXMGR_KTX_PRIMARY")[0] != 48);
-		if (s_ktxPrimary)
 		{
 			char sidecar[1024];
 			strncpy(sidecar, textureFullPathName, sizeof(sidecar) - 1);
