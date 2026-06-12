@@ -218,7 +218,10 @@ void Render( Camera* eye )
 		return;
 
 	gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_AlphaInvAlpha );
-	gos_SetRenderState( gos_State_AlphaTest, 1 );
+	// AlphaTest is set PER INSTANCE below (on only when a sprite texture loaded).
+	// A missing sprite -> tex==0 -> we draw a flat debug-colored quad; with alpha
+	// test ON those untextured fragments get discarded and the fallback is
+	// invisible (the "265 generated but nothing appears" case).
 	gos_SetRenderState( gos_State_ZCompare, 0 );   // v1: always-visible preview
 	gos_SetRenderState( gos_State_ZWrite,   0 );
 
@@ -254,6 +257,10 @@ void Render( Camera* eye )
 
 		DWORD tex = spriteTexFor( in.kind );
 		gos_SetRenderState( gos_State_Texture, (int)tex );
+		// Alpha-test only the textured sprites (cuts the billboard's transparent
+		// border); the untextured debug-color fallback must NOT be alpha-tested or
+		// it vanishes entirely.
+		gos_SetRenderState( gos_State_AlphaTest, tex ? 1 : 0 );
 		DWORD argb = tex ? 0xffffffff : kKindColor[in.kind];
 
 		const float cx = sb.x, by = sb.y, z = sb.z;
