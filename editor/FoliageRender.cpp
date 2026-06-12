@@ -232,8 +232,14 @@ void Render( Camera* eye )
 		Stuff::Vector3D base;
 		base.x = in.x; base.y = in.y; base.z = in.z;
 		Stuff::Vector4D sb;
-		if ( !eye->projectForScreenXY( base, sb ) )
-			continue;                                   // outside frustum
+		// NOTE: projectForScreenXY's bool return is the legacy projectZ "accepted"
+		// flag, which per its own contract (camera.h) is DISCARDED by all callers --
+		// only screen.xy is consumed. The editor's working overlay draws (brush
+		// rings, terrain selection) call projectZ and ignore the bool likewise.
+		// Honoring it here culled every on-screen instance ("265 generated, nothing
+		// appears"). Project for screen.xy only; cull via the near-plane + NaN +
+		// off-screen guards below, which are the real visibility tests.
+		eye->projectForScreenXY( base, sb );
 		if ( sb.w <= 1e-4f )                            // at/behind near plane
 			continue;
 		if ( !( sb.x == sb.x ) || !( sb.y == sb.y ) )  // NaN guard
