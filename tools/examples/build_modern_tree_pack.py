@@ -359,7 +359,10 @@ def main():
                 dest_glb = cooked_dir / f"{lod_tag}.glb"
                 dest_glb.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(cooked_glb_src, dest_glb)
-                cooked_glb_paths[lod["filename"]] = str(dest_glb.relative_to(out_dir).as_posix())
+                # Path must be relative to manifestDir (data/model_overrides), not out_dir root.
+                # Engine resolves: manifestDir + "/" + sourceRelPath via ImportGeometryFromFile.
+                manifest_dir = out_dir / "data" / "model_overrides"
+                cooked_glb_paths[lod["filename"]] = str(dest_glb.relative_to(manifest_dir).as_posix())
 
                 for row in mapping:
                     if row["source_glb"] == lod["filename"] and row["lod_index"] == i:

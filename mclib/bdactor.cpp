@@ -362,7 +362,7 @@ void BldgAppearanceType::init (const char * fileName)
 			// Source path = manifest dir + record source (see Slice 1 registry).
 			char overridePath[1024];
 			snprintf(overridePath, sizeof(overridePath), "%s/%s",
-			         ModelOverrideRegistry::instance().manifestDir().c_str(),
+			         ov->manifestDir.c_str(),
 			         ov->sourceRelPath.c_str());
 			// Guard the importer: Assimp may throw (DeadlyImportError). A throw
 			// here would leak the freshly-new'd render shape and unwind into
@@ -4133,7 +4133,7 @@ void TreeAppearanceType::init (const char * fileName)
 			treeRenderShape[0] = new TG_TypeMultiShape;
 			char overridePath[1024];
 			snprintf(overridePath, sizeof(overridePath), "%s/%s",
-			         ModelOverrideRegistry::instance().manifestDir().c_str(),
+			         ov->manifestDir.c_str(),
 			         ov->sourceRelPath.c_str());
 			// Guard the importer: Assimp may throw (DeadlyImportError). A throw
 			// here would leak the freshly-new'd render shape and unwind into
@@ -4193,7 +4193,7 @@ void TreeAppearanceType::init (const char * fileName)
 						}
 						char lodPath[1024];
 						snprintf(lodPath, sizeof(lodPath), "%s/%s",
-						         ModelOverrideRegistry::instance().manifestDir().c_str(),
+						         ov->manifestDir.c_str(),
 						         lentry.sourceRelPath.c_str());
 						treeRenderShape[li] = new TG_TypeMultiShape;
 						try {
