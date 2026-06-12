@@ -277,12 +277,23 @@ def textures(args) -> int:
             img = img.convert("RGBA")
         tiermap = {}
         for cap in tiers:
-            dst = out_root / "data" / "tgl" / str(cap) / f"{tname}.ktx2"
+            dstdir = out_root / "data" / "tgl" / str(cap)
+            dst = dstdir / f"{tname}.ktx2"
             _ktx_cook(_resized(img, cap), dst, srgb=True)  # albedo = sRGB
             vk = ktx2_format(dst)
             if vk not in (145, 146):
                 print(f"FAIL: {dst} not stored BC7 (vkFormat={vk})")
                 return 1
+            # MODEL-OVERRIDE render path (bdactor.cpp LoadOverrideRenderShapeTextures)
+            # loads textures by '<name>.tga' via mcTextureManager and CANNOT decode
+            # BC7/.ktx2 — it gates on fileExists(<name>.tga). So emit an uncompressed
+            # TGA next to the ktx2 (this is the file the override loader actually
+            # reads; the lush/oak override path used .tga for the same reason).
+            tga = dstdir / f"{tname}.tga"
+            timg = _resized(img, cap)
+            if alpha and timg.mode != "RGBA":
+                timg = timg.convert("RGBA")
+            timg.save(tga)
             tiermap[str(cap)] = f"data/tgl/{cap}/{tname}.ktx2"
         materials.append({
             "slot": slot, "textureName": tname, "alphaClass": alpha,
