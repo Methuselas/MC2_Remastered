@@ -177,9 +177,73 @@ def main():
     # GL_DEBUG_SEVERITY_HIGH from a silent log to abort(). Off by default.
     ap.add_argument("--gl-debug-fatal", action="store_true",
                     help="set MC2_GL_DEBUG_FATAL=1 (abort on GL_DEBUG_SEVERITY_HIGH)")
+    # Deploy-coherence preflight (reuses deploy_payload.py --verify-only; does
+    # NOT reimplement hashing). --verify-only = pure preflight (no mission, no
+    # lock, no artifacts), advisory unless --strict. --verify-preflight = run
+    # the verify THEN proceed to the normal smoke only if it passes.
+    ap.add_argument("--verify-only", action="store_true",
+                    help="reconcile the deploy target against its manifest and "
+                         "exit; no mission launch (advisory unless --strict)")
+    ap.add_argument("--verify-preflight", action="store_true",
+                    help="run --verify-only as a gate, then proceed to the "
+                         "normal smoke only if verify passes (implies --strict)")
+    ap.add_argument("--strict", action="store_true",
+                    help="with --verify-only/--verify-preflight: a hard "
+                         "mismatch (stale/missing) exits 1 instead of advisory")
     args = ap.parse_args()
     if args.gl_debug_fatal:
         os.environ["MC2_GL_DEBUG_FATAL"] = "1"
+
+    # ----- Deploy-coherence verify (preflight) ---------------------------
+    # The target dir run_smoke would launch from = parent of --exe. We call
+    # deploy_payload.py --verify-only against THAT dir, reusing its sha256
+    # reconciliation (no hashing reimplemented here). This block runs BEFORE
+    # the concurrency lock / mission setup, so --verify-only takes no lock,
+    # launches nothing, and writes nothing into the smoke artifact tree.
+    def _run_verify(strict: bool) -> int:
+        verify_target = str(Path(args.exe).resolve().parent)
+        cmd = [sys.executable, str(ROOT / "scripts" / "deploy_payload.py"),
+               verify_target, "--verify-only"]
+        if strict:
+            cmd.append("--strict")
+        print(f"[runner] [VERIFY] reconciling deploy target {verify_target} "
+              f"(strict={str(strict).lower()})", file=sys.stderr)
+        try:
+            _v = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        except Exception as _ve:
+            print(f"[runner] [VERIFY] check error: {_ve}", file=sys.stderr)
+            return 2
+        for _line in ((_v.stdout or "") + (_v.stderr or "")).splitlines():
+            if _line.strip():
+                print(f"[runner] [VERIFY] {_line}", file=sys.stderr)
+        # deploy_payload.py exit codes: 0 = clean OR advisory-clean (no
+        # manifest / drift-without-strict); nonzero = hard mismatch under
+        # --strict or bad config (we surface as 1).
+        return 0 if _v.returncode == 0 else 1
+
+    if args.verify_only:
+        if args.verify_preflight:
+            ap.error("--verify-only and --verify-preflight are mutually exclusive")
+        rc = _run_verify(args.strict)
+        if rc == 0:
+            print("[runner] [VERIFY] preflight OK (advisory clean or match)"
+                  if not args.strict else "[runner] [VERIFY] preflight OK (strict)",
+                  file=sys.stderr)
+        else:
+            print("[runner] [VERIFY] preflight reported a hard mismatch "
+                  "(--strict)", file=sys.stderr)
+        sys.exit(rc)
+
+    if args.verify_preflight:
+        # Strict gate: verify must pass, else abort BEFORE any lock/mission.
+        # On pass, fall through to the byte-identical normal smoke path.
+        rc = _run_verify(strict=True)
+        if rc != 0:
+            print("[runner] [VERIFY] --verify-preflight gate FAILED; not "
+                  "launching smoke.", file=sys.stderr)
+            sys.exit(1)
+        print("[runner] [VERIFY] --verify-preflight gate PASSED; proceeding "
+              "to normal smoke.", file=sys.stderr)
 
     # Deploy-coherence advisory (scripts/check-deploy-coherence.py): detects
     # a stale deployed exe (fix built but never copied to the run dir).
