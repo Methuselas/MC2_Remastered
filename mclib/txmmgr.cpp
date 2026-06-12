@@ -3600,7 +3600,7 @@ DWORD MC_TextureManager::loadTexture (const char *textureFullPathName, gos_Textu
 	File textureFile;
 	long textureFileOpenResult = textureFile.open(textureFullPathName);
 
-	// ROUTE-2 (MC2_TEXMGR_KTX_PRIMARY, default-off): if the .tga cannot be
+	// ROUTE-2 (MC2_TEXMGR_KTX_PRIMARY, default mode 1): if the .tga cannot be
 	// resolved (loose + base-strip + fastfile all miss -- e.g. the redundant
 	// /128 .tga was deleted), source dims + RGBA8 from the BC7 .ktx2 sidecar
 	// via the CPU decoder and build a MEM_RAW node (cf. textureFromMemoryRaw).
