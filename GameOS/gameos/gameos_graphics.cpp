@@ -5518,6 +5518,20 @@ static void traceShadowPass(const char* passName,
                             bool includeBldgCounts) {
     if (!shadowStateTraceEnabled()) return;
     const bool restored = sameShadowGLState(entry, exitState);
+
+    // Rate-limit the per-frame firehose: the dynamic shadow pass fires once per
+    // frame (~11k lines over a tier1 run). Emit only the first occurrence of a
+    // given pass, then one line per kShadowTraceEvery frames. A state leak
+    // (restored==0) is the load-bearing signal and is NEVER throttled -- it
+    // always logs. This changes cadence only, not what the line reports.
+    static const unsigned kShadowTraceEvery = 60;
+    static unsigned long s_passSeen[2] = {0, 0};       // per-pass emit counter
+    // includeBldgCounts==true is the static (full-map) pass; false = dynamic.
+    const int slot = includeBldgCounts ? 0 : 1;
+    const unsigned long seen = s_passSeen[slot]++;
+    if (restored) {
+        if (seen != 0 && (seen % kShadowTraceEvery) != 0) return;
+    }
     char bldg[96] = {0};
     if (includeBldgCounts) {
         int t=0,i=0,d=0;
