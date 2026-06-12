@@ -5116,6 +5116,57 @@ bool MissionInterfaceManager::isPaused()
 	return bPaused;
 }
 
+// [VISUAL_CAPTURE v1.5] Freeze/unfreeze the sim for a deterministic capture
+// sweep WITHOUT raising the pause menu or playing a sound. We mirror the
+// menu-less pause flags directly: scenarioTime + unit/sensor/collision updates
+// are gated on isPaused() (mission.cpp:531), so this is exactly the clock the
+// capture needs frozen. We do NOT touch controlGui (no beginPause/endPause) so
+// no HUD pause overlay is drawn into the captured frame. The pre-sweep flag
+// pair is restored verbatim by the caller via getCapturePauseState(), so a
+// continuing sim resumes exactly as before.
+void MissionInterfaceManager::setPausedForCapture(bool paused)
+{
+	bPaused = paused ? 1 : 0;
+	bPausedWithoutMenu = paused ? 1 : 0;
+}
+
+int MissionInterfaceManager::getCapturePauseState()
+{
+	return ((bPaused ? 1 : 0) << 1) | (bPausedWithoutMenu ? 1 : 0);
+}
+
+// Restore the exact (bPaused, bPausedWithoutMenu) pair captured before the
+// sweep. Resumes a continuing sim exactly as it was, including the case where
+// the player had paused without the menu before the capture fired.
+void MissionInterfaceManager::restoreCapturePauseState(int packed)
+{
+	bPaused = (packed >> 1) & 1;
+	bPausedWithoutMenu = packed & 1;
+}
+
+// [VISUAL_CAPTURE v1.5] extern-C shims so the GameOS-side capture TU
+// (gos_visual_capture.cpp) can drive the mission pause flags WITHOUT including
+// missiongui.h (which pulls in mclib.h/mover.h/controlgui.h, not on that TU's
+// include path). Return -1 when no mission interface exists yet (e.g. in menus)
+// so the capture site can no-op gracefully.
+extern "C" int mc2VisualCaptureGetPauseState()
+{
+	MissionInterfaceManager* mim = MissionInterfaceManager::instance();
+	return mim ? mim->getCapturePauseState() : -1;
+}
+
+extern "C" void mc2VisualCaptureSetPaused(int paused)
+{
+	MissionInterfaceManager* mim = MissionInterfaceManager::instance();
+	if (mim) mim->setPausedForCapture(paused != 0);
+}
+
+extern "C" void mc2VisualCaptureRestorePauseState(int packed)
+{
+	MissionInterfaceManager* mim = MissionInterfaceManager::instance();
+	if (mim) mim->restoreCapturePauseState(packed);
+}
+
 bool MissionInterfaceManager::isPausedWithoutMenu()
 {
 	return bPausedWithoutMenu;

@@ -12,13 +12,35 @@
 //     frames before reading, flushing chunk-LOD (frame N-1 MVP latency),
 //     shadow warmup, and bloom history.
 //
-// v1 UNPINNED / MASKED (documented, NOT hacked around in the renderer):
-//   * Animation clock (water UV scroll, FX phase, light flicker) is NOT pinned
-//     in v1. Capture pinning the global clock was judged invasive (it would
-//     require reaching into the sim clock from this post-render site). The
-//     mc2_01 fixture bookmarks are framed to minimise animated water/FX in
-//     view; any residual water-scroll phase is a known v2 mask item (owner doc
-//     section 5). Sim freeze / clock pin land in a later slice.
+// v1.5 DETERMINISM (the sim-freeze fix):
+//   * The v1 capture was nondeterministic: scenarioTime kept advancing across
+//     the settle window, so water UV scroll, gosFX phase, light flicker, and
+//     unit motion differed run-to-run (47-58% of pixels with small deltas).
+//   * v1.5 fix: the bookmark sweep now PAUSES the mission (menu-less, no sound,
+//     no HUD overlay) BEFORE the first settle frame. mission.cpp:531 gates
+//     `scenarioTime += ...` AND all unit/sensor/collision updates behind
+//     isPaused(), so a paused mission freezes the exact clock that drives every
+//     animated source. Because the freeze is held for the WHOLE sweep,
+//     scenarioTime is constant across bookmarks AND identical between two runs
+//     that reach the trigger frame with the same frozen state -> water/FX/light
+//     phase and unit positions are byte-identical -> captures are byte-stable.
+//   * The sweep fires at a fixed trigger frame (MC2_VISUAL_CAPTURE_FRAME,
+//     default 120) so both runs trigger with the same frozen sim state. We
+//     pause, hold-camera + settle (render-only; sim frozen so settle just
+//     flushes texture streaming / chunk-LOD admission / shadow warmup / bloom
+//     history), capture, advance. After the sweep we restore the camera pose
+//     (position + rotation + ALTITUDE) and the pre-sweep pause flags verbatim,
+//     so a continuing sim resumes exactly as before.
+//   * Chunk-MVP latency: chunk dispatch uses the frame N-1 MVP. With a frozen
+//     camera held for settleFrames >= 2 the N-1 MVP equals the current MVP, so
+//     it converges. Default settle 30 is comfortably >= 2.
+//
+// Single-frame free-capture mode (MC2_VISUAL_CAPTURE_FRAME WITHOUT a bookmark
+// file) is EYEBALL MODE: in a panning/animated mission it is inherently
+// nondeterministic (the sim is live at that frame). We KEEP it for quick visual
+// spot-checks but it is NOT byte-stable. Only the bookmark sweep is the
+// deterministic gate path. (We deliberately do not pause-freeze free mode: it
+// has no fixed camera pose to hold, so freezing would not make it stable.)
 #include "gos_visual_capture.h"
 
 #include "gos_screenshot.h"   // not used for PNG, but keeps capture siblings together
@@ -40,6 +62,23 @@
 // explicit mclib path: the GameOS-local "utils/camera.h" is a different GL
 // helper struct, and a bare "camera.h" would be ambiguous on the include path.
 #include "../../mclib/camera.h"
+
+// Mission sim-freeze hooks for deterministic capture. We do NOT include the
+// game's missiongui.h here -- it pulls in mclib.h / mover.h / controlgui.h via
+// quote-includes that are not on the GameOS translation unit's include path.
+// Instead the game side (missiongui.cpp) exposes three thin extern-C shims that
+// drive the MissionInterfaceManager pause flags. isPaused() gates scenarioTime
+// and all unit/sensor/collision updates (code/mission.cpp:531), so freezing the
+// pause makes every animated source constant -> byte-deterministic capture.
+extern "C" {
+    // Returns packed (bPaused<<1 | bPausedWithoutMenu), or -1 if no mission
+    // interface instance exists yet.
+    int  mc2VisualCaptureGetPauseState();
+    // Freeze (1) / unfreeze (0) the sim, menu-less, no sound, no HUD overlay.
+    void mc2VisualCaptureSetPaused(int paused);
+    // Restore the exact pre-sweep pause flag pair captured above.
+    void mc2VisualCaptureRestorePauseState(int packed);
+}
 
 namespace {
 
@@ -160,7 +199,14 @@ bool write_png_rgb(const char* path, int w, int h,
 bool read_scene_rgb(int w, int h, std::vector<unsigned char>& rgbTopDown) {
     std::vector<unsigned char> bottomUp((size_t)w * h * 3);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    while (glGetError() != GL_NO_ERROR) {}   // drain stale errors
     glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, bottomUp.data());
+    GLenum err = glGetError();
+    if (err != GL_NO_ERROR) {
+        fprintf(stderr, "[VISUAL_CAPTURE v1] ERROR glReadPixels 0x%04X "
+                "(%dx%d) -- skipping PNG\n", (unsigned)err, w, h);
+        return false;   // do NOT write a garbage PNG
+    }
     rgbTopDown.resize((size_t)w * h * 3);
     for (int y = 0; y < h; ++y) {
         memcpy(rgbTopDown.data() + (size_t)y * w * 3,
@@ -202,7 +248,7 @@ void collect_gate_env(std::vector<std::string>& names) {
 
 void write_sidecar(const std::string& jsonPath, const std::string& mission,
                    const std::string& label, unsigned int frame,
-                   int w, int h) {
+                   int w, int h, long triggerFrame, bool deterministic) {
     FILE* f = fopen(jsonPath.c_str(), "wb");
     if (!f) {
         fprintf(stderr, "[VISUAL_CAPTURE v1] ERROR fopen %s\n", jsonPath.c_str());
@@ -222,6 +268,8 @@ void write_sidecar(const std::string& jsonPath, const std::string& mission,
     buf += "  \"label\": \""; esc.clear(); json_escape(label, esc); buf += esc; buf += "\",\n";
     char num[64];
     snprintf(num, sizeof(num), "  \"frame\": %u,\n", frame); buf += num;
+    snprintf(num, sizeof(num), "  \"trigger_frame\": %ld,\n", triggerFrame); buf += num;
+    buf += "  \"deterministic\": "; buf += (deterministic ? "true" : "false"); buf += ",\n";
     snprintf(num, sizeof(num), "  \"seed\": %u,\n",
              (unsigned)SmokeMode::state().seed); buf += num;
     buf += "  \"preset\": \""; esc.clear();
@@ -243,13 +291,15 @@ void write_sidecar(const std::string& jsonPath, const std::string& mission,
 // ---------------------------------------------------------------------------
 void capture_to(const std::string& dir, const std::string& base,
                 const std::string& mission, const std::string& label,
-                unsigned int frame, int w, int h) {
+                unsigned int frame, int w, int h,
+                long triggerFrame, bool deterministic) {
     std::vector<unsigned char> rgb;
     if (!read_scene_rgb(w, h, rgb)) return;
     std::string png = dir + "/" + base + ".png";
     std::string js  = dir + "/" + base + ".json";
     if (write_png_rgb(png.c_str(), w, h, rgb)) {
-        write_sidecar(js, mission, label, frame, w, h);
+        write_sidecar(js, mission, label, frame, w, h,
+                      triggerFrame, deterministic);
         fprintf(stderr, "[VISUAL_CAPTURE v1] wrote %s (%dx%d)\n", png.c_str(), w, h);
         fflush(stderr);
     }
@@ -339,7 +389,7 @@ bool load_bookmarks(const char* path, std::string& missionOut,
         const char* pos = strstr(obj.c_str(), "\"pos\"");
         if (pos) {
             const char* after = nullptr;
-            float v[3];
+            float v[3] = {0, 0, 0};
             if (read_num_array(pos, &after, v, 3) >= 2) {
                 b.pos[0] = v[0]; b.pos[1] = v[1]; b.pos[2] = v[2];
                 b.hasPos = true;
@@ -380,10 +430,16 @@ struct ReplayState {
     size_t idx = 0;
     int settleCount = 0;
     bool teleported = false;
+    long triggerFrame = 120;        // sweep fires at this fixed frame
+    bool triggered = false;         // sweep has begun (sim frozen)
     // Saved camera pose for restore after the sweep.
     bool saved = false;
     Stuff::Vector3D savePos;
     Stuff::Vector3D saveRot;
+    float saveAlt = 1200.0f;        // cameraAltitude (getRotation drops z=0)
+    // Saved pre-sweep mission pause flags (restored verbatim).
+    bool pauseStateSaved = false;
+    int savePauseState = 0;
 };
 ReplayState g_replay;
 
@@ -410,8 +466,15 @@ void parse_replay_cfg() {
     if (settle) { long s = atol(settle); if (s > 0) g_replay.settleFrames = (int)s; }
     const char* dir = getenv("MC2_VISUAL_CAPTURE_DIR");
     g_replay.dir = dir ? dir : ".";
-    fprintf(stderr, "[VISUAL_CAPTURE v1] bookmark-replay init path=%s settle=%d dir=%s\n",
-            g_replay.path, g_replay.settleFrames, g_replay.dir.c_str());
+    // Reuse MC2_VISUAL_CAPTURE_FRAME as the deterministic sweep-trigger frame
+    // (default 120). Both runs trigger the freeze+sweep at the same frame so
+    // scenarioTime is frozen at an identical value across runs.
+    const char* tf = getenv("MC2_VISUAL_CAPTURE_FRAME");
+    if (tf) { long t = atol(tf); if (t >= 0) g_replay.triggerFrame = t; }
+    fprintf(stderr, "[VISUAL_CAPTURE v1.5] bookmark-replay init path=%s settle=%d "
+            "triggerFrame=%ld dir=%s\n",
+            g_replay.path, g_replay.settleFrames, g_replay.triggerFrame,
+            g_replay.dir.c_str());
 }
 
 void apply_bookmark(const Bookmark& b) {
@@ -424,7 +487,19 @@ void apply_bookmark(const Bookmark& b) {
     Stuff::Vector3D rot;
     rot.x = b.proj;   // projectionAngle
     rot.y = b.rot;    // cameraRotation
-    rot.z = b.alt;    // altitude
+    rot.z = b.alt;    // altitude (setRotation writes cameraAltitude = rot.z)
+    eye->setRotation(rot);
+}
+
+// Restore the full pre-sweep camera pose. Camera::getRotation() leaves z=0
+// (it never copies cameraAltitude), so setRotation(saveRot) alone would clamp
+// altitude to AltitudeMinimum. We carry the saved cameraAltitude in rot.z so
+// setRotation restores it exactly. cameraAltitude is a public member of Camera.
+void restore_camera_pose() {
+    if (!eye || !g_replay.saved) return;
+    eye->setPosition(g_replay.savePos, false);
+    Stuff::Vector3D rot = g_replay.saveRot;   // x=projectionAngle, y=cameraRotation
+    rot.z = g_replay.saveAlt;                 // restore altitude (was 0 in saveRot)
     eye->setRotation(rot);
 }
 
@@ -455,64 +530,98 @@ void onPostRenderFrame(unsigned int frame, int sceneW, int sceneH) {
     const std::string mission = SmokeMode::state().mission.empty()
         ? std::string("unknown") : SmokeMode::state().mission;
 
-    // ---- (1) single-frame capture primitive -------------------------------
-    if (capActive && (long)frame >= g_cap.frame) {
+    // ---- (1) single-frame free-capture primitive (EYEBALL MODE) -----------
+    // Suppressed when a bookmark sweep is active: the sweep reuses
+    // MC2_VISUAL_CAPTURE_FRAME as its trigger frame, and the deterministic
+    // sweep owns the camera + sim freeze. Firing the free capture too would
+    // write a redundant, nondeterministic live-sim frame.
+    if (capActive && !replayActive && (long)frame >= g_cap.frame) {
         char base[256];
         snprintf(base, sizeof(base), "%s_frame%u", mission.c_str(), frame);
-        capture_to(g_cap.dir, base, mission, "frame", frame, sceneW, sceneH);
+        capture_to(g_cap.dir, base, mission, "frame", frame, sceneW, sceneH,
+                   g_cap.frame, /*deterministic=*/false);
         g_cap.done = true;
     }
 
-    // ---- (2) bookmark replay sweep ----------------------------------------
+    // ---- (2) bookmark replay sweep (DETERMINISTIC, sim-frozen) -------------
     if (replayActive) {
         if (!g_replay.loaded) {
             g_replay.loaded = true;
             std::string fileMission;
             if (!load_bookmarks(g_replay.path, fileMission, g_replay.marks)) {
                 fprintf(stderr,
-                        "[VISUAL_CAPTURE v1] bookmark load FAILED path=%s\n",
+                        "[VISUAL_CAPTURE v1.5] bookmark load FAILED path=%s\n",
                         g_replay.path);
                 g_replay.finished = true;
                 return;
             }
             g_replay.mission = fileMission.empty() ? mission : fileMission;
-            fprintf(stderr, "[VISUAL_CAPTURE v1] loaded %zu bookmarks (mission=%s)\n",
+            fprintf(stderr, "[VISUAL_CAPTURE v1.5] loaded %zu bookmarks (mission=%s)\n",
                     g_replay.marks.size(), g_replay.mission.c_str());
         }
-        if (g_replay.idx >= g_replay.marks.size()) {
-            // Restore pre-sweep camera so a continuing sim is not perturbed.
-            if (g_replay.saved && eye) {
-                eye->setPosition(g_replay.savePos, false);
-                eye->setRotation(g_replay.saveRot);
+
+        // Wait for the deterministic trigger frame. Both runs reach this frame
+        // with the same elapsed sim, so the frozen scenarioTime matches.
+        if (!g_replay.triggered) {
+            if ((long)frame < g_replay.triggerFrame) return;
+            g_replay.triggered = true;
+            // Save + freeze the sim BEFORE the first settle window. From here on
+            // scenarioTime and all unit/sensor/collision updates are frozen, so
+            // every animated source (water UV, gosFX, light flicker, motion) is
+            // constant across the sweep AND identical between two runs.
+            int ps = mc2VisualCaptureGetPauseState();
+            if (ps >= 0) {
+                g_replay.pauseStateSaved = true;
+                g_replay.savePauseState = ps;
+                mc2VisualCaptureSetPaused(1);
             }
-            g_replay.finished = true;
-            fprintf(stderr, "[VISUAL_CAPTURE v1] bookmark sweep complete, camera restored\n");
-            return;
-        }
-        if (!g_replay.teleported) {
-            if (eye && !g_replay.saved) {
+            // Save the full pre-sweep camera pose, including altitude (which
+            // getRotation() does NOT report -- it leaves z=0).
+            if (eye) {
                 g_replay.saved = true;
                 g_replay.savePos = eye->getPosition();
                 g_replay.saveRot = eye->getRotation();
+                g_replay.saveAlt = eye->cameraAltitude;   // public member
             }
+            fprintf(stderr, "[VISUAL_CAPTURE v1.5] sweep triggered frame=%u "
+                    "(triggerFrame=%ld) sim frozen, pauseState=%d\n",
+                    frame, g_replay.triggerFrame, g_replay.savePauseState);
+        }
+
+        if (g_replay.idx >= g_replay.marks.size()) {
+            // Sweep done: restore camera (pos+rot+altitude) then the exact
+            // pre-sweep pause flags, so a continuing sim resumes unchanged.
+            restore_camera_pose();
+            if (g_replay.pauseStateSaved)
+                mc2VisualCaptureRestorePauseState(g_replay.savePauseState);
+            g_replay.finished = true;
+            fprintf(stderr, "[VISUAL_CAPTURE v1.5] sweep complete, camera + "
+                    "pause-state restored\n");
+            return;
+        }
+        if (!g_replay.teleported) {
             apply_bookmark(g_replay.marks[g_replay.idx]);
             g_replay.teleported = true;
             g_replay.settleCount = 0;
             return;   // let the scene render at the new pose before capturing
         }
-        // Re-apply each settle frame so swoop/goal logic cannot drift the pose.
+        // Re-apply each settle frame so any residual swoop/goal logic cannot
+        // drift the pose. Sim is frozen, so settle only flushes render-side
+        // streaming / chunk-LOD admission / shadow warmup / bloom history.
         apply_bookmark(g_replay.marks[g_replay.idx]);
         if (g_replay.settleCount < g_replay.settleFrames) {
             ++g_replay.settleCount;
             return;
         }
-        // Settled: capture this bookmark.
+        // Settled: capture this bookmark. Sidecar records the trigger frame so
+        // the frozen-sim state is documented and deterministic=true.
         const Bookmark& bm = g_replay.marks[g_replay.idx];
         char base[256];
         snprintf(base, sizeof(base), "%s_%s",
                  g_replay.mission.c_str(), bm.name.c_str());
         capture_to(g_replay.dir, base, g_replay.mission, bm.name,
-                   frame, sceneW, sceneH);
+                   frame, sceneW, sceneH,
+                   g_replay.triggerFrame, /*deterministic=*/true);
         ++g_replay.idx;
         g_replay.teleported = false;
     }
