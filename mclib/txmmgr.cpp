@@ -3605,14 +3605,17 @@ DWORD MC_TextureManager::loadTexture (const char *textureFullPathName, gos_Textu
 	// /128 .tga was deleted), source dims + RGBA8 from the BC7 .ktx2 sidecar
 	// via the CPU decoder and build a MEM_RAW node (cf. textureFromMemoryRaw).
 	// Proves the decoder integration; lets a .ktx2 stand alone without a .tga.
-	// MC2_TEXMGR_KTX_PRIMARY mode: 0=off, 1=fallback (decode the ktx2 only when
-	// the .tga is absent -- the real feature, prerequisite for deleting redundant
-	// /128 .tgas), 2=force (prefer the ktx2 even when the .tga exists -- A/B test
-	// path, since the fst still serves every /128 .tga so mode 1 can't be
-	// triggered in-situ without repacking tgl.fst).
+	// MC2_TEXMGR_KTX_PRIMARY mode: 0=off, 1=fallback (DEFAULT -- decode the BC7
+	// .ktx2 when the .tga is absent; the .tga is the fallback for textures with
+	// no .ktx2), 2=force (prefer the .ktx2 even when the .tga exists -- A/B test).
+	// Default 1 is safe: for a full deploy (every .tga present) it never fires
+	// (open succeeds -> unchanged path, GPU BC7 sidecar VRAM win preserved); for
+	// a slim deploy (redundant /128 .tgas removed from loose + tgl.fst via
+	// tools/fst_repack_drop.py) the .ktx2 is decoded on demand. Set =0 to force
+	// the legacy "tga or bust" behavior.
 	static const int s_ktxPrimaryMode = [](){
 		const char* v = getenv("MC2_TEXMGR_KTX_PRIMARY");
-		return (v && v[0]) ? atoi(v) : 0;
+		return (v && v[0]) ? atoi(v) : 1;
 	}();
 	if (s_ktxPrimaryMode == 2 || (s_ktxPrimaryMode == 1 && textureFileOpenResult != NO_ERR))
 	{
