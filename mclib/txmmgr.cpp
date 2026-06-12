@@ -3598,10 +3598,52 @@ DWORD MC_TextureManager::loadTexture (const char *textureFullPathName, gos_Textu
 	// This way, we never need to know anything about the texture AND we can store PMGs
 	// in memory instead of TGAs which use WAY less RAM!
 	File textureFile;
-#ifdef _DEBUG
-	long textureFileOpenResult = 
-#endif
-		textureFile.open(textureFullPathName);
+	long textureFileOpenResult = textureFile.open(textureFullPathName);
+
+	// ROUTE-2 (MC2_TEXMGR_KTX_PRIMARY, default-off): if the .tga cannot be
+	// resolved (loose + base-strip + fastfile all miss -- e.g. the redundant
+	// /128 .tga was deleted), source dims + RGBA8 from the BC7 .ktx2 sidecar
+	// via the CPU decoder and build a MEM_RAW node (cf. textureFromMemoryRaw).
+	// Proves the decoder integration; lets a .ktx2 stand alone without a .tga.
+	if (textureFileOpenResult != NO_ERR)
+	{
+		static const bool s_ktxPrimary =
+			(getenv("MC2_TEXMGR_KTX_PRIMARY") && getenv("MC2_TEXMGR_KTX_PRIMARY")[0] != 48);
+		if (s_ktxPrimary)
+		{
+			char sidecar[1024];
+			strncpy(sidecar, textureFullPathName, sizeof(sidecar) - 1);
+			sidecar[sizeof(sidecar) - 1] = 0;
+			char* dot = strrchr(sidecar, '.');
+			char* slash = strrchr(sidecar, '/');
+			if (dot && (!slash || dot > slash)) *dot = 0;
+			if (strlen(sidecar) + 6 < sizeof(sidecar)) strcat(sidecar, ".ktx2");
+			RenderCore::KtxImage img;
+			std::vector<uint8_t> rgba;
+			int kw = 0, kh = 0;
+			if (RenderCore::ktxLoadRgba8(sidecar, img) && img.isCompressed &&
+				(img.vkFormat == 145 || img.vkFormat == 146) && img.width == img.height &&
+				RenderCore::ktxDecodeBc7ToRgba8(img, 0, rgba, &kw, &kh) && kw == kh && kw > 0)
+			{
+				const DWORD txmSize = (DWORD)(kw * kh * 4);
+				masterTextureNodes[i].uvScale = 4;
+				masterTextureNodes[i].logicalWidth = (DWORD)kw;
+				masterTextureNodes[i].logicalHeight = (DWORD)kh;
+				masterTextureNodes[i].hints = hints | gosHint_Try32bpp;
+				masterTextureNodes[i].width = MC_TEXCACHE_MEM_RAW + txmSize;
+				masterTextureNodes[i].lzCompSize = txmSize;
+				actualTextureSize += txmSize;
+				compressedTextureSize += txmSize;
+				masterTextureNodes[i].textureData = (DWORD *)textureCacheHeap->Malloc(txmSize);
+				if (masterTextureNodes[i].textureData)
+					memcpy(masterTextureNodes[i].textureData, rgba.data(), txmSize);
+				else
+					masterTextureNodes[i].gosTextureHandle = 0;
+				printf("[TEXMGR_KTX_PRIMARY] %s -> RGBA8 %dx%d (ktx2 CPU decode)\n", sidecar, kw, kh); fflush(stdout);
+				return(i);
+			}
+		}
+	}
 	gosASSERT(textureFileOpenResult == NO_ERR);
 
 	if (textureFile.isLoadedFromDisk())
