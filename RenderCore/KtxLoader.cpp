@@ -9,6 +9,13 @@
 #include <cstring>
 #include <vector>
 
+// COMPRESSION-BC7-CPUDECODE-1: single-header public-domain BC1-7/BC6H decoder
+// (bcdec.h v0.97, Sergii "iOrange" Kudlai, MIT / public domain). Zero deps,
+// GL-free — matches this loader's self-contained design. We only use BC7.
+// Define the implementation in THIS translation unit (it is the sole consumer).
+#define BCDEC_IMPLEMENTATION
+#include "bcdec.h"
+
 namespace RenderCore {
 
 // KTX2 file magic: \xab KTX 20\xbb \r\n \x1a\n
@@ -165,6 +172,72 @@ bool ktxLoadRgba8(const char* path, KtxImage& out)
     out.isCompressed   = isBc7;
     out.blockSizeBytes = isBc7 ? 16u : 0u;
 
+    return true;
+}
+
+bool ktxDecodeBc7ToRgba8(const KtxImage& img, int level,
+                         std::vector<uint8_t>& outRgba,
+                         int* outW, int* outH)
+{
+    // ---- Preconditions ----
+    if (!img.isCompressed ||
+        (img.vkFormat != kVkFormatBc7UnormBlock && img.vkFormat != kVkFormatBc7SrgbBlock) ||
+        img.blockSizeBytes != 16u ||
+        level < 0 || level >= img.mipCount ||
+        static_cast<std::size_t>(level) >= img.mipByteOffsets.size()) {
+        return false;
+    }
+
+    // Level dimensions (same halving rule the header validation used).
+    const uint32_t w = (static_cast<uint32_t>(img.width)  >> level) ? (static_cast<uint32_t>(img.width)  >> level) : 1u;
+    const uint32_t h = (static_cast<uint32_t>(img.height) >> level) ? (static_cast<uint32_t>(img.height) >> level) : 1u;
+
+    const uint32_t blocksWide = (w + 3u) / 4u;
+    const uint32_t blocksHigh = (h + 3u) / 4u;
+    const uint64_t levelBytes = static_cast<uint64_t>(blocksWide) * blocksHigh * 16u;
+
+    // Bounds-check the stored block stream for this level.
+    const std::size_t levelOffset = static_cast<std::size_t>(img.mipByteOffsets[level]);
+    if (levelOffset + levelBytes > img.pixels.size()) {
+        return false;
+    }
+    const uint8_t* src = img.pixels.data() + levelOffset;
+
+    // ---- Decode block-by-block into the tightly-packed RGBA8 output ----
+    outRgba.assign(static_cast<std::size_t>(w) * h * 4u, 0u);
+    const std::size_t rowPitch = static_cast<std::size_t>(w) * 4u;
+
+    // Scratch for one fully-decoded 4x4 block (16 px * 4 bytes), used only for
+    // edge blocks where the 4x4 extends past the image bounds; interior blocks
+    // decode straight into the destination at the correct pitch.
+    uint8_t blockTmp[4 * 4 * 4];
+
+    for (uint32_t by = 0; by < blocksHigh; ++by) {
+        for (uint32_t bx = 0; bx < blocksWide; ++bx) {
+            const uint8_t* block = src + (static_cast<std::size_t>(by) * blocksWide + bx) * 16u;
+            const uint32_t px = bx * 4u;
+            const uint32_t py = by * 4u;
+            const uint32_t bw = (px + 4u <= w) ? 4u : (w - px); // valid columns
+            const uint32_t bh = (py + 4u <= h) ? 4u : (h - py); // valid rows
+
+            if (bw == 4u && bh == 4u) {
+                // Interior/aligned block: decode directly into the destination.
+                uint8_t* dst = outRgba.data() + static_cast<std::size_t>(py) * rowPitch + px * 4u;
+                bcdec_bc7(block, dst, static_cast<int>(rowPitch));
+            } else {
+                // Edge block: decode into scratch, copy the valid sub-rectangle.
+                bcdec_bc7(block, blockTmp, 4 * 4);
+                for (uint32_t r = 0; r < bh; ++r) {
+                    std::memcpy(outRgba.data() + static_cast<std::size_t>(py + r) * rowPitch + px * 4u,
+                                blockTmp + static_cast<std::size_t>(r) * (4 * 4),
+                                static_cast<std::size_t>(bw) * 4u);
+                }
+            }
+        }
+    }
+
+    if (outW) *outW = static_cast<int>(w);
+    if (outH) *outH = static_cast<int>(h);
     return true;
 }
 
