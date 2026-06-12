@@ -331,6 +331,10 @@ def main():
                             # [RENDER_PASS_TIME v1] coarse per-pass GPU timers
                             "MC2_RENDER_PASS_TIME",
                             "MC2_RENDER_PASS_TIME_EVERY",
+                            # [FRAME_PASS_STATS v1] per-pass advisory stats
+                            "MC2_FRAME_PASS_STATS",
+                            "MC2_FRAME_PASS_STATS_EVERY",
+                            "MC2_DEBUG_STATE_DUMP",
                             "MC2_PRESWAP_FINISH",
                             "MC2_MODERN_TERRAIN_SURFACE",
                             "MC2_MODERN_TERRAIN_PATCHES",
