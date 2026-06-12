@@ -29,6 +29,7 @@ size_t              g_frameIdx = 0;
 size_t              g_frameCount = 0;   // monotonic
 size_t              g_frameMsCap = 8192;
 bool                g_firstFrameSeen = false;
+uint32_t            g_fixedSimFrame = 0;     // S9D: sim-frames where fixed step advanced
 
 double elapsedMsSince(uint64_t t0) {
     if (!t0 || !g_freq) return 0.0;
@@ -46,6 +47,16 @@ void parseArgs(int argc, char** argv) {
     g_startupT0 = SDL_GetPerformanceCounter();
 
     g_state.enabled = (std::getenv("MC2_SMOKE_MODE") != nullptr);
+
+    // S9D deterministic clock. Opt-in and SEPARATE from MC2_SMOKE_MODE so
+    // default smoke timing is unchanged until this is proven. Parsed once;
+    // read via fixedTimestepEnabled() (single cached bool) on hot paths.
+    g_state.fixedTimestep = (std::getenv("MC2_SMOKE_FIXED_TIMESTEP") != nullptr);
+    if (g_state.fixedTimestep) {
+        std::fprintf(stderr,
+            "[SMOKE_FIXED_TIMESTEP v1] dt_ms=33.333 fps=30\n");
+        std::fflush(stderr);
+    }
 
     if (const char* seedEnv = std::getenv("MC2_SMOKE_SEED")) {
         char* end = nullptr;
@@ -251,6 +262,29 @@ void markMissionReady() {
 
 bool missionHasStarted() {
     return g_missionReadyT != 0;
+}
+
+// ---------------------------------------------------------------------------
+// S9D fixed timestep (deterministic smoke clock).
+// ---------------------------------------------------------------------------
+
+bool fixedTimestepEnabled() { return g_state.fixedTimestep; }
+
+float fixedTimestepMs() { return 1000.0f / 30.0f; }
+
+void fixedTimestepOnSimFrame(double scenarioTimeSeconds) {
+    if (!g_state.fixedTimestep) return;
+    // Counts only sim frames where the fixed step actually advances the clock
+    // (caller invokes this from the same branch that advances scenarioTime),
+    // so frame N maps to a deterministic scenarioTime across runs.
+    ++g_fixedSimFrame;
+    if (g_fixedSimFrame == 60 || g_fixedSimFrame == 120 ||
+        g_fixedSimFrame == 180) {
+        std::fprintf(stderr,
+            "[SMOKE_CLOCK_PROBE v1] frame=%u scenarioTime=%.6f\n",
+            (unsigned)g_fixedSimFrame, scenarioTimeSeconds);
+        std::fflush(stderr);
+    }
 }
 
 } // namespace SmokeMode

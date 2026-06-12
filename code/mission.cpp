@@ -13,6 +13,7 @@
 #ifndef MCLIB_H
 #include"mclib.h"
 #include "gos_crashbundle.h"
+#include "gos_smoke.h"            // S9D fixed-timestep deterministic smoke clock
 #include "cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (hard_reset)
 #define CB_PRINTF(fmt, ...) do { \
     char _cbbuf[256]; \
@@ -533,13 +534,37 @@ long Mission::update (void)
 			//First Frame we just set LastTimeGetTime.
 			// After that, it increments based on System Time.
 			// NOT the crazy GameOS frameRate.
-			DWORD currentTimeGetTime = timeGetTime();
-			if (LastTimeGetTime != 0xffffffff)
+			// S9D: under MC2_SMOKE_FIXED_TIMESTEP, substitute a fixed step so
+			// frame N reaches an identical sim state every run. Single cached
+			// bool check; OFF path is byte-identical to retail below.
+			if (SmokeMode::fixedTimestepEnabled())
 			{
-				float milliseconds = currentTimeGetTime - LastTimeGetTime;
-				scenarioTime += (milliseconds / 1000.0f);
+				float milliseconds = SmokeMode::fixedTimestepMs();   // 1000/30
+				const bool firstFrame = (LastTimeGetTime == 0xffffffff);
+				// Seed LastTimeGetTime on the first frame so the first fixed
+				// step is clean (no huge initial real-time delta); thereafter
+				// advance it by exactly one fixed step.
+				DWORD currentTimeGetTime =
+					firstFrame ? timeGetTime()
+					           : (DWORD)(LastTimeGetTime + (DWORD)milliseconds);
+				if (!firstFrame)
+					scenarioTime += (milliseconds / 1000.0f);
+				LastTimeGetTime = currentTimeGetTime;
+				// Deterministic clock probe (frames 60/120/180). Counts only
+				// frames where the fixed step advanced scenarioTime.
+				if (!firstFrame)
+					SmokeMode::fixedTimestepOnSimFrame((double)scenarioTime);
 			}
-			LastTimeGetTime = currentTimeGetTime;
+			else
+			{
+				DWORD currentTimeGetTime = timeGetTime();
+				if (LastTimeGetTime != 0xffffffff)
+				{
+					float milliseconds = currentTimeGetTime - LastTimeGetTime;
+					scenarioTime += (milliseconds / 1000.0f);
+				}
+				LastTimeGetTime = currentTimeGetTime;
+			}
 
 			soundSystem->clearIsPaused();
 		}

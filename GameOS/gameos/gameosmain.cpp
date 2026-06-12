@@ -1683,7 +1683,15 @@ int main(int argc, char** argv)
 
 		uint64_t end_tick = timing::gettickcount();
 		uint64_t dt = timing::ticks2ms(end_tick - start_tick);
-		frameRate = dt ? (1000.0f / (float)dt) : 0.0f;
+		// S9D: pin the per-frame animation clock too. frameRate feeds
+		// frameLength (= 1/frameRate) in mechcmd2.cpp, which drives ALL mech /
+		// object / GOSFX motion and animation deltas. Without this, fixing
+		// scenarioTime alone leaves animation phase tied to variable fps.
+		// Single cached bool check; OFF path keeps the wall-clock frameRate.
+		if (SmokeMode::fixedTimestepEnabled())
+			frameRate = 30.0f;
+		else
+			frameRate = dt ? (1000.0f / (float)dt) : 0.0f;
         mc2_hitch::EndFrame(s_hitchFrame, static_cast<double>(dt));
         ++s_hitchFrame;
 
