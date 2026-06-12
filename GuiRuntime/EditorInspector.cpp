@@ -3,6 +3,7 @@
 #include <cstdio>    // snprintf
 #include <cstdlib>   // getenv
 #include "../GameOS/gameos/debug_renderer.h"  // IMG-INSPECT-3
+#include "../GameOS/gameos/gos_frame_pass_stats.h"  // FRAME-INSPECTOR-1
 #include "../GameOS/gameos/ibl_sh_runtime.h"   // V-IBL-STATIC-1: g_iblShStrength
 #include "draw_packet_emitter.h"              // g_dpSelectedRecipeIndex
 #include "../RenderCore/RendererFeatureRegistry.h"
@@ -124,6 +125,87 @@ static EditorInspector::ShadowPassSnapshot      s_shadowPass;    // SHADOW-SPINE
 static EditorInspector::VfxPassSnapshot         s_vfxPass;       // VFX-SPINE-0
 static bool s_open = false;
 static bool s_featuresOpen = false;
+static bool s_frameInspectorOpen = false;   // FRAME-INSPECTOR-1
+static bool s_framePrevCollect   = false;   // last SetCollect we issued
+
+// FRAME-INSPECTOR-1: standalone "Frame Inspector" window. Live per-pass render
+// stats (draws/instances/GL state) from gos_frame_pass_stats. Editor-only: the
+// collect flag is flipped on only while this window is open, so the game build
+// (env unset, tab never opened) keeps collection off = zero cost. Toggle:
+// Ctrl+Shift+P. Mirrors the "Renderer Features" window pattern below.
+static void drawFrameInspectorWindow() {
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_P))
+        s_frameInspectorOpen = !s_frameInspectorOpen;
+
+    // Drive the collector's runtime collect flag from window visibility.
+    if (s_frameInspectorOpen != s_framePrevCollect) {
+        gos_frame_pass_stats::SetCollect(s_frameInspectorOpen);
+        s_framePrevCollect = s_frameInspectorOpen;
+    }
+    if (!s_frameInspectorOpen) return;
+
+    ImGui::SetNextWindowSize(ImVec2(680, 420), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Frame Inspector", &s_frameInspectorOpen)) {
+        ImGui::TextUnformatted("Per-pass render stats (last frame)  --  Ctrl+Shift+P to close");
+
+        const auto& agg = gos_frame_pass_stats::GetFrameAggregates();
+        ImGui::Text("chunks=%u  spBatches=%u  mechInst=%u  vfx=%u",
+                    agg.visibleTerrainChunks, agg.staticPropBatches,
+                    agg.mechBatchInstances, agg.vfxCount);
+        ImGui::Separator();
+
+        if (ImGui::BeginTable("##framepass", 8,
+                ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg
+                | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_ScrollY)) {
+            ImGui::TableSetupScrollFreeze(0, 1);
+            ImGui::TableSetupColumn("Pass",  ImGuiTableColumnFlags_WidthFixed, 110.f);
+            ImGui::TableSetupColumn("Draws", ImGuiTableColumnFlags_WidthFixed,  60.f);
+            ImGui::TableSetupColumn("Inst",  ImGuiTableColumnFlags_WidthFixed,  60.f);
+            ImGui::TableSetupColumn("FBO",   ImGuiTableColumnFlags_WidthFixed,  48.f);
+            ImGui::TableSetupColumn("VP",    ImGuiTableColumnFlags_WidthFixed,  92.f);
+            ImGui::TableSetupColumn("Depth(t/m)",
+                                             ImGuiTableColumnFlags_WidthFixed,  80.f);
+            ImGui::TableSetupColumn("Blend", ImGuiTableColumnFlags_WidthFixed,  48.f);
+            ImGui::TableSetupColumn("Cull",  ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableHeadersRow();
+
+            const int n = gos_frame_pass_stats::PassCount();
+            for (int p = 0; p < n; ++p) {
+                const auto& r = gos_frame_pass_stats::GetPassRow(p);
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                if (r.ran)
+                    ImGui::TextUnformatted(gos_frame_pass_stats::PassKey(p));
+                else
+                    ImGui::TextDisabled("%s", gos_frame_pass_stats::PassKey(p));
+                if (!r.ran) {
+                    // Pass did not run this frame: leave the rest blank.
+                    for (int c = 1; c < 8; ++c) {
+                        ImGui::TableSetColumnIndex(c);
+                        ImGui::TextDisabled("--");
+                    }
+                    continue;
+                }
+                ImGui::TableSetColumnIndex(1); ImGui::Text("%u", r.drawCount);
+                ImGui::TableSetColumnIndex(2); ImGui::Text("%u", r.instanceCount);
+                ImGui::TableSetColumnIndex(3); ImGui::Text("%u", r.fbo);
+                ImGui::TableSetColumnIndex(4);
+                ImGui::Text("%dx%d", r.viewport[2], r.viewport[3]);
+                ImGui::TableSetColumnIndex(5);
+                ImGui::Text("%d/%d", r.depthTest ? 1 : 0, r.depthMask ? 1 : 0);
+                ImGui::TableSetColumnIndex(6);
+                ImGui::Text("%d", r.blend ? 1 : 0);
+                ImGui::TableSetColumnIndex(7);
+                ImGui::Text("%d", r.cull ? 1 : 0);
+            }
+            ImGui::EndTable();
+        }
+    }
+    ImGui::End();
+
+    // The window can be closed via the title-bar X; re-sync the collect flag on
+    // the next call (handled at the top of this function via s_framePrevCollect).
+}
 
 }  // namespace
 
@@ -311,6 +393,10 @@ void EditorInspector::drawImGui() {
         ImGui::End();
     }
 
+    // FRAME-INSPECTOR-1: live per-pass render stats window (Ctrl+Shift+P).
+    // Independent of the Object Inspector; runs before the s_open early-return.
+    drawFrameInspectorWindow();
+
     if (!s_open) return;
 
     ImGui::SetNextWindowSize(ImVec2(440, 500), ImGuiCond_FirstUseEver);
@@ -319,7 +405,7 @@ void EditorInspector::drawImGui() {
         return;
     }
 
-    ImGui::TextDisabled("Ctrl+Shift+F -- Renderer Features");
+    ImGui::TextDisabled("Ctrl+Shift+F -- Renderer Features   Ctrl+Shift+P -- Frame Inspector");
     ImGui::Separator();
 
     const auto& lk = s_selection.lookup;
