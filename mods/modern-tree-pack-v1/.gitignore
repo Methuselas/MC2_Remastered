@@ -1,0 +1,4 @@
+# Cook artifacts — do not commit
+_cook_staging/
+data/model_overrides/cooked/
+data/tgl/
