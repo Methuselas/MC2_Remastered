@@ -39,6 +39,30 @@ py -3 "<worktree>/scripts/deploy_payload.py" --target editor --verify-only
 
 Re-hashes the target against its manifest, reports `N match, N stale, N missing`. No copying. If the target has no manifest yet (never deployed via this tool) it reports that gracefully and exits 0. Add `--strict` to make drift / missing manifest a nonzero exit (for gating).
 
+## Manifest truth (TWO-MANIFEST TRAP — read this)
+
+There are two manifest files in a deploy target and they are NOT interchangeable:
+
+- **`.deployed_manifest.csv` is the VERIFIER TRUTH** — the manifest consumed by
+  `deploy_payload.py --verify-only`. This is the one a staleness gate checks.
+- **`.deploy-manifest.json` is legacy/auxiliary** unless explicitly consumed
+  elsewhere (e.g. `check-deploy-coherence.py`). It does NOT drive `--verify-only`.
+
+Rule: **any out-of-band deploy path** that copies `mc2.exe` / `mc2.pdb` / shaders
+into a target (manual `cp`, a one-off script, an editor-only copy) MUST refresh
+the CSV via:
+
+```bash
+py -3 "<worktree>/scripts/deploy_payload.py" "<target>" \
+    --source-root "<worktree>" --build-dir "<build>" --write-manifest-only
+```
+
+Do **NOT** "fix" a `--verify-only` STALE report by editing the JSON — that is the
+wrong manifest. The CSV is what `--verify-only` re-hashes against; editing the JSON
+changes nothing the verifier reads. (Verified 2026-06-12: append a byte to a
+deployed `mc2.exe` → `--verify-only --strict` exits 6; `--write-manifest-only`
+re-hashes in place → `--verify-only --strict` clean again.)
+
 ## Extras not covered by deploy_payload.py
 
 - **Mod tools** (gosFX effect tools, if built with `-DENABLE_MC2FX=ON -DENABLE_MC2FX_PREVIEW=ON`): still deploy via `bash "<worktree>/scripts/deploy-mc2fx-tools.sh"` (targets both v0.4 and 0.4c by default; override with `DEPLOY=...`).
