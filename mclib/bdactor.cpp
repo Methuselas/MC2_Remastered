@@ -387,6 +387,26 @@ void BldgAppearanceType::init (const char * fileName)
 					fprintf(stderr, "[MODOVERRIDE] staticProp '%s': render override applied (%s)\n",
 					        bldgBaseName, overridePath);
 					fflush(stderr);
+					if (getenv("MC2_ANIMATED_PROP_PROBE"))
+					{
+						int ns = bldgRenderShape->GetNumShapes();
+						fprintf(stderr, "[PROBE] '%s': %d node(s) loaded\n", bldgBaseName, ns);
+						for (int _pi = 0; _pi < ns; ++_pi)
+							fprintf(stderr, "[PROBE]   node[%d] = '%s'\n", _pi, bldgRenderShape->GetNodeId(_pi));
+						if (rotationalNodeId[0] && S_stricmp(rotationalNodeId, "NONE") != 0)
+						{
+							// Type-level scan (no instance yet): checks if GLB has the expected node.
+							bool found = false;
+							for (int _qi = 0; _qi < ns; ++_qi)
+							{
+								if (S_stricmp(bldgRenderShape->GetNodeId(_qi), rotationalNodeId) == 0)
+								{ found = true; break; }
+							}
+							fprintf(stderr, "[PROBE] '%s': AnimationNodeId='%s' %s in loaded GLB\n",
+							        bldgBaseName, rotationalNodeId, found ? "FOUND" : "NOT FOUND");
+						}
+						fflush(stderr);
+					}
 				}
 			}
 			catch (...)
