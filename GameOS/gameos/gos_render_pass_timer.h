@@ -48,9 +48,25 @@ enum Pass {
     Pass_Count
 };
 
-// MC2_RENDER_PASS_TIME=1 (cached on first call). All other entry points
+// Collection runs when MC2_RENDER_PASS_TIME=1 (cached on first call) OR the
+// runtime collect flag is set (see SetCollect). All other entry points
 // early-return when this is false.
 bool Enabled();
+
+// Runtime collect flag, mirroring gos_frame_pass_stats::SetCollect. The editor
+// Frame Inspector flips this true while its window is open so the per-pass GPU
+// ms can be read live, then false when closed. The [RENDER_PASS_TIME v1] emit
+// line stays gated on the ENV alone -- the flag never produces stdout lines.
+// Game build with env unset + window never opened keeps the flag false = zero
+// cost (no GL query objects allocated or begun).
+void SetCollect(bool on);
+
+// Latest harvested mean per-pass GPU ms over the last emitted window, keyed by
+// the Pass enum. Read-only: no GPU stall, no new query -- just exposes what the
+// collector already harvested. Returns 0.0 when the pass had no sample in the
+// last window (use HasSample(p) to distinguish 0ms from no-data).
+double LastMs(Pass p);
+bool   HasSample(Pass p);
 
 // True while a GL_TIME_ELAPSED scope opened by Begin() is still open.
 // Pre-existing standalone GL_TIME_ELAPSED spike timers must skip their own

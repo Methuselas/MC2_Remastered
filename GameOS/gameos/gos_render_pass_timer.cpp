@@ -45,7 +45,13 @@ struct Slot {
 Slot     s_ring[kRing];
 int      s_cur = 0;
 bool     s_inited = false;
-bool     s_on = false;
+bool     s_envOn = false;       // MC2_RENDER_PASS_TIME=1 (drives the emit line)
+bool     s_collect = false;     // runtime collect flag (editor); no emit
+
+// Published last-window mean ms per pass (snapshotted at each emit, survives the
+// accumulator reset). Read by the editor Frame Inspector via LastMs/HasSample.
+double   s_publishedMs[Pass_Count] = {0};
+bool     s_publishedHas[Pass_Count] = {false};
 
 int      s_openPass = -1;       // pass whose scope is currently open (-1 none)
 bool     s_openReal = false;    // glBeginQuery actually issued for it
@@ -90,31 +96,54 @@ void harvest(Slot& s)
     s.frameOpen = false;
 }
 
+// Snapshot the window means into the published arrays the editor reads. Called
+// from emitWindow before the accumulators are reset, in both paths.
+void publishWindow()
+{
+    const double inv = s_frames ? (1.0 / (double)s_frames) : 0.0;
+    for (int p = 0; p < Pass_Count; ++p) {
+        if (s_samples[p]) {
+            s_publishedMs[p]  = s_sumMs[p] * inv;
+            s_publishedHas[p] = true;
+        } else {
+            s_publishedMs[p]  = 0.0;
+            s_publishedHas[p] = false;
+        }
+    }
+}
+
 void emitWindow()
 {
+    publishWindow();
     if (s_frames == 0) {
         // No slot harvested this window (GPU results never became available).
-        // Still emit a heartbeat so silence is diagnosable, then reset.
-        std::printf("[RENDER_PASS_TIME v1] frame=%lu n=0 dropped=%u\n",
-            s_frameNo, s_dropped);
-        std::fflush(stdout);
+        // Heartbeat so silence is diagnosable (ENV-gated only), then reset.
+        if (s_envOn) {
+            std::printf("[RENDER_PASS_TIME v1] frame=%lu n=0 dropped=%u\n",
+                s_frameNo, s_dropped);
+            std::fflush(stdout);
+        }
         s_dropped = 0;
         return;
     }
-    char line[1024];
-    int off = 0;
-    off += std::snprintf(line + off, sizeof(line) - off,
-        "[RENDER_PASS_TIME v1] frame=%lu n=%u gpu_total=%.2f",
-        s_frameNo, s_frames, s_sumTotalMs / (double)s_frames);
-    for (int p = 0; p < Pass_Count; ++p) {
-        if (!s_samples[p]) continue;   // pass never ran in window: key absent
-        off += std::snprintf(line + off, sizeof(line) - off, " %s=%.2f",
-            kPassKey[p], s_sumMs[p] / (double)s_frames);
+    // The telemetry line is gated on the ENV alone -- the runtime collect flag
+    // drives harvesting (so the editor can read ms) but never emits stdout.
+    if (s_envOn) {
+        char line[1024];
+        int off = 0;
+        off += std::snprintf(line + off, sizeof(line) - off,
+            "[RENDER_PASS_TIME v1] frame=%lu n=%u gpu_total=%.2f",
+            s_frameNo, s_frames, s_sumTotalMs / (double)s_frames);
+        for (int p = 0; p < Pass_Count; ++p) {
+            if (!s_samples[p]) continue;   // pass never ran in window: key absent
+            off += std::snprintf(line + off, sizeof(line) - off, " %s=%.2f",
+                kPassKey[p], s_sumMs[p] / (double)s_frames);
+        }
+        if (s_dropped)
+            off += std::snprintf(line + off, sizeof(line) - off, " dropped=%u", s_dropped);
+        std::printf("%s\n", line);
+        std::fflush(stdout);
     }
-    if (s_dropped)
-        off += std::snprintf(line + off, sizeof(line) - off, " dropped=%u", s_dropped);
-    std::printf("%s\n", line);
-    std::fflush(stdout);
 
     std::memset(s_sumMs, 0, sizeof(s_sumMs));
     std::memset(s_samples, 0, sizeof(s_samples));
@@ -125,19 +154,39 @@ void emitWindow()
 
 } // namespace
 
+static void initEnv()
+{
+    if (s_inited) return;
+    const char* v = std::getenv("MC2_RENDER_PASS_TIME");
+    s_envOn = (v && v[0] == '1' && v[1] == '\0');
+    s_inited = true;
+    if (s_envOn) {
+        std::printf("[RENDER_PASS_TIME v1] armed every=%d ring=%d\n",
+            emitEvery(), kRing);
+        std::fflush(stdout);
+    }
+}
+
 bool Enabled()
 {
-    if (!s_inited) {
-        const char* v = std::getenv("MC2_RENDER_PASS_TIME");
-        s_on = (v && v[0] == '1' && v[1] == '\0');
-        s_inited = true;
-        if (s_on) {
-            std::printf("[RENDER_PASS_TIME v1] armed every=%d ring=%d\n",
-                emitEvery(), kRing);
-            std::fflush(stdout);
-        }
-    }
-    return s_on;
+    initEnv();
+    // Collection runs when the env arms it OR the editor flips the runtime flag.
+    // Game build with env unset + window never opened keeps both false.
+    return s_envOn || s_collect;
+}
+
+void SetCollect(bool on) { initEnv(); s_collect = on; }
+
+double LastMs(Pass p)
+{
+    if (p < 0 || p >= Pass_Count) return 0.0;
+    return s_publishedMs[p];
+}
+
+bool HasSample(Pass p)
+{
+    if (p < 0 || p >= Pass_Count) return false;
+    return s_publishedHas[p];
 }
 
 bool QueryActive()
