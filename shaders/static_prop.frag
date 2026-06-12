@@ -354,11 +354,16 @@ void main() {
                 c.rgb = vec3(0.0, 1.0, 1.0);
             } else {
                 // Material scalars: prefer MaterialGpu when sampling is on;
-                // fall back to the PBR-2-TUNE literal defaults otherwise
-                // (metallic=0, roughness=0.6) so gate-ON behavior degrades
-                // gracefully when binding=5 is unbound.
+                // fall back to the literal defaults otherwise (metallic=0,
+                // roughness=1.0) so gate-ON behavior degrades gracefully when
+                // binding=5 is unbound.
+                // MATERIAL-M0: roughness default PINNED to 1.0 to match the
+                // authoritative producer (MaterialGpu record default,
+                // gos_static_prop_batcher.cpp m.roughnessFactor) and the asset
+                // viewer fallback (LocalPbrMaterialBackend.cpp / MaterialRenderBackend.h).
+                // All three sites must agree. See docs/material-m0-contract.md.
                 float metallic  = 0.0;
-                float roughness = 0.6;
+                float roughness = 1.0;
 #ifdef MC2_COALESCE
                 if (u_materialGpuSample != 0) {
                     metallic  = materialTable_.materials[materialIdx].metallicFactor;

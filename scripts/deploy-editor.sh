@@ -99,4 +99,19 @@ if ! py -3 "$REPO/scripts/write-deploy-manifest.py" "$DEPLOY" \
     echo "  (warn) deploy manifest write failed (advisory only)"
 fi
 
+# CSV manifest refresh (.deployed_manifest.csv) -- the manifest that
+# deploy_payload.py --verify-only checks. This editor copy mutated the
+# install WITHOUT going through deploy_payload, so without this step the
+# CSV would go stale (the exact provenance-drift bug this slice fixes).
+# --write-manifest-only re-hashes the files already in $DEPLOY and rewrites
+# the CSV (merging, so the game's mc2.exe rows survive). No copy, no lock
+# check. Best-effort: never fail the deploy over manifest bookkeeping.
+if ! py -3 "$REPO/scripts/deploy_payload.py" "$DEPLOY" \
+        --exe-name "Mission Editor.exe" \
+        --build-dir "$EDITOR_OUT" \
+        --source-root "$REPO" \
+        --write-manifest-only; then
+    echo "  (warn) CSV deploy manifest refresh failed (advisory only)"
+fi
+
 echo "[deploy-editor] done"

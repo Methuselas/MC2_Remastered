@@ -66,7 +66,11 @@ vec3 F_Schlick(float cosT, vec3 F0) { return F0 + (1.0 - F0) * pow(1.0 - cosT, 5
 void main() {
     vec3 albedo = texture(u_baseColor, v_uv).rgb;   // linear (sRGB internalformat)
 
-    float ao = 1.0, rough = 0.5, metal = 0.0;
+    // MATERIAL-M0: roughness default PINNED to 1.0 to match the authoritative
+    // producer (MaterialGpu record default, gos_static_prop_batcher.cpp
+    // m.roughnessFactor) and the static_prop.frag fallback. All three sites
+    // must agree. See docs/material-m0-contract.md.
+    float ao = 1.0, rough = 1.0, metal = 0.0;
     if (u_hasOrm != 0) {
         vec3 orm = texture(u_ormTex, v_uv).rgb;
         ao = orm.r; rough = clamp(orm.g, 0.04, 1.0); metal = orm.b;

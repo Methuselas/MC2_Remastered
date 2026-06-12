@@ -142,11 +142,18 @@ def check_locks(target_dir, exe_name):
 # Payload enumeration
 # ---------------------------------------------------------------------------
 
-def enumerate_payload(src_root, build_dir, exe_name, pdb_name):
-    """Returns list of (src_abspath, target_relpath, kind)."""
+def enumerate_payload(src_root, build_dir, exe_name, pdb_name,
+                      require_build=True):
+    """Returns list of (src_abspath, target_relpath, kind).
+
+    require_build=False (manifest-only): the build outputs may be gone; we
+    only need the relpath list to know which target files to re-hash, so a
+    missing source exe/dll is tolerated (the entry is still emitted so the
+    deployed copy can be recorded).
+    """
     items = []
     exe_src = os.path.join(build_dir, exe_name)
-    if not os.path.isfile(exe_src):
+    if require_build and not os.path.isfile(exe_src):
         fail(f"source exe not found: {exe_src}")
     items.append((exe_src, exe_name, "exe"))
 
@@ -241,6 +248,71 @@ def write_manifest(target_dir, hashes, src_commit):
         f"src_commit {src_commit[:12]})")
 
 
+def hash_present_payload(items, target_dir):
+    """Re-hash the payload files that are ALREADY in target_dir (no copy).
+
+    Used by --write-manifest-only: another deploy path (deploy-editor.sh,
+    the manual recipe, etc.) already copied the binaries in; we just record
+    them in the SAME .deployed_manifest.csv that --verify-only checks, so
+    the CSV does not go stale behind the JSON manifest.
+    Files missing from the target are skipped (not every payload item is
+    present in every target — e.g. an editor-only deploy has no mc2.exe).
+    """
+    hashes = {}
+    present, absent = 0, 0
+    for src, rel, kind in items:
+        dst = os.path.join(target_dir, rel)
+        if os.path.isfile(dst):
+            hashes[rel] = (sha256_file(dst), os.path.getsize(dst))
+            present += 1
+        else:
+            absent += 1
+    log(f"manifest-only: {present} payload files present in target, "
+        f"{absent} absent (skipped)")
+    return hashes
+
+
+def write_manifest_only(src_root, build_dir, exe_name, pdb_name, target_dir):
+    """Refresh <target>/.deployed_manifest.csv from files ALREADY in target.
+
+    No copy, no lock check (we are not writing binaries — only the CSV).
+    Merges with an existing CSV so a partial deploy (editor-only into a
+    shared install) does not drop the game's rows, mirroring the JSON
+    manifest's --merge behaviour.
+    """
+    if not os.path.isdir(target_dir):
+        fail(f"target dir does not exist: {target_dir}")
+    items = enumerate_payload(src_root, build_dir, exe_name, pdb_name,
+                              require_build=False)
+    hashes = hash_present_payload(items, target_dir)
+
+    # Merge: keep prior rows for payload files we did not just re-hash but
+    # that still exist on disk (e.g. game exe rows when refreshing after an
+    # editor-only copy).
+    existing = os.path.join(target_dir, MANIFEST_NAME)
+    if os.path.isfile(existing):
+        try:
+            with open(existing, newline="") as f:
+                rows = list(csv.reader(f))
+            if rows and rows[0][:2] == ["manifest_version", MANIFEST_VERSION]:
+                for row in rows[2:]:
+                    if len(row) < 3:
+                        continue
+                    rel, h, size = row[0], row[1], row[2]
+                    if rel in hashes:
+                        continue  # freshly re-hashed wins
+                    p = os.path.join(target_dir, rel)
+                    if os.path.isfile(p):
+                        hashes[rel] = (h, size)
+        except Exception as e:
+            log(f"WARNING: could not merge existing CSV manifest ({e}); replacing")
+
+    if not hashes:
+        fail("no payload files present in target — nothing to record")
+    write_manifest(target_dir, hashes, git_head(src_root))
+    log("manifest-only COMPLETE — .deployed_manifest.csv refreshed (no copy)")
+
+
 def verify_only(target_dir, strict):
     path = os.path.join(target_dir, MANIFEST_NAME)
     if not os.path.isfile(path):
@@ -328,6 +400,12 @@ def main():
                     help="downgrade PDB staleness to a warning")
     ap.add_argument("--verify-only", action="store_true",
                     help="re-check existing target against its manifest; no copy")
+    ap.add_argument("--write-manifest-only", action="store_true",
+                    help="re-hash payload files ALREADY in the target and "
+                    "rewrite .deployed_manifest.csv; no copy, no lock check. "
+                    "Use as the final step of any OTHER deploy path "
+                    "(deploy-editor.sh, manual recipe) so the CSV manifest "
+                    "that --verify-only checks does not go stale.")
     ap.add_argument("--strict", action="store_true",
                     help="with --verify-only: drift = nonzero exit")
     args = ap.parse_args()
@@ -346,15 +424,19 @@ def main():
     if args.verify_only:
         sys.exit(verify_only(target, args.strict))
 
-    if not os.path.isdir(target):
-        fail(f"target dir does not exist: {target} (refusing to create deploy "
-             "targets — wrong-target trap, Mistake C)")
-
     src_root = os.path.abspath(args.source_root)
     default_subdir = (preset["build_subdir"] if preset
                       else os.path.join("build64", "RelWithDebInfo"))
     build_dir = args.build_dir or os.path.join(src_root, default_subdir)
     pdb_name = os.path.splitext(exe_name)[0] + ".pdb"
+
+    if args.write_manifest_only:
+        write_manifest_only(src_root, build_dir, exe_name, pdb_name, target)
+        return
+
+    if not os.path.isdir(target):
+        fail(f"target dir does not exist: {target} (refusing to create deploy "
+             "targets — wrong-target trap, Mistake C)")
 
     log(f"source root: {src_root}")
     log(f"build dir:   {build_dir}")

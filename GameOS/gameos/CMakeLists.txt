@@ -31,6 +31,7 @@ set(SOURCES ${SOURCES}
     gos_object_parity.cpp
     gos_validate.cpp
     gos_screenshot.cpp
+    gos_visual_capture.cpp
     gos_visual_diff.cpp
     gos_rdoc_capture.cpp
     gos_crashbundle.cpp
@@ -47,6 +48,7 @@ set(SOURCES ${SOURCES}
     gpu_cull_readback.cpp
     render_snapshot.cpp
     gos_render_pass_timer.cpp
+    gos_frame_pass_stats.cpp
     draw_packet_emitter.cpp
     pipeline_binder.cpp
     view_uniforms_gl.cpp

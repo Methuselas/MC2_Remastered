@@ -312,6 +312,14 @@ public:
 
 		bool	isPaused();
 		bool	isPausedWithoutMenu();
+		// [VISUAL_CAPTURE v1.5] Deterministic sim-freeze for the bookmark sweep.
+		// Sets/clears bPaused + bPausedWithoutMenu directly (no menu UI, no
+		// sound), freezing scenarioTime + all sim updates (see mission.cpp:531).
+		// getCapturePauseState() returns the (bPaused<<1 | bPausedWithoutMenu)
+		// pair so the caller can fully restore the pre-sweep pause state.
+		void	setPausedForCapture(bool paused);
+		int		getCapturePauseState();
+		void	restoreCapturePauseState(int packed);
 		int		togglePause();
 		int		togglePauseWithoutMenu();
 		int		toggleHoldPosition();

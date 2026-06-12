@@ -1,0 +1,665 @@
+// gos_visual_capture.cpp - Slice S9 v1 implementation. See header for scope.
+//
+// Determinism notes (the S9 gate):
+//   * PNG bytes are produced by a self-contained encoder (stored DEFLATE
+//     blocks + our own CRC32/Adler32) so the same pixels always yield the same
+//     file bytes -- no external zlib version variance, no timestamp chunk.
+//   * The pixel source is the offscreen scene FBO (RGBA16F clamped to 8-bit by
+//     the driver on readback), the same target the legacy [SCREENSHOT v1] path
+//     reads -- robust to a minimized/occluded window (FBO 0 reads black).
+//   * Bookmark replay hard-sets the camera via setPosition(pos,false) /
+//     setRotation(...) -- bypassing swoop/goal interpolation -- and settles N
+//     frames before reading, flushing chunk-LOD (frame N-1 MVP latency),
+//     shadow warmup, and bloom history.
+//
+// v1.5 DETERMINISM (the sim-freeze fix):
+//   * The v1 capture was nondeterministic: scenarioTime kept advancing across
+//     the settle window, so water UV scroll, gosFX phase, light flicker, and
+//     unit motion differed run-to-run (47-58% of pixels with small deltas).
+//   * v1.5 fix: the bookmark sweep now PAUSES the mission (menu-less, no sound,
+//     no HUD overlay) BEFORE the first settle frame. mission.cpp:531 gates
+//     `scenarioTime += ...` AND all unit/sensor/collision updates behind
+//     isPaused(), so a paused mission freezes the exact clock that drives every
+//     animated source. Because the freeze is held for the WHOLE sweep,
+//     scenarioTime is constant across bookmarks AND identical between two runs
+//     that reach the trigger frame with the same frozen state -> water/FX/light
+//     phase and unit positions are byte-identical -> captures are byte-stable.
+//   * The sweep fires at a fixed trigger frame (MC2_VISUAL_CAPTURE_FRAME,
+//     default 120) so both runs trigger with the same frozen sim state. We
+//     pause, hold-camera + settle (render-only; sim frozen so settle just
+//     flushes texture streaming / chunk-LOD admission / shadow warmup / bloom
+//     history), capture, advance. After the sweep we restore the camera pose
+//     (position + rotation + ALTITUDE) and the pre-sweep pause flags verbatim,
+//     so a continuing sim resumes exactly as before.
+//   * Chunk-MVP latency: chunk dispatch uses the frame N-1 MVP. With a frozen
+//     camera held for settleFrames >= 2 the N-1 MVP equals the current MVP, so
+//     it converges. Default settle 30 is comfortably >= 2.
+//
+// Single-frame free-capture mode (MC2_VISUAL_CAPTURE_FRAME WITHOUT a bookmark
+// file) is EYEBALL MODE: in a panning/animated mission it is inherently
+// nondeterministic (the sim is live at that frame). We KEEP it for quick visual
+// spot-checks but it is NOT byte-stable. Only the bookmark sweep is the
+// deterministic gate path. (We deliberately do not pause-freeze free mode: it
+// has no fixed camera pose to hold, so freezing would not make it stable.)
+// When a bookmark file IS configured the free-capture path is fully suppressed
+// (before/during/after the sweep) so a bookmark run emits ONLY deterministic
+// bookmark PNGs and zero frame*.png -- see active() / onPostRenderFrame().
+#include "gos_visual_capture.h"
+
+#include "gos_screenshot.h"   // not used for PNG, but keeps capture siblings together
+#include "gos_smoke.h"
+
+#include <GL/glew.h>
+
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <cstdint>
+#include <string>
+#include <vector>
+#include <algorithm>
+
+#include "build_fingerprint.h"  // [BUILD_FINGERPRINT v1] identity macros (generated dir)
+
+// Game Camera global `eye` + hard-set API (setPosition/setRotation). Use the
+// explicit mclib path: the GameOS-local "utils/camera.h" is a different GL
+// helper struct, and a bare "camera.h" would be ambiguous on the include path.
+#include "../../mclib/camera.h"
+
+// Mission sim-freeze hooks for deterministic capture. We do NOT include the
+// game's missiongui.h here -- it pulls in mclib.h / mover.h / controlgui.h via
+// quote-includes that are not on the GameOS translation unit's include path.
+// Instead the game side (missiongui.cpp) exposes three thin extern-C shims that
+// drive the MissionInterfaceManager pause flags. isPaused() gates scenarioTime
+// and all unit/sensor/collision updates (code/mission.cpp:531), so freezing the
+// pause makes every animated source constant -> byte-deterministic capture.
+extern "C" {
+    // Returns packed (bPaused<<1 | bPausedWithoutMenu), or -1 if no mission
+    // interface instance exists yet.
+    int  mc2VisualCaptureGetPauseState();
+    // Freeze (1) / unfreeze (0) the sim, menu-less, no sound, no HUD overlay.
+    void mc2VisualCaptureSetPaused(int paused);
+    // Restore the exact pre-sweep pause flag pair captured above.
+    void mc2VisualCaptureRestorePauseState(int packed);
+}
+
+namespace {
+
+// ---------------------------------------------------------------------------
+// Minimal deterministic PNG writer (8-bit RGB, no external deps).
+// ---------------------------------------------------------------------------
+
+uint32_t crc32_buf(const unsigned char* p, size_t n, uint32_t crc) {
+    static uint32_t table[256];
+    static bool init = false;
+    if (!init) {
+        for (uint32_t i = 0; i < 256; ++i) {
+            uint32_t c = i;
+            for (int k = 0; k < 8; ++k)
+                c = (c & 1) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
+            table[i] = c;
+        }
+        init = true;
+    }
+    crc ^= 0xFFFFFFFFu;
+    for (size_t i = 0; i < n; ++i)
+        crc = table[(crc ^ p[i]) & 0xFF] ^ (crc >> 8);
+    return crc ^ 0xFFFFFFFFu;
+}
+
+void put_u32_be(std::vector<unsigned char>& out, uint32_t v) {
+    out.push_back((unsigned char)(v >> 24));
+    out.push_back((unsigned char)(v >> 16));
+    out.push_back((unsigned char)(v >> 8));
+    out.push_back((unsigned char)(v));
+}
+
+void write_chunk(std::vector<unsigned char>& out, const char tag[4],
+                 const unsigned char* data, size_t len) {
+    put_u32_be(out, (uint32_t)len);
+    size_t start = out.size();
+    out.insert(out.end(), tag, tag + 4);
+    if (len) out.insert(out.end(), data, data + len);
+    uint32_t crc = crc32_buf(out.data() + start, 4 + len, 0);
+    put_u32_be(out, crc);
+}
+
+// DEFLATE "stored" (uncompressed) wrapping for a raw byte stream.
+void deflate_stored(const std::vector<unsigned char>& raw,
+                    std::vector<unsigned char>& z) {
+    // zlib header: CM=8, CINFO=7, no dict, default level bits -> 0x78 0x01.
+    z.push_back(0x78);
+    z.push_back(0x01);
+    size_t off = 0;
+    const size_t MAXBLK = 65535;
+    while (off < raw.size() || raw.empty()) {
+        size_t blk = std::min(MAXBLK, raw.size() - off);
+        bool last = (off + blk) >= raw.size();
+        z.push_back(last ? 1 : 0);              // BFINAL, BTYPE=00 (stored)
+        z.push_back((unsigned char)(blk & 0xFF));
+        z.push_back((unsigned char)((blk >> 8) & 0xFF));
+        z.push_back((unsigned char)((~blk) & 0xFF));
+        z.push_back((unsigned char)(((~blk) >> 8) & 0xFF));
+        z.insert(z.end(), raw.begin() + off, raw.begin() + off + blk);
+        off += blk;
+        if (last) break;
+    }
+    // Adler-32 of the raw stream.
+    uint32_t a = 1, b = 0;
+    for (size_t i = 0; i < raw.size(); ++i) {
+        a = (a + raw[i]) % 65521;
+        b = (b + a) % 65521;
+    }
+    put_u32_be(z, (b << 16) | a);
+}
+
+// Write an 8-bit RGB PNG. `rgb` is row-major, top-to-bottom, w*h*3 bytes.
+bool write_png_rgb(const char* path, int w, int h,
+                   const std::vector<unsigned char>& rgb) {
+    // Build the filtered scanline stream (filter byte 0 = None per row).
+    std::vector<unsigned char> raw;
+    raw.reserve((size_t)h * (1 + (size_t)w * 3));
+    for (int y = 0; y < h; ++y) {
+        raw.push_back(0);
+        const unsigned char* row = rgb.data() + (size_t)y * w * 3;
+        raw.insert(raw.end(), row, row + (size_t)w * 3);
+    }
+    std::vector<unsigned char> idat;
+    deflate_stored(raw, idat);
+
+    std::vector<unsigned char> out;
+    const unsigned char sig[8] = {137, 80, 78, 71, 13, 10, 26, 10};
+    out.insert(out.end(), sig, sig + 8);
+
+    unsigned char ihdr[13];
+    ihdr[0] = (unsigned char)(w >> 24); ihdr[1] = (unsigned char)(w >> 16);
+    ihdr[2] = (unsigned char)(w >> 8);  ihdr[3] = (unsigned char)(w);
+    ihdr[4] = (unsigned char)(h >> 24); ihdr[5] = (unsigned char)(h >> 16);
+    ihdr[6] = (unsigned char)(h >> 8);  ihdr[7] = (unsigned char)(h);
+    ihdr[8] = 8;    // bit depth
+    ihdr[9] = 2;    // color type RGB
+    ihdr[10] = 0;   // compression
+    ihdr[11] = 0;   // filter
+    ihdr[12] = 0;   // interlace
+    write_chunk(out, "IHDR", ihdr, sizeof(ihdr));
+    write_chunk(out, "IDAT", idat.data(), idat.size());
+    write_chunk(out, "IEND", nullptr, 0);
+
+    FILE* f = fopen(path, "wb");
+    if (!f) {
+        fprintf(stderr, "[VISUAL_CAPTURE v1] ERROR fopen %s\n", path);
+        return false;
+    }
+    fwrite(out.data(), 1, out.size(), f);
+    fclose(f);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Pixel readback (scene FBO is already bound by the caller). glReadPixels
+// returns bottom-up; we flip to top-down for the PNG.
+// ---------------------------------------------------------------------------
+bool read_scene_rgb(int w, int h, std::vector<unsigned char>& rgbTopDown) {
+    std::vector<unsigned char> bottomUp((size_t)w * h * 3);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    while (glGetError() != GL_NO_ERROR) {}   // drain stale errors
+    glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, bottomUp.data());
+    GLenum err = glGetError();
+    if (err != GL_NO_ERROR) {
+        fprintf(stderr, "[VISUAL_CAPTURE v1] ERROR glReadPixels 0x%04X "
+                "(%dx%d) -- skipping PNG\n", (unsigned)err, w, h);
+        return false;   // do NOT write a garbage PNG
+    }
+    rgbTopDown.resize((size_t)w * h * 3);
+    for (int y = 0; y < h; ++y) {
+        memcpy(rgbTopDown.data() + (size_t)y * w * 3,
+               bottomUp.data() + (size_t)(h - 1 - y) * w * 3,
+               (size_t)w * 3);
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Capture tuple sidecar JSON.
+// ---------------------------------------------------------------------------
+void json_escape(const std::string& s, std::string& out) {
+    for (char c : s) {
+        if (c == '"' || c == '\\') { out.push_back('\\'); out.push_back(c); }
+        else if (c == '\n') { out += "\\n"; }
+        else out.push_back(c);
+    }
+}
+
+// Sorted list of MC2_* env var NAMES currently set (the gate-env set).
+void collect_gate_env(std::vector<std::string>& names) {
+#if defined(_WIN32)
+    // _environ is declared by <stdlib.h>; do not re-declare (a namespace-scoped
+    // redeclaration would acquire internal linkage and fail to link on MSVC).
+    char** e = _environ;
+#else
+    char** e = environ;
+#endif
+    for (; e && *e; ++e) {
+        const char* eq = strchr(*e, '=');
+        if (!eq) continue;
+        size_t nlen = (size_t)(eq - *e);
+        if (nlen >= 4 && strncmp(*e, "MC2_", 4) == 0)
+            names.emplace_back(*e, nlen);
+    }
+    std::sort(names.begin(), names.end());
+}
+
+void write_sidecar(const std::string& jsonPath, const std::string& mission,
+                   const std::string& label, unsigned int frame,
+                   int w, int h, long triggerFrame, bool deterministic) {
+    FILE* f = fopen(jsonPath.c_str(), "wb");
+    if (!f) {
+        fprintf(stderr, "[VISUAL_CAPTURE v1] ERROR fopen %s\n", jsonPath.c_str());
+        return;
+    }
+    std::vector<std::string> gateEnv;
+    collect_gate_env(gateEnv);
+
+    std::string esc;
+    std::string buf;
+    buf += "{\n";
+    buf += "  \"build\": {";
+    buf += " \"sha\": \""; esc.clear(); json_escape(MC2_BUILD_GIT_SHA, esc); buf += esc; buf += "\",";
+    buf += " \"dirty\": "; buf += (MC2_BUILD_GIT_DIRTY ? "true" : "false"); buf += ",";
+    buf += " \"branch\": \""; esc.clear(); json_escape(MC2_BUILD_GIT_BRANCH, esc); buf += esc; buf += "\" },\n";
+    buf += "  \"mission\": \""; esc.clear(); json_escape(mission, esc); buf += esc; buf += "\",\n";
+    buf += "  \"label\": \""; esc.clear(); json_escape(label, esc); buf += esc; buf += "\",\n";
+    char num[64];
+    snprintf(num, sizeof(num), "  \"frame\": %u,\n", frame); buf += num;
+    snprintf(num, sizeof(num), "  \"trigger_frame\": %ld,\n", triggerFrame); buf += num;
+    buf += "  \"deterministic\": "; buf += (deterministic ? "true" : "false"); buf += ",\n";
+    snprintf(num, sizeof(num), "  \"seed\": %u,\n",
+             (unsigned)SmokeMode::state().seed); buf += num;
+    buf += "  \"preset\": \""; esc.clear();
+    json_escape(SmokeMode::state().profile, esc); buf += esc; buf += "\",\n";
+    snprintf(num, sizeof(num), "  \"width\": %d,\n", w); buf += num;
+    snprintf(num, sizeof(num), "  \"height\": %d,\n", h); buf += num;
+    buf += "  \"gate_env\": [";
+    for (size_t i = 0; i < gateEnv.size(); ++i) {
+        if (i) buf += ", ";
+        buf += "\""; esc.clear(); json_escape(gateEnv[i], esc); buf += esc; buf += "\"";
+    }
+    buf += "]\n}\n";
+    fwrite(buf.data(), 1, buf.size(), f);
+    fclose(f);
+}
+
+// ---------------------------------------------------------------------------
+// Shared capture op: PNG + sidecar with deterministic <dir>/<base>.{png,json}.
+// ---------------------------------------------------------------------------
+void capture_to(const std::string& dir, const std::string& base,
+                const std::string& mission, const std::string& label,
+                unsigned int frame, int w, int h,
+                long triggerFrame, bool deterministic) {
+    std::vector<unsigned char> rgb;
+    if (!read_scene_rgb(w, h, rgb)) return;
+    std::string png = dir + "/" + base + ".png";
+    std::string js  = dir + "/" + base + ".json";
+    if (write_png_rgb(png.c_str(), w, h, rgb)) {
+        write_sidecar(js, mission, label, frame, w, h,
+                      triggerFrame, deterministic);
+        fprintf(stderr, "[VISUAL_CAPTURE v1] wrote %s (%dx%d)\n", png.c_str(), w, h);
+        fflush(stderr);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bookmark file (tiny hand-rolled JSON reader; schema owner doc section 2.1).
+// ---------------------------------------------------------------------------
+struct Bookmark {
+    std::string name;
+    float pos[3] = {0, 0, 0};
+    float rot = 0.0f;       // cameraRotation (deg)
+    float proj = 30.0f;     // projectionAngle (deg)
+    float alt = 1200.0f;    // camera altitude
+    bool hasPos = false;
+};
+
+// Read a JSON number array "[a, b, c]" starting at *p (after the key); returns
+// count parsed, advances *pp past the closing bracket.
+int read_num_array(const char* p, const char** pp, float* out, int maxN) {
+    while (*p && *p != '[') ++p;
+    if (*p != '[') { *pp = p; return 0; }
+    ++p;
+    int n = 0;
+    while (*p && *p != ']') {
+        while (*p == ' ' || *p == ',' || *p == '\n' || *p == '\t' || *p == '\r') ++p;
+        if (*p == ']') break;
+        char* end = nullptr;
+        float v = (float)strtod(p, &end);
+        if (end == p) break;
+        if (n < maxN) out[n] = v;
+        ++n;
+        p = end;
+    }
+    if (*p == ']') ++p;
+    *pp = p;
+    return n;
+}
+
+bool read_scalar(const char* obj, const char* key, float* out) {
+    std::string pat = std::string("\"") + key + "\"";
+    const char* k = strstr(obj, pat.c_str());
+    if (!k) return false;
+    k += pat.size();
+    while (*k && *k != ':') ++k;
+    if (*k != ':') return false;
+    ++k;
+    char* end = nullptr;
+    float v = (float)strtod(k, &end);
+    if (end == k) return false;
+    *out = v;
+    return true;
+}
+
+bool load_bookmarks(const char* path, std::string& missionOut,
+                    std::vector<Bookmark>& out) {
+    FILE* f = fopen(path, "rb");
+    if (!f) return false;
+    fseek(f, 0, SEEK_END);
+    long len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    std::string txt((size_t)len, '\0');
+    size_t rd = fread(&txt[0], 1, (size_t)len, f);
+    fclose(f);
+    txt.resize(rd);
+
+    // mission
+    const char* m = strstr(txt.c_str(), "\"mission\"");
+    if (m) {
+        m = strchr(m, ':');
+        if (m) { m = strchr(m, '"'); if (m) { ++m; const char* e = strchr(m, '"');
+                 if (e) missionOut.assign(m, e); } }
+    }
+
+    // Iterate bookmark objects: find each "name" within the bookmarks array.
+    const char* arr = strstr(txt.c_str(), "\"bookmarks\"");
+    if (!arr) return false;
+    const char* p = arr;
+    while ((p = strstr(p, "\"name\"")) != nullptr) {
+        Bookmark b;
+        const char* k = strchr(p, ':');
+        if (k) { k = strchr(k, '"'); if (k) { ++k; const char* e = strchr(k, '"');
+                 if (e) b.name.assign(k, e); } }
+        // Scope to this object: up to the next "name" or end.
+        const char* next = strstr(p + 6, "\"name\"");
+        std::string obj(p, next ? (size_t)(next - p) : strlen(p));
+        const char* pos = strstr(obj.c_str(), "\"pos\"");
+        if (pos) {
+            const char* after = nullptr;
+            float v[3] = {0, 0, 0};
+            if (read_num_array(pos, &after, v, 3) >= 2) {
+                b.pos[0] = v[0]; b.pos[1] = v[1]; b.pos[2] = v[2];
+                b.hasPos = true;
+            }
+        }
+        read_scalar(obj.c_str(), "rot", &b.rot);
+        read_scalar(obj.c_str(), "proj", &b.proj);
+        read_scalar(obj.c_str(), "alt", &b.alt);
+        out.push_back(b);
+        p += 6;
+    }
+    return !out.empty();
+}
+
+// ---------------------------------------------------------------------------
+// Capture-primitive state (MC2_VISUAL_CAPTURE_FRAME / _DIR).
+// ---------------------------------------------------------------------------
+struct CaptureCfg {
+    bool parsed = false;
+    long frame = -1;
+    const char* dir = nullptr;
+    bool done = false;
+};
+CaptureCfg g_cap;
+
+// ---------------------------------------------------------------------------
+// Bookmark-replay state machine. Driven once per frame.
+// ---------------------------------------------------------------------------
+struct ReplayState {
+    bool parsed = false;
+    const char* path = nullptr;     // null => feature off
+    bool loaded = false;
+    bool finished = false;
+    int settleFrames = 30;
+    std::string mission;
+    std::string dir;                // capture dir (reuses MC2_VISUAL_CAPTURE_DIR)
+    std::vector<Bookmark> marks;
+    size_t idx = 0;
+    int settleCount = 0;
+    bool teleported = false;
+    long triggerFrame = 120;        // sweep fires at this fixed frame
+    bool triggered = false;         // sweep has begun (sim frozen)
+    // Saved camera pose for restore after the sweep.
+    bool saved = false;
+    Stuff::Vector3D savePos;
+    Stuff::Vector3D saveRot;
+    float saveAlt = 1200.0f;        // cameraAltitude (getRotation drops z=0)
+    // Saved pre-sweep mission pause flags (restored verbatim).
+    bool pauseStateSaved = false;
+    int savePauseState = 0;
+};
+ReplayState g_replay;
+
+void parse_capture_cfg() {
+    if (g_cap.parsed) return;
+    g_cap.parsed = true;
+    const char* fr = getenv("MC2_VISUAL_CAPTURE_FRAME");
+    g_cap.frame = fr ? atol(fr) : -1L;
+    g_cap.dir = getenv("MC2_VISUAL_CAPTURE_DIR");
+    static bool initLineDone = false;
+    if (!initLineDone && g_cap.frame >= 0 && g_cap.dir) {
+        initLineDone = true;
+        fprintf(stderr, "[VISUAL_CAPTURE v1] init frame=%ld dir=%s\n",
+                g_cap.frame, g_cap.dir);
+    }
+}
+
+void parse_replay_cfg() {
+    if (g_replay.parsed) return;
+    g_replay.parsed = true;
+    g_replay.path = getenv("MC2_VISUAL_BOOKMARK_CAPTURE");
+    if (!g_replay.path) return;
+    const char* settle = getenv("MC2_VISUAL_SETTLE");
+    if (settle) { long s = atol(settle); if (s > 0) g_replay.settleFrames = (int)s; }
+    const char* dir = getenv("MC2_VISUAL_CAPTURE_DIR");
+    g_replay.dir = dir ? dir : ".";
+    // Reuse MC2_VISUAL_CAPTURE_FRAME as the deterministic sweep-trigger frame
+    // (default 120). Both runs trigger the freeze+sweep at the same frame so
+    // scenarioTime is frozen at an identical value across runs.
+    const char* tf = getenv("MC2_VISUAL_CAPTURE_FRAME");
+    if (tf) { long t = atol(tf); if (t >= 0) g_replay.triggerFrame = t; }
+    fprintf(stderr, "[VISUAL_CAPTURE v1.5] bookmark-replay init path=%s settle=%d "
+            "triggerFrame=%ld dir=%s\n",
+            g_replay.path, g_replay.settleFrames, g_replay.triggerFrame,
+            g_replay.dir.c_str());
+}
+
+void apply_bookmark(const Bookmark& b) {
+    if (!eye) return;
+    if (b.hasPos) {
+        Stuff::Vector3D p;
+        p.x = b.pos[0]; p.y = b.pos[1]; p.z = b.pos[2];
+        eye->setPosition(p, false);   // hard set, no swoop
+    }
+    Stuff::Vector3D rot;
+    rot.x = b.proj;   // projectionAngle
+    rot.y = b.rot;    // cameraRotation
+    rot.z = b.alt;    // altitude (setRotation writes cameraAltitude = rot.z)
+    eye->setRotation(rot);
+}
+
+// Restore the full pre-sweep camera pose. Camera::getRotation() leaves z=0
+// (it never copies cameraAltitude), so setRotation(saveRot) alone would clamp
+// altitude to AltitudeMinimum. We carry the saved cameraAltitude in rot.z so
+// setRotation restores it exactly. cameraAltitude is a public member of Camera.
+void restore_camera_pose() {
+    if (!eye || !g_replay.saved) return;
+    eye->setPosition(g_replay.savePos, false);
+    Stuff::Vector3D rot = g_replay.saveRot;   // x=projectionAngle, y=cameraRotation
+    rot.z = g_replay.saveAlt;                 // restore altitude (was 0 in saveRot)
+    eye->setRotation(rot);
+}
+
+}  // namespace
+
+namespace gos { namespace visual_capture {
+
+bool active() {
+    // Parse env once (cached). Unset path is a single int + 2 pointer checks,
+    // no allocation.
+    parse_capture_cfg();
+    parse_replay_cfg();
+    // The free-capture path is fully suppressed whenever a bookmark file is
+    // configured (g_replay.path != nullptr) -- not just while the sweep runs.
+    // A bookmark run must emit ONLY the deterministic bookmark PNGs (zero
+    // frame*.png), even after the sweep finishes.
+    const bool bookmarkConfigured = (g_replay.path != nullptr);
+    const bool capActive = (!bookmarkConfigured && g_cap.frame >= 0 &&
+                            g_cap.dir && !g_cap.done);
+    const bool replayActive = (g_replay.path != nullptr && !g_replay.finished);
+    return capActive || replayActive;
+}
+
+void onPostRenderFrame(unsigned int frame, int sceneW, int sceneH) {
+    // FIX #1: when a bookmark file is configured the free-capture path is
+    // ALWAYS inert -- before, during, AND after the sweep. The deterministic
+    // bookmark sweep owns the camera + sim freeze and reuses
+    // MC2_VISUAL_CAPTURE_FRAME as its trigger frame; firing the live-camera
+    // free capture (e.g. once g_replay.finished flips true) would write a
+    // spurious nondeterministic frame*.png. A bookmark run therefore produces
+    // ONLY the deterministic bookmark PNGs.
+    const bool bookmarkConfigured = (g_replay.path != nullptr);
+    const bool capActive = (!bookmarkConfigured && g_cap.frame >= 0 &&
+                            g_cap.dir && !g_cap.done);
+    const bool replayActive = (g_replay.path != nullptr && !g_replay.finished);
+    if (!capActive && !replayActive) return;       // zero-cost unset path
+
+    // Only ride the smoke harness (no new driver). Outside smoke mode, do
+    // nothing (mission name / seed determinism is only defined there).
+    if (!SmokeMode::state().enabled) return;
+    if (sceneW <= 0 || sceneH <= 0) return;
+
+    const std::string mission = SmokeMode::state().mission.empty()
+        ? std::string("unknown") : SmokeMode::state().mission;
+
+    // ---- (1) single-frame free-capture primitive (EYEBALL MODE) -----------
+    // capActive is already false whenever a bookmark file is configured (see
+    // the guard above), so this path runs ONLY when no bookmark sweep exists.
+    // It is the nondeterministic eyeball spot-check mode.
+    if (capActive && (long)frame >= g_cap.frame) {
+        char base[256];
+        snprintf(base, sizeof(base), "%s_frame%u", mission.c_str(), frame);
+        capture_to(g_cap.dir, base, mission, "frame", frame, sceneW, sceneH,
+                   g_cap.frame, /*deterministic=*/false);
+        g_cap.done = true;
+    }
+
+    // ---- (2) bookmark replay sweep (DETERMINISTIC, sim-frozen) -------------
+    if (replayActive) {
+        if (!g_replay.loaded) {
+            g_replay.loaded = true;
+            std::string fileMission;
+            if (!load_bookmarks(g_replay.path, fileMission, g_replay.marks)) {
+                fprintf(stderr,
+                        "[VISUAL_CAPTURE v1.5] bookmark load FAILED path=%s\n",
+                        g_replay.path);
+                g_replay.finished = true;
+                return;
+            }
+            g_replay.mission = fileMission.empty() ? mission : fileMission;
+            fprintf(stderr, "[VISUAL_CAPTURE v1.5] loaded %zu bookmarks (mission=%s)\n",
+                    g_replay.marks.size(), g_replay.mission.c_str());
+        }
+
+        // Wait for the deterministic trigger frame. Determinism does NOT come
+        // from wall-clock alignment (that was the false premise of the old
+        // wall-clock sim and is now moot): it comes from S9D's fixed-timestep
+        // clock (scenarioTime = frame/30 under MC2_SMOKE_FIXED_TIMESTEP=1) plus
+        // S9E's pinned render-shader clocks. At any given trigger frame both
+        // runs therefore share the identical scenarioTime; we then freeze it
+        // (and all shader clocks) for the whole sweep, so every animated source
+        // is held at the same frozen phase across bookmarks AND across runs.
+        if (!g_replay.triggered) {
+            if ((long)frame < g_replay.triggerFrame) return;
+            g_replay.triggered = true;
+            // Save + freeze the sim BEFORE the first settle window. From here on
+            // scenarioTime and all unit/sensor/collision updates are frozen, so
+            // every animated source (water UV, gosFX, light flicker, motion) is
+            // constant across the sweep AND identical between two runs.
+            int ps = mc2VisualCaptureGetPauseState();
+            if (ps >= 0) {
+                g_replay.pauseStateSaved = true;
+                g_replay.savePauseState = ps;
+                mc2VisualCaptureSetPaused(1);
+            }
+            // Save the full pre-sweep camera pose, including altitude (which
+            // getRotation() does NOT report -- it leaves z=0).
+            if (eye) {
+                g_replay.saved = true;
+                g_replay.savePos = eye->getPosition();
+                g_replay.saveRot = eye->getRotation();
+                g_replay.saveAlt = eye->cameraAltitude;   // public member
+            }
+            fprintf(stderr, "[VISUAL_CAPTURE v1.5] sweep triggered frame=%u "
+                    "(triggerFrame=%ld) sim frozen, pauseState=%d\n",
+                    frame, g_replay.triggerFrame, g_replay.savePauseState);
+        }
+
+        if (g_replay.idx >= g_replay.marks.size()) {
+            // Sweep done: restore camera (pos+rot+altitude) then the exact
+            // pre-sweep pause flags, so a continuing sim resumes unchanged.
+            restore_camera_pose();
+            if (g_replay.pauseStateSaved)
+                mc2VisualCaptureRestorePauseState(g_replay.savePauseState);
+            g_replay.finished = true;
+            fprintf(stderr, "[VISUAL_CAPTURE v1.5] sweep complete, camera + "
+                    "pause-state restored\n");
+            return;
+        }
+        if (!g_replay.teleported) {
+            apply_bookmark(g_replay.marks[g_replay.idx]);
+            g_replay.teleported = true;
+            g_replay.settleCount = 0;
+            return;   // let the scene render at the new pose before capturing
+        }
+        // Re-apply each settle frame so any residual swoop/goal logic cannot
+        // drift the pose. Sim is frozen, so settle only flushes render-side
+        // streaming / chunk-LOD admission / shadow warmup / bloom history.
+        apply_bookmark(g_replay.marks[g_replay.idx]);
+        if (g_replay.settleCount < g_replay.settleFrames) {
+            ++g_replay.settleCount;
+            return;
+        }
+        // Settled: capture this bookmark. The capture is byte-stable ONLY when
+        // the deterministic clock (S9D sim + S9E shader, MC2_SMOKE_FIXED_TIMESTEP)
+        // is engaged; without it the sweep freeze holds scenarioTime constant
+        // within one run but two runs reach the trigger frame at different clock
+        // values. Stamp the sidecar honestly so a Baseline-A golden is never
+        // mislabeled deterministic when it is not.
+        const bool deterministic = SmokeMode::fixedTimestepEnabled();
+        const Bookmark& bm = g_replay.marks[g_replay.idx];
+        // Flatten the bookmark name into a filename token so a name cannot
+        // escape the capture dir (path traversal / separators).
+        std::string safeName = bm.name;
+        for (char& c : safeName) {
+            if (c == '/' || c == '\\' || c == ':' || c == '.')
+                c = '_';
+        }
+        char base[256];
+        snprintf(base, sizeof(base), "%s_%s",
+                 g_replay.mission.c_str(), safeName.c_str());
+        capture_to(g_replay.dir, base, g_replay.mission, bm.name,
+                   frame, sceneW, sceneH,
+                   g_replay.triggerFrame, deterministic);
+        ++g_replay.idx;
+        g_replay.teleported = false;
+    }
+}
+
+}}  // namespace gos::visual_capture

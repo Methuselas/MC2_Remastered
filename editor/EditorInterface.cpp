@@ -4967,12 +4967,17 @@ void EditorInterface::renderObjectCompanionPanel()
 	if (group < 0 || group >= pMgr->getBuildingGroupCount())
 		return;
 
-	ImGuiIO& io = ImGui::GetIO();
-	const float w = 240.0f;
-	ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - w - 16.0f, 360.0f), ImGuiCond_Once);
+	// Same-group object palette. Pop it up on the LEFT edge of the screen so it does
+	// not collide with the right-column dock, and scale its geometry by the editor UI
+	// scale (s_uiScale). Font size is inherited from io.FontGlobalScale (which is set
+	// to s_uiScale) like every other panel -- the old SetWindowFontScale(1.3f) here
+	// double-scaled it and made this palette look oversized / "funny" vs the rest of
+	// the editor, and ignored DPI. ImGuiCond_Always on the position keeps it reliably
+	// on the left each time it pops (it is a transient per-brush context palette).
+	const float w = 240.0f * s_uiScale;
+	ImGui::SetNextWindowPos(ImVec2(16.0f * s_uiScale, 360.0f * s_uiScale), ImGuiCond_Always);
 	ImGui::SetNextWindowSize(ImVec2(w, 0.f), ImGuiCond_Once);
 	ImGui::Begin("Objects", nullptr, ImGuiWindowFlags_NoScrollbar);
-	ImGui::SetWindowFontScale(1.3f);
 
 	// Clicking a button must not delete curBrush (this bb) or mutate the recent
 	// ring mid-render, so defer the actual swap until after all widgets are drawn.
@@ -5269,12 +5274,58 @@ void EditorInterface::renderMissionToolsImGui()
 	ImGui::SetNextItemWidth(-1.f);
 	ImGui::InputText("##gameexe", s_gameExe, sizeof(s_gameExe));
 
+	// GAP 1 -- active-mod propagation. ModPicker::Activate() set MC2_ACTIVE_MOD in
+	// THIS (editor) process via _putenv_s. EditorTaskRunner launches the game with
+	// CreateProcessA(lpEnvironment=NULL), so the child INHERITS the editor's full
+	// environment -- MC2_ACTIVE_MOD included. No explicit env block needed; we just
+	// surface the active mod so the modder knows which overrides the playtest uses.
+	const char* activeMod = ModPicker::ActiveMod();          // "" == stock
+	const bool  haveMod    = (activeMod && activeMod[0]);
+	const char* modLabel   = haveMod ? activeMod : "stock (no mod)";
+	ImGui::Text("Active mod: %s", modLabel);
+
+	// GAP 2 -- stale-build advisory (governance sec 6). Compare game exe mtime to
+	// the editor exe's own mtime. If the game exe is OLDER, the modder likely
+	// rebuilt the editor but forgot to rebuild/deploy the game -> stale playtest.
+	// Non-blocking yellow warning only.
+	auto fileWriteTime = [](const char* path, FILETIME* out) -> bool {
+		WIN32_FILE_ATTRIBUTE_DATA fad{};
+		if (!GetFileAttributesExA(path, GetFileExInfoStandard, &fad))
+			return false;
+		*out = fad.ftLastWriteTime;
+		return true;
+	};
+	bool     gameExeStale = false;
+	FILETIME gameExeFT{};
+	bool     haveGameFT = fileWriteTime(s_gameExe, &gameExeFT);
+	{
+		char editorExe[MAX_PATH] = {0};
+		FILETIME editorFT{};
+		if (haveGameFT && GetModuleFileNameA(NULL, editorExe, MAX_PATH) > 0 &&
+		    fileWriteTime(editorExe, &editorFT))
+		{
+			// gameExe older than editor exe -> CompareFileTime < 0.
+			gameExeStale = (CompareFileTime(&gameExeFT, &editorFT) < 0);
+		}
+	}
+	if (!haveGameFT)
+		ImGui::TextColored(ImVec4(1.f, 0.6f, 0.2f, 1.f),
+		                   "WARNING: game exe not found at the path above.");
+	else if (gameExeStale)
+		ImGui::TextColored(ImVec4(1.f, 0.85f, 0.2f, 1.f),
+		                   "WARNING: game exe is older than the editor;\n"
+		                   "you may be playtesting a stale build.");
+
 	if (!haveMission) ImGui::BeginDisabled();
-	if (ImGui::Button("Launch Game on this Mission", ImVec2(-1.f, 0.f)))
+	char launchLabel[160];
+	snprintf(launchLabel, sizeof(launchLabel),
+	         "Launch Game on this Mission [mod: %s]", modLabel);
+	if (ImGui::Button(launchLabel, ImVec2(-1.f, 0.f)))
 	{
 		// Game loads a mission directly from a -mission <pak> argument (same flag
 		// the editor itself accepts). Launch async via the existing task runner so
 		// the editor UI never blocks; progress/exit show in the Task Monitor.
+		// Child inherits MC2_ACTIVE_MOD from the editor env (see GAP 1 above).
 		EditorTaskRunner::TaskSpec spec;
 		spec.name = "Test Mission";
 		char cmd[1100];
@@ -5284,6 +5335,74 @@ void EditorInterface::renderMissionToolsImGui()
 		std::string exeDir(s_gameExe);
 		size_t slash = exeDir.find_last_of("/\\");
 		spec.workingDirectory = (slash != std::string::npos) ? exeDir.substr(0, slash) : std::string();
+
+		// GAP 3 -- playtest archive (ruling C3). When the launch completes, write a
+		// small record to mods/<id-or-"stock">/.modproject/playtest/<ts>/playtest.json.
+		// Snapshot every input the callback needs NOW (the lambda runs later, on the
+		// main thread, when the game process exits).
+		std::string gameExeSnap   = s_gameExe;
+		std::string missionSnap    = missionPath;
+		std::string modSnap        = haveMod ? activeMod : "stock";
+		bool        staleSnap      = gameExeStale;
+		// Format the game exe mtime as FILETIME ticks (stable, opaque) for the record.
+		unsigned long long gameMtimeTicks = 0;
+		if (haveGameFT)
+			gameMtimeTicks = ((unsigned long long)gameExeFT.dwHighDateTime << 32) |
+			                 (unsigned long long)gameExeFT.dwLowDateTime;
+
+		auto archive = [gameExeSnap, missionSnap, modSnap, staleSnap, gameMtimeTicks]
+		               (const EditorTaskRunner::TaskResult& r)
+		{
+			// Timestamp: tool artifact, not a deterministic capture -> system time OK.
+			SYSTEMTIME st; GetLocalTime(&st);
+			char ts[32];
+			snprintf(ts, sizeof(ts), "%04u%02u%02u-%02u%02u%02u",
+			         st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+
+			// mods/<id>/.modproject/playtest/<ts>/  (create each level; ignore EEXIST).
+			char dir[1024];
+			snprintf(dir, sizeof(dir), "mods");                                      CreateDirectoryA(dir, NULL);
+			snprintf(dir, sizeof(dir), "mods/%s", modSnap.c_str());                  CreateDirectoryA(dir, NULL);
+			snprintf(dir, sizeof(dir), "mods/%s/.modproject", modSnap.c_str());      CreateDirectoryA(dir, NULL);
+			snprintf(dir, sizeof(dir), "mods/%s/.modproject/playtest", modSnap.c_str()); CreateDirectoryA(dir, NULL);
+			snprintf(dir, sizeof(dir), "mods/%s/.modproject/playtest/%s", modSnap.c_str(), ts);
+			CreateDirectoryA(dir, NULL);
+
+			// Persist the captured stdout/stderr tail next to the json.
+			char logPath[1100];
+			snprintf(logPath, sizeof(logPath), "%s/playtest.log", dir);
+			if (FILE* lf = fopen(logPath, "wb"))
+			{
+				fwrite(r.log.data(), 1, r.log.size(), lf);
+				fclose(lf);
+			}
+
+			char jsonPath[1100];
+			snprintf(jsonPath, sizeof(jsonPath), "%s/playtest.json", dir);
+			if (FILE* jf = fopen(jsonPath, "wb"))
+			{
+				// Minimal hand-written JSON (no json dep in the editor). Paths use
+				// forward slashes already; no escaping needed for these fields.
+				fprintf(jf,
+				    "{\n"
+				    "  \"timestamp\": \"%s\",\n"
+				    "  \"missionPak\": \"%s\",\n"
+				    "  \"gameExe\": \"%s\",\n"
+				    "  \"gameExeMtimeTicks\": %llu,\n"
+				    "  \"gameExeStale\": %s,\n"
+				    "  \"activeMod\": \"%s\",\n"
+				    "  \"exitCode\": %d,\n"
+				    "  \"logPath\": \"%s\"\n"
+				    "}\n",
+				    ts, missionSnap.c_str(), gameExeSnap.c_str(),
+				    gameMtimeTicks, staleSnap ? "true" : "false",
+				    modSnap.c_str(), r.exitCode, logPath);
+				fclose(jf);
+			}
+		};
+		spec.onSuccessMainThread = archive;
+		spec.onFailureMainThread = archive;   // archive crashes/nonzero exits too.
+
 		EditorTaskRunner::StartTask(spec);
 	}
 	if (!haveMission) ImGui::EndDisabled();
