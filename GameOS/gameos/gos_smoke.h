@@ -33,6 +33,15 @@ bool fixedTimestepEnabled();
 // Fixed step in milliseconds (1000/30). Constant; only meaningful when enabled.
 float fixedTimestepMs();
 
+// S9E deterministic render-shader clock. Returns the fixed-step elapsed time
+// in SECONDS = (fixed sim-frame count) * (1/30). Shares the exact S9D sim-frame
+// counter (advanced by fixedTimestepOnSimFrame) so the sim AND every
+// render-shader `time` uniform are driven off one pinned 30Hz clock: frame N
+// renders with identical shader time every run. Only meaningful when
+// fixedTimestepEnabled(); callers gate on that and keep their original
+// wall-clock expression on the OFF path (byte-identical retail).
+double fixedClockSeconds();
+
 // Frame-counter hook for the deterministic clock probe. Call exactly once per
 // rendered sim frame (the same place scenarioTime advances). When the flag is
 // on, emits "[SMOKE_CLOCK_PROBE v1] frame=<n> scenarioTime=<t>" at frames

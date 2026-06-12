@@ -272,6 +272,14 @@ bool fixedTimestepEnabled() { return g_state.fixedTimestep; }
 
 float fixedTimestepMs() { return 1000.0f / 30.0f; }
 
+double fixedClockSeconds() {
+    // S9E: shares the S9D fixed sim-frame counter (g_fixedSimFrame, advanced by
+    // fixedTimestepOnSimFrame on each fixed-step sim frame). Frame N maps to a
+    // deterministic time across runs. 1/30 s per frame == 30Hz, the same basis
+    // scenarioTime advances on, so sim and render-shader clocks stay locked.
+    return (double)g_fixedSimFrame / 30.0;
+}
+
 void fixedTimestepOnSimFrame(double scenarioTimeSeconds) {
     if (!g_state.fixedTimestep) return;
     // Counts only sim frames where the fixed step actually advances the clock

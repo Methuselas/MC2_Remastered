@@ -180,3 +180,13 @@ call from inside a draw-bind path.
   (opt-out `=0`); the chunk path needs it built (mip-completeness fixed 2026-06-09).
 - Hemisphere ambient on the chunk path is env-gated like legacy: `MC2_TERRAIN_LIGHTING_V1`
   / `MC2_TERRAIN_LIGHTING_V2` (default OFF).
+
+## Deterministic capture clock
+
+- `MC2_SMOKE_FIXED_TIMESTEP=1` — deterministic capture clock (S9D sim + S9E render-shader).
+  Opt-in, default **OFF** (byte-identical retail/normal smoke). Pins BOTH the sim clock
+  (S9D: scenarioTime/frameRate advance a fixed 1/30s per frame) AND every render-shader
+  `time` uniform (S9E: water/terrain/overlay/decal/screen-shadow/godray/shoreline, all in
+  seconds, driven off the shared S9D fixed sim-frame counter via `SmokeMode::fixedClockSeconds()`),
+  so frame N renders identically every run. Makes sim speed fps-proportional → it is a
+  CAPTURE/DETERMINISM knob, **NOT** for full-duration regression smokes.

@@ -28,6 +28,7 @@
 #include "gos_postprocess.h"
 #include "gos_profiler.h"
 #include "gos_validate.h"  // drainGLErrors (Tier-1 instr §4)
+#include "gos_smoke.h"     // S9E: SmokeMode fixed deterministic render-shader clock
 #include "../../mclib/cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline
 #include "../../mclib/render_contract.h"      // [RENDER_PASS v1] noteRenderPass
 #include "Stuff/Stuff.hpp"                     // Stuff::Matrix4D for gos_SetWorldToClipGL (full chain required; matrix.hpp alone creates circular include ordering)
@@ -2860,7 +2861,9 @@ void gosRenderer::renderWaterFastPath(
     // transitions. Without fog mixing, the 3-band classifier's tile-aligned
     // staircase is fully visible at the shore. Use the renderer's cached
     // fog_color_ (set from gos_State_Fog at clearWindow time) for parity.
-    setF   ("time", (float)((double)(timing::get_wall_time_ms() - timeStart_) / 1000.0));
+    setF   ("time", SmokeMode::fixedTimestepEnabled()
+                        ? (float)SmokeMode::fixedClockSeconds()
+                        : (float)((double)(timing::get_wall_time_ms() - timeStart_) / 1000.0));
     setVec4("fog_color", (const float*)&fog_color_);
 
     // GPU-driven path: dispatch compute cull/pack + cmd-patch if enabled.
@@ -3029,7 +3032,9 @@ void gosRenderer::renderWaterFastPath(
         setMF         ("frameCos",        frameCos);
         setMF         ("frameCosAlpha",   frameCosAlpha);
         setMF         ("maxMinUV",        maxMinUV);
-        setMF         ("time",  (float)((double)(timing::get_wall_time_ms() - timeStart_) / 1000.0));
+        setMF         ("time",  SmokeMode::fixedTimestepEnabled()
+                                    ? (float)SmokeMode::fixedClockSeconds()
+                                    : (float)((double)(timing::get_wall_time_ms() - timeStart_) / 1000.0));
         setMVec4      ("fog_color", (const float*)&fog_color_);
         // WATER reflection frame fix: terrain_camera_pos_ is the Stuff/MLR eye
         // (.x=left, .y=elevation, .z=forward); the water FS consumes cameraPos in
@@ -6029,7 +6034,9 @@ void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
     if (tl.terrainClassGrass >= 0)    glUniform4fv(tl.terrainClassGrass, 1, terrain_class_grass_);
     if (tl.terrainClassDirt  >= 0)    glUniform4fv(tl.terrainClassDirt,  1, terrain_class_dirt_);
     if (tl.time >= 0) {
-        float elapsed = (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
+        float elapsed = SmokeMode::fixedTimestepEnabled()
+                        ? (float)SmokeMode::fixedClockSeconds()
+                        : (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
         glUniform1f(tl.time, elapsed);
     }
 
@@ -6167,7 +6174,9 @@ int gosRenderer::terrainBindThinUniformsForPatchStream(glsl_program* overridePro
     if (tl.terrainClassGrass >= 0)    glUniform4fv(tl.terrainClassGrass, 1, terrain_class_grass_);
     if (tl.terrainClassDirt  >= 0)    glUniform4fv(tl.terrainClassDirt,  1, terrain_class_dirt_);
     if (tl.time >= 0) {
-        float elapsed = (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
+        float elapsed = SmokeMode::fixedTimestepEnabled()
+                        ? (float)SmokeMode::fixedClockSeconds()
+                        : (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
         glUniform1f(tl.time, elapsed);
     }
     if (tl.tex1 >= 0) glUniform1i(tl.tex1, 0);
@@ -6324,7 +6333,9 @@ void gosRenderer::terrainDrawIndexedPatches(gosRenderMaterial* material, gosMesh
     if (tl.terrainClassGrass >= 0)    glUniform4fv(tl.terrainClassGrass, 1, terrain_class_grass_);
     if (tl.terrainClassDirt  >= 0)    glUniform4fv(tl.terrainClassDirt,  1, terrain_class_dirt_);
     if (tl.time >= 0) {
-        float elapsed = (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
+        float elapsed = SmokeMode::fixedTimestepEnabled()
+                        ? (float)SmokeMode::fixedClockSeconds()
+                        : (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
         glUniform1f(tl.time, elapsed);
     }
 
@@ -6516,7 +6527,9 @@ void gosRenderer::drawIndexedTris(gos_VERTEX* vertices, int num_vertices, WORD* 
                 if (curStates_[gos_State_Water]) {
                     prog->setInt("isWater", 1);
                     static uint64_t water_start = timing::get_wall_time_ms();
-                    float elapsed = (float)(timing::get_wall_time_ms() - water_start) / 1000.0f;
+                    float elapsed = SmokeMode::fixedTimestepEnabled()
+                                        ? (float)SmokeMode::fixedClockSeconds()
+                                        : (float)(timing::get_wall_time_ms() - water_start) / 1000.0f;
                     prog->setFloat("time", elapsed);
                 } else {
                     prog->setInt("isWater", 0);
@@ -8759,7 +8772,9 @@ void gosRenderer::drawTerrainOverlays()
     glDisable(GL_CULL_FACE);
 
     glUseProgram(overlayProg_->shp_);
-    float elapsed = (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
+    float elapsed = SmokeMode::fixedTimestepEnabled()
+                        ? (float)SmokeMode::fixedClockSeconds()
+                        : (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
     const float* fixBMvpOverlay =
         gos_terrain_indirect::IsFrameSolidArmed()
             ? gos_terrain_indirect_getDispatchMvp16()
@@ -8871,7 +8886,9 @@ bool gosRenderer::drawDecalStaticBatch(unsigned int vboGL,
 
     DECAL_GLPROBE("after_state_block");
     glUseProgram(overlayProg_->shp_);
-    float elapsed = (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
+    float elapsed = SmokeMode::fixedTimestepEnabled()
+                        ? (float)SmokeMode::fixedClockSeconds()
+                        : (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
     const float* fixBMvpDecalStatic =
         gos_terrain_indirect::IsFrameSolidArmed()
             ? gos_terrain_indirect_getDispatchMvp16()
@@ -8940,7 +8957,9 @@ void gosRenderer::drawDecals()
     glDisable(GL_CULL_FACE);
 
     glUseProgram(decalProg_->shp_);
-    float elapsed = (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
+    float elapsed = SmokeMode::fixedTimestepEnabled()
+                        ? (float)SmokeMode::fixedClockSeconds()
+                        : (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
     const float* fixBMvpDecals =
         gos_terrain_indirect::IsFrameSolidArmed()
             ? gos_terrain_indirect_getDispatchMvp16()
