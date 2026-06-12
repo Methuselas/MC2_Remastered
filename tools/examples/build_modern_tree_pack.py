@@ -284,7 +284,7 @@ def main():
             print(f"ERROR: no family '{args.family}'. Valid: {[f['name'] for f in ASSET_FAMILIES]}", file=sys.stderr)
             sys.exit(1)
 
-    mapping = build_mapping_table(ASSET_FAMILIES)
+    mapping = build_mapping_table(families_to_cook)
     cooked_glb_paths = {}
     cook_errors = []
     cooked_dir = out_dir / "data" / "model_overrides" / "cooked"
