@@ -323,6 +323,9 @@ def main():
                 # entirely, so vars not explicitly listed get dropped.
                 **{k: v for k, v in os.environ.items()
                    if k in ("MC2_FX_COUNT_LOG",
+                            # S9D deterministic fixed-timestep smoke clock
+                            # (opt-in; Popen replaces env so it must be listed).
+                            "MC2_SMOKE_FIXED_TIMESTEP",
                             "MC2_SCREENSHOT_AT_FRAME",
                             "MC2_SCREENSHOT_PATH",
                             "MC2_OBJECT_RECON_TRACY",
