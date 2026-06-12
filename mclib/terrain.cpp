@@ -46,6 +46,7 @@
 #include"../GameOS/gameos/gos_terrain_height_tex.h"  // TERRAIN-NORMALS-FROM-HEIGHT-1
 #include"../GameOS/gameos/gos_terrain_lod_chunk.h"   // Terrain LOD chunk Phase 1
 #include"../GameOS/gameos/gos_render_pass_timer.h"   // [RENDER_PASS_TIME v1] chunk-terrain scope
+#include"../GameOS/gameos/gos_frame_pass_stats.h"     // [FRAME_PASS_STATS v1] chunk draw count
 #include"../GameOS/gameos/utils/logging.h"            // Terrain LOD chunk Phase 2: throttled false-negative log
 #include"terrain_admission_mode.h"  // F6 T2: shared isModern() flag for terrain.cpp + quad.cpp
 
@@ -2458,6 +2459,12 @@ void Terrain::flushDrawCommands (void)
 
 	if (s_blockMeta && s_cmdCount > 0) {
 		gos_render_pass_timer::Begin(gos_render_pass_timer::Pass_TerrainChunk);
+		// [FRAME_PASS_STATS v1] visible terrain chunks = draw-command count
+		// (one cmd per visible block); pulled from the existing aggregate, no
+		// per-block counting. OFF=zero cost (Set* early-returns).
+		gos_frame_pass_stats::SetPassCounts(
+			gos_render_pass_timer::Pass_TerrainChunk, (uint32_t)s_cmdCount, 0u);
+		gos_frame_pass_stats::SetVisibleTerrainChunks((uint32_t)s_cmdCount);
 		gos_TerrainLodChunk_SubmitDrawCommands(s_drawCmds, s_skirtDepths,
 			s_skirtEdgeMaskVec.empty() ? nullptr : s_skirtEdgeMaskVec.data(),
 			s_stitchStepVec.empty() ? nullptr : s_stitchStepVec.data(), s_cmdCount);

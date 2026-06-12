@@ -6,6 +6,7 @@
 #include "view_uniforms_gl.h"
 #include "../../RenderCore/RendererFeatureRegistry.h"
 #include "../../RenderCore/RenderResourceRegistry.h"
+#include "gos_frame_pass_stats.h"   // [FRAME_PASS_STATS v1] additive JSON section
 
 // Texture name lookup for mech node indices (mcTextureManager slot → name string).
 // Defined in gos_mech_batcher.cpp; not declared in any header.
@@ -325,6 +326,44 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
             s << "    }" << (i + 1 < count ? "," : "") << "\n";
         }
         s << "  ]\n";
+    }
+    // [FRAME_PASS_STATS v1] additive section — present ONLY when
+    // MC2_FRAME_PASS_STATS=1 (Enabled()). When absent the schema is byte-for-
+    // byte unchanged, so existing consumers/validator are unaffected (matches
+    // the TerrainPassFacts "outside ok gate" precedent).
+    if (gos_frame_pass_stats::Enabled()) {
+        const gos_frame_pass_stats::FrameAggregates& fa =
+            gos_frame_pass_stats::GetFrameAggregates();
+        s << "  ,\n";
+        s << "  \"framePassStats\": {\n";
+        s << "    \"version\": 1,\n";
+        s << "    \"visibleTerrainChunks\": " << fa.visibleTerrainChunks << ",\n";
+        s << "    \"staticPropBatches\": "    << fa.staticPropBatches    << ",\n";
+        s << "    \"mechBatchInstances\": "   << fa.mechBatchInstances   << ",\n";
+        s << "    \"vfxCount\": "             << fa.vfxCount             << ",\n";
+        s << "    \"passes\": [\n";
+        const int np = gos_frame_pass_stats::PassCount();
+        bool first = true;
+        for (int p = 0; p < np; ++p) {
+            const gos_frame_pass_stats::PassRow& r = gos_frame_pass_stats::GetPassRow(p);
+            if (!r.ran) continue;   // pass absent if it never ran this frame
+            if (!first) s << ",\n";
+            first = false;
+            s << "      {\n";
+            s << "        \"pass\": \"" << gos_frame_pass_stats::PassKey(p) << "\",\n";
+            s << "        \"fbo\": "       << r.fbo            << ",\n";
+            s << "        \"viewportW\": " << r.viewport[2]    << ",\n";
+            s << "        \"viewportH\": " << r.viewport[3]    << ",\n";
+            s << "        \"depthTest\": " << (r.depthTest ? "true" : "false") << ",\n";
+            s << "        \"depthMask\": " << (r.depthMask ? "true" : "false") << ",\n";
+            s << "        \"blend\": "     << (r.blend     ? "true" : "false") << ",\n";
+            s << "        \"cull\": "      << (r.cull      ? "true" : "false") << ",\n";
+            s << "        \"drawCount\": "     << r.drawCount     << ",\n";
+            s << "        \"instanceCount\": " << r.instanceCount << "\n";
+            s << "      }";
+        }
+        s << (first ? "" : "\n") << "    ]\n";
+        s << "  }\n";
     }
     s << "}\n";
     return s.str();
