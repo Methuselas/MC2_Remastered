@@ -42,9 +42,19 @@ struct PassRow {
     uint32_t instanceCount = 0u; // pass instances (from aggregates; 0 if unknown)
 };
 
-// MC2_FRAME_PASS_STATS=1 (cached on first call). All other entry points
-// early-return when this is false.
+// Collection is active when (MC2_FRAME_PASS_STATS=1) OR the in-process runtime
+// collect flag is set (see SetCollect). All other entry points early-return
+// when this is false. Default OFF in the game (env unset + flag false) = zero
+// cost. The editor Frame Inspector tab flips the runtime flag on while visible.
 bool Enabled();
+
+// In-process runtime collect flag. Lets the editor Frame Inspector tab turn
+// collection on while open (env unset) and off when hidden, WITHOUT enabling
+// the [FRAME_PASS_STATS v1] emit cadence path in the game. Game build with the
+// env unset never calls this, so the flag stays false = unchanged. Does NOT
+// alter the emit-line behavior (that still keys off the env, see FrameEnd).
+void SetCollect(bool on);
+bool CollectFlag();
 
 // Called at each gos_render_pass_timer::Begin(p): captures the live GL state
 // for pass p (one glGet burst, OFF=zero). Co-located so the per-pass GL state
