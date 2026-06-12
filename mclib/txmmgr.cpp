@@ -3642,7 +3642,20 @@ DWORD MC_TextureManager::loadTexture (const char *textureFullPathName, gos_Textu
 				compressedTextureSize += txmSize;
 				masterTextureNodes[i].textureData = (DWORD *)textureCacheHeap->Malloc(txmSize);
 				if (masterTextureNodes[i].textureData)
-					memcpy(masterTextureNodes[i].textureData, rgba.data(), txmSize);
+				{
+					// ktxDecodeBc7ToRgba8 emits RGBA8; the gos MEM_RAW upload expects
+					// BGRA8 (matching the .tga decode path), so swap R<->B per pixel.
+					// Without this, red content renders blue (blue-tinted scene).
+					const uint8_t* src = rgba.data();
+					uint8_t* dst = (uint8_t*)masterTextureNodes[i].textureData;
+					for (DWORD px = 0; px + 4 <= txmSize; px += 4)
+					{
+						dst[px + 0] = src[px + 2]; // B
+						dst[px + 1] = src[px + 1]; // G
+						dst[px + 2] = src[px + 0]; // R
+						dst[px + 3] = src[px + 3]; // A
+					}
+				}
 				else
 					masterTextureNodes[i].gosTextureHandle = 0;
 				printf("[TEXMGR_KTX_PRIMARY] %s -> RGBA8 %dx%d (ktx2 CPU decode)\n", sidecar, kw, kh); fflush(stdout);
