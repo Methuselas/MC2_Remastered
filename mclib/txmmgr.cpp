@@ -3891,11 +3891,24 @@ DWORD MC_TextureNode::get_gosTextureHandle (void)	//If texture is not in VidRAM,
 				// upload mip 0 via glCompressedTexImage2D and skip the normal
 				// gos_NewTextureFromMemory call. Any failure (no sidecar, not BC7,
 				// load fail, no BPTC support) falls through unchanged.
-				static const bool s_texmgrCompressedUpload =
-					(getenv("MC2_TEXMGR_COMPRESSED_UPLOAD") && getenv("MC2_TEXMGR_COMPRESSED_UPLOAD")[0] != '0');
+				// Default-ON (opt out with MC2_TEXMGR_COMPRESSED_UPLOAD=0): prefer the
+				// BC7 .ktx2 sidecar for GPU upload when present; any failure (no sidecar,
+				// not BC7, no BPTC support) falls through to the .tga unchanged.
+				static const bool s_texmgrCompressedUpload = [](){
+					const char* v = getenv("MC2_TEXMGR_COMPRESSED_UPLOAD");
+					return (!v || !v[0]) ? true : (v[0] != '0');
+				}();
 				bool uploadedCompressed = false;
 
-				if (s_texmgrCompressedUpload && nodeName && *nodeName)
+				// Exclude MODIFIABLE textures (uniqueInstance != 0): the mech/vehicle
+				// paint-scheme system gos_LockTexture()s these and rewrites the R/G/B
+				// team-color mask in place (mech3d/gvactor setPaintScheme). A BC7
+				// texture is GPU-immutable / not CPU-lockable, so compressing it leaves
+				// the raw mask on screen (base blue + red/green, no team colors). Static
+				// shared textures (uniqueInstance == 0: terrain, trees, buildings) are
+				// never locked and keep the BC7 upload. See txmmgr.h:136 ("Texture is
+				// modifiable. DO NOT CACHE OUT").
+				if (s_texmgrCompressedUpload && nodeName && *nodeName && uniqueInstance == 0)
 				{
 					if (!GLEW_ARB_texture_compression_bptc)
 					{

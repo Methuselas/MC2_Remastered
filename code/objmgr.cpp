@@ -3420,6 +3420,8 @@ GameObjectPtr GameObjectManager::findTerrainObjectByMouse (long mouseX,
 	PkTimer _pk;  // MC2_PICK_RECON per-call wall-time
 	int32_t pickCandidates = 0;
 	int32_t activeBlocksVisited = 0;
+	GameObjectPtr pickBest = NULL;        // BUILDING-PICK FIX: world-space nearest-to-camera
+	float         pickBestDistSq = 3.4e38f;
 	for (long terrainBlock = 0; terrainBlock < Terrain::numObjBlocks; terrainBlock++)
 	{
 		// Cull-cascade consumer (mouse pick). Post-8c source of truth for
@@ -3517,7 +3519,7 @@ GameObjectPtr GameObjectManager::findTerrainObjectByMouse (long mouseX,
 							bool haveRect = false;
 							long oc = obj->getObjectClass();
 							BldgAppearance* ba =
-								((oc == BUILDING) || (oc == TREEBUILDING))
+								((oc == BUILDING) || (oc == TREEBUILDING) || (oc == TERRAINOBJECT) || (oc == BRIDGE) || (oc == TURRET) || (oc == GATE))
 									? (BldgAppearance*)obj->getAppearance()
 									: NULL;
 							if (ba) {
@@ -3534,29 +3536,29 @@ GameObjectPtr GameObjectManager::findTerrainObjectByMouse (long mouseX,
 								         (mouseY <= lry);
 							}
 
-							if (inRect)
+							// BUILDING-PICK FIX (world-space): the candidate's projected world OBB
+							// (projectPickCandidateRect, O(8) corners, correct eye projection) must
+							// contain the cursor. Replaces per-face screen PerPolySelect, which needs
+							// the CPU listOfVisibleFaces the GPU static-prop path no longer bakes
+							// (numVisibleFaces==0 -> buildings were untargetable). No per-face work.
+							if (haveRect && inRect)
 							{
 								if (s_pickRecon) ++s_pkInRect;
-								//---------------------------
-								// We're on it, so save it...
 								if (!obj->isMover() || (obj->isMover() && obj->isOnGUI() && Terrain::IsGameSelectTerrainPosition(obj->getPosition())))
 								{
+									bool okClass;
 									if (skipDisabled)
-									{
-										if (!obj->isDisabled() &&
-											(obj->getObjectClass() != TREE) &&
-											(obj->getDamageLevel() != 36000000) &&				//We are a rock clump
-											objAppearance->PerPolySelect(mouseX, mouseY))
-											return(obj);
-									}
+										okClass = (!obj->isDisabled() && (oc != TREE) && (obj->getDamageLevel() != 36000000));
 									else
+										okClass = ((oc != TREE) && (oc != ARTILLERY) && (obj->getDamageLevel() != 36000000));
+									if (okClass)
 									{
-										//Do not target trees or artillery strikes!!
-										if ((obj->getObjectClass() != TREE) &&
-											(obj->getObjectClass() != ARTILLERY) &&
-											(obj->getDamageLevel() != 36000000) &&				//We are a rock clump
-											objAppearance->PerPolySelect(mouseX, mouseY))
-											return(obj);
+										// Disambiguate overlapping OBBs by nearest-to-camera (front building wins).
+										Stuff::Vector3D _cp = eye->getPosition();
+										Stuff::Vector3D _op = obj->getPosition();
+										float _dx=_op.x-_cp.x, _dy=_op.y-_cp.y, _dz=_op.z-_cp.z;
+										float _dd=_dx*_dx+_dy*_dy+_dz*_dz;
+										if (_dd < pickBestDistSq) { pickBestDistSq = _dd; pickBest = obj; }
 									}
 								}
 							}
@@ -3569,7 +3571,7 @@ GameObjectPtr GameObjectManager::findTerrainObjectByMouse (long mouseX,
 
 	TracyPlot("MIF.TerrainPick.activeBlocks", int64_t(activeBlocksVisited));
 	TracyPlot("MIF.TerrainPick.candidates", int64_t(pickCandidates));
-	return(NULL);
+	return(pickBest);   // BUILDING-PICK FIX: nearest world-OBB hit (NULL if none)
 }
 
 //---------------------------------------------------------------------------
