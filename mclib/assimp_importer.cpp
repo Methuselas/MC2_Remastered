@@ -357,7 +357,15 @@ long ImportShapeFromMesh(const aiScene* scene, unsigned meshIdx,
 	for (unsigned v = 0; v < mesh->mNumVertices; v++) {
 		verts[v].position  = toMC2Pos(mesh->mVertices[v]);
 		verts[v].normal    = toMC2Vec(mesh->mNormals[v]);
-		verts[v].aRGBLight = 0xff000000;
+		// Init OPAQUE WHITE, not black. Override render shapes (treeRenderShape/
+		// bldgRenderShape) are drawn by the GPU static-prop batcher, which reads
+		// a_aRGBLight from the type-level VBO (bdactor.cpp ~2698). The per-vertex
+		// CPU lighting bake runs on the STOCK shape (treeShape), never on the
+		// imported override shape, so its aRGBLight is never overwritten. Black
+		// init => texture * 0 = solid-black tree. White init => the cooked albedo
+		// shows (unlit, matching the "draw foliage UNLIT" prior art). When a bake
+		// DOES run it overwrites this, so stock-lit shapes are unaffected.
+		verts[v].aRGBLight = 0xffffffff;
 
 		// MODEL-OVERRIDE / Track C: vertex-tight bounding box, mesh-local.
 		// Accumulate over the SAME positions stored into the vertex buffer (no

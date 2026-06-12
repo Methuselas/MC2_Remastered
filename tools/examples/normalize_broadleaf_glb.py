@@ -100,7 +100,13 @@ def main():
     ap.add_argument("outfile")
     ap.add_argument("--scale", type=float, default=0.5,
                     help="uniform scale baked into verts (default 0.5 = halve)")
+    ap.add_argument("--no-flip-x", action="store_true",
+                    help="skip the 180-deg X flip (default: flip ON). The flip puts "
+                         "the base at maxBox.y so the importer's default "
+                         "MC2_GLTF_GROUND=2 grounds the base (not the canopy) => upright.")
     args = ap.parse_args()
+    # 180-deg rotation about X: (x,y,z)->(x,-y,-z). Even parity (winding kept).
+    FLIP = np.diag([1.0, -1.0, -1.0]) if not args.no_flip_x else np.eye(3)
 
     d, js, bin_off, bin_len = read_glb(args.infile)
     if bin_off is None:
@@ -116,8 +122,8 @@ def main():
     for mi, mesh in enumerate(js["meshes"]):
         node = mesh_node.get(mi)
         q = node.get("rotation", [0, 0, 0, 1]) if node else [0, 0, 0, 1]
-        R = quat_to_mat3(q) * float(args.scale)        # rotation * user-scale (drop node scale/trans)
-        Rn = quat_to_mat3(q)                            # normals: rotation only
+        R = (FLIP @ quat_to_mat3(q)) * float(args.scale)  # flip * rotation * user-scale (drop node scale/trans)
+        Rn = FLIP @ quat_to_mat3(q)                        # normals: flip * rotation only
         for pr in mesh["primitives"]:
             attrs = pr["attributes"]
             # POSITION
