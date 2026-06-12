@@ -367,6 +367,146 @@ namespace {
 		}
 	};
 }
+
+//----------------------------------------------------------------------------------
+// MC2_BRIDGE_MOVER_STATE -- runtime-bridge v0 (mover.state over stdout).
+//
+// When env MC2_BRIDGE_MOVER_STATE=1, emit one [MOVER v2] line per live mover
+// every MC2_BRIDGE_MOVER_PERIOD_SEC seconds (default 2). Strictly READ-ONLY:
+// only getters, every deref null-guarded. Zero cost when the env is unset
+// (single getenv at startup; the per-frame check is one bool + one float
+// compare). Consumed by the editor's GameplayDebugger live table; see
+// docs/superpowers/strategy/runtime-bridge-architecture.md Phase 3 sec 11.
+//----------------------------------------------------------------------------------
+namespace {
+	static const bool  s_bridgeMoverState =
+		(getenv("MC2_BRIDGE_MOVER_STATE") != nullptr);
+	static float s_bridgeNextEmitTime = 0.0f;   // scenarioTime of next burst
+	static float bridgeMoverPeriodSec() {
+		const char* e = getenv("MC2_BRIDGE_MOVER_PERIOD_SEC");
+		float p = e ? (float)atof(e) : 2.0f;
+		if (p < 0.25f) p = 0.25f;
+		return p;
+	}
+
+	// Short name for the warrior status enum (see warrior.h WARRIOR_STATUS_*).
+	static const char* bridgeWarriorStatusName(long s) {
+		switch (s) {
+			case WARRIOR_STATUS_NORMAL:      return "normal";
+			case WARRIOR_STATUS_WITHDRAWING: return "withdrawing";
+			case WARRIOR_STATUS_WITHDRAWN:   return "withdrawn";
+			case WARRIOR_STATUS_EJECTED:     return "ejected";
+			case WARRIOR_STATUS_DEAD:        return "dead";
+			case WARRIOR_STATUS_MIA:         return "mia";
+			case WARRIOR_STATUS_CAPTURED:    return "captured";
+			case WARRIOR_STATUS_BASECAMP:    return "basecamp";
+			default:                         return "unk";
+		}
+	}
+
+	// Copy src into dst (cap chars) replacing spaces/'='/control with '_' so the
+	// key=value [MOVER v2] line stays parseable even for names with spaces. Always
+	// NUL-terminates; emits "?" for null/empty input.
+	static void bridgeSanitize(char* dst, size_t cap, const char* src) {
+		if (cap == 0) return;
+		if (!src || !src[0]) { strncpy(dst, "?", cap - 1); dst[cap - 1] = 0; return; }
+		size_t j = 0;
+		for (size_t i = 0; src[i] && j + 1 < cap; ++i) {
+			char c = src[i];
+			if (c == ' ' || c == '=' || c == '\t' || c == '\r' || c == '\n')
+				c = '_';
+			dst[j++] = c;
+		}
+		dst[j] = 0;
+	}
+
+	// Emit [MOVER v2] lines for up to kCap live movers. Read-only; defensive.
+	static void bridgeEmitMoverState(float scenarioTimeNow) {
+		if (!s_bridgeMoverState || !ObjectManager)
+			return;
+		if (scenarioTimeNow < s_bridgeNextEmitTime)
+			return;
+		s_bridgeNextEmitTime = scenarioTimeNow + bridgeMoverPeriodSec();
+
+		const long kCap = 64;
+		long total = ObjectManager->getNumMovers();
+		long emitted = 0;
+		printf("[MOVER v2 begin] t=%.1f count=%ld\n", scenarioTimeNow, total);
+		for (long i = 0; i < total && emitted < kCap; ++i) {
+			MoverPtr mover = ObjectManager->getMover(i);
+			if (!mover)
+				continue;
+
+			long              partId = mover->getPartId();
+			char              name[64];
+			bridgeSanitize(name, sizeof(name), mover->getName());
+			long              team   = mover->getTeamId();
+			Stuff::Vector3D   pos    = mover->getPosition();
+
+			// HP as a 0..1 damage-derived fraction (getDamageLevel is the only
+			// HP signal reachable without poking per-location body arrays).
+			float dmg = mover->getDamageLevel();
+			float hpFrac = 1.0f - dmg;
+			if (hpFrac < 0.0f) hpFrac = 0.0f;
+			if (hpFrac > 1.0f) hpFrac = 1.0f;
+
+			char              pilotName[64];
+			bridgeSanitize(pilotName, sizeof(pilotName), 0);   // default "?"
+			long              orderVal  = -1;
+			const char*       orderName = "none";
+			long              targetId  = -1;
+
+			// v2 brain/path/target detail. Defaults are emitted even when the
+			// pilot or path is absent so the [MOVER v2] grammar stays fixed-arity
+			// and the editor parser never has to handle optional fields.
+			long              brainState = -1;   // ABL brain FSM state index (opaque)
+			long              moveState  = -1;   // moveOrders.moveState
+			Stuff::Vector3D   pgoal;             pgoal.Zero();   // world goal of active path
+			long              pCurStep   = -1;   // step index being headed for
+			long              pNumSteps  = 0;    // total steps in active path
+			long              pCost      = -1;   // A* total path cost
+			Stuff::Vector3D   tgtPos;            tgtPos.Zero();  // current target world pos
+
+			MechWarriorPtr    pilot     = mover->getPilot();
+			if (pilot) {
+				bridgeSanitize(pilotName, sizeof(pilotName), pilot->getName());
+				orderVal  = pilot->getStatus();
+				orderName = bridgeWarriorStatusName(orderVal);
+				brainState = pilot->getBrainState();
+				moveState  = pilot->getMoveState();
+				// getMovePath(long) is a PURE accessor (returns moveOrders.path[which]);
+				// the zero-arg getMovePath() MUTATES (swaps path slots) and is never
+				// called here. Null-guarded defensively though the path pair is
+				// normally pre-allocated.
+				MovePathPtr mp = pilot->getMovePath(0);
+				if (mp) {
+					pgoal     = mp->goal;
+					pCurStep  = mp->curStep;
+					pNumSteps = mp->numStepsWhenNotPaused;
+					pCost     = mp->cost;
+				}
+				GameObjectPtr tgt = pilot->getCurrentTarget();
+				if (tgt) {
+					targetId = tgt->getPartId();
+					tgtPos   = tgt->getPosition();
+				}
+			}
+
+			printf("[MOVER v2] id=%ld name=%s team=%ld pos=%.1f,%.1f,%.1f "
+				"hp=%.2f pilot=%s order=%ld/%s target=%ld "
+				"brain=%ld mstate=%ld pgoal=%.1f,%.1f,%.1f pstep=%ld/%ld pcost=%ld "
+				"tgtpos=%.1f,%.1f,%.1f\n",
+				partId, name, team, pos.x, pos.y, pos.z,
+				hpFrac, pilotName, orderVal, orderName, targetId,
+				brainState, moveState, pgoal.x, pgoal.y, pgoal.z,
+				pCurStep, pNumSteps, pCost,
+				tgtPos.x, tgtPos.y, tgtPos.z);
+			++emitted;
+		}
+		fflush(stdout);
+	}
+} // namespace
+
 //----------------------------------------------------------------------------------
 // class Mission
 long Mission::update (void)
@@ -450,50 +590,10 @@ long Mission::update (void)
 				missionLineChanged = turn;
 			}
 
-			// Tessellation debug keys (F-keys, no modifiers needed)
-			// F6/F7 = tess level, F8/F9 = phong, F10/F11 = displacement, F12 = wireframe
-			// Note: F5 = camera preset, F9 = objectives (already bound) — skip those
+			// Tessellation/phong debug F-keys removed: F6/F7/F8 now drive the
+			// Tactical Overview / sensor / weapon-range views (mechcmd2.cpp), and
+			// terrain tuning lives in the imgui overlay. Shadow-softness keys kept.
 			{
-				static float g_tessLevel = 4.0f;
-				static float g_tessDistNear = 200.0f;
-				static float g_tessDistFar = 2000.0f;
-				static float g_phongAlpha = 0.5f;
-				static float g_displaceScale = 2.0f;
-				static bool g_tessWireframe = false;
-
-				if (userInput->getKeyDown(KEY_F6)) {
-					g_tessLevel = min(g_tessLevel + 1.0f, 64.0f);
-					gos_SetTerrainTessParams(g_tessLevel, g_tessDistNear, g_tessDistFar);
-					CB_PRINTF("[TESS-KEY] F6: level=%.0f", g_tessLevel);
-				}
-				if (userInput->getKeyDown(KEY_F7)) {
-					g_tessLevel = max(g_tessLevel - 1.0f, 1.0f);
-					gos_SetTerrainTessParams(g_tessLevel, g_tessDistNear, g_tessDistFar);
-					CB_PRINTF("[TESS-KEY] F7: level=%.0f", g_tessLevel);
-				}
-				if (userInput->getKeyDown(KEY_F8)) {
-					g_phongAlpha = min(g_phongAlpha + 0.1f, 1.0f);
-					gos_SetTerrainPhongAlpha(g_phongAlpha);
-					CB_PRINTF("[TESS-KEY] F8: phong=%.1f", g_phongAlpha);
-				}
-				if (userInput->getKeyDown(KEY_F10)) {
-					g_phongAlpha = max(g_phongAlpha - 0.1f, 0.0f);
-					gos_SetTerrainPhongAlpha(g_phongAlpha);
-					CB_PRINTF("[TESS-KEY] F10: phong=%.1f", g_phongAlpha);
-				}
-				if (userInput->getKeyDown(KEY_F11)) {
-					g_displaceScale += 0.5f;
-					gos_SetTerrainDisplaceScale(g_displaceScale);
-				}
-				if (userInput->getKeyDown(KEY_F12)) {
-					g_displaceScale = max(g_displaceScale - 0.5f, 0.0f);
-					gos_SetTerrainDisplaceScale(g_displaceScale);
-				}
-				if (gos_GetKeyStatus(KEY_GRAVE) == KEY_PRESSED) {
-					g_tessWireframe = !g_tessWireframe;
-					gos_SetTerrainWireframe(g_tessWireframe);
-				}
-
 				// Shadow softness (Poisson disk radius) — edge-triggered (single step
 				// per press, not continuous while held) with 0.1 step for fine control.
 				if (gos_GetKeyStatus(KEY_LBRACKET) == KEY_PRESSED) {
@@ -699,6 +799,12 @@ long Mission::update (void)
 					terminationResult = missionResult;
 			}
 		}
+
+		// Runtime-bridge v0: emit [MOVER v2] mover.state to stdout (env-gated,
+		// throttled to MC2_BRIDGE_MOVER_PERIOD_SEC). Read-only; no-op unless
+		// MC2_BRIDGE_MOVER_STATE=1.
+		if (s_bridgeMoverState)
+			bridgeEmitMoverState(scenarioTime);
 
 		//----------------------------------------------------
 		// Check is all player forces dead/disabled.

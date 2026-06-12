@@ -74,12 +74,18 @@
 #include "MapGeneratorDialog.h"
 #include "MissionValidation.h"
 #include "EditorTaskRunner.h"
+#include "EditorPlaytest.h"
 #include "EditorDebugOverlay.h"
 #include "ModPicker.h"
+#include "EditorModProject.h"
 #include "EditorRecent.h"
 #include "SceneOutliner.h"
 #include "InspectorPanel.h"
 #include "AssetBrowser.h"
+#include "GameplayDebugger.h"
+#include "EditorPlaytestResults.h"
+#include "UndoHistoryPanel.h"
+#include "CommandPalette.h"
 #include "gameplay_pick.h"  // tryGameplayPick: shared pick spine, no game-object deps
 #include "gameos.hpp"       // gos_GetViewport, Environment (drawableWidth/Height)
 #include "gos_render.h"     // graphics::make_current_context
@@ -471,7 +477,9 @@ void Editor::init( char* loader )
 					else
 					{
 					CFileDialog fileDlg( 1,  "pak", NULL, OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR, szPAKFilter );
-					fileDlg.m_ofn.lpstrInitialDir = missionPath;
+					// When a Mod Project is open, default to <root>\data\missions; else unchanged.
+					{ const char* pd = EditorModProject::SaveDirOverride();
+					  fileDlg.m_ofn.lpstrInitialDir = pd ? pd : missionPath; }
 
 					bOK = false;
 					while ( !bOK )
@@ -1535,7 +1543,9 @@ int EditorInterface::FileOpen()
 	}
 
 	CFileDialog fileDlg( 1,  "pak", NULL, OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR, szPAKFilter );
-	fileDlg.m_ofn.lpstrInitialDir = missionPath;
+	// When a Mod Project is open, default to <root>\data\missions; else unchanged.
+	{ const char* pd = EditorModProject::SaveDirOverride();
+	  fileDlg.m_ofn.lpstrInitialDir = pd ? pd : missionPath; }
 
 	if (  IDOK == fileDlg.DoModal() )
 	{
@@ -1550,6 +1560,20 @@ int EditorInterface::FileOpen()
 
 	return true;
 
+}
+
+//--------------------------------------------------------------------------------------
+
+void EditorInterface::OpenMissionByPath( const char* pakPath )
+{
+	if ( !pakPath || !pakPath[0] )
+		return;
+	SetBusyMode();
+	EditorData::initTerrainFromPCV( pakPath );
+	tacMap.UpdateMap();
+	syncScrollBars();
+	PlaySound("SystemDefault",NULL,SND_ASYNC);
+	UnsetBusyMode();
 }
 
 //--------------------------------------------------------------------------------------
@@ -1698,8 +1722,25 @@ void EditorInterface::handleMouseMove( int PosX, int PosY )
 
 	if ( curBrush && ( painting ) )
 	{
-		if ( curBrush->canPaint( vector, PosX, PosY, 0 ) )
-			curBrush->paint( vector, PosX, PosY );
+		// Discrete object placement (BuildingBrush) must continue-paint from the
+		// SAME precise projection the click used (handleLeftButtonDown ->
+		// inverseProject), NOT the approx O(1) ground-plane unproject used for the
+		// cursor hot-path above. Otherwise the click places at the inverseProject
+		// cell and the first (often sub-pixel / synthesized WM_MOUSEMOVE) move
+		// places a SECOND object at the diverging approx cell -- "places twice per
+		// click in different locations". The bug was latent until the per-move
+		// unproject went O(1) approx (315ddec9) and diverged from the click cell.
+		// Recompute precisely only during an active LMB paint stroke and only for
+		// BuildingBrush, so the per-move cursor perf win is preserved and
+		// ScatterBrush (intentional drag-scatter, not a BuildingBrush) is unaffected.
+		Stuff::Vector3D paintPos = vector;
+		if ( dynamic_cast<BuildingBrush*>( curBrush ) )
+		{
+			Stuff::Vector2DOf<long> vp( PosX, PosY );
+			eye->inverseProject( vp, paintPos );
+		}
+		if ( curBrush->canPaint( paintPos, PosX, PosY, 0 ) )
+			curBrush->paint( paintPos, PosX, PosY );
 	}
 
  	//------------------------------------------------
@@ -1883,6 +1924,21 @@ void EditorInterface::handleKeyDown( int Key )
 
 	if ( lastKey != Key ) // only want to do these if something has changed
 	{
+		// Frame camera on the current selection (UE-style 'F'). Plain key, no
+		// modifiers (Ctrl+Alt+F is the fog toggle below). WantTextInput already
+		// consumed keystrokes when an ImGui field is focused, so the Outliner
+		// search box won't trigger this.
+		if ( Key == KEY_F && !shiftDn && !ctrlDn && !altDn )
+		{
+			frameSelectedObjects();
+		}
+
+		// Ctrl+P — toggle the Command Palette (Ctrl+Alt+P is ortho camera below).
+		if ( Key == KEY_P && ctrlDn && !altDn && !shiftDn )
+		{
+			CommandPalette::Toggle();
+		}
+
 		if ( Key == KEY_ESCAPE)
 		{
 			Select();
@@ -2228,7 +2284,9 @@ int EditorInterface::SaveAs()
 		}
 	}
 
-	fileDlg.m_ofn.lpstrInitialDir = missionPath;
+	// When a Mod Project is open, default the Save As dialog to <root>\data\missions.
+	{ const char* pd = EditorModProject::SaveDirOverride();
+	  fileDlg.m_ofn.lpstrInitialDir = pd ? pd : missionPath; }
 	retVal = fileDlg.DoModal();
 	if (  IDOK == retVal )
 	{
@@ -4607,6 +4665,10 @@ void EditorInterface::renderTerrainSelection()
 	const float wupv = land->worldUnitsPerVertex;
 
 	gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_AlphaInvAlpha );
+	// Always-visible overlay: disable depth test/write (rhw=1 z=0 verts otherwise
+	// fail the reverse-Z chunk-terrain depth test and vanish). Restored below.
+	gos_SetRenderState( gos_State_ZCompare, 0 );
+	gos_SetRenderState( gos_State_ZWrite,   0 );
 
 	// PERF: window the selection-overlay scan to the visible camera vertex
 	// range (same window MapData::makeLists renders). Previously this was an
@@ -4652,6 +4714,9 @@ void EditorInterface::renderTerrainSelection()
 			gos_DrawQuads( q, 4 );
 		}
 	}
+
+	gos_SetRenderState( gos_State_ZCompare, 1 );
+	gos_SetRenderState( gos_State_ZWrite,   1 );
 }
 
 void EditorInterface::setSculptBrush( int mode )
@@ -4732,14 +4797,22 @@ void EditorInterface::renderToolbarImGui()
 	{
 		ImGui::SetNextWindowPos( ImVec2( 8.f, 8.f ), ImGuiCond_Always );
 		ImGui::SetNextWindowBgAlpha( 0.35f );
+		extern const char* EditorStartupWarning();
+		extern void EditorClearStartupWarning();
+		const bool hudHasWarning = ( EditorStartupWarning() != nullptr );
 		ImGuiWindowFlags hudFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoNav |
 			ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize |
-			ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
-			ImGuiWindowFlags_NoInputs;
+			ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing;
+		// Accept input only while the dismissable warning banner is showing (its "x"
+		// button must be clickable); otherwise the HUD is a passthrough overlay.
+		if ( !hudHasWarning )
+			hudFlags |= ImGuiWindowFlags_NoInputs;
 		if ( ImGui::Begin( "##statushud", nullptr, hudFlags ) )
 		{
 			const char* mod = ModPicker::ActiveMod();
 			ImGui::Text( "Mod: %s", ( mod && mod[0] ) ? mod : "None (stock)" );
+			if ( EditorModProject::IsActive() )
+				ImGui::Text( "Project: %s", EditorModProject::Id() );
 			if ( land && Terrain::realVerticesMapSide > 1 )
 				ImGui::Text( "Terrain: %ld x %ld", Terrain::realVerticesMapSide, Terrain::realVerticesMapSide );
 			else
@@ -4748,6 +4821,22 @@ void EditorInterface::renderToolbarImGui()
 			ImGui::Text( "Selected: %d", selCount );
 			ImGui::Text( "Foliage: %d", FoliageRender::Count() );
 			ImGui::Text( "%.0f fps", ImGui::GetIO().Framerate );
+
+			// Non-blocking startup warning (e.g. empty-install / no assets). Yellow,
+			// wrapped, with a dismiss "x" that clears it for the session. Replaces the
+			// old blocking ::MessageBoxA the user had to OK on every launch.
+			if ( const char* warn = EditorStartupWarning() )
+			{
+				ImGui::Separator();
+				ImGui::PushStyleColor( ImGuiCol_Text, ImVec4( 1.0f, 0.78f, 0.20f, 1.0f ) );
+				if ( ImGui::SmallButton( "x##startupwarn" ) )
+					EditorClearStartupWarning();
+				ImGui::SameLine();
+				ImGui::PushTextWrapPos( ImGui::GetCursorPosX() + 320.f );
+				ImGui::TextUnformatted( warn );
+				ImGui::PopTextWrapPos();
+				ImGui::PopStyleColor();
+			}
 		}
 		ImGui::End();
 	}
@@ -4796,6 +4885,15 @@ void EditorInterface::renderToolbarImGui()
 	ModPicker::Draw();
 	ImGui::Separator();
 
+	// Mod Project — bind the session to a mods/<id> folder (Open/New/Close). When active,
+	// File save dialogs default to <root>\data\missions and the mod is mounted for assets.
+	if (ImGui::Button("Mod Project", ImVec2(-1.f, 0.f)))
+		EditorModProject::Toggle();
+	EditorModProject::Draw();
+	if (EditorModProject::IsActive())
+		ImGui::TextDisabled("Project: %s", EditorModProject::Id());
+	ImGui::Separator();
+
 	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.30f, 1.0f));
 	if (ImGui::Button("Generate Map", ImVec2(-1.f, 0.f)))
 		MapGeneratorDialog::Open();
@@ -4837,6 +4935,30 @@ void EditorInterface::renderToolbarImGui()
 		AssetBrowser::Toggle();
 	AssetBrowser::Draw();
 
+	// Gameplay Debugger — read-only runtime state for the selection. Editor has
+	// no live sim (ObjectManager is null), so it shows static editor data + a
+	// "not simulating" notice; wired now for when a sim path exists.
+	if (ImGui::Button("Gameplay Debugger", ImVec2(-1.f, 0.f)))
+		GameplayDebugger::Toggle();
+	GameplayDebugger::Draw();
+
+	// Playtest Results — read-only summary of the most recent playtest's archived
+	// stdout (status chip, child exit, SMOKE verdict, PERF p50/p99, mover counts,
+	// warning/fatal markers). Pure post-hoc log reader; no engine telemetry.
+	if (ImGui::Button("Playtest Results", ImVec2(-1.f, 0.f)))
+		EditorPlaytestResults::Toggle();
+	EditorPlaytestResults::Draw();
+
+	// Undo History — display-only list of undo actions with the current cursor.
+	if (ImGui::Button("Undo History", ImVec2(-1.f, 0.f)))
+		UndoHistoryPanel::Toggle();
+	UndoHistoryPanel::Draw();
+
+	// Command Palette — searchable list of editor commands (also Ctrl+P).
+	if (ImGui::Button("Command Palette", ImVec2(-1.f, 0.f)))
+		CommandPalette::Toggle();
+	CommandPalette::Draw();
+
 	// Place Tool — scatter mode + params + active brush (wraps existing brushes).
 	if (ImGui::Button("Place Tool", ImVec2(-1.f, 0.f)))
 		s_placePanelOpen = !s_placePanelOpen;
@@ -4846,6 +4968,32 @@ void EditorInterface::renderToolbarImGui()
 	if (ImGui::Button("Mission Tools", ImVec2(-1.f, 0.f)))
 		s_missionToolsOpen = !s_missionToolsOpen;
 	renderMissionToolsImGui();
+
+	// Playtest in Game (Slice 1): one-click save -> launch mc2.exe -> capture log.
+	// Stop while running; status (state / exit code / last line) below the button.
+	{
+		const bool running = EditorPlaytest::IsRunning();
+		if (running)
+		{
+			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.25f, 0.25f, 1.0f));
+			if (ImGui::Button("Stop Playtest", ImVec2(-1.f, 0.f)))
+				EditorPlaytest::Stop();
+			ImGui::PopStyleColor();
+		}
+		else
+		{
+			const bool can = EditorPlaytest::CanPlaytest();
+			if (!can) ImGui::BeginDisabled();
+			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.30f, 1.0f));
+			if (ImGui::Button("Playtest", ImVec2(-1.f, 0.f)))
+				EditorPlaytest::Start();
+			ImGui::PopStyleColor();
+			if (!can) ImGui::EndDisabled();
+			if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !can)
+				ImGui::SetTooltip("Load + save a mission first.");
+		}
+		ImGui::TextWrapped("%s", EditorPlaytest::StatusLine());
+	}
 
 	ImGui::Separator();
 
@@ -5906,6 +6054,50 @@ void EditorInterface::rotateSelectedObjects( int direction )
 	pAction = NULL;
 }
 
+// Frame the camera on the current selection. Recenters the camera's ground
+// anchor on the centroid of the selected objects' XY positions. Read-only:
+// touches no object, pushes no undo action, does not mark the mission dirty.
+// No-op when nothing is selected. setPosition() clamps the target to the map
+// and derives the camera Z from terrain elevation (swoopy z-glide) — the same
+// path every other editor camera move uses. (setGoalPosition() alone is inert
+// here: updateGoalPosition() resets it to the current pos unless goalPosTime is
+// primed, which the editor never does.)
+void EditorInterface::frameSelectedObjects()
+{
+	if ( !eye )
+		return;
+
+	EditorObjectMgr* mgr = EditorObjectMgr::instance();
+	if ( !mgr )
+		return;
+
+	EditorObjectMgr::EDITOR_OBJECT_LIST selectedObjects = mgr->getSelectedObjectList();
+	Stuff::Vector3D centroid;
+	centroid.x = centroid.y = centroid.z = 0.0f;
+	int count = 0;
+	for ( EditorObjectMgr::EDITOR_OBJECT_LIST::EIterator iter = selectedObjects.Begin();
+	      !iter.IsDone(); iter++ )
+	{
+		if ( !(*iter) )
+			continue;
+		const Stuff::Vector3D& p = (*iter)->getPosition();
+		centroid.x += p.x;
+		centroid.y += p.y;
+		centroid.z += p.z;
+		count++;
+	}
+
+	if ( count == 0 )
+		return;  // no selection -> no-op
+
+	float inv = 1.0f / (float)count;
+	centroid.x *= inv;
+	centroid.y *= inv;
+	centroid.z *= inv;
+
+	eye->setPosition( centroid, true );  // xy clamped to map, z terrain-locked
+}
+
 // Continuous-angle rotation of the current selection, used by the mouse wheel.
 // Mirrors rotateSelectedObjects() but applies an arbitrary degree delta instead
 // of the discrete 45/90 step, so the wheel can spin objects smoothly.
@@ -6021,6 +6213,59 @@ int EditorInterface::runInspectorEditSmoke()
 	}
 
 	return result;
+}
+
+// -smoke-place-oob: reproduce (and now guard) the off-map placement crash.
+// Activates a real BuildingBrush and drives its update() at off-map screen
+// points (top edge = horizon -> projects off any finite map; corners + extreme
+// out-of-viewport coords cover the OOB cell range). Before the BuildingBrush
+// worldToCell clamp, the first off-map point read the heightmap out of bounds
+// in MapData::terrainElevation (0xC0000005). Returns 1 if all updates survived,
+// -1 if setup failed (no terrain / catalog / camera).
+int EditorInterface::runPlaceOobSmoke()
+{
+	if ( !land )
+		return -1;
+
+	// terrainElevation() guards only the UPPER cell bound; a position WEST/NORTH
+	// of the map yields a negative mesh offset and reads blocks[<0] out of bounds
+	// (0xC0000005). The interactive crash was exactly this. Drive far-off-map
+	// world positions through the production guard BuildingBrush::snapToTerrainCell
+	// (the same call BuildingBrush::update makes). Without the clamp these crash;
+	// with it they snap to an in-range edge cell.
+	const float wupv = Terrain::worldUnitsPerVertex;
+	const float farW = land->mapTopLeft3d.x - 100000.0f * wupv; // far west  -> cc << 0
+	const float farN = land->mapTopLeft3d.y + 100000.0f * wupv; // far north -> cr << 0
+	const float farE = land->mapTopLeft3d.x + 100000.0f * wupv; // far east  -> cc >> max
+	const float farS = land->mapTopLeft3d.y - 100000.0f * wupv; // far south -> cr >> max
+
+	const float px[] = { farW, land->mapTopLeft3d.x, farW, farE, farW };
+	const float py[] = { land->mapTopLeft3d.y, farN, farN, farS, farS };
+
+	// Postcondition check (deterministic — the raw OOB read only *faults* on an
+	// unmapped page, which is heap-dependent and unreliable to trigger headless).
+	// After snapToTerrainCell, the result MUST land on a valid in-grid cell. Run
+	// it back through worldToCell and assert the indices are in range. Without the
+	// clamp the snapped position is still off-map -> out-of-range -> returns 0.
+	const int maxCell = (int)( ( Terrain::realVerticesMapSide - 1 ) * 3 ) - 1;
+	if ( maxCell < 0 )
+		return -1;
+
+	for ( int i = 0; i < (int)( sizeof( px ) / sizeof( px[0] ) ); ++i )
+	{
+		Stuff::Vector3D p;
+		p.x = px[i];
+		p.y = py[i];
+		p.z = 0.0f;
+		BuildingBrush::snapToTerrainCell( land, p );  // production guard under test
+
+		int cr = 0, cc = 0;
+		land->worldToCell( p, cr, cc );
+		if ( cr < 0 || cc < 0 || cr > maxCell || cc > maxCell )
+			return 0;  // guard FAILED: snapped result is still off the cell grid
+	}
+
+	return 1; // every off-map input snapped back onto the valid cell grid
 }
 
 static void UpdateMissionPlayerPlayer(int player, CCmdUI* pCmdUI)
@@ -6244,9 +6489,23 @@ void EditorInterface::OnForestTool()
 
 	if ( IDOK == dlg.DoModal() )
 	{
-		EditorObjectMgr::instance()->createForest( dlg.forest );
+		long forestID = EditorObjectMgr::instance()->createForest( dlg.forest );
+		// Register an undo action. createForest assigns the real ID; fetch the
+		// live Forest back so ForestAction snapshots it with that ID.
+		const long kMaxForests = 256;
+		Forest* forestPtrs[kMaxForests];
+		long count = kMaxForests;
+		EditorObjectMgr::instance()->getForests( forestPtrs, count );
+		for ( long i = 0; i < count; ++i )
+		{
+			if ( forestPtrs[i] && forestPtrs[i]->getID() == forestID )
+			{
+				ActionUndoMgr::instance->AddAction( new ForestAction( *forestPtrs[i] ) );
+				break;
+			}
+		}
 	}
-	
+
 }
 
 void EditorInterface::OnOtherEditforests() 

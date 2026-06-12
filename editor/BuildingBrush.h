@@ -39,6 +39,13 @@ class BuildingBrush: public Brush
 		virtual bool canPaint( Stuff::Vector3D& worldPos, int screenX, int screenY, int flags );
 		virtual void render( int ScreenMouseX, int ScreenMouseY);
 		virtual void update( int screenX, int screenY );
+
+		// Clamp a world position to the valid terrain cell grid and snap it to
+		// that cell's centre. Guards the unbounded worldToCell/terrainElevation
+		// OOB read (0xC0000005). Static so the placement-OOB smoke can exercise
+		// the exact production guard. terr may be null (no-op).
+		static void snapToTerrainCell( class Terrain* terr, Stuff::Vector3D& pos );
+
 		void rotateBrush( int direction );
 		void addRotationDegrees( float deg );
 

@@ -120,6 +120,7 @@
 
 #ifndef COMNDR_H
 #include"comndr.h"
+#include"tacticaloverview.h"  // maskWorldBars: hide health bars in overview
 #endif
 
 #ifndef LOGISTICSDATA_H
@@ -6298,7 +6299,7 @@ long BattleMech::update (void)
 		else
 			homeRelations = 1;
 	}
-	appearance->setObjectParameters(position, rotation, drawFlags, getTeamId(), homeRelations);
+	appearance->setObjectParameters(position, rotation, TacticalOverview::maskWorldBars(drawFlags), getTeamId(), homeRelations);
 
 	if (getMoveType() == MOVETYPE_AIR)
 		appearance->setMoverParameters(torsoRotation,0.0f,0.0f,true);

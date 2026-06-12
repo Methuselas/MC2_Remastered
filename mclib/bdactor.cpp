@@ -49,6 +49,7 @@ static unsigned long s_spotDiagBldgCalls      = 0;   // update() call counter
 #include "gos_static_prop_killswitch.h"
 #include "gos_static_prop_batcher.h"
 #include "gos_static_prop_registry.h"  // Stage 3.C: static-registry fast path
+#include "gos_mech_killswitch.h"       // g_mechPreviewRenderDepth (component preview-fix)
 #include "../GameAdapters/StaticPropRenderAdapter.h"  // M1 RenderWorld Tasks 8-11
 #include <unordered_map>  // LODBUG probe: tracks per-actor previous bldgShape*
 #include <cstring>
@@ -1401,7 +1402,9 @@ long BldgAppearance::render (long depthFixup)
 	// letting the GPU clipper decide visibility. The legacy angular-cull
 	// recalcBounds has a ~87% false-negative rate at wolfman zoom; under
 	// the GPU path we render every actor and trust the GPU.
-	if (inView || g_useGpuStaticProps)
+	// PREVIEW-FIX: the SimpleCamera component/weapon preview (MechLab loadout)
+	// owns visibility via the UI; force the render gate on in that context.
+	if (inView || g_useGpuStaticProps || g_mechPreviewRenderDepth > 0)
 	{
 		uint32_t color = SD_BLUE;
 		uint32_t highLight = 0x007f7f7f;
@@ -1437,7 +1440,11 @@ long BldgAppearance::render (long depthFixup)
 		// still counts toward eligible_actors). recordCpuFallback() fires
 		// when no submit succeeded.
 		bool submittedToGpu = false;
-		if (g_useGpuObjects)
+		// PREVIEW-FIX: in the SimpleCamera component/weapon preview, skip the GPU
+		// static-prop submit (the batcher flushes with the world snapshot/terrain
+		// MVP, not the UI camera) so submittedToGpu stays false and the legacy CPU
+		// bldgShape->Render() below runs, honoring this SimpleCamera.
+		if (g_useGpuObjects && g_mechPreviewRenderDepth == 0)
 		{
 			GpuStaticPropBatcher::instance().recordEligibleActor(
 				GpuStaticPropPopulation::Building);
@@ -2661,7 +2668,11 @@ long BldgAppearance::update (bool animate)
 		// (or remove) once the regression is identified.
 		bool gpuEligible;
 		{
+			// PREVIEW-FIX: never take the GPU positions-only/hierarchy-only fast
+			// path in the SimpleCamera preview — the CPU MLR draw needs the full
+			// listOfVertices (positions + argb) that only TransformMultiShape bakes.
 			gpuEligible = g_useGpuObjects &&
+			              (g_mechPreviewRenderDepth == 0) &&
 			              !needsFullBakeNextFrame &&
 			              GpuStaticPropBatcher::instance().isMultiShapeEligibleForGpuObjects(bldgShape);
 		}
@@ -2717,7 +2728,10 @@ long BldgAppearance::update (bool animate)
 			// VBO + rec.shapeToWorld; light cache below is pool-independent), so
 			// run the zero-pool hierarchy walk. mc2CacheOrBakeStaticGpuLight still
 			// runs to seed the light index. MC2_LEGACY_INSTANCE_POOLS=1 reverts.
+			// PREVIEW-FIX: force the full bake in the SimpleCamera preview so the
+			// CPU MLR draw has complete listOfVertices (hierarchy-only leaves it stale).
 			if (!gos_StaticPropLegacyInstancePools() &&
+			    (g_mechPreviewRenderDepth == 0) &&
 			    GpuStaticPropBatcher::instance().isMultiShapeEligibleForGpuObjects(bldgShape))
 				bldgShape->TransformMultiShape_HierarchyOnly (&xlatPosition,&rot);
 			else

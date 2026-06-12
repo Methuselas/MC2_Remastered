@@ -115,6 +115,44 @@ bool         g_cliSmokeAssetBrowser       = false;
 int          g_cliAssetGroups             = -1;  // -1 = not attempted, >=0 = catalog group count
 int          g_cliAssetActivated          = -1;  // -1 = not attempted, 0/1 = placement brush activated
 
+// -smoke-gameplay-debugger: open the read-only Gameplay Debugger, select the
+// first object, and run its null-guarded selection probe (ImGui-free). The
+// editor has no live sim, so this exercises the static-data fallback path only.
+// Safe on an empty map (selected=0, type=none). Facts -> [ESMOKE v1] at exit.
+bool         g_cliSmokeGameplayDbgr       = false;
+int          g_cliGameplayDbgrSel         = -1;   // -1 = not attempted, 0/1 = had selection
+char         g_cliGameplayDbgrType[32]    = "none";
+
+// -smoke-undo-history: open the display-only Undo History panel and read the
+// ActionUndoMgr accessors (count + cursor) added for it. Read-only. A freshly
+// generated map has an empty undo stack (count 0, cursor -1) -> valid PASS.
+bool         g_cliSmokeUndoHistory        = false;
+int          g_cliUndoCount               = -1;   // -1 = not attempted, >=0 = action count
+int          g_cliUndoCursor              = -2;   // -2 = not attempted, >=-1 = cursor position
+
+// -smoke-place-oob: drive a BuildingBrush placement cursor off the map edge to
+// exercise the worldToCell OOB clamp (regression guard for the terrainElevation
+// 0xC0000005 crash). survived=1 -> the clamp held; a crash here is the bug.
+bool         g_cliSmokePlaceOob           = false;
+int          g_cliPlaceOobSurvived        = -1;   // -1 = not attempted, 0/1 = survived all updates
+
+// -playtest [-playtest-timeout-sec N]: the END-TO-END playtest smoke. After the
+// mission auto-loads, run a few frames then trigger the REAL Playtest path
+// (EditorPlaytest::Start(), exactly what the toolbar button does), with the
+// launched game in smoke mode so it auto-quits. Poll EditorPlaytest::IsIdle()
+// from the main-thread OnIdle until the child completes (PASS) or the timeout
+// fires (Stop() + FAIL). On completion emit `[ESMOKE v1] event=playtest ...` and
+// exit with 0 iff the child exited 0, else a distinct nonzero code:
+//   2 = launch/bridge/save abort (Start() never went Running)
+//   3 = child exited nonzero (game crash / content fail)
+//   4 = timeout (child never completed within the window)
+bool         g_cliPlaytest          = false;
+int          g_cliPlaytestTimeout   = 120;  // seconds; -playtest-timeout-sec N
+bool         g_cliPlaytestStarted   = false; // one-shot: Start() has been called
+unsigned int g_cliPlaytestDeadline  = 0;     // GetTickCount() target once started
+int          g_cliPlaytestWarmFrames = 0;    // frames rendered since auto-load done
+bool         g_cliPlaytestDone       = false; // verdict emitted; guards the exit
+
 // Set true after the auto-load block finishes ALL its work (generate + optional
 // foliage + optional save). The smoke exit countdown starts from THIS, not from
 // g_cliAutoLoadFired (which is set at block ENTRY) -- otherwise a slow generation
@@ -196,7 +234,13 @@ static void EarlyTraceBegin()
 #include "InspectorPanel.h"
 #include "AssetBrowser.h"
 #include "MissionValidation.h"
+#include "GameplayDebugger.h"
+#include "UndoHistoryPanel.h"
+#include "Action.h"            // ActionUndoMgr::instance (undo-history smoke)
 #include "ModPicker.h"
+#include "EditorModProject.h"
+#include "EditorPlaytest.h"   // -playtest end-to-end smoke
+#include "EditorTaskRunner.h" // ShutdownKillRunning() on editor exit
 #include "resource.h"   // ID_FOLIAGE_* for the -smoke-foliage-menu WM_COMMAND drive
 
 // -- S-CLI parser ------------------------------------------------------------
@@ -345,12 +389,39 @@ static void s_cli_parse(const char* cmd)
 		{
 			g_cliSmokeAssetBrowser = true;
 		}
+		else if (s_cli_flag_match(tok, "-smoke-gameplay-debugger", "--smoke-gameplay-debugger"))
+		{
+			g_cliSmokeGameplayDbgr = true;
+		}
+		else if (s_cli_flag_match(tok, "-smoke-undo-history", "--smoke-undo-history"))
+		{
+			g_cliSmokeUndoHistory = true;
+		}
+		else if (s_cli_flag_match(tok, "-smoke-place-oob", "--smoke-place-oob"))
+		{
+			g_cliSmokePlaceOob = true;
+		}
+		else if (s_cli_flag_match(tok, "-playtest", "--playtest"))
+		{
+			g_cliPlaytest = true;
+		}
+		else if (s_cli_flag_match(tok, "-playtest-timeout-sec", "--playtest-timeout-sec"))
+		{
+			if (i + 1 < argv.size()) { g_cliPlaytestTimeout = atoi(argv[++i].c_str()); }
+		}
+		else if (s_cli_starts_with(tok, "-playtest-timeout-sec=", &rest) ||
+		         s_cli_starts_with(tok, "--playtest-timeout-sec=", &rest))
+		{
+			g_cliPlaytestTimeout = atoi(rest);
+		}
 	}
 
 	// Any smoke flag implies headless -> suppress the auto-run-path failure modals.
 	g_cliSuppressModals = (g_cliExitAfterSec > 0) || g_cliSmokeFoliage || g_cliSmokeSave
 	                      || g_cliSmokeOutliner || g_cliSmokeInspector || g_cliSmokeValidate
-	                      || g_cliSmokeInspectorEdit || g_cliSmokeAssetBrowser;
+	                      || g_cliSmokeInspectorEdit || g_cliSmokeAssetBrowser
+	                      || g_cliSmokeGameplayDbgr || g_cliSmokeUndoHistory
+	                      || g_cliSmokePlaceOob || g_cliPlaytest;
 }
 
 // Forward declaration — defined in EditorGameOS.cpp.
@@ -420,26 +491,34 @@ BOOL EditorMFCApp::InitInstance()
 	// Warn up front instead of letting the user chase a mysterious crash (this exact
 	// trap cost a long debug detour: the 0.4c editor install ships 0 tgl appearances).
 	{
-		const char* am = ModPicker::ActiveMod();
-		bool modActive = (am && am[0]);
+		// Probe REAL asset resolution rather than just loose data\tgl\*.ini files.
+		// Stock installs ship tgl appearances as data/tgl/<name>.tgl packed inside
+		// the tgl.fst FastFile (and/or under an active mod overlay), so the loose-dir
+		// scan reported a false "no assets" warning even though missions render fine.
+		// fileExists() walks the SAME priority chain a real load uses:
+		//   active mod  ->  base data/  ->  FastFile (tgl.fst).
+		// Use forward slashes -- FST keys are stored slash-normalized (file.cpp:746).
+		// 'anubis' is a canonical Clan-mech appearance present in every install.
+		extern long fileExists(const char* fName, long destination_mask);
+		const long kFileOnDiskOrFst = 1 /*FILE_ON_DISK*/ | 2 /*FILE_ON_FST*/;
+		bool canResolveTgl = (fileExists("data/tgl/anubis.tgl", kFileOnDiskOrFst) != 0);
 
-		WIN32_FIND_DATAA fd;
-		HANDLE h = FindFirstFileA("data\\tgl\\*.ini", &fd);
-		bool hasTgl = (h != INVALID_HANDLE_VALUE);
-		if (h != INVALID_HANDLE_VALUE) FindClose(h);
-
-		if (!hasTgl && !modActive)
+		if (!canResolveTgl)
 		{
-			EarlyTrace("InitInstance: WARNING data/tgl is empty and no mod active -- mission loads will likely CTD");
-			if (g_cliExitAfterSec <= 0)   // interactive only; never block a headless smoke
-				::MessageBoxA(NULL,
-					"This install has no game assets in data\\tgl.\n\n"
-					"Loading a stock mission will crash. Either run the editor from a "
-					"complete install, or pick a Mod in the startup dialog so its assets "
-					"are mounted.",
-					"Mission Editor -- no assets found", MB_OK | MB_ICONWARNING);
+			EarlyTrace("InitInstance: WARNING tgl appearances unresolvable (no loose data/tgl, no tgl.fst, no mod) -- mission loads will likely CTD");
+			// Non-blocking: surface as a persistent dismissable ImGui banner in the
+			// editor HUD instead of a modal the user must click OK on every launch.
+			extern void EditorSetStartupWarning(const char* text);
+			EditorSetStartupWarning(
+				"No game assets in data\\tgl -- stock missions will crash. "
+				"Open a Mod Project or run from a complete install.");
 		}
 	}
+
+	// Auto-reopen the last Mod Project (interactive only -- never in a headless smoke, and
+	// ReopenLastIfAny opens NO dialogs regardless). Binds save-dir default + remounts the mod.
+	if (g_cliExitAfterSec <= 0)
+		EditorModProject::ReopenLastIfAny();
 
 	// Start the smoke driver thread NOW (before the blocking init/gen/save on the
 	// main thread) so it can auto-dismiss modals throughout and enforce the timed
@@ -649,7 +728,7 @@ static void s_emit_esmoke(const char* how)
 {
 	if (g_cliEsmokeEmitted) return;
 	g_cliEsmokeEmitted = true;
-	char esmoke[640];
+	char esmoke[720];
 	_snprintf(esmoke, sizeof(esmoke),
 		"[ESMOKE v1] event=summary how=%s clean_exit=1 frames=%ld autoload=%d gen_map=%d "
 		"foliage_smoke=%d foliage_count=%d saved=%d "
@@ -658,7 +737,8 @@ static void s_emit_esmoke(const char* how)
 		"validate_blocking=%d validate_warning=%d validate_info=%d validate_units_warn=%d "
 		"inspector_edit_applied=%d inspector_edit_undo=%d "
 		"asset_groups=%d asset_activated=%d "
-		"menu_vis0=%d menu_vis1=%d menu_vis2=%d menu_clear=%d menu_reload=%d",
+		"menu_vis0=%d menu_vis1=%d menu_vis2=%d menu_clear=%d menu_reload=%d "
+		"place_oob_survived=%d",
 		how, g_cliFrameCounter, g_cliAutoLoadFired ? 1 : 0, g_cliGenMap ? 1 : 0,
 		g_cliSmokeFoliageFired ? 1 : 0, g_cliSmokeFoliageCount, g_cliSmokeSaveOk,
 		g_cliSmokeOutlinerCount, g_cliSmokeOutlinerSel,
@@ -666,11 +746,70 @@ static void s_emit_esmoke(const char* how)
 		g_cliValidateBlock, g_cliValidateWarn, g_cliValidateInfo, g_cliValidateUnitsWarn,
 		g_cliEditApplied, g_cliEditUndo,
 		g_cliAssetGroups, g_cliAssetActivated,
-		g_menuVis0, g_menuVis1, g_menuVis2, g_menuClearCount, g_menuReloadCount);
+		g_menuVis0, g_menuVis1, g_menuVis2, g_menuClearCount, g_menuReloadCount,
+		g_cliPlaceOobSurvived);
 	esmoke[sizeof(esmoke) - 1] = '\0';
 	fprintf(stderr, "%s\n", esmoke);
 	fflush(stderr);
 	EarlyTrace(esmoke);
+}
+
+// Smoke modal capture: when g_cliSuppressModals is set the editor answers every
+// validation/warning modal with its safe continue-default (IDOK/IDYES) instead of
+// blocking a headless run. We still want the harness to record what a real user
+// would have had to click through, so each suppressed modal emits a parseable line
+// to BOTH the inherited stderr pipe and editor-startup.log. Caption may be NULL/empty.
+// Quotes inside the text are escaped so the `text="..."` field stays parseable.
+void EditorSmokeLogSuppressedModal(const char* text, const char* caption)
+{
+	if (!text) text = "";
+	if (!caption) caption = "";
+
+	// Flatten newlines and escape quotes/backslashes into a single-line field.
+	char clean[600];
+	size_t o = 0;
+	for (const char* p = text; *p && o + 2 < sizeof(clean); ++p)
+	{
+		char c = *p;
+		if (c == '\r') continue;
+		if (c == '\n' || c == '\t') { clean[o++] = ' '; continue; }
+		if (c == '"' || c == '\\') { clean[o++] = '\\'; if (o + 1 >= sizeof(clean)) break; }
+		clean[o++] = c;
+	}
+	clean[o] = '\0';
+
+	char line[760];
+	_snprintf(line, sizeof(line),
+		"[ESMOKE v1] event=modal caption=\"%s\" text=\"%s\"", caption, clean);
+	line[sizeof(line) - 1] = '\0';
+	fprintf(stderr, "%s\n", line);
+	fflush(stderr);
+	EarlyTrace(line);
+}
+
+// --- Non-blocking startup warning banner ----------------------------------
+// Set once during InitInstance (e.g. empty-install guard). Rendered as a
+// dismissable yellow banner in the EditorInterface HUD; cleared for the
+// session when the user clicks the banner's "x". Stays set even if the
+// underlying condition later resolves (kept simple — dismiss is manual).
+static char s_editorStartupWarning[512] = "";
+
+void EditorSetStartupWarning(const char* text)
+{
+	if (!text) text = "";
+	_snprintf(s_editorStartupWarning, sizeof(s_editorStartupWarning), "%s", text);
+	s_editorStartupWarning[sizeof(s_editorStartupWarning) - 1] = '\0';
+}
+
+// Returns the active warning text, or NULL/empty if none / dismissed.
+const char* EditorStartupWarning()
+{
+	return s_editorStartupWarning[0] ? s_editorStartupWarning : nullptr;
+}
+
+void EditorClearStartupWarning()
+{
+	s_editorStartupWarning[0] = '\0';
 }
 
 // Auto-dismiss any modal dialog (#32770 = standard dialog/MessageBox class) owned
@@ -715,8 +854,11 @@ static DWORD WINAPI s_smoke_thread(LPVOID)
 			g_menuClearCount = FoliageRender::Count();
 			::PostMessageA(w, WM_COMMAND, MAKEWPARAM(ID_FOLIAGE_GENERATE, 0), 0); // reload (shells generator)
 			// Generate re-runs the generator synchronously on the main thread; poll
-			// for the reloaded instance count.
-			for (int i = 0; i < 60 && FoliageRender::Count() <= 0; ++i)
+			// for the reloaded instance count. The regen time scales with the random
+			// map's foliage density (a heavy map can place >20k instances, ~30s+), so
+			// the poll window is generous (180 * 500ms = 90s) to avoid a false
+			// reload=0 when the synchronous regen simply hasn't returned yet.
+			for (int i = 0; i < 180 && FoliageRender::Count() <= 0; ++i)
 				::Sleep(500);
 			g_menuReloadCount = FoliageRender::Count();
 		}
@@ -913,6 +1055,52 @@ BOOL EditorMFCApp::OnIdle(LONG lCount)
 			EarlyTrace("OnIdle: smoke-asset-browser done");
 		}
 
+		// -smoke-gameplay-debugger: open the read-only Gameplay Debugger, select
+		// the first object, and run its ImGui-free probe (static-data path; the
+		// editor has no live sim). Safe on empty map. Facts -> [ESMOKE v1].
+		if (g_cliSmokeGameplayDbgr)
+		{
+			SceneOutliner::SelectFirstObject();   // no-op/false on empty map
+			GameplayDebugger::Open();
+			bool had = GameplayDebugger::SmokeProbe(
+				g_cliGameplayDbgrType, sizeof(g_cliGameplayDbgrType));
+			g_cliGameplayDbgrSel = had ? 1 : 0;
+			fprintf(stderr, "[EDITOR_CLI v1] event=gameplay_debugger selected=%d type=%s\n",
+				g_cliGameplayDbgrSel, g_cliGameplayDbgrType);
+			fflush(stderr);
+			EarlyTrace("OnIdle: smoke-gameplay-debugger done");
+		}
+
+		// -smoke-undo-history: open the display-only Undo History panel and read
+		// the ActionUndoMgr accessors added for it. Read-only; empty stack on a
+		// fresh map (count 0, cursor -1). Facts -> [ESMOKE v1].
+		if (g_cliSmokeUndoHistory)
+		{
+			UndoHistoryPanel::Open();
+			if (ActionUndoMgr::instance)
+			{
+				g_cliUndoCount  = ActionUndoMgr::instance->GetActionCount();
+				g_cliUndoCursor = ActionUndoMgr::instance->GetCurrentPosition();
+			}
+			fprintf(stderr, "[EDITOR_CLI v1] event=undo_history count=%d cursor=%d\n",
+				g_cliUndoCount, g_cliUndoCursor);
+			fflush(stderr);
+			EarlyTrace("OnIdle: smoke-undo-history done");
+		}
+
+		// -smoke-place-oob: drive a BuildingBrush cursor off the map edge. If the
+		// worldToCell OOB clamp is missing this crashes in MapData::terrainElevation;
+		// survived=1 proves the regression guard holds. Facts -> [ESMOKE v1].
+		if (g_cliSmokePlaceOob && EditorInterface::instance())
+		{
+			int r = EditorInterface::instance()->runPlaceOobSmoke();
+			g_cliPlaceOobSurvived = (r == 1) ? 1 : 0;
+			fprintf(stderr, "[EDITOR_CLI v1] event=place_oob setup=%d survived=%d\n",
+				(r >= 0) ? 1 : 0, g_cliPlaceOobSurvived);
+			fflush(stderr);
+			EarlyTrace("OnIdle: smoke-place-oob done");
+		}
+
 		// All auto-load work (generate + foliage + save) is complete -> arm the
 		// smoke exit countdown from here.
 		g_cliSmokeWorkDone = true;
@@ -933,6 +1121,85 @@ BOOL EditorMFCApp::OnIdle(LONG lCount)
 	if (g_cliSmokeFoliageMenu && g_smokeMainHwnd == NULL && AfxGetMainWnd())
 		g_smokeMainHwnd = AfxGetMainWnd()->GetSafeHwnd();
 
+	// -playtest END-TO-END SMOKE driver (main thread). Runs once the auto-load
+	// work is done. Warms a few frames, fires the REAL EditorPlaytest::Start()
+	// (the toolbar button path) with the child in smoke mode, then polls
+	// EditorPlaytest::IsIdle() (the task completion is drained by
+	// EditorTaskRunner::PumpMainThread() inside EditorInterface::update()).
+	if (g_cliPlaytest && g_cliSmokeWorkDone && !g_cliPlaytestDone)
+	{
+		if (!g_cliPlaytestStarted)
+		{
+			// Let a few frames render so GL / asset / texture state settles before
+			// the in-place save + child launch.
+			if (g_cliPlaytestWarmFrames < 30)
+			{
+				++g_cliPlaytestWarmFrames;
+			}
+			else
+			{
+				int secs = g_cliPlaytestTimeout > 0 ? g_cliPlaytestTimeout : 120;
+				// Child auto-quit window: a bit shorter than the editor timeout so a
+				// healthy child exits on its own before we declare a timeout.
+				int childSecs = secs > 40 ? 30 : (secs > 10 ? secs - 8 : secs);
+				EditorPlaytest::SetSmokeChildEnv(true, childSecs);
+				EarlyTrace("OnIdle: -playtest Start()");
+				EditorPlaytest::Start();
+				g_cliPlaytestStarted = true;
+				g_cliPlaytestDeadline = ::GetTickCount() + (unsigned int)secs * 1000u;
+
+				if (!EditorPlaytest::IsRunning())
+				{
+					// Start() aborted pre-launch (no mission / save / bridge / exe).
+					g_cliPlaytestDone = true;
+					fprintf(stderr,
+						"[ESMOKE v1] event=playtest exit=-1 log= mod=%s status=launch_abort\n",
+						(EditorPlaytest::LastModId()[0] ? EditorPlaytest::LastModId() : "none"));
+					fprintf(stderr, "[EDITOR_CLI v1] event=playtest_abort status=\"%s\"\n",
+						EditorPlaytest::StatusLine());
+					fflush(stderr);
+					EarlyTrace("OnIdle: -playtest launch abort");
+					EarlyTrace(EditorPlaytest::StatusLine());
+					::ExitProcess(2);
+				}
+			}
+		}
+		else
+		{
+			// Running: wait for the child to complete (IsIdle) or the timeout.
+			if (EditorPlaytest::IsIdle())
+			{
+				g_cliPlaytestDone = true;
+				int childExit = EditorPlaytest::LastExitCode();
+				const char* logp = EditorPlaytest::LastLogPath();
+				const char* modId = EditorPlaytest::LastModId();
+				fprintf(stderr,
+					"[ESMOKE v1] event=playtest exit=%d log=%s mod=%s\n",
+					childExit,
+					(logp && logp[0]) ? logp : "(none)",
+					(modId && modId[0]) ? modId : "none");
+				fprintf(stderr, "[EDITOR_CLI v1] event=playtest_done child_exit=%d\n", childExit);
+				fflush(stderr);
+				EarlyTrace("OnIdle: -playtest child completed");
+				EarlyTrace(EditorPlaytest::StatusLine());
+				::ExitProcess(childExit == 0 ? 0 : 3);
+			}
+			else if (::GetTickCount() >= g_cliPlaytestDeadline)
+			{
+				g_cliPlaytestDone = true;
+				EarlyTrace("OnIdle: -playtest TIMEOUT -> Stop()");
+				EditorPlaytest::Stop();
+				const char* modId = EditorPlaytest::LastModId();
+				fprintf(stderr,
+					"[ESMOKE v1] event=playtest exit=-1 log=%s mod=%s status=timeout\n",
+					(EditorPlaytest::LastLogPath()[0] ? EditorPlaytest::LastLogPath() : "(none)"),
+					(modId && modId[0]) ? modId : "none");
+				fflush(stderr);
+				::ExitProcess(4);
+			}
+		}
+	}
+
 	Sleep(2/*milliseconds*/); /* limits the framerate to 500fps */
 	return 1;
 }
@@ -943,6 +1210,12 @@ int EditorMFCApp::ExitInstance()
 	// Machine-readable smoke summary for the non-smoke-exit path (e.g. -frames or a
 	// real user close). Idempotent with the OnIdle deadline emit.
 	s_emit_esmoke("exit_instance");
+
+	// Failsafe: kill any still-running playtest / cook child this editor launched so it
+	// is not orphaned when the editor exits. Terminates ONLY our own children (by stored
+	// HANDLE) -- concurrent smoke / standalone mc2.exe instances are untouched. The Job
+	// Object (kill-on-job-close) is the crash-path backstop; this is the clean-exit path.
+	EditorTaskRunner::ShutdownKillRunning();
 
 	{
 		Environment.TerminateGameEngine();

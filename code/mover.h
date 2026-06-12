@@ -1076,6 +1076,9 @@ class Mover : public GameObject {
 		}
 
 		void drawWaypointPath();
+		void drawOverviewMovePath( unsigned long color );
+		bool getMoveDestination( Stuff::Vector3D& out );
+		void getWeaponBandsPresent( bool present[3] );	// short/medium/long weapon ranges
 
 		void updateDrawWaypointPath();
 		

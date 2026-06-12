@@ -52,3 +52,25 @@ named area, not as part of post-hoc debugging.
 
 - **Stock install must remain playable** (`memory/stock_install_must_remain_playable.md`): renderer modernization data must degrade to stock-compatible; no savegame depends on render caches.
 - **Path separator** (`memory/mc2_path_separator_linux_build.md`): engine builds with `-DLINUX_BUILD`; `PATH_SEPARATOR` is `/`. Never hardcode `\\` against `_WIN32`.
+
+## Picking / GPU static-prop CPU-geometry trap (2026-06-12)
+
+- **Static-prop CPU geometry is NOT maintained under the GPU path.** The
+  GPU static-prop / object-offload arc runs `TransformMultiShape_HierarchyOnly`
+  (msl.cpp:1924 `s_buildRecipeOnly` → `continue`) or `_PositionsOnly`
+  (tgl.cpp:2717 strips `listOfVisibleFaces`) for buildings/props, so
+  `listOfVertices` / `listOfVisibleFaces` / `numVisibleFaces` go stale/zero.
+  **Any remaining CPU consumer of that geometry breaks silently.** Known
+  consumers that must force a full bake or move off the CPU geometry:
+  SimpleCamera mech preview (bdactor.cpp PREVIEW-FIX ~2651), and **mouse
+  picking**.
+- **Building target-pick is world-space, not per-face** (commit `b6038fd1`).
+  `findTerrainObjectByMouse` no longer calls `TG_Shape::PerPolySelect` (which
+  needs `numVisibleFaces`, == 0 on the GPU path → buildings untargetable while
+  move/passability still worked, since that is world/cell-space). It now picks
+  by the world OBB via `projectPickCandidateRect` (8 corners, correct `eye`
+  projection, O(1)/candidate, no per-face), widened to BUILDING/TREEBUILDING/
+  TERRAINOBJECT/BRIDGE/TURRET/GATE, disambiguated by nearest-to-camera.
+  **Do NOT "fix" such cases by re-introducing the per-frame full CPU bake** —
+  move the operation to world space. Full record:
+  `memory/building_pick_world_obb_not_perpolyselect.md`.

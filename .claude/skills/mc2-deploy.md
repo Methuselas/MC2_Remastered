@@ -5,7 +5,7 @@ description: Deploy mc2.exe and all shaders from current worktree to runtime dir
 
 # MC2 Deploy
 
-Deploy the built exe + PDB + ffmpeg DLLs + all shaders from the current worktree to a runtime install, with per-file hash verification and a deploy manifest.
+Deploy the built exe + PDB + ffmpeg DLLs + all shaders from the current worktree to a runtime install, with per-file hash verification and a deploy manifest. Also ships source-tracked support payload: launch `.bat`s, and (editor target only) the `tools/terrain_gen/**` authoring tree the Generate-Mission / `-gen-map` path needs — so `build → deploy` is self-complete with no manual copy.
 
 **Canonical path: `scripts/deploy_payload.py`.** One command per target. It hard-fails on every documented stale-deploy trap (locked exe, silently-not-overwritten shaders, stale PDB, wrong target) and writes `<target>/.deployed_manifest.csv` automatically.
 

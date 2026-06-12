@@ -2595,9 +2595,14 @@ long Mech3DAppearance::render (long depthFixup)
 
 	// C3: render gate — GPU-lagged visibility when killswitch is enabled.
 	// Preserve the g_useGpuStaticProps fallback for static-prop path.
-	const bool mechShouldRender = s_gpuCullLifecycle
-		? (gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_)) || g_useGpuStaticProps)
-		: (inView || g_useGpuStaticProps);
+	// PREVIEW-FIX: SimpleCamera UI preview (Mech Bay / Purchase) always renders
+	// the mech regardless of world inView/GPU-cull — the preview is the whole
+	// point of the panel and its visibility is owned by the UI, not world cull.
+	const bool mechShouldRender = (g_mechPreviewRenderDepth > 0)
+		? true
+		: s_gpuCullLifecycle
+			? (gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_)) || g_useGpuStaticProps)
+			: (inView || g_useGpuStaticProps);
 	if (mechShouldRender)
 	{
 		if (visible)
@@ -2671,7 +2676,12 @@ long Mech3DAppearance::render (long depthFixup)
 			}
 
 			bool gpuMechSubmitted = false;
-			if (g_useGpuMechs && !mechGpuCullSkip && g_drawMechs) {
+			// PREVIEW-FIX: in SimpleCamera UI preview context, skip the GPU mech
+			// submit entirely so gpuMechSubmitted stays false and the CPU MLR
+			// draw below runs. The GPU batcher flushes with the world snapshot /
+			// terrain MVP and would draw the preview mech off the UI viewport.
+			const bool previewContext = (g_mechPreviewRenderDepth > 0);
+			if (g_useGpuMechs && !mechGpuCullSkip && g_drawMechs && !previewContext) {
 				// Replicate the highlight selection from the CPU SetARGBHighLight
 				// branches above so the GPU path sees the same color choice.
 				uint32_t gpuHighlightARGB = highLight;
@@ -2779,6 +2789,25 @@ long Mech3DAppearance::render (long depthFixup)
 				// value (spec §12 Q6 amendment 3).
 				++s_mlrMechDrawsThisMission;
 				mechShape->Render(true);  // CPU path — unchanged
+
+				// PREVIEW-FIX diagnostic: confirm the UI preview path takes the
+				// CPU draw and skips GPU submit. MC2_MECH_PREVIEW_TRACE=1, once
+				// per process (preview renders ~60Hz; one line is enough).
+				if (previewContext) {
+					static bool s_prevTraceInit = false;
+					static bool s_prevTrace = false;
+					if (!s_prevTraceInit) {
+						s_prevTraceInit = true;
+						s_prevTrace = (getenv("MC2_MECH_PREVIEW_TRACE") != nullptr);
+					}
+					static bool s_prevTraceEmitted = false;
+					if (s_prevTrace && !s_prevTraceEmitted) {
+						s_prevTraceEmitted = true;
+						std::printf("[MECH_PREVIEW v1] event=preview_render gpu_submit=0 cpu_draw=1 depth=%d\n",
+							g_mechPreviewRenderDepth);
+						std::fflush(stdout);
+					}
+				}
 			}
 
 			// [MECHRESTORE v1] per-actor submit discriminator. Gated +
@@ -3778,7 +3807,16 @@ void Mech3DAppearance::updateGeometry (void)
 		// (mechShape->Render(true) bypassed by Slice A; RenderShadows
 		// unreachable on tessellation; findMoverByMouse rect-only — see
 		// killswitch comment in gos_mech_killswitch.h).
-		if (g_useGpuMechs && g_useGpuMechLeafSkip && gos_IsTerrainTessellationActive()) {
+		// PREVIEW-FIX: the SimpleCamera UI preview (Mech Bay / Purchase) draws
+		// via the CPU MLR mechShape->Render(true) path, which consumes the full
+		// TransformMultiShape output (listOfVertices positions + argb lighting).
+		// The GPU fast-transform variants (_PositionsOnly / _HierarchyOnly) leave
+		// listOfVertices stale, so TG_Shape::Render early-returns and the preview
+		// goes blank. Force the full transform whenever a preview render is in
+		// flight. World/tactical mechs (depth == 0) keep the GPU fast paths.
+		if (g_mechPreviewRenderDepth > 0) {
+			mechShape->TransformMultiShape(&xlatPosition, &qRotation);
+		} else if (g_useGpuMechs && g_useGpuMechLeafSkip && gos_IsTerrainTessellationActive()) {
 			mechShape->TransformMultiShape_HierarchyOnly(&xlatPosition, &qRotation);
 		} else if (g_useGpuMechs && g_useGpuMechFastTransform) {
 			mechShape->TransformMultiShape_PositionsOnly(&xlatPosition, &qRotation);

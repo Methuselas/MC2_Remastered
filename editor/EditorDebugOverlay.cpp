@@ -17,6 +17,7 @@
 #include "FoliageRender.h"
 #include "vertex.h"                                   // PostcompVertex (.elevation/.water)
 #include "../GameOS/gameos/gos_terrain_indirect.h"    // IsDenseRecipeReady()
+#include "EditorObjectMgr.h"                          // object ID overlay
 
 #ifdef MC2_IMGUI
 #include "imgui.h"
@@ -41,6 +42,7 @@ namespace
 	bool  s_showSuperchunkGrid = false;
 	bool  s_showWaterDebug     = false;
 	bool  s_showFoliageDebug   = false;   // ImGui stats only; no world draw
+	bool  s_showObjectIds      = false;   // draw id+name labels over every placed object
 
 	int   s_superchunkChunks   = 3;       // 1..8 chunks per superchunk
 	float s_lineOpacity        = 0.65f;   // 0..1
@@ -301,6 +303,64 @@ namespace
 		s_gridOnWaterPlane = savedMode;
 		s_heightBias = savedBias;
 	}
+
+#ifdef MC2_IMGUI
+	// Draw "id:NNN name" labels over every placed object in the scene.
+	// Uses the ImGui foreground draw list so no GL state is disturbed.
+	void drawObjectIdLabels( Camera* eye )
+	{
+		EditorObjectMgr* mgr = EditorObjectMgr::instance();
+		if ( !mgr )
+			return;
+
+		ImDrawList* dl = ImGui::GetForegroundDrawList();
+		if ( !dl )
+			return;
+
+		const ImU32 colText   = IM_COL32( 255, 255,  80, 230 );  // bright yellow, mostly opaque
+		const ImU32 colShadow = IM_COL32(   0,   0,   0, 160 );  // drop-shadow for readability
+
+		auto drawLabel = [&]( EditorObject* obj )
+		{
+			if ( !obj || !obj->appearance() )
+				return;
+			Stuff::Vector3D wpos = obj->getPosition();  // mutable copy (projectForScreenXY takes Vector3D&)
+
+			Stuff::Vector4D scr;
+			if ( !eye->projectForScreenXY( wpos, scr ) )
+				return;
+			if ( scr.w <= 1e-4f )
+				return;
+			if ( scr.x != scr.x || scr.y != scr.y )   // NaN guard
+				return;
+
+			char buf[64];
+			const char* name = obj->getDisplayName();
+			snprintf( buf, sizeof(buf), "id:%ld %s", obj->getID(), name ? name : "?" );
+
+			const ImVec2 pos( scr.x + 2.f, scr.y - 14.f );
+			// Drop shadow one pixel offset for contrast over bright terrain.
+			dl->AddText( ImVec2( pos.x + 1.f, pos.y + 1.f ), colShadow, buf );
+			dl->AddText( pos, colText, buf );
+		};
+
+		// Buildings
+		EditorObjectMgr::BUILDING_LIST blds = mgr->getBuildings();
+		for ( EditorObjectMgr::BUILDING_LIST::EIterator it = blds.Begin(); !it.IsDone(); it++ )
+			drawLabel( *it );
+
+		// Units (mechs / vehicles)
+		EditorObjectMgr::UNIT_LIST units = mgr->getUnits();
+		for ( EditorObjectMgr::UNIT_LIST::EIterator it = units.Begin(); !it.IsDone(); it++ )
+			drawLabel( *it );
+
+		// Drop zones
+		EditorObjectMgr::DROPZONE_LIST dzs = mgr->getDropZones();
+		for ( EditorObjectMgr::DROPZONE_LIST::EIterator it = dzs.Begin(); !it.IsDone(); it++ )
+			drawLabel( *it );
+	}
+#endif // MC2_IMGUI
+
 }
 
 namespace EditorDebugOverlay
@@ -308,7 +368,15 @@ namespace EditorDebugOverlay
 
 void RenderWorldOverlay( Camera* eye )
 {
-	if ( !eye || !terrainLoaded() )
+	if ( !eye )
+		return;
+
+#ifdef MC2_IMGUI
+	if ( s_showObjectIds )
+		drawObjectIdLabels( eye );
+#endif
+
+	if ( !terrainLoaded() )
 		return;
 	if ( !s_showChunkGrid && !s_showSuperchunkGrid && !s_showWaterDebug )
 		return;
@@ -357,6 +425,7 @@ void RenderImGui()
 	ImGui::Checkbox( "Show Superchunk Grid", &s_showSuperchunkGrid );
 	ImGui::Checkbox( "Show Water Debug",     &s_showWaterDebug );
 	ImGui::Checkbox( "Show Foliage Debug",   &s_showFoliageDebug );
+	ImGui::Checkbox( "Object IDs",           &s_showObjectIds );
 
 	ImGui::Separator();
 	ImGui::SetNextItemWidth( 160.f );

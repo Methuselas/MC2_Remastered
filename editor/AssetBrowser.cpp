@@ -11,6 +11,7 @@
 #include "stdafx.h"
 
 #include "AssetBrowser.h"
+#include "AssetThumbnailCache.h"
 
 #include "imgui.h"
 
@@ -164,12 +165,36 @@ void AssetBrowser::Draw()
             if (filtering && !groupNameHit && !assetFilterMatch(s_filter, nm))
                 continue;
 
+            // Packed object ID: same encoding as EditorObjectMgr::getGroup/
+            // getIndexInGroup (group<<16 | index<<8).  Used only for thumbnail
+            // lookup; selectBuildingObject(g, i) is still the placement path.
+            const int objID = (g << 16) | (i << 8);
+
+            // Thumbnail (32x32).  Falls back to text-only when 0.
+            static const float kThumbSize = 32.f;
+            const AssetThumbnailCache::TexHandle thumb =
+                AssetThumbnailCache::get(objID);
+
             ImGui::PushID(g * 1000 + i);
-            if (ImGui::Selectable(nm))
+
+            if (thumb != 0)
+            {
+                // Thumbnail + invisible selectable on the same row.
+                // Draw image first, then overlay a same-height Selectable.
+                ImGui::Image(
+                    (ImTextureID)(uintptr_t)thumb,
+                    ImVec2(kThumbSize, kThumbSize));
+                ImGui::SameLine();
+            }
+
+            // Selectable height matches thumb when present; auto-height when not.
+            const float selectH = (thumb != 0) ? kThumbSize : 0.f;
+            if (ImGui::Selectable(nm, false, 0, ImVec2(0.f, selectH)))
             {
                 pendGroup = g;
                 pendIndex = i;
             }
+
             ImGui::PopID();
         }
     }

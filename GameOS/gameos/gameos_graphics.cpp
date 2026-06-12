@@ -2859,12 +2859,23 @@ void gosRenderer::renderWaterFastPath(
     // through gosRenderMaterial::apply()→setFogColor(fog_color_), so legacy
     // gets per-pixel atmospheric mixing that softens shoreline alpha-band
     // transitions. Without fog mixing, the 3-band classifier's tile-aligned
-    // staircase is fully visible at the shore. Use the renderer's cached
-    // fog_color_ (set from gos_State_Fog at clearWindow time) for parity.
-    setF   ("time", SmokeMode::fixedTimestepEnabled()
-                        ? (float)SmokeMode::fixedClockSeconds()
-                        : (float)((double)(timing::get_wall_time_ms() - timeStart_) / 1000.0));
-    setVec4("fog_color", (const float*)&fog_color_);
+    // staircase is fully visible at the shore.
+    //
+    // CINEMATIC-WATER-WHITE-1: do NOT use the cached fog_color_ here.
+    // fog_color_ holds the last value written by applyRenderStates(), which
+    // may be a stale sky/atmosphere white from the most-recent terrain batch.
+    // By water-render time, renderLists() has finished and every render path
+    // resets gos_State_Fog to 0 — so read the current render-state value
+    // directly. This gives vec4(0) (fog branch disabled) and fixes the
+    // "water white in cinematic" regression. (time uses the SmokeMode
+    // fixed-timestep clock when active, for deterministic capture.)
+    {
+        const vec4 waterFog = uint32_to_vec4(renderStates_[gos_State_Fog]);
+        setF   ("time", SmokeMode::fixedTimestepEnabled()
+                            ? (float)SmokeMode::fixedClockSeconds()
+                            : (float)((double)(timing::get_wall_time_ms() - timeStart_) / 1000.0));
+        setVec4("fog_color", (const float*)&waterFog);
+    }
 
     // GPU-driven path: dispatch compute cull/pack + cmd-patch if enabled.
     // This MUST happen before EnsureRecipeBufferUploaded so the thin records
@@ -3032,10 +3043,16 @@ void gosRenderer::renderWaterFastPath(
         setMF         ("frameCos",        frameCos);
         setMF         ("frameCosAlpha",   frameCosAlpha);
         setMF         ("maxMinUV",        maxMinUV);
-        setMF         ("time",  SmokeMode::fixedTimestepEnabled()
-                                    ? (float)SmokeMode::fixedClockSeconds()
-                                    : (float)((double)(timing::get_wall_time_ms() - timeStart_) / 1000.0));
-        setMVec4      ("fog_color", (const float*)&fog_color_);
+        // CINEMATIC-WATER-WHITE-1: same fix as non-MDI path above — read current
+        // render state, not stale fog_color_. See comment block above. (time uses
+        // the SmokeMode fixed-timestep clock when active, for deterministic capture.)
+        {
+            const vec4 waterFog = uint32_to_vec4(renderStates_[gos_State_Fog]);
+            setMF         ("time",  SmokeMode::fixedTimestepEnabled()
+                                        ? (float)SmokeMode::fixedClockSeconds()
+                                        : (float)((double)(timing::get_wall_time_ms() - timeStart_) / 1000.0));
+            setMVec4("fog_color", (const float*)&waterFog);
+        }
         // WATER reflection frame fix: terrain_camera_pos_ is the Stuff/MLR eye
         // (.x=left, .y=elevation, .z=forward); the water FS consumes cameraPos in
         // RAW MC2 (matching WorldPos: .x=east, .y=north, .z=up). Apply the

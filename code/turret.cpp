@@ -46,6 +46,7 @@
 
 #ifndef TEAM_H
 #include"team.h"
+#include"tacticaloverview.h"  // maskWorldBars: hide health bars in overview
 #endif
 
 #ifndef WEAPONFX_H
@@ -570,7 +571,7 @@ long Turret::update (void)
 			pointLight = NULL;
 		}
 
-		appearance->setObjectParameters(position, rotation, drawFlags, teamId,Team::getRelation(teamId, Team::home->getId()));
+		appearance->setObjectParameters(position, rotation, TacticalOverview::maskWorldBars(drawFlags), teamId,Team::getRelation(teamId, Team::home->getId()));
 		appearance->setMoverParameters(turretRotation,0.0f,0.0f);
 		bool inView = appearance->recalcBounds();
 	
@@ -800,7 +801,7 @@ long Turret::update (void)
 	if (!active || (getStatus() == OBJECT_STATUS_DESTROYED))
 		appearance->setLightsOut(true);
 		
- 	appearance->setObjectParameters(position, rotation, drawFlags, teamId,Team::getRelation(teamId, Team::home->getId()));
+ 	appearance->setObjectParameters(position, rotation, TacticalOverview::maskWorldBars(drawFlags), teamId,Team::getRelation(teamId, Team::home->getId()));
 	appearance->setMoverParameters(turretRotation,turretPitch,0.0f);
 	bool inView = appearance->recalcBounds();
 	long canFire = updateAnimations();
@@ -2047,7 +2048,7 @@ void Turret::render (void)
 {
 	if (appearance->canBeSeen())
 	{
-		if (drawFlags & DRAW_BARS )
+		if (TacticalOverview::maskWorldBars(drawFlags) & DRAW_BARS )
 		{
 			TurretTypePtr type = (TurretTypePtr)getObjectType();
 			float barStatus = 1.0;

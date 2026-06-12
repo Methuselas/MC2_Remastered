@@ -240,6 +240,25 @@ def _run_menu_canary(exe: Path, script_path: Path, artifact_dir: Path,
     return 0 if passed else 1
 
 
+def select_missions(entries, missions):
+    """Resolve --mission names against manifest entries.
+
+    Returns (selected, unknown): selected preserves manifest order and
+    drops skip-tier entries and duplicates; unknown is the sorted list of
+    requested names that matched no non-skip manifest entry.
+    """
+    wanted = set(missions)
+    selected = []
+    seen = set()
+    for e in entries:
+        if e.tier == "skip" or e.stem not in wanted or e.stem in seen:
+            continue
+        selected.append(e)
+        seen.add(e.stem)
+    unknown = sorted(wanted - seen)
+    return selected, unknown
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tier", choices=["tier1", "tier2", "tier3"])
@@ -435,22 +454,23 @@ def main():
 
     entries = manifest.parse_manifest(MANIFEST_PATH)
     if args.mission:
-        wanted = set(args.mission)
-        selected = []
-        seen = set()
-        for e in entries:
-            if e.tier == "skip" or e.stem not in wanted or e.stem in seen:
-                continue
-            selected.append(e)
-            seen.add(e.stem)
+        selected, unknown = select_missions(entries, args.mission)
+        if unknown:
+            # Config-error class (exit 2, same as argparse / GOSFX fatal):
+            # a typo'd mission list must never read as PASS to a CI gate.
+            print(f"[runner] ERROR: unknown mission name(s) "
+                  f"{', '.join(unknown)} not found in {MANIFEST_PATH} "
+                  f"(or skip-tier).", file=sys.stderr)
+            sys.exit(2)
     elif args.tier:
         selected = [e for e in entries if e.tier == args.tier]
     else:
         ap.error("--tier or --mission required")
 
     if not selected:
-        print("[runner] no missions selected", file=sys.stderr)
-        sys.exit(0)
+        print("[runner] ERROR: no missions selected; empty selection is a "
+              "config error, not a pass.", file=sys.stderr)
+        sys.exit(2)
 
     baseline_data = baselines.load(BASELINE_PATH)
     timestamp = dt.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
@@ -499,6 +519,7 @@ def main():
                 # entirely, so vars not explicitly listed get dropped.
                 **{k: v for k, v in os.environ.items()
                    if k in ("MC2_FX_COUNT_LOG",
+                            "MC2_TEXMGR_KTX_PRIMARY",  # route-2 CPU BC7 decode test gate
                             # S9D deterministic fixed-timestep smoke clock
                             # (opt-in; Popen replaces env so it must be listed).
                             "MC2_SMOKE_FIXED_TIMESTEP",

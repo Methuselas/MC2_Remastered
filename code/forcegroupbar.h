@@ -17,6 +17,7 @@ class ForceGroupIcon;
 class Mover;
 class MechWarrior;
 class StaticInfo;
+class Camera;
 
 #define MAX_ICONS 16
 
@@ -41,6 +42,17 @@ class ForceGroupBar
 		void removeMover (Mover* mover);
 		void update();
 		void render();
+
+		// Tactical Overview: draw each unit's HUD icon over its world position on
+		// the main 3D screen. alpha is the overview cross-fade [0,1].
+		void renderOverviewIcons( Camera* eye, float alpha );
+
+		// Tactical Overview (full zoom): draw boxed "SQUAD N" cards grouped by
+		// force group at each group's projected centroid. Returns hit-rects so the
+		// click handler can map a click to a force group (selectForceGroup).
+		struct OverviewCardHit { int forceGroup; void* unit; float l, t, r, b; };
+		int  renderOverviewSquadCards( Camera* eye, float alpha,
+		                               OverviewCardHit* hitsOut, int maxHits );
 
 		void removeAll();
 

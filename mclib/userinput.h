@@ -455,6 +455,14 @@ class UserInput
 			return mouseWheelDelta;
 		}
 
+		// Consume the wheel for this frame so later handlers in the same frame
+		// skip it (e.g. the formation-line spacing wheel must stop the overview
+		// zoom from also firing). Mirrors clearLeftClick().
+		void clearMouseWheelDelta (void)
+		{
+			mouseWheelDelta = 0;
+		}
+
 		long getMouseLeftButtonState (void)
 		{
 			return leftMouseButtonState;
@@ -514,6 +522,13 @@ class UserInput
 
 		bool isLeftClick (void) {
 			return(leftClick);
+		}
+
+		// Consume the current left-click so later handlers in the same frame skip
+		// it (e.g. the Tactical Overview squad-card click selects a group and must
+		// stop the world-pick from also firing under the card).
+		void clearLeftClick (void) {
+			leftClick = false;
 		}
 
 		bool isRightClick (void) {

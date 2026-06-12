@@ -43,4 +43,22 @@ struct KtxImage {
 // BC7 KTX2 files — inspect out.isCompressed / out.vkFormat to dispatch upload.
 bool ktxLoadRgba8(const char* path, KtxImage& out);
 
+// CPU-side BC7 (BPTC) block decode (COMPRESSION-BC7-CPUDECODE-1).
+// Decodes one mip level of an already-loaded BC7 KtxImage into a freshly
+// allocated, tightly-packed RGBA8 buffer (4 bytes/pixel, top row first,
+// no padding). This is the missing CPU-readable source that lets the engine
+// source dimensions + texels from a .ktx2 alone (no companion .tga required).
+//
+//   img    : a KtxImage filled by ktxLoadRgba8 with img.isCompressed == true
+//            and img.vkFormat 145/146 (BC7). Non-BC7 images return false.
+//   level  : mip level to decode (0 == largest). Must be < img.mipCount.
+//   outRgba: resized to mipWidth*mipHeight*4 and filled on success.
+//   outW/outH (optional): receive the decoded level's dimensions.
+//
+// Returns false (and leaves outRgba untouched) on any precondition failure.
+// GL-free, allocation only via the supplied vector, no global state.
+bool ktxDecodeBc7ToRgba8(const KtxImage& img, int level,
+                         std::vector<uint8_t>& outRgba,
+                         int* outW = nullptr, int* outH = nullptr);
+
 } // namespace RenderCore

@@ -3598,10 +3598,71 @@ DWORD MC_TextureManager::loadTexture (const char *textureFullPathName, gos_Textu
 	// This way, we never need to know anything about the texture AND we can store PMGs
 	// in memory instead of TGAs which use WAY less RAM!
 	File textureFile;
-#ifdef _DEBUG
-	long textureFileOpenResult = 
-#endif
-		textureFile.open(textureFullPathName);
+	long textureFileOpenResult = textureFile.open(textureFullPathName);
+
+	// ROUTE-2 (MC2_TEXMGR_KTX_PRIMARY, default-off): if the .tga cannot be
+	// resolved (loose + base-strip + fastfile all miss -- e.g. the redundant
+	// /128 .tga was deleted), source dims + RGBA8 from the BC7 .ktx2 sidecar
+	// via the CPU decoder and build a MEM_RAW node (cf. textureFromMemoryRaw).
+	// Proves the decoder integration; lets a .ktx2 stand alone without a .tga.
+	// MC2_TEXMGR_KTX_PRIMARY mode: 0=off, 1=fallback (decode the ktx2 only when
+	// the .tga is absent -- the real feature, prerequisite for deleting redundant
+	// /128 .tgas), 2=force (prefer the ktx2 even when the .tga exists -- A/B test
+	// path, since the fst still serves every /128 .tga so mode 1 can't be
+	// triggered in-situ without repacking tgl.fst).
+	static const int s_ktxPrimaryMode = [](){
+		const char* v = getenv("MC2_TEXMGR_KTX_PRIMARY");
+		return (v && v[0]) ? atoi(v) : 0;
+	}();
+	if (s_ktxPrimaryMode == 2 || (s_ktxPrimaryMode == 1 && textureFileOpenResult != NO_ERR))
+	{
+		{
+			char sidecar[1024];
+			strncpy(sidecar, textureFullPathName, sizeof(sidecar) - 1);
+			sidecar[sizeof(sidecar) - 1] = 0;
+			char* dot = strrchr(sidecar, '.');
+			char* slash = strrchr(sidecar, '/');
+			if (dot && (!slash || dot > slash)) *dot = 0;
+			if (strlen(sidecar) + 6 < sizeof(sidecar)) strcat(sidecar, ".ktx2");
+			RenderCore::KtxImage img;
+			std::vector<uint8_t> rgba;
+			int kw = 0, kh = 0;
+			if (RenderCore::ktxLoadRgba8(sidecar, img) && img.isCompressed &&
+				(img.vkFormat == 145 || img.vkFormat == 146) && img.width == img.height &&
+				RenderCore::ktxDecodeBc7ToRgba8(img, 0, rgba, &kw, &kh) && kw == kh && kw > 0)
+			{
+				const DWORD txmSize = (DWORD)(kw * kh * 4);
+				masterTextureNodes[i].uvScale = 4;
+				masterTextureNodes[i].logicalWidth = (DWORD)kw;
+				masterTextureNodes[i].logicalHeight = (DWORD)kh;
+				masterTextureNodes[i].hints = hints | gosHint_Try32bpp;
+				masterTextureNodes[i].width = MC_TEXCACHE_MEM_RAW + txmSize;
+				masterTextureNodes[i].lzCompSize = txmSize;
+				actualTextureSize += txmSize;
+				compressedTextureSize += txmSize;
+				masterTextureNodes[i].textureData = (DWORD *)textureCacheHeap->Malloc(txmSize);
+				if (masterTextureNodes[i].textureData)
+				{
+					// ktxDecodeBc7ToRgba8 emits RGBA8; the gos MEM_RAW upload expects
+					// BGRA8 (matching the .tga decode path), so swap R<->B per pixel.
+					// Without this, red content renders blue (blue-tinted scene).
+					const uint8_t* src = rgba.data();
+					uint8_t* dst = (uint8_t*)masterTextureNodes[i].textureData;
+					for (DWORD px = 0; px + 4 <= txmSize; px += 4)
+					{
+						dst[px + 0] = src[px + 2]; // B
+						dst[px + 1] = src[px + 1]; // G
+						dst[px + 2] = src[px + 0]; // R
+						dst[px + 3] = src[px + 3]; // A
+					}
+				}
+				else
+					masterTextureNodes[i].gosTextureHandle = 0;
+				printf("[TEXMGR_KTX_PRIMARY] %s -> RGBA8 %dx%d (ktx2 CPU decode)\n", sidecar, kw, kh); fflush(stdout);
+				return(i);
+			}
+		}
+	}
 	gosASSERT(textureFileOpenResult == NO_ERR);
 
 	if (textureFile.isLoadedFromDisk())
@@ -3891,11 +3952,24 @@ DWORD MC_TextureNode::get_gosTextureHandle (void)	//If texture is not in VidRAM,
 				// upload mip 0 via glCompressedTexImage2D and skip the normal
 				// gos_NewTextureFromMemory call. Any failure (no sidecar, not BC7,
 				// load fail, no BPTC support) falls through unchanged.
-				static const bool s_texmgrCompressedUpload =
-					(getenv("MC2_TEXMGR_COMPRESSED_UPLOAD") && getenv("MC2_TEXMGR_COMPRESSED_UPLOAD")[0] != '0');
+				// Default-ON (opt out with MC2_TEXMGR_COMPRESSED_UPLOAD=0): prefer the
+				// BC7 .ktx2 sidecar for GPU upload when present; any failure (no sidecar,
+				// not BC7, no BPTC support) falls through to the .tga unchanged.
+				static const bool s_texmgrCompressedUpload = [](){
+					const char* v = getenv("MC2_TEXMGR_COMPRESSED_UPLOAD");
+					return (!v || !v[0]) ? true : (v[0] != '0');
+				}();
 				bool uploadedCompressed = false;
 
-				if (s_texmgrCompressedUpload && nodeName && *nodeName)
+				// Exclude MODIFIABLE textures (uniqueInstance != 0): the mech/vehicle
+				// paint-scheme system gos_LockTexture()s these and rewrites the R/G/B
+				// team-color mask in place (mech3d/gvactor setPaintScheme). A BC7
+				// texture is GPU-immutable / not CPU-lockable, so compressing it leaves
+				// the raw mask on screen (base blue + red/green, no team colors). Static
+				// shared textures (uniqueInstance == 0: terrain, trees, buildings) are
+				// never locked and keep the BC7 upload. See txmmgr.h:136 ("Texture is
+				// modifiable. DO NOT CACHE OUT").
+				if (s_texmgrCompressedUpload && nodeName && *nodeName && uniqueInstance == 0)
 				{
 					if (!GLEW_ARB_texture_compression_bptc)
 					{

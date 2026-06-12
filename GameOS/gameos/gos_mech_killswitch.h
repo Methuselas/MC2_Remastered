@@ -34,6 +34,19 @@ extern bool g_drawMechs;
 // Can also be toggled at runtime via RAlt+M (wire in gameosmain.cpp hotkey handler).
 extern bool g_useGpuMechs;
 
+// Preview-render context depth. >0 while a SimpleCamera UI preview render is
+// in flight (Mech Bay / Mech Purchase rotating mech). The GPU mech batcher
+// flushes with the WORLD render snapshot / terrain MVP, not the SimpleCamera
+// UI projection, so a submitted preview mech draws off-screen / blank. While
+// this depth is nonzero, Mech3DAppearance::render bypasses the GPU mech submit
+// and forces the legacy CPU MLR draw, which honors the SimpleCamera. Tactical /
+// world mech rendering (depth == 0) is unaffected. Set via the RAII scope below.
+extern int g_mechPreviewRenderDepth;
+struct MechPreviewRenderScope {
+	MechPreviewRenderScope()  { ++g_mechPreviewRenderDepth; }
+	~MechPreviewRenderScope() { --g_mechPreviewRenderDepth; }
+};
+
 // Slice B1: gates VS-side calc_light() in mech.vert. Independent of
 // g_useGpuMechs so an operator can keep GPU mech rendering on while
 // flipping lighting off if a B1 regression surfaces. No effect when
