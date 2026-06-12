@@ -41,6 +41,9 @@
 // spot-checks but it is NOT byte-stable. Only the bookmark sweep is the
 // deterministic gate path. (We deliberately do not pause-freeze free mode: it
 // has no fixed camera pose to hold, so freezing would not make it stable.)
+// When a bookmark file IS configured the free-capture path is fully suppressed
+// (before/during/after the sweep) so a bookmark run emits ONLY deterministic
+// bookmark PNGs and zero frame*.png -- see active() / onPostRenderFrame().
 #include "gos_visual_capture.h"
 
 #include "gos_screenshot.h"   // not used for PNG, but keeps capture siblings together
@@ -512,13 +515,28 @@ bool active() {
     // no allocation.
     parse_capture_cfg();
     parse_replay_cfg();
-    const bool capActive = (g_cap.frame >= 0 && g_cap.dir && !g_cap.done);
+    // The free-capture path is fully suppressed whenever a bookmark file is
+    // configured (g_replay.path != nullptr) -- not just while the sweep runs.
+    // A bookmark run must emit ONLY the deterministic bookmark PNGs (zero
+    // frame*.png), even after the sweep finishes.
+    const bool bookmarkConfigured = (g_replay.path != nullptr);
+    const bool capActive = (!bookmarkConfigured && g_cap.frame >= 0 &&
+                            g_cap.dir && !g_cap.done);
     const bool replayActive = (g_replay.path != nullptr && !g_replay.finished);
     return capActive || replayActive;
 }
 
 void onPostRenderFrame(unsigned int frame, int sceneW, int sceneH) {
-    const bool capActive = (g_cap.frame >= 0 && g_cap.dir && !g_cap.done);
+    // FIX #1: when a bookmark file is configured the free-capture path is
+    // ALWAYS inert -- before, during, AND after the sweep. The deterministic
+    // bookmark sweep owns the camera + sim freeze and reuses
+    // MC2_VISUAL_CAPTURE_FRAME as its trigger frame; firing the live-camera
+    // free capture (e.g. once g_replay.finished flips true) would write a
+    // spurious nondeterministic frame*.png. A bookmark run therefore produces
+    // ONLY the deterministic bookmark PNGs.
+    const bool bookmarkConfigured = (g_replay.path != nullptr);
+    const bool capActive = (!bookmarkConfigured && g_cap.frame >= 0 &&
+                            g_cap.dir && !g_cap.done);
     const bool replayActive = (g_replay.path != nullptr && !g_replay.finished);
     if (!capActive && !replayActive) return;       // zero-cost unset path
 
@@ -531,11 +549,10 @@ void onPostRenderFrame(unsigned int frame, int sceneW, int sceneH) {
         ? std::string("unknown") : SmokeMode::state().mission;
 
     // ---- (1) single-frame free-capture primitive (EYEBALL MODE) -----------
-    // Suppressed when a bookmark sweep is active: the sweep reuses
-    // MC2_VISUAL_CAPTURE_FRAME as its trigger frame, and the deterministic
-    // sweep owns the camera + sim freeze. Firing the free capture too would
-    // write a redundant, nondeterministic live-sim frame.
-    if (capActive && !replayActive && (long)frame >= g_cap.frame) {
+    // capActive is already false whenever a bookmark file is configured (see
+    // the guard above), so this path runs ONLY when no bookmark sweep exists.
+    // It is the nondeterministic eyeball spot-check mode.
+    if (capActive && (long)frame >= g_cap.frame) {
         char base[256];
         snprintf(base, sizeof(base), "%s_frame%u", mission.c_str(), frame);
         capture_to(g_cap.dir, base, mission, "frame", frame, sceneW, sceneH,
@@ -560,8 +577,14 @@ void onPostRenderFrame(unsigned int frame, int sceneW, int sceneH) {
                     g_replay.marks.size(), g_replay.mission.c_str());
         }
 
-        // Wait for the deterministic trigger frame. Both runs reach this frame
-        // with the same elapsed sim, so the frozen scenarioTime matches.
+        // Wait for the deterministic trigger frame. Determinism does NOT come
+        // from wall-clock alignment (that was the false premise of the old
+        // wall-clock sim and is now moot): it comes from S9D's fixed-timestep
+        // clock (scenarioTime = frame/30 under MC2_SMOKE_FIXED_TIMESTEP=1) plus
+        // S9E's pinned render-shader clocks. At any given trigger frame both
+        // runs therefore share the identical scenarioTime; we then freeze it
+        // (and all shader clocks) for the whole sweep, so every animated source
+        // is held at the same frozen phase across bookmarks AND across runs.
         if (!g_replay.triggered) {
             if ((long)frame < g_replay.triggerFrame) return;
             g_replay.triggered = true;
