@@ -4967,12 +4967,17 @@ void EditorInterface::renderObjectCompanionPanel()
 	if (group < 0 || group >= pMgr->getBuildingGroupCount())
 		return;
 
-	ImGuiIO& io = ImGui::GetIO();
-	const float w = 240.0f;
-	ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - w - 16.0f, 360.0f), ImGuiCond_Once);
+	// Same-group object palette. Pop it up on the LEFT edge of the screen so it does
+	// not collide with the right-column dock, and scale its geometry by the editor UI
+	// scale (s_uiScale). Font size is inherited from io.FontGlobalScale (which is set
+	// to s_uiScale) like every other panel -- the old SetWindowFontScale(1.3f) here
+	// double-scaled it and made this palette look oversized / "funny" vs the rest of
+	// the editor, and ignored DPI. ImGuiCond_Always on the position keeps it reliably
+	// on the left each time it pops (it is a transient per-brush context palette).
+	const float w = 240.0f * s_uiScale;
+	ImGui::SetNextWindowPos(ImVec2(16.0f * s_uiScale, 360.0f * s_uiScale), ImGuiCond_Always);
 	ImGui::SetNextWindowSize(ImVec2(w, 0.f), ImGuiCond_Once);
 	ImGui::Begin("Objects", nullptr, ImGuiWindowFlags_NoScrollbar);
-	ImGui::SetWindowFontScale(1.3f);
 
 	// Clicking a button must not delete curBrush (this bb) or mutate the recent
 	// ring mid-render, so defer the actual swap until after all widgets are drawn.
