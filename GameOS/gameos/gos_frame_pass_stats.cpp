@@ -39,8 +39,9 @@ PassRow         s_last[Pass_Count];   // last completed frame (for consumers)
 FrameAggregates s_agg;                // current frame (filling)
 FrameAggregates s_lastAgg;            // last completed frame
 
-bool s_inited = false;
-bool s_on     = false;
+bool s_inited  = false;
+bool s_envOn   = false;   // MC2_FRAME_PASS_STATS=1 (drives the emit line)
+bool s_collect = false;   // runtime collect flag (editor tab); no emit
 
 int emitEvery()
 {
@@ -77,19 +78,30 @@ void emitLine(unsigned long frameNo)
 
 } // namespace
 
+// Init the cached env gate once. Separate from Enabled() so the emit path can
+// query env-state independently of the runtime collect flag.
+static void initEnv()
+{
+    if (s_inited) return;
+    const char* v = std::getenv("MC2_FRAME_PASS_STATS");
+    s_envOn = (v && v[0] == '1' && v[1] == '\0');
+    s_inited = true;
+    if (s_envOn) {
+        std::printf("[FRAME_PASS_STATS v1] armed every=%d\n", emitEvery());
+        std::fflush(stdout);
+    }
+}
+
 bool Enabled()
 {
-    if (!s_inited) {
-        const char* v = std::getenv("MC2_FRAME_PASS_STATS");
-        s_on = (v && v[0] == '1' && v[1] == '\0');
-        s_inited = true;
-        if (s_on) {
-            std::printf("[FRAME_PASS_STATS v1] armed every=%d\n", emitEvery());
-            std::fflush(stdout);
-        }
-    }
-    return s_on;
+    initEnv();
+    // Collection runs when the env arms it OR the editor tab flips the runtime
+    // flag. Game build with env unset + tab never opened keeps both false.
+    return s_envOn || s_collect;
 }
+
+void SetCollect(bool on) { initEnv(); s_collect = on; }
+bool CollectFlag()       { return s_collect; }
 
 void RecordPassBegin(gos_render_pass_timer::Pass p)
 {
@@ -148,7 +160,11 @@ void FrameEnd(unsigned long frameNo)
     std::memcpy(s_last, s_rows, sizeof(s_last));
     s_lastAgg = s_agg;
 
-    if (emitEvery() > 0 && frameNo % (unsigned long)emitEvery() == 0)
+    // Emit cadence keys off the ENV gate only. When collection is active purely
+    // because the editor tab set the runtime flag (env unset), no [FRAME_PASS_
+    // STATS v1] lines are produced -- the tab reads s_last directly. Keeps the
+    // emit format and game-OFF "zero lines" guarantee intact.
+    if (s_envOn && emitEvery() > 0 && frameNo % (unsigned long)emitEvery() == 0)
         emitLine(frameNo);
 
     // Reset for the next frame.
