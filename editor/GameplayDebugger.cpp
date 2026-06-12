@@ -100,7 +100,7 @@ void GameplayDebugger::Draw()
     }
 
     // ---- LIVE runtime telemetry (runtime bridge v0) ----------------------
-    // When a playtest child is running and has emitted [MOVER v1] mover.state
+    // When a playtest child is running and has emitted [MOVER v2] mover.state
     // bursts, show the live table instead of the "no runtime objects" notice.
     const std::vector<EditorPlaytest::MoverSnapshot>& live = EditorPlaytest::LiveMovers();
     const bool liveActive = EditorPlaytest::IsRunning() && !live.empty();
@@ -116,7 +116,7 @@ void GameplayDebugger::Draw()
 
         ImGuiTableFlags tflags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
             ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
-        if (ImGui::BeginTable("##livemovers", 7, tflags, ImVec2(0.f, 240.f)))
+        if (ImGui::BeginTable("##livemovers", 11, tflags, ImVec2(0.f, 240.f)))
         {
             ImGui::TableSetupScrollFreeze(0, 1);
             ImGui::TableSetupColumn("id");
@@ -126,13 +126,26 @@ void GameplayDebugger::Draw()
             ImGui::TableSetupColumn("pilot");
             ImGui::TableSetupColumn("order");
             ImGui::TableSetupColumn("tgt");
+            ImGui::TableSetupColumn("brain");   // v2: ABL brain FSM state
+            ImGui::TableSetupColumn("move");    // v2: moveOrders.moveState
+            ImGui::TableSetupColumn("path");    // v2: curStep/totalSteps
+            ImGui::TableSetupColumn("cost");    // v2: A* path cost
             ImGui::TableHeadersRow();
             for (size_t i = 0; i < live.size(); ++i)
             {
                 const EditorPlaytest::MoverSnapshot& m = live[i];
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0); ImGui::Text("%ld", m.id);
-                ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(m.name.c_str());
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextUnformatted(m.name.c_str());
+                // Hover the name to read the world-space coords that don't fit columns:
+                // current pos, active-path goal, and current-target position.
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip(
+                        "pos   %.0f, %.0f, %.0f\n"
+                        "goal  %.0f, %.0f, %.0f\n"
+                        "tgtpos %.0f, %.0f, %.0f",
+                        m.x, m.y, m.z, m.gx, m.gy, m.gz, m.tx, m.ty, m.tz);
                 ImGui::TableSetColumnIndex(2); ImGui::Text("%ld", m.team);
                 ImGui::TableSetColumnIndex(3); ImGui::Text("%.0f%%", m.hp * 100.f);
                 ImGui::TableSetColumnIndex(4);
@@ -142,6 +155,18 @@ void GameplayDebugger::Draw()
                 ImGui::TableSetColumnIndex(6);
                 if (m.target >= 0) ImGui::Text("%ld", m.target);
                 else               ImGui::TextDisabled("--");
+                ImGui::TableSetColumnIndex(7);
+                if (m.brain >= 0)  ImGui::Text("%ld", m.brain);
+                else               ImGui::TextDisabled("--");
+                ImGui::TableSetColumnIndex(8);
+                if (m.moveState >= 0) ImGui::Text("%ld", m.moveState);
+                else                  ImGui::TextDisabled("--");
+                ImGui::TableSetColumnIndex(9);
+                if (m.pathSteps > 0) ImGui::Text("%ld/%ld", m.pathStep, m.pathSteps);
+                else                 ImGui::TextDisabled("--");
+                ImGui::TableSetColumnIndex(10);
+                if (m.pathCost >= 0) ImGui::Text("%ld", m.pathCost);
+                else                 ImGui::TextDisabled("--");
             }
             ImGui::EndTable();
         }
@@ -155,7 +180,7 @@ void GameplayDebugger::Draw()
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.75f, 0.2f, 1.0f));
         if (EditorPlaytest::IsRunning())
             ImGui::TextWrapped(
-                "Playtest running -- waiting for [MOVER v1] telemetry...\n"
+                "Playtest running -- waiting for [MOVER v2] telemetry...\n"
                 "Static placement data is shown below.");
         else
             ImGui::TextWrapped(

@@ -371,7 +371,7 @@ namespace {
 //----------------------------------------------------------------------------------
 // MC2_BRIDGE_MOVER_STATE -- runtime-bridge v0 (mover.state over stdout).
 //
-// When env MC2_BRIDGE_MOVER_STATE=1, emit one [MOVER v1] line per live mover
+// When env MC2_BRIDGE_MOVER_STATE=1, emit one [MOVER v2] line per live mover
 // every MC2_BRIDGE_MOVER_PERIOD_SEC seconds (default 2). Strictly READ-ONLY:
 // only getters, every deref null-guarded. Zero cost when the env is unset
 // (single getenv at startup; the per-frame check is one bool + one float
@@ -405,7 +405,7 @@ namespace {
 	}
 
 	// Copy src into dst (cap chars) replacing spaces/'='/control with '_' so the
-	// key=value [MOVER v1] line stays parseable even for names with spaces. Always
+	// key=value [MOVER v2] line stays parseable even for names with spaces. Always
 	// NUL-terminates; emits "?" for null/empty input.
 	static void bridgeSanitize(char* dst, size_t cap, const char* src) {
 		if (cap == 0) return;
@@ -420,7 +420,7 @@ namespace {
 		dst[j] = 0;
 	}
 
-	// Emit [MOVER v1] lines for up to kCap live movers. Read-only; defensive.
+	// Emit [MOVER v2] lines for up to kCap live movers. Read-only; defensive.
 	static void bridgeEmitMoverState(float scenarioTimeNow) {
 		if (!s_bridgeMoverState || !ObjectManager)
 			return;
@@ -431,7 +431,7 @@ namespace {
 		const long kCap = 64;
 		long total = ObjectManager->getNumMovers();
 		long emitted = 0;
-		printf("[MOVER v1 begin] t=%.1f count=%ld\n", scenarioTimeNow, total);
+		printf("[MOVER v2 begin] t=%.1f count=%ld\n", scenarioTimeNow, total);
 		for (long i = 0; i < total && emitted < kCap; ++i) {
 			MoverPtr mover = ObjectManager->getMover(i);
 			if (!mover)
@@ -455,19 +455,52 @@ namespace {
 			long              orderVal  = -1;
 			const char*       orderName = "none";
 			long              targetId  = -1;
+
+			// v2 brain/path/target detail. Defaults are emitted even when the
+			// pilot or path is absent so the [MOVER v2] grammar stays fixed-arity
+			// and the editor parser never has to handle optional fields.
+			long              brainState = -1;   // ABL brain FSM state index (opaque)
+			long              moveState  = -1;   // moveOrders.moveState
+			Stuff::Vector3D   pgoal;             pgoal.Zero();   // world goal of active path
+			long              pCurStep   = -1;   // step index being headed for
+			long              pNumSteps  = 0;    // total steps in active path
+			long              pCost      = -1;   // A* total path cost
+			Stuff::Vector3D   tgtPos;            tgtPos.Zero();  // current target world pos
+
 			MechWarriorPtr    pilot     = mover->getPilot();
 			if (pilot) {
 				bridgeSanitize(pilotName, sizeof(pilotName), pilot->getName());
 				orderVal  = pilot->getStatus();
 				orderName = bridgeWarriorStatusName(orderVal);
+				brainState = pilot->getBrainState();
+				moveState  = pilot->getMoveState();
+				// getMovePath(long) is a PURE accessor (returns moveOrders.path[which]);
+				// the zero-arg getMovePath() MUTATES (swaps path slots) and is never
+				// called here. Null-guarded defensively though the path pair is
+				// normally pre-allocated.
+				MovePathPtr mp = pilot->getMovePath(0);
+				if (mp) {
+					pgoal     = mp->goal;
+					pCurStep  = mp->curStep;
+					pNumSteps = mp->numStepsWhenNotPaused;
+					pCost     = mp->cost;
+				}
 				GameObjectPtr tgt = pilot->getCurrentTarget();
-				if (tgt) targetId = tgt->getPartId();
+				if (tgt) {
+					targetId = tgt->getPartId();
+					tgtPos   = tgt->getPosition();
+				}
 			}
 
-			printf("[MOVER v1] id=%ld name=%s team=%ld pos=%.1f,%.1f,%.1f "
-				"hp=%.2f pilot=%s order=%ld/%s target=%ld\n",
+			printf("[MOVER v2] id=%ld name=%s team=%ld pos=%.1f,%.1f,%.1f "
+				"hp=%.2f pilot=%s order=%ld/%s target=%ld "
+				"brain=%ld mstate=%ld pgoal=%.1f,%.1f,%.1f pstep=%ld/%ld pcost=%ld "
+				"tgtpos=%.1f,%.1f,%.1f\n",
 				partId, name, team, pos.x, pos.y, pos.z,
-				hpFrac, pilotName, orderVal, orderName, targetId);
+				hpFrac, pilotName, orderVal, orderName, targetId,
+				brainState, moveState, pgoal.x, pgoal.y, pgoal.z,
+				pCurStep, pNumSteps, pCost,
+				tgtPos.x, tgtPos.y, tgtPos.z);
 			++emitted;
 		}
 		fflush(stdout);
@@ -767,7 +800,7 @@ long Mission::update (void)
 			}
 		}
 
-		// Runtime-bridge v0: emit [MOVER v1] mover.state to stdout (env-gated,
+		// Runtime-bridge v0: emit [MOVER v2] mover.state to stdout (env-gated,
 		// throttled to MC2_BRIDGE_MOVER_PERIOD_SEC). Read-only; no-op unless
 		// MC2_BRIDGE_MOVER_STATE=1.
 		if (s_bridgeMoverState)
