@@ -296,12 +296,17 @@ def main():
     MOD_ID = "modern-tree-pack-v1"
 
     if args.clean and out_dir.exists():
-        print(f"--clean: removing {out_dir}")
-        shutil.rmtree(out_dir)
+        artifact_dirs = ["_cook_staging", "data/model_overrides/cooked", "data/tgl"]
+        for name in artifact_dirs:
+            d = out_dir / name
+            if d.exists():
+                print(f"--clean: removing {d}")
+                shutil.rmtree(d)
 
     if not args.family and not args.clean and out_dir.exists():
         print("WARNING: full run without --clean on existing output dir. "
-              "Pass --clean to ensure clean state.", file=sys.stderr)
+              "Stale cook artifacts (_cook_staging/, cooked/, tgl/) may persist. "
+              "Pass --clean to remove them before cooking.", file=sys.stderr)
 
     deploy_fingerprint = None
     target_warnings = []
