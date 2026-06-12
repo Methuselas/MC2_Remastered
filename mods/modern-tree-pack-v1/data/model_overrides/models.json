@@ -19,5 +19,68 @@
         "source": "data/model_overrides/cooked/maple1_lod2.glb"
       }
     ]
+  },
+  {
+    "class": "tree",
+    "appearanceName": "pine1",
+    "replaces": "tree:pine1",
+    "renderOnly": true,
+    "fallback": "stock",
+    "lods": [
+      {
+        "distance": 0,
+        "source": "data/model_overrides/cooked/pine1_lod0.glb"
+      },
+      {
+        "distance": 600,
+        "source": "data/model_overrides/cooked/pine1_lod1.glb"
+      },
+      {
+        "distance": 1200,
+        "source": "data/model_overrides/cooked/pine1_lod2.glb"
+      },
+      {
+        "distance": 2000,
+        "source": "data/model_overrides/cooked/pine1_lod3.glb"
+      }
+    ]
+  },
+  {
+    "class": "tree",
+    "appearanceName": "maple2",
+    "replaces": "tree:maple2",
+    "renderOnly": true,
+    "fallback": "stock",
+    "lods": [
+      {
+        "distance": 0,
+        "source": "data/model_overrides/cooked/maple2_lod0.glb"
+      },
+      {
+        "distance": 600,
+        "source": "data/model_overrides/cooked/maple2_lod1.glb"
+      },
+      {
+        "distance": 1200,
+        "source": "data/model_overrides/cooked/maple2_lod2.glb"
+      },
+      {
+        "distance": 2000,
+        "source": "data/model_overrides/cooked/maple2_lod3.glb"
+      }
+    ]
+  },
+  {
+    "class": "staticprop",
+    "appearanceName": "crane",
+    "replaces": "staticprop:crane",
+    "renderOnly": true,
+    "fallback": "stock",
+    "lods": [
+      {
+        "distance": 0,
+        "source": "data/model_overrides/cooked/crane_lod0.glb"
+      }
+    ]
   }
 ]

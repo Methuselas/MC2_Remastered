@@ -189,6 +189,14 @@ for geom_name, geom in scene.geometry.items():
     return tex_dir
 
 
+def _synth_white_png(dest: Path) -> None:
+    """Write a 1x1 white RGBA PNG placeholder for geometry-only (untextured) assets."""
+    from PIL import Image
+    img = Image.new("RGBA", (1, 1), (255, 255, 255, 255))
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    img.save(str(dest))
+
+
 def cook_one_lod(src_glb: Path, out_dir: Path, mod_out: Path,
                  asset_class: str, lod_tag: str, appearance: str) -> Path:
     """Run stage -> textures -> assemble for one GLB. Returns path to manifest.json.
@@ -212,6 +220,23 @@ def cook_one_lod(src_glb: Path, out_dir: Path, mod_out: Path,
 
     tex_dir = out_dir / "_textures"
     extract_glb_textures(src_glb, tex_dir)
+
+    # If the GLB has no embedded textures (geometry-only assets like crane_big),
+    # the stage step records NULLTXM as the material name and the textures step
+    # produces 0 cooked materials -> assemble fails its >=1 requirement.
+    # Synthesise a 1x1 white placeholder so the pipeline can complete.
+    staged_data = json.loads((out_dir / "staged.json").read_text(encoding="utf-8"))
+    for m in staged_data.get("materials_discovered", []):
+        tname = m.get("textureName", "")
+        base = tname[2:] if tname.startswith("a_") else tname
+        has_image = any((tex_dir / f"{base}{ext}").exists()
+                        for ext in (".png", ".tga", ".PNG", ".TGA"))
+        if not has_image and base:
+            placeholder = tex_dir / f"{base}.png"
+            if not placeholder.exists():
+                # 1x1 white RGBA PNG via PIL
+                _synth_white_png(placeholder)
+                print(f"  [placeholder] synthesised 1x1 white PNG for untextured material '{base}'")
 
     materials_json = out_dir / "materials.json"
     _run([py, COOK_SCRIPT, "textures",
