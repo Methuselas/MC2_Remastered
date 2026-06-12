@@ -1722,8 +1722,25 @@ void EditorInterface::handleMouseMove( int PosX, int PosY )
 
 	if ( curBrush && ( painting ) )
 	{
-		if ( curBrush->canPaint( vector, PosX, PosY, 0 ) )
-			curBrush->paint( vector, PosX, PosY );
+		// Discrete object placement (BuildingBrush) must continue-paint from the
+		// SAME precise projection the click used (handleLeftButtonDown ->
+		// inverseProject), NOT the approx O(1) ground-plane unproject used for the
+		// cursor hot-path above. Otherwise the click places at the inverseProject
+		// cell and the first (often sub-pixel / synthesized WM_MOUSEMOVE) move
+		// places a SECOND object at the diverging approx cell -- "places twice per
+		// click in different locations". The bug was latent until the per-move
+		// unproject went O(1) approx (315ddec9) and diverged from the click cell.
+		// Recompute precisely only during an active LMB paint stroke and only for
+		// BuildingBrush, so the per-move cursor perf win is preserved and
+		// ScatterBrush (intentional drag-scatter, not a BuildingBrush) is unaffected.
+		Stuff::Vector3D paintPos = vector;
+		if ( dynamic_cast<BuildingBrush*>( curBrush ) )
+		{
+			Stuff::Vector2DOf<long> vp( PosX, PosY );
+			eye->inverseProject( vp, paintPos );
+		}
+		if ( curBrush->canPaint( paintPos, PosX, PosY, 0 ) )
+			curBrush->paint( paintPos, PosX, PosY );
 	}
 
  	//------------------------------------------------
