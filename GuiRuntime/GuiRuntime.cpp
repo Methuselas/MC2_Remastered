@@ -153,6 +153,7 @@ static void BuildEditorDockspace() {
         s_autodock = (a && strcmp(a, "0") == 0) ? 0 : 1;
     }
     static bool s_built = false;
+    static int  s_focusToolsFrames = 0;  // >0: re-issue SetWindowFocus("Tools") after autodock build
     if (!s_built) {
         s_built = true;
         if (s_autodock) {
@@ -180,7 +181,24 @@ static void BuildEditorDockspace() {
             for (int i = 0; i < (int)(sizeof(kPanels) / sizeof(kPanels[0])); ++i)
                 ImGui::DockBuilderDockWindow(kPanels[i], rightId);
             ImGui::DockBuilderFinish(dockId);
+
+            // All panels share the right-column node, so they render as a tab strip.
+            // ImGui's default selected-tab heuristic lands on "Debug Overlays", which
+            // confuses users who expect to land on the editing Tools. Force "Tools" to
+            // be the active tab on launch (only under autodock so a saved imgui.ini
+            // layout with AUTODOCK=0 still wins).
+            s_focusToolsFrames = 3;  // reinforce a few frames; panels Begin() after us
         }
+    }
+
+    // Apply the deferred "select Tools tab" request. SetWindowFocus(name) is a request
+    // resolved when "Tools" next Begin()s (later this frame), so a single call on the
+    // build frame can be lost to a panel grabbing focus during its own submission.
+    // Re-issue for a few frames after the dock is built, then stop touching focus so
+    // the user's tab selection sticks.
+    if (s_focusToolsFrames > 0) {
+        ImGui::SetWindowFocus("Tools");
+        --s_focusToolsFrames;
     }
 
     if (ImGuiDockNode* central = ImGui::DockBuilderGetCentralNode(dockId)) {
