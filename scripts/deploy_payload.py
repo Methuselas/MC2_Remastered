@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
 """deploy_payload.py — deploy payload completeness gate (slice S8 seed, manifest v1).
 
-Wraps/validates a deploy of the MC2 runtime payload (exe + pdb + ffmpeg DLLs +
-shaders) from a source worktree build to a runtime target dir (e.g.
-A:/Games/mc2-opengl/mc2-win64-v0.4 or .../mc2-win64-0.4c).
+Wraps/validates a deploy of the MC2 runtime payload from a source worktree
+build to a runtime target dir (e.g. A:/Games/mc2-opengl/mc2-win64-v0.4 or
+.../mc2-win64-0.4c). Payload, by target:
+  both    : exe + pdb + ffmpeg DLLs + shaders/ + run-with-log.bat
+  game    : + run-mc2.bat
+  editor  : + run-editor.bat + tools/terrain_gen/** (authoring support — the
+            editor's Generate-Mission / -gen-map path shells `py -3
+            tools\\terrain_gen\\terrain_gen.py`; without it the editor builds
+            and launches but every gen/mission-load smoke case fails)
+Support files (launch .bat, terrain_gen tree) are source-tracked, not build
+outputs, so build -> deploy stays self-complete with no manual copy step.
 
 Hardens against the four documented stale-deploy failure classes
 (docs/superpowers/recon/scratch-accel-1-deploy.md):
@@ -39,7 +47,34 @@ import sys
 
 MANIFEST_NAME = ".deployed_manifest.csv"
 MANIFEST_VERSION = "v1"
-SHADER_EXTS = (".vert", ".frag", ".tesc", ".tese")
+SHADER_EXTS = (".vert", ".frag", ".tesc", ".tese", ".comp")
+
+# Editor target marker (exe_name match, case-insensitive).
+EDITOR_EXE = "mission editor.exe"
+
+# Launch scripts that belong in a user download, by target. Sourced from
+# src_root (tracked at repo root). run-with-log.bat is the generic stderr-
+# capturing launcher and ships with both.
+SUPPORT_SCRIPTS = {
+    "game":   ["run-mc2.bat", "run-with-log.bat"],
+    "editor": ["run-editor.bat", "run-with-log.bat"],
+}
+
+# mc2-launcher.exe — the install front-door (campaign mod-picker GUI that
+# launches mc2.exe with MC2_ACTIVE_MOD). A separate build target
+# (tools/mc2_launcher -> build64/out/mc2_launcher/<cfg>/mc2-launcher.exe), so
+# it lives outside build_dir; we locate it from the build64 root. Ships with
+# both game and editor installs.
+LAUNCHER_NAME = "mc2-launcher.exe"
+LAUNCHER_FROM_BUILD64 = os.path.join("out", "mc2_launcher")  # + <cfg> + exe
+
+# Editor authoring support trees (src_root-relative dirs copied recursively,
+# structure preserved). The editor's -gen-map / Generate Mission path shells
+# `py -3 tools\\terrain_gen\\terrain_gen.py`; without this tree the editor
+# builds and launches but every gen/mission-load smoke case fails. Tying it to
+# the deploy payload keeps "build -> deploy" self-complete (no manual copy).
+EDITOR_SUPPORT_TREES = ["tools/terrain_gen"]
+
 FFMPEG_DLLS = [
     "avcodec-61.dll",
     "avformat-61.dll",
@@ -165,19 +200,68 @@ def enumerate_payload(src_root, build_dir, exe_name, pdb_name,
         if os.path.isfile(p):
             items.append((p, dll, "dll"))
 
+    # mc2-launcher.exe: separate build target outside build_dir. Locate via the
+    # build64 root (walk up from build_dir) using this deploy's config name.
+    bd = os.path.abspath(build_dir).rstrip(os.sep)
+    cfg = os.path.basename(bd)  # e.g. RelWithDebInfo
+    b64 = bd
+    while b64 and os.path.basename(b64) != "build64":
+        parent = os.path.dirname(b64)
+        if parent == b64:
+            b64 = ""
+            break
+        b64 = parent
+    launcher_src = (os.path.join(b64, LAUNCHER_FROM_BUILD64, cfg, LAUNCHER_NAME)
+                    if b64 else "")
+    if launcher_src and os.path.isfile(launcher_src):
+        items.append((launcher_src, LAUNCHER_NAME, "exe"))
+    elif require_build:
+        fail(f"mc2-launcher.exe not found (looked: {launcher_src or '<no build64 root>'})\n"
+             "  Build it as part of the release: cmake --build build64 "
+             "--config RelWithDebInfo --target mc2_launcher")
+    else:
+        # manifest-only: source build output may be gone; still record the
+        # relpath so an existing target copy gets hashed.
+        items.append((launcher_src or LAUNCHER_NAME, LAUNCHER_NAME, "exe"))
+
+    # Deploy the ENTIRE shaders/ tree recursively (every file, all extensions),
+    # not an extension allowlist. Shaders #include each other across stages and
+    # extensions (.comp pulls .glsl/.hglsl; .frag pulls include/*.hglsl); a
+    # per-ext allowlist silently dropped .comp + root .glsl and the GPU-driven
+    # terrain cull/lighting/water compute then failed to compile -> NaN frustum
+    # planes -> terrain culled to black, while smoke still PASSED (compile-fail
+    # is non-fatal sticky-disable, not a crash). Only skip test fixtures.
     shader_dir = os.path.join(src_root, "shaders")
     if not os.path.isdir(shader_dir):
         fail(f"source shader dir not found: {shader_dir}")
-    for fn in sorted(os.listdir(shader_dir)):
-        if fn.lower().endswith(SHADER_EXTS):
-            items.append((os.path.join(shader_dir, fn),
-                          f"shaders/{fn}", "shader"))
-    inc_dir = os.path.join(shader_dir, "include")
-    if os.path.isdir(inc_dir):
-        for fn in sorted(os.listdir(inc_dir)):
-            p = os.path.join(inc_dir, fn)
-            if os.path.isfile(p):
-                items.append((p, f"shaders/include/{fn}", "shader"))
+    for dirpath, dirs, files in os.walk(shader_dir):
+        dirs[:] = [d for d in dirs if d.lower() != "fixtures"]
+        for fn in sorted(files):
+            p = os.path.join(dirpath, fn)
+            rel = os.path.relpath(p, src_root).replace(os.sep, "/")
+            items.append((p, rel, "shader"))
+
+    # Support payload: launch scripts (per target) + editor authoring trees.
+    # These are source-tracked, not build outputs, so they ship even though
+    # they never appear in build_dir. require_build is irrelevant here: a
+    # missing SOURCE support file is a real error (loud copy failure), while
+    # manifest-only tolerates a missing TARGET copy downstream as usual.
+    is_editor = exe_name.lower() == EDITOR_EXE
+    for script in SUPPORT_SCRIPTS["editor" if is_editor else "game"]:
+        sp = os.path.join(src_root, script)
+        items.append((sp, script, "support"))
+    if is_editor:
+        for tree in EDITOR_SUPPORT_TREES:
+            tree_abs = os.path.join(src_root, tree)
+            if require_build and not os.path.isdir(tree_abs):
+                fail(f"editor support tree not found in source: {tree_abs}\n"
+                     "  The editor's Generate-Mission path needs this tree; "
+                     "a deploy without it builds a non-functional editor.")
+            for dirpath, _dirs, files in os.walk(tree_abs):
+                for fn in sorted(files):
+                    sp = os.path.join(dirpath, fn)
+                    rel = os.path.relpath(sp, src_root).replace(os.sep, "/")
+                    items.append((sp, rel, "support"))
     return items
 
 
