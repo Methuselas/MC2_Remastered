@@ -3900,7 +3900,15 @@ DWORD MC_TextureNode::get_gosTextureHandle (void)	//If texture is not in VidRAM,
 				}();
 				bool uploadedCompressed = false;
 
-				if (s_texmgrCompressedUpload && nodeName && *nodeName)
+				// Exclude MODIFIABLE textures (uniqueInstance != 0): the mech/vehicle
+				// paint-scheme system gos_LockTexture()s these and rewrites the R/G/B
+				// team-color mask in place (mech3d/gvactor setPaintScheme). A BC7
+				// texture is GPU-immutable / not CPU-lockable, so compressing it leaves
+				// the raw mask on screen (base blue + red/green, no team colors). Static
+				// shared textures (uniqueInstance == 0: terrain, trees, buildings) are
+				// never locked and keep the BC7 upload. See txmmgr.h:136 ("Texture is
+				// modifiable. DO NOT CACHE OUT").
+				if (s_texmgrCompressedUpload && nodeName && *nodeName && uniqueInstance == 0)
 				{
 					if (!GLEW_ARB_texture_compression_bptc)
 					{
