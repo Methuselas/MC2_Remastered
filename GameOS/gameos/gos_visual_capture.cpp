@@ -636,15 +636,27 @@ void onPostRenderFrame(unsigned int frame, int sceneW, int sceneH) {
             ++g_replay.settleCount;
             return;
         }
-        // Settled: capture this bookmark. Sidecar records the trigger frame so
-        // the frozen-sim state is documented and deterministic=true.
+        // Settled: capture this bookmark. The capture is byte-stable ONLY when
+        // the deterministic clock (S9D sim + S9E shader, MC2_SMOKE_FIXED_TIMESTEP)
+        // is engaged; without it the sweep freeze holds scenarioTime constant
+        // within one run but two runs reach the trigger frame at different clock
+        // values. Stamp the sidecar honestly so a Baseline-A golden is never
+        // mislabeled deterministic when it is not.
+        const bool deterministic = SmokeMode::fixedTimestepEnabled();
         const Bookmark& bm = g_replay.marks[g_replay.idx];
+        // Flatten the bookmark name into a filename token so a name cannot
+        // escape the capture dir (path traversal / separators).
+        std::string safeName = bm.name;
+        for (char& c : safeName) {
+            if (c == '/' || c == '\\' || c == ':' || c == '.')
+                c = '_';
+        }
         char base[256];
         snprintf(base, sizeof(base), "%s_%s",
-                 g_replay.mission.c_str(), bm.name.c_str());
+                 g_replay.mission.c_str(), safeName.c_str());
         capture_to(g_replay.dir, base, g_replay.mission, bm.name,
                    frame, sceneW, sceneH,
-                   g_replay.triggerFrame, /*deterministic=*/true);
+                   g_replay.triggerFrame, deterministic);
         ++g_replay.idx;
         g_replay.teleported = false;
     }
