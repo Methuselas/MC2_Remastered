@@ -48,6 +48,35 @@ static unsigned long s_spotDiagBldgCalls      = 0;   // update() call counter
 
 #include "gos_static_prop_killswitch.h"
 #include "gos_static_prop_batcher.h"
+
+// Slim-deploy texture gate (LOAD_TGA_THEN_GPU_KTX). The static-prop / building /
+// tree appearance loaders below gate loadTexture() behind fileExists(<name>.tga).
+// fileExists is .ktx2-blind, so when a slim deploy drops the redundant .tga the
+// gate fails, loadTexture is never called, and route-2 (txmmgr.cpp,
+// MC2_TEXMGR_KTX_PRIMARY) -- which builds a usable node from the BC7 .ktx2
+// sidecar alone -- is never reached; the static-prop batcher then skips the
+// packet (layer=-1) and buildings vanish. This helper lets the gate also pass
+// when a same-stem .ktx2 sidecar exists, gated in parity with route-2 (only when
+// MC2_TEXMGR_KTX_PRIMARY is enabled). bdactor-only by design: mech/vehicle paint
+// (CPU_RGBA_REQUIRED, gos_LockTexture rewrite) must stay .tga and is NOT routed
+// here. See docs/texture-residency-registry-recon.md.
+static bool textureOrKtxSidecarExists(const char* tgaPath)
+{
+	if (fileExists(tgaPath))
+		return true;
+	const char* v = getenv("MC2_TEXMGR_KTX_PRIMARY");
+	const bool ktxPrimary = (!v || !v[0]) ? true : (v[0] != '0');  // default mode 1
+	if (!ktxPrimary)
+		return false;
+	char ktx[1024];
+	strncpy(ktx, tgaPath, sizeof(ktx) - 1);
+	ktx[sizeof(ktx) - 1] = 0;
+	char* dot   = strrchr(ktx, '.');
+	char* slash = strrchr(ktx, '/');
+	if (dot && (!slash || dot > slash)) *dot = 0;
+	if (strlen(ktx) + 6 < sizeof(ktx)) strcat(ktx, ".ktx2");
+	return fileExists(ktx);
+}
 #include "gos_static_prop_registry.h"  // Stage 3.C: static-registry fast path
 #include "gos_mech_killswitch.h"       // g_mechPreviewRenderDepth (component preview-fix)
 #include "../GameAdapters/StaticPropRenderAdapter.h"  // M1 RenderWorld Tasks 8-11
@@ -185,7 +214,7 @@ static void LoadOverrideRenderShapeTextures(TG_TypeMultiShape* rs)
 		FullPathFileName textureName;
 		textureName.init(texturePath, txmName, "");
 
-		if (fileExists(textureName))
+		if (textureOrKtxSidecarExists(textureName))
 		{
 			// "a_"-prefixed names are the engine's alpha-channel convention.
 			const bool alpha = (S_strnicmp(txmName, "a_", 2) == 0);
@@ -449,7 +478,7 @@ void BldgAppearanceType::init (const char * fileName)
 				sprintf(texturePath, "%s%d" PATH_SEPARATOR, tglPath, ObjectTextureSize);
 				FullPathFileName textureName;
 				textureName.init(texturePath, txmName, "");
-				if (fileExists(textureName))
+				if (textureOrKtxSidecarExists(textureName))
 				{
 					if (S_strnicmp(txmName, "a_", 2) == 0)
 					{
@@ -846,7 +875,7 @@ void BldgAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 			FullPathFileName textureName;
 			textureName.init(texturePath,txmName,"");
 	
-			if (fileExists(textureName))
+			if (textureOrKtxSidecarExists(textureName))
 			{
 				if (S_strnicmp(txmName,"a_",2) == 0)
 				{
@@ -1025,7 +1054,7 @@ void BldgAppearance::setObjStatus (long oStatus)
 				FullPathFileName textureName;
 				textureName.init(texturePath,txmName,"");
 		
-				if (fileExists(textureName))
+				if (textureOrKtxSidecarExists(textureName))
 				{
 					if (S_strnicmp(txmName,"a_",2) == 0)
 					{
@@ -4363,7 +4392,7 @@ void TreeAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 			FullPathFileName textureName;
 			textureName.init(texturePath,txmName,"");
 	
-			if (fileExists(textureName))
+			if (textureOrKtxSidecarExists(textureName))
 			{
 				if (S_strnicmp(txmName,"a_",2) == 0)
 				{
@@ -4519,7 +4548,7 @@ void TreeAppearance::setObjStatus (long oStatus)
 				FullPathFileName textureName;
 				textureName.init(texturePath,txmName,"");
 		
-				if (fileExists(textureName))
+				if (textureOrKtxSidecarExists(textureName))
 				{
 					if (S_strnicmp(txmName,"a_",2) == 0)
 					{
