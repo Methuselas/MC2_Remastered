@@ -156,6 +156,11 @@ void StampBrush::render( int screenX, int screenY )
 	}
 
 	gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_AlphaInvAlpha );
+	// Always-visible cursor overlay: disable depth test/write (rhw=1 z=0 verts
+	// otherwise fail the reverse-Z chunk-terrain depth test and vanish). Mirrors
+	// FoliageRender; restored below.
+	gos_SetRenderState( gos_State_ZCompare, 0 );
+	gos_SetRenderState( gos_State_ZWrite,   0 );
 
 	// Translucent cyan disc (stamp footprint).
 	for ( int k = 0; k < N; ++k )
@@ -175,4 +180,7 @@ void StampBrush::render( int screenX, int screenY )
 		v[1].x = rim[k+1].x; v[1].y = rim[k+1].y; v[1].rhw = 1.0f; v[1].argb = 0xff00ffff;
 		gos_DrawLines( v, 2 );
 	}
+
+	gos_SetRenderState( gos_State_ZCompare, 1 );
+	gos_SetRenderState( gos_State_ZWrite,   1 );
 }

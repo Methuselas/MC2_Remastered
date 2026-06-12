@@ -4665,6 +4665,10 @@ void EditorInterface::renderTerrainSelection()
 	const float wupv = land->worldUnitsPerVertex;
 
 	gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_AlphaInvAlpha );
+	// Always-visible overlay: disable depth test/write (rhw=1 z=0 verts otherwise
+	// fail the reverse-Z chunk-terrain depth test and vanish). Restored below.
+	gos_SetRenderState( gos_State_ZCompare, 0 );
+	gos_SetRenderState( gos_State_ZWrite,   0 );
 
 	// PERF: window the selection-overlay scan to the visible camera vertex
 	// range (same window MapData::makeLists renders). Previously this was an
@@ -4710,6 +4714,9 @@ void EditorInterface::renderTerrainSelection()
 			gos_DrawQuads( q, 4 );
 		}
 	}
+
+	gos_SetRenderState( gos_State_ZCompare, 1 );
+	gos_SetRenderState( gos_State_ZWrite,   1 );
 }
 
 void EditorInterface::setSculptBrush( int mode )
