@@ -746,55 +746,9 @@ static void renderWeaponView( Camera* eye )
 	gos_SetHudScaleExempt( prevExempt );
 }
 
-// Friendly unit markers for the standalone sensor/weapon views: small blue
-// chevron over each own-commander mover so friendlies read at a glance
-// (mirrors the overview's red enemy chevrons; overview itself draws full
-// force-bar icons instead, so this only runs when the overview is NOT up).
-static void renderFriendlyMarkers( Camera* eye )
-{
-	if ( !eye || !Team::home || !ObjectManager ) return;
-	const unsigned long aBits = 0xcc000000;
-	const unsigned long kBlue = 0x003f8cff;
-	const float w = 7.0f, h = 10.0f;
-
-	gos_SetRenderState( gos_State_Texture, 0 );
-	gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_AlphaInvAlpha );
-	gos_SetRenderState( gos_State_AlphaTest, 0 );
-	gos_SetRenderState( gos_State_ZCompare, 0 );
-	gos_SetRenderState( gos_State_ZWrite, 0 );
-
-	bool prevExempt = gos_GetHudScaleExempt();
-	gos_SetHudScaleExempt( true );
-
-	float vmx, vmy, vax, vay;
-	gos_GetViewport( &vmx, &vmy, &vax, &vay );
-
-	for ( int i = 0; i < ObjectManager->numMovers; i++ )
-	{
-		MoverPtr m = ObjectManager->getMover( i );
-		if ( !m || !m->getExists() || m->isDestroyed() || m->isDisabled() ) continue;
-		if ( m->getTeamId() != Team::home->id ) continue;
-		if ( !m->getCommander() || m->getCommander()->getId() != Commander::home->getId() ) continue;
-
-		unsigned long col = aBits | ( m->getSelected() ? ( kBlue | 0x003f3f3f ) : kBlue );
-
-		Stuff::Vector3D wp = m->getPosition();
-		ModernClipResult r = eye->projectModernClipGL( wp );
-		if ( !r.admit || r.clip.w <= 0.05f ) continue;
-		float cx = vax + ( r.clip.x / r.clip.w * 0.5f + 0.5f ) * vmx;
-		float cy = vay + ( 1.0f - ( r.clip.y / r.clip.w * 0.5f + 0.5f ) ) * vmy;
-
-		// Downward chevron, apex on the unit (same silhouette as enemy markers).
-		gos_VERTEX tri[3];
-		for ( int k = 0; k < 3; ++k ) { tri[k].z = 0; tri[k].rhw = .5f; tri[k].argb = col; tri[k].frgb = 0; tri[k].u = tri[k].v = 0; }
-		tri[0].x = cx;     tri[0].y = cy;
-		tri[1].x = cx - w; tri[1].y = cy - h;
-		tri[2].x = cx + w; tri[2].y = cy - h;
-		gos_DrawTriangles( tri, 3 );
-	}
-
-	gos_SetHudScaleExempt( prevExempt );
-}
+// (Removed: blue friendly chevrons. They only ever marked the player's OWN
+// commanded mechs, and at normal zoom — both unwanted. Friendlies already read
+// via selection brackets up close and force-group icons in the F6 overview.)
 
 // Formation line (MC2_TACMAP_FORMATION_LINE): RENDER ONLY — ghost line, slot
 // pips, armed cursor hint. Input/state advance + order issuance live in
@@ -916,10 +870,6 @@ void ControlGui::render( bool bPaused )
 			renderSensorView( eye );
 		if ( g_weaponViewOn )
 			renderWeaponView( eye );
-		// Blue friendly chevrons whenever a tac view is up (the overview draws
-		// full force-bar icons itself, so skip while it is active).
-		if ( ( g_sensorViewOn || g_weaponViewOn ) && !g_tacticalOverview.active() )
-			renderFriendlyMarkers( eye );
 
 		if ( g_tacticalOverview.active() )
 		{
