@@ -391,32 +391,16 @@ MapGeneratorDialog::PendingAction MapGeneratorDialog::TakeAction() {
     return a;
 }
 
-// Returns Windows DPI scale relative to 96 DPI baseline (1.0 = 100%, 2.0 = 200%).
-// Cached after first call; uses GetDpiForSystem (Win8.1+) with fallback.
-static float GetDpiScale() {
-    static float s_scale = 0.0f;
-    if (s_scale == 0.0f) {
-#if defined(_WIN32)
-        // GetDpiForSystem available since Win8.1 (always present on Win10+).
-        typedef UINT (WINAPI *PFN_GetDpiForSystem)();
-        HMODULE user32 = GetModuleHandleA("user32.dll");
-        PFN_GetDpiForSystem fn = user32
-            ? (PFN_GetDpiForSystem)GetProcAddress(user32, "GetDpiForSystem")
-            : nullptr;
-        UINT dpi = fn ? fn() : 96;
-        s_scale = (float)dpi / 96.0f;
-#else
-        s_scale = 1.0f;
-#endif
-        if (s_scale < 1.0f) s_scale = 1.0f;  // never shrink below baseline
-    }
-    return s_scale;
-}
 
 void MapGeneratorDialog::Draw() {
     if (!s_state.open) return;
 
-    const float sc = GetDpiScale();
+    // Layout sizes are base pixels; TEXT scales through the global io.FontGlobalScale
+    // (s_uiScale) like every other editor panel. Do NOT apply a second DPI factor here
+    // -- the old GetDpiScale()*SetWindowFontScale path multiplied on top of
+    // FontGlobalScale (which is already DPI-derived), giving this dialog ~DPI-squared
+    // text far larger than the docked panels. sc=1.0 keeps it matched to the dock size.
+    const float sc = 1.0f;
 
     ImGuiIO& io = ImGui::GetIO();
     ImVec2 center(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
@@ -435,7 +419,8 @@ void MapGeneratorDialog::Draw() {
         Close();
         return;
     }
-    ImGui::SetWindowFontScale(sc);  // scale text within this window
+    // Text scales via the global io.FontGlobalScale (set once for all panels); no
+    // per-window font scale here (that double-applied DPI -- see sc above).
 
     // --- Biome ---
     ImGui::Text("Biome");
