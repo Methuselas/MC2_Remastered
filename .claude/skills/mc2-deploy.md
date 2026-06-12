@@ -89,12 +89,29 @@ done
    - Files that exist in source but not in deploy (new files that need copying)
    - Files that exist in deploy but not in source (stale files from old branches)
 
-6. **Write the deploy-coherence manifest** (LAST step, after all copies verified):
+6. **Write BOTH deploy manifests** (LAST step, after all copies verified).
+   There are two manifest files and both must be refreshed or one goes
+   stale behind the other:
+   - `.deploy-manifest.json` — advisory coherence manifest (carries git
+     metadata; read by `check-deploy-coherence.py`).
+   - `.deployed_manifest.csv` — the manifest `deploy_payload.py --verify-only`
+     checks. A copy that skips this leaves `--verify-only` reporting STALE.
+
 ```bash
+# JSON coherence manifest:
 py -3 "<worktree>/scripts/write-deploy-manifest.py" "A:/Games/mc2-opengl/mc2-win64-v0.4" \
     mc2.exe mc2.pdb --merge --worktree "<worktree>" \
     --glob "*.dll" --glob "shaders/*.vert" --glob "shaders/*.frag" \
     --glob "shaders/*.tesc" --glob "shaders/*.tese" --glob "shaders/include/*"
+
+# CSV manifest that --verify-only checks (re-hashes files already deployed;
+# no copy). Without this the manual recipe leaves the CSV stale:
+py -3 "<worktree>/scripts/deploy_payload.py" "A:/Games/mc2-opengl/mc2-win64-v0.4" \
+    --source-root "<worktree>" --write-manifest-only
 ```
-   If you deploy to BOTH v0.4 and 0.4c, write a manifest into EACH target.
-   `scripts/deploy-editor.sh` already writes its own entry automatically.
+   If you deploy to BOTH v0.4 and 0.4c, write both manifests into EACH target.
+   `scripts/deploy-editor.sh` already refreshes both manifests automatically.
+
+   **Better: just use `py -3 scripts/deploy_payload.py --target game` —
+   the canonical one-command path copies AND writes the CSV manifest in one
+   shot, so it never drifts. The manual recipe above is a fallback only.**
