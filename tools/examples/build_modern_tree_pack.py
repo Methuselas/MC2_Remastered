@@ -25,6 +25,11 @@ REPO_ROOT = Path(__file__).parent.parent.parent
 COOK_SCRIPT = REPO_ROOT / "tools" / "asset_cook" / "trackg_cook.py"
 VALIDATE_SCRIPT = REPO_ROOT / "tools" / "asset_cook" / "validate_asset_manifest.py"
 
+# Uniform scale baked into every cooked asset (external Broadleaf assets render
+# ~2x stock size once the dropped node scale is gone -> 0.5 brings to stock).
+# Override per-run with --tree-scale.
+TREE_SCALE = 0.5
+
 # lods[0] = LOD0 (highest detail). distance_m = threshold to switch to next LOD.
 # NOTE: numbered source files are same-resolution variants used as a LOD chain
 # to demonstrate the config structure — they are NOT decimated polygon LODs.
@@ -105,29 +110,59 @@ def build_mod_json(mod_id, name, version):
     }
 
 
+# Extra stock tree/prop appearance keys that REUSE a cooked family's geometry,
+# so on-map species beyond the 4 source families also get replaced. Maps an
+# override "<class>:<name>" to the family name whose cooked LODs it reuses.
+COVERAGE_ALIASES = {
+    "tree:palm1":  "poplar",
+    "tree:palms":  "poplar",
+    "tree:palmx":  "poplar",
+    "tree:palm1x": "poplar",
+    "tree:oak1":   "white_poplar",
+}
+
+
+def _engine_entry(override_class, replaces, fam, cooked_glb_paths):
+    """One engine-schema override record. The engine parser (mclib/
+    model_override_registry.cpp parseManifest) REQUIRES: type=="model", a
+    top-level `source` (LOD0), scale==1.0, and lods[] entries each carrying an
+    integer ascending `lod` (LOD0 is the top-level source). Emitting the
+    build's old {appearanceName, lods:[{distance,source}]} schema silently
+    drops every record at load."""
+    lods_src = [cooked_glb_paths.get(l["filename"], l["filename"]) for l in fam["lods"]]
+    rec = {
+        "type": "model",
+        "class": override_class,
+        "replaces": replaces,
+        "source": lods_src[0],            # LOD0
+        "renderOnly": True,
+        "scale": 1.0,
+        "fallback": "stock",
+    }
+    lod_entries = []
+    for i, l in enumerate(fam["lods"][1:], start=1):
+        lod_entries.append({"lod": i, "source": lods_src[i], "distance": l["distance_m"]})
+    if lod_entries:
+        rec["lods"] = lod_entries
+    return rec
+
+
 def build_models_json(families, cooked_glb_paths):
-    """Build model override entries for models.json.
-    Only includes entries for the families passed in.
-    """
-    entries = []
+    """Build engine-schema models.json: {"overrides":[...]}.
+    Includes the cooked families plus COVERAGE_ALIASES that reuse a family's
+    cooked geometry for additional on-map appearance keys (only when that
+    family was actually cooked this run)."""
+    by_name = {f["name"]: f for f in families}
+    overrides = []
     for fam in families:
-        appearance = fam["replaces"].split(":")[1]
-        lod_entries = []
-        for lod in fam["lods"]:
-            cooked = cooked_glb_paths.get(lod["filename"], lod["filename"])
-            lod_entries.append({
-                "distance": lod["distance_m"],
-                "source": cooked,
-            })
-        entries.append({
-            "class": fam["class"],
-            "appearanceName": appearance,
-            "replaces": fam["replaces"],
-            "renderOnly": True,
-            "fallback": "stock",
-            "lods": lod_entries,
-        })
-    return entries
+        overrides.append(_engine_entry(fam["class"], fam["replaces"], fam, cooked_glb_paths))
+    for replaces, fam_name in COVERAGE_ALIASES.items():
+        fam = by_name.get(fam_name)
+        if fam is None:
+            continue  # that family not cooked this run
+        cls = replaces.split(":")[0]
+        overrides.append(_engine_entry(cls, replaces, fam, cooked_glb_paths))
+    return {"overrides": overrides}
 
 
 def _run(cmd, label):
@@ -210,6 +245,17 @@ def cook_one_lod(src_glb: Path, out_dir: Path, mod_out: Path,
     out_dir.mkdir(parents=True, exist_ok=True)
     py = sys.executable
 
+    # NORMALIZE external Blender/GLTF assets first: bake node rotation + 0.5
+    # scale into mesh-local verts (MC2 importer drops node transforms -> on-side
+    # + 2x-too-big) and rename baseColor images to material names (runtime binds
+    # textures by image filename, cook names KTX2 by material -> mismatch = black
+    # tree). See normalize_broadleaf_glb.py.
+    NORMALIZE = Path(__file__).parent / "normalize_broadleaf_glb.py"
+    norm_glb = out_dir / f"{lod_tag}_normalized.glb"
+    _run([py, NORMALIZE, str(src_glb), str(norm_glb), "--scale", str(TREE_SCALE)],
+         "normalize")
+    src_glb = norm_glb  # stage + texture-extract operate on the normalized GLB
+
     _run([py, COOK_SCRIPT, "stage",
           str(src_glb), str(out_dir),
           "--id", lod_tag,
@@ -280,6 +326,7 @@ def validate_stock_targets(deploy_root: Path, families):
 
 
 def main():
+    global TREE_SCALE
     ap = argparse.ArgumentParser(description="Cook and assemble modern-tree-pack-v1 example mod")
     ap.add_argument("--asset-root", required=True)
     ap.add_argument("--out", required=True)
@@ -289,7 +336,10 @@ def main():
                     help="Cook only this family. WARNING: writes only this family's entries to models.json.")
     ap.add_argument("--clean", action="store_true",
                     help="Wipe --out before cooking. Required for full run after partial --family runs.")
+    ap.add_argument("--tree-scale", type=float, default=TREE_SCALE,
+                    help=f"Uniform scale baked into cooked verts (default {TREE_SCALE}).")
     args = ap.parse_args()
+    TREE_SCALE = args.tree_scale
 
     asset_root = Path(args.asset_root)
     out_dir = Path(args.out)
