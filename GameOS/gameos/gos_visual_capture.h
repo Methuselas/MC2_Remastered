@@ -1,0 +1,47 @@
+// gos_visual_capture.h - Slice S9 v1: in-engine visual capture primitive +
+// bookmark replay. Owner doc: docs/superpowers/strategy/
+// visual-regression-lab-architecture.md (S9 = its S1 + S2 ONLY).
+//
+// Two env-gated, default-OFF features that ride the existing MC2_SMOKE_MODE
+// harness (no new driver / socket / IPC):
+//
+//   1) Capture primitive  (MC2_VISUAL_CAPTURE_FRAME + MC2_VISUAL_CAPTURE_DIR)
+//      At the requested frame, in smoke mode, write a deterministic PNG of the
+//      finished scene FBO plus a JSON sidecar holding the capture tuple
+//      (build identity, mission, frame, seed, preset, dims, gate-env set).
+//
+//   2) Bookmark replay    (MC2_VISUAL_BOOKMARK_CAPTURE=<bookmarks.json>)
+//      Hard-teleport the camera to each bookmark (no input smoothing), settle
+//      N frames, capture PNG + sidecar, advance, then restore prior camera.
+//
+// All entry points are no-ops (single cached int / pointer check, no
+// allocation) when their env vars are unset. They MUST be called only from the
+// existing post-render screenshot site in gameosmain.cpp; they never touch
+// render passes, swap logic, or smoke gate verdicts.
+#pragma once
+
+namespace gos { namespace visual_capture {
+
+// Called once per frame from the post-render screenshot site, just before
+// swap, with the read framebuffer already bound to the finished scene FBO and
+// its dimensions. `frame` is the canonical g_mc2FrameCounter value.
+//
+// Returns immediately (no allocation) when neither feature env is set.
+// When MC2_VISUAL_CAPTURE_FRAME matches, writes one PNG + sidecar then latches.
+// When MC2_VISUAL_BOOKMARK_CAPTURE is set, drives the teleport/settle/capture
+// sweep across the bookmark file, capturing one PNG + sidecar per bookmark,
+// and restores the camera to its pre-sweep pose when finished.
+//
+// sceneW/sceneH are the FBO dimensions to read. The caller is responsible for
+// having bound GL_READ_FRAMEBUFFER + glReadBuffer; this routine does not alter
+// any render or GL pass state beyond its own glReadPixels.
+void onPostRenderFrame(unsigned int frame, int sceneW, int sceneH);
+
+// Cheap default-OFF gate. Returns true only if MC2_VISUAL_CAPTURE_FRAME (with
+// _DIR) or MC2_VISUAL_BOOKMARK_CAPTURE is set and the corresponding capture is
+// not yet complete. Env is parsed once and cached; subsequent calls are a
+// couple of int/pointer comparisons with no allocation. Callers use this to
+// avoid resolving the scene FBO at all on the unset hot path.
+bool active();
+
+}}  // namespace gos::visual_capture
