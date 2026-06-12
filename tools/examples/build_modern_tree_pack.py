@@ -148,7 +148,15 @@ def _sha256(path: Path) -> str:
 
 
 def extract_glb_textures(src_glb: Path, tex_dir: Path) -> Path:
-    """Extract embedded textures from a GLB to tex_dir using trimesh."""
+    """Extract embedded textures from a GLB to tex_dir using trimesh.
+
+    trimesh PBRMaterial stores the base-color texture in .baseColorTexture
+    (a PIL image), not in the legacy .image attribute.  We check both so
+    this works with both SimpleMaterial and PBRMaterial geometry.
+    The output filename is the material name lowercased (matching what
+    trackg_cook.py derives from the GLB material name field), so the
+    textures step can resolve it without case-sensitive matching.
+    """
     tex_dir.mkdir(parents=True, exist_ok=True)
     extract_script = f"""
 import trimesh, pathlib, sys
@@ -156,13 +164,21 @@ scene = trimesh.load(r"{src_glb}", force="scene", process=False)
 out = pathlib.Path(r"{tex_dir}")
 for geom_name, geom in scene.geometry.items():
     vis = geom.visual
-    if hasattr(vis, "material") and hasattr(vis.material, "image") and vis.material.image:
-        img = vis.material.image
-        stem = getattr(vis.material, "name", geom_name) or geom_name
-        dest = out / (stem + ".png")
-        if not dest.exists():
-            img.save(str(dest))
-            print("extracted:", dest.name)
+    if not hasattr(vis, "material"):
+        continue
+    mat = vis.material
+    # PBRMaterial: baseColorTexture is the albedo PIL image
+    # SimpleMaterial/legacy: .image holds the albedo
+    img = getattr(mat, "baseColorTexture", None) or getattr(mat, "image", None)
+    if img is None:
+        continue
+    raw_name = getattr(mat, "name", None) or geom_name or "mat"
+    # lowercase to match trackg_cook.py material name normalisation
+    stem = "".join(c.lower() if c.isalnum() else "_" for c in raw_name)
+    dest = out / (stem + ".png")
+    if not dest.exists():
+        img.save(str(dest))
+        print("extracted:", dest.name)
 """
     result = subprocess.run(
         [sys.executable, "-c", extract_script],

@@ -1,0 +1,23 @@
+[
+  {
+    "class": "tree",
+    "appearanceName": "maple1",
+    "replaces": "tree:maple1",
+    "renderOnly": true,
+    "fallback": "stock",
+    "lods": [
+      {
+        "distance": 0,
+        "source": "data/model_overrides/cooked/maple1_lod0.glb"
+      },
+      {
+        "distance": 600,
+        "source": "data/model_overrides/cooked/maple1_lod1.glb"
+      },
+      {
+        "distance": 1200,
+        "source": "data/model_overrides/cooked/maple1_lod2.glb"
+      }
+    ]
+  }
+]

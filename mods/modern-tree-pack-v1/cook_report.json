@@ -1,0 +1,46 @@
+{
+  "mod_id": "modern-tree-pack-v1",
+  "family_filter": "maple",
+  "deploy_fingerprint": {
+    "mc2_exe_sha256": "9c30ab72facb0ea74cc05b4c579a1825f79aa220ca489aed927ad39245af6294",
+    "shader_count": 72,
+    "deploy_root": "A:\\Games\\mc2-opengl\\mc2-win64-v0.4"
+  },
+  "target_warnings": [],
+  "mapping": [
+    {
+      "source_glb": "maple1.glb",
+      "target_stock_appearance": "maple1",
+      "class": "tree",
+      "replaces": "tree:maple1",
+      "lod_index": 0,
+      "distance_m": 0,
+      "status": "cooked",
+      "manifest_path": "mods\\modern-tree-pack-v1\\_cook_staging\\maple1_lod0\\manifest.json"
+    },
+    {
+      "source_glb": "maple2.glb",
+      "target_stock_appearance": "maple1",
+      "class": "tree",
+      "replaces": "tree:maple1",
+      "lod_index": 1,
+      "distance_m": 600,
+      "status": "cooked",
+      "manifest_path": "mods\\modern-tree-pack-v1\\_cook_staging\\maple1_lod1\\manifest.json"
+    },
+    {
+      "source_glb": "maple3.glb",
+      "target_stock_appearance": "maple1",
+      "class": "tree",
+      "replaces": "tree:maple1",
+      "lod_index": 2,
+      "distance_m": 1200,
+      "status": "cooked",
+      "manifest_path": "mods\\modern-tree-pack-v1\\_cook_staging\\maple1_lod2\\manifest.json"
+    }
+  ],
+  "errors": [],
+  "total": 3,
+  "cooked": 3,
+  "failed": 0
+}
