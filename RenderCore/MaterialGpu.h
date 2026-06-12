@@ -34,19 +34,20 @@
 //
 //   kMaterialTexAbsent (0xFFFFFFFF) : slot absent; shader uses default.
 //
-// Future direction — typed semantic (not yet implemented):
+// MATERIAL-M0 — texture-identity semantic, PINNED (contract only; not yet wired).
 //
-//   enum class MaterialTextureSemantic {
-//       TextureArrayLayer,    // static-prop current model
-//       TextureManagerSlot,   // mech current model (compare-only)
-//       BindlessHandle,       // ARB_bindless_texture (needs AMD driver audit)
-//       DescriptorIndex,      // indirection table SSBO index
-//   };
+//   The texture fields (albedoTex etc.) carry a uint32 whose *meaning* differs
+//   per consumer lane today (the "split-brain" the recon flags). M0 does NOT
+//   rewire the consumers; it makes the contract EXPLICIT so the divergence
+//   cannot be misread. The enum below names every meaning a texture field can
+//   hold and pins who produces and consumes each. A MaterialTextureSemantic
+//   field is NOT yet stored in the record — adding it is a later milestone
+//   (M2/M4, gated on the mech texture-model decision). Until then each
+//   consumer table is *homogeneous* in semantic and that semantic is declared
+//   here, not inferred at the sample site.
 //
-//   A MaterialTextureSemantic field per consumer type would make the
-//   kind-specific divergence explicit in code rather than in comments.
-//   Prerequisite: mech texture-model arc decision.
-//   See: docs/superpowers/specs/2026-05-26-mech-material-gpu-mech2-decision.md
+//   See: docs/material-m0-contract.md,
+//        docs/superpowers/specs/2026-05-26-mech-material-gpu-mech2-decision.md
 //
 // CHANGING THIS STRUCT REQUIRES CHANGING THE GLSL MIRROR IN LOCKSTEP.
 // Invariant enforced by: scripts/check-material-gpu-mirror.sh
@@ -58,6 +59,37 @@
 #include <cstddef>
 
 namespace RenderCore {
+
+// MATERIAL-M0 — texture-identity semantic, PINNED.
+//
+// Names the meaning a texture field (albedoTex/normalTex/...) holds for a given
+// consumer lane. Each lane's MaterialGpu table is homogeneous in one semantic.
+// This enum is the DECLARED contract; it is not (yet) a stored field of the
+// record — wiring a per-record semantic is a later milestone (M2/M4). M0 only
+// pins the vocabulary so a reader knows what a given table's texture uint means.
+//
+// Producer/consumer per value:
+//   TextureArrayLayer   produced by gos_static_prop_batcher.cpp (array-layer
+//                       dedup at finalizeGeometry); consumed shader-side by
+//                       static_prop.frag (texture(u_texArr, vec3(uv, layer))).
+//                       *** The only shader-actionable semantic today. ***
+//   TextureManagerSlot  produced by gos_mech_batcher.cpp (mcTextureManager
+//                       slot/handle); COMPARE-ONLY — the mech shader never
+//                       samples MaterialGpu. CPU resolves slot -> gos handle
+//                       -> GL tex. NOT shader-actionable without a texture arc.
+//   RawGlId             asset-viewer only (tools/asset_viewer): a raw GL texture
+//                       id bound directly (MaterialSlotTextures). Never reaches
+//                       the runtime SSBO; viewer-local identity.
+//   DescriptorIndex     future: index into an indirection-table SSBO. Target
+//                       semantic once mechs gain a real shader-actionable model.
+//   BindlessHandle      future: ARB_bindless_texture (needs AMD driver audit).
+enum class MaterialTextureSemantic : uint32_t {
+    TextureArrayLayer  = 0,  // static-prop current model (shader-actionable)
+    TextureManagerSlot = 1,  // mech current model (compare-only)
+    RawGlId            = 2,  // asset-viewer only (raw GL id, viewer-local)
+    DescriptorIndex    = 3,  // future: indirection-table SSBO index
+    BindlessHandle     = 4,  // future: ARB_bindless_texture
+};
 
 // Material flags (bit positions in MaterialGpu::flags).
 namespace MaterialFlags {
@@ -87,9 +119,25 @@ constexpr uint32_t kMaterialTexAbsent = 0xFFFFFFFFu;
 // names and order match between the two files at CI time.
 struct alignas(4) MaterialGpu {
     // --- Texture indices (4 × uint32 = 16 bytes) ---
-    // Semantics are consumer-specific — see "Texture field schema" above.
-    // Do NOT add a mech shader consumer without first defining a shader-actionable
-    // texture identity for mechs. See decision doc in header comment above.
+    // MATERIAL-M0 — canonical texture-identity meaning per consumer lane (PINNED):
+    //   static props (shader-actionable): texture uint == GL_TEXTURE_2D_ARRAY
+    //                 layer index  -> MaterialTextureSemantic::TextureArrayLayer.
+    //   mechs (compare-only):             texture uint == mcTextureManager slot
+    //                 -> MaterialTextureSemantic::TextureManagerSlot. The mech
+    //                 shader NEVER samples this record; CPU resolves the slot.
+    //   asset viewer (out-of-band):       not in this SSBO; the viewer binds raw
+    //                 GL ids (MaterialSlotTextures) -> MaterialTextureSemantic::RawGlId.
+    // Each lane's table is HOMOGENEOUS in one semantic. M0 pins/documents only —
+    // it does NOT rewire consumers or store the semantic in the record (later
+    // milestone). Do NOT add a mech shader consumer without first defining a
+    // shader-actionable texture identity for mechs. See decision doc above and
+    // docs/material-m0-contract.md.
+    //
+    // NOT part of this record: TERRAIN splat material. Terrain is a per-pixel-
+    // classified fixed-layer palette (TerrainLayerGpu-style, 5 semantic layers
+    // selected by a colormap classifier), a DISTINCT ABI that shares field
+    // vocabulary (roughness/normal/tint) but has no per-draw materialIdx. See
+    // docs/material-m0-contract.md and mclib/terrain.h.
     uint32_t albedoTex;             //  0  — diffuse/albedo; KIND-SEMANTIC (see above)
     uint32_t normalTex;             //  4  — tangent-space normal map
     uint32_t metallicRoughnessTex;  //  8  — R=AO  G=roughness  B=metalness

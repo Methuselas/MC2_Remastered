@@ -8,7 +8,9 @@ class SphereMesh;
 struct MaterialSlotTextures {
     uint32_t baseColor = 0;   // sRGB-uploaded
     uint32_t normal    = 0;   // linear; 0 => treat as flat (0,0,1)
-    uint32_t orm       = 0;   // linear; R=AO, G=Roughness, B=Metallic; 0 => AO=1, rough=0.5, metal=0
+    // MATERIAL-M0: rough fallback PINNED to 1.0 (matches MaterialGpu record
+    // default + static_prop.frag + LocalPbrMaterialBackend.cpp). See docs/material-m0-contract.md.
+    uint32_t orm       = 0;   // linear; R=AO, G=Roughness, B=Metallic; 0 => AO=1, rough=1.0, metal=0
     uint32_t emissive  = 0;   // sRGB; 0 => no emission
 };
 

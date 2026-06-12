@@ -3715,6 +3715,11 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                     m.flags                = 0;
                     m.baseColorFactor      = 1.0f;   // neutral: full brightness
                     m.metallicFactor       = 0.0f;  // V-MATERIAL-PBR-1: dielectric default
+                    // MATERIAL-M0: this is the AUTHORITATIVE roughness default
+                    // (the MaterialGpu record producer). The static_prop.frag
+                    // fallback and the asset viewer (LocalPbrMaterialBackend.cpp /
+                    // MaterialRenderBackend.h) are pinned to MATCH this value.
+                    // All three sites must agree. See docs/material-m0-contract.md.
                     m.roughnessFactor      = 1.0f;  // V-MATERIAL-PBR-1: fully rough default (was 0.0)
 
                     // STATICPROP-MATERIAL-ORM-1 — keep metallicRoughnessTex ==
