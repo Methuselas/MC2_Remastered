@@ -27,6 +27,108 @@ BuildingBrush.cpp	: Implementation of the BuildingBrush component.
 
 #include "resource.h"
 
+//---------------------------------------------------------------------------
+// Editor-lane crash guard for the building-brush preview snap.
+//
+// The brush snaps its preview cursor to the terrain cell grid every frame:
+//   worldToCell(pos) -> getCellPos(cr,cc,pos) -> getTerrainElevation(cellPos)
+//   -> MapData::terrainElevation(), which indexes the mesh array MapData::blocks.
+// EditorInterface::update() runs this per-frame off the mouse-move path
+// (ForwardMouseToEditor), so `pos` can be ANY unprojected cursor point.
+//
+// terrainElevation() is NOT safe for arbitrary positions:
+//   (1) It only bounds-checks the HIGH side (meshOffset >= verticesMapSide-1);
+//       there is NO low-side check, so a NEGATIVE meshOffset indexes blocks[]
+//       out of bounds -> READ violation 0xC0000005.
+//   (2) It centers meshOffset on verticesMapSide (= verticesBlockSide*blocksMapSide,
+//       always a multiple of 20) while the valid-position extent is sized from
+//       realVerticesMapSide. For the standard MC2 grid (realVerticesMapSide =
+//       N*20 + 1, e.g. 61) those differ by ~half a vertex, so a cursor at the
+//       top/left map EDGE yields meshOffset == -1 -> the unguarded OOB read.
+// (Surfaced 2026-06-12 via run_editor_smoke --case asset_browser. Pre-existing
+// terrain/editor-lane bug. The engine terrainElevation() is shared with the game
+// and is deliberately left untouched; we guard entirely on the editor side.)
+//
+// editorTerrainMeshReady(): the mesh array is live and large enough to index.
+// NOTE checking MapData::blocks != NULL is NOT sufficient -- MapData::destroy()
+// frees the heap (HeapManager::destroy -> VirtualFree + init()) but does NOT null
+// `blocks`, so getBlocks() can be a DANGLING pointer. getHeapPtr() is the reliable
+// "live heap" signal (init() zeroes it on destroy); `blocks` is always set to
+// getHeapPtr() in newInit(). We also require the heap to cover realVerticesMapSide^2.
+static inline bool editorTerrainMeshReady()
+{
+	if ( land == NULL || Terrain::mapData == NULL )
+		return false;
+
+	if ( Terrain::mapData->getHeapPtr() == NULL || Terrain::mapData->getBlocks() == NULL )
+		return false;
+
+	if ( Terrain::realVerticesMapSide <= 0 )
+		return false;
+
+	const size_t neededBytes = (size_t)Terrain::realVerticesMapSide
+	                         * (size_t)Terrain::realVerticesMapSide
+	                         * sizeof(PostcompVertex);
+	return (size_t)Terrain::mapData->tSize() >= neededBytes;
+}
+
+// editorElevationSampleSafe(): mirror MapData::terrainElevation()'s meshOffset
+// computation for `samplePos` and return true ONLY when the sampled vertex AND its
+// +1 neighbors (terrainElevation reads blocks[meshOffset], [+1], [+stride],
+// [+1+stride]) fall inside the array bounds that terrainElevation actually honors,
+// i.e. meshOffset in [0, verticesMapSide-2] on both axes. This adds the low-side
+// bounds check the engine lacks, without touching the engine.
+static inline bool editorElevationSampleSafe( const Stuff::Vector3D& samplePos )
+{
+	const long verticesMapSide = Terrain::verticesBlockSide * Terrain::blocksMapSide;
+	if ( verticesMapSide < 2 )
+		return false;
+
+	const double oneOverWUPV = Terrain::oneOverWorldUnitsPerVertex;
+	const double WUPV        = Terrain::worldUnitsPerVertex;
+
+	// Replicate terrainElevation()'s upperLeft -> meshOffset math (mapdata.cpp).
+	double upperLeftX = floor( samplePos.x * oneOverWUPV ) * WUPV;
+	double upperLeftY = floor( samplePos.y * oneOverWUPV );
+	if ( (float)( samplePos.y * oneOverWUPV ) != (float)upperLeftY )
+		upperLeftY += 1.0;
+	upperLeftY *= WUPV;
+
+	long mx = (long)floor( upperLeftX * oneOverWUPV ) + (verticesMapSide >> 1);
+	long my = (verticesMapSide >> 1) - (long)floor( upperLeftY * oneOverWUPV );
+
+	return ( mx >= 0 && my >= 0
+	      && mx <= (verticesMapSide - 2)
+	      && my <= (verticesMapSide - 2) );
+}
+
+// editorSnapToCellSafe(): perform the WYSIWYG cell snap in place, but only when it
+// is provably crash-free. Computes the cell (worldToCell) and the cell-center world
+// position getCellPos() would query, verifies that position is safely sample-able,
+// and only then performs the real getCellPos() (which re-derives it + the elevation
+// lookup). If anything is unsafe, `pos` is left at the raw unprojected point.
+static inline void editorSnapToCellSafe( Stuff::Vector3D& pos )
+{
+	if ( !editorTerrainMeshReady() )
+		return;
+
+	int cr = 0, cc = 0;
+	land->worldToCell( pos, cr, cc );
+
+	// Reconstruct getCellPos()'s cell-center XY (terrain.h getCellPos(), minus the
+	// elevation line) so we test the exact position terrainElevation() will index.
+	Stuff::Vector3D cellPos;
+	cellPos.x = ( cc * (Terrain::worldUnitsPerVertex / 3.0) ) + (Terrain::worldUnitsPerVertex / 6.0);
+	cellPos.y = ( cr * (Terrain::worldUnitsPerVertex / 3.0) ) + (Terrain::worldUnitsPerVertex / 6.0);
+	cellPos.x += land->mapTopLeft3d.x;
+	cellPos.y  = land->mapTopLeft3d.y - cellPos.y;
+
+	if ( !editorElevationSampleSafe( cellPos ) )
+		return;
+
+	land->getCellPos( cr, cc, pos );
+}
+
 BuildingBrush::BuildingBrush( int Group, int IndexInGroup, int Alignment )
 {
 	group = Group;
@@ -194,12 +296,9 @@ void BuildingBrush::update( int ScreenMouseX, int ScreenMouseY )
 	eye->inverseProject( pt, pos );
 
 	// WYSIWYG: snap to the cell addBuilding() will commit to (see render()).
-	if ( land )
-	{
-		int cr = 0, cc = 0;
-		land->worldToCell( pos, cr, cc );
-		land->getCellPos( cr, cc, pos );
-	}
+	// Guard: skip the cell snap (leave pos at the raw unprojected point) when the
+	// terrain isn't safely sample-able -- getCellPos() would index blocks[] OOB.
+	editorSnapToCellSafe( pos );
 
 	if ( !EditorObjectMgr::instance()->canAddBuilding( pos, pCursor->rotation, group, indexInGroup ) )
 		pCursor->setHighlightColor( 0x00400000 );
@@ -234,12 +333,8 @@ void BuildingBrush::render( int ScreenMouseX, int ScreenMouseY )
 	// cursor was drawn at the RAW unprojected point, so the highlight sat up to a
 	// tile off the cell the object actually lands on. Snap the preview to the same
 	// cell so what you see is what you place.
-	if ( land )
-	{
-		int cr = 0, cc = 0;
-		land->worldToCell( pos, cr, cc );
-		land->getCellPos( cr, cc, pos );
-	}
+	// Guard: skip the cell snap when the terrain isn't safely sample-able (see update()).
+	editorSnapToCellSafe( pos );
 
 	if ( !EditorObjectMgr::instance()->canAddBuilding( pos, pCursor->rotation, group, indexInGroup ) )
 		pCursor->setHighlightColor( 0x00400000 );
