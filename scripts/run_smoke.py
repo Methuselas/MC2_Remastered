@@ -520,6 +520,7 @@ def main():
                 **{k: v for k, v in os.environ.items()
                    if k in ("MC2_FX_COUNT_LOG",
                             "MC2_TEXMGR_KTX_PRIMARY",  # route-2 CPU BC7 decode test gate
+                            "MC2_TEXMGR_LOAD_TRACE",  # residency ground-truth load trace
                             # S9D deterministic fixed-timestep smoke clock
                             # (opt-in; Popen replaces env so it must be listed).
                             "MC2_SMOKE_FIXED_TIMESTEP",

@@ -3530,6 +3530,23 @@ DWORD MC_TextureManager::loadTexture (const char *textureFullPathName, gos_Textu
 	ZoneScopedN("MC_TextureManager::loadTexture");
 	long i=0;
 
+	// Residency ground-truth trace (MC2_TEXMGR_LOAD_TRACE=1, default-off,
+	// zero-cost when unset): logs every loadTexture call's uniqueInstance +
+	// logical name. uniqueInstance != 0 == "modifiable / CPU-locked" (paint;
+	// txmmgr.h:136) -> the texture is CPU_RGBA_REQUIRED and its .tga must NOT be
+	// slimmed. Consumed by tools/residency_slim.py to derive the keep/drop set
+	// from ground truth (mech *rgb AND plain-named vehicle bodies) instead of
+	// fragile filename heuristics.
+	{
+		static const bool s_loadTrace = (getenv("MC2_TEXMGR_LOAD_TRACE") != nullptr);
+		if (s_loadTrace)
+		{
+			fprintf(stderr, "[TEXLOAD] uniq=%lu name=%s\n",
+				(unsigned long)uniqueInstance, textureFullPathName ? textureFullPathName : "<null>");
+			fflush(stderr);
+		}
+	}
+
 	//--------------------------------------
 	// Is this texture already Loaded?
 	for (i=0;i<MC_MAXTEXTURES;i++)
