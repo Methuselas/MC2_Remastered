@@ -20,9 +20,16 @@ struct Instance {
 layout(std430, binding=0) readonly buffer Instances { Instance i[]; } instances_;
 
 uniform mat4 lightSpaceMatrix;
+// SSBO-BIND-ALIGN: the caller now binds the WHOLE instance buffer at offset 0
+// (always aligned) and passes the per-type range start here, instead of a
+// glBindBufferRange at i*sizeof(Instance). i*112 is not a multiple of
+// GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT (32 on this NVIDIA), which the driver
+// rejects with GL_INVALID_VALUE -> the SSBO never binds -> shadow casters drop.
+// Default 0 (kept compatible with any caller that still binds a per-type range).
+uniform int u_instBase;
 
 void main() {
-    Instance inst = instances_.i[gl_InstanceID];
+    Instance inst = instances_.i[u_instBase + gl_InstanceID];
     vec4 worldStuff = vec4(a_position, 1.0) * inst.modelMatrix;
     vec3 worldMC2 = vec3(-worldStuff.x, worldStuff.z, worldStuff.y);
     gl_Position = lightSpaceMatrix * vec4(worldMC2, 1.0);

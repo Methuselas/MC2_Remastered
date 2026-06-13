@@ -7388,10 +7388,14 @@ void GpuStaticPropBatcher::drawStaticBuildingShadows(
         if (tid < static_cast<uint32_t>(s_types.size())) {
             const GpuStaticPropType& type = s_types[tid];
             if (type.packetCount > 0) {
-                gpuBindSsboRange(0, s_staticBldgShadowSsbo,
-                    (long long)(i * sizeof(GpuStaticPropInstance)),
-                    (long long)(instCount * sizeof(GpuStaticPropInstance)),
-                    "staticprop_bldg_shadow");
+                // SSBO-BIND-ALIGN: bind the WHOLE buffer at offset 0 (always aligned)
+                // and pass the per-type instance base as a uniform. A range bind at
+                // i*sizeof(GpuStaticPropInstance) (=i*112) is not a multiple of
+                // GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT (32 on NVIDIA) -> rejected
+                // with GL_INVALID_VALUE -> the SSBO never binds -> shadow casters drop.
+                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, s_staticBldgShadowSsbo);
+                { const GLint locB = glGetUniformLocation(shadowProg, "u_instBase");
+                  if (locB >= 0) glUniform1i(locB, (GLint)i); }
                 for (uint32_t p = 0; p < type.packetCount; ++p) {
                     const uint32_t pk = type.firstPacket + p;
                     if (pk >= s_packets.size()) break;
@@ -7517,10 +7521,12 @@ void GpuStaticPropBatcher::drawDynamicPropShadows(
         if (tid < static_cast<uint32_t>(s_types.size())) {
             const GpuStaticPropType& type = s_types[tid];
             if (type.packetCount > 0) {
-                gpuBindSsboRange(0, s_dynamicPropShadowSsbo,
-                    (long long)(i * sizeof(GpuStaticPropInstance)),
-                    (long long)(instCount * sizeof(GpuStaticPropInstance)),
-                    "staticprop_dynamic_shadow");
+                // SSBO-BIND-ALIGN: bind whole buffer at offset 0 (aligned) + per-type
+                // base uniform, instead of a misaligned i*112 range bind (see the
+                // building shadow pass above; NVIDIA rejects misaligned SSBO offsets).
+                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, s_dynamicPropShadowSsbo);
+                { const GLint locB = glGetUniformLocation(shadowProg, "u_instBase");
+                  if (locB >= 0) glUniform1i(locB, (GLint)i); }
                 for (uint32_t p = 0; p < type.packetCount; ++p) {
                     const uint32_t pk = type.firstPacket + p;
                     if (pk >= s_packets.size()) break;
