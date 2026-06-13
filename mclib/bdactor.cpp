@@ -1464,6 +1464,11 @@ long BldgAppearance::render (long depthFixup)
 		// still counts toward eligible_actors). recordCpuFallback() fires
 		// when no submit succeeded.
 		bool submittedToGpu = false;
+		// FORCE-DYNAMIC REGISTRY-CHURN FIX (see TreeAppearance::render): under
+		// MC2_FORCE_DYNAMIC_BUILDINGS the static path invalidates + re-bakes every
+		// frame; suppress the re-registration block so the registry never grows
+		// unbounded (which freezes the immutable instance SSBO -> frame-1-vanish).
+		bool forcedDynamicThisCall = false;
 		// PREVIEW-FIX: in the SimpleCamera component/weapon preview, skip the GPU
 		// static-prop submit (the batcher flushes with the world snapshot/terrain
 		// MVP, not the UI camera) so submittedToGpu stays false and the legacy CPU
@@ -1522,7 +1527,8 @@ long BldgAppearance::render (long depthFixup)
 				    bdForceDynamicDefault("MC2_FORCE_DYNAMIC_BUILDINGS");
 				if (s_forceDynamicBldgs) {
 					invalidateStaticRegistration();
-					// Fall through to the dynamic path below.
+					forcedDynamicThisCall = true;
+					// Fall through to the dynamic path below (ring-only, no re-register).
 				} else if (bldgShape && bldgShape->getCachedGpuLightIndex() == UINT32_MAX) {
 					// Light gather failed this frame — invalidate so dynamic
 					// path re-runs and re-registers next frame.
@@ -1598,6 +1604,7 @@ long BldgAppearance::render (long depthFixup)
 				if (submittedToGpu && !staticReg.registered
 				        && GpuStaticPropRegistry::isEnabled()
 				        && !needsFullBakeNextFrame
+				        && !forcedDynamicThisCall
 				        && isStaticEligible()) {
 					const auto& batch =
 						GpuStaticPropBatcher::instance().getLastBuiltBatch();
@@ -4735,6 +4742,16 @@ long TreeAppearance::render (long depthFixup)
 		// Call Multi-shape render stuff here.
 		// Slice 1 path (g_useGpuObjects). Same shape as BldgAppearance::render.
 		bool submittedToGpu = false;
+		// FORCE-DYNAMIC REGISTRY-CHURN FIX: when MC2_FORCE_DYNAMIC_TREES is set the
+		// static path invalidates + falls through to submitMultiShape EVERY frame.
+		// If the re-registration block below also runs every frame, the recipe
+		// registry (s_recipes / s_recipeRanges) grows unbounded (no slot recycle),
+		// eventually tripping the immutable static-instance SSBO overflow guard
+		// (gos_static_prop_batcher.cpp fillStaticInstanceBufferIfDirty) -> the
+		// persistent buffer freezes at its last-good (frame-1) contents -> trees
+		// render frame 1 then vanish. Force-dynamic is meant to be a pure per-frame
+		// ring bake (fenced, self-resetting), so suppress re-registration entirely.
+		bool forcedDynamicThisCall = false;
 		if (g_useGpuObjects)
 		{
 			GpuStaticPropBatcher::instance().recordEligibleActor(
@@ -4761,7 +4778,8 @@ long TreeAppearance::render (long depthFixup)
 				    bdForceDynamicDefault("MC2_FORCE_DYNAMIC_TREES");
 				if (s_forceDynamicTrees) {
 					invalidateStaticRegistration();
-					// Fall through to the dynamic path below.
+					forcedDynamicThisCall = true;
+					// Fall through to the dynamic path below (ring-only, no re-register).
 				} else if (treeShape->getCachedGpuLightIndex() == UINT32_MAX) {
 					// Light-data gather failed this frame — invalidate so the dynamic
 					// path re-runs and re-registers next frame with correct lights.
@@ -4823,7 +4841,8 @@ long TreeAppearance::render (long depthFixup)
 				// Pass treeShape as multi so flush() can patch lightDataIndex each frame.
 				if (submittedToGpu && !staticReg[activeLOD].registered
 				        && GpuStaticPropRegistry::isEnabled()
-				        && !needsFullBakeNextFrame) {
+				        && !needsFullBakeNextFrame
+				        && !forcedDynamicThisCall) {
 					const auto& batch =
 						GpuStaticPropBatcher::instance().getLastBuiltBatch();
 					// M1 RenderWorld route (Slice M1 Task 10).

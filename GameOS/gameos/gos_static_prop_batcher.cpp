@@ -4046,8 +4046,16 @@ void GpuStaticPropBatcher::finalizeGeometry() {
     // s_alphaOnCmdCount are valid. One uint32_t per draw command per ring frame.
     if (!s_globalPoolLegacy) {
         const uint32_t totalCmds = s_alphaOffCmdCount + s_alphaOnCmdCount;
-        s_baseInstanceByCmdBytesPerFrame =
-            static_cast<size_t>(totalCmds) * sizeof(uint32_t);
+        // SSBO-BIND-ALIGN: this per-frame byte count is used as a ring-slot
+        // glBindBufferRange offset (slot * stride) at
+        // batcher_bindBaseInstanceByCmdSsboForPatch. totalCmds*4 is not generally
+        // a multiple of GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT, so slots 1+ would
+        // misalign and the bind would fail on NVIDIA (GL_INVALID_VALUE). Pad the
+        // per-frame stride; alloc (RING_FRAMES*stride), CPU write (slot*stride) and
+        // bind all read this same value so they stay consistent.
+        s_baseInstanceByCmdBytesPerFrame = static_cast<size_t>(gpuAlignUp(
+            static_cast<unsigned long long>(totalCmds) * sizeof(uint32_t),
+            static_cast<unsigned long long>(gpuSsboOffsetAlignment())));
         const size_t totalBytes =
             static_cast<size_t>(RING_FRAMES) * s_baseInstanceByCmdBytesPerFrame;
         if (totalBytes > 0) {
