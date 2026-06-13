@@ -68,6 +68,26 @@ int32_t registerRecipe(TG_MultiShape* multi,
 void markVisible(int32_t regIdx, uint32_t lightDataIndex = 0xFFFFFFFFu,
                  float extentRadius = 0.0f);
 
+// STATIC-PROP REGISTRATION CONTRACT (v1). The plain markVisible() above is
+// fire-and-forget: it silently returns on a tombstoned/dead range, yet callers
+// (bdactor Tree/Bldg render) then set submittedToGpu=true and SUPPRESS the legacy
+// draw fallback -> the prop renders nothing (the "trees vanish on replay" class bug).
+// markVisibleChecked() is the contract entry point: it returns whether the registry
+// ACCEPTED a live recipe this frame. A caller must NOT suppress legacy render unless
+// the result is Submitted; on any other result it should invalidate + re-bake (or fall
+// back to legacy), turning "GPU cache stale -> invisible" into "GPU cache miss -> legacy
+// draws" (the correct, safe failure mode). Generation-handle invalidation is v2.
+enum class StaticSubmitResult {
+    Submitted,      // range live (registered, count>0, multi!=null) and queued for flush
+    NotRegistered,  // registry disabled / regIdx<0
+    MissingRange,   // regIdx out of range
+    Tombstoned,     // range.count == 0 (invalidated/destroyed but handle still held)
+    InvalidRecipe,  // range.multi == null (would be skipped at the flush tombstone guard)
+};
+StaticSubmitResult markVisibleChecked(int32_t regIdx,
+                                      uint32_t lightDataIndex = 0xFFFFFFFFu,
+                                      float extentRadius = 0.0f);
+
 // Called when static registration must be cleared (fall, late-reg recovery,
 // shape-pointer change, UINT32_MAX light index). Sets recipe range to
 // count=0 (tombstone) and NULLs multi; caller must also clear staticReg.

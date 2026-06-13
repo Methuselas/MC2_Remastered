@@ -172,6 +172,25 @@ static bool bdForceDynamicDefault(const char* envName) {
 	return gos_IsNvidiaGPU();
 }
 
+// STATIC-PROP REGISTRATION CONTRACT v1: surface (rate-limited) when the GPU static
+// registry REJECTED a visibility submit for a registered actor — i.e. the actor held a
+// dead/tombstoned recipe handle and would have vanished, but the contract routed it to
+// the legacy full-bake fallback instead. Capped at 32 lines so it confirms the failure
+// mode without spamming a long session (AMD never hits it — its registry isn't stale).
+// reason values match GpuStaticPropRegistry::StaticSubmitResult.
+static void bdLogStaticRegInvalid(const char* kind, int reason, int regIdx, const char* name) {
+	static int s_logged = 0;
+	if (s_logged >= 32) return;
+	++s_logged;
+	static const char* const kReason[] = {
+		"Submitted", "NotRegistered", "MissingRange", "Tombstoned", "InvalidRecipe" };
+	const char* rn = (reason >= 0 && reason < 5) ? kReason[reason] : "?";
+	fprintf(stderr, "[STATIC_REG_INVALID] kind=%s reason=%s regIdx=%d actor=%s "
+	                "(falling back to legacy re-bake)\n",
+	        kind, rn, regIdx, name ? name : "(null)");
+	fflush(stderr);
+}
+
 extern float	worldUnitsPerMeter;
 extern bool 	drawTerrainGrid;
 extern bool		useFog;
@@ -1533,11 +1552,23 @@ long BldgAppearance::render (long depthFixup)
 					// flush() can read it (when MC2_STATIC_PER_INSTANCE_LIGHT=1)
 					// instead of multi->getCachedGpuLightIndex() — the per-multi
 					// scratch slot is last-writer-wins across sibling instances.
-					GpuStaticPropRegistry::markVisible(staticReg.recipeIndex,
-					                                  staticReg.lightDataIndex,
-					                                  bldgShape ? bldgShape->GetExtentRadius() : 0.0f);
-					++s_diag_markVisible;
-					submittedToGpu = true;
+					// STATIC-PROP REGISTRATION CONTRACT v1 (see TreeAppearance::render):
+					// only suppress legacy when the registry accepted a LIVE recipe; on a
+					// dead/tombstoned handle, invalidate so the full-bake path re-registers
+					// + draws this frame instead of the prop vanishing.
+					const GpuStaticPropRegistry::StaticSubmitResult bldgRes =
+						GpuStaticPropRegistry::markVisibleChecked(
+							staticReg.recipeIndex,
+							staticReg.lightDataIndex,
+							bldgShape ? bldgShape->GetExtentRadius() : 0.0f);
+					if (bldgRes == GpuStaticPropRegistry::StaticSubmitResult::Submitted) {
+						++s_diag_markVisible;
+						submittedToGpu = true;
+					} else {
+						bdLogStaticRegInvalid("bldg", (int)bldgRes, staticReg.recipeIndex,
+							appearType ? appearType->name : nullptr);
+						invalidateStaticRegistration();  // dead handle -> full-bake re-registers below
+					}
 				}
 			}
 			static const bool s_bldgDiagTrace = (getenv("MC2_BLDG_DIAG_TRACE") != nullptr);
@@ -4771,18 +4802,33 @@ long TreeAppearance::render (long depthFixup)
 					// 2026-05-11: see BldgAppearance::render markVisible site.
 					// TREE-OVERRIDE-LOD-MVP Task 2: replay the active LOD's recipe +
 					// light slot (activeLOD pinned 0 → identical to single-LOD today).
-					GpuStaticPropRegistry::markVisible(staticReg[activeLOD].recipeIndex,
-					                                  staticReg[activeLOD].lightDataIndex,
-					                                  treeShape ? treeShape->GetExtentRadius() : 0.0f);
-					// [LIGHTSLOT v1] Task 0: registered static-replay trees record
-					// their per-frame slot here (the steady-state path) so the
-					// distinct-slot set captures the whole forest, not just frame-1
-					// full-bake instances.
-					mc2_lightslot_trace::recordInstance(
-						appearType,
-						appearType && appearType->treeRenderShapeLodCount > 0,
-						staticReg[activeLOD].lightDataIndex);
-					submittedToGpu = true;
+					// STATIC-PROP REGISTRATION CONTRACT v1: markVisibleChecked() reports
+					// whether the registry ACCEPTED a live recipe. Only suppress the legacy
+					// fallback (submittedToGpu=true) when it did. On a dead/tombstoned handle
+					// (the "trees vanish on replay" bug) invalidate so the !submittedToGpu
+					// full-bake path below re-registers + draws this frame — GPU cache miss
+					// becomes a legacy re-bake, NOT an invisible prop.
+					const GpuStaticPropRegistry::StaticSubmitResult treeRes =
+						GpuStaticPropRegistry::markVisibleChecked(
+							staticReg[activeLOD].recipeIndex,
+							staticReg[activeLOD].lightDataIndex,
+							treeShape ? treeShape->GetExtentRadius() : 0.0f);
+					if (treeRes == GpuStaticPropRegistry::StaticSubmitResult::Submitted) {
+						// [LIGHTSLOT v1] Task 0: registered static-replay trees record
+						// their per-frame slot here (the steady-state path) so the
+						// distinct-slot set captures the whole forest, not just frame-1
+						// full-bake instances.
+						mc2_lightslot_trace::recordInstance(
+							appearType,
+							appearType && appearType->treeRenderShapeLodCount > 0,
+							staticReg[activeLOD].lightDataIndex);
+						submittedToGpu = true;
+					} else {
+						bdLogStaticRegInvalid("tree", (int)treeRes,
+							staticReg[activeLOD].recipeIndex,
+							appearType ? appearType->name : nullptr);
+						invalidateStaticRegistration();  // drop dead handle -> full-bake re-registers below
+					}
 				}
 			}
 			if (!submittedToGpu && treeShape)

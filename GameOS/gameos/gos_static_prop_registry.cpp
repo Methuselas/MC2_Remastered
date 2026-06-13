@@ -697,6 +697,23 @@ void markVisible(int32_t regIdx, uint32_t lightDataIndex, float extentRadius) {
     s_liveRangeIndices.push_back(static_cast<uint32_t>(regIdx));
 }
 
+// STATIC-PROP REGISTRATION CONTRACT (v1). Validate the registration BEFORE accepting
+// visibility, and report the outcome so the caller can fall back instead of suppressing
+// the legacy draw on a dead handle. Checks mirror the flush tombstone guard
+// (gos_static_prop_registry.cpp: "if (rng.count == 0 || !rng.multi) ... continue") so a
+// "Submitted" result GUARANTEES flush will not skip the range for those reasons.
+StaticSubmitResult markVisibleChecked(int32_t regIdx, uint32_t lightDataIndex,
+                                      float extentRadius) {
+    if (!s_enabled) return StaticSubmitResult::NotRegistered;
+    if (regIdx < 0 || static_cast<uint32_t>(regIdx) >= s_recipeRanges.size())
+        return StaticSubmitResult::MissingRange;
+    const RecipeRange& rng = s_recipeRanges[static_cast<uint32_t>(regIdx)];
+    if (rng.count == 0)  return StaticSubmitResult::Tombstoned;   // dead handle
+    if (!rng.multi)      return StaticSubmitResult::InvalidRecipe; // flush would skip it
+    markVisible(regIdx, lightDataIndex, extentRadius);            // accept (queues for flush)
+    return StaticSubmitResult::Submitted;
+}
+
 void invalidate(int32_t regIdx) {
     if (!s_enabled) return;
     if (regIdx < 0 || static_cast<uint32_t>(regIdx) >= s_recipeRanges.size()) return;
