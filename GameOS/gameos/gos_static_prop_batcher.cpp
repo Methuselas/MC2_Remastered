@@ -6778,6 +6778,17 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
     } else {
         // ---- Step 11.8 legacy per-type/per-packet draw loop (unchanged) ----
 
+        // GPU-SYNC-CONTRACT: the legacy instance/color SSBOs were CPU-written this
+        // frame through a persistent GL_MAP_COHERENT_BIT mapping (instMapBase /
+        // colMapBase). The ring's glClientWaitSync handles cross-frame WAR reuse, but
+        // ordering THIS frame's CPU writes BEFORE the draws reads them still needs
+        // GL_CLIENT_MAPPED_BUFFER_BARRIER_BIT. Without it, NVIDIA reads stale instance
+        // data each running frame -> props invisible during gameplay, reappearing only
+        // when paused (the per-frame rewrite stops). The legacy path is the ACTIVE one
+        // on NVIDIA (coalesce disarms there), so this is the live fix. AMD tolerated it.
+        gpuSyncBarrier(GpuProducer::CpuCoherentWrite, GpuConsumer::InstancedDraw,
+                       "staticprop_legacy_instance");
+
         // v1: applyPipeline() above bound the coalesce program (if available).
         // Restore the legacy program before issuing legacy uniform uploads and draws.
         glUseProgram(s_staticPropProgram);
