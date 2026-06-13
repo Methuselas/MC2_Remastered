@@ -224,6 +224,13 @@ void Render( Camera* eye )
 	// invisible (the "265 generated but nothing appears" case).
 	gos_SetRenderState( gos_State_ZCompare, 0 );   // v1: always-visible preview
 	gos_SetRenderState( gos_State_ZWrite,   0 );
+	// Disable face culling: the terrain/scene pass leaves GL_CULL_FACE enabled, and
+	// these billboard quads wind opposite to the front face, so every quad was
+	// back-face culled -- submitted (draw>0 in the trace) but never rasterized, i.e.
+	// "draw>0 yet invisible". Same class as the water cull-winding bug
+	// (gameos_graphics.cpp ~2910). Overlay draws must not depend on inherited cull
+	// state; None makes the quad visible regardless of winding.
+	gos_SetRenderState( gos_State_Culling, gos_Cull_None );
 
 	// --- advisory projection/draw counters (Slice 1; MC2_EDITOR_PROJECT_TRACE) ------
 	// No behavior change. Tally where each instance is lost so the foliage failure
@@ -302,7 +309,16 @@ void Render( Camera* eye )
 		// renderTerrainSelection) leaves z=0. ZCompare is off anyway, so depth is
 		// irrelevant once the quad is inside clip.
 		for ( int k = 0; k < 4; ++k ) { q[k].z = 0.0f; q[k].rhw = 1.0f; q[k].argb = argb; }
-		gos_DrawQuads( q, 4 );
+		// Emit as TWO triangles via gos_DrawTriangles, NOT gos_DrawQuads. gos_DrawQuads
+		// is gated behind the global g_disable_quads (gameos_graphics.cpp:7319), which
+		// the GAME enables only inside draw_screen but the editor's own frame loop
+		// (EditorGameOS.cpp) never sets false -> every editor gos_DrawQuads silently
+		// no-ops. gos_DrawTriangles has no such gate and is the proven editor-visible
+		// path (HeightBrush's ring uses it in this same render() pass). Ring order
+		// (v0,v1,v2)+(v0,v2,v3) matches drawQuads' own triangulation; Cull=None above
+		// makes winding moot regardless.
+		gos_VERTEX t[6] = { q[0], q[1], q[2], q[0], q[2], q[3] };
+		gos_DrawTriangles( t, 6 );
 		++c_draw;
 	}
 
