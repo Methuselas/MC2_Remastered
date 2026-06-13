@@ -1,4 +1,5 @@
 #include "gos_static_prop_batcher.h"
+#include "gos_gpu_sync.h"                 // GPU-SYNC-CONTRACT typed barrier helper
 #include "render_snapshot.h"             // ExtractedStaticPropPacket full definition for batcher_getDrawSlotEntry
 #include "gos_static_prop_registry.h"    // M1.5: getRecipeIndexForType
 #include "../../RenderWorld/RenderWorld.h"  // M1.5: IsObjectIdBufferEnabled + objectIdRawForStaticPropRecipe
@@ -5921,6 +5922,14 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             glBindBuffer(GL_DRAW_INDIRECT_BUFFER, s_staticIndirectCmdBuf);
             const uintptr_t cmdSize =
                 static_cast<uintptr_t>(gpu_cull::kDrawElementsIndirectCommandSize);
+            // GPU-SYNC-CONTRACT: s_staticInstanceSsbo (bound above) was filled via
+            // a persistent GL_MAP_COHERENT_BIT mapping (fillStaticInstanceBufferIfDirty).
+            // Order those CPU writes before the indirect draws read them. Without
+            // this, NVIDIA may draw from stale instance data; AMD tolerated it.
+            // (M2a path -- default-off MC2_STATIC_POP_SPLIT, latent until enabled;
+            // routed through the typed helper.)
+            gpuSyncBarrier(GpuProducer::CpuCoherentWrite, GpuConsumer::MultiDrawIndirect,
+                           "staticpop_m2a_instance");
             if (s_alphaOffCmdCount > 0u) {
                 if (s_locsCoalesce.drawIDBase >= 0) glUniform1i(s_locsCoalesce.drawIDBase, 0);
                 glActiveTexture(GL_TEXTURE0);

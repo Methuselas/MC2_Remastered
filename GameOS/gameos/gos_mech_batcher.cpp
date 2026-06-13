@@ -1,5 +1,6 @@
 // GameOS/gameos/gos_mech_batcher.cpp — GPU mech batcher, Slice A.
 #include "gos_mech_batcher.h"
+#include "gos_gpu_sync.h"      // GPU-SYNC-CONTRACT typed barrier helper
 #include "render_snapshot.h"  // MECH-EXTRACTION-0: ExtractedMechPacket, RenderSnapshot
 #include "../../RenderCore/RenderDebugView.h"  // MECH-DEBUG-VIEWS-1
 #include "../../RenderCore/PipelineRegistry.h"  // MECH-PIPELINEDESC-1
@@ -784,6 +785,11 @@ void GpuMechBatcher::flushShadow() {
     glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 1, s_boneSsbo,
         (GLintptr) (slot * s_boneCapacity * sizeof(GpuMechBone)),
         (GLsizeiptr)(s_lastTotalBones * sizeof(GpuMechBone)));
+
+    // GPU-SYNC-CONTRACT: same coherent instance/bone SSBOs feed the shadow draws;
+    // order the CPU writes before these reads too (see flush() Step 7).
+    gpuSyncBarrier(GpuProducer::CpuCoherentWrite, GpuConsumer::InstancedDraw,
+                   "mech_instance_bone_shadow");
 
     int typesDrawn = 0, instDrawn = 0;
     for (const ShadowDrawEntry& dc : s_lastDrawCalls) {
@@ -1882,6 +1888,15 @@ void GpuMechBatcher::flush() {
             }
         }
     }
+
+    // GPU-SYNC-CONTRACT: the instance + bone SSBOs were just written through a
+    // persistent GL_MAP_COHERENT_BIT mapping (Steps 4-5). Order those CPU writes
+    // BEFORE the instanced draws below read them as SSBO. Without this, NVIDIA may
+    // draw from stale/zero instance+bone data -> mechs garbled/invisible; AMD
+    // tolerated it. (Default-on GPU mech path -- a sibling of the static-prop tree
+    // bug; routed through the typed helper.)
+    gpuSyncBarrier(GpuProducer::CpuCoherentWrite, GpuConsumer::InstancedDraw,
+                   "mech_instance_bone");
 
     // Step 7: Issue one draw call per bucket.
     uint32_t drawnCalls = 0;

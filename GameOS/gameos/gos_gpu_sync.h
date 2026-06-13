@@ -1,0 +1,42 @@
+#pragma once
+// GPU-SYNC-CONTRACT v1 -- typed GPU producer/consumer memory-barrier helper.
+//
+// WHY THIS EXISTS: this engine has a GL render-state contract (render_contract.*,
+// MC2_RENDER_CONTRACT_ASSERT) that validates depth/blend/FBO/MRT state -- but it
+// asserts ZERO memory barriers, and there was no barrier helper at all. Every
+// glMemoryBarrier was hand-placed and individually commented, so structurally
+// identical compute->draw paths drifted: one author remembered the barrier, the
+// next didn't. That ad-hoc gap shipped >=3 producer/consumer-ordering bugs
+// (static-prop cull, terrain-indirect cmd clear, GPU mech instance/bone) that
+// AMD's driver tolerated but NVIDIA's stricter ordering exposed as invisible or
+// garbled geometry. Framed correctly this is an OpenGL sync-correctness class,
+// not an NVIDIA quirk.
+//
+// This helper names the producer->consumer EDGE and maps it to the correct
+// glMemoryBarrier bits via ONE audited table, so the "which bits?" decision is
+// made once and can't drift. Call it AFTER the producer (write/clear/dispatch)
+// and BEFORE the consumer (copy/draw/dispatch).
+//
+// v1 SCOPE: only the edges actually used are mapped -- no overgeneralization.
+// A runtime producer/consumer assert tracker (MC2_GPU_SYNC_ASSERT) is a deliberate
+// deferred v2. Optional once-per-tag debug log via MC2_GPU_SYNC_TRACE=1.
+
+enum class GpuProducer {
+    CpuCoherentWrite,  // CPU write through a persistent GL_MAP_COHERENT_BIT mapping
+    ClearBuffer,       // glClear*BufferData / glClearNamedBufferSubData
+    ComputeShader,     // a compute dispatch that wrote an SSBO / indirect-cmd buffer
+};
+
+enum class GpuConsumer {
+    BufferCopy,         // server-side glCopyBufferSubData reads the produced buffer
+    ComputeShader,      // a later compute dispatch reads/atomics the buffer
+    ShaderStorageRead,  // a graphics-stage shader reads it as SSBO
+    MultiDrawIndirect,  // glMultiDraw*Indirect / glDraw*Indirect consumes it
+    InstancedDraw,      // glDraw*Instanced* reads it (e.g. SSBO instance/bone data)
+};
+
+// Issue the correct glMemoryBarrier for the producer->consumer edge. `tag` is a
+// short static string used only by the MC2_GPU_SYNC_TRACE log (once per tag).
+// An unmapped edge logs a loud warning and falls back to GL_ALL_BARRIER_BITS
+// (fail-safe + visible, never silent).
+void gpuSyncBarrier(GpuProducer producer, GpuConsumer consumer, const char* tag);

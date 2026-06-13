@@ -13,6 +13,7 @@
 // preflight-arming, and bridge entry.
 
 #include "gos_terrain_indirect.h"
+#include "gos_gpu_sync.h"               // GPU-SYNC-CONTRACT typed barrier helper
 #include "gos_terrain_patch_stream.h"  // TerrainQuadRecipe
 #include "gpu_driven_common.h"         // gpu_driven::IsTerrainSolidEnabled
 #include "gos_terrain_lighting.h"      // gos_terrain_lighting::GetOutputSsbo()
@@ -3088,6 +3089,15 @@ void ComputeDispatch() {
                              GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     }
+
+    // GPU-SYNC-CONTRACT: order the cmd-count clear (and the recipe/window/LUT
+    // glBufferSubData uploads earlier this frame) BEFORE the cull/pack dispatch
+    // below, which atomicAdds into cmds[0].count. Without this, NVIDIA may reorder
+    // the clear after the dispatch -> atomicAdd accumulates onto a stale count ->
+    // garbage/giant terrain triangles on fast camera motion. AMD tolerated the
+    // omission. (Routed through the typed helper, not a hand-placed barrier.)
+    gpuSyncBarrier(GpuProducer::ClearBuffer, GpuConsumer::ComputeShader,
+                   "terrain_indirect_count_clear");
 
     // ------------------------------------------------------------------
     // DISPATCH 1: cull/pack (gpu_driven_terrain_solid.comp)
