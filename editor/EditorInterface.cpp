@@ -4903,8 +4903,12 @@ void EditorInterface::renderToolbarImGui()
 	MapGeneratorDialog::Draw();
 
 	// Foliage Detail — add/tweak trees, rocks, bushes on the generated map.
-	if (ImGui::Button("Foliage Detail", ImVec2(-1.f, 0.f)))
-		MapGeneratorDialog::ToggleFoliagePanel();
+	// IN PROGRESS: greyed out until real prop-instance foliage rendering lands
+	// (the preview only produced flat placeholder cards). The panel itself also
+	// shows an "(in progress)" banner + disabled controls if reached.
+	ImGui::BeginDisabled(true);
+	ImGui::Button("Foliage Detail  (in progress)", ImVec2(-1.f, 0.f));
+	ImGui::EndDisabled();
 	MapGeneratorDialog::DrawFoliagePanel();
 
 	// Mission Save Checklist — shows why .pak save is ready/blocked + warnings.

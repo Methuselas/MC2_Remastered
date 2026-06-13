@@ -473,19 +473,19 @@ void MapGeneratorDialog::Draw() {
     ImGui::Unindent();
 
     ImGui::Separator();
-    // --- Foliage / Trees ---
+    // --- Foliage / Trees (IN PROGRESS) ---
+    // Real prop-instance foliage rendering is not wired up yet (the preview only
+    // produced flat placeholder cards). Disable the controls and force the option
+    // off so generation never emits a foliage sidecar, until the prop path lands.
+    s_state.generateFoliage = false;
     ImGui::Text("Foliage");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(in progress)");
     ImGui::Indent();
-    ImGui::Checkbox("Generate trees & rocks", &s_state.generateFoliage);
-    if (s_state.generateFoliage) {
-        ImGui::SetNextItemWidth(280.f * sc);
-        ImGui::SliderFloat("Tree Density", &s_state.treeDensity, 0.f, 1.f, "%.2f");
-        ImGui::SetNextItemWidth(280.f * sc);
-        ImGui::SliderFloat("Tree Line (max altitude)", &s_state.treeLine, 0.f, 1.f, "%.2f");
-        ImGui::Checkbox("Scatter rocks on slopes", &s_state.placeRocks);
-        ImGui::TextDisabled("Species/mix vary by biome (e.g. desert palms, snow pines).");
-        ImGui::TextDisabled("Applies on full Generate (not the fast Preview).");
-    }
+    ImGui::BeginDisabled(true);
+    bool foliageStub = false;
+    ImGui::Checkbox("Generate trees & rocks", &foliageStub);
+    ImGui::EndDisabled();
     ImGui::Unindent();
 
     ImGui::Separator();
@@ -782,6 +782,13 @@ void MapGeneratorDialog::DrawFoliagePanel() {
     ImGui::TextDisabled("Detail the visible map. Fast foliage-only regen.");
     ImGui::Separator();
 
+    // IN PROGRESS: foliage currently only renders flat placeholder cards; real
+    // prop-instance rendering is not wired up yet. Disable the whole control block
+    // until it lands so nothing emits a foliage sidecar or draws placeholders.
+    ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.2f, 1.f), "(in progress) - real prop foliage not yet available");
+    ImGui::Separator();
+    ImGui::BeginDisabled(true);
+
     ImGui::SetNextItemWidth(200.f * sc);
     ImGui::SliderFloat("Tree Density",  &s_fol.treeDensity, 0.f, 1.f, "%.2f");
     ImGui::SetNextItemWidth(200.f * sc);
@@ -810,6 +817,8 @@ void MapGeneratorDialog::DrawFoliagePanel() {
     ImGui::SameLine();
     if (ImGui::Button(FoliageRender::Visible() ? "Hide" : "Show", ImVec2(150.f * sc, 0.f)))
         FoliageRender::Toggle();
+
+    ImGui::EndDisabled();
 
     if (s_fol.status[0])
         ImGui::TextColored(ImVec4(0.6f, 0.9f, 0.6f, 1.f), "%s", s_fol.status);
