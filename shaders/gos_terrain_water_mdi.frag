@@ -189,7 +189,10 @@ void main(void)
         if (u_waterReflStrength > 0.0 || u_waterRtStrength > 0.0 ||
             u_waterDebugMode == 7 || u_waterDebugMode == 8 || u_waterDebugMode == 9) {
             // Wave normal from the in-scope fBm gradient (reused S3 scaffold).
-            PREC vec2  nzGrad     = clamp(vec2(dFdx(nz), dFdy(nz)), -2.0, 2.0);
+            // WATER-ASPECT-CORRECT-1: 4:3-locked projection into a wider viewport
+            // compresses dFdx vs dFdy by (vpAspect/projAspect). Scale X back up.
+            float _ac = (u_waterScreenSize.x / max(u_waterScreenSize.y, 1.0)) * (3.0 / 4.0);
+            PREC vec2  nzGrad     = clamp(vec2(dFdx(nz) * _ac, dFdy(nz)), -2.0, 2.0);
             PREC vec3  waveNormal = normalize(vec3(nzGrad * REFL_WAVE_SLOPE, 1.0));
             PREC vec3  vdir       = normalize(cameraPos.xyz - WorldPos);  // MC2 Z-up
             PREC vec3  rdir       = reflect(-vdir, waveNormal);           // MC2 Z-up
