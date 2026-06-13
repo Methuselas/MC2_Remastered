@@ -929,6 +929,31 @@ void flush() {
     for (uint32_t regIdx : s_liveRangeIndices) {
         RecipeRange& rng = s_recipeRanges[regIdx];
         ++s_diag_ranges_total;
+        // [TOMBDIAG] MC2_STATIC_LEAF_DIAG=1 — frame-sampled, logs EVERY range in the
+        // visible set INCLUDING tombstoned (count==0) ones, BEFORE the skip below. This
+        // catches the suspected no-trees-on-replay cause: a tree markVisible'd every frame
+        // but whose recipe is tombstoned (count==0) -> silently skipped here -> not drawn,
+        // while staticReg.registered stays true (no submitMultiShape fallback). Frames 0-3
+        // + every 120th. count=0 on a tree regIdx = the smoking gun. Default-off.
+        {
+            static const bool s_td = (getenv("MC2_STATIC_LEAF_DIAG") != nullptr);
+            static uint32_t s_tdFrame = 0xFFFFFFFFu;
+            static int s_tdN = 0;
+            if (s_td) {
+                const uint32_t fr = static_cast<uint32_t>(g_mc2FrameCounter);
+                if (fr != s_tdFrame) { s_tdFrame = fr; s_tdN = 0; }
+                if ((fr <= 3u || (fr % 120u) == 0u) && s_tdN < 90) {
+                    ++s_tdN;
+                    const int tid = (rng.count > 0 && rng.first < s_recipes.size())
+                                      ? static_cast<int>(s_recipes[rng.first].typeID) : -1;
+                    fprintf(stderr,
+                        "[TOMBDIAG] frame=%u regIdx=%u count=%u multi=%d typeID=%d%s\n",
+                        fr, regIdx, rng.count, (int)(rng.multi != nullptr), tid,
+                        (rng.count == 0) ? "  <<TOMBSTONED-BUT-VISIBLE" : "");
+                    fflush(stderr);
+                }
+            }
+        }
         if (rng.count == 0 || !rng.multi) { ++s_diag_ranges_tombstone; continue; } // tombstone guard
 
         // 2026-05-05: cull-aware static replay. Skip recipes whose multi-shape
