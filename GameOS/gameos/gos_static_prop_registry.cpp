@@ -268,12 +268,15 @@ static std::vector<RecipeRange>           s_recipeRanges;
 // light SSBO upload [0..S) and the addLightDataStructure base scan grow without
 // bound (observed 80ms -> 500ms+ on NVIDIA). Recycling tombstoned regIdx slots caps
 // max(regIdx) at the live-recipe count, which caps S, which caps both costs.
-// Gated default-off so the default path stays byte-identical until validated on the
-// affected hardware; flip the default once confirmed. Leaf storage (s_recipes) still
-// appends -- that is a slower RAM-only growth, not the per-frame cost this targets.
+// DEFAULT ON (confirmed on the 1050 Ti to flatten the LightDataUpload climb and the
+// addLightDataStructure scan growth); set MC2_STATIC_RECIPE_RECYCLE=0 to disable.
+// Leaf storage (s_recipes) still appends -- that is a slower RAM-only growth, not the
+// per-frame cost this targets.
 static std::vector<uint32_t>              s_recipeRangeFreeList;
-static const bool s_recipeRecycle =
-    (getenv("MC2_STATIC_RECIPE_RECYCLE") != nullptr);
+static const bool s_recipeRecycle = [](){
+    const char* v = getenv("MC2_STATIC_RECIPE_RECYCLE");
+    return !(v && v[0] == '0');   // default ON; opt out with =0
+}();
 
 // 2A: per-recipe cached immutable cull record (one per s_recipes[] entry).
 // Built lazily on first flush of a recipe; invalidated on any immutable-field write.
