@@ -370,6 +370,13 @@ void applyPBO(glsl_program* program, int unit, const char* name, const Texture p
 		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo.id);
 		glTexImage2D(GL_TEXTURE_2D, 0, pbo.format, pbo.w, pbo.h, 0, pbo.format, GL_UNSIGNED_BYTE, 0);
 		glUniform1i(program->samplers_[ name ]->index_, unit);
+		// Restore the default (client-memory) unpack source. Leaving the PBO
+		// bound here makes any later glTexSubImage2D/glTexImage2D that passes a
+		// client pointer (e.g. gosTexture::Unlock's paint-scheme re-upload) read
+		// from this PBO at a bogus offset instead of client memory → garbage
+		// upload (the mech-paint colour-preview corruption on NVIDIA). AMD
+		// tolerated the leaked binding; NVIDIA does not.
+		glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 	}
 }
 

@@ -967,6 +967,16 @@ class gosTexture {
             lock_type_read_only_ = is_read_only;
             const uint32_t ts = tex_.w*tex_.h * getTexFormatPixelSize(TF_RGBA8);
             plocked_area_ = new BYTE[ts];
+            // Zero before readback: getTextureData early-returns WITHOUT writing
+            // for block-compressed (BC7/TF_NONE) textures, which would otherwise
+            // leave this buffer full of heap garbage that the paint-scheme
+            // classifier then re-uploads. (A paint texture can land on BC7 when
+            // its paintInstance hashes low.)
+            memset(plocked_area_, 0, ts);
+            // glGetTexImage readback is sensitive to inherited GL_PACK_* state and
+            // a left-bound GL_PIXEL_PACK_BUFFER; guard save/resets/restores it so
+            // the mech-paint recolour reads the real texels on NVIDIA.
+            GlPixelStoreGuard pixelStoreGuard;
             getTextureData(tex_, 0, plocked_area_, TF_RGBA8);
             for(int y=0;y<tex_.h;++y) {
                 for(int x=0;x<tex_.w;++x) {
@@ -997,6 +1007,11 @@ class gosTexture {
                         ((DWORD*)plocked_area_)[tex_.w*y + x] = argb;
                     }
                 }
+                // Same hazard as Lock's readback, upload side: glTexSubImage2D
+                // reads from a left-bound GL_PIXEL_UNPACK_BUFFER (see applyPBO)
+                // instead of client memory, and honours inherited GL_UNPACK_*.
+                // Guard neutralises both so the recoloured texels actually land.
+                GlPixelStoreGuard pixelStoreGuard;
                 updateTexture(tex_, plocked_area_, TF_RGBA8);
             }
 
