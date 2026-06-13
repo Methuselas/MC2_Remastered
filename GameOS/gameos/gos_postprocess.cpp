@@ -962,6 +962,24 @@ void gosPostProcess::beginScene()
         glClearBufferuiv(GL_COLOR, 2, kClearZero);
     }
     glViewport(0, 0, width_, height_);
+
+    // [RES_DIAG v1] One-shot dump of the resolution split: scene FBO size
+    // (this object's width_/height_) vs the HUD canvas (Environment.screenWidth)
+    // vs the native drawable (Environment.drawableWidth). Env-gated so it is
+    // byte-identical when MC2_RES_DIAG is unset. Confirms whether the scene
+    // FBO tracks options-res (screenWidth) or the native desktop (drawable).
+    static const bool s_resDiag = (getenv("MC2_RES_DIAG") != nullptr);
+    static bool s_resDiagDone = false;
+    if (s_resDiag && !s_resDiagDone) {
+        s_resDiagDone = true;
+        fprintf(stderr,
+            "[RES_DIAG v1] sceneFBO=%dx%d  screenWidth=%dx%d (HUD canvas)  "
+            "drawable=%dx%d (native)\n",
+            width_, height_,
+            Environment.screenWidth, Environment.screenHeight,
+            Environment.drawableWidth, Environment.drawableHeight);
+        fflush(stderr);
+    }
 }
 
 void gosPostProcess::runBloom()

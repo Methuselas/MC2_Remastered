@@ -7552,6 +7552,21 @@ void __stdcall gos_SetScreenMode( DWORD Width, DWORD Height, DWORD bitDepth/*=16
     gosASSERT(g_gos_renderer);
     gosASSERT((GotoFullScreen && !GotoWindowMode) || (!GotoFullScreen&&GotoWindowMode) || (!GotoFullScreen&&!GotoWindowMode));
 
+    // [HUD-RES-CLAMP v1] The legacy 2D HUD/UI is authored only for the discrete
+    // tuned widths {640,800,1024,1280,1600,1920} (ControlGui::swapResolutions).
+    // A non-tuned width (e.g. 2560/4096 — what the in-game options menu writes
+    // on a hi-dpi desktop, see options_cfg_resolution_drift) lands on the
+    // untuned else path and breaks the HUD (pause top-right, loading top-left,
+    // comms-video misposition, double-shrunk bottom bar) while the scene stays
+    // fine. We render the whole frame at the canonical 800x600 base and let
+    // FULLSCREEN_DESKTOP upscale it — identical to the known-good shipped 4K
+    // config (options.cfg ResolutionX=800). This makes the HUD immune to
+    // whatever the options menu writes. (A native-scene + 800-HUD lane split is
+    // deferred to the incoming imgui UI; it would touch camera+input.)
+    // Memory: hud_scene_resolution_separation.
+    Width  = 800;
+    Height = 600;
+
     g_gos_renderer->setScreenMode(Width, Height, bitDepth, GotoFullScreen, AntiAlias);
 }
 

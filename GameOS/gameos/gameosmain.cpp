@@ -1013,6 +1013,15 @@ int main(int argc, char** argv)
     delete[] cmdline;
     cmdline = NULL;
 
+    // [HUD-RES-CLAMP v1] Force the startup render base to the canonical 800x600
+    // regardless of options.cfg ResolutionX/Y. The legacy 2D HUD only lays out
+    // correctly at the discrete tuned widths; a non-tuned options value breaks
+    // it. 800x600 + FULLSCREEN_DESKTOP upscale matches the known-good shipped 4K
+    // config and is immune to the options-menu resolution rewrite. Mirrors the
+    // runtime clamp in gos_SetScreenMode. Memory: hud_scene_resolution_separation.
+    Environment.screenWidth  = 800;
+    Environment.screenHeight = 600;
+
     int w = Environment.screenWidth;
     int h = Environment.screenHeight;
 

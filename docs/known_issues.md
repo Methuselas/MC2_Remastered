@@ -17,7 +17,8 @@ Known bugs that affect anyone running the game. Full detail in the beta doc:
 - **Shadow banding** shifts slightly with camera rotation due to view-dependent tessellation.
 - **Water shoreline z-fight** visible when zooming in or changing elevation (not on pan).
 - **First-launch black terrain** (intermittent) — relaunch the mission; second load is normal.
-- **Options menu writes bad resolution** to `options.cfg` on 4K displays. Delete `<game-deploy-dir>\options.cfg` to reset.
+- **Options menu writes bad resolution** to `options.cfg` on 4K displays. The render base is now force-clamped to 800×600 (`[HUD-RES-CLAMP v1]`, `gos_SetScreenMode` + `gameosmain` startup) so the HUD stays correct regardless — the legacy 2D HUD only lays out at the tuned widths {640,800,1024,1280,1600,1920}; a non-tuned value broke pause/loading/comms-video/bottom-bar. Whole frame renders at 800×600 + FULLSCREEN_DESKTOP upscale (scene therefore soft; sharp-native-scene + 800-HUD lane split deferred to the imgui UI). Memory: `hud_scene_resolution_separation`. `MC2_RES_DIAG=1` dumps the split.
+- **Water "HDR clipped" at odd desktop resolutions** (reported ~3072×1500): water surface renders very dark / blown / noisy. Likely a tonemap/bloom or reflection-FBO (fixed 480×270) interaction with the 800×600→non-16:9-desktop upscale. UNINVESTIGATED — separate water/HDR issue, not the HUD-res clamp.
 - **Bloom/FXAA/tonemapping apply to HUD** — scene and HUD share the same framebuffer.
 
 ---
@@ -89,7 +90,7 @@ them. Add new findings as new bullets; remove fixed ones outright (don't append
 
 ## Options / config
 
-- **Options menu writes bad ResolutionX/Y to options.cfg** (observed 4096x2160 on 4K). Engine UI canvas is 800x600 and self-scales; other values break HUD scale + video positioning. Diagnostic: `memory/options_cfg_resolution_drift.md`.
+- **Options menu writes bad ResolutionX/Y to options.cfg** (observed 4096x2160 on 4K). MITIGATED by `[HUD-RES-CLAMP v1]`: the render base is force-clamped to 800×600 at both resolution entry points (`gos_SetScreenMode`, `gameosmain` startup), so a bad ResolutionX/Y no longer reaches the HUD layout — HUD/video stay correct, scene upscales from 800×600. Diagnostics: `memory/options_cfg_resolution_drift.md`, `memory/hud_scene_resolution_separation.md`. `MC2_RES_DIAG=1`.
 
 ## Blocked slice work
 

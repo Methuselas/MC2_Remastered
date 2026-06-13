@@ -519,6 +519,7 @@ def main():
                 # entirely, so vars not explicitly listed get dropped.
                 **{k: v for k, v in os.environ.items()
                    if k in ("MC2_FX_COUNT_LOG",
+                            "MC2_RES_DIAG",  # [RES_DIAG v1] HUD/scene resolution-split one-shot dump
                             "MC2_TEXMGR_KTX_PRIMARY",  # route-2 CPU BC7 decode test gate
                             "MC2_TEXMGR_LOAD_TRACE",  # residency ground-truth load trace
                             # S9D deterministic fixed-timestep smoke clock
