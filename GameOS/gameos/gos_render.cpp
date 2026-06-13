@@ -6,6 +6,7 @@
 #endif
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <assert.h>
 #include <SDL2/SDL.h>
 #include <GL/glew.h>
@@ -16,6 +17,12 @@
 SDL_Window* g_sdl_window = NULL;
 static SDL_GLContext g_sdl_glcontext = NULL;
 static bool g_mouse_grabbed = false;
+
+// GPU-VENDOR-DETECT-1: -1 = not yet probed, 0 = not NVIDIA, 1 = NVIDIA.
+// Set once in init_render_context after the GL context is live. Read via
+// gos_IsNvidiaGPU() from mclib (bdactor.cpp) to pick vendor-aware defaults.
+int g_gosGpuIsNvidia = -1;
+bool gos_IsNvidiaGPU() { return g_gosGpuIsNvidia == 1; }
 
 namespace graphics {
 
@@ -370,6 +377,24 @@ RenderContextHandle init_render_context(RenderWindowHandle render_window)
     printf("[GPU] Vendor   : %s\n", glGetString(GL_VENDOR));
     printf("[GPU] Renderer : %s\n", glGetString(GL_RENDERER));
     printf("[GPU] Version  : %s\n", glGetString(GL_VERSION));
+
+    // GPU-VENDOR-DETECT-1: cache whether this is an NVIDIA GPU. The whole
+    // GPU-driven static-prop stack (compute cull -> indirect multidraw ->
+    // persistent-mapped readback) was only ever validated on AMD RDNA3; on
+    // NVIDIA registered static props (trees/buildings) can draw nothing. Used
+    // by mclib to default MC2_FORCE_DYNAMIC_{TREES,BUILDINGS} ON for NVIDIA as a
+    // stopgap until the GPU path is fixed on that hardware (see bdactor.cpp).
+    {
+        const char* vend = (const char*)glGetString(GL_VENDOR);
+        g_gosGpuIsNvidia = 0;
+        if (vend) {
+            // Vendor string is e.g. "NVIDIA Corporation".
+            if (strstr(vend, "NVIDIA") || strstr(vend, "nvidia") ||
+                strstr(vend, "NVidia"))
+                g_gosGpuIsNvidia = 1;
+        }
+        printf("[GPU] IsNvidia : %d\n", g_gosGpuIsNvidia);
+    }
 
     // GL capability limits -- useful to rule out SSBO / texture-size / unit
     // ceilings when a user reports rendering issues on unusual hardware.

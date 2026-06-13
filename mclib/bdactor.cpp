@@ -157,6 +157,21 @@ static bool staticRegIsNaturalBuildingName(const char* name)
 #include "../code/static_update_counters.h" /* [TOBJSPLIT v1] g_tobjAngularCyc / g_tobjProjCyc extern decls */
 #include "gos_static_prop_batcher.h"
 //******************************************************************************************
+// GPU-VENDOR-DETECT-1: defined in GameOS/gameos/gos_render.cpp. True only on
+// NVIDIA GPUs. The GPU-driven static-prop stack (compute cull -> indirect
+// multidraw -> persistent-mapped readback) was only validated on AMD RDNA3; on
+// NVIDIA registered static props (trees/buildings) can draw nothing. Until that
+// is fixed on NVIDIA hardware, default the static->dynamic force-fallback ON for
+// NVIDIA so props stay visible (legacy CPU draw). AMD is unaffected.
+bool gos_IsNvidiaGPU();
+// env unset -> default ON for NVIDIA, OFF elsewhere; env="0" -> force OFF
+// (override the NVIDIA default); env set to non-"0" -> force ON everywhere.
+static bool bdForceDynamicDefault(const char* envName) {
+	const char* v = getenv(envName);
+	if (v) return v[0] != '0';
+	return gos_IsNvidiaGPU();
+}
+
 extern float	worldUnitsPerMeter;
 extern bool 	drawTerrainGrid;
 extern bool		useFog;
@@ -1504,7 +1519,7 @@ long BldgAppearance::render (long depthFixup)
 			}
 			if (isnow) {
 				static const bool s_forceDynamicBldgs =
-				    (getenv("MC2_FORCE_DYNAMIC_BUILDINGS") != nullptr);
+				    bdForceDynamicDefault("MC2_FORCE_DYNAMIC_BUILDINGS");
 				if (s_forceDynamicBldgs) {
 					invalidateStaticRegistration();
 					// Fall through to the dynamic path below.
@@ -4743,7 +4758,7 @@ long TreeAppearance::render (long depthFixup)
 				// failing boundary. If they remain, shared draw/material/global
 				// state is guilty. Revert by unsetting the env var (no rebuild).
 				static const bool s_forceDynamicTrees =
-				    (getenv("MC2_FORCE_DYNAMIC_TREES") != nullptr);
+				    bdForceDynamicDefault("MC2_FORCE_DYNAMIC_TREES");
 				if (s_forceDynamicTrees) {
 					invalidateStaticRegistration();
 					// Fall through to the dynamic path below.

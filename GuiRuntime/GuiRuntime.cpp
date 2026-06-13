@@ -336,15 +336,33 @@ void GuiRuntime::NewFrame() {
     input::setImguiWantsMouse(ImGui::GetIO().WantCaptureMouse);
 }
 
+// The Dear ImGui demo window is a developer affordance. It must NOT be one
+// keypress away in the shipped game (a player hit 'F', opened it, and -- with
+// docking on -- could not dismiss it). gui_runtime is a static lib built ONCE
+// and linked into both the game and the editor, and MC2_IS_EDITOR is only
+// defined on the editor exe target, so a compile macro cannot distinguish the
+// two here. Gate the demo behind a runtime env, DEFAULT OFF (opt in with
+// MC2_IMGUI_DEMO=1) -- unlike the other MC2_IMGUI* gates which default ON.
+static bool demoEnabled() {
+    static int cached = -1;
+    if (cached < 0) {
+        const char* v = std::getenv("MC2_IMGUI_DEMO");
+        cached = (v && v[0] == '1') ? 1 : 0;
+    }
+    return cached == 1;
+}
+
 void GuiRuntime::Render() {
     if (!g_imguiInitialized) return;
 
-    // F toggles the ImGui demo window.
-    static bool s_showDemo = false;
-    if (ImGui::IsKeyPressed(ImGuiKey_F, /*repeat=*/false))
-        s_showDemo = !s_showDemo;
-    if (s_showDemo)
-        ImGui::ShowDemoWindow(&s_showDemo);
+    // F toggles the ImGui demo window (dev only -- see demoEnabled()).
+    if (demoEnabled()) {
+        static bool s_showDemo = false;
+        if (ImGui::IsKeyPressed(ImGuiKey_F, /*repeat=*/false))
+            s_showDemo = !s_showDemo;
+        if (s_showDemo)
+            ImGui::ShowDemoWindow(&s_showDemo);
+    }
 
     EditorInspector::drawImGui();
     GraphicsOptionsWindow::draw();

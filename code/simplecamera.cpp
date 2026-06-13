@@ -212,7 +212,29 @@ void SimpleCamera::render(long xOffset, long yOffset)
 
 			
 			pObject->render();
-			if ( !drawOldWay ) {
+			// PREVIEW-WORLDLESS-DRAIN-1: the !drawOldWay block below drains the
+			// in-mission GPU-driven scene (renderLists() + renderWaterFastPath() +
+			// scene-FBO post) so terrain/water appear on the SimpleCamera
+			// intro/deployment cinematic pan. On a WORLDLESS menu mech preview
+			// (Mech Bay / Options->Gameplay paint preview, where mission==NULL) there
+			// is no terrain or water to draw, yet this block still ran every frame --
+			// draining a near-empty queue against the scene FBO and inheriting GL
+			// state. AMD tolerated it; NVIDIA's stricter FBO/depth behavior surfaced it
+			// as a ~1Hz whole-screen flash with the mech visible for one frame. The
+			// preview needs only the CPU MLR mech draw above (pObject->render(), forced
+			// by MechPreviewRenderScope). Gate the world drain on a live mission so the
+			// cinematic (mission!=NULL) is unchanged. Escape hatch: MC2_PREVIEW_SCENE_DRAIN=1
+			// forces the old always-drain behavior.
+			bool worldScenePresent = (mission != NULL);
+			{
+				static int s_forceDrain = -1;
+				if (s_forceDrain < 0) {
+					const char* v = std::getenv("MC2_PREVIEW_SCENE_DRAIN");
+					s_forceDrain = (v && v[0] == '1') ? 1 : 0;
+				}
+				if (s_forceDrain == 1) worldScenePresent = true;
+			}
+			if ( !drawOldWay && worldScenePresent ) {
 				// GPU-CULL-SIMPLECAM-1: update terrain MVP before renderLists() so
 				// compute_dispatch() uses THIS camera's world-to-clip, not the stale
 				// matrix left by the last GameCamera::render(). Without this, the GPU
