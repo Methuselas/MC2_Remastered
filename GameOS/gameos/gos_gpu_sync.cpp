@@ -53,6 +53,15 @@ bool traceEnabled() {
 
 }  // namespace
 
+int gpuSsboOffsetAlignment() {
+    static GLint s_align = 0;
+    if (s_align == 0) {
+        glGetIntegerv(GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT, &s_align);
+        if (s_align < 16) s_align = 256;  // sane fallback (NVIDIA = 256, AMD ~32)
+    }
+    return (int)s_align;
+}
+
 void gpuSyncBarrier(GpuProducer producer, GpuConsumer consumer, const char* tag) {
     GLbitfield bits = barrierBitsFor(producer, consumer);
     if (bits == 0) {

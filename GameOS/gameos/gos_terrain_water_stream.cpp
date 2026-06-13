@@ -15,6 +15,7 @@
 // Spec: docs/superpowers/specs/2026-04-29-renderwater-fastpath-design.md.
 
 #include "gos_terrain_water_stream.h"
+#include "gos_gpu_sync.h"   // GPU-SYNC-CONTRACT: SSBO bind-offset alignment helper
 
 #include "gos_profiler.h"
 #include "gpu_driven_common.h"
@@ -656,8 +657,17 @@ uint32_t UploadAndBindThinRecords() {
         // worst case — every map water quad in the window simultaneously).
         const uint32_t capPerSlot =
             (uint32_t)(g_recipes.size() * sizeof(WaterThinRecord));
-        const uint32_t cap = (capPerSlot > (uint32_t)slotBytes)
+        uint32_t cap = (capPerSlot > (uint32_t)slotBytes)
                               ? capPerSlot : (uint32_t)slotBytes;
+        // SSBO-BIND-ALIGN: slotOffset = g_thinSlot * g_thinSlotCapacity is the
+        // glBindBufferRange offset; it must be a multiple of
+        // GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT (256 on NVIDIA) or slots 1+ are
+        // rejected with GL_INVALID_VALUE -> the water thin SSBO never binds -> water
+        // flashes/vanishes on NVIDIA (AMD tolerated it). Pad the per-slot byte
+        // capacity up to the alignment so every slot offset is aligned. (Drives the
+        // alloc below and the per-frame slotOffset.)
+        cap = (uint32_t)gpuAlignUp((unsigned long long)cap,
+                                   (unsigned long long)gpuSsboOffsetAlignment());
         MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER,
                      (GLsizeiptr)(cap * kThinRingSlots),
                      nullptr, GL_DYNAMIC_DRAW);

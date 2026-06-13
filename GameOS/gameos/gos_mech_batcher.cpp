@@ -569,6 +569,21 @@ static void ensureRingCapacity(size_t neededInstances, size_t neededBones) {
     s_boneCapacity = std::max(neededBones,
         s_boneCapacity ? s_boneCapacity * 2 : kInitialBonesPerFrame);
 
+    // SSBO-BIND-ALIGN: the per-slot bind offset is slot * capacity * sizeof. It
+    // MUST be a multiple of GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT (256 on
+    // NVIDIA) or slots 1+ bind at a misaligned offset -> NVIDIA rejects with
+    // GL_INVALID_VALUE -> the instance/bone SSBO never binds -> the VS reads
+    // garbage -> mechs invisible/garbled (AMD tolerated it). Rounding capacity up
+    // to a multiple of the alignment (in ELEMENTS) makes capacity*sizeof a multiple
+    // of the alignment, so every ring-slot offset (and the alloc + CPU write
+    // pointer, which also derive from capacity) is aligned. Element-count rounding
+    // avoids the lossy byte/sizeof division when sizeof does not divide 256.
+    {
+        const unsigned long long a = (unsigned long long)gpuSsboOffsetAlignment();
+        s_instanceCapacity = (size_t)gpuAlignUp((unsigned long long)s_instanceCapacity, a);
+        s_boneCapacity     = (size_t)gpuAlignUp((unsigned long long)s_boneCapacity,     a);
+    }
+
     const GLbitfield flags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
 
     glGenBuffers(1, &s_instanceSsbo);

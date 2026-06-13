@@ -40,3 +40,19 @@ enum class GpuConsumer {
 // An unmapped edge logs a loud warning and falls back to GL_ALL_BARRIER_BITS
 // (fail-safe + visible, never silent).
 void gpuSyncBarrier(GpuProducer producer, GpuConsumer consumer, const char* tag);
+
+// SSBO-BIND-ALIGN: glBindBufferRange(GL_SHADER_STORAGE_BUFFER, ..., offset, ...)
+// REQUIRES offset % GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT == 0. NVIDIA enforces
+// it (rejects a misaligned offset with GL_INVALID_VALUE -> the SSBO never binds ->
+// the shader reads garbage -> invisible geometry); AMD silently tolerates it. Any
+// ring-slot SSBO whose per-slot byte stride is not a multiple of this alignment
+// produces a misaligned bind on slots 1+ on NVIDIA. Pad the per-slot stride with
+// gpuAlignUp() so every slot offset is aligned. Returns the cached GL value (>=256
+// fallback); valid only after a GL context exists.
+int gpuSsboOffsetAlignment();
+
+// Round `v` up to the next multiple of `a` (a must be a power of two; the GL
+// alignment always is). size_t-based; safe for byte sizes and element counts.
+inline unsigned long long gpuAlignUp(unsigned long long v, unsigned long long a) {
+    return (a == 0ull) ? v : ((v + (a - 1ull)) & ~(a - 1ull));
+}

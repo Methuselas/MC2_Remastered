@@ -2578,8 +2578,15 @@ void GpuStaticPropBatcher::finalizeGeometry() {
 
     // Step 5.9 — allocate s_coalesceInstanceSsbo ring + persistent map.
     {
+        // SSBO-BIND-ALIGN: pad the per-frame ring stride to the SSBO offset
+        // alignment IDENTICALLY to batcher_getCoalescePerFrameInstanceBytes() (which
+        // drives the per-slot bind offset fr_off_bytes_d), so slot offsets are
+        // aligned AND never overrun this allocation.
+        const size_t alignedPerFrame = (size_t)gpuAlignUp(
+            (unsigned long long)s_coalescePerFrameInstanceBytes,
+            (unsigned long long)gpuSsboOffsetAlignment());
         const size_t totalBytes =
-            static_cast<size_t>(RING_FRAMES) * s_coalescePerFrameInstanceBytes;
+            static_cast<size_t>(RING_FRAMES) * alignedPerFrame;
         glGenBuffers(1, &s_coalesceInstanceSsbo);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_coalesceInstanceSsbo);
         const GLbitfield mapFlags =
@@ -8175,10 +8182,21 @@ GLuint batcher_getTexArrayOn() {
 GLuint batcher_getPermutationSsbo()      { return s_permutationSsbo;      }
 
 size_t batcher_getCoalescePerFrameInstanceBytes() {
-    if (!s_globalPoolLegacy) {
-        return static_cast<size_t>(s_globalInstanceCap) * sizeof(GpuStaticPropInstance);
-    }
-    return s_offGroupTotalBytes + s_onGroupTotalBytes;
+    // SSBO-BIND-ALIGN: this is the per-frame RING STRIDE; fr_off_bytes_d =
+    // s_coalesceFrameSlot * this is the glBindBufferRange offset. The std430
+    // GpuStaticPropInstance stride is 112 bytes, so cap*112 is a multiple of 256
+    // (NVIDIA's GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT) only when cap % 16 == 0.
+    // Otherwise slots 1+ bind at a misaligned offset -> NVIDIA rejects with
+    // GL_INVALID_VALUE -> the instance SSBO never binds -> static-prop trees
+    // invisible during gameplay, reappearing only when paused on slot 0 (offset 0,
+    // the one aligned slot). AMD tolerated it. Pad the per-frame stride up to the
+    // alignment; the allocation (Step 5.9) pads identically so offsets never
+    // overrun the ring.
+    size_t raw = s_globalPoolLegacy
+        ? (s_offGroupTotalBytes + s_onGroupTotalBytes)
+        : (static_cast<size_t>(s_globalInstanceCap) * sizeof(GpuStaticPropInstance));
+    return (size_t)gpuAlignUp((unsigned long long)raw,
+                              (unsigned long long)gpuSsboOffsetAlignment());
 }
 
 bool batcher_isCoalesceLayoutReady() { return s_coalesceLayoutReady; }
