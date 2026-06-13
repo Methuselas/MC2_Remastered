@@ -258,6 +258,23 @@ struct RecipeRange {
 static std::vector<GpuStaticPropInstance> s_recipes;
 static std::vector<RecipeRange>           s_recipeRanges;
 
+// RECIPE-SLOT-RECYCLE (MC2_STATIC_RECIPE_RECYCLE, default OFF). The registry
+// historically only APPENDED: registerRecipe() pushed a new s_recipeRanges slot
+// and invalidate() merely tombstoned (count=0), never reclaiming the index. Under
+// per-frame invalidate+re-register churn (LOD swap, damage, and force-dynamic props
+// which default ON for NVIDIA) regIdx therefore climbs without bound. Because the
+// baked static light table is indexed BY regIdx (txmmgr.cpp bakeStaticLightSlot ->
+// s_staticLightHighWater = max(regIdx)+1), an unbounded regIdx makes the per-frame
+// light SSBO upload [0..S) and the addLightDataStructure base scan grow without
+// bound (observed 80ms -> 500ms+ on NVIDIA). Recycling tombstoned regIdx slots caps
+// max(regIdx) at the live-recipe count, which caps S, which caps both costs.
+// Gated default-off so the default path stays byte-identical until validated on the
+// affected hardware; flip the default once confirmed. Leaf storage (s_recipes) still
+// appends -- that is a slower RAM-only growth, not the per-frame cost this targets.
+static std::vector<uint32_t>              s_recipeRangeFreeList;
+static const bool s_recipeRecycle =
+    (getenv("MC2_STATIC_RECIPE_RECYCLE") != nullptr);
+
 // 2A: per-recipe cached immutable cull record (one per s_recipes[] entry).
 // Built lazily on first flush of a recipe; invalidated on any immutable-field write.
 // Sized in lockstep with s_recipes (resize in registerRecipe, new entries valid=0).
@@ -536,6 +553,9 @@ void destroy() {
 
     s_recipes.clear();          s_recipes.shrink_to_fit();
     s_recipeRanges.clear();     s_recipeRanges.shrink_to_fit();
+    // RECIPE-SLOT-RECYCLE: the free-list holds indices into s_recipeRanges; it MUST
+    // be emptied in lockstep or a stale index would alias / go out of bounds next mission.
+    s_recipeRangeFreeList.clear(); s_recipeRangeFreeList.shrink_to_fit();
     // 2A: clear the per-recipe cached actor-record arrays (parallel to s_recipes).
     s_cachedActorRecord.clear();      s_cachedActorRecord.shrink_to_fit();
     s_cachedActorRecordValid.clear(); s_cachedActorRecordValid.shrink_to_fit();
@@ -581,9 +601,21 @@ int32_t registerRecipe(TG_MultiShape* multi,
     s_cachedActorRecordValid.resize(s_recipes.size(), 0u);
     s_recipeToStoreSlot.resize(s_recipes.size(), 0u);  // M1: lockstep with s_recipes
     ++s_registryGeneration;   // 2b Stage 2: spawn = structural change
-    const int32_t regIdx = static_cast<int32_t>(s_recipeRanges.size());
-    s_recipeRanges.push_back(rng);
-    s_recipeHasSubstrateRecord.push_back(0u); // v2: one slot per recipe, parallel to s_recipeRanges
+    // RECIPE-SLOT-RECYCLE: reuse a tombstoned regIdx when available (caps max regIdx
+    // -> caps the baked-light high-water S -> caps the per-frame light upload/scan).
+    // The reused slot's parallel arrays are reset; leaf storage still appends (rng.first
+    // was set from s_recipes.size() above, and the leaves were inserted at the end).
+    int32_t regIdx;
+    if (s_recipeRecycle && !s_recipeRangeFreeList.empty()) {
+        regIdx = static_cast<int32_t>(s_recipeRangeFreeList.back());
+        s_recipeRangeFreeList.pop_back();
+        s_recipeRanges[static_cast<size_t>(regIdx)] = rng;          // overwrite tombstone
+        s_recipeHasSubstrateRecord[static_cast<size_t>(regIdx)] = 0u;
+    } else {
+        regIdx = static_cast<int32_t>(s_recipeRanges.size());
+        s_recipeRanges.push_back(rng);
+        s_recipeHasSubstrateRecord.push_back(0u); // v2: one slot per recipe, parallel to s_recipeRanges
+    }
     // M1.5 C1: maintain typeID -> recipeIndex side-map for the
     // batcher's objectIdRaw producer. All instances in `batch` share
     // the same typeID in practice (one recipe = one multi-shape =
@@ -605,7 +637,9 @@ int32_t registerRecipe(TG_MultiShape* multi,
     // (msl.h:454-470) — GetTextureHandle(j) returns mcTextureNodeIndex directly.
     // Do not access TG_TypeMultiShape::numTextures/listOfTextures — protected.
     if (mcTextureManager) {
-        RecipeRange& storedRng = s_recipeRanges.back();
+        // RECIPE-SLOT-RECYCLE: index by regIdx, NOT .back() -- a recycled slot is
+        // not at the end of s_recipeRanges.
+        RecipeRange& storedRng = s_recipeRanges[static_cast<size_t>(regIdx)];
         const long numTex = multi->GetNumTextures();
         for (long j = 0; j < numTex; ++j) {
             const DWORD nodeIdx = multi->GetTextureHandle(j);
@@ -668,6 +702,11 @@ void invalidate(int32_t regIdx) {
     // separately identifiable here — no separate LOD counter.
     if (s_spflushEnabled) { ++s_total_invalidates; ++s_win_invalidates; }
     RecipeRange& rng = s_recipeRanges[static_cast<uint32_t>(regIdx)];
+    // RECIPE-SLOT-RECYCLE: only reclaim a slot that was actually LIVE this call.
+    // invalidate() is idempotent (may be called on an already-tombstoned slot);
+    // pushing an already-freed regIdx would double-list it -> double reuse -> two
+    // recipes aliasing one slot. Capture liveness BEFORE the tombstone below.
+    const bool wasLive = (rng.count > 0);
     releasePinsForRange(rng);
     // M1.5 C1: tombstone the side-map entry BEFORE zeroing s_recipes
     // (typeID would otherwise be zeroed out by the loop below). Only
@@ -699,6 +738,10 @@ void invalidate(int32_t regIdx) {
     // multi-swap lazily re-bakes the same position-derived constant.
     ::mc2EraseBakedStaticLight(regIdx);
     ++s_registryGeneration;   // 2b Stage 2: despawn = structural change
+    // RECIPE-SLOT-RECYCLE: return the now-tombstoned slot to the free-list so the
+    // next registerRecipe() reuses this regIdx instead of growing the array.
+    if (s_recipeRecycle && wasLive)
+        s_recipeRangeFreeList.push_back(static_cast<uint32_t>(regIdx));
 }
 
 // 2b Stage 2: monotonic dirty signal. A clean generation across frames means the
