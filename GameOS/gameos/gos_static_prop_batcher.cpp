@@ -5580,6 +5580,24 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
     // issue one instanced draw per packet. gl_InstanceID in the shader
     // addresses 0..N-1 within the bound range (no gl_BaseInstance needed).
     //
+    // [INSTDIAG] one-shot path-state log so we know which draw path is active on the
+    // tester's NVIDIA (and therefore whether the per-draw [INSTDIAG] below fires from the
+    // legacy loop or whether the coalesce/MDI path is in play instead).
+    {
+        static const bool s_instDiag = (getenv("MC2_STATIC_INST_DIAG") != nullptr);
+        static bool s_pathLogged = false;
+        if (s_instDiag && !s_pathLogged) {
+            s_pathLogged = true;
+            fprintf(stderr,
+                "[INSTDIAG] PATH coalesceEnabled=%d globalPoolLegacy=%d instanceCapacity=%u "
+                "frameSlot=%u typeRanges=%zu\n",
+                (int)IsCoalesceEnabled(), (int)s_globalPoolLegacy,
+                (unsigned)s_instanceCapacity, (unsigned)s_frameSlot,
+                s_typeRanges.size());
+            fflush(stderr);
+        }
+    }
+
     // Plan v3.8 Step 11.7 / 11.8 — coalesce branch first; on disarm,
     // fall through to the legacy per-type loop with no other state change.
     if (IsCoalesceEnabled()) {
@@ -6890,6 +6908,34 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
         // Per-type increment, not per-packet — we want "actors drawn,"
         // not "draw-call count."
         s_counters.gpu_drawn_instances += r.instanceCount;
+
+        // [INSTDIAG] MC2_STATIC_INST_DIAG=1 — peek the EXACT instance data the GPU will
+        // read at the bound offset (s_instanceMap is the coherent CPU mapping). Decisive
+        // for the no-trees-on-registered-path bug: if data here is ZERO, the bucket/upload
+        // dropped it (LEAFDIAG already proved recipe leaves are valid -> reinject/submit
+        // bug); if VALID, the data is fine and the bug is downstream (shader/cull/ring).
+        // Focus on high-instance types (trees). Default-off: zero behavior change.
+        {
+            static const bool s_instDiag = (getenv("MC2_STATIC_INST_DIAG") != nullptr);
+            static int s_instDiagLogged = 0;
+            if (s_instDiag && r.instanceCount >= 20 && s_instDiagLogged < 40 && s_instanceMap) {
+                ++s_instDiagLogged;
+                const uint8_t* base = static_cast<const uint8_t*>(s_instanceMap)
+                                    + static_cast<size_t>(r.instanceByteOffset);
+                const float* m0 = reinterpret_cast<const float*>(base);
+                const size_t midOff = static_cast<size_t>(r.instanceCount / 2u)
+                                    * sizeof(GpuStaticPropInstance);
+                const float* mm = reinterpret_cast<const float*>(base + midOff);
+                const bool z0 = (m0[0]==0.0f && m0[3]==0.0f && m0[7]==0.0f && m0[11]==0.0f);
+                fprintf(stderr,
+                    "[INSTDIAG] typeID=%u slot=%u instByteOff=%zu count=%u byteSize=%zu "
+                    "drawData0_rawXYZ=(%.1f,%.1f,%.1f) zero0=%d midXYZ=(%.1f,%.1f,%.1f)\n",
+                    typeID, (unsigned)s_frameSlot, (size_t)r.instanceByteOffset,
+                    r.instanceCount, (size_t)r.instanceByteSize,
+                    -m0[3], m0[11], m0[7], (int)z0, -mm[3], mm[11], mm[7]);
+                fflush(stderr);
+            }
+        }
 
         glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_instanceSsbo,
                           static_cast<GLintptr>(r.instanceByteOffset),
