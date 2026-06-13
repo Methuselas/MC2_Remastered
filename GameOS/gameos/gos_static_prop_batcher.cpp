@@ -7388,9 +7388,10 @@ void GpuStaticPropBatcher::drawStaticBuildingShadows(
         if (tid < static_cast<uint32_t>(s_types.size())) {
             const GpuStaticPropType& type = s_types[tid];
             if (type.packetCount > 0) {
-                glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_staticBldgShadowSsbo,
-                    static_cast<GLintptr>(i * sizeof(GpuStaticPropInstance)),
-                    static_cast<GLsizeiptr>(instCount * sizeof(GpuStaticPropInstance)));
+                gpuBindSsboRange(0, s_staticBldgShadowSsbo,
+                    (long long)(i * sizeof(GpuStaticPropInstance)),
+                    (long long)(instCount * sizeof(GpuStaticPropInstance)),
+                    "staticprop_bldg_shadow");
                 for (uint32_t p = 0; p < type.packetCount; ++p) {
                     const uint32_t pk = type.firstPacket + p;
                     if (pk >= s_packets.size()) break;
@@ -7516,9 +7517,10 @@ void GpuStaticPropBatcher::drawDynamicPropShadows(
         if (tid < static_cast<uint32_t>(s_types.size())) {
             const GpuStaticPropType& type = s_types[tid];
             if (type.packetCount > 0) {
-                glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_dynamicPropShadowSsbo,
-                    static_cast<GLintptr>(i * sizeof(GpuStaticPropInstance)),
-                    static_cast<GLsizeiptr>(instCount * sizeof(GpuStaticPropInstance)));
+                gpuBindSsboRange(0, s_dynamicPropShadowSsbo,
+                    (long long)(i * sizeof(GpuStaticPropInstance)),
+                    (long long)(instCount * sizeof(GpuStaticPropInstance)),
+                    "staticprop_dynamic_shadow");
                 for (uint32_t p = 0; p < type.packetCount; ++p) {
                     const uint32_t pk = type.firstPacket + p;
                     if (pk >= s_packets.size()) break;

@@ -58,8 +58,27 @@ int gpuSsboOffsetAlignment() {
     if (s_align == 0) {
         glGetIntegerv(GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT, &s_align);
         if (s_align < 16) s_align = 256;  // sane fallback (NVIDIA = 256, AMD ~32)
+        std::fprintf(stderr, "[GPU_ALIGN] SSBO_OFFSET_ALIGNMENT=%d\n", (int)s_align);
     }
     return (int)s_align;
+}
+
+void gpuBindSsboRange(unsigned int index, unsigned int buffer,
+                      long long offset, long long size, const char* tag) {
+    const long long a = (long long)gpuSsboOffsetAlignment();
+    if (a > 0 && (offset % a) != 0) {
+        static std::set<std::string> s_seen;  // once per tag, no per-frame spam
+        const std::string key = tag ? tag : "(none)";
+        if (s_seen.insert(key).second) {
+            std::fprintf(stderr,
+                "[GPU_ALIGN] MISALIGNED tag=%s offset=%lld align=%lld "
+                "(remainder=%lld) -- glBindBufferRange will fail on NVIDIA\n",
+                key.c_str(), offset, a, offset % a);
+            std::fflush(stderr);
+        }
+    }
+    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, (GLuint)index, (GLuint)buffer,
+                      (GLintptr)offset, (GLsizeiptr)size);
 }
 
 void gpuSyncBarrier(GpuProducer producer, GpuConsumer consumer, const char* tag) {

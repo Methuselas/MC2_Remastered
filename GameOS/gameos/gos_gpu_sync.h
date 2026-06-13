@@ -56,3 +56,13 @@ int gpuSsboOffsetAlignment();
 inline unsigned long long gpuAlignUp(unsigned long long v, unsigned long long a) {
     return (a == 0ull) ? v : ((v + (a - 1ull)) & ~(a - 1ull));
 }
+
+// Wrapper for glBindBufferRange(GL_SHADER_STORAGE_BUFFER, ...). Binds, and if the
+// offset is NOT a multiple of gpuSsboOffsetAlignment() it logs
+// "[GPU_ALIGN] MISALIGNED tag=... offset=... align=..." ONCE per tag (so a single
+// NVIDIA run names every offending bind site by tag -- no more hand-enumeration).
+// Plain int types so this header needs no GL include. `tag` must be a static string.
+// Forbid raw glBindBufferRange(GL_SHADER_STORAGE_BUFFER, ...) in GPU-batcher code;
+// route through this so misalignment can never ship silently again.
+void gpuBindSsboRange(unsigned int index, unsigned int buffer,
+                      long long offset, long long size, const char* tag);
