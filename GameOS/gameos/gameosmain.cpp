@@ -1318,11 +1318,21 @@ int main(int argc, char** argv)
                     totalPackets);
             }
 
-            // Hard gate — anomalies only. skippedRanges is logged under s_logEnabled.
-            if (stats.overflow
-                    || stats.invalidRanges > 0
-                    || stats.oldExpected != stats.expectedPackets
-                    || stats.materialMismatches > 0) {
+            // Hard gate — REAL anomalies only, AND default-SILENT (set MC2_DRAW_PACKET_WARN=1
+            // to re-enable). The old gate also tripped on `oldExpected != expectedPackets`,
+            // but oldExpected is a legacy comparison field that is ALWAYS 0 while
+            // expectedPackets grows (68..71+), so it fired the warning EVERY frame on a
+            // totally benign mismatch -> console spam. Dropped that condition; the remaining
+            // overflow/invalidRanges/materialMismatches are genuine but are now also gated
+            // off by default so a shipping/player build is silent.
+            static const bool s_drawPacketWarn = []{
+                const char* v = std::getenv("MC2_DRAW_PACKET_WARN");
+                return v && v[0] == '1';
+            }();
+            if (s_drawPacketWarn
+                    && (stats.overflow
+                        || stats.invalidRanges > 0
+                        || stats.materialMismatches > 0)) {
                 std::fprintf(stderr,
                     "[DRAW_PACKET v1] WARNING: overflow=%d invalidRanges=%u"
                     " skippedRanges=%u old_expected=%u new_expected=%u"

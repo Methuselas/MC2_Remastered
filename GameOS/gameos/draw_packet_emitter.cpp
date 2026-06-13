@@ -45,6 +45,15 @@ DrawPacketEmitStats emitStaticPropDrawPackets(const RenderSnapshot&          sna
         if (tid > maxTypeId) maxTypeId = tid;
     }
 
+    // [DRAW_PACKET v1] WARNING family is default-SILENT (set MC2_DRAW_PACKET_WARN=1 to
+    // re-enable). These can fire per-type per-frame (e.g. packetCount=0 skip) and were
+    // spamming the player console. Counters (stats.*) still increment; only the prints
+    // are gated. ERRORs (genuine aborts) stay unconditional.
+    static const bool s_dpWarn = []{
+        const char* v = std::getenv("MC2_DRAW_PACKET_WARN");
+        return v && v[0] == '1';
+    }();
+
     // Guard against sparse or corrupt typeId values.
     static constexpr uint32_t kMaxAllowedTypeId = 65535u;
     if (maxTypeId > kMaxAllowedTypeId) {
@@ -75,7 +84,7 @@ DrawPacketEmitStats emitStaticPropDrawPackets(const RenderSnapshot&          sna
             typeToMatIdx[tid] = prop.materialIdx;
         } else if (typeToMatIdx[tid] != prop.materialIdx) {
             ++stats.materialMismatches;
-            std::fprintf(stderr,
+            if (s_dpWarn) std::fprintf(stderr,
                 "[DRAW_PACKET v1] WARNING: typeId=%u materialIdx mismatch "
                 "(%u vs %u)\n",
                 tid, typeToMatIdx[tid], prop.materialIdx);
@@ -127,7 +136,7 @@ DrawPacketEmitStats emitStaticPropDrawPackets(const RenderSnapshot&          sna
         // A mismatch indicates a populate bug and makes the candidate's typeId wrong.
         if (desc.typeId != i) {
             ++stats.invalidRanges;
-            std::fprintf(stderr,
+            if (s_dpWarn) std::fprintf(stderr,
                 "[DRAW_PACKET v1] WARNING: type table row mismatch row=%u typeId=%u\n",
                 i, desc.typeId);
             continue;
@@ -143,14 +152,14 @@ DrawPacketEmitStats emitStaticPropDrawPackets(const RenderSnapshot&          sna
         // packetCount==0 means a malformed slot; log and skip.
         if (desc.packetCount == 0u) {
             ++stats.skippedRanges;
-            std::fprintf(stderr,
+            if (s_dpWarn) std::fprintf(stderr,
                 "[DRAW_PACKET v1] WARNING: typeId=%u skipped (packetCount=0)\n", tid);
             continue;
         }
         // Overflow guard on firstPacket + packetCount arithmetic.
         if (desc.firstPacket > UINT32_MAX - desc.packetCount) {
             ++stats.skippedRanges;
-            std::fprintf(stderr,
+            if (s_dpWarn) std::fprintf(stderr,
                 "[DRAW_PACKET v1] WARNING: typeId=%u packet range overflow "
                 "(firstPacket=%u packetCount=%u)\n",
                 tid, desc.firstPacket, desc.packetCount);
