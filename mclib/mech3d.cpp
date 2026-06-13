@@ -111,6 +111,27 @@ namespace {
 	// path guaranteed to run), not from a discardable anon-namespace static.
 }
 
+// Returns true if the texture file or its .ktx2 BC7 sidecar exists.
+// Used to gate TGL texture loading so sensor shapes work when .tga is absent
+// in a slim deploy (route-2 in txmmgr.cpp will decode the .ktx2 instead).
+static bool textureOrKtxSidecarExists(const char* tgaPath)
+{
+	if (fileExists(tgaPath))
+		return true;
+	const char* v = getenv("MC2_TEXMGR_KTX_PRIMARY");
+	const bool ktxPrimary = (!v || !v[0]) ? true : (v[0] != '0');  // default mode 1
+	if (!ktxPrimary)
+		return false;
+	char ktx[1024];
+	strncpy(ktx, tgaPath, sizeof(ktx) - 1);
+	ktx[sizeof(ktx) - 1] = 0;
+	char* dot   = strrchr(ktx, '.');
+	char* slash = strrchr(ktx, '/');
+	if (dot && (!slash || dot > slash)) *dot = 0;
+	if (strlen(ktx) + 6 < sizeof(ktx)) strcat(ktx, ".ktx2");
+	return fileExists(ktx);
+}
+
 #ifndef CAMERA_H
 #include"camera.h"
 #endif
@@ -1299,7 +1320,7 @@ void Mech3DAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 			FullPathFileName textureName;
 			textureName.init(texturePath,txmName,"");
 	
-			if (fileExists(textureName))
+			if (textureOrKtxSidecarExists(textureName))
 			{
 				if (S_strnicmp(txmName,"a_",2) == 0)
 				{
@@ -1337,7 +1358,7 @@ void Mech3DAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 				FullPathFileName textureName;
 				textureName.init(texturePath,txmName,"");
 		
-				if (fileExists(textureName))
+				if (textureOrKtxSidecarExists(textureName))
 				{
 					if (S_strnicmp(txmName,"a_",2) == 0)
 					{
@@ -1368,14 +1389,14 @@ void Mech3DAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 			{
 				char txmName[1024];
 				sensorSquareShape->GetTextureName(i,txmName,256);
-	
+
 				char texturePath[1024];
 				sprintf(texturePath,"%s%d" PATH_SEPARATOR, tglPath, ObjectTextureSize);
-		
+
 				FullPathFileName textureName;
 				textureName.init(texturePath,txmName,"");
-		
-				if (fileExists(textureName))
+
+				if (textureOrKtxSidecarExists(textureName))
 				{
 					if (S_strnicmp(txmName,"a_",2) == 0)
 					{

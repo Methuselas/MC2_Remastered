@@ -116,6 +116,28 @@ static unsigned long s_spotDiagGvOverflows  = 0;
 static unsigned long s_spotDiagGvActors     = 0;
 static unsigned long s_spotDiagGvCalls      = 0;
 
+// Returns true if the texture file or its .ktx2 BC7 sidecar exists.
+// Sensor shape loaders (sensorTriangleShape, sensorCircleShape) use this so
+// a_contacts.tga can be absent in a slim deploy while the .ktx2 sidecar serves
+// the texture via route-2 in txmmgr.cpp.
+static bool textureOrKtxSidecarExists(const char* tgaPath)
+{
+	if (fileExists(tgaPath))
+		return true;
+	const char* v = getenv("MC2_TEXMGR_KTX_PRIMARY");
+	const bool ktxPrimary = (!v || !v[0]) ? true : (v[0] != '0');  // default mode 1
+	if (!ktxPrimary)
+		return false;
+	char ktx[1024];
+	strncpy(ktx, tgaPath, sizeof(ktx) - 1);
+	ktx[sizeof(ktx) - 1] = 0;
+	char* dot   = strrchr(ktx, '.');
+	char* slash = strrchr(ktx, '/');
+	if (dot && (!slash || dot > slash)) *dot = 0;
+	if (strlen(ktx) + 6 < sizeof(ktx)) strcat(ktx, ".ktx2");
+	return fileExists(ktx);
+}
+
 //******************************************************************************************
 extern float	worldUnitsPerMeter;
 extern bool 	drawTerrainGrid;
@@ -940,7 +962,7 @@ void GVAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 			FullPathFileName textureName;
 			textureName.init(texturePath,txmName,"");
 	
-			if (fileExists(textureName))
+			if (textureOrKtxSidecarExists(textureName))
 			{
 				if (S_strnicmp(txmName,"a_",2) == 0)
 				{
@@ -976,7 +998,7 @@ void GVAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 			FullPathFileName textureName;
 			textureName.init(texturePath,txmName,"");
 	
-			if (fileExists(textureName))
+			if (textureOrKtxSidecarExists(textureName))
 			{
 				if (S_strnicmp(txmName,"a_",2) == 0)
 				{
