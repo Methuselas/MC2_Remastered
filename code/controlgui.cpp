@@ -1833,14 +1833,17 @@ void ControlGui::update( bool bPaused, bool bLOS )
 
 	bool bMouseInsideTacArea = 0;
 
-	if ( rectInfos[0].rect.left <= userInput->getMouseX()
-		&& rectInfos[0].rect.right >= userInput->getMouseX()
-		&& rectInfos[0].rect.top <= userInput->getMouseY()
-		&& rectInfos[0].rect.bottom >= userInput->getMouseY() )
+	// rectInfos[0].rect is authored at 100% HUD coords but the tac area is drawn
+	// shrunk by s_hud_scale; hit-test in HUD-inverse space (matches GameTacMap
+	// and the force-group bar). Raw getMouseX/Y here made this rect bleed upward.
+	if ( rectInfos[0].rect.left <= userInput->getMouseHudX()
+		&& rectInfos[0].rect.right >= userInput->getMouseHudX()
+		&& rectInfos[0].rect.top <= userInput->getMouseHudY()
+		&& rectInfos[0].rect.bottom >= userInput->getMouseHudY() )
 	{
-		bMouseInsideTacArea = true; 
+		bMouseInsideTacArea = true;
 	}
-	
+
 	if ( getButton( TACMAP_TAB )->state & ControlButton::PRESSED )
 	{
 		ZoneScopedN("CGui.TacMap");
@@ -1889,12 +1892,14 @@ bool ControlGui::isOverTacMap()
 {
 	bool bMouseInsideTacArea = 0;
 
-	if ( rectInfos[0].rect.left <= userInput->getMouseX()
-		&& rectInfos[0].rect.right >= userInput->getMouseX()
-		&& rectInfos[0].rect.top <= userInput->getMouseY()
-		&& rectInfos[0].rect.bottom >= userInput->getMouseY() )
+	// HUD-inverse space (see ControlGui::update above): rect authored at 100%,
+	// drawn shrunk by s_hud_scale.
+	if ( rectInfos[0].rect.left <= userInput->getMouseHudX()
+		&& rectInfos[0].rect.right >= userInput->getMouseHudX()
+		&& rectInfos[0].rect.top <= userInput->getMouseHudY()
+		&& rectInfos[0].rect.bottom >= userInput->getMouseHudY() )
 	{
-		bMouseInsideTacArea = true; 
+		bMouseInsideTacArea = true;
 	}
 
 	if ( getButton( TACMAP_TAB )->state & ControlButton::PRESSED )

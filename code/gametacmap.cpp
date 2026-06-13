@@ -68,8 +68,17 @@ void GameTacMap::init( unsigned char* bitmapData, int dataSize )
 void GameTacMap::update()
 {
 	Stuff::Vector2DOf<long> screen;
-	screen.x = userInput->getMouseX();
-	screen.y = userInput->getMouseY();
+	// The tac map is drawn through the bottom-band HUD batch and is shrunk by
+	// s_hud_scale (flushHUDBatch, single bottom-center anchor) during a mission,
+	// exactly like the command bar and force-group bar. Its hit-rect
+	// (left/top/right/bottom, from rectInfos[0].rect) and the tacMapToWorld
+	// size math are authored at 100% coords, so the click must be mapped back
+	// through the HUD-shrink inverse -- mirror the force-group bar
+	// (forcegroupbar.cpp) which uses getMouseHudX/Y. Using raw getMouseX/Y here
+	// made the authored rect bleed upward over the bottom-left buttons (click =
+	// camera jump to top of map) and offset/mis-scaled genuine minimap clicks.
+	screen.x = userInput->getMouseHudX();
+	screen.y = userInput->getMouseHudY();
 
 	float width = right - left;
 	float height = bottom - top;
