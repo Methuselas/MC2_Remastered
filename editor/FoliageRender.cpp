@@ -287,7 +287,7 @@ void Render( Camera* eye )
 		gos_SetRenderState( gos_State_AlphaTest, tex ? 1 : 0 );
 		DWORD argb = tex ? 0xffffffff : kKindColor[in.kind];
 
-		const float cx = sb.x, by = sb.y, z = sb.z;
+		const float cx = sb.x, by = sb.y;
 		gos_VERTEX q[4];
 		memset( q, 0, sizeof( q ) );
 		// Ground-anchored at (cx, by), grows upward (screen y increases downward).
@@ -295,7 +295,13 @@ void Render( Camera* eye )
 		q[1].x = cx + w * 0.5f; q[1].y = by;       q[1].u = 1.0f; q[1].v = 1.0f;
 		q[2].x = cx + w * 0.5f; q[2].y = by - h;   q[2].u = 1.0f; q[2].v = 0.0f;
 		q[3].x = cx - w * 0.5f; q[3].y = by - h;   q[3].u = 0.0f; q[3].v = 0.0f;
-		for ( int k = 0; k < 4; ++k ) { q[k].z = z; q[k].rhw = 1.0f; q[k].argb = argb; }
+		// z = 0, NOT the projected sb.z. These are rhw=1 pre-transformed screen-space
+		// verts, so z is the raw clip depth; a nonzero NDC z (e.g. ~0.99 reverse-Z, or
+		// out of range) depth-clips the quad -> submitted but never rasterized ("draw>0
+		// but invisible"). Every working editor overlay (brush rings,
+		// renderTerrainSelection) leaves z=0. ZCompare is off anyway, so depth is
+		// irrelevant once the quad is inside clip.
+		for ( int k = 0; k < 4; ++k ) { q[k].z = 0.0f; q[k].rhw = 1.0f; q[k].argb = argb; }
 		gos_DrawQuads( q, 4 );
 		++c_draw;
 	}
