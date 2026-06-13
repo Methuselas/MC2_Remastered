@@ -1028,12 +1028,28 @@ int main(int argc, char** argv)
 
     graphics::make_current_context(ctx);
 
+    // GLEW-CORE-PROFILE-1: we request a CORE-profile context (gos_render.cpp:190).
+    // In a core profile glGetString(GL_EXTENSIONS) returns NULL, and without
+    // glewExperimental GLEW falls back to that legacy string for glewIsSupported().
+    // NVIDIA strictly returns NULL there, so glewIsSupported("GL_ARB_*") reports
+    // FALSE for extensions that are actually present (AMD is lenient and still
+    // returns the string, which is why this only bit NVIDIA). That made
+    // glewIsSupported("GL_ARB_shader_draw_parameters") false on NVIDIA ->
+    // s_hasShaderDrawParams=false -> the static-prop coalesce COLOR path was
+    // disabled -> trees/buildings drew only into the shadow map and were invisible
+    // in the scene (root-caused from an RTX 3080 RenderDoc capture). Setting
+    // glewExperimental forces GLEW to use the core-correct glGetStringi() +
+    // GL_NUM_EXTENSIONS query, fixing glewIsSupported() for BOTH vendors.
+    glewExperimental = GL_TRUE;
     GLenum err = glewInit();
     if (GLEW_OK != err)
     {
         SPEW(("GLEW", "Error: %s\n", glewGetErrorString(err)));
         return 1;
     }
+    // glewExperimental can leave a spurious GL_INVALID_ENUM queued from its own
+    // probing; clear it so the first real frame's error checks start clean.
+    (void)glGetError();
 
     render_contract::initRenderContractAssert();
     render_contract::initRenderPassTelemetry();   // [RENDER_PASS v1] (MC2_RENDER_PASS_TELEMETRY=1)

@@ -298,8 +298,15 @@ void __stdcall InitGameOS(HINSTANCE /*hInstance*/, HWND hWindow, char* commandLi
             EditorGameOSTrace("InitGameOS: after graphics::make_current_context");
 
             EditorGameOSTrace("InitGameOS: before glewInit");
+            // GLEW-CORE-PROFILE-1: core-profile context needs glewExperimental so
+            // glewIsSupported() uses glGetStringi() instead of the (NULL on core)
+            // legacy extension string. Without it, NVIDIA reports ARB extensions as
+            // absent -> static-prop coalesce color path disabled -> invisible
+            // trees/buildings. Same fix as gameosmain.cpp. Must precede glewInit().
+            glewExperimental = GL_TRUE;
             GLenum glewErr = glewInit();
             EditorGameOSTrace("InitGameOS: after glewInit result=%u", (unsigned)glewErr);
+            (void)glGetError();  // drain spurious GL_INVALID_ENUM from glew probing
 
             if (glewErr == GLEW_OK)
             {
