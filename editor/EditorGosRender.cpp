@@ -1226,3 +1226,7 @@ static void PrintRenderer(SDL_RendererInfo * info)
 
 
 }; // namespace graphics
+
+// Stub for mclib/bdactor.cpp vendor-aware default logic. The editor has no
+// GPU vendor detection at init; return false (non-Nvidia) to pick safe defaults.
+bool gos_IsNvidiaGPU() { return false; }

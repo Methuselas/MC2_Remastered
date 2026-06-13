@@ -2608,6 +2608,32 @@ void Camera::setOrthogonal(void)
 				"ndcZ_near=%.6f(expect~1) ndcZ_far=%.6f(expect~0)\n",
 				s_rzBuild, near_clip, far_clip, FF, B, ndcNear, ndcFar);
 		}
+
+		// [WATER_ASPECT_DIAG v1] env-gated one-shot (MC2_WATER_ASPECT_DIAG=1),
+		// silent by default. Confirms the projection-vs-viewport aspect mismatch
+		// suspected behind the "water dark/blown/noisy at odd desktop resolution"
+		// issue. The perspective frustum aspect here comes ONLY from
+		// Environment.screenWidth/Height (force-clamped to 800x600 by the
+		// HUD-RES-CLAMP, gameos_graphics.cpp), while the scene FBO + glViewport
+		// rasterize at Environment.drawableWidth/Height (native FULLSCREEN_DESKTOP
+		// drawable). When those aspects differ, geometry is stretched in X by
+		// (vpAspect/projAspect) and the water FS screen-space derivatives
+		// (dFdx/dFdy) go anisotropic. stretchX != 1.0 => mismatch present.
+		static const bool s_waAspect = (getenv("MC2_WATER_ASPECT_DIAG") != nullptr);
+		if (s_waAspect) {
+			const float projAspect = (float)Environment.screenWidth /
+			                         (float)(Environment.screenHeight ? Environment.screenHeight : 1);
+			const float vpAspect   = (float)Environment.drawableWidth /
+			                         (float)(Environment.drawableHeight ? Environment.drawableHeight : 1);
+			const float stretchX   = projAspect != 0.0f ? (vpAspect / projAspect) : 0.0f;
+			fprintf(stderr,
+				"[WATER_ASPECT_DIAG v1] proj=%dx%d (aspect=%.4f, 4:3=1.333) "
+				"viewport=%dx%d (aspect=%.4f) stretchX=%.4f (1.0=match) "
+				"dFdx/dFdy_aniso~=%.4f\n",
+				Environment.screenWidth, Environment.screenHeight, projAspect,
+				Environment.drawableWidth, Environment.drawableHeight, vpAspect,
+				stretchX, stretchX != 0.0f ? (1.0f / stretchX) : 0.0f);
+		}
 	}
 }
 

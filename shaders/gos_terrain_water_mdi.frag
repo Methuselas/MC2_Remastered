@@ -37,7 +37,8 @@ uniform PREC float time;          // seconds — used for water animation
 uniform PREC vec4 cameraPos;      // water-v1: MC2 world-space camera (Fresnel)
 uniform PREC float alphaDepth;    // MapData::alphaDepth (world-units); shore smoothstep range
 uniform int u_waterDebugMode;     // WATER-DEBUG-VIEWS-1: fragment/material-space debug.
-                                  // 0=Final 1=Tint 2=Alpha 3=Normal 4=Depth 5=Shore 6=Lighting.
+                                  // 0=Final 1=Tint 2=Alpha 3=Normal 4=Depth 5=Shore 6=Lighting
+                                  // 7=SHReflect 8=RTsample 9=ReflectBlend 10=Aniso(aspect probe).
                                   // Distinct from VS geometry-space debugMode (MC2_RENDER_WATER_FASTPATH_DEBUG).
 uniform float u_waterSkyTintStrength;  // WATER-VISUAL-FIRST-SLICE: 0 = exact no-op (default).
 uniform vec3  u_waterSkyTintColor;     // camera-INDEPENDENT sky/horizon tint target (NOT fresnel)
@@ -246,6 +247,18 @@ void main(void)
             else if (u_waterDebugMode == 7) dbg = skyReflCol;                     // 7 Reflection: SH-L2 sky term (pre-Fresnel/strength)
             else if (u_waterDebugMode == 8) dbg = mix(vec3(0.0), rtSample.rgb, rtSample.a); // 8 RT sample: terrain reflection RT (black where invalid/alpha=0)
             else if (u_waterDebugMode == 9) dbg = reflectCol;                     // 9 Reflection blend: SH sky <- terrain RT (final reflected color, pre-Fresnel)
+            else if (u_waterDebugMode == 10) {                                    // 10 Aniso: screen-space derivative anisotropy probe
+                // WATER-ASPECT-PROBE: world-units-per-pixel in screen X vs Y. With a
+                // 4:3-locked projection rasterized into a non-16:9 viewport, X is
+                // stretched -> dFdx(WorldPos) shrinks vs dFdy -> ratio departs 1.0.
+                // Encoded so mid-gray(0.5)=isotropic; the FLATTER/uniform the tone,
+                // the cleaner the read. ~0.5 everywhere = no mismatch; a uniform
+                // shift away from 0.5 = anisotropic derivatives (root-cause confirm).
+                PREC vec2 ddx   = vec2(dFdx(WorldPos.x), dFdx(WorldPos.y));
+                PREC vec2 ddy   = vec2(dFdy(WorldPos.x), dFdy(WorldPos.y));
+                PREC float aniso = length(ddx) / max(length(ddy), 1e-6);
+                dbg = vec3(clamp(aniso * 0.5, 0.0, 1.0));
+            }
             else                            dbg = vec3(1.0, 0.0, 1.0);            // unknown -> magenta sentinel
             FragColor = vec4(dbg, 1.0);
             GBuffer1  = rc_gbuffer1_screenShadowEligible(vec3(0.0, 0.0, 1.0));
