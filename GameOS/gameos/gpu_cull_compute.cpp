@@ -869,6 +869,17 @@ void compute_dispatch() {
     const GLsizeiptr copyBytes =
         (slotBytes <= (GLsizeiptr)s_stagingBytes) ? slotBytes : (GLsizeiptr)s_stagingBytes;
 
+    // NVIDIA-COHERENCE-1: the substrate buffer is CPU-written through a persistent
+    // GL_MAP_COHERENT_BIT mapping (substrate_appendStaticPropRecord). Coherent
+    // mapping makes those writes visible without an explicit flush, but ordering
+    // them BEFORE this server-side glCopyBufferSubData read still requires
+    // GL_CLIENT_MAPPED_BUFFER_BARRIER_BIT. AMD RDNA3 happens to serialize it;
+    // NVIDIA may copy pre-write (stale/zero) record bytes -> the cull frustum-test
+    // rejects every static prop -> instanceCount=0 -> trees invisible in the COLOR
+    // pass while still casting shadows (the shadow path is cull-independent).
+    // Candidate fix for the NVIDIA invisible-trees report; AMD-safe (no-op when
+    // already coherent), near-zero cost.
+    glMemoryBarrier(GL_CLIENT_MAPPED_BUFFER_BARRIER_BIT);
     { TracyGpuZone("Cull.CopyStaging");
     glBindBuffer(GL_COPY_READ_BUFFER,  substrateSsbo);
     glBindBuffer(GL_COPY_WRITE_BUFFER, s_stagingSsbo);
@@ -1023,6 +1034,17 @@ void compute_dispatch() {
                                       static_cast<GLsizeiptr>(effectiveCount * sizeof(GLuint)),
                                       GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
         }
+
+        // NVIDIA-CLEAR-RACE-1: order the counter clears above before the cull
+        // dispatch below. glClearNamedBufferSubData is a buffer-update that the
+        // dispatch's atomicAdd(bucketCountData) reads; without this barrier NVIDIA
+        // may reorder the clear after the dispatch -> atomics see stale (large)
+        // counts -> slot>=cap -> nothing scattered into visibleIds -> the patch
+        // shader writes instanceCount=0 -> color pass draws no props (shadows,
+        // which are cull-independent, still draw them). The C2 readback path
+        // already issues this barrier after its identical clear; the C1b path was
+        // missing it. AMD-safe. Candidate fix for the NVIDIA invisible-trees bug.
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_BUFFER_UPDATE_BARRIER_BIT);
 
         // 2. Bind C1b SSBOs and cull dispatch.
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, DEBUG_SSBO_BINDING,    s_visibleIdsBuf);
