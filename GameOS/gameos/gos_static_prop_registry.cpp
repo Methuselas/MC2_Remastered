@@ -1088,6 +1088,31 @@ void flush() {
             (s_flushCachedBlob || s_persistentBuckets)
             && freshLightIdx != 0xFFFFFFFFu
             && freshLightIdx == s_recipes[rng.first].lightDataIndex;
+        // [LEAFDIAG] MC2_STATIC_LEAF_DIAG=1 — pinpoint the no-trees-on-registered-path
+        // (MC2_FORCE_DYNAMIC_TREES=0) bug. RenderDoc A/B proved: the main-view prop draw
+        // fires with the correct instance COUNT but the bound per-instance modelMatrix
+        // data is ZERO -> degenerate -> invisible. This logs, per visible static range,
+        // which flush branch it takes and whether the recipe LEAF data it replays is
+        // itself zero (the suspected root cause). Default-off: zero behavior change.
+        {
+            static const bool s_leafDiag = (getenv("MC2_STATIC_LEAF_DIAG") != nullptr);
+            static int s_leafDiagLogged = 0;
+            if (s_leafDiag && rng.count > 0 && s_leafDiagLogged < 48) {
+                ++s_leafDiagLogged;
+                const float* m0 = s_recipes[rng.first].modelMatrix;
+                const uint32_t midI = rng.count / 2u;
+                const float* mm = s_recipes[rng.first + midI].modelMatrix;
+                const bool leaf0Zero = (m0[0]==0.0f && m0[3]==0.0f && m0[7]==0.0f && m0[11]==0.0f);
+                const bool midZero   = (mm[0]==0.0f && mm[3]==0.0f && mm[7]==0.0f && mm[11]==0.0f);
+                fprintf(stderr,
+                    "[LEAFDIAG] regIdx=%u typeID=%u count=%u cachedBlob=%d freshLight=%u "
+                    "storedLight=%u leaf0_rawXYZ=(%.1f,%.1f,%.1f) leaf0Zero=%d midZero=%d\n",
+                    regIdx, s_recipes[rng.first].typeID, rng.count, (int)useCachedBlob,
+                    freshLightIdx, s_recipes[rng.first].lightDataIndex,
+                    -m0[3], m0[11], m0[7], (int)leaf0Zero, (int)midZero);
+                fflush(stderr);
+            }
+        }
         if (!useCachedBlob) {
         // --- GATE OFF: legacy per-leaf rebuild path (verbatim, moved) ---
         // [SPFLUSH_COST_SPLIT v1] submit_loop_total span wraps the whole leaf loop
