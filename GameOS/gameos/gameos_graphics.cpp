@@ -1658,19 +1658,19 @@ class gosRenderer {
         const vec4& getTerrainLightDir() const { return terrain_light_dir_; }
         void setTerrainDetailParams(float tiling, float strength) { terrain_detail_tiling_ = tiling; terrain_detail_strength_ = strength; }
         void setTerrainMaterialNormal(int idx, GLuint texId) {
-            if (idx >= 0 && idx < 5) {
+            if (idx >= 0 && idx < 9) {
                 terrain_mat_normal_[idx] = texId;
                 terrain_normal_array_dirty_ = true;
             }
         }
         void buildTerrainNormalArray() {
-            // Require all 5 slots to be filled. Log once if incomplete.
+            // Require slots 0-4 (rock/grass/dirt/concrete/snow). Slots 5-8 are optional.
             for (int i = 0; i < 5; ++i) {
                 if (terrain_mat_normal_[i] == 0) {
                     static bool s_warned = false;
                     if (!s_warned) {
                         s_warned = true;
-                        SPEW(("GRAPHICS", "buildTerrainNormalArray: slot %d is zero -- deferring build until all 5 slots are set\n", i));
+                        SPEW(("GRAPHICS", "buildTerrainNormalArray: slot %d is zero -- deferring build until slots 0-4 are set\n", i));
                     }
                     return;
                 }
@@ -1692,8 +1692,10 @@ class gosRenderer {
             if (refW <= 0 || refH <= 0)
                 STOP(("buildTerrainNormalArray: slot 0 has invalid size %dx%d", refW, refH));
 
-            // Assert all 5 textures match in dimensions and internal format.
-            for (int i = 1; i < 5; ++i) {
+            // Assert all present textures (required 1-4 and any loaded optional 5-8)
+            // match slot 0 in dimensions and internal format.
+            for (int i = 1; i < 9; ++i) {
+                if (terrain_mat_normal_[i] == 0) continue;  // optional slot absent
                 GLint wi = 0, hi = 0, fmti = 0;
                 glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[i]);
                 glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH,           &wi);
@@ -1723,19 +1725,21 @@ class gosRenderer {
                 terrain_normal_array_tex_ = 0;
             }
 
-            // Allocate the GL_TEXTURE_2D_ARRAY with GL_RGBA8 storage.
+            // Allocate 9-layer GL_TEXTURE_2D_ARRAY (slots 0-4 required, 5-8 optional).
             // glGetTexImage always decompresses if the source is compressed; we
             // receive RGBA8 regardless of the source internal format.
             glGenTextures(1, &terrain_normal_array_tex_);
             glBindTexture(GL_TEXTURE_2D_ARRAY, terrain_normal_array_tex_);
             glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8,
-                         refW, refH, 5 /*layers*/,
+                         refW, refH, 9 /*layers*/,
                          0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 
             // Copy all mip levels from each source texture into the array.
             // Normal-map mips are authored — do not use glGenerateMipmap here
             // (averaging would shorten normals; hardware-generated mips differ
             // from the source importer's output).
+            // Missing optional slots (terrain_mat_normal_[i] == 0) get a flat
+            // neutral normal (128,128,255,255) so sampling them is always valid.
             std::vector<uint8_t> pixels;
             int levelsCopied = 0;
             for (int level = baseLevel; level < baseLevel + numLevels; ++level) {
@@ -1749,15 +1753,21 @@ class gosRenderer {
 
                 glBindTexture(GL_TEXTURE_2D_ARRAY, terrain_normal_array_tex_);
                 glTexImage3D(GL_TEXTURE_2D_ARRAY, level, GL_RGBA8,
-                             mipW, mipH, 5, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+                             mipW, mipH, 9, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 
                 const size_t mipBytes = (size_t)mipW * mipH * 4;
                 pixels.resize(mipBytes);
 
-                for (int layer = 0; layer < 5; ++layer) {
-                    glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[layer]);
-                    glGetTexImage(GL_TEXTURE_2D, level, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-                    glBindTexture(GL_TEXTURE_2D, 0);
+                for (int layer = 0; layer < 9; ++layer) {
+                    if (terrain_mat_normal_[layer] != 0) {
+                        glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[layer]);
+                        glGetTexImage(GL_TEXTURE_2D, level, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                        glBindTexture(GL_TEXTURE_2D, 0);
+                    } else {
+                        // Flat neutral normal (128,128,255,255) for absent optional slot.
+                        auto* p32 = reinterpret_cast<uint32_t*>(pixels.data());
+                        std::fill(p32, p32 + mipW * mipH, 0xFFFF8080u);
+                    }
 
                     glBindTexture(GL_TEXTURE_2D_ARRAY, terrain_normal_array_tex_);
                     glTexSubImage3D(GL_TEXTURE_2D_ARRAY, level,
@@ -1789,8 +1799,8 @@ class gosRenderer {
         // Phase 10 Step 5: expose the merged material normal sampler2DArray so the
         // terrain LOD chunk path (a bolt-on draw) can bind the SAME texture the
         // legacy terrain uses. Builds lazily if dirty/never-built; returns 0 until
-        // all 5 material slots are populated. GL context assumed live (call from a
-        // draw, like the legacy bind sites).
+        // required slots 0-4 are populated (slots 5-8 optional). GL context assumed
+        // live (call from a draw, like the legacy bind sites).
         GLuint getTerrainNormalArrayTexEnsureBuilt() {
             if (terrain_normal_array_dirty_ || terrain_normal_array_tex_ == 0)
                 buildTerrainNormalArray();
@@ -2001,7 +2011,7 @@ class gosRenderer {
         vec4 terrain_light_dir_;
         float terrain_detail_tiling_ = 1.0f;
         float terrain_detail_strength_ = 4.0f;
-        GLuint terrain_mat_normal_[5] = {0, 0, 0, 0, 0};
+        GLuint terrain_mat_normal_[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
         GLuint terrain_normal_array_tex_   = 0;     // GL_TEXTURE_2D_ARRAY; 0 = not built
         bool   terrain_normal_array_dirty_ = false; // rebuild needed at next bind
         float terrain_cell_scale_ = 8.0f;
@@ -8065,6 +8075,17 @@ void __stdcall gos_LightDataSsbo_Upload(const void* data, size_t bytes)
 		}
 		s_lightDataSsboBytes = (GLsizeiptr)bytes;
 	} else {
+		// LIGHTSSBO-ORPHAN-1: buffer orphaning eliminates the implicit GPU pipeline
+		// sync stall on NVIDIA. glBufferSubData on a buffer that the GPU is still
+		// reading (from the prior frame's draw calls) forces the NVIDIA driver to
+		// block the CPU until the GPU finishes — observed as ~80ms in the
+		// RenderLists.LightDataUpload Tracy zone on a 1050 Ti. AMD tolerates it
+		// silently. glBufferData(nullptr) discards the old backing store immediately;
+		// the driver retires it asynchronously once the GPU finishes, and hands the
+		// CPU a fresh store with no sync stall. GL_STREAM_DRAW is the correct hint
+		// for write-once-per-frame data (vs GL_DYNAMIC_DRAW which NVIDIA can place
+		// in VRAM, making the subsequent write go through PCI-E with sync).
+		glBufferData(GL_SHADER_STORAGE_BUFFER, s_lightDataSsboBytes, nullptr, GL_STREAM_DRAW);
 		glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)bytes, data);
 	}
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, LIGHT_DATA_SSBO_BINDING, s_lightDataSsbo);
@@ -8091,7 +8112,13 @@ void __stdcall gos_LightDataSsbo_UploadSplit(const void* data, size_t prefixByte
 	}
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_lightDataSsbo);
-	if (prefixDirty && prefixBytes > 0) {
+	// LIGHTSSBO-ORPHAN-1: orphan before any write to avoid implicit GPU sync stall
+	// on NVIDIA (same root cause as the non-split path above). After orphaning, the
+	// old data store is gone, so we must re-upload the prefix unconditionally —
+	// the prefixDirty skip is disabled. On AMD the orphan is equally fast (~1us)
+	// and eliminates the latent stall if the GPU falls behind the CPU.
+	glBufferData(GL_SHADER_STORAGE_BUFFER, s_lightDataSsboBytes, nullptr, GL_STREAM_DRAW);
+	if (prefixBytes > 0) {
 		glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)prefixBytes, base);
 	}
 	if (totalBytes > prefixBytes) {
@@ -8101,7 +8128,8 @@ void __stdcall gos_LightDataSsbo_UploadSplit(const void* data, size_t prefixByte
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, LIGHT_DATA_SSBO_BINDING, s_lightDataSsbo);
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 	if (s_lightSsboTrace) {
-		std::fprintf(stderr, "[LIGHTSSBO v2] event=split prefixDirty=%d prefix=%zu suffix=%zu\n",
+		// prefixDirty is always treated as true post-orphan; log what was requested
+		std::fprintf(stderr, "[LIGHTSSBO v2] event=split_orphan prefixDirty=%d prefix=%zu suffix=%zu\n",
 		             prefixDirty ? 1 : 0, prefixBytes, totalBytes - prefixBytes);
 		std::fflush(stderr);
 	}
