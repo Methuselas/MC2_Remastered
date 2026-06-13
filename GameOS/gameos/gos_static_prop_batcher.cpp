@@ -1441,6 +1441,22 @@ void ensureRingCapacity(size_t neededInstances, size_t neededColorEntries) {
     s_colorCapacity    = std::max(neededColorEntries,
         s_colorCapacity    ? s_colorCapacity    * 2 : INITIAL_COLORS_PER_FRAME);
 
+    // SSBO-BIND-ALIGN: the legacy (non-coalesce) per-type draw binds at
+    // slotInstByteBase = s_frameSlot * s_instanceCapacity * sizeof (and the color
+    // base likewise). Those offsets must be multiples of
+    // GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT or ring slots 1+ bind misaligned on
+    // NVIDIA -> GL_INVALID_VALUE -> SSBO unbound -> props invisible. This is NOT
+    // dormant: the coalesce path disarms on NVIDIA (the guard trips because
+    // sizeof(GpuStaticPropInstance)=112 is not alignment-aligned), so the LEGACY
+    // path is the active one there. Round capacity up to an alignment-multiple
+    // (elements) so cap*sizeof is aligned; the alloc and the slot base both derive
+    // from capacity, so this aligns every slot consistently.
+    {
+        const unsigned long long a = (unsigned long long)gpuSsboOffsetAlignment();
+        s_instanceCapacity = (size_t)gpuAlignUp((unsigned long long)s_instanceCapacity, a);
+        s_colorCapacity    = (size_t)gpuAlignUp((unsigned long long)s_colorCapacity,    a);
+    }
+
     const GLbitfield storageFlags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
     const GLbitfield mapFlags     = storageFlags;
 
@@ -7211,6 +7227,15 @@ void GpuStaticPropBatcher::flushShadow(bool skipStaticBuildingTypes) {
     glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 0, &prevSsbo0);
 
     glUseProgram(shadowProg);
+
+    // SSBO-BIND-ALIGN: flushShadow binds a per-type RANGE (r.instanceByteOffset) with
+    // gl_InstanceID relative to the range start, so the shared u_instBase uniform
+    // (added in shadow_static_prop.vert for the building/dynamic WHOLE-buffer passes)
+    // MUST be 0 here. Uniforms persist across glUseProgram, so without this reset
+    // flushShadow inherits a stale non-zero base left by drawDynamicPropShadows ->
+    // instances_.i[staleBase + gl_InstanceID] reads out of range -> shadows garbled.
+    { const GLint ibLoc = glGetUniformLocation(shadowProg, "u_instBase");
+      if (ibLoc >= 0) glUniform1i(ibLoc, 0); }
 
     // Upload the dynamic (per-frame) light-space matrix.
     const GLint lsLoc = glGetUniformLocation(shadowProg, "lightSpaceMatrix");

@@ -1367,14 +1367,24 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
     }
 
     const GLsizeiptr thinSlotBytes = (GLsizeiptr)(maxThinRecords * sizeof(WaterThinRecord));
+    // SSBO-BIND-ALIGN (ARMED PATH): the per-slot bind offset thinSlotOffset =
+    // g_thinSlot * g_thinSlotCapacity must be a multiple of
+    // GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT. sizeof(WaterThinRecord)=48, so
+    // maxThinRecords*48 is aligned only when maxThinRecords%16==0 -> otherwise slots
+    // 1+ bind misaligned on NVIDIA (GL_INVALID_VALUE -> the water thin SSBO never
+    // binds -> the cull writes/reads nothing -> water FLASHES). This is the live
+    // armed water path (the earlier fix only padded the unarmed fallback). Pad the
+    // per-slot STRIDE; thinSlotBytes (raw) stays the bind SIZE (<= stride).
+    const GLsizeiptr thinSlotStride = (GLsizeiptr)gpuAlignUp(
+        (unsigned long long)thinSlotBytes, (unsigned long long)gpuSsboOffsetAlignment());
     if (g_thinBuffer == 0) {
         glGenBuffers(1, &g_thinBuffer);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinBuffer);
         MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER,
-                     thinSlotBytes * (GLsizeiptr)kThinRingSlots,
+                     thinSlotStride * (GLsizeiptr)kThinRingSlots,
                      nullptr, GL_DYNAMIC_DRAW);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-        g_thinSlotCapacity = (uint32_t)thinSlotBytes;
+        g_thinSlotCapacity = (uint32_t)thinSlotStride;
         g_thinSlot = 0;
     }
     // Build and upload per-frame quad window SSBO.
