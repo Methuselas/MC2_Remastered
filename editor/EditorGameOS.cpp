@@ -312,6 +312,10 @@ void __stdcall InitGameOS(HINSTANCE /*hInstance*/, HWND hWindow, char* commandLi
 
 #ifdef MC2_IMGUI
                 EditorGameOSTrace("InitGameOS: MC2_IMGUI defined -- before GuiRuntime::Init sdlWin=%p", graphics::getSDLWindow());
+                // Editor opts into editor-mode ImGui (docking dockspace + auto-dock)
+                // BEFORE Init() so DockingEnable is set. The game never calls this, so
+                // its ImGui windows float. Must precede Init().
+                GuiRuntime::SetEditorMode(true);
                 GuiRuntime::Init();
                 EditorGameOSTrace("InitGameOS: after GuiRuntime::Init g_imguiInitialized=%d", g_imguiInitialized ? 1 : 0);
 #endif

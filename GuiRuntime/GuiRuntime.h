@@ -3,6 +3,15 @@
 #pragma once
 
 namespace GuiRuntime {
+    // Editor-mode opt-in. gui_runtime is ONE static lib linked into both the game
+    // and the editor exe, so it cannot tell which it is from a compile macro. The
+    // editor calls SetEditorMode(true) ONCE before Init(); the game never does.
+    // Editor-only ImGui behavior (the docking dockspace + auto-dock) is gated on
+    // this, so in the GAME, ImGui windows (e.g. Graphics Options) FLOAT instead of
+    // docking. Must be set before Init() to take effect on DockingEnable.
+    void SetEditorMode(bool on);
+    bool IsEditorMode();
+
     void Init();      // call once after GL context created
     void Shutdown();  // call once before context destroyed
     void NewFrame();  // call each frame before game UI

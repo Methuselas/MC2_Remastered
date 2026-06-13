@@ -31,6 +31,12 @@ static bool isEnabled() {
     return cached == 1;
 }
 
+// Editor-mode flag (see header). Default false == GAME: no editor dockspace, so
+// ImGui windows float. The editor sets it true before Init().
+static bool s_editorMode = false;
+void GuiRuntime::SetEditorMode(bool on) { s_editorMode = on; }
+bool GuiRuntime::IsEditorMode() { return s_editorMode; }
+
 void GuiRuntime::Init() {
     if (!isEnabled()) return;
 
@@ -47,7 +53,10 @@ void GuiRuntime::Init() {
     // Docking (vendored ImGui swapped to v1.91.8-docking): floating editor panels ->
     // real dockable layout, default-docked into a right-side column on first run (see
     // BuildEditorDockspace). Layout persists via imgui.ini. Opt out: MC2_EDITOR_DOCK=0.
-    {
+    // EDITOR ONLY: docking is an editor affordance. In the GAME (s_editorMode
+    // false) we must NOT enable docking -- a docked window cannot be dragged out
+    // and the central dockspace is editor UX. Game ImGui windows float.
+    if (s_editorMode) {
         const char* d = std::getenv("MC2_EDITOR_DOCK");
         if (!d || strcmp(d, "0") != 0)
             io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
@@ -59,7 +68,7 @@ void GuiRuntime::Init() {
     // Disabling ini persistence under autodock means every launch starts from the
     // clean built layout with ALL panels docked. (MC2_EDITOR_AUTODOCK=0 keeps the
     // saved layout.) In-session re-docks still work; they just don't persist.
-    {
+    if (s_editorMode) {
         const char* a = std::getenv("MC2_EDITOR_AUTODOCK");
         if (!a || strcmp(a, "0") != 0)
             io.IniFilename = nullptr;
@@ -109,6 +118,7 @@ bool GuiRuntime::RttEnabled() {
     return s_on != 0;
 }
 bool GuiRuntime::AutoDockActive() {
+    if (!s_editorMode) return false;   // GAME: nothing auto-docks
     static int s = -1;
     if (s < 0) {
         const char* a = std::getenv("MC2_EDITOR_AUTODOCK");
@@ -126,6 +136,7 @@ int  GuiRuntime::ViewportRectW() { return s_vpW; }
 int  GuiRuntime::ViewportRectH() { return s_vpH; }
 
 static bool dockEnabled() {
+    if (!s_editorMode) return false;   // GAME: no editor dockspace -> windows float
     const char* d = std::getenv("MC2_EDITOR_DOCK");
     return (!d || strcmp(d, "0") != 0);
 }
