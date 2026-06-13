@@ -464,6 +464,20 @@ void mission_init(uint32_t numVertices, uint32_t maxLights) {
     glGenBuffers(1, &s_computeOutputSsbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_computeOutputSsbo);
     glBufferStorage(GL_SHADER_STORAGE_BUFFER, outputBytes, nullptr, GL_DYNAMIC_STORAGE_BIT);
+    // glBufferStorage leaves VRAM UNINITIALISED. The lighting compute only writes
+    // the visible vertex window [packMinVN, packMaxVN]; full-recipe-authoritative
+    // water (gpu_driven_water.comp) reads lighting[vn].lightRGB for water quads
+    // map-wide, including out-of-window vertices. On AMD fresh pages read back
+    // ~zero (benign); NVIDIA hands back arbitrary prior-tenant VRAM → per-quad
+    // green/blue "streaks" that re-roll each launch (restart appears to fix it).
+    // Clear to 0xFFFFFFFF — the engine "no-tint" white sentinel, identical to the
+    // CPU DRAM shadow init (s_dramShadow, ~line 447) and the vertex-pool default
+    // (vertex.h:122). Cleared while still bound (glClearBufferData targets the
+    // bound buffer); per-mission realloc means this one-time clear suffices.
+    {
+        const uint32_t kWhite = 0xFFFFFFFFu;
+        glClearBufferData(GL_SHADER_STORAGE_BUFFER, GL_R32UI, GL_RED_INTEGER, GL_UNSIGNED_INT, &kWhite);
+    }
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
     // --- 3-slot staging ring (CPU-readable persistent map, BAR memory) ---
