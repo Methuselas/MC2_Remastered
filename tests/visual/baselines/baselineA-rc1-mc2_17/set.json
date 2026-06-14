@@ -1,7 +1,7 @@
 {
   "set_id": "baselineA-rc1-mc2_17",
-  "status": "candidate",
-  "blessed_commit": null,
+  "status": "blessed",
+  "blessed_commit": "8461e3e0d8ca9e7580e7065baf105734186e817e",
   "supersedes": null,
   "mission": "mc2_17",
   "path": "A:\\Games\\mc2-opengl-src\\.claude\\worktrees\\nifty-mendeleev\\tests\\visual\\baselines\\baselineA-rc1-mc2_17",
