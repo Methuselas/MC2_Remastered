@@ -152,3 +152,4 @@ tools/terrain_gen/__pycache__/
 
 # S9 visual-capture scratch (blessed sets live in tests/visual/baselines/)
 tests/visual/captures/
+tests/visual/compare/
