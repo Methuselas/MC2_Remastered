@@ -74,6 +74,31 @@ def _kill_existing_mc2() -> None:
     time.sleep(1)
 
 
+def park_cursor_center() -> None:
+    """Pin the OS cursor to screen center.
+
+    LOAD-BEARING for determinism: the MC2 RTS camera edge-scrolls whenever the
+    desktop cursor sits at a screen edge -- regardless of window focus or
+    whether mc2.exe is foreground/minimized (memory: smoke_autonomous_run_pattern
+    fact #2). The bookmark sweep re-applies the pose each settle frame, but
+    edge-scroll adds a per-frame camera delta on top, so an un-parked cursor
+    makes wide/high-altitude framings drift nondeterministically (it "sometimes
+    matches" only when the cursor happens to land off-edge). Parking center kills
+    the edge-scroll input entirely. Dependency-free (Win32 SetCursorPos); no-op
+    off-Windows.
+    """
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        w = user32.GetSystemMetrics(0)  # SM_CXSCREEN
+        h = user32.GetSystemMetrics(1)  # SM_CYSCREEN
+        user32.SetCursorPos(w // 2, h // 2)
+    except Exception as e:
+        print(f"[viscap] WARN park cursor: {e}", file=sys.stderr)
+
+
 def run_one(exe: Path, mission: str, bookmarks_path: Path, out_dir: Path,
             trigger_frame: int, settle: int, duration: int,
             deterministic_clock: bool) -> dict:
@@ -94,6 +119,7 @@ def run_one(exe: Path, mission: str, bookmarks_path: Path, out_dir: Path,
                 f.unlink()
 
     _kill_existing_mc2()
+    park_cursor_center()   # before launch: no edge-scroll from a stray cursor
 
     log_path = out_dir / f"{mission_token}_capture.log"
     log_fp = open(log_path, "w", encoding="utf-8", errors="replace")
@@ -125,9 +151,13 @@ def run_one(exe: Path, mission: str, bookmarks_path: Path, out_dir: Path,
                             cwd=str(exe.parent), env=env,
                             startupinfo=startupinfo)
 
-    # Poll for all expected PNGs, or process exit, or timeout.
+    # Poll for all expected PNGs, or process exit, or timeout. Re-park the
+    # cursor every iteration so it stays pinned center through the ENTIRE sweep
+    # window (trigger frame + per-bookmark settle) -- a single pre-launch park
+    # is not enough if the cursor moves during the run.
     deadline = t0 + duration + 30
     while time.time() < deadline:
+        park_cursor_center()
         if all(p.exists() for p in expected_pngs.values()):
             # Give the engine a beat to finish the last sidecar write.
             time.sleep(1.0)

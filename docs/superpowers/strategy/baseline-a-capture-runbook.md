@@ -9,11 +9,27 @@ is the operational checklist + the warmup rule that keeps a bless honest.
 
 The first cold run of a capture is NOT representative: shader compile, texture
 residency, static-prop streaming, PBR cache, and first-use GL state all warm on
-run 1. Blessing a cold run blesses first-use noise. Measured on `mc2_01`
-2026-06-13 off `mc2-win64-v0.4d-rc1`: `highangle_wide` produced a different
-sha on the cold run than on warm runs — and, worse, kept drifting run-to-run
-even after warmup (see Known-unstable). The other two bookmarks were byte-
-identical on **every** run.
+run 1. Blessing a cold run blesses first-use noise.
+
+## Cursor MUST be parked (load-bearing)
+
+The MC2 RTS camera **edge-scrolls whenever the OS cursor sits at a screen edge
+— regardless of window focus or whether mc2.exe is minimized**
+(memory: `smoke_autonomous_run_pattern` fact #2). The bookmark sweep re-applies
+the pose each settle frame, but edge-scroll adds a per-frame camera delta on
+top, so an un-parked cursor makes wide/high-altitude framings drift
+nondeterministically (they "sometimes match" only when the cursor happens to
+land off-edge). `run_visual_capture.py` parks the cursor to screen center
+(`SetCursorPos`) before launch AND every poll iteration, so it stays pinned
+through the entire sweep window.
+
+**This was a real harness bug, not engine nondeterminism.** 2026-06-13 off
+`mc2-win64-v0.4d-rc1`: with no cursor park, `highangle_wide` cycled
+`2756b466`/`9d865796`/`d04198ad` across runs while the two tighter poses stayed
+byte-identical (their narrow framing masked the edge-scroll delta). Adding the
+cursor park made **all three** byte-stable (`highangle_wide` = `2756b466` every
+run). Do not attribute capture drift to the engine before confirming the cursor
+is parked.
 
 ## The rule
 
@@ -65,28 +81,20 @@ only produces the candidate + the evidence. Re-bless on any *intentional*
 visual change, naming the change in the commit (lab §3, same discipline as
 `tests/smoke/baselines.json`).
 
-## Current candidate: `baselineA-rc1`
+## Current candidate: `baselineA-rc1` (FULL 3/3)
 
 - Off `mc2-win64-v0.4d-rc1` (exe sha256 `6383bbf0…`; byte-identical to the
   deployed v0.4 game exe — same build `c5d255de`). Worktree HEAD `df7630bc`.
-- **Stable (blessable):** `overview_center` (`93c8ef99…`, covers terrain_splat
-  + sky), `ridge_lowangle` (`11ac0201…`, covers terrain_lod_chunk_skirts +
-  shadow_cascade). Byte-identical across every run today.
-- **Excluded — known unstable (v2):** `highangle_wide` (covers
-  terrain_splat + static_prop_pbr). Cycles across runs (`2756b466` /
-  `9d865796` / `d04198ad`) with fixed timestep + sim-freeze engaged → the
-  drift source is async render-side (static-prop streaming / chunk-LOD
-  admission / PBR first-use), NOT the sim clock and NOT pure cold-start. The
-  sweep's `settle` flushes but does not *deterministically order* that
-  admission. Fix is engine-side (freeze/serialize the streaming source before
-  capture) and is **out of scope** until after Baseline-A v1 is blessed.
+- **All three bookmarks byte-stable** (runs 2 & 3 identical, cursor parked):
+  `overview_center` (`93c8ef99…`, terrain_splat + sky), `ridge_lowangle`
+  (`11ac0201…`, terrain_lod_chunk_skirts + shadow_cascade), `highangle_wide`
+  (`2756b466…`, terrain_splat + static_prop_pbr). No exclusions.
 
 ## Do NOT over-expand before bless
 
 Held until Baseline-A v1 is blessed (governance §3.4; lab §8): Tube merge,
 GlStateGuard, FX fixture, pixel-diff verdict hard-gates, more bookmark
-expansion, the `highangle_wide` streaming-freeze fix. The first blessed
-baseline can be small (2 bookmarks). It just needs to be real.
+expansion. The blessed baseline can be small. It just needs to be real.
 
 ## Artifact identity
 

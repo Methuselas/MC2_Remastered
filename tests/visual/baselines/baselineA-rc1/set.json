@@ -9,20 +9,20 @@
     "runs": 3,
     "warmup_discarded": 1,
     "rule": "runs[1:] byte-identical per bookmark",
-    "all_stable": false,
-    "partial": true
+    "all_stable": true,
+    "partial": false
   },
   "identity": {
     "schema": "mc2-manifest/1",
     "generator": "visual_capture",
-    "generated_utc": "2026-06-14T02:20:47Z",
+    "generated_utc": "2026-06-14T02:29:12Z",
     "host": "DESKTOP-P1N69B5",
     "git": {
-      "commit": "df7630bc04355330a1367b62f1cd43a08ebc4ba2",
-      "commit_short": "df7630bc0435",
+      "commit": "ec2c076de7d58e540f789b77b273dfb30d1d714b",
+      "commit_short": "ec2c076de7d5",
       "branch": "claude/nifty-mendeleev",
       "dirty": true,
-      "describe": "df7630bc-dirty"
+      "describe": "ec2c076d-dirty"
     },
     "exe": {
       "path": "A:\\Games\\mc2-opengl\\releases\\mc2-win64-v0.4d-rc1\\mc2.exe",
@@ -62,20 +62,18 @@
       ],
       "engine_deterministic": true,
       "stable_across_runs": true
-    }
-  ],
-  "excluded_unstable": [
+    },
     {
       "name": "highangle_wide",
+      "png": "mc2_01_highangle_wide.png",
+      "sha256": "2756b466ea97fbbf4ee4735fa4cff916e7c1833f74f447eb97d0dd075281fcaa",
       "covers": [
         "terrain_splat",
         "static_prop_pbr"
       ],
-      "reason": "byte-unstable across compared runs",
-      "shas": [
-        "2756b466ea97fbbf4ee4735fa4cff916e7c1833f74f447eb97d0dd075281fcaa",
-        "9d8657960b6aee53be80c165f5dcd86886ab461047733be725ae442e0c4a19a7"
-      ]
+      "engine_deterministic": true,
+      "stable_across_runs": true
     }
-  ]
+  ],
+  "excluded_unstable": []
 }
