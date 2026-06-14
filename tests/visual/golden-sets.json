@@ -3,7 +3,7 @@
   "sets": {
     "baselineA-rc1": {
       "set_id": "baselineA-rc1",
-      "status": "blessed",
+      "status": "retired",
       "blessed_commit": "8461e3e0d8ca9e7580e7065baf105734186e817e",
       "supersedes": null,
       "mission": "mc2_01",
@@ -42,11 +42,12 @@
           "MC2_VISUAL_SETTLE": "<unset>"
         },
         "zip_set": null
-      }
+      },
+      "superseded_by": "baselineA-head-mc2_01"
     },
     "baselineA-rc1-mc2_10": {
       "set_id": "baselineA-rc1-mc2_10",
-      "status": "blessed",
+      "status": "retired",
       "blessed_commit": "8461e3e0d8ca9e7580e7065baf105734186e817e",
       "supersedes": null,
       "mission": "mc2_10",
@@ -85,11 +86,12 @@
           "MC2_VISUAL_SETTLE": "<unset>"
         },
         "zip_set": null
-      }
+      },
+      "superseded_by": "baselineA-head-mc2_10"
     },
     "baselineA-rc1-mc2_17": {
       "set_id": "baselineA-rc1-mc2_17",
-      "status": "blessed",
+      "status": "retired",
       "blessed_commit": "8461e3e0d8ca9e7580e7065baf105734186e817e",
       "supersedes": null,
       "mission": "mc2_17",
@@ -120,6 +122,136 @@
           "size_bytes": 10402304
         },
         "deploy_target": "A:\\Games\\mc2-opengl\\releases\\mc2-win64-v0.4d-rc1",
+        "env_delta": {
+          "MC2_SMOKE_MODE": "<unset>",
+          "MC2_SMOKE_SEED": "<unset>",
+          "MC2_SMOKE_FIXED_TIMESTEP": "<unset>",
+          "MC2_VISUAL_CAPTURE_FRAME": "<unset>",
+          "MC2_VISUAL_SETTLE": "<unset>"
+        },
+        "zip_set": null
+      },
+      "superseded_by": "baselineA-head-mc2_17"
+    },
+    "baselineA-head-mc2_01": {
+      "set_id": "baselineA-head-mc2_01",
+      "status": "blessed",
+      "blessed_commit": "745a8a5ba88fe764bce23e9761c6cc2f4105f720",
+      "supersedes": null,
+      "mission": "mc2_01",
+      "path": "A:\\Games\\mc2-opengl-src\\.claude\\worktrees\\nifty-mendeleev\\tests\\visual\\baselines\\baselineA-head-mc2_01",
+      "stabilization": {
+        "runs": 3,
+        "warmup_discarded": 1,
+        "rule": "runs[1:] byte-identical per bookmark",
+        "all_stable": true,
+        "partial": false
+      },
+      "identity": {
+        "schema": "mc2-manifest/1",
+        "generator": "visual_capture",
+        "generated_utc": "2026-06-14T04:38:17Z",
+        "host": "DESKTOP-P1N69B5",
+        "git": {
+          "commit": "745a8a5ba88fe764bce23e9761c6cc2f4105f720",
+          "commit_short": "745a8a5ba88f",
+          "branch": "claude/nifty-mendeleev",
+          "dirty": true,
+          "describe": "745a8a5b-dirty"
+        },
+        "exe": {
+          "path": "A:\\Games\\mc2-opengl\\mc2-win64-v0.4\\mc2.exe",
+          "sha256": "b19acdf401536393490491da3ac4c9595d280ef5a77530cf9f9de18a3a8f1a5f",
+          "mtime_iso": "2026-06-14T04:30:11Z",
+          "size_bytes": 10404864
+        },
+        "deploy_target": "A:\\Games\\mc2-opengl\\mc2-win64-v0.4",
+        "env_delta": {
+          "MC2_SMOKE_MODE": "<unset>",
+          "MC2_SMOKE_SEED": "<unset>",
+          "MC2_SMOKE_FIXED_TIMESTEP": "<unset>",
+          "MC2_VISUAL_CAPTURE_FRAME": "<unset>",
+          "MC2_VISUAL_SETTLE": "<unset>"
+        },
+        "zip_set": null
+      }
+    },
+    "baselineA-head-mc2_10": {
+      "set_id": "baselineA-head-mc2_10",
+      "status": "blessed",
+      "blessed_commit": "745a8a5ba88fe764bce23e9761c6cc2f4105f720",
+      "supersedes": null,
+      "mission": "mc2_10",
+      "path": "A:\\Games\\mc2-opengl-src\\.claude\\worktrees\\nifty-mendeleev\\tests\\visual\\baselines\\baselineA-head-mc2_10",
+      "stabilization": {
+        "runs": 3,
+        "warmup_discarded": 1,
+        "rule": "runs[1:] byte-identical per bookmark",
+        "all_stable": true,
+        "partial": false
+      },
+      "identity": {
+        "schema": "mc2-manifest/1",
+        "generator": "visual_capture",
+        "generated_utc": "2026-06-14T04:41:28Z",
+        "host": "DESKTOP-P1N69B5",
+        "git": {
+          "commit": "745a8a5ba88fe764bce23e9761c6cc2f4105f720",
+          "commit_short": "745a8a5ba88f",
+          "branch": "claude/nifty-mendeleev",
+          "dirty": true,
+          "describe": "745a8a5b-dirty"
+        },
+        "exe": {
+          "path": "A:\\Games\\mc2-opengl\\mc2-win64-v0.4\\mc2.exe",
+          "sha256": "b19acdf401536393490491da3ac4c9595d280ef5a77530cf9f9de18a3a8f1a5f",
+          "mtime_iso": "2026-06-14T04:30:11Z",
+          "size_bytes": 10404864
+        },
+        "deploy_target": "A:\\Games\\mc2-opengl\\mc2-win64-v0.4",
+        "env_delta": {
+          "MC2_SMOKE_MODE": "<unset>",
+          "MC2_SMOKE_SEED": "<unset>",
+          "MC2_SMOKE_FIXED_TIMESTEP": "<unset>",
+          "MC2_VISUAL_CAPTURE_FRAME": "<unset>",
+          "MC2_VISUAL_SETTLE": "<unset>"
+        },
+        "zip_set": null
+      }
+    },
+    "baselineA-head-mc2_17": {
+      "set_id": "baselineA-head-mc2_17",
+      "status": "blessed",
+      "blessed_commit": "745a8a5ba88fe764bce23e9761c6cc2f4105f720",
+      "supersedes": null,
+      "mission": "mc2_17",
+      "path": "A:\\Games\\mc2-opengl-src\\.claude\\worktrees\\nifty-mendeleev\\tests\\visual\\baselines\\baselineA-head-mc2_17",
+      "stabilization": {
+        "runs": 3,
+        "warmup_discarded": 1,
+        "rule": "runs[1:] byte-identical per bookmark",
+        "all_stable": true,
+        "partial": false
+      },
+      "identity": {
+        "schema": "mc2-manifest/1",
+        "generator": "visual_capture",
+        "generated_utc": "2026-06-14T04:44:39Z",
+        "host": "DESKTOP-P1N69B5",
+        "git": {
+          "commit": "745a8a5ba88fe764bce23e9761c6cc2f4105f720",
+          "commit_short": "745a8a5ba88f",
+          "branch": "claude/nifty-mendeleev",
+          "dirty": true,
+          "describe": "745a8a5b-dirty"
+        },
+        "exe": {
+          "path": "A:\\Games\\mc2-opengl\\mc2-win64-v0.4\\mc2.exe",
+          "sha256": "b19acdf401536393490491da3ac4c9595d280ef5a77530cf9f9de18a3a8f1a5f",
+          "mtime_iso": "2026-06-14T04:30:11Z",
+          "size_bytes": 10404864
+        },
+        "deploy_target": "A:\\Games\\mc2-opengl\\mc2-win64-v0.4",
         "env_delta": {
           "MC2_SMOKE_MODE": "<unset>",
           "MC2_SMOKE_SEED": "<unset>",

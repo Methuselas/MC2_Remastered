@@ -1,6 +1,6 @@
 {
   "set_id": "baselineA-rc1-mc2_17",
-  "status": "blessed",
+  "status": "retired",
   "blessed_commit": "8461e3e0d8ca9e7580e7065baf105734186e817e",
   "supersedes": null,
   "mission": "mc2_17",
@@ -75,5 +75,6 @@
       "stable_across_runs": true
     }
   ],
-  "excluded_unstable": []
+  "excluded_unstable": [],
+  "superseded_by": "baselineA-head-mc2_17"
 }
