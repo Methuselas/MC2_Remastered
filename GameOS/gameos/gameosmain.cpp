@@ -768,6 +768,22 @@ int main(int argc, char** argv)
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
 
+    // MC2_LOG master log gate. stdout is UNBUFFERED (above), so every
+    // per-mission telemetry printf flushes synchronously -> 400ms+ console
+    // hitches when stdout is connected (a console or a pipe). Default
+    // (MC2_LOG unset): redirect stdout to the NUL device so NORMAL PLAY never
+    // pays that cost -- all the [TAG] printf telemetry is silently discarded.
+    // MC2_LOG set (to anything): keep stdout live so the smoke harness can
+    // parse [SMOKE v1]/[PERF v1]/etc., and so dev + hitch-catcher.bat see
+    // output. stderr is LEFT ALONE -- crashes, GL errors, and the
+    // [VISUAL_CAPTURE] confirmations stay visible regardless. The harness sets
+    // MC2_LOG=1 (scripts/run_smoke.py, scripts/run_visual_capture.py).
+    if (std::getenv("MC2_LOG") == nullptr) {
+        FILE* sink = freopen("NUL", "w", stdout);
+        (void)sink;  // NUL is always present on Windows; if it failed, stdout
+                     // simply stays connected (correct but hitchy) -- never fatal.
+    }
+
     // Tier-1 instrumentation: one-line banner so every log file is
     // self-describing about which traces are enabled.
     projectz_trace_init();

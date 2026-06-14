@@ -78,6 +78,11 @@ def run_one(cfg: RunConfig) -> RunResult:
 
     env = os.environ.copy()
     env["MC2_SMOKE_MODE"] = "1"
+    # MC2_LOG master gate: keep the engine's stdout telemetry live so the smoke
+    # harness can parse [SMOKE v1]/[PERF v1]/oracle tags. Without it the engine
+    # redirects stdout -> NUL (default, so NORMAL PLAY never hitches on the
+    # unbuffered per-mission printf flush). See gameosmain.cpp after setvbuf.
+    env["MC2_LOG"] = "1"
     env["MC2_HEARTBEAT"] = "1"
     env["MC2_TGL_POOL_TRACE"] = "1"
     env["MC2_ASSET_SCALE_TRACE"] = "1"

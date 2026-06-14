@@ -978,6 +978,21 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "used to prove the guards are pixel-neutral (byte-identical captures ON vs OFF). Pixel-neutral "
         "refactor; the explicit state set is identical on both paths."
     },
+    // MC2_LOG master log gate
+    {
+        "MC2_LOG",
+        "MC2_LOG",
+        EnvVarKind::Trace,
+        false,
+        "Master stdout log gate (gameosmain.cpp, right after setvbuf). stdout is "
+        "unbuffered, so per-mission telemetry printf flushes synchronously and "
+        "causes 400ms+ console hitches when stdout is connected. Default (unset): "
+        "freopen stdout -> NUL so NORMAL PLAY discards all [TAG] printf output and "
+        "never hitches. Set (to anything): keep stdout live for the smoke harness "
+        "([SMOKE v1] parsing), dev, and hitch-catcher.bat. stderr is never gated "
+        "(crashes / [VISUAL_CAPTURE] stay visible). Set =1 by run_smoke.py + "
+        "run_visual_capture.py; NOT set by the game launcher (so play stays fast)."
+    },
 };
 
 // ---------------------------------------------------------------------------

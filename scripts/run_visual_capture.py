@@ -130,6 +130,11 @@ def run_one(exe: Path, mission: str, bookmarks_path: Path, out_dir: Path,
 
     env = os.environ.copy()
     env["MC2_SMOKE_MODE"] = "1"
+    # MC2_LOG master gate: keep stdout live (engine default redirects it -> NUL
+    # so normal play never hitches on the unbuffered printf flush). Capture
+    # detection reads [VISUAL_CAPTURE] from stderr, but this keeps capture-run
+    # behavior identical to pre-gate. See gameosmain.cpp after setvbuf.
+    env["MC2_LOG"] = "1"
     env["MC2_SMOKE_SEED"] = "0xC0FFEE"
     if deterministic_clock:
         env["MC2_SMOKE_FIXED_TIMESTEP"] = "1"
