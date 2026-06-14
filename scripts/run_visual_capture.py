@@ -104,6 +104,10 @@ def run_one(exe: Path, mission: str, bookmarks_path: Path, out_dir: Path,
             deterministic_clock: bool) -> dict:
     """Launch one capture sweep; return a result dict (never raises on engine
     failure -- records it instead)."""
+    # The engine runs with cwd = the deploy dir and resolves
+    # MC2_VISUAL_CAPTURE_DIR relative to THAT, so a relative out_dir would write
+    # under the deploy (and fopen-fail if absent). Always pass an absolute path.
+    out_dir = Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     file_mission, marks = _load_bookmarks(bookmarks_path)
     mission_token = file_mission or mission

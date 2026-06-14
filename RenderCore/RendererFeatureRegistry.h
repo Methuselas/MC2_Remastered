@@ -965,6 +965,19 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "(i.e. the RAII restore is load-bearing). OBSERVATION-ONLY: the RAII save/restore itself is "
         "structural and always-on, independent of this var — the log only reports it. ZERO behavior change."
     },
+    // GLSTATEGUARD-SLICE-2
+    {
+        "MC2_GLSTATEGUARD_TERRAIN",
+        "MC2_GLSTATEGUARD_TERRAIN",
+        EnvVarKind::Feature,
+        true,
+        "GLSTATEGUARD-SLICE-2: kill-switch for the RAII depth/blend/cull ownership of the terrain "
+        "LOD chunk draw (gos_TerrainLodChunk_SubmitDrawCommands via mc2gl::GlScopedCapability + "
+        "GlScopedDepthState). Default-ON: guards own GL_DEPTH_TEST/WRITEMASK/DEPTH_FUNC/BLEND/CULL_FACE "
+        "save+set+restore. =0 reverts to the legacy hand-rolled save/restore (kept verbatim) — the A/B "
+        "used to prove the guards are pixel-neutral (byte-identical captures ON vs OFF). Pixel-neutral "
+        "refactor; the explicit state set is identical on both paths."
+    },
 };
 
 // ---------------------------------------------------------------------------

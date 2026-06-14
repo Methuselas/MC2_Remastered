@@ -68,6 +68,66 @@ private:
     GLuint prev_ = 0;
 };
 
+// --- Slice 2: composable render-state guards -------------------------------
+//
+// Slice 1 proved the RAII pattern on SSBO binding (a compute pass). Slice 2
+// introduces the first RENDER-state vocabulary so a draw pass can OWN the
+// depth/blend/cull state it depends on instead of inheriting it (the class of
+// bug behind the terrain transparency / depth-mask saga: a prior pass left
+// glDepthMask FALSE -> opaque terrain wrote color but no depth -> see-through).
+// Each guard captures the previous value in its ctor and restores it in its
+// dtor (restore-previous, exactly matching the hand-rolled save/restore it
+// replaces). Guards are non-copyable/movable; declare them at the point the
+// state is set and let scope exit restore. NOTE: if the guarded function ends
+// with gos_InvalidateRenderStateCache(), the guard MUST be block-scoped to
+// close BEFORE that call (GameOS re-reads raw GL there) — terrain has no such
+// call, so function scope is correct for it.
+
+// Enable or disable a GL capability for the scope; restore its prior
+// enabled/disabled state on destruction.
+class GlScopedCapability {
+public:
+    GlScopedCapability(GLenum cap, bool enable) : cap_(cap) {
+        prev_ = glIsEnabled(cap_);
+        if (enable) glEnable(cap_); else glDisable(cap_);
+    }
+    ~GlScopedCapability() {
+        if (prev_) glEnable(cap_); else glDisable(cap_);
+    }
+    GlScopedCapability(const GlScopedCapability&) = delete;
+    GlScopedCapability& operator=(const GlScopedCapability&) = delete;
+    GlScopedCapability(GlScopedCapability&&) = delete;
+    GlScopedCapability& operator=(GlScopedCapability&&) = delete;
+private:
+    GLenum    cap_;
+    GLboolean prev_ = GL_FALSE;
+};
+
+// Set the depth write-mask and depth-func for the scope; restore both on
+// destruction. (Depth-test enable is a capability -> use GlScopedCapability.)
+class GlScopedDepthState {
+public:
+    GlScopedDepthState(GLboolean mask, GLenum func) {
+        glGetBooleanv(GL_DEPTH_WRITEMASK, &prevMask_);
+        GLint f = GL_LESS;
+        glGetIntegerv(GL_DEPTH_FUNC, &f);
+        prevFunc_ = static_cast<GLenum>(f);
+        glDepthMask(mask);
+        glDepthFunc(func);
+    }
+    ~GlScopedDepthState() {
+        glDepthMask(prevMask_);
+        glDepthFunc(prevFunc_);
+    }
+    GlScopedDepthState(const GlScopedDepthState&) = delete;
+    GlScopedDepthState& operator=(const GlScopedDepthState&) = delete;
+    GlScopedDepthState(GlScopedDepthState&&) = delete;
+    GlScopedDepthState& operator=(GlScopedDepthState&&) = delete;
+private:
+    GLboolean prevMask_ = GL_TRUE;
+    GLenum    prevFunc_ = GL_LESS;
+};
+
 }  // namespace mc2gl
 
 #endif  // GL_STATE_GUARD_H

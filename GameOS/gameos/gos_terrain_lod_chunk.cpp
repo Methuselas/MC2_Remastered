@@ -2,13 +2,28 @@
 #include "utils/gl_utils.h"
 #include "utils/shader_builder.h"
 #include "gos_postprocess.h"   // Phase 10 Step 1c: shadow textures + light matrices
+#include "gl_state_guard.h"    // GlStateGuard slice 2: composable depth/blend/cull RAII
 #include "../../mclib/render_contract.h"  // [RENDER_PASS v1] noteRenderPass
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <vector>
 #include <map>
+
+// GlStateGuard slice 2 kill-switch. Default-ON: when set, the terrain chunk
+// draw owns its depth/blend/cull/mask/func via RAII guards (mc2gl::GlScoped*).
+// MC2_GLSTATEGUARD_TERRAIN=0 reverts to the legacy hand-rolled save/restore
+// (kept verbatim, nothing deleted) — the A/B used to prove the guards are
+// pixel-neutral. Sampled once at process start.
+static bool glStateGuardTerrainEnabled() {
+    static const bool on = []() {
+        const char* v = std::getenv("MC2_GLSTATEGUARD_TERRAIN");
+        return (v == nullptr) || (std::atoi(v) != 0);  // unset/nonzero=ON, 0=OFF
+    }();
+    return on;
+}
 
 // Terrain MVP matrix — exposed by gameos_graphics.cpp for all terrain draw paths.
 extern const float* gos_GetTerrainMVPMat4();
@@ -482,42 +497,63 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     glGetIntegerv(GL_CURRENT_PROGRAM, &prevProg);
     GLint prevVAO = 0;
     glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVAO);
-    // Phase 6: save cull state so we can disable it around skirt draws.
-    GLboolean prevCullFace = glIsEnabled(GL_CULL_FACE);
 
-    // Phase 10.3: chunk terrain is OPAQUE and must EXPLICITLY own depth state.
-    // The driver previously inherited GL_DEPTH_TEST / glDepthMask / GL_BLEND /
-    // glDepthFunc from whatever pass ran before. If a prior transparent/overlay
-    // pass left depth WRITES off (glDepthMask FALSE) or blend on, the terrain top
-    // renders color but writes NO depth -> never occludes -> "transparent,
-    // see-through to the skirts / lower terrain", flipping with draw order and
-    // mech-selection (which changes the prior pass). Independent of frag output
-    // (confirmed: diag7 with all frag outputs neutralized was still transparent).
-    // Set the opaque reverse-Z state explicitly; restore everything at the end.
+    // Phase 10.3: chunk terrain is OPAQUE and must EXPLICITLY own depth/blend/
+    // cull state. The driver previously inherited GL_DEPTH_TEST / glDepthMask /
+    // GL_BLEND / glDepthFunc / GL_CULL_FACE from whatever pass ran before. If a
+    // prior transparent/overlay pass left depth WRITES off (glDepthMask FALSE)
+    // or blend on, the terrain top renders color but writes NO depth -> never
+    // occludes -> "transparent, see-through to the skirts / lower terrain",
+    // flipping with draw order and mech-selection (which changes the prior
+    // pass). Confirmed independent of frag output (diag7). The opaque reverse-Z
+    // state is set explicitly here and restored at the end.
+    //
+    // GlStateGuard slice 2: when MC2_GLSTATEGUARD_TERRAIN is on (default), RAII
+    // guards (mc2gl::GlScoped*) own that save/set/restore — the function-scope
+    // optionals capture prev in ctor and restore in dtor at the closing brace
+    // (no gos_InvalidateRenderStateCache() here, so function scope is correct).
+    // =0 reverts to the legacy hand-rolled path below, byte-for-byte. cull is
+    // disabled for the WHOLE draw (terrainMVP bakes the GL-NDC X-flip -> winding
+    // is inverted -> the terrain TOP would be culled as a backface; terrain is
+    // an opaque heightfield so double-sided is free).
     static const bool s_depthAlways = (getenv("MC2_TERRAIN_LOD_DEPTH_ALWAYS") != nullptr);
-    GLboolean prevDepthTest = glIsEnabled(GL_DEPTH_TEST);
-    GLboolean prevDepthMask = GL_TRUE; glGetBooleanv(GL_DEPTH_WRITEMASK, &prevDepthMask);
-    GLboolean prevBlend     = glIsEnabled(GL_BLEND);
-    GLint     prevDepthFunc = GL_GEQUAL; glGetIntegerv(GL_DEPTH_FUNC, &prevDepthFunc);
-    glEnable(GL_DEPTH_TEST);
-    glDepthMask(GL_TRUE);
-    glDisable(GL_BLEND);
-    glDepthFunc(s_depthAlways ? GL_ALWAYS : GL_GEQUAL);   // reverse-Z opaque terrain
+    const GLenum s_wantDepthFunc = s_depthAlways ? GL_ALWAYS : GL_GEQUAL;
+    const bool useGuards = glStateGuardTerrainEnabled();
+
+    // Guard-path objects (constructed only when useGuards; restore at scope end).
+    std::optional<mc2gl::GlScopedCapability> gDepthTest, gBlend, gCull;
+    std::optional<mc2gl::GlScopedDepthState> gDepthState;
+    // Legacy-path saved values (used only when !useGuards).
+    GLboolean prevCullFace  = glIsEnabled(GL_CULL_FACE);
+    GLboolean prevDepthTest = GL_FALSE;
+    GLboolean prevDepthMask = GL_TRUE;
+    GLboolean prevBlend     = GL_FALSE;
+    GLint     prevDepthFunc = GL_GEQUAL;
+
+    if (useGuards) {
+        gDepthTest.emplace(GL_DEPTH_TEST, /*enable=*/true);
+        gDepthState.emplace(GL_TRUE, s_wantDepthFunc);
+        gBlend.emplace(GL_BLEND, /*enable=*/false);
+        gCull.emplace(GL_CULL_FACE, /*enable=*/false);
+    } else {
+        prevDepthTest = glIsEnabled(GL_DEPTH_TEST);
+        glGetBooleanv(GL_DEPTH_WRITEMASK, &prevDepthMask);
+        prevBlend     = glIsEnabled(GL_BLEND);
+        glGetIntegerv(GL_DEPTH_FUNC, &prevDepthFunc);
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+        glDepthFunc(s_wantDepthFunc);   // reverse-Z opaque terrain
+        glDisable(GL_CULL_FACE);        // double-sided (see comment above)
+    }
 
     glUseProgram(s_terrainProgram);
     glBindVertexArray(s_patchVao);
 
-    // Phase 10.3: render terrain DOUBLE-SIDED for the whole draw. terrainMVP bakes
-    // the kPixelHomogToGLNDC negative-X scale (reverse-Z / GL-NDC X-flip), which
-    // INVERTS triangle winding in screen space — so with GL_CULL_FACE enabled and
-    // the default CCW front face the terrain TOP is treated as a backface and
-    // culled ("transparent terrain, see the skirts through it"; worse on steep
-    // slopes near the camera; flipped by whatever global cull state mech-selection
-    // happens to leave set, since the main patch previously inherited it). Disable
-    // cull once here for main patches AND skirts; restore the inherited state at
-    // the end. Terrain is an opaque heightfield, so double-sided is free of
-    // visual cost (the underside is never seen).
-    glDisable(GL_CULL_FACE);
+    // (Depth/blend/cull state is owned above — RAII guards when
+    // MC2_GLSTATEGUARD_TERRAIN is on, else the legacy explicit calls. Cull is
+    // disabled for the whole draw: terrainMVP bakes the GL-NDC X-flip so winding
+    // is inverted and the opaque heightfield is rendered double-sided.)
 
     // Bind height SSBO (stays bound for all patches this frame).
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_HEIGHT_SSBO_BINDING, s_heightSsbo);
@@ -782,13 +818,16 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_HEIGHT_SSBO_BINDING, 0);
-    if (prevCullFace)
-        glEnable(GL_CULL_FACE);   // Phase 10.3: restore inherited cull state
-    // Phase 10.3: restore inherited depth/blend state.
-    glDepthMask(prevDepthMask);
-    if (!prevDepthTest) glDisable(GL_DEPTH_TEST);
-    if (prevBlend)      glEnable(GL_BLEND);
-    glDepthFunc((GLenum)prevDepthFunc);
+    if (!useGuards) {
+        // Phase 10.3: restore inherited cull/depth/blend state (legacy path).
+        if (prevCullFace)   glEnable(GL_CULL_FACE);
+        glDepthMask(prevDepthMask);
+        if (!prevDepthTest) glDisable(GL_DEPTH_TEST);
+        if (prevBlend)      glEnable(GL_BLEND);
+        glDepthFunc((GLenum)prevDepthFunc);
+    }
+    // useGuards path: gCull/gBlend/gDepthState/gDepthTest restore depth/blend/
+    // cull/mask/func when their optionals destruct at the closing brace below.
     glBindVertexArray((GLuint)prevVAO);
     glUseProgram((GLuint)prevProg);
 }
