@@ -2397,18 +2397,20 @@ long TerrainColorMap::init (char *fileName)
 	printf("[SPLATTING] starting material array load\n");
 	{
 		ZoneScopedN("TerrainColorMap::init materialArrays");
-		const char* normalNames[5] = {
-			"mat0_normal", "mat1_normal", "mat2_normal", "mat3_normal", "mat4_normal"
+		const char* normalNames[9] = {
+			"mat0_normal", "mat1_normal", "mat2_normal", "mat3_normal", "mat4_normal",
+			"mat5_normal", "mat6_normal", "mat7_normal", "mat8_normal"
 		};
-		const char* dispNames[5] = {
-			"mat0_displacement", "mat1_displacement", "mat2_displacement", "mat3_displacement", "mat4_displacement"
+		const char* dispNames[9] = {
+			"mat0_displacement", "mat1_displacement", "mat2_displacement", "mat3_displacement", "mat4_displacement",
+			"mat5_displacement", "mat6_displacement", "mat7_displacement", "mat8_displacement"
 		};
-		const unsigned char* normalLayers[5] = {NULL, NULL, NULL, NULL, NULL};
-		const unsigned char* dispLayers[5] = {NULL, NULL, NULL, NULL, NULL};
+		const unsigned char* normalLayers[9] = {NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL};
+		const unsigned char* dispLayers[9] = {NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL};
 		int arrayWidth = 0;
 		bool allLoaded = true;
 
-		for (int mat = 0; mat < 5; mat++)
+		for (int mat = 0; mat < 9; mat++)
 		{
 			FullPathFileName nmPath;
 			nmPath.init(texturePath, normalNames[mat], ".tga");
@@ -2453,7 +2455,7 @@ long TerrainColorMap::init (char *fileName)
 
 		// Load displacement layers (same pattern) — slot 4+ optional.
 		if (allLoaded) {
-			for (int mat = 0; mat < 5; mat++)
+			for (int mat = 0; mat < 9; mat++)
 			{
 				FullPathFileName dispPath;
 				dispPath.init(texturePath, dispNames[mat], ".tga");
@@ -2489,7 +2491,7 @@ long TerrainColorMap::init (char *fileName)
 
 		if (allLoaded) {
 			printf("[SPLATTING] all loaded OK, width=%d, creating individual textures\n", arrayWidth);
-			for (int i = 0; i < 5; i++) {
+			for (int i = 0; i < 9; i++) {
 				if (!normalLayers[i]) continue;  // optional slot absent
 				unsigned int nmId = gos_CreateTerrainNormalTexture(normalLayers[i], arrayWidth);
 				printf("[SPLATTING] matNormal%d GL id=%u\n", i, nmId);
@@ -2513,7 +2515,7 @@ long TerrainColorMap::init (char *fileName)
 			printf("[SPLATTING] retained matNormal2 alpha on CPU (%dx%d)\n", arrayWidth, arrayWidth);
 		}
 
-		for (int i = 0; i < 5; i++) {
+		for (int i = 0; i < 9; i++) {
 			if (normalLayers[i]) free((void*)normalLayers[i]);
 			if (dispLayers[i]) free((void*)dispLayers[i]);
 		}

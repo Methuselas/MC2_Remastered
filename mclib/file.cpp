@@ -692,10 +692,35 @@ void InitModSearchPaths(const char* modsRoot) {
     std::string modId, modName;
     std::vector<std::string> deps;
     if (!ReadModJson(jsonPath, modId, modName, deps)) {
-        // No mod.json — treat the folder name as the id, no dependencies.
+        // No mod.json — treat the folder name as the id. Dependencies (the compat
+        // layer) come from MC2_MOD_DEPS instead (see below) — the launcher lets the
+        // player pick a campaign + a compatibility layer separately, so metadata-less
+        // third-party campaigns (e.g. MCO packs) need no authored mod.json.
         modId   = envMod;
         modName = envMod;
-        printf("[mod] warning: no mod.json for '%s', loading with no dependencies\n", envMod);
+        printf("[mod] no mod.json for '%s'; folder name as id, deps from MC2_MOD_DEPS\n", envMod);
+    }
+
+    // MC2_MOD_DEPS: launcher-supplied compatibility layer(s), comma/semicolon
+    // separated, highest-priority-first. Appended after any mod.json deps and
+    // de-duplicated. This is how the player's "compatibility layer" selection
+    // reaches the engine without baking it into a campaign's mod.json.
+    if (const char* envDeps = getenv("MC2_MOD_DEPS")) {
+        std::string s(envDeps);
+        size_t i = 0;
+        while (i < s.size()) {
+            size_t j = s.find_first_of(",;", i);
+            if (j == std::string::npos) j = s.size();
+            std::string d = s.substr(i, j - i);
+            size_t a = d.find_first_not_of(" \t");
+            size_t b = d.find_last_not_of(" \t");
+            if (a != std::string::npos) {
+                d = d.substr(a, b - a + 1);
+                if (!d.empty() && std::find(deps.begin(), deps.end(), d) == deps.end())
+                    deps.push_back(d);
+            }
+            i = j + 1;
+        }
     }
     // Priority order: base data < dep[N-1] < ... < dep[0] < active mod.
     // Index is first-wins, so scan highest priority first.

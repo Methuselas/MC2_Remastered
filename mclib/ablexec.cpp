@@ -532,8 +532,28 @@ void freeLocal (SymTableNodePtr idPtr) {
 		}
 		if (!itemPtr)
 			runtimeError(0);
-		else
-			ABLStackFreeCallback(itemPtr->address);
+		else {
+			// Mod-tolerance: some old MC2X-compiled .abx (e.g. campaign area46) carry
+			// stack-frame layouts whose array-local offset lands on the wrong slot at
+			// routine exit, so itemPtr->address reads a garbage value (seen:
+			// 0x...FFFFFFFF, an int local + the adjacent -1 word). Passing that to
+			// free() faults in RtlFreeHeap (routineExit -> UserHeap::Free). Every real
+			// ABLStackMalloc pointer is heap-aligned and non-null, so skip the free for
+			// any null / unaligned / all-ones-low-word pointer instead of crashing.
+			unsigned long long a = (unsigned long long)itemPtr->address;
+			bool plausible = (a != 0ull)
+			              && ((a & 0x7ull) == 0ull)                 // 8-byte aligned
+			              && ((a & 0xFFFFFFFFull) != 0xFFFFFFFFull); // not the -1 sentinel
+			if (plausible) {
+				// Belt-and-suspenders: even a "plausible" pointer from a foreign .abx
+				// stack-layout mismatch may not actually belong to our heap; an SEH
+				// frame guarantees a bad free can never crash the mission (leak at worst).
+				__try {
+					ABLStackFreeCallback(itemPtr->address);
+				} __except (1 /*EXCEPTION_EXECUTE_HANDLER*/) {
+				}
+			}
+		}
 	}
 }
 

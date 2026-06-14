@@ -1823,9 +1823,18 @@ long Terrain::update (void)
 
 		// --- Phase 5 Pass 2: neighbor LOD delta clamp (visible blocks only) ---
 		// Iterates until stable so chains (e.g., LOD0 next to LOD5) propagate.
+		// BOUNDED: the LOD field is distance-smooth (neighbors normally already
+		// differ by <=1) and the clamp only needs as many passes as the max LOD
+		// delta (~6). But each pass re-sweeps ALL s_terrainChunkSide^2 blocks, so on
+		// a LARGE map a single frame where a fast pan/zoom flips many blocks' LOD at
+		// once can cascade to O(side^3) -> a multi-frame "lodChunkCull" hitch. Cap the
+		// passes: a truncated clamp leaves at most a one-frame LOD seam (cosmetic; the
+		// per-edge skirts/stitch below already backstop LOD mismatches), never a
+		// hitch. Stock (5x5=25 blocks) settles in <=3 passes and never hits the cap.
 		{
+			const int kMaxClampPasses = 8;
 			bool lodChanged = true;
-			while (lodChanged)
+			for (int clampPass = 0; clampPass < kMaxClampPasses && lodChanged; ++clampPass)
 			{
 				lodChanged = false;
 				for (int by = 0; by < s_terrainChunkSide; ++by)

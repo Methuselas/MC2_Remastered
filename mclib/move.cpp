@@ -49,6 +49,38 @@ static int safeReadPacket(PacketFilePtr packetFile, int packetNum,
     return packetFile->readPacket(packetNum, buffer);
 }
 
+// MCO wide-schema DoorLink reader. MCO DoorLink is 13 bytes (doorIndex
+// widened to int; doorSide/cost/openCost unchanged) vs MC2's 11. Reads the
+// wide records into a temp buffer and widens field-by-field into the real
+// narrow DoorLink array. Returns the underlying safeReadPacket result
+// (>0 = ok, 0 = read fail, -1 = oversize bail).
+static int readDoorLinksMCO(PacketFilePtr packetFile, int packetNum,
+                            DoorLink* dst, size_t numLinks, size_t mcoStride,
+                            UserHeapPtr heap)
+{
+    size_t tempSize = mcoStride * numLinks;
+    unsigned char* tempBuf = (unsigned char*)heap->Malloc(tempSize);
+    gosASSERT(tempBuf != NULL);
+    int result = safeReadPacket(packetFile, packetNum, tempBuf, tempSize, "doorLinks(MCO)");
+    if (result > 0) {
+        for (size_t k = 0; k < numLinks; k++) {
+            const unsigned char* p = tempBuf + k * mcoStride;
+            int doorIndexVal, costVal, openCostVal;
+            memcpy(&doorIndexVal, p + 0, sizeof(int)); // MCO doorIndex(int,0)
+            char doorSideVal = (char)p[4];             // MCO doorSide(char,4)
+            memcpy(&costVal,      p + 5, sizeof(int));  // MCO cost(int,5)
+            memcpy(&openCostVal,  p + 9, sizeof(int));  // MCO openCost(int,9)
+            gosASSERT(doorIndexVal >= -32768 && doorIndexVal <= 32767);
+            dst[k].doorIndex = (short)doorIndexVal;
+            dst[k].doorSide  = doorSideVal;
+            dst[k].cost      = costVal;
+            dst[k].openCost  = openCostVal;
+        }
+    }
+    heap->Free(tempBuf);
+    return result;
+}
+
 //***************************************************************************
 
 #define	USE_SEPARATE_WATER_MAPS	FALSE
@@ -1604,13 +1636,78 @@ long GlobalMap::init (PacketFilePtr packetFile, long whichPacket) {
 #endif
 	}
 
+	//------------------------------------------------------------------------
+	// MCO wide-schema detection.
+	//
+	// MechCommander Gold (MCO) campaign mods (Wolf Dragoons / Clan Eagle /
+	// Exodus) write the same MC2 move graph but with every `short` field
+	// widened to `int` (same field order, char/bool/DWORD-ptr/trailing-int
+	// unchanged). Stock + MC2X paks are byte-for-byte the MC2 narrow schema.
+	//
+	// Detection is purely structural and disjoint from stock:
+	//   * Stock/MC2X areaMap packet is ZLIB-stored, unpacked size == 2*h*w
+	//     (sizeof(short) per cell).
+	//   * MCO areaMap packet is RAW, size == 4*h*w (sizeof(int) per cell).
+	// These can never collide. A confirming guard requires the areas packet
+	// to unpack to exactly the MCO area stride (31 bytes) * numAreas; if that
+	// does not hold we leave the flag false and fall through to the existing
+	// (narrow) path — never misparse a hypothetical third variant.
+	//
+	// When the flag is true, each of the five alloc/read sites below reads a
+	// temp buffer at the MCO stride and widens field-by-field into the real
+	// narrow MC2 arrays, so all downstream code is untouched.
+	//------------------------------------------------------------------------
+	// MCO on-disk strides (#pragma pack(1)).
+	const size_t MCO_AREAMAP_CELL_SIZE  = 4;   // int      (MC2: short, 2)
+	const size_t MCO_AREA_SIZE          = 31;  // GlobalMapArea (MC2: 25)
+	const size_t MCO_DOORINFO_SIZE      = 5;   // DoorInfo       (MC2: 3)
+	const size_t MCO_DOOR_SIZE          = 73;  // GlobalMapDoor  (MC2: 57)
+	const size_t MCO_DOORLINK_SIZE      = 13;  // DoorLink       (MC2: 11)
+
+	bool mcoWideSchema = false;
+	{
+		packetFile->seekPacket(whichPacket);
+		size_t amSize = (size_t)packetFile->getPacketSize();
+		if (height > 0 && width > 0 &&
+		    amSize == MCO_AREAMAP_CELL_SIZE * (size_t)height * (size_t)width)
+			mcoWideSchema = true;
+		// Confirming guard: the areas packet (whichPacket + 1) must unpack to
+		// exactly the MCO area stride * numAreas, else this is not MCO.
+		if (mcoWideSchema) {
+			packetFile->seekPacket(whichPacket + 1);
+			size_t areasSize = (size_t)packetFile->getPacketSize();
+			if (areasSize != MCO_AREA_SIZE * (size_t)numAreas)
+				mcoWideSchema = false;
+		}
+		packetFile->seekPacket(whichPacket);
+	}
+
 	// Mod-tolerance: Carver5O pak contains an areaMap packet of 360000 bytes
 	// where vanilla schema expects 180000 (sizeof(short)*height*width for
 	// baseline map dims). The mod engine may use int per cell instead of
 	// short, or a different dim encoding. Rather than bail, allocate to
 	// whichever is larger so the packet fits; downstream indexing uses
 	// baseline (width/height) so the "extra" bytes are safe scratch.
-	{
+	if (mcoWideSchema) {
+		// MCO: areaMap is RAW int-per-cell. Allocate the real narrow array at
+		// the MC2 size; read the wide cells into a temp buffer and narrow.
+		size_t cellCount = (size_t)height * (size_t)width;
+		areaMap = (short*)systemHeap->Malloc(sizeof(short) * cellCount);
+		gosASSERT(areaMap != NULL);
+		size_t tempSize = MCO_AREAMAP_CELL_SIZE * cellCount;
+		unsigned char* tempBuf = (unsigned char*)systemHeap->Malloc(tempSize);
+		gosASSERT(tempBuf != NULL);
+		result = safeReadPacket(packetFile, whichPacket++, tempBuf, tempSize, "areaMap(MCO)");
+		if (result > 0) {
+			for (size_t c = 0; c < cellCount; c++) {
+				int v;
+				memcpy(&v, tempBuf + c * MCO_AREAMAP_CELL_SIZE, sizeof(int));
+				gosASSERT(v >= -32768 && v <= 32767);
+				areaMap[c] = (short)v;
+			}
+		}
+		systemHeap->Free(tempBuf);
+	} else {
 		packetFile->seekPacket(whichPacket);
 		size_t packetSize = (size_t)packetFile->getPacketSize();
 		size_t expected = sizeof(short) * (size_t)height * (size_t)width;
@@ -1634,7 +1731,51 @@ long GlobalMap::init (PacketFilePtr packetFile, long whichPacket) {
 
 	// Same mod-tolerance pattern for areas packet. Carver5O may also have
 	// a larger areas struct size per entry (extended mod schema).
-	{
+	if (mcoWideSchema) {
+		// MCO GlobalMapArea is 31 bytes (shorts widened to int). Read into a
+		// temp buffer at MCO stride and widen field-by-field into the real
+		// narrow MC2 areas[] array.
+		areas = (GlobalMapAreaPtr)systemHeap->Malloc(sizeof(GlobalMapArea) * (size_t)numAreas);
+		areas_cellsCovered = (short**)systemHeap->Malloc(sizeof(short*) * numAreas);
+		areas_doors = (DoorInfoPtr*)systemHeap->Malloc(sizeof(DoorInfoPtr) * numAreas);
+		gosASSERT(areas != NULL);
+		gosASSERT(areas_cellsCovered != NULL);
+		gosASSERT(areas_doors != NULL);
+		size_t tempSize = MCO_AREA_SIZE * (size_t)numAreas;
+		unsigned char* tempBuf = (unsigned char*)systemHeap->Malloc(tempSize);
+		gosASSERT(tempBuf != NULL);
+		result = safeReadPacket(packetFile, whichPacket++, tempBuf, tempSize, "areas(MCO)");
+		if (result > 0) {
+			for (long i = 0; i < numAreas; i++) {
+				const unsigned char* p = tempBuf + (size_t)i * MCO_AREA_SIZE;
+				int sectorR, sectorC, typeVal, numDoorsVal, ownerWIDVal;
+				memcpy(&sectorR,     p + 0,  sizeof(int));   // MCO sectorR(int,0)
+				memcpy(&sectorC,     p + 4,  sizeof(int));   // MCO sectorC(int,4)
+				// skip doors_ptr(int,8)
+				memcpy(&typeVal,     p + 12, sizeof(int));   // MCO type(int,12)
+				memcpy(&numDoorsVal, p + 16, sizeof(int));   // MCO numDoors(int,16)
+				memcpy(&ownerWIDVal, p + 20, sizeof(int));   // MCO ownerWID(int,20)
+				char teamIDVal = (char)p[24];                // MCO teamID(char,24)
+				bool offMapVal  = (p[25] != 0);              // MCO offMap(bool,25)
+				bool openVal    = (p[26] != 0);              // MCO open(bool,26)
+				// skip cellsCovered_ptr(int,27)
+				gosASSERT(sectorR     >= -32768 && sectorR     <= 32767);
+				gosASSERT(sectorC     >= -32768 && sectorC     <= 32767);
+				gosASSERT(numDoorsVal >= -32768 && numDoorsVal <= 32767);
+				areas[i].sectorR  = (short)sectorR;
+				areas[i].sectorC  = (short)sectorC;
+				areas[i].type     = (AreaType)typeVal;
+				areas[i].numDoors = (short)numDoorsVal;
+				areas[i].ownerWID = ownerWIDVal;
+				areas[i].teamID   = teamIDVal;
+				areas[i].offMap   = offMapVal;
+				areas[i].open     = openVal;
+				areas[i].doors_Legacy32bitPtr = 0;
+				areas[i].cellsCovered_Legacy32bitPtr = 0;
+			}
+		}
+		systemHeap->Free(tempBuf);
+	} else {
 		packetFile->seekPacket(whichPacket);
 		size_t packetSize = (size_t)packetFile->getPacketSize();
 		size_t expected = sizeof(GlobalMapArea) * (size_t)numAreas;
@@ -1690,8 +1831,31 @@ long GlobalMap::init (PacketFilePtr packetFile, long whichPacket) {
 				doorInfoOverflow = true;
 				break;
 			}
+			if (mcoWideSchema) {
+				// MCO DoorInfo is 5 bytes (doorIndex widened to int). Read the
+				// area's door infos into a temp buffer and widen into the real
+				// narrow doorInfos[] slice.
+				size_t n = (size_t)areas[i].numDoors;
+				size_t tempSize = MCO_DOORINFO_SIZE * n;
+				unsigned char* tempBuf = (unsigned char*)systemHeap->Malloc(tempSize);
+				gosASSERT(tempBuf != NULL);
+				result = safeReadPacket(packetFile, whichPacket++, tempBuf, tempSize, "doorInfos[i](MCO)");
+				if (result > 0) {
+					for (size_t d = 0; d < n; d++) {
+						const unsigned char* p = tempBuf + d * MCO_DOORINFO_SIZE;
+						int doorIndexVal;
+						memcpy(&doorIndexVal, p + 0, sizeof(int)); // MCO doorIndex(int,0)
+						char doorSideVal = (char)p[4];             // MCO doorSide(char,4)
+						gosASSERT(doorIndexVal >= -32768 && doorIndexVal <= 32767);
+						doorInfos[curDoorInfo + (long)d].doorIndex = (short)doorIndexVal;
+						doorInfos[curDoorInfo + (long)d].doorSide  = doorSideVal;
+					}
+				}
+				systemHeap->Free(tempBuf);
+			} else {
 			result = safeReadPacket(packetFile, whichPacket++, (unsigned char*)&doorInfos[curDoorInfo],
 			                        sizeof(DoorInfo) * areas[i].numDoors, "doorInfos[i]");
+			}
 			if (result < 0) {
 				doorInfoOverflow = true;
 				break;
@@ -1732,7 +1896,85 @@ long GlobalMap::init (PacketFilePtr packetFile, long whichPacket) {
 
 	// Mod-tolerance: grow doors allocation to packet size if the pak uses a
 	// larger door struct than baseline.
-	{
+	if (mcoWideSchema) {
+		// MCO GlobalMapDoor is 73 bytes (8 shorts widened to int; 7 trailing
+		// ints + char/bool fields unchanged; two link pointers skipped). Read
+		// into a temp buffer and widen into the real narrow doors[] array.
+		long doorCount = numDoors + NUM_DOOR_OFFSETS;
+		doors = (GlobalMapDoorPtr)systemHeap->Malloc(sizeof(GlobalMapDoor) * (size_t)doorCount);
+		doors_links = (DoorInfoLinksPtr*)systemHeap->Malloc(sizeof(DoorInfoLinksPtr) * doorCount);
+		gosASSERT(doors != NULL);
+		size_t tempSize = MCO_DOOR_SIZE * (size_t)doorCount;
+		unsigned char* tempBuf = (unsigned char*)systemHeap->Malloc(tempSize);
+		gosASSERT(tempBuf != NULL);
+		result = safeReadPacket(packetFile, whichPacket++, tempBuf, tempSize, "doors(MCO)");
+		if (result > 0) {
+			for (long i = 0; i < doorCount; i++) {
+				const unsigned char* p = tempBuf + (size_t)i * MCO_DOOR_SIZE;
+				GlobalMapDoor& d = doors[i];
+				int rowV, colV, area0, area1, areaCost0, areaCost1, numLinks0, numLinks1;
+				memcpy(&rowV,      p + 0,  sizeof(int)); // MCO row(int,0)
+				memcpy(&colV,      p + 4,  sizeof(int)); // MCO col(int,4)
+				char lengthV  = (char)p[8];              // MCO length(char,8)
+				bool openV    = (p[9] != 0);             // MCO open(bool,9)
+				char teamIDV  = (char)p[10];             // MCO teamID(char,10)
+				memcpy(&area0,     p + 11, sizeof(int)); // MCO area[0](int,11)
+				memcpy(&area1,     p + 15, sizeof(int)); // MCO area[1](int,15)
+				memcpy(&areaCost0, p + 19, sizeof(int)); // MCO areaCost[0](int,19)
+				memcpy(&areaCost1, p + 23, sizeof(int)); // MCO areaCost[1](int,23)
+				char dir0     = (char)p[27];             // MCO direction[0](char,27)
+				char dir1     = (char)p[28];             // MCO direction[1](char,28)
+				memcpy(&numLinks0, p + 29, sizeof(int)); // MCO numLinks[0](int,29)
+				memcpy(&numLinks1, p + 33, sizeof(int)); // MCO numLinks[1](int,33)
+				// skip links_ptr[2] at MCO 37 & 41 (DWORD each)
+				int costV, parentV, fromAreaIdxV, gV, hPrimeV, fPrimeV;
+				unsigned int flagsV;
+				memcpy(&costV,        p + 45, sizeof(int)); // MCO cost(int,45)
+				memcpy(&parentV,      p + 49, sizeof(int)); // MCO parent(int,49)
+				memcpy(&fromAreaIdxV, p + 53, sizeof(int)); // MCO fromAreaIndex(int,53)
+				memcpy(&flagsV,       p + 57, sizeof(unsigned int)); // MCO flags(int,57)
+				memcpy(&gV,           p + 61, sizeof(int)); // MCO g(int,61)
+				memcpy(&hPrimeV,      p + 65, sizeof(int)); // MCO hPrime(int,65)
+				memcpy(&fPrimeV,      p + 69, sizeof(int)); // MCO fPrime(int,69)
+				gosASSERT(rowV       >= -32768 && rowV       <= 32767);
+				gosASSERT(colV       >= -32768 && colV       <= 32767);
+				gosASSERT(area0      >= -32768 && area0      <= 32767);
+				gosASSERT(area1      >= -32768 && area1      <= 32767);
+				gosASSERT(areaCost0  >= -32768 && areaCost0  <= 32767);
+				gosASSERT(areaCost1  >= -32768 && areaCost1  <= 32767);
+				gosASSERT(numLinks0  >= -32768 && numLinks0  <= 32767);
+				gosASSERT(numLinks1  >= -32768 && numLinks1  <= 32767);
+				d.row          = (short)rowV;
+				d.col          = (short)colV;
+				d.length       = lengthV;
+				d.open         = openV;
+				d.teamID       = teamIDV;
+				d.area[0]      = (short)area0;
+				d.area[1]      = (short)area1;
+				d.areaCost[0]  = (short)areaCost0;
+				d.areaCost[1]  = (short)areaCost1;
+				d.direction[0] = dir0;
+				d.direction[1] = dir1;
+				d.numLinks[0]  = (short)numLinks0;
+				d.numLinks[1]  = (short)numLinks1;
+				d.links_Legacy32bitPtr[0] = 0;
+				d.links_Legacy32bitPtr[1] = 0;
+				d.cost          = costV;
+				d.parent        = parentV;
+				d.fromAreaIndex = fromAreaIdxV;
+				d.flags         = flagsV;
+				d.g             = gV;
+				d.hPrime        = hPrimeV;
+				d.fPrime        = fPrimeV;
+				// One-shot sanity: widened indices must be in range.
+				gosASSERT(d.area[0] < numAreas);
+				gosASSERT(d.area[1] < numAreas);
+				gosASSERT(d.numLinks[0] >= 0 && d.numLinks[0] <= 30);
+				gosASSERT(d.numLinks[1] >= 0 && d.numLinks[1] <= 30);
+			}
+		}
+		systemHeap->Free(tempBuf);
+	} else {
 		packetFile->seekPacket(whichPacket);
 		size_t packetSize = (size_t)packetFile->getPacketSize();
 		size_t expected = sizeof(GlobalMapDoor) * (size_t)(numDoors + NUM_DOOR_OFFSETS);
@@ -1772,8 +2014,13 @@ long GlobalMap::init (PacketFilePtr packetFile, long whichPacket) {
 			doorLinkOverflow = true;
 			break;
 		}
+		if (mcoWideSchema) {
+			result = readDoorLinksMCO(packetFile, whichPacket++, &doorLinks[numLinksRead],
+			                          (size_t)numLinks, MCO_DOORLINK_SIZE, systemHeap);
+		} else {
 		result = safeReadPacket(packetFile, whichPacket++, (unsigned char*)&doorLinks[numLinksRead],
 		                        sizeof(DoorLink) * numLinks, "doorLinks[i][0]");
+		}
 		if (result < 0) { doorLinkOverflow = true; break; }
 		if (result <= 0)
 			Fatal(result, " GlobalMap.init: Unable to write doorLinks packet ");
@@ -1788,8 +2035,13 @@ long GlobalMap::init (PacketFilePtr packetFile, long whichPacket) {
 			doorLinkOverflow = true;
 			break;
 		}
+		if (mcoWideSchema) {
+			result = readDoorLinksMCO(packetFile, whichPacket++, &doorLinks[numLinksRead],
+			                          (size_t)numLinks, MCO_DOORLINK_SIZE, systemHeap);
+		} else {
 		result = safeReadPacket(packetFile, whichPacket++, (unsigned char*)&doorLinks[numLinksRead],
 		                        sizeof(DoorLink) * numLinks, "doorLinks[i][1]");
+		}
 		if (result < 0) { doorLinkOverflow = true; break; }
 		if (result <= 0)
 			Fatal(result, " GlobalMap.init: Unable to write doorLinks packet ");
