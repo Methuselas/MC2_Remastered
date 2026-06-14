@@ -154,3 +154,4 @@ tools/terrain_gen/__pycache__/
 tests/visual/captures/
 tests/visual/compare/
 tests/visual/abtest/
+tests/visual/watercheck/
