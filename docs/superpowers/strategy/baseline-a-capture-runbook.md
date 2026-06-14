@@ -81,14 +81,31 @@ only produces the candidate + the evidence. Re-bless on any *intentional*
 visual change, naming the change in the commit (lab §3, same discipline as
 `tests/smoke/baselines.json`).
 
-## Current candidate: `baselineA-rc1` (FULL 3/3)
+## Baseline-A v1 candidate (tier1, off `mc2-win64-v0.4d-rc1`)
 
-- Off `mc2-win64-v0.4d-rc1` (exe sha256 `6383bbf0…`; byte-identical to the
-  deployed v0.4 game exe — same build `c5d255de`). Worktree HEAD `df7630bc`.
-- **All three bookmarks byte-stable** (runs 2 & 3 identical, cursor parked):
-  `overview_center` (`93c8ef99…`, terrain_splat + sky), `ridge_lowangle`
-  (`11ac0201…`, terrain_lod_chunk_skirts + shadow_cascade), `highangle_wide`
-  (`2756b466…`, terrain_splat + static_prop_pbr). No exclusions.
+exe sha256 `6383bbf0…` (byte-identical to deployed v0.4 game exe, build
+`c5d255de`); worktree HEAD `df7630bc`. Cursor parked, fixed timestep, 3 runs /
+1 warmup, runs 2&3 byte-identical.
+
+| mission | set_id | result | note |
+|---|---|---|---|
+| mc2_01 | `baselineA-rc1` | FULL 3/3 stable | |
+| mc2_10 | `baselineA-rc1-mc2_10` | FULL 3/3 stable | |
+| mc2_17 | `baselineA-rc1-mc2_17` | FULL 3/3 stable | |
+| mc2_03 | — (no set) | ALL DRIFT — deferred | animated intro buildings (radar dish, 2 generators, 3 turrets): mesh-animation clock NOT frozen by the sweep |
+| mc2_24 | — (no set) | ALL DRIFT — deferred | water-heavy final (MDI water + reflection): water animation phase NOT frozen |
+
+**Baseline-A v1 = mc2_01 + mc2_10 + mc2_17 (9 stable golden frames).** Small but
+real (advisor's bar). mc2_03 / mc2_24 are blocked on the same root: the sweep
+freezes sim-time (scenarioTime) + shader clocks but NOT mesh-animation or
+water-surface animation clocks. Adding those freezes is **engine work, HELD**
+until Baseline-A v1 is blessed. The provisional bookmark JSONs for all five
+missions are committed; the two deferred missions just have no materialized
+golden set yet.
+
+> The shared 3-pose template (overview/ridge/highangle) is provisional and
+> map-agnostic; re-author per mission from in-game `[BOOKMARK v1]` dumps when the
+> authoring hotkey lands.
 
 ## Do NOT over-expand before bless
 
