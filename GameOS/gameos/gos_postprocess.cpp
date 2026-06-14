@@ -2634,7 +2634,7 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
     // the center (cxL/cyL) is overridden, BEFORE the texel-snap + back-project.
     static const bool s_focusCenter = []() {
         const char* v = getenv("MC2_SHADOW_FOCUS_CENTER");
-        return (v && v[0] == '1');
+        return !(v && v[0] == '0');  // default ON; opt out with =0
     }();
     bool focusApplied = false;
     float focusWorld[3] = {0.0f, 0.0f, 0.0f};
@@ -2703,7 +2703,7 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
     {
         static const bool s_boundedNear = []() {
             const char* v = getenv("MC2_SHADOW_BOUNDED_NEAR_FIT");
-            return (v && v[0] == '1');
+            return !(v && v[0] == '0');  // default ON; opt out with =0
         }();
         if (s_boundedNear) {
             static const float s_boundedRadiusRaw = []() {
