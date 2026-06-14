@@ -1,0 +1,136 @@
+{
+  "mod_id": "modern-tree-pack-v1",
+  "family_filter": null,
+  "deploy_fingerprint": {
+    "mc2_exe_sha256": "9c30ab72facb0ea74cc05b4c579a1825f79aa220ca489aed927ad39245af6294",
+    "shader_count": 72,
+    "deploy_root": "A:\\Games\\mc2-opengl\\mc2-win64-v0.4"
+  },
+  "target_warnings": [],
+  "mapping": [
+    {
+      "source_glb": "maple1.glb",
+      "target_stock_appearance": "maple1",
+      "class": "tree",
+      "replaces": "tree:maple1",
+      "lod_index": 0,
+      "distance_m": 0,
+      "status": "cooked",
+      "manifest_path": "mods\\modern-tree-pack-v1\\_cook_staging\\maple1_lod0\\manifest.json"
+    },
+    {
+      "source_glb": "maple2.glb",
+      "target_stock_appearance": "maple1",
+      "class": "tree",
+      "replaces": "tree:maple1",
+      "lod_index": 1,
+      "distance_m": 600,
+      "status": "cooked",
+      "manifest_path": "mods\\modern-tree-pack-v1\\_cook_staging\\maple1_lod1\\manifest.json"
+    },
+    {
+      "source_glb": "maple3.glb",
+      "target_stock_appearance": "maple1",
+      "class": "tree",
+      "replaces": "tree:maple1",
+      "lod_index": 2,
+      "distance_m": 1200,
+      "status": "cooked",
+      "manifest_path": "mods\\modern-tree-pack-v1\\_cook_staging\\maple1_lod2\\manifest.json"
+    },
+    {
+      "source_glb": "poplar1.glb",
+      "target_stock_appearance": "pine1",
+      "class": "tree",
+      "replaces": "tree:pine1",
+      "lod_index": 0,
+      "distance_m": 0,
+      "status": "cooked",
+      "manifest_path": "mods\\modern-tree-pack-v1\\_cook_staging\\pine1_lod0\\manifest.json"
+    },
+    {
+      "source_glb": "poplar2.glb",
+      "target_stock_appearance": "pine1",
+      "class": "tree",
+      "replaces": "tree:pine1",
+      "lod_index": 1,
+      "distance_m": 600,
+      "status": "cooked",
+      "manifest_path": "mods\\modern-tree-pack-v1\\_cook_staging\\pine1_lod1\\manifest.json"
+    },
+    {
+      "source_glb": "poplar3.glb",
+      "target_stock_appearance": "pine1",
+      "class": "tree",
+      "replaces": "tree:pine1",
+      "lod_index": 2,
+      "distance_m": 1200,
+      "status": "cooked",
+      "manifest_path": "mods\\modern-tree-pack-v1\\_cook_staging\\pine1_lod2\\manifest.json"
+    },
+    {
+      "source_glb": "poplar4.glb",
+      "target_stock_appearance": "pine1",
+      "class": "tree",
+      "replaces": "tree:pine1",
+      "lod_index": 3,
+      "distance_m": 2000,
+      "status": "cooked",
+      "manifest_path": "mods\\modern-tree-pack-v1\\_cook_staging\\pine1_lod3\\manifest.json"
+    },
+    {
+      "source_glb": "whitePoplar1.glb",
+      "target_stock_appearance": "maple2",
+      "class": "tree",
+      "replaces": "tree:maple2",
+      "lod_index": 0,
+      "distance_m": 0,
+      "status": "cooked",
+      "manifest_path": "mods\\modern-tree-pack-v1\\_cook_staging\\maple2_lod0\\manifest.json"
+    },
+    {
+      "source_glb": "whitePoplar2.glb",
+      "target_stock_appearance": "maple2",
+      "class": "tree",
+      "replaces": "tree:maple2",
+      "lod_index": 1,
+      "distance_m": 600,
+      "status": "cooked",
+      "manifest_path": "mods\\modern-tree-pack-v1\\_cook_staging\\maple2_lod1\\manifest.json"
+    },
+    {
+      "source_glb": "whitePoplar3.glb",
+      "target_stock_appearance": "maple2",
+      "class": "tree",
+      "replaces": "tree:maple2",
+      "lod_index": 2,
+      "distance_m": 1200,
+      "status": "cooked",
+      "manifest_path": "mods\\modern-tree-pack-v1\\_cook_staging\\maple2_lod2\\manifest.json"
+    },
+    {
+      "source_glb": "whitePoplar4.glb",
+      "target_stock_appearance": "maple2",
+      "class": "tree",
+      "replaces": "tree:maple2",
+      "lod_index": 3,
+      "distance_m": 2000,
+      "status": "cooked",
+      "manifest_path": "mods\\modern-tree-pack-v1\\_cook_staging\\maple2_lod3\\manifest.json"
+    },
+    {
+      "source_glb": "crane_big.glb",
+      "target_stock_appearance": "crane",
+      "class": "staticprop",
+      "replaces": "staticprop:crane",
+      "lod_index": 0,
+      "distance_m": 0,
+      "status": "cooked",
+      "manifest_path": "mods\\modern-tree-pack-v1\\_cook_staging\\crane_lod0\\manifest.json"
+    }
+  ],
+  "errors": [],
+  "total": 12,
+  "cooked": 12,
+  "failed": 0
+}

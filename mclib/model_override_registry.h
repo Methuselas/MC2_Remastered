@@ -21,7 +21,8 @@ struct ModelOverrideLod {
 struct ModelOverrideRecord {
     std::string overrideClass;   // "staticprop" | "tree" — NORMALIZED lowercase
     std::string appearanceName;  // from "replaces" after ':' — NORMALIZED lowercase
-    std::string sourceRelPath;   // .glb/.gltf relative to manifest dir (validated safe)
+    std::string sourceRelPath;   // .glb/.gltf relative to manifestDir (validated safe)
+    std::string manifestDir;     // directory from which this record's source paths resolve
     float       scale = 1.0f;    // MVP requires exactly 1.0
     // TREE-OVERRIDE-LOD-MVP-1: optional lower-detail LOD chain (LOD0 == source).
     // Ascending `lod`, each source isSafeSource. Empty = single-LOD (LOD0 only).
@@ -34,8 +35,13 @@ struct ModelOverrideRecord {
 
 class ModelOverrideRegistry {
 public:
+    // Clears registry then loads from manifestPath. Returns count.
     int loadFromFile(const std::string& manifestPath,
                      const std::string& manifestDir);
+    // Additive: loads manifestPath without clearing. Mod entries WIN on dup key.
+    // Returns count of entries merged in (not total).
+    int mergeFromFile(const std::string& manifestPath,
+                      const std::string& manifestDir);
     const ModelOverrideRecord* resolve(const char* overrideClass,
                                        const char* appearanceName) const;
     int count() const { return (int)records_.size(); }

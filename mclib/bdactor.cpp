@@ -407,7 +407,7 @@ void BldgAppearanceType::init (const char * fileName)
 			// Source path = manifest dir + record source (see Slice 1 registry).
 			char overridePath[1024];
 			snprintf(overridePath, sizeof(overridePath), "%s/%s",
-			         ModelOverrideRegistry::instance().manifestDir().c_str(),
+			         ov->manifestDir.c_str(),
 			         ov->sourceRelPath.c_str());
 			// Guard the importer: Assimp may throw (DeadlyImportError). A throw
 			// here would leak the freshly-new'd render shape and unwind into
@@ -432,6 +432,26 @@ void BldgAppearanceType::init (const char * fileName)
 					fprintf(stderr, "[MODOVERRIDE] staticProp '%s': render override applied (%s)\n",
 					        bldgBaseName, overridePath);
 					fflush(stderr);
+					if (getenv("MC2_ANIMATED_PROP_PROBE"))
+					{
+						int ns = bldgRenderShape->GetNumShapes();
+						fprintf(stderr, "[PROBE] '%s': %d node(s) loaded\n", bldgBaseName, ns);
+						for (int _pi = 0; _pi < ns; ++_pi)
+							fprintf(stderr, "[PROBE]   node[%d] = '%s'\n", _pi, bldgRenderShape->GetNodeId(_pi));
+						if (rotationalNodeId[0] && S_stricmp(rotationalNodeId, "NONE") != 0)
+						{
+							// Type-level scan (no instance yet): checks if GLB has the expected node.
+							bool found = false;
+							for (int _qi = 0; _qi < ns; ++_qi)
+							{
+								if (S_stricmp(bldgRenderShape->GetNodeId(_qi), rotationalNodeId) == 0)
+								{ found = true; break; }
+							}
+							fprintf(stderr, "[PROBE] '%s': AnimationNodeId='%s' %s in loaded GLB\n",
+							        bldgBaseName, rotationalNodeId, found ? "FOUND" : "NOT FOUND");
+						}
+						fflush(stderr);
+					}
 				}
 			}
 			catch (...)
@@ -4171,7 +4191,7 @@ void TreeAppearanceType::init (const char * fileName)
 			treeRenderShape[0] = new TG_TypeMultiShape;
 			char overridePath[1024];
 			snprintf(overridePath, sizeof(overridePath), "%s/%s",
-			         ModelOverrideRegistry::instance().manifestDir().c_str(),
+			         ov->manifestDir.c_str(),
 			         ov->sourceRelPath.c_str());
 			// Guard the importer: Assimp may throw (DeadlyImportError). A throw
 			// here would leak the freshly-new'd render shape and unwind into
@@ -4231,7 +4251,7 @@ void TreeAppearanceType::init (const char * fileName)
 						}
 						char lodPath[1024];
 						snprintf(lodPath, sizeof(lodPath), "%s/%s",
-						         ModelOverrideRegistry::instance().manifestDir().c_str(),
+						         ov->manifestDir.c_str(),
 						         lentry.sourceRelPath.c_str());
 						treeRenderShape[li] = new TG_TypeMultiShape;
 						try {

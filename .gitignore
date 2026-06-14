@@ -78,6 +78,9 @@ test_sound/
 # Coverity
 cov-int/
 
+# Mod distribution packages
+mods/dist/
+
 # CMake Tools VS Code extension
 CMakeToolsMeta.in.txt
 CMakeToolsMeta.txt

@@ -36,22 +36,30 @@ static bool isSafeSource(const std::string& s) {
     return glb || gltf;
 }
 
-int ModelOverrideRegistry::loadFromFile(const std::string& manifestPath,
-                                        const std::string& manifestDir) {
-    records_.clear();
-    manifestDir_ = manifestDir;
+static std::string trimSource(const std::string& s) {
+    size_t b = 0, en = s.size();
+    while (b < en && std::isspace((unsigned char)s[b])) ++b;
+    while (en > b && std::isspace((unsigned char)s[en - 1])) --en;
+    return s.substr(b, en - b);
+}
+
+// Parse manifestPath and return all valid records stamped with dir.
+// No duplicate-key check here — callers apply their own policy.
+static std::vector<ModelOverrideRecord> parseManifest(
+        const std::string& manifestPath, const std::string& dir) {
+    std::vector<ModelOverrideRecord> out;
 
     std::ifstream in(manifestPath.c_str());
-    if (!in.is_open()) return 0;
+    if (!in.is_open()) return out;
     json root;
     try { in >> root; }
     catch (const std::exception& e) {
         fprintf(stderr, "[MODOVERRIDE] parse error in %s: %s\n", manifestPath.c_str(), e.what());
-        return 0;
+        return out;
     }
     if (!root.is_object() || !root.contains("overrides") || !root["overrides"].is_array()) {
         fprintf(stderr, "[MODOVERRIDE] %s: missing 'overrides' array\n", manifestPath.c_str());
-        return 0;
+        return out;
     }
 
     for (const auto& e : root["overrides"]) {
@@ -80,26 +88,14 @@ int ModelOverrideRegistry::loadFromFile(const std::string& manifestPath,
             if (clsField != cls) { logDrop("class field disagrees with replaces", key); continue; }
         }
 
-        // Trim leading/trailing ASCII whitespace before safety check (case-preserving).
-        std::string source = e.value("source", std::string());
-        {
-            size_t b = 0, en = source.size();
-            while (b < en && std::isspace((unsigned char)source[b])) ++b;
-            while (en > b && std::isspace((unsigned char)source[en - 1])) --en;
-            source = source.substr(b, en - b);
-        }
+        std::string source = trimSource(e.value("source", std::string()));
         if (!isSafeSource(source)) { logDrop("unsafe/non-glTF source path", key); continue; }
-
-        bool dup = false;
-        for (const auto& r : records_) {
-            if (r.overrideClass == cls && r.appearanceName == name) { dup = true; break; }
-        }
-        if (dup) { logDrop("duplicate key (first entry wins)", key); continue; }
 
         ModelOverrideRecord rec;
         rec.overrideClass  = cls;
         rec.appearanceName = name;
         rec.sourceRelPath  = source;
+        rec.manifestDir    = dir;
         rec.scale          = scale;
 
         // TREE-OVERRIDE-LOD-MVP-1 Task 3/4: optional lower-detail LOD chain.
@@ -118,13 +114,7 @@ int ModelOverrideRegistry::loadFromFile(const std::string& manifestPath,
                 const int lod = le["lod"].get<int>();
                 if (lod <= lastLod) { logDrop("lods 'lod' not strictly ascending (LOD0=source)", key); continue; }
 
-                std::string lsrc = le.value("source", std::string());
-                {
-                    size_t b = 0, en = lsrc.size();
-                    while (b < en && std::isspace((unsigned char)lsrc[b])) ++b;
-                    while (en > b && std::isspace((unsigned char)lsrc[en - 1])) --en;
-                    lsrc = lsrc.substr(b, en - b);
-                }
+                std::string lsrc = trimSource(le.value("source", std::string()));
                 if (!isSafeSource(lsrc)) { logDrop("lods entry unsafe/non-glTF source", key); continue; }
 
                 ModelOverrideLod l;
@@ -136,12 +126,53 @@ int ModelOverrideRegistry::loadFromFile(const std::string& manifestPath,
             }
         }
 
-        records_.push_back(std::move(rec));
+        out.push_back(std::move(rec));
         } catch (const std::exception& ex) {
             logDrop(ex.what(), "<entry>"); continue;
         }
     }
+    return out;
+}
+
+int ModelOverrideRegistry::loadFromFile(const std::string& manifestPath,
+                                        const std::string& manifestDir) {
+    records_.clear();
+    manifestDir_ = manifestDir;
+
+    auto parsed = parseManifest(manifestPath, manifestDir);
+    // Dup check: first entry wins within a single file.
+    for (auto& rec : parsed) {
+        bool dup = false;
+        for (const auto& r : records_)
+            if (r.overrideClass == rec.overrideClass && r.appearanceName == rec.appearanceName)
+                { dup = true; break; }
+        if (dup) { logDrop("duplicate key (first entry wins)", rec.overrideClass + ":" + rec.appearanceName); continue; }
+        records_.push_back(std::move(rec));
+    }
     return (int)records_.size();
+}
+
+int ModelOverrideRegistry::mergeFromFile(const std::string& manifestPath,
+                                         const std::string& manifestDir) {
+    auto parsed = parseManifest(manifestPath, manifestDir);
+    int merged = 0;
+    for (auto& rec : parsed) {
+        // Mod wins on dup key: replace existing base record if present.
+        bool replaced = false;
+        for (auto& r : records_) {
+            if (r.overrideClass == rec.overrideClass && r.appearanceName == rec.appearanceName) {
+                r = std::move(rec);
+                replaced = true;
+                ++merged;
+                break;
+            }
+        }
+        if (!replaced) {
+            records_.push_back(std::move(rec));
+            ++merged;
+        }
+    }
+    return merged;
 }
 
 const ModelOverrideRecord* ModelOverrideRegistry::resolve(
@@ -159,9 +190,34 @@ ModelOverrideRegistry& ModelOverrideRegistry::instance() {
     static ModelOverrideRegistry g;
     static std::once_flag once;
     std::call_once(once, []{
-        g.loadFromFile("data/model_overrides/models.json", "data/model_overrides");
-        fprintf(stderr, "[MODOVERRIDE] registry loaded: %d override(s)\n", g.count());
+        // Always load base registry first.
+        int base = g.loadFromFile("data/model_overrides/models.json", "data/model_overrides");
+        fprintf(stderr, "[MODOVERRIDE] base registry: %d override(s)\n", base);
         fflush(stderr);
+
+        // Additive mod merge: mod entries WIN on dup key (mod overrides base).
+        // Source paths in the mod's models.json must be relative to the mod's
+        // manifestDir (mods/<id>/data/model_overrides), not full data-relative.
+        // GLB load uses ImportGeometryFromFile (raw Assimp, not File::open),
+        // so per-record manifestDir is the only way to route to the mod's files.
+        const char* activeMod = getenv("MC2_ACTIVE_MOD");
+        if (activeMod && activeMod[0]) {
+            std::string modManifest = std::string("mods/") + activeMod
+                                      + "/data/model_overrides/models.json";
+            std::string modDir      = std::string("mods/") + activeMod
+                                      + "/data/model_overrides";
+            std::ifstream probe(modManifest.c_str());
+            if (probe.is_open()) {
+                probe.close();
+                int n = g.mergeFromFile(modManifest, modDir);
+                fprintf(stderr, "[MODOVERRIDE] mod '%s': %d override(s) merged (total %d)\n",
+                        activeMod, n, g.count());
+                fflush(stderr);
+            } else {
+                fprintf(stderr, "[MODOVERRIDE] mod '%s' has no models.json; base only\n", activeMod);
+                fflush(stderr);
+            }
+        }
     });
     return g;
 }
