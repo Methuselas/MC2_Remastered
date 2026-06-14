@@ -264,6 +264,27 @@ def _write_cockpit_artifacts_inner(
         "result": result,
         "source": source,
     }
+    # S12: additively embed the unified identity + report blocks (mc2-manifest/1)
+    # alongside the legacy fields. Consumers that read schema_v/exe/git_head keep
+    # working; new consumers join on identity.*/report.*. Best-effort -- a
+    # missing manifest_schema module must not break the (sacred) cockpit writer.
+    try:
+        scripts_dir = str(Path(repo_root) / "scripts")
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        import manifest_schema  # noqa: E402
+        ident = manifest_schema.identity_block(
+            generator="run_smoke",
+            exe_path=exe_path,
+            repo_root=str(repo_root),
+            deploy_target=str(Path(exe_path).parent),
+        )
+        rep = manifest_schema.report_summary(
+            verdict=result, missions=missions, artifact_dir=str(artifact_dir),
+        )
+        manifest_schema.attach(manifest, ident, rep)
+    except Exception:
+        pass  # legacy manifest still written; identity enrichment is optional
     (artifact_dir / "manifest.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8"
     )
