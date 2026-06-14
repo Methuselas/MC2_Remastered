@@ -223,3 +223,11 @@ echo "[engine] $(ls -lh "$OUTDIR/mc2-remastered-engine.zip" | awk '{print $5}')"
 echo
 echo "Done. Zips in $OUTDIR :"
 ls -lh "$OUTDIR"/*.zip
+
+echo
+echo "RELEASE GATE (do NOT publish until this passes):"
+echo "  py -3 scripts/test_release_zip_install.py --zip-dir \"$OUTDIR\""
+echo "  -> installs the zips ONLY (no dev deploy) into a temp tree, verifies,"
+echo "     smokes mc2_01, writes release_install_{manifest.csv,report.json}."
+echo "  Archive release_install_report.json (verdict must be PASS) WITH the zips."
+echo "  See docs/release-checklist.md."

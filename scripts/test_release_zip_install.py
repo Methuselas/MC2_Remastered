@@ -28,7 +28,9 @@ from __future__ import annotations
 
 import argparse
 import csv
+import datetime
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -44,6 +46,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUN_SMOKE = REPO_ROOT / "scripts" / "run_smoke.py"
 DEFAULT_ZIP_DIR = REPO_ROOT / "release_assets"
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+import manifest_schema  # noqa: E402  (S12 unified identity block)
 
 # ---------------------------------------------------------------------------
 # Assembly spec
@@ -82,6 +86,7 @@ REQUIRED_DIRS = [
 REQUIRED_FST = True
 
 MANIFEST_NAME = "release_install_manifest.csv"
+REPORT_NAME = "release_install_report.json"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -173,6 +178,43 @@ def emit_manifest(install: Path, zip_sources: dict[str, str], out_path: Path) ->
         w.writerow(["relpath", "sha256", "bytes", "zip_source"])
         w.writerows(rows)
     return len(rows)
+
+
+def emit_report(out_path: Path, *, verdict: str, install: Path,
+                zip_labels: list[str], mission: str, file_count: int,
+                tree_failures: list[str], smoke_rc: int | None,
+                manifest_path: Path | None) -> None:
+    """Write release_install_report.json carrying the S12 identity block.
+
+    The report is the formal release gate's machine-readable verdict: a release
+    is publishable iff verdict==PASS. It joins with smoke run manifests and the
+    visual golden sets on the same identity fields (exe.sha256 / git.commit).
+    """
+    exe = install / "mc2.exe"
+    ident = manifest_schema.identity_block(
+        generator="release_zip_install",
+        exe_path=str(exe) if exe.is_file() else None,
+        repo_root=str(REPO_ROOT),
+        deploy_target=str(install),
+        zip_set=zip_labels,
+    )
+    rep = manifest_schema.report_summary(
+        verdict=verdict,
+        missions=[mission],
+        artifact_dir=str(out_path.parent),
+        extra={
+            "tree_ok": not tree_failures,
+            "tree_failures": tree_failures,
+            "file_count": file_count,
+            "smoke_rc": smoke_rc,
+            "manifest_csv": (manifest_path.name if manifest_path else None),
+            "generated_utc": datetime.datetime.now(
+                datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        },
+    )
+    doc = manifest_schema.attach({"kind": "release-install"}, ident, rep)
+    out_path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+    log(f"report: {out_path} (verdict={verdict})")
 
 
 def run_smoke(exe: Path, mission: str, duration: int) -> int:
@@ -280,19 +322,27 @@ def main() -> None:
         # ------------------------------------------------------------------
         # 3. Verify required tree.
         # ------------------------------------------------------------------
+        out_dir.mkdir(parents=True, exist_ok=True)
+        report_path = out_dir / REPORT_NAME
+        manifest_path = out_dir / MANIFEST_NAME
+        zip_labels = [label for _f, _r, label in present_zips]
+
         log("verifying assembled tree ...")
         failures = verify_tree(tmp_root)
+        file_count = sum(1 for _ in tmp_root.rglob('*') if _.is_file())
         if failures:
             for f in failures:
                 print(f"[release-test]   FAIL: {f}", file=sys.stderr)
+            emit_report(report_path, verdict="FAIL", install=tmp_root,
+                        zip_labels=zip_labels, mission=args.mission,
+                        file_count=file_count, tree_failures=failures,
+                        smoke_rc=None, manifest_path=None)
             fail(f"{len(failures)} tree verification failure(s) — see above", code=1)
-        log(f"  tree OK — {sum(1 for _ in tmp_root.rglob('*') if _.is_file())} files assembled")
+        log(f"  tree OK — {file_count} files assembled")
 
         # ------------------------------------------------------------------
         # 4. Emit manifest.
         # ------------------------------------------------------------------
-        out_dir.mkdir(parents=True, exist_ok=True)
-        manifest_path = out_dir / MANIFEST_NAME
         count = emit_manifest(tmp_root, zip_sources, manifest_path)
         log(f"manifest: {manifest_path} ({count} entries)")
 
@@ -301,6 +351,10 @@ def main() -> None:
         # ------------------------------------------------------------------
         if args.no_smoke:
             log("--no-smoke: skipping smoke run")
+            emit_report(report_path, verdict="PASS", install=tmp_root,
+                        zip_labels=zip_labels, mission=args.mission,
+                        file_count=file_count, tree_failures=[],
+                        smoke_rc=None, manifest_path=manifest_path)
             log("PASS (tree verify only)")
             return
 
@@ -310,6 +364,10 @@ def main() -> None:
 
         log(f"running smoke: mission={args.mission} duration={args.duration}s ...")
         rc = run_smoke(exe, args.mission, args.duration)
+        emit_report(report_path, verdict="PASS" if rc == 0 else "FAIL",
+                    install=tmp_root, zip_labels=zip_labels,
+                    mission=args.mission, file_count=file_count,
+                    tree_failures=[], smoke_rc=rc, manifest_path=manifest_path)
         if rc != 0:
             fail(f"smoke exited {rc}", code=2)
 

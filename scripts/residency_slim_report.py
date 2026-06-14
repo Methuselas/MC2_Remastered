@@ -22,8 +22,12 @@ Hard-fail exit codes:
   1  — classification error or unsafe drop condition detected
   2  — deploy root not found or other I/O error
 
+Action vocabulary (per texture): KEEP / DROP / FAIL (unsafe drop → hard-fail) /
+UNKNOWN (cannot classify → conservative keep, flagged for review). This script
+NEVER deletes anything — report first; deletion is a separate, deliberate tool.
+
 CSV columns:
-  texture,path,class,action,reason,bytes,has_ktx2,kept_cpu_source
+  texture,path,class,action,reason,bytes,sha256,has_ktx2,kept_cpu_source
 
 Usage:
   py -3 scripts/residency_slim_report.py
@@ -36,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import os
 import re
 import sys
@@ -62,6 +67,22 @@ RC_UNKNOWN        = "unknown"
 
 # Classes that must NEVER be dropped — hard-fail if action=DROP assigned.
 NEVER_DROP = {RC_CPU_RGBA, RC_GPU_ARRAY_CPU, RC_GPU_TILES_CPU, RC_LEGACY, RC_UNKNOWN}
+
+# Action vocabulary (the report's keep/drop/fail/unknown verdict per texture):
+#   KEEP    — retain the .tga (CPU-required or no .ktx2 fallback)
+#   DROP    — safe to remove the .tga (.ktx2 fallback proven for its class)
+#   FAIL    — a DROP was inferred for a NEVER_DROP class -> hard-fail (unsafe)
+#   UNKNOWN — cannot classify; retained conservatively, flagged for human review
+ACT_KEEP, ACT_DROP, ACT_FAIL, ACT_UNKNOWN = "KEEP", "DROP", "FAIL", "UNKNOWN"
+
+
+def effective_action(rc: str, action: str) -> str:
+    """Resolve the report action from (class, raw action). An unsafe DROP
+    (NEVER_DROP class) surfaces as FAIL so the row self-documents the block
+    instead of falsely reading DROP."""
+    if action == ACT_DROP and rc in NEVER_DROP:
+        return ACT_FAIL
+    return action
 
 # ---------------------------------------------------------------------------
 # Trace parsing
@@ -150,7 +171,7 @@ def classify_tga(
         return RC_LEGACY, "KEEP", "insignia/mod: not classified for slim", False
 
     # --- anything else ---
-    return RC_UNKNOWN, "KEEP", "unknown: cannot classify; conservative keep", False
+    return RC_UNKNOWN, ACT_UNKNOWN, "unknown: cannot classify; conservative keep (review)", False
 
 
 def _is_terrain_splat(rel_lower: str, stem_lower: str) -> bool:
@@ -179,7 +200,19 @@ def _is_gpu_sample_terrain(rel_lower: str, stem_lower: str) -> bool:
 # Scan deploy root
 # ---------------------------------------------------------------------------
 
-Row = tuple[str, str, str, str, str, int, bool, bool]  # noqa: E501
+# (texture, path, class, action, reason, bytes, sha256, has_ktx2, kept_cpu_source)
+Row = tuple[str, str, str, str, str, int, str, bool, bool]  # noqa: E501
+
+
+def _sha256(full: str) -> str:
+    try:
+        h = hashlib.sha256()
+        with open(full, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 16), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return ""
 
 
 def scan_deploy(
@@ -187,6 +220,7 @@ def scan_deploy(
     paint_set: set[str],
     seen_set: set[str],
     skip_mods: bool = True,
+    do_hash: bool = True,
 ) -> list[Row]:
     rows: list[Row] = []
     for root, dirs, files in os.walk(deploy):
@@ -211,10 +245,12 @@ def scan_deploy(
             except OSError:
                 size = 0
 
-            rc, action, reason, kept_cpu = classify_tga(
+            rc, raw_action, reason, kept_cpu = classify_tga(
                 rel, base_lower, stem_lower, has_ktx2, paint_set, seen_set
             )
-            rows.append((fname, rel, rc, action, reason, size, has_ktx2, kept_cpu))
+            action = effective_action(rc, raw_action)
+            sha = _sha256(full) if do_hash else ""
+            rows.append((fname, rel, rc, action, reason, size, sha, has_ktx2, kept_cpu))
     return rows
 
 
@@ -222,14 +258,22 @@ def scan_deploy(
 # Reporting
 # ---------------------------------------------------------------------------
 
+_CSV_HEADER = ["texture", "path", "class", "action", "reason",
+               "bytes", "sha256", "has_ktx2", "kept_cpu_source"]
+
+
+def _csv_row(r: Row) -> list:
+    texture, path, rc, action, reason, size, sha, has_ktx2, kept_cpu = r
+    return [texture, path, rc, action, reason, size, sha,
+            str(has_ktx2).lower(), str(kept_cpu).lower()]
+
+
 def emit_csv(rows: list[Row], out_path: Path) -> None:
     with open(out_path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["texture", "path", "class", "action", "reason",
-                    "bytes", "has_ktx2", "kept_cpu_source"])
-        for texture, path, rc, action, reason, size, has_ktx2, kept_cpu in rows:
-            w.writerow([texture, path, rc, action, reason, size,
-                        str(has_ktx2).lower(), str(kept_cpu).lower()])
+        w.writerow(_CSV_HEADER)
+        for r in rows:
+            w.writerow(_csv_row(r))
 
 
 def print_summary(rows: list[Row], violations: list[str]) -> None:
@@ -237,8 +281,10 @@ def print_summary(rows: list[Row], violations: list[str]) -> None:
     for row in rows:
         by_class.setdefault(row[2], []).append(row)
 
-    drop_rows = [r for r in rows if r[3] == "DROP"]
-    keep_rows = [r for r in rows if r[3] == "KEEP"]
+    drop_rows = [r for r in rows if r[3] == ACT_DROP]
+    keep_rows = [r for r in rows if r[3] == ACT_KEEP]
+    fail_rows = [r for r in rows if r[3] == ACT_FAIL]
+    unknown_rows = [r for r in rows if r[3] == ACT_UNKNOWN]
     drop_bytes = sum(r[5] for r in drop_rows)
     keep_bytes = sum(r[5] for r in keep_rows)
 
@@ -246,15 +292,19 @@ def print_summary(rows: list[Row], violations: list[str]) -> None:
     print(f"  total .tga files  : {len(rows)}")
     print(f"  action=DROP       : {len(drop_rows)}  ({drop_bytes / 1048576:.1f} MB recoverable)")
     print(f"  action=KEEP       : {len(keep_rows)}  ({keep_bytes / 1048576:.1f} MB)")
+    print(f"  action=UNKNOWN    : {len(unknown_rows)}  (conservative keep; review)")
+    print(f"  action=FAIL       : {len(fail_rows)}  (unsafe drop - hard-fail)")
     print()
     for rc in [RC_CPU_RGBA, RC_GPU_SAMPLE, RC_LOAD_TGA_KTX,
                RC_GPU_ARRAY_CPU, RC_GPU_TILES_CPU, RC_LEGACY, RC_UNKNOWN]:
         rrows = by_class.get(rc, [])
         if not rrows:
             continue
-        drop_c = sum(1 for r in rrows if r[3] == "DROP")
-        keep_c = sum(1 for r in rrows if r[3] == "KEEP")
-        print(f"  {rc:<32}  {len(rrows):5d}  ({drop_c} DROP, {keep_c} KEEP)")
+        acts = {}
+        for r in rrows:
+            acts[r[3]] = acts.get(r[3], 0) + 1
+        breakdown = ", ".join(f"{n} {a}" for a, n in sorted(acts.items()))
+        print(f"  {rc:<32}  {len(rrows):5d}  ({breakdown})")
     print()
     if violations:
         print(f"  HARD-FAIL — {len(violations)} violation(s):")
@@ -269,10 +319,11 @@ def print_summary(rows: list[Row], violations: list[str]) -> None:
 # ---------------------------------------------------------------------------
 
 def check_violations(rows: list[Row]) -> list[str]:
-    """Return list of violation strings.  Empty = clean."""
+    """Return list of violation strings.  Empty = clean. A row carries action
+    FAIL iff effective_action() relabelled an unsafe DROP (NEVER_DROP class)."""
     violations: list[str] = []
-    for texture, path, rc, action, reason, size, has_ktx2, kept_cpu in rows:
-        if action == "DROP" and rc in NEVER_DROP:
+    for texture, path, rc, action, reason, size, sha, has_ktx2, kept_cpu in rows:
+        if action == ACT_FAIL:
             violations.append(
                 f"UNSAFE DROP: {path}  class={rc}  reason={reason}"
             )
@@ -312,8 +363,13 @@ def main() -> None:
     )
     ap.add_argument(
         "--filter-action",
-        choices=["DROP", "KEEP"],
+        choices=[ACT_KEEP, ACT_DROP, ACT_FAIL, ACT_UNKNOWN],
         help="Restrict CSV output to this action only.",
+    )
+    ap.add_argument(
+        "--no-hash", action="store_true",
+        help="Skip per-texture sha256 (faster; sha256 column left empty). "
+             "Default computes sha256 for content provenance.",
     )
     args = ap.parse_args()
 
@@ -340,7 +396,10 @@ def main() -> None:
         )
 
     print(f"[slim-report] scanning {deploy} ...")
-    rows = scan_deploy(deploy, paint_set, seen_set, skip_mods=not args.include_mods)
+    if not args.no_hash:
+        print("[slim-report] hashing each .tga (sha256); use --no-hash to skip")
+    rows = scan_deploy(deploy, paint_set, seen_set,
+                       skip_mods=not args.include_mods, do_hash=not args.no_hash)
     print(f"[slim-report] {len(rows)} .tga files classified")
 
     violations = check_violations(rows)
@@ -357,11 +416,9 @@ def main() -> None:
             import io
             buf = io.StringIO()
             w = csv.writer(buf)
-            w.writerow(["texture", "path", "class", "action", "reason",
-                        "bytes", "has_ktx2", "kept_cpu_source"])
-            for texture, path, rc, action, reason, size, has_ktx2, kept_cpu in out_rows:
-                w.writerow([texture, path, rc, action, reason, size,
-                            str(has_ktx2).lower(), str(kept_cpu).lower()])
+            w.writerow(_CSV_HEADER)
+            for r in out_rows:
+                w.writerow(_csv_row(r))
             print(buf.getvalue(), end="")
         else:
             out_path = args.out if args.out else (deploy / DEFAULT_OUT.name)
