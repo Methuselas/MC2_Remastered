@@ -162,6 +162,11 @@ public:
 	// for both axes (backward-compatible with all existing callers).
 	void				setFileHeight( float newHeight ){ fileHeight = newHeight; }
 	float				getFileHeight() const { return fileHeight; }
+	// getTextureHandle: read-only access to the loaded texture node id.  Lets a
+	// caller (e.g. MechListBox::initIcon) query the atlas's logical size to set
+	// fileHeight explicitly for a non-square atlas, instead of asystem auto-
+	// detecting it for every atlas (which shifts UVs on unrelated GUI panels).
+	unsigned long		getTextureHandle() const { return textureHandle; }
 	int				getID() const { return ID; }
 	void			setID(int newID) { ID = newID; }
 

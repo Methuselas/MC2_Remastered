@@ -18,6 +18,7 @@ MechListBox.cpp			: Implementation of the MechListBox component.
 #include"logisticsdata.h"
 #include"mechpurchasescreen.h"
 #include"gamesound.h"
+#include"txmmgr.h"
 
 MechListBoxItem* MechListBoxItem::s_templateItem = NULL;
 
@@ -494,11 +495,12 @@ void MechListBox::initIcon( LogisticsMech* pMech, aObject& mechIcon )
 
 	// Icon atlas: 25x30px cells, 10 cols.  Atlas width is always 256 so U uses
 	// setFileWidth(256).  Atlas height varies: base=256 (slots 0-79 addressable),
-	// mco-compat=512 (slots 0-169).  The aObject::init FIT path already set
-	// fileHeight from the actual texture height (via tryGetTextureLogicalSize) and
-	// copyData propagated it into mechIcon above.  setUVs() reads fileHeight to
-	// divide V, so taller atlases are automatically addressed correctly -- no
-	// per-atlas branching needed here.
+	// mco-compat=512 (slots 0-169).  asystem does NOT auto-set fileHeight (that
+	// would shift V on unrelated GUI panels), so initIcon sets it EXPLICITLY here
+	// from the atlas's actual texture height -- ONLY for the mech-icon atlas.  For
+	// a square 256x256 atlas this resolves to fileHeight=256 == fileWidth, so
+	// setUVs is byte-identical to the old fileWidth-only path.  For 256x512 the V
+	// divisor becomes 512, addressing slots >=80.
 	// See MC2_LOG_MECH_ICON env var for per-mech UV diagnostics.
 	long index = pMech->getIconIndex();
 	long xIndex = index % 10;
@@ -520,8 +522,18 @@ void MechListBox::initIcon( LogisticsMech* pMech, aObject& mechIcon )
 	float v2 = (fY * height);
 
 	mechIcon.setFileWidth( 256.f );
-	// fileHeight is already set from atlas texture height via aObject::init -> copyData.
-	// setUVs uses it for V; no explicit setFileHeight call needed.
+	// EXPLICIT, mech-icon-only fileHeight: query the atlas's logical height and
+	// set the V divisor.  Falls back to 256 (square) if the size is unavailable,
+	// preserving the old behavior.  Scoped here so no other FIT atlas is touched.
+	{
+		DWORD atlasW = 0, atlasH = 0;
+		float fileH = 256.f;
+		if ( mcTextureManager &&
+		     mcTextureManager->tryGetTextureLogicalSize( mechIcon.getTextureHandle(), atlasW, atlasH ) &&
+		     atlasH > 0 )
+			fileH = (float)atlasH;
+		mechIcon.setFileHeight( fileH );
+	}
 	mechIcon.setUVs( u, v, u2, v2 );
 
 	if ( getenv("MC2_LOG_MECH_ICON") )

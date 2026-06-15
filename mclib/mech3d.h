@@ -810,12 +810,18 @@ class Mech3DAppearance: public ObjectAppearance
 		
 		virtual Stuff::Point3D getRootNodeCenter (void)
 		{
+			// DEGRADE-DON'T-CRASH: partial import with no base shape -> origin.
+			if (!mechShape)
+				return Stuff::Point3D(0.0f, 0.0f, 0.0f);
 			Stuff::Point3D result = mechShape->GetRootNodeCenter();
 			return result;
 		}
-		
+
 		virtual void setAlphaValue (BYTE aVal)
 		{
+			// DEGRADE-DON'T-CRASH: partial import with no base shape.
+			if (!mechShape)
+				return;
 			mechShape->SetAlphaValue(aVal);
 			
 			//Sensor shape fades in opposite direction from mover

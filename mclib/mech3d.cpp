@@ -1282,8 +1282,19 @@ void Mech3DAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 
 	//Default to Bright RGB.
 	psRed = psGreen = psBlue = 0xffffffff;
-	
-	if (mechType)
+
+	// DEGRADE-DON'T-CRASH: ensure the instance shape is NULL before the build
+	// block so a partially-imported mech (missing appearance .ini / missing
+	// TGLData / missing base-LOD .ase) leaves a well-defined NULL, not garbage.
+	// Mech3DAppearanceType::init() falls through its STOP()/gosASSERT() (both
+	// no-ops in RelWithDebInfo) when those assets are absent, leaving
+	// mechType->mechShape[0] == NULL. Without this guard mechShape =
+	// mechType->mechShape[0]->CreateFrom() below derefs NULL and crashes the
+	// encyclopedia / mech-bay preview. The per-frame render()/update()/
+	// recalcBounds() paths early-out on the resulting NULL mechShape.
+	mechShape = NULL;
+
+	if (mechType && mechType->mechShape[0])
 	{
 		// Re-register all LODs with the GPU mech batcher. GpuMechBatcher::onMapLoad()
 		// clears s_typeLodIndex between sessions, but AppearanceTypeList caches the
@@ -1510,9 +1521,25 @@ void Mech3DAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 			mechType->typeUpperLeft.y *= EXPAND_FACTOR;
 			mechType->typeUpperLeft.z *= EXPAND_FACTOR;
 
-			mechType->typeLowerRight.x *= EXPAND_FACTOR; 
-			mechType->typeLowerRight.y *= EXPAND_FACTOR; 
-			mechType->typeLowerRight.z *= EXPAND_FACTOR; 
+			mechType->typeLowerRight.x *= EXPAND_FACTOR;
+			mechType->typeLowerRight.y *= EXPAND_FACTOR;
+			mechType->typeLowerRight.z *= EXPAND_FACTOR;
+		}
+	}
+	else
+	{
+		// DEGRADE-DON'T-CRASH: partially-imported mech — appearance type exists
+		// but has no usable base-LOD shape (missing .ini / TGLData / .ase). Skip
+		// shape build; mechShape stays NULL and the render path renders nothing.
+		// One-time warn so the missing asset is visible in logs (not silent).
+		static bool s_warnedMissingMechShape = false;
+		if (!s_warnedMissingMechShape)
+		{
+			s_warnedMissingMechShape = true;
+			std::printf("[MECH_LOAD] WARN: mech appearance has no base shape "
+				"(missing/partial import) -- rendering nothing. mechType=%p\n",
+				(void*)mechType);
+			std::fflush(stdout);
 		}
 	}
 
@@ -1787,6 +1814,9 @@ void Mech3DAppearance::hitRight (void)
 //-----------------------------------------------------------------------------
 bool Mech3DAppearance::PerPolySelect (long mouseX, long mouseY)
 {
+	// DEGRADE-DON'T-CRASH: partial import with no base shape -> not selectable.
+	if (!mechShape)
+		return false;
 	return mechShape->PerPolySelect(mouseX,mouseY);
 }
 
@@ -1834,6 +1864,10 @@ void Mech3DAppearance::LoadPaintSchemata (void)
 //-----------------------------------------------------------------------------
 void Mech3DAppearance::setPaintScheme (void)
 {
+	// DEGRADE-DON'T-CRASH: partial import with no base shape -> nothing to paint.
+	if (!mechShape)
+		return;
+
 	//----------------------------------------------------------------------------
 	// Simple really.  Get the texture memory, apply the paint scheme, let it go!
 	DWORD gosHandle = mcTextureManager->get_gosTextureHandle(mechShape->GetTextureHandle(0));
@@ -1988,6 +2022,13 @@ void Mech3DAppearance::getPaintScheme( DWORD& red, DWORD& green, DWORD& blue )
 //-----------------------------------------------------------------------------
 void Mech3DAppearance::resetPaintScheme (DWORD red, DWORD green, DWORD blue)
 {
+	// DEGRADE-DON'T-CRASH: partial import with no base shape -> no texture to
+	// repaint. Called directly from the encyclopedia / mech-bay preview setup
+	// (SimpleCamera::setMech) before any frame; mechShape->GetTextureName below
+	// would deref NULL.
+	if (!mechShape)
+		return;
+
 	//---------------------------------------------------------------------------------
 	// Simple really.  Toss the current texture, reload the RGB and reapply the colors
 
@@ -2284,6 +2325,15 @@ bool Mech3DAppearance::recalcBounds (void)
 	::mc2_cpu_proj_cost::Scope _f3_recalcBounds_scope(
 	    ::mc2_cpu_proj_cost::BUCKET_RECALCBOUNDS_PERFRAME);
 	::mc2_cpu_proj_cost::add_workload_recalcbounds(1);
+
+	// DEGRADE-DON'T-CRASH: no base shape (partial import) -> treat as not in
+	// view; the mechShape->GetNodeNameId() / LOD-swap derefs below are unsafe.
+	if (!mechShape)
+	{
+		setVisibilityGatesFromLegacy(false);
+		return inView;
+	}
+
 	Stuff::Vector4D tempPos;
 	bool wasInView = inView;
 	setVisibilityGatesFromLegacy(false);
@@ -2604,6 +2654,11 @@ long Mech3DAppearance::render (long depthFixup)
 			if (s_fxCountLog) std::atexit(&fxCountEmit);
 		}
 	}
+
+	// DEGRADE-DON'T-CRASH: a partially-imported mech (no base shape) leaves
+	// mechShape NULL (see init()). Render nothing rather than deref NULL.
+	if (!mechShape)
+		return NO_ERR;
 
 	// Force textures to reload due to unique instance.
 	mechShape->SetTextureHandle(0,localTextureHandle);
@@ -3321,6 +3376,10 @@ long Mech3DAppearance::renderShadows (void)
 {
 	// Skip legacy blob shadows when shadow maps are active
 	if (gos_IsTerrainTessellationActive())
+		return NO_ERR;
+
+	// DEGRADE-DON'T-CRASH: partial import with no base shape -> no shadow.
+	if (!mechShape)
 		return NO_ERR;
 
 	mechShape->SetTextureHandle(0,localTextureHandle);
@@ -4501,6 +4560,13 @@ long Mech3DAppearance::update (bool animate)
 		}
 	}
 #endif
+
+	// DEGRADE-DON'T-CRASH: partial import with no base shape -> nothing to
+	// animate; the many mechShape-> derefs below are unsafe. Return as if the
+	// frame advanced successfully so callers (encyclopedia preview, mech bay)
+	// keep running.
+	if (!mechShape)
+		return TRUE;
 
 	//----------------------------------------
 	// Recycle the weapon Nodes

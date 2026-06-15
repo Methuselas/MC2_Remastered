@@ -141,13 +141,12 @@ void aObject::init(FitIniFile* file, const char* blockName, DWORD neverFlush)
 			if ( mcTextureManager->tryGetTextureLogicalSize( ID, logicalWidth, logicalHeight ) )
 			{
 				fileWidth = logicalWidth;
-				// fileHeight: only set when height != width so setUVs can divide
-				// V by the correct atlas dimension.  For square atlases (most
-				// legacy assets) leave fileHeight=0 which means "use fileWidth".
-				// For a tall atlas (e.g. 256x512 mech-icon atlas) fileHeight will
-				// be 512, fixing the OOB-slot problem without touching any caller.
-				if ( logicalHeight != logicalWidth )
-					fileHeight = (float)logicalHeight;
+				// NOTE: fileHeight is intentionally NOT auto-set here.  Auto-setting
+				// it for every non-square FIT atlas shifts V-coords on unrelated GUI
+				// panels.  Callers that genuinely need a non-square V divisor (only
+				// the mech-bay icon atlas, MechListBox::initIcon) call setFileHeight()
+				// explicitly.  fileHeight stays 0 => setUVs uses the fileWidth path,
+				// byte-identical to pre-fileHeight behavior for all other atlases.
 			}
 			else
 			{
@@ -158,9 +157,7 @@ void aObject::init(FitIniFile* file, const char* blockName, DWORD neverFlush)
 					gos_LockTexture( gosID, 0, 0, 	&textureData );
 				}
 				fileWidth = textureData.Width / mcTextureManager->getUVScale(ID);
-				float fh = textureData.Height / mcTextureManager->getUVScale(ID);
-				if ( fh != fileWidth )
-					fileHeight = fh;
+				// fileHeight intentionally NOT auto-set (see note above).
 				{
 					ZoneScopedN("aObject::init fit gos_UnLockTexture");
 					gos_UnLockTexture( gosID );
