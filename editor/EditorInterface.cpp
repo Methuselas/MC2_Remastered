@@ -6199,11 +6199,18 @@ bool EditorInterface::applyObjectAlignment( EditorObject* obj, int newTeam )
 
 	obj->setAlignment( newTeam );
 
-	// Re-bake the static recipe so the team colour updates (position unchanged).
-	ObjectAppearance* pApp = obj->appearance();
-	pApp->invalidateStaticRegistration();
-	pApp->update();
-	pApp->registerStatic();
+	// Buildings are STATIC props whose team colour is baked into the GPU recipe,
+	// so re-bake them. UNITS are dynamic movers -- the working UnitSettingsDlg
+	// path just calls setAlignment with NO static re-bake; doing the static
+	// invalidate/registerStatic on a unit corrupts it (it vanishes when
+	// deselected). So skip the re-bake for units.
+	if ( !dynamic_cast<Unit*>( obj ) )
+	{
+		ObjectAppearance* pApp = obj->appearance();
+		pApp->invalidateStaticRegistration();
+		pApp->update();
+		pApp->registerStatic();
+	}
 
 	// Position is unchanged, but keep the action's location bookkeeping consistent
 	// (undo locates the object by position).
