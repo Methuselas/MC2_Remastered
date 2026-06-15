@@ -77,6 +77,26 @@ bool groupLogEnabled() {
     return s_groupLog_value;
 }
 
+// MC2_VFX_ORACLE_TUBE_COVERAGE=1: wrap the deferred ribbon draw in a
+// GL_SAMPLES_PASSED occlusion query and log per-frame coverage + the bound
+// draw-FBO. This is the DETERMINISTIC, nondeterminism-immune proof that the
+// oracle tube fragments actually rasterize + pass depth into the composited
+// scene FBO (cross-launch pixel-diff cannot validate combat FX -- mech-pose
+// noise ~2.3% swamps it; an in-frame sample count does not depend on pose).
+// samples>0 with fbo=scene target => tube pixels reach the frame. Diagnostic,
+// default-OFF; the GL_QUERY_RESULT read stalls, acceptable when gated on.
+bool s_tubeCoverage_initialized = false;
+bool s_tubeCoverage_value       = false;
+bool tubeCoverageEnabled() {
+    if (!s_tubeCoverage_initialized) {
+        const char* v = std::getenv("MC2_VFX_ORACLE_TUBE_COVERAGE");
+        s_tubeCoverage_value       = (v && v[0] == '1');
+        s_tubeCoverage_initialized = true;
+    }
+    return s_tubeCoverage_value;
+}
+GLuint s_tubeCoverageQuery = 0;  // lazily created occlusion query object
+
 // VFX-DEBUG-VIEWS-1: particle billboard debug-mode selector.
 // 0=Final (byte-identical default), 1=Albedo, 2=Alpha, 3=ParticleKind,
 // 4=Overdraw proxy. Seeded once from MC2_VFX_DEBUG_MODE (clamped 0..4);
@@ -658,6 +678,18 @@ extern "C" void gos_tube_ribbon_flush_deferred(void) {
         }
     }
 
+    // MC2_VFX_ORACLE_TUBE_COVERAGE: begin an occlusion query over the ribbon
+    // draws + capture the bound draw-FBO (scene target). samples>0 with a
+    // non-default fbo proves tube fragments rasterize + pass depth into the
+    // composited scene FBO -- deterministic, immune to mech-pose nondeterminism.
+    const bool covOn  = tubeCoverageEnabled();
+    GLint      covFbo = 0;
+    if (covOn) {
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &covFbo);
+        if (s_tubeCoverageQuery == 0) glGenQueries(1, &s_tubeCoverageQuery);
+        glBeginQuery(GL_SAMPLES_PASSED, s_tubeCoverageQuery);
+    }
+
     // ── Per-record draw loop ───────────────────────────────────────────
     for (const RibbonRecord& rec : s_ribbonQueue) {
         const unsigned numVerts   = (unsigned)(rec.positions.size() / 3u);
@@ -718,6 +750,21 @@ extern "C" void gos_tube_ribbon_flush_deferred(void) {
 
         glBindTexture(GL_TEXTURE_2D, glTex);
         glDrawElements(GL_TRIANGLES, (GLsizei)numIndices, GL_UNSIGNED_SHORT, (const void*)0);
+    }
+
+    // MC2_VFX_ORACLE_TUBE_COVERAGE: end the query, read the sample count (this
+    // stalls -- acceptable for a gated diagnostic) and log per-frame coverage.
+    // sceneDrawBufs = the scene FBO's MRT attachment count (3 with the
+    // RenderWorld arc R32UI objectId attachment) -- confirms the target is the
+    // composited scene FBO, not a scratch target.
+    if (covOn) {
+        glEndQuery(GL_SAMPLES_PASSED);
+        GLuint covSamples = 0;
+        glGetQueryObjectuiv(s_tubeCoverageQuery, GL_QUERY_RESULT, &covSamples);
+        std::fprintf(stderr,
+            "[VFX_ORACLE_TUBE coverage] ribbons=%u samples=%u fbo=%d sceneDrawBufs=%d\n",
+            (unsigned)s_ribbonQueue.size(), covSamples, (int)covFbo, nSavedDrawBufs);
+        std::fflush(stderr);
     }
 
     // ── Unbind SSBO/IBO slots ──────────────────────────────────────────

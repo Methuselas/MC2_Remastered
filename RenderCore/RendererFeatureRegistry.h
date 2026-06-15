@@ -598,6 +598,13 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         false,
         "GOSFX-TUBE-RIBBON-1: per-Tube ribbon submit counters (FIRST_HARVEST / v2 vertex+index tallies, unsupported->MLR fallbacks). Default-OFF; =1 enables. Diagnostic only, no behavior change."
     },
+    {
+        "MC2_VFX_ORACLE_TUBE_COVERAGE",
+        "MC2_VFX_ORACLE_TUBE_COVERAGE",
+        EnvVarKind::Trace,
+        false,
+        "GOSFX-TUBE-RIBBON-1: wrap the deferred ribbon draw in a GL_SAMPLES_PASSED occlusion query; logs [VFX_ORACLE_TUBE coverage] ribbons/samples/fbo/sceneDrawBufs per frame. Deterministic proof (immune to mech-pose nondeterminism) that oracle tube fragments rasterize+pass-depth into the composited scene FBO. Default-OFF; =1 enables. Diagnostic only (query result read stalls), no behavior change."
+    },
     // STATICPROP-PERMANENT-INSTANCE-LIGHTS-1 (Slice 1)
     {
         "MC2_TRACE_LIGHTBAKE_STABILITY",
