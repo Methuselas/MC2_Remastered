@@ -607,6 +607,9 @@ def main():
                             # them and the fixture never fires.
                             "MC2_FX_FORCE_SPAWN",
                             "MC2_LOG",
+                            # Direct-fire projectile speed multiplier (PPC/AC/gauss);
+                            # default 1.0 (stock). Allowlisted so the fixture can A/B it.
+                            "MC2_PROJECTILE_SPEED_MULT",
                             # Active mod id — drives model_override + anim_override
                             # registry mod-merge (mods/<id>/...). Allowlisted so mod
                             # smokes actually load the mod; without it Popen drops it.

@@ -38,6 +38,8 @@
 #include"mission.h"
 #endif
 
+#include <cstdlib>  // getenv/atof for MC2_PROJECTILE_SPEED_MULT
+
 #ifndef GOS_PROFILER_H
 #include"gos_profiler.h"
 #endif
@@ -584,7 +586,24 @@ long WeaponBolt::update (void)
 	Stuff::Vector3D laserVelocity;
 	float velMag = ((WeaponBoltTypePtr)getObjectType())->velocity;
 	velMag *= frameLength;
-		
+
+	// PPC-SPEED step 2 (incremental, env-gated, default-off): scale DIRECT-FIRE
+	// bolt travel speed (PPC/AC/gauss) for a snappier feel. Excludes arcEffect
+	// bolts (LRM / indirect lobbed) -- their parabola depends on the tuned
+	// velocity. MC2_PROJECTILE_SPEED_MULT default 1.0 (=stock); clamped (0,10].
+	// Pure flight-speed change: hit/miss is pre-rolled (mech.cpp) and damage is
+	// applied on proximity regardless of speed, so this does not alter outcomes.
+	// (The curving/de-track is a separate change -- the full PPC fix.)
+	if (!((WeaponBoltTypePtr)getObjectType())->arcEffect)
+	{
+		static const float s_dfSpeedMult = []{
+			const char* v = getenv("MC2_PROJECTILE_SPEED_MULT");
+			float m = v ? (float)atof(v) : 1.0f;
+			return (m > 0.0f && m <= 10.0f) ? m : 1.0f;
+		}();
+		velMag *= s_dfSpeedMult;
+	}
+
 	laserVelocity.Subtract(targetPos,ownerPosition);
 	float distance = laserVelocity.x * laserVelocity.x + laserVelocity.y * laserVelocity.y;
 	
