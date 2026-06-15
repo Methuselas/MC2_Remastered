@@ -1684,10 +1684,19 @@ void EditorInterface::handleMouseMove( int PosX, int PosY )
 		const int K = 120;
 		Stuff::Vector3D wxp, wxm, wyp, wym;
 		Stuff::Vector2DOf<long> sp;
-		sp.x = PosX + K; sp.y = PosY; eye->inverseProject( sp, wxp );
-		sp.x = PosX - K; sp.y = PosY; eye->inverseProject( sp, wxm );
-		sp.x = PosX; sp.y = PosY + K; eye->inverseProject( sp, wyp );
-		sp.x = PosX; sp.y = PosY - K; eye->inverseProject( sp, wym );
+		// Build the local screen->world jacobian from the O(1) ground-plane
+		// unproject (screenToGroundPlaneApprox), NOT eye->inverseProject. The
+		// terrain-raycast inverseProject returns a GARBAGE far-world point on a
+		// heightfield-raycast MISS (over water / off-map / under the default-on
+		// LOD-chunk terrain). A single bad jacobian sample blows Mxx/Myy up and the
+		// object jumps across the map ("teleports when I move a prop"). The
+		// ground-plane unproject always intersects z=0 cleanly -> a smooth finite
+		// local map; the drag uses a per-frame DELTA so the constant ground-vs-
+		// terrain-elevation offset cancels.
+		sp.x = PosX + K; sp.y = PosY; eye->screenToGroundPlaneApprox( sp.x, sp.y, wxp );
+		sp.x = PosX - K; sp.y = PosY; eye->screenToGroundPlaneApprox( sp.x, sp.y, wxm );
+		sp.x = PosX; sp.y = PosY + K; eye->screenToGroundPlaneApprox( sp.x, sp.y, wyp );
+		sp.x = PosX; sp.y = PosY - K; eye->screenToGroundPlaneApprox( sp.x, sp.y, wym );
 		float inv2K = 1.0f / ( 2.0f * (float)K );
 		float Mxx = ( wxp.x - wxm.x ) * inv2K, Myx = ( wxp.y - wxm.y ) * inv2K;
 		float Mxy = ( wyp.x - wym.x ) * inv2K, Myy = ( wyp.y - wym.y ) * inv2K;
