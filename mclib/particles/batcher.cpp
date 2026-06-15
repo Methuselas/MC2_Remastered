@@ -173,23 +173,27 @@ bool Batcher::is_gpu_sim_compare_enabled() {
 }
 
 // MC2_VFX_ORACLE_TUBE slice 1: Tube swept-quad ribbon oracle gate.
-// STOPGAP 2026-06-11: flipped to DEFAULT-OFF. The oracle's immediate-mode GL
-// draw (gos_tube_ribbon_flush) renders NOTHING on the current RenderWorld-arc
-// base — it submits (addRibbon=83538) but its pixels never reach the composited
-// frame, so PPC/gauss/AC weapon FX are invisible. Legacy MLR renders them all
-// correctly (verified interactive tube-control A/B + screenshot). Until the
-// RenderWorld<->immediate-draw render-target/pass-order regression is fixed,
-// default to legacy MLR. Opt back IN with MC2_VFX_ORACLE_TUBE=1 (only =1 enables);
-// absent or any other value = legacy. Re-flip to default-ON once the oracle
-// render path is repaired.
+// DEFAULT-ON 2026-06-15. The 2026-06-11 stopgap ("oracle submits but pixels
+// never reach the composited frame") was STALE — the deferred-flush +
+// single-COLOR0 MRT fix (gos_particle_bridge.cpp) already repaired the
+// RenderWorld render-target regression. Proven two ways:
+//   * MC2_VFX_ORACLE_TUBE_COVERAGE occlusion query: samples=1050..1728/frame
+//     into fbo=1 sceneDrawBufs=3 (the composited RenderWorld MRT) — tube
+//     fragments rasterize + pass depth into the scene FBO. Deterministic,
+//     immune to the ~2.3% cross-launch combat nondeterminism that defeats
+//     pixel-diff.
+//   * Eyes-on (mc2_01 + MC2_FX_FORCE_SPAWN, ~8 frames post-fire): Bushwacker
+//     PPC renders the blue oracle ribbon; recognizable weapon FX.
+// Default-ON with a =0 kill-switch: absent or any value != "0" = oracle;
+// MC2_VFX_ORACLE_TUBE=0 = legacy MLR fallback.
 bool Batcher::is_oracle_tube_enabled() {
     static bool s_init = false;
     static bool s_val  = false;
     if (!s_init) {
         const char* v = std::getenv("MC2_VFX_ORACLE_TUBE");
-        s_val  = (v && v[0] == '1');   // STOPGAP: default-OFF; only =1 enables
+        s_val  = !(v && v[0] == '0');   // DEFAULT-ON; only =0 disables (legacy MLR)
         s_init = true;
-        std::fprintf(stderr, "[VFX_ORACLE_TUBE v1] gate=%s (stopgap default-off)\n",
+        std::fprintf(stderr, "[VFX_ORACLE_TUBE v1] gate=%s (default-on; =0 disables)\n",
                      s_val ? "on" : "off");
         std::fflush(stderr);
     }
