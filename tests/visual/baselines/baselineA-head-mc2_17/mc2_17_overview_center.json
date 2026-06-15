@@ -1,5 +1,5 @@
 {
-  "build": { "sha": "745a8a5ba88f", "dirty": true, "branch": "claude/nifty-mendeleev" },
+  "build": { "sha": "1f0419acc712", "dirty": true, "branch": "claude/fx-tube-mech-fire-1" },
   "mission": "mc2_17",
   "label": "overview_center",
   "frame": 151,
@@ -9,5 +9,5 @@
   "preset": "stock",
   "width": 800,
   "height": 600,
-  "gate_env": ["MC2_GPU_CULL_STATIC_EAGER_LIGHT_BAKE", "MC2_GPU_CULL_STATIC_FROZEN_RECORDS", "MC2_HEARTBEAT", "MC2_SMOKE_FIXED_TIMESTEP", "MC2_SMOKE_MODE", "MC2_SMOKE_SEED", "MC2_STATIC_POP_SPLIT", "MC2_VISUAL_BOOKMARK_CAPTURE", "MC2_VISUAL_CAPTURE_DIR", "MC2_VISUAL_CAPTURE_FRAME", "MC2_VISUAL_SETTLE"]
+  "gate_env": ["MC2_GPU_CULL_STATIC_EAGER_LIGHT_BAKE", "MC2_GPU_CULL_STATIC_FROZEN_RECORDS", "MC2_HEARTBEAT", "MC2_LOG", "MC2_SMOKE_FIXED_TIMESTEP", "MC2_SMOKE_MODE", "MC2_SMOKE_SEED", "MC2_STATIC_POP_SPLIT", "MC2_VISUAL_BOOKMARK_CAPTURE", "MC2_VISUAL_CAPTURE_DIR", "MC2_VISUAL_CAPTURE_FRAME", "MC2_VISUAL_SETTLE"]
 }

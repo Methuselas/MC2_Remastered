@@ -1,10 +1,10 @@
 {
-  "set_id": "baselineA-head-mc2_17",
+  "set_id": "baselineA-head-mc2_24",
   "status": "blessed",
   "blessed_commit": "1f0419acc71260ecb06e2111a2775942d86f58c1",
   "supersedes": null,
-  "mission": "mc2_17",
-  "path": "A:\\Games\\mc2-opengl-src\\.claude\\worktrees\\nifty-mendeleev\\tests\\visual\\baselines\\baselineA-head-mc2_17",
+  "mission": "mc2_24",
+  "path": "A:\\Games\\mc2-opengl-src\\.claude\\worktrees\\nifty-mendeleev\\tests\\visual\\baselines\\baselineA-head-mc2_24",
   "stabilization": {
     "runs": 3,
     "warmup_discarded": 1,
@@ -15,7 +15,7 @@
   "identity": {
     "schema": "mc2-manifest/1",
     "generator": "visual_capture",
-    "generated_utc": "2026-06-15T01:46:40Z",
+    "generated_utc": "2026-06-15T01:35:32Z",
     "host": "DESKTOP-P1N69B5",
     "git": {
       "commit": "1f0419acc71260ecb06e2111a2775942d86f58c1",
@@ -43,8 +43,8 @@
   "bookmarks": [
     {
       "name": "overview_center",
-      "png": "mc2_17_overview_center.png",
-      "sha256": "ec9a4546d8bd8b02e792717944f3db1be3f9b9751043e8dbb2f34488ae90ef19",
+      "png": "mc2_24_overview_center.png",
+      "sha256": "358163daf1490856f2107b84f91378f0b394507469291c81cfeb71788c181842",
       "covers": [
         "terrain_splat",
         "sky"
@@ -54,8 +54,8 @@
     },
     {
       "name": "ridge_lowangle",
-      "png": "mc2_17_ridge_lowangle.png",
-      "sha256": "5dff0d1b6c74fc2efa78e9e818d62a08174fc246250d9b12d28f671079411b3d",
+      "png": "mc2_24_ridge_lowangle.png",
+      "sha256": "9442ccb6ea229378450c595ee5096d6a5f9f828e797fe4d9e348150df56bd060",
       "covers": [
         "terrain_lod_chunk_skirts",
         "shadow_cascade"
@@ -65,8 +65,8 @@
     },
     {
       "name": "highangle_wide",
-      "png": "mc2_17_highangle_wide.png",
-      "sha256": "3ee1d45426f5d5f208547eb2739bf789a760b2e39217ab384f72eb883ceda307",
+      "png": "mc2_24_highangle_wide.png",
+      "sha256": "6bd83e216f099a5fe1b4e16741bb450d5d46d7360a58789cbc77b31b9a4c6de2",
       "covers": [
         "terrain_splat",
         "static_prop_pbr"
