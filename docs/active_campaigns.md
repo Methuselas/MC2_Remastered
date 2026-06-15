@@ -2,6 +2,20 @@
 
 > Pointer doc. Detail in memory/ handoffs and docs/. Add new campaigns at top.
 
+## 2026-06-14 — Proof-machine S-program + GlStateGuard + RC reconcile + FX/pixel gate (nifty `1f0419ac`)
+
+**SHIPPED (S11-S20 proof machine):**
+- S12 unified manifest schema `ee4a583f` (`scripts/manifest_schema.py` + checker + tests + cockpit adoption)
+- S9/S13 pixel gate `8461e3e0` (`scripts/run_visual.py` capture/compare/verify, byte-hash, refuses non-blessed) + **Baseline-A v2 `7e997e8f` (all 5 tier1, 15 golden frames, coherent off `1f0419ac`)**
+- S11/S15 `c9421306` (release-install report w/ S12 identity; residency slim report sha+keep/drop/fail/unknown)
+- S14 render-pass reader `0017bb2b` (`scripts/render_pass_report.py` + --compare)
+- S20 GlStateGuard slice 2 `783406a8` (RAII depth/blend/cull on terrain chunk draw, A/B pixel-neutral)
+- S19 FX fixture `1f0419ac` (`MC2_FX_FORCE_SPAWN` mech-fire PPC tubes in MechWarrior::updateActions)
+- RC→nifty reconcile `d69611f1`/`7d087f16`/`77beb69c`/`4855fcf9`/`745a8a5b` (5 fixes incl. dark-water uninit-VRAM); merged engine set + importer `d821018c`/`eca37ed3`
+- MC2_LOG hitch gate `47ef382f` (stdout→NUL default kills the 400ms printf hitch; harness sets MC2_LOG=1)
+
+**LEFT:** S16 modder round-trip (`verify_mod_roundtrip.py`), S17 editor authoring depth, S18 asset-browser thumbnails, S13+ HTML gallery + advisory smoke-gate auto-wire, S15+ cook.json provenance + texture-res validator, #5 Tube/render merge (unblocked). Full: MEMORY.md 2026-06-14 handoff.
+
 ## Current state (2026-06-01)
 
 **Nifty HEAD:** see MEMORY.md handoffs for current commit.
