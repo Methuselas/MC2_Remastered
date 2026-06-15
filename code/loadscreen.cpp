@@ -163,10 +163,30 @@ void LoadScreenWrapper::changeRes()
 
 	if ( NO_ERR != outFile.open( path ) )
 	{
-		char error[256];
-		sprintf( error, "couldn't open file %s", (const char*)path );
-		Assert( 0, 0, error );
-		return;
+		// Old MC2X campaigns (pre-1920 era) may lack high-res loading screens.
+		// Walk DOWN the resolution table and use the best fit that opens.
+		bool opened = false;
+		for ( int fi = suitable_res - 1; fi >= 0; fi-- )
+		{
+			char fbName[256];
+			sprintf( fbName, "mcl_loadingscreen%s", str_resolutions[fi] );
+			FullPathFileName fbPath;
+			fbPath.init( artPath, fbName, ".fit" );
+			if ( NO_ERR == outFile.open( (const char*)fbPath ) )
+			{
+				SPEW(( "GRAPHICS", "loadscreen: %s missing, fell back to %s.fit\n",
+				       fileName, fbName ));
+				opened = true;
+				break;
+			}
+		}
+		if ( !opened )
+		{
+			char error[256];
+			sprintf( error, "couldn't open file %s (no fallback found)", (const char*)path );
+			Assert( 0, 0, error );
+			return;
+		}
 	}
 
 	//The 0x2 means that we do NOT want to flush this texture when we toss

@@ -582,14 +582,11 @@ void SimpleCamera::setObject( const char* pFileName, long type, long base, long 
 {
 	if ( !pFileName || !strlen( pFileName ) )
 	{
-		assert(0 && "SimpleCamera::setObject");// sebi: check if we go here
-		if ( appearanceTypeList && appearanceTypeList->pointerCanBeDeleted(pObject) )
+		// Empty/NULL filename = no model. Free existing object and return cleanly.
+		if ( appearanceTypeList )
 			delete pObject;
-
 		pObject = NULL;
-
 		return;
-
 	}
 	switch( type )
 	{

@@ -226,9 +226,30 @@ void LogisticsData::initVariants()
 	strcpy( variantPath, artPath );
 	strcat( variantPath, "buildings.csv" );
 
+	// ---- MC2_LOG_LOGISTICS diagnostics (instrumentation only, no behavior change) ----
+	static FILE* s_logFile = nullptr;
+	if ( getenv("MC2_LOG_LOGISTICS") && !s_logFile ) {
+		s_logFile = fopen("logistics_debug.log", "a");
+	}
+#define LOG_LOGISTICS(fmt, ...) do { \
+	if ( getenv("MC2_LOG_LOGISTICS") ) { \
+		printf("[LOGISTICS] " fmt "\n", ##__VA_ARGS__); fflush(stdout); \
+		if (s_logFile) { fprintf(s_logFile, "[LOGISTICS] " fmt "\n", ##__VA_ARGS__); fflush(s_logFile); } \
+	} } while(0)
+
+	LOG_LOGISTICS("initVariants: artPath='%s' objectPath='%s'", artPath, objectPath);
+	LOG_LOGISTICS("initVariants: buildings.csv path='%s'", variantPath);
 
 	CSVFile variantFile;
-	variantFile.open( variantPath );
+	long csvOpenResult = variantFile.open( variantPath );
+	if ( getenv("MC2_LOG_LOGISTICS") ) {
+		const char* modOwner = LookupModOwner(variantPath);
+		unsigned long fsz = (csvOpenResult == NO_ERR) ? variantFile.fileSize() : 0;
+		LOG_LOGISTICS("initVariants: buildings.csv open=%s size=%lu tier=%s",
+			(csvOpenResult == NO_ERR) ? "OK" : "FAIL",
+			(unsigned long)fsz,
+			modOwner ? modOwner : "base-or-fastfile");
+	}
 
 	FullPathFileName pakPath;
 	pakPath.init( objectPath, "Object2", ".pak" );
@@ -305,10 +326,9 @@ void LogisticsData::initVariants()
 		CSVFile mechFile;
 		if ( NO_ERR != mechFile.open( variantFullPath ) )
 		{
-			char error[256];
-			sprintf( error, "couldn't open file %s", variantFullPath );
-			Assert( 0, 0, error );
-			return;
+			LOG_LOGISTICS("initVariants: SKIP missing csv '%s' (row %d)", variantFullPath, i);
+			i++;
+			continue;
 		}
 
 		LogisticsChassis* chassis = new LogisticsChassis();
@@ -334,6 +354,27 @@ void LogisticsData::initVariants()
 		i++;
 
 	}
+
+	// ---- post-load diagnostics ----
+	if ( getenv("MC2_LOG_LOGISTICS") ) {
+		int totalVariants = 0;
+		bool shadowhawkFound = false;
+		for ( VARIANT_LIST::EIterator it = variants.Begin(); !it.IsDone(); it++ ) {
+			totalVariants++;
+			EString fn = (*it)->getFileName();
+			char fnLow[1024];
+			strncpy(fnLow, (const char*)fn, sizeof(fnLow)-1);
+			fnLow[sizeof(fnLow)-1] = '\0';
+			S_strlwr(fnLow);
+			if ( strstr(fnLow, "shadowhawk") ) shadowhawkFound = true;
+		}
+		LOG_LOGISTICS("initVariants: total variants loaded=%d", totalVariants);
+		if ( shadowhawkFound )
+			LOG_LOGISTICS("SHADOWHAWK VARIANT LOADED");
+		else
+			LOG_LOGISTICS("SHADOWHAWK NOT IN VARIANTS");
+	}
+#undef LOG_LOGISTICS
 }
 
 void LogisticsData::addVehicle( long fitID, PacketFile& objectFile, float scale, long nameID )
@@ -1480,6 +1521,17 @@ LogisticsVariant* LogisticsData::getVariant( const char* mechName )
 
 long LogisticsData::updateAvailability()
 {
+	// ---- MC2_LOG_LOGISTICS diagnostics ----
+	static FILE* s_logFileUA = nullptr;
+	if ( getenv("MC2_LOG_LOGISTICS") && !s_logFileUA ) {
+		s_logFileUA = fopen("logistics_debug.log", "a");
+	}
+#define LOG_LOGISTICS_UA(fmt, ...) do { \
+	if ( getenv("MC2_LOG_LOGISTICS") ) { \
+		printf("[LOGISTICS] " fmt "\n", ##__VA_ARGS__); fflush(stdout); \
+		if (s_logFileUA) { fprintf(s_logFileUA, "[LOGISTICS] " fmt "\n", ##__VA_ARGS__); fflush(s_logFileUA); } \
+	} } while(0)
+
 	bNewWeapons = 0;
 	EString purchaseFileName = missionInfo->getCurrentPurchaseFile();
 	purchaseFileName.MakeLower();
@@ -1502,16 +1554,19 @@ long LogisticsData::updateAvailability()
 		(*pIter).setAvailable( 0 );
 	}
 
+	LOG_LOGISTICS_UA("updateAvailability: purchaseFile='%s'", (const char*)purchaseFileName);
 
-	// make sure its around and you can open it 
+	// make sure its around and you can open it
 	FitIniFile file;
 	if ( NO_ERR != file.open( (char*)(const char*)purchaseFileName ) )
 	{
+		LOG_LOGISTICS_UA("updateAvailability: purchase file OPEN FAILED");
 		EString error;
 		error.Format( "Couldn't open %s", (char*)(const char*)purchaseFileName );
 		PAUSE(((char*)(const char*)error ));
 		return NO_PURCHASE_FILE;
 	}
+	LOG_LOGISTICS_UA("updateAvailability: purchase file open OK");
 	// read in available components
 	bool available[255];
 	memset( available, 0, sizeof( bool ) * 255 );
@@ -1594,6 +1649,7 @@ long LogisticsData::updateAvailability()
 		sprintf( tmp, "Mech%ld", i );
 		if ( NO_ERR != file.readIdString( tmp, chassisFileName, 254 ) )
 			break;
+		LOG_LOGISTICS_UA("updateAvailability: [Mechs] Mech%d='%s'", i, chassisFileName);
 
 		// go through each variant, if it has the same chassis, check and see if all of its components are valid
 		for (VARIANT_LIST::EIterator vIter = variants.Begin(); !vIter.IsDone(); vIter++ )
@@ -1667,7 +1723,9 @@ long LogisticsData::updateAvailability()
 	else
 		bNewPilots = 0;
 
-
+	LOG_LOGISTICS_UA("updateAvailability: newMechAvailableCount=%d oldMechAvailableCount=%d",
+		newMechAvailableCount, oldMechAvailableCount);
+#undef LOG_LOGISTICS_UA
 
 	return 0;
 

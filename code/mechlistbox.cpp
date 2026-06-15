@@ -6,6 +6,8 @@ MechListBox.cpp			: Implementation of the MechListBox component.
 //===========================================================================//
 \*************************************************************************************************/
 
+#include <cstdio>
+#include <cstdlib>
 #include"mechlistbox.h"
 #include"logisticsmech.h"
 #include"paths.h"
@@ -185,6 +187,24 @@ MechListBoxItem::MechListBoxItem( LogisticsMech* pRefMech, long count )
 	
 	sprintf( text, "%.0lf", pMech->getMaxWeight() );
 	weightText.setText( text );
+
+	// ---- MC2_LOG_LOGISTICS mech-list item diagnostic (env-gated, no behavior change) ----
+	if ( pMech && getenv("MC2_LOG_LOGISTICS") ) {
+		char chassisBuf[256] = "";
+		cLoadString( pMech->getChassisName(), chassisBuf, sizeof(chassisBuf) );
+		FILE* mechListLog = fopen("logistics_debug.log", "a");
+		if ( mechListLog ) {
+			fprintf( mechListLog,
+				"[MECHLIST] item chassisNameID=%ld chassisText='%s' variantName='%s' cost=%ld weight=%.0f\n",
+				pMech->getChassisName(),
+				chassisBuf,
+				(const char*)pMech->getName(),
+				pMech->getCost(),
+				pMech->getMaxWeight() );
+			fflush( mechListLog );
+			fclose( mechListLog );
+		}
+	}
 
 	addChild( &weightIcon );
 	addChild( &mechIcon );

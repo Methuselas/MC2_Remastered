@@ -3371,11 +3371,11 @@ void ControlGui::swapResolutions( int resolutionX, int resolutionY )
 	if ( resolutionX == 1920) {
 		strcpy( fileName, "buttonlayout1920.fit" );
     } else if ( resolutionX == 1600) {
-		strcpy( fileName, "buttonlayout1600.fit" ); 
+		strcpy( fileName, "buttonlayout1600.fit" );
     } else if ( resolutionX == 1280) {
-		strcpy( fileName, "buttonlayout1280.fit" ); 
+		strcpy( fileName, "buttonlayout1280.fit" );
     } else if ( resolutionX == 1024) {
-		strcpy( fileName, "buttonlayout1024.fit" ); 
+		strcpy( fileName, "buttonlayout1024.fit" );
     } else if ( resolutionX == 800 ) {
 		strcpy( fileName, "buttonlayout800.fit" );
     } else if ( resolutionX == 640 ) {
@@ -3383,13 +3383,39 @@ void ControlGui::swapResolutions( int resolutionX, int resolutionY )
     } else {
 		strcpy( fileName, "buttonlayout1920.fit" );
     }
-	
+
 	strcat( path, fileName );
 	if ( NO_ERR != buttonFile.open( path ) )
 	{
-		char error[256];
-		sprintf( error, "couldn't find the file %s", path );
-		Assert( 0, 0, error );
+		// Old MC2X campaigns (pre-1920 era) may lack high-res layouts.
+		// Walk DOWN the resolution ladder and use the best fit that exists.
+		static const int fallbackWidths[] = { 1920, 1680, 1600, 1440, 1366, 1280, 1024, 800, 640 };
+		bool opened = false;
+		for ( int fi = 0; fi < (int)(sizeof(fallbackWidths)/sizeof(fallbackWidths[0])); fi++ )
+		{
+			if ( fallbackWidths[fi] >= resolutionX )
+				continue; // only try LOWER (or equal-lower) candidates
+			char fallbackName[32];
+			sprintf( fallbackName, "buttonlayout%d.fit", fallbackWidths[fi] );
+			char fallbackPath[256];
+			strcpy( fallbackPath, artPath );
+			strcat( fallbackPath, fallbackName );
+			if ( NO_ERR == buttonFile.open( fallbackPath ) )
+			{
+				SPEW(( 0, "controlgui: buttonlayout%d.fit missing, fell back to %s\n",
+				       resolutionX, fallbackName ));
+				strcpy( path, fallbackPath );
+				strcpy( fileName, fallbackName );
+				opened = true;
+				break;
+			}
+		}
+		if ( !opened )
+		{
+			char error[256];
+			sprintf( error, "couldn't find the file %s (no fallback found)", path );
+			Assert( 0, 0, error );
+		}
 	}
 
 	//------------------------------------

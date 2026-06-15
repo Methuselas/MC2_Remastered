@@ -2423,6 +2423,12 @@ void BeginFrame() {
         fflush(stderr);
     }
     s_frameSolidArmed = false;
+    // BeginFrame() is the true end-of-frame boundary; clear BOTH per-frame latches here
+    // so they can't desync on idle (un-preflighted) frames. On logistics / mech-bay /
+    // menu screens ComputePreflight() stops running, so without this the dispatch latch
+    // stays stale-true and the guard above fires every frame (false-positive spam).
+    // ComputePreflight() re-sets it next in-mission frame.
+    s_solidGpuDispatchRanThisFrame = false;
 }
 
 // ---------------------------------------------------------------------------

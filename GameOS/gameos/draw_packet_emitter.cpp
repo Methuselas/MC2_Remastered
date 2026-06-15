@@ -124,8 +124,14 @@ DrawPacketEmitStats emitStaticPropDrawPackets(const RenderSnapshot&          sna
     const RenderCore::StaticPropTypeDesc* descs =
         batcher_getStaticPropTypeDescTable(&typeCount);
     if (!descs || typeCount == 0u) {
-        std::fprintf(stderr,
-            "[DRAW_PACKET v1] ERROR: type table empty; emit aborted\n");
+        // Benign during map/mission teardown: the batcher type table is cleared on
+        // mission end, but the render snapshot can still carry stale prop rows for a few
+        // frames (cache invalidation lags), producing props-present + empty-table here.
+        // The emit correctly aborts regardless; gate the print behind the warn flag so it
+        // doesn't spam the player console once-per-frame on the post-mission screens.
+        if (s_dpWarn)
+            std::fprintf(stderr,
+                "[DRAW_PACKET v1] ERROR: type table empty; emit aborted\n");
         return stats;
     }
 
