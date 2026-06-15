@@ -81,6 +81,7 @@
 #include "EditorRecent.h"
 #include "SceneOutliner.h"
 #include "InspectorPanel.h"
+#include "TelemetryPanel.h"
 #include "AssetBrowser.h"
 #include "GameplayDebugger.h"
 #include "EditorPlaytestResults.h"
@@ -4933,6 +4934,11 @@ void EditorInterface::renderToolbarImGui()
 	if (ImGui::Button("Inspector", ImVec2(-1.f, 0.f)))
 		InspectorPanel::Toggle();
 	InspectorPanel::Draw();
+
+	// Telemetry — read-only live editor state (fps / counts / undo / dirty / map).
+	if (ImGui::Button("Telemetry", ImVec2(-1.f, 0.f)))
+		TelemetryPanel::Toggle();
+	TelemetryPanel::Draw();
 
 	// Asset Browser Lite — searchable object catalog; click to start placing.
 	if (ImGui::Button("Asset Browser", ImVec2(-1.f, 0.f)))
