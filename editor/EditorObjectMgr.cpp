@@ -833,6 +833,35 @@ EditorObject* EditorObjectMgr::getObjectAtPosition( const Stuff::Vector3D& posit
 // miss leaves pBest NULL. The per-object pixel tolerance is derived from the
 // object's own world radius projected to screen (so big buildings stay clickable
 // near and small props don't over-grab far), floored by a base click slop.
+// GL-correct forward projection for editor screen-space picking. Projects a
+// world point to screen pixels through worldToClipGL (projectModernClipGL),
+// which keeps the SIGNED clip.w. The legacy projectForScreenXY default (Legacy
+// mode) routes through projectZ, which does screen.w = fabs(rhw) (camera.h:508)
+// and so DISCARDS the w-sign: a point BEHIND the camera came back with positive
+// w, sailed through the `sp.w <= 1e-4` near-plane guard, and its mirrored
+// screen-XY matched the click -> "selecting things behind the camera". Using the
+// signed-w GL transform makes the near-plane reject correct. No frustum bool
+// cull (a2cebf34): off-screen-but-in-front points get a real screen.xy and are
+// filtered by the caller's pixel-distance test. Same transform the scene renders
+// with, so the pick lines up with what is on screen.
+static bool EditorObjectMgr_ProjectScreenXY_GL(const Stuff::Vector3D& wp, Stuff::Vector4D& sp)
+{
+	if (!eye)
+		return false;
+	ModernClipResult r = eye->projectModernClipGL(wp);
+	if (r.clip.w <= 1e-4f)            // at/behind the near plane (SIGNED w)
+		return false;
+	float vmx = 0.f, vmy = 0.f, vax = 0.f, vay = 0.f;
+	gos_GetViewport(&vmx, &vmy, &vax, &vay);
+	const float ndcX = r.clip.x / r.clip.w;
+	const float ndcY = r.clip.y / r.clip.w;
+	sp.x = vax + (ndcX * 0.5f + 0.5f) * vmx;
+	sp.y = vay + (1.0f - (ndcY * 0.5f + 0.5f)) * vmy;  // GL origin bottom-left -> screen-Y flip
+	sp.z = r.clip.z / r.clip.w;
+	sp.w = r.clip.w;
+	return true;
+}
+
 static void EditorObjectMgr_ConsiderScreenPick(EditorObject* pObject,
 	float clickX, float clickY, float pixelFloor, float& bestPixSq, EditorObject*& pBest)
 {
@@ -842,9 +871,9 @@ static void EditorObjectMgr_ConsiderScreenPick(EditorObject* pObject,
 
 	Stuff::Vector3D wp = pApp->position;   // real position, real elevation
 	Stuff::Vector4D sp;
-	if (!eye->projectForScreenXY(wp, sp))  // outside frustum
+	if (!EditorObjectMgr_ProjectScreenXY_GL(wp, sp))  // behind near plane (signed w) / no camera
 		return;
-	if (sp.w <= 1e-4f)                     // at/behind the near plane
+	if (sp.w <= 1e-4f)                     // at/behind the near plane (defensive; helper checks)
 		return;
 	if (!(sp.x == sp.x) || !(sp.y == sp.y))  // NaN guard
 		return;
@@ -858,7 +887,7 @@ static void EditorObjectMgr_ConsiderScreenPick(EditorObject* pObject,
 		Stuff::Vector3D wr = wp;
 		wr.x += worldR;
 		Stuff::Vector4D sr;
-		if (eye->projectForScreenXY(wr, sr) && sr.w > 1e-4f
+		if (EditorObjectMgr_ProjectScreenXY_GL(wr, sr) && sr.w > 1e-4f
 		    && (sr.x == sr.x) && (sr.y == sr.y))
 		{
 			float rpx = sr.x - sp.x;
