@@ -599,6 +599,14 @@ def main():
                             "MC2_TERRAIN_INDIRECT_OVERLAY_PARITY_CHECK",
                             "MC2_TERRAIN_COST_SPLIT",
                             "MC2_FX_COST_SPLIT",
+                            # FX-FORCE-SPAWN fixture (code/warrior.cpp): forces up
+                            # to 8 mechs to fire all weapons (PPC -> tube ribbons)
+                            # so the otherwise-idle tier1 fly-throughs exercise the
+                            # tube/particle FX path. MC2_LOG=1 surfaces its stdout
+                            # confirmation. Both must be allowlisted or Popen drops
+                            # them and the fixture never fires.
+                            "MC2_FX_FORCE_SPAWN",
+                            "MC2_LOG",
                             "MC2_LIGHT_COST_SPLIT",
                             "MC2_SLIM_COST_SPLIT",
                             "MC2_TOBJ_COST_SPLIT",
