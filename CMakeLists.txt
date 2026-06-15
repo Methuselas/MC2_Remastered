@@ -296,6 +296,10 @@ endif()
 if(ENABLE_MC2FX_PREVIEW AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/mc2fx_preview/CMakeLists.txt")
     add_subdirectory("./tools/mc2fx_preview" "./out/tools/mc2fx_preview")
 endif()
+# mc2weapon_gui — ImGui weapon editor (SDL2+GL+ImGui; CSV-only, no engine).
+if(ENABLE_MC2WEAPON_GUI AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/mc2weapon_gui/CMakeLists.txt")
+    add_subdirectory("./tools/mc2weapon_gui" "./out/tools/mc2weapon_gui")
+endif()
 
 
 set(SOURCES 
