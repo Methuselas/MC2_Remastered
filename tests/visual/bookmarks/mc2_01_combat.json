@@ -1,0 +1,31 @@
+{
+  "schema_v": 1,
+  "mission": "mc2_01",
+  "_note": "Combat-framing poses (NOT baseline) aimed at mc2_01 mech spawn coords to capture weapon-tube FX under MC2_FX_FORCE_SPAWN. Werewolf(player) @ (2496,-1941); Centipede cluster(enemy) @ (2858,2112). Fire is one-shot at scenarioTime>5 (sim frame ~150 at 30Hz) -> capture trigger frame ~165. alt low to frame the mechs, not terrain.",
+  "bookmarks": [
+    {
+      "name": "enemy_cluster_low",
+      "pos": [2858.0, 2112.0, 0.0],
+      "rot": 45.0,
+      "proj": 24.0,
+      "alt": 220.0,
+      "covers": ["mech_fire", "tube_fx"]
+    },
+    {
+      "name": "enemy_cluster_mid",
+      "pos": [2858.0, 2112.0, 0.0],
+      "rot": 45.0,
+      "proj": 24.0,
+      "alt": 420.0,
+      "covers": ["mech_fire", "tube_fx"]
+    },
+    {
+      "name": "player_werewolf",
+      "pos": [2496.0, -1941.0, 0.0],
+      "rot": 45.0,
+      "proj": 24.0,
+      "alt": 300.0,
+      "covers": ["mech_fire", "tube_fx"]
+    }
+  ]
+}

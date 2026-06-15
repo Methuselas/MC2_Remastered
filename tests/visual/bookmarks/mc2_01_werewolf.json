@@ -1,0 +1,15 @@
+{
+  "schema_v": 1,
+  "mission": "mc2_01",
+  "_note": "Single pose on the player Werewolf spawn (2496,-1941), which fires 5 weapons under MC2_FX_FORCE_SPAWN at sim frame ~150. Single bookmark so the capture lands at triggerFrame+settle on the fire frame (use --trigger-frame 147 --settle 4 -> ~151).",
+  "bookmarks": [
+    {
+      "name": "werewolf_fire",
+      "pos": [2496.0, -1941.0, 0.0],
+      "rot": 45.0,
+      "proj": 24.0,
+      "alt": 260.0,
+      "covers": ["mech_fire", "tube_fx"]
+    }
+  ]
+}
