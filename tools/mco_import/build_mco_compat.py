@@ -104,19 +104,56 @@ def _row_type(line):
     return ""
 
 
+def _row_fitid(line):
+    """Return the FitID field (col 4, 0-indexed) as int, or -1 if missing/invalid."""
+    parts = line.split(",")
+    if len(parts) > 4:
+        try:
+            return int(parts[4].strip())
+        except ValueError:
+            pass
+    return -1
+
+
 def build_buildings_csv_overlay(stock_path, mco_path, out_path):
     """
     Produce a merged buildings.csv at out_path:
-      - Full stock content (header + all rows)
-      - Appended: MCO rows where Type==MECH AND name not already in stock
+      - Stock rows (header + all rows), with FitID=0 MECH placeholder rows
+        replaced by the corresponding MCO MECH row when MCO has a nonzero FitID.
+      - Appended: MCO MECH rows whose name is not in stock at all.
     Regression guard: never emits VEHICLE/BUILDING/TREE rows from MCO.
-    Returns (added_names, skipped_names) for logging.
+    Returns (added_names, overridden_names, skipped_names) for logging.
     """
     stock_header, stock_rows = _parse_buildings_csv(stock_path)
     _mco_header, mco_rows = _parse_buildings_csv(mco_path)
 
-    # Build set of names already present in stock (case-insensitive).
-    stock_names = set(_row_name(r) for r in stock_rows if r.strip())
+    # Build MCO MECH lookup: lowercase name -> row string (nonzero FitID only).
+    mco_mech_by_name = {}
+    for row in mco_rows:
+        if not row.strip():
+            continue
+        if _row_type(row) != "MECH":
+            continue
+        fitid = _row_fitid(row)
+        if fitid > 0:
+            mco_mech_by_name[_row_name(row)] = row if row.endswith("\n") else row + "\n"
+
+    # Emit stock rows, substituting FitID=0 MECH placeholders with MCO rows.
+    overridden = []
+    out_stock_names = set()
+    final_stock_rows = []
+    for row in stock_rows:
+        if not row.strip():
+            final_stock_rows.append(row)
+            continue
+        name = _row_name(row)
+        out_stock_names.add(name)
+        if _row_type(row) == "MECH" and _row_fitid(row) == 0 and name in mco_mech_by_name:
+            # Replace placeholder with real MCO row.
+            final_stock_rows.append(mco_mech_by_name[name])
+            overridden.append(name)
+        else:
+            final_stock_rows.append(row)
 
     added = []
     skipped_non_mech = []
@@ -131,22 +168,22 @@ def build_buildings_csv_overlay(stock_path, mco_path, out_path):
             skipped_non_mech.append(_row_name(row))
             continue
         name = _row_name(row)
-        if name in stock_names:
+        if name in out_stock_names:
             skipped_dup.append(name)
             continue
         new_rows.append(row if row.endswith("\n") else row + "\n")
         added.append(name)
-        stock_names.add(name)  # prevent duplicate MCO rows
+        out_stock_names.add(name)  # prevent duplicate MCO rows
 
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w", encoding="utf-8", newline="") as f:
         f.write(stock_header)
-        for r in stock_rows:
+        for r in final_stock_rows:
             f.write(r)
         for r in new_rows:
             f.write(r)
 
-    return added, skipped_non_mech, skipped_dup
+    return added, overridden, skipped_non_mech, skipped_dup
 
 
 def copy_mech_csvs(mco_objects_dir, out_objects_dir, mech_names,
@@ -337,14 +374,20 @@ _MECH_ICON_MAP = {
 }
 
 # Atlas constants (must match mechlistbox.cpp::initIcon / asystem.cpp)
+# Layout: 10 cols x 17 rows of 25x30px cells.
+#   W=256  (fileWidth=256, U = col*25/256 in [0,1])
+#   H=512  (fileHeight=512 auto-read from texture; V = row*30/512 in [0,1])
+# Rows 0-16 = slots 0-169 are addressable; max MCO slot=126 fits with room.
+# Stock base atlas (256x256) is backward-compatible: its fileHeight=256
+# (square => fileHeight stays 0 in aObject, falls back to fileWidth=256),
+# so stock V math is identical to before the engine change.
 _ATLAS_W = 256
-_ATLAS_H = 256
+_ATLAS_H = 512
 _CELL_W = 25
-_CELL_H = 30   # UV-space cell height; setFileWidth(256) divides V by 256 too
+_CELL_H = 30
 _ATLAS_COLS = 10
-# Hard limit: UV v = row*30/256; rows 0-8 (slots 0-79) addressable.
-# Rows 9+ yield UV > 1.0 and cannot be addressed without an engine fileWidth fix.
-_MAX_ADDRESSABLE_SLOT = 79
+# With fileHeight=512: rows 0-16 (V up to 17*30/512=0.996) are addressable.
+_MAX_ADDRESSABLE_SLOT = 169  # floor(512/30)*10 - 1 = 16*10+9 = 169
 
 
 def _read_mech_parts(csv_path):
@@ -391,9 +434,12 @@ def build_mech_icon_atlas(base_atlas_path, mco_mechicons_dir, objects_dir, out_p
     The mod VFS (TryModOpen) matches this exact key. A PNG at data/art/gui/ is
     NEVER loaded by the list icon path and would be silently ignored.
 
-    Atlas UV constraint: mechlistbox::initIcon uses setFileWidth(256) so both U and V
-    are divided by 256 before GL sampling. This means only slots 0-79 (rows 0-8,
-    v < 256) are addressable. Mechs with MechParts > 79 are reported as OOB.
+    Atlas layout: 10 cols x 17 rows, 25x30px cells, 256x512 TGA.
+    The engine's aObject::init reads the texture's logical height and stores it
+    as fileHeight (non-square atlases only).  setUVs() then divides V by
+    fileHeight instead of fileWidth, so slots 0-169 are addressable.
+    Stock base atlas remains 256x256 (fileHeight=0 -> falls back to fileWidth=256),
+    keeping stock slot UVs identical to before.
 
     Returns (painted, oob) lists of (mech_name, slot) tuples.
     """
@@ -406,7 +452,7 @@ def build_mech_icon_atlas(base_atlas_path, mco_mechicons_dir, objects_dir, out_p
     # Load base atlas: prefer to extract from art.fst (the authoritative source the engine
     # loads via data/art/mcui_gn_mechicons.tga) so vanilla icons in slots 0-32 are preserved
     # correctly. Falls back to the loose base PNG if the FST is not present.
-    atlas = None
+    base_img = None
     # out_path = .../mods/mco-compat/data/art/mcui_gn_mechicons.tga
     # deploy root = 4 dirs up from out_path
     fst_path = os.path.normpath(os.path.join(os.path.dirname(out_path), "..", "..", "..", "..", "art.fst"))
@@ -421,17 +467,31 @@ def build_mech_icon_atlas(base_atlas_path, mco_mechicons_dir, objects_dir, out_p
                 _offset, _size = _struct.unpack_from("<II", _fst_raw, _es)[:2]
                 _cdata = _fst_raw[_offset:_offset + _size]
                 _img = Image.open(_io.BytesIO(_zlib.decompress(_cdata))).convert("RGBA")
-                atlas = _img
+                base_img = _img
                 print("  base atlas: extracted from art.fst (%dx%d)" % _img.size)
         except Exception as _e:
             print("  WARN: could not extract from art.fst (%s), falling back to loose PNG" % _e)
 
-    if atlas is None:
+    if base_img is None:
         if not os.path.isfile(base_atlas_path):
             print("  WARN: base atlas not found: %s" % base_atlas_path)
             return [], []
-        atlas = Image.open(base_atlas_path).convert("RGBA")
-        print("  base atlas: loose PNG %s (%dx%d)" % (base_atlas_path, atlas.width, atlas.height))
+        base_img = Image.open(base_atlas_path).convert("RGBA")
+        print("  base atlas: loose PNG %s (%dx%d)" % (base_atlas_path, base_img.width, base_img.height))
+
+    # Build output canvas at target size (_ATLAS_W x _ATLAS_H = 256x512).
+    # Copy base atlas into top of canvas so stock slots 0-79 are preserved at
+    # the same pixel positions.  With fileHeight=512 the engine divides V by 512
+    # instead of 256, so the UV for stock slot N becomes N_px/512 — pointing at
+    # the same pixel row (because the pixel is still at the same absolute Y in the
+    # 512-tall texture).  No stock icon shifts.
+    atlas = Image.new("RGBA", (_ATLAS_W, _ATLAS_H), (0, 0, 0, 0))
+    # Paste base at (0,0); clip if base is wider/taller than our canvas column.
+    paste_w = min(base_img.width, _ATLAS_W)
+    paste_h = min(base_img.height, _ATLAS_H)
+    atlas.paste(base_img.crop((0, 0, paste_w, paste_h)), (0, 0))
+    print("  output canvas: %dx%d (base %dx%d pasted at origin)" % (
+        _ATLAS_W, _ATLAS_H, paste_w, paste_h))
 
     # Index available source icons
     icon_files = {}
@@ -613,13 +673,15 @@ def main():
         added_mechs = []
     else:
         out_buildings = os.path.join(out, "data", "art", "Buildings.csv")
-        added_mechs, skipped_non_mech, skipped_dup = build_buildings_csv_overlay(
+        added_mechs, overridden_mechs, skipped_non_mech, skipped_dup = build_buildings_csv_overlay(
             stock_buildings, mco_buildings, out_buildings
         )
-        print("  added %d MCO MECH rows, %d already in stock (skipped), %d non-MECH (excluded)"
-              % (len(added_mechs), len(skipped_dup), len(skipped_non_mech)))
+        print("  added %d MCO MECH rows, %d overridden (FitID=0 placeholders), %d already in stock (skipped), %d non-MECH (excluded)"
+              % (len(added_mechs), len(overridden_mechs), len(skipped_dup), len(skipped_non_mech)))
         if added_mechs:
             print("  new mechs:", ", ".join(sorted(added_mechs)))
+        if overridden_mechs:
+            print("  FitID=0 placeholder overrides:", ", ".join(sorted(overridden_mechs)))
         # Regression guard: confirm no vehicles/buildings were added
         assert len(skipped_non_mech) >= 0  # always true, but name makes intent clear
         print("  regression guard: 0 VEHICLE/BUILDING/TREE rows emitted from MCO (Type!=MECH excluded)")
@@ -679,10 +741,12 @@ def main():
     atlas_painted, atlas_oob = build_mech_icon_atlas(
         base_atlas_path, mco_mechicons_dir, mco_objects_for_atlas, atlas_out
     )
-    print("  painted %d slots (0-79 addressable)" % len(atlas_painted))
+    print("  painted %d slots (0-%d addressable with %dx%d atlas)"
+          % (len(atlas_painted), _MAX_ADDRESSABLE_SLOT, _ATLAS_W, _ATLAS_H))
     if atlas_oob:
-        print("  OOB (slot > 79, engine UV fix needed): %d mechs -- %s"
-              % (len(atlas_oob), ", ".join("%s(%d)" % t for t in sorted(atlas_oob, key=lambda x: x[1])[:8]))
+        print("  OOB (slot > %d, increase _ATLAS_H to fix): %d mechs -- %s"
+              % (_MAX_ADDRESSABLE_SLOT, len(atlas_oob),
+                 ", ".join("%s(%d)" % t for t in sorted(atlas_oob, key=lambda x: x[1])[:8]))
               + ("..." if len(atlas_oob) > 8 else ""))
     if atlas_painted:
         print("  atlas: %s" % atlas_out)
