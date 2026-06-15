@@ -1578,31 +1578,36 @@ void gosFX::Tube::Draw(DrawInfo *info)
 				const unsigned numVerts   = m_activeProfileCount * vc;
 				const unsigned numIndices = static_cast<unsigned>(m_triangleCount) * 3u;
 
-				// Transform local-space verts to MC2/Stuff world space.
-				// (m_P_vertices are effect-local; the ribbon VS applies the GL
-				// axis swap, so we hand it MC2 world unswapped.)
-				static Stuff::DynamicArrayOf<float> s_worldPos;
-				if (static_cast<unsigned>(s_worldPos.GetLength()) < numVerts*3u)
-					s_worldPos.SetLength(numVerts*3u);
-				for (unsigned vi = 0; vi < numVerts; ++vi)
-				{
-					Stuff::Point3D wp;
-					wp.Multiply(m_P_vertices[vi], local_to_world);
-					s_worldPos[vi*3+0] = wp.x;
-					s_worldPos[vi*3+1] = wp.y;
-					s_worldPos[vi*3+2] = wp.z;
-				}
-
 				const uint32_t gosHandle =
 					static_cast<uint32_t>(spec->m_state.GetTextureHandle());
 
-				// TUBE-DEFERRED-FLUSH-1: if the Tube has a real texture handle,
-				// enqueue into the deferred ribbon queue (drawn post-renderLists
-				// via gos_tube_ribbon_flush_deferred in gamecam.cpp).
-				// If gosHandle==0 (untextured / gauss case), do NOT enqueue —
-				// leave ribbonSubmitted=false so the legacy MLR DrawEffect runs
-				// (it is correctly phased via the MLR sorter after renderLists).
+				// Q2-S2: build the world-space vertex copy ONLY when it will
+				// actually be enqueued (gosHandle != 0). For untextured tubes
+				// (gosHandle==0, e.g. gauss) ribbonSubmitted stays false and the
+				// legacy MLR DrawEffect renders from the local-space m_P_vertices
+				// instead — so transforming every vert to world here was pure
+				// waste (an O(numVerts) matrix-vec pass built then discarded).
+				// Behaviour-identical: s_worldPos was never read when gosHandle==0.
+				//
+				// TUBE-DEFERRED-FLUSH-1: with a real texture handle, enqueue into
+				// the deferred ribbon queue (drawn post-renderLists via
+				// gos_tube_ribbon_flush_deferred in gamecam.cpp).
 				if (gosHandle != 0) {
+					// Transform local-space verts to MC2/Stuff world space.
+					// (m_P_vertices are effect-local; the ribbon VS applies the GL
+					// axis swap, so we hand it MC2 world unswapped.)
+					static Stuff::DynamicArrayOf<float> s_worldPos;
+					if (static_cast<unsigned>(s_worldPos.GetLength()) < numVerts*3u)
+						s_worldPos.SetLength(numVerts*3u);
+					for (unsigned vi = 0; vi < numVerts; ++vi)
+					{
+						Stuff::Point3D wp;
+						wp.Multiply(m_P_vertices[vi], local_to_world);
+						s_worldPos[vi*3+0] = wp.x;
+						s_worldPos[vi*3+1] = wp.y;
+						s_worldPos[vi*3+2] = wp.z;
+					}
+
 					gos_tube_ribbon_enqueue(
 						&s_worldPos[0],
 						reinterpret_cast<const float*>(m_P_colors),
