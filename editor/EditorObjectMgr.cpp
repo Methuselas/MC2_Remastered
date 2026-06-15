@@ -1177,6 +1177,42 @@ void EditorObjectMgr::getBuildingNamesInGroup( int group, const char** names, in
 	NumberOfNames = i;
 }
 
+// --------------------------------------------------------------------------
+// GV-slide diagnostics + fix knobs (editor-only).
+//
+// Placed ground-vehicles (VEHICLE_APPR_TYPE) ride GpuStaticPropBatcher, which
+// draws them every frame with the LIVE terrain MVP while reading each GV's
+// last-baked shapeToWorld (gvactor.cpp TransformMultiShape, run only from
+// GVAppearance::update()->updateGeometry()).  The editor gated that refresh
+// behind recalcBounds()==inView, so a cluster of GVs swinging to the frustum
+// edge on camera rotate skipped update() and rendered with a stale,
+// terrain-conformed transform -> the group slid off the ground.  Buildings
+// don't (static, no per-frame terrain conform); mechs use a different batcher.
+//
+// MC2_EDITOR_MOVER_REFRESH (default-ON): refresh placed-mover transforms every
+//   frame regardless of inView, matching what BldgAppearance already does.
+//   Set =0 to restore the legacy inView-gated behavior (bisect / A-B).
+// MC2_EDITOR_MOVER_TRACE (default-OFF): per-frame recalcBounds() pass/fail
+//   counts split GV-vs-mech across the update and render loops, to confirm the
+//   mechanism.  Emitted once per render() frame at the trace throttle points.
+static bool editorMoverRefreshOn()
+{
+	static int v = -1;
+	if (v < 0) { const char* e = getenv("MC2_EDITOR_MOVER_REFRESH");
+		v = (e && e[0] == '0' && e[1] == '\0') ? 0 : 1; }   // default-on; exactly "0" disables
+	return v == 1;
+}
+static bool editorMoverTraceOn()
+{
+	static int v = -1;
+	if (v < 0) { const char* e = getenv("MC2_EDITOR_MOVER_TRACE");
+		v = (e && e[0] && !(e[0] == '0' && e[1] == '\0')) ? 1 : 0; }  // default-off
+	return v == 1;
+}
+// per-frame counters: update() fills *Upd*, render() fills *Rnd*; logged in render().
+static long s_dbgUpdGvIn = 0, s_dbgUpdGvOut = 0, s_dbgUpdMechIn = 0, s_dbgUpdMechOut = 0;
+static long s_dbgRndGvIn = 0, s_dbgRndGvOut = 0, s_dbgRndMechIn = 0, s_dbgRndMechOut = 0;
+
 //*************************************************************************************************
 void EditorObjectMgr::update()
 {
@@ -1213,6 +1249,11 @@ void EditorObjectMgr::update()
 	}
 
 	//Always draw the Mechs/Vehicles
+		// Reset per-frame mover trace counters (update() runs before render() each frame).
+		s_dbgUpdGvIn = s_dbgUpdGvOut = s_dbgUpdMechIn = s_dbgUpdMechOut = 0;
+		s_dbgRndGvIn = s_dbgRndGvOut = s_dbgRndMechIn = s_dbgRndMechOut = 0;
+		const bool moverRefresh = editorMoverRefreshOn();
+		const bool moverTrace   = editorMoverTraceOn();
 		for ( UNIT_LIST::EIterator mIter = units.Begin();
 		!mIter.IsDone(); mIter++ )
 		{
@@ -1221,7 +1262,18 @@ void EditorObjectMgr::update()
 			// Guard: units with no loaded appearance are skipped.
 			ObjectAppearance* pUAppr = pObj ? pObj->appearance() : NULL;
 			if (!pUAppr) continue;
-			if ( pUAppr->recalcBounds() )
+			const bool uInView = pUAppr->recalcBounds();
+			if (moverTrace)
+			{
+				const bool isGv = (pUAppr->getAppearanceClass() == VEHICLE_APPR_TYPE);
+				if (isGv) { if (uInView) ++s_dbgUpdGvIn;   else ++s_dbgUpdGvOut; }
+				else      { if (uInView) ++s_dbgUpdMechIn; else ++s_dbgUpdMechOut; }
+			}
+			// GV-slide fix: refresh the mover transform every frame (not only when
+			// inView), so static-prop-batched GVs never render with a shapeToWorld
+			// stale from a frame they swung off the rotating frustum.  Visibility is
+			// still only asserted when actually in view.
+			if ( uInView || moverRefresh )
 			{
 				// Vehicles and mech forced to ground in Object classes in game now.
 				// NOT in the appearance anymore since they can fly when they die!
@@ -1239,7 +1291,8 @@ void EditorObjectMgr::update()
 				if (pObj->getSpecialType() == HELICOPTER)
 					pUAppr->setMoverParameters(0.0f,0.0f,0.0f,true);
 				pUAppr->update();
-				pUAppr->setVisibility(true,true);
+				if ( uInView )
+					pUAppr->setVisibility(true,true);
 			}
 		}
 }
@@ -1310,12 +1363,22 @@ void EditorObjectMgr::render()
 	if (s_emrLog)
 		EditorObjMgrTrace("EditorObjectMgr::render frame=%ld units-loop enter count=%ld",
 			s_emrFrame, (long)units.Count());
+	const bool moverTrace = editorMoverTraceOn();
 	for ( UNIT_LIST::EIterator mIter = units.Begin();
 		!mIter.IsDone(); mIter++ )
 	{
 		EditorObject* pObj = (*mIter);
 		currentFloatHelp = 0;
-		if ( pObj->appearance()->recalcBounds() )
+		// Capture recalcBounds() ONCE (it has LOD-swap / inView side effects;
+		// calling it twice would re-swap and re-invalidate the baked transform).
+		const bool rInView = pObj->appearance()->recalcBounds();
+		if (moverTrace)
+		{
+			const bool isGv = (pObj->appearance()->getAppearanceClass() == VEHICLE_APPR_TYPE);
+			if (isGv) { if (rInView) ++s_dbgRndGvIn;   else ++s_dbgRndGvOut; }
+			else      { if (rInView) ++s_dbgRndMechIn; else ++s_dbgRndMechOut; }
+		}
+		if ( rInView )
 		{
 			++uRecalcPassed;
 			// Mech3DAppearance::render() submits into the mech batcher via
@@ -1333,6 +1396,10 @@ void EditorObjectMgr::render()
 	if (s_emrLog)
 		EditorObjMgrTrace("EditorObjectMgr::render frame=%ld units-loop exit recalcPassed=%ld rendered=%ld",
 			s_emrFrame, uRecalcPassed, uRendered);
+	if (moverTrace)
+		EditorObjMgrTrace("[MoverTrace] frame=%ld GV upd(in=%ld out=%ld) rnd(in=%ld out=%ld) | MECH upd(in=%ld out=%ld) rnd(in=%ld out=%ld)",
+			s_emrFrame, s_dbgUpdGvIn, s_dbgUpdGvOut, s_dbgRndGvIn, s_dbgRndGvOut,
+			s_dbgUpdMechIn, s_dbgUpdMechOut, s_dbgRndMechIn, s_dbgRndMechOut);
 
 	// Building links -- 2D overlay, NOT batcher scope.
 	for ( LINK_LIST::EIterator lIter = links.Begin();
