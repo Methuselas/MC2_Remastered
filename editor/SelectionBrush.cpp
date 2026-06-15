@@ -40,6 +40,7 @@ SelectionBrush::SelectionBrush( bool Area, int newRadius )
 	pCurModifyBuildingAction = NULL;
 
 	lastPos.x = lastPos.y = lastPos.z = lastPos.w = 0.0f;		//Keep the FPU exception from going off!
+	m_lastDragScreen.x = m_lastDragScreen.y = 0.0f;			//Keep the FPU exception from going off!
 	smoothRadius = newRadius;
 	bFirstClick = false;
 
@@ -157,44 +158,98 @@ bool SelectionBrush::paint( Stuff::Vector3D& worldPos, int screenX, int screenY 
 		const EditorObject* pObject = pDragBuilding;
 		if ( pObject )
 		{
-			if ( !pCurModifyBuildingAction )
-				pCurModifyBuildingAction = new ModifyBuildingAction();
-
-			int newCellI, newCellJ;
-			land->worldToCell( worldPos, newCellJ, newCellI );
-
+			EditorObject* pMutable = const_cast<EditorObject*>(pObject);
+			ObjectAppearance* pApp = pMutable->appearance();
+			if ( pApp )
 			{
-				pCurModifyBuildingAction->addBuildingInfo(*(const_cast<EditorObject*>(pObject)));
-				// Free (un-snapped) move: moveBuilding keeps cell/link bookkeeping
-				// current, then we override its grid-snapped position with the exact
-				// cursor world point so buildings can be aligned precisely. The legacy
-				// path stopped at moveBuilding(), which snapped the building to the
-				// cell grid every drag step.
-				EditorObject* pMutable = const_cast<EditorObject*>(pObject);
-				EditorObjectMgr::instance()->moveBuilding( pMutable, newCellJ, newCellI );
-				if ( pMutable->appearance() )
+				if ( !pCurModifyBuildingAction )
+					pCurModifyBuildingAction = new ModifyBuildingAction();
+
+				// FORWARD-projection drag jacobian, ported from the working object-drag
+				// path (EditorInterface.cpp m_pDragObject, ~lines 1719-1797). The hand
+				// tool previously assigned pApp->position = inverseProject(cursor), but
+				// inverseProject inverts the distorted worldToClipGL (X-collapse) and
+				// teleported the object off-map. Instead, forward-project the object's
+				// world pos +-D in world X/Y (the well-conditioned matrix the GPU renders
+				// with), invert that 2x2 dScreen/dWorld jacobian, and advance the object
+				// by J^-1 * (per-frame cursor pixel delta). All cell/link bookkeeping and
+				// the invalidate/update/register re-bake sequence below are unchanged.
+				auto projGL = [&]( const Stuff::Vector3D& wp, float& outSx, float& outSy ) -> bool {
+					ModernClipResult r = eye->projectModernClipGL( wp );
+					if ( r.clip.w <= 1e-4f )            // at/behind the near plane (signed w)
+						return false;
+					float vmx = 0.f, vmy = 0.f, vax = 0.f, vay = 0.f;
+					gos_GetViewport( &vmx, &vmy, &vax, &vay );
+					const float ndcX = r.clip.x / r.clip.w;
+					const float ndcY = r.clip.y / r.clip.w;
+					outSx = vax + (ndcX * 0.5f + 0.5f) * vmx;
+					outSy = vay + (1.0f - (ndcY * 0.5f + 0.5f)) * vmy;  // GL bottom-left -> screen-Y flip
+					return true;
+				};
+				const float D = 50.0f;   // world-unit probe for the forward jacobian
+				Stuff::Vector3D w0  = pApp->position;
+				Stuff::Vector3D wXp = w0; wXp.x += D;
+				Stuff::Vector3D wYp = w0; wYp.y += D;
+				float s0x, s0y, sXx, sXy, sYx, sYy;
+				// Per-frame cursor screen delta from the dedicated last-screen state.
+				const float dsx = (float)screenX - m_lastDragScreen.x;
+				const float dsy = (float)screenY - m_lastDragScreen.y;
+				m_lastDragScreen.x = (float)screenX;
+				m_lastDragScreen.y = (float)screenY;
+
+				if ( !projGL( w0, s0x, s0y ) || !projGL( wXp, sXx, sXy ) || !projGL( wYp, sYx, sYy ) )
 				{
-					ObjectAppearance* pApp = pMutable->appearance();
-					pApp->position.x = worldPos.x;
-					pApp->position.y = worldPos.y;
-					pApp->position.z = land->getTerrainElevation( worldPos );
-					// Invalidate the baked static recipe BEFORE update() so update()
-					// runs UNREGISTERED and re-transforms from the free position; the
-					// next render then re-bakes the recipe at the free pose. If
-					// invalidate came after update(), update() takes the still-
-					// registered PositionsOnly path and never re-bakes -> snap-back.
-					pApp->invalidateStaticRegistration();
-					pApp->update();
-					// Re-bake the static recipe at the new pose. invalidate() only
-					// destroys the old recipe (registered=false); update() does NOT
-					// re-register, and render-time late-spawn registration is off by
-					// default -- so without this explicit re-register the GPU keeps
-					// drawing the last baked (snapped) modelMatrix.
-					pApp->registerStatic();
+					// Object at/behind the near plane this frame: skip the move (do NOT
+					// fall back to a broken unproject that would teleport it off-map).
+					return true;
 				}
+
+				// Forward jacobian J = dScreen/dWorld (rows screenX/Y, cols worldX/Y).
+				const float invD = 1.0f / D;
+				const float Jxx = ( sXx - s0x ) * invD;   // dScreenX / dWorldX
+				const float Jyx = ( sXy - s0y ) * invD;   // dScreenY / dWorldX
+				const float Jxy = ( sYx - s0x ) * invD;   // dScreenX / dWorldY
+				const float Jyy = ( sYy - s0y ) * invD;   // dScreenY / dWorldY
+				const float det = Jxx * Jyy - Jxy * Jyx;
+				if ( fabsf( det ) < 1e-9f )
+				{
+					// Degenerate jacobian: skip the move this frame.
+					return true;
+				}
+
+				Stuff::Vector3D newPos = pApp->position;
+				// world delta = J^-1 * screen delta.
+				const float invDet = 1.0f / det;
+				newPos.x += (  Jyy * dsx - Jxy * dsy ) * invDet;
+				newPos.y += ( -Jyx * dsx + Jxx * dsy ) * invDet;
+				newPos.z = land->getTerrainElevation( newPos );
+
+				int newCellI, newCellJ;
+				land->worldToCell( newPos, newCellJ, newCellI );
+
+				pCurModifyBuildingAction->addBuildingInfo(*pMutable);
+				// Free (un-snapped) move: moveBuilding keeps cell/link bookkeeping
+				// current, then we override its grid-snapped position with the
+				// jacobian-advanced free position so buildings track the cursor exactly.
+				EditorObjectMgr::instance()->moveBuilding( pMutable, newCellJ, newCellI );
+				pApp->position = newPos;
+				// Invalidate the baked static recipe BEFORE update() so update()
+				// runs UNREGISTERED and re-transforms from the free position; the
+				// next render then re-bakes the recipe at the free pose. If
+				// invalidate came after update(), update() takes the still-
+				// registered PositionsOnly path and never re-bakes -> snap-back.
+				pApp->invalidateStaticRegistration();
+				pApp->update();
+				// Re-bake the static recipe at the new pose. invalidate() only
+				// destroys the old recipe (registered=false); update() does NOT
+				// re-register, and render-time late-spawn registration is off by
+				// default -- so without this explicit re-register the GPU keeps
+				// drawing the last baked (snapped) modelMatrix.
+				pApp->registerStatic();
+
+				lastRow = newCellI;
+				lastCol = newCellJ;
 			}
-			lastRow = newCellI;
-			lastCol = newCellJ;
 		}
 		return true;
 	}
@@ -341,16 +396,17 @@ void SelectionBrush::render( int screenX, int screenY )
 		if ( EditorObjectMgr::instance()->getSelectionCount() == 1 )
 		{
 			// only drag move one building at a time
-			Stuff::Vector2DOf<long> screenPos;
-			screenPos.x = screenX;
-			screenPos.y = screenY;
-
-			Stuff::Vector3D worldPos;
-
-			eye->inverseProject( screenPos, worldPos );
-
-			const EditorObject* pObject = 
-				EditorObjectMgr::instance()->getObjectAtPosition( worldPos );
+			//
+			// Hover-grab pick: use the FORWARD screen-space picker (the same one the
+			// working single-click path uses), NOT eye->inverseProject. inverseProject
+			// inverts the distorted worldToClipGL (documented X-collapse) so the hovered
+			// world point disagreed with what is on screen -> the hand cursor fired on a
+			// body-click the forward pick missed, then the inverse-projected position fed
+			// the teleporting move. getObjectAtScreenPosition tests the actual cursor
+			// pixel against forward-projected object footprints, so the hand cursor and
+			// pDragBuilding now agree with the on-screen object.
+			const EditorObject* pObject =
+				EditorObjectMgr::instance()->getObjectAtScreenPosition( screenX, screenY );
 
 			if ( pObject && pObject->isSelected() )
 			{
@@ -359,6 +415,10 @@ void SelectionBrush::render( int screenX, int screenY )
 				pObject->getCells( (long&)lastRow, (long&)lastCol );
 				lastPos.x = (float)screenX;
 				lastPos.y = (float)screenY;
+				// Seed the dedicated last-cursor-screen state for the jacobian move so
+				// the first paint() frame produces a zero (not garbage) screen delta.
+				m_lastDragScreen.x = (float)screenX;
+				m_lastDragScreen.y = (float)screenY;
 				return;
 			}
 

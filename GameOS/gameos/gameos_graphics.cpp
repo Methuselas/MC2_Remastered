@@ -7625,6 +7625,19 @@ void __stdcall gos_SetRenderState( gos_RenderState RenderState, int Value )
     g_gos_renderer->setRenderState(RenderState, Value);
 }
 
+// [HUD-RES-CLAMP v1] runtime gate. Default ON (game path). The Mission Editor
+// disables it via gos_SetHudResClampEnabled(false) so it renders at native
+// window resolution; clamping the editor's render base to 800x600 desyncs the
+// GL viewport (gos_GetViewport) from the MFC window/mouse space and corrupts
+// editor object pick + drag-move projection. Runtime gate (not #ifdef
+// MC2_IS_EDITOR) because gameos_graphics.cpp is compiled into the gameos_editor
+// library WITHOUT that define (GameOS/gameos/CMakeLists.txt:104).
+static bool g_hudResClampEnabled = true;
+void __stdcall gos_SetHudResClampEnabled( bool enabled )
+{
+    g_hudResClampEnabled = enabled;
+}
+
 void __stdcall gos_SetScreenMode( DWORD Width, DWORD Height, DWORD bitDepth/*=16*/, DWORD Device/*=0*/, bool disableZBuffer/*=0*/, bool AntiAlias/*=0*/, bool RenderToVram/*=0*/, bool GotoFullScreen/*=0*/, int DirtyRectangle/*=0*/, bool GotoWindowMode/*=0*/, bool EnableStencil/*=0*/, DWORD Renderer/*=0*/)
 {
     ZoneScopedN("gos_SetScreenMode");
@@ -7643,8 +7656,13 @@ void __stdcall gos_SetScreenMode( DWORD Width, DWORD Height, DWORD bitDepth/*=16
     // whatever the options menu writes. (A native-scene + 800-HUD lane split is
     // deferred to the incoming imgui UI; it would touch camera+input.)
     // Memory: hud_scene_resolution_separation.
-    Width  = 800;
-    Height = 600;
+    // EDITOR: gated off (gos_SetHudResClampEnabled(false)) — the editor has no
+    // legacy 2D HUD (ImGui) and must render at native res so pick/drag align.
+    if (g_hudResClampEnabled)
+    {
+        Width  = 800;
+        Height = 600;
+    }
 
     g_gos_renderer->setScreenMode(Width, Height, bitDepth, GotoFullScreen, AntiAlias);
 }

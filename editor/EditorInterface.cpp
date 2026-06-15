@@ -787,6 +787,14 @@ void Editor::update()
 	if (windowSizeChanged)
 	{
 		windowSizeChanged = false;
+		// Editor renders at NATIVE window resolution: disable the game's 800x600
+		// HUD render-base clamp (gos_SetScreenMode) so the GL viewport matches the
+		// MFC window/mouse space. Without this the clamp leaves gos_GetViewport at
+		// 800x600 while the cursor lives in the real ~2535x1265 window, and every
+		// editor object pick / drag-move forward-projection is scaled wrong ->
+		// objects unselectable after a camera move and the hand tool flings them
+		// off-map on release. The editor has no legacy 2D HUD (it uses ImGui).
+		gos_SetHudResClampEnabled(false);
 		gos_SetScreenMode(g_newWidth, g_newHeight);
 	}
 
@@ -1612,6 +1620,40 @@ void EditorInterface::handleLeftButtonDown( int PosX, int PosY )
 			m_dragObjStartPos = pHit->appearance() ? pHit->appearance()->position : vector;
 			m_dragLastScreenX = PosX;
 			m_dragLastScreenY = PosY;
+			// One-shot drag coordinate-space diagnostic (MC2_EDITOR_DRAG_TRACE=1).
+			// At grab the cursor is ON the object, so the object's FORWARD-projected
+			// screen pos (projectModernClipGL + gos_GetViewport remap, the correct
+			// world->screen direction) should equal (PosX,PosY) if the mouse coords
+			// and the projection share a pixel space. A ~2x / ~0.5x ratio pins a
+			// client-vs-FBO/screenResolution scale mismatch as the "drag moves ~2x the
+			// cursor" root; a 1:1 match instead implicates the worldToClipGL INVERSE
+			// (X-collapse) used by screenToGroundPlaneApprox. PosX/PosY here are
+			// already RTT-remapped (handleMouseMove); this path is the press handler.
+			{
+				static const bool s_dragTrace = ( getenv("MC2_EDITOR_DRAG_TRACE") != NULL );
+				if ( s_dragTrace && eye && pHit->appearance() )
+				{
+					Stuff::Vector3D wp = pHit->appearance()->position;
+					ModernClipResult r = eye->projectModernClipGL( wp );
+					float vmx = 0.f, vmy = 0.f, vax = 0.f, vay = 0.f;
+					gos_GetViewport( &vmx, &vmy, &vax, &vay );
+					float objSx = -1.f, objSy = -1.f;
+					if ( r.clip.w > 1e-4f )
+					{
+						const float ndcX = r.clip.x / r.clip.w;
+						const float ndcY = r.clip.y / r.clip.w;
+						objSx = vax + (ndcX * 0.5f + 0.5f) * vmx;
+						objSy = vay + (1.0f - (ndcY * 0.5f + 0.5f)) * vmy;
+					}
+					CRect cr; GetClientRect( &cr );
+					fprintf( stderr,
+						"[DragTrace] cursorRemapped=(%d,%d) objScreenGL=(%.1f,%.1f) clipW=%.3f "
+						"vpMul=(%.1f,%.1f) vpAdd=(%.1f,%.1f) client=(%dx%d)\n",
+						PosX, PosY, objSx, objSy, r.clip.w,
+						vmx, vmy, vax, vay, (int)cr.Width(), (int)cr.Height() );
+					fflush( stderr );
+				}
+			}
 			m_pDragAction = new ModifyBuildingAction;
 			m_pDragAction->addBuildingInfo( *pHit );
 			lastClickPos = vector;
@@ -1681,32 +1723,65 @@ void EditorInterface::handleMouseMove( int PosX, int PosY )
 		ObjectAppearance* pDragApp = m_pDragObject->appearance();
 		if ( !pDragApp )
 			return;
-		const int K = 120;
-		Stuff::Vector3D wxp, wxm, wyp, wym;
-		Stuff::Vector2DOf<long> sp;
-		// Build the local screen->world jacobian from the O(1) ground-plane
-		// unproject (screenToGroundPlaneApprox), NOT eye->inverseProject. The
-		// terrain-raycast inverseProject returns a GARBAGE far-world point on a
-		// heightfield-raycast MISS (over water / off-map / under the default-on
-		// LOD-chunk terrain). A single bad jacobian sample blows Mxx/Myy up and the
-		// object jumps across the map ("teleports when I move a prop"). The
-		// ground-plane unproject always intersects z=0 cleanly -> a smooth finite
-		// local map; the drag uses a per-frame DELTA so the constant ground-vs-
-		// terrain-elevation offset cancels.
-		sp.x = PosX + K; sp.y = PosY; eye->screenToGroundPlaneApprox( sp.x, sp.y, wxp );
-		sp.x = PosX - K; sp.y = PosY; eye->screenToGroundPlaneApprox( sp.x, sp.y, wxm );
-		sp.x = PosX; sp.y = PosY + K; eye->screenToGroundPlaneApprox( sp.x, sp.y, wyp );
-		sp.x = PosX; sp.y = PosY - K; eye->screenToGroundPlaneApprox( sp.x, sp.y, wym );
-		float inv2K = 1.0f / ( 2.0f * (float)K );
-		float Mxx = ( wxp.x - wxm.x ) * inv2K, Myx = ( wxp.y - wxm.y ) * inv2K;
-		float Mxy = ( wyp.x - wym.x ) * inv2K, Myy = ( wyp.y - wym.y ) * inv2K;
+		// FORWARD-projection drag jacobian (metafix rule: forward-project via
+		// worldToClipGL, NEVER unproject cursor->world). Every screen->world
+		// unproject available here -- inverseProject, screenToGroundPlaneApprox,
+		// screenToTerrainApprox -- inverts worldToClipGL, and that inverse is
+		// distorted (the documented "X-collapse", see Camera::inverseProject): the
+		// dragged prop tracked ~2x the cursor and zig-zagged on a straight drag.
+		// MC2_EDITOR_DRAG_TRACE measurement confirmed the FORWARD projection
+		// (projectModernClipGL + gos_GetViewport remap) lands the object exactly
+		// under the cursor with NO coordinate-space scale (client == FBO == viewport,
+		// vpAdd=0), so no mouse-coord normalization is needed. Build dScreen/dWorld by
+		// forward-projecting the object's world pos +-D world-units in X and Y (the
+		// well-conditioned matrix the GPU renders with), invert that 2x2, and map the
+		// per-frame cursor pixel delta to a world delta. Recomputed at the object's
+		// real position each move -> 1:1 tracking, no jitter, and the near-plane guard
+		// replaces the inverseProject garbage-far-point teleport the prior fix chased.
+		auto projGL = [&]( const Stuff::Vector3D& wp, float& outSx, float& outSy ) -> bool {
+			ModernClipResult r = eye->projectModernClipGL( wp );
+			if ( r.clip.w <= 1e-4f )            // at/behind the near plane (signed w)
+				return false;
+			float vmx = 0.f, vmy = 0.f, vax = 0.f, vay = 0.f;
+			gos_GetViewport( &vmx, &vmy, &vax, &vay );
+			const float ndcX = r.clip.x / r.clip.w;
+			const float ndcY = r.clip.y / r.clip.w;
+			outSx = vax + (ndcX * 0.5f + 0.5f) * vmx;
+			outSy = vay + (1.0f - (ndcY * 0.5f + 0.5f)) * vmy;  // GL bottom-left -> screen-Y flip
+			return true;
+		};
+		const float D = 50.0f;   // world-unit probe for the forward jacobian
+		Stuff::Vector3D w0  = pDragApp->position;
+		Stuff::Vector3D wXp = w0; wXp.x += D;
+		Stuff::Vector3D wYp = w0; wYp.y += D;
+		float s0x, s0y, sXx, sXy, sYx, sYy;
+		if ( !projGL( w0, s0x, s0y ) || !projGL( wXp, sXx, sXy ) || !projGL( wYp, sYx, sYy ) )
+		{
+			// Object at/behind the near plane this frame: skip the move (do NOT fall
+			// back to a broken unproject that would teleport it across the map).
+			m_dragLastScreenX = PosX;
+			m_dragLastScreenY = PosY;
+			return;
+		}
+		// Forward jacobian J = dScreen/dWorld (rows screenX/Y, cols worldX/Y).
+		const float invD = 1.0f / D;
+		const float Jxx = ( sXx - s0x ) * invD;   // dScreenX / dWorldX
+		const float Jyx = ( sXy - s0y ) * invD;   // dScreenY / dWorldX
+		const float Jxy = ( sYx - s0x ) * invD;   // dScreenX / dWorldY
+		const float Jyy = ( sYy - s0y ) * invD;   // dScreenY / dWorldY
+		const float det = Jxx * Jyy - Jxy * Jyx;
 		float dsx = (float)( PosX - m_dragLastScreenX );
 		float dsy = (float)( PosY - m_dragLastScreenY );
 		m_dragLastScreenX = PosX;
 		m_dragLastScreenY = PosY;
 		Stuff::Vector3D newPos = pDragApp->position;
-		newPos.x += Mxx * dsx + Mxy * dsy;
-		newPos.y += Myx * dsx + Myy * dsy;
+		if ( fabsf( det ) > 1e-9f )
+		{
+			// world delta = J^-1 * screen delta.
+			const float invDet = 1.0f / det;
+			newPos.x += (  Jyy * dsx - Jxy * dsy ) * invDet;
+			newPos.y += ( -Jyx * dsx + Jxx * dsy ) * invDet;
+		}
 		newPos.z = m_dragObjStartPos.z;
 		int row = 0, col = 0;
 		land->worldToCell( newPos, row, col );

@@ -41,6 +41,11 @@ class SelectionBrush: public Brush
 		Stuff::Vector3D		firstWorldPos;
 		Stuff::Vector3D		lastWorldPos;
 
+		// Dedicated last-cursor-screen state for the hand-tool (pDragBuilding) move.
+		// lastPos doubles as the height-drag delta tracker and is zeroed in beginPaint,
+		// so it is unreliable as the per-frame screen delta base for the jacobian move.
+		Stuff::Vector2DOf<float>	m_lastDragScreen;
+
 		bool bPainting;
 		bool bArea;
 		bool bDrag;

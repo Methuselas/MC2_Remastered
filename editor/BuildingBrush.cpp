@@ -113,7 +113,9 @@ static inline void editorSnapToCellSafe( Stuff::Vector3D& pos )
 		return;
 
 	int cr = 0, cc = 0;
-	land->worldToCell( pos, cr, cc );
+	// Round-to-nearest vertex so the visible preview snaps to the cell under the
+	// cursor (worldToCell floors -> up-left half-cell bias). Editor-scoped only.
+	land->worldToCellNearest( pos, cr, cc );
 
 	// Reconstruct getCellPos()'s cell-center XY (terrain.h getCellPos(), minus the
 	// elevation line) so we test the exact position terrainElevation() will index.
@@ -297,7 +299,9 @@ void BuildingBrush::snapToTerrainCell( Terrain* terr, Stuff::Vector3D& pos )
 	if ( !terr )
 		return;
 	int cr = 0, cc = 0;
-	terr->worldToCell( pos, cr, cc );
+	// Round-to-nearest vertex so the placed object snaps to the cell under the
+	// cursor (worldToCell floors -> up-left half-cell bias). Editor-scoped only.
+	terr->worldToCellNearest( pos, cr, cc );
 	const int maxCell = (int)( ( Terrain::realVerticesMapSide - 1 ) * 3 ) - 1;
 	if ( maxCell < 0 )
 		return;

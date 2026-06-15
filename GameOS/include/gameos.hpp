@@ -2879,6 +2879,14 @@ void __stdcall gos_DestroyVertexDeclaration(HGOSVERTEXDECLARATION buffer);
 //
 void __stdcall gos_SetScreenMode( DWORD Width, DWORD Height, DWORD bitDepth=16, DWORD Device=0, bool disableZBuffer=0, bool AntiAlias=0, bool RenderToVram=0, bool GotoFullScreen=0, int DirtyRectangle=0, bool GotoWindowMode=0, bool EnableStencil=0, DWORD Renderer=0 );
 
+// [HUD-RES-CLAMP v1] runtime gate for the 800x600 HUD render-base clamp inside
+// gos_SetScreenMode. Default ON (game: legacy 2D HUD authored at 800x600, then
+// upscaled). The Mission Editor calls this with false at startup so it renders
+// at native window resolution and its object pick / drag-move projection stays
+// aligned with the MFC window/mouse space. Runtime (not #ifdef MC2_IS_EDITOR)
+// because gameos_graphics.cpp compiles into the gameos_editor lib without it.
+void __stdcall gos_SetHudResClampEnabled( bool enabled );
+
 //
 // This API sets the current gamma correction value. The default value is 1.0 (no correction applied). All color values are effected by (value/255 ^ (1.0/gamma)).
 //

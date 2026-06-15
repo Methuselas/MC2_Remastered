@@ -869,37 +869,94 @@ static void EditorObjectMgr_ConsiderScreenPick(EditorObject* pObject,
 		return;
 	ObjectAppearance* pApp = pObject->appearance();
 
-	Stuff::Vector3D wp = pApp->position;   // real position, real elevation
-	Stuff::Vector4D sp;
-	if (!EditorObjectMgr_ProjectScreenXY_GL(wp, sp))  // behind near plane (signed w) / no camera
+	// --- Object's world height ---------------------------------------------
+	// The old pick centered on the bare GROUND point (position) with tolerance =
+	// projected horizontal getRadius(). But tall objects (mechs/vehicles) render
+	// UPWARD from the ground point, and at the editor camera tilt "world up"
+	// projects up-and-left on screen -- so the hit circle landed at the model's
+	// base (down-right of the visible center), forcing the user to click the
+	// wheels/feet. The selection brackets (recalcBounds) already cover the model;
+	// this makes the pick hit-region do the same.
+	//
+	// Height source (both accessors are base-class virtuals on Appearance, so no
+	// new API is added): BldgAppearance overrides getTopZ() -> highZ (a true world
+	// height above the ground point; codebase already uses position.z + getTopZ()
+	// for hotspots, e.g. bldng.h:237). Mech3D/GV appearances DO NOT override
+	// getTopZ() (inherits 0.0f) but DO override getRadius() -> OBBRadius (a
+	// bounding-sphere radius). So: use getTopZ() when it is meaningful (buildings),
+	// else fall back to the sphere radius as a height proxy (mechs/vehicles).
+	float worldR = pApp->getRadius();
+	float worldH = pApp->getTopZ();
+	if (worldH <= 1.0f)                    // no real height (mech/vehicle) -> use sphere radius
+		worldH = (worldR > 0.0f) ? worldR : 0.0f;
+
+	// Three world points up the object's vertical axis: ground, bounding-center
+	// (ground + half height), and top (ground + full height). We center the pick
+	// on the bounding-center so the hit-region sits on the visible model, not its
+	// feet; ground+top give us the on-screen vertical span.
+	Stuff::Vector3D wGround = pApp->position;   // real position, real elevation
+	Stuff::Vector3D wCenter = wGround;  wCenter.z += 0.5f * worldH;
+	Stuff::Vector3D wTop    = wGround;  wTop.z    += worldH;
+
+	Stuff::Vector4D sCenter;
+	if (!EditorObjectMgr_ProjectScreenXY_GL(wCenter, sCenter))  // behind near plane (signed w) / no camera
 		return;
-	if (sp.w <= 1e-4f)                     // at/behind the near plane (defensive; helper checks)
+	if (sCenter.w <= 1e-4f)                // at/behind the near plane (defensive; helper checks)
 		return;
-	if (!(sp.x == sp.x) || !(sp.y == sp.y))  // NaN guard
+	if (!(sCenter.x == sCenter.x) || !(sCenter.y == sCenter.y))  // NaN guard
 		return;
 
-	// Per-object screen radius: project a point one world-radius away in X and
-	// measure the pixel delta. Falls back to the click-slop floor.
+	// Vertical screen reach: project ground and top, take the larger screen-space
+	// distance from the bounding-center to either endpoint. This is the half-span
+	// of the model's projected vertical extent. Endpoints that fail to project
+	// (behind near plane / NaN) are skipped -- the center is always valid here.
 	float tol = pixelFloor;
-	float worldR = pApp->getRadius();
+	{
+		Stuff::Vector4D sGround, sTop;
+		if (EditorObjectMgr_ProjectScreenXY_GL(wGround, sGround) && sGround.w > 1e-4f
+		    && (sGround.x == sGround.x) && (sGround.y == sGround.y))
+		{
+			float gx = sGround.x - sCenter.x;
+			float gy = sGround.y - sCenter.y;
+			float gReach = sqrtf(gx * gx + gy * gy);
+			if (gReach > tol)
+				tol = gReach;
+		}
+		if (EditorObjectMgr_ProjectScreenXY_GL(wTop, sTop) && sTop.w > 1e-4f
+		    && (sTop.x == sTop.x) && (sTop.y == sTop.y))
+		{
+			float tx = sTop.x - sCenter.x;
+			float ty = sTop.y - sCenter.y;
+			float tReach = sqrtf(tx * tx + ty * ty);
+			if (tReach > tol)
+				tol = tReach;
+		}
+	}
+
+	// Horizontal screen radius: project a point one world-radius away in X from the
+	// bounding-center and measure the pixel delta. Keeps wide/short objects
+	// clickable across their breadth. Combined with the vertical reach above so the
+	// final hit-circle covers the full on-screen extent.
 	if (worldR > 1.0f)
 	{
-		Stuff::Vector3D wr = wp;
+		Stuff::Vector3D wr = wCenter;
 		wr.x += worldR;
 		Stuff::Vector4D sr;
 		if (EditorObjectMgr_ProjectScreenXY_GL(wr, sr) && sr.w > 1e-4f
 		    && (sr.x == sr.x) && (sr.y == sr.y))
 		{
-			float rpx = sr.x - sp.x;
-			float rpy = sr.y - sp.y;
+			float rpx = sr.x - sCenter.x;
+			float rpy = sr.y - sCenter.y;
 			float screenR = sqrtf(rpx * rpx + rpy * rpy);
 			if (screenR > tol)
 				tol = screenR;
 		}
 	}
 
-	float dx = sp.x - clickX;
-	float dy = sp.y - clickY;
+	// Hit test + nearest-object tie-break are both measured to the bounding-CENTER
+	// projection (the region center), so the closest visible object still wins.
+	float dx = sCenter.x - clickX;
+	float dy = sCenter.y - clickY;
 	float pixSq = dx * dx + dy * dy;
 	if (pixSq <= tol * tol && pixSq < bestPixSq)
 	{
@@ -934,6 +991,43 @@ EditorObject* EditorObjectMgr::getObjectAtScreenPosition( int screenX, int scree
 
 	for ( DROP_LIST::EIterator dIter = dropZones.Begin(); !dIter.IsDone(); dIter++ )
 		EditorObjectMgr_ConsiderScreenPick(*dIter, clickX, clickY, pixelFloor, bestPixSq, pBest);
+
+	// MC2_EDITOR_PICK_TRACE diagnostic (default-off). Independent measurement of the
+	// rotate-pick failure: forward-project EVERY object and report the one whose
+	// projGL screen pos is NEAREST the cursor. After a camera rotate, if the user
+	// clicked a VISIBLE object but its projGL screen pos is FAR from the cursor, the
+	// forward projection is wrong at this yaw (not a stale matrix). If it is NEAR but
+	// hit==NO, the failure is the pick tolerance / selection gate, not projection.
+	{
+		static const bool s_pickTrace = ( getenv("MC2_EDITOR_PICK_TRACE") != NULL );
+		if ( s_pickTrace )
+		{
+			float nbest = 1.0e30f, nSx = -1.f, nSy = -1.f;
+			Stuff::Vector3D nWorld; nWorld.x = nWorld.y = nWorld.z = 0.f;
+			const char* nKind = "none";
+			for ( BUILDING_LIST::EIterator i = buildings.Begin(); !i.IsDone(); i++ )
+			{
+				if ( !(*i) || !(*i)->appearance() ) continue;
+				Stuff::Vector3D wp = (*i)->appearance()->position; Stuff::Vector4D sp;
+				if ( !EditorObjectMgr_ProjectScreenXY_GL( wp, sp ) ) continue;
+				float dx = sp.x - clickX, dy = sp.y - clickY, d2 = dx*dx + dy*dy;
+				if ( d2 < nbest ) { nbest = d2; nWorld = wp; nSx = sp.x; nSy = sp.y; nKind = "bldg"; }
+			}
+			for ( UNIT_LIST::EIterator i = units.Begin(); !i.IsDone(); i++ )
+			{
+				if ( !(*i) || !(*i)->appearance() ) continue;
+				Stuff::Vector3D wp = (*i)->appearance()->position; Stuff::Vector4D sp;
+				if ( !EditorObjectMgr_ProjectScreenXY_GL( wp, sp ) ) continue;
+				float dx = sp.x - clickX, dy = sp.y - clickY, d2 = dx*dx + dy*dy;
+				if ( d2 < nbest ) { nbest = d2; nWorld = wp; nSx = sp.x; nSy = sp.y; nKind = "unit"; }
+			}
+			fprintf( stderr,
+				"[PickTrace] cursor=(%d,%d) hit=%s nearest=%s world=(%.1f,%.1f,%.1f) projScreen=(%.1f,%.1f) pixDist=%.1f\n",
+				screenX, screenY, pBest ? "YES" : "NO", nKind,
+				nWorld.x, nWorld.y, nWorld.z, nSx, nSy, sqrtf( nbest ) );
+			fflush( stderr );
+		}
+	}
 
 	return pBest;
 }

@@ -357,6 +357,9 @@ class Terrain
 
 		inline void worldToTile( const Stuff::Vector3D& pos, int& tileR, int& tileC );
 		inline void worldToCell( const Stuff::Vector3D& pos, int& cellR, int& cellC );
+		// Editor placement snap: round-to-nearest vertex (worldToCell floors -> up-left bias).
+		// Game keeps worldToCell's floor for AI-grid stability.
+		inline void worldToCellNearest( const Stuff::Vector3D& pos, int& cellR, int& cellC );
 		inline void worldToTileCell (const Stuff::Vector3D& pos, int& tileR, int& tileC, int& cellR, int& cellC);
 		inline void tileCellToWorld (int tileR, int tileC, int cellR, int cellC, Stuff::Vector3D& worldPos);
 		inline void cellToWorld (int cellR, int cellC, Stuff::Vector3D& worldPos);
@@ -458,6 +461,16 @@ inline void Terrain::worldToCell( const Stuff::Vector3D& pos, int& cellR, int& c
 {
 	cellC = static_cast<int>(( pos.x - land->mapTopLeft3d.x ) * (oneOverWorldUnitsPerVertex*3.0f));
 	cellR = static_cast<int>(( land->mapTopLeft3d.y - pos.y ) * (oneOverWorldUnitsPerVertex*3.0f));
+}
+
+//---------------------------------------------------------------------------
+
+// Editor placement snap: round-to-nearest vertex (worldToCell floors -> up-left bias).
+// Game keeps worldToCell's floor for AI-grid stability.
+inline void Terrain::worldToCellNearest( const Stuff::Vector3D& pos, int& cellR, int& cellC )
+{
+	cellC = static_cast<int>(( pos.x - land->mapTopLeft3d.x ) * (oneOverWorldUnitsPerVertex*3.0f) + 0.5f);
+	cellR = static_cast<int>(( land->mapTopLeft3d.y - pos.y ) * (oneOverWorldUnitsPerVertex*3.0f) + 0.5f);
 }
 
 //---------------------------------------------------------------------------
