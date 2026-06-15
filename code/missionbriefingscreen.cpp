@@ -332,6 +332,26 @@ long	MissionBriefingScreen::getMissionTGA( const char* missionName )
 
 			flipTopToBottom( (BYTE*)(pHeader + 1), pHeader->pixel_depth, bmpWidth, bmpHeight );
 
+			// The baked tacmap TGA stores water + cement cells with alpha=0
+			// (drawTacMap overwrites them with 0x00RRGGBB colors, while
+			// colormap-derived land pixels get alpha=0xff). The HUD tacmap
+			// upload (gos_NewTextureFromMemory -> loadTGA -> convertIfNecessary)
+			// force-stamps alpha opaque via makeKindaSolid, but the briefing
+			// screen's MC_TextureManager::textureFromMemory path LZ-caches the
+			// raw pixels and uploads them verbatim (gos_NewEmptyTexture +
+			// LockTexture memcpy), so it never runs makeKindaSolid. Result: the
+			// alpha=0 water/runway/pad cells render solid black on the brief
+			// minimap (stock + all mods). Stamp alpha opaque here, mirroring
+			// makeKindaSolid, since this is a fully opaque gos_Texture_Solid
+			// minimap (gos_Texture_Solid implies the alpha is meaningless).
+			if ( pHeader->pixel_depth == 32 )
+			{
+				DWORD* px = (DWORD*)(pHeader + 1);
+				const long pxCount = (long)bmpWidth * (long)bmpHeight;
+				for ( long p = 0; p < pxCount; ++p )
+					px[p] |= 0xff000000;
+			}
+
 			// set up the texture
 			long tmpMapTextureHandle = mcTextureManager->textureFromMemory( (DWORD*)(pHeader+1), gos_Texture_Solid, 0, bmpWidth );
 
