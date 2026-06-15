@@ -142,6 +142,8 @@ bool field(const char* label, char* buf, size_t cap, const char* kind,
 }
 
 void drawList(App& a) {
+    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(380, 780), ImGuiCond_FirstUseEver);
     ImGui::Begin("Weapons");
     ImGui::InputText("filter", a.filter, sizeof a.filter);
     ImGui::SameLine();
@@ -172,6 +174,8 @@ void drawList(App& a) {
 }
 
 void drawEditor(App& a) {
+    ImGui::SetNextWindowPos(ImVec2(400, 10), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(860, 780), ImGuiCond_FirstUseEver);
     ImGui::Begin("Editor");
 
     // create-new section
