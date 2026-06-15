@@ -522,7 +522,7 @@ extern "C" void gos_tube_ribbon_flush(const float*          positions,
     glDepthFunc(GL_GEQUAL);  // reverse-Z convention
     glDepthMask(GL_FALSE);
     glEnable(GL_BLEND);
-    if (blendMode == 1) glBlendFunc(GL_SRC_ALPHA, GL_ONE);          // (slice 1 never uses this)
+    if (blendMode == 1) glBlendFunc(GL_ONE, GL_ONE);               // pure additive = legacy OneOneMode parity (dead path; deferred is live)
     else                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     // Ribbon is a swept double-sided strip; disable face culling so it shows
     // from both sides regardless of profile winding.
@@ -744,8 +744,13 @@ extern "C" void gos_tube_ribbon_flush_deferred(void) {
         if (s_tloc_uAdditive >= 0)
             glUniform1i(s_tloc_uAdditive, rec.blendMode == 1 ? 1 : 0);
 
-        // Per-record blend func (alpha vs additive).
-        if (rec.blendMode == 1) glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+        // Per-record blend func (alpha vs additive). Additive PPC/ER-PPC Tubes
+        // are legacy MLRState::OneOneMode = pure additive GL_ONE,GL_ONE. Using
+        // GL_SRC_ALPHA,GL_ONE double-attenuated the bolt (frag already folds
+        // alpha into RGB via tex*v_color, then SRC_ALPHA scales by the small
+        // age-ramped per-vertex alpha again) -> bright core + faint ghost ribbon
+        // = the "extra tube / partial transparency" artifact. Match legacy.
+        if (rec.blendMode == 1) glBlendFunc(GL_ONE, GL_ONE);
         else                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
         glBindTexture(GL_TEXTURE_2D, glTex);
