@@ -35,6 +35,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import shutil
 import sys
 import zipfile
@@ -72,6 +73,50 @@ def _sha256_file(path: str) -> str:
 
 def _sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Hardening helpers (S17 validator hardening)
+# ---------------------------------------------------------------------------
+
+# id is used verbatim as the install directory name (<deploy>/mods/<id>/), so it
+# must be a safe, lowercase, separator-free token.
+_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+# version must be dotted-numeric with an optional pre-release/build suffix.
+_VERSION_RE = re.compile(r"^\d+(\.\d+){0,3}([-+][0-9A-Za-z.-]+)?$")
+
+
+def _version_key(v: str) -> Tuple[int, ...]:
+    """Sortable key from a dotted-numeric version (pre-release/build suffix
+    dropped). '1.2.0' > '1.1.9'. Non-numeric -> (-1,) so it never wins 'latest'."""
+    core = re.split(r"[-+]", str(v), 1)[0]
+    try:
+        return tuple(int(p) for p in core.split("."))
+    except ValueError:
+        return (-1,)
+
+
+def _unsafe_member_path(rel: Any) -> Optional[str]:
+    """Return a reason if rel is unsafe to extract under an install root (zip-slip
+    / path-traversal guard for cmd_install), else None."""
+    if not isinstance(rel, str) or rel == "":
+        return "empty or non-string path"
+    if rel.startswith("/") or rel.startswith("\\"):
+        return "absolute path (leading slash)"
+    if "\\" in rel:
+        return "backslash separator (use forward slashes)"
+    if re.match(r"^[A-Za-z]:", rel):
+        return "drive-letter absolute path"
+    parts = rel.split("/")
+    if ".." in parts:
+        return "contains a '..' parent-traversal segment"
+    if any(p == "" for p in parts):
+        return "empty path segment ('//' or trailing '/')"
+    # A drive-letter in ANY segment escapes on Windows: os.path.join(root,
+    # "data\\C:\\evil") -> "C:\\evil" (inner absolute component drops the root).
+    if any(re.match(r"^[A-Za-z]:", p) for p in parts):
+        return "drive-letter in a path segment"
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -153,55 +198,55 @@ def _collect_mod_files(mod_dir: str) -> List[Tuple[str, str]]:
     return results
 
 
-def cmd_pack(args: argparse.Namespace) -> int:
-    mod_dir = str(Path(args.mod_dir).resolve())
-    if not os.path.isdir(mod_dir):
-        print(f"ERROR: mod directory not found: {mod_dir}", file=sys.stderr)
-        return 1
-
+def pack_mod(mod_dir: str, out_dir: Path) -> Path:
+    """Pack a mod directory into <out_dir>/<id>-<version>.mc2mod and return the
+    package path. Shared by cmd_pack and cmd_publish."""
     mod_id, name, version = _read_mod_json(mod_dir)
-    out_dir = Path(args.out).resolve() if args.out else Path(mod_dir).parent
     out_dir.mkdir(parents=True, exist_ok=True)
-
-    package_filename = f"{mod_id}-{version}{PACKAGE_EXT}"
-    package_path = out_dir / package_filename
+    package_path = out_dir / f"{mod_id}-{version}{PACKAGE_EXT}"
 
     files_meta: List[Dict[str, Any]] = []
     collected = _collect_mod_files(mod_dir)
-
-    # Collect file metadata (before writing zip, skip package.json from mod dir
-    # if it exists -- we generate a fresh one)
     for abs_path, rel_fwd in collected:
         if rel_fwd == "package.json":
-            continue  # will be replaced by generated one
-        size = os.path.getsize(abs_path)
-        sha = _sha256_file(abs_path)
-        files_meta.append({"path": rel_fwd, "sha256": sha, "size": size})
+            continue  # will be replaced by a freshly generated one
+        files_meta.append({
+            "path": rel_fwd,
+            "sha256": _sha256_file(abs_path),
+            "size": os.path.getsize(abs_path),
+        })
 
-    package_json_obj: Dict[str, Any] = {
+    package_json_bytes = json.dumps({
         "schema": PACKAGE_SCHEMA,
         "id": mod_id,
         "name": name,
         "version": version,
         "files": files_meta,
         "dependencies": [],
-    }
-    package_json_bytes = json.dumps(package_json_obj, indent=2).encode("utf-8")
+    }, indent=2).encode("utf-8")
 
-    # Write zip
     with zipfile.ZipFile(str(package_path), "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        # Write generated package.json first
         zf.writestr("package.json", package_json_bytes)
-        # Write all other mod files
         for abs_path, rel_fwd in collected:
             if rel_fwd == "package.json":
-                continue  # replaced above
+                continue
             zf.write(abs_path, rel_fwd)
+    return package_path
 
-    package_sha = _sha256_file(str(package_path))
-    file_count = len(files_meta)
+
+def cmd_pack(args: argparse.Namespace) -> int:
+    mod_dir = str(Path(args.mod_dir).resolve())
+    if not os.path.isdir(mod_dir):
+        print(f"ERROR: mod directory not found: {mod_dir}", file=sys.stderr)
+        return 1
+    out_dir = Path(args.out).resolve() if args.out else Path(mod_dir).parent
+    package_path = pack_mod(mod_dir, out_dir)
+    mod_id, _name, version = _read_mod_json(mod_dir)
+    # count matches the archived file set (package.json is regenerated, not counted)
+    file_count = sum(1 for _abs, rel in _collect_mod_files(mod_dir) if rel != "package.json")
     print(f"pack: {package_path}")
-    print(f"  id={mod_id}  version={version}  files={file_count}  sha256={package_sha}")
+    print(f"  id={mod_id}  version={version}  "
+          f"files={file_count}  sha256={_sha256_file(str(package_path))}")
     return 0
 
 
@@ -279,6 +324,34 @@ def cmd_verify_lite(args: argparse.Namespace) -> int:
                 continue
             if name not in declared_paths:
                 errors.append(f"archive member not declared in files[]: {name}")
+
+        # --- Hardening (S17) -------------------------------------------------
+        # id safety: it becomes the install dir name (<deploy>/mods/<id>/).
+        mod_id = pkg.get("id", "")
+        if isinstance(mod_id, str) and mod_id and not _ID_RE.match(mod_id):
+            errors.append(
+                f"unsafe id '{mod_id}': must match {_ID_RE.pattern} "
+                "(lowercase token, no spaces/separators/'..'; used as a dir name)")
+
+        # version must be dotted-numeric (semver-ish).
+        version = pkg.get("version", "")
+        if not (isinstance(version, str) and _VERSION_RE.match(version)):
+            errors.append(f"version '{version}' is not dotted-numeric (e.g. 1.0.0)")
+
+        # dependencies, if present, must be a list.
+        if "dependencies" in pkg and not isinstance(pkg.get("dependencies"), list):
+            errors.append("'dependencies' is present but is not a list")
+
+        # Per-member path safety (zip-slip / traversal) + duplicate detection.
+        seen_paths = set()
+        for entry in files_list:
+            rel = entry.get("path", "")
+            reason = _unsafe_member_path(rel)
+            if reason:
+                errors.append(f"unsafe member path '{rel}': {reason}")
+            if rel in seen_paths:
+                errors.append(f"duplicate member path in files[]: {rel}")
+            seen_paths.add(rel)
 
     if errors:
         print(f"verify-lite FAILED: {len(errors)} error(s)")
@@ -407,10 +480,21 @@ def cmd_install(args: argparse.Namespace) -> int:
 
         files_list: List[Dict[str, Any]] = pkg.get("files", [])
 
-        # Extract all declared files
+        # Extract all declared files. Guard zip-slip at the point of use: install
+        # may run on a package that was never verify-lite'd, so re-check each path
+        # AND confirm the resolved destination stays under install_root.
+        install_root_real = os.path.realpath(install_root)
         for entry in files_list:
             rel = entry["path"]
+            reason = _unsafe_member_path(rel)
+            if reason:
+                print(f"ERROR: refusing unsafe member path '{rel}': {reason}", file=sys.stderr)
+                return 1
             dest = os.path.join(install_root, rel.replace("/", os.sep))
+            if os.path.commonpath([os.path.realpath(os.path.dirname(dest) or install_root),
+                                    install_root_real]) != install_root_real:
+                print(f"ERROR: member '{rel}' escapes install root; aborting", file=sys.stderr)
+                return 1
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             data = zf.read(rel)
             with open(dest, "wb") as fh:
@@ -556,6 +640,108 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Subcommand: publish (S17 publish hook)
+# ---------------------------------------------------------------------------
+
+PUBLISH_REGISTRY_SCHEMA = "mc2-mod-registry/1"
+
+
+def cmd_publish(args: argparse.Namespace) -> int:
+    """
+    Publish a mod into a LOCAL package registry: pack (if a mod-dir) -> verify-lite
+    gate -> place the archive under <registry>/packages/ -> update the registry
+    manifest <registry>/registry.json (schema mc2-mod-registry/1). Pure-local, no
+    network. The deploy-side index (tools/registry/build_index.py) is the
+    complementary install-side view; this is the distribution side.
+    """
+    registry = Path(args.registry).resolve()
+    if _is_canonical_deploy(str(registry)):
+        print(f"ERROR: refusing to publish into a canonical deploy root: {registry}",
+              file=sys.stderr)
+        return 1
+    packages_dir = registry / "packages"
+    packages_dir.mkdir(parents=True, exist_ok=True)
+
+    # Resolve the package: pack a mod-dir, or use a prebuilt archive.
+    packed_here = False
+    if args.package:
+        src_pkg = Path(args.package).resolve()
+        if not src_pkg.is_file():
+            print(f"ERROR: package not found: {src_pkg}", file=sys.stderr)
+            return 1
+    else:
+        mod_dir = Path(args.mod_dir).resolve()
+        if not mod_dir.is_dir():
+            print(f"ERROR: mod directory not found: {mod_dir}", file=sys.stderr)
+            return 1
+        src_pkg = pack_mod(str(mod_dir), packages_dir)
+        packed_here = True
+
+    # verify-lite gate (the hardened validator). Abort publish on any failure.
+    if cmd_verify_lite(argparse.Namespace(package=str(src_pkg))) != 0:
+        print("publish ABORTED: verify-lite failed", file=sys.stderr)
+        if packed_here:
+            try:
+                os.remove(src_pkg)  # do not leave an invalid package in the registry
+            except OSError:
+                pass
+        return 1
+
+    with zipfile.ZipFile(str(src_pkg), "r") as zf:
+        pkg = _load_package_json_from_zip(zf)
+    mod_id = pkg.get("id", "")
+    version = pkg.get("version", "")
+
+    dest_pkg = packages_dir / f"{mod_id}-{version}{PACKAGE_EXT}"
+    if Path(src_pkg).resolve() != dest_pkg.resolve():
+        shutil.copy2(str(src_pkg), str(dest_pkg))
+
+    pkg_sha = _sha256_file(str(dest_pkg))
+    entry = {
+        "id": mod_id,
+        "version": version,
+        "name": pkg.get("name", ""),
+        "package": dest_pkg.name,
+        "sha256": pkg_sha,
+        "size": os.path.getsize(dest_pkg),
+        "dependencies": pkg.get("dependencies", []),
+        "published_utc": args.utc,
+    }
+
+    manifest_path = registry / "registry.json"
+    manifest: Dict[str, Any] = {"schema": PUBLISH_REGISTRY_SCHEMA,
+                                "generated_utc": args.utc, "mods": {}}
+    if manifest_path.is_file():
+        try:
+            loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if loaded.get("schema") == PUBLISH_REGISTRY_SCHEMA and isinstance(loaded.get("mods"), dict):
+                manifest = loaded
+                manifest["generated_utc"] = args.utc
+        except (OSError, ValueError):
+            pass  # corrupt manifest -> rebuild fresh
+
+    mod_rec = manifest["mods"].setdefault(mod_id, {"versions": {}})
+    overwrote = version in mod_rec["versions"]
+    mod_rec["versions"][version] = entry
+    # 'latest' = highest version by dotted-numeric order (NOT most-recently
+    # published), so a backport of an older version never clobbers the pointer.
+    mod_rec["latest"] = max(mod_rec["versions"], key=_version_key)
+
+    # Atomic write (temp + os.replace) so an interrupted/concurrent publish never
+    # truncates registry.json -> the corrupt-read path would silently drop every
+    # prior entry on the next run.
+    tmp_path = manifest_path.with_name(manifest_path.name + ".tmp")
+    tmp_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    os.replace(str(tmp_path), str(manifest_path))
+
+    print(f"publish: {mod_id} v{version} -> {dest_pkg}")
+    print(f"  registry        : {manifest_path}"
+          + ("  (overwrote existing version)" if overwrote else ""))
+    print(f"  package_sha256  : {pkg_sha}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
@@ -586,6 +772,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p_uninstall.add_argument("--deploy", required=True, metavar="DIR", help="Deploy root directory")
     p_uninstall.add_argument("--force", action="store_true", help="Remove even if files were modified")
 
+    # publish
+    p_publish = sub.add_parser("publish", help="Publish a mod into a local package registry")
+    src = p_publish.add_mutually_exclusive_group(required=True)
+    src.add_argument("--mod-dir", metavar="DIR", help="Mod project dir to pack then publish")
+    src.add_argument("--package", metavar="FILE", help="Prebuilt .mc2mod to publish")
+    p_publish.add_argument("--registry", required=True, metavar="DIR", help="Registry root directory")
+    p_publish.add_argument("--utc", default="", metavar="STAMP",
+                           help="published_utc stamp (default empty = byte-stable manifest)")
+
     return parser
 
 
@@ -597,6 +792,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "verify-lite": cmd_verify_lite,
         "install": cmd_install,
         "uninstall": cmd_uninstall,
+        "publish": cmd_publish,
     }
     fn = dispatch.get(args.command)
     if fn is None:
