@@ -155,6 +155,13 @@ public:
 	virtual void		moveNoRecurse( float offsetX, float offsetY );
 
 	void				setFileWidth( float newWidth ){ fileWidth = newWidth; }
+	// setFileHeight: override the V-axis divisor independently of fileWidth.
+	// Used by icon atlases that are taller than wide (e.g. 256x512 mech-icon
+	// atlas) so V-coords are divided by the actual atlas height rather than
+	// fileWidth.  If fileHeight is 0 (default), setUVs falls back to fileWidth
+	// for both axes (backward-compatible with all existing callers).
+	void				setFileHeight( float newHeight ){ fileHeight = newHeight; }
+	float				getFileHeight() const { return fileHeight; }
 	int				getID() const { return ID; }
 	void			setID(int newID) { ID = newID; }
 
@@ -197,6 +204,7 @@ protected:
 
 	unsigned long	textureHandle;
 	float		fileWidth;
+	float		fileHeight;  // V-axis divisor; 0 = use fileWidth (default, backward-compat)
 	bool		showWindow;
 
 	AssetScale::AssetKey	assetKey;

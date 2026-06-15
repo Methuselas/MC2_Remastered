@@ -492,7 +492,13 @@ void MechListBox::initIcon( LogisticsMech* pMech, aObject& mechIcon )
 {
 	mechIcon = (MechListBoxItem::s_templateItem->mechIcon);
 
-	// Icon atlas (mcui_gn_mechicons.tga) uses 25x30px cells at setFileWidth(256).
+	// Icon atlas: 25x30px cells, 10 cols.  Atlas width is always 256 so U uses
+	// setFileWidth(256).  Atlas height varies: base=256 (slots 0-79 addressable),
+	// mco-compat=512 (slots 0-169).  The aObject::init FIT path already set
+	// fileHeight from the actual texture height (via tryGetTextureLogicalSize) and
+	// copyData propagated it into mechIcon above.  setUVs() reads fileHeight to
+	// divide V, so taller atlases are automatically addressed correctly -- no
+	// per-atlas branching needed here.
 	// See MC2_LOG_MECH_ICON env var for per-mech UV diagnostics.
 	long index = pMech->getIconIndex();
 	long xIndex = index % 10;
@@ -514,17 +520,20 @@ void MechListBox::initIcon( LogisticsMech* pMech, aObject& mechIcon )
 	float v2 = (fY * height);
 
 	mechIcon.setFileWidth( 256.f );
+	// fileHeight is already set from atlas texture height via aObject::init -> copyData.
+	// setUVs uses it for V; no explicit setFileHeight call needed.
 	mechIcon.setUVs( u, v, u2, v2 );
 
 	if ( getenv("MC2_LOG_MECH_ICON") )
 	{
-		printf("[mechicon-list] mech=ID:%ld iconIndex=%ld row=%ld col=%ld "
+		float fh = mechIcon.getFileHeight() > 0.f ? mechIcon.getFileHeight() : 256.f;
+		printf("[mechicon-list] mech=%s iconIndex=%ld row=%ld col=%ld "
 		       "widgetW=%.0f widgetH=%.0f u=[%.1f,%.1f] v=[%.1f,%.1f] "
-		       "fileWidth=256 uvX=[%.3f,%.3f] uvY=[%.3f,%.3f]\n",
+		       "fileWidth=256 fileHeight=%.0f uvX=[%.3f,%.3f] uvY=[%.3f,%.3f]\n",
 		       pMech->getChassisName(), index, yIndex, xIndex,
 		       width, height,
 		       u, u2, v, v2,
-		       u/256.f, u2/256.f, v/256.f, v2/256.f);
+		       fh, u/256.f, u2/256.f, v/fh, v2/fh);
 		fflush(stdout);
 	}
 

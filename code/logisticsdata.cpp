@@ -23,6 +23,7 @@ LogisticsData.cpp			: Implementation of the LogisticsData component.
 #include"comndr.h"
 #include"missionresults.h"
 #include<zlib.h>
+#include<vector>
 
 #ifndef VIEWER
 #include"multplyr.h"
@@ -32,6 +33,18 @@ LogisticsData.cpp			: Implementation of the LogisticsData component.
 #endif
 
 extern CPrefs prefs;
+
+// Snapshot of deployed (force-group) mechs captured before removeMechsInForceGroup()
+// deletes the LogisticsMech objects.  pVariant remains valid (owned by the variants list,
+// not by LogisticsMech) so the pointer survives the delete.  Used by setMissionCompleted()
+// to recover mod-purchased mechs whose variantName is absent from the variants list at
+// mission end (getVariant would otherwise return NULL, silently losing the mech).
+struct DeployedMechSnapshot
+{
+	EString           variantName; // copy of LogisticsVariant::variantName (== BattleMech::variantName)
+	LogisticsVariant* pVariant;    // raw ptr — valid lifetime: variants list outlives this snapshot
+};
+static std::vector<DeployedMechSnapshot> s_deployedMechSnapshot;
 
 //----------------------------------------------------------------------
 // WARNING!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -933,6 +946,22 @@ LogisticsVariant* LogisticsData::getVariant( const char* pCSVFileName, int Varia
 
 void LogisticsData::removeMechsInForceGroup()
 {
+	// Capture {variantName, pVariant*} for every deployed mech BEFORE deletion.
+	// pVariant is owned by the variants list, not by LogisticsMech, so the pointer
+	// survives the delete below and can be used by setMissionCompleted() as a fallback
+	// for mod-purchased variants whose name is absent from the loaded variants list.
+	s_deployedMechSnapshot.clear();
+	for ( MECH_LIST::EIterator si = inventory.Begin(); !si.IsDone(); si++ )
+	{
+		if ( (*si)->getForceGroup() )
+		{
+			DeployedMechSnapshot snap;
+			snap.variantName = (*si)->getName(); // EString copy — variantName == LogisticsVariant::getName()
+			snap.pVariant    = (*si)->getVariant();
+			s_deployedMechSnapshot.push_back( snap );
+		}
+	}
+
 	if ( !inventory.Count() )
 		return;
 	for ( MECH_LIST::EIterator iter = inventory.End(); !iter.IsDone();  )
@@ -1413,17 +1442,41 @@ void	LogisticsData::setMissionCompleted( )
 
 					}
 				}
-				else // mech was recovered during the mission
+				else // mech was recovered during the mission (or was a deployed mech removed by removeMechsInForceGroup)
 				{
 					if ( !pMover->isDestroyed() && !pMover->isDisabled() )
 					{
 						// find the variant with this mech's info
-					LogisticsVariant* pVariant = getVariant( ((BattleMech*)pMover)->variantName );
+						const char* vname = ((BattleMech*)pMover)->variantName;
+						LogisticsVariant* pVariant = getVariant( vname );
 						if ( !pVariant )
 						{
-							Assert( 0, 0, "couldn't find the variant of a salvaged mech" );
+							// getVariant failed: variantName not in the loaded variants list.
+							// This happens for mod-purchased mechs whose variant was added at
+							// runtime (not in the campaign's base variant CSV).  Fall back to
+							// the pre-removal snapshot captured by removeMechsInForceGroup().
+							// The pVariant pointer in the snapshot is still valid — LogisticsVariant
+							// objects are owned by the variants list, not by LogisticsMech.
+							for ( const DeployedMechSnapshot& snap : s_deployedMechSnapshot )
+							{
+								// EString::Compare is case-sensitive; variantName case must match
+								// BattleMech::variantName (set from LogisticsVariant::getName() at deploy).
+								if ( snap.variantName.Compare( vname, 0 ) == 0 && snap.pVariant )
+								{
+									pVariant = snap.pVariant;
+									break;
+								}
+							}
+							if ( !pVariant )
+							{
+								// Still NULL: genuine missing variant (corrupt save / unknown mech).
+								// Log and skip rather than Assert no-op (Assert is a no-op in RelWithDebInfo).
+								printf( "[LOGISTICS] setMissionCompleted: no variant for surviving mech '%s' — mech lost\n",
+								        vname );
+								fflush( stdout );
+							}
 						}
-						else
+						if ( pVariant )
 						{
 							addMechToInventory( pVariant, ForceGroupCount++, pPilot, base, highlight1, highlight2 );
 							if ( pPilot )

@@ -45,6 +45,7 @@ aObject::aObject()
 	showWindow = 1;
 	helpID = 0;
 	fileWidth = 0.0f;
+	fileHeight = 0.0f;
 }
 
 aObject::~aObject()
@@ -88,7 +89,8 @@ void aObject::init(FitIniFile* file, const char* blockName, DWORD neverFlush)
 	memset( location, 0, sizeof( location ) );
 	char fileName[256];
 	textureHandle = 0;
-	fileWidth = 256.; 
+	fileWidth = 256.;
+	fileHeight = 0.0f;
 	
 	if ( NO_ERR != file->seekBlock( blockName ) )
 	{
@@ -137,7 +139,16 @@ void aObject::init(FitIniFile* file, const char* blockName, DWORD neverFlush)
 			DWORD logicalWidth = 0;
 			DWORD logicalHeight = 0;
 			if ( mcTextureManager->tryGetTextureLogicalSize( ID, logicalWidth, logicalHeight ) )
+			{
 				fileWidth = logicalWidth;
+				// fileHeight: only set when height != width so setUVs can divide
+				// V by the correct atlas dimension.  For square atlases (most
+				// legacy assets) leave fileHeight=0 which means "use fileWidth".
+				// For a tall atlas (e.g. 256x512 mech-icon atlas) fileHeight will
+				// be 512, fixing the OOB-slot problem without touching any caller.
+				if ( logicalHeight != logicalWidth )
+					fileHeight = (float)logicalHeight;
+			}
 			else
 			{
 				unsigned long gosID = mcTextureManager->get_gosTextureHandle( ID );
@@ -147,6 +158,9 @@ void aObject::init(FitIniFile* file, const char* blockName, DWORD neverFlush)
 					gos_LockTexture( gosID, 0, 0, 	&textureData );
 				}
 				fileWidth = textureData.Width / mcTextureManager->getUVScale(ID);
+				float fh = textureData.Height / mcTextureManager->getUVScale(ID);
+				if ( fh != fileWidth )
+					fileHeight = fh;
 				{
 					ZoneScopedN("aObject::init fit gos_UnLockTexture");
 					gos_UnLockTexture( gosID );
@@ -576,12 +590,15 @@ void aObject::setColor( uint32_t newColor, bool bRecurse )
 
 void	aObject::setUVs( float u1, float v1, float u2, float v2 )
 {
+	// U-axis: always divided by fileWidth (horizontal texture dimension).
 	location[0].u = location[1].u = u1/fileWidth + (.1f / (float)fileWidth);
 	location[2].u = location[3].u = u2/fileWidth + (.1f / (float)fileWidth);
-	location[0].v = location[3].v = v1/fileWidth + (.1f / (float)fileWidth);
-	location[1].v = location[2].v = v2/fileWidth + (.1f / (float)fileWidth);
-
-	
+	// V-axis: divided by fileHeight when set (non-square atlas), else fileWidth.
+	// This lets a 256x512 atlas address rows 0-16 while leaving square atlases
+	// (fileHeight==0) fully backward-compatible.
+	float fh = (fileHeight > 0.f) ? fileHeight : fileWidth;
+	location[0].v = location[3].v = v1/fh + (.1f / fh);
+	location[1].v = location[2].v = v2/fh + (.1f / fh);
 }
 
 void aObject::removeAllChildren( bool bDelete)
@@ -608,6 +625,7 @@ void aObject::copyData( const aObject& src )
 			location[i] = src.location[i];
 		
 		fileWidth = src.fileWidth;
+		fileHeight = src.fileHeight;
 		showWindow = src.showWindow;
 
 	

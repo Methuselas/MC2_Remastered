@@ -775,13 +775,21 @@ int main(int argc, char** argv)
     // pays that cost -- all the [TAG] printf telemetry is silently discarded.
     // MC2_LOG set (to anything): keep stdout live so the smoke harness can
     // parse [SMOKE v1]/[PERF v1]/etc., and so dev + hitch-catcher.bat see
-    // output. stderr is LEFT ALONE -- crashes, GL errors, and the
-    // [VISUAL_CAPTURE] confirmations stay visible regardless. The harness sets
-    // MC2_LOG=1 (scripts/run_smoke.py, scripts/run_visual_capture.py).
+    // output. Default (MC2_LOG unset) ALSO redirects stderr to NUL: the
+    // render-modernization oracle/parity telemetry ([MECH_MATERIAL_GPU],
+    // [OBJBATCHER], [TERRAIN_INDIRECT_PARITY], [DRAW_PACKET_V6], [RENDER_SNAPSHOT],
+    // [RENDER_WORLD], [VISIBILITY], [ENGINE_VIEW], [VIEW_UNIFORMS], ...) prints
+    // periodically to stderr and spams the console + causes fflush hitches even
+    // with nothing set. Crashes still land in crash.txt (gos_crashbundle writes
+    // the file independently of stderr), so nothing debuggable is lost.
+    // MC2_LOG=1 restores full stdout+stderr for smoke/dev/hitch-catcher
+    // (scripts/run_smoke.py, scripts/run_visual_capture.py set it).
     if (std::getenv("MC2_LOG") == nullptr) {
         FILE* sink = freopen("NUL", "w", stdout);
-        (void)sink;  // NUL is always present on Windows; if it failed, stdout
+        (void)sink;  // NUL is always present on Windows; if it failed, the stream
                      // simply stays connected (correct but hitchy) -- never fatal.
+        FILE* esink = freopen("NUL", "w", stderr);
+        (void)esink;
     }
 
     // Tier-1 instrumentation: one-line banner so every log file is
