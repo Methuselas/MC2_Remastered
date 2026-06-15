@@ -20,6 +20,7 @@
 #include "../GameOS/gameos/gos_mech_batcher.h"
 #include "../GameOS/gameos/gos_mech_killswitch.h"
 #include "cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (RAII scope)
+#include "anim_override_registry.h"  // ANIM-OVERRIDE-MVP: declarative gesture-clip remap
 #include "spotlight_diag.h"  // T1.16 — (E)-owned slot tagging for per-slot probe
 #include <cstdint>  // M2.5 (Q6 amendment 2): uint64_t for MLR mech draw counter
 
@@ -555,10 +556,25 @@ void Mech3DAppearanceType::init (const char * fileName)
 			sprintf(animName,"%s%s",fileName,MechAnimationNames[i]);
 
 			FullPathFileName animPath;
-			animPath.init(tglPath,animName,".ase");
-
 			FullPathFileName otherPath;
-			otherPath.init(tglPath,animName,".agl");
+
+			// ANIM-OVERRIDE-MVP: declarative gesture remap. If the active mod's
+			// data/anim_overrides/anims.json remaps this (mech,gesture), load the
+			// override clip from the mod dir; otherwise use the stock
+			// <mech><GestureSuffix> convention path. Default-off: with no manifest
+			// resolve() returns null -> stock path -> zero stock behaviour change.
+			const AnimOverrideRecord* animOv =
+				AnimOverrideRegistry::instance().resolve(fileName, MechAnimationNames[i]);
+			if (animOv)
+			{
+				animPath.init(animOv->manifestDir.c_str(), animOv->sourceBase.c_str(), ".ase");
+				otherPath.init(animOv->manifestDir.c_str(), animOv->sourceBase.c_str(), ".agl");
+			}
+			else
+			{
+				animPath.init(tglPath,animName,".ase");
+				otherPath.init(tglPath,animName,".agl");
+			}
 
 			if (fileExists(animPath) || fileExists(otherPath))
 			{

@@ -1,0 +1,178 @@
+// anim_override_registry.cpp — ANIM-OVERRIDE-MVP-1.
+// Mirrors model_override_registry.cpp. Permitted to include nlohmann/json
+// (allowlisted in scripts/check-json-isolation.sh).
+#include "anim_override_registry.h"
+#include <nlohmann/json.hpp>
+#include <cctype>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <mutex>
+#include <utility>
+
+using nlohmann::json;
+
+static void animLogDrop(const char* why, const std::string& key) {
+    fprintf(stderr, "[ANIMOVERRIDE] dropped '%s': %s\n", key.c_str(), why);
+    fflush(stderr);
+}
+
+static std::string animNormalizeKey(const std::string& s) {
+    size_t b = 0, e = s.size();
+    while (b < e && std::isspace((unsigned char)s[b])) ++b;
+    while (e > b && std::isspace((unsigned char)s[e - 1])) --e;
+    std::string out = s.substr(b, e - b);
+    for (char& c : out) c = (char)std::tolower((unsigned char)c);
+    return out;
+}
+
+static std::string animTrim(const std::string& s) {
+    size_t b = 0, en = s.size();
+    while (b < en && std::isspace((unsigned char)s[b])) ++b;
+    while (en > b && std::isspace((unsigned char)s[en - 1])) --en;
+    return s.substr(b, en - b);
+}
+
+// Safe relative .ase/.agl source. Rejects absolute paths, drive letters, and any
+// ".." (traversal). Returns the basename WITHOUT extension in `baseOut`.
+static bool animSafeSource(const std::string& s, std::string& baseOut) {
+    if (s.empty()) return false;
+    if (s[0] == '/' || s[0] == '\\') return false;
+    if (s.size() >= 2 && s[1] == ':') return false;
+    if (s.find("..") != std::string::npos) return false;
+    std::string low = s; for (char& c : low) c = (char)std::tolower((unsigned char)c);
+    const bool ase = low.size() >= 4 && low.compare(low.size() - 4, 4, ".ase") == 0;
+    const bool agl = low.size() >= 4 && low.compare(low.size() - 4, 4, ".agl") == 0;
+    if (!ase && !agl) return false;
+    baseOut = s.substr(0, s.size() - 4);  // strip the 4-char extension
+    if (baseOut.empty()) return false;
+    return true;
+}
+
+static std::vector<AnimOverrideRecord> animParseManifest(
+        const std::string& manifestPath, const std::string& dir) {
+    std::vector<AnimOverrideRecord> out;
+
+    std::ifstream in(manifestPath.c_str());
+    if (!in.is_open()) return out;
+    json root;
+    try { in >> root; }
+    catch (const std::exception& e) {
+        fprintf(stderr, "[ANIMOVERRIDE] parse error in %s: %s\n", manifestPath.c_str(), e.what());
+        return out;
+    }
+    if (!root.is_object() || !root.contains("overrides") || !root["overrides"].is_array()) {
+        fprintf(stderr, "[ANIMOVERRIDE] %s: missing 'overrides' array\n", manifestPath.c_str());
+        return out;
+    }
+
+    for (const auto& e : root["overrides"]) {
+        try {
+        if (!e.is_object()) { animLogDrop("entry is not an object", "<non-object>"); continue; }
+        std::string replaces = e.value("replaces", std::string());
+        std::string gestureRaw = e.value("gesture", std::string());
+        const std::string key = (replaces.empty() ? "<no-replaces>" : replaces)
+                                + "/" + (gestureRaw.empty() ? "<no-gesture>" : gestureRaw);
+
+        if (e.value("type", std::string()) != "anim")     { animLogDrop("type!=anim", key); continue; }
+        if (e.value("fallback", std::string()) != "stock"){ animLogDrop("fallback!=stock", key); continue; }
+
+        // replaces == "mech:<name>"
+        size_t colon = replaces.find(':');
+        if (colon == std::string::npos) { animLogDrop("replaces not '<class>:<name>'", key); continue; }
+        std::string cls  = animNormalizeKey(replaces.substr(0, colon));
+        std::string name = animNormalizeKey(replaces.substr(colon + 1));
+        if (cls != "mech")  { animLogDrop("class not 'mech'", key); continue; }
+        if (name.empty())   { animLogDrop("empty mech name in replaces", key); continue; }
+
+        std::string gesture = animNormalizeKey(gestureRaw);
+        if (gesture.empty()) { animLogDrop("empty gesture", key); continue; }
+
+        std::string source = animTrim(e.value("source", std::string()));
+        std::string base;
+        if (!animSafeSource(source, base)) { animLogDrop("unsafe/non-.ase/.agl source path", key); continue; }
+
+        AnimOverrideRecord rec;
+        rec.mechName    = name;
+        rec.gesture     = gesture;
+        rec.sourceBase  = base;
+        rec.manifestDir = dir;
+        out.push_back(std::move(rec));
+        } catch (const std::exception& ex) {
+            animLogDrop(ex.what(), "<entry>"); continue;
+        }
+    }
+    return out;
+}
+
+int AnimOverrideRegistry::loadFromFile(const std::string& manifestPath,
+                                       const std::string& manifestDir) {
+    records_.clear();
+    manifestDir_ = manifestDir;
+
+    auto parsed = animParseManifest(manifestPath, manifestDir);
+    for (auto& rec : parsed) {
+        bool dup = false;
+        for (const auto& r : records_)
+            if (r.mechName == rec.mechName && r.gesture == rec.gesture) { dup = true; break; }
+        if (dup) { animLogDrop("duplicate key (first entry wins)", rec.mechName + ":" + rec.gesture); continue; }
+        records_.push_back(std::move(rec));
+    }
+    return (int)records_.size();
+}
+
+int AnimOverrideRegistry::mergeFromFile(const std::string& manifestPath,
+                                        const std::string& manifestDir) {
+    auto parsed = animParseManifest(manifestPath, manifestDir);
+    int merged = 0;
+    for (auto& rec : parsed) {
+        bool replaced = false;
+        for (auto& r : records_) {
+            if (r.mechName == rec.mechName && r.gesture == rec.gesture) {
+                r = std::move(rec); replaced = true; ++merged; break;
+            }
+        }
+        if (!replaced) { records_.push_back(std::move(rec)); ++merged; }
+    }
+    return merged;
+}
+
+const AnimOverrideRecord* AnimOverrideRegistry::resolve(
+        const char* mechName, const char* gesture) const {
+    if (!mechName || !gesture) return nullptr;
+    if (records_.empty()) return nullptr;  // fast no-op for the common (no-mod) case
+    const std::string m = animNormalizeKey(mechName);
+    const std::string g = animNormalizeKey(gesture);
+    for (const auto& r : records_) {
+        if (r.mechName == m && r.gesture == g) return &r;
+    }
+    return nullptr;
+}
+
+AnimOverrideRegistry& AnimOverrideRegistry::instance() {
+    static AnimOverrideRegistry g;
+    static std::once_flag once;
+    std::call_once(once, []{
+        int base = g.loadFromFile("data/anim_overrides/anims.json", "data/anim_overrides");
+        if (base > 0) {
+            fprintf(stderr, "[ANIMOVERRIDE] base registry: %d override(s)\n", base);
+            fflush(stderr);
+        }
+        const char* activeMod = getenv("MC2_ACTIVE_MOD");
+        if (activeMod && activeMod[0]) {
+            std::string modManifest = std::string("mods/") + activeMod
+                                      + "/data/anim_overrides/anims.json";
+            std::string modDir      = std::string("mods/") + activeMod
+                                      + "/data/anim_overrides";
+            std::ifstream probe(modManifest.c_str());
+            if (probe.is_open()) {
+                probe.close();
+                int n = g.mergeFromFile(modManifest, modDir);
+                fprintf(stderr, "[ANIMOVERRIDE] mod '%s': %d override(s) merged (total %d)\n",
+                        activeMod, n, g.count());
+                fflush(stderr);
+            }
+        }
+    });
+    return g;
+}

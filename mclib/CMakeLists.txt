@@ -91,6 +91,7 @@ set(SOURCES ${SOURCES}
     tacmap.cpp
     utilities.cpp
     model_override_registry.cpp
+    anim_override_registry.cpp
     )
 
 # Track D — Assimp-backed FBX/GLB mech importer.

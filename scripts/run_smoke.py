@@ -607,6 +607,10 @@ def main():
                             # them and the fixture never fires.
                             "MC2_FX_FORCE_SPAWN",
                             "MC2_LOG",
+                            # Active mod id — drives model_override + anim_override
+                            # registry mod-merge (mods/<id>/...). Allowlisted so mod
+                            # smokes actually load the mod; without it Popen drops it.
+                            "MC2_ACTIVE_MOD",
                             "MC2_LIGHT_COST_SPLIT",
                             "MC2_SLIM_COST_SPLIT",
                             "MC2_TOBJ_COST_SPLIT",
