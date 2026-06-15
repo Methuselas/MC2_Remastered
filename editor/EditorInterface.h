@@ -105,10 +105,18 @@ public:
 	// and marks the mission dirty.
 	bool applyObjectTransform( EditorObject* obj, float worldX, float worldY, float yawDegrees );
 
+	// Inspector edit: change an object's team/alignment (newTeam in [-1,7]; -1 =
+	// Neutral). Pushes ONE undoable ModifyBuildingAction (its snapshot already
+	// captures teamId) + marks the mission dirty + re-bakes the static recipe so
+	// the team colour updates. Returns false (no-op) for null/no-appearance/
+	// forest-member objects, an out-of-range team, or an unchanged team.
+	bool applyObjectAlignment( EditorObject* obj, int newTeam );
+
 	// Smoke-only (-smoke-inspector-edit): place a throwaway drop zone, transform it
-	// via applyObjectTransform, then undo through the same undo manager. Returns a
-	// bitmask: bit0 = transform moved the object, bit1 = undo restored it.
-	// Returns -1 if setup failed (no terrain / object-mgr).
+	// via applyObjectTransform AND change its team via applyObjectAlignment, then
+	// undo through the same undo manager. Returns a bitmask: bit0 = transform moved
+	// the object, bit1 = undo restored it, bit2 = team change applied, bit3 = undo
+	// restored the team. Returns -1 if setup failed (no terrain / object-mgr).
 	int runInspectorEditSmoke();
 
 	// Smoke-only (-smoke-place-oob): activate a BuildingBrush and drive its

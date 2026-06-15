@@ -1,10 +1,12 @@
 /***************************************************************
 * FILENAME: InspectorPanel.cpp
-* DESCRIPTION: Read-only Inspector Lite (Phase 1b modder usability).
+* DESCRIPTION: Inspector (Phase 1b modder usability + S17 edit depth).
 *   See InspectorPanel.h. Reads the current selection from the existing
 *   EditorObjectMgr selection list (shared by viewport + Scene Outliner)
-*   and displays per-object details. No mutation, no save-path, no undo.
-* DATE: 2026-06-09
+*   and displays per-object details. EDITABLE fields (transform XY+yaw, team)
+*   commit through the existing undo manager (ModifyBuildingAction) and mark
+*   the mission dirty -- one undoable action per commit.
+* DATE: 2026-06-09 (edit depth 2026-06-15)
 ****************************************************************/
 
 #include "stdafx.h"
@@ -308,6 +310,31 @@ void InspectorPanel::Draw()
             reloadFields();
 
         ImGui::TextDisabled("Apply pushes one undoable action (Ctrl+Z to undo).");
+    }
+
+    // -----------------------------------------------------------------------
+    // Editable alignment / team (-1 = Neutral, 0..7 = numbered teams). Applied
+    // immediately on change -> exactly one undoable ModifyBuildingAction each
+    // (applyObjectAlignment is a no-op if the team is unchanged). The combo
+    // reads getAlignment() live, so it reflects undo/redo and viewport edits.
+    // -----------------------------------------------------------------------
+    if (app && obj->getForestID() == -1)
+    {
+        ImGui::Separator();
+        ImGui::TextUnformatted("Alignment");
+        static const char* kTeamItems[] = {
+            "Neutral", "Team 0", "Team 1", "Team 2", "Team 3",
+            "Team 4", "Team 5", "Team 6", "Team 7"
+        };
+        const int curTeam = obj->getAlignment();
+        int comboIdx = (curTeam < 0 || curTeam > 7) ? 0 : (curTeam + 1);
+        if (ImGui::Combo("Team##align", &comboIdx, kTeamItems, IM_ARRAYSIZE(kTeamItems)))
+        {
+            const int newTeam = (comboIdx == 0) ? -1 : (comboIdx - 1);
+            if (EditorInterface* ei = EditorInterface::instance())
+                ei->applyObjectAlignment(obj, newTeam);
+        }
+        ImGui::TextDisabled("Changing team pushes one undoable action.");
     }
 
     ImGui::End();

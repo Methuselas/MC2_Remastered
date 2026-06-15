@@ -6177,6 +6177,46 @@ bool EditorInterface::applyObjectTransform( EditorObject* obj, float worldX, flo
 	return true;
 }
 
+bool EditorInterface::applyObjectAlignment( EditorObject* obj, int newTeam )
+{
+	if ( !obj || !obj->appearance() )
+		return false;
+
+	// Forest-member trees are owned by the forest; skip (mirrors applyObjectTransform).
+	if ( obj->getForestID() != -1 )
+		return false;
+
+	// Valid team range is [-1,7] (EditorObject::setAlignment / its gosASSERT).
+	if ( newTeam < -1 || newTeam > 7 )
+		return false;
+
+	// No-op if unchanged -- never push an empty undo entry.
+	if ( obj->getAlignment() == newTeam )
+		return false;
+
+	ModifyBuildingAction* pAction = new ModifyBuildingAction;
+	pAction->addBuildingInfo( *obj );   // snapshot captures the OLD teamId
+
+	obj->setAlignment( newTeam );
+
+	// Re-bake the static recipe so the team colour updates (position unchanged).
+	ObjectAppearance* pApp = obj->appearance();
+	pApp->invalidateStaticRegistration();
+	pApp->update();
+	pApp->registerStatic();
+
+	// Position is unchanged, but keep the action's location bookkeeping consistent
+	// (undo locates the object by position).
+	pAction->updateNotedObjectPositions();
+
+	undoMgr.AddAction( pAction );
+
+	if ( EditorData::instance )
+		EditorData::instance->MissionNeedsSaving( true );
+
+	return true;
+}
+
 int EditorInterface::runInspectorEditSmoke()
 {
 	if ( !land || !EditorObjectMgr::instance() )
@@ -6214,6 +6254,20 @@ int EditorInterface::runInspectorEditSmoke()
 		const float uy = obj->getPosition().y;
 		if ( fabsf( ux - ox ) < 1.0f && fabsf( uy - oy ) < 1.0f )
 			result |= 2;
+	}
+
+	// Team edit: change alignment, assert it took, then undo and assert restored.
+	const int oTeam = obj->getAlignment();
+	const int nTeam = ( oTeam == 1 ) ? 2 : 1;   // a different valid team
+	if ( applyObjectAlignment( obj, nTeam ) && obj->getAlignment() == nTeam )
+	{
+		result |= 4;
+		if ( undoMgr.HaveUndo() )
+		{
+			undoMgr.Undo();
+			if ( obj->getAlignment() == oTeam )
+				result |= 8;
+		}
 	}
 
 	return result;

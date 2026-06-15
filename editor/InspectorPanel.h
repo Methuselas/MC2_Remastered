@@ -2,12 +2,14 @@
 #define INSPECTOR_PANEL_H
 /***************************************************************
 * FILENAME: InspectorPanel.h
-* DESCRIPTION: Read-only modder-friendly Inspector Lite (Phase 1b).
+* DESCRIPTION: Modder-friendly Inspector (Phase 1b + S17 edit depth).
 *   Shows details of the current selection (the first selected object from
 *   the existing EditorObjectMgr selection list -- so it reflects BOTH
-*   viewport selection and Scene Outliner selection). Read-only: no mutation,
-*   no dirty flag, no undo. Does NOT touch save/load or PacketFile.
-* DATE: 2026-06-09
+*   viewport selection and Scene Outliner selection). Has EDITABLE fields
+*   (transform XY+yaw, team/alignment) that commit through the existing undo
+*   manager and mark the mission dirty -- one undoable action per commit. Does
+*   NOT touch save/load or PacketFile directly.
+* DATE: 2026-06-09 (edit depth 2026-06-15)
 ****************************************************************/
 
 class EditorObject;
@@ -22,7 +24,7 @@ public:
     static bool IsOpen();
 
     // Draw the floating panel each frame from renderToolbarImGui().
-    // No-op cheaply when closed. Pure read-only.
+    // No-op cheaply when closed. Editable fields commit via the undo manager.
     static void Draw();
 
     // Compact, no-space category token for an object (smoke + display):
