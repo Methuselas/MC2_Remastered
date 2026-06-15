@@ -70,10 +70,12 @@ void MouseCursorData::initCursors (const char *cursorFileName)
 	
 	FitIniFile cursorFile;
 	long result;
+	long openResult;
 	{
 		ZoneScopedN("MouseCursorData::initCursors openFit");
 		result = cursorFile.open(cursorName);
 	}
+	openResult = result;
 	gosASSERT(result == NO_ERR);
 	
 	{
@@ -114,9 +116,31 @@ void MouseCursorData::initCursors (const char *cursorFileName)
 		}
 
 	}
-	
+
+	// ---- MC2_LOG_CURSOR diagnostics (instrumentation only) ----
+	// Logs the resolved FIT path, the open result, NumCursors, and the per-cursor
+	// texture handle for the states the GUI actually uses (NORMAL=21, LOGISTICS=43).
+	// A texHandle of 0 here means StaticInfo::init's loadTexture failed silently
+	// (the smoking gun for an invisible-but-positioned cursor quad).
+	if (getenv("MC2_LOG_CURSOR"))
+	{
+		FILE* f = fopen("cursor_debug.log", "a");
+		if (f)
+		{
+			fprintf(f, "[CURSOR] initCursors name='%s' realHack='%s' fitPath='%s' "
+			           "fitOpen=%ld numCursors=%ld screenW=%ld\n",
+			        cursorFileName, realHackName, (const char*)cursorName,
+			        openResult, numCursors, (long)Environment.screenWidth);
+			for (long s = 0; s < numCursors; s++)
+				fprintf(f, "[CURSOR]   cursor[%ld] texHandle=%lu texWidth=%lu\n",
+				        s, cursorInfos[s].textureHandle, cursorInfos[s].textureWidth);
+			fflush(f);
+			fclose(f);
+		}
+	}
+
 	cursorFile.close();
-}	
+}
 
 //---------------------------------------------------------------------------
 void MouseCursorData::destroy (void)
@@ -902,6 +926,30 @@ void UserInput::setMouseScale (float scaleFactor)
 //---------------------------------------------------------------------------
 void UserInput::render (void)						//Last thing rendered.  Draws Mouse.
 {
+	// ---- MC2_LOG_CURSOR diagnostics (instrumentation only, no behavior change) ----
+	// Writes to cursor_debug.log (stdout goes to NUL when MC2_LOG unset). Throttled
+	// so we get a steady heartbeat without spamming. Shows the exact render-gate
+	// state every frame the cursor would-or-wouldn't draw: drawMouse, mouseState,
+	// numCursors, and the resolved texture handle for the current state.
+	if (getenv("MC2_LOG_CURSOR"))
+	{
+		static FILE* s_curLog = nullptr;
+		if (!s_curLog) s_curLog = fopen("cursor_debug.log", "a");
+		static int s_frame = 0;
+		if (s_curLog && (s_frame++ % 60) == 0)
+		{
+			long nc = cursors ? cursors->numCursors : -1;
+			long th = (cursors && mouseState >= 0 && mouseState < nc)
+			          ? cursors->cursorInfos[mouseState].textureHandle : -999;
+			fprintf(s_curLog,
+			        "[CURSOR] f=%d drawMouse=%d mouseState=%ld numCursors=%ld "
+			        "texHandle=%ld screenW=%ld\n",
+			        s_frame, (int)drawMouse, (long)mouseState, nc, th,
+			        (long)Environment.screenWidth);
+			fflush(s_curLog);
+		}
+	}
+
     //sebi, always NOT async mouse
 	//if (!mc2UseAsyncMouse)
 	{

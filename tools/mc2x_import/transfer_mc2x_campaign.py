@@ -109,10 +109,12 @@ def in_refs(name, refs):
     return False
 
 
-def extract_fst(fst_path, out_root, refs=None, drop_upscale=False):
+def extract_fst(fst_path, out_root, refs=None, drop_upscale=False, gui_canon=None):
     """Extract entries of an FST into out_root, preserving its data\\... path.
     If refs is given, skip entries already provided by a ref data dir (delta only).
-    drop_upscale -> skip entries under data/{textures,art,tgl} (upscale dirs)."""
+    drop_upscale -> skip entries under data/{textures,art,tgl} (upscale dirs).
+    gui_canon -> skip data/art/* entries whose basename is canonical GUI (owned by
+    base art.fst / compat); the engine must always use OUR GUI, never the campaign's."""
     n = 0
     seen = set()
     for off, comp, real, name, is_lz, data in fst.fst_entries(fst_path):
@@ -120,6 +122,8 @@ def extract_fst(fst_path, out_root, refs=None, drop_upscale=False):
             continue
         rn = rel_norm(name)
         if rn in EXCLUDE_REL or rn in CORE_GUI_EXCLUDE or rn in seen:
+            continue
+        if gui_canon and _is_canon_gui(rn, gui_canon):
             continue
         if drop_upscale:
             # strip leading "data/" then check against upscale dirs
@@ -146,10 +150,74 @@ def extract_fst(fst_path, out_root, refs=None, drop_upscale=False):
 # Excluded under --drop-upscale to avoid bloating the campaign mod with an upscale dump.
 UPSCALE_DIRS = ("textures/", "art/", "tgl/")
 
+# Campaign roster files to pull SURGICALLY from misc.fst (NOT the whole archive).
+# pilots.csv lives in the install's misc.fst, is NOT loose, and has no base/compat
+# fallback -> without it LogisticsData::initPilots builds an empty pilot pool, so
+# AVAILABLE PILOTS is empty and the deployment screen can never be filled to LAUNCH.
+# Only roster CSVs here -- overlaying all of misc.fst (mech/weapon/building csvs) onto
+# base regresses logistics, the same class of breakage as buildings.csv/object2.pak.
+MISC_ROSTER = {"data/objects/pilots.csv"}
 
-def copy_loose_delta(src_data, refs, out_data, drop_upscale=False):
+
+def extract_fst_whitelist(fst_path, out_root, include):
+    """Extract ONLY entries whose normalized name is in `include` (lowercased
+    'data/...' paths). Surgical roster pull; everything else in the FST is ignored."""
+    n = 0
+    for off, comp, real, name, is_lz, data in fst.fst_entries(fst_path):
+        if not name or rel_norm(name) not in include:
+            continue
+        out_path = os.path.join(out_root, name.replace("\\", os.sep))
+        try:
+            content = fst.decompress_entry(off, comp, real, is_lz, data)
+        except Exception as e:
+            print("  WARN: %s: %s" % (name, e))
+            continue
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        with open(out_path, "wb") as f:
+            f.write(content)
+        n += 1
+    return n
+
+
+def _is_canon_gui(name, gui_canon):
+    """True if `name` (a 'data/...'-style rel path) is a data/art file whose basename
+    is canonical GUI the engine already owns (base art.fst / compat). Such a campaign
+    file is an OVERRIDE of our GUI and must not be imported."""
+    rn = name.replace("\\", "/").lower()
+    sub = rn[5:] if rn.startswith("data/") else rn
+    return sub.startswith("art/") and os.path.basename(rn) in gui_canon
+
+
+def build_canonical_gui_basenames(deploy_root, refs):
+    """Lowercased basenames of canonical GUI art the engine already owns: every
+    data/art/* entry in the deploy's base art.fst (GUI + icons live there, NOT in the
+    loose ref dirs — which is why old-era campaign GUI used to slip in), plus any art
+    file in a ref data dir (compat-provided GUI). A campaign's data/art file matching
+    one of these is an override and is skipped at import."""
+    names = set()
+    if deploy_root:
+        art_fst = os.path.join(deploy_root, "art.fst")
+        if os.path.isfile(art_fst):
+            try:
+                for e in fst.fst_entries(art_fst):
+                    nm = (e[3] or "").replace("\\", "/").lower()
+                    if nm.startswith("data/art/"):
+                        names.add(os.path.basename(nm))
+            except Exception as ex:
+                print("  WARN: could not read base art.fst for GUI canon: %s" % ex)
+    for ref in refs or []:
+        art_dir = os.path.join(ref, "art")
+        if os.path.isdir(art_dir):
+            for fn in os.listdir(art_dir):
+                if os.path.isfile(os.path.join(art_dir, fn)):
+                    names.add(fn.lower())
+    return names
+
+
+def copy_loose_delta(src_data, refs, out_data, drop_upscale=False, gui_canon=None):
     """Copy files under src_data whose rel path is absent in every ref dir.
-    drop_upscale -> also exclude the loose data/{textures,art,tgl} trees (base+compat own them)."""
+    drop_upscale -> also exclude the loose data/{textures,art,tgl} trees (base+compat own them).
+    gui_canon -> skip data/art/* files that are canonical GUI (use OUR GUI, not the campaign's)."""
     import shutil
     n = 0
     for root, _, files in os.walk(src_data):
@@ -158,6 +226,8 @@ def copy_loose_delta(src_data, refs, out_data, drop_upscale=False):
             rel = os.path.relpath(sp, src_data).replace("\\", "/")
             rel_key = ("data/" + rel).lower()
             if rel_key in EXCLUDE_REL or rel_key in CORE_GUI_EXCLUDE:
+                continue
+            if gui_canon and _is_canon_gui(rel_key, gui_canon):
                 continue
             if drop_upscale and rel.lower().startswith(UPSCALE_DIRS):
                 continue
@@ -209,11 +279,22 @@ def main():
                          "appearances; avoids bloating the mod with an upscale dump)")
     ap.add_argument("--force", action="store_true",
                     help="overwrite an existing --out even if it was not generated by this tool")
+    ap.add_argument("--deploy", default=None,
+                    help="deploy root (has base art.fst). Default: derived as the parent of "
+                         "the mods/ dir containing --out. Used to skip campaign GUI overrides.")
     args = ap.parse_args()
 
     src = args.source
     if not os.path.isdir(src):
         sys.exit("source not found: %s" % src)
+
+    # Canonical GUI set: campaign data/art files that duplicate base art.fst / compat GUI
+    # are NOT imported -- the engine always uses OUR GUI (the old-era campaign GUI is
+    # mis-packed and renders garbled/pink/no-cursor). deploy root holds base art.fst.
+    deploy_root = args.deploy or os.path.dirname(os.path.dirname(os.path.abspath(args.out)))
+    gui_canon = build_canonical_gui_basenames(deploy_root, args.refs)
+    print("  GUI canon: %d canonical data/art basenames (base art.fst + refs); campaign "
+          "overrides of these are NOT imported" % len(gui_canon))
 
     # guard: refuse to clobber a foreign --out unless --force.
     if os.path.isdir(args.out) and not args.force:
@@ -238,7 +319,7 @@ def main():
             print("  (no %s — skipping)" % fname)
             missing_fsts.append(fname)
             continue
-        n = extract_fst(fpath, args.out)
+        n = extract_fst(fpath, args.out, gui_canon=gui_canon)
         print("  extracted %s (full): %d files" % (fname, n))
         total_fst += n
     for fname in args.delta_fsts:
@@ -248,15 +329,26 @@ def main():
             # installs) -> NOT counted as missing inputs (would false-warn every MCO import).
             print("  (no %s — skipping, optional delta)" % fname)
             continue
-        n = extract_fst(fpath, args.out, refs=args.refs, drop_upscale=args.drop_upscale)
+        n = extract_fst(fpath, args.out, refs=args.refs, drop_upscale=args.drop_upscale,
+                        gui_canon=gui_canon)
         print("  extracted %s (delta): %d files" % (fname, n))
         total_fst += n
+
+    # Surgical roster pull from misc.fst (campaign pilots.csv; see MISC_ROSTER).
+    misc_path = os.path.join(src, "misc.fst")
+    if os.path.isfile(misc_path):
+        n_misc = extract_fst_whitelist(misc_path, args.out, MISC_ROSTER)
+        if n_misc:
+            print("  extracted misc.fst roster (pilots.csv): %d file(s)" % n_misc)
+            total_fst += n_misc
+        else:
+            print("  (misc.fst present but no roster CSV matched MISC_ROSTER)")
 
     src_data = os.path.join(src, "data")
     n_loose = 0
     if os.path.isdir(src_data):
         n_loose = copy_loose_delta(src_data, args.refs, os.path.join(args.out, "data"),
-                                   drop_upscale=args.drop_upscale)
+                                   drop_upscale=args.drop_upscale, gui_canon=gui_canon)
     print("  loose campaign delta: %d files%s"
           % (n_loose, " (--drop-upscale)" if args.drop_upscale else ""))
     _write_marker(args.out, src, total_fst, n_loose, args.drop_upscale, missing=missing_fsts)

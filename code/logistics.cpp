@@ -114,6 +114,26 @@ void Logistics::start (long startMode)
 	userInput->setMouseCursor( mState_LOGISTICS );
 //	userInput->mouseOn();
 
+	// ---- MC2_LOG_CURSOR diagnostics (instrumentation only) ----
+	// Logistics::start does NOT call mouseOn() (it is commented out) -- it relies
+	// on drawMouse already being true from mainmenu.begin / loadscreen. If DEE
+	// reaches here with drawMouse==false, the cursor stays invisible the whole
+	// logistics/deployment screen. This logs the inherited state on entry.
+	if ( getenv("MC2_LOG_CURSOR") )
+	{
+		FILE* f = fopen("cursor_debug.log", "a");
+		if (f) { fprintf(f, "[CURSOR] Logistics::start startMode=%ld drawMouse=%d\n",
+		                 startMode, (int)UserInput::drawMouse); fflush(f); fclose(f); }
+	}
+
+	// FIX (DEE / old-MC2X no-intro-video flow): loadscreen turns the mouse cursor OFF
+	// during mission load (loadscreen.cpp:~397) and the original line 115 mouseOn() is
+	// commented out -- logistics relied on the cursor already being on from the intro
+	// movie / menu path. Campaigns with empty Video fields (DEE/DWE/HPE) skip that path
+	// and reach the deployment screen with drawMouse==false -> no cursor for the whole
+	// screen. Force it on here: a no-op for stock (already on), restores it for these.
+	userInput->mouseOn();
+
 	DWORD localRenderer = prefs.renderer;
 	if (prefs.renderer != 0 && prefs.renderer != 3)
 		localRenderer = 0;
