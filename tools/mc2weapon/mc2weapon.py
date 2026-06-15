@@ -199,6 +199,259 @@ def cmd_show(args):
         print(f"  FX -> (Special FX ID {hit['fxid']} not found in effects.csv)")
 
 
+# ----------------------------------------------------------------------------
+# Editor: edits write a LOOSE mods/<id>/data/objects/compbas.csv overlay (full
+# CSV, only edited cells differ from base). The game resolves the loose overlay
+# first (MC2_ACTIVE_MOD=<id>) -- no .pak repack. Validation gates every write.
+# ----------------------------------------------------------------------------
+
+VALID_RANGES = {"short", "medium", "long", "0"}
+# field -> (compbas idx key, kind) for `set`/`new`. kind drives validation.
+EDITABLE = {
+    "damage": "ufloat", "heat": "ufloat", "recycle": "ufloat", "tons": "ufloat",
+    "slots": "uint", "range": "range", "missileType": "int", "fields": "int",
+    "fxid": "fxid", "ammoMasterId": "int", "name": "str", "type": "wtype",
+}
+
+
+def load_compbas_raw(path):
+    with open(path, newline="", encoding="latin-1") as f:
+        rows = list(csv.reader(f))
+    if not rows:
+        sys.exit(f"mc2weapon: empty compbas: {path}")
+    header = rows[0]
+    idx = {field: _col_index(header, needle) for field, needle in COMPBAS_FIELDS}
+    return header, rows[1:], idx
+
+
+def write_csv(path, header, data_rows):
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", newline="", encoding="latin-1") as f:
+        w = csv.writer(f)
+        w.writerow(header)
+        w.writerows(data_rows)
+
+
+def _validate_cell(field, value, effects):
+    kind = EDITABLE.get(field)
+    if kind in ("ufloat", "uint"):
+        try:
+            n = float(value)
+        except ValueError:
+            return f"{field}={value!r} is not numeric"
+        if n < 0:
+            return f"{field}={value} must be >= 0"
+        if kind == "uint" and (n != int(n) or int(n) <= 0):
+            return f"{field}={value} must be a positive integer"
+    elif kind == "int":
+        try:
+            int(value)
+        except ValueError:
+            return f"{field}={value!r} is not an integer"
+    elif kind == "range":
+        if value.strip().lower() not in VALID_RANGES:
+            return f"range={value!r} not in {sorted(VALID_RANGES)}"
+    elif kind == "wtype":
+        if value.strip().lower() not in WEAPON_TYPES:
+            return f"type={value!r} not a weapon type {sorted(WEAPON_TYPES)}"
+    elif kind == "fxid":
+        try:
+            fxid = int(float(value))
+        except ValueError:
+            return f"fxid={value!r} is not an integer"
+        if fxid not in effects:
+            return f"fxid={fxid} has no row in effects.csv"
+    elif kind == "str":
+        if not value.strip():
+            return f"{field} must be non-empty"
+    return None
+
+
+def validate_rows(header, data_rows, idx, effects, weapons_only=True):
+    """Returns list of (masterID, message) problems."""
+    problems = []
+    ti, ri, fi = idx["type"], idx["range"], idx["fxid"]
+    for r in data_rows:
+        if not r or not r[0].strip():
+            continue
+        mid = r[0].strip()
+        typ = (r[ti].strip().lower() if 0 <= ti < len(r) else "")
+        if weapons_only and typ not in WEAPON_TYPES:
+            continue
+        # range bracket
+        if 0 <= ri < len(r) and r[ri].strip().lower() not in VALID_RANGES:
+            problems.append((mid, f"range={r[ri]!r} invalid"))
+        # fx id present in effects.csv
+        if 0 <= fi < len(r):
+            try:
+                fxid = int(float(r[fi]))
+                if fxid not in effects:
+                    problems.append((mid, f"Special FX ID {fxid} absent from effects.csv"))
+            except ValueError:
+                problems.append((mid, f"Special FX ID {r[fi]!r} not an integer"))
+    return problems
+
+
+def ensure_mod(mod_root, modid):
+    """Create mods/<id>/ with mod.json if absent; return the data/objects dir."""
+    moddir = os.path.join(mod_root, modid)
+    objdir = os.path.join(moddir, "data", "objects")
+    os.makedirs(objdir, exist_ok=True)
+    modjson = os.path.join(moddir, "mod.json")
+    if not os.path.isfile(modjson):
+        with open(modjson, "w", encoding="utf-8") as f:
+            json.dump({"schema": "mc2-mod/1", "id": modid, "name": modid,
+                       "version": "1.0.0", "dependencies": []}, f, indent=2)
+    return objdir
+
+
+def _overlay_or_base(mod_root, modid, base_path):
+    """If a mod overlay compbas already exists, edit it (cumulative); else base."""
+    overlay = os.path.join(mod_root, modid, "data", "objects", "compbas.csv")
+    return overlay if os.path.isfile(overlay) else base_path
+
+
+def _find_row(data_rows, weapon):
+    q = weapon.strip().lower()
+    for i, r in enumerate(data_rows):
+        if r and (r[0].strip() == weapon or
+                  (len(r) > 2 and r[2].strip().lower() == q)):
+            return i
+    return -1
+
+
+def cmd_list_fx(args):
+    fx = load_effects(args.effects)
+    if args.json:
+        print(json.dumps(fx, indent=2))
+        return
+    print(f"{'FXid':>4}  {'trail':<20} {'muzzle':<18} {'hit':<18} {'miss':<18} obj")
+    print("-" * 86)
+    for fxid in sorted(fx):
+        e = fx[fxid]
+        print(f"{fxid:>4}  {e['name'][:20]:<20} {e['muzzle'][:18]:<18} "
+              f"{e['hit'][:18]:<18} {e['miss'][:18]:<18} {e['objNum']}")
+    print(f"\n{len(fx)} FX entries (assignable Special FX IDs).")
+
+
+def cmd_validate(args):
+    path = args.file or args.compbas
+    header, data_rows, idx = load_compbas_raw(path)
+    effects = load_effects(args.effects)
+    problems = validate_rows(header, data_rows, idx, effects,
+                             weapons_only=not args.all)
+    if not problems:
+        print(f"OK: {path} -- all {'components' if args.all else 'weapons'} valid.")
+        return
+    for mid, msg in problems:
+        print(f"  [{mid}] {msg}")
+    sys.exit(f"\n{len(problems)} problem(s) in {path}")
+
+
+def _apply_edits(args, edits):
+    """Shared by set/set-fx/new: load base-or-overlay, apply, validate, write."""
+    effects = load_effects(args.effects)
+    base = _overlay_or_base(args.mod_root, args.mod, args.compbas)
+    header, data_rows, idx = load_compbas_raw(base)
+
+    ri = _find_row(data_rows, args.weapon)
+    if ri < 0:
+        if not getattr(args, "create", False):
+            sys.exit(f"mc2weapon: no component matching '{args.weapon}'")
+        # `new`: weapon arg must be an unused masterID slot
+        try:
+            mid = int(args.weapon)
+        except ValueError:
+            sys.exit("mc2weapon new: <id> must be a numeric masterID")
+        for i, r in enumerate(data_rows):
+            if r and r[0].strip() == str(mid):
+                ri = i
+                cur = (r[idx["type"]].strip().lower() if 0 <= idx["type"] < len(r) else "")
+                if cur in WEAPON_TYPES and not args.force:
+                    sys.exit(f"mc2weapon new: masterID {mid} already a weapon "
+                             f"({r[idx['type']]}); use --force to overwrite")
+                break
+        if ri < 0:
+            sys.exit(f"mc2weapon new: masterID {mid} not in compbas (0..{len(data_rows)-1})")
+
+    row = list(data_rows[ri])
+    # validate every edit, then apply
+    errors = []
+    for field, value in edits.items():
+        if field not in EDITABLE:
+            errors.append(f"unknown field '{field}' (editable: {sorted(EDITABLE)})")
+            continue
+        err = _validate_cell(field, value, effects)
+        if err:
+            errors.append(err)
+    if errors:
+        for e in errors:
+            print(f"  {e}")
+        sys.exit(f"\n{len(errors)} validation error(s); nothing written.")
+    for field, value in edits.items():
+        ci = idx[field]
+        if ci < 0:
+            sys.exit(f"mc2weapon: field '{field}' has no column in this compbas")
+        while len(row) <= ci:
+            row.append("")
+        row[ci] = value
+    data_rows[ri] = row
+
+    objdir = ensure_mod(args.mod_root, args.mod)
+    out = os.path.join(objdir, "compbas.csv")
+    write_csv(out, header, data_rows)
+    print(f"wrote {out}")
+    print(f"  [{row[0]}] {row[idx['name']] if 0 <= idx['name'] < len(row) else ''}: "
+          + ", ".join(f"{k}={v}" for k, v in edits.items()))
+    print(f"run with: MC2_ACTIVE_MOD={args.mod}")
+
+
+def _parse_kv(pairs):
+    out = {}
+    for p in pairs:
+        if "=" not in p:
+            sys.exit(f"mc2weapon: expected field=value, got '{p}'")
+        k, v = p.split("=", 1)
+        out[k.strip()] = v.strip()
+    return out
+
+
+def cmd_set(args):
+    edits = _parse_kv(args.edits)
+    if not edits:
+        sys.exit("mc2weapon set: no field=value pairs given")
+    _apply_edits(args, edits)
+
+
+def cmd_set_fx(args):
+    fx = load_effects(args.effects)
+    val = args.fx.strip()
+    try:
+        fxid = int(val)
+    except ValueError:
+        # resolve by effect (trail) name
+        matches = [k for k, e in fx.items() if e["name"].lower() == val.lower()]
+        if not matches:
+            sys.exit(f"mc2weapon set-fx: no effects.csv row named '{val}'")
+        fxid = matches[0]
+    _apply_edits(args, {"fxid": str(fxid)})
+
+
+def cmd_new(args):
+    edits = _parse_kv(args.edits)
+    edits["type"] = args.type
+    edits["name"] = args.name
+    # sane defaults for required weapon stats if not supplied
+    for k, d in (("damage", "1"), ("heat", "1"), ("recycle", "3"),
+                 ("range", "medium"), ("slots", "1"), ("tons", "1"),
+                 ("fxid", "4"), ("missileType", "0"), ("fields", "0"),
+                 ("ammoMasterId", "0")):
+        edits.setdefault(k, d)
+    args.create = True
+    args.weapon = args.id
+    _apply_edits(args, edits)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="mc2weapon",
                                 description="MC2 weapon viewer / modder tool")
@@ -215,6 +468,43 @@ def main(argv=None):
     ps.add_argument("weapon", help="masterID or name (substring ok)")
     ps.add_argument("--json", action="store_true", help="emit JSON")
     ps.set_defaults(func=cmd_show)
+
+    pf = sub.add_parser("list-fx", help="list effects.csv rows (assignable FX palette)")
+    pf.add_argument("--json", action="store_true", help="emit JSON")
+    pf.set_defaults(func=cmd_list_fx)
+
+    pv = sub.add_parser("validate", help="validate a compbas.csv (the 'just works' gate)")
+    pv.add_argument("file", nargs="?", help="compbas.csv to check (default: auto-detected base)")
+    pv.add_argument("--all", action="store_true", help="check all components, not just weapons")
+    pv.set_defaults(func=cmd_validate)
+
+    # editor commands share --mod / --mod-root (where the loose overlay is written)
+    def add_mod_args(sp):
+        sp.add_argument("--mod", default="my-weapons", help="mod id (overlay -> mods/<id>/)")
+        sp.add_argument("--mod-root", default="mods", help="dir holding mod folders")
+        sp.add_argument("--force", action="store_true", help="override safety checks")
+
+    pset = sub.add_parser("set", help="edit a weapon's stats -> loose mod overlay")
+    pset.add_argument("weapon", help="masterID or name")
+    pset.add_argument("edits", nargs="+", help="field=value (damage/heat/recycle/range/"
+                      "tons/slots/missileType/fields/fxid/ammoMasterId/name/type)")
+    add_mod_args(pset)
+    pset.set_defaults(func=cmd_set)
+
+    psf = sub.add_parser("set-fx", help="assign a weapon's FX -> loose mod overlay")
+    psf.add_argument("weapon", help="masterID or name")
+    psf.add_argument("fx", help="Special FX ID (int) or effect trail name")
+    add_mod_args(psf)
+    psf.set_defaults(func=cmd_set_fx)
+
+    pn = sub.add_parser("new", help="create a weapon in an unused masterID slot")
+    pn.add_argument("id", help="unused masterID (0..254)")
+    pn.add_argument("name", help="weapon name")
+    pn.add_argument("--type", required=True,
+                    help="EnergyWeapon | BallisticWeapon | MissileWeapon")
+    pn.add_argument("edits", nargs="*", help="field=value overrides (defaults applied otherwise)")
+    add_mod_args(pn)
+    pn.set_defaults(func=cmd_new)
 
     args = p.parse_args(argv)
     args.compbas = _find(args.compbas, COMPBAS_CANDIDATES, "compbas")

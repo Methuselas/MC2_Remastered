@@ -28,6 +28,46 @@ py -3 mc2weapon.py show 104 --json
 py -3 mc2weapon.py --compbas path/to/compbas.csv --effects path/to/effects.csv list
 ```
 
+## Editing (writes a loose mod overlay — no .pak repack)
+
+Edits never touch the base game. They write a full `mods/<id>/data/objects/compbas.csv`
+(only the edited cells differ) plus a `mod.json`. Launch the game with
+`MC2_ACTIVE_MOD=<id>` and it resolves the overlay first. Every write is validated.
+
+```sh
+# The FX palette you can assign (effects.csv rows)
+py -3 mc2weapon.py list-fx
+
+# Edit stats -> overlay (cumulative; re-running edits the same overlay)
+py -3 mc2weapon.py set 145 damage=15 heat=8 --mod my-weapons
+py -3 mc2weapon.py set "Gauss Rifle" recycle=4 range=medium --mod my-weapons
+
+# Assign FX by id or trail-effect name (validated against effects.csv)
+py -3 mc2weapon.py set-fx 145 gauss_trail --mod my-weapons
+py -3 mc2weapon.py set-fx 104 10 --mod my-weapons
+
+# Create a weapon in an unused masterID slot (defaults fill unspecified stats)
+py -3 mc2weapon.py new 5 "Plasma Cannon" --type EnergyWeapon \
+    damage=12 heat=9 recycle=5 range=long fxid=4 --mod my-weapons
+
+# The "just works" gate — validate a compbas (yours or the base)
+py -3 mc2weapon.py validate mods/my-weapons/data/objects/compbas.csv
+
+# Then: copy mods/my-weapons/ into the game dir and run MC2_ACTIVE_MOD=my-weapons
+```
+
+Editable fields: `damage heat recycle range tons slots missileType fields fxid
+ammoMasterId name type`. `--mod-root <dir>` chooses where mod folders live
+(default `mods`). `--force` overrides the "slot already a weapon" guard on `new`.
+
+## Not yet (see design doc)
+
+- Bolt *visual* edits (texture/color/length) live in `object2.pak` `.fit` packets — a
+  later slice (PacketFile write).
+- Range-in-meters is global (`gamesys.fit`), not per-weapon; only the bracket
+  (short/medium/long) is editable here.
+- A GUI (ImGui) workbench with FX curve preview.
+
 ## What it shows
 
 - **Stats** (from `compbas.csv`): damage, heat, recycle (cooldown s), range bracket

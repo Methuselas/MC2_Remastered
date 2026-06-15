@@ -115,11 +115,17 @@ editor refuses to write an overlay that fails validation (or `--force` with a wa
 
 ## Roadmap (smallest valuable first)
 1. **Viewer** — `list`/`show` (SHIPPED).
-2. **list-fx + validate** — read-only FX palette + the validation gate (no writes).
-3. **set / set-fx** — edit stats/FX → loose overlay; validate before write.
-4. **new + pack** — create weapons; assemble a runnable mod folder.
-5. **Bolt visual** — `.fit`-in-`.pak` texture/color edit (PacketFile write).
+2. **list-fx + validate** — read-only FX palette + the validation gate (SHIPPED).
+3. **set / set-fx** — edit stats/FX → loose overlay; validate before write (SHIPPED).
+4. **new** — create weapons in an unused masterID slot; auto-writes mod.json (SHIPPED).
+5. **Bolt visual** — `.fit`-in-`.pak` texture/color edit (PacketFile write). NEXT.
 6. **GUI** — ImGui workbench + FX curve preview.
+
+**End-to-end "just works" verified:** a `set 104 damage=99` + `set-fx 145 gauss_trail`
+overlay written to `<deploy>/mods/wtest/`, launched with `MC2_ACTIVE_MOD=wtest` →
+mc2_01 smoke PASS, Δdestroys=0, no crash. The loose compbas overlay loads in-engine
+with no .pak repack, exactly as designed. `pack` folded into the editor (mod.json is
+auto-created on first write).
 
 Each editor slice gates on: `validate` passing on its own output, and an interactive
 load test (`MC2_ACTIVE_MOD=<id>` → mission loads, weapon fires with new stats/FX).
