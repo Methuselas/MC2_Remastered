@@ -4881,6 +4881,51 @@ void MechWarrior::updateActions (void) {
 		return;
 	}
 
+	// MC2_FX_FORCE_SPAWN fixture (default-OFF). Idle tier1/visual captures spawn
+	// NO weapon FX, so the PPC TUBE path never renders headlessly. This forces
+	// ONE mech to fire its ENERGY weapons (PPCs -> tube ribbons) at a point in
+	// front of it. Mechs ALWAYS tick here (unlike static buildings, which are
+	// update-skipped), so the FX drives + renders + cleans via the normal
+	// weaponbolt path. Fire-at-POINT: fireWeapon(target=NULL, &targetPoint) --
+	// the target-specific logic is if(target)-guarded (mech.cpp). Fires ONCE
+	// (global latch). Output is stdout, so it needs MC2_LOG=1 to be visible.
+	static const bool s_fxForceSpawn =
+		(getenv("MC2_FX_FORCE_SPAWN") != NULL && getenv("MC2_FX_FORCE_SPAWN")[0] != '0');
+	if (s_fxForceSpawn) {
+		// Fire ALL weapons (not just energy): tube ribbons come from PPC AND
+		// missiles (SRM/LRM/TBolt) -- the energy-only filter both missed the
+		// missile tubes and caught non-tube lasers. Spread across up to 8
+		// DISTINCT mechs (per-WID latch) so at least one with a tube weapon
+		// fires, then stop. dmgDone/target=NULL -> FX only, no real damage.
+		static long s_firedWIDs[8];
+		static int  s_firedMechs = 0;
+		if (s_firedMechs < 8 && myVehicle && scenarioTime > 5.0f && myVehicle->canFireWeapons()) {
+			long wid = myVehicle->getWatchID();
+			bool already = false;
+			for (int i = 0; i < s_firedMechs; i++)
+				if (s_firedWIDs[i] == wid) { already = true; break; }
+			if (!already) {
+				Stuff::Vector3D pos = myVehicle->getPosition();
+				Stuff::Vector3D targetPoint = pos;
+				targetPoint.x += 150.0f;   // a point in front; any on-map point spawns a bolt
+				int firedCount = 0;
+				for (long cw = 0; cw < myVehicle->numWeapons; cw++) {
+					long wi = myVehicle->numOther + cw;
+					float dmgDone = 0.0f;
+					if (NO_ERR == myVehicle->fireWeapon(NULL, scenarioTime, wi,
+							ATTACK_TO_DESTROY, -1, &targetPoint, dmgDone))
+						firedCount++;
+				}
+				if (firedCount > 0) {
+					s_firedWIDs[s_firedMechs++] = wid;
+					printf("[FX_FORCE_SPAWN v1] event=mech_fire mech=%d wid=%ld weapons=%d pos=%.0f,%.0f,%.0f scenarioTime=%.2f\n",
+						s_firedMechs, wid, firedCount, pos.x, pos.y, pos.z, scenarioTime);
+					fflush(stdout);
+				}
+			}
+		}
+	}
+
 	if (combatUpdate <= scenarioTime)
 		combatDecisionTree();
 

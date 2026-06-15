@@ -993,6 +993,21 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "(crashes / [VISUAL_CAPTURE] stay visible). Set =1 by run_smoke.py + "
         "run_visual_capture.py; NOT set by the game launcher (so play stays fast)."
     },
+    // FX-FORCE-SPAWN fixture (mech-fire tube)
+    {
+        "MC2_FX_FORCE_SPAWN",
+        "MC2_FX_FORCE_SPAWN",
+        EnvVarKind::Feature,
+        false,
+        "FX-FORCE-SPAWN v1 fixture: default-OFF. When set, MechWarrior::updateActions "
+        "(code/warrior.cpp) forces ONE mech to fire its ENERGY weapons (PPCs -> tube "
+        "ribbons) at a point in front of it, so idle smoke/visual captures -- which "
+        "spawn NO weapon FX -- have a visible PPC TUBE to observe (target mission: "
+        "mc2_24). Fires once (global latch) via fireWeapon(target=NULL, &targetPoint); "
+        "mechs always tick so the FX drives+renders+cleans via the weaponbolt path. "
+        "Emits [FX_FORCE_SPAWN v1] event=mech_fire (stdout -> needs MC2_LOG=1 to see). "
+        "=0/unset disables; zero cost unset."
+    },
 };
 
 // ---------------------------------------------------------------------------
