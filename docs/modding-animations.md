@@ -89,6 +89,26 @@ contact frames sensible.)
 
 That's it — no rebuild. To revert, remove the file or unset `MC2_ACTIVE_MOD`.
 
+### Declarative remap (anims.json) — rename-free swap
+
+If you'd rather not match the stock filename, declare the remap in a manifest and
+point a gesture at any clip name. Put `anims.json` in your mod:
+```
+mods/<yourMod>/data/anim_overrides/anims.json
+mods/<yourMod>/data/anim_overrides/my_strut.ase     # your clip (cooks to .agl here)
+```
+```json
+{ "overrides": [
+  { "type": "anim", "replaces": "mech:madcat", "gesture": "Walk",
+    "source": "my_strut.ase", "fallback": "stock" }
+] }
+```
+- `replaces` = `mech:<mechName>`; `gesture` = a suffix from the table above (case-insensitive).
+- `source` = a relative `.ase`/`.agl` in the manifest dir (no absolute paths / `..`).
+- A matched (mech,gesture) loads your clip; everything else stays stock. Invalid entries are
+  logged `[ANIMOVERRIDE] dropped ...` and ignored (never fatal). Launch with `MC2_ACTIVE_MOD`.
+- This is additive over a base `data/anim_overrides/anims.json`; mod entries win on duplicate key.
+
 ### Tips
 - Ship the **`.ase`** (human-diffable, auto-recooks) unless you specifically pre-cooked a
   current-version `.agl`. A stale-version `.agl` is ignored and re-derived from the `.ase`.
@@ -115,7 +135,6 @@ Note: gosFX particles are **default-disabled in the current beta** (`MC2_DISABLE
 - **GLTF import ignores animation.** The modern `[Import] Source=<glb>` mesh path
   (`mclib/mech3d.cpp:367-449` → `assimp_importer.cpp:483`) loads geometry only; it logs but does
   **not** read `scene->mNumAnimations`. GLB swaps the *mesh*, not the *animation*.
-- **No declarative override registry yet.** Today's swap relies on the filename convention. A
-  planned additive `data/anim_overrides/anims.json` (mirroring `mclib/model_override_registry.cpp`)
-  would let you remap a gesture to an arbitrarily-named clip — see
-  [ppc-flight-and-fx-anim-moddability-recon.md](ppc-flight-and-fx-anim-moddability-recon.md).
+- ~~No declarative override registry~~ — **shipped**: see
+  [Declarative remap (anims.json)](#declarative-remap-animsjson--rename-free-swap) above. Still
+  loads existing `.ase`/`.agl` files only (no authoring/retarget tool).
