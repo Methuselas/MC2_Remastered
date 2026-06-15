@@ -24,6 +24,12 @@ set(SOURCES ${SOURCES}
 )
 
 include_directories(${COMMON_INCLUDE_DIRS} "../../mclib")
+# Q2-S0: Tracy headers (<tracy/Tracy.hpp>) for the FX cost-split CPU zones in
+# effect.cpp / particlecloud.cpp / tube.cpp. TRACY_ENABLE is defined project-
+# wide (root CMakeLists), but the gosfx subdir is added before the root
+# include_directories(${THIRDPARTY_INCLUDE_DIRS}) line, so the tracy path is
+# not otherwise inherited here.
+include_directories(${THIRDPARTY_INCLUDE_DIRS})
 
 add_library(gosfx ${SOURCES})
 

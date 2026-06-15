@@ -1,4 +1,5 @@
 #include"gosfxheaders.hpp"
+#include"fx_trace/fx_cost_split.h"  // Q2-S0 FX cost-split (env MC2_FX_COST_SPLIT)
 
 //==========================================================================//
 // File:	 gosFX_SpinningCloud.cpp										//
@@ -422,6 +423,12 @@ bool
 	Stuff::Scalar age = particle->m_age;
 	if (age >= 1.0f)
 		return false;
+
+	// Q2-S0 instrumentation only. Per-particle rdtsc bucket (NO Tracy zone —
+	// per-particle Tracy scopes are forbidden by the 100ns floor). Placed after
+	// the dead-particle early-return so only live particles are timed.
+	mc2::fx_cost_split::Scope _fxcs(mc2::fx_cost_split::B_SPINNINGCLOUD_ANIMATE);
+
 	Stuff::Point3D *translation = &particle->m_localTranslation;
 	Stuff::UnitQuaternion *rotation = &particle->m_localRotation;
 	Stuff::Vector3D *velocity = &particle->m_localLinearVelocity;

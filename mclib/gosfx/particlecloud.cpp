@@ -1,4 +1,6 @@
 #include"gosfxheaders.hpp"
+#include"fx_trace/fx_cost_split.h"  // Q2-S0 FX cost-split (env MC2_FX_COST_SPLIT)
+#include <tracy/Tracy.hpp>          // Q2-S0 coarse CPU zone
 
 //==========================================================================//
 // File:	 gosFX_ParticleCloud.cpp										//
@@ -360,6 +362,13 @@ bool gosFX::ParticleCloud::Execute(ExecuteInfo *info)
 	Check_Object(this);
 	Check_Object(info);
 	Verify(IsExecuted());
+
+	// Q2-S0 instrumentation only. The per-particle AnimateParticle sim cost is
+	// captured by its own rdtsc bucket (no per-particle Tracy zone — 100ns
+	// floor); here the zone's self-time (minus the nested Effect.Execute child)
+	// is the coarse Tracy view of the active-particle loop.
+	ZoneScopedN("gosFX.ParticleCloud.Execute");
+	mc2::fx_cost_split::Scope _fxcs(mc2::fx_cost_split::B_PARTICLECLOUD_EXECUTE);
 
 	//
 	//--------------------------------------------------------------------

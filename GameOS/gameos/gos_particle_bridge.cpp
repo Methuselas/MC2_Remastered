@@ -25,6 +25,8 @@
 #include <cstdlib>   // std::getenv, std::atoi (MC2_VFX_DEBUG_MODE)
 #include <unordered_set>
 #include <vector>    // MC2_VFX_ORACLE_TUBE: pos3->vec4 staging
+#include <tracy/Tracy.hpp>               // Q2-S0 coarse CPU zones (flush paths)
+#include "../../mclib/fx_trace/fx_cost_split.h"  // Q2-S0 FX cost-split + per-frame roll
 
 // terrainMVP getter — same accessor used by gos_terrain_bridge_renderWaterFast
 // at gameos_graphics.cpp:2171. C linkage upstream.
@@ -600,6 +602,12 @@ extern "C" void gos_tube_ribbon_enqueue(const float*          positions,
 }
 
 extern "C" void gos_tube_ribbon_flush_deferred(void) {
+    // Q2-S0: this drain is called once per WALL frame from the unconditional
+    // particlesFlush phase (code/gamecam.cpp ~454), so it is the per-frame tick
+    // for the [FX_COST v1] summary. Tick BEFORE the empty-queue early-return so
+    // the 600-frame denominator counts wall frames, not just tube-active ones.
+    mc2::fx_cost_split::roll_frame_and_maybe_emit();
+
     if (s_ribbonQueue.empty()) return;
 
     tubeEnsureInitialized();
@@ -607,6 +615,12 @@ extern "C" void gos_tube_ribbon_flush_deferred(void) {
         s_ribbonQueue.clear();
         return;
     }
+
+    // Q2-S0 instrumentation only (no behavior change). Coarse zone + bucket for
+    // the per-frame ribbon SSBO upload + draw. Placed after the guards so empty
+    // frames are not instrumented.
+    ZoneScopedN("gos.TubeRibbon.FlushDeferred");
+    mc2::fx_cost_split::Scope _fxcs(mc2::fx_cost_split::B_TUBE_BRIDGE_FLUSH);
 
     // ── State save (same set as the immediate flush) ───────────────────
     GLint savedProgram   = 0; glGetIntegerv(GL_CURRENT_PROGRAM, &savedProgram);
@@ -844,6 +858,12 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
         return;
     }
     if (s_prog == nullptr || s_prog->shp_ == 0) return;
+
+    // Q2-S0 instrumentation only (no behavior change). Coarse zone + bucket for
+    // the billboard particle SSBO upload + per-group draw. Placed after all the
+    // early-returns so only real flushes are timed.
+    ZoneScopedN("gos.ParticleBridge.Flush");
+    mc2::fx_cost_split::Scope _fxcs(mc2::fx_cost_split::B_PARTICLE_BRIDGE_FLUSH);
 
     // P1-5: first-call banner — once only.
     {

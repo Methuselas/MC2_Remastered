@@ -1,5 +1,7 @@
 #include"gosfxheaders.hpp"
 #include<mlr/mlrindexedtrianglecloud.hpp>
+#include"fx_trace/fx_cost_split.h"  // Q2-S0 FX cost-split (env MC2_FX_COST_SPLIT)
+#include <tracy/Tracy.hpp>          // Q2-S0 coarse CPU zone
 
 // B1 Stage 2' C8: subclass-Start routing into the GPU particle pipeline.
 #include"particles/batcher.h"
@@ -1088,6 +1090,13 @@ bool
 	Stuff::Scalar age = profile->m_age;
 	if (age >= 1.0f)
 		return false;
+
+	// Q2-S0 instrumentation only. Per-profile ribbon rebuild cost (the swept-
+	// quad CPU rebuild we suspect is hot). Profiles are bounded per tube, so a
+	// per-profile Tracy zone is coarse (not per-particle). Placed after the
+	// dead-profile early-return so only real rebuilds are timed.
+	ZoneScopedN("gosFX.Tube.AnimateProfile");
+	mc2::fx_cost_split::Scope _fxcs(mc2::fx_cost_split::B_TUBE_ANIMATE_PROFILE);
 
 	//
 	//--------------------------------------------------------------------
