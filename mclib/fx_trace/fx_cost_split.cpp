@@ -62,13 +62,19 @@ void roll_frame_and_maybe_emit() {
         "spinningcloud_animate_particle_cyc=%.0f spinningcloud_animate_particle_calls=%.1f "
         "tube_animate_profile_cyc=%.0f tube_animate_profile_calls=%.1f "
         "tube_bridge_flush_cyc=%.0f tube_bridge_flush_calls=%.1f "
-        "particle_bridge_flush_cyc=%.0f particle_bridge_flush_calls=%.1f\n",
+        "particle_bridge_flush_cyc=%.0f particle_bridge_flush_calls=%.1f "
+        "fx_forces_cyc=%.0f fx_forces_calls=%.1f "
+        "fx_integrate_cyc=%.0f fx_integrate_calls=%.1f "
+        "fx_birth_death_cyc=%.0f fx_birth_death_calls=%.1f\n",
         (double)g_cyc[B_FX_EXECUTE]            / f, (double)g_call[B_FX_EXECUTE]            / f,
         (double)g_cyc[B_PARTICLECLOUD_EXECUTE] / f, (double)g_call[B_PARTICLECLOUD_EXECUTE] / f,
         (double)g_cyc[B_SPINNINGCLOUD_ANIMATE] / f, (double)g_call[B_SPINNINGCLOUD_ANIMATE] / f,
         (double)g_cyc[B_TUBE_ANIMATE_PROFILE]  / f, (double)g_call[B_TUBE_ANIMATE_PROFILE]  / f,
         (double)g_cyc[B_TUBE_BRIDGE_FLUSH]     / f, (double)g_call[B_TUBE_BRIDGE_FLUSH]     / f,
-        (double)g_cyc[B_PARTICLE_BRIDGE_FLUSH] / f, (double)g_call[B_PARTICLE_BRIDGE_FLUSH] / f);
+        (double)g_cyc[B_PARTICLE_BRIDGE_FLUSH] / f, (double)g_call[B_PARTICLE_BRIDGE_FLUSH] / f,
+        (double)g_cyc[B_FX_FORCES]             / f, (double)g_call[B_FX_FORCES]             / f,
+        (double)g_cyc[B_FX_INTEGRATE]          / f, (double)g_call[B_FX_INTEGRATE]          / f,
+        (double)g_cyc[B_FX_BIRTH_DEATH]        / f, (double)g_call[B_FX_BIRTH_DEATH]        / f);
     std::fflush(stderr);
 
     for (int i = 0; i < B_COUNT; ++i) { g_cyc[i] = 0; g_call[i] = 0; }

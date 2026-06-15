@@ -458,13 +458,17 @@ bool
 	Stuff::Scalar seed = particle->m_seed;
 	Specification *spec = GetSpecification();
 	Check_Object(spec);
+	Stuff::Vector3D accel(Stuff::Vector3D::Identity);
+	{
+	// Q2-S0b: curve-heavy force calc (7 of 8 ComputeValue calls in this
+	// function) — the region the curve-cache / GPU-offload decision hinges on.
+	mc2::fx_cost_split::Scope _fxf(mc2::fx_cost_split::B_FX_FORCES);
 	Stuff::Scalar drag = -spec->m_pDrag.ComputeValue(age, seed);
 	Max_Clamp(drag, 0.0f);
 	Stuff::Vector3D ether;
 	ether.x = spec->m_pEtherVelocityX.ComputeValue(age, seed);
 	ether.y = spec->m_pEtherVelocityY.ComputeValue(age, seed);
 	ether.z = spec->m_pEtherVelocityZ.ComputeValue(age, seed);
-	Stuff::Vector3D accel(Stuff::Vector3D::Identity);
 
 	//
 	//-------------------------------------------------------------------
@@ -517,12 +521,16 @@ bool
 		accel.y += spec->m_pAccelerationY.ComputeValue(age, seed);
 		accel.z += spec->m_pAccelerationZ.ComputeValue(age, seed);
 	}
+	}  // end B_FX_FORCES scope
 
 	//
 	//-------------------------------------------------
 	// Compute the particle's new velocity and position
 	//-------------------------------------------------
 	//
+	{
+	// Q2-S0b: velocity/position/rotation integration (no curve eval).
+	mc2::fx_cost_split::Scope _fxi(mc2::fx_cost_split::B_FX_INTEGRATE);
 	Stuff::Scalar time_slice =
 		static_cast<Stuff::Scalar>(till - m_lastRan);
 	velocity->AddScaled(*velocity, accel, time_slice);
@@ -542,6 +550,7 @@ bool
 		rotation->Multiply(omega_q, Stuff::UnitQuaternion(*rotation));
 		rotation->Normalize();
 	}
+	}  // end B_FX_INTEGRATE scope
 
 	//
 	//---------------------------------------------------------------------

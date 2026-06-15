@@ -39,6 +39,12 @@ enum Bucket {
     B_TUBE_ANIMATE_PROFILE,
     B_TUBE_BRIDGE_FLUSH,
     B_PARTICLE_BRIDGE_FLUSH,
+    // Q2-S0b refinement: split AnimateParticle's cost so the GPU-offload /
+    // curve-cache decision is data-driven. FORCES + INTEGRATE nest INSIDE
+    // B_SPINNINGCLOUD_ANIMATE; BIRTH_DEATH nests inside B_PARTICLECLOUD_EXECUTE.
+    B_FX_FORCES,        // drag/ether/accel curve eval + vector math (7 of 8 ComputeValue)
+    B_FX_INTEGRATE,     // velocity/position/rotation integration
+    B_FX_BIRTH_DEATH,   // CreateNewParticle (RNG draws + init)
     B_COUNT
 };
 

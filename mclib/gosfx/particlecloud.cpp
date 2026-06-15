@@ -446,7 +446,10 @@ bool gosFX::ParticleCloud::Execute(ExecuteInfo *info)
 		if (m_birthAccumulator >= 1.0f)
 		{
 			Stuff::Point3D translation;
-			CreateNewParticle(i, &translation);
+			{	// Q2-S0b: birth cost (RNG draws + init)
+				mc2::fx_cost_split::Scope _fxbd(mc2::fx_cost_split::B_FX_BIRTH_DEATH);
+				CreateNewParticle(i, &translation);
+			}
 			if (AnimateParticle(i, matrix, info->m_time))
 				last_real = i;
 			else
@@ -469,7 +472,10 @@ bool gosFX::ParticleCloud::Execute(ExecuteInfo *info)
 	{
 		i = m_activeParticleCount++;
 		Stuff::Point3D translation;
-		CreateNewParticle(i, &translation);
+		{	// Q2-S0b: birth cost (RNG draws + init)
+			mc2::fx_cost_split::Scope _fxbd(mc2::fx_cost_split::B_FX_BIRTH_DEATH);
+			CreateNewParticle(i, &translation);
+		}
 		if (!AnimateParticle(i, matrix, info->m_time))
 		{
 			DestroyParticle(i);
