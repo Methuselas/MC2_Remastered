@@ -14,6 +14,8 @@ target_compile_definitions(mc2_launcher PRIVATE
     _CRT_SECURE_NO_WARNINGS
 )
 
+target_link_libraries(mc2_launcher PRIVATE comctl32 ole32)
+
 # Deploy alongside mc2.exe after build.
 if(DEFINED MC2_DEPLOY_DIR AND EXISTS "${MC2_DEPLOY_DIR}")
     add_custom_command(TARGET mc2_launcher POST_BUILD

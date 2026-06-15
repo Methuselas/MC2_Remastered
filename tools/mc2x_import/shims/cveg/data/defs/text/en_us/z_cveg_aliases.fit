@@ -1,0 +1,6566 @@
+// Auto-generated: CVE-G LegacyTextAlias overrides.
+// Sorts after mechlopedia_* so our aliases win over _undefined placeholders.
+
+LegacyTextAlias {
+    legacyId = 10076
+    textKey = "cveg.dll.10076"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10077
+    textKey = "cveg.dll.10077"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10078
+    textKey = "cveg.dll.10078"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10079
+    textKey = "cveg.dll.10079"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10080
+    textKey = "cveg.dll.10080"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10081
+    textKey = "cveg.dll.10081"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10082
+    textKey = "cveg.dll.10082"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10083
+    textKey = "cveg.dll.10083"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10084
+    textKey = "cveg.dll.10084"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10085
+    textKey = "cveg.dll.10085"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10086
+    textKey = "cveg.dll.10086"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10087
+    textKey = "cveg.dll.10087"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10088
+    textKey = "cveg.dll.10088"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10089
+    textKey = "cveg.dll.10089"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10090
+    textKey = "cveg.dll.10090"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10091
+    textKey = "cveg.dll.10091"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10092
+    textKey = "cveg.dll.10092"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10093
+    textKey = "cveg.dll.10093"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10094
+    textKey = "cveg.dll.10094"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10095
+    textKey = "cveg.dll.10095"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10096
+    textKey = "cveg.dll.10096"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10097
+    textKey = "cveg.dll.10097"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10098
+    textKey = "cveg.dll.10098"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10099
+    textKey = "cveg.dll.10099"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10100
+    textKey = "cveg.dll.10100"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10101
+    textKey = "cveg.dll.10101"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10102
+    textKey = "cveg.dll.10102"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10103
+    textKey = "cveg.dll.10103"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10104
+    textKey = "cveg.dll.10104"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10105
+    textKey = "cveg.dll.10105"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 10106
+    textKey = "cveg.dll.10106"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 20005
+    textKey = "cveg.dll.20005"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 20006
+    textKey = "cveg.dll.20006"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 20007
+    textKey = "cveg.dll.20007"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 20008
+    textKey = "cveg.dll.20008"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 20009
+    textKey = "cveg.dll.20009"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 20010
+    textKey = "cveg.dll.20010"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26627
+    textKey = "cveg.dll.26627"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26628
+    textKey = "cveg.dll.26628"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26629
+    textKey = "cveg.dll.26629"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26630
+    textKey = "cveg.dll.26630"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26631
+    textKey = "cveg.dll.26631"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26632
+    textKey = "cveg.dll.26632"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26633
+    textKey = "cveg.dll.26633"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26634
+    textKey = "cveg.dll.26634"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26635
+    textKey = "cveg.dll.26635"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26636
+    textKey = "cveg.dll.26636"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26637
+    textKey = "cveg.dll.26637"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26638
+    textKey = "cveg.dll.26638"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26639
+    textKey = "cveg.dll.26639"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26640
+    textKey = "cveg.dll.26640"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26641
+    textKey = "cveg.dll.26641"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26642
+    textKey = "cveg.dll.26642"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26643
+    textKey = "cveg.dll.26643"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26644
+    textKey = "cveg.dll.26644"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26645
+    textKey = "cveg.dll.26645"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26646
+    textKey = "cveg.dll.26646"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26647
+    textKey = "cveg.dll.26647"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26648
+    textKey = "cveg.dll.26648"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26649
+    textKey = "cveg.dll.26649"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26650
+    textKey = "cveg.dll.26650"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26651
+    textKey = "cveg.dll.26651"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26652
+    textKey = "cveg.dll.26652"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26653
+    textKey = "cveg.dll.26653"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26654
+    textKey = "cveg.dll.26654"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26655
+    textKey = "cveg.dll.26655"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26656
+    textKey = "cveg.dll.26656"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26657
+    textKey = "cveg.dll.26657"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26658
+    textKey = "cveg.dll.26658"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26659
+    textKey = "cveg.dll.26659"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26660
+    textKey = "cveg.dll.26660"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26661
+    textKey = "cveg.dll.26661"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26662
+    textKey = "cveg.dll.26662"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26663
+    textKey = "cveg.dll.26663"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26664
+    textKey = "cveg.dll.26664"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26665
+    textKey = "cveg.dll.26665"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26666
+    textKey = "cveg.dll.26666"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26667
+    textKey = "cveg.dll.26667"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26668
+    textKey = "cveg.dll.26668"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26669
+    textKey = "cveg.dll.26669"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26670
+    textKey = "cveg.dll.26670"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26671
+    textKey = "cveg.dll.26671"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 26672
+    textKey = "cveg.dll.26672"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 27077
+    textKey = "cveg.dll.27077"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 27078
+    textKey = "cveg.dll.27078"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 27178
+    textKey = "cveg.dll.27178"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 27179
+    textKey = "cveg.dll.27179"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 27681
+    textKey = "cveg.dll.27681"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 27743
+    textKey = "cveg.dll.27743"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 27744
+    textKey = "cveg.dll.27744"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 27745
+    textKey = "cveg.dll.27745"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 27746
+    textKey = "cveg.dll.27746"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 27747
+    textKey = "cveg.dll.27747"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 27748
+    textKey = "cveg.dll.27748"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 27749
+    textKey = "cveg.dll.27749"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 27782
+    textKey = "cveg.dll.27782"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 28795
+    textKey = "cveg.dll.28795"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 28796
+    textKey = "cveg.dll.28796"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 28971
+    textKey = "cveg.dll.28971"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 29084
+    textKey = "cveg.dll.29084"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 29951
+    textKey = "cveg.dll.29951"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 29952
+    textKey = "cveg.dll.29952"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 29966
+    textKey = "cveg.dll.29966"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 29967
+    textKey = "cveg.dll.29967"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 29968
+    textKey = "cveg.dll.29968"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 29969
+    textKey = "cveg.dll.29969"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30000
+    textKey = "cveg.dll.30000"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30193
+    textKey = "cveg.dll.30193"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30275
+    textKey = "cveg.mech.harasser"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30277
+    textKey = "cveg.mech.minelayer"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30278
+    textKey = "cveg.mech.partisan"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30280
+    textKey = "cveg.mech.vedette"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30301
+    textKey = "cveg.mech.legion"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30303
+    textKey = "cveg.mech.hunter"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30341
+    textKey = "cveg.mech.storm"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30366
+    textKey = "cveg.mech.hetzer"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30395
+    textKey = "cveg.mech.infantry"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30472
+    textKey = "cveg.mech.drillson"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30641
+    textKey = "cveg.mech.karnov2"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30652
+    textKey = "cveg.mech.slayer1"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30656
+    textKey = "cveg.dll.30656"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30657
+    textKey = "cveg.dll.30657"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30658
+    textKey = "cveg.dll.30658"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30659
+    textKey = "cveg.dll.30659"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30660
+    textKey = "cveg.dll.30660"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30661
+    textKey = "cveg.dll.30661"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30662
+    textKey = "cveg.dll.30662"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30663
+    textKey = "cveg.dll.30663"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30664
+    textKey = "cveg.dll.30664"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30665
+    textKey = "cveg.dll.30665"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30666
+    textKey = "cveg.dll.30666"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30667
+    textKey = "cveg.dll.30667"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30668
+    textKey = "cveg.dll.30668"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30669
+    textKey = "cveg.dll.30669"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30670
+    textKey = "cveg.dll.30670"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30671
+    textKey = "cveg.dll.30671"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30672
+    textKey = "cveg.dll.30672"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30673
+    textKey = "cveg.dll.30673"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30674
+    textKey = "cveg.dll.30674"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30675
+    textKey = "cveg.dll.30675"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30676
+    textKey = "cveg.dll.30676"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30677
+    textKey = "cveg.dll.30677"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30678
+    textKey = "cveg.dll.30678"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30679
+    textKey = "cveg.dll.30679"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30680
+    textKey = "cveg.dll.30680"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30681
+    textKey = "cveg.dll.30681"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30682
+    textKey = "cveg.dll.30682"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30683
+    textKey = "cveg.dll.30683"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30684
+    textKey = "cveg.dll.30684"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30685
+    textKey = "cveg.dll.30685"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30686
+    textKey = "cveg.dll.30686"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30687
+    textKey = "cveg.dll.30687"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30690
+    textKey = "cveg.dll.30690"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30691
+    textKey = "cveg.dll.30691"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30692
+    textKey = "cveg.dll.30692"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30693
+    textKey = "cveg.dll.30693"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30694
+    textKey = "cveg.mech.specialist"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30695
+    textKey = "cveg.pilot.pmwpollux"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30696
+    textKey = "cveg.dll.30696"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30697
+    textKey = "cveg.dll.30697"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30698
+    textKey = "cveg.dll.30698"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30699
+    textKey = "cveg.dll.30699"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30700
+    textKey = "cveg.mech.atlas"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30703
+    textKey = "cveg.mech.menshen"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30706
+    textKey = "cveg.mech.catapult"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30715
+    textKey = "cveg.mech.wolfhound"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30718
+    textKey = "cveg.mech.hollander"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30721
+    textKey = "cveg.mech.hunchback"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30724
+    textKey = "cveg.mech.zeus"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30727
+    textKey = "cveg.mech.jaegermech"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30730
+    textKey = "cveg.mech.starslayer"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30736
+    textKey = "cveg.mech.anubis"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30739
+    textKey = "cveg.mech.raven"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30745
+    textKey = "cveg.mech.uller"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30748
+    textKey = "cveg.mech.vulture"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30751
+    textKey = "cveg.mech.highlander"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30754
+    textKey = "cveg.mech.cyclops"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30757
+    textKey = "cveg.mech.bushwacker"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30766
+    textKey = "cveg.mech.enfield"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30769
+    textKey = "cveg.mech.shootist"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30915
+    textKey = "cveg.mech.ryoken"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30916
+    textKey = "cveg.mech.cougar"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30917
+    textKey = "cveg.mech.thor"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30918
+    textKey = "cveg.dll.30918"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30919
+    textKey = "cveg.dll.30919"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30920
+    textKey = "cveg.dll.30920"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30921
+    textKey = "cveg.dll.30921"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30922
+    textKey = "cveg.dll.30922"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30923
+    textKey = "cveg.dll.30923"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30924
+    textKey = "cveg.dll.30924"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30925
+    textKey = "cveg.dll.30925"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30926
+    textKey = "cveg.dll.30926"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30927
+    textKey = "cveg.dll.30927"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30928
+    textKey = "cveg.dll.30928"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30929
+    textKey = "cveg.dll.30929"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30930
+    textKey = "cveg.dll.30930"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30931
+    textKey = "cveg.dll.30931"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30932
+    textKey = "cveg.dll.30932"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30933
+    textKey = "cveg.dll.30933"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30934
+    textKey = "cveg.dll.30934"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30935
+    textKey = "cveg.dll.30935"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30936
+    textKey = "cveg.dll.30936"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30937
+    textKey = "cveg.dll.30937"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30938
+    textKey = "cveg.dll.30938"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30939
+    textKey = "cveg.dll.30939"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30940
+    textKey = "cveg.dll.30940"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30941
+    textKey = "cveg.dll.30941"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30942
+    textKey = "cveg.dll.30942"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30943
+    textKey = "cveg.dll.30943"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30944
+    textKey = "cveg.dll.30944"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30945
+    textKey = "cveg.dll.30945"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30946
+    textKey = "cveg.dll.30946"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30947
+    textKey = "cveg.dll.30947"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30948
+    textKey = "cveg.dll.30948"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30949
+    textKey = "cveg.dll.30949"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30950
+    textKey = "cveg.dll.30950"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30951
+    textKey = "cveg.dll.30951"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30952
+    textKey = "cveg.dll.30952"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 30953
+    textKey = "cveg.dll.30953"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 31202
+    textKey = "cveg.mech.bulldog"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 31203
+    textKey = "cveg.mech.condor"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 31209
+    textKey = "cveg.mech.pegasus"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 31211
+    textKey = "cveg.mech.rommel"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 31249
+    textKey = "cveg.mech.ambulance"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 31250
+    textKey = "cveg.mech.centipede"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 31251
+    textKey = "cveg.mech.regulator"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 31252
+    textKey = "cveg.mech.manticore"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 31256
+    textKey = "cveg.mech.marine"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 31257
+    textKey = "cveg.mech.mercenary"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 31258
+    textKey = "cveg.mech.transport"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32000
+    textKey = "cveg.dll.32000"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32039
+    textKey = "cveg.dll.32039"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32040
+    textKey = "cveg.dll.32040"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32041
+    textKey = "cveg.dll.32041"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32044
+    textKey = "cveg.dll.32044"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32045
+    textKey = "cveg.dll.32045"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32046
+    textKey = "cveg.dll.32046"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32047
+    textKey = "cveg.dll.32047"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32048
+    textKey = "cveg.mech.awesome"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32049
+    textKey = "cveg.mech.battlemaster"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32050
+    textKey = "cveg.dll.32050"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32051
+    textKey = "cveg.mech.nova1"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32052
+    textKey = "cveg.mech.nova"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32053
+    textKey = "cveg.mech.blackjack"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32054
+    textKey = "cveg.mech.broadsword"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32055
+    textKey = "cveg.dll.32055"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32056
+    textKey = "cveg.mech.cauldron"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32057
+    textKey = "cveg.mech.centurion"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32058
+    textKey = "cveg.dll.32058"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32059
+    textKey = "cveg.dll.32059"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32060
+    textKey = "cveg.dll.32060"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32061
+    textKey = "cveg.mech.direwolf"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32062
+    textKey = "cveg.mech.dragon"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32063
+    textKey = "cveg.mech.enforcer"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32064
+    textKey = "cveg.mech.executioner"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32065
+    textKey = "cveg.dll.32065"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32066
+    textKey = "cveg.mech.firestarter"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32067
+    textKey = "cveg.mech.flashman"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32068
+    textKey = "cveg.dll.32068"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32069
+    textKey = "cveg.dll.32069"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32070
+    textKey = "cveg.mech.gargoyle"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32071
+    textKey = "cveg.dll.32071"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32072
+    textKey = "cveg.dll.32072"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32073
+    textKey = "cveg.mech.kodiak"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32074
+    textKey = "cveg.dll.32074"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32075
+    textKey = "cveg.mech.loki"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32076
+    textKey = "cveg.mech.longbow"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32077
+    textKey = "cveg.mech.vulture1"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32078
+    textKey = "cveg.mech.marauder"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32079
+    textKey = "cveg.mech.mauler"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32080
+    textKey = "cveg.mech.orion"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32081
+    textKey = "cveg.dll.32081"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32082
+    textKey = "cveg.dll.32082"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32083
+    textKey = "cveg.dll.32083"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32084
+    textKey = "cveg.mech.timberwolf"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32085
+    textKey = "cveg.mech.victor"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32086
+    textKey = "cveg.mech.warhammer"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32087
+    textKey = "cveg.dll.32087"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32088
+    textKey = "cveg.mech.warhawk"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32089
+    textKey = "cveg.mech.novacat"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32090
+    textKey = "cveg.mech.turkina"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32091
+    textKey = "cveg.dll.32091"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32092
+    textKey = "cveg.dll.32092"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32093
+    textKey = "cveg.dll.32093"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32094
+    textKey = "cveg.dll.32094"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32095
+    textKey = "cveg.mech.hellhound"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32096
+    textKey = "cveg.dll.32096"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32097
+    textKey = "cveg.dll.32097"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32119
+    textKey = "cveg.dll.32119"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32127
+    textKey = "cveg.dll.32127"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32128
+    textKey = "cveg.dll.32128"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32129
+    textKey = "cveg.dll.32129"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32137
+    textKey = "cveg.dll.32137"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32138
+    textKey = "cveg.dll.32138"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32148
+    textKey = "cveg.dll.32148"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32149
+    textKey = "cveg.dll.32149"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32157
+    textKey = "cveg.dll.32157"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32158
+    textKey = "cveg.dll.32158"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32159
+    textKey = "cveg.dll.32159"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32162
+    textKey = "cveg.dll.32162"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32163
+    textKey = "cveg.dll.32163"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32164
+    textKey = "cveg.dll.32164"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32165
+    textKey = "cveg.dll.32165"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32166
+    textKey = "cveg.dll.32166"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32167
+    textKey = "cveg.dll.32167"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32168
+    textKey = "cveg.dll.32168"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32169
+    textKey = "cveg.dll.32169"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32170
+    textKey = "cveg.dll.32170"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32171
+    textKey = "cveg.dll.32171"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32172
+    textKey = "cveg.dll.32172"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32173
+    textKey = "cveg.dll.32173"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32174
+    textKey = "cveg.dll.32174"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32175
+    textKey = "cveg.dll.32175"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32176
+    textKey = "cveg.dll.32176"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32177
+    textKey = "cveg.dll.32177"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32178
+    textKey = "cveg.dll.32178"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32179
+    textKey = "cveg.dll.32179"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32180
+    textKey = "cveg.dll.32180"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32181
+    textKey = "cveg.dll.32181"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32182
+    textKey = "cveg.dll.32182"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32183
+    textKey = "cveg.dll.32183"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32184
+    textKey = "cveg.dll.32184"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32185
+    textKey = "cveg.dll.32185"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32186
+    textKey = "cveg.dll.32186"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32187
+    textKey = "cveg.dll.32187"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32188
+    textKey = "cveg.dll.32188"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32189
+    textKey = "cveg.dll.32189"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32190
+    textKey = "cveg.dll.32190"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32191
+    textKey = "cveg.dll.32191"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32192
+    textKey = "cveg.dll.32192"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32193
+    textKey = "cveg.dll.32193"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32194
+    textKey = "cveg.dll.32194"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32195
+    textKey = "cveg.dll.32195"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32196
+    textKey = "cveg.dll.32196"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32197
+    textKey = "cveg.dll.32197"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32219
+    textKey = "cveg.dll.32219"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32229
+    textKey = "cveg.dll.32229"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32237
+    textKey = "cveg.dll.32237"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32238
+    textKey = "cveg.dll.32238"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32239
+    textKey = "cveg.dll.32239"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32240
+    textKey = "cveg.dll.32240"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32241
+    textKey = "cveg.dll.32241"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32242
+    textKey = "cveg.dll.32242"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32243
+    textKey = "cveg.dll.32243"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32244
+    textKey = "cveg.dll.32244"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32245
+    textKey = "cveg.dll.32245"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32246
+    textKey = "cveg.dll.32246"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32247
+    textKey = "cveg.dll.32247"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32248
+    textKey = "cveg.dll.32248"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32249
+    textKey = "cveg.dll.32249"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32250
+    textKey = "cveg.dll.32250"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32251
+    textKey = "cveg.dll.32251"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32252
+    textKey = "cveg.dll.32252"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32253
+    textKey = "cveg.dll.32253"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32254
+    textKey = "cveg.dll.32254"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32255
+    textKey = "cveg.dll.32255"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32256
+    textKey = "cveg.dll.32256"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32257
+    textKey = "cveg.dll.32257"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32258
+    textKey = "cveg.dll.32258"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32259
+    textKey = "cveg.dll.32259"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32260
+    textKey = "cveg.dll.32260"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32261
+    textKey = "cveg.dll.32261"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32262
+    textKey = "cveg.dll.32262"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32263
+    textKey = "cveg.dll.32263"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32264
+    textKey = "cveg.dll.32264"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32265
+    textKey = "cveg.dll.32265"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32266
+    textKey = "cveg.dll.32266"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32267
+    textKey = "cveg.dll.32267"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32268
+    textKey = "cveg.dll.32268"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 32269
+    textKey = "cveg.dll.32269"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33000
+    textKey = "cveg.dll.33000"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33036
+    textKey = "cveg.dll.33036"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33039
+    textKey = "cveg.dll.33039"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33040
+    textKey = "cveg.dll.33040"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33041
+    textKey = "cveg.dll.33041"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33044
+    textKey = "cveg.dll.33044"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33045
+    textKey = "cveg.dll.33045"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33046
+    textKey = "cveg.dll.33046"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33047
+    textKey = "cveg.dll.33047"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33048
+    textKey = "cveg.dll.33048"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33049
+    textKey = "cveg.dll.33049"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33050
+    textKey = "cveg.dll.33050"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33051
+    textKey = "cveg.dll.33051"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33052
+    textKey = "cveg.dll.33052"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33053
+    textKey = "cveg.dll.33053"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33054
+    textKey = "cveg.dll.33054"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33055
+    textKey = "cveg.dll.33055"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33056
+    textKey = "cveg.dll.33056"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33057
+    textKey = "cveg.mech.chimera"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33058
+    textKey = "cveg.mech.commando"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33059
+    textKey = "cveg.mech.hunchbackIIC"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33060
+    textKey = "cveg.mech.shadowhawk"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33061
+    textKey = "cveg.dll.33061"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33062
+    textKey = "cveg.mech.rifleman"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33063
+    textKey = "cveg.dll.33063"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33064
+    textKey = "cveg.dll.33064"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33065
+    textKey = "cveg.dll.33065"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33066
+    textKey = "cveg.dll.33066"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33067
+    textKey = "cveg.dll.33067"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33068
+    textKey = "cveg.mech.bulldozer"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33069
+    textKey = "cveg.mech.anihilator"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33070
+    textKey = "cveg.dll.33070"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33071
+    textKey = "cveg.mech.assassin"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33072
+    textKey = "cveg.mech.digger"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33073
+    textKey = "cveg.mech.hellspawn"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33074
+    textKey = "cveg.dll.33074"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33075
+    textKey = "cveg.dll.33075"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33076
+    textKey = "cveg.dll.33076"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33077
+    textKey = "cveg.dll.33077"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33078
+    textKey = "cveg.dll.33078"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33079
+    textKey = "cveg.dll.33079"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33080
+    textKey = "cveg.dll.33080"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33081
+    textKey = "cveg.mech.firemoth"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33082
+    textKey = "cveg.mech.jenner"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33083
+    textKey = "cveg.dll.33083"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33084
+    textKey = "cveg.dll.33084"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33085
+    textKey = "cveg.dll.33085"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33086
+    textKey = "cveg.mech.phantom"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33087
+    textKey = "cveg.dll.33087"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33088
+    textKey = "cveg.dll.33088"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33089
+    textKey = "cveg.dll.33089"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33090
+    textKey = "cveg.dll.33090"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33091
+    textKey = "cveg.mech.javelin"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33092
+    textKey = "cveg.mech.panther"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33093
+    textKey = "cveg.dll.33093"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33094
+    textKey = "cveg.dll.33094"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33095
+    textKey = "cveg.dll.33095"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33096
+    textKey = "cveg.dll.33096"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33097
+    textKey = "cveg.dll.33097"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33119
+    textKey = "cveg.dll.33119"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33127
+    textKey = "cveg.dll.33127"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33128
+    textKey = "cveg.dll.33128"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33129
+    textKey = "cveg.dll.33129"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33137
+    textKey = "cveg.dll.33137"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33138
+    textKey = "cveg.dll.33138"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33148
+    textKey = "cveg.dll.33148"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33149
+    textKey = "cveg.dll.33149"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33157
+    textKey = "cveg.dll.33157"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33158
+    textKey = "cveg.dll.33158"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33159
+    textKey = "cveg.dll.33159"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33162
+    textKey = "cveg.dll.33162"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33163
+    textKey = "cveg.dll.33163"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33164
+    textKey = "cveg.dll.33164"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33165
+    textKey = "cveg.dll.33165"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33166
+    textKey = "cveg.dll.33166"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33167
+    textKey = "cveg.dll.33167"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33168
+    textKey = "cveg.dll.33168"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33169
+    textKey = "cveg.dll.33169"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33170
+    textKey = "cveg.dll.33170"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33171
+    textKey = "cveg.dll.33171"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33172
+    textKey = "cveg.dll.33172"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33173
+    textKey = "cveg.dll.33173"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33174
+    textKey = "cveg.dll.33174"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33175
+    textKey = "cveg.dll.33175"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33176
+    textKey = "cveg.dll.33176"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33177
+    textKey = "cveg.dll.33177"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33178
+    textKey = "cveg.dll.33178"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33179
+    textKey = "cveg.dll.33179"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33180
+    textKey = "cveg.dll.33180"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33181
+    textKey = "cveg.dll.33181"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33182
+    textKey = "cveg.dll.33182"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33183
+    textKey = "cveg.dll.33183"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33184
+    textKey = "cveg.dll.33184"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33185
+    textKey = "cveg.dll.33185"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33186
+    textKey = "cveg.dll.33186"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33187
+    textKey = "cveg.dll.33187"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33188
+    textKey = "cveg.dll.33188"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33189
+    textKey = "cveg.dll.33189"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33190
+    textKey = "cveg.dll.33190"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33191
+    textKey = "cveg.dll.33191"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33192
+    textKey = "cveg.dll.33192"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33193
+    textKey = "cveg.dll.33193"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33194
+    textKey = "cveg.dll.33194"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33195
+    textKey = "cveg.dll.33195"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33196
+    textKey = "cveg.dll.33196"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33197
+    textKey = "cveg.dll.33197"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33219
+    textKey = "cveg.dll.33219"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33229
+    textKey = "cveg.dll.33229"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33237
+    textKey = "cveg.dll.33237"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33238
+    textKey = "cveg.dll.33238"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33239
+    textKey = "cveg.dll.33239"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33240
+    textKey = "cveg.dll.33240"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33241
+    textKey = "cveg.dll.33241"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33242
+    textKey = "cveg.dll.33242"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33243
+    textKey = "cveg.dll.33243"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33244
+    textKey = "cveg.dll.33244"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33245
+    textKey = "cveg.dll.33245"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33246
+    textKey = "cveg.dll.33246"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33247
+    textKey = "cveg.dll.33247"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33248
+    textKey = "cveg.dll.33248"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33249
+    textKey = "cveg.dll.33249"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33250
+    textKey = "cveg.dll.33250"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33251
+    textKey = "cveg.dll.33251"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33252
+    textKey = "cveg.dll.33252"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33253
+    textKey = "cveg.dll.33253"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33254
+    textKey = "cveg.dll.33254"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33255
+    textKey = "cveg.dll.33255"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33256
+    textKey = "cveg.dll.33256"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33257
+    textKey = "cveg.dll.33257"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33258
+    textKey = "cveg.dll.33258"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33259
+    textKey = "cveg.dll.33259"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33260
+    textKey = "cveg.dll.33260"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33261
+    textKey = "cveg.dll.33261"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33262
+    textKey = "cveg.dll.33262"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33263
+    textKey = "cveg.dll.33263"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33264
+    textKey = "cveg.dll.33264"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33265
+    textKey = "cveg.dll.33265"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33266
+    textKey = "cveg.dll.33266"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33267
+    textKey = "cveg.dll.33267"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 33268
+    textKey = "cveg.dll.33268"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34000
+    textKey = "cveg.dll.34000"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34001
+    textKey = "cveg.dll.34001"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34002
+    textKey = "cveg.dll.34002"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34003
+    textKey = "cveg.dll.34003"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34004
+    textKey = "cveg.dll.34004"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34005
+    textKey = "cveg.dll.34005"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34007
+    textKey = "cveg.dll.34007"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34008
+    textKey = "cveg.dll.34008"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34009
+    textKey = "cveg.dll.34009"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34011
+    textKey = "cveg.dll.34011"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34012
+    textKey = "cveg.dll.34012"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34013
+    textKey = "cveg.dll.34013"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34014
+    textKey = "cveg.dll.34014"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34015
+    textKey = "cveg.dll.34015"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34016
+    textKey = "cveg.dll.34016"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34017
+    textKey = "cveg.dll.34017"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34018
+    textKey = "cveg.mech.supplyhover"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34019
+    textKey = "cveg.dll.34019"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34020
+    textKey = "cveg.dll.34020"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34021
+    textKey = "cveg.dll.34021"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34022
+    textKey = "cveg.dll.34022"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34023
+    textKey = "cveg.dll.34023"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34024
+    textKey = "cveg.dll.34024"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34026
+    textKey = "cveg.dll.34026"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34027
+    textKey = "cveg.dll.34027"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34029
+    textKey = "cveg.dll.34029"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34030
+    textKey = "cveg.dll.34030"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34031
+    textKey = "cveg.dll.34031"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34032
+    textKey = "cveg.dll.34032"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34033
+    textKey = "cveg.dll.34033"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34034
+    textKey = "cveg.dll.34034"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34035
+    textKey = "cveg.dll.34035"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34036
+    textKey = "cveg.dll.34036"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34037
+    textKey = "cveg.dll.34037"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34038
+    textKey = "cveg.dll.34038"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34039
+    textKey = "cveg.dll.34039"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34040
+    textKey = "cveg.dll.34040"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34041
+    textKey = "cveg.dll.34041"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34042
+    textKey = "cveg.dll.34042"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34043
+    textKey = "cveg.dll.34043"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34044
+    textKey = "cveg.dll.34044"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34045
+    textKey = "cveg.mech.locust"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34046
+    textKey = "cveg.mech.vulcan"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34047
+    textKey = "cveg.mech.overlord"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34048
+    textKey = "cveg.dll.34048"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34049
+    textKey = "cveg.mech.jaegermech3"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34050
+    textKey = "cveg.dll.34050"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34051
+    textKey = "cveg.dll.34051"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34052
+    textKey = "cveg.dll.34052"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34053
+    textKey = "cveg.dll.34053"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34054
+    textKey = "cveg.dll.34054"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34055
+    textKey = "cveg.dll.34055"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34056
+    textKey = "cveg.mech.avatar"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34057
+    textKey = "cveg.mech.wolfhound2c"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34058
+    textKey = "cveg.mech.highlander2c"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34059
+    textKey = "cveg.mech.orion2c"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34060
+    textKey = "cveg.mech.jenner2c"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34061
+    textKey = "cveg.mech.marauder2c"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34062
+    textKey = "cveg.mech.rifleman2c"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34063
+    textKey = "cveg.dll.34063"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34064
+    textKey = "cveg.mech.warhammer2c"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34065
+    textKey = "cveg.mech.bloodasp2"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34066
+    textKey = "cveg.dll.34066"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34067
+    textKey = "cveg.mech.puma"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34068
+    textKey = "cveg.mech.union"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34069
+    textKey = "cveg.mech.lion"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34070
+    textKey = "cveg.mech.overlordc"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34071
+    textKey = "cveg.mech.leopard"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34072
+    textKey = "cveg.mech.unionc"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34073
+    textKey = "cveg.dll.34073"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34074
+    textKey = "cveg.dll.34074"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34075
+    textKey = "cveg.dll.34075"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34076
+    textKey = "cveg.dll.34076"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34077
+    textKey = "cveg.dll.34077"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34078
+    textKey = "cveg.dll.34078"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34079
+    textKey = "cveg.mech.hollander2"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34080
+    textKey = "cveg.mech.locust2c"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34081
+    textKey = "cveg.mech.guardian"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34082
+    textKey = "cveg.mech.urbanmech2c"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34083
+    textKey = "cveg.mech.heavylrmc"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34084
+    textKey = "cveg.mech.commando2c"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34085
+    textKey = "cveg.dll.34085"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34086
+    textKey = "cveg.mech.cargodropship"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34087
+    textKey = "cveg.dll.34087"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34088
+    textKey = "cveg.dll.34088"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34089
+    textKey = "cveg.mech.challenger"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34090
+    textKey = "cveg.mech.demolisher"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34091
+    textKey = "cveg.mech.goblin"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34092
+    textKey = "cveg.mech.zhukov"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34093
+    textKey = "cveg.mech.sabutai"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34094
+    textKey = "cveg.dll.34094"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34095
+    textKey = "cveg.mech.tiger"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34096
+    textKey = "cveg.dll.34096"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34097
+    textKey = "cveg.dll.34097"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34106
+    textKey = "cveg.dll.34106"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34107
+    textKey = "cveg.dll.34107"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34115
+    textKey = "cveg.dll.34115"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34116
+    textKey = "cveg.dll.34116"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34117
+    textKey = "cveg.dll.34117"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34118
+    textKey = "cveg.dll.34118"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34119
+    textKey = "cveg.dll.34119"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34121
+    textKey = "cveg.dll.34121"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34122
+    textKey = "cveg.dll.34122"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34126
+    textKey = "cveg.dll.34126"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34127
+    textKey = "cveg.dll.34127"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34128
+    textKey = "cveg.dll.34128"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34129
+    textKey = "cveg.dll.34129"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34131
+    textKey = "cveg.dll.34131"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34132
+    textKey = "cveg.dll.34132"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34133
+    textKey = "cveg.dll.34133"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34134
+    textKey = "cveg.mech.fafnir"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34136
+    textKey = "cveg.mech.intruder"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34137
+    textKey = "cveg.mech.thug"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34138
+    textKey = "cveg.mech.madcatmkii"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34148
+    textKey = "cveg.mech.argus"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34149
+    textKey = "cveg.mech.bloodkite"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34157
+    textKey = "cveg.mech.Thanatos"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34158
+    textKey = "cveg.dll.34158"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34159
+    textKey = "cveg.dll.34159"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34162
+    textKey = "cveg.mech.commanders"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34163
+    textKey = "cveg.dll.34163"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34164
+    textKey = "cveg.dll.34164"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34165
+    textKey = "cveg.dll.34165"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34166
+    textKey = "cveg.dll.34166"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34167
+    textKey = "cveg.dll.34167"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34168
+    textKey = "cveg.dll.34168"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34169
+    textKey = "cveg.dll.34169"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34170
+    textKey = "cveg.mech.mobilehq2"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34171
+    textKey = "cveg.dll.34171"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34172
+    textKey = "cveg.dll.34172"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34173
+    textKey = "cveg.dll.34173"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34174
+    textKey = "cveg.dll.34174"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34175
+    textKey = "cveg.dll.34175"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34176
+    textKey = "cveg.mech.thunderstorm"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34177
+    textKey = "cveg.dll.34177"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34178
+    textKey = "cveg.mech.ultraspotter"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34179
+    textKey = "cveg.mech.call4strike"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34180
+    textKey = "cveg.mech.jfbroadsword"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34181
+    textKey = "cveg.dll.34181"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34182
+    textKey = "cveg.dll.34182"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34183
+    textKey = "cveg.mech.thunder"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34184
+    textKey = "cveg.dll.34184"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34185
+    textKey = "cveg.dll.34185"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34186
+    textKey = "cveg.dll.34186"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34187
+    textKey = "cveg.dll.34187"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34188
+    textKey = "cveg.dll.34188"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34189
+    textKey = "cveg.dll.34189"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34190
+    textKey = "cveg.dll.34190"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34191
+    textKey = "cveg.mech.icerunner"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34192
+    textKey = "cveg.mech.shockmaster"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34193
+    textKey = "cveg.dll.34193"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34194
+    textKey = "cveg.mech.alacorn"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34195
+    textKey = "cveg.dll.34195"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34196
+    textKey = "cveg.mech.lightning"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34197
+    textKey = "cveg.mech.trooper"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34198
+    textKey = "cveg.mech.pollux"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34199
+    textKey = "cveg.mech.tantal"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34200
+    textKey = "cveg.dll.34200"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34201
+    textKey = "cveg.dll.34201"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34202
+    textKey = "cveg.dll.34202"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34203
+    textKey = "cveg.dll.34203"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34204
+    textKey = "cveg.dll.34204"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34205
+    textKey = "cveg.dll.34205"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34206
+    textKey = "cveg.dll.34206"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34207
+    textKey = "cveg.dll.34207"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34208
+    textKey = "cveg.dll.34208"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34209
+    textKey = "cveg.dll.34209"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34210
+    textKey = "cveg.dll.34210"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34211
+    textKey = "cveg.mech.slayerhawk"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34212
+    textKey = "cveg.mech.monster"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34213
+    textKey = "cveg.dll.34213"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34214
+    textKey = "cveg.dll.34214"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34215
+    textKey = "cveg.dll.34215"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34216
+    textKey = "cveg.dll.34216"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34217
+    textKey = "cveg.dll.34217"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34218
+    textKey = "cveg.dll.34218"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34219
+    textKey = "cveg.dll.34219"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34220
+    textKey = "cveg.dll.34220"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34221
+    textKey = "cveg.dll.34221"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34222
+    textKey = "cveg.dll.34222"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34223
+    textKey = "cveg.dll.34223"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34224
+    textKey = "cveg.mech.rapier"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34225
+    textKey = "cveg.mech.repairhover"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34226
+    textKey = "cveg.mech.gotha"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34227
+    textKey = "cveg.mech.lucifer"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34228
+    textKey = "cveg.mech.sholagar"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34229
+    textKey = "cveg.mech.centurion1"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34230
+    textKey = "cveg.mech.cougar1"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34231
+    textKey = "cveg.mech.repairxl"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34232
+    textKey = "cveg.mech.valkyrie"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34233
+    textKey = "cveg.dll.34233"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34234
+    textKey = "cveg.mech.iceferret"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34235
+    textKey = "cveg.mech.huntsman"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34236
+    textKey = "cveg.mech.mistlynx"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34237
+    textKey = "cveg.dll.34237"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34238
+    textKey = "cveg.dll.34238"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34239
+    textKey = "cveg.dll.34239"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34240
+    textKey = "cveg.dll.34240"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34241
+    textKey = "cveg.dll.34241"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34242
+    textKey = "cveg.dll.34242"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34243
+    textKey = "cveg.dll.34243"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34244
+    textKey = "cveg.dll.34244"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34245
+    textKey = "cveg.dll.34245"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34246
+    textKey = "cveg.dll.34246"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34247
+    textKey = "cveg.dll.34247"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34248
+    textKey = "cveg.dll.34248"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34249
+    textKey = "cveg.dll.34249"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34250
+    textKey = "cveg.dll.34250"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34251
+    textKey = "cveg.dll.34251"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34252
+    textKey = "cveg.dll.34252"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34253
+    textKey = "cveg.dll.34253"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34254
+    textKey = "cveg.dll.34254"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34255
+    textKey = "cveg.mech.zeusmk2"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34256
+    textKey = "cveg.dll.34256"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34257
+    textKey = "cveg.dll.34257"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34258
+    textKey = "cveg.dll.34258"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34259
+    textKey = "cveg.dll.34259"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34260
+    textKey = "cveg.dll.34260"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34261
+    textKey = "cveg.dll.34261"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34262
+    textKey = "cveg.dll.34262"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34263
+    textKey = "cveg.dll.34263"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34264
+    textKey = "cveg.mech.salamander"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34265
+    textKey = "cveg.mech.supplier"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34266
+    textKey = "cveg.mech.omen"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34267
+    textKey = "cveg.dll.34267"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34268
+    textKey = "cveg.dll.34268"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34269
+    textKey = "cveg.dll.34269"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34270
+    textKey = "cveg.dll.34270"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34271
+    textKey = "cveg.dll.34271"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34272
+    textKey = "cveg.dll.34272"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34273
+    textKey = "cveg.dll.34273"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34274
+    textKey = "cveg.dll.34274"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34275
+    textKey = "cveg.dll.34275"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34276
+    textKey = "cveg.dll.34276"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34277
+    textKey = "cveg.dll.34277"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34278
+    textKey = "cveg.dll.34278"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34279
+    textKey = "cveg.dll.34279"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34280
+    textKey = "cveg.dll.34280"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34281
+    textKey = "cveg.dll.34281"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34282
+    textKey = "cveg.dll.34282"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34283
+    textKey = "cveg.dll.34283"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34284
+    textKey = "cveg.dll.34284"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34285
+    textKey = "cveg.dll.34285"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34286
+    textKey = "cveg.dll.34286"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34287
+    textKey = "cveg.dll.34287"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34288
+    textKey = "cveg.dll.34288"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34289
+    textKey = "cveg.dll.34289"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34290
+    textKey = "cveg.dll.34290"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34291
+    textKey = "cveg.dll.34291"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34292
+    textKey = "cveg.dll.34292"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34293
+    textKey = "cveg.dll.34293"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34294
+    textKey = "cveg.dll.34294"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34295
+    textKey = "cveg.dll.34295"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34296
+    textKey = "cveg.dll.34296"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34297
+    textKey = "cveg.dll.34297"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34298
+    textKey = "cveg.dll.34298"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34299
+    textKey = "cveg.mech.waterwolf"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34300
+    textKey = "cveg.mech.crusader"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34301
+    textKey = "cveg.dll.34301"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34302
+    textKey = "cveg.dll.34302"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34303
+    textKey = "cveg.dll.34303"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34304
+    textKey = "cveg.dll.34304"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34305
+    textKey = "cveg.dll.34305"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34306
+    textKey = "cveg.dll.34306"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34307
+    textKey = "cveg.dll.34307"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34308
+    textKey = "cveg.dll.34308"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34309
+    textKey = "cveg.dll.34309"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34310
+    textKey = "cveg.dll.34310"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34311
+    textKey = "cveg.dll.34311"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34312
+    textKey = "cveg.dll.34312"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34313
+    textKey = "cveg.dll.34313"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34314
+    textKey = "cveg.dll.34314"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34315
+    textKey = "cveg.dll.34315"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34316
+    textKey = "cveg.dll.34316"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34317
+    textKey = "cveg.dll.34317"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34318
+    textKey = "cveg.dll.34318"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34319
+    textKey = "cveg.dll.34319"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34320
+    textKey = "cveg.dll.34320"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34321
+    textKey = "cveg.dll.34321"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34322
+    textKey = "cveg.dll.34322"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34323
+    textKey = "cveg.dll.34323"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34324
+    textKey = "cveg.dll.34324"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34325
+    textKey = "cveg.dll.34325"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34326
+    textKey = "cveg.dll.34326"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34327
+    textKey = "cveg.dll.34327"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34328
+    textKey = "cveg.dll.34328"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34329
+    textKey = "cveg.mech.maddog"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34330
+    textKey = "cveg.dll.34330"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34331
+    textKey = "cveg.dll.34331"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34332
+    textKey = "cveg.dll.34332"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34333
+    textKey = "cveg.dll.34333"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34334
+    textKey = "cveg.dll.34334"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34335
+    textKey = "cveg.dll.34335"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34336
+    textKey = "cveg.mech.prisoner"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34337
+    textKey = "cveg.mech.crab"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34338
+    textKey = "cveg.mech.stalker"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34339
+    textKey = "cveg.mech.Firefly"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34340
+    textKey = "cveg.mech.humvee"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34341
+    textKey = "cveg.mech.wheeldozer"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34342
+    textKey = "cveg.mech.acv"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34343
+    textKey = "cveg.dll.34343"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34344
+    textKey = "cveg.dll.34344"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34345
+    textKey = "cveg.dll.34345"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34346
+    textKey = "cveg.dll.34346"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34347
+    textKey = "cveg.dll.34347"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34348
+    textKey = "cveg.dll.34348"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34349
+    textKey = "cveg.dll.34349"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34350
+    textKey = "cveg.dll.34350"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34351
+    textKey = "cveg.dll.34351"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34352
+    textKey = "cveg.dll.34352"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34353
+    textKey = "cveg.dll.34353"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34354
+    textKey = "cveg.dll.34354"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34355
+    textKey = "cveg.dll.34355"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34356
+    textKey = "cveg.dll.34356"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34357
+    textKey = "cveg.dll.34357"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34358
+    textKey = "cveg.dll.34358"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34359
+    textKey = "cveg.dll.34359"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34360
+    textKey = "cveg.dll.34360"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34361
+    textKey = "cveg.dll.34361"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34362
+    textKey = "cveg.dll.34362"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34363
+    textKey = "cveg.dll.34363"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34364
+    textKey = "cveg.dll.34364"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34365
+    textKey = "cveg.dll.34365"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34366
+    textKey = "cveg.dll.34366"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34367
+    textKey = "cveg.dll.34367"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34368
+    textKey = "cveg.dll.34368"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34369
+    textKey = "cveg.dll.34369"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34370
+    textKey = "cveg.mech.mbcb"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34371
+    textKey = "cveg.dll.34371"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34372
+    textKey = "cveg.dll.34372"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34373
+    textKey = "cveg.mech.coroner"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34374
+    textKey = "cveg.mech.noris"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34375
+    textKey = "cveg.dll.34375"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34376
+    textKey = "cveg.dll.34376"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34377
+    textKey = "cveg.mech.drone"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34378
+    textKey = "cveg.dll.34378"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34379
+    textKey = "cveg.dll.34379"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34380
+    textKey = "cveg.dll.34380"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34381
+    textKey = "cveg.dll.34381"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34382
+    textKey = "cveg.dll.34382"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34383
+    textKey = "cveg.dll.34383"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34384
+    textKey = "cveg.dll.34384"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34385
+    textKey = "cveg.dll.34385"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34386
+    textKey = "cveg.dll.34386"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34387
+    textKey = "cveg.dll.34387"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34388
+    textKey = "cveg.dll.34388"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34389
+    textKey = "cveg.dll.34389"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34390
+    textKey = "cveg.dll.34390"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34391
+    textKey = "cveg.dll.34391"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34392
+    textKey = "cveg.dll.34392"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34393
+    textKey = "cveg.dll.34393"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34394
+    textKey = "cveg.dll.34394"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34395
+    textKey = "cveg.dll.34395"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34396
+    textKey = "cveg.dll.34396"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34397
+    textKey = "cveg.dll.34397"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34398
+    textKey = "cveg.dll.34398"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34399
+    textKey = "cveg.mech.hades"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34400
+    textKey = "cveg.dll.34400"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34401
+    textKey = "cveg.dll.34401"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34402
+    textKey = "cveg.dll.34402"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34403
+    textKey = "cveg.mech.darkfield"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34404
+    textKey = "cveg.dll.34404"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34405
+    textKey = "cveg.dll.34405"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34406
+    textKey = "cveg.dll.34406"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34407
+    textKey = "cveg.mech.firewraith"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34408
+    textKey = "cveg.mech.gladiator"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34409
+    textKey = "cveg.mech.champio2"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34410
+    textKey = "cveg.dll.34410"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34411
+    textKey = "cveg.dll.34411"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34412
+    textKey = "cveg.mech.assaultcopter"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34413
+    textKey = "cveg.mech.supplycopter"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34414
+    textKey = "cveg.mech.vtol2"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34415
+    textKey = "cveg.dll.34415"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34416
+    textKey = "cveg.pilot.pmwthunder"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34417
+    textKey = "cveg.pilot.pmwoutlaw"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34418
+    textKey = "cveg.pilot.pmwrebel"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34419
+    textKey = "cveg.pilot.pmwspice"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34420
+    textKey = "cveg.pilot.pmwgator"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34421
+    textKey = "cveg.pilot.pmwfirestorm"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34422
+    textKey = "cveg.pilot.pmwhunter"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34423
+    textKey = "cveg.pilot.pmwdragon"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34424
+    textKey = "cveg.pilot.pmwhawk"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34425
+    textKey = "cveg.dll.34425"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34426
+    textKey = "cveg.dll.34426"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34427
+    textKey = "cveg.dll.34427"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34428
+    textKey = "cveg.mech.suicider"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34429
+    textKey = "cveg.dll.34429"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34430
+    textKey = "cveg.dll.34430"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34431
+    textKey = "cveg.dll.34431"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34432
+    textKey = "cveg.dll.34432"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34433
+    textKey = "cveg.dll.34433"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34434
+    textKey = "cveg.dll.34434"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34435
+    textKey = "cveg.dll.34435"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34436
+    textKey = "cveg.dll.34436"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34437
+    textKey = "cveg.dll.34437"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34438
+    textKey = "cveg.dll.34438"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34439
+    textKey = "cveg.dll.34439"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34440
+    textKey = "cveg.dll.34440"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34441
+    textKey = "cveg.dll.34441"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34442
+    textKey = "cveg.dll.34442"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34443
+    textKey = "cveg.mech.stinger"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34444
+    textKey = "cveg.mech.quickdraw"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34445
+    textKey = "cveg.mech.dervish"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34446
+    textKey = "cveg.mech.vindicator"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34447
+    textKey = "cveg.mech.undertaker"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34448
+    textKey = "cveg.dll.34448"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34449
+    textKey = "cveg.dll.34449"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34450
+    textKey = "cveg.dll.34450"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34451
+    textKey = "cveg.pilot.pmwbaron"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34452
+    textKey = "cveg.pilot.pmwbeast"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34453
+    textKey = "cveg.pilot.pmwblaze"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34454
+    textKey = "cveg.pilot.pmwburnout"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34455
+    textKey = "cveg.pilot.pmwcountess"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34456
+    textKey = "cveg.pilot.pmwfalcon"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34457
+    textKey = "cveg.pilot.pmwfiend"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34458
+    textKey = "cveg.pilot.pmwgoblin"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34459
+    textKey = "cveg.pilot.pmwgunman"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34460
+    textKey = "cveg.pilot.pmwhitman"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34461
+    textKey = "cveg.pilot.pmwisis"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34462
+    textKey = "cveg.pilot.pmwvixen"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34463
+    textKey = "cveg.pilot.pmwsiren"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34464
+    textKey = "cveg.pilot.pmwscarab"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34465
+    textKey = "cveg.pilot.pmwronin"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34466
+    textKey = "cveg.pilot.pmwmystique"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34467
+    textKey = "cveg.pilot.pmwmantis"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34468
+    textKey = "cveg.pilot.pmwlynx"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34469
+    textKey = "cveg.pilot.pmwpaingod"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34470
+    textKey = "cveg.mech.archer2"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34471
+    textKey = "cveg.dll.34471"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34472
+    textKey = "cveg.mech.fortress"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34473
+    textKey = "cveg.dll.34473"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34474
+    textKey = "cveg.dll.34474"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34475
+    textKey = "cveg.dll.34475"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34476
+    textKey = "cveg.dll.34476"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34477
+    textKey = "cveg.dll.34477"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34478
+    textKey = "cveg.dll.34478"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34479
+    textKey = "cveg.dll.34479"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34480
+    textKey = "cveg.dll.34480"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34481
+    textKey = "cveg.pilot.pmwsupply"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34482
+    textKey = "cveg.mech.furor"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34483
+    textKey = "cveg.mech.viking"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34484
+    textKey = "cveg.mech.omega"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34485
+    textKey = "cveg.mech.kraken"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34486
+    textKey = "cveg.mech.hgt"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34487
+    textKey = "cveg.mech.osiris"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34488
+    textKey = "cveg.mech.supernova"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34489
+    textKey = "cveg.dll.34489"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34490
+    textKey = "cveg.dll.34490"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34491
+    textKey = "cveg.pilot.pmwstrato"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34492
+    textKey = "cveg.pilot.pmwflame"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34493
+    textKey = "cveg.pilot.pmwjoker"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34494
+    textKey = "cveg.dll.34494"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34495
+    textKey = "cveg.dll.34495"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34496
+    textKey = "cveg.dll.34496"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34497
+    textKey = "cveg.dll.34497"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34498
+    textKey = "cveg.pilot.pmwmeathead"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34499
+    textKey = "cveg.dll.34499"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34500
+    textKey = "cveg.dll.34500"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34501
+    textKey = "cveg.dll.34501"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34502
+    textKey = "cveg.dll.34502"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34503
+    textKey = "cveg.dll.34503"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34504
+    textKey = "cveg.mech.jamfly"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34505
+    textKey = "cveg.pilot.pmwcarrier"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34506
+    textKey = "cveg.dll.34506"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34507
+    textKey = "cveg.dll.34507"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34508
+    textKey = "cveg.pilot.pmwlander"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34509
+    textKey = "cveg.pilot.pmwhumvee"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 34510
+    textKey = "cveg.pilot.pmwstinger"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 40054
+    textKey = "cveg.dll.40054"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 40055
+    textKey = "cveg.dll.40055"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 41053
+    textKey = "cveg.dll.41053"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 42036
+    textKey = "cveg.pilot.pmworeilly"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 42037
+    textKey = "cveg.pilot.pmwmiao"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 42038
+    textKey = "cveg.pilot.pmwgordon"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 42039
+    textKey = "cveg.pilot.pmwzac"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 42040
+    textKey = "cveg.pilot.pmwfuria"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 42041
+    textKey = "cveg.pilot.pmwmarceror"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 42042
+    textKey = "cveg.pilot.pmwacp"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 42043
+    textKey = "cveg.pilot.pmwacp518"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 42044
+    textKey = "cveg.pilot.pmwacp856"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 42045
+    textKey = "cveg.pilot.pmwacp442"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 42046
+    textKey = "cveg.pilot.pmwacp319"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 42047
+    textKey = "cveg.pilot.pmwacp291"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 42048
+    textKey = "cveg.pilot.pmwdefector"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 42049
+    textKey = "cveg.pilot.pmwconfederate"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 42050
+    textKey = "cveg.pilot.pmwdummy"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 42051
+    textKey = "cveg.pilot.pmwclick"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 43252
+    textKey = "cveg.dll.43252"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 43253
+    textKey = "cveg.dll.43253"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 43254
+    textKey = "cveg.dll.43254"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 43255
+    textKey = "cveg.dll.43255"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 44002
+    textKey = "cveg.dll.44002"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 44003
+    textKey = "cveg.dll.44003"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 45061
+    textKey = "cveg.pilot.pmwrescue"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 45062
+    textKey = "cveg.dll.45062"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 45063
+    textKey = "cveg.pilot.pmwtransport"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 45175
+    textKey = "cveg.dll.45175"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 45176
+    textKey = "cveg.dll.45176"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 45177
+    textKey = "cveg.dll.45177"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 45178
+    textKey = "cveg.dll.45178"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 45179
+    textKey = "cveg.dll.45179"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 45180
+    textKey = "cveg.dll.45180"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 45181
+    textKey = "cveg.dll.45181"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 45182
+    textKey = "cveg.dll.45182"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 45392
+    textKey = "cveg.dll.45392"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 45393
+    textKey = "cveg.dll.45393"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 45394
+    textKey = "cveg.dll.45394"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 45395
+    textKey = "cveg.dll.45395"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 45396
+    textKey = "cveg.dll.45396"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 45397
+    textKey = "cveg.dll.45397"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 45436
+    textKey = "cveg.dll.45436"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 45437
+    textKey = "cveg.dll.45437"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 45438
+    textKey = "cveg.dll.45438"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 45439
+    textKey = "cveg.dll.45439"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 45440
+    textKey = "cveg.dll.45440"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 45441
+    textKey = "cveg.dll.45441"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 45442
+    textKey = "cveg.dll.45442"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 45443
+    textKey = "cveg.dll.45443"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46255
+    textKey = "cveg.dll.46255"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46257
+    textKey = "cveg.dll.46257"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46258
+    textKey = "cveg.dll.46258"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46259
+    textKey = "cveg.dll.46259"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46260
+    textKey = "cveg.dll.46260"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46261
+    textKey = "cveg.dll.46261"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46262
+    textKey = "cveg.dll.46262"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46263
+    textKey = "cveg.dll.46263"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46264
+    textKey = "cveg.dll.46264"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46265
+    textKey = "cveg.dll.46265"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46266
+    textKey = "cveg.dll.46266"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46267
+    textKey = "cveg.dll.46267"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46268
+    textKey = "cveg.dll.46268"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46269
+    textKey = "cveg.dll.46269"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46270
+    textKey = "cveg.dll.46270"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46271
+    textKey = "cveg.dll.46271"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46272
+    textKey = "cveg.dll.46272"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46273
+    textKey = "cveg.dll.46273"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46274
+    textKey = "cveg.dll.46274"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46275
+    textKey = "cveg.dll.46275"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46276
+    textKey = "cveg.dll.46276"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46277
+    textKey = "cveg.dll.46277"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46278
+    textKey = "cveg.dll.46278"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46279
+    textKey = "cveg.dll.46279"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46280
+    textKey = "cveg.dll.46280"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46281
+    textKey = "cveg.dll.46281"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46282
+    textKey = "cveg.dll.46282"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46283
+    textKey = "cveg.dll.46283"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46284
+    textKey = "cveg.dll.46284"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46285
+    textKey = "cveg.dll.46285"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46286
+    textKey = "cveg.dll.46286"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46287
+    textKey = "cveg.dll.46287"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46288
+    textKey = "cveg.dll.46288"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46289
+    textKey = "cveg.dll.46289"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46290
+    textKey = "cveg.dll.46290"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46291
+    textKey = "cveg.dll.46291"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46292
+    textKey = "cveg.dll.46292"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46293
+    textKey = "cveg.dll.46293"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46294
+    textKey = "cveg.dll.46294"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46295
+    textKey = "cveg.dll.46295"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46296
+    textKey = "cveg.dll.46296"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 46300
+    textKey = "cveg.dll.46300"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 51056
+    textKey = "cveg.dll.51056"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 51057
+    textKey = "cveg.dll.51057"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 51058
+    textKey = "cveg.dll.51058"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 51059
+    textKey = "cveg.dll.51059"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 51060
+    textKey = "cveg.dll.51060"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 51061
+    textKey = "cveg.dll.51061"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 51062
+    textKey = "cveg.dll.51062"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 51063
+    textKey = "cveg.dll.51063"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 51064
+    textKey = "cveg.dll.51064"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 51065
+    textKey = "cveg.dll.51065"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 51066
+    textKey = "cveg.dll.51066"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 51067
+    textKey = "cveg.dll.51067"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 51068
+    textKey = "cveg.dll.51068"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 57050
+    textKey = "cveg.dll.57050"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 60050
+    textKey = "cveg.dll.60050"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 60051
+    textKey = "cveg.dll.60051"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 60052
+    textKey = "cveg.dll.60052"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 60053
+    textKey = "cveg.dll.60053"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 60054
+    textKey = "cveg.dll.60054"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 60056
+    textKey = "cveg.dll.60056"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 60057
+    textKey = "cveg.dll.60057"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 60058
+    textKey = "cveg.dll.60058"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 60059
+    textKey = "cveg.pilot.pmwdrone"
+    source = "cveg"
+}
+
+LegacyTextAlias {
+    legacyId = 60060
+    textKey = "cveg.dll.60060"
+    source = "cveg"
+}

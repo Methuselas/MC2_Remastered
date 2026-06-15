@@ -1,0 +1,3 @@
+# Shim files are byte-exact compat assets (ABL/INI/TGA/FIT) -- never normalize line endings.
+shims/** -text
+*.fit -text

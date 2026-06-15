@@ -1,0 +1,14 @@
+// nop.abl -- no-operation warrior stub
+// Used as a placeholder when a warrior slot has no script.
+
+fsm nop;
+
+	var
+
+	state start;
+
+		code
+
+	endstate;
+
+endfsm.
