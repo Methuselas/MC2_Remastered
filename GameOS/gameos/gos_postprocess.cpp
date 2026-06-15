@@ -18,7 +18,46 @@
 #include <cstring>
 #include <cmath>
 #include <vector>
+#include <cstdlib>
 #include <SDL2/SDL.h>
+
+// === Item 1: Cascaded Shadow Maps gate (dynamic shadow path) ==============
+// MC2_SHADOW_CSM  : master gate, DEFAULT OFF. OFF => legacy single dynamic
+//                   map path is byte-identical (none of the CSM code runs).
+// MC2_SHADOW_CSM_COUNT  : cascade count, default 2, clamp [1,3].
+// MC2_SHADOW_CSM_LAMBDA : log/uniform split blend, default 0.5, clamp [0,1].
+bool mc2ShadowCsmEnabled()
+{
+    static const bool s_on = []() {
+        const char* v = getenv("MC2_SHADOW_CSM");
+        return (v && v[0] == '1' && v[1] == '\0');   // DEFAULT OFF; only "1" enables
+    }();
+    return s_on;
+}
+
+int mc2ShadowCsmCount()
+{
+    static const int s_n = []() {
+        const char* v = getenv("MC2_SHADOW_CSM_COUNT");
+        int n = (v && v[0]) ? atoi(v) : 2;
+        if (n < 1) n = 1;
+        if (n > 3) n = 3;
+        return n;
+    }();
+    return s_n;
+}
+
+float mc2ShadowCsmLambda()
+{
+    static const float s_l = []() {
+        const char* v = getenv("MC2_SHADOW_CSM_LAMBDA");
+        float l = (v && v[0]) ? (float)atof(v) : 0.5f;
+        if (l < 0.0f) l = 0.0f;
+        if (l > 1.0f) l = 1.0f;
+        return l;
+    }();
+    return s_l;
+}
 
 namespace {
 
@@ -159,6 +198,12 @@ gosPostProcess::gosPostProcess()
     , dynShadowDummyColorTex_(0)
     , dynShadowMapSize_(2048)
     , shadowDebugProg_(nullptr)
+    , dynShadowArrayFBO_(0)
+    , dynShadowArrayDummyColorTex_(0)
+    , dynShadowArrayTex_(0)
+    , csmCount_(0)
+    , csmActiveCascade_(-1)
+    , csmDebugLayer_(0)
     , screenShadowProg_(nullptr)
     , screenShadowEnabled_(true)
     , screenShadowDebug_(0)
@@ -181,6 +226,7 @@ gosPostProcess::gosPostProcess()
     bloomColorTex_[0] = bloomColorTex_[1] = 0;
     memset(staticLightSpaceMatrix_, 0, sizeof(staticLightSpaceMatrix_));
     memset(dynamicLightSpaceMatrix_, 0, sizeof(dynamicLightSpaceMatrix_));
+    memset(dynamicCascadeMatrices_, 0, sizeof(dynamicCascadeMatrices_));
     memset(savedViewport_, 0, sizeof(savedViewport_));
     memset(inverseViewProj_, 0, sizeof(inverseViewProj_));
     memset(viewProj_, 0, sizeof(viewProj_));
@@ -245,7 +291,9 @@ void gosPostProcess::init(int w, int h)
 
         if (hdriEnabled_) {
             const char* hdrPath = "data/hdr/DaySkyHDRI063B_4K.exr";
-            hdriTex_ = loadHdriTexture(hdrPath);  // logs failures internally
+            // Item 2: also scan for the baked sun azimuth (read-only; used only
+            // when sun-sync is enabled at draw time).
+            hdriTex_ = loadHdriTexture(hdrPath, &hdriBakedSunAz_, &hdriBakedSunValid_);  // logs failures internally
 
             hdriSkyboxProg_ = glsl_program::makeProgram(
                 "hdri_skybox",
@@ -316,13 +364,27 @@ void gosPostProcess::init(int w, int h)
     if (!bloomBlurProg_ || !bloomBlurProg_->is_valid())
         fprintf(stderr, "gosPostProcess: failed to compile bloom_blur shader\n");
 
+    // Item 1 P5: inject MC2_SHADOW_CSM so the debug blit can sample an array layer.
+    std::string shadowDebugPrefix = "#version 430\n";
+    if (mc2ShadowCsmEnabled())
+        shadowDebugPrefix += "#define MC2_SHADOW_CSM 1\n";
     shadowDebugProg_ = glsl_program::makeProgram("shadow_debug",
-        "shaders/postprocess.vert", "shaders/shadow_debug.frag", kShaderPrefix);
+        "shaders/postprocess.vert", "shaders/shadow_debug.frag", shadowDebugPrefix.c_str());
     if (!shadowDebugProg_ || !shadowDebugProg_->is_valid())
         fprintf(stderr, "gosPostProcess: failed to compile shadow_debug shader\n");
 
+    // Item 1: shadow_screen.frag #includes shadow.hglsl -> inject MC2_SHADOW_CSM
+    // when ON so it compiles the array-sampler dynamic-shadow variant.
+    std::string screenShadowPrefix = "#version 430\n";
+    if (mc2ShadowCsmEnabled()) {
+        char csmDef[64];
+        snprintf(csmDef, sizeof(csmDef),
+                 "#define MC2_SHADOW_CSM 1\n#define MC2_SHADOW_CSM_MAX %d\n",
+                 mc2ShadowCsmCount());
+        screenShadowPrefix += csmDef;
+    }
     screenShadowProg_ = glsl_program::makeProgram("shadow_screen",
-        "shaders/postprocess.vert", "shaders/shadow_screen.frag", kShaderPrefix);
+        "shaders/postprocess.vert", "shaders/shadow_screen.frag", screenShadowPrefix.c_str());
     if (!screenShadowProg_ || !screenShadowProg_->is_valid())
         fprintf(stderr, "gosPostProcess: failed to compile shadow_screen shader\n");
 
@@ -1623,13 +1685,20 @@ void gosPostProcess::runScreenShadow()
     }
 
     // Set uniforms BEFORE apply()
+    const bool csmActive = (mc2ShadowCsmEnabled() && dynShadowArrayTex_ != 0);
     screenShadowProg_->setInt("sceneDepthTex", 0);
     screenShadowProg_->setInt("sceneNormalTex", 1);
     screenShadowProg_->setInt("shadowMap", 2);
-    screenShadowProg_->setInt("dynamicShadowMap", 3);
+    if (csmActive)
+        screenShadowProg_->setInt("dynamicShadowArray", 3);
+    else
+        screenShadowProg_->setInt("dynamicShadowMap", 3);
     screenShadowProg_->setInt("overlayPass", 0);
     screenShadowProg_->setInt("enableShadows", shadowsEnabled_ ? 1 : 0);
-    screenShadowProg_->setInt("enableDynamicShadows", (dynShadowDepthTex_ != 0) ? 1 : 0);
+    screenShadowProg_->setInt("enableDynamicShadows",
+                              (csmActive || dynShadowDepthTex_ != 0) ? 1 : 0);
+    if (csmActive)
+        screenShadowProg_->setInt("dynamicCsmCount", csmCount_);
     screenShadowProg_->setFloat("shadowSoftness", 0.9f);  // match terrain default
     screenShadowProg_->setInt("debugMode", screenShadowDebug_);
     float screenSz[2] = { (float)width_, (float)height_ };
@@ -1645,8 +1714,13 @@ void gosPostProcess::runScreenShadow()
     if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_FALSE, inverseViewProj_);
     loc = glGetUniformLocation(screenShadowProg_->shp_, "lightSpaceMatrix");
     if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_FALSE, staticLightSpaceMatrix_);
-    loc = glGetUniformLocation(screenShadowProg_->shp_, "dynamicLightSpaceMatrix");
-    if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_FALSE, dynamicLightSpaceMatrix_);
+    if (csmActive) {
+        loc = glGetUniformLocation(screenShadowProg_->shp_, "dynamicCascadeMatrices");
+        if (loc >= 0) glUniformMatrix4fv(loc, csmCount_, GL_FALSE, dynamicCascadeMatrices_);
+    } else {
+        loc = glGetUniformLocation(screenShadowProg_->shp_, "dynamicLightSpaceMatrix");
+        if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_FALSE, dynamicLightSpaceMatrix_);
+    }
 
     // Bind textures
     glActiveTexture(GL_TEXTURE0);
@@ -1656,7 +1730,10 @@ void gosPostProcess::runScreenShadow()
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, shadowDepthTex_);
     glActiveTexture(GL_TEXTURE3);
-    glBindTexture(GL_TEXTURE_2D, dynShadowDepthTex_);
+    if (csmActive)
+        glBindTexture(GL_TEXTURE_2D_ARRAY, dynShadowArrayTex_);
+    else
+        glBindTexture(GL_TEXTURE_2D, dynShadowDepthTex_);
 
     // Draw fullscreen quad — pass 1: normal (skip terrain)
     // Draw fullscreen quad - single pass for terrain, objects, and overlays.
@@ -1951,7 +2028,13 @@ void gosPostProcess::drawShadowDebugOverlay()
     if (!initialized_)
         return;
 
-    GLuint tex = (shadowDebugMode_ == 0) ? shadowDepthTex_ : dynShadowDepthTex_;
+    // Item 1 P5: when CSM is active AND we're inspecting the dynamic map
+    // (mode 1), the dynamic shadow is a GL_TEXTURE_2D_ARRAY -> sample a layer
+    // (csmDebugLayer_) via the array sampler. Static map (mode 0) stays 2D.
+    const bool csmDynamic = (mc2ShadowCsmEnabled() && dynShadowArrayTex_ != 0 && shadowDebugMode_ != 0);
+    const GLenum texTarget = csmDynamic ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
+    GLuint tex = csmDynamic ? dynShadowArrayTex_
+                            : ((shadowDebugMode_ == 0) ? shadowDepthTex_ : dynShadowDepthTex_);
     if (!tex)
         return;
 
@@ -1966,22 +2049,32 @@ void gosPostProcess::drawShadowDebugOverlay()
     glDepthMask(GL_FALSE);
 
     // Temporarily switch shadow texture from comparison mode to raw depth read
-    glBindTexture(GL_TEXTURE_2D, tex);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);
+    glBindTexture(texTarget, tex);
+    glTexParameteri(texTarget, GL_TEXTURE_COMPARE_MODE, GL_NONE);
 
     shadowDebugProg_->setInt("shadowDebugMap", 0);
+    if (mc2ShadowCsmEnabled()) {
+        shadowDebugProg_->setInt("shadowDebugUseArray", csmDynamic ? 1 : 0);
+        if (csmDynamic) {
+            shadowDebugProg_->setInt("shadowDebugArray", 0);
+            int layer = csmDebugLayer_;
+            if (layer < 0) layer = 0;
+            if (layer >= csmCount_) layer = csmCount_ - 1;
+            shadowDebugProg_->setInt("shadowDebugLayer", layer);
+        }
+    }
     shadowDebugProg_->apply();
 
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, tex);
+    glBindTexture(texTarget, tex);
 
     glBindVertexArray(quadVAO_);
     glDrawArrays(GL_TRIANGLES, 0, 6);
     glBindVertexArray(0);
 
     // CRITICAL: restore comparison mode so PCF sampling works next frame
-    glBindTexture(GL_TEXTURE_2D, tex);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+    glBindTexture(texTarget, tex);
+    glTexParameteri(texTarget, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
 
     glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
     glDepthMask(GL_TRUE);
@@ -2097,10 +2190,107 @@ void gosPostProcess::renderHdriSkybox(const float* viewMat, const float* projMat
     glDisable(GL_BLEND);
     glDisable(GL_CULL_FACE);
 
+    // --- Item 2 sub-flag resolution (env read once; all default to the
+    //     byte-identical baseline). ---
+    // MC2_HDRI_SKY_UV_DEBUG : worldDir-gradient diagnostic instead of sample.
+    // MC2_HDRI_SKY_AZ_OFFSET: degrees trim added to the sky yaw.
+    // MC2_HDRI_SKY_STATE_PROBE: GL-state save/restore self-check.
+    // The sun-sync rotation is only applied when the AZ offset is set OR the
+    // baked-sun scan succeeded AND a non-zero offset/sync makes skyYaw != 0;
+    // when skyYaw resolves to exactly 0.0 the frag path is byte-identical.
+    static const int   s_uvDebug = []() {
+        const char* e = getenv("MC2_HDRI_SKY_UV_DEBUG");
+        return (e && e[0] != '0') ? 1 : 0;
+    }();
+    // MC2_HDRI_SKY_FRAME_FIX: when set (any non-"0" value), applies the
+    // kAxisSwapMC2toGL conversion to worldDir in the frag shader before equirect
+    // lookup.  Default OFF => frameFix=0 => byte-identical baseline.
+    static const int   s_frameFix = []() {
+        const char* e = getenv("MC2_HDRI_SKY_FRAME_FIX");
+        return (e && e[0] != '0') ? 1 : 0;
+    }();
+    static const bool  s_azOffsetSet = (getenv("MC2_HDRI_SKY_AZ_OFFSET") != nullptr);
+    static const float s_azOffsetRad = []() {
+        const char* e = getenv("MC2_HDRI_SKY_AZ_OFFSET");
+        return e ? (float)(atof(e) * 3.14159265358979323846 / 180.0) : 0.0f;
+    }();
+    static const bool  s_stateProbe = (getenv("MC2_HDRI_SKY_STATE_PROBE") != nullptr);
+
+    // Compute skyYaw. Default (no offset env set) => 0.0 => byte-identical.
+    // When the offset env is present we activate sun-sync: align the baked sun
+    // azimuth to the mission sun azimuth (both in the GL-equirect frame) and
+    // add the trim offset. The whole rotation is gated on s_azOffsetSet so the
+    // default launch is unchanged.
+    float skyYaw = 0.0f;
+    if (s_azOffsetSet) {
+        float sunSyncYaw = 0.0f;
+        if (hdriBakedSunValid_) {
+            // Mission sun in RAW MC2 (x=east, y=north, z=elevation, Z-up).
+            float lx = 0.0f, ly = 0.0f, lz = 0.0f;
+            gos_GetTerrainLightDir(&lx, &ly, &lz);
+            // Convert to the SAME GL-equirect frame the baked-sun scan used.
+            // kAxisSwapMC2toGL: GL.x = -MC2.x, GL.y = MC2.z(elev), GL.z = MC2.y(north).
+            // Equirect azimuth = atan(worldDir.z, worldDir.x) = atan(GL.z, GL.x)
+            //                  = atan2(MC2.north, -MC2.east) = atan2(ly, -lx).
+            // (Not a guessed sign: -lx and +ly come directly from the swap
+            //  literal in mclib/camera.cpp makeAxisSwapMC2toGL.)
+            const float sunAzGL = atan2f(ly, -lx);
+            // frag rotates worldDir by +skyYaw about +Y before atan(z,x), which
+            // SUBTRACTS skyYaw from the recovered azimuth. To move the baked sun
+            // (hdriBakedSunAz_) onto the mission sun (sunAzGL) we need
+            //   bakedAz - skyYaw == sunAzGL  ->  skyYaw = bakedAz - sunAzGL.
+            sunSyncYaw = hdriBakedSunAz_ - sunAzGL;
+        }
+        skyYaw = sunSyncYaw + s_azOffsetRad;
+    }
+
+    // --- Item 2 / Phase 1: one-shot screen-center worldDir log. ---
+    // Reconstruct the center-pixel direction CPU-side from the same matrices the
+    // frag uses (vNdc = (0,0) at screen center), so the log is independent of
+    // whether the gradient draw is visible.
+    if (s_uvDebug) {
+        static bool s_loggedCenter = false;
+        if (!s_loggedCenter) {
+            s_loggedCenter = true;
+            // viewDir = invProj * (0,0,1,1); worldDir = invViewRot * viewDir.
+            float vd[3] = {
+                invProjArray[8] + invProjArray[12],   // col2.x + col3.x
+                invProjArray[9] + invProjArray[13],   // col2.y + col3.y
+                invProjArray[10] + invProjArray[14],  // col2.z + col3.z
+            };
+            // invViewRot is column-major 3x3 (cols are the rows of viewMat 3x3).
+            float wd[3] = {
+                invViewRot[0]*vd[0] + invViewRot[3]*vd[1] + invViewRot[6]*vd[2],
+                invViewRot[1]*vd[0] + invViewRot[4]*vd[1] + invViewRot[7]*vd[2],
+                invViewRot[2]*vd[0] + invViewRot[5]*vd[1] + invViewRot[8]*vd[2],
+            };
+            float len = std::sqrt(wd[0]*wd[0] + wd[1]*wd[1] + wd[2]*wd[2]);
+            if (len > 0.0f) { wd[0]/=len; wd[1]/=len; wd[2]/=len; }
+            std::fprintf(stderr,
+                "[HDRI_SKY v1] uv_debug center_worldDir=(%.3f,%.3f,%.3f) "
+                "bakedSunValid=%d bakedSunAz=%.4f skyYaw=%.4f\n",
+                wd[0], wd[1], wd[2], hdriBakedSunValid_ ? 1 : 0,
+                hdriBakedSunAz_, skyYaw);
+            std::fflush(stderr);
+        }
+    }
+
+    // --- Phase 3: snapshot GL state pre-draw for the probe. ---
+    GLint probeFbo = 0, probeDrawBuf0 = 0;
+    GLboolean probeMask0[4] = { GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE };
+    if (s_stateProbe) {
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &probeFbo);
+        glGetIntegerv(GL_DRAW_BUFFER0, &probeDrawBuf0);
+        glGetBooleani_v(GL_COLOR_WRITEMASK, 0, probeMask0);
+    }
+
     // Bind shader + uniforms + texture.
     hdriSkyboxProg_->apply();
     hdriSkyboxProg_->setMat4("invProj", invProjArray);
     hdriSkyboxProg_->setMat3("invViewRot", invViewRot);
+    hdriSkyboxProg_->setInt("uvDebug", s_uvDebug);
+    hdriSkyboxProg_->setFloat("skyYaw", skyYaw);
+    hdriSkyboxProg_->setInt("frameFix", s_frameFix);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, hdriTex_);
     hdriSkyboxProg_->setInt("u_hdri", 0);
@@ -2131,8 +2321,428 @@ void gosPostProcess::renderHdriSkybox(const float* viewMat, const float* projMat
     if (prevBlend)     glEnable(GL_BLEND);      else glDisable(GL_BLEND);
     if (prevCull)      glEnable(GL_CULL_FACE);  else glDisable(GL_CULL_FACE);
 
+    // --- Phase 3: GL-state probe (read-only; never calls glDrawBuffers). ---
+    // After the restore block above, every piece of state we touched must match
+    // what we saved. Logs any mismatch; does not mutate state.
+    if (s_stateProbe) {
+        GLboolean curDepthMask = GL_TRUE;
+        glGetBooleanv(GL_DEPTH_WRITEMASK, &curDepthMask);
+        const GLboolean curDepthTest = glIsEnabled(GL_DEPTH_TEST);
+        const GLboolean curBlend     = glIsEnabled(GL_BLEND);
+        const GLboolean curCull      = glIsEnabled(GL_CULL_FACE);
+        GLint curFbo = 0, curDrawBuf0 = 0;
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &curFbo);
+        glGetIntegerv(GL_DRAW_BUFFER0, &curDrawBuf0);
+        GLboolean curMask0[4] = { GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE };
+        glGetBooleani_v(GL_COLOR_WRITEMASK, 0, curMask0);
+
+        int mismatch = 0;
+        if (curDepthMask != prevDepthMask) mismatch |= 1;
+        if (curDepthTest != prevDepthTest) mismatch |= 2;
+        if (curBlend     != prevBlend)     mismatch |= 4;
+        if (curCull      != prevCull)      mismatch |= 8;
+        if (curFbo       != probeFbo)      mismatch |= 16;
+        if (curDrawBuf0  != probeDrawBuf0) mismatch |= 32;
+        for (int k = 0; k < 4; ++k)
+            if (curMask0[k] != probeMask0[k]) mismatch |= 64;
+
+        if (mismatch != 0) {
+            std::fprintf(stderr,
+                "[HDRI_SKY v1] state_probe MISMATCH bits=0x%02x "
+                "depthMask(%d->%d) depthTest(%d->%d) blend(%d->%d) cull(%d->%d) "
+                "fbo(%d->%d) drawBuf0(0x%x->0x%x) "
+                "mask0(%d%d%d%d->%d%d%d%d)\n",
+                mismatch,
+                prevDepthMask, curDepthMask, prevDepthTest, curDepthTest,
+                prevBlend, curBlend, prevCull, curCull,
+                probeFbo, curFbo, probeDrawBuf0, curDrawBuf0,
+                probeMask0[0], probeMask0[1], probeMask0[2], probeMask0[3],
+                curMask0[0], curMask0[1], curMask0[2], curMask0[3]);
+        } else {
+            std::fprintf(stderr, "[HDRI_SKY v1] state_probe ok\n");
+        }
+        std::fflush(stderr);
+    }
+
     // Note: do NOT call glDrawBuffers anywhere in this function.
     // setSceneDrawBuffers owns the FBO draw-buffer array.
+}
+
+// HDRI-SKY frame fix (MC2_HDRI_SKY_FRAME_FIX ON path). Reconstructs the world
+// ray directly from the camera WORLD-space basis (raw MC2 frame x=east,
+// y=north, z=elevation) — no matrix inversion, so the kPixelHomogToGLNDC
+// X/Y-flip never enters the ray. GL state save/mask/restore mirrors
+// renderHdriSkybox() exactly; only the direction-feeding uniforms and the
+// equirect frame differ (frameFix=1; sun azimuth = atan2(north,east)).
+void gosPostProcess::renderHdriSkyboxBasis(const float* camFwd,
+                                           const float* camRight,
+                                           const float* camUp,
+                                           float tHX, float tHY)
+{
+    if (!hdriReady_ || !hdriSkyboxProg_ || !hdriSkyboxProg_->is_valid()
+        || !hdriTex_ || !camFwd || !camRight || !camUp) {
+        return;  // no-op: black sky baseline
+    }
+
+    GLint maxDrawBuffers = 0;
+    glGetIntegerv(GL_MAX_DRAW_BUFFERS, &maxDrawBuffers);
+    const int nAtt = (maxDrawBuffers < 3) ? maxDrawBuffers : 3;
+
+    // --- Save state ---
+    GLboolean prevDepthMask = GL_TRUE;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &prevDepthMask);
+    GLboolean prevDepthTest  = glIsEnabled(GL_DEPTH_TEST);
+    GLboolean prevBlend      = glIsEnabled(GL_BLEND);
+    GLboolean prevCull       = glIsEnabled(GL_CULL_FACE);
+    GLint     prevActiveTex  = 0;
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &prevActiveTex);
+    glActiveTexture(GL_TEXTURE0);
+    GLint     prevTex2DBind  = 0;
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex2DBind);
+    GLint     prevProgram    = 0;
+    glGetIntegerv(GL_CURRENT_PROGRAM, &prevProgram);
+    GLint     prevVAO        = 0;
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVAO);
+
+    GLboolean prevMask[3][4] = {
+        { GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE },
+        { GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE },
+        { GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE },
+    };
+    for (int i = 0; i < nAtt; ++i) {
+        glGetBooleani_v(GL_COLOR_WRITEMASK, (GLuint)i, prevMask[i]);
+    }
+
+    if (nAtt > 0) glColorMaski(0, GL_TRUE,  GL_TRUE,  GL_TRUE,  GL_TRUE);
+    if (nAtt > 1) glColorMaski(1, GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+    if (nAtt > 2) glColorMaski(2, GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+
+    glDepthMask(GL_FALSE);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+
+    // --- Sub-flag resolution (env read once). ---
+    static const int   s_uvDebug = []() {
+        const char* e = getenv("MC2_HDRI_SKY_UV_DEBUG");
+        return (e && e[0] != '0') ? 1 : 0;
+    }();
+    static const bool  s_azOffsetSet = (getenv("MC2_HDRI_SKY_AZ_OFFSET") != nullptr);
+    static const float s_azOffsetRad = []() {
+        const char* e = getenv("MC2_HDRI_SKY_AZ_OFFSET");
+        return e ? (float)(atof(e) * 3.14159265358979323846 / 180.0) : 0.0f;
+    }();
+    static const bool  s_stateProbe = (getenv("MC2_HDRI_SKY_STATE_PROBE") != nullptr);
+
+    // skyYaw. Default (no offset env) => 0.0 => no rotation. Frame-consistent
+    // with the MC2-frame equirect: azimuth = atan2(north, east) = atan2(ly, lx)
+    // (+lx, NOT -lx — the matrix path's -lx was for the GL Y-up equirect).
+    float skyYaw = 0.0f;
+    if (s_azOffsetSet) {
+        float sunSyncYaw = 0.0f;
+        if (hdriBakedSunValid_) {
+            float lx = 0.0f, ly = 0.0f, lz = 0.0f;
+            gos_GetTerrainLightDir(&lx, &ly, &lz);
+            // MC2-frame equirect azimuth of the mission sun.
+            const float sunAzGL = atan2f(ly, lx);
+            sunSyncYaw = hdriBakedSunAz_ - sunAzGL;
+        }
+        skyYaw = sunSyncYaw + s_azOffsetRad;
+    }
+
+    if (s_uvDebug) {
+        static bool s_loggedCenterBasis = false;
+        if (!s_loggedCenterBasis) {
+            s_loggedCenterBasis = true;
+            // Center pixel: vNdc=(0,0) -> worldDir = normalize(camFwd).
+            float wd[3] = { camFwd[0], camFwd[1], camFwd[2] };
+            float len = std::sqrt(wd[0]*wd[0] + wd[1]*wd[1] + wd[2]*wd[2]);
+            if (len > 0.0f) { wd[0]/=len; wd[1]/=len; wd[2]/=len; }
+            std::fprintf(stderr,
+                "[HDRI_SKY framefix] uv_debug center_worldDir=(%.3f,%.3f,%.3f) "
+                "tHX=%.4f tHY=%.4f bakedSunValid=%d bakedSunAz=%.4f skyYaw=%.4f\n",
+                wd[0], wd[1], wd[2], tHX, tHY, hdriBakedSunValid_ ? 1 : 0,
+                hdriBakedSunAz_, skyYaw);
+            std::fflush(stderr);
+        }
+    }
+
+    GLint probeFbo = 0, probeDrawBuf0 = 0;
+    GLboolean probeMask0[4] = { GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE };
+    if (s_stateProbe) {
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &probeFbo);
+        glGetIntegerv(GL_DRAW_BUFFER0, &probeDrawBuf0);
+        glGetBooleani_v(GL_COLOR_WRITEMASK, 0, probeMask0);
+    }
+
+    // Bind shader + uniforms + texture (direct-basis path).
+    hdriSkyboxProg_->apply();
+    hdriSkyboxProg_->setFloat3("camFwd",   camFwd);
+    hdriSkyboxProg_->setFloat3("camRight", camRight);
+    hdriSkyboxProg_->setFloat3("camUp",    camUp);
+    hdriSkyboxProg_->setFloat("tHX", tHX);
+    hdriSkyboxProg_->setFloat("tHY", tHY);
+    hdriSkyboxProg_->setInt("uvDebug", s_uvDebug);
+    hdriSkyboxProg_->setFloat("skyYaw", skyYaw);
+    hdriSkyboxProg_->setInt("frameFix", 1);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, hdriTex_);
+    hdriSkyboxProg_->setInt("u_hdri", 0);
+
+    if (quadVAO_ != 0) {
+        glBindVertexArray(quadVAO_);
+    } else {
+        if (hdriDummyVao_ == 0) glGenVertexArrays(1, &hdriDummyVao_);
+        glBindVertexArray(hdriDummyVao_);
+    }
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    // --- Restore state (exact) ---
+    glBindVertexArray(prevVAO);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)prevTex2DBind);
+    glActiveTexture(prevActiveTex);
+    glUseProgram(prevProgram);
+
+    for (int i = 0; i < nAtt; ++i) {
+        glColorMaski((GLuint)i,
+            prevMask[i][0], prevMask[i][1], prevMask[i][2], prevMask[i][3]);
+    }
+
+    glDepthMask(prevDepthMask);
+    if (prevDepthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+    if (prevBlend)     glEnable(GL_BLEND);      else glDisable(GL_BLEND);
+    if (prevCull)      glEnable(GL_CULL_FACE);  else glDisable(GL_CULL_FACE);
+
+    if (s_stateProbe) {
+        GLboolean curDepthMask = GL_TRUE;
+        glGetBooleanv(GL_DEPTH_WRITEMASK, &curDepthMask);
+        const GLboolean curDepthTest = glIsEnabled(GL_DEPTH_TEST);
+        const GLboolean curBlend     = glIsEnabled(GL_BLEND);
+        const GLboolean curCull      = glIsEnabled(GL_CULL_FACE);
+        GLint curFbo = 0, curDrawBuf0 = 0;
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &curFbo);
+        glGetIntegerv(GL_DRAW_BUFFER0, &curDrawBuf0);
+        GLboolean curMask0[4] = { GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE };
+        glGetBooleani_v(GL_COLOR_WRITEMASK, 0, curMask0);
+
+        int mismatch = 0;
+        if (curDepthMask != prevDepthMask) mismatch |= 1;
+        if (curDepthTest != prevDepthTest) mismatch |= 2;
+        if (curBlend     != prevBlend)     mismatch |= 4;
+        if (curCull      != prevCull)      mismatch |= 8;
+        if (curFbo       != probeFbo)      mismatch |= 16;
+        if (curDrawBuf0  != probeDrawBuf0) mismatch |= 32;
+        for (int k = 0; k < 4; ++k)
+            if (curMask0[k] != probeMask0[k]) mismatch |= 64;
+
+        if (mismatch != 0) {
+            std::fprintf(stderr,
+                "[HDRI_SKY framefix] state_probe MISMATCH bits=0x%02x\n",
+                mismatch);
+        } else {
+            std::fprintf(stderr, "[HDRI_SKY framefix] state_probe ok\n");
+        }
+        std::fflush(stderr);
+    }
+}
+
+// HDRI-SKY frame fix (MC2_HDRI_SKY_FRAME_FIX ON path, one-proven-matrix).
+// Reconstructs the sky ray by UNPROJECTING NDC through the inverse of
+// worldToClipGL — the EXACT matrix the GPU rasterizes terrain with
+// (= kAxisSwapMC2toGL * worldToCameraMatrix * cameraToClipGL, see
+// mclib/camera.cpp:2839). Because that matrix's leftmost factor is the MC2->GL
+// axis swap, its INVERSE maps clip-space straight back to the raw MC2 world
+// frame (x=east, y=north, z=elevation, Z-up). No camera basis, no FOV, no
+// handedness toggle — the proven engine matrix carries the whole frame.
+// invVP16 is uploaded verbatim (same convention as renderHdriSkybox's invProj),
+// so the shader does invWorldToClipGL * vec4(ndc, depth, 1.0). frameFix=2
+// selects the inverse-VP path in the frag shader (1 = legacy camera-basis,
+// 0 = byte-identical legacy matrix path). GL state save/mask/restore mirrors
+// renderHdriSkybox() exactly.
+void gosPostProcess::renderHdriSkyboxInvVP(const float* invVP16)
+{
+    if (!hdriReady_ || !hdriSkyboxProg_ || !hdriSkyboxProg_->is_valid()
+        || !hdriTex_ || !invVP16) {
+        return;  // no-op: black sky baseline
+    }
+
+    GLint maxDrawBuffers = 0;
+    glGetIntegerv(GL_MAX_DRAW_BUFFERS, &maxDrawBuffers);
+    const int nAtt = (maxDrawBuffers < 3) ? maxDrawBuffers : 3;
+
+    // --- Save state ---
+    GLboolean prevDepthMask = GL_TRUE;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &prevDepthMask);
+    GLboolean prevDepthTest  = glIsEnabled(GL_DEPTH_TEST);
+    GLboolean prevBlend      = glIsEnabled(GL_BLEND);
+    GLboolean prevCull       = glIsEnabled(GL_CULL_FACE);
+    GLint     prevActiveTex  = 0;
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &prevActiveTex);
+    glActiveTexture(GL_TEXTURE0);
+    GLint     prevTex2DBind  = 0;
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex2DBind);
+    GLint     prevProgram    = 0;
+    glGetIntegerv(GL_CURRENT_PROGRAM, &prevProgram);
+    GLint     prevVAO        = 0;
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVAO);
+
+    GLboolean prevMask[3][4] = {
+        { GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE },
+        { GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE },
+        { GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE },
+    };
+    for (int i = 0; i < nAtt; ++i) {
+        glGetBooleani_v(GL_COLOR_WRITEMASK, (GLuint)i, prevMask[i]);
+    }
+
+    if (nAtt > 0) glColorMaski(0, GL_TRUE,  GL_TRUE,  GL_TRUE,  GL_TRUE);
+    if (nAtt > 1) glColorMaski(1, GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+    if (nAtt > 2) glColorMaski(2, GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+
+    glDepthMask(GL_FALSE);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+
+    // --- Sub-flag resolution (env read once). ---
+    // MC2_HDRI_SKY_FLIP_H / FLIP_V are intentionally NOT read here: the matrix
+    // inverse needs no handedness toggle (they were camera-basis only).
+    static const int   s_uvDebug = []() {
+        const char* e = getenv("MC2_HDRI_SKY_UV_DEBUG");
+        return (e && e[0] != '0') ? 1 : 0;
+    }();
+    static const bool  s_azOffsetSet = (getenv("MC2_HDRI_SKY_AZ_OFFSET") != nullptr);
+    static const float s_azOffsetRad = []() {
+        const char* e = getenv("MC2_HDRI_SKY_AZ_OFFSET");
+        return e ? (float)(atof(e) * 3.14159265358979323846 / 180.0) : 0.0f;
+    }();
+    static const bool  s_stateProbe = (getenv("MC2_HDRI_SKY_STATE_PROBE") != nullptr);
+
+    // skyYaw. Default (no offset env) => 0.0 => no rotation. The raw-MC2-frame
+    // equirect uses azimuth = atan2(north, east) = atan2(ly, lx), so the sun
+    // azimuth here uses +lx (NOT the GL Y-up path's -lx). The frag rotates
+    // worldDir about +Z (MC2 up) by skyYaw before atan2(y,x).
+    float skyYaw = 0.0f;
+    if (s_azOffsetSet) {
+        float sunSyncYaw = 0.0f;
+        if (hdriBakedSunValid_) {
+            float lx = 0.0f, ly = 0.0f, lz = 0.0f;
+            gos_GetTerrainLightDir(&lx, &ly, &lz);
+            // MC2-frame equirect azimuth of the mission sun.
+            const float sunAzGL = atan2f(ly, lx);
+            sunSyncYaw = hdriBakedSunAz_ - sunAzGL;
+        }
+        skyYaw = sunSyncYaw + s_azOffsetRad;
+    }
+
+    GLint probeFbo = 0, probeDrawBuf0 = 0;
+    GLboolean probeMask0[4] = { GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE };
+    if (s_stateProbe) {
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &probeFbo);
+        glGetIntegerv(GL_DRAW_BUFFER0, &probeDrawBuf0);
+        glGetBooleani_v(GL_COLOR_WRITEMASK, 0, probeMask0);
+    }
+
+    // Bind shader + uniforms + texture (inverse-worldToClipGL path).
+    hdriSkyboxProg_->apply();
+    hdriSkyboxProg_->setMat4("invWorldToClipGL", invVP16);
+    hdriSkyboxProg_->setInt("uvDebug", s_uvDebug);
+    hdriSkyboxProg_->setFloat("skyYaw", skyYaw);
+    hdriSkyboxProg_->setInt("frameFix", 2);   // 2 = inverse-VP unproject path
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, hdriTex_);
+    hdriSkyboxProg_->setInt("u_hdri", 0);
+
+    if (s_uvDebug) {
+        static bool s_loggedCenterInvVP = false;
+        if (!s_loggedCenterInvVP) {
+            s_loggedCenterInvVP = true;
+            // Reconstruct the center-pixel ray CPU-side the same way the frag
+            // does (vNdc=(0,0); near depth=1, far depth=0 reverse-Z), so the log
+            // is independent of whether the gradient draw is visible. invVP16 is
+            // column-major: world_i = sum_j invVP16[j*4+i] * clip_j.
+            auto unproj = [&](float dz, float out[3]) {
+                const float c[4] = { 0.0f, 0.0f, dz, 1.0f };
+                float w4[4];
+                for (int i = 0; i < 4; ++i) {
+                    w4[i] = invVP16[0*4+i]*c[0] + invVP16[1*4+i]*c[1]
+                          + invVP16[2*4+i]*c[2] + invVP16[3*4+i]*c[3];
+                }
+                const float iw = (w4[3] != 0.0f) ? (1.0f / w4[3]) : 0.0f;
+                out[0] = w4[0]*iw; out[1] = w4[1]*iw; out[2] = w4[2]*iw;
+            };
+            float wn[3], wf[3];
+            unproj(1.0f, wn);   // near (reverse-Z near=1)
+            unproj(0.0f, wf);   // far  (reverse-Z far=0)
+            float wd[3] = { wf[0]-wn[0], wf[1]-wn[1], wf[2]-wn[2] };
+            float len = std::sqrt(wd[0]*wd[0] + wd[1]*wd[1] + wd[2]*wd[2]);
+            if (len > 0.0f) { wd[0]/=len; wd[1]/=len; wd[2]/=len; }
+            std::fprintf(stderr,
+                "[HDRI_SKY invVP] uv_debug center_worldDir=(%.3f,%.3f,%.3f) "
+                "(Z-up: z=elevation) bakedSunValid=%d bakedSunAz=%.4f skyYaw=%.4f\n",
+                wd[0], wd[1], wd[2], hdriBakedSunValid_ ? 1 : 0,
+                hdriBakedSunAz_, skyYaw);
+            std::fflush(stderr);
+        }
+    }
+
+    if (quadVAO_ != 0) {
+        glBindVertexArray(quadVAO_);
+    } else {
+        if (hdriDummyVao_ == 0) glGenVertexArrays(1, &hdriDummyVao_);
+        glBindVertexArray(hdriDummyVao_);
+    }
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    // --- Restore state (exact) ---
+    glBindVertexArray(prevVAO);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)prevTex2DBind);
+    glActiveTexture(prevActiveTex);
+    glUseProgram(prevProgram);
+
+    for (int i = 0; i < nAtt; ++i) {
+        glColorMaski((GLuint)i,
+            prevMask[i][0], prevMask[i][1], prevMask[i][2], prevMask[i][3]);
+    }
+
+    glDepthMask(prevDepthMask);
+    if (prevDepthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+    if (prevBlend)     glEnable(GL_BLEND);      else glDisable(GL_BLEND);
+    if (prevCull)      glEnable(GL_CULL_FACE);  else glDisable(GL_CULL_FACE);
+
+    if (s_stateProbe) {
+        GLboolean curDepthMask = GL_TRUE;
+        glGetBooleanv(GL_DEPTH_WRITEMASK, &curDepthMask);
+        const GLboolean curDepthTest = glIsEnabled(GL_DEPTH_TEST);
+        const GLboolean curBlend     = glIsEnabled(GL_BLEND);
+        const GLboolean curCull      = glIsEnabled(GL_CULL_FACE);
+        GLint curFbo = 0, curDrawBuf0 = 0;
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &curFbo);
+        glGetIntegerv(GL_DRAW_BUFFER0, &curDrawBuf0);
+        GLboolean curMask0[4] = { GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE };
+        glGetBooleani_v(GL_COLOR_WRITEMASK, 0, curMask0);
+
+        int mismatch = 0;
+        if (curDepthMask != prevDepthMask) mismatch |= 1;
+        if (curDepthTest != prevDepthTest) mismatch |= 2;
+        if (curBlend     != prevBlend)     mismatch |= 4;
+        if (curCull      != prevCull)      mismatch |= 8;
+        if (curFbo       != probeFbo)      mismatch |= 16;
+        if (curDrawBuf0  != probeDrawBuf0) mismatch |= 32;
+        for (int k = 0; k < 4; ++k)
+            if (curMask0[k] != probeMask0[k]) mismatch |= 64;
+
+        if (mismatch != 0) {
+            std::fprintf(stderr,
+                "[HDRI_SKY invVP] state_probe MISMATCH bits=0x%02x\n",
+                mismatch);
+        } else {
+            std::fprintf(stderr, "[HDRI_SKY invVP] state_probe ok\n");
+        }
+        std::fflush(stderr);
+    }
 }
 
 void gosPostProcess::initShadows()
@@ -2531,6 +3141,72 @@ void gosPostProcess::initDynamicShadows()
         d.valid     = true;
         RenderCore::registerOrUpdateRenderResource(d);
     }
+
+    // === Item 1 P1: cascaded depth array (only when MC2_SHADOW_CSM is ON) ===
+    // GL_DEPTH_COMPONENT24 GL_TEXTURE_2D_ARRAY (dynShadowMapSize_^2 x N) with the
+    // EXACT sampler param set the legacy single dynamic map uses:
+    // COMPARE_REF_TO_TEXTURE / GL_LEQUAL / CLAMP_TO_BORDER / border 1.0. The
+    // border is load-bearing: missing it yields garbage edge cascades.
+    if (mc2ShadowCsmEnabled()) {
+        csmCount_ = mc2ShadowCsmCount();
+
+        glGenTextures(1, &dynShadowArrayTex_);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, dynShadowArrayTex_);
+        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_DEPTH_COMPONENT24,
+            dynShadowMapSize_, dynShadowMapSize_, csmCount_,
+            0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+        float csmBorder[] = {1.0f, 1.0f, 1.0f, 1.0f};
+        glTexParameterfv(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_BORDER_COLOR, csmBorder);
+
+        // Dummy color array (7900 XTX FBO-completeness workaround, mirrors the
+        // legacy dummy at the single-map FBO above). One layer per cascade.
+        glGenTextures(1, &dynShadowArrayDummyColorTex_);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, dynShadowArrayDummyColorTex_);
+        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_R8,
+            dynShadowMapSize_, dynShadowMapSize_, csmCount_,
+            0, GL_RED, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+
+        // One FBO; per-cascade we attach a single layer via glFramebufferTextureLayer.
+        glGenFramebuffers(1, &dynShadowArrayFBO_);
+        glBindFramebuffer(GL_FRAMEBUFFER, dynShadowArrayFBO_);
+        glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, dynShadowArrayTex_, 0, 0);
+        glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, dynShadowArrayDummyColorTex_, 0, 0);
+        glDrawBuffer(GL_COLOR_ATTACHMENT0);
+        glReadBuffer(GL_NONE);
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+            fprintf(stderr, "gosPostProcess: CSM dynamic shadow array FBO incomplete\n");
+
+        // Forward-Z clear all layers to 1.0 (fully lit). Reverse-Z partition:
+        // dynamic shadow stays forward-Z; restore scene clear-depth after.
+        glDepthMask(GL_TRUE);
+        glClearDepth(1.0f);
+        for (int i = 0; i < csmCount_; ++i) {
+            glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, dynShadowArrayTex_, 0, i);
+            glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, dynShadowArrayDummyColorTex_, 0, i);
+            glClear(GL_DEPTH_BUFFER_BIT);
+        }
+        glClearDepth(0.0f);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        // Cascade matrices start as identity so an early sample is a no-op.
+        for (int i = 0; i < kMaxCsmCascades; ++i) {
+            dynamicCascadeMatrices_[i*16 + 0]  = 1.0f;
+            dynamicCascadeMatrices_[i*16 + 5]  = 1.0f;
+            dynamicCascadeMatrices_[i*16 + 10] = 1.0f;
+            dynamicCascadeMatrices_[i*16 + 15] = 1.0f;
+        }
+
+        fprintf(stderr, "[CSM] init layers=%d size=%d\n", csmCount_, dynShadowMapSize_);
+    }
 }
 
 void gosPostProcess::destroyDynamicShadows()
@@ -2538,10 +3214,92 @@ void gosPostProcess::destroyDynamicShadows()
     if (dynShadowFBO_) { glDeleteFramebuffers(1, &dynShadowFBO_); dynShadowFBO_ = 0; }
     if (dynShadowDepthTex_) { glDeleteTextures(1, &dynShadowDepthTex_); dynShadowDepthTex_ = 0; }
     if (dynShadowDummyColorTex_) { glDeleteTextures(1, &dynShadowDummyColorTex_); dynShadowDummyColorTex_ = 0; }
+    if (dynShadowArrayFBO_) { glDeleteFramebuffers(1, &dynShadowArrayFBO_); dynShadowArrayFBO_ = 0; }
+    if (dynShadowArrayTex_) { glDeleteTextures(1, &dynShadowArrayTex_); dynShadowArrayTex_ = 0; }
+    if (dynShadowArrayDummyColorTex_) { glDeleteTextures(1, &dynShadowArrayDummyColorTex_); dynShadowArrayDummyColorTex_ = 0; }
 
     RenderCore::RenderResourceDesc invalid;
     invalid.id = RenderCore::RenderResourceId::ShadowDynamicMap;
     RenderCore::registerOrUpdateRenderResource(invalid);
+}
+
+// === Item 1 P1: per-cascade caster pass framebuffer binding ================
+// Called once per cascade by the dynamic shadow caster loop (txmmgr.cpp). Binds
+// the array FBO to layer i, sets viewport + forward-Z clear, and sets ALL depth/
+// blend/cull state EXPLICITLY (do not inherit — chunk-transparency lesson). The
+// caster batchers then upload getDynamicLightSpaceMatrix() which, because we set
+// csmActiveCascade_ here, resolves to this cascade's matrix.
+bool gosPostProcess::beginDynamicShadowCascade(int i)
+{
+    if (!mc2ShadowCsmEnabled() || !dynShadowArrayFBO_) return false;
+    if (i < 0 || i >= csmCount_) return false;
+
+    // SHADOW-CSM-STATE-1: capture the caller's full scene GL state ONCE, on the
+    // first cascade of the loop. endDynamicShadowCascadePass() restores it. This
+    // mirrors gosRenderer::beginDynamicShadowPass capturing s_dynamicPassEntry
+    // (captureShadowGLState, gameos_graphics.cpp:5549) so the forward-Z 4096^2
+    // array pass cannot leak FBO/viewport/depth/blend/cull into the reverse-Z
+    // scene passes (props/actors/water) that draw after the loop. Without this,
+    // endDynamicShadowCascadePass only did glBindFramebuffer(0) -> scene drew into
+    // the default backbuffer at 4096^2 with forward-Z depth -> geometry vanished.
+    if (!csmStateSaved_) {
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &csmSavedFBO_);
+        glGetIntegerv(GL_VIEWPORT, csmSavedViewport_);
+        glGetFloatv(GL_DEPTH_CLEAR_VALUE, &csmSavedClearDepth_);
+        csmSavedDepthTest_ = glIsEnabled(GL_DEPTH_TEST);
+        glGetIntegerv(GL_DEPTH_FUNC, &csmSavedDepthFunc_);
+        glGetBooleanv(GL_DEPTH_WRITEMASK, &csmSavedDepthMask_);
+        csmSavedBlend_ = glIsEnabled(GL_BLEND);
+        csmSavedCull_  = glIsEnabled(GL_CULL_FACE);
+        csmStateSaved_ = true;
+    }
+
+    csmActiveCascade_ = i;
+
+    glBindFramebuffer(GL_FRAMEBUFFER, dynShadowArrayFBO_);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, dynShadowArrayTex_, 0, i);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, dynShadowArrayDummyColorTex_, 0, i);
+    glDrawBuffer(GL_COLOR_ATTACHMENT0);
+    glViewport(0, 0, dynShadowMapSize_, dynShadowMapSize_);
+
+    // Explicit state (forward-Z shadow pass; scene uses reverse-Z clearDepth 0).
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glDepthFunc(GL_LESS);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+    glClearDepth(1.0f);
+    glClear(GL_DEPTH_BUFFER_BIT);
+    glClearDepth(0.0f);   // restore scene reverse-Z default
+    return true;
+}
+
+void gosPostProcess::endDynamicShadowCascadePass()
+{
+    csmActiveCascade_ = -1;
+
+    // SHADOW-CSM-STATE-1: restore the full scene GL state captured on the first
+    // cascade (mirror of gosRenderer::endDynamicShadowPass ->
+    // restoreShadowGLState(s_dynamicPassEntry), gameos_graphics.cpp:5564). Done
+    // per-cascade-end and idempotent: each end restores to the same saved scene
+    // state, the next begin re-binds the array FBO, and the final end leaves the
+    // scene FBO/viewport/reverse-Z depth correct for the following passes. The
+    // saved-state flag is cleared so the next frame's loop re-captures fresh.
+    if (csmStateSaved_) {
+        glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)csmSavedFBO_);
+        glViewport(csmSavedViewport_[0], csmSavedViewport_[1],
+                   csmSavedViewport_[2], csmSavedViewport_[3]);
+        glClearDepth(csmSavedClearDepth_);
+        if (csmSavedDepthTest_) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+        glDepthFunc((GLenum)csmSavedDepthFunc_);
+        glDepthMask(csmSavedDepthMask_);
+        if (csmSavedBlend_) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+        if (csmSavedCull_)  glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
+        csmStateSaved_ = false;
+    } else {
+        // Defensive: no capture (should not happen) -> at least leave a valid FBO.
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
 }
 
 void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float sunDirZ,
@@ -2623,15 +3381,31 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
     const float halfLX = 0.5f * (maxLX - minLX);
     const float halfLY = 0.5f * (maxLY - minLY);
 
-    // SHADOW-FOCUS-CENTER-1 (gate, default OFF): center the shadow box on the
-    // camera's near-ground FOCUS POINT instead of the frustum-corner AABB
-    // centroid. For an oblique near-ground camera the far/horizon corners drag
-    // the AABB centroid off-map (measured worldCenter=(-17131,-35844,7526)
-    // while the scene is at ~(+-300,3349,635)) and oscillate near map edges
-    // -> "shadows reflect off the map edge". Focus-point centering decouples
-    // the center from the far corners: box tracks where the player looks.
-    // KEEP the radius fit (halfLX/halfLY -> fitRadius) unchanged below; ONLY
-    // the center (cxL/cyL) is overridden, BEFORE the texel-snap + back-project.
+    // SHADOW-FOCUS-CENTER-1 (default ON): center the shadow box on the camera's
+    // GROUND FOCUS POINT -- where the center view ray hits the ground plane
+    // (z = 0, sea level), not on the frustum-corner AABB centroid.
+    //
+    // PROBLEM with old approach (nearC + vd*focusDist): the near frustum
+    // centroid sits at camera height (elevated, not on the ground). Stepping
+    // 1500 WU along the view ray from there still leaves the box centered
+    // somewhere in mid-air behind/below the visible terrain ahead. Half the
+    // shadow-map coverage is wasted behind the camera.
+    //
+    // NEW approach -- per-corner ground-plane intercept:
+    //   For each of the 4 near/far corner pairs, find where the line from
+    //   nearCorner[c] to farCorner[c] crosses z = 0:
+    //     t = -nz / (fz - nz)   (clamp t to [0,1] if line doesn't cross)
+    //     groundPt = near + t * (far - near)
+    //   Average the 4 ground intercept XY values -> the TRUE ground focus.
+    //   Fall back: if all corner pairs have |fz - nz| < eps (nearly horizontal
+    //   ray, or camera pitched up), drop the near-centroid z to 0 instead.
+    //
+    // The formula sets the shadow box center directly over where the camera
+    // is looking on the ground, so coverage lands on the visible terrain ahead.
+    //
+    // Kill-switch: MC2_SHADOW_FOCUS_CENTER=0 reverts to the AABB centroid.
+    // (MC2_SHADOW_FOCUS_DIST is retained for diagnostic logging but no longer
+    //  drives the centering.)
     static const bool s_focusCenter = []() {
         const char* v = getenv("MC2_SHADOW_FOCUS_CENTER");
         return !(v && v[0] == '0');  // default ON; opt out with =0
@@ -2641,19 +3415,10 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
     float focusDistUsed = 0.0f;
     float nearSpread = 0.0f, farSpread = 0.0f;
     if (s_focusCenter) {
-        static const float s_focusDist = []() {
-            const char* v = getenv("MC2_SHADOW_FOCUS_DIST");
-            float d = (v ? (float)atof(v) : 1500.0f);
-            if (d < 256.0f)  d = 256.0f;
-            if (d > 8000.0f) d = 8000.0f;
-            return d;
-        }();
-        // Robust near/far corner identification. Corners 0-3 have GL-NDC z=0,
-        // 4-7 have z=1 (txmmgr.cpp:2259-2277), but we do NOT assume which is
-        // the near plane -- we detect by SPREAD. A perspective frustum's near
-        // corners are closer together (smaller max corner-to-centroid dist)
-        // than the far corners. The set with the smaller spread is NEAR.
-        float cA[3] = {0,0,0}, cB[3] = {0,0,0};   // A = corners[0..3], B = corners[4..7]
+        // Robust near/far corner identification (same detector as before).
+        // Corners 0-3 and 4-7 are the two frustum planes; detect near by smaller
+        // spread (perspective: near corners are closer together than far corners).
+        float cA[3] = {0,0,0}, cB[3] = {0,0,0};
         for (int c = 0; c < 4; ++c) {
             cA[0] += camFitCornersMC2[c][0]; cA[1] += camFitCornersMC2[c][1]; cA[2] += camFitCornersMC2[c][2];
         }
@@ -2672,24 +3437,50 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
             float d = sqrtf(dx*dx+dy*dy+dz*dz);
             if (d > spreadB) spreadB = d;
         }
-        // Pick near = smaller spread.
+        // nearC/farC = centroids; near has smaller spread.
         const float* nearC; const float* farC;
+        const int nearBase2 = (spreadA <= spreadB) ? 0 : 4;
+        const int farBase2  = (spreadA <= spreadB) ? 4 : 0;
         if (spreadA <= spreadB) { nearC = cA; farC = cB; nearSpread = spreadA; farSpread = spreadB; }
         else                    { nearC = cB; farC = cA; nearSpread = spreadB; farSpread = spreadA; }
 
-        float vd[3] = { farC[0]-nearC[0], farC[1]-nearC[1], farC[2]-nearC[2] };
-        float vlen = sqrtf(vd[0]*vd[0] + vd[1]*vd[1] + vd[2]*vd[2]);
-        if (vlen > 1e-3f) {
-            vd[0] /= vlen; vd[1] /= vlen; vd[2] /= vlen;
-            focusWorld[0] = nearC[0] + vd[0] * s_focusDist;
-            focusWorld[1] = nearC[1] + vd[1] * s_focusDist;
-            focusWorld[2] = nearC[2] + vd[2] * s_focusDist;
-            // Override light-space center with the focus projection.
-            cxL = rx*focusWorld[0] + ry*focusWorld[1] + rz*focusWorld[2];
-            cyL = ux*focusWorld[0] + uy*focusWorld[1] + uz*focusWorld[2];
-            focusDistUsed = s_focusDist;
+        // Per-corner ground-plane (z=0) intercept.
+        // For each near/far corner pair: t = -nz/(fz-nz), clamped to [0,1].
+        // ground = near + t*(far-near).  Average the 4 XY results.
+        float gx = 0.0f, gy = 0.0f;
+        int   groundHits = 0;
+        for (int c = 0; c < 4; ++c) {
+            const float* nC = camFitCornersMC2[nearBase2 + c];
+            const float* fC = camFitCornersMC2[farBase2  + c];
+            float dz = fC[2] - nC[2];
+            float t;
+            if (fabsf(dz) > 1e-3f) {
+                t = -nC[2] / dz;
+                if (t < 0.0f) t = 0.0f;
+                if (t > 1.0f) t = 1.0f;
+            } else {
+                // Nearly horizontal ray: use the far corner's XY (best proxy for
+                // where the camera is looking when not angled downward).
+                t = 1.0f;
+            }
+            gx += nC[0] + t * (fC[0] - nC[0]);
+            gy += nC[1] + t * (fC[1] - nC[1]);
+            ++groundHits;
+        }
+        if (groundHits > 0) {
+            focusWorld[0] = gx / (float)groundHits;
+            focusWorld[1] = gy / (float)groundHits;
+            focusWorld[2] = 0.0f;   // grounded on z=0 plane (sea level)
+            // Override light-space center with the ground focus point projection.
+            cxL = rx*focusWorld[0] + ry*focusWorld[1];   // rz*0 = 0
+            cyL = ux*focusWorld[0] + uy*focusWorld[1];   // uz*0 = 0
+            // focusDistUsed: log the XY distance from near-centroid to focus
+            // (diagnostic only -- this value no longer drives the centering).
+            float fdx = focusWorld[0]-nearC[0], fdy = focusWorld[1]-nearC[1];
+            focusDistUsed = sqrtf(fdx*fdx + fdy*fdy);
             focusApplied = true;
         }
+        (void)farC;  // used via farBase2 index above
     }
     float fitRadius = (halfLX > halfLY ? halfLX : halfLY);
     if (fitRadius < 64.0f) fitRadius = 64.0f;
@@ -2754,7 +3545,7 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
                 if (focusApplied) {
                     fprintf(stderr,
                         "[SHADOW_FRUSTUM_DIAG]   focusCenter=1 focusWorld=(%.0f,%.0f,%.0f) "
-                        "focusDist=%.0f nearSpread=%.0f farSpread=%.0f\n",
+                        "focusXYDist=%.0f nearSpread=%.0f farSpread=%.0f\n",
                         focusWorld[0], focusWorld[1], focusWorld[2],
                         focusDistUsed, nearSpread, farSpread);
                 }
@@ -2807,6 +3598,185 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
         memcpy(dv.viewUniforms.worldToClipGL, dynamicLightSpaceMatrix_,
                sizeof(dv.viewUniforms.worldToClipGL));
         RenderCore::registerOrUpdateView(dv);
+    }
+
+    // === Item 1 P2: per-cascade matrix array ===============================
+    // ONE basis (rx..uz), ONE sun (fx,fy,fz) — reused for every cascade. The
+    // z-row of each cascade ortho is IDENTICAL to the legacy single matrix
+    // (same nearP/farP/depthDist, same -1/(farP-nearP) z scale). Cascades
+    // differ ONLY by their xy center + xy extent (and the texel snap). Each
+    // off-center cascade gets a TRANSLATE via its own lightPos back-projected
+    // from the cascade's snapped light-space center (not just an xy scale).
+    // All math stays in raw MC2 Z-up light space (no GL-NDC/D3D stage).
+    //
+    // Split: partition the camera frustum near->splitFar (~8000 WU light depth
+    // along the view axis) into csmCount_ slices, blended log/uniform by lambda.
+    // Beyond ~8000 the world-fixed STATIC map covers (min-combine in shaders).
+    if (mc2ShadowCsmEnabled() && dynShadowArrayTex_) {
+        const int   N = csmCount_;
+        const float lambda = mc2ShadowCsmLambda();
+
+        // Identify near/far frustum corner sets by spread (same detector the
+        // focus-center block uses). near = smaller spread.
+        float cA[3] = {0,0,0}, cB[3] = {0,0,0};
+        for (int c = 0; c < 4; ++c) { cA[0]+=camFitCornersMC2[c][0]; cA[1]+=camFitCornersMC2[c][1]; cA[2]+=camFitCornersMC2[c][2]; }
+        for (int c = 4; c < 8; ++c) { cB[0]+=camFitCornersMC2[c][0]; cB[1]+=camFitCornersMC2[c][1]; cB[2]+=camFitCornersMC2[c][2]; }
+        for (int k = 0; k < 3; ++k) { cA[k]*=0.25f; cB[k]*=0.25f; }
+        float spreadA = 0.0f, spreadB = 0.0f;
+        for (int c = 0; c < 4; ++c) { float dx=camFitCornersMC2[c][0]-cA[0],dy=camFitCornersMC2[c][1]-cA[1],dz=camFitCornersMC2[c][2]-cA[2]; float d=sqrtf(dx*dx+dy*dy+dz*dz); if(d>spreadA)spreadA=d; }
+        for (int c = 4; c < 8; ++c) { float dx=camFitCornersMC2[c][0]-cB[0],dy=camFitCornersMC2[c][1]-cB[1],dz=camFitCornersMC2[c][2]-cB[2]; float d=sqrtf(dx*dx+dy*dy+dz*dz); if(d>spreadB)spreadB=d; }
+        // nearIdx maps cascade fraction t to the corner pairs: corners 0..3 are
+        // one plane, 4..7 the other. We interpolate per-corner between the near
+        // plane corner and the far plane corner.
+        const int nearBase = (spreadA <= spreadB) ? 0 : 4;
+        const int farBase  = (spreadA <= spreadB) ? 4 : 0;
+
+        // Distance (light depth, along view axis = -f) span near->far, clamp far.
+        // light-depth coordinate = dot(world, -f) (increasing away from light).
+        auto lightDepth = [&](const float* w){ return -(fx*w[0] + fy*w[1] + fz*w[2]); };
+        float dNear = 0.0f, dFar = 0.0f;
+        for (int c = 0; c < 4; ++c) { dNear += lightDepth(camFitCornersMC2[nearBase+c]); dFar += lightDepth(camFitCornersMC2[farBase+c]); }
+        dNear *= 0.25f; dFar *= 0.25f;
+        if (dFar < dNear) { float t=dNear; dNear=dFar; dFar=t; }
+        const float kCsmFarCap = 8000.0f;     // static map owns beyond this
+        float spanFar = dFar - dNear;
+        if (spanFar > kCsmFarCap) spanFar = kCsmFarCap;
+        // Split fractions [0..1] over [dNear, dNear+spanFar].
+        float splitFrac[kMaxCsmCascades + 1];
+        splitFrac[0] = 0.0f;
+        for (int i = 1; i < N; ++i) {
+            float p = (float)i / (float)N;
+            float uniform = p;
+            float logr = (dNear > 1.0f) ? (dNear * powf((dNear + spanFar) / dNear, p) - dNear) / spanFar : p;
+            splitFrac[i] = lambda * logr + (1.0f - lambda) * uniform;
+        }
+        splitFrac[N] = 1.0f;
+
+        for (int ci = 0; ci < N; ++ci) {
+            const float t0 = splitFrac[ci];
+            const float t1 = splitFrac[ci + 1];
+            // Sub-frustum corners: interpolate near->far corner by t0/t1.
+            float cMinLX=1e30f,cMaxLX=-1e30f,cMinLY=1e30f,cMaxLY=-1e30f;
+            for (int c = 0; c < 4; ++c) {
+                const float* nC = camFitCornersMC2[nearBase + c];
+                const float* fC = camFitCornersMC2[farBase  + c];
+                for (int e = 0; e < 2; ++e) {
+                    const float tt = (e == 0) ? t0 : t1;
+                    float w[3] = { nC[0]+(fC[0]-nC[0])*tt, nC[1]+(fC[1]-nC[1])*tt, nC[2]+(fC[2]-nC[2])*tt };
+                    if (w[2] < kSceneZFloor) continue;
+                    float lxc = rx*w[0]+ry*w[1]+rz*w[2];
+                    float lyc = ux*w[0]+uy*w[1]+uz*w[2];
+                    if (lxc<cMinLX)cMinLX=lxc; if (lxc>cMaxLX)cMaxLX=lxc;
+                    if (lyc<cMinLY)cMinLY=lyc; if (lyc>cMaxLY)cMaxLY=lyc;
+                }
+            }
+            // Degenerate guard: fall back to the full light AABB.
+            if (cMinLX > cMaxLX || cMinLY > cMaxLY) {
+                cMinLX = minLX; cMaxLX = maxLX; cMinLY = minLY; cMaxLY = maxLY;
+            }
+            float cCx = 0.5f*(cMinLX+cMaxLX);
+            float cCy = 0.5f*(cMinLY+cMaxLY);
+            // SHADOW-FOCUS-CENTER-1 (CSM): apply the same ground-plane (z=0)
+            // intercept centering as the main shadow box, so each cascade is
+            // also centered on the visible terrain ahead, not on elevated
+            // sub-frustum centroids. Gate: same s_focusCenter knob.
+            // For the cascade we intersect each of the 4 near/far sub-frustum
+            // corner pairs (at t0 and t1 respectively) with z=0 and average.
+            if (s_focusCenter) {
+                float cgx = 0.0f, cgy = 0.0f;
+                int cgHits = 0;
+                for (int c = 0; c < 4; ++c) {
+                    const float* nCorner = camFitCornersMC2[nearBase + c];
+                    const float* fCorner = camFitCornersMC2[farBase  + c];
+                    // Sub-frustum near corner at t0, far at t1.
+                    float cnx = nCorner[0]+(fCorner[0]-nCorner[0])*t0;
+                    float cny = nCorner[1]+(fCorner[1]-nCorner[1])*t0;
+                    float cnz = nCorner[2]+(fCorner[2]-nCorner[2])*t0;
+                    float cfx = nCorner[0]+(fCorner[0]-nCorner[0])*t1;
+                    float cfy = nCorner[1]+(fCorner[1]-nCorner[1])*t1;
+                    float cfz = nCorner[2]+(fCorner[2]-nCorner[2])*t1;
+                    float dz2 = cfz - cnz;
+                    float t;
+                    if (fabsf(dz2) > 1e-3f) {
+                        t = -cnz / dz2;
+                        if (t < 0.0f) t = 0.0f;
+                        if (t > 1.0f) t = 1.0f;
+                    } else {
+                        t = 1.0f;  // nearly horizontal: use far end
+                    }
+                    cgx += cnx + t*(cfx - cnx);
+                    cgy += cny + t*(cfy - cny);
+                    ++cgHits;
+                }
+                if (cgHits > 0) {
+                    float gwx = cgx / (float)cgHits;
+                    float gwy = cgy / (float)cgHits;
+                    // Override cascade center with ground-plane focus.
+                    cCx = rx*gwx + ry*gwy;   // rz*0 = 0
+                    cCy = ux*gwx + uy*gwy;   // uz*0 = 0
+                }
+            }
+            float cHalf = 0.5f * fmaxf(cMaxLX-cMinLX, cMaxLY-cMinLY);
+            if (cHalf < 64.0f) cHalf = 64.0f;
+            if (cHalf > r)     cHalf = r;
+            // Snap radius to pow2 + center to texel grid (anti-shimmer), same as legacy.
+            float cRad = 64.0f;
+            while (cRad < cHalf) cRad *= 2.0f;
+            if (cRad > r) cRad = r;
+            float cTexel = (2.0f * cRad) / (float)dynShadowMapSize_;
+            cCx = floorf(cCx / cTexel) * cTexel;
+            cCy = floorf(cCy / cTexel) * cTexel;
+            // Back-project snapped light-space center to world (the cascade origin).
+            float wCx = cCx*rx + cCy*ux;
+            float wCy = cCx*ry + cCy*uy;
+            float wCz = cCx*rz + cCy*uz;
+            // Per-cascade light position along the sun axis (shared depthDist ->
+            // shared z-row). TRANSLATE column reflects this center.
+            float lpX = wCx - fx*depthDist;
+            float lpY = wCy - fy*depthDist;
+            float lpZ = wCz - fz*depthDist;
+            float cView[16] = {
+                 rx,  ux, -fx, 0,
+                 ry,  uy, -fy, 0,
+                 rz,  uz, -fz, 0,
+                -(rx*lpX + ry*lpY + rz*lpZ),
+                -(ux*lpX + uy*lpY + uz*lpZ),
+                 (fx*lpX + fy*lpY + fz*lpZ),
+                1
+            };
+            // SAME z-row as legacy (nearP/farP/depthDist identical).
+            float cOrtho[16] = {
+                1.0f/cRad, 0, 0, 0,
+                0, 1.0f/cRad, 0, 0,
+                0, 0, -1.0f/(farP - nearP), 0,
+                0, 0, -nearP/(farP - nearP), 1
+            };
+            float* dst = &dynamicCascadeMatrices_[ci * 16];
+            for (int col = 0; col < 4; col++)
+                for (int row = 0; row < 4; row++) {
+                    float sum = 0;
+                    for (int k = 0; k < 4; k++)
+                        sum += cOrtho[k*4+row] * cView[col*4+k];
+                    dst[col*4+row] = sum;
+                }
+        }
+
+        // Per-cascade ZRANGE probe (center + corners must land in [0,1]).
+        if (getenv("MC2_DEBUG_SHADOW_ZRANGE") != nullptr) {
+            static int s_csmN = 0;
+            if (++s_csmN <= 1) {
+                for (int ci = 0; ci < N; ++ci) {
+                    const float* M = &dynamicCascadeMatrices_[ci*16];
+                    // sample the cascade's own center (col 3 back-projected approx via camX/Y/Z)
+                    const float px=camX, py=camY, pz=camZ;
+                    float cz = M[0*4+2]*px+M[1*4+2]*py+M[2*4+2]*pz+M[3*4+2];
+                    float cw = M[0*4+3]*px+M[1*4+3]*py+M[2*4+3]*pz+M[3*4+3];
+                    float ndc = (cw!=0.0f)?cz/cw:0.0f;
+                    fprintf(stderr, "[SHADOWZRANGE v1] event=csm cascade=%d ndcZ=%.5f inRange=%d\n",
+                            ci, ndc, (ndc>=0.0f&&ndc<=1.0f)?1:0);
+                }
+            }
+        }
     }
 
     // [SHADOWZRANGE v1] VPL-#10: dynamic-path [0,1] verification. Rebuilds

@@ -83,7 +83,113 @@ float calcShadow(vec3 worldPos, vec3 normal, vec3 lightDir)
     return calcShadow(worldPos, normal, lightDir, 16);
 }
 
-// Dynamic object shadow map (mech shadows, camera-centered, per-frame)
+// Dynamic object shadow map (mech shadows, camera-centered, per-frame).
+//
+// THE FROZEN META-FIX: calcDynamicShadow(vec3,vec3,vec3,int) (and its 3-arg
+// overload) keep an IDENTICAL signature in BOTH variants. shadow.hglsl is
+// #include'd by 7 shaders; NONE of them change their call site. Only the
+// uniform DECLARATIONS swap under MC2_SHADOW_CSM, and ALL cascade-select /
+// array-sampler / blend logic lives INSIDE the function body.
+//
+//  - OFF (default): legacy sampler2DShadow + single mat4 (byte-identical).
+//  - ON           : sampler2DArrayShadow + mat4[N] + int dynamicCsmCount,
+//                   with per-cascade projection-test selection + overlap blend.
+//
+// All cascades are in raw MC2 Z-up light space (z already [0,1], ZERO_TO_ONE);
+// no GL-NDC/D3D clip stage is introduced per cascade.
+#ifdef MC2_SHADOW_CSM
+#ifndef MC2_SHADOW_CSM_MAX
+#define MC2_SHADOW_CSM_MAX 3
+#endif
+uniform sampler2DArrayShadow dynamicShadowArray;
+uniform mat4 dynamicCascadeMatrices[MC2_SHADOW_CSM_MAX];
+uniform int  dynamicCsmCount;        // 1..MC2_SHADOW_CSM_MAX
+uniform int  enableDynamicShadows;
+
+// Sample one cascade layer with the same gradient-adaptive Poisson PCF the
+// legacy path uses. Returns visibility in [0,1] (1 = lit). projCoords already
+// in [0,1] xy and [0,1] z for that cascade.
+float csmSampleLayer(vec3 projCoords, int layer, vec3 worldPos, float NdotL, int numTaps)
+{
+    float bias = max(0.005 * (1.0 - NdotL), 0.002);
+    float currentDepth = projCoords.z - bias;
+
+    float angle = 6.2831853 * fract(sin(dot(worldPos.xz, vec2(12.9898, 78.233))) * 43758.5453);
+    float ca = cos(angle), sa = sin(angle);
+    mat2 rot = mat2(ca, sa, -sa, ca);
+
+    float depthGradient = length(vec2(dFdx(projCoords.z), dFdy(projCoords.z)));
+    float hardness = clamp(depthGradient * 180.0, 0.0, 1.0);
+    float adaptiveScale = mix(3.2, 0.8, hardness);
+
+    vec2 texelSize = 1.0 / vec2(textureSize(dynamicShadowArray, 0).xy);
+    float radius = max(shadowSoftness, 0.5) * adaptiveScale;
+    float shadow = 0.0;
+    int taps = clamp(numTaps, 1, 16);
+    for (int i = 0; i < taps; i++) {
+        vec2 offset = rot * poissonDisk[i] * radius * texelSize;
+        // sampler2DArrayShadow: (s, t, layer, ref)
+        shadow += texture(dynamicShadowArray, vec4(projCoords.xy + offset, float(layer), currentDepth));
+    }
+    shadow /= float(taps);
+    return shadow;
+}
+
+// Project worldPos into cascade `layer`; out-of-range -> inside=false.
+bool csmProject(vec3 worldPos, int layer, out vec3 projCoords)
+{
+    vec4 lsPos = dynamicCascadeMatrices[layer] * vec4(worldPos, 1.0);
+    projCoords = lsPos.xyz / lsPos.w;
+    projCoords.xy = projCoords.xy * 0.5 + 0.5;
+    if (projCoords.z > 1.0 || projCoords.z < 0.0) return false;
+    if (projCoords.xy != clamp(projCoords.xy, 0.0, 1.0)) return false;
+    return true;
+}
+
+float calcDynamicShadow(vec3 worldPos, vec3 normal, vec3 lightDir, int numTaps)
+{
+    if (enableDynamicShadows == 0) return 1.0;
+
+    float NdotL = max(dot(normal, lightDir), 0.0);
+    if (NdotL < 0.05) return 1.0;
+
+    int count = clamp(dynamicCsmCount, 1, MC2_SHADOW_CSM_MAX);
+
+    // Select the first (tightest) cascade that contains worldPos. Cascade 0 is
+    // the near/highest-resolution slice; fall through to coarser ones. When the
+    // sample lands inside the OVERLAP toward the next cascade's near edge, blend
+    // smoothly to hide the resolution seam.
+    for (int c = 0; c < count; ++c) {
+        vec3 pc;
+        if (!csmProject(worldPos, c, pc)) continue;
+
+        float vis = csmSampleLayer(pc, c, worldPos, NdotL, numTaps);
+
+        // Overlap blend with the next cascade near the outer edge of this one.
+        if (c + 1 < count) {
+            // distance to nearest xy border in [0,0.5]; band = outer 12%.
+            vec2 d = min(pc.xy, 1.0 - pc.xy);
+            float edge = min(d.x, d.y);
+            const float band = 0.06;
+            if (edge < band) {
+                vec3 pc2;
+                if (csmProject(worldPos, c + 1, pc2)) {
+                    float vis2 = csmSampleLayer(pc2, c + 1, worldPos, NdotL, numTaps);
+                    float t = smoothstep(0.0, band, edge);   // 0 at border -> use next
+                    vis = mix(vis2, vis, t);
+                }
+            }
+        }
+
+        return mix(0.4, 1.0, vis);
+    }
+
+    // Outside every cascade -> fully lit (static map covers the far field).
+    return 1.0;
+}
+
+#else  // ---- legacy single dynamic shadow map (default, byte-identical) ----
+
 uniform sampler2DShadow dynamicShadowMap;
 uniform mat4 dynamicLightSpaceMatrix;
 uniform int enableDynamicShadows;
@@ -126,6 +232,15 @@ float calcDynamicShadow(vec3 worldPos, vec3 normal, vec3 lightDir, int numTaps)
     shadow /= float(taps);
 
     return mix(0.4, 1.0, shadow);
+}
+
+#endif  // MC2_SHADOW_CSM
+
+// Convenience overload — full quality (backwards compatible). Signature frozen
+// and IDENTICAL in both variants.
+float calcDynamicShadow(vec3 worldPos, vec3 normal, vec3 lightDir)
+{
+    return calcDynamicShadow(worldPos, normal, lightDir, 16);
 }
 
 #endif

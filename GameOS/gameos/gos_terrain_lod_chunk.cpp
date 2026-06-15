@@ -2,6 +2,8 @@
 #include "utils/gl_utils.h"
 #include "utils/shader_builder.h"
 #include "gos_postprocess.h"   // Phase 10 Step 1c: shadow textures + light matrices
+#include <gameos.hpp>          // Item 1: mc2ShadowCsmEnabled/Count (CSM shader define)
+#include <string>
 #include "gl_state_guard.h"    // GlStateGuard slice 2: composable depth/blend/cull RAII
 #include "../../mclib/render_contract.h"  // [RENDER_PASS v1] noteRenderPass
 #include <cstdio>
@@ -77,6 +79,10 @@ static GLint    s_locShadowSoftness     = -1;
 static GLint    s_locDynShadowMap       = -1;
 static GLint    s_locDynLightSpaceMat   = -1;
 static GLint    s_locEnableDynShadows   = -1;
+// Item 1 CSM array-variant locs (only valid when MC2_SHADOW_CSM is ON)
+static GLint    s_locDynShadowArray     = -1;
+static GLint    s_locDynCascadeMats     = -1;
+static GLint    s_locDynCsmCount        = -1;
 // Mirror gameos_graphics.cpp's file-static terrain shadow texture units (9/10).
 static constexpr GLint kChunkTexUnitStaticShadow  = 9;
 static constexpr GLint kChunkTexUnitDynamicShadow = 10;
@@ -325,12 +331,21 @@ void gos_TerrainLodChunk_Init()
     // Shader program (Phase 4) — load unconditionally; SubmitDrawCommands gates
     // on the env var so no pixels change unless MC2_TERRAIN_LOD_CHUNK=1.
     {
-        static const char* kPrefix = "#version 430\n";
+        // Item 1: inject MC2_SHADOW_CSM define so terrain_lod_chunk.frag (which
+        // #includes shadow.hglsl) compiles the array-sampler variant when ON.
+        std::string prefix = "#version 430\n";
+        if (mc2ShadowCsmEnabled()) {
+            char csmDef[64];
+            snprintf(csmDef, sizeof(csmDef),
+                     "#define MC2_SHADOW_CSM 1\n#define MC2_SHADOW_CSM_MAX %d\n",
+                     mc2ShadowCsmCount());
+            prefix += csmDef;
+        }
         glsl_program* prog = glsl_program::makeProgram(
             "terrain_lod_chunk",
             "shaders/terrain_lod_chunk.vert",
             "shaders/terrain_lod_chunk.frag",
-            kPrefix);
+            prefix.c_str());
         if (!prog || !prog->shp_)
         {
             fprintf(stderr, "[TerrainLodChunk] WARNING: shader compile failed"
@@ -364,6 +379,9 @@ void gos_TerrainLodChunk_Init()
             s_locDynShadowMap     = glGetUniformLocation(s_terrainProgram, "dynamicShadowMap");
             s_locDynLightSpaceMat = glGetUniformLocation(s_terrainProgram, "dynamicLightSpaceMatrix");
             s_locEnableDynShadows = glGetUniformLocation(s_terrainProgram, "enableDynamicShadows");
+            s_locDynShadowArray   = glGetUniformLocation(s_terrainProgram, "dynamicShadowArray");
+            s_locDynCascadeMats   = glGetUniformLocation(s_terrainProgram, "dynamicCascadeMatrices");
+            s_locDynCsmCount      = glGetUniformLocation(s_terrainProgram, "dynamicCsmCount");
             s_locMatNormalArray   = glGetUniformLocation(s_terrainProgram, "matNormalArray");
             s_locClassGrass     = glGetUniformLocation(s_terrainProgram, "terrainClassGrass");
             s_locClassDirt      = glGetUniformLocation(s_terrainProgram, "terrainClassDirt");
@@ -625,14 +643,28 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
                 glActiveTexture(GL_TEXTURE0);
             }
             if (pp->getDynamicShadowFBO()) {
-                if (s_locDynLightSpaceMat >= 0)
-                    glUniformMatrix4fv(s_locDynLightSpaceMat, 1, GL_FALSE, pp->getDynamicLightSpaceMatrix());
                 if (s_locEnableDynShadows >= 0) glUniform1i(s_locEnableDynShadows, 1);
-                if (s_locDynShadowMap >= 0) {
-                    glUniform1i(s_locDynShadowMap, kChunkTexUnitDynamicShadow);
-                    glActiveTexture(GL_TEXTURE0 + kChunkTexUnitDynamicShadow);
-                    glBindTexture(GL_TEXTURE_2D, pp->getDynamicShadowTexture());
-                    glActiveTexture(GL_TEXTURE0);
+                if (mc2ShadowCsmEnabled() && pp->getDynamicShadowArrayTexture()) {
+                    // Item 1 CSM: array-sampler variant.
+                    if (s_locDynCascadeMats >= 0)
+                        glUniformMatrix4fv(s_locDynCascadeMats, pp->getDynamicShadowCascadeCount(),
+                                           GL_FALSE, pp->getDynamicCascadeMatrices());
+                    if (s_locDynCsmCount >= 0) glUniform1i(s_locDynCsmCount, pp->getDynamicShadowCascadeCount());
+                    if (s_locDynShadowArray >= 0) {
+                        glUniform1i(s_locDynShadowArray, kChunkTexUnitDynamicShadow);
+                        glActiveTexture(GL_TEXTURE0 + kChunkTexUnitDynamicShadow);
+                        glBindTexture(GL_TEXTURE_2D_ARRAY, pp->getDynamicShadowArrayTexture());
+                        glActiveTexture(GL_TEXTURE0);
+                    }
+                } else {
+                    if (s_locDynLightSpaceMat >= 0)
+                        glUniformMatrix4fv(s_locDynLightSpaceMat, 1, GL_FALSE, pp->getDynamicLightSpaceMatrix());
+                    if (s_locDynShadowMap >= 0) {
+                        glUniform1i(s_locDynShadowMap, kChunkTexUnitDynamicShadow);
+                        glActiveTexture(GL_TEXTURE0 + kChunkTexUnitDynamicShadow);
+                        glBindTexture(GL_TEXTURE_2D, pp->getDynamicShadowTexture());
+                        glActiveTexture(GL_TEXTURE0);
+                    }
                 }
             } else if (s_locEnableDynShadows >= 0) {
                 glUniform1i(s_locEnableDynShadows, 0);

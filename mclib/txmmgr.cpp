@@ -2308,6 +2308,9 @@ void MC_TextureManager::renderLists (void)
 			gos_GetTerrainLightDir(&lx, &ly, &lz);   // same accessor used by old shim
 			gos_BuildDynamicLightMatrix(-lx, -ly, -lz, cornersMC2);  // sign matches old shim
 			gos_BeginDynamicShadowPass();             // no-op if shadowsEnabled_ false
+			// Item 1 P1: caster set used by the CSM cascade replay (set in the
+			// prop-caster path below; nullptr => CSM replay uses flushShadow).
+			const std::vector<GpuStaticPropInstance>* csmCasterSet = nullptr;
 			// SHADOW-STATIC-BUILDINGS-2: when buildings cast via the world-fixed
 			// static map, skip them in the dynamic pass to avoid a redundant fuzzy
 			// double-shadow on buildings (trees/mechs still cast dynamically).
@@ -2464,11 +2467,47 @@ void MC_TextureManager::renderLists (void)
 				TracyGpuZone("GpuSP.DynShadowDraw");
 				GpuStaticPropBatcher::instance().drawDynamicPropShadows(*dynShadowSet);
 			}
+				csmCasterSet = dynShadowSet;   // Item 1 P1: remember for the cascade replay
 			} else {
 				GpuStaticPropBatcher::instance().flushShadow(s_skipBldgInDynamic);
 			}
 			GpuMechBatcher::instance().flushShadow();
 			gos_EndDynamicShadowPass();
+
+			// Item 1 P1: replay casters into each CSM array layer. The legacy
+			// single-map pass above is fully complete (props+mech+EndPass restored
+			// state). Each beginDynamicShadowCascade binds the array layer + sets
+			// the active cascade matrix (via getDynamicLightSpaceMatrix resolving to
+			// the active cascade) and clears forward-Z. Skipped entirely (no GL) and
+			// byte-identical when MC2_SHADOW_CSM is OFF. csmCasterSet is non-null in
+			// the prop-caster path; otherwise we fall back to flushShadow per layer.
+			if (mc2ShadowCsmEnabled()) {
+				gosPostProcess* ppCsm = getGosPostProcess();
+				if (ppCsm && ppCsm->getDynamicShadowArrayTexture()) {
+					ZoneScopedN("RenderLists.DynShadowCSM");
+					const int csmN = ppCsm->getDynamicShadowCascadeCount();
+					for (int ci = 0; ci < csmN; ++ci) {
+						if (!ppCsm->beginDynamicShadowCascade(ci)) continue;
+						if (csmCasterSet)
+							GpuStaticPropBatcher::instance().drawDynamicPropShadows(*csmCasterSet);
+						else
+							GpuStaticPropBatcher::instance().flushShadow(s_skipBldgInDynamic);
+						GpuMechBatcher::instance().flushShadow();
+						ppCsm->endDynamicShadowCascadePass();
+					}
+					// P5 headless log: layers + prop caster-set size fed to each
+					// cascade (per-cascade containment is decided GPU-side in the
+					// shader; this proves the array pass ran with casters).
+					static bool s_csmLogged = false;
+					if (!s_csmLogged) {
+						s_csmLogged = true;
+						const size_t nCasters = csmCasterSet ? csmCasterSet->size() : 0;
+						fprintf(stderr, "[CSM] layers=%d casters_per_layer=%zu\n",
+						        csmN, nCasters);
+						fflush(stderr);
+					}
+				}
+			}
 		}
 		gos_render_pass_timer::End(gos_render_pass_timer::Pass_ShadowDyn);
 	}

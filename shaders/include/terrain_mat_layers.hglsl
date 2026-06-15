@@ -2,9 +2,13 @@
 // Layer N in the array corresponds to the same material as matNormalN in the
 // individual-sampler path. Keep in sync with buildTerrainNormalArray() layer
 // order in gameos_graphics.cpp.
-#define MAT_LAYER_ROCK     0
-#define MAT_LAYER_GRASS    1
-#define MAT_LAYER_DIRT     2
-#define MAT_LAYER_CONCRETE 3
-#define MAT_LAYER_SNOW     4
-#define MAT_LAYER_COUNT    5
+#define MAT_LAYER_ROCK          0
+#define MAT_LAYER_GRASS         1
+#define MAT_LAYER_DIRT          2
+#define MAT_LAYER_CONCRETE      3
+#define MAT_LAYER_SNOW          4
+#define MAT_LAYER_MARBLE_CLIFF  5   // mat5_normal.tga (marble_cliff_01)
+#define MAT_LAYER_PAINTED_CONC  6   // mat6_normal.tga (painted_concrete_02)
+#define MAT_LAYER_ASPHALT       7   // mat7_normal.tga (clean_asphalt)
+#define MAT_LAYER_CONC_WALL     8   // mat8_normal.tga (concrete_wall_003)
+#define MAT_LAYER_COUNT         9

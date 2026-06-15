@@ -29,6 +29,22 @@ public:
     // viewMat, projMat are column-major 4x4 floats (16 floats each).
     void renderHdriSkybox(const float* viewMat, const float* projMat);
 
+    // HDRI-SKY frame fix (MC2_HDRI_SKY_FRAME_FIX ON path): renders the HDRI
+    // background reconstructing the world ray directly from the camera's
+    // WORLD-space basis (raw MC2 frame x=east, y=north, z=elevation) instead
+    // of inverting view+proj. camFwd/camRight/camUp are float[3]; tHX/tHY are
+    // tan(halfFOV) horizontal / vertical.
+    void renderHdriSkyboxBasis(const float* camFwd, const float* camRight,
+                               const float* camUp, float tHX, float tHY);
+
+    // HDRI-SKY frame fix (MC2_HDRI_SKY_FRAME_FIX ON path, one-proven-matrix).
+    // Unprojects NDC through the inverse of worldToClipGL (the EXACT matrix
+    // the GPU rasterizes terrain with) to reconstruct the sky ray in the raw
+    // MC2 world frame (x=east, y=north, z=elevation, Z-up). No camera-basis,
+    // no FOV, no handedness guessing. invVP16 is column-major 16 floats =
+    // inverse(worldToClipGL), uploaded verbatim (same convention as invProj).
+    void renderHdriSkyboxInvVP(const float* invVP16);
+
     void runBloom();
 
     // Shadow mapping
@@ -102,8 +118,30 @@ public:
                                  const float camFitCornersMC2[8][3]);
     GLuint getDynamicShadowTexture() const { return dynShadowDepthTex_; }
     GLuint getDynamicShadowFBO() const { return dynShadowFBO_; }
-    const float* getDynamicLightSpaceMatrix() const { return dynamicLightSpaceMatrix_; }
+    // When CSM is active during the caster pass, this returns the matrix for the
+    // cascade currently being rendered (csmActiveCascade_), so the existing
+    // batcher caster sites (which all upload getDynamicLightSpaceMatrix() as
+    // "lightSpaceMatrix") render into the correct layer with NO batcher edits.
+    // Outside the caster pass / when CSM is off it returns the legacy single matrix.
+    const float* getDynamicLightSpaceMatrix() const {
+        if (dynShadowArrayTex_ && csmActiveCascade_ >= 0 && csmActiveCascade_ < csmCount_)
+            return &dynamicCascadeMatrices_[csmActiveCascade_ * 16];
+        return dynamicLightSpaceMatrix_;
+    }
     int getDynamicShadowMapSize() const { return dynShadowMapSize_; }
+
+    // --- Item 1: Cascaded Shadow Maps (dynamic path) -----------------------
+    // Gate (MC2_SHADOW_CSM, default OFF). When OFF the legacy single-map path
+    // above is used unchanged (byte-identical). When ON, the dynamic shadow is
+    // a GL_TEXTURE_2D_ARRAY of csmCount layers, each with its own light matrix.
+    GLuint getDynamicShadowArrayTexture() const { return dynShadowArrayTex_; }
+    int    getDynamicShadowCascadeCount() const { return csmCount_; }
+    // Flat float[csmCount_*16] of per-cascade light-space matrices (col-major).
+    const float* getDynamicCascadeMatrices() const { return dynamicCascadeMatrices_; }
+    // Bind the per-layer FBO + viewport + forward-Z clear for caster layer i.
+    // Returns false if CSM inactive or i out of range (caller skips).
+    bool beginDynamicShadowCascade(int i);
+    void endDynamicShadowCascadePass();
 
     // Toggles and parameters
     float exposure_;
@@ -229,6 +267,11 @@ private:
     bool          hdriEnabled_     = false;  // resolved once from env at init
     bool          hdriReady_       = false;  // true iff tex + program both valid
     GLuint        hdriDummyVao_    = 0;      // fallback when quadVAO_ unavailable
+    // HDRI-SKY Item 2: GL-equirect azimuth (radians) of the baked sun in the
+    // EXR, derived at load time by luminance-weighted centroid of the brightest
+    // above-horizon texels. NaN => scan unavailable (sun-sync stays disabled).
+    float         hdriBakedSunAz_  = 0.0f;
+    bool          hdriBakedSunValid_ = false;
 
     // Bloom shaders
     glsl_program* bloomThresholdProg_;
@@ -258,6 +301,33 @@ private:
     int dynShadowMapSize_;
     float dynamicLightSpaceMatrix_[16];
     glsl_program* shadowDebugProg_;
+
+    // --- Item 1 CSM state (only used when MC2_SHADOW_CSM gate is ON) --------
+    static const int kMaxCsmCascades = 3;
+    GLuint dynShadowArrayFBO_;                 // FBO whose depth attach is one array layer
+    GLuint dynShadowArrayDummyColorTex_;       // 7900 XTX FBO-completeness dummy (array)
+    GLuint dynShadowArrayTex_;                 // GL_TEXTURE_2D_ARRAY depth (4096^2 x N)
+    int    csmCount_;                          // clamp(MC2_SHADOW_CSM_COUNT,1,3)
+    float  dynamicCascadeMatrices_[kMaxCsmCascades * 16]; // per-cascade col-major
+    int    csmActiveCascade_;                  // cascade the caster pass is drawing
+    int    csmDebugLayer_;                     // which layer the debug blit shows
+
+    // CSM caster-loop GL-state save/restore. beginDynamicShadowCascade() captures
+    // the caller's full scene GL state on the FIRST cascade (csmStateSaved_ flips
+    // true); endDynamicShadowCascadePass() restores it on the LAST cascade. This
+    // mirrors gosRenderer::begin/endDynamicShadowPass (captureShadowGLState /
+    // restoreShadowGLState in gameos_graphics.cpp) so the forward-Z 4096^2 array
+    // pass does not leak FBO/viewport/depth/blend/cull into the reverse-Z scene
+    // passes (props/actors/water) that draw after the cascade loop.
+    bool      csmStateSaved_ = false;
+    GLint     csmSavedFBO_ = 0;
+    GLint     csmSavedViewport_[4] = {0,0,0,0};
+    GLfloat   csmSavedClearDepth_ = 0.0f;
+    GLboolean csmSavedDepthTest_ = GL_FALSE;
+    GLint     csmSavedDepthFunc_ = 0;
+    GLboolean csmSavedDepthMask_ = GL_TRUE;
+    GLboolean csmSavedBlend_ = GL_FALSE;
+    GLboolean csmSavedCull_ = GL_FALSE;
 
     // Post-process screen shadow
     glsl_program* screenShadowProg_;

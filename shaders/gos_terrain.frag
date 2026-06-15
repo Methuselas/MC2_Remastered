@@ -6,6 +6,7 @@
 #include <include/noise.hglsl>
 #include <include/render_contract.hglsl>
 #include <include/terrain_depth_bias.hglsl>  // single-sourced reverse-Z OVERLAY_DEPTH_BIAS (K7)
+#include <include/edge_haze.hglsl>
 
 // [RENDER_CONTRACT]
 //   Pass:           TerrainBase
@@ -415,14 +416,28 @@ void main(void)
         uint cementWord  = thinRecsFrag[RecordIdx].control.w;
         bool cementValid = (cementWord & 0x80000000u) != 0u;
         if (cementValid) {
-            uint layerIdx = cementWord & 0xFFFFu;  // V27: was 0xFFu pre-widening
+            // CEMENT-DETAIL-COLOR: replace cement atlas diffuse with detail layer sample.
+            // MAT_LAYER_PAINTED_CONC (layer 6) = mat6_normal.tga (painted_concrete_02).
+            // NOTE: this is a NORMAL MAP stored as RGBA8; sampling it as colour will
+            // produce blue/purple tones (normal maps encode XYZ in RGB, biased to ~0.5,0.5,1).
+            // The user asked for this literal replacement. For a true albedo result,
+            // replace data/textures/mat6_normal.tga with a concrete colour/albedo texture
+            // (the asset-swap fallback) and re-cook.
+            PREC float baseTilingC = detailNormalTiling.x;
+            PREC vec2 uvConcreteC  = Texcoord * baseTilingC * matTiling.w;
+#ifdef TERRAIN_NORMAL_ARRAY
+            texColor = texture(matNormalArray, vec3(uvConcreteC, float(MAT_LAYER_PAINTED_CONC)));
+#else
+            // Array path not compiled — fall back to cement atlas (no layer available)
+            uint layerIdx = cementWord & 0xFFFFu;
             int  gridSide = atlasCementGridSide;
             if (gridSide < 1) gridSide = 1;
             int  cCol = int(layerIdx) % gridSide;
             int  cRow = int(layerIdx) / gridSide;
-            PREC vec2 cTileUV = fract(vec2(WorldPos.x, -WorldPos.y) / atlasCementWorldUnitsPerTile);
+            PREC vec2 cTileUV  = fract(vec2(WorldPos.x, -WorldPos.y) / atlasCementWorldUnitsPerTile);
             PREC vec2 cAtlasUV = (vec2(float(cCol), float(cRow)) + cTileUV) / float(gridSide);
             texColor = texture(tex3, cAtlasUV);
+#endif
         }
     }
     PREC float waterFlag = smoothstep(0.35, 0.45, rgb2hsv(texColor.rgb).x);
@@ -681,7 +696,19 @@ void main(void)
         detailN += snowWeight * 0.9 * (snowSample.rgb * 2.0 - 1.0);
     }
 #endif
+    // Cement normal: suppress the regular detail normal in cement-masked regions and
+    // apply the painted-concrete normal (MAT_LAYER_PAINTED_CONC) instead, so cement
+    // gets real surface relief rather than the flat-surface zeroing from legacy.
+    // pureConcrete blends smoothly at boundary patches (smoothstep 2->3 TerrainType).
     detailN *= (1.0 - pureConcrete);
+    if (pureConcrete > 0.001) {
+#ifdef TERRAIN_NORMAL_ARRAY
+        PREC vec4 cementNormalSample = texture(matNormalArray, vec3(uvConcrete, float(MAT_LAYER_PAINTED_CONC)));
+#else
+        PREC vec4 cementNormalSample = texture(matNormal3, uvConcrete);  // fallback: reuse concrete slot
+#endif
+        detailN += pureConcrete * normalBoost.w * fwConcrete * (cementNormalSample.rgb * 2.0 - 1.0);
+    }
 
     PREC vec3 N;
     N.xy = detailN.xy * detailNormalStrength.x;
@@ -922,12 +949,7 @@ void main(void)
     // haze-to-sky fade across the last ~one-tile band to reproduce the vanilla result
     // without bringing back global distance fog.
     if (mapHalfExtent > 0.0) {
-        PREC vec3 edgeSkyCol = vec3(0.58, 0.65, 0.75);
-        PREC float chebDist  = max(abs(WorldPos.x), abs(WorldPos.y));
-        PREC float edgeStart = mapHalfExtent - 256.0;
-        PREC float edgeEnd   = mapHalfExtent - 32.0;
-        PREC float edgeHaze  = smoothstep(edgeStart, edgeEnd, chebDist);
-        c.rgb = mix(c.rgb, edgeSkyCol, edgeHaze);
+        c.rgb = mix(c.rgb, EDGE_HAZE_SKY, edgeHazeAmount(WorldPos.xy, mapHalfExtent));
     }
 
     c.a = 1.0;

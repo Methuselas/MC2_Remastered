@@ -345,6 +345,16 @@ class gosMaterialVariationHelper {
             }
             if (terrainNormalArrayEnabled())
                 defines_str.append("#define TERRAIN_NORMAL_ARRAY\n");
+            // Item 1: Cascaded Shadow Maps. When the gate is ON, shadow.hglsl
+            // compiles its sampler2DArrayShadow + mat4[N] variant of
+            // calcDynamicShadow (signature frozen; no call-site changes).
+            if (mc2ShadowCsmEnabled()) {
+                char csmDef[64];
+                snprintf(csmDef, sizeof(csmDef),
+                         "#define MC2_SHADOW_CSM 1\n#define MC2_SHADOW_CSM_MAX %d\n",
+                         mc2ShadowCsmCount());
+                defines_str.append(csmDef);
+            }
             defines_str.append("\n");
 
             if(variation.defines_)
@@ -2080,6 +2090,8 @@ class gosRenderer {
             GLint matNormalArray = -1;   // sampler2DArray (TERRAIN_NORMAL_ARRAY path)
             GLint lightSpaceMatrix = -1, enableShadows = -1, shadowSoftness = -1, shadowMap = -1;
             GLint dynamicLightSpaceMatrix = -1, enableDynamicShadows = -1, dynamicShadowMap = -1;
+            // Item 1 CSM: array-variant dynamic shadow uniforms (only valid when ON)
+            GLint dynamicShadowArray = -1, dynamicCascadeMatrices = -1, dynamicCsmCount = -1;
             GLint time = -1;
             GLint mapHalfExtent = -1;
             GLint terrainMaterialProfile = -1;  // C1 tactical (mclib/terrain.h)
@@ -2118,6 +2130,8 @@ class gosRenderer {
             GLint tex1 = -1;
             GLint lightSpaceMatrix = -1, enableShadows = -1, shadowSoftness = -1, shadowMap = -1;
             GLint dynamicLightSpaceMatrix = -1, enableDynamicShadows = -1, dynamicShadowMap = -1;
+            // Item 1 CSM: array-variant dynamic shadow uniforms (only valid when ON)
+            GLint dynamicShadowArray = -1, dynamicCascadeMatrices = -1, dynamicCsmCount = -1;
             GLint time = -1, mapHalfExtent = -1;
             GLint ssboRecordBase = -1;
             GLint terrainMaterialProfile = -1;  // C1 tactical (mclib/terrain.h)
@@ -2192,6 +2206,9 @@ class gosRenderer {
             terrainLocs_.dynamicLightSpaceMatrix = glGetUniformLocation(shp, "dynamicLightSpaceMatrix");
             terrainLocs_.enableDynamicShadows = glGetUniformLocation(shp, "enableDynamicShadows");
             terrainLocs_.dynamicShadowMap = glGetUniformLocation(shp, "dynamicShadowMap");
+            terrainLocs_.dynamicShadowArray = glGetUniformLocation(shp, "dynamicShadowArray");
+            terrainLocs_.dynamicCascadeMatrices = glGetUniformLocation(shp, "dynamicCascadeMatrices");
+            terrainLocs_.dynamicCsmCount = glGetUniformLocation(shp, "dynamicCsmCount");
             terrainLocs_.time = glGetUniformLocation(shp, "time");
             terrainLocs_.mapHalfExtent = glGetUniformLocation(shp, "mapHalfExtent");
             terrainLocs_.terrainMaterialProfile = glGetUniformLocation(shp, "g_terrainMaterialProfile");
@@ -2248,6 +2265,9 @@ class gosRenderer {
             thinTerrainLocs_.dynamicLightSpaceMatrix = glGetUniformLocation(shp, "dynamicLightSpaceMatrix");
             thinTerrainLocs_.enableDynamicShadows    = glGetUniformLocation(shp, "enableDynamicShadows");
             thinTerrainLocs_.dynamicShadowMap        = glGetUniformLocation(shp, "dynamicShadowMap");
+            thinTerrainLocs_.dynamicShadowArray      = glGetUniformLocation(shp, "dynamicShadowArray");
+            thinTerrainLocs_.dynamicCascadeMatrices  = glGetUniformLocation(shp, "dynamicCascadeMatrices");
+            thinTerrainLocs_.dynamicCsmCount         = glGetUniformLocation(shp, "dynamicCsmCount");
             thinTerrainLocs_.time               = glGetUniformLocation(shp, "time");
             thinTerrainLocs_.mapHalfExtent      = glGetUniformLocation(shp, "mapHalfExtent");
             thinTerrainLocs_.ssboRecordBase     = glGetUniformLocation(shp, "ssboRecordBase");
@@ -2664,27 +2684,27 @@ void  gos_GetWaterSkyTintColor(float* rgb) { rgb[0]=g_waterSkyTintColor[0]; rgb[
 void  gos_SetWaterSkyTintColor(float r,float g,float b) { g_waterSkyTintColor[0]=r; g_waterSkyTintColor[1]=g; g_waterSkyTintColor[2]=b; }
 
 // WATER-SKY-REFLECTION-1: gated camera-DEPENDENT SH-L2 sky reflection on the MDI
-// water FS. Strength default 0.0 = exact no-op (byte-identical). Env
-// MC2_WATER_REFLECTION=1 bumps the default to 0.15 for A/B; the ImGui slider is
-// authoritative once touched BUT is disabled in the UI when the env gate is OFF
-// (the env is the hard gate — the slider must not bypass it). Sentinel -1 on
-// strength = uninit (resolve env once). Source = inlined SH-L2 sky in the shader.
+// water FS. Default 0.12 = un-gated (sky reflection is ON by default as of
+// WATER-SUN-SPEC-1; MC2_WATER_REFLECTION=0 kills it back to 0.0 byte-identical).
+// Env MC2_WATER_REFLECTION=0 -> 0.0 no-op; =1 or unset -> 0.12 default.
+// Slider authoritative once touched. Sentinel -1 = uninit (resolve env once).
 float g_waterReflStrength = -1.0f;
 float gos_GetWaterReflStrength()
 {
     if (g_waterReflStrength < 0.0f) {
         const char* v = getenv("MC2_WATER_REFLECTION");
+        // default OFF (0.0); MC2_WATER_REFLECTION=1 -> 0.15 (sky-reflection A/B).
         g_waterReflStrength = (v && v[0] && v[0] != '0') ? 0.15f : 0.0f;
     }
     return g_waterReflStrength;
 }
 void  gos_SetWaterReflStrength(float v) { g_waterReflStrength = (v < 0.0f) ? 0.0f : v; }
-// Whether the env gate is enabled (UI uses this to disable the slider so it
-// cannot bypass the gate). Resolved live each call (cheap).
+// Whether reflection is enabled (default: ON). Env MC2_WATER_REFLECTION=0 kills it.
+// Resolved live each call (cheap). UI uses this to toggle gate-state label.
 int   gos_GetWaterReflectionGate()
 {
     const char* v = getenv("MC2_WATER_REFLECTION");
-    return (v && v[0] && v[0] != '0') ? 1 : 0;
+    return (v && v[0] == '0') ? 0 : 1;  // default ON; =0 disables
 }
 
 // WATER-REFLECTION-SAMPLE-1: strength of the terrain reflection RT blended OVER
@@ -2706,6 +2726,21 @@ int  gos_GetWaterReflectionRtGate()
     const char* v = getenv("MC2_WATER_REFLECTION_RT");
     return (v && v[0] && v[0] != '0') ? 1 : 0;
 }
+
+// WATER-SUN-SPEC-1: Blinn-Phong sun specular intensity on MDI water FS.
+// Default 0.0 = exact no-op (byte-identical). Env MC2_WATER_SHINE=1 bumps
+// the default to 0.25 for quick A/B; the ImGui slider is authoritative once
+// touched. Sentinel -1 = uninit (resolve env once).
+float g_waterSpecIntensity = -1.0f;
+float gos_GetWaterSpecIntensity()
+{
+    if (g_waterSpecIntensity < 0.0f) {
+        const char* v = getenv("MC2_WATER_SHINE");
+        g_waterSpecIntensity = (v && v[0] && v[0] != '0') ? 0.25f : 0.0f;
+    }
+    return g_waterSpecIntensity;
+}
+void gos_SetWaterSpecIntensity(float v) { g_waterSpecIntensity = (v < 0.0f) ? 0.0f : v; }
 
 void gos_terrain_bridge_renderWaterFast(
     unsigned int recordCount,
@@ -3087,6 +3122,13 @@ void gosRenderer::renderWaterFastPath(
         const float camMC2[4] = { -terrain_camera_pos_.x, terrain_camera_pos_.z,
                                    terrain_camera_pos_.y,  1.0f };
         setMVec4      ("cameraPos", camMC2);  // water-v1 reflection/Fresnel (raw MC2)
+        // WATER-SUN-SPEC-1: upload terrainLightDir RAW MC2 (no camMC2 swap).
+        // The camMC2 swap above is for cameraPos only (Stuff->MC2 frame fix).
+        // Light dir is already raw MC2 from gamecam.cpp:314 ("NOT swizzled — MC2 Z-up");
+        // terrain uploads it raw at :6055/6177/6354. Applying the swap would double-
+        // transform -> sun on wrong axis. The shader uses it directly in MC2 Z-up.
+        setMVec4      ("terrainLightDir", (const float*)&terrain_light_dir_);
+        setMF         ("u_waterSpecIntensity", gos_GetWaterSpecIntensity());
         setMI         ("tex1",  0);
         setMI         ("tex2",  1);
 
@@ -6010,6 +6052,43 @@ static void bindTerrainHeightTexUniforms(GLint heightTexLoc, GLint paramsLoc,
     }
 }
 
+// Item 1 CSM: upload the dynamic-shadow uniforms for a terrain-style loc set.
+// When CSM is OFF this is byte-identical to the legacy inline block (sets
+// dynamicLightSpaceMatrix + dynamicShadowMap + binds the 2D texture). When ON
+// it instead uploads dynamicCascadeMatrices[N] + dynamicCsmCount and binds the
+// GL_TEXTURE_2D_ARRAY to the same texunit. Template over the loc struct because
+// TerrainUniformLocs and ThinTerrainUniformLocs share field names.
+template <typename Locs>
+static void uploadDynamicShadowUniforms(const Locs& tl, gosPostProcess* pp, GLint texUnit)
+{
+    if (mc2ShadowCsmEnabled() && pp->getDynamicShadowArrayTexture()) {
+        if (tl.dynamicCascadeMatrices >= 0)
+            glUniformMatrix4fv(tl.dynamicCascadeMatrices,
+                               pp->getDynamicShadowCascadeCount(), GL_FALSE,
+                               pp->getDynamicCascadeMatrices());
+        if (tl.dynamicCsmCount >= 0)
+            glUniform1i(tl.dynamicCsmCount, pp->getDynamicShadowCascadeCount());
+        if (tl.enableDynamicShadows >= 0) glUniform1i(tl.enableDynamicShadows, 1);
+        if (tl.dynamicShadowArray >= 0) {
+            glUniform1i(tl.dynamicShadowArray, texUnit);
+            glActiveTexture(GL_TEXTURE0 + texUnit);
+            glBindTexture(GL_TEXTURE_2D_ARRAY, pp->getDynamicShadowArrayTexture());
+            glActiveTexture(GL_TEXTURE0);
+        }
+        return;
+    }
+    // Legacy single-map path (byte-identical to the prior inline block).
+    if (tl.dynamicLightSpaceMatrix >= 0)
+        glUniformMatrix4fv(tl.dynamicLightSpaceMatrix, 1, GL_FALSE, pp->getDynamicLightSpaceMatrix());
+    if (tl.enableDynamicShadows >= 0) glUniform1i(tl.enableDynamicShadows, 1);
+    if (tl.dynamicShadowMap >= 0) {
+        glUniform1i(tl.dynamicShadowMap, texUnit);
+        glActiveTexture(GL_TEXTURE0 + texUnit);
+        glBindTexture(GL_TEXTURE_2D, pp->getDynamicShadowTexture());
+        glActiveTexture(GL_TEXTURE0);
+    }
+}
+
 void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
 {
     if (!material) return;
@@ -6121,15 +6200,7 @@ void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
             glActiveTexture(GL_TEXTURE0);
         }
         if (pp->getDynamicShadowFBO()) {
-            if (tl.dynamicLightSpaceMatrix >= 0)
-                glUniformMatrix4fv(tl.dynamicLightSpaceMatrix, 1, GL_FALSE, pp->getDynamicLightSpaceMatrix());
-            if (tl.enableDynamicShadows >= 0) glUniform1i(tl.enableDynamicShadows, 1);
-            if (tl.dynamicShadowMap >= 0) {
-                glUniform1i(tl.dynamicShadowMap, kTerrainTexUnitDynamicShadow);
-                glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitDynamicShadow);
-                glBindTexture(GL_TEXTURE_2D, pp->getDynamicShadowTexture());
-                glActiveTexture(GL_TEXTURE0);
-            }
+            uploadDynamicShadowUniforms(tl, pp, kTerrainTexUnitDynamicShadow);
         } else {
             if (tl.enableDynamicShadows >= 0) glUniform1i(tl.enableDynamicShadows, 0);
         }
@@ -6262,16 +6333,7 @@ int gosRenderer::terrainBindThinUniformsForPatchStream(glsl_program* overridePro
             glActiveTexture(GL_TEXTURE0);
         }
         if (pp->getDynamicShadowFBO()) {
-            if (tl.dynamicLightSpaceMatrix >= 0)
-                glUniformMatrix4fv(tl.dynamicLightSpaceMatrix, 1, GL_FALSE,
-                                   pp->getDynamicLightSpaceMatrix());
-            if (tl.enableDynamicShadows >= 0) glUniform1i(tl.enableDynamicShadows, 1);
-            if (tl.dynamicShadowMap >= 0) {
-                glUniform1i(tl.dynamicShadowMap, kTerrainTexUnitDynamicShadow);
-                glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitDynamicShadow);
-                glBindTexture(GL_TEXTURE_2D, pp->getDynamicShadowTexture());
-                glActiveTexture(GL_TEXTURE0);
-            }
+            uploadDynamicShadowUniforms(tl, pp, kTerrainTexUnitDynamicShadow);
         } else {
             if (tl.enableDynamicShadows >= 0) glUniform1i(tl.enableDynamicShadows, 0);
         }
@@ -6424,15 +6486,7 @@ void gosRenderer::terrainDrawIndexedPatches(gosRenderMaterial* material, gosMesh
             }
             // Dynamic object shadow map (unit kTerrainTexUnitDynamicShadow)
             if (pp->getDynamicShadowFBO()) {
-                if (tl.dynamicLightSpaceMatrix >= 0)
-                    glUniformMatrix4fv(tl.dynamicLightSpaceMatrix, 1, GL_FALSE, pp->getDynamicLightSpaceMatrix());
-                if (tl.enableDynamicShadows >= 0) glUniform1i(tl.enableDynamicShadows, 1);
-                if (tl.dynamicShadowMap >= 0) {
-                    glUniform1i(tl.dynamicShadowMap, kTerrainTexUnitDynamicShadow);
-                    glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitDynamicShadow);
-                    glBindTexture(GL_TEXTURE_2D, pp->getDynamicShadowTexture());
-                    glActiveTexture(GL_TEXTURE0);
-                }
+                uploadDynamicShadowUniforms(tl, pp, kTerrainTexUnitDynamicShadow);
             } else {
                 if (tl.enableDynamicShadows >= 0) glUniform1i(tl.enableDynamicShadows, 0);
             }
@@ -8238,15 +8292,31 @@ void __stdcall gos_SetupObjectShadows(HGOSRENDERMATERIAL material)
 		loc = glGetUniformLocation(shp, "enableDynamicShadows");
 		if (loc >= 0) glUniform1i(loc, 1);
 
-		loc = glGetUniformLocation(shp, "dynamicLightSpaceMatrix");
-		if (loc >= 0)
-			glUniformMatrix4fv(loc, 1, GL_FALSE, pp->getDynamicLightSpaceMatrix());
+		if (mc2ShadowCsmEnabled() && pp->getDynamicShadowArrayTexture()) {
+			// Item 1 CSM: array-sampler variant.
+			loc = glGetUniformLocation(shp, "dynamicCascadeMatrices");
+			if (loc >= 0)
+				glUniformMatrix4fv(loc, pp->getDynamicShadowCascadeCount(), GL_FALSE,
+				                   pp->getDynamicCascadeMatrices());
+			loc = glGetUniformLocation(shp, "dynamicCsmCount");
+			if (loc >= 0) glUniform1i(loc, pp->getDynamicShadowCascadeCount());
+			loc = glGetUniformLocation(shp, "dynamicShadowArray");
+			if (loc >= 0) {
+				glUniform1i(loc, kTerrainTexUnitDynamicShadow);
+				glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitDynamicShadow);
+				glBindTexture(GL_TEXTURE_2D_ARRAY, pp->getDynamicShadowArrayTexture());
+			}
+		} else {
+			loc = glGetUniformLocation(shp, "dynamicLightSpaceMatrix");
+			if (loc >= 0)
+				glUniformMatrix4fv(loc, 1, GL_FALSE, pp->getDynamicLightSpaceMatrix());
 
-		loc = glGetUniformLocation(shp, "dynamicShadowMap");
-		if (loc >= 0) {
-			glUniform1i(loc, kTerrainTexUnitDynamicShadow);
-			glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitDynamicShadow);
-			glBindTexture(GL_TEXTURE_2D, pp->getDynamicShadowTexture());
+			loc = glGetUniformLocation(shp, "dynamicShadowMap");
+			if (loc >= 0) {
+				glUniform1i(loc, kTerrainTexUnitDynamicShadow);
+				glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitDynamicShadow);
+				glBindTexture(GL_TEXTURE_2D, pp->getDynamicShadowTexture());
+			}
 		}
 	} else {
 		loc = glGetUniformLocation(shp, "enableDynamicShadows");
@@ -8393,8 +8463,14 @@ void __stdcall gos_SetWorldToClipGL(const Stuff::Matrix4D& mat)
 
     // [MVP_DIAG v1] S2.7 — log set_mvp entry. Throttled to frames
     // {1,5,30,120}. row0 is M[0..3] AFTER the column->row repack.
+    // MC2_MVP_DIAG_ALL=1: log every 20th frame too (camera-move diagnostic --
+    // pairs with the coalesce_upload object-MVP log to see if the object batcher
+    // MVP goes stale on camera move while this terrain MVP updates).
     ++g_mvpDiagFrame;
-    if (g_mvpDiagFrame == 1 || g_mvpDiagFrame == 5 ||
+    static int s_mvpDiagAll = -1;
+    if (s_mvpDiagAll < 0) { const char* e = getenv("MC2_MVP_DIAG_ALL"); s_mvpDiagAll = (e && e[0] == '1') ? 1 : 0; }
+    if ((s_mvpDiagAll && (g_mvpDiagFrame % 20 == 0)) ||
+        g_mvpDiagFrame == 1 || g_mvpDiagFrame == 5 ||
         g_mvpDiagFrame == 30 || g_mvpDiagFrame == 120) {
         fprintf(stderr,
                 "[MVP_DIAG v1] event=set_mvp frame=%ld renderer=%p row0=[%g %g %g %g]\n",
@@ -8754,13 +8830,29 @@ static void setupOverlayShadowsForShp(GLuint shp)
     if (pp->getDynamicShadowFBO()) {
         loc = glGetUniformLocation(shp, "enableDynamicShadows");
         if (loc >= 0) glUniform1i(loc, 1);
-        loc = glGetUniformLocation(shp, "dynamicLightSpaceMatrix");
-        if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_FALSE, pp->getDynamicLightSpaceMatrix());
-        loc = glGetUniformLocation(shp, "dynamicShadowMap");
-        if (loc >= 0) {
-            glUniform1i(loc, kTerrainTexUnitDynamicShadow);
-            glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitDynamicShadow);
-            glBindTexture(GL_TEXTURE_2D, pp->getDynamicShadowTexture());
+        if (mc2ShadowCsmEnabled() && pp->getDynamicShadowArrayTexture()) {
+            // Item 1 CSM: array-sampler variant.
+            loc = glGetUniformLocation(shp, "dynamicCascadeMatrices");
+            if (loc >= 0)
+                glUniformMatrix4fv(loc, pp->getDynamicShadowCascadeCount(), GL_FALSE,
+                                   pp->getDynamicCascadeMatrices());
+            loc = glGetUniformLocation(shp, "dynamicCsmCount");
+            if (loc >= 0) glUniform1i(loc, pp->getDynamicShadowCascadeCount());
+            loc = glGetUniformLocation(shp, "dynamicShadowArray");
+            if (loc >= 0) {
+                glUniform1i(loc, kTerrainTexUnitDynamicShadow);
+                glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitDynamicShadow);
+                glBindTexture(GL_TEXTURE_2D_ARRAY, pp->getDynamicShadowArrayTexture());
+            }
+        } else {
+            loc = glGetUniformLocation(shp, "dynamicLightSpaceMatrix");
+            if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_FALSE, pp->getDynamicLightSpaceMatrix());
+            loc = glGetUniformLocation(shp, "dynamicShadowMap");
+            if (loc >= 0) {
+                glUniform1i(loc, kTerrainTexUnitDynamicShadow);
+                glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitDynamicShadow);
+                glBindTexture(GL_TEXTURE_2D, pp->getDynamicShadowTexture());
+            }
         }
     } else {
         loc = glGetUniformLocation(shp, "enableDynamicShadows");

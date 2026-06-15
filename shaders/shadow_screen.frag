@@ -62,10 +62,22 @@ layout(location = 0) out PREC vec4 FragColor;
 uniform sampler2D sceneDepthTex;
 uniform sampler2D sceneNormalTex;
 uniform sampler2DShadow shadowMap;
-uniform sampler2DShadow dynamicShadowMap;
 uniform mat4 inverseViewProj;
 uniform mat4 lightSpaceMatrix;
+// Item 1: dynamic-shadow uniforms swap under MC2_SHADOW_CSM. This shader does
+// NOT include shadow.hglsl (it carries its own sampler), so the variant lives
+// here too. enableDynamicShadows + the call sites are unchanged either way.
+#ifdef MC2_SHADOW_CSM
+#ifndef MC2_SHADOW_CSM_MAX
+#define MC2_SHADOW_CSM_MAX 3
+#endif
+uniform sampler2DArrayShadow dynamicShadowArray;
+uniform mat4 dynamicCascadeMatrices[MC2_SHADOW_CSM_MAX];
+uniform int  dynamicCsmCount;
+#else
+uniform sampler2DShadow dynamicShadowMap;
 uniform mat4 dynamicLightSpaceMatrix;
+#endif
 uniform vec2 screenSize;
 uniform int enableShadows;
 uniform int enableDynamicShadows;
@@ -116,6 +128,43 @@ float sampleShadowMap(sampler2DShadow smap, vec3 worldPos, mat4 lsMatrix, int nu
     return mix(0.4, 1.0, shadow);
 }
 
+// Item 1: single entry point for the dynamic shadow lookup. Same signature in
+// both variants so the call sites below never change.
+#ifdef MC2_SHADOW_CSM
+float sampleDynamicShadow(vec3 worldPos)
+{
+    int count = clamp(dynamicCsmCount, 1, MC2_SHADOW_CSM_MAX);
+    for (int c = 0; c < count; ++c) {
+        vec4 lsPos = dynamicCascadeMatrices[c] * vec4(worldPos, 1.0);
+        vec3 projCoords = lsPos.xyz / lsPos.w;
+        projCoords.xy = projCoords.xy * 0.5 + 0.5;
+        if (projCoords.z > 1.0 || projCoords.z < 0.0) continue;
+        if (projCoords.xy != clamp(projCoords.xy, 0.0, 1.0)) continue;
+
+        float bias = 0.003;
+        float currentDepth = projCoords.z - bias;
+        float angle = 6.2831853 * fract(sin(dot(worldPos.xz, vec2(12.9898, 78.233))) * 43758.5453);
+        float ca = cos(angle), sa = sin(angle);
+        mat2 rot = mat2(ca, sa, -sa, ca);
+        vec2 texelSize = 1.0 / vec2(textureSize(dynamicShadowArray, 0).xy);
+        float radius = max(shadowSoftness, 0.5);
+        float shadow = 0.0;
+        for (int i = 0; i < 4; i++) {
+            vec2 offset = rot * poissonDisk[i] * radius * texelSize;
+            shadow += texture(dynamicShadowArray, vec4(projCoords.xy + offset, float(c), currentDepth));
+        }
+        shadow /= 4.0;
+        return mix(0.4, 1.0, shadow);
+    }
+    return 1.0;   // outside every cascade -> lit (static map covers far field)
+}
+#else
+float sampleDynamicShadow(vec3 worldPos)
+{
+    return sampleShadowMap(dynamicShadowMap, worldPos, dynamicLightSpaceMatrix, 4);
+}
+#endif
+
 vec3 reconstructWorldPos(vec2 uv, float depth)
 {
     vec2 ndc_xy = uv * 2.0 - 1.0;
@@ -146,7 +195,7 @@ void main()
             if (enableShadows == 1)
                 shadow = min(shadow, sampleShadowMap(shadowMap, worldPos, lightSpaceMatrix, 8));
             if (enableDynamicShadows == 1)
-                shadow = min(shadow, sampleShadowMap(dynamicShadowMap, worldPos, dynamicLightSpaceMatrix, 4));
+                shadow = min(shadow, sampleDynamicShadow(worldPos));
 
             if (shadow < 0.99) {
                 FragColor = vec4(0.0, 0.0, shadow, 1.0);  // blue = shadowed
@@ -188,7 +237,7 @@ void main()
         shadow = min(shadow, sampleShadowMap(shadowMap, worldPos, lightSpaceMatrix, 8));
     }
     if (enableDynamicShadows == 1) {
-        float dynShadow = sampleShadowMap(dynamicShadowMap, worldPos, dynamicLightSpaceMatrix, 4);
+        float dynShadow = sampleDynamicShadow(worldPos);
         shadow = min(shadow, dynShadow);
     }
 

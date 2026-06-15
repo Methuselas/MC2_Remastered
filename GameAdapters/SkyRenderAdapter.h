@@ -28,5 +28,28 @@ bool isHdriReady();
 // intentionally excluded so the sky does not parallax with the camera.
 void renderHdri(const float* viewMat, const float* projMat);
 
+// HDRI-SKY frame fix (MC2_HDRI_SKY_FRAME_FIX ON path): renders the HDRI
+// background by reconstructing the world ray directly from the camera's
+// WORLD-space basis (raw MC2 frame: x=east, y=north, z=elevation) instead of
+// inverting view+proj. No-op when isHdriReady() is false.
+//
+// camFwd/camRight/camUp: column-vec float[3] world-space camera basis.
+// tHX/tHY: tan(halfFOV) horizontal / vertical.
+void renderHdriBasis(const float* camFwd, const float* camRight,
+                     const float* camUp, float tHX, float tHY);
+
+// HDRI-SKY frame fix (MC2_HDRI_SKY_FRAME_FIX ON path, one-proven-matrix
+// approach): renders the HDRI background by UNPROJECTING NDC through the
+// inverse of the EXACT matrix the GPU rasterizes terrain with
+// (worldToClipGL = kAxisSwapMC2toGL * worldToCameraMatrix * cameraToClipGL).
+// Its inverse yields a ray in the raw MC2 world frame (x=east, y=north,
+// z=elevation, Z-up) with NO frame/FOV/handedness guessing. No-op when
+// isHdriReady() is false.
+//
+// invVP16: column-major float[16] = inverse(worldToClipGL), uploaded verbatim
+// (same convention as renderHdri's invProj) so the shader does
+// invWorldToClipGL * vec4(ndc, depth, 1.0).
+void renderHdriInvVP(const float* invVP16);
+
 }  // namespace Sky
 }  // namespace GameAdapters

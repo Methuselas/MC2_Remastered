@@ -344,13 +344,15 @@ void main() {
     int  ctY = clamp(int(floor((u_halfMap - v_worldPos.y) / 128.0)), 0, u_mapSide - 1);
     uint cw  = cementWordsF[ctX + ctY * u_mapSide];
     if (u_useCement != 0 && (cw & 0x80000000u) != 0u) {
-        uint layerIdx = cw & 0xFFFFu;
-        int  gs   = max(u_cementGridSide, 1);
-        int  cCol = int(layerIdx) % gs;
-        int  cRow = int(layerIdx) / gs;
-        vec2 cTileUV  = fract(vec2(v_worldPos.x, -v_worldPos.y) / u_cementWUPT);
-        vec2 cAtlasUV = (vec2(float(cCol), float(cRow)) + cTileUV) / float(gs);
-        base = texture(u_cementAtlas, cAtlasUV).rgb;
+        // CEMENT-DETAIL-COLOR: replace cement atlas diffuse with detail layer sample.
+        // MAT_LAYER_PAINTED_CONC (layer 6) = mat6_normal.tga (painted_concrete_02).
+        // NOTE: this is a NORMAL MAP stored as RGBA8; sampling it as colour will
+        // produce blue/purple tones (normal maps encode XYZ in RGB, biased to ~0.5,0.5,1).
+        // The user asked for this literal replacement. For a true albedo result,
+        // replace data/textures/mat6_normal.tga with a concrete colour/albedo texture
+        // (the asset-swap fallback) and re-cook.
+        vec2 uvConcreteC = v_worldPos.xy * (detailNormalTiling.x / MAT_WORLD_UNITS_PER_TILE) * matTiling.w;
+        base = texture(matNormalArray, vec3(uvConcreteC, float(MAT_LAYER_PAINTED_CONC))).rgb;
         cementHit = true;
     }
 
@@ -423,7 +425,16 @@ void main() {
             N = baseN;  // detail disabled (A/B)
         } else {
             vec3 dN   = chunkDetailNormal(matWeights, snowWeight, v_worldPos.xy)
-                      * (1.0 - pureConcrete);  // cement is smooth (legacy)
+                      * (1.0 - pureConcrete);  // suppress regular detail on cement
+            // Cement normal: apply painted-concrete normal (MAT_LAYER_PAINTED_CONC) in the
+            // cement-masked region so runways get real surface relief instead of flat shading.
+            // Uses the same concrete UV tiling as chunkDetailNormal() (legacy parity).
+            if (pureConcrete > 0.001) {
+                vec2 uvC   = v_worldPos.xy * (detailNormalTiling.x / MAT_WORLD_UNITS_PER_TILE) * matTiling.w;
+                float fwC  = clamp(1.0 - (length(fwidth(uvC)) - 0.5) * 2.0, 0.0, 1.0);
+                vec4 cN    = texture(matNormalArray, vec3(uvC, float(MAT_LAYER_PAINTED_CONC)));
+                dN        += pureConcrete * matNormalBoost.w * fwC * (cN.rgb * 2.0 - 1.0);
+            }
             // terrainNormalsFromHeightStrength scales the macro-slope tilt (default 1.0).
             vec3 pert = vec3(baseN.xy / max(baseN.z, 0.2) * terrainNormalsFromHeightStrength
                              + dN.xy * detailNormalStrength.x, 1.0);
