@@ -37,6 +37,24 @@ const char* kDefaultEffectsCandidates[] = {
     "A:/Games/mc2-opengl-src/mc2srcdata/objects/effects.csv",
 };
 
+// missile-type enum (compbas "Missile type" column) — label shown, value stored.
+const char* kMTypeLabels[5] = {"Energy (0)", "Ballistic (1)", "LRM", "ST (streak)", "SRM"};
+const char* kMTypeValues[5] = {"0", "1", "LRM", "ST", "SRM"};
+// fields bitfield (compbas "Fields" column).
+const char* kFieldLabels[4] = {"streak", "inferno", "LBX", "Artillery"};
+const int   kFieldBits[4]   = {1, 2, 4, 8};
+
+void helpMarker(const char* desc) {
+    ImGui::TextDisabled("(?)");
+    if (ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
+        ImGui::TextUnformatted(desc);
+        ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
+    }
+}
+
 struct App {
     mc2w::Compbas cb;
     std::vector<mc2w::FxEntry> fx;
@@ -50,7 +68,9 @@ struct App {
     char eSlots[32] = "";
     int eRange = 1;                // index into kRanges
     int eFx = 0;                   // index into fx palette
-    char eMissileType[16] = "", eFields[16] = "", eAmmo[16] = "";
+    int eMType = 0;                // index into kMTypeValues
+    bool eFld[4] = {false, false, false, false};  // streak/inferno/lbx/artillery
+    char eIconX[8] = "", eIconY[8] = "", eAmmo[16] = "";
     char modId[64] = "my-weapons";
     char modRoot[256] = "mods";
     char newId[16] = "";
@@ -93,9 +113,15 @@ void loadSelectionToBuffers(App& a) {
     setBuf(a.eRecycle, sizeof a.eRecycle, a.cb.cell(r, I.recycle));
     setBuf(a.eTons, sizeof a.eTons, a.cb.cell(r, I.tons));
     setBuf(a.eSlots, sizeof a.eSlots, a.cb.cell(r, I.slots));
-    setBuf(a.eMissileType, sizeof a.eMissileType, a.cb.cell(r, I.missileType));
-    setBuf(a.eFields, sizeof a.eFields, a.cb.cell(r, I.fields));
     setBuf(a.eAmmo, sizeof a.eAmmo, a.cb.cell(r, I.ammoMasterId));
+    setBuf(a.eIconX, sizeof a.eIconX, a.cb.cell(r, I.iconX));
+    setBuf(a.eIconY, sizeof a.eIconY, a.cb.cell(r, I.iconY));
+    a.eMType = comboIndex(kMTypeValues, 5, a.cb.cell(r, I.missileType));
+    if (a.eMType < 0) a.eMType = 0;
+    {
+        long fv = std::strtol(a.cb.cell(r, I.fields).c_str(), nullptr, 10);
+        for (int i = 0; i < 4; ++i) a.eFld[i] = (fv & kFieldBits[i]) != 0;
+    }
     int ti = comboIndex(mc2w::kWeaponTypes, 3, a.cb.cell(r, I.type));
     a.eType = ti < 0 ? 0 : ti;
     int ri = comboIndex(mc2w::kRanges, 3, a.cb.cell(r, I.range));
@@ -115,9 +141,17 @@ void buffersToRow(App& a) {
     a.cb.setCell(r, I.tons, a.eTons);
     a.cb.setCell(r, I.slots, a.eSlots);
     a.cb.setCell(r, I.range, mc2w::kRanges[a.eRange]);
-    a.cb.setCell(r, I.missileType, a.eMissileType);
-    a.cb.setCell(r, I.fields, a.eFields);
+    a.cb.setCell(r, I.missileType, kMTypeValues[a.eMType]);
+    {
+        int fv = 0;
+        for (int i = 0; i < 4; ++i) if (a.eFld[i]) fv |= kFieldBits[i];
+        char fb[8];
+        std::snprintf(fb, sizeof fb, "%d", fv);
+        a.cb.setCell(r, I.fields, fb);
+    }
     a.cb.setCell(r, I.ammoMasterId, a.eAmmo);
+    a.cb.setCell(r, I.iconX, a.eIconX);
+    a.cb.setCell(r, I.iconY, a.eIconY);
     if (!a.fx.empty()) {
         char fxbuf[16];
         std::snprintf(fxbuf, sizeof fxbuf, "%d", a.fx[a.eFx].id);
@@ -199,6 +233,10 @@ void drawEditor(App& a) {
                 setBuf(a.eTons, sizeof a.eTons, "1");
                 setBuf(a.eSlots, sizeof a.eSlots, "1");
                 a.eRange = 1;
+                a.eMType = 0;
+                for (int i = 0; i < 4; ++i) a.eFld[i] = false;
+                setBuf(a.eIconX, sizeof a.eIconX, "1");
+                setBuf(a.eIconY, sizeof a.eIconY, "1");
             }
             a.status = std::string("editing masterID ") + a.newId;
         }
@@ -223,7 +261,9 @@ void drawEditor(App& a) {
     ok &= field("heat", a.eHeat, sizeof a.eHeat, "ufloat", a.fx);
     ok &= field("recycle (s)", a.eRecycle, sizeof a.eRecycle, "ufloat", a.fx);
     ok &= field("tons", a.eTons, sizeof a.eTons, "ufloat", a.fx);
-    ok &= field("slots", a.eSlots, sizeof a.eSlots, "uint", a.fx);
+    ok &= field("crit slots", a.eSlots, sizeof a.eSlots, "uint", a.fx);
+    ImGui::SameLine();
+    helpMarker("BattleTech critical-slot count (damage transfer). NOT the mech-bay grid size -- that's 'bay grid' below.");
 
     ImGui::SetNextItemWidth(120);
     ImGui::Combo("range", &a.eRange, mc2w::kRanges, 3);
@@ -249,8 +289,34 @@ void drawEditor(App& a) {
         ImGui::TextDisabled("hit=%s miss=%s", a.fx[a.eFx].hit.c_str(), a.fx[a.eFx].miss.c_str());
     }
 
-    ok &= field("missileType", a.eMissileType, sizeof a.eMissileType, "int", a.fx, 60);
-    ok &= field("fields", a.eFields, sizeof a.eFields, "int", a.fx, 60);
+    // mech-bay grid footprint (Icon X = columns, Icon Y = rows)
+    ImGui::TextUnformatted("bay grid"); ImGui::SameLine();
+    ImGui::SetNextItemWidth(46); ImGui::InputText("##ix", a.eIconX, sizeof a.eIconX);
+    ImGui::SameLine(); ImGui::TextUnformatted("x"); ImGui::SameLine();
+    ImGui::SetNextItemWidth(46); ImGui::InputText("cols x rows##iy", a.eIconY, sizeof a.eIconY);
+    {
+        bool gridOk = mc2w::validateCell("uint", a.eIconX, a.fx).empty() &&
+                      mc2w::validateCell("uint", a.eIconY, a.fx).empty();
+        if (!gridOk) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "positive ints");
+            ok = false;
+        }
+    }
+    ImGui::SameLine();
+    helpMarker("How big the weapon's icon shows in the mech-bay grid (Icon X = columns, Icon Y = rows). e.g. PPC 1x3, Gauss 2x4.");
+
+    // missile type enum (self-documenting dropdown — fixes the false 'SRM not an integer')
+    ImGui::SetNextItemWidth(150);
+    ImGui::Combo("missileType", &a.eMType, kMTypeLabels, 5);
+    ImGui::SameLine();
+    helpMarker("Sim sub-class: 0=Energy, 1=Ballistic; LRM / ST (streak) / SRM for missiles. Drives ammo + flight behaviour.");
+
+    // fields bitfield as checkboxes
+    ImGui::TextUnformatted("fields"); ImGui::SameLine();
+    helpMarker("Special-behaviour flags (bitfield): streak=1, inferno=2, LBX=4, Artillery=8. Most weapons have none.");
+    for (int i = 0; i < 4; ++i) { ImGui::SameLine(); ImGui::Checkbox(kFieldLabels[i], &a.eFld[i]); }
+
     ok &= field("ammoMasterId", a.eAmmo, sizeof a.eAmmo, "int", a.fx, 60);
 
     ImGui::Separator();

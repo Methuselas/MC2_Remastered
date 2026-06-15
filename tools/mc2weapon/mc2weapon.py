@@ -45,6 +45,8 @@ COMPBAS_FIELDS = [
     ("fields", "fields"),
     ("fxid", "special fx id"),
     ("ammoMasterId", "ammo master id"),
+    ("iconX", "icon x"),
+    ("iconY", "icon y"),
 ]
 
 # Candidate locations for the loose source CSVs (first existing wins).
@@ -206,11 +208,14 @@ def cmd_show(args):
 # ----------------------------------------------------------------------------
 
 VALID_RANGES = {"short", "medium", "long", "0"}
+# compbas "Missile type" column is an enum, not a number.
+VALID_MTYPES = {"0", "1", "lrm", "st", "srm"}
 # field -> (compbas idx key, kind) for `set`/`new`. kind drives validation.
 EDITABLE = {
     "damage": "ufloat", "heat": "ufloat", "recycle": "ufloat", "tons": "ufloat",
-    "slots": "uint", "range": "range", "missileType": "int", "fields": "int",
+    "slots": "uint", "range": "range", "missileType": "mtype", "fields": "int",
     "fxid": "fxid", "ammoMasterId": "int", "name": "str", "type": "wtype",
+    "iconX": "uint", "iconY": "uint",
 }
 
 
@@ -251,6 +256,9 @@ def _validate_cell(field, value, effects):
     elif kind == "range":
         if value.strip().lower() not in VALID_RANGES:
             return f"range={value!r} not in {sorted(VALID_RANGES)}"
+    elif kind == "mtype":
+        if value.strip().lower() not in VALID_MTYPES:
+            return f"missileType={value!r} not in 0/1/LRM/ST/SRM"
     elif kind == "wtype":
         if value.strip().lower() not in WEAPON_TYPES:
             return f"type={value!r} not a weapon type {sorted(WEAPON_TYPES)}"
@@ -271,6 +279,7 @@ def validate_rows(header, data_rows, idx, effects, weapons_only=True):
     """Returns list of (masterID, message) problems."""
     problems = []
     ti, ri, fi = idx["type"], idx["range"], idx["fxid"]
+    mi = idx.get("missileType", -1)
     for r in data_rows:
         if not r or not r[0].strip():
             continue
@@ -281,6 +290,9 @@ def validate_rows(header, data_rows, idx, effects, weapons_only=True):
         # range bracket
         if 0 <= ri < len(r) and r[ri].strip().lower() not in VALID_RANGES:
             problems.append((mid, f"range={r[ri]!r} invalid"))
+        # missile-type enum
+        if 0 <= mi < len(r) and r[mi].strip().lower() not in VALID_MTYPES:
+            problems.append((mid, f"missileType={r[mi]!r} not 0/1/LRM/ST/SRM"))
         # fx id present in effects.csv
         if 0 <= fi < len(r):
             try:

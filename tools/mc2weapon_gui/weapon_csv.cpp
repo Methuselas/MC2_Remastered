@@ -109,6 +109,8 @@ bool Compbas::load(const std::string& path, std::string& err) {
     idx.fields       = colIndex(header, "fields");
     idx.fxid         = colIndex(header, "special fx id");
     idx.ammoMasterId = colIndex(header, "ammo master id");
+    idx.iconX        = colIndex(header, "icon x");
+    idx.iconY        = colIndex(header, "icon y");
     return true;
 }
 
@@ -177,6 +179,10 @@ std::string validateCell(const std::string& kind, const std::string& value,
         std::string lv = lower(v);
         if (lv != "short" && lv != "medium" && lv != "long" && lv != "0")
             return "range must be short/medium/long";
+    } else if (kind == "mtype") {
+        std::string lv = lower(v);
+        if (lv != "0" && lv != "1" && lv != "lrm" && lv != "st" && lv != "srm")
+            return "must be 0/1/LRM/ST/SRM";
     } else if (kind == "wtype") {
         if (!isWeaponType(v)) return "not a weapon type";
     } else if (kind == "fxid") {
@@ -209,7 +215,7 @@ std::vector<std::string> validateRow(const Compbas& cb, int row,
     chk(cb.idx.slots, "uint", "slots");
     chk(cb.idx.range, "range", "range");
     chk(cb.idx.fxid, "fxid", "fxid");
-    chk(cb.idx.missileType, "int", "missileType");
+    chk(cb.idx.missileType, "mtype", "missileType");
     chk(cb.idx.fields, "int", "fields");
     chk(cb.idx.ammoMasterId, "int", "ammoMasterId");
     return probs;

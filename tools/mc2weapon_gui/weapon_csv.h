@@ -11,7 +11,7 @@ namespace mc2w {
 struct ColIdx {
     int masterID = -1, type = -1, name = -1, slots = -1, recycle = -1, heat = -1,
         tons = -1, damage = -1, br = -1, rp = -1, range = -1, missileType = -1,
-        fields = -1, fxid = -1, ammoMasterId = -1;
+        fields = -1, fxid = -1, ammoMasterId = -1, iconX = -1, iconY = -1;
 };
 
 struct FxEntry {
