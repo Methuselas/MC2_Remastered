@@ -106,6 +106,16 @@ long TerrainTextures::init (const char *fileName, const char *baseName)
 		}
 	}
 
+	// MC2_FORCE_TXM_REGEN=1 -> ignore the pre-cooked .txm composite cache and
+	// regenerate terrain texture composites from the source .tga (cement_N,
+	// overlays, masks) so edited terrain art shows without an editor re-cook.
+	// Same effect as InEditor's quickLoad=false. The .txm hash is keyed by the
+	// texture-combo ID (content-blind), so a .tga edit never invalidates it on
+	// its own; this is the override. Regen re-caches new loose .txm (loose wins
+	// over FST), so the new art persists even after the env is unset.
+	if (getenv("MC2_FORCE_TXM_REGEN"))
+		quickLoad = false;
+
 	tileCacheReqs = 0;
 	tileCacheHits = 0;
 	tileCacheMiss = 0;
