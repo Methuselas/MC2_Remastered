@@ -40,6 +40,58 @@ EXCLUDE_REL = {
     "data/art/buildings.csv",
 }
 
+# Core engine GUI assets that must NEVER be overridden by a campaign mod.
+# These ship in mc2x-compat (canonical versions from MC2X 1.2+) and the engine
+# reads them from there.  Older MC2X installs (DWE, HPE, DEE era) ship
+# incompatible old-format versions inside art.fst that cause jumbled GUI, no
+# mouse cursor, and pink mech bay when the mod overrides the base.
+# Exclusion is belt-and-suspenders: in_refs() will also skip them when
+# mc2x-compat is present, but explicit exclusion prevents poisoning even if
+# refs are incomplete.
+CORE_GUI_EXCLUDE = {
+    # buttonlayout FITs — control positions/sprites; old format = jumbled layout
+    "data/art/buttonlayout640.fit",
+    "data/art/buttonlayout800.fit",
+    "data/art/buttonlayout1024.fit",
+    "data/art/buttonlayout1280.fit",
+    "data/art/buttonlayout1366.fit",
+    "data/art/buttonlayout1440.fit",
+    "data/art/buttonlayout1600.fit",
+    "data/art/buttonlayout1680.fit",
+    "data/art/buttonlayout1920.fit",
+    # cursor FITs — old format = no mouse cursor visible
+    "data/art/cursors.fit",
+    "data/art/cursorsa.fit",
+    # cursor TGA atlases
+    "data/art/cursors1.tga",  "data/art/cursors1a.tga",
+    "data/art/cursors2.tga",  "data/art/cursors2a.tga",
+    "data/art/cursors3.tga",  "data/art/cursors3a.tga",
+    "data/art/cursors4.tga",  "data/art/cursors4a.tga",
+    "data/art/cursors5.tga",  "data/art/cursors5a.tga",
+    "data/art/cursors6.tga",  "data/art/cursors6a.tga",
+    # loading screen FITs (engine version-sensitive)
+    "data/art/mcl_loadingscreen.fit",
+    "data/art/mcl_loadingscreen_640.fit",
+    "data/art/mcl_loadingscreen_1024.fit",
+    "data/art/mcl_loadingscreen_1280.fit",
+    "data/art/mcl_loadingscreen_1366.fit",
+    "data/art/mcl_loadingscreen_1440.fit",
+    "data/art/mcl_loadingscreen_1600.fit",
+    "data/art/mcl_loadingscreen_1680.fit",
+    "data/art/mcl_loadingscreen_1920.fit",
+    # options FITs (engine-version-sensitive layout)
+    "data/art/mcl_options.fit",
+    "data/art/mcl_optionsgameplay.fit",
+    # shared UI micro-textures / atlas strips (version-sensitive or same in all installs)
+    "data/art/a_compass_small.tga",
+    "data/art/blip.tga",
+    "data/art/circle.tga",
+    "data/art/mcui_scroll.tga",
+    # mcui_low5.tga: sprite strip whose width changed between old (625px) and new (675px)
+    # MC2X installs; new buttonlayout FITs assume 675px -> old strip = garbled sprites / pink UI
+    "data/art/mcui_low5.tga",
+}
+
 
 def rel_norm(p):
     return p.replace("\\", "/").lower()
@@ -67,7 +119,7 @@ def extract_fst(fst_path, out_root, refs=None, drop_upscale=False):
         if not name:
             continue
         rn = rel_norm(name)
-        if rn in EXCLUDE_REL or rn in seen:
+        if rn in EXCLUDE_REL or rn in CORE_GUI_EXCLUDE or rn in seen:
             continue
         if drop_upscale:
             # strip leading "data/" then check against upscale dirs
@@ -104,7 +156,8 @@ def copy_loose_delta(src_data, refs, out_data, drop_upscale=False):
         for fn in files:
             sp = os.path.join(root, fn)
             rel = os.path.relpath(sp, src_data).replace("\\", "/")
-            if ("data/" + rel).lower() in EXCLUDE_REL:
+            rel_key = ("data/" + rel).lower()
+            if rel_key in EXCLUDE_REL or rel_key in CORE_GUI_EXCLUDE:
                 continue
             if drop_upscale and rel.lower().startswith(UPSCALE_DIRS):
                 continue
