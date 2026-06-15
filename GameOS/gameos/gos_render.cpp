@@ -321,7 +321,14 @@ RenderWindow* create_window(const char* pwinname, int width, int height)
 
         // Hide the OS cursor. MC2 renders its own in-game cursor sprite, so
         // the default arrow would otherwise double up on top of it.
-        SDL_ShowCursor(SDL_DISABLE);
+        // MC2_OS_CURSOR=1: keep the native OS cursor visible instead. Use when the
+        // software cursor doesn't render (e.g. old-era MC2X/MCO campaigns at the
+        // 800-logical GUI tier, where the cursorsa sprite draws invisibly). Paired
+        // with a software-cursor-draw skip in UserInput::render so there's no double.
+        if (getenv("MC2_OS_CURSOR"))
+            SDL_ShowCursor(SDL_ENABLE);
+        else
+            SDL_ShowCursor(SDL_DISABLE);
     }
 
     RenderWindow* rw = new RenderWindow();

@@ -950,6 +950,14 @@ void UserInput::render (void)						//Last thing rendered.  Draws Mouse.
 		}
 	}
 
+	// MC2_OS_CURSOR: the native OS cursor is shown (see gos_render.cpp) -> skip the
+	// software cursor draw entirely so there is exactly one cursor on screen. Use for
+	// campaigns where the software cursor sprite doesn't render (old-era MC2X/MCO at
+	// the 800-logical GUI tier). Cached: getenv once.
+	static int s_osCursor = -1;
+	if (s_osCursor < 0) s_osCursor = getenv("MC2_OS_CURSOR") ? 1 : 0;
+	if (s_osCursor) return;
+
     //sebi, always NOT async mouse
 	//if (!mc2UseAsyncMouse)
 	{
