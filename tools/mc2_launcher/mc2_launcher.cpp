@@ -1,11 +1,21 @@
 // mc2_launcher.cpp — MC2 OpenGL Campaign Mod Launcher
 //
 // Scans ./mods/ for any folder that contains a data/ subdir and treats it as a
-// mod — NO mod.json required. Folders are classified by content:
-//   * compatibility layer  — folder name contains "-compat", or mod.json says
-//                            type="dependency". Shown as a checkbox.
-//   * campaign             — has data/missions with mission .fit files and is
-//                            not a compat layer. Shown in the campaign list.
+// mod — NO mod.json required. Folders sort into two buckets:
+//   * Add-ons / Assets  — compat layers + mech/weapon/asset packs. Folder name
+//                         contains "-compat", or mod.json says type="dependency"/
+//                         "assets", OR it has a data/ dir but no playable missions
+//                         (a pure asset pack). Shown as a checkbox (stack any).
+//   * Campaign          — has data/missions with real mission content (.fit) and
+//                         is not an add-on, OR mod.json says type="campaign".
+//                         Shown in the campaign list (pick one).
+//
+// Bucketing rule (load-bearing): the 3 ABL library files corebrain.abx /
+// orders.abx / miscfunc.abx are AI plumbing a compat layer ships — they are NOT
+// mission content and must never make a folder look like a campaign. (Campaign
+// detection keys on .fit, which already excludes those .abx libs; the exclusion
+// is made explicit below.) An explicit mod.json "type" always wins over the
+// content guess.
 //
 // For the selected campaign the launcher auto-detects which compatibility layer
 // it needs and pre-checks it:
@@ -15,9 +25,12 @@
 //   * otherwise ambiguous (stock-range objtypes, indistinguishable from pure
 //     stock) -> nothing auto-checked; the player ticks a layer if needed.
 //
-// On launch it sets MC2_ACTIVE_MOD=<campaign folder> and MC2_MOD_DEPS=<comma-
-// separated checked compat folders> in mc2.exe's environment. If a campaign is
-// launched with no compatibility layer checked it warns first ("are you sure?").
+// On launch it sets MC2_ACTIVE_MOD=<campaign folder> (EMPTY for Stock) and
+// MC2_MOD_DEPS=<comma-separated checked add-on folders> in mc2.exe's environment.
+// Stock + checked add-ons = "stock campaign with borrowed mechs/weapons" (Slice 1
+// engine mounts deps with no active mod). The "no add-on checked - are you sure?"
+// warning fires ONLY for a campaign that auto-needs a compat (MCO/MC2X) but has
+// none checked; Stock (with or without add-ons) never warns.
 //
 // "Import..." button: picks a raw install/pack folder and shells out to the
 // python importer brain (tools/mc2_import/import_tool.py) — the launcher is a
@@ -205,6 +218,37 @@ static CompatKind DetectCompat(const char* modFolderAbs) {
 
 // ---- Mod discovery --------------------------------------------------------
 
+// The three ABL library files a compat layer ships under data/missions. They are
+// campaign-brain plumbing (magicAttack etc.), NOT playable missions. A folder
+// that contains ONLY these (e.g. mco-compat) must stay an add-on, never a
+// campaign — so the "has playable missions" test below skips them explicitly.
+static bool IsAblLibName(const char* fileName) {
+    return _stricmp(fileName, "corebrain.abx") == 0 ||
+           _stricmp(fileName, "orders.abx")    == 0 ||
+           _stricmp(fileName, "miscfunc.abx")  == 0;
+}
+
+// True if <missDir> holds at least one real mission file (.fit) that is not one
+// of the 3 ABL libs. (.abx libs are excluded outright; .fit is the mission key.)
+static bool HasPlayableMissions(const char* missDir) {
+    char pattern[MAX_PATH];
+    _snprintf(pattern, sizeof(pattern), "%s\\*", missDir);
+    pattern[sizeof(pattern)-1] = '\0';
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pattern, &fd);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    bool found = false;
+    do {
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        if (IsAblLibName(fd.cFileName)) continue;   // skip corebrain/orders/miscfunc
+        const char* ext = strrchr(fd.cFileName, '.');
+        if (!ext) continue;
+        if (_stricmp(ext, ".fit") == 0) { found = true; break; }
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+    return found;
+}
+
 static void ScanMods(const char* modsPath) {
     char pattern[MAX_PATH];
     _snprintf(pattern, sizeof(pattern), "%s*", modsPath);
@@ -239,15 +283,33 @@ static void ScanMods(const char* modsPath) {
         }
         if (!name[0]) _snprintf(name, sizeof(name), "%s", fd.cFileName);
 
-        bool isCompat = (_stricmp(type, "dependency") == 0) || ContainsCI(fd.cFileName, "-compat");
+        // --- Bucketing ---
+        // 1. Explicit mod.json "type" wins over content-detection:
+        //      "campaign"               -> Campaign bucket
+        //      "dependency" / "assets"  -> Add-on bucket
+        // 2. Name "-compat" -> Add-on bucket.
+        // 3. Otherwise content-detect: a folder with real playable missions
+        //    (.fit, excluding the 3 ABL libs) -> Campaign; everything else with
+        //    a data/ dir (a pure asset pack) -> Add-on (never vanish).
+        bool typeCampaign = (_stricmp(type, "campaign") == 0);
+        bool typeAddon    = (_stricmp(type, "dependency") == 0) ||
+                            (_stricmp(type, "assets") == 0);
 
-        if (isCompat) {
+        bool isCampaign;
+        if (typeCampaign)                          isCampaign = true;       // explicit override
+        else if (typeAddon)                        isCampaign = false;      // explicit override
+        else if (ContainsCI(fd.cFileName, "-compat")) isCampaign = false;   // name convention
+        else                                       isCampaign = HasPlayableMissions(missDir);
+
+        if (!isCampaign) {
+            // Add-on / asset bucket (checkbox).
             if (s_compatCount >= MAX_MODS) continue;
             ModEntry& e = s_compats[s_compatCount++];
             _snprintf(e.folderName, sizeof(e.folderName), "%s", fd.cFileName);
             _snprintf(e.name, sizeof(e.name), "%s", name);
             e.isCompat = true; e.isCampaign = false; e.needs = CK_UNKNOWN;
-        } else if (DirExists(missDir)) {
+        } else {
+            // Campaign bucket (radio / list).
             if (s_campCount >= MAX_MODS) continue;
             ModEntry& e = s_campaigns[s_campCount++];
             _snprintf(e.folderName, sizeof(e.folderName), "%s", fd.cFileName);
@@ -292,9 +354,9 @@ static void RefreshCompatSlots() {
 
 static void UpdateForSelection() {
     int sel = (int)SendMessageA(s_hListBox, LB_GETCURSEL, 0, 0);
-    // sel 0 = Base Game; sel-1 indexes s_campaigns.
+    // sel 0 = Stock (base game); sel-1 indexes s_campaigns.
     CompatKind needs = CK_UNKNOWN;
-    const char* status = "Base game - no mod, no compatibility layer.";
+    const char* status = "Stock campaign. Check any add-ons to play stock with their mechs/weapons.";
     int wantIdx = -1;
     if (sel > 0 && sel <= s_campCount) {
         needs = s_campaigns[sel-1].needs;
@@ -304,12 +366,14 @@ static void UpdateForSelection() {
         else if (needs == CK_MC2X)
             status = "Detected: MC2X campaign. mc2x-compat auto-selected.";
         else
-            status = "Could not auto-detect. If this is an MC2X pack, tick a layer; pure-stock needs none.";
+            status = "Could not auto-detect. If this is an MC2X pack, tick an add-on; pure-stock needs none.";
+        // Auto-tick only the campaign's detected compat; Stock leaves add-ons manual.
+        for (int i = 0; i < s_compatCount && i < COMPAT_SLOTS; i++)
+            SendMessageA(s_hCompat[i], BM_SETCHECK,
+                         (i == wantIdx) ? BST_CHECKED : BST_UNCHECKED, 0);
     }
-    // Set checkboxes: tick only the auto-detected one (player may override).
-    for (int i = 0; i < s_compatCount && i < COMPAT_SLOTS; i++)
-        SendMessageA(s_hCompat[i], BM_SETCHECK,
-                     (i == wantIdx) ? BST_CHECKED : BST_UNCHECKED, 0);
+    // Note: when Stock (sel 0) is selected we do NOT touch the checkboxes — the
+    // player's add-on picks for the "stock + borrowed mechs" path are preserved.
     SetWindowTextA(s_hDesc, status);
 }
 
@@ -320,7 +384,7 @@ static void RescanAndRepopulate(const char* selectFolder) {
     ScanMods(s_modsPath);
 
     SendMessageA(s_hListBox, LB_RESETCONTENT, 0, 0);
-    SendMessageA(s_hListBox, LB_ADDSTRING, 0, (LPARAM)"Base Game (no mod)");
+    SendMessageA(s_hListBox, LB_ADDSTRING, 0, (LPARAM)"Stock (base game)");
     int wantSel = 0;
     for (int i = 0; i < s_campCount; i++) {
         SendMessageA(s_hListBox, LB_ADDSTRING, 0, (LPARAM)s_campaigns[i].name);
@@ -351,20 +415,27 @@ static void DoLaunch(HWND hwnd) {
     }
 
     if (sel == 0) {
-        SetEnvironmentVariableA("MC2_ACTIVE_MOD", NULL);
-        SetEnvironmentVariableA("MC2_MOD_DEPS", NULL);
+        // Stock (base game). With add-ons checked this is the "stock campaign +
+        // borrowed mechs/weapons" path: export an EMPTY active mod + the checked
+        // deps. Slice 1's engine mounts deps with no active campaign (and guards
+        // the dep ABL libs from overriding stock AI). No warning either way:
+        //   - Stock + nothing  = pure base game.
+        //   - Stock + add-ons  = a valid, intentional combo.
+        SetEnvironmentVariableA("MC2_ACTIVE_MOD", "");          // empty, not unset
+        SetEnvironmentVariableA("MC2_MOD_DEPS", deps[0] ? deps : NULL);
     } else if (sel <= s_campCount) {
         const ModEntry& camp = s_campaigns[sel-1];
-        // Warn if a campaign that needs (or might need) a compat layer has none.
-        if (checkedCount == 0) {
+        // Warn ONLY for a campaign that auto-NEEDS a compat (MCO/MC2X detected)
+        // but has none checked. An auto-undetected campaign (pure-stock-range) is
+        // assumed fine; Stock + add-ons is handled above and never warns.
+        if (checkedCount == 0 && camp.needs != CK_UNKNOWN) {
             char msg[512];
             _snprintf(msg, sizeof(msg),
-                "Campaign \"%s\" selected with NO compatibility layer.\n\n%s\n\nLaunch anyway?",
+                "Campaign \"%s\" selected with NO add-on checked.\n\n%s\n\nLaunch anyway?",
                 camp.name,
                 camp.needs == CK_MCO  ? "It looks like a MechCommander Omnitech pack and will almost certainly fail to load without mco-compat." :
-                camp.needs == CK_MC2X ? "It looks like an MC2X pack and will likely fail without mc2x-compat." :
-                                        "If it is a content pack it may fail to load; if it is pure stock this is fine.");
-            if (MessageBoxA(hwnd, msg, "No compatibility layer",
+                                        "It looks like an MC2X pack and will likely fail without mc2x-compat.");
+            if (MessageBoxA(hwnd, msg, "No add-on checked",
                             MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2) != IDYES)
                 return;
         }
@@ -911,7 +982,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
 
         // Top row: label + Import button (right-aligned).
-        HWND hLabel = CreateWindowA("STATIC", "Select a campaign to launch, or choose Base Game:",
+        HWND hLabel = CreateWindowA("STATIC", "Campaign (pick one):",
             WS_CHILD | WS_VISIBLE, 10, 14, 280, 18, hwnd, (HMENU)IDC_LABEL, s_hInst, NULL);
         SendMessageA(hLabel, WM_SETFONT, (WPARAM)hFont, TRUE);
 
@@ -923,12 +994,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
             10, 40, 380, 140, hwnd, (HMENU)IDC_MODLIST, s_hInst, NULL);
         SendMessageA(s_hListBox, WM_SETFONT, (WPARAM)hFont, TRUE);
-        SendMessageA(s_hListBox, LB_ADDSTRING, 0, (LPARAM)"Base Game (no mod)");
+        SendMessageA(s_hListBox, LB_ADDSTRING, 0, (LPARAM)"Stock (base game)");
         for (int i = 0; i < s_campCount; i++)
             SendMessageA(s_hListBox, LB_ADDSTRING, 0, (LPARAM)s_campaigns[i].name);
         SendMessageA(s_hListBox, LB_SETCURSEL, 0, 0);
 
-        HWND hCompatLbl = CreateWindowA("STATIC", "Compatibility layer(s):",
+        HWND hCompatLbl = CreateWindowA("STATIC", "Add-ons / Assets (stack any):",
             WS_CHILD | WS_VISIBLE, 10, 190, 380, 18, hwnd, (HMENU)IDC_COMPATLBL, s_hInst, NULL);
         SendMessageA(hCompatLbl, WM_SETFONT, (WPARAM)hFont, TRUE);
 
