@@ -2345,6 +2345,10 @@ float mc2ShadowCsmLambda();
 int   mc2ShadowMapSize();   // CSM-REDESIGN: env-tunable dynamic shadow map edge (texels)
 float mc2ShadowCsmSoftness();
 float mc2ShadowObjNormalBias();  // object shadow-receive normal-offset (texels); 0 disables
+// MC2_SHADER_PATH_TINT: debug-only. 1 = each candidate ground shader outputs a
+// unique solid color so the render path of a given surface can be identified
+// visually. Default 0 => byte-identical normal rendering. See gos_postprocess.cpp.
+int   mc2ShaderPathTint();
 // Forward decl for F1 unified-projection API (Stuff::Matrix4D defined in mclib/stuff/matrix.hpp).
 namespace Stuff { class Matrix4D; }
 // F1 Stage A unified-projection production setter. Repackages column-major

@@ -261,14 +261,8 @@ void main()
     vec3 objN_stuff = normalize(normalData.rgb * 2.0 - 1.0);
     vec3 objN = vec3(-objN_stuff.x, objN_stuff.z, objN_stuff.y);
 
-    // Cloud shadows — same formula as gos_terrain.frag for matching appearance.
-    float cloudFactor = 1.0;
-    {
-        vec2 cloudUV = worldPos.xy * 0.0006 + vec2(time * 0.012, time * 0.005);
-        float cloudNoise = fbm(cloudUV, 4) * 0.5 + 0.5;
-        cloudFactor = mix(0.85, 1.0, smoothstep(0.3, 0.7, cloudNoise));
-    }
-
+    // Cloud shadows moved to the fullscreen cloud pass (cloud.frag); this pass
+    // now applies sun (static + dynamic) shadow only.
     float shadow = 1.0;
     if (enableShadows == 1) {
         shadow = min(shadow, sampleShadowMap(shadowMap, worldPos, lightSpaceMatrix, 8));
@@ -278,6 +272,6 @@ void main()
         shadow = min(shadow, dynShadow);
     }
 
-    float combined = shadow * cloudFactor;
+    float combined = shadow;
     FragColor = vec4(combined, combined, combined, 1.0);
 }

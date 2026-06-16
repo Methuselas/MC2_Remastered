@@ -166,6 +166,36 @@ public:
     bool screenShadowEnabled_;
     int screenShadowDebug_;  // 0=normal, 1=visualize
 
+    // Cloud shadows — single fullscreen multiplicative pass (replaces the four
+    // inline cloud blocks). Default-ON to preserve legacy look; tunable live.
+    void runCloudShadow();
+    glsl_program* cloudProg_;
+    bool  enableCloudShadow_;   // seeded from mc2CloudShadowEnabled()
+    float cloudStrength_;       // max darkening (factor floor = 1-strength)
+    float cloudScale_;          // worldXY * scale (smaller = bigger clouds)
+    float cloudScrollX_;
+    float cloudScrollY_;
+    float cloudThreshLo_;       // smoothstep coverage band low
+    float cloudThreshHi_;       // smoothstep coverage band high
+    int   cloudOctaves_;        // fbm octaves
+    // Live getters/setters for ImGui.
+    bool  getCloudShadowEnabled() const { return enableCloudShadow_; }
+    void  setCloudShadowEnabled(bool b) { enableCloudShadow_ = b; }
+    float getCloudStrength() const { return cloudStrength_; }
+    void  setCloudStrength(float v) { cloudStrength_ = v; }
+    float getCloudScale() const { return cloudScale_; }
+    void  setCloudScale(float v) { cloudScale_ = v; }
+    float getCloudScrollX() const { return cloudScrollX_; }
+    void  setCloudScrollX(float v) { cloudScrollX_ = v; }
+    float getCloudScrollY() const { return cloudScrollY_; }
+    void  setCloudScrollY(float v) { cloudScrollY_ = v; }
+    float getCloudThreshLo() const { return cloudThreshLo_; }
+    void  setCloudThreshLo(float v) { cloudThreshLo_ = v; }
+    float getCloudThreshHi() const { return cloudThreshHi_; }
+    void  setCloudThreshHi(float v) { cloudThreshHi_ = v; }
+    int   getCloudOctaves() const { return cloudOctaves_; }
+    void  setCloudOctaves(int v) { cloudOctaves_ = v; }
+
     // Scene state — set by terrain draw, cleared each frame in beginScene()
     bool sceneHasTerrain_;
     bool prevFrameHadTerrain_;  // for clear color: blue-grey in gameplay, black in menus
@@ -190,6 +220,14 @@ public:
     float aoBias_;          // window-depth compare bias
     float aoPower_;         // contrast curve
     void runSSAO();
+
+    // OOB-FOG-1: fullscreen fog over out-of-bounds far-plane pixels.
+    // Default ON (MC2_OOB_FOG=0 to disable). Reads only scene depth —
+    // no sceneColorTex_ feedback loop; blends SRC_ALPHA over scene color.
+    bool  fogOobEnabled_ = false;
+    float oobFogColor_[3] = {0.58f, 0.65f, 0.75f}; // default: terrain horizon haze
+    float oobFogOpacity_ = 1.0f;
+    void  runFogOob();
 
     // HZB-DEPTH-PYRAMID-MVP-1 (TRACKRV-HZB-VISIBILITY-OPUS-1). Gated reverse-Z
     // Hi-Z depth pyramid built from sceneDepthTex_ via a custom fragment MIN
@@ -350,6 +388,9 @@ private:
 
     // Shoreline
     glsl_program* shorelineProg_;
+
+    // OOB fog
+    glsl_program* fogOobProg_ = nullptr;
 
     // SSAO (half resolution)
     GLuint        ssaoFBO_      = 0;

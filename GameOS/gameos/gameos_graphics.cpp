@@ -2085,6 +2085,7 @@ class gosRenderer {
         struct TerrainUniformLocs {
             GLint tessLevel = -1, tessDistanceRange = -1, tessDisplace = -1;
             GLint cameraPos = -1, tessDebug = -1, terrainMVP = -1;
+            GLint pathTint = -1;  // MC2_SHADER_PATH_TINT debug
             GLint terrainLightDir = -1, detailNormalTiling = -1, detailNormalStrength = -1;
             GLint pomParams = -1, terrainWorldScale = -1, cellBombParams = -1;
             GLint matNormal[5] = {-1, -1, -1, -1, -1};
@@ -2139,6 +2140,7 @@ class gosRenderer {
             GLint ssboRecordBase = -1;
             GLint terrainMaterialProfile = -1;  // C1 tactical (mclib/terrain.h)
             GLint tessDebug = -1;               // shader debug-viz mode (frag mode 1..8)
+            GLint pathTint = -1;                // MC2_SHADER_PATH_TINT debug
             GLint matNormalBoost = -1;          // per-material normal strength (vec4)
             GLint matTiling = -1;               // per-material UV tiling (vec4: rock,grass,dirt,concrete)
             GLint matTilingSnow = -1;           // snow UV tiling (float)
@@ -2189,6 +2191,7 @@ class gosRenderer {
             terrainLocs_.tessDisplace = glGetUniformLocation(shp, "tessDisplace");
             terrainLocs_.cameraPos = glGetUniformLocation(shp, "cameraPos");
             terrainLocs_.tessDebug = glGetUniformLocation(shp, "tessDebug");
+            terrainLocs_.pathTint = glGetUniformLocation(shp, "u_pathTint");
             terrainLocs_.terrainMVP = glGetUniformLocation(shp, "u_worldToClipGL");
             terrainLocs_.terrainLightDir = glGetUniformLocation(shp, "terrainLightDir");
             terrainLocs_.detailNormalTiling = glGetUniformLocation(shp, "detailNormalTiling");
@@ -2280,6 +2283,7 @@ class gosRenderer {
             thinTerrainLocs_.ssboRecordBase     = glGetUniformLocation(shp, "ssboRecordBase");
             thinTerrainLocs_.terrainMaterialProfile = glGetUniformLocation(shp, "g_terrainMaterialProfile");
             thinTerrainLocs_.tessDebug          = glGetUniformLocation(shp, "tessDebug");
+            thinTerrainLocs_.pathTint           = glGetUniformLocation(shp, "u_pathTint");
             thinTerrainLocs_.matNormalBoost     = glGetUniformLocation(shp, "matNormalBoost");
             thinTerrainLocs_.matTiling          = glGetUniformLocation(shp, "matTiling");
             thinTerrainLocs_.matTilingSnow      = glGetUniformLocation(shp, "matTilingSnow");
@@ -2352,6 +2356,7 @@ class gosRenderer {
             GLint time           = -1;
             GLint cameraPos      = -1;
             GLint surfaceDebugMode = -1;
+            GLint pathTint        = -1;  // MC2_SHADER_PATH_TINT debug
             GLint terrainLightDir = -1;
             GLint mapHalfExtent  = -1;
             // TERRAIN-DECAL-LIGHTING-1a: shared terrain-lighting uniforms on
@@ -4766,13 +4771,29 @@ void gosRenderer::init() {
         // layout(location=...) and in/out attribute qualifiers, breaking
         // these programs at init on NVIDIA drivers. AMD accepts the same
         // source by silently promoting to a newer GLSL version.
-        static const char* kShaderPrefix = "#version 430\n";
+        // TERRAIN-DECAL-SHADOW-CSM: inject the same CSM define the terrain
+        // material does (gameos_graphics.cpp:352) so terrain_overlay.frag /
+        // decal.frag compile shadow.hglsl's CSM variant of calcDynamicShadow.
+        // Without it they used the legacy branch and the C++ CSM uniform binds
+        // (setupOverlayShadowsForShp) silently dropped (loc==-1) -> no dynamic
+        // shadow on cement overlay or decals. Built locally so unrelated
+        // programs aren't recompiled (kShaderPrefix was local to these two).
+        // MC2_SHADOW_CSM_MAX must equal terrain's count source so the
+        // dynamicCascadeMatrices[] array stride matches the upload count.
+        std::string overlayPrefix = "#version 430\n";
+        if (mc2ShadowCsmEnabled()) {
+            char csmDef[64];
+            snprintf(csmDef, sizeof(csmDef),
+                     "#define MC2_SHADOW_CSM 1\n#define MC2_SHADOW_CSM_MAX %d\n",
+                     mc2ShadowCsmCount());
+            overlayPrefix.append(csmDef);
+        }
         overlayProg_ = glsl_program::makeProgram("terrain_overlay",
             "shaders/terrain_overlay.vert", "shaders/terrain_overlay.frag",
-            kShaderPrefix);
+            overlayPrefix.c_str());
         decalProg_ = glsl_program::makeProgram("decal",
             "shaders/terrain_overlay.vert", "shaders/decal.frag",
-            kShaderPrefix);
+            overlayPrefix.c_str());
     }
 
     if (!overlayProg_)
@@ -4790,6 +4811,7 @@ void gosRenderer::init() {
         locs.time            = glGetUniformLocation(shp, "time");
         locs.cameraPos       = glGetUniformLocation(shp, "cameraPos");
         locs.surfaceDebugMode = glGetUniformLocation(shp, "surfaceDebugMode");
+        locs.pathTint        = glGetUniformLocation(shp, "u_pathTint");
         locs.terrainLightDir = glGetUniformLocation(shp, "terrainLightDir");
         locs.mapHalfExtent   = glGetUniformLocation(shp, "mapHalfExtent");
         // TERRAIN-DECAL-LIGHTING-1a — populated only on overlayProg_ (the
@@ -6159,6 +6181,7 @@ void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
     }
     float tessDebugVec[4] = { debugMode, 0.0f, 0.0f, 0.0f };
     if (tl.tessDebug >= 0)         glUniform4fv(tl.tessDebug, 1, tessDebugVec);
+    if (tl.pathTint >= 0)          glUniform1i(tl.pathTint, mc2ShaderPathTint());  // MC2_SHADER_PATH_TINT
 
     if (tl.mapHalfExtent >= 0) {
         gosPostProcess* pp = getGosPostProcess();
@@ -6303,6 +6326,7 @@ int gosRenderer::terrainBindThinUniformsForPatchStream(glsl_program* overridePro
         }
         float tessDebugVec[4] = { debugMode, 0.0f, 0.0f, 0.0f };
         if (tl.tessDebug >= 0) glUniform4fv(tl.tessDebug, 1, tessDebugVec);
+        if (tl.pathTint >= 0)  glUniform1i(tl.pathTint, mc2ShaderPathTint());  // MC2_SHADER_PATH_TINT
     }
     if (tl.mapHalfExtent >= 0) {
         gosPostProcess* pp = getGosPostProcess();
@@ -6438,6 +6462,7 @@ void gosRenderer::terrainDrawIndexedPatches(gosRenderMaterial* material, gosMesh
         }
         float tessDebugVec[4] = { debugMode, 0.0f, 0.0f, 0.0f };
         if (tl.tessDebug >= 0) glUniform4fv(tl.tessDebug, 1, tessDebugVec);
+        if (tl.pathTint >= 0)  glUniform1i(tl.pathTint, mc2ShaderPathTint());  // MC2_SHADER_PATH_TINT
     }
 
     // Map half-extent for off-map edge haze (fades meta-ring terrain to sky).
@@ -8953,6 +8978,8 @@ void gosRenderer::uploadOverlayUniforms_(GLuint shp, const OverlayUniformLocs_& 
         glUniform4fv(L.cameraPos, 1, (const float*)&getTerrainCameraPos());
     if (L.surfaceDebugMode >= 0)
         glUniform1i(L.surfaceDebugMode, (GLint)terrain_debug_mode_);
+    if (L.pathTint >= 0)
+        glUniform1i(L.pathTint, mc2ShaderPathTint());  // MC2_SHADER_PATH_TINT
     if (L.mapHalfExtent >= 0) {
         gosPostProcess* pp = getGosPostProcess();
         float halfExt = pp ? pp->getMapHalfExtent() : 0.0f;

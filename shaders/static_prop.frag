@@ -130,6 +130,8 @@ uniform int   u_debugAddrMode;   // 0 normal, 1 gradient, 2 hash, 3 white, 4 arg
 // MaterialGpu table is only bound under the coalesce path.
 uniform int   u_debugMaterialMode;
 
+uniform int   u_pathTint;  // MC2_SHADER_PATH_TINT: 1 = solid signature colour (debug); 0 = normal
+
 layout(location = 0) out vec4 FragColor;
 layout(location = 1) out vec4 GBuffer1;
 #ifdef MC2_OBJECT_ID_BUFFER
@@ -161,6 +163,12 @@ vec3 debug_palette(uint key) {
 }
 
 void main() {
+    // MC2_SHADER_PATH_TINT: solid MAGENTA so this shader's surfaces are unmistakable.
+    if (u_pathTint != 0) {
+        FragColor = vec4(1.0, 0.0, 1.0, 1.0);
+        GBuffer1  = rc_gbuffer1_legacyDebugSentinelScreenShadowEligible();
+        return;
+    }
     // Plan v3.8 Step 8.5 — resolve the three per-draw values to locals so
     // the rest of main() reads them identically in legacy and coalesce
     // modes. Under MC2_COALESCE these come from PerDrawData.entries[] at

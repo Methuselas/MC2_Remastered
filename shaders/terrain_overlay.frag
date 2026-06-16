@@ -47,9 +47,18 @@ uniform PREC vec4 cameraPos;
 uniform vec4 terrainLightDir;
 uniform int surfaceDebugMode;
 uniform PREC float mapHalfExtent;  // half side length of playable map (0 = disabled)
+uniform int u_pathTint;  // MC2_SHADER_PATH_TINT: 1 = solid signature colour (debug); 0 = normal
 
 void main()
 {
+    // MC2_SHADER_PATH_TINT: solid BLUE so this shader's surfaces are unmistakable.
+    if (u_pathTint != 0) {
+        FragColor = vec4(0.0, 0.0, 1.0, 1.0);
+#ifdef MRT_ENABLED
+        GBuffer1 = rc_gbuffer1_shadowHandled_flatUp();
+#endif
+        return;
+    }
     PREC vec4 tex_color = texture(tex1, Texcoord);
     // Vertex argb is forced to 0xffffffff in quad.cpp so no vertex-lighting needed.
     // Solid interior cement has a warm ochre cast; transition atlas tiles are cooler/brighter.
@@ -73,18 +82,7 @@ void main()
         return;
     }
 
-    // Shared cloud mask — exact same expression and time epoch as gos_terrain.frag.
-    PREC vec2  cloudUV    = WorldPos.xy * 0.0006 + vec2(time * 0.012, time * 0.005);
-    PREC float cloudNoise = fbm(cloudUV, 4) * 0.5 + 0.5;
-    PREC float cloudMask  = smoothstep(0.3, 0.7, cloudNoise); // 0=shadow, 1=clear
-    if (surfaceDebugMode == 1) {
-        FragColor = vec4(vec3(mix(0.92, 1.0, cloudMask)), 1.0);
-#ifdef MRT_ENABLED
-        GBuffer1 = rc_gbuffer1_shadowHandled_flatUp();
-#endif
-        return;
-    }
-
+    // Cloud shadows moved to the fullscreen cloud pass (cloud.frag).
     if (surfaceDebugMode == 3) {
         FragColor = vec4(c.rgb, 1.0);
 #ifdef MRT_ENABLED
@@ -106,6 +104,22 @@ void main()
     float staticShadow  = calcShadow(WorldPos, shadowN, lightDir3, 8);
     float dynamicShadow = calcDynamicShadow(WorldPos, shadowN, lightDir3, 4);
     float shadow        = staticShadow * dynamicShadow;
+    // DEBUG-VIZ: 30 = dynamic-cast shadow only (isolates building dynamic shadow
+    // on cement vs grass), 31 = combined. Grayscale, early-return.
+    if (surfaceDebugMode == 30) {
+        FragColor = vec4(vec3(dynamicShadow), 1.0);
+#ifdef MRT_ENABLED
+        GBuffer1 = rc_gbuffer1_shadowHandled_flatUp();
+#endif
+        return;
+    }
+    if (surfaceDebugMode == 31) {
+        FragColor = vec4(vec3(shadow), 1.0);
+#ifdef MRT_ENABLED
+        GBuffer1 = rc_gbuffer1_shadowHandled_flatUp();
+#endif
+        return;
+    }
     if (surfaceDebugMode == 2) {
         FragColor = vec4(vec3(shadow), 1.0);
 #ifdef MRT_ENABLED
@@ -114,7 +128,6 @@ void main()
         return;
     }
 
-    c.rgb *= mix(0.85, 1.0, cloudMask);
     c.rgb *= shadow;
 
     // TERRAIN-DECAL-LIGHTING-1a: V1 hemisphere additive (+ V2 shadow-aware

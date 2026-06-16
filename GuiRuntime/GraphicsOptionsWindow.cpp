@@ -150,7 +150,7 @@ static const TerrainMode kTerrainModes[] = {
     {  4.0f, "Material Weights",  "R = rock  |  G = grass  |  B = dirt  (classification weights)" },
     {  5.0f, "Normal Lighting",   "diffuse contribution (0.35–1.20 remapped to 0–1)" },
     {  6.0f, "Shadow Factor",     "PCF static shadow × dynamic shadow" },
-    {  7.0f, "Cloud Shadow",      "FBM cloud attenuation (0.92–1.0 remapped to 0–1)" },
+    {  7.0f, "Cloud Shadow (n/a)", "removed — cloud is now the fullscreen cloud.frag pass (see Render Passes > Cloud Shadows)" },
     // ── Diagnostic modes ──────────────────────────────────────────────────────
     {  8.0f, "Cement Diagnostic", "R = layer valid  |  G = layer index/255  |  B = useCementAtlas==0" },
     {  9.0f, "Thin-Record",       "R = recipeIdx/255  |  G = flags/255  |  B = terrainHandle/255" },
@@ -1329,6 +1329,55 @@ static void drawRenderPassesSection() {
         ImGui::Checkbox("Shadow Pass##rp", &pp->shadowsEnabled_);
         ImGui::SameLine();
         ImGui::TextDisabled("(also in Post-Process)");
+    }
+
+    // ── Cloud shadows (fullscreen procedural pass) ────────────────────────────
+    if (pp && ImGui::CollapsingHeader("Cloud Shadows##rp")) {
+        bool cloudOn = pp->getCloudShadowEnabled();
+        if (ImGui::Checkbox("Enable##cloud", &cloudOn))
+            pp->setCloudShadowEnabled(cloudOn);
+
+        float strength = pp->getCloudStrength();
+        if (ImGui::SliderFloat("Strength##cloud", &strength, 0.0f, 0.6f, "%.3f"))
+            pp->setCloudStrength(strength);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Max darkening amplitude. 0=clear, 0.15=default.");
+
+        float scale = pp->getCloudScale();
+        if (ImGui::SliderFloat("Cloud Scale##cloud", &scale, 0.0001f, 0.003f, "%.4f"))
+            pp->setCloudScale(scale);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("World-XY frequency. Smaller = bigger clouds. Default 0.0006.");
+
+        float scroll[2] = { pp->getCloudScrollX(), pp->getCloudScrollY() };
+        if (ImGui::SliderFloat2("Scroll Speed##cloud", scroll, -0.05f, 0.05f, "%.4f")) {
+            pp->setCloudScrollX(scroll[0]);
+            pp->setCloudScrollY(scroll[1]);
+        }
+
+        float thresh[2] = { pp->getCloudThreshLo(), pp->getCloudThreshHi() };
+        if (ImGui::SliderFloat2("Coverage (lo/hi)##cloud", thresh, 0.0f, 1.0f, "%.3f")) {
+            pp->setCloudThreshLo(thresh[0]);
+            pp->setCloudThreshHi(thresh[1]);
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Smoothstep band on the FBM noise. Default 0.3 / 0.7.");
+
+        int octaves = pp->getCloudOctaves();
+        if (ImGui::SliderInt("Octaves##cloud", &octaves, 1, 6))
+            pp->setCloudOctaves(octaves);
+
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##cloud")) {
+            pp->setCloudShadowEnabled(true);
+            pp->setCloudStrength(0.15f);
+            pp->setCloudScale(0.0006f);
+            pp->setCloudScrollX(0.012f);
+            pp->setCloudScrollY(0.005f);
+            pp->setCloudThreshLo(0.3f);
+            pp->setCloudThreshHi(0.7f);
+            pp->setCloudOctaves(4);
+        }
     }
 
     ImGui::Separator();

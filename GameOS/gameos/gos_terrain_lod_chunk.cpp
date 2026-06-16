@@ -68,6 +68,7 @@ static GLint    s_locAtlasTLY       = -1;  // Phase 10: atlas top-left Y (world)
 static GLint    s_locAtlasOOW       = -1;  // Phase 10: atlas oneOverWorldUnitsMapSide
 static GLint    s_locLightDir       = -1;  // Phase 10 Step 1b: terrainLightDir (sun)
 static GLint    s_locDiag           = -1;  // bisection bitmask (MC2_TERRAIN_LOD_CHUNK_DIAG)
+static GLint    s_locPathTint       = -1;  // MC2_SHADER_PATH_TINT debug (u_pathTint)
 static GLint    s_locQuadCountX     = -1;  // Phase 10.4: block quad extent X (edge detect)
 static GLint    s_locQuadCountY     = -1;  // Phase 10.4: block quad extent Y (edge detect)
 static GLint    s_locEdgeStitch     = -1;  // Phase 10.4: packed coarser-neighbour stride
@@ -371,6 +372,7 @@ void gos_TerrainLodChunk_Init()
             s_locAtlasOOW     = glGetUniformLocation(s_terrainProgram, "u_atlasOneOverWorldUnits");
             s_locLightDir     = glGetUniformLocation(s_terrainProgram, "terrainLightDir");
             s_locDiag         = glGetUniformLocation(s_terrainProgram, "u_diag");
+            s_locPathTint     = glGetUniformLocation(s_terrainProgram, "u_pathTint");
             s_locQuadCountX   = glGetUniformLocation(s_terrainProgram, "u_quadCountX");
             s_locQuadCountY   = glGetUniformLocation(s_terrainProgram, "u_quadCountY");
             s_locEdgeStitch   = glGetUniformLocation(s_terrainProgram, "u_edgeStitch");
@@ -607,6 +609,10 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         const char* dv = getenv("MC2_TERRAIN_LOD_CHUNK_DIAG");
         glUniform1i(s_locDiag, dv ? atoi(dv) : 0);
     }
+
+    // MC2_SHADER_PATH_TINT: solid GREEN for the chunk terrain path (default 0 = OFF).
+    if (s_locPathTint >= 0)
+        glUniform1i(s_locPathTint, mc2ShaderPathTint());
 
     // Phase 10 (Step 1a): bind the merged colormap atlas (tex1) on unit 0 and
     // feed the atlas-UV reconstruction params (same source as the legacy

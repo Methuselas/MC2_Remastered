@@ -44,26 +44,37 @@ uniform sampler2D tex1;
 uniform PREC vec4 fog_color;
 uniform PREC float time;
 uniform vec4 terrainLightDir;
+uniform int u_pathTint;  // MC2_SHADER_PATH_TINT: 1 = solid signature colour (debug); 0 = normal
 
 void main()
 {
+    // MC2_SHADER_PATH_TINT: solid CYAN so this shader's surfaces are unmistakable.
+    if (u_pathTint != 0) {
+        FragColor = vec4(0.0, 1.0, 1.0, 1.0);
+#ifdef MRT_ENABLED
+        GBuffer1 = rc_gbuffer1_shadowHandled_flatUp();
+#endif
+        return;
+    }
     PREC vec4 tex_color = texture(tex1, Texcoord);
 
     // Straight texture × vertex colour — no tone correction.
     // Color is RGBA [0,1] unpacked from BGRA uint.
     PREC vec4 c = Color * tex_color;
 
-    // Cloud shadows — narrow range for already-dark decals.
-    {
-        PREC vec2  cloudUV    = WorldPos.xy * 0.0006 + vec2(time * 0.012, time * 0.005);
-        PREC float cloudNoise = fbm(cloudUV, 4) * 0.5 + 0.5;
-        c.rgb *= mix(0.88, 1.0, smoothstep(0.3, 0.7, cloudNoise));
-    }
+    // Cloud shadows moved to the fullscreen cloud pass (cloud.frag).
 
-    // SHADOW-DECAL-DOUBLE-FIX: decals are alpha-blended over base terrain that already
-    // applied min(staticShadow,dynShadow) (gos_terrain.frag). Re-multiplying sun shadow
-    // here squares it on the partial-alpha fringe (shadow^2). Sun shadow now applied ONCE
-    // on the base terrain; let it show through the blend. (Any cloud-shadow term above stays.)
+    // SHADOW-DECAL-SINGLE: apply sun shadow ONCE here. Opaque decals fully cover
+    // the shadowed terrain underneath (alpha-blend, no depth write) and are skipped
+    // by shadow_screen.frag (GBuffer1.a=1, shadowHandled). The earlier "double"
+    // claim was a distribution math error: base*sh*(1-a)+decal*sh*a = sh once.
+    {
+        const PREC vec3 shadowN = vec3(0.0, 0.0, 1.0);   // flat-up, matches terrain
+        float staticShadow = calcShadow(WorldPos, shadowN, terrainLightDir.xyz, 8);
+        float dynShadow    = calcDynamicShadow(WorldPos, shadowN, terrainLightDir.xyz, 4);
+        float shadow       = min(staticShadow, dynShadow);
+        c.rgb *= shadow;
+    }
 
     // Fog.
     if (fog_color.x > 0.0 || fog_color.y > 0.0 || fog_color.z > 0.0 || fog_color.w > 0.0)

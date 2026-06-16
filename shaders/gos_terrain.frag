@@ -58,6 +58,7 @@ uniform sampler2DArray matNormalArray;
 
 uniform PREC vec4 terrainLightDir;
 uniform PREC vec4 detailNormalTiling;
+uniform int u_pathTint;  // MC2_SHADER_PATH_TINT: 1 = solid signature colour (debug); 0 = normal
 // Atlas-mode toggle for tex1 (colormap) sampling. When the indirect path binds
 // the merged colormap atlas, we need atlas-absolute UV for tex1 sampling, but
 // per-tile UV preserves the legacy frag shader's detail-tiling, anti-tile
@@ -300,6 +301,14 @@ PREC vec2 parallaxMapping(PREC vec2 uv, PREC vec3 viewDirTS, PREC float scale, P
 
 void main(void)
 {
+    // MC2_SHADER_PATH_TINT: solid RED so this shader's surfaces are unmistakable.
+    if (u_pathTint != 0) {
+        FragColor = vec4(1.0, 0.0, 0.0, 1.0);
+#ifdef MRT_ENABLED
+        GBuffer1 = rc_gbuffer1_shadowHandled_flatUp();
+#endif
+        return;
+    }
     // Debug visualizations for tessellation data
     // Distance-based LOD factors (1.0 = full quality, 0.0 = cheapest)
     // cameraPos is in Stuff/MLR space: .x=left/right, .y=elevation, .z=forward
@@ -416,19 +425,12 @@ void main(void)
         uint cementWord  = thinRecsFrag[RecordIdx].control.w;
         bool cementValid = (cementWord & 0x80000000u) != 0u;
         if (cementValid) {
-            // CEMENT-DETAIL-COLOR: replace cement atlas diffuse with detail layer sample.
-            // MAT_LAYER_PAINTED_CONC (layer 6) = mat6_normal.tga (painted_concrete_02).
-            // NOTE: this is a NORMAL MAP stored as RGBA8; sampling it as colour will
-            // produce blue/purple tones (normal maps encode XYZ in RGB, biased to ~0.5,0.5,1).
-            // The user asked for this literal replacement. For a true albedo result,
-            // replace data/textures/mat6_normal.tga with a concrete colour/albedo texture
-            // (the asset-swap fallback) and re-cook.
-            PREC float baseTilingC = detailNormalTiling.x;
-            PREC vec2 uvConcreteC  = Texcoord * baseTilingC * matTiling.w;
-#ifdef TERRAIN_NORMAL_ARRAY
-            texColor = texture(matNormalArray, vec3(uvConcreteC, float(MAT_LAYER_PAINTED_CONC)));
-#else
-            // Array path not compiled — fall back to cement atlas (no layer available)
+            // CEMENT-DIFFUSE-COLOR: sample the real cement DIFFUSE atlas (tex3).
+            // Was sampling matNormalArray[MAT_LAYER_PAINTED_CONC] (a NORMAL map)
+            // as colour -> flat dark bluish slab. Both compile-paths now take
+            // cement albedo from the cement atlas diffuse so the pad reads as
+            // concrete (and the building shadow becomes visible). Proper fix is
+            // an asset cook (swap the 64/ folder .tga); this is the stopgap.
             uint layerIdx = cementWord & 0xFFFFu;
             int  gridSide = atlasCementGridSide;
             if (gridSide < 1) gridSide = 1;
@@ -437,7 +439,6 @@ void main(void)
             PREC vec2 cTileUV  = fract(vec2(WorldPos.x, -WorldPos.y) / atlasCementWorldUnitsPerTile);
             PREC vec2 cAtlasUV = (vec2(float(cCol), float(cRow)) + cTileUV) / float(gridSide);
             texColor = texture(tex3, cAtlasUV);
-#endif
         }
     }
     PREC float waterFlag = smoothstep(0.35, 0.45, rgb2hsv(texColor.rgb).x);
@@ -826,6 +827,26 @@ void main(void)
     // camera-fitted dynamic map): min(0.4,0.4)=0.4 vs the old 0.4*0.4=0.16.
     // Matches the screen-space/object receiver composition (shadow_screen.frag).
     float shadow = min(staticShadow, dynShadow);
+
+    // DEBUG-VIZ: 30 = dynamic-cast shadow only (isolates building dynamic shadow),
+    // 31 = min(static,dyn). Grayscale, early-return. Gated by surfaceDebugMode only.
+    if (surfaceDebugMode == 30) {
+        gl_FragDepth = gl_FragCoord.z;
+        FragColor = vec4(vec3(dynShadow), 1.0);
+#ifdef MRT_ENABLED
+        GBuffer1 = rc_gbuffer1_shadowHandled(N);
+#endif
+        return;
+    }
+    if (surfaceDebugMode == 31) {
+        gl_FragDepth = gl_FragCoord.z;
+        FragColor = vec4(vec3(shadow), 1.0);
+#ifdef MRT_ENABLED
+        GBuffer1 = rc_gbuffer1_shadowHandled(N);
+#endif
+        return;
+    }
+
     c.rgb *= shadow;
 
     // TERRAIN-LIGHTING-1: hemisphere ambient fill. Added AFTER shadow
@@ -892,25 +913,14 @@ void main(void)
         c.rgb += vec3(sparkle);
     }
 
-    // --- Phase 4A: Procedural cloud shadows ---
-    // Applied inline so cloud UV uses the actual tessellated WorldPos (stable world-space).
-    // Terrain overlays use the same cloud expression in terrain_overlay.frag.
+    // --- Blowing-snow particle glow ---
+    // Cloud-shadow darkening moved to the fullscreen cloud pass (cloud.frag).
+    // The animated FBM is retained here only to drive the snow-edge particle
+    // glow below — it no longer darkens the terrain.
     {
         PREC vec2 cloudUV = WorldPos.xy * 0.0006 + vec2(time * 0.012, time * 0.005);
         PREC float cloudNoise = fbm(cloudUV, 4) * 0.5 + 0.5;
         PREC float cloudShadow = smoothstep(0.3, 0.7, cloudNoise);
-        if (surfaceDebugMode == 7) {
-            gl_FragDepth = gl_FragCoord.z;
-            FragColor = vec4(vec3(mix(0.92, 1.0, cloudShadow)), 1.0);
-#ifdef MRT_ENABLED
-            GBuffer1 = rc_gbuffer1_legacyTerrainMaterialAlpha(N, materialAlpha);
-#endif
-            return;
-        }
-        // Cloud shadow: 15% amplitude on non-snow terrain, tapering to 3% on snow so
-        // the blowing-snow particles below aren't competing with bulk darkening.
-        PREC float cloudLo = mix(0.85, 0.97, snowWeight);
-        c.rgb *= mix(cloudLo, 1.0, cloudShadow);
 
         // Blowing snow: near snow edges the animated FBM drives a subtle additive
         // white glow that reads as windblown particles drifting across the boundary.

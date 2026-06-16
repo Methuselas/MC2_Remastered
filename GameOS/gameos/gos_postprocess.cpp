@@ -35,6 +35,17 @@ bool mc2ShadowCsmEnabled()
     return s_on;
 }
 
+// MC2_SHADER_PATH_TINT: debug-only solid-color-per-shader-path tint. DEFAULT OFF.
+// 1 = each candidate ground shader returns its signature solid color early.
+int mc2ShaderPathTint()
+{
+    static const int s_v = []() {
+        const char* v = getenv("MC2_SHADER_PATH_TINT");
+        return (v && v[0]) ? atoi(v) : 0;   // DEFAULT 0 (off, byte-identical)
+    }();
+    return s_v;
+}
+
 int mc2ShadowCsmCount()
 {
     static const int s_n = []() {
@@ -121,6 +132,19 @@ float mc2ShadowObjNormalBias()
         return b;
     }();
     return s_b;
+}
+
+// Cloud-shadow master gate. MC2_CLOUD_SHADOW, DEFAULT ON (preserves the legacy
+// inline-cloud behavior that this fullscreen pass replaces). =0 disables the
+// whole pass (and the C++ early-return skips it entirely).
+bool mc2CloudShadowEnabled()
+{
+    static const bool s_on = []() {
+        const char* v = getenv("MC2_CLOUD_SHADOW");
+        if (!v || !v[0]) return true;            // default ON
+        return !(v[0] == '0' && v[1] == '\0');
+    }();
+    return s_on;
 }
 
 namespace {
@@ -271,6 +295,15 @@ gosPostProcess::gosPostProcess()
     , screenShadowProg_(nullptr)
     , screenShadowEnabled_(true)
     , screenShadowDebug_(0)
+    , cloudProg_(nullptr)
+    , enableCloudShadow_(mc2CloudShadowEnabled())
+    , cloudStrength_(0.15f)
+    , cloudScale_(0.0006f)
+    , cloudScrollX_(0.012f)
+    , cloudScrollY_(0.005f)
+    , cloudThreshLo_(0.3f)
+    , cloudThreshHi_(0.7f)
+    , cloudOctaves_(4)
     , sceneHasTerrain_(false)
     , prevFrameHadTerrain_(false)
     , godrayEnabled_(false)  // disabled: no visible sky at RTS zoom. RAlt+6 to test.
@@ -454,6 +487,11 @@ void gosPostProcess::init(int w, int h)
     if (!screenShadowProg_ || !screenShadowProg_->is_valid())
         fprintf(stderr, "gosPostProcess: failed to compile shadow_screen shader\n");
 
+    cloudProg_ = glsl_program::makeProgram("cloud",
+        "shaders/postprocess.vert", "shaders/cloud.frag", kShaderPrefix);
+    if (!cloudProg_ || !cloudProg_->is_valid())
+        fprintf(stderr, "gosPostProcess: failed to compile cloud shader\n");
+
     godrayProg_ = glsl_program::makeProgram("godray",
         "shaders/postprocess.vert", "shaders/godray.frag", kShaderPrefix);
     if (!godrayProg_ || !godrayProg_->is_valid())
@@ -485,6 +523,25 @@ void gosPostProcess::init(int w, int h)
         std::fprintf(stderr, "[SSAO v1] enabled=%d debug=%d (MC2_SSAO=%s) radius=%.2f strength=%.2f bias=%.4f\n",
                      ssaoEnabled_ ? 1 : 0, ssaoDebug_,
                      ssaoEnv ? ssaoEnv : "(unset)", aoRadius_, aoStrength_, aoBias_);
+    }
+
+    // OOB-FOG-1: far-plane fog over the out-of-bounds region. Default ON.
+    {
+        fogOobProg_ = glsl_program::makeProgram("fog_oob",
+            "shaders/postprocess.vert", "shaders/fog_oob.frag", kShaderPrefix);
+        if (!fogOobProg_ || !fogOobProg_->is_valid())
+            std::fprintf(stderr, "gosPostProcess: failed to compile fog_oob shader\n");
+        const char* oobEnv = getenv("MC2_OOB_FOG");
+        fogOobEnabled_ = !(oobEnv && oobEnv[0] == '0' && oobEnv[1] == '\0')
+                      && fogOobProg_ && fogOobProg_->is_valid();
+        if (const char* colorEnv = getenv("MC2_OOB_FOG_COLOR")) {
+            float r, g, b;
+            if (std::sscanf(colorEnv, "%f,%f,%f", &r, &g, &b) == 3) {
+                oobFogColor_[0] = r; oobFogColor_[1] = g; oobFogColor_[2] = b;
+            }
+        }
+        std::fprintf(stderr, "[OOB_FOG v1] enabled=%d color=(%.2f,%.2f,%.2f)\n",
+            fogOobEnabled_ ? 1 : 0, oobFogColor_[0], oobFogColor_[1], oobFogColor_[2]);
     }
 
     // HZB-DEPTH-PYRAMID-MVP-1: reduction shader. Gate (hzbEnabled_) is resolved
@@ -625,6 +682,11 @@ void gosPostProcess::destroy()
         screenShadowProg_ = nullptr;
     }
 
+    if (cloudProg_) {
+        glsl_program::deleteProgram("cloud");
+        cloudProg_ = nullptr;
+    }
+
     if (godrayProg_) {
         glsl_program::deleteProgram("godray");
         godrayProg_ = nullptr;
@@ -642,6 +704,10 @@ void gosPostProcess::destroy()
     if (ssaoApplyProg_) {
         glsl_program::deleteProgram("ssao_apply");
         ssaoApplyProg_ = nullptr;
+    }
+    if (fogOobProg_) {
+        glsl_program::deleteProgram("fog_oob");
+        fogOobProg_ = nullptr;
     }
 
     destroyShadows();
@@ -1838,6 +1904,63 @@ void gosPostProcess::runScreenShadow()
     glActiveTexture(GL_TEXTURE0);
 }
 
+// Fullscreen procedural cloud-shadow pass. Replaces the four inline cloud
+// blocks (gos_terrain / terrain_overlay / decal / shadow_screen). Runs AFTER
+// runScreenShadow; multiplicative (GL_DST_COLOR, GL_ZERO) onto the scene color.
+// World XY is reconstructed from sceneDepthTex_ via inverseViewProj_, exactly
+// like runScreenShadow.
+void gosPostProcess::runCloudShadow()
+{
+    ZoneScopedN("Render.CloudShadow");
+    TracyGpuZone("Render.CloudShadow");
+
+    if (!enableCloudShadow_) return;               // env/ImGui gate -> skip entirely
+    if (!sceneHasTerrain_) return;
+    if (!cloudProg_ || !cloudProg_->is_valid()) return;
+
+    glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
+    setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
+    glViewport(0, 0, width_, height_);
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDepthMask(GL_FALSE);
+
+    // Multiplicative: dst * src (cloud darkening).
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_DST_COLOR, GL_ZERO);
+
+    cloudProg_->setInt("sceneDepthTex", 0);
+    cloudProg_->setInt("u_cloudEnable", 1);   // gated in C++ above; 1 inside the pass
+    cloudProg_->setFloat("u_time", SmokeMode::fixedTimestepEnabled()
+                                       ? (float)SmokeMode::fixedClockSeconds()
+                                       : (float)SDL_GetTicks() * 0.001f);
+    cloudProg_->setFloat("u_cloudScale", cloudScale_);
+    float scroll[2] = { cloudScrollX_, cloudScrollY_ };
+    cloudProg_->setFloat2("u_cloudScroll", scroll);
+    cloudProg_->setFloat("u_cloudStrength", cloudStrength_);
+    float thresh[2] = { cloudThreshLo_, cloudThreshHi_ };
+    cloudProg_->setFloat2("u_cloudThreshold", thresh);
+    cloudProg_->setInt("u_cloudOctaves", cloudOctaves_);
+    cloudProg_->apply();
+
+    GLint loc = glGetUniformLocation(cloudProg_->shp_, "inverseViewProj");
+    if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_FALSE, inverseViewProj_);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, sceneDepthTex_);
+
+    glBindVertexArray(quadVAO_);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glBindVertexArray(0);
+
+    // Restore state.
+    glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+    glActiveTexture(GL_TEXTURE0);
+}
+
 void gosPostProcess::runGodRays()
 {
     ZoneScopedN("Render.GodRays");
@@ -1955,6 +2078,48 @@ void gosPostProcess::runShoreline()
     glActiveTexture(GL_TEXTURE0);
 }
 
+void gosPostProcess::runFogOob()
+{
+    ZoneScopedN("Render.FogOob");
+    TracyGpuZone("Render.FogOob");
+
+    if (!fogOobEnabled_ || !fogOobProg_ || !fogOobProg_->is_valid()) return;
+
+    // Bind scene FBO — writes to color attachment 0 only.
+    // Reads sceneDepthTex_ (separate attachment — no read/write conflict).
+    glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
+    setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
+    glViewport(0, 0, width_, height_);
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDepthMask(GL_FALSE);
+
+    // SRC_ALPHA blend: OOB pixels emit (fogColor, opacity), sky pixels emit (0,0).
+    // Result = fogColor * opacity + sceneColor * (1 - opacity).
+    // sceneColorTex_ is never sampled — no read/write feedback loop.
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    fogOobProg_->apply();
+    fogOobProg_->setInt("depthTex", 0);
+    fogOobProg_->setMat4("invViewProj", inverseViewProj_);
+    fogOobProg_->setFloat3("u_fogColor",  oobFogColor_);
+    fogOobProg_->setFloat("u_fogOpacity", oobFogOpacity_);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, sceneDepthTex_);
+
+    glBindVertexArray(quadVAO_);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glBindVertexArray(0);
+
+    glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+    glActiveTexture(GL_TEXTURE0);
+}
+
 void gosPostProcess::endScene()
 {
     ZoneScopedN("Render.PostProcess");
@@ -1973,6 +2138,11 @@ void gosPostProcess::endScene()
     // pass, with reduced terrain darkening to avoid obvious double-shadowing.
     runScreenShadow();
 
+    // Procedural cloud shadows: single fullscreen multiplicative pass over all
+    // non-sky pixels (replaces the four inline cloud blocks). After the screen
+    // shadow so cloud darkens the already-shadowed scene color.
+    runCloudShadow();
+
     // Shoreline foam pass (brightens water pixels adjacent to terrain)
     runShoreline();
 
@@ -1982,6 +2152,10 @@ void gosPostProcess::endScene()
     // SSAO grounding pass (multiplicative darkening into scene color). Before
     // bloom so bloom extracts from the AO-darkened scene. Default-OFF (gated).
     runSSAO();
+
+    // OOB fog: applies fog color to far-plane pixels pointing toward ground.
+    // After SSAO so AO-darkening is preserved under the fog. Default ON.
+    runFogOob();
 
     runBloom();
 

@@ -15,6 +15,7 @@
 in vec3  v_worldPos;
 in float v_terrainType;       // Step 5b: interpolated per-vertex terrainType (concrete)
 uniform int   u_lodStep;
+uniform int   u_pathTint;  // MC2_SHADER_PATH_TINT: 1 = solid signature colour (debug); 0 = normal
 
 // Step 5c: cement catalog atlas (legacy tex3). Concrete tiles sample this instead
 // of the colormap. Same UV math as gos_terrain.frag.
@@ -300,6 +301,13 @@ void main() {
     // disabled early-Z/Hi-Z on AMD -> decal tearing at the cement boundary under
     // camera motion (greybeard META-FIX; vulkan_aligned_depth_bias_ruling.md).
 
+    // MC2_SHADER_PATH_TINT: solid GREEN so this shader's surfaces are unmistakable.
+    if (u_pathTint != 0) {
+        fragColor = vec4(0.0, 1.0, 0.0, 1.0);
+        GBuffer1  = vec4(0.5, 0.5, 1.0, 1.0);   // shadowHandled_flatUp
+        return;
+    }
+
     // Phase 7.5 debug: neon LOD-band palette when u_forceColor=1 (launch_lod_*color.bat).
     if (u_forceColor != 0) {
         vec3 fc;
@@ -344,15 +352,19 @@ void main() {
     int  ctY = clamp(int(floor((u_halfMap - v_worldPos.y) / 128.0)), 0, u_mapSide - 1);
     uint cw  = cementWordsF[ctX + ctY * u_mapSide];
     if (u_useCement != 0 && (cw & 0x80000000u) != 0u) {
-        // CEMENT-DETAIL-COLOR: replace cement atlas diffuse with detail layer sample.
-        // MAT_LAYER_PAINTED_CONC (layer 6) = mat6_normal.tga (painted_concrete_02).
-        // NOTE: this is a NORMAL MAP stored as RGBA8; sampling it as colour will
-        // produce blue/purple tones (normal maps encode XYZ in RGB, biased to ~0.5,0.5,1).
-        // The user asked for this literal replacement. For a true albedo result,
-        // replace data/textures/mat6_normal.tga with a concrete colour/albedo texture
-        // (the asset-swap fallback) and re-cook.
-        vec2 uvConcreteC = v_worldPos.xy * (detailNormalTiling.x / MAT_WORLD_UNITS_PER_TILE) * matTiling.w;
-        base = texture(matNormalArray, vec3(uvConcreteC, float(MAT_LAYER_PAINTED_CONC))).rgb;
+        // CEMENT-DIFFUSE-COLOR: sample the real cement DIFFUSE atlas (u_cementAtlas).
+        // Was sampling matNormalArray[MAT_LAYER_PAINTED_CONC] (a NORMAL map) as
+        // colour -> flat dark bluish slab. Port the atlas-UV reconstruction from
+        // gos_terrain.frag: atlas index from the cement word (cw & 0xFFFFu),
+        // grid cell + fract world tile UV via u_cementWUPT (world units per tile).
+        uint cLayerIdx = cw & 0xFFFFu;
+        int  cGridSide = u_cementGridSide;
+        if (cGridSide < 1) cGridSide = 1;
+        int  cCol = int(cLayerIdx) % cGridSide;
+        int  cRow = int(cLayerIdx) / cGridSide;
+        vec2 cTileUV  = fract(vec2(v_worldPos.x, -v_worldPos.y) / u_cementWUPT);
+        vec2 cAtlasUV = (vec2(float(cCol), float(cRow)) + cTileUV) / float(cGridSide);
+        base = texture(u_cementAtlas, cAtlasUV).rgb;
         cementHit = true;
     }
 
@@ -493,6 +505,24 @@ void main() {
         float staticS = calcShadow(v_worldPos, shadowN, terrainLightDir.xyz, 16);
         float dynS    = calcDynamicShadow(v_worldPos, shadowN, terrainLightDir.xyz, 8);
         shadow = min(staticS, dynS);
+    }
+
+    // DEBUG-VIZ (exact-value escape on u_diag; bitmask modes never reach 30/31):
+    //   30 = dynamic-cast shadow only (isolates building dynamic shadow), 31 = min(static,dyn).
+    if (u_diag == 30) {
+        const vec3 shadowN = vec3(0.0, 0.0, 1.0);
+        float dynVizS = calcDynamicShadow(v_worldPos, shadowN, terrainLightDir.xyz, 8);
+        fragColor = vec4(vec3(dynVizS), 1.0);
+        GBuffer1  = vec4(0.5, 0.5, 1.0, 1.0);
+        return;
+    }
+    if (u_diag == 31) {
+        const vec3 shadowN = vec3(0.0, 0.0, 1.0);
+        float staticVizS = calcShadow(v_worldPos, shadowN, terrainLightDir.xyz, 16);
+        float dynVizS2   = calcDynamicShadow(v_worldPos, shadowN, terrainLightDir.xyz, 8);
+        fragColor = vec4(vec3(min(staticVizS, dynVizS2)), 1.0);
+        GBuffer1  = vec4(0.5, 0.5, 1.0, 1.0);
+        return;
     }
 
     vec3 lit = baseColor * normalLight * shadow;
