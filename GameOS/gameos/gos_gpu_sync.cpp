@@ -48,6 +48,20 @@ GLbitfield barrierBitsFor(GpuProducer p, GpuConsumer c) {
     if (p == GpuProducer::ComputeShader &&
         (c == GpuConsumer::ShaderStorageRead || c == GpuConsumer::ComputeShader))
         return GL_SHADER_STORAGE_BARRIER_BIT;
+    // Compute dispatch wrote an SSBO; a server-side glCopyBufferSubData reads it.
+    if (p == GpuProducer::ComputeShader && c == GpuConsumer::BufferCopy)
+        return GL_SHADER_STORAGE_BARRIER_BIT;
+    // CPU reads the result through a persistent GL_MAP_PERSISTENT_BIT mapping.
+    // GL_CLIENT_MAPPED_BUFFER_BARRIER_BIT is required regardless of which GPU
+    // stage wrote the buffer -- it orders GPU writes before the mapped pointer
+    // is read by the CPU.
+    if (c == GpuConsumer::CpuMappedRead)
+        return GL_CLIENT_MAPPED_BUFFER_BARRIER_BIT;
+    // glGetBufferSubData / glGetNamedBufferSubData: GL_BUFFER_UPDATE_BARRIER_BIT
+    // is the precise bit (spec §7.12.1). It subsumes SSBO write visibility for
+    // API-level reads, so SHADER_STORAGE_BARRIER_BIT is NOT additionally required.
+    if (c == GpuConsumer::BufferReadback)
+        return GL_BUFFER_UPDATE_BARRIER_BIT;
     return 0;  // unmapped edge
 }
 

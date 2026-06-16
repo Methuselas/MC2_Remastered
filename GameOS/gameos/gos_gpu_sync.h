@@ -33,6 +33,8 @@ enum class GpuConsumer {
     ShaderStorageRead,  // a graphics-stage shader reads it as SSBO
     MultiDrawIndirect,  // glMultiDraw*Indirect / glDraw*Indirect consumes it
     InstancedDraw,      // glDraw*Instanced* reads it (e.g. SSBO instance/bone data)
+    CpuMappedRead,      // CPU reads through a persistent GL_MAP_PERSISTENT_BIT mapping
+    BufferReadback,     // glGetBufferSubData / glGetNamedBufferSubData reads the buffer
 };
 
 // Issue the correct glMemoryBarrier for the producer->consumer edge. `tag` is a

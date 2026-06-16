@@ -22,6 +22,7 @@
 
 #include "particles/cardcloud_sim.h"
 #include "particles/batcher.h"   // is_gpu_sim_cardcloud_enabled / is_gpu_sim_compare_enabled
+#include "gos_gpu_sync.h"
 
 #include <gameos.hpp>
 #include <GL/glew.h>
@@ -180,7 +181,8 @@ extern "C" void gos_cardcloud_sim_flush(void)
     if (s_loc_count >= 0) glUniform1ui(s_loc_count, n);
     const GLuint groups = (n + 63u) / 64u;
     glDispatchCompute(groups, 1, 1);
-    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    gpuSyncBarrier(GpuProducer::ComputeShader, GpuConsumer::BufferReadback,
+                   "cardcloud-sim-dispatch");
 
     // Dispatch diagnostic — ALWAYS-ON (not gated on compare) so the compute
     // path is observable with MC2_VFX_GPU_SIM_CARDCLOUD=1 alone. One-shot +
