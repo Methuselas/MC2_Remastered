@@ -233,7 +233,7 @@ public:
     // Default ON (MC2_OOB_FOG=0 to disable). Reads only scene depth —
     // no sceneColorTex_ feedback loop; blends SRC_ALPHA over scene color.
     bool  fogOobEnabled_ = false;
-    float oobFogColor_[3] = {0.58f, 0.65f, 0.75f}; // default: terrain horizon haze
+    float oobFogColor_[3] = {0.93f, 0.94f, 0.95f}; // default: white cloud bank
     float oobFogOpacity_ = 1.0f;
     void  runFogOob();
 

@@ -1960,9 +1960,26 @@ void gosPostProcess::runCloudShadow()
     ZoneScopedN("Render.CloudShadow");
     TracyGpuZone("Render.CloudShadow");
 
-    if (!enableCloudShadow_) return;               // env/ImGui gate -> skip entirely
-    if (!sceneHasTerrain_) return;
-    if (!cloudProg_ || !cloudProg_->is_valid()) return;
+    static const bool s_cloudDiag = (getenv("MC2_CLOUD_DIAG") != nullptr);
+    static int s_cloudDiagFrame = 0;
+    const bool cloudDiagNow = s_cloudDiag && ((s_cloudDiagFrame++ % 120) == 0);
+    if (cloudDiagNow)
+        fprintf(stderr, "[CLOUD_DIAG] runCloudShadow called enable=%d hasTerrain=%d progValid=%d\n",
+                (int)enableCloudShadow_, (int)sceneHasTerrain_,
+                (int)(cloudProg_ && cloudProg_->is_valid()));
+
+    if (!enableCloudShadow_) {                     // env/ImGui gate -> skip entirely
+        if (cloudDiagNow) fprintf(stderr, "[CLOUD_DIAG] bail: !enableCloudShadow_\n");
+        return;
+    }
+    if (!sceneHasTerrain_) {
+        if (cloudDiagNow) fprintf(stderr, "[CLOUD_DIAG] bail: !sceneHasTerrain_\n");
+        return;
+    }
+    if (!cloudProg_ || !cloudProg_->is_valid()) {
+        if (cloudDiagNow) fprintf(stderr, "[CLOUD_DIAG] bail: prog invalid\n");
+        return;
+    }
 
     glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
     setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
@@ -2005,6 +2022,10 @@ void gosPostProcess::runCloudShadow()
     glDepthMask(GL_TRUE);
     glEnable(GL_DEPTH_TEST);
     glActiveTexture(GL_TEXTURE0);
+
+    if (cloudDiagNow)
+        fprintf(stderr, "[CLOUD_DIAG] cloud pass DREW (fbo=%u blend on)\n",
+                (unsigned)sceneFBO_);
 }
 
 void gosPostProcess::runGodRays()
@@ -2153,16 +2174,20 @@ void gosPostProcess::runFogOob()
     // setMat4 uses GL_TRUE internally; transposing here gives the same result.
     float invT[16];
     {
-        const float* s = &inverseViewProj_.elem[0][0];
+        const float* s = inverseViewProj_;
         for (int i = 0; i < 4; ++i)
             for (int j = 0; j < 4; ++j)
                 invT[i*4+j] = s[j*4+i];
     }
+    float fogTime = SmokeMode::fixedTimestepEnabled()
+                        ? (float)SmokeMode::fixedClockSeconds()
+                        : (float)SDL_GetTicks() / 1000.0f;
     fogOobProg_->apply();
     fogOobProg_->setInt("depthTex", 0);
     fogOobProg_->setMat4("invViewProj", invT);
     fogOobProg_->setFloat3("u_fogColor",  oobFogColor_);
     fogOobProg_->setFloat("u_fogOpacity", oobFogOpacity_);
+    fogOobProg_->setFloat("u_time", fogTime);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, sceneDepthTex_);
@@ -2945,12 +2970,14 @@ void gosPostProcess::renderHdriSkyboxInvVP(const float* invVP16)
     // +Z (MC2 up) by skyYaw before atan2(y,x). MC2_HDRI_SKY_AZ_OFFSET adds a
     // manual trim on top of the auto-sync (or replaces it when scan failed).
     float skyYaw = 0.0f;
-    float dbgSunAzGL = 0.0f;
     if (hdriBakedSunValid_) {
         float lx = 0.0f, ly = 0.0f, lz = 0.0f;
         gos_GetTerrainLightDir(&lx, &ly, &lz);
-        dbgSunAzGL = atan2f(ly, lx);
-        skyYaw = hdriBakedSunAz_ - dbgSunAzGL;
+        const float sunAzGL = atan2f(ly, lx);
+        // hdriBakedSunAz_ is the azimuth of the anti-solar backscatter peak
+        // (the brightest *diffuse* region in the upper half of the EXR, which
+        // sits 180° opposite the actual sun disk). Add π to get the true disk.
+        skyYaw = hdriBakedSunAz_ + 3.14159265f - sunAzGL;
     }
     if (s_azOffsetSet) {
         skyYaw += s_azOffsetRad;
@@ -2959,13 +2986,14 @@ void gosPostProcess::renderHdriSkyboxInvVP(const float* invVP16)
         static bool s_loggedSync = false;
         if (!s_loggedSync) {
             s_loggedSync = true;
+            float lx = 0.0f, ly = 0.0f, lz = 0.0f;
+            gos_GetTerrainLightDir(&lx, &ly, &lz);
             std::fprintf(stderr,
-                "[HDRI_SUN_SYNC] valid=%d bakedAz=%.1fdeg sunAzGL=%.1fdeg skyYaw=%.1fdeg azOffset=%.1fdeg\n",
+                "[HDRI_SUN_SYNC] valid=%d antiSolarAz=%.1fdeg sunAzGL=%.1fdeg skyYaw=%.1fdeg\n",
                 hdriBakedSunValid_ ? 1 : 0,
                 hdriBakedSunAz_ * 57.29577951f,
-                dbgSunAzGL * 57.29577951f,
-                skyYaw * 57.29577951f,
-                s_azOffsetRad * 57.29577951f);
+                atan2f(ly, lx) * 57.29577951f,
+                skyYaw * 57.29577951f);
             std::fflush(stderr);
         }
     }
