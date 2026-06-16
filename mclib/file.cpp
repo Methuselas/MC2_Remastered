@@ -666,11 +666,21 @@ void InitModSearchPaths(const char* modsRoot) {
     }
 
     const char* envMod = getenv("MC2_ACTIVE_MOD");
-    if (!envMod || !envMod[0]) {
-        printf("[mod] base game mode (MC2_ACTIVE_MOD not set)\n"); fflush(stdout);
-        return;
+    const bool stockMode = (!envMod || !envMod[0]);
+    if (stockMode) {
+        // Stock campaign: no active mod. Add-on layers (MC2_MOD_DEPS) may still mount
+        // (e.g. "stock + Omnitech mechs"). With NO deps either, this is pure base game.
+        const char* envDepsCheck = getenv("MC2_MOD_DEPS");
+        if (!envDepsCheck || !envDepsCheck[0]) {
+            printf("[mod] base game mode (MC2_ACTIVE_MOD not set, MC2_MOD_DEPS not set)\n");
+            fflush(stdout);
+            return;
+        }
+        printf("[mod] stock campaign + add-ons mode (MC2_MOD_DEPS set, no MC2_ACTIVE_MOD)\n");
+        fflush(stdout);
+        envMod = "";  // downstream treats the active mod as absent
     }
-    g_activeModId = envMod;
+    g_activeModId = stockMode ? std::string() : std::string(envMod);
 
     // Resolve modsRoot to absolute path so index keys stay valid regardless of CWD changes.
     char absRoot[MAX_PATH];
@@ -691,7 +701,12 @@ void InitModSearchPaths(const char* modsRoot) {
 
     std::string modId, modName;
     std::vector<std::string> deps;
-    if (!ReadModJson(jsonPath, modId, modName, deps)) {
+    if (stockMode) {
+        // Stock campaign: no active mod, so no active mod.json. Add-on layers come
+        // solely from MC2_MOD_DEPS (parsed below).
+        modId = "";
+        modName = "";
+    } else if (!ReadModJson(jsonPath, modId, modName, deps)) {
         // No mod.json — treat the folder name as the id. Dependencies (the compat
         // layer) come from MC2_MOD_DEPS instead (see below) — the launcher lets the
         // player pick a campaign + a compatibility layer separately, so metadata-less
@@ -734,11 +749,11 @@ void InitModSearchPaths(const char* modsRoot) {
         fflush(stdout);
     }
 
-    // Index active mod first (highest priority).
+    // Index active mod first (highest priority). Skipped entirely in stock mode.
     char activeDataDir[MAX_PATH];
     _snprintf(activeDataDir, sizeof(activeDataDir), "%s%s/data/", absRoot, envMod);
     activeDataDir[sizeof(activeDataDir)-1] = '\0';
-    if (GetFileAttributesA(activeDataDir) != INVALID_FILE_ATTRIBUTES) {
+    if (!stockMode && GetFileAttributesA(activeDataDir) != INVALID_FILE_ATTRIBUTES) {
         size_t before = g_modIndex.size();
         if (!TryLoadModCache(g_modIndex, absRoot, modId.c_str(), activeDataDir))
             IndexModDataCached(g_modIndex, g_shadowedBy, absRoot, modId.c_str(), activeDataDir, "data/");
@@ -762,6 +777,26 @@ void InitModSearchPaths(const char* modsRoot) {
             IndexModDataCached(g_modIndex, g_shadowedBy, absRoot, dep.c_str(), depDataDir, "data/");
         printf("[mod] [%zu/%zu] dep '%s': %zu new files\n",
                i+2, deps.size()+1, dep.c_str(), g_modIndex.size() - before);
+    }
+
+    // STOCK-AI GUARD (load-bearing invariant): with no active campaign, a dep add-on
+    // layer must not override stock's core ABL libraries (data/missions/*.abx, i.e.
+    // corebrain/orders/miscfunc). Those are campaign-brain plumbing the mechs/weapons
+    // do not need; letting them override stock would alter/break stock AI. Erase any
+    // such dep-supplied key so the engine falls back to stock's ABL. g_modIndex holds
+    // only dep/active entries (base is the fallback, never indexed), so in stock mode
+    // every match is a dep override. Runs after both fresh-index and cache-load paths.
+    if (stockMode) {
+        size_t erased = 0;
+        for (auto it = g_modIndex.begin(); it != g_modIndex.end(); ) {
+            const std::string& k = it->first;  // NormalizeKey: lowercase, '/' separators
+            const bool inMissions = (k.rfind("data/missions/", 0) == 0);
+            const bool isAbx = (k.size() >= 4 && k.compare(k.size() - 4, 4, ".abx") == 0);
+            if (inMissions && isAbx) { it = g_modIndex.erase(it); ++erased; }
+            else { ++it; }
+        }
+        printf("[mod] stock-AI guard: dropped %zu dep ABL override(s) under data/missions/\n", erased);
+        fflush(stdout);
     }
 
     printf("[mod] ready: active='%s' total=%zu files\n", envMod, g_modIndex.size());
