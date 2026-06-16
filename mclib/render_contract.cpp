@@ -429,16 +429,44 @@ const SOC& lookupShaderOutput(PassIdentity id) {
 
 static bool s_assertEnabled = false;
 
-void checkDrawBuffer(GLenum query, bool required,
-                     const char* slotName, const char* passName, const char* hint)
+static void fatalContractViolation(const char* passName, const char* hint,
+                                   const char* msg)
+{
+    fprintf(stderr,
+        "[RENDER_CONTRACT_ASSERT] FATAL pass=%s hint=%s: %s\n",
+        passName, hint ? hint : "?", msg);
+    fflush(stderr);
+    std::abort();
+}
+
+static void checkDrawBuffer(GLenum query, bool required,
+                            const char* slotName, const char* passName,
+                            const char* hint)
 {
     if (!required) return;
     GLint buf = 0;
     glGetIntegerv(query, &buf);
     if (buf == GL_NONE) {
-        fprintf(stderr,
-            "[RENDER_CONTRACT_ASSERT] pass=%s hint=%s: %s required but GL_NONE\n",
-            passName, hint ? hint : "?", slotName);
+        char msg[128];
+        std::snprintf(msg, sizeof(msg), "%s required but draw buffer is GL_NONE", slotName);
+        fatalContractViolation(passName, hint, msg);
+    }
+}
+
+// Returns the GL depth func expected for this pass, or 0 meaning "don't check."
+// Opaque scene passes use reverse-Z (GL_GEQUAL); shadow caster uses forward-Z (GL_LESS).
+static GLenum expectedDepthFuncFor(PassIdentity id)
+{
+    switch (id) {
+        case PassIdentity::TerrainBase:
+        case PassIdentity::Grass:
+        case PassIdentity::StaticProp:
+        case PassIdentity::OpaqueObject:
+            return GL_GEQUAL;
+        case PassIdentity::ShadowCaster:
+            return GL_LESS;
+        default:
+            return 0; // not checked for this pass
     }
 }
 
@@ -471,7 +499,8 @@ const char* passIdentityName(PassIdentity id) {
 }
 
 void initRenderContractAssert() {
-    s_assertEnabled = (::getenv("MC2_RENDER_CONTRACT_ASSERT") != nullptr);
+    const char* v = ::getenv("MC2_RENDER_CONTRACT_ASSERT");
+    s_assertEnabled = (v && v[0] != '\0' && v[0] != '0');
     if (s_assertEnabled)
         fprintf(stderr, "[RENDER_CONTRACT v2] assert mode ACTIVE\n");
 }
@@ -481,6 +510,7 @@ void assertPassContract(PassIdentity id, const char* hint) {
     const PassStateContract& state = lookupState(id);
     const char* passName = passIdentityName(id);
 
+    // --- draw-buffer attachment checks ---
     checkDrawBuffer(GL_DRAW_BUFFER0, state.attachments.color0,
                     "COLOR_ATTACHMENT0", passName, hint);
     checkDrawBuffer(GL_DRAW_BUFFER1, state.attachments.color1,
@@ -488,22 +518,45 @@ void assertPassContract(PassIdentity id, const char* hint) {
     checkDrawBuffer(GL_DRAW_BUFFER2, state.attachments.color2,
                     "COLOR_ATTACHMENT2", passName, hint);
 
+    // --- depth test ---
     if (state.requiresDepthTest) {
         GLboolean dt = GL_FALSE;
         glGetBooleanv(GL_DEPTH_TEST, &dt);
         if (!dt)
-            fprintf(stderr,
-                "[RENDER_CONTRACT_ASSERT] pass=%s hint=%s: depth test required but disabled\n",
-                passName, hint ? hint : "?");
+            fatalContractViolation(passName, hint,
+                "depth test required but GL_DEPTH_TEST disabled");
     }
 
+    // --- depth write ---
     if (state.requiresDepthWrite) {
         GLboolean dw = GL_FALSE;
         glGetBooleanv(GL_DEPTH_WRITEMASK, &dw);
         if (!dw)
-            fprintf(stderr,
-                "[RENDER_CONTRACT_ASSERT] pass=%s hint=%s: depth write required but masked\n",
-                passName, hint ? hint : "?");
+            fatalContractViolation(passName, hint,
+                "depth write required but GL_DEPTH_WRITEMASK=FALSE");
+    }
+
+    // --- depth func: GL_GEQUAL for opaque scene, GL_LESS for shadow ---
+    const GLenum wantDF = expectedDepthFuncFor(id);
+    if (wantDF != 0) {
+        GLint df = 0;
+        glGetIntegerv(GL_DEPTH_FUNC, &df);
+        if ((GLenum)df != wantDF) {
+            const char* msg =
+                (wantDF == GL_GEQUAL) ?
+                    "depth func must be GL_GEQUAL (reverse-Z scene pass)" :
+                    "depth func must be GL_LESS (shadow forward-Z pass)";
+            fatalContractViolation(passName, hint, msg);
+        }
+    }
+
+    // --- blend disabled for opaque passes ---
+    if (state.blend == BM::Opaque) {
+        GLboolean blendOn = GL_FALSE;
+        glGetBooleanv(GL_BLEND, &blendOn);
+        if (blendOn)
+            fatalContractViolation(passName, hint,
+                "GL_BLEND enabled but pass blend contract is Opaque");
     }
 }
 

@@ -3670,6 +3670,8 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     // No blend for opaque terrain SOLID pass.
     glDisable(GL_BLEND);
+    render_contract::assertPassContract(render_contract::PassIdentity::TerrainBase,
+                                        "gos_TerrainLodChunk_SubmitDrawCommands");
 
     // ---- Sampler: CLAMP_TO_EDGE / LINEAR (matches M2 atlas-tiled path) ----
     static GLuint s_indirectTerrainSampler = 0;
@@ -5720,6 +5722,8 @@ void gosRenderer::beginShadowPrePass(bool clearDepth) {
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glDisable(GL_CULL_FACE);
+    render_contract::assertPassContract(render_contract::PassIdentity::ShadowCaster,
+                                        "gosRenderer::beginShadowPrePass");
 
     // Bind shadow shader and upload lightSpaceMatrix
     shadow_terrain_material_->apply();
