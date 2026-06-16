@@ -2344,6 +2344,7 @@ int   mc2ShadowCsmCount();
 float mc2ShadowCsmLambda();
 int   mc2ShadowMapSize();   // CSM-REDESIGN: env-tunable dynamic shadow map edge (texels)
 float mc2ShadowCsmSoftness();
+float mc2ShadowObjNormalBias();  // object shadow-receive normal-offset (texels); 0 disables
 // Forward decl for F1 unified-projection API (Stuff::Matrix4D defined in mclib/stuff/matrix.hpp).
 namespace Stuff { class Matrix4D; }
 // F1 Stage A unified-projection production setter. Repackages column-major

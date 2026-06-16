@@ -108,6 +108,21 @@ float mc2ShadowCsmSoftness()
     return s_s;
 }
 
+// Object shadow-receive normal-offset bias (in cascade texels). Default 2.0,
+// clamped [0,16]. 0 disables the normal-offset (A/B). Slope-scale term in the
+// shader is always-on (tiny); this only gates the world-space normal-offset.
+float mc2ShadowObjNormalBias()
+{
+    static const float s_b = []() {
+        const char* v = getenv("MC2_SHADOW_OBJ_NORMAL_BIAS");
+        float b = (v && v[0]) ? (float)atof(v) : 2.0f;
+        if (b < 0.0f) b = 0.0f;
+        if (b > 16.0f) b = 16.0f;
+        return b;
+    }();
+    return s_b;
+}
+
 namespace {
 
 // M1.5 C1 fix + M3 plan-review fix: centralized scene-FBO draw-buffer
@@ -1751,6 +1766,24 @@ void gosPostProcess::runScreenShadow()
     if (csmActive)
         screenShadowProg_->setInt("dynamicCsmCount", csmCount_);
     screenShadowProg_->setFloat("shadowSoftness", mc2ShadowCsmSoftness());  // match terrain default
+    screenShadowProg_->setFloat("objNormalBiasScale", mc2ShadowObjNormalBias());
+    {
+        // Object self-shadow acne fix needs the SURFACE->LIGHT direction for
+        // NdotL + normal-offset, expressed in the SAME frame as worldPos and
+        // the GBuffer normal that shadow_screen.frag reconstructs (GL world).
+        //   gos_GetTerrainLightDir returns RAW MC2/Stuff space (x=east,
+        //   y=north, z=elev), pointing light->scene.
+        //   surface->light = negate. Stuff->GL swap: (x,y,z)_GL = (-x, z, y).
+        float lx = 0.0f, ly = 0.0f, lz = 1.0f;
+        gos_GetTerrainLightDir(&lx, &ly, &lz);
+        // negate (light->scene  =>  surface->light), then Stuff->GL.
+        float sx = -lx, sy = -ly, sz = -lz;          // surface->light, Stuff
+        float gx = -sx, gy =  sz, gz =  sy;          // -> GL world
+        float len = sqrtf(gx*gx + gy*gy + gz*gz);
+        if (len > 1e-6f) { gx /= len; gy /= len; gz /= len; }
+        float lightDirVec[3] = { gx, gy, gz };
+        screenShadowProg_->setFloat3("lightDir", lightDirVec);
+    }
     screenShadowProg_->setInt("debugMode", screenShadowDebug_);
     float screenSz[2] = { (float)width_, (float)height_ };
     screenShadowProg_->setFloat2("screenSize", screenSz);

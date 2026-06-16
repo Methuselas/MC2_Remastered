@@ -87,6 +87,12 @@ uniform float shadowSoftness;
 uniform int debugMode;    // 0=normal, 1=visualize classification
 uniform float time;       // seconds, for animated cloud shadows
 
+// Object (mech/building) self-shadow acne fix. lightDir = GL-world surface->light
+// (set in gos_postprocess::runScreenShadow). objNormalBiasScale = normal-offset
+// distance in cascade texels; 0 disables the offset (slope-scale term stays on).
+uniform vec3  lightDir;
+uniform float objNormalBiasScale;
+
 const vec2 poissonDisk[8] = vec2[](
     vec2(-0.94201624, -0.39906216),
     vec2( 0.94558609, -0.76890725),
@@ -133,20 +139,32 @@ float sampleShadowMap(sampler2DShadow smap, vec3 worldPos, mat4 lsMatrix, int nu
 // Item 1: single entry point for the dynamic shadow lookup. Same signature in
 // both variants so the call sites below never change.
 #ifdef MC2_SHADOW_CSM
-float sampleDynamicShadow(vec3 worldPos)
+// N = GL-world surface normal of the object pixel (object path only). Used to
+// slope-scale the depth bias and normal-offset the sample point off the surface
+// to kill self-shadow acne. Terrain/grass/decals never reach this (early-out).
+float sampleDynamicShadow(vec3 worldPos, vec3 N)
 {
+    float NdotL = max(dot(N, lightDir), 0.0);
     int count = clamp(dynamicCsmCount, 1, MC2_SHADOW_CSM_MAX);
     for (int c = 0; c < count; ++c) {
-        vec4 lsPos = dynamicCascadeMatrices[c] * vec4(worldPos, 1.0);
+        // NORMAL-OFFSET: push the sample point off the surface along N by a
+        // texel-proportional distance (larger at grazing angles). Applied in
+        // world space, per-cascade (uses that cascade's world texel size), so
+        // the projected coord is consistent. Gated: 0 => no offset.
+        float offsetDist = objNormalBiasScale * dynamicCascadeTexelWorld[c]
+                         * (1.0 + (1.0 - NdotL));
+        vec3 samplePos = worldPos + N * offsetDist;
+
+        vec4 lsPos = dynamicCascadeMatrices[c] * vec4(samplePos, 1.0);
         vec3 projCoords = lsPos.xyz / lsPos.w;
         projCoords.xy = projCoords.xy * 0.5 + 0.5;
         if (projCoords.z > 1.0 || projCoords.z < 0.0) continue;
         if (projCoords.xy != clamp(projCoords.xy, 0.0, 1.0)) continue;
 
-        // Stage 3: per-cascade texel-scaled depth bias (screen pass has no NdotL,
-        // so use a fixed base + the same additive texel term as shadow.hglsl).
+        // Stage 3 texel-scaled bias + slope-scale top-up for grazing angles
+        // (small; ground bias already reduced — this is object self-shadow only).
         float texelBias = 1.5 * dynamicCascadeTexelWorld[c] / max(csmDepthSpan, 1.0);
-        float bias = 0.0012 + texelBias;
+        float bias = 0.0012 + texelBias + 0.0010 * (1.0 - NdotL);
         float currentDepth = projCoords.z - bias;
         float angle = 6.2831853 * fract(sin(dot(worldPos.xz, vec2(12.9898, 78.233))) * 43758.5453);
         float ca = cos(angle), sa = sin(angle);
@@ -164,9 +182,16 @@ float sampleDynamicShadow(vec3 worldPos)
     return 1.0;   // outside every cascade -> lit (static map covers far field)
 }
 #else
-float sampleDynamicShadow(vec3 worldPos)
+// Non-CSM legacy single dynamic map: normal-offset the world position before
+// the lookup (slope-scale lives inside sampleShadowMap's fixed bias; the offset
+// is the dominant acne fix). texelWorld is unavailable here, so scale the offset
+// by a small world constant tied to objNormalBiasScale. Gated: 0 => no offset.
+float sampleDynamicShadow(vec3 worldPos, vec3 N)
 {
-    return sampleShadowMap(dynamicShadowMap, worldPos, dynamicLightSpaceMatrix, 4);
+    float NdotL = max(dot(N, lightDir), 0.0);
+    vec3 samplePos = worldPos
+                   + N * (objNormalBiasScale * 0.5 * (1.0 + (1.0 - NdotL)));
+    return sampleShadowMap(dynamicShadowMap, samplePos, dynamicLightSpaceMatrix, 4);
 }
 #endif
 
@@ -195,12 +220,15 @@ void main()
         } else {
             // Non-terrain: reconstruct and show shadow result
             vec3 worldPos = reconstructWorldPos(TexCoord, depth);
+            // Decode GBuffer normal (stored Stuff-space n*0.5+0.5) -> GL world.
+            vec3 N_stuff = normalize(normalData.rgb * 2.0 - 1.0);
+            vec3 N = vec3(-N_stuff.x, N_stuff.z, N_stuff.y);
 
             float shadow = 1.0;
             if (enableShadows == 1)
                 shadow = min(shadow, sampleShadowMap(shadowMap, worldPos, lightSpaceMatrix, 8));
             if (enableDynamicShadows == 1)
-                shadow = min(shadow, sampleDynamicShadow(worldPos));
+                shadow = min(shadow, sampleDynamicShadow(worldPos, N));
 
             if (shadow < 0.99) {
                 FragColor = vec4(0.0, 0.0, shadow, 1.0);  // blue = shadowed
@@ -228,6 +256,10 @@ void main()
     // Overlay pixels don't write depth — depth buffer holds terrain depth at their position,
     // so worldPos.xy matches the terrain surface below (same cloud UV as terrain inline).
     vec3 worldPos = reconstructWorldPos(TexCoord, depth);
+    // Decode GBuffer normal (stored Stuff-space n*0.5+0.5) -> GL world. Object
+    // pixels only (terrain/grass/decals already took the early-out above).
+    vec3 objN_stuff = normalize(normalData.rgb * 2.0 - 1.0);
+    vec3 objN = vec3(-objN_stuff.x, objN_stuff.z, objN_stuff.y);
 
     // Cloud shadows — same formula as gos_terrain.frag for matching appearance.
     float cloudFactor = 1.0;
@@ -242,7 +274,7 @@ void main()
         shadow = min(shadow, sampleShadowMap(shadowMap, worldPos, lightSpaceMatrix, 8));
     }
     if (enableDynamicShadows == 1) {
-        float dynShadow = sampleDynamicShadow(worldPos);
+        float dynShadow = sampleDynamicShadow(worldPos, objN);
         shadow = min(shadow, dynShadow);
     }
 
