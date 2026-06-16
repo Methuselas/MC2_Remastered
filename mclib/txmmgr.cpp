@@ -2401,9 +2401,13 @@ void MC_TextureManager::renderLists (void)
 					// This is EXACTLY the registry's actorWorldCenter extraction
 					// (gos_static_prop_registry.cpp:842-847) and the frame the light matrix
 					// consumes — verified against both the VS and the SHADOWZRANGE probe.
-					static const bool s_casterLightboxCull = (
-						getenv("MC2_SHADOW_CASTER_LIGHTBOX_CULL") != nullptr &&
-						getenv("MC2_SHADOW_CASTER_LIGHTBOX_CULL")[0] == '1');  // DEFAULT OFF
+					static const bool s_casterLightboxCull = []() {
+						// DEFAULT ON since 2026-06-16 (render-hygiene-s1). Off-map props
+						// never land their shadows on the playfield — filtering them saves
+						// ~0.2-0.4ms GPU fill on prop-heavy missions (mc2_24). Kill: =0.
+						const char* v = getenv("MC2_SHADOW_CASTER_LIGHTBOX_CULL");
+						return !(v && v[0] == '0' && v[1] == '\0');
+					}();
 					const std::vector<GpuStaticPropInstance>* dynShadowSet = &s_dynPropInsts;
 					if (s_casterLightboxCull) {
 						ZoneScopedN("Shadow.CasterCull");

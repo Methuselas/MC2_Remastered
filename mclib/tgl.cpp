@@ -2983,7 +2983,13 @@ void TG_Shape::Render (float forceZ, bool isHudElement, BYTE alphaValue, bool is
 
 	if (isSpotlight && !isNight)
 		return;
- 	
+
+	// Ensure depth write is on regardless of prior-pass state. This path uses
+	// the legacy MLR queue (gos_DrawTriangles); the state propagates to the
+	// batch flush in renderLists(). Depth comparison function left unchanged
+	// pending A/B verification of vehicle forward-Z convention (render-hygiene-s1).
+	gos_SetRenderState(gos_State_ZWrite, 1);
+
  	for (long j=0;j<numVisibleFaces;j++)
 	{
 		if (listOfVisibleFaces[j] < numTriangles)
