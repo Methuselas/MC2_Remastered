@@ -2,6 +2,25 @@
 
 > Pointer doc. Detail in memory/ handoffs and docs/. Add new campaigns at top.
 
+## 2026-06-16 — NVIDIA hardening S2 — SHIPPED + merged to nifty (`97be4e5c`)
+
+7 hardening items targeting correctness gaps AMD silently tolerates but NVIDIA exposes:
+
+| Item | Result | Commit |
+|------|--------|--------|
+| 1. `gpuBindSsboRange` — 24 SSBO bind sites + alignment assert | DONE | `61b3684b` |
+| 2. GPU buffer zero-init audit | CLEAN | `bb550ed4` |
+| 3. `assertPassContract` — depth-func + blend aborts under `MC2_RENDER_CONTRACT_ASSERT=1` | DONE | `50ee010a` |
+| 4. `[SHADER WARN]` on successful compile/link | DONE | `594eafe3` |
+| 5. PBO unbind audit | CLEAN — `GlPixelStoreGuard` already correct | — |
+| 6. Pass-entry state audit | CLEAN — mech via `applyPipeline`, decal+post explicit | — |
+| 7. `barrierBitsFor` table extended + cardcloud migrated | DONE | `90b6aa5a` |
+| 8. NVIDIA validation smoke checklist | PENDING — requires NVIDIA HW | — |
+
+Invariants now in `docs/critical_inline_rules.md` (GPU resource invariants section).
+Full plan: `docs/nvidia-hardening-s2.md`.
+Tier1 5/5 PASS. Item 8 fires when NVIDIA hardware available.
+
 ## 2026-06-14 — Proof-machine S-program + GlStateGuard + RC reconcile + FX/pixel gate (nifty `1f0419ac`)
 
 **SHIPPED (S11-S20 proof machine):**
