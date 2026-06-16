@@ -70,6 +70,7 @@
 #define IDC_ADDONLBL  1008  // "Add-ons (stack any):" label
 #define IDC_BASE0     1050  // base radios: IDC_BASE0 + slot index (slot 0 = "None")
 #define IDC_ADDON0    1100  // add-on checkboxes: IDC_ADDON0 + slot index
+#define IDC_FASTERWEAPONS 1300  // gameplay toggle (NOT a mod): faster weapons
 
 // Progress-dialog controls.
 #define IDC_PROG_CANCEL 1200
@@ -112,6 +113,7 @@ static HWND      s_hDesc;
 static HWND      s_hImport;
 static HWND      s_hBase[BASE_SLOTS];     // FIXED radio slots — slot 0 = "None"; never destroy
 static HWND      s_hAddon[ADDON_SLOTS];   // FIXED add-on checkbox slots — never destroy
+static HWND      s_hFasterWeapons;        // gameplay toggle (NOT a mod): faster weapons
 
 static char      s_launcherDir[MAX_PATH];   // trailing-slash launcher directory
 static char      s_modsPath[MAX_PATH];      // <launcherDir>mods\
@@ -393,7 +395,13 @@ static int BaseIndexForKind(CompatKind k) {
 // Add-on group: a gap below the base radios, then label, then checkboxes.
 #define LP_ADDON_LBL_Y (LP_BASE_Y + BASE_SLOTS * LP_ROW_STEP + 10) // add-on group label top
 #define LP_ADDON_Y    (LP_ADDON_LBL_Y + LP_LBL_H + 2)            // first add-on checkbox top
-#define LP_RCOL_BOTTOM (LP_ADDON_Y + ADDON_SLOTS * LP_ROW_STEP)   // bottom of right column
+#define LP_ADDON_BOTTOM (LP_ADDON_Y + ADDON_SLOTS * LP_ROW_STEP)  // bottom of add-on slots
+// Options group: a gap below the add-on checkboxes, then an "Options:" label,
+// then the "Faster weapons" gameplay toggle. This is NOT a mod -- it sets engine
+// env vars on launch, separate from the MC2_ACTIVE_MOD/MC2_MOD_DEPS logic.
+#define LP_OPT_LBL_Y  (LP_ADDON_BOTTOM + 14)                      // "Options:" label top
+#define LP_OPT_Y      (LP_OPT_LBL_Y + LP_LBL_H + 2)               // faster-weapons checkbox top
+#define LP_RCOL_BOTTOM (LP_OPT_Y + LP_ROW_STEP)                   // bottom of right column
 #define LP_LCOL_BOTTOM (LP_LIST_Y + LP_LIST_H)                    // bottom of left column
 // Bottom (status + buttons) clears the taller of the two columns.
 #define LP_COLS_BOTTOM ((LP_RCOL_BOTTOM > LP_LCOL_BOTTOM) ? LP_RCOL_BOTTOM : LP_LCOL_BOTTOM)
@@ -571,6 +579,12 @@ static void DoLaunch(HWND hwnd) {
         SetEnvironmentVariableA("MC2_ACTIVE_MOD", camp.folderName);
         SetEnvironmentVariableA("MC2_MOD_DEPS", deps[0] ? deps : NULL);
     }
+
+    // Gameplay "Faster weapons" toggle (NOT a mod): drive engine env vars in the
+    // child process. NULL unsets the var so unchecked == vanilla weapons.
+    BOOL fw = (SendMessageA(s_hFasterWeapons, BM_GETCHECK, 0, 0) == BST_CHECKED);
+    SetEnvironmentVariableA("MC2_DIRECT_FIRE_STRAIGHT", fw ? "1" : NULL);
+    SetEnvironmentVariableA("MC2_PROJECTILE_SPEED_MULT", fw ? "2" : NULL);
 
     char mc2Path[MAX_PATH];
     _snprintf(mc2Path, sizeof(mc2Path), "%smc2.exe", s_launcherDir);
@@ -1174,6 +1188,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         RefreshBaseSlots();    // show/hide + label per current scan; default None
         RefreshAddonSlots();   // show/hide + label per current scan
+
+        // Sub-group 3: gameplay "Options:" label + Faster-weapons toggle. This is
+        // NOT a mod -- the checkbox drives engine env vars on Launch, separate from
+        // the MC2_ACTIVE_MOD/MC2_MOD_DEPS mod logic. A WS_GROUP STATIC terminates
+        // any preceding group; the checkbox defaults UNCHECKED.
+        HWND hOptLbl = CreateWindowA("STATIC", "Options:",
+            WS_CHILD | WS_VISIBLE | WS_GROUP, LP_RCOL_X, LP_OPT_LBL_Y, LP_RCOL_W, LP_LBL_H,
+            hwnd, (HMENU)(INT_PTR)-1, s_hInst, NULL);
+        SendMessageA(hOptLbl, WM_SETFONT, (WPARAM)hFont, TRUE);
+
+        s_hFasterWeapons = CreateWindowA("BUTTON", "Faster weapons (experimental)",
+            WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+            LP_RCOL_X, LP_OPT_Y, LP_RCOL_W, LP_ROW_H,
+            hwnd, (HMENU)(INT_PTR)IDC_FASTERWEAPONS, s_hInst, NULL);
+        SendMessageA(s_hFasterWeapons, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SendMessageA(s_hFasterWeapons, BM_SETCHECK, BST_UNCHECKED, 0);  // default OFF
 
         // ---- BOTTOM (spans full width below BOTH columns): status + buttons ----
         s_hDesc = CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE | SS_LEFT,
