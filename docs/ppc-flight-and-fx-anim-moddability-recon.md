@@ -1,5 +1,13 @@
 # PPC Flight Jank Fix + FX/Animation Moddability — Recon
 
+> **STATUS (2026-06-15): SHIPPED.** PPC speed mult (`MC2_PROJECTILE_SPEED_MULT`, `0a3a852c`)
+> + de-curve straight-flight w/ spawn-velocity lead (`MC2_DIRECT_FIRE_STRAIGHT`, `4435d835`),
+> both env-gated default-off + launcher-toggleable. FX moddability: `anims.json` anim-override
+> registry (`96c50ad0`) + `tools/mc2weapon` weapon editor. Separately, the GPU gosFX FX path
+> was REVERTED to default-OFF (CPU/MLR) — `4ad31a9e` — because the GPU oracle looked broken;
+> the Q1 energy-beam visual upgrade was NOT done (it stays an option only if the GPU path is
+> re-enabled and fixed). See memory `fx_gpu_oracle_reverted_default_cpu`.
+
 Scouting report. Branch `claude/fx-tracy-cost-split` (off advanced nifty). Two asks:
 (1) fix the janky "hit/miss-rolled-at-spawn then curve-to-target" projectile flight —
 speed PPC 2-3×, disable curving for direct-fire, KEEP arc for LRMs; (2) deep
