@@ -72,6 +72,7 @@ static GLint    s_locPathTint       = -1;  // MC2_SHADER_PATH_TINT debug (u_path
 static GLint    s_locQuadCountX     = -1;  // Phase 10.4: block quad extent X (edge detect)
 static GLint    s_locQuadCountY     = -1;  // Phase 10.4: block quad extent Y (edge detect)
 static GLint    s_locEdgeStitch     = -1;  // Phase 10.4: packed coarser-neighbour stride
+static GLint    s_locShadowTier     = -1;  // Slice B: per-chunk shadow tier (DIAG=40 tint only)
 // Phase 10 Step 1c: shadow uniforms (declared by include/shadow.hglsl).
 static GLint    s_locShadowMap          = -1;
 static GLint    s_locLightSpaceMatrix   = -1;
@@ -386,6 +387,7 @@ void gos_TerrainLodChunk_Init()
             s_locQuadCountX   = glGetUniformLocation(s_terrainProgram, "u_quadCountX");
             s_locQuadCountY   = glGetUniformLocation(s_terrainProgram, "u_quadCountY");
             s_locEdgeStitch   = glGetUniformLocation(s_terrainProgram, "u_edgeStitch");
+            s_locShadowTier   = glGetUniformLocation(s_terrainProgram, "u_shadowTier"); // Slice B
             s_locShadowMap        = glGetUniformLocation(s_terrainProgram, "shadowMap");
             s_locLightSpaceMatrix = glGetUniformLocation(s_terrainProgram, "lightSpaceMatrix");
             s_locEnableShadows    = glGetUniformLocation(s_terrainProgram, "enableShadows");
@@ -499,6 +501,7 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     const float*              skirtDepths,
     const unsigned char*      skirtEdgeMasks,
     const unsigned int*       edgeStitch,
+    const int*                shadowTiers,
     int                       count)
 {
     if (count == 0) return;
@@ -848,6 +851,8 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         if (s_locQuadCountY >= 0) glUniform1i(s_locQuadCountY, maxOffY);
         if (s_locEdgeStitch >= 0)
             glUniform1i(s_locEdgeStitch, edgeStitch ? (GLint)edgeStitch[i] : 0);
+        if (s_locShadowTier >= 0)  // Slice B: per-chunk shadow tier (DIAG=40 tint only)
+            glUniform1i(s_locShadowTier, shadowTiers ? (GLint)shadowTiers[i] : 0);
 
         // --- Draw main patch (skirtDepth=0 so isSkirtFlag pulls height by 0) ---
         if (s_locSkirtDepth >= 0)

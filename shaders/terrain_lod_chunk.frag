@@ -37,6 +37,7 @@ uniform float u_atlasTopLeftX;            // = Terrain::mapTopLeft3d.x
 uniform float u_atlasTopLeftY;            // = Terrain::mapTopLeft3d.y
 uniform float u_atlasOneOverWorldUnits;   // = Terrain::oneOverWorldUnitsMapSide
 uniform vec4  terrainLightDir;            // Phase 10 Step 1b: sun dir (same uniform as legacy)
+uniform int   u_shadowTier;               // Slice B: per-chunk shadow tier (0=high,1=low,2=static,3=none)
 uniform int   u_diag;                     // Bisection bitmask (MC2_TERRAIN_LOD_CHUNK_DIAG):
                                           //   1  = do NOT write GBuffer1
                                           //   2  = no depth fudge (raw gl_FragCoord.z)
@@ -308,6 +309,19 @@ void main() {
     if (u_pathTint != 0) {
         fragColor = vec4(0.0, 1.0, 0.0, 1.0);
         GBuffer1  = vec4(0.5, 0.5, 1.0, 1.0);   // shadowHandled_flatUp
+        return;
+    }
+
+    // Slice B debug: per-chunk SHADOW TIER map (MC2_TERRAIN_LOD_CHUNK_DIAG=40).
+    // Flat tier color; does NOT alter real shadow sampling (that is Slice C).
+    if (u_diag == 40) {
+        vec3 tc;
+        if      (u_shadowTier == 0) tc = vec3(1.0, 0.0, 0.0);   // high-res dynamic (near) red
+        else if (u_shadowTier == 1) tc = vec3(1.0, 1.0, 0.0);   // low-res dynamic (mid)  yellow
+        else if (u_shadowTier == 2) tc = vec3(0.0, 0.0, 1.0);   // static-only (far)      blue
+        else                        tc = vec3(0.5, 0.5, 0.5);   // none/culled            grey
+        fragColor = vec4(tc, 1.0);
+        GBuffer1  = vec4(0.5, 0.5, 1.0, 1.0);
         return;
     }
 

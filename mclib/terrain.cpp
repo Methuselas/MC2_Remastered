@@ -222,6 +222,12 @@ static std::vector<uint8_t> s_skirtEdgeMaskVec;
 // shared edge -> no T-junction crack (neighbour-min technique, cf c2d7eb46).
 static std::vector<uint32_t> s_stitchStepVec;
 
+// Slice B: per-draw-command SHADOW TIER. Parallel to s_drawCmds; written in Pass
+// 3 in lockstep with s_cmdCount. 0=high-res dynamic (near), 1=low-res dynamic
+// (mid), 2=static-only (far), 3=none/culled. Classify+visualize only — feeds the
+// MC2_TERRAIN_LOD_CHUNK_DIAG=40 tier-tint; does NOT change shadow sampling.
+static std::vector<int> s_shadowTierVec;
+
 // Choose LOD level (0-5) for a block given squared distance and previous level.
 // Promotion (going finer) is immediate; demotion (going coarser) uses 10%
 // hysteresis in linear distance (= 1.21x in distSq) to prevent flickering.
@@ -1562,6 +1568,8 @@ long Terrain::update (void)
 				s_skirtEdgeMaskVec.resize(need, 0);
 			if (s_stitchStepVec.size() < need)
 				s_stitchStepVec.resize(need, 0);
+			if (s_shadowTierVec.size() < need)  // Slice B
+				s_shadowTierVec.resize(need, 0);
 		}
 
 		// Cache frustum planes once for this frame (eye->cacheFrustumPlanes()
@@ -1868,6 +1876,35 @@ long Terrain::update (void)
 			}
 		}
 
+		// --- Slice B: per-chunk SHADOW TIER classification accumulators ---
+		// Counts + world-area per tier over the chunks emitted this frame. Cheap
+		// (a few ints + one tier compute per visible block). Logged only when
+		// MC2_SHADOW_TIER_STATS is set; classification+vector-fill always runs.
+		int    tierChunks[4] = {0, 0, 0, 0};      // tier 0/1/2/3 chunk counts
+		double tierArea[4]   = {0.0, 0.0, 0.0, 0.0};
+
+		// --- Slice B: shadow-tier cascade center + near-cascade outer radius. ---
+		// The shadow tier is a coarse per-chunk proxy for receiver importance,
+		// thresholded at the CSM cascade geometry (NOT camera-altitude LOD).
+		// Cascade center == the shadow focus == eye->getPosition() (the orbit
+		// target, MC2-world east/north; .x=east, .y=north). This matches the
+		// CSM center fed to gos_BuildDynamicLightMatrix in txmmgr.cpp:2318-2319.
+		// NOTE: eyeX/eyeY (used above for LOD) is getCameraOrigin() = the HIGH-UP
+		// eye, NOT the target -- so we deliberately use getPosition() here so the
+		// tier tracks the cascade center, not the camera altitude.
+		// mc2ShadowCsmR0/R1() live in gos_postprocess.cpp (no header); declare
+		// them extern so the tier tracks the same env (MC2_SHADOW_CSM_R0/R1) the
+		// cascade radii use. Defaults R0=512, R1=4096.
+		extern float mc2ShadowCsmR0();
+		extern float mc2ShadowCsmR1();
+		const Stuff::Vector3D shadowTierCenter = eye->getPosition();  // cascade center
+		const float shadowR1 = mc2ShadowCsmR1();   // near-cascade outer radius (~4096)
+		// Mid/far split: chunks past the near cascades but within a few R1 still
+		// receive the full-map cascade at usable density -> tier 1 (coarse
+		// dynamic); only the far tail is a static-only candidate. The 2.5x factor
+		// is a starting guess kept as a clearly-labeled local for tuning.
+		const float shadowMidFarMult = 2.5f;
+
 		// --- Phase 5 Pass 3: emit draw commands using lodLevel -> lodStep ---
 		// --- Phase 6: also compute per-block skirt depth (parallel array) ---
 		for (int by = 0; by < s_terrainChunkSide; ++by)
@@ -1876,6 +1913,32 @@ long Terrain::update (void)
 			{
 				const TerrainBlockMeta& bm = s_blockMeta[bx + by * s_terrainChunkSide];
 				if (!bm.inFrustum) continue;
+
+				// --- Slice B: classify this visible chunk into a shadow tier. ---
+				// DISTANCE-from-cascade-center heuristic (replaces lodLevel-based:
+				// at MC2 zoom the camera maxes ~6400 WU altitude so lodLevel stays
+				// 0-1 map-wide -> the whole map classified tier 0). Distance to the
+				// shadow focus, thresholded at the CSM cascade radii, properly
+				// discriminates near (crisp cascades) vs far (full-map cascade).
+				// Chunk center XY uses the SAME conversion as the LOD site above
+				// (worldX = mapX*128 - halfMap; worldY = halfMap - mapY*128).
+				const float chunkCenterX =
+					float(bm.originX) * 128.0f + float(bm.quadCountX) * 0.5f * 128.0f - halfMap;
+				const float chunkCenterY =
+					halfMap - (float(bm.originY) * 128.0f + float(bm.quadCountY) * 0.5f * 128.0f);
+				const float stDx = chunkCenterX - shadowTierCenter.x;
+				const float stDy = chunkCenterY - shadowTierCenter.y;
+				const float stDist = sqrtf(stDx * stDx + stDy * stDy);
+				int shadowTier;
+				if (!bm.inFrustum)                              shadowTier = 3; // culled (completeness)
+				else if (stDist < shadowR1)                     shadowTier = 0; // near cascades -> crisp dynamic
+				else if (stDist < shadowR1 * shadowMidFarMult)  shadowTier = 1; // full-map cascade mid -> coarse dynamic
+				else                                            shadowTier = 2; // far -> static-only candidate
+				s_shadowTierVec[s_cmdCount] = shadowTier;
+				tierChunks[shadowTier]++;
+				// World-area of this chunk = quads * (128*128) world-units^2.
+				tierArea[shadowTier] +=
+					(double)bm.quadCountX * (double)bm.quadCountY * (128.0 * 128.0);
 				s_drawCmds[s_cmdCount].blockOriginX     = bm.originX;
 				s_drawCmds[s_cmdCount].blockOriginY     = bm.originY;
 				s_drawCmds[s_cmdCount].lodStep          = LOD_STEPS[bm.lodLevel];
@@ -1955,6 +2018,25 @@ long Terrain::update (void)
 					}
 				}
 				++s_cmdCount;
+			}
+		}
+
+		// --- Slice B: SHADOW TIER stats (env-gated, ~once per 600 frames). ---
+		// Cheap: a handful of ints/doubles accumulated in Pass 3 above, printed
+		// only when MC2_SHADOW_TIER_STATS is set. Resets implicitly each frame
+		// (tier* are frame-local). area%% is of total emitted visible terrain area.
+		{
+			static const bool s_shadowTierStats =
+				(getenv("MC2_SHADOW_TIER_STATS") != nullptr);
+			if (s_shadowTierStats && (gCurrentFrame % 600) == 0)
+			{
+				double totalArea = tierArea[0] + tierArea[1] + tierArea[2] + tierArea[3];
+				double inv = (totalArea > 0.0) ? (100.0 / totalArea) : 0.0;
+				printf("[ShadowTier] high=%d low=%d static=%d none=%d | "
+				       "area%% h=%.0f l=%.0f s=%.0f (of visible terrain area)\n",
+				       tierChunks[0], tierChunks[1], tierChunks[2], tierChunks[3],
+				       tierArea[0] * inv, tierArea[1] * inv, tierArea[2] * inv);
+				fflush(stdout);
 			}
 		}
 
@@ -2476,7 +2558,8 @@ void Terrain::flushDrawCommands (void)
 		gos_frame_pass_stats::SetVisibleTerrainChunks((uint32_t)s_cmdCount);
 		gos_TerrainLodChunk_SubmitDrawCommands(s_drawCmds, s_skirtDepths,
 			s_skirtEdgeMaskVec.empty() ? nullptr : s_skirtEdgeMaskVec.data(),
-			s_stitchStepVec.empty() ? nullptr : s_stitchStepVec.data(), s_cmdCount);
+			s_stitchStepVec.empty() ? nullptr : s_stitchStepVec.data(),
+			s_shadowTierVec.empty() ? nullptr : s_shadowTierVec.data(), s_cmdCount);
 		gos_render_pass_timer::End(gos_render_pass_timer::Pass_TerrainChunk);
 	}
 }
