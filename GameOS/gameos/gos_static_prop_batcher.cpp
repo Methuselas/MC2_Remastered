@@ -5957,8 +5957,9 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
         if (staticPopSplitArmed() && s_staticIndirectCmdBuf && !s_staticDrawCmds.empty()) {
             size_t staticTotal = 0;
             for (auto& kv : s_persistentStaticStore) staticTotal += kv.second.size();
-            glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_staticInstanceSsbo, 0,
-                static_cast<GLsizeiptr>((staticTotal ? staticTotal : 1) * sizeof(GpuStaticPropInstance)));
+            gpuBindSsboRange(0, s_staticInstanceSsbo, 0LL,
+                (long long)((staticTotal ? staticTotal : 1) * sizeof(GpuStaticPropInstance)),
+                "sp.staticInstance");
             glBindBuffer(GL_DRAW_INDIRECT_BUFFER, s_staticIndirectCmdBuf);
             const uintptr_t cmdSize =
                 static_cast<uintptr_t>(gpu_cull::kDrawElementsIndirectCommandSize);
@@ -6095,10 +6096,10 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             // Unconditionally bind SSBO slot 0 (same as v5).
             {
                 const size_t totalUsed = s_totalUsedBytesThisFrame;
-                glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo,
-                                  static_cast<GLintptr>(fr_off_bytes_d),
-                                  static_cast<GLsizeiptr>(
-                                      totalUsed > 0 ? totalUsed : sizeof(GpuStaticPropInstance)));
+                gpuBindSsboRange(0, s_coalesceInstanceSsbo,
+                                 (long long)fr_off_bytes_d,
+                                 (long long)(totalUsed > 0 ? totalUsed : sizeof(GpuStaticPropInstance)),
+                                 "sp.coalesce.v6a");
             }
 
             glActiveTexture(GL_TEXTURE0);
@@ -6513,10 +6514,10 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             // v5 only runs in global-pool mode (legacy mode disarms at gate-arm).
             {
                 const size_t totalUsed = s_totalUsedBytesThisFrame;
-                glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo,
-                                  static_cast<GLintptr>(fr_off_bytes_d),
-                                  static_cast<GLsizeiptr>(
-                                      totalUsed > 0 ? totalUsed : sizeof(GpuStaticPropInstance)));
+                gpuBindSsboRange(0, s_coalesceInstanceSsbo,
+                                 (long long)fr_off_bytes_d,
+                                 (long long)(totalUsed > 0 ? totalUsed : sizeof(GpuStaticPropInstance)),
+                                 "sp.coalesce.v5");
             }
 
             // Bind alpha-OFF texture array before loop.
@@ -6668,9 +6669,10 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             glBindBuffer(GL_DRAW_INDIRECT_BUFFER, gpu_cull::compute_getIndirectCmdBuf());
             if (!s_globalPoolLegacy) {
                 const size_t totalUsed = s_totalUsedBytesThisFrame;
-                glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo,
-                                  static_cast<GLintptr>(fr_off_bytes_d),
-                                  static_cast<GLsizeiptr>(totalUsed > 0 ? totalUsed : sizeof(GpuStaticPropInstance)));
+                gpuBindSsboRange(0, s_coalesceInstanceSsbo,
+                                 (long long)fr_off_bytes_d,
+                                 (long long)(totalUsed > 0 ? totalUsed : sizeof(GpuStaticPropInstance)),
+                                 "sp.coalesce.bucket");
             }
             uint32_t cmdBase = 0u;
             for (uint32_t b = 0u; b < s_bucketCmdCount.size(); ++b) {
@@ -6688,11 +6690,10 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                 }
                 if (s_globalPoolLegacy) {
                     const bool isOnGroup = (b < s_bucketInfo.size() && s_bucketInfo[b].group == 1u);
-                    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo,
-                                      static_cast<GLintptr>(fr_off_bytes_d +
-                                          (isOnGroup ? off_total_bytes : 0u)),
-                                      static_cast<GLsizeiptr>(isOnGroup ? on_total_bytes
-                                                                        : off_total_bytes));
+                    gpuBindSsboRange(0, s_coalesceInstanceSsbo,
+                                     (long long)(fr_off_bytes_d + (isOnGroup ? off_total_bytes : 0u)),
+                                     (long long)(isOnGroup ? on_total_bytes : off_total_bytes),
+                                     "sp.coalesce.bucket.legacy");
                 }
                 if (s_locsCoalesce.drawIDBase >= 0)
                     glUniform1i(s_locsCoalesce.drawIDBase, static_cast<GLint>(cmdBase));
@@ -6722,14 +6723,16 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                 if (s_locsCoalesce.drawIDBase >= 0)
                     glUniform1i(s_locsCoalesce.drawIDBase, 0);
                 if (s_globalPoolLegacy) {
-                    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo,
-                                      static_cast<GLintptr>(fr_off_bytes_d + 0u),
-                                      static_cast<GLsizeiptr>(off_total_bytes));
+                    gpuBindSsboRange(0, s_coalesceInstanceSsbo,
+                                     (long long)(fr_off_bytes_d + 0u),
+                                     (long long)off_total_bytes,
+                                     "sp.coalesce.alphaOff.legacy");
                 } else {
                     const size_t totalUsed = s_totalUsedBytesThisFrame;
-                    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo,
-                                      static_cast<GLintptr>(fr_off_bytes_d),
-                                      static_cast<GLsizeiptr>(totalUsed > 0 ? totalUsed : sizeof(GpuStaticPropInstance)));
+                    gpuBindSsboRange(0, s_coalesceInstanceSsbo,
+                                     (long long)fr_off_bytes_d,
+                                     (long long)(totalUsed > 0 ? totalUsed : sizeof(GpuStaticPropInstance)),
+                                     "sp.coalesce.alphaOff");
                 }
                 glActiveTexture(GL_TEXTURE0);
                 glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOff);
@@ -6745,9 +6748,10 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                 if (s_locsCoalesce.drawIDBase >= 0)
                     glUniform1i(s_locsCoalesce.drawIDBase, static_cast<GLint>(s_alphaOffCmdCount));
                 if (s_globalPoolLegacy) {
-                    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo,
-                                      static_cast<GLintptr>(fr_off_bytes_d + off_total_bytes),
-                                      static_cast<GLsizeiptr>(on_total_bytes));
+                    gpuBindSsboRange(0, s_coalesceInstanceSsbo,
+                                     (long long)(fr_off_bytes_d + off_total_bytes),
+                                     (long long)on_total_bytes,
+                                     "sp.coalesce.alphaOn.legacy");
                 }
                 // else: single bind from alpha-OFF draw still covers alpha-ON (same range).
                 glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOn);
@@ -6928,16 +6932,16 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             }
         }
 
-        glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_instanceSsbo,
-                          static_cast<GLintptr>(r.instanceByteOffset),
-                          static_cast<GLsizeiptr>(r.instanceByteSize));
+        gpuBindSsboRange(0, s_instanceSsbo,
+                         (long long)r.instanceByteOffset, (long long)r.instanceByteSize,
+                         "sp.instance");
         // STATICPROP-COLORS-FILL-DEBUGONLY-1: colorByteSize is 0 for static types
-        // when the colors fill is skipped (the default). A 0-size glBindBufferRange
-        // is GL_INVALID_VALUE — and no shader reads binding 1 — so skip the bind.
+        // when the colors fill is skipped (the default). A 0-size bind is GL_INVALID_VALUE
+        // — and no shader reads binding 1 — so skip it (gpuBindSsboRange would catch it too).
         if (r.colorByteSize)
-            glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 1, s_colorSsbo,
-                              static_cast<GLintptr>(r.colorByteOffset),
-                              static_cast<GLsizeiptr>(r.colorByteSize));
+            gpuBindSsboRange(1, s_colorSsbo,
+                             (long long)r.colorByteOffset, (long long)r.colorByteSize,
+                             "sp.color");
 
         // SEMANTIC: max VALID local vertex index, not count. Lets the
         // gradient debug mode hit t=1.0 at the last vertex.
@@ -6988,9 +6992,10 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                 const GLintptr slotBase =
                     static_cast<GLintptr>(s_frameSlot) *
                     static_cast<GLintptr>(kParitySlotBytes);
-                glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 3, parityBuffer,
-                                  slotBase + static_cast<GLintptr>(cursor),
-                                  static_cast<GLsizeiptr>(needBytes));
+                gpuBindSsboRange(3, (unsigned int)parityBuffer,
+                                 (long long)(slotBase + (GLintptr)cursor),
+                                 (long long)needBytes,
+                                 "sp.parity");
                 // u_parityVertsPerType = expanded (triangle-soup) vertex count.
                 if (locParityVerts >= 0)
                     glUniform1i(locParityVerts, (int)parityVerts);
@@ -7406,9 +7411,9 @@ void GpuStaticPropBatcher::flushShadow(bool skipStaticBuildingTypes) {
 
         // Bind the per-type instance SSBO range (binding 0 = Instances block
         // in shadow_static_prop.vert, indexed by gl_InstanceID).
-        glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_instanceSsbo,
-                          static_cast<GLintptr>(r.instanceByteOffset),
-                          static_cast<GLsizeiptr>(r.instanceByteSize));
+        gpuBindSsboRange(0, s_instanceSsbo,
+                         (long long)r.instanceByteOffset, (long long)r.instanceByteSize,
+                         "sp.instance.shadow");
 
         // Per-packet draw -- mirrors the legacy non-indirect branch of flush().
         for (uint32_t p = 0; p < type.packetCount; ++p) {
@@ -8684,9 +8689,9 @@ void batcher_bindBaseInstanceByCmdSsboForPatch() {
     glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, BASE_INSTANCE_SSBO_BINDING, &s_savedSsbo16);
     const GLintptr off = static_cast<GLintptr>(
         s_coalesceFrameSlot * s_baseInstanceByCmdBytesPerFrame);
-    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, BASE_INSTANCE_SSBO_BINDING,
-                      s_baseInstanceByCmdSsbo, off,
-                      static_cast<GLsizeiptr>(s_baseInstanceByCmdBytesPerFrame));
+    gpuBindSsboRange(BASE_INSTANCE_SSBO_BINDING, s_baseInstanceByCmdSsbo,
+                     (long long)off, (long long)s_baseInstanceByCmdBytesPerFrame,
+                     "sp.baseInstanceByCmd");
 }
 void batcher_unbindBaseInstanceByCmdSsboForPatch() {
     if (s_globalPoolLegacy || !s_baseInstanceByCmdSsbo) return;

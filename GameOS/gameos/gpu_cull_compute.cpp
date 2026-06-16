@@ -21,6 +21,7 @@
 #include "gos_static_prop_batcher.h"      // batcher_getTypeCount(), batcher_getTypeDrawInfo()
 #include "gl_state_guard.h"               // GlStateGuard slice 1: mc2gl::GlScopedSsboBinding
 #include "gos_render_pass_timer.h"        // [RENDER_PASS_TIME v1] nesting guard (QueryActive)
+#include "gos_gpu_sync.h"
 
 #include <GL/glew.h>
 #include <gameos.hpp>                     // STOP()
@@ -971,8 +972,9 @@ void compute_dispatch() {
             glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
             // Drain any prior GL errors so the check below is clean.
             while (glGetError() != GL_NO_ERROR) {}
-            glBindBufferRange(GL_SHADER_STORAGE_BUFFER, gpu_cull::READBACK_SSBO_BINDING,
-                              rbBuf, rbOff, rbSz);
+            gpuBindSsboRange(gpu_cull::READBACK_SSBO_BINDING, (unsigned int)rbBuf,
+                             (long long)rbOff, (long long)rbSz,
+                             "gpu_cull.readback");
             // Check for GL_INVALID_VALUE (misalignment, out-of-range, etc).
             const GLenum bindErr = glGetError();
             if (bindErr != GL_NO_ERROR) {

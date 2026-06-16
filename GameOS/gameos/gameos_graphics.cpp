@@ -27,6 +27,7 @@
 #include "gos_render.h"
 #include "gos_postprocess.h"
 #include "gos_profiler.h"
+#include "gos_gpu_sync.h"
 #include "gos_validate.h"  // drainGLErrors (Tier-1 instr §4)
 #include "gos_smoke.h"     // S9E: SmokeMode fixed deterministic render-shader clock
 #include "../../mclib/cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline
@@ -3796,7 +3797,8 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
         const size_t kMaxRecs   = 65536u;
         const GLintptr offset   = (GLintptr)(slot * kMaxRecs * kRecordSz);
         const GLsizeiptr sz     = (GLsizeiptr)(kMaxRecs * kRecordSz);
-        glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 2, (GLuint)thinRecordSSBO, offset, sz);
+        gpuBindSsboRange(2, (GLuint)thinRecordSSBO, (long long)offset, (long long)sz,
+                         "gameos.thinRecord");
     }
 
     // ── Probe 8: compare draw-time MVP fingerprint vs compute-time fingerprint.

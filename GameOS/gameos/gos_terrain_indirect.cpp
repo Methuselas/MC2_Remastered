@@ -3121,8 +3121,9 @@ void ComputeDispatch() {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, lightSsbo);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2,
                      g_terrainHandleLutSSBO ? g_terrainHandleLutSSBO : 0);
-    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 3,
-                      g_thinRecordSSBO, thinSlotOffset, (GLsizeiptr)kThinRecordBytes);
+    gpuBindSsboRange(3, g_thinRecordSSBO,
+                     (long long)thinSlotOffset, (long long)kThinRecordBytes,
+                     "terrain.thinRecord");
     // Step 2b: bucket-header SSBO only bound when MC2_BUCKET_HEADER_TRACE
     // armed.  When unbound, the shader sees u_bucketHeaderTrace=0 and skips
     // all hdr.* writes (including the slot-counter atomicAdd on visibleCount).

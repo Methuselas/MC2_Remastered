@@ -682,8 +682,9 @@ uint32_t UploadAndBindThinRecords() {
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinBuffer);
     MC2_GL_BufferSubData(GL_SHADER_STORAGE_BUFFER, slotOffset, slotBytes,
                     g_thinStaging.data());
-    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, kWaterThinSsboBinding,
-                      g_thinBuffer, slotOffset, slotBytes);
+    gpuBindSsboRange(kWaterThinSsboBinding, g_thinBuffer,
+                     (long long)slotOffset, (long long)slotBytes,
+                     "water.thin.upload");
 
     if (DebugOn()) {
         static uint32_t s_diagFramesPrinted = 0;
@@ -1422,8 +1423,9 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
     }
 
     // Bind the thin-record ring slot for GPU output.
-    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, kWaterThinSsboBinding,
-                      g_thinBuffer, thinSlotOffset, thinSlotBytes);
+    gpuBindSsboRange(kWaterThinSsboBinding, g_thinBuffer,
+                     (long long)thinSlotOffset, (long long)thinSlotBytes,
+                     "water.thin.draw");
 
     // ------------------------------------------------------------------
     // DISPATCH 1: cull/pack (gpu_driven_water.comp)
@@ -1442,8 +1444,9 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
     // binding 6 for the bucket header (coherent buffer Header). After both
     // dispatches finish, binding 6 must be restored to the thin-record range for
     // the VS draw (see re-bind after final glMemoryBarrier below).
-    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 3,
-                      g_thinBuffer, thinSlotOffset, thinSlotBytes);
+    gpuBindSsboRange(3, g_thinBuffer,
+                     (long long)thinSlotOffset, (long long)thinSlotBytes,
+                     "water.thin.compute");
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, g_waterBucketHeaderSsbo);
 
     // Uniforms for gpu_driven_water.comp.
@@ -1889,8 +1892,9 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
     // satisfy the compute shader's binding-6 header read. The VS reads thin records
     // from slot 6, so we must restore the correct binding after both dispatches
     // and barriers complete.
-    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, kWaterThinSsboBinding,
-                      g_thinBuffer, thinSlotOffset, thinSlotBytes);
+    gpuBindSsboRange(kWaterThinSsboBinding, g_thinBuffer,
+                     (long long)thinSlotOffset, (long long)thinSlotBytes,
+                     "water.thin.restore");
 
     // Unbind compute-only slots (0=recipe, 1=lighting, 2=window, 3=thin-write)
     // so Stage 2 compute subsystems don't inherit stale bindings on entry.

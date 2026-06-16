@@ -10,6 +10,15 @@
 
 namespace {
 
+bool contractAssertEnabled() {
+    static int cached = -1;
+    if (cached < 0) {
+        const char* v = std::getenv("MC2_RENDER_CONTRACT_ASSERT");
+        cached = (v && v[0] != '0') ? 1 : 0;
+    }
+    return cached == 1;
+}
+
 // The audited edge -> barrier-bits table. ONLY edges used in this slice are
 // mapped (v1, no overgeneralization). Add a new edge here -- in one place --
 // when a new compute->draw / clear->shader / coherent-write->read path appears.
@@ -65,17 +74,31 @@ int gpuSsboOffsetAlignment() {
 
 void gpuBindSsboRange(unsigned int index, unsigned int buffer,
                       long long offset, long long size, const char* tag) {
+    const char* t = tag ? tag : "(none)";
+    if (buffer == 0) {
+        std::fprintf(stderr, "[GPU_ALIGN] FATAL: gpuBindSsboRange tag=%s buffer=0 "
+                     "(zero object -- forgot to create/upload?)\n", t);
+        std::fflush(stderr);
+        if (contractAssertEnabled()) std::abort();
+    }
+    if (size <= 0) {
+        std::fprintf(stderr, "[GPU_ALIGN] FATAL: gpuBindSsboRange tag=%s size=%lld "
+                     "(zero or negative size -- nothing to bind)\n", t, size);
+        std::fflush(stderr);
+        if (contractAssertEnabled()) std::abort();
+    }
     const long long a = (long long)gpuSsboOffsetAlignment();
     if (a > 0 && (offset % a) != 0) {
-        static std::set<std::string> s_seen;  // once per tag, no per-frame spam
-        const std::string key = tag ? tag : "(none)";
+        static std::set<std::string> s_seen;
+        const std::string key = t;
         if (s_seen.insert(key).second) {
             std::fprintf(stderr,
                 "[GPU_ALIGN] MISALIGNED tag=%s offset=%lld align=%lld "
                 "(remainder=%lld) -- glBindBufferRange will fail on NVIDIA\n",
-                key.c_str(), offset, a, offset % a);
+                t, offset, a, offset % a);
             std::fflush(stderr);
         }
+        if (contractAssertEnabled()) std::abort();
     }
     glBindBufferRange(GL_SHADER_STORAGE_BUFFER, (GLuint)index, (GLuint)buffer,
                       (GLintptr)offset, (GLsizeiptr)size);

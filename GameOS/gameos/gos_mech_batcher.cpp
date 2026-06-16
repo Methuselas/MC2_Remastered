@@ -794,12 +794,14 @@ void GpuMechBatcher::flushShadow() {
 
     // Read the already-fenced previous-frame SSBO slot.
     const uint32_t slot = s_frameSlot;
-    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_instanceSsbo,
-        (GLintptr) (slot * s_instanceCapacity * sizeof(GpuMechInstance)),
-        (GLsizeiptr)(s_lastTotalInstances * sizeof(GpuMechInstance)));
-    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 1, s_boneSsbo,
-        (GLintptr) (slot * s_boneCapacity * sizeof(GpuMechBone)),
-        (GLsizeiptr)(s_lastTotalBones * sizeof(GpuMechBone)));
+    gpuBindSsboRange(0, s_instanceSsbo,
+        (long long)(slot * s_instanceCapacity * sizeof(GpuMechInstance)),
+        (long long)(s_lastTotalInstances * sizeof(GpuMechInstance)),
+        "mech.instance");
+    gpuBindSsboRange(1, s_boneSsbo,
+        (long long)(slot * s_boneCapacity * sizeof(GpuMechBone)),
+        (long long)(s_lastTotalBones * sizeof(GpuMechBone)),
+        "mech.bone");
 
     // GPU-SYNC-CONTRACT: same coherent instance/bone SSBOs feed the shadow draws;
     // order the CPU writes before these reads too (see flush() Step 7).
@@ -1722,12 +1724,14 @@ void GpuMechBatcher::flush() {
     glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 2, &prevSsbo2);
 
     // Step 6: Bind SSBOs (whole per-frame slices; shader indexes via u_instanceBase).
-    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_instanceSsbo,
-        (GLintptr) (s_frameSlot * s_instanceCapacity * sizeof(GpuMechInstance)),
-        (GLsizeiptr)(totalInstances * sizeof(GpuMechInstance)));
-    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 1, s_boneSsbo,
-        (GLintptr) (s_frameSlot * s_boneCapacity * sizeof(GpuMechBone)),
-        (GLsizeiptr)(totalBones * sizeof(GpuMechBone)));
+    gpuBindSsboRange(0, s_instanceSsbo,
+        (long long)(s_frameSlot * s_instanceCapacity * sizeof(GpuMechInstance)),
+        (long long)(totalInstances * sizeof(GpuMechInstance)),
+        "mech.instance.shadow");
+    gpuBindSsboRange(1, s_boneSsbo,
+        (long long)(s_frameSlot * s_boneCapacity * sizeof(GpuMechBone)),
+        (long long)(totalBones * sizeof(GpuMechBone)),
+        "mech.bone.shadow");
     // Mech-1: bind MaterialGpu table SSBO at binding 2
     if (s_mechMaterialGpuEnabled && s_mechMaterialSsbo != 0) {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, s_mechMaterialSsbo);
