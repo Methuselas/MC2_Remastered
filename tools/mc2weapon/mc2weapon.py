@@ -92,6 +92,14 @@ def load_compbas(path):
         sys.exit(f"mc2weapon: empty compbas: {path}")
     header = rows[0]
     idx = {field: _col_index(header, needle) for field, needle in COMPBAS_FIELDS}
+    # Robustness: some mod compbas (e.g. Omnitech) ship a malformed fully-quoted
+    # header that collapses to a few columns. The layout is positional/standard,
+    # so fall back to canonical indices when the header didn't parse to columns.
+    if len(header) < 20 or any("," in h for h in header):
+        idx = {"masterID": 0, "type": 1, "name": 2, "slots": 3, "recycle": 4,
+               "heat": 5, "tons": 6, "damage": 7, "br": 8, "rp": 9, "range": 10,
+               "missileType": 19, "fields": 20, "fxid": 21, "ammoMasterId": 22,
+               "iconX": 27, "iconY": 28}
     comps = []
     for r in rows[1:]:
         if not r or not r[0].strip():
@@ -332,6 +340,37 @@ def _find_row(data_rows, weapon):
     return -1
 
 
+def find_mods(mods_dir):
+    """Mod ids under mods_dir that carry a data/objects/compbas.csv."""
+    out = []
+    if not os.path.isdir(mods_dir):
+        return out
+    for name in sorted(os.listdir(mods_dir)):
+        cb = os.path.join(mods_dir, name, "data", "objects", "compbas.csv")
+        if os.path.isfile(cb):
+            out.append(name)
+    return out
+
+
+def cmd_list_mods(args):
+    mods = find_mods(args.mods_dir)
+    if args.json:
+        print(json.dumps(mods, indent=2))
+        return
+    if not mods:
+        print(f"(no mods with data/objects/compbas.csv under {args.mods_dir})")
+        return
+    for m in mods:
+        cb = os.path.join(args.mods_dir, m, "data", "objects", "compbas.csv")
+        try:
+            comps, _, _ = load_compbas(cb)
+            n = sum(1 for c in comps if is_weapon(c))
+        except SystemExit:
+            n = "?"
+        print(f"  {m:<28} {n} weapon(s)  ({cb})")
+    print(f"\n{len(mods)} mod(s). Load one with: --compbas {args.mods_dir}/<id>/data/objects/compbas.csv")
+
+
 def cmd_list_fx(args):
     fx = load_effects(args.effects)
     if args.json:
@@ -469,6 +508,8 @@ def main(argv=None):
                                 description="MC2 weapon viewer / modder tool")
     p.add_argument("--compbas", help="path to compbas.csv (auto-detected if omitted)")
     p.add_argument("--effects", help="path to effects.csv (auto-detected if omitted)")
+    p.add_argument("--mods-dir", default="mods", help="dir holding mod folders")
+    p.add_argument("--from-mod", help="load weapons from <mods-dir>/<id>/data/objects/compbas.csv")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pl = sub.add_parser("list", help="list weapons (or --all components) with stats + FX")
@@ -484,6 +525,12 @@ def main(argv=None):
     pf = sub.add_parser("list-fx", help="list effects.csv rows (assignable FX palette)")
     pf.add_argument("--json", action="store_true", help="emit JSON")
     pf.set_defaults(func=cmd_list_fx)
+
+    pm = sub.add_parser("list-mods", help="list mods (under --mods-dir) that have weapons")
+    pm.add_argument("--mods-dir", default=argparse.SUPPRESS,
+                    help="dir holding mod folders (accepted before or after the command)")
+    pm.add_argument("--json", action="store_true", help="emit JSON")
+    pm.set_defaults(func=cmd_list_mods, _no_csv=True)
 
     pv = sub.add_parser("validate", help="validate a compbas.csv (the 'just works' gate)")
     pv.add_argument("file", nargs="?", help="compbas.csv to check (default: auto-detected base)")
@@ -519,8 +566,13 @@ def main(argv=None):
     pn.set_defaults(func=cmd_new)
 
     args = p.parse_args(argv)
-    args.compbas = _find(args.compbas, COMPBAS_CANDIDATES, "compbas")
-    args.effects = _find(args.effects, EFFECTS_CANDIDATES, "effects")
+    # --from-mod loads weapons from a mod's overlay compbas.
+    if getattr(args, "from_mod", None) and not args.compbas:
+        args.compbas = os.path.join(args.mods_dir, args.from_mod,
+                                    "data", "objects", "compbas.csv")
+    if not getattr(args, "_no_csv", False):
+        args.compbas = _find(args.compbas, COMPBAS_CANDIDATES, "compbas")
+        args.effects = _find(args.effects, EFFECTS_CANDIDATES, "effects")
     args.func(args)
 
 

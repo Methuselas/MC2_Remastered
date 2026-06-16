@@ -10,9 +10,11 @@
 // --headless-smoke [--frames N]: load + render N frames (or core-only fallback
 // if no display) then exit 0 — autonomous build/run verification.
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -72,8 +74,13 @@ struct App {
     bool eFld[4] = {false, false, false, false};  // streak/inferno/lbx/artillery
     char eIconX[8] = "", eIconY[8] = "", eAmmo[16] = "";
     char modId[64] = "my-weapons";
-    char modRoot[256] = "mods";
+    char modRoot[256] = "mods";          // deploy target (where Save writes mods/<id>)
     char newId[16] = "";
+    // source / mod loading
+    std::string basePath;                // original auto-detected compbas (Stock)
+    char loadPath[256] = "";             // explicit compbas path to load
+    char modsDir[256] = "mods";          // dir scanned for loadable mods
+    std::vector<std::string> foundMods;  // mod ids under modsDir with a compbas.csv
     std::string status;
 };
 
@@ -175,10 +182,71 @@ bool field(const char* label, char* buf, size_t cap, const char* kind,
     return ok;
 }
 
+namespace fs = std::filesystem;
+
+// Load a different compbas (a mod's, or stock) as the working set.
+bool reloadCompbas(App& a, const std::string& path) {
+    mc2w::Compbas nb;
+    std::string err;
+    if (!nb.load(path, err)) { a.status = "load failed: " + err; return false; }
+    a.cb = nb;
+    a.selectedRow = -1;
+    a.status = "loaded " + path + "  (" + std::to_string(nb.rows.size()) + " components)";
+    return true;
+}
+
+// Scan modsDir for subfolders that carry a data/objects/compbas.csv.
+void scanMods(App& a) {
+    a.foundMods.clear();
+    std::error_code ec;
+    if (!fs::is_directory(a.modsDir, ec)) { a.status = std::string("no such mods dir: ") + a.modsDir; return; }
+    for (const auto& e : fs::directory_iterator(a.modsDir, ec)) {
+        if (!e.is_directory()) continue;
+        fs::path cb = e.path() / "data" / "objects" / "compbas.csv";
+        std::error_code ec2;
+        if (fs::exists(cb, ec2)) a.foundMods.push_back(e.path().filename().string());
+    }
+    std::sort(a.foundMods.begin(), a.foundMods.end());
+    a.status = "found " + std::to_string(a.foundMods.size()) + " mod(s) with weapons in " + a.modsDir;
+}
+
 void drawList(App& a) {
     ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(380, 780), ImGuiCond_FirstUseEver);
     ImGui::Begin("Weapons");
+
+    if (ImGui::CollapsingHeader("Source / Mods")) {
+        // load any compbas by path (a mod's, or stock); Stock = original base.
+        ImGui::SetNextItemWidth(-90);
+        ImGui::InputText("##loadpath", a.loadPath, sizeof a.loadPath);
+        ImGui::SameLine();
+        if (ImGui::Button("Load##cb")) reloadCompbas(a, a.loadPath);
+        ImGui::SameLine();
+        if (ImGui::Button("Stock")) {
+            if (reloadCompbas(a, a.basePath)) { setBuf(a.modId, sizeof a.modId, "my-weapons"); }
+        }
+        // scan a mods dir, click a mod to load + target it for Save
+        ImGui::SetNextItemWidth(-90);
+        ImGui::InputText("mods dir", a.modsDir, sizeof a.modsDir);
+        ImGui::SameLine();
+        if (ImGui::Button("Scan")) scanMods(a);
+        if (!a.foundMods.empty()) {
+            ImGui::TextDisabled("click a mod to load + deploy back to it:");
+            ImGui::BeginChild("mods", ImVec2(0, 90), true);
+            for (const auto& m : a.foundMods) {
+                if (ImGui::Selectable((m + "##mod").c_str())) {
+                    std::string p = std::string(a.modsDir) + "/" + m + "/data/objects/compbas.csv";
+                    if (reloadCompbas(a, p)) {
+                        setBuf(a.modId, sizeof a.modId, m.c_str());
+                        setBuf(a.modRoot, sizeof a.modRoot, a.modsDir);  // Save -> same mod
+                    }
+                }
+            }
+            ImGui::EndChild();
+        }
+        ImGui::Separator();
+    }
+
     ImGui::InputText("filter", a.filter, sizeof a.filter);
     ImGui::SameLine();
     ImGui::Checkbox("all components", &a.showAll);
@@ -323,7 +391,11 @@ void drawEditor(App& a) {
     ImGui::SetNextItemWidth(160);
     ImGui::InputText("mod id", a.modId, sizeof a.modId);
     ImGui::SetNextItemWidth(260);
-    ImGui::InputText("mod root", a.modRoot, sizeof a.modRoot);
+    ImGui::InputText("deploy mods dir", a.modRoot, sizeof a.modRoot);
+    ImGui::SameLine();
+    helpMarker("Folder Save writes into: <deploy mods dir>/<mod id>/data/objects/compbas.csv (+ mod.json). "
+               "Point it at a game install's mods\\ folder to deploy straight there; launch with MC2_ACTIVE_MOD=<mod id>.");
+    ImGui::TextDisabled("-> %s/%s/data/objects/compbas.csv", a.modRoot, a.modId);
 
     if (!ok) ImGui::BeginDisabled();
     if (ImGui::Button("Save overlay")) {
@@ -406,6 +478,8 @@ int main(int argc, char** argv) {
     std::string err;
     if (!app.cb.load(cbp, err)) { std::fprintf(stderr, "load compbas: %s\n", err.c_str()); return 2; }
     if (!mc2w::loadEffects(efp, app.fx, err)) { std::fprintf(stderr, "load effects: %s\n", err.c_str()); return 2; }
+    app.basePath = cbp;
+    setBuf(app.loadPath, sizeof app.loadPath, cbp);
     std::printf("mc2weapon_gui: %zu components, %zu FX from %s / %s\n",
                 app.cb.rows.size(), app.fx.size(), cbp, efp);
 

@@ -111,6 +111,22 @@ bool Compbas::load(const std::string& path, std::string& err) {
     idx.ammoMasterId = colIndex(header, "ammo master id");
     idx.iconX        = colIndex(header, "icon x");
     idx.iconY        = colIndex(header, "icon y");
+
+    // Robustness: some mod compbas files (e.g. Omnitech) ship a malformed,
+    // fully-quoted header that collapses to a few columns, breaking name-based
+    // matching. The compbas data layout is standard/positional, so fall back to
+    // canonical indices when the header clearly didn't parse into columns.
+    bool headerBad = (int)header.size() < 20;
+    for (const auto& h : header)
+        if (h.find(',') != std::string::npos) headerBad = true;
+    if (headerBad) {
+        idx = ColIdx{};
+        idx.masterID = 0; idx.type = 1; idx.name = 2; idx.slots = 3;
+        idx.recycle = 4; idx.heat = 5; idx.tons = 6; idx.damage = 7;
+        idx.br = 8; idx.rp = 9; idx.range = 10; idx.missileType = 19;
+        idx.fields = 20; idx.fxid = 21; idx.ammoMasterId = 22;
+        idx.iconX = 27; idx.iconY = 28;
+    }
     return true;
 }
 
