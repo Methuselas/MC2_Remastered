@@ -588,8 +588,8 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "MC2_VFX_ORACLE_TUBE",
         "MC2_VFX_ORACLE_TUBE",
         EnvVarKind::Feature,
-        true,
-        "GOSFX-TUBE-RIBBON-1: route supported gosFX Tube trails (MissileSmoke alpha, PPC additive, polygon) through the swept-quad ribbon oracle submit path instead of legacy MLR. Default-ON; =0 = legacy MLR kill-switch. Unsupported Tube classes fall back to MLR. No object-ID writes."
+        false,
+        "GOSFX-TUBE-RIBBON-1: route supported gosFX Tube trails (MissileSmoke alpha, PPC additive, polygon) through the swept-quad ribbon oracle submit path instead of legacy MLR. REVERTED to Default-OFF (GPU oracle looked broken -- flat grey sheets); =1 opts into the GPU path. Unsupported Tube classes fall back to MLR. No object-ID writes."
     },
     {
         "MC2_VFX_ORACLE_TUBE_LOG",
@@ -1014,6 +1014,40 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "mechs always tick so the FX drives+renders+cleans via the weaponbolt path. "
         "Emits [FX_FORCE_SPAWN v1] event=mech_fire (stdout -> needs MC2_LOG=1 to see). "
         "=0/unset disables; zero cost unset."
+    },
+    // PPC / direct-fire projectile knobs (gameplay; launcher-toggleable)
+    {
+        "MC2_PROJECTILE_SPEED_MULT",
+        "MC2_PROJECTILE_SPEED_MULT",
+        EnvVarKind::Feature,
+        false,
+        "Direct-fire projectile speed multiplier (PPC/autocannon/gauss = non-arc "
+        "bolts). Default 1.0 (stock); clamped (0,10]. ~2.0 = a good snappier feel. "
+        "Excludes arcEffect (LRM) bolts. Scales velMag in WeaponBolt::update "
+        "(code/weaponbolt.cpp); the de-curve lead uses the same factor. Hit/miss is "
+        "pre-rolled and damage applies on proximity, so speed does not change "
+        "outcomes. Launcher-toggleable via SetEnvironmentVariableA."
+    },
+    {
+        "MC2_DIRECT_FIRE_STRAIGHT",
+        "MC2_DIRECT_FIRE_STRAIGHT",
+        EnvVarKind::Feature,
+        false,
+        "Direct-fire de-curve: PPC/autocannon/gauss bolts fly STRAIGHT instead of "
+        "re-tracking the moving target every frame (the janky homing curve). Leads "
+        "the aim once at spawn by target velocity over flight time so a pre-rolled "
+        "hit still lands. LRM (arcEffect) + beams keep tracking. Default-off. "
+        "code/weaponbolt.cpp. Launcher-toggleable."
+    },
+    {
+        "MC2_FX_COST_SPLIT",
+        "MC2_FX_COST_SPLIT",
+        EnvVarKind::Feature,
+        false,
+        "FX cost-split instrumentation (default-off). RDTSC buckets over the gosFX "
+        "particle/tube path (forces/integrate/birth, animate, bridge flush) -> "
+        "[FX_COST v1] stderr summary every 600 frames. "
+        "mclib/fx_trace/fx_cost_split.*. Zero cost unset."
     },
 };
 
