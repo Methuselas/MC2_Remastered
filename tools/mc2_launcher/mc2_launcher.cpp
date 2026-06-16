@@ -1,13 +1,18 @@
 // mc2_launcher.cpp — MC2 OpenGL Campaign Mod Launcher
 //
 // Scans ./mods/ for any folder that contains a data/ subdir and treats it as a
-// mod — NO mod.json required. Folders sort into two buckets:
-//   * Add-ons / Assets  — compat layers + mech/weapon/asset packs. Folder name
-//                         contains "-compat", or mod.json says type="dependency"/
-//                         "assets", OR it has a data/ dir but no playable missions
-//                         (a pure asset pack). Shown as a checkbox (stack any).
+// mod — NO mod.json required. Folders sort into THREE buckets:
+//   * Compatibility Base — mco-compat / mc2x-compat. Folder name contains
+//                         "-compat", or mod.json says type="dependency". These
+//                         BOTH replace object2.pak/buildings.csv, so they are
+//                         MUTUALLY EXCLUSIVE -> shown as a RADIO group (pick one,
+//                         plus a "None" entry). Default = None.
+//   * Add-ons            — genuine stackable asset packs (a weapon pack etc.):
+//                         any non-campaign folder with data/ that is NOT a base
+//                         (mod.json type="assets", or no playable missions and
+//                         not "-compat"). Shown as CHECKBOXES (stack any).
 //   * Campaign          — has data/missions with real mission content (.fit) and
-//                         is not an add-on, OR mod.json says type="campaign".
+//                         is not a base/add-on, OR mod.json says type="campaign".
 //                         Shown in the campaign list (pick one).
 //
 // Bucketing rule (load-bearing): the 3 ABL library files corebrain.abx /
@@ -17,28 +22,31 @@
 // is made explicit below.) An explicit mod.json "type" always wins over the
 // content guess.
 //
-// For the selected campaign the launcher auto-detects which compatibility layer
-// it needs and pre-checks it:
+// For the selected campaign the launcher auto-detects which compatibility base
+// it needs and auto-SELECTS that base radio (CK_MCO -> mco-compat radio,
+// CK_MC2X -> mc2x-compat radio; Stock/undetected -> the "None" radio):
 //   * MechCommander Omnitech (MCO): mission Parts reference ObjectNumber > 1188
 //     (mech FitIDs only mco-compat provides) AND warrior brains call magicAttack.
 //   * MC2X "fat" packs: ObjectNumber > 1188 but no magicAttack -> mc2x-compat.
 //   * otherwise ambiguous (stock-range objtypes, indistinguishable from pure
-//     stock) -> nothing auto-checked; the player ticks a layer if needed.
+//     stock) -> base radio stays None; the player picks a base if needed.
 //
 // On launch it sets MC2_ACTIVE_MOD=<campaign folder> (EMPTY for Stock) and
-// MC2_MOD_DEPS=<comma-separated checked add-on folders> in mc2.exe's environment.
-// Stock + checked add-ons = "stock campaign with borrowed mechs/weapons" (Slice 1
-// engine mounts deps with no active mod). The "no add-on checked - are you sure?"
-// warning fires ONLY for a campaign that auto-needs a compat (MCO/MC2X) but has
-// none checked; Stock (with or without add-ons) never warns.
+// MC2_MOD_DEPS = [checked stackable add-ons] then [selected base, if not None],
+// comma-separated, in mc2.exe's environment. Add-ons are listed BEFORE the base
+// because file.cpp treats MC2_MOD_DEPS as highest-priority-first, so add-ons
+// override the base. Stock + None + no add-ons = pure base game (empty deps).
+// The "no base picked - are you sure?" warning fires ONLY for a campaign that
+// auto-needs a compat base (MCO/MC2X) but whose base radio is still None;
+// Stock never warns.
 //
 // "Import..." button: picks a raw install/pack folder and shells out to the
 // python importer brain (tools/mc2_import/import_tool.py) — the launcher is a
 // THIN shell. It probes the folder (read-only classify), confirms with the user,
 // then runs the import on a worker thread with a modal progress dialog. The
 // importer owns all detection / idempotency / staging / atomicity. After import
-// the mod list and compat slots are refreshed in place (fixed slots — never
-// destroyed/recreated).
+// the mod list, base radios and add-on checkboxes are refreshed in place (fixed
+// slots — never destroyed/recreated).
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -57,9 +65,11 @@
 #define IDC_CANCEL    1003
 #define IDC_LABEL     1004
 #define IDC_DESC      1005
-#define IDC_COMPATLBL 1006
+#define IDC_BASELBL   1006  // "Compatibility Base (pick one):" label
 #define IDC_IMPORT    1007
-#define IDC_COMPAT0   1100  // compat checkboxes: IDC_COMPAT0 + slot index
+#define IDC_ADDONLBL  1008  // "Add-ons (stack any):" label
+#define IDC_BASE0     1050  // base radios: IDC_BASE0 + slot index (slot 0 = "None")
+#define IDC_ADDON0    1100  // add-on checkboxes: IDC_ADDON0 + slot index
 
 // Progress-dialog controls.
 #define IDC_PROG_CANCEL 1200
@@ -69,29 +79,39 @@
 #define WM_APP_IMPORT_DONE (WM_APP + 1)
 
 #define MAX_MODS    64
-#define COMPAT_SLOTS 4   // FIXED set of compat checkbox slots (created once)
+// FIXED set of base-radio slots: slot 0 is always "None"; the rest hold detected
+// base layers (mco-compat, mc2x-compat). 1 None + up to 3 bases.
+#define BASE_SLOTS  4
+// FIXED set of stackable add-on checkbox slots (created once).
+#define ADDON_SLOTS 4
 
 enum CompatKind { CK_UNKNOWN = 0, CK_MCO = 1, CK_MC2X = 2 };
 
 struct ModEntry {
     char folderName[256];   // OS directory name — passed as MC2_ACTIVE_MOD / MC2_MOD_DEPS
     char name[256];         // display name (mod.json "name" or folder)
-    bool isCompat;          // compatibility layer (checkbox)
+    bool isCompat;          // compatibility layer (base or add-on)
     bool isCampaign;        // has data/missions
     CompatKind needs;       // auto-detected compat for a campaign
 };
 
 static ModEntry s_campaigns[MAX_MODS];
 static int      s_campCount = 0;
-static ModEntry s_compats[MAX_MODS];
-static int      s_compatCount = 0;
+// Compatibility BASES (mutually exclusive -> radio). Both mco-compat and
+// mc2x-compat replace object2.pak/buildings.csv so only one can be active.
+static ModEntry s_bases[MAX_MODS];
+static int      s_baseCount = 0;
+// Stackable ADD-ONS (genuine asset packs -> checkboxes; any number may stack).
+static ModEntry s_addons[MAX_MODS];
+static int      s_addonCount = 0;
 
 static HINSTANCE s_hInst;
 static HWND      s_hMainWnd;
 static HWND      s_hListBox;
 static HWND      s_hDesc;
 static HWND      s_hImport;
-static HWND      s_hCompat[COMPAT_SLOTS];   // FIXED slots — show/hide + relabel, never destroy
+static HWND      s_hBase[BASE_SLOTS];     // FIXED radio slots — slot 0 = "None"; never destroy
+static HWND      s_hAddon[ADDON_SLOTS];   // FIXED add-on checkbox slots — never destroy
 
 static char      s_launcherDir[MAX_PATH];   // trailing-slash launcher directory
 static char      s_modsPath[MAX_PATH];      // <launcherDir>mods\
@@ -302,12 +322,27 @@ static void ScanMods(const char* modsPath) {
         else                                       isCampaign = HasPlayableMissions(missDir);
 
         if (!isCampaign) {
-            // Add-on / asset bucket (checkbox).
-            if (s_compatCount >= MAX_MODS) continue;
-            ModEntry& e = s_compats[s_compatCount++];
-            _snprintf(e.folderName, sizeof(e.folderName), "%s", fd.cFileName);
-            _snprintf(e.name, sizeof(e.name), "%s", name);
-            e.isCompat = true; e.isCampaign = false; e.needs = CK_UNKNOWN;
+            // Non-campaign content. Split into BASE vs stackable ADD-ON:
+            //   BASE  = mod.json type=="dependency", OR folder name has "-compat".
+            //           Bases (mco-compat/mc2x-compat) replace object2.pak/
+            //           buildings.csv -> mutually exclusive -> radio group.
+            //   ADD-ON= everything else (mod.json type=="assets", or any other
+            //           non-campaign folder with data/) -> stackable -> checkbox.
+            bool typeDependency = (_stricmp(type, "dependency") == 0);
+            bool isBase = typeDependency || ContainsCI(fd.cFileName, "-compat");
+            if (isBase) {
+                if (s_baseCount >= MAX_MODS) continue;
+                ModEntry& e = s_bases[s_baseCount++];
+                _snprintf(e.folderName, sizeof(e.folderName), "%s", fd.cFileName);
+                _snprintf(e.name, sizeof(e.name), "%s", name);
+                e.isCompat = true; e.isCampaign = false; e.needs = CK_UNKNOWN;
+            } else {
+                if (s_addonCount >= MAX_MODS) continue;
+                ModEntry& e = s_addons[s_addonCount++];
+                _snprintf(e.folderName, sizeof(e.folderName), "%s", fd.cFileName);
+                _snprintf(e.name, sizeof(e.name), "%s", name);
+                e.isCompat = true; e.isCampaign = false; e.needs = CK_UNKNOWN;
+            }
         } else {
             // Campaign bucket (radio / list).
             if (s_campCount >= MAX_MODS) continue;
@@ -322,65 +357,150 @@ static void ScanMods(const char* modsPath) {
     FindClose(h);
 }
 
-// Find the compat-layer index whose folder matches a detected kind, or -1.
-static int CompatIndexForKind(CompatKind k) {
+// Find the BASE index whose folder matches a detected kind, or -1. (Radio slot
+// for base i is i+1, since base-radio slot 0 is the "None" entry.)
+static int BaseIndexForKind(CompatKind k) {
     const char* tag = (k == CK_MCO) ? "mco" : (k == CK_MC2X) ? "mc2x" : NULL;
     if (!tag) return -1;
-    for (int i = 0; i < s_compatCount; i++)
-        if (ContainsCI(s_compats[i].folderName, tag)) return i;
+    for (int i = 0; i < s_baseCount; i++)
+        if (ContainsCI(s_bases[i].folderName, tag)) return i;
     return -1;
 }
 
 // ---- UI sync --------------------------------------------------------------
 
-// Show/hide + relabel the FIXED compat slots from the current s_compats[] set.
-// Never destroys/recreates a window — geometry is constant.
-static void RefreshCompatSlots() {
-    for (int i = 0; i < COMPAT_SLOTS; i++) {
-        if (!s_hCompat[i]) continue;
-        if (i < s_compatCount) {
+// ---- Two-column layout geometry (single source of truth) ------------------
+// Both WM_CREATE control creation and the refresh helpers use these so a rescan
+// keeps the two-column layout identical to the initial build.
+//
+// Right column (top -> bottom): base label, BASE_SLOTS radios, gap, add-on
+// label, ADDON_SLOTS checkboxes. The right column is taller than the listbox,
+// so the bottom row (status + buttons) clears whichever column is taller.
+#define LP_MARGIN     10
+#define LP_LIST_X     LP_MARGIN
+#define LP_LIST_Y     40
+#define LP_LIST_W     320
+#define LP_LIST_H     200
+#define LP_RCOL_X     (LP_LIST_X + LP_LIST_W + 15)   // right column left edge
+#define LP_RCOL_W     230                             // right column width
+#define LP_RLBL_Y     14                              // base label Y (matches left label)
+#define LP_ROW_H      20                              // radio/checkbox height
+#define LP_ROW_STEP   22                              // radio/checkbox vertical step
+#define LP_LBL_H      18                              // sub-group label height
+// Base radio group: label at LP_LIST_Y row top, radios stacked below it.
+#define LP_BASE_LBL_Y LP_LIST_Y                                    // base group label top
+#define LP_BASE_Y     (LP_BASE_LBL_Y + LP_LBL_H + 2)              // first base radio top
+// Add-on group: a gap below the base radios, then label, then checkboxes.
+#define LP_ADDON_LBL_Y (LP_BASE_Y + BASE_SLOTS * LP_ROW_STEP + 10) // add-on group label top
+#define LP_ADDON_Y    (LP_ADDON_LBL_Y + LP_LBL_H + 2)            // first add-on checkbox top
+#define LP_RCOL_BOTTOM (LP_ADDON_Y + ADDON_SLOTS * LP_ROW_STEP)   // bottom of right column
+#define LP_LCOL_BOTTOM (LP_LIST_Y + LP_LIST_H)                    // bottom of left column
+// Bottom (status + buttons) clears the taller of the two columns.
+#define LP_COLS_BOTTOM ((LP_RCOL_BOTTOM > LP_LCOL_BOTTOM) ? LP_RCOL_BOTTOM : LP_LCOL_BOTTOM)
+#define LP_CLIENT_W   (LP_RCOL_X + LP_RCOL_W + LP_MARGIN)  // 10+320+15+230+10 = 585
+#define LP_BOTTOM_Y   (LP_COLS_BOTTOM + 8)            // status STATIC top (below both columns)
+#define LP_DESC_H     34
+#define LP_BTN_Y      (LP_BOTTOM_Y + LP_DESC_H + 6)   // Launch/Cancel row top
+#define LP_BTN_H      28
+
+// Show/hide + relabel the FIXED base-radio slots from the current s_bases[] set.
+// Slot 0 is always the "None" radio (always shown). Slot i+1 maps to base i.
+// Never destroys/recreates a window — geometry is constant. Default selection is
+// "None" (slot 0) whenever the set changes.
+static void RefreshBaseSlots() {
+    for (int i = 0; i < BASE_SLOTS; i++) {
+        if (!s_hBase[i]) continue;
+        if (i == 0) {
+            SetWindowTextA(s_hBase[i], "None");
+            ShowWindow(s_hBase[i], SW_SHOW);
+        } else if ((i - 1) < s_baseCount) {
             char label[300];
-            _snprintf(label, sizeof(label), "%s  (%s)", s_compats[i].name, s_compats[i].folderName);
+            _snprintf(label, sizeof(label), "%s  (%s)",
+                      s_bases[i-1].name, s_bases[i-1].folderName);
             label[sizeof(label)-1] = '\0';
-            SetWindowTextA(s_hCompat[i], label);
-            ShowWindow(s_hCompat[i], SW_SHOW);
+            SetWindowTextA(s_hBase[i], label);
+            ShowWindow(s_hBase[i], SW_SHOW);
         } else {
-            SetWindowTextA(s_hCompat[i], "");
-            SendMessageA(s_hCompat[i], BM_SETCHECK, BST_UNCHECKED, 0);
-            ShowWindow(s_hCompat[i], SW_HIDE);
+            SetWindowTextA(s_hBase[i], "");
+            ShowWindow(s_hBase[i], SW_HIDE);
         }
     }
+    // Default the exclusive group to "None".
+    for (int i = 0; i < BASE_SLOTS; i++)
+        if (s_hBase[i])
+            SendMessageA(s_hBase[i], BM_SETCHECK,
+                         (i == 0) ? BST_CHECKED : BST_UNCHECKED, 0);
+}
+
+// Show/hide + relabel the FIXED add-on checkbox slots from s_addons[]. Never
+// destroys/recreates a window — geometry is constant. With no add-ons deployed,
+// all slots hide and only the "Add-ons (stack any):" label remains visible.
+static void RefreshAddonSlots() {
+    for (int i = 0; i < ADDON_SLOTS; i++) {
+        if (!s_hAddon[i]) continue;
+        if (i < s_addonCount) {
+            char label[300];
+            _snprintf(label, sizeof(label), "%s  (%s)",
+                      s_addons[i].name, s_addons[i].folderName);
+            label[sizeof(label)-1] = '\0';
+            SetWindowTextA(s_hAddon[i], label);
+            ShowWindow(s_hAddon[i], SW_SHOW);
+        } else {
+            SetWindowTextA(s_hAddon[i], "");
+            SendMessageA(s_hAddon[i], BM_SETCHECK, BST_UNCHECKED, 0);
+            ShowWindow(s_hAddon[i], SW_HIDE);
+        }
+    }
+}
+
+// Select base-radio slot `slot` (0 = None) exclusively. Mirrors what
+// BS_AUTORADIOBUTTON does on a user click, but lets code drive auto-detect.
+static void SelectBaseRadio(int slot) {
+    for (int i = 0; i < BASE_SLOTS; i++)
+        if (s_hBase[i])
+            SendMessageA(s_hBase[i], BM_SETCHECK,
+                         (i == slot) ? BST_CHECKED : BST_UNCHECKED, 0);
+}
+
+// Return the currently selected base-radio slot (0 = None), or 0 if none.
+static int SelectedBaseSlot() {
+    for (int i = 0; i < BASE_SLOTS; i++)
+        if (s_hBase[i] && SendMessageA(s_hBase[i], BM_GETCHECK, 0, 0) == BST_CHECKED)
+            return i;
+    return 0;
 }
 
 static void UpdateForSelection() {
     int sel = (int)SendMessageA(s_hListBox, LB_GETCURSEL, 0, 0);
     // sel 0 = Stock (base game); sel-1 indexes s_campaigns.
-    CompatKind needs = CK_UNKNOWN;
-    const char* status = "Stock campaign. Check any add-ons to play stock with their mechs/weapons.";
-    int wantIdx = -1;
+    const char* status = "Stock campaign. Pick a base only if needed; stack any add-ons.";
     if (sel > 0 && sel <= s_campCount) {
-        needs = s_campaigns[sel-1].needs;
-        wantIdx = CompatIndexForKind(needs);
-        if (needs == CK_MCO)
-            status = "Detected: MechCommander Omnitech campaign. mco-compat auto-selected.";
-        else if (needs == CK_MC2X)
-            status = "Detected: MC2X campaign. mc2x-compat auto-selected.";
+        CompatKind needs = s_campaigns[sel-1].needs;
+        int baseIdx = BaseIndexForKind(needs);   // index into s_bases[], or -1
+        if (needs == CK_MCO && baseIdx >= 0)
+            status = "Detected: MechCommander Omnitech campaign. mco-compat base auto-selected.";
+        else if (needs == CK_MC2X && baseIdx >= 0)
+            status = "Detected: MC2X campaign. mc2x-compat base auto-selected.";
+        else if (needs != CK_UNKNOWN)
+            status = "Detected a compat need, but no matching base layer is installed.";
         else
-            status = "Could not auto-detect. If this is an MC2X pack, tick an add-on; pure-stock needs none.";
-        // Auto-tick only the campaign's detected compat; Stock leaves add-ons manual.
-        for (int i = 0; i < s_compatCount && i < COMPAT_SLOTS; i++)
-            SendMessageA(s_hCompat[i], BM_SETCHECK,
-                         (i == wantIdx) ? BST_CHECKED : BST_UNCHECKED, 0);
+            status = "Could not auto-detect. If this is an MC2X pack, pick a base; pure-stock needs none.";
+        // Auto-SELECT the matching base radio (slot = baseIdx+1; slot 0 = None).
+        // Stock or undetected -> None (slot 0). Add-on checkboxes left as-is so the
+        // player's stacked picks survive a campaign change.
+        SelectBaseRadio(baseIdx >= 0 ? baseIdx + 1 : 0);
+    } else {
+        // Stock: base radio -> None. Add-on checkboxes preserved.
+        SelectBaseRadio(0);
     }
-    // Note: when Stock (sel 0) is selected we do NOT touch the checkboxes — the
-    // player's add-on picks for the "stock + borrowed mechs" path are preserved.
     SetWindowTextA(s_hDesc, status);
 }
 
 // Reset + re-scan mods, repopulate listbox + compat slots. Used after import.
 static void RescanAndRepopulate(const char* selectFolder) {
     s_campCount = 0;
-    s_compatCount = 0;
+    s_baseCount = 0;
+    s_addonCount = 0;
     ScanMods(s_modsPath);
 
     SendMessageA(s_hListBox, LB_RESETCONTENT, 0, 0);
@@ -393,7 +513,8 @@ static void RescanAndRepopulate(const char* selectFolder) {
             wantSel = i + 1;   // +1 for the Base Game row
     }
     SendMessageA(s_hListBox, LB_SETCURSEL, wantSel, 0);
-    RefreshCompatSlots();
+    RefreshBaseSlots();
+    RefreshAddonSlots();
     UpdateForSelection();
 }
 
@@ -403,15 +524,23 @@ static void DoLaunch(HWND hwnd) {
     int sel = (int)SendMessageA(s_hListBox, LB_GETCURSEL, 0, 0);
     if (sel == LB_ERR) sel = 0;
 
-    // Build MC2_MOD_DEPS from checked compat layers.
+    // Build MC2_MOD_DEPS = [checked stackable add-ons] then [selected base].
+    // file.cpp treats MC2_MOD_DEPS as highest-priority-FIRST, so add-ons are
+    // listed BEFORE the base and thus override it. The base (mco/mc2x-compat),
+    // if not "None", goes last.
     char deps[1024] = "";
-    int checkedCount = 0;
-    for (int i = 0; i < s_compatCount && i < COMPAT_SLOTS; i++) {
-        if (SendMessageA(s_hCompat[i], BM_GETCHECK, 0, 0) == BST_CHECKED) {
+    int addonChecked = 0;
+    for (int i = 0; i < s_addonCount && i < ADDON_SLOTS; i++) {
+        if (SendMessageA(s_hAddon[i], BM_GETCHECK, 0, 0) == BST_CHECKED) {
             if (deps[0]) strncat(deps, ",", sizeof(deps)-strlen(deps)-1);
-            strncat(deps, s_compats[i].folderName, sizeof(deps)-strlen(deps)-1);
-            checkedCount++;
+            strncat(deps, s_addons[i].folderName, sizeof(deps)-strlen(deps)-1);
+            addonChecked++;
         }
+    }
+    int baseSlot = SelectedBaseSlot();   // 0 = None; slot i -> s_bases[i-1]
+    if (baseSlot > 0 && (baseSlot - 1) < s_baseCount) {
+        if (deps[0]) strncat(deps, ",", sizeof(deps)-strlen(deps)-1);
+        strncat(deps, s_bases[baseSlot-1].folderName, sizeof(deps)-strlen(deps)-1);
     }
 
     if (sel == 0) {
@@ -425,17 +554,17 @@ static void DoLaunch(HWND hwnd) {
         SetEnvironmentVariableA("MC2_MOD_DEPS", deps[0] ? deps : NULL);
     } else if (sel <= s_campCount) {
         const ModEntry& camp = s_campaigns[sel-1];
-        // Warn ONLY for a campaign that auto-NEEDS a compat (MCO/MC2X detected)
-        // but has none checked. An auto-undetected campaign (pure-stock-range) is
-        // assumed fine; Stock + add-ons is handled above and never warns.
-        if (checkedCount == 0 && camp.needs != CK_UNKNOWN) {
+        // Warn ONLY for a campaign that auto-NEEDS a compat base (MCO/MC2X
+        // detected) but the base radio is still "None". An auto-undetected
+        // campaign (pure-stock-range) is assumed fine; Stock is handled above.
+        if (baseSlot == 0 && camp.needs != CK_UNKNOWN) {
             char msg[512];
             _snprintf(msg, sizeof(msg),
-                "Campaign \"%s\" selected with NO add-on checked.\n\n%s\n\nLaunch anyway?",
+                "Campaign \"%s\" selected with NO compatibility base picked.\n\n%s\n\nLaunch anyway?",
                 camp.name,
-                camp.needs == CK_MCO  ? "It looks like a MechCommander Omnitech pack and will almost certainly fail to load without mco-compat." :
-                                        "It looks like an MC2X pack and will likely fail without mc2x-compat.");
-            if (MessageBoxA(hwnd, msg, "No add-on checked",
+                camp.needs == CK_MCO  ? "It looks like a MechCommander Omnitech pack and will almost certainly fail to load without the mco-compat base." :
+                                        "It looks like an MC2X pack and will likely fail without the mc2x-compat base.");
+            if (MessageBoxA(hwnd, msg, "No base picked",
                             MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2) != IDYES)
                 return;
         }
@@ -741,8 +870,10 @@ static void SetMainControlsEnabled(BOOL en) {
     EnableWindow(s_hImport, en);
     EnableWindow(GetDlgItem(s_hMainWnd, IDC_LAUNCH), en);
     EnableWindow(GetDlgItem(s_hMainWnd, IDC_CANCEL), en);
-    for (int i = 0; i < COMPAT_SLOTS; i++)
-        if (s_hCompat[i]) EnableWindow(s_hCompat[i], en);
+    for (int i = 0; i < BASE_SLOTS; i++)
+        if (s_hBase[i]) EnableWindow(s_hBase[i], en);
+    for (int i = 0; i < ADDON_SLOTS; i++)
+        if (s_hAddon[i]) EnableWindow(s_hAddon[i], en);
 }
 
 // Start the worker thread + show the modal progress dialog. s_importForce must
@@ -981,51 +1112,82 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         s_hMainWnd = hwnd;
         HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
 
-        // Top row: label + Import button (right-aligned).
+        // ---- LEFT COLUMN: campaign label + Import button + campaign listbox ----
+        // Top row: label (top-left of left column) + Import button (top-right of
+        // left column, above the listbox, as before relative to the campaign section).
         HWND hLabel = CreateWindowA("STATIC", "Campaign (pick one):",
-            WS_CHILD | WS_VISIBLE, 10, 14, 280, 18, hwnd, (HMENU)IDC_LABEL, s_hInst, NULL);
+            WS_CHILD | WS_VISIBLE, LP_LIST_X, 14, 220, 18, hwnd, (HMENU)IDC_LABEL, s_hInst, NULL);
         SendMessageA(hLabel, WM_SETFONT, (WPARAM)hFont, TRUE);
 
         s_hImport = CreateWindowA("BUTTON", "Import...",
-            WS_CHILD | WS_VISIBLE, 300, 8, 90, 26, hwnd, (HMENU)IDC_IMPORT, s_hInst, NULL);
+            WS_CHILD | WS_VISIBLE, LP_LIST_X + LP_LIST_W - 90, 8, 90, 26,
+            hwnd, (HMENU)IDC_IMPORT, s_hInst, NULL);
         SendMessageA(s_hImport, WM_SETFONT, (WPARAM)hFont, TRUE);
 
         s_hListBox = CreateWindowA("LISTBOX", NULL,
             WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
-            10, 40, 380, 140, hwnd, (HMENU)IDC_MODLIST, s_hInst, NULL);
+            LP_LIST_X, LP_LIST_Y, LP_LIST_W, LP_LIST_H, hwnd, (HMENU)IDC_MODLIST, s_hInst, NULL);
         SendMessageA(s_hListBox, WM_SETFONT, (WPARAM)hFont, TRUE);
         SendMessageA(s_hListBox, LB_ADDSTRING, 0, (LPARAM)"Stock (base game)");
         for (int i = 0; i < s_campCount; i++)
             SendMessageA(s_hListBox, LB_ADDSTRING, 0, (LPARAM)s_campaigns[i].name);
         SendMessageA(s_hListBox, LB_SETCURSEL, 0, 0);
 
-        HWND hCompatLbl = CreateWindowA("STATIC", "Add-ons / Assets (stack any):",
-            WS_CHILD | WS_VISIBLE, 10, 190, 380, 18, hwnd, (HMENU)IDC_COMPATLBL, s_hInst, NULL);
-        SendMessageA(hCompatLbl, WM_SETFONT, (WPARAM)hFont, TRUE);
+        // ---- RIGHT COLUMN: base-radio group (top) + add-on checkbox group ----
+        // Sub-group 1: "Compatibility Base (pick one):" label + radios.
+        HWND hBaseLbl = CreateWindowA("STATIC", "Compatibility Base (pick one):",
+            WS_CHILD | WS_VISIBLE, LP_RCOL_X, LP_BASE_LBL_Y, LP_RCOL_W, LP_LBL_H,
+            hwnd, (HMENU)IDC_BASELBL, s_hInst, NULL);
+        SendMessageA(hBaseLbl, WM_SETFONT, (WPARAM)hFont, TRUE);
 
-        // FIXED compat slots: create COMPAT_SLOTS once. Geometry never changes.
-        // Refresh = show/hide + relabel only.
-        int y = 212;
-        for (int i = 0; i < COMPAT_SLOTS; i++) {
-            s_hCompat[i] = CreateWindowA("BUTTON", "",
-                WS_CHILD | BS_AUTOCHECKBOX,
-                14, y, 376, 20, hwnd, (HMENU)(INT_PTR)(IDC_COMPAT0 + i), s_hInst, NULL);
-            SendMessageA(s_hCompat[i], WM_SETFONT, (WPARAM)hFont, TRUE);
-            y += 22;
+        // FIXED base-radio slots: ONE exclusive group (first radio carries
+        // WS_GROUP; BS_AUTORADIOBUTTON makes them mutually exclusive). Slot 0 is
+        // always "None". Geometry never changes — refresh = show/hide + relabel.
+        for (int i = 0; i < BASE_SLOTS; i++) {
+            int by = LP_BASE_Y + i * LP_ROW_STEP;
+            DWORD st = WS_CHILD | BS_AUTORADIOBUTTON;
+            if (i == 0) st |= WS_GROUP;   // start of the exclusive radio group
+            s_hBase[i] = CreateWindowA("BUTTON", "", st,
+                LP_RCOL_X, by, LP_RCOL_W, LP_ROW_H,
+                hwnd, (HMENU)(INT_PTR)(IDC_BASE0 + i), s_hInst, NULL);
+            SendMessageA(s_hBase[i], WM_SETFONT, (WPARAM)hFont, TRUE);
         }
-        RefreshCompatSlots();   // show/hide + label per current scan
 
+        // Sub-group 2: "Add-ons (stack any):" label + stackable checkboxes.
+        // A WS_GROUP STATIC after the radios terminates the radio group so the
+        // add-on checkboxes are not pulled into it.
+        HWND hAddonLbl = CreateWindowA("STATIC", "Add-ons (stack any):",
+            WS_CHILD | WS_VISIBLE | WS_GROUP, LP_RCOL_X, LP_ADDON_LBL_Y, LP_RCOL_W, LP_LBL_H,
+            hwnd, (HMENU)IDC_ADDONLBL, s_hInst, NULL);
+        SendMessageA(hAddonLbl, WM_SETFONT, (WPARAM)hFont, TRUE);
+
+        // FIXED add-on checkbox slots: stacked vertically below the add-on label.
+        // Geometry never changes — refresh = show/hide + relabel only. With no
+        // add-ons deployed, all hide and just the label shows (that's fine).
+        for (int i = 0; i < ADDON_SLOTS; i++) {
+            int cy = LP_ADDON_Y + i * LP_ROW_STEP;
+            s_hAddon[i] = CreateWindowA("BUTTON", "",
+                WS_CHILD | BS_AUTOCHECKBOX,
+                LP_RCOL_X, cy, LP_RCOL_W, LP_ROW_H,
+                hwnd, (HMENU)(INT_PTR)(IDC_ADDON0 + i), s_hInst, NULL);
+            SendMessageA(s_hAddon[i], WM_SETFONT, (WPARAM)hFont, TRUE);
+        }
+        RefreshBaseSlots();    // show/hide + label per current scan; default None
+        RefreshAddonSlots();   // show/hide + label per current scan
+
+        // ---- BOTTOM (spans full width below BOTH columns): status + buttons ----
         s_hDesc = CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE | SS_LEFT,
-            10, y + 4, 380, 34, hwnd, (HMENU)IDC_DESC, s_hInst, NULL);
+            LP_MARGIN, LP_BOTTOM_Y, LP_CLIENT_W - 2 * LP_MARGIN, LP_DESC_H,
+            hwnd, (HMENU)IDC_DESC, s_hInst, NULL);
         SendMessageA(s_hDesc, WM_SETFONT, (WPARAM)hFont, TRUE);
-        int by = y + 44;
 
+        int btnW = (LP_CLIENT_W - 2 * LP_MARGIN - 10) / 2;   // two buttons + 10px gap
         HWND hLaunch = CreateWindowA("BUTTON", "Launch",
-            WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 10, by, 185, 28,
+            WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, LP_MARGIN, LP_BTN_Y, btnW, LP_BTN_H,
             hwnd, (HMENU)IDC_LAUNCH, s_hInst, NULL);
         SendMessageA(hLaunch, WM_SETFONT, (WPARAM)hFont, TRUE);
         HWND hCancel = CreateWindowA("BUTTON", "Cancel",
-            WS_CHILD | WS_VISIBLE, 205, by, 185, 28,
+            WS_CHILD | WS_VISIBLE, LP_MARGIN + btnW + 10, LP_BTN_Y, btnW, LP_BTN_H,
             hwnd, (HMENU)IDC_CANCEL, s_hInst, NULL);
         SendMessageA(hCancel, WM_SETFONT, (WPARAM)hFont, TRUE);
 
@@ -1076,9 +1238,12 @@ static void PrintListing() {
                       : "unknown (none auto)";
         fprintf(f, "  %-24s  %s\n", s_campaigns[i].folderName, k);
     }
-    fprintf(f, "compat layers (%d):\n", s_compatCount);
-    for (int i = 0; i < s_compatCount; i++)
-        fprintf(f, "  %s\n", s_compats[i].folderName);
+    fprintf(f, "bases (%d) [radio, mutually exclusive]:\n", s_baseCount);
+    for (int i = 0; i < s_baseCount; i++)
+        fprintf(f, "  %s\n", s_bases[i].folderName);
+    fprintf(f, "add-ons (%d) [checkbox, stackable]:\n", s_addonCount);
+    for (int i = 0; i < s_addonCount; i++)
+        fprintf(f, "  %s\n", s_addons[i].folderName);
     fclose(f);
 }
 
@@ -1125,12 +1290,13 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR lpCmd, int) {
     wc.lpszClassName = "MC2LauncherWnd";
     RegisterClassA(&wc);
 
-    // Size the window to fit the actual layout (must match WM_CREATE geometry):
-    //   list y=40 h=140; compat label y=190; FIXED 4 slots start y=212 +22 each;
-    //   desc; Launch/Cancel at y_after+44, h28.
+    // Size the window to fit the two-column layout (must match WM_CREATE geometry):
+    //   LEFT col: listbox at (10,40) 320x200; RIGHT col: base label + BASE_SLOTS
+    //   radios, then add-on label + ADDON_SLOTS checkboxes; BOTTOM (full width):
+    //   status STATIC then Launch/Cancel. Client height clears the taller column.
     DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
-    int clientW = 400;                                  // 10 + 380 + 10
-    int clientH = 212 + COMPAT_SLOTS * 22 + 84;         // slots + desc + buttons + margin
+    int clientW = LP_CLIENT_W;                           // 10+320+15+230+10 = 585
+    int clientH = LP_BTN_Y + LP_BTN_H + LP_MARGIN;       // bottom button row + margin
     RECT rc = { 0, 0, clientW, clientH };
     AdjustWindowRect(&rc, style, FALSE);
     int wW = rc.right - rc.left;
