@@ -397,6 +397,22 @@ glsl_shader* glsl_shader::makeShader(Shader_t stype, const char* fname, const ch
         delete pshader;
         return nullptr;
     }
+    // Log warnings from successful compile. NVIDIA emits them; AMD log is
+    // empty on success (len<=1). Drops silently when there's nothing to say.
+    {
+        GLsizei warnLen = 0;
+        glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &warnLen);
+        if (warnLen > 1) {
+            char* warnBuf = new char[warnLen];
+            GLsizei actualLen = 0;
+            glGetShaderInfoLog(shader, warnLen, &actualLen, warnBuf);
+            if (actualLen > 0) {
+                printf("[SHADER WARN] compile %s:\n%s\n", fname, warnBuf);
+                fflush(stdout);
+            }
+            delete[] warnBuf;
+        }
+    }
 
     pshader->fname_ = fname;
     pshader->shader_ = shader;
@@ -742,6 +758,21 @@ glsl_program* glsl_program::makeProgram2(const char* name, const char* vp, const
     {
         glDeleteProgram(shp);
         return 0;
+    }
+    // Log warnings from successful link (NVIDIA may emit them; AMD log empty).
+    {
+        GLsizei warnLen = 0;
+        glGetProgramiv(shp, GL_INFO_LOG_LENGTH, &warnLen);
+        if (warnLen > 1) {
+            char* warnBuf = new char[warnLen];
+            GLsizei actualLen = 0;
+            glGetProgramInfoLog(shp, warnLen, &actualLen, warnBuf);
+            if (actualLen > 0) {
+                printf("[SHADER WARN] link '%s':\n%s\n", name, warnBuf);
+                fflush(stdout);
+            }
+            delete[] warnBuf;
+        }
     }
 
     glsl_program* pprogram = new glsl_program();
