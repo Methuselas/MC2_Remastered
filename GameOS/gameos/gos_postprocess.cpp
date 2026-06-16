@@ -84,6 +84,36 @@ int mc2ShadowMapSize()
     return s_sz;
 }
 
+// Per-cascade shadow resolution: separate full-map (last) cascade.
+// MC2_SHADOW_FULLMAP_SEPARATE (default ON): render the last (map-centered
+// full-map catch-all) cascade into a separate lower-res 2D depth texture so the
+// high-res near-cascade array can be (csmCount-1) layers instead of csmCount.
+// When OFF, dynamicFullMapSize_ is forced == dynShadowMapSize_ (equivalent VRAM
+// to the old all-in-array layout; the texture still exists, just full-res).
+bool mc2ShadowFullMapSeparate()
+{
+    static const bool s_on = []() {
+        const char* v = getenv("MC2_SHADOW_FULLMAP_SEPARATE");
+        if (!v || !v[0]) return true;          // DEFAULT ON
+        return !(v[0] == '0' && v[1] == '\0'); // only "0" disables
+    }();
+    return s_on;
+}
+
+// MC2_SHADOW_FULLMAP_SIZE : edge of the separate full-map cascade depth texture.
+// Default 4096. Clamp {2048,4096,8192}. VRAM (depth24, 2D): 4096=~67MB, 8192=~268MB.
+int mc2ShadowFullMapSize()
+{
+    static const int s_sz = []() {
+        const char* v = getenv("MC2_SHADOW_FULLMAP_SIZE");
+        int s = (v && v[0]) ? atoi(v) : 4096;
+        if (s <= 2048) return 2048;
+        if (s <= 4096) return 4096;
+        return 8192;
+    }();
+    return s_sz;
+}
+
 // CSM-REDESIGN: fixed near/mid cascade radii (WU), texel-snapped, frame-stable
 // (kills frustum-refit popping). Last cascade is full-map (map-centered).
 float mc2ShadowCsmR0()
@@ -323,6 +353,11 @@ gosPostProcess::gosPostProcess()
     bloomColorTex_[0] = bloomColorTex_[1] = 0;
     memset(staticLightSpaceMatrix_, 0, sizeof(staticLightSpaceMatrix_));
     memset(dynamicLightSpaceMatrix_, 0, sizeof(dynamicLightSpaceMatrix_));
+    dynamicFullMapTex_ = 0;
+    dynamicFullMapFbo_ = 0;
+    dynamicFullMapDummyColorTex_ = 0;
+    dynamicFullMapSize_ = 4096;
+    dynamicFullMapTexelWorld_ = 0.0f;
     memset(dynamicCascadeMatrices_, 0, sizeof(dynamicCascadeMatrices_));
     memset(dynamicCascadeTexelWorld_, 0, sizeof(dynamicCascadeTexelWorld_));
     csmDepthSpan_ = 1.0f;
@@ -1821,10 +1856,13 @@ void gosPostProcess::runScreenShadow()
     screenShadowProg_->setInt("sceneDepthTex", 0);
     screenShadowProg_->setInt("sceneNormalTex", 1);
     screenShadowProg_->setInt("shadowMap", 2);
-    if (csmActive)
+    if (csmActive) {
         screenShadowProg_->setInt("dynamicShadowArray", 3);
-    else
+        // Per-cascade shadow resolution: separate full-map (last) cascade on unit 4.
+        screenShadowProg_->setInt("dynamicFullMapShadow", 4);
+    } else {
         screenShadowProg_->setInt("dynamicShadowMap", 3);
+    }
     screenShadowProg_->setInt("overlayPass", 0);
     screenShadowProg_->setInt("enableShadows", shadowsEnabled_ ? 1 : 0);
     screenShadowProg_->setInt("enableDynamicShadows",
@@ -1872,6 +1910,9 @@ void gosPostProcess::runScreenShadow()
         if (loc >= 0) glUniform1fv(loc, csmCount_, dynamicCascadeTexelWorld_);
         loc = glGetUniformLocation(screenShadowProg_->shp_, "csmDepthSpan");
         if (loc >= 0) glUniform1f(loc, csmDepthSpan_);
+        // Per-cascade shadow resolution: separate full-map (last) cascade texel.
+        loc = glGetUniformLocation(screenShadowProg_->shp_, "dynamicFullMapTexelWorld");
+        if (loc >= 0) glUniform1f(loc, dynamicFullMapTexelWorld_);
     } else {
         loc = glGetUniformLocation(screenShadowProg_->shp_, "dynamicLightSpaceMatrix");
         if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_FALSE, dynamicLightSpaceMatrix_);
@@ -1889,6 +1930,11 @@ void gosPostProcess::runScreenShadow()
         glBindTexture(GL_TEXTURE_2D_ARRAY, dynShadowArrayTex_);
     else
         glBindTexture(GL_TEXTURE_2D, dynShadowDepthTex_);
+    if (csmActive) {
+        // Per-cascade shadow resolution: separate full-map (last) cascade, unit 4.
+        glActiveTexture(GL_TEXTURE4);
+        glBindTexture(GL_TEXTURE_2D, dynamicFullMapTex_);
+    }
 
     // Draw fullscreen quad — pass 1: normal (skip terrain)
     // Draw fullscreen quad - single pass for terrain, objects, and overlays.
@@ -2101,9 +2147,20 @@ void gosPostProcess::runFogOob()
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+    // Other post-process passes upload inverseViewProj_ with GL_FALSE (row-major
+    // data as-is), which in GLSL gives (W^{-1})^T * v — the correct clip->world
+    // unprojection when the terrain MVP was uploaded via GL_FALSE.
+    // setMat4 uses GL_TRUE internally; transposing here gives the same result.
+    float invT[16];
+    {
+        const float* s = &inverseViewProj_.elem[0][0];
+        for (int i = 0; i < 4; ++i)
+            for (int j = 0; j < 4; ++j)
+                invT[i*4+j] = s[j*4+i];
+    }
     fogOobProg_->apply();
     fogOobProg_->setInt("depthTex", 0);
-    fogOobProg_->setMat4("invViewProj", inverseViewProj_);
+    fogOobProg_->setMat4("invViewProj", invT);
     fogOobProg_->setFloat3("u_fogColor",  oobFogColor_);
     fogOobProg_->setFloat("u_fogOpacity", oobFogOpacity_);
 
@@ -2882,21 +2939,35 @@ void gosPostProcess::renderHdriSkyboxInvVP(const float* invVP16)
     }();
     static const bool  s_stateProbe = (getenv("MC2_HDRI_SKY_STATE_PROBE") != nullptr);
 
-    // skyYaw. Default (no offset env) => 0.0 => no rotation. The raw-MC2-frame
-    // equirect uses azimuth = atan2(north, east) = atan2(ly, lx), so the sun
-    // azimuth here uses +lx (NOT the GL Y-up path's -lx). The frag rotates
-    // worldDir about +Z (MC2 up) by skyYaw before atan2(y,x).
+    // skyYaw: auto-sync HDRI sun to terrain light direction when the scan found
+    // a baked sun (hdriBakedSunValid_). The raw-MC2-frame equirect uses azimuth
+    // = atan2(north, east) = atan2(ly, lx) and the frag rotates worldDir about
+    // +Z (MC2 up) by skyYaw before atan2(y,x). MC2_HDRI_SKY_AZ_OFFSET adds a
+    // manual trim on top of the auto-sync (or replaces it when scan failed).
     float skyYaw = 0.0f;
+    float dbgSunAzGL = 0.0f;
+    if (hdriBakedSunValid_) {
+        float lx = 0.0f, ly = 0.0f, lz = 0.0f;
+        gos_GetTerrainLightDir(&lx, &ly, &lz);
+        dbgSunAzGL = atan2f(ly, lx);
+        skyYaw = hdriBakedSunAz_ - dbgSunAzGL;
+    }
     if (s_azOffsetSet) {
-        float sunSyncYaw = 0.0f;
-        if (hdriBakedSunValid_) {
-            float lx = 0.0f, ly = 0.0f, lz = 0.0f;
-            gos_GetTerrainLightDir(&lx, &ly, &lz);
-            // MC2-frame equirect azimuth of the mission sun.
-            const float sunAzGL = atan2f(ly, lx);
-            sunSyncYaw = hdriBakedSunAz_ - sunAzGL;
+        skyYaw += s_azOffsetRad;
+    }
+    {
+        static bool s_loggedSync = false;
+        if (!s_loggedSync) {
+            s_loggedSync = true;
+            std::fprintf(stderr,
+                "[HDRI_SUN_SYNC] valid=%d bakedAz=%.1fdeg sunAzGL=%.1fdeg skyYaw=%.1fdeg azOffset=%.1fdeg\n",
+                hdriBakedSunValid_ ? 1 : 0,
+                hdriBakedSunAz_ * 57.29577951f,
+                dbgSunAzGL * 57.29577951f,
+                skyYaw * 57.29577951f,
+                s_azOffsetRad * 57.29577951f);
+            std::fflush(stderr);
         }
-        skyYaw = sunSyncYaw + s_azOffsetRad;
     }
 
     GLint probeFbo = 0, probeDrawBuf0 = 0;
@@ -3413,10 +3484,18 @@ void gosPostProcess::initDynamicShadows()
     if (mc2ShadowCsmEnabled()) {
         csmCount_ = mc2ShadowCsmCount();
 
+        // Per-cascade shadow resolution: the array holds only the NEAR cascades
+        // (0..csmCount_-2). The LAST cascade (csmCount_-1, map-centered full-map)
+        // renders into the separate dynamicFullMapTex_ below. arrayLayers is the
+        // near-cascade count, floored at 1 so the GL array texture is always
+        // valid even when csmCount_==1 (no near cascades -> layer 0 unused).
+        const int nearCascades = (csmCount_ > 1) ? (csmCount_ - 1) : 0;
+        const int arrayLayers  = (nearCascades > 0) ? nearCascades : 1;
+
         glGenTextures(1, &dynShadowArrayTex_);
         glBindTexture(GL_TEXTURE_2D_ARRAY, dynShadowArrayTex_);
         glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_DEPTH_COMPONENT24,
-            dynShadowMapSize_, dynShadowMapSize_, csmCount_,
+            dynShadowMapSize_, dynShadowMapSize_, arrayLayers,
             0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -3432,7 +3511,7 @@ void gosPostProcess::initDynamicShadows()
         glGenTextures(1, &dynShadowArrayDummyColorTex_);
         glBindTexture(GL_TEXTURE_2D_ARRAY, dynShadowArrayDummyColorTex_);
         glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_R8,
-            dynShadowMapSize_, dynShadowMapSize_, csmCount_,
+            dynShadowMapSize_, dynShadowMapSize_, arrayLayers,
             0, GL_RED, GL_UNSIGNED_BYTE, nullptr);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -3452,13 +3531,60 @@ void gosPostProcess::initDynamicShadows()
         // dynamic shadow stays forward-Z; restore scene clear-depth after.
         glDepthMask(GL_TRUE);
         glClearDepth(1.0f);
-        for (int i = 0; i < csmCount_; ++i) {
+        for (int i = 0; i < arrayLayers; ++i) {
             glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, dynShadowArrayTex_, 0, i);
             glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, dynShadowArrayDummyColorTex_, 0, i);
             glClear(GL_DEPTH_BUFFER_BIT);
         }
         glClearDepth(0.0f);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        // === Per-cascade shadow resolution: separate full-map (last) cascade ===
+        // The last cascade (csmCount_-1) renders into this lower-res 2D depth
+        // texture. Same sampler param set as the array (COMPARE_REF_TO_TEXTURE /
+        // GL_LEQUAL / CLAMP_TO_BORDER / border 1.0). When the SEPARATE env is OFF
+        // we force size == dynShadowMapSize_ (equivalent VRAM to old all-in-array).
+        dynamicFullMapSize_ = mc2ShadowFullMapSeparate()
+                              ? mc2ShadowFullMapSize()
+                              : dynShadowMapSize_;
+
+        glGenTextures(1, &dynamicFullMapTex_);
+        glBindTexture(GL_TEXTURE_2D, dynamicFullMapTex_);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24,
+            dynamicFullMapSize_, dynamicFullMapSize_, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+        float fmBorder[] = {1.0f, 1.0f, 1.0f, 1.0f};
+        glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, fmBorder);
+
+        // 7900 XTX FBO-completeness dummy color (mirrors the array/single-map FBOs).
+        glGenTextures(1, &dynamicFullMapDummyColorTex_);
+        glBindTexture(GL_TEXTURE_2D, dynamicFullMapDummyColorTex_);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R8,
+            dynamicFullMapSize_, dynamicFullMapSize_, 0, GL_RED, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+        glGenFramebuffers(1, &dynamicFullMapFbo_);
+        glBindFramebuffer(GL_FRAMEBUFFER, dynamicFullMapFbo_);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, dynamicFullMapTex_, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dynamicFullMapDummyColorTex_, 0);
+        glDrawBuffer(GL_COLOR_ATTACHMENT0);
+        glReadBuffer(GL_NONE);
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+            fprintf(stderr, "gosPostProcess: CSM dynamic full-map FBO incomplete\n");
+
+        // Forward-Z clear to 1.0 (fully lit), restore scene reverse-Z default.
+        glDepthMask(GL_TRUE);
+        glClearDepth(1.0f);
+        glClear(GL_DEPTH_BUFFER_BIT);
+        glClearDepth(0.0f);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glBindTexture(GL_TEXTURE_2D, 0);
 
         // Cascade matrices start as identity so an early sample is a no-op.
         for (int i = 0; i < kMaxCsmCascades; ++i) {
@@ -3468,7 +3594,9 @@ void gosPostProcess::initDynamicShadows()
             dynamicCascadeMatrices_[i*16 + 15] = 1.0f;
         }
 
-        fprintf(stderr, "[CSM] init layers=%d size=%d\n", csmCount_, dynShadowMapSize_);
+        fprintf(stderr, "[CSM] init nearLayers=%d arraySize=%d fullMapSize=%d separate=%d\n",
+                nearCascades, dynShadowMapSize_, dynamicFullMapSize_,
+                mc2ShadowFullMapSeparate() ? 1 : 0);
     }
 }
 
@@ -3480,6 +3608,9 @@ void gosPostProcess::destroyDynamicShadows()
     if (dynShadowArrayFBO_) { glDeleteFramebuffers(1, &dynShadowArrayFBO_); dynShadowArrayFBO_ = 0; }
     if (dynShadowArrayTex_) { glDeleteTextures(1, &dynShadowArrayTex_); dynShadowArrayTex_ = 0; }
     if (dynShadowArrayDummyColorTex_) { glDeleteTextures(1, &dynShadowArrayDummyColorTex_); dynShadowArrayDummyColorTex_ = 0; }
+    if (dynamicFullMapFbo_) { glDeleteFramebuffers(1, &dynamicFullMapFbo_); dynamicFullMapFbo_ = 0; }
+    if (dynamicFullMapTex_) { glDeleteTextures(1, &dynamicFullMapTex_); dynamicFullMapTex_ = 0; }
+    if (dynamicFullMapDummyColorTex_) { glDeleteTextures(1, &dynamicFullMapDummyColorTex_); dynamicFullMapDummyColorTex_ = 0; }
 
     RenderCore::RenderResourceDesc invalid;
     invalid.id = RenderCore::RenderResourceId::ShadowDynamicMap;
@@ -3519,11 +3650,22 @@ bool gosPostProcess::beginDynamicShadowCascade(int i)
 
     csmActiveCascade_ = i;
 
-    glBindFramebuffer(GL_FRAMEBUFFER, dynShadowArrayFBO_);
-    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, dynShadowArrayTex_, 0, i);
-    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, dynShadowArrayDummyColorTex_, 0, i);
-    glDrawBuffer(GL_COLOR_ATTACHMENT0);
-    glViewport(0, 0, dynShadowMapSize_, dynShadowMapSize_);
+    // Per-cascade shadow resolution: the LAST cascade (csmCount_-1) renders into
+    // the separate lower-res full-map 2D texture; the near cascades (0..N-2) go
+    // to their array layer. getDynamicLightSpaceMatrix() resolves to
+    // dynamicCascadeMatrices_[i] either way (no batcher edits needed).
+    const bool isFullMap = (i == csmCount_ - 1);
+    if (isFullMap) {
+        glBindFramebuffer(GL_FRAMEBUFFER, dynamicFullMapFbo_);
+        glDrawBuffer(GL_COLOR_ATTACHMENT0);
+        glViewport(0, 0, dynamicFullMapSize_, dynamicFullMapSize_);
+    } else {
+        glBindFramebuffer(GL_FRAMEBUFFER, dynShadowArrayFBO_);
+        glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, dynShadowArrayTex_, 0, i);
+        glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, dynShadowArrayDummyColorTex_, 0, i);
+        glDrawBuffer(GL_COLOR_ATTACHMENT0);
+        glViewport(0, 0, dynShadowMapSize_, dynShadowMapSize_);
+    }
 
     // Explicit state (forward-Z shadow pass; scene uses reverse-Z clearDepth 0).
     glEnable(GL_DEPTH_TEST);
@@ -3969,8 +4111,15 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
             float cRad = 64.0f;
             while (cRad < cHalf) cRad *= 2.0f;
             if (cRad > r) cRad = r;
-            float cTexel = (2.0f * cRad) / (float)dynShadowMapSize_;
+            // Per-cascade shadow resolution: the LAST (full-map) cascade lives in
+            // the separate dynamicFullMapSize_ texture, so its texel-snap grid +
+            // world-texel footprint MUST use that resolution, not the array's.
+            const bool isFullMapCascade = (ci == N - 1);
+            const int  cascadeMapSize = isFullMapCascade ? dynamicFullMapSize_
+                                                         : dynShadowMapSize_;
+            float cTexel = (2.0f * cRad) / (float)cascadeMapSize;
             dynamicCascadeTexelWorld_[ci] = cTexel;
+            if (isFullMapCascade) dynamicFullMapTexelWorld_ = cTexel;
             cCx = floorf(cCx / cTexel) * cTexel;
             cCy = floorf(cCy / cTexel) * cTexel;
             // Back-project snapped light-space center to world (the cascade origin).

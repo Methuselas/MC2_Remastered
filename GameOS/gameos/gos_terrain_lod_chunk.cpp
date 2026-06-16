@@ -86,9 +86,13 @@ static GLint    s_locDynCascadeMats     = -1;
 static GLint    s_locDynCsmCount        = -1;
 static GLint    s_locDynCascadeTexel    = -1;  // Stage 3 texel bias
 static GLint    s_locCsmDepthSpan       = -1;
+// Per-cascade shadow resolution: separate full-map (last) cascade.
+static GLint    s_locDynFullMapShadow   = -1;
+static GLint    s_locDynFullMapTexel    = -1;
 // Mirror gameos_graphics.cpp's file-static terrain shadow texture units (9/10).
 static constexpr GLint kChunkTexUnitStaticShadow  = 9;
 static constexpr GLint kChunkTexUnitDynamicShadow = 10;
+static constexpr GLint kChunkTexUnitDynFullMap    = 13;  // free unit (chunk uses up to 11)
 // Phase 10 Step 5a: merged material normal sampler2DArray (own unit, no collision
 // with colormap=0 / shadows=9,10). Sourced from gos_GetTerrainNormalArrayTex().
 static GLint    s_locMatNormalArray     = -1;
@@ -394,6 +398,8 @@ void gos_TerrainLodChunk_Init()
             s_locDynCsmCount      = glGetUniformLocation(s_terrainProgram, "dynamicCsmCount");
             s_locDynCascadeTexel  = glGetUniformLocation(s_terrainProgram, "dynamicCascadeTexelWorld");
             s_locCsmDepthSpan     = glGetUniformLocation(s_terrainProgram, "csmDepthSpan");
+            s_locDynFullMapShadow = glGetUniformLocation(s_terrainProgram, "dynamicFullMapShadow");
+            s_locDynFullMapTexel  = glGetUniformLocation(s_terrainProgram, "dynamicFullMapTexelWorld");
             s_locMatNormalArray   = glGetUniformLocation(s_terrainProgram, "matNormalArray");
             s_locClassGrass     = glGetUniformLocation(s_terrainProgram, "terrainClassGrass");
             s_locClassDirt      = glGetUniformLocation(s_terrainProgram, "terrainClassDirt");
@@ -678,6 +684,15 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
                         glUniform1i(s_locDynShadowArray, kChunkTexUnitDynamicShadow);
                         glActiveTexture(GL_TEXTURE0 + kChunkTexUnitDynamicShadow);
                         glBindTexture(GL_TEXTURE_2D_ARRAY, pp->getDynamicShadowArrayTexture());
+                        glActiveTexture(GL_TEXTURE0);
+                    }
+                    // Per-cascade shadow resolution: separate full-map (last) cascade.
+                    if (s_locDynFullMapTexel >= 0)
+                        glUniform1f(s_locDynFullMapTexel, pp->getDynamicFullMapTexelWorld());
+                    if (s_locDynFullMapShadow >= 0) {
+                        glUniform1i(s_locDynFullMapShadow, kChunkTexUnitDynFullMap);
+                        glActiveTexture(GL_TEXTURE0 + kChunkTexUnitDynFullMap);
+                        glBindTexture(GL_TEXTURE_2D, pp->getDynamicFullMapTexture());
                         glActiveTexture(GL_TEXTURE0);
                     }
                 } else {

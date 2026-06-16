@@ -95,6 +95,9 @@ static bool isAllConcreteTerrainBatch(const gos_VERTEX* vertices, int count) {
 static constexpr GLint kTerrainTexUnitStaticShadow  = 9;
 static constexpr GLint kTerrainTexUnitDynamicShadow = 10;
 static constexpr GLint kTerrainTexUnitHeight        = 11;
+// Per-cascade shadow resolution: separate full-map (last) cascade depth texture.
+// Free unit (terrain uses 5-12); under the 16-unit min-spec floor.
+static constexpr GLint kTerrainTexUnitDynFullMap    = 13;
 // matNormal0-3: units 5-8 (rock/grass/dirt/concrete); matNormal4 (snow): unit 12
 static constexpr GLint kTerrainMatNormalUnits[5]    = { 5, 6, 7, 8, 12 };
 // When MC2_TERRAIN_NORMAL_ARRAY=1 (future plan), the array texture occupies unit 5.
@@ -2095,6 +2098,8 @@ class gosRenderer {
             // Item 1 CSM: array-variant dynamic shadow uniforms (only valid when ON)
             GLint dynamicShadowArray = -1, dynamicCascadeMatrices = -1, dynamicCsmCount = -1;
             GLint dynamicCascadeTexelWorld = -1, csmDepthSpan = -1;  // Stage 3 texel bias
+            // Per-cascade shadow resolution: separate full-map (last) cascade.
+            GLint dynamicFullMapShadow = -1, dynamicFullMapTexelWorld = -1;
             GLint time = -1;
             GLint mapHalfExtent = -1;
             GLint terrainMaterialProfile = -1;  // C1 tactical (mclib/terrain.h)
@@ -2136,6 +2141,8 @@ class gosRenderer {
             // Item 1 CSM: array-variant dynamic shadow uniforms (only valid when ON)
             GLint dynamicShadowArray = -1, dynamicCascadeMatrices = -1, dynamicCsmCount = -1;
             GLint dynamicCascadeTexelWorld = -1, csmDepthSpan = -1;  // Stage 3 texel bias
+            // Per-cascade shadow resolution: separate full-map (last) cascade.
+            GLint dynamicFullMapShadow = -1, dynamicFullMapTexelWorld = -1;
             GLint time = -1, mapHalfExtent = -1;
             GLint ssboRecordBase = -1;
             GLint terrainMaterialProfile = -1;  // C1 tactical (mclib/terrain.h)
@@ -2216,6 +2223,8 @@ class gosRenderer {
             terrainLocs_.dynamicCascadeMatrices = glGetUniformLocation(shp, "dynamicCascadeMatrices");
             terrainLocs_.dynamicCsmCount = glGetUniformLocation(shp, "dynamicCsmCount");
             terrainLocs_.dynamicCascadeTexelWorld = glGetUniformLocation(shp, "dynamicCascadeTexelWorld");
+            terrainLocs_.dynamicFullMapShadow = glGetUniformLocation(shp, "dynamicFullMapShadow");
+            terrainLocs_.dynamicFullMapTexelWorld = glGetUniformLocation(shp, "dynamicFullMapTexelWorld");
             terrainLocs_.csmDepthSpan = glGetUniformLocation(shp, "csmDepthSpan");
             terrainLocs_.time = glGetUniformLocation(shp, "time");
             terrainLocs_.mapHalfExtent = glGetUniformLocation(shp, "mapHalfExtent");
@@ -2277,6 +2286,8 @@ class gosRenderer {
             thinTerrainLocs_.dynamicCascadeMatrices  = glGetUniformLocation(shp, "dynamicCascadeMatrices");
             thinTerrainLocs_.dynamicCsmCount         = glGetUniformLocation(shp, "dynamicCsmCount");
             thinTerrainLocs_.dynamicCascadeTexelWorld = glGetUniformLocation(shp, "dynamicCascadeTexelWorld");
+            thinTerrainLocs_.dynamicFullMapShadow = glGetUniformLocation(shp, "dynamicFullMapShadow");
+            thinTerrainLocs_.dynamicFullMapTexelWorld = glGetUniformLocation(shp, "dynamicFullMapTexelWorld");
             thinTerrainLocs_.csmDepthSpan            = glGetUniformLocation(shp, "csmDepthSpan");
             thinTerrainLocs_.time               = glGetUniformLocation(shp, "time");
             thinTerrainLocs_.mapHalfExtent      = glGetUniformLocation(shp, "mapHalfExtent");
@@ -6199,6 +6210,16 @@ static void uploadDynamicShadowUniforms(const Locs& tl, gosPostProcess* pp, GLin
             glBindTexture(GL_TEXTURE_2D_ARRAY, pp->getDynamicShadowArrayTexture());
             glActiveTexture(GL_TEXTURE0);
         }
+        // Per-cascade shadow resolution: the LAST cascade samples this separate
+        // lower-res 2D depth texture on its own dedicated unit.
+        if (tl.dynamicFullMapTexelWorld >= 0)
+            glUniform1f(tl.dynamicFullMapTexelWorld, pp->getDynamicFullMapTexelWorld());
+        if (tl.dynamicFullMapShadow >= 0) {
+            glUniform1i(tl.dynamicFullMapShadow, kTerrainTexUnitDynFullMap);
+            glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitDynFullMap);
+            glBindTexture(GL_TEXTURE_2D, pp->getDynamicFullMapTexture());
+            glActiveTexture(GL_TEXTURE0);
+        }
         return;
     }
     // Legacy single-map path (byte-identical to the prior inline block).
@@ -8457,6 +8478,16 @@ void __stdcall gos_SetupObjectShadows(HGOSRENDERMATERIAL material)
 				glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitDynamicShadow);
 				glBindTexture(GL_TEXTURE_2D_ARRAY, pp->getDynamicShadowArrayTexture());
 			}
+			// Per-cascade shadow resolution: separate full-map (last) cascade.
+			loc = glGetUniformLocation(shp, "dynamicFullMapTexelWorld");
+			if (loc >= 0) glUniform1f(loc, pp->getDynamicFullMapTexelWorld());
+			loc = glGetUniformLocation(shp, "dynamicFullMapShadow");
+			if (loc >= 0) {
+				glUniform1i(loc, kTerrainTexUnitDynFullMap);
+				glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitDynFullMap);
+				glBindTexture(GL_TEXTURE_2D, pp->getDynamicFullMapTexture());
+				glActiveTexture(GL_TEXTURE0);
+			}
 		} else {
 			loc = glGetUniformLocation(shp, "dynamicLightSpaceMatrix");
 			if (loc >= 0)
@@ -8996,6 +9027,16 @@ static void setupOverlayShadowsForShp(GLuint shp)
                 glUniform1i(loc, kTerrainTexUnitDynamicShadow);
                 glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitDynamicShadow);
                 glBindTexture(GL_TEXTURE_2D_ARRAY, pp->getDynamicShadowArrayTexture());
+            }
+            // Per-cascade shadow resolution: separate full-map (last) cascade.
+            loc = glGetUniformLocation(shp, "dynamicFullMapTexelWorld");
+            if (loc >= 0) glUniform1f(loc, pp->getDynamicFullMapTexelWorld());
+            loc = glGetUniformLocation(shp, "dynamicFullMapShadow");
+            if (loc >= 0) {
+                glUniform1i(loc, kTerrainTexUnitDynFullMap);
+                glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitDynFullMap);
+                glBindTexture(GL_TEXTURE_2D, pp->getDynamicFullMapTexture());
+                glActiveTexture(GL_TEXTURE0);
             }
         } else {
             loc = glGetUniformLocation(shp, "dynamicLightSpaceMatrix");

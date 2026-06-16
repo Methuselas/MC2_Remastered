@@ -106,6 +106,12 @@ uniform mat4 dynamicCascadeMatrices[MC2_SHADOW_CSM_MAX];
 uniform int  dynamicCsmCount;        // 1..MC2_SHADOW_CSM_MAX
 uniform float dynamicCascadeTexelWorld[MC2_SHADOW_CSM_MAX]; // 2*cRad/mapSize, world units
 uniform float csmDepthSpan;          // (farP-nearP) of shared CSM ortho z-row
+// Per-cascade shadow resolution: the LAST cascade (index dynamicCsmCount-1, the
+// map-centered full-map catch-all) lives in a SEPARATE lower-res 2D depth texture
+// instead of the high-res near-cascade array. Its own texel-world (computed at the
+// separate texture's resolution) drives the depth bias.
+uniform sampler2DShadow dynamicFullMapShadow;
+uniform float dynamicFullMapTexelWorld;
 uniform int  enableDynamicShadows;
 
 // Sample one cascade layer with the same gradient-adaptive Poisson PCF the
@@ -141,6 +147,36 @@ float csmSampleLayer(vec3 projCoords, int layer, vec3 worldPos, float NdotL, int
     return shadow;
 }
 
+// Per-cascade shadow resolution: sample the LAST cascade from the separate
+// lower-res 2D depth texture (dynamicFullMapShadow). Mirrors csmSampleLayer's
+// gradient-adaptive Poisson PCF but uses the 2D sampler + dynamicFullMapTexelWorld.
+float csmSampleFullMap(vec3 projCoords, vec3 worldPos, float NdotL, int numTaps)
+{
+    float slope = max(1.0 - NdotL, 0.0);
+    float texelBias = 1.5 * dynamicFullMapTexelWorld / max(csmDepthSpan, 1.0);
+    float bias = max(0.0012 * slope, 0.0004) + texelBias;
+    float currentDepth = projCoords.z - bias;
+
+    float angle = 6.2831853 * fract(sin(dot(worldPos.xz, vec2(12.9898, 78.233))) * 43758.5453);
+    float ca = cos(angle), sa = sin(angle);
+    mat2 rot = mat2(ca, sa, -sa, ca);
+
+    float depthGradient = length(vec2(dFdx(projCoords.z), dFdy(projCoords.z)));
+    float hardness = clamp(depthGradient * 180.0, 0.0, 1.0);
+    float adaptiveScale = mix(2.4, 0.8, hardness);
+
+    vec2 texelSize = 1.0 / vec2(textureSize(dynamicFullMapShadow, 0).xy);
+    float radius = max(shadowSoftness, 0.5) * adaptiveScale;
+    float shadow = 0.0;
+    int taps = clamp(numTaps, 1, 16);
+    for (int i = 0; i < taps; i++) {
+        vec2 offset = rot * poissonDisk[i] * radius * texelSize;
+        shadow += texture(dynamicFullMapShadow, vec3(projCoords.xy + offset, currentDepth));
+    }
+    shadow /= float(taps);
+    return shadow;
+}
+
 // Project worldPos into cascade `layer`; out-of-range -> inside=false.
 bool csmProject(vec3 worldPos, int layer, out vec3 projCoords)
 {
@@ -169,7 +205,11 @@ float calcDynamicShadow(vec3 worldPos, vec3 normal, vec3 lightDir, int numTaps)
         vec3 pc;
         if (!csmProject(worldPos, c, pc)) continue;
 
-        float vis = csmSampleLayer(pc, c, worldPos, NdotL, numTaps);
+        // Per-cascade shadow resolution: last cascade is the separate full-map 2D
+        // texture; near cascades sample their array layer.
+        float vis = (c == count - 1)
+                  ? csmSampleFullMap(pc, worldPos, NdotL, numTaps)
+                  : csmSampleLayer(pc, c, worldPos, NdotL, numTaps);
 
         // Overlap blend with the next cascade near the outer edge of this one.
         if (c + 1 < count) {
@@ -180,7 +220,10 @@ float calcDynamicShadow(vec3 worldPos, vec3 normal, vec3 lightDir, int numTaps)
             if (edge < band) {
                 vec3 pc2;
                 if (csmProject(worldPos, c + 1, pc2)) {
-                    float vis2 = csmSampleLayer(pc2, c + 1, worldPos, NdotL, numTaps);
+                    // The next cascade is the full-map one when c+1 == count-1.
+                    float vis2 = (c + 1 == count - 1)
+                               ? csmSampleFullMap(pc2, worldPos, NdotL, numTaps)
+                               : csmSampleLayer(pc2, c + 1, worldPos, NdotL, numTaps);
                     float t = smoothstep(0.0, band, edge);   // 0 at border -> use next
                     vis = mix(vis2, vis, t);
                 }

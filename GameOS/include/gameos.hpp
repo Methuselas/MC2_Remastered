@@ -2344,6 +2344,11 @@ int   mc2ShadowCsmCount();
 float mc2ShadowCsmLambda();
 int   mc2ShadowMapSize();   // CSM-REDESIGN: env-tunable dynamic shadow map edge (texels)
 float mc2ShadowCsmSoftness();
+// Per-cascade shadow resolution: the LAST (full-map) cascade renders into a
+// separate lower-res 2D depth texture instead of the high-res near-cascade
+// array. Saves VRAM (3x8192 array -> 2x8192 array + 1x4096). See gos_postprocess.cpp.
+bool  mc2ShadowFullMapSeparate();  // MC2_SHADOW_FULLMAP_SEPARATE, default ON
+int   mc2ShadowFullMapSize();      // MC2_SHADOW_FULLMAP_SIZE, default 4096, clamp {2048,4096,8192}
 float mc2ShadowObjNormalBias();  // object shadow-receive normal-offset (texels); 0 disables
 // MC2_SHADER_PATH_TINT: debug-only. 1 = each candidate ground shader outputs a
 // unique solid color so the render path of a given surface can be identified

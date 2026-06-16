@@ -76,6 +76,10 @@ uniform mat4 dynamicCascadeMatrices[MC2_SHADOW_CSM_MAX];
 uniform int  dynamicCsmCount;
 uniform float dynamicCascadeTexelWorld[MC2_SHADOW_CSM_MAX]; // 2*cRad/mapSize, world units
 uniform float csmDepthSpan;          // (farP-nearP) of shared CSM ortho z-row
+// Per-cascade shadow resolution: the LAST cascade (dynamicCsmCount-1) lives in a
+// SEPARATE lower-res 2D depth texture (see gos_postprocess.cpp / shadow.hglsl).
+uniform sampler2DShadow dynamicFullMapShadow;
+uniform float dynamicFullMapTexelWorld;
 #else
 uniform sampler2DShadow dynamicShadowMap;
 uniform mat4 dynamicLightSpaceMatrix;
@@ -147,11 +151,17 @@ float sampleDynamicShadow(vec3 worldPos, vec3 N)
     float NdotL = max(dot(N, lightDir), 0.0);
     int count = clamp(dynamicCsmCount, 1, MC2_SHADOW_CSM_MAX);
     for (int c = 0; c < count; ++c) {
+        // Per-cascade shadow resolution: the last cascade uses the separate
+        // full-map 2D texture + its own world-texel; near cascades the array.
+        bool isFullMap = (c == count - 1);
+        float cTexelWorld = isFullMap ? dynamicFullMapTexelWorld
+                                      : dynamicCascadeTexelWorld[c];
+
         // NORMAL-OFFSET: push the sample point off the surface along N by a
         // texel-proportional distance (larger at grazing angles). Applied in
         // world space, per-cascade (uses that cascade's world texel size), so
         // the projected coord is consistent. Gated: 0 => no offset.
-        float offsetDist = objNormalBiasScale * dynamicCascadeTexelWorld[c]
+        float offsetDist = objNormalBiasScale * cTexelWorld
                          * (1.0 + (1.0 - NdotL));
         vec3 samplePos = worldPos + N * offsetDist;
 
@@ -163,18 +173,22 @@ float sampleDynamicShadow(vec3 worldPos, vec3 N)
 
         // Stage 3 texel-scaled bias + slope-scale top-up for grazing angles
         // (small; ground bias already reduced — this is object self-shadow only).
-        float texelBias = 1.5 * dynamicCascadeTexelWorld[c] / max(csmDepthSpan, 1.0);
+        float texelBias = 1.5 * cTexelWorld / max(csmDepthSpan, 1.0);
         float bias = 0.0012 + texelBias + 0.0010 * (1.0 - NdotL);
         float currentDepth = projCoords.z - bias;
         float angle = 6.2831853 * fract(sin(dot(worldPos.xz, vec2(12.9898, 78.233))) * 43758.5453);
         float ca = cos(angle), sa = sin(angle);
         mat2 rot = mat2(ca, sa, -sa, ca);
-        vec2 texelSize = 1.0 / vec2(textureSize(dynamicShadowArray, 0).xy);
+        vec2 texelSize = isFullMap
+            ? (1.0 / vec2(textureSize(dynamicFullMapShadow, 0).xy))
+            : (1.0 / vec2(textureSize(dynamicShadowArray, 0).xy));
         float radius = max(shadowSoftness, 0.5);
         float shadow = 0.0;
         for (int i = 0; i < 4; i++) {
             vec2 offset = rot * poissonDisk[i] * radius * texelSize;
-            shadow += texture(dynamicShadowArray, vec4(projCoords.xy + offset, float(c), currentDepth));
+            shadow += isFullMap
+                ? texture(dynamicFullMapShadow, vec3(projCoords.xy + offset, currentDepth))
+                : texture(dynamicShadowArray, vec4(projCoords.xy + offset, float(c), currentDepth));
         }
         shadow /= 4.0;
         return mix(0.4, 1.0, shadow);

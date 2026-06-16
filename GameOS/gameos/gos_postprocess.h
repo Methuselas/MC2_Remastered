@@ -144,6 +144,14 @@ public:
     const float* getDynamicCascadeTexelWorld() const { return dynamicCascadeTexelWorld_; }
     // (farP-nearP) of the shared CSM ortho z-row; must match the C++ z-row exactly.
     float getCsmDepthSpan() const { return csmDepthSpan_; }
+    // Per-cascade shadow resolution: the LAST cascade lives in a separate 2D
+    // depth texture (dynamicFullMapTex_), the near cascades stay in the array.
+    GLuint getDynamicFullMapTexture() const { return dynamicFullMapTex_; }
+    int    getDynamicFullMapSize() const { return dynamicFullMapSize_; }
+    // World-texel footprint of the last (full-map) cascade, computed with the
+    // separate texture's resolution (NOT the array's). Used for the depth bias.
+    float  getDynamicFullMapTexelWorld() const { return dynamicFullMapTexelWorld_; }
+
     // Bind the per-layer FBO + viewport + forward-Z clear for caster layer i.
     // Returns false if CSM inactive or i out of range (caller skips).
     bool beginDynamicShadowCascade(int i);
@@ -357,6 +365,19 @@ private:
     float  csmDepthSpan_;                                 // (farP-nearP) of shared ortho z-row
     int    csmActiveCascade_;                  // cascade the caster pass is drawing
     int    csmDebugLayer_;                     // which layer the debug blit shows
+
+    // --- Per-cascade shadow resolution: separate full-map (last) cascade -----
+    // The near cascades (0..N-2) live in dynShadowArrayTex_ at dynShadowMapSize_.
+    // The LAST cascade (N-1, map-centered full-map catch-all) renders into this
+    // separate, lower-res 2D depth texture to save VRAM while keeping the near
+    // cascades razor sharp. Same sampler params as the array. When
+    // MC2_SHADOW_FULLMAP_SEPARATE=0, dynamicFullMapSize_ == dynShadowMapSize_ so
+    // the VRAM is equivalent to the old all-in-array layout (A/B fallback).
+    GLuint dynamicFullMapTex_;                  // GL_TEXTURE_2D depth (last cascade)
+    GLuint dynamicFullMapFbo_;                  // depth-only FBO for the full-map cascade
+    GLuint dynamicFullMapDummyColorTex_;        // 7900 XTX FBO-completeness dummy
+    int    dynamicFullMapSize_;                 // edge in texels (default 4096)
+    float  dynamicFullMapTexelWorld_;           // 2*cRad/dynamicFullMapSize_ for last cascade
 
     // CSM caster-loop GL-state save/restore. beginDynamicShadowCascade() captures
     // the caller's full scene GL state on the FIRST cascade (csmStateSaved_ flips
