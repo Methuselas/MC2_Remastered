@@ -91,6 +91,9 @@ uniform float atlasOneOverWorldUnits;
 uniform int   useCementAtlas;          // 0 = M2 / legacy, 1 = indirect cement-armed
 uniform int   atlasCementGridSide;     // cells per row/col of cement atlas
 uniform float atlasCementWorldUnitsPerTile;  // = Terrain::worldUnitsPerVertex (128.0)
+// Stage B: transition mask array (14 layers, R8, procedural bilinear shapes).
+uniform sampler2DArray u_transitionMaskArray;  // unit 4 (legacy path) or unit 4 (chunk)
+uniform int            u_useTransitionMask;    // 0 = mask not yet ready, 1 = armed
 
 flat in uint RecordIdx;
 
@@ -421,16 +424,17 @@ void main(void)
     // while their _pad0 has no validity bit set, and we must NOT sample cement[0]
     // for those (advisor C2).  When validity bit is set, the quad is genuinely
     // pure-cement and TerrainType is exactly 3.0 across all corners.
+    //
+    // cementWord bit layout (Stage B extension):
+    //   bit 31     = CEMENT_VALID
+    //   bit 30     = IS_TRANSITION
+    //   bits 29:24 = maskId (0..13) — index into u_transitionMaskArray
+    //   bits 15:0  = cementAtlas layerIdx (unchanged)
     if (useCementAtlas != 0) {
-        uint cementWord  = thinRecsFrag[RecordIdx].control.w;
-        bool cementValid = (cementWord & 0x80000000u) != 0u;
+        uint cementWord    = thinRecsFrag[RecordIdx].control.w;
+        bool cementValid   = (cementWord & 0x80000000u) != 0u;
+        bool isTransition  = (cementWord & 0x40000000u) != 0u;
         if (cementValid) {
-            // CEMENT-DIFFUSE-COLOR: sample the real cement DIFFUSE atlas (tex3).
-            // Was sampling matNormalArray[MAT_LAYER_PAINTED_CONC] (a NORMAL map)
-            // as colour -> flat dark bluish slab. Both compile-paths now take
-            // cement albedo from the cement atlas diffuse so the pad reads as
-            // concrete (and the building shadow becomes visible). Proper fix is
-            // an asset cook (swap the 64/ folder .tga); this is the stopgap.
             uint layerIdx = cementWord & 0xFFFFu;
             int  gridSide = atlasCementGridSide;
             if (gridSide < 1) gridSide = 1;
@@ -438,7 +442,18 @@ void main(void)
             int  cRow = int(layerIdx) / gridSide;
             PREC vec2 cTileUV  = fract(vec2(WorldPos.x, -WorldPos.y) / atlasCementWorldUnitsPerTile);
             PREC vec2 cAtlasUV = (vec2(float(cCol), float(cRow)) + cTileUV) / float(gridSide);
-            texColor = texture(tex3, cAtlasUV);
+            PREC vec4 cementColor = texture(tex3, cAtlasUV);
+            if (isTransition && u_useTransitionMask != 0) {
+                // Transition quad: blend terrain base with cement using procedural mask.
+                // maskId from bits 29:24, localUV = cTileUV (tile-local [0,1]^2).
+                int  maskId   = int((cementWord >> 24u) & 0x3Fu);
+                PREC float maskAlpha = texture(u_transitionMaskArray,
+                                               vec3(cTileUV, float(maskId))).r;
+                texColor = mix(texColor, cementColor, maskAlpha);
+            } else {
+                // Solid cement quad — full replacement (original behavior).
+                texColor = cementColor;
+            }
         }
     }
     PREC float waterFlag = smoothstep(0.35, 0.45, rgb2hsv(texColor.rgb).x);

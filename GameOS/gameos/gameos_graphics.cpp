@@ -3707,6 +3707,8 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
     extern int    gos_terrain_indirect_getCementAtlasGridSide();
     extern bool   gos_terrain_indirect_isCementAtlasReady();
     extern float  gos_terrain_indirect_getWorldUnitsPerVertex();
+    extern GLuint gos_terrain_indirect_getTransitionMaskArrayGL();
+    extern bool   gos_terrain_indirect_isTransitionMaskReady();
 
     GLint savedTex0Binding = 0;
     glActiveTexture(GL_TEXTURE0);
@@ -3775,6 +3777,24 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
         } else {
             if (locUCA   >= 0) glUniform1i(locUCA,   0);
         }
+    }
+
+    // ---- Bind transition mask array at unit 4 (Stage B) --------------------
+    GLint  savedTex4Binding2D     = 0;
+    GLuint savedTex4Binding2DArr  = 0;
+    const bool transitionMaskReady = gos_terrain_indirect_isTransitionMaskReady();
+    if (transitionMaskReady) {
+        glActiveTexture(GL_TEXTURE4);
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &savedTex4Binding2D);
+        { GLint q = 0; glGetIntegerv(GL_TEXTURE_BINDING_2D_ARRAY, &q); savedTex4Binding2DArr = (GLuint)q; }
+        glBindTexture(GL_TEXTURE_2D_ARRAY, gos_terrain_indirect_getTransitionMaskArrayGL());
+        glActiveTexture(GL_TEXTURE0);
+    }
+    {
+        const GLint locTMArr = glGetUniformLocation(prog, "u_transitionMaskArray");
+        const GLint locUseTM = glGetUniformLocation(prog, "u_useTransitionMask");
+        if (locTMArr >= 0) glUniform1i(locTMArr, 4);
+        if (locUseTM >= 0) glUniform1i(locUseTM, transitionMaskReady ? 1 : 0);
     }
 
     // ---- SSBO bindings + indirect buffer -----------------------------------
@@ -3904,14 +3924,23 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
     }
     // Reset useCementAtlas so the M2 fast path doesn't inherit the cement flag.
     {
-        const GLint locUCA = glGetUniformLocation(prog, "useCementAtlas");
-        if (locUCA >= 0) glUniform1i(locUCA, 0);
+        const GLint locUCA  = glGetUniformLocation(prog, "useCementAtlas");
+        const GLint locUseTM = glGetUniformLocation(prog, "u_useTransitionMask");
+        if (locUCA  >= 0) glUniform1i(locUCA,  0);
+        if (locUseTM >= 0) glUniform1i(locUseTM, 0);
     }
     // Restore unit 3 (texture binding + sampler).
     if (cementAtlasReady) {
         glActiveTexture(GL_TEXTURE3);
         glBindSampler(3, savedTex3Sampler);
         glBindTexture(GL_TEXTURE_2D, (GLuint)savedTex3Binding);
+        glActiveTexture(GL_TEXTURE0);
+    }
+    // Restore unit 4 (transition mask array).
+    if (transitionMaskReady) {
+        glActiveTexture(GL_TEXTURE4);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, savedTex4Binding2DArr);
+        glBindTexture(GL_TEXTURE_2D, (GLuint)savedTex4Binding2D);
         glActiveTexture(GL_TEXTURE0);
     }
 
@@ -4004,6 +4033,8 @@ bool gos_terrain_bridge_drawMaskSolid(uint32_t solidMaskSSBO,
     extern int    gos_terrain_indirect_getCementAtlasGridSide();
     extern bool   gos_terrain_indirect_isCementAtlasReady();
     extern float  gos_terrain_indirect_getWorldUnitsPerVertex();
+    extern GLuint gos_terrain_indirect_getTransitionMaskArrayGL();
+    extern bool   gos_terrain_indirect_isTransitionMaskReady();
 
     // ---- Depth + color state -----------------------------------------------
     // Stage 1b dual-run soak: suppress all framebuffer writes so the mask draw
@@ -4073,6 +4104,24 @@ bool gos_terrain_bridge_drawMaskSolid(uint32_t solidMaskSSBO,
         }
     }
 
+    // ---- Bind transition mask array at unit 4 (Stage B) --------------------
+    GLint  savedTex4Binding2D_b    = 0;
+    GLuint savedTex4Binding2DArr_b = 0;
+    const bool transitionMaskReady2 = gos_terrain_indirect_isTransitionMaskReady();
+    if (transitionMaskReady2) {
+        glActiveTexture(GL_TEXTURE4);
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &savedTex4Binding2D_b);
+        { GLint q = 0; glGetIntegerv(GL_TEXTURE_BINDING_2D_ARRAY, &q); savedTex4Binding2DArr_b = (GLuint)q; }
+        glBindTexture(GL_TEXTURE_2D_ARRAY, gos_terrain_indirect_getTransitionMaskArrayGL());
+        glActiveTexture(GL_TEXTURE0);
+    }
+    {
+        const GLint locTMArr = glGetUniformLocation(prog, "u_transitionMaskArray");
+        const GLint locUseTM = glGetUniformLocation(prog, "u_useTransitionMask");
+        if (locTMArr >= 0) glUniform1i(locTMArr, 4);
+        if (locUseTM >= 0) glUniform1i(locUseTM, transitionMaskReady2 ? 1 : 0);
+    }
+
     // ---- SSBO bindings -----------------------------------------------------
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 17, (GLuint)solidMaskSSBO);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 19, (GLuint)recipeSSBO);
@@ -4107,16 +4156,24 @@ bool gos_terrain_bridge_drawMaskSolid(uint32_t solidMaskSSBO,
 
     // Reset useAtlasColormap on this program so re-entry doesn't inherit atlas mode.
     {
-        const GLint locUAC = glGetUniformLocation(prog, "useAtlasColormap");
-        if (locUAC >= 0) glUniform1i(locUAC, 0);
-        const GLint locUCA = glGetUniformLocation(prog, "useCementAtlas");
-        if (locUCA >= 0) glUniform1i(locUCA, 0);
+        const GLint locUAC  = glGetUniformLocation(prog, "useAtlasColormap");
+        const GLint locUCA  = glGetUniformLocation(prog, "useCementAtlas");
+        const GLint locUseTM = glGetUniformLocation(prog, "u_useTransitionMask");
+        if (locUAC  >= 0) glUniform1i(locUAC,  0);
+        if (locUCA  >= 0) glUniform1i(locUCA,  0);
+        if (locUseTM >= 0) glUniform1i(locUseTM, 0);
     }
 
     if (cementReady) {
         glActiveTexture(GL_TEXTURE3);
         glBindSampler(3, savedTex3Sampler);
         glBindTexture(GL_TEXTURE_2D, (GLuint)savedTex3Binding);
+        glActiveTexture(GL_TEXTURE0);
+    }
+    if (transitionMaskReady2) {
+        glActiveTexture(GL_TEXTURE4);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, savedTex4Binding2DArr_b);
+        glBindTexture(GL_TEXTURE_2D, (GLuint)savedTex4Binding2D_b);
         glActiveTexture(GL_TEXTURE0);
     }
     glBindSampler(0, savedSampler);

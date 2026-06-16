@@ -19,10 +19,13 @@ uniform int   u_pathTint;  // MC2_SHADER_PATH_TINT: 1 = solid signature colour (
 
 // Step 5c: cement catalog atlas (legacy tex3). Concrete tiles sample this instead
 // of the colormap. Same UV math as gos_terrain.frag.
-uniform sampler2D u_cementAtlas;
-uniform int       u_useCement;
-uniform int       u_cementGridSide;
-uniform float     u_cementWUPT;   // world units per cement tile (= 128)
+uniform sampler2D  u_cementAtlas;
+uniform int        u_useCement;
+uniform int        u_cementGridSide;
+uniform float      u_cementWUPT;   // world units per cement tile (= 128)
+// Stage B: transition mask array (14 layers R8, unit 11).
+uniform sampler2DArray u_transitionMaskArray;
+uniform int            u_useTransitionMask;
 uniform float u_skirtDepth;  // Phase 6: >0 when drawing a skirt strip
 uniform int   u_forceColor;  // Phase 7.5: 1 = neon debug palette; 0 = colormap
 
@@ -345,26 +348,30 @@ void main() {
               + texture(u_colormap, uv + vec2(-CMAP_R2, -CMAP_R2)).rgb;
     base /= 9.0;
 
-    // Step 5c: cement catalog override. Pure-cement tiles (validity bit set)
-    // sample the cement atlas instead of the colormap (legacy gos_terrain.frag).
+    // Step 5c / Stage B: cement catalog override.
+    // cw bit layout: bit31=VALID, bit30=IS_TRANSITION, bits29:24=maskId, bits15:0=layerIdx.
     bool cementHit = false;
     int  ctX = clamp(int(floor((v_worldPos.x + u_halfMap) / 128.0)), 0, u_mapSide - 1);
     int  ctY = clamp(int(floor((u_halfMap - v_worldPos.y) / 128.0)), 0, u_mapSide - 1);
     uint cw  = cementWordsF[ctX + ctY * u_mapSide];
     if (u_useCement != 0 && (cw & 0x80000000u) != 0u) {
-        // CEMENT-DIFFUSE-COLOR: sample the real cement DIFFUSE atlas (u_cementAtlas).
-        // Was sampling matNormalArray[MAT_LAYER_PAINTED_CONC] (a NORMAL map) as
-        // colour -> flat dark bluish slab. Port the atlas-UV reconstruction from
-        // gos_terrain.frag: atlas index from the cement word (cw & 0xFFFFu),
-        // grid cell + fract world tile UV via u_cementWUPT (world units per tile).
-        uint cLayerIdx = cw & 0xFFFFu;
+        uint cLayerIdx    = cw & 0xFFFFu;
+        bool isTransition = (cw & 0x40000000u) != 0u;
         int  cGridSide = u_cementGridSide;
         if (cGridSide < 1) cGridSide = 1;
         int  cCol = int(cLayerIdx) % cGridSide;
         int  cRow = int(cLayerIdx) / cGridSide;
         vec2 cTileUV  = fract(vec2(v_worldPos.x, -v_worldPos.y) / u_cementWUPT);
         vec2 cAtlasUV = (vec2(float(cCol), float(cRow)) + cTileUV) / float(cGridSide);
-        base = texture(u_cementAtlas, cAtlasUV).rgb;
+        vec3 cementColor = texture(u_cementAtlas, cAtlasUV).rgb;
+        if (isTransition && u_useTransitionMask != 0) {
+            int  maskId   = int((cw >> 24u) & 0x3Fu);
+            float maskAlpha = texture(u_transitionMaskArray,
+                                      vec3(cTileUV, float(maskId))).r;
+            base = mix(base, cementColor, maskAlpha);
+        } else {
+            base = cementColor;
+        }
         cementHit = true;
     }
 

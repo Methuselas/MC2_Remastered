@@ -132,6 +132,12 @@ static GLint    s_locUseCement      = -1;
 static GLint    s_locCementGridSide = -1;
 static GLint    s_locCementWUPT     = -1;
 static constexpr GLint kChunkTexUnitCement = 3;  // matches legacy tex3
+// Stage B: transition mask array (GL_TEXTURE_2D_ARRAY, unit 11).
+extern GLuint gos_terrain_indirect_getTransitionMaskArrayGL();
+extern bool   gos_terrain_indirect_isTransitionMaskReady();
+static GLint s_locTransitionMaskArray = -1;
+static GLint s_locUseTransitionMask   = -1;
+static constexpr GLint kChunkTexUnitTransitionMask = 11;
 extern void  gos_GetTerrainMatNormalBoost(float*, float*, float*, float*);
 extern void  gos_GetTerrainClassGrass(float*, float*, float*, float*);
 extern void  gos_GetTerrainClassDirt(float*, float*, float*, float*);
@@ -409,6 +415,8 @@ void gos_TerrainLodChunk_Init()
             s_locUseCement      = glGetUniformLocation(s_terrainProgram, "u_useCement");
             s_locCementGridSide = glGetUniformLocation(s_terrainProgram, "u_cementGridSide");
             s_locCementWUPT     = glGetUniformLocation(s_terrainProgram, "u_cementWUPT");
+            s_locTransitionMaskArray = glGetUniformLocation(s_terrainProgram, "u_transitionMaskArray");
+            s_locUseTransitionMask   = glGetUniformLocation(s_terrainProgram, "u_useTransitionMask");
             printf("[TerrainLodChunk] shader loaded prog=%u "
                    "locs: originX=%d originY=%d mapSide=%d halfMap=%d mvp=%d lodStep=%d skirtDepth=%d forceColor=%d\n",
                    (unsigned)s_terrainProgram,
@@ -720,6 +728,19 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
                 glBindTexture(GL_TEXTURE_2D, (GLuint)gos_terrain_indirect_getCementAtlasGLTex());
                 glActiveTexture(GL_TEXTURE0);
             }
+        }
+    }
+
+    // Stage B: transition mask array at unit 11.
+    {
+        const bool tmReady = gos_terrain_indirect_isTransitionMaskReady();
+        if (s_locUseTransitionMask >= 0)
+            glUniform1i(s_locUseTransitionMask, tmReady ? 1 : 0);
+        if (tmReady && s_locTransitionMaskArray >= 0) {
+            glUniform1i(s_locTransitionMaskArray, kChunkTexUnitTransitionMask);
+            glActiveTexture(GL_TEXTURE0 + kChunkTexUnitTransitionMask);
+            glBindTexture(GL_TEXTURE_2D_ARRAY, gos_terrain_indirect_getTransitionMaskArrayGL());
+            glActiveTexture(GL_TEXTURE0);
         }
     }
 

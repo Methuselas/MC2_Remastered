@@ -777,6 +777,66 @@ static uint16_t g_cementLayerIndexByNodeIdx[MC_MAXTEXTURES];
 // 0xFFFF = "not cement / not in atlas".
 static uint16_t g_cementLayerIndexBySlot[MC_MAX_TERRAIN_TXMS];
 
+// Stage B — cement transitions in recipe.
+static constexpr uint32_t kCementTransitionBit = 0x40000000u;  // IS_TRANSITION in cementWord
+static constexpr uint32_t kCementMaskIdShift    = 24u;         // bits 29:24 = maskId
+static constexpr uint32_t kCementMaskIdMask     = 0x3Fu;       // 6 bits (14 shapes used)
+static constexpr int      kTransitionMaskLayers = 14;
+static constexpr int      kTransitionMaskSize   = 256;
+
+static GLuint g_transitionMaskArrayGL = 0;
+static bool   g_transitionMaskReady   = false;
+
+// binNumber = (c0?8:0)|(c1?4:0)|(c2?2:0)|(c3?1:0); 0 and 15 are degenerate.
+// maskId = binNumber - 1 (0..13).
+static int deriveMaskIdFromCorners(bool c0, bool c1, bool c2, bool c3) {
+    const uint32_t bn = (c0 ? 8u : 0u) | (c1 ? 4u : 0u) | (c2 ? 2u : 0u) | (c3 ? 1u : 0u);
+    if (bn == 0u || bn == 15u) return -1;
+    return (int)(bn - 1u);
+}
+
+// Build 14-layer R8 GL_TEXTURE_2D_ARRAY procedurally (bilinear weights + smoothstep).
+// Called once at end of BuildCementCatalogAtlas().
+static void BuildTransitionMaskArray() {
+    const int N = kTransitionMaskLayers;
+    const int S = kTransitionMaskSize;
+    std::vector<uint8_t> buf((size_t)N * S * S, 0u);
+    for (int k = 0; k < N; ++k) {
+        const uint32_t bn = (uint32_t)(k + 1);
+        const bool c0 = (bn & 8u) != 0u;
+        const bool c1 = (bn & 4u) != 0u;
+        const bool c2 = (bn & 2u) != 0u;
+        const bool c3 = (bn & 1u) != 0u;
+        uint8_t* layer = &buf[(size_t)k * S * S];
+        for (int py = 0; py < S; ++py) {
+            for (int px = 0; px < S; ++px) {
+                const float u  = (float(px) + 0.5f) / float(S);
+                const float v  = (float(py) + 0.5f) / float(S);
+                const float w0 = (1.f - u) * (1.f - v);  // corner 0: UV(0,0)
+                const float w1 =        u  * (1.f - v);  // corner 1: UV(1,0)
+                const float w2 =        u  *        v;   // corner 2: UV(1,1)
+                const float w3 = (1.f - u) *        v;   // corner 3: UV(0,1)
+                float cov = (c0 ? w0 : 0.f) + (c1 ? w1 : 0.f)
+                          + (c2 ? w2 : 0.f) + (c3 ? w3 : 0.f);
+                cov = cov * cov * (3.f - 2.f * cov);  // smoothstep sharpening
+                layer[py * S + px] = (uint8_t)(std::min(cov, 1.f) * 255.f + 0.5f);
+            }
+        }
+    }
+    if (g_transitionMaskArrayGL == 0) glGenTextures(1, &g_transitionMaskArrayGL);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, g_transitionMaskArrayGL);
+    glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_R8, S, S, N, 0, GL_RED, GL_UNSIGNED_BYTE, buf.data());
+    glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+    g_transitionMaskReady = true;
+    printf("[CEMENT_ATLAS v1] event=transition_mask_array_built layers=%d size=%dx%d\n", N, S, S);
+    fflush(stdout);
+}
+
 // ---------------------------------------------------------------------------
 // PopulateRecipeCementWords — bake cementWord into recipe._wp3 for every slot.
 // Must be called AFTER BuildCementCatalogAtlas() because g_cementLayerIndexBySlot
@@ -790,7 +850,12 @@ static void PopulateRecipeCementWords() {
     const size_t N = g_denseRecipes.size();
     constexpr uint32_t kCementLayerValidBit = 0x80000000u;
 
-    long cementQuadCount = 0;
+    // Per-vertex terrain type array for corner lookup in transition handling.
+    PostcompVertexPtr blocks = Terrain::mapData->getBlocks();
+    auto* tt = Terrain::terrainTextures;
+
+    long cementQuadCount    = 0;
+    long transitionQuadCount = 0;
     // Step 5c: also collect a full per-vn cement-word array for the terrain LOD
     // chunk path (indexed vn = mx + my*mapSide, matching its heightfield SSBO).
     std::vector<uint32_t> chunkCementWords((size_t)mapSide * (size_t)mapSide, 0u);
@@ -806,8 +871,39 @@ static void PopulateRecipeCementWords() {
             if (slot < (DWORD)MC_MAX_TERRAIN_TXMS) {
                 const uint16_t idx = g_cementLayerIndexBySlot[slot];
                 if (idx != 0xFFFFu) {
+                    // Solid cement quad — existing path, unchanged.
                     cementWord = kCementLayerValidBit | ((uint32_t)idx & 0xFFFFu);
                     ++cementQuadCount;
+                } else if (blocks && tt
+                           && tt->isCement((DWORD)slot)
+                           && tt->isAlpha((DWORD)slot)) {
+                    // Transition quad: read per-vertex terrain types from PostcompVertex.
+                    // v0=(my,mx) v1=(my,mx+1) v2=(my+1,mx+1) v3=(my+1,mx) — matches
+                    // mapdata.cpp setTexture() corner ordering and createTransition() packing.
+                    auto cemLayerForVertex = [&](long row, long col) -> uint16_t {
+                        const size_t vi = (size_t)row * (size_t)mapSide + (size_t)col;
+                        const DWORD  vt = blocks[vi].terrainType;
+                        return (vt < (DWORD)MC_MAX_TERRAIN_TXMS)
+                               ? g_cementLayerIndexBySlot[vt] : 0xFFFFu;
+                    };
+                    const uint16_t l0 = cemLayerForVertex(my,     mx);
+                    const uint16_t l1 = cemLayerForVertex(my,     mx + 1);
+                    const uint16_t l2 = cemLayerForVertex(my + 1, mx + 1);
+                    const uint16_t l3 = cemLayerForVertex(my + 1, mx);
+                    const bool c0 = (l0 != 0xFFFFu);
+                    const bool c1 = (l1 != 0xFFFFu);
+                    const bool c2 = (l2 != 0xFFFFu);
+                    const bool c3 = (l3 != 0xFFFFu);
+                    const int maskId = deriveMaskIdFromCorners(c0, c1, c2, c3);
+                    // Cement atlas layer from first cement corner.
+                    const uint16_t cementLayerIdx = c0 ? l0 : (c1 ? l1 : (c2 ? l2 : l3));
+                    if (maskId >= 0 && cementLayerIdx != 0xFFFFu) {
+                        cementWord = kCementLayerValidBit
+                                   | kCementTransitionBit
+                                   | ((uint32_t)(maskId & (int)kCementMaskIdMask) << kCementMaskIdShift)
+                                   | ((uint32_t)cementLayerIdx & 0xFFFFu);
+                        ++transitionQuadCount;
+                    }
                 }
             }
         }
@@ -819,8 +915,8 @@ static void PopulateRecipeCementWords() {
     // Push to the chunk renderer (no-op if its SSBO/Init has not run yet).
     gos_TerrainLodChunk_UploadCementWordsFull(
         chunkCementWords.data(), (int)chunkCementWords.size(), (int)mapSide);
-    printf("[CEMENT_ATLAS v1] event=cement_words_baked cement_quads=%ld total_vn=%zu\n",
-           cementQuadCount, N);
+    printf("[CEMENT_ATLAS v1] event=cement_words_baked cement_solid=%ld cement_transition=%ld total_vn=%zu\n",
+           cementQuadCount, transitionQuadCount, N);
     fflush(stdout);
 }
 
@@ -1187,6 +1283,9 @@ void BuildCementCatalogAtlas() {
         }
         fflush(stdout);
     }
+
+    // Stage B: build procedural 14-layer transition mask array alongside the atlas.
+    BuildTransitionMaskArray();
 }
 
 }  // anonymous namespace (atlas helpers)
@@ -1202,6 +1301,9 @@ GLuint gos_terrain_indirect_getCementAtlasGLTex()    { return g_cementAtlasGLTex
 int    gos_terrain_indirect_getCementAtlasGridSide() { return g_cementAtlasGridSide; }
 bool   gos_terrain_indirect_isCementAtlasReady()     { return g_cementLayerMapReady && g_cementAtlasGLTex != 0; }
 float  gos_terrain_indirect_getWorldUnitsPerVertex() { return Terrain::worldUnitsPerVertex; }
+
+GLuint gos_terrain_indirect_getTransitionMaskArrayGL() { return g_transitionMaskArrayGL; }
+bool   gos_terrain_indirect_isTransitionMaskReady()    { return g_transitionMaskReady && g_transitionMaskArrayGL != 0; }
 
 // ---------------------------------------------------------------------------
 // Stage 2 public API
@@ -4383,11 +4485,19 @@ void RebuildDecalStaticVBOIfDirty() {
 unsigned int GetDecalStaticVBO_GL() { return g_decalStaticVBO_GL; }
 int          GetDecalVertCount()    { return g_decalVertCount; }
 
+// Kill switch: MC2_TERRAIN_LEGACY_OVERLAY=1 restores the old pre-baked decal VBO path.
+// Default (unset / 0) = Stage-B recipe path; DrawDecalStatic becomes a no-op.
+static bool s_legacyOverlayForced = []() -> bool {
+    const char* v = getenv("MC2_TERRAIN_LEGACY_OVERLAY");
+    return v && v[0] == '1' && v[1] == '\0';
+}();
+
 // Mirror DrawMineStatic. Lazy rebuild-if-dirty on first armed draw, single
 // bridge dispatch, NO clear (static buffer persists). Returns true on a
 // successful zero-emit frame (mission has no cement overlay) — the M2d gate-
 // off is still the point.
 bool DrawDecalStatic() {
+    if (!s_legacyOverlayForced) return true;  // Stage B: recipe handles transitions
     RebuildDecalStaticVBOIfDirty();
     if (g_decalVertCount <= 0 || g_decalDrawRanges.empty()) {
         return true;  // no cement overlay this mission — successful no-op
