@@ -901,6 +901,16 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         }
     }
 
+    // Terrain pixels are now on screen. Mark terrain drawn so the terrain-gated
+    // post-process passes (runScreenShadow / runCloudShadow / runShoreline /
+    // runGodRays) actually run. The chunk path is the default-on production
+    // terrain draw (8z cutover); the legacy markTerrainDrawn() sites
+    // (gameos_graphics.cpp tess draw + gos_terrain_patch_stream.cpp) do NOT
+    // fire under this path, so sceneHasTerrain_ would otherwise stay false and
+    // all four passes silently skip (root cause of the dead cloud-shadow pass).
+    if (gosPostProcess* pp = getGosPostProcess())
+        pp->markTerrainDrawn();
+
     // Restore GL state.
     glDisableVertexAttribArray(0);
     glDisableVertexAttribArray(1);
