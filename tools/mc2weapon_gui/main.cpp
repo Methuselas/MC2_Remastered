@@ -26,7 +26,25 @@
 #include "backends/imgui_impl_sdl2.h"
 #include "backends/imgui_impl_opengl3.h"
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 namespace {
+
+// Directory containing this exe (for defaults relative to the install, not cwd).
+std::string exeDir() {
+#ifdef _WIN32
+    char buf[2048];
+    DWORD n = GetModuleFileNameA(NULL, buf, (DWORD)sizeof buf);
+    if (n == 0 || n >= sizeof buf) return ".";
+    std::string p(buf, n);
+    size_t s = p.find_last_of("\\/");
+    return s == std::string::npos ? std::string(".") : p.substr(0, s);
+#else
+    return ".";
+#endif
+}
 
 const char* kDefaultCompbasCandidates[] = {
     "data/objects/compbas.csv",
@@ -480,6 +498,17 @@ int main(int argc, char** argv) {
     if (!mc2w::loadEffects(efp, app.fx, err)) { std::fprintf(stderr, "load effects: %s\n", err.c_str()); return 2; }
     app.basePath = cbp;
     setBuf(app.loadPath, sizeof app.loadPath, cbp);
+    // Default the mods dir + deploy target to the INSTALL's mods folder, derived
+    // from the exe location (<install>/tools/mc2weapon/exe -> <install>/mods), so
+    // it's correct regardless of the working directory. Bundled with releases at
+    // <release>/tools/mc2weapon/, so this resolves to <release>/mods.
+    {
+        std::string ms = (std::filesystem::path(exeDir()) / ".." / ".." / "mods")
+                             .lexically_normal().string();
+        setBuf(app.modsDir, sizeof app.modsDir, ms.c_str());
+        setBuf(app.modRoot, sizeof app.modRoot, ms.c_str());
+        std::printf("mc2weapon_gui: default mods dir = %s\n", app.modsDir);
+    }
     std::printf("mc2weapon_gui: %zu components, %zu FX from %s / %s\n",
                 app.cb.rows.size(), app.fx.size(), cbp, efp);
 
