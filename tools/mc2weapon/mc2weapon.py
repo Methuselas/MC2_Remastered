@@ -352,23 +352,47 @@ def find_mods(mods_dir):
     return out
 
 
+def _read_mod_type(modjson):
+    try:
+        with open(modjson, encoding="utf-8") as f:
+            return json.load(f).get("type", "")
+    except Exception:
+        return ""
+
+
 def cmd_list_mods(args):
-    mods = find_mods(args.mods_dir)
+    md = args.mods_dir
+    if not os.path.isdir(md):
+        print(f"(no such mods dir: {md})")
+        return
+    rows = []  # (name, hasWeapons, count, type)
+    for name in sorted(os.listdir(md)):
+        d = os.path.join(md, name)
+        if not os.path.isdir(d) or name.startswith("."):
+            continue
+        cb = os.path.join(d, "data", "objects", "compbas.csv")
+        if os.path.isfile(cb):
+            try:
+                comps, _, _ = load_compbas(cb)
+                n = sum(1 for c in comps if is_weapon(c))
+            except SystemExit:
+                n = 0
+            rows.append((name, True, n, ""))
+        else:
+            rows.append((name, False, 0, _read_mod_type(os.path.join(d, "mod.json"))))
+    rows.sort(key=lambda r: (not r[1], r[0]))
     if args.json:
-        print(json.dumps(mods, indent=2))
+        print(json.dumps([{"id": r[0], "hasWeapons": r[1], "weapons": r[2],
+                           "type": r[3]} for r in rows], indent=2))
         return
-    if not mods:
-        print(f"(no mods with data/objects/compbas.csv under {args.mods_dir})")
-        return
-    for m in mods:
-        cb = os.path.join(args.mods_dir, m, "data", "objects", "compbas.csv")
-        try:
-            comps, _, _ = load_compbas(cb)
-            n = sum(1 for c in comps if is_weapon(c))
-        except SystemExit:
-            n = "?"
-        print(f"  {m:<28} {n} weapon(s)  ({cb})")
-    print(f"\n{len(mods)} mod(s). Load one with: --compbas {args.mods_dir}/<id>/data/objects/compbas.csv")
+    for name, has, n, typ in rows:
+        if has:
+            print(f"  {name:<28} {n} weapon(s)")
+        else:
+            print(f"  {name:<28} -- {typ or 'no compbas'}, no weapons of its own")
+    wc = sum(1 for r in rows if r[1])
+    print(f"\n{len(rows)} mod(s), {wc} define weapons. Load a weapon mod with --from-mod <id>. "
+          f"Campaign/dependency mods reuse base or a dependency's weapons (e.g. Omnitech).")
 
 
 def cmd_list_fx(args):

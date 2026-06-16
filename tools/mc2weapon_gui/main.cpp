@@ -15,6 +15,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -75,6 +77,31 @@ void helpMarker(const char* desc) {
     }
 }
 
+// One scanned mod: whether it defines weapons (has compbas), its count, and its
+// mod.json "type" (campaign / dependency / ...) for the ones that don't.
+struct ModInfo {
+    std::string name;
+    bool        hasWeapons = false;
+    int         weapons = 0;
+    std::string type;
+};
+
+// Crude mod.json "type" extractor (no JSON dep): find "type":"<x>".
+std::string readModType(const std::string& path) {
+    std::ifstream in(path);
+    if (!in.is_open()) return "";
+    std::string s((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    size_t p = s.find("\"type\"");
+    if (p == std::string::npos) return "";
+    p = s.find(':', p);
+    if (p == std::string::npos) return "";
+    size_t q1 = s.find('"', p);
+    if (q1 == std::string::npos) return "";
+    size_t q2 = s.find('"', q1 + 1);
+    if (q2 == std::string::npos) return "";
+    return s.substr(q1 + 1, q2 - q1 - 1);
+}
+
 struct App {
     mc2w::Compbas cb;
     std::vector<mc2w::FxEntry> fx;
@@ -98,7 +125,7 @@ struct App {
     std::string basePath;                // original auto-detected compbas (Stock)
     char loadPath[256] = "";             // explicit compbas path to load
     char modsDir[256] = "mods";          // dir scanned for loadable mods
-    std::vector<std::string> foundMods;  // mod ids under modsDir with a compbas.csv
+    std::vector<ModInfo> foundMods;      // all mods under modsDir (weapon + others)
     std::string status;
 };
 
@@ -213,19 +240,41 @@ bool reloadCompbas(App& a, const std::string& path) {
     return true;
 }
 
-// Scan modsDir for subfolders that carry a data/objects/compbas.csv.
+// Scan modsDir for ALL mod subfolders; flag which define weapons (a compbas.csv)
+// and, for the rest, record their mod.json type so the user sees WHY they're not
+// editable here (campaign / dependency mods reuse base or a dependency's weapons).
 void scanMods(App& a) {
     a.foundMods.clear();
     std::error_code ec;
     if (!fs::is_directory(a.modsDir, ec)) { a.status = std::string("no such mods dir: ") + a.modsDir; return; }
     for (const auto& e : fs::directory_iterator(a.modsDir, ec)) {
         if (!e.is_directory()) continue;
-        fs::path cb = e.path() / "data" / "objects" / "compbas.csv";
+        ModInfo mi;
+        mi.name = e.path().filename().string();
+        if (!mi.name.empty() && mi.name[0] == '.') continue;  // .import_reports etc.
         std::error_code ec2;
-        if (fs::exists(cb, ec2)) a.foundMods.push_back(e.path().filename().string());
+        fs::path cb = e.path() / "data" / "objects" / "compbas.csv";
+        if (fs::exists(cb, ec2)) {
+            mc2w::Compbas tmp;
+            std::string err;
+            if (tmp.load(cb.string(), err)) {
+                mi.hasWeapons = true;
+                for (int i = 0; i < (int)tmp.rows.size(); ++i)
+                    if (mc2w::isWeaponType(tmp.cell(i, tmp.idx.type))) ++mi.weapons;
+            }
+        }
+        mi.type = readModType((e.path() / "mod.json").string());
+        a.foundMods.push_back(mi);
     }
-    std::sort(a.foundMods.begin(), a.foundMods.end());
-    a.status = "found " + std::to_string(a.foundMods.size()) + " mod(s) with weapons in " + a.modsDir;
+    std::sort(a.foundMods.begin(), a.foundMods.end(),
+              [](const ModInfo& x, const ModInfo& y) {
+                  if (x.hasWeapons != y.hasWeapons) return x.hasWeapons > y.hasWeapons;
+                  return x.name < y.name;
+              });
+    int wc = 0;
+    for (const auto& m : a.foundMods) if (m.hasWeapons) ++wc;
+    a.status = "found " + std::to_string(a.foundMods.size()) + " mod(s), " +
+               std::to_string(wc) + " with weapons, in " + a.modsDir;
 }
 
 void drawList(App& a) {
@@ -249,18 +298,27 @@ void drawList(App& a) {
         ImGui::SameLine();
         if (ImGui::Button("Scan")) scanMods(a);
         if (!a.foundMods.empty()) {
-            ImGui::TextDisabled("click a mod to load + deploy back to it:");
-            ImGui::BeginChild("mods", ImVec2(0, 90), true);
+            ImGui::TextDisabled("click a weapon mod to load + deploy back to it:");
+            ImGui::BeginChild("mods", ImVec2(0, 120), true);
             for (const auto& m : a.foundMods) {
-                if (ImGui::Selectable((m + "##mod").c_str())) {
-                    std::string p = std::string(a.modsDir) + "/" + m + "/data/objects/compbas.csv";
-                    if (reloadCompbas(a, p)) {
-                        setBuf(a.modId, sizeof a.modId, m.c_str());
-                        setBuf(a.modRoot, sizeof a.modRoot, a.modsDir);  // Save -> same mod
+                if (m.hasWeapons) {
+                    char lbl[200];
+                    std::snprintf(lbl, sizeof lbl, "%s  (%d weapons)##mod", m.name.c_str(), m.weapons);
+                    if (ImGui::Selectable(lbl)) {
+                        std::string p = std::string(a.modsDir) + "/" + m.name + "/data/objects/compbas.csv";
+                        if (reloadCompbas(a, p)) {
+                            setBuf(a.modId, sizeof a.modId, m.name.c_str());
+                            setBuf(a.modRoot, sizeof a.modRoot, a.modsDir);  // Save -> same mod
+                        }
                     }
+                } else {
+                    // campaign / dependency mods define no weapons of their own
+                    ImGui::TextDisabled("%s  (%s - no weapons)", m.name.c_str(),
+                                        m.type.empty() ? "no compbas" : m.type.c_str());
                 }
             }
             ImGui::EndChild();
+            ImGui::TextDisabled("dimmed = campaign/dependency mod; its weapons come from base or a dependency (e.g. Omnitech).");
         }
         ImGui::Separator();
     }
