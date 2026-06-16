@@ -23,6 +23,15 @@ matching condition is met. Read them all before touching anything.
 - **Shaders deploy in lockstep with exe.** Any slice touching a shader MUST redeploy the shader tree, not just mc2.exe. See `memory/shader_exe_deploy_lockstep.md`.
 - **Git:** NEVER push to `alariq/mc2` origin. All work is local.
 
+## GPU resource invariants (S2 NVIDIA hardening — enforced)
+
+Four rules. No exceptions for new code.
+
+- **New SSBO range bind:** use `gpuBindSsboRange(index, buf, offset, size, "tag")`. Raw `glBindBufferRange(GL_SHADER_STORAGE_BUFFER, ...)` is forbidden in new code. Enforces offset alignment (`GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT`) that NVIDIA rejects and AMD silently tolerates. `gos_gpu_sync.h`.
+- **New render pass entry:** call `render_contract::assertPassContract(PassIdentity::X, "hint")` after the pass's fixed-function state block. Aborts under `MC2_RENDER_CONTRACT_ASSERT=1` on depth-func / blend mismatches. `mclib/render_contract.h`.
+- **New compute/copy/readback edge:** add a named row to `barrierBitsFor` in `gos_gpu_sync.cpp`, then call `gpuSyncBarrier(producer, consumer, "tag")`. No raw `glMemoryBarrier` in new code. If the edge is already in the table, just call the wrapper. If it's not, add the edge first — unmapped edges fall back to `GL_ALL_BARRIER_BITS` with a loud stderr warning.
+- **New shader variant:** must compile with `[SHADER WARN]` clean (zero lines logged from `glGetShaderInfoLog` / `glGetProgramInfoLog` on success). NVIDIA emits warnings for unused uniforms, precision mismatches, and deprecated builtins that AMD logs nothing for. Treat them as errors. `GameOS/gameos/utils/shader_builder.cpp`.
+
 ## Shaders / GL
 
 - **Shader `#version`:** Never in shader files. Pass `"#version 430\n"` as prefix to `makeProgram()` (4.3 for SSBO / std430).
