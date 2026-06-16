@@ -380,6 +380,31 @@ bool WeaponBolt::isVisible (void)
 }
 
 //---------------------------------------------------------------------------
+// PPC de-curve + direct-fire speed (env-gated, default-off). "Direct-fire" =
+// non-arc, non-beam bolts (PPC / autocannon / gauss). MC2_DIRECT_FIRE_STRAIGHT=1
+// makes them fly STRAIGHT (no per-frame target re-track) to a one-time aim that
+// is LED by the target's velocity over the bolt's flight time, so a pre-rolled
+// hit on a moving target still lands. LRM (arcEffect) + beams keep tracking.
+// MC2_PROJECTILE_SPEED_MULT scales direct-fire travel speed (default 1.0).
+static bool directFireStraightEnabled (void)
+{
+	static const bool s = []{
+		const char* v = getenv("MC2_DIRECT_FIRE_STRAIGHT");
+		return v && v[0] == '1' && v[1] == '\0';
+	}();
+	return s;
+}
+static float directFireSpeedMult (void)
+{
+	static const float s = []{
+		const char* v = getenv("MC2_PROJECTILE_SPEED_MULT");
+		float m = v ? (float)atof(v) : 1.0f;
+		return (m > 0.0f && m <= 10.0f) ? m : 1.0f;
+	}();
+	return s;
+}
+
+//---------------------------------------------------------------------------
 long WeaponBolt::update (void)
 {
 	ZoneScopedN("GameLogic.Projectile.Update");
@@ -416,24 +441,38 @@ long WeaponBolt::update (void)
 		actualPosition.z = laserPosition.y;
 
 		GameObjectPtr target = ObjectManager->getByWatchID(targetWID);
-			
+
 		Stuff::Vector3D targetPos;
 		targetPos.Zero();
 		if (target)
 		{
+			Stuff::Vector3D aim;
 			if (!target->isMech())
-			{
-				setTargetPosition(target->getPositionFromHS(targetHotSpot));
-			}
+				aim = target->getPositionFromHS(targetHotSpot);
+			else if (targetHotSpot)
+				aim = target->appearance->getHitNodeLeft();
 			else
+				aim = target->appearance->getHitNodeRight();
+
+			// PPC de-curve: direct-fire bolts do NOT re-track (see flight loop),
+			// so lead the aim ONCE here by the target's velocity over the bolt's
+			// estimated flight time. getVelocity()==0 for non-movers -> no lead
+			// (straight shot at the fire-time position). Env-gated, default-off.
+			WeaponBoltTypePtr bt = (WeaponBoltTypePtr)getObjectType();
+			if (directFireStraightEnabled() && !bt->arcEffect && !bt->isBeam)
 			{
-				if (targetHotSpot)
-					setTargetPosition(target->appearance->getHitNodeLeft());
-				else
-					setTargetPosition(target->appearance->getHitNodeRight()); 
+				Stuff::Vector3D toTgt;
+				toTgt.Subtract(aim, ownerPosition);
+				float dist = toTgt.GetLength();
+				float spd  = bt->velocity * directFireSpeedMult();
+				float tof  = (spd > 0.01f) ? (dist / spd) : 0.0f;
+				Stuff::Vector3D lead;
+				lead.Multiply(target->getVelocity(), tof);
+				aim.Add(aim, lead);
 			}
+			setTargetPosition(aim);
 		}
-			
+
 		if (targetPosition)
 		{
 			targetPos = *targetPosition;
@@ -563,7 +602,12 @@ long WeaponBolt::update (void)
 		
 	Stuff::Vector3D targetPos;
 	targetPos.Zero();
-	if (target && (!hitTarget || ((WeaponBoltTypePtr)getObjectType())->isBeam))
+	// PPC de-curve: direct-fire (non-arc, non-beam) bolts do NOT re-track -- they
+	// fly straight to the lead-aim locked at spawn. LRM/arc + beams keep tracking.
+	WeaponBoltTypePtr boltType = (WeaponBoltTypePtr)getObjectType();
+	const bool directStraight =
+		directFireStraightEnabled() && !boltType->arcEffect && !boltType->isBeam;
+	if (target && (!hitTarget || boltType->isBeam) && !directStraight)
 	{
 		if (!target->isMech())
 		{
@@ -574,7 +618,7 @@ long WeaponBolt::update (void)
 			if (targetHotSpot)
 				setTargetPosition(target->appearance->getHitNodeLeft());
 			else
-				setTargetPosition(target->appearance->getHitNodeRight()); 
+				setTargetPosition(target->appearance->getHitNodeRight());
 		}
 	}
 		
@@ -587,22 +631,11 @@ long WeaponBolt::update (void)
 	float velMag = ((WeaponBoltTypePtr)getObjectType())->velocity;
 	velMag *= frameLength;
 
-	// PPC-SPEED step 2 (incremental, env-gated, default-off): scale DIRECT-FIRE
-	// bolt travel speed (PPC/AC/gauss) for a snappier feel. Excludes arcEffect
-	// bolts (LRM / indirect lobbed) -- their parabola depends on the tuned
-	// velocity. MC2_PROJECTILE_SPEED_MULT default 1.0 (=stock); clamped (0,10].
-	// Pure flight-speed change: hit/miss is pre-rolled (mech.cpp) and damage is
-	// applied on proximity regardless of speed, so this does not alter outcomes.
-	// (The curving/de-track is a separate change -- the full PPC fix.)
+	// PPC-SPEED: scale DIRECT-FIRE (non-arc) bolt travel speed (PPC/AC/gauss).
+	// MC2_PROJECTILE_SPEED_MULT default 1.0 (=stock); clamped (0,10]. Hit/miss is
+	// pre-rolled and damage applies on proximity, so speed doesn't alter outcomes.
 	if (!((WeaponBoltTypePtr)getObjectType())->arcEffect)
-	{
-		static const float s_dfSpeedMult = []{
-			const char* v = getenv("MC2_PROJECTILE_SPEED_MULT");
-			float m = v ? (float)atof(v) : 1.0f;
-			return (m > 0.0f && m <= 10.0f) ? m : 1.0f;
-		}();
-		velMag *= s_dfSpeedMult;
-	}
+		velMag *= directFireSpeedMult();
 
 	laserVelocity.Subtract(targetPos,ownerPosition);
 	float distance = laserVelocity.x * laserVelocity.x + laserVelocity.y * laserVelocity.y;

@@ -610,6 +610,9 @@ def main():
                             # Direct-fire projectile speed multiplier (PPC/AC/gauss);
                             # default 1.0 (stock). Allowlisted so the fixture can A/B it.
                             "MC2_PROJECTILE_SPEED_MULT",
+                            # Direct-fire de-curve (straight flight + spawn lead),
+                            # default-off. Allowlisted for the fixture A/B.
+                            "MC2_DIRECT_FIRE_STRAIGHT",
                             # Active mod id — drives model_override + anim_override
                             # registry mod-merge (mods/<id>/...). Allowlisted so mod
                             # smokes actually load the mod; without it Popen drops it.
