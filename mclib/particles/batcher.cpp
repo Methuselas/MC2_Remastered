@@ -79,9 +79,10 @@ void initialize_env() {
     const char* v = std::getenv("MC2_GPU_PARTICLES");
     const char* vl = std::getenv("MC2_GPU_PARTICLES_LOG");
     g_log_value = (vl && vl[0] == '1');
-    // B3c-2: default-ON. Absent env var → enabled. Explicit "0" → disabled.
+    // REVERTED TO CPU/MLR DEFAULT (user request: GPU FX looked broken). Absent
+    // env var → DISABLED (legacy CPU billboards). Opt back into GPU with "1".
     if (!v) {
-        g_enabled_value = true;   // default ON
+        g_enabled_value = false;  // default OFF -> legacy CPU/MLR FX
     } else if (v[0] == '1') {
         g_enabled_value = true;
     } else {
@@ -134,13 +135,13 @@ bool Batcher::is_oracle_render_enabled() {
     static bool s_val  = false;
     if (!s_init) {
         const char* v = std::getenv("MC2_VFX_ORACLE_RENDER");
-        // Default-ON pattern (same as MC2_GPU_PARTICLES B3c-2).
-        // Absent or any value except "0" = enabled.
-        s_val  = !(v && v[0] == '0');
+        // REVERTED TO CPU/MLR DEFAULT (user request). Absent = OFF (legacy MLR
+        // cards); opt into GPU with "1".
+        s_val  = (v && v[0] == '1');
         s_init = true;
         std::fprintf(stderr, "[VFX_ROUTE v1] oracle_render=%s reason=%s\n",
             s_val ? "on" : "off",
-            (v && v[0] == '0') ? "kill_switch" : "default_on");
+            s_val ? "opt_in" : "default_off");
         std::fflush(stderr);
     }
     return s_val;
@@ -191,9 +192,9 @@ bool Batcher::is_oracle_tube_enabled() {
     static bool s_val  = false;
     if (!s_init) {
         const char* v = std::getenv("MC2_VFX_ORACLE_TUBE");
-        s_val  = !(v && v[0] == '0');   // DEFAULT-ON; only =0 disables (legacy MLR)
+        s_val  = (v && v[0] == '1');    // REVERTED: DEFAULT-OFF (legacy MLR tubes); =1 opts into GPU
         s_init = true;
-        std::fprintf(stderr, "[VFX_ORACLE_TUBE v1] gate=%s (default-on; =0 disables)\n",
+        std::fprintf(stderr, "[VFX_ORACLE_TUBE v1] gate=%s (default-off; =1 enables GPU)\n",
                      s_val ? "on" : "off");
         std::fflush(stderr);
     }
