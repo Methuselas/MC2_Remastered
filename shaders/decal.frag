@@ -60,13 +60,10 @@ void main()
         c.rgb *= mix(0.88, 1.0, smoothstep(0.3, 0.7, cloudNoise));
     }
 
-    // Static + dynamic shadow maps.
-    {
-        vec3  lightDir3 = normalize(terrainLightDir.xyz);
-        float shadow    = calcShadow(WorldPos, vec3(0.0, 0.0, 1.0), lightDir3, 8);
-        shadow = min(shadow, calcDynamicShadow(WorldPos, vec3(0.0, 0.0, 1.0), lightDir3, 4));
-        c.rgb *= shadow;
-    }
+    // SHADOW-DECAL-DOUBLE-FIX: decals are alpha-blended over base terrain that already
+    // applied min(staticShadow,dynShadow) (gos_terrain.frag). Re-multiplying sun shadow
+    // here squares it on the partial-alpha fringe (shadow^2). Sun shadow now applied ONCE
+    // on the base terrain; let it show through the blend. (Any cloud-shadow term above stays.)
 
     // Fog.
     if (fog_color.x > 0.0 || fog_color.y > 0.0 || fog_color.z > 0.0 || fog_color.w > 0.0)

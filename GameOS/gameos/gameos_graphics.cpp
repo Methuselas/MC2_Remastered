@@ -2026,7 +2026,7 @@ class gosRenderer {
         glsl_program* shadow_static_prop_prog_ = nullptr;  // shadow_static_prop.vert + shadow_instanced.frag
         bool shadow_mode_ = false;
         bool shadow_prepass_active_ = false;
-        float terrain_shadow_softness_ = 0.9f;  // tuned for gradient-adaptive PCF + 4096² maps
+        float terrain_shadow_softness_ = mc2ShadowCsmSoftness();  // env-overridable via MC2_SHADOW_CSM_SOFTNESS
         bool terrain_draw_enabled_ = true;
         GLint shadow_prepass_prev_fbo_ = 0;
         GLint shadow_prepass_prev_viewport_[4] = {0};
@@ -2092,6 +2092,7 @@ class gosRenderer {
             GLint dynamicLightSpaceMatrix = -1, enableDynamicShadows = -1, dynamicShadowMap = -1;
             // Item 1 CSM: array-variant dynamic shadow uniforms (only valid when ON)
             GLint dynamicShadowArray = -1, dynamicCascadeMatrices = -1, dynamicCsmCount = -1;
+            GLint dynamicCascadeTexelWorld = -1, csmDepthSpan = -1;  // Stage 3 texel bias
             GLint time = -1;
             GLint mapHalfExtent = -1;
             GLint terrainMaterialProfile = -1;  // C1 tactical (mclib/terrain.h)
@@ -2132,6 +2133,7 @@ class gosRenderer {
             GLint dynamicLightSpaceMatrix = -1, enableDynamicShadows = -1, dynamicShadowMap = -1;
             // Item 1 CSM: array-variant dynamic shadow uniforms (only valid when ON)
             GLint dynamicShadowArray = -1, dynamicCascadeMatrices = -1, dynamicCsmCount = -1;
+            GLint dynamicCascadeTexelWorld = -1, csmDepthSpan = -1;  // Stage 3 texel bias
             GLint time = -1, mapHalfExtent = -1;
             GLint ssboRecordBase = -1;
             GLint terrainMaterialProfile = -1;  // C1 tactical (mclib/terrain.h)
@@ -2209,6 +2211,8 @@ class gosRenderer {
             terrainLocs_.dynamicShadowArray = glGetUniformLocation(shp, "dynamicShadowArray");
             terrainLocs_.dynamicCascadeMatrices = glGetUniformLocation(shp, "dynamicCascadeMatrices");
             terrainLocs_.dynamicCsmCount = glGetUniformLocation(shp, "dynamicCsmCount");
+            terrainLocs_.dynamicCascadeTexelWorld = glGetUniformLocation(shp, "dynamicCascadeTexelWorld");
+            terrainLocs_.csmDepthSpan = glGetUniformLocation(shp, "csmDepthSpan");
             terrainLocs_.time = glGetUniformLocation(shp, "time");
             terrainLocs_.mapHalfExtent = glGetUniformLocation(shp, "mapHalfExtent");
             terrainLocs_.terrainMaterialProfile = glGetUniformLocation(shp, "g_terrainMaterialProfile");
@@ -2268,6 +2272,8 @@ class gosRenderer {
             thinTerrainLocs_.dynamicShadowArray      = glGetUniformLocation(shp, "dynamicShadowArray");
             thinTerrainLocs_.dynamicCascadeMatrices  = glGetUniformLocation(shp, "dynamicCascadeMatrices");
             thinTerrainLocs_.dynamicCsmCount         = glGetUniformLocation(shp, "dynamicCsmCount");
+            thinTerrainLocs_.dynamicCascadeTexelWorld = glGetUniformLocation(shp, "dynamicCascadeTexelWorld");
+            thinTerrainLocs_.csmDepthSpan            = glGetUniformLocation(shp, "csmDepthSpan");
             thinTerrainLocs_.time               = glGetUniformLocation(shp, "time");
             thinTerrainLocs_.mapHalfExtent      = glGetUniformLocation(shp, "mapHalfExtent");
             thinTerrainLocs_.ssboRecordBase     = glGetUniformLocation(shp, "ssboRecordBase");
@@ -6068,6 +6074,13 @@ static void uploadDynamicShadowUniforms(const Locs& tl, gosPostProcess* pp, GLin
                                pp->getDynamicCascadeMatrices());
         if (tl.dynamicCsmCount >= 0)
             glUniform1i(tl.dynamicCsmCount, pp->getDynamicShadowCascadeCount());
+        // Stage 3: per-cascade texel-scaled depth bias inputs.
+        if (tl.dynamicCascadeTexelWorld >= 0)
+            glUniform1fv(tl.dynamicCascadeTexelWorld,
+                         pp->getDynamicShadowCascadeCount(),
+                         pp->getDynamicCascadeTexelWorld());
+        if (tl.csmDepthSpan >= 0)
+            glUniform1f(tl.csmDepthSpan, pp->getCsmDepthSpan());
         if (tl.enableDynamicShadows >= 0) glUniform1i(tl.enableDynamicShadows, 1);
         if (tl.dynamicShadowArray >= 0) {
             glUniform1i(tl.dynamicShadowArray, texUnit);
@@ -8318,6 +8331,12 @@ void __stdcall gos_SetupObjectShadows(HGOSRENDERMATERIAL material)
 				                   pp->getDynamicCascadeMatrices());
 			loc = glGetUniformLocation(shp, "dynamicCsmCount");
 			if (loc >= 0) glUniform1i(loc, pp->getDynamicShadowCascadeCount());
+			// Stage 3: per-cascade texel-scaled depth bias inputs.
+			loc = glGetUniformLocation(shp, "dynamicCascadeTexelWorld");
+			if (loc >= 0) glUniform1fv(loc, pp->getDynamicShadowCascadeCount(),
+			                           pp->getDynamicCascadeTexelWorld());
+			loc = glGetUniformLocation(shp, "csmDepthSpan");
+			if (loc >= 0) glUniform1f(loc, pp->getCsmDepthSpan());
 			loc = glGetUniformLocation(shp, "dynamicShadowArray");
 			if (loc >= 0) {
 				glUniform1i(loc, kTerrainTexUnitDynamicShadow);
@@ -8481,14 +8500,8 @@ void __stdcall gos_SetWorldToClipGL(const Stuff::Matrix4D& mat)
 
     // [MVP_DIAG v1] S2.7 — log set_mvp entry. Throttled to frames
     // {1,5,30,120}. row0 is M[0..3] AFTER the column->row repack.
-    // MC2_MVP_DIAG_ALL=1: log every 20th frame too (camera-move diagnostic --
-    // pairs with the coalesce_upload object-MVP log to see if the object batcher
-    // MVP goes stale on camera move while this terrain MVP updates).
     ++g_mvpDiagFrame;
-    static int s_mvpDiagAll = -1;
-    if (s_mvpDiagAll < 0) { const char* e = getenv("MC2_MVP_DIAG_ALL"); s_mvpDiagAll = (e && e[0] == '1') ? 1 : 0; }
-    if ((s_mvpDiagAll && (g_mvpDiagFrame % 20 == 0)) ||
-        g_mvpDiagFrame == 1 || g_mvpDiagFrame == 5 ||
+    if (g_mvpDiagFrame == 1 || g_mvpDiagFrame == 5 ||
         g_mvpDiagFrame == 30 || g_mvpDiagFrame == 120) {
         fprintf(stderr,
                 "[MVP_DIAG v1] event=set_mvp frame=%ld renderer=%p row0=[%g %g %g %g]\n",
@@ -8590,9 +8603,11 @@ void gos_EndDynamicShadowPass() {
     if (g_gos_renderer) g_gos_renderer->endDynamicShadowPass();
 }
 void gos_BuildDynamicLightMatrix(float sx, float sy, float sz,
-                                  const float camFitCornersMC2[8][3]) {
+                                  const float camFitCornersMC2[8][3],
+                                  const float shadowCenterXYZ[3], bool shadowCenterValid) {
     gosPostProcess* pp = getGosPostProcess();
-    if (pp) pp->buildDynamicLightMatrix(sx, sy, sz, camFitCornersMC2);
+    if (pp) pp->buildDynamicLightMatrix(sx, sy, sz, camFitCornersMC2,
+                                        shadowCenterXYZ, shadowCenterValid);
 }
 
 void gos_GetTerrainLightDir(float* x, float* y, float* z) {
@@ -8856,6 +8871,12 @@ static void setupOverlayShadowsForShp(GLuint shp)
                                    pp->getDynamicCascadeMatrices());
             loc = glGetUniformLocation(shp, "dynamicCsmCount");
             if (loc >= 0) glUniform1i(loc, pp->getDynamicShadowCascadeCount());
+            // Stage 3: per-cascade texel-scaled depth bias inputs.
+            loc = glGetUniformLocation(shp, "dynamicCascadeTexelWorld");
+            if (loc >= 0) glUniform1fv(loc, pp->getDynamicShadowCascadeCount(),
+                                       pp->getDynamicCascadeTexelWorld());
+            loc = glGetUniformLocation(shp, "csmDepthSpan");
+            if (loc >= 0) glUniform1f(loc, pp->getCsmDepthSpan());
             loc = glGetUniformLocation(shp, "dynamicShadowArray");
             if (loc >= 0) {
                 glUniform1i(loc, kTerrainTexUnitDynamicShadow);

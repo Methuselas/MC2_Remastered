@@ -17,7 +17,8 @@
 //
 // Struct layouts are LOCKSTEP with C++ counterparts (verified by grep at write-time):
 //   TerrainQuadRecipe       — gos_terrain_patch_stream.h:87-97  (144 B, alignas(16))
-//   TerrainQuadThinRecord   — gos_terrain_patch_stream.h:103-11 ( 32 B, alignas(16))
+//   TerrainQuadThinRecord   — gos_terrain_patch_stream.h:103-11 ( 96 B, alignas(16))
+//                             = uvec4 control + uvec4 + vec4 clipPos[4]
 //   GpuTerrainLightingOutput— gos_terrain_lighting.h:56-59      (  8 B, alignas(4))
 //
 // Terrain handle LUT (binding 2 — per-frame, uint[MC_MAXTEXTURES]):
@@ -65,7 +66,8 @@ struct TerrainQuadRecipe {
 };
 
 // ---------------------------------------------------------------------------
-// TerrainQuadThinRecord — lockstep with gos_terrain_patch_stream.h:103-111 (32 B)
+// TerrainQuadThinRecord — lockstep with gos_terrain_patch_stream.h:103-111 (96 B)
+//   = uvec4 control + uvec4 + vec4 clipPos[4]
 //
 //   uint recipeIdx;     // offset  0 — top-left vertexNum (= windowIdx entry)
 //   uint terrainHandle; // offset  4 — terrain texture slot

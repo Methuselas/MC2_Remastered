@@ -2334,13 +2334,16 @@ void gos_DrawShadowObjectBatchStatic(HGOSBUFFER vb, HGOSBUFFER ib,
 void gos_BeginDynamicShadowPass();
 void gos_EndDynamicShadowPass();
 void gos_BuildDynamicLightMatrix(float sunDirX, float sunDirY, float sunDirZ,
-                                  const float camFitCornersMC2[8][3]);
+                                  const float camFitCornersMC2[8][3],
+                                  const float shadowCenterXYZ[3], bool shadowCenterValid);
 
 // Item 1: Cascaded Shadow Maps gate (dynamic path). Default OFF => the legacy
 // single dynamic shadow map runs unchanged (byte-identical). See gos_postprocess.cpp.
 bool  mc2ShadowCsmEnabled();
 int   mc2ShadowCsmCount();
 float mc2ShadowCsmLambda();
+int   mc2ShadowMapSize();   // CSM-REDESIGN: env-tunable dynamic shadow map edge (texels)
+float mc2ShadowCsmSoftness();
 // Forward decl for F1 unified-projection API (Stuff::Matrix4D defined in mclib/stuff/matrix.hpp).
 namespace Stuff { class Matrix4D; }
 // F1 Stage A unified-projection production setter. Repackages column-major

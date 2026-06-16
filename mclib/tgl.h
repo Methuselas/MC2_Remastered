@@ -336,6 +336,9 @@ struct TG_HWLightsData {
     }
 };
 
+// LOCKSTEP with lighting.hglsl ObjectLights SSBO (1808B); int pad[3] absorbs the GLSL ivec4 numLights tail — do not insert fields before the tail without updating both sides.
+static_assert(sizeof(TG_HWLightsData) == 1808, "TG_HWLightsData must be 1808 B — lockstep with lighting.hglsl ObjectLights");
+
 typedef TG_HWLightsData* TG_HWLightsDataPtr;
 
 

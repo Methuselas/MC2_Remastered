@@ -8,6 +8,7 @@
 // (Task 3), so gl_InstanceID is relative to the bound range start.
 layout(location=0) in vec3 a_position;
 
+// LOCKSTEP: must match C++ GpuStaticPropInstance (gos_static_prop_batcher.h, 112B, static_assert'd) AND static_prop.vert. Keep full 112-byte layout even though only modelMatrix is read here.
 struct Instance {
     mat4  modelMatrix;
     uint  typeID;

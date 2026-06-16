@@ -74,6 +74,8 @@ uniform mat4 lightSpaceMatrix;
 uniform sampler2DArrayShadow dynamicShadowArray;
 uniform mat4 dynamicCascadeMatrices[MC2_SHADOW_CSM_MAX];
 uniform int  dynamicCsmCount;
+uniform float dynamicCascadeTexelWorld[MC2_SHADOW_CSM_MAX]; // 2*cRad/mapSize, world units
+uniform float csmDepthSpan;          // (farP-nearP) of shared CSM ortho z-row
 #else
 uniform sampler2DShadow dynamicShadowMap;
 uniform mat4 dynamicLightSpaceMatrix;
@@ -141,7 +143,10 @@ float sampleDynamicShadow(vec3 worldPos)
         if (projCoords.z > 1.0 || projCoords.z < 0.0) continue;
         if (projCoords.xy != clamp(projCoords.xy, 0.0, 1.0)) continue;
 
-        float bias = 0.003;
+        // Stage 3: per-cascade texel-scaled depth bias (screen pass has no NdotL,
+        // so use a fixed base + the same additive texel term as shadow.hglsl).
+        float texelBias = 1.5 * dynamicCascadeTexelWorld[c] / max(csmDepthSpan, 1.0);
+        float bias = 0.0012 + texelBias;
         float currentDepth = projCoords.z - bias;
         float angle = 6.2831853 * fract(sin(dot(worldPos.xz, vec2(12.9898, 78.233))) * 43758.5453);
         float ca = cos(angle), sa = sin(angle);

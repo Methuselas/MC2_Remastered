@@ -83,6 +83,8 @@ static GLint    s_locEnableDynShadows   = -1;
 static GLint    s_locDynShadowArray     = -1;
 static GLint    s_locDynCascadeMats     = -1;
 static GLint    s_locDynCsmCount        = -1;
+static GLint    s_locDynCascadeTexel    = -1;  // Stage 3 texel bias
+static GLint    s_locCsmDepthSpan       = -1;
 // Mirror gameos_graphics.cpp's file-static terrain shadow texture units (9/10).
 static constexpr GLint kChunkTexUnitStaticShadow  = 9;
 static constexpr GLint kChunkTexUnitDynamicShadow = 10;
@@ -382,6 +384,8 @@ void gos_TerrainLodChunk_Init()
             s_locDynShadowArray   = glGetUniformLocation(s_terrainProgram, "dynamicShadowArray");
             s_locDynCascadeMats   = glGetUniformLocation(s_terrainProgram, "dynamicCascadeMatrices");
             s_locDynCsmCount      = glGetUniformLocation(s_terrainProgram, "dynamicCsmCount");
+            s_locDynCascadeTexel  = glGetUniformLocation(s_terrainProgram, "dynamicCascadeTexelWorld");
+            s_locCsmDepthSpan     = glGetUniformLocation(s_terrainProgram, "csmDepthSpan");
             s_locMatNormalArray   = glGetUniformLocation(s_terrainProgram, "matNormalArray");
             s_locClassGrass     = glGetUniformLocation(s_terrainProgram, "terrainClassGrass");
             s_locClassDirt      = glGetUniformLocation(s_terrainProgram, "terrainClassDirt");
@@ -650,6 +654,12 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
                         glUniformMatrix4fv(s_locDynCascadeMats, pp->getDynamicShadowCascadeCount(),
                                            GL_FALSE, pp->getDynamicCascadeMatrices());
                     if (s_locDynCsmCount >= 0) glUniform1i(s_locDynCsmCount, pp->getDynamicShadowCascadeCount());
+                    // Stage 3: per-cascade texel-scaled depth bias inputs.
+                    if (s_locDynCascadeTexel >= 0)
+                        glUniform1fv(s_locDynCascadeTexel, pp->getDynamicShadowCascadeCount(),
+                                     pp->getDynamicCascadeTexelWorld());
+                    if (s_locCsmDepthSpan >= 0)
+                        glUniform1f(s_locCsmDepthSpan, pp->getCsmDepthSpan());
                     if (s_locDynShadowArray >= 0) {
                         glUniform1i(s_locDynShadowArray, kChunkTexUnitDynamicShadow);
                         glActiveTexture(GL_TEXTURE0 + kChunkTexUnitDynamicShadow);

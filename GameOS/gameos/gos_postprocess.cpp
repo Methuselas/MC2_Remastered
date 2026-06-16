@@ -24,7 +24,7 @@
 // === Item 1: Cascaded Shadow Maps gate (dynamic shadow path) ==============
 // MC2_SHADOW_CSM  : master gate, DEFAULT OFF. OFF => legacy single dynamic
 //                   map path is byte-identical (none of the CSM code runs).
-// MC2_SHADOW_CSM_COUNT  : cascade count, default 2, clamp [1,3].
+// MC2_SHADOW_CSM_COUNT  : cascade count, default 3, clamp [1,3].
 // MC2_SHADOW_CSM_LAMBDA : log/uniform split blend, default 0.5, clamp [0,1].
 bool mc2ShadowCsmEnabled()
 {
@@ -39,7 +39,7 @@ int mc2ShadowCsmCount()
 {
     static const int s_n = []() {
         const char* v = getenv("MC2_SHADOW_CSM_COUNT");
-        int n = (v && v[0]) ? atoi(v) : 2;
+        int n = (v && v[0]) ? atoi(v) : 3;
         if (n < 1) n = 1;
         if (n > 3) n = 3;
         return n;
@@ -57,6 +57,55 @@ float mc2ShadowCsmLambda()
         return l;
     }();
     return s_l;
+}
+
+// MC2_SHADOW_MAP_SIZE : dynamic shadow map edge in texels. Default 8192.
+// Clamp {2048,4096,8192}. VRAM (CSM 3 layers depth24): 4096=~201MB, 8192=~805MB.
+int mc2ShadowMapSize()
+{
+    static const int s_sz = []() {
+        const char* v = getenv("MC2_SHADOW_MAP_SIZE");
+        int s = (v && v[0]) ? atoi(v) : 8192;
+        if (s <= 2048) return 2048;
+        if (s <= 4096) return 4096;
+        return 8192;
+    }();
+    return s_sz;
+}
+
+// CSM-REDESIGN: fixed near/mid cascade radii (WU), texel-snapped, frame-stable
+// (kills frustum-refit popping). Last cascade is full-map (map-centered).
+float mc2ShadowCsmR0()
+{
+    static const float s = []() {
+        const char* v = getenv("MC2_SHADOW_CSM_R0");
+        float r = (v && v[0]) ? (float)atof(v) : 1024.0f;
+        return (r < 64.0f) ? 64.0f : r;
+    }();
+    return s;
+}
+float mc2ShadowCsmR1()
+{
+    static const float s = []() {
+        const char* v = getenv("MC2_SHADOW_CSM_R1");
+        float r = (v && v[0]) ? (float)atof(v) : 4096.0f;
+        return (r < 128.0f) ? 128.0f : r;
+    }();
+    return s;
+}
+
+// MC2_SHADOW_CSM_SOFTNESS : PCF penumbra radius in texels (pre-adaptiveScale).
+// Default 0.9. Lower = sharper mech/terrain shadows; higher = softer. Clamp [0.1, 6.0].
+float mc2ShadowCsmSoftness()
+{
+    static const float s_s = []() {
+        const char* v = getenv("MC2_SHADOW_CSM_SOFTNESS");
+        float s = (v && v[0]) ? (float)atof(v) : 0.9f;
+        if (s < 0.1f) s = 0.1f;
+        if (s > 6.0f) s = 6.0f;
+        return s;
+    }();
+    return s_s;
 }
 
 namespace {
@@ -227,6 +276,8 @@ gosPostProcess::gosPostProcess()
     memset(staticLightSpaceMatrix_, 0, sizeof(staticLightSpaceMatrix_));
     memset(dynamicLightSpaceMatrix_, 0, sizeof(dynamicLightSpaceMatrix_));
     memset(dynamicCascadeMatrices_, 0, sizeof(dynamicCascadeMatrices_));
+    memset(dynamicCascadeTexelWorld_, 0, sizeof(dynamicCascadeTexelWorld_));
+    csmDepthSpan_ = 1.0f;
     memset(savedViewport_, 0, sizeof(savedViewport_));
     memset(inverseViewProj_, 0, sizeof(inverseViewProj_));
     memset(viewProj_, 0, sizeof(viewProj_));
@@ -1699,7 +1750,7 @@ void gosPostProcess::runScreenShadow()
                               (csmActive || dynShadowDepthTex_ != 0) ? 1 : 0);
     if (csmActive)
         screenShadowProg_->setInt("dynamicCsmCount", csmCount_);
-    screenShadowProg_->setFloat("shadowSoftness", 0.9f);  // match terrain default
+    screenShadowProg_->setFloat("shadowSoftness", mc2ShadowCsmSoftness());  // match terrain default
     screenShadowProg_->setInt("debugMode", screenShadowDebug_);
     float screenSz[2] = { (float)width_, (float)height_ };
     screenShadowProg_->setFloat2("screenSize", screenSz);
@@ -1717,6 +1768,11 @@ void gosPostProcess::runScreenShadow()
     if (csmActive) {
         loc = glGetUniformLocation(screenShadowProg_->shp_, "dynamicCascadeMatrices");
         if (loc >= 0) glUniformMatrix4fv(loc, csmCount_, GL_FALSE, dynamicCascadeMatrices_);
+        // Stage 3: per-cascade texel-scaled depth bias inputs.
+        loc = glGetUniformLocation(screenShadowProg_->shp_, "dynamicCascadeTexelWorld");
+        if (loc >= 0) glUniform1fv(loc, csmCount_, dynamicCascadeTexelWorld_);
+        loc = glGetUniformLocation(screenShadowProg_->shp_, "csmDepthSpan");
+        if (loc >= 0) glUniform1f(loc, csmDepthSpan_);
     } else {
         loc = glGetUniformLocation(screenShadowProg_->shp_, "dynamicLightSpaceMatrix");
         if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_FALSE, dynamicLightSpaceMatrix_);
@@ -3080,7 +3136,7 @@ void gosPostProcess::initDynamicShadows()
     // Dynamic shadow covers radius=1200 around frustum center, so at 2048²
     // each texel ≈ 1.17 world units — much bigger than a mech foot, hence blocky
     // mech shadow edges. 4096² → ~0.59 world units/texel (half the step).
-    dynShadowMapSize_ = 4096;
+    dynShadowMapSize_ = mc2ShadowMapSize();   // CSM-REDESIGN: env-tunable, default 8192
 
     glGenFramebuffers(1, &dynShadowFBO_);
     glBindFramebuffer(GL_FRAMEBUFFER, dynShadowFBO_);
@@ -3303,7 +3359,8 @@ void gosPostProcess::endDynamicShadowCascadePass()
 }
 
 void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float sunDirZ,
-                                              const float camFitCornersMC2[8][3])
+                                              const float camFitCornersMC2[8][3],
+                                              const float shadowCenterXYZ[3], bool shadowCenterValid)
 {
     if (!shadowsEnabled_ || !dynShadowFBO_) return;
 
@@ -3410,6 +3467,11 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
         const char* v = getenv("MC2_SHADOW_FOCUS_CENTER");
         return !(v && v[0] == '0');  // default ON; opt out with =0
     }();
+    // CSM-REDESIGN: MC2_SHADOW_CSM_FULLMAP_LAST and MC2_SHADOW_CSM_NEAR_MAX are
+    // RETIRED/IGNORED. The last cascade is always full-map+map-centered and the
+    // near/mid cascades use fixed radii (mc2ShadowCsmR0/R1), so the old per-frame
+    // catch-all flag and near-extent cap no longer apply. Unread envs are
+    // harmless (old launch scripts that still set them just have no effect).
     bool focusApplied = false;
     float focusWorld[3] = {0.0f, 0.0f, 0.0f};
     float focusDistUsed = 0.0f;
@@ -3444,43 +3506,87 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
         if (spreadA <= spreadB) { nearC = cA; farC = cB; nearSpread = spreadA; farSpread = spreadB; }
         else                    { nearC = cB; farC = cA; nearSpread = spreadB; farSpread = spreadA; }
 
-        // Per-corner ground-plane (z=0) intercept.
-        // For each near/far corner pair: t = -nz/(fz-nz), clamped to [0,1].
-        // ground = near + t*(far-near).  Average the 4 XY results.
-        float gx = 0.0f, gy = 0.0f;
-        int   groundHits = 0;
-        for (int c = 0; c < 4; ++c) {
-            const float* nC = camFitCornersMC2[nearBase2 + c];
-            const float* fC = camFitCornersMC2[farBase2  + c];
-            float dz = fC[2] - nC[2];
-            float t;
-            if (fabsf(dz) > 1e-3f) {
-                t = -nC[2] / dz;
-                if (t < 0.0f) t = 0.0f;
-                if (t > 1.0f) t = 1.0f;
-            } else {
-                // Nearly horizontal ray: use the far corner's XY (best proxy for
-                // where the camera is looking when not angled downward).
-                t = 1.0f;
+        // FOCUS SOURCE. Preferred: the screen-center ground point passed in by
+        // the caller (eye->screenToGroundPlaneApprox at resX/2,resY/2) = the
+        // TRUE look-at the cascade should radiate from. Same MC2 world space as
+        // camFitCornersMC2 (both invert worldToClipGL). No forward-cap needed:
+        // it is already the real look-at, not a frustum-corner reconstruction.
+        // FALLBACK (shadowCenterValid == false): the central view-axis z=0
+        // intercept reconstructed from frustum corners, with the R1 forward cap.
+        float t = 0.0f, d = 0.0f, cap = 0.0f;   // diag only
+        const char* focusSrc;
+        if (shadowCenterValid) {
+            focusSrc = "camtarget";
+            // Screen-center TERRAIN point: x=east, y=north, z=terrain elevation.
+            // Carry Z through so the cascade center sits at the real look-at
+            // height (not sea level). The light-space projection below now
+            // includes the rz/uz*z term, and the back-projection reconstructs
+            // the world center at this elevation (basis-consistent).
+            focusWorld[0] = shadowCenterXYZ[0];
+            focusWorld[1] = shadowCenterXYZ[1];
+            focusWorld[2] = shadowCenterXYZ[2];
+            focusApplied  = true;
+        } else {
+            focusSrc = "axis";
+            // CENTRAL VIEW-AXIS ground focus (replaces per-corner z=0 averaging).
+            // The per-corner average skewed forward when far corners rose above the
+            // horizon (per-corner t clamped to 1.0) and fell back to under-camera
+            // when no corner hit the ground. Instead intersect the CENTRAL view axis
+            // -- the ray through the frustum center (near-centroid -> far-centroid),
+            // i.e. the true screen-center look-at -- with z=0. This does not skew.
+            // nearC/farC are the 4-near and 4-far corner centroids (xyz) from above.
+            const float* nearCenter = nearC;
+            const float* farCenter  = farC;
+            float dzc = farCenter[2] - nearCenter[2];
+            if (fabsf(dzc) > 1e-3f) { t = -nearCenter[2] / dzc; }
+            else                    { t = 1.0f; }   // near-horizontal axis -> far center
+            if (t < 0.0f) t = 0.0f;                 // behind camera -> use near center
+            // allow t>1 (forward distance capped below via cascade-1 radius)
+            float fx_f = nearCenter[0] + t * (farCenter[0] - nearCenter[0]);
+            float fy_f = nearCenter[1] + t * (farCenter[1] - nearCenter[1]);
+            // Carry the intercept Z through (for a z=0 plane solve this is ~0,
+            // but keep the computed value so 4c/4d stay basis-consistent).
+            float fz_f = nearCenter[2] + t * (farCenter[2] - nearCenter[2]);
+
+            // ROBUST FORWARD CAP: never let the look-at sit beyond where cascade 1
+            // reaches. camGround = near-plane center XY (~ under/just-ahead of cam).
+            const float camGroundX = nearCenter[0];
+            const float camGroundY = nearCenter[1];
+            float ox = fx_f - camGroundX, oy = fy_f - camGroundY;
+            d   = sqrtf(ox*ox + oy*oy);
+            cap = mc2ShadowCsmR1();
+            if (d > cap && d > 1e-3f) {
+                float s = cap / d;
+                fx_f = camGroundX + ox * s;
+                fy_f = camGroundY + oy * s;
             }
-            gx += nC[0] + t * (fC[0] - nC[0]);
-            gy += nC[1] + t * (fC[1] - nC[1]);
-            ++groundHits;
+
+            focusWorld[0] = fx_f;
+            focusWorld[1] = fy_f;
+            focusWorld[2] = fz_f;   // intercept Z (~0 for the z=0 plane solve)
+            focusApplied  = true;   // central-axis always yields a usable focus
         }
-        if (groundHits > 0) {
-            focusWorld[0] = gx / (float)groundHits;
-            focusWorld[1] = gy / (float)groundHits;
-            focusWorld[2] = 0.0f;   // grounded on z=0 plane (sea level)
-            // Override light-space center with the ground focus point projection.
-            cxL = rx*focusWorld[0] + ry*focusWorld[1];   // rz*0 = 0
-            cyL = ux*focusWorld[0] + uy*focusWorld[1];   // uz*0 = 0
-            // focusDistUsed: log the XY distance from near-centroid to focus
-            // (diagnostic only -- this value no longer drives the centering).
-            float fdx = focusWorld[0]-nearC[0], fdy = focusWorld[1]-nearC[1];
-            focusDistUsed = sqrtf(fdx*fdx + fdy*fdy);
-            focusApplied = true;
+        // Override light-space center with the focus point projection. INCLUDE
+        // the Z term: focusWorld[2] is the terrain elevation (or z=0 plane in
+        // the axis fallback), so the projection must carry rz/uz*z to land the
+        // center at the real look-at height. Matches the full-3D frustum-corner
+        // projection (lx = rx*wx+ry*wy+rz*wz) above.
+        cxL = rx*focusWorld[0] + ry*focusWorld[1] + rz*focusWorld[2];
+        cyL = ux*focusWorld[0] + uy*focusWorld[1] + uz*focusWorld[2];
+        // focusDistUsed: XY distance from near-centroid to focus (diagnostic).
+        float fdx = focusWorld[0]-nearC[0], fdy = focusWorld[1]-nearC[1];
+        focusDistUsed = sqrtf(fdx*fdx + fdy*fdy);
+
+        // [CSM focus] diag: gate on existing CSM frustum-diag env, else a
+        // dedicated opt-in env. Cheap: only formats/prints when env is set.
+        static const bool s_focusDiag =
+            (getenv("MC2_SHADOW_FRUSTUM_DIAG") != nullptr) ||
+            (getenv("MC2_SHADOW_FOCUS_DIAG")   != nullptr);
+        if (s_focusDiag) {
+            printf("[CSM focus] src=%s fx=%.1f fy=%.1f fz=%.1f t=%.3f d=%.1f cap=%.1f\n",
+                   focusSrc, focusWorld[0], focusWorld[1], focusWorld[2], t, d, cap);
         }
-        (void)farC;  // used via farBase2 index above
+        (void)nearBase2; (void)farBase2;  // near/far identified via nearC/farC
     }
     float fitRadius = (halfLX > halfLY ? halfLX : halfLY);
     if (fitRadius < 64.0f) fitRadius = 64.0f;
@@ -3572,6 +3678,8 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
     // (GL_ZERO_TO_ONE), lockstep with buildStaticLightMatrix above and the
     // .xy-only sampler remap in shadow.hglsl / shadow_screen.frag.
     float nearP = 1.0f, farP = 2.0f * depthDist;
+    // Stage 3: single-source the CSM ortho depth span for the shaders' texel bias.
+    csmDepthSpan_ = farP - nearP;
     float ortho[16] = {
         1.0f/xyRadius, 0, 0, 0,
         0, 1.0f/xyRadius, 0, 0,
@@ -3613,110 +3721,41 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
     // along the view axis) into csmCount_ slices, blended log/uniform by lambda.
     // Beyond ~8000 the world-fixed STATIC map covers (min-combine in shaders).
     if (mc2ShadowCsmEnabled() && dynShadowArrayTex_) {
-        const int   N = csmCount_;
-        const float lambda = mc2ShadowCsmLambda();
+        const int N = csmCount_;
 
-        // Identify near/far frustum corner sets by spread (same detector the
-        // focus-center block uses). near = smaller spread.
-        float cA[3] = {0,0,0}, cB[3] = {0,0,0};
-        for (int c = 0; c < 4; ++c) { cA[0]+=camFitCornersMC2[c][0]; cA[1]+=camFitCornersMC2[c][1]; cA[2]+=camFitCornersMC2[c][2]; }
-        for (int c = 4; c < 8; ++c) { cB[0]+=camFitCornersMC2[c][0]; cB[1]+=camFitCornersMC2[c][1]; cB[2]+=camFitCornersMC2[c][2]; }
-        for (int k = 0; k < 3; ++k) { cA[k]*=0.25f; cB[k]*=0.25f; }
-        float spreadA = 0.0f, spreadB = 0.0f;
-        for (int c = 0; c < 4; ++c) { float dx=camFitCornersMC2[c][0]-cA[0],dy=camFitCornersMC2[c][1]-cA[1],dz=camFitCornersMC2[c][2]-cA[2]; float d=sqrtf(dx*dx+dy*dy+dz*dz); if(d>spreadA)spreadA=d; }
-        for (int c = 4; c < 8; ++c) { float dx=camFitCornersMC2[c][0]-cB[0],dy=camFitCornersMC2[c][1]-cB[1],dz=camFitCornersMC2[c][2]-cB[2]; float d=sqrtf(dx*dx+dy*dy+dz*dz); if(d>spreadB)spreadB=d; }
-        // nearIdx maps cascade fraction t to the corner pairs: corners 0..3 are
-        // one plane, 4..7 the other. We interpolate per-corner between the near
-        // plane corner and the far plane corner.
-        const int nearBase = (spreadA <= spreadB) ? 0 : 4;
-        const int farBase  = (spreadA <= spreadB) ? 4 : 0;
-
-        // Distance (light depth, along view axis = -f) span near->far, clamp far.
-        // light-depth coordinate = dot(world, -f) (increasing away from light).
-        auto lightDepth = [&](const float* w){ return -(fx*w[0] + fy*w[1] + fz*w[2]); };
-        float dNear = 0.0f, dFar = 0.0f;
-        for (int c = 0; c < 4; ++c) { dNear += lightDepth(camFitCornersMC2[nearBase+c]); dFar += lightDepth(camFitCornersMC2[farBase+c]); }
-        dNear *= 0.25f; dFar *= 0.25f;
-        if (dFar < dNear) { float t=dNear; dNear=dFar; dFar=t; }
-        const float kCsmFarCap = 8000.0f;     // static map owns beyond this
-        float spanFar = dFar - dNear;
-        if (spanFar > kCsmFarCap) spanFar = kCsmFarCap;
-        // Split fractions [0..1] over [dNear, dNear+spanFar].
-        float splitFrac[kMaxCsmCascades + 1];
-        splitFrac[0] = 0.0f;
-        for (int i = 1; i < N; ++i) {
-            float p = (float)i / (float)N;
-            float uniform = p;
-            float logr = (dNear > 1.0f) ? (dNear * powf((dNear + spanFar) / dNear, p) - dNear) / spanFar : p;
-            splitFrac[i] = lambda * logr + (1.0f - lambda) * uniform;
-        }
-        splitFrac[N] = 1.0f;
+        // CSM-REDESIGN: FIXED concentric cascade scheme. Near/mid cascades use
+        // FIXED world-unit radii (mc2ShadowCsmR0/R1) centered on the ground
+        // look-at focus -> no per-frame frustum-refit -> no popping. The LAST
+        // cascade is ALWAYS full-map and MAP-CENTERED so props anywhere on the
+        // map cast shadows even with the camera at a map edge. The old per-frame
+        // sub-frustum AABB fit + log/uniform split + s_csmFullMapLast +
+        // s_csmNearMax cap are retired (superseded by this fixed scheme).
+        //
+        // Shared ground look-at focus (reuse focusWorld = z=0 intercept computed
+        // by the focus block above; fall back to the snapped camera world XY).
+        const float gfx = focusApplied ? focusWorld[0] : camX;
+        const float gfy = focusApplied ? focusWorld[1] : camY;
+        // gfz: focus terrain elevation (camZ when no focus). camZ is the snapped
+        // light-space center back-projected to world, already in scope above.
+        const float gfz = focusApplied ? focusWorld[2] : camZ;
 
         for (int ci = 0; ci < N; ++ci) {
-            const float t0 = splitFrac[ci];
-            const float t1 = splitFrac[ci + 1];
-            // Sub-frustum corners: interpolate near->far corner by t0/t1.
-            float cMinLX=1e30f,cMaxLX=-1e30f,cMinLY=1e30f,cMaxLY=-1e30f;
-            for (int c = 0; c < 4; ++c) {
-                const float* nC = camFitCornersMC2[nearBase + c];
-                const float* fC = camFitCornersMC2[farBase  + c];
-                for (int e = 0; e < 2; ++e) {
-                    const float tt = (e == 0) ? t0 : t1;
-                    float w[3] = { nC[0]+(fC[0]-nC[0])*tt, nC[1]+(fC[1]-nC[1])*tt, nC[2]+(fC[2]-nC[2])*tt };
-                    if (w[2] < kSceneZFloor) continue;
-                    float lxc = rx*w[0]+ry*w[1]+rz*w[2];
-                    float lyc = ux*w[0]+uy*w[1]+uz*w[2];
-                    if (lxc<cMinLX)cMinLX=lxc; if (lxc>cMaxLX)cMaxLX=lxc;
-                    if (lyc<cMinLY)cMinLY=lyc; if (lyc>cMaxLY)cMaxLY=lyc;
-                }
+            float cCx, cCy, cHalf;
+            if (ci == N - 1) {
+                // Full-map, MAP-CENTERED. MC2 maps are center-origin -> world
+                // (0,0) projects to light-space (0,0). Always stable, covers
+                // edge props regardless of camera position.
+                cCx = 0.0f; cCy = 0.0f; cHalf = r;
+            } else {
+                const float fixedRadius = (ci == 0) ? mc2ShadowCsmR0() : mc2ShadowCsmR1();
+                // Project the terrain look-at point into light XY. INCLUDE the
+                // Z term (rz/uz*gfz): gfz is the terrain elevation, so the
+                // center lands at the real look-at height. SAME full-3D
+                // projection as the focus/cView path and the frustum-corner fit.
+                cCx = rx * gfx + ry * gfy + rz * gfz;
+                cCy = ux * gfx + uy * gfy + uz * gfz;
+                cHalf = fixedRadius;
             }
-            // Degenerate guard: fall back to the full light AABB.
-            if (cMinLX > cMaxLX || cMinLY > cMaxLY) {
-                cMinLX = minLX; cMaxLX = maxLX; cMinLY = minLY; cMaxLY = maxLY;
-            }
-            float cCx = 0.5f*(cMinLX+cMaxLX);
-            float cCy = 0.5f*(cMinLY+cMaxLY);
-            // SHADOW-FOCUS-CENTER-1 (CSM): apply the same ground-plane (z=0)
-            // intercept centering as the main shadow box, so each cascade is
-            // also centered on the visible terrain ahead, not on elevated
-            // sub-frustum centroids. Gate: same s_focusCenter knob.
-            // For the cascade we intersect each of the 4 near/far sub-frustum
-            // corner pairs (at t0 and t1 respectively) with z=0 and average.
-            if (s_focusCenter) {
-                float cgx = 0.0f, cgy = 0.0f;
-                int cgHits = 0;
-                for (int c = 0; c < 4; ++c) {
-                    const float* nCorner = camFitCornersMC2[nearBase + c];
-                    const float* fCorner = camFitCornersMC2[farBase  + c];
-                    // Sub-frustum near corner at t0, far at t1.
-                    float cnx = nCorner[0]+(fCorner[0]-nCorner[0])*t0;
-                    float cny = nCorner[1]+(fCorner[1]-nCorner[1])*t0;
-                    float cnz = nCorner[2]+(fCorner[2]-nCorner[2])*t0;
-                    float cfx = nCorner[0]+(fCorner[0]-nCorner[0])*t1;
-                    float cfy = nCorner[1]+(fCorner[1]-nCorner[1])*t1;
-                    float cfz = nCorner[2]+(fCorner[2]-nCorner[2])*t1;
-                    float dz2 = cfz - cnz;
-                    float t;
-                    if (fabsf(dz2) > 1e-3f) {
-                        t = -cnz / dz2;
-                        if (t < 0.0f) t = 0.0f;
-                        if (t > 1.0f) t = 1.0f;
-                    } else {
-                        t = 1.0f;  // nearly horizontal: use far end
-                    }
-                    cgx += cnx + t*(cfx - cnx);
-                    cgy += cny + t*(cfy - cny);
-                    ++cgHits;
-                }
-                if (cgHits > 0) {
-                    float gwx = cgx / (float)cgHits;
-                    float gwy = cgy / (float)cgHits;
-                    // Override cascade center with ground-plane focus.
-                    cCx = rx*gwx + ry*gwy;   // rz*0 = 0
-                    cCy = ux*gwx + uy*gwy;   // uz*0 = 0
-                }
-            }
-            float cHalf = 0.5f * fmaxf(cMaxLX-cMinLX, cMaxLY-cMinLY);
             if (cHalf < 64.0f) cHalf = 64.0f;
             if (cHalf > r)     cHalf = r;
             // Snap radius to pow2 + center to texel grid (anti-shimmer), same as legacy.
@@ -3724,6 +3763,7 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
             while (cRad < cHalf) cRad *= 2.0f;
             if (cRad > r) cRad = r;
             float cTexel = (2.0f * cRad) / (float)dynShadowMapSize_;
+            dynamicCascadeTexelWorld_[ci] = cTexel;
             cCx = floorf(cCx / cTexel) * cTexel;
             cCy = floorf(cCy / cTexel) * cTexel;
             // Back-project snapped light-space center to world (the cascade origin).

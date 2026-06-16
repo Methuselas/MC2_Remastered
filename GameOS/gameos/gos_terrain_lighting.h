@@ -9,6 +9,7 @@
 // Stage 3: consumer switch (GPU authoritative, CPU block gated off).
 
 #include <cstdint>
+#include <cstddef>   // offsetof (struct-layout static_asserts)
 #include <GL/glew.h>
 
 // Forward-declare TerrainQuad (full definition in mclib/quad.h:59).
@@ -44,6 +45,7 @@ struct alignas(16) GpuTerrainVertexInput {   // 32 B std430
     uint32_t flags;          // 4 B @ offset 28
 };
 static_assert(sizeof(GpuTerrainVertexInput) == 32, "GpuTerrainVertexInput must be 32 B std430");
+static_assert(offsetof(GpuTerrainVertexInput, normal) == 16, "normal vec3 must stay @16 — a field inserted before it breaks GLSL std430 lockstep");
 
 struct alignas(16) GpuTerrainLight {         // 48 B std430 (Stage 2 extended)
     float    position[3];    // 12 B @ offset 0
@@ -56,6 +58,7 @@ struct alignas(16) GpuTerrainLight {         // 48 B std430 (Stage 2 extended)
     float    _pad2;          // 4 B @ offset 44
 };
 static_assert(sizeof(GpuTerrainLight) == 48, "GpuTerrainLight must be 48 B std430");
+static_assert(offsetof(GpuTerrainLight, color) == 16, "color vec3 must stay @16 — a field inserted before it breaks GLSL std430 lockstep");
 
 struct alignas(4) GpuTerrainLightingOutput { //  8 B std430
     uint32_t lightRGB;       // packed BGRA per memory/mc2_argb_packing.md

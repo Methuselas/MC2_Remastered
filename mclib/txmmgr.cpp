@@ -2306,7 +2306,20 @@ void MC_TextureManager::renderLists (void)
 			}
 			float lx, ly, lz;
 			gos_GetTerrainLightDir(&lx, &ly, &lz);   // same accessor used by old shim
-			gos_BuildDynamicLightMatrix(-lx, -ly, -lz, cornersMC2);  // sign matches old shim
+			// Focus source = the camera ORBIT TARGET (getPosition), not a
+			// screen-center terrain raycast. The orbit target is yaw-invariant
+			// MC2-world east/north (.x=east WU, .y=north WU; yaw is applied only
+			// to the eye direction, never to position) and moves linearly with
+			// panning, so the cascade no longer skews with the horizon or with
+			// facing. Z = cameraShiftZ (terrain elevation at the target, already
+			// clamped up to waterElevation), giving the correct water-clamped
+			// look-at height in the same MC2 world space as cornersMC2
+			// (x=east,y=north,z=elev). Always valid -- no raycast fallback needed.
+			Stuff::Vector3D camTgt = eye->getPosition();        // MC2-world orbit target (east,north)
+			float shadowCenterXYZ[3] = { camTgt.x, camTgt.y, eye->getCameraShiftZ() };
+			bool scOk = true;                                   // camera target always valid
+			gos_BuildDynamicLightMatrix(-lx, -ly, -lz, cornersMC2,
+			                            shadowCenterXYZ, scOk);  // sign matches old shim
 			gos_BeginDynamicShadowPass();             // no-op if shadowsEnabled_ false
 			// Item 1 P1: caster set used by the CSM cascade replay (set in the
 			// prop-caster path below; nullptr => CSM replay uses flushShadow).

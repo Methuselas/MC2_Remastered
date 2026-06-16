@@ -1068,6 +1068,8 @@ class Camera
 			return position;
 		}
 
+		float getCameraShiftZ (void) { return cameraShiftZ; }
+
 		void updateDaylight (bool bInitialize = false);
 		
 		virtual long update (void);

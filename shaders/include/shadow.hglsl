@@ -61,7 +61,7 @@ float calcShadow(vec3 worldPos, vec3 normal, vec3 lightDir, int numTaps)
     // Low gradient (flat terrain) → widen radius for soft penumbra without banding.
     float depthGradient = length(vec2(dFdx(projCoords.z), dFdy(projCoords.z)));
     float hardness = clamp(depthGradient * 180.0, 0.0, 1.0);
-    float adaptiveScale = mix(3.2, 0.8, hardness);
+    float adaptiveScale = mix(2.4, 0.8, hardness);   // SHADOW-SHARPEN: 3.2->2.4 flat (sharper mech shadow)
 
     // Poisson disk sampling with variable tap count
     vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
@@ -104,6 +104,8 @@ float calcShadow(vec3 worldPos, vec3 normal, vec3 lightDir)
 uniform sampler2DArrayShadow dynamicShadowArray;
 uniform mat4 dynamicCascadeMatrices[MC2_SHADOW_CSM_MAX];
 uniform int  dynamicCsmCount;        // 1..MC2_SHADOW_CSM_MAX
+uniform float dynamicCascadeTexelWorld[MC2_SHADOW_CSM_MAX]; // 2*cRad/mapSize, world units
+uniform float csmDepthSpan;          // (farP-nearP) of shared CSM ortho z-row
 uniform int  enableDynamicShadows;
 
 // Sample one cascade layer with the same gradient-adaptive Poisson PCF the
@@ -111,7 +113,11 @@ uniform int  enableDynamicShadows;
 // in [0,1] xy and [0,1] z for that cascade.
 float csmSampleLayer(vec3 projCoords, int layer, vec3 worldPos, float NdotL, int numTaps)
 {
-    float bias = max(0.005 * (1.0 - NdotL), 0.002);
+    // Stage 3: per-cascade texel-scaled depth bias. Scale the cascade's world-texel
+    // footprint into NDC depth units via the shared ortho span, then apply slope.
+    float slope = max(1.0 - NdotL, 0.0);
+    float texelBias = 1.5 * dynamicCascadeTexelWorld[layer] / max(csmDepthSpan, 1.0);
+    float bias = max(0.0012 * slope, 0.0004) + texelBias;
     float currentDepth = projCoords.z - bias;
 
     float angle = 6.2831853 * fract(sin(dot(worldPos.xz, vec2(12.9898, 78.233))) * 43758.5453);
@@ -120,7 +126,7 @@ float csmSampleLayer(vec3 projCoords, int layer, vec3 worldPos, float NdotL, int
 
     float depthGradient = length(vec2(dFdx(projCoords.z), dFdy(projCoords.z)));
     float hardness = clamp(depthGradient * 180.0, 0.0, 1.0);
-    float adaptiveScale = mix(3.2, 0.8, hardness);
+    float adaptiveScale = mix(2.4, 0.8, hardness);   // SHADOW-SHARPEN: 3.2->2.4 flat (sharper mech shadow)
 
     vec2 texelSize = 1.0 / vec2(textureSize(dynamicShadowArray, 0).xy);
     float radius = max(shadowSoftness, 0.5) * adaptiveScale;
@@ -219,7 +225,7 @@ float calcDynamicShadow(vec3 worldPos, vec3 normal, vec3 lightDir, int numTaps)
     // Same gradient-adaptive PCF as static shadow (see calcShadow above).
     float depthGradient = length(vec2(dFdx(projCoords.z), dFdy(projCoords.z)));
     float hardness = clamp(depthGradient * 180.0, 0.0, 1.0);
-    float adaptiveScale = mix(3.2, 0.8, hardness);
+    float adaptiveScale = mix(2.4, 0.8, hardness);   // SHADOW-SHARPEN: 3.2->2.4 flat (sharper mech shadow)
 
     vec2 texelSize = 1.0 / vec2(textureSize(dynamicShadowMap, 0));
     float radius = max(shadowSoftness, 0.5) * adaptiveScale;

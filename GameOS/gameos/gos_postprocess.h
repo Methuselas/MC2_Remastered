@@ -115,7 +115,8 @@ public:
     // camFitCornersMC2 = 8 raw-MC2 frustum corners (clipToWorld-unprojected
     // + Stuff->MC2 swizzled by the caller). Builder clamps + fits the ortho.
     void buildDynamicLightMatrix(float sunDirX, float sunDirY, float sunDirZ,
-                                 const float camFitCornersMC2[8][3]);
+                                 const float camFitCornersMC2[8][3],
+                                 const float shadowCenterXYZ[3], bool shadowCenterValid);
     GLuint getDynamicShadowTexture() const { return dynShadowDepthTex_; }
     GLuint getDynamicShadowFBO() const { return dynShadowFBO_; }
     // When CSM is active during the caster pass, this returns the matrix for the
@@ -138,6 +139,11 @@ public:
     int    getDynamicShadowCascadeCount() const { return csmCount_; }
     // Flat float[csmCount_*16] of per-cascade light-space matrices (col-major).
     const float* getDynamicCascadeMatrices() const { return dynamicCascadeMatrices_; }
+    // Per-cascade world-texel footprint (2*cRad/mapSize), used for texel-scaled
+    // depth bias in the shadow shaders. Same indexing as the cascade matrices.
+    const float* getDynamicCascadeTexelWorld() const { return dynamicCascadeTexelWorld_; }
+    // (farP-nearP) of the shared CSM ortho z-row; must match the C++ z-row exactly.
+    float getCsmDepthSpan() const { return csmDepthSpan_; }
     // Bind the per-layer FBO + viewport + forward-Z clear for caster layer i.
     // Returns false if CSM inactive or i out of range (caller skips).
     bool beginDynamicShadowCascade(int i);
@@ -309,6 +315,8 @@ private:
     GLuint dynShadowArrayTex_;                 // GL_TEXTURE_2D_ARRAY depth (4096^2 x N)
     int    csmCount_;                          // clamp(MC2_SHADOW_CSM_COUNT,1,3)
     float  dynamicCascadeMatrices_[kMaxCsmCascades * 16]; // per-cascade col-major
+    float  dynamicCascadeTexelWorld_[kMaxCsmCascades];    // 2*cRad/mapSize per cascade, world units
+    float  csmDepthSpan_;                                 // (farP-nearP) of shared ortho z-row
     int    csmActiveCascade_;                  // cascade the caster pass is drawing
     int    csmDebugLayer_;                     // which layer the debug blit shows
 
