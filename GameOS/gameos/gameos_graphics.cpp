@@ -2987,6 +2987,9 @@ void gosRenderer::renderWaterFastPath(
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glDepthMask(GL_FALSE);
+    // Invalidate after direct GL state set so subsequent applyRenderStates()
+    // calls between here and the draw cannot short-circuit on stale cache.
+    invalidateRenderStateCache();
 
     // Install a REPEAT/LINEAR sampler on unit 0 for the water draw. The
     // patch-stream's bucket sampler (CLAMP_TO_EDGE) may still be bound from
@@ -4595,6 +4598,29 @@ void gosRenderer::init() {
         else
             printf("[SHADOW_STATIC_PROP] Shadow static-prop shader loaded: prog=%u\n",
                    (unsigned)shadow_static_prop_prog_->shp_);
+        fflush(stdout);
+    }
+    {
+        // SHADOW-PROP-ALPHA-1: dedicated alpha-tested prop shadow program.
+        // shadow_static_prop.vert (now forwards a_uv->v_uv) + the new
+        // shadow_static_prop.frag (legacy non-coalesce alpha-test discard).
+        // Used ONLY by drawDynamicPropShadows when MC2_SHADOW_PROP_ALPHA != 0
+        // so foliage/tree cards cast a leaf-shaped silhouette instead of a
+        // square card. Mechs stay on the empty shadow_instanced.frag (above).
+        ZoneScopedN("gosRenderer::init shadowStaticPropAlphaProg");
+        static const char* kShadowPropAlphaPrefix = "#version 430\n";
+        glsl_program* p = glsl_program::makeProgram(
+            "shadow_static_prop_alpha",
+            "shaders/shadow_static_prop.vert",
+            "shaders/shadow_static_prop.frag",
+            kShadowPropAlphaPrefix);
+        if (!p || !p->shp_)
+            fprintf(stderr, "[SHADOW_STATIC_PROP] WARNING: failed to compile "
+                            "shadow_static_prop_alpha shader -- foliage shadow "
+                            "casters fall back to square (empty-frag) silhouette\n");
+        else
+            printf("[SHADOW_STATIC_PROP] Shadow static-prop ALPHA shader loaded: prog=%u\n",
+                   (unsigned)p->shp_);
         fflush(stdout);
     }
 

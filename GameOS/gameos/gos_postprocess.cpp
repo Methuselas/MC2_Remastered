@@ -79,7 +79,7 @@ float mc2ShadowCsmR0()
 {
     static const float s = []() {
         const char* v = getenv("MC2_SHADOW_CSM_R0");
-        float r = (v && v[0]) ? (float)atof(v) : 1024.0f;
+        float r = (v && v[0]) ? (float)atof(v) : 512.0f;
         return (r < 64.0f) ? 64.0f : r;
     }();
     return s;

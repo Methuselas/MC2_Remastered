@@ -7,6 +7,14 @@
 // (bare, no u_instanceBase). The SSBO range is bound per-type by the caller
 // (Task 3), so gl_InstanceID is relative to the bound range start.
 layout(location=0) in vec3 a_position;
+// SHADOW-PROP-ALPHA-1: forward UVs so the dedicated prop shadow frag
+// (shadow_static_prop.frag, program "shadow_static_prop_alpha") can alpha-test
+// the foliage card. The shared static-prop VAO already enables attribute 2
+// (a_uv, kVertexStride offset 24 — gos_static_prop_batcher.cpp ~2263). The
+// empty shadow_instanced.frag (program "shadow_static_prop") ignores v_uv, so
+// adding this output is harmless for that pairing.
+layout(location=2) in vec2 a_uv;
+out vec2 v_uv;
 
 // LOCKSTEP: must match C++ GpuStaticPropInstance (gos_static_prop_batcher.h, 112B, static_assert'd) AND static_prop.vert. Keep full 112-byte layout even though only modelMatrix is read here.
 struct Instance {
@@ -34,4 +42,5 @@ void main() {
     vec4 worldStuff = vec4(a_position, 1.0) * inst.modelMatrix;
     vec3 worldMC2 = vec3(-worldStuff.x, worldStuff.z, worldStuff.y);
     gl_Position = lightSpaceMatrix * vec4(worldMC2, 1.0);
+    v_uv = a_uv;
 }

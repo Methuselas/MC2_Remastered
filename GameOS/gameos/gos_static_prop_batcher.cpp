@@ -5287,10 +5287,11 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
     }
     s_parityBytesUsedThisFrame = 0;
 
-    // Save ALL GL state we'll mutate so we can restore it at the end.
-    // This is the defensive-save approach — the engine's MLR/HUD paths
-    // under 4.3 core are fragile about inherited bindings, so we behave
-    // as if every caller expects state unchanged.
+    // Save binding state (program/VAO/SSBO/texture) for restore at exit.
+    // Pipeline state (depth/blend/cull) is set by applyPipeline() below and
+    // NOT restored: gos_InvalidateRenderStateCache() at exit ensures the next
+    // applyRenderStates() re-applies from scratch. Removed 6 glGet* roundtrips
+    // (render-hygiene-s1).
     GLint prevProgram=0, prevVao=0, prevArrayBuf=0, prevElemBuf=0;
     GLint prevActiveTex=0, prevTexUnit0=0;
     // Slice 2 (object-offload) — Stage 2.C.2: also save/restore SSBO slot 2
@@ -5298,9 +5299,6 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
     // Stage 2.D.1: also save/restore SSBO slot 3 (parity readback harness;
     // bound only when MC2_OBJECT_PARITY_CHECK=1).
     GLint prevSsbo0=0, prevSsbo1=0, prevSsbo2=0, prevSsbo3=0, prevSsbo5=0;
-    GLboolean prevDepthTest=GL_FALSE, prevDepthMask=GL_FALSE;
-    GLboolean prevCullFace=GL_FALSE, prevBlend=GL_FALSE;
-    GLint prevDepthFunc=GL_LESS, prevCullMode=GL_BACK;
     glGetIntegerv(GL_CURRENT_PROGRAM, &prevProgram);
     glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
     glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &prevArrayBuf);
@@ -5313,13 +5311,6 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
     glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 2, &prevSsbo2);
     glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 3, &prevSsbo3);
     glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 5, &prevSsbo5);
-    prevDepthTest = glIsEnabled(GL_DEPTH_TEST);
-    glGetBooleanv(GL_DEPTH_WRITEMASK, &prevDepthMask);
-    glGetIntegerv(GL_DEPTH_FUNC, &prevDepthFunc);
-    prevCullFace = glIsEnabled(GL_CULL_FACE);
-    glGetIntegerv(GL_CULL_FACE_MODE, &prevCullMode);
-    prevBlend = glIsEnabled(GL_BLEND);
-
     // Bind program + depth/blend/cull via PipelineDesc.
     // Uses StaticPropOpaque — both alpha and opaque packets share the same
     // program and fixed-function state; the alpha distinction is texture-array
@@ -7150,14 +7141,10 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
     glBindBuffer(GL_ARRAY_BUFFER, (GLuint)prevArrayBuf);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, (GLuint)prevElemBuf);
     glUseProgram((GLuint)prevProgram);
-    // Pipeline state
-    if (prevDepthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
-    glDepthMask(prevDepthMask);
-    glDepthFunc((GLenum)prevDepthFunc);
-    if (prevCullFace) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
-    glCullFace((GLenum)prevCullMode);
-    if (prevBlend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
-
+    // Pipeline state: no explicit restore needed — applyPipeline() set state
+    // above, and gos_InvalidateRenderStateCache() below ensures the next
+    // applyRenderStates() call re-applies from scratch regardless of what
+    // applyPipeline left. Six glGet* roundtrips removed (render-hygiene-s1).
     accumulateMonotonicAndMaybeEmit(/*forceEmit=*/false);
 
     // Slice 2 (object-offload) — Stage 2.D.1: tick parity counters and emit
@@ -7231,6 +7218,73 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
     // s_depthPrepassRanThisFrame state that was set+reset but never read).
 }
 
+// SHADOW-PROP-ALPHA-1 -------------------------------------------------------
+// Foliage/tree cards are textured quads with a binary-alpha leaf cutout. The
+// legacy prop shadow caster used the empty depth frag (shadow_instanced.frag,
+// `void main(){}`) so the WHOLE quad wrote depth -> square tree shadows. The
+// new "shadow_static_prop_alpha" program (shadow_static_prop.vert forwarding
+// a_uv + shadow_static_prop.frag) alpha-tests the card so the cast silhouette
+// matches the visible foliage. MC2_SHADOW_PROP_ALPHA=0 = A/B kill switch
+// (revert to the empty-frag program).
+static bool shadowPropAlphaEnabled() {
+    static const bool s_on = []{
+        const char* v = getenv("MC2_SHADOW_PROP_ALPHA");
+        return !(v && v[0] == '0');           // default ON
+    }();
+    return s_on;
+}
+
+// Resolve the prop shadow caster program. Returns the program handle and sets
+// outIsAlpha=true iff we landed on the alpha-test program (so the caller knows
+// to do the per-packet texture/material binds). Falls back to the empty-frag
+// program if the alpha program failed to link this session.
+static GLuint resolvePropShadowProgram(bool& outIsAlpha) {
+    outIsAlpha = false;
+    if (shadowPropAlphaEnabled()) {
+        auto a = glsl_program::s_programs.find("shadow_static_prop_alpha");
+        if (a != glsl_program::s_programs.end() && a->second && a->second->shp_) {
+            outIsAlpha = true;
+            return a->second->shp_;
+        }
+    }
+    auto pit = glsl_program::s_programs.find("shadow_static_prop");
+    if (pit == glsl_program::s_programs.end() || !pit->second || !pit->second->shp_)
+        return 0;
+    return pit->second->shp_;
+}
+
+// Per-program u_tex / u_debugAddrMode setup for the alpha-test prop shadow
+// program. Sets the sampler unit (0) + mode-8 bypass parity once after
+// glUseProgram. Cheap (called once per pass).
+static void setupPropShadowAlphaUniforms(GLuint prog, int debugAddrMode) {
+    const GLint locTex = glGetUniformLocation(prog, "u_tex");
+    if (locTex >= 0) glUniform1i(locTex, 0);
+    const GLint locDbg = glGetUniformLocation(prog, "u_debugAddrMode");
+    if (locDbg >= 0) glUniform1i(locDbg, debugAddrMode);
+}
+
+// Bind the per-packet foliage texture (unit 0, REPEAT/LINEAR) + u_materialFlags
+// for the alpha-test prop shadow program. Mirrors the LEGACY color flush loop
+// (gos_static_prop_batcher.cpp ~7042-7106). Bind ONCE per packet. Opaque
+// packets (ALPHA_TEST clear) still bind so the shader's `u_materialFlags &
+// ALPHA_TEST_BIT` gate skips the sample correctly.
+//
+// NOTE: glTexId + effFlags are resolved by the CALLER (a GpuStaticPropBatcher
+// member, which is a `friend` of TG_TypeShape and so may read the protected
+// listOfTextures/numTextures — this free helper is not a friend).
+static void bindPropShadowAlphaPacket(GLuint prog, uint32_t glTexId,
+                                      uint32_t effFlags) {
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, glTexId);
+    // Sampler-state inheritance trap: the shadow pass binds no sampler object,
+    // so the inherited GL_TEXTURE_2D wrap may be CLAMP (corrupting atlas-edge
+    // alpha) — match the color path's explicit REPEAT.
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    const GLint locFlags = glGetUniformLocation(prog, "u_materialFlags");
+    if (locFlags >= 0) glUniform1i(locFlags, (int)effFlags);
+}
+
 // File-scope counters written by flushShadow() and read by Task 6 probe.
 static int s_shadowTypesDrawn = 0;
 static int s_shadowInstDrawn  = 0;
@@ -7263,14 +7317,14 @@ void GpuStaticPropBatcher::flushShadow(bool skipStaticBuildingTypes) {
 
     if (!uploadAllBucketsIfNeeded()) return;
 
-    // Resolve shadow_static_prop program via the global program registry.
-    // glsl_program::s_programs is populated by makeProgram() at init; the
-    // key is the name string passed to makeProgram (gosRenderer::init uses
-    // "shadow_static_prop").
-    auto pit = glsl_program::s_programs.find("shadow_static_prop");
-    if (pit == glsl_program::s_programs.end() || !pit->second || !pit->second->shp_)
-        return;
-    const GLuint shadowProg = pit->second->shp_;
+    // SHADOW-PROP-ALPHA-1: prefer the alpha-tested prop shadow program so
+    // foliage/tree cards cast a leaf-shaped (not square) silhouette. Falls back
+    // to the empty-frag program when MC2_SHADOW_PROP_ALPHA=0 or the alpha
+    // program failed to link. flushShadow is the camera-visible static-prop sun
+    // shadow caster (it routes tree types), so it is the primary fix site.
+    bool usingAlphaProg = false;
+    const GLuint shadowProg = resolvePropShadowProgram(usingAlphaProg);
+    if (shadowProg == 0) return;
 
     if (s_typeRanges.empty()) return;
 
@@ -7306,6 +7360,10 @@ void GpuStaticPropBatcher::flushShadow(bool skipStaticBuildingTypes) {
     const GLint lsLoc = glGetUniformLocation(shadowProg, "lightSpaceMatrix");
     if (lsLoc >= 0)
         glUniformMatrix4fv(lsLoc, 1, GL_FALSE, pp->getDynamicLightSpaceMatrix());
+
+    // SHADOW-PROP-ALPHA-1: one-time u_tex(=0) + u_debugAddrMode(mode-8 bypass)
+    // setup for the alpha-test program. No-op for the empty-frag fallback.
+    if (usingAlphaProg) setupPropShadowAlphaUniforms(shadowProg, debugAddrMode_);
 
     glBindVertexArray(s_sharedVao);
     // Root cause of the frame-2 0x2A18 crash: the GPU-cull/indirect flush()
@@ -7357,6 +7415,22 @@ void GpuStaticPropBatcher::flushShadow(bool skipStaticBuildingTypes) {
             const uint32_t pktIdx = type.firstPacket + p;
             if (pktIdx >= s_packets.size()) break;  // defense-in-depth: stale range
             const GpuStaticPropPacket& pkt = s_packets[pktIdx];
+            // SHADOW-PROP-ALPHA-1: bind the foliage texture + material flags so
+            // the alpha-test frag can cut the leaf silhouette (legacy color
+            // flush parity). Skipped under the empty-frag fallback. Resolution
+            // is inline here (member = TG_TypeShape friend) so the protected
+            // listOfTextures/numTextures stay accessible.
+            if (usingAlphaProg) {
+                uint32_t shGosHandle = 0;
+                const TG_TypeShape* shSrc = type.source;
+                if (shSrc && shSrc->listOfTextures && pkt.textureSlot < shSrc->numTextures)
+                    shGosHandle = shSrc->listOfTextures[pkt.textureSlot].gosTextureHandle;
+                uint32_t shEffFlags = pkt.materialFlags;
+                if (shSrc && shSrc->listOfTextures && pkt.textureSlot < shSrc->numTextures &&
+                    shSrc->listOfTextures[pkt.textureSlot].textureAlpha)
+                    shEffFlags |= STATIC_PROP_FLAG_ALPHA_TEST;
+                bindPropShadowAlphaPacket(shadowProg, gos_GetGLTextureId(shGosHandle), shEffFlags);
+            }
             if (s_shDiag) {
                 fprintf(stderr,
                     "[SHADOW_DIAG] sp draw type=%u byteOff=%llu byteSize=%llu instCnt=%u "
@@ -7555,10 +7629,11 @@ void GpuStaticPropBatcher::drawDynamicPropShadows(
     if (!s_geometryFinalized || s_fatalRegistrationFailure) return;
     if (instances.empty()) return;
 
-    auto pit = glsl_program::s_programs.find("shadow_static_prop");
-    if (pit == glsl_program::s_programs.end() || !pit->second || !pit->second->shp_)
-        return;
-    const GLuint shadowProg = pit->second->shp_;
+    // SHADOW-PROP-ALPHA-1: alpha-tested prop shadow program (foliage silhouette)
+    // with empty-frag fallback. Full-registry dynamic prop caster.
+    bool usingAlphaProg = false;
+    const GLuint shadowProg = resolvePropShadowProgram(usingAlphaProg);
+    if (shadowProg == 0) return;
 
     gosPostProcess* pp = getGosPostProcess();
     if (!pp) return;
@@ -7594,6 +7669,9 @@ void GpuStaticPropBatcher::drawDynamicPropShadows(
     if (lsLoc >= 0)
         glUniformMatrix4fv(lsLoc, 1, GL_FALSE, pp->getDynamicLightSpaceMatrix()); // DYNAMIC matrix
 
+    // SHADOW-PROP-ALPHA-1: one-time u_tex(=0)+u_debugAddrMode setup (alpha prog).
+    if (usingAlphaProg) setupPropShadowAlphaUniforms(shadowProg, debugAddrMode_);
+
     glBindVertexArray(s_sharedVao);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_sharedIbo);
 
@@ -7621,6 +7699,20 @@ void GpuStaticPropBatcher::drawDynamicPropShadows(
                     const uint32_t pk = type.firstPacket + p;
                     if (pk >= s_packets.size()) break;
                     const GpuStaticPropPacket& pkt = s_packets[pk];
+                    // SHADOW-PROP-ALPHA-1: per-packet foliage texture + flags so
+                    // the alpha-test frag cuts the leaf silhouette. Inline
+                    // resolution (member = TG_TypeShape friend).
+                    if (usingAlphaProg) {
+                        uint32_t shGosHandle = 0;
+                        const TG_TypeShape* shSrc = type.source;
+                        if (shSrc && shSrc->listOfTextures && pkt.textureSlot < shSrc->numTextures)
+                            shGosHandle = shSrc->listOfTextures[pkt.textureSlot].gosTextureHandle;
+                        uint32_t shEffFlags = pkt.materialFlags;
+                        if (shSrc && shSrc->listOfTextures && pkt.textureSlot < shSrc->numTextures &&
+                            shSrc->listOfTextures[pkt.textureSlot].textureAlpha)
+                            shEffFlags |= STATIC_PROP_FLAG_ALPHA_TEST;
+                        bindPropShadowAlphaPacket(shadowProg, gos_GetGLTextureId(shGosHandle), shEffFlags);
+                    }
                     glDrawElementsInstancedBaseVertex(
                         GL_TRIANGLES, static_cast<GLsizei>(pkt.indexCount), GL_UNSIGNED_INT,
                         reinterpret_cast<void*>(static_cast<uintptr_t>(pkt.firstIndex) * sizeof(uint32_t)),
