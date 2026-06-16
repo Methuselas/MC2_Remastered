@@ -724,7 +724,12 @@ bool compute_buildIndirectBuffer(uint32_t typeCount) {
 
     // --- VisibleIds SSBO (binding 9 in C1b cull shader) ---
     // Sized: sum of all per-type instance caps × sizeof(uint32_t).
-    // Cleared per-frame before cull dispatch.
+    // Written per-frame by the cull scatter shader (atomicAdd-based slot
+    // assignment). NOT cleared per-frame — stale slots past the current
+    // frame's bucket counts are never read (the draw path iterates only
+    // up to the cleared bucketCounts[b] entries). Initial nullptr content
+    // is safe for the same reason: the cleared counts on frame 0 bound
+    // any reads to slots the shader actually wrote.
     const GLsizeiptr visIdsBytes = static_cast<GLsizeiptr>(
         (totalVisibleSlots > 0 ? totalVisibleSlots : 1) * sizeof(uint32_t));
     glGenBuffers(1, &s_visibleIdsBuf);
