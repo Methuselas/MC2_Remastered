@@ -54,11 +54,11 @@ float DistributionGGX(float NdotH, float roughness) {
 }
 
 // ---------------------------------------------------------------------------
-// Smith GGX height-correlated visibility function (G term).
-// Combined G1(V)*G1(L) / (4*NdotV*NdotL) -- the 0.5 factor absorbs the
-// denominator, so callers do NOT need to divide by 4*NdotV*NdotL separately.
+// Smith GGX height-correlated visibility function (joint V term).
+// Returns the joint visibility term V = G_correlated / (4 * NdotV * NdotL).
+// Caller does: specular = D * V * F  (no extra 4*NdotV*NdotL divide).
 // ---------------------------------------------------------------------------
-float GeometrySmithGGX(float NdotV, float NdotL, float roughness) {
+float VisibilitySmithGGXCorrelated(float NdotV, float NdotL, float roughness) {
     float a  = roughness * roughness;
     float a2 = a * a;
     float gV = NdotV + sqrt(a2 + (1.0 - a2) * NdotV * NdotV);
@@ -84,11 +84,10 @@ vec3 StandardLit(StandardLitInput i) {
     vec3 F0 = mix(vec3(0.04), i.albedo, metallic);
     vec3 F  = FresnelSchlick(VdotH, F0);
 
-    float D = DistributionGGX(NdotH, roughness);
-    float G = GeometrySmithGGX(NdotV, NdotL, roughness);
+    float D   = DistributionGGX(NdotH, roughness);
+    float Vis = VisibilitySmithGGXCorrelated(NdotV, NdotL, roughness);
 
-    // GeometrySmithGGX already incorporates the 1/(4*NdotV*NdotL) denominator
-    vec3 specular = (D * G * F) / max(4.0 * NdotV * NdotL, 0.001);
+    vec3 specular = D * Vis * F;
     vec3 diffuse  = (1.0 - F) * (1.0 - metallic) * i.albedo / MC2_PI;
 
     vec3 Lo = (diffuse + specular) * i.lightColor * NdotL;
