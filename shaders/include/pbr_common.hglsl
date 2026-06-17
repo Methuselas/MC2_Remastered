@@ -29,9 +29,10 @@ struct StandardLitInput {
     vec3  L;            // normalized light direction (toward light)
     vec3  lightColor;   // linear light color * intensity
     vec3  ambientColor; // ambient sky/fill color (cheap indirect)
-    float roughness;    // linear roughness [0.25, 0.85] (clamped by caller)
-    float metallic;     // metalness [0, 1]
-    float ao;           // ambient occlusion [0, 1] (1.0 = no occlusion)
+    float roughness;               // linear roughness [0.25, 0.85] (clamped by caller)
+    float metallic;                // metalness [0, 1]
+    float ao;                      // ambient occlusion [0, 1] (1.0 = no occlusion)
+    float ambientSpecularStrength; // fake env fill for metals (0.25 default); set 0 to disable
 };
 
 // ---------------------------------------------------------------------------
@@ -96,7 +97,7 @@ vec3 StandardLit(StandardLitInput i) {
     // ambientDiffuse uses energy-conserving (1-metallic) suppression so pure
     // metals get their indirect contribution from the specular term only.
     vec3 ambientDiffuse  = i.ambientColor * i.albedo * (1.0 - metallic);
-    vec3 ambientSpecular = i.ambientColor * F0 * 0.25;
+    vec3 ambientSpecular = i.ambientColor * F0 * i.ambientSpecularStrength;
     vec3 ambient = (ambientDiffuse + ambientSpecular) * i.ao;
 
     return ambient + Lo;

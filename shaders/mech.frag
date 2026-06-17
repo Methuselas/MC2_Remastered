@@ -45,8 +45,13 @@ uniform sampler2D u_tex;
 // Both sampled only when u_standardLitEnabled != 0 (MC2_STANDARD_LIT_V1=1).
 uniform sampler2D u_pbrNormalTex;   // unit 1: NormalGL (RGB8, linear)
 uniform sampler2D u_pbrOrmTex;      // unit 2: packed ORM (R=AO G=Rough B=Metal, linear)
-uniform int   u_standardLitEnabled; // 0=Blinn-Phong passthrough, 1=GGX StandardLit
-uniform float u_pbrTileScale;       // UV tile scale for detail material (default 4.0)
+uniform int   u_standardLitEnabled;          // 0=Blinn-Phong passthrough, 1=GGX StandardLit
+uniform float u_pbrTileScale;               // UV tile scale for detail material (default 4.0)
+// PBR-TUNE-1: material influence knobs -- all env-tunable, no recompile needed.
+uniform float u_pbrMetallicInfluence;       // scale raw ORM metallic channel (default 0.15)
+uniform float u_pbrRoughnessMin;            // roughness floor after clamp (default 0.45)
+uniform float u_pbrRoughnessMax;            // roughness ceiling after clamp (default 0.90)
+uniform float u_pbrAmbientSpecularStrength; // fake env fill for metals (default 0.25)
 uniform int u_materialFlags;  // bit 0: ALPHA_TEST
 // Slice B2: u_fogValue retained for backward compat / parity with
 // static_prop convention but no longer drives the mix — per-actor
@@ -193,8 +198,10 @@ void main() {
         vec2 pbrUV  = v_uv * u_pbrTileScale;
         vec3 orm    = texture(u_pbrOrmTex, pbrUV).rgb;
         float ao        = orm.r;
-        float roughness = orm.g;
-        float metallic  = orm.b;
+        // PBR-TUNE-1: clamp roughness to avoid mirror-bright low-roughness response;
+        // scale metallic down so painted armor stays dielectric by default.
+        float roughness = clamp(orm.g, u_pbrRoughnessMin, u_pbrRoughnessMax);
+        float metallic  = orm.b * u_pbrMetallicInfluence;
 
         // Derivative TBN normal map (Slice C3). Falls back to vertex N on
         // degenerate screen-space derivatives (silhouette pixels etc.).
@@ -221,9 +228,10 @@ void main() {
         si.L            = L;
         si.lightColor   = lightColor;
         si.ambientColor = ambientColor;
-        si.roughness    = roughness;
-        si.metallic     = metallic;
-        si.ao           = ao;
+        si.roughness               = roughness;
+        si.metallic                = metallic;
+        si.ao                      = ao;
+        si.ambientSpecularStrength = u_pbrAmbientSpecularStrength;
 
         vec3 pbrLit = StandardLit(si);
         pbrLit += v_highlightColor.rgb * v_highlightColor.a;

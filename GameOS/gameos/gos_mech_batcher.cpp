@@ -268,6 +268,11 @@ static GLint s_loc_u_standardLitEnabled      = -1;
 static GLint s_loc_u_pbrNormalTex            = -1;
 static GLint s_loc_u_pbrOrmTex               = -1;
 static GLint s_loc_u_pbrTileScale            = -1;
+// PBR-TUNE-1: material influence knobs (metallic scale, roughness clamp, ambient specular).
+static GLint s_loc_u_pbrMetallicInfluence      = -1;
+static GLint s_loc_u_pbrRoughnessMin           = -1;
+static GLint s_loc_u_pbrRoughnessMax           = -1;
+static GLint s_loc_u_pbrAmbientSpecularStrength = -1;
 
 // Geometry (immutable after finalizeGeometry).
 static GLuint s_sharedVao = 0;
@@ -543,6 +548,11 @@ static void loadProgramsIfNeeded() {
     s_loc_u_pbrNormalTex            = loc("u_pbrNormalTex");
     s_loc_u_pbrOrmTex               = loc("u_pbrOrmTex");
     s_loc_u_pbrTileScale            = loc("u_pbrTileScale");
+    // PBR-TUNE-1: material influence knobs.
+    s_loc_u_pbrMetallicInfluence       = loc("u_pbrMetallicInfluence");
+    s_loc_u_pbrRoughnessMin            = loc("u_pbrRoughnessMin");
+    s_loc_u_pbrRoughnessMax            = loc("u_pbrRoughnessMax");
+    s_loc_u_pbrAmbientSpecularStrength = loc("u_pbrAmbientSpecularStrength");
 
     // MECH-VIEWUNIFORMS-1: on the gated path, verify the ViewUniformsBlock is
     // present and bound to point 3. The GLSL layout(binding=3) qualifier is
@@ -1934,6 +1944,33 @@ void GpuMechBatcher::flush() {
         }();
         if (s_loc_u_standardLitEnabled >= 0)
             glUniform1i(s_loc_u_standardLitEnabled, s_standardLitEnabled);
+    }
+
+    // PBR-TUNE-1: metallic influence, roughness clamp, ambient specular fill.
+    // Env: MC2_PBR_METALLIC_INFLUENCE (def 0.15), MC2_PBR_ROUGHNESS_MIN (def 0.45),
+    //      MC2_PBR_ROUGHNESS_MAX (def 0.90), MC2_PBR_AMBIENT_SPECULAR (def 0.25).
+    // All -1 guarded so no-op when shader lacks the uniform (non-viewuniforms variants).
+    {
+        static const float s_metInfluence = [](){
+            const char* v = std::getenv("MC2_PBR_METALLIC_INFLUENCE");
+            return v ? (float)std::atof(v) : 0.15f;
+        }();
+        static const float s_roughMin = [](){
+            const char* v = std::getenv("MC2_PBR_ROUGHNESS_MIN");
+            return v ? (float)std::atof(v) : 0.45f;
+        }();
+        static const float s_roughMax = [](){
+            const char* v = std::getenv("MC2_PBR_ROUGHNESS_MAX");
+            return v ? (float)std::atof(v) : 0.90f;
+        }();
+        static const float s_ambSpec = [](){
+            const char* v = std::getenv("MC2_PBR_AMBIENT_SPECULAR");
+            return v ? (float)std::atof(v) : 0.25f;
+        }();
+        if (s_loc_u_pbrMetallicInfluence      >= 0) glUniform1f(s_loc_u_pbrMetallicInfluence,       s_metInfluence);
+        if (s_loc_u_pbrRoughnessMin           >= 0) glUniform1f(s_loc_u_pbrRoughnessMin,            s_roughMin);
+        if (s_loc_u_pbrRoughnessMax           >= 0) glUniform1f(s_loc_u_pbrRoughnessMax,            s_roughMax);
+        if (s_loc_u_pbrAmbientSpecularStrength >= 0) glUniform1f(s_loc_u_pbrAmbientSpecularStrength, s_ambSpec);
     }
 
     // Projection uniforms — match static_prop batcher and the
