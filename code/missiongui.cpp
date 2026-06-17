@@ -1189,7 +1189,7 @@ void MissionInterfaceManager::update (void)
 			if ( moveCameraAround( lineOfSight, passable, ctrlDn, bGui, moverCount, nonMoverCount ) )
 			{
 				bool leftClicked = (!userInput->isLeftDrag() && !userInput->isRightDrag() && userInput->isLeftClick());
-				bool rightClicked = (!userInput->isLeftDrag() && !userInput->isRightDrag() && userInput->isRightClick());
+				bool rightClicked = (!userInput->isLeftDrag() && !userInput->wasRightDrag() && userInput->rightMouseReleased());
 
 				// deal with the hot keys
 				update( leftClicked, rightClicked, mouseX, mouseY, target,  lineOfSight );
@@ -3987,8 +3987,8 @@ bool MissionInterfaceManager::moveCameraAround( bool lineOfSight, bool passable,
 	bool bRetVal = 0;
 	bool middleClicked = (!userInput->isLeftDrag() && !userInput->isRightDrag() && userInput->isMiddleClick());
 
-	if ( (useLeftRightMouseProfile && ((userInput->isLeftClick() && userInput->getKeyDown(KEY_T)) || userInput->isLeftDoubleClick()) && target) 
-		|| (!useLeftRightMouseProfile && userInput->isRightClick() && !userInput->isRightDrag() && target) && !bGui)
+	if ( (useLeftRightMouseProfile && ((userInput->isLeftClick() && userInput->getKeyDown(KEY_T)) || userInput->isLeftDoubleClick()) && target)
+		|| (!useLeftRightMouseProfile && userInput->rightMouseReleased() && !userInput->wasRightDrag() && target) && !bGui)
 	{
 		if (eye)
 			((GameCamera *)eye)->setTarget(target);
