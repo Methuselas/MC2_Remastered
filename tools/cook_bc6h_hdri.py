@@ -100,11 +100,23 @@ def encode_bc6h_mode11(pixels, width, height):
     ep1_b = quantize_ep10(b.max(axis=1))
 
     # Build palette for all blocks: (n_blocks, 16)
+    # BC6H spec requires integer interpolation on float16 bit-patterns (pseudo-log
+    # scale), NOT float arithmetic on decoded values.  The GPU decodes exactly:
+    #   interp_bits = (ep0_bits*(64-w) + ep1_bits*w + 32) // 64
+    #   palette_value = reinterpret_as_float16(interp_bits)
+    # Doing float lerp produces catastrophically wrong results for HDR content
+    # because float16 bit-patterns are log-scale, not linear.
     def palette(ep0, ep1):
-        f0 = reconstruct_ep10(ep0)[:, np.newaxis]   # (n_blocks, 1)
-        f1 = reconstruct_ep10(ep1)[:, np.newaxis]
-        w = BC6H_WEIGHTS_4[np.newaxis, :]            # (1, 16)
-        return (f0 * (64.0 - w) + f1 * w + 32.0) / 64.0
+        # ep0, ep1 are 10-bit endpoint values (uint16, shape (n_blocks,)).
+        # Shift left 6 to recover the float16 bit-pattern (lower 6 bits zero).
+        ep0_bits = (ep0.astype(np.int32) << 6)[:, np.newaxis]   # (n_blocks, 1)
+        ep1_bits = (ep1.astype(np.int32) << 6)[:, np.newaxis]
+        W = BC6H_WEIGHTS_4.astype(np.int32)[np.newaxis, :]       # (1, 16)
+        # Integer interpolation in float16 bit-pattern space (per spec).
+        interp_bits = (ep0_bits * (64 - W) + ep1_bits * W + 32) // 64  # (n_blocks, 16) int32
+        # Mask to uint16, reinterpret as float16, promote to float32 for index search.
+        interp_u16 = (interp_bits & 0xFFFF).astype(np.uint16)
+        return interp_u16.view(np.float16).astype(np.float32)
 
     pal_r = palette(ep0_r, ep1_r)  # (n_blocks, 16)
     pal_g = palette(ep0_g, ep1_g)
