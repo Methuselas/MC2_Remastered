@@ -37,6 +37,9 @@
 // [B1 C16] (diagnostic) gosFX heap + child accumulation counters; env-gated on
 // MC2_GPU_PARTICLES=1. Forward-decl to avoid Stuff/gosfx header chain here.
 namespace gosFX { void DiagFrameTick(); }
+#include "debug_state_dump.h"    // mc2_debug_state::getSessionId, writeShutdownState
+#include "diagnostic_trace.h"   // mc2_diag::init, shutdown
+#include <process.h>             // _getpid()
 #include "gos_terrain_bridge.h"
 #include "gos_terrain_lod_chunk.h"
 #include "gos_terrain_patch_stream.h"
@@ -7306,9 +7309,18 @@ void gos_CreateRenderer(graphics::RenderContextHandle ctx_h, graphics::RenderWin
 
     gosPostProcess* pp = new gosPostProcess();
     pp->init(w, h);
+
+    // Initialize diagnostic JSONL trace. Session id shared with debug_state_dump
+    // so MCP can correlate JSONL events with render-state snapshots by session_id.
+    mc2_diag::init(mc2_debug_state::getSessionId(), _getpid());
 }
 
 void gos_DestroyRenderer() {
+
+    // Write shutdown state dump and flush diagnostics BEFORE any resource teardown.
+    // Both functions read render/postprocess state — must run while it is still valid.
+    mc2_debug_state::writeShutdownState();
+    mc2_diag::shutdown();
 
     gosPostProcess* pp = getGosPostProcess();
     if (pp) { pp->destroy(); delete pp; }

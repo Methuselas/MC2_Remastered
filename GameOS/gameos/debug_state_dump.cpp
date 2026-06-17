@@ -12,11 +12,15 @@
 // Defined in gos_mech_batcher.cpp; not declared in any header.
 extern "C" const char* gos_getMechTextureNameByNodeIdx(uint32_t nodeIdx);
 
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <process.h>   // for _getpid()
 #include <sstream>
 #include <string>
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 
 extern char missionName[1024];
 
@@ -24,6 +28,11 @@ namespace {
 
 constexpr uint64_t kDumpIntervalFrames = 300u;
 constexpr uint32_t kHistorySlots       = 8u;
+
+// Last rendered snapshot, cached so writeShutdownState() can run without a parameter
+// while render state (postprocess, static props) is still valid. Zero-initialized;
+// populated on the first maybeWriteRenderState() call when MC2_DEBUG_STATE_DUMP=1.
+static RenderSnapshot s_lastSnap{};
 
 bool envFlagOn(const char* name) {
     const char* v = std::getenv(name);
@@ -68,6 +77,46 @@ std::filesystem::path outputDir() {
         if (dir[0]) return std::filesystem::path(dir);
     }
     return std::filesystem::path("debug_state");
+}
+
+static std::string& s_sessionId() {
+    static std::string id = []() {
+        auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        return std::to_string(static_cast<long long>(_getpid()))
+               + "-"
+               + std::to_string(static_cast<long long>(us));
+    }();
+    return id;
+}
+
+static int s_pid() {
+    static int pid = _getpid();
+    return pid;
+}
+
+bool writeFileAtomic(const std::filesystem::path& dir,
+                     const std::string& finalName,
+                     const std::string& content) {
+    const std::string tmpName = finalName + ".tmp." + std::to_string(static_cast<long long>(_getpid()));
+    const std::filesystem::path tmpPath  = dir / tmpName;
+    const std::filesystem::path finalPath = dir / finalName;
+
+    {
+        std::ofstream f(tmpPath, std::ios::out | std::ios::trunc);
+        if (!f) return false;
+        f << content;
+    }
+
+    // Atomic replace on same filesystem (MoveFileEx is atomic on NTFS for same-dir rename)
+    if (MoveFileExW(tmpPath.wstring().c_str(), finalPath.wstring().c_str(),
+                    MOVEFILE_REPLACE_EXISTING)) {
+        return true;
+    }
+    // Fallback: remove tmp
+    std::error_code ec;
+    std::filesystem::remove(tmpPath, ec);
+    return false;
 }
 
 const char* viewKindForId(RenderCore::ViewId id) {
@@ -128,13 +177,24 @@ static void b(std::ostringstream& s, bool v) { s << (v ? "true" : "false"); }
 std::string buildSnapshotJson(const RenderSnapshot& snap,
                               const StaticPropOpaqueDebugState& sp,
                               const RenderCore::EngineView& view,
-                              const RenderPassState& ps) {
+                              const RenderPassState& ps,
+                              const char* dumpKind) {
     const bool viewKnown    = view.id != RenderCore::kInvalidViewId;
     const bool missionKnown = missionName[0] != '\0';
 
+    const auto nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    const double writtenAtEpoch = static_cast<double>(nowUs) / 1e6;
+
     std::ostringstream s;
     s << "{\n";
-    s << "  \"schema\": \"MC2_DEBUG_STATE_V1\",\n";
+    s << "  \"schema\": \"MC2_DEBUG_STATE_V2\",\n";
+    s << "  \"schema_version\": 2,\n";
+    s << "  \"session_id\": \"" << s_sessionId() << "\",\n";
+    s << "  \"pid\": " << s_pid() << ",\n";
+    s << "  \"build_id\": \"" << buildConfigString() << "-unknown\",\n";
+    s << "  \"dump_kind\": \"" << (dumpKind ? dumpKind : "periodic") << "\",\n";
+    s << "  \"written_at_epoch\": " << writtenAtEpoch << ",\n";
     s << "  \"frame\": " << static_cast<unsigned long long>(snap.frameIndex) << ",\n";
     s << "  \"mission\": {\n";
     s << "    \"name\": \"" << jsonEscape(missionKnown ? missionName : "") << "\",\n";
@@ -383,6 +443,7 @@ namespace mc2_debug_state {
 void maybeWriteRenderState(const RenderSnapshot& snap) {
     static const bool s_enabled = envFlagOn("MC2_DEBUG_STATE_DUMP");
     if (!s_enabled) return;
+    s_lastSnap = snap;  // cache for writeShutdownState()
     if (snap.frameIndex != 1u && (snap.frameIndex % kDumpIntervalFrames) != 0u)
         return;
 
@@ -396,9 +457,9 @@ void maybeWriteRenderState(const RenderSnapshot& snap) {
     const RenderCore::EngineView& view = RenderCore::getCurrentView();
     const RenderPassState ps = readPassState();
 
-    const std::string json = buildSnapshotJson(snap, sp, view, ps);
+    const std::string json = buildSnapshotJson(snap, sp, view, ps, "periodic");
 
-    writeFile(dir / "latest_render_state.json", json);
+    writeFileAtomic(dir, "latest_render_state.json", json);
 
     static const bool s_historyEnabled = envFlagOn("MC2_DEBUG_STATE_DUMP_HISTORY");
     if (s_historyEnabled) {
@@ -408,6 +469,28 @@ void maybeWriteRenderState(const RenderSnapshot& snap) {
         writeFile(dir / name, json);
         s_historySlot = (s_historySlot + 1u) % kHistorySlots;
     }
+}
+
+void writeShutdownState() {
+    static const bool s_enabled = envFlagOn("MC2_DEBUG_STATE_DUMP");
+    if (!s_enabled) return;
+
+    const std::filesystem::path dir = outputDir();
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    if (ec) return;
+
+    StaticPropOpaqueDebugState sp{};
+    batcher_getStaticPropOpaqueDebugState(&sp);
+    const RenderCore::EngineView& view = RenderCore::getCurrentView();
+    const RenderPassState ps = readPassState();
+
+    const std::string json = buildSnapshotJson(s_lastSnap, sp, view, ps, "shutdown");
+    writeFileAtomic(dir, "latest_render_state.json", json);
+}
+
+const char* getSessionId() {
+    return s_sessionId().c_str();  // pointer into static string; valid for process lifetime
 }
 
 } // namespace mc2_debug_state

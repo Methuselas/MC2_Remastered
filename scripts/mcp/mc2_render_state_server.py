@@ -35,7 +35,9 @@ _DEPLOY_DIR = Path(os.environ.get("MC2_DEPLOY_DIR", "A:/Games/mc2-opengl/mc2-win
 _STATE_DIR = _DEPLOY_DIR / "debug_state"
 _LATEST = _STATE_DIR / "latest_render_state.json"
 _HISTORY_SLOTS = 8
-_SCHEMA = "MC2_DEBUG_STATE_V1"
+_SCHEMA_V1 = "MC2_DEBUG_STATE_V1"
+_SCHEMA_V2 = "MC2_DEBUG_STATE_V2"
+_SUPPORTED_SCHEMAS = {_SCHEMA_V1, _SCHEMA_V2}
 
 # Worktree root — two levels up from scripts/mcp/
 _WORKTREE_DIR = Path(__file__).resolve().parents[2]
@@ -47,10 +49,11 @@ _VALID_MISSION = re.compile(r"^[a-z0-9_]{1,32}$")
 mcp = FastMCP(
     "mc2-render-state",
     instructions=(
-        "Read-only access to MC2 engine render state. "
-        "The engine must be running with MC2_DEBUG_STATE_DUMP=1. "
-        "State updates every 300 frames (~5s at 60fps). "
-        "All tools are safe — no gameplay or renderer mutation."
+        "Read-only bridge to running MC2 engine. "
+        "State: engine needs MC2_DEBUG_STATE_DUMP=1. Use get_render_health() to check liveness. "
+        "Smoke: use get_latest_smoke_report() for structured results. "
+        "Diagnostics: use get_diagnostic_events(tag) to query JSONL trace. "
+        "All tools are read-only — no gameplay or renderer mutation."
     ),
 )
 
@@ -101,6 +104,69 @@ def _stale_banner() -> str:
     return ""
 
 
+def _pid_alive(pid: int | None) -> bool | None:
+    """Return True if PID is running, False if not, None if check unavailable."""
+    if pid is None:
+        return None
+    try:
+        import subprocess
+        r = subprocess.run(
+            ["tasklist", "/fi", f"PID eq {pid}", "/nh", "/fo", "CSV"],
+            capture_output=True, text=True, timeout=3,
+        )
+        return str(pid) in r.stdout
+    except Exception:
+        return None
+
+
+def _get_liveness() -> dict:
+    """
+    Return liveness dict using V2 schema fields when available.
+
+    live = dump_kind=="periodic" AND pid_alive AND seconds_since_update < threshold
+    For V1 snapshots (no pid/dump_kind), falls back to age-only heuristic.
+    """
+    data = _latest()
+    age = _file_age_s()
+
+    result: dict = {
+        "live": False,
+        "seconds_since_update": round(age, 1) if age is not None else None,
+        "pid_alive": None,
+        "dump_kind": None,
+        "session_id": None,
+        "pid": None,
+        "schema": None,
+    }
+
+    if data is None:
+        return result
+
+    schema = data.get("schema", "")
+    result["schema"] = schema
+    pid = data.get("pid")
+    dump_kind = data.get("dump_kind")
+    session_id = data.get("session_id")
+
+    result["dump_kind"] = dump_kind
+    result["session_id"] = session_id
+    result["pid"] = pid
+
+    pid_alive = _pid_alive(pid)
+    result["pid_alive"] = pid_alive
+
+    recent = age is not None and age < _STALE_THRESHOLD_S
+
+    if schema == _SCHEMA_V2:
+        # V2: use dump_kind + pid_alive + age
+        result["live"] = (dump_kind == "periodic" and pid_alive is True and recent)
+    else:
+        # V1: age-only heuristic (no pid/dump_kind in schema)
+        result["live"] = recent and pid_alive is not False
+
+    return result
+
+
 def _not_available(detail: str = "") -> str:
     msg = (
         f"State file not available: {_LATEST}\n"
@@ -131,8 +197,9 @@ def _validate(data: dict[str, Any]) -> list[str]:
         errors.append("root is not an object")
         return errors
 
-    if data.get("schema") != _SCHEMA:
-        errors.append(f"schema: expected {_SCHEMA!r}, got {data.get('schema')!r}")
+    schema = data.get("schema", "")
+    if schema not in _SUPPORTED_SCHEMAS:
+        errors.append(f"schema: expected one of {_SUPPORTED_SCHEMAS!r}, got {schema!r}")
 
     require(data, "frame", int)
     for section in ("mission", "build", "features", "engineView", "renderSnapshot", "staticPropOpaque"):
@@ -183,6 +250,7 @@ def get_render_health() -> str:
     Reports: frame, mission, renderSnapshot.ok, all mismatch counters,
     arenaOverflow, and any failing counters highlighted. Fast diagnostic check.
     """
+    liveness = _get_liveness()
     data = _latest()
     if data is None:
         return _not_available()
@@ -231,12 +299,27 @@ def get_render_health() -> str:
     else:
         lines.insert(0, "HEALTH: PASS")
 
-    banner = _stale_banner()
+    if not liveness["live"]:
+        age = _file_age_s()
+        if age is None:
+            banner = "*** NO DATA — engine not running or MC2_DEBUG_STATE_DUMP=1 not set\n"
+        elif age >= _STALE_THRESHOLD_S:
+            banner = f"*** STALE — file is {age:.0f}s old; game likely not running\n"
+        else:
+            banner = "*** NOT LIVE — pid dead or shutdown dump\n"
+    else:
+        banner = ""
     if banner:
         lines.insert(0, banner.rstrip())
 
     age = _file_age_s()
-    lines.append(f"\nfile_age: {age:.0f}s" if age is not None else "\nfile_age: unknown")
+    liveness = _get_liveness()
+    lines.append(f"\nfile_age:     {age:.0f}s" if age is not None else "\nfile_age:     unknown")
+    lines.append(f"live:         {liveness['live']}")
+    lines.append(f"dump_kind:    {liveness.get('dump_kind') or '(V1/unknown)'}")
+    lines.append(f"pid:          {liveness.get('pid') or '(V1/unknown)'}")
+    lines.append(f"pid_alive:    {liveness.get('pid_alive')}")
+    lines.append(f"session_id:   {liveness.get('session_id') or '(V1/unknown)'}")
 
     return "\n".join(lines)
 
@@ -393,6 +476,7 @@ def get_frame_info() -> str:
     views = data.get("registeredViews", [])
     view_names = [f"{v.get('viewKind', '?')}(id={v.get('viewId', '?')})" for v in views]
 
+    liveness = _get_liveness()
     lines = [
         f"schema:   {schema}",
         f"frame:    {frame}",
@@ -402,6 +486,12 @@ def get_frame_info() -> str:
         f"stateDir: {_STATE_DIR}",
         f"file_age: {age_str}" + (" *** STALE — game likely not running" if stale else ""),
     ]
+    lines.extend([
+        f"live:     {liveness['live']} (dump_kind={liveness.get('dump_kind') or 'V1'}, pid_alive={liveness.get('pid_alive')})",
+        f"pid:      {data.get('pid', '(V1/unknown)')}",
+        f"session:  {data.get('session_id', '(V1/unknown)')}",
+        f"written:  {data.get('written_at_epoch', '(V1/unknown)')}",
+    ])
     return "\n".join(lines)
 
 
@@ -413,12 +503,21 @@ def _latest_artifact_dir() -> Path | None:
     """Return the newest artifact directory, or None if none exist."""
     if not _ARTIFACTS_DIR.exists():
         return None
-    dirs = sorted(
-        (d for d in _ARTIFACTS_DIR.iterdir() if d.is_dir()),
-        key=lambda d: d.name,
-        reverse=True,
-    )
-    return dirs[0] if dirs else None
+    dirs = [d for d in _ARTIFACTS_DIR.iterdir() if d.is_dir()]
+    if not dirs:
+        return None
+
+    def _sort_key(d: Path):
+        # Directory names are ISO timestamps like 2026-06-17T14-23-45
+        # Alphabetical sort works for ISO format, but fall back to mtime if name differs
+        try:
+            # Normalize hyphens-in-time back to colons for parsing, but sort as string
+            return (d.name,)
+        except Exception:
+            return (str(d.stat().st_mtime),)
+
+    dirs.sort(key=_sort_key, reverse=True)
+    return dirs[0]
 
 
 @mcp.tool()
@@ -437,6 +536,23 @@ def run_capture_baseline(mission: str = "mc2_01", duration: int = 30) -> str:
         return f"Invalid mission name {mission!r}. Use alphanumeric + underscore, max 32 chars."
 
     duration = max(10, min(120, duration))
+
+    # Pre-check: refuse to run if mc2.exe is already running (smoke lock is concurrency-safe
+    # but a running game produces unreliable frames and the smoke lock may fail to acquire).
+    try:
+        import subprocess as _sp
+        _chk = _sp.run(
+            ["tasklist", "/fi", "IMAGENAME eq mc2.exe", "/nh", "/fo", "CSV"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if "mc2.exe" in _chk.stdout:
+            return json.dumps({
+                "error": "mc2_already_running",
+                "message": "mc2.exe is already running. Close the game before running a capture baseline.",
+                "action": "Close mc2.exe first, then retry.",
+            })
+    except Exception:
+        pass  # If tasklist fails, proceed (don't block on check failure)
 
     # run_smoke.py contract: missions are passed as repeated --mission (there is
     # no --missions flag and no 'adhoc' tier), and --kill-existing is forbidden
@@ -523,6 +639,146 @@ def list_capture_sets() -> str:
         lines.append(f"  {d.name}  tier={tier}  {summary}")
 
     return "\n".join(lines)
+
+
+@mcp.tool()
+def get_latest_smoke_report() -> str:
+    """
+    Return structured result of the most recent smoke test run.
+
+    Parses report.json from the newest artifact directory and returns:
+    overall pass/fail, per-mission results with FPS, destroys_delta,
+    artifact location, and staleness. Prefer this over reading log files directly.
+    """
+    artifact_dir = _latest_artifact_dir()
+    if artifact_dir is None:
+        return json.dumps({"error": "no_artifact_dir", "artifact_dir": None}, indent=2)
+
+    report_path = artifact_dir / "report.json"
+    report = _read_json(report_path)
+    if report is None:
+        return json.dumps({
+            "error": "no_report_json",
+            "artifact_dir": str(artifact_dir),
+            "files": [f.name for f in sorted(artifact_dir.iterdir()) if f.is_file()],
+        }, indent=2)
+
+    # Staleness
+    try:
+        age_s = round(time.time() - report_path.stat().st_mtime, 1)
+    except OSError:
+        age_s = None
+
+    rows = report.get("rows", [])
+    overall = "PASS" if rows and all(r.get("result") == "PASS" for r in rows) else "FAIL"
+
+    return json.dumps({
+        "schema_version": 1,
+        "overall": overall,
+        "timestamp": report.get("timestamp"),
+        "tier": report.get("tier"),
+        "profile": report.get("profile"),
+        "artifact_dir": str(artifact_dir),
+        "artifact_dir_exists": artifact_dir.exists(),
+        "seconds_since_run": age_s,
+        "missions": [
+            {
+                "stem": r.get("stem"),
+                "result": r.get("result"),
+                "avg_fps": r.get("avg_fps"),
+                "p1low_fps": r.get("p1low_fps"),
+                "mission_ready_ms": r.get("mission_ready_ms"),
+                "destroys_delta": r.get("destroys_delta"),
+                "buckets": r.get("buckets"),
+                "details": r.get("details"),
+            }
+            for r in rows
+        ],
+    }, indent=2)
+
+
+# Diagnostic JSONL trace path (written by engine when MC2_DIAGNOSTIC_TRACE_FILE is set)
+_DIAG_TRACE_PATH = _STATE_DIR / "diagnostic_trace.jsonl"
+
+# Registered diagnostic tags (must match mc2_diag::knownTags() in diagnostic_trace.cpp)
+_KNOWN_DIAG_TAGS: frozenset[str] = frozenset({
+    "GPU_CULL",
+    "LIGHTBAKE_PROOF",
+    "ANIM_GATE",
+    "SPFLUSH_COST_SPLIT",
+    "TerrainLOD_prod",
+    "TERRAIN_ACTIVE_AB",
+    "TERRAIN_SOLID_AB",
+    "CONFIG",
+    "ENV",
+    "BUILD",
+    "DEVICE",
+    "SHADER_COMPILE",
+})
+
+
+@mcp.tool()
+def get_diagnostic_events(tag: str, last_n: int = 50) -> str:
+    """
+    Return the last N diagnostic events for a tag from diagnostic_trace.jsonl.
+
+    tag: registered tag name (GPU_CULL, SPFLUSH_COST_SPLIT, ANIM_GATE, etc.)
+         Use tag="*" to get all events regardless of tag.
+         Unknown/unregistered tag returns an error with the known tag list.
+    last_n: max events to return (default 50, capped at 500).
+
+    Known tags with no matching events return an empty list (not an error).
+    Requires engine running with MC2_DIAGNOSTIC_TRACE_FILE set (or default path)
+    and the tag enabled via MC2_DIAG_TAGS.
+    """
+    last_n = max(1, min(500, last_n))
+
+    # Validate tag
+    if tag != "*" and tag not in _KNOWN_DIAG_TAGS:
+        return json.dumps({
+            "error": "unknown_tag",
+            "tag": tag,
+            "known_tags": sorted(_KNOWN_DIAG_TAGS),
+            "tip": "Use tag='*' to see all events regardless of tag name.",
+        }, indent=2)
+
+    if not _DIAG_TRACE_PATH.exists():
+        return json.dumps({
+            "error": "no_trace_file",
+            "path": str(_DIAG_TRACE_PATH),
+            "tip": (
+                "Engine must be running with MC2_DIAGNOSTIC_TRACE_FILE set "
+                "(default: debug_state/diagnostic_trace.jsonl). "
+                "Also ensure MC2_DIAG_TAGS includes the desired tag."
+            ),
+        }, indent=2)
+
+    # Read and filter
+    try:
+        text = _DIAG_TRACE_PATH.read_text(encoding="utf-8")
+    except OSError as e:
+        return json.dumps({"error": "read_error", "detail": str(e)}, indent=2)
+
+    events: list[dict] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if tag == "*" or event.get("tag") == tag:
+            events.append(event)
+
+    events = events[-last_n:]
+
+    return json.dumps({
+        "tag": tag,
+        "count": len(events),
+        "trace_path": str(_DIAG_TRACE_PATH),
+        "events": events,
+    }, indent=2)
 
 
 @mcp.tool()

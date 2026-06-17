@@ -55,6 +55,7 @@ set(SOURCES ${SOURCES}
     pipeline_binder.cpp
     view_uniforms_gl.cpp
     debug_state_dump.cpp
+    diagnostic_trace.cpp
     visual_tuning_profile.cpp
 
     utils/stream.cpp
