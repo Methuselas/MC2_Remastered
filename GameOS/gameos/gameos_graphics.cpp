@@ -3182,7 +3182,7 @@ void gosRenderer::renderWaterFastPath(
             static float s_waterHdriLod = -999.0f;
             if (s_waterHdriLod < -1.0f) {
                 const char* lv = getenv("MC2_WATER_HDRI_LOD");
-                s_waterHdriLod = (lv && lv[0]) ? (float)atof(lv) : 2.5f;
+                s_waterHdriLod = (lv && lv[0]) ? (float)atof(lv) : 1.0f;
             }
             const bool hdriAvail = (ppRefl && ppRefl->isHdriReady());
             setMI("u_hdri", 3);

@@ -128,7 +128,11 @@ PREC vec3 waterEvalHdri(PREC vec3 rdir) {
                        rdir.z);
     PREC vec2 uv = vec2(atan(d.y, d.x) / (2.0 * 3.14159265) + 0.5,
                         asin(clamp(d.z, -1.0, 1.0)) / 3.14159265 + 0.5);
-    return textureLod(u_hdri, uv, u_waterHdriLod).rgb;
+    PREC vec3 raw = textureLod(u_hdri, uv, u_waterHdriLod).rgb;
+    // Reinhard per-channel: physical HDR values [0, inf) -> [0, 1).
+    // Keeps blue > red for clear sky (hue preserved), prevents sun/bright-cloud
+    // from collapsing to featureless white in the reflection mix.
+    return raw / (raw + 1.0);
 }
 
 // Mirror of static_prop.vert::evalShL2 (Ramamoorthi-Hanrahan 2001). Returns
