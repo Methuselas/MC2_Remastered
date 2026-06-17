@@ -151,19 +151,21 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
         {
             if (static_cast<int>(instances.size()) >= maxInst) break;
 
-            // z=0; getTerrainType only uses x/y for cell lookup.
+            // Convert world pos to tile indices first; getTerrain(row,col) is the
+            // implemented path -- getTerrainType(Vector3D) is declared but undefined.
             const Stuff::Vector3D samplePos(wx, wy, 0.0f);
-            const short ttype = land->getTerrainType(samplePos);
+            int cellR = 0, cellC = 0;
+            land->worldToCell(samplePos, cellR, cellC);
+            const long lR = static_cast<long>(cellR);
+            const long lC = static_cast<long>(cellC);
+
+            const short ttype = static_cast<short>(land->getTerrain(lR, lC));
 
             if (isHardReject(ttype)) continue;
             if (!isGreenZone(ttype))  continue;
 
             // MissionMap overlay / water rejection.
             if (gameMap) {
-                int cellR = 0, cellC = 0;
-                land->worldToCell(samplePos, cellR, cellC);
-                const long lR = static_cast<long>(cellR);
-                const long lC = static_cast<long>(cellC);
                 if (gameMap->getOverlay(lR, lC) != 0)  continue;
                 if (gameMap->getDeepWater(lR, lC))      continue;
                 if (gameMap->getShallowWater(lR, lC))   continue;
