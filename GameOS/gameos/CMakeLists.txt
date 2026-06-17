@@ -20,6 +20,7 @@ set(SOURCES ${SOURCES}
     gos_cardcloud_sim.cpp
     gos_mech_batcher.cpp
     gos_vegetation.cpp
+    gos_materials.cpp
     gos_object_recon_tracy.cpp
     gos_terrain_patch_stream.cpp
     gos_terrain_water_stream.cpp
