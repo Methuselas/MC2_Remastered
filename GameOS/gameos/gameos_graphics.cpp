@@ -39,7 +39,17 @@
 namespace gosFX { void DiagFrameTick(); }
 #include "debug_state_dump.h"    // mc2_debug_state::getSessionId, writeShutdownState
 #include "diagnostic_trace.h"   // mc2_diag::init, shutdown
+#include "build_fingerprint.h"  // MC2_BUILD_GIT_SHA/BRANCH/DIRTY/TIME_ISO
 #include <process.h>             // _getpid()
+
+// Build config label for BUILD diagnostic event
+#if defined(_DEBUG)
+#  define MC2_DIAG_BUILD_CONFIG "Debug"
+#elif defined(NDEBUG)
+#  define MC2_DIAG_BUILD_CONFIG "Release"
+#else
+#  define MC2_DIAG_BUILD_CONFIG "RelWithDebInfo"
+#endif
 #include "gos_terrain_bridge.h"
 #include "gos_terrain_lod_chunk.h"
 #include "gos_terrain_patch_stream.h"
@@ -7313,6 +7323,39 @@ void gos_CreateRenderer(graphics::RenderContextHandle ctx_h, graphics::RenderWin
     // Initialize diagnostic JSONL trace. Session id shared with debug_state_dump
     // so MCP can correlate JSONL events with render-state snapshots by session_id.
     mc2_diag::init(mc2_debug_state::getSessionId(), _getpid());
+
+    // BUILD — one-shot build metadata; fires immediately after init().
+    {
+        char buf[512];
+        snprintf(buf, sizeof(buf),
+            "{\"commit\":\"" MC2_BUILD_GIT_SHA "\","
+            "\"dirty\":%s,"
+            "\"branch\":\"" MC2_BUILD_GIT_BRANCH "\","
+            "\"build_time\":\"" MC2_BUILD_TIME_ISO "\","
+            "\"config\":\"" MC2_DIAG_BUILD_CONFIG "\","
+            "\"platform\":\"windows\"}",
+            MC2_BUILD_GIT_DIRTY ? "true" : "false");
+        mc2_diag::writeEvent("BUILD", 1, 0, buf);
+    }
+
+    // DEVICE — one-shot GL device info; GL context is valid (g_gos_renderer->init() ran above).
+    {
+        const char* vendor   = reinterpret_cast<const char*>(glGetString(GL_VENDOR));
+        const char* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+        const char* version  = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+        const char* glsl     = reinterpret_cast<const char*>(glGetString(GL_SHADING_LANGUAGE_VERSION));
+        char buf[1024];
+        snprintf(buf, sizeof(buf),
+            "{\"gl_vendor\":\"%s\","
+            "\"gl_renderer\":\"%s\","
+            "\"gl_version\":\"%s\","
+            "\"glsl_version\":\"%s\"}",
+            vendor   ? vendor   : "<unavailable>",
+            renderer ? renderer : "<unavailable>",
+            version  ? version  : "<unavailable>",
+            glsl     ? glsl     : "<unavailable>");
+        mc2_diag::writeEvent("DEVICE", 1, 0, buf);
+    }
 }
 
 void gos_DestroyRenderer() {
