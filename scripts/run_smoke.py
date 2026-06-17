@@ -1073,9 +1073,14 @@ def main():
                     _sid = ""
 
             # --- CONFIG event check (diagnostic_trace.jsonl) ---
+            # Relative MC2_DIAGNOSTIC_TRACE_FILE resolves from the exe dir
+            # (engine CWD), not the runner CWD.  Absolute paths pass through.
             _trace_env = os.environ.get("MC2_DIAGNOSTIC_TRACE_FILE", "")
-            _trace_path = (Path(_trace_env) if _trace_env
-                           else _diag_state_dir / "diagnostic_trace.jsonl")
+            if _trace_env:
+                _tp = Path(_trace_env)
+                _trace_path = _tp if _tp.is_absolute() else Path(args.exe).resolve().parent / _tp
+            else:
+                _trace_path = _diag_state_dir / "diagnostic_trace.jsonl"
             if _trace_path.exists():
                 try:
                     _trace_lines = _trace_path.read_text(
