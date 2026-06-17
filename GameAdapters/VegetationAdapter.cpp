@@ -151,11 +151,15 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
         {
             if (static_cast<int>(instances.size()) >= maxInst) break;
 
-            // Convert world pos to tile indices first; getTerrain(row,col) is the
+            // Convert world pos to tile indices; getTerrain(row,col) is the
             // implemented path -- getTerrainType(Vector3D) is declared but undefined.
+            // worldToCell has NO bounds check; mapData->getTerrain only gosASSERTs
+            // (no-op in RelWithDebInfo) -- guard explicitly.
             const Stuff::Vector3D samplePos(wx, wy, 0.0f);
             int cellR = 0, cellC = 0;
             land->worldToCell(samplePos, cellR, cellC);
+            const long mapSide = static_cast<long>(Terrain::realVerticesMapSide);
+            if (cellR < 0 || cellC < 0 || cellR >= mapSide || cellC >= mapSide) continue;
             const long lR = static_cast<long>(cellR);
             const long lC = static_cast<long>(cellC);
 
