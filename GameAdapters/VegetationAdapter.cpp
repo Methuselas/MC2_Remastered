@@ -21,6 +21,7 @@
 #include "Stuff/Stuff.hpp"
 
 #include <vector>
+#include <algorithm> // std::max
 #include <cstdlib>   // std::getenv, std::atoi
 #include <cstdio>    // fprintf
 #include <cmath>     // sinf, fmodf, fabsf
@@ -59,42 +60,33 @@ constexpr float kGridStep = 32.0f;
 // Placement accept/reject helpers
 // ---------------------------------------------------------------------------
 
-[[nodiscard]] bool isGreenZone(short terrainType) noexcept
+// Vegetation density tier for each terrain type.
+// kNone   = no vegetation (bare rock, water, paved)
+// kSparse = dry/transitional terrain, low density and only near kFull zones
+// kFull   = green/lush terrain, full density
+enum class VegDensity : int { kNone = 0, kSparse = 1, kFull = 2 };
+
+[[nodiscard]] VegDensity classifyTerrain(short t) noexcept
 {
-    switch (terrainType) {
-    case MC_MUD_TYPE:         // predominant outdoor terrain in many missions
+    switch (t) {
+    case MC_MUD_TYPE:
     case MC_MOSS_TYPE:
     case MC_FORESTFLOOR_TYPE:
     case MC_GRASS_TYPE:
-    case MC_TUNDRA_TYPE:
     case MC_SLIMY_TYPE:
+        return VegDensity::kFull;
     case MC_DIRT_TYPE:
-        return true;
+    case MC_TUNDRA_TYPE:
+        return VegDensity::kSparse;
     default:
-        return false;
+        return VegDensity::kNone;  // water, ash, mountain, concrete, cliff, cement
     }
 }
 
-[[nodiscard]] bool isHardReject(short terrainType) noexcept
+// Smooth spatial noise in [0,1] at ~400 WU scale for macro density patches.
+[[nodiscard]] float smoothNoise(float wx, float wy) noexcept
 {
-    switch (terrainType) {
-    case MC_BLUEWATER_TYPE:
-    case MC_GREEN_WATER_TYPE:
-    case MC_ASH_TYPE:
-    case MC_MOUNTAIN_TYPE:
-    case MC_CONCRETE_TYPE:
-    case MC_CLIFF_TYPE:
-    case MC_CEMENT2_TYPE:
-    case MC_CEMENT3_TYPE:
-    case MC_CEMENT4_TYPE:
-    case MC_CEMENT5_TYPE:
-    case MC_CEMENT6_TYPE:
-    case MC_CEMENT7_TYPE:
-    case MC_CEMENT8_TYPE:
-        return true;
-    default:
-        return false;
-    }
+    return fabsf(fmodf(sinf(wx * 0.0025f + wy * 0.0063f) * 43758.5f, 1.0f));
 }
 
 } // anonymous namespace
@@ -196,54 +188,68 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
 
             const short ttype = static_cast<short>(land->getTerrain(lR, lC));
 
-            if (isHardReject(ttype)) { ++diagHard; continue; }
-            if (!isGreenZone(ttype)) { ++diagNotGreen; continue; }
+            const VegDensity vdc = classifyTerrain(ttype);
+            if (vdc == VegDensity::kNone) { ++diagHard; continue; }
 
-            // Water/overlay rejection via terrain type is sufficient:
-            // MC_BLUEWATER_TYPE and MC_GREEN_WATER_TYPE are in isHardReject above.
             // MissionMap getOverlay encodes movement costs for every cell (always != 0
-            // for natural terrain in mc2), so checking overlay != 0 rejects everything.
-            // getDeepWater/getShallowWater duplicates what the terrain-type check already
-            // handles — skipped for now.
+            // for natural terrain), so overlay != 0 rejects everything — skip it.
             (void)gameMap;
 
-            // Per-cell jitter: constant across all instances within this cell.
-            const float h1 = hashf(wx, wy);
-            const float h2 = hashf(wy, wx);
-            const float jitterX = (h1 - 0.5f) * kGridStep * 0.8f;
-            const float jitterY = (h2 - 0.5f) * kGridStep * 0.8f;
+            // Macro spatial noise [0,1] at ~400 WU scale for density variation.
+            const float noise = smoothNoise(wx, wy);
 
-            for (int i = 0; i < density; ++i) {
+            // Terrain type multiplier: kFull = 1.0, kSparse = 0.25.
+            const float terrMult = (vdc == VegDensity::kFull) ? 1.0f : 0.25f;
+
+            // nearForest scan (±2 tiles): boost kSparse cells adjacent to kFull zones.
+            float nearBoost = 1.0f;
+            if (vdc == VegDensity::kSparse) {
+                for (int dr = -2; dr <= 2 && nearBoost < 2.0f; ++dr) {
+                    for (int dc = -2; dc <= 2 && nearBoost < 2.0f; ++dc) {
+                        if (dr == 0 && dc == 0) continue;
+                        const long nr = lR + dr, nc = lC + dc;
+                        if (nr >= 0 && nc >= 0 && nr < mapSide && nc < mapSide)
+                            if (classifyTerrain(static_cast<short>(land->getTerrain(nr, nc))) == VegDensity::kFull)
+                                nearBoost = 3.0f;
+                    }
+                }
+            }
+
+            // Instance count: floor = max(1, density * terrMult * noise * nearBoost) / 6.
+            // density=25, kFull, noise=0.8 → max(1,20)/6 = 3. kSparse near forest, noise=0.8 → max(1,15)/6 = 2.
+            const int count = std::max(1, static_cast<int>(
+                static_cast<float>(density) * terrMult * noise * nearBoost)) / 6;
+            if (count == 0) { ++diagNotGreen; continue; }
+
+            const float mapHalf = mapSpan * 0.5f;
+
+            // Full-cell scatter: each instance independently placed (no shared jitter center).
+            for (int i = 0; i < count; ++i) {
                 if (static_cast<int>(instances.size()) >= maxInst) break;
 
                 const float fi = static_cast<float>(i);
 
-                const float h3 = hashf(wx + fi * 73.1f,  wy);
-                const float h4 = hashf(wy + fi * 83.7f,  wx);
-                const float h5 = hashf(wx + fi * 199.1f, wy + fi * 17.3f);
-                const float h6 = hashf(wy + fi * 151.3f, wx + fi * 11.7f);
-                const float h7 = hashf(wx + fi * 37.9f,  wy + fi * 59.1f);
-                const float h8 = hashf(wy + fi * 61.3f,  wx + fi * 43.1f);
+                const float h1 = hashf(wx + fi * 73.1f,  wy + fi *  7.3f);
+                const float h2 = hashf(wy + fi * 83.7f,  wx + fi *  3.1f);
+                const float h3 = hashf(wx + fi * 199.1f, wy + fi * 17.3f);
+                const float h4 = hashf(wy + fi * 151.3f, wx + fi * 11.7f);
+                const float h5 = hashf(wx + fi * 37.9f,  wy + fi * 59.1f);
+                const float h6 = hashf(wy + fi * 61.3f,  wx + fi * 43.1f);
 
-                const float instWx = wx + jitterX + h3 * 20.0f;
-                const float instWy = wy + jitterY + h4 * 20.0f;
+                const float instWx = wx + (h1 - 0.5f) * kGridStep * 0.9f;
+                const float instWy = wy + (h2 - 0.5f) * kGridStep * 0.9f;
 
                 const Stuff::Vector3D instPos(instWx, instWy, 0.0f);
                 const float elevation = land->getTerrainElevation(instPos);
-
-                // Convert to terrain-chunk centered space (matching terrain_lod_chunk.vert):
-                //   x = east_centered  = wx - originX - mapHalf
-                //   y = north_centered = wy - originY + mapHalf  (originY = max north)
-                const float mapHalf = mapSpan * 0.5f;
 
                 GosVegetation::Instance inst;
                 inst.x          = instWx - originX - mapHalf;
                 inst.y          = instWy - originY + mapHalf;
                 inst.z          = elevation;
-                inst.yaw        = h5 * 6.2831f;
-                inst.scale      = 0.8f + h6 * 0.7f;
-                inst.atlasFrame = static_cast<uint32_t>(h7 * 4.0f) & 3u;
-                inst.seed       = h8;
+                inst.yaw        = h3 * 6.2831f;
+                inst.scale      = 0.8f + h4 * 0.7f;
+                inst.atlasFrame = static_cast<uint32_t>(h5 * 4.0f) & 3u;
+                inst.seed       = h6;
 
                 instances.push_back(inst);
             }
