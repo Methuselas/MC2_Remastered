@@ -264,6 +264,10 @@ static GLint s_loc_u_mechSpecDebugMask       = -1;
 // Slice C1: StandardLit toggle. Returns -1 until mech.frag declares the uniform;
 // guarded with >= 0 at upload so no crash when shader lacks it.
 static GLint s_loc_u_standardLitEnabled      = -1;
+// Slice C2: PBR detail material samplers + tile scale.
+static GLint s_loc_u_pbrNormalTex            = -1;
+static GLint s_loc_u_pbrOrmTex               = -1;
+static GLint s_loc_u_pbrTileScale            = -1;
 
 // Geometry (immutable after finalizeGeometry).
 static GLuint s_sharedVao = 0;
@@ -535,6 +539,10 @@ static void loadProgramsIfNeeded() {
     s_loc_u_mechSpecDebugMask       = loc("u_mechSpecDebugMask");
     // Slice C1: StandardLit toggle (default 0 = passthrough; shader may not declare it yet).
     s_loc_u_standardLitEnabled      = loc("u_standardLitEnabled");
+    // Slice C2: PBR detail surface samplers + tile scale.
+    s_loc_u_pbrNormalTex            = loc("u_pbrNormalTex");
+    s_loc_u_pbrOrmTex               = loc("u_pbrOrmTex");
+    s_loc_u_pbrTileScale            = loc("u_pbrTileScale");
 
     // MECH-VIEWUNIFORMS-1: on the gated path, verify the ViewUniformsBlock is
     // present and bound to point 3. The GLSL layout(binding=3) qualifier is
@@ -1804,6 +1812,14 @@ void GpuMechBatcher::flush() {
     GLint     prevSsbo1     = 0; glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 1, &prevSsbo1);
     glActiveTexture(GL_TEXTURE0);
     GLint     prevTexUnit0; glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTexUnit0);
+    // Slice C2: save PBR detail sampler units 1 and 2.
+    glActiveTexture(GL_TEXTURE1);
+    GLint prevTexUnit1 = 0; glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTexUnit1);
+    GLint prevSampler1 = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, 1, &prevSampler1);
+    glActiveTexture(GL_TEXTURE2);
+    GLint prevTexUnit2 = 0; glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTexUnit2);
+    GLint prevSampler2 = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, 2, &prevSampler2);
+    glActiveTexture(GL_TEXTURE0);
 
     // MECH-PIPELINEDESC-1: program + fixed-function state (depth test+write+func
     // GEQUAL, blend Opaque, cull Back) from the registered MechOpaque PipelineDesc,
@@ -1830,6 +1846,28 @@ void GpuMechBatcher::flush() {
     // Identified via debug=7 (hardcoded UV (0.5, 0.5) showed yellow paint
     // while debug=2 with v_uv showed black).
     glBindSampler(0, s_sampler);
+
+    // Slice C2: bind PBR surface-detail textures to units 1 and 2.
+    // s_mechSurfaceMaterialIdx 0 → both getters return 0 → unbind (safe; shader
+    // only samples these when u_standardLitEnabled != 0, which requires a non-zero profile).
+    {
+        static const float s_pbrTileScale = []() {
+            const char* v = std::getenv("MC2_PBR_TILE_SCALE");
+            return v ? (float)std::atof(v) : 4.0f;
+        }();
+        const GLuint pbrNormal = gos_materials::getProfileNormalTex(s_mechSurfaceMaterialIdx);
+        const GLuint pbrOrm    = gos_materials::getProfileOrmTex(s_mechSurfaceMaterialIdx);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, pbrNormal);
+        glBindSampler(1, s_sampler);   // REPEAT/LINEAR same as unit 0
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, pbrOrm);
+        glBindSampler(2, s_sampler);
+        glActiveTexture(GL_TEXTURE0);
+        if (s_loc_u_pbrNormalTex >= 0) glUniform1i(s_loc_u_pbrNormalTex, 1);
+        if (s_loc_u_pbrOrmTex    >= 0) glUniform1i(s_loc_u_pbrOrmTex,    2);
+        if (s_loc_u_pbrTileScale >= 0) glUniform1f(s_loc_u_pbrTileScale, s_pbrTileScale);
+    }
 
     // Static uniforms.
     glUniform1i(s_loc_u_tex,      0);
@@ -2076,6 +2114,13 @@ void GpuMechBatcher::flush() {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, (GLuint)prevSsbo2);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, (GLuint)prevTexUnit0);
+    // Slice C2: restore PBR detail sampler units.
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)prevTexUnit1);
+    glBindSampler(1, (GLuint)prevSampler1);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)prevTexUnit2);
+    glBindSampler(2, (GLuint)prevSampler2);
     glActiveTexture((GLenum)prevActiveTex);
     glBindSampler(0, (GLuint)prevSampler);
     glBindVertexArray((GLuint)prevVao);

@@ -390,4 +390,14 @@ void bindMaterialTable() {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, kMechMaterialTableBinding, s_ssbo);
 }
 
+uint32_t getProfileNormalTex(uint32_t index) {
+    if (index >= s_profiles.size()) return 0u;
+    return s_profiles[index].ownedNormal;
+}
+
+uint32_t getProfileOrmTex(uint32_t index) {
+    if (index >= s_profiles.size()) return 0u;
+    return s_profiles[index].ownedOrm;
+}
+
 } // namespace gos_materials

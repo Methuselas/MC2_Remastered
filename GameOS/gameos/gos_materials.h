@@ -65,4 +65,15 @@ uint32_t profileCount();
 // was created because no textured profiles were registered).
 void bindMaterialTable();
 
+// Returns the raw GL texture object ID for profile[index]'s normal map.
+// Returns 0 when the profile has no normal map or index is out of range.
+// Not thread-safe. Call only from the main GL thread, after init().
+// Returns uint32_t (= GLuint) so the header needs no GL includes.
+uint32_t getProfileNormalTex(uint32_t index);
+
+// Returns the raw GL texture object ID for profile[index]'s packed ORM map.
+// Returns 0 when the profile has no ORM map or index is out of range.
+// Not thread-safe. Call only from the main GL thread, after init().
+uint32_t getProfileOrmTex(uint32_t index);
+
 } // namespace gos_materials

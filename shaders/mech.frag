@@ -16,6 +16,7 @@
 #ifdef MC2_USE_VIEW_UNIFORMS
 #include <include/view_uniforms.hglsl>
 #endif
+#include <include/pbr_common.hglsl>
 
 // [RENDER_CONTRACT]
 //   Pass:           Mech
@@ -39,6 +40,13 @@ flat in int   v_mechSunFound;
 #endif
 
 uniform sampler2D u_tex;
+// Slice C2: PBR surface-detail material (Metal061B).
+// u_pbrNormalTex bound to unit 1, u_pbrOrmTex to unit 2.
+// Both sampled only when u_standardLitEnabled != 0 (MC2_STANDARD_LIT_V1=1).
+uniform sampler2D u_pbrNormalTex;   // unit 1: NormalGL (RGB8, linear)
+uniform sampler2D u_pbrOrmTex;      // unit 2: packed ORM (R=AO G=Rough B=Metal, linear)
+uniform int   u_standardLitEnabled; // 0=Blinn-Phong passthrough, 1=GGX StandardLit
+uniform float u_pbrTileScale;       // UV tile scale for detail material (default 4.0)
 uniform int u_materialFlags;  // bit 0: ALPHA_TEST
 // Slice B2: u_fogValue retained for backward compat / parity with
 // static_prop convention but no longer drives the mix — per-actor
@@ -174,6 +182,60 @@ void main() {
     }
 #endif  // MC2_USE_VIEW_UNIFORMS
 
+    // GBuffer normal; updated to PBR detail normal when StandardLit active.
+    vec3 N_gbuf = normalize(v_normal);
+
+#ifdef MC2_USE_VIEW_UNIFORMS
+    // Slice C2/C3/D: StandardLit GGX PBR surface-detail layer.
+    // Gated by u_standardLitEnabled (MC2_STANDARD_LIT_V1=1) and sun presence.
+    // Replaces the Blinn-Phong c.rgb with Cook-Torrance GGX result.
+    if (u_standardLitEnabled != 0 && v_mechSunFound != 0) {
+        vec2 pbrUV  = v_uv * u_pbrTileScale;
+        vec3 orm    = texture(u_pbrOrmTex, pbrUV).rgb;
+        float ao        = orm.r;
+        float roughness = orm.g;
+        float metallic  = orm.b;
+
+        // Derivative TBN normal map (Slice C3). Falls back to vertex N on
+        // degenerate screen-space derivatives (silhouette pixels etc.).
+        vec3 N_pbr = applyPbrNormal(N_gbuf, v_worldPos, v_uv,
+                                    u_pbrNormalTex, u_pbrTileScale, 1.0);
+        N_gbuf = N_pbr;
+
+        // v_mechSunDirGL = -(surface->sun); negate to get L = surface->sun.
+        vec3 V = normalize(u_cameraWorldPos.xyz - v_worldPos);
+        vec3 L = normalize(-v_mechSunDirGL);
+
+        // sRGB decode before PBR lighting (gamma-correct path).
+        vec3 albedo = pow(tex_color.rgb, vec3(2.2));
+
+        // Approximate light/ambient colors for v0 (no sun-color uniform yet).
+        // Tuned for typical MC2 daylight; tunable via MC2_PBR_TILE_SCALE env.
+        vec3 lightColor   = vec3(2.0, 1.9, 1.7);
+        vec3 ambientColor = vec3(0.4, 0.45, 0.5);
+
+        StandardLitInput si;
+        si.albedo       = albedo;
+        si.N            = N_pbr;
+        si.V            = V;
+        si.L            = L;
+        si.lightColor   = lightColor;
+        si.ambientColor = ambientColor;
+        si.roughness    = roughness;
+        si.metallic     = metallic;
+        si.ao           = ao;
+
+        vec3 pbrLit = StandardLit(si);
+        pbrLit += v_highlightColor.rgb * v_highlightColor.a;
+        c = vec4(pbrLit, tex_color.a);
+
+        // PBR debug modes (overridden by standard modes 1-9 below if also set).
+        if      (u_debugMode == 10) c = vec4(roughness, roughness, roughness, 1.0);
+        else if (u_debugMode == 11) c = vec4(metallic,  metallic,  metallic,  1.0);
+        else if (u_debugMode == 12) c = vec4(N_pbr * 0.5 + 0.5, 1.0);
+    }
+#endif  // MC2_USE_VIEW_UNIFORMS
+
     // Slice B2: per-actor haze. v_fogRGB.a=0 → clear, =1 → fully fogged.
     c.rgb  = mix(c.rgb, v_fogRGB.rgb, v_fogRGB.a);
 
@@ -189,7 +251,7 @@ void main() {
     else if (u_debugMode == 9) c = vec4(v_litColor.rgb / max(textureLod(u_tex, v_uv, 0.0).rgb, vec3(0.001)), 1.0); // lighting / texture (texture-inversion overlay)
 
     FragColor = c;
-    GBuffer1  = rc_gbuffer1_screenShadowEligible(normalize(v_normal));
+    GBuffer1  = rc_gbuffer1_screenShadowEligible(N_gbuf);
 #ifdef MC2_OBJECT_ID_BUFFER
     // M2.5: emit per-pixel RenderObjectHandle.raw(). Debug-mode pixels
     // (u_debugMode 1..9 at lines 65-73) DO NOT discard; they still emit
