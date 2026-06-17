@@ -282,10 +282,10 @@ void GosVegetation::flush(const float* worldToClipGL_4x4,
         glProgramUniformMatrix4fv(progId, loc, 1, GL_FALSE, worldToClipGL_4x4);
     }
 
-    // Upload vec3 camera pos.
+    // Upload camera pos (vec4 uniform; w unused, set to 0).
     {
         const GLint loc = glGetUniformLocation(progId, "u_cameraPos");
-        glProgramUniform3f(progId, loc, camX, camY, camZ);
+        glProgramUniform4f(progId, loc, camX, camY, camZ, 0.0f);
     }
 
     // Upload vec4 terrain light direction.

@@ -121,6 +121,7 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
 {
     if (!land) return;
     if (!GosVegetation::isEnabled()) return;
+    GosVegetation::init();  // no-op if already initialized
 
     const int density   = envInt("MC2_VEGETATION_DENSITY", 4);
     const int maxInst   = envInt("MC2_VEGETATION_MAX", 50000);
