@@ -245,9 +245,9 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
                 GosVegetation::Instance inst;
                 inst.x          = instWx - originX - mapHalf;
                 inst.y          = instWy - originY + mapHalf;
-                inst.z          = elevation;
+                inst.z          = elevation + 0.5f;  // lift card base off terrain surface
                 inst.yaw        = h3 * 6.2831f;
-                inst.scale      = 0.8f + h4 * 0.7f;
+                inst.scale      = 5.0f + h4 * 5.0f;  // 5-10 WU
                 inst.atlasFrame = static_cast<uint32_t>(h5 * 4.0f) & 3u;
                 inst.seed       = h6;
 
