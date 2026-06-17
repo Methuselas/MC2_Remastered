@@ -75,6 +75,12 @@ LAUNCHER_FROM_BUILD64 = os.path.join("out", "mc2_launcher")  # + <cfg> + exe
 # the deploy payload keeps "build -> deploy" self-complete (no manual copy).
 EDITOR_SUPPORT_TREES = ["tools/terrain_gen"]
 
+# Cook tools shipped with BOTH game and editor installs so modders/users can
+# re-cook or inspect assets without a full source checkout.
+#   tools/cook_bc6h_hdri.py  — EXR -> BC6H KTX2 via texconv+ktx (HDRI baking)
+#   tools/examples/          — asset inspection helpers (list_mission_assets etc.)
+GAME_COOK_TOOLS = ["tools/cook_bc6h_hdri.py", "tools/examples"]
+
 FFMPEG_DLLS = [
     "avcodec-61.dll",
     "avformat-61.dll",
@@ -258,6 +264,17 @@ def enumerate_payload(src_root, build_dir, exe_name, pdb_name,
                      "  The editor's Generate-Mission path needs this tree; "
                      "a deploy without it builds a non-functional editor.")
             for dirpath, _dirs, files in os.walk(tree_abs):
+                for fn in sorted(files):
+                    sp = os.path.join(dirpath, fn)
+                    rel = os.path.relpath(sp, src_root).replace(os.sep, "/")
+                    items.append((sp, rel, "support"))
+    # Cook tools ship with both game and editor installs (modder/user asset pipeline).
+    for entry in GAME_COOK_TOOLS:
+        entry_abs = os.path.join(src_root, entry)
+        if os.path.isfile(entry_abs):
+            items.append((entry_abs, entry.replace(os.sep, "/"), "support"))
+        elif os.path.isdir(entry_abs):
+            for dirpath, _dirs, files in os.walk(entry_abs):
                 for fn in sorted(files):
                     sp = os.path.join(dirpath, fn)
                     rel = os.path.relpath(sp, src_root).replace(os.sep, "/")
