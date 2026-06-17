@@ -300,6 +300,7 @@ extern PriorityQueuePtr	openList;
 #include "gos_profiler.h"
 #include "../GameAdapters/StaticPropRenderAdapter.h"  // M1 Task 13: firewall bridge (was: gos_static_prop_batcher.h + gos_static_prop_registry.h)
 #include "../GameAdapters/MechRenderAdapter.h"          // M2: mech lifecycle adapter
+#include "../GameAdapters/VegetationAdapter.h"          // vegetation card system lifecycle
 #include "gos_mech_batcher.h"
 
 // Phase-timing hooks implemented in GameOS/gameos/gameosmain.cpp.
@@ -3417,6 +3418,11 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	if (gpu_cull::compute_isEnabled()) {
 		gpu_cull::compute_buildIndirectBuffer(GameAdapters::StaticProp::typeCount());
 	}
+
+	// Vegetation card system — notify adapter that terrain + move map are ready.
+	// land and GameMap are both stable by this point (terrain init + MOVE_readData
+	// both completed above). No-op when MC2_VEGETATION_CARDS is unset.
+	GameAdapters::Vegetation::missionLoaded(land, GameMap);
 }
 
 //----------------------------------------------------------------------------------
@@ -3567,6 +3573,7 @@ void Mission::destroy (bool initLogistics)
 	GpuMechBatcher::instance().onMapUnload();
 	GameAdapters::StaticProp::endMissionLate();    // M1 Task 13
 	GameAdapters::Mech::endMission();               // M2: mech lifecycle
+	GameAdapters::Vegetation::missionUnloaded();    // vegetation card system teardown
 
 	//---------------------------------------------------------------
 	// Shutdown the Mission Interface

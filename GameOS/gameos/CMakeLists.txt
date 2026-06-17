@@ -19,6 +19,7 @@ set(SOURCES ${SOURCES}
     gos_vfx_mesh_bridge.cpp
     gos_cardcloud_sim.cpp
     gos_mech_batcher.cpp
+    gos_vegetation.cpp
     gos_object_recon_tracy.cpp
     gos_terrain_patch_stream.cpp
     gos_terrain_water_stream.cpp

@@ -43,6 +43,7 @@
 #include <tracy/Tracy.hpp>
 #include "cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (RAII scope)
 #include "../GameAdapters/StaticPropRenderAdapter.h"  // M1 CI-gate: firewall bridge for frameBegin()
+#include "../GameAdapters/VegetationAdapter.h"         // vegetation card flush (post-renderLists)
 #include "particles/batcher.h"  // GPU particle batcher flush (Stage 2' and beyond)
 #include "../GameOS/gameos/gos_particle_bridge.h"  // B2 P1: camera basis bridge
 #include "../GameOS/gameos/debug_renderer.h"
@@ -413,6 +414,25 @@ void GameCamera::render (void)
 				// raw GL that bypasses the gos render-state cache; re-sync so the
 				// next gos_SetRenderState isn't a stale no-op (mirrors mech batcher).
 				gos_InvalidateRenderStateCache();
+			}
+
+			// Vegetation card flush — instanced crossed-quad billboards, default-OFF
+			// (MC2_VEGETATION_CARDS=1). MUST run after renderLists so the scene
+			// depth buffer is populated for z-rejection. After water so vegetation
+			// alpha-discard correctly occludes/is-occluded by terrain+water.
+			// Before particles: vegetation is opaque/alpha-test (not additive blend).
+			// gos_GetTerrainLightDir and time sourced inside VegetationAdapter::flush.
+			// No-op when vegetation system is not initialised or flag is unset.
+			{
+				ZoneScopedN("GameCamera::render vegetationFlush");
+				Stuff::Matrix4D worldToClipGL = eye->worldToClipGL();
+				Stuff::Vector3D camPos = eye->getPosition();
+				float lx = 0.0f, ly = 0.0f, lz = 1.0f;
+				gos_GetTerrainLightDir(&lx, &ly, &lz);
+				const float terrainLightDir_4f[4] = { lx, ly, lz, 0.0f };
+				const float missionTime = static_cast<float>(gos_GetElapsedTime());
+				GameAdapters::Vegetation::flush(worldToClipGL, camPos,
+				                                terrainLightDir_4f, missionTime);
 			}
 
 			// GPU particle batcher flush — Stage 2' and beyond.
