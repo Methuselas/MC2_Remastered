@@ -191,6 +191,28 @@ void init(const char* sessionId, int pid) {
         fprintf(stderr, "[MC2_DIAG] WARNING: cannot open trace file %s\n",
                 path.string().c_str());
         s.disabled = true;
+        return;
+    }
+
+    // Emit a startup CONFIG event so sessions can confirm the trace path works
+    // even before any diagnostic sites are migrated from stderr.
+    {
+        const auto nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        std::ostringstream line;
+        line << "{\"tag\":\"CONFIG\",\"v\":1"
+             << ",\"session_id\":\"" << s.sessionId << "\""
+             << ",\"pid\":" << s.pid
+             << ",\"tid\":0"
+             << ",\"frame\":0"
+             << ",\"ts_ms\":0"
+             << ",\"written_epoch\":" << static_cast<double>(nowUs) / 1e6
+             << ",\"data\":{\"event\":\"diagnostic_trace_initialized\""
+             << ",\"tags_mode\":" << (s.allTags ? "\"all\"" : "\"whitelist\"")
+             << "}}\n";
+        const std::string lineStr = line.str();
+        fwrite(lineStr.c_str(), 1, lineStr.size(), s.file);
+        fflush(s.file);
     }
 }
 
