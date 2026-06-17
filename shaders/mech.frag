@@ -40,18 +40,24 @@ flat in int   v_mechSunFound;
 #endif
 
 uniform sampler2D u_tex;
-// Slice C2: PBR surface-detail material (Metal061B).
-// u_pbrNormalTex bound to unit 1, u_pbrOrmTex to unit 2.
-// Both sampled only when u_standardLitEnabled != 0 (MC2_STANDARD_LIT_V1=1).
-uniform sampler2D u_pbrNormalTex;   // unit 1: NormalGL (RGB8, linear)
-uniform sampler2D u_pbrOrmTex;      // unit 2: packed ORM (R=AO G=Rough B=Metal, linear)
-uniform int   u_standardLitEnabled;          // 0=Blinn-Phong passthrough, 1=GGX StandardLit
-uniform float u_pbrTileScale;               // UV tile scale for detail material (default 4.0)
-// PBR-TUNE-1: material influence knobs -- all env-tunable, no recompile needed.
-uniform float u_pbrMetallicInfluence;       // scale raw ORM metallic channel (default 0.15)
-uniform float u_pbrRoughnessMin;            // roughness floor after clamp (default 0.45)
-uniform float u_pbrRoughnessMax;            // roughness ceiling after clamp (default 0.90)
+// Slice C2/C3/D + PBR-LAYERED-1: StandardLit GGX with two-layer triplanar material.
+// Metal061B = worn substrate (units 1+2), PaintedMetal003 = paint layer (units 3+4).
+// All sampled only when u_standardLitEnabled != 0 and MC2_USE_VIEW_UNIFORMS defined.
+uniform sampler2D u_pbrNormalTex;      // unit 1: Metal061B NormalGL (RGB8, linear)
+uniform sampler2D u_pbrOrmTex;         // unit 2: Metal061B packed ORM (R=AO G=Rough B=Metal)
+uniform sampler2D u_pbrPaintNormalTex; // unit 3: PaintedMetal003 NormalGL
+uniform sampler2D u_pbrPaintOrmTex;    // unit 4: PaintedMetal003 packed ORM
+uniform int   u_standardLitEnabled;          // 0=Blinn-Phong, 1=GGX StandardLit (default ON)
+uniform float u_pbrTileScale;               // UV tile scale (fallback path, default 4.0)
+// PBR-TUNE-1: material influence knobs.
+uniform float u_pbrMetallicInfluence;       // scale raw ORM metallic (default 0.15)
+uniform float u_pbrRoughnessMin;            // roughness floor (default 0.45)
+uniform float u_pbrRoughnessMax;            // roughness ceiling (default 0.90)
 uniform float u_pbrAmbientSpecularStrength; // fake env fill for metals (default 0.25)
+// PBR-LAYERED-1: paint/wear blend + triplanar.
+uniform float u_pbrWearStrength;      // wear blend 0=all paint, 1=full metal reveal (default 1.0)
+uniform int   u_pbrTriplanar;         // 1=world-space triplanar (default ON)
+uniform float u_pbrTriplanarScale;    // triplanar world-unit scale (default 0.2)
 uniform int u_materialFlags;  // bit 0: ALPHA_TEST
 // Slice B2: u_fogValue retained for backward compat / parity with
 // static_prop convention but no longer drives the mix — per-actor
@@ -195,29 +201,44 @@ void main() {
     // Gated by u_standardLitEnabled (MC2_STANDARD_LIT_V1=1) and sun presence.
     // Replaces the Blinn-Phong c.rgb with Cook-Torrance GGX result.
     if (u_standardLitEnabled != 0 && v_mechSunFound != 0) {
-        vec2 pbrUV  = v_uv * u_pbrTileScale;
-        vec3 orm    = texture(u_pbrOrmTex, pbrUV).rgb;
-        float ao        = orm.r;
-        // PBR-TUNE-1: clamp roughness to avoid mirror-bright low-roughness response;
-        // scale metallic down so painted armor stays dielectric by default.
-        float roughness = clamp(orm.g, u_pbrRoughnessMin, u_pbrRoughnessMax);
-        float metallic  = orm.b * u_pbrMetallicInfluence;
+        vec3 N_vtx = normalize(v_normal);
 
-        // Derivative TBN normal map (Slice C3). Falls back to vertex N on
-        // degenerate screen-space derivatives (silhouette pixels etc.).
-        vec3 N_pbr = applyPbrNormal(N_gbuf, v_worldPos, v_uv,
-                                    u_pbrNormalTex, u_pbrTileScale, 1.0);
+        // PBR-LAYERED-1: sample both material layers via triplanar or UV.
+        // Metal061B (units 1+2) = worn metal substrate.
+        // PaintedMetal003 (units 3+4) = paint layer; metalness encodes wear.
+        vec3 orm61;    // Metal061B ORM
+        vec3 N_61;     // Metal061B world-space normal
+        vec3 ormPaint; // PaintedMetal003 ORM
+        vec3 N_paint;  // PaintedMetal003 world-space normal
+
+        if (u_pbrTriplanar != 0) {
+            float ts = u_pbrTriplanarScale;
+            orm61    = sampleTriplanar      (u_pbrOrmTex,        v_worldPos, N_vtx, ts);
+            N_61     = sampleTriplanarNormal(u_pbrNormalTex,     v_worldPos, N_vtx, ts);
+            ormPaint = sampleTriplanar      (u_pbrPaintOrmTex,   v_worldPos, N_vtx, ts);
+            N_paint  = sampleTriplanarNormal(u_pbrPaintNormalTex, v_worldPos, N_vtx, ts);
+        } else {
+            vec2 pbrUV = v_uv * u_pbrTileScale;
+            orm61    = texture(u_pbrOrmTex,       pbrUV).rgb;
+            N_61     = applyPbrNormal(N_vtx, v_worldPos, v_uv, u_pbrNormalTex,     u_pbrTileScale, 1.0);
+            ormPaint = texture(u_pbrPaintOrmTex,  pbrUV).rgb;
+            N_paint  = applyPbrNormal(N_vtx, v_worldPos, v_uv, u_pbrPaintNormalTex, u_pbrTileScale, 1.0);
+        }
+
+        // Wear blend: PaintedMetal003 metalness drives where paint is thin/worn.
+        // wornMask=0 -> all paint, wornMask=1 -> full metal substrate exposed.
+        float wornMask  = clamp(ormPaint.b * u_pbrWearStrength, 0.0, 1.0);
+
+        float ao        = mix(ormPaint.r, orm61.r, wornMask);
+        float roughness = clamp(mix(ormPaint.g, orm61.g, wornMask), u_pbrRoughnessMin, u_pbrRoughnessMax);
+        float metallic  = mix(ormPaint.b, orm61.b, wornMask) * u_pbrMetallicInfluence;
+        vec3  N_pbr     = normalize(mix(N_paint, N_61, wornMask));
         N_gbuf = N_pbr;
 
-        // v_mechSunDirGL = -(surface->sun); negate to get L = surface->sun.
         vec3 V = normalize(u_cameraWorldPos.xyz - v_worldPos);
         vec3 L = normalize(-v_mechSunDirGL);
-
-        // sRGB decode before PBR lighting (gamma-correct path).
         vec3 albedo = pow(tex_color.rgb, vec3(2.2));
 
-        // Approximate light/ambient colors for v0 (no sun-color uniform yet).
-        // Tuned for typical MC2 daylight; tunable via MC2_PBR_TILE_SCALE env.
         vec3 lightColor   = vec3(2.0, 1.9, 1.7);
         vec3 ambientColor = vec3(0.4, 0.45, 0.5);
 
@@ -237,10 +258,13 @@ void main() {
         pbrLit += v_highlightColor.rgb * v_highlightColor.a;
         c = vec4(pbrLit, tex_color.a);
 
-        // PBR debug modes (overridden by standard modes 1-9 below if also set).
+        // PBR debug modes 10-15 (overridden by standard modes 1-9 if also set).
         if      (u_debugMode == 10) c = vec4(roughness, roughness, roughness, 1.0);
         else if (u_debugMode == 11) c = vec4(metallic,  metallic,  metallic,  1.0);
         else if (u_debugMode == 12) c = vec4(N_pbr * 0.5 + 0.5, 1.0);
+        else if (u_debugMode == 13) c = vec4(ormPaint.ggg, 1.0);          // paint roughness
+        else if (u_debugMode == 14) c = vec4(N_paint * 0.5 + 0.5, 1.0);  // paint normal
+        else if (u_debugMode == 15) c = vec4(wornMask, wornMask, wornMask, 1.0); // wear mask
     }
 #endif  // MC2_USE_VIEW_UNIFORMS
 

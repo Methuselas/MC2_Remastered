@@ -102,6 +102,12 @@ extern "C" float batcher_getPbrRoughnessMax(void);
 extern "C" void  batcher_setPbrRoughnessMax(float v);
 extern "C" float batcher_getPbrAmbientSpecularStrength(void);
 extern "C" void  batcher_setPbrAmbientSpecularStrength(float v);
+extern "C" float batcher_getPbrWearStrength(void);
+extern "C" void  batcher_setPbrWearStrength(float v);
+extern "C" int   batcher_getPbrTriplanar(void);
+extern "C" void  batcher_setPbrTriplanar(int on);
+extern "C" float batcher_getPbrTriplanarScale(void);
+extern "C" void  batcher_setPbrTriplanarScale(float v);
 extern "C" float batcher_getMechGlassRoughness(void);
 extern "C" void  batcher_setMechGlassRoughness(float r);
 // VFX-TUNING-UI-1: GPU particle debug-mode + intensity scales (defined in
@@ -1725,6 +1731,36 @@ static void drawMechSection() {
                               "armour going black. Default: 0.25");
         ImGui::SameLine();
         if (ImGui::SmallButton("Reset##pbras")) batcher_setPbrAmbientSpecularStrength(0.25f);
+
+        ImGui::Spacing();
+        ImGui::SeparatorText("Paint/wear layer (PaintedMetal003)");
+
+        float ws = batcher_getPbrWearStrength();
+        if (ImGui::SliderFloat("Wear strength##pbr", &ws, 0.0f, 4.0f, "%.2f"))
+            batcher_setPbrWearStrength(ws);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Scales PaintedMetal003 metalness as wear mask.\n"
+                              "0=all paint, 1=natural wear, 4=fully exposed metal.\n"
+                              "Default: 1.0");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##pbrws")) batcher_setPbrWearStrength(1.0f);
+
+        ImGui::Separator();
+        bool triOn = batcher_getPbrTriplanar() != 0;
+        if (ImGui::Checkbox("Triplanar##pbr", &triOn))
+            batcher_setPbrTriplanar(triOn ? 1 : 0);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("World-space triplanar UV sampling (no UV seams).\n"
+                              "Default ON. Disable to use v_uv * tileScale instead.");
+
+        float ts = batcher_getPbrTriplanarScale();
+        if (ImGui::SliderFloat("Triplanar scale##pbr", &ts, 0.01f, 2.0f, "%.3f"))
+            batcher_setPbrTriplanarScale(ts);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("World-unit tile scale for triplanar sampling.\n"
+                              "Higher = smaller/finer tiles. Default: 0.2");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##pbrts")) batcher_setPbrTriplanarScale(0.2f);
     }
 }
 

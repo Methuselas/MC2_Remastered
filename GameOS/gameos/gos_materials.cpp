@@ -304,6 +304,49 @@ static void registerMetal061b() {
         g.normalTex, g.metallicRoughnessTex, g.flags);
 }
 
+// ---------------------------------------------------------------------------
+// Register "paintedmetal003" profile.
+// Source files (1K-PNG set from ambientCG PaintedMetal003 download):
+//   NormalGL  -> normalTex  (GL_RGB8, linear)
+//   Roughness + Metalness -> metallicRoughnessTex  (packed ORM, GL_RGB8, linear)
+// ---------------------------------------------------------------------------
+static void registerPaintedMetal003() {
+    static const char* kNormal = "C:\\Users\\Joe\\Downloads\\GameAsset\\Materials"
+        "\\PaintedMetal003_1K-PNG\\PaintedMetal003_1K-PNG_NormalGL.png";
+    static const char* kRough  = "C:\\Users\\Joe\\Downloads\\GameAsset\\Materials"
+        "\\PaintedMetal003_1K-PNG\\PaintedMetal003_1K-PNG_Roughness.png";
+    static const char* kMetal  = "C:\\Users\\Joe\\Downloads\\GameAsset\\Materials"
+        "\\PaintedMetal003_1K-PNG\\PaintedMetal003_1K-PNG_Metalness.png";
+
+    ProfileEntry e;
+    e.name = "paintedmetal003";
+
+    int nw = 0, nh = 0;
+    e.ownedNormal = loadLinearPng(kNormal, nw, nh);
+    e.ownedOrm    = buildPackedOrm(kRough, kMetal, nw, nh);
+
+    RenderCore::MaterialGpu& g = e.gpu;
+    g.albedoTex            = RenderCore::kMaterialTexAbsent;
+    g.normalTex            = e.ownedNormal != 0 ? e.ownedNormal : RenderCore::kMaterialTexAbsent;
+    g.metallicRoughnessTex = e.ownedOrm    != 0 ? e.ownedOrm    : RenderCore::kMaterialTexAbsent;
+    g.emissiveTex          = RenderCore::kMaterialTexAbsent;
+
+    g.flags = 0u;
+    if (e.ownedNormal != 0) g.flags |= RenderCore::MaterialFlags::kNormalMap;
+    if (e.ownedOrm    != 0) g.flags |= RenderCore::MaterialFlags::kMetallicRoughness;
+
+    g.baseColorFactor = 1.0f;
+    g.metallicFactor  = 1.0f;
+    g.roughnessFactor = 1.0f;
+
+    s_nameToIndex["paintedmetal003"] = static_cast<uint32_t>(s_profiles.size());
+    s_profiles.push_back(std::move(e));
+
+    std::fprintf(stderr,
+        "[GOS_MATERIALS] registered paintedmetal003: normalTex=%u ormTex=%u flags=0x%x\n",
+        g.normalTex, g.metallicRoughnessTex, g.flags);
+}
+
 } // anonymous namespace
 
 // ---------------------------------------------------------------------------
@@ -336,6 +379,7 @@ void init() {
 
     if (loadMetal061b) {
         registerMetal061b();
+        registerPaintedMetal003();  // paint layer; always paired with metal061b
     } else {
         std::fprintf(stderr,
             "[GOS_MATERIALS] MC2_MECH_SURFACE_MATERIAL=%s: metal061b skipped\n",

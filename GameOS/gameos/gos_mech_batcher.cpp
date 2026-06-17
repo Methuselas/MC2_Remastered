@@ -248,7 +248,7 @@ static bool  s_mechSpecDebugMask = false;  // ImGui only; no env var
 // Env-seeded defaults; no VBO rebuild needed (per-flush uniforms).
 static int   s_standardLitEnabled = []() {
     const char* v = std::getenv("MC2_STANDARD_LIT_V1");
-    return (v && v[0] == '1') ? 1 : 0;
+    return !(v != nullptr && v[0] == '0');  // DEFAULT-ON; kill-switch =0
 }();
 static float s_pbrMetallicInfluence = []() {
     const char* v = std::getenv("MC2_PBR_METALLIC_INFLUENCE");
@@ -267,6 +267,21 @@ static float s_pbrRoughnessMax = []() {
 static float s_pbrAmbientSpecularStrength = []() {
     const char* v = std::getenv("MC2_PBR_AMBIENT_SPECULAR");
     return v ? (float)std::atof(v) : 0.25f;
+}();
+
+// PBR-LAYERED-1: PaintedMetal003 paint layer + triplanar. All mutable via ImGui.
+static uint32_t s_mechPaintSurfaceMaterialIdx = 0u;  // resolved lazily alongside s_mechSurfaceMaterialIdx
+static float s_pbrWearStrength = []() {
+    const char* v = std::getenv("MC2_PBR_WEAR_STRENGTH");
+    return v ? (float)std::atof(v) : 1.0f;
+}();
+static int   s_pbrTriplanar = []() {
+    const char* v = std::getenv("MC2_PBR_TRIPLANAR");
+    return !(v != nullptr && v[0] == '0');  // DEFAULT-ON; kill-switch =0
+}();
+static float s_pbrTriplanarScale = []() {
+    const char* v = std::getenv("MC2_PBR_TRIPLANAR_SCALE");
+    return v ? (float)std::atof(v) : 0.2f;
 }();
 
 // Cached uniform locations (set at program link time).
@@ -299,6 +314,12 @@ static GLint s_loc_u_pbrMetallicInfluence      = -1;
 static GLint s_loc_u_pbrRoughnessMin           = -1;
 static GLint s_loc_u_pbrRoughnessMax           = -1;
 static GLint s_loc_u_pbrAmbientSpecularStrength = -1;
+// PBR-LAYERED-1: paint layer + triplanar.
+static GLint s_loc_u_pbrPaintNormalTex  = -1;
+static GLint s_loc_u_pbrPaintOrmTex     = -1;
+static GLint s_loc_u_pbrWearStrength    = -1;
+static GLint s_loc_u_pbrTriplanar       = -1;
+static GLint s_loc_u_pbrTriplanarScale  = -1;
 
 // Geometry (immutable after finalizeGeometry).
 static GLuint s_sharedVao = 0;
@@ -579,6 +600,12 @@ static void loadProgramsIfNeeded() {
     s_loc_u_pbrRoughnessMin            = loc("u_pbrRoughnessMin");
     s_loc_u_pbrRoughnessMax            = loc("u_pbrRoughnessMax");
     s_loc_u_pbrAmbientSpecularStrength = loc("u_pbrAmbientSpecularStrength");
+    // PBR-LAYERED-1: paint layer + triplanar.
+    s_loc_u_pbrPaintNormalTex  = loc("u_pbrPaintNormalTex");
+    s_loc_u_pbrPaintOrmTex     = loc("u_pbrPaintOrmTex");
+    s_loc_u_pbrWearStrength    = loc("u_pbrWearStrength");
+    s_loc_u_pbrTriplanar       = loc("u_pbrTriplanar");
+    s_loc_u_pbrTriplanarScale  = loc("u_pbrTriplanarScale");
 
     // MECH-VIEWUNIFORMS-1: on the gated path, verify the ViewUniformsBlock is
     // present and bound to point 3. The GLSL layout(binding=3) qualifier is
@@ -772,6 +799,7 @@ void GpuMechBatcher::onMapUnload() {
     // Also reset the lazy-resolve guard so the profile index is re-queried next mission.
     gos_materials::shutdown();
     s_mechSurfaceMaterialIdx         = 0u;
+    s_mechPaintSurfaceMaterialIdx    = 0u;
     s_mechSurfaceMaterialIdxResolved = false;
     std::fprintf(stderr, "[MECHBATCHER v1] event=map_unload\n");
 }
@@ -1589,6 +1617,8 @@ void GpuMechBatcher::flush() {
         if (v && v[0] != '\0' && strcmp(v, "none") != 0 && strcmp(v, "0") != 0)
             s_mechSurfaceMaterialIdx = gos_materials::getProfileIndex(v);
         // else stays 0 (default passthrough)
+        if (s_mechSurfaceMaterialIdx != 0u)
+            s_mechPaintSurfaceMaterialIdx = gos_materials::getProfileIndex("paintedmetal003");
     }
 
     // Step 1: Count total bones (one block per actor).
@@ -1848,13 +1878,19 @@ void GpuMechBatcher::flush() {
     GLint     prevSsbo1     = 0; glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 1, &prevSsbo1);
     glActiveTexture(GL_TEXTURE0);
     GLint     prevTexUnit0; glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTexUnit0);
-    // Slice C2: save PBR detail sampler units 1 and 2.
+    // Slice C2 + PBR-LAYERED-1: save PBR detail sampler units 1-4.
     glActiveTexture(GL_TEXTURE1);
     GLint prevTexUnit1 = 0; glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTexUnit1);
     GLint prevSampler1 = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, 1, &prevSampler1);
     glActiveTexture(GL_TEXTURE2);
     GLint prevTexUnit2 = 0; glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTexUnit2);
     GLint prevSampler2 = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, 2, &prevSampler2);
+    glActiveTexture(GL_TEXTURE3);
+    GLint prevTexUnit3 = 0; glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTexUnit3);
+    GLint prevSampler3 = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, 3, &prevSampler3);
+    glActiveTexture(GL_TEXTURE4);
+    GLint prevTexUnit4 = 0; glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTexUnit4);
+    GLint prevSampler4 = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, 4, &prevSampler4);
     glActiveTexture(GL_TEXTURE0);
 
     // MECH-PIPELINEDESC-1: program + fixed-function state (depth test+write+func
@@ -1903,6 +1939,23 @@ void GpuMechBatcher::flush() {
         if (s_loc_u_pbrNormalTex >= 0) glUniform1i(s_loc_u_pbrNormalTex, 1);
         if (s_loc_u_pbrOrmTex    >= 0) glUniform1i(s_loc_u_pbrOrmTex,    2);
         if (s_loc_u_pbrTileScale >= 0) glUniform1f(s_loc_u_pbrTileScale, s_pbrTileScale);
+    }
+    // PBR-LAYERED-1: bind PaintedMetal003 paint layer to units 3 (normal) and 4 (ORM).
+    // Falls back to Metal061B textures when paint profile not registered (idx=0, id=0).
+    {
+        GLuint pbrPaintNormal = gos_materials::getProfileNormalTex(s_mechPaintSurfaceMaterialIdx);
+        if (pbrPaintNormal == 0u) pbrPaintNormal = gos_materials::getProfileNormalTex(s_mechSurfaceMaterialIdx);
+        GLuint pbrPaintOrm = gos_materials::getProfileOrmTex(s_mechPaintSurfaceMaterialIdx);
+        if (pbrPaintOrm == 0u) pbrPaintOrm = gos_materials::getProfileOrmTex(s_mechSurfaceMaterialIdx);
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D, pbrPaintNormal);
+        glBindSampler(3, s_sampler);
+        glActiveTexture(GL_TEXTURE4);
+        glBindTexture(GL_TEXTURE_2D, pbrPaintOrm);
+        glBindSampler(4, s_sampler);
+        glActiveTexture(GL_TEXTURE0);
+        if (s_loc_u_pbrPaintNormalTex >= 0) glUniform1i(s_loc_u_pbrPaintNormalTex, 3);
+        if (s_loc_u_pbrPaintOrmTex    >= 0) glUniform1i(s_loc_u_pbrPaintOrmTex,    4);
     }
 
     // Static uniforms.
@@ -1971,6 +2024,10 @@ void GpuMechBatcher::flush() {
     if (s_loc_u_pbrRoughnessMin           >= 0) glUniform1f(s_loc_u_pbrRoughnessMin,            s_pbrRoughnessMin);
     if (s_loc_u_pbrRoughnessMax           >= 0) glUniform1f(s_loc_u_pbrRoughnessMax,            s_pbrRoughnessMax);
     if (s_loc_u_pbrAmbientSpecularStrength >= 0) glUniform1f(s_loc_u_pbrAmbientSpecularStrength, s_pbrAmbientSpecularStrength);
+    // PBR-LAYERED-1: wear blend + triplanar.
+    if (s_loc_u_pbrWearStrength   >= 0) glUniform1f(s_loc_u_pbrWearStrength,   s_pbrWearStrength);
+    if (s_loc_u_pbrTriplanar      >= 0) glUniform1i(s_loc_u_pbrTriplanar,      s_pbrTriplanar ? 1 : 0);
+    if (s_loc_u_pbrTriplanarScale >= 0) glUniform1f(s_loc_u_pbrTriplanarScale, s_pbrTriplanarScale);
 
     // Projection uniforms — match static_prop batcher and the
     // terrain_overlay.vert convention: terrainMVP = CPU-composed
@@ -2150,13 +2207,19 @@ void GpuMechBatcher::flush() {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, (GLuint)prevSsbo2);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, (GLuint)prevTexUnit0);
-    // Slice C2: restore PBR detail sampler units.
+    // Slice C2 + PBR-LAYERED-1: restore PBR detail sampler units 1-4.
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, (GLuint)prevTexUnit1);
     glBindSampler(1, (GLuint)prevSampler1);
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, (GLuint)prevTexUnit2);
     glBindSampler(2, (GLuint)prevSampler2);
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)prevTexUnit3);
+    glBindSampler(3, (GLuint)prevSampler3);
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)prevTexUnit4);
+    glBindSampler(4, (GLuint)prevSampler4);
     glActiveTexture((GLenum)prevActiveTex);
     glBindSampler(0, (GLuint)prevSampler);
     glBindVertexArray((GLuint)prevVao);
@@ -2468,6 +2531,20 @@ extern "C" void  batcher_setPbrAmbientSpecularStrength(float v) {
     s_pbrAmbientSpecularStrength = v;
 }
 extern "C" float batcher_getPbrAmbientSpecularStrength() { return s_pbrAmbientSpecularStrength; }
+
+// PBR-LAYERED-1: wear blend + triplanar knobs.
+extern "C" void  batcher_setPbrWearStrength(float v) {
+    if (v < 0.0f) v = 0.0f; if (v > 4.0f) v = 4.0f;
+    s_pbrWearStrength = v;
+}
+extern "C" float batcher_getPbrWearStrength()        { return s_pbrWearStrength; }
+extern "C" void  batcher_setPbrTriplanar(int on)     { s_pbrTriplanar = (on != 0) ? 1 : 0; }
+extern "C" int   batcher_getPbrTriplanar()           { return s_pbrTriplanar; }
+extern "C" void  batcher_setPbrTriplanarScale(float v) {
+    if (v < 0.001f) v = 0.001f; if (v > 10.0f) v = 10.0f;
+    s_pbrTriplanarScale = v;
+}
+extern "C" float batcher_getPbrTriplanarScale()      { return s_pbrTriplanarScale; }
 
 // batcher_rebuildMechNormals: re-upload the mech geometry VBO with the current
 // s_mechNormalsMode and s_mechNormalsSmoothDeg. No-op if geometry is not yet
