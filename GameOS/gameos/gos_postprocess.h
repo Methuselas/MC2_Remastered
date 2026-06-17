@@ -22,7 +22,9 @@ public:
 
     void renderSkybox(float sunDirX, float sunDirY, float sunDirZ);
 
-    bool isHdriReady() const { return hdriReady_; }
+    bool   isHdriReady()  const { return hdriReady_; }
+    GLuint getHdriTex()   const { return hdriTex_; }   // WATER-HDRI-REFL-1
+    float  getSkyYaw()    const { return skyYaw_; }    // WATER-HDRI-REFL-1: cached per-frame
 
     // Renders the HDRI background as a fullscreen triangle.
     // Assumes scene FBO is bound. Writes only color attachment 0.
@@ -235,7 +237,7 @@ public:
     bool  edgeFogEnabled_  = false;
     float edgeFogColor_[3] = {0.93f, 0.94f, 0.95f};
     float edgeFogStart_    = 50.0f;    // world units inside boundary where fog begins
-    float edgeFogHeight_   = 50.0f;    // cloud bank top in world Z (MC2_EDGE_FOG_HEIGHT)
+    float edgeFogHeight_   = 2000.0f;  // cloud bank top in world Z (MC2_EDGE_FOG_HEIGHT)
     float edgeFogMax_      = 0.92f;    // max opacity
     glsl_program* edgeFogProg_ = nullptr;
     void  runEdgeFog();
@@ -335,6 +337,7 @@ private:
     // above-horizon texels. NaN => scan unavailable (sun-sync stays disabled).
     float         hdriBakedSunAz_  = 0.0f;
     bool          hdriBakedSunValid_ = false;
+    float         skyYaw_          = 0.0f;  // WATER-HDRI-REFL-1: cached after each sky render
 
     // Bloom shaders
     glsl_program* bloomThresholdProg_;

@@ -2716,8 +2716,10 @@ float gos_GetWaterReflStrength()
 {
     if (g_waterReflStrength < 0.0f) {
         const char* v = getenv("MC2_WATER_REFLECTION");
-        // default OFF (0.0); MC2_WATER_REFLECTION=1 -> 0.15 (sky-reflection A/B).
-        g_waterReflStrength = (v && v[0] && v[0] != '0') ? 0.15f : 0.0f;
+        // WATER-REFL-DEFAULT-ON: default ON (1.5); MC2_WATER_REFLECTION=0 kills it.
+        // Higher default exposes the HDRI specular contribution at gameplay camera.
+        const bool reflOff = (v && v[0] == '0');
+        g_waterReflStrength = reflOff ? 0.0f : 1.5f;
     }
     return g_waterReflStrength;
 }
@@ -3172,6 +3174,22 @@ void gosRenderer::renderWaterFastPath(
                        ppRefl ? (float)ppRefl->getWidth()  : 1.0f,
                        ppRefl ? (float)ppRefl->getHeight() : 1.0f);
 
+        // WATER-HDRI-REFL-1: bind HDRI equirect on unit 3 for direct specular
+        // sampling (sun disk + sky color, LOD-filtered via mipmaps added in gos_hdri.cpp).
+        // u_waterHdriLod < 0 signals no HDRI -> FS falls back to SH-L2.
+        // MC2_WATER_HDRI_LOD env (float) overrides default 2.5 (1024x512 for 4K HDRI).
+        {
+            static float s_waterHdriLod = -999.0f;
+            if (s_waterHdriLod < -1.0f) {
+                const char* lv = getenv("MC2_WATER_HDRI_LOD");
+                s_waterHdriLod = (lv && lv[0]) ? (float)atof(lv) : 2.5f;
+            }
+            const bool hdriAvail = (ppRefl && ppRefl->isHdriReady());
+            setMI("u_hdri", 3);
+            setMF("u_skyYaw", hdriAvail ? ppRefl->getSkyYaw() : 0.0f);
+            setMF("u_waterHdriLod", hdriAvail ? s_waterHdriLod : -1.0f);
+        }
+
         // Bind SSBOs.
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, recipeBuf);
         // Slot 6 (thin records) was already bound by ComputeDispatchAndBindThinRecords.
@@ -3210,6 +3228,14 @@ void gosRenderer::renderWaterFastPath(
             glActiveTexture(GL_TEXTURE0);
         }
 
+        // WATER-HDRI-REFL-1: bind HDRI equirect on unit 3 (with mipmaps for LOD).
+        const bool bindHdri = (ppRefl && ppRefl->isHdriReady() && ppRefl->getHdriTex() != 0u);
+        if (bindHdri) {
+            glActiveTexture(GL_TEXTURE0 + 3);
+            glBindTexture(GL_TEXTURE_2D, ppRefl->getHdriTex());
+            glActiveTexture(GL_TEXTURE0);
+        }
+
         // MDI: 2 draws (base + detail); 1 if detail not present.
         const GLsizei drawCount = (detailTex != 0) ? 2 : 1;
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, WaterStream::GetIndirectCmdBuffer());
@@ -3222,6 +3248,13 @@ void gosRenderer::renderWaterFastPath(
             glBindTexture(GL_TEXTURE_2D, 0);    // force-clear; mirrors unit-1 post-draw
             glActiveTexture(GL_TEXTURE0);
             glBindSampler(2, savedSampler2);    // restore sampler only
+        }
+
+        // Restore unit 3 — WATER-HDRI-REFL-1: unbind HDRI.
+        if (bindHdri) {
+            glActiveTexture(GL_TEXTURE0 + 3);
+            glBindTexture(GL_TEXTURE_2D, 0);
+            glActiveTexture(GL_TEXTURE0);
         }
 
         // Restore unit 1 — don't leave a texture bound on unit 1 for the legacy path.

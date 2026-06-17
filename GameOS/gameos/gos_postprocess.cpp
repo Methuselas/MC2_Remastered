@@ -2649,32 +2649,24 @@ void gosPostProcess::renderHdriSkybox(const float* viewMat, const float* projMat
     }();
     static const bool  s_stateProbe = (getenv("MC2_HDRI_SKY_STATE_PROBE") != nullptr);
 
-    // Compute skyYaw. Default (no offset env set) => 0.0 => byte-identical.
-    // When the offset env is present we activate sun-sync: align the baked sun
-    // azimuth to the mission sun azimuth (both in the GL-equirect frame) and
-    // add the trim offset. The whole rotation is gated on s_azOffsetSet so the
-    // default launch is unchanged.
-    float skyYaw = 0.0f;
-    if (s_azOffsetSet) {
-        float sunSyncYaw = 0.0f;
-        if (hdriBakedSunValid_) {
-            // Mission sun in RAW MC2 (x=east, y=north, z=elevation, Z-up).
-            float lx = 0.0f, ly = 0.0f, lz = 0.0f;
-            gos_GetTerrainLightDir(&lx, &ly, &lz);
-            // Convert to the SAME GL-equirect frame the baked-sun scan used.
-            // kAxisSwapMC2toGL: GL.x = -MC2.x, GL.y = MC2.z(elev), GL.z = MC2.y(north).
-            // Equirect azimuth = atan(worldDir.z, worldDir.x) = atan(GL.z, GL.x)
-            //                  = atan2(MC2.north, -MC2.east) = atan2(ly, -lx).
-            // (Not a guessed sign: -lx and +ly come directly from the swap
-            //  literal in mclib/camera.cpp makeAxisSwapMC2toGL.)
-            const float sunAzGL = atan2f(ly, -lx);
-            // frag rotates worldDir by +skyYaw about +Y before atan(z,x), which
-            // SUBTRACTS skyYaw from the recovered azimuth. To move the baked sun
-            // (hdriBakedSunAz_) onto the mission sun (sunAzGL) we need
-            //   bakedAz - skyYaw == sunAzGL  ->  skyYaw = bakedAz - sunAzGL.
-            sunSyncYaw = hdriBakedSunAz_ - sunAzGL;
-        }
-        skyYaw = sunSyncYaw + s_azOffsetRad;
+    // Compute skyYaw. Auto-sync is always-on when hdriBakedSunValid_:
+    // aligns the HDRI baked-sun azimuth to the mission terrain sun.
+    // MC2_HDRI_SKY_AZ_OFFSET adds a manual trim on top (degrees).
+    float skyYaw = s_azOffsetRad;   // manual trim always applied
+    if (hdriBakedSunValid_) {
+        // Mission sun in RAW MC2 (x=east, y=north, z=elevation, Z-up).
+        float lx = 0.0f, ly = 0.0f, lz = 0.0f;
+        gos_GetTerrainLightDir(&lx, &ly, &lz);
+        // Convert to the SAME GL-equirect frame the baked-sun scan used.
+        // kAxisSwapMC2toGL: GL.x = -MC2.x, GL.y = MC2.z(elev), GL.z = MC2.y(north).
+        // Equirect azimuth = atan(worldDir.z, worldDir.x) = atan(GL.z, GL.x)
+        //                  = atan2(MC2.north, -MC2.east) = atan2(ly, -lx).
+        const float sunAzGL = atan2f(ly, -lx);
+        // frag rotates worldDir by +skyYaw about +Y before atan(z,x), which
+        // SUBTRACTS skyYaw from the recovered azimuth. To move the baked sun
+        // (hdriBakedSunAz_) onto the mission sun (sunAzGL) we need
+        //   bakedAz - skyYaw == sunAzGL  ->  skyYaw = bakedAz - sunAzGL.
+        skyYaw += hdriBakedSunAz_ - sunAzGL;
     }
 
     // --- Item 2 / Phase 1: one-shot screen-center worldDir log. ---
@@ -2718,6 +2710,7 @@ void gosPostProcess::renderHdriSkybox(const float* viewMat, const float* projMat
     }
 
     // Bind shader + uniforms + texture.
+    skyYaw_ = skyYaw;  // WATER-HDRI-REFL-1: cache for water shader uniform
     hdriSkyboxProg_->apply();
     hdriSkyboxProg_->setMat4("invProj", invProjArray);
     hdriSkyboxProg_->setMat3("invViewRot", invViewRot);
@@ -2909,6 +2902,7 @@ void gosPostProcess::renderHdriSkyboxBasis(const float* camFwd,
     }
 
     // Bind shader + uniforms + texture (direct-basis path).
+    skyYaw_ = skyYaw;  // WATER-HDRI-REFL-1: cache for water shader uniform
     hdriSkyboxProg_->apply();
     hdriSkyboxProg_->setFloat3("camFwd",   camFwd);
     hdriSkyboxProg_->setFloat3("camRight", camRight);
@@ -3095,6 +3089,7 @@ void gosPostProcess::renderHdriSkyboxInvVP(const float* invVP16)
     }
 
     // Bind shader + uniforms + texture (inverse-worldToClipGL path).
+    skyYaw_ = skyYaw;  // WATER-HDRI-REFL-1: cache for water shader uniform
     hdriSkyboxProg_->apply();
     hdriSkyboxProg_->setMat4("invWorldToClipGL", invVP16);
     hdriSkyboxProg_->setInt("uvDebug", s_uvDebug);
