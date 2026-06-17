@@ -276,10 +276,6 @@ void main()
     vec3 objN_stuff = normalize(normalData.rgb * 2.0 - 1.0);
     vec3 objN = vec3(-objN_stuff.x, objN_stuff.z, objN_stuff.y);
 
-    // GREYBEARD-ISO: force object shadow OFF to isolate diffuse vs shadow. REVERT after.
-    FragColor = vec4(1.0, 1.0, 1.0, 1.0);   // multiplicative identity -> no darkening on objects
-    return;
-
     // Cloud shadows moved to the fullscreen cloud pass (cloud.frag); this pass
     // now applies sun (static + dynamic) shadow only.
     float shadow = 1.0;

@@ -1892,20 +1892,19 @@ void gosPostProcess::runScreenShadow()
     screenShadowProg_->setFloat("shadowSoftness", mc2ShadowCsmSoftness());  // match terrain default
     screenShadowProg_->setFloat("objNormalBiasScale", mc2ShadowObjNormalBias());
     {
-        // Object self-shadow acne fix needs the SURFACE->LIGHT direction for
-        // NdotL + normal-offset, expressed in the SAME frame as worldPos and
-        // the GBuffer normal that shadow_screen.frag reconstructs (GL world).
-        //   gos_GetTerrainLightDir returns RAW MC2/Stuff space (x=east,
-        //   y=north, z=elev), pointing light->scene.
-        //   surface->light = negate. Stuff->GL swap: (x,y,z)_GL = (-x, z, y).
+        // SCREEN-SHADOW-LIGHTDIR-FRAME-FIX: the back-face guard + normal-offset
+        // dot objN against lightDir. objN in shadow_screen.frag is the SAME
+        // (-x,z,y) swap of the Stuff GBuffer normal that static_prop's diffuse
+        // uses as worldNormalMC2 — and the diffuse dots that against the RAW
+        // gos_GetTerrainLightDir (toward-sun) and is correct. So lightDir here
+        // must be the RAW terrain sun too (no negate, no extra swap), or the
+        // guard lands the self-shadow on the wrong (90deg-off) faces.
         float lx = 0.0f, ly = 0.0f, lz = 1.0f;
         gos_GetTerrainLightDir(&lx, &ly, &lz);
-        // negate (light->scene  =>  surface->light), then Stuff->GL.
-        float sx = -lx, sy = -ly, sz = -lz;          // surface->light, Stuff
-        float gx = -sx, gy =  sz, gz =  sy;          // -> GL world
-        float len = sqrtf(gx*gx + gy*gy + gz*gz);
-        if (len > 1e-6f) { gx /= len; gy /= len; gz /= len; }
-        float lightDirVec[3] = { gx, gy, gz };
+        float len = sqrtf(lx*lx + ly*ly + lz*lz);
+        if (len > 1e-6f) { lx /= len; ly /= len; lz /= len; }
+        // negate: was 180deg off with the raw vector -> flip sign (frame already correct).
+        float lightDirVec[3] = { -lx, -ly, -lz };    // matches objN frame, correct sign
         screenShadowProg_->setFloat3("lightDir", lightDirVec);
     }
     screenShadowProg_->setInt("debugMode", screenShadowDebug_);
