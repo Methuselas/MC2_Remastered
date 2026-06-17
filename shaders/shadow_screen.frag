@@ -96,6 +96,9 @@ uniform float time;       // seconds, for animated cloud shadows
 // distance in cascade texels; 0 disables the offset (slope-scale term stays on).
 uniform vec3  lightDir;
 uniform float objNormalBiasScale;
+// MECH self-shadow softening (mech pixels only). 1.0 default, 0 = legacy hard.
+// Scales the extra PCF penumbra radius and the terminator smoothstep width.
+uniform float mechSoft;
 
 const vec2 poissonDisk[8] = vec2[](
     vec2(-0.94201624, -0.39906216),
@@ -146,7 +149,9 @@ float sampleShadowMap(sampler2DShadow smap, vec3 worldPos, mat4 lsMatrix, int nu
 // N = GL-world surface normal of the object pixel (object path only). Used to
 // slope-scale the depth bias and normal-offset the sample point off the surface
 // to kill self-shadow acne. Terrain/grass/decals never reach this (early-out).
-float sampleDynamicShadow(vec3 worldPos, vec3 N)
+// softScale: 0 = legacy hard object shadow; >0 widens PCF penumbra and floor.
+// shadowFloor: lower bound of the mix() (mech raised to subtle vs prop default).
+float sampleDynamicShadow(vec3 worldPos, vec3 N, float softScale, float shadowFloor)
 {
     float NdotL = max(dot(N, lightDir), 0.0);
     if (NdotL < 0.05) return 1.0;   // back-face guard: faces away from sun have no direct light to occlude (matches shadow.hglsl)
@@ -182,16 +187,26 @@ float sampleDynamicShadow(vec3 worldPos, vec3 N)
         vec2 texelSize = isFullMap
             ? (1.0 / vec2(textureSize(dynamicFullMapShadow, 0).xy))
             : (1.0 / vec2(textureSize(dynamicShadowArray, 0).xy));
-        float radius = max(shadowSoftness, 0.5);
+        // Widen the penumbra for soft object shadows (mech). 8 taps when soft.
+        float radius = max(shadowSoftness, 0.5) * (1.0 + 2.0 * softScale);
+        int taps = (softScale > 0.0) ? 8 : 4;
         float shadow = 0.0;
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < taps; i++) {
             vec2 offset = rot * poissonDisk[i] * radius * texelSize;
             shadow += isFullMap
                 ? texture(dynamicFullMapShadow, vec3(projCoords.xy + offset, currentDepth))
                 : texture(dynamicShadowArray, vec4(projCoords.xy + offset, float(c), currentDepth));
         }
-        shadow /= 4.0;
-        return mix(0.4, 1.0, shadow);
+        shadow /= float(taps);
+        // TERMINATOR SMOOTHSTEP: near grazing (NdotL small) a flat facet pops
+        // shadow state as the mech turns. Fade the self-shadow toward lit over
+        // a soft band so it ramps instead of flipping. Width scales with soft.
+        if (softScale > 0.0) {
+            float band = 0.15 + 0.30 * softScale;
+            float term = smoothstep(0.0, band, NdotL);
+            shadow = mix(1.0, shadow, term);
+        }
+        return mix(shadowFloor, 1.0, shadow);
     }
     return 1.0;   // outside every cascade -> lit (static map covers far field)
 }
@@ -200,13 +215,23 @@ float sampleDynamicShadow(vec3 worldPos, vec3 N)
 // the lookup (slope-scale lives inside sampleShadowMap's fixed bias; the offset
 // is the dominant acne fix). texelWorld is unavailable here, so scale the offset
 // by a small world constant tied to objNormalBiasScale. Gated: 0 => no offset.
-float sampleDynamicShadow(vec3 worldPos, vec3 N)
+float sampleDynamicShadow(vec3 worldPos, vec3 N, float softScale, float shadowFloor)
 {
     float NdotL = max(dot(N, lightDir), 0.0);
     if (NdotL < 0.05) return 1.0;
     vec3 samplePos = worldPos
                    + N * (objNormalBiasScale * 0.5 * NdotL);
-    return sampleShadowMap(dynamicShadowMap, samplePos, dynamicLightSpaceMatrix, 4);
+    int taps = (softScale > 0.0) ? 8 : 4;
+    float s = sampleShadowMap(dynamicShadowMap, samplePos, dynamicLightSpaceMatrix, taps);
+    // Remap sampleShadowMap's fixed mix(0.4,1.0) back to a 0..1 visibility so
+    // we can re-apply the per-object floor + terminator fade.
+    float vis = clamp((s - 0.4) / 0.6, 0.0, 1.0);
+    if (softScale > 0.0) {
+        float band = 0.15 + 0.30 * softScale;
+        float term = smoothstep(0.0, band, NdotL);
+        vis = mix(1.0, vis, term);
+    }
+    return mix(shadowFloor, 1.0, vis);
 }
 #endif
 
@@ -239,11 +264,12 @@ void main()
             vec3 N_stuff = normalize(normalData.rgb * 2.0 - 1.0);
             vec3 N = vec3(-N_stuff.x, N_stuff.z, N_stuff.y);
 
+            bool isProp = rc_isStaticPropNoSelfShadow(normalData);
             float shadow = 1.0;
             if (enableShadows == 1)
                 shadow = min(shadow, sampleShadowMap(shadowMap, worldPos, lightSpaceMatrix, 8));
-            if (enableDynamicShadows == 1)
-                shadow = min(shadow, sampleDynamicShadow(worldPos, N));
+            if (enableDynamicShadows == 1 && !isProp)
+                shadow = min(shadow, sampleDynamicShadow(worldPos, N, mechSoft, 0.55));
 
             if (shadow < 0.99) {
                 FragColor = vec4(0.0, 0.0, shadow, 1.0);  // blue = shadowed
@@ -276,16 +302,31 @@ void main()
     vec3 objN_stuff = normalize(normalData.rgb * 2.0 - 1.0);
     vec3 objN = vec3(-objN_stuff.x, objN_stuff.z, objN_stuff.y);
 
+    // PER-OBJECT-TYPE self-shadow classification (GBuffer1.a mask):
+    //   a > 0.5         -> terrain/decal (early-out above, never reaches here)
+    //   a in (0.1,0.5]  -> STATIC PROP (building): static map OK, NO dynamic
+    //                      self-shadow (CPU never self-shadowed buildings)
+    //   a <= 0.1        -> MECH: keep dynamic self-shadow, SOFTENED
+    bool isStaticProp = rc_isStaticPropNoSelfShadow(normalData);
+
     // Cloud shadows moved to the fullscreen cloud pass (cloud.frag); this pass
     // now applies sun (static + dynamic) shadow only.
     float shadow = 1.0;
     if (enableShadows == 1) {
+        // Static shadow map (baked terrain/static occluders) applies to BOTH
+        // mechs and static props — buildings receiving cast shadows is fine.
         shadow = min(shadow, sampleShadowMap(shadowMap, worldPos, lightSpaceMatrix, 8));
     }
-    if (enableDynamicShadows == 1) {
-        float dynShadow = sampleDynamicShadow(worldPos, objN);
+    if (enableDynamicShadows == 1 && !isStaticProp) {
+        // Mech only: keep the dynamic-cascade self-shadow but soften it
+        // (wider PCF penumbra + terminator smoothstep + raised floor) so flat
+        // low-poly facets fade across the terminator instead of popping.
+        float dynShadow = sampleDynamicShadow(worldPos, objN, mechSoft, 0.55);
         shadow = min(shadow, dynShadow);
     }
+    // Static props: dynamic path skipped entirely -> shadow stays 1.0 from the
+    // dynamic cascade (matches CPU: no building self-shadow). They keep N·L
+    // diffuse (in static_prop.frag) and cloud shadow (separate cloud.frag pass).
 
     float combined = shadow;
     FragColor = vec4(combined, combined, combined, 1.0);

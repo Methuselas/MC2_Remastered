@@ -164,6 +164,22 @@ float mc2ShadowObjNormalBias()
     return s_b;
 }
 
+// Mech self-shadow softening factor. MC2_SHADOW_MECH_SOFT, default 1.0,
+// clamped [0,4]. Scales the extra PCF penumbra radius + terminator smoothstep
+// width applied to MECH pixels only (a<0.1). 0 = no extra softening (legacy
+// hard mech self-shadow); >1 = blurrier/softer terminator.
+float mc2ShadowMechSoft()
+{
+    static const float s_s = []() {
+        const char* v = getenv("MC2_SHADOW_MECH_SOFT");
+        float s = (v && v[0]) ? (float)atof(v) : 1.0f;
+        if (s < 0.0f) s = 0.0f;
+        if (s > 4.0f) s = 4.0f;
+        return s;
+    }();
+    return s_s;
+}
+
 // Cloud-shadow master gate. MC2_CLOUD_SHADOW, DEFAULT ON (preserves the legacy
 // inline-cloud behavior that this fullscreen pass replaces). =0 disables the
 // whole pass (and the C++ early-return skips it entirely).
@@ -1891,6 +1907,7 @@ void gosPostProcess::runScreenShadow()
         screenShadowProg_->setInt("dynamicCsmCount", csmCount_);
     screenShadowProg_->setFloat("shadowSoftness", mc2ShadowCsmSoftness());  // match terrain default
     screenShadowProg_->setFloat("objNormalBiasScale", mc2ShadowObjNormalBias());
+    screenShadowProg_->setFloat("mechSoft", mc2ShadowMechSoft());
     {
         // SCREEN-SHADOW-LIGHTDIR-FRAME-FIX: the back-face guard + normal-offset
         // dot objN against lightDir. objN in shadow_screen.frag is the SAME
