@@ -18,6 +18,7 @@ set(SOURCES ${SOURCES}
     gos_particle_bridge.cpp
     gos_vfx_mesh_bridge.cpp
     gos_cardcloud_sim.cpp
+    gos_materials.cpp
     gos_mech_batcher.cpp
     gos_vegetation.cpp
     gos_materials.cpp

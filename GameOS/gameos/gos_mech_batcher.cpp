@@ -1,5 +1,6 @@
 // GameOS/gameos/gos_mech_batcher.cpp — GPU mech batcher, Slice A.
 #include "gos_mech_batcher.h"
+#include "gos_materials.h"       // Slice C1: named material profile SSBO (binding 7)
 #include "gos_gpu_sync.h"      // GPU-SYNC-CONTRACT typed barrier helper
 #include "render_snapshot.h"  // MECH-EXTRACTION-0: ExtractedMechPacket, RenderSnapshot
 #include "../../RenderCore/RenderDebugView.h"  // MECH-DEBUG-VIEWS-1
@@ -260,6 +261,9 @@ static GLint s_loc_u_mechGlassRoughness      = -1;
 static GLint s_loc_u_mechGlassLumaThresh     = -1;
 static GLint s_loc_u_mechGlassMaxChanThresh  = -1;
 static GLint s_loc_u_mechSpecDebugMask       = -1;
+// Slice C1: StandardLit toggle. Returns -1 until mech.frag declares the uniform;
+// guarded with >= 0 at upload so no crash when shader lacks it.
+static GLint s_loc_u_standardLitEnabled      = -1;
 
 // Geometry (immutable after finalizeGeometry).
 static GLuint s_sharedVao = 0;
@@ -430,6 +434,15 @@ static std::vector<uint32_t>                       s_mechDrawMaterialIdx;
 static GLuint                                      s_mechMaterialSsbo          = 0;
 static uint32_t                                    s_mechMaterialGpuFrameCount = 0;
 
+// Slice C1: named profile index for binding-7 SSBO (gos_materials).
+// Resolved lazily at first flush() (after gos_materials::init() runs).
+// 0 = default/passthrough (env unset or none/0). Non-zero = named profile active;
+// overrides per-instance materialIdx only when selected so the existing per-actor
+// albedo table (binding 2) is undisturbed when MC2_MECH_SURFACE_MATERIAL is unset.
+// Protected by s_mechSurfaceMaterialIdxResolved to call getProfileIndex() only once.
+static uint32_t s_mechSurfaceMaterialIdx         = 0u;
+static bool     s_mechSurfaceMaterialIdxResolved = false;
+
 // ---------------------------------------------------------------------------
 // Shader load
 // ---------------------------------------------------------------------------
@@ -520,6 +533,8 @@ static void loadProgramsIfNeeded() {
     s_loc_u_mechGlassLumaThresh     = loc("u_mechGlassLumaThresh");
     s_loc_u_mechGlassMaxChanThresh  = loc("u_mechGlassMaxChanThresh");
     s_loc_u_mechSpecDebugMask       = loc("u_mechSpecDebugMask");
+    // Slice C1: StandardLit toggle (default 0 = passthrough; shader may not declare it yet).
+    s_loc_u_standardLitEnabled      = loc("u_standardLitEnabled");
 
     // MECH-VIEWUNIFORMS-1: on the gated path, verify the ViewUniformsBlock is
     // present and bound to point 3. The GLSL layout(binding=3) qualifier is
@@ -708,6 +723,12 @@ void GpuMechBatcher::onMapUnload() {
     s_mechMaterialTable.clear();
     s_mechHandleToMaterialIdx.clear();
     s_mechDrawMaterialIdx.clear();
+    // Slice C1: release named material profile SSBO (binding 7).
+    // shutdown() resets s_initialized so init() can be called again on next map load.
+    // Also reset the lazy-resolve guard so the profile index is re-queried next mission.
+    gos_materials::shutdown();
+    s_mechSurfaceMaterialIdx         = 0u;
+    s_mechSurfaceMaterialIdxResolved = false;
     std::fprintf(stderr, "[MECHBATCHER v1] event=map_unload\n");
 }
 
@@ -1235,6 +1256,9 @@ static void uploadMechGeometryVbo() {
 void GpuMechBatcher::finalizeGeometry() {
     if (s_geometryFinalized) return;
     loadProgramsIfNeeded();
+    // Slice C1: init named material profile SSBO (binding 7) once per process.
+    // Idempotent; requires GL context (already active at finalizeGeometry call site).
+    gos_materials::init();
 
     // Bail cleanly if shader failed: geometry upload skipped.
     // submit() fast-rejects on s_geometryFinalized==false.
@@ -1513,6 +1537,16 @@ void GpuMechBatcher::flush() {
         return;
     }
 
+    // Slice C1: resolve s_mechSurfaceMaterialIdx once after gos_materials::init() has run.
+    // init() is called from finalizeGeometry() which always precedes the first flush().
+    if (!s_mechSurfaceMaterialIdxResolved) {
+        s_mechSurfaceMaterialIdxResolved = true;
+        const char* v = std::getenv("MC2_MECH_SURFACE_MATERIAL");
+        if (v && v[0] != '\0' && strcmp(v, "none") != 0 && strcmp(v, "0") != 0)
+            s_mechSurfaceMaterialIdx = gos_materials::getProfileIndex(v);
+        // else stays 0 (default passthrough)
+    }
+
     // Step 1: Count total bones (one block per actor).
     size_t totalBones = 0;
     for (const auto& ps : s_pendingSubmits) totalBones += ps.bones.size();
@@ -1679,6 +1713,11 @@ void GpuMechBatcher::flush() {
             inst.materialIdx = (s_mechMaterialGpuEnabled && dcIdx < s_mechDrawMaterialIdx.size())
                 ? s_mechDrawMaterialIdx[dcIdx]
                 : 0u;
+            // Slice C1: when a named surface material profile is selected via
+            // MC2_MECH_SURFACE_MATERIAL, override materialIdx with the binding-7
+            // profile index. 0 = env unset/none → preserve existing albedo-table value.
+            if (s_mechSurfaceMaterialIdx != 0u)
+                inst.materialIdx = s_mechSurfaceMaterialIdx;
             // GAMEADAPTERS-VISUAL-STATE-BRIDGE-1: per-mech visual state into the
             // SSBO record. No shader reads these in Slice 1.
             inst.visualDamage01     = d.damage01;
@@ -1736,6 +1775,9 @@ void GpuMechBatcher::flush() {
     if (s_mechMaterialGpuEnabled && s_mechMaterialSsbo != 0) {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, s_mechMaterialSsbo);
     }
+    // Slice C1: bind named material profile SSBO at binding 7.
+    // No-op when MC2_MATERIAL_GPU=0, init() not called, or no textured profiles.
+    gos_materials::bindMaterialTable();
 
     // Save prior GL state. The mech flush bypasses applyRenderStates'
     // tracked slot set, so the engine's render-state cache becomes
@@ -1845,6 +1887,16 @@ void GpuMechBatcher::flush() {
         glUniform1f(s_loc_u_mechGlassMaxChanThresh, s_mechGlassMaxChanThresh);
     if (s_loc_u_mechSpecDebugMask >= 0)
         glUniform1i(s_loc_u_mechSpecDebugMask, s_mechSpecDebugMask ? 1 : 0);
+    // Slice C1: StandardLit feature gate (default OFF: MC2_STANDARD_LIT_V1=1 to enable).
+    // glGetUniformLocation returns -1 when the shader lacks the uniform; guard keeps this a no-op.
+    {
+        static const int s_standardLitEnabled = []() {
+            const char* v = std::getenv("MC2_STANDARD_LIT_V1");
+            return (v && v[0] == '1') ? 1 : 0;
+        }();
+        if (s_loc_u_standardLitEnabled >= 0)
+            glUniform1i(s_loc_u_standardLitEnabled, s_standardLitEnabled);
+    }
 
     // Projection uniforms — match static_prop batcher and the
     // terrain_overlay.vert convention: terrainMVP = CPU-composed
