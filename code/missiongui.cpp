@@ -3987,8 +3987,7 @@ bool MissionInterfaceManager::moveCameraAround( bool lineOfSight, bool passable,
 	bool bRetVal = 0;
 	bool middleClicked = (!userInput->isLeftDrag() && !userInput->isRightDrag() && userInput->isMiddleClick());
 
-	if ( (useLeftRightMouseProfile && ((userInput->isLeftClick() && userInput->getKeyDown(KEY_T)) || userInput->isLeftDoubleClick()) && target)
-		|| (!useLeftRightMouseProfile && userInput->rightMouseReleased() && !userInput->wasRightDrag() && target) && !bGui)
+	if ( useLeftRightMouseProfile && ((userInput->isLeftClick() && userInput->getKeyDown(KEY_T)) || userInput->isLeftDoubleClick()) && target )
 	{
 		if (eye)
 			((GameCamera *)eye)->setTarget(target);
