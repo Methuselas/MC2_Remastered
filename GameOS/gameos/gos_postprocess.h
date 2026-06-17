@@ -229,6 +229,17 @@ public:
     float aoPower_;         // contrast curve
     void runSSAO();
 
+    // EDGE-FOG-1: world-space map-edge fog on geometry pixels.
+    // Fades terrain/props/mechs near the map boundary into the cloud color.
+    // Default ON (MC2_EDGE_FOG=0 to disable).
+    bool  edgeFogEnabled_  = false;
+    float edgeFogColor_[3] = {0.93f, 0.94f, 0.95f};
+    float edgeFogStart_    = 50.0f;    // world units inside boundary where fog begins
+    float edgeFogHeight_   = 50.0f;    // cloud bank top in world Z (MC2_EDGE_FOG_HEIGHT)
+    float edgeFogMax_      = 0.92f;    // max opacity
+    glsl_program* edgeFogProg_ = nullptr;
+    void  runEdgeFog();
+
     // OOB-FOG-1: fullscreen fog over out-of-bounds far-plane pixels.
     // Default ON (MC2_OOB_FOG=0 to disable). Reads only scene depth —
     // no sceneColorTex_ feedback loop; blends SRC_ALPHA over scene color.

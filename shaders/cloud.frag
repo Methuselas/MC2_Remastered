@@ -95,7 +95,13 @@ void main()
     vec3 worldPos = reconstructWorldPos(TexCoord, depth);
 
     int   oct   = clamp(u_cloudOctaves, 1, 6);
-    vec2  uv    = worldPos.xy * u_cloudScale + u_time * u_cloudScroll;
+    // SHADOW-CLOUD-STREAK-FIX: wrap time so scroll can't dominate the spatial term,
+    // and decorrelate the two UV axes so a near-constant reconstructed axis (fixed
+    // oblique camera) can't collapse the FBM field into 1D streaks. worldPos.xz is
+    // correct (GL-world ground plane), do not change to .xy.
+    float tWrapped = mod(u_time, 1000.0);
+    vec2  g  = worldPos.xz * u_cloudScale;
+    vec2  uv = vec2(g.x + 0.5 * g.y, g.y - 0.5 * g.x) + tWrapped * u_cloudScroll;
     float n     = fbm(uv, oct) * 0.5 + 0.5;
     float clear = smoothstep(u_cloudThreshold.x, u_cloudThreshold.y, n);
     float factor = mix(1.0 - u_cloudStrength, 1.0, clear);

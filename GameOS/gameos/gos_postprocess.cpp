@@ -579,6 +579,22 @@ void gosPostProcess::init(int w, int h)
             fogOobEnabled_ ? 1 : 0, oobFogColor_[0], oobFogColor_[1], oobFogColor_[2]);
     }
 
+    // EDGE-FOG-1: world-space map-edge fog on geometry pixels. Default ON.
+    {
+        edgeFogProg_ = glsl_program::makeProgram("edge_fog",
+            "shaders/postprocess.vert", "shaders/edge_fog.frag", kShaderPrefix);
+        if (!edgeFogProg_ || !edgeFogProg_->is_valid())
+            std::fprintf(stderr, "gosPostProcess: failed to compile edge_fog shader\n");
+        const char* efEnv = getenv("MC2_EDGE_FOG");
+        edgeFogEnabled_ = !(efEnv && efEnv[0] == '0' && efEnv[1] == '\0')
+                       && edgeFogProg_ && edgeFogProg_->is_valid();
+        if (const char* v = getenv("MC2_EDGE_FOG_START"))  edgeFogStart_  = std::atof(v);
+        if (const char* v = getenv("MC2_EDGE_FOG_HEIGHT")) edgeFogHeight_ = std::atof(v);
+        if (const char* v = getenv("MC2_EDGE_FOG_MAX"))    edgeFogMax_    = std::atof(v);
+        std::fprintf(stderr, "[EDGE_FOG v3] enabled=%d start=%.0f height=%.0f max=%.2f\n",
+            edgeFogEnabled_ ? 1 : 0, edgeFogStart_, edgeFogHeight_, edgeFogMax_);
+    }
+
     // HZB-DEPTH-PYRAMID-MVP-1: reduction shader. Gate (hzbEnabled_) is resolved
     // earlier (before createFBOs); default OFF -> no allocation, no-op build.
     hzbReduceProg_ = glsl_program::makeProgram("hzb_reduce",
@@ -743,6 +759,10 @@ void gosPostProcess::destroy()
     if (fogOobProg_) {
         glsl_program::deleteProgram("fog_oob");
         fogOobProg_ = nullptr;
+    }
+    if (edgeFogProg_) {
+        glsl_program::deleteProgram("edge_fog");
+        edgeFogProg_ = nullptr;
     }
 
     destroyShadows();
@@ -2145,6 +2165,54 @@ void gosPostProcess::runShoreline()
     glActiveTexture(GL_TEXTURE0);
 }
 
+void gosPostProcess::runEdgeFog()
+{
+    ZoneScopedN("Render.EdgeFog");
+    TracyGpuZone("Render.EdgeFog");
+
+    if (!edgeFogEnabled_ || !edgeFogProg_ || !edgeFogProg_->is_valid()) return;
+    if (mapHalfExtent_ <= 0.0f) return;
+
+    // Bind scene FBO — writes to colour attachment 0 only.
+    // Reads sceneDepthTex_ (separate attachment — no read/write conflict).
+    // sceneColorTex_ is NEVER sampled here; blend equation does the composite.
+    glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
+    setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
+    glViewport(0, 0, width_, height_);
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDepthMask(GL_FALSE);
+
+    // SRC_ALPHA blend: shader emits (fogColor, alpha), blends over existing scene.
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    // invViewProj: same GL_FALSE / row-major convention as SSAO and other passes.
+    edgeFogProg_->apply();
+    edgeFogProg_->setInt("depthTex", 0);
+    glUniformMatrix4fv(
+        glGetUniformLocation(edgeFogProg_->shp_, "invViewProj"),
+        1, GL_FALSE, inverseViewProj_);
+    edgeFogProg_->setFloat3("u_fogColor",   edgeFogColor_);
+    edgeFogProg_->setFloat("u_halfExtent",  mapHalfExtent_);
+    edgeFogProg_->setFloat("u_fogStart",    edgeFogStart_);
+    edgeFogProg_->setFloat("u_fogHeight",   edgeFogHeight_);
+    edgeFogProg_->setFloat("u_fogMax",      edgeFogMax_);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, sceneDepthTex_);
+
+    glBindVertexArray(quadVAO_);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glBindVertexArray(0);
+
+    glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+    glActiveTexture(GL_TEXTURE0);
+}
+
 void gosPostProcess::runFogOob()
 {
     ZoneScopedN("Render.FogOob");
@@ -2235,8 +2303,12 @@ void gosPostProcess::endScene()
     // bloom so bloom extracts from the AO-darkened scene. Default-OFF (gated).
     runSSAO();
 
+    // Edge fog: fades geometry near the map boundary into the cloud color.
+    // After SSAO so AO-darkening is preserved under the fog.
+    runEdgeFog();
+
     // OOB fog: applies fog color to far-plane pixels pointing toward ground.
-    // After SSAO so AO-darkening is preserved under the fog. Default ON.
+    // After edge fog so the two cloud colors match seamlessly.
     runFogOob();
 
     runBloom();

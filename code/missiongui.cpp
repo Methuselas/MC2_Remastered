@@ -6025,11 +6025,13 @@ bool MissionInterfaceManager::selectionIsHelicopters( )
 int MissionInterfaceManager::saveHotKeys( FitIniFile& file )
 {
 	file.writeBlock( "Keyboard" );
+	// Version sentinel so stale saves from a different MAX_COMMAND are rejected on load.
+	file.writeIdLong( "KeyboardVersion", MAX_COMMAND );
 	for ( int i = 0; i < MAX_COMMAND; i++ )
 	{
 		char header[256];
 		sprintf( header, "Key%ld", i );
-		file.writeIdLong( header, commands[i].key );		
+		file.writeIdLong( header, commands[i].key );
 	}
 
 	file.writeIdLong( "WayPointKey", WAYPOINT_KEY );
@@ -6044,17 +6046,26 @@ int MissionInterfaceManager::loadHotKeys( FitIniFile& file )
 	{
 		for ( int i = 0; i < MAX_COMMAND; i++ )
 		{
-			OldKeys[i] = commands[i].key;		
+			OldKeys[i] = commands[i].key;
 		}
 	}
 
 	if ( NO_ERR == file.seekBlock( "Keyboard" ) )
 	{
+		long version = -1;
+		file.readIdLong( "KeyboardVersion", version );
+		if ( version != MAX_COMMAND )
+		{
+			// Stale save (different command count — e.g. a key was added/removed).
+			// Silently discard and keep compiled-in defaults.
+			return -1;
+		}
+
 		for ( int i = 0; i < MAX_COMMAND; i++ )
 		{
 			char header[256];
 			sprintf( header, "Key%ld", i );
-			file.readIdLong( header, commands[i].key );		
+			file.readIdLong( header, commands[i].key );
 		}
 
 		long tmp;
@@ -6065,7 +6076,7 @@ int MissionInterfaceManager::loadHotKeys( FitIniFile& file )
 		return 0;
 	}
 
-	
+
 	return -1;
 }
 

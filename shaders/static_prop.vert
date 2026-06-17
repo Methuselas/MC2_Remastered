@@ -71,6 +71,11 @@ layout(std430, binding = 3) buffer ParityOut { uint parityOut[]; } parityOut_;
 #else
 uniform mat4 u_worldToClipGL;  // world -> GL clip (kAxisSwapMC2toGL * worldToClip)
 #endif
+// STATIC-PROP-TERRAIN-SUN-DIFFUSE: raw MC2 terrain sun (x=east,y=north,z=up,
+// toward-sun), same vector gos_GetTerrainLightDir returns and the terrain
+// shader uses. Used as the directional term for static-prop diffuse because
+// calc_light's frozen worldLights[0] sun was ~90deg off.
+uniform vec3 u_terrainSunMC2;
 // Slice 2 (object-offload) — Stage 2.D.1: parity write gate.
 // 0 (default) = no write to parityOut_; nonzero = write per-vertex lit ARGB.
 // 'uniform uint' crashes this engine's shader compile (memory/uniform_uint_crash.md)
@@ -321,6 +326,16 @@ void main() {
     vec3 worldNormal = a_normal * mat3(inst.modelMatrix);
     vec3 worldPos    = world.xyz;
 
+    // STATIC-PROP-NORMAL-FRAME-FIX: match mech's Stuff->MC2 normal swap (was
+    // Stuff-frame -> 90deg off vs terrain/mech sun). worldPos above is already
+    // MC2-frame (world.xyz = the Stuff->MC2 swap at line 251); the normal was
+    // left in Stuff frame, so calc_light's NdotL mixed frames -> 90deg-rotated
+    // sun on static props. Mirror mech.vert:162
+    // normalize(vec3(-normalStuff.x, normalStuff.z, normalStuff.y)) so the
+    // normal and position fed to calc_light share the MC2 frame, exactly as
+    // mech passes (worldMC2 normal + worldMC2 position).
+    vec3 worldNormalMC2 = normalize(vec3(-worldNormal.x, worldNormal.z, worldNormal.y));
+
     // 5. Per-vertex full 6-type lighting via lighting.hglsl calc_light.
     //    inst.lightDataIndex addresses one ObjectLights entry in the
     //    LightsData[32] UBO populated per-actor by GatherGpuObjectLightDataOnly().
@@ -347,7 +362,38 @@ void main() {
         // Window node: hot-color magic only, no sun/ambient lighting.
         lit = base_light;
     } else {
-        lit = calc_light(int(inst.lightDataIndex), worldNormal, worldPos, base_light);
+        // STATIC-PROP-TERRAIN-SUN-DIFFUSE: use terrain sun (ground-shadow sun)
+        // for the directional term; calc_light's frozen worldLights[0] sun was
+        // ~90deg off. Keeps sun color + ambient.
+        //
+        // Replicate calc_light's structure (return = base_light + ambientSum +
+        // sum_over_dir_lights(NdotL * lcolor)) but substitute u_terrainSunMC2
+        // for the broken sun light_dir. We scan the same ObjectLights row:
+        //   - AMBIENT (type 0) light_color accumulates into ambientTerm
+        //     (identical to calc_light's `ambient += lcolor`).
+        //   - The first INFINITE/INFINITEWITHFALLOFF (type 1/2) entry is the
+        //     sun; we take its light_color as sunColor but IGNORE its broken
+        //     light_dir, using u_terrainSunMC2 (raw-MC2 terrain sun) instead.
+        //   - Point/spot lights are omitted (negligible for buildings); noted.
+        ObjectLights ld_sun = light[int(inst.lightDataIndex)];
+        vec3 ambientTerm = vec3(0.0);
+        vec3 sunColor    = vec3(0.0);
+        bool sunFound    = false;
+        int n_sun = min(ld_sun.numLights.x, MAX_LIGHTS_IN_WORLD);
+        for (int i = 0; i < n_sun; ++i) {
+            int lt = int(ld_sun.light_dir[i].w);
+            if (lt == TG_LIGHT_AMBIENT) {
+                ambientTerm += ld_sun.light_color[i].xyz;
+            } else if (!sunFound &&
+                       (lt == TG_LIGHT_INFINITE || lt == TG_LIGHT_INFINITEWITHFALLOFF)) {
+                sunColor = ld_sun.light_color[i].xyz;
+                sunFound = true;
+            }
+        }
+        float ndl = max(dot(normalize(worldNormalMC2), normalize(u_terrainSunMC2)), 0.0);
+        // base_light = hot-color magic seed (same as calc_light's starting
+        // `final = base_light`); ambientTerm + sunColor*NdotL = the lit term.
+        lit = base_light + ambientTerm + sunColor * ndl;
 
         // V-AMBIENT-STATIC-1: hemisphere fill. Strength=0.0 (default) is a
         // bitwise no-op (add vec3(0)). Skip for window branch to preserve

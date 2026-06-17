@@ -4485,19 +4485,11 @@ void RebuildDecalStaticVBOIfDirty() {
 unsigned int GetDecalStaticVBO_GL() { return g_decalStaticVBO_GL; }
 int          GetDecalVertCount()    { return g_decalVertCount; }
 
-// Kill switch: MC2_TERRAIN_LEGACY_OVERLAY=1 restores the old pre-baked decal VBO path.
-// Default (unset / 0) = Stage-B recipe path; DrawDecalStatic becomes a no-op.
-static bool s_legacyOverlayForced = []() -> bool {
-    const char* v = getenv("MC2_TERRAIN_LEGACY_OVERLAY");
-    return v && v[0] == '1' && v[1] == '\0';
-}();
-
 // Mirror DrawMineStatic. Lazy rebuild-if-dirty on first armed draw, single
 // bridge dispatch, NO clear (static buffer persists). Returns true on a
 // successful zero-emit frame (mission has no cement overlay) — the M2d gate-
 // off is still the point.
 bool DrawDecalStatic() {
-    if (!s_legacyOverlayForced) return true;  // Stage B: recipe handles transitions
     RebuildDecalStaticVBOIfDirty();
     if (g_decalVertCount <= 0 || g_decalDrawRanges.empty()) {
         return true;  // no cement overlay this mission — successful no-op

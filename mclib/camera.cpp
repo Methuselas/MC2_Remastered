@@ -208,7 +208,7 @@ bool MaxObjectsDrawn = FALSE;
 
 float elevationAdjustFactor = 50.0;
 
-float Camera::MIN_PERSPECTIVE =			10.0f;
+float Camera::MIN_PERSPECTIVE =			-20.0f;  // allow looking up to 20deg above horizontal
 float Camera::MIN_ORTHO		  =			18.0f;
 float Camera::MAX_PERSPECTIVE =			88.0f;
 float Camera::MAX_ORTHO		  =			88.0f;
@@ -219,7 +219,7 @@ float zoomMax = 2.0;
 float zoomMin = 0.1f;
 float FOVMax = 75.0f;
 float FOVMin = 20.0f;
-float Camera::AltitudeMinimum = 60.0f;
+float Camera::AltitudeMinimum = 10.0f;
 float Camera::AltitudeMaximumLo = 6000.0f;
 float Camera::AltitudeMaximumHi = 6400.0f;
 float Camera::AltitudeDefault = 1200.0f;
@@ -530,7 +530,7 @@ long Camera::init (FitIniFilePtr cameraFile )
 	
 	lightToWorldMatrix.BuildTranslation(Stuff::Point3D(0.0,0.0,0.0));
 	lightToWorldMatrix.BuildRotation(Stuff::EulerAngles(lightPitch * DEGREES_TO_RADS, (lightYaw + 135.0) * DEGREES_TO_RADS, 0.0f));
-	
+
 	worldLights[0]->SetLightToWorld(&lightToWorldMatrix);
 
 	//---------------------------------------------------------
@@ -3623,7 +3623,7 @@ void Camera::rotateLightLeft(float amount)
 
 	lightToWorldMatrix.BuildTranslation(Stuff::Point3D(0.0,0.0,0.0));
 	lightToWorldMatrix.BuildRotation(Stuff::EulerAngles(lightPitch * DEGREES_TO_RADS, (lightYaw + 135.0) * DEGREES_TO_RADS, 0.0f));
-	
+
 	worldLights[0]->SetLightToWorld(&lightToWorldMatrix);
 }	
 
@@ -3638,7 +3638,7 @@ void Camera::rotateLightRight(float amount)
 	Stuff::LinearMatrix4D lightToWorldMatrix;
 	lightToWorldMatrix.BuildTranslation(Stuff::Point3D(0.0,0.0,0.0));
 	lightToWorldMatrix.BuildRotation(Stuff::EulerAngles(lightPitch * DEGREES_TO_RADS, (lightYaw + 135.0) * DEGREES_TO_RADS, 0.0f));
-	
+
 	worldLights[0]->SetLightToWorld(&lightToWorldMatrix);
 }	
 
@@ -3654,7 +3654,7 @@ void Camera::rotateLightUp(float amount)
 	
 	lightToWorldMatrix.BuildTranslation(Stuff::Point3D(0.0,0.0,0.0));
 	lightToWorldMatrix.BuildRotation(Stuff::EulerAngles(lightPitch * DEGREES_TO_RADS, (lightYaw + 135.0) * DEGREES_TO_RADS, 0.0f));
-	
+
 	worldLights[0]->SetLightToWorld(&lightToWorldMatrix);
 }	
 
@@ -3670,7 +3670,7 @@ void Camera::rotateLightDown(float amount)
 	
 	lightToWorldMatrix.BuildTranslation(Stuff::Point3D(0.0,0.0,0.0));
 	lightToWorldMatrix.BuildRotation(Stuff::EulerAngles(lightPitch * DEGREES_TO_RADS, (lightYaw + 135.0) * DEGREES_TO_RADS, 0.0f));
-	
+
 	worldLights[0]->SetLightToWorld(&lightToWorldMatrix);
 }	
 

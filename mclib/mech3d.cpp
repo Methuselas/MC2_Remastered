@@ -2674,7 +2674,14 @@ long Mech3DAppearance::render (long depthFixup)
 	// DEGRADE-DON'T-CRASH: a partially-imported mech (no base shape) leaves
 	// mechShape NULL (see init()). Render nothing rather than deref NULL.
 	if (!mechShape)
+	{
+		if (g_mechPreviewRenderDepth > 0 && getenv("MC2_LOG_PREVIEW"))
+		{
+			FILE* f = fopen("preview_debug.log","a");
+			if (f) { fprintf(f,"[PREVIEW] Mech3D::render EARLY-OUT mechShape=NULL (partial-import guard)\n"); fflush(f); fclose(f); }
+		}
 		return NO_ERR;
+	}
 
 	// Force textures to reload due to unique instance.
 	mechShape->SetTextureHandle(0,localTextureHandle);
@@ -2697,6 +2704,11 @@ long Mech3DAppearance::render (long depthFixup)
 			: (inView || g_useGpuStaticProps);
 	if (mechShouldRender)
 	{
+		if (g_mechPreviewRenderDepth > 0 && getenv("MC2_LOG_PREVIEW"))
+		{
+			FILE* f = fopen("preview_debug.log","a");
+			if (f) { fprintf(f,"[PREVIEW] Mech3D::render preview shouldRender=1 visible=%d mechShape=%p currentLOD=%d\n",(int)visible,(void*)mechShape,(int)currentLOD); fflush(f); fclose(f); }
+		}
 		if (visible)
 		{
 			uint32_t color = SD_BLUE;

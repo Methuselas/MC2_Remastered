@@ -1279,8 +1279,8 @@ void __stdcall InitializeGameEngine()
 				if (result != NO_ERR)
 					Camera::MIN_PERSPECTIVE = 18.0f;
 
-				if (Camera::MIN_PERSPECTIVE < 0.0f)
-					Camera::MIN_PERSPECTIVE = 0.0f;
+				if (Camera::MIN_PERSPECTIVE < -89.0f)
+					Camera::MIN_PERSPECTIVE = -89.0f;
 
 				result = systemFile->readIdFloat("MaxOrtho",Camera::MAX_ORTHO);
 				if (result != NO_ERR)
@@ -1300,8 +1300,8 @@ void __stdcall InitializeGameEngine()
 				if (result != NO_ERR)
 					Camera::AltitudeMinimum = 60.0f;
 
-				if (Camera::AltitudeMinimum < 60.0f)
-					Camera::AltitudeMinimum = 60.0f;
+				if (Camera::AltitudeMinimum < 1.0f)
+					Camera::AltitudeMinimum = 1.0f;
 
 				result = systemFile->readIdFloat("AltitudeMaximumHi",Camera::AltitudeMaximumHi);
 				if (result != NO_ERR)

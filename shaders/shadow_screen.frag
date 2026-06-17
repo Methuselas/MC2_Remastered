@@ -149,6 +149,7 @@ float sampleShadowMap(sampler2DShadow smap, vec3 worldPos, mat4 lsMatrix, int nu
 float sampleDynamicShadow(vec3 worldPos, vec3 N)
 {
     float NdotL = max(dot(N, lightDir), 0.0);
+    if (NdotL < 0.05) return 1.0;   // back-face guard: faces away from sun have no direct light to occlude (matches shadow.hglsl)
     int count = clamp(dynamicCsmCount, 1, MC2_SHADOW_CSM_MAX);
     for (int c = 0; c < count; ++c) {
         // Per-cascade shadow resolution: the last cascade uses the separate
@@ -161,8 +162,7 @@ float sampleDynamicShadow(vec3 worldPos, vec3 N)
         // texel-proportional distance (larger at grazing angles). Applied in
         // world space, per-cascade (uses that cascade's world texel size), so
         // the projected coord is consistent. Gated: 0 => no offset.
-        float offsetDist = objNormalBiasScale * cTexelWorld
-                         * (1.0 + (1.0 - NdotL));
+        float offsetDist = objNormalBiasScale * cTexelWorld * NdotL;
         vec3 samplePos = worldPos + N * offsetDist;
 
         vec4 lsPos = dynamicCascadeMatrices[c] * vec4(samplePos, 1.0);
@@ -174,7 +174,7 @@ float sampleDynamicShadow(vec3 worldPos, vec3 N)
         // Stage 3 texel-scaled bias + slope-scale top-up for grazing angles
         // (small; ground bias already reduced — this is object self-shadow only).
         float texelBias = 1.5 * cTexelWorld / max(csmDepthSpan, 1.0);
-        float bias = 0.0012 + texelBias + 0.0010 * (1.0 - NdotL);
+        float bias = 0.0012 + texelBias + 0.0005 * (1.0 - NdotL);
         float currentDepth = projCoords.z - bias;
         float angle = 6.2831853 * fract(sin(dot(worldPos.xz, vec2(12.9898, 78.233))) * 43758.5453);
         float ca = cos(angle), sa = sin(angle);
@@ -203,8 +203,9 @@ float sampleDynamicShadow(vec3 worldPos, vec3 N)
 float sampleDynamicShadow(vec3 worldPos, vec3 N)
 {
     float NdotL = max(dot(N, lightDir), 0.0);
+    if (NdotL < 0.05) return 1.0;
     vec3 samplePos = worldPos
-                   + N * (objNormalBiasScale * 0.5 * (1.0 + (1.0 - NdotL)));
+                   + N * (objNormalBiasScale * 0.5 * NdotL);
     return sampleShadowMap(dynamicShadowMap, samplePos, dynamicLightSpaceMatrix, 4);
 }
 #endif
@@ -274,6 +275,10 @@ void main()
     // pixels only (terrain/grass/decals already took the early-out above).
     vec3 objN_stuff = normalize(normalData.rgb * 2.0 - 1.0);
     vec3 objN = vec3(-objN_stuff.x, objN_stuff.z, objN_stuff.y);
+
+    // GREYBEARD-ISO: force object shadow OFF to isolate diffuse vs shadow. REVERT after.
+    FragColor = vec4(1.0, 1.0, 1.0, 1.0);   // multiplicative identity -> no darkening on objects
+    return;
 
     // Cloud shadows moved to the fullscreen cloud pass (cloud.frag); this pass
     // now applies sun (static + dynamic) shadow only.

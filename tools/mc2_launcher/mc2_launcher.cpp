@@ -68,8 +68,10 @@
 #define IDC_BASELBL   1006  // "Compatibility Base (pick one):" label
 #define IDC_IMPORT    1007
 #define IDC_ADDONLBL  1008  // "Add-ons (stack any):" label
+#define IDC_TEXQUALLBL 1009 // "Texture Quality (pick one):" label
 #define IDC_BASE0     1050  // base radios: IDC_BASE0 + slot index (slot 0 = "None")
 #define IDC_ADDON0    1100  // add-on checkboxes: IDC_ADDON0 + slot index
+#define IDC_TEXQUAL0  1150  // texture-quality radios: IDC_TEXQUAL0 + slot (slot 0 = "None")
 #define IDC_FASTERWEAPONS 1300  // gameplay toggle (NOT a mod): faster weapons
 
 // Progress-dialog controls.
@@ -85,6 +87,8 @@
 #define BASE_SLOTS  4
 // FIXED set of stackable add-on checkbox slots (created once).
 #define ADDON_SLOTS 4
+// FIXED set of texture-quality radio slots: slot 0 = "None"; rest hold radioGroup="texture-quality" mods.
+#define TEXQUAL_SLOTS 5
 
 enum CompatKind { CK_UNKNOWN = 0, CK_MCO = 1, CK_MC2X = 2 };
 
@@ -94,6 +98,7 @@ struct ModEntry {
     bool isCompat;          // compatibility layer (base or add-on)
     bool isCampaign;        // has data/missions
     CompatKind needs;       // auto-detected compat for a campaign
+    char radioGroup[64];    // mod.json "radioGroup" — routes to a mutually-exclusive radio bank
 };
 
 static ModEntry s_campaigns[MAX_MODS];
@@ -105,6 +110,9 @@ static int      s_baseCount = 0;
 // Stackable ADD-ONS (genuine asset packs -> checkboxes; any number may stack).
 static ModEntry s_addons[MAX_MODS];
 static int      s_addonCount = 0;
+// Texture-quality radio group (radioGroup="texture-quality" -> mutually exclusive).
+static ModEntry s_texQual[MAX_MODS];
+static int      s_texQualCount = 0;
 
 static HINSTANCE s_hInst;
 static HWND      s_hMainWnd;
@@ -112,7 +120,8 @@ static HWND      s_hListBox;
 static HWND      s_hDesc;
 static HWND      s_hImport;
 static HWND      s_hBase[BASE_SLOTS];     // FIXED radio slots — slot 0 = "None"; never destroy
-static HWND      s_hAddon[ADDON_SLOTS];   // FIXED add-on checkbox slots — never destroy
+static HWND      s_hAddon[ADDON_SLOTS];      // FIXED add-on checkbox slots — never destroy
+static HWND      s_hTexQual[TEXQUAL_SLOTS];  // FIXED texture-quality radio slots — never destroy
 static HWND      s_hFasterWeapons;        // gameplay toggle (NOT a mod): faster weapons
 
 static char      s_launcherDir[MAX_PATH];   // trailing-slash launcher directory
@@ -293,8 +302,8 @@ static void ScanMods(const char* modsPath) {
         // A mod is any folder with a data/ subdir — no mod.json required.
         if (!DirExists(dataDir)) continue;
 
-        // Optional mod.json for nicer names / explicit type.
-        char name[256] = "", type[32] = "";
+        // Optional mod.json for nicer names / explicit type / radioGroup.
+        char name[256] = "", type[32] = "", radioGroup[64] = "";
         HANDLE fh = CreateFileA(jsonPath, GENERIC_READ, FILE_SHARE_READ, NULL,
                                 OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
         if (fh != INVALID_HANDLE_VALUE) {
@@ -302,6 +311,7 @@ static void ScanMods(const char* modsPath) {
             ReadFile(fh, buf, sizeof(buf)-1, &got, NULL); CloseHandle(fh); buf[got] = '\0';
             JsonGetString(buf, "name", name, sizeof(name));
             JsonGetString(buf, "type", type, sizeof(type));
+            JsonGetString(buf, "radioGroup", radioGroup, sizeof(radioGroup));
         }
         if (!name[0]) _snprintf(name, sizeof(name), "%s", fd.cFileName);
 
@@ -332,18 +342,28 @@ static void ScanMods(const char* modsPath) {
             //           non-campaign folder with data/) -> stackable -> checkbox.
             bool typeDependency = (_stricmp(type, "dependency") == 0);
             bool isBase = typeDependency || ContainsCI(fd.cFileName, "-compat");
+            bool isTexQual = (_stricmp(radioGroup, "texture-quality") == 0);
             if (isBase) {
                 if (s_baseCount >= MAX_MODS) continue;
                 ModEntry& e = s_bases[s_baseCount++];
                 _snprintf(e.folderName, sizeof(e.folderName), "%s", fd.cFileName);
                 _snprintf(e.name, sizeof(e.name), "%s", name);
                 e.isCompat = true; e.isCampaign = false; e.needs = CK_UNKNOWN;
+                e.radioGroup[0] = '\0';
+            } else if (isTexQual) {
+                if (s_texQualCount >= MAX_MODS) continue;
+                ModEntry& e = s_texQual[s_texQualCount++];
+                _snprintf(e.folderName, sizeof(e.folderName), "%s", fd.cFileName);
+                _snprintf(e.name, sizeof(e.name), "%s", name);
+                e.isCompat = false; e.isCampaign = false; e.needs = CK_UNKNOWN;
+                _snprintf(e.radioGroup, sizeof(e.radioGroup), "%s", radioGroup);
             } else {
                 if (s_addonCount >= MAX_MODS) continue;
                 ModEntry& e = s_addons[s_addonCount++];
                 _snprintf(e.folderName, sizeof(e.folderName), "%s", fd.cFileName);
                 _snprintf(e.name, sizeof(e.name), "%s", name);
                 e.isCompat = true; e.isCampaign = false; e.needs = CK_UNKNOWN;
+                e.radioGroup[0] = '\0';
             }
         } else {
             // Campaign bucket (radio / list).
@@ -353,6 +373,7 @@ static void ScanMods(const char* modsPath) {
             _snprintf(e.name, sizeof(e.name), "%s", name);
             e.isCompat = false; e.isCampaign = true;
             e.needs = DetectCompat(modDir);
+            e.radioGroup[0] = '\0';
         }
     } while (FindNextFileA(h, &fd));
 
@@ -375,14 +396,13 @@ static int BaseIndexForKind(CompatKind k) {
 // Both WM_CREATE control creation and the refresh helpers use these so a rescan
 // keeps the two-column layout identical to the initial build.
 //
-// Right column (top -> bottom): base label, BASE_SLOTS radios, gap, add-on
-// label, ADDON_SLOTS checkboxes. The right column is taller than the listbox,
-// so the bottom row (status + buttons) clears whichever column is taller.
+// Layout: left column holds the campaign listbox; right column holds base
+// radios, add-ons, texture-quality, and options.  The listbox fills the full
+// height of the right column so both columns bottom out at the same Y.
 #define LP_MARGIN     10
 #define LP_LIST_X     LP_MARGIN
 #define LP_LIST_Y     40
 #define LP_LIST_W     320
-#define LP_LIST_H     200
 #define LP_RCOL_X     (LP_LIST_X + LP_LIST_W + 15)   // right column left edge
 #define LP_RCOL_W     230                             // right column width
 #define LP_RLBL_Y     14                              // base label Y (matches left label)
@@ -396,15 +416,19 @@ static int BaseIndexForKind(CompatKind k) {
 #define LP_ADDON_LBL_Y (LP_BASE_Y + BASE_SLOTS * LP_ROW_STEP + 10) // add-on group label top
 #define LP_ADDON_Y    (LP_ADDON_LBL_Y + LP_LBL_H + 2)            // first add-on checkbox top
 #define LP_ADDON_BOTTOM (LP_ADDON_Y + ADDON_SLOTS * LP_ROW_STEP)  // bottom of add-on slots
-// Options group: a gap below the add-on checkboxes, then an "Options:" label,
-// then the "Faster weapons" gameplay toggle. This is NOT a mod -- it sets engine
-// env vars on launch, separate from the MC2_ACTIVE_MOD/MC2_MOD_DEPS logic.
-#define LP_OPT_LBL_Y  (LP_ADDON_BOTTOM + 14)                      // "Options:" label top
+// Texture quality group: gap below add-ons, then label, then TEXQUAL_SLOTS radios.
+#define LP_TEXQUAL_LBL_Y (LP_ADDON_BOTTOM + 14)                    // "Texture Quality:" label top
+#define LP_TEXQUAL_Y     (LP_TEXQUAL_LBL_Y + LP_LBL_H + 2)        // first tex-qual radio top
+#define LP_TEXQUAL_BOTTOM (LP_TEXQUAL_Y + TEXQUAL_SLOTS * LP_ROW_STEP)
+// Options group: below the texture-quality radios.
+#define LP_OPT_LBL_Y  (LP_TEXQUAL_BOTTOM + 14)                    // "Options:" label top
 #define LP_OPT_Y      (LP_OPT_LBL_Y + LP_LBL_H + 2)               // faster-weapons checkbox top
 #define LP_RCOL_BOTTOM (LP_OPT_Y + LP_ROW_STEP)                   // bottom of right column
-#define LP_LCOL_BOTTOM (LP_LIST_Y + LP_LIST_H)                    // bottom of left column
-// Bottom (status + buttons) clears the taller of the two columns.
-#define LP_COLS_BOTTOM ((LP_RCOL_BOTTOM > LP_LCOL_BOTTOM) ? LP_RCOL_BOTTOM : LP_LCOL_BOTTOM)
+// Listbox fills the full height of the right column.
+#define LP_LIST_H     (LP_RCOL_BOTTOM - LP_LIST_Y)
+#define LP_LCOL_BOTTOM LP_RCOL_BOTTOM
+// Bottom (status + buttons) below both columns.
+#define LP_COLS_BOTTOM LP_RCOL_BOTTOM
 #define LP_CLIENT_W   (LP_RCOL_X + LP_RCOL_W + LP_MARGIN)  // 10+320+15+230+10 = 585
 #define LP_BOTTOM_Y   (LP_COLS_BOTTOM + 8)            // status STATIC top (below both columns)
 #define LP_DESC_H     34
@@ -461,6 +485,46 @@ static void RefreshAddonSlots() {
     }
 }
 
+// Show/hide + relabel the FIXED texture-quality radio slots from s_texQual[].
+// Slot 0 is always "None". Never destroys/recreates — geometry is constant.
+static void RefreshTexQualSlots() {
+    for (int i = 0; i < TEXQUAL_SLOTS; i++) {
+        if (!s_hTexQual[i]) continue;
+        if (i == 0) {
+            SetWindowTextA(s_hTexQual[i], "None");
+            ShowWindow(s_hTexQual[i], SW_SHOW);
+        } else if ((i - 1) < s_texQualCount) {
+            char label[300];
+            _snprintf(label, sizeof(label), "%s", s_texQual[i-1].name);
+            label[sizeof(label)-1] = '\0';
+            SetWindowTextA(s_hTexQual[i], label);
+            ShowWindow(s_hTexQual[i], SW_SHOW);
+        } else {
+            SetWindowTextA(s_hTexQual[i], "");
+            ShowWindow(s_hTexQual[i], SW_HIDE);
+        }
+    }
+    // Default to "None".
+    for (int i = 0; i < TEXQUAL_SLOTS; i++)
+        if (s_hTexQual[i])
+            SendMessageA(s_hTexQual[i], BM_SETCHECK,
+                         (i == 0) ? BST_CHECKED : BST_UNCHECKED, 0);
+}
+
+static void SelectTexQualRadio(int slot) {
+    for (int i = 0; i < TEXQUAL_SLOTS; i++)
+        if (s_hTexQual[i])
+            SendMessageA(s_hTexQual[i], BM_SETCHECK,
+                         (i == slot) ? BST_CHECKED : BST_UNCHECKED, 0);
+}
+
+static int SelectedTexQualSlot() {
+    for (int i = 0; i < TEXQUAL_SLOTS; i++)
+        if (s_hTexQual[i] && SendMessageA(s_hTexQual[i], BM_GETCHECK, 0, 0) == BST_CHECKED)
+            return i;
+    return 0;
+}
+
 // Select base-radio slot `slot` (0 = None) exclusively. Mirrors what
 // BS_AUTORADIOBUTTON does on a user click, but lets code drive auto-detect.
 static void SelectBaseRadio(int slot) {
@@ -509,6 +573,7 @@ static void RescanAndRepopulate(const char* selectFolder) {
     s_campCount = 0;
     s_baseCount = 0;
     s_addonCount = 0;
+    s_texQualCount = 0;
     ScanMods(s_modsPath);
 
     SendMessageA(s_hListBox, LB_RESETCONTENT, 0, 0);
@@ -523,6 +588,7 @@ static void RescanAndRepopulate(const char* selectFolder) {
     SendMessageA(s_hListBox, LB_SETCURSEL, wantSel, 0);
     RefreshBaseSlots();
     RefreshAddonSlots();
+    RefreshTexQualSlots();
     UpdateForSelection();
 }
 
@@ -544,6 +610,12 @@ static void DoLaunch(HWND hwnd) {
             strncat(deps, s_addons[i].folderName, sizeof(deps)-strlen(deps)-1);
             addonChecked++;
         }
+    }
+    // Texture-quality radio (slot 0 = None; slot i -> s_texQual[i-1]).
+    int texSlot = SelectedTexQualSlot();
+    if (texSlot > 0 && (texSlot - 1) < s_texQualCount) {
+        if (deps[0]) strncat(deps, ",", sizeof(deps)-strlen(deps)-1);
+        strncat(deps, s_texQual[texSlot-1].folderName, sizeof(deps)-strlen(deps)-1);
     }
     int baseSlot = SelectedBaseSlot();   // 0 = None; slot i -> s_bases[i-1]
     if (baseSlot > 0 && (baseSlot - 1) < s_baseCount) {
@@ -888,6 +960,8 @@ static void SetMainControlsEnabled(BOOL en) {
         if (s_hBase[i]) EnableWindow(s_hBase[i], en);
     for (int i = 0; i < ADDON_SLOTS; i++)
         if (s_hAddon[i]) EnableWindow(s_hAddon[i], en);
+    for (int i = 0; i < TEXQUAL_SLOTS; i++)
+        if (s_hTexQual[i]) EnableWindow(s_hTexQual[i], en);
 }
 
 // Start the worker thread + show the modal progress dialog. s_importForce must
@@ -1189,7 +1263,25 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         RefreshBaseSlots();    // show/hide + label per current scan; default None
         RefreshAddonSlots();   // show/hide + label per current scan
 
-        // Sub-group 3: gameplay "Options:" label + Faster-weapons toggle. This is
+        // Sub-group 3: "Texture Quality (pick one):" label + mutually-exclusive radios.
+        // A WS_GROUP STATIC after the checkboxes terminates the add-on group.
+        HWND hTexQualLbl = CreateWindowA("STATIC", "Texture Quality (pick one):",
+            WS_CHILD | WS_VISIBLE | WS_GROUP, LP_RCOL_X, LP_TEXQUAL_LBL_Y, LP_RCOL_W, LP_LBL_H,
+            hwnd, (HMENU)IDC_TEXQUALLBL, s_hInst, NULL);
+        SendMessageA(hTexQualLbl, WM_SETFONT, (WPARAM)hFont, TRUE);
+
+        for (int i = 0; i < TEXQUAL_SLOTS; i++) {
+            int ty = LP_TEXQUAL_Y + i * LP_ROW_STEP;
+            DWORD st = WS_CHILD | BS_AUTORADIOBUTTON;
+            if (i == 0) st |= WS_GROUP;
+            s_hTexQual[i] = CreateWindowA("BUTTON", "", st,
+                LP_RCOL_X, ty, LP_RCOL_W, LP_ROW_H,
+                hwnd, (HMENU)(INT_PTR)(IDC_TEXQUAL0 + i), s_hInst, NULL);
+            SendMessageA(s_hTexQual[i], WM_SETFONT, (WPARAM)hFont, TRUE);
+        }
+        RefreshTexQualSlots();  // show/hide + label; default None
+
+        // Sub-group 5: gameplay "Options:" label + Faster-weapons toggle. This is
         // NOT a mod -- the checkbox drives engine env vars on Launch, separate from
         // the MC2_ACTIVE_MOD/MC2_MOD_DEPS mod logic. A WS_GROUP STATIC terminates
         // any preceding group; the checkbox defaults UNCHECKED.
@@ -1274,6 +1366,9 @@ static void PrintListing() {
     fprintf(f, "add-ons (%d) [checkbox, stackable]:\n", s_addonCount);
     for (int i = 0; i < s_addonCount; i++)
         fprintf(f, "  %s\n", s_addons[i].folderName);
+    fprintf(f, "texture-quality (%d) [radio, mutually exclusive]:\n", s_texQualCount);
+    for (int i = 0; i < s_texQualCount; i++)
+        fprintf(f, "  %s\n", s_texQual[i].folderName);
     fclose(f);
 }
 

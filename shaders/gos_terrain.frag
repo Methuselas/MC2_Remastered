@@ -443,13 +443,8 @@ void main(void)
             PREC vec2 cTileUV  = fract(vec2(WorldPos.x, -WorldPos.y) / atlasCementWorldUnitsPerTile);
             PREC vec2 cAtlasUV = (vec2(float(cCol), float(cRow)) + cTileUV) / float(gridSide);
             PREC vec4 cementColor = texture(tex3, cAtlasUV);
-            if (isTransition && u_useTransitionMask != 0) {
-                // Transition quad: blend terrain base with cement using procedural mask.
-                // maskId from bits 29:24, localUV = cTileUV (tile-local [0,1]^2).
-                int  maskId   = int((cementWord >> 24u) & 0x3Fu);
-                PREC float maskAlpha = texture(u_transitionMaskArray,
-                                               vec3(cTileUV, float(maskId))).r;
-                texColor = mix(texColor, cementColor, maskAlpha);
+            if (isTransition) {
+                // Transition: legacy overlay draw handles cement blend. Shader pass-through.
             } else {
                 // Solid cement quad — full replacement (original behavior).
                 texColor = cementColor;

@@ -921,6 +921,7 @@ struct ProgramLocs {
     GLint ormTexArr           = -1;   // STATICPROP-MATERIAL-ORM-1: u_ormTexArr (sampler2DArray)
     GLint ormSampleEnable     = -1;   // STATICPROP-MATERIAL-ORM-1: u_ormSampleEnable (int)
     GLint pathTint            = -1;   // MC2_SHADER_PATH_TINT debug: u_pathTint (int)
+    GLint terrainSunMC2       = -1;   // GREYBEARD-DIFFUSE-TEST: u_terrainSunMC2 (vec3)
 };
 
 // STATICPROP-MATERIAL-ORM-1 — texture unit reserved for the per-bucket ORM
@@ -1199,6 +1200,8 @@ void loadProgramsIfNeeded() {
     // V-MATERIAL-DEBUG-1: per-fragment material debug view mode (default 0 = OFF).
     s_locsLegacy.debugMaterialMode = glGetUniformLocation(s_staticPropProgram, "u_debugMaterialMode");
     s_locsLegacy.pathTint          = glGetUniformLocation(s_staticPropProgram, "u_pathTint");
+    // GREYBEARD-DIFFUSE-TEST: terrain sun (raw MC2) for forced-diffuse probe.
+    s_locsLegacy.terrainSunMC2     = glGetUniformLocation(s_staticPropProgram, "u_terrainSunMC2");
     // V-IBL-STATIC-1: SH-L2 coeffs + strength (default strength 0.0 = OFF).
     s_locsLegacy.iblSh             = glGetUniformLocation(s_staticPropProgram, "u_iblSh");
     s_locsLegacy.iblShStrength     = glGetUniformLocation(s_staticPropProgram, "u_iblShStrength");
@@ -1242,6 +1245,8 @@ void loadProgramsIfNeeded() {
             // V-MATERIAL-DEBUG-1: per-fragment material debug view mode (default 0 = OFF).
             s_locsCoalesce.debugMaterialMode = glGetUniformLocation(s_staticPropProgramCoalesce, "u_debugMaterialMode");
             s_locsCoalesce.pathTint          = glGetUniformLocation(s_staticPropProgramCoalesce, "u_pathTint");
+            // GREYBEARD-DIFFUSE-TEST: terrain sun (raw MC2) for forced-diffuse probe.
+            s_locsCoalesce.terrainSunMC2     = glGetUniformLocation(s_staticPropProgramCoalesce, "u_terrainSunMC2");
             // V-IBL-STATIC-1: SH-L2 coeffs + strength (default strength 0.0 = OFF).
             s_locsCoalesce.iblSh             = glGetUniformLocation(s_staticPropProgramCoalesce, "u_iblSh");
             s_locsCoalesce.iblShStrength     = glGetUniformLocation(s_staticPropProgramCoalesce, "u_iblShStrength");
@@ -5728,6 +5733,13 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
         // MC2_SHADER_PATH_TINT: solid-color path-id debug (default 0 = OFF).
         if (s_locsCoalesce.pathTint >= 0)
             glUniform1i       (s_locsCoalesce.pathTint, mc2ShaderPathTint());
+        // GREYBEARD-DIFFUSE-TEST: upload raw MC2 terrain sun for forced diffuse.
+        if (s_locsCoalesce.terrainSunMC2 >= 0) {
+            extern void gos_GetTerrainLightDir(float*, float*, float*);
+            float tsx = 0.0f, tsy = 0.0f, tsz = 1.0f;
+            gos_GetTerrainLightDir(&tsx, &tsy, &tsz);
+            glUniform3f(s_locsCoalesce.terrainSunMC2, tsx, tsy, tsz);
+        }
         // V-IBL-STATIC-1: SH-L2 image-based ambient. Strength gate is the env
         // var (s_iblShEnabled); when OFF -> upload 0.0 -> shader short-circuits
         // before evalShL2 (byte-identical to pre-slice output). When ON, the
@@ -6850,6 +6862,13 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             // MC2_SHADER_PATH_TINT: solid-color path-id debug (default 0 = OFF).
             if (s_locsLegacy.pathTint >= 0)
                 glUniform1i(s_locsLegacy.pathTint, mc2ShaderPathTint());
+            // GREYBEARD-DIFFUSE-TEST: upload raw MC2 terrain sun for forced diffuse.
+            if (s_locsLegacy.terrainSunMC2 >= 0) {
+                extern void gos_GetTerrainLightDir(float*, float*, float*);
+                float tsx = 0.0f, tsy = 0.0f, tsz = 1.0f;
+                gos_GetTerrainLightDir(&tsx, &tsy, &tsz);
+                glUniform3f(s_locsLegacy.terrainSunMC2, tsx, tsy, tsz);
+            }
             // V-IBL-STATIC-1: SH-L2 image-based ambient (legacy program). Same
             // semantics as coalesce site: strength 0.0 default -> byte-identical OFF.
             // V-IBL-STATIC-2: same per-mission source as coalesce site.
