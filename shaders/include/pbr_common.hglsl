@@ -1,0 +1,131 @@
+// shaders/include/pbr_common.hglsl
+//
+// Shared PBR BRDF functions -- StandardLit material system
+//
+// No MaterialGpu or ObjectLights dependency -- all functions take explicit
+// inputs only. Include this header in any shader that needs StandardLit
+// shading (mech, static_prop PBR path, animated props, etc.).
+//
+// Usage:
+//   #include <include/pbr_common.hglsl>
+//   StandardLitInput i;
+//   i.albedo      = ...;
+//   // ... fill remaining fields ...
+//   vec3 color    = StandardLit(i);
+
+#pragma once
+
+#ifndef MC2_PI
+#define MC2_PI 3.14159265358979323846
+#endif
+
+// ---------------------------------------------------------------------------
+// Input struct -- caller fills all fields before calling StandardLit().
+// ---------------------------------------------------------------------------
+struct StandardLitInput {
+    vec3  albedo;       // linear-space albedo (mech paint, already decoded if sRGB)
+    vec3  N;            // world-space normal (may be detail-normal from TBN)
+    vec3  V;            // normalized view vector (camera - worldPos)
+    vec3  L;            // normalized light direction (toward light)
+    vec3  lightColor;   // linear light color * intensity
+    vec3  ambientColor; // ambient sky/fill color (cheap indirect)
+    float roughness;    // linear roughness [0.25, 0.85] (clamped by caller)
+    float metallic;     // metalness [0, 1]
+    float ao;           // ambient occlusion [0, 1] (1.0 = no occlusion)
+};
+
+// ---------------------------------------------------------------------------
+// FresnelSchlick -- VdotH form (physically correct half-vector Fresnel).
+// NOTE: static_prop.frag uses NdotV which is incorrect; this function uses
+// VdotH as required by the Cook-Torrance microfacet BRDF derivation.
+// ---------------------------------------------------------------------------
+vec3 FresnelSchlick(float VdotH, vec3 F0) {
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - VdotH, 0.0, 1.0), 5.0);
+}
+
+// ---------------------------------------------------------------------------
+// GGX Normal Distribution Function (D term).
+// ---------------------------------------------------------------------------
+float DistributionGGX(float NdotH, float roughness) {
+    float a  = roughness * roughness;
+    float a2 = a * a;
+    float d  = NdotH * NdotH * (a2 - 1.0) + 1.0;
+    return a2 / max(MC2_PI * d * d, 0.001);
+}
+
+// ---------------------------------------------------------------------------
+// Smith GGX height-correlated visibility function (G term).
+// Combined G1(V)*G1(L) / (4*NdotV*NdotL) -- the 0.5 factor absorbs the
+// denominator, so callers do NOT need to divide by 4*NdotV*NdotL separately.
+// ---------------------------------------------------------------------------
+float GeometrySmithGGX(float NdotV, float NdotL, float roughness) {
+    float a  = roughness * roughness;
+    float a2 = a * a;
+    float gV = NdotV + sqrt(a2 + (1.0 - a2) * NdotV * NdotV);
+    float gL = NdotL + sqrt(a2 + (1.0 - a2) * NdotL * NdotL);
+    return 0.5 / max(gV * gL, 0.001);
+}
+
+// ---------------------------------------------------------------------------
+// StandardLit -- full direct + cheap-indirect PBR shading.
+// Returns linear-space HDR color (tone-map / gamma-encode in the caller).
+// ---------------------------------------------------------------------------
+vec3 StandardLit(StandardLitInput i) {
+    vec3 H = normalize(i.V + i.L);
+    float NdotL = max(dot(i.N, i.L), 0.0);
+    float NdotV = max(dot(i.N, i.V), 0.001);
+    float NdotH = max(dot(i.N, H), 0.0);
+    float VdotH = max(dot(i.V, H), 0.0);
+
+    float roughness = max(i.roughness, 0.04); // avoid degenerate specular
+    float metallic  = clamp(i.metallic, 0.0, 1.0);
+
+    // F0: dielectric baseline 4% reflectance; lerp to albedo for metals
+    vec3 F0 = mix(vec3(0.04), i.albedo, metallic);
+    vec3 F  = FresnelSchlick(VdotH, F0);
+
+    float D = DistributionGGX(NdotH, roughness);
+    float G = GeometrySmithGGX(NdotV, NdotL, roughness);
+
+    // GeometrySmithGGX already incorporates the 1/(4*NdotV*NdotL) denominator
+    vec3 specular = (D * G * F) / max(4.0 * NdotV * NdotL, 0.001);
+    vec3 diffuse  = (1.0 - F) * (1.0 - metallic) * i.albedo / MC2_PI;
+
+    vec3 Lo = (diffuse + specular) * i.lightColor * NdotL;
+
+    // Cheap indirect -- prevents metals going black in the absence of IBL.
+    // ambientDiffuse uses energy-conserving (1-metallic) suppression so pure
+    // metals get their indirect contribution from the specular term only.
+    vec3 ambientDiffuse  = i.ambientColor * i.albedo * (1.0 - metallic);
+    vec3 ambientSpecular = i.ambientColor * F0 * 0.25;
+    vec3 ambient = (ambientDiffuse + ambientSpecular) * i.ao;
+
+    return ambient + Lo;
+}
+
+// ---------------------------------------------------------------------------
+// applyPbrNormal -- derivative TBN normal-map application with determinant
+// guard. Returns a world-space normal blended between the vertex normal N and
+// the detail normal decoded from normalTex at the given tileScale and strength.
+//
+// Requires: dFdx/dFdy available (fragment shader only).
+// Normal map convention: NormalGL (no Y-flip -- green-up, not green-down).
+// ---------------------------------------------------------------------------
+vec3 applyPbrNormal(vec3 N, vec3 worldPos, vec2 uv,
+                    sampler2D normalTex, float tileScale, float strength) {
+    vec2 tiledUV = uv * tileScale;
+    vec3 mapN    = texture(normalTex, tiledUV).rgb * 2.0 - 1.0; // NormalGL, no Y flip
+
+    vec3 dp1  = dFdx(worldPos); vec3 dp2  = dFdy(worldPos);
+    vec2 duv1 = dFdx(tiledUV); vec2 duv2 = dFdy(tiledUV);
+    float det = duv1.x * duv2.y - duv1.y * duv2.x;
+
+    if (abs(det) < 1e-6) return normalize(N); // degenerate UVs -- fall back to vertex normal
+
+    vec3 T = normalize((dp1 * duv2.y - dp2 * duv1.y) / det);
+    T = normalize(T - N * dot(N, T)); // Gram-Schmidt re-orthogonalize
+    vec3 B = normalize(cross(N, T));
+
+    vec3 detailN = normalize(mat3(T, B, N) * mapN);
+    return normalize(mix(N, detailN, strength));
+}
