@@ -275,4 +275,24 @@ $env:MC2_DIAG_TAGS="CONFIG,BUILD,DEVICE,SHADER_COMPILE"
 ```
 Then: `get_diagnostic_events("SHADER_COMPILE", 20)` — each event includes `stage`, `path`, `result`, and `info_log` on failure.
 
+**GPU cull triage** — startup health of substrate/compute/readback init:
+```powershell
+$env:MC2_DIAG_TAGS="CONFIG,BUILD,DEVICE,GPU_CULL"
+```
+`get_diagnostic_events("GPU_CULL", 20)` — substrate_init, gl_probe, c1b_cull_ok/fail, compute_selftest, readback_init, readback_selftest per session.
+
+**Static prop flush perf triage** — 10-frame perf window with per-bucket ns breakdown:
+```powershell
+$env:MC2_STATIC_PROP_FLUSH_COST_SPLIT="1"
+$env:MC2_DIAG_TAGS="CONFIG,BUILD,DEVICE,SPFLUSH_COST_SPLIT"
+```
+`get_diagnostic_events("SPFLUSH_COST_SPLIT", 10)` — summary events with `frame`, `window_frames`, and all ns buckets.
+
+**Light bake stability triage** — bake index permanence/parity proof:
+```powershell
+$env:MC2_LIGHTBAKE_STABILITY="1"
+$env:MC2_DIAG_TAGS="CONFIG,BUILD,DEVICE,LIGHTBAKE_PROOF"
+```
+`get_diagnostic_events("LIGHTBAKE_PROOF", 20)` — enabled/first/coverage/UNSTABLE events.
+
 **Fail-open:** Shader compile failures emit `SHADER_COMPILE compile_fail` with `info_log` and do not abort optional shader paths where the existing loader already continues gracefully (e.g. vegetation, optional overlays). Core shaders that call `STOP()` on failure remain fatal — fail-open applies only to paths the loader was already skipping.
