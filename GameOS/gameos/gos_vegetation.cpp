@@ -15,6 +15,7 @@
 //   location 6: float seed         offset 24, divisor 1
 
 #include "gos_vegetation.h"
+#include "gos_static_prop_killswitch.h"  // gos_GetTerrainMVPMat4()
 #include "../../mclib/render_contract.h"
 #include "utils/shader_builder.h"
 #include "utils/gl_utils.h"
@@ -28,14 +29,15 @@
 // ---------------------------------------------------------------------------
 namespace {
 
-static GLuint       s_vao          = 0;
-static GLuint       s_staticVbo    = 0;
-static GLuint       s_ibo          = 0;
-static GLuint       s_instanceVbo  = 0;
-static GLuint       s_atlasTexId   = 0;
-static glsl_program* s_prog        = nullptr;
+static GLuint       s_vao           = 0;
+static GLuint       s_staticVbo     = 0;
+static GLuint       s_ibo           = 0;
+static GLuint       s_instanceVbo   = 0;
+static GLuint       s_atlasTexId    = 0;
+static GLuint       s_blockVisSsbo  = 0;
+static glsl_program* s_prog         = nullptr;
 static uint32_t     s_instanceCount = 0;
-static bool         s_initialized  = false;
+static bool         s_initialized   = false;
 
 // Vertex for static crossed-quad geometry.
 struct CardVert {
@@ -190,6 +192,20 @@ void GosVegetation::init() {
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
 
+    // --- Block visibility SSBO (binding 12) ---
+    // Pre-allocated to 1024 slots at 2u (LOD0 = draw) so OOB reads
+    // on the first frame (before setBlockVisibility fires) show all cards.
+    glGenBuffers(1, &s_blockVisSsbo);
+    {
+        uint32_t initVis[1024];
+        for (int i = 0; i < 1024; ++i) initVis[i] = 2u;
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_blockVisSsbo);
+        glBufferData(GL_SHADER_STORAGE_BUFFER,
+                     static_cast<GLsizeiptr>(1024 * sizeof(uint32_t)),
+                     initVis, GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+
     // --- Atlas texture ---
     const char* atlasPath = s_atlasPathOverride
                           ? s_atlasPathOverride
@@ -216,14 +232,15 @@ void GosVegetation::init() {
 }
 
 void GosVegetation::shutdown() {
-    if (s_vao)         { glDeleteVertexArrays(1, &s_vao);        s_vao = 0; }
-    if (s_staticVbo)   { glDeleteBuffers(1, &s_staticVbo);       s_staticVbo = 0; }
-    if (s_ibo)         { glDeleteBuffers(1, &s_ibo);              s_ibo = 0; }
-    if (s_instanceVbo) { glDeleteBuffers(1, &s_instanceVbo);     s_instanceVbo = 0; }
-    if (s_atlasTexId)  { glDeleteTextures(1, &s_atlasTexId);     s_atlasTexId = 0; }
-    if (s_prog)        { glsl_program::deleteProgram("vegetation_card"); s_prog = nullptr; }
-    s_instanceCount  = 0;
-    s_initialized    = false;
+    if (s_vao)          { glDeleteVertexArrays(1, &s_vao);        s_vao = 0; }
+    if (s_staticVbo)    { glDeleteBuffers(1, &s_staticVbo);       s_staticVbo = 0; }
+    if (s_ibo)          { glDeleteBuffers(1, &s_ibo);              s_ibo = 0; }
+    if (s_instanceVbo)  { glDeleteBuffers(1, &s_instanceVbo);     s_instanceVbo = 0; }
+    if (s_blockVisSsbo) { glDeleteBuffers(1, &s_blockVisSsbo);    s_blockVisSsbo = 0; }
+    if (s_atlasTexId)   { glDeleteTextures(1, &s_atlasTexId);     s_atlasTexId = 0; }
+    if (s_prog)         { glsl_program::deleteProgram("vegetation_card"); s_prog = nullptr; }
+    s_instanceCount   = 0;
+    s_initialized     = false;
 }
 
 void GosVegetation::uploadInstances(const Instance* instances, uint32_t count) {
@@ -244,69 +261,80 @@ void GosVegetation::uploadInstances(const Instance* instances, uint32_t count) {
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
-void GosVegetation::flush(const float* worldToClipGL_4x4,
-                          float camX, float camY, float camZ,
-                          float lightDirX, float lightDirY,
-                          float lightDirZ, float lightDirW,
-                          float time) {
-    if (!isEnabled()) {
-        return;
-    }
-    if (s_instanceCount == 0 || s_atlasTexId == 0) {
-        return;
-    }
-    if (!s_prog || !s_prog->is_valid()) {
-        return;
-    }
+void GosVegetation::setBlockVisibility(const uint32_t* visible, uint32_t blockCount) {
+    if (!s_blockVisSsbo || !visible || blockCount == 0) return;
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_blockVisSsbo);
+    glBufferData(GL_SHADER_STORAGE_BUFFER,
+                 static_cast<GLsizeiptr>(blockCount * sizeof(uint32_t)),
+                 visible, GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+}
+
+void GosVegetation::flush(float lightDirX, float lightDirY, float lightDirZ, float lightDirW,
+                          float time,
+                          float camChunkX, float camChunkY, float camChunkZ,
+                          float mapHalfWU, float blockSideWU, int chunkSide) {
+    if (!isEnabled()) return;
+    if (s_instanceCount == 0 || s_atlasTexId == 0) return;
+    if (!s_prog || !s_prog->is_valid()) return;
+
+    const float* mvp = gos_GetTerrainMVPMat4();
+    if (!mvp) return;  // terrain MVP not ready yet
 
     // --- Explicit GL state for vegetation card pass ---
     glEnable(GL_DEPTH_TEST);
-    glDepthMask(GL_FALSE);       // depth write OFF for v1 (cards transparent to each other)
+    glDepthMask(GL_FALSE);    // depth write OFF (cards alpha-test but don't occlude each other)
     glDisable(GL_BLEND);
-    glDisable(GL_CULL_FACE);     // both sides visible
-    glDepthFunc(GL_GEQUAL);      // reverse-Z
+    glDisable(GL_CULL_FACE);  // both faces visible
+    glDepthFunc(GL_GEQUAL);   // reverse-Z
 
     // [RENDER_CONTRACT:Pass=VegetationCards]
     render_contract::assertPassContract(
         render_contract::PassIdentity::VegetationCards,
         "GosVegetation::flush");
 
-    // Bind program.
     s_prog->apply();
-
     const GLuint progId = s_prog->shp_;
 
-    // Upload matrix uniform (explicit-program form per project rule).
     {
         const GLint loc = glGetUniformLocation(progId, "u_worldToClipGL");
-        glProgramUniformMatrix4fv(progId, loc, 1, GL_FALSE, worldToClipGL_4x4);
+        glProgramUniformMatrix4fv(progId, loc, 1, GL_FALSE, mvp);
     }
-
-    // Upload camera pos (vec4 uniform; w unused, set to 0).
     {
         const GLint loc = glGetUniformLocation(progId, "u_cameraPos");
-        glProgramUniform4f(progId, loc, camX, camY, camZ, 0.0f);
+        glProgramUniform3f(progId, loc, camChunkX, camChunkY, camChunkZ);
     }
-
-    // Upload vec4 terrain light direction.
     {
         const GLint loc = glGetUniformLocation(progId, "u_terrainLightDir");
         glProgramUniform4f(progId, loc, lightDirX, lightDirY, lightDirZ, lightDirW);
     }
-
-    // Upload time.
     {
         const GLint loc = glGetUniformLocation(progId, "u_time");
         glProgramUniform1f(progId, loc, time);
     }
+    {
+        const GLint loc = glGetUniformLocation(progId, "u_mapHalfWU");
+        glProgramUniform1f(progId, loc, mapHalfWU);
+    }
+    {
+        const GLint loc = glGetUniformLocation(progId, "u_blockSideWU");
+        glProgramUniform1f(progId, loc, blockSideWU);
+    }
+    {
+        const GLint loc = glGetUniformLocation(progId, "u_chunkSide");
+        glProgramUniform1i(progId, loc, chunkSide);
+    }
 
-    // Bind atlas texture to unit 0.
+    // Atlas texture on unit 0.
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, s_atlasTexId);
     {
         const GLint loc = glGetUniformLocation(progId, "u_atlas");
         glProgramUniform1i(progId, loc, 0);
     }
+
+    // Block visibility SSBO at binding 12.
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 12, s_blockVisSsbo);
 
     // Draw.
     glBindVertexArray(s_vao);
@@ -315,9 +343,8 @@ void GosVegetation::flush(const float* worldToClipGL_4x4,
                             static_cast<GLsizei>(s_instanceCount));
 
     // --- Restore critical state ---
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 12, 0);
     glDepthMask(GL_TRUE);
     glEnable(GL_CULL_FACE);
-    // glDepthFunc remains GL_GEQUAL (reverse-Z; matches rest of engine)
-
     glBindVertexArray(0);
 }

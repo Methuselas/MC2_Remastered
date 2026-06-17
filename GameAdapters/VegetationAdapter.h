@@ -15,7 +15,6 @@
 #pragma once
 
 // Forward declarations only -- .cpp includes real headers.
-namespace Stuff { class Matrix4D; class Vector3D; }
 class Terrain;
 class MissionMap;
 
@@ -38,16 +37,12 @@ void missionLoaded(Terrain* land, MissionMap* gameMap);
 void missionUnloaded();
 
 // Called once per frame to submit vegetation draw commands.
-//
-// worldToClipGL      -- the GL-NDC world-to-clip matrix (Stuff column-major,
-//                       same source as gos_SetWorldToClipGL).
-// cameraPos          -- camera world position (ML/R space).
+// Matrix sourced internally from gos_GetTerrainMVPMat4() (terrain-chunk space).
 // terrainLightDir_4f -- vec4 light direction forwarded from terrain shaders.
 // time               -- elapsed seconds (used for shader animation).
-void flush(const Stuff::Matrix4D& worldToClipGL,
-           const Stuff::Vector3D& cameraPos,
-           const float*           terrainLightDir_4f,
-           float                  time);
+// camChunkX/Y/Z      -- camera position in terrain-chunk space (for wind LOD fade).
+void flush(const float* terrainLightDir_4f, float time,
+           float camChunkX, float camChunkY, float camChunkZ);
 
 } // namespace Vegetation
 } // namespace GameAdapters

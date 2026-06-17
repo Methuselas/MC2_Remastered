@@ -225,20 +225,32 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
     }
 }
 
-void GameAdapters::Vegetation::flush(const Stuff::Matrix4D& worldToClipGL,
-                                     const Stuff::Vector3D&  cameraPos,
-                                     const float*            terrainLightDir_4f,
-                                     float                   time)
+void GameAdapters::Vegetation::flush(const float* terrainLightDir_4f, float time,
+                                     float camChunkX, float camChunkY, float camChunkZ)
 {
     if (!GosVegetation::isEnabled()) return;
 
-    // Stuff::Matrix4D::entries is float[16], column-major.
-    // GosVegetation::flush expects the same layout (GL_FALSE upload
-    // convention matching gos_SetWorldToClipGL).
+    // Build per-block LOD visibility from terrain chunk metadata and upload to SSBO.
+    // The SSBO tells the vertex shader which blocks to cull (0) or draw at LOD1 (1) or LOD0 (2).
+    const int chunkSide  = Terrain::s_terrainChunkSide;
+    const int blockCount = chunkSide * chunkSide;
+    if (blockCount > 0 && Terrain::s_blockMeta) {
+        static thread_local std::vector<uint32_t> s_visBuffer;
+        s_visBuffer.resize(static_cast<size_t>(blockCount));
+        for (int i = 0; i < blockCount; ++i) {
+            const int lod = Terrain::s_blockMeta[i].lodLevel;
+            s_visBuffer[i] = (lod == 0) ? 2u : (lod == 1) ? 1u : 0u;
+        }
+        GosVegetation::setBlockVisibility(s_visBuffer.data(),
+                                          static_cast<uint32_t>(blockCount));
+    }
+
     GosVegetation::flush(
-        worldToClipGL.entries,
-        cameraPos.x, cameraPos.y, cameraPos.z,
         terrainLightDir_4f[0], terrainLightDir_4f[1],
         terrainLightDir_4f[2], terrainLightDir_4f[3],
-        time);
+        time,
+        camChunkX, camChunkY, camChunkZ,
+        Terrain::worldUnitsMapSide * 0.5f,
+        Terrain::worldUnitsBlockSide,
+        chunkSide);
 }

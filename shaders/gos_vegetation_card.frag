@@ -15,44 +15,54 @@
 
 in PREC vec2  v_atlasUV;
 in PREC float v_camDist;
+in PREC float v_camTrueDist;
+in PREC float v_cardBottom;
 in PREC float v_seed;
 in PREC vec3  v_worldPos;
+in PREC float v_lodFade;   // 1.0=LOD0 full, 0.4=LOD1 dithered
 
 layout(location=0) out PREC vec4 FragColor;
 layout(location=1) out PREC vec4 GBuffer1;
 
 uniform sampler2D    u_atlas;
-uniform PREC vec4    u_terrainLightDir; // matches terrainLightDir convention in other passes
+uniform PREC vec4    u_terrainLightDir;
 
 void main()
 {
-    // --- Distance dither fade (Bayer 4x4, stable, no TAA needed) ---
-    PREC float fade = 1.0 - smoothstep(3000.0, 5000.0, v_camDist);
-    if (fade <= 0.0) discard;
-
+    // Bayer 4×4 ordered dither for LOD1 distance fade.
+    // v_lodFade=1.0 → never discard (LOD0 full).
+    // v_lodFade=0.3 → discard ~70% of pixels (LOD1 flat patch, sparse ground cover look).
     const float bayer[16] = float[16](
          0.0/16.0,  8.0/16.0,  2.0/16.0, 10.0/16.0,
         12.0/16.0,  4.0/16.0, 14.0/16.0,  6.0/16.0,
          3.0/16.0, 11.0/16.0,  1.0/16.0,  9.0/16.0,
         15.0/16.0,  7.0/16.0, 13.0/16.0,  5.0/16.0
     );
-    ivec2 fc = ivec2(gl_FragCoord.xy) & 3;
-    float bayerThreshold = bayer[fc.y * 4 + fc.x];
-    if (fade < bayerThreshold) discard;
+    int bx = int(gl_FragCoord.x) & 3;
+    int by = int(gl_FragCoord.y) & 3;
+    if (v_lodFade < bayer[by * 4 + bx]) discard;
 
-    // --- Atlas sample ---
-    vec4 texel = texture(u_atlas, v_atlasUV);
+    // LOD bias -1.5 applied at bind site.
+    vec4 col = texture(u_atlas, v_atlasUV);
 
-    // --- Alpha cutoff ---
-    if (texel.a < 0.5) discard;
+    // Alpha test.
+    if (col.a < 0.5) discard;
 
-    // --- Simple diffuse lighting (v1: upward-facing approximate normal, no normal map) ---
-    PREC vec3 cardNormal = normalize(vec3(u_terrainLightDir.x * 0.2, u_terrainLightDir.y * 0.2, 1.0));
-    PREC float NdotL = clamp(dot(cardNormal, u_terrainLightDir.xyz), 0.1, 1.0);
-    PREC float diffuse = mix(0.5, 1.0, NdotL);
+    // Lighting: raised ambient so shadows don't read as black blots.
+    float NdotL = max(dot(vec3(0.0, 0.0, 1.0), u_terrainLightDir.xyz), 0.0);
+    col.rgb *= 0.72 + 0.28 * NdotL;
 
-    // --- Output ---
-    vec3 color = texel.rgb * diffuse;
-    FragColor = vec4(color, 1.0);
-    GBuffer1  = rc_gbuffer1_shadowHandled(cardNormal);
+    // Root lift.
+    col.rgb += vec3(v_cardBottom * 0.10);
+
+    // Terrain colormap tint deferred (no colormap sampler in v1 flush API).
+
+    col.rgb = min(vec3(1.0), col.rgb);
+
+    // Dim LOD1 surviving pixels — proxy for missing CSM shadow at mid range.
+    // (Proper shadow requires shadow map samplers in this pass — deferred.)
+    col.rgb *= (v_lodFade >= 1.0) ? 1.0 : 0.60;
+
+    FragColor = vec4(col.rgb, 1.0);
+    GBuffer1  = vec4(0.0);
 }
