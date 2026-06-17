@@ -75,8 +75,9 @@ void main()
             v_lodFade    = 0.0;
             return;
         }
-        // LOD0 = full (2), LOD1 = flat patch + dithered (1 → 0.3 survival rate in frag)
-        lodFade = (lodVis >= 2u) ? 1.0 : 0.3;
+        // All non-culled blocks draw as vertical LOD0 cards.
+        // LOD1 flat-card was coplanar with terrain in RTS overview → invisible.
+        lodFade = 1.0;
     }
 
     // LOD0 = vertical crossed-quad billboard (full 3D card).
