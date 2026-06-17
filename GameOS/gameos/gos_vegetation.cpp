@@ -279,7 +279,22 @@ void GosVegetation::flush(float lightDirX, float lightDirY, float lightDirZ, flo
     if (!s_prog || !s_prog->is_valid()) return;
 
     const float* mvp = gos_GetTerrainMVPMat4();
-    if (!mvp) return;  // terrain MVP not ready yet
+
+    static int s_flushCount = 0;
+    const bool firstFlush = (s_flushCount++ == 0);
+    if (firstFlush) {
+        fprintf(stderr,
+            "[VEG v1] flush: instances=%u atlas=%u prog=%s mvp=%s "
+            "chunkSide=%d blockSideWU=%.0f mapHalfWU=%.0f\n",
+            s_instanceCount, s_atlasTexId,
+            (s_prog && s_prog->is_valid()) ? "OK" : "BAD",
+            mvp ? "OK" : "NULL",
+            chunkSide, static_cast<double>(blockSideWU),
+            static_cast<double>(mapHalfWU));
+        fflush(stderr);
+    }
+
+    if (!mvp) return;  // terrain MVP not ready yet — fail-open
 
     // --- Explicit GL state for vegetation card pass ---
     glEnable(GL_DEPTH_TEST);

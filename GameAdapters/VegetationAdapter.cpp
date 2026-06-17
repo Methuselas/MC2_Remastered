@@ -53,7 +53,7 @@ namespace {
 }
 
 // World-unit spacing between sample points.
-constexpr float kGridStep = 64.0f;
+constexpr float kGridStep = 32.0f;
 
 // ---------------------------------------------------------------------------
 // Placement accept/reject helpers
@@ -62,11 +62,13 @@ constexpr float kGridStep = 64.0f;
 [[nodiscard]] bool isGreenZone(short terrainType) noexcept
 {
     switch (terrainType) {
+    case MC_MUD_TYPE:         // predominant outdoor terrain in many missions
     case MC_MOSS_TYPE:
     case MC_FORESTFLOOR_TYPE:
     case MC_GRASS_TYPE:
+    case MC_TUNDRA_TYPE:
     case MC_SLIMY_TYPE:
-    case MC_DIRT_TYPE:   // accepted at potentially reduced density
+    case MC_DIRT_TYPE:
         return true;
     default:
         return false;
@@ -123,8 +125,8 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
     if (!GosVegetation::isEnabled()) return;
     GosVegetation::init();  // no-op if already initialized
 
-    const int density   = envInt("MC2_VEGETATION_DENSITY", 4);
-    const int maxInst   = envInt("MC2_VEGETATION_MAX", 50000);
+    const int density   = envInt("MC2_VEGETATION_DENSITY", 25);
+    const int maxInst   = envInt("MC2_VEGETATION_MAX", 1500000);
     const bool debugLog = envSet("MC2_VEGETATION_DEBUG");
 
     // Terrain map is square.  mapTopLeft3d is the top-left (max-Y, min-X)
@@ -136,6 +138,35 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
 
     std::vector<GosVegetation::Instance> instances;
     instances.reserve(static_cast<size_t>(maxInst));
+
+    // Reject counters — logged at end to diagnose zero-placement.
+    int diagOOB = 0, diagHard = 0, diagNotGreen = 0, diagOverlay = 0, diagWater = 0;
+
+    if (gameMap) {
+        fprintf(stderr, "[VegetationAdapter] gameMap: width=%d height=%d\n",
+                gameMap->width, gameMap->height);
+        fflush(stderr);
+    }
+
+    // Diagnostic: sample first 20 terrain type values to see what's on this map.
+    {
+        const float stepX = mapSpan / 20.0f;
+        fprintf(stderr, "[VegetationAdapter] terrain-type sample (20 pts): ");
+        for (int si = 0; si < 20; ++si) {
+            const float sx = originX + stepX * (si + 0.5f);
+            const float sy = originY - mapSpan * 0.5f;
+            const Stuff::Vector3D sp(sx, sy, 0.0f);
+            int tr = 0, tc = 0, cr = 0, cc = 0;
+            land->worldToTileCell(sp, tr, tc, cr, cc);
+            const long ms = static_cast<long>(Terrain::realVerticesMapSide);
+            if (tr >= 0 && tc >= 0 && tr < ms && tc < ms)
+                fprintf(stderr, "%d ", static_cast<int>(land->getTerrain(tr, tc)));
+            else
+                fprintf(stderr, "OOB ");
+        }
+        fprintf(stderr, "\n");
+        fflush(stderr);
+    }
 
     // Walk the map in world-space steps of kGridStep.
     // wy decreases (southward) because MissionMap row increases as Y decreases.
@@ -151,29 +182,30 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
         {
             if (static_cast<int>(instances.size()) >= maxInst) break;
 
-            // Convert world pos to tile indices; getTerrain(row,col) is the
-            // implemented path -- getTerrainType(Vector3D) is declared but undefined.
-            // worldToCell has NO bounds check; mapData->getTerrain only gosASSERTs
-            // (no-op in RelWithDebInfo) -- guard explicitly.
+            // worldToTileCell: tile indices for Terrain::getTerrain (vertex grid).
+            // worldToCell: absolute cell indices for MissionMap (cell grid = 3x finer).
+            // Both return row/col in the same spatial convention; use the right
+            // index type for each API.
             const Stuff::Vector3D samplePos(wx, wy, 0.0f);
-            int cellR = 0, cellC = 0;
-            land->worldToCell(samplePos, cellR, cellC);
+            int tileR = 0, tileC = 0, subR = 0, subC = 0;
+            land->worldToTileCell(samplePos, tileR, tileC, subR, subC);
             const long mapSide = static_cast<long>(Terrain::realVerticesMapSide);
-            if (cellR < 0 || cellC < 0 || cellR >= mapSide || cellC >= mapSide) continue;
-            const long lR = static_cast<long>(cellR);
-            const long lC = static_cast<long>(cellC);
+            if (tileR < 0 || tileC < 0 || tileR >= mapSide || tileC >= mapSide) { ++diagOOB; continue; }
+            const long lR = static_cast<long>(tileR);
+            const long lC = static_cast<long>(tileC);
 
             const short ttype = static_cast<short>(land->getTerrain(lR, lC));
 
-            if (isHardReject(ttype)) continue;
-            if (!isGreenZone(ttype))  continue;
+            if (isHardReject(ttype)) { ++diagHard; continue; }
+            if (!isGreenZone(ttype)) { ++diagNotGreen; continue; }
 
-            // MissionMap overlay / water rejection.
-            if (gameMap) {
-                if (gameMap->getOverlay(lR, lC) != 0)  continue;
-                if (gameMap->getDeepWater(lR, lC))      continue;
-                if (gameMap->getShallowWater(lR, lC))   continue;
-            }
+            // Water/overlay rejection via terrain type is sufficient:
+            // MC_BLUEWATER_TYPE and MC_GREEN_WATER_TYPE are in isHardReject above.
+            // MissionMap getOverlay encodes movement costs for every cell (always != 0
+            // for natural terrain in mc2), so checking overlay != 0 rejects everything.
+            // getDeepWater/getShallowWater duplicates what the terrain-type check already
+            // handles — skipped for now.
+            (void)gameMap;
 
             // Per-cell jitter: constant across all instances within this cell.
             const float h1 = hashf(wx, wy);
@@ -199,9 +231,14 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
                 const Stuff::Vector3D instPos(instWx, instWy, 0.0f);
                 const float elevation = land->getTerrainElevation(instPos);
 
+                // Convert to terrain-chunk centered space (matching terrain_lod_chunk.vert):
+                //   x = east_centered  = wx - originX - mapHalf
+                //   y = north_centered = wy - originY + mapHalf  (originY = max north)
+                const float mapHalf = mapSpan * 0.5f;
+
                 GosVegetation::Instance inst;
-                inst.x          = instWx;
-                inst.y          = instWy;
+                inst.x          = instWx - originX - mapHalf;
+                inst.y          = instWy - originY + mapHalf;
                 inst.z          = elevation;
                 inst.yaw        = h5 * 6.2831f;
                 inst.scale      = 0.8f + h6 * 0.7f;
@@ -216,13 +253,16 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
     GosVegetation::uploadInstances(instances.data(),
                                    static_cast<uint32_t>(instances.size()));
 
-    if (debugLog) {
-        fprintf(stderr,
-                "[VegetationAdapter] missionLoaded: %u instances "
-                "(density=%d max=%d)\n",
-                static_cast<unsigned>(instances.size()), density, maxInst);
-        fflush(stderr);
-    }
+    // Always log: needed to diagnose zero-instance cases without re-running.
+    fprintf(stderr,
+            "[VegetationAdapter] missionLoaded: placed=%u density=%d kGridStep=%.0f "
+            "maxInst=%d mapSpan=%.0f\n"
+            "  rejects: OOB=%d hard=%d notGreen=%d overlay=%d water=%d\n",
+            static_cast<unsigned>(instances.size()),
+            density, static_cast<double>(kGridStep),
+            maxInst, static_cast<double>(mapSpan),
+            diagOOB, diagHard, diagNotGreen, diagOverlay, diagWater);
+    fflush(stderr);
 }
 
 void GameAdapters::Vegetation::flush(const float* terrainLightDir_4f, float time,
