@@ -74,9 +74,10 @@ Default regression gate. **ALWAYS** `--keep-logs`, NEVER `--with-menu-canary`, N
 **Canonical invocation (verbatim; subagents must copy-paste):**
 
 ```powershell
-$env:MC2_DEBUG_STATE_DUMP="1"; $env:MC2_DIAGNOSTIC_TRACE_FILE="debug_state/diagnostic_trace.jsonl"; $env:MC2_DIAG_TAGS="CONFIG"; py -3 A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\scripts\run_smoke.py --tier tier1 --duration 30 --keep-logs
+$env:MC2_DEBUG_STATE_DUMP="1"; $env:MC2_DIAGNOSTIC_TRACE_FILE="debug_state/diagnostic_trace.jsonl"; $env:MC2_DIAG_TAGS="CONFIG,BUILD,DEVICE"; py -3 A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\scripts\run_smoke.py --tier tier1 --duration 30 --keep-logs
 ```
 
+- Canonical smoke enables CONFIG, BUILD, and DEVICE so MCP can verify diagnostic trace startup, build provenance, and GL device identity.
 - NEVER `--kill-existing`: taskkills concurrent mc2.exe (false `crash_silent`). run_smoke holds concurrency-safe lock. Enforced by `scripts/check-smoke-matrices.py`.
 - `tier1` = 5 missions (`mc2_01`, `mc2_03`, `mc2_10`, `mc2_17`, `mc2_24`). 30s each.
 - Exit `0` = pass. Nonzero → inspect `tests/smoke/artifacts/<timestamp>/`.
