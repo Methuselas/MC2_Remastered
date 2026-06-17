@@ -26,6 +26,9 @@ static constexpr uint8_t kKtx2Magic[12] = {
 // VK_FORMAT constants for uncompressed RGBA8
 static constexpr uint32_t kVkFormatR8G8B8A8Unorm = 37;
 static constexpr uint32_t kVkFormatR8G8B8A8Srgb  = 43;
+// VK_FORMAT constants for stored BC6H (BPTC float) blocks — HDR
+static constexpr uint32_t kVkFormatBc6hUfloat = 143;  // VK_FORMAT_BC6H_UFLOAT_BLOCK
+static constexpr uint32_t kVkFormatBc6hSfloat = 144;  // VK_FORMAT_BC6H_SFLOAT_BLOCK
 // VK_FORMAT constants for stored BC7 (BPTC) blocks
 static constexpr uint32_t kVkFormatBc7UnormBlock = 145;
 static constexpr uint32_t kVkFormatBc7SrgbBlock  = 146;
@@ -80,9 +83,13 @@ bool ktxLoadRgba8(const char* path, KtxImage& out)
     // ---- 3. Validate ----
     const bool isRgba8 = (hdr.vkFormat == kVkFormatR8G8B8A8Unorm ||
                           hdr.vkFormat == kVkFormatR8G8B8A8Srgb);
+    const bool isBc6h  = (hdr.vkFormat == kVkFormatBc6hUfloat ||
+                          hdr.vkFormat == kVkFormatBc6hSfloat);
     const bool isBc7   = (hdr.vkFormat == kVkFormatBc7UnormBlock ||
                           hdr.vkFormat == kVkFormatBc7SrgbBlock);
-    if (!isRgba8 && !isBc7) {
+    // BC6H and BC7 both use 4x4 blocks of 16 bytes — same block geometry.
+    const bool isBlockCompressed = isBc6h || isBc7;
+    if (!isRgba8 && !isBlockCompressed) {
         std::fclose(f);
         return false;
     }
@@ -129,8 +136,9 @@ bool ktxLoadRgba8(const char* path, KtxImage& out)
         const uint32_t lw = (hdr.pixelWidth  >> lvl) ? (hdr.pixelWidth  >> lvl) : 1u;
         const uint32_t lh = (hdr.pixelHeight >> lvl) ? (hdr.pixelHeight >> lvl) : 1u;
         uint64_t expected;
-        if (isBc7) {
-            // BC7: 4x4 blocks, 16 bytes/block. ceil(lw/4)*ceil(lh/4)*16.
+        if (isBlockCompressed) {
+            // BC6H and BC7: identical 4x4 blocks, 16 bytes/block.
+            // ceil(lw/4)*ceil(lh/4)*16.
             const uint64_t bw = (static_cast<uint64_t>(lw) + 3u) / 4u;
             const uint64_t bh = (static_cast<uint64_t>(lh) + 3u) / 4u;
             expected = bw * bh * 16u;
@@ -167,10 +175,11 @@ bool ktxLoadRgba8(const char* path, KtxImage& out)
     out.height         = static_cast<int>(hdr.pixelHeight);
     out.isSrgb         = (hdr.vkFormat == kVkFormatR8G8B8A8Srgb ||
                           hdr.vkFormat == kVkFormatBc7SrgbBlock);
+    // BC6H is always linear HDR; it has no sRGB variant.
     out.mipCount       = static_cast<int>(hdr.levelCount);
     out.vkFormat       = hdr.vkFormat;
-    out.isCompressed   = isBc7;
-    out.blockSizeBytes = isBc7 ? 16u : 0u;
+    out.isCompressed   = isBlockCompressed;  // true for BC6H (143/144) and BC7 (145/146)
+    out.blockSizeBytes = isBlockCompressed ? 16u : 0u;
 
     return true;
 }
