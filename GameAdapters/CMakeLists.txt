@@ -1,4 +1,4 @@
-# GameAdapters/CMakeLists.txt
+﻿# GameAdapters/CMakeLists.txt
 #
 # Slice M1: STATIC library. The ONLY module that bridges game-side
 # (mclib/appear.h) and engine-side (RenderWorld) per spec section 12.
@@ -7,6 +7,7 @@ add_library(gameadapters STATIC
     StaticPropRenderAdapter.cpp
     MechRenderAdapter.cpp
     SkyRenderAdapter.cpp
+    VegetationAdapter.cpp
 )
 
 target_link_libraries(gameadapters PUBLIC rendercore renderworld)
