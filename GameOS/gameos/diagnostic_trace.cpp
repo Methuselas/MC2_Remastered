@@ -181,14 +181,17 @@ void init(const char* sessionId, int pid) {
         maybeRotate(path);
     }
 
-    // Open in append mode (line-buffered via manual fflush).
-    // Use L"a" (byte mode, wide path) — NOT L"a,ccs=UTF-8": that opens a
-    // wide-character stream (writes BOM, expects fputws/fwprintf) and causes
-    // MSVC _invalid_parameter abort when fwrite() writes narrow UTF-8 bytes.
-    s.file = _wfopen(path.wstring().c_str(), L"a");
+    // Open in BINARY append mode (line-buffered via manual fflush).
+    // "ab": binary so fwrite writes raw bytes without \n→\r\n translation.
+    //   No BOM is written (binary mode bypasses CRT text encoding).
+    // Wide path (_wfopen) handles non-ASCII deploy directories.
+    // NOT L"a,ccs=UTF-8": that opens a wide-char stream (writes UTF-8 BOM,
+    //   expects fputws/fwprintf) and triggers MSVC _invalid_parameter abort
+    //   on the subsequent narrow fwrite() call.
+    s.file = _wfopen(path.wstring().c_str(), L"ab");
     if (!s.file) {
         // Try ASCII path as fallback
-        s.file = fopen(path.string().c_str(), "a");
+        s.file = fopen(path.string().c_str(), "ab");
     }
     if (!s.file) {
         fprintf(stderr, "[MC2_DIAG] WARNING: cannot open trace file %s\n",

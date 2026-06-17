@@ -1084,7 +1084,9 @@ def main():
             if _trace_path.exists():
                 try:
                     _trace_lines = _trace_path.read_text(
-                        encoding="utf-8", errors="replace").splitlines()
+                        encoding="utf-8-sig", errors="replace").splitlines()
+                    # utf-8-sig strips a leading BOM if present (guards against
+                    # stale trace files written by the now-fixed _wfopen bug).
                     # Scan last 200 lines for a CONFIG startup event.
                     _cfg_found = False
                     for _tline in _trace_lines[-200:]:
