@@ -181,8 +181,11 @@ void init(const char* sessionId, int pid) {
         maybeRotate(path);
     }
 
-    // Open in append mode (line-buffered via manual fflush)
-    s.file = _wfopen(path.wstring().c_str(), L"a, ccs=UTF-8");
+    // Open in append mode (line-buffered via manual fflush).
+    // Use L"a" (byte mode, wide path) — NOT L"a,ccs=UTF-8": that opens a
+    // wide-character stream (writes BOM, expects fputws/fwprintf) and causes
+    // MSVC _invalid_parameter abort when fwrite() writes narrow UTF-8 bytes.
+    s.file = _wfopen(path.wstring().c_str(), L"a");
     if (!s.file) {
         // Try ASCII path as fallback
         s.file = fopen(path.string().c_str(), "a");
