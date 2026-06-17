@@ -18,6 +18,7 @@
 #endif
 #include "render_contract.h"  // [RENDER_PASS v1] noteRenderPass
 #include"tex_resolve_table.h"
+#include "diagnostic_trace.h"
 
 #ifndef TGAINFO_H
 #include"tgainfo.h"
@@ -1242,6 +1243,13 @@ namespace {
         std::printf("[LIGHTBAKE v1] event=enabled mode=%s\n",
                     s_bakeEnabled ? "bake" : "passthrough");
         std::fflush(stdout);
+        if (mc2_diag::tagEnabled("LIGHTBAKE_PROOF")) {
+            char diag_buf[128];
+            snprintf(diag_buf, sizeof(diag_buf),
+                "{\"event\":\"enabled\",\"mode\":\"%s\"}",
+                s_bakeEnabled ? "bake" : "passthrough");
+            mc2_diag::writeEvent("LIGHTBAKE_PROOF", 1, 0, diag_buf);
+        }
     }
 }
 
@@ -1326,6 +1334,13 @@ void mc2LightBakeStabilityObserve(int32_t recipeIndex, uint32_t lightDataIndex)
                 "[LIGHTBAKE-PROOF v1] event=first recipe=%d index=%u S=%u inPrefix=%d\n",
                 recipeIndex, lightDataIndex, S, (lightDataIndex < S) ? 1 : 0);
             std::fflush(stderr);
+            if (mc2_diag::tagEnabled("LIGHTBAKE_PROOF")) {
+                char diag_buf[128];
+                snprintf(diag_buf, sizeof(diag_buf),
+                    "{\"event\":\"first\",\"recipe\":%d,\"index\":%u,\"S\":%u,\"inPrefix\":%d}",
+                    recipeIndex, lightDataIndex, S, (lightDataIndex < S) ? 1 : 0);
+                mc2_diag::writeEvent("LIGHTBAKE_PROOF", 1, 0, diag_buf);
+            }
         }
         // Aggregate coverage so recipes beyond the 32 log-cap are accounted for.
         if ((s_lbFirstSeenIndex.size() % 256u) == 0u) {
@@ -1334,6 +1349,15 @@ void mc2LightBakeStabilityObserve(int32_t recipeIndex, uint32_t lightDataIndex)
                 s_lbFirstSeenIndex.size(), s_lbMaxIndex, S,
                 (unsigned long long)s_lbOutOfPrefix);
             std::fflush(stderr);
+            if (mc2_diag::tagEnabled("LIGHTBAKE_PROOF")) {
+                char diag_buf[192];
+                snprintf(diag_buf, sizeof(diag_buf),
+                    "{\"event\":\"coverage\",\"recipes_tracked\":%zu,\"max_index\":%u,"
+                    "\"S\":%u,\"out_of_prefix\":%llu}",
+                    s_lbFirstSeenIndex.size(), s_lbMaxIndex, S,
+                    (unsigned long long)s_lbOutOfPrefix);
+                mc2_diag::writeEvent("LIGHTBAKE_PROOF", 1, 0, diag_buf);
+            }
         }
     } else if (it->second != lightDataIndex) {
         ++s_lbStabilityViolations;   // detection runs for ALL recipes (uncapped)
@@ -1342,6 +1366,13 @@ void mc2LightBakeStabilityObserve(int32_t recipeIndex, uint32_t lightDataIndex)
                 "[LIGHTBAKE-PROOF v1] event=UNSTABLE recipe=%d was=%u now=%u S=%u\n",
                 recipeIndex, it->second, lightDataIndex, S);
             std::fflush(stderr);
+            if (mc2_diag::tagEnabled("LIGHTBAKE_PROOF")) {
+                char diag_buf[128];
+                snprintf(diag_buf, sizeof(diag_buf),
+                    "{\"event\":\"UNSTABLE\",\"recipe\":%d,\"was\":%u,\"now\":%u,\"S\":%u}",
+                    recipeIndex, it->second, lightDataIndex, S);
+                mc2_diag::writeEvent("LIGHTBAKE_PROOF", 1, 0, diag_buf);
+            }
         }
     }
 }
