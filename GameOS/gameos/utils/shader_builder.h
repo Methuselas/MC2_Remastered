@@ -150,5 +150,6 @@ private:
     static UNIFORM_FUNC uniformFuncs[15];
 
     bool is_valid_;
+    std::string name_;  // program name as passed to makeProgram2 — used by reload() for diagnostics
 };
 
