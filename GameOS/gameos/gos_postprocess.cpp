@@ -3,6 +3,7 @@
 #include "utils/gl_utils.h"
 #include "utils/vec.h"
 #include "gos_hdri.h"
+#include "../../RenderCore/IblHdriRegistry.h"  // HDRI-SKY-NUMBER-1
 #include "gos_profiler.h"
 #include "gos_validate.h"  // drainGLErrors (Tier-1 instr §4)
 #include "gos_smoke.h"     // S9E: SmokeMode fixed deterministic render-shader clock
@@ -285,6 +286,61 @@ float gos_GetSsaoRadius()   { return s_postProcess ? s_postProcess->aoRadius_   
 float gos_GetSsaoStrength() { return s_postProcess ? s_postProcess->aoStrength_ : 0.7f; }
 float gos_GetSsaoBias()     { return s_postProcess ? s_postProcess->aoBias_     : 0.0025f; }
 
+// HDRI-SKY-NUMBER-1: swap the loaded HDRI texture to match theSkyNumber.
+// Called at mission load (via GameAdapters::Sky::setSkyNumber -> gos_SetSkyNumber).
+// Pattern: load is deferred to first mission load so the default init texture
+// (DaySkyHDRI063B_4K) is overridden before the first frame draws the sky.
+// GL context is valid at mission load time (game is running).
+void gosPostProcess::setSkyNumber(int skyNumber)
+{
+    if (!hdriEnabled_) return;
+    if (skyNumber < 1 || skyNumber > 21) return;
+
+    const RenderCore::IblHdriSet& hdriSet =
+        RenderCore::lookupHdriForSkyNumber(skyNumber);
+    const char* newPath = hdriSet.exrPath;
+
+    // Skip reload if the path hasn't changed (same mission reloaded, etc.).
+    if (std::strncmp(hdriCurrentPath_, newPath, sizeof(hdriCurrentPath_)) == 0)
+        return;
+
+    std::fprintf(stderr,
+        "[HDRI_SKY v1] setSkyNumber sky=%d mood=%s path=%s\n",
+        skyNumber, hdriSet.name, newPath);
+
+    // Delete the old texture before loading the new one.
+    if (hdriTex_) {
+        glDeleteTextures(1, &hdriTex_);
+        hdriTex_ = 0;
+    }
+
+    float newSunAz = 0.0f;
+    bool  newSunValid = false;
+    GLuint newTex = loadHdriTexture(newPath, &newSunAz, &newSunValid);
+
+    if (newTex) {
+        hdriTex_          = newTex;
+        hdriBakedSunAz_   = newSunAz;
+        hdriBakedSunValid_ = newSunValid;
+        std::strncpy(hdriCurrentPath_, newPath, sizeof(hdriCurrentPath_) - 1);
+        hdriCurrentPath_[sizeof(hdriCurrentPath_) - 1] = '\0';
+        hdriReady_ = (hdriSkyboxProg_ != nullptr) && hdriSkyboxProg_->is_valid();
+    } else {
+        // Load failed — keep hdriReady_=false so sky renders black rather than crash.
+        hdriReady_ = false;
+        std::fprintf(stderr,
+            "[HDRI_SKY v1] setSkyNumber sky=%d load_failed path=%s\n",
+            skyNumber, newPath);
+    }
+}
+
+// Free-function bridge: GameAdapters or profile code calls this without
+// including the full gosPostProcess class.
+void gos_SetSkyNumber(int skyNumber)
+{
+    if (s_postProcess) s_postProcess->setSkyNumber(skyNumber);
+}
+
 // Fullscreen quad vertices: 2 triangles covering NDC [-1,1]
 // Each vertex: pos.x, pos.y, uv.x, uv.y
 static const float kQuadVerts[] = {
@@ -440,10 +496,15 @@ void gosPostProcess::init(int w, int h)
         hdriEnabled_ = !(gateEnv && gateEnv[0] == '0' && gateEnv[1] == '\0');
 
         if (hdriEnabled_) {
+            // HDRI-SKY-NUMBER-1: default path (overridden at mission load via setSkyNumber).
             const char* hdrPath = "data/hdr/DaySkyHDRI063B_4K.exr";
             // Item 2: also scan for the baked sun azimuth (read-only; used only
             // when sun-sync is enabled at draw time).
             hdriTex_ = loadHdriTexture(hdrPath, &hdriBakedSunAz_, &hdriBakedSunValid_);  // logs failures internally
+            if (hdriTex_) {
+                std::strncpy(hdriCurrentPath_, hdrPath, sizeof(hdriCurrentPath_) - 1);
+                hdriCurrentPath_[sizeof(hdriCurrentPath_) - 1] = '\0';
+            }
 
             hdriSkyboxProg_ = glsl_program::makeProgram(
                 "hdri_skybox",

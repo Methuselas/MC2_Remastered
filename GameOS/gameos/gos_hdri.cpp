@@ -78,11 +78,11 @@ static bool scanHdriSunAzGL(const float* px, int w, int h, float* outAzGL)
     return true;
 }
 
-// HDRI-BC6H-1: gate — MC2_HDRI_BC6H=1 enables BC6H sidecar upload.
-// Off by default; smoke runs validate the fallback path at no extra cost.
+// HDRI-BC6H-1: gate — MC2_HDRI_BC6H controls BC6H sidecar upload.
+// Default ON (absent = ON); set =0 to force RGBA16F fallback path.
 static bool s_hdribc6h = [] {
     const char* e = getenv("MC2_HDRI_BC6H");
-    return e && e[0] != '0';
+    return !e || e[0] != '0';
 }();
 
 // Derive sidecar path: replace trailing ".exr" with ".ktx2".
@@ -155,6 +155,9 @@ GLuint loadHdriTexture(const char* path,
                                           img.width, img.height, 0,
                                           static_cast<GLsizei>(mip0Bytes),
                                           img.pixels.data());
+                    // Single-mip BC6H texture: clamp max level to 0 so the
+                    // texture is never incomplete due to missing mip levels.
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
                     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
                     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
                     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -171,7 +174,7 @@ GLuint loadHdriTexture(const char* path,
                         // Fall through to tinyexr below.
                     } else {
                         std::fprintf(stderr,
-                            "[HDRI_SKY v1] bc6h: loaded sidecar=%s w=%d h=%d "
+                            "[HDRI_SKY] bc6h: ON (default) sidecar=%s w=%d h=%d "
                             "glIF=0x%x bytes=%zu tex=%u\n",
                             sidecarPath, img.width, img.height,
                             (unsigned)glIF, mip0Bytes, (unsigned)tex);

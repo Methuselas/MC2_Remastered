@@ -26,6 +26,12 @@ public:
     GLuint getHdriTex()   const { return hdriTex_; }   // WATER-HDRI-REFL-1
     float  getSkyYaw()    const { return skyYaw_; }    // WATER-HDRI-REFL-1: cached per-frame
 
+    // HDRI-SKY-NUMBER-1: reload the HDRI texture to match theSkyNumber from the
+    // .fit file.  Called by GameAdapters::Sky::setSkyNumber() at mission load.
+    // No-op when HDRI is disabled (MC2_HDRI_SKY=0) or skyNumber==0.
+    // Swaps hdriTex_ only when the resolved path differs from the current one.
+    void setSkyNumber(int skyNumber);
+
     // Renders the HDRI background as a fullscreen triangle.
     // Assumes scene FBO is bound. Writes only color attachment 0.
     // viewMat, projMat are column-major 4x4 floats (16 floats each).
@@ -338,6 +344,9 @@ private:
     float         hdriBakedSunAz_  = 0.0f;
     bool          hdriBakedSunValid_ = false;
     float         skyYaw_          = 0.0f;  // WATER-HDRI-REFL-1: cached after each sky render
+    // HDRI-SKY-NUMBER-1: path of the currently loaded HDRI (used by setSkyNumber
+    // to detect when a swap is actually needed).
+    char          hdriCurrentPath_[256] = {};
 
     // Bloom shaders
     glsl_program* bloomThresholdProg_;
@@ -489,5 +498,11 @@ void  gos_SetSsaoBias(float v);
 float gos_GetSsaoRadius();
 float gos_GetSsaoStrength();
 float gos_GetSsaoBias();
+
+// HDRI-SKY-NUMBER-1: notify the postprocessor of the mission sky number so it
+// can swap to the appropriate HDRI asset (IblHdriRegistry).
+// Call at mission load after the mission sky number is known.
+// No-op when HDRI is disabled or skyNumber is out of range (1-21).
+void gos_SetSkyNumber(int skyNumber);
 
 #endif // GOS_POSTPROCESS_H

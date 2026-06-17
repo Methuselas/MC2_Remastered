@@ -51,5 +51,12 @@ void renderHdriBasis(const float* camFwd, const float* camRight,
 // invWorldToClipGL * vec4(ndc, depth, 1.0).
 void renderHdriInvVP(const float* invVP16);
 
+// HDRI-SKY-NUMBER-1: notify the sky renderer of the mission's theSkyNumber
+// (read from [TheSky] SkyNumber in the .fit file).  Swaps the loaded HDRI
+// texture to the mood-appropriate asset (IblHdriRegistry).
+// Call once at mission load, after mission->theSkyNumber is known.
+// No-op when HDRI is disabled or skyNumber is out of range (1-21).
+void setSkyNumber(int skyNumber);
+
 }  // namespace Sky
 }  // namespace GameAdapters

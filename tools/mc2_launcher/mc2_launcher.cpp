@@ -68,16 +68,32 @@
 #define IDC_BASELBL   1006  // "Compatibility Base (pick one):" label
 #define IDC_IMPORT    1007
 #define IDC_ADDONLBL  1008  // "Add-ons (stack any):" label
-#define IDC_TEXQUALLBL 1009 // "Texture Quality (pick one):" label
 #define IDC_BASE0     1050  // base radios: IDC_BASE0 + slot index (slot 0 = "None")
 #define IDC_ADDON0    1100  // add-on checkboxes: IDC_ADDON0 + slot index
-#define IDC_TEXQUAL0  1150  // texture-quality radios: IDC_TEXQUAL0 + slot (slot 0 = "None")
 #define IDC_FASTERWEAPONS 1300  // gameplay toggle (NOT a mod): faster weapons
 
 // Progress-dialog controls.
 #define IDC_PROG_CANCEL 1200
 #define IDC_PROG_BAR    1201
 #define IDC_PROG_TEXT   1202
+
+// Options dialog controls (1400-1499).
+#define IDC_OPTIONS        1400  // "Engine Options..." button on main window
+#define IDC_OPT_OK         1401
+#define IDC_OPT_CANCEL     1402
+#define IDC_OPT_CTRL_BASE  1410  // env-var controls start here (IDC_OPT_CTRL_BASE + index)
+
+// Graphics Options dialog controls (1500-1599).
+#define IDC_GRAPHICS           1500  // "Graphics..." button on main window
+#define IDC_GFX_OK             1501
+#define IDC_GFX_CANCEL         1502
+#define IDC_GFX_TEXPACK_BASE   1503  // texture-pack radios: +0=None +1..N=packs (up to TEXPACK_DLG_SLOTS)
+#define IDC_GFX_TEXQUAL_BASE   1510  // texture-quality radios: +0=Low +1=Med +2=High +3=Ultra
+#define IDC_GFX_SHADQUAL_BASE  1520  // shadow-quality radios:  +0=Low +1=Med +2=High
+#define IDC_GFX_FRAMECAP_CHK   1530  // "Limit frame rate" checkbox
+#define IDC_GFX_FRAMECAP_EDIT  1531  // FPS edit control
+#define IDC_GFX_VSYNC_CHK      1532  // "Enable VSync" checkbox
+#define IDC_GFX_VRAM_TEXT      1540  // multi-line STATIC for VRAM estimate
 
 #define WM_APP_IMPORT_DONE (WM_APP + 1)
 
@@ -87,8 +103,9 @@
 #define BASE_SLOTS  4
 // FIXED set of stackable add-on checkbox slots (created once).
 #define ADDON_SLOTS 4
-// FIXED set of texture-quality radio slots: slot 0 = "None"; rest hold radioGroup="texture-quality" mods.
-#define TEXQUAL_SLOTS 5
+// Max texture-pack radio slots shown in Graphics dialog (slot 0 = "None"; +1..N = packs).
+// Capped to keep the dialog manageable.
+#define TEXPACK_DLG_SLOTS 7  // 1 "None" + up to 6 packs
 
 enum CompatKind { CK_UNKNOWN = 0, CK_MCO = 1, CK_MC2X = 2 };
 
@@ -121,11 +138,341 @@ static HWND      s_hDesc;
 static HWND      s_hImport;
 static HWND      s_hBase[BASE_SLOTS];     // FIXED radio slots — slot 0 = "None"; never destroy
 static HWND      s_hAddon[ADDON_SLOTS];      // FIXED add-on checkbox slots — never destroy
-static HWND      s_hTexQual[TEXQUAL_SLOTS];  // FIXED texture-quality radio slots — never destroy
 static HWND      s_hFasterWeapons;        // gameplay toggle (NOT a mod): faster weapons
 
 static char      s_launcherDir[MAX_PATH];   // trailing-slash launcher directory
 static char      s_modsPath[MAX_PATH];      // <launcherDir>mods\
+
+// ---- Engine Options (MC2_* env vars) -----------------------------------------
+
+// Two control types: checkbox (bool) or label+edit (value).
+struct EnvVarDef {
+    const char* key;         // env var name, e.g. "MC2_SHADOW_CSM"
+    const char* label;       // display label
+    bool        isBool;      // true = checkbox; false = static+edit
+    const char* defaultVal;  // shown in edit / initial check state; "" = unset by default
+    const char* section;     // section header (grouped in dialog)
+};
+
+// Curated interactive list.  Excludes:
+//   - MC2_DIRECT_FIRE_STRAIGHT / MC2_PROJECTILE_SPEED_MULT (covered by Faster Weapons)
+//   - Pure debug/diagnostic vars (MC2_LOG, cost-split, trace, smoke clock, etc.)
+//   - Default-ON vars where toggling is rarely useful interactively
+static const EnvVarDef k_envVars[] = {
+    // --- Rendering ---
+    { "MC2_SHADOW_CSM",              "Cascaded shadow maps (CSM)",           true,  "",     "Rendering" },
+    { "MC2_CLOUD_SHADOW",            "Cloud shadows (default ON)",            true,  "1",    "Rendering" },
+    { "MC2_SHADOW_BOUNDED_NEAR_FIT", "Crisp near shadows",                    true,  "",     "Rendering" },
+    { "MC2_STATIC_PROP_PBR_V1",      "Static prop PBR specular",              true,  "",     "Rendering" },
+    { "MC2_STATIC_PROP_AMBIENT_V1",  "Static prop hemisphere ambient",        true,  "",     "Rendering" },
+    { "MC2_STATIC_PROP_IBL_SH",      "Static prop SH-L2 IBL ambient (ON)",    true,  "1",    "Rendering" },
+    // --- Terrain ---
+    { "MC2_TERRAIN_LOD_CHUNK",       "Chunk terrain LOD renderer (default ON)", true, "1",   "Terrain"   },
+    { "MC2_COLORMAP_KTX2",           "BC7 KTX2 colormap atlas (default ON)",  true,  "1",    "Terrain"   },
+    // --- Water / VFX ---
+    { "MC2_WATER_SKYTINT",           "Water sky tint",                        true,  "",     "Water/VFX" },
+    { "MC2_WATER_REFLECTION",        "Water SH-L2 sky reflection",            true,  "",     "Water/VFX" },
+    { "MC2_VFX_SOFT_PARTICLES",      "Soft particles (depth-fade)",           true,  "",     "Water/VFX" },
+    { "MC2_VFX_LIT_PARTICLES",       "Lit particles",                         true,  "",     "Water/VFX" },
+    // --- Debug ---
+    { "MC2_IMGUI",                   "ImGui overlay",                         true,  "",     "Debug"     },
+    { "MC2_IMGUI_INSPECTOR",         "ImGui inspector panel",                 true,  "",     "Debug"     },
+    // --- Shadow tuning (value vars) ---
+    // NOTE: MC2_SHADOW_MAP_SIZE moved to Graphics Options dialog (shadow quality radios).
+    { "MC2_SHADOW_CSM_R0",           "CSM near cascade radius WU (def 512)",  false, "512",  "Shadow Tuning" },
+};
+static const int k_envVarCount = (int)(sizeof(k_envVars) / sizeof(k_envVars[0]));
+
+// In-memory state: for bool vars "1" = set / "" = unset; for value vars: the text or "".
+static char s_envVarValues[32][256];  // [k_envVarCount][MAX_VAL]
+
+// Path to launcher_env.json.
+static char s_envJsonPath[MAX_PATH];
+
+// Options dialog window handle.
+static HWND s_hOptionsDlg = NULL;
+
+// Forward declarations (defined later in the file).
+static bool JsonGetString(const char* json, const char* key, char* out, int outSz);
+static void SelectBaseRadio(int slot);
+static int  SelectedBaseSlot();
+static void UpdateForSelection();
+
+// ---- Graphics Options state ---------------------------------------------------
+//
+// Texture quality tier: 0=Low(128) 1=Medium(256) 2=High(512) 3=Ultra(1024)
+// Shadow quality:       0=Low(2048) 1=Medium(4096) 2=High(8192)
+// Frame cap: enabled flag + FPS value (0 = use default 60)
+// VSync: enabled flag
+//
+// Engine vars driven by these:
+//   MC2_STATICPROP_TEX_TIER  = "128" / "256" / "512" / "1024"
+//     (NOTE: engine side must read this var to select the texture resolution tier;
+//      launcher sets it here — wire the engine read in MaterialGpu/texarray loader)
+//   MC2_SHADOW_MAP_SIZE = "2048" / "4096" / "8192"
+//   MC2_FPS_CAP         = "<N>" or unset
+//   MC2_VSYNC           = "1" or unset
+
+static int  s_gfxTexQual      = 2;   // default High (512px)
+static int  s_gfxShadQual     = 2;   // default High (8192)
+static bool s_gfxFrameCapOn   = false;
+static int  s_gfxFrameCapFps  = 60;
+static bool s_gfxVsync        = false;
+// Texture-pack mod selection: 0=None; index i -> s_texQual[i-1].folderName.
+// Persisted as "tex_pack_mod" (folder name string) in launcher_env.json.
+static int  s_gfxTexPackIdx   = 0;
+// Raw folder name loaded from JSON; resolved to s_gfxTexPackIdx after ScanMods.
+static char s_gfxTexPackSaved[256] = "";
+
+// ---- Main-page persistence (last_* keys in launcher_env.json) ----------------
+// Saved/restored across sessions: campaign folder, base folder, addon list, faster-weapons.
+static char s_savedCampaign[256]  = "";   // folder name, "" = Stock
+static char s_savedBase[256]      = "";   // folder name, "" = None
+static char s_savedAddons[1024]   = "";   // comma-delimited folder names, "" = none
+static char s_savedFasterWeapons[4] = ""; // "1" or "0" or ""
+
+static const char* k_texTierValues[]    = { "128", "256", "512", "1024" };
+static const char* k_texTierLabels[]    = { "Low (128px)", "Medium (256px)", "High (512px)", "Ultra (1024px)" };
+static const char* k_shadSizeValues[]   = { "2048", "4096", "8192" };
+static const char* k_shadQualLabels[]   = { "Low (2048)", "Medium (4096)", "High (8192)" };
+static const int   k_texVramMB[]        = { 40, 160, 640, 2560 };  // texture array VRAM by tier
+static const int   k_shadVramMB[]       = { 64, 256, 1024 };       // shadow map VRAM by quality (4 cascades)
+
+// Graphics Options dialog window handle.
+static HWND s_hGraphicsDlg = NULL;
+
+static void GfxSetDefaults() {
+    s_gfxTexQual      = 2;
+    s_gfxShadQual     = 2;
+    s_gfxFrameCapOn   = false;
+    s_gfxFrameCapFps  = 60;
+    s_gfxVsync        = false;
+    s_gfxTexPackIdx   = 0;
+}
+
+// Load graphics options from launcher_env.json (same file, extra keys).
+// Called after LoadEnvJson() so both share the same file.
+static void LoadGfxJson() {
+    if (!s_envJsonPath[0]) return;
+    HANDLE fh = CreateFileA(s_envJsonPath, GENERIC_READ, FILE_SHARE_READ, NULL,
+                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (fh == INVALID_HANDLE_VALUE) return;
+    static char buf[32768];
+    DWORD got = 0;
+    ReadFile(fh, buf, sizeof(buf)-1, &got, NULL);
+    CloseHandle(fh);
+    buf[got] = '\0';
+
+    char val[256] = "";
+    // Texture tier
+    if (JsonGetString(buf, "MC2_STATICPROP_TEX_TIER", val, sizeof(val))) {
+        int tier = atoi(val);
+        if      (tier == 128)  s_gfxTexQual = 0;
+        else if (tier == 256)  s_gfxTexQual = 1;
+        else if (tier == 512)  s_gfxTexQual = 2;
+        else if (tier == 1024) s_gfxTexQual = 3;
+    }
+    // Shadow quality via MC2_SHADOW_MAP_SIZE
+    if (JsonGetString(buf, "MC2_SHADOW_MAP_SIZE", val, sizeof(val))) {
+        int sz = atoi(val);
+        if      (sz == 2048) s_gfxShadQual = 0;
+        else if (sz == 4096) s_gfxShadQual = 1;
+        else if (sz == 8192) s_gfxShadQual = 2;
+    }
+    // Frame cap
+    val[0] = '\0';
+    if (JsonGetString(buf, "MC2_FPS_CAP", val, sizeof(val)) && val[0]) {
+        s_gfxFrameCapOn  = true;
+        s_gfxFrameCapFps = atoi(val);
+        if (s_gfxFrameCapFps <= 0) s_gfxFrameCapFps = 60;
+    }
+    // VSync
+    val[0] = '\0';
+    if (JsonGetString(buf, "MC2_VSYNC", val, sizeof(val))) {
+        s_gfxVsync = (val[0] == '1');
+    }
+    // Texture pack mod: saved as folder name; resolved to index after ScanMods.
+    val[0] = '\0';
+    if (JsonGetString(buf, "tex_pack_mod", val, sizeof(val))) {
+        _snprintf(s_gfxTexPackSaved, sizeof(s_gfxTexPackSaved), "%s", val);
+        s_gfxTexPackSaved[sizeof(s_gfxTexPackSaved)-1] = '\0';
+    }
+}
+
+// Write graphics options into launcher_env.json (merges with engine-option keys).
+static void SaveGfxJson() {
+    if (!s_envJsonPath[0]) return;
+    FILE* f = fopen(s_envJsonPath, "w");
+    if (!f) return;
+    fprintf(f, "{\n");
+    bool first = true;
+    // Engine options
+    for (int i = 0; i < k_envVarCount; i++) {
+        if (!s_envVarValues[i][0]) continue;
+        if (!first) fprintf(f, ",\n");
+        fprintf(f, "  \"%s\": \"%s\"", k_envVars[i].key, s_envVarValues[i]);
+        first = false;
+    }
+    // Texture tier (always write so the engine always gets a value)
+    if (!first) fprintf(f, ",\n");
+    fprintf(f, "  \"MC2_STATICPROP_TEX_TIER\": \"%s\"", k_texTierValues[s_gfxTexQual]);
+    first = false;
+    // Shadow map size (always write)
+    fprintf(f, ",\n  \"MC2_SHADOW_MAP_SIZE\": \"%s\"", k_shadSizeValues[s_gfxShadQual]);
+    // Frame cap (only if enabled)
+    if (s_gfxFrameCapOn) {
+        char fpsBuf[32];
+        _snprintf(fpsBuf, sizeof(fpsBuf), "%d", s_gfxFrameCapFps);
+        fprintf(f, ",\n  \"MC2_FPS_CAP\": \"%s\"", fpsBuf);
+    }
+    // VSync (only if enabled)
+    if (s_gfxVsync) {
+        fprintf(f, ",\n  \"MC2_VSYNC\": \"1\"");
+    }
+    // Texture pack mod (always write; empty string = None)
+    {
+        const char* packFolder = "";
+        if (s_gfxTexPackIdx > 0 && (s_gfxTexPackIdx - 1) < s_texQualCount)
+            packFolder = s_texQual[s_gfxTexPackIdx - 1].folderName;
+        fprintf(f, ",\n  \"tex_pack_mod\": \"%s\"", packFolder);
+    }
+    // Main-page selections (always write)
+    fprintf(f, ",\n  \"last_campaign\": \"%s\"", s_savedCampaign);
+    fprintf(f, ",\n  \"last_base\": \"%s\"", s_savedBase);
+    fprintf(f, ",\n  \"last_addons\": \"%s\"", s_savedAddons);
+    fprintf(f, ",\n  \"last_faster_weapons\": \"%s\"", s_savedFasterWeapons);
+    fprintf(f, "\n}\n");
+    fclose(f);
+}
+
+// Replace the simple SaveEnvJson (engine-only) with one that also writes graphics vars.
+// The old SaveEnvJson is superseded — call SaveGfxJson() everywhere instead.
+static void SaveEnvJson() { SaveGfxJson(); }
+
+// Load main-page selections from launcher_env.json into s_saved* globals.
+// Called at startup before RestoreMainPageSelections (which needs the UI to exist).
+static void LoadMainPageJson() {
+    if (!s_envJsonPath[0]) return;
+    HANDLE fh = CreateFileA(s_envJsonPath, GENERIC_READ, FILE_SHARE_READ, NULL,
+                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (fh == INVALID_HANDLE_VALUE) return;
+    static char buf[32768];
+    DWORD got = 0;
+    ReadFile(fh, buf, sizeof(buf)-1, &got, NULL);
+    CloseHandle(fh);
+    buf[got] = '\0';
+
+    char val[1024] = "";
+    if (JsonGetString(buf, "last_campaign", val, sizeof(val)))
+        _snprintf(s_savedCampaign, sizeof(s_savedCampaign), "%s", val);
+    val[0] = '\0';
+    if (JsonGetString(buf, "last_base", val, sizeof(val)))
+        _snprintf(s_savedBase, sizeof(s_savedBase), "%s", val);
+    val[0] = '\0';
+    if (JsonGetString(buf, "last_addons", val, sizeof(val)))
+        _snprintf(s_savedAddons, sizeof(s_savedAddons), "%s", val);
+    val[0] = '\0';
+    if (JsonGetString(buf, "last_faster_weapons", val, sizeof(val)))
+        _snprintf(s_savedFasterWeapons, sizeof(s_savedFasterWeapons), "%s", val);
+}
+
+// Read the current main-page UI state into s_saved* globals, then persist.
+// Call before PostQuitMessage (on Launch or Cancel/Close) so the file is up to date.
+// Requires the main window controls to exist (s_hListBox etc. non-NULL).
+static void SaveMainPageSelections() {
+    // Campaign: listbox sel 0 = Stock (""), sel i -> s_campaigns[i-1].folderName
+    {
+        int sel = (int)SendMessageA(s_hListBox, LB_GETCURSEL, 0, 0);
+        if (sel == LB_ERR) sel = 0;
+        if (sel > 0 && sel <= s_campCount)
+            _snprintf(s_savedCampaign, sizeof(s_savedCampaign), "%s", s_campaigns[sel-1].folderName);
+        else
+            s_savedCampaign[0] = '\0';
+    }
+    // Base radio: slot 0 = None (""), slot i -> s_bases[i-1].folderName
+    {
+        int slot = SelectedBaseSlot();
+        if (slot > 0 && (slot - 1) < s_baseCount)
+            _snprintf(s_savedBase, sizeof(s_savedBase), "%s", s_bases[slot-1].folderName);
+        else
+            s_savedBase[0] = '\0';
+    }
+    // Add-ons: comma-delimited checked folder names
+    {
+        s_savedAddons[0] = '\0';
+        for (int i = 0; i < s_addonCount && i < ADDON_SLOTS; i++) {
+            if (s_hAddon[i] && SendMessageA(s_hAddon[i], BM_GETCHECK, 0, 0) == BST_CHECKED) {
+                if (s_savedAddons[0])
+                    strncat(s_savedAddons, ",", sizeof(s_savedAddons)-strlen(s_savedAddons)-1);
+                strncat(s_savedAddons, s_addons[i].folderName,
+                        sizeof(s_savedAddons)-strlen(s_savedAddons)-1);
+            }
+        }
+    }
+    // Faster weapons
+    {
+        BOOL fw = s_hFasterWeapons ?
+            (SendMessageA(s_hFasterWeapons, BM_GETCHECK, 0, 0) == BST_CHECKED) : FALSE;
+        _snprintf(s_savedFasterWeapons, sizeof(s_savedFasterWeapons), "%s", fw ? "1" : "0");
+    }
+    SaveGfxJson();
+}
+
+// Restore main-page UI from s_saved* globals.  Call after ScanMods + RefreshAllSlots
+// so that the fixed slots are populated and relabelled before we try to match them.
+// Missing/removed mods are silently skipped.
+static void RestoreMainPageSelections() {
+    // Campaign listbox: find the entry whose folder matches s_savedCampaign.
+    if (s_savedCampaign[0]) {
+        for (int i = 0; i < s_campCount; i++) {
+            if (_stricmp(s_campaigns[i].folderName, s_savedCampaign) == 0) {
+                SendMessageA(s_hListBox, LB_SETCURSEL, i + 1, 0);  // +1 for Stock row
+                break;
+            }
+        }
+        // If not found, leave Stock (slot 0) selected — already default.
+    }
+    // Base radio.
+    if (s_savedBase[0]) {
+        for (int i = 0; i < s_baseCount; i++) {
+            if (_stricmp(s_bases[i].folderName, s_savedBase) == 0) {
+                SelectBaseRadio(i + 1);  // slot i+1
+                break;
+            }
+        }
+        // If not found, None remains (already defaulted by RefreshBaseSlots).
+    }
+    // Add-on checkboxes: parse comma-delimited list.
+    if (s_savedAddons[0]) {
+        char addonsBuf[1024];
+        _snprintf(addonsBuf, sizeof(addonsBuf), "%s", s_savedAddons);
+        addonsBuf[sizeof(addonsBuf)-1] = '\0';
+        char* ctx = NULL;
+        char* tok = strtok_s(addonsBuf, ",", &ctx);
+        while (tok) {
+            // Trim leading/trailing spaces (defensive).
+            while (*tok == ' ') tok++;
+            char* e = tok + strlen(tok) - 1;
+            while (e > tok && *e == ' ') *e-- = '\0';
+            if (tok[0]) {
+                for (int i = 0; i < s_addonCount && i < ADDON_SLOTS; i++) {
+                    if (s_hAddon[i] && _stricmp(s_addons[i].folderName, tok) == 0) {
+                        SendMessageA(s_hAddon[i], BM_SETCHECK, BST_CHECKED, 0);
+                        break;
+                    }
+                }
+            }
+            tok = strtok_s(NULL, ",", &ctx);
+        }
+    }
+    // Faster weapons checkbox.
+    if (s_hFasterWeapons && s_savedFasterWeapons[0]) {
+        SendMessageA(s_hFasterWeapons, BM_SETCHECK,
+                     (s_savedFasterWeapons[0] == '1') ? BST_CHECKED : BST_UNCHECKED, 0);
+    }
+    // Sync status bar / auto-detect for the restored campaign selection.
+    UpdateForSelection();
+}
 
 // ---- Import state ---------------------------------------------------------
 static volatile bool s_importing = false;
@@ -160,6 +507,617 @@ static bool JsonGetString(const char* json, const char* key, char* out, int outS
     memcpy(out, p, len);
     out[len] = '\0';
     return true;
+}
+
+// ---- Env-var persistence: launcher_env.json ----------------------------------
+
+// Initialize s_envVarValues from the defaultVal fields (before any load).
+static void EnvVarsSetDefaults() {
+    for (int i = 0; i < k_envVarCount; i++) {
+        _snprintf(s_envVarValues[i], sizeof(s_envVarValues[i]), "%s",
+                  k_envVars[i].defaultVal ? k_envVars[i].defaultVal : "");
+        s_envVarValues[i][sizeof(s_envVarValues[i])-1] = '\0';
+    }
+}
+
+// Load launcher_env.json into s_envVarValues.  Uses the same strstr extractor as
+// JsonGetString.  Missing key -> leave the default value untouched.
+static void LoadEnvJson() {
+    if (!s_envJsonPath[0]) return;
+    HANDLE fh = CreateFileA(s_envJsonPath, GENERIC_READ, FILE_SHARE_READ, NULL,
+                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (fh == INVALID_HANDLE_VALUE) return;
+    static char buf[32768];
+    DWORD got = 0;
+    ReadFile(fh, buf, sizeof(buf)-1, &got, NULL);
+    CloseHandle(fh);
+    buf[got] = '\0';
+
+    for (int i = 0; i < k_envVarCount; i++) {
+        char val[256] = "";
+        if (JsonGetString(buf, k_envVars[i].key, val, sizeof(val))) {
+            _snprintf(s_envVarValues[i], sizeof(s_envVarValues[i]), "%s", val);
+            s_envVarValues[i][sizeof(s_envVarValues[i])-1] = '\0';
+        }
+    }
+}
+
+// ---- Options dialog (in-process, no .rc file) --------------------------------
+//
+// Implemented as a modal child popup using a registered window class.
+// Controls:
+//   - Section header STATICs (not interactive)
+//   - Bool vars: BS_AUTOCHECKBOX
+//   - Value vars: a STATIC label + an EDIT control
+//   - [OK] and [Cancel] pushbuttons
+//
+// Control IDs: IDC_OPT_CTRL_BASE + i  for the active-control at index i.
+// For bool vars: IDC_OPT_CTRL_BASE+i is the checkbox.
+// For value vars: IDC_OPT_CTRL_BASE+i is the edit (label is decorative, no ID).
+
+#define OPT_DLG_W       420
+#define OPT_ROW_H       20
+#define OPT_ROW_STEP    24
+#define OPT_SECTION_H   18
+#define OPT_SECTION_STEP 26
+#define OPT_LBL_W       240
+#define OPT_EDIT_W      120
+#define OPT_MARGIN      12
+#define OPT_BTN_H       26
+#define OPT_BTN_W       80
+
+// Forward declaration for use in dialog proc.
+static void OptionsDialogReadControls(HWND hwnd);
+
+static LRESULT CALLBACK OptionsDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+    case WM_CREATE: {
+        HFONT hFont      = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        HFONT hFontBold  = (HFONT)GetStockObject(ANSI_FIXED_FONT);
+
+        int y = OPT_MARGIN;
+        const char* lastSection = NULL;
+
+        for (int i = 0; i < k_envVarCount; i++) {
+            // Section header when section changes.
+            if (!lastSection || strcmp(k_envVars[i].section, lastSection) != 0) {
+                lastSection = k_envVars[i].section;
+                HWND hSec = CreateWindowA("STATIC", lastSection,
+                    WS_CHILD | WS_VISIBLE | SS_LEFT,
+                    OPT_MARGIN, y, OPT_DLG_W - 2*OPT_MARGIN, OPT_SECTION_H,
+                    hwnd, (HMENU)(INT_PTR)-1, s_hInst, NULL);
+                SendMessageA(hSec, WM_SETFONT, (WPARAM)hFontBold, TRUE);
+                y += OPT_SECTION_STEP;
+            }
+
+            if (k_envVars[i].isBool) {
+                // Checkbox: full-width
+                HWND hCk = CreateWindowA("BUTTON", k_envVars[i].label,
+                    WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+                    OPT_MARGIN + 8, y, OPT_DLG_W - 2*OPT_MARGIN - 8, OPT_ROW_H,
+                    hwnd, (HMENU)(INT_PTR)(IDC_OPT_CTRL_BASE + i), s_hInst, NULL);
+                SendMessageA(hCk, WM_SETFONT, (WPARAM)hFont, TRUE);
+                // Pre-check if saved value == "1"
+                SendMessageA(hCk, BM_SETCHECK,
+                    (strcmp(s_envVarValues[i], "1") == 0) ? BST_CHECKED : BST_UNCHECKED, 0);
+            } else {
+                // Label + edit
+                HWND hLbl = CreateWindowA("STATIC", k_envVars[i].label,
+                    WS_CHILD | WS_VISIBLE | SS_LEFT,
+                    OPT_MARGIN + 8, y + 2, OPT_LBL_W, OPT_ROW_H,
+                    hwnd, (HMENU)(INT_PTR)-1, s_hInst, NULL);
+                SendMessageA(hLbl, WM_SETFONT, (WPARAM)hFont, TRUE);
+                HWND hEd = CreateWindowA("EDIT", s_envVarValues[i],
+                    WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+                    OPT_MARGIN + 8 + OPT_LBL_W + 4, y, OPT_EDIT_W, OPT_ROW_H,
+                    hwnd, (HMENU)(INT_PTR)(IDC_OPT_CTRL_BASE + i), s_hInst, NULL);
+                SendMessageA(hEd, WM_SETFONT, (WPARAM)hFont, TRUE);
+            }
+            y += OPT_ROW_STEP;
+        }
+
+        // Store final content height so we know where to place buttons.
+        SetWindowLongPtrA(hwnd, GWLP_USERDATA, (LONG_PTR)y);
+
+        y += OPT_MARGIN;
+        // [OK] and [Cancel] buttons.
+        HWND hOK = CreateWindowA("BUTTON", "OK",
+            WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+            OPT_DLG_W/2 - OPT_BTN_W - 4, y, OPT_BTN_W, OPT_BTN_H,
+            hwnd, (HMENU)IDC_OPT_OK, s_hInst, NULL);
+        SendMessageA(hOK, WM_SETFONT, (WPARAM)hFont, TRUE);
+        HWND hCl = CreateWindowA("BUTTON", "Cancel",
+            WS_CHILD | WS_VISIBLE,
+            OPT_DLG_W/2 + 4, y, OPT_BTN_W, OPT_BTN_H,
+            hwnd, (HMENU)IDC_OPT_CANCEL, s_hInst, NULL);
+        SendMessageA(hCl, WM_SETFONT, (WPARAM)hFont, TRUE);
+        break;
+    }
+
+    case WM_COMMAND:
+        if (LOWORD(wParam) == IDC_OPT_OK) {
+            OptionsDialogReadControls(hwnd);
+            SaveEnvJson();
+            DestroyWindow(hwnd);
+            s_hOptionsDlg = NULL;
+        } else if (LOWORD(wParam) == IDC_OPT_CANCEL) {
+            DestroyWindow(hwnd);
+            s_hOptionsDlg = NULL;
+        }
+        break;
+
+    case WM_CLOSE:
+        DestroyWindow(hwnd);
+        s_hOptionsDlg = NULL;
+        break;
+
+    case WM_KEYDOWN:
+        if ((int)wParam == VK_ESCAPE) {
+            DestroyWindow(hwnd);
+            s_hOptionsDlg = NULL;
+        }
+        break;
+
+    default:
+        return DefWindowProcA(hwnd, msg, wParam, lParam);
+    }
+    return 0;
+}
+
+// Read all controls back into s_envVarValues.
+static void OptionsDialogReadControls(HWND hwnd) {
+    for (int i = 0; i < k_envVarCount; i++) {
+        HWND hCtrl = GetDlgItem(hwnd, IDC_OPT_CTRL_BASE + i);
+        if (!hCtrl) continue;
+        if (k_envVars[i].isBool) {
+            bool checked = (SendMessageA(hCtrl, BM_GETCHECK, 0, 0) == BST_CHECKED);
+            _snprintf(s_envVarValues[i], sizeof(s_envVarValues[i]), "%s", checked ? "1" : "");
+        } else {
+            GetWindowTextA(hCtrl, s_envVarValues[i], (int)sizeof(s_envVarValues[i]));
+        }
+    }
+}
+
+static void RegisterOptionsDlgClass() {
+    static bool done = false;
+    if (done) return;
+    WNDCLASSA wc = {};
+    wc.lpfnWndProc   = OptionsDlgProc;
+    wc.hInstance     = s_hInst;
+    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wc.hCursor       = LoadCursorA(NULL, (LPCSTR)IDC_ARROW);
+    wc.lpszClassName = "MC2OptionsDlg";
+    RegisterClassA(&wc);
+    done = true;
+}
+
+static void ShowOptionsDialog(HWND owner) {
+    if (s_hOptionsDlg) {
+        SetForegroundWindow(s_hOptionsDlg);
+        return;
+    }
+    RegisterOptionsDlgClass();
+
+    // Compute dialog height: count section changes + rows.
+    int contentH = OPT_MARGIN;
+    const char* lastSec = NULL;
+    for (int i = 0; i < k_envVarCount; i++) {
+        if (!lastSec || strcmp(k_envVars[i].section, lastSec) != 0) {
+            lastSec = k_envVars[i].section;
+            contentH += OPT_SECTION_STEP;
+        }
+        contentH += OPT_ROW_STEP;
+    }
+    contentH += OPT_MARGIN + OPT_BTN_H + OPT_MARGIN;
+
+    int clientW = OPT_DLG_W;
+    int clientH = contentH;
+    DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU;
+    RECT rc = { 0, 0, clientW, clientH };
+    AdjustWindowRect(&rc, style, FALSE);
+    int ww = rc.right - rc.left;
+    int wh = rc.bottom - rc.top;
+
+    RECT orc; GetWindowRect(owner, &orc);
+    int ox = orc.left + ((orc.right  - orc.left) - ww) / 2;
+    int oy = orc.top  + ((orc.bottom - orc.top)  - wh) / 2;
+
+    s_hOptionsDlg = CreateWindowA("MC2OptionsDlg", "Engine Options",
+        style, ox, oy, ww, wh, owner, NULL, s_hInst, NULL);
+    ShowWindow(s_hOptionsDlg, SW_SHOW);
+    UpdateWindow(s_hOptionsDlg);
+}
+
+// ---- Graphics Options dialog --------------------------------------------------
+//
+// Layout (fixed width 440px):
+//   Section: Texture Quality  — 4 radios
+//   Section: Shadow Quality   — 3 radios
+//   Section: VRAM Estimate    — multi-line STATIC (monospace, 8 lines)
+//   Section: Frame Cap        — checkbox + edit (both active: MC2_FPS_CAP wired)
+//   Section: VSync            — checkbox (active: MC2_VSYNC wired)
+//   [OK] [Cancel]
+
+#define GFX_DLG_W       440
+#define GFX_ROW_H       20
+#define GFX_ROW_STEP    24
+#define GFX_SEC_H       18
+#define GFX_SEC_STEP    26
+#define GFX_MARGIN      12
+#define GFX_BTN_H       26
+#define GFX_BTN_W       80
+#define GFX_VRAM_H      130   // tall enough for ~8 lines of monospace text
+
+// Build the VRAM estimate string into out[]. outSz should be >= 512.
+// Reads s_gfxTexQual, s_gfxShadQual; reads MC2_HDRI_BC6H from s_envVarValues.
+// MC2_HDRI_BC6H default is ON (BC6H 4K = 8 MB); set =0 for RGBA16F (134 MB).
+static void RecalcVram(char* out, int outSz) {
+    int texMB  = k_texVramMB[s_gfxTexQual];
+    int shadMB = k_shadVramMB[s_gfxShadQual];
+    int fboMB  = 96;    // GL_RGBA16F 1080p x3 attachments + bloom
+
+    // MC2_HDRI_BC6H: default ON (absent = BC6H 4K = 8 MB).
+    // Only use RGBA16F (134 MB) when key is present in k_envVars and set to "0".
+    bool bc6hOff = false;
+    for (int i = 0; i < k_envVarCount; i++) {
+        if (strcmp(k_envVars[i].key, "MC2_HDRI_BC6H") == 0) {
+            bc6hOff = (s_envVarValues[i][0] == '0');
+            break;
+        }
+    }
+    const int  hdriMB      = bc6hOff ? 134 : 8;
+    const char* hdriLabel  = bc6hOff
+        ? "HDRI (RGBA16F 4K): %d MB"
+        : "HDRI (BC6H 4K):    %d MB";
+
+    int baseMB  = 256;
+    int totalMB = texMB + shadMB + fboMB + hdriMB + baseMB;
+
+    char hdriLine[64];
+    _snprintf(hdriLine, sizeof(hdriLine), hdriLabel, hdriMB);
+    hdriLine[sizeof(hdriLine)-1] = '\0';
+
+    _snprintf(out, outSz,
+        "Estimated VRAM: ~%d MB\r\n"
+        "  Textures:      %d MB\r\n"
+        "  Shadow maps:   %d MB\r\n"
+        "  Scene FBOs:     %d MB\r\n"
+        "  %s\r\n"
+        "  (16K BC6H ~128 MB, 16K RGBA16F ~1 GB)\r\n"
+        "  Base overhead: %d MB\r\n"
+        "  " "\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95" "\r\n"
+        "  (excl. terrain, water, mission geometry)",
+        totalMB, texMB, shadMB, fboMB, hdriLine, baseMB);
+    out[outSz-1] = '\0';
+}
+
+// Read graphics dialog controls back into s_gfx* globals.
+static void GfxDialogReadControls(HWND hwnd) {
+    // Texture pack radios (slot 0 = None; slot i -> s_texQual[i-1])
+    {
+        int nSlots = s_texQualCount + 1;
+        if (nSlots > TEXPACK_DLG_SLOTS) nSlots = TEXPACK_DLG_SLOTS;
+        for (int i = 0; i < nSlots; i++) {
+            HWND h = GetDlgItem(hwnd, IDC_GFX_TEXPACK_BASE + i);
+            if (h && SendMessageA(h, BM_GETCHECK, 0, 0) == BST_CHECKED) {
+                s_gfxTexPackIdx = i; break;
+            }
+        }
+    }
+    // Texture quality radios
+    for (int i = 0; i < 4; i++) {
+        HWND h = GetDlgItem(hwnd, IDC_GFX_TEXQUAL_BASE + i);
+        if (h && SendMessageA(h, BM_GETCHECK, 0, 0) == BST_CHECKED) {
+            s_gfxTexQual = i; break;
+        }
+    }
+    // Shadow quality radios
+    for (int i = 0; i < 3; i++) {
+        HWND h = GetDlgItem(hwnd, IDC_GFX_SHADQUAL_BASE + i);
+        if (h && SendMessageA(h, BM_GETCHECK, 0, 0) == BST_CHECKED) {
+            s_gfxShadQual = i; break;
+        }
+    }
+    // Frame cap
+    HWND hCk = GetDlgItem(hwnd, IDC_GFX_FRAMECAP_CHK);
+    HWND hEd = GetDlgItem(hwnd, IDC_GFX_FRAMECAP_EDIT);
+    if (hCk) s_gfxFrameCapOn = (SendMessageA(hCk, BM_GETCHECK, 0, 0) == BST_CHECKED);
+    if (hEd) {
+        char buf[32]; GetWindowTextA(hEd, buf, sizeof(buf));
+        int v = atoi(buf);
+        s_gfxFrameCapFps = (v > 0) ? v : 60;
+    }
+    // VSync
+    HWND hVs = GetDlgItem(hwnd, IDC_GFX_VSYNC_CHK);
+    if (hVs) s_gfxVsync = (SendMessageA(hVs, BM_GETCHECK, 0, 0) == BST_CHECKED);
+}
+
+static LRESULT CALLBACK GraphicsDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+    case WM_CREATE: {
+        HFONT hFont     = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        HFONT hFontBold = (HFONT)GetStockObject(ANSI_FIXED_FONT);
+        HFONT hMono     = (HFONT)GetStockObject(SYSTEM_FIXED_FONT);
+
+        int y = GFX_MARGIN;
+
+        // --- Texture Packs ---
+        {
+            HWND hTP = CreateWindowA("STATIC", "Texture Packs",
+                WS_CHILD | WS_VISIBLE | SS_LEFT,
+                GFX_MARGIN, y, GFX_DLG_W - 2*GFX_MARGIN, GFX_SEC_H,
+                hwnd, (HMENU)(INT_PTR)-1, s_hInst, NULL);
+            SendMessageA(hTP, WM_SETFONT, (WPARAM)hFontBold, TRUE);
+            y += GFX_SEC_STEP;
+
+            int nSlots = s_texQualCount + 1;  // +1 for "None"
+            if (nSlots > TEXPACK_DLG_SLOTS) nSlots = TEXPACK_DLG_SLOTS;
+            for (int i = 0; i < nSlots; i++) {
+                DWORD st = WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON;
+                if (i == 0) st |= WS_GROUP;
+                const char* lbl = "None";
+                char nameBuf[300];
+                if (i > 0) {
+                    _snprintf(nameBuf, sizeof(nameBuf), "%s", s_texQual[i-1].name);
+                    nameBuf[sizeof(nameBuf)-1] = '\0';
+                    lbl = nameBuf;
+                }
+                HWND hR = CreateWindowA("BUTTON", lbl, st,
+                    GFX_MARGIN + 8, y, GFX_DLG_W - 2*GFX_MARGIN - 8, GFX_ROW_H,
+                    hwnd, (HMENU)(INT_PTR)(IDC_GFX_TEXPACK_BASE + i), s_hInst, NULL);
+                SendMessageA(hR, WM_SETFONT, (WPARAM)hFont, TRUE);
+                SendMessageA(hR, BM_SETCHECK,
+                    (i == s_gfxTexPackIdx) ? BST_CHECKED : BST_UNCHECKED, 0);
+                y += GFX_ROW_STEP;
+            }
+            // If no packs found, show a placeholder label.
+            if (s_texQualCount == 0) {
+                HWND hNone = CreateWindowA("STATIC", "(No texture packs installed)",
+                    WS_CHILD | WS_VISIBLE | SS_LEFT,
+                    GFX_MARGIN + 8, y, GFX_DLG_W - 2*GFX_MARGIN - 8, GFX_ROW_H,
+                    hwnd, (HMENU)(INT_PTR)-1, s_hInst, NULL);
+                SendMessageA(hNone, WM_SETFONT, (WPARAM)hFont, TRUE);
+                y += GFX_ROW_STEP;
+            }
+        }
+        y += 6;
+
+        // --- Texture Quality ---
+        HWND hS = CreateWindowA("STATIC", "Texture Quality",
+            WS_CHILD | WS_VISIBLE | SS_LEFT,
+            GFX_MARGIN, y, GFX_DLG_W - 2*GFX_MARGIN, GFX_SEC_H,
+            hwnd, (HMENU)(INT_PTR)-1, s_hInst, NULL);
+        SendMessageA(hS, WM_SETFONT, (WPARAM)hFontBold, TRUE);
+        y += GFX_SEC_STEP;
+
+        for (int i = 0; i < 4; i++) {
+            DWORD st = WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON;
+            if (i == 0) st |= WS_GROUP;
+            HWND hR = CreateWindowA("BUTTON", k_texTierLabels[i], st,
+                GFX_MARGIN + 8, y, GFX_DLG_W - 2*GFX_MARGIN - 8, GFX_ROW_H,
+                hwnd, (HMENU)(INT_PTR)(IDC_GFX_TEXQUAL_BASE + i), s_hInst, NULL);
+            SendMessageA(hR, WM_SETFONT, (WPARAM)hFont, TRUE);
+            SendMessageA(hR, BM_SETCHECK,
+                (i == s_gfxTexQual) ? BST_CHECKED : BST_UNCHECKED, 0);
+            y += GFX_ROW_STEP;
+        }
+        y += 6;
+
+        // --- Shadow Quality ---
+        HWND hSh = CreateWindowA("STATIC", "Shadow Quality",
+            WS_CHILD | WS_VISIBLE | SS_LEFT | WS_GROUP,
+            GFX_MARGIN, y, GFX_DLG_W - 2*GFX_MARGIN, GFX_SEC_H,
+            hwnd, (HMENU)(INT_PTR)-1, s_hInst, NULL);
+        SendMessageA(hSh, WM_SETFONT, (WPARAM)hFontBold, TRUE);
+        y += GFX_SEC_STEP;
+
+        for (int i = 0; i < 3; i++) {
+            DWORD st = WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON;
+            if (i == 0) st |= WS_GROUP;
+            HWND hR = CreateWindowA("BUTTON", k_shadQualLabels[i], st,
+                GFX_MARGIN + 8, y, GFX_DLG_W - 2*GFX_MARGIN - 8, GFX_ROW_H,
+                hwnd, (HMENU)(INT_PTR)(IDC_GFX_SHADQUAL_BASE + i), s_hInst, NULL);
+            SendMessageA(hR, WM_SETFONT, (WPARAM)hFont, TRUE);
+            SendMessageA(hR, BM_SETCHECK,
+                (i == s_gfxShadQual) ? BST_CHECKED : BST_UNCHECKED, 0);
+            y += GFX_ROW_STEP;
+        }
+        y += 6;
+
+        // --- VRAM Estimator ---
+        HWND hVramLbl = CreateWindowA("STATIC", "VRAM Estimate",
+            WS_CHILD | WS_VISIBLE | SS_LEFT | WS_GROUP,
+            GFX_MARGIN, y, GFX_DLG_W - 2*GFX_MARGIN, GFX_SEC_H,
+            hwnd, (HMENU)(INT_PTR)-1, s_hInst, NULL);
+        SendMessageA(hVramLbl, WM_SETFONT, (WPARAM)hFontBold, TRUE);
+        y += GFX_SEC_STEP;
+
+        char vramBuf[512];
+        RecalcVram(vramBuf, sizeof(vramBuf));
+        HWND hVramText = CreateWindowA("STATIC", vramBuf,
+            WS_CHILD | WS_VISIBLE | SS_LEFT,
+            GFX_MARGIN + 4, y, GFX_DLG_W - 2*GFX_MARGIN - 4, GFX_VRAM_H,
+            hwnd, (HMENU)(INT_PTR)IDC_GFX_VRAM_TEXT, s_hInst, NULL);
+        SendMessageA(hVramText, WM_SETFONT, (WPARAM)hMono, TRUE);
+        y += GFX_VRAM_H + 6;
+
+        // --- Frame Cap (MC2_FPS_CAP is wired in gameosmain.cpp) ---
+        HWND hFcLbl = CreateWindowA("STATIC", "Frame Rate",
+            WS_CHILD | WS_VISIBLE | SS_LEFT | WS_GROUP,
+            GFX_MARGIN, y, GFX_DLG_W - 2*GFX_MARGIN, GFX_SEC_H,
+            hwnd, (HMENU)(INT_PTR)-1, s_hInst, NULL);
+        SendMessageA(hFcLbl, WM_SETFONT, (WPARAM)hFontBold, TRUE);
+        y += GFX_SEC_STEP;
+
+        HWND hFcCk = CreateWindowA("BUTTON", "Limit frame rate",
+            WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+            GFX_MARGIN + 8, y, 140, GFX_ROW_H,
+            hwnd, (HMENU)(INT_PTR)IDC_GFX_FRAMECAP_CHK, s_hInst, NULL);
+        SendMessageA(hFcCk, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SendMessageA(hFcCk, BM_SETCHECK, s_gfxFrameCapOn ? BST_CHECKED : BST_UNCHECKED, 0);
+
+        char fpsBuf[16]; _snprintf(fpsBuf, sizeof(fpsBuf), "%d", s_gfxFrameCapFps);
+        HWND hFcEd = CreateWindowA("EDIT", fpsBuf,
+            WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL,
+            GFX_MARGIN + 8 + 146, y, 52, GFX_ROW_H,
+            hwnd, (HMENU)(INT_PTR)IDC_GFX_FRAMECAP_EDIT, s_hInst, NULL);
+        SendMessageA(hFcEd, WM_SETFONT, (WPARAM)hFont, TRUE);
+
+        HWND hFcUnit = CreateWindowA("STATIC", "FPS",
+            WS_CHILD | WS_VISIBLE | SS_LEFT,
+            GFX_MARGIN + 8 + 146 + 56, y + 2, 40, GFX_ROW_H,
+            hwnd, (HMENU)(INT_PTR)-1, s_hInst, NULL);
+        SendMessageA(hFcUnit, WM_SETFONT, (WPARAM)hFont, TRUE);
+        y += GFX_ROW_STEP + 4;
+
+        // --- VSync (MC2_VSYNC is wired in gos_render.cpp) ---
+        HWND hVsLbl = CreateWindowA("STATIC", "VSync",
+            WS_CHILD | WS_VISIBLE | SS_LEFT | WS_GROUP,
+            GFX_MARGIN, y, GFX_DLG_W - 2*GFX_MARGIN, GFX_SEC_H,
+            hwnd, (HMENU)(INT_PTR)-1, s_hInst, NULL);
+        SendMessageA(hVsLbl, WM_SETFONT, (WPARAM)hFontBold, TRUE);
+        y += GFX_SEC_STEP;
+
+        HWND hVsCk = CreateWindowA("BUTTON", "Enable VSync",
+            WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+            GFX_MARGIN + 8, y, GFX_DLG_W - 2*GFX_MARGIN - 8, GFX_ROW_H,
+            hwnd, (HMENU)(INT_PTR)IDC_GFX_VSYNC_CHK, s_hInst, NULL);
+        SendMessageA(hVsCk, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SendMessageA(hVsCk, BM_SETCHECK, s_gfxVsync ? BST_CHECKED : BST_UNCHECKED, 0);
+        y += GFX_ROW_STEP;
+
+        SetWindowLongPtrA(hwnd, GWLP_USERDATA, (LONG_PTR)y);
+
+        y += GFX_MARGIN;
+        HWND hOK = CreateWindowA("BUTTON", "OK",
+            WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+            GFX_DLG_W/2 - GFX_BTN_W - 4, y, GFX_BTN_W, GFX_BTN_H,
+            hwnd, (HMENU)(INT_PTR)IDC_GFX_OK, s_hInst, NULL);
+        SendMessageA(hOK, WM_SETFONT, (WPARAM)hFont, TRUE);
+        HWND hCl = CreateWindowA("BUTTON", "Cancel",
+            WS_CHILD | WS_VISIBLE,
+            GFX_DLG_W/2 + 4, y, GFX_BTN_W, GFX_BTN_H,
+            hwnd, (HMENU)(INT_PTR)IDC_GFX_CANCEL, s_hInst, NULL);
+        SendMessageA(hCl, WM_SETFONT, (WPARAM)hFont, TRUE);
+        break;
+    }
+
+    case WM_COMMAND: {
+        WORD id = LOWORD(wParam);
+        WORD notif = HIWORD(wParam);
+
+        // Recalc VRAM whenever a quality radio changes.
+        bool qualChanged = false;
+        if (notif == BN_CLICKED) {
+            if (id >= IDC_GFX_TEXQUAL_BASE && id < IDC_GFX_TEXQUAL_BASE + 4) qualChanged = true;
+            if (id >= IDC_GFX_SHADQUAL_BASE && id < IDC_GFX_SHADQUAL_BASE + 3) qualChanged = true;
+        }
+        if (qualChanged) {
+            // Read current radio selections for recalc (don't commit to globals yet)
+            int tq = s_gfxTexQual, sq = s_gfxShadQual;
+            for (int i = 0; i < 4; i++) {
+                HWND h = GetDlgItem(hwnd, IDC_GFX_TEXQUAL_BASE + i);
+                if (h && SendMessageA(h, BM_GETCHECK, 0, 0) == BST_CHECKED) { tq = i; break; }
+            }
+            for (int i = 0; i < 3; i++) {
+                HWND h = GetDlgItem(hwnd, IDC_GFX_SHADQUAL_BASE + i);
+                if (h && SendMessageA(h, BM_GETCHECK, 0, 0) == BST_CHECKED) { sq = i; break; }
+            }
+            int savedTq = s_gfxTexQual, savedSq = s_gfxShadQual;
+            s_gfxTexQual = tq; s_gfxShadQual = sq;
+            char vramBuf[512]; RecalcVram(vramBuf, sizeof(vramBuf));
+            HWND hVt = GetDlgItem(hwnd, IDC_GFX_VRAM_TEXT);
+            if (hVt) SetWindowTextA(hVt, vramBuf);
+            s_gfxTexQual = savedTq; s_gfxShadQual = savedSq;
+        }
+
+        if (id == IDC_GFX_OK) {
+            GfxDialogReadControls(hwnd);
+            SaveGfxJson();
+            DestroyWindow(hwnd);
+            s_hGraphicsDlg = NULL;
+        } else if (id == IDC_GFX_CANCEL) {
+            DestroyWindow(hwnd);
+            s_hGraphicsDlg = NULL;
+        }
+        break;
+    }
+
+    case WM_CLOSE:
+        DestroyWindow(hwnd);
+        s_hGraphicsDlg = NULL;
+        break;
+
+    case WM_KEYDOWN:
+        if ((int)wParam == VK_ESCAPE) {
+            DestroyWindow(hwnd);
+            s_hGraphicsDlg = NULL;
+        }
+        break;
+
+    default:
+        return DefWindowProcA(hwnd, msg, wParam, lParam);
+    }
+    return 0;
+}
+
+static void RegisterGraphicsDlgClass() {
+    static bool done = false;
+    if (done) return;
+    WNDCLASSA wc = {};
+    wc.lpfnWndProc   = GraphicsDlgProc;
+    wc.hInstance     = s_hInst;
+    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wc.hCursor       = LoadCursorA(NULL, (LPCSTR)IDC_ARROW);
+    wc.lpszClassName = "MC2GraphicsDlg";
+    RegisterClassA(&wc);
+    done = true;
+}
+
+static void ShowGraphicsDialog(HWND owner) {
+    if (s_hGraphicsDlg) {
+        SetForegroundWindow(s_hGraphicsDlg);
+        return;
+    }
+    RegisterGraphicsDlgClass();
+
+    // Compute dialog height: sections + rows + VRAM box + buttons.
+    int contentH = GFX_MARGIN;
+    // Texture Packs: 1 header + (nSlots) rows  (at least 1 "None" row or placeholder)
+    {
+        int nPackSlots = s_texQualCount + 1;
+        if (nPackSlots > TEXPACK_DLG_SLOTS) nPackSlots = TEXPACK_DLG_SLOTS;
+        if (s_texQualCount == 0) nPackSlots = 1;  // placeholder row
+        contentH += GFX_SEC_STEP + nPackSlots * GFX_ROW_STEP + 6;
+    }
+    // Texture Quality
+    contentH += GFX_SEC_STEP + 4 * GFX_ROW_STEP + 6;
+    // Shadow Quality
+    contentH += GFX_SEC_STEP + 3 * GFX_ROW_STEP + 6;
+    // VRAM Estimator
+    contentH += GFX_SEC_STEP + GFX_VRAM_H + 6;
+    // Frame Rate
+    contentH += GFX_SEC_STEP + GFX_ROW_STEP + 4;
+    // VSync
+    contentH += GFX_SEC_STEP + GFX_ROW_STEP;
+    contentH += GFX_MARGIN + GFX_BTN_H + GFX_MARGIN;
+
+    int clientW = GFX_DLG_W;
+    int clientH = contentH;
+    DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU;
+    RECT rc = { 0, 0, clientW, clientH };
+    AdjustWindowRect(&rc, style, FALSE);
+    int ww = rc.right - rc.left;
+    int wh = rc.bottom - rc.top;
+
+    RECT orc; GetWindowRect(owner, &orc);
+    int ox = orc.left + ((orc.right  - orc.left) - ww) / 2;
+    int oy = orc.top  + ((orc.bottom - orc.top)  - wh) / 2;
+
+    s_hGraphicsDlg = CreateWindowA("MC2GraphicsDlg", "Graphics Options",
+        style, ox, oy, ww, wh, owner, NULL, s_hInst, NULL);
+    ShowWindow(s_hGraphicsDlg, SW_SHOW);
+    UpdateWindow(s_hGraphicsDlg);
 }
 
 static bool DirExists(const char* path) {
@@ -416,14 +1374,12 @@ static int BaseIndexForKind(CompatKind k) {
 #define LP_ADDON_LBL_Y (LP_BASE_Y + BASE_SLOTS * LP_ROW_STEP + 10) // add-on group label top
 #define LP_ADDON_Y    (LP_ADDON_LBL_Y + LP_LBL_H + 2)            // first add-on checkbox top
 #define LP_ADDON_BOTTOM (LP_ADDON_Y + ADDON_SLOTS * LP_ROW_STEP)  // bottom of add-on slots
-// Texture quality group: gap below add-ons, then label, then TEXQUAL_SLOTS radios.
-#define LP_TEXQUAL_LBL_Y (LP_ADDON_BOTTOM + 14)                    // "Texture Quality:" label top
-#define LP_TEXQUAL_Y     (LP_TEXQUAL_LBL_Y + LP_LBL_H + 2)        // first tex-qual radio top
-#define LP_TEXQUAL_BOTTOM (LP_TEXQUAL_Y + TEXQUAL_SLOTS * LP_ROW_STEP)
-// Options group: below the texture-quality radios.
-#define LP_OPT_LBL_Y  (LP_TEXQUAL_BOTTOM + 14)                    // "Options:" label top
+// Options group: directly below add-ons (texture-quality section moved to Graphics dialog).
+#define LP_OPT_LBL_Y  (LP_ADDON_BOTTOM + 14)                      // "Options:" label top
 #define LP_OPT_Y      (LP_OPT_LBL_Y + LP_LBL_H + 2)               // faster-weapons checkbox top
-#define LP_RCOL_BOTTOM (LP_OPT_Y + LP_ROW_STEP)                   // bottom of right column
+#define LP_OPT_BTN_Y  (LP_OPT_Y + LP_ROW_STEP + 4)                // "Engine Options..." button top
+#define LP_GFX_BTN_Y  (LP_OPT_BTN_Y + LP_ROW_H + 4)              // "Graphics..." button top
+#define LP_RCOL_BOTTOM (LP_GFX_BTN_Y + LP_ROW_H + 2)              // bottom of right column
 // Listbox fills the full height of the right column.
 #define LP_LIST_H     (LP_RCOL_BOTTOM - LP_LIST_Y)
 #define LP_LCOL_BOTTOM LP_RCOL_BOTTOM
@@ -485,46 +1441,6 @@ static void RefreshAddonSlots() {
     }
 }
 
-// Show/hide + relabel the FIXED texture-quality radio slots from s_texQual[].
-// Slot 0 is always "None". Never destroys/recreates — geometry is constant.
-static void RefreshTexQualSlots() {
-    for (int i = 0; i < TEXQUAL_SLOTS; i++) {
-        if (!s_hTexQual[i]) continue;
-        if (i == 0) {
-            SetWindowTextA(s_hTexQual[i], "None");
-            ShowWindow(s_hTexQual[i], SW_SHOW);
-        } else if ((i - 1) < s_texQualCount) {
-            char label[300];
-            _snprintf(label, sizeof(label), "%s", s_texQual[i-1].name);
-            label[sizeof(label)-1] = '\0';
-            SetWindowTextA(s_hTexQual[i], label);
-            ShowWindow(s_hTexQual[i], SW_SHOW);
-        } else {
-            SetWindowTextA(s_hTexQual[i], "");
-            ShowWindow(s_hTexQual[i], SW_HIDE);
-        }
-    }
-    // Default to "None".
-    for (int i = 0; i < TEXQUAL_SLOTS; i++)
-        if (s_hTexQual[i])
-            SendMessageA(s_hTexQual[i], BM_SETCHECK,
-                         (i == 0) ? BST_CHECKED : BST_UNCHECKED, 0);
-}
-
-static void SelectTexQualRadio(int slot) {
-    for (int i = 0; i < TEXQUAL_SLOTS; i++)
-        if (s_hTexQual[i])
-            SendMessageA(s_hTexQual[i], BM_SETCHECK,
-                         (i == slot) ? BST_CHECKED : BST_UNCHECKED, 0);
-}
-
-static int SelectedTexQualSlot() {
-    for (int i = 0; i < TEXQUAL_SLOTS; i++)
-        if (s_hTexQual[i] && SendMessageA(s_hTexQual[i], BM_GETCHECK, 0, 0) == BST_CHECKED)
-            return i;
-    return 0;
-}
-
 // Select base-radio slot `slot` (0 = None) exclusively. Mirrors what
 // BS_AUTORADIOBUTTON does on a user click, but lets code drive auto-detect.
 static void SelectBaseRadio(int slot) {
@@ -575,6 +1491,16 @@ static void RescanAndRepopulate(const char* selectFolder) {
     s_addonCount = 0;
     s_texQualCount = 0;
     ScanMods(s_modsPath);
+    // Re-resolve the selected texture-pack index against the refreshed mod list.
+    // If the previously-selected pack is no longer present, fall back to None.
+    if (s_gfxTexPackIdx > 0) {
+        int prev = s_gfxTexPackIdx;
+        s_gfxTexPackIdx = 0;
+        if ((prev - 1) < s_texQualCount) {
+            // Verify the folder is still there at the same slot.
+            s_gfxTexPackIdx = prev;
+        }
+    }
 
     SendMessageA(s_hListBox, LB_RESETCONTENT, 0, 0);
     SendMessageA(s_hListBox, LB_ADDSTRING, 0, (LPARAM)"Stock (base game)");
@@ -588,7 +1514,6 @@ static void RescanAndRepopulate(const char* selectFolder) {
     SendMessageA(s_hListBox, LB_SETCURSEL, wantSel, 0);
     RefreshBaseSlots();
     RefreshAddonSlots();
-    RefreshTexQualSlots();
     UpdateForSelection();
 }
 
@@ -611,11 +1536,10 @@ static void DoLaunch(HWND hwnd) {
             addonChecked++;
         }
     }
-    // Texture-quality radio (slot 0 = None; slot i -> s_texQual[i-1]).
-    int texSlot = SelectedTexQualSlot();
-    if (texSlot > 0 && (texSlot - 1) < s_texQualCount) {
+    // Texture-pack mod from Graphics dialog (s_gfxTexPackIdx: 0=None; i -> s_texQual[i-1]).
+    if (s_gfxTexPackIdx > 0 && (s_gfxTexPackIdx - 1) < s_texQualCount) {
         if (deps[0]) strncat(deps, ",", sizeof(deps)-strlen(deps)-1);
-        strncat(deps, s_texQual[texSlot-1].folderName, sizeof(deps)-strlen(deps)-1);
+        strncat(deps, s_texQual[s_gfxTexPackIdx - 1].folderName, sizeof(deps)-strlen(deps)-1);
     }
     int baseSlot = SelectedBaseSlot();   // 0 = None; slot i -> s_bases[i-1]
     if (baseSlot > 0 && (baseSlot - 1) < s_baseCount) {
@@ -658,6 +1582,41 @@ static void DoLaunch(HWND hwnd) {
     SetEnvironmentVariableA("MC2_DIRECT_FIRE_STRAIGHT", fw ? "1" : NULL);
     SetEnvironmentVariableA("MC2_PROJECTILE_SPEED_MULT", fw ? "2" : NULL);
 
+    // Apply engine-option env vars from the Options dialog (launcher_env.json).
+    // Skip any vars that DoLaunch already sets explicitly above.
+    for (int i = 0; i < k_envVarCount; i++) {
+        // MC2_DIRECT_FIRE_STRAIGHT and MC2_PROJECTILE_SPEED_MULT are driven by
+        // the Faster Weapons toggle — skip them to avoid double-set.
+        if (strcmp(k_envVars[i].key, "MC2_DIRECT_FIRE_STRAIGHT") == 0) continue;
+        if (strcmp(k_envVars[i].key, "MC2_PROJECTILE_SPEED_MULT") == 0) continue;
+
+        const char* val = s_envVarValues[i];
+        if (val[0]) {
+            SetEnvironmentVariableA(k_envVars[i].key, val);
+        } else {
+            // Explicitly unset so a previously-set ambient value in the shell
+            // doesn't bleed into the child.
+            SetEnvironmentVariableA(k_envVars[i].key, NULL);
+        }
+    }
+
+    // Apply Graphics Options env vars.
+    // MC2_STATICPROP_TEX_TIER: texture resolution tier (engine reads this in the
+    //   texture-array loader to pick which mip level / atlas to load).
+    SetEnvironmentVariableA("MC2_STATICPROP_TEX_TIER", k_texTierValues[s_gfxTexQual]);
+    // MC2_SHADOW_MAP_SIZE: per-cascade shadow texture size.
+    SetEnvironmentVariableA("MC2_SHADOW_MAP_SIZE", k_shadSizeValues[s_gfxShadQual]);
+    // MC2_FPS_CAP: frame cap in FPS (gameosmain.cpp reads this).
+    if (s_gfxFrameCapOn) {
+        char fpsBuf[32];
+        _snprintf(fpsBuf, sizeof(fpsBuf), "%d", s_gfxFrameCapFps);
+        SetEnvironmentVariableA("MC2_FPS_CAP", fpsBuf);
+    } else {
+        SetEnvironmentVariableA("MC2_FPS_CAP", NULL);  // unset = no cap
+    }
+    // MC2_VSYNC: vsync toggle (gos_render.cpp reads this via SDL_GL_SetSwapInterval).
+    SetEnvironmentVariableA("MC2_VSYNC", s_gfxVsync ? "1" : NULL);
+
     char mc2Path[MAX_PATH];
     _snprintf(mc2Path, sizeof(mc2Path), "%smc2.exe", s_launcherDir);
     mc2Path[sizeof(mc2Path)-1] = '\0';
@@ -673,6 +1632,7 @@ static void DoLaunch(HWND hwnd) {
     }
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
+    SaveMainPageSelections();
     PostQuitMessage(0);
 }
 
@@ -960,8 +1920,6 @@ static void SetMainControlsEnabled(BOOL en) {
         if (s_hBase[i]) EnableWindow(s_hBase[i], en);
     for (int i = 0; i < ADDON_SLOTS; i++)
         if (s_hAddon[i]) EnableWindow(s_hAddon[i], en);
-    for (int i = 0; i < TEXQUAL_SLOTS; i++)
-        if (s_hTexQual[i]) EnableWindow(s_hTexQual[i], en);
 }
 
 // Start the worker thread + show the modal progress dialog. s_importForce must
@@ -1263,25 +2221,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         RefreshBaseSlots();    // show/hide + label per current scan; default None
         RefreshAddonSlots();   // show/hide + label per current scan
 
-        // Sub-group 3: "Texture Quality (pick one):" label + mutually-exclusive radios.
-        // A WS_GROUP STATIC after the checkboxes terminates the add-on group.
-        HWND hTexQualLbl = CreateWindowA("STATIC", "Texture Quality (pick one):",
-            WS_CHILD | WS_VISIBLE | WS_GROUP, LP_RCOL_X, LP_TEXQUAL_LBL_Y, LP_RCOL_W, LP_LBL_H,
-            hwnd, (HMENU)IDC_TEXQUALLBL, s_hInst, NULL);
-        SendMessageA(hTexQualLbl, WM_SETFONT, (WPARAM)hFont, TRUE);
-
-        for (int i = 0; i < TEXQUAL_SLOTS; i++) {
-            int ty = LP_TEXQUAL_Y + i * LP_ROW_STEP;
-            DWORD st = WS_CHILD | BS_AUTORADIOBUTTON;
-            if (i == 0) st |= WS_GROUP;
-            s_hTexQual[i] = CreateWindowA("BUTTON", "", st,
-                LP_RCOL_X, ty, LP_RCOL_W, LP_ROW_H,
-                hwnd, (HMENU)(INT_PTR)(IDC_TEXQUAL0 + i), s_hInst, NULL);
-            SendMessageA(s_hTexQual[i], WM_SETFONT, (WPARAM)hFont, TRUE);
-        }
-        RefreshTexQualSlots();  // show/hide + label; default None
-
-        // Sub-group 5: gameplay "Options:" label + Faster-weapons toggle. This is
+        // Sub-group 3: gameplay "Options:" label + Faster-weapons toggle. This is
         // NOT a mod -- the checkbox drives engine env vars on Launch, separate from
         // the MC2_ACTIVE_MOD/MC2_MOD_DEPS mod logic. A WS_GROUP STATIC terminates
         // any preceding group; the checkbox defaults UNCHECKED.
@@ -1296,6 +2236,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             hwnd, (HMENU)(INT_PTR)IDC_FASTERWEAPONS, s_hInst, NULL);
         SendMessageA(s_hFasterWeapons, WM_SETFONT, (WPARAM)hFont, TRUE);
         SendMessageA(s_hFasterWeapons, BM_SETCHECK, BST_UNCHECKED, 0);  // default OFF
+
+        HWND hOptBtn = CreateWindowA("BUTTON", "Engine Options...",
+            WS_CHILD | WS_VISIBLE,
+            LP_RCOL_X, LP_OPT_BTN_Y, LP_RCOL_W, LP_ROW_H,
+            hwnd, (HMENU)(INT_PTR)IDC_OPTIONS, s_hInst, NULL);
+        SendMessageA(hOptBtn, WM_SETFONT, (WPARAM)hFont, TRUE);
+
+        HWND hGfxBtn = CreateWindowA("BUTTON", "Graphics...",
+            WS_CHILD | WS_VISIBLE,
+            LP_RCOL_X, LP_GFX_BTN_Y, LP_RCOL_W, LP_ROW_H,
+            hwnd, (HMENU)(INT_PTR)IDC_GRAPHICS, s_hInst, NULL);
+        SendMessageA(hGfxBtn, WM_SETFONT, (WPARAM)hFont, TRUE);
 
         // ---- BOTTOM (spans full width below BOTH columns): status + buttons ----
         s_hDesc = CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE | SS_LEFT,
@@ -1322,12 +2274,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             UpdateForSelection();
         if (LOWORD(wParam) == IDC_IMPORT && HIWORD(wParam) == BN_CLICKED)
             OnImportButton(hwnd);
+        if (LOWORD(wParam) == IDC_OPTIONS && HIWORD(wParam) == BN_CLICKED)
+            ShowOptionsDialog(hwnd);
+        if (LOWORD(wParam) == IDC_GRAPHICS && HIWORD(wParam) == BN_CLICKED)
+            ShowGraphicsDialog(hwnd);
         if (LOWORD(wParam) == IDC_LAUNCH ||
             (LOWORD(wParam) == IDC_MODLIST && HIWORD(wParam) == LBN_DBLCLK)) {
             if (!s_importing) DoLaunch(hwnd);
         }
         if (LOWORD(wParam) == IDC_CANCEL) {
-            if (!s_importing) PostQuitMessage(0);
+            if (!s_importing) {
+                SaveMainPageSelections();
+                PostQuitMessage(0);
+            }
         }
         break;
 
@@ -1337,6 +2296,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
     case WM_CLOSE:
         if (s_importing) return 0;   // block close during import
+        SaveMainPageSelections();
         PostQuitMessage(0);
         break;
 
@@ -1383,7 +2343,26 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR lpCmd, int) {
     _snprintf(s_modsPath, sizeof(s_modsPath), "%smods\\", s_launcherDir);
     s_modsPath[sizeof(s_modsPath)-1] = '\0';
 
+    // Env-var options: set defaults then load persisted values from launcher_env.json.
+    _snprintf(s_envJsonPath, sizeof(s_envJsonPath), "%slauncher_env.json", s_launcherDir);
+    s_envJsonPath[sizeof(s_envJsonPath)-1] = '\0';
+    EnvVarsSetDefaults();
+    GfxSetDefaults();
+    LoadEnvJson();
+    LoadGfxJson();
+    LoadMainPageJson();
+
     ScanMods(s_modsPath);
+
+    // Resolve the saved texture-pack folder name to an index now that s_texQual[] is populated.
+    if (s_gfxTexPackSaved[0]) {
+        for (int i = 0; i < s_texQualCount; i++) {
+            if (_stricmp(s_texQual[i].folderName, s_gfxTexPackSaved) == 0) {
+                s_gfxTexPackIdx = i + 1;
+                break;
+            }
+        }
+    }
 
     if (lpCmd && strstr(lpCmd, "--list")) { PrintListing(); return 0; }
 
@@ -1391,6 +2370,23 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR lpCmd, int) {
     if (s_campCount == 0) {
         SetEnvironmentVariableA("MC2_ACTIVE_MOD", NULL);
         SetEnvironmentVariableA("MC2_MOD_DEPS", NULL);
+        // Apply engine options even in the no-GUI direct-launch path.
+        for (int i = 0; i < k_envVarCount; i++) {
+            const char* val = s_envVarValues[i];
+            if (val[0]) SetEnvironmentVariableA(k_envVars[i].key, val);
+            else        SetEnvironmentVariableA(k_envVars[i].key, NULL);
+        }
+        // Apply graphics options.
+        SetEnvironmentVariableA("MC2_STATICPROP_TEX_TIER", k_texTierValues[s_gfxTexQual]);
+        SetEnvironmentVariableA("MC2_SHADOW_MAP_SIZE", k_shadSizeValues[s_gfxShadQual]);
+        if (s_gfxFrameCapOn) {
+            char fpsBuf[32]; _snprintf(fpsBuf, sizeof(fpsBuf), "%d", s_gfxFrameCapFps);
+            SetEnvironmentVariableA("MC2_FPS_CAP", fpsBuf);
+        } else {
+            SetEnvironmentVariableA("MC2_FPS_CAP", NULL);
+        }
+        SetEnvironmentVariableA("MC2_VSYNC", s_gfxVsync ? "1" : NULL);
+
         char mc2Path[MAX_PATH];
         _snprintf(mc2Path, sizeof(mc2Path), "%smc2.exe", s_launcherDir);
         SetCurrentDirectoryA(s_launcherDir);
@@ -1436,8 +2432,16 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR lpCmd, int) {
     ShowWindow(hwnd, SW_SHOW);
     UpdateWindow(hwnd);
 
+    // Restore last-used main-page selections (campaign, base, add-ons, faster-weapons).
+    // WM_CREATE has already built the fixed slots; restore runs after so all HWNDs exist.
+    RestoreMainPageSelections();
+
     MSG msg;
     while (GetMessageA(&msg, NULL, 0, 0)) {
+        // Route keyboard messages (Tab, Enter, Escape) to the modeless options
+        // dialog when it is open, so IsDialogMessage handles focus traversal.
+        if (s_hOptionsDlg   && IsDialogMessage(s_hOptionsDlg,   &msg)) continue;
+        if (s_hGraphicsDlg  && IsDialogMessage(s_hGraphicsDlg,  &msg)) continue;
         TranslateMessage(&msg);
         DispatchMessageA(&msg);
     }

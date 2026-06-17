@@ -669,6 +669,17 @@ static int s_staticPropDebugMaterialMode = []() {
 }();
 static bool s_materialKtxEnabled = (std::getenv("MC2_MATERIAL_KTX") != nullptr &&
                                      std::getenv("MC2_MATERIAL_KTX")[0] != '0');   // MC2_MATERIAL_KTX=1
+// MC2_STATICPROP_TEX_TIER: 128 | 256 | 512 (default) | 1024
+// Selects which cooked tier directory (data/tgl/<tier>/<name>.ktx2) is loaded
+// when MC2_MATERIAL_KTX=1. Launcher sets this from the Graphics / Texture Quality
+// slider; engine reads it once at process start.
+static int s_texTier = []() -> int {
+    const char* e = getenv("MC2_STATICPROP_TEX_TIER");
+    if (!e) return 512;
+    int v = atoi(e);
+    if (v == 128 || v == 256 || v == 1024) return v;
+    return 512;
+}();
 // COMPRESSION-BC7-STATICPROP-1: gate for BC7-compressed KTX2 static-prop arrays.
 // Default-OFF; effective only when s_materialKtxEnabled is also true. When the
 // per-group BC7 conditions (all-or-nothing + uniform-dim) are not met, the group
@@ -1015,6 +1026,32 @@ static std::string deriveOrmSidecar(const char* srcName) {
     if (dot != std::string::npos && (sep == std::string::npos || dot > sep))
         s.erase(dot);
     return s + ".orm.ktx2";
+}
+
+// MC2_STATICPROP_TEX_TIER — derive the tiered KTX2 path from a SOURCE texture name.
+// getTextureName() returns the .tga/.txm source path (e.g. "data/tgl/foo.tga").
+// This function constructs the tier-directory path:
+//   "data/tgl/foo.tga" + tier=512 -> "data/tgl/512/foo.ktx2"
+// The tier subdirectory is inserted between the parent directory and the filename.
+// If no tier directory is found the plain sidecar path (flat .ktx2) is returned
+// so the existing fallback / miss path handles it gracefully.
+static std::string deriveTieredKtxPath(const char* srcName, int tier) {
+    std::string s(srcName ? srcName : "");
+    // Strip extension: find last dot after the last path separator.
+    const size_t sep = s.find_last_of("/\\");
+    const size_t dot = s.find_last_of('.');
+    if (dot != std::string::npos && (sep == std::string::npos || dot > sep))
+        s.erase(dot);
+    // s is now the path without extension, e.g. "data/tgl/foo"
+    // Find the last separator again to split directory from filename stem.
+    const size_t lastSep = s.find_last_of("/\\");
+    if (lastSep == std::string::npos) {
+        // No directory component — just prepend tier and append .ktx2.
+        return std::to_string(tier) + "/" + s + ".ktx2";
+    }
+    // Insert tier directory: "data/tgl" + "/" + "512" + "/" + "foo" + ".ktx2"
+    return s.substr(0, lastSep + 1) + std::to_string(tier) + "/"
+           + s.substr(lastSep + 1) + ".ktx2";
 }
 
 // COMPRESSION-BC7-STATICPROP-2 — release all bucketed arrays + reset the
@@ -2235,6 +2272,11 @@ void GpuStaticPropBatcher::registerMultiShape(TG_TypeMultiShape* multiShape, boo
 void GpuStaticPropBatcher::finalizeGeometry() {
     if (s_geometryFinalized) return;
 
+    // One-shot log: always emit so the log confirms which tier is active.
+    std::printf("[StaticPropBatcher] tex tier: %dpx (MC2_STATICPROP_TEX_TIER)"
+                " ktx=%s\n", s_texTier, s_materialKtxEnabled ? "ON" : "OFF");
+    std::fflush(stdout);
+
     GpuStaticPropRegistry::staticPropRegistryClearMaterialCache();
     s_packetTexArrayLayer.clear();  // v2: will be repopulated from layerForPacket below
 
@@ -2741,10 +2783,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                 if (u.nodeIdx == 0xFFFFFFFFu) { bc7Ok = false; failReason = "load_fail"; break; }
                 const char* srcName = mcTextureManager->getTextureName(u.nodeIdx);
                 if (!srcName || !*srcName) { bc7Ok = false; failReason = "load_fail"; break; }
-                std::string ktxPath(srcName);
-                const auto dot = ktxPath.rfind('.');
-                if (dot != std::string::npos) ktxPath.replace(dot, std::string::npos, ".ktx2");
-                else                          ktxPath += ".ktx2";
+                const std::string ktxPath = deriveTieredKtxPath(srcName, s_texTier);
                 if (!RenderCore::ktxLoadRgba8(ktxPath.c_str(), bc7Imgs[k])) {
                     bc7Ok = false; failReason = "load_fail"; break;
                 }
@@ -2819,10 +2858,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             if (s_materialKtxEnabled && u.nodeIdx != 0xFFFFFFFFu && mcTextureManager) {
                 const char* srcName = mcTextureManager->getTextureName(u.nodeIdx);
                 if (srcName && *srcName) {
-                    std::string ktxPath(srcName);
-                    const auto dot = ktxPath.rfind('.');
-                    if (dot != std::string::npos) ktxPath.replace(dot, std::string::npos, ".ktx2");
-                    else                          ktxPath += ".ktx2";
+                    const std::string ktxPath = deriveTieredKtxPath(srcName, s_texTier);
                     RenderCore::KtxImage ktxImg;
                     const bool ktxOk = RenderCore::ktxLoadRgba8(ktxPath.c_str(), ktxImg);
                     // Reject compressed sidecars here — block bytes are not RGBA8.
@@ -3362,10 +3398,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                 if (u.nodeIdx == 0xFFFFFFFFu) { bc7Ok = false; failReason = "load_fail"; break; }
                 const char* srcName = mcTextureManager->getTextureName(u.nodeIdx);
                 if (!srcName || !*srcName) { bc7Ok = false; failReason = "load_fail"; break; }
-                std::string ktxPath(srcName);
-                const auto dot = ktxPath.rfind('.');
-                if (dot != std::string::npos) ktxPath.replace(dot, std::string::npos, ".ktx2");
-                else                          ktxPath += ".ktx2";
+                const std::string ktxPath = deriveTieredKtxPath(srcName, s_texTier);
                 if (!RenderCore::ktxLoadRgba8(ktxPath.c_str(), bc7Imgs[k])) {
                     bc7Ok = false; failReason = "load_fail"; break;
                 }
@@ -3489,14 +3522,8 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             if (s_materialKtxEnabled && u.nodeIdx != 0xFFFFFFFFu && mcTextureManager) {
                 const char* srcName = mcTextureManager->getTextureName(u.nodeIdx);
                 if (srcName && *srcName) {
-                    // Derive .ktx2 sidecar path by replacing extension.
-                    std::string ktxPath(srcName);
-                    const auto dot = ktxPath.rfind('.');
-                    if (dot != std::string::npos) {
-                        ktxPath.replace(dot, std::string::npos, ".ktx2");
-                    } else {
-                        ktxPath += ".ktx2";
-                    }
+                    // Derive tiered .ktx2 path: data/tgl/<tier>/foo.ktx2
+                    const std::string ktxPath = deriveTieredKtxPath(srcName, s_texTier);
                     RenderCore::KtxImage ktxImg;
                     const bool ktxOk = RenderCore::ktxLoadRgba8(ktxPath.c_str(), ktxImg);
                     // This RGBA8 upload path cannot consume compressed (BC7) KTX2:

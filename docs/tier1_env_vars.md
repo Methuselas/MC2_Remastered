@@ -12,6 +12,7 @@
 - `MC2_IMGUI_INSPECTOR=1` — inspector panel. Default **OFF**. Requires `MC2_IMGUI`.
 - `MC2_DEBUG_RENDERER=1` — debug overlay. Requires `MC2_IMGUI_INSPECTOR`.
 - `MC2_STATIC_PROP_REGISTRY=1` — GpuStaticPropRegistry. Default **ON**. Editor sets `=0`.
+- `MC2_HDRI_BC6H` — upload HDRI sky as BC6H_UFLOAT (requires `.ktx2` sidecar + `GL_ARB_texture_compression_bptc`). Default **ON** (absent = ON; set `=0` to force RGBA16F fallback). Sidecar cooked via `tools/cook_bc6h_hdri.py`.
 
 ## SPFLUSH cost-split decomposition (SPFLUSH-COST-SPLIT-1)
 
@@ -48,6 +49,7 @@
 - `MC2_SHADOW_CSM_COUNT` — cascade count. Default **3** (R0 near / R1 mid / full-map far).
 - `MC2_SHADOW_CSM_SOFTNESS` — PCF softness. Default **0.9**.
 - `MC2_SHADOW_OBJ_NORMAL_BIAS` — object self-shadow normal-offset bias (kills residual acne). Default **2.0**.
+- `MC2_SHADOW_MECH_SOFT` — mech self-shadow softness (wider PCF penumbra + terminator smoothstep so flat low-poly facets fade instead of flip + raised floor). Default **1.0**, clamp [0,4]. Object self-shadow is now per-type via GBuffer1.a mask: terrain skip / static-prop NO self-shadow / mech soft (`3253d582`).
 - `MC2_SHADOW_PROP_ALPHA` — tree-foliage shadow alpha-test (`shadow_static_prop.frag`, legacy texture path only). Default **ON**.
 - `MC2_CLOUD_SHADOW` — cloud-shadow pass. Default **ON**.
 - **DEBUG-only:** `MC2_SHADER_PATH_TINT` (shader-path tint); `MC2_TERRAIN_DEBUG_MODE` / `MC2_TERRAIN_LOD_CHUNK_DIAG` = **30/31** = dynamic-shadow viz.
@@ -204,3 +206,55 @@ call from inside a draw-bind path.
   seconds, driven off the shared S9D fixed sim-frame counter via `SmokeMode::fixedClockSeconds()`),
   so frame N renders identically every run. Makes sim speed fps-proportional → it is a
   CAPTURE/DETERMINISM knob, **NOT** for full-duration regression smokes.
+
+## Diagnostic JSONL trace (diagnostic_trace.cpp — 2026-06-17)
+
+Structured per-event JSONL output replacing env-gated stderr prints.
+Survives normal exits and most crashes better than stderr.
+Crash handlers still write to stderr as the last-resort path.
+
+- `MC2_DIAGNOSTIC_TRACE_FILE=<path>` — JSONL output file. Default: `debug_state/diagnostic_trace.jsonl`. Set to `off` to disable.
+- `MC2_DIAG_TAGS=<list>` — comma-separated tag whitelist. Controls which tags write events.
+  - Unset: default high-value whitelist (`GPU_CULL,LIGHTBAKE_PROOF,ANIM_GATE,SPFLUSH_COST_SPLIT,CONFIG,BUILD,DEVICE,SHADER_COMPILE`).
+  - `*` — all registered tags.
+  - `none` — disable JSONL output entirely.
+  - Unknown tag names in list → startup warning to stderr, tag ignored.
+
+### Per-event format
+
+```json
+{"tag":"GPU_CULL","v":1,"session_id":"12345-1718616000000","pid":12345,"tid":6789,"frame":1234,"ts_ms":16234,"written_epoch":1718616016.234,"data":{...}}
+```
+
+### Registered tags
+
+| Tag | Source | Replaces |
+|---|---|---|
+| `GPU_CULL` | GPU cull readback | `MC2_GPU_CULL_READBACK_TRACE=1` stderr |
+| `LIGHTBAKE_PROOF` | Light bake parity | `MC2_LIGHTBAKE_PARITY` stderr |
+| `ANIM_GATE` | Animation eligibility summary | `MC2_BLDG_TYPE_ANIM_STATIC_ELIGIBLE` stderr |
+| `SPFLUSH_COST_SPLIT` | Static prop flush perf | `MC2_STATIC_PROP_FLUSH_COST_SPLIT=1` stderr |
+| `TerrainLOD_prod` | Terrain chunk production telemetry | `[TerrainLOD prod]` stderr |
+| `TERRAIN_ACTIVE_AB` | A/B false-negative counts | `MC2_TERRAIN_ACTIVE_AB` stderr |
+| `TERRAIN_SOLID_AB` | Solid window A/B counts | `MC2_TERRAIN_SOLID_AB` stderr |
+| `CONFIG` | Feature gate snapshot at startup | (new) |
+| `BUILD` | Build identity at startup | (new) |
+| `DEVICE` | GPU/driver info at startup | (new) |
+| `SHADER_COMPILE` | Shader compile results | (new) |
+
+### MCP query
+
+Sessions query via `get_diagnostic_events(tag, last_n)` instead of reading log files:
+```
+get_diagnostic_events("GPU_CULL", 20)     → last 20 GPU_CULL events
+get_diagnostic_events("*", 50)            → last 50 events of any tag
+```
+Unknown tag → error with known tag list. Known tag with no events → empty list.
+
+### Rotation
+
+At engine startup, if `diagnostic_trace.jsonl` exceeds 10 MB, it is renamed to `diagnostic_trace.prev.jsonl` and a fresh file is started. Previous run's trace is preserved in `.prev.jsonl`.
+
+### Flush policy
+
+Each event is flushed immediately (`fflush`) for crash-survival on most platforms. `mc2_diag::flush()` may be called from crash handlers (no allocation). Full crash survival (hardware fault, SIGKILL, kernel panic) is not guaranteed without `fsync`/`FlushFileBuffers`, which is too expensive per-event.

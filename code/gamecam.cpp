@@ -416,23 +416,24 @@ void GameCamera::render (void)
 				gos_InvalidateRenderStateCache();
 			}
 
-			// Vegetation card flush — instanced crossed-quad billboards, default-OFF
-			// (MC2_VEGETATION_CARDS=1). MUST run after renderLists so the scene
-			// depth buffer is populated for z-rejection. After water so vegetation
-			// alpha-discard correctly occludes/is-occluded by terrain+water.
-			// Before particles: vegetation is opaque/alpha-test (not additive blend).
-			// gos_GetTerrainLightDir and time sourced inside VegetationAdapter::flush.
-			// No-op when vegetation system is not initialised or flag is unset.
+			// Vegetation ground-patch flush — instanced flat quads, default-OFF
+			// (MC2_VEGETATION_CARDS=1). After renderLists+water, before particles.
+			// Matrix sourced inside flush via gos_GetTerrainMVPMat4() (terrain-chunk space).
 			{
 				ZoneScopedN("GameCamera::render vegetationFlush");
-				Stuff::Matrix4D worldToClipGL = eye->worldToClipGL();
-				Stuff::Vector3D camPos = eye->getPosition();
 				float lx = 0.0f, ly = 0.0f, lz = 1.0f;
 				gos_GetTerrainLightDir(&lx, &ly, &lz);
 				const float terrainLightDir_4f[4] = { lx, ly, lz, 0.0f };
 				const float missionTime = static_cast<float>(gos_GetElapsedTime());
-				GameAdapters::Vegetation::flush(worldToClipGL, camPos,
-				                                terrainLightDir_4f, missionTime);
+				// Camera position in terrain-chunk space for wind LOD + brightness.
+				// Chunk space: x = east_centered, y = north_centered (same as instance encode).
+				Stuff::Vector3D vegCamOrig = getCameraOrigin();
+				const float vegHalfMap = Terrain::worldUnitsMapSide * 0.5f;
+				const float vegCamCX = vegCamOrig.x - Terrain::mapTopLeft3d.x - vegHalfMap;
+				const float vegCamCY = vegCamOrig.y - Terrain::mapTopLeft3d.y + vegHalfMap;
+				const float vegCamCZ = vegCamOrig.z;
+				GameAdapters::Vegetation::flush(terrainLightDir_4f, missionTime,
+				                                vegCamCX, vegCamCY, vegCamCZ);
 			}
 
 			// GPU particle batcher flush — Stage 2' and beyond.
@@ -813,7 +814,11 @@ long GameCamera::activate (void)
 	theSky->init((GenericAppearanceType*)genericAppearanceType, NULL);
 	
 	theSky->setSkyNumber(mission->theSkyNumber);
-			
+
+	// HDRI-SKY-NUMBER-1: swap the HDRI equirect sky to the mood-appropriate
+	// asset for this mission's sky number (IblHdriRegistry mapping).
+	GameAdapters::Sky::setSkyNumber(static_cast<int>(mission->theSkyNumber));
+
  	return NO_ERR;
 }
 

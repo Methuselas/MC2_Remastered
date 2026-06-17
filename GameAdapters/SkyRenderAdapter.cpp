@@ -48,5 +48,12 @@ void renderHdriInvVP(const float* invVP16)
     pp->renderHdriSkyboxInvVP(invVP16);
 }
 
+void setSkyNumber(int skyNumber)
+{
+    gosPostProcess* pp = getGosPostProcess();
+    if (!pp) return;
+    pp->setSkyNumber(skyNumber);
+}
+
 }  // namespace Sky
 }  // namespace GameAdapters
