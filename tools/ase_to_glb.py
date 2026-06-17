@@ -681,7 +681,8 @@ def build_glb_data(all_geom, materials, helper_objects=None):
 
         mesh_name = obj.node_name if obj.node_name else f'mesh_{len(gltf_meshes)}'
         gltf_meshes.append({'name': mesh_name, 'primitives': primitives})
-        node = {'name': obj.node_name, 'mesh': len(gltf_meshes) - 1}
+        node = {'name': obj.node_name, 'mesh': len(gltf_meshes) - 1,
+                '_parent_name': obj.parent_name}  # temp field, removed below
         gltf_nodes.append(node)
 
     # Add helper objects (joints, hardpoints) as empty nodes
@@ -694,14 +695,41 @@ def build_glb_data(all_geom, materials, helper_objects=None):
                 helper_node = {
                     'name': h.node_name,
                     'translation': [round(tx, 6), round(ty, 6), round(tz, 6)],
+                    '_parent_name': h.parent_name,  # temp field, removed below
                 }
                 gltf_nodes.append(helper_node)
                 existing_names.add(h.node_name)
 
+    # ------------------------------------------------------------------
+    # P1-C: wire parent-child node hierarchy
+    # ------------------------------------------------------------------
+    # Build name -> index map for all nodes in this GLB
+    node_name_to_idx = {n['name']: idx for idx, n in enumerate(gltf_nodes) if n.get('name')}
+
+    # For each node, attach children list to its parent
+    for idx, node in enumerate(gltf_nodes):
+        parent_name = node.pop('_parent_name', '')
+        # A node is a root if it has no parent, or if its parent is not in our set
+        if parent_name and parent_name in node_name_to_idx:
+            parent_idx = node_name_to_idx[parent_name]
+            parent_node = gltf_nodes[parent_idx]
+            if 'children' not in parent_node:
+                parent_node['children'] = []
+            parent_node['children'].append(idx)
+
+    # Scene root nodes: only those whose _parent_name was absent or unresolved
+    # We already popped _parent_name above, so re-derive from ASE source:
+    # root = any node not appearing as a child of another
+    child_indices = set()
+    for node in gltf_nodes:
+        for c in node.get('children', []):
+            child_indices.add(c)
+    root_indices = [i for i in range(len(gltf_nodes)) if i not in child_indices]
+
     gltf = {
         'asset': {'version': '2.0', 'generator': 'mc2-ase_to_glb'},
         'scene': 0,
-        'scenes': [{'nodes': list(range(len(gltf_nodes)))}],
+        'scenes': [{'nodes': root_indices}],
         'nodes': gltf_nodes,
         'meshes': gltf_meshes,
         'accessors': gltf_accessors,
@@ -716,7 +744,8 @@ def build_glb_data(all_geom, materials, helper_objects=None):
         gltf['images'] = gltf_images
 
     stats = {'vertex_count': total_verts, 'triangle_count': total_tris,
-             'mesh_count': len(gltf_meshes), 'material_count': len(gltf_materials)}
+             'mesh_count': len(gltf_meshes), 'material_count': len(gltf_materials),
+             'node_count': len(gltf_nodes), 'root_node_count': len(root_indices)}
     return gltf, buf, stats
 
 
@@ -885,7 +914,8 @@ def main():
     print("Building GLB data...")
     gltf, binary, stats = build_glb_data(geom_objects, materials, helper_objects)
     print(f"  vertices={stats['vertex_count']}, triangles={stats['triangle_count']}, "
-          f"meshes={stats['mesh_count']}, materials={stats['material_count']}")
+          f"meshes={stats['mesh_count']}, materials={stats['material_count']}, "
+          f"nodes={stats['node_count']}, root_nodes={stats['root_node_count']}")
 
     os.makedirs(os.path.dirname(os.path.abspath(args.out_glb)), exist_ok=True)
     write_glb(gltf, binary, args.out_glb)
