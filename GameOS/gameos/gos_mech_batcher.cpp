@@ -243,6 +243,32 @@ static float s_mechGlassMaxChanThresh = []() {
 }();
 static bool  s_mechSpecDebugMask = false;  // ImGui only; no env var
 
+// PBR-TUNE-1: StandardLit GGX gate + material influence knobs.
+// Mutable so ImGui can dial live (batcher_setStandardLitEnabled / batcher_setPbr*).
+// Env-seeded defaults; no VBO rebuild needed (per-flush uniforms).
+static int   s_standardLitEnabled = []() {
+    const char* v = std::getenv("MC2_STANDARD_LIT_V1");
+    return (v && v[0] == '1') ? 1 : 0;
+}();
+static float s_pbrMetallicInfluence = []() {
+    const char* v = std::getenv("MC2_PBR_METALLIC_INFLUENCE");
+    return v ? (float)std::atof(v) : 0.15f;
+}();
+static float s_pbrRoughnessMin = []() {
+    const char* v = std::getenv("MC2_PBR_ROUGHNESS_MIN");
+    float d = v ? (float)std::atof(v) : 0.45f;
+    return d;
+}();
+static float s_pbrRoughnessMax = []() {
+    const char* v = std::getenv("MC2_PBR_ROUGHNESS_MAX");
+    float d = v ? (float)std::atof(v) : 0.90f;
+    return d;
+}();
+static float s_pbrAmbientSpecularStrength = []() {
+    const char* v = std::getenv("MC2_PBR_AMBIENT_SPECULAR");
+    return v ? (float)std::atof(v) : 0.25f;
+}();
+
 // Cached uniform locations (set at program link time).
 static GLint s_loc_u_instanceBase    = -1;
 static GLint s_loc_u_materialFlags   = -1;
@@ -1935,43 +1961,16 @@ void GpuMechBatcher::flush() {
         glUniform1f(s_loc_u_mechGlassMaxChanThresh, s_mechGlassMaxChanThresh);
     if (s_loc_u_mechSpecDebugMask >= 0)
         glUniform1i(s_loc_u_mechSpecDebugMask, s_mechSpecDebugMask ? 1 : 0);
-    // Slice C1: StandardLit feature gate (default OFF: MC2_STANDARD_LIT_V1=1 to enable).
-    // glGetUniformLocation returns -1 when the shader lacks the uniform; guard keeps this a no-op.
-    {
-        static const int s_standardLitEnabled = []() {
-            const char* v = std::getenv("MC2_STANDARD_LIT_V1");
-            return (v && v[0] == '1') ? 1 : 0;
-        }();
-        if (s_loc_u_standardLitEnabled >= 0)
-            glUniform1i(s_loc_u_standardLitEnabled, s_standardLitEnabled);
-    }
+    // Slice C1: StandardLit GGX gate (mutable via ImGui / batcher_setStandardLitEnabled).
+    if (s_loc_u_standardLitEnabled >= 0)
+        glUniform1i(s_loc_u_standardLitEnabled, s_standardLitEnabled);
 
     // PBR-TUNE-1: metallic influence, roughness clamp, ambient specular fill.
-    // Env: MC2_PBR_METALLIC_INFLUENCE (def 0.15), MC2_PBR_ROUGHNESS_MIN (def 0.45),
-    //      MC2_PBR_ROUGHNESS_MAX (def 0.90), MC2_PBR_AMBIENT_SPECULAR (def 0.25).
-    // All -1 guarded so no-op when shader lacks the uniform (non-viewuniforms variants).
-    {
-        static const float s_metInfluence = [](){
-            const char* v = std::getenv("MC2_PBR_METALLIC_INFLUENCE");
-            return v ? (float)std::atof(v) : 0.15f;
-        }();
-        static const float s_roughMin = [](){
-            const char* v = std::getenv("MC2_PBR_ROUGHNESS_MIN");
-            return v ? (float)std::atof(v) : 0.45f;
-        }();
-        static const float s_roughMax = [](){
-            const char* v = std::getenv("MC2_PBR_ROUGHNESS_MAX");
-            return v ? (float)std::atof(v) : 0.90f;
-        }();
-        static const float s_ambSpec = [](){
-            const char* v = std::getenv("MC2_PBR_AMBIENT_SPECULAR");
-            return v ? (float)std::atof(v) : 0.25f;
-        }();
-        if (s_loc_u_pbrMetallicInfluence      >= 0) glUniform1f(s_loc_u_pbrMetallicInfluence,       s_metInfluence);
-        if (s_loc_u_pbrRoughnessMin           >= 0) glUniform1f(s_loc_u_pbrRoughnessMin,            s_roughMin);
-        if (s_loc_u_pbrRoughnessMax           >= 0) glUniform1f(s_loc_u_pbrRoughnessMax,            s_roughMax);
-        if (s_loc_u_pbrAmbientSpecularStrength >= 0) glUniform1f(s_loc_u_pbrAmbientSpecularStrength, s_ambSpec);
-    }
+    // Mutable via ImGui / batcher_setPbr* accessors; env-seeded defaults.
+    if (s_loc_u_pbrMetallicInfluence      >= 0) glUniform1f(s_loc_u_pbrMetallicInfluence,       s_pbrMetallicInfluence);
+    if (s_loc_u_pbrRoughnessMin           >= 0) glUniform1f(s_loc_u_pbrRoughnessMin,            s_pbrRoughnessMin);
+    if (s_loc_u_pbrRoughnessMax           >= 0) glUniform1f(s_loc_u_pbrRoughnessMax,            s_pbrRoughnessMax);
+    if (s_loc_u_pbrAmbientSpecularStrength >= 0) glUniform1f(s_loc_u_pbrAmbientSpecularStrength, s_pbrAmbientSpecularStrength);
 
     // Projection uniforms — match static_prop batcher and the
     // terrain_overlay.vert convention: terrainMVP = CPU-composed
@@ -2444,6 +2443,31 @@ extern "C" void  batcher_setMechGlassMaxChanThresh(float t) {
 extern "C" float batcher_getMechGlassMaxChanThresh()         { return s_mechGlassMaxChanThresh; }
 extern "C" void  batcher_setMechSpecDebugMask(int on)        { s_mechSpecDebugMask = (on != 0); }
 extern "C" int   batcher_getMechSpecDebugMask()              { return s_mechSpecDebugMask ? 1 : 0; }
+
+// PBR-TUNE-1: StandardLit GGX toggle + material influence knobs.
+// All per-flush uniforms — no VBO rebuild needed.
+extern "C" void  batcher_setStandardLitEnabled(int on)  { s_standardLitEnabled = (on != 0) ? 1 : 0; }
+extern "C" int   batcher_getStandardLitEnabled()        { return s_standardLitEnabled; }
+extern "C" void  batcher_setPbrMetallicInfluence(float v) {
+    if (v < 0.0f) v = 0.0f; if (v > 1.0f) v = 1.0f;
+    s_pbrMetallicInfluence = v;
+}
+extern "C" float batcher_getPbrMetallicInfluence()      { return s_pbrMetallicInfluence; }
+extern "C" void  batcher_setPbrRoughnessMin(float v) {
+    if (v < 0.0f) v = 0.0f; if (v > 1.0f) v = 1.0f;
+    s_pbrRoughnessMin = v;
+}
+extern "C" float batcher_getPbrRoughnessMin()           { return s_pbrRoughnessMin; }
+extern "C" void  batcher_setPbrRoughnessMax(float v) {
+    if (v < 0.0f) v = 0.0f; if (v > 1.0f) v = 1.0f;
+    s_pbrRoughnessMax = v;
+}
+extern "C" float batcher_getPbrRoughnessMax()           { return s_pbrRoughnessMax; }
+extern "C" void  batcher_setPbrAmbientSpecularStrength(float v) {
+    if (v < 0.0f) v = 0.0f; if (v > 2.0f) v = 2.0f;
+    s_pbrAmbientSpecularStrength = v;
+}
+extern "C" float batcher_getPbrAmbientSpecularStrength() { return s_pbrAmbientSpecularStrength; }
 
 // batcher_rebuildMechNormals: re-upload the mech geometry VBO with the current
 // s_mechNormalsMode and s_mechNormalsSmoothDeg. No-op if geometry is not yet

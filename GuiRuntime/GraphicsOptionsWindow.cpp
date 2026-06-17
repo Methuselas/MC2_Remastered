@@ -92,6 +92,16 @@ extern "C" float batcher_getMechSpecularStrength(void);
 extern "C" void  batcher_setMechSpecularStrength(float s);
 extern "C" float batcher_getMechMetalRoughness(void);
 extern "C" void  batcher_setMechMetalRoughness(float r);
+extern "C" int   batcher_getStandardLitEnabled(void);
+extern "C" void  batcher_setStandardLitEnabled(int on);
+extern "C" float batcher_getPbrMetallicInfluence(void);
+extern "C" void  batcher_setPbrMetallicInfluence(float v);
+extern "C" float batcher_getPbrRoughnessMin(void);
+extern "C" void  batcher_setPbrRoughnessMin(float v);
+extern "C" float batcher_getPbrRoughnessMax(void);
+extern "C" void  batcher_setPbrRoughnessMax(float v);
+extern "C" float batcher_getPbrAmbientSpecularStrength(void);
+extern "C" void  batcher_setPbrAmbientSpecularStrength(float v);
 extern "C" float batcher_getMechGlassRoughness(void);
 extern "C" void  batcher_setMechGlassRoughness(float r);
 // VFX-TUNING-UI-1: GPU particle debug-mode + intensity scales (defined in
@@ -1668,6 +1678,54 @@ static void drawMechSection() {
     if (ImGui::SmallButton("Reset##mechgr")) batcher_setMechGlassRoughness(0.25f);
 
     ImGui::TextDisabled("ambient/specular strength also settable via visual_tuning.json");
+
+    ImGui::Spacing();
+    ImGui::SeparatorText("StandardLit GGX (MC2_STANDARD_LIT_V1)");
+    {
+        bool slOn = batcher_getStandardLitEnabled() != 0;
+        if (ImGui::Checkbox("StandardLit GGX##mech", &slOn))
+            batcher_setStandardLitEnabled(slOn ? 1 : 0);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Cook-Torrance GGX PBR on mechs (MC2_STANDARD_LIT_V1=1).\n"
+                              "Requires MC2_MECH_SURFACE_MATERIAL=metal061b + viewuniforms path.\n"
+                              "Default OFF (Blinn-Phong passthrough, byte-identical).");
+
+        float mi = batcher_getPbrMetallicInfluence();
+        if (ImGui::SliderFloat("Metallic influence##pbr", &mi, 0.0f, 1.0f, "%.2f"))
+            batcher_setPbrMetallicInfluence(mi);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Scale ORM metallic channel. Low = painted dielectric look.\n"
+                              "High metallic + no IBL = black armour. Default: 0.15");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##pbrmi")) batcher_setPbrMetallicInfluence(0.15f);
+
+        float rMin = batcher_getPbrRoughnessMin();
+        if (ImGui::SliderFloat("Roughness min##pbr", &rMin, 0.0f, 1.0f, "%.2f"))
+            batcher_setPbrRoughnessMin(rMin);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Floor for ORM roughness. Prevents mirror-like armour.\n"
+                              "Default: 0.45");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##pbrrmin")) batcher_setPbrRoughnessMin(0.45f);
+
+        float rMax = batcher_getPbrRoughnessMax();
+        if (ImGui::SliderFloat("Roughness max##pbr", &rMax, 0.0f, 1.0f, "%.2f"))
+            batcher_setPbrRoughnessMax(rMax);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Ceiling for ORM roughness. Prevents fully matte armour.\n"
+                              "Default: 0.90");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##pbrrmax")) batcher_setPbrRoughnessMax(0.90f);
+
+        float as = batcher_getPbrAmbientSpecularStrength();
+        if (ImGui::SliderFloat("Ambient specular##pbr", &as, 0.0f, 2.0f, "%.2f"))
+            batcher_setPbrAmbientSpecularStrength(as);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Fake env fill for metals (no IBL). Prevents pure-metal\n"
+                              "armour going black. Default: 0.25");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##pbras")) batcher_setPbrAmbientSpecularStrength(0.25f);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
