@@ -3,11 +3,14 @@
 // Material profile name registry.
 // Each profile maps to one MaterialGpu entry in a dedicated profile SSBO.
 //
+// In mech.frag, the buffer block must use binding=7 and a distinct name (e.g. MechMaterialTable)
+// to avoid collision with static-prop materialTable_ at binding=5.
+//
 // This system manages GLOBALLY-LOADED material profiles (Normal + ORM textures
 // for named surface types like "metal061b"). It is DISTINCT from the per-actor
 // mech material table in gos_mech_batcher.cpp (which stores per-actor albedo
-// texHandle at binding 2). This table lives at binding 5 (shared with the
-// static-prop table; only one table is active per draw call type).
+// texHandle at binding 2). This table lives at binding 7 (binding 5 is owned by
+// the static-prop batcher; see D-material-unify debt to consolidate later).
 //
 // Texture semantic for this table: RawGlId
 //   normalTex             = raw GL texture object (GL_RGB8, linear, tangent-space NM)
@@ -30,7 +33,7 @@
 // Usage (Slice C -- gos_mech_batcher.cpp):
 //   gos_materials::init()  -- once, from map load / startup, before flush
 //   uint32_t idx = gos_materials::getProfileIndex("metal061b");
-//   gos_materials::bindMaterialTable();  -- binding 5, before draw
+//   gos_materials::bindMaterialTable();  -- binding 7, before draw
 //
 // IMPORTANT: do not call init() more than once per process (idempotent guard inside).
 //
@@ -56,7 +59,7 @@ uint32_t getProfileIndex(const char* name);
 // Returns the number of registered profiles (includes index-0 default entry).
 uint32_t profileCount();
 
-// Binds the profile SSBO to GL_SHADER_STORAGE_BUFFER binding 5.
+// Binds the profile SSBO to GL_SHADER_STORAGE_BUFFER binding 7.
 // No-op when MC2_MATERIAL_GPU=0, init() has not been called, or the SSBO
 // handle is 0 (empty table -- only the default entry exists but no GL buffer
 // was created because no textured profiles were registered).

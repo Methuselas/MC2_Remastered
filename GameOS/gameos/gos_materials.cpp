@@ -55,8 +55,12 @@ std::unordered_map<std::string, uint32_t> s_nameToIndex;
 GLuint                                    s_ssbo = 0;
 bool                                      s_initialized = false;
 
+// Binding 7: mech material profile table (temporary; binding 5 owned by static-prop batcher).
+// Debt: D-material-unify — unify static-props and mechs under shared gos_materials table on binding 5.
+constexpr GLuint kMechMaterialTableBinding = 7;
+
 // ---------------------------------------------------------------------------
-// Helper: upload profile table to SSBO at binding 5.
+// Helper: upload profile table to SSBO at binding 7.
 // ---------------------------------------------------------------------------
 static void uploadSsbo() {
     if (!s_gpuEnabled) return;
@@ -383,7 +387,7 @@ uint32_t profileCount() {
 void bindMaterialTable() {
     if (!s_gpuEnabled) return;
     if (s_ssbo == 0) return;
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, s_ssbo);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, kMechMaterialTableBinding, s_ssbo);
 }
 
 } // namespace gos_materials
