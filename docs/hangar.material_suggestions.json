@@ -8,9 +8,10 @@
       "material_name": "Hangar",
       "legacy_texture": "A_Hangar.tga",
       "guessed_class": "corrugated_steel_painted",
-      "confidence": 0.85,
+      "auto_confidence": 0.85,
+      "needs_review": true,
+      "reviewed": false,
       "reason": "keywords ['hangar'] in material name 'Hangar' and texture 'A_Hangar.tga' \u2192 corrugated_steel_painted",
-      "needs_review": false,
       "profile_defaults": {
         "metallic": 0.0,
         "roughness": 0.7,

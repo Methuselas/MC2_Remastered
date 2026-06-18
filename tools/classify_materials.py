@@ -11,6 +11,17 @@ Usage:
         --out OUTPUT.json [--asset-name NAME]
 
 Stdlib only, no pip dependencies.
+
+Review workflow
+---------------
+Every slot is emitted with "needs_review": true and "reviewed": false.
+This tool NEVER auto-clears needs_review, even for high-confidence guesses.
+After inspecting a slot, set manually in the output JSON:
+    "reviewed": true, "approved_class": "<class>"
+The "auto_confidence" field records the classifier's raw score for reference
+only — it does not gate approval.
+# After review, set: "reviewed": true, "approved_class": "<class>"
+# The "needs_review": true field is always set by this tool (never auto-cleared).
 """
 import argparse
 import json
@@ -258,26 +269,28 @@ def build_slots(materials):
             for sub_idx, sub in enumerate(mat.submaterials):
                 cls, conf, reason = classify(sub.name, sub.bitmap)
                 slot = {
-                    'slot':           '{}.{}'.format(parent_idx, sub_idx),
-                    'material_name':  sub.name,
-                    'legacy_texture': sub.bitmap or None,
-                    'guessed_class':  cls,
-                    'confidence':     round(conf, 4),
-                    'reason':         reason,
-                    'needs_review':   conf < 0.80,
+                    'slot':             '{}.{}'.format(parent_idx, sub_idx),
+                    'material_name':    sub.name,
+                    'legacy_texture':   sub.bitmap or None,
+                    'guessed_class':    cls,
+                    'auto_confidence':  round(conf, 4),
+                    'needs_review':     True,
+                    'reviewed':         False,
+                    'reason':           reason,
                     'profile_defaults': build_profile_defaults(cls),
                 }
                 slots.append(slot)
         else:
             cls, conf, reason = classify(mat.name, mat.bitmap)
             slot = {
-                'slot':           parent_idx,
-                'material_name':  mat.name,
-                'legacy_texture': mat.bitmap or None,
-                'guessed_class':  cls,
-                'confidence':     round(conf, 4),
-                'reason':         reason,
-                'needs_review':   conf < 0.80,
+                'slot':             parent_idx,
+                'material_name':    mat.name,
+                'legacy_texture':   mat.bitmap or None,
+                'guessed_class':    cls,
+                'auto_confidence':  round(conf, 4),
+                'needs_review':     True,
+                'reviewed':         False,
+                'reason':           reason,
                 'profile_defaults': build_profile_defaults(cls),
             }
             slots.append(slot)
