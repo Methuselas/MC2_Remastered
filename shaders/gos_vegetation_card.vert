@@ -18,7 +18,7 @@ layout(location=1) in vec2 a_uv;
 layout(location=2) in vec3  i_worldPos;   // (east_centered, north_centered, elevation)
 layout(location=3) in float i_yaw;        // rotation about elevation axis (radians)
 layout(location=4) in float i_scale;      // card height in WU (also controls width)
-layout(location=5) in uint  i_atlasFrame; // 0..7
+layout(location=5) in uint  i_atlasFrame; // bits 0-3 = atlas index (0..7); bits 4-5 = card role (0=vertical,1=tilted,2=top)
 layout(location=6) in float i_seed;       // per-instance random [0,1]
 // location 7 removed — blockIdx computed in shader from world position
 
@@ -53,19 +53,18 @@ out float v_cardBottom;   // 1=roots, 0=tips
 out float v_seed;
 out vec3  v_worldPos;
 out float v_lodFade;      // 1.0=LOD0 full, 0.4=LOD1 dithered, 0.0=culled (unused in frag)
+out float v_tilt;         // 0.0=vertical, 0.5=tilted, 1.0=top/cap — role for frag alpha/dim
 
 void main()
 {
-    // 2-row × 4-col atlas (2048×1024).
-    uint frameCol = i_atlasFrame % 4u;
-    uint frameRow = i_atlasFrame / 4u;
+    // Atlas UV: lower 4 bits = atlas index; bits 4-5 = card role.
+    uint atlasIdx = i_atlasFrame & 0x0Fu;
+    uint frameCol = atlasIdx % 4u;
+    uint frameRow = atlasIdx / 4u;
     v_atlasUV = vec2(a_uv.x * 0.25 + float(frameCol) * 0.25,
                      float(frameRow) * 0.5 + (1.0 - a_uv.y) * 0.5);
 
     // Compute terrain block index from world position at render time.
-    // i_worldPos is in terrain-chunk space (east/north centered).
-    // bCol = (gameWorldX - originX) / blockSide = (i_worldPos.x + mapHalf) / blockSide
-    // bRow = (originY   - gameWorldY) / blockSide = (-i_worldPos.y + mapHalf) / blockSide
     uint blockIdx = 0u;
     float lodFade = 1.0;
     if (u_chunkSide > 0 && u_blockSideWU > 0.0) {
@@ -74,52 +73,53 @@ void main()
         blockIdx  = uint(bRow * u_chunkSide + bCol);
         uint lodVis = (u_forceVisible != 0) ? 2u : b_blockVis[blockIdx];
         if (lodVis == 0u) {
-            // Cull: clip to outside NDC — all 8 verts of the crossed-quad
             gl_Position  = vec4(2.0, 2.0, 2.0, 1.0);
             v_atlasUV    = vec2(0.0); v_camDist = 0.0; v_camTrueDist = 0.0;
             v_cardBottom = 0.0;       v_seed    = 0.0; v_worldPos    = vec3(0.0);
-            v_lodFade    = 0.0;
+            v_lodFade    = 0.0;       v_tilt    = 0.0;
             return;
         }
-        // 2u = LOD0 (close, full density).  1u = LOD1 (far, Bayer-dithered in frag).
-        // LOD1 flat-card was replaced by vertical cards everywhere; flat mode removed.
         lodFade = (lodVis >= 2u) ? 1.0 : 0.4;
     }
 
-    // LOD0 = vertical crossed-quad billboard (full 3D card).
-    // LOD1 = flat horizontal ground patch: card lies on terrain surface.
-    //   a_card.x → east/north spread (unchanged),
-    //   a_card.y → second horizontal axis instead of height (rotated 90° in tangent plane),
-    //   Z stays at i_worldPos.z (ground level).
-    // This makes LOD1 look like a ground-cover patch rather than a floating billboard.
-    float vertFactor = (lodFade >= 1.0) ? 1.0 : 0.0;  // 1=vertical (LOD0), 0=flat (LOD1)
-    float flatFactor = 1.0 - vertFactor;
+    // Card role from bits 4-5 of i_atlasFrame:
+    //   0 = vertical (~55% of instances, 0° tilt)
+    //   1 = tilted   (~30% of instances, 45° from vertical)
+    //   2 = top/cap  (~15% of instances, 80° from vertical — nearly horizontal)
+    uint  cardRole  = (i_atlasFrame >> 4u) & 0x3u;
+    float tiltAngle = (cardRole == 2u) ? 1.3963 : (cardRole == 1u) ? 0.7854 : 0.0;
+    float vertFactor = cos(tiltAngle);  // 1.0 / 0.707 / 0.174
+    float flatFactor = sin(tiltAngle);  // 0.0 / 0.707 / 0.985
+
+    // Top/cap cards are smaller so they don't dominate the silhouette.
+    float effectiveScale = i_scale * (cardRole == 2u ? 0.6 : 1.0);
 
     float totalYaw = i_yaw + a_card.z;
     float cy = cos(totalYaw), sy = sin(totalYaw);
 
-    // Horizontal spread (both modes): a_card.x rotated by totalYaw
+    // Horizontal spread: a_card.x rotated by totalYaw.
     float eastFromX  = a_card.x * cy;
     float northFromX = a_card.x * sy;
-    // Vertical-mode: a_card.y goes straight up.
-    // Flat-mode:     a_card.y goes into the perpendicular horizontal axis (−sy, cy).
+    // Vertical component: a_card.y rises if vertFactor>0, spreads outward if flatFactor>0.
+    // Outward direction = perpendicular to card face = (−sy, cy).
     float eastFromY  = -a_card.y * sy * flatFactor;
     float northFromY =  a_card.y * cy * flatFactor;
     float upFromY    =  a_card.y      * vertFactor;
 
-    // Wind sway — vertical cards only (flat cards are ground, no sway)
-    float trueDist  = length(i_worldPos - u_cameraPos);
-    float windFade  = 1.0 - smoothstep(300.0, 450.0, trueDist);
-    float windPhase = u_time * 1.8 + i_worldPos.x * 0.07 + i_worldPos.y * 0.11 + i_seed * 6.28;
-    float sway = sin(windPhase) * a_card.y * 0.06 * i_scale * windFade * vertFactor;
-
-    // Flat cards use 2× scale in horizontal so they cover more ground area
-    float scaleMult = 1.0 + flatFactor * 1.5;  // LOD0=1.0, LOD1=2.5
+    // Wind: two overlapping harmonics for organic, non-repeating motion.
+    // Top cards are lightly damped (horizontal face catches less lateral wind).
+    float trueDist   = length(i_worldPos - u_cameraPos);
+    float windFade   = 1.0 - smoothstep(300.0, 450.0, trueDist);
+    float windPhase1 = u_time * 1.8 + i_worldPos.x * 0.07 + i_worldPos.y * 0.11 + i_seed * 6.28;
+    float windPhase2 = u_time * 2.7 + i_worldPos.x * 0.13 + i_worldPos.y * 0.17 + i_seed * 3.14;
+    float windNoise  = sin(windPhase1) * 0.75 + sin(windPhase2) * 0.25;
+    float windStr    = (cardRole == 2u) ? 0.03 : 0.06;
+    float sway = windNoise * a_card.y * windStr * effectiveScale * windFade * vertFactor;
 
     vec3 worldPos;
-    worldPos.x = i_worldPos.x + (eastFromX  + eastFromY)  * i_scale * scaleMult + sway * cy;
-    worldPos.y = i_worldPos.y + (northFromX  + northFromY) * i_scale * scaleMult + sway * sy;
-    worldPos.z = i_worldPos.z + upFromY * i_scale;
+    worldPos.x = i_worldPos.x + (eastFromX + eastFromY) * effectiveScale + sway * cy;
+    worldPos.y = i_worldPos.y + (northFromX + northFromY) * effectiveScale + sway * sy;
+    worldPos.z = i_worldPos.z + upFromY * effectiveScale;
 
     v_camDist     = 0.0;
     v_camTrueDist = trueDist;
@@ -127,12 +127,12 @@ void main()
     v_seed        = i_seed;
     v_worldPos    = worldPos;
     v_lodFade     = lodFade;
+    v_tilt        = float(cardRole) * 0.5;  // 0.0=vertical, 0.5=tilted, 1.0=top
 
     // VEGETATION-DEPTH-BIAS: shift by 1× TERRAIN_DEPTH_FUDGE (−0.002), NOT 2×.
     // Terrain chunk applies 2× (−0.004). With GL_GREATER:
     //   D−0.002 > D−0.004 = TRUE  → veg wins over coplanar terrain surface ✓
     //   D−0.002 > D       = FALSE → veg stays behind static props ✓
-    // Ghost zone (cliff within 0.002 NDC poking through) halved from original.
     vec4 clip = u_worldToClipGL * vec4(worldPos, 1.0);
     clip.z += TERRAIN_DEPTH_FUDGE * clip.w;
     gl_Position = clip;

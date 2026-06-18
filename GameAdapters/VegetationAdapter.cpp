@@ -276,6 +276,7 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
                 const float h4 = hashf(clumpCy + fi * 151.3f, clumpCx + fi * 11.7f);
                 const float h5 = hashf(clumpCx + fi * 37.9f,  clumpCy + fi * 59.1f);
                 const float h6 = hashf(clumpCy + fi * 61.3f,  clumpCx + fi * 43.1f);
+                const float h7 = hashf(clumpCx + fi * 113.7f, clumpCy + fi * 89.3f);
 
                 const float instWx = clumpCx + (h1 - 0.5f) * 20.0f;
                 const float instWy = clumpCy + (h2 - 0.5f) * 20.0f;
@@ -297,7 +298,9 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
                 const uint32_t frame = (h5 < 0.70f)
                     ? static_cast<uint32_t>(domFrame)
                     : static_cast<uint32_t>(pal.f[static_cast<int>(h5 * static_cast<float>(pal.n)) % pal.n]);
-                inst.atlasFrame = frame;
+                // Card role (bits 4-5): 0=vertical 55%, 1=tilted 30%, 2=top 15%.
+                const uint32_t cardRole = (h7 < 0.55f) ? 0u : (h7 < 0.85f) ? 1u : 2u;
+                inst.atlasFrame = (cardRole << 4u) | (frame & 0x0Fu);
                 inst.seed       = h6;
 
                 instances.push_back(inst);

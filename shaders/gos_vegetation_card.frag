@@ -20,6 +20,7 @@ in PREC float v_cardBottom;
 in PREC float v_seed;
 in PREC vec3  v_worldPos;
 in PREC float v_lodFade;   // 1.0=LOD0 full, 0.4=LOD1 dithered
+in PREC float v_tilt;      // 0.0=vertical, 0.5=tilted, 1.0=top/cap
 
 layout(location=0) out PREC vec4 FragColor;
 layout(location=1) out PREC vec4 GBuffer1;
@@ -45,8 +46,9 @@ void main()
     // LOD bias -1.5 applied at bind site.
     vec4 col = texture(u_atlas, v_atlasUV);
 
-    // Alpha test.
-    if (col.a < 0.5) discard;
+    // Alpha test: top/cap cards use softer threshold (0.25) for wispy edges.
+    float alphaThresh = mix(0.50, 0.25, v_tilt);
+    if (col.a < alphaThresh) discard;
 
     // Desaturate to reduce uniform vivid-green look.
     float lum = dot(col.rgb, vec3(0.299, 0.587, 0.114));
@@ -56,9 +58,10 @@ void main()
     col.r += (v_seed - 0.5) * 0.07;
     col.b -= v_seed * 0.05;
 
-    // Lighting.
+    // Lighting. Top/cap cards are slightly darker: horizontal face = less direct sun.
     float NdotL = max(dot(vec3(0.0, 0.0, 1.0), u_terrainLightDir.xyz), 0.0);
-    col.rgb *= 0.60 + 0.38 * NdotL;
+    float topDim = mix(1.0, 0.80, v_tilt);
+    col.rgb *= (0.60 + 0.38 * NdotL) * topDim;
 
     // Root lift.
     col.rgb += vec3(v_cardBottom * 0.08);
