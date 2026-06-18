@@ -23,6 +23,7 @@ layout(location=6) in float i_seed;       // per-instance random [0,1]
 // location 7 removed — blockIdx computed in shader from world position
 
 // terrain-chunk MVP (same convention as terrain_lod_chunk.vert u_worldToClipGL)
+#include <include/terrain_depth_bias.hglsl>
 uniform mat4  u_worldToClipGL;
 uniform float u_time;
 uniform vec3  u_cameraPos;  // camera position in terrain-chunk space (wind fade only)
@@ -75,9 +76,9 @@ void main()
             v_lodFade    = 0.0;
             return;
         }
-        // All non-culled blocks draw as vertical LOD0 cards.
-        // LOD1 flat-card was coplanar with terrain in RTS overview → invisible.
-        lodFade = 1.0;
+        // 2u = LOD0 (close, full density).  1u = LOD1 (far, Bayer-dithered in frag).
+        // LOD1 flat-card was replaced by vertical cards everywhere; flat mode removed.
+        lodFade = (lodVis >= 2u) ? 1.0 : 0.4;
     }
 
     // LOD0 = vertical crossed-quad billboard (full 3D card).
@@ -122,5 +123,7 @@ void main()
     v_worldPos    = worldPos;
     v_lodFade     = lodFade;
 
-    gl_Position = u_worldToClipGL * vec4(worldPos, 1.0);
+    vec4 clip = u_worldToClipGL * vec4(worldPos, 1.0);
+    clip.z += 2.0 * TERRAIN_DEPTH_FUDGE * clip.w;
+    gl_Position = clip;
 }
