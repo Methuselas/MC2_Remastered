@@ -485,4 +485,14 @@ void ParityPrintMismatch(int frame, int quad, const char* layer, int tri,
 // unconditionally.
 void ParityFrameTick(int quadsCheckedThisFrame);
 
+// ---------------------------------------------------------------------------
+// Vegetation color classification — built from cpuColorMap before retirement.
+// ---------------------------------------------------------------------------
+// VegClassAt returns: 0=kNone (rock/cement/grey), 1=kSparse (dirt/warm),
+//   2=kFull (grass/green). Returns 2 (kFull) when no map is available.
+// u, v: colormap UV [0,1]. u=west→east, v=north→south.
+// Built during BuildColormapAtlas(); cleared during ResetDenseRecipe().
+uint8_t VegClassAt(float u, float v);
+bool    HasVegClassMap();
+
 }  // namespace gos_terrain_indirect
