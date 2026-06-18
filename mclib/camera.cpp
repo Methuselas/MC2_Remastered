@@ -2820,6 +2820,8 @@ void Camera::setCameraOrigin (void)
 			if (land)
 			{
 				float terrainAtCam = land->getTerrainElevation(actualPosition);
+				if (terrainAtCam < Terrain::waterElevation)
+					terrainAtCam = Terrain::waterElevation;
 				if (translation.y < terrainAtCam + 2.0f)
 				{
 					translation.y = terrainAtCam + 2.0f;
