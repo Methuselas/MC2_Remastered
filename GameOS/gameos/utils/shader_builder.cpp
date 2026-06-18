@@ -201,6 +201,24 @@ const char* glsl_load(const char* fname, size_t* out_size = nullptr)
     size_t rv = pstream->read(pdata, 1, size);
     assert(rv==size);
     pdata[size] = '\0';
+
+    // Strip UTF-8 BOM (EF BB BF) defensively.
+    // BOM is valid UTF-8 but GLSL forbids non-ASCII tokens — driver reports
+    // "unexpected token '€'" at line 0 with no file name. Strip + emit so
+    // SHADER_COMPILE tag captures it; check_shader_bom.py is the preflight gate.
+    if (size >= 3 &&
+        static_cast<unsigned char>(pdata[0]) == 0xEF &&
+        static_cast<unsigned char>(pdata[1]) == 0xBB &&
+        static_cast<unsigned char>(pdata[2]) == 0xBF) {
+        memmove(pdata, pdata + 3, size - 3 + 1); // +1 = null terminator
+        size -= 3;
+        fprintf(stderr, "[shader_builder] WARN: stripped UTF-8 BOM from %s\n", fname);
+        char evJson[512];
+        snprintf(evJson, sizeof(evJson),
+            "{\"event\":\"bom_stripped\",\"path\":\"%s\"}", fname);
+        mc2_diag::writeEvent("SHADER_COMPILE", 1, 0, evJson);
+    }
+
     if(out_size)
         *out_size = size;
 

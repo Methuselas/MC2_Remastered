@@ -82,7 +82,13 @@ static const char* s_atlasPathOverride = nullptr;
 bool GosVegetation::isEnabled() {
     static int cached = -1;
     if (cached < 0) {
-        cached = (getenv("MC2_VEGETATION_CARDS") != nullptr) ? 1 : 0;
+        const char* v = getenv("MC2_VEGETATION_CARDS");
+        cached = (v && v[0] && v[0] != '0') ? 1 : 0;
+        fprintf(stderr, "[VEG v1] feature enabled=%d reason=%s\n",
+            cached,
+            !v         ? "env_missing" :
+            (!v[0] || v[0]=='0') ? "env_zero"  : "env_set");
+        fflush(stderr);
     }
     return cached == 1;
 }
@@ -344,6 +350,17 @@ void GosVegetation::flush(float lightDirX, float lightDirY, float lightDirZ, flo
     {
         const GLint loc = glGetUniformLocation(progId, "u_chunkSide");
         glProgramUniform1i(progId, loc, chunkSide);
+    }
+
+    // MC2_VEG_DEBUG_FORCE_VISIBLE=1 — override blockVis/LOD cull in shader.
+    {
+        static int s_forceVis = -1;
+        if (s_forceVis < 0) {
+            const char* v = getenv("MC2_VEG_DEBUG_FORCE_VISIBLE");
+            s_forceVis = (v && v[0] && v[0] != '0') ? 1 : 0;
+        }
+        const GLint loc = glGetUniformLocation(progId, "u_forceVisible");
+        if (loc >= 0) glProgramUniform1i(progId, loc, s_forceVis);
     }
 
     // Atlas texture on unit 0.

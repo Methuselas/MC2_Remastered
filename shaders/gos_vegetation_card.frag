@@ -48,21 +48,27 @@ void main()
     // Alpha test.
     if (col.a < 0.5) discard;
 
-    // Lighting: raised ambient so shadows don't read as black blots.
+    // Desaturate to reduce uniform vivid-green look.
+    float lum = dot(col.rgb, vec3(0.299, 0.587, 0.114));
+    col.rgb = mix(col.rgb, vec3(lum), 0.30);
+
+    // Per-instance warmth variation: some cards yellower, some cooler.
+    col.r += (v_seed - 0.5) * 0.07;
+    col.b -= v_seed * 0.05;
+
+    // Lighting.
     float NdotL = max(dot(vec3(0.0, 0.0, 1.0), u_terrainLightDir.xyz), 0.0);
-    col.rgb *= 0.72 + 0.28 * NdotL;
+    col.rgb *= 0.60 + 0.38 * NdotL;
 
     // Root lift.
-    col.rgb += vec3(v_cardBottom * 0.10);
-
-    // Terrain colormap tint deferred (no colormap sampler in v1 flush API).
+    col.rgb += vec3(v_cardBottom * 0.08);
 
     col.rgb = min(vec3(1.0), col.rgb);
 
-    // Dim LOD1 surviving pixels — proxy for missing CSM shadow at mid range.
-    // (Proper shadow requires shadow map samplers in this pass — deferred.)
-    col.rgb *= (v_lodFade >= 1.0) ? 1.0 : 0.60;
+    // Dim LOD1 distance tier.
+    col.rgb *= (v_lodFade >= 1.0) ? 1.0 : 0.82;
 
     FragColor = vec4(col.rgb, 1.0);
-    GBuffer1  = vec4(0.0);
+    // Sets GBuffer1.a > 0.5 so post-screen-shadow pass skips vegetation.
+    GBuffer1 = rc_gbuffer1_shadowHandled_flatUp();
 }

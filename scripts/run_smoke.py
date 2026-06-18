@@ -368,6 +368,24 @@ def main():
     except Exception as _e:
         print(f"[runner] [DEPLOY_COHERENCE] check skipped: {_e}", file=sys.stderr)
 
+    # Shader BOM preflight: UTF-8 BOM in any shader = silent compile death
+    # (driver reports "unexpected token '€'" with no file name). Hard-fail
+    # so a BOM-infected deploy never silently passes the smoke gate.
+    try:
+        _bom = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "check_shader_bom.py")],
+            capture_output=True, text=True, timeout=15)
+        for _line in ((_bom.stdout or "") + (_bom.stderr or "")).splitlines():
+            if _line.strip():
+                print(f"[runner] [BOM-CHECK] {_line}", file=sys.stderr)
+        if _bom.returncode != 0:
+            print("[runner] [BOM-CHECK] FATAL: BOM detected in shader source(s). "
+                  "Run `py -3 scripts/check_shader_bom.py --fix` to strip.",
+                  file=sys.stderr)
+            sys.exit(2)
+    except Exception as _e:
+        print(f"[runner] [BOM-CHECK] check skipped: {_e}", file=sys.stderr)
+
     # F1 unified-projection: forbid MC2_DISABLE_GOSFX=0 in smoke runs.
     # Visual regression accepted only in dev-override sessions; smoke must
     # represent shipped default state.

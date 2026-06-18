@@ -41,6 +41,11 @@ uniform int   u_chunkSide;   // s_terrainChunkSide
 //   2 = LOD0  (full bright, full density)
 layout(binding=12, std430) readonly buffer BlockVis { uint b_blockVis[]; };
 
+// MC2_VEG_DEBUG_FORCE_VISIBLE=1: bypass blockVis/LOD cull — forces all instances
+// to LOD0 regardless of SSBO. If this makes cards appear, blockVis/shader cull is
+// the failing stage. If cards still absent, placement/draw/texture/depth is guilty.
+uniform int u_forceVisible;
+
 out vec2  v_atlasUV;
 out float v_camDist;
 out float v_camTrueDist;
@@ -67,7 +72,7 @@ void main()
         int bCol = clamp(int((i_worldPos.x + u_mapHalfWU) / u_blockSideWU), 0, u_chunkSide - 1);
         int bRow = clamp(int((-i_worldPos.y + u_mapHalfWU) / u_blockSideWU), 0, u_chunkSide - 1);
         blockIdx  = uint(bRow * u_chunkSide + bCol);
-        uint lodVis = b_blockVis[blockIdx];
+        uint lodVis = (u_forceVisible != 0) ? 2u : b_blockVis[blockIdx];
         if (lodVis == 0u) {
             // Cull: clip to outside NDC — all 8 verts of the crossed-quad
             gl_Position  = vec4(2.0, 2.0, 2.0, 1.0);
