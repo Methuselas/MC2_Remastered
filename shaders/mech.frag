@@ -56,8 +56,12 @@ uniform float u_pbrRoughnessMax;            // roughness ceiling (default 0.90)
 uniform float u_pbrAmbientSpecularStrength; // fake env fill for metals (default 0.25)
 // PBR-LAYERED-1: paint/wear blend + triplanar.
 uniform float u_pbrWearStrength;      // wear blend 0=all paint, 1=full metal reveal (default 1.0)
-uniform int   u_pbrTriplanar;         // 1=world-space triplanar (default ON)
+uniform int   u_pbrTriplanar;         // 1=world-space triplanar (default OFF)
 uniform float u_pbrTriplanarScale;    // triplanar world-unit scale (default 0.2)
+// PBR-IBL-MECH-1: SH-L2 image-based ambient (same coeff set as static props).
+// u_iblShStrength == 0.0 -> evalShL2 skipped, falls back to hardcoded sky color.
+uniform vec3  u_iblSh[9];
+uniform float u_iblShStrength;
 uniform int u_materialFlags;  // bit 0: ALPHA_TEST
 // Slice B2: u_fogValue retained for backward compat / parity with
 // static_prop convention but no longer drives the mix — per-actor
@@ -105,6 +109,31 @@ layout(location=2) out uint v_objectId;
 #endif
 
 const int ALPHA_TEST_BIT = 1;
+
+// PBR-IBL-MECH-1: SH-L2 diffuse irradiance evaluator (Ramamoorthi-Hanrahan 2001).
+// Mirror of static_prop.vert::evalShL2. n must be Y-up world space (v_normal is Y-up).
+// Returns diffuse irradiance pre-convolved with the cosine lobe kernel.
+// Called only when u_iblShStrength > 0.0 so the guard short-circuits to
+// the fallback sky color when IBL is disabled (byte-identical default path).
+vec3 evalShL2(vec3 n) {
+    const float kSH_c1 = 0.429043;
+    const float kSH_c2 = 0.511664;
+    const float kSH_c3 = 0.743125;
+    const float kSH_c4 = 0.886227;
+    const float kSH_c5 = 0.247708;
+    return (
+          kSH_c1 * u_iblSh[8] * (n.x * n.x - n.z * n.z)
+        + kSH_c3 * u_iblSh[6] * (n.y * n.y)
+        + kSH_c4 * u_iblSh[0]
+        - kSH_c5 * u_iblSh[6]
+        + 2.0 * kSH_c1 * u_iblSh[4] * (n.x * n.y)
+        + 2.0 * kSH_c1 * u_iblSh[5] * (n.y * n.z)
+        + 2.0 * kSH_c1 * u_iblSh[7] * (n.x * n.z)
+        + 2.0 * kSH_c2 * u_iblSh[3] * n.x
+        + 2.0 * kSH_c2 * u_iblSh[1] * n.y
+        + 2.0 * kSH_c2 * u_iblSh[2] * n.z
+    );
+}
 
 void main() {
     // textureLod(.., 0.0) instead of texture(): AMD RX 7900 XTX
@@ -240,7 +269,12 @@ void main() {
         vec3 albedo = pow(tex_color.rgb, vec3(2.2));
 
         vec3 lightColor   = vec3(2.0, 1.9, 1.7);
-        vec3 ambientColor = vec3(0.4, 0.45, 0.5);
+        // PBR-IBL-MECH-1: SH-L2 ambient from HDRI sky. Replaces the flat
+        // sky-color fill with directional irradiance from the loaded HDRI.
+        // Falls back to the conservative sky color when IBL is disabled.
+        vec3 ambientColor = (u_iblShStrength > 0.0)
+            ? max(evalShL2(N_pbr) * u_iblShStrength, vec3(0.0))
+            : vec3(0.4, 0.45, 0.5);
 
         StandardLitInput si;
         si.albedo       = albedo;

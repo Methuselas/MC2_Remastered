@@ -1,6 +1,8 @@
 // GameOS/gameos/gos_mech_batcher.cpp — GPU mech batcher, Slice A.
 #include "gos_mech_batcher.h"
 #include "gos_materials.h"       // Slice C1: named material profile SSBO (binding 7)
+#include "ibl_sh_runtime.h"     // PBR-IBL-MECH-1: g_iblShStrength (shared with static props)
+#include "../../RenderCore/IblShCoeffs.h"  // PBR-IBL-MECH-1: SH-L2 coefficients
 #include "gos_gpu_sync.h"      // GPU-SYNC-CONTRACT typed barrier helper
 #include "render_snapshot.h"  // MECH-EXTRACTION-0: ExtractedMechPacket, RenderSnapshot
 #include "../../RenderCore/RenderDebugView.h"  // MECH-DEBUG-VIEWS-1
@@ -277,11 +279,17 @@ static float s_pbrWearStrength = []() {
 }();
 static int   s_pbrTriplanar = []() {
     const char* v = std::getenv("MC2_PBR_TRIPLANAR");
-    return !(v != nullptr && v[0] == '0');  // DEFAULT-ON; kill-switch =0
+    return (v && v[0] == '1') ? 1 : 0;  // DEFAULT-OFF; enable with =1
 }();
 static float s_pbrTriplanarScale = []() {
     const char* v = std::getenv("MC2_PBR_TRIPLANAR_SCALE");
     return v ? (float)std::atof(v) : 0.2f;
+}();
+// PBR-IBL-MECH-1: SH-L2 image-based ambient for mechs.
+// Shares g_iblShStrength with static props (same slider). Default-ON; =0 disables.
+static const bool s_mechIblShEnabled = []() {
+    const char* v = std::getenv("MC2_MECH_IBL_SH");
+    return !(v != nullptr && v[0] == '0');
 }();
 
 // Cached uniform locations (set at program link time).
@@ -320,6 +328,9 @@ static GLint s_loc_u_pbrPaintOrmTex     = -1;
 static GLint s_loc_u_pbrWearStrength    = -1;
 static GLint s_loc_u_pbrTriplanar       = -1;
 static GLint s_loc_u_pbrTriplanarScale  = -1;
+// PBR-IBL-MECH-1: SH-L2 ambient.
+static GLint s_loc_u_iblSh             = -1;
+static GLint s_loc_u_iblShStrength     = -1;
 
 // Geometry (immutable after finalizeGeometry).
 static GLuint s_sharedVao = 0;
@@ -606,6 +617,9 @@ static void loadProgramsIfNeeded() {
     s_loc_u_pbrWearStrength    = loc("u_pbrWearStrength");
     s_loc_u_pbrTriplanar       = loc("u_pbrTriplanar");
     s_loc_u_pbrTriplanarScale  = loc("u_pbrTriplanarScale");
+    // PBR-IBL-MECH-1: SH-L2 ambient (shared coeffs with static props).
+    s_loc_u_iblSh              = loc("u_iblSh");
+    s_loc_u_iblShStrength      = loc("u_iblShStrength");
 
     // MECH-VIEWUNIFORMS-1: on the gated path, verify the ViewUniformsBlock is
     // present and bound to point 3. The GLSL layout(binding=3) qualifier is
@@ -2028,6 +2042,11 @@ void GpuMechBatcher::flush() {
     if (s_loc_u_pbrWearStrength   >= 0) glUniform1f(s_loc_u_pbrWearStrength,   s_pbrWearStrength);
     if (s_loc_u_pbrTriplanar      >= 0) glUniform1i(s_loc_u_pbrTriplanar,      s_pbrTriplanar ? 1 : 0);
     if (s_loc_u_pbrTriplanarScale >= 0) glUniform1f(s_loc_u_pbrTriplanarScale, s_pbrTriplanarScale);
+    // PBR-IBL-MECH-1: SH-L2 ambient — same coefficients as static props.
+    if (s_loc_u_iblSh         >= 0)
+        glUniform3fv(s_loc_u_iblSh, 9, &RenderCore::kIblShCoeffs[0][0]);
+    if (s_loc_u_iblShStrength >= 0)
+        glUniform1f(s_loc_u_iblShStrength, s_mechIblShEnabled ? g_iblShStrength : 0.0f);
 
     // Projection uniforms — match static_prop batcher and the
     // terrain_overlay.vert convention: terrainMVP = CPU-composed

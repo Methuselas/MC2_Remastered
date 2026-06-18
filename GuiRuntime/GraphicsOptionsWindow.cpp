@@ -1727,10 +1727,27 @@ static void drawMechSection() {
         if (ImGui::SliderFloat("Ambient specular##pbr", &as, 0.0f, 2.0f, "%.2f"))
             batcher_setPbrAmbientSpecularStrength(as);
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Fake env fill for metals (no IBL). Prevents pure-metal\n"
-                              "armour going black. Default: 0.25");
+            ImGui::SetTooltip("Specular env fill via IBL sky color for metals.\n"
+                              "Prevents pure-metal armour going black. Default: 0.25");
         ImGui::SameLine();
         if (ImGui::SmallButton("Reset##pbras")) batcher_setPbrAmbientSpecularStrength(0.25f);
+
+        // PBR-IBL-MECH-1: IBL SH ambient status.
+        // Strength slider lives in Static Prop Tuning (shared g_iblShStrength).
+        {
+            const char* mechIblEnv = std::getenv("MC2_MECH_IBL_SH");
+            bool mechIblOn = !(mechIblEnv != nullptr && mechIblEnv[0] == '0');
+            if (mechIblOn)
+                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
+                    "IBL SH ambient: ON (strength=%.2f from Static Prop Tuning)", g_iblShStrength);
+            else
+                ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f),
+                    "IBL SH ambient: OFF (MC2_MECH_IBL_SH=0)");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("PBR-IBL-MECH-1: SH-L2 HDRI ambient replaces flat\n"
+                                  "sky color. Kill-switch: MC2_MECH_IBL_SH=0.\n"
+                                  "Strength shared with Static Prop IBL SH slider.");
+        }
 
         ImGui::Spacing();
         ImGui::SeparatorText("Paint/wear layer (PaintedMetal003)");
@@ -1751,7 +1768,7 @@ static void drawMechSection() {
             batcher_setPbrTriplanar(triOn ? 1 : 0);
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("World-space triplanar UV sampling (no UV seams).\n"
-                              "Default ON. Disable to use v_uv * tileScale instead.");
+                              "Default OFF. Enable with MC2_PBR_TRIPLANAR=1.");
 
         float ts = batcher_getPbrTriplanarScale();
         if (ImGui::SliderFloat("Triplanar scale##pbr", &ts, 0.01f, 2.0f, "%.3f"))
