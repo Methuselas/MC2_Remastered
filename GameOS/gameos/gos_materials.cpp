@@ -10,12 +10,13 @@
 //   Slice C (mech.frag sampling) must bind u_normalMap / u_ormMap explicitly
 //   using the raw GL id from this table, NOT via mcTextureManager.
 //
-// Profiles registered:
-//   index 0 : "default"       -- passthrough; no textures; flat metallic=0 rough=0.85
-//   index 1 : "metal061b"     -- Metal061B normal + ORM (debug/exposed-metal; explicit only)
-//   index 1 : "painted_subtle"-- ORM only + flat normal; subtle roughness/metalness detail
-//                                (MC2_MECH_SURFACE_MATERIAL=painted_subtle; explicit only)
-//   Unset MC2_MECH_SURFACE_MATERIAL -> passthrough only (no surface detail)
+// Profiles registered (mutually exclusive load; only one non-default profile
+// exists in the table at any given runtime):
+//   index 0 : "default"         -- passthrough; no textures; flat metallic=0 rough=0.85
+//   index 1 : "metal061b"       -- Metal061B normal + ORM (explicit: MC2_MECH_SURFACE_MATERIAL=metal061b)
+//             "paintedmetal003" -- paired paint layer, index 2 (loaded with metal061b)
+//   index 1 : "painted_subtle"  -- ORM-only + flat normal; subtle detail (MC2_MECH_SURFACE_MATERIAL=painted_subtle)
+//   Unset MC2_MECH_SURFACE_MATERIAL -> passthrough only
 //
 
 #include "gos_materials.h"
@@ -444,10 +445,14 @@ void init() {
         registerPaintedMetal003();
     } else if (loadPaintedSubtle) {
         registerPaintedSubtle();
+    } else if (matEnv != nullptr && matEnv[0] != '\0') {
+        std::fprintf(stderr,
+            "[GOS_MATERIALS] WARN: unrecognized MC2_MECH_SURFACE_MATERIAL='%s': "
+            "falling back to passthrough\n", matEnv);
     } else {
         std::fprintf(stderr,
-            "[GOS_MATERIALS] MC2_MECH_SURFACE_MATERIAL=%s: no surface material loaded (passthrough)\n",
-            matEnv ? matEnv : "(null)");
+            "[GOS_MATERIALS] MC2_MECH_SURFACE_MATERIAL=%s: passthrough only\n",
+            matEnv ? "(empty)" : "(null)");
     }
 
     uploadSsbo();
