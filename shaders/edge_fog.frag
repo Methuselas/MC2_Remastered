@@ -28,6 +28,7 @@ uniform float     u_halfExtent;
 uniform float     u_fogStart;
 uniform float     u_fogHeight;
 uniform float     u_fogMax;
+uniform float     u_waterElevation;  // sea-level world Z — skip fog at/below water surface
 
 void main()
 {
@@ -48,6 +49,10 @@ void main()
         vec4 wp = invViewProj * vec4(ndc, rawDepth, 1.0);
         geoZ = wp.z / wp.w;
     }
+
+    // Water surface sits at sea level — don't let the cloud bank overwrite it.
+    // A 2 WU margin covers wave displacement so the edge doesn't flicker.
+    if (geoZ <= u_waterElevation + 2.0) { outFog = vec4(0.0); return; }
 
     // Suppress fog for pixels above the cloud bank top.
     // smoothstep(a, b, x) with a > b → 1 at x <= b, 0 at x >= a.

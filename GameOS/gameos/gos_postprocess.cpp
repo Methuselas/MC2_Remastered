@@ -2271,11 +2271,12 @@ void gosPostProcess::runEdgeFog()
     glUniformMatrix4fv(
         glGetUniformLocation(edgeFogProg_->shp_, "invViewProj"),
         1, GL_FALSE, inverseViewProj_);
-    edgeFogProg_->setFloat3("u_fogColor",   edgeFogColor_);
-    edgeFogProg_->setFloat("u_halfExtent",  mapHalfExtent_);
-    edgeFogProg_->setFloat("u_fogStart",    edgeFogStart_);
-    edgeFogProg_->setFloat("u_fogHeight",   edgeFogHeight_);
-    edgeFogProg_->setFloat("u_fogMax",      edgeFogMax_);
+    edgeFogProg_->setFloat3("u_fogColor",        edgeFogColor_);
+    edgeFogProg_->setFloat("u_halfExtent",       mapHalfExtent_);
+    edgeFogProg_->setFloat("u_fogStart",         edgeFogStart_);
+    edgeFogProg_->setFloat("u_fogHeight",        edgeFogHeight_);
+    edgeFogProg_->setFloat("u_fogMax",           edgeFogMax_);
+    edgeFogProg_->setFloat("u_waterElevation",   waterElevation_);
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, sceneDepthTex_);

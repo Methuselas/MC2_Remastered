@@ -116,6 +116,7 @@ public:
     void resetStaticLightMatrix() { staticLightMatrixBuilt_ = false; }
     void setMapHalfExtent(float extent) { mapHalfExtent_ = extent; }
     float getMapHalfExtent() const { return mapHalfExtent_; }
+    void setWaterElevation(float elev) { waterElevation_ = elev; }
 
     // Dynamic object shadows: camera-centered, re-rendered every frame
     void initDynamicShadows();
@@ -368,6 +369,7 @@ private:
     float staticLightSpaceMatrix_[16]; // world-fixed ortho, built once at map load
     bool staticLightMatrixBuilt_;      // true after light matrix is built (first frame)
     float mapHalfExtent_;              // half the map size in world units
+    float waterElevation_ = 0.0f;     // sea-level world Z (Terrain::waterElevation)
 
     // Dynamic object shadow FBO (1024x1024, camera-centered, per-frame)
     GLuint dynShadowFBO_;

@@ -8761,6 +8761,10 @@ void gos_SetMapHalfExtent(float halfExtent) {
     gosPostProcess* pp = getGosPostProcess();
     if (pp) pp->setMapHalfExtent(halfExtent);
 }
+void gos_SetWaterElevation(float elevation) {
+    gosPostProcess* pp = getGosPostProcess();
+    if (pp) pp->setWaterElevation(elevation);
+}
 bool gos_StaticLightMatrixBuilt() {
     gosPostProcess* pp = getGosPostProcess();
     return pp && pp->staticLightMatrixBuilt();

@@ -3839,6 +3839,7 @@ bool Terrain::load( FitIniFile* fitFile )
 	result = fitFile->readIdFloat( "Elevation", mapData->waterDepth );
 	gosASSERT( result == NO_ERR );
 	waterElevation = mapData->waterDepth;
+	gos_SetWaterElevation(waterElevation);
 	result = fitFile->readIdFloat( "Frequency", waterFreq );
 	gosASSERT( result == NO_ERR );
 	result = fitFile->readIdFloat( "Ampliture", waterAmplitude );

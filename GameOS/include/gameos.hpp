@@ -2294,6 +2294,7 @@ void gos_GetTerrainLightDir(float* x, float* y, float* z);
 
 // Static shadow API: world-fixed shadow map, accumulates over multiple frames
 void gos_SetMapHalfExtent(float halfExtent);
+void gos_SetWaterElevation(float elevation);  // sea-level world Z for edge-fog water skip
 bool gos_StaticLightMatrixBuilt();
 void gos_BuildStaticLightMatrix();  // builds matrix once (idempotent)
 void gos_MarkStaticLightMatrixBuilt();
