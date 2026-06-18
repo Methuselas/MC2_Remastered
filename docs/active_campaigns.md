@@ -2,6 +2,27 @@
 
 > Pointer doc. Detail in memory/ handoffs and docs/. Add new campaigns at top.
 
+## Asset Modernization Pipeline — v0 SHIPPED (merged nifty `fdb7c470`, 2026-06-17)
+
+| Slice | Status | Notes |
+|-------|--------|-------|
+| P1-A→D: ASE → GLB + sidecar roundtrip tooling | SHIPPED | `tools/ase_to_glb.py`, `tools/validate_glb.py`, `tools/asset_baseline.py`, `.mcasset.json` sidecar spec |
+| Phase 2: texture cook (BC7 KTX2, AI-upscaled sources) | SHIPPED | `tools/mc2texcook/cook_pbr_maps.py`; `fireantrgb.ktx2` + `a_hangar.ktx2` deployed rc1 |
+| Phase 3: mech PBR (StandardLit GGX) | ALREADY LIVE | Metal061B+PaintedMetal003 active in mech3d pipeline |
+| P1-E: HangarGLB building GLB load | SHIPPED | Positive load confirmed mc2_01 via ASSIMP_TRACE; `data/tgl/HangarGLB.glb` + sidecar in rc1 |
+| P1-F: material classification + CorrugatedSteel006A cook | SHIPPED | `tools/classify_materials.py`; BC7 KTX2 pack in `gameassets/materials/CorrugatedSteel006A/` |
+| Runtime `MC2_ASSIMP_IMPORT=0` kill switch | SHIPPED | `mclib/msl.cpp LoadFromFile`; bdactor/genactor/gvactor all probe `[Import] Source=` |
+
+**In flight / next:**
+
+- **P1-G: building MaterialGpu SSBO wiring + `building.frag` PBR** — branch `claude/building-materialgpu-v1`
+  - Status: NOT STARTED — foundation merged, new branch required
+  - Kill switch: `MC2_BUILDING_PBR=0` (default OFF)
+  - Blocked on: nothing — unblocked after v0 merge
+  - First step: wire `CorrugatedSteel006A` BC7 KTX2 into MaterialGpu SSBO per building instance
+
+---
+
 ## 2026-06-16 — NVIDIA hardening S2 — SHIPPED + merged to nifty (`97be4e5c`)
 
 7 hardening items targeting correctness gaps AMD silently tolerates but NVIDIA exposes:

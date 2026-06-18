@@ -5,7 +5,7 @@
 > upscaled/cooked, and who *owns* it on the **render** side vs the **gamedata**
 > side. It also documents the upscale → cook → deploy pipeline.
 >
-> **Last verified:** 2026-06-02 (against `claude/nifty-mendeleev`, deploy `mc2-win64-v0.4`).
+> **Last verified:** 2026-06-17 (against `claude/nifty-mendeleev`, deploy rc1; merge `fdb7c470`).
 > **Maintenance:** see [§7 Keeping this current](#7-keeping-this-current). Update this
 > doc whenever you add/remove/re-cook/upscale an asset set, change a loader, or change
 > the cook/upscale pipeline. `scripts/check-asset-pipeline-doc.sh` flags drift.
@@ -24,6 +24,8 @@
 | **Static prop — geometry** (buildings ~2760, trees ~65, turrets ~111) | src `mc2srcdata/tgl/*.ase` (2,947); compiled `.tgl` → **`tgl.fst`** (33 MB) | `mclib/msl.cpp:563 LoadTGMultiShapeFromASE`; `bdactor.cpp:217/3391` | verts/tris in `.tgl` (`TG_TypeVertex` 28B `tgl.h:35`; `TG_TypeTriangle` 64B `tgl.h:121`) | n/a (geometry) | **`GpuStaticPropBatcher`** (`gos_static_prop_batcher.cpp:143`) | `BldgAppearanceType`/`TreeAppearanceType` (`bdactor.cpp`) |
 | **Static prop — textures** | deploy `data/tgl/{128,256,512,1024}/*.ktx2` (BC7) | `gos_static_prop_batcher.cpp:830/2435` (path) → `RenderCore/KtxLoader` | 128 base; **256/512/1024 tiers** (cook 2026-06-02) | **Yes** (src 512/1024 in `mc2-tgl.zip`) | GpuStaticPropBatcher | BldgAppearance |
 | **Mech — geometry** (13 src) | `mc2srcdata/tgl/*.ini`+`.ase`; only madcat deployed | `mclib/mech3d.cpp:239-387 init`; `gos_mech_batcher`; `GameAdapters/MechRenderAdapter.cpp:48` | verts via ASE `NUM_VERTEX` (`tgl.cpp:886`); 3 LODs, 25 anims | partial (4× archives) | `mech3d.cpp` (engine appearance) + `gos_mech_batcher` | `code/mech.cpp` BattleMech (game AI) |
+| **Mech — GLB import (Flea)** | rc1 `data/tgl/Flea.glb` + `Flea.mcasset.json`; src `mc2srcdata/tgl/flea.ase` | `mclib/msl.cpp LoadFromFile` → `[Import] Source=Flea` in mech ini; `mech3d.cpp` LOD0 override; kill switch `MC2_ASSIMP_IMPORT=0` | GLB LOD0 (Assimp import); texture `data/tgl/128/fireantrgb.ktx2` (BC7, 512×512, AI-upscaled) | Yes (AI-upscaled src) | `mech3d.cpp` via `TG_TypeMultiShape` Assimp path | `code/mech.cpp` BattleMech |
+| **Building — GLB import (HangarGLB)** | rc1 `data/tgl/HangarGLB.glb` + `HangarGLB.mcasset.json`; src `mc2srcdata/tgl/hangar.ase` | `bdactor.cpp` `[Import] Source=HangarGLB`; LOD0 probe; positive load confirmed mc2_01 via ASSIMP_TRACE; kill switch `MC2_ASSIMP_IMPORT=0` | GLB LOD0; texture `data/tgl/128/a_hangar.ktx2` | No | `GpuStaticPropBatcher` / `BldgAppearanceType` | `bdactor.cpp BldgAppearanceType` |
 | **Mech — textures** | `mc2srcdata/textures/*.txm` (paint-hash) → `data/tgl/{tier}/*.ktx2` | `mech3d.cpp:1941 resetPaintScheme` → `txmmgr.cpp` | 128–1024 bucket; 27-bit paint instance | Yes (`art_4x_gpu`/BC7) | `txmmgr.cpp`; `RenderCore::MechVisualState` | BattleMech |
 | **Vehicles** (7 src) | `mc2srcdata/tgl/*.ini`+`.ase`, `objects/*.fit`; **not deployed in v0.4** | `mclib/gvactor.cpp:151 GVAppearanceType::init` (mirrors mech) | 3 LODs, 10 anims | — | `GVAppearance` (`gvactor.cpp`) | `code/gvehicl.cpp GroundVehicle` |
 | **VFX — GPU particles** | procedural SSBO (no disk tex); 64B `GpuParticle` | `gos_particle_bridge.cpp`; `mclib/particles/batcher.cpp`; `shaders/particle_billboard.{vert,frag}` | 64B/particle; atlas frames | n/a | `gos_particle_bridge_flush` | `code/weaponbolt.cpp`; `particles/spawn_*` |
@@ -36,6 +38,10 @@
 | **Audio** | `data/sound/` (314, 200 MB) WAV + `betty.pak` voice | `GameOS/gameos/gameos_sound.cpp` (SDL2_mixer); `code/gamesound.h` | PCM WAV; SFX IDs `sounds.h` | n/a | `gameos_sound.cpp` (SDL2; no GPU) | `GameSoundSystem` |
 | **Mission/game data** | `mission.fst` (19 MB) `.fit`; `*.pak` terrain; `mc2-gamedata.zip` | `code/mission.cpp:1739 init`; `ObjectManager::loadTerrainObjects` | text INI / binary pak | n/a | — | `code/mission.cpp`, `logistics.cpp` |
 | **Save data** | `data/missions/save.fit` (text FIT) | `code/logistics.cpp:208/216` | INI | n/a | — | `LogisticsData` |
+
+**Non-mech GLB probe (bdactor/genactor/gvactor):** as of merge `fdb7c470`, `bdactor.cpp`, `genactor.cpp`, and `gvactor.cpp` all support `[Import] Source=<stem>` in the actor `.ini` to override LOD0 with a GLB loaded via Assimp. Only LOD0 is replaced; LOD1/LOD2 fall back to the legacy `.tgl` path. Kill switch: `MC2_ASSIMP_IMPORT=0` (default on in rc1). HangarGLB is the first production building to use this path; mech Flea uses the equivalent path in `mech3d.cpp`.
+
+**CorrugatedSteel006A PBR material pack:** `gameassets/materials/CorrugatedSteel006A/`. Three BC7 KTX2 maps cooked from CC0 (ambientCG) sources: `albedo_srgb.ktx2`, `normal_linear.ktx2`, `orm_linear.ktx2`. Manifest: `manifest.json`. Not yet wired to engine — pending P1-G (building MaterialGpu SSBO + `building.frag` PBR). Cook pipeline: `tools/mc2texcook/cook_pbr_maps.py`. Hangar material classification: `docs/hangar.material_suggestions.json` (slot 0 → corrugated_steel_painted, needs_review=true).
 
 **Cement-pad albedo issue (terrain overlays):** in **0.4 / 0.4c** the deploy `64/` folder ships `mat6_normal.tga` where the cement-overlay tile (`MAT_LAYER_PAINTED_CONC`, drawn by `terrain_overlay.frag`) reads its albedo, so the pad sampled a *normal map* as color → dark slab. The renderer stopgap (`ead760df`) samples the real cement diffuse atlas in `gos_terrain.frag` + `terrain_lod_chunk.frag`. The **proper fix** — swapping the literal `.tga` in `64/` and color-matching it (asset cook) — is already in **rc1** but NOT 0.4. See `docs/known_issues.md` (Water / terrain rendering).
 
@@ -100,9 +106,16 @@ Notes:
 - `upscale_stablesr.py`, `upscale_ui_textures.py`, `upscale_textures.py` — variants.
 - `deploy_256.py`, `deploy_colormaps.py` — upscaled → TGA mip chain / colormap deploy.
 
+**Asset modernization toolchain** (ASE → GLB roundtrip + validation, added 2026-06-17 merge `fdb7c470`):
+- `tools/ase_to_glb.py` — convert `mc2srcdata/tgl/*.ase` to GLB via Assimp; produces `.glb` + `.mcasset.json` sidecar.
+- `tools/validate_glb.py` — validate GLB output (vertex count, UV presence, material slots).
+- `tools/asset_baseline.py` — snapshot-based asset regression baseline tool.
+- `tools/classify_materials.py` — classify material slots from GLB against PBR material library; outputs `docs/<stem>.material_suggestions.json`.
+
 **Cook** (TGA/PNG → KTX2, BC7 via KTX-Software CLI `A:/Games/mc2-tools/ktx/ktx.exe`):
 - `tools/mc2texcook/mc2texcook.py` — single-file; presets albedo(sRGB), normal/orm/mask/emissive(UNORM).
 - `tools/mc2texcook/batch_cook.py` — batch tree cook (`--src --dst --preset --bc7 [--no-mips]`); cooks at **native** source res (no resize).
+- `tools/mc2texcook/cook_pbr_maps.py` — PBR material pack cook (albedo sRGB + normal UNORM + ORM UNORM → BC7 KTX2); target layout `gameassets/materials/<MaterialName>/`. Used for CorrugatedSteel006A.
 - `tools/mc2texcook/cook_tgl_tiers.py` — **multi-resolution tier cook** from the release `mc2-tgl.zip` → BC7 KTX2 into `data/tgl/{256,512,1024}`. Caps the longest edge per tier; **never upscales** (a 512 source in the 1024 tier stays 512). Example:
   ```
   py -3 tools/mc2texcook/cook_tgl_tiers.py \
@@ -121,6 +134,9 @@ resolution ladder; only tiers present on disk are offered.
 | Terrain colormaps | ✅ 4× burn-ins (release zips) | ✅ BC7 atlas (108→27 MB) |
 | **Static-prop tgl textures** | ✅ 512/1024 in `mc2-tgl.zip` | 128 base; **256/512/1024 cooked 2026-06-02** |
 | Mech textures | ✅ 4× archives | partial (bucketed 128–1024) |
+| **Flea.glb mech** | AI-upscaled (`fireantrgb.ktx2`) from release_assets zip | ✅ BC7 512×512 deployed rc1 `data/tgl/128/` |
+| **HangarGLB.glb building** | Source `hangar.ase` | ✅ `a_hangar.ktx2` BC7 deployed rc1 `data/tgl/128/` |
+| **CorrugatedSteel006A PBR** | CC0 ambientCG sources | ✅ albedo/normal/orm BC7 KTX2 in `gameassets/materials/`; NOT yet engine-wired |
 | Terrain detail/overlay | ✅ | 64/128/256 |
 | UI/menu art | ✅ 1024/512 (`mc2-art.zip`) | loose TGA/PNG (no BC7 tier yet) |
 | VFX / fonts / heightmap / movies / audio | n/a | n/a |
