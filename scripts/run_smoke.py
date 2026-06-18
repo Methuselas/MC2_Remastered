@@ -896,7 +896,12 @@ def main():
                             "MC2_QUADSETUP_ARMED_SKIP",
                             "MC2_GEOM_PHASE_SPLIT",
                             "MC2_MIF_SPLIT",
-                            "MC2_PICK_RECON")},
+                            "MC2_PICK_RECON",
+                            # Diagnostic JSONL trace (diagnostic_trace.cpp).
+                            # Without these in the allowlist Popen drops them and
+                            # the trace file is never written / tag filter is lost.
+                            "MC2_DIAGNOSTIC_TRACE_FILE",
+                            "MC2_DIAG_TAGS")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission
@@ -1014,6 +1019,116 @@ def main():
             _rf.write("\n" + _vline + "\n")
     except Exception as _vexc:  # noqa: BLE001  advisory must never break the gate
         print(f"[runner] [visual-advisory] skipped ({_vexc})", file=sys.stderr)
+
+    # Diag-state check: verify V2 schema + shutdown dump + CONFIG trace event.
+    # Advisory by default; MC2_SMOKE_REQUIRE_DIAG_STATE=1 = hard fail on any
+    # failed check. Only runs when MC2_DEBUG_STATE_DUMP=1 was active.
+    try:
+        _diag_require = os.environ.get("MC2_SMOKE_REQUIRE_DIAG_STATE") == "1"
+        _diag_dump_active = os.environ.get("MC2_DEBUG_STATE_DUMP") == "1"
+        if _diag_dump_active:
+            _diag_state_dir_env = os.environ.get("MC2_DEBUG_STATE_DUMP_DIR", "")
+            _diag_state_dir = (Path(_diag_state_dir_env)
+                               if _diag_state_dir_env
+                               else Path(args.exe).resolve().parent / "debug_state")
+            _diag_latest = _diag_state_dir / "latest_render_state.json"
+
+            _diag_checks: list[str] = []  # one line per check: PASS/FAIL + detail
+            _diag_ok = True
+
+            # --- schema check ---
+            if not _diag_latest.exists():
+                _diag_checks.append("FAIL latest_render_state.json not found")
+                _diag_ok = False
+            else:
+                try:
+                    _ds = json.loads(_diag_latest.read_text(encoding="utf-8"))
+                    _sv = _ds.get("schema_version")
+                    _dk = _ds.get("dump_kind")
+                    _sid = _ds.get("session_id", "")
+                    _pid = _ds.get("pid")
+                    _wat = _ds.get("written_at_epoch")
+                    if _sv != 2:
+                        _diag_checks.append(
+                            f"FAIL schema_version={_sv!r} (expected 2)")
+                        _diag_ok = False
+                    else:
+                        _diag_checks.append("PASS schema_version==2")
+                    if _dk != "shutdown":
+                        _diag_checks.append(
+                            f"FAIL dump_kind={_dk!r} (expected 'shutdown' after exit)")
+                        _diag_ok = False
+                    else:
+                        _diag_checks.append("PASS dump_kind=shutdown")
+                    for _field, _val in (("session_id", _sid), ("pid", _pid),
+                                         ("written_at_epoch", _wat)):
+                        if _val is None or _val == "":
+                            _diag_checks.append(f"FAIL {_field} missing/empty")
+                            _diag_ok = False
+                        else:
+                            _diag_checks.append(f"PASS {_field} present")
+                except Exception as _je:
+                    _diag_checks.append(f"FAIL cannot parse latest_render_state.json: {_je}")
+                    _diag_ok = False
+                    _sid = ""
+
+            # --- CONFIG event check (diagnostic_trace.jsonl) ---
+            # Relative MC2_DIAGNOSTIC_TRACE_FILE resolves from the exe dir
+            # (engine CWD), not the runner CWD.  Absolute paths pass through.
+            _trace_env = os.environ.get("MC2_DIAGNOSTIC_TRACE_FILE", "")
+            if _trace_env:
+                _tp = Path(_trace_env)
+                _trace_path = _tp if _tp.is_absolute() else Path(args.exe).resolve().parent / _tp
+            else:
+                _trace_path = _diag_state_dir / "diagnostic_trace.jsonl"
+            if _trace_path.exists():
+                try:
+                    _trace_lines = _trace_path.read_text(
+                        encoding="utf-8-sig", errors="replace").splitlines()
+                    # utf-8-sig strips a leading BOM if present (guards against
+                    # stale trace files written by the now-fixed _wfopen bug).
+                    # Scan last 200 lines for a CONFIG startup event.
+                    _cfg_found = False
+                    for _tline in _trace_lines[-200:]:
+                        try:
+                            _te = json.loads(_tline)
+                            if _te.get("tag") == "CONFIG" and "diagnostic_trace_initialized" in str(_te.get("data", {})):
+                                _cfg_found = True
+                                break
+                        except Exception:
+                            continue
+                    if _cfg_found:
+                        _diag_checks.append("PASS diagnostic_trace.jsonl has CONFIG startup event")
+                    else:
+                        _diag_checks.append("FAIL no CONFIG startup event in diagnostic_trace.jsonl")
+                        _diag_ok = False
+                except Exception as _te:
+                    _diag_checks.append(f"FAIL cannot read diagnostic_trace.jsonl: {_te}")
+                    _diag_ok = False
+            else:
+                _diag_checks.append(
+                    f"WARN diagnostic_trace.jsonl not found at {_trace_path} "
+                    f"(set MC2_DIAGNOSTIC_TRACE_FILE or MC2_DIAG_TAGS to enable)")
+
+            _diag_verdict = "PASS" if _diag_ok else "FAIL"
+            _diag_lines = [f"# Diag-state check: {_diag_verdict}",
+                           ""] + [f"- {c}" for c in _diag_checks]
+            _diag_report_text = "\n".join(_diag_lines) + "\n"
+            (artifact_dir / "diag_state_report.md").write_text(
+                _diag_report_text, encoding="utf-8")
+
+            _diag_summary = (f"[diag-state] {_diag_verdict}: "
+                             + "; ".join(_diag_checks))
+            if _diag_require and not _diag_ok:
+                print(f"[runner] [DIAG_STATE] HARD FAIL: schema/trace check "
+                      f"failed and MC2_SMOKE_REQUIRE_DIAG_STATE=1",
+                      file=sys.stderr)
+                passed = False
+            print(_diag_summary, file=sys.stderr)
+            with open(artifact_dir / "report.md", "a", encoding="utf-8") as _rf:
+                _rf.write("\n" + _diag_summary + "\n")
+    except Exception as _diag_exc:  # noqa: BLE001  advisory must never break the gate
+        print(f"[runner] [diag-state] skipped ({_diag_exc})", file=sys.stderr)
 
     # Post-verdict cockpit hook (S2).  Verdict is already frozen above.
     # Any exception here is swallowed by cockpit.write_cockpit_artifacts;

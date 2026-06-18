@@ -183,6 +183,17 @@ void GVAppearanceType::init (const char * fileName)
 	if (result != NO_ERR)
 		Fatal(result,"Could not find vehicle appearance INI file");
 
+	// ASSIMP-GV-IMPORT-1 — optional GLB probe for vehicles. Mirror of
+	// mech3d.cpp [Import] pattern. LOD0 only; shadow/damage shapes stay ASE.
+	char importSourceBase[256] = "";
+	if (iniFile.seekBlock("Import") == NO_ERR &&
+	    iniFile.readIdString("Source", importSourceBase, 255) == NO_ERR &&
+	    importSourceBase[0])
+	{
+		char* dot = strrchr(importSourceBase, '.');
+		if (dot) *dot = '\0';
+	}
+
 	result = iniFile.seekBlock("TGLData");
 	if (result != NO_ERR)
 		Fatal(result,"Could not find block in vehicle appearance INI file");
@@ -213,11 +224,14 @@ void GVAppearanceType::init (const char * fileName)
 				// Base LOD shape.  In stand Pose by default.
 				gvShape[i] = new TG_TypeMultiShape;
 				gosASSERT(gvShape[i] != NULL);
-			
-				FullPathFileName gvName;
-				gvName.init(tglPath,aseFileName,".ase");
-			
-				gvShape[i]->LoadTGMultiShapeFromASE(gvName);
+
+				if (i == 0 && importSourceBase[0]) {
+					gvShape[i]->LoadFromFile(importSourceBase); // ASSIMP-GV-IMPORT-1: opt-in GLB probe
+				} else {
+					FullPathFileName gvName;
+					gvName.init(tglPath,aseFileName,".ase");
+					gvShape[i]->LoadTGMultiShapeFromASE(gvName);
+				}
 			}
 			else if (!i)
 			{
@@ -231,11 +245,14 @@ void GVAppearanceType::init (const char * fileName)
 		// Base shape.  In stand Pose by default.
 		gvShape[0] = new TG_TypeMultiShape;
 		gosASSERT(gvShape[0] != NULL);
-	
-		FullPathFileName gvName;
-		gvName.init(tglPath,aseFileName,".ase");
-	
-		gvShape[0]->LoadTGMultiShapeFromASE(gvName);
+
+		if (importSourceBase[0]) {
+			gvShape[0]->LoadFromFile(importSourceBase); // ASSIMP-GV-IMPORT-1: opt-in GLB probe
+		} else {
+			FullPathFileName gvName;
+			gvName.init(tglPath,aseFileName,".ase");
+			gvShape[0]->LoadTGMultiShapeFromASE(gvName);
+		}
 	}
 
 	result = iniFile.readIdString("ShadowName",aseFileName,511);

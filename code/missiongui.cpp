@@ -1189,7 +1189,7 @@ void MissionInterfaceManager::update (void)
 			if ( moveCameraAround( lineOfSight, passable, ctrlDn, bGui, moverCount, nonMoverCount ) )
 			{
 				bool leftClicked = (!userInput->isLeftDrag() && !userInput->isRightDrag() && userInput->isLeftClick());
-				bool rightClicked = (!userInput->isLeftDrag() && !userInput->isRightDrag() && userInput->isRightClick());
+				bool rightClicked = (!userInput->isLeftDrag() && !userInput->wasRightDrag() && userInput->rightMouseReleased());
 
 				// deal with the hot keys
 				update( leftClicked, rightClicked, mouseX, mouseY, target,  lineOfSight );
@@ -3987,8 +3987,7 @@ bool MissionInterfaceManager::moveCameraAround( bool lineOfSight, bool passable,
 	bool bRetVal = 0;
 	bool middleClicked = (!userInput->isLeftDrag() && !userInput->isRightDrag() && userInput->isMiddleClick());
 
-	if ( (useLeftRightMouseProfile && ((userInput->isLeftClick() && userInput->getKeyDown(KEY_T)) || userInput->isLeftDoubleClick()) && target) 
-		|| (!useLeftRightMouseProfile && userInput->isRightClick() && !userInput->isRightDrag() && target) && !bGui)
+	if ( useLeftRightMouseProfile && ((userInput->isLeftClick() && userInput->getKeyDown(KEY_T)) || userInput->isLeftDoubleClick()) && target )
 	{
 		if (eye)
 			((GameCamera *)eye)->setTarget(target);
@@ -6025,11 +6024,13 @@ bool MissionInterfaceManager::selectionIsHelicopters( )
 int MissionInterfaceManager::saveHotKeys( FitIniFile& file )
 {
 	file.writeBlock( "Keyboard" );
+	// Version sentinel so stale saves from a different MAX_COMMAND are rejected on load.
+	file.writeIdLong( "KeyboardVersion", MAX_COMMAND );
 	for ( int i = 0; i < MAX_COMMAND; i++ )
 	{
 		char header[256];
 		sprintf( header, "Key%ld", i );
-		file.writeIdLong( header, commands[i].key );		
+		file.writeIdLong( header, commands[i].key );
 	}
 
 	file.writeIdLong( "WayPointKey", WAYPOINT_KEY );
@@ -6044,17 +6045,26 @@ int MissionInterfaceManager::loadHotKeys( FitIniFile& file )
 	{
 		for ( int i = 0; i < MAX_COMMAND; i++ )
 		{
-			OldKeys[i] = commands[i].key;		
+			OldKeys[i] = commands[i].key;
 		}
 	}
 
 	if ( NO_ERR == file.seekBlock( "Keyboard" ) )
 	{
+		long version = -1;
+		file.readIdLong( "KeyboardVersion", version );
+		if ( version != MAX_COMMAND )
+		{
+			// Stale save (different command count — e.g. a key was added/removed).
+			// Silently discard and keep compiled-in defaults.
+			return -1;
+		}
+
 		for ( int i = 0; i < MAX_COMMAND; i++ )
 		{
 			char header[256];
 			sprintf( header, "Key%ld", i );
-			file.readIdLong( header, commands[i].key );		
+			file.readIdLong( header, commands[i].key );
 		}
 
 		long tmp;
@@ -6065,7 +6075,7 @@ int MissionInterfaceManager::loadHotKeys( FitIniFile& file )
 		return 0;
 	}
 
-	
+
 	return -1;
 }
 

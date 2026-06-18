@@ -26,6 +26,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include "diagnostic_trace.h"
 
 // Env-gated trace macro.
 static const bool s_readbackTrace = (getenv("MC2_GPU_CULL_READBACK_TRACE") != nullptr);
@@ -284,6 +285,16 @@ bool readback_init(uint32_t maxActors) {
            maxActors, s_slotBytes, (long long)totalBytes,
            ssboAlignment, READBACK_SSBO_BINDING, (int)s_forceNotReady);
     fflush(stdout);
+    if (mc2_diag::tagEnabled("GPU_CULL")) {
+        char diag_buf[256];
+        snprintf(diag_buf, sizeof(diag_buf),
+            "{\"event\":\"readback_init\",\"maxActors\":%u,\"slotBytes\":%zu,"
+            "\"totalBytes\":%lld,\"ssboAlignment\":%d,\"binding\":%u,"
+            "\"forceNotReady\":%d,\"dual_buf\":1}",
+            maxActors, s_slotBytes, (long long)totalBytes,
+            ssboAlignment, READBACK_SSBO_BINDING, (int)s_forceNotReady);
+        mc2_diag::writeEvent("GPU_CULL", 1, 0, diag_buf);
+    }
 
     // Run the three-tier selftest now that the ring is initialized.
     readback_selftest();
@@ -653,6 +664,12 @@ void readback_selftest() {
 
     printf("[GPU_CULL v1] event=readback_selftest pass=%d fail=%d\n", pass, fail);
     fflush(stdout);
+    if (mc2_diag::tagEnabled("GPU_CULL")) {
+        char diag_buf[64];
+        snprintf(diag_buf, sizeof(diag_buf),
+            "{\"event\":\"readback_selftest\",\"pass\":%d,\"fail\":%d}", pass, fail);
+        mc2_diag::writeEvent("GPU_CULL", 1, 0, diag_buf);
+    }
 
     if (fail > 0) {
         STOP(("[GPU_CULL] readback_selftest failed %d/%d tiers — tier logic is broken",

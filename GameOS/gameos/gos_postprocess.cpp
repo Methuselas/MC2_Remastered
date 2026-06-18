@@ -3,6 +3,7 @@
 #include "utils/gl_utils.h"
 #include "utils/vec.h"
 #include "gos_hdri.h"
+#include "../../RenderCore/IblHdriRegistry.h"  // HDRI-SKY-NUMBER-1
 #include "gos_profiler.h"
 #include "gos_validate.h"  // drainGLErrors (Tier-1 instr §4)
 #include "gos_smoke.h"     // S9E: SmokeMode fixed deterministic render-shader clock
@@ -164,6 +165,22 @@ float mc2ShadowObjNormalBias()
     return s_b;
 }
 
+// Mech self-shadow softening factor. MC2_SHADOW_MECH_SOFT, default 1.0,
+// clamped [0,4]. Scales the extra PCF penumbra radius + terminator smoothstep
+// width applied to MECH pixels only (a<0.1). 0 = no extra softening (legacy
+// hard mech self-shadow); >1 = blurrier/softer terminator.
+float mc2ShadowMechSoft()
+{
+    static const float s_s = []() {
+        const char* v = getenv("MC2_SHADOW_MECH_SOFT");
+        float s = (v && v[0]) ? (float)atof(v) : 1.0f;
+        if (s < 0.0f) s = 0.0f;
+        if (s > 4.0f) s = 4.0f;
+        return s;
+    }();
+    return s_s;
+}
+
 // Cloud-shadow master gate. MC2_CLOUD_SHADOW, DEFAULT ON (preserves the legacy
 // inline-cloud behavior that this fullscreen pass replaces). =0 disables the
 // whole pass (and the C++ early-return skips it entirely).
@@ -268,6 +285,61 @@ void  gos_SetSsaoBias(float v)     { if (s_postProcess) s_postProcess->aoBias_  
 float gos_GetSsaoRadius()   { return s_postProcess ? s_postProcess->aoRadius_   : 3.0f; }
 float gos_GetSsaoStrength() { return s_postProcess ? s_postProcess->aoStrength_ : 0.7f; }
 float gos_GetSsaoBias()     { return s_postProcess ? s_postProcess->aoBias_     : 0.0025f; }
+
+// HDRI-SKY-NUMBER-1: swap the loaded HDRI texture to match theSkyNumber.
+// Called at mission load (via GameAdapters::Sky::setSkyNumber -> gos_SetSkyNumber).
+// Pattern: load is deferred to first mission load so the default init texture
+// (DaySkyHDRI063B_4K) is overridden before the first frame draws the sky.
+// GL context is valid at mission load time (game is running).
+void gosPostProcess::setSkyNumber(int skyNumber)
+{
+    if (!hdriEnabled_) return;
+    if (skyNumber < 1 || skyNumber > 21) return;
+
+    const RenderCore::IblHdriSet& hdriSet =
+        RenderCore::lookupHdriForSkyNumber(skyNumber);
+    const char* newPath = hdriSet.exrPath;
+
+    // Skip reload if the path hasn't changed (same mission reloaded, etc.).
+    if (std::strncmp(hdriCurrentPath_, newPath, sizeof(hdriCurrentPath_)) == 0)
+        return;
+
+    std::fprintf(stderr,
+        "[HDRI_SKY v1] setSkyNumber sky=%d mood=%s path=%s\n",
+        skyNumber, hdriSet.name, newPath);
+
+    // Delete the old texture before loading the new one.
+    if (hdriTex_) {
+        glDeleteTextures(1, &hdriTex_);
+        hdriTex_ = 0;
+    }
+
+    float newSunAz = 0.0f;
+    bool  newSunValid = false;
+    GLuint newTex = loadHdriTexture(newPath, &newSunAz, &newSunValid);
+
+    if (newTex) {
+        hdriTex_          = newTex;
+        hdriBakedSunAz_   = newSunAz;
+        hdriBakedSunValid_ = newSunValid;
+        std::strncpy(hdriCurrentPath_, newPath, sizeof(hdriCurrentPath_) - 1);
+        hdriCurrentPath_[sizeof(hdriCurrentPath_) - 1] = '\0';
+        hdriReady_ = (hdriSkyboxProg_ != nullptr) && hdriSkyboxProg_->is_valid();
+    } else {
+        // Load failed — keep hdriReady_=false so sky renders black rather than crash.
+        hdriReady_ = false;
+        std::fprintf(stderr,
+            "[HDRI_SKY v1] setSkyNumber sky=%d load_failed path=%s\n",
+            skyNumber, newPath);
+    }
+}
+
+// Free-function bridge: GameAdapters or profile code calls this without
+// including the full gosPostProcess class.
+void gos_SetSkyNumber(int skyNumber)
+{
+    if (s_postProcess) s_postProcess->setSkyNumber(skyNumber);
+}
 
 // Fullscreen quad vertices: 2 triangles covering NDC [-1,1]
 // Each vertex: pos.x, pos.y, uv.x, uv.y
@@ -424,10 +496,15 @@ void gosPostProcess::init(int w, int h)
         hdriEnabled_ = !(gateEnv && gateEnv[0] == '0' && gateEnv[1] == '\0');
 
         if (hdriEnabled_) {
+            // HDRI-SKY-NUMBER-1: default path (overridden at mission load via setSkyNumber).
             const char* hdrPath = "data/hdr/DaySkyHDRI063B_4K.exr";
             // Item 2: also scan for the baked sun azimuth (read-only; used only
             // when sun-sync is enabled at draw time).
             hdriTex_ = loadHdriTexture(hdrPath, &hdriBakedSunAz_, &hdriBakedSunValid_);  // logs failures internally
+            if (hdriTex_) {
+                std::strncpy(hdriCurrentPath_, hdrPath, sizeof(hdriCurrentPath_) - 1);
+                hdriCurrentPath_[sizeof(hdriCurrentPath_) - 1] = '\0';
+            }
 
             hdriSkyboxProg_ = glsl_program::makeProgram(
                 "hdri_skybox",
@@ -577,6 +654,22 @@ void gosPostProcess::init(int w, int h)
         }
         std::fprintf(stderr, "[OOB_FOG v1] enabled=%d color=(%.2f,%.2f,%.2f)\n",
             fogOobEnabled_ ? 1 : 0, oobFogColor_[0], oobFogColor_[1], oobFogColor_[2]);
+    }
+
+    // EDGE-FOG-1: world-space map-edge fog on geometry pixels. Default ON.
+    {
+        edgeFogProg_ = glsl_program::makeProgram("edge_fog",
+            "shaders/postprocess.vert", "shaders/edge_fog.frag", kShaderPrefix);
+        if (!edgeFogProg_ || !edgeFogProg_->is_valid())
+            std::fprintf(stderr, "gosPostProcess: failed to compile edge_fog shader\n");
+        const char* efEnv = getenv("MC2_EDGE_FOG");
+        edgeFogEnabled_ = !(efEnv && efEnv[0] == '0' && efEnv[1] == '\0')
+                       && edgeFogProg_ && edgeFogProg_->is_valid();
+        if (const char* v = getenv("MC2_EDGE_FOG_START"))  edgeFogStart_  = std::atof(v);
+        if (const char* v = getenv("MC2_EDGE_FOG_HEIGHT")) edgeFogHeight_ = std::atof(v);
+        if (const char* v = getenv("MC2_EDGE_FOG_MAX"))    edgeFogMax_    = std::atof(v);
+        std::fprintf(stderr, "[EDGE_FOG v3] enabled=%d start=%.0f height=%.0f max=%.2f\n",
+            edgeFogEnabled_ ? 1 : 0, edgeFogStart_, edgeFogHeight_, edgeFogMax_);
     }
 
     // HZB-DEPTH-PYRAMID-MVP-1: reduction shader. Gate (hzbEnabled_) is resolved
@@ -743,6 +836,10 @@ void gosPostProcess::destroy()
     if (fogOobProg_) {
         glsl_program::deleteProgram("fog_oob");
         fogOobProg_ = nullptr;
+    }
+    if (edgeFogProg_) {
+        glsl_program::deleteProgram("edge_fog");
+        edgeFogProg_ = nullptr;
     }
 
     destroyShadows();
@@ -1871,21 +1968,21 @@ void gosPostProcess::runScreenShadow()
         screenShadowProg_->setInt("dynamicCsmCount", csmCount_);
     screenShadowProg_->setFloat("shadowSoftness", mc2ShadowCsmSoftness());  // match terrain default
     screenShadowProg_->setFloat("objNormalBiasScale", mc2ShadowObjNormalBias());
+    screenShadowProg_->setFloat("mechSoft", mc2ShadowMechSoft());
     {
-        // Object self-shadow acne fix needs the SURFACE->LIGHT direction for
-        // NdotL + normal-offset, expressed in the SAME frame as worldPos and
-        // the GBuffer normal that shadow_screen.frag reconstructs (GL world).
-        //   gos_GetTerrainLightDir returns RAW MC2/Stuff space (x=east,
-        //   y=north, z=elev), pointing light->scene.
-        //   surface->light = negate. Stuff->GL swap: (x,y,z)_GL = (-x, z, y).
+        // SCREEN-SHADOW-LIGHTDIR-FRAME-FIX: the back-face guard + normal-offset
+        // dot objN against lightDir. objN in shadow_screen.frag is the SAME
+        // (-x,z,y) swap of the Stuff GBuffer normal that static_prop's diffuse
+        // uses as worldNormalMC2 — and the diffuse dots that against the RAW
+        // gos_GetTerrainLightDir (toward-sun) and is correct. So lightDir here
+        // must be the RAW terrain sun too (no negate, no extra swap), or the
+        // guard lands the self-shadow on the wrong (90deg-off) faces.
         float lx = 0.0f, ly = 0.0f, lz = 1.0f;
         gos_GetTerrainLightDir(&lx, &ly, &lz);
-        // negate (light->scene  =>  surface->light), then Stuff->GL.
-        float sx = -lx, sy = -ly, sz = -lz;          // surface->light, Stuff
-        float gx = -sx, gy =  sz, gz =  sy;          // -> GL world
-        float len = sqrtf(gx*gx + gy*gy + gz*gz);
-        if (len > 1e-6f) { gx /= len; gy /= len; gz /= len; }
-        float lightDirVec[3] = { gx, gy, gz };
+        float len = sqrtf(lx*lx + ly*ly + lz*lz);
+        if (len > 1e-6f) { lx /= len; ly /= len; lz /= len; }
+        // negate: was 180deg off with the raw vector -> flip sign (frame already correct).
+        float lightDirVec[3] = { -lx, -ly, -lz };    // matches objN frame, correct sign
         screenShadowProg_->setFloat3("lightDir", lightDirVec);
     }
     screenShadowProg_->setInt("debugMode", screenShadowDebug_);
@@ -2145,6 +2242,54 @@ void gosPostProcess::runShoreline()
     glActiveTexture(GL_TEXTURE0);
 }
 
+void gosPostProcess::runEdgeFog()
+{
+    ZoneScopedN("Render.EdgeFog");
+    TracyGpuZone("Render.EdgeFog");
+
+    if (!edgeFogEnabled_ || !edgeFogProg_ || !edgeFogProg_->is_valid()) return;
+    if (mapHalfExtent_ <= 0.0f) return;
+
+    // Bind scene FBO — writes to colour attachment 0 only.
+    // Reads sceneDepthTex_ (separate attachment — no read/write conflict).
+    // sceneColorTex_ is NEVER sampled here; blend equation does the composite.
+    glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
+    setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
+    glViewport(0, 0, width_, height_);
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDepthMask(GL_FALSE);
+
+    // SRC_ALPHA blend: shader emits (fogColor, alpha), blends over existing scene.
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    // invViewProj: same GL_FALSE / row-major convention as SSAO and other passes.
+    edgeFogProg_->apply();
+    edgeFogProg_->setInt("depthTex", 0);
+    glUniformMatrix4fv(
+        glGetUniformLocation(edgeFogProg_->shp_, "invViewProj"),
+        1, GL_FALSE, inverseViewProj_);
+    edgeFogProg_->setFloat3("u_fogColor",   edgeFogColor_);
+    edgeFogProg_->setFloat("u_halfExtent",  mapHalfExtent_);
+    edgeFogProg_->setFloat("u_fogStart",    edgeFogStart_);
+    edgeFogProg_->setFloat("u_fogHeight",   edgeFogHeight_);
+    edgeFogProg_->setFloat("u_fogMax",      edgeFogMax_);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, sceneDepthTex_);
+
+    glBindVertexArray(quadVAO_);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glBindVertexArray(0);
+
+    glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+    glActiveTexture(GL_TEXTURE0);
+}
+
 void gosPostProcess::runFogOob()
 {
     ZoneScopedN("Render.FogOob");
@@ -2235,8 +2380,12 @@ void gosPostProcess::endScene()
     // bloom so bloom extracts from the AO-darkened scene. Default-OFF (gated).
     runSSAO();
 
+    // Edge fog: fades geometry near the map boundary into the cloud color.
+    // After SSAO so AO-darkening is preserved under the fog.
+    runEdgeFog();
+
     // OOB fog: applies fog color to far-plane pixels pointing toward ground.
-    // After SSAO so AO-darkening is preserved under the fog. Default ON.
+    // After edge fog so the two cloud colors match seamlessly.
     runFogOob();
 
     runBloom();
@@ -2561,32 +2710,24 @@ void gosPostProcess::renderHdriSkybox(const float* viewMat, const float* projMat
     }();
     static const bool  s_stateProbe = (getenv("MC2_HDRI_SKY_STATE_PROBE") != nullptr);
 
-    // Compute skyYaw. Default (no offset env set) => 0.0 => byte-identical.
-    // When the offset env is present we activate sun-sync: align the baked sun
-    // azimuth to the mission sun azimuth (both in the GL-equirect frame) and
-    // add the trim offset. The whole rotation is gated on s_azOffsetSet so the
-    // default launch is unchanged.
-    float skyYaw = 0.0f;
-    if (s_azOffsetSet) {
-        float sunSyncYaw = 0.0f;
-        if (hdriBakedSunValid_) {
-            // Mission sun in RAW MC2 (x=east, y=north, z=elevation, Z-up).
-            float lx = 0.0f, ly = 0.0f, lz = 0.0f;
-            gos_GetTerrainLightDir(&lx, &ly, &lz);
-            // Convert to the SAME GL-equirect frame the baked-sun scan used.
-            // kAxisSwapMC2toGL: GL.x = -MC2.x, GL.y = MC2.z(elev), GL.z = MC2.y(north).
-            // Equirect azimuth = atan(worldDir.z, worldDir.x) = atan(GL.z, GL.x)
-            //                  = atan2(MC2.north, -MC2.east) = atan2(ly, -lx).
-            // (Not a guessed sign: -lx and +ly come directly from the swap
-            //  literal in mclib/camera.cpp makeAxisSwapMC2toGL.)
-            const float sunAzGL = atan2f(ly, -lx);
-            // frag rotates worldDir by +skyYaw about +Y before atan(z,x), which
-            // SUBTRACTS skyYaw from the recovered azimuth. To move the baked sun
-            // (hdriBakedSunAz_) onto the mission sun (sunAzGL) we need
-            //   bakedAz - skyYaw == sunAzGL  ->  skyYaw = bakedAz - sunAzGL.
-            sunSyncYaw = hdriBakedSunAz_ - sunAzGL;
-        }
-        skyYaw = sunSyncYaw + s_azOffsetRad;
+    // Compute skyYaw. Auto-sync is always-on when hdriBakedSunValid_:
+    // aligns the HDRI baked-sun azimuth to the mission terrain sun.
+    // MC2_HDRI_SKY_AZ_OFFSET adds a manual trim on top (degrees).
+    float skyYaw = s_azOffsetRad;   // manual trim always applied
+    if (hdriBakedSunValid_) {
+        // Mission sun in RAW MC2 (x=east, y=north, z=elevation, Z-up).
+        float lx = 0.0f, ly = 0.0f, lz = 0.0f;
+        gos_GetTerrainLightDir(&lx, &ly, &lz);
+        // Convert to the SAME GL-equirect frame the baked-sun scan used.
+        // kAxisSwapMC2toGL: GL.x = -MC2.x, GL.y = MC2.z(elev), GL.z = MC2.y(north).
+        // Equirect azimuth = atan(worldDir.z, worldDir.x) = atan(GL.z, GL.x)
+        //                  = atan2(MC2.north, -MC2.east) = atan2(ly, -lx).
+        const float sunAzGL = atan2f(ly, -lx);
+        // frag rotates worldDir by +skyYaw about +Y before atan(z,x), which
+        // SUBTRACTS skyYaw from the recovered azimuth. To move the baked sun
+        // (hdriBakedSunAz_) onto the mission sun (sunAzGL) we need
+        //   bakedAz - skyYaw == sunAzGL  ->  skyYaw = bakedAz - sunAzGL.
+        skyYaw += hdriBakedSunAz_ - sunAzGL;
     }
 
     // --- Item 2 / Phase 1: one-shot screen-center worldDir log. ---
@@ -2630,6 +2771,7 @@ void gosPostProcess::renderHdriSkybox(const float* viewMat, const float* projMat
     }
 
     // Bind shader + uniforms + texture.
+    skyYaw_ = skyYaw;  // WATER-HDRI-REFL-1: cache for water shader uniform
     hdriSkyboxProg_->apply();
     hdriSkyboxProg_->setMat4("invProj", invProjArray);
     hdriSkyboxProg_->setMat3("invViewRot", invViewRot);
@@ -2821,6 +2963,7 @@ void gosPostProcess::renderHdriSkyboxBasis(const float* camFwd,
     }
 
     // Bind shader + uniforms + texture (direct-basis path).
+    skyYaw_ = skyYaw;  // WATER-HDRI-REFL-1: cache for water shader uniform
     hdriSkyboxProg_->apply();
     hdriSkyboxProg_->setFloat3("camFwd",   camFwd);
     hdriSkyboxProg_->setFloat3("camRight", camRight);
@@ -3007,6 +3150,7 @@ void gosPostProcess::renderHdriSkyboxInvVP(const float* invVP16)
     }
 
     // Bind shader + uniforms + texture (inverse-worldToClipGL path).
+    skyYaw_ = skyYaw;  // WATER-HDRI-REFL-1: cache for water shader uniform
     hdriSkyboxProg_->apply();
     hdriSkyboxProg_->setMat4("invWorldToClipGL", invVP16);
     hdriSkyboxProg_->setInt("uvDebug", s_uvDebug);

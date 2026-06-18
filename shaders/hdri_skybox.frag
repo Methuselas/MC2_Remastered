@@ -141,16 +141,19 @@ void main()
         }
     }
 
-    // Equirect mapping. Output the FLIPPED v to handle EXR top-to-bottom
-    // scanline order vs GL bottom-to-top texture convention.
+    // Equirect mapping.
+    // invWorldToClipGL inverts kPixelHomogToGLNDC which negates the Z component,
+    // so worldDir.z is negative for "up" (GL NDC Y+ maps to world -Z via inversion).
+    // TinyEXR row 0 (sky zenith) lands at GL v=0; asin(-1)/PI+0.5 == 0.0, so
+    // we do NOT flip v here — the negated z already reads the correct row.
     vec2 uv;
     if (zUp) {
         // Raw MC2 Z-up equirect (frameFix==2, one-proven-matrix path).
         // azimuth   = atan2(north, east) = atan2(worldDir.y, worldDir.x)
-        // elevation = asin(worldDir.z)   (z = elevation in raw MC2 frame)
+        // elevation = asin(worldDir.z)   — worldDir.z < 0 when looking up (see above)
         uv = vec2(
             atan(worldDir.y, worldDir.x) / (2.0 * PI) + 0.5,
-            1.0 - (asin(clamp(worldDir.z, -1.0, 1.0)) / PI + 0.5)
+            asin(clamp(worldDir.z, -1.0, 1.0)) / PI + 0.5
         );
     } else {
         // Y-up equirect (legacy frameFix 0 baseline + frameFix 1 camera-basis,

@@ -438,7 +438,10 @@ void main() {
     c.rgb = mix(v_fog.rgb, c.rgb, u_fogValue);
 
     FragColor = c;
-    GBuffer1  = rc_gbuffer1_screenShadowEligible(normalize(v_normal));
+    // Static props receive the static shadow map but NOT the dynamic-cascade
+    // self-shadow (CPU never self-shadowed buildings; hard terminator on flat
+    // facets looks wrong). a=0.25 routes to the no-self-shadow object path.
+    GBuffer1  = rc_gbuffer1_screenShadowEligible_noSelfShadow(normalize(v_normal));
 #ifdef MC2_OBJECT_ID_BUFFER
     // M1.5: emit handle.raw() to attachment-2. Alpha-tested fragments
     // that discard() above skip this write naturally. Coalesce path

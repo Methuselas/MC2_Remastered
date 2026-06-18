@@ -36,6 +36,8 @@ Usage:
   --dry-run          Print what would be done, don't run.
   --limit      N     Process at most N files (for testing).
   --mission    NAME  Process only this mission stem (e.g. mc2_01).
+  --max-edge   N     Cap longest edge to N pixels before cooking (0=no cap).
+                     Uses LANCZOS downscale. Does not upscale.
 """
 from __future__ import annotations
 
@@ -55,7 +57,7 @@ _DEFAULT_DATA_DIR = r"A:/Games/mc2-opengl/mc2-win64-v0.3/data/textures"
 _DEFAULT_KTX_TOOL = r"A:/Games/mc2-tools/ktx/ktx.exe"
 
 
-def bake_one(src: Path, ktx_tool: str, dry_run: bool) -> bool:
+def bake_one(src: Path, ktx_tool: str, dry_run: bool, max_edge: int = 0) -> bool:
     """Bake src (.burnin.tga or .burnin.jpg) -> src.with_suffix('.ktx2').
     Returns True on success, False on failure."""
     dst = src.with_suffix(".ktx2")
@@ -71,6 +73,13 @@ def bake_one(src: Path, ktx_tool: str, dry_run: bool) -> bool:
 
     src_w, src_h = img.size
     img_rgba = img.convert("RGBA")
+
+    if max_edge > 0 and max(src_w, src_h) > max_edge:
+        scale = max_edge / max(src_w, src_h)
+        new_w = int(src_w * scale)
+        new_h = int(src_h * scale)
+        img_rgba = img_rgba.resize((new_w, new_h), Image.LANCZOS)
+        print(f"  resized {src_w}x{src_h} -> {new_w}x{new_h}")
 
     with tempfile.TemporaryDirectory() as td:
         tdp = Path(td)
@@ -127,6 +136,8 @@ def main() -> int:
     ap.add_argument("--limit",         type=int, default=0)
     ap.add_argument("--mission",       action="append", default=[],
                     help="Filter to mission stem (repeatable, e.g. mc2_01)")
+    ap.add_argument("--max-edge",      type=int, default=0,
+                    help="Cap longest edge to N pixels (0=no cap, LANCZOS downscale)")
     args = ap.parse_args()
 
     data_dir = Path(args.data_dir)
@@ -163,7 +174,7 @@ def main() -> int:
         if args.skip_existing and dst.exists():
             skip += 1
             continue
-        if bake_one(src, ktx_tool, args.dry_run):
+        if bake_one(src, ktx_tool, args.dry_run, args.max_edge):
             ok += 1
         else:
             fail += 1

@@ -166,6 +166,10 @@ inline float agsqrt( float _a, float _b )
 
 char WindowTitle[1024];		// Global window title (GetWindowText is VERY slow)
 
+// Scroll-velocity momentum for adaptive zoom speed.
+// Bumped by ZoomIn/ZoomOut each call, decayed every frame by Camera::update().
+static float s_scrollMomentum = 0.0f;
+
 long topCtrlUpd = 0;
 
 extern long scenarioEndTurn;
@@ -208,7 +212,7 @@ bool MaxObjectsDrawn = FALSE;
 
 float elevationAdjustFactor = 50.0;
 
-float Camera::MIN_PERSPECTIVE =			10.0f;
+float Camera::MIN_PERSPECTIVE =			-20.0f;  // allow looking up to 20deg above horizontal
 float Camera::MIN_ORTHO		  =			18.0f;
 float Camera::MAX_PERSPECTIVE =			88.0f;
 float Camera::MAX_ORTHO		  =			88.0f;
@@ -219,7 +223,7 @@ float zoomMax = 2.0;
 float zoomMin = 0.1f;
 float FOVMax = 75.0f;
 float FOVMin = 20.0f;
-float Camera::AltitudeMinimum = 60.0f;
+float Camera::AltitudeMinimum = 10.0f;
 float Camera::AltitudeMaximumLo = 6000.0f;
 float Camera::AltitudeMaximumHi = 6400.0f;
 float Camera::AltitudeDefault = 1200.0f;
@@ -530,7 +534,7 @@ long Camera::init (FitIniFilePtr cameraFile )
 	
 	lightToWorldMatrix.BuildTranslation(Stuff::Point3D(0.0,0.0,0.0));
 	lightToWorldMatrix.BuildRotation(Stuff::EulerAngles(lightPitch * DEGREES_TO_RADS, (lightYaw + 135.0) * DEGREES_TO_RADS, 0.0f));
-	
+
 	worldLights[0]->SetLightToWorld(&lightToWorldMatrix);
 
 	//---------------------------------------------------------
@@ -2148,6 +2152,26 @@ long Camera::update (void)
 	// VFX stuff for this.  ALL GOS NOW!
 	screenResolution.x = viewMulX;
 	screenResolution.y = viewMulY;
+
+	// Smooth zoom: lerp cameraAltitude toward cameraAltitudeDesired each frame.
+	// Also decay scroll momentum (used for adaptive scroll-speed zoom).
+	{
+		s_scrollMomentum -= frameLength * 4.0f;
+		if (s_scrollMomentum < 0.0f) s_scrollMomentum = 0.0f;
+
+		float diff = cameraAltitudeDesired - cameraAltitude;
+		if (fabsf(diff) > 0.1f)
+			cameraAltitude += diff * (frameLength * 20.0f < 1.0f ? frameLength * 20.0f : 1.0f);
+		else
+			cameraAltitude = cameraAltitudeDesired;
+		if (cameraAltitude < AltitudeMinimum)
+			cameraAltitude = AltitudeMinimum;
+		float _ap = (projectionAngle - MIN_PERSPECTIVE) / (MAX_PERSPECTIVE - MIN_PERSPECTIVE);
+		float _tm = AltitudeMaximumLo + ((AltitudeMaximumHi - AltitudeMaximumLo) * _ap);
+		if (_tm > 0.0f)
+			newScaleFactor = 1.0f - ((cameraAltitude - AltitudeMinimum) / _tm);
+	}
+
 	calculateProjectionConstants();
 
 	globalScaleFactor = getScaleFactor();
@@ -2788,38 +2812,32 @@ void Camera::setCameraOrigin (void)
 			actualPosition.x = -translation.x;
 			actualPosition.y = translation.z;
 			actualPosition.z = translation.y - ELEVATION_BUFFER;
-			
-			if (land && (turn > 3) && (useLOSAngle))
+
+			// Clamp camera to terrain floor via position, not angle.
+			// When clamped, recompute the rotation to look FROM the lifted
+			// position TOWARD the focus — prevents the lifted camera from
+			// aiming into the ground with the pre-lift pitch.
+			if (land)
 			{
-				//bool isLOS = CameraLineOfSight(actualPosition,position);
-				bool isLOS = actualPosition.z > (land->getTerrainElevation(actualPosition) + 75.0f);
-				if (!isLOS)
+				float terrainAtCam = land->getTerrainElevation(actualPosition);
+				if (translation.y < terrainAtCam + 2.0f)
 				{
-					//Try moving closer to get above terrain.
-					//if (localAltitude > AltitudeMinimum)
-					//{
-					//	isOKView = false;
-					//	localAltitude -= MOVE_IN_INC;
-					//}
-					//else	//We are as tight as we can go, pull localAngle up.
-					{
-						isOKView = false;
-						localAngle += ANGLE_UP_INC;
-					}
-				}
-				else
-				{
-					isOKView = true;
-					cameraOrigin.BuildTranslation(translation);
-					physicalPos = translation;
+					translation.y = terrainAtCam + 2.0f;
+					actualPosition.z = translation.y - ELEVATION_BUFFER;
+
+					// Repoint at focus from clamped position.
+					float dx = position.x - actualPosition.x;
+					float dy = position.y - actualPosition.y;
+					float dz = cameraShiftZ - translation.y;
+					float horiz = sqrtf(dx*dx + dy*dy);
+					float newPitch = (horiz > 0.1f) ? atan2f(dz, horiz) : (dz < 0.0f ? -1.5707f : 0.0f);
+					cameraOrigin.BuildRotation(Stuff::EulerAngles(newPitch, cameraDirection.yaw, 0.0f));
 				}
 			}
-			else
-			{
-				isOKView = true;
-				cameraOrigin.BuildTranslation(translation);
-				physicalPos = translation;
-			}
+
+			isOKView = true;
+			cameraOrigin.BuildTranslation(translation);
+			physicalPos = translation;
 		}
 	}
 
@@ -3223,17 +3241,20 @@ void Camera::ZoomIn (float amount)
 	}
 	else
 	{
-		cameraAltitude -= (amount*1500.0f);
-		cameraAltitudeDesired = cameraAltitude;
-		if (cameraAltitude < AltitudeMinimum)
-			cameraAltitude = AltitudeMinimum;
-			
-		float anglePercent = (projectionAngle - MIN_PERSPECTIVE) / (MAX_PERSPECTIVE - MIN_PERSPECTIVE);
-		float testMax = Camera::AltitudeMaximumLo + ((Camera::AltitudeMaximumHi - Camera::AltitudeMaximumLo) * anglePercent);
-
-		newScaleFactor = 1.0f - ((cameraAltitude - AltitudeMinimum) / testMax);
+		// Proportional zoom: strip the scaleFactor baked into amount so step is
+		// a fixed % of remaining altitude range regardless of current zoom level.
+		// Momentum boosts fast scrolling up to ~2.5x; slow scroll stays at 1x.
+		s_scrollMomentum += 1.0f;
+		if (s_scrollMomentum > 5.0f) s_scrollMomentum = 5.0f;
+		float speedMult = 1.0f + s_scrollMomentum * 0.3f;
+		float sf = newScaleFactor > 0.01f ? newScaleFactor : 0.01f;
+		float altRange = max(1.0f, cameraAltitudeDesired - AltitudeMinimum);
+		cameraAltitudeDesired -= altRange * (amount / sf) * 0.045f * speedMult;
+		if (cameraAltitudeDesired < AltitudeMinimum)
+			cameraAltitudeDesired = AltitudeMinimum;
+		// cameraAltitude lerps toward cameraAltitudeDesired in update()
 	}
-		
+
 	cameraShiftZ = position.z;
 }
 
@@ -3251,14 +3272,19 @@ void Camera::ZoomOut (float amount)
 		float anglePercent = (projectionAngle - MIN_PERSPECTIVE) / (MAX_PERSPECTIVE - MIN_PERSPECTIVE);
 		float testMax = Camera::AltitudeMaximumLo + ((Camera::AltitudeMaximumHi - Camera::AltitudeMaximumLo) * anglePercent);
 
- 		cameraAltitude += (amount*1500.0f);
-		cameraAltitudeDesired = cameraAltitude;
-		if (cameraAltitude > testMax)
-			cameraAltitude = testMax;
-			
-		newScaleFactor = 1.0f - ((cameraAltitude - AltitudeMinimum) / testMax);
+		// Proportional zoom: strip scaleFactor bake-in, step = % of remaining range.
+		// Momentum boosts fast scrolling up to ~2.5x; slow scroll stays at 1x.
+		s_scrollMomentum += 1.0f;
+		if (s_scrollMomentum > 5.0f) s_scrollMomentum = 5.0f;
+		float speedMult = 1.0f + s_scrollMomentum * 0.3f;
+		float sf = newScaleFactor > 0.01f ? newScaleFactor : 0.01f;
+		float altRange = max(1.0f, testMax - cameraAltitudeDesired);
+		cameraAltitudeDesired += altRange * (amount / sf) * 0.045f * speedMult;
+		if (cameraAltitudeDesired > testMax)
+			cameraAltitudeDesired = testMax;
+		// cameraAltitude lerps toward cameraAltitudeDesired in update()
 	}
-		
+
 	cameraShiftZ = position.z;
 }
 
@@ -3623,7 +3649,7 @@ void Camera::rotateLightLeft(float amount)
 
 	lightToWorldMatrix.BuildTranslation(Stuff::Point3D(0.0,0.0,0.0));
 	lightToWorldMatrix.BuildRotation(Stuff::EulerAngles(lightPitch * DEGREES_TO_RADS, (lightYaw + 135.0) * DEGREES_TO_RADS, 0.0f));
-	
+
 	worldLights[0]->SetLightToWorld(&lightToWorldMatrix);
 }	
 
@@ -3638,7 +3664,7 @@ void Camera::rotateLightRight(float amount)
 	Stuff::LinearMatrix4D lightToWorldMatrix;
 	lightToWorldMatrix.BuildTranslation(Stuff::Point3D(0.0,0.0,0.0));
 	lightToWorldMatrix.BuildRotation(Stuff::EulerAngles(lightPitch * DEGREES_TO_RADS, (lightYaw + 135.0) * DEGREES_TO_RADS, 0.0f));
-	
+
 	worldLights[0]->SetLightToWorld(&lightToWorldMatrix);
 }	
 
@@ -3654,7 +3680,7 @@ void Camera::rotateLightUp(float amount)
 	
 	lightToWorldMatrix.BuildTranslation(Stuff::Point3D(0.0,0.0,0.0));
 	lightToWorldMatrix.BuildRotation(Stuff::EulerAngles(lightPitch * DEGREES_TO_RADS, (lightYaw + 135.0) * DEGREES_TO_RADS, 0.0f));
-	
+
 	worldLights[0]->SetLightToWorld(&lightToWorldMatrix);
 }	
 
@@ -3670,7 +3696,7 @@ void Camera::rotateLightDown(float amount)
 	
 	lightToWorldMatrix.BuildTranslation(Stuff::Point3D(0.0,0.0,0.0));
 	lightToWorldMatrix.BuildRotation(Stuff::EulerAngles(lightPitch * DEGREES_TO_RADS, (lightYaw + 135.0) * DEGREES_TO_RADS, 0.0f));
-	
+
 	worldLights[0]->SetLightToWorld(&lightToWorldMatrix);
 }	
 

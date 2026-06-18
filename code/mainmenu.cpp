@@ -444,6 +444,16 @@ void MainMenu::update()
 	{
 		userInput->mouseOff();
 
+		{
+			static int s_introDbgFrame = 0;
+			gosEnum_KeyStatus escSt  = gos_GetKeyStatus(KEY_ESCAPE);
+			gosEnum_KeyStatus spcSt  = gos_GetKeyStatus(KEY_SPACE);
+			gosEnum_KeyStatus lmsSt  = gos_GetKeyStatus(KEY_LMOUSE);
+			if (escSt != KEY_FREE || spcSt != KEY_FREE || lmsSt != KEY_FREE || s_introDbgFrame % 60 == 0)
+				printf("[INTRO_MOVIE] frame=%d esc=%d spc=%d lmouse=%d\n", s_introDbgFrame, (int)escSt, (int)spcSt, (int)lmsSt);
+			++s_introDbgFrame;
+		}
+
 		if (userInput->getKeyDown(KEY_SPACE) || userInput->getKeyDown(KEY_ESCAPE) || userInput->getKeyDown(KEY_LMOUSE))
 		{
 			introMovie->stop();

@@ -362,7 +362,7 @@ void main() {
               + texture(u_colormap, uv + vec2(-CMAP_R2, -CMAP_R2)).rgb;
     base /= 9.0;
 
-    // Step 5c / Stage B: cement catalog override.
+    // Step 5c: cement catalog override.
     // cw bit layout: bit31=VALID, bit30=IS_TRANSITION, bits29:24=maskId, bits15:0=layerIdx.
     bool cementHit = false;
     int  ctX = clamp(int(floor((v_worldPos.x + u_halfMap) / 128.0)), 0, u_mapSide - 1);
@@ -378,15 +378,12 @@ void main() {
         vec2 cTileUV  = fract(vec2(v_worldPos.x, -v_worldPos.y) / u_cementWUPT);
         vec2 cAtlasUV = (vec2(float(cCol), float(cRow)) + cTileUV) / float(cGridSide);
         vec3 cementColor = texture(u_cementAtlas, cAtlasUV).rgb;
-        if (isTransition && u_useTransitionMask != 0) {
-            int  maskId   = int((cw >> 24u) & 0x3Fu);
-            float maskAlpha = texture(u_transitionMaskArray,
-                                      vec3(cTileUV, float(maskId))).r;
-            base = mix(base, cementColor, maskAlpha);
+        if (isTransition) {
+            // Transition: legacy overlay draw handles cement blend. Shader pass-through.
         } else {
             base = cementColor;
+            cementHit = true;
         }
-        cementHit = true;
     }
 
     // DIAG bit 64: visualize the raw matNormalArray ROCK-layer sample as color

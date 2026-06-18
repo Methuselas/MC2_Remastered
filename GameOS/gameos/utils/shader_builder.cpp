@@ -5,8 +5,10 @@
 #include <assert.h>
 #include <stdio.h>
 #include <cstring>
+#include <sstream>
 #include <string>
 
+#include "diagnostic_trace.h"
 #include "gos_validate.h"
 #include "utils/stream.h"
 #include "utils/logging.h"
@@ -60,8 +62,39 @@ void init_func_ptrs(UNIFORM_FUNC (&uniformFuncs)[15])
     uniformFuncs[CONSTANT_MAT4]  = (UNIFORM_FUNC) glUniformMatrix4fv;
 }
 
+namespace {
+
+std::string diag_json_escape(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s) {
+        switch (c) {
+        case '"':  out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\n': out += "\\n";  break;
+        case '\r': out += "\\r";  break;
+        case '\t': out += "\\t";  break;
+        default:   out += c;      break;
+        }
+    }
+    return out;
+}
+
+static const char* stage_name(glsl_shader::Shader_t stype) {
+    switch (stype) {
+    case glsl_shader::VERTEX:   return "vertex";
+    case glsl_shader::FRAGMENT: return "fragment";
+    case glsl_shader::HULL:     return "hull";
+    case glsl_shader::DOMAINE:  return "domain";
+    case glsl_shader::GEOMERTY: return "geometry";
+    default:                    return "unknown";
+    }
+}
+
+} // namespace
+
 // true - error, false - no error
-bool get_shader_error_status(GLuint shader, GLenum status_type)
+bool get_shader_error_status(GLuint shader, GLenum status_type, std::string* out_log = nullptr)
 {
     int status;
     glGetShaderiv(shader, status_type, &status);
@@ -79,6 +112,7 @@ bool get_shader_error_status(GLuint shader, GLenum status_type)
             printf("[SHADER ERROR] CompileShader: %s\n", buf);
             fflush(stdout);
             validateRecordShaderError(buf);
+            if (out_log) *out_log = buf;
         } else {
             printf("[SHADER ERROR] CompileShader: driver reported FAIL with empty info log (GL id=%u)\n", shader);
             fflush(stdout);
@@ -91,7 +125,7 @@ bool get_shader_error_status(GLuint shader, GLenum status_type)
     return false;
 }
 
-bool get_program_error_status(GLuint program, GLenum status_type)
+bool get_program_error_status(GLuint program, GLenum status_type, std::string* out_log = nullptr)
 {
     int status;
     glGetProgramiv(program, status_type, &status);
@@ -109,6 +143,7 @@ bool get_program_error_status(GLuint program, GLenum status_type)
             printf("[SHADER ERROR] LinkProgram: %s\n", buf);
             fflush(stdout);
             validateRecordShaderError(buf);
+            if (out_log) *out_log = buf;
         }
 		delete[] buf;
         return true;
@@ -323,7 +358,7 @@ bool load_shader(const char* fname, std::string& shader_source, std::vector<std:
     return true;
 }
 
-bool compile_shader(GLenum shader, const char** strings, size_t count)
+bool compile_shader(GLenum shader, const char** strings, size_t count, std::string* out_log = nullptr)
 {
     ZoneScopedN("Shader.Compile");
     // Drain any leftover GL errors from prior calls — an uncleared
@@ -340,7 +375,7 @@ bool compile_shader(GLenum shader, const char** strings, size_t count)
 		log_error("OpenGL Error: %s\n", ogl_get_error_code_str(err));
 	}
 
-    bool error = get_shader_error_status(shader, GL_COMPILE_STATUS);
+    bool error = get_shader_error_status(shader, GL_COMPILE_STATUS, out_log);
     return !error && err==GL_NO_ERROR;
 }
 
@@ -391,8 +426,17 @@ glsl_shader* glsl_shader::makeShader(Shader_t stype, const char* fname, const ch
     }
 
     const char* strings[] = { prefix == nullptr ? "" : prefix, shader_source.c_str() };
-    if(!compile_shader(shader, strings, sizeof(strings)/sizeof(strings[0])))
+    std::string compileLog;
+    if(!compile_shader(shader, strings, sizeof(strings)/sizeof(strings[0]), &compileLog))
     {
+        if (mc2_diag::tagEnabled("SHADER_COMPILE")) {
+            std::ostringstream data;
+            data << "{\"event\":\"compile_fail\",\"stage\":\""
+                 << stage_name(stype) << "\",\"path\":\""
+                 << diag_json_escape(std::string(fname)) << "\",\"result\":\"fail\",\"info_log\":\""
+                 << diag_json_escape(compileLog) << "\"}";
+            mc2_diag::writeEvent("SHADER_COMPILE", 1, 0, data.str().c_str());
+        }
         glDeleteShader(shader);
         delete pshader;
         return nullptr;
@@ -414,6 +458,13 @@ glsl_shader* glsl_shader::makeShader(Shader_t stype, const char* fname, const ch
         }
     }
 
+    if (mc2_diag::tagEnabled("SHADER_COMPILE")) {
+        std::ostringstream data;
+        data << "{\"event\":\"compile_ok\",\"stage\":\""
+             << stage_name(stype) << "\",\"path\":\""
+             << diag_json_escape(std::string(fname)) << "\",\"result\":\"ok\"}";
+        mc2_diag::writeEvent("SHADER_COMPILE", 1, 0, data.str().c_str());
+    }
     pshader->fname_ = fname;
     pshader->shader_ = shader;
     pshader->type_ = type;
@@ -754,8 +805,16 @@ glsl_program* glsl_program::makeProgram2(const char* name, const char* vp, const
 	}
 
 	CHECK_GL_ERROR
-	if(get_program_error_status(shp, GL_LINK_STATUS))
+    std::string linkLog;
+	if(get_program_error_status(shp, GL_LINK_STATUS, &linkLog))
     {
+        if (mc2_diag::tagEnabled("SHADER_COMPILE")) {
+            std::ostringstream data;
+            data << "{\"event\":\"link_fail\",\"program\":\""
+                 << diag_json_escape(std::string(name)) << "\",\"stage\":\"link\",\"result\":\"fail\",\"info_log\":\""
+                 << diag_json_escape(linkLog) << "\"}";
+            mc2_diag::writeEvent("SHADER_COMPILE", 1, 0, data.str().c_str());
+        }
         glDeleteProgram(shp);
         return 0;
     }
@@ -775,7 +834,15 @@ glsl_program* glsl_program::makeProgram2(const char* name, const char* vp, const
         }
     }
 
+    if (mc2_diag::tagEnabled("SHADER_COMPILE")) {
+        std::ostringstream data;
+        data << "{\"event\":\"link_ok\",\"program\":\""
+             << diag_json_escape(std::string(name)) << "\",\"stage\":\"link\",\"result\":\"ok\"}";
+        mc2_diag::writeEvent("SHADER_COMPILE", 1, 0, data.str().c_str());
+    }
+
     glsl_program* pprogram = new glsl_program();
+    pprogram->name_ = name ? name : "";
     pprogram->shp_ = shp;
     pprogram->vsh_ = vsh;
     pprogram->fsh_ = fsh;
@@ -890,6 +957,12 @@ bool glsl_program::reload()
         }
     }
     if (!compileOk) {
+        if (mc2_diag::tagEnabled("SHADER_COMPILE")) {
+            std::ostringstream data;
+            data << "{\"event\":\"reload_compile_fail\",\"program\":\""
+                 << diag_json_escape(name_) << "\",\"stage\":\"reload_compile\",\"result\":\"fail\"}";
+            mc2_diag::writeEvent("SHADER_COMPILE", 1, 0, data.str().c_str());
+        }
         for (int i = 0; i < 5; ++i) if (newShaders[i]) glDeleteShader(newShaders[i]);
         printf("[SHADER] reload failed (compile); keeping previous program\n");
         return false;
@@ -905,7 +978,15 @@ bool glsl_program::reload()
         glDetachShader(newProg, newShaders[i]);
         glDeleteShader(newShaders[i]);
     }
-    if (get_program_error_status(newProg, GL_LINK_STATUS)) {
+    std::string reloadLinkLog;
+    if (get_program_error_status(newProg, GL_LINK_STATUS, &reloadLinkLog)) {
+        if (mc2_diag::tagEnabled("SHADER_COMPILE")) {
+            std::ostringstream data;
+            data << "{\"event\":\"reload_link_fail\",\"program\":\""
+                 << diag_json_escape(name_) << "\",\"stage\":\"reload_link\",\"result\":\"fail\",\"info_log\":\""
+                 << diag_json_escape(reloadLinkLog) << "\"}";
+            mc2_diag::writeEvent("SHADER_COMPILE", 1, 0, data.str().c_str());
+        }
         glDeleteProgram(newProg);
         printf("[SHADER] reload failed (link); keeping previous program\n");
         return false;
@@ -930,6 +1011,12 @@ bool glsl_program::reload()
 
     last_load_time_ = timing::get_wall_time_ms();
     is_valid_ = true;
+    if (mc2_diag::tagEnabled("SHADER_COMPILE")) {
+        std::ostringstream data;
+        data << "{\"event\":\"reload_ok\",\"program\":\""
+             << diag_json_escape(name_) << "\",\"stage\":\"reload\",\"result\":\"ok\"}";
+        mc2_diag::writeEvent("SHADER_COMPILE", 1, 0, data.str().c_str());
+    }
     return true;
 }
 

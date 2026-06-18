@@ -438,13 +438,23 @@ void Mechlopedia::MechScreen::select( aTextListItem* pItem )
 }
 void Mechlopedia::MechScreen::render()
 {
+	// PREVIEW-FIX: render the 3D mech/vehicle preview LAST so the 2D panels
+	// (statsListBox/compListBox) and LogisticsScreen::render's SubScreen
+	// statics/background cannot paint over it. The 2D GUI primitives draw
+	// with ZCompare/ZWrite off (drawRect/gos_DrawQuads), so anything drawn
+	// after camera.render() in an overlapping region simply overwrites the
+	// mech's pixels -> blank preview. WeaponScreen (679) and BuildingScreen
+	// (1085) already draw camera.render() last, as does the working Mech Bay
+	// (logisticsmechdisplay.cpp). MechScreen was the lone outlier drawing the
+	// camera BEFORE the panels + LogisticsScreen::render(285,58).
 	groupListBox->render();
 	descriptionListBox.render();
-	camera.render();
 	statsListBox.render();
 	compListBox.render();
 
 	LogisticsScreen::render(285, 58);
+
+	camera.render();
 }
 
 void Mechlopedia::MechScreen::setVehicle( LogisticsVehicle* pVehicle )
@@ -557,6 +567,15 @@ void Mechlopedia::MechScreen::setMech( LogisticsVariant* pChassis, bool bShowJum
 	compListBox.setMech( pChassis );
 
 	camera.setMech( pChassis->getFileName(), prefs.baseColor, prefs.highlightColor, prefs.highlightColor );
+	// PREVIEW-FRAMING-FIX: the Mech Bay (mechbayscreen.cpp:777) follows setMech()
+	// with setScale(chassis scale). The encyclopedia omitted it for mechs, so
+	// shapeScale stayed 0.0f -> SimpleCamera::update() called pObject->scale(0)
+	// -> TG node shapeScalar=0 -> the per-vertex transform (tgl.cpp:1810,
+	// `if (shapeScalar > 0.0f) pos *= shapeScalar;`) left the model at its raw
+	// native size instead of the ~1.0 chassis scale that AltitudeTight=650 frames
+	// for. The mech drew (363 mech3d draws confirmed) but unframed/oversized in
+	// the tiny preview rect -> "blank". Match the bay so the model is framed.
+	camera.setScale( pChassis->getChassis()->getScale() );
 
 	char name[256];
 	cLoadString( pChassis->getChassisName(), name, 255 );

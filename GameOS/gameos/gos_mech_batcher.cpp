@@ -1,5 +1,8 @@
 // GameOS/gameos/gos_mech_batcher.cpp — GPU mech batcher, Slice A.
 #include "gos_mech_batcher.h"
+#include "gos_materials.h"       // Slice C1: named material profile SSBO (binding 7)
+#include "ibl_sh_runtime.h"     // PBR-IBL-MECH-1: g_iblShStrength (shared with static props)
+#include "../../RenderCore/IblShCoeffs.h"  // PBR-IBL-MECH-1: SH-L2 coefficients
 #include "gos_gpu_sync.h"      // GPU-SYNC-CONTRACT typed barrier helper
 #include "render_snapshot.h"  // MECH-EXTRACTION-0: ExtractedMechPacket, RenderSnapshot
 #include "../../RenderCore/RenderDebugView.h"  // MECH-DEBUG-VIEWS-1
@@ -242,6 +245,53 @@ static float s_mechGlassMaxChanThresh = []() {
 }();
 static bool  s_mechSpecDebugMask = false;  // ImGui only; no env var
 
+// PBR-TUNE-1: StandardLit GGX gate + material influence knobs.
+// Mutable so ImGui can dial live (batcher_setStandardLitEnabled / batcher_setPbr*).
+// Env-seeded defaults; no VBO rebuild needed (per-flush uniforms).
+static int   s_standardLitEnabled = []() {
+    const char* v = std::getenv("MC2_STANDARD_LIT_V1");
+    return !(v != nullptr && v[0] == '0');  // DEFAULT-ON; kill-switch =0
+}();
+static float s_pbrMetallicInfluence = []() {
+    const char* v = std::getenv("MC2_PBR_METALLIC_INFLUENCE");
+    return v ? (float)std::atof(v) : 0.15f;
+}();
+static float s_pbrRoughnessMin = []() {
+    const char* v = std::getenv("MC2_PBR_ROUGHNESS_MIN");
+    float d = v ? (float)std::atof(v) : 0.45f;
+    return d;
+}();
+static float s_pbrRoughnessMax = []() {
+    const char* v = std::getenv("MC2_PBR_ROUGHNESS_MAX");
+    float d = v ? (float)std::atof(v) : 0.90f;
+    return d;
+}();
+static float s_pbrAmbientSpecularStrength = []() {
+    const char* v = std::getenv("MC2_PBR_AMBIENT_SPECULAR");
+    return v ? (float)std::atof(v) : 0.25f;
+}();
+
+// PBR-LAYERED-1: PaintedMetal003 paint layer + triplanar. All mutable via ImGui.
+static uint32_t s_mechPaintSurfaceMaterialIdx = 0u;  // resolved lazily alongside s_mechSurfaceMaterialIdx
+static float s_pbrWearStrength = []() {
+    const char* v = std::getenv("MC2_PBR_WEAR_STRENGTH");
+    return v ? (float)std::atof(v) : 1.0f;
+}();
+static int   s_pbrTriplanar = []() {
+    const char* v = std::getenv("MC2_PBR_TRIPLANAR");
+    return (v && v[0] == '1') ? 1 : 0;  // DEFAULT-OFF; enable with =1
+}();
+static float s_pbrTriplanarScale = []() {
+    const char* v = std::getenv("MC2_PBR_TRIPLANAR_SCALE");
+    return v ? (float)std::atof(v) : 0.2f;
+}();
+// PBR-IBL-MECH-1: SH-L2 image-based ambient for mechs.
+// Shares g_iblShStrength with static props (same slider). Default-ON; =0 disables.
+static const bool s_mechIblShEnabled = []() {
+    const char* v = std::getenv("MC2_MECH_IBL_SH");
+    return !(v != nullptr && v[0] == '0');
+}();
+
 // Cached uniform locations (set at program link time).
 static GLint s_loc_u_instanceBase    = -1;
 static GLint s_loc_u_materialFlags   = -1;
@@ -260,6 +310,27 @@ static GLint s_loc_u_mechGlassRoughness      = -1;
 static GLint s_loc_u_mechGlassLumaThresh     = -1;
 static GLint s_loc_u_mechGlassMaxChanThresh  = -1;
 static GLint s_loc_u_mechSpecDebugMask       = -1;
+// Slice C1: StandardLit toggle. Returns -1 until mech.frag declares the uniform;
+// guarded with >= 0 at upload so no crash when shader lacks it.
+static GLint s_loc_u_standardLitEnabled      = -1;
+// Slice C2: PBR detail material samplers + tile scale.
+static GLint s_loc_u_pbrNormalTex            = -1;
+static GLint s_loc_u_pbrOrmTex               = -1;
+static GLint s_loc_u_pbrTileScale            = -1;
+// PBR-TUNE-1: material influence knobs (metallic scale, roughness clamp, ambient specular).
+static GLint s_loc_u_pbrMetallicInfluence      = -1;
+static GLint s_loc_u_pbrRoughnessMin           = -1;
+static GLint s_loc_u_pbrRoughnessMax           = -1;
+static GLint s_loc_u_pbrAmbientSpecularStrength = -1;
+// PBR-LAYERED-1: paint layer + triplanar.
+static GLint s_loc_u_pbrPaintNormalTex  = -1;
+static GLint s_loc_u_pbrPaintOrmTex     = -1;
+static GLint s_loc_u_pbrWearStrength    = -1;
+static GLint s_loc_u_pbrTriplanar       = -1;
+static GLint s_loc_u_pbrTriplanarScale  = -1;
+// PBR-IBL-MECH-1: SH-L2 ambient.
+static GLint s_loc_u_iblSh             = -1;
+static GLint s_loc_u_iblShStrength     = -1;
 
 // Geometry (immutable after finalizeGeometry).
 static GLuint s_sharedVao = 0;
@@ -430,6 +501,15 @@ static std::vector<uint32_t>                       s_mechDrawMaterialIdx;
 static GLuint                                      s_mechMaterialSsbo          = 0;
 static uint32_t                                    s_mechMaterialGpuFrameCount = 0;
 
+// Slice C1: named profile index for binding-7 SSBO (gos_materials).
+// Resolved lazily at first flush() (after gos_materials::init() runs).
+// 0 = default/passthrough (env unset or none/0). Non-zero = named profile active;
+// overrides per-instance materialIdx only when selected so the existing per-actor
+// albedo table (binding 2) is undisturbed when MC2_MECH_SURFACE_MATERIAL is unset.
+// Protected by s_mechSurfaceMaterialIdxResolved to call getProfileIndex() only once.
+static uint32_t s_mechSurfaceMaterialIdx         = 0u;
+static bool     s_mechSurfaceMaterialIdxResolved = false;
+
 // ---------------------------------------------------------------------------
 // Shader load
 // ---------------------------------------------------------------------------
@@ -520,6 +600,26 @@ static void loadProgramsIfNeeded() {
     s_loc_u_mechGlassLumaThresh     = loc("u_mechGlassLumaThresh");
     s_loc_u_mechGlassMaxChanThresh  = loc("u_mechGlassMaxChanThresh");
     s_loc_u_mechSpecDebugMask       = loc("u_mechSpecDebugMask");
+    // Slice C1: StandardLit toggle (default 0 = passthrough; shader may not declare it yet).
+    s_loc_u_standardLitEnabled      = loc("u_standardLitEnabled");
+    // Slice C2: PBR detail surface samplers + tile scale.
+    s_loc_u_pbrNormalTex            = loc("u_pbrNormalTex");
+    s_loc_u_pbrOrmTex               = loc("u_pbrOrmTex");
+    s_loc_u_pbrTileScale            = loc("u_pbrTileScale");
+    // PBR-TUNE-1: material influence knobs.
+    s_loc_u_pbrMetallicInfluence       = loc("u_pbrMetallicInfluence");
+    s_loc_u_pbrRoughnessMin            = loc("u_pbrRoughnessMin");
+    s_loc_u_pbrRoughnessMax            = loc("u_pbrRoughnessMax");
+    s_loc_u_pbrAmbientSpecularStrength = loc("u_pbrAmbientSpecularStrength");
+    // PBR-LAYERED-1: paint layer + triplanar.
+    s_loc_u_pbrPaintNormalTex  = loc("u_pbrPaintNormalTex");
+    s_loc_u_pbrPaintOrmTex     = loc("u_pbrPaintOrmTex");
+    s_loc_u_pbrWearStrength    = loc("u_pbrWearStrength");
+    s_loc_u_pbrTriplanar       = loc("u_pbrTriplanar");
+    s_loc_u_pbrTriplanarScale  = loc("u_pbrTriplanarScale");
+    // PBR-IBL-MECH-1: SH-L2 ambient (shared coeffs with static props).
+    s_loc_u_iblSh              = loc("u_iblSh");
+    s_loc_u_iblShStrength      = loc("u_iblShStrength");
 
     // MECH-VIEWUNIFORMS-1: on the gated path, verify the ViewUniformsBlock is
     // present and bound to point 3. The GLSL layout(binding=3) qualifier is
@@ -708,6 +808,13 @@ void GpuMechBatcher::onMapUnload() {
     s_mechMaterialTable.clear();
     s_mechHandleToMaterialIdx.clear();
     s_mechDrawMaterialIdx.clear();
+    // Slice C1: release named material profile SSBO (binding 7).
+    // shutdown() resets s_initialized so init() can be called again on next map load.
+    // Also reset the lazy-resolve guard so the profile index is re-queried next mission.
+    gos_materials::shutdown();
+    s_mechSurfaceMaterialIdx         = 0u;
+    s_mechPaintSurfaceMaterialIdx    = 0u;
+    s_mechSurfaceMaterialIdxResolved = false;
     std::fprintf(stderr, "[MECHBATCHER v1] event=map_unload\n");
 }
 
@@ -1235,6 +1342,9 @@ static void uploadMechGeometryVbo() {
 void GpuMechBatcher::finalizeGeometry() {
     if (s_geometryFinalized) return;
     loadProgramsIfNeeded();
+    // Slice C1: init named material profile SSBO (binding 7) once per process.
+    // Idempotent; requires GL context (already active at finalizeGeometry call site).
+    gos_materials::init();
 
     // Bail cleanly if shader failed: geometry upload skipped.
     // submit() fast-rejects on s_geometryFinalized==false.
@@ -1513,6 +1623,18 @@ void GpuMechBatcher::flush() {
         return;
     }
 
+    // Slice C1: resolve s_mechSurfaceMaterialIdx once after gos_materials::init() has run.
+    // init() is called from finalizeGeometry() which always precedes the first flush().
+    if (!s_mechSurfaceMaterialIdxResolved) {
+        s_mechSurfaceMaterialIdxResolved = true;
+        const char* v = std::getenv("MC2_MECH_SURFACE_MATERIAL");
+        if (v && v[0] != '\0' && strcmp(v, "none") != 0 && strcmp(v, "0") != 0)
+            s_mechSurfaceMaterialIdx = gos_materials::getProfileIndex(v);
+        // else stays 0 (default passthrough)
+        if (s_mechSurfaceMaterialIdx != 0u)
+            s_mechPaintSurfaceMaterialIdx = gos_materials::getProfileIndex("paintedmetal003");
+    }
+
     // Step 1: Count total bones (one block per actor).
     size_t totalBones = 0;
     for (const auto& ps : s_pendingSubmits) totalBones += ps.bones.size();
@@ -1679,6 +1801,11 @@ void GpuMechBatcher::flush() {
             inst.materialIdx = (s_mechMaterialGpuEnabled && dcIdx < s_mechDrawMaterialIdx.size())
                 ? s_mechDrawMaterialIdx[dcIdx]
                 : 0u;
+            // Slice C1: when a named surface material profile is selected via
+            // MC2_MECH_SURFACE_MATERIAL, override materialIdx with the binding-7
+            // profile index. 0 = env unset/none → preserve existing albedo-table value.
+            if (s_mechSurfaceMaterialIdx != 0u)
+                inst.materialIdx = s_mechSurfaceMaterialIdx;
             // GAMEADAPTERS-VISUAL-STATE-BRIDGE-1: per-mech visual state into the
             // SSBO record. No shader reads these in Slice 1.
             inst.visualDamage01     = d.damage01;
@@ -1736,6 +1863,9 @@ void GpuMechBatcher::flush() {
     if (s_mechMaterialGpuEnabled && s_mechMaterialSsbo != 0) {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, s_mechMaterialSsbo);
     }
+    // Slice C1: bind named material profile SSBO at binding 7.
+    // No-op when MC2_MATERIAL_GPU=0, init() not called, or no textured profiles.
+    gos_materials::bindMaterialTable();
 
     // Save prior GL state. The mech flush bypasses applyRenderStates'
     // tracked slot set, so the engine's render-state cache becomes
@@ -1762,6 +1892,20 @@ void GpuMechBatcher::flush() {
     GLint     prevSsbo1     = 0; glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 1, &prevSsbo1);
     glActiveTexture(GL_TEXTURE0);
     GLint     prevTexUnit0; glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTexUnit0);
+    // Slice C2 + PBR-LAYERED-1: save PBR detail sampler units 1-4.
+    glActiveTexture(GL_TEXTURE1);
+    GLint prevTexUnit1 = 0; glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTexUnit1);
+    GLint prevSampler1 = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, 1, &prevSampler1);
+    glActiveTexture(GL_TEXTURE2);
+    GLint prevTexUnit2 = 0; glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTexUnit2);
+    GLint prevSampler2 = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, 2, &prevSampler2);
+    glActiveTexture(GL_TEXTURE3);
+    GLint prevTexUnit3 = 0; glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTexUnit3);
+    GLint prevSampler3 = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, 3, &prevSampler3);
+    glActiveTexture(GL_TEXTURE4);
+    GLint prevTexUnit4 = 0; glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTexUnit4);
+    GLint prevSampler4 = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, 4, &prevSampler4);
+    glActiveTexture(GL_TEXTURE0);
 
     // MECH-PIPELINEDESC-1: program + fixed-function state (depth test+write+func
     // GEQUAL, blend Opaque, cull Back) from the registered MechOpaque PipelineDesc,
@@ -1788,6 +1932,45 @@ void GpuMechBatcher::flush() {
     // Identified via debug=7 (hardcoded UV (0.5, 0.5) showed yellow paint
     // while debug=2 with v_uv showed black).
     glBindSampler(0, s_sampler);
+
+    // Slice C2: bind PBR surface-detail textures to units 1 and 2.
+    // s_mechSurfaceMaterialIdx 0 → both getters return 0 → unbind (safe; shader
+    // only samples these when u_standardLitEnabled != 0, which requires a non-zero profile).
+    {
+        static const float s_pbrTileScale = []() {
+            const char* v = std::getenv("MC2_PBR_TILE_SCALE");
+            return v ? (float)std::atof(v) : 4.0f;
+        }();
+        const GLuint pbrNormal = gos_materials::getProfileNormalTex(s_mechSurfaceMaterialIdx);
+        const GLuint pbrOrm    = gos_materials::getProfileOrmTex(s_mechSurfaceMaterialIdx);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, pbrNormal);
+        glBindSampler(1, s_sampler);   // REPEAT/LINEAR same as unit 0
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, pbrOrm);
+        glBindSampler(2, s_sampler);
+        glActiveTexture(GL_TEXTURE0);
+        if (s_loc_u_pbrNormalTex >= 0) glUniform1i(s_loc_u_pbrNormalTex, 1);
+        if (s_loc_u_pbrOrmTex    >= 0) glUniform1i(s_loc_u_pbrOrmTex,    2);
+        if (s_loc_u_pbrTileScale >= 0) glUniform1f(s_loc_u_pbrTileScale, s_pbrTileScale);
+    }
+    // PBR-LAYERED-1: bind PaintedMetal003 paint layer to units 3 (normal) and 4 (ORM).
+    // Falls back to Metal061B textures when paint profile not registered (idx=0, id=0).
+    {
+        GLuint pbrPaintNormal = gos_materials::getProfileNormalTex(s_mechPaintSurfaceMaterialIdx);
+        if (pbrPaintNormal == 0u) pbrPaintNormal = gos_materials::getProfileNormalTex(s_mechSurfaceMaterialIdx);
+        GLuint pbrPaintOrm = gos_materials::getProfileOrmTex(s_mechPaintSurfaceMaterialIdx);
+        if (pbrPaintOrm == 0u) pbrPaintOrm = gos_materials::getProfileOrmTex(s_mechSurfaceMaterialIdx);
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D, pbrPaintNormal);
+        glBindSampler(3, s_sampler);
+        glActiveTexture(GL_TEXTURE4);
+        glBindTexture(GL_TEXTURE_2D, pbrPaintOrm);
+        glBindSampler(4, s_sampler);
+        glActiveTexture(GL_TEXTURE0);
+        if (s_loc_u_pbrPaintNormalTex >= 0) glUniform1i(s_loc_u_pbrPaintNormalTex, 3);
+        if (s_loc_u_pbrPaintOrmTex    >= 0) glUniform1i(s_loc_u_pbrPaintOrmTex,    4);
+    }
 
     // Static uniforms.
     glUniform1i(s_loc_u_tex,      0);
@@ -1845,6 +2028,25 @@ void GpuMechBatcher::flush() {
         glUniform1f(s_loc_u_mechGlassMaxChanThresh, s_mechGlassMaxChanThresh);
     if (s_loc_u_mechSpecDebugMask >= 0)
         glUniform1i(s_loc_u_mechSpecDebugMask, s_mechSpecDebugMask ? 1 : 0);
+    // Slice C1: StandardLit GGX gate (mutable via ImGui / batcher_setStandardLitEnabled).
+    if (s_loc_u_standardLitEnabled >= 0)
+        glUniform1i(s_loc_u_standardLitEnabled, s_standardLitEnabled);
+
+    // PBR-TUNE-1: metallic influence, roughness clamp, ambient specular fill.
+    // Mutable via ImGui / batcher_setPbr* accessors; env-seeded defaults.
+    if (s_loc_u_pbrMetallicInfluence      >= 0) glUniform1f(s_loc_u_pbrMetallicInfluence,       s_pbrMetallicInfluence);
+    if (s_loc_u_pbrRoughnessMin           >= 0) glUniform1f(s_loc_u_pbrRoughnessMin,            s_pbrRoughnessMin);
+    if (s_loc_u_pbrRoughnessMax           >= 0) glUniform1f(s_loc_u_pbrRoughnessMax,            s_pbrRoughnessMax);
+    if (s_loc_u_pbrAmbientSpecularStrength >= 0) glUniform1f(s_loc_u_pbrAmbientSpecularStrength, s_pbrAmbientSpecularStrength);
+    // PBR-LAYERED-1: wear blend + triplanar.
+    if (s_loc_u_pbrWearStrength   >= 0) glUniform1f(s_loc_u_pbrWearStrength,   s_pbrWearStrength);
+    if (s_loc_u_pbrTriplanar      >= 0) glUniform1i(s_loc_u_pbrTriplanar,      s_pbrTriplanar ? 1 : 0);
+    if (s_loc_u_pbrTriplanarScale >= 0) glUniform1f(s_loc_u_pbrTriplanarScale, s_pbrTriplanarScale);
+    // PBR-IBL-MECH-1: SH-L2 ambient — same coefficients as static props.
+    if (s_loc_u_iblSh         >= 0)
+        glUniform3fv(s_loc_u_iblSh, 9, &RenderCore::kIblShCoeffs[0][0]);
+    if (s_loc_u_iblShStrength >= 0)
+        glUniform1f(s_loc_u_iblShStrength, s_mechIblShEnabled ? g_iblShStrength : 0.0f);
 
     // Projection uniforms — match static_prop batcher and the
     // terrain_overlay.vert convention: terrainMVP = CPU-composed
@@ -2024,6 +2226,19 @@ void GpuMechBatcher::flush() {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, (GLuint)prevSsbo2);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, (GLuint)prevTexUnit0);
+    // Slice C2 + PBR-LAYERED-1: restore PBR detail sampler units 1-4.
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)prevTexUnit1);
+    glBindSampler(1, (GLuint)prevSampler1);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)prevTexUnit2);
+    glBindSampler(2, (GLuint)prevSampler2);
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)prevTexUnit3);
+    glBindSampler(3, (GLuint)prevSampler3);
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)prevTexUnit4);
+    glBindSampler(4, (GLuint)prevSampler4);
     glActiveTexture((GLenum)prevActiveTex);
     glBindSampler(0, (GLuint)prevSampler);
     glBindVertexArray((GLuint)prevVao);
@@ -2310,6 +2525,45 @@ extern "C" void  batcher_setMechGlassMaxChanThresh(float t) {
 extern "C" float batcher_getMechGlassMaxChanThresh()         { return s_mechGlassMaxChanThresh; }
 extern "C" void  batcher_setMechSpecDebugMask(int on)        { s_mechSpecDebugMask = (on != 0); }
 extern "C" int   batcher_getMechSpecDebugMask()              { return s_mechSpecDebugMask ? 1 : 0; }
+
+// PBR-TUNE-1: StandardLit GGX toggle + material influence knobs.
+// All per-flush uniforms — no VBO rebuild needed.
+extern "C" void  batcher_setStandardLitEnabled(int on)  { s_standardLitEnabled = (on != 0) ? 1 : 0; }
+extern "C" int   batcher_getStandardLitEnabled()        { return s_standardLitEnabled; }
+extern "C" void  batcher_setPbrMetallicInfluence(float v) {
+    if (v < 0.0f) v = 0.0f; if (v > 1.0f) v = 1.0f;
+    s_pbrMetallicInfluence = v;
+}
+extern "C" float batcher_getPbrMetallicInfluence()      { return s_pbrMetallicInfluence; }
+extern "C" void  batcher_setPbrRoughnessMin(float v) {
+    if (v < 0.0f) v = 0.0f; if (v > 1.0f) v = 1.0f;
+    s_pbrRoughnessMin = v;
+}
+extern "C" float batcher_getPbrRoughnessMin()           { return s_pbrRoughnessMin; }
+extern "C" void  batcher_setPbrRoughnessMax(float v) {
+    if (v < 0.0f) v = 0.0f; if (v > 1.0f) v = 1.0f;
+    s_pbrRoughnessMax = v;
+}
+extern "C" float batcher_getPbrRoughnessMax()           { return s_pbrRoughnessMax; }
+extern "C" void  batcher_setPbrAmbientSpecularStrength(float v) {
+    if (v < 0.0f) v = 0.0f; if (v > 2.0f) v = 2.0f;
+    s_pbrAmbientSpecularStrength = v;
+}
+extern "C" float batcher_getPbrAmbientSpecularStrength() { return s_pbrAmbientSpecularStrength; }
+
+// PBR-LAYERED-1: wear blend + triplanar knobs.
+extern "C" void  batcher_setPbrWearStrength(float v) {
+    if (v < 0.0f) v = 0.0f; if (v > 4.0f) v = 4.0f;
+    s_pbrWearStrength = v;
+}
+extern "C" float batcher_getPbrWearStrength()        { return s_pbrWearStrength; }
+extern "C" void  batcher_setPbrTriplanar(int on)     { s_pbrTriplanar = (on != 0) ? 1 : 0; }
+extern "C" int   batcher_getPbrTriplanar()           { return s_pbrTriplanar; }
+extern "C" void  batcher_setPbrTriplanarScale(float v) {
+    if (v < 0.001f) v = 0.001f; if (v > 10.0f) v = 10.0f;
+    s_pbrTriplanarScale = v;
+}
+extern "C" float batcher_getPbrTriplanarScale()      { return s_pbrTriplanarScale; }
 
 // batcher_rebuildMechNormals: re-upload the mech geometry VBO with the current
 // s_mechNormalsMode and s_mechNormalsSmoothDeg. No-op if geometry is not yet

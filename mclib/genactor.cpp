@@ -97,6 +97,17 @@ void GenericAppearanceType::init (const char * fileName)
 	if (result != NO_ERR)
 		Fatal(result,"Could not find building appearance INI file");
 
+	// ASSIMP-GEN-IMPORT-1 — optional GLB probe for generic props. Mirror of
+	// mech3d.cpp [Import] pattern. LOD0 only; damage shape stays ASE.
+	char importSourceBase[256] = "";
+	if (iniFile.seekBlock("Import") == NO_ERR &&
+	    iniFile.readIdString("Source", importSourceBase, 255) == NO_ERR &&
+	    importSourceBase[0])
+	{
+		char* dot = strrchr(importSourceBase, '.');
+		if (dot) *dot = '\0';
+	}
+
 	result = iniFile.seekBlock("TGLData");
 	if (result != NO_ERR)
 		Fatal(result,"Could not find block in building appearance INI file");
@@ -106,10 +117,13 @@ void GenericAppearanceType::init (const char * fileName)
 	if (result != NO_ERR)
 		Fatal(result,"Could not find ASE FileName in building appearance INI file");
 
-	FullPathFileName genName;
-	genName.init(tglPath,aseFileName,".ase");
-
-	genShape->LoadTGMultiShapeFromASE(genName);
+	if (importSourceBase[0]) {
+		genShape->LoadFromFile(importSourceBase); // ASSIMP-GEN-IMPORT-1: opt-in GLB probe
+	} else {
+		FullPathFileName genName;
+		genName.init(tglPath,aseFileName,".ase");
+		genShape->LoadTGMultiShapeFromASE(genName);
+	}
 
 	result = iniFile.readIdString("TextureName",textureName,49);
 	if (result != NO_ERR)

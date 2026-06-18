@@ -37,6 +37,8 @@
 | **Mission/game data** | `mission.fst` (19 MB) `.fit`; `*.pak` terrain; `mc2-gamedata.zip` | `code/mission.cpp:1739 init`; `ObjectManager::loadTerrainObjects` | text INI / binary pak | n/a | — | `code/mission.cpp`, `logistics.cpp` |
 | **Save data** | `data/missions/save.fit` (text FIT) | `code/logistics.cpp:208/216` | INI | n/a | — | `LogisticsData` |
 
+**Cement-pad albedo issue (terrain overlays):** in **0.4 / 0.4c** the deploy `64/` folder ships `mat6_normal.tga` where the cement-overlay tile (`MAT_LAYER_PAINTED_CONC`, drawn by `terrain_overlay.frag`) reads its albedo, so the pad sampled a *normal map* as color → dark slab. The renderer stopgap (`ead760df`) samples the real cement diffuse atlas in `gos_terrain.frag` + `terrain_lod_chunk.frag`. The **proper fix** — swapping the literal `.tga` in `64/` and color-matching it (asset cook) — is already in **rc1** but NOT 0.4. See `docs/known_issues.md` (Water / terrain rendering).
+
 ### 1a. Geometry budgets (vertex/triangle, from `.ase`)
 
 Audited 2026-06-02 via `tools/mc2texcook/ase_geo_audit.py` over `mc2srcdata/tgl/*.ase`

@@ -46,6 +46,13 @@ CLAUDE.md (this file)
 - **Render contract:** `docs/render-contract.md` + `mclib/render_contract.*` (Phase 2: `MC2_RENDER_CONTRACT_ASSERT=1`)
 - **Skills:** `.claude/skills/` — `/mc2-build`, `/mc2-deploy`, `/mc2-build-deploy`, `/mc2-check`, `/mc2-shader-diff`, `/mc2-amd-shader-review`, `/mc2-validate`, `/mc2-render-spine-advisor`, `/mc2-gsd-planner-executor`, `adversarial-plan-review`, `greybeard`, `cost-split-recon-bucket-design`
 - **Steering:** `A:/Games/mc2-opengl-src/.claude/STEERING.md` (`sh .claude/steer.sh "..."` blocks next Bash/Agent; agent runs `ack-steering.sh` to clear)
+- **MCP-first workflow:**
+  1. `get_render_health()` — check liveness (`live=true` = periodic dump + pid alive + recent)
+  2. `get_latest_smoke_report()` — structured smoke pass/fail with fps per mission
+  3. `get_diagnostic_events(tag, 50)` — query specific JSONL diagnostic tag
+  4. Read raw logs ONLY when MCP unavailable/stale/corrupt, crash-handler output needed, or a tool points to a specific artifact log.
+  - Requires engine running with `MC2_DEBUG_STATE_DUMP=1` for live state.
+  - Stale = `seconds_since_update > 30` or `pid_alive=false`.
 
 ## Key paths
 
@@ -67,9 +74,10 @@ Default regression gate. **ALWAYS** `--keep-logs`, NEVER `--with-menu-canary`, N
 **Canonical invocation (verbatim; subagents must copy-paste):**
 
 ```powershell
-py -3 A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\scripts\run_smoke.py --tier tier1 --duration 30 --keep-logs
+$env:MC2_DEBUG_STATE_DUMP="1"; $env:MC2_DIAGNOSTIC_TRACE_FILE="debug_state/diagnostic_trace.jsonl"; $env:MC2_DIAG_TAGS="CONFIG,BUILD,DEVICE"; py -3 A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\scripts\run_smoke.py --tier tier1 --duration 30 --keep-logs
 ```
 
+- Canonical smoke enables CONFIG, BUILD, and DEVICE so MCP can verify diagnostic trace startup, build provenance, and GL device identity.
 - NEVER `--kill-existing`: taskkills concurrent mc2.exe (false `crash_silent`). run_smoke holds concurrency-safe lock. Enforced by `scripts/check-smoke-matrices.py`.
 - `tier1` = 5 missions (`mc2_01`, `mc2_03`, `mc2_10`, `mc2_17`, `mc2_24`). 30s each.
 - Exit `0` = pass. Nonzero → inspect `tests/smoke/artifacts/<timestamp>/`.

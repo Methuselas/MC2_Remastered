@@ -12,6 +12,7 @@
 - `MC2_IMGUI_INSPECTOR=1` — inspector panel. Default **OFF**. Requires `MC2_IMGUI`.
 - `MC2_DEBUG_RENDERER=1` — debug overlay. Requires `MC2_IMGUI_INSPECTOR`.
 - `MC2_STATIC_PROP_REGISTRY=1` — GpuStaticPropRegistry. Default **ON**. Editor sets `=0`.
+- `MC2_HDRI_BC6H` — upload HDRI sky as BC6H_UFLOAT (requires `.ktx2` sidecar + `GL_ARB_texture_compression_bptc`). Default **ON** (absent = ON; set `=0` to force RGBA16F fallback). Sidecar cooked via `tools/cook_bc6h_hdri.py`.
 
 ## SPFLUSH cost-split decomposition (SPFLUSH-COST-SPLIT-1)
 
@@ -38,6 +39,21 @@
 - `MC2_STATIC_PROP_BUILDING_SHADOW=1` — replay all buildings into world-fixed static shadow map. Default **OFF**. `=2` adds trace.
 - `MC2_SHADOW_DYNAMIC_PROP_CASTERS` — feed dynamic caster pass from registry. Default **ON**. Kill=`=0`.
 - `MC2_SHADOW_ROBUST_BASIS` — light-basis singularity guard + AABB corner-scarcity fallback (SHADOW-ROBUST-BASIS-1). Default **ON**. `=0` restores legacy (byte-identical for normal suns; can go singular).
+
+### Dynamic CSM (reworked 2026-06-16 `8d36b37d`/`b8f764b6`/`13e96cc9`/`ead760df`)
+
+- `MC2_SHADOW_CSM` — master cascaded-shadow-map toggle. Default **OFF**.
+- `MC2_SHADOW_MAP_SIZE` — per-cascade shadow texture size. Default **8192**. 3×8192² ≈ 805 MB VRAM; `=4096` ≈ 201 MB (still sharp at R0=512).
+- `MC2_SHADOW_CSM_R0` — near-cascade fit radius (WU). Default **512** (→ 0.25 WU/texel at 4096).
+- `MC2_SHADOW_CSM_R1` — mid-cascade fit radius (WU). Default **4096**.
+- `MC2_SHADOW_CSM_COUNT` — cascade count. Default **3** (R0 near / R1 mid / full-map far).
+- `MC2_SHADOW_CSM_SOFTNESS` — PCF softness. Default **0.9**.
+- `MC2_SHADOW_OBJ_NORMAL_BIAS` — object self-shadow normal-offset bias (kills residual acne). Default **2.0**.
+- `MC2_SHADOW_MECH_SOFT` — mech self-shadow softness (wider PCF penumbra + terminator smoothstep so flat low-poly facets fade instead of flip + raised floor). Default **1.0**, clamp [0,4]. Object self-shadow is now per-type via GBuffer1.a mask: terrain skip / static-prop NO self-shadow / mech soft (`3253d582`).
+- `MC2_SHADOW_PROP_ALPHA` — tree-foliage shadow alpha-test (`shadow_static_prop.frag`, legacy texture path only). Default **ON**.
+- `MC2_CLOUD_SHADOW` — cloud-shadow pass. Default **ON**.
+- **DEBUG-only:** `MC2_SHADER_PATH_TINT` (shader-path tint); `MC2_TERRAIN_DEBUG_MODE` / `MC2_TERRAIN_LOD_CHUNK_DIAG` = **30/31** = dynamic-shadow viz.
+- **RETIRED:** `MC2_SHADOW_CSM_FULLMAP_LAST`, `MC2_SHADOW_CSM_NEAR_MAX` (folded into the fixed-cascade rework).
 
 ## GPU cull readback diagnostics
 
@@ -190,3 +206,93 @@ call from inside a draw-bind path.
   seconds, driven off the shared S9D fixed sim-frame counter via `SmokeMode::fixedClockSeconds()`),
   so frame N renders identically every run. Makes sim speed fps-proportional → it is a
   CAPTURE/DETERMINISM knob, **NOT** for full-duration regression smokes.
+
+## Diagnostic JSONL trace (diagnostic_trace.cpp — 2026-06-17)
+
+Structured per-event JSONL output replacing env-gated stderr prints.
+Survives normal exits and most crashes better than stderr.
+Crash handlers still write to stderr as the last-resort path.
+
+- `MC2_DIAGNOSTIC_TRACE_FILE=<path>` — JSONL output file. Default: `debug_state/diagnostic_trace.jsonl`. Set to `off` to disable.
+- `MC2_DIAG_TAGS=<list>` — comma-separated tag whitelist. Controls which tags write events.
+  - Unset: default high-value whitelist (`GPU_CULL,LIGHTBAKE_PROOF,ANIM_GATE,SPFLUSH_COST_SPLIT,CONFIG,BUILD,DEVICE,SHADER_COMPILE`).
+  - `*` — all registered tags.
+  - `none` — disable JSONL output entirely.
+  - Unknown tag names in list → startup warning to stderr, tag ignored.
+
+### Per-event format
+
+```json
+{"tag":"GPU_CULL","v":1,"session_id":"12345-1718616000000","pid":12345,"tid":6789,"frame":1234,"ts_ms":16234,"written_epoch":1718616016.234,"data":{...}}
+```
+
+### Registered tags
+
+| Tag | Source | Replaces |
+|---|---|---|
+| `GPU_CULL` | GPU cull readback | `MC2_GPU_CULL_READBACK_TRACE=1` stderr |
+| `LIGHTBAKE_PROOF` | Light bake parity | `MC2_LIGHTBAKE_PARITY` stderr |
+| `ANIM_GATE` | Animation eligibility summary | `MC2_BLDG_TYPE_ANIM_STATIC_ELIGIBLE` stderr |
+| `SPFLUSH_COST_SPLIT` | Static prop flush perf | `MC2_STATIC_PROP_FLUSH_COST_SPLIT=1` stderr |
+| `TerrainLOD_prod` | Terrain chunk production telemetry | `[TerrainLOD prod]` stderr |
+| `TERRAIN_ACTIVE_AB` | A/B false-negative counts | `MC2_TERRAIN_ACTIVE_AB` stderr |
+| `TERRAIN_SOLID_AB` | Solid window A/B counts | `MC2_TERRAIN_SOLID_AB` stderr |
+| `CONFIG` | Feature gate snapshot at startup | (new) |
+| `BUILD` | Build identity at startup | (new) |
+| `DEVICE` | GPU/driver info at startup | (new) |
+| `SHADER_COMPILE` | Shader compile results | (new) |
+
+### MCP query
+
+Sessions query via `get_diagnostic_events(tag, last_n)` instead of reading log files:
+```
+get_diagnostic_events("GPU_CULL", 20)     → last 20 GPU_CULL events
+get_diagnostic_events("*", 50)            → last 50 events of any tag
+```
+Unknown tag → error with known tag list. Known tag with no events → empty list.
+
+### Rotation
+
+At engine startup, if `diagnostic_trace.jsonl` exceeds 10 MB, it is renamed to `diagnostic_trace.prev.jsonl` and a fresh file is started. Previous run's trace is preserved in `.prev.jsonl`.
+
+### Flush policy
+
+Each event is flushed immediately (`fflush`) for crash-survival on most platforms. `mc2_diag::flush()` may be called from crash handlers (no allocation). Full crash survival (hardware fault, SIGKILL, kernel panic) is not guaranteed without `fsync`/`FlushFileBuffers`, which is too expensive per-event.
+
+### Diagnostic profiles
+
+**Standard smoke** (canonical `MC2_DIAG_TAGS=CONFIG,BUILD,DEVICE`):
+```powershell
+$env:MC2_DEBUG_STATE_DUMP="1"
+$env:MC2_DIAGNOSTIC_TRACE_FILE="debug_state/diagnostic_trace.jsonl"
+$env:MC2_DIAG_TAGS="CONFIG,BUILD,DEVICE"
+```
+
+**Shader triage** — add `SHADER_COMPILE` to diagnose boot shader failures or missing vegetation card compiles:
+```powershell
+$env:MC2_DEBUG_STATE_DUMP="1"
+$env:MC2_DIAG_TAGS="CONFIG,BUILD,DEVICE,SHADER_COMPILE"
+```
+Then: `get_diagnostic_events("SHADER_COMPILE", 20)` — each event includes `stage`, `path`, `result`, and `info_log` on failure.
+
+**GPU cull triage** — startup health of substrate/compute/readback init:
+```powershell
+$env:MC2_DIAG_TAGS="CONFIG,BUILD,DEVICE,GPU_CULL"
+```
+`get_diagnostic_events("GPU_CULL", 20)` — substrate_init, gl_probe, c1b_cull_ok/fail, compute_selftest, readback_init, readback_selftest per session.
+
+**Static prop flush perf triage** — 10-frame perf window with per-bucket ns breakdown:
+```powershell
+$env:MC2_STATIC_PROP_FLUSH_COST_SPLIT="1"
+$env:MC2_DIAG_TAGS="CONFIG,BUILD,DEVICE,SPFLUSH_COST_SPLIT"
+```
+`get_diagnostic_events("SPFLUSH_COST_SPLIT", 10)` — summary events with `frame`, `window_frames`, and all ns buckets.
+
+**Light bake stability triage** — bake index permanence/parity proof:
+```powershell
+$env:MC2_LIGHTBAKE_STABILITY="1"
+$env:MC2_DIAG_TAGS="CONFIG,BUILD,DEVICE,LIGHTBAKE_PROOF"
+```
+`get_diagnostic_events("LIGHTBAKE_PROOF", 20)` — enabled/first/coverage/UNSTABLE events.
+
+**Fail-open:** Shader compile failures emit `SHADER_COMPILE compile_fail` with `info_log` and do not abort optional shader paths where the existing loader already continues gracefully (e.g. vegetation, optional overlays). Core shaders that call `STOP()` on failure remain fatal — fail-open applies only to paths the loader was already skipping.

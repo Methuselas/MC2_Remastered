@@ -46,6 +46,7 @@ enum class PassIdentity : std::uint8_t {
     OpaqueObject,       // mechs, vehicles, buildings — opaque pass
     AlphaObject,        // same shapes when alpha-tested or alpha-blended
     StaticProp,         // GPU static-prop renderer (static_prop.frag)
+    VegetationCards,    // instanced crossed-quad vegetation billboards (v1 alpha-discard)
     ParticleEffect,     // weapon bolts, weather, clouds, explosions
     UI,                 // HUD, text, menu (screen-space)
     DebugOverlay,       // F1 / F2 / RAlt+P / etc. — diagnostic only

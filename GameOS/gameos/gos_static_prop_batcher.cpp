@@ -669,6 +669,17 @@ static int s_staticPropDebugMaterialMode = []() {
 }();
 static bool s_materialKtxEnabled = (std::getenv("MC2_MATERIAL_KTX") != nullptr &&
                                      std::getenv("MC2_MATERIAL_KTX")[0] != '0');   // MC2_MATERIAL_KTX=1
+// MC2_STATICPROP_TEX_TIER: 128 | 256 | 512 (default) | 1024
+// Selects which cooked tier directory (data/tgl/<tier>/<name>.ktx2) is loaded
+// when MC2_MATERIAL_KTX=1. Launcher sets this from the Graphics / Texture Quality
+// slider; engine reads it once at process start.
+static int s_texTier = []() -> int {
+    const char* e = getenv("MC2_STATICPROP_TEX_TIER");
+    if (!e) return 512;
+    int v = atoi(e);
+    if (v == 128 || v == 256 || v == 1024) return v;
+    return 512;
+}();
 // COMPRESSION-BC7-STATICPROP-1: gate for BC7-compressed KTX2 static-prop arrays.
 // Default-OFF; effective only when s_materialKtxEnabled is also true. When the
 // per-group BC7 conditions (all-or-nothing + uniform-dim) are not met, the group
@@ -921,6 +932,7 @@ struct ProgramLocs {
     GLint ormTexArr           = -1;   // STATICPROP-MATERIAL-ORM-1: u_ormTexArr (sampler2DArray)
     GLint ormSampleEnable     = -1;   // STATICPROP-MATERIAL-ORM-1: u_ormSampleEnable (int)
     GLint pathTint            = -1;   // MC2_SHADER_PATH_TINT debug: u_pathTint (int)
+    GLint terrainSunMC2       = -1;   // GREYBEARD-DIFFUSE-TEST: u_terrainSunMC2 (vec3)
 };
 
 // STATICPROP-MATERIAL-ORM-1 — texture unit reserved for the per-bucket ORM
@@ -1014,6 +1026,32 @@ static std::string deriveOrmSidecar(const char* srcName) {
     if (dot != std::string::npos && (sep == std::string::npos || dot > sep))
         s.erase(dot);
     return s + ".orm.ktx2";
+}
+
+// MC2_STATICPROP_TEX_TIER — derive the tiered KTX2 path from a SOURCE texture name.
+// getTextureName() returns the .tga/.txm source path (e.g. "data/tgl/foo.tga").
+// This function constructs the tier-directory path:
+//   "data/tgl/foo.tga" + tier=512 -> "data/tgl/512/foo.ktx2"
+// The tier subdirectory is inserted between the parent directory and the filename.
+// If no tier directory is found the plain sidecar path (flat .ktx2) is returned
+// so the existing fallback / miss path handles it gracefully.
+static std::string deriveTieredKtxPath(const char* srcName, int tier) {
+    std::string s(srcName ? srcName : "");
+    // Strip extension: find last dot after the last path separator.
+    const size_t sep = s.find_last_of("/\\");
+    const size_t dot = s.find_last_of('.');
+    if (dot != std::string::npos && (sep == std::string::npos || dot > sep))
+        s.erase(dot);
+    // s is now the path without extension, e.g. "data/tgl/foo"
+    // Find the last separator again to split directory from filename stem.
+    const size_t lastSep = s.find_last_of("/\\");
+    if (lastSep == std::string::npos) {
+        // No directory component — just prepend tier and append .ktx2.
+        return std::to_string(tier) + "/" + s + ".ktx2";
+    }
+    // Insert tier directory: "data/tgl" + "/" + "512" + "/" + "foo" + ".ktx2"
+    return s.substr(0, lastSep + 1) + std::to_string(tier) + "/"
+           + s.substr(lastSep + 1) + ".ktx2";
 }
 
 // COMPRESSION-BC7-STATICPROP-2 — release all bucketed arrays + reset the
@@ -1199,6 +1237,8 @@ void loadProgramsIfNeeded() {
     // V-MATERIAL-DEBUG-1: per-fragment material debug view mode (default 0 = OFF).
     s_locsLegacy.debugMaterialMode = glGetUniformLocation(s_staticPropProgram, "u_debugMaterialMode");
     s_locsLegacy.pathTint          = glGetUniformLocation(s_staticPropProgram, "u_pathTint");
+    // GREYBEARD-DIFFUSE-TEST: terrain sun (raw MC2) for forced-diffuse probe.
+    s_locsLegacy.terrainSunMC2     = glGetUniformLocation(s_staticPropProgram, "u_terrainSunMC2");
     // V-IBL-STATIC-1: SH-L2 coeffs + strength (default strength 0.0 = OFF).
     s_locsLegacy.iblSh             = glGetUniformLocation(s_staticPropProgram, "u_iblSh");
     s_locsLegacy.iblShStrength     = glGetUniformLocation(s_staticPropProgram, "u_iblShStrength");
@@ -1242,6 +1282,8 @@ void loadProgramsIfNeeded() {
             // V-MATERIAL-DEBUG-1: per-fragment material debug view mode (default 0 = OFF).
             s_locsCoalesce.debugMaterialMode = glGetUniformLocation(s_staticPropProgramCoalesce, "u_debugMaterialMode");
             s_locsCoalesce.pathTint          = glGetUniformLocation(s_staticPropProgramCoalesce, "u_pathTint");
+            // GREYBEARD-DIFFUSE-TEST: terrain sun (raw MC2) for forced-diffuse probe.
+            s_locsCoalesce.terrainSunMC2     = glGetUniformLocation(s_staticPropProgramCoalesce, "u_terrainSunMC2");
             // V-IBL-STATIC-1: SH-L2 coeffs + strength (default strength 0.0 = OFF).
             s_locsCoalesce.iblSh             = glGetUniformLocation(s_staticPropProgramCoalesce, "u_iblSh");
             s_locsCoalesce.iblShStrength     = glGetUniformLocation(s_staticPropProgramCoalesce, "u_iblShStrength");
@@ -2230,6 +2272,11 @@ void GpuStaticPropBatcher::registerMultiShape(TG_TypeMultiShape* multiShape, boo
 void GpuStaticPropBatcher::finalizeGeometry() {
     if (s_geometryFinalized) return;
 
+    // One-shot log: always emit so the log confirms which tier is active.
+    std::printf("[StaticPropBatcher] tex tier: %dpx (MC2_STATICPROP_TEX_TIER)"
+                " ktx=%s\n", s_texTier, s_materialKtxEnabled ? "ON" : "OFF");
+    std::fflush(stdout);
+
     GpuStaticPropRegistry::staticPropRegistryClearMaterialCache();
     s_packetTexArrayLayer.clear();  // v2: will be repopulated from layerForPacket below
 
@@ -2736,10 +2783,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                 if (u.nodeIdx == 0xFFFFFFFFu) { bc7Ok = false; failReason = "load_fail"; break; }
                 const char* srcName = mcTextureManager->getTextureName(u.nodeIdx);
                 if (!srcName || !*srcName) { bc7Ok = false; failReason = "load_fail"; break; }
-                std::string ktxPath(srcName);
-                const auto dot = ktxPath.rfind('.');
-                if (dot != std::string::npos) ktxPath.replace(dot, std::string::npos, ".ktx2");
-                else                          ktxPath += ".ktx2";
+                const std::string ktxPath = deriveTieredKtxPath(srcName, s_texTier);
                 if (!RenderCore::ktxLoadRgba8(ktxPath.c_str(), bc7Imgs[k])) {
                     bc7Ok = false; failReason = "load_fail"; break;
                 }
@@ -2814,10 +2858,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             if (s_materialKtxEnabled && u.nodeIdx != 0xFFFFFFFFu && mcTextureManager) {
                 const char* srcName = mcTextureManager->getTextureName(u.nodeIdx);
                 if (srcName && *srcName) {
-                    std::string ktxPath(srcName);
-                    const auto dot = ktxPath.rfind('.');
-                    if (dot != std::string::npos) ktxPath.replace(dot, std::string::npos, ".ktx2");
-                    else                          ktxPath += ".ktx2";
+                    const std::string ktxPath = deriveTieredKtxPath(srcName, s_texTier);
                     RenderCore::KtxImage ktxImg;
                     const bool ktxOk = RenderCore::ktxLoadRgba8(ktxPath.c_str(), ktxImg);
                     // Reject compressed sidecars here — block bytes are not RGBA8.
@@ -3357,10 +3398,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                 if (u.nodeIdx == 0xFFFFFFFFu) { bc7Ok = false; failReason = "load_fail"; break; }
                 const char* srcName = mcTextureManager->getTextureName(u.nodeIdx);
                 if (!srcName || !*srcName) { bc7Ok = false; failReason = "load_fail"; break; }
-                std::string ktxPath(srcName);
-                const auto dot = ktxPath.rfind('.');
-                if (dot != std::string::npos) ktxPath.replace(dot, std::string::npos, ".ktx2");
-                else                          ktxPath += ".ktx2";
+                const std::string ktxPath = deriveTieredKtxPath(srcName, s_texTier);
                 if (!RenderCore::ktxLoadRgba8(ktxPath.c_str(), bc7Imgs[k])) {
                     bc7Ok = false; failReason = "load_fail"; break;
                 }
@@ -3484,14 +3522,8 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             if (s_materialKtxEnabled && u.nodeIdx != 0xFFFFFFFFu && mcTextureManager) {
                 const char* srcName = mcTextureManager->getTextureName(u.nodeIdx);
                 if (srcName && *srcName) {
-                    // Derive .ktx2 sidecar path by replacing extension.
-                    std::string ktxPath(srcName);
-                    const auto dot = ktxPath.rfind('.');
-                    if (dot != std::string::npos) {
-                        ktxPath.replace(dot, std::string::npos, ".ktx2");
-                    } else {
-                        ktxPath += ".ktx2";
-                    }
+                    // Derive tiered .ktx2 path: data/tgl/<tier>/foo.ktx2
+                    const std::string ktxPath = deriveTieredKtxPath(srcName, s_texTier);
                     RenderCore::KtxImage ktxImg;
                     const bool ktxOk = RenderCore::ktxLoadRgba8(ktxPath.c_str(), ktxImg);
                     // This RGBA8 upload path cannot consume compressed (BC7) KTX2:
@@ -4696,14 +4728,22 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
         uint32_t flags = 0;
         if (child->lightsOut)   flags |= (1u << 0);
         if (child->isWindow)    flags |= (1u << 1);
-        // [T3.2] Bit-2 (kFlagIsSpotlight) emission deleted. After T3.1 the
+        // Bit-2: foliage/alpha-test. Enables abs(NdotL) two-sided lighting in
+        // static_prop.vert so cross-quad tree faces light consistently from
+        // all camera angles (face normals rotate with view → dark face shadow
+        // rotates with camera without this). alphaTestOn lives on TG_TypeShape.
+        if (const TG_TypeShape* ts2 = static_cast<const TG_TypeShape*>(child->myType)) {
+            if (ts2->alphaTestOn) flags |= (1u << 2);
+        }
+        // [T3.2] Bit-2 was kFlagIsSpotlight (deleted). After T3.1 the
         // spotlight `continue` skip above is unconditional, so this code path
         // is structurally unreachable for spotlight children. The dead
         // shader-side read in static_prop.vert is removed in lockstep per
         // memory/cpp_glsl_ubo_struct_lockstep.md. The static-prop branch of
         // [SPOTLIGHT_REAL_TRACE v1] never fires post-T3.1; the per-actor
         // mech/gv first-hit traces remain via the registration sites in
-        // mech3d.cpp / gvactor.cpp (Debug Instrumentation Rule).
+        // mech3d.cpp / gvactor.cpp (Debug Instrumentation Rule). Bit-2 is now
+        // reused as kFlagIsAlphaTest above.
 
         // rec.shapeToWorld is LinearMatrix4D; convert to Matrix4D for submit().
         Stuff::Matrix4D xform(rec.shapeToWorld);
@@ -5728,6 +5768,13 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
         // MC2_SHADER_PATH_TINT: solid-color path-id debug (default 0 = OFF).
         if (s_locsCoalesce.pathTint >= 0)
             glUniform1i       (s_locsCoalesce.pathTint, mc2ShaderPathTint());
+        // GREYBEARD-DIFFUSE-TEST: upload raw MC2 terrain sun for forced diffuse.
+        if (s_locsCoalesce.terrainSunMC2 >= 0) {
+            extern void gos_GetTerrainLightDir(float*, float*, float*);
+            float tsx = 0.0f, tsy = 0.0f, tsz = 1.0f;
+            gos_GetTerrainLightDir(&tsx, &tsy, &tsz);
+            glUniform3f(s_locsCoalesce.terrainSunMC2, tsx, tsy, tsz);
+        }
         // V-IBL-STATIC-1: SH-L2 image-based ambient. Strength gate is the env
         // var (s_iblShEnabled); when OFF -> upload 0.0 -> shader short-circuits
         // before evalShL2 (byte-identical to pre-slice output). When ON, the
@@ -6850,6 +6897,13 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             // MC2_SHADER_PATH_TINT: solid-color path-id debug (default 0 = OFF).
             if (s_locsLegacy.pathTint >= 0)
                 glUniform1i(s_locsLegacy.pathTint, mc2ShaderPathTint());
+            // GREYBEARD-DIFFUSE-TEST: upload raw MC2 terrain sun for forced diffuse.
+            if (s_locsLegacy.terrainSunMC2 >= 0) {
+                extern void gos_GetTerrainLightDir(float*, float*, float*);
+                float tsx = 0.0f, tsy = 0.0f, tsz = 1.0f;
+                gos_GetTerrainLightDir(&tsx, &tsy, &tsz);
+                glUniform3f(s_locsLegacy.terrainSunMC2, tsx, tsy, tsz);
+            }
             // V-IBL-STATIC-1: SH-L2 image-based ambient (legacy program). Same
             // semantics as coalesce site: strength 0.0 default -> byte-identical OFF.
             // V-IBL-STATIC-2: same per-mission source as coalesce site.

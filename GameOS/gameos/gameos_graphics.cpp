@@ -37,6 +37,19 @@
 // [B1 C16] (diagnostic) gosFX heap + child accumulation counters; env-gated on
 // MC2_GPU_PARTICLES=1. Forward-decl to avoid Stuff/gosfx header chain here.
 namespace gosFX { void DiagFrameTick(); }
+#include "debug_state_dump.h"    // mc2_debug_state::getSessionId, writeShutdownState
+#include "diagnostic_trace.h"   // mc2_diag::init, shutdown
+#include "build_fingerprint.h"  // MC2_BUILD_GIT_SHA/BRANCH/DIRTY/TIME_ISO
+#include <process.h>             // _getpid()
+
+// Build config label for BUILD diagnostic event
+#if defined(_DEBUG)
+#  define MC2_DIAG_BUILD_CONFIG "Debug"
+#elif defined(NDEBUG)
+#  define MC2_DIAG_BUILD_CONFIG "Release"
+#else
+#  define MC2_DIAG_BUILD_CONFIG "RelWithDebInfo"
+#endif
 #include "gos_terrain_bridge.h"
 #include "gos_terrain_lod_chunk.h"
 #include "gos_terrain_patch_stream.h"
@@ -2716,8 +2729,10 @@ float gos_GetWaterReflStrength()
 {
     if (g_waterReflStrength < 0.0f) {
         const char* v = getenv("MC2_WATER_REFLECTION");
-        // default OFF (0.0); MC2_WATER_REFLECTION=1 -> 0.15 (sky-reflection A/B).
-        g_waterReflStrength = (v && v[0] && v[0] != '0') ? 0.15f : 0.0f;
+        // WATER-REFL-DEFAULT-ON: default ON (1.5); MC2_WATER_REFLECTION=0 kills it.
+        // Higher default exposes the HDRI specular contribution at gameplay camera.
+        const bool reflOff = (v && v[0] == '0');
+        g_waterReflStrength = reflOff ? 0.0f : 1.5f;
     }
     return g_waterReflStrength;
 }
@@ -3172,6 +3187,22 @@ void gosRenderer::renderWaterFastPath(
                        ppRefl ? (float)ppRefl->getWidth()  : 1.0f,
                        ppRefl ? (float)ppRefl->getHeight() : 1.0f);
 
+        // WATER-HDRI-REFL-1: bind HDRI equirect on unit 3 for direct specular
+        // sampling (sun disk + sky color, LOD-filtered via mipmaps added in gos_hdri.cpp).
+        // u_waterHdriLod < 0 signals no HDRI -> FS falls back to SH-L2.
+        // MC2_WATER_HDRI_LOD env (float) overrides default 2.5 (1024x512 for 4K HDRI).
+        {
+            static float s_waterHdriLod = -999.0f;
+            if (s_waterHdriLod < -1.0f) {
+                const char* lv = getenv("MC2_WATER_HDRI_LOD");
+                s_waterHdriLod = (lv && lv[0]) ? (float)atof(lv) : 1.0f;
+            }
+            const bool hdriAvail = (ppRefl && ppRefl->isHdriReady());
+            setMI("u_hdri", 3);
+            setMF("u_skyYaw", hdriAvail ? ppRefl->getSkyYaw() : 0.0f);
+            setMF("u_waterHdriLod", hdriAvail ? s_waterHdriLod : -1.0f);
+        }
+
         // Bind SSBOs.
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, recipeBuf);
         // Slot 6 (thin records) was already bound by ComputeDispatchAndBindThinRecords.
@@ -3210,6 +3241,14 @@ void gosRenderer::renderWaterFastPath(
             glActiveTexture(GL_TEXTURE0);
         }
 
+        // WATER-HDRI-REFL-1: bind HDRI equirect on unit 3 (with mipmaps for LOD).
+        const bool bindHdri = (ppRefl && ppRefl->isHdriReady() && ppRefl->getHdriTex() != 0u);
+        if (bindHdri) {
+            glActiveTexture(GL_TEXTURE0 + 3);
+            glBindTexture(GL_TEXTURE_2D, ppRefl->getHdriTex());
+            glActiveTexture(GL_TEXTURE0);
+        }
+
         // MDI: 2 draws (base + detail); 1 if detail not present.
         const GLsizei drawCount = (detailTex != 0) ? 2 : 1;
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, WaterStream::GetIndirectCmdBuffer());
@@ -3222,6 +3261,13 @@ void gosRenderer::renderWaterFastPath(
             glBindTexture(GL_TEXTURE_2D, 0);    // force-clear; mirrors unit-1 post-draw
             glActiveTexture(GL_TEXTURE0);
             glBindSampler(2, savedSampler2);    // restore sampler only
+        }
+
+        // Restore unit 3 — WATER-HDRI-REFL-1: unbind HDRI.
+        if (bindHdri) {
+            glActiveTexture(GL_TEXTURE0 + 3);
+            glBindTexture(GL_TEXTURE_2D, 0);
+            glActiveTexture(GL_TEXTURE0);
         }
 
         // Restore unit 1 — don't leave a texture bound on unit 1 for the legacy path.
@@ -7273,9 +7319,51 @@ void gos_CreateRenderer(graphics::RenderContextHandle ctx_h, graphics::RenderWin
 
     gosPostProcess* pp = new gosPostProcess();
     pp->init(w, h);
+
+    // Initialize diagnostic JSONL trace. Session id shared with debug_state_dump
+    // so MCP can correlate JSONL events with render-state snapshots by session_id.
+    mc2_diag::init(mc2_debug_state::getSessionId(), _getpid());
+
+    // BUILD — one-shot build metadata; fires immediately after init().
+    {
+        char buf[512];
+        snprintf(buf, sizeof(buf),
+            "{\"commit\":\"" MC2_BUILD_GIT_SHA "\","
+            "\"dirty\":%s,"
+            "\"branch\":\"" MC2_BUILD_GIT_BRANCH "\","
+            "\"build_time\":\"" MC2_BUILD_TIME_ISO "\","
+            "\"config\":\"" MC2_DIAG_BUILD_CONFIG "\","
+            "\"platform\":\"windows\"}",
+            MC2_BUILD_GIT_DIRTY ? "true" : "false");
+        mc2_diag::writeEvent("BUILD", 1, 0, buf);
+    }
+
+    // DEVICE — one-shot GL device info; GL context is valid (g_gos_renderer->init() ran above).
+    {
+        const char* vendor   = reinterpret_cast<const char*>(glGetString(GL_VENDOR));
+        const char* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+        const char* version  = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+        const char* glsl     = reinterpret_cast<const char*>(glGetString(GL_SHADING_LANGUAGE_VERSION));
+        char buf[1024];
+        snprintf(buf, sizeof(buf),
+            "{\"gl_vendor\":\"%s\","
+            "\"gl_renderer\":\"%s\","
+            "\"gl_version\":\"%s\","
+            "\"glsl_version\":\"%s\"}",
+            vendor   ? vendor   : "<unavailable>",
+            renderer ? renderer : "<unavailable>",
+            version  ? version  : "<unavailable>",
+            glsl     ? glsl     : "<unavailable>");
+        mc2_diag::writeEvent("DEVICE", 1, 0, buf);
+    }
 }
 
 void gos_DestroyRenderer() {
+
+    // Write shutdown state dump and flush diagnostics BEFORE any resource teardown.
+    // Both functions read render/postprocess state — must run while it is still valid.
+    mc2_debug_state::writeShutdownState();
+    mc2_diag::shutdown();
 
     gosPostProcess* pp = getGosPostProcess();
     if (pp) { pp->destroy(); delete pp; }

@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>  // for free()
 #include <cmath>    // for atan2, fabsf, cosf, sinf
+#include <cstring>  // for strlen, memcpy
 #include <vector>
 #include <algorithm>
 
@@ -11,6 +12,9 @@
 // in CMake at T7).
 #define TINYEXR_IMPLEMENTATION
 #include "tinyexr.h"
+
+// HDRI-BC6H-1: BC6H sidecar upload via KtxLoader (GL-free loader, BC6H blocks).
+#include "../../RenderCore/KtxLoader.h"
 
 // HDRI-SKY Item 2: scan a decoded equirect RGBA-float buffer for the dominant
 // above-horizon light source and return its GL-equirect azimuth (radians).
@@ -74,6 +78,32 @@ static bool scanHdriSunAzGL(const float* px, int w, int h, float* outAzGL)
     return true;
 }
 
+// HDRI-BC6H-1: gate — MC2_HDRI_BC6H controls BC6H sidecar upload.
+// Default ON (absent = ON); set =0 to force RGBA16F fallback path.
+static bool s_hdribc6h = [] {
+    const char* e = getenv("MC2_HDRI_BC6H");
+    return !e || e[0] != '0';
+}();
+
+// Derive sidecar path: replace trailing ".exr" with ".ktx2".
+// Returns false if path does not end with ".exr" or output buffer is too small.
+static bool deriveSidecarKtx2(const char* exrPath, char* outBuf, size_t outBufLen)
+{
+    if (!exrPath || !outBuf || outBufLen < 2) return false;
+    const size_t n = strlen(exrPath);
+    if (n < 4) return false;
+    if (exrPath[n-4] != '.' ||
+        (exrPath[n-3] != 'e' && exrPath[n-3] != 'E') ||
+        (exrPath[n-2] != 'x' && exrPath[n-2] != 'X') ||
+        (exrPath[n-1] != 'r' && exrPath[n-1] != 'R')) {
+        return false;
+    }
+    if (n - 4 + 5 + 1 > outBufLen) return false;  // ".ktx2\0"
+    memcpy(outBuf, exrPath, n - 4);
+    memcpy(outBuf + n - 4, ".ktx2", 6);  // includes '\0'
+    return true;
+}
+
 GLuint loadHdriTexture(const char* path,
                        float* outSunAzGL,
                        bool*  outSunValid)
@@ -84,6 +114,111 @@ GLuint loadHdriTexture(const char* path,
         return 0;
     }
 
+    // ---- HDRI-BC6H-1: BC6H sidecar probe ----
+    // Attempt the .ktx2 sidecar before tinyexr if MC2_HDRI_BC6H=1 and BPTC
+    // is available.  The sun-scan still runs from the EXR pixel buffer so the
+    // azimuth estimate is identical to the RGBA16F path.
+    if (s_hdribc6h && GLEW_ARB_texture_compression_bptc) {
+        char sidecarPath[1024];
+        if (deriveSidecarKtx2(path, sidecarPath, sizeof(sidecarPath))) {
+            RenderCore::KtxImage img;
+            if (RenderCore::ktxLoadRgba8(sidecarPath, img) &&
+                img.isCompressed &&
+                (img.vkFormat == 143 || img.vkFormat == 144)) {
+
+                // BC6H_UFLOAT_BLOCK (143) maps to GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT.
+                // BC6H_SFLOAT_BLOCK (144) maps to GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT.
+                const GLenum glIF = (img.vkFormat == 144)
+                    ? GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT
+                    : GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT;
+
+                // Mip 0 byte length.
+                const size_t mip0Bytes = (img.mipCount > 1 &&
+                                          img.mipByteOffsets.size() > 1)
+                    ? static_cast<size_t>(img.mipByteOffsets[1])
+                    : img.pixels.size();
+
+                while (glGetError() != GL_NO_ERROR) { /* drain */ }
+
+                GLuint tex = 0;
+                glGenTextures(1, &tex);
+                if (!tex) {
+                    std::fprintf(stderr,
+                        "[HDRI_SKY v1] bc6h: glGenTextures failed path=%s\n", path);
+                    // Fall through to tinyexr path below.
+                } else {
+                    GLint prevBinding = 0;
+                    glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevBinding);
+
+                    glBindTexture(GL_TEXTURE_2D, tex);
+                    glCompressedTexImage2D(GL_TEXTURE_2D, 0, glIF,
+                                          img.width, img.height, 0,
+                                          static_cast<GLsizei>(mip0Bytes),
+                                          img.pixels.data());
+                    // Single-mip BC6H texture: clamp max level to 0 so the
+                    // texture is never incomplete due to missing mip levels.
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                    glBindTexture(GL_TEXTURE_2D, prevBinding);
+
+                    const GLenum glErr = glGetError();
+                    if (glErr != GL_NO_ERROR) {
+                        std::fprintf(stderr,
+                            "[HDRI_SKY v1] bc6h: gl_error=0x%x path=%s\n",
+                            glErr, path);
+                        glDeleteTextures(1, &tex);
+                        tex = 0;
+                        // Fall through to tinyexr below.
+                    } else {
+                        std::fprintf(stderr,
+                            "[HDRI_SKY] bc6h: ON (default) sidecar=%s w=%d h=%d "
+                            "glIF=0x%x bytes=%zu tex=%u\n",
+                            sidecarPath, img.width, img.height,
+                            (unsigned)glIF, mip0Bytes, (unsigned)tex);
+
+                        // Sun scan: still load the EXR briefly to find the sun.
+                        if (outSunAzGL) {
+                            float* pixels = nullptr;
+                            int sw = 0, sh = 0;
+                            const char* err = nullptr;
+                            if (LoadEXR(&pixels, &sw, &sh, path, &err) == TINYEXR_SUCCESS) {
+                                float azGL = 0.0f;
+                                if (scanHdriSunAzGL(pixels, sw, sh, &azGL)) {
+                                    *outSunAzGL = azGL;
+                                    if (outSunValid) *outSunValid = true;
+                                    std::fprintf(stderr,
+                                        "[HDRI_SKY v1] bc6h: sun_scan ok az_gl_rad=%.4f az_gl_deg=%.1f\n",
+                                        azGL, azGL * 57.2957795f);
+                                } else {
+                                    std::fprintf(stderr,
+                                        "[HDRI_SKY v1] bc6h: sun_scan failed reason=no_above_horizon_energy\n");
+                                }
+                                free(pixels);
+                            } else {
+                                std::fprintf(stderr,
+                                    "[HDRI_SKY v1] bc6h: sun_scan skipped reason=exr_load_failed err=%s\n",
+                                    err ? err : "(null)");
+                                if (err) FreeEXRErrorMessage(err);
+                                if (pixels) free(pixels);
+                            }
+                        }
+
+                        return tex;
+                    }
+                }
+            } else {
+                // Sidecar missing or wrong format — log at debug level and fall through.
+                std::fprintf(stderr,
+                    "[HDRI_SKY v1] bc6h: sidecar not found or wrong format "
+                    "(%s), falling back to RGBA16F\n", sidecarPath);
+            }
+        }
+    }
+
+    // ---- Original tinyexr / GL_RGBA16F path ----
     // tinyexr LoadEXR signature:
     //   int LoadEXR(float** out_rgba, int* width, int* height,
     //               const char* filename, const char** err);
@@ -122,9 +257,10 @@ GLuint loadHdriTexture(const char* path,
     glBindTexture(GL_TEXTURE_2D, tex);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0,
                  GL_RGBA, GL_FLOAT, pixels);
+    glGenerateMipmap(GL_TEXTURE_2D);   // WATER-HDRI-REFL-1: mipmaps for textureLod in water FS
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
     glBindTexture(GL_TEXTURE_2D, prevBinding);

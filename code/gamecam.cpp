@@ -43,6 +43,7 @@
 #include <tracy/Tracy.hpp>
 #include "cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (RAII scope)
 #include "../GameAdapters/StaticPropRenderAdapter.h"  // M1 CI-gate: firewall bridge for frameBegin()
+#include "../GameAdapters/VegetationAdapter.h"         // vegetation card flush (post-renderLists)
 #include "particles/batcher.h"  // GPU particle batcher flush (Stage 2' and beyond)
 #include "../GameOS/gameos/gos_particle_bridge.h"  // B2 P1: camera basis bridge
 #include "../GameOS/gameos/debug_renderer.h"
@@ -413,6 +414,26 @@ void GameCamera::render (void)
 				// raw GL that bypasses the gos render-state cache; re-sync so the
 				// next gos_SetRenderState isn't a stale no-op (mirrors mech batcher).
 				gos_InvalidateRenderStateCache();
+			}
+
+			// Vegetation ground-patch flush — instanced flat quads, default-OFF
+			// (MC2_VEGETATION_CARDS=1). After renderLists+water, before particles.
+			// Matrix sourced inside flush via gos_GetTerrainMVPMat4() (terrain-chunk space).
+			{
+				ZoneScopedN("GameCamera::render vegetationFlush");
+				float lx = 0.0f, ly = 0.0f, lz = 1.0f;
+				gos_GetTerrainLightDir(&lx, &ly, &lz);
+				const float terrainLightDir_4f[4] = { lx, ly, lz, 0.0f };
+				const float missionTime = static_cast<float>(gos_GetElapsedTime());
+				// Camera position in terrain-chunk space for wind LOD + brightness.
+				// Chunk space: x = east_centered, y = north_centered (same as instance encode).
+				Stuff::Vector3D vegCamOrig = getCameraOrigin();
+				const float vegHalfMap = Terrain::worldUnitsMapSide * 0.5f;
+				const float vegCamCX = vegCamOrig.x - Terrain::mapTopLeft3d.x - vegHalfMap;
+				const float vegCamCY = vegCamOrig.y - Terrain::mapTopLeft3d.y + vegHalfMap;
+				const float vegCamCZ = vegCamOrig.z;
+				GameAdapters::Vegetation::flush(terrainLightDir_4f, missionTime,
+				                                vegCamCX, vegCamCY, vegCamCZ);
 			}
 
 			// GPU particle batcher flush — Stage 2' and beyond.
@@ -793,7 +814,11 @@ long GameCamera::activate (void)
 	theSky->init((GenericAppearanceType*)genericAppearanceType, NULL);
 	
 	theSky->setSkyNumber(mission->theSkyNumber);
-			
+
+	// HDRI-SKY-NUMBER-1: swap the HDRI equirect sky to the mood-appropriate
+	// asset for this mission's sky number (IblHdriRegistry mapping).
+	GameAdapters::Sky::setSkyNumber(static_cast<int>(mission->theSkyNumber));
+
  	return NO_ERR;
 }
 

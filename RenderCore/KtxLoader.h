@@ -1,8 +1,19 @@
 // RenderCore/KtxLoader.h
-// Minimal KTX2 loader for RGBA8 and stored BC7 textures.
-// Supports VK_FORMAT_R8G8B8A8_UNORM (37), VK_FORMAT_R8G8B8A8_SRGB (43),
-// VK_FORMAT_BC7_UNORM_BLOCK (145), and VK_FORMAT_BC7_SRGB_BLOCK (146).
+// Minimal KTX2 loader for RGBA8, BC6H, and stored BC7 textures.
+// Supports:
+//   VK_FORMAT_R8G8B8A8_UNORM       (37)
+//   VK_FORMAT_R8G8B8A8_SRGB        (43)
+//   VK_FORMAT_BC6H_UFLOAT_BLOCK   (143)  -- HDR skybox (HDRI-BC6H-1)
+//   VK_FORMAT_BC6H_SFLOAT_BLOCK   (144)  -- HDR skybox signed variant
+//   VK_FORMAT_BC7_UNORM_BLOCK     (145)
+//   VK_FORMAT_BC7_SRGB_BLOCK      (146)
 // Returns false for supercompressed files, missing files, or invalid headers.
+//
+// BC6H support (HDRI-BC6H-1): loader stores the raw block stream (isCompressed=true,
+// vkFormat=143/144, blockSizeBytes=16) for the consumer to upload via
+// glCompressedTexImage2D(GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT). BC6H blocks
+// have identical geometry to BC7 (4x4, 16 bytes/block); no decoder is provided
+// since BC6H is always uploaded to GL verbatim.
 //
 // BC7 support (COMPRESSION-BC7-STATICPROP-1): the loader stays GL-FREE and
 // simply validates + concatenates the stored block-compressed mip chain. The
@@ -31,10 +42,10 @@ struct KtxImage {
     int   mipCount = 0;            // number of mip levels present in `pixels`
     std::vector<uint64_t> mipByteOffsets; // byte offset of each level in `pixels` (level 0 == 0)
 
-    // COMPRESSION-BC7-STATICPROP-1 format metadata.
+    // COMPRESSION-BC7-STATICPROP-1 / HDRI-BC6H-1 format metadata.
     uint32_t vkFormat       = 0;   // raw VK_FORMAT value from the file header
-    bool     isCompressed   = false; // true for BC7 (145/146); false for RGBA8 (37/43)
-    uint32_t blockSizeBytes = 0;   // 16 for BC7; 0 for uncompressed RGBA8
+    bool     isCompressed   = false; // true for BC6H (143/144) or BC7 (145/146); false for RGBA8
+    uint32_t blockSizeBytes = 0;   // 16 for BC6H/BC7; 0 for uncompressed RGBA8
 };
 
 // Returns true and fills `out` on success.

@@ -112,6 +112,12 @@ void SimpleCamera::render(long xOffset, long yOffset)
 	if ( xOffset != 0 && yOffset != 0 ) // don't know how to do this
 		return;
 
+	if ( getenv("MC2_LOG_PREVIEW") )
+	{
+		FILE* f = fopen("preview_debug.log","a");
+		if (f) { fprintf(f,"[PREVIEW] SimpleCamera::render pObject=%p bIsComponent=%d\n",(void*)pObject,(int)bIsComponent); fflush(f); fclose(f); }
+	}
+
 	if ( pObject )
 	{
 		// PREVIEW-FIX: mark this as a UI preview render so Mech3DAppearance::render
@@ -341,6 +347,14 @@ long SimpleCamera::update()
 	
 		pObject->update();
 		pObject->setVisibility(true,true);
+
+		if ( getenv("MC2_LOG_PREVIEW") )
+		{
+			FILE* f = fopen("preview_debug.log","a");
+			if (f) { fprintf(f,"[PREVIEW] update bounds=[%.0f,%.0f,%.0f,%.0f] viewMul=%.0f,%.0f off=%.1f,%.1f scale=%.3f Alt=%.0f mechPos=%.1f,%.1f,%.1f\n",
+				bounds[0],bounds[1],bounds[2],bounds[3],viewMulX,viewMulY,offsetX,offsetY,shapeScale,(float)AltitudeTight,mechPos.x,mechPos.y,mechPos.z); fflush(f); fclose(f); }
+		}
+
 		eye = oldCam;
 
 	}

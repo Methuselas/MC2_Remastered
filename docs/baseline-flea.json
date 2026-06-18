@@ -1,0 +1,129 @@
+{
+  "asset_name": "Flea",
+  "source_ase": "A:\\Games\\mc2-opengl-src\\mc2srcdata\\tgl\\flea.ase",
+  "source_ini": "A:\\Games\\mc2-opengl\\mc2-win64-v0.4\\data\\tgl\\flea.ini",
+  "vertex_count": 180,
+  "triangle_count": 261,
+  "material_slots": 1,
+  "texture_names": [
+    "FireAntRGB.tga"
+  ],
+  "node_names": [
+    "joint_root",
+    "joint_torso",
+    "joint_ruarm",
+    "joint_rgun",
+    "fl_rgun",
+    "weapon_rightarm",
+    "joint_luarm",
+    "joint_lgun",
+    "fl_lgun",
+    "weapon_leftarm",
+    "fl_torso",
+    "sparks_left",
+    "sparks_right",
+    "joint_antenna",
+    "Hit_Left",
+    "Hit_Right",
+    "smoke_rshoulder",
+    "weapon_righttorso",
+    "weapon_lefttorso",
+    "weapon_centertorso",
+    "Spot_Flea",
+    "Spotlight_WW",
+    "SLCircle_anubis",
+    "cockpit",
+    "joint_hip",
+    "joint_luleg",
+    "joint_llleg",
+    "joint_lankle",
+    "joint_lfoot",
+    "fl_lfoot",
+    "joint_litoe",
+    "joint_lotoe",
+    "dust_lfoot",
+    "fl_llleg",
+    "fl_luleg",
+    "joint_ruleg",
+    "joint_rlleg",
+    "joint_rankle",
+    "joint_rfoot",
+    "fl_rfoot",
+    "joint_rotoe",
+    "joint_ritoe",
+    "dust_rfoot",
+    "fl_rlleg",
+    "fl_ruleg",
+    "fl_hip",
+    "jumpjet_center",
+    "handle_rhand",
+    "handle_lhand",
+    "handle_lfoot",
+    "handle_rfoot"
+  ],
+  "bbox": {
+    "min": [
+      -12.226,
+      -43.9808,
+      0.0138
+    ],
+    "max": [
+      12.2074,
+      10.6283,
+      40.999
+    ]
+  },
+  "lods": [
+    {
+      "filename": "Flea",
+      "distance": 0.0
+    },
+    {
+      "filename": "FleaL1",
+      "distance": 1500.0
+    }
+  ],
+  "shadow_name": "FleaX",
+  "hardpoints": {
+    "weapon": [
+      {
+        "name": "weapon_rightarm",
+        "type": 5
+      },
+      {
+        "name": "weapon_leftarm",
+        "type": 5
+      },
+      {
+        "name": "weapon_righttorso",
+        "type": 0
+      },
+      {
+        "name": "weapon_centertorso",
+        "type": 2
+      },
+      {
+        "name": "weapon_lefttorso",
+        "type": 0
+      }
+    ],
+    "smoke": [
+      {
+        "name": "smoke_rshoulder"
+      }
+    ],
+    "jumpjet": [
+      {
+        "name": "jumpjet_center"
+      }
+    ],
+    "foot": [
+      {
+        "name": "dust_rfoot"
+      },
+      {
+        "name": "dust_lfoot"
+      }
+    ]
+  }
+}

@@ -15,6 +15,7 @@
 #include <set>
 #include <unordered_map>
 #include <intrin.h>  // __rdtsc — [SPFLUSH_COST_SPLIT v1]
+#include "diagnostic_trace.h"
 
 // MC_TextureManager singleton, defined in mclib/txmmgr.cpp.
 extern MC_TextureManager* mcTextureManager;
@@ -1625,6 +1626,35 @@ void flush() {
                 s_win_invalidates, s_win_registrations, win_recipe_rebuilds, win_recipe_rebuilds,
                 s_total_invalidates, s_total_registrations, tot_recipe_rebuilds, tot_recipe_rebuilds);
             fflush(stderr);
+            if (mc2_diag::tagEnabled("SPFLUSH_COST_SPLIT")) {
+                char diag_buf[2048];
+                snprintf(diag_buf, sizeof(diag_buf),
+                    "{\"event\":\"summary\",\"frame\":%u,\"window_frames\":%d,"
+                    "\"leaves\":%lld,\"ranges\":%lld,"
+                    "\"submit_loop_ns\":%lld,\"inst_build_ns\":%lld,"
+                    "\"map_lookup_ns\":%lld,\"color_fill_ns\":%lld,"
+                    "\"actor_record_ns\":%lld,\"world_to_block_ns\":%lld,"
+                    "\"substrate_append_ns\":%lld,\"baseinstance_upload_ns\":%lld,"
+                    "\"cached_total_ns\":%lld,\"cached_submit_ns\":%lld,\"cached_records_ns\":%lld,"
+                    "\"win_cache_builds\":%lld,\"win_cache_hits\":%lld,"
+                    "\"win_invalidates\":%llu,\"win_registrations\":%llu,"
+                    "\"win_recipe_rebuilds\":%llu,"
+                    "\"tot_invalidates\":%llu,\"tot_registrations\":%llu,"
+                    "\"tot_recipe_rebuilds\":%llu}",
+                    g_mc2FrameCounter, s_spflushWindowFrames,
+                    leaves_pf, ranges_pf,
+                    cyc2ns(s_w_submit_loop_total_cyc), cyc2ns(s_w_inst_build_cyc),
+                    cyc2ns(map_lookup_cyc), cyc2ns(color_fill_cyc),
+                    cyc2ns(s_w_actor_record_build_cyc), cyc2ns(s_w_world_to_block_idx_cyc),
+                    cyc2ns(s_w_substrate_append_cyc), cyc2ns(bi_upload_cyc),
+                    cyc2ns(s_w_cached_total_cyc), cyc2ns(s_w_cached_submit_cyc),
+                    cyc2ns(s_w_cached_records_cyc),
+                    static_cast<long long>(s_win_cache_builds / static_cast<unsigned long long>(s_spflushWindowFrames)),
+                    static_cast<long long>(s_win_cache_hits   / static_cast<unsigned long long>(s_spflushWindowFrames)),
+                    s_win_invalidates, s_win_registrations, win_recipe_rebuilds,
+                    s_total_invalidates, s_total_registrations, tot_recipe_rebuilds);
+                mc2_diag::writeEvent("SPFLUSH_COST_SPLIT", 1, g_mc2FrameCounter, diag_buf);
+            }
             // Reset window accumulators.
             s_w_submit_loop_total_cyc  = 0;
             s_w_inst_build_cyc         = 0;

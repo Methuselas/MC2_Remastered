@@ -1,0 +1,16 @@
+{
+  "name": "CorrugatedSteel006A",
+  "source": "ambientCG",
+  "source_id": "CorrugatedSteel006A",
+  "license": "CC0",
+  "resolution": "1K",
+  "source_format": "PNG",
+  "maps": {
+    "albedo": "corrugatedsteel006a_albedo.ktx2",
+    "normal": "corrugatedsteel006a_normal.ktx2",
+    "orm": "corrugatedsteel006a_orm.ktx2"
+  },
+  "orm_packing": "R=AO,G=Roughness,B=Metalness",
+  "color_policy": "do_not_use_source_color_as_authoritative_paint",
+  "color_policy_reason": "AmbientCG albedo is a neutral/average steel color, not the hangar's paint identity. Per-asset paint color must be specified in the mcasset.json materials array separately."
+}

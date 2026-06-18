@@ -13,6 +13,9 @@ Validated by `scripts/check-debug-state-json.py`.
 
 ## Top-level fields
 
+> V1 fields: `schema`, `frame`, `mission`, `build`, `features`, `engineView`, `renderSnapshot`, `staticPropOpaque`, `mech`.
+> V2 additions (below `schema`): `schema_version`, `session_id`, `pid`, `build_id`, `dump_kind`, `written_at_epoch`.
+
 | Field | Type | Description |
 |---|---|---|
 | `schema` | string | Always `"MC2_DEBUG_STATE_V1"`. Bump on breaking change. |
@@ -151,8 +154,10 @@ One entry per mech instance submitted to the GPU batcher this frame (capped at 3
 
 ## Versioning
 
-- Breaking schema change (field removed, type changed, semantics changed) → bump `schema` to `MC2_DEBUG_STATE_V2`.
-- Additive change (new field added) → keep `MC2_DEBUG_STATE_V1`; consumers must handle unknown fields gracefully.
+- Breaking schema change (field removed, type changed, semantics changed) → bump `schema` to `MC2_DEBUG_STATE_V3`.
+- `MC2_DEBUG_STATE_V2` added V2 top-level fields (2026-06-17).
+- `MC2_DEBUG_STATE_V1` was the original schema. Both V1 and V2 are recognized by MCP.
+- Additive change (new field added) → keep current `schema` string; consumers must handle unknown fields gracefully.
 - `check-debug-state-json.py` validates required fields for V1. New fields are optional and ignored by the validator until V2.
 
 ## Out of scope for V1
@@ -164,3 +169,33 @@ The following are explicitly excluded to keep the dump focused:
 - Mission script or save state
 - Network state
 - Any per-object or per-material detail beyond lane-level globals
+
+---
+
+## Schema V2 additions (MC2_DEBUG_STATE_V2)
+
+Added in 2026-06-17. New top-level fields emitted BEFORE `frame`:
+
+| Field | Type | Description |
+|---|---|---|
+| `schema_version` | int | Integer `2`. Allows numeric comparison without string parsing. |
+| `session_id` | string | Process-unique identifier: `"<pid>-<epoch_us>"`. Same value for all dumps in one engine run. |
+| `pid` | int | OS process ID of the engine instance that wrote this file. |
+| `build_id` | string | Build config string, e.g. `"RelWithDebInfo-unknown"`. |
+| `dump_kind` | string | `"periodic"` (routine dump), `"shutdown"` (final dump on exit). |
+| `written_at_epoch` | float | Unix epoch seconds with microsecond precision at write time. |
+
+### Liveness classification (MCP)
+
+MCP `get_render_health()` and `get_liveness()` use these fields to distinguish:
+- **Live**: `dump_kind == "periodic"` AND `pid_alive == true` AND `seconds_since_update < 30`
+- **Shutdown dump**: `dump_kind == "shutdown"` — engine exited, data is final but process dead
+- **V1/unknown**: no V2 fields — fall back to age-only heuristic
+
+### Atomic write
+
+The engine writes V2 snapshots via tmp-file + `MoveFileExW(MOVEFILE_REPLACE_EXISTING)` to the same directory (NTFS atomic rename). MCP retry on `JSONDecodeError` remains as defense-in-depth against edge cases (existing corrupt file, antivirus interference).
+
+### Shutdown dump
+
+`mc2_debug_state::writeShutdownState()` writes a `dump_kind="shutdown"` snapshot on clean exit. Gate: `MC2_DEBUG_STATE_DUMP=1`. Useful for post-mortem queries when the engine is not running.

@@ -92,6 +92,22 @@ extern "C" float batcher_getMechSpecularStrength(void);
 extern "C" void  batcher_setMechSpecularStrength(float s);
 extern "C" float batcher_getMechMetalRoughness(void);
 extern "C" void  batcher_setMechMetalRoughness(float r);
+extern "C" int   batcher_getStandardLitEnabled(void);
+extern "C" void  batcher_setStandardLitEnabled(int on);
+extern "C" float batcher_getPbrMetallicInfluence(void);
+extern "C" void  batcher_setPbrMetallicInfluence(float v);
+extern "C" float batcher_getPbrRoughnessMin(void);
+extern "C" void  batcher_setPbrRoughnessMin(float v);
+extern "C" float batcher_getPbrRoughnessMax(void);
+extern "C" void  batcher_setPbrRoughnessMax(float v);
+extern "C" float batcher_getPbrAmbientSpecularStrength(void);
+extern "C" void  batcher_setPbrAmbientSpecularStrength(float v);
+extern "C" float batcher_getPbrWearStrength(void);
+extern "C" void  batcher_setPbrWearStrength(float v);
+extern "C" int   batcher_getPbrTriplanar(void);
+extern "C" void  batcher_setPbrTriplanar(int on);
+extern "C" float batcher_getPbrTriplanarScale(void);
+extern "C" void  batcher_setPbrTriplanarScale(float v);
 extern "C" float batcher_getMechGlassRoughness(void);
 extern "C" void  batcher_setMechGlassRoughness(float r);
 // VFX-TUNING-UI-1: GPU particle debug-mode + intensity scales (defined in
@@ -1668,6 +1684,101 @@ static void drawMechSection() {
     if (ImGui::SmallButton("Reset##mechgr")) batcher_setMechGlassRoughness(0.25f);
 
     ImGui::TextDisabled("ambient/specular strength also settable via visual_tuning.json");
+
+    ImGui::Spacing();
+    ImGui::SeparatorText("StandardLit GGX (MC2_STANDARD_LIT_V1)");
+    {
+        bool slOn = batcher_getStandardLitEnabled() != 0;
+        if (ImGui::Checkbox("StandardLit GGX##mech", &slOn))
+            batcher_setStandardLitEnabled(slOn ? 1 : 0);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Cook-Torrance GGX PBR on mechs (MC2_STANDARD_LIT_V1=1).\n"
+                              "Requires MC2_MECH_SURFACE_MATERIAL=metal061b + viewuniforms path.\n"
+                              "Default OFF (Blinn-Phong passthrough, byte-identical).");
+
+        float mi = batcher_getPbrMetallicInfluence();
+        if (ImGui::SliderFloat("Metallic influence##pbr", &mi, 0.0f, 1.0f, "%.2f"))
+            batcher_setPbrMetallicInfluence(mi);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Scale ORM metallic channel. Low = painted dielectric look.\n"
+                              "High metallic + no IBL = black armour. Default: 0.15");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##pbrmi")) batcher_setPbrMetallicInfluence(0.15f);
+
+        float rMin = batcher_getPbrRoughnessMin();
+        if (ImGui::SliderFloat("Roughness min##pbr", &rMin, 0.0f, 1.0f, "%.2f"))
+            batcher_setPbrRoughnessMin(rMin);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Floor for ORM roughness. Prevents mirror-like armour.\n"
+                              "Default: 0.45");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##pbrrmin")) batcher_setPbrRoughnessMin(0.45f);
+
+        float rMax = batcher_getPbrRoughnessMax();
+        if (ImGui::SliderFloat("Roughness max##pbr", &rMax, 0.0f, 1.0f, "%.2f"))
+            batcher_setPbrRoughnessMax(rMax);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Ceiling for ORM roughness. Prevents fully matte armour.\n"
+                              "Default: 0.90");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##pbrrmax")) batcher_setPbrRoughnessMax(0.90f);
+
+        float as = batcher_getPbrAmbientSpecularStrength();
+        if (ImGui::SliderFloat("Ambient specular##pbr", &as, 0.0f, 2.0f, "%.2f"))
+            batcher_setPbrAmbientSpecularStrength(as);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Specular env fill via IBL sky color for metals.\n"
+                              "Prevents pure-metal armour going black. Default: 0.25");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##pbras")) batcher_setPbrAmbientSpecularStrength(0.25f);
+
+        // PBR-IBL-MECH-1: IBL SH ambient status.
+        // Strength slider lives in Static Prop Tuning (shared g_iblShStrength).
+        {
+            const char* mechIblEnv = std::getenv("MC2_MECH_IBL_SH");
+            bool mechIblOn = !(mechIblEnv != nullptr && mechIblEnv[0] == '0');
+            if (mechIblOn)
+                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
+                    "IBL SH ambient: ON (strength=%.2f from Static Prop Tuning)", g_iblShStrength);
+            else
+                ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f),
+                    "IBL SH ambient: OFF (MC2_MECH_IBL_SH=0)");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("PBR-IBL-MECH-1: SH-L2 HDRI ambient replaces flat\n"
+                                  "sky color. Kill-switch: MC2_MECH_IBL_SH=0.\n"
+                                  "Strength shared with Static Prop IBL SH slider.");
+        }
+
+        ImGui::Spacing();
+        ImGui::SeparatorText("Paint/wear layer (PaintedMetal003)");
+
+        float ws = batcher_getPbrWearStrength();
+        if (ImGui::SliderFloat("Wear strength##pbr", &ws, 0.0f, 4.0f, "%.2f"))
+            batcher_setPbrWearStrength(ws);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Scales PaintedMetal003 metalness as wear mask.\n"
+                              "0=all paint, 1=natural wear, 4=fully exposed metal.\n"
+                              "Default: 1.0");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##pbrws")) batcher_setPbrWearStrength(1.0f);
+
+        ImGui::Separator();
+        bool triOn = batcher_getPbrTriplanar() != 0;
+        if (ImGui::Checkbox("Triplanar##pbr", &triOn))
+            batcher_setPbrTriplanar(triOn ? 1 : 0);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("World-space triplanar UV sampling (no UV seams).\n"
+                              "Default OFF. Enable with MC2_PBR_TRIPLANAR=1.");
+
+        float ts = batcher_getPbrTriplanarScale();
+        if (ImGui::SliderFloat("Triplanar scale##pbr", &ts, 0.01f, 2.0f, "%.3f"))
+            batcher_setPbrTriplanarScale(ts);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("World-unit tile scale for triplanar sampling.\n"
+                              "Higher = smaller/finer tiles. Default: 0.2");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##pbrts")) batcher_setPbrTriplanarScale(0.2f);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

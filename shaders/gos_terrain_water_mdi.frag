@@ -43,6 +43,11 @@ uniform int u_waterDebugMode;     // WATER-DEBUG-VIEWS-1: fragment/material-spac
 uniform float u_waterSkyTintStrength;  // WATER-VISUAL-FIRST-SLICE: 0 = exact no-op (default).
 uniform vec3  u_waterSkyTintColor;     // camera-INDEPENDENT sky/horizon tint target (NOT fresnel)
 uniform float u_waterReflStrength;     // WATER-SKY-REFLECTION-1: 0 = exact no-op (gate OFF default).
+// WATER-HDRI-REFL-1: direct equirect HDRI sample for specular sun glint.
+// u_waterHdriLod < 0 => HDRI unavailable, fall back to SH-L2 only.
+uniform sampler2D u_hdri;        // HDRI equirect (unit 3, with mipmaps)
+uniform float     u_skyYaw;      // azimuth rotation (rad) matching renderHdriSkyboxInvVP
+uniform float     u_waterHdriLod; // sample LOD; MC2_WATER_HDRI_LOD env (default 2.5)
 
 // water-v1 style params. WATER-TUNING-UI-1: the user-tunable subset is promoted
 // from compile-time const to uniform (live ImGui control in Graphics Options >
@@ -71,7 +76,7 @@ const float WAVE_FADE_FAR  = 40000.0; // only the very furthest extreme calms (n
 // principle (rule superseded 2026-05-18). The reflect-vector + Fresnel + mix
 // math is reused below; only the SOURCE changed: ground colormap -> SH-L2 sky.
 const float REFL_F0         = 0.02;   // Schlick base reflectance (water ~0.02)
-const float REFL_MAX        = 0.30;   // hard ceiling on the reflection mix factor
+const float REFL_MAX        = 0.55;   // WATER-REFL-DEFAULT-ON: raised from 0.30 for visible shiny
 const float REFL_WAVE_SLOPE = 0.05;   // fBm-gradient -> wave-normal slope (0.02-0.10)
 
 // Precision-safe (fract-early) hash -> stable for large MC2 world coords;
@@ -110,6 +115,25 @@ const vec3 kWaterSkySh[9] = vec3[9](
     vec3( 0.05064675817, 0.04545421310, 0.03281146747),
     vec3( 1.962057200,   1.850144657,   1.499676879  )
 );
+
+// WATER-HDRI-REFL-1: equirect sample of the live HDRI texture using the same
+// Z-up (MC2 frame) azimuth/elevation formula as renderHdriSkyboxInvVP (frameFix==2).
+// rdir is in MC2 Z-up world space (east=x, north=y, up=z).
+// Apply the cached skyYaw rotation about +Z (up) so the reflected sun matches the
+// visible HDRI sun. LOD is caller-supplied (MC2_WATER_HDRI_LOD, default 2.5).
+PREC vec3 waterEvalHdri(PREC vec3 rdir) {
+    float s = sin(u_skyYaw), c = cos(u_skyYaw);
+    PREC vec3 d = vec3(rdir.x * c - rdir.y * s,
+                       rdir.x * s + rdir.y * c,
+                       rdir.z);
+    PREC vec2 uv = vec2(atan(d.y, d.x) / (2.0 * 3.14159265) + 0.5,
+                        asin(clamp(d.z, -1.0, 1.0)) / 3.14159265 + 0.5);
+    PREC vec3 raw = textureLod(u_hdri, uv, u_waterHdriLod).rgb;
+    // Reinhard per-channel: physical HDR values [0, inf) -> [0, 1).
+    // Keeps blue > red for clear sky (hue preserved), prevents sun/bright-cloud
+    // from collapsing to featureless white in the reflection mix.
+    return raw / (raw + 1.0);
+}
 
 // Mirror of static_prop.vert::evalShL2 (Ramamoorthi-Hanrahan 2001). Returns
 // diffuse sky IRRADIANCE by direction -> smooth, low-frequency, orbit-stable
@@ -205,11 +229,16 @@ void main(void)
             // ground truth rather than derived, since the projector basis sign on
             // the non-up axes was unconfirmed.)
             PREC vec3  skyDir     = vec3(rdir.x, rdir.z, -rdir.y);
-            // evalShL2 returns diffuse IRRADIANCE; this consumer wants directional
-            // sky COLOR, so /PI converts irradiance -> sky-radiance-like (the /PI
-            // that IblShCoeffs.h forbids for AMBIENT use IS correct here).
-            skyReflCol = clamp(waterEvalSkySh(skyDir) * (1.0 / 3.14159265), 0.0, 2.0);
-            reflectCol = skyReflCol;   // default reflection = SH sky (fallback/base)
+            // WATER-HDRI-REFL-1: use live equirect HDRI when available (captures sun
+            // disk + sky gradient, LOD-filtered to suppress wave-normal flicker).
+            // Fall back to SH-L2 when HDRI is absent (u_waterHdriLod < 0).
+            if (u_waterHdriLod >= 0.0) {
+                skyReflCol = waterEvalHdri(rdir);   // rdir in MC2 Z-up, skyYaw applied inside
+            } else {
+                // evalShL2 returns diffuse IRRADIANCE; /PI -> sky-radiance-like.
+                skyReflCol = clamp(waterEvalSkySh(skyDir) * (1.0 / 3.14159265), 0.0, 2.0);
+            }
+            reflectCol = skyReflCol;   // default reflection = sky (fallback/base)
 
             // WATER-REFLECTION-SAMPLE-1: blend the terrain reflection RT (Phase C1)
             // OVER the SH sky where the RT has valid terrain (alpha>0). The RT was

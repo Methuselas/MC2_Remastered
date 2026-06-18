@@ -443,32 +443,40 @@ long TG_TypeMultiShape::LoadFromFile(const char* baseName)
 	ASSIMP_TRACE_MSL("LoadFromFile baseName='%s'", baseName);
 
 #ifdef ENABLE_ASSIMP_IMPORTER
-	// Probe order: .glb (preferred new format, modder gate per advisor D3)
-	// then .fbx (existing community asset format — A:/Games/mc2-opengl/
-	// MC2 Conversions/* ships .FBX). On any importer failure, fall through
-	// to ASE so a broken modder asset can't render the mech un-loadable.
-	// Stock-install playability is paramount per
-	// memory:stock_install_must_remain_playable.
-	static const char* const kImportExts[] = { ".glb", ".fbx" };
-	for (size_t e = 0; e < sizeof(kImportExts) / sizeof(kImportExts[0]); ++e)
+	// Runtime killswitch: MC2_ASSIMP_IMPORT=0 forces legacy ASE for all asset
+	// classes without requiring a rebuild. Default is enabled (any value other
+	// than "0", or env var absent). Compile-time ENABLE_ASSIMP_IMPORTER is the
+	// master gate; this is the per-launch override.
 	{
-		FullPathFileName probePath;
-		probePath.init(tglPath, baseName, kImportExts[e]);
-		const bool exists = fileExists(probePath, FILE_ON_DISK);
-		ASSIMP_TRACE_MSL("  probe '%s' exists=%d",
-		                  (const char*)probePath, (int)exists);
-		if (exists)
-		{
-			ASSIMP_TRACE_MSL("  calling ImportGeometryFromFile...");
-			long r = ImportGeometryFromFile(probePath, this);
-			ASSIMP_TRACE_MSL("  ImportGeometryFromFile returned %ld", r);
-			if (r == 0)
-				return NO_ERR;
-			// Importer logged the reason via STOP/PAUSE; fall through.
-			break;  // don't probe further extensions if one was rejected
+		const char* kEnv = getenv("MC2_ASSIMP_IMPORT");
+		if (!kEnv || strcmp(kEnv, "0") != 0) {
+			// Probe order: .glb then .fbx. On any importer failure, fall
+			// through to ASE so a broken modder asset can't render the mech
+			// un-loadable. Stock-install playability is paramount.
+			static const char* const kImportExts[] = { ".glb", ".fbx" };
+			for (size_t e = 0; e < sizeof(kImportExts) / sizeof(kImportExts[0]); ++e)
+			{
+				FullPathFileName probePath;
+				probePath.init(tglPath, baseName, kImportExts[e]);
+				const bool exists = fileExists(probePath, FILE_ON_DISK);
+				ASSIMP_TRACE_MSL("  probe '%s' exists=%d",
+				                  (const char*)probePath, (int)exists);
+				if (exists)
+				{
+					ASSIMP_TRACE_MSL("  calling ImportGeometryFromFile...");
+					long r = ImportGeometryFromFile(probePath, this);
+					ASSIMP_TRACE_MSL("  ImportGeometryFromFile returned %ld", r);
+					if (r == 0)
+						return NO_ERR;
+					// Importer logged the reason via STOP/PAUSE; fall through.
+					break;
+				}
+			}
+			ASSIMP_TRACE_MSL("  no modern source found, falling through to ASE");
+		} else {
+			ASSIMP_TRACE_MSL("  MC2_ASSIMP_IMPORT=0, skipping modern probe");
 		}
 	}
-	ASSIMP_TRACE_MSL("  no modern source found, falling through to ASE");
 #endif // ENABLE_ASSIMP_IMPORTER
 
 	// Default fallback: legacy ASE path. Behavior is byte-equivalent to the

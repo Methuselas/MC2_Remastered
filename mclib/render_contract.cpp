@@ -169,6 +169,35 @@ constexpr SOC kStaticPropOutput{
     /*writesDepth*/     false,
 };
 
+// VegetationCards: instanced crossed-quad billboards, alpha-discard (v1).
+// No shadows cast (v1 — no shadow atlas slot allocated).
+// Depth test ON (must z-reject behind terrain/mechs); depth write OFF (alpha-discard
+// geom without depth write avoids self-occlusion artefacts in crossed-quad pairs).
+// AlphaTest blend = the frag shader discards fragments below threshold.
+// skipsPostScreenShadow true: vegetation is already lit at draw time, same
+// as grass; post-screen shadow darkening on top would double-shade.
+constexpr ShadowContract kVegetationCardsShadow{
+    /*castsStaticShadow*/    false,
+    /*castsDynamicShadow*/   false,
+    /*skipsPostScreenShadow*/true,
+};
+constexpr PassStateContract kVegetationCardsState{
+    /*requiresDepthTest*/    true,
+    /*requiresDepthWrite*/   false,
+    /*blend*/                BM::AlphaTest,
+    /*requiresMRT*/          true,
+    /*attachmentCount*/      2,
+    /*attachments*/          RA{true, true, false},
+    /*expectedFBO*/          "scene HDR FBO (MRT)",
+    /*restoresStateOnExit*/  false,
+};
+constexpr SOC kVegetationCardsOutput{
+    /*writesLocation0*/ true,
+    /*writesLocation1*/ true,   // writes GBuffer1.a = 1.0 to skip post-screen shadow
+    /*writesLocation2*/ false,
+    /*writesDepth*/     false,
+};
+
 constexpr ShadowContract kPostProcessShadow{
     /*castsStaticShadow*/    false,
     /*castsDynamicShadow*/   false,
@@ -374,8 +403,9 @@ const ShadowContract& lookupShadow(PassIdentity id) {
         case PassIdentity::Water:          return kWaterShadow;
         case PassIdentity::OpaqueObject:   return kOpaqueObjectShadow;
         case PassIdentity::AlphaObject:    return kAlphaObjectShadow;
-        case PassIdentity::StaticProp:     return kStaticPropShadow;
-        case PassIdentity::ParticleEffect: return kParticleEffectShadow;
+        case PassIdentity::StaticProp:        return kStaticPropShadow;
+        case PassIdentity::VegetationCards:   return kVegetationCardsShadow;
+        case PassIdentity::ParticleEffect:    return kParticleEffectShadow;
         case PassIdentity::UI:             return kUIShadow;
         case PassIdentity::DebugOverlay:   return kDebugOverlayShadow;
         case PassIdentity::ShadowCaster:   return kShadowCasterShadow;
@@ -394,8 +424,9 @@ const PassStateContract& lookupState(PassIdentity id) {
         case PassIdentity::Water:          return kWaterState;
         case PassIdentity::OpaqueObject:   return kOpaqueObjectState;
         case PassIdentity::AlphaObject:    return kAlphaObjectState;
-        case PassIdentity::StaticProp:     return kStaticPropState;
-        case PassIdentity::ParticleEffect: return kParticleEffectState;
+        case PassIdentity::StaticProp:        return kStaticPropState;
+        case PassIdentity::VegetationCards:   return kVegetationCardsState;
+        case PassIdentity::ParticleEffect:    return kParticleEffectState;
         case PassIdentity::UI:             return kUIState;
         case PassIdentity::DebugOverlay:   return kDebugOverlayState;
         case PassIdentity::ShadowCaster:   return kShadowCasterState;
@@ -414,8 +445,9 @@ const SOC& lookupShaderOutput(PassIdentity id) {
         case PassIdentity::Water:          return kWaterOutput;
         case PassIdentity::OpaqueObject:   return kOpaqueObjectOutput;
         case PassIdentity::AlphaObject:    return kAlphaObjectOutput;
-        case PassIdentity::StaticProp:     return kStaticPropOutput;
-        case PassIdentity::ParticleEffect: return kParticleEffectOutput;
+        case PassIdentity::StaticProp:        return kStaticPropOutput;
+        case PassIdentity::VegetationCards:   return kVegetationCardsOutput;
+        case PassIdentity::ParticleEffect:    return kParticleEffectOutput;
         case PassIdentity::UI:             return kUIOutput;
         case PassIdentity::DebugOverlay:   return kDebugOverlayOutput;
         case PassIdentity::ShadowCaster:   return kShadowCasterOutput;
@@ -488,8 +520,9 @@ const char* passIdentityName(PassIdentity id) {
         case PassIdentity::Water:          return "Water";
         case PassIdentity::OpaqueObject:   return "OpaqueObject";
         case PassIdentity::AlphaObject:    return "AlphaObject";
-        case PassIdentity::StaticProp:     return "StaticProp";
-        case PassIdentity::ParticleEffect: return "ParticleEffect";
+        case PassIdentity::StaticProp:        return "StaticProp";
+        case PassIdentity::VegetationCards:   return "VegetationCards";
+        case PassIdentity::ParticleEffect:    return "ParticleEffect";
         case PassIdentity::UI:             return "UI";
         case PassIdentity::DebugOverlay:   return "DebugOverlay";
         case PassIdentity::ShadowCaster:   return "ShadowCaster";

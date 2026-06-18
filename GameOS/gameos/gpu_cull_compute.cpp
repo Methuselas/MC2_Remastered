@@ -31,6 +31,7 @@
 #include <cassert>
 #include <string>
 #include <vector>
+#include "diagnostic_trace.h"
 
 // ---------------------------------------------------------------------------
 // Trace macro (env-gated, default off)
@@ -320,6 +321,9 @@ bool compute_init() {
     if (!substrate_isEnabled()) {
         printf("[GPU_CULL v1] event=compute_init_skip reason=substrate_disabled\n");
         fflush(stdout);
+        if (mc2_diag::tagEnabled("GPU_CULL"))
+            mc2_diag::writeEvent("GPU_CULL", 1, 0,
+                "{\"event\":\"compute_init_skip\",\"reason\":\"substrate_disabled\"}");
         return true;
     }
 
@@ -335,6 +339,14 @@ bool compute_init() {
     printf("[GPU_CULL v1] event=gl_probe version=%d.%d compute=%s\n",
            glMaj, glMin, computeOk ? "ok" : "fail");
     fflush(stdout);
+    if (mc2_diag::tagEnabled("GPU_CULL")) {
+        char diag_buf[128];
+        snprintf(diag_buf, sizeof(diag_buf),
+            "{\"event\":\"gl_probe\",\"version_major\":%d,\"version_minor\":%d,"
+            "\"compute\":\"%s\"}",
+            glMaj, glMin, computeOk ? "ok" : "fail");
+        mc2_diag::writeEvent("GPU_CULL", 1, 0, diag_buf);
+    }
     if (!computeOk) {
         STOP(("[GPU_CULL] GL 4.3+ required for compute shaders (got %d.%d)", glMaj, glMin));
         return false;
@@ -374,11 +386,19 @@ bool compute_init() {
         if (!prog) {
             printf("[GPU_CULL v1] event=c1b_cull_compile_fail — C1b indirect draw disabled\n");
             fflush(stdout);
+            if (mc2_diag::tagEnabled("GPU_CULL"))
+                mc2_diag::writeEvent("GPU_CULL", 1, 0, "{\"event\":\"c1b_cull_compile_fail\"}");
             // Non-fatal: fall back to C1a shadow mode.
         } else {
             printf("[GPU_CULL v1] event=c1b_cull_ok c2_readback=%d\n",
                    (int)(nPreambles >= 2));
             fflush(stdout);
+            if (mc2_diag::tagEnabled("GPU_CULL")) {
+                char diag_buf[64];
+                snprintf(diag_buf, sizeof(diag_buf),
+                    "{\"event\":\"c1b_cull_ok\",\"c2_readback\":%d}", (int)(nPreambles >= 2));
+                mc2_diag::writeEvent("GPU_CULL", 1, 0, diag_buf);
+            }
         }
         s_c1bCullProgram = prog;
     }
@@ -468,6 +488,14 @@ bool compute_init() {
     printf("[GPU_CULL v1] event=compute_selftest result=ok maxActors=%u debugSsboBytes=%lld\n",
            s_maxActors, (long long)debugSsboBytes);
     fflush(stdout);
+    if (mc2_diag::tagEnabled("GPU_CULL")) {
+        char diag_buf[128];
+        snprintf(diag_buf, sizeof(diag_buf),
+            "{\"event\":\"compute_selftest\",\"result\":\"ok\","
+            "\"maxActors\":%u,\"debugSsboBytes\":%lld}",
+            s_maxActors, (long long)debugSsboBytes);
+        mc2_diag::writeEvent("GPU_CULL", 1, 0, diag_buf);
+    }
     return true;
 }
 

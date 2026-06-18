@@ -22,7 +22,15 @@ public:
 
     void renderSkybox(float sunDirX, float sunDirY, float sunDirZ);
 
-    bool isHdriReady() const { return hdriReady_; }
+    bool   isHdriReady()  const { return hdriReady_; }
+    GLuint getHdriTex()   const { return hdriTex_; }   // WATER-HDRI-REFL-1
+    float  getSkyYaw()    const { return skyYaw_; }    // WATER-HDRI-REFL-1: cached per-frame
+
+    // HDRI-SKY-NUMBER-1: reload the HDRI texture to match theSkyNumber from the
+    // .fit file.  Called by GameAdapters::Sky::setSkyNumber() at mission load.
+    // No-op when HDRI is disabled (MC2_HDRI_SKY=0) or skyNumber==0.
+    // Swaps hdriTex_ only when the resolved path differs from the current one.
+    void setSkyNumber(int skyNumber);
 
     // Renders the HDRI background as a fullscreen triangle.
     // Assumes scene FBO is bound. Writes only color attachment 0.
@@ -229,6 +237,17 @@ public:
     float aoPower_;         // contrast curve
     void runSSAO();
 
+    // EDGE-FOG-1: world-space map-edge fog on geometry pixels.
+    // Fades terrain/props/mechs near the map boundary into the cloud color.
+    // Default ON (MC2_EDGE_FOG=0 to disable).
+    bool  edgeFogEnabled_  = false;
+    float edgeFogColor_[3] = {0.93f, 0.94f, 0.95f};
+    float edgeFogStart_    = 50.0f;    // world units inside boundary where fog begins
+    float edgeFogHeight_   = 2000.0f;  // cloud bank top in world Z (MC2_EDGE_FOG_HEIGHT)
+    float edgeFogMax_      = 0.92f;    // max opacity
+    glsl_program* edgeFogProg_ = nullptr;
+    void  runEdgeFog();
+
     // OOB-FOG-1: fullscreen fog over out-of-bounds far-plane pixels.
     // Default ON (MC2_OOB_FOG=0 to disable). Reads only scene depth —
     // no sceneColorTex_ feedback loop; blends SRC_ALPHA over scene color.
@@ -324,6 +343,10 @@ private:
     // above-horizon texels. NaN => scan unavailable (sun-sync stays disabled).
     float         hdriBakedSunAz_  = 0.0f;
     bool          hdriBakedSunValid_ = false;
+    float         skyYaw_          = 0.0f;  // WATER-HDRI-REFL-1: cached after each sky render
+    // HDRI-SKY-NUMBER-1: path of the currently loaded HDRI (used by setSkyNumber
+    // to detect when a swap is actually needed).
+    char          hdriCurrentPath_[256] = {};
 
     // Bloom shaders
     glsl_program* bloomThresholdProg_;
@@ -475,5 +498,11 @@ void  gos_SetSsaoBias(float v);
 float gos_GetSsaoRadius();
 float gos_GetSsaoStrength();
 float gos_GetSsaoBias();
+
+// HDRI-SKY-NUMBER-1: notify the postprocessor of the mission sky number so it
+// can swap to the appropriate HDRI asset (IblHdriRegistry).
+// Call at mission load after the mission sky number is known.
+// No-op when HDRI is disabled or skyNumber is out of range (1-21).
+void gos_SetSkyNumber(int skyNumber);
 
 #endif // GOS_POSTPROCESS_H
