@@ -264,7 +264,11 @@ void main() {
     // `invariant gl_Position` guarantees depth prepass + color pass are
     // bit-identical after the bias, so the depth-prepass GL_EQUAL gate holds.
     vec4 clip = u_worldToClipGL * world;
-    clip.z += 2.0 * TERRAIN_DEPTH_FUDGE * clip.w;
+    // STATIC-PROP-DEPTH-NOFUDGE: terrain has TERRAIN_DEPTH_FUDGE = -0.002
+    // (pushed to depth D-0.004). Props at true depth D naturally win
+    // GL_GEQUAL vs terrain without their own fudge. Without this fudge,
+    // vegetation at true depth D also passes GL_GREATER vs props at D, which
+    // is the correct behavior (vegetation appears behind props, over terrain).
     gl_Position = clip;
 
     // Slice 2 (object-offload) — Stage 2.C.2: GPU vertex lighting.
@@ -365,6 +369,11 @@ void main() {
     //    via real TG_Light registrations (BldgAppearance::update), not via
     //    cone-billboard packets.
     const uint kFlagIsWindow    = (1u << 1);
+    // STATIC-PROP-FOLIAGE-NdotL: two-sided lighting for alpha-test props.
+    // Cross-quad tree geometry has face normals; orbiting camera reveals
+    // different faces with different NdotL → dark face appears to move with
+    // camera. abs(NdotL) lights both sides consistently.
+    const uint kFlagIsAlphaTest = (1u << 2u);
     vec3 lit;
     if ((inst.flags & kFlagIsWindow) != 0u) {
         // Window node: hot-color magic only, no sun/ambient lighting.
@@ -398,7 +407,12 @@ void main() {
                 sunFound = true;
             }
         }
-        float ndl = max(dot(normalize(worldNormalMC2), normalize(u_terrainSunMC2)), 0.0);
+        float ndl;
+        if ((inst.flags & kFlagIsAlphaTest) != 0u) {
+            ndl = abs(dot(normalize(worldNormalMC2), normalize(u_terrainSunMC2)));
+        } else {
+            ndl = max(dot(normalize(worldNormalMC2), normalize(u_terrainSunMC2)), 0.0);
+        }
         // base_light = hot-color magic seed (same as calc_light's starting
         // `final = base_light`); ambientTerm + sunColor*NdotL = the lit term.
         lit = base_light + ambientTerm + sunColor * ndl;

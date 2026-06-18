@@ -4728,14 +4728,22 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
         uint32_t flags = 0;
         if (child->lightsOut)   flags |= (1u << 0);
         if (child->isWindow)    flags |= (1u << 1);
-        // [T3.2] Bit-2 (kFlagIsSpotlight) emission deleted. After T3.1 the
+        // Bit-2: foliage/alpha-test. Enables abs(NdotL) two-sided lighting in
+        // static_prop.vert so cross-quad tree faces light consistently from
+        // all camera angles (face normals rotate with view → dark face shadow
+        // rotates with camera without this). alphaTestOn lives on TG_TypeShape.
+        if (const TG_TypeShape* ts2 = static_cast<const TG_TypeShape*>(child->myType)) {
+            if (ts2->alphaTestOn) flags |= (1u << 2);
+        }
+        // [T3.2] Bit-2 was kFlagIsSpotlight (deleted). After T3.1 the
         // spotlight `continue` skip above is unconditional, so this code path
         // is structurally unreachable for spotlight children. The dead
         // shader-side read in static_prop.vert is removed in lockstep per
         // memory/cpp_glsl_ubo_struct_lockstep.md. The static-prop branch of
         // [SPOTLIGHT_REAL_TRACE v1] never fires post-T3.1; the per-actor
         // mech/gv first-hit traces remain via the registration sites in
-        // mech3d.cpp / gvactor.cpp (Debug Instrumentation Rule).
+        // mech3d.cpp / gvactor.cpp (Debug Instrumentation Rule). Bit-2 is now
+        // reused as kFlagIsAlphaTest above.
 
         // rec.shapeToWorld is LinearMatrix4D; convert to Matrix4D for submit().
         Stuff::Matrix4D xform(rec.shapeToWorld);

@@ -209,7 +209,7 @@ void GosVegetation::init() {
     // --- Atlas texture ---
     const char* atlasPath = s_atlasPathOverride
                           ? s_atlasPathOverride
-                          : "data/textures/vegetation_grass_card.png";
+                          : "data/textures/vegetation_atlas_v2.png";
 
     // Allow env-var override at runtime too.
     const char* envPath = getenv("MC2_VEGETATION_ATLAS");
@@ -301,7 +301,11 @@ void GosVegetation::flush(float lightDirX, float lightDirY, float lightDirZ, flo
     glDepthMask(GL_FALSE);    // depth write OFF (cards alpha-test but don't occlude each other)
     glDisable(GL_BLEND);
     glDisable(GL_CULL_FACE);  // both faces visible
-    glDepthFunc(GL_GEQUAL);   // reverse-Z
+    // VEGETATION-DEPTH-GREATER: terrain has TERRAIN_DEPTH_FUDGE (pushed back,
+    // depth D-0.004). Static props have no fudge (depth D, true depth).
+    // Vegetation at true depth D: GL_GREATER vs terrain (D > D-0.004 = TRUE,
+    // appears over terrain) and vs props (D > D = FALSE, appears behind props).
+    glDepthFunc(GL_GREATER);
 
     // [RENDER_CONTRACT:Pass=VegetationCards]
     render_contract::assertPassContract(
