@@ -29,6 +29,7 @@ CLAUDE.md (this file)
 │                                         upscale-cook state + render-vs-gamedata
 │                                         owner. UPDATE when assets are touched
 │                                         (scripts/check-asset-pipeline-doc.sh)
+├── docs/asset-modernization-pipeline.md — asset mod plan + status (P1-F shipped)
 └── ~/.claude/projects/A--Games-mc2-opengl-src/memory/MEMORY.md
     └── INDEX-{RENDERING,SHADERS,TERRAIN,MECH,BUILD-DEPLOY,
                 MISSION-DATA,SMOKE-TEST,PROCESS}.md
