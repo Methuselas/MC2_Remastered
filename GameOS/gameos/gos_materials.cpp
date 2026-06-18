@@ -11,9 +11,11 @@
 //   using the raw GL id from this table, NOT via mcTextureManager.
 //
 // Profiles registered:
-//   index 0 : "default"  -- passthrough; no textures; flat metallic=0 rough=0.85
-//   index 1 : "metal061b"-- Metal061B_1K normal + packed ORM (R=AO G=rough B=metal)
-//                           (only when MC2_MECH_SURFACE_MATERIAL != "0"/"none")
+//   index 0 : "default"       -- passthrough; no textures; flat metallic=0 rough=0.85
+//   index 1 : "metal061b"     -- Metal061B normal + ORM (debug/exposed-metal; explicit only)
+//   index 1 : "painted_subtle"-- ORM only + flat normal; subtle roughness/metalness detail
+//                                (MC2_MECH_SURFACE_MATERIAL=painted_subtle; explicit only)
+//   Unset MC2_MECH_SURFACE_MATERIAL -> passthrough only (no surface detail)
 //
 
 #include "gos_materials.h"
@@ -228,6 +230,26 @@ static GLuint buildPackedOrm(const char* roughPath, const char* metalPath,
 }
 
 // ---------------------------------------------------------------------------
+// Helper: build a 1x1 flat normal GL texture (RGB=128,128,255, linear, no perturbation).
+// Used by painted_subtle profile so no normal detail is applied.
+// ---------------------------------------------------------------------------
+static GLuint buildFlatNormalTex() {
+    const uint8_t pixel[3] = {128u, 128u, 255u};
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, 1, 1, 0,
+                 GL_RGB, GL_UNSIGNED_BYTE, pixel);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    std::fprintf(stderr, "[GOS_MATERIALS] built flat normal tex=%u\n", tex);
+    return tex;
+}
+
+// ---------------------------------------------------------------------------
 // Register "default" profile at index 0.
 // Passthrough: no textures; flat scalars only.
 // ---------------------------------------------------------------------------
@@ -347,6 +369,45 @@ static void registerPaintedMetal003() {
         g.normalTex, g.metallicRoughnessTex, g.flags);
 }
 
+// ---------------------------------------------------------------------------
+// Register "painted_subtle" profile.
+// ORM-only: same roughness/metalness sources as metal061b.
+// Normal = flat (1x1 128,128,255) so no normal perturbation is applied.
+// ---------------------------------------------------------------------------
+static void registerPaintedSubtle() {
+    static const char* kRough = "C:\\Users\\Joe\\Downloads\\GameAsset\\Materials"
+        "\\Metal061B_1K-PNG\\Metal061B_1K-PNG_Roughness.png";
+    static const char* kMetal = "C:\\Users\\Joe\\Downloads\\GameAsset\\Materials"
+        "\\Metal061B_1K-PNG\\Metal061B_1K-PNG_Metalness.png";
+
+    ProfileEntry e;
+    e.name = "painted_subtle";
+
+    e.ownedNormal = buildFlatNormalTex();
+    e.ownedOrm    = buildPackedOrm(kRough, kMetal, 0, 0);
+
+    RenderCore::MaterialGpu& g = e.gpu;
+    g.albedoTex            = RenderCore::kMaterialTexAbsent;
+    g.normalTex            = e.ownedNormal != 0 ? e.ownedNormal : RenderCore::kMaterialTexAbsent;
+    g.metallicRoughnessTex = e.ownedOrm    != 0 ? e.ownedOrm    : RenderCore::kMaterialTexAbsent;
+    g.emissiveTex          = RenderCore::kMaterialTexAbsent;
+
+    g.flags = 0u;
+    if (e.ownedNormal != 0) g.flags |= RenderCore::MaterialFlags::kNormalMap;
+    if (e.ownedOrm    != 0) g.flags |= RenderCore::MaterialFlags::kMetallicRoughness;
+
+    g.baseColorFactor = 1.0f;
+    g.metallicFactor  = 1.0f;
+    g.roughnessFactor = 1.0f;
+
+    s_nameToIndex["painted_subtle"] = static_cast<uint32_t>(s_profiles.size());
+    s_profiles.push_back(std::move(e));
+
+    std::fprintf(stderr,
+        "[GOS_MATERIALS] registered painted_subtle: normalTex=%u ormTex=%u flags=0x%x\n",
+        g.normalTex, g.metallicRoughnessTex, g.flags);
+}
+
 } // anonymous namespace
 
 // ---------------------------------------------------------------------------
@@ -369,20 +430,23 @@ void init() {
     registerDefault();
 
     // Gate: MC2_MECH_SURFACE_MATERIAL controls which profiles to load.
-    // null/unset or "metal061b" -> load metal061b.
-    // "0" or "none" -> no extra profiles.
+    // Unset/null -> passthrough only (no surface detail).
+    // "metal061b"     -> load metal061b + paintedmetal003 (debug/exposed-metal).
+    // "painted_subtle"-> load painted_subtle (ORM-only, flat normal).
     const char* matEnv = getenv("MC2_MECH_SURFACE_MATERIAL");
     const bool loadMetal061b =
-        (matEnv == nullptr) ||
-        (matEnv[0] == '\0') ||
-        (strcmp(matEnv, "metal061b") == 0);
+        (matEnv != nullptr) && (strcmp(matEnv, "metal061b") == 0);
+    const bool loadPaintedSubtle =
+        (matEnv != nullptr) && (strcmp(matEnv, "painted_subtle") == 0);
 
     if (loadMetal061b) {
         registerMetal061b();
-        registerPaintedMetal003();  // paint layer; always paired with metal061b
+        registerPaintedMetal003();
+    } else if (loadPaintedSubtle) {
+        registerPaintedSubtle();
     } else {
         std::fprintf(stderr,
-            "[GOS_MATERIALS] MC2_MECH_SURFACE_MATERIAL=%s: metal061b skipped\n",
+            "[GOS_MATERIALS] MC2_MECH_SURFACE_MATERIAL=%s: no surface material loaded (passthrough)\n",
             matEnv ? matEnv : "(null)");
     }
 
