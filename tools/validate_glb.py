@@ -68,6 +68,114 @@ def read_glb_json(glb_path):
 # Checks
 # ---------------------------------------------------------------------------
 
+KNOWN_ASSET_CLASSES = {'mech', 'prop', 'building', 'vehicle', 'tree'}
+
+
+def check_schema_version(sidecar):
+    """HARD: schema_version must be '1.0'."""
+    sv = sidecar.get('schema_version')
+    if sv != '1.0':
+        report(FAIL, 'schema_version', f"expected '1.0', got {sv!r}")
+        return False
+    report(PASS, 'schema_version', f"schema_version={sv!r}")
+    return True
+
+
+def check_asset_class(sidecar):
+    """HARD: asset_class must be one of the known values."""
+    ac = sidecar.get('asset_class')
+    if ac not in KNOWN_ASSET_CLASSES:
+        report(FAIL, 'asset_class',
+               f"{ac!r} is not a known asset class; expected one of {sorted(KNOWN_ASSET_CLASSES)}")
+        return False
+    report(PASS, 'asset_class', f"asset_class={ac!r}")
+    return True
+
+
+def check_collision_bounds_source(sidecar):
+    """HARD: collision_bounds.source must be 'legacy' (prevents accidental gameplay-bounds overwrites)."""
+    cb = sidecar.get('collision_bounds', {})
+    src = cb.get('source')
+    if src != 'legacy':
+        report(FAIL, 'collision_bounds_source',
+               f"expected 'legacy', got {src!r}. Never overwrite gameplay bounds automatically.")
+        return False
+    report(PASS, 'collision_bounds_source', "collision_bounds.source='legacy'")
+    return True
+
+
+def check_lod_entries(sidecar):
+    """HARD: every LOD entry must have either 'glb' or 'ase' key."""
+    lods = sidecar.get('lods', [])
+    bad = []
+    for entry in lods:
+        if 'glb' not in entry and 'ase' not in entry:
+            bad.append(entry.get('index', '?'))
+    if bad:
+        report(FAIL, 'lod_entries',
+               f"LOD entries at index(es) {bad} have neither 'glb' nor 'ase' key")
+        return False
+    report(PASS, 'lod_entries', f"all {len(lods)} LOD entries have 'glb' or 'ase' key")
+    return True
+
+
+def check_shadow_mesh_legacy(sidecar):
+    """WARN: shadow_mesh should have status='legacy'."""
+    sm = sidecar.get('shadow_mesh')
+    if sm is None:
+        return True  # no shadow mesh is acceptable
+    if sm.get('status') != 'legacy':
+        report(WARN, 'shadow_mesh_status',
+               f"shadow_mesh.status expected 'legacy', got {sm.get('status')!r}")
+    else:
+        report(PASS, 'shadow_mesh_status', "shadow_mesh.status='legacy'")
+    return True
+
+
+def check_upscale_method_present(sidecar):
+    """WARN: upscale_method should be present and not null."""
+    if 'upscale_method' not in sidecar or sidecar['upscale_method'] is None:
+        report(WARN, 'upscale_method', "upscale_method absent or null in sidecar")
+    else:
+        report(PASS, 'upscale_method', f"upscale_method={sidecar['upscale_method']!r}")
+    return True
+
+
+def check_material_map_vs_baseline(sidecar):
+    """WARN: material_map length should match validation_baseline.material_slots."""
+    mat_map = sidecar.get('material_map', [])
+    vb = sidecar.get('validation_baseline', {})
+    baseline_slots = vb.get('material_slots')
+    if baseline_slots is None:
+        return True  # no baseline to compare
+    if len(mat_map) != baseline_slots:
+        report(WARN, 'material_map_vs_baseline',
+               f"material_map has {len(mat_map)} entries but validation_baseline.material_slots={baseline_slots}")
+    else:
+        report(PASS, 'material_map_vs_baseline',
+               f"material_map length ({len(mat_map)}) matches validation_baseline.material_slots")
+    return True
+
+
+def check_bbox_sanity(sidecar):
+    """WARN: collision_bounds minBox[i] < maxBox[i] for all axes."""
+    cb = sidecar.get('collision_bounds', {})
+    mn = cb.get('minBox')
+    mx = cb.get('maxBox')
+    if not mn or not mx or len(mn) != 3 or len(mx) != 3:
+        report(WARN, 'bbox_sanity', "collision_bounds minBox/maxBox missing or malformed")
+        return True
+    inverted = [i for i in range(3) if mn[i] >= mx[i]]
+    if inverted:
+        report(WARN, 'bbox_sanity',
+               f"collision_bounds axis(es) {inverted} have minBox >= maxBox "
+               f"(min={mn}, max={mx})")
+    else:
+        report(PASS, 'bbox_sanity',
+               f"collision_bounds minBox < maxBox on all axes")
+    return True
+
+
 def check_node_name_length(node_names, max_len=23):
     """HARD: all node names <= max_len chars."""
     violations = [n for n in node_names if len(n) > max_len]
@@ -257,6 +365,22 @@ def main():
         print(f"NOTE: GLB not found at {args.glb} — sidecar-only validation mode")
 
     hard_pass = True
+
+    # --- New sidecar-schema HARD checks (P1-D) ---
+    if not check_schema_version(sidecar):
+        hard_pass = False
+    if not check_asset_class(sidecar):
+        hard_pass = False
+    if not check_collision_bounds_source(sidecar):
+        hard_pass = False
+    if not check_lod_entries(sidecar):
+        hard_pass = False
+
+    # --- New sidecar WARN checks (P1-D) ---
+    check_shadow_mesh_legacy(sidecar)
+    check_upscale_method_present(sidecar)
+    check_material_map_vs_baseline(sidecar)
+    check_bbox_sanity(sidecar)
 
     # --- Checks that can run from sidecar alone ---
 

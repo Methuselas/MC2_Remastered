@@ -24,6 +24,8 @@ import re
 import struct
 import sys
 
+__version__ = '1.1.0'
+
 
 # ---------------------------------------------------------------------------
 # Axis transform  (matches assimp_importer.cpp axisMap case 0)
@@ -774,7 +776,8 @@ def write_glb(gltf_dict, binary_data, out_path):
 # Sidecar JSON builder
 # ---------------------------------------------------------------------------
 
-def build_sidecar(ase_path, ini_path, glb_path, geom_objects, materials, ini_sections, stats):
+def build_sidecar(ase_path, ini_path, glb_path, geom_objects, materials, ini_sections, stats,
+                  asset_class='mech', upscale_method=None):
     # Parse LODs and shadow from INI
     lods = []
     for idx in range(10):
@@ -787,6 +790,7 @@ def build_sidecar(ase_path, ini_path, glb_path, geom_objects, materials, ini_sec
             entry['glb'] = os.path.basename(glb_path)
         else:
             entry['ase'] = f'{fn}.ase'
+            entry['status'] = 'legacy'
         entry['distance'] = dist
         lods.append(entry)
 
@@ -852,11 +856,17 @@ def build_sidecar(ase_path, ini_path, glb_path, geom_objects, materials, ini_sec
     if not asset_name:
         asset_name = os.path.splitext(os.path.basename(ase_path))[0]
 
+    # Determine upscale_method if not explicitly provided:
+    # "none" by default; callers or the CLI may override with
+    # "user_upscaled_external" when they know the texture has been upscaled.
+    if upscale_method is None:
+        upscale_method = 'none'
+
     sidecar = {
         'schema_version': '1.0',
         'asset_name': asset_name,
         'source_ase': os.path.abspath(ase_path),
-        'asset_class': 'mech',
+        'asset_class': asset_class,
         'lods': lods,
         'shadow_mesh': {'ase': f'{shadow_name}.ase', 'status': 'legacy'} if shadow_name else None,
         'hardpoints': {
@@ -872,6 +882,7 @@ def build_sidecar(ase_path, ini_path, glb_path, geom_objects, materials, ini_sec
         },
         'axis_mapping': 'MC2_GLTF_AXIS=0',
         'material_map': mat_map,
+        'upscale_method': upscale_method,
         'validation_baseline': {
             'vertex_count': stats['vertex_count'],
             'triangle_count': stats['triangle_count'],
@@ -879,6 +890,7 @@ def build_sidecar(ase_path, ini_path, glb_path, geom_objects, materials, ini_sec
             'bbox': bbox,
             'bbox_tolerance': 0.01,
         },
+        'generated_by': f'ase_to_glb.py v{__version__}',
     }
 
     return sidecar
@@ -894,6 +906,14 @@ def main():
     p.add_argument('--ini', required=True, help='Path to source FITini file')
     p.add_argument('--out-glb', required=True, help='Output .glb path')
     p.add_argument('--out-sidecar', required=True, help='Output .mcasset.json path')
+    p.add_argument('--asset-class',
+                   choices=['mech', 'prop', 'building', 'vehicle', 'tree'],
+                   default='mech',
+                   help='Asset class for sidecar (default: mech)')
+    p.add_argument('--upscale-method',
+                   default=None,
+                   help='upscale_method value for sidecar '
+                        '(e.g. user_upscaled_external). Default: none')
     args = p.parse_args()
 
     if not os.path.isfile(args.ase):
@@ -922,7 +942,9 @@ def main():
     print(f"Wrote GLB: {args.out_glb}  ({os.path.getsize(args.out_glb)} bytes)")
 
     ini_sections = parse_fitini(args.ini)
-    sidecar = build_sidecar(args.ase, args.ini, args.out_glb, geom_objects, materials, ini_sections, stats)
+    sidecar = build_sidecar(args.ase, args.ini, args.out_glb, geom_objects, materials, ini_sections, stats,
+                            asset_class=args.asset_class,
+                            upscale_method=args.upscale_method)
 
     os.makedirs(os.path.dirname(os.path.abspath(args.out_sidecar)), exist_ok=True)
     with open(args.out_sidecar, 'w', encoding='utf-8') as f:
