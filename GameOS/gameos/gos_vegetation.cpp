@@ -352,7 +352,7 @@ void GosVegetation::flush(float lightDirX, float lightDirY, float lightDirZ, flo
         glProgramUniform1i(progId, loc, chunkSide);
     }
 
-    // MC2_VEG_DEBUG_FORCE_VISIBLE=1 — override blockVis/LOD cull in shader.
+    // MC2_VEG_DEBUG_FORCE_VISIBLE=1 — override blockVis/LOD cull AND distance fade in shader.
     {
         static int s_forceVis = -1;
         if (s_forceVis < 0) {
@@ -361,6 +361,25 @@ void GosVegetation::flush(float lightDirX, float lightDirY, float lightDirZ, flo
         }
         const GLint loc = glGetUniformLocation(progId, "u_forceVisible");
         if (loc >= 0) glProgramUniform1i(progId, loc, s_forceVis);
+    }
+
+    // Distance-based fade: MC2_VEG_MAX_DIST sets the hard cull distance (wu), default 8192.
+    // Fade begins at 70% of max. Force-visible bypasses distFade in the shader via u_forceVisible.
+    {
+        static float s_vegMaxDist = -1.0f;
+        if (s_vegMaxDist < 0.0f) {
+            const char* v = getenv("MC2_VEG_MAX_DIST");
+            s_vegMaxDist = (v && v[0]) ? static_cast<float>(atof(v)) : 8192.0f;
+        }
+        const float vegFadeStart = s_vegMaxDist * 0.70f;
+        {
+            const GLint loc = glGetUniformLocation(progId, "u_vegMaxDist");
+            if (loc >= 0) glProgramUniform1f(progId, loc, s_vegMaxDist);
+        }
+        {
+            const GLint loc = glGetUniformLocation(progId, "u_vegFadeStart");
+            if (loc >= 0) glProgramUniform1f(progId, loc, vegFadeStart);
+        }
     }
 
     // Atlas texture on unit 0.

@@ -21,6 +21,7 @@ in PREC float v_seed;
 in PREC vec3  v_worldPos;
 in PREC float v_lodFade;   // 1.0=LOD0 full, 0.4=LOD1 dithered
 in PREC float v_tilt;      // 0.0=vertical, 0.5=tilted, 1.0=top/cap
+in PREC float v_distFade;  // 1.0=near, 0.0=at/beyond max dist
 
 layout(location=0) out PREC vec4 FragColor;
 layout(location=1) out PREC vec4 GBuffer1;
@@ -30,9 +31,14 @@ uniform PREC vec4    u_terrainLightDir;
 
 void main()
 {
-    // Bayer 4×4 ordered dither for LOD1 distance fade.
-    // v_lodFade=1.0 → never discard (LOD0 full).
-    // v_lodFade=0.3 → discard ~70% of pixels (LOD1 flat patch, sparse ground cover look).
+    // Unified Bayer gate: gate = lodFade * distFade.
+    //   LOD0 near  (gate=1.0): never discard — full density.
+    //   LOD1 near  (gate=0.4): discard ~60% → sparser beyond block LOD boundary.
+    //   LOD0 far   (gate<1.0): progressive discard → smooth fade to invisible.
+    //   LOD1 far   (gate~0.2): very sparse — thin out then gone.
+    // Shimmer note: screen-space Bayer shifts with camera motion. Accepted for v1;
+    // instance-stable hash dithering is planned for v2.
+    float gate = v_lodFade * v_distFade;
     const float bayer[16] = float[16](
          0.0/16.0,  8.0/16.0,  2.0/16.0, 10.0/16.0,
         12.0/16.0,  4.0/16.0, 14.0/16.0,  6.0/16.0,
@@ -41,7 +47,7 @@ void main()
     );
     int bx = int(gl_FragCoord.x) & 3;
     int by = int(gl_FragCoord.y) & 3;
-    if (v_lodFade < bayer[by * 4 + bx]) discard;
+    if (gate < bayer[by * 4 + bx]) discard;
 
     // LOD bias -1.5 applied at bind site.
     vec4 col = texture(u_atlas, v_atlasUV);
@@ -67,9 +73,6 @@ void main()
     col.rgb += vec3(v_cardBottom * 0.08);
 
     col.rgb = min(vec3(1.0), col.rgb);
-
-    // Dim LOD1 distance tier.
-    col.rgb *= (v_lodFade >= 1.0) ? 1.0 : 0.82;
 
     FragColor = vec4(col.rgb, 1.0);
     // Sets GBuffer1.a > 0.5 so post-screen-shadow pass skips vegetation.

@@ -26,7 +26,9 @@ layout(location=6) in float i_seed;       // per-instance random [0,1]
 #include <include/terrain_depth_bias.hglsl>
 uniform mat4  u_worldToClipGL;
 uniform float u_time;
-uniform vec3  u_cameraPos;  // camera position in terrain-chunk space (wind fade only)
+uniform vec3  u_cameraPos;    // camera position in terrain-chunk space
+uniform float u_vegMaxDist;   // distance fade: hard limit (wu), default 8192
+uniform float u_vegFadeStart; // distance fade: begin fading here (u_vegMaxDist * 0.70)
 
 // Terrain block-index computation.
 // blockIdx = bRow * u_chunkSide + bCol, computed per-vertex from i_worldPos.
@@ -52,8 +54,9 @@ out float v_camTrueDist;
 out float v_cardBottom;   // 1=roots, 0=tips
 out float v_seed;
 out vec3  v_worldPos;
-out float v_lodFade;      // 1.0=LOD0 full, 0.4=LOD1 dithered, 0.0=culled (unused in frag)
+out float v_lodFade;      // 1.0=LOD0 full, 0.4=LOD1 dithered, 0.0=culled
 out float v_tilt;         // 0.0=vertical, 0.5=tilted, 1.0=top/cap — role for frag alpha/dim
+out float v_distFade;     // 1.0=near, 0.0=at/beyond max dist — combined with v_lodFade in Bayer gate
 
 void main()
 {
@@ -76,10 +79,19 @@ void main()
             gl_Position  = vec4(2.0, 2.0, 2.0, 1.0);
             v_atlasUV    = vec2(0.0); v_camDist = 0.0; v_camTrueDist = 0.0;
             v_cardBottom = 0.0;       v_seed    = 0.0; v_worldPos    = vec3(0.0);
-            v_lodFade    = 0.0;       v_tilt    = 0.0;
+            v_lodFade    = 0.0;       v_tilt    = 0.0; v_distFade    = 0.0;
             return;
         }
         lodFade = (lodVis >= 2u) ? 1.0 : 0.4;
+    }
+
+    // Per-instance distance fade: 2D horizontal (elevation-neutral), matching terrain LOD metric.
+    // force-visible bypasses both blockVis and distFade so "is the draw path alive?" still works.
+    {
+        float trueDist2D = length(i_worldPos.xy - u_cameraPos.xy);
+        v_distFade = (u_forceVisible != 0)
+            ? 1.0
+            : 1.0 - smoothstep(u_vegFadeStart, u_vegMaxDist, trueDist2D);
     }
 
     // Card role from bits 4-5 of i_atlasFrame:
