@@ -56,7 +56,8 @@ namespace {
 }
 
 // World-unit spacing between sample points.
-constexpr float kGridStep = 32.0f;
+// ~5x area density vs 32: (32/14)^2 ≈ 5.2x more grid cells per area.
+constexpr float kGridStep = 14.0f;
 
 // ---------------------------------------------------------------------------
 // Placement accept/reject helpers
@@ -156,7 +157,7 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
     GosVegetation::init();  // no-op if already initialized
 
     const int density   = envInt("MC2_VEGETATION_DENSITY", 25);
-    const int maxInst   = envInt("MC2_VEGETATION_MAX", 1500000);
+    const int maxInst   = envInt("MC2_VEGETATION_MAX", 5000000);
     const bool debugLog = envSet("MC2_VEGETATION_DEBUG");
 
     // Terrain map is square.  mapTopLeft3d is the top-left (max-Y, min-X)
