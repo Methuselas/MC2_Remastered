@@ -49,25 +49,40 @@ struct CardVert {
 };
 static_assert(sizeof(CardVert) == 20, "CardVert stride must be 20 bytes");
 
-// 8 vertices: two crossed quads.
-// Quad 1 (yawOffset = 0.0), Quad 2 (yawOffset = PI/2).
-static const CardVert k_verts[8] = {
-    // Quad 1
-    {-0.5f, 0.0f, 0.0f,       0.0f, 0.0f},   // BL
-    { 0.5f, 0.0f, 0.0f,       1.0f, 0.0f},   // BR
-    {-0.5f, 1.0f, 0.0f,       0.0f, 1.0f},   // TL
-    { 0.5f, 1.0f, 0.0f,       1.0f, 1.0f},   // TR
-    // Quad 2
-    {-0.5f, 0.0f, 1.5707963f, 0.0f, 0.0f},   // BL
-    { 0.5f, 0.0f, 1.5707963f, 1.0f, 0.0f},   // BR
-    {-0.5f, 1.0f, 1.5707963f, 0.0f, 1.0f},   // TL
-    { 0.5f, 1.0f, 1.5707963f, 1.0f, 1.0f},   // TR
+// 16 vertices: two crossed quads, each subdivided into 3 height segments.
+// Heights y ∈ {0, 1/3, 2/3, 1}. Shader applies quadratic sway (y*y) so each
+// row curves by a different amount — base stays fixed, tip bends the most.
+static const CardVert k_verts[16] = {
+    // Quad 1 (yawOffset = 0)
+    {-0.5f, 0.000000f, 0.0f,       0.0f, 0.000000f},  //  0: row0 L
+    { 0.5f, 0.000000f, 0.0f,       1.0f, 0.000000f},  //  1: row0 R
+    {-0.5f, 0.333333f, 0.0f,       0.0f, 0.333333f},  //  2: row1 L
+    { 0.5f, 0.333333f, 0.0f,       1.0f, 0.333333f},  //  3: row1 R
+    {-0.5f, 0.666667f, 0.0f,       0.0f, 0.666667f},  //  4: row2 L
+    { 0.5f, 0.666667f, 0.0f,       1.0f, 0.666667f},  //  5: row2 R
+    {-0.5f, 1.000000f, 0.0f,       0.0f, 1.000000f},  //  6: row3 L
+    { 0.5f, 1.000000f, 0.0f,       1.0f, 1.000000f},  //  7: row3 R
+    // Quad 2 (yawOffset = PI/2)
+    {-0.5f, 0.000000f, 1.5707963f, 0.0f, 0.000000f},  //  8: row0 L
+    { 0.5f, 0.000000f, 1.5707963f, 1.0f, 0.000000f},  //  9: row0 R
+    {-0.5f, 0.333333f, 1.5707963f, 0.0f, 0.333333f},  // 10: row1 L
+    { 0.5f, 0.333333f, 1.5707963f, 1.0f, 0.333333f},  // 11: row1 R
+    {-0.5f, 0.666667f, 1.5707963f, 0.0f, 0.666667f},  // 12: row2 L
+    { 0.5f, 0.666667f, 1.5707963f, 1.0f, 0.666667f},  // 13: row2 R
+    {-0.5f, 1.000000f, 1.5707963f, 0.0f, 1.000000f},  // 14: row3 L
+    { 0.5f, 1.000000f, 1.5707963f, 1.0f, 1.000000f},  // 15: row3 R
 };
 
-// 12 indices (2 quads x 2 tris x 3 indices).
-static const uint16_t k_indices[12] = {
-    0, 1, 2,  1, 3, 2,   // quad 1
-    4, 5, 6,  5, 7, 6,   // quad 2
+// 36 indices: 2 quads × 3 strips × 2 tris × 3 indices.
+static const uint16_t k_indices[36] = {
+    // Quad 1
+     0,  1,  2,   1,  3,  2,   // row 0-1
+     2,  3,  4,   3,  5,  4,   // row 1-2
+     4,  5,  6,   5,  7,  6,   // row 2-3
+    // Quad 2
+     8,  9, 10,   9, 11, 10,   // row 0-1
+    10, 11, 12,  11, 13, 12,   // row 1-2
+    12, 13, 14,  13, 15, 14,   // row 2-3
 };
 
 // Default atlas path; can be overridden via setAtlasPath() before init().
@@ -369,7 +384,7 @@ void GosVegetation::flush(float lightDirX, float lightDirY, float lightDirZ, flo
         static float s_vegMaxDist = -1.0f;
         if (s_vegMaxDist < 0.0f) {
             const char* v = getenv("MC2_VEG_MAX_DIST");
-            s_vegMaxDist = (v && v[0]) ? static_cast<float>(atof(v)) : 8192.0f;
+            s_vegMaxDist = (v && v[0]) ? static_cast<float>(atof(v)) : 4096.0f;
         }
         const float vegFadeStart = s_vegMaxDist * 0.50f;  // clump cull starts at half max (4096 for default 8192)
         {
@@ -395,7 +410,7 @@ void GosVegetation::flush(float lightDirX, float lightDirY, float lightDirZ, flo
 
     // Draw.
     glBindVertexArray(s_vao);
-    glDrawElementsInstanced(GL_TRIANGLES, 12, GL_UNSIGNED_SHORT,
+    glDrawElementsInstanced(GL_TRIANGLES, 36, GL_UNSIGNED_SHORT,
                             nullptr,
                             static_cast<GLsizei>(s_instanceCount));
 

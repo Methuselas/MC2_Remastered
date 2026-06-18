@@ -102,16 +102,22 @@ void main()
     }
 
     // Card role from bits 4-5 of i_atlasFrame:
-    //   0 = vertical (~55% of instances, 0° tilt)
-    //   1 = tilted   (~30% of instances, 45° from vertical)
-    //   2 = top/cap  (~15% of instances, 80° from vertical — nearly horizontal)
+    //   0 = vertical    (~40% of instances, 0° tilt)
+    //   1 = tilted      (~25% of instances, 45° from vertical)
+    //   2 = top/cap     (~15% of instances, 80° from vertical — nearly horizontal)
+    //   3 = ground cover (~20% of instances, 20° splay, 0.25× scale, no wind)
     uint  cardRole  = (i_atlasFrame >> 4u) & 0x3u;
-    float tiltAngle = (cardRole == 2u) ? 1.3963 : (cardRole == 1u) ? 0.7854 : 0.0;
-    float vertFactor = cos(tiltAngle);  // 1.0 / 0.707 / 0.174
-    float flatFactor = sin(tiltAngle);  // 0.0 / 0.707 / 0.985
+    float tiltAngle = (cardRole == 3u) ? 0.3491          // ground cover: 20° splay
+                    : (cardRole == 2u) ? 1.3963           // top/cap: 80°
+                    : (cardRole == 1u) ? 0.7854           // tilted: 45°
+                    : 0.0;                                // vertical: 0°
+    float vertFactor = cos(tiltAngle);
+    float flatFactor = sin(tiltAngle);
 
-    // Top/cap cards are smaller so they don't dominate the silhouette.
-    float effectiveScale = i_scale * (cardRole == 2u ? 0.6 : 1.0);
+    // Scale multipliers: top/cap smaller; ground cover very short (1.25-2.5 WU).
+    float effectiveScale = i_scale * (cardRole == 3u ? 0.25
+                                     : cardRole == 2u ? 0.6
+                                     : 1.0);
 
     float totalYaw = i_yaw + a_card.z;
     float cy = cos(totalYaw), sy = sin(totalYaw);
@@ -125,15 +131,19 @@ void main()
     float northFromY =  a_card.y * cy * flatFactor;
     float upFromY    =  a_card.y      * vertFactor;
 
-    // Wind: two overlapping harmonics for organic, non-repeating motion.
-    // Top cards are lightly damped (horizontal face catches less lateral wind).
+    // Wind: two slow overlapping harmonics for flowing, continuous motion.
+    // Spatial gradient is gentle so the wave across the field is wide.
+    // Ground cover (role 3) is static — too short to visibly sway.
     float trueDist   = length(i_worldPos - u_cameraPos);
     float windFade   = 1.0 - smoothstep(u_vegFadeStart * 0.8, u_vegFadeStart, trueDist);
-    float windPhase1 = u_time * 1.8 + i_worldPos.x * 0.07 + i_worldPos.y * 0.11 + i_seed * 6.28;
-    float windPhase2 = u_time * 2.7 + i_worldPos.x * 0.13 + i_worldPos.y * 0.17 + i_seed * 3.14;
+    float windPhase1 = u_time * 0.35 + i_worldPos.x * 0.02 + i_worldPos.y * 0.03 + i_seed * 6.28;
+    float windPhase2 = u_time * 0.55 + i_worldPos.x * 0.03 + i_worldPos.y * 0.05 + i_seed * 3.14;
     float windNoise  = sin(windPhase1) * 0.75 + sin(windPhase2) * 0.25;
-    float windStr    = (cardRole == 2u) ? 0.03 : 0.06;
-    float sway = windNoise * a_card.y * windStr * effectiveScale * windFade * vertFactor;
+    float windStr    = (cardRole == 3u) ? 0.0           // ground cover: no sway
+                     : (cardRole == 2u) ? 0.05           // top/cap: gentle
+                     : 0.10;                             // vertical/tilted: full
+    // Quadratic sway: tip bends most (y²=1), mid-row less (y²=0.11/0.44), base fixed (y²=0).
+    float sway = windNoise * a_card.y * a_card.y * windStr * effectiveScale * windFade * vertFactor;
 
     vec3 worldPos;
     worldPos.x = i_worldPos.x + (eastFromX + eastFromY) * effectiveScale + sway * cy;
@@ -146,7 +156,7 @@ void main()
     v_seed        = i_seed;
     v_worldPos    = worldPos;
     v_lodFade     = lodFade;
-    v_tilt        = float(cardRole) * 0.5;  // 0.0=vertical, 0.5=tilted, 1.0=top
+    v_tilt        = (cardRole == 3u) ? 0.25 : float(cardRole) * 0.5;  // 0=vert, 0.5=tilt, 1=top, 0.25=ground
 
     // VEGETATION-DEPTH-BIAS: shift by 1× TERRAIN_DEPTH_FUDGE (−0.002), NOT 2×.
     // Terrain chunk applies 2× (−0.004). With GL_GREATER:

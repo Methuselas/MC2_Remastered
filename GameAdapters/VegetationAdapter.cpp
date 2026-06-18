@@ -290,7 +290,7 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
                 inst.y          = instWy - originY + mapHalf;
                 inst.z          = elevation + 0.5f;
                 inst.yaw        = h3 * 6.2831f;
-                inst.scale      = 5.0f + h4 * 5.0f;
+                inst.scale      = 1.0f + h4 * 5.0f;  // 1-6 WU range
                 // Species: dominant frame for this clump (70%), fill from palette (30%).
                 const FramePalette pal = framePalette(ttype);
                 const float domHash = hashf(clumpCx * 0.11f, clumpCy * 0.09f + 9999.0f);
@@ -298,8 +298,8 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
                 const uint32_t frame = (h5 < 0.70f)
                     ? static_cast<uint32_t>(domFrame)
                     : static_cast<uint32_t>(pal.f[static_cast<int>(h5 * static_cast<float>(pal.n)) % pal.n]);
-                // Card role (bits 4-5): 0=vertical 55%, 1=tilted 30%, 2=top 15%.
-                const uint32_t cardRole = (h7 < 0.55f) ? 0u : (h7 < 0.85f) ? 1u : 2u;
+                // Card role (bits 4-5): 0=vertical 40%, 1=tilted 25%, 2=top 15%, 3=ground 20%.
+                const uint32_t cardRole = (h7 < 0.40f) ? 0u : (h7 < 0.65f) ? 1u : (h7 < 0.80f) ? 2u : 3u;
                 inst.atlasFrame = (cardRole << 4u) | (frame & 0x0Fu);
                 inst.seed       = h6;
 
