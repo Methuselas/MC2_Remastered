@@ -260,17 +260,21 @@ static int   s_standardLitEnabled = []() {
 }();
 static float s_pbrMetallicInfluence = []() {
     const char* v = std::getenv("MC2_PBR_METALLIC_INFLUENCE");
-    return v ? (float)std::atof(v) : 0.15f;
+    if (v) return (float)std::atof(v);
+    const char* mat = std::getenv("MC2_MECH_SURFACE_MATERIAL");
+    return (mat && strcmp(mat, "painted_subtle") == 0) ? 0.03f : 0.15f;
 }();
 static float s_pbrRoughnessMin = []() {
     const char* v = std::getenv("MC2_PBR_ROUGHNESS_MIN");
-    float d = v ? (float)std::atof(v) : 0.45f;
-    return d;
+    if (v) return (float)std::atof(v);
+    const char* mat = std::getenv("MC2_MECH_SURFACE_MATERIAL");
+    return (mat && strcmp(mat, "painted_subtle") == 0) ? 0.65f : 0.45f;
 }();
 static float s_pbrRoughnessMax = []() {
     const char* v = std::getenv("MC2_PBR_ROUGHNESS_MAX");
-    float d = v ? (float)std::atof(v) : 0.90f;
-    return d;
+    if (v) return (float)std::atof(v);
+    const char* mat = std::getenv("MC2_MECH_SURFACE_MATERIAL");
+    return (mat && strcmp(mat, "painted_subtle") == 0) ? 0.90f : 0.90f;
 }();
 static float s_pbrAmbientSpecularStrength = []() {
     const char* v = std::getenv("MC2_PBR_AMBIENT_SPECULAR");
@@ -281,7 +285,9 @@ static float s_pbrAmbientSpecularStrength = []() {
 static uint32_t s_mechPaintSurfaceMaterialIdx = 0u;  // resolved lazily alongside s_mechSurfaceMaterialIdx
 static float s_pbrWearStrength = []() {
     const char* v = std::getenv("MC2_PBR_WEAR_STRENGTH");
-    return v ? (float)std::atof(v) : 1.0f;
+    if (v) return (float)std::atof(v);
+    const char* mat = std::getenv("MC2_MECH_SURFACE_MATERIAL");
+    return (mat && strcmp(mat, "painted_subtle") == 0) ? 0.0f : 1.0f;
 }();
 static int   s_pbrTriplanar = []() {
     const char* v = std::getenv("MC2_PBR_TRIPLANAR");
@@ -1947,7 +1953,9 @@ void GpuMechBatcher::flush() {
     {
         static const float s_pbrTileScale = []() {
             const char* v = std::getenv("MC2_PBR_TILE_SCALE");
-            return v ? (float)std::atof(v) : 4.0f;
+            if (v) return (float)std::atof(v);
+            const char* mat = std::getenv("MC2_MECH_SURFACE_MATERIAL");
+            return (mat && strcmp(mat, "painted_subtle") == 0) ? 2.0f : 4.0f;
         }();
         const GLuint pbrNormal = gos_materials::getProfileNormalTex(s_mechSurfaceMaterialIdx);
         const GLuint pbrOrm    = gos_materials::getProfileOrmTex(s_mechSurfaceMaterialIdx);
