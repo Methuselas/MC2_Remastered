@@ -110,6 +110,8 @@ extern "C" float batcher_getPbrTriplanarScale(void);
 extern "C" void  batcher_setPbrTriplanarScale(float v);
 extern "C" float batcher_getMechGlassRoughness(void);
 extern "C" void  batcher_setMechGlassRoughness(float r);
+extern "C" float batcher_getMechBackFillStrength(void);
+extern "C" void  batcher_setMechBackFillStrength(float v);
 // VFX-TUNING-UI-1: GPU particle debug-mode + intensity scales (defined in
 // GameOS/gameos/gos_particle_bridge.cpp). All scales default 1.0 = no-op.
 extern "C" int   gos_vfx_getDebugMode(void);
@@ -1640,8 +1642,9 @@ static void drawMechSection() {
     if (ImGui::Checkbox("Ambient##mech", &ambOn))
         batcher_setMechAmbientEnabled(ambOn ? 1 : 0);
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Hemisphere ambient fill on mech hull. Default ON.\n"
-                          "Gate MC2_MECH_AMBIENT_V1=0 to kill-switch.");
+        ImGui::SetTooltip("Hemisphere ambient fill on mech hull (legacy path).\n"
+                          "No effect when StandardLit GGX is ON (replaced by IBL+back-fill).\n"
+                          "Kill-switch: MC2_MECH_AMBIENT_V1=0.");
     ImGui::SameLine();
     float as = batcher_getMechAmbientStrength();
     if (ImGui::SliderFloat("Strength##mechamb", &as, 0.0f, 2.0f, "%.2f"))
@@ -1654,9 +1657,9 @@ static void drawMechSection() {
     if (ImGui::Checkbox("Specular##mech", &specOn))
         batcher_setMechSpecularEnabled(specOn ? 1 : 0);
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Blinn specular sheen on mech hull. Default ON.\n"
-                          "Only visible when MC2_MECH_VIEWUNIFORMS=1.\n"
-                          "Gate MC2_MECH_SPECULAR_V1=0 to kill-switch.");
+        ImGui::SetTooltip("Blinn specular sheen on mech hull (legacy path).\n"
+                          "No effect when StandardLit GGX is ON (Blinn path bypassed).\n"
+                          "Kill-switch: MC2_MECH_SPECULAR_V1=0.");
     ImGui::SameLine();
     float ss = batcher_getMechSpecularStrength();
     if (ImGui::SliderFloat("Strength##mechspec", &ss, 0.0f, 2.0f, "%.2f"))
@@ -1692,9 +1695,9 @@ static void drawMechSection() {
         if (ImGui::Checkbox("StandardLit GGX##mech", &slOn))
             batcher_setStandardLitEnabled(slOn ? 1 : 0);
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Cook-Torrance GGX PBR on mechs (MC2_STANDARD_LIT_V1=1).\n"
-                              "Requires MC2_MECH_SURFACE_MATERIAL=metal061b + viewuniforms path.\n"
-                              "Default OFF (Blinn-Phong passthrough, byte-identical).");
+            ImGui::SetTooltip("Cook-Torrance GGX PBR on mechs. Default ON.\n"
+                              "Kill-switch: MC2_STANDARD_LIT_V1=0.\n"
+                              "Requires MC2_MECH_SURFACE_MATERIAL=metal061b.");
 
         float mi = batcher_getPbrMetallicInfluence();
         if (ImGui::SliderFloat("Metallic influence##pbr", &mi, 0.0f, 1.0f, "%.2f"))
@@ -1748,6 +1751,17 @@ static void drawMechSection() {
                                   "sky color. Kill-switch: MC2_MECH_IBL_SH=0.\n"
                                   "Strength shared with Static Prop IBL SH slider.");
         }
+
+        // MECH-BACK-FILL-1: cool-sky fill for shadow hemisphere.
+        float bf = batcher_getMechBackFillStrength();
+        if (ImGui::SliderFloat("Back fill##pbr", &bf, 0.0f, 4.0f, "%.2f"))
+            batcher_setMechBackFillStrength(bf);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Cool-sky fill for the shadow hemisphere (faces away from sun).\n"
+                              "Prevents dark side going pitch-black. Works only in StandardLit path.\n"
+                              "Default: 0.25. Kill-switch: MC2_MECH_BACK_FILL=0.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##bf")) batcher_setMechBackFillStrength(2.0f);
 
         ImGui::Spacing();
         ImGui::SeparatorText("Paint/wear layer (PaintedMetal003)");

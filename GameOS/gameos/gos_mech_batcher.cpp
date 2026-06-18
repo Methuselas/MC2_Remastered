@@ -244,6 +244,12 @@ static float s_mechGlassMaxChanThresh = []() {
     return d;
 }();
 static bool  s_mechSpecDebugMask = false;  // ImGui only; no env var
+// MECH-BACK-FILL-1: cool-sky fill for the StandardLit shadow hemisphere.
+// Default OFF (0.0). Enable via MC2_MECH_BACK_FILL=<strength> (e.g. 1.5).
+static float s_mechBackFillStrength = []() {
+    const char* v = std::getenv("MC2_MECH_BACK_FILL");
+    return v ? (float)std::atof(v) : 0.0f;
+}();
 
 // PBR-TUNE-1: StandardLit GGX gate + material influence knobs.
 // Mutable so ImGui can dial live (batcher_setStandardLitEnabled / batcher_setPbr*).
@@ -310,6 +316,7 @@ static GLint s_loc_u_mechGlassRoughness      = -1;
 static GLint s_loc_u_mechGlassLumaThresh     = -1;
 static GLint s_loc_u_mechGlassMaxChanThresh  = -1;
 static GLint s_loc_u_mechSpecDebugMask       = -1;
+static GLint s_loc_u_mechBackFillStrength    = -1;
 // Slice C1: StandardLit toggle. Returns -1 until mech.frag declares the uniform;
 // guarded with >= 0 at upload so no crash when shader lacks it.
 static GLint s_loc_u_standardLitEnabled      = -1;
@@ -600,6 +607,7 @@ static void loadProgramsIfNeeded() {
     s_loc_u_mechGlassLumaThresh     = loc("u_mechGlassLumaThresh");
     s_loc_u_mechGlassMaxChanThresh  = loc("u_mechGlassMaxChanThresh");
     s_loc_u_mechSpecDebugMask       = loc("u_mechSpecDebugMask");
+    s_loc_u_mechBackFillStrength    = loc("u_mechBackFillStrength");
     // Slice C1: StandardLit toggle (default 0 = passthrough; shader may not declare it yet).
     s_loc_u_standardLitEnabled      = loc("u_standardLitEnabled");
     // Slice C2: PBR detail surface samplers + tile scale.
@@ -2028,6 +2036,8 @@ void GpuMechBatcher::flush() {
         glUniform1f(s_loc_u_mechGlassMaxChanThresh, s_mechGlassMaxChanThresh);
     if (s_loc_u_mechSpecDebugMask >= 0)
         glUniform1i(s_loc_u_mechSpecDebugMask, s_mechSpecDebugMask ? 1 : 0);
+    if (s_loc_u_mechBackFillStrength >= 0)
+        glUniform1f(s_loc_u_mechBackFillStrength, s_mechBackFillStrength);
     // Slice C1: StandardLit GGX gate (mutable via ImGui / batcher_setStandardLitEnabled).
     if (s_loc_u_standardLitEnabled >= 0)
         glUniform1i(s_loc_u_standardLitEnabled, s_standardLitEnabled);
@@ -2525,6 +2535,12 @@ extern "C" void  batcher_setMechGlassMaxChanThresh(float t) {
 extern "C" float batcher_getMechGlassMaxChanThresh()         { return s_mechGlassMaxChanThresh; }
 extern "C" void  batcher_setMechSpecDebugMask(int on)        { s_mechSpecDebugMask = (on != 0); }
 extern "C" int   batcher_getMechSpecDebugMask()              { return s_mechSpecDebugMask ? 1 : 0; }
+extern "C" float batcher_getMechBackFillStrength()           { return s_mechBackFillStrength; }
+extern "C" void  batcher_setMechBackFillStrength(float v) {
+    if (v < 0.0f) v = 0.0f;
+    if (v > 4.0f) v = 4.0f;
+    s_mechBackFillStrength = v;
+}
 
 // PBR-TUNE-1: StandardLit GGX toggle + material influence knobs.
 // All per-flush uniforms — no VBO rebuild needed.

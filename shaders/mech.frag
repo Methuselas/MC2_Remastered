@@ -93,6 +93,10 @@ uniform float u_mechGlassRoughness;       // glass/cockpit roughness (default 0.
 uniform float u_mechGlassLumaThresh;      // glass if luma < this (default 0.12)
 uniform float u_mechGlassMaxChanThresh;   // AND max(rgb) < this (default 0.18)
 uniform int   u_mechSpecDebugMask;        // 1 = visualize cockpit mask in green/grey
+// MECH-BACK-FILL-1: cool-sky fill for the shadow hemisphere in the StandardLit
+// GGX path. Adds albedo * coolSkyColor * max(-NdotL,0) * strength so the dark
+// side is never pitch-black. 0=OFF (legacy behaviour). Default 0.
+uniform float u_mechBackFillStrength;
 #endif
 
 layout(location=0) out vec4 FragColor;
@@ -290,6 +294,16 @@ void main() {
 
         vec3 pbrLit = StandardLit(si);
         pbrLit += v_highlightColor.rgb * v_highlightColor.a;
+
+        // MECH-BACK-FILL-1: fills shadow hemisphere with cool-sky light so the
+        // dark side isn't pitch-black. Keyed to the anti-sun direction (backFace=1
+        // directly away from sun, 0 at terminator/lit side). Cool blue-sky tint
+        // contrasts the warm direct light; no AO applied (this is directional fill).
+        if (u_mechBackFillStrength > 0.0) {
+            float backFace = max(-dot(N_pbr, L), 0.0);
+            pbrLit += albedo * vec3(0.38, 0.47, 0.62) * backFace * u_mechBackFillStrength;
+        }
+
         c = vec4(pbrLit, tex_color.a);
 
         // PBR debug modes 10-15 (overridden by standard modes 1-9 if also set).
