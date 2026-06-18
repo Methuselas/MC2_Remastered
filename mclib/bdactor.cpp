@@ -293,6 +293,19 @@ void BldgAppearanceType::init (const char * fileName)
 	if (result != NO_ERR)
 		STOP(("Could not find building appearance INI file %s",iniName));
 
+	// ASSIMP-BLDG-IMPORT-1 — optional GLB probe for buildings/trees. Mirror of
+	// mech3d.cpp [Import] pattern. An optional [Import] section with Source=
+	// opts this asset into LoadFromFile (glb/fbx probe) for LOD0. Stock assets
+	// with no [Import] block take the unchanged LoadTGMultiShapeFromASE path.
+	char importSourceBase[256] = "";
+	if (iniFile.seekBlock("Import") == NO_ERR &&
+	    iniFile.readIdString("Source", importSourceBase, 255) == NO_ERR &&
+	    importSourceBase[0])
+	{
+		char* dot = strrchr(importSourceBase, '.');
+		if (dot) *dot = '\0';
+	}
+
 	result = iniFile.seekBlock("TGLData");
 	if (result != NO_ERR)
 		Fatal(result,"Could not find block in building appearance INI file");
@@ -375,10 +388,13 @@ void BldgAppearanceType::init (const char * fileName)
 				bldgShape[i] = new TG_TypeMultiShape;
 				gosASSERT(bldgShape[i] != NULL);
 
-				FullPathFileName bldgName;
-				bldgName.init(tglPath,aseFileName,".ase");
-
-				bldgShape[i]->LoadTGMultiShapeFromASE(bldgName);
+				if (i == 0 && importSourceBase[0]) {
+					bldgShape[i]->LoadFromFile(importSourceBase); // ASSIMP-BLDG-IMPORT-1: opt-in GLB probe
+				} else {
+					FullPathFileName bldgName;
+					bldgName.init(tglPath,aseFileName,".ase");
+					bldgShape[i]->LoadTGMultiShapeFromASE(bldgName);
+				}
 
 				if (!i)
 					strncpy(bldgBaseName, aseFileName, sizeof(bldgBaseName) - 1);
@@ -396,10 +412,13 @@ void BldgAppearanceType::init (const char * fileName)
 		bldgShape[0] = new TG_TypeMultiShape;
 		gosASSERT(bldgShape[0] != NULL);
 
-		FullPathFileName bldgName;
-		bldgName.init(tglPath,aseFileName,".ase");
-
-		bldgShape[0]->LoadTGMultiShapeFromASE(bldgName);
+		if (importSourceBase[0]) {
+			bldgShape[0]->LoadFromFile(importSourceBase); // ASSIMP-BLDG-IMPORT-1: opt-in GLB probe
+		} else {
+			FullPathFileName bldgName;
+			bldgName.init(tglPath,aseFileName,".ase");
+			bldgShape[0]->LoadTGMultiShapeFromASE(bldgName);
+		}
 
 		strncpy(bldgBaseName, aseFileName, sizeof(bldgBaseName) - 1);
 	}
@@ -4124,6 +4143,17 @@ void TreeAppearanceType::init (const char * fileName)
 	if (result != NO_ERR)
 		Fatal(result,"Could not find building appearance INI file");
 
+	// ASSIMP-TREE-IMPORT-1 — optional GLB probe for trees. Mirror of
+	// mech3d.cpp [Import] pattern. LOD0 only; LOD1+ and damage stay ASE.
+	char importSourceBase[256] = "";
+	if (iniFile.seekBlock("Import") == NO_ERR &&
+	    iniFile.readIdString("Source", importSourceBase, 255) == NO_ERR &&
+	    importSourceBase[0])
+	{
+		char* dot = strrchr(importSourceBase, '.');
+		if (dot) *dot = '\0';
+	}
+
 	result = iniFile.seekBlock("TGLData");
 	if (result != NO_ERR)
 		Fatal(result,"Could not find block in building appearance INI file");
@@ -4131,7 +4161,7 @@ void TreeAppearanceType::init (const char * fileName)
 	result = iniFile.readIdBoolean("ForestClump",isForestClump);
 	if (result != NO_ERR)
 		isForestClump = false;
-		
+
  	char aseFileName[512];
 	// MODEL-OVERRIDE dual-shape: capture the BASE (LOD0) asset name before the
 	// damage block below reuses aseFileName.
@@ -4163,10 +4193,13 @@ void TreeAppearanceType::init (const char * fileName)
 				treeShape[i] = new TG_TypeMultiShape;
 				gosASSERT(treeShape[i] != NULL);
 
-				FullPathFileName treeName;
-				treeName.init(tglPath,aseFileName,".ase");
-
-				treeShape[i]->LoadTGMultiShapeFromASE(treeName);
+				if (i == 0 && importSourceBase[0]) {
+					treeShape[i]->LoadFromFile(importSourceBase); // ASSIMP-TREE-IMPORT-1: opt-in GLB probe
+				} else {
+					FullPathFileName treeName;
+					treeName.init(tglPath,aseFileName,".ase");
+					treeShape[i]->LoadTGMultiShapeFromASE(treeName);
+				}
 
 				//---------------------------------------------------------
 				// Should only be necessary for trees.  Easy to data drive
@@ -4189,10 +4222,13 @@ void TreeAppearanceType::init (const char * fileName)
 		treeShape[0] = new TG_TypeMultiShape;
 		gosASSERT(treeShape[0] != NULL);
 
-		FullPathFileName treeName;
-		treeName.init(tglPath,aseFileName,".ase");
-
-		treeShape[0]->LoadTGMultiShapeFromASE(treeName);
+		if (importSourceBase[0]) {
+			treeShape[0]->LoadFromFile(importSourceBase); // ASSIMP-TREE-IMPORT-1: opt-in GLB probe
+		} else {
+			FullPathFileName treeName;
+			treeName.init(tglPath,aseFileName,".ase");
+			treeShape[0]->LoadTGMultiShapeFromASE(treeName);
+		}
 
 		//---------------------------------------------------------
 		// Should only be necessary for trees.  Easy to data drive
