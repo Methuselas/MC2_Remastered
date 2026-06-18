@@ -85,7 +85,7 @@ struct IblHdriSkyEntry {
 //  21  |  299.1 | 0.2875 | 0.1161 | 0.6853 | purple      (69% dark = night)
 
 constexpr IblHdriSkyEntry kSkyNumberHdriMap[] = {
-    {  1, "overcast"  }, // H=330° S=0.06 V=0.73 — near-white, very low saturation; warm-grey haze
+    {  1, "day_clear" }, // H=330° S=0.06 V=0.73 — near-white, bright; beach/coastal day (user override)
     {  2, "sunset"    }, // H=7°   S=0.24 V=0.77 — warm orange-red, medium sat; classic sunset palette
     {  3, "dramatic"  }, // H=284° S=0.43 V=0.30 — purple, high saturation, dim; used in dark dramatic missions
     {  4, "overcast"  }, // H=59°  S=0.12 V=0.87 — yellow-tinted bright grey; featureless overcast day
