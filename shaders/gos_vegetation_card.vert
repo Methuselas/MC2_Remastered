@@ -85,13 +85,20 @@ void main()
         lodFade = (lodVis >= 2u) ? 1.0 : 0.4;
     }
 
-    // Per-instance distance fade: 2D horizontal (elevation-neutral), matching terrain LOD metric.
-    // force-visible bypasses both blockVis and distFade so "is the draw path alive?" still works.
+    // Instance-level distance cull: whole clumps disappear, no per-pixel thinning.
+    // Probabilistic in fade zone [u_vegFadeStart, u_vegMaxDist]: i_seed decides each
+    // clump — stable across frames, no shimmer. force-visible keeps all for debugging.
     {
         float trueDist2D = length(i_worldPos.xy - u_cameraPos.xy);
-        v_distFade = (u_forceVisible != 0)
-            ? 1.0
-            : 1.0 - smoothstep(u_vegFadeStart, u_vegMaxDist, trueDist2D);
+        float fadeProb = smoothstep(u_vegFadeStart, u_vegMaxDist, trueDist2D);
+        if (u_forceVisible == 0 && i_seed < fadeProb) {
+            gl_Position  = vec4(2.0, 2.0, 2.0, 1.0);
+            v_atlasUV    = vec2(0.0); v_camDist = 0.0; v_camTrueDist = 0.0;
+            v_cardBottom = 0.0;       v_seed    = 0.0; v_worldPos    = vec3(0.0);
+            v_lodFade    = 0.0;       v_tilt    = 0.0; v_distFade    = 0.0;
+            return;
+        }
+        v_distFade = 1.0;  // surviving instances always full opacity; clump cull done above
     }
 
     // Card role from bits 4-5 of i_atlasFrame:
@@ -121,7 +128,7 @@ void main()
     // Wind: two overlapping harmonics for organic, non-repeating motion.
     // Top cards are lightly damped (horizontal face catches less lateral wind).
     float trueDist   = length(i_worldPos - u_cameraPos);
-    float windFade   = 1.0 - smoothstep(300.0, 450.0, trueDist);
+    float windFade   = 1.0 - smoothstep(u_vegFadeStart * 0.8, u_vegFadeStart, trueDist);
     float windPhase1 = u_time * 1.8 + i_worldPos.x * 0.07 + i_worldPos.y * 0.11 + i_seed * 6.28;
     float windPhase2 = u_time * 2.7 + i_worldPos.x * 0.13 + i_worldPos.y * 0.17 + i_seed * 3.14;
     float windNoise  = sin(windPhase1) * 0.75 + sin(windPhase2) * 0.25;

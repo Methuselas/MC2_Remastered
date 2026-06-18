@@ -425,13 +425,14 @@ void GameCamera::render (void)
 				gos_GetTerrainLightDir(&lx, &ly, &lz);
 				const float terrainLightDir_4f[4] = { lx, ly, lz, 0.0f };
 				const float missionTime = static_cast<float>(gos_GetElapsedTime());
-				// Camera position in terrain-chunk space for wind LOD + brightness.
-				// Chunk space: x = east_centered, y = north_centered (same as instance encode).
-				Stuff::Vector3D vegCamOrig = getCameraOrigin();
+				// Camera position in terrain-chunk space for distance fade + wind LOD.
+				// Use orbit target (game world: x=east, y=north) — same frame as instance encode.
+				// getCameraOrigin() returns Stuff/MLR (west,elev,north) — wrong axes for this.
+				Stuff::Vector3D camTgt = getPosition();
 				const float vegHalfMap = Terrain::worldUnitsMapSide * 0.5f;
-				const float vegCamCX = vegCamOrig.x - Terrain::mapTopLeft3d.x - vegHalfMap;
-				const float vegCamCY = vegCamOrig.y - Terrain::mapTopLeft3d.y + vegHalfMap;
-				const float vegCamCZ = vegCamOrig.z;
+				const float vegCamCX = camTgt.x - Terrain::mapTopLeft3d.x - vegHalfMap;
+				const float vegCamCY = camTgt.y - Terrain::mapTopLeft3d.y + vegHalfMap;
+				const float vegCamCZ = camTgt.z;
 				GameAdapters::Vegetation::flush(terrainLightDir_4f, missionTime,
 				                                vegCamCX, vegCamCY, vegCamCZ);
 			}

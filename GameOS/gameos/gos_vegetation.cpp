@@ -371,7 +371,7 @@ void GosVegetation::flush(float lightDirX, float lightDirY, float lightDirZ, flo
             const char* v = getenv("MC2_VEG_MAX_DIST");
             s_vegMaxDist = (v && v[0]) ? static_cast<float>(atof(v)) : 8192.0f;
         }
-        const float vegFadeStart = s_vegMaxDist * 0.70f;
+        const float vegFadeStart = s_vegMaxDist * 0.50f;  // clump cull starts at half max (4096 for default 8192)
         {
             const GLint loc = glGetUniformLocation(progId, "u_vegMaxDist");
             if (loc >= 0) glProgramUniform1f(progId, loc, s_vegMaxDist);
