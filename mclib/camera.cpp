@@ -2822,9 +2822,9 @@ void Camera::setCameraOrigin (void)
 				float terrainAtCam = land->getTerrainElevation(actualPosition);
 				if (terrainAtCam < Terrain::waterElevation)
 					terrainAtCam = Terrain::waterElevation;
-				if (translation.y < terrainAtCam + 2.0f)
+				if (translation.y < terrainAtCam + AltitudeMinimum)
 				{
-					translation.y = terrainAtCam + 2.0f;
+					translation.y = terrainAtCam + AltitudeMinimum;
 					actualPosition.z = translation.y - ELEVATION_BUFFER;
 
 					// Repoint at focus from clamped position.
