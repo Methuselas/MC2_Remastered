@@ -303,8 +303,10 @@ void GosVegetation::flush(float lightDirX, float lightDirY, float lightDirZ, flo
     glDisable(GL_CULL_FACE);  // both faces visible
     // VEGETATION-DEPTH-GREATER: terrain has TERRAIN_DEPTH_FUDGE (pushed back,
     // depth D-0.004). Static props have no fudge (depth D, true depth).
-    // Vegetation at true depth D: GL_GREATER vs terrain (D > D-0.004 = TRUE,
-    // appears over terrain) and vs props (D > D = FALSE, appears behind props).
+    // Vegetation VS at depth D−0.002 (1× TERRAIN_DEPTH_FUDGE bias, half of terrain's 2×).
+    // GL_GREATER: (D−0.002) > (D−0.004)=TRUE → veg over coplanar terrain ✓
+    //             (D−0.002) > D        =FALSE → veg behind static props   ✓
+    // Ghost zone (cliff just-in-front within 0.002 NDC): acceptable for typical geometry.
     glDepthFunc(GL_GREATER);
 
     // [RENDER_CONTRACT:Pass=VegetationCards]

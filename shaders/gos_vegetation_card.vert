@@ -123,7 +123,12 @@ void main()
     v_worldPos    = worldPos;
     v_lodFade     = lodFade;
 
+    // VEGETATION-DEPTH-BIAS: shift by 1× TERRAIN_DEPTH_FUDGE (−0.002), NOT 2×.
+    // Terrain chunk applies 2× (−0.004). With GL_GREATER:
+    //   D−0.002 > D−0.004 = TRUE  → veg wins over coplanar terrain surface ✓
+    //   D−0.002 > D       = FALSE → veg stays behind static props ✓
+    // Ghost zone (cliff within 0.002 NDC poking through) halved from original.
     vec4 clip = u_worldToClipGL * vec4(worldPos, 1.0);
-    clip.z += 2.0 * TERRAIN_DEPTH_FUDGE * clip.w;
+    clip.z += TERRAIN_DEPTH_FUDGE * clip.w;
     gl_Position = clip;
 }
