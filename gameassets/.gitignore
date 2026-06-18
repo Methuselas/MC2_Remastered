@@ -1,0 +1,3 @@
+# Large source PNGs and cooked binaries — not tracked in git
+materials/*/source/
+materials/*/cooked/
