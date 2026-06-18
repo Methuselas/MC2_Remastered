@@ -19,6 +19,7 @@
 // preserves its pre-38ba240 behavior. See memory/mc2_argb_packing.md.
 #define MC2_STATIC_PROP_LIGHTING
 #include <include/lighting.hglsl>
+#include <include/terrain_depth_bias.hglsl>
 
 layout(location = 0) in vec3  a_position;
 layout(location = 1) in vec3  a_normal;
@@ -257,7 +258,14 @@ void main() {
     vec4 world = vec4(world_mc2, 1.0);
     // Match terrain_overlay.vert exactly: terrainMVP is the CPU-composed
     // axisSwap * worldToClip matrix uploaded GL_FALSE.
-    gl_Position = u_worldToClipGL * world;
+    // Apply the same reverse-Z surface bias as terrain so props at coplanar
+    // or near-coplanar mountain geometry win the GL_GEQUAL depth test.
+    // Shadow pass uses shadow_static_prop.vert (separate) — no guard needed.
+    // `invariant gl_Position` guarantees depth prepass + color pass are
+    // bit-identical after the bias, so the depth-prepass GL_EQUAL gate holds.
+    vec4 clip = u_worldToClipGL * world;
+    clip.z += 2.0 * TERRAIN_DEPTH_FUDGE * clip.w;
+    gl_Position = clip;
 
     // Slice 2 (object-offload) — Stage 2.C.2: GPU vertex lighting.
     //
