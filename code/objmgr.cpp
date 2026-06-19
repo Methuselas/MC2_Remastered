@@ -3432,6 +3432,13 @@ GameObjectPtr GameObjectManager::findTerrainObjectByMouse (long mouseX,
 	{
 		return s_pmResult;
 	}
+	// Camera moved this frame — return stale result without scanning.
+	// Hover highlight is cosmetic; player is panning, not selecting.
+	// camRev is updated so that once camera settles the next frame triggers a fresh scan.
+	if (camRev != 0 && camRev != s_pmCamRev) {
+		s_pmCamRev = camRev;
+		return s_pmResult;
+	}
 
 	PkTimer _pk;  // MC2_PICK_RECON per-call wall-time
 	int32_t pickCandidates = 0;

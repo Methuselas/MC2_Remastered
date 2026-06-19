@@ -1,0 +1,372 @@
+#!/usr/bin/env python3
+"""
+REPO-INTEL-1a: repo_query.py
+Read-only codebase intelligence CLI.
+
+Usage:
+    python tools/repo_intel/repo_query.py dirty
+    python tools/repo_intel/repo_query.py harness build
+    python tools/repo_intel/repo_query.py harness deploy
+    python tools/repo_intel/repo_query.py harness smoke
+    python tools/repo_intel/repo_query.py harness tier1
+    python tools/repo_intel/repo_query.py preflight
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def git(args, cwd=None, strip=True):
+    result = subprocess.run(
+        ["git"] + args,
+        capture_output=True, text=True, cwd=cwd
+    )
+    out = result.stdout.strip() if strip else result.stdout
+    return out, result.returncode
+
+
+def find_repo_root():
+    out, rc = git(["rev-parse", "--show-toplevel"])
+    if rc != 0:
+        return None
+    return Path(out)
+
+
+def find_claude_md(repo_root):
+    candidate = repo_root / "CLAUDE.md"
+    if candidate.exists():
+        return candidate
+    # fall back to project-level
+    parent = repo_root.parent
+    candidate2 = parent / "CLAUDE.md"
+    if candidate2.exists():
+        return candidate2
+    return None
+
+
+def out_json(obj):
+    print(json.dumps(obj, indent=2))
+
+
+# ---------------------------------------------------------------------------
+# File classification
+# ---------------------------------------------------------------------------
+
+# Order matters: first match wins.
+_CLASSIFICATION_RULES = [
+    # protected — never touch
+    (re.compile(r"^(build[^/]*/|3rdparty/|\.git/|releases?/|dist/)", re.I),
+     "protected", "build/3rdparty/git/release tree — never touch"),
+    # generated cmake/build artefacts
+    (re.compile(r"\.(vcxproj|cmake_install\.cmake|sln)$", re.I),
+     "protected", "generated build artefact"),
+    (re.compile(r"CMakeCache\.txt$|CMakeFiles/", re.I),
+     "protected", "CMake cache/generated — never touch"),
+    # deploy rail
+    (re.compile(r"^scripts/deploy_payload\.py$", re.I),
+     "deploy_rail", "deploy harness — edit with care"),
+    (re.compile(r"^scripts/run_smoke\.py$", re.I),
+     "deploy_rail", "smoke harness — edit with care"),
+    # key source (render core, engine, game code, adapters)
+    (re.compile(r"^(code|GameOS|mclib|RenderCore|GameAdapters)/", re.I),
+     "key_source", "key engine source — requires smoke gate before merge"),
+    # shaders
+    (re.compile(r"^shaders/.*\.(vert|frag|comp|geom|hglsl|tesc|tese)$", re.I),
+     "shader", "shader file — subject to shader discipline"),
+    # docs / markdown
+    (re.compile(r"^docs/|\.md$", re.I),
+     "docs", "documentation"),
+    # tools and scripts (general — not deploy rail)
+    (re.compile(r"^(tools|scripts)/", re.I),
+     "normal", "tool/script"),
+    # data assets
+    (re.compile(r"^data/", re.I),
+     "normal", "data asset"),
+    # .claude/ internal (config, memory, skills)
+    (re.compile(r"^\.claude/", re.I),
+     "normal", "claude config/memory"),
+    # test artifacts (baselines, visual captures, smoke outputs)
+    (re.compile(r"^tests/", re.I),
+     "normal", "test artifact"),
+    # graphify output (generated graph — not source)
+    (re.compile(r"^graphify-out/", re.I),
+     "normal", "graphify-generated output"),
+    # runtime / temp artifacts at repo root
+    (re.compile(
+        r"^(run/|imgui\.ini$|sniff\.dat$|.*_stdout\.txt$|.*_stderr\.txt$|"
+        r"fire_wire\.png$|.*bridge_manual.*\.txt$|central_merge.*/)"),
+     "normal", "runtime/temp artifact"),
+]
+
+_SAFE_CLASSES = {"docs", "normal"}
+
+
+def classify_file(rel_path: str):
+    for pattern, cls, reason in _CLASSIFICATION_RULES:
+        if pattern.search(rel_path):
+            return cls, reason
+    return "unknown", "unclassified — treat as sensitive"
+
+
+def get_dirty_state(repo_root: Path):
+    branch, _ = git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_root)
+    head, _    = git(["rev-parse", "--short", "HEAD"],      cwd=repo_root)
+    status_out, _ = git(["status", "--porcelain=v1"],        cwd=repo_root, strip=False)
+
+    files = []
+    for line in status_out.splitlines():
+        if not line.strip():
+            continue
+        xy   = line[:2]
+        path = line[3:].strip()
+        # handle renames: "old -> new"
+        if " -> " in path:
+            path = path.split(" -> ")[-1]
+        status = xy.strip() or "?"
+        cls, reason = classify_file(path)
+        files.append({
+            "path":   path,
+            "status": status,
+            "class":  cls,
+            "reason": reason,
+        })
+
+    dirty         = bool(files)
+    unsafe_files  = [f for f in files if f["class"] not in _SAFE_CLASSES]
+    safe_to_touch = not bool(unsafe_files)
+    requires_ack  = not safe_to_touch
+
+    return {
+        "repo_root":      str(repo_root),
+        "branch":         branch,
+        "head":           head,
+        "dirty":          dirty,
+        "safe_to_touch":  safe_to_touch,
+        "requires_user_ack": requires_ack,
+        "files":          files,
+        "summary": (
+            f"{len(files)} dirty file(s); "
+            f"{len(unsafe_files)} require ack"
+            if dirty else "clean"
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Harness parsing
+# ---------------------------------------------------------------------------
+
+_HARNESSES = {
+    "build": {
+        "description": "Build mc2 exe (RelWithDebInfo)",
+        # Extracted from CLAUDE.md 'Codex build/deploy rails' + cmake path
+        "search_patterns": [
+            # CMake path line
+            re.compile(r"CMake:\s+(.+cmake\.exe)", re.I),
+            # build flags
+            re.compile(r"--build\s+build64\s+--config\s+RelWithDebInfo\s+--target\s+mc2"),
+        ],
+        "note": (
+            "Invoke via /mc2-build skill. "
+            "Do not substitute MSBuild, random cmake, or manual copy commands."
+        ),
+    },
+    "deploy": {
+        "description": "Deploy payload to release directory",
+        "search_patterns": [
+            re.compile(r"scripts/deploy_payload\.py[^\n]*", re.I),
+        ],
+        "note": (
+            "Invoke scripts/deploy_payload.py with --source-root, --build-dir, --exe-name. "
+            "For rc1 pass target dir positionally. Never copy files manually."
+        ),
+    },
+    "smoke": {
+        "description": "Smoke test gate (tier1, 30s, all 5 missions)",
+        "search_patterns": [
+            # Capture the canonical powershell block
+            re.compile(
+                r"Canonical invocation.*?```(?:powershell)?\n(.+?)\n```",
+                re.S | re.I
+            ),
+        ],
+        "note": "ALWAYS --keep-logs. NEVER --kill-existing. NEVER --duration >30.",
+    },
+    "tier1": {
+        "description": "Smoke test gate — tier1 5-mission full run",
+        "search_patterns": [
+            re.compile(
+                r"Canonical invocation.*?```(?:powershell)?\n(.+?)\n```",
+                re.S | re.I
+            ),
+        ],
+        "note": "Same command as smoke. --tier tier1 --duration 30 --keep-logs.",
+    },
+}
+
+
+def parse_harness(name: str, claude_md_path: Path):
+    if name not in _HARNESSES:
+        return {
+            "name": name,
+            "error": f"Unknown harness '{name}'. Valid: build, deploy, smoke, tier1",
+        }
+
+    h      = _HARNESSES[name]
+    text   = claude_md_path.read_text(encoding="utf-8", errors="replace")
+    source = str(claude_md_path)
+
+    command   = None
+    evidence  = []
+    ambiguous = False
+
+    if name in ("smoke", "tier1"):
+        # Extract the canonical powershell block verbatim
+        m = re.search(
+            r"Canonical invocation[^\n]*\n+```(?:powershell)?\n(.+?)\n```",
+            text, re.S | re.I
+        )
+        if m:
+            command  = m.group(1).strip()
+            evidence = [{"match": command[:120] + ("..." if len(command) > 120 else "")}]
+        else:
+            ambiguous = True
+
+    elif name == "build":
+        cmake_path = None
+        # CMake line may have backtick-quoted path with spaces
+        m = re.search(r"CMake:\s+`?(.+?cmake\.exe)`?", text, re.I)
+        if m:
+            cmake_path = m.group(1).strip()
+        if cmake_path:
+            command = f'"{cmake_path}" --build build64 --config RelWithDebInfo --target mc2'
+            evidence = [{"cmake_exe": cmake_path}]
+        else:
+            ambiguous = True
+
+    elif name == "deploy":
+        m = re.search(r"Deploy only with[^\n]*(`scripts/deploy_payload\.py`)[^\n]*", text, re.I)
+        if m:
+            # Return the canonical script name + documented arg pattern
+            command  = "scripts/deploy_payload.py <rc1-target-dir> --source-root <path> --build-dir build64 --exe-name mc2.exe"
+            evidence = [{"source_line": m.group(0)[:120]}]
+        else:
+            ambiguous = True
+
+    result = {
+        "name":        name,
+        "source":      source,
+        "description": h["description"],
+        "confidence":  "ambiguous" if ambiguous else "documented",
+        "note":        h["note"],
+    }
+    if command:
+        result["command"] = command
+    if evidence:
+        result["evidence"] = evidence
+    if ambiguous:
+        result["warning"] = (
+            f"Could not extract '{name}' command from {source}. "
+            "Do not invent a command — read CLAUDE.md manually."
+        )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Preflight
+# ---------------------------------------------------------------------------
+
+def all_harnesses(claude_md_path: Path):
+    names = ["build", "deploy", "smoke", "tier1"]
+    return {name: parse_harness(name, claude_md_path) for name in names}
+
+
+def preflight(repo_root: Path, claude_md_path: Path):
+    dirty    = get_dirty_state(repo_root)
+    harness  = all_harnesses(claude_md_path)
+
+    all_documented = all(
+        h.get("confidence") == "documented" for h in harness.values()
+    )
+    ok = not dirty["requires_user_ack"] and all_documented
+
+    harness_status = " ".join(
+        f"{name}={h.get('confidence','unknown')}"
+        for name, h in harness.items()
+    )
+    summary_parts = [
+        f"dirty={str(dirty['dirty']).lower()}",
+        f"safe_to_touch={str(dirty['safe_to_touch']).lower()}",
+        f"branch={dirty['branch']}",
+        f"head={dirty['head']}",
+        f"harness=[{harness_status}]",
+    ]
+    summary = "PRECHECK: " + " ".join(summary_parts)
+
+    return {
+        "ok":      ok,
+        "summary": summary,
+        "dirty":   dirty,
+        "harness": harness,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def main():
+    args = sys.argv[1:]
+    if not args:
+        print("Usage: repo_query.py <dirty|harness <name>|preflight>", file=sys.stderr)
+        sys.exit(1)
+
+    repo_root = find_repo_root()
+    if repo_root is None:
+        out_json({"error": "Not inside a git repository"})
+        sys.exit(1)
+
+    claude_md = find_claude_md(repo_root)
+
+    cmd = args[0].lower()
+
+    if cmd == "dirty":
+        out_json(get_dirty_state(repo_root))
+
+    elif cmd == "harness":
+        if len(args) < 2:
+            out_json({"error": "harness requires a name: build | deploy | smoke | tier1 | all"})
+            sys.exit(1)
+        if claude_md is None:
+            out_json({"error": "CLAUDE.md not found — cannot parse harnesses"})
+            sys.exit(1)
+        name = args[1].lower()
+        if name == "all":
+            out_json(all_harnesses(claude_md))
+        else:
+            out_json(parse_harness(name, claude_md))
+
+    elif cmd == "preflight":
+        if claude_md is None:
+            out_json({"error": "CLAUDE.md not found — cannot parse harnesses"})
+            sys.exit(1)
+        result = preflight(repo_root, claude_md)
+        # Print summary line first for easy grepping
+        print(result["summary"])
+        out_json(result)
+
+    else:
+        out_json({"error": f"Unknown command '{cmd}'. Valid: dirty, harness, preflight"})
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
