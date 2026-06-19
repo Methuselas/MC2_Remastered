@@ -340,15 +340,25 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
                     }
                 }
 
-                // Slope gate: fuzzy threshold so cliff edges are ragged, not a sharp line.
-                // Transition zone ~35°..55° — gentle slopes always keep vegetation,
-                // only steep cliff faces (>55°) are universally rejected.
+                // Slope gate: getTerrainAngle() returns DEGREES.
+                // Hard limit 60°: cliff faces above this never get vegetation.
+                // Soft fade zone 45°..60°: reject with linearly increasing
+                // probability so the edge is organic rather than a sharp line.
+                // Position-based hash (deterministic, no rand()) for the fade.
                 {
-                    const float h8 = hashf(instWx * 97.3f, instWy * 137.9f);
-                    const float slopeLimit = 0.785f + h8 * 0.349f;  // 45°..65° random per instance
                     Stuff::Vector3D slopeNormal;
-                    if (land->getTerrainAngle(instPos, &slopeNormal) > slopeLimit)
+                    const float angle = land->getTerrainAngle(instPos, &slopeNormal);
+                    constexpr float kSlopeHard  = 60.0f;   // hard reject above this
+                    constexpr float kSlopeSoft  = 45.0f;   // fade begins here
+                    if (angle >= kSlopeHard)
                         { ++instRejSlope; continue; }
+                    if (angle > kSlopeSoft) {
+                        // t in [0,1]: 0 at soft start, 1 at hard limit
+                        const float t = (angle - kSlopeSoft) / (kSlopeHard - kSlopeSoft);
+                        const float h8 = hashf(instWx * 97.3f, instWy * 137.9f);
+                        if (h8 < t)
+                            { ++instRejSlope; continue; }
+                    }
                 }
 
                 GosVegetation::Instance inst;
