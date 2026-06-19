@@ -965,60 +965,6 @@ static uint32_t g_cementPackUnmappedCount = 0;
 static uint32_t g_cementMappedThisFrame       = 0;  // valid cement layer found
 static uint32_t g_concreteAllCornersThisFrame = 0;  // _wp0 == 3,3,3,3 (genuine pure-cement quad)
 
-// Vegetation color classification map — built from cpuColorMap before retirement.
-// One byte per colormap pixel: 0=kNone (rock/cement), 1=kSparse (dirt), 2=kFull (grass).
-// Built by BuildColormapAtlas(), cleared by ResetDenseRecipe().
-// Query: gos_terrain_indirect::VegClassAt(u, v).
-static std::vector<uint8_t> g_vegClassMap;
-static int g_vegClassMapSide = 0;
-
-static void BuildVegClassSnapshot(const unsigned char* bgra, int side) {
-    g_vegClassMapSide = side;
-    g_vegClassMap.resize(static_cast<size_t>(side) * static_cast<size_t>(side));
-    const float inv255 = 1.0f / 255.0f;
-    for (int py = 0; py < side; ++py) {
-        for (int px = 0; px < side; ++px) {
-            const int idx = (py * side + px) * 4;
-            const float b = bgra[idx    ] * inv255;
-            const float g = bgra[idx + 1] * inv255;
-            const float r = bgra[idx + 2] * inv255;
-            // Mirror gos_terrain.frag getColorWeights() channel-delta classifier.
-            auto ss = [](float e0, float e1, float x) noexcept -> float {
-                const float t = (x - e0) / (e1 - e0);
-                const float tc = t < 0.f ? 0.f : (t > 1.f ? 1.f : t);
-                return tc * tc * (3.f - 2.f * tc);
-            };
-            const float grassW = ss(-0.02f, 0.06f, g - r) * ss(0.22f, 0.40f, g);
-            const float dirtW  = ss(-0.02f, 0.06f, r - g) * ss(0.22f, 0.45f, r);
-            // Classify: green-tilted → kFull (2), warm/dirt-tilted → kSparse (1),
-            // ambiguous natural terrain (dry grass, brownish-green, mixed) → kSparse (1).
-            // kNone (0) only for clearly barren pixels: very dark rock OR low-saturation grey
-            // (cement, roads, concrete) that are definitely non-vegetated.
-            // Thresholds lowered from 0.3 to 0.2 so natural mixed terrain passes kFull/kSparse
-            // rather than falling through to the barren check.
-            uint8_t cls;
-            if (grassW > 0.2f) {
-                cls = 2u;  // kFull: clearly green
-            } else if (dirtW > 0.2f) {
-                cls = 1u;  // kSparse: clearly dirt/warm
-            } else {
-                // Ambiguous pixel — check if it is clearly barren (grey cement or dark rock).
-                // clearlyBarren: very dark (lum < 0.15) OR low-chroma grey (sat < 0.06 AND lum < 0.35).
-                const float lum = 0.299f * r + 0.587f * g + 0.114f * b;
-                const float cmax = (r > g ? r : g) > b ? (r > g ? r : g) : b;
-                const float cmin = (r < g ? r : g) < b ? (r < g ? r : g) : b;
-                const float sat  = (cmax > 0.001f) ? (cmax - cmin) / cmax : 0.0f;
-                const bool clearlyBarren = (lum < 0.15f) || (sat < 0.06f && lum < 0.35f);
-                cls = clearlyBarren ? 0u : 1u;  // barren → kNone; everything else → kSparse
-            }
-            g_vegClassMap[py * side + px] = cls;
-        }
-    }
-    if (traceOn()) {
-        printf("[TERRAIN_INDIRECT v1] event=veg_class_built size=%d bytes=%zu\n",
-               side, g_vegClassMap.size());
-    }
-}
 
 void BuildColormapAtlas() {
     ZoneScopedN("Terrain::IndirectAtlasUpload");
@@ -1027,12 +973,6 @@ void BuildColormapAtlas() {
         return;
     }
     auto* tcm = Terrain::terrainTextures2;
-
-    // Snapshot colormap for vegetation classification BEFORE any retirement branch.
-    // VegClassAt() is then available when VegetationAdapter::missionLoaded() runs later.
-    if (tcm->cpuColorMap && tcm->cpuColorMapSize > 0) {
-        BuildVegClassSnapshot(tcm->cpuColorMap, tcm->cpuColorMapSize);
-    }
 
     int atlasSizeCapture = 0;
     bool atlasBuilt = false;
@@ -1353,20 +1293,6 @@ void BuildCementCatalogAtlas() {
 
 namespace gos_terrain_indirect {
 
-// Vegetation color classification — sampled from cpuColorMap before CPU retirement.
-// u, v in [0,1]: u=west→east, v=north→south.
-// Returns 0=kNone (rock/cement/grey), 1=kSparse (dirt/warm), 2=kFull (grass/green).
-// Returns 2 (kFull) as default when no map is built yet.
-uint8_t VegClassAt(float u, float v) {
-    if (g_vegClassMap.empty() || g_vegClassMapSide <= 0) return 2;
-    const int side = g_vegClassMapSide;
-    const int px = std::max(0, std::min(side - 1, static_cast<int>(u * float(side - 1) + 0.5f)));
-    const int py = std::max(0, std::min(side - 1, static_cast<int>(v * float(side - 1) + 0.5f)));
-    return g_vegClassMap[static_cast<size_t>(py * side + px)];
-}
-
-bool HasVegClassMap() { return !g_vegClassMap.empty(); }
-
 }  // namespace gos_terrain_indirect
 
 // Bridge accessors — declared extern in gameos_graphics.cpp.
@@ -1513,9 +1439,6 @@ void ResetDenseRecipe() {
     g_atlasOneOverWorldUnits = 0.f;
     // Clear stale nodeIds so the GPU path guard doesn't fire from a prior mission.
     g_uniqueTerrainNodeIds.clear();
-    // Clear veg class snapshot (rebuilt per mission by BuildColormapAtlas).
-    g_vegClassMap.clear();
-    g_vegClassMapSide = 0;
 
     // Cement catalog atlas teardown — mirror g_atlasGLTex pattern.
     if (g_cementAtlasGLTex != 0) {

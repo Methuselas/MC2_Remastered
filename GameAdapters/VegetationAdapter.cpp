@@ -8,10 +8,11 @@
 
 // Engine side.
 #include "gos_vegetation.h"
-#include "../../GameOS/gameos/gos_terrain_indirect.h"  // VegClassAt() colormap classifier
 
 // Game side -- terrain geometry + type queries.
 #include "../mclib/terrain.h"
+// Game side -- terrain type codes (TerrainType enum).
+#include "../mclib/dmapdata.h"
 // Game side -- MissionMap overlay / water queries.
 #include "../mclib/move.h"
 
@@ -62,11 +63,11 @@ constexpr float kGridStep = 14.0f;
 // Placement accept/reject helpers
 // ---------------------------------------------------------------------------
 
-// Vegetation density tier from colormap color classification.
-// kHard   = absolute no-vegetation (unused with colormap path — water handled by elevation)
-// kNone   = soft-exclude: rock/cement (grey) — 15% fringe at edges for natural look
-// kSparse = warm tilt (R>G): dirt / transitional surfaces
-// kFull   = green tilt (G>R): grass / lush areas
+// Vegetation density tier from terrain material type (getTerrain codes).
+// kHard   = absolute no-vegetation: water, concrete, cement, cliff, none
+// kNone   = hard exclude (kept for 15% fringe logic at borders)
+// kSparse = transitional surfaces: dirt, ash, mountain, slimy
+// kFull   = vegetated surfaces: grass, moss, forest floor, mud, tundra
 enum class VegDensity : int { kHard = -1, kNone = 0, kSparse = 1, kFull = 2 };
 
 // Atlas frame palettes per vegetation density tier.
@@ -84,17 +85,67 @@ struct FramePalette { uint8_t f[8]; int dominant; int n; };
     return {{ 0, 1, 2, 0, 1, 2, 0, 1 }, 3, 3};
 }
 
-// Sample colormap color classification at world position → VegDensity.
-// Uses gos_terrain_indirect::VegClassAt() which is built from cpuColorMap
-// during BuildColormapAtlas() (before CPU-side retirement).
-[[nodiscard]] VegDensity sampleColormap(float wx, float wy,
-                                        float originX, float originY, float mapSpan) noexcept {
-    const float u = std::max(0.0f, std::min(1.0f, (wx - originX) / mapSpan));
-    const float v = std::max(0.0f, std::min(1.0f, (originY - wy) / mapSpan));
-    const uint8_t cls = gos_terrain_indirect::VegClassAt(u, v);
-    return (cls >= 2) ? VegDensity::kFull
-         : (cls == 1) ? VegDensity::kSparse
-         : VegDensity::kNone;
+// Classify a terrain cell by its actual material type code from getTerrain().
+// This is the authoritative classification — it uses what the engine actually
+// assigned to each tile, not what color the colormap happens to render.
+//
+// TerrainType codes (dmapdata.h):
+//   0  MC_BLUEWATER_TYPE   → kHard (water)
+//   1  MC_GREEN_WATER_TYPE → kHard (water)
+//   2  MC_MUD_TYPE         → kFull (moist ground, vegetation OK)
+//   3  MC_MOSS_TYPE        → kFull
+//   4  MC_DIRT_TYPE        → kSparse
+//   5  MC_ASH_TYPE         → kSparse (barren but not paved)
+//   6  MC_MOUNTAIN_TYPE    → kSparse (rocky slopes, sparse)
+//   7  MC_TUNDRA_TYPE      → kFull (tundra grass)
+//   8  MC_FORESTFLOOR_TYPE → kFull
+//   9  MC_GRASS_TYPE       → kFull
+//  10  MC_CONCRETE_TYPE    → kHard (paved surface, no vegetation)
+//  11  MC_CLIFF_TYPE       → kHard (sheer rock face)
+//  12  MC_SLIMY_TYPE       → kSparse (damp, sparse growth OK)
+//  13  MC_CEMENT2_TYPE     → kHard
+//  14  MC_CEMENT3_TYPE     → kHard
+//  15  MC_CEMENT4_TYPE     → kHard
+//  16  MC_CEMENT5_TYPE     → kHard
+//  17  MC_CEMENT6_TYPE     → kHard
+//  18  MC_CEMENT7_TYPE     → kHard
+//  19  MC_CEMENT8_TYPE     → kHard
+//  20  MC_NONE_TYPE        → kHard (unassigned)
+[[nodiscard]] VegDensity classifyTerrainType(int terrainCode) noexcept {
+    switch (terrainCode) {
+        // Water — handled by elevation gate too, belt-and-suspenders.
+        case MC_BLUEWATER_TYPE:
+        case MC_GREEN_WATER_TYPE:
+        // Paved / engineered surfaces — absolutely no vegetation.
+        case MC_CONCRETE_TYPE:
+        case MC_CLIFF_TYPE:
+        case MC_CEMENT2_TYPE:
+        case MC_CEMENT3_TYPE:
+        case MC_CEMENT4_TYPE:
+        case MC_CEMENT5_TYPE:
+        case MC_CEMENT6_TYPE:
+        case MC_CEMENT7_TYPE:
+        case MC_CEMENT8_TYPE:
+        case MC_NONE_TYPE:
+            return VegDensity::kHard;
+
+        // Transitional / sparse ground.
+        case MC_DIRT_TYPE:
+        case MC_ASH_TYPE:
+        case MC_MOUNTAIN_TYPE:
+        case MC_SLIMY_TYPE:
+            return VegDensity::kSparse;
+
+        // Vegetated surfaces.
+        case MC_MUD_TYPE:
+        case MC_MOSS_TYPE:
+        case MC_TUNDRA_TYPE:
+        case MC_FORESTFLOOR_TYPE:
+        case MC_GRASS_TYPE:
+        default:
+            // Default kFull for any unknown code (future terrain types should be green).
+            return VegDensity::kFull;
+    }
 }
 
 // Bilinear-interpolated hash on a coarse grid → smooth spatial blobs.
@@ -158,12 +209,9 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
     std::vector<GosVegetation::Instance> instances;
     instances.reserve(static_cast<size_t>(maxInst));
 
-    // Colormap classification is pre-computed in BuildColormapAtlas() before
-    // cpuColorMap retirement.  Query via gos_terrain_indirect::VegClassAt().
-    const bool hasVegMap = gos_terrain_indirect::HasVegClassMap();
-    fprintf(stderr, "[VegetationAdapter] colormap_class_map: %s\n",
-            hasVegMap ? "ok" : "NOT BUILT (fallback=kFull everywhere)");
-    fflush(stderr);
+    // Classification uses getTerrain() tile type codes — no pre-built map needed.
+    // This is always available as long as mapData is initialized (which it is at
+    // missionLoaded time). No fallback required.
 
     // Placement counters — logged + emitted as VEG_HEALTH JSONL at end.
     int diagCellsTotal = 0;
@@ -198,10 +246,13 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
             const long mapSide = static_cast<long>(Terrain::realVerticesMapSide);
             if (tileR < 0 || tileC < 0 || tileR >= mapSide || tileC >= mapSide) { ++diagOOB; continue; }
 
-            // Classify by colormap color (mirrors gos_terrain.frag getColorWeights).
-            // Grass (G>R) → kFull; dirt (R>G) → kSparse; rock/cement (grey) → kNone.
-            const VegDensity vdc = sampleColormap(wx, wy, originX, originY, mapSpan);
-            if (vdc == VegDensity::kHard || vdc == VegDensity::kNone) { ++diagHard; continue; }
+            // Classify by actual terrain material type (getTerrain tile code).
+            // Cement/concrete/water/cliff → kHard (rejected).
+            // Dirt/ash/mountain/slimy → kSparse. Grass/moss/mud/tundra/forest → kFull.
+            const int terrainCode = land->getTerrain(static_cast<long>(tileR),
+                                                     static_cast<long>(tileC));
+            const VegDensity vdc = classifyTerrainType(terrainCode);
+            if (vdc == VegDensity::kHard) { ++diagHard; continue; }
 
             (void)gameMap;
 
@@ -260,14 +311,19 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
                 const float elevation = land->getTerrainElevation(instPos);
                 if (elevation <= Terrain::waterElevation) { ++instRejWater; continue; }
 
-                // Per-instance colormap classification.
-                // kNone (rock/cement/grey): 15% fringe allowed for ragged edges.
-                // kSparse/kFull: pass.
+                // Per-instance terrain type classification.
+                // kHard (cement/concrete/water/cliff): always reject — no fringe.
+                // kNone is not returned by classifyTerrainType (kHard covers hard-excludes).
                 {
-                    const VegDensity instVdc = sampleColormap(instWx, instWy,
-                                                               originX, originY, mapSpan);
-                    if (instVdc == VegDensity::kHard) { ++instRejHard; continue; }
-                    if (instVdc == VegDensity::kNone && h6 < 0.85f) { ++instRejNoneFringe; continue; }
+                    int iInstR = 0, iInstC = 0, iInstSR = 0, iInstSC = 0;
+                    land->worldToTileCell(instPos, iInstR, iInstC, iInstSR, iInstSC);
+                    if (iInstR >= 0 && iInstC >= 0 &&
+                        iInstR < static_cast<int>(mapSide) && iInstC < static_cast<int>(mapSide)) {
+                        const int instCode = land->getTerrain(static_cast<long>(iInstR),
+                                                              static_cast<long>(iInstC));
+                        const VegDensity instVdc = classifyTerrainType(instCode);
+                        if (instVdc == VegDensity::kHard) { ++instRejHard; continue; }
+                    }
                 }
                 // Reject paved roads and bridges via overlay code.
                 // ROUGH (detail normal) and DIRT_ROAD are allowed; paved/bridges are not.
@@ -325,14 +381,12 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
 
     // Always log: needed to diagnose zero-instance cases without re-running.
     fprintf(stderr,
-        "[VEG v3] placement_health cells_total=%d oob=%d colormap_reject=%d "
-        "water=%d density=%d overlay=%d instances=%u max=%d mapSpan=%.0f waterElev=%.2f "
-        "veg_class_map=%s\n",
+        "[VEG v3] placement_health cells_total=%d oob=%d terrain_type_reject=%d "
+        "water=%d density=%d overlay=%d instances=%u max=%d mapSpan=%.0f waterElev=%.2f\n",
         diagCellsTotal, diagOOB, diagHard,
         diagWater, diagNotGreen, diagOverlay,
         instCount, maxInst, static_cast<double>(mapSpan),
-        static_cast<double>(Terrain::waterElevation),
-        hasVegMap ? "ok" : "missing");
+        static_cast<double>(Terrain::waterElevation));
     fflush(stderr);
 
     // Structured VEG_HEALTH JSONL placement event (MCP-queryable).
@@ -348,7 +402,8 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
             "\"reject_density\":%d,"
             "\"reject_overlay\":%d,"
             "\"instances_generated\":%u,"
-            "\"max_instances\":%d"
+            "\"max_instances\":%d,"
+            "\"classifier\":\"terrain_type\""
             "}",
             diagCellsTotal,
             diagOOB, diagHard, diagWater, diagNotGreen, diagOverlay,
@@ -376,30 +431,35 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
     // Also write to a file so we can read it without console access.
     if (FILE* diagF = fopen("veg_diag.txt", "w")) {
         fprintf(diagF,
-            "[VEG v3] placement_health cells_total=%d oob=%d colormap_reject=%d "
+            "[VEG v3] placement_health cells_total=%d oob=%d terrain_type_reject=%d "
             "water=%d density=%d overlay=%d instances=%u max=%d mapSpan=%.0f "
-            "waterElev=%.2f elevRange=%.2f..%.2f veg_class_map=%s\n",
+            "waterElev=%.2f elevRange=%.2f..%.2f\n",
             diagCellsTotal, diagOOB, diagHard,
             diagWater, diagNotGreen, diagOverlay,
             instCount, maxInst, static_cast<double>(mapSpan),
             static_cast<double>(Terrain::waterElevation),
-            static_cast<double>(elevMin), static_cast<double>(elevMax),
-            hasVegMap ? "ok" : "missing");
+            static_cast<double>(elevMin), static_cast<double>(elevMax));
         fprintf(diagF,
             "[VEG v3] per_inst tried=%d rej_water=%d rej_hard=%d "
             "rej_none_fringe=%d rej_overlay=%d rej_slope=%d passed=%u\n",
             instTriedTotal, instRejWater, instRejHard,
             instRejNoneFringe, instRejOverlay, instRejSlope, instCount);
-        // 5x5 colormap-color classification grid (rows: N..S, cols: W..E).
-        fprintf(diagF, "[VEG v3] colormap_class_grid 5x5 (row=N..S col=W..E): F=full S=sparse N=none\n");
+        // 5x5 terrain-type classification grid (rows: N..S, cols: W..E).
+        fprintf(diagF, "[VEG v3] terrain_type_class_grid 5x5 (row=N..S col=W..E): F=full S=sparse H=hard\n");
         for (int gr = 0; gr < 5; ++gr) {
             const float gy = originY - mapSpan * ((gr + 0.5f) / 5.0f);
             for (int gc = 0; gc < 5; ++gc) {
                 const float gx = originX + mapSpan * ((gc + 0.5f) / 5.0f);
                 const float ge = land->getTerrainElevation(Stuff::Vector3D(gx, gy, 0.0f));
-                const VegDensity gvd = sampleColormap(gx, gy, originX, originY, mapSpan);
+                int gTR = 0, gTC = 0, gSR = 0, gSC = 0;
+                land->worldToTileCell(Stuff::Vector3D(gx, gy, 0.0f), gTR, gTC, gSR, gSC);
+                const long gMapSide = static_cast<long>(Terrain::realVerticesMapSide);
+                VegDensity gvd = VegDensity::kHard;
+                if (gTR >= 0 && gTC >= 0 && gTR < gMapSide && gTC < gMapSide) {
+                    gvd = classifyTerrainType(land->getTerrain(gTR, gTC));
+                }
                 const char cls = (gvd == VegDensity::kFull) ? 'F'
-                               : (gvd == VegDensity::kSparse) ? 'S' : 'N';
+                               : (gvd == VegDensity::kSparse) ? 'S' : 'H';
                 fprintf(diagF, "  [%d,%d] class=%c elev=%.1f\n", gr, gc, cls,
                         static_cast<double>(ge));
             }
