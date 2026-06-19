@@ -32,6 +32,7 @@
 #include "../GameOS/gameos/gpu_cull_readback.h"        // C3: per-actor GPU visibility snapshot
 #include "../GameOS/gameos/gos_static_prop_registry.h" // Task 5: mission-load bulk registration
 #include "move_recon.h"  // MC2_MOVE_RECON per-frame pathfinding cost instrumentation
+#include "frame_jobs.h"  // FRAME-JOBS-1: parallelForRange worker pool
 
 #ifndef OBJMGR_H
 #include"objmgr.h"
@@ -2176,6 +2177,54 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 
 	if (terrain && renderObjects)
 	{
+		// ── FRAME-JOBS-1: parallel recalcBounds pre-pass ─────────────────────────────
+		// Tier B only: recalcBoundsAndStamp() on whitelisted types.
+		// No touch(), no update(), no GL, no txmmgr. See FRAME-JOBS-2 for Tier C.
+		// boundsFrame stamp prevents double-compute in the serial loop below.
+		{
+			static std::vector<long> s_frameJobsHandles;
+			s_frameJobsHandles.clear();
+			frameJobsResetFrameStats();
+
+			if (frameJobsEnabled()) {
+				// Build flat handle list with basic eligibility filter.
+				// Intentionally loose — isRecalcBoundsWorkerSafe() filters inside the lambda.
+				for (int block = 0; block < Terrain::numObjBlocks; ++block) {
+					if (!Terrain::objBlockInfo[block].active) continue;
+					long h = Terrain::objBlockInfo[block].firstHandle;
+					int  n = Terrain::objBlockInfo[block].numObjects;
+					for (int i = 0; i < n; ++i, ++h) {
+						GameObjectPtr obj = objList[h];
+						if (!obj || !obj->getExists()) continue;
+						if (!Terrain::objVertexActive[obj->getVertexNum()]) continue;
+						s_frameJobsHandles.push_back(h);
+					}
+				}
+
+				const int count = static_cast<int>(s_frameJobsHandles.size());
+				parallelForRange(count, frameJobsBatch(),
+					[](int begin, int end) {
+						// FRAME-JOBS-1: Tier B only. No appearance->update() here.
+						// Tier C (txmmgr) is NOT worker-safe. See FRAME-JOBS-2.
+						for (int i = begin; i < end; ++i) {
+							GameObjectPtr obj = ObjectManager->objList[s_frameJobsHandles[i]];
+							if (!obj) continue;
+							AppearancePtr ap = obj->getAppearance();
+							if (!ap) continue;
+							if (!ap->isRecalcBoundsWorkerSafe()) {
+								if (frameJobsTrace()) {
+									printf("FRAME_JOBS WARN: unsupported appearance type at handle %ld\n",
+									       s_frameJobsHandles[i]);
+								}
+								continue;
+							}
+							ap->recalcBoundsAndStamp();
+						}
+					});
+			}
+		}
+		// ── end FRAME-JOBS-1 pre-pass ────────────────────────────────────────────────
+
 		ZoneScopedN("GameLogic.Units.TerrainObjects");
 		long specialBuildingsUpdated = 0;
 		long gatesUpdated = 0;

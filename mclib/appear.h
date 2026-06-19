@@ -285,6 +285,11 @@ class Appearance
 		// Default false = serial handles this type.
 		virtual bool isRecalcBoundsWorkerSafe() const { return false; }
 
+		// FRAME-JOBS-1: worker-path entry point. Calls recalcBounds() then stamps boundsFrame.
+		// Only called after isRecalcBoundsWorkerSafe() returns true.
+		// Default no-op — overridden by BldgAppearance and TreeAppearance.
+		virtual void recalcBoundsAndStamp() {}
+
 		virtual void setGesture (unsigned long gestureId)
 		{
 		}
