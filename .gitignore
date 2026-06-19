@@ -158,3 +158,6 @@ tests/visual/compare/
 tests/visual/abtest/
 tests/visual/watercheck/
 tests/visual/gallery/
+
+# terrain gen scratch output
+terrain_gen_test/
