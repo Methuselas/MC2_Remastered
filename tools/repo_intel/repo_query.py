@@ -121,7 +121,7 @@ def classify_file(rel_path: str):
     return "unknown", "unclassified — treat as sensitive"
 
 
-def get_dirty_state(repo_root: Path):
+def get_dirty_state(repo_root: Path, expect_branch: str = None):
     branch, _ = git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_root)
     head, _    = git(["rev-parse", "--short", "HEAD"],      cwd=repo_root)
     status_out, _ = git(["status", "--porcelain=v1"],        cwd=repo_root, strip=False)
@@ -146,23 +146,43 @@ def get_dirty_state(repo_root: Path):
 
     dirty         = bool(files)
     unsafe_files  = [f for f in files if f["class"] not in _SAFE_CLASSES]
-    safe_to_touch = not bool(unsafe_files)
+
+    # Branch guard
+    branch_ok      = True
+    branch_warning = None
+    if expect_branch:
+        if branch != expect_branch:
+            branch_ok      = False
+            branch_warning = (
+                f"current branch '{branch}' does not match expected "
+                f"'{expect_branch}' — work may have landed on the wrong branch"
+            )
+    else:
+        branch_warning = "no expected branch supplied (pass --expect-branch to enable guard)"
+
+    safe_to_touch = not bool(unsafe_files) and branch_ok
     requires_ack  = not safe_to_touch
 
-    return {
-        "repo_root":      str(repo_root),
-        "branch":         branch,
-        "head":           head,
-        "dirty":          dirty,
-        "safe_to_touch":  safe_to_touch,
+    result = {
+        "repo_root":         str(repo_root),
+        "branch":            branch,
+        "head":              head,
+        "dirty":             dirty,
+        "safe_to_touch":     safe_to_touch,
         "requires_user_ack": requires_ack,
-        "files":          files,
+        "files":             files,
         "summary": (
             f"{len(files)} dirty file(s); "
             f"{len(unsafe_files)} require ack"
             if dirty else "clean"
         ),
     }
+    if expect_branch:
+        result["expected_branch"] = expect_branch
+        result["branch_ok"]       = branch_ok
+    if branch_warning:
+        result["branch_warning"] = branch_warning
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -294,8 +314,8 @@ def all_harnesses(claude_md_path: Path):
     return {name: parse_harness(name, claude_md_path) for name in names}
 
 
-def preflight(repo_root: Path, claude_md_path: Path):
-    dirty    = get_dirty_state(repo_root)
+def preflight(repo_root: Path, claude_md_path: Path, expect_branch: str = None):
+    dirty    = get_dirty_state(repo_root, expect_branch=expect_branch)
     harness  = all_harnesses(claude_md_path)
 
     all_documented = all(
@@ -307,6 +327,10 @@ def preflight(repo_root: Path, claude_md_path: Path):
         f"{name}={h.get('confidence','unknown')}"
         for name, h in harness.items()
     )
+    branch_flag = (
+        f"branch_ok={str(dirty.get('branch_ok', True)).lower()}"
+        if expect_branch else ""
+    )
     summary_parts = [
         f"dirty={str(dirty['dirty']).lower()}",
         f"safe_to_touch={str(dirty['safe_to_touch']).lower()}",
@@ -314,6 +338,8 @@ def preflight(repo_root: Path, claude_md_path: Path):
         f"head={dirty['head']}",
         f"harness=[{harness_status}]",
     ]
+    if branch_flag:
+        summary_parts.append(branch_flag)
     summary = "PRECHECK: " + " ".join(summary_parts)
 
     return {
@@ -328,15 +354,37 @@ def preflight(repo_root: Path, claude_md_path: Path):
 # Entry point
 # ---------------------------------------------------------------------------
 
+def _parse_flags(args):
+    """Extract --expect-branch VALUE from args. Returns (remaining_args, expect_branch)."""
+    expect_branch = None
+    remaining     = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--expect-branch":
+            if i + 1 < len(args):
+                i += 1
+                expect_branch = args[i]
+        elif a.startswith("--expect-branch="):
+            expect_branch = a.split("=", 1)[1]
+        else:
+            remaining.append(a)
+        i += 1
+    return remaining, expect_branch
+
+
 def main():
-    args = sys.argv[1:]
-    if not args:
+    raw_args = sys.argv[1:]
+    if not raw_args:
         print(
             "Usage: repo_query.py <dirty|harness <name>|preflight|"
-            "env [MC2_NAME|--undocumented|--domain D|--all]>",
+            "env [MC2_NAME|--undocumented|--domain D|--all]> "
+            "[--expect-branch BRANCH]",
             file=sys.stderr,
         )
         sys.exit(1)
+
+    args, expect_branch = _parse_flags(raw_args)
 
     repo_root = find_repo_root()
     if repo_root is None:
@@ -345,10 +393,10 @@ def main():
 
     claude_md = find_claude_md(repo_root)
 
-    cmd = args[0].lower()
+    cmd = args[0].lower() if args else ""
 
     if cmd == "dirty":
-        out_json(get_dirty_state(repo_root))
+        out_json(get_dirty_state(repo_root, expect_branch=expect_branch))
 
     elif cmd == "harness":
         if len(args) < 2:
@@ -367,7 +415,7 @@ def main():
         if claude_md is None:
             out_json({"error": "CLAUDE.md not found — cannot parse harnesses"})
             sys.exit(1)
-        result = preflight(repo_root, claude_md)
+        result = preflight(repo_root, claude_md, expect_branch=expect_branch)
         print(result["summary"])
         out_json(result)
 
