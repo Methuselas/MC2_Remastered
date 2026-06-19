@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """
-REPO-INTEL-1a: repo_query.py
+REPO-INTEL-1a/1b: repo_query.py
 Read-only codebase intelligence CLI.
 
 Usage:
     python tools/repo_intel/repo_query.py dirty
-    python tools/repo_intel/repo_query.py harness build
-    python tools/repo_intel/repo_query.py harness deploy
-    python tools/repo_intel/repo_query.py harness smoke
-    python tools/repo_intel/repo_query.py harness tier1
+    python tools/repo_intel/repo_query.py harness build|deploy|smoke|tier1|all
     python tools/repo_intel/repo_query.py preflight
+    python tools/repo_intel/repo_query.py env MC2_GPU_MECHS
+    python tools/repo_intel/repo_query.py env --undocumented
+    python tools/repo_intel/repo_query.py env --domain shadow
+    python tools/repo_intel/repo_query.py env --all
+    python tools/repo_intel/repo_query.py env          (summary only)
 """
 
 import json
@@ -18,6 +20,9 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+
+# Allow sibling modules (env_index, etc.) to be imported when running as script
+sys.path.insert(0, str(Path(__file__).parent))
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +331,11 @@ def preflight(repo_root: Path, claude_md_path: Path):
 def main():
     args = sys.argv[1:]
     if not args:
-        print("Usage: repo_query.py <dirty|harness <name>|preflight>", file=sys.stderr)
+        print(
+            "Usage: repo_query.py <dirty|harness <name>|preflight|"
+            "env [MC2_NAME|--undocumented|--domain D|--all]>",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     repo_root = find_repo_root()
@@ -359,12 +368,37 @@ def main():
             out_json({"error": "CLAUDE.md not found — cannot parse harnesses"})
             sys.exit(1)
         result = preflight(repo_root, claude_md)
-        # Print summary line first for easy grepping
         print(result["summary"])
         out_json(result)
 
+    elif cmd == "env":
+        from env_index import query_env
+        rest = args[1:]
+        name         = None
+        domain       = None
+        undocumented = False
+        show_all     = False
+        i = 0
+        while i < len(rest):
+            a = rest[i]
+            if a == "--undocumented":
+                undocumented = True
+            elif a == "--all":
+                show_all = True
+            elif a.startswith("--domain"):
+                if "=" in a:
+                    domain = a.split("=", 1)[1]
+                elif i + 1 < len(rest):
+                    i += 1
+                    domain = rest[i]
+            elif not a.startswith("--"):
+                name = a
+            i += 1
+        out_json(query_env(repo_root, name=name, domain=domain,
+                           undocumented=undocumented, show_all=show_all))
+
     else:
-        out_json({"error": f"Unknown command '{cmd}'. Valid: dirty, harness, preflight"})
+        out_json({"error": f"Unknown command '{cmd}'. Valid: dirty, harness, preflight, env"})
         sys.exit(1)
 
 
