@@ -129,6 +129,7 @@ uniform vec3  tintRock;             // default (0.36, 0.37, 0.40)
 uniform vec3  tintGrass;            // default (0.35, 0.42, 0.25)
 uniform vec3  tintDirt;             // default (0.48, 0.42, 0.33)
 uniform float tintStrengthScale;   // 0 = colormap passthrough, 1 = full tint
+uniform float snowBrightnessDampen; // <1 darkens detected snow (snowWeight-gated); default 0.78
 
 // Remaining legacy tunables (copied with legacy defaults; driver replicates the
 // env gates so default == legacy default). cellBombParams is a DEAD uniform in
@@ -509,6 +510,8 @@ void main() {
         float breakup  = mix(0.78, 1.18, mix(lowFreq, highFreq, 0.55));
         baseColor *= mix(1.0, breakup, 1.0 - snowWeight);
     }
+    // Snow brightness dampen — only detected-snow fragments (snowWeight) are darkened.
+    baseColor *= mix(1.0, snowBrightnessDampen, snowWeight);
 
     // --- Lighting: NdotL relief band + sun shadow (baked; GBuffer1 stays
     // shadowHandled_flatUp so the compositor does not re-shadow terrain). ---

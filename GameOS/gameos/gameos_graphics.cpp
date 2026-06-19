@@ -2074,6 +2074,9 @@ class gosRenderer {
         float terrain_class_grass_[4] = { -0.02f, 0.06f, 0.22f, 0.40f };
         float terrain_class_dirt_[4]  = { -0.02f, 0.06f, 0.22f, 0.45f };
         float terrain_tint_strength_scale_ = 1.0f;  // 0=colormap passthrough, 1=full tint
+        // Snow brightness dampen: <1 darkens detected-snow fragments. Default 0.78
+        // (visibly turned down); MC2_TERRAIN_SNOW_BRIGHTNESS_DAMPEN overrides.
+        float terrain_snow_brightness_dampen_ = [](){ const char* v = getenv("MC2_TERRAIN_SNOW_BRIGHTNESS_DAMPEN"); return v ? (float)atof(v) : 0.78f; }();
         // TERRAIN-TINT-UI-1: material base tint colors (defaults match shader)
         float terrain_tint_rock_[3]  = { 0.36f, 0.37f, 0.40f };
         float terrain_tint_grass_[3] = { 0.35f, 0.42f, 0.25f };
@@ -2121,6 +2124,7 @@ class gosRenderer {
             GLint matTiling = -1;                // per-material UV tiling (vec4: rock,grass,dirt,concrete)
             GLint matTilingSnow = -1;            // snow UV tiling (float)
             GLint tintStrengthScale = -1;        // global tint blend scalar
+            GLint snowBrightnessDampen = -1;     // <1 darkens detected snow
             // TERRAIN-TINT-UI-1
             GLint tintRock  = -1;                // material base tint (vec3)
             GLint tintGrass = -1;
@@ -2165,6 +2169,7 @@ class gosRenderer {
             GLint matTiling = -1;               // per-material UV tiling (vec4: rock,grass,dirt,concrete)
             GLint matTilingSnow = -1;           // snow UV tiling (float)
             GLint tintStrengthScale = -1;       // global tint blend scalar
+            GLint snowBrightnessDampen = -1;    // <1 darkens detected snow
             // TERRAIN-TINT-UI-1
             GLint tintRock  = -1;               // material base tint (vec3)
             GLint tintGrass = -1;
@@ -2248,6 +2253,7 @@ class gosRenderer {
             terrainLocs_.matTiling        = glGetUniformLocation(shp, "matTiling");
             terrainLocs_.matTilingSnow    = glGetUniformLocation(shp, "matTilingSnow");
             terrainLocs_.tintStrengthScale = glGetUniformLocation(shp, "tintStrengthScale");
+            terrainLocs_.snowBrightnessDampen = glGetUniformLocation(shp, "snowBrightnessDampen");
             // TERRAIN-TINT-UI-1
             terrainLocs_.tintRock  = glGetUniformLocation(shp, "tintRock");
             terrainLocs_.tintGrass = glGetUniformLocation(shp, "tintGrass");
@@ -2312,6 +2318,7 @@ class gosRenderer {
             thinTerrainLocs_.matTiling          = glGetUniformLocation(shp, "matTiling");
             thinTerrainLocs_.matTilingSnow      = glGetUniformLocation(shp, "matTilingSnow");
             thinTerrainLocs_.tintStrengthScale  = glGetUniformLocation(shp, "tintStrengthScale");
+            thinTerrainLocs_.snowBrightnessDampen = glGetUniformLocation(shp, "snowBrightnessDampen");
             // TERRAIN-TINT-UI-1
             thinTerrainLocs_.tintRock  = glGetUniformLocation(shp, "tintRock");
             thinTerrainLocs_.tintGrass = glGetUniformLocation(shp, "tintGrass");
@@ -6341,6 +6348,7 @@ void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
     if (tl.matTiling >= 0)            glUniform4fv(tl.matTiling, 1, terrain_mat_tiling_);
     if (tl.matTilingSnow >= 0)        glUniform1f(tl.matTilingSnow, terrain_mat_tiling_snow_);
     if (tl.tintStrengthScale >= 0)    glUniform1f(tl.tintStrengthScale, terrain_tint_strength_scale_);
+    if (tl.snowBrightnessDampen >= 0) glUniform1f(tl.snowBrightnessDampen, terrain_snow_brightness_dampen_);
     if (tl.tintRock  >= 0)            glUniform3fv(tl.tintRock,  1, terrain_tint_rock_);
     if (tl.tintGrass >= 0)            glUniform3fv(tl.tintGrass, 1, terrain_tint_grass_);
     if (tl.tintDirt  >= 0)            glUniform3fv(tl.tintDirt,  1, terrain_tint_dirt_);
@@ -6474,6 +6482,7 @@ int gosRenderer::terrainBindThinUniformsForPatchStream(glsl_program* overridePro
     if (tl.matTiling >= 0)            glUniform4fv(tl.matTiling, 1, terrain_mat_tiling_);
     if (tl.matTilingSnow >= 0)        glUniform1f(tl.matTilingSnow, terrain_mat_tiling_snow_);
     if (tl.tintStrengthScale >= 0)    glUniform1f(tl.tintStrengthScale, terrain_tint_strength_scale_);
+    if (tl.snowBrightnessDampen >= 0) glUniform1f(tl.snowBrightnessDampen, terrain_snow_brightness_dampen_);
     if (tl.tintRock  >= 0)            glUniform3fv(tl.tintRock,  1, terrain_tint_rock_);
     if (tl.tintGrass >= 0)            glUniform3fv(tl.tintGrass, 1, terrain_tint_grass_);
     if (tl.tintDirt  >= 0)            glUniform3fv(tl.tintDirt,  1, terrain_tint_dirt_);
@@ -6625,6 +6634,7 @@ void gosRenderer::terrainDrawIndexedPatches(gosRenderMaterial* material, gosMesh
     if (tl.matTiling >= 0)            glUniform4fv(tl.matTiling, 1, terrain_mat_tiling_);
     if (tl.matTilingSnow >= 0)        glUniform1f(tl.matTilingSnow, terrain_mat_tiling_snow_);
     if (tl.tintStrengthScale >= 0)    glUniform1f(tl.tintStrengthScale, terrain_tint_strength_scale_);
+    if (tl.snowBrightnessDampen >= 0) glUniform1f(tl.snowBrightnessDampen, terrain_snow_brightness_dampen_);
     if (tl.tintRock  >= 0)            glUniform3fv(tl.tintRock,  1, terrain_tint_rock_);
     if (tl.tintGrass >= 0)            glUniform3fv(tl.tintGrass, 1, terrain_tint_grass_);
     if (tl.tintDirt  >= 0)            glUniform3fv(tl.tintDirt,  1, terrain_tint_dirt_);

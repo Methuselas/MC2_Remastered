@@ -112,6 +112,7 @@ static GLint    s_locTintRock           = -1;
 static GLint    s_locTintGrass          = -1;
 static GLint    s_locTintDirt           = -1;
 static GLint    s_locTintStrengthScale  = -1;
+static GLint    s_locSnowBrightnessDampen = -1;  // <1 darkens detected snow
 extern void  gos_GetTerrainMatTiling(float*, float*, float*, float*, float*);
 extern void  gos_GetTerrainTintRock(float*, float*, float*);
 extern void  gos_GetTerrainTintGrass(float*, float*, float*);
@@ -414,6 +415,7 @@ void gos_TerrainLodChunk_Init()
             s_locTintGrass         = glGetUniformLocation(s_terrainProgram, "tintGrass");
             s_locTintDirt          = glGetUniformLocation(s_terrainProgram, "tintDirt");
             s_locTintStrengthScale = glGetUniformLocation(s_terrainProgram, "tintStrengthScale");
+            s_locSnowBrightnessDampen = glGetUniformLocation(s_terrainProgram, "snowBrightnessDampen");
             s_locLightingV1  = glGetUniformLocation(s_terrainProgram, "terrainLightingV1Strength");
             s_locLightingV2  = glGetUniformLocation(s_terrainProgram, "terrainLightingV2ShadowFillFloor");
             s_locNfhStrength = glGetUniformLocation(s_terrainProgram, "terrainNormalsFromHeightStrength");
@@ -787,6 +789,10 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         if (s_locTintGrass         >= 0) glUniform3f(s_locTintGrass, tg[0], tg[1], tg[2]);
         if (s_locTintDirt          >= 0) glUniform3f(s_locTintDirt,  td[0], td[1], td[2]);
         if (s_locTintStrengthScale >= 0) glUniform1f(s_locTintStrengthScale, tss);
+        // Snow brightness dampen: <1 darkens detected snow. Default 0.78 (visibly
+        // turned down); MC2_TERRAIN_SNOW_BRIGHTNESS_DAMPEN overrides.
+        static const float s_snowDampen = [](){ const char* v = getenv("MC2_TERRAIN_SNOW_BRIGHTNESS_DAMPEN"); return v ? (float)atof(v) : 0.78f; }();
+        if (s_locSnowBrightnessDampen >= 0) glUniform1f(s_locSnowBrightnessDampen, s_snowDampen);
 
         // Remaining tunables. Hemisphere V1/V2 are env-gated OFF by default (match
         // legacy: force-zeroed unless MC2_TERRAIN_LIGHTING_V1/V2 set). NFH strength

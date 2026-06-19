@@ -149,6 +149,7 @@ uniform PREC vec3  tintRock;   // default (0.36, 0.37, 0.40)
 uniform PREC vec3  tintGrass;  // default (0.35, 0.42, 0.25)
 uniform PREC vec3  tintDirt;   // default (0.48, 0.42, 0.33)
 uniform PREC float tintStrengthScale;  // 0=colormap passthrough, 1=full material tint; default 1.0
+uniform PREC float snowBrightnessDampen;  // <1 darkens detected snow (snowWeight-gated); default 0.78
 
 // TERRAIN-NORMALS-FROM-HEIGHT-1 / TERRAIN-LIGHTING-1/2 uniforms +
 // computeTerrainNormalFromHeight() helper. Shared with terrain_overlay.frag
@@ -804,6 +805,8 @@ void main(void)
     }
 
     c.rgb *= baseColor;
+    // Snow brightness dampen — only detected-snow fragments (snowWeight) are darkened.
+    c.rgb *= mix(1.0, snowBrightnessDampen, snowWeight);
     // Normal map lighting — widened range from (0.55,1.15) to (0.35,1.20)
     // so dark sides of bumps read noticeably darker, creating actual bump contrast.
     PREC float normalLight = mix(0.35, 1.20, diffuse);
