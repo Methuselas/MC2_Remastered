@@ -3,12 +3,14 @@
 REPO-INTEL-MCP-1: repo_intel_server.py
 Read-only MCP wrapper around tools/repo_intel/repo_query.py.
 
-Exposes five tools:
+Exposes tools:
   repo.preflight      — branch + root guard + harness summary
   repo.dirty          — dirty-file classification with optional guards
   repo.env_var        — env var index query (MC2_* variables)
   repo.shader_binding — GL binding point index query
   repo.harness        — canonical build/deploy/smoke command lookup
+  repo.grep           — lexical pattern search with sane default excludes
+  repo.symbol         — best-effort definition/reference split (lexical, not AST)
 
 No new indexing logic. No writes. No build/deploy execution.
 Read-only.
@@ -43,6 +45,7 @@ from mcp.server.fastmcp import FastMCP
 import repo_query  as rq
 import env_index   as ei
 import binding_index as bi
+import grep_tool   as gt
 
 # ---------------------------------------------------------------------------
 # Server
@@ -276,6 +279,69 @@ def harness(name: str = "all") -> str:
         result = rq.all_harnesses(cml)
     else:
         result = rq.parse_harness(name, cml)
+    return _j(result)
+
+
+@mcp.tool()
+def repo_grep(
+    pattern: str,
+    include_globs: Optional[list] = None,
+    exclude_globs: Optional[list] = None,
+    case_sensitive: bool = True,
+    max_results: int = 200,
+) -> str:
+    """
+    Lexical grep over the MC2 source tree.
+
+    Default excludes (always applied):
+      .git/  build64/  releases/  3rdparty/  .claude/
+      tests/smoke/artifacts/  *.log  *.jsonl  binaries
+
+    Parameters:
+      pattern        — Python regex (ripgrep if available, else re fallback)
+      include_globs  — restrict to matching filenames (e.g. ["*.cpp", "*.h"])
+      exclude_globs  — additional globs to exclude
+      case_sensitive — default True
+      max_results    — cap (default 200); set higher for broad sweeps
+
+    Returns: {matches:[{file, line, snippet}], match_count, truncated, confidence:"lexical"}
+    """
+    root = _repo()
+    result = gt.grep_source(
+        root,
+        pattern       = pattern,
+        include_globs = include_globs,
+        exclude_globs = exclude_globs,
+        case_sensitive = case_sensitive,
+        max_results   = max_results,
+    )
+    return _j(result)
+
+
+@mcp.tool()
+def repo_symbol(
+    symbol: str,
+    max_results: int = 300,
+) -> str:
+    """
+    Best-effort lexical symbol lookup. NOT clangd, NOT AST, NOT graphify.
+
+    Searches for \\bsymbol\\b across the source tree, then splits hits into
+    definition-candidates and references using C++ heuristics (typed decl,
+    class/struct/enum keyword, function signature, #define).
+
+    Useful for:
+      "where is MC2_BUILDING_PBR read?"
+      "where is TG_SetRenderShapePbrOverride called?"
+      "which files reference RenderObjectDesc::gameObjectId?"
+
+    Returns:
+      {symbol, definitions:[{file,line,snippet}], references:[{file,line,snippet}],
+       match_count, truncated, confidence:"lexical",
+       note:"Lexical only — not clangd, not AST, not graphify."}
+    """
+    root = _repo()
+    result = gt.symbol_lookup(root, symbol, max_results=max_results)
     return _j(result)
 
 
