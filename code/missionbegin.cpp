@@ -549,8 +549,21 @@ const char* MissionBegin::update()
 				}
 				else
 				{
-					curScreenX = 0;
-					curScreenY = 1;
+					// MC2_BOOT_TO_BAY headless capture: jump straight to the mech bay
+					// (campaign + first mission already set by startNewCampaign) instead
+					// of the campaign-select screen, so the LOGISTICS capture dumps the
+					// bay. The auto-cycle in update() then walks the subscreens.
+					const char* bootBay = std::getenv("MC2_BOOT_TO_BAY");
+					if ( bootBay && bootBay[0] )
+					{
+						curScreenX = 2;   // [2][1] MechBayScreen
+						curScreenY = 1;
+					}
+					else
+					{
+						curScreenX = 0;
+						curScreenY = 1;
+					}
 					screens[curScreenX][curScreenY]->beginFadeIn( 1.0 );
 					screens[curScreenX][curScreenY]->begin();
 				}

@@ -430,6 +430,23 @@ void MainMenu::skipIntro()
 
 void MainMenu::update()
 {
+	// MC2_BOOT_TO_BAY=<campaign .fit basename> (e.g. "pictures of a rebellion"):
+	// headless boot for screen capture. One-shot: auto-start the campaign (mirrors
+	// the New-Campaign menu action) and request RESTART, which enters MissionBegin;
+	// MissionBegin then jumps straight to the mech bay (see its RESTART handler) so
+	// the LOGISTICS capture can dump the bay/purchase/loadout/launch screens with no
+	// clicks. Requires MC2_ACTIVE_MOD + MC2_MOD_DEPS set (as the launcher does).
+	{
+		static bool s_bootToBayFired = false;
+		const char* bootCamp = std::getenv("MC2_BOOT_TO_BAY");
+		if ( !s_bootToBayFired && bootCamp && bootCamp[0] && LogisticsData::instance )
+		{
+			s_bootToBayFired = true;
+			LogisticsData::instance->startNewCampaign( bootCamp );
+			status = RESTART;
+			return;
+		}
+	}
 
 	if ( bDrawBackground || MPlayer || LogisticsData::instance->isSingleMission() )
 	{
