@@ -142,6 +142,16 @@ bool IsMechPickDebugEnabled();
 // undetected enemy mechs via the inspect log).
 bool IsMechPickPierceFogEnabled();
 
+// GPU_PICK_HOVER_DYNAMIC-1: hover-pick gate (MC2_GPU_PICK_HOVER=1).
+// Requires MC2_OBJECT_ID_BUFFER=1. When enabled, updateTarget() uses
+// lookupAtPixel to identify mechs under the cursor before falling through
+// to the CPU findObjectByMouse scan. Static props still use CPU path.
+bool IsGpuPickHoverEnabled();
+
+// GPU_PICK_HOVER_DYNAMIC-1: hover-pick verbose trace (MC2_GPU_PICK_HOVER_TRACE=1).
+// Logs attempts/hits/fallbacks from the hover pick block.
+bool IsGpuPickHoverTraceEnabled();
+
 // M1.5 C1 fix: centralize Handle encoding. Returns 0 for invalid
 // recipeIndex (< 0). The producer in gos_static_prop_batcher.cpp
 // calls this with the result of GpuStaticPropRegistry::getRecipeIndexForType().

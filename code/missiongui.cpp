@@ -31,8 +31,10 @@
 
 // M1.6 + M2.6: IsStaticPropPickEnabled, lookupAtPixel, setLastGameplayPick,
 // clearLastGameplayPick, getLastGameplayPick, IsObjectIdBufferEnabled,
-// IsMechPickEnabled, IsMechPickDebugEnabled, IsMechPickPierceFogEnabled.
+// IsMechPickEnabled, IsMechPickDebugEnabled, IsMechPickPierceFogEnabled,
+// IsGpuPickHoverEnabled, IsGpuPickHoverTraceEnabled.
 #include "../RenderWorld/RenderWorld.h"
+#include "../RenderWorld/ScreenPick.h"  // GPU_PICK_HOVER_DYNAMIC-1: screenPickCompute
 #include "gameplay_pick.h"  // M2-pre: tryGameplayPick spine + GameplayPickRequest
 #include "../GameAdapters/MechRenderAdapter.h"  // M2.6: findMechByHandle (forward-decls BattleMech)
 #ifdef MC2_IS_EDITOR
@@ -1564,7 +1566,94 @@ void MissionInterfaceManager::updateTarget( bool bGui)
 	// Get Any object we are over.  Change cursor if appropriate.  Set selected if necessary.
 	// Clear the target pointer if we have done all we need to do here.  Otherwise, leave it
 	// set and issue an order below based on who is in the myForce pointers.
+	//
+	// GPU_PICK_HOVER_DYNAMIC-1: fast mech hover via ObjectId MRT.
+	// Gate: MC2_GPU_PICK_HOVER=1 + MC2_OBJECT_ID_BUFFER=1.
+	// Only Mech kind uses the GPU result; static props fall through to CPU.
+	// Mouse-position cache: no glReadPixels when cursor hasn't moved.
+	{
+		static const bool s_hoverGate = []() {
+			return RenderWorld::IsGpuPickHoverEnabled() &&
+			       RenderWorld::IsObjectIdBufferEnabled();
+		}();
+		static const bool s_hoverTrace = []() {
+			return RenderWorld::IsGpuPickHoverTraceEnabled();
+		}();
+		static int   s_lastMouseX  = -1;
+		static int   s_lastMouseY  = -1;
+		static GameObjectPtr s_cachedTarget = nullptr;
+		static bool  s_cacheValid  = false;
+		// Per-frame counters for trace output (reset on first call each frame via atexit).
+		static int s_attempts = 0, s_mechHits = 0, s_nonMech = 0, s_cpuFallback = 0;
+		static bool s_atexitRegistered = false;
+		if (s_hoverGate) {
+			if (!s_atexitRegistered) {
+				s_atexitRegistered = true;
+				std::atexit([]() {
+					if (s_attempts && RenderWorld::IsGpuPickHoverTraceEnabled()) {
+						std::fprintf(stderr,
+							"[GPU_PICK_HOVER v1] session: attempts=%d mech_hits=%d "
+							"non_mech_fallback=%d cpu_fallback=%d\n",
+							s_attempts, s_mechHits, s_nonMech, s_cpuFallback);
+					}
+				});
+			}
+			// Cache hit: mouse hasn't moved, reuse last result.
+			if (s_cacheValid && mouseX == s_lastMouseX && mouseY == s_lastMouseY) {
+				target = s_cachedTarget;
+				goto gpu_hover_done;
+			}
+			// Viewport-to-GL coord transform via proven ScreenPick utility.
+			float vMulX, vMulY, vAddX, vAddY;
+			gos_GetViewport(&vMulX, &vMulY, &vAddX, &vAddY);
+			if (vMulX > 0.0f && vMulY > 0.0f &&
+			    mouseX >= 0 && mouseY >= 0 &&
+			    mouseX < (int)vMulX && mouseY < (int)vMulY) {
+				RenderWorld::ScreenPickContext ctx;
+				ctx.mouseX = mouseX; ctx.mouseY = mouseY;
+				ctx.vMulX  = vMulX;  ctx.vMulY  = vMulY;
+				ctx.vAddX  = vAddX;  ctx.vAddY  = vAddY;
+				ctx.drawableWidth  = Environment.drawableWidth;
+				ctx.drawableHeight = Environment.drawableHeight;
+				RenderWorld::screenPickCompute(&ctx);
+				++s_attempts;
+				RenderWorld::LookupResult res = RenderWorld::lookupAtPixel(ctx.glX, ctx.glY);
+				if (res.isValid && res.kind == RenderWorld::RenderObjectKind::Mech) {
+					BattleMech* bm = GameAdapters::Mech::findMechByHandle(res.handle);
+					if (bm != nullptr) {
+						++s_mechHits;
+						if (s_hoverTrace) {
+							std::fprintf(stderr,
+								"[GPU_PICK_HOVER v1] hit kind=Mech handle=%u idx=%u "
+								"mech=%p screen=(%d,%d) gl=(%d,%d)\n",
+								res.handle.bits,
+								(unsigned)res.handle.index(),
+								(void*)bm, mouseX, mouseY, ctx.glX, ctx.glY);
+						}
+						s_lastMouseX   = mouseX;
+						s_lastMouseY   = mouseY;
+						s_cachedTarget = bm;
+						s_cacheValid   = true;
+						target = bm;
+						goto gpu_hover_done;
+					}
+				} else if (res.isValid) {
+					++s_nonMech;
+					if (s_hoverTrace) {
+						std::fprintf(stderr,
+							"[GPU_PICK_HOVER v1] non_mech kind=%d screen=(%d,%d) "
+							"falling through to CPU\n",
+							(int)res.kind, mouseX, mouseY);
+					}
+				}
+			}
+			// GPU miss or non-Mech: invalidate cache, fall through to CPU.
+			s_cacheValid = false;
+			++s_cpuFallback;
+		}
+	}
 	target = ObjectManager->findObjectByMouse(mouseX, mouseY);
+	gpu_hover_done:;
 	if ( target )
 	{
 		if ( bGui )

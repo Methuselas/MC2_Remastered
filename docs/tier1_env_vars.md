@@ -1,6 +1,6 @@
 # Tier-1 instrumentation env vars
 
-> **NOTE: This file is stale as of 2026-06-01. Treat as orientation only; verify against RendererFeatureRegistry.h and source before relying on any entry.**
+> **STATUS: Verified current as of 2026-06-19 (nifty HEAD, build pipeline). Includes MC2_TERRAIN_LOD_CHUNK (default ON), MC2_SHADOW_CSM (default ON), asset-mod payload vars (HDRI_BC6H, BUILDING_PBR), and diagnostic JSONL trace. Match against RendererFeatureRegistry.h for new feature gates.**
 
 ## Feature gates (RendererFeatureRegistry.h kFeatureTable)
 
@@ -76,6 +76,8 @@
 - `MC2_MECH_PICK=1` — mech-pick consumer (M2.6). Requires `MC2_OBJECT_ID_BUFFER=1`.
 - `MC2_STATIC_PROP_PICK=1` — static-prop pick (M1.6). Requires `MC2_OBJECT_ID_BUFFER=1`.
 - `MC2_GAMEPLAY_PICK_SELFTEST=1` — M2-pre spine validator
+- `MC2_GPU_PICK_HOVER=1` — GPU hover pick for mechs/dynamic actors (GPU_PICK_HOVER_DYNAMIC-1). Requires `MC2_OBJECT_ID_BUFFER=1`. Only mech kind uses GPU result; static props fall through to CPU.
+- `MC2_GPU_PICK_HOVER_TRACE=1` — verbose hover-pick log (hit/miss/fallback per frame + session totals on exit).
 
 ## EditorBridge
 

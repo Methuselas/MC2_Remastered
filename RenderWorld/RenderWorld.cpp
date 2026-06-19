@@ -735,6 +735,16 @@ bool IsMechPickPierceFogEnabled() {
     return s_enabled;
 }
 
+bool IsGpuPickHoverEnabled() {
+    static const bool s_enabled = envFlag("MC2_GPU_PICK_HOVER");
+    return s_enabled;
+}
+
+bool IsGpuPickHoverTraceEnabled() {
+    static const bool s_enabled = envFlag("MC2_GPU_PICK_HOVER_TRACE");
+    return s_enabled;
+}
+
 uint32_t objectIdRawForStaticPropRecipe(int32_t recipeIndex) {
     // M1.5 C1: centralized Handle bit encoding for the batcher
     // producer. Mirrors the recipeIndex -> Handle convention used by
