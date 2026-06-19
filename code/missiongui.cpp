@@ -979,6 +979,23 @@ void MissionInterfaceManager::update (void)
 
 	bool bGui = false;
 
+	// Raw-space GUI test. ae7e1794 switched the bGui hit-test below to
+	// HUD-inverse space so a click on a drawn-shrunk command-bar widget would
+	// correctly register / suppress a spurious world order. But gos_HudInverseMousePoint
+	// maps the WHOLE s_hud_scale shrink band (raw y >= ~0.66*sh) outward toward the
+	// bottom-center anchor, so an OPEN world pixel sitting above the actual drawn
+	// chrome (but inside the shrink band) gets pushed DOWN into an authored widget
+	// rect -> inRegion(HUD-inverse) wrongly returns true over the lower-center world.
+	// That over-claim made updateTarget zero a genuinely-hovered unit (target=0 at
+	// the `if(bGui)` below), so the hovered mech/vehicle/building name stopped
+	// rendering for units in the lower screen band (regression since 2026-06-10).
+	// findObjectByMouse picks in RAW space (what the user sees), so the name/target
+	// gate must also use a RAW-space GUI test; the drawn-shrunk widget rect is a
+	// subset of its authored rect, so raw-in-authored-region still returns true when
+	// the cursor is genuinely over a drawn widget. bGui (HUD-inverse) is kept for
+	// order/drag suppression so the ae7e1794 widget-click fix is unchanged.
+	bool bRawGui = controlGui.inRegion( mouseX, mouseY, isPaused() && !isPausedWithoutMenu() );
+
 	// check and see if its in the control area
 	// HUD command bar draws shrunk -> test the region in HUD-inverse space (the
 	// raw mouseX/mouseY locals stay raw for terrain inverseProject below).
@@ -991,11 +1008,15 @@ void MissionInterfaceManager::update (void)
 			dragStart.y = 0.f;
 		}
 	}
-	else
+	// Clear stale help text only when the cursor is genuinely over a drawn HUD
+	// widget (raw space). Using bGui (HUD-inverse) here would leave the previous
+	// frame's text up over the over-claimed world band; using bRawGui keeps the
+	// hovered-unit name path (set in updateTarget below) authoritative for the world.
+	if ( !bRawGui )
 	{
 		helpTextHeaderID = helpTextID = 0;
 	}
-	
+
 	if (bGui)
 		userInput->setMouseCursor( mState_NORMAL );
 
@@ -1069,7 +1090,10 @@ void MissionInterfaceManager::update (void)
 
 	{
 		ZoneScopedN("MIF.UpdateTarget"); MifScope _mUT(MF_UPDTGT);
-		updateTarget(bGui);
+		// Pass the RAW-space GUI flag (not the HUD-inverse bGui): the world pick +
+		// hovered-unit name must be suppressed only when the cursor is over a widget
+		// in the space the pick (findObjectByMouse) and the user actually use.
+		updateTarget(bRawGui);
 	}
 
 	{ ZoneScopedN("MIF.PostTarget");
@@ -1515,6 +1539,10 @@ void MissionInterfaceManager::updateVTol()
 }
 
 	
+// bGui here is the RAW-space "cursor over a drawn HUD widget" flag (bRawGui at the
+// caller), NOT the HUD-inverse order-suppression bGui. It only gates whether a
+// genuinely-picked world object (and its name help-text) is kept. See bRawGui note
+// in update().
 void MissionInterfaceManager::updateTarget( bool bGui)
 {
 	
