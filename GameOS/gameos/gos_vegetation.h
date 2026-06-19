@@ -13,6 +13,14 @@ namespace GosVegetation {
     };
     static_assert(sizeof(Instance) == 28, "GosVegetation::Instance must be 28 bytes");
 
+    // VEG-FLUSH-REASON-1: per-frame stats written by flush().
+    // Exposed for smoke contract assertion (VEG-SMOKE-FLOOR-1).
+    struct VegFrameStats {
+        int         instance_count;  // total instances in SSBO (s_instanceCount)
+        int         draw_calls;      // draw calls issued this frame
+        const char* flush_reason;    // reason string set in flush() — static literal
+    };
+
     void init();
     void shutdown();
     void setAtlasPath(const char* path);
@@ -33,6 +41,14 @@ namespace GosVegetation {
                float time,
                float camChunkX, float camChunkY, float camChunkZ,
                float mapHalfWU, float blockSideWU, int chunkSide);
+
+    // VEG-FLUSH-REASON-1: returns stats from the most recent flush() call.
+    // Safe to call at any time; returns zeroes / "no_call" before first flush().
+    [[nodiscard]] VegFrameStats getFrameStats();
+
+    // VEG-SMOKE-FLOOR-1: emit VEG_SUMMARY line to stderr for smoke log parsing.
+    // Called by the engine at mission end / shutdown when MC2_VEGETATION_CARDS=1.
+    void emitSummary();
 
     [[nodiscard]] bool isEnabled();       // checks MC2_VEGETATION_CARDS env var
     [[nodiscard]] uint32_t instanceCount();

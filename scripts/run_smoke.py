@@ -48,6 +48,70 @@ DEFAULT_MENU_SCRIPT = ROOT / "tests" / "smoke" / "menu_canary_first_mission.txt"
 GAME_AUTO = ROOT / "scripts" / "game_auto.py"
 
 
+def _parse_veg_summary(stdout_text: str) -> dict | None:
+    """Parse VEG_SUMMARY line from captured engine output.
+
+    Returns a dict with keys instance_count (int), draw_calls (int),
+    flush_reason (str) if found; None if the line is absent.
+
+    Format emitted by GosVegetation::emitSummary():
+      VEG_SUMMARY instance_count=N draw_calls=N flush_reason=<reason>
+    """
+    import re as _re
+    _VEG_RE = _re.compile(
+        r"VEG_SUMMARY\s+"
+        r"instance_count=(?P<ic>\d+)\s+"
+        r"draw_calls=(?P<dc>\d+)\s+"
+        r"flush_reason=(?P<fr>\S+)"
+    )
+    for line in reversed(stdout_text.splitlines()):
+        m = _VEG_RE.search(line)
+        if m:
+            return {
+                "instance_count": int(m.group("ic")),
+                "draw_calls":     int(m.group("dc")),
+                "flush_reason":   m.group("fr"),
+            }
+    return None
+
+
+def _check_veg_floor(stem: str, veg: dict | None) -> list[str]:
+    """VEG-SMOKE-FLOOR-1: assert veg output contract for a single mission.
+
+    Returns a list of failure messages (empty = pass).
+    Only called when MC2_VEGETATION_CARDS=1.
+
+    Floors:
+      mc2_01: instance_count > 100000  (dense forest mission)
+      others: instance_count > 1000    (drier terrain — "not zero")
+    """
+    if veg is None:
+        return [f"VEG-SMOKE-FLOOR FAIL {stem}: VEG_SUMMARY line absent from log "
+                f"(engine may not have called emitSummary, or MC2_LOG not set)"]
+
+    floor = 100000 if stem == "mc2_01" else 1000
+    fails = []
+    if veg["instance_count"] <= floor:
+        fails.append(
+            f"VEG-SMOKE-FLOOR FAIL {stem}: "
+            f"instance_count={veg['instance_count']} draw_calls={veg['draw_calls']} "
+            f"flush_reason={veg['flush_reason']} "
+            f"(instance_count must be > {floor})")
+    if veg["draw_calls"] <= 0:
+        fails.append(
+            f"VEG-SMOKE-FLOOR FAIL {stem}: "
+            f"instance_count={veg['instance_count']} draw_calls={veg['draw_calls']} "
+            f"flush_reason={veg['flush_reason']} "
+            f"(draw_calls must be > 0)")
+    if veg["flush_reason"] != "submitted":
+        fails.append(
+            f"VEG-SMOKE-FLOOR FAIL {stem}: "
+            f"instance_count={veg['instance_count']} draw_calls={veg['draw_calls']} "
+            f"flush_reason={veg['flush_reason']} "
+            f"(flush_reason must be 'submitted')")
+    return fails
+
+
 def _norm_path(p: str) -> str:
     """Normalize an exe path for comparison: resolve, forward-slash, casefold.
     Windows paths are case-insensitive and may mix slashes; an unresolvable
@@ -517,6 +581,10 @@ def main():
         except Exception:
             _fp_expected_sha = None
 
+    # VEG-SMOKE-FLOOR-1: only active when MC2_VEGETATION_CARDS=1.
+    _veg_floor_active = os.environ.get("MC2_VEGETATION_CARDS") == "1"
+    _veg_floor_failures: list[str] = []  # accumulated across all missions
+
     rows: list[report.Row] = []
     for e in selected:
         duration = args.duration or e.duration or 120
@@ -931,7 +999,15 @@ def main():
                             # Without these in the allowlist Popen drops them and
                             # the trace file is never written / tag filter is lost.
                             "MC2_DIAGNOSTIC_TRACE_FILE",
-                            "MC2_DIAG_TAGS")},
+                            "MC2_DIAG_TAGS",
+                            # VEG-SMOKE-FLOOR-1: vegetation card output contract gate.
+                            # MC2_VEGETATION_CARDS=1 enables GPU instanced vegetation
+                            # and triggers VEG-SMOKE-FLOOR-1 assertions in this runner.
+                            # Without this entry Popen drops it and the floor check
+                            # compares against an engine that never drew vegetation.
+                            "MC2_VEGETATION_CARDS",
+                            # VEG-FLUSH-REASON-1: atlas path override for vegetation tests.
+                            "MC2_VEGETATION_ATLAS")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission
@@ -989,6 +1065,26 @@ def main():
                 "peak_ms": result.summary.perf.peak_ms,
             }
 
+        # VEG-SMOKE-FLOOR-1: check vegetation output contract when gate is active.
+        # Only fires when MC2_VEGETATION_CARDS=1; never affects non-veg smoke runs.
+        if _veg_floor_active:
+            _veg = _parse_veg_summary(result.stdout_text)
+            _veg_fails = _check_veg_floor(e.stem, _veg)
+            for _vf in _veg_fails:
+                print(f"[runner] {_vf}", file=sys.stderr)
+                _veg_floor_failures.append(_vf)
+            if _veg:
+                print(
+                    f"[runner] [VEG-SMOKE-FLOOR] {e.stem}: "
+                    f"instance_count={_veg['instance_count']} "
+                    f"draw_calls={_veg['draw_calls']} "
+                    f"flush_reason={_veg['flush_reason']} "
+                    f"{'PASS' if not _veg_fails else 'FAIL'}",
+                    file=sys.stderr)
+            else:
+                print(f"[runner] [VEG-SMOKE-FLOOR] {e.stem}: VEG_SUMMARY absent",
+                      file=sys.stderr)
+
         if args.fail_fast and not result.verdict.passed:
             print(f"[runner] --fail-fast: stopping at {e.stem}", file=sys.stderr)
             break
@@ -1011,6 +1107,15 @@ def main():
     sys.stdout.buffer.write(b"\n")
     sys.stdout.buffer.flush()
     passed = all(r.verdict.passed for r in rows) and (menu_canary_rc in (None, 0))
+
+    # VEG-SMOKE-FLOOR-1: promote veg floor failures to hard fail when active.
+    # Only active when MC2_VEGETATION_CARDS=1; non-veg runs are never affected.
+    if _veg_floor_active and _veg_floor_failures:
+        print(f"[runner] [VEG-SMOKE-FLOOR] HARD FAIL: {len(_veg_floor_failures)} "
+              f"vegetation floor check(s) failed", file=sys.stderr)
+        for _vf in _veg_floor_failures:
+            print(f"[runner]   {_vf}", file=sys.stderr)
+        passed = False
 
     # MC2_SMOKE_REQUIRE_FINGERPRINT=1: promote fingerprint mismatch/absence to
     # a hard failure. Default (unset) keeps the verdict untouched (advisory).

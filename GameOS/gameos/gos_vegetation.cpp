@@ -39,6 +39,15 @@ static glsl_program* s_prog         = nullptr;
 static uint32_t     s_instanceCount = 0;
 static bool         s_initialized   = false;
 
+// VEG-FLUSH-REASON-1: per-frame stats updated by flush().
+// Accumulated across the session for VEG_SUMMARY (emitSummary()).
+static const char*  s_flushReason        = "no_call";  // last flush() exit reason
+static int          s_frameDrawCalls     = 0;          // draw calls in most recent flush()
+static int          s_sessionDrawCalls   = 0;          // total draw calls since init()
+static int          s_sessionFrames      = 0;          // flush() calls since init()
+static uint32_t     s_peakInstanceCount  = 0;          // highest uploadInstances count seen
+static bool         s_summaryEmitted     = false;      // guard: emitSummary() fires exactly once
+
 // Vertex for static crossed-quad geometry.
 struct CardVert {
     float horizontal;
@@ -249,10 +258,19 @@ void GosVegetation::init() {
         s_atlasTexId = 0;
     }
 
+    // VEG-SMOKE-FLOOR-1: register atexit so emitSummary() fires at process exit
+    // even when GosVegetation::shutdown() is not wired into the shutdown sequence.
+    // emitSummary() is guarded against double-emit (s_summaryEmitted).
+    std::atexit([]() { GosVegetation::emitSummary(); });
+
     s_initialized = true;
 }
 
 void GosVegetation::shutdown() {
+    // VEG-SMOKE-FLOOR-1: emit session summary before state is cleared.
+    // Must fire before zeroing s_peakInstanceCount / s_sessionDrawCalls.
+    emitSummary();
+
     if (s_vao)          { glDeleteVertexArrays(1, &s_vao);        s_vao = 0; }
     if (s_staticVbo)    { glDeleteBuffers(1, &s_staticVbo);       s_staticVbo = 0; }
     if (s_ibo)          { glDeleteBuffers(1, &s_ibo);              s_ibo = 0; }
@@ -260,8 +278,13 @@ void GosVegetation::shutdown() {
     if (s_blockVisSsbo) { glDeleteBuffers(1, &s_blockVisSsbo);    s_blockVisSsbo = 0; }
     if (s_atlasTexId)   { glDeleteTextures(1, &s_atlasTexId);     s_atlasTexId = 0; }
     if (s_prog)         { glsl_program::deleteProgram("vegetation_card"); s_prog = nullptr; }
-    s_instanceCount   = 0;
-    s_initialized     = false;
+    s_instanceCount      = 0;
+    s_peakInstanceCount  = 0;
+    s_sessionDrawCalls   = 0;
+    s_sessionFrames      = 0;
+    s_frameDrawCalls     = 0;
+    s_flushReason        = "no_call";
+    s_initialized        = false;
 }
 
 void GosVegetation::uploadInstances(const Instance* instances, uint32_t count) {
@@ -269,6 +292,8 @@ void GosVegetation::uploadInstances(const Instance* instances, uint32_t count) {
         return;
     }
     s_instanceCount = count;
+    // VEG-FLUSH-REASON-1: track peak instance count across uploads for emitSummary().
+    if (count > s_peakInstanceCount) s_peakInstanceCount = count;
     if (count == 0 || instances == nullptr) {
         return;
     }
@@ -295,9 +320,26 @@ void GosVegetation::flush(float lightDirX, float lightDirY, float lightDirZ, flo
                           float time,
                           float camChunkX, float camChunkY, float camChunkZ,
                           float mapHalfWU, float blockSideWU, int chunkSide) {
-    if (!isEnabled()) return;
-    if (s_instanceCount == 0 || s_atlasTexId == 0) return;
-    if (!s_prog || !s_prog->is_valid()) return;
+    // VEG-FLUSH-REASON-1: reset per-frame draw-call counter and set default reason.
+    s_frameDrawCalls = 0;
+    s_sessionFrames++;
+
+    if (!isEnabled()) {
+        s_flushReason = "disabled";
+        return;
+    }
+    if (s_instanceCount == 0) {
+        s_flushReason = "no_instances";
+        return;
+    }
+    if (s_atlasTexId == 0) {
+        s_flushReason = "no_atlas";
+        return;
+    }
+    if (!s_prog || !s_prog->is_valid()) {
+        s_flushReason = "no_program";
+        return;
+    }
 
     const float* mvp = gos_GetTerrainMVPMat4();
 
@@ -315,7 +357,10 @@ void GosVegetation::flush(float lightDirX, float lightDirY, float lightDirZ, flo
         fflush(stderr);
     }
 
-    if (!mvp) return;  // terrain MVP not ready yet — fail-open
+    if (!mvp) {
+        s_flushReason = "missing_buffers";  // terrain MVP not ready yet
+        return;
+    }
 
     // --- Explicit GL state for vegetation card pass ---
     glEnable(GL_DEPTH_TEST);
@@ -413,10 +458,40 @@ void GosVegetation::flush(float lightDirX, float lightDirY, float lightDirZ, flo
     glDrawElementsInstanced(GL_TRIANGLES, 36, GL_UNSIGNED_SHORT,
                             nullptr,
                             static_cast<GLsizei>(s_instanceCount));
+    // VEG-FLUSH-REASON-1: record successful draw submission.
+    s_flushReason = "submitted";
+    s_frameDrawCalls = 1;
+    s_sessionDrawCalls++;
 
     // --- Restore critical state ---
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 12, 0);
     glDepthMask(GL_TRUE);
     glEnable(GL_CULL_FACE);
     glBindVertexArray(0);
+}
+
+// VEG-FLUSH-REASON-1: return stats from the most recent flush() call.
+GosVegetation::VegFrameStats GosVegetation::getFrameStats() {
+    VegFrameStats stats;
+    stats.instance_count = static_cast<int>(s_instanceCount);
+    stats.draw_calls     = s_frameDrawCalls;
+    stats.flush_reason   = s_flushReason;
+    return stats;
+}
+
+// VEG-SMOKE-FLOOR-1: emit a VEG_SUMMARY line to stderr for smoke log parsing.
+// Called at shutdown (before state is cleared).
+// Format (stable — smoke assertion parses this):
+//   VEG_SUMMARY instance_count=N draw_calls=N flush_reason=<reason>
+// instance_count = peak count uploaded this session (persists after missionUnloaded clears live count).
+void GosVegetation::emitSummary() {
+    if (!isEnabled()) return;
+    if (s_summaryEmitted) return;     // guard: emit exactly once per process
+    s_summaryEmitted = true;
+    fprintf(stderr,
+        "VEG_SUMMARY instance_count=%u draw_calls=%d flush_reason=%s\n",
+        s_peakInstanceCount,
+        s_sessionDrawCalls,
+        s_flushReason);
+    fflush(stderr);
 }
