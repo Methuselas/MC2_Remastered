@@ -3417,6 +3417,22 @@ GameObjectPtr GameObjectManager::findTerrainObjectByMouse (long mouseX,
 														   long mouseY,
 														   bool skipDisabled)
 {
+	// v0+: top-level cache on (mouseX, mouseY, cameraRevision).
+	// Returns immediately when cursor and camera are both unchanged.
+	// cameraRevision driven by Camera::worldToClip memcmp — covers every
+	// mutation path (position/rotation/FOV/viewport/cinematic/script).
+	// Updated at the single return site below.
+	static long         s_pmX = -999999, s_pmY = -999999;
+	static uint32_t     s_pmCamRev = 0;
+	static GameObjectPtr s_pmResult = nullptr;
+	uint32_t camRev = eye ? eye->getViewProjectionRevision() : 0;
+	if (mouseX == s_pmX && mouseY == s_pmY &&
+		camRev != 0 && camRev == s_pmCamRev &&
+		(!s_pmResult || s_pmResult->getExists()))
+	{
+		return s_pmResult;
+	}
+
 	PkTimer _pk;  // MC2_PICK_RECON per-call wall-time
 	int32_t pickCandidates = 0;
 	int32_t activeBlocksVisited = 0;
@@ -3523,8 +3539,25 @@ GameObjectPtr GameObjectManager::findTerrainObjectByMouse (long mouseX,
 									? (BldgAppearance*)obj->getAppearance()
 									: NULL;
 							if (ba) {
-								if (s_pickRecon) ++s_pkRectProj;
-								haveRect = projectPickCandidateRect(ba, ulx, uly, lrx, lry);
+								// v2: per-instance screen-rect cache keyed on cameraRevision.
+								// Safe for static terrain objects (never move post-spawn).
+								// camRev==0 means Camera not yet initialised: always project.
+								auto& pc = ba->pickCache_;
+								if (camRev != 0 && pc.valid && pc.cameraRevision == camRev) {
+									// cache hit — reuse stored rect
+									ulx = pc.ulx; uly = pc.uly;
+									lrx = pc.lrx; lry = pc.lry;
+									haveRect = true;
+								} else {
+									if (s_pickRecon) ++s_pkRectProj;
+									haveRect = projectPickCandidateRect(ba, ulx, uly, lrx, lry);
+									if (haveRect && camRev != 0) {
+										pc.ulx = ulx; pc.uly = uly;
+										pc.lrx = lrx; pc.lry = lry;
+										pc.cameraRevision = camRev;
+										pc.valid = true;
+									}
+								}
 							}
 
 							bool inRect = true;
@@ -3571,6 +3604,9 @@ GameObjectPtr GameObjectManager::findTerrainObjectByMouse (long mouseX,
 
 	TracyPlot("MIF.TerrainPick.activeBlocks", int64_t(activeBlocksVisited));
 	TracyPlot("MIF.TerrainPick.candidates", int64_t(pickCandidates));
+	// v0+: update top-level cache before returning.
+	s_pmX = mouseX; s_pmY = mouseY; s_pmCamRev = camRev;
+	s_pmResult = pickBest;
 	return(pickBest);   // BUILDING-PICK FIX: nearest world-OBB hit (NULL if none)
 }
 

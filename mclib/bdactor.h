@@ -56,6 +56,19 @@ class BldgAppearanceType : public AppearanceType
 		// NULL = no override → render falls back to stock bldgShape[lod].
 		// Collision/damage NEVER read this; they read bldgShape[lod] directly.
 		TG_TypeMultiShapePtr		bldgRenderShape;
+		bool						buildingPbrEnabled;
+		HGOSRENDERMATERIAL			buildingPbrProgram;
+		DWORD						buildingPbrNormalTexture;
+		DWORD						buildingPbrOrmTexture;
+		DWORD						buildingPbrMaterialSsbo;
+		float						buildingPbrTileScale;
+		float						buildingPbrRoughnessBias;
+		float						buildingPbrMetallicInfluence;
+		bool						buildingPbrPreserveLegacyAlpha;
+		bool						buildingFootprintShadowEnabled;
+		float						buildingFootprintShadowStrength;
+		float						buildingFootprintShadowSoftness;
+		float						buildingFootprintShadowHeightBias;
 
 		TG_TypeMultiShapePtr		bldgDmgShape;
 		
@@ -91,6 +104,19 @@ class BldgAppearanceType : public AppearanceType
 			}
 
 			bldgRenderShape = NULL;   // MODEL-OVERRIDE dual-shape: no override by default
+			buildingPbrEnabled = false;
+			buildingPbrProgram = NULL;
+			buildingPbrNormalTexture = 0;
+			buildingPbrOrmTexture = 0;
+			buildingPbrMaterialSsbo = 0;
+			buildingPbrTileScale = 1.0f;
+			buildingPbrRoughnessBias = 0.0f;
+			buildingPbrMetallicInfluence = 0.0f;
+			buildingPbrPreserveLegacyAlpha = false;
+			buildingFootprintShadowEnabled = false;
+			buildingFootprintShadowStrength = 0.0f;
+			buildingFootprintShadowSoftness = 0.0f;
+			buildingFootprintShadowHeightBias = 0.05f;
 			bldgDmgShape = NULL;
 			
 			for (i=0;i<MAX_BD_ANIMATIONS;i++)
@@ -203,6 +229,7 @@ class BldgAppearance : public ObjectAppearance
 
 		BldgAppearanceType*							appearType;
 		TG_MultiShapePtr							bldgShape;
+		bool										buildingPbrRenderActive;
 
 		// Slice 2 (object-offload): set true by the GPU-object batcher's
 		// late-registration branch when a leaf type is encountered for the
@@ -232,6 +259,18 @@ class BldgAppearance : public ObjectAppearance
 			uint32_t         lightDataIndex = 0xFFFFFFFFu;
 		};
 		StaticRegistration							staticReg;
+
+		// Static terrain-object pick screen-rect cache.
+		// Invalidated by camera revision only — safe because terrain statics never
+		// move post-spawn. Dynamic/movable objects must NOT use this cache without
+		// also tracking an object transform revision.
+		struct PickScreenRectCache {
+			uint32_t cameraRevision = 0;	// 0 = uninitialized/invalid sentinel
+			long     ulx = 0, uly = 0;
+			long     lrx = 0, lry = 0;
+			bool     valid = false;
+		};
+		PickScreenRectCache							pickCache_;
 
 		long										bdAnimationState;
 		float										currentFrame;
@@ -693,4 +732,3 @@ class TreeAppearance : public ObjectAppearance
 
 
 #endif
-

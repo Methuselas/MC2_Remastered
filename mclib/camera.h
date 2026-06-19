@@ -177,6 +177,13 @@ class Camera
 		Stuff::Matrix4D				worldToClip;					//Matrix used to bring a point from world space to camera/clip space
 		Stuff::Matrix4D				clipToWorld;					//Matrix used to bring a point from camera/clip space to world space
 		float						cachedFrustumPlanes_[6][4];		// F6 T2 cache; valid after cacheFrustumPlanes() per frame.
+
+		// Pick screen-rect cache: monotonically increments when worldToClip changes.
+		// Compared via memcmp inside calculateProjectionConstants() — robust against
+		// any mutation path (position/rotation/FOV/viewport/cinematic/script).
+		// Never zero: 0 is the uninitialized sentinel in PickScreenRectCache.
+		uint32_t					viewProjectionRevision_;
+		Stuff::Matrix4D				lastWorldToClip_;				// snapshot for change detection
 		
 		TG_LightPtr					*worldLights;					//Lighting for the entire world.
 		long						numLights;						//Number of lights in the above list.  Always MAX_LIGHTS!
@@ -961,6 +968,10 @@ class Camera
 		// F1-3A ViewUniforms: camera world position in GL coordinate space.
 		// Applies the MC2->GL axis swap (x'=-x, y'=z, z'=y) to physicalPos.
 		Stuff::Vector3D cameraOriginGL() const;
+
+		// Pick screen-rect cache invalidation key. Increments when worldToClip
+		// changes (position/rotation/FOV/viewport). 0 = uninitialized.
+		uint32_t getViewProjectionRevision() const { return viewProjectionRevision_; }
 
 		// F4 projectZ-bypass helper. Computes clip directly via worldToClipGL()
 		// for a single world point. Used by the 5 Modern-default wrappers when

@@ -2938,10 +2938,19 @@ void Camera::calculateProjectionConstants (void)
 		Stuff::Vector3D rotationVector(-projectionAngle,0.0f,cameraRotation);
 		cameraFrame.rotate(rotationVector);
 	}
-	
+
 	setOrthogonal();		//Setup the camera Clip matrix.
-	
+
 	setCameraOrigin();
+
+	// Invalidate pick screen-rect cache when view/projection actually changes.
+	// memcmp is safe: Stuff::Matrix4D is POD (float[4][4]). Runs every frame but
+	// only increments revision on real change — camera-still frames = zero pick-cache churn.
+	if (memcmp(&worldToClip, &lastWorldToClip_, sizeof(Stuff::Matrix4D)) != 0) {
+		lastWorldToClip_ = worldToClip;
+		++viewProjectionRevision_;
+		if (viewProjectionRevision_ == 0) viewProjectionRevision_ = 1; // keep non-zero sentinel
+	}
 }
 
 //---------------------------------------------------------------------------
