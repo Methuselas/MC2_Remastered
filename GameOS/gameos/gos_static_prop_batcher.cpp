@@ -15,6 +15,7 @@
 #include "static_prop_dispatch_meta.h"
 #include "gos_postprocess.h"             // getGosPostProcess, getDynamicLightSpaceMatrix
 #include "gos_static_prop_killswitch.h"  // gos_GetGLTextureId
+#include "gos_mech_killswitch.h"          // g_mechPreviewRenderDepth (mech-bay preview gate)
 #include "gos_profiler.h"
 #include "gos_object_parity.h"           // Slice 2 Stage 2.D.1 parity harness
 #include "gpu_cull_compute.h"            // C1b: compute_isEnabled, getIndirectCmdBuf, getBucketCount
@@ -7696,6 +7697,15 @@ void GpuStaticPropBatcher::drawDynamicPropShadows(
     s_dynPropShadowTypes = 0; s_dynPropShadowInst = 0; s_dynPropShadowDraws = 0;
     if (!s_geometryFinalized || s_fatalRegistrationFailure) return;
     if (instances.empty()) return;
+    // MECH-BAY-SHADOW-CRASH (2026-06-19): skip the terrain static-prop dynamic-shadow
+    // caster replay during a SimpleCamera UI preview (mech bay / purchase / mechlab).
+    // After a mission ends, the prop registry still holds the prior mission's
+    // instances, but their TG_TypeShape sources (type.source) are freed when the bay
+    // loads preview shapes -> dereferencing type.source->listOfTextures here faults
+    // (READ at 0xFFFF... in MechBayScreen::render). The preview only needs the mech's
+    // own shadow (GpuMechBatcher::flushShadow), not terrain props. Crash repro:
+    // ClanEagle, win mission, enter mech bay.
+    if (g_mechPreviewRenderDepth > 0) return;
 
     // SHADOW-PROP-ALPHA-1: alpha-tested prop shadow program (foliage silhouette)
     // with empty-frag fallback. Full-registry dynamic prop caster.
