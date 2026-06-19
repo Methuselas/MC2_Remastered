@@ -75,12 +75,13 @@ enum class VegDensity : int { kHard = -1, kNone = 0, kSparse = 1, kFull = 2 };
 //   Row 0 (frames 0-3): grass / ground-cover variants
 //   Row 1 (frames 4-7): ferns, shrubs, taller plants
 // dominant = how many leading frames to pick the clump dominant from.
+// NOTE: frames 4-7 (ferns/shrubs) are intentionally excluded — grass cards only.
 struct FramePalette { uint8_t f[8]; int dominant; int n; };
 
 [[nodiscard]] FramePalette framePalette(VegDensity vdc) noexcept
 {
     if (vdc == VegDensity::kFull)
-        return {{ 0, 1, 2, 3, 6, 7, 4, 5 }, 4, 6};  // grass dominant, occasional shrub
+        return {{ 0, 1, 2, 3, 0, 1, 2, 3 }, 4, 4};  // grass only, all 4 variants
     // kSparse: short dry grass only
     return {{ 0, 1, 2, 0, 1, 2, 0, 1 }, 3, 3};
 }
