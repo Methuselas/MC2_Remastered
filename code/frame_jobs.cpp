@@ -88,7 +88,8 @@ void frameJobsInit() {
     int nw = (hw > 1) ? (hw - 1) : 1;
     if (const char* e = std::getenv("MC2_FRAME_JOBS_WORKERS"))
         nw = std::atoi(e);
-    nw = std::max(1, std::min(8, nw));
+    const int hwMax = std::max(1, static_cast<int>(std::thread::hardware_concurrency()));
+    nw = std::max(1, std::min(hwMax, nw));
 
     if (nw <= 1) { g_enabled = false; return; } // serial fallback
 
