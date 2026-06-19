@@ -45,6 +45,12 @@ import shutil
 import subprocess
 import sys
 
+try:
+    import psutil
+    _PSUTIL_OK = True
+except ImportError:
+    _PSUTIL_OK = False
+
 MANIFEST_NAME = ".deployed_manifest.csv"
 MANIFEST_VERSION = "v1"
 SHADER_EXTS = (".vert", ".frag", ".tesc", ".tese", ".comp")
@@ -80,6 +86,19 @@ EDITOR_SUPPORT_TREES = ["tools/terrain_gen"]
 #   tools/cook_bc6h_hdri.py  — EXR -> BC6H KTX2 via texconv+ktx (HDRI baking)
 #   tools/examples/          — asset inspection helpers (list_mission_assets etc.)
 GAME_COOK_TOOLS = ["tools/cook_bc6h_hdri.py", "tools/examples"]
+
+# P1-G building PBR runtime payload. These files are source-tracked so HangarGLB
+# and its CorrugatedSteel006A normal/ORM maps deploy through the verified payload
+# path instead of by hand-copying release directories.
+BUILDING_PBR_PAYLOAD = [
+    "data/tgl/HangarGLB.glb",
+    "data/tgl/HangarGLB.mcasset.json",
+    "data/tgl/quonset.ini",
+    "data/tgl/QuonsetGLB.glb",
+    "data/tgl/QuonsetGLB.mcasset.json",
+    "data/materials/pbr/corrugatedsteel006a_normal.ktx2",
+    "data/materials/pbr/corrugatedsteel006a_orm.ktx2",
+]
 
 FFMPEG_DLLS = [
     "avcodec-61.dll",
@@ -148,35 +167,146 @@ def is_file_locked_windows(path):
     return False
 
 
-def running_processes_named(names):
-    """Report (advisory context) running processes matching names via tasklist."""
-    found = []
+def _norm(p):
+    """Normalize a path for case-insensitive Windows comparison."""
+    return os.path.normcase(os.path.abspath(str(p)))
+
+
+def _same_path(a, b):
+    """True if a and b refer to the same file (os.path.samefile when possible)."""
     try:
-        out = subprocess.run(["tasklist", "/FO", "CSV", "/NH"],
-                             capture_output=True, text=True, timeout=30)
+        return os.path.samefile(a, b)
+    except (OSError, ValueError):
+        return _norm(a) == _norm(b)
+
+
+def _proc_exe_paths_psutil(exe_name):
+    """Yield (pid, exe_path_or_None) for every process whose name matches exe_name.
+
+    exe_path is None when the path cannot be read (access denied, zombie, etc.).
+    """
+    name_lower = exe_name.lower()
+    for proc in psutil.process_iter(["pid", "name"]):
+        try:
+            if proc.info["name"] and proc.info["name"].lower() == name_lower:
+                try:
+                    yield proc.pid, proc.exe()
+                except (psutil.AccessDenied, psutil.ZombieProcess, OSError):
+                    yield proc.pid, None
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+
+def _proc_exe_paths_wmic(exe_name):
+    """Fallback when psutil is unavailable: query WMIC for ExecutablePath.
+
+    Yields (pid, exe_path_or_None).  pid is int when parseable, else str.
+    """
+    results = []
+    try:
+        out = subprocess.run(
+            ["wmic", "process", "where",
+             f"name='{exe_name}'", "get", "ProcessId,ExecutablePath", "/FORMAT:CSV"],
+            capture_output=True, text=True, timeout=30,
+        )
         for line in out.stdout.splitlines():
-            for n in names:
-                if line.lower().startswith(f'"{n.lower()}'):
-                    found.append(line.split(",")[0].strip('"'))
+            line = line.strip()
+            if not line or line.lower().startswith("node"):
+                continue
+            parts = line.split(",")
+            # CSV columns: Node, ExecutablePath, ProcessId
+            if len(parts) >= 3:
+                exe_path = parts[1].strip() or None
+                pid_str = parts[2].strip()
+                try:
+                    pid = int(pid_str)
+                except ValueError:
+                    pid = pid_str
+                results.append((pid, exe_path))
     except Exception:
         pass
-    return found
+    return results
+
+
+def _enumerate_matching_processes(exe_name):
+    """Return list of (pid, exe_path_or_None) for all running processes named exe_name."""
+    if _PSUTIL_OK:
+        return list(_proc_exe_paths_psutil(exe_name))
+    return _proc_exe_paths_wmic(exe_name)
+
+
+def _check_running_processes(target_exe_resolved, exe_name):
+    """Path-aware running-process check.
+
+    - If a running process exe matches target_exe_resolved: HARD FAIL (returns
+      a non-empty error string).
+    - Processes from other folders: log info, allow.
+    - Processes whose path cannot be read: log warning, allow (do NOT block
+      unless the file-lock probe below catches them).
+
+    Returns an error string if deploy must be blocked, or '' if clear.
+    """
+    procs = _enumerate_matching_processes(exe_name)
+    if not procs:
+        return ""
+
+    blocking = []
+    other = []
+    unreadable = []
+
+    for pid, proc_exe in procs:
+        if proc_exe is None:
+            unreadable.append(pid)
+            continue
+        proc_resolved = os.path.normcase(os.path.abspath(proc_exe))
+        if _same_path(proc_exe, target_exe_resolved):
+            blocking.append((pid, proc_exe))
+        else:
+            other.append((pid, proc_exe))
+
+    for pid in unreadable:
+        log(f"WARNING: running process PID {pid} ({exe_name}) path unreadable "
+            "(access denied / zombie) — not blocking deploy")
+    for pid, path in other:
+        log(f"INFO: running {exe_name} PID {pid} from OTHER folder "
+            f"({path}) — deploy continues")
+
+    if blocking:
+        lines = "\n".join(f"  PID {pid}: {path}" for pid, path in blocking)
+        return (
+            f"target exe is running from THIS deploy folder:\n{lines}\n"
+            "  Close that instance and re-run. "
+            "This script will NEVER taskkill automatically."
+        )
+    return ""
 
 
 def check_locks(target_dir, exe_name):
     target_exe = os.path.join(target_dir, exe_name)
-    if sys.platform == "win32" and is_file_locked_windows(target_exe):
-        procs = running_processes_named(["mc2.exe", "Mission Editor.exe",
-                                         "mc2_asset_viewer.exe"])
-        hint = f" Running candidates: {', '.join(procs)}." if procs else ""
+    target_exe_resolved = os.path.normcase(os.path.abspath(target_exe))
+
+    # Step 1: path-aware running-process check (psutil / wmic).
+    err = _check_running_processes(target_exe_resolved, exe_name)
+    if err:
         fail(
-            f"target exe is LOCKED by a running process: {target_exe}.{hint}\n"
+            f"{err}\n"
             "  Copy-to-locked-exe silently fails on Windows (stale-exe trap, "
-            "Mistake A). Close the game/editor yourself and re-run. "
+            "Mistake A).",
+            code=2,
+        )
+
+    # Step 2: file-lock probe as a safety net (catches cases where psutil
+    # could not enumerate the process but the file handle is still held).
+    if sys.platform == "win32" and is_file_locked_windows(target_exe):
+        fail(
+            f"target exe is LOCKED by an unidentified process: {target_exe}\n"
+            "  psutil/wmic found no matching process by name, but the file "
+            "cannot be opened for writing. Close any process holding it and re-run. "
             "This script will NEVER taskkill automatically.",
             code=2,
         )
-    log(f"lock check OK: {target_exe} not held by a running process")
+
+    log(f"lock check OK: {target_exe} not held by a running process from this deploy folder")
 
 
 # ---------------------------------------------------------------------------
@@ -246,6 +376,12 @@ def enumerate_payload(src_root, build_dir, exe_name, pdb_name,
             p = os.path.join(dirpath, fn)
             rel = os.path.relpath(p, src_root).replace(os.sep, "/")
             items.append((p, rel, "shader"))
+
+    for rel in BUILDING_PBR_PAYLOAD:
+        p = os.path.join(src_root, rel)
+        if require_build and not os.path.isfile(p):
+            fail(f"building PBR payload missing in source: {p}")
+        items.append((p, rel, "support"))
 
     # Support payload: launch scripts (per target) + editor authoring trees.
     # These are source-tracked, not build outputs, so they ship even though
