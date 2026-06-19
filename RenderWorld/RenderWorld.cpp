@@ -584,7 +584,7 @@ RenderCore::RenderObjectHandle upsertStaticProp(RenderCore::StaticPropDesc desc)
     // M1.5: capture POD fields before std::move; vector is moved out
     // but scalars survive on the moved-from object regardless, this
     // is just defensive.
-    const uint32_t gameObjectId = desc.gameObjectId;
+    uint32_t gameObjectId = desc.gameObjectId;
     const int32_t r = legacy::registerStaticPropRecipe(std::move(desc));
     if (r < 0) {
         s_upsertFail.fetch_add(1, std::memory_order_relaxed);
@@ -597,6 +597,12 @@ RenderCore::RenderObjectHandle upsertStaticProp(RenderCore::StaticPropDesc desc)
     s_upsertOk.fetch_add(1, std::memory_order_relaxed);
     RenderCore::RenderObjectHandle h = RenderCore::RenderObjectHandle::make(
         recipeIndexToHandleIndex(r), 1u);
+    // BRIDGE-1: adapter doesn't thread a game-object id through syncStaticProp,
+    // so echo the handle index (== recipe index) when no id was supplied.
+    // This makes lookupAtPixel return a stable, nonzero gameObjectId for every
+    // static prop/building with recipe index > 0. Recipe 0 edge case: index==0
+    // stays 0, which is rare and acceptable (getRecipeShapeName still works).
+    if (gameObjectId == 0u) gameObjectId = h.index();
     // M1.5: populate the always-on record table (mission/upsert-time
     // metadata, ~85 KB peak; M1 decision).
     populateRecord(h.index(),
@@ -606,6 +612,22 @@ RenderCore::RenderObjectHandle upsertStaticProp(RenderCore::StaticPropDesc desc)
         std::fprintf(stderr,
             "[RENDER_WORLD v1] event=upsert_ok recipe=%d handle.index=%u\n",
             r, (unsigned)h.index());
+    }
+    // BRIDGE-1 upsert diagnostic: log first 32 registrations under the trace gate.
+    {
+        static const bool s_bridgeTrace = envFlag("MC2_OBJECT_ID_BRIDGE_TRACE");
+        if (s_bridgeTrace) {
+            static std::atomic<int> s_logCount{0};
+            const int n = s_logCount.fetch_add(1, std::memory_order_relaxed);
+            if (n < 32) {
+                std::fprintf(stderr,
+                    "[OBJECT_ID_BRIDGE v1] upsert: recipe=%d handle.index=%u gameObjectId=%u\n",
+                    r, (unsigned)h.index(), gameObjectId);
+            } else if (n == 32) {
+                std::fprintf(stderr,
+                    "[OBJECT_ID_BRIDGE v1] upsert: ... (suppressing further upsert logs)\n");
+            }
+        }
     }
     return h;
 }
@@ -620,12 +642,11 @@ RenderCore::RenderObjectHandle adoptStaticPropRecipe(int32_t recipeIndex) {
     s_upsertOk.fetch_add(1, std::memory_order_relaxed);
     RenderCore::RenderObjectHandle h = RenderCore::RenderObjectHandle::make(
         recipeIndexToHandleIndex(recipeIndex), 1u);
-    // M1.5: late-spawn populates the record table too. gameObjectId
-    // is unknown at this seam (the adapter does not pass one through
-    // syncStaticPropLateSpawn); 0 is the canonical "no cookie".
+    // M1.5: late-spawn populates the record table too.
+    // BRIDGE-1: echo handle index as gameObjectId (same convention as upsertStaticProp).
     populateRecord(h.index(),
                    static_cast<uint16_t>(h.generation()),
-                   0u);
+                   h.index());
     return h;
 }
 
@@ -894,6 +915,18 @@ LookupResult lookupAtPixel(int screenX, int screenY) {
     out.pathReasonCode     = rec.pathReasonCode;
     out.gameObjectId       = rec.gameObjectId;
     out.kind               = rec.kind;  // M2.6: kind discriminator
+
+    // BRIDGE-1 diagnostic: log static prop hits with nonzero gameObjectId.
+    // MC2_OBJECT_ID_BRIDGE_TRACE=1 enables; one line per pixel lookup hit.
+    if (rec.kind == RenderObjectKind::StaticProp) {
+        static const bool s_bridgeTrace = envFlag("MC2_OBJECT_ID_BRIDGE_TRACE");
+        if (s_bridgeTrace) {
+            std::fprintf(stderr,
+                "[OBJECT_ID_BRIDGE v1] hit: handle.index=%u generation=%u kind=StaticProp gameObjectId=%u %s\n",
+                h.index(), (unsigned)rec.generation, rec.gameObjectId,
+                rec.gameObjectId != 0u ? "NONZERO_OK" : "ZERO_EDGE_CASE");
+        }
+    }
 
     // Unproject depth sample to world position using the inverse VP stored
     // by the render loop each frame. depthSample==0 means far plane / sky.
