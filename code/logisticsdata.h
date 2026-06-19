@@ -165,6 +165,9 @@ public:
 
 
 	int					setCurrentMission( const char* missionName );
+	// Cross-stage mission set for the headless boot driver (MC2_BOOT_TO_MISSION):
+	// jump to any mission regardless of stage/progression, then updateAvailability.
+	int					setCurrentMissionAnyStage( const char* missionName );
 
 	void				startNewCampaign( const char* fileName = "campaign");
 	void				startMultiPlayer();

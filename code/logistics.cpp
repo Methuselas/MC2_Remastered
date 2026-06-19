@@ -926,6 +926,13 @@ void Logistics::playFullScreenVideo( const char* fileName )
 	if ( !fileName || !fileName[0])
 		return;
 
+	// MC2_BOOT_TO_BAY headless capture: skip all front-end fullscreen videos
+	// (campaign intro PreVideo e.g. poarintro.bik, mission cutscenes) so the
+	// automated boot reaches the bay/purchase screens deterministically instead
+	// of sitting on the intro for the capture window.
+	if ( std::getenv("MC2_BOOT_TO_BAY") )
+		return;
+
 	FullPathFileName path;
 	path.init( moviePath, fileName, ".bik" );
 

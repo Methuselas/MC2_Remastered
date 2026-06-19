@@ -443,6 +443,13 @@ void MainMenu::update()
 		{
 			s_bootToBayFired = true;
 			LogisticsData::instance->startNewCampaign( bootCamp );
+			// MC2_BOOT_TO_MISSION=<mission FileName>: jump to a specific mission's
+			// logistics instead of the campaign's first mission. Used to boot the
+			// LAST purchasing-enabled mission (fullest roster -> highest icon indices)
+			// for icon-atlas verification. startNewCampaign defaults to mission 0.
+			const char* bootMission = std::getenv("MC2_BOOT_TO_MISSION");
+			if ( bootMission && bootMission[0] )
+				LogisticsData::instance->setCurrentMissionAnyStage( bootMission );
 			status = RESTART;
 			return;
 		}

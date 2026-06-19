@@ -818,6 +818,18 @@ bool LogisticsData::getMissionAvailable( const char* missionName )
 
 
 // SetCurrentMission( char* missionName )
+int LogisticsData::setCurrentMissionAnyStage( const char* missionName )
+{
+	long result = missionInfo->setMissionAnyStage( missionName );
+	if ( result == NO_ERR )
+	{
+		updateAvailability();
+		resourcePoints = missionInfo->getCurrentRP();
+		removeDeadWeight();
+	}
+	return result;
+}
+
 int LogisticsData::setCurrentMission( const char* missionName )
 {
 	long result = missionInfo->setNextMission( missionName );

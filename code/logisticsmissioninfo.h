@@ -43,6 +43,11 @@ class LogisticsMissionInfo
 		bool isSingleMission() const;
 
 		long setNextMission( const char* missionName );
+		// Like setNextMission but searches ALL groups/stages (setNextMission only
+		// searches the current stage). Used by the headless boot driver
+		// (MC2_BOOT_TO_MISSION) to jump to any mission for logistics/icon capture
+		// without campaign progression. Sets currentStage + currentMission.
+		long setMissionAnyStage( const char* missionName );
 		void setMissionComplete( );
 
 		long getCurrentLogisticsTuneId();

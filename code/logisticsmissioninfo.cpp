@@ -690,6 +690,34 @@ long LogisticsMissionInfo::setNextMission( const char* missionName )
 
 }
 
+long LogisticsMissionInfo::setMissionAnyStage( const char* missionName )
+{
+	// Cross-stage variant of setNextMission for the headless boot driver: find the
+	// mission by FileName across ALL groups (not just the current stage) and set
+	// currentStage + currentMission so its logistics/purchase screen loads, with no
+	// campaign-progression requirement. Ignores the completed gate on purpose.
+	if ( !missionName || !strlen( missionName ) )
+		return -1;
+	for ( long s = 0; s < groupCount; s++ )
+	{
+		MissionGroup* pGroup = &groups[s];
+		long count = 0;
+		for ( MISSION_LIST::EIterator iter = pGroup->infos.Begin(); !iter.IsDone(); iter++ )
+		{
+			if ( S_stricmp( (*iter)->fileName, missionName ) == 0 )
+			{
+				currentStage = s;
+				currentMission = count;
+				currentMissionName = (*iter)->fileName;
+				currentMissionName.Remove( EString( ".fit" ) );
+				return 0;
+			}
+			count++;
+		}
+	}
+	return INVALID_MISSION;
+}
+
 void LogisticsMissionInfo::setSingleMission( const char* missionFileName )
 {
 	clear();
