@@ -79,11 +79,13 @@ def _j(obj) -> str:
 
 
 def _git_fast(args: list, cwd: Path, timeout: int = 5) -> tuple:
-    """Run a single git command with a hard timeout. Returns (stdout, ok)."""
+    """Run a single git command with a hard timeout. Returns (stdout, ok).
+    stdin=DEVNULL: prevents git from reading the MCP stdio pipe."""
     try:
         r = subprocess.run(
             ["git"] + args,
             capture_output=True, text=True, cwd=str(cwd), timeout=timeout,
+            stdin=subprocess.DEVNULL,
         )
         return r.stdout.strip(), r.returncode == 0
     except subprocess.TimeoutExpired:

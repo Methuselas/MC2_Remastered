@@ -46,6 +46,7 @@ def git(args, cwd=None, strip=True, timeout=10):
         result = subprocess.run(
             ["git"] + args,
             capture_output=True, text=True, cwd=cwd, timeout=timeout,
+            stdin=subprocess.DEVNULL,
         )
         out = result.stdout.strip() if strip else result.stdout
         return out, result.returncode
