@@ -39,6 +39,11 @@ namespace GosVegetation {
                float camChunkX, float camChunkY, float camChunkZ,
                float mapHalfWU, float blockSideWU, int chunkSide);
 
+    // Override the per-frame fade distance (WU) used in flush().
+    // Call at missionLoaded time after the schema is parsed.
+    // Pass -1 to revert to env-var / built-in default (4096 WU).
+    void setFadeDist(float maxDistWU);
+
     [[nodiscard]] bool isEnabled();       // checks MC2_VEGETATION_CARDS env var
     [[nodiscard]] uint32_t instanceCount();
 

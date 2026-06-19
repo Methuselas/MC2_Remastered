@@ -107,6 +107,12 @@ struct VegSchema {
     int  cards_full_count;
     char cards_sparse[kMaxSchemaCards][kMaxCardNameLen];
     int  cards_sparse_count;
+    // camera_height_gate: if > 0, flush() skips draw when camChunkZ >= this value.
+    // -1 = disabled (no gate).  Set from JSON field "camera_height_gate".
+    float camera_height_gate;
+    // fade_dist: max draw distance in WU for this schema.
+    // -1 = use env var / engine default.  Set from JSON field "fade_dist".
+    float fade_dist;
     bool loaded;
 };
 
@@ -258,6 +264,21 @@ static int jsonGetStringArray(const char* json, const char* keyName,
     return count;
 }
 
+// Minimal JSON float extractor (key: number).
+// Returns defaultVal if the key is not present.
+[[nodiscard]] static float jsonGetFloat(const char* json, const char* key,
+                                        float defaultVal) noexcept
+{
+    char needle[80];
+    snprintf(needle, sizeof(needle), "\"%s\"", key);
+    const char* p = strstr(json, needle);
+    if (!p) return defaultVal;
+    p += strlen(needle);
+    while (*p == ' ' || *p == ':' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    if (*p == '\0') return defaultVal;
+    return static_cast<float>(std::atof(p));
+}
+
 // Minimal JSON string field extractor (key: "value").
 static bool jsonGetString(const char* json, const char* key,
                           char* out, int outSz) noexcept
@@ -297,11 +318,16 @@ static bool jsonGetString(const char* json, const char* key,
     jsonGetString(buf, "name", out->name, sizeof(out->name));
     out->cards_full_count   = jsonGetStringArray(buf, "cards_full",   out->cards_full,   kMaxSchemaCards);
     out->cards_sparse_count = jsonGetStringArray(buf, "cards_sparse", out->cards_sparse, kMaxSchemaCards);
+    out->camera_height_gate = jsonGetFloat(buf, "camera_height_gate", -1.0f);
+    out->fade_dist          = jsonGetFloat(buf, "fade_dist",          -1.0f);
     out->loaded = (out->cards_full_count > 0);
 
     fprintf(stderr,
-        "[VEG schema] event=loaded name=%s full=%d sparse=%d path=%s\n",
-        out->name, out->cards_full_count, out->cards_sparse_count, schemaPath);
+        "[VEG schema] event=loaded name=%s full=%d sparse=%d "
+        "camera_height_gate=%.1f fade_dist=%.1f path=%s\n",
+        out->name, out->cards_full_count, out->cards_sparse_count,
+        static_cast<double>(out->camera_height_gate),
+        static_cast<double>(out->fade_dist), schemaPath);
     fflush(stderr);
     return out->loaded;
 }
@@ -525,6 +551,24 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
                 "[VEG] event=schema_not_found path=%s using_legacy_atlas\n", schemaPath);
         }
         fflush(stderr);
+    }
+
+    // Push per-schema fade distance to GosVegetation so flush() uses the right value.
+    // Schema fade_dist field (-1 = not set) → env var MC2_VEG_MAX_DIST → default 4096 WU.
+    // For the dense-layer schema the JSON sets "fade_dist": 1000.0 so grass is only
+    // drawn close to the camera (avoids fill-rate cost from hundreds of tiny cards).
+    {
+        float schemaFadeDist = -1.0f;
+        if (s_schemaActive && s_activeSchema.fade_dist > 0.0f) {
+            schemaFadeDist = s_activeSchema.fade_dist;
+        }
+        // env var MC2_VEG_FADE_DIST overrides schema field (but not in gos_vegetation.cpp
+        // which already handles MC2_VEG_MAX_DIST; mirror the override here if set).
+        const char* envFadeDist = std::getenv("MC2_VEG_FADE_DIST");
+        if (envFadeDist && envFadeDist[0]) {
+            schemaFadeDist = static_cast<float>(std::atof(envFadeDist));
+        }
+        GosVegetation::setFadeDist(schemaFadeDist);
     }
 
     // MC2_VEGETATION_CLUMP_MAX: max cards per clump (internal tuning knob, default 25).
@@ -839,14 +883,20 @@ void GameAdapters::Vegetation::flush(const float* terrainLightDir_4f, float time
 {
     if (!GosVegetation::isEnabled()) return;
 
-    // Camera height gate: skip all vegetation rendering when camera altitude >= 100 WU.
-    // Instances are still present in the GPU buffer (generated at mission load); this
-    // is purely a per-frame draw skip.  Provides a natural LOD: at ground level (<100 WU)
-    // dense grass is visible; at altitude the overhead view draws nothing (grass too small
-    // to be meaningful from high up and would tank fill-rate).
-    // MC2_VEG_CAM_HEIGHT_GATE: override threshold in WU (default 100.0; 0=disable gate).
+    // Camera height gate: skip vegetation rendering above the schema-defined threshold.
+    // Only applies when the active schema has "camera_height_gate" set (> 0) in its JSON.
+    // Regular schemas (no field) draw at any altitude; dense-layer schemas can set e.g.
+    // "camera_height_gate": 100.0 to avoid fill-rate cost from tiny cards at altitude.
+    // MC2_VEG_CAM_HEIGHT_GATE env var: if set, overrides the schema value (0 = disable gate).
     {
-        const float heightGate = envFloat("MC2_VEG_CAM_HEIGHT_GATE", 100.0f);
+        // Determine effective threshold: env var > schema field > disabled.
+        float heightGate = -1.0f;
+        const char* envGate = std::getenv("MC2_VEG_CAM_HEIGHT_GATE");
+        if (envGate && envGate[0]) {
+            heightGate = static_cast<float>(std::atof(envGate));
+        } else if (s_schemaActive && s_activeSchema.camera_height_gate > 0.0f) {
+            heightGate = s_activeSchema.camera_height_gate;
+        }
         if (heightGate > 0.0f && camChunkZ >= heightGate) return;
     }
 
