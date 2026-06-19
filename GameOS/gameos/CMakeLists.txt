@@ -90,6 +90,8 @@ include_directories("../include"  ".")
 include_directories(${THIRDPARTY_INCLUDE_DIRS})
 # gos_static_prop_batcher.cpp pulls tgl.h / msl.h / Stuff from mclib.
 include_directories("${CMAKE_SOURCE_DIR}/mclib" "${CMAKE_SOURCE_DIR}/mclib/stuff")
+# RenderCore/ headers (e.g. RenderPassContract.h) use repo-root-relative includes.
+include_directories("${CMAKE_SOURCE_DIR}")
 # gos_hdri.cpp needs tinyexr.h (defines TINYEXR_IMPLEMENTATION).
 include_directories("${CMAKE_SOURCE_DIR}/3rdparty/tinyexr")
 

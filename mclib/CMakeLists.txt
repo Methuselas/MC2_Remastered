@@ -104,6 +104,8 @@ endif()
 include_directories(${COMMON_INCLUDE_DIRS} "./mclib" "../Editor" "../DirectX8/include" "./")
 include_directories(${THIRDPARTY_INCLUDE_DIRS})
 include_directories(${CMAKE_SOURCE_DIR}/3rdparty/include)
+# RenderCore/ headers (e.g. RenderPassContract.h) use repo-root-relative includes.
+include_directories(${CMAKE_SOURCE_DIR})
 
 # BGR was a DX-era holdover: setPaintScheme ran bgrTorgb on every color
 # DWORD, assuming callers passed BGR-encoded values. In this port all
