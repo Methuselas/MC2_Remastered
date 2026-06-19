@@ -286,8 +286,12 @@ class Appearance
 		virtual bool isRecalcBoundsWorkerSafe() const { return false; }
 
 		// FRAME-JOBS-1: worker-path entry point. Calls recalcBounds() then stamps boundsFrame.
-		// Only called after isRecalcBoundsWorkerSafe() returns true.
-		// Default no-op — overridden by BldgAppearance and TreeAppearance.
+		// Base no-op exists ONLY for safe virtual dispatch through Appearance*.
+		// Worker path checks isRecalcBoundsWorkerSafe() BEFORE calling — the no-op
+		// is never reached in practice. Do NOT remove the whitelist check on the
+		// grounds that "the base no-op makes it safe": the base no-op skips the
+		// stamp, so the serial path would re-compute — correctness is not the
+		// concern, silent no-op behaviour for unaudited types is.
 		virtual void recalcBoundsAndStamp() {}
 
 		virtual void setGesture (unsigned long gestureId)
