@@ -31,7 +31,11 @@ _REGISTRY_ENTRY = re.compile(
     re.MULTILINE | re.DOTALL,
 )
 
-_GETENV_VAR    = re.compile(r'getenv\("(MC2_[A-Z_0-9]+)"')
+# Match direct getenv("MC2_*") and common thin wrappers:
+#   envFlagDefaultOn("MC2_*"), envFlagDefaultOff("MC2_*"), getEnvVar("MC2_*")
+_GETENV_VAR    = re.compile(
+    r'(?:getenv|envFlag(?:Default(?:On|Off))?|getEnvVar)\s*\(\s*"(MC2_[A-Z_0-9]+)"'
+)
 _TIER1_VAR     = re.compile(r'`(MC2_[A-Z_0-9]+)(?:=[^`]*)?`')
 _TIER1_DEFAULT = re.compile(r'Default\s+\*\*(ON|OFF)\*\*', re.IGNORECASE)
 
@@ -118,7 +122,7 @@ def _grep_getenv(repo_root: Path) -> dict:
                 text = fpath.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
-            if 'getenv("MC2_' not in text:
+            if 'MC2_' not in text:
                 continue
             rel = str(fpath.relative_to(repo_root)).replace("\\", "/")
             for lineno, line in enumerate(text.splitlines(), 1):
