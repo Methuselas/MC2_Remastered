@@ -18,12 +18,16 @@ base lacks -- and DELIBERATELY NOTHING ELSE:
 
   2. data/missions/{orders,miscfunc,corebrain}.abx  -- the ABL libraries the engine
      compiles at every mission start (mission.cpp ~2462). MCO warrior brains call
-     library routines like `magicAttack` that live in corebrain. orders/miscfunc
-     come from the user's MCO install. corebrain is special: MCO's own 2015
-     corebrain uses a `range` type this engine's ABL compiler rejects ("Incompatible
-     types range"), so we take the MC2-era corebrain (from --corebrain) which also
-     defines magicAttack and compiles cleanly. TODO(engine): teach the ABL compiler
-     MCO's `range` type to drop the --corebrain dependency.
+     library routines that live in corebrain. orders/miscfunc come from the user's
+     MCO install. corebrain (--corebrain) is now the GENUINE MCO 2015 corebrain
+     (shims/corebrain.abx), which defines magicAttack AND magicPatrol/magicGuard/
+     magicEscort -- the routines MCO warrior brains actually call. The older MC2-era
+     corebrain only had magicAttack + core*, so MCO patrol/guard/escort AI was dead
+     (units inert until attacked). The MCO corebrain has one routine (line ~569) that
+     uses a `range` type the ABL compiler rejects ("Incompatible types range"); that
+     single routine fails to compile but the compiler continues and the magic*/core*
+     routines compile and work (verified: ClanEagle AI). TODO(engine): teach the ABL
+     compiler MCO's `range` type so that last routine compiles too.
 
   3. data/tgl/**  -- MCO mech appearance INIs + shapes (~302MB). Non-stock MCO mechs
      (chimera, awesome, firestarter, ...) have no appearance/shape in the MC2 base,
