@@ -539,10 +539,13 @@ void MechListBox::initIcon( LogisticsMech* pMech, aObject& mechIcon )
 	if ( getenv("MC2_LOG_MECH_ICON") )
 	{
 		float fh = mechIcon.getFileHeight() > 0.f ? mechIcon.getFileHeight() : 256.f;
+		// getChassisName() returns a long string-table id, not a char* -- using it
+		// with %s dereferences the id value and crashes (READ at the id). Log the
+		// variant name (an EString) for the %s field instead.
 		printf("[mechicon-list] mech=%s iconIndex=%ld row=%ld col=%ld "
 		       "widgetW=%.0f widgetH=%.0f u=[%.1f,%.1f] v=[%.1f,%.1f] "
 		       "fileWidth=256 fileHeight=%.0f uvX=[%.3f,%.3f] uvY=[%.3f,%.3f]\n",
-		       pMech->getChassisName(), index, yIndex, xIndex,
+		       (const char*)pMech->getName(), index, yIndex, xIndex,
 		       width, height,
 		       u, u2, v, v2,
 		       fh, u/256.f, u2/256.f, v/fh, v2/fh);

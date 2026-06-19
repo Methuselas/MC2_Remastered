@@ -1772,13 +1772,20 @@ public:
 		lights_data_ = lights_data;
 	}
 
-	void render(HGOSBUFFER vb, HGOSBUFFER ib, HGOSVERTEXDECLARATION vdecl, DWORD texture_id, int light_index, bool isHudElement = false)
+	void render(HGOSBUFFER vb, HGOSBUFFER ib, HGOSVERTEXDECLARATION vdecl, DWORD texture_id, int light_index, bool isHudElement = false, const TG_RenderShape* renderShape = NULL)
 	{
 		gos_SetRenderState(gos_State_Texture, texture_id);
 		gos_SetRenderViewport(viewport_[2], viewport_[3], viewport_[0], viewport_[1]);
 
 		HGOSRENDERMATERIAL mat;
-		if (texture_id == 0) {
+		const bool usePbrOverride = renderShape &&
+			renderShape->programOverride_ &&
+			renderShape->pbrNormalTexture_ &&
+			renderShape->pbrOrmTexture_ &&
+			renderShape->pbrMaterialSsbo_;
+		if (usePbrOverride) {
+			mat = renderShape->programOverride_;
+		} else if (texture_id == 0) {
 			static const HGOSRENDERMATERIAL s_matVertexLighted = gos_getRenderMaterial("gos_vertex_lighted");
 			mat = s_matVertexLighted;
 		} else {
@@ -1803,6 +1810,35 @@ public:
 		// SceneData stays a UBO.
 		gos_SetRenderMaterialUniformBlockBindingPoint(mat, "SceneData", SCENE_DATA_ATTACHMENT_SLOT);
 
+		if (usePbrOverride) {
+			static int s_pbrRenderTrace = 0;
+			if (getenv("MC2_BUILDING_PBR_TRACE") && s_pbrRenderTrace < 64) {
+				++s_pbrRenderTrace;
+				fprintf(stderr,
+					"[BUILDING_PBR_TRACE] ShapeRenderer::render vb=%p ib=%p tex=%lu normal=%lu orm=%lu ssbo=%lu light=%d\n",
+					(void*)vb, (void*)ib, (unsigned long)texture_id,
+					(unsigned long)renderShape->pbrNormalTexture_,
+					(unsigned long)renderShape->pbrOrmTexture_,
+					(unsigned long)renderShape->pbrMaterialSsbo_,
+					light_index);
+				fflush(stderr);
+			}
+			float controls[4] = {
+				renderShape->pbrTileScale_,
+				renderShape->pbrRoughnessBias_,
+				renderShape->pbrMetallicInfluence_,
+				0.0f
+			};
+			gos_SetRenderMaterialParameterFloat4(mat, "u_buildingPbrControls", controls);
+			gos_SetRenderMaterialSamplerUnit(mat, "tex1", 0);
+			gos_SetRenderMaterialSamplerUnit(mat, "u_normalTex", 1);
+			gos_SetRenderMaterialSamplerUnit(mat, "u_ormTex", 2);
+			gos_SetRenderState(gos_State_Texture2, renderShape->pbrNormalTexture_);
+			gos_SetRenderState(gos_State_Texture3, renderShape->pbrOrmTexture_);
+			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, (GLuint)renderShape->pbrMaterialSsbo_);
+			gos_SetRenderState(gos_State_Culling, gos_Cull_None);
+		}
+
 		gos_ApplyRenderMaterial(mat);
 		gos_BindLightDataStorageBlock(mat);
 
@@ -1812,6 +1848,13 @@ public:
 		}
 
 		gos_RenderIndexedArray(ib, vb, vdecl);
+
+		if (usePbrOverride) {
+			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, 0);
+			gos_SetRenderState(gos_State_Texture2, 0);
+			gos_SetRenderState(gos_State_Texture3, 0);
+			gos_SetRenderState(gos_State_Culling, gos_Cull_CW);
+		}
 
 	}
 
@@ -2114,6 +2157,9 @@ void MC_TextureManager::renderLists (void)
 		if ((masterHardwareVertexNodes[i].flags & MC2_DRAWSOLID) &&
 			(masterHardwareVertexNodes[i].shapes))
 		{
+			gos_SetRenderState(gos_State_AlphaMode, gos_Alpha_OneZero);
+			gos_SetRenderState(gos_State_AlphaTest,
+				(masterHardwareVertexNodes[i].flags & MC2_ALPHATEST) ? 1 : 0);
 			if (masterHardwareVertexNodes[i].flags & MC2_ISTERRAIN)
 				gos_SetRenderState(gos_State_TextureAddress, gos_TextureClamp);
 			else
@@ -2155,7 +2201,7 @@ void MC_TextureManager::renderLists (void)
 
 					ShapeRenderer shape_renderer;
 					shape_renderer.setup(&world_mat, &view_mat, &wvp_mat, rs->viewport_);
-					shape_renderer.render(rs->vb_, rs->ib_, rs->vdecl_, texture, rs->light_data_buffer_index_, rs->isHudElement_);
+					shape_renderer.render(rs->vb_, rs->ib_, rs->vdecl_, texture, rs->light_data_buffer_index_, rs->isHudElement_, rs);
 				}
 
 			}
@@ -2166,6 +2212,7 @@ void MC_TextureManager::renderLists (void)
 			//masterHardwareVertexNodes[i].numShapes = 0;
 		}
 	}
+	gos_SetRenderState(gos_State_AlphaTest, 0);
 	gos_render_pass_timer::End(gos_render_pass_timer::Pass_Obj3d);
 	} // end Render.3DObjects zone
 	drainGLErrors("objects_3d");
@@ -3773,7 +3820,17 @@ DWORD MC_TextureManager::loadTexture (const char *textureFullPathName, gos_Textu
 	gosASSERT(textureFileOpenResult == NO_ERR);
 
 	if (textureFile.isLoadedFromDisk())
-		masterTextureNodes[i].uvScale = 4;
+	{
+		// Disk TGAs are 4x-upscaled gameplay textures (logical = physical/4). But the
+		// mech-bay roster icon atlas (mcui_gn_mechicons.tga) is a native-resolution UI
+		// atlas, NOT upscaled. The blanket uvScale=4 makes its logical size physical/4
+		// (e.g. 256x512 -> 64x128), and initIcon uses that logical height as the
+		// icon-cell V divisor, so high indices (vehicles, 118-142) sample far off-atlas
+		// -> red placeholder. Keep uvScale=1 for it (logical = physical).
+		const bool isGuiIconAtlas = textureFullPathName &&
+			strstr(textureFullPathName, "mcui_gn_mechicons") != nullptr;
+		masterTextureNodes[i].uvScale = isGuiIconAtlas ? 1 : 4;
+	}
 
 	tryReadTgaLogicalSize(textureFile, masterTextureNodes[i].uvScale,
 		masterTextureNodes[i].logicalWidth, masterTextureNodes[i].logicalHeight);
