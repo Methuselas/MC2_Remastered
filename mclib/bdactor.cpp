@@ -1883,6 +1883,15 @@ bool BldgAppearance::recalcBounds (void)
 }
 
 //-----------------------------------------------------------------------------
+void BldgAppearance::recalcBoundsAndStamp() {
+	// FRAME-JOBS-1 worker path. Do not call from game logic.
+	extern uint32_t g_mc2FrameCounter;
+	if (boundsFrame == g_mc2FrameCounter) return;
+	recalcBounds();
+	boundsFrame = g_mc2FrameCounter;
+}
+
+//-----------------------------------------------------------------------------
 bool BldgAppearance::playDestruction (void)
 {
 	//Check if there is a Destruct FX
@@ -5292,6 +5301,15 @@ bool TreeAppearance::recalcBounds (void)
 	}
 
 	return(inView);
+}
+
+//-----------------------------------------------------------------------------
+void TreeAppearance::recalcBoundsAndStamp() {
+	// FRAME-JOBS-1 worker path. Do not call from game logic.
+	extern uint32_t g_mc2FrameCounter;
+	if (boundsFrame == g_mc2FrameCounter) return;
+	recalcBounds();
+	boundsFrame = g_mc2FrameCounter;
 }
 
 //-----------------------------------------------------------------------------

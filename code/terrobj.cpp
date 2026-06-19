@@ -65,6 +65,7 @@
 #include"objectappearance.h"
 #include "static_update_counters.h"
 #include "bldg_anim_gate_counters.h"
+#include "frame_jobs.h"  // FRAME-JOBS-1: frameJobsEnabled() gate
 
 //---------------------------------------------------------------------------
 // Slice 3 Static-Update Bypass instrumentation (worktree CLAUDE.md
@@ -837,10 +838,22 @@ long TerrainObject::update (void) {
 					inView = true;
 				} else {
 					// Readback uncertain: CPU recalcBounds is authoritative.
-					inView = appearance->recalcBounds();
+					// FRAME-JOBS-1: if workers already computed bounds this frame, use cached result.
+					// frameJobsEnabled() is false by default — this branch costs one bool read only.
+					if (frameJobsEnabled() && appearance->boundsFrame == g_mc2FrameCounter) {
+						inView = appearance->inView;
+					} else {
+						inView = appearance->recalcBounds();
+					}
 				}
 			} else {
-				inView = appearance->recalcBounds();
+				// FRAME-JOBS-1: if workers already computed bounds this frame, use cached result.
+				// frameJobsEnabled() is false by default — this branch costs one bool read only.
+				if (frameJobsEnabled() && appearance->boundsFrame == g_mc2FrameCounter) {
+					inView = appearance->inView;
+				} else {
+					inView = appearance->recalcBounds();
+				}
 			}
 		}
 		// gpuVisible extension: unused when readback is on (inView IS the result).
