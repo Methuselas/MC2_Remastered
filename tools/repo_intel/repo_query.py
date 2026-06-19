@@ -378,7 +378,8 @@ def main():
     if not raw_args:
         print(
             "Usage: repo_query.py <dirty|harness <name>|preflight|"
-            "env [MC2_NAME|--undocumented|--domain D|--all]> "
+            "env [MC2_NAME|--undocumented|--domain D|--all]|"
+            "binding [N|--conflicts|--namespace NS|--all]> "
             "[--expect-branch BRANCH]",
             file=sys.stderr,
         )
@@ -419,6 +420,36 @@ def main():
         print(result["summary"])
         out_json(result)
 
+    elif cmd == "binding":
+        from binding_index import query_binding
+        rest      = args[1:]
+        binding_n  = None
+        namespace  = None
+        conflicts  = False
+        show_all   = False
+        i = 0
+        while i < len(rest):
+            a = rest[i]
+            if a == '--conflicts':
+                conflicts = True
+            elif a == '--all':
+                show_all = True
+            elif a.startswith('--namespace'):
+                if '=' in a:
+                    namespace = a.split('=', 1)[1]
+                elif i + 1 < len(rest):
+                    i += 1
+                    namespace = rest[i]
+            elif not a.startswith('--'):
+                try:
+                    binding_n = int(a)
+                except ValueError:
+                    out_json({'error': f"Binding number must be an integer, got '{a}'"})
+                    sys.exit(1)
+            i += 1
+        out_json(query_binding(repo_root, binding=binding_n, namespace=namespace,
+                               conflicts=conflicts, show_all=show_all))
+
     elif cmd == "env":
         from env_index import query_env
         rest = args[1:]
@@ -446,7 +477,7 @@ def main():
                            undocumented=undocumented, show_all=show_all))
 
     else:
-        out_json({"error": f"Unknown command '{cmd}'. Valid: dirty, harness, preflight, env"})
+        out_json({"error": f"Unknown command '{cmd}'. Valid: dirty, harness, preflight, env, binding"})
         sys.exit(1)
 
 
