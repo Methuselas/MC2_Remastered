@@ -8,6 +8,8 @@
 
 // Engine side.
 #include "gos_vegetation.h"
+#include "utils/Image.h"   // Image + getBytesPerPixel (inline in Image.h)
+#include <GL/glew.h>        // GLuint, glGenTextures, etc. (THIRDPARTY_INCLUDE_DIRS)
 
 // Game side -- terrain geometry + type queries.
 #include "../mclib/terrain.h"
@@ -25,7 +27,8 @@
 #include <vector>
 #include <algorithm> // std::max
 #include <cstdlib>   // std::getenv, std::atoi
-#include <cstdio>    // fprintf, snprintf
+#include <cstdio>    // fprintf, snprintf, fopen, fclose, fread
+#include <cstring>   // strstr, strlen, memcpy
 #include <cmath>     // sinf, fmodf, fabsf
 
 // ---------------------------------------------------------------------------
@@ -70,16 +73,63 @@ constexpr float kGridStep = 14.0f;
 // kFull   = vegetated surfaces: grass, moss, forest floor, mud, tundra
 enum class VegDensity : int { kHard = -1, kNone = 0, kSparse = 1, kFull = 2 };
 
+// ---------------------------------------------------------------------------
+// Vegetation schema — struct and statics (defined here so framePalette can use them)
+// ---------------------------------------------------------------------------
+
+// Maximum cards per schema list (atlas is 4×2 = 8 frames max).
+static constexpr int kMaxSchemaCards = 8;
+// Maximum card name length (without extension).
+static constexpr int kMaxCardNameLen = 64;
+
+struct VegSchema {
+    char name[64];
+    char cards_full[kMaxSchemaCards][kMaxCardNameLen];
+    int  cards_full_count;
+    char cards_sparse[kMaxSchemaCards][kMaxCardNameLen];
+    int  cards_sparse_count;
+    bool loaded;
+};
+
+// Active schema (zeroed = no schema loaded).
+static VegSchema s_activeSchema = {};
+static bool s_schemaActive = false;
+
 // Atlas frame palettes per vegetation density tier.
 // vegetation_atlas_v2.png: 2 rows x 4 cols = 8 frames.
 //   Row 0 (frames 0-3): grass / ground-cover variants
 //   Row 1 (frames 4-7): ferns, shrubs, taller plants
 // dominant = how many leading frames to pick the clump dominant from.
-// NOTE: frames 4-7 (ferns/shrubs) are intentionally excluded — grass cards only.
+//
+// When a schema is active, cards_full maps to kFull and cards_sparse to kSparse.
+// NOTE: frames 4-7 (ferns/shrubs) are excluded from the legacy palette — grass only.
 struct FramePalette { uint8_t f[8]; int dominant; int n; };
 
 [[nodiscard]] FramePalette framePalette(VegDensity vdc) noexcept
 {
+    if (s_schemaActive) {
+        // Schema-driven palette.  cards_full indices = 0..full_count-1,
+        // cards_sparse indices = 0..sparse_count-1 (subset of full, same frames).
+        FramePalette pal{};
+        const int nFull   = std::min(s_activeSchema.cards_full_count,   8);
+        const int nSparse = std::min(s_activeSchema.cards_sparse_count, 8);
+
+        if (vdc == VegDensity::kFull && nFull > 0) {
+            for (int i = 0; i < nFull; ++i) pal.f[i] = static_cast<uint8_t>(i);
+            pal.dominant = nFull;
+            pal.n        = nFull;
+        } else if (nSparse > 0) {
+            for (int i = 0; i < nSparse; ++i) pal.f[i] = static_cast<uint8_t>(i);
+            pal.dominant = nSparse;
+            pal.n        = nSparse;
+        } else {
+            // Fallback: use frame 0 only.
+            pal.f[0] = 0; pal.dominant = 1; pal.n = 1;
+        }
+        return pal;
+    }
+
+    // Legacy hard-coded palette (no schema).
     if (vdc == VegDensity::kFull)
         return {{ 0, 1, 2, 3, 0, 1, 2, 3 }, 4, 4};  // grass only, all 4 variants
     // kSparse: short dry grass only
@@ -149,6 +199,224 @@ struct FramePalette { uint8_t f[8]; int dominant; int n; };
     }
 }
 
+// ---------------------------------------------------------------------------
+// Vegetation schema — JSON helpers and atlas builder
+// ---------------------------------------------------------------------------
+
+// Minimal hand-rolled JSON string-array extractor.
+// Finds key "keyName": ["val1", "val2", ...] in flat JSON.
+// Returns count of values stored (up to maxVals), 0 on failure.
+static int jsonGetStringArray(const char* json, const char* keyName,
+                              char (*out)[kMaxCardNameLen], int maxVals) noexcept
+{
+    // Build needle: "keyName"
+    char needle[80];
+    snprintf(needle, sizeof(needle), "\"%s\"", keyName);
+    const char* p = strstr(json, needle);
+    if (!p) return 0;
+    p += strlen(needle);
+    // Skip whitespace and colon
+    while (*p == ' ' || *p == ':' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    if (*p != '[') return 0;
+    p++;  // skip '['
+
+    int count = 0;
+    while (*p && *p != ']' && count < maxVals) {
+        // Skip whitespace and commas
+        while (*p && (*p == ' ' || *p == ',' || *p == '\t' || *p == '\r' || *p == '\n')) p++;
+        if (*p == ']' || *p == '\0') break;
+        if (*p != '"') { p++; continue; }
+        p++;  // skip opening quote
+        const char* end = strchr(p, '"');
+        if (!end) break;
+        int len = static_cast<int>(end - p);
+        if (len >= kMaxCardNameLen) len = kMaxCardNameLen - 1;
+        memcpy(out[count], p, static_cast<size_t>(len));
+        out[count][len] = '\0';
+        count++;
+        p = end + 1;
+    }
+    return count;
+}
+
+// Minimal JSON string field extractor (key: "value").
+static bool jsonGetString(const char* json, const char* key,
+                          char* out, int outSz) noexcept
+{
+    char needle[80];
+    snprintf(needle, sizeof(needle), "\"%s\"", key);
+    const char* p = strstr(json, needle);
+    if (!p) return false;
+    p += strlen(needle);
+    while (*p == ' ' || *p == ':' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    if (*p != '"') return false;
+    p++;
+    const char* end = strchr(p, '"');
+    if (!end) return false;
+    int len = static_cast<int>(end - p);
+    if (len >= outSz) len = outSz - 1;
+    memcpy(out, p, static_cast<size_t>(len));
+    out[len] = '\0';
+    return true;
+}
+
+// Load and parse a schema JSON file.  Returns false on failure.
+[[nodiscard]] static bool loadVegSchema(const char* schemaPath, VegSchema* out) noexcept
+{
+    memset(out, 0, sizeof(*out));
+    FILE* f = fopen(schemaPath, "rb");
+    if (!f) {
+        fprintf(stderr, "[VEG schema] event=load_failed path=%s reason=file_open\n", schemaPath);
+        fflush(stderr);
+        return false;
+    }
+    char buf[4096];
+    const size_t got = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    buf[got] = '\0';
+
+    jsonGetString(buf, "name", out->name, sizeof(out->name));
+    out->cards_full_count   = jsonGetStringArray(buf, "cards_full",   out->cards_full,   kMaxSchemaCards);
+    out->cards_sparse_count = jsonGetStringArray(buf, "cards_sparse", out->cards_sparse, kMaxSchemaCards);
+    out->loaded = (out->cards_full_count > 0);
+
+    fprintf(stderr,
+        "[VEG schema] event=loaded name=%s full=%d sparse=%d path=%s\n",
+        out->name, out->cards_full_count, out->cards_sparse_count, schemaPath);
+    fflush(stderr);
+    return out->loaded;
+}
+
+// Build a GL_TEXTURE_2D atlas (4 cols × 2 rows, each card 512×512, RGBA)
+// from a list of card base names.  Packs cards_full into the first rows,
+// cards_sparse continues (they may overlap at lower indices — framePalette
+// limits which indices are used per density tier).
+//
+// Layout: cards[0..N-1] fill frames 0..N-1 left-to-right, top-to-bottom.
+// Atlas is always 2048×1024 (matching the legacy vegetation_atlas_v2.png).
+// Returns 0 on failure (all frames black = missing card is transparent).
+[[nodiscard]] static GLuint buildSchemaAtlas(
+    const VegSchema& schema, const char* cardDir) noexcept
+{
+    constexpr int kAtlasCols = 4;
+    constexpr int kAtlasRows = 2;
+    constexpr int kCardW = 512;
+    constexpr int kCardH = 512;
+    constexpr int kAtlasW = kAtlasCols * kCardW;  // 2048
+    constexpr int kAtlasH = kAtlasRows * kCardH;  // 1024
+    constexpr int kBpp    = 4;  // RGBA
+
+    // Allocate atlas pixel buffer (zero = transparent black).
+    const size_t atlasBytes = static_cast<size_t>(kAtlasW) * kAtlasH * kBpp;
+    std::vector<unsigned char> atlasBuf(atlasBytes, 0);
+
+    // Collect all card names to blit: full first, then any sparse-only cards.
+    // cards_full always provides the primary set; cards_sparse is a subset.
+    // We pack full cards into frames 0..full-1, total up to 8 frames.
+    const int nCards = std::min(schema.cards_full_count, kAtlasCols * kAtlasRows);
+
+    char cardPath[512];
+    for (int i = 0; i < nCards; ++i) {
+        // Try .ktx2 first (TODO: cook pipeline), then .png fallback.
+        // Currently only .png is produced by extract_veg_cards.py.
+        snprintf(cardPath, sizeof(cardPath), "%s/%s.ktx2", cardDir, schema.cards_full[i]);
+        bool usePng = true;
+        // KTX2 loading not implemented yet — always use PNG.
+        (void)usePng;
+
+        snprintf(cardPath, sizeof(cardPath), "%s/%s.png", cardDir, schema.cards_full[i]);
+
+        Image img;
+        if (!img.loadFromFile(cardPath)) {
+            fprintf(stderr,
+                "[VEG schema] event=card_missing frame=%d path=%s (frame will be black)\n",
+                i, cardPath);
+            fflush(stderr);
+            continue;
+        }
+
+        const int cw = img.getWidth();
+        const int ch = img.getHeight();
+        const int bpp = getBytesPerPixel(img.getFormat());
+        const unsigned char* src = img.getPixels();
+
+        // Destination tile in atlas.
+        const int dstCol = i % kAtlasCols;
+        const int dstRow = i / kAtlasCols;
+        const int dstX = dstCol * kCardW;
+        const int dstY = dstRow * kCardH;
+
+        // Blit card into atlas (clamp if card size differs from kCardW/kCardH).
+        const int blitW = std::min(cw, kCardW);
+        const int blitH = std::min(ch, kCardH);
+
+        for (int row = 0; row < blitH; ++row) {
+            for (int col = 0; col < blitW; ++col) {
+                const int srcIdx = (row * cw + col) * bpp;
+                const int dstIdx = ((dstY + row) * kAtlasW + (dstX + col)) * kBpp;
+                atlasBuf[static_cast<size_t>(dstIdx) + 0] = src[srcIdx + 0];  // R
+                atlasBuf[static_cast<size_t>(dstIdx) + 1] = (bpp > 1) ? src[srcIdx + 1] : src[srcIdx]; // G
+                atlasBuf[static_cast<size_t>(dstIdx) + 2] = (bpp > 2) ? src[srcIdx + 2] : src[srcIdx]; // B
+                atlasBuf[static_cast<size_t>(dstIdx) + 3] = (bpp > 3) ? src[srcIdx + 3] : 0xFF;        // A
+            }
+        }
+
+        fprintf(stderr,
+            "[VEG schema] event=card_blitted frame=%d name=%s size=%dx%d bpp=%d\n",
+            i, schema.cards_full[i], cw, ch, bpp);
+        fflush(stderr);
+    }
+
+    // Upload to GL.
+    GLuint texId = 0;
+    glGenTextures(1, &texId);
+    glBindTexture(GL_TEXTURE_2D, texId);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, kAtlasW, kAtlasH,
+                 0, GL_RGBA, GL_UNSIGNED_BYTE, atlasBuf.data());
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    fprintf(stderr,
+        "[VEG schema] event=atlas_built cards=%d size=%dx%d texId=%u\n",
+        nCards, kAtlasW, kAtlasH, texId);
+    fflush(stderr);
+    return texId;
+}
+
+// ---------------------------------------------------------------------------
+// Density tier helpers
+// ---------------------------------------------------------------------------
+
+// MC2_VEGETATION_DENSITY: 0=off, 1=low, 2=med, 3=high (default 3).
+// Returns the density value (0-3).  Cached.
+[[nodiscard]] static int vegDensityTier() noexcept
+{
+    static int cached = -1;
+    if (cached < 0) {
+        const char* v = std::getenv("MC2_VEGETATION_DENSITY");
+        if (!v || !v[0]) {
+            // Legacy: MC2_VEGETATION_DENSITY not set.
+            // If MC2_VEGETATION_CARDS is set, default to density 3 (high).
+            cached = 3;
+        } else {
+            cached = std::atoi(v);
+            if (cached < 0) cached = 0;
+            if (cached > 3) cached = 3;
+        }
+    }
+    return cached;
+}
+
+// Clump acceptance probability for each density tier.
+// Tier 3 = 1.0 (100%), Tier 2 = 0.60, Tier 1 = 0.25, Tier 0 = 0.0 (off).
+static constexpr float kDensityProb[4] = { 0.0f, 0.25f, 0.60f, 1.0f };
+
+// ---------------------------------------------------------------------------
+
 // Bilinear-interpolated hash on a coarse grid → smooth spatial blobs.
 // Returns [0,1].  Used as secondary variation WITHIN terrain-type zones;
 // terrain type is still the primary gate.
@@ -195,9 +463,54 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
 {
     if (!land) return;
     if (!GosVegetation::isEnabled()) return;
+
+    // Density tier gate.  Density=0 means off even if MC2_VEGETATION_CARDS=1.
+    const int densityTier = vegDensityTier();
+    if (densityTier == 0) {
+        fprintf(stderr, "[VEG] event=density_off MC2_VEGETATION_DENSITY=0 skipping placement\n");
+        fflush(stderr);
+        GosVegetation::uploadInstances(nullptr, 0);
+        return;
+    }
+    const float densityProb = kDensityProb[densityTier];
+
     GosVegetation::init();  // no-op if already initialized
 
-    const int density = envInt("MC2_VEGETATION_DENSITY", 25);
+    // Schema loading.  MC2_VEGETATION_SCHEMA selects the JSON schema
+    // (default: "grasslands").  Schema files live in data/vegetation/schemas/.
+    // Card images live in data/vegetation/cards/.
+    {
+        const char* schemaName = std::getenv("MC2_VEGETATION_SCHEMA");
+        if (!schemaName || !schemaName[0]) schemaName = "grasslands";
+
+        char schemaPath[512];
+        snprintf(schemaPath, sizeof(schemaPath),
+                 "data/vegetation/schemas/%s.json", schemaName);
+
+        s_schemaActive = false;
+        if (loadVegSchema(schemaPath, &s_activeSchema)) {
+            GLuint atlasId = buildSchemaAtlas(s_activeSchema, "data/vegetation/cards");
+            if (atlasId) {
+                GosVegetation::setAtlasTexId(atlasId);
+                s_schemaActive = true;
+                fprintf(stderr,
+                    "[VEG] event=schema_active name=%s density_tier=%d prob=%.2f\n",
+                    s_activeSchema.name, densityTier, static_cast<double>(densityProb));
+            } else {
+                fprintf(stderr,
+                    "[VEG] event=schema_atlas_failed name=%s falling_back_to_legacy_atlas\n",
+                    s_activeSchema.name);
+            }
+        } else {
+            fprintf(stderr,
+                "[VEG] event=schema_not_found path=%s using_legacy_atlas\n", schemaPath);
+        }
+        fflush(stderr);
+    }
+
+    // MC2_VEGETATION_CLUMP_MAX: max cards per clump (internal tuning knob, default 25).
+    // Distinct from MC2_VEGETATION_DENSITY which is the 0-3 tier selector.
+    const int density = envInt("MC2_VEGETATION_CLUMP_MAX", 25);
     const int maxInst = envInt("MC2_VEGETATION_MAX", 5000000);
 
     // Terrain map is square.  mapTopLeft3d is the top-left (max-Y, min-X)
@@ -263,6 +576,14 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
             {
                 const float sampleElev = land->getTerrainElevation(samplePos);
                 if (sampleElev <= Terrain::waterElevation) { ++diagWater; continue; }
+            }
+
+            // Density tier rejection: probabilistic per-clump gate.
+            // At tier 3 (prob=1.0) all clumps pass; lower tiers thin out.
+            // Uses a position hash for stability (same result every call for same position).
+            if (densityProb < 1.0f) {
+                const float h = hashf(wx * 0.003f, wy * 0.005f + 77777.7f);
+                if (h > densityProb) { ++diagNotGreen; continue; }
             }
 
             // macroZone [0,1] — secondary variation WITHIN terrain-type zones.
@@ -393,11 +714,13 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
     // Always log: needed to diagnose zero-instance cases without re-running.
     fprintf(stderr,
         "[VEG v3] placement_health cells_total=%d oob=%d terrain_type_reject=%d "
-        "water=%d density=%d overlay=%d instances=%u max=%d mapSpan=%.0f waterElev=%.2f\n",
+        "water=%d density=%d overlay=%d instances=%u max=%d mapSpan=%.0f waterElev=%.2f "
+        "density_tier=%d schema=%s\n",
         diagCellsTotal, diagOOB, diagHard,
         diagWater, diagNotGreen, diagOverlay,
         instCount, maxInst, static_cast<double>(mapSpan),
-        static_cast<double>(Terrain::waterElevation));
+        static_cast<double>(Terrain::waterElevation),
+        densityTier, s_schemaActive ? s_activeSchema.name : "legacy");
     fflush(stderr);
 
     // Structured VEG_HEALTH JSONL placement event (MCP-queryable).

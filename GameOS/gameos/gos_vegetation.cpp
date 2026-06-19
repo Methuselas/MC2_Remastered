@@ -117,6 +117,17 @@ void GosVegetation::setAtlasPath(const char* path) {
     s_atlasPathOverride = path;
 }
 
+void GosVegetation::setAtlasTexId(unsigned int texId) {
+    // Replace atlas after init().  Delete old texture if we own one.
+    if (s_atlasTexId) {
+        glDeleteTextures(1, &s_atlasTexId);
+        s_atlasTexId = 0;
+    }
+    s_atlasTexId = texId;
+    fprintf(stderr, "[VEG v1] event=atlas_replaced new_tex=%u\n", texId);
+    fflush(stderr);
+}
+
 void GosVegetation::init() {
     if (s_initialized) {
         return;

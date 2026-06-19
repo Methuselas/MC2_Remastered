@@ -1,0 +1,5 @@
+{
+  "name": "swamp",
+  "cards_full": ["fern_01", "fern_02", "fern_03", "fern_04"],
+  "cards_sparse": ["fern_01", "fern_02"]
+}

@@ -28,6 +28,8 @@ data/*
 !data/defs/
 !data/hdr/
 !data/visual_tuning.json
+!data/vegetation/
+!data/vegetation/**
 unpacked_data
 unpacked_data--
 data-orig
