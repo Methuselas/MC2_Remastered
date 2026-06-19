@@ -2813,6 +2813,23 @@ void Camera::setCameraOrigin (void)
 			actualPosition.y = translation.z;
 			actualPosition.z = translation.y - ELEVATION_BUFFER;
 
+			// [HZB_CAM v1] one-shot diagnostic (env-gated, at most once per second)
+			if (getenv("MC2_HZB_FORCE_HORIZON"))
+			{
+				static double s_hzbCamLastPrint = -999.0;
+				double nowSec = (double)clock() / CLOCKS_PER_SEC;
+				if (nowSec - s_hzbCamLastPrint >= 1.0)
+				{
+					s_hzbCamLastPrint = nowSec;
+					fprintf(stderr,
+						"[HZB_CAM v1] eyeX=%f eyeY=%f lookX=%f lookY=%f rot=%f angle=%f\n",
+						actualPosition.x, actualPosition.y,
+						lookVector.x, lookVector.y,
+						cameraRotation, projectionAngle);
+					fflush(stderr);
+				}
+			}
+
 			// Clamp camera to terrain floor via position, not angle.
 			// When clamped, recompute the rotation to look FROM the lifted
 			// position TOWARD the focus — prevents the lifted camera from

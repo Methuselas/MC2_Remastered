@@ -1,7 +1,11 @@
 #include "EditorInspector.h"
 #include "imgui.h"
-#include <cstdio>    // snprintf
+#include <cstdio>    // snprintf, fopen, fprintf, fclose
 #include <cstdlib>   // getenv
+
+// HZB camera-view dump: thin C helper defined in code/gamecam.cpp so we don't
+// have to pull the full camera.h -> terrain.h chain into GuiRuntime.
+extern "C" void mc2_hzb_dump_camera_view(void);
 #include "../GameOS/gameos/debug_renderer.h"  // IMG-INSPECT-3
 #include "../GameOS/gameos/gos_frame_pass_stats.h"  // FRAME-INSPECTOR-1
 #include "../GameOS/gameos/gos_render_pass_timer.h"  // FRAME-INSPECTOR-1 (ms col)
@@ -464,6 +468,23 @@ void EditorInspector::drawImGui() {
         ImGui::Text("World:         (%.1f, %.1f, %.1f)", lk.worldX, lk.worldY, lk.worldZ);
     else
         ImGui::TextDisabled("World:         (unavailable)");
+
+    // Save Camera View (HZB) — dumps current eye position/rotation to saved_view.txt
+    // so it can be replayed via MC2_HZB_VIEW_FILE. Uses a thin C helper in gamecam.cpp
+    // to avoid pulling the camera.h -> terrain.h header chain into GuiRuntime.
+    {
+        static bool s_hzbSaved = false;
+        ImGui::Spacing();
+        if (ImGui::Button("Save Camera View (HZB)")) {
+            mc2_hzb_dump_camera_view();
+            s_hzbSaved = true;
+        }
+        if (s_hzbSaved) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("saved!");
+        }
+        ImGui::Spacing();
+    }
 
     // Copy All — formats everything visible in the window to the clipboard.
     ImGui::Spacing();

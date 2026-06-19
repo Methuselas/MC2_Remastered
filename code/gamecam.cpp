@@ -980,7 +980,107 @@ long GameCamera::update (void)
 	if ((cameraAltitude < testMax) && (cameraAltitudeDesired > testMax))
 		cameraAltitude = testMax;
 												  
-	// calculate new near and far plane distance based on 
+	// HZB validation knob (debug only): force a low across-map HORIZON view so
+	// static props occlude each other. MC2's default RTS camera is near top-down
+	// (projectionAngle up to 88deg) where buildings rarely occlude — that hides
+	// any HZB-cull benefit. Shallow angle (~12deg) + low altitude looks across
+	// the map. Tunable: MC2_HZB_FORCE_HORIZON_ANGLE (deg), MC2_HZB_FORCE_HORIZON_ALT.
+	// MC2_HZB_VIEW_FILE: path to a saved_view.txt written by Ctrl+Alt+V.
+	// When set, read the file once and pin the camera to those exact coords.
+	static const char* s_hzbViewFile = getenv("MC2_HZB_VIEW_FILE");
+	struct HzbSavedView { float x, y, z, rot, angle, alt; bool valid; };
+	static HzbSavedView s_hzbSavedView = [&]() -> HzbSavedView {
+		HzbSavedView v{}; v.valid = false;
+		if (!s_hzbViewFile || !s_hzbViewFile[0]) return v;
+		FILE* f = fopen(s_hzbViewFile, "r");
+		if (!f) { fprintf(stderr, "[HZB_VIEW_FILE] cannot open '%s'\n", s_hzbViewFile); fflush(stderr); return v; }
+		int n = fscanf(f, "X=%f Y=%f Z=%f ROT=%f ANGLE=%f ALT=%f",
+		               &v.x, &v.y, &v.z, &v.rot, &v.angle, &v.alt);
+		fclose(f);
+		if (n == 6) {
+			v.valid = true;
+			fprintf(stderr, "[HZB_VIEW_FILE] loaded X=%.4f Y=%.4f Z=%.4f ROT=%.4f ANGLE=%.4f ALT=%.4f\n",
+			        v.x, v.y, v.z, v.rot, v.angle, v.alt);
+			fflush(stderr);
+		} else {
+			fprintf(stderr, "[HZB_VIEW_FILE] parse failed (n=%d) in '%s'\n", n, s_hzbViewFile);
+			fflush(stderr);
+		}
+		return v;
+	}();
+
+	// Shared pin lambda: zero all jitter sources so viewProj is byte-stable.
+	auto hzbPinCamera = [&]() {
+		velocity.Zero();
+		goalVelocity.Zero();
+		goalVelTime  = 0.0f;
+		goalPosition = position;
+		goalPosTime  = 0.0f;
+		goalRotation.x = projectionAngle;
+		goalRotation.y = cameraRotation;
+		goalRotation.z = cameraAltitude;
+		goalRotTime  = 0.0f;
+		if (land) {
+			float elev = land->getTerrainElevation(position);
+			if (elev < Terrain::waterElevation) elev = Terrain::waterElevation;
+			position.z = elev;
+			goalPositionZ = elev;
+			cameraShiftZ  = elev;
+		}
+		cameraShift.x = 0.0f;
+		cameraShift.y = 0.0f;
+	};
+
+	static const bool s_hzbForceHorizon = (getenv("MC2_HZB_FORCE_HORIZON") != nullptr);
+	if (s_hzbSavedView.valid)
+	{
+		// MC2_HZB_VIEW_FILE wins: absolute coord replay from saved_view.txt
+		position.x     = s_hzbSavedView.x;
+		position.y     = s_hzbSavedView.y;
+		// position.z set by pin lambda via terrain elevation
+		cameraRotation        = s_hzbSavedView.rot;
+		projectionAngle       = s_hzbSavedView.angle;
+		cameraAltitude        = s_hzbSavedView.alt;
+		cameraAltitudeDesired = s_hzbSavedView.alt;
+		anglePercent = (projectionAngle - MIN_PERSPECTIVE) / (MAX_PERSPECTIVE - MIN_PERSPECTIVE);
+		testMax = Camera::AltitudeMaximumLo + ((Camera::AltitudeMaximumHi - Camera::AltitudeMaximumLo) * anglePercent);
+		hzbPinCamera();
+	}
+	else if (s_hzbForceHorizon)
+	{
+		auto envf = [](const char* k, float def) {
+			const char* v = getenv(k);
+			return (v && v[0]) ? (float)atof(v) : def;
+		};
+		// Corner position as a fraction of the half-map extent (map is centered
+		// at origin: vegHalfMap = worldUnitsMapSide*0.5). +X=east, +Y=north.
+		// mc2_01 SE-looking-NW: X=+0.9 Y=-0.9 ROT~?  mc2_24 NW-looking-SE: X=-0.9 Y=+0.9.
+		static const float s_xf    = envf("MC2_HZB_FORCE_HORIZON_X",   0.9f);
+		static const float s_yf    = envf("MC2_HZB_FORCE_HORIZON_Y",  -0.9f);
+		static const float s_rot   = envf("MC2_HZB_FORCE_HORIZON_ROT", 135.0f);
+		static const float s_angle = envf("MC2_HZB_FORCE_HORIZON_ANGLE", 12.0f);
+		static const float s_alt   = envf("MC2_HZB_FORCE_HORIZON_ALT",  150.0f);
+		// Position override is opt-in (MC2_HZB_FORCE_HORIZON_POS=1): place the
+		// camera at a map corner. Without it, the flythrough position is kept and
+		// only the pitch/altitude/rotation are forced (occlusion-rich over land).
+		static const bool s_forcePos = (getenv("MC2_HZB_FORCE_HORIZON_POS") != nullptr);
+		if (s_forcePos) {
+			const float half = Terrain::worldUnitsMapSide * 0.5f;
+			position.x = s_xf * half;
+			position.y = s_yf * half;
+		}
+		cameraRotation        = s_rot;
+		projectionAngle       = s_angle;
+		cameraAltitude        = s_alt;
+		cameraAltitudeDesired = s_alt;
+		anglePercent = (projectionAngle - MIN_PERSPECTIVE) / (MAX_PERSPECTIVE - MIN_PERSPECTIVE);
+		testMax = Camera::AltitudeMaximumLo + ((Camera::AltitudeMaximumHi - Camera::AltitudeMaximumLo) * anglePercent);
+
+		// HZB-PIN: kill all jitter sources so viewProj is byte-stable frame-to-frame.
+		hzbPinCamera();
+	}
+
+	// calculate new near and far plane distance based on
 	// Current altitude above terrain.
 	float altitudePercent = (cameraAltitude - AltitudeMinimum) / (testMax - AltitudeMinimum);
 	Camera::NearPlaneDistance = MinNearPlane + ((MaxNearPlane - MinNearPlane) * altitudePercent);
@@ -989,7 +1089,31 @@ long GameCamera::update (void)
 	if (userInput->getKeyDown(KEY_LBRACKET) && userInput->ctrl() && userInput->alt() && !userInput->shift())
 	{
 		useLOSAngle ^= true;
-	}		
+	}
+
+	// Ctrl+Alt+V: dump current camera viewpoint to saved_view.txt for deterministic replay.
+	// Use MC2_HZB_VIEW_FILE=A:/Games/mc2-hzb-cull/saved_view.txt to replay it.
+	if (userInput->getKeyDown(KEY_V) && userInput->ctrl() && userInput->alt() && !userInput->shift())
+	{
+		const char* dumpPath = "A:/Games/mc2-hzb-cull/saved_view.txt";
+		FILE* df = fopen(dumpPath, "w");
+		if (df)
+		{
+			fprintf(df, "X=%.4f Y=%.4f Z=%.4f ROT=%.4f ANGLE=%.4f ALT=%.4f\n",
+			        position.x, position.y, position.z,
+			        cameraRotation, projectionAngle, cameraAltitude);
+			fclose(df);
+			fprintf(stderr, "[HZB_VIEW_DUMP v1] saved X=%.4f Y=%.4f Z=%.4f ROT=%.4f ANGLE=%.4f ALT=%.4f\n",
+			        position.x, position.y, position.z,
+			        cameraRotation, projectionAngle, cameraAltitude);
+			fflush(stderr);
+		}
+		else
+		{
+			fprintf(stderr, "[HZB_VIEW_DUMP v1] ERROR: cannot open '%s' for write\n", dumpPath);
+			fflush(stderr);
+		}
+	}
 
 #ifdef DEBUG_CAMERA
 	if (userInput->getKeyDown(KEY_RBRACKET) && userInput->ctrl() && userInput->alt() && !userInput->shift())
@@ -1133,6 +1257,37 @@ long GameCamera::update (void)
 	useShadows = oldShadows;
 	
 	return result;
+}
+
+//---------------------------------------------------------------------------
+// mc2_hzb_dump_camera_view — C-linkage helper called from GuiRuntime/EditorInspector.cpp
+// ("Save Camera View (HZB)" button). Writes saved_view.txt in the same format that
+// the MC2_HZB_VIEW_FILE replay reader (fscanf "X=%f Y=%f Z=%f ROT=%f ANGLE=%f ALT=%f")
+// expects. Keeping this here avoids pulling camera.h -> terrain.h into GuiRuntime.
+extern "C" void mc2_hzb_dump_camera_view(void)
+{
+	const char* dumpPath = "A:/Games/mc2-hzb-cull/saved_view.txt";
+	if (!eye) {
+		fprintf(stderr, "[HZB_VIEW_DUMP v1] ERROR: eye is null\n");
+		fflush(stderr);
+		return;
+	}
+	Stuff::Vector3D pos = eye->getPosition();
+	float rot   = eye->getCameraRotation();
+	float angle = eye->getProjectionAngle();
+	float alt   = eye->getCameraAltitude();
+	FILE* df = fopen(dumpPath, "w");
+	if (df) {
+		fprintf(df, "X=%.4f Y=%.4f Z=%.4f ROT=%.4f ANGLE=%.4f ALT=%.4f\n",
+		        pos.x, pos.y, pos.z, rot, angle, alt);
+		fclose(df);
+		fprintf(stderr, "[HZB_VIEW_DUMP v1] saved X=%.4f Y=%.4f Z=%.4f ROT=%.4f ANGLE=%.4f ALT=%.4f\n",
+		        pos.x, pos.y, pos.z, rot, angle, alt);
+		fflush(stderr);
+	} else {
+		fprintf(stderr, "[HZB_VIEW_DUMP v1] ERROR: cannot open '%s' for write\n", dumpPath);
+		fflush(stderr);
+	}
 }
 
 //---------------------------------------------------------------------------
