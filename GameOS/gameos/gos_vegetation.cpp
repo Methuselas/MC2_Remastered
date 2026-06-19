@@ -38,8 +38,6 @@ static GLuint       s_blockVisSsbo  = 0;
 static glsl_program* s_prog         = nullptr;
 static uint32_t     s_instanceCount = 0;
 static bool         s_initialized   = false;
-// Per-mission fade distance override (set via setFadeDist(); -1 = use env/default).
-static float        s_fadeDistOverride = -1.0f;
 
 // Vertex for static crossed-quad geometry.
 struct CardVert {
@@ -117,24 +115,6 @@ uint32_t GosVegetation::instanceCount() {
 void GosVegetation::setAtlasPath(const char* path) {
     // Must be called before init(); the pointer must remain valid through init().
     s_atlasPathOverride = path;
-}
-
-void GosVegetation::setAtlasTexId(unsigned int texId) {
-    // Replace atlas after init().  Delete old texture if we own one.
-    if (s_atlasTexId) {
-        glDeleteTextures(1, &s_atlasTexId);
-        s_atlasTexId = 0;
-    }
-    s_atlasTexId = texId;
-    fprintf(stderr, "[VEG v1] event=atlas_replaced new_tex=%u\n", texId);
-    fflush(stderr);
-}
-
-void GosVegetation::setFadeDist(float maxDistWU) {
-    s_fadeDistOverride = maxDistWU;
-    fprintf(stderr, "[VEG v1] event=fade_dist_set value=%.1f\n",
-            static_cast<double>(maxDistWU));
-    fflush(stderr);
 }
 
 void GosVegetation::init() {
@@ -280,9 +260,8 @@ void GosVegetation::shutdown() {
     if (s_blockVisSsbo) { glDeleteBuffers(1, &s_blockVisSsbo);    s_blockVisSsbo = 0; }
     if (s_atlasTexId)   { glDeleteTextures(1, &s_atlasTexId);     s_atlasTexId = 0; }
     if (s_prog)         { glsl_program::deleteProgram("vegetation_card"); s_prog = nullptr; }
-    s_instanceCount    = 0;
-    s_initialized      = false;
-    s_fadeDistOverride = -1.0f;
+    s_instanceCount   = 0;
+    s_initialized     = false;
 }
 
 void GosVegetation::uploadInstances(const Instance* instances, uint32_t count) {
@@ -399,23 +378,18 @@ void GosVegetation::flush(float lightDirX, float lightDirY, float lightDirZ, flo
         if (loc >= 0) glProgramUniform1i(progId, loc, s_forceVis);
     }
 
-    // Distance-based fade: priority order:
-    //   1. Per-schema fade_dist (set via setFadeDist() at missionLoaded time)
-    //   2. MC2_VEG_MAX_DIST env var
-    //   3. Built-in default: 4096 WU
-    // Fade starts at 50% of max distance so cards dissolve gradually before hard cull.
-    // Force-visible bypasses distFade in the shader via u_forceVisible.
+    // Distance-based fade: MC2_VEG_MAX_DIST sets the hard cull distance (wu), default 8192.
+    // Fade begins at 70% of max. Force-visible bypasses distFade in the shader via u_forceVisible.
     {
-        float vegMaxDist = s_fadeDistOverride;
-        if (vegMaxDist < 0.0f) {
-            // No per-schema override: fall back to env var or default.
+        static float s_vegMaxDist = -1.0f;
+        if (s_vegMaxDist < 0.0f) {
             const char* v = getenv("MC2_VEG_MAX_DIST");
-            vegMaxDist = (v && v[0]) ? static_cast<float>(atof(v)) : 4096.0f;
+            s_vegMaxDist = (v && v[0]) ? static_cast<float>(atof(v)) : 4096.0f;
         }
-        const float vegFadeStart = vegMaxDist * 0.50f;
+        const float vegFadeStart = s_vegMaxDist * 0.50f;  // clump cull starts at half max (4096 for default 8192)
         {
             const GLint loc = glGetUniformLocation(progId, "u_vegMaxDist");
-            if (loc >= 0) glProgramUniform1f(progId, loc, vegMaxDist);
+            if (loc >= 0) glProgramUniform1f(progId, loc, s_vegMaxDist);
         }
         {
             const GLint loc = glGetUniformLocation(progId, "u_vegFadeStart");

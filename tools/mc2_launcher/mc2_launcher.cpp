@@ -160,7 +160,7 @@ struct EnvVarDef {
 //   - Default-ON vars where toggling is rarely useful interactively
 static const EnvVarDef k_envVars[] = {
     // --- Rendering ---
-    { "MC2_SHADOW_CSM",              "Cascaded shadow maps (CSM, default ON)", true,  "1",    "Rendering" },
+    { "MC2_SHADOW_CSM",              "Cascaded shadow maps (CSM)",           true,  "",     "Rendering" },
     { "MC2_CLOUD_SHADOW",            "Cloud shadows (default ON)",            true,  "1",    "Rendering" },
     { "MC2_SHADOW_BOUNDED_NEAR_FIT", "Crisp near shadows",                    true,  "",     "Rendering" },
     { "MC2_STATIC_PROP_PBR_V1",      "Static prop PBR specular",              true,  "",     "Rendering" },
@@ -169,9 +169,6 @@ static const EnvVarDef k_envVars[] = {
     // --- Terrain ---
     { "MC2_TERRAIN_LOD_CHUNK",       "Chunk terrain LOD renderer (default ON)", true, "1",   "Terrain"   },
     { "MC2_COLORMAP_KTX2",           "BC7 KTX2 colormap atlas (default ON)",  true,  "1",    "Terrain"   },
-    { "MC2_VEGETATION_CARDS",        "Vegetation ground-cover cards (default ON)", true,  "1",          "Terrain"  },
-    { "MC2_VEGETATION_DENSITY",      "Vegetation density 0=off 1=low 2=med 3=high", false, "3",         "Terrain"  },
-    { "MC2_VEGETATION_SCHEMA",       "Vegetation schema (grasslands/swamp/...)",  false, "grasslands",  "Terrain"  },
     // --- Water / VFX ---
     { "MC2_WATER_SKYTINT",           "Water sky tint",                        true,  "",     "Water/VFX" },
     { "MC2_WATER_REFLECTION",        "Water SH-L2 sky reflection",            true,  "",     "Water/VFX" },

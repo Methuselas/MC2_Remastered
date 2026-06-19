@@ -16,11 +16,6 @@ namespace GosVegetation {
     void init();
     void shutdown();
     void setAtlasPath(const char* path);
-    // Replace the atlas texture with a caller-owned GL texture (e.g. built from
-    // schema card files).  Must be called after init().  The previous atlas texture
-    // is deleted.  texId ownership transfers to GosVegetation; do not delete it.
-    // Parameter type is unsigned int to avoid pulling <GL/glew.h> into this header.
-    void setAtlasTexId(unsigned int texId);
     void uploadInstances(const Instance* instances, uint32_t count);
 
     // Per-block visibility: 1=draw, 0=cull.  Derived from Terrain::s_blockMeta[i].lodLevel.
@@ -38,11 +33,6 @@ namespace GosVegetation {
                float time,
                float camChunkX, float camChunkY, float camChunkZ,
                float mapHalfWU, float blockSideWU, int chunkSide);
-
-    // Override the per-frame fade distance (WU) used in flush().
-    // Call at missionLoaded time after the schema is parsed.
-    // Pass -1 to revert to env-var / built-in default (4096 WU).
-    void setFadeDist(float maxDistWU);
 
     [[nodiscard]] bool isEnabled();       // checks MC2_VEGETATION_CARDS env var
     [[nodiscard]] uint32_t instanceCount();
