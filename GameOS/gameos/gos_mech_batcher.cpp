@@ -256,7 +256,7 @@ static float s_mechBackFillStrength = []() {
 // Env-seeded defaults; no VBO rebuild needed (per-flush uniforms).
 static int   s_standardLitEnabled = []() {
     const char* v = std::getenv("MC2_STANDARD_LIT_V1");
-    return !(v != nullptr && v[0] == '0');  // DEFAULT-ON; kill-switch =0
+    return (v != nullptr && v[0] == '1');   // TEMPORARY DEFAULT-OFF (PBR mech rendering disabled); opt-in =1
 }();
 static float s_pbrMetallicInfluence = []() {
     const char* v = std::getenv("MC2_PBR_METALLIC_INFLUENCE");
@@ -506,7 +506,7 @@ static bool     s_spotlightReal_firstHitDraw     = false;
 #include "../../RenderCore/MaterialGpu.h"
 static const bool s_mechMaterialGpuEnabled = []() {
     const char* v = getenv("MC2_MATERIAL_GPU");
-    return v == nullptr || (v[0] != '0');
+    return v != nullptr && (v[0] != '0');
 }();
 static std::vector<RenderCore::MaterialGpu>        s_mechMaterialTable;
 static std::unordered_map<uint32_t, uint32_t>      s_mechHandleToMaterialIdx;
