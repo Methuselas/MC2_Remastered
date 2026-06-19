@@ -2344,6 +2344,7 @@ bool  mc2ShadowCsmEnabled();
 int   mc2ShadowCsmCount();
 float mc2ShadowCsmLambda();
 int   mc2ShadowMapSize();   // CSM-REDESIGN: env-tunable dynamic shadow map edge (texels)
+float mc2ShadowCsmR0();     // CSM-REDESIGN: near/mid cascade radius (world units), clamp >=64
 float mc2ShadowCsmSoftness();
 // Per-cascade shadow resolution: the LAST (full-map) cascade renders into a
 // separate lower-res 2D depth texture instead of the high-res near-cascade

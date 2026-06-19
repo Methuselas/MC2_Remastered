@@ -1,5 +1,6 @@
 #include "debug_state_dump.h"
 
+#include "gameos.hpp"           // SHADOW-OBSERVABILITY-1: mc2ShadowCsm* accessors
 #include "gos_postprocess.h"
 #include "gos_static_prop_batcher.h"
 #include "render_snapshot.h"
@@ -263,6 +264,21 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
     s << "    \"fxaa\": "; b(s, ps.fxaa); s << ",\n";
     s << "    \"tonemap\": "; b(s, ps.tonemap); s << "\n";
     s << "  },\n";
+    // SHADOW-OBSERVABILITY-1: live shadow/CSM runtime state. Emitted always
+    // (zeros/false when CSM disabled). Lets an agent query the resolved gate +
+    // tunables via mc2-render-state instead of re-deriving from launcher_env.json.
+    {
+        gosPostProcess* ppShadow = getGosPostProcess();
+        const bool dynArrBound = ppShadow && (ppShadow->getDynamicShadowArrayTexture() != 0);
+        s << "  \"shadow\": {\n";
+        s << "    \"csmActive\": "; b(s, mc2ShadowCsmEnabled()); s << ",\n";
+        s << "    \"cascadeCount\": " << mc2ShadowCsmCount() << ",\n";
+        s << "    \"r0\": " << mc2ShadowCsmR0() << ",\n";
+        s << "    \"lambda\": " << mc2ShadowCsmLambda() << ",\n";
+        s << "    \"mapSize\": " << mc2ShadowMapSize() << ",\n";
+        s << "    \"dynShadowArrayTexBound\": "; b(s, dynArrBound); s << "\n";
+        s << "  },\n";
+    }
     s << "  \"registeredViews\": [\n";
     {
         const uint32_t vc = RenderCore::getViewCount();
