@@ -160,7 +160,7 @@ struct EnvVarDef {
 //   - Default-ON vars where toggling is rarely useful interactively
 static const EnvVarDef k_envVars[] = {
     // --- Rendering ---
-    { "MC2_SHADOW_CSM",              "Cascaded shadow maps (CSM)",           true,  "",     "Rendering" },
+    { "MC2_SHADOW_CSM",              "Cascaded shadow maps (CSM, default ON)", true,  "1",    "Rendering" },
     { "MC2_CLOUD_SHADOW",            "Cloud shadows (default ON)",            true,  "1",    "Rendering" },
     { "MC2_SHADOW_BOUNDED_NEAR_FIT", "Crisp near shadows",                    true,  "",     "Rendering" },
     { "MC2_STATIC_PROP_PBR_V1",      "Static prop PBR specular",              true,  "",     "Rendering" },

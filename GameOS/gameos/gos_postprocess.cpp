@@ -31,7 +31,7 @@ bool mc2ShadowCsmEnabled()
 {
     static const bool s_on = []() {
         const char* v = getenv("MC2_SHADOW_CSM");
-        return (v && v[0] == '1' && v[1] == '\0');   // DEFAULT OFF; only "1" enables
+        return !(v && v[0] == '0' && v[1] == '\0');   // DEFAULT ON; only "0" disables
     }();
     return s_on;
 }
