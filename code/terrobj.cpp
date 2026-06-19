@@ -205,8 +205,8 @@ void g_staticUpdateEmitSummary(uint32_t frame) {
 #include <stdlib.h>
 #include <stdio.h>
 static bool s_tobjSplitEnabled = (getenv("MC2_TOBJ_COST_SPLIT") != nullptr);
-unsigned long long g_tobjAngularCyc = 0ULL;
-unsigned long long g_tobjProjCyc    = 0ULL;
+std::atomic<unsigned long long> g_tobjAngularCyc{0ULL};
+std::atomic<unsigned long long> g_tobjProjCyc{0ULL};
 unsigned long long g_tobjUpdateCyc  = 0ULL;
 static unsigned long long g_tobjFrameCount = 0ULL;
 
@@ -232,7 +232,9 @@ void g_tobjSplitRollAndMaybeEmit() {
                (double)g_tobjProjCyc / f,
                (double)g_tobjUpdateCyc / f);
         fflush(stderr);
-        g_tobjAngularCyc = g_tobjProjCyc = g_tobjUpdateCyc = 0ULL;
+        g_tobjAngularCyc.store(0ULL, std::memory_order_relaxed);
+        g_tobjProjCyc.store(0ULL, std::memory_order_relaxed);
+        g_tobjUpdateCyc = 0ULL;
     }
 }
 

@@ -1859,7 +1859,7 @@ bool BldgAppearance::recalcBounds (void)
 				}
 			}
 		}
-		if (s_tobjSplitBdOn) g_tobjAngularCyc += __rdtsc() - _tsA;
+		if (s_tobjSplitBdOn) g_tobjAngularCyc.fetch_add(__rdtsc() - _tsA, std::memory_order_relaxed);
 		}  // end ANGULAR bracket
 
 		// recalcBounds projection body deleted 2026-05-18 (Task 2): the GPU
@@ -5271,7 +5271,7 @@ bool TreeAppearance::recalcBounds (void)
 				}
 			}
 		}
-		if (s_tobjSplitBdOn) g_tobjAngularCyc += __rdtsc() - _tsA;
+		if (s_tobjSplitBdOn) g_tobjAngularCyc.fetch_add(__rdtsc() - _tsA, std::memory_order_relaxed);
 		}  // end ANGULAR bracket
 
 		// recalcBounds projection body deleted 2026-05-18 (Task 3, Tree mirror of Task 2):
