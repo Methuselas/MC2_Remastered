@@ -2177,6 +2177,7 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 
 	if (terrain && renderObjects)
 	{
+		int frameJobsPrePassCount = 0; // FRAME-JOBS-1: handle count for per-frame trace
 		// ── FRAME-JOBS-1: parallel recalcBounds pre-pass ─────────────────────────────
 		// Tier B only: recalcBoundsAndStamp() on whitelisted types.
 		// No touch(), no update(), no GL, no txmmgr. See FRAME-JOBS-2 for Tier C.
@@ -2202,6 +2203,7 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 				}
 
 				const int count = static_cast<int>(s_frameJobsHandles.size());
+				frameJobsPrePassCount = count; // FRAME-JOBS-1: exported for per-frame trace
 				parallelForRange(count, frameJobsBatch(),
 					[](int begin, int end) {
 						// FRAME-JOBS-1: Tier B only. No appearance->update() here.
@@ -2729,6 +2731,16 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 		// superset-parity counter probe (proof-gate #2). Called here at the
 		// same per-frame boundary as TOBJSPLIT (see static_update_counters.h).
 		g_tobjParityRollAndMaybeEmit();
+
+		// FRAME-JOBS-1: per-frame trace
+		if (frameJobsEnabled() && frameJobsTrace()) {
+			FrameJobsFrameStats stats = frameJobsGetFrameStats();
+			printf("FRAME_JOBS: workers=%d chunks=%d handles=%d serial=%s\n",
+			       stats.workerCount,
+			       stats.chunksExecuted,
+			       frameJobsPrePassCount,
+			       stats.serialFallback ? "yes" : "no");
+		}
 	}
 	
  	if (movers) {
