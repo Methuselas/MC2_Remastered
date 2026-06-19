@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-REPO-INTEL-1a/1b: repo_query.py
+REPO-INTEL-1a/1b/1c/1d: repo_query.py
 Read-only codebase intelligence CLI.
 
 Usage:
@@ -12,6 +12,18 @@ Usage:
     python tools/repo_intel/repo_query.py env --domain shadow
     python tools/repo_intel/repo_query.py env --all
     python tools/repo_intel/repo_query.py env          (summary only)
+    python tools/repo_intel/repo_query.py binding 5
+    python tools/repo_intel/repo_query.py binding --conflicts
+    python tools/repo_intel/repo_query.py binding --namespace ssbo
+
+Guards (apply to dirty + preflight):
+    --expect-branch BRANCH   fail if not on BRANCH (branch contamination guard)
+    --expect-root   PATH     fail if worktree root != PATH (shared-worktree guard)
+
+Example full preflight:
+    py -3 tools\\repo_intel\\repo_query.py preflight \\
+        --expect-branch claude/nifty-mendeleev \\
+        --expect-root A:\\Games\\mc2-opengl-src\\.claude\\worktrees\\nifty-mendeleev
 """
 
 import json
@@ -59,6 +71,11 @@ def find_claude_md(repo_root):
 
 def out_json(obj):
     print(json.dumps(obj, indent=2))
+
+
+def _normalize_path(p: str) -> str:
+    """Normalize a path for comparison: resolve, lower-case, forward slashes."""
+    return str(Path(p).resolve()).lower().replace("\\", "/")
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +138,8 @@ def classify_file(rel_path: str):
     return "unknown", "unclassified — treat as sensitive"
 
 
-def get_dirty_state(repo_root: Path, expect_branch: str = None):
+def get_dirty_state(repo_root: Path, expect_branch: str = None,
+                    expect_root: str = None):
     branch, _ = git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_root)
     head, _    = git(["rev-parse", "--short", "HEAD"],      cwd=repo_root)
     status_out, _ = git(["status", "--porcelain=v1"],        cwd=repo_root, strip=False)
@@ -144,8 +162,8 @@ def get_dirty_state(repo_root: Path, expect_branch: str = None):
             "reason": reason,
         })
 
-    dirty         = bool(files)
-    unsafe_files  = [f for f in files if f["class"] not in _SAFE_CLASSES]
+    dirty        = bool(files)
+    unsafe_files = [f for f in files if f["class"] not in _SAFE_CLASSES]
 
     # Branch guard
     branch_ok      = True
@@ -160,11 +178,25 @@ def get_dirty_state(repo_root: Path, expect_branch: str = None):
     else:
         branch_warning = "no expected branch supplied (pass --expect-branch to enable guard)"
 
-    safe_to_touch = not bool(unsafe_files) and branch_ok
+    # Root guard — catches shared-worktree contamination
+    root_ok      = True
+    root_warning = None
+    actual_root  = str(repo_root)
+    if expect_root:
+        if _normalize_path(actual_root) != _normalize_path(expect_root):
+            root_ok      = False
+            root_warning = (
+                f"current worktree root '{actual_root}' does not match expected "
+                f"'{expect_root}' — agent is running in the wrong worktree"
+            )
+    else:
+        root_warning = "no expected root supplied (pass --expect-root to enable guard)"
+
+    safe_to_touch = not bool(unsafe_files) and branch_ok and root_ok
     requires_ack  = not safe_to_touch
 
     result = {
-        "repo_root":         str(repo_root),
+        "repo_root":         actual_root,
         "branch":            branch,
         "head":              head,
         "dirty":             dirty,
@@ -182,6 +214,11 @@ def get_dirty_state(repo_root: Path, expect_branch: str = None):
         result["branch_ok"]       = branch_ok
     if branch_warning:
         result["branch_warning"] = branch_warning
+    if expect_root:
+        result["expected_root"] = expect_root
+        result["root_ok"]       = root_ok
+    if root_warning:
+        result["root_warning"] = root_warning
     return result
 
 
@@ -314,9 +351,11 @@ def all_harnesses(claude_md_path: Path):
     return {name: parse_harness(name, claude_md_path) for name in names}
 
 
-def preflight(repo_root: Path, claude_md_path: Path, expect_branch: str = None):
-    dirty    = get_dirty_state(repo_root, expect_branch=expect_branch)
-    harness  = all_harnesses(claude_md_path)
+def preflight(repo_root: Path, claude_md_path: Path, expect_branch: str = None,
+              expect_root: str = None):
+    dirty   = get_dirty_state(repo_root, expect_branch=expect_branch,
+                               expect_root=expect_root)
+    harness = all_harnesses(claude_md_path)
 
     all_documented = all(
         h.get("confidence") == "documented" for h in harness.values()
@@ -327,10 +366,6 @@ def preflight(repo_root: Path, claude_md_path: Path, expect_branch: str = None):
         f"{name}={h.get('confidence','unknown')}"
         for name, h in harness.items()
     )
-    branch_flag = (
-        f"branch_ok={str(dirty.get('branch_ok', True)).lower()}"
-        if expect_branch else ""
-    )
     summary_parts = [
         f"dirty={str(dirty['dirty']).lower()}",
         f"safe_to_touch={str(dirty['safe_to_touch']).lower()}",
@@ -338,8 +373,10 @@ def preflight(repo_root: Path, claude_md_path: Path, expect_branch: str = None):
         f"head={dirty['head']}",
         f"harness=[{harness_status}]",
     ]
-    if branch_flag:
-        summary_parts.append(branch_flag)
+    if expect_branch:
+        summary_parts.append(f"branch_ok={str(dirty.get('branch_ok', True)).lower()}")
+    if expect_root:
+        summary_parts.append(f"root_ok={str(dirty.get('root_ok', True)).lower()}")
     summary = "PRECHECK: " + " ".join(summary_parts)
 
     return {
@@ -355,8 +392,10 @@ def preflight(repo_root: Path, claude_md_path: Path, expect_branch: str = None):
 # ---------------------------------------------------------------------------
 
 def _parse_flags(args):
-    """Extract --expect-branch VALUE from args. Returns (remaining_args, expect_branch)."""
+    """Extract --expect-branch and --expect-root from args.
+    Returns (remaining_args, expect_branch, expect_root)."""
     expect_branch = None
+    expect_root   = None
     remaining     = []
     i = 0
     while i < len(args):
@@ -367,25 +406,36 @@ def _parse_flags(args):
                 expect_branch = args[i]
         elif a.startswith("--expect-branch="):
             expect_branch = a.split("=", 1)[1]
+        elif a == "--expect-root":
+            if i + 1 < len(args):
+                i += 1
+                expect_root = args[i]
+        elif a.startswith("--expect-root="):
+            expect_root = a.split("=", 1)[1]
         else:
             remaining.append(a)
         i += 1
-    return remaining, expect_branch
+    return remaining, expect_branch, expect_root
 
 
 def main():
     raw_args = sys.argv[1:]
     if not raw_args:
         print(
-            "Usage: repo_query.py <dirty|harness <name>|preflight|"
-            "env [MC2_NAME|--undocumented|--domain D|--all]|"
-            "binding [N|--conflicts|--namespace NS|--all]> "
-            "[--expect-branch BRANCH]",
+            "Usage: repo_query.py <dirty|harness <name>|preflight|\n"
+            "                      env [MC2_NAME|--undocumented|--domain D|--all]|\n"
+            "                      binding [N|--conflicts|--namespace NS|--all]>\n"
+            "       [--expect-branch BRANCH] [--expect-root PATH]\n"
+            "\n"
+            "Example full preflight:\n"
+            r"  py -3 tools\repo_intel\repo_query.py preflight"
+            " --expect-branch claude/nifty-mendeleev"
+            r" --expect-root A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    args, expect_branch = _parse_flags(raw_args)
+    args, expect_branch, expect_root = _parse_flags(raw_args)
 
     repo_root = find_repo_root()
     if repo_root is None:
@@ -397,7 +447,8 @@ def main():
     cmd = args[0].lower() if args else ""
 
     if cmd == "dirty":
-        out_json(get_dirty_state(repo_root, expect_branch=expect_branch))
+        out_json(get_dirty_state(repo_root, expect_branch=expect_branch,
+                                 expect_root=expect_root))
 
     elif cmd == "harness":
         if len(args) < 2:
@@ -416,7 +467,8 @@ def main():
         if claude_md is None:
             out_json({"error": "CLAUDE.md not found — cannot parse harnesses"})
             sys.exit(1)
-        result = preflight(repo_root, claude_md, expect_branch=expect_branch)
+        result = preflight(repo_root, claude_md, expect_branch=expect_branch,
+                           expect_root=expect_root)
         print(result["summary"])
         out_json(result)
 
