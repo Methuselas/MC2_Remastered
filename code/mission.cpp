@@ -88,6 +88,8 @@ extern void visualTuning_applyProfile(const char*);  // MISSION-VISUAL-TUNING-1
 #include"gamecam.h"
 #endif
 
+#include "frame_jobs.h"  // FRAME-JOBS-1: fixed worker pool for parallel CPU prep
+
 #ifndef MULTPLYR_H
 #include"multplyr.h"
 #endif
@@ -3093,6 +3095,7 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	// C1a: init GPU visibility compute pipeline (shadow/diagnostic mode).
 	// No-op if MC2_GPU_CULL env var is not set (default off).
 	gpu_cull::compute_init();
+	frameJobsInit();  // FRAME-JOBS-1: fixed worker pool for parallel CPU prep
 	// Phase 1: terrain lighting GPU compute — per-mission init alongside gpu_cull.
 	// CRITICAL: use realVerticesMapSide * realVerticesMapSide, NOT getNumVertices()
 	// (getNumVertices() returns 0 at this point — set per-frame by makeLists).
@@ -3558,6 +3561,7 @@ void Mission::destroy (bool initLogistics)
 	// C2: release async readback ring buffer at mission teardown.
 	gpu_cull::readback_shutdown();
 	// C1a: release GPU compute resources at mission teardown.
+	frameJobsShutdown();  // FRAME-JOBS-1: join workers before any GPU teardown (LIFO vs init)
 	gpu_cull::compute_shutdown();
 	// C0-3: release GPU cull substrate SSBO at mission teardown.
 	// substrate_init() handles re-init on next mission load (calls shutdown internally).
