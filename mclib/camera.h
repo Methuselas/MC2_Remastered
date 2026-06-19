@@ -178,12 +178,13 @@ class Camera
 		Stuff::Matrix4D				clipToWorld;					//Matrix used to bring a point from camera/clip space to world space
 		float						cachedFrustumPlanes_[6][4];		// F6 T2 cache; valid after cacheFrustumPlanes() per frame.
 
-		// Pick screen-rect cache: monotonically increments when worldToClip changes.
-		// Compared via memcmp inside calculateProjectionConstants() — robust against
-		// any mutation path (position/rotation/FOV/viewport/cinematic/script).
+		// Pick screen-rect cache: monotonically increments when camera inputs change
+		// visually. Keyed on a coarse integer hash of position/rotation/fov/viewport
+		// rather than worldToClip bits — stable under per-frame altitude/zoom lerp
+		// micro-drift that would otherwise fire every frame.
 		// Never zero: 0 is the uninitialized sentinel in PickScreenRectCache.
 		uint32_t					viewProjectionRevision_;
-		Stuff::Matrix4D				lastWorldToClip_;				// snapshot for change detection
+		uint32_t					lastCameraInputHash_;			// previous coarse hash for change detection
 		
 		TG_LightPtr					*worldLights;					//Lighting for the entire world.
 		long						numLights;						//Number of lights in the above list.  Always MAX_LIGHTS!

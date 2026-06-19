@@ -2943,13 +2943,27 @@ void Camera::calculateProjectionConstants (void)
 
 	setCameraOrigin();
 
-	// Invalidate pick screen-rect cache when view/projection actually changes.
-	// memcmp is safe: Stuff::Matrix4D is POD (float[4][4]). Runs every frame but
-	// only increments revision on real change — camera-still frames = zero pick-cache churn.
-	if (memcmp(&worldToClip, &lastWorldToClip_, sizeof(Stuff::Matrix4D)) != 0) {
-		lastWorldToClip_ = worldToClip;
-		++viewProjectionRevision_;
-		if (viewProjectionRevision_ == 0) viewProjectionRevision_ = 1; // keep non-zero sentinel
+	// Invalidate pick screen-rect cache when camera inputs change visually.
+	// Coarse grid: position snapped to 0.25 WU, rotation to 0.05 deg, fov to 0.1 deg.
+	// Stable under per-frame altitude/zoom lerp micro-drift that would otherwise
+	// cause the revision to increment every frame even on a "stationary" camera.
+	{
+		auto snapI = [](float v, float step) -> uint32_t {
+			return (uint32_t)(int32_t)(v / step);
+		};
+		uint32_t h = snapI(position.x,      0.25f) * 2654435761u
+		           ^ snapI(position.y,      0.25f) * 2246822519u
+		           ^ snapI(cameraShiftZ,    0.25f) * 3266489917u
+		           ^ snapI(cameraRotation,  0.05f) * 374761393u
+		           ^ snapI(projectionAngle, 0.05f) * 668265263u
+		           ^ snapI(camera_fov,      0.1f)  * 2166136261u
+		           ^ (uint32_t)(int32_t)screenResolution.x
+		           ^ (uint32_t)(int32_t)screenResolution.y * 40503u;
+		if (h != lastCameraInputHash_) {
+			lastCameraInputHash_ = h;
+			++viewProjectionRevision_;
+			if (viewProjectionRevision_ == 0) viewProjectionRevision_ = 1;
+		}
 	}
 }
 
