@@ -2,6 +2,5 @@
   "name": "grasslands_dense",
   "cards_full": ["grass_summer", "grass_spring", "grass_patch_summer", "grass_patch_spring"],
   "cards_sparse": ["grass_patch_summer", "grass_patch_fall"],
-  "camera_height_gate": 100.0,
   "fade_dist": 1000.0
 }

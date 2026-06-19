@@ -107,9 +107,6 @@ struct VegSchema {
     int  cards_full_count;
     char cards_sparse[kMaxSchemaCards][kMaxCardNameLen];
     int  cards_sparse_count;
-    // camera_height_gate: if > 0, flush() skips draw when camChunkZ >= this value.
-    // -1 = disabled (no gate).  Set from JSON field "camera_height_gate".
-    float camera_height_gate;
     // fade_dist: max draw distance in WU for this schema.
     // -1 = use env var / engine default.  Set from JSON field "fade_dist".
     float fade_dist;
@@ -318,15 +315,13 @@ static bool jsonGetString(const char* json, const char* key,
     jsonGetString(buf, "name", out->name, sizeof(out->name));
     out->cards_full_count   = jsonGetStringArray(buf, "cards_full",   out->cards_full,   kMaxSchemaCards);
     out->cards_sparse_count = jsonGetStringArray(buf, "cards_sparse", out->cards_sparse, kMaxSchemaCards);
-    out->camera_height_gate = jsonGetFloat(buf, "camera_height_gate", -1.0f);
     out->fade_dist          = jsonGetFloat(buf, "fade_dist",          -1.0f);
     out->loaded = (out->cards_full_count > 0);
 
     fprintf(stderr,
         "[VEG schema] event=loaded name=%s full=%d sparse=%d "
-        "camera_height_gate=%.1f fade_dist=%.1f path=%s\n",
+        "fade_dist=%.1f path=%s\n",
         out->name, out->cards_full_count, out->cards_sparse_count,
-        static_cast<double>(out->camera_height_gate),
         static_cast<double>(out->fade_dist), schemaPath);
     fflush(stderr);
     return out->loaded;
@@ -882,23 +877,6 @@ void GameAdapters::Vegetation::flush(const float* terrainLightDir_4f, float time
                                      float camChunkX, float camChunkY, float camChunkZ)
 {
     if (!GosVegetation::isEnabled()) return;
-
-    // Camera height gate: skip vegetation rendering above the schema-defined threshold.
-    // Only applies when the active schema has "camera_height_gate" set (> 0) in its JSON.
-    // Regular schemas (no field) draw at any altitude; dense-layer schemas can set e.g.
-    // "camera_height_gate": 100.0 to avoid fill-rate cost from tiny cards at altitude.
-    // MC2_VEG_CAM_HEIGHT_GATE env var: if set, overrides the schema value (0 = disable gate).
-    {
-        // Determine effective threshold: env var > schema field > disabled.
-        float heightGate = -1.0f;
-        const char* envGate = std::getenv("MC2_VEG_CAM_HEIGHT_GATE");
-        if (envGate && envGate[0]) {
-            heightGate = static_cast<float>(std::atof(envGate));
-        } else if (s_schemaActive && s_activeSchema.camera_height_gate > 0.0f) {
-            heightGate = s_activeSchema.camera_height_gate;
-        }
-        if (heightGate > 0.0f && camChunkZ >= heightGate) return;
-    }
 
     // Build per-block LOD visibility from terrain chunk metadata and upload to SSBO.
     // The SSBO tells the vertex shader which blocks to cull (0) or draw at LOD1 (1) or LOD0 (2).
