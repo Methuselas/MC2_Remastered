@@ -158,3 +158,28 @@ For each class add the `[Import] Source=` hook mirroring `mech3d.cpp`:
 See `docs/asset-modernization-recon.md` §3 for the full plan.
 Static props: BC7 via `KtxLoader` extension (easiest path).
 Burnin/mech/vehicle: ETC1S after GameOS compressed-upload path.
+
+---
+
+## Building PBR v0 status
+
+- Hangar and rusty Quonset are the first building GLB/PBR payloads in the rc1
+  deploy path.
+- Quonset shell is accepted for v0. `LitWin_Quonset` remains recorded as a
+  deferred `window_overlay` mesh role because the source overlay is broad
+  card geometry with no useful UV/alpha source; forcing it through the shell
+  texture produces smeared wall cards.
+- Follow-up: add a shadow/interior darkening treatment for Quonset and similar
+  buildings. With the overlay deferred, the terrain visible under/inside the
+  open shell reads fully lit; this is a separate shadow/interior-occlusion issue,
+  not a placement or GLB import failure.
+- Footprint darkening v0 is sidecar-controlled via `footprint_shadow`. It uses
+  the existing world-space decal batch with a procedural black alpha footprint;
+  normal building materials are untouched. Set `MC2_BUILDING_FOOTPRINT_SHADOW=0`
+  to disable the runtime path for comparison.
+- WIP/default-off follow-up: building PBR metal lighting calibration. Goal is to
+  recover the brighter legacy metal read without disabling the corrugated PBR
+  material. Candidate sidecar fields: `pbr_lighting.enabled=false`,
+  `albedo_boost`, `ambient_boost`, `legacy_light_mix`, `normal_strength`, and
+  `specular_boost`. Do not enable globally until Hangar and Quonset have a
+  visual pass against their non-PBR baseline.

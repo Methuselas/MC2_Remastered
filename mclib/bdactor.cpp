@@ -82,6 +82,13 @@ static bool textureOrKtxSidecarExists(const char* tgaPath)
 #include "../GameAdapters/StaticPropRenderAdapter.h"  // M1 RenderWorld Tasks 8-11
 #include <unordered_map>  // LODBUG probe: tracks per-actor previous bldgShape*
 #include <cstring>
+#include <string>
+#include <fstream>
+#include <sstream>
+#include <algorithm>
+#include <GL/glew.h>
+#include "../RenderCore/KtxLoader.h"
+#include "../RenderCore/MaterialGpu.h"
 #include "gos_object_parity_query.h"  // IsDualEmitArmed — Stage 2.D.2 dual-emit hook
 #include <set>            // [LIGHTSLOT v1] Task 0 cardinality gate
 #include "gos_smoke.h"    // [LIGHTSLOT v1] SmokeMode::missionHasStarted()
@@ -104,6 +111,412 @@ static bool staticRegIsNaturalBuildingName(const char* name)
 // MODEL-OVERRIDE dual-shape (Slice 2): registry resolve + direct geometry import.
 #include "model_override_registry.h"
 #include "assimp_importer.h"
+
+static bool buildingPbrGateEnabled()
+{
+	const char* v = getenv("MC2_BUILDING_PBR");
+	return v && v[0] == '1' && v[1] == '\0';
+}
+
+static bool readTextFile(const char* path, std::string& out)
+{
+	std::ifstream f(path, std::ios::in | std::ios::binary);
+	if (!f)
+		return false;
+	std::ostringstream ss;
+	ss << f.rdbuf();
+	out = ss.str();
+	return true;
+}
+
+static bool extractJsonString(const std::string& text, const char* key, std::string& out)
+{
+	std::string needle = "\"";
+	needle += key;
+	needle += "\"";
+	size_t p = text.find(needle);
+	if (p == std::string::npos)
+		return false;
+	p = text.find(':', p + needle.size());
+	if (p == std::string::npos)
+		return false;
+	p = text.find('"', p + 1);
+	if (p == std::string::npos)
+		return false;
+	size_t e = text.find('"', p + 1);
+	if (e == std::string::npos)
+		return false;
+	out.assign(text, p + 1, e - p - 1);
+	return true;
+}
+
+static bool extractJsonNumber(const std::string& text, const char* key, float fallback, float& out)
+{
+	out = fallback;
+	std::string needle = "\"";
+	needle += key;
+	needle += "\"";
+	size_t p = text.find(needle);
+	if (p == std::string::npos)
+		return true;
+	p = text.find(':', p + needle.size());
+	if (p == std::string::npos)
+		return false;
+	char* end = NULL;
+	const char* start = text.c_str() + p + 1;
+	out = (float)strtod(start, &end);
+	return end != start;
+}
+
+static bool extractJsonObject(const std::string& text, const char* key, std::string& out)
+{
+	std::string needle = "\"";
+	needle += key;
+	needle += "\"";
+	size_t p = text.find(needle);
+	if (p == std::string::npos)
+		return false;
+	p = text.find('{', p + needle.size());
+	if (p == std::string::npos)
+		return false;
+	int depth = 0;
+	for (size_t i = p; i < text.size(); ++i) {
+		if (text[i] == '{')
+			++depth;
+		else if (text[i] == '}') {
+			--depth;
+			if (depth == 0) {
+				out.assign(text, p, i - p + 1);
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+static bool extractJsonBool(const std::string& text, const char* key, bool fallback, bool& out)
+{
+	out = fallback;
+	std::string needle = "\"";
+	needle += key;
+	needle += "\"";
+	size_t p = text.find(needle);
+	if (p == std::string::npos)
+		return true;
+	p = text.find(':', p + needle.size());
+	if (p == std::string::npos)
+		return false;
+	const char* start = text.c_str() + p + 1;
+	while (*start == ' ' || *start == '\t' || *start == '\r' || *start == '\n')
+		++start;
+	if (strncmp(start, "true", 4) == 0) {
+		out = true;
+		return true;
+	}
+	if (strncmp(start, "false", 5) == 0) {
+		out = false;
+		return true;
+	}
+	return false;
+}
+
+static bool extractBuildingPbrAxis(const char* sidecarPath, int& axis)
+{
+	axis = -1;
+	std::string text;
+	if (!readTextFile(sidecarPath, text))
+		return false;
+
+	std::string axisMapping;
+	if (extractJsonString(text, "axis_mapping", axisMapping)) {
+		size_t p = axisMapping.find("MC2_GLTF_AXIS=");
+		if (p != std::string::npos) {
+			p += strlen("MC2_GLTF_AXIS=");
+			if (p < axisMapping.size() && axisMapping[p] >= '0' && axisMapping[p] <= '3') {
+				axis = axisMapping[p] - '0';
+				return true;
+			}
+		}
+	}
+
+	float numericAxis = -1.0f;
+	if (extractJsonNumber(text, "gltf_axis", -1.0f, numericAxis)) {
+		const int asInt = (int)numericAxis;
+		if (asInt >= 0 && asInt <= 3) {
+			axis = asInt;
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool extractBuildingPbrYaw(const char* sidecarPath, float& yawDegrees)
+{
+	yawDegrees = 0.0f;
+	std::string text;
+	if (!readTextFile(sidecarPath, text))
+		return false;
+	return extractJsonNumber(text, "yaw_degrees", 0.0f, yawDegrees);
+}
+
+static void loadBuildingImportSourceWithSidecarAxis(TG_TypeMultiShape* shape, const char* importSourceBase)
+{
+	if (!shape || !importSourceBase || !importSourceBase[0]) {
+		return;
+	}
+
+	FullPathFileName sidecarName;
+	sidecarName.init(tglPath, importSourceBase, ".mcasset.json");
+
+	int axis = -1;
+	const bool hasAxis = extractBuildingPbrAxis(sidecarName, axis);
+	float yawDegrees = 0.0f;
+	const bool hasYaw = extractBuildingPbrYaw(sidecarName, yawDegrees);
+	char axisValue[8] = {0};
+	char yawValue[32] = {0};
+	const char* oldAxis = getenv("MC2_GLTF_AXIS");
+	const char* oldYaw = getenv("MC2_GLTF_YAW_DEG");
+	std::string oldAxisValue = oldAxis ? oldAxis : "";
+	std::string oldYawValue = oldYaw ? oldYaw : "";
+	if (hasAxis) {
+		snprintf(axisValue, sizeof(axisValue), "%d", axis);
+		_putenv_s("MC2_GLTF_AXIS", axisValue);
+	}
+	if (hasYaw) {
+		snprintf(yawValue, sizeof(yawValue), "%.3f", yawDegrees);
+		_putenv_s("MC2_GLTF_YAW_DEG", yawValue);
+	}
+
+	shape->LoadFromFile(importSourceBase);
+
+	if (hasYaw) {
+		if (!oldYawValue.empty())
+			_putenv_s("MC2_GLTF_YAW_DEG", oldYawValue.c_str());
+		else
+			_putenv_s("MC2_GLTF_YAW_DEG", "");
+	}
+	if (hasAxis) {
+		if (!oldAxisValue.empty())
+			_putenv_s("MC2_GLTF_AXIS", oldAxisValue.c_str());
+		else
+			_putenv_s("MC2_GLTF_AXIS", "");
+	}
+}
+
+static std::string pathDir(const char* path)
+{
+	std::string s = path ? path : "";
+	size_t p = s.find_last_of("\\/");
+	return (p == std::string::npos) ? std::string() : s.substr(0, p + 1);
+}
+
+static std::string joinSidecarPath(const std::string& sidecarDir, const std::string& p)
+{
+	if (p.size() > 2 && p[1] == ':')
+		return p;
+	if (p.compare(0, 5, "data/") == 0 || p.compare(0, 5, "data\\") == 0)
+		return p;
+	if (!p.empty() && (p[0] == '/' || p[0] == '\\'))
+		return p;
+	std::string joined = sidecarDir + p;
+	for (size_t i = 0; i < joined.size(); ++i)
+		if (joined[i] == '/')
+			joined[i] = '\\';
+	return joined;
+}
+
+static DWORD uploadBuildingPbrKtx2(const char* path, bool srgb)
+{
+	RenderCore::KtxImage img;
+	if (!RenderCore::ktxLoadRgba8(path, img) || !img.isCompressed || !GLEW_ARB_texture_compression_bptc)
+		return 0;
+	uint32_t fmt = srgb ? GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM : GL_COMPRESSED_RGBA_BPTC_UNORM;
+	size_t mip0Bytes = img.pixels.size();
+	if (img.mipByteOffsets.size() > 1)
+		mip0Bytes = (size_t)img.mipByteOffsets[1];
+	return gos_NewCompressedTexture2D(fmt, img.width, img.height, img.pixels.data(), mip0Bytes, path);
+}
+
+static bool loadBuildingPbrFromSidecar(BldgAppearanceType* type, const char* sidecarPath)
+{
+	if (!type || !buildingPbrGateEnabled())
+		return false;
+
+	std::string text;
+	if (!readTextFile(sidecarPath, text))
+		return false;
+	if (text.find("\"materials\"") == std::string::npos ||
+	    text.find("corrugated_steel_painted") == std::string::npos ||
+	    text.find("CorrugatedSteel006A") == std::string::npos)
+		return false;
+
+	std::string normalPath;
+	std::string ormPath;
+	if (!extractJsonString(text, "normal", normalPath) ||
+	    !extractJsonString(text, "orm", ormPath))
+		return false;
+
+	float tileScale = 2.0f;
+	float roughnessBias = 0.0f;
+	float metallicInfluence = 0.0f;
+	if (!extractJsonNumber(text, "tile_scale", 2.0f, tileScale) ||
+	    !extractJsonNumber(text, "roughness_bias", 0.0f, roughnessBias) ||
+	    !extractJsonNumber(text, "metallic_influence", 0.0f, metallicInfluence))
+		return false;
+
+	const std::string dir = pathDir(sidecarPath);
+	const std::string normalFull = joinSidecarPath(dir, normalPath);
+	const std::string ormFull = joinSidecarPath(dir, ormPath);
+	DWORD normalHandle = uploadBuildingPbrKtx2(normalFull.c_str(), false);
+	DWORD ormHandle = uploadBuildingPbrKtx2(ormFull.c_str(), false);
+	if (!normalHandle || !ormHandle)
+		return false;
+
+	RenderCore::MaterialGpu material = {};
+	material.albedoTex = RenderCore::kMaterialTexAbsent;
+	material.normalTex = 1;
+	material.metallicRoughnessTex = 2;
+	material.emissiveTex = RenderCore::kMaterialTexAbsent;
+	material.flags = RenderCore::MaterialFlags::kNormalMap |
+	                 RenderCore::MaterialFlags::kMetallicRoughness;
+	material.baseColorFactor = 1.0f;
+	material.metallicFactor = metallicInfluence;
+	material.roughnessFactor = 1.0f + roughnessBias;
+
+	GLuint ssbo = 0;
+	glGenBuffers(1, &ssbo);
+	if (ssbo == 0)
+		return false;
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(material), &material, GL_STATIC_DRAW);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+	type->buildingPbrProgram = gos_getRenderMaterial("building_pbr");
+	if (!type->buildingPbrProgram) {
+		glDeleteBuffers(1, &ssbo);
+		return false;
+	}
+	type->buildingPbrNormalTexture = normalHandle;
+	type->buildingPbrOrmTexture = ormHandle;
+	type->buildingPbrMaterialSsbo = (DWORD)ssbo;
+	type->buildingPbrTileScale = tileScale;
+	type->buildingPbrRoughnessBias = roughnessBias;
+	type->buildingPbrMetallicInfluence = metallicInfluence;
+	bool preserveLegacyAlpha = false;
+	if (extractJsonBool(text, "preserve_legacy_alpha", false, preserveLegacyAlpha))
+		type->buildingPbrPreserveLegacyAlpha = preserveLegacyAlpha;
+	std::string footprint;
+	if (extractJsonObject(text, "footprint_shadow", footprint)) {
+		bool fpEnabled = false;
+		float fpStrength = 0.35f;
+		float fpSoftness = 2.0f;
+		float fpHeightBias = 0.05f;
+		if (extractJsonBool(footprint, "enabled", false, fpEnabled) &&
+		    extractJsonNumber(footprint, "strength", 0.35f, fpStrength) &&
+		    extractJsonNumber(footprint, "softness", 2.0f, fpSoftness) &&
+		    extractJsonNumber(footprint, "height_bias", 0.05f, fpHeightBias)) {
+			type->buildingFootprintShadowEnabled = fpEnabled;
+			type->buildingFootprintShadowStrength = std::max(0.0f, std::min(fpStrength, 0.85f));
+			type->buildingFootprintShadowSoftness = std::max(0.0f, fpSoftness);
+			type->buildingFootprintShadowHeightBias = fpHeightBias;
+		}
+	}
+	type->buildingPbrEnabled = true;
+	fprintf(stderr, "[BUILDING_PBR] loaded sidecar=%s normal=%s orm=%s\n",
+	        sidecarPath, normalFull.c_str(), ormFull.c_str());
+	fflush(stderr);
+	return true;
+}
+
+static bool buildingFootprintShadowRuntimeEnabled()
+{
+	const char* v = getenv("MC2_BUILDING_FOOTPRINT_SHADOW");
+	return !v || v[0] != '0';
+}
+
+static DWORD footprintShadowColor(float strength)
+{
+	const unsigned int a = (unsigned int)(std::max(0.0f, std::min(strength, 0.85f)) * 255.0f + 0.5f);
+	return (DWORD)(a << 24);
+}
+
+static Stuff::Vector3D buildingFootprintCorner(const Stuff::Vector3D& origin,
+                                               float localX,
+                                               float localY,
+                                               float rotationDegrees,
+                                               float z)
+{
+	Stuff::Vector3D v;
+	v.x = localX;
+	v.y = localY;
+	v.z = 0.0f;
+	if (rotationDegrees != 0.0f)
+		Rotate(v, -rotationDegrees);
+	v.x += origin.x;
+	v.y += origin.y;
+	v.z = z;
+	return v;
+}
+
+static void pushFootprintTri(const Stuff::Vector3D& a, const Stuff::Vector3D& b,
+                             const Stuff::Vector3D& c, DWORD ca, DWORD cb, DWORD cc)
+{
+	WorldOverlayVert tri[3] = {
+		{ a.x, a.y, a.z, -1.0f, 0.0f, 1.0f, ca },
+		{ b.x, b.y, b.z, -1.0f, 0.0f, 1.0f, cb },
+		{ c.x, c.y, c.z, -1.0f, 0.0f, 1.0f, cc },
+	};
+	gos_PushDecal(tri, 0xffffffffu);
+}
+
+static void submitBuildingFootprintShadow(const BldgAppearance* appearance)
+{
+	if (!appearance || !appearance->appearType || !appearance->bldgShape)
+		return;
+	const BldgAppearanceType* type = appearance->appearType;
+	if (!type->buildingFootprintShadowEnabled || !buildingFootprintShadowRuntimeEnabled())
+		return;
+	if (type->buildingFootprintShadowStrength <= 0.0f)
+		return;
+
+	const Stuff::Vector3D minBox = appearance->bldgShape->GetMinBox();
+	const Stuff::Vector3D maxBox = appearance->bldgShape->GetMaxBox();
+	const Stuff::Vector3D center = appearance->bldgShape->GetRootNodeCenter();
+	const float softness = std::max(0.0f, type->buildingFootprintShadowSoftness);
+	const float z = appearance->position.z + type->buildingFootprintShadowHeightBias;
+	const DWORD inner = footprintShadowColor(type->buildingFootprintShadowStrength);
+	const DWORD outer = 0x00000000u;
+
+	const float ix0 = minBox.x + center.x;
+	const float ix1 = maxBox.x + center.x;
+	const float iy0 = minBox.z + center.z;
+	const float iy1 = maxBox.z + center.z;
+	const float ox0 = ix0 - softness;
+	const float ox1 = ix1 + softness;
+	const float oy0 = iy0 - softness;
+	const float oy1 = iy1 + softness;
+
+	Stuff::Vector3D i00 = buildingFootprintCorner(appearance->position, ix0, iy0, appearance->rotation, z);
+	Stuff::Vector3D i10 = buildingFootprintCorner(appearance->position, ix1, iy0, appearance->rotation, z);
+	Stuff::Vector3D i11 = buildingFootprintCorner(appearance->position, ix1, iy1, appearance->rotation, z);
+	Stuff::Vector3D i01 = buildingFootprintCorner(appearance->position, ix0, iy1, appearance->rotation, z);
+	Stuff::Vector3D o00 = buildingFootprintCorner(appearance->position, ox0, oy0, appearance->rotation, z);
+	Stuff::Vector3D o10 = buildingFootprintCorner(appearance->position, ox1, oy0, appearance->rotation, z);
+	Stuff::Vector3D o11 = buildingFootprintCorner(appearance->position, ox1, oy1, appearance->rotation, z);
+	Stuff::Vector3D o01 = buildingFootprintCorner(appearance->position, ox0, oy1, appearance->rotation, z);
+
+	pushFootprintTri(i00, i10, i11, inner, inner, inner);
+	pushFootprintTri(i00, i11, i01, inner, inner, inner);
+
+	pushFootprintTri(o00, o10, i10, outer, outer, inner);
+	pushFootprintTri(o00, i10, i00, outer, inner, inner);
+	pushFootprintTri(o10, o11, i11, outer, outer, inner);
+	pushFootprintTri(o10, i11, i10, outer, inner, inner);
+	pushFootprintTri(o11, o01, i01, outer, outer, inner);
+	pushFootprintTri(o11, i01, i11, outer, inner, inner);
+	pushFootprintTri(o01, o00, i00, outer, outer, inner);
+	pushFootprintTri(o01, i00, i01, outer, inner, inner);
+}
 
 #ifndef CAMERA_H
 #include"camera.h"
@@ -389,7 +802,7 @@ void BldgAppearanceType::init (const char * fileName)
 				gosASSERT(bldgShape[i] != NULL);
 
 				if (i == 0 && importSourceBase[0]) {
-					bldgShape[i]->LoadFromFile(importSourceBase); // ASSIMP-BLDG-IMPORT-1: opt-in GLB probe
+					loadBuildingImportSourceWithSidecarAxis(bldgShape[i], importSourceBase); // ASSIMP-BLDG-IMPORT-1: opt-in GLB probe
 				} else {
 					FullPathFileName bldgName;
 					bldgName.init(tglPath,aseFileName,".ase");
@@ -413,7 +826,7 @@ void BldgAppearanceType::init (const char * fileName)
 		gosASSERT(bldgShape[0] != NULL);
 
 		if (importSourceBase[0]) {
-			bldgShape[0]->LoadFromFile(importSourceBase); // ASSIMP-BLDG-IMPORT-1: opt-in GLB probe
+			loadBuildingImportSourceWithSidecarAxis(bldgShape[0], importSourceBase); // ASSIMP-BLDG-IMPORT-1: opt-in GLB probe
 		} else {
 			FullPathFileName bldgName;
 			bldgName.init(tglPath,aseFileName,".ase");
@@ -421,6 +834,17 @@ void BldgAppearanceType::init (const char * fileName)
 		}
 
 		strncpy(bldgBaseName, aseFileName, sizeof(bldgBaseName) - 1);
+	}
+
+	if (importSourceBase[0] && buildingPbrGateEnabled())
+	{
+		FullPathFileName sidecarName;
+		sidecarName.init(tglPath, importSourceBase, ".mcasset.json");
+		if (!loadBuildingPbrFromSidecar(this, sidecarName)) {
+			fprintf(stderr, "[BUILDING_PBR] disabled for import '%s' sidecar=%s\n",
+			        importSourceBase, (const char*)sidecarName);
+			fflush(stderr);
+		}
 	}
 
 	// MODEL-OVERRIDE dual-shape: render-only override for static props. The
@@ -470,6 +894,21 @@ void BldgAppearanceType::init (const char * fileName)
 					fprintf(stderr, "[MODOVERRIDE] staticProp '%s': render override applied (%s)\n",
 					        bldgBaseName, overridePath);
 					fflush(stderr);
+					if (buildingPbrGateEnabled())
+					{
+						char sidecarPath[1024];
+						snprintf(sidecarPath, sizeof(sidecarPath), "%s", overridePath);
+						char* dot = strrchr(sidecarPath, '.');
+						if (dot)
+							strcpy(dot, ".mcasset.json");
+						else
+							strncat(sidecarPath, ".mcasset.json", sizeof(sidecarPath) - strlen(sidecarPath) - 1);
+						if (!loadBuildingPbrFromSidecar(this, sidecarPath)) {
+							fprintf(stderr, "[BUILDING_PBR] disabled for '%s' sidecar=%s\n",
+							        bldgBaseName, sidecarPath);
+							fflush(stderr);
+						}
+					}
 					if (getenv("MC2_ANIMATED_PROP_PROBE"))
 					{
 						int ns = bldgRenderShape->GetNumShapes();
@@ -730,6 +1169,23 @@ void BldgAppearanceType::destroy (void)
 		delete bldgRenderShape;
 		bldgRenderShape = NULL;
 	}
+	if (buildingPbrMaterialSsbo)
+	{
+		GLuint ssbo = (GLuint)buildingPbrMaterialSsbo;
+		glDeleteBuffers(1, &ssbo);
+		buildingPbrMaterialSsbo = 0;
+	}
+	if (buildingPbrNormalTexture)
+	{
+		gos_DestroyTexture(buildingPbrNormalTexture);
+		buildingPbrNormalTexture = 0;
+	}
+	if (buildingPbrOrmTexture)
+	{
+		gos_DestroyTexture(buildingPbrOrmTexture);
+		buildingPbrOrmTexture = 0;
+	}
+	buildingPbrEnabled = false;
 
  	if (bldgDmgShape)
 	{
@@ -926,6 +1382,7 @@ void BldgAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 	nodeRecycle = NULL;
 	
 	beenInView = false;
+	buildingPbrRenderActive = false;
 
 	fogLightSet = false;
 	if (appearType)
@@ -934,6 +1391,7 @@ void BldgAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 		// render accessor (override if present, else stock). Collision rebuilds
 		// this same member from stock bldgShape[lod] when it needs passability.
 		bldgShape = appearType->getBldgRenderShape(0)->CreateFrom();
+		buildingPbrRenderActive = appearType->buildingPbrEnabled;
 
 		//-------------------------------------------------
 		// Load the texture and store its handle.
@@ -950,7 +1408,9 @@ void BldgAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 	
 			if (textureOrKtxSidecarExists(textureName))
 			{
-				if (S_strnicmp(txmName,"a_",2) == 0)
+				const bool forceOpaquePbrTexture = buildingPbrRenderActive &&
+					!(appearType && appearType->buildingPbrPreserveLegacyAlpha);
+				if (!forceOpaquePbrTexture && S_strnicmp(txmName,"a_",2) == 0)
 				{
 					DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Alpha,gosHint_DisableMipmap | gosHint_DontShrink);
 					gosASSERT(gosTextureHandle != 0xffffffff);
@@ -1080,6 +1540,7 @@ void BldgAppearance::setObjStatus (long oStatus)
 				}
 				
 				bldgShape = appearType->bldgDmgShape->CreateFrom();
+				buildingPbrRenderActive = false;
 				if (bdAnimationState != -1)
 					appearType->setAnimation(bldgShape,bdAnimationState);
 				
@@ -1104,6 +1565,7 @@ void BldgAppearance::setObjStatus (long oStatus)
 				// MODEL-OVERRIDE dual-shape: restore the per-instance RENDER
 				// shape via the render accessor (override if present, else stock).
 				bldgShape = appearType->getBldgRenderShape(0)->CreateFrom();
+				buildingPbrRenderActive = appearType->buildingPbrEnabled;
 				if (bdAnimationState != -1)
 					appearType->setAnimation(bldgShape,bdAnimationState);
 
@@ -1526,7 +1988,8 @@ long BldgAppearance::render (long depthFixup)
 		// static-prop submit (the batcher flushes with the world snapshot/terrain
 		// MVP, not the UI camera) so submittedToGpu stays false and the legacy CPU
 		// bldgShape->Render() below runs, honoring this SimpleCamera.
-		if (g_useGpuObjects && g_mechPreviewRenderDepth == 0)
+		const bool buildingPbrOverrideActive = appearType && buildingPbrRenderActive;
+		if (g_useGpuObjects && g_mechPreviewRenderDepth == 0 && !buildingPbrOverrideActive)
 		{
 			GpuStaticPropBatcher::instance().recordEligibleActor(
 				GpuStaticPropPopulation::Building);
@@ -1703,13 +2166,24 @@ long BldgAppearance::render (long depthFixup)
 		// with slice 1 — gated on !g_useGpuObjects so the two paths cannot
 		// coexist. Tagged Legacy so Gate F's fallback-rate is computed only
 		// over slice-1 populations. See spec R1.
-		if (!submittedToGpu && !g_useGpuObjects && g_useGpuStaticProps && bldgShape)
+		if (!submittedToGpu && !g_useGpuObjects && g_useGpuStaticProps && bldgShape && !buildingPbrOverrideActive)
 		{
 			submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(
 				bldgShape, GpuStaticPropPopulation::Legacy);
 		}
 		if (!submittedToGpu)
 		{
+			if (buildingPbrOverrideActive)
+				submitBuildingFootprintShadow(this);
+			if (buildingPbrOverrideActive) {
+				TG_SetRenderShapePbrOverride(appearType->buildingPbrProgram,
+					appearType->buildingPbrNormalTexture,
+					appearType->buildingPbrOrmTexture,
+					appearType->buildingPbrMaterialSsbo,
+					appearType->buildingPbrTileScale,
+					appearType->buildingPbrRoughnessBias,
+					appearType->buildingPbrMetallicInfluence);
+			}
 			if (appearType->spinMe)
 				bldgShape->Render(false,0.00001f);
 			else if (!depthFixup)
@@ -1718,6 +2192,8 @@ long BldgAppearance::render (long depthFixup)
 				bldgShape->Render(false,0.9999999f);
 			else if (depthFixup < 0)
 				bldgShape->Render(false,0.00001f);
+			if (buildingPbrOverrideActive)
+				TG_ClearRenderShapePbrOverride();
 		}
 
 		// LODBUG probe — post-swap submit observation.  When the actor's
@@ -2765,8 +3241,13 @@ long BldgAppearance::update (bool animate)
 			// PREVIEW-FIX: never take the GPU positions-only/hierarchy-only fast
 			// path in the SimpleCamera preview — the CPU MLR draw needs the full
 			// listOfVertices (positions + argb) that only TransformMultiShape bakes.
+			// BUILDING-PBR: the gated PBR path currently renders through the same
+			// CPU MLR queue, so it needs that full bake too. Keep this in lockstep
+			// with the render-side GPU submit bypass.
+			const bool buildingPbrCpuRenderActive = appearType && appearType->buildingPbrEnabled;
 			gpuEligible = g_useGpuObjects &&
 			              (g_mechPreviewRenderDepth == 0) &&
+			              !buildingPbrCpuRenderActive &&
 			              !needsFullBakeNextFrame &&
 			              GpuStaticPropBatcher::instance().isMultiShapeEligibleForGpuObjects(bldgShape);
 		}
@@ -2824,7 +3305,9 @@ long BldgAppearance::update (bool animate)
 			// runs to seed the light index. MC2_LEGACY_INSTANCE_POOLS=1 reverts.
 			// PREVIEW-FIX: force the full bake in the SimpleCamera preview so the
 			// CPU MLR draw has complete listOfVertices (hierarchy-only leaves it stale).
-			if (!gos_StaticPropLegacyInstancePools() &&
+			const bool buildingPbrCpuRenderActive = appearType && appearType->buildingPbrEnabled;
+			if (!buildingPbrCpuRenderActive &&
+			    !gos_StaticPropLegacyInstancePools() &&
 			    (g_mechPreviewRenderDepth == 0) &&
 			    GpuStaticPropBatcher::instance().isMultiShapeEligibleForGpuObjects(bldgShape))
 				bldgShape->TransformMultiShape_HierarchyOnly (&xlatPosition,&rot);
@@ -3570,6 +4053,7 @@ long BldgAppearance::calcCellsCovered (Stuff::Vector3D& pos, short* cellList) {
 		bldgShape = NULL;
 	
 		bldgShape = appearType->bldgShape[currentLOD]->CreateFrom();
+		buildingPbrRenderActive = false;
 		if (bdAnimationState != -1)
 			appearType->setAnimation(bldgShape,bdAnimationState);
 	}
@@ -3637,6 +4121,7 @@ void BldgAppearance::markTerrain (_ScenarioMapCellInfo* pInfo, int type, int cou
 		bldgShape = NULL;
 	
 		bldgShape = appearType->bldgShape[currentLOD]->CreateFrom();
+		buildingPbrRenderActive = false;
 		if (bdAnimationState != -1)
 			appearType->setAnimation(bldgShape,bdAnimationState);
 	}
@@ -3699,6 +4184,7 @@ void BldgAppearance::markTerrain (_ScenarioMapCellInfo* pInfo, int type, int cou
 				bldgShape = NULL;
 					
 				bldgShape = appearType->bldgShape[0]->CreateFrom();
+				buildingPbrRenderActive = false;
 				if (bdAnimationState != -1)
 					appearType->setAnimation(bldgShape,bdAnimationState);
 			}
@@ -3713,6 +4199,7 @@ void BldgAppearance::markTerrain (_ScenarioMapCellInfo* pInfo, int type, int cou
 				bldgShape = NULL;
 					
 				bldgShape = appearType->bldgDmgShape->CreateFrom();
+				buildingPbrRenderActive = false;
 				if (bdAnimationState != -1)
 					appearType->setAnimation(bldgShape,bdAnimationState);
 			}
@@ -3796,6 +4283,7 @@ void BldgAppearance::markTerrain (_ScenarioMapCellInfo* pInfo, int type, int cou
 				bldgShape = NULL;
 					
 				bldgShape = appearType->bldgDmgShape->CreateFrom();
+				buildingPbrRenderActive = false;
 				if (bdAnimationState != -1)
 					appearType->setAnimation(bldgShape,bdAnimationState);
 			}
@@ -3810,6 +4298,7 @@ void BldgAppearance::markTerrain (_ScenarioMapCellInfo* pInfo, int type, int cou
 				bldgShape = NULL;
 					
 				bldgShape = appearType->bldgShape[0]->CreateFrom();
+				buildingPbrRenderActive = false;
 				if (bdAnimationState != -1)
 					appearType->setAnimation(bldgShape,bdAnimationState);
 			}
@@ -3865,6 +4354,7 @@ void BldgAppearance::markTerrain (_ScenarioMapCellInfo* pInfo, int type, int cou
 			bldgShape = NULL;
 						
 			bldgShape = appearType->bldgShape[0]->CreateFrom();
+			buildingPbrRenderActive = false;
 			if (bdAnimationState != -1)
 				appearType->setAnimation(bldgShape,bdAnimationState);
 		}
@@ -3875,6 +4365,7 @@ void BldgAppearance::markTerrain (_ScenarioMapCellInfo* pInfo, int type, int cou
 			bldgShape = NULL;
 					
 			bldgShape = appearType->bldgDmgShape->CreateFrom();
+			buildingPbrRenderActive = false;
 			if (bdAnimationState != -1)
 				appearType->setAnimation(bldgShape,bdAnimationState);
 		}
@@ -4101,6 +4592,7 @@ void BldgAppearance::calcAdjCell (long& row, long& col)
 		bldgShape = NULL;
 	
 		bldgShape = appearType->bldgShape[currentLOD]->CreateFrom();
+		buildingPbrRenderActive = false;
 		if (bdAnimationState != -1)
 			appearType->setAnimation(bldgShape,bdAnimationState);
 	}

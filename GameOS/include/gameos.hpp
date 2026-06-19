@@ -2746,6 +2746,7 @@ void __stdcall gos_ApplyRenderMaterial(HGOSRENDERMATERIAL material);
 void __stdcall gos_SetRenderMaterialParameterFloat4(HGOSRENDERMATERIAL material, const char* name, const float* v);
 void __stdcall gos_SetRenderMaterialParameterMat4(HGOSRENDERMATERIAL material, const char* name, const float* m);
 void __stdcall gos_SetRenderMaterialParameterInt(HGOSRENDERMATERIAL material, const char* name, int v);
+void __stdcall gos_SetRenderMaterialSamplerUnit(HGOSRENDERMATERIAL material, const char* name, uint32_t unit);
 void __stdcall gos_SetRenderMaterialUniformBlockBindingPoint(HGOSRENDERMATERIAL material, const char* name, uint32_t slot);
 void __stdcall gos_SetCommonMaterialParameters(HGOSRENDERMATERIAL material);
 // Bind shadow map textures + uniforms to an already-applied material (for GPU-projected objects)
@@ -3593,4 +3594,3 @@ public:
 };
 
 #endif // __cplusplus
-

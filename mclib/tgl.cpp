@@ -67,6 +67,40 @@ float					TG_Shape::fogFull = 0.0f;
 TG_LightPtr				*TG_Shape::s_listOfLights = NULL;
 DWORD					TG_Shape::s_numLights = 0;
 
+struct TG_RenderShapePbrOverrideState {
+	HGOSRENDERMATERIAL program = NULL;
+	DWORD normalTexture = 0;
+	DWORD ormTexture = 0;
+	DWORD materialSsbo = 0;
+	float tileScale = 1.0f;
+	float roughnessBias = 0.0f;
+	float metallicInfluence = 0.0f;
+};
+
+static TG_RenderShapePbrOverrideState s_activeRenderShapePbrOverride;
+
+void TG_SetRenderShapePbrOverride(HGOSRENDERMATERIAL program,
+                                  DWORD normalTexture,
+                                  DWORD ormTexture,
+                                  DWORD materialSsbo,
+                                  float tileScale,
+                                  float roughnessBias,
+                                  float metallicInfluence)
+{
+	s_activeRenderShapePbrOverride.program = program;
+	s_activeRenderShapePbrOverride.normalTexture = normalTexture;
+	s_activeRenderShapePbrOverride.ormTexture = ormTexture;
+	s_activeRenderShapePbrOverride.materialSsbo = materialSsbo;
+	s_activeRenderShapePbrOverride.tileScale = tileScale;
+	s_activeRenderShapePbrOverride.roughnessBias = roughnessBias;
+	s_activeRenderShapePbrOverride.metallicInfluence = metallicInfluence;
+}
+
+void TG_ClearRenderShapePbrOverride()
+{
+	s_activeRenderShapePbrOverride = TG_RenderShapePbrOverrideState();
+}
+
 // Stage 2.D.2 diagnostic: one-shot trace for hot-green CPU lighting.
 // Fires once per session when MC2_OBJECT_PARITY_TRACE=1.
 // Prints s_lightDir direction, normal, cosine, contribution per vertex.
@@ -2628,7 +2662,7 @@ long TG_Shape::MultiTransformShape (Stuff::Matrix4D *shapeToClip, Stuff::Point3D
 			}
 			else if (isWindow)
 			{
-				mcTextureManager->addTriangle(0xffffffff,MC2_DRAWALPHA);
+				mcTextureManager->addTriangle(0xffffffff, MC2_DRAWALPHA);
 			}
 			else
 			{
@@ -2933,6 +2967,17 @@ uint32_t TG_Shape::ResubmitCachedLightData()
 //   tgl.cpp:2700-2730. Phase 1 documents only; centralization is F4.
 void TG_Shape::Render (float forceZ, bool isHudElement, BYTE alphaValue, bool isClamped, const Stuff::Matrix4D* shapeToClip, const Stuff::Matrix4D* shapeToWorld)
 {
+	const bool traceBuildingPbr = s_activeRenderShapePbrOverride.program && getenv("MC2_BUILDING_PBR_TRACE");
+	if (traceBuildingPbr) {
+		static int s_pbrRenderTrace = 0;
+		if (s_pbrRenderTrace < 64) {
+			++s_pbrRenderTrace;
+			fprintf(stderr,
+				"[BUILDING_PBR_TRACE] TG_Shape::Render enter shape=%p verts=%ld visible=%ld last=%ld turn=%ld\n",
+				this, numVertices, numVisibleFaces, lastTurnTransformed, turn);
+			fflush(stderr);
+		}
+	}
 	if (!renderTGLShapes)
 		return;
 		
@@ -2946,7 +2991,16 @@ void TG_Shape::Render (float forceZ, bool isHudElement, BYTE alphaValue, bool is
 		!listOfVisibleFaces ||
 		!listOfVisibleShadows ||
 		(/*(lastTurnTransformed != (turn-1)) &&*/ (lastTurnTransformed != turn)))
+	{
+		if (traceBuildingPbr) {
+			fprintf(stderr,
+				"[BUILDING_PBR_TRACE] TG_Shape::Render reject shape=%p lv=%p lc=%p lsv=%p lt=%p lvf=%p lvs=%p last=%ld turn=%ld\n",
+				this, listOfVertices, listOfColors, listOfShadowTVertices, listOfTriangles,
+				listOfVisibleFaces, listOfVisibleShadows, lastTurnTransformed, turn);
+			fflush(stderr);
+		}
 		return;
+	}
 
 	// [RENDER_PASS v1] advisory telemetry (env-gated, rate-limited; dedupes
 	// per pass per sampled frame so per-shape calls emit at most one line).
@@ -3091,7 +3145,7 @@ void TG_Shape::Render (float forceZ, bool isHudElement, BYTE alphaValue, bool is
 					}
 					else if (isWindow)
 					{
-						mcTextureManager->addVertices(0xffffffff,gVertex,MC2_DRAWALPHA);
+						mcTextureManager->addVertices(0xffffffff, gVertex, MC2_DRAWALPHA);
 					}
 					else
 					{
@@ -3133,8 +3187,11 @@ void TG_Shape::Render (float forceZ, bool isHudElement, BYTE alphaValue, bool is
 		}
 	}
 
-	// FIXME: this (listOfTypeTriangles[0]) is not correct if model has more than 1 texture! 
-	if (!isSpotlight && !isWindow && !theShape->listOfTextures[theShape->listOfTypeTriangles[0].localTextureHandle].textureAlpha && (alphaValue == 0xff))
+	// FIXME: this (listOfTypeTriangles[0]) is not correct if model has more than 1 texture!
+	const TG_TypeTriangle firstTriType = theShape->listOfTypeTriangles[0];
+	const bool firstTextureAlpha = theShape->listOfTextures[firstTriType.localTextureHandle].textureAlpha;
+	const bool pbrOverrideActive = s_activeRenderShapePbrOverride.program != 0;
+	if (!isSpotlight && !isWindow && (!firstTextureAlpha || pbrOverrideActive) && (alphaValue == 0xff))
 	{
 		DWORD addFlags = 0;
 		if (isHudElement)
@@ -3156,7 +3213,7 @@ void TG_Shape::Render (float forceZ, bool isHudElement, BYTE alphaValue, bool is
 
 			// FIXME: this is not correct if model has more than 1 texture!
 			// TODO: split on per texture batches basis
-			TG_TypeTriangle triType = theShape->listOfTypeTriangles[0];
+			TG_TypeTriangle triType = firstTriType;
 
 			Stuff::Matrix4D mvp;
 			if ((forceZ >= 0.0f) && (forceZ < 1.0f))
@@ -3175,20 +3232,52 @@ void TG_Shape::Render (float forceZ, bool isHudElement, BYTE alphaValue, bool is
 			rs.ib_ = theShape->ib_;
 			rs.vb_ = theShape->vb_;
 			rs.vdecl_ = theShape->vdecl_;
-			rs.mvp_ = mvp;
+            rs.mvp_ = mvp;
 			rs.mw_ = *shapeToWorld;
 			memcpy(rs.viewport_, cur_viewport, 4 * sizeof(float));
+			rs.programOverride_ = s_activeRenderShapePbrOverride.program;
+			rs.pbrNormalTexture_ = s_activeRenderShapePbrOverride.normalTexture;
+			rs.pbrOrmTexture_ = s_activeRenderShapePbrOverride.ormTexture;
+			rs.pbrMaterialSsbo_ = s_activeRenderShapePbrOverride.materialSsbo;
+			rs.pbrTileScale_ = s_activeRenderShapePbrOverride.tileScale;
+			rs.pbrRoughnessBias_ = s_activeRenderShapePbrOverride.roughnessBias;
+			rs.pbrMetallicInfluence_ = s_activeRenderShapePbrOverride.metallicInfluence;
 			{
 				LcsScope<LcsBucket::C2> _lcs;
 				rs.light_data_buffer_index_ = mcTextureManager->addLightDataStructure(&lightData_);
 			}
             rs.isHudElement_ = isHudElement;
 
-			mcTextureManager->addRenderShape(
-				theShape->listOfTextures[triType.localTextureHandle].mcTextureNodeIndex,
-				&rs,
-				MC2_DRAWSOLID | addFlags);
+			const DWORD texNode = theShape->listOfTextures[triType.localTextureHandle].mcTextureNodeIndex;
+			const DWORD renderFlags = MC2_DRAWSOLID | addFlags |
+				((pbrOverrideActive && firstTextureAlpha) ? MC2_ALPHATEST : 0);
+			if (pbrOverrideActive && firstTextureAlpha)
+				mcTextureManager->addRenderShape(texNode, renderFlags);
+			mcTextureManager->addRenderShape(texNode, &rs, renderFlags);
+			if (traceBuildingPbr) {
+				fprintf(stderr,
+					"[BUILDING_PBR_TRACE] TG_Shape::Render enqueue shape=%p texNode=%lu localTex=%lu visible=%ld\n",
+					this,
+					(unsigned long)texNode,
+					(unsigned long)triType.localTextureHandle,
+					numVisibleFaces);
+				fflush(stderr);
+			}
 		}
+		else if (traceBuildingPbr) {
+			fprintf(stderr, "[BUILDING_PBR_TRACE] TG_Shape::Render no buffers shape=%p ib=%p vb=%p\n",
+				this, (void*)theShape->ib_, (void*)theShape->vb_);
+			fflush(stderr);
+		}
+	}
+	else if (traceBuildingPbr) {
+		TG_TypeTriangle triType = theShape->listOfTypeTriangles[0];
+		fprintf(stderr,
+			"[BUILDING_PBR_TRACE] TG_Shape::Render skip indexed shape=%p spot=%d window=%d alpha=%d alphaValue=%u localTex=%lu\n",
+			this, (int)isSpotlight, (int)isWindow,
+			(int)theShape->listOfTextures[triType.localTextureHandle].textureAlpha,
+			(unsigned)alphaValue, (unsigned long)triType.localTextureHandle);
+		fflush(stderr);
 	}
 
 	gos_SetRenderState( gos_State_Fog, 0);

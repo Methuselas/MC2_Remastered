@@ -57,8 +57,21 @@ namespace {
 // dialed in-game without rebuilds; MC2_GLTF_YOFF nudges the up component (stuff.y)
 // to lift a buried mesh (pivot-not-at-base). All four mappings are even-parity
 // (winding preserved). Bake the winning combo as the default once confirmed.
-static inline int s_gltfAxis() { static int a=[]{const char*e=getenv("MC2_GLTF_AXIS"); return e?atoi(e):0;}(); return a; }
+static inline int s_gltfAxis() { const char* e=getenv("MC2_GLTF_AXIS"); return e?atoi(e):0; }
 static inline float s_gltfYoff() { static float o=[]{const char*e=getenv("MC2_GLTF_YOFF"); return e?(float)atof(e):0.0f;}(); return o; }
+static inline float s_gltfYawDeg() { const char* e=getenv("MC2_GLTF_YAW_DEG"); return e?(float)atof(e):0.0f; }
+static inline void applyYaw(float& X, float& Z) {
+	const float yaw = s_gltfYawDeg();
+	if (fabsf(yaw) < 0.001f)
+		return;
+	const float r = yaw * 0.017453292519943295769f;
+	const float c = cosf(r);
+	const float s = sinf(r);
+	const float x = X * c - Z * s;
+	const float z = X * s + Z * c;
+	X = x;
+	Z = z;
+}
 static inline void axisMap(const aiVector3D& v, float& X, float& Y, float& Z) {
 	switch (s_gltfAxis()) {
 	default:
@@ -67,6 +80,7 @@ static inline void axisMap(const aiVector3D& v, float& X, float& Y, float& Z) {
 	case 2: X=-v.x; Y= v.y; Z=-v.z; break;  // -x,y,-z ('upside down')
 	case 3: X=-v.x; Y=-v.z; Z=-v.y; break;  // -x,-z,-y
 	}
+	applyYaw(X, Z);
 }
 inline Stuff::Point3D toMC2Pos(const aiVector3D& v) {
 	Stuff::Point3D p; float X,Y,Z; axisMap(v,X,Y,Z);

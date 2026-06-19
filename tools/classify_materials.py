@@ -38,9 +38,9 @@ __version__ = '1.0.0'
 # Order matters: first match wins.
 KEYWORD_RULES = [
     ('corrugated_steel_painted', ['corr', 'rib', 'siding', 'steel', 'sheet', 'hangar']),
-    ('painted_metal',            ['metal', 'door', 'pipe', 'rail', 'panel', 'tank']),
+    ('painted_metal',            ['metal', 'door', 'pipe', 'rail', 'panel', 'tank', 'quonset']),
     ('bare_metal',               ['bare']),
-    ('concrete',                 ['conc', 'cement', 'foundation', 'slab']),
+    ('concrete',                 ['conc', 'cement', 'foundation', 'slab', 'genericmilitary', 'military']),
     ('brick',                    ['brick', 'masonry']),
     ('roof',                     ['roof', 'shingle', 'tar']),
     ('glass',                    ['glass', 'window']),
@@ -272,6 +272,7 @@ def build_slots(materials):
                     'slot':             '{}.{}'.format(parent_idx, sub_idx),
                     'material_name':    sub.name,
                     'legacy_texture':   sub.bitmap or None,
+                    'suggested_class':  cls,
                     'guessed_class':    cls,
                     'auto_confidence':  round(conf, 4),
                     'needs_review':     True,
@@ -286,6 +287,7 @@ def build_slots(materials):
                 'slot':             parent_idx,
                 'material_name':    mat.name,
                 'legacy_texture':   mat.bitmap or None,
+                'suggested_class':  cls,
                 'guessed_class':    cls,
                 'auto_confidence':  round(conf, 4),
                 'needs_review':     True,

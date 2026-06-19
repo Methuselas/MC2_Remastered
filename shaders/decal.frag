@@ -56,7 +56,7 @@ void main()
 #endif
         return;
     }
-    PREC vec4 tex_color = texture(tex1, Texcoord);
+    PREC vec4 tex_color = (Texcoord.x < -0.5) ? vec4(1.0) : texture(tex1, Texcoord);
 
     // Straight texture × vertex colour — no tone correction.
     // Color is RGBA [0,1] unpacked from BGRA uint.

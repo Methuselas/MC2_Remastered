@@ -3025,7 +3025,15 @@ void gosRenderer::renderWaterFastPath(
     glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (scene water)
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    glDepthMask(GL_FALSE);
+    // OOB-FOG-WATER-DEPTH-1: water must write depth so runFogOob() (which
+    // fires on rawDepth==0 far-plane pixels) skips water-covered pixels.
+    // Without depth writes, OOB fog classifies water pixels as empty sky and
+    // overlays near-opaque white clouds over them.  MC2_WATER_NO_DEPTH_WRITE=1
+    // restores the old broken behaviour for A/B bisect.
+    static const bool s_waterNoDepthWrite = [] {
+        return getenv("MC2_WATER_NO_DEPTH_WRITE") != nullptr;
+    }();
+    glDepthMask(s_waterNoDepthWrite ? GL_FALSE : GL_TRUE);
     // Invalidate after direct GL state set so subsequent applyRenderStates()
     // calls between here and the draw cannot short-circuit on stale cache.
     invalidateRenderStateCache();
@@ -4577,8 +4585,9 @@ void gosRenderer::init() {
     }
 
 
-    const char* shader_list[] = {"gos_vertex", "gos_tex_vertex", "gos_text", "gos_vertex_lighted", "gos_tex_vertex_lighted"};
-    gosRenderMaterial** shader_ptr_list[] = { &basic_material_, &basic_tex_material_, &text_material_, &basic_lighted_material_, &basic_tex_lighted_material_};
+    gosRenderMaterial* building_pbr_material = nullptr;
+    const char* shader_list[] = {"gos_vertex", "gos_tex_vertex", "gos_text", "gos_vertex_lighted", "gos_tex_vertex_lighted", "building_pbr"};
+    gosRenderMaterial** shader_ptr_list[] = { &basic_material_, &basic_tex_material_, &text_material_, &basic_lighted_material_, &basic_tex_lighted_material_, &building_pbr_material };
 
     static_assert(COUNTOF(shader_list) == COUNTOF(shader_ptr_list), "Arrays myst have same size");
     uint32_t combinations[] = {
@@ -8358,6 +8367,13 @@ void __stdcall gos_SetRenderMaterialParameterInt(HGOSRENDERMATERIAL material, co
 {
 	gosASSERT(material);
 	material->getShader()->setInt(name, v);
+}
+
+void __stdcall gos_SetRenderMaterialSamplerUnit(HGOSRENDERMATERIAL material, const char* name, uint32_t unit)
+{
+	gosASSERT(material);
+	gosASSERT(name);
+	material->setSamplerUnit(name, unit);
 }
 
 // ===================================================================
