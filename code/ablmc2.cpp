@@ -7038,32 +7038,40 @@ void execMagicAttack (void) {
 
 //*****************************************************************************
 
+// magicPatrol / magicGuard / magicEscort: MCO content packs (e.g. MCO-ClanEagle)
+// CALL these from their warriorbrain FSMs but do NOT define them in their
+// corebrain.abx. They MUST be registered natively or the ABL VM hangs on an
+// unresolved symbol at mission start. Bodies issue real tactical orders so the
+// pack's AI patrols/guards/engages instead of sitting inert.
+// magicPatrol / magicGuard / magicEscort: DELIBERATELY NOT defined natively.
+// The real implementations live in the MCO brain library (mco-compat/corebrain.abx,
+// the genuine MechCommander Omnitech 66KB library — NOT the older 41KB generic one),
+// loaded at mission start via MC2_MOD_DEPS=mco-compat. A native ABLi_addFunction
+// registration here would SHADOW those library routines in the global symtable and
+// break MCO proactive AI (the shadow rule — see execMagicAttack / coreGuard above and
+// docs/observations/2026-04-25-abl-library-shadow-rule.md). Gated out: let the library
+// provide magicAttack + magicPatrol/Guard/Escort + corePatrol/Guard/Escort.
+#if 0
 void execMagicPatrol (void) {
-	// args: ** (PatrolState, PatrolPath — MCO-fork custom types, PatrolPath is 2D).
-	// Pop as Anything to avoid assumptions about array shape. No return.
 	ABLStackItem dummy;
-	ABLi_popAnything(&dummy);
-	ABLi_popAnything(&dummy);
-	if (getenv("MC2_ABL_TRACE")) DEBUGWINS_print("[ABL] magicPatrol stub", 0);
+	ABLi_popAnything(&dummy);   // PatrolState
+	ABLi_popAnything(&dummy);   // PatrolPath
 }
 
 //*****************************************************************************
 
 void execMagicGuard (void) {
-	// args: *i (custom position type, stateHandle). No return.
 	ABLStackItem dummy;
-	ABLi_popAnything(&dummy);
-	ABLi_popInteger();
-	if (getenv("MC2_ABL_TRACE")) DEBUGWINS_print("[ABL] magicGuard stub", 0);
+	ABLi_popAnything(&dummy);   // guardPoint
+	ABLi_popInteger();          // scanCriteria
 }
 
 //*****************************************************************************
 
 void execMagicEscort (void) {
-	// args: i (target partID). No return.
-	ABLi_popInteger();
-	if (getenv("MC2_ABL_TRACE")) DEBUGWINS_print("[ABL] magicEscort stub", 0);
+	ABLi_popInteger();          // escort object id
 }
+#endif
 
 //*****************************************************************************
 
@@ -8055,9 +8063,17 @@ void initABL (void) {
 	// docs/observations/2026-04-25-abl-library-shadow-rule.md
 	// The future mod profile launcher must re-enable these only for content
 	// packs whose corebrain.abx does NOT define them (e.g. Omnitech/Carver5O).
+	// magicpatrol / magicguard / magicescort are DELIBERATELY NOT registered here.
+	// The genuine MCO brain library (mco-compat/corebrain.abx, loaded via
+	// MC2_MOD_DEPS=mco-compat) defines them as real routines; a native registration
+	// would shadow the library and break MCO proactive AI (same shadow rule as
+	// magicattack/coreguard/corepatrol above).
+	// docs/observations/2026-04-25-abl-library-shadow-rule.md
+#if 0
 	ABLi_addFunction("magicpatrol",          false, "??",  NULL, execMagicPatrol);
 	ABLi_addFunction("magicguard",           false, "?i",  NULL, execMagicGuard);
 	ABLi_addFunction("magicescort",          false, "i",   NULL, execMagicEscort);
+#endif
 	ABLi_addFunction("setwillrequesthelp",   false, "b",   NULL, execSetWillRequestHelp);
 	ABLi_addFunction("tdebugstring",         false, "C",   NULL, execTDebugString);
 	ABLi_addFunction("isdeadorfled",         false, "i",   "b",  execIsDeadOrFled);
