@@ -26,6 +26,9 @@
 #include <cstdio>   // fprintf
 #include <cstdlib>  // getenv
 
+#include "RenderCore/RenderPassContract.h"
+#include "RenderCore/RenderResourceRegistry.h"
+
 namespace render_contract {
 
 namespace {
@@ -658,6 +661,149 @@ void noteRenderPass(PassIdentity id, const char* callerHint) {
            (int)vp[0], (int)vp[1], (int)vp[2], (int)vp[3], drawBuffers,
            callerHint ? callerHint : "?");
     fflush(stdout);
+}
+
+// ---- CONTRACT-3: per-frame resource-ordering audit ---------------------------
+//
+// MC2_RENDER_PASS_ORDER=1  -- check reads[] satisfied each beginPass
+// MC2_RENDER_PASS_TELEMETRY (shared with [RENDER_PASS v1]) also drives endPass telemetry
+//
+// FrameResourceState is process-global static (no GL dependency; safe from
+// any call site). forceEnabled is set by _test_forceOrderAudit() for CI use.
+
+namespace {
+
+struct FrameResourceState {
+    uint32_t writtenBits    = 0;
+    uint32_t violationCount = 0;
+    int      telemetryTick  = 0;
+    bool     orderEnabled   = false;
+    bool     telEnabled     = false;
+    bool     forceEnabled   = false; // test-only override
+};
+static FrameResourceState s_frame;
+
+static constexpr int kPassOrderTelemetryInterval = 300;
+
+bool isResourceWritten(RenderCore::RenderResourceId id) {
+    if (id == RenderCore::RenderResourceId::Unknown) return true;
+    return (s_frame.writtenBits & (1u << static_cast<uint32_t>(id))) != 0;
+}
+
+void markResourceWritten(RenderCore::RenderResourceId id) {
+    if (id == RenderCore::RenderResourceId::Unknown) return;
+    s_frame.writtenBits |= (1u << static_cast<uint32_t>(id));
+}
+
+const char* resourceName(RenderCore::RenderResourceId id) {
+    switch (id) {
+        case RenderCore::RenderResourceId::Unknown:              return "Unknown";
+        case RenderCore::RenderResourceId::MainColor:            return "MainColor";
+        case RenderCore::RenderResourceId::MainDepth:            return "MainDepth";
+        case RenderCore::RenderResourceId::ShadowStaticMap:      return "ShadowStaticMap";
+        case RenderCore::RenderResourceId::TerrainHeightTexture: return "TerrainHeightTexture";
+        case RenderCore::RenderResourceId::MaterialGpuBuffer:    return "MaterialGpuBuffer";
+        case RenderCore::RenderResourceId::ShadowDynamicMap:     return "ShadowDynamicMap";
+        case RenderCore::RenderResourceId::WaterReflectionColor: return "WaterReflectionColor";
+        case RenderCore::RenderResourceId::WaterReflectionDepth: return "WaterReflectionDepth";
+        default:                                                  return "???";
+    }
+}
+
+const RenderCore::RenderPassContract* findPassContract(RenderCore::RenderPassId id) {
+    for (const auto& c : RenderCore::kRenderPassContracts) {
+        if (c.id == id) return &c;
+    }
+    return nullptr;
+}
+
+} // anonymous namespace (CONTRACT-3 helpers)
+
+void initRenderPassOrder() {
+    const char* v = getenv("MC2_RENDER_PASS_ORDER");
+    s_frame.orderEnabled = s_frame.forceEnabled || (v && v[0] == '1');
+    const char* t = getenv("MC2_RENDER_PASS_TELEMETRY");
+    s_frame.telEnabled = s_frame.forceEnabled || (t && t[0] == '1');
+}
+
+void _test_forceOrderAudit(bool enabled) {
+    s_frame.forceEnabled = enabled;
+    if (enabled) {
+        s_frame.orderEnabled = true;
+        s_frame.telEnabled   = true;
+    }
+}
+
+void frameBegin() {
+    s_frame.writtenBits    = 0;
+    s_frame.violationCount = 0;
+    // Pre-seed resources that are always valid (not produced per-frame):
+    //   ShadowStaticMap: built once per mission at renderLists() preamble
+    //   TerrainHeightTexture: uploaded at mission load
+    markResourceWritten(RenderCore::RenderResourceId::ShadowStaticMap);
+    markResourceWritten(RenderCore::RenderResourceId::TerrainHeightTexture);
+    ++s_frame.telemetryTick;
+}
+
+void beginPass(RenderCore::RenderPassId id) {
+    if (!s_frame.orderEnabled) return;
+    const RenderCore::RenderPassContract* c = findPassContract(id);
+    if (!c) return;
+    for (int i = 0; i < 4; ++i) {
+        RenderCore::RenderResourceId r = c->reads[i];
+        if (r == RenderCore::RenderResourceId::Unknown) break;
+        if (!isResourceWritten(r)) {
+            ++s_frame.violationCount;
+            fprintf(stderr,
+                "[RENDER_PASS_ORDER v3] VIOLATION: pass %s reads %s but no writer seen this frame\n",
+                c->name, resourceName(r));
+        }
+    }
+}
+
+void endPass(RenderCore::RenderPassId id) {
+    // Early-out on default path (both gates off) -- skip table scan.
+    if (!s_frame.orderEnabled && !s_frame.telEnabled) return;
+
+    const RenderCore::RenderPassContract* c = findPassContract(id);
+    if (!c) return;
+
+    // ORDER MATTERS: inspect read status BEFORE marking writes complete.
+    // 1. Capture read ok/missing status for telemetry
+    bool readOk[4] = {};
+    int  readCount = 0;
+    for (int i = 0; i < 4; ++i) {
+        if (c->reads[i] == RenderCore::RenderResourceId::Unknown) break;
+        readOk[i] = isResourceWritten(c->reads[i]);
+        ++readCount;
+    }
+
+    // 2. Mark this pass's writes complete
+    for (int i = 0; i < 4; ++i) {
+        RenderCore::RenderResourceId w = c->writes[i];
+        if (w == RenderCore::RenderResourceId::Unknown) break;
+        markResourceWritten(w);
+    }
+
+    // 3. Emit telemetry (rate-limited)
+    if (!s_frame.telEnabled) return;
+    if (s_frame.telemetryTick % kPassOrderTelemetryInterval != 0) return;
+
+    fprintf(stderr, "[RENDER_PASS_TELEMETRY v3] pass=%s", c->name);
+    for (int i = 0; i < readCount; ++i) {
+        fprintf(stderr, " read=%s:%s",
+            resourceName(c->reads[i]),
+            readOk[i] ? "ok" : "MISSING");
+    }
+    for (int i = 0; i < 4; ++i) {
+        if (c->writes[i] == RenderCore::RenderResourceId::Unknown) break;
+        fprintf(stderr, " write=%s", resourceName(c->writes[i]));
+    }
+    fprintf(stderr, "\n");
+}
+
+uint32_t getFrameViolationCount() {
+    return s_frame.violationCount;
 }
 
 } // namespace render_contract

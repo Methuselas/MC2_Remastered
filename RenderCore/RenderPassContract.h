@@ -29,6 +29,7 @@
 #pragma once
 
 #include <cstdint>
+#include "RenderResourceRegistry.h"
 
 namespace RenderCore {
 
@@ -59,6 +60,24 @@ constexpr uint32_t kRenderPassIdCount =
     static_cast<uint32_t>(RenderPassId::_SentinelLast) - 1u;
 
 // ---------------------------------------------------------------------------
+// Barrier kinds
+// ---------------------------------------------------------------------------
+// Bit flags for GL barriers needed after a pass's writes become visible to consumers.
+// v0: metadata only -- runtime barrier calls are a future slice.
+enum class BarrierKind : uint32_t {
+    None          = 0,
+    TextureFetch  = 1u << 0,  // GL_TEXTURE_FETCH_BARRIER_BIT
+    ShaderStorage = 1u << 1,  // GL_SHADER_STORAGE_BARRIER_BIT
+    ImageAccess   = 1u << 2,  // GL_SHADER_IMAGE_ACCESS_BARRIER_BIT
+    Command       = 1u << 3,  // GL_COMMAND_BARRIER_BIT
+    Framebuffer   = 1u << 4,  // GL_FRAMEBUFFER_BARRIER_BIT
+};
+constexpr inline BarrierKind operator|(BarrierKind a, BarrierKind b) {
+    return static_cast<BarrierKind>(
+        static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
+}
+
+// ---------------------------------------------------------------------------
 // Contract entry (descriptive)
 // ---------------------------------------------------------------------------
 
@@ -72,6 +91,26 @@ struct RenderPassContract {
     const char*  inspectorSectionId;        // ImGui CollapsingHeader label (incl. ##tag if any)
     const char*  killSwitchEnv;             // env var; nullptr if none
     const char*  notes;                     // optional one-liner
+
+    // Resources this pass samples (reads). RenderResourceId::Unknown (=0) terminates.
+    RenderResourceId reads[4]  = {
+        RenderResourceId::Unknown,
+        RenderResourceId::Unknown,
+        RenderResourceId::Unknown,
+        RenderResourceId::Unknown
+    };
+
+    // Resources this pass writes. RenderResourceId::Unknown (=0) terminates.
+    RenderResourceId writes[4] = {
+        RenderResourceId::Unknown,
+        RenderResourceId::Unknown,
+        RenderResourceId::Unknown,
+        RenderResourceId::Unknown
+    };
+
+    // GL barrier needed after this pass's writes, before consumers can read.
+    // v0: informational only; runtime enforcement is a future slice.
+    BarrierKind barrierAfter = BarrierKind::None;
 };
 
 // ---------------------------------------------------------------------------
@@ -101,7 +140,10 @@ static constexpr RenderPassContract kRenderPassContracts[] = {
         /*snapshotRowAuthoritative*/ true,
         "StaticProp",
         "MC2_SNAPSHOT_STATIC_PROP_BUILD",
-        "Reference path: snapshot-owned v6 DrawPacket+meta dispatch default-on (STATIC-PROP-V3-FLIP 2a88a5a8)."
+        "Reference path: snapshot-owned v6 DrawPacket+meta dispatch default-on (STATIC-PROP-V3-FLIP 2a88a5a8).",
+        /* reads[4]    */ { RenderResourceId::ShadowDynamicMap },
+        /* writes[4]   */ { RenderResourceId::MainColor, RenderResourceId::MainDepth },
+        /* barrierAfter */ BarrierKind::Framebuffer
     },
     {
         RenderPassId::Terrain,
@@ -112,7 +154,10 @@ static constexpr RenderPassContract kRenderPassContracts[] = {
         /*snapshotRowAuthoritative*/ false,
         "Terrain Pass##tp",
         nullptr,
-        "TerrainPassFacts row landed in RenderSnapshot at 1d7b9ea6 as passive recorder; not yet authoritative."
+        "TerrainPassFacts row landed in RenderSnapshot at 1d7b9ea6 as passive recorder; not yet authoritative.",
+        /* reads[4]    */ { RenderResourceId::ShadowDynamicMap },
+        /* writes[4]   */ { RenderResourceId::MainColor, RenderResourceId::MainDepth },
+        /* barrierAfter */ BarrierKind::Framebuffer
     },
     {
         RenderPassId::MechOpaque,
@@ -124,7 +169,10 @@ static constexpr RenderPassContract kRenderPassContracts[] = {
         "Mech",
         "MC2_SNAPSHOT_MECH_EXTRACT",
         "Wired through PipelineId::MechOpaque (MECH-PIPELINEDESC-1, applyPipeline) "
-        "+ ViewUniforms UBO consumer default-on (MECH-VIEWUNIFORMS)."
+        "+ ViewUniforms UBO consumer default-on (MECH-VIEWUNIFORMS).",
+        /* reads[4]    */ { RenderResourceId::ShadowDynamicMap },
+        /* writes[4]   */ { RenderResourceId::MainColor, RenderResourceId::MainDepth },
+        /* barrierAfter */ BarrierKind::Framebuffer
     },
     {
         RenderPassId::Shadow,
@@ -135,7 +183,10 @@ static constexpr RenderPassContract kRenderPassContracts[] = {
         /*snapshotRowAuthoritative*/ false,
         "Shadow Pass##sp",
         nullptr,
-        "Three shadow lanes (terrain/mech/static-prop); counters live-read from inspectors."
+        "Three shadow lanes (terrain/mech/static-prop); counters live-read from inspectors.",
+        /* reads[4]    */ {},
+        /* writes[4]   */ { RenderResourceId::ShadowDynamicMap },
+        /* barrierAfter */ BarrierKind::TextureFetch
     },
     {
         RenderPassId::VFX,
@@ -146,7 +197,10 @@ static constexpr RenderPassContract kRenderPassContracts[] = {
         /*snapshotRowAuthoritative*/ false,
         "VFX Pass##vfx",
         nullptr,
-        "Object-ID PROHIBITED. GpuTrailKind {None, MissileSmoke, PpcBolt}."
+        "Object-ID PROHIBITED. GpuTrailKind {None, MissileSmoke, PpcBolt}.",
+        /* reads[4]    */ { RenderResourceId::MainDepth },
+        /* writes[4]   */ { RenderResourceId::MainColor },
+        /* barrierAfter */ BarrierKind::None
     },
 };
 

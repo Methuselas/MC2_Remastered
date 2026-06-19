@@ -30,6 +30,7 @@
 #define MC2_RENDER_CONTRACT_H
 
 #include <cstdint>
+#include "RenderCore/RenderPassContract.h"
 
 namespace render_contract {
 
@@ -119,6 +120,25 @@ const char*                 passIdentityName(PassIdentity);
 // is not set. callerHint is logged in assertion messages (use __func__).
 void initRenderContractAssert();
 void assertPassContract(PassIdentity id, const char* callerHint = nullptr);
+
+// CONTRACT-3: per-frame resource-ordering audit.
+// Env gates:
+//   MC2_RENDER_PASS_ORDER=1   -- check reads[] satisfied; warn + count violations
+//   MC2_RENDER_PASS_TELEMETRY=1 -- emit rate-limited pass manifest (every 300 frames)
+//
+// DO NOT USE MC2_RENDER_CONTRACT_ASSERT for this system.
+// MC2_RENDER_CONTRACT_ASSERT drives the existing GL-state abort checker (assertPassContract).
+//
+// Call frameBegin() once per frame before any pass.
+// Call beginPass(id) before each tracked pass; endPass(id) after.
+// Returns count of ordering violations since frameBegin(); 0 under normal operation.
+
+void initRenderPassOrder();
+void frameBegin();
+void beginPass(RenderCore::RenderPassId id);
+void endPass(RenderCore::RenderPassId id);
+uint32_t getFrameViolationCount();
+void _test_forceOrderAudit(bool enabled); // test-only override
 
 // [RENDER_PASS v1] advisory telemetry (slice D1). Gated by
 // MC2_RENDER_PASS_TELEMETRY=1 (cached bool; zero log lines and near-zero

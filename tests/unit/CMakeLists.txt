@@ -49,6 +49,7 @@ add_executable(mc2_tests
 )
 
 target_include_directories(mc2_tests PRIVATE
+    ${MC2_WORKTREE_ROOT}           # for "RenderCore/RenderPassContract.h" style includes
     ${MC2_WORKTREE_ROOT}/mclib
     ${MC2_WORKTREE_ROOT}/GameOS
     ${MC2_WORKTREE_ROOT}/RenderWorld
@@ -84,4 +85,37 @@ add_custom_target(rendercore_tests
     DEPENDS mc2_tests
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     COMMENT "Running RenderCore substrate unit tests"
+)
+
+# CONTRACT-3: per-frame resource-ordering tracking test.
+# Standalone binary (own int main, no doctest) because render_contract.cpp
+# carries a GL include that the main mc2_tests target deliberately avoids.
+# Links glew32 for compilation; CONTRACT-3 paths never call GL at runtime.
+add_executable(test_render_contract_3
+    test_render_contract_3.cpp
+    ${MC2_WORKTREE_ROOT}/mclib/render_contract.cpp
+    ${MC2_WORKTREE_ROOT}/RenderCore/RenderResourceRegistry.cpp
+)
+
+target_include_directories(test_render_contract_3 PRIVATE
+    ${MC2_WORKTREE_ROOT}           # for "RenderCore/RenderPassContract.h" style includes
+    ${MC2_WORKTREE_ROOT}/mclib
+    ${MC2_WORKTREE_ROOT}/RenderCore
+    ${MC2_WORKTREE_ROOT}/GameOS
+    ${MC2_WORKTREE_ROOT}/3rdparty/include
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_compile_definitions(test_render_contract_3 PRIVATE
+    LINUX_BUILD
+    _CRT_SECURE_NO_WARNINGS
+)
+
+if(MSVC)
+    target_compile_options(test_render_contract_3 PRIVATE /W4 /WX-)
+endif()
+
+target_link_libraries(test_render_contract_3 PRIVATE
+    ${MC2_WORKTREE_ROOT}/3rdparty/lib/x64/glew32.lib
+    opengl32
 )

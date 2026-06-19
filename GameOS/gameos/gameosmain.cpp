@@ -1086,6 +1086,7 @@ int main(int argc, char** argv)
 
     render_contract::initRenderContractAssert();
     render_contract::initRenderPassTelemetry();   // [RENDER_PASS v1] (MC2_RENDER_PASS_TELEMETRY=1)
+    render_contract::initRenderPassOrder();       // CONTRACT-3 (MC2_RENDER_PASS_ORDER=1)
 
     if (GLEW_ARB_parallel_shader_compile) {
         glMaxShaderCompilerThreadsARB(0xFFFFFFFF);
