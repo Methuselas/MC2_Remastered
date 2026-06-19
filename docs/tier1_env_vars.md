@@ -42,7 +42,7 @@
 
 ### Dynamic CSM (reworked 2026-06-16 `8d36b37d`/`b8f764b6`/`13e96cc9`/`ead760df`)
 
-- `MC2_SHADOW_CSM` — master cascaded-shadow-map toggle. Default **OFF**.
+- `MC2_SHADOW_CSM` — master cascaded-shadow-map toggle. Default **ON** (2026-06-18, `8ff13a36`); opt out with `=0`.
 - `MC2_SHADOW_MAP_SIZE` — per-cascade shadow texture size. Default **8192**. 3×8192² ≈ 805 MB VRAM; `=4096` ≈ 201 MB (still sharp at R0=512).
 - `MC2_SHADOW_CSM_R0` — near-cascade fit radius (WU). Default **512** (→ 0.25 WU/texel at 4096).
 - `MC2_SHADOW_CSM_R1` — mid-cascade fit radius (WU). Default **4096**.

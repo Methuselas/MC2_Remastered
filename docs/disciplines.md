@@ -56,6 +56,26 @@ resource lifetime, or cross-system control flow lands env-gated `[SUBSYSTEM]`
 lifecycle prints in the same commit. Stays gated off; demote-don't-delete
 after fix. Full rule: `memory/debug_instrumentation_rule.md`.
 
+## Render-slice observability rule (state-dump block)
+
+Any **gated render slice** ships with a state-dump observability block in the
+same commit (`debug_state_dump.cpp` → `"shadow"`-style object, queryable via
+the `mc2-render-state` MCP). It exposes the feature's gate + key resolved
+runtime values.
+
+Criteria (gap-driven, NOT blanket): a feature earns a block when it has a
+default-on/off gate **AND** a runtime effect you iterate on visually
+(shadows, water, vegetation, terrain LOD, PBR). Skip always-on, cosmetic-only,
+or trivially-confirmed features — a dead field is engine maintenance cost for
+zero query value.
+
+Why: cheap at authoring time (the values are already in hand), expensive to
+bolt on later. The 2026-06-18 CSM work proved the cost — "is CSM actually on?"
+required md5-ing exes and reading `launcher_env.json` across deploy folders
+because no live state exposed it. Pattern reference: `9d0556c0`
+(`"shadow"` block). Aligns with the *measure-before-infer* /
+*forced-constant-verify-over-code-theory* discipline.
+
 ## Smoke sessions are USER-DRIVEN
 
 **The user can see and control every smoke session.** `run_smoke.py` launches
