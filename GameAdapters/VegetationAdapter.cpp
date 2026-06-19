@@ -45,6 +45,14 @@ namespace {
     return std::atoi(v);
 }
 
+// Read a float env var.  Returns defaultVal if not set or empty.
+[[nodiscard]] float envFloat(const char* name, float defaultVal) noexcept
+{
+    const char* v = std::getenv(name);
+    if (!v || !v[0]) return defaultVal;
+    return static_cast<float>(std::atof(v));
+}
+
 [[nodiscard]] bool envSet(const char* name) noexcept
 {
     const char* v = std::getenv(name);
@@ -59,8 +67,19 @@ namespace {
 }
 
 // World-unit spacing between sample points.
-// ~5x area density vs 32: (32/14)^2 ≈ 5.2x more grid cells per area.
-constexpr float kGridStep = 14.0f;
+// Default 14.0 WU.  Override with MC2_VEG_GRID_SPACING (e.g. 2.0 for denser grass).
+// Clamped to [1.0, 256.0] to prevent runaway instance counts.
+[[nodiscard]] static float getGridStep() noexcept
+{
+    static float cached = -1.0f;
+    if (cached < 0.0f) {
+        float v = envFloat("MC2_VEG_GRID_SPACING", 14.0f);
+        if (v < 1.0f)   v = 1.0f;
+        if (v > 256.0f) v = 256.0f;
+        cached = v;
+    }
+    return cached;
+}
 
 // ---------------------------------------------------------------------------
 // Placement accept/reject helpers
@@ -534,17 +553,27 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
     int instTriedTotal = 0, instRejWater = 0, instRejHard = 0, instRejNoneFringe = 0,
         instRejOverlay = 0, instRejSlope = 0;
 
-    // Walk the map in world-space steps of kGridStep.
+    // World-unit spacing between grid sample points.
+    // Reads MC2_VEG_GRID_SPACING env var (default 14.0 WU, clamped to [1.0, 256.0]).
+    // Smaller = denser placement; maxInst cap prevents runaway counts.
+    const float gridStep = getGridStep();
+
+    // MC2_VEG_CARD_SIZE: base card height in WU (default 1.0 WU).
+    // Each instance adds random variation: base + h4 * (base * 0.5) so cards vary
+    // from base to 1.5× base.  For grasslands_dense set to 0.8 WU.
+    const float cardSizeBase = envFloat("MC2_VEG_CARD_SIZE", 1.0f);
+
+    // Walk the map in world-space steps of gridStep.
     // wy decreases (southward) because MissionMap row increases as Y decreases.
-    for (float wy = originY - kGridStep * 0.5f;
-         wy > (originY - mapSpan + kGridStep);
-         wy -= kGridStep)
+    for (float wy = originY - gridStep * 0.5f;
+         wy > (originY - mapSpan + gridStep);
+         wy -= gridStep)
     {
         if (static_cast<int>(instances.size()) >= maxInst) break;
 
-        for (float wx = originX + kGridStep * 0.5f;
-             wx < (originX + mapSpan - kGridStep);
-             wx += kGridStep)
+        for (float wx = originX + gridStep * 0.5f;
+             wx < (originX + mapSpan - gridStep);
+             wx += gridStep)
         {
             if (static_cast<int>(instances.size()) >= maxInst) break;
 
@@ -606,9 +635,9 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
 
             const float mapHalf = mapSpan * 0.5f;
 
-            // Jitter clump centre by half grid step — breaks visible 32 WU rows.
-            const float jx = (hashf(wx * 0.017f, wy * 0.013f + 1234.0f) - 0.5f) * kGridStep;
-            const float jy = (hashf(wy * 0.019f, wx * 0.023f + 5678.0f) - 0.5f) * kGridStep;
+            // Jitter clump centre by half grid step — breaks visible grid rows.
+            const float jx = (hashf(wx * 0.017f, wy * 0.013f + 1234.0f) - 0.5f) * gridStep;
+            const float jy = (hashf(wy * 0.019f, wx * 0.023f + 5678.0f) - 0.5f) * gridStep;
             const float clumpCx = wx + jx;
             const float clumpCy = wy + jy;
 
@@ -688,7 +717,10 @@ void GameAdapters::Vegetation::missionLoaded(Terrain* land, MissionMap* gameMap)
                 inst.y          = instWy - originY + mapHalf;
                 inst.z          = elevation + 0.5f;
                 inst.yaw        = h3 * 6.2831f;
-                inst.scale      = 1.0f + h4 * 5.0f;  // 1-6 WU range
+                // Scale: cardSizeBase to 1.5× cardSizeBase with random variation.
+                // Default (MC2_VEG_CARD_SIZE=1.0): 1.0–1.5 WU.
+                // Dense grass (MC2_VEG_CARD_SIZE=0.8): 0.8–1.2 WU.
+                inst.scale      = cardSizeBase + h4 * (cardSizeBase * 0.5f);
                 // Species: dominant frame for this clump (70%), fill from palette (30%).
                 const FramePalette pal = framePalette(vdc);
                 const float domHash = hashf(clumpCx * 0.11f, clumpCy * 0.09f + 9999.0f);
@@ -806,6 +838,17 @@ void GameAdapters::Vegetation::flush(const float* terrainLightDir_4f, float time
                                      float camChunkX, float camChunkY, float camChunkZ)
 {
     if (!GosVegetation::isEnabled()) return;
+
+    // Camera height gate: skip all vegetation rendering when camera altitude >= 100 WU.
+    // Instances are still present in the GPU buffer (generated at mission load); this
+    // is purely a per-frame draw skip.  Provides a natural LOD: at ground level (<100 WU)
+    // dense grass is visible; at altitude the overhead view draws nothing (grass too small
+    // to be meaningful from high up and would tank fill-rate).
+    // MC2_VEG_CAM_HEIGHT_GATE: override threshold in WU (default 100.0; 0=disable gate).
+    {
+        const float heightGate = envFloat("MC2_VEG_CAM_HEIGHT_GATE", 100.0f);
+        if (heightGate > 0.0f && camChunkZ >= heightGate) return;
+    }
 
     // Build per-block LOD visibility from terrain chunk metadata and upload to SSBO.
     // The SSBO tells the vertex shader which blocks to cull (0) or draw at LOD1 (1) or LOD0 (2).

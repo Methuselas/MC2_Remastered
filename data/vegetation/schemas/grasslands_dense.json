@@ -1,0 +1,5 @@
+{
+  "name": "grasslands_dense",
+  "cards_full": ["grass_summer", "grass_spring", "grass_patch_summer", "grass_patch_spring"],
+  "cards_sparse": ["grass_patch_summer", "grass_patch_fall"]
+}
