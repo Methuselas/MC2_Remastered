@@ -41,13 +41,16 @@ sys.path.insert(0, str(Path(__file__).parent))
 # Helpers
 # ---------------------------------------------------------------------------
 
-def git(args, cwd=None, strip=True):
-    result = subprocess.run(
-        ["git"] + args,
-        capture_output=True, text=True, cwd=cwd
-    )
-    out = result.stdout.strip() if strip else result.stdout
-    return out, result.returncode
+def git(args, cwd=None, strip=True, timeout=10):
+    try:
+        result = subprocess.run(
+            ["git"] + args,
+            capture_output=True, text=True, cwd=cwd, timeout=timeout,
+        )
+        out = result.stdout.strip() if strip else result.stdout
+        return out, result.returncode
+    except subprocess.TimeoutExpired:
+        return "", 1
 
 
 def find_repo_root():

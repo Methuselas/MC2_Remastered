@@ -19,6 +19,7 @@ Configuration:
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
@@ -77,9 +78,69 @@ def _j(obj) -> str:
     return json.dumps(obj, indent=2)
 
 
+def _git_fast(args: list, cwd: Path, timeout: int = 5) -> tuple:
+    """Run a single git command with a hard timeout. Returns (stdout, ok)."""
+    try:
+        r = subprocess.run(
+            ["git"] + args,
+            capture_output=True, text=True, cwd=str(cwd), timeout=timeout,
+        )
+        return r.stdout.strip(), r.returncode == 0
+    except subprocess.TimeoutExpired:
+        return "", False
+    except Exception:
+        return "", False
+
+
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
+
+@mcp.tool()
+def preflight_fast(expect_branch: str = "", expect_root: str = "") -> str:
+    """
+    Fast branch + root guard only. Two git rev-parse calls, <200ms.
+    No git status, no harness parse, no source walk.
+
+    Use this as the mandatory session-start seatbelt.
+    Use preflight() only when you also need dirty-file detail or harness commands.
+
+    HARD STOP RULES:
+      branch_ok=false → stop immediately, do not edit
+      root_ok=false   → stop immediately, do not edit
+    """
+    root = _repo()
+
+    branch, branch_ok_call = _git_fast(["rev-parse", "--abbrev-ref", "HEAD"], root)
+    head,   _              = _git_fast(["rev-parse", "--short",       "HEAD"], root)
+    actual_root, root_ok_call = _git_fast(["rev-parse", "--show-toplevel"],   root)
+
+    if not branch_ok_call:
+        return _j({"error": "git rev-parse failed — is this a git repo?", "repo_root": str(root)})
+
+    branch_ok = True
+    root_ok   = True
+    warnings  = []
+
+    if expect_branch and branch != expect_branch:
+        branch_ok = False
+        warnings.append(f"branch '{branch}' != expected '{expect_branch}'")
+
+    if expect_root and root_ok_call:
+        if rq._normalize_path(actual_root) != rq._normalize_path(expect_root):
+            root_ok = False
+            warnings.append(f"root '{actual_root}' != expected '{expect_root}'")
+
+    return _j({
+        "branch_ok":       branch_ok,
+        "root_ok":         root_ok,
+        "safe_to_proceed": branch_ok and root_ok,
+        "branch":          branch,
+        "head":            head,
+        "repo_root":       actual_root or str(root),
+        "warnings":        warnings,
+    })
+
 
 @mcp.tool()
 def preflight(expect_branch: str = "", expect_root: str = "") -> str:
