@@ -484,6 +484,32 @@ long MissionBegin::getCurrentScreenId()
 
 const char* MissionBegin::update()
 {
+	// LOGISTICS capture: on each front-end screen change, dump the screen + bay/
+	// purchase/loadout/launch state to an MCP-readable LOGISTICS diagnostic event.
+	// Self-gated on the LOGISTICS diag tag (no cost unless enabled). curScreenX==-1
+	// during the splash/main menu. One hook covers all screens via curScreenX/Y.
+	if ( !bSplash && curScreenX >= 0 && LogisticsData::instance )
+	{
+		static int s_lastDumpX = -2, s_lastDumpY = -2;
+		if ( curScreenX != s_lastDumpX || curScreenY != s_lastDumpY )
+		{
+			s_lastDumpX = curScreenX;
+			s_lastDumpY = curScreenY;
+			const char* nm = "unknown";
+			switch ( 10 * curScreenX + curScreenY )
+			{
+				case 1:  nm = "campaign_select";    break; // [0][1] MissionSelectionScreen
+				case 11: nm = "mission_briefing";   break; // [1][1] BriefingScreen
+				case 21: nm = "mech_bay";           break; // [2][1] MechBayScreen
+				case 20: nm = "mech_purchase";      break; // [2][0] PurchaseMechScreen
+				case 22: nm = "mech_lab_loadout";   break; // [2][2] MechLabScreen
+				case 31: nm = "pilot_ready_launch"; break; // [3][1] PilotSelectionScreen
+				case 41: nm = "load";               break; // [4][1] LoadScreen
+				default: break;
+			}
+			LogisticsData::instance->dumpFrontEndState( nm );
+		}
+	}
 
 	if ( bSplash )
 	{

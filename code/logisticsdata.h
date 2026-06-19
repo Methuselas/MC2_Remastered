@@ -106,6 +106,12 @@ public:
 	void				setMissionCompleted();
 	long				updateAvailability();
 
+	// Front-end screen state capture: emits a "LOGISTICS" diagnostic-trace event
+	// (MCP-readable) with the current screen + bay/purchase/loadout/launch state
+	// (purchasable mechs, inventory, force group, pilots, CB/RP, drop weight,
+	// mission info). Self-gates on the LOGISTICS diag tag being enabled.
+	void				dumpFrontEndState( const char* screenName );
+
 	const EString&		getCurrentMission() const;
 	const EString&		getLastMission() const;
 	int					setCurrentMission( const EString& missionName );

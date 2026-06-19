@@ -625,6 +625,14 @@ def main():
                             # them and the fixture never fires.
                             "MC2_FX_FORCE_SPAWN",
                             "MC2_LOG",
+                            # MCO magic* AI behavior trace (code/ablmc2.cpp magicAiLog):
+                            # logs whether ClanEagle brains call magicPatrol/Guard/Escort
+                            # and what target the engine acquired. Allowlist or Popen drops it.
+                            "MC2_MAGIC_AI_LOG",
+                            # Logistics/purchase-screen load trace (code/logisticsdata.cpp
+                            # updateAvailability): logs resolved purchase file path, open
+                            # OK/FAIL, each Mech read, available counts. For POAR bay debug.
+                            "MC2_LOG_LOGISTICS",
                             # Direct-fire projectile speed multiplier (PPC/AC/gauss);
                             # default 1.0 (stock). Allowlisted so the fixture can A/B it.
                             "MC2_PROJECTILE_SPEED_MULT",
@@ -635,6 +643,10 @@ def main():
                             # registry mod-merge (mods/<id>/...). Allowlisted so mod
                             # smokes actually load the mod; without it Popen drops it.
                             "MC2_ACTIVE_MOD",
+                            # Launcher-supplied compatibility layer(s) (file.cpp MC2_MOD_DEPS):
+                            # e.g. mco-compat / mc2x-compat. Required to replicate a launcher
+                            # campaign launch in smoke (loads corebrain.abx + object2.pak).
+                            "MC2_MOD_DEPS",
                             "MC2_LIGHT_COST_SPLIT",
                             "MC2_SLIM_COST_SPLIT",
                             "MC2_TOBJ_COST_SPLIT",

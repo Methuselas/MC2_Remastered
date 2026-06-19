@@ -33,6 +33,7 @@ const std::unordered_set<std::string>& knownTags() {
         "BUILD",
         "DEVICE",
         "SHADER_COMPILE",
+        "LOGISTICS",
     };
     return tags;
 }

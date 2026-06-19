@@ -24,6 +24,8 @@ LogisticsData.cpp			: Implementation of the LogisticsData component.
 #include"missionresults.h"
 #include<zlib.h>
 #include<vector>
+#include<string>
+#include"../GameOS/gameos/diagnostic_trace.h"   // LOGISTICS front-end state capture
 
 #ifndef VIEWER
 #include"multplyr.h"
@@ -1782,6 +1784,142 @@ long LogisticsData::updateAvailability()
 
 	return 0;
 
+}
+
+//*****************************************************************************
+// Front-end screen state capture (MCP-readable LOGISTICS diagnostic event).
+// One hook in MissionBegin::update keyed on the current screen drives this for
+// every front-end screen: campaign select, briefing, mech bay, purchase,
+// loadout (mech lab), and the pilot/launch screen. Self-gates on the LOGISTICS
+// diag tag so it costs nothing unless explicitly enabled (MC2_DIAG_TAGS).
+//*****************************************************************************
+void LogisticsData::dumpFrontEndState( const char* screenName )
+{
+	if ( !mc2_diag::tagEnabled( "LOGISTICS" ) )
+		return;
+
+	static uint64_t s_dumpSeq = 0;
+	++s_dumpSeq;
+
+	auto esc = []( const char* s ) -> std::string {
+		std::string o;
+		if ( !s ) return o;
+		for ( const char* p = s; *p; ++p ) {
+			char c = *p;
+			if ( c == '"' || c == '\\' ) { o.push_back( '\\' ); o.push_back( c ); }
+			else if ( c == '\n' || c == '\r' || c == '\t' ) o.push_back( ' ' );
+			else o.push_back( c );
+		}
+		return o;
+	};
+
+	std::string j = "{";
+	j += "\"screen\":\"" + esc( screenName ) + "\"";
+	j += ",\"campaign\":\"" + esc( (const char*)getCampaignName() ) + "\"";
+
+	// Mission name fields — guard on a valid current mission (campaign-select
+	// screen may have none yet).
+	const EString& curMission = getCurrentMission();
+	if ( curMission.Length() > 0 ) {
+		j += ",\"mission\":\"" + esc( (const char*)curMission ) + "\"";
+		j += ",\"missionFriendly\":\"" + esc( getCurrentMissionFriendlyName() ) + "\"";
+		j += ",\"dropWeight\":" + std::to_string( getCurrentDropWeight() );
+		j += ",\"maxDropWeight\":" + std::to_string( getMaxDropWeight() );
+	}
+
+	j += ",\"cbills\":" + std::to_string( getCBills() );
+	j += ",\"resourcePoints\":" + std::to_string( getResourcePoints() );
+
+	// Purchasable mechs — the bay/purchase population. Empty here = the POAR bug.
+	{
+		LogisticsVariant* pv[512];
+		int pc = 512;
+		getPurchasableMechs( pv, pc );
+		j += ",\"purchasableCount\":" + std::to_string( pc );
+		j += ",\"purchasable\":[";
+		int lim = pc < 64 ? pc : 64;
+		for ( int i = 0; i < lim; ++i ) {
+			if ( i ) j += ",";
+			j += "\"" + esc( pv[i] ? (const char*)pv[i]->getName() : "" ) + "\"";
+		}
+		j += "]";
+	}
+
+	// Vehicles available to the campaign (POAR early missions sell these).
+	{
+		const LogisticsVehicle* vv[256];
+		int vc = 256;
+		getVehicles( vv, vc );
+		j += ",\"vehicleCount\":" + std::to_string( vc );
+	}
+
+	// Inventory (owned mechs).
+	{
+		EList<LogisticsMech*, LogisticsMech*> inv;
+		getInventory( inv );
+		j += ",\"inventoryCount\":" + std::to_string( (int)inv.Count() );
+		j += ",\"inventory\":[";
+		int i = 0;
+		for ( EList<LogisticsMech*, LogisticsMech*>::EIterator it = inv.Begin();
+		      !it.IsDone() && i < 64; it++, ++i ) {
+			if ( i ) j += ",";
+			j += "\"" + esc( (const char*)( *it )->getName() ) + "\"";
+		}
+		j += "]";
+	}
+
+	// Force group (the deployed loadout / launch roster).
+	{
+		EList<LogisticsMech*, LogisticsMech*> fg;
+		getForceGroup( fg );
+		j += ",\"forceGroupCount\":" + std::to_string( (int)fg.Count() );
+		j += ",\"forceGroup\":[";
+		int i = 0;
+		for ( EList<LogisticsMech*, LogisticsMech*>::EIterator it = fg.Begin();
+		      !it.IsDone() && i < 24; it++, ++i ) {
+			if ( i ) j += ",";
+			j += "\"" + esc( (const char*)( *it )->getName() ) + "\"";
+		}
+		j += "]";
+	}
+
+	// Pilots (name + availability).
+	{
+		LogisticsPilot* pp[256];
+		long pcount = 256;
+		getPilots( pp, pcount );
+		int avail = 0;
+		for ( long i = 0; i < pcount; ++i )
+			if ( pp[i] && pp[i]->isAvailable() ) ++avail;
+		j += ",\"pilotCount\":" + std::to_string( (int)pcount );
+		j += ",\"pilotsAvailable\":" + std::to_string( avail );
+		j += ",\"pilots\":[";
+		long lim = pcount < 48 ? pcount : 48;
+		for ( long i = 0; i < lim; ++i ) {
+			if ( i ) j += ",";
+			j += "{\"name\":\"" + esc( pp[i] ? (const char*)pp[i]->getName() : "" )
+			   + "\",\"available\":" + ( ( pp[i] && pp[i]->isAvailable() ) ? "true" : "false" ) + "}";
+		}
+		j += "]";
+	}
+
+	// Available missions (campaign-select screen).
+	{
+		const char* mn[256];
+		long mc = 256;
+		getCurrentMissions( mn, mc );
+		j += ",\"missionListCount\":" + std::to_string( (int)mc );
+		j += ",\"missionList\":[";
+		long lim = mc < 48 ? mc : 48;
+		for ( long i = 0; i < lim; ++i ) {
+			if ( i ) j += ",";
+			j += "\"" + esc( mn[i] ) + "\"";
+		}
+		j += "]";
+	}
+
+	j += "}";
+	mc2_diag::writeEvent( "LOGISTICS", 1, s_dumpSeq, j.c_str() );
 }
 
 void LogisticsData::appendAvailability(const char* pFileName, bool* availableArray )
