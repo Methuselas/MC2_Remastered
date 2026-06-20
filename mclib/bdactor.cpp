@@ -4086,6 +4086,58 @@ int32_t BldgAppearance::getStaticRecipeIndex() const {
     return staticReg.registered ? staticReg.recipeIndex : -1;
 }
 
+// STATIC-REG-PREWARM-QUEUE-1: mission-load off-screen light bake.
+// Called after finalizeGeometry() + eye init, before the first update() frame.
+// Purpose: drain the H4 latch (needsFullBakeNextFrame=true) that registerStatic()
+// arms, using the permanent SSBO path (mc2CacheOrBakeStaticGpuLight → MISS →
+// mc2WriteStaticLightSlot). Off-screen props that never reach render() will
+// have a valid cached light slot and will pass stableLightSkipEligible from
+// frame 1 onward, eliminating the rej_no_static_reg bucket on mc2_24.
+// The approach mirrors the existing gpuEligible non-full-bake branch in update():
+//   SetLightList → TransformMultiShape_HierarchyOnly → mc2CacheOrBakeStaticGpuLight
+// We re-use the static mc2CacheOrBakeStaticGpuLight() declared above in this TU.
+bool BldgAppearance::prewarmStaticLightBake(Camera* cam)
+{
+	// Gate: only bake objects that are registered and have the latch set.
+	if (!staticReg.registered || staticReg.recipeIndex < 0)
+		return false;
+	if (!needsFullBakeNextFrame)
+		return false;
+	if (!bldgShape)
+		return false;
+	if (!cam || cam->getNumLights() == 0)
+		return false;
+
+	// Populate shapeToWorld hierarchy (no full pool bake — mirrors gpuEligible branch).
+	bldgShape->SetLightList(cam->getWorldLights(), cam->getNumLights());
+
+	// Build xlatPosition/rot from the appearance world position/rotation.
+	// Same coordinate transform as BldgAppearance::update (line ~3281):
+	Stuff::Point3D xlatPosition;
+	xlatPosition.x = -position.x;
+	xlatPosition.y =  position.z;
+	xlatPosition.z =  position.y;
+
+	float yaw = rotation * DEGREES_TO_RADS;
+	Stuff::UnitQuaternion rot;
+	rot = Stuff::EulerAngles(0.0f, yaw, 0.0f);
+
+	// Hierarchy-only walk: fills shapeToWorld matrices without touching TGL pools.
+	// Safe to call from mission load: no GL calls, no frame-pool alloc.
+	bldgShape->TransformMultiShape_HierarchyOnly(&xlatPosition, &rot);
+
+	// Bake light into permanent SSBO slot (MISS path: CacheGpuLightData + mc2WriteStaticLightSlot).
+	mc2CacheOrBakeStaticGpuLight(bldgShape, staticReg.registered, staticReg.recipeIndex);
+	staticReg.lightDataIndex = bldgShape->getCachedGpuLightIndex();
+
+	if (staticReg.lightDataIndex != 0xFFFFFFFFu) {
+		staticReg.hasValidStaticLight = true;
+		needsFullBakeNextFrame = false;
+		return true;  // baked successfully
+	}
+	return false;  // gpu objects not enabled or CacheGpuLightData early-returned
+}
+
 bool BldgAppearance::IsStaticNow() const
 {
 	return staticReg.registered
@@ -6869,6 +6921,53 @@ bool TreeAppearance::isStaticRegistered() const { return staticReg[activeLOD].re
 
 int32_t TreeAppearance::getStaticRecipeIndex() const {
     return staticReg[activeLOD].registered ? staticReg[activeLOD].recipeIndex : -1;
+}
+
+// STATIC-REG-PREWARM-QUEUE-1: mission-load off-screen light bake for trees.
+// Mirrors BldgAppearance::prewarmStaticLightBake — see that function for rationale.
+// Trees bake LOD0 only (activeLOD is pinned 0 at mission load; Task 5 adds distance
+// selection later). LOD0 is the canonical light key; other LODs share the slot.
+bool TreeAppearance::prewarmStaticLightBake(Camera* cam)
+{
+	const int lod = 0;  // activeLOD is always 0 at mission-load prewarm time
+	if (!staticReg[lod].registered || staticReg[lod].recipeIndex < 0)
+		return false;
+	if (!needsFullBakeNextFrame)
+		return false;
+	if (!treeShape)
+		return false;
+	if (!cam || cam->getNumLights() == 0)
+		return false;
+
+	treeShape->SetLightList(cam->getWorldLights(), cam->getNumLights());
+
+	// xlatPosition/rot: same transform as TreeAppearance::update (line ~6129-6132).
+	// Trees use pitch + yaw combined; position.y is world-Y but terrain height
+	// is overridden in touchSerialCommit (registerStatic path uses position directly).
+	Stuff::Point3D xlatPosition;
+	xlatPosition.x = -position.x;
+	xlatPosition.y =  position.z;
+	xlatPosition.z =  position.y;
+
+	float yawAngle   = (rotation * DEGREES_TO_RADS) + (yaw * DEGREES_TO_RADS);
+	float pitchAngle = (pitch    * DEGREES_TO_RADS);
+	Stuff::UnitQuaternion rot;
+	rot = Stuff::EulerAngles(pitchAngle, yawAngle, 0.0f);
+
+	treeShape->TransformMultiShape_HierarchyOnly(&xlatPosition, &rot);
+
+	// Bake into permanent SSBO slot for LOD0.
+	mc2CacheOrBakeStaticGpuLight(treeShape, staticReg[lod].registered, staticReg[lod].recipeIndex);
+	const uint32_t lightIdx = treeShape->getCachedGpuLightIndex();
+	// Share light slot across all LODs (matches update() K×M fix).
+	for (int l = 0; l < MAX_LODS; ++l)
+		staticReg[l].lightDataIndex = lightIdx;
+
+	if (lightIdx != 0xFFFFFFFFu) {
+		needsFullBakeNextFrame = false;
+		return true;
+	}
+	return false;
 }
 
 // BLDG-TYPE-ANIM-GATE-FIX-1 counter accessors (header: bldg_anim_gate_counters.h).

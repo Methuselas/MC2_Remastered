@@ -1505,6 +1505,80 @@ void GameObjectManager::registerStaticPropsForMissionLoad() {
 	fflush(stderr);
 }
 
+// STATIC-REG-PREWARM-QUEUE-1: mission-load off-screen light bake.
+// Must be called AFTER finalizeGeometry() and AFTER eye->init() so that
+// world lights are valid (Camera::getWorldLights()/getNumLights() return live data).
+// Walks the same four object arrays as registerStaticPropsForMissionLoad().
+// For each registered-and-latched static prop, calls
+//   app->prewarmStaticLightBake(cam)
+// which runs SetLightList → TransformMultiShape_HierarchyOnly → mc2CacheOrBakeStaticGpuLight
+// and clears needsFullBakeNextFrame if the bake produced a valid permanent SSBO slot.
+// Guarded by MC2_STATIC_REG_PREWARM=1 (default off).
+void GameObjectManager::prewarmStaticPropLightBakes(Camera* cam)
+{
+	ZoneScopedN("GameObjectManager::prewarmStaticPropLightBakes");
+	static const bool s_enabled  = (getenv("MC2_STATIC_REG_PREWARM")       != nullptr);
+	static const bool s_trace    = (getenv("MC2_STATIC_REG_PREWARM_TRACE") != nullptr);
+	if (!s_enabled) return;
+
+	auto t0 = std::chrono::steady_clock::now();
+
+	int attempted = 0, baked = 0;
+	int skipped_no_lights = 0, skipped_not_registered = 0;
+	int skipped_no_multishape = 0, failed_no_cached_index = 0;
+
+	auto tryBake = [&](GameObjectPtr obj) {
+		if (!obj) return;
+		AppearancePtr app = obj->getAppearance();
+		if (!app) { ++skipped_no_multishape; return; }
+		if (!app->isStaticRegistered()) { ++skipped_not_registered; return; }
+		if (!app->needsPrewarmBake()) return;  // already baked or not latched
+		if (!cam || cam->getNumLights() == 0) { ++skipped_no_lights; return; }
+		++attempted;
+		if (s_trace) {
+			fprintf(stderr,
+				"STATIC_REG_PREWARM_TRACE: obj=%p recipeIdx=%d\n",
+				(void*)obj, app->getStaticRecipeIndex());
+		}
+		if (app->prewarmStaticLightBake(cam)) {
+			++baked;
+		} else {
+			++failed_no_cached_index;
+		}
+	};
+
+	for (long i = 0; i < numTerrainObjects; ++i) tryBake(terrainObjects[i]);
+	for (long i = 0; i < numBuildings;      ++i) tryBake(buildings[i]);
+	for (long i = 0; i < numTurrets;        ++i) tryBake(turrets[i]);
+	for (long i = 0; i < numGates;          ++i) tryBake(gates[i]);
+
+	// Count remaining needsPrewarmBake objects (acceptance metric).
+	int remaining_needs_full_bake = 0;
+	auto countRemaining = [&](GameObjectPtr obj) {
+		if (!obj) return;
+		AppearancePtr app = obj->getAppearance();
+		if (app && app->needsPrewarmBake()) ++remaining_needs_full_bake;
+	};
+	for (long i = 0; i < numTerrainObjects; ++i) countRemaining(terrainObjects[i]);
+	for (long i = 0; i < numBuildings;      ++i) countRemaining(buildings[i]);
+	for (long i = 0; i < numTurrets;        ++i) countRemaining(turrets[i]);
+	for (long i = 0; i < numGates;          ++i) countRemaining(gates[i]);
+
+	auto t1 = std::chrono::steady_clock::now();
+	long long elapsed_us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+
+	printf("STATIC_REG_PREWARM: enabled=1"
+	       " attempted=%d baked=%d"
+	       " skipped_no_lights=%d skipped_not_registered=%d"
+	       " skipped_no_multishape=%d failed_no_cached_index=%d"
+	       " remaining_needs_full_bake=%d elapsed_us=%lld\n",
+	       attempted, baked,
+	       skipped_no_lights, skipped_not_registered,
+	       skipped_no_multishape, failed_no_cached_index,
+	       remaining_needs_full_bake, elapsed_us);
+	fflush(stdout);
+}
+
 extern GameObjectFootPrint* tempSpecialAreaFootPrints;
 extern long tempNumSpecialAreas;
 

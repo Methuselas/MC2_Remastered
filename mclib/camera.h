@@ -1128,10 +1128,18 @@ class Camera
 		{
 			return activeLights;
 		}
-		
+
 		long getNumLights (void)
 		{
 			return numActiveLights;
+		}
+
+		// STATIC-REG-PREWARM-QUEUE-1: populate activeLights before any render frame.
+		// updateLights() is private; this wrapper allows mission-load callers to prime
+		// the active light list so SetLightList receives non-zero lights at prewarm time.
+		void primeActiveLightsForPrewarm()
+		{
+			updateLights();
 		}
 
 		TG_LightPtr getTerrainLight (long index)

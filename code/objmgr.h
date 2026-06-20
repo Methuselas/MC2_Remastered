@@ -16,6 +16,8 @@
 #ifndef DOBJMGR_H
 #include"dobjmgr.h"
 #endif
+// Forward declaration for prewarmStaticPropLightBakes parameter.
+class Camera;
 
 #ifndef GAMEOBJ_H
 #include"gameobj.h"
@@ -420,6 +422,13 @@ class GameObjectManager {
 		// Called after primeTerrainObjectsForMissionLoad (positions/rotations set)
 		// and before finalizeGeometry. Guarded by MC2_STATIC_PROP_MISSION_LOAD_REG.
 		void registerStaticPropsForMissionLoad();
+
+		// STATIC-REG-PREWARM-QUEUE-1: off-screen light bake at mission load.
+		// Called after finalizeGeometry() + eye init, when world lights are valid.
+		// Drains needsFullBakeNextFrame latches for all registered static props
+		// using the permanent SSBO path, so off-screen set-dressing is baked before
+		// the first frame. Guarded by MC2_STATIC_REG_PREWARM=1 (default off).
+		void prewarmStaticPropLightBakes(Camera* cam);
 
 		long getSpecificObjects (long objClass, long objSubType, GameObjectPtr* objects, long maxObjects);
 

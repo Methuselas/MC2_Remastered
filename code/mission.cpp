@@ -3701,6 +3701,17 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 		gpu_cull::compute_buildIndirectBuffer(GameAdapters::StaticProp::typeCount());
 	}
 
+	// STATIC-REG-PREWARM-QUEUE-1: bake light slots for registered static props
+	// that are off-screen (never reach render() → never cleared their
+	// needsFullBakeNextFrame H4 latch). Must run AFTER finalizeGeometry() (geometry
+	// is final) AND after eye->init() (world lights are valid — eye is created at
+	// mission.cpp:3589 before we reach here). Guarded by MC2_STATIC_REG_PREWARM=1.
+	// updateLights() is called first so activeLights is populated (numActiveLights > 0);
+	// without it activeLights is empty at load time and SetLightList gets zero lights.
+	{ ZoneScopedN("Mission::init prewarmStaticPropLightBakes");
+	  eye->primeActiveLightsForPrewarm();
+	  ObjectManager->prewarmStaticPropLightBakes(eye); }
+
 	// Vegetation card system — notify adapter that terrain + move map are ready.
 	// land and GameMap are both stable by this point (terrain init + MOVE_readData
 	// both completed above). No-op when MC2_VEGETATION_CARDS is unset.

@@ -23,6 +23,8 @@
 #endif
 
 #include<stuff/stuff.hpp>
+// Forward declaration for prewarmStaticLightBake parameter.
+class Camera;
 //---------------------------------------------------------------------------
 // Macro definitions
 #ifndef MAX_ULONG
@@ -196,6 +198,17 @@ class Appearance
 		// returns -1 (no recipe); BldgAppearance / TreeAppearance override
 		// to return staticReg.recipeIndex when registered, else -1.
 		virtual int32_t getStaticRecipeIndex() const { return -1; }
+
+		// STATIC-REG-PREWARM-QUEUE-1: mission-load off-screen light bake.
+		// Called after finalizeGeometry() when world lights are valid.
+		// Drains the needsFullBakeNextFrame H4 latch using the permanent SSBO
+		// path (mc2WriteStaticLightSlot) so off-screen props are baked at
+		// mission load rather than waiting for first on-screen update().
+		// Default no-op; BldgAppearance and TreeAppearance override.
+		// Returns true if this object was baked in this call.
+		virtual bool prewarmStaticLightBake(Camera* cam) { return false; }
+		// Returns true if this object still needs a full bake after prewarm.
+		virtual bool needsPrewarmBake() const { return false; }
 
 		virtual long render (long depthFixup = 0)
 		{

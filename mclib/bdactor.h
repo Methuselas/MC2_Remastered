@@ -372,6 +372,9 @@ class BldgAppearance : public ObjectAppearance
 		virtual void registerStatic()              override;
 		virtual bool isStaticRegistered()    const override;
 		virtual int32_t getStaticRecipeIndex() const override;
+		// STATIC-REG-PREWARM-QUEUE-1: off-screen light bake at mission load.
+		virtual bool prewarmStaticLightBake(Camera* cam) override;
+		virtual bool needsPrewarmBake() const override { return needsFullBakeNextFrame && staticReg.registered; }
 
 		~BldgAppearance (void)
 		{
@@ -686,6 +689,9 @@ class TreeAppearance : public ObjectAppearance
 		virtual void registerStatic()              override;
 		virtual bool isStaticRegistered()    const override;
 		virtual int32_t getStaticRecipeIndex() const override;
+		// STATIC-REG-PREWARM-QUEUE-1: off-screen light bake at mission load.
+		virtual bool prewarmStaticLightBake(Camera* cam) override;
+		virtual bool needsPrewarmBake() const override { return needsFullBakeNextFrame && staticReg[0].registered; }
 
 		~TreeAppearance (void)
 		{
