@@ -3821,15 +3821,18 @@ DWORD MC_TextureManager::loadTexture (const char *textureFullPathName, gos_Textu
 
 	if (textureFile.isLoadedFromDisk())
 	{
-		// Disk TGAs are 4x-upscaled gameplay textures (logical = physical/4). But the
-		// mech-bay roster icon atlas (mcui_gn_mechicons.tga) is a native-resolution UI
-		// atlas, NOT upscaled. The blanket uvScale=4 makes its logical size physical/4
-		// (e.g. 256x512 -> 64x128), and initIcon uses that logical height as the
-		// icon-cell V divisor, so high indices (vehicles, 118-142) sample far off-atlas
-		// -> red placeholder. Keep uvScale=1 for it (logical = physical).
-		const bool isGuiIconAtlas = textureFullPathName &&
-			strstr(textureFullPathName, "mcui_gn_mechicons") != nullptr;
-		masterTextureNodes[i].uvScale = isGuiIconAtlas ? 1 : 4;
+		// Disk TGAs are 4x-upscaled gameplay textures (logical = physical/4). But some
+		// UI atlases are NATIVE-resolution (NOT upscaled), and their FIT UV coords are
+		// authored in physical-pixel space -> logical must equal physical (uvScale=1):
+		//  - mcui_gn_mechicons.tga (mech-bay roster): blanket uvScale=4 made initIcon's
+		//    logical V divisor physical/4 so vehicle indices 118-142 sampled off-atlas.
+		//  - cursors*.tga (mouse-cursor sheets): a 128x128 sheet -> logical 32, while the
+		//    cursor FIT UNormal (e.g. 48) is physical -> U=48/32=1.5 off-texture ->
+		//    INVISIBLE cursor (notably MC2X at the 800-logical cursorsa.fit tier).
+		const bool isNativeResUiAtlas = textureFullPathName &&
+			(strstr(textureFullPathName, "mcui_gn_mechicons") != nullptr ||
+			 strstr(textureFullPathName, "cursors") != nullptr);
+		masterTextureNodes[i].uvScale = isNativeResUiAtlas ? 1 : 4;
 	}
 
 	tryReadTgaLogicalSize(textureFile, masterTextureNodes[i].uvScale,
