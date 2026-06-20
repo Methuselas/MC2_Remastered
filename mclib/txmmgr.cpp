@@ -61,6 +61,8 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <atomic>   // FRAME-JOBS-2 precondition: g_numShadowShapes
+#include <mutex>    // FRAME-JOBS-2 precondition: s_lightDataMapMu
 #include <chrono>   // [LIGHTBRIDGE v1] coarse per-frame populate sizing
 #include <intrin.h> // __rdtsc — [SPFLUSH_COST_SPLIT v1]
 #include <utils/gl_utils.h>
@@ -196,7 +198,11 @@ struct ShadowShapeEntry {
 };
 static const int MAX_SHADOW_SHAPES = 512;
 static ShadowShapeEntry g_shadowShapes[MAX_SHADOW_SHAPES];
-static int g_numShadowShapes = 0;
+// FRAME-JOBS-2 precondition: atomic so worker threads can reserve shadow
+// shape slots without a mutex. ShadowShapeEntry fields are fully independent
+// per-slot (vb/ib/vdecl/worldMatrix — no aliased pointers), so fetch_add
+// reservation + per-slot write is race-free between different callers.
+static std::atomic<int> g_numShadowShapes{0};
 
 static bool isAllConcreteTerrainBatch(const gos_VERTEX* vertices, DWORD totalVertices)
 {
@@ -213,8 +219,16 @@ static bool isAllConcreteTerrainBatch(const gos_VERTEX* vertices, DWORD totalVer
 }
 
 void addShadowShape(HGOSBUFFER vb, HGOSBUFFER ib, HGOSVERTEXDECLARATION vdecl, const float* worldEntries16) {
-	if (g_numShadowShapes >= MAX_SHADOW_SHAPES) return;
-	ShadowShapeEntry& ss = g_shadowShapes[g_numShadowShapes++];
+	// Atomic reservation: fetch_add reserves an exclusive slot index.
+	// ShadowShapeEntry fields are per-slot independent, so two threads
+	// writing different indices never alias.
+	int idx = g_numShadowShapes.fetch_add(1, std::memory_order_relaxed);
+	if (idx >= MAX_SHADOW_SHAPES) {
+		// Cap to prevent out-of-bounds; re-store MAX so future callers fast-fail.
+		g_numShadowShapes.store(MAX_SHADOW_SHAPES, std::memory_order_relaxed);
+		return;
+	}
+	ShadowShapeEntry& ss = g_shadowShapes[idx];
 	ss.vb = vb;
 	ss.ib = ib;
 	ss.vdecl = vdecl;
@@ -222,7 +236,7 @@ void addShadowShape(HGOSBUFFER vb, HGOSBUFFER ib, HGOSVERTEXDECLARATION vdecl, c
 }
 
 void clearShadowShapes() {
-	g_numShadowShapes = 0;
+	g_numShadowShapes.store(0, std::memory_order_relaxed);
 }
 
 DWORD actualTextureSize = 0;
@@ -2606,7 +2620,7 @@ void MC_TextureManager::renderLists (void)
 		}
 		gos_render_pass_timer::End(gos_render_pass_timer::Pass_ShadowDyn);
 	}
-	g_numShadowShapes = 0;
+	g_numShadowShapes.store(0, std::memory_order_relaxed);
 
 	// No special depth state for DRAWSOLID terrain
 
