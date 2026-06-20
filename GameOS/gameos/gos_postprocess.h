@@ -31,6 +31,7 @@ public:
     // No-op when HDRI is disabled (MC2_HDRI_SKY=0) or skyNumber==0.
     // Swaps hdriTex_ only when the resolved path differs from the current one.
     void setSkyNumber(int skyNumber);
+    int  getSkyNumber() const { return skyNumber_; }  // SCENE-LIGHTING-STATE-1: last requested sky #
 
     // Renders the HDRI background as a fullscreen triangle.
     // Assumes scene FBO is bound. Writes only color attachment 0.
@@ -348,6 +349,7 @@ private:
     // HDRI-SKY-NUMBER-1: path of the currently loaded HDRI (used by setSkyNumber
     // to detect when a swap is actually needed).
     char          hdriCurrentPath_[256] = {};
+    int           skyNumber_       = -1;     // SCENE-LIGHTING-STATE-1: last requested sky #
 
     // Bloom shaders
     glsl_program* bloomThresholdProg_;

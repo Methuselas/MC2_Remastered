@@ -293,6 +293,7 @@ float gos_GetSsaoBias()     { return s_postProcess ? s_postProcess->aoBias_     
 // GL context is valid at mission load time (game is running).
 void gosPostProcess::setSkyNumber(int skyNumber)
 {
+    skyNumber_ = skyNumber;   // SCENE-LIGHTING-STATE-1: record requested sky # even if HDRI disabled
     if (!hdriEnabled_) return;
     if (skyNumber < 1 || skyNumber > 21) return;
 
@@ -339,6 +340,12 @@ void gosPostProcess::setSkyNumber(int skyNumber)
 void gos_SetSkyNumber(int skyNumber)
 {
     if (s_postProcess) s_postProcess->setSkyNumber(skyNumber);
+}
+
+// SCENE-LIGHTING-STATE-1: read-only accessor for the current sky number.
+int gos_GetSkyNumber()
+{
+    return s_postProcess ? s_postProcess->getSkyNumber() : -1;
 }
 
 // Fullscreen quad vertices: 2 triangles covering NDC [-1,1]

@@ -2292,6 +2292,9 @@ bool __stdcall gos_IsTerrainTessellationActive();
 // Shadow coordinate API (raw MC2 coordinates for shadow matrix)
 void gos_GetTerrainLightDir(float* x, float* y, float* z);
 
+// SCENE-LIGHTING-STATE-1: read-only current sky number (-1 = none/unset).
+int gos_GetSkyNumber();
+
 // Static shadow API: world-fixed shadow map, accumulates over multiple frames
 void gos_SetMapHalfExtent(float halfExtent);
 void gos_SetWaterElevation(float elevation);  // sea-level world Z for edge-fog water skip

@@ -56,8 +56,97 @@
 // raw GL lives in gos_terrain_indirect.cpp, this is a plain call -> firewall OK).
 namespace gos_terrain_indirect { void RenderWaterReflectionPass(); }
 
+#include <cmath>
+#include <cstdlib>
+#include "../RenderCore/SceneLighting.h"  // SCENE-LIGHTING-STATE-1 canonical mirror
+extern float g_iblShStrength;             // static-prop SH ambient slider (gos_static_prop_batcher.cpp)
+
 //---------------------------------------------------------------------------
 CameraPtr eye = NULL;
+
+// SCENE-LIGHTING-STATE-1: capture a canonical mirror of today's fragmented
+// lighting state and emit one trace line per ~300-frame window. Read-only —
+// changes no rendering. Gates: MC2_SCENE_LIGHTING_TRACE=1 (log),
+// MC2_SCENE_LIGHTING_ASSERT=1 (additionally WARN, never abort, when the camera
+// sun and terrain sun diverge — that divergence is EXPECTED today and is the
+// headline fragmentation this slice surfaces). No-op when neither gate is set.
+void mc2SceneLightingTrace()
+{
+    const bool doTrace  = (getenv("MC2_SCENE_LIGHTING_TRACE")  != nullptr);
+    const bool doAssert = (getenv("MC2_SCENE_LIGHTING_ASSERT") != nullptr);
+    if (!doTrace && !doAssert) return;
+
+    static unsigned s_frame = 0;
+    ++s_frame;
+    if ((s_frame % 300u) != 1u) return;   // self-throttle: one window per ~300 frames
+    if (!eye) return;
+
+    SceneLighting s;
+    s.sun_dir[0] = eye->lightDirection.x;
+    s.sun_dir[1] = eye->lightDirection.y;
+    s.sun_dir[2] = eye->lightDirection.z;
+    DWORD sc = eye->getLightColor(0);
+    s.sun_color[0] = float((sc >> 16) & 0xFFu) / 255.0f;
+    s.sun_color[1] = float((sc >>  8) & 0xFFu) / 255.0f;
+    s.sun_color[2] = float( sc        & 0xFFu) / 255.0f;
+    // Intensity proxy: the aRGB returned by getLightColor already has the light
+    // intensity folded in (tgl.h aRGB = intensity-scaled color), and Camera's raw
+    // intensity field is protected. Report the sun color luminance as the proxy.
+    s.sun_intensity = 0.299f*s.sun_color[0] + 0.587f*s.sun_color[1] + 0.114f*s.sun_color[2];
+    DWORD ac = eye->getLightColor(1);
+    s.ambient_color[0] = float((ac >> 16) & 0xFFu) / 255.0f;
+    s.ambient_color[1] = float((ac >>  8) & 0xFFu) / 255.0f;
+    s.ambient_color[2] = float( ac        & 0xFFu) / 255.0f;
+
+    float tx = 0.0f, ty = 0.0f, tz = 1.0f;
+    gos_GetTerrainLightDir(&tx, &ty, &tz);
+    s.terrain_light_dir_current[0] = tx;
+    s.terrain_light_dir_current[1] = ty;
+    s.terrain_light_dir_current[2] = tz;
+    s.shadow_sun_dir[0] = -tx;   // derived: gameos_graphics.cpp:8834 passes -terrainLightDir
+    s.shadow_sun_dir[1] = -ty;
+    s.shadow_sun_dir[2] = -tz;
+
+    s.world_light_count  = -1;                       // slot capacity (Camera::numLights) is protected; ~MAX, not exposed
+    s.active_light_count = (int)eye->getNumLights();  // public accessor returns numActiveLights (frustum-filtered)
+    s.sky_number   = gos_GetSkyNumber();
+    s.ibl_sh_present = (g_iblShStrength > 0.0f);
+
+    // Parity headline: angle between the OBJECT/camera sun and the TERRAIN sun.
+    float lc = sqrtf(s.sun_dir[0]*s.sun_dir[0] + s.sun_dir[1]*s.sun_dir[1] + s.sun_dir[2]*s.sun_dir[2]);
+    float lt = sqrtf(tx*tx + ty*ty + tz*tz);
+    float dtheta = -1.0f;
+    if (lc > 1e-4f && lt > 1e-4f) {
+        float d = (s.sun_dir[0]*tx + s.sun_dir[1]*ty + s.sun_dir[2]*tz) / (lc * lt);
+        d = d < -1.0f ? -1.0f : (d > 1.0f ? 1.0f : d);
+        dtheta = acosf(d) * 57.29578f;
+    }
+    const bool sunDiverged = (dtheta > 5.0f);
+    static unsigned s_sunMismatch = 0;
+    if (sunDiverged) ++s_sunMismatch;
+
+    if (doTrace) {
+        fprintf(stderr,
+            "[SCENE_LIGHTING] frame=%u sun_cam=(%.2f,%.2f,%.2f) sun_terrain=(%.2f,%.2f,%.2f) "
+            "shadow=(%.2f,%.2f,%.2f) dtheta_cam_terrain=%.1fdeg sun_rgb=(%.2f,%.2f,%.2f) intensity=%.2f "
+            "ambient_rgb=(%.2f,%.2f,%.2f) worldLights=%d active=%d sky=%d ibl_sh=%d sun_match=%d cum_sun_mismatch=%u\n",
+            s_frame, s.sun_dir[0], s.sun_dir[1], s.sun_dir[2], tx, ty, tz,
+            s.shadow_sun_dir[0], s.shadow_sun_dir[1], s.shadow_sun_dir[2], dtheta,
+            s.sun_color[0], s.sun_color[1], s.sun_color[2], s.sun_intensity,
+            s.ambient_color[0], s.ambient_color[1], s.ambient_color[2],
+            s.world_light_count, s.active_light_count, s.sky_number, s.ibl_sh_present ? 1 : 0,
+            sunDiverged ? 0 : 1, s_sunMismatch);
+        fflush(stderr);
+    }
+    if (doAssert && sunDiverged) {
+        fprintf(stderr,
+            "[SCENE_LIGHTING] WARN frame=%u camera_sun vs terrain_sun diverge by %.1fdeg "
+            "(EXPECTED today: object path uses the corrected terrain sun because worldLights[0] "
+            "was ~90deg off -- see static_prop.vert STATIC-PROP-TERRAIN-SUN-DIFFUSE). Not a regression.\n",
+            s_frame, dtheta);
+        fflush(stderr);
+    }
+}
 
 extern bool useShadows;
 extern bool useFog;
@@ -318,6 +407,9 @@ void GameCamera::render (void)
 			// NOT swizzled — fragment shader normals are in tangent space where Z = up,
 			// which matches raw MC2 coords (Z = elevation).
 			gos_SetTerrainLightDir(lightDirection.x, lightDirection.y, lightDirection.z);
+
+			// SCENE-LIGHTING-STATE-1: mirror + parity trace (gated, self-throttled, no-op default).
+			mc2SceneLightingTrace();
 
 			#undef WTC
 		}
