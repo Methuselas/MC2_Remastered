@@ -5891,11 +5891,19 @@ long BattleMech::update (void)
 				setSelected(1);
 				pilot->corePower(true);
 				setOnGUI(true);
-				sensorSystem->broken = false;
+				// Mod-tolerance: MC2X stub-substituted chassis can reach
+				// update() with sensorSystem still NULL (no COMPONENT_FORM_SENSOR
+				// in inventory, and the init-time fallback at BattleMech::init
+				// could not allocate). Writing ->broken on a NULL sensor is a
+				// WRITE at offset 0x28 (the 'broken' member) — the recurring
+				// MC2X mid-campaign crash. Skip the flag write when absent.
+				if (sensorSystem)
+					sensorSystem->broken = false;
 			}
 			else
 			{
-				sensorSystem->broken = true;
+				if (sensorSystem)
+					sensorSystem->broken = true;
 			}
 		}
 		
