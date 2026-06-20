@@ -1941,8 +1941,26 @@ long Mission::addMover (MoverInitData* moveSpec, LogisticsMech* mechData)
 
 	//Now take the moverHandle and change the component data to match Heidi's passed logisticsMech.
 	MoverPtr mMech = (MoverPtr)ObjectManager->get(moverHandle);
+	// BATTLEMECH-RESET-KIND-GUARD-1: the customization below (variantName strcpy +
+	// resetComponents) is BattleMech-ONLY. A non-BattleMech deployable
+	// (GroundVehicle / Elemental — valid MC2X content, e.g. a salvaged Repair Truck
+	// fielded via the cheat-mode lance) was only soft-STOP'd here and fell through to
+	// a BattleMech downcast: variantName written to the wrong offset, then
+	// resetComponents -> calcMaxTargetDamage -> null call / crash. The mover is
+	// already fully created+initialised by addMover() above (vehicles via CSV), so
+	// return its handle and skip the mech-only step. Uses the runtime object-class
+	// discriminator (NOT name/weight). Does not strip or reject the vehicle.
 	if (mMech->getObjectClass() != BATTLEMECH)
-		STOP(("LogisticsMech was not a MECH!!"));
+	{
+		static const bool s_deployKindTrace = (getenv("MC2_DEPLOY_KIND_TRACE") != nullptr);
+		if (s_deployKindTrace)
+		{
+			printf("[DEPLOY] non-BattleMech deployable class=%d fielded without mech reset (file=%s)\n",
+				(int)mMech->getObjectClass(), mechData ? mechData->getFileName() : "?");
+			fflush(stdout);
+		}
+		return moverHandle;
+	}
 
 	strcpy( ((BattleMech*)mMech)->variantName, mechData->getName() );
 		
