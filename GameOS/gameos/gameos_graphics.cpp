@@ -6296,14 +6296,17 @@ static void uploadDynamicShadowUniforms(const Locs& tl, gosPostProcess* pp, GLin
     }
 }
 
-// LIGHTING-DEBUG-VIEWS-1A-TERRAIN: named, render-family-shared lighting debug
-// enum. Maps MC2_LIGHTING_DEBUG_VIEW=<name> onto the terrain surfaceDebugMode
-// integer space. The 40-series is reserved for the unified lighting channels so
-// the SAME name means the SAME channel in static_prop/mech (slices 1B/1C).
+// LIGHTING-DEBUG-VIEWS: named, render-family-shared lighting debug enum. Maps
+// MC2_LIGHTING_DEBUG_VIEW=<name> onto a shared surfaceDebugMode integer space.
+// The 40-series is reserved for the unified lighting channels so the SAME name
+// means the SAME channel across terrain (1A), static_prop (1B) and mech (1C).
 // Returns -1 when the env var is unset OR the name is unknown, so callers keep
 // their existing debug mode (default 0 = off = byte-identical legacy render).
 // Takes precedence over MC2_TERRAIN_DEBUG_MODE when both are set.
-static int mc2LightingDebugTerrainMode()
+// NON-static: also consumed by gos_static_prop_batcher.cpp (extern decl there).
+// Note: not every channel applies to every family — a family ignores ids it
+// does not implement (falls through to its normal render), which is safe.
+int mc2LightingDebugMode()
 {
     const char* v = getenv("MC2_LIGHTING_DEBUG_VIEW");
     if (!v || !*v) return -1;
@@ -6311,10 +6314,12 @@ static int mc2LightingDebugTerrainMode()
     if (!strcmp(v, "albedo"))     return 40;
     if (!strcmp(v, "normal"))     return 41;   // final per-fragment N as RGB
     if (!strcmp(v, "sun"))        return 42;   // sun N·L diffuse term
-    if (!strcmp(v, "ambient"))    return 43;   // hemisphere/ambient fill only
-    if (!strcmp(v, "shadow"))     return 44;   // combined PCF shadow factor
+    if (!strcmp(v, "ambient"))    return 43;   // hemisphere/ambient/SH fill only
+    if (!strcmp(v, "shadow"))     return 44;   // shadow factor (terrain) / no-shadow marker (props)
     if (!strcmp(v, "final"))      return 45;   // == default lit render (falls through)
     if (!strcmp(v, "overbright")) return 46;   // over/under-bright heatmap
+    if (!strcmp(v, "lightcount")) return 47;   // dynamic light-count heatmap (props/mech)
+    if (!strcmp(v, "lightindex")) return 48;   // baked-static-light-index palette (props/mech)
     return -1;                                 // unknown -> safe fallback (keep existing)
 }
 
@@ -6341,7 +6346,7 @@ void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
     if (const char* envDebug = getenv("MC2_TERRAIN_DEBUG_MODE")) {
         debugMode = (float)atof(envDebug);
     }
-    { int lvm = mc2LightingDebugTerrainMode(); if (lvm >= 0) debugMode = (float)lvm; }  // LIGHTING-DEBUG-VIEWS-1A
+    { int lvm = mc2LightingDebugMode(); if (lvm >= 0) debugMode = (float)lvm; }  // LIGHTING-DEBUG-VIEWS-1A
     float tessDebugVec[4] = { debugMode, 0.0f, 0.0f, 0.0f };
     if (tl.tessDebug >= 0)         glUniform4fv(tl.tessDebug, 1, tessDebugVec);
     if (tl.pathTint >= 0)          glUniform1i(tl.pathTint, mc2ShaderPathTint());  // MC2_SHADER_PATH_TINT
@@ -6488,7 +6493,7 @@ int gosRenderer::terrainBindThinUniformsForPatchStream(glsl_program* overridePro
         if (const char* envDebug = getenv("MC2_TERRAIN_DEBUG_MODE")) {
             debugMode = (float)atof(envDebug);
         }
-        { int lvm = mc2LightingDebugTerrainMode(); if (lvm >= 0) debugMode = (float)lvm; }  // LIGHTING-DEBUG-VIEWS-1A
+        { int lvm = mc2LightingDebugMode(); if (lvm >= 0) debugMode = (float)lvm; }  // LIGHTING-DEBUG-VIEWS-1A
         float tessDebugVec[4] = { debugMode, 0.0f, 0.0f, 0.0f };
         if (tl.tessDebug >= 0) glUniform4fv(tl.tessDebug, 1, tessDebugVec);
         if (tl.pathTint >= 0)  glUniform1i(tl.pathTint, mc2ShaderPathTint());  // MC2_SHADER_PATH_TINT
@@ -6626,7 +6631,7 @@ void gosRenderer::terrainDrawIndexedPatches(gosRenderMaterial* material, gosMesh
         if (const char* envDebug = getenv("MC2_TERRAIN_DEBUG_MODE")) {
             debugMode = (float)atof(envDebug);
         }
-        { int lvm = mc2LightingDebugTerrainMode(); if (lvm >= 0) debugMode = (float)lvm; }  // LIGHTING-DEBUG-VIEWS-1A
+        { int lvm = mc2LightingDebugMode(); if (lvm >= 0) debugMode = (float)lvm; }  // LIGHTING-DEBUG-VIEWS-1A
         float tessDebugVec[4] = { debugMode, 0.0f, 0.0f, 0.0f };
         if (tl.tessDebug >= 0) glUniform4fv(tl.tessDebug, 1, tessDebugVec);
         if (tl.pathTint >= 0)  glUniform1i(tl.pathTint, mc2ShaderPathTint());  // MC2_SHADER_PATH_TINT

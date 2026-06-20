@@ -37,6 +37,13 @@ flat in uint v_drawID;          // plan v3.8 Step 8.3: forwarded from VS as
                                 // uint(gl_DrawIDARB) under MC2_COALESCE,
                                 // else 0u (vertex shader sets per branch).
 
+// LIGHTING-DEBUG-VIEWS-1B-STATIC-PROPS: separated lighting channels (match
+// static_prop.vert outputs in name/type/qualifier). Only read when
+// u_lightingDebugView selects a channel; default path ignores them.
+in       vec3 v_dbgSun;
+in       vec3 v_dbgAmbient;
+flat in  vec4 v_dbgLightMeta;   // x=lightDataIndex, y=numLights
+
 #if defined(MC2_USE_VIEW_UNIFORMS)
 // V-MATERIAL-PBR-3: per-fragment PBR varyings (must match static_prop.vert
 // outputs in name, type, and flat qualifier). v_worldPos is interpolated
@@ -129,6 +136,12 @@ uniform int   u_debugAddrMode;   // 0 normal, 1 gradient, 2 hash, 3 white, 4 arg
 // Modes 5/6 likewise collapse to 0.0 (black) in the legacy lane since the
 // MaterialGpu table is only bound under the coalesce path.
 uniform int   u_debugMaterialMode;
+
+// LIGHTING-DEBUG-VIEWS-1B-STATIC-PROPS: unified lighting debug channel.
+// 0 = OFF (default; CPU uploads 0 unless MC2_LIGHTING_DEBUG_VIEW selects a
+// channel). 40 albedo, 41 normal, 42 sun, 43 ambient/SH, 44 no-shadow marker,
+// 45 final (falls through), 46 overbright, 47 light-count, 48 light-index.
+uniform int   u_lightingDebugView;
 
 uniform int   u_pathTint;  // MC2_SHADER_PATH_TINT: 1 = solid signature colour (debug); 0 = normal
 
@@ -434,6 +447,46 @@ void main() {
         }
     }
 #endif  // MC2_USE_VIEW_UNIFORMS
+
+    // LIGHTING-DEBUG-VIEWS-1B-STATIC-PROPS: unified lighting debug channels.
+    // u_lightingDebugView==0 -> skipped (pixel-invariant default). Static props
+    // do NOT self-shadow in this shader (the post screen-shadow pass applies
+    // building shadowing), so channel 44 is an explicit NO-SHADOW marker rather
+    // than a faked shadow factor. Channel 45 (final) and unknown ids fall
+    // through to the normal lit render below.
+    if (u_lightingDebugView != 0) {
+        vec3 dbg;
+        bool handled = true;
+        if      (u_lightingDebugView == 40) dbg = tex_color.rgb;                    // albedo
+        else if (u_lightingDebugView == 41) dbg = normalize(v_normal) * 0.5 + 0.5;  // normal
+        else if (u_lightingDebugView == 42) dbg = v_dbgSun;                         // sun/direct
+        else if (u_lightingDebugView == 43) dbg = v_dbgAmbient;                     // ambient/SH/fill
+        else if (u_lightingDebugView == 44) dbg = vec3(0.15, 0.15, 0.35);           // no-shadow marker
+        else if (u_lightingDebugView == 46) {                                       // over/under-bright heatmap
+            float luma = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
+            if      (luma > 1.0)  dbg = vec3(1.0, clamp(2.0 - luma, 0.0, 1.0) * 0.4, 0.0);
+            else if (luma < 0.05) dbg = vec3(0.0, 0.0, 1.0);
+            else                  dbg = vec3(luma);
+        }
+        else if (u_lightingDebugView == 47) {                                       // dynamic light-count heat
+            float t = clamp(v_dbgLightMeta.y / 16.0, 0.0, 1.0);
+            dbg = vec3(t, 1.0 - t, 0.0);
+        }
+        else if (u_lightingDebugView == 48) dbg = debug_palette(uint(v_dbgLightMeta.x)); // baked light index
+        else handled = false;                                                       // 45/unknown -> fall through
+        if (handled) {
+            FragColor = vec4(dbg, 1.0);
+            GBuffer1  = rc_gbuffer1_legacyDebugSentinelScreenShadowEligible();
+#ifdef MC2_OBJECT_ID_BUFFER
+#ifdef MC2_COALESCE
+            v_objectId = uint(perDraw_.entries[v_drawID + uint(u_drawIDBase)].objectIdRaw);
+#else
+            v_objectId = uint(u_objectIdRaw);
+#endif
+#endif
+            return;
+        }
+    }
 
     c.rgb = mix(v_fog.rgb, c.rgb, u_fogValue);
 

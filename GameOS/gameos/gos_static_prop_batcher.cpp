@@ -5766,6 +5766,15 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
         if (s_locsCoalesce.debugMaterialMode >= 0)
             glUniform1i       (s_locsCoalesce.debugMaterialMode,
                                s_staticPropDebugMaterialMode);
+        // LIGHTING-DEBUG-VIEWS-1B: unified lighting debug channel (40-series).
+        // Resolver returns -1 when MC2_LIGHTING_DEBUG_VIEW is unset/unknown ->
+        // upload 0 -> shader skips all channels (pixel-invariant default).
+        {
+            extern int mc2LightingDebugMode();
+            int lvm = mc2LightingDebugMode();
+            glUniform1i(glGetUniformLocation(s_staticPropProgramCoalesce, "u_lightingDebugView"),
+                        lvm < 0 ? 0 : lvm);
+        }
         // MC2_SHADER_PATH_TINT: solid-color path-id debug (default 0 = OFF).
         if (s_locsCoalesce.pathTint >= 0)
             glUniform1i       (s_locsCoalesce.pathTint, mc2ShaderPathTint());
@@ -6895,6 +6904,14 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             if (s_locsLegacy.debugMaterialMode >= 0)
                 glUniform1i(s_locsLegacy.debugMaterialMode,
                             s_staticPropDebugMaterialMode);
+            // LIGHTING-DEBUG-VIEWS-1B: unified lighting debug channel (legacy
+            // program). Resolver -1 -> upload 0 -> pixel-invariant default.
+            {
+                extern int mc2LightingDebugMode();
+                int lvm = mc2LightingDebugMode();
+                glUniform1i(glGetUniformLocation(s_staticPropProgram, "u_lightingDebugView"),
+                            lvm < 0 ? 0 : lvm);
+            }
             // MC2_SHADER_PATH_TINT: solid-color path-id debug (default 0 = OFF).
             if (s_locsLegacy.pathTint >= 0)
                 glUniform1i(s_locsLegacy.pathTint, mc2ShaderPathTint());

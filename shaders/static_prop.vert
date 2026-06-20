@@ -196,6 +196,18 @@ flat out uint v_drawID;          // plan v3.8 Step 8.2: forwarded to FS as
                                  // else 0u (fragment shader's MC2_COALESCE
                                  // branch indexes perDraw_.entries[] by it).
 
+// LIGHTING-DEBUG-VIEWS-1B-STATIC-PROPS: separated lighting channels for the
+// unified MC2_LIGHTING_DEBUG_VIEW enum. v_argb already SUMS sun+ambient+ibl so
+// the fragment cannot recover them — export the components here. Always written
+// (window branch -> 0). Frag reads them only when u_lightingDebugView selects a
+// channel, so the default (off) render is pixel-identical.
+//   v_dbgSun       = sunColor * NdotL (directional term only)
+//   v_dbgAmbient   = ambientTerm + hemisphere-fill + SH-IBL (all fill light)
+//   v_dbgLightMeta = (x=lightDataIndex, y=numLights, z/w spare) for count/index views
+out      vec3 v_dbgSun;
+out      vec3 v_dbgAmbient;
+flat out vec4 v_dbgLightMeta;
+
 // FOLIAGE-STATICPROP-DEPTH-PREPASS-1: guarantee gl_Position is computed
 // bit-identically across the two program objects that link this same VS — the
 // color program (static_prop.frag) and the depth-prepass program
@@ -374,6 +386,11 @@ void main() {
     // different faces with different NdotL → dark face appears to move with
     // camera. abs(NdotL) lights both sides consistently.
     const uint kFlagIsAlphaTest = (1u << 2u);
+    // LIGHTING-DEBUG-VIEWS-1B: defaults. lightDataIndex needs no SSBO read;
+    // numLights (.y) is filled inside the non-window branch from ld_sun.
+    v_dbgSun       = vec3(0.0);
+    v_dbgAmbient   = vec3(0.0);
+    v_dbgLightMeta = vec4(float(inst.lightDataIndex), 0.0, 0.0, 0.0);
     vec3 lit;
     if ((inst.flags & kFlagIsWindow) != 0u) {
         // Window node: hot-color magic only, no sun/ambient lighting.
@@ -397,6 +414,7 @@ void main() {
         vec3 sunColor    = vec3(0.0);
         bool sunFound    = false;
         int n_sun = min(ld_sun.numLights.x, MAX_LIGHTS_IN_WORLD);
+        v_dbgLightMeta.y = float(ld_sun.numLights.x);  // LIGHTING-DEBUG-VIEWS-1B: light-count view
         for (int i = 0; i < n_sun; ++i) {
             int lt = int(ld_sun.light_dir[i].w);
             if (lt == TG_LIGHT_AMBIENT) {
@@ -441,6 +459,13 @@ void main() {
             vec3 ibl = evalShL2(normalize(worldNormal));
             lit += ibl * u_iblShStrength;
         }
+
+        // LIGHTING-DEBUG-VIEWS-1B: split the summed lighting into channels.
+        // At this point lit = base_light + ambientTerm + sunColor*ndl +
+        // ambient_v1 + ibl. Sun term is the directional component; everything
+        // else above base_light (hot-color seed) is fill/ambient.
+        v_dbgSun     = sunColor * ndl;
+        v_dbgAmbient = lit - base_light - sunColor * ndl;
 
         // V-MATERIAL-PBR-3: per-vertex PBR math REMOVED — moved to
         // static_prop.frag so Schlick-Fresnel + power-lobe specular runs
