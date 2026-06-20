@@ -25,6 +25,8 @@
 #include <unordered_map>
 #include <vector>
 #include <algorithm>
+#include <chrono>  // FRAME-JOBS-1: prepass wall-clock timing
+#include "../GameOS/gameos/diagnostic_trace.h"  // FRAME-JOBS-1: JSONL trace emit
 #include "gos_static_prop_killswitch.h"  // g_useGpuStaticProps
 #include "static_update_counters.h"      // g_staticUpdateRunCount/SkipCount/EmitSummary
 #include "../GameOS/gameos/gpu_cull_substrate.h"       // C0: GPU cull substrate SSBO upload
@@ -2204,25 +2206,57 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 
 				const int count = static_cast<int>(s_frameJobsHandles.size());
 				frameJobsPrePassCount = count; // FRAME-JOBS-1: exported for per-frame trace
-				parallelForRange(count, frameJobsBatch(),
-					[](int begin, int end) {
-						// FRAME-JOBS-1: Tier B only. No appearance->update() here.
-						// Tier C (txmmgr) is NOT worker-safe. See FRAME-JOBS-2.
-						for (int i = begin; i < end; ++i) {
-							GameObjectPtr obj = ObjectManager->objList[s_frameJobsHandles[i]];
-							if (!obj) continue;
-							AppearancePtr ap = obj->getAppearance();
-							if (!ap) continue;
-							if (!ap->isRecalcBoundsWorkerSafe()) {
-								if (frameJobsTrace()) {
-									printf("FRAME_JOBS WARN: unsupported appearance type at handle %ld\n",
-									       s_frameJobsHandles[i]);
+
+				// FRAME-JOBS-1: wall-clock timing + Tracy zone for the parallel recalcBounds pass.
+				auto _fj_t0 = std::chrono::high_resolution_clock::now();
+				{
+					ZoneScopedN("FrameJobs.RecalcBounds");
+					parallelForRange(count, frameJobsBatch(),
+						[](int begin, int end) {
+							// FRAME-JOBS-1: Tier B only. No appearance->update() here.
+							// Tier C (txmmgr) is NOT worker-safe. See FRAME-JOBS-2.
+							for (int i = begin; i < end; ++i) {
+								GameObjectPtr obj = ObjectManager->objList[s_frameJobsHandles[i]];
+								if (!obj) continue;
+								AppearancePtr ap = obj->getAppearance();
+								if (!ap) continue;
+								if (!ap->isRecalcBoundsWorkerSafe()) {
+									if (frameJobsTrace()) {
+										printf("FRAME_JOBS WARN: unsupported appearance type at handle %ld\n",
+										       s_frameJobsHandles[i]);
+									}
+									continue;
 								}
-								continue;
+								ap->recalcBoundsAndStamp();
 							}
-							ap->recalcBoundsAndStamp();
-						}
-					});
+						});
+				}
+				auto _fj_t1 = std::chrono::high_resolution_clock::now();
+				float _fj_prepass_us = std::chrono::duration<float, std::micro>(_fj_t1 - _fj_t0).count();
+
+				if (frameJobsTrace()) {
+					FrameJobsFrameStats _fj_stats = frameJobsGetFrameStats();
+					printf("FRAME_JOBS_PERF: batch=%d workers=%d handles=%d chunks=%d prepass_us=%.1f\n",
+					       frameJobsBatch(),
+					       _fj_stats.workerCount,
+					       count,
+					       _fj_stats.chunksExecuted,
+					       _fj_prepass_us);
+				}
+
+				// FRAME-JOBS-1: emit to diagnostic JSONL trace (MC2_DIAG_TAGS=FRAME_JOBS or *)
+				if (mc2_diag::tagEnabled("FRAME_JOBS")) {
+					FrameJobsFrameStats _fj_stats = frameJobsGetFrameStats();
+					char _fj_buf[192];
+					snprintf(_fj_buf, sizeof(_fj_buf),
+					         "{\"batch\":%d,\"workers\":%d,\"handles\":%d,\"chunks\":%d,\"prepass_us\":%.1f}",
+					         frameJobsBatch(),
+					         _fj_stats.workerCount,
+					         count,
+					         _fj_stats.chunksExecuted,
+					         _fj_prepass_us);
+					mc2_diag::writeEvent("FRAME_JOBS", 1, 0, _fj_buf);
+				}
 			}
 		}
 		// ── end FRAME-JOBS-1 pre-pass ────────────────────────────────────────────────
