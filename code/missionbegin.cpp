@@ -136,6 +136,14 @@ static bool mc2BootScreenXY( int& x, int& y )
 	return true;
 }
 
+// CRASH-SOAK harness (MC2_SOAK_AUTOWIN). When set, the booted campaign drives
+// itself from logistics to mission start with no clicks: each settled (RUNNING)
+// logistics screen at curScreenX>=2 is forced to advance (NEXT) on a throttle so
+// it walks bay -> pilotready -> load -> mission start. Gated on the env flag;
+// default OFF = byte-identical. Single getenv cached at startup.
+static const bool s_soakAutoWin =
+	( std::getenv("MC2_SOAK_AUTOWIN") != nullptr );
+
 void MissionBegin::begin()
 {
 	ZoneScopedN("MissionBegin::begin");
@@ -813,6 +821,42 @@ const char* MissionBegin::update()
 
 		pCurScreen->update();
 
+		// CRASH-SOAK: drive the settled logistics screen toward mission start by
+		// synthesizing a NEXT (same lever the launch button pulls). Only when the
+		// screen has settled to RUNNING (real transition pending takes priority),
+		// on a logistics screen (curScreenX>=2, past splash/select), throttled and
+		// fired once per screen-settle so we don't spam. Single-player only.
+		bool soakForceNext = false;
+		if ( s_soakAutoWin && !MPlayer && curScreenX >= 2 && curScreenX < 4 &&
+			 pCurScreen->getStatus() == LogisticsScreen::RUNNING && !animJustBegun )
+		{
+			static long  s_soakLastAdvX = -99;
+			static long  s_soakLastAdvY = -99;
+			static float s_soakSettleTimer = 0.0f;
+			// New screen cell since last advance? reset the settle dwell timer.
+			if ( curScreenX != s_soakLastAdvX || curScreenY != s_soakLastAdvY )
+			{
+				s_soakSettleTimer += frameLength;
+				if ( s_soakSettleTimer >= 0.5f )
+				{
+					soakForceNext = true;
+					s_soakLastAdvX = curScreenX;
+					s_soakLastAdvY = curScreenY;
+					s_soakSettleTimer = 0.0f;
+					printf("[SOAK] advance screen=%d,%d\n", (int)curScreenX, (int)curScreenY);
+					if ( LogisticsData::instance )
+						printf("[SOAK] launch mission=%s stage=%d\n",
+							(const char*)LogisticsData::instance->getCurrentMission(),
+							(int)LogisticsData::instance->getCurrentMissionNum());
+					fflush(stdout);
+				}
+			}
+			else
+			{
+				s_soakSettleTimer = 0.0f; // same cell already advanced; idle
+			}
+		}
+
 		if ( pCurScreen->getStatus() == LogisticsScreen::GOTOSPLASH || ( MPlayer && MPlayer->hostLeft ) )
 		{
 			pCurScreen->end();
@@ -832,11 +876,11 @@ const char* MissionBegin::update()
 			bReadyToLoad = true;
 
 
-		if ( pCurScreen->getStatus() != LogisticsScreen::RUNNING )
+		if ( pCurScreen->getStatus() != LogisticsScreen::RUNNING || soakForceNext )
 		{
 			soundSystem->stopBettySample(); // don't want to carry droning on to next screen
 			soundSystem->stopSupportSample();
-			if ( pCurScreen->getStatus() == LogisticsScreen::NEXT )
+			if ( pCurScreen->getStatus() == LogisticsScreen::NEXT || soakForceNext )
 			{
 				pCurScreen->end();
 				if ( curScreenX < 4 )

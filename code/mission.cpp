@@ -506,6 +506,19 @@ namespace {
 		}
 		fflush(stdout);
 	}
+
+	// --- CRASH-SOAK harness (MC2_SOAK_AUTOWIN) -------------------------------
+	// Auto-win the running mission after MC2_SOAK_WIN_AFTER_SEC of scenario
+	// time so a campaign booted via MC2_BOOT_TO_BAY walks itself end-to-end
+	// unattended. Gated entirely on the env flag; default OFF = byte-identical.
+	static const bool s_soakAutoWin =
+		(getenv("MC2_SOAK_AUTOWIN") != nullptr);
+	static float soakWinAfterSec() {
+		const char* e = getenv("MC2_SOAK_WIN_AFTER_SEC");
+		float p = e ? (float)atof(e) : 5.0f;
+		if (p < 0.0f) p = 0.0f;
+		return p;
+	}
 } // namespace
 
 //----------------------------------------------------------------------------------
@@ -974,6 +987,28 @@ long Mission::update (void)
 			globalFloatHelp->setFloatHelp(text,moveHere,SD_GREEN,XP_BLACK,1.0f,true,false,false,false);
 		}
 #endif
+
+		// CRASH-SOAK auto-win (always compiled; gated on MC2_SOAK_AUTOWIN env).
+		// Independent of the #ifndef FINAL cheat path above so the harness works
+		// in RelWithDebInfo regardless of FINAL. Fires once per mission after
+		// MC2_SOAK_WIN_AFTER_SEC of scenario time. mis_PLAYER_WIN_BIG returned
+		// from update() ends the mission instantly (no countdown).
+		if (s_soakAutoWin && !scenarioResult)
+		{
+			static bool s_soakWinEmitted = false;
+			const float winAfter = soakWinAfterSec();
+			// Re-arm for each new mission: scenarioTime resets to 0 on start().
+			if (scenarioTime < winAfter)
+				s_soakWinEmitted = false;
+			if (!s_soakWinEmitted && scenarioTime > winAfter)
+			{
+				scenarioResult = mis_PLAYER_WIN_BIG;
+				s_soakWinEmitted = true;
+				printf("[SOAK] autowin mission=%s t=%.1f\n",
+					missionFileName, (float)scenarioTime);
+				fflush(stdout);
+			}
+		}
 
 #ifdef LAB_ONLY
 		MCTimeMissionTotal 		= MCTimeTerrainUpdate +
