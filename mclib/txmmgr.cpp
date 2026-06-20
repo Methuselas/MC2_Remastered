@@ -166,6 +166,59 @@ unsigned long long spflush_GetRecipeRebuildTotal() {
 #define TEX_LC(fmt, ...) \
     do { if (s_texLifecycleTrace) { printf("[TEX_LIFECYCLE v1] " fmt "\n", ##__VA_ARGS__); fflush(stdout); } } while (0)
 
+// ---------------------------------------------------------------------------
+// [TXMMGR_TEXTURE_AUDIT v1] — texture-node-slot leak instrumentation.
+// Gate: MC2_TXM_LEAK_TRACE=1. Default OFF = byte-identical (no allocs, no emit).
+// Goal: name the texture classes that accumulate node slots across mission
+// unloads (the 4096 masterTextureNodes[] cap STOP at textureFromMemory /
+// loadTexture / textureFromMemoryRaw). Emitted from flush() (the per-mission
+// unload boundary, see Mission::destroy -> mcTextureManager->flush()).
+//
+//   [TXMMGR_TEXTURE_AUDIT] one line per mission unload with slot census.
+//   [TXMMGR_FLUSH]         keep/free decision counts around the flush loop.
+//   [TXMMGR_SURVIVOR]      top-10 surviving node-name prefixes after the flush.
+//
+// from_memory / anonymous heuristic: textureFromMemory + textureFromMemoryRaw
+// both set nodeName=NULL; loadTexture always sets a real name. So a node with
+// nodeName==NULL/empty is either a from-memory texture or the reserved empty
+// node[0]. We report both buckets off the same NULL-name test.
+// ---------------------------------------------------------------------------
+static const bool s_txmLeakTrace =
+    []() { const char* v = getenv("MC2_TXM_LEAK_TRACE"); return v && v[0] == '1'; }();
+static long s_txmMissionIndex      = 0;   // ++ per mission unload (flush)
+static long s_txmAllocThisMission  = 0;   // nodes created since last unload boundary
+
+// Bump on every fresh node-slot creation (the three creation paths).
+static inline void txmLeakNoteAlloc()
+{
+    if (s_txmLeakTrace) s_txmAllocThisMission++;
+}
+
+// Group a node name into a coarse leak key: take dir prefix (up to last
+// separator) else the name with trailing digits stripped, so e.g.
+// "data/tgl/128/foo01.tga" -> "data/tgl/128/", "cursor07" -> "cursor".
+static void txmLeakKeyForName(const char* name, char* out, size_t outSz)
+{
+    if (!name || !name[0]) { snprintf(out, outSz, "<anon/from_memory>"); return; }
+    const char* lastSep = NULL;
+    for (const char* p = name; *p; ++p)
+        if (*p == '/' || *p == '\\') lastSep = p;
+    if (lastSep) {
+        size_t n = (size_t)(lastSep - name) + 1;
+        if (n >= outSz) n = outSz - 1;
+        memcpy(out, name, n);
+        out[n] = 0;
+        return;
+    }
+    // No dir: copy, then strip trailing digits.
+    size_t len = strlen(name);
+    if (len >= outSz) len = outSz - 1;
+    memcpy(out, name, len);
+    out[len] = 0;
+    while (len > 0 && out[len-1] >= '0' && out[len-1] <= '9') out[--len] = 0;
+    if (len == 0) snprintf(out, outSz, "<numeric>");
+}
+
 // Shared per-process dedup for event=evict_skipped across the four eviction
 // sites (one in MC_TextureManager::update, three in flushCache). Without
 // dedup, ~thousands of pinned nodes × 60Hz eviction sweeps = unsustainable
@@ -507,16 +560,90 @@ void MC_TextureManager::flush (bool justTextures)
 		}
 		peakUsedTextures = 0;
 
+		// [TXMMGR_TEXTURE_AUDIT v1] pre-flush census (slot occupancy before free).
+		long auditTotalUsed = 0, auditNeverflush = 0, auditFlushable = 0;
+		long auditGosLive = 0, auditAnon = 0;
+		if (s_txmLeakTrace)
+		{
+			for (long i=0;i<MC_MAXTEXTURES;i++)
+			{
+				const DWORD h = masterTextureNodes[i].gosTextureHandle;
+				const bool occupied = (h != 0xffffffff);
+				if (!occupied) continue;
+				auditTotalUsed++;
+				if (masterTextureNodes[i].neverFLUSH) auditNeverflush++; else auditFlushable++;
+				if (h != 0xffffffff && h != CACHED_OUT_HANDLE) auditGosLive++;
+				const char* nm = masterTextureNodes[i].nodeName;
+				if (!nm || !nm[0]) auditAnon++;   // from_memory / empty node
+			}
+		}
+
 		//-----------------------------------------------------
 		// Traverses list of texture nodes and frees each one.
 		long usedCount = 0;
+		// [TXMMGR_FLUSH v1] keep/free decision tally.
+		long flushBeforeUsed = auditTotalUsed, flushFreed = 0;
+		long flushKeptNeverflush = 0, flushKeptOther = 0;
 		for (long i=0;i<MC_MAXTEXTURES;i++)
 		{
 			if (!masterTextureNodes[i].neverFLUSH)
+			{
+				if (s_txmLeakTrace && masterTextureNodes[i].gosTextureHandle != 0xffffffff)
+					flushFreed++;
 				masterTextureNodes[i].destroy();		// Destroy for nodes whacks GOS Handle
+			}
+			else if (s_txmLeakTrace && masterTextureNodes[i].gosTextureHandle != 0xffffffff)
+			{
+				flushKeptNeverflush++;
+			}
 		}
-		
+
 		currentUsedTextures = usedCount;				//Can this have been the damned bug all along!?
+
+		// [TXMMGR_TEXTURE_AUDIT v1] post-flush survivor census + emit.
+		if (s_txmLeakTrace)
+		{
+			// Survivor name-prefix histogram (bounded fixed table; no heap).
+			struct { char key[96]; long count; } buckets[64];
+			int nBuckets = 0;
+			long afterUsed = 0;
+			for (long i=0;i<MC_MAXTEXTURES;i++)
+			{
+				if (masterTextureNodes[i].gosTextureHandle == 0xffffffff) continue;
+				afterUsed++;
+				if (!masterTextureNodes[i].neverFLUSH) flushKeptOther++;  // BUG: survived flush
+				char key[96];
+				txmLeakKeyForName(masterTextureNodes[i].nodeName, key, sizeof(key));
+				int b = -1;
+				for (int k=0;k<nBuckets;k++)
+					if (strcmp(buckets[k].key, key) == 0) { b = k; break; }
+				if (b < 0 && nBuckets < 64) { b = nBuckets++; strncpy(buckets[b].key, key, sizeof(buckets[b].key)-1); buckets[b].key[sizeof(buckets[b].key)-1]=0; buckets[b].count = 0; }
+				if (b >= 0) buckets[b].count++;
+			}
+
+			s_txmMissionIndex++;
+			printf("[TXMMGR_TEXTURE_AUDIT] mission_index=%ld total_nodes_used=%ld neverflush_nodes=%ld flushable_nodes=%ld gos_handles_live=%ld allocated_this_mission=%ld released_on_flush=%ld survived_flush=%ld anonymous_nodes=%ld from_memory_nodes=%ld\n",
+				s_txmMissionIndex, auditTotalUsed, auditNeverflush, auditFlushable,
+				auditGosLive, s_txmAllocThisMission, flushFreed, afterUsed,
+				auditAnon, auditAnon);
+			printf("[TXMMGR_FLUSH] mission_index=%ld before_flush_used=%ld freed_count=%ld kept_neverflush_count=%ld kept_other_count=%ld after_flush_used=%ld\n",
+				s_txmMissionIndex, flushBeforeUsed, flushFreed, flushKeptNeverflush, flushKeptOther, afterUsed);
+
+			// top_survivors[10]: selection sort over the bounded bucket table.
+			for (int rank=0; rank<10 && rank<nBuckets; rank++)
+			{
+				int best = rank;
+				for (int k=rank+1;k<nBuckets;k++)
+					if (buckets[k].count > buckets[best].count) best = k;
+				if (best != rank) { auto t = buckets[rank]; buckets[rank] = buckets[best]; buckets[best] = t; }
+				printf("[TXMMGR_SURVIVOR] mission_index=%ld rank=%d count=%ld key=%s\n",
+					s_txmMissionIndex, rank, buckets[rank].count, buckets[rank].key);
+			}
+			fflush(stdout);
+
+			// Reset per-mission alloc counter at the unload boundary.
+			s_txmAllocThisMission = 0;
+		}
 	}
 	
 	//If we just wanted to free up RAM, just return and let the MUNGA stuff go later.
@@ -3574,6 +3701,7 @@ DWORD MC_TextureManager::textureFromMemory (DWORD *data, gos_TextureFormat key, 
 	// DO NOT create GOS handle until we need it.
  	masterTextureNodes[i].gosTextureHandle = CACHED_OUT_HANDLE;
 	masterTextureNodes[i].nodeName = NULL;
+	txmLeakNoteAlloc();  // [TXMMGR_TEXTURE_AUDIT v1] from_memory path
 
 	masterTextureNodes[i].numUsers = 1;
 	masterTextureNodes[i].key = key;
@@ -3732,6 +3860,7 @@ DWORD MC_TextureManager::loadTexture (const char *textureFullPathName, gos_Textu
 	// New Method.  Just store memory footprint of texture.
 	// DO NOT create GOS handle until we need it.
  	masterTextureNodes[i].gosTextureHandle = CACHED_OUT_HANDLE;
+	txmLeakNoteAlloc();  // [TXMMGR_TEXTURE_AUDIT v1] named loadTexture path
 	masterTextureNodes[i].nodeName = (char *)textureStringHeap->Malloc(strlen(textureFullPathName) + 1);
 	gosASSERT(masterTextureNodes[i].nodeName != NULL);
 
@@ -3927,6 +4056,7 @@ DWORD MC_TextureManager::textureFromMemoryRaw (DWORD *data, gos_TextureFormat ke
 
 	masterTextureNodes[i].gosTextureHandle = CACHED_OUT_HANDLE;
 	masterTextureNodes[i].nodeName = NULL;
+	txmLeakNoteAlloc();  // [TXMMGR_TEXTURE_AUDIT v1] from_memory raw path
 	masterTextureNodes[i].numUsers = 1;
 	masterTextureNodes[i].key = key;
 	masterTextureNodes[i].hints = hints;
