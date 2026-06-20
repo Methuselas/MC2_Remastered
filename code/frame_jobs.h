@@ -20,6 +20,8 @@ void parallelForRange(int count, int batchSize,
 bool frameJobsEnabled();  // true when parallel mode is active
 int  frameJobsBatch();    // resolved batch size (MC2_FRAME_JOBS_BATCH or 128)
 bool frameJobsTrace();    // true when MC2_FRAME_JOBS_TRACE=1
+// Returns true only if MC2_FRAME_JOBS=1 AND MC2_FRAME_JOBS_TOUCH=1
+bool frameJobsTouchEnabled();
 
 struct FrameJobsFrameStats {
     int  chunksExecuted;
