@@ -503,14 +503,31 @@ void MechListBox::initIcon( LogisticsMech* pMech, aObject& mechIcon )
 	// divisor becomes 512, addressing slots >=80.
 	// See MC2_LOG_MECH_ICON env var for per-mech UV diagnostics.
 	long index = pMech->getIconIndex();
-	long xIndex = index % 10;
-	long yIndex = index / 10;
-
-	float fX = xIndex;
-	float fY = yIndex;
 
 	float width = mechIcon.width();
 	float height = mechIcon.height();
+
+	// Atlas geometry DERIVED from the loaded texture (both axes), not hardcoded.
+	// 256-wide retail atlas -> 10 cols (mechs, idx 0-79); 512-wide MC2X
+	// mc2x_mechicons -> 20 cols, addressing vehicle/infantry icons at high
+	// indices (Ambulance=118, APC=142, Infantry=28). Falls back to 10/256 when
+	// the size is unavailable, preserving the old square-atlas behavior.
+	DWORD atlasW = 0, atlasH = 0;
+	float fileW = 256.f, fileH = 256.f;
+	if ( mcTextureManager &&
+	     mcTextureManager->tryGetTextureLogicalSize( mechIcon.getTextureHandle(), atlasW, atlasH ) )
+	{
+		if ( atlasW > 0 ) fileW = (float)atlasW;
+		if ( atlasH > 0 ) fileH = (float)atlasH;
+	}
+	long cols = ( width > 0.f ) ? (long)( fileW / width + 0.5f ) : 10;
+	if ( cols < 1 ) cols = 10;
+
+	long xIndex = index % cols;
+	long yIndex = index / cols;
+
+	float fX = xIndex;
+	float fY = yIndex;
 
 	float u = (fX * width);
 	float v = (fY * height);
@@ -521,34 +538,22 @@ void MechListBox::initIcon( LogisticsMech* pMech, aObject& mechIcon )
 	float u2 = (fX * width);
 	float v2 = (fY * height);
 
-	mechIcon.setFileWidth( 256.f );
-	// EXPLICIT, mech-icon-only fileHeight: query the atlas's logical height and
-	// set the V divisor.  Falls back to 256 (square) if the size is unavailable,
-	// preserving the old behavior.  Scoped here so no other FIT atlas is touched.
-	{
-		DWORD atlasW = 0, atlasH = 0;
-		float fileH = 256.f;
-		if ( mcTextureManager &&
-		     mcTextureManager->tryGetTextureLogicalSize( mechIcon.getTextureHandle(), atlasW, atlasH ) &&
-		     atlasH > 0 )
-			fileH = (float)atlasH;
-		mechIcon.setFileHeight( fileH );
-	}
+	mechIcon.setFileWidth( fileW );
+	mechIcon.setFileHeight( fileH );
 	mechIcon.setUVs( u, v, u2, v2 );
 
 	if ( getenv("MC2_LOG_MECH_ICON") )
 	{
-		float fh = mechIcon.getFileHeight() > 0.f ? mechIcon.getFileHeight() : 256.f;
 		// getChassisName() returns a long string-table id, not a char* -- using it
 		// with %s dereferences the id value and crashes (READ at the id). Log the
 		// variant name (an EString) for the %s field instead.
-		printf("[mechicon-list] mech=%s iconIndex=%ld row=%ld col=%ld "
+		printf("[mechicon-list] mech=%s iconIndex=%ld cols=%ld row=%ld col=%ld "
 		       "widgetW=%.0f widgetH=%.0f u=[%.1f,%.1f] v=[%.1f,%.1f] "
-		       "fileWidth=256 fileHeight=%.0f uvX=[%.3f,%.3f] uvY=[%.3f,%.3f]\n",
-		       (const char*)pMech->getName(), index, yIndex, xIndex,
+		       "fileWidth=%.0f fileHeight=%.0f uvX=[%.3f,%.3f] uvY=[%.3f,%.3f]\n",
+		       (const char*)pMech->getName(), index, cols, yIndex, xIndex,
 		       width, height,
 		       u, u2, v, v2,
-		       fh, u/256.f, u2/256.f, v/fh, v2/fh);
+		       fileW, fileH, u/fileW, u2/fileW, v/fileH, v2/fileH);
 		fflush(stdout);
 	}
 
