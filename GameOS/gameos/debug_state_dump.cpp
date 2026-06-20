@@ -24,6 +24,10 @@ extern "C" const char* gos_getMechTextureNameByNodeIdx(uint32_t nodeIdx);
 #include <windows.h>
 
 extern char missionName[1024];
+// Per-mission asset globals — set by game layer (code/logmain.cpp, code/gamecam.cpp,
+// code/loadscreen.cpp). No game headers here; mirror the missionName pattern.
+extern long g_dbgSkyNumber;
+extern char g_dbgLoadScreen[64];
 
 namespace {
 
@@ -201,6 +205,10 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
     s << "  \"mission\": {\n";
     s << "    \"name\": \"" << jsonEscape(missionKnown ? missionName : "") << "\",\n";
     s << "    \"known\": "; b(s, missionKnown); s << "\n";
+    s << "  },\n";
+    s << "  \"assets\": {\n";
+    s << "    \"skyNumber\": " << g_dbgSkyNumber << ",\n";
+    s << "    \"loadScreen\": \"" << jsonEscape(g_dbgLoadScreen) << "\"\n";
     s << "  },\n";
     s << "  \"build\": {\n";
     s << "    \"commit\": \"unknown\",\n";

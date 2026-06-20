@@ -71,6 +71,11 @@ extern bool drawOldWay;
 
 extern bool useNonWeaponEffects;
 GenericAppearance *theSky = NULL;
+
+// DEBUG-STATE-ASSETS: globals read by GameOS/gameos/debug_state_dump.cpp via extern.
+// Defined here (gamecam.cpp is always compiled); set at mission-load / loadscreen-pick.
+long  g_dbgSkyNumber   = -1;
+char  g_dbgLoadScreen[64] = "";
 //---------------------------------------------------------------------------
 void GameCamera::destroy (void)
 {
@@ -819,6 +824,9 @@ long GameCamera::activate (void)
 	// HDRI-SKY-NUMBER-1: swap the HDRI equirect sky to the mood-appropriate
 	// asset for this mission's sky number (IblHdriRegistry mapping).
 	GameAdapters::Sky::setSkyNumber(static_cast<int>(mission->theSkyNumber));
+
+	// DEBUG-STATE-ASSETS: record sky number for per-mission asset block in JSON dump.
+	g_dbgSkyNumber = mission->theSkyNumber;
 
  	return NO_ERR;
 }

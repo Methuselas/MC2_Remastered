@@ -161,6 +161,9 @@ void LoadScreenWrapper::changeRes()
 
 	FitIniFile outFile;
 
+	// Tracks the resolved loadscreen name for debug-state asset dump.
+	const char* resolvedLoadScreen = fileName;
+
 	if ( NO_ERR != outFile.open( path ) )
 	{
 		// Old MC2X campaigns (pre-1920 era) may lack high-res loading screens.
@@ -176,6 +179,9 @@ void LoadScreenWrapper::changeRes()
 			{
 				SPEW(( "GRAPHICS", "loadscreen: %s missing, fell back to %s.fit\n",
 				       fileName, fbName ));
+				// fbName is stack-local; copy into fileName so resolvedLoadScreen stays valid.
+				strncpy( fileName, fbName, sizeof(fileName) - 1 );
+				fileName[sizeof(fileName) - 1] = '\0';
 				opened = true;
 				break;
 			}
@@ -187,6 +193,13 @@ void LoadScreenWrapper::changeRes()
 			Assert( 0, 0, error );
 			return;
 		}
+	}
+
+	// DEBUG-STATE-ASSETS: record resolved loadscreen filename for per-mission JSON dump.
+	{
+		extern char g_dbgLoadScreen[64];
+		strncpy( g_dbgLoadScreen, resolvedLoadScreen, sizeof(g_dbgLoadScreen) - 1 );
+		g_dbgLoadScreen[sizeof(g_dbgLoadScreen) - 1] = '\0';
 	}
 
 	//The 0x2 means that we do NOT want to flush this texture when we toss

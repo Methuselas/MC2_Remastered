@@ -85,6 +85,8 @@ bool inViewMode = false;
 unsigned long viewObject = 0x0;
 char missionName[1024];
 
+// g_dbgSkyNumber / g_dbgLoadScreen defined in code/gamecam.cpp (always compiled).
+
 char* ExceptionGameMsg = NULL;
 
 char buildNumber[80];
