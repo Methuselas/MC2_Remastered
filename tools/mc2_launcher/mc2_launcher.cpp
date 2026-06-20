@@ -180,6 +180,9 @@ static const EnvVarDef k_envVars[] = {
     // --- Shadow tuning (value vars) ---
     // NOTE: MC2_SHADOW_MAP_SIZE moved to Graphics Options dialog (shadow quality radios).
     { "MC2_SHADOW_CSM_R0",           "CSM near cascade radius WU (def 512)",  false, "512",  "Shadow Tuning" },
+    // --- Cheats (interactive play) ---
+    { "MC2_CHEAT_INFINITE_MONEY",    "Infinite Money",                        true,  "",     "Cheats" },
+    { "MC2_CHEAT_SALVAGE_ALL",       "Salvage Everything",                    true,  "",     "Cheats" },
 };
 static const int k_envVarCount = (int)(sizeof(k_envVars) / sizeof(k_envVars[0]));
 
