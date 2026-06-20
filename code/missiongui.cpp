@@ -198,6 +198,7 @@ gosEnum_KeyIndex MissionInterfaceManager::WAYPOINT_KEY = (gosEnum_KeyIndex)-1;
 static int           s_hoverLastMouseX = -1;
 static int           s_hoverLastMouseY = -1;
 static GameObject*   s_hoverCachedTarget = nullptr;
+static unsigned long s_hoverCachedTargetWID = 0;   // watch-ID of the cached hover target — validate by handle before any deref of the raw pointer
 static bool          s_hoverCacheValid  = false;
 // Generation stamp: bumped on every mission begin/end invalidate. A cached target is only
 // trusted while its stamp matches; any boundary crossing discards it cheaply.
@@ -425,6 +426,7 @@ void MissionInterfaceManager::invalidateHoverTarget (void)
 {
 	target              = NULL;
 	s_hoverCachedTarget = nullptr;
+	s_hoverCachedTargetWID = 0;
 	s_hoverCacheValid   = false;
 	s_hoverLastMouseX   = -1;
 	s_hoverLastMouseY   = -1;
@@ -1693,10 +1695,20 @@ void MissionInterfaceManager::updateTarget( bool bGui)
 					}
 				});
 			}
-			// Cache hit: mouse hasn't moved, reuse last result.
+			// Cache hit: mouse hasn't moved, reuse last result — but only if the cached
+			// object is still live. Validate by watch-ID WITHOUT dereferencing the raw
+			// cached pointer (getByWatchID takes the stored WID; '==' is a pointer
+			// compare). A mech that died since the cache was set leaves a stale/poisoned
+			// pointer; reusing it raw let target reach a virtual call (target->isDisabled)
+			// with target = 0xFFFF.. -> READ-violation crash. If it no longer resolves to
+			// the same live registered object, drop the cache and fall through to a fresh pick.
 			if (s_hoverCacheValid && mouseX == s_hoverLastMouseX && mouseY == s_hoverLastMouseY) {
-				target = s_hoverCachedTarget;
-				goto gpu_hover_done;
+				if (s_hoverCachedTarget &&
+				    ObjectManager->getByWatchID(s_hoverCachedTargetWID) == s_hoverCachedTarget) {
+					target = s_hoverCachedTarget;
+					goto gpu_hover_done;
+				}
+				s_hoverCacheValid = false;   // cached object died — re-pick fresh below
 			}
 			// Viewport-to-GL coord transform via proven ScreenPick utility.
 			float vMulX, vMulY, vAddX, vAddY;
@@ -1728,6 +1740,7 @@ void MissionInterfaceManager::updateTarget( bool bGui)
 						s_hoverLastMouseX   = mouseX;
 						s_hoverLastMouseY   = mouseY;
 						s_hoverCachedTarget = bm;
+						s_hoverCachedTargetWID = bm->getWatchID();   // bm freshly picked = live; cache its WID for next-frame validation
 						s_hoverCacheValid   = true;
 						target = bm;
 						goto gpu_hover_done;
