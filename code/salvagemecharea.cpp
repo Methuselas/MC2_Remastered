@@ -568,7 +568,23 @@ void SalvageListItem::render()
 bool SalvageListItem::isChecked()
 {
 	// Guard: checkButton may be NULL on the early-return ctor path (null pVariant).
-	return checkButton && checkButton->isPressed();
+	if ( !checkButton )
+	{
+		// Diagnostic (one-shot): GetCheckedItem reached a salvage item with no
+		// checkButton. The !bDone gate in SalvageMechScreen::update should prevent
+		// any post-teardown poll; if this fires, that gate has regressed and the
+		// old use-after-free window is back -- make it loud instead of silent.
+		static bool s_warned = false;
+		if ( !s_warned )
+		{
+			s_warned = true;
+			printf("[SALVAGE] WARN isChecked() on item with NULL checkButton "
+			       "(stale post-Done poll? UAF guard tripped)\n");
+			fflush(stdout);
+		}
+		return false;
+	}
+	return checkButton->isPressed();
 }
 
 int SalvageListItem::handleMessage( unsigned long message, unsigned long who )
