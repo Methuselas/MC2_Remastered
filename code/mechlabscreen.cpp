@@ -234,7 +234,18 @@ void MechLabScreen::begin()
 
 	if ( !pVariant ) // if we are coming directly from the main menu
 	{
-		pVariant = LogisticsData::instance->getMechToModify()->getVariant();
+		// getMechToModify() can return null when no mech is selected (e.g. forced
+		// begin() from the soak check-screens harness before logistics is staged).
+		// Bail out early rather than null-deref — caller should have guarded first.
+		LogisticsMech* mechToMod = LogisticsData::instance
+		                           ? LogisticsData::instance->getMechToModify()
+		                           : nullptr;
+		if ( !mechToMod )
+		{
+			status = DONE;
+			return;
+		}
+		pVariant = mechToMod->getVariant();
 
 		variantList.ListBox().removeAllItems(true);
 

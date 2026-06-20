@@ -1199,15 +1199,20 @@ void Building::setSensorData (TeamPtr team, float range, bool setTeam)
 {
 	if (range > -1.0) 
 	{
-		if (!sensorSystem) 
+		if (!sensorSystem)
 		{
 			sensorSystem = SensorManager->newSensor();
 			if (!sensorSystem)
-				Fatal(0, " No RAM for Sensor System ");
+			{
+				// Pool exhausted (MAX_SENSORS). Fatal(0,...) is non-fatal here and
+				// would fall through to a null deref at setOwner. Skip sensor setup
+				// gracefully — building runs sensorless rather than crashing.
+				return;
+			}
 		}
 		sensorSystem->setOwner(this);
 		sensorSystem->setRange(range);
-		
+
 		if (!isLookoutTower())
 			sensorSystem->setLOSCapability(false);
 	}

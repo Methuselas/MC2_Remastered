@@ -11,7 +11,7 @@
 #ifndef DCONTACT_H
 #define DCONTACT_H
 
-#define	MAX_SENSORS						150	// # sensor systems allowed per mission
+#define	MAX_SENSORS						512	// # sensor systems allowed per mission (raised from 150: stub-substituted chassis in mod campaigns e.g. keid-v flood the pool; pool is per-mission missionHeap, sensors are small)
 #define	MAX_ECMS						50
 #define	MAX_CONTACTS_PER_SENSOR			200
 

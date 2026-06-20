@@ -1757,9 +1757,17 @@ void MissionInterfaceManager::updateTarget( bool bGui)
 		// below (bGui/sensor/destroyed); that's fine -- the WID is only consulted when target
 		// is non-null next frame, and target is never reassigned to a different object here.
 		s_targetWatchID = target->getWatchID();
-		if ( bGui )
+		// Drop a stale/freed pick before ANY virtual dispatch below. getWatchID()
+		// is a non-virtual member read (safe even on freed memory); round-trip it
+		// through the ObjectManager to confirm the object is still live+registered.
+		// Without this, a mech that died the same frame (common under cheat-mode
+		// mass-kill) leaves a dangling target whose first virtual call
+		// (isDisabled / getDescription) jumps through a freed vtable -> EXEC at 0x0.
+		if ( ObjectManager->getByWatchID( s_targetWatchID ) != target )
 			target = 0;
-		else if ( target->isMover() && !ShowMovers && !(MPlayer && MPlayer->allUnitsDestroyed[MPlayer->commanderID]))
+		if ( target && bGui )
+			target = 0;
+		else if ( target && target->isMover() && !ShowMovers && !(MPlayer && MPlayer->allUnitsDestroyed[MPlayer->commanderID]))
 		{
 			if ((target->getTeamId() != Team::home->getId()) && 
 				!target->isDisabled() && 
@@ -1767,6 +1775,14 @@ void MissionInterfaceManager::updateTarget( bool bGui)
 				target = NULL;
 		}
 		
+		// STABILITY: a disabled mech may be mid-teardown (null/partial appearance,
+		// stale vtable) — the virtual derefs below (getDescription / getAppearance)
+		// then jump through a freed slot and crash (EXEC at 0x0). This surfaces under
+		// cheat-mode soak mass-disable but is a latent hazard whenever a hovered mech
+		// dies the same frame. Don't compute hover info for a disabled target.
+		if ( target && target->isDisabled() )
+			target = 0;
+
 		if ( target )
 		{
 			// MISSION-START-HOVER-TARGET-LIFETIME-1: secondary defensive guard (insurance,

@@ -391,7 +391,14 @@ SalvageListItem::SalvageListItem( BattleMech* pMech )
 	icon->init( pMech );
 	icon->update();
 
-	((Mech3DAppearance*)pMech->getAppearance())->getPaintScheme( psRed, psGreen, psBlue );
+	// A salvageable mech may have a null/partial appearance (stub-substituted
+	// chassis, partial GLB import — see "mech appearance has no base shape" warns).
+	// Guard before deref so the salvage list survives it instead of crashing
+	// (SalvageMechScreen::init, salvagemecharea.cpp).
+	psRed = psGreen = psBlue = 0;
+	Mech3DAppearance* salvAppr = (Mech3DAppearance*)pMech->getAppearance();
+	if ( salvAppr )
+		salvAppr->getPaintScheme( psRed, psGreen, psBlue );
 
 	normalAnim = *s_normalAnim;
 	pressedAnim = *s_pressedAnim;

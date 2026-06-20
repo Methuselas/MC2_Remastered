@@ -1242,8 +1242,14 @@ long SensorSystemManager::checkIntegrity (void)
 
 SensorSystemPtr SensorSystemManager::newSensor (void) {
 
+	// Stub-substituted chassis (e.g. keid-v objType 252) may exhaust the pool
+	// when the mech.cpp fallback allocates a default sensor for every chassis
+	// missing a COMPONENT_FORM_SENSOR.  Return nullptr instead of Fatal so
+	// that guarded callers (mech.cpp:3350 stub-chassis fallback) survive
+	// gracefully.  Unguarded callers in normal load paths never hit this
+	// because they only fire when a COMPONENT_FORM_SENSOR is present.
 	if (!freeSensors)
-		Fatal(0, " No More Free Sensors ");
+		return nullptr;
 
 	freeSensors--;
 

@@ -4391,7 +4391,7 @@ void execGetRelativePositionToObject (void) {
 	float* relPos = ABLi_popRealPtr();
 
 	GameObjectPtr object = getObject(objectId);
-	if (object) {
+	if (object && object->isMover()) {
 		Stuff::Vector3D newPos;
 		newPos = ((MoverPtr)object)->relativePosition(angle, distance, flags);
 		relPos[0] = newPos.x;

@@ -993,6 +993,13 @@ void TerrainTextures::combineOverlayTxm (MemoryPtr dest, long type, long mipLeve
 	}
 
 	MemoryPtr combineRAM = overlays[oType].overlayData[oIndx];
+	if (combineRAM == NULL)
+	{
+		// Overlay texture slot unloaded or missing (e.g. quickLoad path skipped
+		// TGA fill, or 'type' matched no overlay range leaving default oType/oIndx=0).
+		// TCE ships overlay types that hit this; skip silently to avoid null-deref.
+		return;
+	}
 	gosASSERT(combineRAM != NULL);
 
 	long mipSize = 0;
