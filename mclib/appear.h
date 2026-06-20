@@ -285,6 +285,11 @@ class Appearance
 		// Default false = serial handles this type.
 		virtual bool isRecalcBoundsWorkerSafe() const { return false; }
 
+		// FRAME-JOBS-2B: opt-in for parallel touch() prepass. Default false — only
+		// audited appearance families override this. Worker path checks this BEFORE
+		// calling touch(). Serial path is unchanged.
+		virtual bool isTouchWorkerSafe() const { return false; }
+
 		// FRAME-JOBS-1: worker-path entry point. Calls recalcBounds() then stamps boundsFrame.
 		// Base no-op exists ONLY for safe virtual dispatch through Appearance*.
 		// Worker path checks isRecalcBoundsWorkerSafe() BEFORE calling — the no-op

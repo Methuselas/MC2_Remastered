@@ -33,10 +33,11 @@ struct Pool {
     std::vector<std::thread>      threads;
 };
 
-Pool* g_pool    = nullptr;
-bool  g_enabled = false;
-int   g_batch   = 64;
-bool  g_trace   = false;
+Pool* g_pool      = nullptr;
+bool  g_enabled   = false;
+bool  g_touchEnabled = false;
+int   g_batch     = 64;
+bool  g_trace     = false;
 
 std::atomic<int> g_chunksThisFrame{0};
 std::atomic<int> g_workersCount{0};
@@ -82,6 +83,9 @@ void frameJobsInit() {
     g_trace = std::getenv("MC2_FRAME_JOBS_TRACE") &&
               std::atoi(std::getenv("MC2_FRAME_JOBS_TRACE")) != 0;
 
+    const char* touchEnv = getenv("MC2_FRAME_JOBS_TOUCH");
+    g_touchEnabled = g_enabled && touchEnv && touchEnv[0] == '1';
+
     if (!g_enabled) return;
 
     int hw = static_cast<int>(std::thread::hardware_concurrency());
@@ -100,6 +104,10 @@ void frameJobsInit() {
         g_pool->threads.emplace_back(workerFn, g_pool, i);
 
     g_workersCount.store(nw, std::memory_order_relaxed);
+
+    if (g_touchEnabled && g_trace) {
+        printf("FRAME_JOBS_TOUCH: enabled workers=%d batch=%d\n", nw, g_batch);
+    }
 }
 
 void frameJobsShutdown() {
@@ -159,9 +167,10 @@ void parallelForRange(int count, int batchSize,
     }
 }
 
-bool frameJobsEnabled() { return g_enabled; }
-int  frameJobsBatch()   { return g_batch;   }
-bool frameJobsTrace()   { return g_trace;   }
+bool frameJobsEnabled()      { return g_enabled;      }
+bool frameJobsTouchEnabled() { return g_touchEnabled; }
+int  frameJobsBatch()        { return g_batch;        }
+bool frameJobsTrace()        { return g_trace;        }
 
 FrameJobsFrameStats frameJobsGetFrameStats() {
     return {
