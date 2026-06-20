@@ -9,6 +9,9 @@
 #include <cstdlib>
 #include <cstdio>
 
+// FRAME-JOBS-2D: thread-local flag — set true on workers during touchWorkerPrepass.
+thread_local bool g_isFrameJobsWorker = false;
+
 namespace {
 
 struct Chunk { int begin, end; };

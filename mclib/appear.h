@@ -290,6 +290,17 @@ class Appearance
 		// calling touch(). Serial path is unchanged.
 		virtual bool isTouchWorkerSafe() const { return false; }
 
+		// FRAME-JOBS-2D: split touch() into two phases to eliminate mutex contention.
+		// isTouchSplitSafe() — true if this type implements the split. Default false.
+		// touchWorkerPrepass() — lock-free per-instance prep; called on worker threads.
+		//   MUST NOT acquire any mutex, call txmmgr light-data paths, emit GL, or
+		//   touch shared state.
+		// touchSerialCommit() — light-data resubmit; called serially on main thread
+		//   after worker join. Default delegates to touch() for non-split types.
+		virtual bool isTouchSplitSafe() const { return false; }
+		virtual void touchWorkerPrepass() {}
+		virtual void touchSerialCommit() { touch(); }
+
 		// FRAME-JOBS-1: worker-path entry point. Calls recalcBounds() then stamps boundsFrame.
 		// Base no-op exists ONLY for safe virtual dispatch through Appearance*.
 		// Worker path checks isRecalcBoundsWorkerSafe() BEFORE calling — the no-op

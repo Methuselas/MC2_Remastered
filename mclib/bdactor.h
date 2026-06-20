@@ -377,6 +377,11 @@ class BldgAppearance : public ObjectAppearance
 		bool isRecalcBoundsWorkerSafe() const override { return true; }
 		bool isTouchWorkerSafe() const override { return true; }
 
+		// FRAME-JOBS-2D: split touch prepass
+		bool isTouchSplitSafe() const override { return true; }
+		void touchWorkerPrepass() override;
+		void touchSerialCommit() override;
+
 		virtual bool getInTransition (void)
 		{
 			return (canTransition == false);
@@ -685,6 +690,11 @@ class TreeAppearance : public ObjectAppearance
 		void recalcBoundsAndStamp();
 		bool isRecalcBoundsWorkerSafe() const override { return true; }
 		bool isTouchWorkerSafe() const override { return true; }
+
+		// FRAME-JOBS-2D: split touch prepass
+		bool isTouchSplitSafe() const override { return true; }
+		void touchWorkerPrepass() override;
+		void touchSerialCommit() override;
 
 		void setFadeTable (MemoryPtr fTable)
 		{

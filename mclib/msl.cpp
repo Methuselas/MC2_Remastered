@@ -25,11 +25,17 @@
 #include "../GameOS/gameos/gos_static_prop_killswitch.h" // g_useGpuObjects extern
 #include "../GameOS/gameos/gos_mech_killswitch.h"        // g_useGpuMechs extern (Slice B1)
 #include "../GameOS/gameos/gos_profiler.h"  // PERF DIAGNOSTIC 2026-05-06: ZoneScopedN for CacheGpuLightData breakdown
+#include "../code/frame_jobs.h"              // FRAME-JOBS-2D: isFrameJobsWorkerThread()
+#include <atomic>
 
 // 2026-05-05: frame-stamp the cache so registry::flush() can skip stale entries
 // (actors whose update() was culled this frame; their cached UBO slot index now
 // points to a slot whose content was filled by a different actor).
 extern uint32_t g_mc2FrameCounter;
+
+// FRAME-JOBS-2D: counts ResubmitCachedGpuLightData calls made from worker threads.
+// Must remain 0 every frame — nonzero means the split boundary is broken.
+std::atomic<int> g_workerResubmitCalls{0};
 
 #ifndef CIDENT_H
 #include"cident.h"
@@ -2118,6 +2124,12 @@ void TG_MultiShape::EmitBakedGpuLightData(int32_t recipeIndex, const TG_HWLights
 
 void TG_MultiShape::ResubmitCachedGpuLightData()
 {
+    // FRAME-JOBS-2D invariant: this function must never run on worker threads.
+    // g_workerResubmitCalls > 0 means split boundary is broken — touchWorkerPrepass
+    // called into the light-data path instead of touchSerialCommit.
+    if (isFrameJobsWorkerThread())
+        g_workerResubmitCalls.fetch_add(1, std::memory_order_relaxed);
+
     // Slice B1 (2026-05-09): see CacheGpuLightData rationale.
     if (!g_useGpuObjects && !g_useGpuMechs)
         return;

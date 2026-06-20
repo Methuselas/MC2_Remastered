@@ -3981,6 +3981,55 @@ void BldgAppearance::touch()
 	}
 }
 
+// FRAME-JOBS-2D: lock-free per-instance prep; runs on worker threads.
+// bldgShape->Touch() is lock-free (verified: sets lastTurnTransformed only, tgl.cpp:4073).
+// s_animTypeIdleNowStatic.fetch_add is atomic — worker-safe.
+void BldgAppearance::touchWorkerPrepass()
+{
+	if (bldgTypeHasAnimations(appearType) && bdAnimationState == -1 && staticReg.registered)
+		s_animTypeIdleNowStatic.fetch_add(1, std::memory_order_relaxed);
+	if (bldgShape)
+		bldgShape->Touch();
+}
+
+// FRAME-JOBS-2D: light-data resubmit; runs serially on main thread after worker join.
+void BldgAppearance::touchSerialCommit()
+{
+	if (!bldgShape) return;
+	const bool stableLightSkipArmed = mc2StableLightSkipEnabled();
+	const uint64_t currentLightEnvGen = mc2StaticLightEnvironmentGeneration(eye);
+	const bool stableLightSkipEligible =
+		staticReg.registered &&
+		staticReg.recipeIndex >= 0 &&
+		staticReg.hasValidStaticLight &&
+		staticReg.lightDataIndex != 0xFFFFFFFFu &&
+		staticReg.lastLightEnvGen == currentLightEnvGen &&
+		!needsFullBakeNextFrame;
+	recordStableLightSkipDiag(
+		stableLightSkipArmed,
+		stableLightSkipEligible,
+		!staticReg.registered || staticReg.recipeIndex < 0,
+		!staticReg.hasValidStaticLight,
+		staticReg.hasValidStaticLight && (staticReg.lastLightEnvGen != currentLightEnvGen),
+		needsFullBakeNextFrame,
+		staticReg.lightDataIndex == 0xFFFFFFFFu);
+
+	extern bool mc2LightBakeEnabled();
+	extern bool mc2GetBakedStaticLight(int32_t, TG_HWLightsData&);
+	TG_HWLightsData baked;
+	if (mc2LightBakeEnabled()
+	    && staticReg.registered && staticReg.recipeIndex >= 0
+	    && mc2GetBakedStaticLight(staticReg.recipeIndex, baked)) {
+		bldgShape->EmitBakedGpuLightData(staticReg.recipeIndex, baked);
+	} else {
+		bldgShape->ResubmitCachedGpuLightData();
+	}
+	staticReg.lightDataIndex = bldgShape->getCachedGpuLightIndex();
+	staticReg.hasValidStaticLight = (staticReg.lightDataIndex != 0xFFFFFFFFu);
+	staticReg.lastLightEnvGen = currentLightEnvGen;
+	// NOTE: bldgShape->Touch() is in touchWorkerPrepass() (verified lock-free)
+}
+
 void BldgAppearance::invalidateStaticRegistration()
 {
 	if (staticReg.registered && staticReg.recipeIndex >= 0)
@@ -6062,6 +6111,34 @@ void TreeAppearance::touch()
 		staticReg[activeLOD].lightDataIndex = treeShape->getCachedGpuLightIndex();
 		treeShape->Touch();
 	}
+}
+
+// FRAME-JOBS-2D: lock-free per-instance prep; runs on worker threads.
+// selectActiveLOD() reads per-instance state only (no shared mutation).
+// treeShape->Touch() is lock-free (verified: sets lastTurnTransformed only, tgl.cpp:4073).
+void TreeAppearance::touchWorkerPrepass()
+{
+	selectActiveLOD();
+	if (treeShape)
+		treeShape->Touch();
+}
+
+// FRAME-JOBS-2D: light-data resubmit; runs serially on main thread after worker join.
+void TreeAppearance::touchSerialCommit()
+{
+	if (!treeShape) return;
+	extern bool mc2LightBakeEnabled();
+	extern bool mc2GetBakedStaticLight(int32_t, TG_HWLightsData&);
+	TG_HWLightsData baked;
+	if (mc2LightBakeEnabled()
+	    && staticReg[activeLOD].registered && staticReg[activeLOD].recipeIndex >= 0
+	    && mc2GetBakedStaticLight(staticReg[activeLOD].recipeIndex, baked)) {
+		treeShape->EmitBakedGpuLightData(staticReg[activeLOD].recipeIndex, baked);
+	} else {
+		treeShape->ResubmitCachedGpuLightData();
+	}
+	staticReg[activeLOD].lightDataIndex = treeShape->getCachedGpuLightIndex();
+	// NOTE: treeShape->Touch() is in touchWorkerPrepass() (verified lock-free)
 }
 
 void TreeAppearance::invalidateStaticRegistration()

@@ -798,4 +798,10 @@ class TG_AnimateShape
 
 typedef TG_AnimateShape *TG_AnimateShapePtr;
 //-------------------------------------------------------------------------------
+
+// FRAME-JOBS-2D: counts ResubmitCachedGpuLightData calls made from worker threads.
+// Defined in msl.cpp; read by objmgr.cpp for the per-frame diagnostic.
+#include <atomic>
+extern std::atomic<int> g_workerResubmitCalls;
+
 #endif

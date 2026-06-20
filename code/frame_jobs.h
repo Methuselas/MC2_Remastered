@@ -30,3 +30,9 @@ struct FrameJobsFrameStats {
 };
 FrameJobsFrameStats frameJobsGetFrameStats();
 void                frameJobsResetFrameStats();
+
+// FRAME-JOBS-2D: Thread-local flag set true during touchWorkerPrepass dispatch
+// on worker threads. Used by txmmgr/light-data paths to assert they are never
+// called from workers. worker_resubmit_calls > 0 = split boundary is broken.
+extern thread_local bool g_isFrameJobsWorker;
+inline bool isFrameJobsWorkerThread() { return g_isFrameJobsWorker; }

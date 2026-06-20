@@ -35,6 +35,8 @@
 #include "../GameOS/gameos/gos_static_prop_registry.h" // Task 5: mission-load bulk registration
 #include "move_recon.h"  // MC2_MOVE_RECON per-frame pathfinding cost instrumentation
 #include "frame_jobs.h"  // FRAME-JOBS-1: parallelForRange worker pool
+#include <atomic>
+extern std::atomic<int> g_workerResubmitCalls;  // FRAME-JOBS-2D: msl.cpp
 
 #ifndef OBJMGR_H
 #include"objmgr.h"
@@ -2259,56 +2261,74 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 				}
 			}
 
-			// ── FRAME-JOBS-2B: parallel touch() prepass ──────────────────────────────────
-			// Workers call touch() only for whitelisted appearance families (isTouchWorkerSafe()==true).
-			// Serial loop still runs touch() for non-whitelisted objects via the static-update-skip path.
-			// No GL, no txmmgr mutation, no GPU cull emit, no sound/effects from workers.
-			// Placed inside the FRAME-JOBS-1 block so s_frameJobsHandles is in scope.
+			// ── FRAME-JOBS-2D: split touch prepass ──────────────────────────────────────
+			// Phase 1 (workers): touchWorkerPrepass() — lock-free per-instance prep
+			//   (bldgShape->Touch() / treeShape->Touch() / selectActiveLOD()).
+			// Phase 2 (main thread serial): touchSerialCommit() — light-data resubmit.
+			// g_workerResubmitCalls must be 0 every frame — nonzero = split broken.
 			if (frameJobsTouchEnabled()) {
 				ZoneScopedN("FrameJobs.Touch");
-				static std::vector<long> s_touchHandles;
-				s_touchHandles.clear();
+				static std::vector<long> s_splitHandles;
+				s_splitHandles.clear();
+				int candidates = 0, skipped_not_split_safe = 0;
 
-				// Filter s_frameJobsHandles to whitelisted touch types only.
+				// Filter s_frameJobsHandles to split-safe appearance types only.
 				for (long h : s_frameJobsHandles) {
+					++candidates;
+					GameObjectPtr obj = objList[h];
+					if (!obj) { ++skipped_not_split_safe; continue; }
+					AppearancePtr ap = obj->getAppearance();
+					if (!ap || !ap->isTouchSplitSafe()) { ++skipped_not_split_safe; continue; }
+					s_splitHandles.push_back(h);
+				}
+				int worker_submitted = static_cast<int>(s_splitHandles.size());
+
+				// Phase 1: parallel lock-free prep ─────────────────────────────────────
+				auto _tw0 = std::chrono::high_resolution_clock::now();
+				int touchCount = worker_submitted;
+				if (touchCount > 0) {
+					parallelForRange(touchCount, frameJobsBatch(), [](int begin, int end) {
+						g_isFrameJobsWorker = true;
+						for (int i = begin; i < end; ++i) {
+							GameObjectPtr obj = ObjectManager->objList[s_splitHandles[i]];
+							if (!obj) continue;
+							AppearancePtr ap = obj->getAppearance();
+							if (ap) ap->touchWorkerPrepass();
+						}
+						g_isFrameJobsWorker = false;
+					});
+				}
+				auto _tw1 = std::chrono::high_resolution_clock::now();
+				float worker_us = std::chrono::duration<float, std::micro>(_tw1 - _tw0).count();
+
+				// Phase 2: serial commit ───────────────────────────────────────────────
+				int serial_commits = 0;
+				int prev_resubmit_calls = g_workerResubmitCalls.load(std::memory_order_relaxed);
+				auto _tc0 = std::chrono::high_resolution_clock::now();
+				for (long h : s_splitHandles) {
 					GameObjectPtr obj = objList[h];
 					if (!obj) continue;
 					AppearancePtr ap = obj->getAppearance();
-					if (ap && ap->isTouchWorkerSafe()) s_touchHandles.push_back(h);
+					if (ap) { ap->touchSerialCommit(); ++serial_commits; }
 				}
-
-				const int touchCount = static_cast<int>(s_touchHandles.size());
-				const int skippedNotWhitelisted = static_cast<int>(s_frameJobsHandles.size()) - touchCount;
+				auto _tc1 = std::chrono::high_resolution_clock::now();
+				float commit_us = std::chrono::duration<float, std::micro>(_tc1 - _tc0).count();
+				int worker_resubmit_calls = g_workerResubmitCalls.load(std::memory_order_relaxed) - prev_resubmit_calls;
 
 				if (frameJobsTrace()) {
-					printf("FRAME_JOBS_TOUCH: candidates=%d submitted=%d skipped_not_whitelisted=%d\n",
-					       static_cast<int>(s_frameJobsHandles.size()), touchCount, skippedNotWhitelisted);
-				}
-
-				if (touchCount > 0) {
-					auto _ft_t0 = std::chrono::high_resolution_clock::now();
-					parallelForRange(touchCount, frameJobsBatch(), [](int begin, int end) {
-						for (int i = begin; i < end; ++i) {
-							GameObjectPtr obj = ObjectManager->objList[s_touchHandles[i]];
-							if (!obj) continue;
-							AppearancePtr ap = obj->getAppearance();
-							if (!ap || !ap->isTouchWorkerSafe()) continue;
-							// FRAME-JOBS-2B: BldgAppearance only (isTouchWorkerSafe() whitelist).
-							// touch() is light-cache resubmit + vertex-transform stale guard.
-							// No GL, no txmmgr mutation beyond mutex-protected addLightDataStructure.
-							ap->touch();
-						}
-					});
-					auto _ft_t1 = std::chrono::high_resolution_clock::now();
-					float worker_us = std::chrono::duration<float, std::micro>(_ft_t1 - _ft_t0).count();
-
-					if (frameJobsTrace()) {
-						printf("FRAME_JOBS_TOUCH_PERF: objects=%d worker_us=%.1f\n",
-						       touchCount, worker_us);
-					}
+					printf("FRAME_JOBS_TOUCH: enabled=1 split=yes candidates=%d worker_submitted=%d"
+					       " serial_commits=%d worker_resubmit_calls=%d"
+					       " skipped_not_split_safe=%d\n",
+					       candidates, worker_submitted, serial_commits, worker_resubmit_calls,
+					       skipped_not_split_safe);
+					printf("FRAME_JOBS_TOUCH_PERF: worker_us=%.1f serial_commit_us=%.1f"
+					       " avg_worker_us_per_object=%.3f avg_serial_commit_us_per_object=%.3f\n",
+					       worker_us, commit_us,
+					       worker_us / std::max(1, worker_submitted),
+					       commit_us / std::max(1, serial_commits));
 				}
 			}
-			// ── end FRAME-JOBS-2B pre-pass ───────────────────────────────────────────────
+			// ── end FRAME-JOBS-2D pre-pass ───────────────────────────────────────────────
 		}
 		// ── end FRAME-JOBS-1 pre-pass ────────────────────────────────────────────────
 
