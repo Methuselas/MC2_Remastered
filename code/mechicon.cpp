@@ -574,12 +574,23 @@ bool MechIcon::init( long whichIndex )
 		for( int j = 0; j < unitIconY; ++j )
 		{
 			int srcY = (int)(offsetY * f.y) + (int)(j * f.y);
-			DWORD* pSrcRow = (DWORD*)pTmp + (long)srcY * (long)actualW;
 			pDestData = pDestRow;
+			if ( srcY < 0 || (uint32_t)srcY >= actualH )
+			{
+				// srcY out of source texture bounds (atlas/dimension mismatch) -- leave dest row blank
+				for ( int i = 0; i < unitIconX; ++i )
+					*pDestData++ = 0x00000000;
+				pDestRow += textureData.Width;
+				continue;
+			}
+			DWORD* pSrcRow = (DWORD*)pTmp + (long)srcY * (long)actualW;
 			for ( int i = 0; i < unitIconX; ++i ) // do four icons per row
 			{
 				int srcX = (int)(offsetX * f.x) + (int)(i * f.x);
-				*pDestData++ = pSrcRow[srcX];
+				if ( srcX < 0 || (uint32_t)srcX >= actualW )
+					*pDestData++ = 0x00000000; // srcX OOB -- blank pixel
+				else
+					*pDestData++ = pSrcRow[srcX];
 			}
 			pDestRow += textureData.Width;
 		}
@@ -1275,12 +1286,23 @@ bool VehicleIcon::init( Mover* pMover )
 		for( int j = 0; j < unitIconY; ++j )
 		{
 			int srcY = (int)(offsetY * f.y) + (int)(j * f.y);
-			DWORD* pSrcRow = (DWORD*)pTmp + (long)srcY * (long)actualW;
 			pDestData = pDestRow;
+			if ( srcY < 0 || (uint32_t)srcY >= actualH )
+			{
+				// srcY out of source texture bounds (atlas/dimension mismatch) -- leave dest row blank
+				for ( int i = 0; i < unitIconX; ++i )
+					*pDestData++ = 0x00000000;
+				pDestRow += textureData.Width;
+				continue;
+			}
+			DWORD* pSrcRow = (DWORD*)pTmp + (long)srcY * (long)actualW;
 			for ( int i = 0; i < unitIconX; ++i ) // do four icons per row
 			{
 				int srcX = (int)(offsetX * f.x) + (int)(i * f.x);
-				*pDestData++ = pSrcRow[srcX];
+				if ( srcX < 0 || (uint32_t)srcX >= actualW )
+					*pDestData++ = 0x00000000; // srcX OOB -- blank pixel
+				else
+					*pDestData++ = pSrcRow[srcX];
 			}
 			pDestRow += textureData.Width;
 		}
