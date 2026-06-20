@@ -90,6 +90,11 @@ class LogisticsPilot
 		bool		promotePilot();
 		int			turnAverageIntoRank( float avg);
 
+		// SOAK harness only — do NOT call from normal game code.
+		// Adds delta to both gunnery lifetime skill and the per-mission
+		// newGunnery delta so promotePilot() sees a rank-crossing gain.
+		void		soakAddGunnery(float delta) { gunnery += delta; newGunnery += delta; }
+
 
 
 		static		const char* getSkillText( int skillID );

@@ -521,6 +521,29 @@ namespace {
 		if (p < 0.0f) p = 0.0f;
 		return p;
 	}
+
+	// --- MC2_SOAK_KILL_ENEMY -------------------------------------------------
+	// When set, kills one random live enemy BattleMech before autowin fires so
+	// the salvage screen has a candidate, and then programmatically salvages it
+	// into LogisticsData inventory.  Default OFF = byte-identical when unset.
+	static const bool s_soakKillEnemy =
+		(getenv("MC2_SOAK_KILL_ENEMY") != nullptr);
+
+	// Stores the variantName of the enemy killed this mission so the next
+	// mission can assert it reached the load-bay inventory.
+	static char s_soakKilledVariant[64] = {};
+	static bool s_soakKillDone = false;      // armed once per mission
+	static bool s_soakSalvageDone = false;   // salvage commit fired once per mission
+	static bool s_soakInventoryChecked = false; // load-bay check fired once per mission
+
+	// --- MC2_SOAK_PILOT_PROMOTE ----------------------------------------------
+	// Grants a deployed pilot enough skill delta to cross the next rank
+	// threshold, then runs the same promotePilot() call the UI uses.
+	// Throttled to mission-index 2 and 5 within a campaign (1-based).
+	// Default OFF = byte-identical when unset.
+	static const bool s_soakPilotPromote =
+		(getenv("MC2_SOAK_PILOT_PROMOTE") != nullptr);
+	static bool s_soakPromoteFired = false;  // armed once per mission
 } // namespace
 
 //----------------------------------------------------------------------------------
@@ -1009,6 +1032,184 @@ long Mission::update (void)
 				printf("[SOAK] autowin mission=%s t=%.1f\n",
 					missionFileName, (float)scenarioTime);
 				fflush(stdout);
+			}
+		}
+
+		// --- MC2_SOAK_KILL_ENEMY ---------------------------------------------
+		// Three phases per mission pair.
+		// Phase 1 (current mission, t=60% win): disable one enemy mech.
+		// Phase 2 (current mission, post-win):  commit it to inventory.
+		// Phase 3 (next mission, first frame):  verify it is in load bay.
+		// Re-arm clears kill/salvage flags but intentionally does NOT clear
+		// s_soakKilledVariant until AFTER Phase 3 has fired, so the cross-
+		// mission variant name survives the mission boundary.
+		if (s_soakKillEnemy && s_soakAutoWin)
+		{
+			// PHASE 3 (next mission, first frames): load-bay check using the
+			// variant name carried over from last mission.  Must run BEFORE
+			// re-arm to avoid s_soakKilledVariant being cleared too early.
+			if (!s_soakInventoryChecked && s_soakSalvageDone &&
+				s_soakKilledVariant[0] &&
+				scenarioTime >= 0.0f && scenarioTime < 1.0f)
+			{
+				LogisticsVariant* pChkVar =
+					LogisticsData::instance
+						? LogisticsData::instance->getVariant(s_soakKilledVariant)
+						: nullptr;
+				int present = 0;
+				if (pChkVar && LogisticsData::instance)
+					present = LogisticsData::instance->getVariantsInInventory(
+						pChkVar, /*bIncludeForceGroup=*/true);
+				printf("[SOAK] salvage-in-loadbay name=%s present=%d\n",
+					s_soakKilledVariant, present > 0 ? 1 : 0);
+				fflush(stdout);
+				s_soakInventoryChecked = true;
+			}
+
+			// Re-arm each new mission (scenarioTime resets to 0 on start()).
+			// Only clears variant name after Phase 3 has had its window.
+			if (scenarioTime < soakWinAfterSec() * 0.5f)
+			{
+				s_soakKillDone = false;
+				s_soakSalvageDone = false;
+				if (s_soakInventoryChecked)
+				{
+					s_soakInventoryChecked = false;
+					s_soakKilledVariant[0] = '\0';
+				}
+			}
+
+			// PHASE 1: "cheat mode" — disable EVERY enemy mech at 60% of the win
+			// timer so they are all DISABLED (not DESTROYED) and therefore all
+			// salvageable. This maximally stresses the salvage system and mech-bay
+			// capacity over a campaign. Remember the first variant for the Phase 3
+			// load-bay round-trip check.
+			const float killAt = soakWinAfterSec() * 0.6f;
+			if (!s_soakKillDone && scenarioTime > killAt && !scenarioResult)
+			{
+				int killed = 0;
+				for (int mi = 0; mi < ObjectManager->numMechs; ++mi)
+				{
+					BattleMech* pM = ObjectManager->getMech(mi);
+					if (!pM) continue;
+					if (pM->isDisabled() || pM->isDestroyed()) continue;
+					// Enemy = any team other than the player home team.
+					if (Team::home && pM->getTeamId() == Team::home->id) continue;
+					// OBJECT_STATUS_DISABLED: salvage screen keeps it (isDisabled
+					// true, isDestroyed false).
+					pM->setStatus(OBJECT_STATUS_DISABLED, /*force=*/true);
+					if (!s_soakKilledVariant[0])
+					{
+						strncpy(s_soakKilledVariant, pM->variantName,
+							sizeof(s_soakKilledVariant) - 1);
+						s_soakKilledVariant[sizeof(s_soakKilledVariant) - 1] = '\0';
+					}
+					++killed;
+				}
+				printf("[SOAK] kill-enemy killed=%d first=%s\n",
+					killed, s_soakKilledVariant[0] ? s_soakKilledVariant : "(none)");
+				fflush(stdout);
+				s_soakKillDone = true;
+			}
+
+			// PHASE 2: After autowin, salvage ALL disabled enemy mechs into the
+			// inventory (mirrors SalvageMechScreen -> addMechToInventory, done for
+			// every salvageable mech). This is where mech-bay capacity gets stressed.
+			if (!s_soakSalvageDone && scenarioResult)
+			{
+				int salvCount = 0;
+				if (LogisticsData::instance)
+				{
+					for (int mi = 0; mi < ObjectManager->numMechs; ++mi)
+					{
+						BattleMech* pM = ObjectManager->getMech(mi);
+						if (!pM) continue;
+						if (!pM->isDisabled() || pM->isDestroyed()) continue;
+						if (Team::home && pM->getTeamId() == Team::home->id) continue;
+						LogisticsVariant* pVar =
+							LogisticsData::instance->getVariant(pM->variantName);
+						if (!pVar) continue;
+						LogisticsData::instance->addMechToInventory(
+							pVar, (LogisticsPilot*)nullptr, 0, /*bSubtractPts=*/false);
+						++salvCount;
+					}
+				}
+				printf("[SOAK] salvage-check items=%d first=%s\n",
+					salvCount, s_soakKilledVariant[0] ? s_soakKilledVariant : "(none)");
+				fflush(stdout);
+				s_soakSalvageDone = true;
+			}
+		}
+
+		// --- MC2_SOAK_PILOT_PROMOTE ------------------------------------------
+		// Fires on campaign mission numbers 2 and 5 (via getCurrentMissionNum).
+		// Grants enough gunnery to cross the next rank threshold, then runs
+		// promotePilot() exactly as pilotreviewarea.cpp:215 does.
+		// Throttle: getCurrentMissionNum() % 10 == 2 or == 5 — roughly 2
+		// firings per 10-mission stretch without hammering every mission.
+		if (s_soakPilotPromote && s_soakAutoWin)
+		{
+			// Re-arm at start of each mission, and count missions played once each
+			// (edge-triggered) so the throttle does not depend on
+			// getCurrentMissionNumber() semantics (not a clean 1..N per campaign).
+			static int  s_soakMissionCount   = 0;
+			static bool s_soakMissionCounted = false;
+			if (scenarioTime < soakWinAfterSec() * 0.5f)
+			{
+				if (!s_soakMissionCounted) { ++s_soakMissionCount; s_soakMissionCounted = true; }
+				s_soakPromoteFired = false;
+			}
+			else
+			{
+				s_soakMissionCounted = false;
+			}
+
+			// Throttle: ~twice per campaign — the 2nd and 5th missions played.
+			const bool throttlePass =
+				(s_soakMissionCount == 2 || s_soakMissionCount == 5);
+
+			const float promoteAt = soakWinAfterSec() * 0.7f;
+			if (!s_soakPromoteFired && throttlePass &&
+				scenarioTime > promoteAt && !scenarioResult)
+			{
+				// Find first deployed pilot via MechWarrior::warriorList.
+				LogisticsPilot* lPilot = nullptr;
+				const char* pilotName = "(none)";
+				for (int wi = 1; wi <= MechWarrior::numWarriors && !lPilot; ++wi)
+				{
+					MechWarriorPtr mw = MechWarrior::warriorList[wi];
+					if (!mw) continue;  // getPilot() below gates to real deployed pilots
+					// Resolve to LogisticsPilot via LogisticsData.
+					LogisticsPilot* lp =
+						LogisticsData::instance
+							? LogisticsData::instance->getPilot(mw->getName())
+							: nullptr;
+					if (!lp) continue;
+					lPilot = lp;
+					pilotName = lp->getName();
+				}
+
+				if (lPilot)
+				{
+					const long rankBefore = lPilot->getRank();
+					// soakAddGunnery bumps both lifetime gunnery and newGunnery
+					// delta so promotePilot() sees a mission gain large enough
+					// to cross a rank threshold from any starting rank.
+					// 11 pts guarantees crossing regardless of start (worst case
+					// GREEN->REGULAR needs avg 50+epsilon; 11 pts covers all).
+					lPilot->soakAddGunnery(11.0f);
+					bool promoted = lPilot->promotePilot();
+					const long rankAfter = lPilot->getRank();
+					printf("[SOAK] pilot-promote pilot=%s rankBefore=%ld rankAfter=%ld ok=%d\n",
+						pilotName, rankBefore, rankAfter, promoted ? 1 : 0);
+					fflush(stdout);
+				}
+				else
+				{
+					printf("[SOAK] pilot-promote no-deployed-pilot\n");
+					fflush(stdout);
+				}
+				s_soakPromoteFired = true;
 			}
 		}
 

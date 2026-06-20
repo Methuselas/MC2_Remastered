@@ -12,6 +12,8 @@ MissionBegin.cpp			: Implementation of the MissionBegin component.
 #include"logisticsvariant.h"
 #include"mechicon.h"
 #include"logisticsdata.h"
+#include"logisticsmech.h"
+#include"logisticspilot.h"
 #include"missionselectionscreen.h"
 #include"mechbayscreen.h"
 #include"pilotreadyscreen.h"
@@ -143,6 +145,38 @@ static bool mc2BootScreenXY( int& x, int& y )
 // default OFF = byte-identical. Single getenv cached at startup.
 static const bool s_soakAutoWin =
 	( std::getenv("MC2_SOAK_AUTOWIN") != nullptr );
+
+// SOAK-SCREEN-CHECK-1 (MC2_SOAK_CHECK_SCREENS). When set (and MC2_SOAK_AUTOWIN
+// is also active), before each mission launch the soak walks through
+// singlePlayerScreens[2][0] (mech_purchase) and singlePlayerScreens[2][2]
+// (mech_lab_loadout), dwells briefly on each to let dumpFrontEndState fire,
+// emits [SOAK] screen-check markers, then returns to [2][1] and resumes the
+// normal autowin advance. Default OFF = byte-identical to prior behaviour.
+static const bool s_soakCheckScreens =
+	( std::getenv("MC2_SOAK_CHECK_SCREENS") != nullptr );
+
+// SOAK-AUTO-PURCHASE-1 (MC2_SOAK_AUTO_PURCHASE). Campaign missions require the
+// player to buy + deploy a mech in the mech bay before launch; the auto-advance
+// soak never does this, so purchase-required missions stall at the bay and never
+// launch. When set (with MC2_SOAK_AUTOWIN), on each fresh settle at mech_bay
+// [2][1] with an empty force group, the soak grants infinite money, buys one
+// drop-weight-legal mech (mid/bottom of the purchase list), deploys it to lance
+// slot 1, assigns the first available pilot, and selects it (which also makes the
+// loadout/mechlab screen reachable for MC2_SOAK_CHECK_SCREENS). Default OFF =
+// byte-identical to prior behaviour.
+static const bool s_soakAutoPurchase =
+	( std::getenv("MC2_SOAK_AUTO_PURCHASE") != nullptr );
+
+// State machine for the screen-check detour. IDLE when not active.
+enum class SoakCheckState : int
+{
+	IDLE            = 0,
+	ENTER_PURCHASE  = 1,  // about to begin [2][0]
+	DWELL_PURCHASE  = 2,  // waiting for dwell timer on [2][0]
+	ENTER_LOADOUT   = 3,  // about to begin [2][2]
+	DWELL_LOADOUT   = 4,  // waiting for dwell timer on [2][2]
+	RETURN_TO_BAY   = 5,  // returning to [2][1] so normal advance fires
+};
 
 void MissionBegin::begin()
 {
@@ -843,30 +877,338 @@ const char* MissionBegin::update()
 		if ( s_soakAutoWin && !MPlayer && curScreenX < 4 &&
 			 pCurScreen->getStatus() == LogisticsScreen::RUNNING && !animJustBegun )
 		{
+			// SOAK-AUTO-PURCHASE-1: buy + deploy a mech so purchase-required campaign
+			// missions can launch under auto-advance. Runs once per fresh bay visit at
+			// [2][1]; the latch resets whenever we leave the bay (next mission re-buys).
+			static bool  s_autoPurchasedThisBay = false;
+			static float s_purchaseSettle       = 0.0f;
+			if ( s_soakAutoPurchase && curScreenX == 2 && curScreenY == 1 )
+			{
+				s_purchaseSettle += frameLength;
+				if ( !s_autoPurchasedThisBay && s_purchaseSettle >= 0.3f &&
+				     LogisticsData::instance )
+				{
+					LogisticsData* ld = LogisticsData::instance;
+					EList<LogisticsMech*, LogisticsMech*> fg;
+					ld->getForceGroup( fg );
+					if ( fg.Count() > 0 )
+					{
+						// Already have a lance (e.g. campaigns that pre-stage mechs).
+						s_autoPurchasedThisBay = true;
+					}
+					else
+					{
+						ld->addCBills( 100000000 );          // effectively infinite money
+						const int CAP = 512;
+						LogisticsVariant* pool[CAP];
+						int count = CAP;
+						ld->getPurchasableMechs( pool, count );
+						int n = ( count < CAP ) ? count : CAP;
+						int maxDrop = ld->getMaxDropWeight();
+						int cap = ( maxDrop > 0 ) ? maxDrop : 0x7fffffff;
+						// The purchase pool mixes real BattleMechs with support vehicles
+						// (e.g. a 3-ton "Ambulance") and infantry. Deploying a non-mech to
+						// the player force group crashes ("LogisticsMech was not a MECH!!",
+						// mission.cpp:1869). Filter to mechs by tonnage (>= 20t = standard
+						// minimum BattleMech; excludes vehicles/infantry). Prefer the
+						// HEAVIEST mech that fits the drop-weight cap; if none fit (tight
+						// early-mission cap), take the LIGHTEST mech and force-deploy it
+						// over cap — this is cheat-mode soak, launching matters more than
+						// the tonnage rule.
+						const int MECH_MIN_TONS = 20;
+						LogisticsVariant* pick      = nullptr;   // heaviest mech within cap
+						int               pickW     = -1;
+						LogisticsVariant* lightest  = nullptr;   // lightest mech overall
+						int               lightestW = 0x7fffffff;
+						for ( int i = 0; i < n; ++i )
+						{
+							if ( !pool[i] )
+								continue;
+							int w = (int)pool[i]->getMaxWeight();
+							if ( w < MECH_MIN_TONS )
+								continue;                       // skip vehicle / infantry
+							if ( w < lightestW ) { lightestW = w; lightest = pool[i]; }
+							if ( w <= cap && w > pickW ) { pickW = w; pick = pool[i]; }
+						}
+						if ( !pick )
+							pick = lightest;                     // none fit cap -> lightest mech
+						if ( !pick && n > 0 )
+							pick = pool[n - 1];                  // no mechs at all -> bottom of list
+
+						if ( pick && ld->purchaseMech( pick ) == 0 )
+						{
+							// The purchased mech is the last-appended inventory entry of
+							// this variant that has no force group yet.
+							LogisticsMech* bought = nullptr;
+							EList<LogisticsMech*, LogisticsMech*> inv;
+							ld->getInventory( inv );
+							for ( EList<LogisticsMech*, LogisticsMech*>::EIterator it = inv.Begin();
+							      !it.IsDone(); it++ )
+								if ( (*it) && (*it)->getVariant() == pick && !(*it)->getForceGroup() )
+									bought = (*it);
+							if ( bought )
+							{
+								ld->addMechToForceGroup( bought, 1 );
+								LogisticsPilot* pilot = ld->getFirstAvailablePilot();
+								if ( pilot )
+									bought->setPilot( pilot );
+								ld->setMechToModify( bought );  // also enables loadout screen-check
+								printf("[SOAK] auto-purchase mech=%s tons=%d pilot=%d deployed=slot1 maxDrop=%d pool=%d\n",
+									(const char*)pick->getName(), (int)pick->getMaxWeight(),
+									pilot ? 1 : 0, maxDrop, n);
+							}
+							else
+							{
+								printf("[SOAK] auto-purchase WARN bought-not-found variant=%s\n",
+									(const char*)pick->getName());
+							}
+						}
+						else
+						{
+							printf("[SOAK] auto-purchase FAILED reason=%s pool=%d maxDrop=%d\n",
+								pick ? "purchase-rejected" : "empty-pool", n, maxDrop);
+						}
+						fflush( stdout );
+						s_autoPurchasedThisBay = true;
+					}
+				}
+			}
+			else if ( s_soakAutoPurchase )
+			{
+				// Left the bay (or feature off): reset so the next mission re-purchases.
+				s_autoPurchasedThisBay = false;
+				s_purchaseSettle       = 0.0f;
+			}
+
 			static long  s_soakLastAdvX = -99;
 			static long  s_soakLastAdvY = -99;
 			static float s_soakSettleTimer = 0.0f;
-			// New screen cell since last advance? reset the settle dwell timer.
-			if ( curScreenX != s_soakLastAdvX || curScreenY != s_soakLastAdvY )
+
+			// SOAK-SCREEN-CHECK-1: state machine that detours through purchase [2][0]
+			// and loadout [2][2] before the normal autowin advance from mech_bay [2][1].
+			// Statics here so they persist across frames (dwell states run every frame).
+			static SoakCheckState s_checkState = SoakCheckState::IDLE;
+			static float          s_checkDwell = 0.0f;
+			static bool           s_checkDone  = false;
+			// Mission serial: incremented each time we depart [2][1] toward a launch.
+			// s_checkDone is valid only for the current value of this counter.
+			static int            s_checkMissionSerial = 0;
+			static int            s_checkDoneSerial    = -1;
+
+			// s_checkDone is true iff we already ran the walk for this mission arrival.
+			// Keyed by serial so it auto-resets across missions without touching
+			// s_soakLastAdvX (which would re-trigger the mission-boundary detector).
+			s_checkDone = ( s_checkDoneSerial == s_checkMissionSerial );
+
+			// Detect mission-boundary: a fresh arrival at [2][1] (last-adv was not
+			// [2][1]) while the machine is idle AND we haven't done a walk yet for
+			// this mission.  The !s_checkDone guard prevents re-triggering when the
+			// walk completion sets lastAdv=-99 to unblock the normal advance path.
+			if ( s_soakCheckScreens &&
+			     curScreenX == 2 && curScreenY == 1 &&
+			     !( s_soakLastAdvX == 2 && s_soakLastAdvY == 1 ) &&
+			     s_checkState == SoakCheckState::IDLE &&
+			     !s_checkDone )
 			{
-				s_soakSettleTimer += frameLength;
+				++s_checkMissionSerial;
+				s_checkDone  = false;   // new serial != doneSerial
+				s_checkDwell = 0.0f;
+			}
+
+			// Run the screen-check state machine every frame while it is active.
+			// When the machine is active we suppress the normal settle-timer advance.
+			bool checkMachineActive = ( s_soakCheckScreens && !s_checkDone &&
+			                            s_checkState != SoakCheckState::IDLE );
+			// True while we are at [2][1] waiting for the kick-off settle timer:
+			// this suppresses the normal advance path (else branch) so we don't
+			// double-accumulate s_soakSettleTimer.
+			bool checkKickoffPending = false;
+
+			if ( s_soakCheckScreens && !s_checkDone &&
+			     s_checkState == SoakCheckState::IDLE &&
+			     curScreenX == 2 && curScreenY == 1 )
+			{
+				checkKickoffPending = true;
+				// Kick off once the settle timer fires for the first time at [2][1].
+				// We only start the machine when the settle period has elapsed so
+				// the bay screen has had a chance to fully initialise.
+				if ( curScreenX != s_soakLastAdvX || curScreenY != s_soakLastAdvY )
+					s_soakSettleTimer += frameLength;
+				else
+					s_soakSettleTimer = 0.0f;
+
 				if ( s_soakSettleTimer >= 0.5f )
 				{
-					soakForceNext = true;
-					s_soakLastAdvX = curScreenX;
-					s_soakLastAdvY = curScreenY;
-					s_soakSettleTimer = 0.0f;
-					printf("[SOAK] advance screen=%d,%d\n", (int)curScreenX, (int)curScreenY);
-					if ( LogisticsData::instance )
-						printf("[SOAK] launch mission=%s stage=%d\n",
-							(const char*)LogisticsData::instance->getCurrentMission(),
-							(int)LogisticsData::instance->getCurrentMissionNum());
-					fflush(stdout);
+					s_soakSettleTimer  = 0.0f;
+					s_checkState       = SoakCheckState::ENTER_PURCHASE;
+					checkMachineActive = true;
+					checkKickoffPending = false;
 				}
 			}
-			else
+
+			if ( checkMachineActive )
 			{
-				s_soakSettleTimer = 0.0f; // same cell already advanced; idle
+				// Keep the settle-tracker pointed at the current cell so the normal
+				// advance path is suppressed while the machine runs.
+				s_soakLastAdvX = curScreenX;
+				s_soakLastAdvY = curScreenY;
+
+				switch ( s_checkState )
+				{
+				case SoakCheckState::ENTER_PURCHASE:
+				{
+					// Purchase screen [2][0] does NOT need getMechToModify — it lists
+					// buyable inventory regardless of force-group selection.
+					// Transition [2][1] -> [2][0].
+					pCurScreen->end();
+					curScreenY = 0;
+					if ( screens[curScreenX][curScreenY] )
+						screens[curScreenX][curScreenY]->begin();
+					// dumpFrontEndState fires next frame when the top-of-update
+					// curScreenX/Y change detector sees the new cell.
+					s_checkDwell = 0.0f;
+					s_checkState = SoakCheckState::DWELL_PURCHASE;
+					break;
+				}
+				case SoakCheckState::DWELL_PURCHASE:
+				{
+					s_checkDwell += frameLength;
+					if ( s_checkDwell >= 0.5f )
+					{
+						// Emit purchase screen-check marker.
+						// items = LogisticsData inventory count (mechs available to buy).
+						// ok=1 if any exist; ok=0 if inventory empty.
+						// Limitation: reflects LogisticsData list, NOT rendered widget asset
+						// validity (no per-icon load signal available cheaply here).
+						int items = 0;
+						if ( LogisticsData::instance )
+						{
+							EList<LogisticsMech*, LogisticsMech*> inv;
+							LogisticsData::instance->getInventory( inv );
+							items = (int)inv.Count();
+						}
+						printf("[SOAK] screen-check screen=purchase ok=%d items=%d\n",
+							(items > 0) ? 1 : 0, items);
+						fflush(stdout);
+						// Return to [2][1] briefly before going to loadout.
+						if ( screens[curScreenX][curScreenY] )
+							screens[curScreenX][curScreenY]->end();
+						curScreenY = 1;
+						if ( screens[curScreenX][curScreenY] )
+							screens[curScreenX][curScreenY]->begin();
+						s_checkDwell = 0.0f;
+						s_checkState = SoakCheckState::ENTER_LOADOUT;
+					}
+					break;
+				}
+				case SoakCheckState::ENTER_LOADOUT:
+				{
+					// MechLabScreen::begin() dereferences getMechToModify() at
+					// mechlabscreen.cpp:237 — crash if null.  Guard here so we never call
+					// begin() when no mech is selected (e.g. PoaR / campaign missions where
+					// logistics force-group is not staged before the screen walk).
+					bool mechReady = ( LogisticsData::instance &&
+					                   LogisticsData::instance->getMechToModify() != nullptr );
+					if ( !mechReady )
+					{
+						printf("[SOAK] screen-check screen=loadout ok=0 reason=no-mech-selected\n");
+						fflush(stdout);
+						// Return to [2][1] and mark done; normal advance takes over.
+						if ( screens[curScreenX][curScreenY] )
+							screens[curScreenX][curScreenY]->end();
+						curScreenY = 1;
+						if ( screens[curScreenX][curScreenY] )
+							screens[curScreenX][curScreenY]->begin();
+						s_checkDoneSerial = s_checkMissionSerial;  // latch: done for THIS mission
+						s_checkDone  = true;
+						s_checkState = SoakCheckState::IDLE;
+						// Reset lastAdv so the normal advance path sees [2][1] as a new
+						// cell and fires.  The boundary detector is guarded by !s_checkDone
+						// so it will NOT re-trigger the walk even with lastAdv=-99.
+						s_soakLastAdvX = -99;
+						s_soakLastAdvY = -99;
+						s_soakSettleTimer = 0.0f;
+						break;
+					}
+					// Transition [2][1] -> [2][2] (loadout/mechlab).
+					if ( screens[curScreenX][curScreenY] )
+						screens[curScreenX][curScreenY]->end();
+					curScreenY = 2;
+					if ( screens[curScreenX][curScreenY] )
+						screens[curScreenX][curScreenY]->begin();
+					s_checkDwell = 0.0f;
+					s_checkState = SoakCheckState::DWELL_LOADOUT;
+					break;
+				}
+				case SoakCheckState::DWELL_LOADOUT:
+				{
+					s_checkDwell += frameLength;
+					if ( s_checkDwell >= 0.5f )
+					{
+						// Emit loadout screen-check marker.
+						// items = force-group mech count (mechs assigned to this lance).
+						// ok=1 if at least one mech is in the force group.
+						// Same limitation as purchase: list count, not rendered icon validity.
+						int items = 0;
+						if ( LogisticsData::instance )
+						{
+							EList<LogisticsMech*, LogisticsMech*> fg;
+							LogisticsData::instance->getForceGroup( fg );
+							items = (int)fg.Count();
+						}
+						printf("[SOAK] screen-check screen=loadout ok=%d items=%d\n",
+							(items > 0) ? 1 : 0, items);
+						fflush(stdout);
+						// Return to [2][1] and mark done so normal advance fires.
+						if ( screens[curScreenX][curScreenY] )
+							screens[curScreenX][curScreenY]->end();
+						curScreenY = 1;
+						if ( screens[curScreenX][curScreenY] )
+							screens[curScreenX][curScreenY]->begin();
+						s_checkDwell = 0.0f;
+						s_checkDoneSerial = s_checkMissionSerial;  // latch: done for THIS mission
+						s_checkDone  = true;
+						s_checkState = SoakCheckState::IDLE;
+						// Reset lastAdv so the normal advance path sees [2][1] as a fresh
+						// cell and fires soakForceNext (else it idles on "same cell" and the
+						// soak HANGS at the bay). The mission-boundary detector is guarded by
+						// !s_checkDone (now latched true), so this will NOT restart the walk.
+						s_soakLastAdvX = -99;
+						s_soakLastAdvY = -99;
+						s_soakSettleTimer = 0.0f;
+					}
+					break;
+				}
+				default:
+					break;
+				}
+				// Machine is consuming this frame — do not fall through to normal advance.
+			}
+			else if ( !checkMachineActive && !checkKickoffPending )
+			{
+				// Normal autowin advance path (no check-screens, or check already done,
+				// or not at [2][1]).
+				if ( curScreenX != s_soakLastAdvX || curScreenY != s_soakLastAdvY )
+				{
+					s_soakSettleTimer += frameLength;
+					if ( s_soakSettleTimer >= 0.5f )
+					{
+						soakForceNext = true;
+						s_soakLastAdvX = curScreenX;
+						s_soakLastAdvY = curScreenY;
+						s_soakSettleTimer = 0.0f;
+						printf("[SOAK] advance screen=%d,%d\n", (int)curScreenX, (int)curScreenY);
+						if ( LogisticsData::instance )
+							printf("[SOAK] launch mission=%s stage=%d\n",
+								(const char*)LogisticsData::instance->getCurrentMission(),
+								(int)LogisticsData::instance->getCurrentMissionNum());
+						fflush(stdout);
+					}
+				}
+				else
+				{
+					s_soakSettleTimer = 0.0f; // same cell already advanced; idle
+				}
 			}
 		}
 
