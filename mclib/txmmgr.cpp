@@ -1538,6 +1538,20 @@ bool mc2GetBakedStaticLight(int32_t recipeIndex, TG_HWLightsData& out)
     return true;
 }
 
+// [LIGHTBRIDGE-BAKED-PROBE-1] Presence-only probe — avoids 1792B struct copy
+// when the callee (EmitBakedGpuLightData) only needs the key (recipeIndex).
+// Use this in touch()/touchSerialCommit() hot paths instead of mc2GetBakedStaticLight.
+std::atomic<int>       g_bakedProbeCalls{0};
+std::atomic<int>       g_bakedCopyCalls{0};
+std::atomic<long long> g_bakedCopyBytes{0};
+
+bool mc2IsBakedStaticLightPresent(int32_t recipeIndex)
+{
+    if (recipeIndex < 0) return false;
+    g_bakedProbeCalls.fetch_add(1, std::memory_order_relaxed);
+    return s_bakedStaticLight.count(recipeIndex) != 0;
+}
+
 void mc2SetBakedStaticLight(int32_t recipeIndex, const TG_HWLightsData& in)
 {
     if (recipeIndex < 0) return;

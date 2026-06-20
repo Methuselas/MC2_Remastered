@@ -3951,7 +3951,7 @@ void BldgAppearance::touch()
 		// resubmit (NOT CacheGpuLightData -- terrain-color-staleness,
 		// msl.cpp:1874-1887). MC2_LIGHTBAKE=0 -> legacy path bit-for-bit.
 		extern bool mc2LightBakeEnabled();
-		extern bool mc2GetBakedStaticLight(int32_t, TG_HWLightsData&);
+		extern bool mc2IsBakedStaticLightPresent(int32_t);
 		// THREAD-SAFETY CLASSIFICATION: EmitBakedGpuLightData — WORKER_SAFE.
 		// (1) Writes only per-instance members cachedGpuLightIndex_ and cachedFrame_
 		//     on the TG_MultiShape pointed to by bldgShape (unique per BldgAppearance
@@ -3963,10 +3963,11 @@ void BldgAppearance::touch()
 		//     also writes only per-instance members on the same hot path; no shared
 		//     pool write occurs unless the repoint fast-path misses, in which case it
 		//     calls addLightDataStructure (now mutex-protected by s_lightDataMapMu).
-		TG_HWLightsData baked;
+		// [LIGHTBRIDGE-BAKED-PROBE-1] probe only — EmitBakedGpuLightData discards baked
 		if (mc2LightBakeEnabled()
 		    && staticReg.registered && staticReg.recipeIndex >= 0
-		    && mc2GetBakedStaticLight(staticReg.recipeIndex, baked)) {
+		    && mc2IsBakedStaticLightPresent(staticReg.recipeIndex)) {
+			TG_HWLightsData baked{};
 			bldgShape->EmitBakedGpuLightData(staticReg.recipeIndex, baked);
 		} else {
 			bldgShape->ResubmitCachedGpuLightData();
@@ -4015,11 +4016,12 @@ void BldgAppearance::touchSerialCommit()
 		staticReg.lightDataIndex == 0xFFFFFFFFu);
 
 	extern bool mc2LightBakeEnabled();
-	extern bool mc2GetBakedStaticLight(int32_t, TG_HWLightsData&);
-	TG_HWLightsData baked;
+	extern bool mc2IsBakedStaticLightPresent(int32_t);
+	// [LIGHTBRIDGE-BAKED-PROBE-1] probe only — EmitBakedGpuLightData discards baked
 	if (mc2LightBakeEnabled()
 	    && staticReg.registered && staticReg.recipeIndex >= 0
-	    && mc2GetBakedStaticLight(staticReg.recipeIndex, baked)) {
+	    && mc2IsBakedStaticLightPresent(staticReg.recipeIndex)) {
+		TG_HWLightsData baked{};
 		bldgShape->EmitBakedGpuLightData(staticReg.recipeIndex, baked);
 	} else {
 		bldgShape->ResubmitCachedGpuLightData();
@@ -6098,11 +6100,12 @@ void TreeAppearance::touch()
 		// resubmit (NOT CacheGpuLightData -- terrain-color-staleness,
 		// msl.cpp:1874-1887). MC2_LIGHTBAKE=0 -> legacy path bit-for-bit.
 		extern bool mc2LightBakeEnabled();
-		extern bool mc2GetBakedStaticLight(int32_t, TG_HWLightsData&);
-		TG_HWLightsData baked;
+		extern bool mc2IsBakedStaticLightPresent(int32_t);
+		// [LIGHTBRIDGE-BAKED-PROBE-1] probe only — EmitBakedGpuLightData discards baked
 		if (mc2LightBakeEnabled()
 		    && staticReg[activeLOD].registered && staticReg[activeLOD].recipeIndex >= 0
-		    && mc2GetBakedStaticLight(staticReg[activeLOD].recipeIndex, baked)) {
+		    && mc2IsBakedStaticLightPresent(staticReg[activeLOD].recipeIndex)) {
+			TG_HWLightsData baked{};
 			treeShape->EmitBakedGpuLightData(staticReg[activeLOD].recipeIndex, baked);
 		} else {
 			treeShape->ResubmitCachedGpuLightData();
@@ -6128,11 +6131,12 @@ void TreeAppearance::touchSerialCommit()
 {
 	if (!treeShape) return;
 	extern bool mc2LightBakeEnabled();
-	extern bool mc2GetBakedStaticLight(int32_t, TG_HWLightsData&);
-	TG_HWLightsData baked;
+	extern bool mc2IsBakedStaticLightPresent(int32_t);
+	// [LIGHTBRIDGE-BAKED-PROBE-1] probe only — EmitBakedGpuLightData discards baked
 	if (mc2LightBakeEnabled()
 	    && staticReg[activeLOD].registered && staticReg[activeLOD].recipeIndex >= 0
-	    && mc2GetBakedStaticLight(staticReg[activeLOD].recipeIndex, baked)) {
+	    && mc2IsBakedStaticLightPresent(staticReg[activeLOD].recipeIndex)) {
+		TG_HWLightsData baked{};
 		treeShape->EmitBakedGpuLightData(staticReg[activeLOD].recipeIndex, baked);
 	} else {
 		treeShape->ResubmitCachedGpuLightData();

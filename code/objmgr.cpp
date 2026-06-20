@@ -2327,6 +2327,18 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 					       worker_us / std::max(1, worker_submitted),
 					       commit_us / std::max(1, serial_commits));
 				}
+				// [LIGHTBRIDGE-BAKED-PROBE-1] per-frame probe/copy counters
+				static bool s_lightbridgeTrace = (std::getenv("MC2_LIGHTBRIDGE_COMMIT_TRACE") != nullptr);
+				if (s_lightbridgeTrace && (g_mc2FrameCounter % 300 == 0)) {
+					extern std::atomic<int>       g_bakedProbeCalls;
+					extern std::atomic<int>       g_bakedCopyCalls;
+					extern std::atomic<long long> g_bakedCopyBytes;
+					printf("LIGHTBRIDGE_COMMIT: baked_probe_calls=%d baked_copy_calls=%d baked_copy_bytes=%lld\n",
+					       g_bakedProbeCalls.load(std::memory_order_relaxed),
+					       g_bakedCopyCalls.load(std::memory_order_relaxed),
+					       g_bakedCopyBytes.load(std::memory_order_relaxed));
+					std::fflush(stdout);
+				}
 			}
 			// ── end FRAME-JOBS-2D pre-pass ───────────────────────────────────────────────
 		}
