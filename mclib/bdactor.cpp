@@ -12,6 +12,9 @@
 #include"bdactor.h"
 #endif
 
+#include <map>    // STATIC-REGISTRY-COVERAGE-RECON-1: top shape names
+#include <mutex>  // STATIC-REGISTRY-COVERAGE-RECON-1: shape map guard
+
 // [TOBJSPLIT v1] RDTSC includes for the BldgAppearance/TreeAppearance probe
 // points. __rdtsc() overhead ~5-10ns (cost_split_instrumentation_is_observer_
 // effect_dominated.md). Accumulators defined in code/terrobj.cpp.
@@ -57,6 +60,26 @@ static std::atomic<int64_t> g_spr_rejNoValidLight{0};// !hasValidStaticLight (bl
 static std::atomic<int64_t> g_spr_rejLightGenMismatch{0}; // lastLightEnvGen != currentLightEnvGen (bldg only)
 static std::atomic<int64_t> g_spr_rejNeedsFullBake{0};    // needsFullBakeNextFrame
 static std::atomic<int64_t> g_spr_callCounter{0};    // monotonic call count for print trigger
+
+// STATIC-REGISTRY-COVERAGE-RECON-1: sub-classify the rej_no_static_reg population.
+// Gated by MC2_STATIC_REG_COVERAGE env var. No behavior change — read-only.
+// Answers why mc2_24 has ~72% rej_no_static_reg vs mc2_10 99% proxy_candidate.
+// Sub-conditions (first-fail priority, same as stableLightSkipEligible order):
+//   never_registered  — !staticReg.registered (registerStatic never completed)
+//   no_recipe         — registered but recipeIndex<0 (shouldn't normally occur)
+//   bake_not_enabled  — mc2LightBakeEnabled()=false blocks EmitBakedGpuLightData
+//   not_in_bake_table — bake on but recipeIndex not yet in s_bakedStaticLight
+// Also tracks: isStaticEligible() for the unregistered set, top shape names.
+static const bool s_regCovEnabled = (getenv("MC2_STATIC_REG_COVERAGE") != nullptr);
+static std::atomic<int64_t> g_rc_neverRegistered{0};   // !staticReg.registered
+static std::atomic<int64_t> g_rc_noRecipe{0};          // registered && recipeIndex<0
+static std::atomic<int64_t> g_rc_bakeNotEnabled{0};    // bake gate off (within rej_no_static_reg)
+static std::atomic<int64_t> g_rc_notInBakeTable{0};    // bake on but recipe not in table
+static std::atomic<int64_t> g_rc_isStaticEligibleYes{0}; // unregistered but would be eligible
+static std::atomic<int64_t> g_rc_isStaticEligibleNo{0};  // unregistered and not eligible
+// Top shape names for the never_registered bucket (guarded by mutex, main-thread only).
+static std::mutex            g_rc_shapeMu;
+static std::map<std::string, int> g_rc_shapeNames;
 
 // T1.15 SpotLight_ illumination diagnostic — registration probe (bldg class).
 // Env-gated per Debug Instrumentation Rule. First-hit is always-on (one stderr
@@ -4217,9 +4240,43 @@ void BldgAppearance::touchSerialCommit()
 		bool isProxy = stableLightSkipEligible;
 		if (!isProxy) {
 			// Attribute the first failing condition (same priority as stableLightSkipEligible)
-			if (!staticReg.registered || staticReg.recipeIndex < 0)
+			if (!staticReg.registered || staticReg.recipeIndex < 0) {
 				g_spr_rejNoStaticReg.fetch_add(1, std::memory_order_relaxed);
-			else if (!staticReg.hasValidStaticLight)
+
+				// STATIC-REGISTRY-COVERAGE-RECON-1: sub-classify the rej_no_static_reg bucket.
+				// Runs only when MC2_STATIC_REG_COVERAGE=1 to avoid overhead on normal runs.
+				if (s_regCovEnabled) {
+					extern bool mc2LightBakeEnabled();
+					extern bool mc2IsBakedStaticLightPresent(int32_t);
+					if (!staticReg.registered) {
+						g_rc_neverRegistered.fetch_add(1, std::memory_order_relaxed);
+						// isStaticEligible() for the never-registered set: tells us whether
+						// the building COULD have been registered but wasn't (eligible=true),
+						// or is inherently ineligible (animated, spinning, etc.).
+						if (isStaticEligible())
+							g_rc_isStaticEligibleYes.fetch_add(1, std::memory_order_relaxed);
+						else
+							g_rc_isStaticEligibleNo.fetch_add(1, std::memory_order_relaxed);
+						// Track shape name for the top-N breakdown.
+						if (appearType && appearType->name) {
+							std::lock_guard<std::mutex> lk(g_rc_shapeMu);
+							g_rc_shapeNames[appearType->name]++;
+						}
+					} else {
+						// registered=true but recipeIndex<0 — should not normally occur
+						// (registration sets registered = (recipeIndex >= 0)).
+						g_rc_noRecipe.fetch_add(1, std::memory_order_relaxed);
+					}
+					// Also probe the bake gate and bake-table presence, independent of
+					// registered flag, to reveal whether bake infrastructure is live at all.
+					if (!mc2LightBakeEnabled()) {
+						g_rc_bakeNotEnabled.fetch_add(1, std::memory_order_relaxed);
+					} else if (staticReg.registered && staticReg.recipeIndex >= 0
+					           && !mc2IsBakedStaticLightPresent(staticReg.recipeIndex)) {
+						g_rc_notInBakeTable.fetch_add(1, std::memory_order_relaxed);
+					}
+				}
+			} else if (!staticReg.hasValidStaticLight)
 				g_spr_rejNoValidLight.fetch_add(1, std::memory_order_relaxed);
 			else if (staticReg.lightDataIndex == 0xFFFFFFFFu)
 				g_spr_rejBadLightIdx.fetch_add(1, std::memory_order_relaxed);
@@ -4253,6 +4310,48 @@ void BldgAppearance::touchSerialCommit()
 			       (long long)rNS, (long long)rBL,
 			       (long long)rNVL, (long long)rLG,
 			       (long long)rNFB, (long long)rNSh);
+
+			// STATIC-REGISTRY-COVERAGE-RECON-1: print sub-breakdown when gate is on.
+			if (s_regCovEnabled) {
+				const int64_t rcNR  = g_rc_neverRegistered.exchange(0, std::memory_order_relaxed);
+				const int64_t rcNRp = g_rc_noRecipe.exchange(0, std::memory_order_relaxed);
+				const int64_t rcBN  = g_rc_bakeNotEnabled.exchange(0, std::memory_order_relaxed);
+				const int64_t rcNBT = g_rc_notInBakeTable.exchange(0, std::memory_order_relaxed);
+				const int64_t rcEY  = g_rc_isStaticEligibleYes.exchange(0, std::memory_order_relaxed);
+				const int64_t rcEN  = g_rc_isStaticEligibleNo.exchange(0, std::memory_order_relaxed);
+				printf("STATIC_REG_COVERAGE: total_rej_no_static_reg=%lld"
+				       " sub: never_registered=%lld no_recipe=%lld"
+				       " bake_not_enabled=%lld not_in_bake_table=%lld"
+				       " is_static_eligible_yes=%lld is_static_eligible_no=%lld\n",
+				       (long long)rNS,
+				       (long long)rcNR, (long long)rcNRp,
+				       (long long)rcBN, (long long)rcNBT,
+				       (long long)rcEY, (long long)rcEN);
+				// Top-20 shape names from never_registered bucket.
+				{
+					std::lock_guard<std::mutex> lk(g_rc_shapeMu);
+					if (!g_rc_shapeNames.empty()) {
+						// Copy to a vector for top-N sort.
+						std::vector<std::pair<int,std::string>> sorted;
+						sorted.reserve(g_rc_shapeNames.size());
+						for (auto& kv : g_rc_shapeNames)
+							sorted.push_back({kv.second, kv.first});
+						std::sort(sorted.begin(), sorted.end(),
+						          [](const std::pair<int,std::string>& a, const std::pair<int,std::string>& b){
+						              return a.first > b.first;
+						          });
+						printf("STATIC_REG_COVERAGE: top_shapes(name:count):");
+						int shown = 0;
+						for (auto& p : sorted) {
+							if (shown >= 20) break;
+							printf(" %s:%d", p.second.c_str(), p.first);
+							++shown;
+						}
+						printf("\n");
+						g_rc_shapeNames.clear();
+					}
+				}
+			}
 			fflush(stdout);
 		}
 	}
