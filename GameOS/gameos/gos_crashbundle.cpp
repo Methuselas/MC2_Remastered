@@ -333,6 +333,24 @@ static size_t format_crash_txt(EXCEPTION_POINTERS* ep, char* out, size_t cap)
     frame_rec.AddrFrame.Mode = AddrModeFlat;
     frame_rec.AddrStack.Mode = AddrModeFlat;
 
+#if defined(_M_X64) || defined(_M_AMD64)
+    // EXEC violation at 0x0 = a CALL through a null function pointer (null vtable
+    // / freed object / uninitialised callback). RIP is 0, so StackWalk64 cannot
+    // seed the first frame and the stack comes out EMPTY. The return address the
+    // bad CALL pushed is at [RSP] -> use it to recover the caller chain so the
+    // crash is actually attributable. (Common with the soak's mission teardown.)
+    if (frame_rec.AddrPC.Offset == 0 && frame_rec.AddrStack.Offset != 0 &&
+        !IsBadReadPtr((void*)(uintptr_t)frame_rec.AddrStack.Offset, sizeof(DWORD64)))
+    {
+        sbuff(out, cap, &pos, "  #-- 0x0000000000000000  <null call (jmp/call to 0)>\n");
+        DWORD64 retAddr = *(DWORD64*)(uintptr_t)frame_rec.AddrStack.Offset;
+        ctx.Rip = retAddr;
+        ctx.Rsp += sizeof(DWORD64);
+        frame_rec.AddrPC.Offset = ctx.Rip;
+        frame_rec.AddrStack.Offset = ctx.Rsp;
+    }
+#endif
+
     for (int i = 0; i < 48; ++i) {
         if (!StackWalk64(machine, proc, GetCurrentThread(), &frame_rec, &ctx,
                           NULL, SymFunctionTableAccess64, SymGetModuleBase64, NULL))
