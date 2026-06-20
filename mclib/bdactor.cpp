@@ -40,6 +40,24 @@ static std::atomic<uint32_t> s_animTypeIdleNowStatic{0};
 static uint32_t s_animStartInvalidated    = 0;
 static uint32_t s_animStateToStateGesture = 0;
 
+// STATIC-SCENE-PROXY-RECON-1: per-window classification counters.
+// Gated by MC2_STATIC_PROXY_RECON env var. No behavior change — read-only.
+// "proxy candidate" = object that is fully stable and could be baked at mission
+// load rather than evaluated every frame in Phase 2 (touchSerialCommit).
+// Rejection categories mirror the stableLightSkipEligible criteria exactly.
+static const bool s_proxyReconEnabled = (getenv("MC2_STATIC_PROXY_RECON") != nullptr);
+static std::atomic<int64_t> g_spr_phase2Calls{0};    // total touchSerialCommit calls (bldg+tree)
+static std::atomic<int64_t> g_spr_bldgCalls{0};      // BldgAppearance::touchSerialCommit calls
+static std::atomic<int64_t> g_spr_treeCalls{0};      // TreeAppearance::touchSerialCommit calls
+static std::atomic<int64_t> g_spr_proxyCandidate{0}; // fully stable — all criteria met
+static std::atomic<int64_t> g_spr_rejNoShape{0};     // bldgShape/treeShape is null (returned early)
+static std::atomic<int64_t> g_spr_rejNoStaticReg{0}; // !staticReg.registered || recipeIndex < 0
+static std::atomic<int64_t> g_spr_rejBadLightIdx{0}; // lightDataIndex == 0xFFFFFFFFu
+static std::atomic<int64_t> g_spr_rejNoValidLight{0};// !hasValidStaticLight (bldg only)
+static std::atomic<int64_t> g_spr_rejLightGenMismatch{0}; // lastLightEnvGen != currentLightEnvGen (bldg only)
+static std::atomic<int64_t> g_spr_rejNeedsFullBake{0};    // needsFullBakeNextFrame
+static std::atomic<int64_t> g_spr_callCounter{0};    // monotonic call count for print trigger
+
 // T1.15 SpotLight_ illumination diagnostic — registration probe (bldg class).
 // Env-gated per Debug Instrumentation Rule. First-hit is always-on (one stderr
 // line per BldgAppearance instance that walks the lazy-init block). Periodic
@@ -4156,7 +4174,15 @@ void BldgAppearance::touchSerialCommit()
 		++s_touchEntryDiag.serial_commit_hits;
 	}
 
-	if (!bldgShape) return;
+	if (!bldgShape) {
+		if (s_proxyReconEnabled) {
+			g_spr_phase2Calls.fetch_add(1, std::memory_order_relaxed);
+			g_spr_bldgCalls.fetch_add(1, std::memory_order_relaxed);
+			g_spr_rejNoShape.fetch_add(1, std::memory_order_relaxed);
+			g_spr_callCounter.fetch_add(1, std::memory_order_relaxed);
+		}
+		return;
+	}
 	const bool stableLightSkipArmed = mc2StableLightSkipEnabled();
 	const uint64_t currentLightEnvGen = mc2StaticLightEnvironmentGeneration(eye);
 	const bool stableLightSkipEligible =
@@ -4174,6 +4200,62 @@ void BldgAppearance::touchSerialCommit()
 		staticReg.hasValidStaticLight && (staticReg.lastLightEnvGen != currentLightEnvGen),
 		needsFullBakeNextFrame,
 		staticReg.lightDataIndex == 0xFFFFFFFFu);
+
+	// STATIC-SCENE-PROXY-RECON-1: classify this object as proxy candidate or not.
+	// Must run BEFORE the LBSS early return below (most objects skip via LBSS on mc2_24).
+	// Mirrors stableLightSkipEligible criteria exactly (stableLightSkipEligible is already
+	// computed above). No behavior change.
+	// Note: falling state (OBJECT_FLAG_FALLING) lives on the Building game object,
+	// not BldgAppearance — not accessible here without an owner pointer. Omitted;
+	// falling buildings will be counted as rej_no_static_reg (IsStaticNow calls
+	// invalidateStaticRegistration on fall, clearing staticReg.registered).
+	if (s_proxyReconEnabled) {
+		g_spr_phase2Calls.fetch_add(1, std::memory_order_relaxed);
+		g_spr_bldgCalls.fetch_add(1, std::memory_order_relaxed);
+
+		// Mirror stableLightSkipEligible exactly:
+		bool isProxy = stableLightSkipEligible;
+		if (!isProxy) {
+			// Attribute the first failing condition (same priority as stableLightSkipEligible)
+			if (!staticReg.registered || staticReg.recipeIndex < 0)
+				g_spr_rejNoStaticReg.fetch_add(1, std::memory_order_relaxed);
+			else if (!staticReg.hasValidStaticLight)
+				g_spr_rejNoValidLight.fetch_add(1, std::memory_order_relaxed);
+			else if (staticReg.lightDataIndex == 0xFFFFFFFFu)
+				g_spr_rejBadLightIdx.fetch_add(1, std::memory_order_relaxed);
+			else if (staticReg.lastLightEnvGen != currentLightEnvGen)
+				g_spr_rejLightGenMismatch.fetch_add(1, std::memory_order_relaxed);
+			else if (needsFullBakeNextFrame)
+				g_spr_rejNeedsFullBake.fetch_add(1, std::memory_order_relaxed);
+		}
+		if (isProxy) g_spr_proxyCandidate.fetch_add(1, std::memory_order_relaxed);
+
+		const int64_t n = g_spr_callCounter.fetch_add(1, std::memory_order_relaxed);
+		if (n > 0 && (n % 15000) == 0) {
+			const int64_t ph2   = g_spr_phase2Calls.exchange(0, std::memory_order_relaxed);
+			const int64_t bldg  = g_spr_bldgCalls.exchange(0, std::memory_order_relaxed);
+			const int64_t tree  = g_spr_treeCalls.exchange(0, std::memory_order_relaxed);
+			const int64_t proxy = g_spr_proxyCandidate.exchange(0, std::memory_order_relaxed);
+			const int64_t rNS   = g_spr_rejNoStaticReg.exchange(0, std::memory_order_relaxed);
+			const int64_t rBL   = g_spr_rejBadLightIdx.exchange(0, std::memory_order_relaxed);
+			const int64_t rNVL  = g_spr_rejNoValidLight.exchange(0, std::memory_order_relaxed);
+			const int64_t rLG   = g_spr_rejLightGenMismatch.exchange(0, std::memory_order_relaxed);
+			const int64_t rNFB  = g_spr_rejNeedsFullBake.exchange(0, std::memory_order_relaxed);
+			const int64_t rNSh  = g_spr_rejNoShape.exchange(0, std::memory_order_relaxed);
+			printf("STATIC_PROXY_RECON: ph2_calls=%lld bldg=%lld tree=%lld"
+			       " proxy_candidate=%lld(%.1f%%)"
+			       " rej_no_static_reg=%lld rej_bad_light_idx=%lld"
+			       " rej_no_valid_light=%lld rej_light_gen_mismatch=%lld"
+			       " rej_needs_full_bake=%lld rej_no_shape=%lld\n",
+			       (long long)ph2, (long long)bldg, (long long)tree,
+			       (long long)proxy,
+			       ph2 > 0 ? (proxy * 100.0 / ph2) : 0.0,
+			       (long long)rNS, (long long)rBL,
+			       (long long)rNVL, (long long)rLG,
+			       (long long)rNFB, (long long)rNSh);
+			fflush(stdout);
+		}
+	}
 
 	// [LIGHTBRIDGE-STABLE-SKIP-WIRE-1]: skip Section C (EmitBakedGpuLightData +
 	// getCachedGpuLightIndex + staticReg writes) when MC2_LIGHTBRIDGE_STABLE_SKIP=1
@@ -6343,7 +6425,15 @@ void TreeAppearance::touchSerialCommit()
 		++s_touchEntryDiag.serial_commit_hits;
 	}
 
-	if (!treeShape) return;
+	if (!treeShape) {
+		if (s_proxyReconEnabled) {
+			g_spr_phase2Calls.fetch_add(1, std::memory_order_relaxed);
+			g_spr_treeCalls.fetch_add(1, std::memory_order_relaxed);
+			g_spr_rejNoShape.fetch_add(1, std::memory_order_relaxed);
+			g_spr_callCounter.fetch_add(1, std::memory_order_relaxed);
+		}
+		return;
+	}
 
 	// FRAME-JOBS-2F Step 5: needsFullBakeNextFrame guard — mirrors BldgAppearance's
 	// stableLightSkipEligible which includes !needsFullBakeNextFrame. In practice,
@@ -6351,6 +6441,32 @@ void TreeAppearance::touchSerialCommit()
 	// split path (IsStaticNow() returns false), but add explicit guard for safety.
 	// When true, fall through to full commit (do not apply stable-skip).
 	const bool forceFullCommit = needsFullBakeNextFrame;
+
+	// STATIC-SCENE-PROXY-RECON-1: classify tree as proxy candidate or not.
+	// Must run BEFORE the LBSS early return below (most trees skip via LBSS).
+	// Trees don't track lastLightEnvGen (mission lighting is static for trees),
+	// so the criteria are: registered + valid recipeIndex + valid lightDataIndex
+	// + !needsFullBakeNextFrame. Mirrors the tree stable-skip check exactly.
+	if (s_proxyReconEnabled) {
+		g_spr_phase2Calls.fetch_add(1, std::memory_order_relaxed);
+		g_spr_treeCalls.fetch_add(1, std::memory_order_relaxed);
+
+		const bool treeRegistered = (staticReg[activeLOD].registered && staticReg[activeLOD].recipeIndex >= 0);
+		const bool treeIdxValid   = (staticReg[activeLOD].lightDataIndex != 0xFFFFFFFFu);
+		const bool isProxy = treeRegistered && treeIdxValid && !forceFullCommit;
+		if (!isProxy) {
+			if (!treeRegistered)
+				g_spr_rejNoStaticReg.fetch_add(1, std::memory_order_relaxed);
+			else if (!treeIdxValid)
+				g_spr_rejBadLightIdx.fetch_add(1, std::memory_order_relaxed);
+			else if (forceFullCommit)
+				g_spr_rejNeedsFullBake.fetch_add(1, std::memory_order_relaxed);
+		}
+		if (isProxy) g_spr_proxyCandidate.fetch_add(1, std::memory_order_relaxed);
+		// Tree path also bumps the shared call counter so the print trigger fires
+		// on tree-heavy missions where bldg count alone wouldn't reach the modulo.
+		g_spr_callCounter.fetch_add(1, std::memory_order_relaxed);
+	}
 
 	// [LIGHTBRIDGE-STABLE-SKIP-WIRE-1] Tree path: if MC2_LIGHTBRIDGE_STABLE_SKIP=1 and
 	// the active LOD's baked light slot is valid, skip EmitBakedGpuLightData entirely.
