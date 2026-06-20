@@ -987,6 +987,14 @@ void MC_TextureManager::addRenderShape(DWORD nodeId, TG_RenderShape* render_shap
 // from collisions are correct (same-data → same-result), just waste a
 // UBO slot. Acceptable.
 namespace {
+    // FRAME-JOBS-2 precondition: single mutex protecting both dedup maps AND
+    // the lightData_ grow path. One lock covers the whole light-slot allocation
+    // sequence (map lookup -> grow-if-needed -> table write -> map insert) so
+    // the check-then-act is atomic from the callers' perspective.
+    // recursive_mutex: addLightDataStructureWithPerActorColor calls
+    // addLightDataStructure on the same thread while holding this lock.
+    static std::recursive_mutex s_lightDataMapMu;
+
     static std::unordered_map<uint64_t, uint32_t> s_lightDataDedupMap;
 
     struct CachedSceneLightTemplate {
@@ -1477,6 +1485,9 @@ uint32_t MC_TextureManager::addLightDataStructure(TG_HWLightsData* light_data)
     // function so old captures remain comparable. Should drop from
     // ~12 µs/call (linear scan) to ~200-300 ns/call (hash + map ops).
     ZoneScopedN("addLightDataStructure scan");
+    // FRAME-JOBS-2 precondition: lock covers map lookup + grow-if-needed +
+    // table write + map insert as a single atomic sequence.
+    std::lock_guard<std::recursive_mutex> _lk(s_lightDataMapMu);
 
     const uint64_t hash = fnv1a_64_struct(light_data, sizeof(TG_HWLightsData));
     auto it = s_lightDataDedupMap.find(hash);
@@ -1531,6 +1542,10 @@ uint32_t MC_TextureManager::addLightDataStructureWithPerActorColor(TG_HWLightsDa
 {
     gosASSERT(light_data);
     LbScope _lb_;  // [LIGHTBRIDGE v1] C5/C6 populate sizing (RAII, all return paths)
+    // FRAME-JOBS-2 precondition: protects s_sceneLightTemplateMap, s_lightSlotByActorKey,
+    // and (via the nested addLightDataStructure call) s_lightDataDedupMap + lightData_ grow.
+    // recursive_mutex allows the nested call to re-acquire on the same thread.
+    std::lock_guard<std::recursive_mutex> _lk(s_lightDataMapMu);
 
     if (s_sceneLightTemplateFrame != g_mc2FrameCounter) {
         s_sceneLightTemplateMap.clear();
@@ -1603,6 +1618,8 @@ void MC_TextureManager::resetLightData()
     // [LIGHTBRIDGE v1] frame-start boundary: flush the just-completed frame's
     // C5/C6 populate sizing (same boundary the dedup-map reset relies on).
     lbDrainPerFrame(g_mc2FrameCounter);
+    // FRAME-JOBS-2 precondition: lock during map clears and count rebase.
+    std::lock_guard<std::recursive_mutex> _lk(s_lightDataMapMu);
 
     // [LIGHTBAKE v2] Rebase the DYNAMIC allocator base to S (the static
     // prefix high-water) when the bake is on, so dynamic appends start
