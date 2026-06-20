@@ -188,6 +188,25 @@ GameObject* MissionInterfaceManager::target = NULL;
 MissionInterfaceManager* MissionInterfaceManager::s_instance = NULL;
 gosEnum_KeyIndex MissionInterfaceManager::WAYPOINT_KEY = (gosEnum_KeyIndex)-1;
 
+//--------------------------------------------------------------------------------------
+// MISSION-START-HOVER-TARGET-LIFETIME-1
+// Hover/pick cache state for updateTarget(). Hoisted to file scope (was function-local
+// statics) so it can be invalidated at mission lifecycle boundaries. At mission start the
+// first Mission::update -> updateTarget ran with a STALE target / hover cache from the
+// PREVIOUS mission, then issued a virtual call through a freed object's vtable -> crash.
+// invalidateHoverTarget() clears all of it on mission begin AND end.
+static int           s_hoverLastMouseX = -1;
+static int           s_hoverLastMouseY = -1;
+static GameObject*   s_hoverCachedTarget = nullptr;
+static bool          s_hoverCacheValid  = false;
+// Generation stamp: bumped on every mission begin/end invalidate. A cached target is only
+// trusted while its stamp matches; any boundary crossing discards it cheaply.
+static unsigned      s_hoverMissionSerial = 0;
+// Suppress hover picking until the mission is fully live (objects loaded). Set true by
+// invalidateHoverTarget() at mission END (and at init), cleared at mission BEGIN once the
+// world is ready. While true updateTarget() is a no-op for picking.
+static bool          s_hoverSuppressed = true;
+
 
 extern bool drawTerrainTiles;
 extern bool drawTerrainOverlays;
@@ -381,6 +400,37 @@ void MissionInterfaceManager::init (void)
 	reinforcement = NULL;
 	bForcedShot = false;
 	bAimedShot = false;
+
+	// MISSION-START-HOVER-TARGET-LIFETIME-1: ensure no stale hover/target carries into the
+	// freshly-initialized GUI. Leave picking SUPPRESSED until armHoverTarget() runs at the
+	// point the mission world is live.
+	invalidateHoverTarget();
+}
+
+//--------------------------------------------------------------------------------------
+// MISSION-START-HOVER-TARGET-LIFETIME-1
+// Clear every piece of persistent hover/target/pick state and bump the generation serial.
+// Called on mission BEGIN (before first updateTarget) and on mission END (teardown). After
+// this, picking is suppressed until armHoverTarget() declares the mission live.
+void MissionInterfaceManager::invalidateHoverTarget (void)
+{
+	target              = NULL;
+	s_hoverCachedTarget = nullptr;
+	s_hoverCacheValid   = false;
+	s_hoverLastMouseX   = -1;
+	s_hoverLastMouseY   = -1;
+	s_hoverSuppressed   = true;
+	++s_hoverMissionSerial;
+	if (s_instance)
+		memset( s_instance->oldTargets, 0, sizeof( GameObject*) * MAX_ICONS );
+}
+
+//--------------------------------------------------------------------------------------
+// MISSION-START-HOVER-TARGET-LIFETIME-1
+// Declare the mission world fully live: re-enable hover picking. Safe to call repeatedly.
+void MissionInterfaceManager::armHoverTarget (void)
+{
+	s_hoverSuppressed = false;
 }
 
 #define TACMAP_ID		0
@@ -1560,7 +1610,17 @@ void MissionInterfaceManager::updateTarget( bool bGui)
 	
 	// if there was a target, unset it
 	if ( target )
-		target->setTargeted( 0 );			
+		target->setTargeted( 0 );
+
+	// MISSION-START-HOVER-TARGET-LIFETIME-1: suppress hover picking until the mission world
+	// is live (armHoverTarget). The first beginMission update frame runs before objects are
+	// fully settled; picking then could return a stale/freed pointer from the prior mission.
+	// Keeping target NULL here is correct: no hover, no order target, no virtual call.
+	if ( s_hoverSuppressed )
+	{
+		target = NULL;
+		return;
+	}
 
 	//----------------------------------------------------------------------------------------
 	// Get Any object we are over.  Change cursor if appropriate.  Set selected if necessary.
@@ -1579,10 +1639,8 @@ void MissionInterfaceManager::updateTarget( bool bGui)
 		static const bool s_hoverTrace = []() {
 			return RenderWorld::IsGpuPickHoverTraceEnabled();
 		}();
-		static int   s_lastMouseX  = -1;
-		static int   s_lastMouseY  = -1;
-		static GameObjectPtr s_cachedTarget = nullptr;
-		static bool  s_cacheValid  = false;
+		// MISSION-START-HOVER-TARGET-LIFETIME-1: these caches are now FILE-SCOPE statics
+		// (s_hover*) so invalidateHoverTarget() can clear them at mission boundaries.
 		// Per-frame counters for trace output (reset on first call each frame via atexit).
 		static int s_attempts = 0, s_mechHits = 0, s_nonMech = 0, s_cpuFallback = 0;
 		static bool s_atexitRegistered = false;
@@ -1599,8 +1657,8 @@ void MissionInterfaceManager::updateTarget( bool bGui)
 				});
 			}
 			// Cache hit: mouse hasn't moved, reuse last result.
-			if (s_cacheValid && mouseX == s_lastMouseX && mouseY == s_lastMouseY) {
-				target = s_cachedTarget;
+			if (s_hoverCacheValid && mouseX == s_hoverLastMouseX && mouseY == s_hoverLastMouseY) {
+				target = s_hoverCachedTarget;
 				goto gpu_hover_done;
 			}
 			// Viewport-to-GL coord transform via proven ScreenPick utility.
@@ -1630,10 +1688,10 @@ void MissionInterfaceManager::updateTarget( bool bGui)
 								(unsigned)res.handle.index(),
 								(void*)bm, mouseX, mouseY, ctx.glX, ctx.glY);
 						}
-						s_lastMouseX   = mouseX;
-						s_lastMouseY   = mouseY;
-						s_cachedTarget = bm;
-						s_cacheValid   = true;
+						s_hoverLastMouseX   = mouseX;
+						s_hoverLastMouseY   = mouseY;
+						s_hoverCachedTarget = bm;
+						s_hoverCacheValid   = true;
 						target = bm;
 						goto gpu_hover_done;
 					}
@@ -1648,7 +1706,7 @@ void MissionInterfaceManager::updateTarget( bool bGui)
 				}
 			}
 			// GPU miss or non-Mech: invalidate cache, fall through to CPU.
-			s_cacheValid = false;
+			s_hoverCacheValid = false;
 			++s_cpuFallback;
 		}
 	}
@@ -1668,6 +1726,11 @@ void MissionInterfaceManager::updateTarget( bool bGui)
 		
 		if ( target )
 		{
+			// MISSION-START-HOVER-TARGET-LIFETIME-1: secondary defensive guard (insurance,
+			// not the fix). The lifecycle invalidation + suppression above is what prevents a
+			// stale/freed target reaching this virtual call at mission start.
+			if ( !target )
+				return;
 			int descID = target->getDescription();
 			if ( descID != -1 )
 			{

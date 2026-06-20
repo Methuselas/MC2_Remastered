@@ -3397,6 +3397,13 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	missionInterface->init(&missionLoader);
 	missionInterface->initMechs();
 	missionLoader.close();
+
+	// MISSION-START-HOVER-TARGET-LIFETIME-1: this MissionInterfaceManager is freshly
+	// constructed, but the file-scope hover/target caches and the static `target` pointer
+	// survive across missions. Clear them now (begin boundary) so the first Mission::update
+	// can't pick a stale/freed object from the previous mission. Picking stays SUPPRESSED
+	// until Mission::start() arms it (world fully live).
+	MissionInterfaceManager::invalidateHoverTarget();
 	
 	//----------------------------------------------------------------------------
 	userInput->setMouseCursor(mState_NORMAL);
@@ -3489,6 +3496,10 @@ void Mission::start (void)
 {
 	active = true;
 	mission_phase_mark("mission_ready");
+	// MISSION-START-HOVER-TARGET-LIFETIME-1: mission world is now fully live (objects loaded,
+	// active set). Re-enable hover picking that was suppressed since invalidateHoverTarget().
+	if (missionInterface)
+		MissionInterfaceManager::armHoverTarget();
 	gos_SetHudScaleActive(true);  // enable HUD shrink only during mission
 	for (long i = 0; i < NumGameObjectsToDisplay; i++)
 		DEBUGWINS_setGameObject(-1, ObjectManager->getByWatchID(parts[GameObjectWindowList[i]].objectWID));
@@ -3632,8 +3643,13 @@ void Mission::destroy (bool initLogistics)
 	// Shutdown the Mission Interface
 	if (missionInterface)
 	{
+		// MISSION-START-HOVER-TARGET-LIFETIME-1: clear the static `target` pointer and the
+		// file-scope hover caches at teardown (end boundary). The objects they reference are
+		// about to be freed; suppress picking so nothing dereferences them before the next
+		// mission arms hover again.
+		MissionInterfaceManager::invalidateHoverTarget();
 		missionInterface->destroy();
-		
+
 		delete missionInterface;
 		missionInterface = NULL;
 	}

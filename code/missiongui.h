@@ -245,6 +245,10 @@ public:
 		void updateWaypoints (void);
 		
 		void setTarget( GameObject* pTarget ){ target = pTarget; }
+		// MISSION-START-HOVER-TARGET-LIFETIME-1: invalidate stale hover/pick/target caches at
+		// mission begin+end; arm re-enables picking once the mission world is live.
+		static void invalidateHoverTarget (void);
+		static void armHoverTarget (void);
 		static void selectForceGroup( int forceGroup, bool deselectOthers );
 		void doRepair( GameObject* who);
 		void doRepairBay( GameObject* who);
