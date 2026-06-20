@@ -864,7 +864,12 @@ class MC_TextureManager
 		// mine pairs, water pairs) — see mclib/quad.cpp.
 		void addTriangleBulk (DWORD nodeId, DWORD flags, int triCount)
 		{
-			if (triCount <= 0) return;
+			// Bounds-check triCount: negative caught by <= 0; upper cap guards against
+			// runaway callers sending corrupt counts into the untextured fallback loop
+			// (for (i=0; i<triCount; ++i) addTriangle) which has no independent limit.
+			// MC_MAXFACES is the total face budget for the entire scene — no single
+			// bulk call can legitimately exceed it.
+			if (triCount <= 0 || triCount > static_cast<int>(MC_MAXFACES)) return;
 
 			if ((nodeId < MC_MAXTEXTURES) && (nextAvailableVertexNode < MC_MAXTEXTURES))
 			{
