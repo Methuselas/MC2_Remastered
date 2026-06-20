@@ -31,6 +31,7 @@ MissionBegin.cpp			: Implementation of the MissionBegin component.
 #include"logisticsmechicon.h"
 #include"../GameOS/gameos/gos_profiler.h"
 #include <cstdlib>
+#include"platform_str.h"   // S_stricmp (MC2_BOOT_TO_SCREEN parse, LINUX_BUILD-safe)
 
 #include"prefs.h"
 extern CPrefs prefs;
@@ -114,6 +115,27 @@ bool MissionBegin::startAnimation (long bId, bool isButton, float scrollTime, lo
 	return true;
 }
 
+// Headless harness: map MC2_BOOT_TO_SCREEN to a logistics screen grid cell.
+// Returns true if MC2_BOOT_TO_BAY is active (boot mode), filling x/y with the
+// target cell. purchase=[2][0] bay=[2][1] loadout=[2][2] launch=[3][1].
+// Unset/unknown MC2_BOOT_TO_SCREEN defaults to bay (preserves prior behavior).
+static bool mc2BootScreenXY( int& x, int& y )
+{
+	const char* bootBay = std::getenv("MC2_BOOT_TO_BAY");
+	if ( !bootBay || !bootBay[0] )
+		return false;
+	x = 2; y = 1; // default: mech bay
+	const char* scr = std::getenv("MC2_BOOT_TO_SCREEN");
+	if ( scr && scr[0] )
+	{
+		if      ( !S_stricmp(scr, "purchase") ) { x = 2; y = 0; }
+		else if ( !S_stricmp(scr, "bay") )      { x = 2; y = 1; }
+		else if ( !S_stricmp(scr, "loadout") )  { x = 2; y = 2; }
+		else if ( !S_stricmp(scr, "launch") )   { x = 3; y = 1; }
+	}
+	return true;
+}
+
 void MissionBegin::begin()
 {
 	ZoneScopedN("MissionBegin::begin");
@@ -182,6 +204,28 @@ void MissionBegin::begin()
 	if ( mainMenu ) // already initialized
 	{
 		ZoneScopedN("MissionBegin::begin reuseExistingScreens");
+
+		// Headless harness: on re-entry (e.g. after setCurrentMissionAnyStage
+		// cross-stage jump) the default below stomps to [0][1] mission-select,
+		// which then auto-routes to the briefing screen. Under MC2_BOOT_TO_BAY,
+		// lock the boot-forced screen ([2][0] purchase, etc.) and hold it.
+		{
+			int bx, by;
+			if ( mc2BootScreenXY( bx, by ) )
+			{
+				curScreenX = bx;
+				curScreenY = by;
+				if ( screens[curScreenX][curScreenY] )
+				{
+					screens[curScreenX][curScreenY]->beginFadeIn( 1.0 );
+					screens[curScreenX][curScreenY]->begin();
+				}
+				Mission::initTGLForLogistics();
+				bDone = 0;
+				return;
+			}
+		}
+
 		curScreenX = 0;
 		curScreenY = 1;
 
@@ -549,15 +593,16 @@ const char* MissionBegin::update()
 				}
 				else
 				{
-					// MC2_BOOT_TO_BAY headless capture: jump straight to the mech bay
-					// (campaign + first mission already set by startNewCampaign) instead
-					// of the campaign-select screen, so the LOGISTICS capture dumps the
-					// bay. The auto-cycle in update() then walks the subscreens.
-					const char* bootBay = std::getenv("MC2_BOOT_TO_BAY");
-					if ( bootBay && bootBay[0] )
+					// MC2_BOOT_TO_BAY headless capture: jump straight to the chosen
+					// logistics screen (campaign + first mission already set by
+					// startNewCampaign) instead of the campaign-select screen, so the
+					// LOGISTICS capture dumps it. MC2_BOOT_TO_SCREEN picks the cell
+					// (purchase=[2][0] bay=[2][1] loadout=[2][2] launch=[3][1]).
+					int bootX, bootY;
+					if ( mc2BootScreenXY( bootX, bootY ) )
 					{
-						curScreenX = 2;   // [2][1] MechBayScreen
-						curScreenY = 1;
+						curScreenX = bootX;
+						curScreenY = bootY;
 					}
 					else
 					{

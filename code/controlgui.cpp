@@ -5,6 +5,7 @@ controlGui.cpp			: Implementation of the controlGui component.
 //===========================================================================//
 \*************************************************************************************************/
 
+#include <cstdlib>   // std::getenv (MC2_BOOT_TO_BAY video-skip gate)
 #include"controlgui.h"
 #include"tacticaloverview.h"  // Tactical Overview: strategic-icon overlay
 #include"contact.h"           // Tactical Overview: friendly sensor coverage tint
@@ -3601,6 +3602,12 @@ void ControlGui::switchTabs(int direction)
 void ControlGui::playMovie( const char* fileName )
 {
 	if (moviePlaying)
+		return;
+
+	// Headless harness: mission-objective briefing videos (CPlayBIK) reach here,
+	// bypassing the MC2_BOOT_TO_BAY gate in Logistics::playFullScreenVideo. Skip
+	// them too so the boot-to-purchase capture is not blocked by standin.bik.
+	if ( std::getenv("MC2_BOOT_TO_BAY") )
 		return;
 
 	// Apply hiResOffsetX/Y at use time — they were still 0 when
