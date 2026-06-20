@@ -2249,6 +2249,9 @@ void gosPostProcess::runEdgeFog()
 
     if (!edgeFogEnabled_ || !edgeFogProg_ || !edgeFogProg_->is_valid()) return;
     if (mapHalfExtent_ <= 0.0f) return;
+    // No world fog on the front-end / logistics menus: same in-mission gate the
+    // sibling passes (cloud-shadow, godrays, shoreline, OOB fog) use.
+    if (!sceneHasTerrain_) return;
 
     // Bind scene FBO — writes to colour attachment 0 only.
     // Reads sceneDepthTex_ (separate attachment — no read/write conflict).
@@ -2297,6 +2300,12 @@ void gosPostProcess::runFogOob()
     TracyGpuZone("Render.FogOob");
 
     if (!fogOobEnabled_ || !fogOobProg_ || !fogOobProg_->is_valid()) return;
+
+    // Skip on menus / logistics (mech bay, purchase screen): no terrain drawn this
+    // frame means we are not in an active mission. Mirrors the sceneHasTerrain_
+    // gate used by cloud-shadow / godrays / shoreline. Without this the OOB fog
+    // leaks onto the front-end backdrop. markTerrainDrawn() sets this in-mission.
+    if (!sceneHasTerrain_) return;
 
     // Bind scene FBO — writes to color attachment 0 only.
     // Reads sceneDepthTex_ (separate attachment — no read/write conflict).

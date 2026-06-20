@@ -31,6 +31,7 @@ MissionBegin.cpp			: Implementation of the MissionBegin component.
 #include"logisticsmechicon.h"
 #include"../GameOS/gameos/gos_profiler.h"
 #include <cstdlib>
+#include"platform_str.h"   // S_stricmp (MC2_BOOT_TO_SCREEN parse, LINUX_BUILD-safe)
 
 #include"prefs.h"
 extern CPrefs prefs;
@@ -114,6 +115,35 @@ bool MissionBegin::startAnimation (long bId, bool isButton, float scrollTime, lo
 	return true;
 }
 
+// Headless harness: map MC2_BOOT_TO_SCREEN to a logistics screen grid cell.
+// Returns true if MC2_BOOT_TO_BAY is active (boot mode), filling x/y with the
+// target cell. purchase=[2][0] bay=[2][1] loadout=[2][2] launch=[3][1].
+// Unset/unknown MC2_BOOT_TO_SCREEN defaults to bay (preserves prior behavior).
+static bool mc2BootScreenXY( int& x, int& y )
+{
+	const char* bootBay = std::getenv("MC2_BOOT_TO_BAY");
+	if ( !bootBay || !bootBay[0] )
+		return false;
+	x = 2; y = 1; // default: mech bay
+	const char* scr = std::getenv("MC2_BOOT_TO_SCREEN");
+	if ( scr && scr[0] )
+	{
+		if      ( !S_stricmp(scr, "purchase") ) { x = 2; y = 0; }
+		else if ( !S_stricmp(scr, "bay") )      { x = 2; y = 1; }
+		else if ( !S_stricmp(scr, "loadout") )  { x = 2; y = 2; }
+		else if ( !S_stricmp(scr, "launch") )   { x = 3; y = 1; }
+	}
+	return true;
+}
+
+// CRASH-SOAK harness (MC2_SOAK_AUTOWIN). When set, the booted campaign drives
+// itself from logistics to mission start with no clicks: each settled (RUNNING)
+// logistics screen at curScreenX>=2 is forced to advance (NEXT) on a throttle so
+// it walks bay -> pilotready -> load -> mission start. Gated on the env flag;
+// default OFF = byte-identical. Single getenv cached at startup.
+static const bool s_soakAutoWin =
+	( std::getenv("MC2_SOAK_AUTOWIN") != nullptr );
+
 void MissionBegin::begin()
 {
 	ZoneScopedN("MissionBegin::begin");
@@ -162,6 +192,14 @@ void MissionBegin::begin()
 		logisticsBrain = NULL;
 	}
 
+	// CRASH-SOAK harness marker: report whether a logistics ABL brain was
+	// found+loaded for the current mission. Cheap (one printf at screen
+	// entry); always emitted so it shows up regardless of soak gate.
+	printf("[SOAK] abl logistics brain=%s loaded=%d\n",
+		brainfile ? brainfile : "(none)",
+		(logisticsBrain != NULL) ? 1 : 0);
+	fflush(stdout);
+
 	//---------------------------------------------
 	DWORD localRenderer = prefs.renderer;
 	if (prefs.renderer != 0 && prefs.renderer != 3)
@@ -182,6 +220,28 @@ void MissionBegin::begin()
 	if ( mainMenu ) // already initialized
 	{
 		ZoneScopedN("MissionBegin::begin reuseExistingScreens");
+
+		// Headless harness: on re-entry (e.g. after setCurrentMissionAnyStage
+		// cross-stage jump) the default below stomps to [0][1] mission-select,
+		// which then auto-routes to the briefing screen. Under MC2_BOOT_TO_BAY,
+		// lock the boot-forced screen ([2][0] purchase, etc.) and hold it.
+		{
+			int bx, by;
+			if ( mc2BootScreenXY( bx, by ) )
+			{
+				curScreenX = bx;
+				curScreenY = by;
+				if ( screens[curScreenX][curScreenY] )
+				{
+					screens[curScreenX][curScreenY]->beginFadeIn( 1.0 );
+					screens[curScreenX][curScreenY]->begin();
+				}
+				Mission::initTGLForLogistics();
+				bDone = 0;
+				return;
+			}
+		}
+
 		curScreenX = 0;
 		curScreenY = 1;
 
@@ -549,15 +609,16 @@ const char* MissionBegin::update()
 				}
 				else
 				{
-					// MC2_BOOT_TO_BAY headless capture: jump straight to the mech bay
-					// (campaign + first mission already set by startNewCampaign) instead
-					// of the campaign-select screen, so the LOGISTICS capture dumps the
-					// bay. The auto-cycle in update() then walks the subscreens.
-					const char* bootBay = std::getenv("MC2_BOOT_TO_BAY");
-					if ( bootBay && bootBay[0] )
+					// MC2_BOOT_TO_BAY headless capture: jump straight to the chosen
+					// logistics screen (campaign + first mission already set by
+					// startNewCampaign) instead of the campaign-select screen, so the
+					// LOGISTICS capture dumps it. MC2_BOOT_TO_SCREEN picks the cell
+					// (purchase=[2][0] bay=[2][1] loadout=[2][2] launch=[3][1]).
+					int bootX, bootY;
+					if ( mc2BootScreenXY( bootX, bootY ) )
 					{
-						curScreenX = 2;   // [2][1] MechBayScreen
-						curScreenY = 1;
+						curScreenX = bootX;
+						curScreenY = bootY;
 					}
 					else
 					{
@@ -768,6 +829,47 @@ const char* MissionBegin::update()
 
 		pCurScreen->update();
 
+		// CRASH-SOAK: drive the settled logistics screen toward mission start by
+		// synthesizing a NEXT (same lever the launch button pulls). Only when the
+		// screen has settled to RUNNING (real transition pending takes priority),
+		// on a logistics screen (curScreenX>=2, past splash/select), throttled and
+		// fired once per screen-settle so we don't spam. Single-player only.
+		// Walk forward from ANY settled grid column toward launch: the
+		// inter-mission flow re-enters at mission-selection [0][1] / briefing
+		// [1][1], so cover curScreenX 0..3 (was 2..3 for the pre-mission-only
+		// walk). Briefing video is already gated by MC2_BOOT_TO_BAY
+		// (controlgui playMovie), so widening here adds no video block.
+		bool soakForceNext = false;
+		if ( s_soakAutoWin && !MPlayer && curScreenX < 4 &&
+			 pCurScreen->getStatus() == LogisticsScreen::RUNNING && !animJustBegun )
+		{
+			static long  s_soakLastAdvX = -99;
+			static long  s_soakLastAdvY = -99;
+			static float s_soakSettleTimer = 0.0f;
+			// New screen cell since last advance? reset the settle dwell timer.
+			if ( curScreenX != s_soakLastAdvX || curScreenY != s_soakLastAdvY )
+			{
+				s_soakSettleTimer += frameLength;
+				if ( s_soakSettleTimer >= 0.5f )
+				{
+					soakForceNext = true;
+					s_soakLastAdvX = curScreenX;
+					s_soakLastAdvY = curScreenY;
+					s_soakSettleTimer = 0.0f;
+					printf("[SOAK] advance screen=%d,%d\n", (int)curScreenX, (int)curScreenY);
+					if ( LogisticsData::instance )
+						printf("[SOAK] launch mission=%s stage=%d\n",
+							(const char*)LogisticsData::instance->getCurrentMission(),
+							(int)LogisticsData::instance->getCurrentMissionNum());
+					fflush(stdout);
+				}
+			}
+			else
+			{
+				s_soakSettleTimer = 0.0f; // same cell already advanced; idle
+			}
+		}
+
 		if ( pCurScreen->getStatus() == LogisticsScreen::GOTOSPLASH || ( MPlayer && MPlayer->hostLeft ) )
 		{
 			pCurScreen->end();
@@ -787,11 +889,11 @@ const char* MissionBegin::update()
 			bReadyToLoad = true;
 
 
-		if ( pCurScreen->getStatus() != LogisticsScreen::RUNNING )
+		if ( pCurScreen->getStatus() != LogisticsScreen::RUNNING || soakForceNext )
 		{
 			soundSystem->stopBettySample(); // don't want to carry droning on to next screen
 			soundSystem->stopSupportSample();
-			if ( pCurScreen->getStatus() == LogisticsScreen::NEXT )
+			if ( pCurScreen->getStatus() == LogisticsScreen::NEXT || soakForceNext )
 			{
 				pCurScreen->end();
 				if ( curScreenX < 4 )

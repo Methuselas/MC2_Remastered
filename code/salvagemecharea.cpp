@@ -275,7 +275,11 @@ void SalvageMechScreen::update()
 	textObjects[RP_TEXTID].setText( cBillText );
 	textObjects[RP_TEXTID].setColor( color );
 
-	salvageListBox.update();
+	// Once Done has been pressed (bDone) the screen is exiting and its list items
+	// are about to be torn down; do not iterate items[] (GetCheckedItem/isChecked)
+	// during teardown -- that path reads freed checkButtons (use-after-free).
+	if ( !bDone )
+		salvageListBox.update();
 
 	for ( int i = 0; i < buttonCount; i++ )
 	{
@@ -317,7 +321,8 @@ void SalvageMechScreen::updateSalvage()
 
 SalvageListItem::~SalvageListItem()
 {
-	removeAllChildren( true );
+	removeAllChildren( true );  // frees checkButton (it is a child)
+	checkButton = NULL;         // don't leave a dangling member behind
 }
 
 void	SalvageListItem::init( FitIniFile* file )
@@ -376,6 +381,8 @@ void	SalvageListItem::init( FitIniFile* file )
 SalvageListItem::SalvageListItem( BattleMech* pMech )
 {
 	gosASSERT( pMech );
+
+	checkButton = NULL;  // ensure valid even on early-return (null pVariant) path
 
 	long width = rect.right - rect.left;
 	aObject::init( 0, 2, width, rect.bottom - rect.top );
@@ -454,6 +461,10 @@ SalvageListItem::SalvageListItem( BattleMech* pMech )
 
 void SalvageListItem::update()
 {
+	// Item never finished construction (null pVariant -> ctor early return):
+	// checkButton is NULL. Skip rather than deref it below.
+	if ( !checkButton )
+		return;
 
 	long mouseX = userInput->getMouseX();
 	long mouseY = userInput->getMouseY();
@@ -556,7 +567,23 @@ void SalvageListItem::render()
 
 bool SalvageListItem::isChecked()
 {
-
+	// Guard: checkButton may be NULL on the early-return ctor path (null pVariant).
+	if ( !checkButton )
+	{
+		// Diagnostic (one-shot): GetCheckedItem reached a salvage item with no
+		// checkButton. The !bDone gate in SalvageMechScreen::update should prevent
+		// any post-teardown poll; if this fires, that gate has regressed and the
+		// old use-after-free window is back -- make it loud instead of silent.
+		static bool s_warned = false;
+		if ( !s_warned )
+		{
+			s_warned = true;
+			printf("[SALVAGE] WARN isChecked() on item with NULL checkButton "
+			       "(stale post-Done poll? UAF guard tripped)\n");
+			fflush(stdout);
+		}
+		return false;
+	}
 	return checkButton->isPressed();
 }
 

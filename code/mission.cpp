@@ -508,6 +508,19 @@ namespace {
 		}
 		fflush(stdout);
 	}
+
+	// --- CRASH-SOAK harness (MC2_SOAK_AUTOWIN) -------------------------------
+	// Auto-win the running mission after MC2_SOAK_WIN_AFTER_SEC of scenario
+	// time so a campaign booted via MC2_BOOT_TO_BAY walks itself end-to-end
+	// unattended. Gated entirely on the env flag; default OFF = byte-identical.
+	static const bool s_soakAutoWin =
+		(getenv("MC2_SOAK_AUTOWIN") != nullptr);
+	static float soakWinAfterSec() {
+		const char* e = getenv("MC2_SOAK_WIN_AFTER_SEC");
+		float p = e ? (float)atof(e) : 5.0f;
+		if (p < 0.0f) p = 0.0f;
+		return p;
+	}
 } // namespace
 
 //----------------------------------------------------------------------------------
@@ -976,6 +989,28 @@ long Mission::update (void)
 			globalFloatHelp->setFloatHelp(text,moveHere,SD_GREEN,XP_BLACK,1.0f,true,false,false,false);
 		}
 #endif
+
+		// CRASH-SOAK auto-win (always compiled; gated on MC2_SOAK_AUTOWIN env).
+		// Independent of the #ifndef FINAL cheat path above so the harness works
+		// in RelWithDebInfo regardless of FINAL. Fires once per mission after
+		// MC2_SOAK_WIN_AFTER_SEC of scenario time. mis_PLAYER_WIN_BIG returned
+		// from update() ends the mission instantly (no countdown).
+		if (s_soakAutoWin && !scenarioResult)
+		{
+			static bool s_soakWinEmitted = false;
+			const float winAfter = soakWinAfterSec();
+			// Re-arm for each new mission: scenarioTime resets to 0 on start().
+			if (scenarioTime < winAfter)
+				s_soakWinEmitted = false;
+			if (!s_soakWinEmitted && scenarioTime > winAfter)
+			{
+				scenarioResult = mis_PLAYER_WIN_BIG;
+				s_soakWinEmitted = true;
+				printf("[SOAK] autowin mission=%s t=%.1f\n",
+					missionFileName, (float)scenarioTime);
+				fflush(stdout);
+			}
+		}
 
 #ifdef LAB_ONLY
 		MCTimeMissionTotal 		= MCTimeTerrainUpdate +
@@ -2660,9 +2695,13 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	gosASSERT(result == NO_ERR);
 
 	bool loadBrainParameters = (result == NO_ERR);
-	if (numWarriors) 
+	// CRASH-SOAK harness: tally how many mission AI brains (e.g. "magicx" on
+	// MCO missions) load vs fail, so the soak runner can confirm AI is active.
+	long soakBrainsLoaded = 0;
+	long soakBrainsFailed = 0;
+	if (numWarriors)
 	{
-		for (long i = 1; i <= numWarriors; i++) 
+		for (long i = 1; i <= numWarriors; i++)
 		{
 			char warriorName[12];
 			sprintf(warriorName,"Warrior%d",i);
@@ -2719,13 +2758,27 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 			
 			long moduleHandle = ABLi_preProcess(brainFileName, &numErrors, &numLinesProcessed);
 			gosASSERT(moduleHandle >= 0);
-			
+			if (moduleHandle >= 0 && numErrors == 0)
+				soakBrainsLoaded++;
+			else
+			{
+				soakBrainsFailed++;
+				printf("[SOAK] WARN abl brain load failed name=%s errors=%ld\n",
+					moduleName, (long)numErrors);
+			}
+
 #ifdef _DEBUG
-			long error = 
+			long error =
 #endif
 				pilot->setBrain(moduleHandle);
 			gosASSERT(error == 0);
 		}
+	}
+	if (std::getenv("MC2_SOAK_AUTOWIN") != nullptr || soakBrainsFailed > 0)
+	{
+		printf("[SOAK] abl mission brains loaded=%ld failed=%ld\n",
+			soakBrainsLoaded, soakBrainsFailed);
+		fflush(stdout);
 	}
 
 	if (loadBrainParameters) {
@@ -3347,6 +3400,13 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	missionInterface->init(&missionLoader);
 	missionInterface->initMechs();
 	missionLoader.close();
+
+	// MISSION-START-HOVER-TARGET-LIFETIME-1: this MissionInterfaceManager is freshly
+	// constructed, but the file-scope hover/target caches and the static `target` pointer
+	// survive across missions. Clear them now (begin boundary) so the first Mission::update
+	// can't pick a stale/freed object from the previous mission. Picking stays SUPPRESSED
+	// until Mission::start() arms it (world fully live).
+	MissionInterfaceManager::invalidateHoverTarget();
 	
 	//----------------------------------------------------------------------------
 	userInput->setMouseCursor(mState_NORMAL);
@@ -3439,6 +3499,10 @@ void Mission::start (void)
 {
 	active = true;
 	mission_phase_mark("mission_ready");
+	// MISSION-START-HOVER-TARGET-LIFETIME-1: mission world is now fully live (objects loaded,
+	// active set). Re-enable hover picking that was suppressed since invalidateHoverTarget().
+	if (missionInterface)
+		MissionInterfaceManager::armHoverTarget();
 	gos_SetHudScaleActive(true);  // enable HUD shrink only during mission
 	for (long i = 0; i < NumGameObjectsToDisplay; i++)
 		DEBUGWINS_setGameObject(-1, ObjectManager->getByWatchID(parts[GameObjectWindowList[i]].objectWID));
@@ -3583,8 +3647,13 @@ void Mission::destroy (bool initLogistics)
 	// Shutdown the Mission Interface
 	if (missionInterface)
 	{
+		// MISSION-START-HOVER-TARGET-LIFETIME-1: clear the static `target` pointer and the
+		// file-scope hover caches at teardown (end boundary). The objects they reference are
+		// about to be freed; suppress picking so nothing dereferences them before the next
+		// mission arms hover again.
+		MissionInterfaceManager::invalidateHoverTarget();
 		missionInterface->destroy();
-		
+
 		delete missionInterface;
 		missionInterface = NULL;
 	}

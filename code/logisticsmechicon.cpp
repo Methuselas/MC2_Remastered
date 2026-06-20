@@ -129,14 +129,31 @@ void LogisticsMechIcon::setMech( LogisticsMech* pNewMech )
 		// Icon atlas (mcui_gn_mechicons.tga) uses 25x30px cells at setFileWidth(256).
 		// See MC2_LOG_MECH_ICON env var for per-mech UV diagnostics.
 		long index = pMech->getIconIndex();
-		long xIndex = index % 10;
-		long yIndex = index / 10;
-
-		float fX = xIndex;
-		float fY = yIndex;
 
 		float width = icon.width();
 		float height = icon.height();
+
+		// Atlas geometry is DERIVED from the loaded texture, not hardcoded.
+		// Retail mech atlas = 256 wide (10 cols of 25px, mechs only, idx 0-79).
+		// MC2X mc2x_mechicons = 512 wide (20 cols), holding vehicle/infantry
+		// icons at high indices (Ambulance=118, APC=142, Infantry=28). The old
+		// hardcoded "% 10 / setFileWidth(256)" scrambled those high indices.
+		DWORD atlasW = 0, atlasH = 0;
+		float fileW = 256.f, fileH = 256.f;
+		if ( mcTextureManager &&
+		     mcTextureManager->tryGetTextureLogicalSize( icon.getTextureHandle(), atlasW, atlasH ) )
+		{
+			if ( atlasW > 0 ) fileW = (float)atlasW;
+			if ( atlasH > 0 ) fileH = (float)atlasH;
+		}
+		long cols = ( width > 0.f ) ? (long)( fileW / width + 0.5f ) : 10;
+		if ( cols < 1 ) cols = 10;
+
+		long xIndex = index % cols;
+		long yIndex = index / cols;
+
+		float fX = xIndex;
+		float fY = yIndex;
 
 		float u = (fX * width);
 		float v = (fY * height);
@@ -147,18 +164,19 @@ void LogisticsMechIcon::setMech( LogisticsMech* pNewMech )
 		float u2 = (fX * width);
 		float v2 = (fY * height);
 
-		icon.setFileWidth( 256.f );
+		icon.setFileWidth( fileW );
+		icon.setFileHeight( fileH );
 		icon.setUVs( u, v, u2, v2 );
 
 		if ( getenv("MC2_LOG_MECH_ICON") )
 		{
-			printf("[mechicon-logi] mech=ID:%ld iconIndex=%ld row=%ld col=%ld "
+			printf("[mechicon-logi] mech=ID:%ld iconIndex=%ld cols=%ld row=%ld col=%ld "
 			       "widgetW=%.0f widgetH=%.0f u=[%.1f,%.1f] v=[%.1f,%.1f] "
-			       "fileWidth=256 uvX=[%.3f,%.3f] uvY=[%.3f,%.3f]\n",
-			       pMech->getChassisName(), index, yIndex, xIndex,
+			       "fileWidth=%.0f fileHeight=%.0f uvX=[%.3f,%.3f] uvY=[%.3f,%.3f]\n",
+			       pMech->getChassisName(), index, cols, yIndex, xIndex,
 			       width, height,
 			       u, u2, v, v2,
-			       u/256.f, u2/256.f, v/256.f, v2/256.f);
+			       fileW, fileH, u/fileW, u2/fileW, v/fileH, v2/fileH);
 			fflush(stdout);
 		}
 

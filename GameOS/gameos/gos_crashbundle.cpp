@@ -56,6 +56,7 @@ static struct {
     int abl_trace;
     int abl_reg_trace;
     int ff_trace;
+    int crash_fast_exit; // headless: skip the modal crash dialog + terminate now
     int initialized;
     char exe_dir[MAX_PATH];
 } g_cfg = {0};
@@ -333,6 +334,24 @@ static size_t format_crash_txt(EXCEPTION_POINTERS* ep, char* out, size_t cap)
     frame_rec.AddrFrame.Mode = AddrModeFlat;
     frame_rec.AddrStack.Mode = AddrModeFlat;
 
+#if defined(_M_X64) || defined(_M_AMD64)
+    // EXEC violation at 0x0 = a CALL through a null function pointer (null vtable
+    // / freed object / uninitialised callback). RIP is 0, so StackWalk64 cannot
+    // seed the first frame and the stack comes out EMPTY. The return address the
+    // bad CALL pushed is at [RSP] -> use it to recover the caller chain so the
+    // crash is actually attributable. (Common with the soak's mission teardown.)
+    if (frame_rec.AddrPC.Offset == 0 && frame_rec.AddrStack.Offset != 0 &&
+        !IsBadReadPtr((void*)(uintptr_t)frame_rec.AddrStack.Offset, sizeof(DWORD64)))
+    {
+        sbuff(out, cap, &pos, "  #-- 0x0000000000000000  <null call (jmp/call to 0)>\n");
+        DWORD64 retAddr = *(DWORD64*)(uintptr_t)frame_rec.AddrStack.Offset;
+        ctx.Rip = retAddr;
+        ctx.Rsp += sizeof(DWORD64);
+        frame_rec.AddrPC.Offset = ctx.Rip;
+        frame_rec.AddrStack.Offset = ctx.Rsp;
+    }
+#endif
+
     for (int i = 0; i < 48; ++i) {
         if (!StackWalk64(machine, proc, GetCurrentThread(), &frame_rec, &ctx,
                           NULL, SymFunctionTableAccess64, SymGetModuleBase64, NULL))
@@ -601,7 +620,20 @@ static LONG WINAPI crashbundle_filter(EXCEPTION_POINTERS* ep)
         // 5) Minidump
         write_minidump(ep);
 
-        // 6) Modal dialog — blocks until user dismisses
+        // 6) Either terminate now (headless soak/harness) or show the dialog.
+        if (g_cfg.crash_fast_exit) {
+            // Loud, single-line, parseable marker to stderr (always live) so the
+            // watching harness/MCP detects the crash + bundle path immediately,
+            // then exit WITHOUT the modal dialog (no WaitForExit-timeout wait).
+            char mk[MAX_PATH + 64];
+            int mn = _snprintf(mk, sizeof(mk),
+                               "\n[CRASH] FAST-EXIT code=0x%08lX bundle=%s\n",
+                               ep->ExceptionRecord->ExceptionCode, g_crash_folderA);
+            if (mn > 0) { fwrite(mk, 1, (size_t)mn, stderr); fflush(stderr); }
+            TerminateProcess(GetCurrentProcess(),
+                             ep->ExceptionRecord->ExceptionCode);
+        }
+        // Modal dialog — blocks until user dismisses (interactive runs only).
         show_crash_dialog(g_crash_txtA, g_crash_folderW, g_crash_folderA);
     }
     __except(EXCEPTION_EXECUTE_HANDLER) {
@@ -627,6 +659,12 @@ extern "C" void crashbundle_init(void)
     read_env_flag("MC2_ABL_TRACE",            &g_cfg.abl_trace);
     read_env_flag("MC2_ABL_REG_TRACE",        &g_cfg.abl_reg_trace);
     read_env_flag("MC2_FF_TRACE",             &g_cfg.ff_trace);
+    // Headless crash fast-exit: write the bundle, then terminate WITHOUT the
+    // modal dialog so an automated soak/harness process exits immediately on
+    // crash (the watcher sees it now, not at the WaitForExit timeout). Auto-on
+    // under the crash-soak; also settable directly.
+    read_env_flag("MC2_CRASH_FAST_EXIT",      &g_cfg.crash_fast_exit);
+    { int soak = 0; read_env_flag("MC2_SOAK_AUTOWIN", &soak); if (soak) g_cfg.crash_fast_exit = 1; }
 
     char exe_path[MAX_PATH];
     DWORD got = GetModuleFileNameA(NULL, exe_path, MAX_PATH);

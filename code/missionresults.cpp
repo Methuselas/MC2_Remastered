@@ -17,6 +17,7 @@ MissionResults.cpp			: Implementation of the MissionResults component.
 #include"pilotreviewarea.h"
 #include"gamesound.h"
 #include "../resource.h"
+#include <cstdlib>   // std::getenv (MC2_SOAK_AUTOWIN results auto-dismiss)
 
 bool MissionResults::FirstTimeResults = true;
 MissionResults::MissionResults()
@@ -134,6 +135,42 @@ void MissionResults::update()
 {
 	userInput->setMouseCursor( mState_NORMAL );
 	userInput->mouseOn();
+
+	// CRASH-SOAK harness (MC2_SOAK_AUTOWIN): the post-win results flow
+	// (salvage mech screen, then pilot promotion/review screen) needs a
+	// "Done" click to dismiss each panel. Under the soak gate, synthesize
+	// that click programmatically so the campaign walks itself unattended.
+	// We mirror exactly what each screen's Done button does:
+	//   - SalvageMechScreen::handleMessage  -> who == 101
+	//   - PilotReviewScreen::handleMessage  -> who == aMSG_DONE (110), but
+	//     it self-gates on entryAnim.isDone(), so a repeated nudge is safe.
+	// A short settle dwell per panel lets entry anims finish (matches the
+	// human-pace dismissal) before we fire. Single-player only; default OFF
+	// (env unset) is byte-identical. Cached getenv at first call.
+	static const bool s_soakAutoWin =
+		( std::getenv("MC2_SOAK_AUTOWIN") != nullptr );
+	if ( s_soakAutoWin && !MPlayer )
+	{
+		static float s_soakResultsDwell = 0.0f;
+		s_soakResultsDwell += frameLength;
+		if ( s_soakResultsDwell >= 0.75f )
+		{
+			s_soakResultsDwell = 0.0f;
+			if ( pSalvageScreen && !pSalvageScreen->donePressed() )
+			{
+				printf("[SOAK] results dismiss screen=salvage\n");
+				fflush(stdout);
+				pSalvageScreen->handleMessage( 101, 101 );
+			}
+			else if ( pPilotScreen )
+			{
+				printf("[SOAK] results dismiss screen=pilot\n");
+				fflush(stdout);
+				bPilotStarted = true; // salvage normally sets this on its Done
+				pPilotScreen->handleMessage( aMSG_DONE, aMSG_DONE );
+			}
+		}
+	}
 
 	if ( MPlayer )
 	{
