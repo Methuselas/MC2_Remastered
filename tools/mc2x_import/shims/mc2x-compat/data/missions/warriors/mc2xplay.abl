@@ -1,0 +1,1358 @@
+//==================================================================
+module mc2xplay: integer;														//	MC2X (R49) 
+//==================================================================
+//
+//	includes mission specific functions for the following wmxid:
+//
+//	 4712, 4713, 4714, 4715,4717,4718,4719, 4720,4721,4722,4723,9999
+//	
+//==================================================================
+//	MC2X PLAYER WARRIOR BRAIN 									Status: 05 Apr 2021
+//==================================================================
+
+	const
+    		#include_ "OConst.abi"
+    		#include_ "UnitConst.abi"
+  
+		NORMAL = 0;
+		GUARD_POINT = 1;
+		GUARD_OBJECT = 2;
+		GUARD_MOVER = 3;
+		STOPPED = 4;
+	
+		ORDER_ORIGIN_PLAYER = 0;
+		ORDER_ORIGIN_COMMANDER = 1;
+		ORDER_ORIGIN_SELF = 2;
+	
+		TACTICAL_ORDER_NONE = 0;
+		TACTICAL_ORDER_WAIT = 1;
+		TACTICAL_ORDER_MOVETO_POINT = 2;
+		TACTICAL_ORDER_MOVETO_OBJECT = 3;
+		TACTICAL_ORDER_JUMPTO_POINT = 4;
+		TACTICAL_ORDER_JUMPTO_OBJECT = 5;
+		TACTICAL_ORDER_TRAVERSE_PATH = 6;
+		TACTICAL_ORDER_PATROL_PATH = 7;
+		TACTICAL_ORDER_ESCORT = 8;
+		TACTICAL_ORDER_FOLLOW = 9;
+		TACTICAL_ORDER_GUARD = 10;
+		TACTICAL_ORDER_STOP = 11;
+		TACTICAL_ORDER_POWERUP = 12;
+		TACTICAL_ORDER_POWERDOWN = 13;
+		TACTICAL_ORDER_FORMATION = 14;
+		TACTICAL_ORDER_EJECT = 15;
+		TACTICAL_ORDER_ATTACK_OBJECT = 16;
+		TACTICAL_ORDER_ATTACK_POINT = 17;
+		TACTICAL_ORDER_HOLD_FIRE = 18;
+		TACTICAL_ORDER_WITHDRAW = 19;
+	
+		RADIO_HITTING_MINES = 22;
+		RADIO_UNDER_AIRSTRIKE = 25;
+		RADIO_MOVE_BLOCKED = 26;
+	
+		RETURN_STATE_FALSE = 0;
+		RETURN_STATE_TRUE = 1;
+		RETURN_STATE_NOW = 2;
+
+	type
+
+	var
+
+	 	static integer		FreeWillMode;
+		static integer		MyObject;
+		static real				MyRange;
+		static real				MyAngle;
+		static integer		PlayerTarget;
+		integer					GuardStatus;
+	
+		static boolean		KludgeHandleGuard;
+		static boolean		KludgePlayerTarget;
+		integer					ObjClass;
+	
+		integer					curTacCode;
+		integer					lastTacCode;
+		static integer[15]	tacOrderParams;
+		real						time;
+		static integer		StopCounter;
+		static real				StopTime;
+		static real				lastHelpRequestTime;
+		static real[3]  		returnPosition;
+		static integer		returnState;
+		real						distanceToReturnPosition;
+		char[120]				debugS;
+		
+		static boolean	areaNotScaned; //wolfman(by magic)(R37)
+		
+//=======================================================
+
+//if ((wmxid == 4712) OR (wmxid ==4717) OR (wmxid ==4719) OR (wmxid == 4720) OR (wmxid == 4721) OR (wmxid == 4722) OR (wmxid == 4723)) then
+	static real[3]  	curryPosition;
+	static boolean	PUpTime; 	
+	static real			PUDelay;
+	static real			rwPUStartWait;
+	real					curTime;
+//endif;
+//=======================================================	
+
+//=======================================================
+//if (wmxid == 4714) then
+	static integer	objectiveToTrigger;
+	static boolean	objectiveToggled;
+	static integer	 Me;
+	static integer	count;
+//endif;
+//=======================================================	
+
+//=======================================================
+//if (wmxid == 4715) then
+//	static integer	objectiveToTrigger;
+//	static boolean	objectiveToggled;
+//	static integer	 Me;
+	static boolean	shutdownA;
+	static boolean	shutdownB;
+	static WorldPosition	shutdowncenterA;
+	static WorldPosition	shutdowncenterB;
+	static WorldPosition	MePosition;
+//endif;
+//=======================================================	
+
+//=======================================================
+//if (wmxid == 4718) then
+//	static integer	objectiveToTrigger;
+//	static boolean	objectiveToggled;
+//	static integer	 Me;
+	static integer	objective2ToTrigger;
+	static boolean	objective2Toggled;
+	static boolean	shutdownC;
+	static WorldPosition	shutdowncenterC;
+//	static WorldPosition	MePosition;
+// endif;
+//=======================================================	
+
+//=======================================================
+//if (wmxid == 4723) then
+//	static integer	objectiveToTrigger;
+//	static boolean	objectiveToggled;
+//	static integer	 Me;
+//	static integer	objective2ToTrigger;
+//	static boolean	objective2Toggled;
+	static integer	 	radiationDamage;
+	static integer	 	radiationMax;
+	static boolean		radiationstormwarning;
+	static boolean		radiationstormwarning2; 
+	static WorldPosition	reactorPosition;
+//	static WorldPosition	MePosition;
+// endif;
+//=======================================================	
+
+//=======================================================
+// if (wmxid == 4721) then
+	static integer					AobjectID;
+	static integer					BobjectID;
+	static integer					CobjectID;
+	static integer					DobjectID;
+	static integer					EobjectID;
+	static integer					FobjectID;
+	static integer					AgenID;
+	static integer					BgenID;
+	static integer					CgenID;
+	static integer					DgenID;
+	static integer					EgenID;
+	static integer					FgenID;	
+	static WorldPosition		ASpot;
+	static WorldPosition		BSpot;
+	static WorldPosition		CSpot;
+	static WorldPosition		DSpot;
+	static WorldPosition		ESpot;
+	static WorldPosition		FSpot;
+	static boolean				waitover;
+// endif;
+//=======================================================	
+
+//=======================================================
+// if (wmxid == 4722) then
+//	static integer					AobjectID;
+//	static integer					BobjectID;
+//	static integer					BgenID;
+//	static WorldPosition			ASpot;
+//	static WorldPosition			BSpot;
+//	static boolean					waitover;
+// endif;
+//=======================================================	
+
+//=======================================================	
+function Init;
+
+    	code
+        		#include_ "UBInit.abi"
+
+If (wmxid == 4713) then
+		 FreeWillMode = STOPPED;
+else
+		FreeWillMode = NORMAL;
+endif;
+		PlayerTarget = 0;
+        
+		IdentifySensorContactsOFF;
+		MoveToEngageOFF;
+		SetCurrentTargetMod(3.0);
+		SetConcentrateFireMod(1.5);
+		SetEngageRadius(400.0);			//wolfman(R37)
+		SetDisengageRadius(400.0);	//wolfman(R37)
+		SetGuardMod(50.0);	// 10
+		SetSpeed(RUN);
+		SetNotTargetingMod(0.0);
+
+		KludgeHandleGuard = FALSE;
+		KludgePlayerTarget = FALSE;
+		StopCounter = 0;
+		StopTime = 0.0;
+		lastHelpRequestTime = -100.0;
+		returnState = RETURN_STATE_FALSE;
+		returnPosition[0] = 0.0;
+		returnPosition[1] = 0.0;
+		
+		areaNotScaned = TRUE; //wolfman(by magic)(R37)
+
+//=======================================================
+ if (wmxid == 9999) then
+//	setpilotwounds(-1,random(6));			// TESTING ONLY
+	damagemecharmor(-1);					// TESTING ONLY
+	setpilotwounds(-1,4);						// TESTING ONLY
+ endif;
+//=======================================================	
+		
+//=======================================================	
+if ((wmxid == 4712) OR (wmxid == 4717) OR (wmxid == 4720) OR (wmxid == 4721) OR (wmxid == 4722)) then
+		rwPUStartWait	= 20;
+		PUDelay			= -1;
+		PUpTime			= false;
+	endif; 
+//=======================================================	
+if (wmxid == 4719) then
+		rwPUStartWait		= 3;
+		PUDelay			= -1;
+		PUpTime			= false;
+	endif; 	
+//=======================================================	
+
+//=======================================================	
+if (wmxid == 4715) then
+		Me 								= getId;
+		objectiveToTrigger		= 20;
+		objectiveToggled			= FALSE;
+		shutdownA 					= FALSE;
+		shutdownB 					= FALSE;
+		shutdowncenterA[0]		= 3648;
+		shutdowncenterA[1]		= -5994;
+		shutdowncenterB[0]		= -832;
+		shutdowncenterB[1]		= -6080;
+	endif; 
+//=======================================================	
+
+//=======================================================	
+	if (wmxid == 4718) then
+		Me 								= getId;
+		objectiveToTrigger		= 32;
+		objectiveToggled			= FALSE;
+		objective2ToTrigger		= 4;
+		objective2Toggled		= FALSE;
+		shutdownC 					= FALSE;
+		shutdowncenterC[0]	= -5440;
+		shutdowncenterC[1]	= -8640;
+		shutdowncenterC[2]	= 0;
+	endif; 
+//=======================================================	
+
+//=======================================================	
+	if (wmxid == 4721) then
+		Me 	= getId;
+		AobjectID = 113435;
+		BobjectID = 20012;
+		CobjectID = 452435;
+		DobjectID = 458915;
+		EobjectID = 173372;
+		FobjectID = 380828;		
+		AgenID = 110554;
+		BgenID = 20728;
+		CgenID = 452439;
+		DgenID = 458919;
+		EgenID = 174096;
+		FgenID = 380824;	
+		ASpot[0] = 11072;
+		ASpot[1] = 8896;
+		BSpot[0] = -12096;
+		BSpot[1] = 14400;
+		CSpot[0] = 5952;
+		CSpot[1] = -11200;
+		DSpot[0] = 5952;
+		DSpot[1] = -11584;
+		ESpot[0] = -12096;
+		ESpot[1] = 5312;
+		FSpot[0] = -8000;
+		FSpot[1] = -6976;		
+		waitover 	= TRUE;
+	endif; 
+//=======================================================	
+
+//=======================================================	
+	if (wmxid == 4722) then
+		Me 	= getId;
+		AobjectID = 117536;
+		BobjectID = 461207;
+		AgenID = 118260;
+		BgenID = 464087;
+		ASpot[0] = 1728;
+		ASpot[1] = 8640;
+		BSpot[0] = 11584;
+		BSpot[1] = -11712;
+		waitover 	= TRUE;
+	endif; 
+//=======================================================	
+
+//=======================================================	
+	if (wmxid == 4723) then
+		Me 	= getId;
+		reactorPosition[0] 	= 3349;;
+		reactorPosition[1] 	= -234;
+		rwPUStartWait			= 15;
+		PUDelay					= -1;
+		PUpTime					= false;
+		radiationDamage 	= 0;
+		radiationMax			= 0;
+		radiationstormwarning = FALSE;
+		radiationstormwarning2 = FALSE;
+		
+	endif; 
+//=======================================================	
+
+
+
+		fueloff = FALSE;
+
+endfunction;
+
+//==================================================================
+
+function hasPlayerOrder : boolean;
+
+	var
+
+		integer				orderCode;
+		real					orderTime;
+		integer[40]		orderParams;
+		
+	code
+
+		orderCode = getTacOrder(-1, orderTime, orderParams);
+		if (orderParams[17] <> 0) then
+			return(true);
+		endif;
+		return((orderCode <> TACTICAL_ORDER_NONE) and ((orderParams[1] == ORDER_ORIGIN_PLAYER) or (orderParams[5] == 1)));
+
+endfunction;
+
+//==================================================================
+
+function hasPlayerAttackOrder : boolean;
+
+	var
+
+		integer				orderCode;
+		real					orderTime;
+		integer[40]		orderParams;
+		
+	code
+
+		orderCode = getTacOrder(-1, orderTime, orderParams);
+		if (orderParams[17] == 3) then
+			return(true);
+		endif;
+		if ((orderCode == TACTICAL_ORDER_ATTACK_OBJECT) or (orderCode == TACTICAL_ORDER_ATTACK_POINT)) then
+			if ((orderParams[1] == ORDER_ORIGIN_PLAYER) or (orderParams[5] == 1)) then
+				return(true);
+			endif;
+		endif;
+		return(false);
+
+endfunction;
+
+//==================================================================
+
+function handleTargetOfWeaponFire;
+
+	var
+		IntList			triggers;
+		integer		numAttacks;
+		integer		AttClass;
+		integer		curTarget;
+		real			distanceToAttacker;
+		real[3]			attackerPos;
+		real[3]			myPos;
+		integer		i;
+		char[128]		dstring;
+
+	code
+
+		dstring = "Player handleTargetOfWF: ";
+		concat(dstring, getID);
+		mcprint(dstring);
+
+		numAttacks = getAlarmTriggers(triggers);
+		if (isTeamCapturing(objectSide(-1), triggers[0], 0)) then
+			return;
+		endif;
+
+		if (lastHelpRequestTime < (getTime - 20.0)) then
+			lastHelpRequestTime = getTime;
+//			if ((getIntegerMemory(0) == 1)) then
+				//distanceToAttacker = distanceToObject(-1, triggers[0]);
+				getObjectPosition(triggers[0], attackerPos);
+				getObjectPosition(-1, myPos);
+				requestHelp(triggers[0], myPos, 200.0, attackerPos, 300.0, 0);
+				
+//			endif;
+		endif;
+
+		curTarget = getTarget(-1);
+		if (curTarget == 0) then
+			if (not hasPlayerOrder) then
+				mcprint("     attacked!");
+				orderAttackObject(triggers[0], 1, 0, -1, true);
+				//if (returnState == RETURN_STATE_FALSE) then
+				//	getObjectPosition(-1, returnPosition);
+				//endif;
+				//returnState = RETURN_STATE_TRUE;
+			else
+				if (not hasPlayerAttackOrder) then
+						setTarget(-1, triggers[0]);
+				endif;
+			endif;
+		endif;
+
+endfunction;
+
+//==================================================================
+
+function handleHitByWeaponFire;
+
+	var
+		IntList		triggers;
+		integer		numAttacks;
+		integer		AttClass;
+		char[80]	dstring;
+
+	code
+
+		numAttacks = getAlarmTriggers(triggers);
+		setIntegerMemory(I_HITS,getIntegerMemory(I_HITS) + numAttacks);
+
+		if (triggers[0] == -2) then // Mine
+			dstring = "Plyr.handleHitByWF (orderwait): ";
+			concat(dstring, getID);
+			mcprint(dstring);
+			CurTacCode = getTacORder(-1, time, tacOrderParams);
+			if ((CurTacCode == TACTICAL_ORDER_MOVETO_POINT) OR (CurTacCode == TACTICAL_ORDER_ATTACK_OBJECT)) then
+				if (tacOrderParams[7] <> 1) then
+					orderWait(0.0,FALSE);
+				endif;
+			else
+				orderWait(0.0,FALSE); // Stop moving, don't clear target
+			endif;
+			return;
+		else
+			if (triggers[0] == -3) then // Artillery or Airstrike
+				playSpeech(CUR_OBJECT_ID,RADIO_UNDER_AIRSTRIKE);
+				return;
+			endif;
+		endif;
+
+/*
+		if (getTarget(CUR_OBJECT_ID) == 0) then
+			AttClass = ObjectClass(triggers[0]);
+			if ((AttClass == MECH_CLASS) OR (AttClass == VEHICLE_CLASS) OR (AttClass == ELEMENTAL_CLASS) OR (AttClass == TURRET_CLASS)) then
+				if (objectSide(triggers[0]) <> objectSide(Me)) then
+					setTarget(CUR_OBJECT_ID,triggers[0]);
+				endif;
+			endif;
+		endif;
+*/
+
+endfunction;
+
+//==================================================================
+
+function handleKilledTarget;
+
+	var
+
+		real[3]		myPos;
+		integer		targetID;
+		integer		victimID;
+
+	code
+
+		targetID = getTarget(-1);
+		if (targetID == 0) then
+			getObjectPosition(-1, myPos);
+			victimID = requestTarget(myPos, 300.0);
+			if (victimID <> 0) then
+				if (not hasPlayerOrder) then
+					orderAttackObject(victimID, 1, 0, -1, true);
+					//if (returnState == RETURN_STATE_FALSE) then
+					//	getObjectPosition(-1, returnPosition);
+					//endif;
+					//returnState = RETURN_STATE_TRUE;
+				else
+					if (not hasPlayerAttackOrder) then
+						setTarget(-1, victimID);
+					endif;
+				endif;
+			endif;
+		endif;
+
+endfunction;
+
+//==================================================================
+
+function handleAttackOrder;
+
+	var
+		IntList				triggers;
+		integer				targetID;
+		integer				playerTargetID;
+		integer				numAttacks;
+		integer				AttClass;
+		boolean				attackIt;
+		real[3]				targetPos;
+		char[90]			dstring;
+
+	code
+
+		targetID = getTarget(-1);
+		attackIt = true;
+/*		//===============================
+		if (masterdead == TRUE) then
+			attackIt = FALSE;
+			targetID = 0;
+			masterdead = FALSE;
+		endif;
+		//================================
+*/		
+		dstring = "Player handleAttackOrder: ";
+		concat(dstring, getID);
+		mcprint(dstring);
+
+		numAttacks = getAlarmTriggers(triggers);
+
+		//if (returnState == RETURN_STATE_NOW) then
+			//-----------------------------------------------------------------------------
+			// already returning to returnPosition. If we're within a decent engage radius,
+			// then we'll take the new target...
+		//	if (distanceToObject(-1, triggers[0]) > 100.0) then
+		//		return;
+		//	endif;
+		//endif;
+
+		if (targetID == 0) then
+			if (not hasPlayerOrder) then
+				orderAttackObject(triggers[0], 1, 0, -1, true);
+				//if (returnState == RETURN_STATE_FALSE) then
+				//	getObjectPosition(-1, returnPosition);
+				//endif;
+				//returnState = RETURN_STATE_TRUE;
+				mcprint("     orderAttackObj");
+			else
+				if (not hasPlayerAttackOrder) then
+					setTarget(-1, triggers[0]);
+					mcprint("     setTarget");
+				endif;
+			endif;
+		endif;
+
+endfunction;
+
+//==================================================================
+// HANDLE NO MOVE PATH
+//==================================================================
+function handleNoMovePath;
+
+	var
+		IntList		triggers;
+
+	code
+
+		getAlarmTriggers(triggers);
+/*
+		if (triggers[0] == Rtn_NO_SR_PATH) then // SHORT_RANGE_PATH_BLOCKED
+			setIntegerMemory(I_MOVE_STATUS,NOT_MOVING);
+			playSpeech(CUR_OBJECT_ID,RADIO_MOVE_BLOCKED);
+		else
+			if (triggers[0] == Rtn_LR_FROM_BLOCKED) then
+				print("Long Range Path from Blocked Tile");
+				setIntegerMemory(I_MOVE_STATUS,MOVE_IMPOSSIBLE);
+				playSpeech(CUR_OBJECT_ID,RADIO_MOVE_BLOCKED);
+			else
+				if (triggers[0] == Rtn_CLOSE_ENOUGH) then
+					print("Close Enough");
+					setIntegerMemory(I_MOVE_STATUS,NOT_MOVING);
+				else
+					if (triggers[0] == Rtn_INVALID_GOAL) then
+						print("Invalid Goal");
+						setIntegerMemory(I_MOVE_STATUS,MOVE_IMPOSSIBLE);
+						playSpeech(CUR_OBJECT_ID,RADIO_MOVE_BLOCKED);
+					else
+						if (triggers[0] == Rtn_TIME_OUT) then
+							print("Time Out");
+							setIntegerMemory(I_MOVE_STATUS,NOT_MOVING);
+							//playSpeech(CUR_OBJECT_ID,RADIO_MOVE_BLOCKED);
+						else
+							setIntegerMemory(I_MOVE_STATUS,MOVE_IMPOSSIBLE);
+							//playSpeech(CUR_OBJECT_ID,RADIO_MOVE_BLOCKED);
+						endif;
+					endif;
+				endif;
+			endif;
+		endif;
+*/
+endfunction;
+
+
+//==================================================================
+
+function handlePlayerOrder;
+
+	var
+
+		integer			numTriggers;
+		IntList			triggers;
+		integer			ObjClass;
+		position		dapoint;
+
+	code
+
+		//assert(false,86,"HandlePlayerOrder");
+		numTriggers = getAlarmTriggers(triggers);
+		CurTacCode = triggers[0];
+		print("Got Order");
+		Print(CurTacCode);
+		Me = GetId;
+
+		setIntegerMemory(I_MOVE_STATUS,NOT_MOVING);
+
+	If (wmxid == 4713) then
+		 FreeWillMode = STOPPED;
+	else
+		FreeWillMode = NORMAL;
+	endif;
+//		KludgePlayerTarget = FALSE;
+		KludgeHandleGuard = FALSE;
+
+		returnState = RETURN_STATE_FALSE;
+
+		switch (CurTacCode)
+
+		case TACTICAL_ORDER_ATTACK_OBJECT :
+
+				KludgePlayerTarget = TRUE;
+				
+		endcase;
+				
+
+		case TACTICAL_ORDER_GUARD :
+
+				KludgeHandleGuard = TRUE;
+				PlayerTarget = 0;
+
+				if (StopCounter > 5) then
+					dapoint[0] = 0.0;
+					dapoint[1] = 0.0;
+					dapoint[2] = 0.0;
+					setRevealed(objectside(Me),10000.0,dapoint);
+					StopCounter = 0;
+				endif;
+
+		endcase;
+
+		case TACTICAL_ORDER_STOP :
+
+			
+			If (wmxid == 4713) then
+				 FreeWillMode = STOPPED;
+			else
+				FreeWillMode = NORMAL;
+			endif;
+
+				SetTarget(Me,0);
+				PlayerTarget = 0;
+				if (gettime - 1.0 < StopTime) then
+					print("Got it.");
+					print(StopCounter);
+					StopCounter = StopCounter + 1;
+				else
+					StopCounter = 1;
+					StopTime = gettime;
+				endif;
+
+
+		endcase;
+
+		case TACTICAL_ORDER_HOLD_FIRE :
+
+			If (wmxid == 4713) then
+				 FreeWillMode = STOPPED;
+			else
+				FreeWillMode = NORMAL;
+			endif;
+
+				SetTarget(Me,0);
+				PlayerTarget = 0;
+				print("HoldFire");
+				if (gettime - 1.0 < StopTime) then
+					print("Got it.");
+					print(StopCounter);
+					StopCounter = StopCounter + 1;
+				else
+					StopCounter = 1;
+					StopTime = gettime;
+				endif;
+
+
+		endcase;
+
+		endswitch;
+
+		if (CurTacCode <> TACTICAL_ORDER_GUARD) then
+			SetEngageRadius(400.0);			//wolfman(R37)
+			SetDisengageRadius(400.0);	//wolfman(R37)
+			SetNotTargetingMod(0.0);
+			SetSpeed(WALK);
+		endif;
+
+		// if I get an order from the player, assume the player is happy with my target selection
+		if ((CurTacCode <> TACTICAL_ORDER_ATTACK_OBJECT) AND (getTarget(CUR_OBJECT_ID) > 0)) then
+			PlayerTarget = getTarget(Me);
+		endif;
+
+endfunction;
+
+//==================================================================
+// Main Code
+//==================================================================
+
+	code
+
+   		  initOrders;
+
+		debugS = "retPos: (";
+		concat(debugS, returnPosition[0]);
+		concat(debugS, ",");
+		concat(debugS, returnPosition[1]);
+		concat(debugS, ") ");
+		if (returnState == RETURN_STATE_FALSE) then
+			concat(debugS, "--");
+		else
+			if (returnState == RETURN_STATE_TRUE) then
+				concat(debugS, "TR ");
+			else
+				concat(debugS, "!! ");
+			endif;
+			distanceToReturnPosition = distanceToPosition(-1, returnPosition);
+			concat (debugS, distanceToReturnPosition);
+		endif;
+		setDebugString(-1, 4, debugS);
+
+//====================================================================	
+if ((wmxid == 4712) OR (wmxid ==4717)) then
+	getObjectPosition(-1, curryPosition);
+	if (curryposition[2]< -200) then
+		playWave("data\sound\systemalert.WAV",-1);	
+		curTime = getTime;
+		PUpTime 	= True;
+		if ((PUpTime) and (PUDelay == -1)) then
+			PUDelay = getTime + rwPUStartWait;
+		endif;
+		if (PUDelay > 0) and (getTime > PUDelay) then
+			coreEject;	
+		//	corePower(false);				
+		endif;
+	endif;
+	if (curryposition[2]> -200) then
+		PUpTime 	= False;
+		PUDelay = -1;
+	endif;	
+endif;
+//====================================================================	
+if (wmxid == 4720) then
+	myBR = getCurrentBRValue(CUR_OBJECT_ID);
+	if (myBR < 9999) then
+		getObjectPosition(-1, curryPosition);
+		if (curryposition[2]< 250) then
+			playWave("data\sound\systemalert.WAV",-1);	
+			curTime = getTime;
+			PUpTime 	= True;
+			if ((PUpTime) and (PUDelay == -1)) then
+				PUDelay = getTime + rwPUStartWait;
+			endif;
+			if (PUDelay > 0) and (getTime > PUDelay) then
+				coreEject;	
+			//	corePower(false);				
+			endif;
+		endif;
+		if (curryposition[2]> 250) then
+			PUpTime 	= False;
+			PUDelay = -1;
+		endif;
+	endif;		
+endif;
+//====================================================================	
+if (wmxid == 4719) then
+	getObjectPosition(-1, curryPosition);
+	if (curryposition[2]<=0) then
+		playWave("data\sound\systemalert.WAV",-1);	
+		curTime = getTime;
+		PUpTime 	= True;
+		if ((PUpTime) and (PUDelay == -1)) then
+			PUDelay = getTime + rwPUStartWait;
+		endif;
+		if (PUDelay > 0) and (getTime > PUDelay) then
+			coreEject;	
+		//	corePower(false);				
+		endif;
+	endif;
+	if (curryposition[2]>0) then
+		PUpTime 	= False;
+		PUDelay = -1;
+	endif;	
+endif;
+//====================================================================	
+if (wmxid == 4721) then
+	if ((distancetoObject(Me,BobjectID) < 20.0) AND waitover AND (objectside(BobjectID) == PLAYER_FORCE) AND (getobjectdamage(BobjectID) < 100) AND (getobjectdamage(BgenID) < 100) AND (objectside(CobjectID) == PLAYER_FORCE) AND (getobjectdamage(CobjectID) < 100) AND (getobjectdamage(CgenID) < 100)) then
+		OrderWait(0.0,TRUE);
+		teleporttopoint(Me, CSpot);
+		playWave("data\sound\teleport.WAV",-1);	
+		waitover = FALSE;
+	endif;
+
+	if ((distancetoObject(Me,AobjectID) < 20.0) AND waitover AND (objectside(AobjectID) == PLAYER_FORCE) AND (getobjectdamage(AobjectID) < 100) AND (getobjectdamage(AgenID) < 100) AND (objectside(DobjectID) == PLAYER_FORCE) AND (getobjectdamage(DobjectID) < 100) AND (getobjectdamage(DgenID) < 100)) then
+		OrderWait(0.0,TRUE);
+		teleporttopoint(Me, DSpot);
+		playWave("data\sound\teleport.WAV",-1);	
+		waitover = FALSE;
+	endif;
+
+		if ((distancetoObject(Me,DobjectID) < 20.0) AND waitover AND (objectside(DobjectID) == PLAYER_FORCE) AND (getobjectdamage(DobjectID) < 100) AND (getobjectdamage(DgenID) < 100) AND (objectside(AobjectID) == PLAYER_FORCE) AND (getobjectdamage(AobjectID) < 100) AND (getobjectdamage(AgenID) < 100)) then
+		OrderWait(0.0,TRUE);
+		teleporttopoint(Me, ASpot);
+		playWave("data\sound\teleport.WAV",-1);	
+		waitover = FALSE;
+	endif;
+
+	if ((distancetoObject(Me,CobjectID) < 20.0) AND waitover AND (objectside(CobjectID) == PLAYER_FORCE) AND (getobjectdamage(CobjectID) < 100) AND (getobjectdamage(CgenID) < 100) AND (objectside(BobjectID) == PLAYER_FORCE)  AND (getobjectdamage(BobjectID) < 100) AND (getobjectdamage(BgenID) < 100)) then
+		OrderWait(0.0,TRUE);
+		teleporttopoint(Me, BSpot);
+		playWave("data\sound\teleport.WAV",-1);	
+		waitover = FALSE;
+	endif;
+
+	if ((distancetoObject(Me,EobjectID) < 20.0) AND waitover AND (objectside(EobjectID) == PLAYER_FORCE) AND (getobjectdamage(EobjectID) < 100) AND (getobjectdamage(EgenID) < 100) AND (objectside(FobjectID) == PLAYER_FORCE)  AND (getobjectdamage(FobjectID) < 100) AND (getobjectdamage(FgenID) < 100)) then
+		OrderWait(0.0,TRUE);
+		teleporttopoint(Me, FSpot);
+		playWave("data\sound\teleport.WAV",-1);	
+		waitover = FALSE;
+	endif;
+	if ((distancetoObject(Me,FobjectID) < 20.0) AND waitover AND (objectside(FobjectID) == PLAYER_FORCE) AND (getobjectdamage(FobjectID) < 100) AND (getobjectdamage(FgenID) < 100) AND (objectside(EobjectID) == PLAYER_FORCE)  AND (getobjectdamage(EobjectID) < 100) AND (getobjectdamage(EgenID) < 100)) then
+		OrderWait(0.0,TRUE);
+		teleporttopoint(Me, ESpot);
+		playWave("data\sound\teleport.WAV",-1);	
+		waitover = FALSE;
+	endif;	
+
+	
+	if(waitover == FALSE) then	
+		curTime = getTime;
+		PUpTime 	= True;
+		if ((PUpTime) and (PUDelay == -1)) then
+				PUDelay = getTime + rwPUStartWait;
+		endif;
+		if (PUDelay > 0) and (getTime > PUDelay) then
+			waitover = TRUE;
+			PUpTime 	= False;
+			PUDelay = -1;
+		endif;
+	endif;
+	
+	If  (objectside(AobjectID) == PLAYER_FORCE) AND (objectside(DobjectID) == CLAN_FORCE) then
+		objectchangesides(DobjectID, 0);
+	endif;
+	If  (objectside(BobjectID) == PLAYER_FORCE) AND (objectside(CobjectID) == CLAN_FORCE) then
+		objectchangesides(CobjectID, 0);	
+	endif;
+	If  (objectside(CobjectID) == PLAYER_FORCE) AND (objectside(BobjectID) == CLAN_FORCE) then
+		objectchangesides(BobjectID, 0);	
+	endif;
+	If  (objectside(DobjectID) == PLAYER_FORCE) AND (objectside(AobjectID) == CLAN_FORCE) then
+	objectchangesides(AobjectID, 0);
+	endif;
+		If  (objectside(EobjectID) == PLAYER_FORCE) AND (objectside(FobjectID) == CLAN_FORCE) then
+		objectchangesides(FobjectID, 0);	
+	endif;
+	If  (objectside(FobjectID) == PLAYER_FORCE) AND (objectside(EobjectID) == CLAN_FORCE) then
+	objectchangesides(EobjectID, 0);
+	endif;		
+	
+endif;
+//====================================================================	
+
+//====================================================================	
+if (wmxid == 4722) then
+	if ((distancetoObject(Me,BobjectID) < 20.0) AND waitover AND (objectside(BobjectID) == PLAYER_FORCE) AND (getobjectdamage(BobjectID) < 100) AND (getobjectdamage(BgenID) < 100) AND (objectside(AobjectID) == PLAYER_FORCE) AND (getobjectdamage(AobjectID) < 100) AND (getobjectdamage(AgenID) < 100)) then
+		OrderWait(0.0,TRUE);
+		teleporttopoint(Me, ASpot);
+		playWave("data\sound\teleport.WAV",-1);	
+		waitover = FALSE;
+	endif;
+
+
+	if ((distancetoObject(Me,AobjectID) < 20.0) AND waitover AND (objectside(AobjectID) == PLAYER_FORCE) AND (getobjectdamage(AobjectID) < 100) AND (getobjectdamage(AgenID) < 100) AND (objectside(BobjectID) == PLAYER_FORCE)  AND (getobjectdamage(BobjectID) < 100) AND (getobjectdamage(BgenID) < 100)) then
+		OrderWait(0.0,TRUE);
+		teleporttopoint(Me, BSpot);
+		playWave("data\sound\teleport.WAV",-1);	
+		waitover = FALSE;
+	endif;
+
+	
+	if(waitover == FALSE) then	
+		curTime = getTime;
+		PUpTime 	= True;
+		if ((PUpTime) and (PUDelay == -1)) then
+				PUDelay = getTime + rwPUStartWait;
+		endif;
+		if (PUDelay > 0) and (getTime > PUDelay) then
+			waitover = TRUE;
+			PUpTime 	= False;
+			PUDelay = -1;
+		endif;
+	endif;
+	
+	If  (objectside(AobjectID) == PLAYER_FORCE) AND (objectside(BobjectID) == CLAN_FORCE) then
+		objectchangesides(BobjectID, 0);
+	endif;
+	If  (objectside(BobjectID) == PLAYER_FORCE) AND (objectside(AobjectID) == CLAN_FORCE) then
+		objectchangesides(AobjectID, 0);	
+	endif;
+
+endif;
+//====================================================================	
+
+//====================================================================	
+if (wmxid == 4723) then
+
+if(distancetoposition(Me, reactorPosition) > 2100) then
+		radiationstormwarning =  FALSE;
+		radiationstormwarning2 = FALSE;
+	endif;
+if((distancetoposition(Me, reactorPosition) <= 2050)  AND (objectstatus(Me) == 0) AND (radiationstormwarning == False) )  then
+			playWave("radiation1",1);
+			radiationstormwarning = TRUE;
+endif;			
+
+if((distancetoposition(Me, reactorPosition) <= 2000) AND (distancetoposition(Me, reactorPosition) > 1200) AND (objectstatus(Me) == 0))  then
+						playWave("lowdosis",1);
+						radiationDamage=1;
+						if (radiationMax < radiationDamage) then
+						radiationMax = radiationDamage;
+						endif;
+						 setpilotwounds(Me,radiationMax);
+	endif;
+	
+	if((distancetoposition(Me, reactorPosition) <= 1200) AND (distancetoposition(Me, reactorPosition) > 900) AND (objectstatus(Me) == 0))  then
+						playWave("lowdosis",1);
+						radiationDamage=2;
+						if (radiationMax < radiationDamage) then
+						radiationMax = radiationDamage;
+						endif; 
+						setpilotwounds(Me,radiationMax);
+	endif;
+			
+	if((distancetoposition(Me, reactorPosition) <= 900) AND (distancetoposition(Me, reactorPosition) > 600) AND (objectstatus(Me) == 0)) then
+					
+						playWave("mediumdosis",1);
+						radiationDamage=3;
+						if (radiationMax < radiationDamage) then
+						radiationMax = radiationDamage;
+						endif; 
+						setpilotwounds(Me,radiationMax);
+	endif;
+		
+if((distancetoposition(Me, reactorPosition) <= 650)  AND (objectstatus(Me) == 0) AND (radiationstormwarning2 == False) )  then
+			playWave("radiation2",1);
+			radiationstormwarning2 = TRUE;
+endif;
+	
+if((distancetoposition(Me, reactorPosition) <= 600) AND (distancetoposition(Me, reactorPosition) > 300)AND (objectstatus(Me) == 0)) then
+		
+						playWave("highdosis",1);
+						radiationDamage=4;
+						if (radiationMax < radiationDamage) then
+						radiationMax = radiationDamage;
+						endif; 
+						setpilotwounds(Me,radiationMax);
+						PUDelay					= -1;
+						PUpTime					= false;
+	endif;
+	
+	if ((distancetoposition(Me, reactorPosition) <= 300) AND (objectstatus(Me) == 0)) then
+				
+						playWave("deadlydosis",1);
+						
+						If( PUpTime 	==  FALSE) then;
+						   radiationDamage=5;
+						if (radiationMax < radiationDamage) then
+						radiationMax = radiationDamage;
+						endif; 
+						setpilotwounds(Me,radiationMax);
+						endif;
+						
+						curTime = getTime;
+						PUpTime 	= TRUE;
+						
+						if ((PUpTime) and (PUDelay == -1)) then
+							PUDelay = getTime + rwPUStartWait;
+						endif;
+						
+						if (PUDelay > 0) and (getTime > PUDelay) then
+							corePower(FALSE);
+							setpilotwounds(Me,6);
+							coreEject;
+					
+						endif;
+	endif;
+endif;
+//====================================================================	
+
+	
+		//assert(false,86,"below initOrders");	
+		if (KludgePlayerTarget) then
+			PlayerTarget = getTarget(CUR_OBJECT_ID);
+			KludgePlayerTarget = FALSE;
+		endif;
+	
+		if (KludgeHandleGuard) then
+	
+			If (wmxid == 4713) then
+		 SetEngageRadius(100.0);
+	else
+		SetEngageRadius(400.0);	//wolfman(R37)
+	endif;
+
+	
+			SetDisengageRadius(450.0);	//wolfman(R37)
+	    SetNotTargetingMod(0.5);
+			//--------------
+			// until Run can issued with gaurd order
+			SetSpeed(RUN);
+	
+			CurTacCode = getTacORder(-1, time, tacOrderParams);
+	
+			//-----------------
+			// if run can ever be issued with guard order
+			//if (tacOrderParams[7] == 1) then
+			//	SetSpeed(RUN);
+			//else
+			//	SetSpeed(WALK);
+			//endif;
+	
+			if (tacOrderParams[3] == 0) then								
+				FreeWillMode = GUARD_POINT;
+				Sentry(tacOrderParams[9],tacOrderParams[10]);
+				KludgeHandleGuard = FALSE;
+				return(1);
+			else
+				ObjClass = ObjectClass(tacOrderParams[3]);
+				if ((ObjClass == MECH_CLASS) OR (ObjClass == VEHICLE_CLASS) OR (ObjClass == ELEMENTAL_CLASS)) then
+					FreeWillMode = GUARD_MOVER;
+					initOrders;
+					MyObject = tacOrderParams[3];
+	
+					SelectContact(1,MyObject);
+					getContactRelativePosition(MyRange, MyAngle);
+					print("MyAngle");
+					print(MyAngle);
+	
+					Guard(MyObject);
+					//Escort(MyObject,MyAngle);
+	
+					KludgeHandleGuard = FALSE;
+					return(1);
+				else
+					FreeWillMode = GUARD_OBJECT;
+					initOrders;
+					MyObject = tacOrderParams[3];
+					Guard(MyObject);
+					KludgeHandleGuard = FALSE;
+					return(1);
+				endif;
+			endif;
+					
+			KludgeHandleGuard = FALSE;
+		endif;
+//=======================================================		
+
+//=======================================================
+	if (wmxid == 4714) then
+
+	//	if ((checkObjectiveStatus(objectiveToTrigger) == 1) AND (objectiveToggled == false) AND (Me == 2050)) then 
+		if ((checkObjectiveStatus(objectiveToTrigger) == 1) AND (objectiveToggled == false) AND (Me == 512)) then 
+			
+			If (count<=20) then
+				corepower(false);
+				count = count+1;
+			else
+				coreeject;
+				objectiveToggled = TRUE;
+			endif;		
+		endif;
+	endif;
+//=======================================================
+
+//=======================================================
+	if (wmxid == 4715) then
+		getobjectposition(Me,Meposition);
+
+	if (distanceToPosition(Me,shutdowncenterA) < 360) then
+			shutdownA = true;
+		else
+			shutdownA = false;
+		endif;
+		if (distanceToPosition(Me,shutdowncenterB) < 310) then
+			shutdownB = true;
+		else
+			shutdownB = false;
+		endif;
+					
+		if ((checkObjectiveStatus(objectiveToTrigger) == 0) AND (objectiveToggled == false)  AND ((shutdownA == true) OR (shutdownB == true))) then 
+			corepower(false);
+		endif;
+				
+		if ((checkObjectiveStatus(objectiveToTrigger) == 1) AND (objectiveToggled == false)) then
+			corepower(true);
+			objectiveToggled = true;
+		endif;	
+	endif;
+//=======================================================
+
+//=======================================================
+if (wmxid == 4718) then
+
+	if ((checkObjectiveStatus(objectiveToTrigger) == 1) AND (objectiveToggled == false)) then
+		objectiveToggled = TRUE;
+	endif;
+		if ((checkObjectiveStatus(objective2ToTrigger) == 1) AND (objective2Toggled == false)) then
+		objective2Toggled = TRUE;
+	endif;		
+
+	getobjectposition(Me, Meposition);
+	if ((distanceToPosition(Me,shutdowncenterC) < 150) AND (objective2Toggled == FALSE) AND (objectiveToggled == FALSE)) then
+			shutdownC = TRUE;
+	endif;
+	if ((distanceToPosition(Me,shutdowncenterC) < 400) AND (objective2Toggled == TRUE) AND (objectiveToggled == FALSE)) then
+			shutdownC = TRUE;
+	endif;
+	if (objectiveToggled == TRUE) then
+			shutdownC = FALSE;
+	endif;
+
+					
+	if (shutdownC == TRUE) then 
+			corepower(false);
+	else
+			corepower(true);
+	endif;
+endif;
+//=======================================================
+	
+
+	
+	//	if (objectSide(getTarget(CUR_OBJECT_ID)) == objectSide(Me)) then
+	//		setTarget(Me,0);
+	//		PlayerTarget = 0;
+	//	endif;
+	
+		if (returnState == RETURN_STATE_TRUE) then
+			if (distanceToPosition(-1, returnPosition) > 275.0) then
+				//------------------------------------------
+				// return, because we've gone too far out...
+				returnState = RETURN_STATE_NOW;
+			else
+				if (getTarget(-1) == 0) then
+					returnState = RETURN_STATE_NOW;
+				endif;
+			endif;
+		endif;
+		if (returnState == RETURN_STATE_NOW) then
+			orderMoveTo(returnPosition, RUN);
+			distanceToReturnPosition = distanceToPosition(-1, returnPosition);
+			if (distanceToReturnPosition > 100.0) then
+				return(1);
+			endif;
+			if (distanceToReturnPosition < 20.0) then
+				returnState = RETURN_STATE_FALSE;
+			endif;
+		endif;
+	
+		switch (FreeWillMode)
+	
+			case NORMAL :
+				
+			// curTacCode = getTacOrder(-1, time, tacOrderParams);
+
+			if (getTarget(CUR_OBJECT_ID) == 0) then
+				PlayerTarget = 0;
+			endif;
+
+			if (PlayerTarget > 0) then
+				if (isDead(PlayerTarget)) then
+					PlayerTarget = 0;
+				endif;
+			endif;
+
+			if (PlayerTarget == 0) then
+				FireAtWill; // FireAtWill;
+			endif;
+			//=====================================	
+			//wolfman(by magic)(start)(R37)
+			//=====================================
+			if (autoscan) then	 //(open useAutoscan loop)
+			
+			if (NOT isselected) then
+
+		
+			if (isrefit) then
+				SetSpeed(RUN);
+				autorepairwithinradius(-1,500.0);
+				automedicalwithinradius(-1,500.0);
+			endif;
+	
+
+
+			if (PlayerTarget == 0) then
+			
+			if (((ObjectClass(Me) == MECH_CLASS)  OR (ObjectClass(Me) == VEHICLE_CLASS) ) AND (numenemieswithinradius(-1,700.0) == 0)) then
+
+				if (areaNotScaned) then
+ 					if (scanareacapture(400) == 0) then
+						areaNotScaned = FALSE;
+					endif;
+				else
+					if (needsrefit) then
+						scanarearepair(400.0);
+					else	
+						FireAtWill; // FireAtWill;
+					endif;
+				endif;
+
+			else
+				FireAtWill; // FireAtWill;
+			endif;
+			endif;
+
+	else
+			if (PlayerTarget == 0) then
+				FireAtWill; // FireAtWill;
+			endif;
+		endif;
+	endif;	//(close useAutoscan loop)
+	//===============================
+	//wolfman(by magic)(end)(R37)
+	//===============================
+	
+			endcase;
+	
+			case GUARD_POINT :
+	
+				GuardStatus = Sentry(MyX,MyY);
+				if (GuardStatus <> INCOMPLETE) then
+					FreeWillMode = NORMAL;
+					if (PlayerTarget == 0) then
+						FireAtWill; // FireAtWill;
+					endif;
+				endif;
+	
+				endcase;
+	
+			case GUARD_OBJECT :
+	
+				GuardStatus = Guard(MyObject);
+				if (GuardStatus <> INCOMPLETE) then
+					FreeWillMode = NORMAL;
+					if (PlayerTarget == 0) then
+						FireAtWill; // FireAtWill;
+					endif;
+				endif;
+	
+				endcase;
+	
+			case GUARD_MOVER :
+	
+				// GuardStatus = Escort(MyObject,MyAngle);
+				GuardStatus = Guard(MyObject);
+				if (GuardStatus <> INCOMPLETE) then
+					FreeWillMode = NORMAL;
+					if (PlayerTarget == 0) then
+						FireAtWill; // FireAtWill;
+					endif;
+				endif;
+				
+				endcase;
+	
+			case STOPPED :
+	
+				Print("Stopped.");
+				SetTarget(CUR_OBJECT_ID,0);
+	
+				endcase;
+	
+		endswitch;
+
+		//wolfman(by magic)(start)(R37)
+	
+	if (hasorderfromplayer) then		
+			areaNotScaned = TRUE; 
+		endif;
+
+	//wolfman(by magic)(end)(R37)
+		
+		
+		
+
+		//==================================
+		If (fuelcode == TRUE) then
+			If (fueloff == TRUE) then
+				corePower(FALSE);
+			endif;
+
+			If (fueloff == FALSE) then
+				corePower(TRUE);
+			endif;
+		endif;
+		//==================================
+	
+		//==================================
+		If (repaircode == TRUE) then
+			setIntegerMemory(I_PERMIT_REPAIR, 1);
+			Repair(-1, 500.0);
+			setIntegerMemory(I_HITS,0); 
+		endif;
+		//==================================
+			
+		debugS = "PlyrTrgt=";
+		concat(debugS, PlayerTarget);
+		setDebugString(-1, 3, debugS);
+	
+	    return(1);
+
+//----------------------------------------------------------------------------------------
+
+endmodule.
+
+//==================================================================
