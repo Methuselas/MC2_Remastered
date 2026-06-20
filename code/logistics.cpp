@@ -170,13 +170,17 @@ void Logistics::start (long startMode)
 				// if mission is over, play video then quit when  done
 				if ( LogisticsData::instance->campaignOver() && !MPlayer && !LogisticsData::instance->isSingleMission() )
 				{
-					// CRASH-SOAK harness marker: campaign reached its end. Existing
-					// exit path (final video -> splash) runs as normal; the parent
-					// soak runner time-bounds the final video. Gated on env flag.
+					// CRASH-SOAK harness: campaign reached its end. Under the soak,
+					// terminate cleanly instead of running final-video -> splash ->
+					// main-menu (which would idle until the harness timed out). The
+					// run ends and the parent sees the process exit.
 					if ( std::getenv("MC2_SOAK_AUTOWIN") != nullptr )
 					{
-						printf("[SOAK] campaign-complete\n");
+						printf("[SOAK] campaign-complete -- terminating\n");
 						fflush(stdout);
+						mission->destroy();
+						gos_TerminateApplication();
+						break; // skip final video + splash; clean exit
 					}
 					mission->destroy();
 					playFullScreenVideo( LogisticsData::instance->getFinalVideo() );
