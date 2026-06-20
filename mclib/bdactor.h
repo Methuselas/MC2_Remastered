@@ -332,6 +332,13 @@ class BldgAppearance : public ObjectAppearance
 		long										activityNodeId;
 		long										activityNode1Id;
 
+		// FRAME-JOBS-2F: per-frame stamp set by touchSerialCommit() so touch() (Path B,
+		// terrain object loop) can return early and avoid redundant EmitBakedGpuLightData.
+		// Initialized to 0xFFFFFFFFu to avoid false match on frame 0.
+		// When MC2_FRAME_JOBS_TOUCH=0, touchSerialCommit() is never called and stamp is
+		// never set, so touch() always runs normally — the guard is a no-op in that mode.
+		uint32_t									touchSerialCommitFrame = 0xFFFFFFFFu;
+
  	public:
 
 		virtual void init (AppearanceTypePtr tree = NULL, GameObjectPtr obj = NULL);
@@ -643,6 +650,11 @@ class TreeAppearance : public ObjectAppearance
 		bool										fogLightSet;
 		DWORD										lightRGB;
 		DWORD										fogRGB;
+
+		// FRAME-JOBS-2F: per-frame stamp set by touchSerialCommit() so touch() (Path B,
+		// terrain object loop) can return early and avoid redundant EmitBakedGpuLightData.
+		// See BldgAppearance::touchSerialCommitFrame for full contract.
+		uint32_t									touchSerialCommitFrame = 0xFFFFFFFFu;
 
 	public:
 

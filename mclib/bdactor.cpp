@@ -2820,6 +2820,47 @@ static inline void lbssRecordTree(bool taken, bool blk_idx)
 
 } // namespace (lbss diag)
 
+// ============================================================================
+// FRAME-JOBS-2F: TOUCH-ENTRY-UNIFICATION diagnostics
+// MC2_FRAME_JOBS_TOUCH_DIAG=1 — enable per-300-frame print (independent of lbss diag)
+// Counters are cumulative per-frame accumulators, reset every 300 frames.
+// ============================================================================
+static bool mc2FrameJobsTouchDiagEnabled() {
+    static const bool s_enabled = ParseEnvBool("MC2_FRAME_JOBS_TOUCH_DIAG");
+    return s_enabled;
+}
+
+namespace {
+
+struct TouchEntryDiag {
+    uint32_t frame                    = 0xFFFFFFFFu;
+    uint64_t serial_commit_hits       = 0;  // touchSerialCommit() calls (stamp set)
+    uint64_t legacy_skipped           = 0;  // touch() early-returns (Path B suppressed)
+    uint64_t legacy_ran_nosplit       = 0;  // touch() ran with no prior split commit
+};
+
+static TouchEntryDiag s_touchEntryDiag;
+
+static void touchEntryDiagRollFrame(uint32_t frame)
+{
+    if (!mc2FrameJobsTouchDiagEnabled()) return;
+    if (frame == s_touchEntryDiag.frame) return;
+    if (s_touchEntryDiag.frame != 0xFFFFFFFFu && (s_touchEntryDiag.frame % 300u) == 0u) {
+        fprintf(stderr,
+            "FRAME_JOBS_TOUCH_ENTRY: serial_commit_hits=%llu legacy_skipped=%llu "
+            "double_touch_prevented=%llu legacy_ran_nosplit=%llu\n",
+            (unsigned long long)s_touchEntryDiag.serial_commit_hits,
+            (unsigned long long)s_touchEntryDiag.legacy_skipped,
+            (unsigned long long)s_touchEntryDiag.legacy_skipped,  // same as legacy_skipped
+            (unsigned long long)s_touchEntryDiag.legacy_ran_nosplit);
+        fflush(stderr);
+    }
+    s_touchEntryDiag = TouchEntryDiag{};
+    s_touchEntryDiag.frame = frame;
+}
+
+} // namespace (touch-entry diag)
+
 // [LIGHTSLOT v1] accessor free fns (defined mclib/txmmgr.cpp, global scope).
 extern uint32_t mc2LightSlotBakedHighWater();
 extern uint64_t mc2LightSlotDedupHits();
@@ -4014,6 +4055,21 @@ bool BldgAppearance::IsStaticNow() const
 
 void BldgAppearance::touch()
 {
+	// FRAME-JOBS-2F: if touchSerialCommit() already ran this frame (split path active),
+	// skip redundant Path B work. When MC2_FRAME_JOBS_TOUCH=0, stamp is never set
+	// (0xFFFFFFFFu initial value cannot match any real frame counter).
+	if (mc2FrameJobsTouchDiagEnabled()) {
+		touchEntryDiagRollFrame(g_mc2FrameCounter);
+		if (touchSerialCommitFrame == g_mc2FrameCounter) {
+			++s_touchEntryDiag.legacy_skipped;
+			return;
+		}
+		++s_touchEntryDiag.legacy_ran_nosplit;
+	} else {
+		if (touchSerialCommitFrame == g_mc2FrameCounter)
+			return;
+	}
+
 	// BLDG-TYPE-ANIM-GATE-FIX-1: count touch() calls for newly-eligible pop:
 	// type has animation data, instance is idle (bdAnimationState==-1), and
 	// currently registered (staticReg.registered). Nonzero delta proves fix works.
@@ -4090,6 +4146,16 @@ void BldgAppearance::touchWorkerPrepass()
 // FRAME-JOBS-2D: light-data resubmit; runs serially on main thread after worker join.
 void BldgAppearance::touchSerialCommit()
 {
+	// FRAME-JOBS-2F: stamp this frame unconditionally so touch() (Path B, terrain object
+	// loop) returns immediately. Set BEFORE any early returns including stable-skip:
+	// if stable-skip fires and we return early, the stamp still prevents Path B from
+	// re-doing work that stable-skip correctly decided to omit.
+	touchSerialCommitFrame = g_mc2FrameCounter;
+	if (mc2FrameJobsTouchDiagEnabled()) {
+		touchEntryDiagRollFrame(g_mc2FrameCounter);
+		++s_touchEntryDiag.serial_commit_hits;
+	}
+
 	if (!bldgShape) return;
 	const bool stableLightSkipArmed = mc2StableLightSkipEnabled();
 	const uint64_t currentLightEnvGen = mc2StaticLightEnvironmentGeneration(eye);
@@ -4130,13 +4196,13 @@ void BldgAppearance::touchSerialCommit()
 	// DO NOT remove the else-branch fallback — it handles any frame where light state
 	// changed, needsFullBakeNextFrame, or slot was invalidated.
 	if (mc2LightbridgeStableSkipEnabled() && stableLightSkipArmed) {
-		const bool indexValid = (staticReg.lightDataIndex != 0xFFFFFFFFu);
-		const bool genMatch   = (staticReg.lastLightEnvGen == currentLightEnvGen);
-		const bool skipTaken  = (stableLightSkipEligible && indexValid && genMatch);
-		const bool blk_idx    = stableLightSkipEligible && !indexValid;
-		const bool blk_gen    = stableLightSkipEligible && indexValid && !genMatch;
+		// FRAME-JOBS-2F Fix-A: stableLightSkipEligible already requires
+		// (lightDataIndex != 0xFFFFFFFF) and (lastLightEnvGen == currentLightEnvGen),
+		// so blk_idx and blk_gen were always false — removed (always-zero, misleading).
+		// skipTaken == stableLightSkipEligible by definition now.
+		const bool skipTaken  = stableLightSkipEligible;
 		const bool blk_noelig = !stableLightSkipEligible;
-		lbssRecordBldg(stableLightSkipEligible, skipTaken, blk_idx, blk_gen, blk_noelig);
+		lbssRecordBldg(stableLightSkipEligible, skipTaken, /*blk_idx=*/false, /*blk_gen=*/false, blk_noelig);
 		if (skipTaken)
 			return;
 	}
@@ -6213,6 +6279,20 @@ void TreeAppearance::selectActiveLOD()
 
 void TreeAppearance::touch()
 {
+	// FRAME-JOBS-2F: if touchSerialCommit() already ran this frame (split path active),
+	// skip redundant Path B work. See BldgAppearance::touch for full contract.
+	if (mc2FrameJobsTouchDiagEnabled()) {
+		touchEntryDiagRollFrame(g_mc2FrameCounter);
+		if (touchSerialCommitFrame == g_mc2FrameCounter) {
+			++s_touchEntryDiag.legacy_skipped;
+			return;
+		}
+		++s_touchEntryDiag.legacy_ran_nosplit;
+	} else {
+		if (touchSerialCommitFrame == g_mc2FrameCounter)
+			return;
+	}
+
 	selectActiveLOD();  // re-evaluate LOD every frame on the skip path
 	// Stage 3.C: called by the outer-skip gate instead of update() when this
 	// tree is registered and stable. Re-submits the cached lightData_ (set
@@ -6255,14 +6335,29 @@ void TreeAppearance::touchWorkerPrepass()
 // FRAME-JOBS-2D: light-data resubmit; runs serially on main thread after worker join.
 void TreeAppearance::touchSerialCommit()
 {
+	// FRAME-JOBS-2F: stamp this frame unconditionally so touch() (Path B, terrain object
+	// loop) returns immediately. Set BEFORE any early returns including stable-skip.
+	touchSerialCommitFrame = g_mc2FrameCounter;
+	if (mc2FrameJobsTouchDiagEnabled()) {
+		touchEntryDiagRollFrame(g_mc2FrameCounter);
+		++s_touchEntryDiag.serial_commit_hits;
+	}
+
 	if (!treeShape) return;
+
+	// FRAME-JOBS-2F Step 5: needsFullBakeNextFrame guard — mirrors BldgAppearance's
+	// stableLightSkipEligible which includes !needsFullBakeNextFrame. In practice,
+	// objects with needsFullBakeNextFrame=true do not reach touchSerialCommit via the
+	// split path (IsStaticNow() returns false), but add explicit guard for safety.
+	// When true, fall through to full commit (do not apply stable-skip).
+	const bool forceFullCommit = needsFullBakeNextFrame;
 
 	// [LIGHTBRIDGE-STABLE-SKIP-WIRE-1] Tree path: if MC2_LIGHTBRIDGE_STABLE_SKIP=1 and
 	// the active LOD's baked light slot is valid, skip EmitBakedGpuLightData entirely.
 	// INVARIANT: same as BldgAppearance — lightData_[recipeIndex] persists frame-to-frame;
 	// staticReg[activeLOD].lightDataIndex == recipeIndex from prior frame's emit is valid.
 	// Trees don't track lastLightEnvGen (mission lighting is effectively static for trees).
-	if (mc2LightbridgeStableSkipEnabled()) {
+	if (mc2LightbridgeStableSkipEnabled() && !forceFullCommit) {
 		const bool indexValid = (staticReg[activeLOD].lightDataIndex != 0xFFFFFFFFu);
 		const bool registered = (staticReg[activeLOD].registered && staticReg[activeLOD].recipeIndex >= 0);
 		const bool skipTaken  = (registered && indexValid);
