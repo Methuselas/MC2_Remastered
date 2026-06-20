@@ -35,7 +35,7 @@ struct Pool {
 
 Pool* g_pool    = nullptr;
 bool  g_enabled = false;
-int   g_batch   = 128;
+int   g_batch   = 64;
 bool  g_trace   = false;
 
 std::atomic<int> g_chunksThisFrame{0};
