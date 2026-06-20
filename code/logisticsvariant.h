@@ -51,6 +51,11 @@ public:
 	int				getSensorID() const;
 	int				getECM() const;
 	bool			jumpJetsAllowed() const { return canHaveJumpJets; }
+	// VEHICLE-AUTO-PILOT-1: true for a LogisticsVehicle chassis (set in
+	// LogisticsVehicle::init). Logistics-safe vehicle discriminator — does NOT need the
+	// mission-only objTypeManager that loadObjectType derefs (which is null at the
+	// logistics/pilot-ready screen).
+	bool			isVehicle() const { return bIsVehicle; }
 
 protected:
 
@@ -82,6 +87,7 @@ protected:
 	bool canHaveActiveProbe;//can Mech have Active Probe Installed.
 	bool canHaveJumpJets;
 	bool canHaveExtendedSensor;
+	bool bIsVehicle;   // VEHICLE-AUTO-PILOT-1: set true by LogisticsVehicle::init
 
 	long				encyclopediaID;
 	long				helpID;

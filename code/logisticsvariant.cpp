@@ -29,7 +29,8 @@ LogisticsChassis::LogisticsChassis()
 	baseCost = 0;
 	maxWeight = 0;
 	refCount = 0;
-	canHaveActiveProbe = 
+	bIsVehicle = false;   // VEHICLE-AUTO-PILOT-1
+	canHaveActiveProbe =
 	canHaveAdvSensor = 
 	canHaveExtendedSensor = 
 	canHaveECM = 
@@ -1005,6 +1006,7 @@ void		LogisticsVariant::setAvailable( bool available )
 
 void LogisticsVehicle::init( FitIniFile& file )
 {
+	bIsVehicle = true;   // VEHICLE-AUTO-PILOT-1: this chassis is a vehicle/support unit
 	componentCount = 0;
 	
 	file.seekBlock( "ObjectType" );

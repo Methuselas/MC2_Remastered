@@ -789,10 +789,14 @@ LogisticsPilot* LogisticsData::getFirstAvailablePilot()
 // when its object type class != BATTLEMECH_TYPE. Bridge: chassis fitID -> ObjectType.
 bool LogisticsData::isVehicleUnit( LogisticsMech* pMech )
 {
-	if ( !pMech )
-		return false;
-	ObjectTypePtr ot = ObjectManager->loadObjectType( pMech->getFitID() );
-	return ( ot && ot->getObjectTypeClass() != BATTLEMECH_TYPE );
+	// Logistics-safe: read the chassis vehicle flag (set by LogisticsVehicle::init).
+	// Do NOT call ObjectManager->loadObjectType here — objTypeManager is null at the
+	// logistics / pilot-ready screen (mission-runtime only) and derefs to a crash
+	// (objmgr.cpp:4049). Vehicles are built as LogisticsVehicle chassis (logisticsdata
+	// .cpp:418); mechs as plain LogisticsChassis.
+	return ( pMech && pMech->getVariant()
+	         && pMech->getVariant()->getChassis()
+	         && pMech->getVariant()->getChassis()->isVehicle() );
 }
 
 //---------------------------------------------------------------------------
