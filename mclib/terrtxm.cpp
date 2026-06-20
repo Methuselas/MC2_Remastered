@@ -1532,6 +1532,29 @@ void TerrainTextures::update (void)
 //---------------------------------------------------------------------------
 void TerrainTextures::destroy (void)
 {
+	// [TXMMGR-TEXTURE-LEAK-FIX-1] Release every master texture-node slot this
+	// per-mission TerrainTextures allocated. All of these are pinned neverFLUSH
+	// (setTextureNeverFlush / loadTexture nFlush=0x1 in initDetail / initTexture /
+	// loadOverlayMemory etc.), so the per-mission flush() skips them. Without an
+	// explicit removeTextureNode() per slot here, the detail / type / overlay
+	// (e.g. data/textures/64overlays/) nodes accumulate in masterTextureNodes[]
+	// every mission and eventually STOP("TOO Many textures"). textures[] is
+	// memset(-1) at init so unused slots hold 0xffffffff; nextAvailable bounds
+	// the live region. These are rebuilt next mission in init(), so freeing on
+	// unload is correct.
+	if (mcTextureManager && textures)
+	{
+		for (long i=0;i<nextAvailable;i++)
+		{
+			if (textures[i].mcTextureNodeIndex != 0xffffffff)
+			{
+				mcTextureManager->removeTextureNode(textures[i].mcTextureNodeIndex);
+				textures[i].mcTextureNodeIndex = 0xffffffff;
+			}
+		}
+	}
+	nextAvailable = 0;
+
 	update();
 
 	delete tileHeap;

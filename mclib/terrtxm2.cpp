@@ -266,6 +266,62 @@ void TerrainColorMap::init (void)
 
 void TerrainColorMap::destroy (void)
 {
+	// [TXMMGR-TEXTURE-LEAK-FIX-1] Release the master texture-node slots this
+	// per-mission colormap allocated. The colormap tile + normal-map nodes are
+	// pinned neverFLUSH (setTextureNeverFlush, see init()), so the per-mission
+	// flush() skips them; without an explicit removeTextureNode() here their
+	// 4096-slot masterTextureNodes[] entries accumulate every mission and
+	// eventually STOP("TOO Many textures"). These textures are rebuilt next
+	// mission in init(fileName), so freeing them on unload is correct.
+	if (mcTextureManager)
+	{
+		if (textures)
+		{
+			for (unsigned long i=0;i<numTextures;i++)
+			{
+				if (textures[i].mcTextureNodeIndex != 0xffffffff)
+				{
+					mcTextureManager->removeTextureNode(textures[i].mcTextureNodeIndex);
+					textures[i].mcTextureNodeIndex = 0xffffffff;
+				}
+			}
+		}
+		if (normalMapTextures)
+		{
+			for (unsigned long i=0;i<numNormalMapTextures;i++)
+			{
+				if (normalMapTextures[i].mcTextureNodeIndex != 0xffffffff)
+				{
+					mcTextureManager->removeTextureNode(normalMapTextures[i].mcTextureNodeIndex);
+					normalMapTextures[i].mcTextureNodeIndex = 0xffffffff;
+				}
+			}
+		}
+		if (detailTextureNodeIndex != 0xffffffff)
+		{
+			mcTextureManager->removeTextureNode(detailTextureNodeIndex);
+			detailTextureNodeIndex = 0xffffffff;
+		}
+		if (detailNormalNodeIndex != 0xffffffff)
+		{
+			mcTextureManager->removeTextureNode(detailNormalNodeIndex);
+			detailNormalNodeIndex = 0xffffffff;
+		}
+		if (waterTextureNodeIndex != 0xffffffff)
+		{
+			mcTextureManager->removeTextureNode(waterTextureNodeIndex);
+			waterTextureNodeIndex = 0xffffffff;
+		}
+		for (DWORD i=0;i<numWaterDetailFrames;i++)
+		{
+			if (waterDetailNodeIndex[i] != 0xffffffff)
+			{
+				mcTextureManager->removeTextureNode(waterDetailNodeIndex[i]);
+				waterDetailNodeIndex[i] = 0xffffffff;
+			}
+		}
+	}
+
 	if (textures)
 	{
 		colorMapHeap->Free(textures);
