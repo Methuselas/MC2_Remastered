@@ -3952,6 +3952,17 @@ void BldgAppearance::touch()
 		// msl.cpp:1874-1887). MC2_LIGHTBAKE=0 -> legacy path bit-for-bit.
 		extern bool mc2LightBakeEnabled();
 		extern bool mc2GetBakedStaticLight(int32_t, TG_HWLightsData&);
+		// THREAD-SAFETY CLASSIFICATION: EmitBakedGpuLightData — WORKER_SAFE.
+		// (1) Writes only per-instance members cachedGpuLightIndex_ and cachedFrame_
+		//     on the TG_MultiShape pointed to by bldgShape (unique per BldgAppearance
+		//     instance, never aliased across actors). (2) Makes NO GL calls
+		//     (glBufferSubData, glMapBuffer, etc.). (3) The 'baked' struct is
+		//     explicitly discarded ((void)baked in msl.cpp:2114) — the slot index IS
+		//     recipeIndex, which is per-recipe-constant. Two calls on different shape
+		//     instances cannot conflict. ResubmitCachedGpuLightData (the else branch)
+		//     also writes only per-instance members on the same hot path; no shared
+		//     pool write occurs unless the repoint fast-path misses, in which case it
+		//     calls addLightDataStructure (now mutex-protected by s_lightDataMapMu).
 		TG_HWLightsData baked;
 		if (mc2LightBakeEnabled()
 		    && staticReg.registered && staticReg.recipeIndex >= 0
