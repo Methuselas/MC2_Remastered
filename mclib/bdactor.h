@@ -372,7 +372,10 @@ class BldgAppearance : public ObjectAppearance
 		}
 
 		virtual bool recalcBounds (void);
-		
+		// FRAME-JOBS-1: worker-path bounds. Calls recalcBounds() then stamps boundsFrame.
+		void recalcBoundsAndStamp();
+		bool isRecalcBoundsWorkerSafe() const override { return true; }
+
 		virtual bool getInTransition (void)
 		{
 			return (canTransition == false);
@@ -677,21 +680,24 @@ class TreeAppearance : public ObjectAppearance
 		}
 
 		virtual bool recalcBounds (void);
-		
+		// FRAME-JOBS-1: worker-path bounds. Calls recalcBounds() then stamps boundsFrame.
+		void recalcBoundsAndStamp();
+		bool isRecalcBoundsWorkerSafe() const override { return true; }
+
 		void setFadeTable (MemoryPtr fTable)
 		{
 			fadeTable = fTable;
 		}
-		
+
 		virtual void setObjectNameId (long objId)
 		{
 			objectNameId = objId;
 		}
 
 		virtual bool isMouseOver (float px, float py);
-		
+
 		virtual void setObjectParameters (const Stuff::Vector3D &pos, float rot, long selected, long alignment, long homeRelations);
-		
+
 		virtual void setMoverParameters (float pitchAngle, float lArmRot = 0.0f, float rArmRot = 0.0f, bool isAirborne = false);
 		
 		virtual void setObjStatus (long oStatus);

@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <stdint.h>
 
 // Slice 3 static-update counter accessors. Definitions live in code/terrobj.cpp.
@@ -28,8 +29,8 @@ void     g_staticUpdateEmitSummary(uint32_t frame);
 // and TreeAppearance::recalcBounds) can reference them without inline-extern
 // declarations in function bodies. mclib -> code/ includes are established
 // precedent (see unitdesg.h, gameobj.h).
-extern unsigned long long g_tobjAngularCyc;
-extern unsigned long long g_tobjProjCyc;
+extern std::atomic<unsigned long long> g_tobjAngularCyc;
+extern std::atomic<unsigned long long> g_tobjProjCyc;
 void g_tobjSplitRollAndMaybeEmit();
 
 // [TOBJPARITY v1] once-per-frame roll + 120-frame summary for the superset-

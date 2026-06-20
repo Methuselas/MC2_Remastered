@@ -311,6 +311,7 @@ set(SOURCES
     "code/collsn.cpp"
     "code/comndr.cpp"
     "code/contact.cpp"
+    "code/frame_jobs.cpp"
     "code/gameobj.cpp"
     "code/gate.cpp"
     "code/goal.cpp"

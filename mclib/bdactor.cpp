@@ -1859,7 +1859,7 @@ bool BldgAppearance::recalcBounds (void)
 				}
 			}
 		}
-		if (s_tobjSplitBdOn) g_tobjAngularCyc += __rdtsc() - _tsA;
+		if (s_tobjSplitBdOn) g_tobjAngularCyc.fetch_add(__rdtsc() - _tsA, std::memory_order_relaxed);
 		}  // end ANGULAR bracket
 
 		// recalcBounds projection body deleted 2026-05-18 (Task 2): the GPU
@@ -1880,6 +1880,15 @@ bool BldgAppearance::recalcBounds (void)
 
 
 	return(inView);
+}
+
+//-----------------------------------------------------------------------------
+void BldgAppearance::recalcBoundsAndStamp() {
+	// FRAME-JOBS-1 worker path. Do not call from game logic.
+	extern uint32_t g_mc2FrameCounter;
+	if (boundsFrame == g_mc2FrameCounter) return;
+	recalcBounds();
+	boundsFrame = g_mc2FrameCounter;
 }
 
 //-----------------------------------------------------------------------------
@@ -5271,7 +5280,7 @@ bool TreeAppearance::recalcBounds (void)
 				}
 			}
 		}
-		if (s_tobjSplitBdOn) g_tobjAngularCyc += __rdtsc() - _tsA;
+		if (s_tobjSplitBdOn) g_tobjAngularCyc.fetch_add(__rdtsc() - _tsA, std::memory_order_relaxed);
 		}  // end ANGULAR bracket
 
 		// recalcBounds projection body deleted 2026-05-18 (Task 3, Tree mirror of Task 2):
@@ -5292,6 +5301,15 @@ bool TreeAppearance::recalcBounds (void)
 	}
 
 	return(inView);
+}
+
+//-----------------------------------------------------------------------------
+void TreeAppearance::recalcBoundsAndStamp() {
+	// FRAME-JOBS-1 worker path. Do not call from game logic.
+	extern uint32_t g_mc2FrameCounter;
+	if (boundsFrame == g_mc2FrameCounter) return;
+	recalcBounds();
+	boundsFrame = g_mc2FrameCounter;
 }
 
 //-----------------------------------------------------------------------------

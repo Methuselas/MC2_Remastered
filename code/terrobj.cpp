@@ -65,6 +65,7 @@
 #include"objectappearance.h"
 #include "static_update_counters.h"
 #include "bldg_anim_gate_counters.h"
+#include "frame_jobs.h"  // FRAME-JOBS-1: frameJobsEnabled() gate
 
 //---------------------------------------------------------------------------
 // Slice 3 Static-Update Bypass instrumentation (worktree CLAUDE.md
@@ -205,8 +206,8 @@ void g_staticUpdateEmitSummary(uint32_t frame) {
 #include <stdlib.h>
 #include <stdio.h>
 static bool s_tobjSplitEnabled = (getenv("MC2_TOBJ_COST_SPLIT") != nullptr);
-unsigned long long g_tobjAngularCyc = 0ULL;
-unsigned long long g_tobjProjCyc    = 0ULL;
+std::atomic<unsigned long long> g_tobjAngularCyc{0ULL};
+std::atomic<unsigned long long> g_tobjProjCyc{0ULL};
 unsigned long long g_tobjUpdateCyc  = 0ULL;
 static unsigned long long g_tobjFrameCount = 0ULL;
 
@@ -232,7 +233,9 @@ void g_tobjSplitRollAndMaybeEmit() {
                (double)g_tobjProjCyc / f,
                (double)g_tobjUpdateCyc / f);
         fflush(stderr);
-        g_tobjAngularCyc = g_tobjProjCyc = g_tobjUpdateCyc = 0ULL;
+        g_tobjAngularCyc.store(0ULL, std::memory_order_relaxed);
+        g_tobjProjCyc.store(0ULL, std::memory_order_relaxed);
+        g_tobjUpdateCyc = 0ULL;
     }
 }
 
@@ -835,10 +838,22 @@ long TerrainObject::update (void) {
 					inView = true;
 				} else {
 					// Readback uncertain: CPU recalcBounds is authoritative.
-					inView = appearance->recalcBounds();
+					// FRAME-JOBS-1: if workers already computed bounds this frame, use cached result.
+					// frameJobsEnabled() is false by default — this branch costs one bool read only.
+					if (frameJobsEnabled() && appearance->boundsFrame == g_mc2FrameCounter) {
+						inView = appearance->inView;
+					} else {
+						inView = appearance->recalcBounds();
+					}
 				}
 			} else {
-				inView = appearance->recalcBounds();
+				// FRAME-JOBS-1: if workers already computed bounds this frame, use cached result.
+				// frameJobsEnabled() is false by default — this branch costs one bool read only.
+				if (frameJobsEnabled() && appearance->boundsFrame == g_mc2FrameCounter) {
+					inView = appearance->inView;
+				} else {
+					inView = appearance->recalcBounds();
+				}
 			}
 		}
 		// gpuVisible extension: unused when readback is on (inView IS the result).

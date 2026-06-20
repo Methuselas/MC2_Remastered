@@ -81,6 +81,13 @@ class Appearance
 		bool						simActive;
 		bool						lifecycleAlive;
 		bool						aiPresentable;
+
+		// FRAME-JOBS-1: per-object frame stamp. Set by recalcBoundsAndStamp() AFTER
+		// recalcBounds() completes. Serial path reads this to skip recompute when
+		// MC2_FRAME_JOBS=1. Plain uint32_t; no race (parallelForRange barrier ensures
+		// workers finish before serial reads).
+		uint32_t                    boundsFrame;
+
 		Stuff::Vector4D				upperLeft;		//used to draw select boxes.  Can be 3D Now!
 		Stuff::Vector4D				lowerRight;		//used to draw select boxes.
 		
@@ -106,6 +113,7 @@ class Appearance
 			simActive       = FALSE;
 			lifecycleAlive  = TRUE;
 			aiPresentable   = FALSE;
+			boundsFrame     = 0;
 			screenPos.x = screenPos.y = screenPos.z = screenPos.w = -999.0f;
 			upperLeft.x = upperLeft.y = upperLeft.z = upperLeft.w = -999.0f;
 			lowerRight.x = lowerRight.y = lowerRight.z = lowerRight.w = -999.0f;
@@ -124,6 +132,7 @@ class Appearance
 			simActive       = FALSE;
 			lifecycleAlive  = TRUE;
 			aiPresentable   = FALSE;
+			boundsFrame     = 0;
 			screenPos.x = screenPos.y = screenPos.z = screenPos.w = -999.0f;
 			upperLeft.x = upperLeft.y = upperLeft.z = upperLeft.w = -999.0f;
 			lowerRight.x = lowerRight.y = lowerRight.z = lowerRight.w = -999.0f;
@@ -271,6 +280,19 @@ class Appearance
 			setVisibilityGatesFromLegacy(FALSE);
 			return inView;
 		}
+
+		// Returns true only for types audited as worker-safe for parallel recalcBounds.
+		// Default false = serial handles this type.
+		virtual bool isRecalcBoundsWorkerSafe() const { return false; }
+
+		// FRAME-JOBS-1: worker-path entry point. Calls recalcBounds() then stamps boundsFrame.
+		// Base no-op exists ONLY for safe virtual dispatch through Appearance*.
+		// Worker path checks isRecalcBoundsWorkerSafe() BEFORE calling — the no-op
+		// is never reached in practice. Do NOT remove the whitelist check on the
+		// grounds that "the base no-op makes it safe": the base no-op skips the
+		// stamp, so the serial path would re-compute — correctness is not the
+		// concern, silent no-op behaviour for unaudited types is.
+		virtual void recalcBoundsAndStamp() {}
 
 		virtual void setGesture (unsigned long gestureId)
 		{

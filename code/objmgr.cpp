@@ -25,6 +25,8 @@
 #include <unordered_map>
 #include <vector>
 #include <algorithm>
+#include <chrono>  // FRAME-JOBS-1: prepass wall-clock timing
+#include "../GameOS/gameos/diagnostic_trace.h"  // FRAME-JOBS-1: JSONL trace emit
 #include "gos_static_prop_killswitch.h"  // g_useGpuStaticProps
 #include "static_update_counters.h"      // g_staticUpdateRunCount/SkipCount/EmitSummary
 #include "../GameOS/gameos/gpu_cull_substrate.h"       // C0: GPU cull substrate SSBO upload
@@ -32,6 +34,7 @@
 #include "../GameOS/gameos/gpu_cull_readback.h"        // C3: per-actor GPU visibility snapshot
 #include "../GameOS/gameos/gos_static_prop_registry.h" // Task 5: mission-load bulk registration
 #include "move_recon.h"  // MC2_MOVE_RECON per-frame pathfinding cost instrumentation
+#include "frame_jobs.h"  // FRAME-JOBS-1: parallelForRange worker pool
 
 #ifndef OBJMGR_H
 #include"objmgr.h"
@@ -2176,6 +2179,88 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 
 	if (terrain && renderObjects)
 	{
+		int frameJobsPrePassCount = 0; // FRAME-JOBS-1: handle count for per-frame trace
+		// ── FRAME-JOBS-1: parallel recalcBounds pre-pass ─────────────────────────────
+		// Tier B only: recalcBoundsAndStamp() on whitelisted types.
+		// No touch(), no update(), no GL, no txmmgr. See FRAME-JOBS-2 for Tier C.
+		// boundsFrame stamp prevents double-compute in the serial loop below.
+		{
+			static std::vector<long> s_frameJobsHandles;
+			s_frameJobsHandles.clear();
+			frameJobsResetFrameStats();
+
+			if (frameJobsEnabled()) {
+				// Build flat handle list with basic eligibility filter.
+				// Intentionally loose — isRecalcBoundsWorkerSafe() filters inside the lambda.
+				for (int block = 0; block < Terrain::numObjBlocks; ++block) {
+					if (!Terrain::objBlockInfo[block].active) continue;
+					long h = Terrain::objBlockInfo[block].firstHandle;
+					int  n = Terrain::objBlockInfo[block].numObjects;
+					for (int i = 0; i < n; ++i, ++h) {
+						GameObjectPtr obj = objList[h];
+						if (!obj || !obj->getExists()) continue;
+						if (!Terrain::objVertexActive[obj->getVertexNum()]) continue;
+						s_frameJobsHandles.push_back(h);
+					}
+				}
+
+				const int count = static_cast<int>(s_frameJobsHandles.size());
+				frameJobsPrePassCount = count; // FRAME-JOBS-1: exported for per-frame trace
+
+				// FRAME-JOBS-1: wall-clock timing + Tracy zone for the parallel recalcBounds pass.
+				auto _fj_t0 = std::chrono::high_resolution_clock::now();
+				{
+					ZoneScopedN("FrameJobs.RecalcBounds");
+					parallelForRange(count, frameJobsBatch(),
+						[](int begin, int end) {
+							// FRAME-JOBS-1: Tier B only. No appearance->update() here.
+							// Tier C (txmmgr) is NOT worker-safe. See FRAME-JOBS-2.
+							for (int i = begin; i < end; ++i) {
+								GameObjectPtr obj = ObjectManager->objList[s_frameJobsHandles[i]];
+								if (!obj) continue;
+								AppearancePtr ap = obj->getAppearance();
+								if (!ap) continue;
+								if (!ap->isRecalcBoundsWorkerSafe()) {
+									if (frameJobsTrace()) {
+										printf("FRAME_JOBS WARN: unsupported appearance type at handle %ld\n",
+										       s_frameJobsHandles[i]);
+									}
+									continue;
+								}
+								ap->recalcBoundsAndStamp();
+							}
+						});
+				}
+				auto _fj_t1 = std::chrono::high_resolution_clock::now();
+				float _fj_prepass_us = std::chrono::duration<float, std::micro>(_fj_t1 - _fj_t0).count();
+
+				if (frameJobsTrace()) {
+					FrameJobsFrameStats _fj_stats = frameJobsGetFrameStats();
+					printf("FRAME_JOBS_PERF: batch=%d workers=%d handles=%d chunks=%d prepass_us=%.1f\n",
+					       frameJobsBatch(),
+					       _fj_stats.workerCount,
+					       count,
+					       _fj_stats.chunksExecuted,
+					       _fj_prepass_us);
+				}
+
+				// FRAME-JOBS-1: emit to diagnostic JSONL trace (MC2_DIAG_TAGS=FRAME_JOBS or *)
+				if (mc2_diag::tagEnabled("FRAME_JOBS")) {
+					FrameJobsFrameStats _fj_stats = frameJobsGetFrameStats();
+					char _fj_buf[192];
+					snprintf(_fj_buf, sizeof(_fj_buf),
+					         "{\"batch\":%d,\"workers\":%d,\"handles\":%d,\"chunks\":%d,\"prepass_us\":%.1f}",
+					         frameJobsBatch(),
+					         _fj_stats.workerCount,
+					         count,
+					         _fj_stats.chunksExecuted,
+					         _fj_prepass_us);
+					mc2_diag::writeEvent("FRAME_JOBS", 1, 0, _fj_buf);
+				}
+			}
+		}
+		// ── end FRAME-JOBS-1 pre-pass ────────────────────────────────────────────────
+
 		ZoneScopedN("GameLogic.Units.TerrainObjects");
 		long specialBuildingsUpdated = 0;
 		long gatesUpdated = 0;
@@ -2680,6 +2765,16 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 		// superset-parity counter probe (proof-gate #2). Called here at the
 		// same per-frame boundary as TOBJSPLIT (see static_update_counters.h).
 		g_tobjParityRollAndMaybeEmit();
+
+		// FRAME-JOBS-1: per-frame trace
+		if (frameJobsEnabled() && frameJobsTrace()) {
+			FrameJobsFrameStats stats = frameJobsGetFrameStats();
+			printf("FRAME_JOBS: workers=%d chunks=%d handles=%d serial=%s\n",
+			       stats.workerCount,
+			       stats.chunksExecuted,
+			       frameJobsPrePassCount,
+			       stats.serialFallback ? "yes" : "no");
+		}
 	}
 	
  	if (movers) {

@@ -34,6 +34,7 @@ const std::unordered_set<std::string>& knownTags() {
         "DEVICE",
         "SHADER_COMPILE",
         "LOGISTICS",
+        "FRAME_JOBS",
     };
     return tags;
 }

@@ -23,8 +23,9 @@ bool useClouds = false;
 // ---- TOBJSPLIT performance counters (code/static_update_counters.h) ----
 // Cycle-count accumulators written by mclib/bdactor.cpp when the
 // s_tobjSplitBdOn flag is set.  Zero-initialize; editor does not display them.
-unsigned long long g_tobjAngularCyc = 0ULL;
-unsigned long long g_tobjProjCyc    = 0ULL;
+#include <atomic>
+std::atomic<unsigned long long> g_tobjAngularCyc{0ULL};
+std::atomic<unsigned long long> g_tobjProjCyc{0ULL};
 
 // ---- game object manager ----
 // MechRenderAdapter.cpp reads ObjectManager to reverse-look up mechs.
