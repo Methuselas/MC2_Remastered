@@ -232,6 +232,17 @@ void PilotReadyScreen::begin()
 					pIcons[FG-1].setPilot( (*iter)->getPilot() );
 					bHasPilot = FG - 1;
 				}
+				else if ( LogisticsData::instance->isVehicleUnit( (*iter) ) )
+				{
+					// VEHICLE-AUTO-PILOT-1: vehicles/support units auto-get a standard
+					// vehicle pilot so they are launch-ready without a roster mech-pilot.
+					LogisticsPilot* vp = LogisticsData::instance->getVehiclePilot();
+					if ( vp )
+					{
+						(*iter)->setPilot( vp );
+						pIcons[FG-1].setPilot( vp );
+					}
+				}
 
 				forceGroupCount++;
 			}

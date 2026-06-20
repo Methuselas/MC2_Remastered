@@ -784,6 +784,47 @@ LogisticsPilot* LogisticsData::getFirstAvailablePilot()
 
 }
 
+//---------------------------------------------------------------------------
+// VEHICLE-AUTO-PILOT-1: a deployed unit is a vehicle/support unit (not a BattleMech)
+// when its object type class != BATTLEMECH_TYPE. Bridge: chassis fitID -> ObjectType.
+bool LogisticsData::isVehicleUnit( LogisticsMech* pMech )
+{
+	if ( !pMech )
+		return false;
+	ObjectTypePtr ot = ObjectManager->loadObjectType( pMech->getFitID() );
+	return ( ot && ot->getObjectTypeClass() != BATTLEMECH_TYPE );
+}
+
+//---------------------------------------------------------------------------
+// Shared standard vehicle pilot (PMWScout, resolved via VFS from the cveg dep's
+// data/missions/warriors). Assigned to deployed vehicles so they satisfy the launch
+// pilot-requirement without consuming a roster mech-pilot, and so they deploy with a
+// vehicle pilot file. setAvailable(false) keeps it out of the AVAILABLE PILOTS list.
+// Lazily created + cached; null if the file does not resolve (campaign without cveg)
+// -> the vehicle stays unpiloted, no worse than before.
+LogisticsPilot* LogisticsData::getVehiclePilot()
+{
+	static LogisticsPilot* s_vehiclePilot = NULL;
+	static bool s_tried = false;
+	if ( !s_tried )
+	{
+		s_tried = true;
+		LogisticsPilot* p = new LogisticsPilot;
+		char nm[] = "PMWScout";
+		if ( p->init( nm ) == -1 )
+		{
+			delete p;
+			p = NULL;
+		}
+		else
+		{
+			p->setAvailable( false );
+		}
+		s_vehiclePilot = p;
+	}
+	return s_vehiclePilot;
+}
+
 
 
 // GetAvailableMissions( char** missionNames, long& count )

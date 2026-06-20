@@ -66,6 +66,12 @@ public:
 
 	int createInstanceID( LogisticsVariant* pVar );
 	LogisticsPilot*		getFirstAvailablePilot();
+	// VEHICLE-AUTO-PILOT-1: a deployed vehicle/support unit auto-gets a standard
+	// vehicle pilot so it satisfies the launch pilot-requirement without consuming a
+	// roster mech-pilot. isVehicleUnit() = object class != BATTLEMECH; getVehiclePilot()
+	// returns a shared, hidden-from-roster (setAvailable(false)) standard vehicle pilot.
+	bool				isVehicleUnit( class LogisticsMech* pMech );
+	LogisticsPilot*		getVehiclePilot();
 	void				getForceGroup( EList<LogisticsMech*, LogisticsMech*>& newList );
 	void				getInventory( EList<LogisticsMech*, LogisticsMech*>& newList );
 
