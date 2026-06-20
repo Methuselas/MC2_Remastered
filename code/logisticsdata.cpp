@@ -237,6 +237,16 @@ void LogisticsData::initPilots()
 		id++;
 
 	}
+
+	// PILOTS-ROSTER diagnostic (MC2_LOG_PILOTS=1): how many pilots loaded + the
+	// roster path. Stock ~52; an MC2X/MCO compat roster (mc2x-compat/mco-compat
+	// data/objects/pilots.csv, VFS-overlaid) should report ~100+. Confirms whether
+	// the campaign/compat roster won over base stock.
+	if ( getenv("MC2_LOG_PILOTS") )
+	{
+		printf("[PILOTS] loaded=%d roster=%s\n", (int)pilots.Count(), pilotPath);
+		fflush(stdout);
+	}
 }
 
 void LogisticsData::initVariants()
