@@ -748,9 +748,29 @@ void main(void)
     N.z = 1.0;
     N = normalize(N);
 
+    // LIGHTING-DEBUG-VIEWS-1A: mode 41 = final per-fragment normal as RGB.
+    if (surfaceDebugMode == 41) {
+        gl_FragDepth = gl_FragCoord.z;
+        FragColor = vec4(N * 0.5 + 0.5, 1.0);
+#ifdef MRT_ENABLED
+        GBuffer1 = rc_gbuffer1_shadowHandled(N);
+#endif
+        return;
+    }
+
     PREC float NdotL = dot(N, terrainLightDir.xyz);
     // Floor lowered 0.1→0.02 so shadow-facing bumps can actually read as dark.
     PREC float diffuse = clamp(NdotL, 0.02, 1.0);
+
+    // LIGHTING-DEBUG-VIEWS-1A: mode 42 = sun N·L diffuse term (grayscale).
+    if (surfaceDebugMode == 42) {
+        gl_FragDepth = gl_FragCoord.z;
+        FragColor = vec4(vec3(diffuse), 1.0);
+#ifdef MRT_ENABLED
+        GBuffer1 = rc_gbuffer1_shadowHandled(N);
+#endif
+        return;
+    }
 
     // --- Material color tinting ---
     // tintRock/tintGrass/tintDirt are uniforms (TERRAIN-TINT-UI-1, tunable via ImGui).
@@ -804,6 +824,18 @@ void main(void)
         baseColor *= mix(1.0, breakupMod, breakupAmount);
     }
 
+    // LIGHTING-DEBUG-VIEWS-1A: mode 40 = albedo (surface base color before any
+    // lighting/shadow/ambient). Includes material tint, cliff and break-up
+    // albedo-domain modulation; excludes sun, shadow, hemi fill, fog.
+    if (surfaceDebugMode == 40) {
+        gl_FragDepth = gl_FragCoord.z;
+        FragColor = vec4(c.rgb * baseColor, 1.0);
+#ifdef MRT_ENABLED
+        GBuffer1 = rc_gbuffer1_shadowHandled(N);
+#endif
+        return;
+    }
+
     c.rgb *= baseColor;
     // Snow brightness dampen — only detected-snow fragments (snowWeight) are darkened.
     c.rgb *= mix(1.0, snowBrightnessDampen, snowWeight);
@@ -840,6 +872,18 @@ void main(void)
     // camera-fitted dynamic map): min(0.4,0.4)=0.4 vs the old 0.4*0.4=0.16.
     // Matches the screen-space/object receiver composition (shadow_screen.frag).
     float shadow = min(staticShadow, dynShadow);
+
+    // LIGHTING-DEBUG-VIEWS-1A: mode 44 = combined PCF shadow factor (grayscale,
+    // 1=lit 0=occluded). Distinct from legacy modes 6/31 so the unified named
+    // enum (MC2_LIGHTING_DEBUG_VIEW=shadow) is consistent across render families.
+    if (surfaceDebugMode == 44) {
+        gl_FragDepth = gl_FragCoord.z;
+        FragColor = vec4(vec3(shadow), 1.0);
+#ifdef MRT_ENABLED
+        GBuffer1 = rc_gbuffer1_shadowHandled(N);
+#endif
+        return;
+    }
 
     // DEBUG-VIZ: 30 = dynamic-cast shadow only (isolates building dynamic shadow),
     // 31 = min(static,dyn). Grayscale, early-return. Gated by surfaceDebugMode only.
@@ -893,6 +937,18 @@ void main(void)
         PREC float hemiShadowMix = mix(terrainLightingV2ShadowFillFloor, 1.0, shadow);
         hemiContrib = hemiFill * hemiAmount * 0.25 * hemiShadowMix;
         c.rgb += hemiContrib;
+    }
+
+    // LIGHTING-DEBUG-VIEWS-1A: mode 43 = ambient/hemisphere fill only (×4 for
+    // visibility, capped). Black when MC2_TERRAIN_LIGHTING_V1 gate is OFF.
+    // Same channel meaning as legacy mode 11; kept under the unified enum id.
+    if (surfaceDebugMode == 43) {
+        gl_FragDepth = gl_FragCoord.z;
+        FragColor = vec4(min(hemiContrib * 4.0, vec3(1.0)), 1.0);
+#ifdef MRT_ENABLED
+        GBuffer1 = rc_gbuffer1_shadowHandled_flatUp();
+#endif
+        return;
     }
 
     // TERRAIN-LIGHTING-2: debug mode 11 — hemi-only contribution. Shows
@@ -949,6 +1005,28 @@ void main(void)
         FragColor = vec4(vec3(shadow), 1.0);
 #ifdef MRT_ENABLED
         GBuffer1 = rc_gbuffer1_legacyTerrainMaterialAlpha(N, materialAlpha);
+#endif
+        return;
+    }
+
+    // LIGHTING-DEBUG-VIEWS-1A: mode 46 = over/under-bright heatmap of the fully
+    // lit terrain color BEFORE fog. red = overbright (luma>1), blue = underlit
+    // (luma<0.05), grayscale = in-range luma. Surfaces clipping past 1.0 or
+    // crushed to black flag lighting-balance problems for the audit.
+    if (surfaceDebugMode == 46) {
+        PREC float luma = dot(c.rgb, kLumaWeights);
+        PREC vec3 heat;
+        if (luma > 1.0) {
+            heat = vec3(1.0, clamp(2.0 - luma, 0.0, 1.0) * 0.4, 0.0);   // red, hotter = redder
+        } else if (luma < 0.05) {
+            heat = vec3(0.0, 0.0, 1.0);                                  // blue = crushed black
+        } else {
+            heat = vec3(luma);                                          // in-range grayscale
+        }
+        gl_FragDepth = gl_FragCoord.z;
+        FragColor = vec4(heat, 1.0);
+#ifdef MRT_ENABLED
+        GBuffer1 = rc_gbuffer1_shadowHandled(N);
 #endif
         return;
     }

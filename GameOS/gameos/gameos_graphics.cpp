@@ -6296,6 +6296,28 @@ static void uploadDynamicShadowUniforms(const Locs& tl, gosPostProcess* pp, GLin
     }
 }
 
+// LIGHTING-DEBUG-VIEWS-1A-TERRAIN: named, render-family-shared lighting debug
+// enum. Maps MC2_LIGHTING_DEBUG_VIEW=<name> onto the terrain surfaceDebugMode
+// integer space. The 40-series is reserved for the unified lighting channels so
+// the SAME name means the SAME channel in static_prop/mech (slices 1B/1C).
+// Returns -1 when the env var is unset OR the name is unknown, so callers keep
+// their existing debug mode (default 0 = off = byte-identical legacy render).
+// Takes precedence over MC2_TERRAIN_DEBUG_MODE when both are set.
+static int mc2LightingDebugTerrainMode()
+{
+    const char* v = getenv("MC2_LIGHTING_DEBUG_VIEW");
+    if (!v || !*v) return -1;
+    if (!strcmp(v, "off") || !strcmp(v, "0")) return 0;   // explicit no-op render
+    if (!strcmp(v, "albedo"))     return 40;
+    if (!strcmp(v, "normal"))     return 41;   // final per-fragment N as RGB
+    if (!strcmp(v, "sun"))        return 42;   // sun N·L diffuse term
+    if (!strcmp(v, "ambient"))    return 43;   // hemisphere/ambient fill only
+    if (!strcmp(v, "shadow"))     return 44;   // combined PCF shadow factor
+    if (!strcmp(v, "final"))      return 45;   // == default lit render (falls through)
+    if (!strcmp(v, "overbright")) return 46;   // over/under-bright heatmap
+    return -1;                                 // unknown -> safe fallback (keep existing)
+}
+
 void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
 {
     if (!material) return;
@@ -6319,6 +6341,7 @@ void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
     if (const char* envDebug = getenv("MC2_TERRAIN_DEBUG_MODE")) {
         debugMode = (float)atof(envDebug);
     }
+    { int lvm = mc2LightingDebugTerrainMode(); if (lvm >= 0) debugMode = (float)lvm; }  // LIGHTING-DEBUG-VIEWS-1A
     float tessDebugVec[4] = { debugMode, 0.0f, 0.0f, 0.0f };
     if (tl.tessDebug >= 0)         glUniform4fv(tl.tessDebug, 1, tessDebugVec);
     if (tl.pathTint >= 0)          glUniform1i(tl.pathTint, mc2ShaderPathTint());  // MC2_SHADER_PATH_TINT
@@ -6465,6 +6488,7 @@ int gosRenderer::terrainBindThinUniformsForPatchStream(glsl_program* overridePro
         if (const char* envDebug = getenv("MC2_TERRAIN_DEBUG_MODE")) {
             debugMode = (float)atof(envDebug);
         }
+        { int lvm = mc2LightingDebugTerrainMode(); if (lvm >= 0) debugMode = (float)lvm; }  // LIGHTING-DEBUG-VIEWS-1A
         float tessDebugVec[4] = { debugMode, 0.0f, 0.0f, 0.0f };
         if (tl.tessDebug >= 0) glUniform4fv(tl.tessDebug, 1, tessDebugVec);
         if (tl.pathTint >= 0)  glUniform1i(tl.pathTint, mc2ShaderPathTint());  // MC2_SHADER_PATH_TINT
@@ -6602,6 +6626,7 @@ void gosRenderer::terrainDrawIndexedPatches(gosRenderMaterial* material, gosMesh
         if (const char* envDebug = getenv("MC2_TERRAIN_DEBUG_MODE")) {
             debugMode = (float)atof(envDebug);
         }
+        { int lvm = mc2LightingDebugTerrainMode(); if (lvm >= 0) debugMode = (float)lvm; }  // LIGHTING-DEBUG-VIEWS-1A
         float tessDebugVec[4] = { debugMode, 0.0f, 0.0f, 0.0f };
         if (tl.tessDebug >= 0) glUniform4fv(tl.tessDebug, 1, tessDebugVec);
         if (tl.pathTint >= 0)  glUniform1i(tl.pathTint, mc2ShaderPathTint());  // MC2_SHADER_PATH_TINT
