@@ -206,6 +206,15 @@ static unsigned      s_hoverMissionSerial = 0;
 // invalidateHoverTarget() at mission END (and at init), cleared at mission BEGIN once the
 // world is ready. While true updateTarget() is a no-op for picking.
 static bool          s_hoverSuppressed = true;
+// After arming, keep picking OFF for a few live frames: the first updates of a mission can
+// still pick a not-yet-settled world (findObjectByMouse returns a stale/garbage pointer).
+static long          s_hoverSettleFrames = 0;
+// Watch-IDs of the persistent target + oldTargets, captured when each was set to a LIVE
+// object. updateTarget re-validates via ObjectManager->getByWatchID() (registry lookup, no
+// deref) before touching them, so a target whose object DIED since last frame is dropped,
+// not crashed-on. MAX_ICONS == oldTargets[] size (forcegroupbar.h).
+static unsigned long  s_targetWatchID = 0;
+static unsigned long  s_oldTargetWatchID[MAX_ICONS] = {0};
 
 
 extern bool drawTerrainTiles;
@@ -431,6 +440,7 @@ void MissionInterfaceManager::invalidateHoverTarget (void)
 void MissionInterfaceManager::armHoverTarget (void)
 {
 	s_hoverSuppressed = false;
+	s_hoverSettleFrames = 4; // give the live world a few frames before the first pick
 }
 
 #define TACMAP_ID		0
@@ -1289,6 +1299,7 @@ void MissionInterfaceManager::update (void)
 				{
 					pTmpTarget->setDrawBars(true);
 					oldTargets[i] = pTmpTarget;
+					s_oldTargetWatchID[i] = pTmpTarget->getWatchID(); // for next-frame liveness check
 				}
 			}
 		}
@@ -1598,29 +1609,55 @@ void MissionInterfaceManager::updateVTol()
 void MissionInterfaceManager::updateTarget( bool bGui)
 {
 	
-	// unset anything that isn't targeted
+	// MISSION-START-HOVER-TARGET-LIFETIME-1 (completed): suppress hover BEFORE any deref.
+	// During mission start / settle frames / teardown the persistent target + oldTargets[]
+	// can point at freed objects, and findObjectByMouse can return a stale/garbage pointer.
+	// Clear hover state WITHOUT dereferencing (no setDrawBars/setTargeted -> no virtual call
+	// on freed memory) and bail. s_hoverSettleFrames keeps picking off for a few live frames
+	// after arming, so the first beginMission update can't pick a not-yet-ready world.
+	if ( s_hoverSuppressed || s_hoverSettleFrames > 0 )
+	{
+		if ( s_hoverSettleFrames > 0 )
+			s_hoverSettleFrames--;
+		memset( oldTargets, 0, sizeof(GameObject*) * MAX_ICONS );
+		memset( s_oldTargetWatchID, 0, sizeof(s_oldTargetWatchID) );
+		target = NULL;
+		s_targetWatchID = 0;
+		return;
+	}
+
+	// Validate the PERSISTENT target + oldTargets are still live before dereferencing them:
+	// an object targeted last frame may have died this frame. getByWatchID(wid) is a registry
+	// lookup (NO deref of the possibly-freed pointer); if it no longer maps to our pointer the
+	// object is gone -> drop it silently (its draw-bars died with it).
+	if ( target && ObjectManager->getByWatchID( s_targetWatchID ) != target )
+	{
+		target = NULL;
+		s_targetWatchID = 0;
+	}
+	for ( int i = 0; i < MAX_ICONS; i++ )
+	{
+		if ( oldTargets[i] && ObjectManager->getByWatchID( s_oldTargetWatchID[i] ) != oldTargets[i] )
+		{
+			oldTargets[i] = 0;
+			s_oldTargetWatchID[i] = 0;
+		}
+	}
+
+	// unset anything that isn't targeted (now validated-live, safe to deref)
 	for ( int i = 0; i < MAX_ICONS; i++ )
 	{
 		if ( oldTargets[i] )
 		{
 			oldTargets[i]->setDrawBars( 0 );
 			oldTargets[i] = 0;
+			s_oldTargetWatchID[i] = 0;
 		}
 	}
-	
+
 	// if there was a target, unset it
 	if ( target )
 		target->setTargeted( 0 );
-
-	// MISSION-START-HOVER-TARGET-LIFETIME-1: suppress hover picking until the mission world
-	// is live (armHoverTarget). The first beginMission update frame runs before objects are
-	// fully settled; picking then could return a stale/freed pointer from the prior mission.
-	// Keeping target NULL here is correct: no hover, no order target, no virtual call.
-	if ( s_hoverSuppressed )
-	{
-		target = NULL;
-		return;
-	}
 
 	//----------------------------------------------------------------------------------------
 	// Get Any object we are over.  Change cursor if appropriate.  Set selected if necessary.
@@ -1714,6 +1751,12 @@ void MissionInterfaceManager::updateTarget( bool bGui)
 	gpu_hover_done:;
 	if ( target )
 	{
+		// Remember the freshly-picked (live) target's watch-ID so next frame's top-of-function
+		// validation can detect if its object dies. Picking only runs post-settle, so target
+		// here is a live object -> getWatchID() is safe. target may be nulled by the checks
+		// below (bGui/sensor/destroyed); that's fine -- the WID is only consulted when target
+		// is non-null next frame, and target is never reassigned to a different object here.
+		s_targetWatchID = target->getWatchID();
 		if ( bGui )
 			target = 0;
 		else if ( target->isMover() && !ShowMovers && !(MPlayer && MPlayer->allUnitsDestroyed[MPlayer->commanderID]))
