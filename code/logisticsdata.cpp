@@ -1,4 +1,4 @@
-#define LOGISTICSDATA_CPP
+﻿#define LOGISTICSDATA_CPP
 /*************************************************************************************************\
 LogisticsData.cpp			: Implementation of the LogisticsData component.
 //---------------------------------------------------------------------------//
@@ -27,6 +27,10 @@ LogisticsData.cpp			: Implementation of the LogisticsData component.
 #include<string>
 #include"../GameOS/gameos/diagnostic_trace.h"   // LOGISTICS front-end state capture
 
+// Interactive cheat gates â€” read once at startup, default OFF (unset = nullptr = false)
+static const bool s_cheatInfiniteMoney = (getenv("MC2_CHEAT_INFINITE_MONEY") != nullptr);
+static const bool s_cheatSalvageAll    = (getenv("MC2_CHEAT_SALVAGE_ALL")    != nullptr);
+
 #ifndef VIEWER
 #include"multplyr.h"
 #include"chatwindow.h"
@@ -44,7 +48,7 @@ extern CPrefs prefs;
 struct DeployedMechSnapshot
 {
 	EString           variantName; // copy of LogisticsVariant::variantName (== BattleMech::variantName)
-	LogisticsVariant* pVariant;    // raw ptr — valid lifetime: variants list outlives this snapshot
+	LogisticsVariant* pVariant;    // raw ptr â€” valid lifetime: variants list outlives this snapshot
 };
 static std::vector<DeployedMechSnapshot> s_deployedMechSnapshot;
 
@@ -513,12 +517,13 @@ int LogisticsData::purchaseMech( LogisticsVariant* pVariant )
 
 	int RP = pVariant->getCost();
 
-	if ( missionInfo->getCBills() - RP >= 0 )
+	if ( s_cheatInfiniteMoney || missionInfo->getCBills() - RP >= 0 )
 	{
 		int count = instance->createInstanceID( pVariant );
 		LogisticsMech* pMech = new LogisticsMech( pVariant, count );
 		instance->inventory.Append( pMech );
-		missionInfo->decrementCBills( pVariant->getCost() );
+		if ( !s_cheatInfiniteMoney )
+			missionInfo->decrementCBills( pVariant->getCost() );
 		return 0;
 	}
 
@@ -529,6 +534,9 @@ int LogisticsData::canPurchaseMech( LogisticsVariant* pVar )
 {
 	if ( !pVar )
 		return INVALID_ID;
+
+	if ( s_cheatInfiniteMoney )
+		return 0;
 
 	int RP = pVar->getCost();
 
@@ -970,7 +978,7 @@ void LogisticsData::removeMechsInForceGroup()
 		if ( (*si)->getForceGroup() )
 		{
 			DeployedMechSnapshot snap;
-			snap.variantName = (*si)->getName(); // EString copy — variantName == LogisticsVariant::getName()
+			snap.variantName = (*si)->getName(); // EString copy â€” variantName == LogisticsVariant::getName()
 			snap.pVariant    = (*si)->getVariant();
 			s_deployedMechSnapshot.push_back( snap );
 		}
@@ -1469,7 +1477,7 @@ void	LogisticsData::setMissionCompleted( )
 							// This happens for mod-purchased mechs whose variant was added at
 							// runtime (not in the campaign's base variant CSV).  Fall back to
 							// the pre-removal snapshot captured by removeMechsInForceGroup().
-							// The pVariant pointer in the snapshot is still valid — LogisticsVariant
+							// The pVariant pointer in the snapshot is still valid â€” LogisticsVariant
 							// objects are owned by the variants list, not by LogisticsMech.
 							for ( const DeployedMechSnapshot& snap : s_deployedMechSnapshot )
 							{
@@ -1485,7 +1493,7 @@ void	LogisticsData::setMissionCompleted( )
 							{
 								// Still NULL: genuine missing variant (corrupt save / unknown mech).
 								// Log and skip rather than Assert no-op (Assert is a no-op in RelWithDebInfo).
-								printf( "[LOGISTICS] setMissionCompleted: no variant for surviving mech '%s' — mech lost\n",
+								printf( "[LOGISTICS] setMissionCompleted: no variant for surviving mech '%s' â€” mech lost\n",
 								        vname );
 								fflush( stdout );
 							}
@@ -1829,7 +1837,7 @@ void LogisticsData::dumpFrontEndState( const char* screenName )
 	j += "\"screen\":\"" + esc( screenName ) + "\"";
 	j += ",\"campaign\":\"" + esc( (const char*)getCampaignName() ) + "\"";
 
-	// Mission name fields — guard on a valid current mission (campaign-select
+	// Mission name fields â€” guard on a valid current mission (campaign-select
 	// screen may have none yet).
 	const EString& curMission = getCurrentMission();
 	if ( curMission.Length() > 0 ) {
@@ -1842,7 +1850,7 @@ void LogisticsData::dumpFrontEndState( const char* screenName )
 	j += ",\"cbills\":" + std::to_string( getCBills() );
 	j += ",\"resourcePoints\":" + std::to_string( getResourcePoints() );
 
-	// Purchasable mechs — the bay/purchase population. Empty here = the POAR bug.
+	// Purchasable mechs â€” the bay/purchase population. Empty here = the POAR bug.
 	{
 		LogisticsVariant* pv[512];
 		int pc = 512;

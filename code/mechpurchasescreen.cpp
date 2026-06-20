@@ -1,4 +1,4 @@
-#define MECHPURCHASESCREEN_CPP
+﻿#define MECHPURCHASESCREEN_CPP
 /*************************************************************************************************\
 MechPurchaseScreen.cpp			: Implementation of the MechPurchaseScreen component.
 //---------------------------------------------------------------------------//
@@ -18,6 +18,9 @@ MechPurchaseScreen.cpp			: Implementation of the MechPurchaseScreen component.
 #include"multplyr.h"
 
 MechPurchaseScreen* MechPurchaseScreen::s_instance = NULL;
+
+// Interactive cheat gate
+static const bool s_cheatInfiniteMoney = (getenv("MC2_CHEAT_INFINITE_MONEY") != nullptr);
 
 #define INVENTORY_ID 88
 #define VARIANT_ID	89
@@ -171,7 +174,7 @@ void MechPurchaseScreen::update()
 
 	if ( pCurBuy )
 	{
-		if ( pCurBuy->getCost() > LogisticsData::instance->getCBills() )
+		if ( !s_cheatInfiniteMoney && pCurBuy->getCost() > LogisticsData::instance->getCBills() )
 		{
 			pCurBuy = NULL;
 		}

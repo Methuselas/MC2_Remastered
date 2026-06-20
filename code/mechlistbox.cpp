@@ -1,4 +1,4 @@
-#define MECHLISTBOX_CPP
+﻿#define MECHLISTBOX_CPP
 /*************************************************************************************************\
 MechListBox.cpp			: Implementation of the MechListBox component.
 //---------------------------------------------------------------------------//
@@ -18,6 +18,9 @@ MechListBox.cpp			: Implementation of the MechListBox component.
 #include"logisticsdata.h"
 #include"mechpurchasescreen.h"
 #include"gamesound.h"
+
+// Interactive cheat gate (set in logisticsdata.cpp; extern here for UI bypass)
+static const bool s_cheatInfiniteMoney = (getenv("MC2_CHEAT_INFINITE_MONEY") != nullptr);
 #include"txmmgr.h"
 
 MechListBoxItem* MechListBoxItem::s_templateItem = NULL;
@@ -646,7 +649,7 @@ void MechListBox::disableItemsThatCostMoreThanRP()
 	bool bDisabledSel = 0;
 	for ( int i = 0; i < itemCount; i++ )
 	{
-		if ( ((MechListBoxItem*)items[i])->pMech->getCost() > LogisticsData::instance->getCBills() )
+		if ( !s_cheatInfiniteMoney && ((MechListBoxItem*)items[i])->pMech->getCost() > LogisticsData::instance->getCBills() )
 		{
 			items[i]->setState( aListItem::DISABLED );
 			if ( itemSelected == i )

@@ -1,4 +1,4 @@
-#define MECHLABSCREEN_CPP
+﻿#define MECHLABSCREEN_CPP
 /*************************************************************************************************\
 MechLabScreen.cpp			: Implementation of the MechLabScreen component.
 //---------------------------------------------------------------------------//
@@ -16,6 +16,9 @@ MechLabScreen.cpp			: Implementation of the MechLabScreen component.
 #include"logisticsdialog.h"
 #include<malloc.h>
 #include"gamesound.h"
+
+// Interactive cheat gate
+static const bool s_cheatInfiniteMoney = (getenv("MC2_CHEAT_INFINITE_MONEY") != nullptr);
 #include"chatwindow.h"
 #include"multplyr.h"
 extern bool useUnlimitedAmmo;
@@ -236,7 +239,7 @@ void MechLabScreen::begin()
 	{
 		// getMechToModify() can return null when no mech is selected (e.g. forced
 		// begin() from the soak check-screens harness before logistics is staged).
-		// Bail out early rather than null-deref — caller should have guarded first.
+		// Bail out early rather than null-deref â€” caller should have guarded first.
 		LogisticsMech* mechToMod = LogisticsData::instance
 		                           ? LogisticsData::instance->getMechToModify()
 		                           : nullptr;
@@ -1043,7 +1046,7 @@ int	MechLabScreen::handleMessage( unsigned long msg, unsigned long who)
 				// figure out change
 				float costChange = newCost - originalCost;
 
-				if ( costChange > LogisticsData::instance->getCBills() )
+				if ( !s_cheatInfiniteMoney && costChange > LogisticsData::instance->getCBills() )
 				{
 					LogisticsOneButtonDialog::instance()->setText( IDS_MC_INSUFFICIENT_CBILLS, IDS_DIALOG_OK,
 						IDS_DIALOG_OK );

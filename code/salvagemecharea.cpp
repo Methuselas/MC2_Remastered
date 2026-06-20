@@ -1,4 +1,4 @@
-#define SALVAGEMECHAREA_CPP
+﻿#define SALVAGEMECHAREA_CPP
 /*************************************************************************************************\
 SalvageMechArea.cpp			: Implementation of the SalvageMechArea component.
 //---------------------------------------------------------------------------//
@@ -16,6 +16,10 @@ SalvageMechArea.cpp			: Implementation of the SalvageMechArea component.
 #include "../resource.h"
 #include"gamesound.h"
 #include<malloc.h>
+
+// Interactive cheat gates — read once at startup, default OFF
+static const bool s_cheatInfiniteMoney = (getenv("MC2_CHEAT_INFINITE_MONEY") != nullptr);
+static const bool s_cheatSalvageAll    = (getenv("MC2_CHEAT_SALVAGE_ALL")    != nullptr);
 
 aAnimButton* SalvageListItem::templateCheckButton = NULL;
 
@@ -153,7 +157,7 @@ void SalvageMechScreen::init(FitIniFile* file)
 	for (int i = 0; i < ObjectManager->numMechs; i++ )
 	{
 		BattleMech* pMech = ObjectManager->getMech( i );
-		if ( pMech->isDisabled() && !pMech->isDestroyed() && pMech->moveLevel != 2 )
+		if ( pMech->moveLevel != 2 && ( s_cheatSalvageAll ? ( pMech->isDisabled() || pMech->isDestroyed() ) : ( pMech->isDisabled() && !pMech->isDestroyed() ) ) )
 			pSortedMechs[count++] = pMech;
 	}
 
@@ -162,7 +166,7 @@ void SalvageMechScreen::init(FitIniFile* file)
 	for (int i = 0; i < count; i++ )
 	{
 		BattleMech* pMech = pSortedMechs[i];
-		if ( pMech->isDisabled() && !pMech->isDestroyed() && pMech->moveLevel != 2 ) // don't put copters in the list
+		if ( pMech->moveLevel != 2 && ( s_cheatSalvageAll ? ( pMech->isDisabled() || pMech->isDestroyed() ) : ( pMech->isDisabled() && !pMech->isDestroyed() ) ) ) // don't put copters in the list
 		{
 			SalvageListItem* pItem = new SalvageListItem( pMech );
 			salvageListBox.AddItem( pItem );
@@ -392,7 +396,7 @@ SalvageListItem::SalvageListItem( BattleMech* pMech )
 	icon->update();
 
 	// A salvageable mech may have a null/partial appearance (stub-substituted
-	// chassis, partial GLB import — see "mech appearance has no base shape" warns).
+	// chassis, partial GLB import â€” see "mech appearance has no base shape" warns).
 	// Guard before deref so the salvage list survives it instead of crashing
 	// (SalvageMechScreen::init, salvagemecharea.cpp).
 	psRed = psGreen = psBlue = 0;
@@ -476,7 +480,7 @@ void SalvageListItem::update()
 	long mouseX = userInput->getMouseX();
 	long mouseY = userInput->getMouseY();
 
-	if ( costToSalvage > LogisticsData::instance->getCBills()
+	if ( !s_cheatInfiniteMoney && costToSalvage > LogisticsData::instance->getCBills()
 		&& !isChecked() )
 	{
 		disable( );
