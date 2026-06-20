@@ -2726,6 +2726,100 @@ static inline void recordStableLightSkipDiag(bool armed, bool eligible,
 }
 } // namespace
 
+// ============================================================================
+// [LIGHTBRIDGE-STABLE-SKIP-WIRE-1] Gate + diagnostics
+// MC2_LIGHTBRIDGE_STABLE_SKIP=1  — enable the skip path (default OFF)
+// MC2_LIGHTBRIDGE_STABLE_SKIP_DIAG=1 — enable per-frame diagnostic print (independent)
+// ============================================================================
+extern uint32_t mc2StaticLightHighWater();  // txmmgr.cpp — s_staticLightHighWater accessor
+
+static bool mc2LightbridgeStableSkipEnabled() {
+    static const bool s_enabled = ParseEnvBool("MC2_LIGHTBRIDGE_STABLE_SKIP");
+    return s_enabled;
+}
+static bool mc2LightbridgeStableSkipDiagEnabled() {
+    static const bool s_diagEnabled = ParseEnvBool("MC2_LIGHTBRIDGE_STABLE_SKIP_DIAG");
+    return s_diagEnabled;
+}
+
+namespace {
+
+// Per-frame counters for LIGHTBRIDGE_STABLE_SKIP diagnostics.
+// Printed every 300 frames when MC2_LIGHTBRIDGE_STABLE_SKIP_DIAG=1.
+struct LightbridgeStableSkipDiag {
+    uint32_t frame         = 0xFFFFFFFFu;
+    // Building counters
+    uint64_t b_armed       = 0;  // stableLightSkipArmed
+    uint64_t b_eligible    = 0;  // stableLightSkipEligible
+    uint64_t b_taken       = 0;  // skip actually fired
+    uint64_t b_blk_idx     = 0;  // blocked: invalid lightDataIndex
+    uint64_t b_blk_gen     = 0;  // blocked: generation mismatch
+    uint64_t b_blk_noelig  = 0;  // blocked: armed but not eligible
+    // Tree counters
+    uint64_t t_taken       = 0;
+    uint64_t t_blk_idx     = 0;
+    uint64_t t_total       = 0;
+};
+
+static LightbridgeStableSkipDiag s_lbssDiag;
+
+static void lbssDiagPrint(const LightbridgeStableSkipDiag& d)
+{
+    fprintf(stderr,
+        "LIGHTBRIDGE_STABLE_SKIP: enabled=%d armed=%llu eligible=%llu taken=%llu "
+        "blocked_invalid_index=%llu blocked_generation_mismatch=%llu blocked_no_eligible=%llu "
+        "static_prefix_count=%u\n",
+        (int)mc2LightbridgeStableSkipEnabled(),  // references file-scope fn, not anon-ns
+        (unsigned long long)d.b_armed,
+        (unsigned long long)d.b_eligible,
+        (unsigned long long)d.b_taken,
+        (unsigned long long)d.b_blk_idx,
+        (unsigned long long)d.b_blk_gen,
+        (unsigned long long)d.b_blk_noelig,
+        mc2StaticLightHighWater());
+    fprintf(stderr,
+        "LIGHTBRIDGE_TREE_STABLE_SKIP: total=%llu taken=%llu blocked_invalid_index=%llu\n",
+        (unsigned long long)d.t_total,
+        (unsigned long long)d.t_taken,
+        (unsigned long long)d.t_blk_idx);
+    fflush(stderr);
+}
+
+static void lbssDiagRollFrame(uint32_t frame)
+{
+    if (!mc2LightbridgeStableSkipDiagEnabled()) return;
+    if (frame == s_lbssDiag.frame) return;
+    // Print on new frame boundary (every 300 frames)
+    if (s_lbssDiag.frame != 0xFFFFFFFFu && (s_lbssDiag.frame % 300u) == 0u)
+        lbssDiagPrint(s_lbssDiag);
+    s_lbssDiag = LightbridgeStableSkipDiag{};
+    s_lbssDiag.frame = frame;
+}
+
+static inline void lbssRecordBldg(bool eligible, bool taken,
+    bool blk_idx, bool blk_gen, bool blk_noelig)
+{
+    if (!mc2LightbridgeStableSkipDiagEnabled()) return;
+    lbssDiagRollFrame(g_mc2FrameCounter);
+    ++s_lbssDiag.b_armed;   // always called when armed (caller gate)
+    if (eligible) ++s_lbssDiag.b_eligible;
+    if (taken)    ++s_lbssDiag.b_taken;
+    if (blk_idx)  ++s_lbssDiag.b_blk_idx;
+    if (blk_gen)  ++s_lbssDiag.b_blk_gen;
+    if (blk_noelig) ++s_lbssDiag.b_blk_noelig;
+}
+
+static inline void lbssRecordTree(bool taken, bool blk_idx)
+{
+    if (!mc2LightbridgeStableSkipDiagEnabled()) return;
+    lbssDiagRollFrame(g_mc2FrameCounter);
+    ++s_lbssDiag.t_total;
+    if (taken)   ++s_lbssDiag.t_taken;
+    if (blk_idx) ++s_lbssDiag.t_blk_idx;
+}
+
+} // namespace (lbss diag)
+
 // [LIGHTSLOT v1] accessor free fns (defined mclib/txmmgr.cpp, global scope).
 extern uint32_t mc2LightSlotBakedHighWater();
 extern uint64_t mc2LightSlotDedupHits();
@@ -4014,6 +4108,38 @@ void BldgAppearance::touchSerialCommit()
 		staticReg.hasValidStaticLight && (staticReg.lastLightEnvGen != currentLightEnvGen),
 		needsFullBakeNextFrame,
 		staticReg.lightDataIndex == 0xFFFFFFFFu);
+
+	// [LIGHTBRIDGE-STABLE-SKIP-WIRE-1]: skip Section C (EmitBakedGpuLightData +
+	// getCachedGpuLightIndex + staticReg writes) when MC2_LIGHTBRIDGE_STABLE_SKIP=1
+	// and this object's baked light slot is known valid for this frame.
+	//
+	// INVARIANT proof (verified 2026-06-20):
+	//   Q1: resetLightData() rebases lightDataStructuresCount to s_staticLightHighWater
+	//       (not 0) when MC2_LIGHTBAKE is on. lightData_[0..s_staticLightHighWater) is
+	//       NEVER memset'd or cleared — it persists intact frame-to-frame.
+	//   Q2: EmitBakedGpuLightData(recipeIndex, ...) sets cachedGpuLightIndex_ =
+	//       static_cast<uint32_t>(recipeIndex) — i.e. the permanent static prefix slot.
+	//   Q3: staticReg.lightDataIndex = getCachedGpuLightIndex() = recipeIndex, which
+	//       is an index into the static prefix [0..s_staticLightHighWater).
+	//   Q4: renderLists() uploads lightData_[0..max(lightDataStructuresCount,64)] which
+	//       always covers [0..s_staticLightHighWater) since count >= S after rebase.
+	//       With MC2_STATIC_LIGHT_UPLOAD_SPLIT the prefix is uploaded once-per-dirty;
+	//       suffix is uploaded every frame. Either path keeps [0..S) in GPU memory.
+	// Therefore: staticReg.lightDataIndex from a prior frame remains valid on the GPU
+	// for stable objects — we can skip resubmit entirely when stableLightSkipEligible.
+	// DO NOT remove the else-branch fallback — it handles any frame where light state
+	// changed, needsFullBakeNextFrame, or slot was invalidated.
+	if (mc2LightbridgeStableSkipEnabled() && stableLightSkipArmed) {
+		const bool indexValid = (staticReg.lightDataIndex != 0xFFFFFFFFu);
+		const bool genMatch   = (staticReg.lastLightEnvGen == currentLightEnvGen);
+		const bool skipTaken  = (stableLightSkipEligible && indexValid && genMatch);
+		const bool blk_idx    = stableLightSkipEligible && !indexValid;
+		const bool blk_gen    = stableLightSkipEligible && indexValid && !genMatch;
+		const bool blk_noelig = !stableLightSkipEligible;
+		lbssRecordBldg(stableLightSkipEligible, skipTaken, blk_idx, blk_gen, blk_noelig);
+		if (skipTaken)
+			return;
+	}
 
 	extern bool mc2LightBakeEnabled();
 	extern bool mc2IsBakedStaticLightPresent(int32_t);
@@ -6130,6 +6256,21 @@ void TreeAppearance::touchWorkerPrepass()
 void TreeAppearance::touchSerialCommit()
 {
 	if (!treeShape) return;
+
+	// [LIGHTBRIDGE-STABLE-SKIP-WIRE-1] Tree path: if MC2_LIGHTBRIDGE_STABLE_SKIP=1 and
+	// the active LOD's baked light slot is valid, skip EmitBakedGpuLightData entirely.
+	// INVARIANT: same as BldgAppearance — lightData_[recipeIndex] persists frame-to-frame;
+	// staticReg[activeLOD].lightDataIndex == recipeIndex from prior frame's emit is valid.
+	// Trees don't track lastLightEnvGen (mission lighting is effectively static for trees).
+	if (mc2LightbridgeStableSkipEnabled()) {
+		const bool indexValid = (staticReg[activeLOD].lightDataIndex != 0xFFFFFFFFu);
+		const bool registered = (staticReg[activeLOD].registered && staticReg[activeLOD].recipeIndex >= 0);
+		const bool skipTaken  = (registered && indexValid);
+		lbssRecordTree(skipTaken, registered && !indexValid);
+		if (skipTaken)
+			return;
+	}
+
 	extern bool mc2LightBakeEnabled();
 	extern bool mc2IsBakedStaticLightPresent(int32_t);
 	// [LIGHTBRIDGE-BAKED-PROBE-1] probe only — EmitBakedGpuLightData discards baked
