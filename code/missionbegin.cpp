@@ -929,28 +929,158 @@ const char* MissionBegin::update()
 
 						if ( s_soakLanceRandom )
 						{
-							// SOAK-LANCE-RANDOM-1: buy+deploy a random-sized lance [1..12].
-							// Seed: per-bay counter mixed with a small integer hash so each
-							// mission gets a different N and different variant sequence without
-							// requiring std::rand (which has no guaranteed seed here).
+							// SOAK-LANCE-RANDOM-2: deploy MAX-SIZE lance with MAX MECH VARIETY.
+							// Goal: stress-test as many distinct mech loadouts as possible each
+							// mission.  Lance size = min(12, pilots, distinctCandidates).
+							// Sources (in priority order, deduplicated by variant pointer):
+							//   (a) Salvaged inventory mechs already owned (getForceGroup()==0),
+							//       accumulated by MC2_SOAK_KILL_ENEMY. No weight filter needed.
+							//   (b) Purchasable mechs (weight >= 20t) covering additional variants.
+							// Combined list is Fisher-Yates shuffled by per-mission LCG so each
+							// mission gets a different ordering (deterministic, no srand).
+
 							static unsigned int s_soakLanceMissionNum = 0;
 							++s_soakLanceMissionNum;
-							// Hash: Thomas Wang 32-bit mix
-							unsigned int h = s_soakLanceMissionNum;
-							h = (h ^ 61u) ^ (h >> 16);
-							h = h + (h << 3);
-							h ^= h >> 4;
-							h = h * 0x27d4eb2du;
-							h ^= h >> 15;
+							// Thomas Wang 32-bit mix -> per-mission shuffle seed
+							unsigned int seed = s_soakLanceMissionNum;
+							seed = (seed ^ 61u) ^ (seed >> 16);
+							seed = seed + (seed << 3);
+							seed ^= seed >> 4;
+							seed = seed * 0x27d4eb2du;
+							seed ^= seed >> 15;
 
 							const int LANCE_MAX = 12;
-							int targetN = ( mechCount > 0 )
-								? (int)( h % (unsigned int)LANCE_MAX ) + 1   // [1..12]
-								: 0;
 
+							// Candidate: salvage (invMech!=null, no buy) or purchasable (invMech==null).
+							struct Candidate {
+								LogisticsMech*    invMech;
+								LogisticsVariant* variant;
+							};
+							const int CAND_CAP = 256;
+							Candidate cands[CAND_CAP];
+							int       nCands = 0;
+
+							// Variant dedup table (pointer equality).
+							LogisticsVariant* seenVariants[CAND_CAP];
+							int               nSeen = 0;
+							auto variantSeen = [&]( LogisticsVariant* v ) -> bool {
+								for ( int i = 0; i < nSeen; ++i )
+									if ( seenVariants[i] == v ) return true;
+								return false;
+							};
+							auto markVariant = [&]( LogisticsVariant* v ) {
+								if ( nSeen < CAND_CAP ) seenVariants[nSeen++] = v;
+							};
+
+							// -- (a) salvaged inventory mechs (unassigned) ----------------------
+							{
+								EList<LogisticsMech*, LogisticsMech*> inv;
+								ld->getInventory( inv );
+								for ( EList<LogisticsMech*, LogisticsMech*>::EIterator it = inv.Begin();
+								      !it.IsDone() && nCands < CAND_CAP; it++ )
+								{
+									LogisticsMech* m = (*it);
+									if ( !m ) continue;
+									if ( m->getForceGroup() ) continue;
+									LogisticsVariant* v = m->getVariant();
+									if ( !v ) continue;
+									if ( variantSeen(v) ) continue;
+									cands[nCands++] = { m, v };
+									markVariant(v);
+								}
+							}
+							int nSalvageCands = nCands;
+
+							// -- (b) purchasable mechs (weight>=20t) not covered by salvage -----
+							for ( int i = 0; i < mechCount && nCands < CAND_CAP; ++i )
+							{
+								LogisticsVariant* v = pool[ mechIdx[i] ];
+								if ( !v ) continue;
+								if ( variantSeen(v) ) continue;
+								cands[nCands++] = { nullptr, v };
+								markVariant(v);
+							}
+
+							// -- Fisher-Yates shuffle (Knuth LCG) -------------------------------
+							for ( int i = nCands - 1; i > 0; --i )
+							{
+								seed = seed * 1664525u + 1013904223u;
+								int j = (int)( seed % (unsigned int)( i + 1 ) );
+								Candidate tmp = cands[i]; cands[i] = cands[j]; cands[j] = tmp;
+							}
+
+							// -- deploy down shuffled list --------------------------------------
+							int deployed    = 0;
+							int fromSalvage = 0;
+							int fromBuy     = 0;
+							const char* firstName = "none";
+
+							for ( int slot = 1; slot <= LANCE_MAX && (slot - 1) < nCands; ++slot )
+							{
+								Candidate&        cand    = cands[slot - 1];
+								LogisticsMech*    mech    = cand.invMech;
+								LogisticsVariant* variant = cand.variant;
+								const char*       src     = mech ? "salvage" : "buy";
+
+								if ( !mech )
+								{
+									// (b) buy path: purchase then locate fresh instance
+									if ( ld->purchaseMech( variant ) != 0 )
+									{
+										printf("[SOAK] lance-add slot=%d FAILED purchase variant=%s\n",
+										    slot, (const char*)variant->getName());
+										continue;
+									}
+									EList<LogisticsMech*, LogisticsMech*> inv;
+									ld->getInventory( inv );
+									for ( EList<LogisticsMech*, LogisticsMech*>::EIterator it = inv.Begin();
+									      !it.IsDone(); it++ )
+									{
+										LogisticsMech* m = (*it);
+										if ( m && m->getVariant() == variant && !m->getForceGroup() )
+										{ mech = m; break; }
+									}
+									if ( !mech )
+									{
+										printf("[SOAK] lance-add slot=%d WARN bought-not-found variant=%s\n",
+										    slot, (const char*)variant->getName());
+										continue;
+									}
+								}
+
+								// Pilot check BEFORE force-group assignment
+								LogisticsPilot* pilot = ld->getFirstAvailablePilot();
+								if ( !pilot )
+								{
+									printf("[SOAK] lance-add slot=%d STOPPED no-pilot mech=%s\n",
+									    slot, (const char*)variant->getName());
+									break;
+								}
+
+								if ( ld->addMechToForceGroup( mech, slot ) != 0 )
+								{
+									printf("[SOAK] lance-add slot=%d REJECTED addMechToForceGroup mech=%s\n",
+									    slot, (const char*)variant->getName());
+									continue;
+								}
+								mech->setPilot( pilot );
+
+								if ( deployed == 0 )
+								{
+									ld->setMechToModify( mech );
+									firstName = (const char*)variant->getName();
+								}
+
+								printf("[SOAK] lance-add slot=%d mech=%s tons=%d src=%s\n",
+								    slot, (const char*)variant->getName(),
+								    (int)variant->getMaxWeight(), src);
+								++deployed;
+								if ( src[0] == 's' ) ++fromSalvage; else ++fromBuy;
+							}
+
+							// Count remaining available pilots for summary
 							int pilotsAvail = 0;
 							{
-								// Count available (unassigned) pilots for the summary log.
 								LogisticsPilot* pp[256];
 								long pc = 256;
 								ld->getPilots( pp, pc );
@@ -959,74 +1089,11 @@ const char* MissionBegin::update()
 										++pilotsAvail;
 							}
 
-							int deployed = 0;
-							const char* firstName = "none";
-
-							for ( int slot = 1; slot <= targetN && mechCount > 0; ++slot )
-							{
-								// Pick a random variant from the mech-filtered pool.
-								// Vary the seed per slot by folding slot into h.
-								unsigned int hSlot = h ^ (unsigned int)( slot * 2654435761u );
-								int variantIdx = mechIdx[ hSlot % (unsigned int)mechCount ];
-								LogisticsVariant* pick = pool[ variantIdx ];
-								if ( !pick )
-									break;
-
-								if ( ld->purchaseMech( pick ) != 0 )
-								{
-									printf("[SOAK] lance-add slot=%d FAILED purchase variant=%s\n",
-										slot, (const char*)pick->getName());
-									break;
-								}
-
-								// Find the freshly-purchased instance (no force group yet).
-								LogisticsMech* bought = nullptr;
-								EList<LogisticsMech*, LogisticsMech*> inv;
-								ld->getInventory( inv );
-								for ( EList<LogisticsMech*, LogisticsMech*>::EIterator it = inv.Begin();
-								      !it.IsDone(); it++ )
-									if ( (*it) && (*it)->getVariant() == pick && !(*it)->getForceGroup() )
-										bought = (*it);
-
-								if ( !bought )
-								{
-									printf("[SOAK] lance-add slot=%d WARN bought-not-found variant=%s\n",
-										slot, (const char*)pick->getName());
-									break;
-								}
-
-								// Check pilot availability BEFORE adding to force group so
-								// we never strand a pilotless mech in the lance.
-								LogisticsPilot* pilot = ld->getFirstAvailablePilot();
-								if ( !pilot )
-								{
-									printf("[SOAK] lance-add slot=%d STOPPED no-pilot mech=%s\n",
-										slot, (const char*)pick->getName());
-									break;
-								}
-
-								if ( ld->addMechToForceGroup( bought, slot ) != 0 )
-								{
-									// Engine rejected the slot (capacity rule / slot > 12).
-									printf("[SOAK] lance-add slot=%d REJECTED by addMechToForceGroup mech=%s\n",
-										slot, (const char*)pick->getName());
-									break;
-								}
-								bought->setPilot( pilot );
-
-								if ( deployed == 0 )
-								{
-									ld->setMechToModify( bought );  // enables loadout screen-check
-									firstName = (const char*)pick->getName();
-								}
-
-								printf("[SOAK] lance-add slot=%d mech=%s tons=%d\n",
-									slot, (const char*)pick->getName(), (int)pick->getMaxWeight());
-								++deployed;
-							}
-
-							printf("[SOAK] lance-random target=%d deployed=%d pilotsAvail=%d firstMech=%s pool=%d missionNum=%u\n",
-								targetN, deployed, pilotsAvail, firstName, mechCount, s_soakLanceMissionNum);
+							printf("[SOAK] lance-v2 deployed=%d distinct=%d pilots=%d fromSalvage=%d fromBuy=%d salvageCands=%d buyCands=%d missionNum=%u\n",
+							    deployed, deployed, pilotsAvail,
+							    fromSalvage, fromBuy,
+							    nSalvageCands, nCands - nSalvageCands,
+							    s_soakLanceMissionNum);
 							fflush( stdout );
 						}
 						else
