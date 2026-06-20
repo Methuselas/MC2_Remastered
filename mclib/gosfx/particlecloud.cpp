@@ -324,6 +324,16 @@ gosFX::ParticleCloud::ParticleCloud(
 	//
 	m_data.SetLength(spec->m_maxParticleCount*spec->m_totalParticleSize);
 
+	// Zero the raw channel block so every particle slot starts cleared — in
+	// particular each slot's m_effect pointer is NULL until CreateNewParticle
+	// sets it. Without this, a slot activated over uninitialized pool memory
+	// holds a garbage m_effect that EffectCloud::DestroyParticle then delete's
+	// during Kill() -> crash in Stuff::Plug::~Plug (READ at 0xF0..). Surfaced by
+	// cheat-mode mass-kill, which churns effect-cloud slots fast enough to hit
+	// the uninitialized window.
+	if (m_data.GetData() && m_data.GetSize() > 0)
+		memset(m_data.GetData(), 0, m_data.GetSize());
+
 	//
 	//-------------------------------
 	// Set up an empty particle cloud
