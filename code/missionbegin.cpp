@@ -192,6 +192,14 @@ void MissionBegin::begin()
 		logisticsBrain = NULL;
 	}
 
+	// CRASH-SOAK harness marker: report whether a logistics ABL brain was
+	// found+loaded for the current mission. Cheap (one printf at screen
+	// entry); always emitted so it shows up regardless of soak gate.
+	printf("[SOAK] abl logistics brain=%s loaded=%d\n",
+		brainfile ? brainfile : "(none)",
+		(logisticsBrain != NULL) ? 1 : 0);
+	fflush(stdout);
+
 	//---------------------------------------------
 	DWORD localRenderer = prefs.renderer;
 	if (prefs.renderer != 0 && prefs.renderer != 3)
@@ -826,8 +834,13 @@ const char* MissionBegin::update()
 		// screen has settled to RUNNING (real transition pending takes priority),
 		// on a logistics screen (curScreenX>=2, past splash/select), throttled and
 		// fired once per screen-settle so we don't spam. Single-player only.
+		// Walk forward from ANY settled grid column toward launch: the
+		// inter-mission flow re-enters at mission-selection [0][1] / briefing
+		// [1][1], so cover curScreenX 0..3 (was 2..3 for the pre-mission-only
+		// walk). Briefing video is already gated by MC2_BOOT_TO_BAY
+		// (controlgui playMovie), so widening here adds no video block.
 		bool soakForceNext = false;
-		if ( s_soakAutoWin && !MPlayer && curScreenX >= 2 && curScreenX < 4 &&
+		if ( s_soakAutoWin && !MPlayer && curScreenX < 4 &&
 			 pCurScreen->getStatus() == LogisticsScreen::RUNNING && !animJustBegun )
 		{
 			static long  s_soakLastAdvX = -99;

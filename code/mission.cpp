@@ -2693,9 +2693,13 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	gosASSERT(result == NO_ERR);
 
 	bool loadBrainParameters = (result == NO_ERR);
-	if (numWarriors) 
+	// CRASH-SOAK harness: tally how many mission AI brains (e.g. "magicx" on
+	// MCO missions) load vs fail, so the soak runner can confirm AI is active.
+	long soakBrainsLoaded = 0;
+	long soakBrainsFailed = 0;
+	if (numWarriors)
 	{
-		for (long i = 1; i <= numWarriors; i++) 
+		for (long i = 1; i <= numWarriors; i++)
 		{
 			char warriorName[12];
 			sprintf(warriorName,"Warrior%d",i);
@@ -2752,13 +2756,27 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 			
 			long moduleHandle = ABLi_preProcess(brainFileName, &numErrors, &numLinesProcessed);
 			gosASSERT(moduleHandle >= 0);
-			
+			if (moduleHandle >= 0 && numErrors == 0)
+				soakBrainsLoaded++;
+			else
+			{
+				soakBrainsFailed++;
+				printf("[SOAK] WARN abl brain load failed name=%s errors=%ld\n",
+					moduleName, (long)numErrors);
+			}
+
 #ifdef _DEBUG
-			long error = 
+			long error =
 #endif
 				pilot->setBrain(moduleHandle);
 			gosASSERT(error == 0);
 		}
+	}
+	if (std::getenv("MC2_SOAK_AUTOWIN") != nullptr || soakBrainsFailed > 0)
+	{
+		printf("[SOAK] abl mission brains loaded=%ld failed=%ld\n",
+			soakBrainsLoaded, soakBrainsFailed);
+		fflush(stdout);
 	}
 
 	if (loadBrainParameters) {
