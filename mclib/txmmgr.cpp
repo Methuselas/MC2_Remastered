@@ -222,10 +222,13 @@ void addShadowShape(HGOSBUFFER vb, HGOSBUFFER ib, HGOSVERTEXDECLARATION vdecl, c
 	// Atomic reservation: fetch_add reserves an exclusive slot index.
 	// ShadowShapeEntry fields are per-slot independent, so two threads
 	// writing different indices never alias.
+	// Do NOT store MAX_SHADOW_SHAPES back on overflow — that store is racy
+	// (concurrent fetch_adds can push count past MAX before the store lands,
+	// and the store itself races with other fetch_adds). Instead let the
+	// counter freely overflow and clamp at all read sites via
+	//   std::min(g_numShadowShapes.load(), MAX_SHADOW_SHAPES).
 	int idx = g_numShadowShapes.fetch_add(1, std::memory_order_relaxed);
 	if (idx >= MAX_SHADOW_SHAPES) {
-		// Cap to prevent out-of-bounds; re-store MAX so future callers fast-fail.
-		g_numShadowShapes.store(MAX_SHADOW_SHAPES, std::memory_order_relaxed);
 		return;
 	}
 	ShadowShapeEntry& ss = g_shadowShapes[idx];
