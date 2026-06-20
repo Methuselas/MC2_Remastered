@@ -48,6 +48,13 @@ uniform int   u_diag;                     // Bisection bitmask (MC2_TERRAIN_LOD_
                                           //   64 = viz raw matNormalArray rock sample
                                           //  128 = viz v_terrainType (grey + red=concrete)
 
+// LIGHTING-DEBUG-VIEWS-1A-CHUNK: unified lighting debug channel, SAME enum as
+// static_prop / gos_terrain.frag. Separate from u_diag (bitmask) to avoid
+// mis-triggering bits. 0 = OFF (default; driver uploads 0 unless
+// MC2_LIGHTING_DEBUG_VIEW selects a channel). 40 albedo, 41 normal, 42 sun,
+// 43 ambient/hemi, 44 shadow, 45 final (falls through), 46 overbright.
+uniform int   u_lightingDebugView;
+
 // Step 1c-fix: SMOOTH per-pixel normal from the heightfield. The frag reads the
 // SAME height SSBO the vert uses (binding 23) and takes a bilinear central
 // difference, so even coarse LOD triangles shade smoothly instead of as flat
@@ -550,6 +557,7 @@ void main() {
     // Hemisphere ambient fill (TERRAIN-LIGHTING-1/2) — added AFTER shadow so sky/
     // ground bounce still lights shadowed terrain. Env-gated OFF by default
     // (terrainLightingV1Strength=0 -> skipped, byte-safe). Matches gos_terrain.frag.
+    vec3 hemiContrib = vec3(0.0);   // LIGHTING-DEBUG-VIEWS: captured for ambient channel
     if (terrainLightingV1Strength > 0.0) {
         const vec3 hemiSkyTint    = vec3(0.55, 0.62, 0.75);
         const vec3 hemiGroundTint = vec3(0.32, 0.28, 0.22);
@@ -557,7 +565,33 @@ void main() {
         vec3  hemiFill     = mix(hemiGroundTint, hemiSkyTint, skyFactor);
         float hemiAmount   = terrainLightingV1Strength * (1.0 - 0.5 * snowWeight);
         float hemiShadowMix = mix(terrainLightingV2ShadowFillFloor, 1.0, shadow);
-        lit += hemiFill * hemiAmount * 0.25 * hemiShadowMix;
+        hemiContrib = hemiFill * hemiAmount * 0.25 * hemiShadowMix;
+        lit += hemiContrib;
+    }
+
+    // LIGHTING-DEBUG-VIEWS-1A-CHUNK: unified lighting debug channels on the
+    // DEFAULT (LodChunk) terrain renderer. u_lightingDebugView==0 -> skipped
+    // (pixel-invariant). 45 final / 47 / 48 have no terrain meaning -> fall
+    // through to the normal lit render below.
+    if (u_lightingDebugView != 0) {
+        vec3 dbg; bool handled = true;
+        if      (u_lightingDebugView == 40) dbg = baseColor;                            // albedo (pre-light, post-tint)
+        else if (u_lightingDebugView == 41) dbg = N * 0.5 + 0.5;                        // surface normal
+        else if (u_lightingDebugView == 42) dbg = vec3(diffuse);                        // sun N·L diffuse
+        else if (u_lightingDebugView == 43) dbg = min(hemiContrib * 4.0, vec3(1.0));    // ambient/hemi fill
+        else if (u_lightingDebugView == 44) dbg = vec3(shadow);                         // shadow factor
+        else if (u_lightingDebugView == 46) {                                           // over/under-bright heatmap
+            float luma = dot(lit, vec3(0.2126, 0.7152, 0.0722));
+            if      (luma > 1.0)  dbg = vec3(1.0, clamp(2.0 - luma, 0.0, 1.0) * 0.4, 0.0);
+            else if (luma < 0.05) dbg = vec3(0.0, 0.0, 1.0);
+            else                  dbg = vec3(luma);
+        }
+        else handled = false;                                                           // 45/47/48/unknown -> fall through
+        if (handled) {
+            fragColor = vec4(dbg, 1.0);
+            if ((u_diag & 1) == 0) GBuffer1 = vec4(0.5, 0.5, 1.0, 1.0);
+            return;
+        }
     }
 
     fragColor = vec4(lit, 1.0);                                     // alpha forced 1.0

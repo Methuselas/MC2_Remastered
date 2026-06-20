@@ -68,6 +68,7 @@ static GLint    s_locAtlasTLY       = -1;  // Phase 10: atlas top-left Y (world)
 static GLint    s_locAtlasOOW       = -1;  // Phase 10: atlas oneOverWorldUnitsMapSide
 static GLint    s_locLightDir       = -1;  // Phase 10 Step 1b: terrainLightDir (sun)
 static GLint    s_locDiag           = -1;  // bisection bitmask (MC2_TERRAIN_LOD_CHUNK_DIAG)
+static GLint    s_locLightDebugView = -1;  // LIGHTING-DEBUG-VIEWS-1A-CHUNK: u_lightingDebugView
 static GLint    s_locPathTint       = -1;  // MC2_SHADER_PATH_TINT debug (u_pathTint)
 static GLint    s_locQuadCountX     = -1;  // Phase 10.4: block quad extent X (edge detect)
 static GLint    s_locQuadCountY     = -1;  // Phase 10.4: block quad extent Y (edge detect)
@@ -384,6 +385,7 @@ void gos_TerrainLodChunk_Init()
             s_locAtlasOOW     = glGetUniformLocation(s_terrainProgram, "u_atlasOneOverWorldUnits");
             s_locLightDir     = glGetUniformLocation(s_terrainProgram, "terrainLightDir");
             s_locDiag         = glGetUniformLocation(s_terrainProgram, "u_diag");
+            s_locLightDebugView = glGetUniformLocation(s_terrainProgram, "u_lightingDebugView"); // LIGHTING-DEBUG-VIEWS-1A-CHUNK
             s_locPathTint     = glGetUniformLocation(s_terrainProgram, "u_pathTint");
             s_locQuadCountX   = glGetUniformLocation(s_terrainProgram, "u_quadCountX");
             s_locQuadCountY   = glGetUniformLocation(s_terrainProgram, "u_quadCountY");
@@ -627,6 +629,17 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     if (s_locDiag >= 0) {
         const char* dv = getenv("MC2_TERRAIN_LOD_CHUNK_DIAG");
         glUniform1i(s_locDiag, dv ? atoi(dv) : 0);
+    }
+
+    // LIGHTING-DEBUG-VIEWS-1A-CHUNK: unified lighting debug channel (40-series),
+    // the SAME enum as static_prop / gos_terrain.frag. Separate uniform from
+    // u_diag (which is a bitmask, so reusing it would mis-trigger bits). Resolver
+    // returns -1 when MC2_LIGHTING_DEBUG_VIEW is unset/unknown -> upload 0 ->
+    // shader skips all channels (pixel-invariant default).
+    if (s_locLightDebugView >= 0) {
+        extern int mc2LightingDebugMode();
+        int lvm = mc2LightingDebugMode();
+        glUniform1i(s_locLightDebugView, lvm < 0 ? 0 : lvm);
     }
 
     // MC2_SHADER_PATH_TINT: solid GREEN for the chunk terrain path (default 0 = OFF).
