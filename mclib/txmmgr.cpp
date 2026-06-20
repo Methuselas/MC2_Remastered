@@ -61,6 +61,8 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <atomic>   // FRAME-JOBS-2 precondition: g_numShadowShapes
+#include <mutex>    // FRAME-JOBS-2 precondition: s_lightDataMapMu
 #include <chrono>   // [LIGHTBRIDGE v1] coarse per-frame populate sizing
 #include <intrin.h> // __rdtsc — [SPFLUSH_COST_SPLIT v1]
 #include <utils/gl_utils.h>
@@ -196,7 +198,11 @@ struct ShadowShapeEntry {
 };
 static const int MAX_SHADOW_SHAPES = 512;
 static ShadowShapeEntry g_shadowShapes[MAX_SHADOW_SHAPES];
-static int g_numShadowShapes = 0;
+// FRAME-JOBS-2 precondition: atomic so worker threads can reserve shadow
+// shape slots without a mutex. ShadowShapeEntry fields are fully independent
+// per-slot (vb/ib/vdecl/worldMatrix — no aliased pointers), so fetch_add
+// reservation + per-slot write is race-free between different callers.
+static std::atomic<int> g_numShadowShapes{0};
 
 static bool isAllConcreteTerrainBatch(const gos_VERTEX* vertices, DWORD totalVertices)
 {
@@ -213,8 +219,19 @@ static bool isAllConcreteTerrainBatch(const gos_VERTEX* vertices, DWORD totalVer
 }
 
 void addShadowShape(HGOSBUFFER vb, HGOSBUFFER ib, HGOSVERTEXDECLARATION vdecl, const float* worldEntries16) {
-	if (g_numShadowShapes >= MAX_SHADOW_SHAPES) return;
-	ShadowShapeEntry& ss = g_shadowShapes[g_numShadowShapes++];
+	// Atomic reservation: fetch_add reserves an exclusive slot index.
+	// ShadowShapeEntry fields are per-slot independent, so two threads
+	// writing different indices never alias.
+	// Do NOT store MAX_SHADOW_SHAPES back on overflow — that store is racy
+	// (concurrent fetch_adds can push count past MAX before the store lands,
+	// and the store itself races with other fetch_adds). Instead let the
+	// counter freely overflow and clamp at all read sites via
+	//   std::min(g_numShadowShapes.load(), MAX_SHADOW_SHAPES).
+	int idx = g_numShadowShapes.fetch_add(1, std::memory_order_relaxed);
+	if (idx >= MAX_SHADOW_SHAPES) {
+		return;
+	}
+	ShadowShapeEntry& ss = g_shadowShapes[idx];
 	ss.vb = vb;
 	ss.ib = ib;
 	ss.vdecl = vdecl;
@@ -222,7 +239,7 @@ void addShadowShape(HGOSBUFFER vb, HGOSBUFFER ib, HGOSVERTEXDECLARATION vdecl, c
 }
 
 void clearShadowShapes() {
-	g_numShadowShapes = 0;
+	g_numShadowShapes.store(0, std::memory_order_relaxed);
 }
 
 DWORD actualTextureSize = 0;
@@ -973,6 +990,14 @@ void MC_TextureManager::addRenderShape(DWORD nodeId, TG_RenderShape* render_shap
 // from collisions are correct (same-data → same-result), just waste a
 // UBO slot. Acceptable.
 namespace {
+    // FRAME-JOBS-2 precondition: single mutex protecting both dedup maps AND
+    // the lightData_ grow path. One lock covers the whole light-slot allocation
+    // sequence (map lookup -> grow-if-needed -> table write -> map insert) so
+    // the check-then-act is atomic from the callers' perspective.
+    // recursive_mutex: addLightDataStructureWithPerActorColor calls
+    // addLightDataStructure on the same thread while holding this lock.
+    static std::recursive_mutex s_lightDataMapMu;
+
     static std::unordered_map<uint64_t, uint32_t> s_lightDataDedupMap;
 
     struct CachedSceneLightTemplate {
@@ -1463,6 +1488,9 @@ uint32_t MC_TextureManager::addLightDataStructure(TG_HWLightsData* light_data)
     // function so old captures remain comparable. Should drop from
     // ~12 µs/call (linear scan) to ~200-300 ns/call (hash + map ops).
     ZoneScopedN("addLightDataStructure scan");
+    // FRAME-JOBS-2 precondition: lock covers map lookup + grow-if-needed +
+    // table write + map insert as a single atomic sequence.
+    std::lock_guard<std::recursive_mutex> _lk(s_lightDataMapMu);
 
     const uint64_t hash = fnv1a_64_struct(light_data, sizeof(TG_HWLightsData));
     auto it = s_lightDataDedupMap.find(hash);
@@ -1517,6 +1545,10 @@ uint32_t MC_TextureManager::addLightDataStructureWithPerActorColor(TG_HWLightsDa
 {
     gosASSERT(light_data);
     LbScope _lb_;  // [LIGHTBRIDGE v1] C5/C6 populate sizing (RAII, all return paths)
+    // FRAME-JOBS-2 precondition: protects s_sceneLightTemplateMap, s_lightSlotByActorKey,
+    // and (via the nested addLightDataStructure call) s_lightDataDedupMap + lightData_ grow.
+    // recursive_mutex allows the nested call to re-acquire on the same thread.
+    std::lock_guard<std::recursive_mutex> _lk(s_lightDataMapMu);
 
     if (s_sceneLightTemplateFrame != g_mc2FrameCounter) {
         s_sceneLightTemplateMap.clear();
@@ -1589,6 +1621,8 @@ void MC_TextureManager::resetLightData()
     // [LIGHTBRIDGE v1] frame-start boundary: flush the just-completed frame's
     // C5/C6 populate sizing (same boundary the dedup-map reset relies on).
     lbDrainPerFrame(g_mc2FrameCounter);
+    // FRAME-JOBS-2 precondition: lock during map clears and count rebase.
+    std::lock_guard<std::recursive_mutex> _lk(s_lightDataMapMu);
 
     // [LIGHTBAKE v2] Rebase the DYNAMIC allocator base to S (the static
     // prefix high-water) when the bake is on, so dynamic appends start
@@ -2606,7 +2640,7 @@ void MC_TextureManager::renderLists (void)
 		}
 		gos_render_pass_timer::End(gos_render_pass_timer::Pass_ShadowDyn);
 	}
-	g_numShadowShapes = 0;
+	g_numShadowShapes.store(0, std::memory_order_relaxed);
 
 	// No special depth state for DRAWSOLID terrain
 
