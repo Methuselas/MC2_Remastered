@@ -2258,6 +2258,57 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 					mc2_diag::writeEvent("FRAME_JOBS", 1, 0, _fj_buf);
 				}
 			}
+
+			// ── FRAME-JOBS-2B: parallel touch() prepass ──────────────────────────────────
+			// Workers call touch() only for whitelisted appearance families (isTouchWorkerSafe()==true).
+			// Serial loop still runs touch() for non-whitelisted objects via the static-update-skip path.
+			// No GL, no txmmgr mutation, no GPU cull emit, no sound/effects from workers.
+			// Placed inside the FRAME-JOBS-1 block so s_frameJobsHandles is in scope.
+			if (frameJobsTouchEnabled()) {
+				ZoneScopedN("FrameJobs.Touch");
+				static std::vector<long> s_touchHandles;
+				s_touchHandles.clear();
+
+				// Filter s_frameJobsHandles to whitelisted touch types only.
+				for (long h : s_frameJobsHandles) {
+					GameObjectPtr obj = objList[h];
+					if (!obj) continue;
+					AppearancePtr ap = obj->getAppearance();
+					if (ap && ap->isTouchWorkerSafe()) s_touchHandles.push_back(h);
+				}
+
+				const int touchCount = static_cast<int>(s_touchHandles.size());
+				const int skippedNotWhitelisted = static_cast<int>(s_frameJobsHandles.size()) - touchCount;
+
+				if (frameJobsTrace()) {
+					printf("FRAME_JOBS_TOUCH: candidates=%d submitted=%d skipped_not_whitelisted=%d\n",
+					       static_cast<int>(s_frameJobsHandles.size()), touchCount, skippedNotWhitelisted);
+				}
+
+				if (touchCount > 0) {
+					auto _ft_t0 = std::chrono::high_resolution_clock::now();
+					parallelForRange(touchCount, frameJobsBatch(), [](int begin, int end) {
+						for (int i = begin; i < end; ++i) {
+							GameObjectPtr obj = ObjectManager->objList[s_touchHandles[i]];
+							if (!obj) continue;
+							AppearancePtr ap = obj->getAppearance();
+							if (!ap || !ap->isTouchWorkerSafe()) continue;
+							// FRAME-JOBS-2B: BldgAppearance only (isTouchWorkerSafe() whitelist).
+							// touch() is light-cache resubmit + vertex-transform stale guard.
+							// No GL, no txmmgr mutation beyond mutex-protected addLightDataStructure.
+							ap->touch();
+						}
+					});
+					auto _ft_t1 = std::chrono::high_resolution_clock::now();
+					float worker_us = std::chrono::duration<float, std::micro>(_ft_t1 - _ft_t0).count();
+
+					if (frameJobsTrace()) {
+						printf("FRAME_JOBS_TOUCH_PERF: objects=%d worker_us=%.1f\n",
+						       touchCount, worker_us);
+					}
+				}
+			}
+			// ── end FRAME-JOBS-2B pre-pass ───────────────────────────────────────────────
 		}
 		// ── end FRAME-JOBS-1 pre-pass ────────────────────────────────────────────────
 
