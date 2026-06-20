@@ -375,6 +375,7 @@ class BldgAppearance : public ObjectAppearance
 		// FRAME-JOBS-1: worker-path bounds. Calls recalcBounds() then stamps boundsFrame.
 		void recalcBoundsAndStamp();
 		bool isRecalcBoundsWorkerSafe() const override { return true; }
+		bool isTouchWorkerSafe() const override { return true; }
 
 		virtual bool getInTransition (void)
 		{
