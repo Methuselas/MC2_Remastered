@@ -30,6 +30,7 @@
 
 #include<string.h>
 #include<gameos.hpp>
+#include<mutex>  // std::recursive_mutex — FRAME-JOBS-2 precondition (vertex node allocators)
 //----------------------------------------------------------------------
 enum MC_TextureKey
 {
@@ -361,6 +362,18 @@ class MC_TextureManager
 
 		MC_HardwareVertexArrayNode 		*masterHardwareVertexNodes;			//Dynamically allocated from an MC Heap.
 		size_t							nextAvailableHardwareVertexNode;	//index to next available hardware vertex Node
+
+		// FRAME-JOBS-2 precondition: protects nextAvailableVertexNode and
+		// nextAvailableHardwareVertexNode slot allocations.
+		// Atomics alone are NOT sufficient here: the allocation sequence is
+		// (1) check !masterTextureNodes[nodeId].vertexDataX, then (2) take a
+		// slot index, then (3) write the pointer into the shared per-texture-node
+		// struct. Steps 1-3 are not atomic together, so a mutex is required to
+		// prevent two threads from both observing a null pointer and then both
+		// advancing the counter for the same texture node.
+		// recursive_mutex because addTriangleBulk's untextured fallback path
+		// calls addTriangle while holding the lock (same thread, same mutex).
+		mutable std::recursive_mutex	m_vertexNodeMu;
 													
 		UserHeapPtr						textureCacheHeap;			//Heap used to cache textures from vidCard to system RAM.
 		UserHeapPtr						textureStringHeap;			//Heap used to store filenames of textures so no dupes.
@@ -588,6 +601,7 @@ class MC_TextureManager
 
 		void addRenderShape(DWORD nodeId, DWORD flags)
 		{
+			std::lock_guard<std::recursive_mutex> _lk(m_vertexNodeMu);  // protects nextAvailableHardwareVertexNode + pointer writes
 			if ((nodeId < MC_MAXTEXTURES) && (nextAvailableHardwareVertexNode < MC_MAXTEXTURES))
 			{
 				if (!masterTextureNodes[nodeId].hardwareVertexData)
@@ -723,6 +737,7 @@ class MC_TextureManager
 
 		void addTriangle (DWORD nodeId, DWORD flags)
 		{
+			std::lock_guard<std::recursive_mutex> _lk(m_vertexNodeMu);  // protects nextAvailableVertexNode + pointer writes
 			if ((nodeId < MC_MAXTEXTURES) && (nextAvailableVertexNode < MC_MAXTEXTURES))
 			{
 				if (!masterTextureNodes[nodeId].vertexData)
@@ -870,6 +885,9 @@ class MC_TextureManager
 			// MC_MAXFACES is the total face budget for the entire scene — no single
 			// bulk call can legitimately exceed it.
 			if (triCount <= 0 || triCount > static_cast<int>(MC_MAXFACES)) return;
+			// recursive_mutex: the untextured fallback path below calls addTriangle
+			// which also acquires m_vertexNodeMu on the same thread — recursive is required.
+			std::lock_guard<std::recursive_mutex> _lk(m_vertexNodeMu);
 
 			if ((nodeId < MC_MAXTEXTURES) && (nextAvailableVertexNode < MC_MAXTEXTURES))
 			{
