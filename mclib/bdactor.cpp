@@ -17,6 +17,7 @@
 // effect_dominated.md). Accumulators defined in code/terrobj.cpp.
 #include <intrin.h>
 #include <stdlib.h>
+#include <atomic>  // std::atomic — FRAME-JOBS-2 precondition (s_animTypeIdleNowStatic)
 // File-scope gate: one getenv per TU, process-start-constant, shared across
 // BldgAppearance::recalcBounds and TreeAppearance::recalcBounds. Matches the
 // file-scope pattern in code/terrobj.cpp:176.
@@ -32,7 +33,10 @@ static bool s_bldgTypeAnimStaticEligible = []() -> bool {
 }();
 
 // BLDG-TYPE-ANIM-GATE-FIX-1 diagnostic counters (cumulative).
-static uint32_t s_animTypeIdleNowStatic   = 0;
+// s_animTypeIdleNowStatic is atomic: FRAME-JOBS-2 will run BldgAppearance::touch()
+// on worker threads; this counter is incremented there. relaxed ordering is
+// sufficient — it is a diagnostic accumulator, not a synchronisation point.
+static std::atomic<uint32_t> s_animTypeIdleNowStatic{0};
 static uint32_t s_animStartInvalidated    = 0;
 static uint32_t s_animStateToStateGesture = 0;
 
@@ -3920,7 +3924,7 @@ void BldgAppearance::touch()
 	// type has animation data, instance is idle (bdAnimationState==-1), and
 	// currently registered (staticReg.registered). Nonzero delta proves fix works.
 	if (bldgTypeHasAnimations(appearType) && bdAnimationState == -1 && staticReg.registered)
-		++s_animTypeIdleNowStatic;
+		s_animTypeIdleNowStatic.fetch_add(1, std::memory_order_relaxed);
 	// MC2_STATIC_UPDATE_SKIP defaults TRUE (terrobj.cpp:92); touch() is the
 	// DEFAULT path. update() runs only when the env var is explicitly cleared.
 	if (bldgShape) {
@@ -6325,7 +6329,7 @@ int32_t TreeAppearance::getStaticRecipeIndex() const {
 }
 
 // BLDG-TYPE-ANIM-GATE-FIX-1 counter accessors (header: bldg_anim_gate_counters.h).
-uint32_t g_bldgAnimGate_typeIdleNowStatic()    { return s_animTypeIdleNowStatic; }
+uint32_t g_bldgAnimGate_typeIdleNowStatic()    { return s_animTypeIdleNowStatic.load(std::memory_order_relaxed); }
 uint32_t g_bldgAnimGate_animStartInvalidated() { return s_animStartInvalidated; }
 uint32_t g_bldgAnimGate_animStateToState()     { return s_animStateToStateGesture; }
 
