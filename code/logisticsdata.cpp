@@ -789,14 +789,15 @@ LogisticsPilot* LogisticsData::getFirstAvailablePilot()
 // when its object type class != BATTLEMECH_TYPE. Bridge: chassis fitID -> ObjectType.
 bool LogisticsData::isVehicleUnit( LogisticsMech* pMech )
 {
-	// Logistics-safe: read the chassis vehicle flag (set by LogisticsVehicle::init).
-	// Do NOT call ObjectManager->loadObjectType here — objTypeManager is null at the
-	// logistics / pilot-ready screen (mission-runtime only) and derefs to a crash
-	// (objmgr.cpp:4049). Vehicles are built as LogisticsVehicle chassis (logisticsdata
-	// .cpp:418); mechs as plain LogisticsChassis.
-	return ( pMech && pMech->getVariant()
-	         && pMech->getVariant()->getChassis()
-	         && pMech->getVariant()->getChassis()->isVehicle() );
+	// Logistics-safe vehicle detection (NO ObjectManager->loadObjectType — objTypeManager
+	// is null at the logistics/pilot-ready screen and crashes, objmgr.cpp:4049).
+	if ( !pMech || !pMech->getVariant() )
+		return false;
+	// The chassis carries a logistics-safe vehicle flag, computed once from CSV-visible
+	// signals in LogisticsChassis::init (objTypeManager is null here so the real object class
+	// is unavailable). Covers both registry vehicles and force-group support units / copters.
+	const LogisticsChassis* ch = pMech->getVariant()->getChassis();
+	return ( ch && ch->isVehicle() );
 }
 
 //---------------------------------------------------------------------------

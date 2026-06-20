@@ -232,12 +232,13 @@ void PilotReadyScreen::begin()
 					pIcons[FG-1].setPilot( (*iter)->getPilot() );
 					bHasPilot = FG - 1;
 				}
-				else if ( LogisticsData::instance->isVehicleUnit( (*iter) ) )
+				else
 				{
 					// VEHICLE-AUTO-PILOT-1: vehicles/support units auto-get a standard
 					// vehicle pilot so they are launch-ready without a roster mech-pilot.
-					LogisticsPilot* vp = LogisticsData::instance->getVehiclePilot();
-					if ( vp )
+					bool isVeh = LogisticsData::instance->isVehicleUnit( (*iter) );
+					LogisticsPilot* vp = isVeh ? LogisticsData::instance->getVehiclePilot() : NULL;
+					if ( isVeh && vp )
 					{
 						(*iter)->setPilot( vp );
 						pIcons[FG-1].setPilot( vp );
@@ -409,7 +410,10 @@ void PilotReadyScreen::update()
 				pIcons[i].setPilot( NULL );
 			}
 
-			if ( pIcons[i].getMech() && !pIcons[i].getPilot() )
+			// VEHICLE-AUTO-PILOT-1: vehicles/support units (incl. copters) do not consume a
+			// roster mech-pilot, so an un-piloted vehicle must NOT block launch readiness.
+			if ( pIcons[i].getMech() && !pIcons[i].getPilot()
+				&& !LogisticsData::instance->isVehicleUnit( pIcons[i].getMech() ) )
 				bAllFull = 0;
 
 			if ( pIcons[i].getMech() )

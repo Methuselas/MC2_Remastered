@@ -134,10 +134,34 @@ int LogisticsChassis::init( CSVFile* file, int chassisID )
 	cLoadString( ID, tmpWeightClass, 256 );
 
 	mechClass = tmpWeightClass;
-		
+
+	// VEHICLE-AUTO-PILOT-1: logistics-safe vehicle detection. objTypeManager is null at the
+	// logistics/pilot-ready screen, so we cannot query the real object class. Use two
+	// CSV-visible signals (computed once here, where the chassis CSV is open):
+	//  (1) ground vehicles list a "Vehicle ..." component (e.g. "Vehicle Sensors/Engine") in
+	//      the Item* component rows; mechs never do (verified across stock data/objects).
+	//  (2) rotor/air units (scoutcopter etc.) reuse the mech chassis layout verbatim, so the
+	//      only logistics-visible tell is the chassis filename token "copter".
+	{
+		bool isVeh = false;
+		char comp[256];
+		for ( int r = 26; r <= 48 && !isVeh; ++r )            // Item0..Item22 component rows, name in col 5
+		{
+			if ( NO_ERR == file->readString( r, 5, comp, 256 ) )
+			{
+				S_strlwr( comp );
+				if ( 0 == S_strncmp( comp, "vehicle", 7 ) )
+					isVeh = true;
+			}
+		}
+		if ( !isVeh && strstr( (const char*)fileName, "copter" ) )
+			isVeh = true;
+		bIsVehicle = isVeh;
+	}
+
 	return 0;
-	
-	
+
+
 }
 
 int LogisticsChassis::getArmorClass() const
