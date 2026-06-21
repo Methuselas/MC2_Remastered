@@ -790,15 +790,15 @@ int ABLModule::getStateHandle (void) {
 //---------------------------------------------------------------------------
 
 // OMNITECH-ABL-EXECEXPRESSION-1 helpers: gate + one-shot-per-module skip report.
-// DEFAULT-ON: executing a module that failed to compile (STOPSYNTAX) runs malformed
-// bytecode -> stack underflow -> crash (ablxexpr.cpp:501). A clean-compiling campaign has
-// compileErrorCount==0 so this is a no-op for it; only broken modules are skipped. The
-// kill-switch MC2_ABL_SKIP_ERRORED_MODULES=0 restores the legacy crash-prone behaviour.
+// DEFAULT-OFF. Skipping an entire compile-errored module is TOO BLUNT: most modules with
+// STOPSYNTAX errors still RUN correctly (the errored bytecode executes fine) — e.g.
+// DarkRain's torrinescort.abl / torrin_script.abl (4 errors each) drive working AI attack
+// orders. Skipping them broke the AI (mechs patrol but never engage). The actual crash
+// (MCO: stack underflow -> READ@0x4 in execExpression) is now prevented by a per-site
+// underflow guard in ablxexpr.cpp, so the module no longer needs skipping. This gate stays
+// OFF by default (opt-in MC2_ABL_SKIP_ERRORED_MODULES=1) as a last-resort escape hatch only.
 static bool ablSkipErroredModulesEnabled (void) {
-	static const bool s_on = []{
-		const char* v = getenv("MC2_ABL_SKIP_ERRORED_MODULES");
-		return !(v && v[0] == '0');   // default ON unless explicitly "0"
-	}();
+	static const bool s_on = (getenv("MC2_ABL_SKIP_ERRORED_MODULES") != NULL);
 	return s_on;
 }
 static void ablReportSkippedErroredModule (long handle, const char* fileName, long errs) {

@@ -496,10 +496,20 @@ TypePtr execExpression (void) {
 		operand1Ptr = tos - 1;
 		operand2Ptr = tos;
 
+		// OMNITECH-ABL crash guard: a module that failed to compile (STOPSYNTAX) can emit
+		// malformed bytecode that leaves resultTypePtr NULL or underflows the operand stack,
+		// so the type/operand derefs below read ~0x4 -> crash (the MCO execExpression crash).
+		// Skip the relational evaluation safely when inputs are invalid (result stays false);
+		// the stack is still normalized to a boolean below. Errored-but-valid bytecode
+		// (e.g. DarkRain's torrin brains) is unaffected -> AI logic keeps running. This
+		// replaces the too-blunt whole-module skip (which broke working errored brains).
+		const bool relInputsValid = (resultTypePtr != NULL) && (operand1Ptr != NULL) && (operand2Ptr != NULL);
+
 		//-----------------------------------------------------
 		// Both operands are integer, boolean or enumeration...
-		if (((resultTypePtr == IntegerTypePtr) && (type2Ptr == IntegerTypePtr)) ||
-			(resultTypePtr->form == FRM_ENUM)) {
+		if (relInputsValid &&
+			(((resultTypePtr == IntegerTypePtr) && (type2Ptr == IntegerTypePtr)) ||
+			(resultTypePtr->form == FRM_ENUM))) {
 			switch (op) {
 				case TKN_EQUALEQUAL:
 					result = operand1Ptr->integer == operand2Ptr->integer;
@@ -521,7 +531,7 @@ TypePtr execExpression (void) {
 					break;
 			}
 			}
-		else if (resultTypePtr == CharTypePtr) {
+		else if (relInputsValid && resultTypePtr == CharTypePtr) {
 			switch (op) {
 				case TKN_EQUALEQUAL:
 					result = operand1Ptr->byte == operand2Ptr->byte;
@@ -543,12 +553,12 @@ TypePtr execExpression (void) {
 					break;
 			}
 			}
-		else if ((resultTypePtr->form == FRM_ARRAY) && (resultTypePtr->info.array.elementTypePtr == CharTypePtr)) {
+		else if (relInputsValid && (resultTypePtr->form == FRM_ARRAY) && (resultTypePtr->info.array.elementTypePtr == CharTypePtr)) {
 			//----------------------------------------
 			// Strings. For now, always return true...
 			result = true;
 			}
-		else if ((resultTypePtr == RealTypePtr) || (type2Ptr == RealTypePtr)) {
+		else if (relInputsValid && ((resultTypePtr == RealTypePtr) || (type2Ptr == RealTypePtr))) {
 			promoteOperandsToReal(operand1Ptr, resultTypePtr, operand2Ptr, type2Ptr);
 			switch (op) {
 				case TKN_EQUALEQUAL:
@@ -574,10 +584,8 @@ TypePtr execExpression (void) {
  
 		//---------------------------------------------------------
 		// Replace the two operands with the result on the stack...
-		if (result)
-			operand1Ptr->integer = 1;
-		else
-			operand1Ptr->integer = 0;
+		if (relInputsValid)
+			operand1Ptr->integer = result ? 1 : 0;
 		pop();
 
 		resultTypePtr = BooleanTypePtr;
