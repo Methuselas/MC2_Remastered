@@ -2375,39 +2375,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR lpCmd, int) {
 
     if (lpCmd && strstr(lpCmd, "--list")) { PrintListing(); return 0; }
 
-    // No campaigns discovered: launch base game directly.
-    if (s_campCount == 0) {
-        SetEnvironmentVariableA("MC2_ACTIVE_MOD", NULL);
-        SetEnvironmentVariableA("MC2_MOD_DEPS", NULL);
-        // Apply engine options even in the no-GUI direct-launch path.
-        for (int i = 0; i < k_envVarCount; i++) {
-            const char* val = s_envVarValues[i];
-            if (val[0]) SetEnvironmentVariableA(k_envVars[i].key, val);
-            else        SetEnvironmentVariableA(k_envVars[i].key, NULL);
-        }
-        // Apply graphics options.
-        SetEnvironmentVariableA("MC2_STATICPROP_TEX_TIER", k_texTierValues[s_gfxTexQual]);
-        SetEnvironmentVariableA("MC2_SHADOW_MAP_SIZE", k_shadSizeValues[s_gfxShadQual]);
-        if (s_gfxFrameCapOn) {
-            char fpsBuf[32]; _snprintf(fpsBuf, sizeof(fpsBuf), "%d", s_gfxFrameCapFps);
-            SetEnvironmentVariableA("MC2_FPS_CAP", fpsBuf);
-        } else {
-            SetEnvironmentVariableA("MC2_FPS_CAP", NULL);
-        }
-        SetEnvironmentVariableA("MC2_VSYNC", s_gfxVsync ? "1" : NULL);
-
-        char mc2Path[MAX_PATH];
-        _snprintf(mc2Path, sizeof(mc2Path), "%smc2.exe", s_launcherDir);
-        SetCurrentDirectoryA(s_launcherDir);
-        // [LAUNCHER-BOOTSTRAP v1] Sentinel: tell the child mc2.exe the launcher
-        // started it (run game directly, don't re-spawn the launcher).
-        SetEnvironmentVariableA("MC2_LAUNCHED", "1");
-        STARTUPINFOA si = {}; si.cb = sizeof(si);
-        PROCESS_INFORMATION pi = {};
-        CreateProcessA(mc2Path, NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
-        if (pi.hProcess) { CloseHandle(pi.hThread); CloseHandle(pi.hProcess); }
-        return 0;
-    }
+    // Always show the GUI. (Previously, "no campaigns discovered" launched the base game
+    // directly and skipped the launcher entirely — which hid the GUI and its Import button
+    // on a fresh install with no mods/, exactly the shipped-release case where users import
+    // their own campaigns. The campaign listbox already includes "Stock campaign" as slot 0,
+    // so stock is a single Launch click and community campaigns are added via Import.)
 
     // Init common controls (marquee progress bar) + COM (SHBrowseForFolder).
     INITCOMMONCONTROLSEX icc = {}; icc.dwSize = sizeof(icc);
