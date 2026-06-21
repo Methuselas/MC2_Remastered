@@ -14,7 +14,8 @@ import json, os, re, subprocess, sys, time, glob
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_DEPLOY = r"A:/Games/mc2-opengl/releases/mc2-win64-v0.4d-rc1"
+# Computer-agnostic: override with MC2_DEPLOY_DIR env; literal is a last-resort dev fallback.
+DEFAULT_DEPLOY = os.environ.get("MC2_DEPLOY_DIR", r"A:/Games/mc2-opengl/releases/mc2-win64-v0.4d-rc1")
 
 def resolve(deploy, name):
     out = subprocess.run([sys.executable, str(HERE / "resolve_campaign_config.py"), deploy, name],

@@ -39,7 +39,9 @@ from pathlib import Path
 HIGH_OBJ_THRESHOLD = 1188  # ObjectNumber > this => MC2X/MCO range
 ABL_LIBS = {"corebrain.abx", "orders.abx", "miscfunc.abx"}  # never count as missions
 
-DEFAULT_DEPLOY = "A:/Games/mc2-opengl/releases/mc2-win64-v0.4d-rc1"
+# Computer-agnostic: override with MC2_DEPLOY_DIR env on any machine; the literal is only a
+# last-resort fallback for this dev box. Always pass the deploy dir as argv when scripting.
+DEFAULT_DEPLOY = os.environ.get("MC2_DEPLOY_DIR", "A:/Games/mc2-opengl/releases/mc2-win64-v0.4d-rc1")
 
 
 # ---------------------------------------------------------------------------
