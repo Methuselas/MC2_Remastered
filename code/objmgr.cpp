@@ -3774,20 +3774,24 @@ GameObjectPtr GameObjectManager::findTerrainObjectByMouse (long mouseX,
 	// Updated at the single return site below.
 	static long         s_pmX = -999999, s_pmY = -999999;
 	static uint32_t     s_pmCamRev = 0;
-	static GameObjectPtr s_pmResult = nullptr;
+	static unsigned long s_pmWatchID = 0;   // UAF FIX: cache by watch-ID, not raw pointer
 	uint32_t camRev = eye ? eye->getViewProjectionRevision() : 0;
+	// PICK-CACHE-UAF FIX: the picked object can be destroyed between frames (e.g. a building
+	// blown up, or any mover killed). Caching the raw GameObjectPtr and later calling a
+	// virtual on it (getExists()) dispatches through a freed vtable -> EXEC violation
+	// (objmgr.cpp:3781, crash seen in findTerrainObjectByMouse). Cache the watch-ID instead
+	// and re-resolve through getByWatchID(), which returns NULL if the object is gone.
 	if (mouseX == s_pmX && mouseY == s_pmY &&
-		camRev != 0 && camRev == s_pmCamRev &&
-		(!s_pmResult || s_pmResult->getExists()))
+		camRev != 0 && camRev == s_pmCamRev)
 	{
-		return s_pmResult;
+		return s_pmWatchID ? getByWatchID(s_pmWatchID) : NULL;
 	}
-	// Camera moved this frame — return stale result without scanning.
+	// Camera moved this frame — return stale (watch-ID-validated) result without scanning.
 	// Hover highlight is cosmetic; player is panning, not selecting.
 	// camRev is updated so that once camera settles the next frame triggers a fresh scan.
 	if (camRev != 0 && camRev != s_pmCamRev) {
 		s_pmCamRev = camRev;
-		return s_pmResult;
+		return s_pmWatchID ? getByWatchID(s_pmWatchID) : NULL;
 	}
 
 	PkTimer _pk;  // MC2_PICK_RECON per-call wall-time
@@ -3963,7 +3967,7 @@ GameObjectPtr GameObjectManager::findTerrainObjectByMouse (long mouseX,
 	TracyPlot("MIF.TerrainPick.candidates", int64_t(pickCandidates));
 	// v0+: update top-level cache before returning.
 	s_pmX = mouseX; s_pmY = mouseY; s_pmCamRev = camRev;
-	s_pmResult = pickBest;
+	s_pmWatchID = pickBest ? pickBest->getWatchID() : 0;   // UAF FIX: cache watch-ID, not raw ptr
 	return(pickBest);   // BUILDING-PICK FIX: nearest world-OBB hit (NULL if none)
 }
 
