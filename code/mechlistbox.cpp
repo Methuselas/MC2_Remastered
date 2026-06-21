@@ -523,7 +523,10 @@ void MechListBox::initIcon( LogisticsMech* pMech, aObject& mechIcon )
 		if ( atlasW > 0 ) fileW = (float)atlasW;
 		if ( atlasH > 0 ) fileH = (float)atlasH;
 	}
-	long cols = ( width > 0.f ) ? (long)( fileW / width + 0.5f ) : 10;
+	// FLOOR (not round): floor(atlasW/cellW) columns. The old +0.5f invented a phantom
+	// column when the remainder >= half a cell (MCO 1024/40=25.6 -> 26), misplacing
+	// high-index icons. Retail (256/25) and MC2X (512/25) floor to the same value.
+	long cols = ( width > 0.f ) ? (long)( fileW / width + 0.01f ) : 10;
 	if ( cols < 1 ) cols = 10;
 
 	long xIndex = index % cols;

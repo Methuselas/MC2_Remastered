@@ -146,7 +146,12 @@ void LogisticsMechIcon::setMech( LogisticsMech* pNewMech )
 			if ( atlasW > 0 ) fileW = (float)atlasW;
 			if ( atlasH > 0 ) fileH = (float)atlasH;
 		}
-		long cols = ( width > 0.f ) ? (long)( fileW / width + 0.5f ) : 10;
+		// FLOOR (not round): a W-wide atlas of `width`-px cells holds floor(W/width)
+		// columns. The old +0.5f rounded UP when the remainder >= half a cell (e.g. MCO's
+		// 1024-wide / 40px atlas: 25.6 -> 26), inventing a phantom column that misplaced
+		// high-index icons. Epsilon guards float underflow on exact divisions. Retail
+		// (256/25=10.24) and MC2X (512/25=20.48) floor identically to the old value.
+		long cols = ( width > 0.f ) ? (long)( fileW / width + 0.01f ) : 10;
 		if ( cols < 1 ) cols = 10;
 
 		long xIndex = index % cols;
