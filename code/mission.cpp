@@ -629,6 +629,27 @@ long Mission::update (void)
 				missionLineChanged = turn;
 			}
 
+			// DEV HOTKEY (Ctrl+Alt+Shift+K): disable ALL enemy mechs on demand, the same
+			// way MC2_SOAK_KILL_ENEMY does (OBJECT_STATUS_DISABLED, not destroyed) so they
+			// stay salvageable. Lets you grab salvage without a full firefight. Disabled in
+			// FINAL builds (this whole block is #ifndef FINAL).
+			if (userInput->getKeyDown(KEY_K) && userInput->ctrl() && userInput->alt() && userInput->shift())
+			{
+				int killed = 0;
+				for (int mi = 0; mi < ObjectManager->numMechs; ++mi)
+				{
+					BattleMech* pM = ObjectManager->getMech(mi);
+					if (!pM) continue;
+					if (pM->isDisabled() || pM->isDestroyed()) continue;
+					if (Team::home && pM->getTeamId() == Team::home->id) continue;  // skip friendlies
+					pM->setStatus(OBJECT_STATUS_DISABLED, /*force=*/true);
+					++killed;
+				}
+				printf("[DEVHOTKEY] kill-all-enemy killed=%d (Ctrl+Alt+Shift+K)\n", killed);
+				fflush(stdout);
+				missionLineChanged = turn;
+			}
+
 			// Tessellation/phong debug F-keys removed: F6/F7/F8 now drive the
 			// Tactical Overview / sensor / weapon-range views (mechcmd2.cpp), and
 			// terrain tuning lives in the imgui overlay. Shadow-softness keys kept.
