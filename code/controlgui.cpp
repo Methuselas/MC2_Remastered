@@ -318,7 +318,7 @@ bool ControlGui::animateTacMap (int buttonId,float timeToScroll,long numFlashes)
 // Sensor view: standalone toggle (F7), works at all zooms. Draws sensor coverage
 // rings on the ground — green = friendly, red = enemy — with the range labeled
 // on the rim.
-bool g_sensorViewOn = true;   // default ON (toggle with F7)
+bool g_sensorViewOn = false;   // default OFF (toggle with F7)
 
 static void drawSensorRing( Camera* eye, const Stuff::Vector3D& center, float radius,
                             unsigned long rgb, unsigned long aBits )
