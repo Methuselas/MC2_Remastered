@@ -454,11 +454,10 @@ void LogisticsSaveDialog::begin()
 }
 
 
-void LogisticsSaveDialog::beginLoad()
+void LogisticsSaveDialog::beginLoad(bool bSkipSaveScan)
 {
 	beginFadeIn( 0 );
 	edits[0].setFocus(true);
-	initDialog(savePath, 0);
 	status = RUNNING;
 	bPromptOverwrite = 0;
 	bDeletePrompt = 0;
@@ -475,16 +474,22 @@ void LogisticsSaveDialog::beginLoad()
 	edits[0].setEntry( "" );
 	edits[0].limitEntry( 20 );
 
-	
-	aListItem* pItem = gameListBox.GetItem( 0 );
-	if ( pItem )
+	if (!bSkipSaveScan)
 	{
-		pItem->select();
-		edits[0].setEntry( ((aTextListItem*)pItem)->getText() );
-		selectedName = ( ((aLocalizedListItem*)pItem)->getHiddenText() );
-	}
+		// Scan save directory and update UI — skip when called from beginCampaign()
+		// since initDialog(campaignPath, 1) immediately overwrites the list.
+		initDialog(savePath, 0);
 
-	updateMissionInfo();
+		aListItem* pItem = gameListBox.GetItem( 0 );
+		if ( pItem )
+		{
+			pItem->select();
+			edits[0].setEntry( ((aTextListItem*)pItem)->getText() );
+			selectedName = ( ((aLocalizedListItem*)pItem)->getHiddenText() );
+		}
+
+		updateMissionInfo();
+	}
 
 	LogisticsDialog::begin();
 
@@ -492,7 +497,7 @@ void LogisticsSaveDialog::beginLoad()
 
 void LogisticsSaveDialog::beginCampaign()
 {
-	beginLoad();
+	beginLoad(true); // skip save-game scan — overwritten by initDialog(campaignPath, 1) below
 	edits[0].limitEntry( 20 );
 	bCampaign= true;
 	initDialog(campaignPath, 1);
@@ -512,7 +517,6 @@ void LogisticsSaveDialog::beginCampaign()
 			selectedName = ( ((aLocalizedListItem*)pItem)->getHiddenText() );
 		}
 	}
-
 
 	updateMissionInfo();
 }
@@ -542,24 +546,31 @@ void LogisticsSaveDialog::initDialog( const char* path, bool bCampaign )
 				}
 				if ( pExt )
 					*pExt = '\0';
-			
-				if (!bCampaign && isCorrectVersionSaveGame(findResult.cFileName))
-					pEntry->setText( findResult.cFileName );
-				else if (bCampaign)
-					pEntry->setText( findResult.cFileName );
 
-				if ( bCampaign )
+				bool addItem;
+				if (bCampaign)
 				{
 					char campaignName[1024];
 					readCampaignNameFromFile( findResult.cFileName, campaignName, 1023 );
 					pEntry->setText( campaignName );
+					addItem = true;
+				}
+				else
+				{
+					addItem = isCorrectVersionSaveGame(findResult.cFileName);
+					if (addItem)
+						pEntry->setText( findResult.cFileName );
 				}
 
-				if (bCampaign || isCorrectVersionSaveGame(findResult.cFileName))
+				if (addItem)
 				{
 					pEntry->setHiddenText( findResult.cFileName );
 					pEntry->setColor( edits[0].getColor() );
 					gameListBox.AddItem( pEntry );
+				}
+				else
+				{
+					delete pEntry;
 				}
 			}
 		} while (FindNextFile(searchHandle,&findResult) != 0);

@@ -148,7 +148,7 @@ class LogisticsSaveDialog : public LogisticsDialog
 		LogisticsSaveDialog();
 
 		virtual void begin();
-		virtual void beginLoad();
+		virtual void beginLoad(bool bSkipSaveScan = false);
 		void		 beginCampaign();
 
 		virtual void end();
