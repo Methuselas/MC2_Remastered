@@ -29,6 +29,8 @@ public:
 	LogisticsData();
 	~LogisticsData();
 	void			init();
+	void			initFast();
+	void			ensureMechBayDataLoaded(const char* trigger = nullptr);
 
 	bool			rpJustAdded;
 
@@ -272,6 +274,9 @@ private:
 	void initComponents();
 	void initPilots();
 	void initVariants();
+	void initPhaseA();
+	bool m_phaseAComplete = false;
+	bool m_phaseBComplete = false;
 
 	void addVehicle( long fitID, PacketFile& objectFile, float scale, long nameID = 0 );
 	int  addBuilding( long fitID, PacketFile& objectFile, float scale );

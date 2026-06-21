@@ -920,8 +920,8 @@ void Logistics::initializeLogData()
 	ZoneScopedN("Logistics::initializeLogData");
 	LogisticsData::instance->removeMechsInForceGroup();
 
-	{ ZoneScopedN("Logistics::initializeLogData LogisticsData::init");
-	LogisticsData::instance->init();
+	{ ZoneScopedN("Logistics::initializeLogData LogisticsData::initFast");
+	LogisticsData::instance->initFast();
 	}
 	Team* pTeam = Team::home;
 
