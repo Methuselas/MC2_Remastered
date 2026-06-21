@@ -109,10 +109,20 @@ void LogisticsData::init()
 	{
 		return;
 	}
-	
+
+#define LOG_INIT_TIME(label) do { \
+	if ( getenv("MC2_LOG_LOGISTICS") ) { \
+		ULONGLONG _t = GetTickCount64(); \
+		printf("[LOGISTICS_INIT] " label " t=%llums\n", (unsigned long long)_t); fflush(stdout); \
+	} } while(0)
+
+	LOG_INIT_TIME("begin");
 	initComponents();
+	LOG_INIT_TIME("after_initComponents");
 	initPilots();
+	LOG_INIT_TIME("after_initPilots");
 	initVariants();
+	LOG_INIT_TIME("after_initVariants");
 
 	missionInfo = new LogisticsMissionInfo;
 
@@ -129,6 +139,9 @@ void LogisticsData::init()
 	missionInfo->getAvailableMissions( missionNames, count );
 
 	setCurrentMission( missionNames[0] );
+	LOG_INIT_TIME("after_setCurrentMission_updateAvailability");
+
+#undef LOG_INIT_TIME
 }
 
 //*************************************************************************************************
@@ -2112,7 +2125,9 @@ const EString& LogisticsData::getLastMission() const
 
 const char * LogisticsData::getCurrentABLScript() const
 {
-	return missionInfo->getCurrentABLScriptName();
+	// missionInfo may be null before bg init thread completes — return null so
+	// the caller's `if (brainfile)` guard skips tutorial brain load safely.
+	return missionInfo ? missionInfo->getCurrentABLScriptName() : nullptr;
 }
 
 long LogisticsData::getCurrentMissionTune()

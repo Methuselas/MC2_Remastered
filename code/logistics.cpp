@@ -235,21 +235,29 @@ void Logistics::start (long startMode)
 					MPlayer = NULL;
 				}
 			}
-			
-			{ ZoneScopedN("Logistics::start initializeLogData");
-			initializeLogData();
-			}
-			
+
+			// Join any previous bg init thread before (re-)launching.
+			if (m_initFuture.valid())
+				m_initFuture.get();
+
+			// Launch LogisticsData::init() (mech/variant/availability scan) on a
+			// background thread so the intro movie starts without waiting for it.
+			// Safety: FastFile globals and g_modIndex are read-only by this point.
+			// LogisticsData::init() has an early-return guard after first run.
+			// Main thread joins in update() before any interactive LogisticsData use.
+			m_initFuture = std::async(std::launch::async, [this]{ initializeLogData(); });
+
 			bool bTestScript = false;
 			if ( bTestScript )
 			{
+				// bTestScript is always false — dead code retained for reference.
 				FitIniFile loadFile;
 				loadFile.open( "data" PATH_SEPARATOR "missions" PATH_SEPARATOR "save.fit" );
 				LogisticsData::instance->load( loadFile );
 				FitIniFile saveFile;
 				saveFile.open("data" PATH_SEPARATOR "missions" PATH_SEPARATOR "save.fit", CREATE);
 				LogisticsData::instance->save( saveFile );
-		
+
 			}
 
 			active = TRUE;
@@ -441,6 +449,13 @@ long Logistics::update (void)
 	}
 	else if ( logisticsState != log_DONE )
 	{
+		// Join bg init thread (once) before driving the main menu.
+		// Runs in parallel with MissionBegin::begin() + initDialogs in InitializeGameEngine,
+		// so this join is usually instant (thread done before first update() call).
+		// Blocks at most (T_init - T_missionBeginSetup) on the very first update() frame.
+		if (m_initFuture.valid())
+			m_initFuture.get();
+
 		if ( missionBegin )
 		{
 			const char* pVid =  missionBegin->update();
