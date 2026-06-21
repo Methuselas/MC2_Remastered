@@ -510,6 +510,7 @@ void MissionInterfaceManager::setTutorialText(const char *text)
 #include <chrono>
 #include <cstdlib>
 #include <cstdio>
+#include "../GameOS/gameos/diagnostic_trace.h"  // CURSOR_TARGET trace (offscreen-pick recon)
 namespace {
 	enum MifPhase { MF_TOTAL=0, MF_INVPROJ, MF_LOS, MF_CTRLGUI, MF_UPDTGT, MF_POSTTGT, MF_DRAWBARS, MF_COUNT };
 	static const char* s_mfNames[MF_COUNT] = {"TOTAL","invProj","LOS","controlGui","updateTarget","postTarget","drawBars"};
@@ -1822,6 +1823,36 @@ void MissionInterfaceManager::updateTarget( bool bGui)
 			{
 				if ( !target->isDisabled() && !target->isMover() )
 					target = NULL;
+			}
+		}
+	}
+
+	// CURSOR_TARGET symptom trace (INPUT-CURSOR-OFFSCREEN-TARGET-RECON-1): emit when a
+	// resolved hover/command target is anomalous — projects behind the camera (w<=1e-4)
+	// or lands far from the cursor. This is the offscreen-pick symptom; pairs with the
+	// pick_rect mechanism emit in objmgr.cpp. Gate MC2_CURSOR_TARGET_TRACE +
+	// MC2_DIAG_TAGS=CURSOR_TARGET. Read via get_diagnostic_events("CURSOR_TARGET").
+	// Recon only — no behavior change.
+	{
+		static const bool s_cursorTargetTrace = (std::getenv("MC2_CURSOR_TARGET_TRACE") != nullptr);
+		if ( s_cursorTargetTrace && target && eye && mc2_diag::tagEnabled("CURSOR_TARGET") )
+		{
+			Stuff::Vector3D _ct_pos = target->getPosition();
+			Stuff::Vector4D _ct_sp;
+			eye->projectForScreenXY( _ct_pos, _ct_sp );
+			bool  _ct_behind = (_ct_sp.w <= 1e-4f);
+			float _ct_dx = _ct_sp.x - (float)mouseX;
+			float _ct_dy = _ct_sp.y - (float)mouseY;
+			float _ct_distSq = _ct_dx*_ct_dx + _ct_dy*_ct_dy;
+			if ( _ct_behind || _ct_distSq > 90000.0f )   // behind camera, or >300px from cursor
+			{
+				char _ct_buf[320];
+				snprintf(_ct_buf, sizeof(_ct_buf),
+				         "{\"site\":\"update_target\",\"mouse\":[%ld,%ld],\"target_screen\":[%.1f,%.1f],\"w\":%.4f,\"behind\":%d,\"dist_sq\":%.0f,\"is_mover\":%d,\"watch_id\":%d}",
+				         (long)mouseX, (long)mouseY, _ct_sp.x, _ct_sp.y, _ct_sp.w,
+				         _ct_behind?1:0, _ct_distSq,
+				         target->isMover()?1:0, (int)s_targetWatchID);
+				mc2_diag::writeEvent("CURSOR_TARGET", 1, 0, _ct_buf);
 			}
 		}
 	}

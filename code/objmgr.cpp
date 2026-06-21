@@ -3529,9 +3529,24 @@ static bool projectPickCandidateRect(BldgAppearance* ba,
 	float maxX = 0.0f, maxY = 0.0f;
 	float minX = 0.0f, minY = 0.0f;
 
+	// INPUT-CURSOR-OFFSCREEN-TARGET-RECON-1 / -FIX-1: a near-plane-clipped OBB corner
+	// projects to (0,0) with w<=1e-4 (camera.h:860-862). Including it in the screen-rect
+	// min/max stretches the rect to the screen origin, so an object whose lower corners
+	// sit below terrain (and thus behind the near plane at low camera angles) yields a
+	// huge bogus rect that swallows the cursor -> wrong/offscreen object wins the pick.
+	// PROVEN in TangoMaster m1: behind_corners=4, pos.z=48.7 (terrain ~325), rect
+	// [-3369,-3759,1675,809] contained a cursor 436px away.
+	// FIX: build the rect from in-front corners only (skip w<=1e-4). If ALL corners are
+	// behind the camera the object has no valid screen rect this frame -> not pickable.
+	// Killswitch MC2_PICK_BEHIND_LEGACY=1 restores the byte-identical legacy behavior.
+	static const bool s_pickBehindLegacy = (std::getenv("MC2_PICK_BEHIND_LEGACY") != nullptr);
+	int behindCount = 0;
+
 	for (long i=0;i<8;i++)
 	{
 		eye->projectForScreenXY(boxCoords[i],bcsp[i]);
+		if (bcsp[i].w <= 1e-4f)
+			++behindCount;
 		if (!i)
 		{
 			maxX = minX = bcsp[i].x;
@@ -3565,6 +3580,36 @@ static bool projectPickCandidateRect(BldgAppearance* ba,
 	outMinY = (long)minY;
 	outMaxX = (long)maxX;
 	outMaxY = (long)maxY;
+
+	// CURSOR_TARGET mechanism emit: only when a corner was behind the camera (rare,
+	// exactly the bug). Gate MC2_CURSOR_TARGET_TRACE + MC2_DIAG_TAGS=CURSOR_TARGET.
+	// Read via get_diagnostic_events("CURSOR_TARGET"). No behavior change.
+	if (behindCount > 0)
+	{
+		static const bool s_cursorTargetTrace = (std::getenv("MC2_CURSOR_TARGET_TRACE") != nullptr);
+		if (s_cursorTargetTrace && mc2_diag::tagEnabled("CURSOR_TARGET"))
+		{
+			char _ct_buf[256];
+			snprintf(_ct_buf, sizeof(_ct_buf),
+			         "{\"site\":\"pick_rect\",\"behind_corners\":%d,\"pos\":[%.1f,%.1f,%.1f],\"rect\":[%ld,%ld,%ld,%ld]}",
+			         behindCount, position.x, position.y, position.z,
+			         outMinX, outMinY, outMaxX, outMaxY);
+			mc2_diag::writeEvent("CURSOR_TARGET", 1, 0, _ct_buf);
+		}
+	}
+
+	// INPUT-CURSOR-OFFSCREEN-TARGET-FIX-2: any OBB corner behind the near plane means
+	// the camera straddles / sits inside the object's bounding box (e.g. a prop ~280
+	// units below terrain, viewed from above). Near-plane corners — both the ones
+	// behind (project to (0,0)) AND the in-front ones with tiny w (perspective divide
+	// blows them to extreme screen coords) — make the screen rect span the whole view,
+	// so the object wins the pick at every pixel ("cannot capture" wall). No reliable
+	// 2D rect exists for such an object; reject it. A building selected normally (camera
+	// outside it) has all 8 corners in front -> behindCount==0 -> unaffected.
+	// Killswitch MC2_PICK_BEHIND_LEGACY=1 restores the legacy (broken) behavior.
+	if (!s_pickBehindLegacy && behindCount > 0)
+		return false;
+
 	return true;
 }
 

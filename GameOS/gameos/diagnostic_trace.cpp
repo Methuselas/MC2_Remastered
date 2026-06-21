@@ -35,6 +35,7 @@ const std::unordered_set<std::string>& knownTags() {
         "SHADER_COMPILE",
         "LOGISTICS",
         "FRAME_JOBS",
+        "CURSOR_TARGET",
     };
     return tags;
 }
