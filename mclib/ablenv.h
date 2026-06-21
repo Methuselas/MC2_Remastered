@@ -149,6 +149,7 @@ typedef struct {
 	long*					sizeStaticVars;
 	long					totalSizeStaticVars;
 	long					numInstances;
+	long					compileErrorCount;	// OMNITECH-ABL-EXECEXPRESSION: STOPSYNTAX count at compile; gates execute()
 } ModuleEntry;
 
 typedef ModuleEntry* ModuleEntryPtr;

@@ -11,6 +11,7 @@
 #include<stdlib.h>
 #include<string.h>
 #include<cassert>
+#include<set>
 #include"platform_str.h"
 
 #ifndef ABLGEN_H
@@ -788,7 +789,30 @@ int ABLModule::getStateHandle (void) {
 
 //---------------------------------------------------------------------------
 
+// OMNITECH-ABL-EXECEXPRESSION-RECON-1 helpers: env gate + one-shot-per-module skip report.
+static bool ablSkipErroredModulesEnabled (void) {
+	static const bool s_on = (getenv("MC2_ABL_SKIP_ERRORED_MODULES") != NULL);
+	return s_on;
+}
+static void ablReportSkippedErroredModule (long handle, const char* fileName, long errs) {
+	static std::set<long> s_reported;
+	if (s_reported.insert(handle).second) {
+		printf("[ABL-SKIP] handle=%ld file=%s compileErrors=%ld -> execution skipped (MC2_ABL_SKIP_ERRORED_MODULES)\n",
+			handle, fileName ? fileName : "?", errs);
+		fflush(stdout);
+	}
+}
+
 long ABLModule::execute (ABLParamPtr paramList) {
+
+	// OMNITECH-ABL-EXECEXPRESSION-RECON-1: a module that failed to compile (STOPSYNTAX) has
+	// malformed bytecode; running it underflows the VM stack -> READ AV at ablxexpr.cpp:501.
+	// Skip execution of errored modules when MC2_ABL_SKIP_ERRORED_MODULES is set (default OFF
+	// = legacy behaviour). One-shot log per module handle.
+	if (ablSkipErroredModulesEnabled() && ModuleRegistry[handle].compileErrorCount > 0) {
+		ablReportSkippedErroredModule(handle, ModuleRegistry[handle].fileName, ModuleRegistry[handle].compileErrorCount);
+		return 0;
+	}
 
 	CurModule = this;
 	if (debugger)
@@ -929,6 +953,12 @@ long ABLModule::execute (ABLParamPtr paramList) {
 //---------------------------------------------------------------------------
 
 long ABLModule::execute (ABLParamPtr moduleParamList, SymTableNodePtr functionIdPtr) {
+
+	// OMNITECH-ABL-EXECEXPRESSION-RECON-1: skip errored-compile modules (see overload above).
+	if (ablSkipErroredModulesEnabled() && ModuleRegistry[handle].compileErrorCount > 0) {
+		ablReportSkippedErroredModule(handle, ModuleRegistry[handle].fileName, ModuleRegistry[handle].compileErrorCount);
+		return 0;
+	}
 
 	CurModule = this;
 	if (debugger)

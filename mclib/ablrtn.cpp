@@ -782,7 +782,14 @@ int32_t ABLi_preProcess (const char* sourceFileName, long* numErrors, long* numL
 		ModuleRegistry[NumModulesRegistered].stateHandles = (StateHandleInfoPtr)ABLStackMallocCallback(sizeof(StateHandleInfo) * NumStateHandles);
 		memcpy(ModuleRegistry[NumModulesRegistered].stateHandles, StateHandleList, sizeof(StateHandleInfo) * NumStateHandles);
 	}
-	
+
+	// OMNITECH-ABL-EXECEXPRESSION-RECON-1: record this module's compile error count
+	// (errorCount is this module's STOPSYNTAX total here, same value reported via numErrors
+	// below). A module that failed to compile has malformed/incomplete bytecode; executing
+	// it underflows the ABL VM stack -> READ AV (ablxexpr.cpp:501 execExpression). The gate
+	// in ABLModule::execute() skips such modules when MC2_ABL_SKIP_ERRORED_MODULES is set.
+	ModuleRegistry[NumModulesRegistered].compileErrorCount = errorCount;
+
 	NumModulesRegistered++;
 
 	//---------------------------------------------------------------
