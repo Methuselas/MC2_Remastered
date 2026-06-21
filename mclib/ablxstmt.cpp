@@ -248,6 +248,11 @@ void execAssignmentStatement (SymTableNodePtr idPtr) {
 
 	//--------------------------
 	// Now, do the assignment...
+	// OMNITECH-ABL crash guard: malformed bytecode from a STOPSYNTAX module can leave
+	// targetTypePtr/targetPtr/tos NULL (execVariable failed) -> the assignment derefs crash
+	// (execAssignmentStatement, ablxstmt.cpp). Skip the store when invalid; pop() below still
+	// balances the stack. Valid bytecode is unaffected.
+	if (targetTypePtr && targetPtr && tos) {
 	if ((targetTypePtr == RealTypePtr) && (expressionTypePtr == IntegerTypePtr)) {
 		//-------------------------
 		// integer assigned to real
@@ -280,6 +285,7 @@ void execAssignmentStatement (SymTableNodePtr idPtr) {
 		// Assign real to real...
 		targetPtr->real = tos->real;
 	}
+	}  // OMNITECH-ABL crash guard (targetTypePtr && targetPtr && tos)
 
 	//-----------------------------
 	// Grab the expression value...
