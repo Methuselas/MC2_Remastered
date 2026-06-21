@@ -35,13 +35,19 @@ void applyPipeline(const RenderCore::PipelineDesc& desc) {
     }
 
     // --- Blend ---
+    // GLSTATE-BLEND-RESTORE-1: always set glBlendFunc regardless of enable/disable.
+    // NVIDIA retains stale blend factors when GL_BLEND is disabled; any subsequent
+    // glEnable(GL_BLEND) without a matching glBlendFunc inherits them. Resetting to
+    // GL_ONE/GL_ZERO for Opaque/AlphaTest ensures a predictable neutral baseline.
     switch (desc.blend) {
         case RenderCore::BlendMode::Opaque:
             glDisable(GL_BLEND);
+            glBlendFunc(GL_ONE, GL_ZERO);
             break;
         case RenderCore::BlendMode::AlphaTest:
             // Alpha-tested geometry uses shader discard; GL_BLEND stays off.
             glDisable(GL_BLEND);
+            glBlendFunc(GL_ONE, GL_ZERO);
             break;
         case RenderCore::BlendMode::AlphaBlend:
             glEnable(GL_BLEND);
