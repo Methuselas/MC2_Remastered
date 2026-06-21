@@ -849,6 +849,13 @@ void TerrainTextures::combineTxm (MemoryPtr dest, DWORD binNumber, long type, lo
 	MemoryPtr combineRAM = types[type].textureData[mipLevel];
 	MemoryPtr maskRAM = types[type].maskData[(binNumber-1) + (mipLevel * MC_MASK_NUM)];
 
+	// Guard missing terrain-texture/mask data: a mod map (e.g. MCO-Carver5) referencing a
+	// texture type whose textureData/maskData never loaded leaves these NULL -> the blend
+	// loop reads maskRAM[i]/combineRAM at 0x0 (crash at mission init, terrtxm.cpp:874).
+	// Skip the blend (leaves the base tile) instead of crashing.
+	if (!combineRAM || !maskRAM)
+		return;
+
 	long mipSize = 0;
 	switch (mipLevel)
 	{
@@ -1267,10 +1274,17 @@ long TerrainTextures::createTransition (DWORD typeInfo, DWORD overlayInfo)
 			MemoryPtr texture = types[priTypes[0]].textureData[kmp];
 			if (!Terrain::terrainTextures2 || isCementType(priTypes[0]))
 			{
-				//Base is now a BLANK ALPHA MASK for new Terrain                     
-				//This means we shove a blank transparent texture                    
-				//into the starting buffer.  Easily done with memset(dest,0,sizeof); 
-				memcpy(ourRAM,texture,mipSize * mipSize * sizeof(DWORD));
+				//Base is now a BLANK ALPHA MASK for new Terrain
+				//This means we shove a blank transparent texture
+				//into the starting buffer.  Easily done with memset(dest,0,sizeof);
+				// Guard missing terrain-texture data: a mod map referencing a texture
+				// type whose textureData[kmp] never loaded leaves `texture` NULL ->
+				// memcpy reads from 0x0 (crash at mission init, terrtxm.cpp:1273; e.g.
+				// MCO-Carver5). Blank the tile instead of crashing.
+				if (texture)
+					memcpy(ourRAM,texture,mipSize * mipSize * sizeof(DWORD));
+				else
+					memset(ourRAM,0,mipSize * mipSize * sizeof(DWORD));
 				forceAlphaOpaque(ourRAM,kmp);
 			}
 			else
