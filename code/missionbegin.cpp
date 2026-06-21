@@ -289,6 +289,19 @@ void MissionBegin::begin()
 		curScreenX = 0;
 		curScreenY = 1;
 
+		// LOGISTICS-PILOTSCREEN-FIX: the RESTART/boot path clobbers a grid cell when
+		// mission 1 has PlayLogistics=FALSE + PlaySelection=TRUE (MCO campaigns):
+		// screens[3][1] (PilotReadyScreen) is overwritten with MissionSelectionScreen
+		// at :644. This reuse-path begin() never reset screens[][] (only the RESTART
+		// handler does, at the loop near :630-637), so the clobber persisted into every
+		// later mission -> the PilotReady screen stayed replaced by the briefing/launch
+		// screen and pilots could never be assigned. Restore the grid to the canonical
+		// singlePlayerScreens before routing. Idempotent no-op for stock (PlayLogistics
+		// =TRUE / PlaySelection=FALSE -> never clobbered), so byte-identical there.
+		for (int ri = 0; ri < 5; ri += 1)
+			for (int rj = 0; rj < 3; rj += 1)
+				screens[ri][rj] = singlePlayerScreens[ri][rj];
+
 		if ( LogisticsData::instance->skipLogistics() )
 		{
 					
