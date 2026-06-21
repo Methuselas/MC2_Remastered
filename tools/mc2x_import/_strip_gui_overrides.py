@@ -21,11 +21,13 @@ apply = '--apply' in sys.argv
 # falls back to the base atlas -> custom mechs render as magenta/wrong-offset icons.
 # NEVER strip these, even when a canonical-named copy exists. (Bug: MCO icons, 2026-06-20.)
 CONTENT_KEEP = {
-    'mcui_gn_mechicons.tga',          # mech-bay roster atlas (per-campaign mech icons)
+    'mcui_gn_mechicons.tga',          # mech-bay roster atlas (per-campaign CUSTOM mech icons)
     'mc2x_mechicons.tga',             # MC2X variant of the roster atlas
-    'mcl_pr_pilotskillicons.tga',     # pilot skill-icon atlas
-    'mcl_pr_pilotskillicons2.tga',    # MCO spelling variant
-    'mcl_gn_deploymentteams.fit',     # MechEntryIcon/PilotIcon cell geometry (Width/Height)
+    'mcl_gn_deploymentteams.fit',     # MechEntryIcon cell geometry (campaign mech-atlas layout)
+    # NOTE: pilot skill-icon + rank-insignia atlases (mcl_pr_pilotskillicons*) are GENERIC GUI
+    # CHROME (same specialty skills + ranks for every campaign) owned by base/compat. A campaign
+    # shipping its own copy (old-era layout) OVERRIDES base's correct one -> wrong skill/rank
+    # icons. They are NOT content -> intentionally NOT kept (let base/compat win).
 }
 
 canon = set()  # lowercased basenames under data/art/

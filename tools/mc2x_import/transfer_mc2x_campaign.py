@@ -156,8 +156,10 @@ UPSCALE_DIRS = ("textures/", "art/", "tgl/")
 # imported (and NOT stripped, see _strip_gui_overrides.CONTENT_KEEP) or icons go magenta.
 CONTENT_KEEP_ART = {
     "mcui_gn_mechicons.tga", "mc2x_mechicons.tga",
-    "mcl_pr_pilotskillicons.tga", "mcl_pr_pilotskillicons2.tga",
     "mcl_gn_deploymentteams.fit",
+    # pilot skill-icon + rank-insignia atlases (mcl_pr_pilotskillicons*) are GENERIC GUI
+    # chrome owned by base/compat — a campaign's own copy overrides base's correct layout
+    # and renders wrong skill/rank icons, so they are NOT kept (intentionally chrome).
 }
 
 
