@@ -160,11 +160,11 @@ struct EnvVarDef {
 //   - Default-ON vars where toggling is rarely useful interactively
 static const EnvVarDef k_envVars[] = {
     // --- Rendering ---
-    { "MC2_SHADOW_CSM",              "Cascaded shadow maps (CSM)",           true,  "",     "Rendering" },
+    { "MC2_SHADOW_CSM",              "Cascaded shadow maps (CSM)",           true,  "1",    "Rendering" },
     { "MC2_CLOUD_SHADOW",            "Cloud shadows (default ON)",            true,  "1",    "Rendering" },
     { "MC2_SHADOW_BOUNDED_NEAR_FIT", "Crisp near shadows",                    true,  "",     "Rendering" },
-    { "MC2_STATIC_PROP_PBR_V1",      "Static prop PBR specular",              true,  "",     "Rendering" },
-    { "MC2_STATIC_PROP_AMBIENT_V1",  "Static prop hemisphere ambient",        true,  "",     "Rendering" },
+    { "MC2_STATIC_PROP_PBR_V1",      "Static prop PBR specular",              true,  "1",    "Rendering" },
+    { "MC2_STATIC_PROP_AMBIENT_V1",  "Static prop hemisphere ambient",        true,  "1",    "Rendering" },
     { "MC2_STATIC_PROP_IBL_SH",      "Static prop SH-L2 IBL ambient (ON)",    true,  "1",    "Rendering" },
     // --- Display ---
     { "MC2_FORCE_43",                "Force 4:3 aspect (pillarbox widescreen)", true, "",    "Display"   },
@@ -172,7 +172,7 @@ static const EnvVarDef k_envVars[] = {
     { "MC2_TERRAIN_LOD_CHUNK",       "Chunk terrain LOD renderer (default ON)", true, "1",   "Terrain"   },
     { "MC2_COLORMAP_KTX2",           "BC7 KTX2 colormap atlas (default ON)",  true,  "1",    "Terrain"   },
     // --- Water / VFX ---
-    { "MC2_WATER_SKYTINT",           "Water sky tint",                        true,  "",     "Water/VFX" },
+    { "MC2_WATER_SKYTINT",           "Water sky tint",                        true,  "1",    "Water/VFX" },
     { "MC2_WATER_REFLECTION",        "Water SH-L2 sky reflection",            true,  "",     "Water/VFX" },
     { "MC2_VFX_SOFT_PARTICLES",      "Soft particles (depth-fade)",           true,  "",     "Water/VFX" },
     { "MC2_VFX_LIT_PARTICLES",       "Lit particles",                         true,  "",     "Water/VFX" },
@@ -249,8 +249,8 @@ static HWND s_hGraphicsDlg = NULL;
 static void GfxSetDefaults() {
     s_gfxTexQual      = 2;
     s_gfxShadQual     = 2;
-    s_gfxFrameCapOn   = false;
-    s_gfxFrameCapFps  = 60;
+    s_gfxFrameCapOn   = true;
+    s_gfxFrameCapFps  = 165;
     s_gfxVsync        = false;
     s_gfxTexPackIdx   = 0;
 }
