@@ -96,6 +96,19 @@ LogisticsPilotListBoxItem::LogisticsPilotListBoxItem( LogisticsPilot* pNewPilot 
 		rankText.setText( IDS_ACE );
 
 	int rank = pPilot->getRank();
+	// PILOT-ICON-UV: the rank-insignia UVs are PIXEL coords (rank*15 @ y96) normalized by the
+	// icon's fileWidth/Height. The fit's authored size can disagree with the actual resolved
+	// atlas (e.g. fit=256 but base mcl_pr_pilotskillicons.tga is 128) -> insignia sampled at
+	// the wrong scale. Derive the divisor from the real texture (mirrors the mech-icon fix).
+	{
+		DWORD aw = 0, ah = 0;
+		if ( mcTextureManager &&
+		     mcTextureManager->tryGetTextureLogicalSize( rankIcon.getTextureHandle(), aw, ah ) )
+		{
+			if ( aw > 0 ) rankIcon.setFileWidth( (float)aw );
+			if ( ah > 0 ) rankIcon.setFileHeight( (float)ah );
+		}
+	}
 	rankIcon.setUVs( rank * 15, 96, rank * 15 + 15, 96 + 15 );
 	
 	LogisticsPilotListBox::makeUVs( pPilot, icon );
@@ -266,7 +279,16 @@ void LogisticsPilotListBox::makeUVs( LogisticsPilot* pPilot, aObject& icon )
 	float u2 = (fX * width);
 	float v2 = (fY * height);
 
-	icon.setFileWidth(256.f);
+	// PILOT-ICON-UV: derive the photo-atlas width from the real texture instead of a
+	// hardcoded 256 (a campaign/compat photo atlas may differ); mirrors the mech-icon fix.
+	{
+		DWORD aw = 0, ah = 0;
+		float fw = 256.f;
+		if ( mcTextureManager &&
+		     mcTextureManager->tryGetTextureLogicalSize( icon.getTextureHandle(), aw, ah ) && aw > 0 )
+			fw = (float)aw;
+		icon.setFileWidth( fw );
+	}
 	icon.setUVs( u, v, u2, v2 );
 
 }
