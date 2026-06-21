@@ -2,6 +2,17 @@
 
 > Pointer doc. Detail in memory/ handoffs and docs/. Add new campaigns at top.
 
+## 2026-06-21 — Startup / load performance arc
+
+| Slice | Commits | Status | Notes |
+|-------|---------|--------|-------|
+| SAVE-LOAD-FAST-1: skip redundant save-game scan on campaign start | `77f0478c` | **SHIPPED** | `beginLoad(bSkipSaveScan)` + dedup `isCorrectVersionSaveGame`; fixed memory leak on rejected entries |
+| STARTUP-INIT-ASYNC-1: bg-thread LogisticsData::init + null guard | `4da59f21` | **SHIPPED** | `std::async` in `Logistics::start(log_SPLASH)`; blocking join before menu; `getCurrentABLScript()` null guard |
+| STARTUP-PARALLEL-VARIANTS-1: parallel mech CSV reads | `8ede25b5` | **SHIPPED** | `std::async` per mech job inside `initVariants()`; serial scan + parallel read + serial merge |
+| SMART-LOAD-1: defer mech-bay Phase B until first accessor | `bcc6359d` `27768580` | **SHIPPED** | Phase A (campaign.fit only) on bg thread; Phase B (components/pilots/variants + updateAvailability) lazy on first mech-bay call. Gate `MC2_SMART_LOAD=1` default OFF. Smoke mc2_01 PASS gate-OFF + gate-ON. |
+
+---
+
 ## Asset Modernization Pipeline — v0 SHIPPED (merged nifty `fdb7c470`, 2026-06-17)
 
 | Slice | Status | Notes |
