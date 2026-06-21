@@ -1189,6 +1189,32 @@ bool gosTexture::createHardwareTexture() {
         DWORD* pdata = new DWORD[tex_.w*tex_.h];
         for(int i=0;i<tex_.w*tex_.h;++i)
             pdata[i] = 0xFF00FFFF;
+
+        // OVERLAY-MAGENTA-TEXTURE-RECON-1 (Source A): this texture object has w/h but
+        // NO source path and NO compressed data -> filled solid magenta. Emit WHICH
+        // texture resolved to nothing (the highest-value magenta probe). Gated
+        // MC2_OVERLAY_MAGENTA_TRACE + MC2_DIAG_TAGS=OVERLAY_MAGENTA; read via
+        // get_diagnostic_events("OVERLAY_MAGENTA"). No behavior change.
+        {
+            static const bool s_magentaTrace = (std::getenv("MC2_OVERLAY_MAGENTA_TRACE") != nullptr);
+            if (s_magentaTrace && mc2_diag::tagEnabled("OVERLAY_MAGENTA")) {
+                char _mg_fn[256]; char _mg_tn[256];
+                const char* _mg_sfn = filename_ ? filename_ : "";
+                const char* _mg_stn = texname_  ? texname_  : "";
+                size_t _mg_k;
+                for (_mg_k=0; _mg_k<sizeof(_mg_fn)-1 && _mg_sfn[_mg_k]; ++_mg_k)
+                    _mg_fn[_mg_k] = (_mg_sfn[_mg_k]=='\\') ? '/' : _mg_sfn[_mg_k];
+                _mg_fn[_mg_k] = '\0';
+                for (_mg_k=0; _mg_k<sizeof(_mg_tn)-1 && _mg_stn[_mg_k]; ++_mg_k)
+                    _mg_tn[_mg_k] = (_mg_stn[_mg_k]=='\\') ? '/' : _mg_stn[_mg_k];
+                _mg_tn[_mg_k] = '\0';
+                char _mg_buf[600];
+                snprintf(_mg_buf, sizeof(_mg_buf),
+                         "{\"site\":\"fallback_fill\",\"filename\":\"%s\",\"texname\":\"%s\",\"w\":%d,\"h\":%d}",
+                         _mg_fn, _mg_tn, (int)tex_.w, (int)tex_.h);
+                mc2_diag::writeEvent("OVERLAY_MAGENTA", 1, 0, _mg_buf);
+            }
+        }
         tex_ = create2DTexture(tex_.w, tex_.h, tf, (const uint8_t*)pdata, wantMipmaps);
         delete[] pdata;
         return tex_.isValid();
@@ -6366,6 +6392,24 @@ void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
         gosPostProcess* pp = getGosPostProcess();
         float halfExt = pp ? pp->getMapHalfExtent() : 0.0f;
         glUniform1f(tl.mapHalfExtent, halfExt);
+
+        // OVERLAY-MAGENTA-TEXTURE-RECON-1 (Source B): the colormap "no-data" magenta
+        // texels are hidden by the off-map edge-haze ONLY when mapHalfExtent > 0. If
+        // this is <= 0 for a map, the haze guard is skipped and magenta renders raw.
+        // Emit the live value (throttled to value changes) so we can tell Source-B
+        // guard-fail from a Source-A missing-texture. Gated MC2_OVERLAY_MAGENTA_TRACE.
+        {
+            static const bool s_magentaTrace = (std::getenv("MC2_OVERLAY_MAGENTA_TRACE") != nullptr);
+            static float s_lastHalfExt = -99999.0f;
+            if (s_magentaTrace && halfExt != s_lastHalfExt && mc2_diag::tagEnabled("OVERLAY_MAGENTA")) {
+                s_lastHalfExt = halfExt;
+                char _mg_buf[160];
+                snprintf(_mg_buf, sizeof(_mg_buf),
+                         "{\"site\":\"map_half_extent\",\"value\":%.1f,\"guard_fail\":%d}",
+                         halfExt, (halfExt <= 0.0f) ? 1 : 0);
+                mc2_diag::writeEvent("OVERLAY_MAGENTA", 1, 0, _mg_buf);
+            }
+        }
     }
     if (terrain_mvp_valid_ && tl.terrainMVP >= 0)
         glUniformMatrix4fv(tl.terrainMVP, 1, GL_FALSE, (const float*)&terrain_mvp_);

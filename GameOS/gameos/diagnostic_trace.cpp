@@ -36,6 +36,8 @@ const std::unordered_set<std::string>& knownTags() {
         "LOGISTICS",
         "FRAME_JOBS",
         "CURSOR_TARGET",
+        "OVERLAY_MAGENTA",
+        "ANIM_ADVANCE",
     };
     return tags;
 }

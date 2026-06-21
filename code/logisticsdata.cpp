@@ -1604,9 +1604,37 @@ void	LogisticsData::setMissionCompleted( )
 		for ( int i = pTeam->getRosterSize() - 1; i > -1; i-- )
 		{
 			Mover* pMover = (Mover*)pTeam->getMover( i );
-			
+
+			// LOGISTICS-PILOT-SKIP-UNIT-LOSS-RECON-1 (T4): per-unit carry-over decision.
+			// Emits, for every roster unit at mission completion, the exact reason it is
+			// re-added or dropped — so we can see which check a vanished TM vehicle fails
+			// (on_gui / type_class / move_type AIR). Gate MC2_LOG_LOGISTICS_FLOW +
+			// MC2_DIAG_TAGS=LOGISTICS; read via get_diagnostic_events("LOGISTICS"). No behavior change.
+			{
+				static const bool s_logiFlowTrace = (getenv("MC2_LOG_LOGISTICS_FLOW") != nullptr);
+				if ( s_logiFlowTrace && pMover && mc2_diag::tagEnabled("LOGISTICS") )
+				{
+					int  _lg_otc  = pMover->getObjectType() ? (int)pMover->getObjectType()->getObjectTypeClass() : -1;
+					bool _lg_gui  = pMover->isOnGUI();
+					int  _lg_mt   = (int)pMover->getMoveType();
+					bool _lg_cmd  = (pMover->getCommanderId() == Commander::home->getId());
+					bool _lg_pass = _lg_gui && (_lg_otc == BATTLEMECH_TYPE) && _lg_cmd && (_lg_mt != MOVETYPE_AIR);
+					char _lg_nm[64]; const char* _lg_src = pMover->getName() ? pMover->getName() : "";
+					size_t _lg_k;
+					for (_lg_k=0; _lg_k<sizeof(_lg_nm)-1 && _lg_src[_lg_k]; ++_lg_k)
+						_lg_nm[_lg_k] = (_lg_src[_lg_k]=='\\' || _lg_src[_lg_k]=='"') ? '_' : _lg_src[_lg_k];
+					_lg_nm[_lg_k] = '\0';
+					char _lg_buf[320];
+					snprintf(_lg_buf, sizeof(_lg_buf),
+					         "{\"site\":\"cull\",\"name\":\"%s\",\"on_gui\":%d,\"type_class\":%d,\"move_type\":%d,\"cmd_match\":%d,\"is_air\":%d,\"dead\":%d,\"carry_over\":%d}",
+					         _lg_nm, _lg_gui?1:0, _lg_otc, _lg_mt, _lg_cmd?1:0, (_lg_mt==MOVETYPE_AIR)?1:0,
+					         (pMover->isDestroyed()||pMover->isDisabled())?1:0, _lg_pass?1:0);
+					mc2_diag::writeEvent("LOGISTICS", 1, 0, _lg_buf);
+				}
+			}
+
 			//Must check if we ever linked up with the mech!!
-			if ( pMover->isOnGUI() && 
+			if ( pMover->isOnGUI() &&
 				 (pMover->getObjectType()->getObjectTypeClass() == BATTLEMECH_TYPE) && 
 				 (pMover->getCommanderId() == Commander::home->getId()) &&
 				 (pMover->getMoveType() != MOVETYPE_AIR))
@@ -1616,6 +1644,28 @@ void	LogisticsData::setMissionCompleted( )
 				DWORD base, highlight1, highlight2;
 				((Mech3DAppearance*)pMover->getAppearance())->getPaintScheme( base, highlight1, highlight2 );
 				LogisticsPilot* pPilot = getPilot( pMover->getPilot()->getName() );
+
+				// LOGISTICS T4b: re-add resolution outcome for a filter-passing mech.
+				// Shows whether the inventory mech (pMech) and the pilot round-trip
+				// (pPilot) survive — a pilotless re-add or a getMech miss is how a
+				// surviving Mad Dog still vanishes. Gate MC2_LOG_LOGISTICS_FLOW.
+				{
+					static const bool s_lfResolve = (getenv("MC2_LOG_LOGISTICS_FLOW") != nullptr);
+					if ( s_lfResolve && mc2_diag::tagEnabled("LOGISTICS") )
+					{
+						const char* _r_pn = (pMover->getPilot() && pMover->getPilot()->getName()) ? pMover->getPilot()->getName() : "";
+						const char* _r_vn = ((BattleMech*)pMover)->variantName ? ((BattleMech*)pMover)->variantName : "";
+						char _r_nm[64], _r_pnm[64], _r_vnm[64];
+						const char* _r_srcs[3] = { pMover->getName() ? pMover->getName() : "", _r_pn, _r_vn };
+						char* _r_dsts[3] = { _r_nm, _r_pnm, _r_vnm };
+						for (int _r_s=0; _r_s<3; ++_r_s) { size_t _r_k; for(_r_k=0;_r_k<63 && _r_srcs[_r_s][_r_k];++_r_k) _r_dsts[_r_s][_r_k]=(_r_srcs[_r_s][_r_k]=='\\'||_r_srcs[_r_s][_r_k]=='"')?'_':_r_srcs[_r_s][_r_k]; _r_dsts[_r_s][_r_k]='\0'; }
+						char _r_buf[400];
+						snprintf(_r_buf, sizeof(_r_buf),
+						         "{\"site\":\"resolve\",\"name\":\"%s\",\"pilot\":\"%s\",\"variant\":\"%s\",\"mech_found\":%d,\"pilot_found\":%d,\"dead\":%d}",
+						         _r_nm, _r_pnm, _r_vnm, pMech?1:0, pPilot?1:0, (pMover->isDestroyed()||pMover->isDisabled())?1:0);
+						mc2_diag::writeEvent("LOGISTICS", 1, 0, _r_buf);
+					}
+				}
 				if ( pMech )
 				{
 					if ( pMover->isDestroyed() || pMover->isDisabled() )
@@ -1664,6 +1714,15 @@ void	LogisticsData::setMissionCompleted( )
 								printf( "[LOGISTICS] setMissionCompleted: no variant for surviving mech '%s' -- mech lost\n",
 								        vname );
 								fflush( stdout );
+								// LOGISTICS T4c: the actual deletion — variant unresolved, mech dropped.
+								if ( getenv("MC2_LOG_LOGISTICS_FLOW") && mc2_diag::tagEnabled("LOGISTICS") )
+								{
+									char _ml_vn[80]; const char* _ml_s = vname ? vname : "";
+									size_t _ml_k; for(_ml_k=0;_ml_k<79 && _ml_s[_ml_k];++_ml_k) _ml_vn[_ml_k]=(_ml_s[_ml_k]=='\\'||_ml_s[_ml_k]=='"')?'_':_ml_s[_ml_k]; _ml_vn[_ml_k]='\0';
+									char _ml_buf[160];
+									snprintf(_ml_buf, sizeof(_ml_buf), "{\"site\":\"mech_lost\",\"variant\":\"%s\"}", _ml_vn);
+									mc2_diag::writeEvent("LOGISTICS", 1, 0, _ml_buf);
+								}
 							}
 						}
 						if ( pVariant )

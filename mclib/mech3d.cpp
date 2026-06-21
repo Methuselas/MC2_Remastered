@@ -21,6 +21,9 @@
 #include "../GameOS/gameos/gos_mech_killswitch.h"
 #include "cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (RAII scope)
 #include "anim_override_registry.h"  // ANIM-OVERRIDE-MVP: declarative gesture-clip remap
+#include "../GameOS/gameos/diagnostic_trace.h"  // ANIM_ADVANCE trace (double-step recon)
+
+extern uint32_t g_mc2FrameCounter;  // defined mclib/tgl.cpp:3718 — ANIM_ADVANCE double-step probe
 #include "spotlight_diag.h"  // T1.16 — (E)-owned slot tagging for per-slot probe
 #include <cstdint>  // M2.5 (Q6 amendment 2): uint64_t for MLR mech draw counter
 
@@ -4874,7 +4877,27 @@ long Mech3DAppearance::update (bool animate)
 					else
 						currentFrame += frameInc;
 				}
-	
+
+				// ANIM-MECH-DOUBLE-STEP-RECON-1: emit one event per gait advance.
+				// Two events with the SAME ptr AND SAME frame == gait double-advanced
+				// this frame (the "double step"). Normal == exactly one per mech/frame;
+				// if single but cadence looks wrong, compare mechFrameRate vs ground
+				// speed (run-in-place = mover velocity, not this advance). Gated
+				// MC2_ANIM_ADVANCE_TRACE + MC2_DIAG_TAGS=ANIM_ADVANCE; read via
+				// get_diagnostic_events("ANIM_ADVANCE"). No behavior change.
+				if (frameInc != 0.0f)
+				{
+					static const bool s_animAdvTrace = (std::getenv("MC2_ANIM_ADVANCE_TRACE") != nullptr);
+					if (s_animAdvTrace && mc2_diag::tagEnabled("ANIM_ADVANCE"))
+					{
+						char _aa_buf[256];
+						snprintf(_aa_buf, sizeof(_aa_buf),
+						         "{\"ptr\":\"%p\",\"gesture\":%d,\"mechFrameRate\":%.3f,\"frameLength\":%.5f,\"frameInc\":%.4f,\"currentFrame\":%.3f}",
+						         (void*)this, (int)currentGestureId, mechFrameRate, frameLength, frameInc, currentFrame);
+						mc2_diag::writeEvent("ANIM_ADVANCE", 1, (uint64_t)g_mc2FrameCounter, _aa_buf);
+					}
+				}
+
 				//--------------------------------------
 				//Check Positive overflow of gesture
 				if (currentFrame >= mechType->getNumFrames(currentGestureId))
