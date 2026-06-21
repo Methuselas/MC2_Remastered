@@ -128,6 +128,35 @@ private:
     GLenum    prevFunc_ = GL_LESS;
 };
 
+// Save/restore glClipControl (clip origin + depth-range mode). ARB_clip_control
+// is required at engine startup (gameosmain.cpp); this guard is safe to
+// instantiate whenever GL is live. Use at the boundary of any pass that could
+// change clip semantics, or defensively in endXxxPass() to re-assert the scene
+// expectation (GL_LOWER_LEFT + GL_ZERO_TO_ONE) if an NVIDIA driver reset occurs
+// on FBO switch. Not usable across function call pairs — use manual member-var
+// save/restore instead (see gosPostProcess::shadowSaved* pattern).
+class GlScopedClipControl {
+public:
+    GlScopedClipControl() {
+        GLint origin = GL_LOWER_LEFT;
+        GLint depth  = GL_NEGATIVE_ONE_TO_ONE;
+        glGetIntegerv(GL_CLIP_ORIGIN,     &origin);
+        glGetIntegerv(GL_CLIP_DEPTH_MODE, &depth);
+        prevOrigin_ = static_cast<GLenum>(origin);
+        prevDepth_  = static_cast<GLenum>(depth);
+    }
+    ~GlScopedClipControl() {
+        glClipControl(prevOrigin_, prevDepth_);
+    }
+    GlScopedClipControl(const GlScopedClipControl&) = delete;
+    GlScopedClipControl& operator=(const GlScopedClipControl&) = delete;
+    GlScopedClipControl(GlScopedClipControl&&) = delete;
+    GlScopedClipControl& operator=(GlScopedClipControl&&) = delete;
+private:
+    GLenum prevOrigin_ = GL_LOWER_LEFT;
+    GLenum prevDepth_  = GL_ZERO_TO_ONE;
+};
+
 }  // namespace mc2gl
 
 #endif  // GL_STATE_GUARD_H

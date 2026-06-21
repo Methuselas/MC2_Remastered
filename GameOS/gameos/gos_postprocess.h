@@ -368,6 +368,14 @@ private:
     glsl_program* shadowDepthProg_;
     int shadowMapSize_;
     int savedViewport_[4];
+    // GLSTATE-SHADOW-CLIP-RESTORE-1: state captured by beginShadowPass/beginShadowPassNoClear
+    // and restored by endShadowPass. Mirrors the csmSaved* pattern for CSM cascade state.
+    GLboolean shadowSavedDepthTest_  = GL_TRUE;
+    GLint     shadowSavedDepthFunc_  = GL_GEQUAL;
+    GLboolean shadowSavedDepthMask_  = GL_TRUE;
+    GLboolean shadowSavedCullFace_   = GL_TRUE;
+    GLint     shadowSavedClipOrigin_ = GL_LOWER_LEFT;
+    GLint     shadowSavedClipDepth_  = GL_ZERO_TO_ONE;
     float staticLightSpaceMatrix_[16]; // world-fixed ortho, built once at map load
     bool staticLightMatrixBuilt_;      // true after light matrix is built (first frame)
     float mapHalfExtent_;              // half the map size in world units
