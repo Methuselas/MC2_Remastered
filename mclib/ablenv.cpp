@@ -789,9 +789,16 @@ int ABLModule::getStateHandle (void) {
 
 //---------------------------------------------------------------------------
 
-// OMNITECH-ABL-EXECEXPRESSION-RECON-1 helpers: env gate + one-shot-per-module skip report.
+// OMNITECH-ABL-EXECEXPRESSION-1 helpers: gate + one-shot-per-module skip report.
+// DEFAULT-ON: executing a module that failed to compile (STOPSYNTAX) runs malformed
+// bytecode -> stack underflow -> crash (ablxexpr.cpp:501). A clean-compiling campaign has
+// compileErrorCount==0 so this is a no-op for it; only broken modules are skipped. The
+// kill-switch MC2_ABL_SKIP_ERRORED_MODULES=0 restores the legacy crash-prone behaviour.
 static bool ablSkipErroredModulesEnabled (void) {
-	static const bool s_on = (getenv("MC2_ABL_SKIP_ERRORED_MODULES") != NULL);
+	static const bool s_on = []{
+		const char* v = getenv("MC2_ABL_SKIP_ERRORED_MODULES");
+		return !(v && v[0] == '0');   // default ON unless explicitly "0"
+	}();
 	return s_on;
 }
 static void ablReportSkippedErroredModule (long handle, const char* fileName, long errs) {
