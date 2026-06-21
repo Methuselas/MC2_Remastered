@@ -131,6 +131,16 @@ def detect_compat(mod_dir: Path, mod_json_deps: list[str] | None) -> str | None:
         return "mco-compat"
     if has_high_obj:
         return "mc2x-compat"
+    # Content scan inconclusive: campaigns that keep missions in FST archives
+    # (DEE/DWE/HPE) have no loose data/missions/*.fit to scan, so the signals are
+    # absent and deps came back EMPTY -> the campaign ran WITHOUT its universal compat
+    # (mc2x-compat brains/atlases/colormaps) -> missing terrain, GUI stretch, skybox
+    # bleed, 0 missions. Fall back to the folder-name family prefix.
+    name = mod_dir.name.lower()
+    if name.startswith("mc2x"):
+        return "mc2x-compat"
+    if name.startswith("mco") or name == "mechcommanderomnitech":
+        return "mco-compat"
     return None
 
 
