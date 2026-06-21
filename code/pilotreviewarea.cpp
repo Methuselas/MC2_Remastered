@@ -307,6 +307,29 @@ void PilotReviewScreen::update()
 		return;
 	}
 
+	// PILOT-REVIEW-SKIP: SPACE fast-forwards the cosmetic per-pilot scroll-fest.
+	// Each pilotListBox.update() advances the current item's dwell timer toward
+	// flashTime(), so bursting many ticks completes cosmetic pilots instantly. A
+	// pilot who earns a promotion sets s_curPromotion mid-burst -> the loop stops and
+	// the next frame's halt block (above) shows the specialty-skill panel for the
+	// player's pick; press SPACE again to continue. We never write s_curPromotion/
+	// bDone, so the skill-pick halt is preserved. Promotions/XP are already applied in
+	// init(), so skipping the wait loses nothing. Once the list is fully scrolled,
+	// SPACE fires the (now-enabled) Done button to exit.
+	if ( entryAnim.isDone() && userInput->getKeyDown( KEY_SPACE ) )
+	{
+		if ( pilotListBox.isDone() )
+		{
+			if ( buttons[0].isEnabled() )
+				handleMessage( aMSG_DONE, aMSG_DONE );
+		}
+		else
+		{
+			for ( int sk = 0; sk < 8000 && !pilotListBox.isDone() && !s_curPromotion; ++sk )
+				pilotListBox.update();
+		}
+	}
+
 	if ( entryAnim.isDone() )
 		pilotListBox.update();
 
@@ -314,16 +337,31 @@ void PilotReviewScreen::update()
 	{
 		buttons[i].update();
 		if ( buttons[i].pointInside( userInput->getMouseX(), userInput->getMouseY() )
-			&& userInput->isLeftClick() 
+			&& userInput->isLeftClick()
 			&& buttons[i].isEnabled() )
 		{
-			handleMessage( aMSG_DONE, aMSG_DONE );
+			// PILOT-REVIEW-SKIP: the Done/advance button (buttons[0]) doubles as the
+			// fast-forward control — if the scroll isn't finished, burst it (halting at
+			// specialty-skill picks) instead of dismissing; once the list is done it
+			// dismisses normally. Same behavior as the SPACE key above. Other buttons
+			// keep their normal aMSG_DONE behavior.
+			if ( i == 0 && entryAnim.isDone() && !pilotListBox.isDone() && !s_curPromotion )
+			{
+				for ( int sk = 0; sk < 8000 && !pilotListBox.isDone() && !s_curPromotion; ++sk )
+					pilotListBox.update();
+			}
+			else
+			{
+				handleMessage( aMSG_DONE, aMSG_DONE );
+			}
 		}
 
 	}
 
-	if ( pilotListBox.isDone() )
-		buttons[0].disable( false );
+	// PILOT-REVIEW-SKIP: keep the Done button active throughout so it can serve as the
+	// fast-forward control before the scroll finishes (its click is routed above); once
+	// the list is done, clicking it performs the normal dismiss.
+	buttons[0].disable( false );
 
 	entryAnim.update();
 	exitAnim.update();
