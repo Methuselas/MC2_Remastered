@@ -25,6 +25,7 @@ LogisticsData.cpp			: Implementation of the LogisticsData component.
 #include<zlib.h>
 #include<vector>
 #include<string>
+#include<future>
 #include"../GameOS/gameos/diagnostic_trace.h"   // LOGISTICS front-end state capture
 
 // Interactive cheat gates â€” read once at startup, default OFF (unset = nullptr = false)
@@ -313,6 +314,16 @@ void LogisticsData::initVariants()
 
 	char tmpStr[256];
 
+	struct MechJob {
+		std::string path;
+		long fitID;
+		float scale;
+		int chassisId;
+		LogisticsChassis* chassis = nullptr;
+		std::vector<LogisticsVariant*> varList;
+	};
+	std::vector<MechJob> mechJobs;
+
 	int i = 1;
 	while( true )
 	{
@@ -365,36 +376,51 @@ void LogisticsData::initVariants()
 		strcat(  variantFullPath, ".csv" );
 		S_strlwr( variantFullPath );
 
-		CSVFile mechFile;
-		if ( NO_ERR != mechFile.open( variantFullPath ) )
-		{
-			LOG_LOGISTICS("initVariants: SKIP missing csv '%s' (row %d)", variantFullPath, i);
-			i++;
-			continue;
-		}
-
-		LogisticsChassis* chassis = new LogisticsChassis();
-		chassis->init( &mechFile, chassisID++ );
-		chassis->setFitID(fitID);
-		chassis->setScale( scale );
-
-		int row = 23;
-		char buffer[256];
-		int varCount = 0;
-		while( NO_ERR == mechFile.readString( row, 2, buffer, 256 ) )
-		{
-			LogisticsVariant* pVariant = new LogisticsVariant;
-			
-			if ( 0 == pVariant->init( &mechFile, chassis, varCount++ ) )
-				variants.Append( pVariant );
-			else
-				delete pVariant;
-
-			row += 97;
-		}
+		mechJobs.push_back({ variantFullPath, fitID, scale, chassisID++ });
 
 		i++;
 
+	}
+
+	// --- Parallel phase: open + parse each mech CSV concurrently ---
+	// Safety: CSVFile/File use read-only FastFile globals and g_modIndex.
+	// LogisticsChassis::init() writes only to 'this'. LogisticsVariant::init()
+	// reads LogisticsData::components (read-only after initComponents()).
+	// pChassis->refCount++ is per-chassis so only one thread touches each chassis.
+	std::vector<std::future<void>> mechFutures;
+	mechFutures.reserve(mechJobs.size());
+	for (auto& job : mechJobs) {
+		mechFutures.push_back(std::async(std::launch::async, [&job, this]() {
+			CSVFile mechFile;
+			if (NO_ERR != mechFile.open(job.path.c_str()))
+				return;
+
+			job.chassis = new LogisticsChassis();
+			job.chassis->init(&mechFile, job.chassisId);
+			job.chassis->setFitID(job.fitID);
+			job.chassis->setScale(job.scale);
+
+			int row = 23;
+			char buffer[256];
+			int varCount = 0;
+			while (NO_ERR == mechFile.readString(row, 2, buffer, 256)) {
+				LogisticsVariant* pVariant = new LogisticsVariant;
+				if (0 == pVariant->init(&mechFile, job.chassis, varCount++))
+					job.varList.push_back(pVariant);
+				else
+					delete pVariant;
+				row += 97;
+			}
+		}));
+	}
+	for (auto& f : mechFutures) f.get();
+
+	// Serial merge in original buildings.csv order.
+	for (auto& job : mechJobs) {
+		if (job.chassis) {
+			for (auto* v : job.varList)
+				variants.Append(v);
+		}
 	}
 
 	// ---- post-load diagnostics ----
