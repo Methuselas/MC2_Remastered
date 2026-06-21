@@ -123,13 +123,12 @@ def extract_fst(fst_path, out_root, refs=None, drop_upscale=False, gui_canon=Non
         rn = rel_norm(name)
         if rn in EXCLUDE_REL or rn in CORE_GUI_EXCLUDE or rn in seen:
             continue
-        if gui_canon and _is_canon_gui(rn, gui_canon):
+        sub = rn[5:] if rn.startswith("data/") else rn
+        keep_content = _is_campaign_unique_asset(sub)  # colormaps + matched icon set survive both filters
+        if gui_canon and _is_canon_gui(rn, gui_canon) and not keep_content:
             continue
-        if drop_upscale:
-            # strip leading "data/" then check against upscale dirs
-            sub = rn[5:] if rn.startswith("data/") else rn
-            if sub.startswith(UPSCALE_DIRS) and not _is_campaign_unique_texture(sub):
-                continue
+        if drop_upscale and sub.startswith(UPSCALE_DIRS) and not keep_content:
+            continue
         if refs and in_refs(name, refs):
             continue
         seen.add(rn)
@@ -151,13 +150,29 @@ def extract_fst(fst_path, out_root, refs=None, drop_upscale=False, gui_canon=Non
 UPSCALE_DIRS = ("textures/", "art/", "tgl/")
 
 
-def _is_campaign_unique_texture(sub):
-    """data/textures/<map>.burnin.* are per-MISSION baked terrain colormaps that the
-    base/compat layers do NOT own (each campaign map has its own). The blanket
-    --drop-upscale exclusion of data/textures dropped them, leaving terrain BLACK
-    (MapData::calcLight has no colormap). Keep these. (Bug: MCO black terrain, 2026-06-20.)"""
+# Campaign content atlases / layout fit that share a canonical name but carry
+# CAMPAIGN-SPECIFIC content (custom mech/pilot icons + the cell geometry the engine reads).
+# They are a matched set with the campaign's mech CSVs (iconPictureIndex), so they must be
+# imported (and NOT stripped, see _strip_gui_overrides.CONTENT_KEEP) or icons go magenta.
+CONTENT_KEEP_ART = {
+    "mcui_gn_mechicons.tga", "mc2x_mechicons.tga",
+    "mcl_pr_pilotskillicons.tga", "mcl_pr_pilotskillicons2.tga",
+    "mcl_gn_deploymentteams.fit",
+}
+
+
+def _is_campaign_unique_asset(sub):
+    """Campaign-unique CONTENT under the upscale dirs (textures/ art/) that base/compat do
+    NOT own. Must survive BOTH --drop-upscale and the gui_canon skip:
+      * data/textures/<map>.burnin.* = per-MISSION baked terrain colormaps; dropping them
+        leaves terrain BLACK (MapData::calcLight has no colormap).
+      * the mech/pilot icon atlases + mcl_gn_deploymentteams.fit = the campaign's matched
+        icon set; dropping them -> base atlas + campaign CSV indices mismatch -> magenta.
+    (Bug: MCO black terrain + magenta icons, 2026-06-20.)"""
     s = sub.lower()
-    return s.startswith("textures/") and ".burnin." in s
+    if s.startswith("textures/") and ".burnin." in s:
+        return True
+    return s.rsplit("/", 1)[-1] in CONTENT_KEEP_ART
 
 # Campaign roster files to pull SURGICALLY from misc.fst (NOT the whole archive).
 # pilots.csv lives in the install's misc.fst, is NOT loose, and has no base/compat
@@ -236,9 +251,10 @@ def copy_loose_delta(src_data, refs, out_data, drop_upscale=False, gui_canon=Non
             rel_key = ("data/" + rel).lower()
             if rel_key in EXCLUDE_REL or rel_key in CORE_GUI_EXCLUDE:
                 continue
-            if gui_canon and _is_canon_gui(rel_key, gui_canon):
+            keep_content = _is_campaign_unique_asset(rel)  # colormaps + matched icon set survive both filters
+            if gui_canon and _is_canon_gui(rel_key, gui_canon) and not keep_content:
                 continue
-            if drop_upscale and rel.lower().startswith(UPSCALE_DIRS):
+            if drop_upscale and rel.lower().startswith(UPSCALE_DIRS) and not keep_content:
                 continue
             if any(os.path.isfile(os.path.join(ref, rel.replace("/", os.sep))) for ref in refs):
                 continue
