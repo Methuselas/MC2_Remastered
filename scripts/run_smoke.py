@@ -40,7 +40,7 @@ try:
 except Exception:
     _fingerprint = None
 
-DEFAULT_EXE = Path(r"A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe")
+DEFAULT_EXE = Path(r"A:/Games/mc2-opengl/mc2-win64-v0.4c/mc2.exe")
 ARTIFACT_ROOT = ROOT / "tests" / "smoke" / "artifacts"
 MANIFEST_PATH = ROOT / "tests" / "smoke" / "smoke_missions.txt"
 BASELINE_PATH = ROOT / "tests" / "smoke" / "baselines.json"
@@ -586,6 +586,19 @@ def main():
     _veg_floor_failures: list[str] = []  # accumulated across all missions
 
     rows: list[report.Row] = []
+    # MC2_DIAGNOSTIC_TRACE_FILE: normalise to absolute once, outside the
+    # per-mission loop.  The game launches with cwd=exe_dir (not the runner
+    # cwd), so a relative path would land in the deploy dir rather than the
+    # runner's working directory — the MCP tool (mc2_render_state_server.py)
+    # would then be unable to find it.  Absolute paths pass through unchanged.
+    _exe_dir = Path(args.exe).resolve().parent
+    _trace_file_raw = os.environ.get("MC2_DIAGNOSTIC_TRACE_FILE", "")
+    _trace_file_abs = (
+        str(_exe_dir / _trace_file_raw)
+        if _trace_file_raw and not Path(_trace_file_raw).is_absolute()
+        else _trace_file_raw
+    )
+
     for e in selected:
         duration = args.duration or e.duration or 120
         tier = args.tier or "adhoc"
@@ -600,6 +613,10 @@ def main():
             allow_asset_oob=e.allow_asset_oob,
             env_extra={
                 "MC2_SMOKE_SEED": "0xC0FFEE",
+                # MC2_DIAGNOSTIC_TRACE_FILE is always absolute (computed above)
+                # so the engine writes to _exe_dir/debug_state/... regardless
+                # of where the smoke runner is invoked from.
+                **({"MC2_DIAGNOSTIC_TRACE_FILE": _trace_file_abs} if _trace_file_abs else {}),
                 # Propagate PatchStream env vars from parent if set —
                 # subprocess.Popen's env arg replaces the inherited env
                 # entirely, so vars not explicitly listed get dropped.
@@ -657,6 +674,10 @@ def main():
                             "MC2_SHADOW_ENABLE",
                             # SHADOW-STABILITY-1: per-pass GL-state trace gate.
                             "MC2_SHADOW_STATE_TRACE",
+                            # GLSTATE-SHADOW-CLIP-RESTORE-1: post-shadow GL state restore trace.
+                            "MC2_GLSTATE_TRACE",
+                            # GLSTATE slice 1: SSBO slot save/restore trace.
+                            "MC2_GLSTATEGUARD_LOG",
                             "MC2_STATIC_PROP_BUILDING_SHADOW",
                             "MC2_SHADOW_DYNAMIC_PROP_CASTERS",
                             "MC2_SHADOW_BOUNDED_NEAR_FIT",
@@ -996,9 +1017,8 @@ def main():
                             "MC2_MIF_SPLIT",
                             "MC2_PICK_RECON",
                             # Diagnostic JSONL trace (diagnostic_trace.cpp).
-                            # Without these in the allowlist Popen drops them and
-                            # the trace file is never written / tag filter is lost.
-                            "MC2_DIAGNOSTIC_TRACE_FILE",
+                            # MC2_DIAGNOSTIC_TRACE_FILE is handled above (absolute
+                            # path override) so only the tag filter needs passthrough.
                             "MC2_DIAG_TAGS",
                             # VEG-SMOKE-FLOOR-1: vegetation card output contract gate.
                             # MC2_VEGETATION_CARDS=1 enables GPU instanced vegetation
@@ -1007,7 +1027,32 @@ def main():
                             # compares against an engine that never drew vegetation.
                             "MC2_VEGETATION_CARDS",
                             # VEG-FLUSH-REASON-1: atlas path override for vegetation tests.
-                            "MC2_VEGETATION_ATLAS")},
+                            "MC2_VEGETATION_ATLAS",
+                            # FRAME-JOBS-2x: parallel touch/bounds pre-pass gates.
+                            # Without these in the allowlist Popen drops them and
+                            # the gates never reach the engine.
+                            "MC2_FRAME_JOBS",
+                            "MC2_FRAME_JOBS_WORKERS",
+                            "MC2_FRAME_JOBS_BATCH",
+                            "MC2_FRAME_JOBS_TRACE",
+                            "MC2_FRAME_JOBS_TOUCH",
+                            "MC2_FRAME_JOBS_TOUCH_DIAG",
+                            # FRAME-JOBS-2F: touch-entry unification stamp diagnostics.
+                            "MC2_FRAME_JOBS_TOUCH_DIAG",
+                            # FRAME-JOBS-2G: Path B terrain-loop touch cost diag.
+                            "MC2_FRAME_JOBS_PATHB_DIAG",
+                            # FRAME-JOBS stable-light skip gate.
+                            "MC2_LIGHTBRIDGE_STABLE_SKIP",
+                            "MC2_LIGHTBRIDGE_COMMIT_TRACE",
+                            # STATIC-SCENE-PROXY-RECON-1: proxy candidate classifier.
+                            "MC2_STATIC_PROXY_RECON",
+                            # STATIC-REGISTRY-COVERAGE-RECON-1: sub-classify rej_no_static_reg.
+                            "MC2_STATIC_REG_COVERAGE",
+                            # STATIC-REG-PREWARM-QUEUE-1: mission-load off-screen light bake.
+                            # MC2_STATIC_REG_PREWARM=1 enables prewarmStaticPropLightBakes().
+                            # MC2_STATIC_REG_PREWARM_TRACE=1 adds per-object diagnostic.
+                            "MC2_STATIC_REG_PREWARM",
+                            "MC2_STATIC_REG_PREWARM_TRACE")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission

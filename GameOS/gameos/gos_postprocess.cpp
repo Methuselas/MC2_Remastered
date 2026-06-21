@@ -3388,14 +3388,6 @@ void gosPostProcess::beginShadowPass()
 {
     if (!shadowsEnabled_ || !shadowFBO_) return;
 
-    // GLSTATE-SHADOW-CLIP-RESTORE-1: capture caller state before mutating
-    shadowSavedDepthTest_ = glIsEnabled(GL_DEPTH_TEST);
-    glGetIntegerv(GL_DEPTH_FUNC,      &shadowSavedDepthFunc_);
-    glGetBooleanv(GL_DEPTH_WRITEMASK, &shadowSavedDepthMask_);
-    shadowSavedCullFace_ = glIsEnabled(GL_CULL_FACE);
-    glGetIntegerv(GL_CLIP_ORIGIN,     &shadowSavedClipOrigin_);
-    glGetIntegerv(GL_CLIP_DEPTH_MODE, &shadowSavedClipDepth_);
-
     glGetIntegerv(GL_VIEWPORT, savedViewport_);
     glBindFramebuffer(GL_FRAMEBUFFER, shadowFBO_);
     glViewport(0, 0, shadowMapSize_, shadowMapSize_);
@@ -3425,14 +3417,6 @@ void gosPostProcess::beginShadowPassNoClear()
 {
     if (!shadowsEnabled_ || !shadowFBO_) return;
 
-    // GLSTATE-SHADOW-CLIP-RESTORE-1: capture caller state before mutating
-    shadowSavedDepthTest_ = glIsEnabled(GL_DEPTH_TEST);
-    glGetIntegerv(GL_DEPTH_FUNC,      &shadowSavedDepthFunc_);
-    glGetBooleanv(GL_DEPTH_WRITEMASK, &shadowSavedDepthMask_);
-    shadowSavedCullFace_ = glIsEnabled(GL_CULL_FACE);
-    glGetIntegerv(GL_CLIP_ORIGIN,     &shadowSavedClipOrigin_);
-    glGetIntegerv(GL_CLIP_DEPTH_MODE, &shadowSavedClipDepth_);
-
     glGetIntegerv(GL_VIEWPORT, savedViewport_);
     glBindFramebuffer(GL_FRAMEBUFFER, shadowFBO_);
     glViewport(0, 0, shadowMapSize_, shadowMapSize_);
@@ -3458,29 +3442,6 @@ void gosPostProcess::endShadowPass()
     glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_); // restore to scene FBO
     glViewport(savedViewport_[0], savedViewport_[1], savedViewport_[2], savedViewport_[3]);
 
-    // GLSTATE-SHADOW-CLIP-RESTORE-1: restore state saved by beginShadowPass*.
-    // Previously missing: depth func (shadow set GL_LESS; scene needs GL_GEQUAL
-    // for reverse-Z), depth mask, depth test, cull face, and clip control (NVIDIA
-    // can silently reset glClipControl on FBO switch -> water z-fights on NVIDIA).
-    if (shadowSavedDepthTest_) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
-    glDepthFunc(static_cast<GLenum>(shadowSavedDepthFunc_));
-    glDepthMask(shadowSavedDepthMask_);
-    if (shadowSavedCullFace_) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
-    glClipControl(static_cast<GLenum>(shadowSavedClipOrigin_),
-                  static_cast<GLenum>(shadowSavedClipDepth_));
-
-    static const bool s_trace = (std::getenv("MC2_GLSTATE_TRACE") != nullptr);
-    if (s_trace) {
-        std::printf("[GLSTATE-SHADOW] after_shadow_depth_func=%s"
-                    " after_shadow_clip_origin=0x%X/depth=0x%X"
-                    " after_shadow_cull_enabled=%d after_shadow_color_mask=TRUE\n",
-                    shadowSavedDepthFunc_ == GL_GEQUAL ? "GL_GEQUAL" :
-                    shadowSavedDepthFunc_ == GL_LESS   ? "GL_LESS"   : "other",
-                    (unsigned)shadowSavedClipOrigin_,
-                    (unsigned)shadowSavedClipDepth_,
-                    (int)shadowSavedCullFace_);
-        std::fflush(stdout);
-    }
 }
 
 void gosPostProcess::destroyShadows()

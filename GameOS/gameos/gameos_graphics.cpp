@@ -5718,6 +5718,10 @@ struct ShadowPassGLState {
     GLboolean cullEnabled = GL_FALSE;
     GLint    cullFace = 0;
     GLint    frontFace = 0;
+    // GLSTATE-SHADOW-CLIP-RESTORE-1: NVIDIA can silently reset glClipControl on FBO
+    // switch (reverse-Z scene uses GL_ZERO_TO_ONE; shadow FBO bind can flip it back).
+    GLint    clipOrigin = GL_LOWER_LEFT;
+    GLint    clipDepth  = GL_ZERO_TO_ONE;
 };
 
 // Entry-state captures for the two (non-nesting) shadow passes, held across
@@ -5745,6 +5749,8 @@ static void captureShadowGLState(ShadowPassGLState& s) {
     s.cullEnabled = glIsEnabled(GL_CULL_FACE);
     glGetIntegerv(GL_CULL_FACE_MODE, &s.cullFace);
     glGetIntegerv(GL_FRONT_FACE, &s.frontFace);
+    glGetIntegerv(GL_CLIP_ORIGIN,     &s.clipOrigin);
+    glGetIntegerv(GL_CLIP_DEPTH_MODE, &s.clipDepth);
 }
 
 // Restore every tracked field to the captured values. Called at pass exit so
@@ -5760,6 +5766,8 @@ static void restoreShadowGLState(const ShadowPassGLState& s) {
     if (s.cullEnabled) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
     glCullFace((GLenum)s.cullFace);
     glFrontFace((GLenum)s.frontFace);
+    // GLSTATE-SHADOW-CLIP-RESTORE-1: explicit re-assert after FBO switch.
+    glClipControl((GLenum)s.clipOrigin, (GLenum)s.clipDepth);
 }
 
 static const char* depthFuncName(GLint f) {
@@ -5782,7 +5790,8 @@ static bool sameShadowGLState(const ShadowPassGLState& a, const ShadowPassGLStat
            a.colorMask[0]==b.colorMask[0] && a.colorMask[1]==b.colorMask[1] &&
            a.colorMask[2]==b.colorMask[2] && a.colorMask[3]==b.colorMask[3] &&
            a.cullEnabled == b.cullEnabled && a.cullFace == b.cullFace &&
-           a.frontFace == b.frontFace;
+           a.frontFace == b.frontFace &&
+           a.clipOrigin == b.clipOrigin && a.clipDepth == b.clipDepth;
 }
 
 // Emit one [SHADOW_STATE v1] line describing the state the pass ran WITH (the
@@ -5818,7 +5827,7 @@ static void traceShadowPass(const char* passName,
     fprintf(stderr,
         "[SHADOW_STATE v1] pass=%s fbo=%d vp=%d,%d,%d,%d clearDepth=%g "
         "depthTest=%d depthFunc=%s depthMask=%d colorMask=%d%d%d%d "
-        "cull=%s/%s/%s restored=%d%s\n",
+        "cull=%s/%s/%s clipOrigin=0x%X clipDepth=0x%X restored=%d%s\n",
         passName, pass.fbo,
         pass.viewport[0], pass.viewport[1], pass.viewport[2], pass.viewport[3],
         (double)pass.clearDepth,
@@ -5829,6 +5838,7 @@ static void traceShadowPass(const char* passName,
         pass.cullEnabled ? "on" : "off",
         pass.cullFace == GL_FRONT ? "front" : "back",
         pass.frontFace == GL_CW ? "CW" : "CCW",
+        (unsigned)pass.clipOrigin, (unsigned)pass.clipDepth,
         restored ? 1 : 0, bldg);
     fflush(stderr);
 }
