@@ -2400,6 +2400,14 @@ void gosPostProcess::endScene()
     if (!initialized_)
         return;
 
+    // GLSTATE-VAO-RESTORE-1: save the caller's VAO so endScene() is self-contained.
+    // NVIDIA Core profile rejects any draw with VAO=0 (GL_INVALID_OPERATION). endScene
+    // uses its own quadVAO_ internally and leaves VAO=0 on exit; callers that draw
+    // afterward must not rely on the side effect. Restoring here eliminates that
+    // contract leak and makes future draw sites safe without a gos_RendererRebindVAO() call.
+    GLint prevVAO = 0;
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVAO);
+
     // HZB-DEPTH-PYRAMID-MVP-1: build the reverse-Z Hi-Z pyramid from the
     // resolved scene depth before any post pass. Gated (MC2_HZB_BUILD), no
     // consumers, no draw suppression -> no-op + byte-identical when OFF.
@@ -2572,6 +2580,9 @@ void gosPostProcess::endScene()
     gos_InvalidateRenderStateCache();
 
     drainGLErrors("post_process");
+
+    // GLSTATE-VAO-RESTORE-1: restore the caller's VAO (see capture above).
+    glBindVertexArray((GLuint)prevVAO);
 }
 
 void gosPostProcess::drawShadowDebugOverlay()
