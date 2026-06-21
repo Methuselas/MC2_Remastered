@@ -28,9 +28,17 @@ LogisticsData.cpp			: Implementation of the LogisticsData component.
 #include<future>
 #include"../GameOS/gameos/diagnostic_trace.h"   // LOGISTICS front-end state capture
 
-// Interactive cheat gates â€” read once at startup, default OFF (unset = nullptr = false)
+// Interactive cheat gates -- read once at startup, default OFF (unset = nullptr = false)
 static const bool s_cheatInfiniteMoney = (getenv("MC2_CHEAT_INFINITE_MONEY") != nullptr);
 static const bool s_cheatSalvageAll    = (getenv("MC2_CHEAT_SALVAGE_ALL")    != nullptr);
+
+// SMART-LOAD-1: defer mech-bay data (components/pilots/variants) until first mech-bay accessor.
+static const bool s_smartLoad      = (getenv("MC2_SMART_LOAD")       != nullptr);
+static const bool s_smartLoadTrace = (getenv("MC2_SMART_LOAD_TRACE") != nullptr);
+
+#define SMART_LOAD_TRACE_LOG(fmt, ...) do { \
+    if (s_smartLoadTrace) { printf("[SMART_LOAD] " fmt "\n", ##__VA_ARGS__); fflush(stdout); } \
+} while(0)
 
 #ifndef VIEWER
 #include"multplyr.h"
@@ -49,7 +57,7 @@ extern CPrefs prefs;
 struct DeployedMechSnapshot
 {
 	EString           variantName; // copy of LogisticsVariant::variantName (== BattleMech::variantName)
-	LogisticsVariant* pVariant;    // raw ptr â€” valid lifetime: variants list outlives this snapshot
+	LogisticsVariant* pVariant;    // raw ptr -- valid lifetime: variants list outlives this snapshot
 };
 static std::vector<DeployedMechSnapshot> s_deployedMechSnapshot;
 
@@ -73,6 +81,8 @@ LogisticsData::LogisticsData()
 	rpJustAdded = false;
 
 	bNewMechs = bNewWeapons = bNewPilots = 0;
+	m_phaseAComplete = false;
+	m_phaseBComplete = false;
 }
 
 LogisticsData::~LogisticsData()
@@ -106,6 +116,13 @@ LogisticsData::~LogisticsData()
 //*************************************************************************************************
 void LogisticsData::init()
 {
+	if ( s_smartLoad ) {
+		// gate ON: full init on demand -- idempotent via phase flags
+		initPhaseA();
+		ensureMechBayDataLoaded("init");
+		return;
+	}
+
 	if ( components.Count() ) // already been initialized
 	{
 		return;
@@ -143,6 +160,58 @@ void LogisticsData::init()
 	LOG_INIT_TIME("after_setCurrentMission_updateAvailability");
 
 #undef LOG_INIT_TIME
+}
+
+//*************************************************************************************************
+// SMART-LOAD-1: Phase A only -- loads campaign tree (missionInfo), skips mech-bay data.
+// Gate OFF falls through to full init().
+void LogisticsData::initFast()
+{
+	if ( !s_smartLoad ) { init(); return; }
+	SMART_LOAD_TRACE_LOG("initFast: Phase A only");
+	initPhaseA();
+}
+
+void LogisticsData::initPhaseA()
+{
+	if ( m_phaseAComplete ) return;
+	SMART_LOAD_TRACE_LOG("Phase A begin");
+
+	missionInfo = new LogisticsMissionInfo;
+	FitIniFile file;
+	if ( NO_ERR != file.open( "data" PATH_SEPARATOR "campaign" PATH_SEPARATOR "campaign.fit" ) )
+		Assert( 0, 0, "coudln't find the campaign file\n" );
+	missionInfo->init( file );
+
+	int count = 32;
+	const char* missionNames[32];
+	missionInfo->getAvailableMissions( missionNames, count );
+	// setCurrentMission skips updateAvailability while !m_phaseBComplete
+	setCurrentMission( missionNames[0] );
+
+	m_phaseAComplete = true;
+	SMART_LOAD_TRACE_LOG("Phase A done");
+}
+
+// Phase B: loads components/pilots/variants and runs the first availability pass.
+// No-op if gate OFF or already done. Only marks success at the end (retry-safe).
+void LogisticsData::ensureMechBayDataLoaded( const char* trigger )
+{
+	if ( !s_smartLoad || m_phaseBComplete ) return;
+	initPhaseA(); // must be done before Phase B
+	SMART_LOAD_TRACE_LOG("Phase B begin trigger=%s", trigger ? trigger : "?");
+
+	initComponents();
+	initPilots();
+	initVariants();
+
+	// First availability pass now that variants/components are populated
+	updateAvailability();
+	resourcePoints = missionInfo->getCurrentRP();
+	removeDeadWeight();
+
+	m_phaseBComplete = true;
+	SMART_LOAD_TRACE_LOG("Phase B done");
 }
 
 //*************************************************************************************************
@@ -483,8 +552,9 @@ void LogisticsData::UnRegisterFunctions()
 
 int LogisticsData::getAvailableComponents( LogisticsComponent** pComps, int& maxCount )
 {
+	ensureMechBayDataLoaded("getAvailableComponents");
 	int retVal = 0;
-	
+
 	int i = 0;
 	for ( COMPONENT_LIST::EIterator iter = components.Begin(); 
 		!iter.IsDone(); iter++ )
@@ -531,6 +601,7 @@ int	LogisticsData::getAllComponents( LogisticsComponent** pComps, int& maxCount 
 
 int LogisticsData::getPurchasableMechs( LogisticsVariant** array, int& count )
 {
+	ensureMechBayDataLoaded("getPurchasableMechs");
 	long retVal = 0;
 	long arraySize = count;
 
@@ -801,6 +872,7 @@ int LogisticsData::removeMechFromForceGroup( LogisticsMech* pMech, bool bRemoveP
 
 LogisticsPilot* LogisticsData::getFirstAvailablePilot()
 {
+	ensureMechBayDataLoaded("getFirstAvailablePilot");
 	for ( PILOT_LIST::EIterator iter = pilots.Begin(); !iter.IsDone(); iter++  )
 	{
 		 bool bIsUsed = false;
@@ -828,7 +900,7 @@ LogisticsPilot* LogisticsData::getFirstAvailablePilot()
 // when its object type class != BATTLEMECH_TYPE. Bridge: chassis fitID -> ObjectType.
 bool LogisticsData::isVehicleUnit( LogisticsMech* pMech )
 {
-	// Logistics-safe vehicle detection (NO ObjectManager->loadObjectType — objTypeManager
+	// Logistics-safe vehicle detection (NO ObjectManager->loadObjectType -- objTypeManager
 	// is null at the logistics/pilot-ready screen and crashes, objmgr.cpp:4049).
 	if ( !pMech || !pMech->getVariant() )
 		return false;
@@ -926,9 +998,11 @@ int LogisticsData::setCurrentMissionAnyStage( const char* missionName )
 	long result = missionInfo->setMissionAnyStage( missionName );
 	if ( result == NO_ERR )
 	{
-		updateAvailability();
+		if ( !s_smartLoad || m_phaseBComplete ) {
+			updateAvailability();
+			removeDeadWeight();
+		}
 		resourcePoints = missionInfo->getCurrentRP();
-		removeDeadWeight();
 	}
 	return result;
 }
@@ -939,12 +1013,11 @@ int LogisticsData::setCurrentMission( const char* missionName )
 
 	if ( result == NO_ERR )
 	{
-		// if we made it this far
-		updateAvailability();
-
+		if ( !s_smartLoad || m_phaseBComplete ) {
+			updateAvailability();
+			removeDeadWeight();
+		}
 		resourcePoints = missionInfo->getCurrentRP();
-
-		removeDeadWeight();
 	}
 
 
@@ -979,6 +1052,7 @@ int		LogisticsData::setCurrentMission( const EString& missionName )
 
 void	LogisticsData::getForceGroup( EList<LogisticsMech*, LogisticsMech*>& newList )
 {
+	ensureMechBayDataLoaded("getForceGroup");
 	int count = 0;
 
 	for ( MECH_LIST::EIterator iter = inventory.Begin(); !iter.IsDone(); iter++ )
@@ -996,6 +1070,7 @@ void	LogisticsData::getForceGroup( EList<LogisticsMech*, LogisticsMech*>& newLis
 
 void	LogisticsData::getInventory( EList<LogisticsMech*, LogisticsMech*>& newList )
 {
+	ensureMechBayDataLoaded("getInventory");
 	for ( MECH_LIST::EIterator iter = inventory.Begin(); !iter.IsDone(); iter++ )
 	{
 
@@ -1073,7 +1148,7 @@ void LogisticsData::removeMechsInForceGroup()
 		if ( (*si)->getForceGroup() )
 		{
 			DeployedMechSnapshot snap;
-			snap.variantName = (*si)->getName(); // EString copy â€” variantName == LogisticsVariant::getName()
+			snap.variantName = (*si)->getName(); // EString copy -- variantName == LogisticsVariant::getName()
 			snap.pVariant    = (*si)->getVariant();
 			s_deployedMechSnapshot.push_back( snap );
 		}
@@ -1097,8 +1172,7 @@ void LogisticsData::removeMechsInForceGroup()
 
 const char*	LogisticsData::getBestPilot( long mechWeight )
 {
-	if ( !pilots.Count() )
-		initPilots();
+	ensureMechBayDataLoaded("getBestPilot");
 
 	LogisticsPilot** pPilots = (LogisticsPilot**)_alloca( pilots.Count() * sizeof( LogisticsPilot*) );
 	memset( pPilots, 0, pilots.Count() * sizeof( LogisticsPilot*) );
@@ -1149,8 +1223,7 @@ const char*	LogisticsData::getBestPilot( long mechWeight )
 
 bool		LogisticsData::gotPilotsLeft()
 {
-	if ( !pilots.Count() )
-		initPilots();
+	ensureMechBayDataLoaded("gotPilotsLeft");
 
 	LogisticsPilot** pPilots = (LogisticsPilot**)_alloca( pilots.Count() * sizeof( LogisticsPilot*) );
 	memset( pPilots, 0, pilots.Count() * sizeof( LogisticsPilot*) );
@@ -1572,7 +1645,7 @@ void	LogisticsData::setMissionCompleted( )
 							// This happens for mod-purchased mechs whose variant was added at
 							// runtime (not in the campaign's base variant CSV).  Fall back to
 							// the pre-removal snapshot captured by removeMechsInForceGroup().
-							// The pVariant pointer in the snapshot is still valid â€” LogisticsVariant
+							// The pVariant pointer in the snapshot is still valid -- LogisticsVariant
 							// objects are owned by the variants list, not by LogisticsMech.
 							for ( const DeployedMechSnapshot& snap : s_deployedMechSnapshot )
 							{
@@ -1588,7 +1661,7 @@ void	LogisticsData::setMissionCompleted( )
 							{
 								// Still NULL: genuine missing variant (corrupt save / unknown mech).
 								// Log and skip rather than Assert no-op (Assert is a no-op in RelWithDebInfo).
-								printf( "[LOGISTICS] setMissionCompleted: no variant for surviving mech '%s' â€” mech lost\n",
+								printf( "[LOGISTICS] setMissionCompleted: no variant for surviving mech '%s' -- mech lost\n",
 								        vname );
 								fflush( stdout );
 							}
@@ -1932,7 +2005,7 @@ void LogisticsData::dumpFrontEndState( const char* screenName )
 	j += "\"screen\":\"" + esc( screenName ) + "\"";
 	j += ",\"campaign\":\"" + esc( (const char*)getCampaignName() ) + "\"";
 
-	// Mission name fields â€” guard on a valid current mission (campaign-select
+	// Mission name fields -- guard on a valid current mission (campaign-select
 	// screen may have none yet).
 	const EString& curMission = getCurrentMission();
 	if ( curMission.Length() > 0 ) {
@@ -1945,7 +2018,7 @@ void LogisticsData::dumpFrontEndState( const char* screenName )
 	j += ",\"cbills\":" + std::to_string( getCBills() );
 	j += ",\"resourcePoints\":" + std::to_string( getResourcePoints() );
 
-	// Purchasable mechs â€” the bay/purchase population. Empty here = the POAR bug.
+	// Purchasable mechs -- the bay/purchase population. Empty here = the POAR bug.
 	{
 		LogisticsVariant* pv[512];
 		int pc = 512;
@@ -2151,7 +2224,7 @@ const EString& LogisticsData::getLastMission() const
 
 const char * LogisticsData::getCurrentABLScript() const
 {
-	// missionInfo may be null before bg init thread completes — return null so
+	// missionInfo may be null before bg init thread completes -- return null so
 	// the caller's `if (brainfile)` guard skips tutorial brain load safely.
 	return missionInfo ? missionInfo->getCurrentABLScriptName() : nullptr;
 }
@@ -2183,6 +2256,7 @@ int	LogisticsData::getPilotCount()
 }
 int	LogisticsData::getPilots( LogisticsPilot** pArray, long& count )
 {
+	ensureMechBayDataLoaded("getPilots");
 	if ( count < pilots.Count() )
 	 {
 		return NEED_BIGGER_ARRAY;
@@ -2309,7 +2383,7 @@ int LogisticsData::setMechToModify( LogisticsMech* pMech )
 {
 	if ( !pMech )
 		return -1;
-
+	ensureMechBayDataLoaded("setMechToModify");
 	currentlyModifiedMech = pMech;
 	oldVariant = pMech->getVariant();
 
