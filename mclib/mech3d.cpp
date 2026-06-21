@@ -374,7 +374,16 @@ void Mech3DAppearanceType::init (const char * fileName)
 	// empty and take the EXACT original LoadTGMultiShapeFromASE path below —
 	// byte-identical, no probe. Only [Import] Source= mechs call LoadFromFile.
 	char importSourceBase[256] = "";
-	if (mechFile.seekBlock("Import") == NO_ERR &&
+	// ASSIMP-MECH-IMPORT default-OFF guard. The mech GLB import path is experimental
+	// and the only shipped opt-in (the Flea, via flea.ini [Import] Source="Flea")
+	// points at a broken Z-up GLB that renders the Fire Ant tipped 90deg. Ignore
+	// mech [Import] blocks by default so a stray/redeployed [Import] flea.ini can
+	// NEVER put the Flea on the broken path again — it falls back to the stock
+	// ASE/FST shape. Set MC2_ASSIMP_MECH_IMPORT=1 to opt back in once a mech's GLB
+	// is verified good. (Building/prop GLB import is unaffected — separate path.)
+	static const bool s_assimpMechImport = (getenv("MC2_ASSIMP_MECH_IMPORT") != nullptr);
+	if (s_assimpMechImport &&
+	    mechFile.seekBlock("Import") == NO_ERR &&
 	    mechFile.readIdString("Source", importSourceBase, 255) == NO_ERR &&
 	    importSourceBase[0])
 	{
