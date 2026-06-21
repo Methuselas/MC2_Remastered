@@ -1985,6 +1985,10 @@ public:
 		// SceneData stays a UBO.
 		gos_SetRenderMaterialUniformBlockBindingPoint(mat, "SceneData", SCENE_DATA_ATTACHMENT_SLOT);
 
+		// GLSTATE-SSBO-SLOT5-RESTORE-1: save prior slot 5 binding so endShadowPass
+		// restores it correctly instead of hard-zeroing (NVIDIA may generate
+		// GL_INVALID_OPERATION on a shader read from a zero-bound SSBO slot).
+		GLuint savedSsbo5 = 0;
 		if (usePbrOverride) {
 			static int s_pbrRenderTrace = 0;
 			if (getenv("MC2_BUILDING_PBR_TRACE") && s_pbrRenderTrace < 64) {
@@ -2010,6 +2014,9 @@ public:
 			gos_SetRenderMaterialSamplerUnit(mat, "u_ormTex", 2);
 			gos_SetRenderState(gos_State_Texture2, renderShape->pbrNormalTexture_);
 			gos_SetRenderState(gos_State_Texture3, renderShape->pbrOrmTexture_);
+			GLint q5 = 0;
+			glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 5, &q5);
+			savedSsbo5 = static_cast<GLuint>(q5);
 			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, (GLuint)renderShape->pbrMaterialSsbo_);
 			gos_SetRenderState(gos_State_Culling, gos_Cull_None);
 		}
@@ -2025,7 +2032,7 @@ public:
 		gos_RenderIndexedArray(ib, vb, vdecl);
 
 		if (usePbrOverride) {
-			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, 0);
+			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, savedSsbo5);
 			gos_SetRenderState(gos_State_Texture2, 0);
 			gos_SetRenderState(gos_State_Texture3, 0);
 			gos_SetRenderState(gos_State_Culling, gos_Cull_CW);
