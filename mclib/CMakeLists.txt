@@ -92,6 +92,13 @@ set(SOURCES ${SOURCES}
     utilities.cpp
     model_override_registry.cpp
     anim_override_registry.cpp
+    # LINK-CONFIG-FIX: msl.cpp (this lib) references isFrameJobsWorkerThread()
+    # -> g_isFrameJobsWorker, whose only definition lived in code/frame_jobs.cpp
+    # (compiled only into mc2.exe). Carrying it in mclib resolves every target
+    # that links mclib but builds its own main (EditRel, data_tools). The TU is
+    # self-contained (stdlib only). Removed from mc2's own SOURCES to avoid a
+    # duplicate definition.
+    ../code/frame_jobs.cpp
     )
 
 # Track D — Assimp-backed FBX/GLB mech importer.
@@ -101,7 +108,7 @@ if(ENABLE_ASSIMP_IMPORTER)
     list(APPEND SOURCES assimp_importer.cpp)
 endif()
 
-include_directories(${COMMON_INCLUDE_DIRS} "./mclib" "../Editor" "../DirectX8/include" "./")
+include_directories(${COMMON_INCLUDE_DIRS} "./mclib" "../Editor" "../DirectX8/include" "./" "../code")
 include_directories(${THIRDPARTY_INCLUDE_DIRS})
 include_directories(${CMAKE_SOURCE_DIR}/3rdparty/include)
 # RenderCore/ headers (e.g. RenderPassContract.h) use repo-root-relative includes.

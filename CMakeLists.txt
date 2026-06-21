@@ -311,7 +311,9 @@ set(SOURCES
     "code/collsn.cpp"
     "code/comndr.cpp"
     "code/contact.cpp"
-    "code/frame_jobs.cpp"
+    # code/frame_jobs.cpp moved to mclib (LINK-CONFIG-FIX): mclib/msl.cpp
+    # references g_isFrameJobsWorker, so the defining TU must live in mclib to
+    # resolve EditRel/data_tools. Listing it here too would double-define it.
     "code/gameobj.cpp"
     "code/gate.cpp"
     "code/goal.cpp"

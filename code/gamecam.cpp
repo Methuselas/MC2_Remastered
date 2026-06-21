@@ -162,9 +162,12 @@ extern bool useNonWeaponEffects;
 GenericAppearance *theSky = NULL;
 
 // DEBUG-STATE-ASSETS: globals read by GameOS/gameos/debug_state_dump.cpp via extern.
-// Defined here (gamecam.cpp is always compiled); set at mission-load / loadscreen-pick.
-long  g_dbgSkyNumber   = -1;
-char  g_dbgLoadScreen[64] = "";
+// LINK-CONFIG-FIX: definitions moved to GameOS/gameos/dbg_asset_globals.cpp so that
+// EditRel (gameos_editor) and the data_tools (gameos) — which link a gameos-family
+// lib but not gamecam.cpp — resolve them. Declared extern here; set below at
+// mission-load / loadscreen-pick.
+extern long  g_dbgSkyNumber;
+extern char  g_dbgLoadScreen[64];
 //---------------------------------------------------------------------------
 void GameCamera::destroy (void)
 {

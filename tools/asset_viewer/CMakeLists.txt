@@ -52,6 +52,13 @@ add_library(mc2_tglloader STATIC
     "${CMAKE_SOURCE_DIR}/mclib/cpu_proj_cost_split.cpp"
     "${CMAKE_SOURCE_DIR}/mclib/projectz_trace.cpp"
     "${CMAKE_SOURCE_DIR}/mclib/object_admission_predicate.cpp"
+    # LINK-CONFIG-FIX: tgl.cpp references render_contract::noteRenderPass and
+    # msl.cpp references g_isFrameJobsWorker (frame_jobs.h). Both defining TUs
+    # are otherwise compiled only into mc2.exe's source list, so this isolated
+    # loader lib must carry them too. render_contract.cpp's GL calls are runtime-
+    # gated and resolve against the GLEW/OpenGL the viewer exe links.
+    "${CMAKE_SOURCE_DIR}/mclib/render_contract.cpp"
+    "${CMAKE_SOURCE_DIR}/code/frame_jobs.cpp"
     # --- Stuff library TUs (game-free math + containers) ---
     "${CMAKE_SOURCE_DIR}/mclib/stuff/affinematrix.cpp"
     "${CMAKE_SOURCE_DIR}/mclib/stuff/angle.cpp"
