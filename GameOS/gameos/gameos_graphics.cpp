@@ -7952,6 +7952,38 @@ void __stdcall gos_SetScreenMode( DWORD Width, DWORD Height, DWORD bitDepth/*=16
     g_gos_renderer->setScreenMode(Width, Height, bitDepth, GotoFullScreen, AntiAlias);
 }
 
+// [FORCE-43 v1] Centered 4:3 pillarbox rect. Single source of truth shared by
+// the scene composite letterbox, the mouse box-relative remap, and HUD viewport.
+bool __stdcall gos_Compute43Box( int w, int h, int* ox, int* oy, int* obw, int* obh )
+{
+    int rx = 0, ry = 0, rw = w, rh = h;
+    // Default-OFF gate (matches the launcher toggle model: checked -> MC2_FORCE_43=1,
+    // unchecked -> unset). ON only when the var is present and not "0". Unset ->
+    // byte-identical legacy (full surface), so smoke without the launcher is a no-op.
+    static const bool s_on =
+        []{ const char* e = getenv("MC2_FORCE_43"); return e && e[0] != '\0' && e[0] != '0'; }();
+    bool active = s_on && w > 0 && h > 0;
+    if (active) {
+        const double kTarget = 4.0 / 3.0;
+        const double aspect = (double)w / (double)h;
+        if (aspect > kTarget) {           // wider than 4:3 -> pillarbox (side bars)
+            rh = h;
+            rw = (int)((double)h * kTarget + 0.5);
+        } else if (aspect < kTarget) {    // taller than 4:3 -> letterbox (top/bottom)
+            rw = w;
+            rh = (int)((double)w / kTarget + 0.5);
+        }                                  // == 4:3 -> full surface, no bars
+        rx = (w - rw) / 2;
+        ry = (h - rh) / 2;
+        if (rw == w && rh == h) active = false;  // 4:3 surface: report no-op
+    }
+    if (ox) *ox = rx;
+    if (oy) *oy = ry;
+    if (obw) *obw = rw;
+    if (obh) *obh = rh;
+    return active;
+}
+
 void __stdcall gos_SetupViewport( bool FillZ, float ZBuffer, bool FillBG, DWORD BGColor, float top, float left, float bottom, float right, bool ClearStencil/*=0*/, DWORD StencilValue/*=0*/)
 {
     gosASSERT(g_gos_renderer);

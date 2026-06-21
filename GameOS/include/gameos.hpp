@@ -2221,6 +2221,15 @@ void __stdcall gos_SetupViewport( bool FillZ, float ZBuffer, bool FillBG, DWORD 
 //
 void __stdcall gos_GetViewport( float* pViewportMulX, float* pViewportMulY, float* pViewportAddX, float* pViewportAddY );
 
+// [FORCE-43 v1] Single source of truth for the centered 4:3 pillarbox rect.
+// Given a target surface of (w x h) pixels, writes the centered 4:3 sub-rect
+// (ox,oy,obw,obh) and returns true when boxing is active. Default ON; disable
+// with MC2_FORCE_43=0 (then returns false and the rect is the full surface).
+// Used by the final composite (scene letterbox), the mouse normalize/warp
+// (box-relative remap so pick stays aligned), and any HUD viewport so the whole
+// frame pillarboxes coherently. On a 4:3 surface returns the full rect (no-op).
+bool __stdcall gos_Compute43Box( int w, int h, int* ox, int* oy, int* obw, int* obh );
+
 //
 // Draw points, pass a pointer to an array of gos_VERTEX's - every vertex is a new point
 //  (you must set the texture to 0 if you want to disable texture mapping on the points)

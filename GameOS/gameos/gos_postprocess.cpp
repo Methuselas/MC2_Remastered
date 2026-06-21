@@ -2437,7 +2437,21 @@ void gosPostProcess::endScene()
 
     // Bind default framebuffer
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(0, 0, width_, height_);
+    // [FORCE-43 v1] Pillarbox the final scene composite into a centered 4:3
+    // rect with black bars. The scene FBO content (4:3 world stretched into the
+    // 16:9 target) un-stretches when drawn into a 4:3 rect. Mouse is remapped
+    // box-relative in gameos_input so pick stays aligned with the visible box.
+    {
+        int bx, by, bw, bh;
+        if (gos_Compute43Box(width_, height_, &bx, &by, &bw, &bh)) {
+            glViewport(0, 0, width_, height_);
+            glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            glViewport(bx, by, bw, bh);
+        } else {
+            glViewport(0, 0, width_, height_);
+        }
+    }
 
     // Disable depth test and face culling for fullscreen quad
     glDisable(GL_DEPTH_TEST);

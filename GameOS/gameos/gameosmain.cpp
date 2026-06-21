@@ -762,6 +762,43 @@ void GLAPIENTRY OpenGLDebugLog(GLenum source, GLenum type, GLuint id, GLenum sev
 #ifndef DISABLE_GAMEOS_MAIN
 int main(int argc, char** argv)
 {
+    // [LAUNCHER-BOOTSTRAP v1] If mc2.exe was started directly (double-click /
+    // shortcut) and NOT by mc2-launcher.exe, hand off to the launcher so the
+    // player gets the options front-end first. The launcher sets MC2_LAUNCHED=1
+    // then re-launches this exe, which falls through and runs the game normally.
+    // Automation (smoke/diagnostic/visual) is detected via env signals + the
+    // explicit MC2_NO_LAUNCHER escape, so headless runs never pop the GUI. If the
+    // launcher is missing or fails to start, fall through and run the game.
+    {
+        const bool fromLauncher = std::getenv("MC2_LAUNCHED") != nullptr;
+        const bool automation =
+            std::getenv("MC2_NO_LAUNCHER")     || std::getenv("MC2_SMOKE_SEED") ||
+            std::getenv("MC2_SMOKE_MODE")      || std::getenv("MC2_HEARTBEAT")  ||
+            std::getenv("MC2_DEBUG_STATE_DUMP") || std::getenv("MC2_LOG");
+        if (!fromLauncher && !automation) {
+            char exePath[MAX_PATH] = {0};
+            DWORD n = GetModuleFileNameA(NULL, exePath, MAX_PATH);
+            if (n > 0 && n < MAX_PATH) {
+                char dir[MAX_PATH];
+                strncpy(dir, exePath, MAX_PATH); dir[MAX_PATH-1] = '\0';
+                char* slash = strrchr(dir, '\\');
+                if (!slash) slash = strrchr(dir, '/');
+                if (slash) *(slash + 1) = '\0'; else dir[0] = '\0';
+                char launcher[MAX_PATH];
+                _snprintf(launcher, sizeof(launcher), "%smc2-launcher.exe", dir);
+                launcher[sizeof(launcher)-1] = '\0';
+                STARTUPINFOA si = {}; si.cb = sizeof(si);
+                PROCESS_INFORMATION pi = {};
+                if (CreateProcessA(launcher, NULL, NULL, NULL, FALSE, 0, NULL,
+                                   dir[0] ? dir : NULL, &si, &pi)) {
+                    CloseHandle(pi.hThread);
+                    CloseHandle(pi.hProcess);
+                    return 0;  // launcher will relaunch us with MC2_LAUNCHED=1
+                }
+            }
+        }
+    }
+
     // Make stdout line-buffered (was fully buffered on Windows when redirected, hiding
     // output past the last explicit fflush before a crash). Harmless for interactive
     // runs; invaluable for diagnosing startup crashes when stdout is piped to a file.

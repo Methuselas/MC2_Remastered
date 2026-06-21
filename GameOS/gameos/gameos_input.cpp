@@ -44,10 +44,23 @@ void __stdcall gos_GetMouseInfo( float* pXPosition, float* pYPosition, int* pXDe
 
     const input::MouseInfo* mi = input::getMouseInfo();
 
-    if(pXPosition)
-        *pXPosition = mi->x_ / w;
-    if(pYPosition)
-        *pYPosition = mi->y_ / h;
+    // [FORCE-43 v1] When the frame is pillarboxed, the visible 0..1 span is the
+    // centered 4:3 box, not the full drawable. Normalize relative to the box so
+    // the existing viewMul transform (and thus world pick) lands on the same
+    // pixels the scene was composited into. Outside the box -> <0 or >1 (no hit).
+    int bx, by, bw, bh;
+    if (gos_Compute43Box(Environment.drawableWidth, Environment.drawableHeight,
+                         &bx, &by, &bw, &bh)) {
+        if(pXPosition)
+            *pXPosition = (mi->x_ - (float)bx) / (float)bw;
+        if(pYPosition)
+            *pYPosition = (mi->y_ - (float)by) / (float)bh;
+    } else {
+        if(pXPosition)
+            *pXPosition = mi->x_ / w;
+        if(pYPosition)
+            *pYPosition = mi->y_ / h;
+    }
 
     // MC2_MOUSE_RECON: env-gated one-shot-ish confirm log. Prints the raw mouse,
     // both candidate denominators, and the resulting normalized coord so the
@@ -115,9 +128,19 @@ void __stdcall gos_SetMousePosition( float XPosition, float YPosition )
         // 800x600). SDL_WarpMouseInWindow consumes the same physical space here.
         const float w = (float)Environment.drawableWidth;
         const float h = (float)Environment.drawableHeight;
-        SDL_WarpMouseInWindow(g_sdl_window,
-                              (int)(XPosition * w),
-                              (int)(YPosition * h));
+        // [FORCE-43 v1] Inverse of the box-relative normalize in gos_GetMouseInfo:
+        // map the 0..1 box coordinate back into physical drawable pixels.
+        int bx, by, bw, bh;
+        if (gos_Compute43Box(Environment.drawableWidth, Environment.drawableHeight,
+                             &bx, &by, &bw, &bh)) {
+            SDL_WarpMouseInWindow(g_sdl_window,
+                                  (int)((float)bx + XPosition * (float)bw),
+                                  (int)((float)by + YPosition * (float)bh));
+        } else {
+            SDL_WarpMouseInWindow(g_sdl_window,
+                                  (int)(XPosition * w),
+                                  (int)(YPosition * h));
+        }
     }
 }
 

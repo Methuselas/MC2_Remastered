@@ -166,6 +166,8 @@ static const EnvVarDef k_envVars[] = {
     { "MC2_STATIC_PROP_PBR_V1",      "Static prop PBR specular",              true,  "",     "Rendering" },
     { "MC2_STATIC_PROP_AMBIENT_V1",  "Static prop hemisphere ambient",        true,  "",     "Rendering" },
     { "MC2_STATIC_PROP_IBL_SH",      "Static prop SH-L2 IBL ambient (ON)",    true,  "1",    "Rendering" },
+    // --- Display ---
+    { "MC2_FORCE_43",                "Force 4:3 aspect (pillarbox widescreen)", true, "",    "Display"   },
     // --- Terrain ---
     { "MC2_TERRAIN_LOD_CHUNK",       "Chunk terrain LOD renderer (default ON)", true, "1",   "Terrain"   },
     { "MC2_COLORMAP_KTX2",           "BC7 KTX2 colormap atlas (default ON)",  true,  "1",    "Terrain"   },
@@ -1625,6 +1627,10 @@ static void DoLaunch(HWND hwnd) {
     mc2Path[sizeof(mc2Path)-1] = '\0';
     if (s_launcherDir[0]) SetCurrentDirectoryA(s_launcherDir);
 
+    // [LAUNCHER-BOOTSTRAP v1] Sentinel so the child mc2.exe knows it was started
+    // by the launcher and runs the game directly instead of re-spawning us.
+    SetEnvironmentVariableA("MC2_LAUNCHED", "1");
+
     STARTUPINFOA si = {}; si.cb = sizeof(si);
     PROCESS_INFORMATION pi = {};
     if (!CreateProcessA(mc2Path, NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
@@ -2393,6 +2399,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR lpCmd, int) {
         char mc2Path[MAX_PATH];
         _snprintf(mc2Path, sizeof(mc2Path), "%smc2.exe", s_launcherDir);
         SetCurrentDirectoryA(s_launcherDir);
+        // [LAUNCHER-BOOTSTRAP v1] Sentinel: tell the child mc2.exe the launcher
+        // started it (run game directly, don't re-spawn the launcher).
+        SetEnvironmentVariableA("MC2_LAUNCHED", "1");
         STARTUPINFOA si = {}; si.cb = sizeof(si);
         PROCESS_INFORMATION pi = {};
         CreateProcessA(mc2Path, NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
