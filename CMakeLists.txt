@@ -230,9 +230,24 @@ if(ENABLE_ASSIMP_IMPORTER)
     # The engine's own ZLIB::ZLIB target is unaffected (already created).
     set(ASSIMP_BUILD_ZLIB                     ON  CACHE BOOL "" FORCE)
     set(ZLIB_FOUND FALSE)
+    # [ASSIMP-PDB-SLIM-1] Build vendored assimp WITHOUT MSVC debug info. Statically
+    # linked assimp (FBX+GLTF+OpenDDL+zlib parsers) contributed ~39 MB to mc2.pdb,
+    # yet the importer is runtime-gated OFF by default and assimp is 3rdparty we do
+    # not step-debug into. Strip /Zi (debug-info generation) from the RelWithDebInfo
+    # compile flags for the assimp subdir ONLY, then restore so mc2/mclib/gameos/etc.
+    # keep full symbols. SCOPED — no global CMAKE_MSVC_DEBUG_INFORMATION_FORMAT,
+    # /DEBUG, /INCREMENTAL, or /ZI change; assimp's own CMake does not add /Zi in the
+    # RelWithDebInfo config (only DEBUG/RELEASE), so /Zi here is purely inherited.
+    set(_ASSIMP_SLIM_SAVED_CXX "${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
+    set(_ASSIMP_SLIM_SAVED_C   "${CMAKE_C_FLAGS_RELWITHDEBINFO}")
+    string(REGEX REPLACE "[-/]Z[iI7]" "" CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
+    string(REGEX REPLACE "[-/]Z[iI7]" "" CMAKE_C_FLAGS_RELWITHDEBINFO   "${CMAKE_C_FLAGS_RELWITHDEBINFO}")
     # EXCLUDE_FROM_ALL: don't build assimp unless mclib actually links it.
     add_subdirectory(3rdparty/assimp out/3rdparty/assimp EXCLUDE_FROM_ALL)
-    message(STATUS "ENABLE_ASSIMP_IMPORTER=ON — vendored Assimp at 3rdparty/assimp/ (FBX + GLTF, static)")
+    # Restore full debug-info flags for all subsequent (engine-owned) targets.
+    set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${_ASSIMP_SLIM_SAVED_CXX}")
+    set(CMAKE_C_FLAGS_RELWITHDEBINFO   "${_ASSIMP_SLIM_SAVED_C}")
+    message(STATUS "ENABLE_ASSIMP_IMPORTER=ON — vendored Assimp at 3rdparty/assimp/ (FBX + GLTF, static, debug-info stripped: ASSIMP-PDB-SLIM-1)")
 endif()
 
 # ---------------------------------------------------------------------------
