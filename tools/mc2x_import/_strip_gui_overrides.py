@@ -15,6 +15,19 @@ rc = sys.argv[1]
 mod = sys.argv[2]
 apply = '--apply' in sys.argv
 
+# CONTENT atlases / layout fits: these share a canonical filename with base/compat
+# but carry CAMPAIGN-SPECIFIC CONTENT (custom mech/pilot icons + the cell geometry the
+# engine reads from the layout fit). Stripping them drops the campaign's content and
+# falls back to the base atlas -> custom mechs render as magenta/wrong-offset icons.
+# NEVER strip these, even when a canonical-named copy exists. (Bug: MCO icons, 2026-06-20.)
+CONTENT_KEEP = {
+    'mcui_gn_mechicons.tga',          # mech-bay roster atlas (per-campaign mech icons)
+    'mc2x_mechicons.tga',             # MC2X variant of the roster atlas
+    'mcl_pr_pilotskillicons.tga',     # pilot skill-icon atlas
+    'mcl_pr_pilotskillicons2.tga',    # MCO spelling variant
+    'mcl_gn_deploymentteams.fit',     # MechEntryIcon/PilotIcon cell geometry (Width/Height)
+}
+
 canon = set()  # lowercased basenames under data/art/
 
 # base art.fst entries
@@ -49,7 +62,9 @@ for fn in os.listdir(dee_art):
     full = os.path.join(dee_art, fn)
     if not os.path.isfile(full) or fn.endswith('.import-removed'):
         continue
-    if fn.lower() in canon:
+    if fn.lower() in CONTENT_KEEP:
+        keep.append(fn)          # campaign content atlas/fit -> never strip
+    elif fn.lower() in canon:
         strip.append(fn)
     else:
         keep.append(fn)

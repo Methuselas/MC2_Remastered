@@ -128,7 +128,7 @@ def extract_fst(fst_path, out_root, refs=None, drop_upscale=False, gui_canon=Non
         if drop_upscale:
             # strip leading "data/" then check against upscale dirs
             sub = rn[5:] if rn.startswith("data/") else rn
-            if sub.startswith(UPSCALE_DIRS):
+            if sub.startswith(UPSCALE_DIRS) and not _is_campaign_unique_texture(sub):
                 continue
         if refs and in_refs(name, refs):
             continue
@@ -149,6 +149,15 @@ def extract_fst(fst_path, out_root, refs=None, drop_upscale=False, gui_canon=Non
 # Loose appearance/texture trees that the base + compat layers already own.
 # Excluded under --drop-upscale to avoid bloating the campaign mod with an upscale dump.
 UPSCALE_DIRS = ("textures/", "art/", "tgl/")
+
+
+def _is_campaign_unique_texture(sub):
+    """data/textures/<map>.burnin.* are per-MISSION baked terrain colormaps that the
+    base/compat layers do NOT own (each campaign map has its own). The blanket
+    --drop-upscale exclusion of data/textures dropped them, leaving terrain BLACK
+    (MapData::calcLight has no colormap). Keep these. (Bug: MCO black terrain, 2026-06-20.)"""
+    s = sub.lower()
+    return s.startswith("textures/") and ".burnin." in s
 
 # Campaign roster files to pull SURGICALLY from misc.fst (NOT the whole archive).
 # pilots.csv lives in the install's misc.fst, is NOT loose, and has no base/compat
