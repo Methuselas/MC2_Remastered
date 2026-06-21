@@ -157,6 +157,50 @@ private:
     GLenum prevDepth_  = GL_ZERO_TO_ONE;
 };
 
+// --- Slice 3: texture-unit save/restore ------------------------------------
+//
+// Slice 2 covered depth/blend/cull states. Slice 3 adds the texture-unit
+// leak class: legacy decal/overlay paths call glActiveTexture(GL_TEXTURE0)
+// and glBindTexture(GL_TEXTURE_2D, ...) inside their draw loops without
+// restoring the previous active unit or the previous unit-0 binding.
+// gos_InvalidateRenderStateCache() does NOT track texture unit state, so
+// after one of these paths the engine cache believes unit 0 is bound to
+// whatever applyRenderStates() last set, while GL actually holds the
+// decal/overlay texture — exactly the vendor-visibility gap (AMD tolerates
+// it; NVIDIA exposes wrong textures or intermittent corruption).
+//
+// Usage: declare at the point where the raw binds begin; the guard captures
+// the current active-texture unit and the GL_TEXTURE_2D binding on `unit`
+// (default 0), then restores both on destruction.  If the enclosing function
+// ends with gos_InvalidateRenderStateCache(), use a block scope so the guard
+// closes (restores) BEFORE that call — the cache-invalidation path re-reads
+// raw GL state and must see the restored binding, not the mutated one.
+class GlScopedTextureUnit {
+public:
+    explicit GlScopedTextureUnit(GLuint unit = 0) : unit_(unit) {
+        GLint active = static_cast<GLint>(GL_TEXTURE0);
+        glGetIntegerv(GL_ACTIVE_TEXTURE, &active);
+        prevActiveTex_ = static_cast<GLenum>(active);
+        glActiveTexture(GL_TEXTURE0 + unit_);
+        GLint binding = 0;
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &binding);
+        prevBinding_ = static_cast<GLuint>(binding);
+    }
+    ~GlScopedTextureUnit() {
+        glActiveTexture(GL_TEXTURE0 + unit_);
+        glBindTexture(GL_TEXTURE_2D, prevBinding_);
+        glActiveTexture(prevActiveTex_);
+    }
+    GlScopedTextureUnit(const GlScopedTextureUnit&) = delete;
+    GlScopedTextureUnit& operator=(const GlScopedTextureUnit&) = delete;
+    GlScopedTextureUnit(GlScopedTextureUnit&&) = delete;
+    GlScopedTextureUnit& operator=(GlScopedTextureUnit&&) = delete;
+private:
+    GLuint unit_;
+    GLenum prevActiveTex_ = GL_TEXTURE0;
+    GLuint prevBinding_   = 0;
+};
+
 }  // namespace mc2gl
 
 #endif  // GL_STATE_GUARD_H

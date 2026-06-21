@@ -299,7 +299,9 @@ PREC vec2 parallaxMapping(PREC vec2 uv, PREC vec3 viewDirTS, PREC float scale, P
     PREC vec2 prevUV = currentUV + deltaUV;
     PREC float afterDepth = currentDepth - currentLayerDepth;
     PREC float beforeDepth = sampleDisplacement(prevUV, matWeights) - currentLayerDepth + layerDepth;
-    PREC float weight = afterDepth / (afterDepth - beforeDepth);
+    // Guard against zero denominator when consecutive samples are identical;
+    // AMD silently produces inf/nan but NVIDIA may trap — use 1e-6 epsilon.
+    PREC float weight = afterDepth / max(abs(afterDepth - beforeDepth), 1.0e-6);
     return mix(currentUV, prevUV, weight);
 }
 

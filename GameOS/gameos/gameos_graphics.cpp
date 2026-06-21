@@ -29,6 +29,7 @@
 #include "gos_profiler.h"
 #include "gos_gpu_sync.h"
 #include "gos_validate.h"  // drainGLErrors (Tier-1 instr §4)
+#include "gl_state_guard.h"  // GlScopedTextureUnit (GLSTATE-TEXTURE-UNIT0-RESTORE-1)
 #include "gos_smoke.h"     // S9E: SmokeMode fixed deterministic render-shader clock
 #include "../../mclib/cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline
 #include "../../mclib/render_contract.h"      // [RENDER_PASS v1] noteRenderPass
@@ -9335,18 +9336,21 @@ void gosRenderer::drawTerrainOverlays()
     if (!fixBMvpOverlay) fixBMvpOverlay = gos_GetTerrainMVPMat4();
     uploadOverlayUniforms_(overlayProg_->shp_, overlayLocs_, elapsed, fixBMvpOverlay);
 
-    GLint prevVao = 0;
-    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
-    glBindVertexArray(terrainOverlayBatch_.vao);
-    for (const auto& entry : terrainOverlayBatch_.draws) {
-        if (overlayLocs_.tex1 >= 0)
-            glUniform1i(overlayLocs_.tex1, 0);
-        glActiveTexture(GL_TEXTURE0);
-        gosTexture* t = lookupBatchTextureOrWarn(textureList_, entry.texHandle, "terrainOverlayBatch");
-        glBindTexture(GL_TEXTURE_2D, t ? t->getTextureId() : 0);
-        glDrawArrays(GL_TRIANGLES, (GLint)entry.firstVert, (GLsizei)entry.vertCount);
-    }
-    glBindVertexArray((GLuint)prevVao);
+    {
+        mc2gl::GlScopedTextureUnit texGuard(0);  // GLSTATE-TEXTURE-UNIT0-RESTORE-1
+        GLint prevVao = 0;
+        glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
+        glBindVertexArray(terrainOverlayBatch_.vao);
+        for (const auto& entry : terrainOverlayBatch_.draws) {
+            if (overlayLocs_.tex1 >= 0)
+                glUniform1i(overlayLocs_.tex1, 0);
+            glActiveTexture(GL_TEXTURE0);
+            gosTexture* t = lookupBatchTextureOrWarn(textureList_, entry.texHandle, "terrainOverlayBatch");
+            glBindTexture(GL_TEXTURE_2D, t ? t->getTextureId() : 0);
+            glDrawArrays(GL_TRIANGLES, (GLint)entry.firstVert, (GLsizei)entry.vertCount);
+        }
+        glBindVertexArray((GLuint)prevVao);
+    }  // texGuard: restores unit-0 binding + active texture unit before invalidate
 
     glDepthFunc(GL_LESS);
     glEnable(GL_CULL_FACE);
@@ -9356,9 +9360,6 @@ void gosRenderer::drawTerrainOverlays()
     terrainOverlayBatch_.verts.clear();
     terrainOverlayBatch_.draws.clear();
 
-    // RENDER_STATES v1: this path leaves depth-func at GL_LESS and the
-    // unit-0 texture binding mutated, neither tracked by applyRenderStates'
-    // cache. MAJOR-1 from the 2026-05-08 adversarial review.
     gos_InvalidateRenderStateCache();
 }
 
@@ -9450,20 +9451,23 @@ bool gosRenderer::drawDecalStaticBatch(unsigned int vboGL,
     uploadOverlayUniforms_(overlayProg_->shp_, overlayLocs_, elapsed, fixBMvpDecalStatic);
     DECAL_GLPROBE("after_uniform_upload");
 
-    glBindVertexArray(s_decalStaticVAO);
-    for (int i = 0; i < drawCount; ++i) {
-        const struct GosDecalStaticDraw& entry = draws[i];
-        if (overlayLocs_.tex1 >= 0)
-            glUniform1i(overlayLocs_.tex1, 0);
-        glActiveTexture(GL_TEXTURE0);
-        gosTexture* t = lookupBatchTextureOrWarn(textureList_, entry.texHandle, "decalStaticBatch");
-        glBindTexture(GL_TEXTURE_2D, t ? t->getTextureId() : 0);
-        glDrawArrays(GL_TRIANGLES, (GLint)entry.firstVert, (GLsizei)entry.vertCount);
-        if (i == 0) DECAL_GLPROBE("after_first_drawarrays");
-    }
-    DECAL_GLPROBE("after_all_drawarrays");
-    glBindVertexArray((GLuint)prevVao);
-    DECAL_GLPROBE("after_vao_restore");
+    {
+        mc2gl::GlScopedTextureUnit texGuard(0);  // GLSTATE-TEXTURE-UNIT0-RESTORE-1
+        glBindVertexArray(s_decalStaticVAO);
+        for (int i = 0; i < drawCount; ++i) {
+            const struct GosDecalStaticDraw& entry = draws[i];
+            if (overlayLocs_.tex1 >= 0)
+                glUniform1i(overlayLocs_.tex1, 0);
+            glActiveTexture(GL_TEXTURE0);
+            gosTexture* t = lookupBatchTextureOrWarn(textureList_, entry.texHandle, "decalStaticBatch");
+            glBindTexture(GL_TEXTURE_2D, t ? t->getTextureId() : 0);
+            glDrawArrays(GL_TRIANGLES, (GLint)entry.firstVert, (GLsizei)entry.vertCount);
+            if (i == 0) DECAL_GLPROBE("after_first_drawarrays");
+        }
+        DECAL_GLPROBE("after_all_drawarrays");
+        glBindVertexArray((GLuint)prevVao);
+        DECAL_GLPROBE("after_vao_restore");
+    }  // texGuard: restores unit-0 binding + active texture unit before invalidate
 
     glDepthFunc(GL_LESS);
     glEnable(GL_CULL_FACE);
@@ -9473,8 +9477,6 @@ bool gosRenderer::drawDecalStaticBatch(unsigned int vboGL,
     // NO batch clear — the static bake persists across frames (mirror
     // DrawMineStatic; the per-frame drawTerrainOverlays clears here).
 
-    // RENDER_STATES v1: same trap class as drawTerrainOverlays — depth-func
-    // and unit-0 texture binding mutated outside applyRenderStates' tracking.
     gos_InvalidateRenderStateCache();
     DECAL_GLPROBE("exit");
     #undef DECAL_GLPROBE
@@ -9520,18 +9522,21 @@ void gosRenderer::drawDecals()
     if (!fixBMvpDecals) fixBMvpDecals = gos_GetTerrainMVPMat4();
     uploadOverlayUniforms_(decalProg_->shp_, decalLocs_, elapsed, fixBMvpDecals);
 
-    GLint prevVao = 0;
-    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
-    glBindVertexArray(decalBatch_.vao);
-    for (const auto& entry : decalBatch_.draws) {
-        if (decalLocs_.tex1 >= 0)
-            glUniform1i(decalLocs_.tex1, 0);
-        glActiveTexture(GL_TEXTURE0);
-        gosTexture* t = lookupBatchTextureOrWarn(textureList_, entry.texHandle, "decalBatch");
-        glBindTexture(GL_TEXTURE_2D, t ? t->getTextureId() : 0);
-        glDrawArrays(GL_TRIANGLES, (GLint)entry.firstVert, (GLsizei)entry.vertCount);
-    }
-    glBindVertexArray((GLuint)prevVao);
+    {
+        mc2gl::GlScopedTextureUnit texGuard(0);  // GLSTATE-TEXTURE-UNIT0-RESTORE-1
+        GLint prevVao = 0;
+        glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
+        glBindVertexArray(decalBatch_.vao);
+        for (const auto& entry : decalBatch_.draws) {
+            if (decalLocs_.tex1 >= 0)
+                glUniform1i(decalLocs_.tex1, 0);
+            glActiveTexture(GL_TEXTURE0);
+            gosTexture* t = lookupBatchTextureOrWarn(textureList_, entry.texHandle, "decalBatch");
+            glBindTexture(GL_TEXTURE_2D, t ? t->getTextureId() : 0);
+            glDrawArrays(GL_TRIANGLES, (GLint)entry.firstVert, (GLsizei)entry.vertCount);
+        }
+        glBindVertexArray((GLuint)prevVao);
+    }  // texGuard: restores unit-0 binding + active texture unit before invalidate
 
     glDepthFunc(GL_LESS);
     glDisable(GL_BLEND);
@@ -9542,9 +9547,6 @@ void gosRenderer::drawDecals()
     decalBatch_.verts.clear();
     decalBatch_.draws.clear();
 
-    // RENDER_STATES v1: same trap class as drawTerrainOverlays — depth-func
-    // and unit-0 texture binding mutated outside applyRenderStates' tracking.
-    // MAJOR-2 from the 2026-05-08 adversarial review.
     gos_InvalidateRenderStateCache();
 }
 
