@@ -263,6 +263,16 @@ void Logistics::start (long startMode)
 			active = TRUE;
 			setLogisticsState(log_SPLASH);
 
+			// [STARTUP-INIT-ASYNC-1 FIX] missionBegin->init() below synchronously
+			// reaches MissionSelectionScreen::begin(), which reads logistics mission
+			// data (getCurrentOperationFile etc.). Join the bg init future first: a
+			// skipped or fast intro otherwise reaches that read before
+			// initializeLogData() populates missionInfo->groups -> null-deref crash
+			// at LogisticsMissionInfo::getCurrentOperationFile. Normal play (intro
+			// plays >5s) finds the future already done, so this join is ~instant.
+			if (m_initFuture.valid())
+				m_initFuture.get();
+
 			if ( !missionBegin )
 			{
 				ZoneScopedN("Logistics::start missionBeginInit");

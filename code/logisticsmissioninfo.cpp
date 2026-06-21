@@ -918,19 +918,21 @@ long LogisticsMissionInfo::getCurrentDropWeight() const
 
 const char* LogisticsMissionInfo::getCurrentOperationFile() const
 {
-	gosASSERT(currentStage < groupCount);
+	// Defense-in-depth: bg init (STARTUP-INIT-ASYNC-1) may not have populated
+	// groups yet. &groups[currentStage] is address-of an element, so the old
+	// `if (pGroup)` was dead-code-eliminated and the deref was unconditional UB.
+	if ( !groups || currentStage < 0 || currentStage >= groupCount )
+		return NULL;
 
 	MissionGroup* pGroup = &groups[currentStage];
-
-	if ( pGroup )
-		return pGroup->operationFileName;
-
-	return NULL;
-	
+	return pGroup->operationFileName;
 }
 
 const char* LogisticsMissionInfo::getCurrentVideo() const
 {
+	if ( !groups || currentStage < 0 || currentStage >= groupCount )
+		return NULL;
+
 	MissionGroup* pGroup = &groups[currentStage];
 
 	if ( pGroup )
@@ -964,12 +966,13 @@ long LogisticsMissionInfo::getCurrentLogisticsTuneId()
 const char*	LogisticsMissionInfo::getCurrentMissionDescription() const
 {
 	//sebi
-	gosASSERT(currentStage < groupCount);
+	if ( !groups || currentStage < 0 || currentStage >= groupCount )
+		return NULL;
 
 	MissionGroup* pGroup = &groups[currentStage];
 
 	if ( pGroup )
-		return pGroup->infos[currentMission]->description;	
+		return pGroup->infos[currentMission]->description;
 
 	return NULL;
 }
