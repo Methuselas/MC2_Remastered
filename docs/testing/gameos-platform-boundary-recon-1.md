@@ -2,6 +2,24 @@
 
 **Status:** RECON ONLY — no code. Maps GameOS/platform deps blocking portability,
 harnessability, Vulkan/Linux readiness, and clean subsystem tests.
+
+> **SCOPE HONESTY:** this is the **GameOS/platform boundary** only. It is NOT the
+> broader cross-subsystem audit (shader/material, texture/asset policy,
+> EditorBridge, editor runtime, smoke/deploy/release ops are OUT OF SCOPE here).
+> Do not cite this as `CROSS-SUBSYSTEM-AUDIT-RECON-1`.
+>
+> **CONFIDENCE on the headline findings** (advisor calibration):
+> - gameos.hpp pulls no GL — **PROVEN** (header has no GL include; only `<windows.h>`/shim).
+> - 143-file transitive reach — **PLAUSIBLE** (grep-derived; reproduce before trusting as exact).
+> - `File::open(buffer,len)` exists, inRAM-aware, zero callers — **PROVEN** (file.cpp:1355 cited).
+> - FIT/CSV harness "~3 lines away" — **PLAUSIBLE, downgraded from GREEN**: the
+>   wrapper is tiny but the test `systemHeap` bootstrap, buffer lifetime, and
+>   malformed/empty-buffer error behavior can bite. Treat as YELLOW-small.
+> - Threading portable — **GREEN but SCOPED** to frame_jobs/txmmgr/mclib (not a
+>   global platform conclusion).
+> - gosRenderer RED, crash-handler additive — **PROVEN/RED** and **YELLOW** resp.
+> - Header split "mechanical/zero churn" — **PLAUSIBLE, not proven** (splits expose
+>   include-order assumptions; worth doing, not "free").
 **Method:** 4 parallel read-only recons (File/FST/heap/path · GL/window/input/timing ·
 crash/diag/threading · gameos.hpp surface+callers). All cites live-verified at HEAD.
 
