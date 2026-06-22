@@ -79,6 +79,25 @@ RE_CPP_ACTIVETEX = re.compile(r"\bglActiveTexture\s*\(\s*GL_TEXTURE(\d+)\b")
 # Intentional same-unit pairs on mutually-exclusive runtime branches (census).
 MODE_ALTERNATE_PAIRS = [frozenset({"dynamicShadowArray", "dynamicShadowMap"})]
 
+# ---------------------------------------------------------------------------
+# Hard anchors (SHADER-SAMPLER-HARD-ANCHORS-1)
+# ---------------------------------------------------------------------------
+# A SMALL allowlist of provably-stable, NON-multiplexed (name->unit) bindings
+# promoted from WARN to FAIL: the build will not silently let these drift. Each
+# entry must meet all four criteria (one GLSL decl file, one C++ receiver, one
+# unit, comment agrees) — verified at recon and re-checked here every run. The
+# anchor is on the (name -> unit) PAIR, never on the bare unit (unit 0 is
+# legitimately multiplexed across ~15 programs). The check is SELF-DEMOTING: if
+# a future change makes an anchored name multiplexed (a 2nd decl file or 2nd
+# receiver appears), the equality guards below FAIL loudly, forcing the author
+# to remove it from this table rather than silently passing a now-unsafe anchor.
+HARD_ANCHORS = {
+    # name: (expected_unit, glsl_file_substr, cpp_receiver)
+    "uSrc":     (0, "shaders/hzb_reduce.frag",  "hzbReduceProg_"),
+    "sceneTex": (0, "shaders/postprocess.frag", "compositeProg_"),
+    "ssaoTex":  (0, "shaders/ssao_apply.frag",  "ssaoApplyProg_"),
+}
+
 
 def walk(root, dirs, exts):
     for d in dirs:
@@ -205,6 +224,39 @@ def main():
                     f"intra-program contradiction: receiver '{recv}' binds "
                     f"sampler '{name}' to multiple units ({where})")
 
+    # FAIL 3 (hard anchors): each anchored (name -> unit) pair must still hold,
+    # and must still be non-multiplexed. Any drift OR loss of the four criteria
+    # is a FAIL (self-demoting: a new decl/receiver trips the equality guards).
+    anchors = []
+    for name, (exp_unit, exp_glsl, exp_recv) in sorted(HARD_ANCHORS.items()):
+        decls = glsl.get(name, [])
+        binds = by_name.get(name, [])
+        problems = []
+        if not decls:
+            problems.append("GLSL declaration vanished/renamed")
+        if not binds:
+            problems.append("C++ setter vanished/renamed")
+        units = {a["unit"] for a in binds}
+        recvs = {a["receiver"] for a in binds}
+        files = {d["file"] for d in decls}
+        if units and units != {exp_unit}:
+            problems.append(f"C++ unit set {sorted(units)} != expected {{{exp_unit}}}")
+        if len(files) > 1 or (files and not any(exp_glsl in f for f in files)):
+            problems.append(f"GLSL decl files {sorted(files)} != expected ~'{exp_glsl}' "
+                            f"(anchored name became multiplexed or moved)")
+        if len(recvs) > 1 or (recvs and exp_recv not in recvs):
+            problems.append(f"C++ receivers {sorted(recvs)} != expected '{exp_recv}' "
+                            f"(anchored name became multiplexed or moved)")
+        for d in decls:
+            if d["comment_unit"] is not None and d["comment_unit"] != exp_unit:
+                problems.append(f"GLSL comment unit {d['comment_unit']} != {exp_unit} "
+                                f"@ {d['file']}:{d['line']}")
+        status = "clean" if not problems else "drift"
+        anchors.append({"name": name, "expected_unit": exp_unit,
+                        "status": status, "problems": problems})
+        for p in problems:
+            fails.append(f"hard-anchor '{name}' (expect unit {exp_unit}): {p}")
+
     # WARN: same receiver, one unit, two distinct sampler names (collision or
     # intentional mode-alternate).
     for recv, items in sorted(by_recv.items()):
@@ -256,11 +308,14 @@ def main():
             "cpp_name_resolvable_binds": len(assigns),
             "glUniform1i_sites": n_uniform1i,
             "glActiveTexture_sites": n_activetex,
+            "hard_anchors": len(anchors),
+            "anchors_drift": sum(1 for a in anchors if a["status"] == "drift"),
             "fails": len(fails),
             "warns": len(warns),
         },
         "fails": fails,
         "warns": warns,
+        "anchors": anchors,
         "samplers": {n: glsl[n] for n in sorted(glsl)},
         "assignments": sorted(assigns, key=lambda a: (a["unit"], a["name"], a["file"])),
         "occupancy": {str(u): occ[u] for u in sorted(occ)},
@@ -276,6 +331,8 @@ def main():
         print(f"  C++ name-resolvable binds  : {len(assigns)}")
         print(f"  glUniform1i sites          : {n_uniform1i}")
         print(f"  glActiveTexture sites      : {n_activetex}")
+        print(f"  hard anchors               : {len(anchors)} "
+              f"({sum(1 for a in anchors if a['status']=='drift')} drift)")
         for w in warns:
             print(f"  WARN: {w}")
         for fl in fails:

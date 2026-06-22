@@ -4,6 +4,8 @@
     "cpp_name_resolvable_binds": 22,
     "glUniform1i_sites": 237,
     "glActiveTexture_sites": 201,
+    "hard_anchors": 3,
+    "anchors_drift": 0,
     "fails": 0,
     "warns": 36
   },
@@ -45,6 +47,26 @@
     "cross-pass reuse: unit 3 carries ['dynamicShadowArray', 'dynamicShadowMap', 'u_hdri', 'u_pbrPaintNormalTex'] (expected \u2014 multiplexed)",
     "cross-pass reuse: unit 4 carries ['dynamicFullMapShadow', 'u_pbrPaintOrmTex', 'u_transitionMaskArray'] (expected \u2014 multiplexed)",
     "cross-pass reuse: unit 5 carries ['matNormal0', 'mineSpriteArray'] (expected \u2014 multiplexed)"
+  ],
+  "anchors": [
+    {
+      "name": "sceneTex",
+      "expected_unit": 0,
+      "status": "clean",
+      "problems": []
+    },
+    {
+      "name": "ssaoTex",
+      "expected_unit": 0,
+      "status": "clean",
+      "problems": []
+    },
+    {
+      "name": "uSrc",
+      "expected_unit": 0,
+      "status": "clean",
+      "problems": []
+    }
   ],
   "samplers": {
     "depthTex": [
