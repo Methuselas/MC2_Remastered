@@ -37,6 +37,7 @@ REGISTERED_HARNESSES = [
     "ibl_registry_contract_harness",
     "render_pass_table_harness",
     "logistics_csv_harness",
+    "mech_texname_harness",
     "icon_atlas_harness",
 ]
 
@@ -99,7 +100,7 @@ def main():
 
     build_dirs = args.build_dir or [
         "build64-contract", "build64-shader", "build64-renderstate",
-        "build64-objmgr", "build64-ibl", "build64-iconatlas", "build64-rptable", "build64-logcsv", "build64-harness"]
+        "build64-objmgr", "build64-ibl", "build64-iconatlas", "build64-rptable", "build64-logcsv", "build64-texname", "build64-harness"]
 
     results = []
     missing = []
