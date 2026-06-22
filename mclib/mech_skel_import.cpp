@@ -5,14 +5,35 @@
 #include <assimp/scene.h>
 #include <assimp/anim.h>
 
+#include <cstdlib>
 #include <cstring>
 #include <map>
 
 namespace mc2skel {
 namespace {
 
+// MECH-UBLB-ATTACHMENT-FIX-1 — rotation-only retargeting (default ON).
+// The BT2018 mech is a RIGID skeleton (every mesh-part binds to exactly one bone;
+// no blend weights). Bone lengths are therefore fixed. The clips, however, carry
+// TRANSLATION channels on the spine chain (j_Pitch/j_Spine/j_Spine1) and the
+// pelvis — a ball-joint waist absorbs rotation but not translation, so applying
+// those keys lifts the rigid upper body off the lower-body socket (constant
+// ~0.015 in normalized units across every clip/frame). For a rigid mech the
+// correct retarget is rotation-only: take the channel's ROTATION, keep the
+// node-default translation+scale (the bind bone length). Also drops in-place root
+// translation, which MC2 wants (the game positions the mech in the world).
+// Set MC2_MECH_ANIM_ROTATION_ONLY=0 to apply raw channels (old behaviour).
+bool rotationOnlyEnabled() {
+    const char* v = std::getenv("MC2_MECH_ANIM_ROTATION_ONLY");
+    return !(v && v[0] == '0');  // default ON; only explicit "0" disables
+}
+
 // Sample one node-animation channel at tick time t -> local transform.
-aiMatrix4x4 sampleChannel(const aiNodeAnim* ch, double t) {
+// When `rotationOnly` is set, translation+scale come from `nodeDefault` (the bind
+// pose) and only rotation is taken from the channel (falling back to nodeDefault's
+// rotation if the channel has no rotation keys).
+aiMatrix4x4 sampleChannel(const aiNodeAnim* ch, double t,
+                          const aiMatrix4x4& nodeDefault, bool rotationOnly) {
     auto lerpVec = [&](const aiVectorKey* keys, unsigned n) -> aiVector3D {
         if (n == 1) return keys[0].mValue;
         unsigned i = 0;
@@ -25,7 +46,9 @@ aiMatrix4x4 sampleChannel(const aiNodeAnim* ch, double t) {
     aiVector3D pos = ch->mNumPositionKeys ? lerpVec(ch->mPositionKeys, ch->mNumPositionKeys) : aiVector3D(0, 0, 0);
     aiVector3D scl = ch->mNumScalingKeys ? lerpVec(ch->mScalingKeys, ch->mNumScalingKeys) : aiVector3D(1, 1, 1);
     aiQuaternion rot;
-    if (ch->mNumRotationKeys == 1) {
+    if (ch->mNumRotationKeys == 0) {
+        // No rotation keys: identity unless rotation-only fallback fills it below.
+    } else if (ch->mNumRotationKeys == 1) {
         rot = ch->mRotationKeys[0].mValue;
     } else if (ch->mNumRotationKeys > 1) {
         unsigned i = 0;
@@ -39,18 +62,28 @@ aiMatrix4x4 sampleChannel(const aiNodeAnim* ch, double t) {
             rot.Normalize();
         }
     }
+    if (rotationOnly) {
+        // Keep bind translation+scale (rigid bone length); use channel rotation,
+        // or the bind rotation when this channel carries no rotation keys.
+        aiVector3D defScl, defPos; aiQuaternion defRot;
+        nodeDefault.Decompose(defScl, defRot, defPos);
+        if (ch->mNumRotationKeys == 0) rot = defRot;
+        return aiMatrix4x4(defScl, rot, defPos);
+    }
     return aiMatrix4x4(scl, rot, pos);
 }
 
 void computeGlobals(const aiNode* n, const aiMatrix4x4& parent,
                     const std::map<std::string, const aiNodeAnim*>& chans, double t,
-                    std::map<std::string, aiMatrix4x4>& globals) {
+                    bool rotationOnly, std::map<std::string, aiMatrix4x4>& globals) {
     auto it = chans.find(n->mName.C_Str());
-    aiMatrix4x4 local = (it != chans.end()) ? sampleChannel(it->second, t) : n->mTransformation;
+    aiMatrix4x4 local = (it != chans.end())
+                            ? sampleChannel(it->second, t, n->mTransformation, rotationOnly)
+                            : n->mTransformation;
     aiMatrix4x4 global = parent * local;
     globals[n->mName.C_Str()] = global;
     for (unsigned i = 0; i < n->mNumChildren; ++i)
-        computeGlobals(n->mChildren[i], global, chans, t, globals);
+        computeGlobals(n->mChildren[i], global, chans, t, rotationOnly, globals);
 }
 
 // Map node name -> parent node name across the whole tree.
@@ -124,7 +157,7 @@ bool EvaluateClipGpuBones(const aiScene* scene,
         chans[anim->mChannels[c]->mNodeName.C_Str()] = anim->mChannels[c];
 
     std::map<std::string, aiMatrix4x4> globals;
-    computeGlobals(scene->mRootNode, aiMatrix4x4(), chans, t, globals);
+    computeGlobals(scene->mRootNode, aiMatrix4x4(), chans, t, rotationOnlyEnabled(), globals);
 
     // Return the joint GLOBAL (FK world) matrix per bone — NOT global*inverseBind.
     // The BT2018 rig has a DIFFERENT inverse-bind per mesh-part for the same bone
@@ -145,7 +178,8 @@ void EvaluateRestGpuBones(const aiScene* scene,
                           std::vector<GpuBone>& out) {
     std::map<std::string, const aiNodeAnim*> none;  // no clip -> node defaults (rest)
     std::map<std::string, aiMatrix4x4> globals;
-    computeGlobals(scene->mRootNode, aiMatrix4x4(), none, 0.0, globals);
+    // Rest has no channels, so rotationOnly is moot — pass false.
+    computeGlobals(scene->mRootNode, aiMatrix4x4(), none, 0.0, false, globals);
     out.assign(boneNames.size(), GpuBone{});
     for (size_t i = 0; i < boneNames.size(); ++i) {
         auto g = globals.find(boneNames[i]);
