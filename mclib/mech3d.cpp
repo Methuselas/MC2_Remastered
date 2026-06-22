@@ -3569,6 +3569,18 @@ void Mech3DAppearance::updateGeometry (void)
 		_mm.px = position.x; _mm.py = position.y; _mm.pz = position.z;
 		_mm.legHeadingDeg = rotation;
 		mc2mechanim::TickImportedMechs(frameLength, (unsigned)g_mc2FrameCounter, _mm);
+		// 1B-GPU not yet implemented: the GPU mech path draws from an immutable
+		// rest-pose VBO, so the CPU re-bake shows a FROZEN pose. Warn once so the
+		// symptom is self-explaining (run with MC2_GPU_MECHS=0). See
+		// docs/bt2018-skel-1b-gpu-recon.md.
+		if (g_useGpuMechs && mc2mechanim::AnyImportedAnim()) {
+			static bool s_warnedImportGpu = false;
+			if (!s_warnedImportGpu) {
+				s_warnedImportGpu = true;
+				fprintf(stderr, "[MECH_IMPORT] animated imported mech on GPU path shows a "
+				                "FROZEN pose; run with MC2_GPU_MECHS=0 (1B-GPU pending)\n");
+			}
+		}
 	}
 
 	//Always override with our local instance.
