@@ -80,9 +80,11 @@ Correctness bugs first, then cleanup, then architecture. Each = its own behavior
 1. ✅ **UB2-02** — mech.frag StandardLit. FIXED `55f6cc71`.
 2. ✅ **UB2-01** — terrain_lod_chunk.frag detail-normals/POM/cement. FIXED `f4208726` (byte-exact visual gate PASS 9/9). Established the golden-gated-shader-fix flow (capture blessed golden on same exe → change → `run_visual.py compare` byte-exact).
 3. ✅ **OMT-1** — overlay/decal bind-0 on resolve-fail. FIXED `36d6a254` (explicit 1×1 magenta fallback + log + counters; behavior-neutral on stock).
-4. **UB2-05** — building_pbr discard-before-sample (default-off gate, provable like mech). Move samples above discard. **← next.**
-5. **POST-BLOOM/ACES/FXAA-DEAD-1** — delete dead bloom/ACES/FXAA (cleanup, not a bug; wrong for an RTS).
+4. ✅ **UB2-05** — building_pbr discard-before-sample. FIXED `1851b16d` (hoisted above discard; tier1 5/5, neutral).
+5. **DEAD-POST-FX-CLEANUP-1** — delete dead bloom/ACES/FXAA (PROVEN_DEAD; cleanup, not a bug; wrong for an RTS). **← next.**
 6. **POST-GODRAYS-FBBIND-1** — 1-line FBO-restore tidy.
+
+All confirmed shader/CPU LIVE_BUGs in the queue are now FIXED. Remaining items are cleanup (dead-code) + a 1-line tidy. NEEDS_VENDOR_TEST items (empty shadow frags UB2-06/07, shadow PCF UB2-04, on-NVIDIA tree-disappear visual confirm) await a vendor run.
 
 Parked (NEEDS_VENDOR_TEST, no repro available): TREE-N2 veg-cards OOB (veg cards shipped-DISABLED — real latent bug but not the tree symptom), NVIDIA static-prop tree-disappear (predates veg cards; known classes all covered; needs fresh capture), UB2-04 shadow PCF derivatives, UB2-06/07 empty shadow frags (empirically fine on dev AMD).
 
