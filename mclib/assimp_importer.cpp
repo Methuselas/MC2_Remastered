@@ -123,11 +123,17 @@ long ValidateScene(const aiScene* scene, const char* path) {
 		stack.pop_back();
 		const char* name = n->mName.C_Str();
 		const size_t len = strlen(name);
-		// 24 chars max + null terminator. Spec §5 forbids silent truncation.
+		// VALIDATE-SCENE-ASSIMP-NAME-LEN-1: GLB/FBX node names routinely exceed
+		// the legacy TG_NODE_ID (24-char) field (e.g. BT2018 'mad_centre_torso_
+		// pelvis_dmg' = 27). That length cap is an MC2/ASE runtime-field limit, not
+		// a glTF constraint — rejecting valid GLB names here is wrong. Do NOT abort;
+		// the importer truncates only where the name is written into the fixed-size
+		// nodeId (TG_TypeShape::InitFromImportedMesh, which logs original->truncated).
+		// Node names only drive animation binding (M2); bind-pose/static import does
+		// not bind by name. Warn under trace and continue.
 		if (len >= TG_NODE_ID) {
-			STOP(("[importer] %s: node name '%s' exceeds %d chars (silent truncation would break animation binding)",
-			      path, name, TG_NODE_ID - 1));
-			return -1;
+			ASSIMP_TRACE("  node name '%s' (%zu chars) > %d; nodeId will be truncated on import",
+			             name, len, TG_NODE_ID - 1);
 		}
 		if (len > 0) {
 			if (!seen.insert(name).second) {

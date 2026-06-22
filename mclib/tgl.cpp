@@ -1643,10 +1643,17 @@ void TG_TypeShape::InitFromImportedMesh(const char* nodeIdIn, const char* parent
                                         TG_TypeVertexPtr vertexBuf,
                                         TG_TypeTrianglePtr triangleBuf)
 {
-	// Node identity. Truncation here would silently break animation binding
-	// (which matches by name) — the importer must already have rejected
-	// names exceeding TG_NODE_ID-1; assert as a defence-in-depth check.
-	gosASSERT(nodeIdIn != NULL && strlen(nodeIdIn) < TG_NODE_ID);
+	// Node identity. VALIDATE-SCENE-ASSIMP-NAME-LEN-1: GLB node names may exceed
+	// the fixed TG_NODE_ID field; strncpy truncates safely. Log original->truncated
+	// so the mapping is visible (matters for M2 animation binding; static import
+	// does not bind by name). Stock ASE names already fit, so this never fires for them.
+	if (nodeIdIn && strlen(nodeIdIn) >= TG_NODE_ID) {
+		char trunc[TG_NODE_ID];
+		strncpy(trunc, nodeIdIn, TG_NODE_ID - 1);
+		trunc[TG_NODE_ID - 1] = '\0';
+		printf("[MECH_SKEL] nodeId truncated: '%s' -> '%s'\n", nodeIdIn, trunc);
+		fflush(stdout);
+	}
 	strncpy(nodeId, nodeIdIn ? nodeIdIn : "", TG_NODE_ID - 1);
 	nodeId[TG_NODE_ID - 1] = '\0';
 	strncpy(parentId, parentIdIn ? parentIdIn : "None", TG_NODE_ID - 1);
