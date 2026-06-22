@@ -62,6 +62,7 @@ namespace gosFX { void DiagFrameTick(); }
 #include "../../mclib/terrain_surface_bands.h"   // [TERRAIN_SURFACE] PR-3 band config (single source)
 #include "gos_terrain_water_stream.h"
 #include "gpu_driven_common.h"
+#include "mc2_hitch_trace.h"  // GPU-UPDATE-BUFFER-COUNTER-1: MC2_GL_BufferData_Owner (include LAST, after all GL headers)
 
 class gosRenderer;
 class gosFont;
@@ -8518,7 +8519,11 @@ void __stdcall gos_UpdateBuffer(HGOSBUFFER buffer, void* data, size_t offset, si
     gosASSERT(buffer->element_size_ * buffer->count_ >= num_bytes);
 	GLenum gl_target = getGLBufferType(buffer->type_);
     glBindBuffer(gl_target, buffer->buffer_);
-	glBufferData(gl_target, num_bytes, data, GL_DYNAMIC_DRAW);
+	// NOTE (unchanged behavior): this full glBufferData re-spec IGNORES the
+	// `offset` arg — it always orphans the whole buffer from byte 0. Left as-is
+	// by GPU-UPDATE-BUFFER-COUNTER-1 (measurement-only); the macro just tallies
+	// this orphan-on-write under owner GosUpdateBuffer when the gate is on.
+	MC2_GL_BufferData_Owner(gl_target, num_bytes, data, GL_DYNAMIC_DRAW, GosUpdateBuffer);
     glBindBuffer(gl_target, 0);
 }
 
@@ -8608,7 +8613,7 @@ void __stdcall gos_LightDataSsbo_Upload(const void* data, size_t bytes)
 	if (s_lightDataSsbo == 0) {
 		glGenBuffers(1, &s_lightDataSsbo);
 		glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_lightDataSsbo);
-		glBufferData(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)bytes, data, GL_DYNAMIC_DRAW);
+		MC2_GL_BufferData_Owner(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)bytes, data, GL_DYNAMIC_DRAW, LightSsbo);
 		s_lightDataSsboBytes = (GLsizeiptr)bytes;
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, LIGHT_DATA_SSBO_BINDING, s_lightDataSsbo);
 		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
@@ -8627,7 +8632,7 @@ void __stdcall gos_LightDataSsbo_Upload(const void* data, size_t bytes)
 		// (glShaderStorageBlockBinding, gos_BindLightDataStorageBlock) is
 		// PROGRAM state and is UNAFFECTED by buffer reallocation — do NOT
 		// re-issue it here.
-		glBufferData(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)bytes, data, GL_DYNAMIC_DRAW);
+		MC2_GL_BufferData_Owner(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)bytes, data, GL_DYNAMIC_DRAW, LightSsbo);
 		if (s_lightSsboTrace) {
 			std::fprintf(stderr, "[LIGHTSSBO v1] event=buffer_grow old=%td new=%zu\n",
 			             (ptrdiff_t)s_lightDataSsboBytes, bytes);
@@ -8645,7 +8650,7 @@ void __stdcall gos_LightDataSsbo_Upload(const void* data, size_t bytes)
 		// CPU a fresh store with no sync stall. GL_STREAM_DRAW is the correct hint
 		// for write-once-per-frame data (vs GL_DYNAMIC_DRAW which NVIDIA can place
 		// in VRAM, making the subsequent write go through PCI-E with sync).
-		glBufferData(GL_SHADER_STORAGE_BUFFER, s_lightDataSsboBytes, nullptr, GL_STREAM_DRAW);
+		MC2_GL_BufferData_Owner(GL_SHADER_STORAGE_BUFFER, s_lightDataSsboBytes, nullptr, GL_STREAM_DRAW, LightSsbo);
 		glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)bytes, data);
 	}
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, LIGHT_DATA_SSBO_BINDING, s_lightDataSsbo);
@@ -8677,7 +8682,7 @@ void __stdcall gos_LightDataSsbo_UploadSplit(const void* data, size_t prefixByte
 	// old data store is gone, so we must re-upload the prefix unconditionally —
 	// the prefixDirty skip is disabled. On AMD the orphan is equally fast (~1us)
 	// and eliminates the latent stall if the GPU falls behind the CPU.
-	glBufferData(GL_SHADER_STORAGE_BUFFER, s_lightDataSsboBytes, nullptr, GL_STREAM_DRAW);
+	MC2_GL_BufferData_Owner(GL_SHADER_STORAGE_BUFFER, s_lightDataSsboBytes, nullptr, GL_STREAM_DRAW, LightSsbo);
 	if (prefixBytes > 0) {
 		glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)prefixBytes, base);
 	}

@@ -75,6 +75,29 @@ struct HitchFrameAccum {
     uint32_t glFenceSyncCalls         = 0;
     uint32_t glFinishCalls            = 0;
     uint32_t glFlushCalls             = 0;
+
+    // -----------------------------------------------------------------------
+    // GPU-UPDATE-BUFFER-COUNTER-1 — per-owner orphan-on-write tally.
+    // Counts full glBufferData re-spec (orphan, no fence/ring) per owner so
+    // the per-frame churn that is INVISIBLE in the hitch trace (it only emits
+    // on >threshold frames) becomes visible under the MC2_GPUBUF_COUNTER gate.
+    // Fixed-size, indexed by GpuBufOwner. Reset each BeginFrame.
+    // -----------------------------------------------------------------------
+    uint32_t gpuBufOrphanCalls[/*GpuBufOwner::kCount*/ 4] = {0, 0, 0, 0};
+    uint64_t gpuBufOrphanBytes[/*GpuBufOwner::kCount*/ 4] = {0, 0, 0, 0};
+};
+
+// ---------------------------------------------------------------------------
+// Orphan-on-write owner tags (GPU-UPDATE-BUFFER-COUNTER-1).
+// Declared inside namespace mc2_hitch (already open). Macros reference it as
+// ::mc2_hitch::GpuBufOwner.
+// ---------------------------------------------------------------------------
+enum class GpuBufOwner : uint8_t {
+    GosUpdateBuffer  = 0,   // gos_UpdateBuffer (scene-data UBO respec)
+    Hud              = 1,   // updateBuffer 5-arg overload (gosMesh/HUD per-batch)
+    LightSsbo        = 2,   // light SSBO create/grow/orphan
+    StaticPropShadow = 3,   // static/dynamic prop transient shadow SSBOs
+    kCount           = 4
 };
 
 // ---------------------------------------------------------------------------
@@ -125,6 +148,14 @@ struct HitchScope {
 extern bool                        g_mc2HitchEnabled;
 extern mc2_hitch::HitchFrameAccum  g_mc2HitchAccum;
 
+// GPU-UPDATE-BUFFER-COUNTER-1: independent default-OFF gate. When set it
+// enables per-owner orphan accumulation + a per-frame [GPUBUF v1] emit
+// WITHOUT forcing the rest of the hitch trace on (no threshold gating).
+// g_mc2GpuBufAccumOn = (g_mc2HitchEnabled || g_mc2GpuBufCounter) is the
+// single cached bool the hot-path macros branch on.
+extern bool                        g_mc2GpuBufCounter;
+extern bool                        g_mc2GpuBufAccumOn;
+
 // ---------------------------------------------------------------------------
 // MC2_GL_* macro wrappers.
 // Use these in place of the raw GL calls in instrumented TUs.
@@ -137,6 +168,27 @@ extern mc2_hitch::HitchFrameAccum  g_mc2HitchAccum;
         if (g_mc2HitchEnabled) {                                            \
             ++g_mc2HitchAccum.glBufferDataCalls;                            \
             g_mc2HitchAccum.glBufferDataBytes += (uint64_t)(size);          \
+        }                                                                   \
+        glBufferData(target, size, data, usage);                            \
+    } while(0)
+
+// GPU-UPDATE-BUFFER-COUNTER-1: owner-tagged orphan-on-write wrapper.
+// Wraps the SAME glBufferData call (no extra GL calls, no reordering).
+// Accumulates the global glBufferData counters (preserving Tier-1 hitch
+// behavior when MC2_HITCH_TRACE is on) AND a per-owner orphan tally that
+// the [GPUBUF v1] line emits per frame when MC2_GPUBUF_COUNTER is on.
+// When BOTH gates are unset, g_mc2GpuBufAccumOn is false and the only delta
+// vs a raw glBufferData is one predicted-false bool check — byte-identical
+// GL stream and output.
+#define MC2_GL_BufferData_Owner(target, size, data, usage, owner)            \
+    do {                                                                    \
+        if (g_mc2GpuBufAccumOn) {                                           \
+            ++g_mc2HitchAccum.glBufferDataCalls;                            \
+            g_mc2HitchAccum.glBufferDataBytes += (uint64_t)(size);          \
+            const unsigned _oi =                                            \
+                (unsigned)(::mc2_hitch::GpuBufOwner::owner);                \
+            ++g_mc2HitchAccum.gpuBufOrphanCalls[_oi];                       \
+            g_mc2HitchAccum.gpuBufOrphanBytes[_oi] += (uint64_t)(size);     \
         }                                                                   \
         glBufferData(target, size, data, usage);                            \
     } while(0)
