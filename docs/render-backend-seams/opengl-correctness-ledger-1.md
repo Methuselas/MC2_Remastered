@@ -138,3 +138,17 @@ A. list texture-unit binds · B. does the pass restore prev binding? · C. what 
 YES: GL_TEXTURE_2D unit leaks; sampler/compare-mode only if an existing guard covers it. NO: depth/cull/blend hard-resets; viewport/scissor/VAO unless an existing guard already exists & span is simple; 2D_ARRAY unless proven to leak to a later 2D consumer; any new guard type in this slice.
 
 **Revised family priority:** 2. HUD/menu/2D overlays + decals → 3. particles/water/shoreline → 4. mech/static-prop/terrain batchers → 5. shadows LAST (2D_ARRAY/depth-compare heavy; touch only on a proven leak into ordinary 2D draw). Commit only families with a real fix; no-leak family = ledger note or skip.
+
+### CLOSURE (2026-06-22) — GLSTATE-TEXUNIT-LEAK-GUARDS-1 COMPLETE (1 real fix)
+Recon swept all five families for the unrestored-GL_TEXTURE_2D-unit-leak class. Result: the composite (family 1, `6de2cbb0`) was the ONLY live leak. Everything else already covered:
+
+| family | surface | verdict |
+|--------|---------|---------|
+| 1 post-process | composite unit-0/2 | ✅ FIXED `6de2cbb0` (only live leak) |
+| 2 HUD/menu/2D + decals | drawTerrainOverlays / drawDecals / drawDecalStaticBatch | already guarded (`GLSTATE-TEXTURE-UNIT0-RESTORE-1`); HUD via `applyRenderStates` re-bind → MASKED. No fix. |
+| 3 particles/water/shoreline | gos_particle_bridge, gos_vfx_mesh_bridge, renderWaterFastPath | per-fn manual save/restore epilogues cover unit-0/1 → MASKED. No fix. |
+| 4 mech/static-prop batchers | gos_mech_batcher (units 0-4), gos_static_prop_batcher (unit 0) | flush prologue saves + epilogue restores units 0-4 + active → MASKED. No fix. |
+| 5 shadows / 2D_ARRAY | drawMineStatic, terrain shadow/normal arrays, static-prop ORM/veg buckets | GL_TEXTURE_2D_ARRAY + depth-compare samplers — outside `GlScopedTextureUnit` scope → SKIP (not this class). |
+
+Net: the tex-unit-leak class is now closed for `GL_TEXTURE_2D` across the GPU-direct path. No new guard types added. The broad "adopt RAII everywhere / collapse invalidate list" goal was correctly dropped — those passes hard-reset by design.
+Residual (NOT this slice): 2D_ARRAY-target leak class (would need an array-aware guard variant) — open only if a RenderDoc NVIDIA inspection shows a 2D_ARRAY binding bleeding into a later array consumer. Vendor-visibility of all "MASKED via applyRenderStates" verdicts is AMD-tested-only; confirm on NVIDIA if certainty needed.
