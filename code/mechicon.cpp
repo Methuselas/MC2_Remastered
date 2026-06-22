@@ -319,7 +319,7 @@ void MechIcon::setDrawBack( bool bSet)
 
 	
 	int iconsPerLine = ((int)s_textureMemory->width/(int)unitIconX);
-	int iconsPerPage = ((int)s_textureMemory->width/(int)unitIconY);
+	int iconsPerPage = ((int)s_textureMemory->height/(int)unitIconY);
 	long textureIndex = 0;
 	long row = (backDamageIndex/iconsPerLine);
 	if ( row >= iconsPerPage )
@@ -522,7 +522,7 @@ bool MechIcon::init( long whichIndex )
 
 
 	int iconsPerLine = ((int)s_textureMemory->width/(int)unitIconX);
-	int iconsPerPage = ((int)s_textureMemory->width/(int)unitIconY);
+	int iconsPerPage = ((int)s_textureMemory->height/(int)unitIconY);
 	long textureIndex = 0;
 	long row = (damageIconIndex/iconsPerLine);
 	if ( row >= iconsPerPage )
@@ -842,7 +842,7 @@ void MechIcon::doDraw( char* newDamage, char* oldDamage, unsigned long handle, u
 			// find the icon
 			long texIndex = 0;
 			int iconsPerLine = ((int)s_textureMemory->width/(int)unitIconX);
-			int iconsPerPage = ((int)s_textureMemory->width/(int)unitIconY);
+			int iconsPerPage = ((int)s_textureMemory->height/(int)unitIconY);
 			int yIndex = index / iconsPerLine;
 			if ( yIndex >= iconsPerPage )
 			{
@@ -1104,7 +1104,7 @@ void ForceGroupIcon::renderUnitIcon( float left, float top, float right, float b
 {
 	int texIndex = 0;
 	int iconsPerLine = ((int)s_textureMemory->width/(int)unitIconX);
-	int iconsPerPage= ((int)s_textureMemory->width/(int)unitIconY);
+	int iconsPerPage= ((int)s_textureMemory->height/(int)unitIconY);
 	int yIndex = damageIconIndex / iconsPerLine;
 	if ( yIndex >= iconsPerPage )
 	{
@@ -1239,7 +1239,7 @@ bool VehicleIcon::init( Mover* pMover )
 	
 	long texIndex = 0;
 	int iconsPerLine = ((int)s_textureMemory->width/(int)unitIconX);
-	int iconsPerPage = ((int)s_textureMemory->width/(int)unitIconY);
+	int iconsPerPage = ((int)s_textureMemory->height/(int)unitIconY);
 	long row = damageIconIndex/iconsPerLine;
 	long column = (damageIconIndex % iconsPerLine);
 	if ( row >= iconsPerPage )
@@ -1390,7 +1390,7 @@ void VehicleIcon::update()
 		{	
 			long texIndex = 0;
 			int iconsPerLine = ((int)s_textureMemory->width/(int)unitIconX);
-			int iconsPerPage = ((int)s_textureMemory->width/(int)unitIconY);
+			int iconsPerPage = ((int)s_textureMemory->height/(int)unitIconY);
 			int yIndex = damageIconIndex / iconsPerLine;
 			int xIndex = damageIconIndex % iconsPerLine;
 			if ( yIndex >= iconsPerPage )
