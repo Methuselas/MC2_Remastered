@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <chrono>  // FRAME-JOBS-1: prepass wall-clock timing
 #include "../GameOS/gameos/diagnostic_trace.h"  // FRAME-JOBS-1: JSONL trace emit
+#include "objmgr_watch_policy.h"  // OBJMGR-WATCH-POLICY-EXTRACT-1: shared watch bounds/index policy
 #include "gos_static_prop_killswitch.h"  // g_useGpuStaticProps
 #include "static_update_counters.h"      // g_staticUpdateRunCount/SkipCount/EmitSummary
 #include "../GameOS/gameos/gpu_cull_substrate.h"       // C0: GPU cull substrate SSBO upload
@@ -987,7 +988,7 @@ void GameObjectManager::setWatchID (GameObjectPtr obj) {
 		// leave the object un-watchable (watchID stays 0) instead of writing
 		// OOB. Reuse is deliberately avoided — it would reintroduce ABA /
 		// stale-target hazards. The Save-side clamp is independent (see ::Save).
-		if (nextWatchID > (unsigned long)getMaxObjects()) {
+		if (!mc2watch::canAssignWatchId(nextWatchID, getMaxObjects())) {
 			static unsigned long s_watchIdDrops = 0;
 			++s_watchIdDrops;
 			if (s_watchIdDrops == 1)
@@ -4799,12 +4800,10 @@ void GameObjectManager::CopyFrom (ObjectManagerData *data)
 	// so getMaxObjects() reflects the loaded scene. Never trust the serialized
 	// value blindly (mirrors the Save-side clamp in OBJMGR-WATCHID-BOUNDS-1).
 	const long _cap = getMaxObjects() + 1;
-	if (data->nextWatchId < 0 || (long)data->nextWatchId > _cap) {
+	const unsigned long _clampedNext = mc2watch::clampSavedNextWatchId(data->nextWatchId, getMaxObjects());
+	if ((long)_clampedNext != data->nextWatchId)
 		mc2_watchidLoadDiag("nextWatchId", (long)data->nextWatchId, _cap);
-		nextWatchID = (data->nextWatchId < 0) ? 1 : (unsigned long)_cap;
-	} else {
-		nextWatchID = data->nextWatchId;
-	}
+	nextWatchID = _clampedNext;
 }
 
 //-------------------------------------------------------------------
@@ -4835,8 +4834,7 @@ long GameObjectManager::Save (PacketFilePtr file, long packetNum)
 			// not exceed getMaxObjects(). Previously j<=nextWatchID could read
 			// watchList[j] / write watchSave[j] one past the allocation
 			// (nextWatchID can legitimately equal getMaxObjects()+1).
-			const long _watchHi = ((long)nextWatchID < getMaxObjects())
-				? (long)nextWatchID : getMaxObjects();
+			const long _watchHi = mc2watch::clampSaveLoopLimit(nextWatchID, getMaxObjects());
 			for (long j=0;j<=_watchHi;j++)
 			{
 				if (watchList[j] == objList[i])
@@ -5467,7 +5465,7 @@ long GameObjectManager::Load (PacketFilePtr file, long packetNum)
 	for (int j=0;j<_maxObj;j++)
 	{
 		const int32_t _idx = watchSave[j];
-		if (_idx < 0 || (long)_idx > _maxObj)
+		if (!mc2watch::isValidWatchSaveIndex(_idx, _maxObj))
 		{
 			watchList[j] = NULL;
 			mc2_watchidLoadDiag("watchSave", (long)_idx, _maxObj);
