@@ -21,6 +21,7 @@
 #include "../GameOS/gameos/gos_mech_killswitch.h"
 #include "cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (RAII scope)
 #include "anim_override_registry.h"  // ANIM-OVERRIDE-MVP: declarative gesture-clip remap
+#include "mech_anim_runtime.h"  // BT2018-SKEL-ENGINE-1B-RUNTIME: imported-mech per-frame re-bake
 #include "../GameOS/gameos/diagnostic_trace.h"  // ANIM_ADVANCE trace (double-step recon)
 
 extern uint32_t g_mc2FrameCounter;  // defined mclib/tgl.cpp:3718 — ANIM_ADVANCE double-step probe
@@ -3556,6 +3557,14 @@ void Mech3DAppearance::updateGeometry (void)
 	// projection_total). One scope per visible mech per frame.
 	::mc2_cpu_proj_cost::SidecarScope _f3_skin_scope(
 	    ::mc2_cpu_proj_cost::SIDECAR_SKINNING_CHAIN);
+
+	// BT2018-SKEL-ENGINE-1B-RUNTIME: advance + re-pose imported skinned mechs once
+	// per frame BEFORE TransformMultiShape re-reads the shared type geometry below.
+	// Idempotent on g_mc2FrameCounter (the second combat update() is a no-op here);
+	// near-free when no imported animated mech is registered. Requires the CPU mech
+	// path (MC2_GPU_MECHS=0) so the re-baked type verts reach listOfVertices.
+	mc2mechanim::TickImportedMechs(frameLength, (unsigned)g_mc2FrameCounter);
+
 	//Always override with our local instance.
 	mechShape->SetTextureHandle(0,localTextureHandle);
 	

@@ -32,6 +32,7 @@
 #include "msl.h"
 #include "tgl.h"
 #include "mech_skel_import.h"  // BT2018-SKEL-ENGINE-1A: shared FK/skeleton math
+#include "mech_anim_runtime.h" // BT2018-SKEL-ENGINE-1B-RUNTIME: per-frame re-bake API
 
 // BT2018-SKEL-ENGINE-1A — bind-pose bake trace (default OFF). MC2_MECH_SKEL_TRACE=1.
 static const bool s_mechSkelTrace = (getenv("MC2_MECH_SKEL_TRACE") != NULL);
@@ -117,6 +118,20 @@ inline float toMC2V(float v) { return 1.0f - v; }
 // same geometry the Python fk_bake static export produced. Animation is M2.
 //
 // Buildings/props/trees import with NO bones -> bake disabled -> unchanged path.
+// BT2018-SKEL-ENGINE-1B-RUNTIME — per-part record for the per-frame re-bake.
+// Captures, during the one-time merge, exactly what TickImportedMechs needs to
+// re-pose this part from a clip global each frame: which source mesh, which bone
+// (index into SkelBake::names), that part's bone offset, and where the part's
+// vertices landed in the merged listOfTypeVertices. boneIndex < 0 => rigid stray
+// (no bone) baked with scale only, mirroring PopulateMergedSkinnedShape.
+struct ImportPartRec {
+    unsigned meshIndex;
+    int      boneIndex;
+    aiMatrix4x4 off;
+    unsigned vOff;
+    unsigned vCount;
+};
+
 struct SkelBake {
     bool active = false;
     std::vector<std::string> names;
@@ -127,6 +142,9 @@ struct SkelBake {
     float scale = 1.0f;                        // auto-scale bind pose to MC2 size
     std::string forcedClip;                    // 1B: posed-clip bake (empty = rest)
     int forcedFrame = 0;
+    // 1B-RUNTIME: when non-null, PopulateMergedSkinnedShape records each part's
+    // layout here so the import can register a per-frame re-bake (see below).
+    std::vector<ImportPartRec>* recParts = nullptr;
     // counters (trace)
     int importedParts = 0, partsSingleBone = 0, partsOffsetBaked = 0, droppedParts = 0;
 };
@@ -618,6 +636,19 @@ long PopulateMergedSkinnedShape(const aiScene* scene, TG_TypeMultiShape* out, Sk
 		const float* rm = (it != bake.nameIdx.end()) ? bake.rest[it->second].m : nullptr;
 		aiMatrix4x4 off = bone->mOffsetMatrix;
 		if (rm) ++bake.partsOffsetBaked;
+		// 1B-RUNTIME: record this part's layout for the per-frame re-bake. The
+		// vOff/vCount range is this part's slice of the merged listOfTypeVertices;
+		// boneIndex indexes SkelBake::names (the clip-global array TickImportedMechs
+		// re-evaluates each frame). -1 = no bone match (scale-only, as below).
+		if (bake.recParts) {
+			ImportPartRec pr;
+			pr.meshIndex = m;
+			pr.boneIndex = (it != bake.nameIdx.end()) ? it->second : -1;
+			pr.off       = off;
+			pr.vOff      = vOff;
+			pr.vCount    = me->mNumVertices;
+			bake.recParts->push_back(pr);
+		}
 		const bool hasUV = me->HasTextureCoords(0);
 
 		for (unsigned v = 0; v < me->mNumVertices; ++v) {
@@ -707,6 +738,125 @@ void ComputeBoundingBox(TG_TypeMultiShape* out) {
 } // anonymous namespace
 
 //=============================================================================
+// BT2018-SKEL-ENGINE-1B-RUNTIME — per-frame imported-mech animation.
+//
+// The merge above bakes ONE static pose into the shared TG type geometry. This
+// re-poses that same merged `listOfTypeVertices` every frame from a looping clip
+// (same FK/offset math, clip global per frame) so the imported mech MOVES. The
+// CPU TransformMultiShape then re-reads the type verts into the instance each
+// frame. Scope (1B): one forced clip, CPU mech path (MC2_GPU_MECHS=0), shared
+// type → actors animate in lockstep. Per-actor + GPU path are later slices.
+namespace {
+
+struct ImportedAnimEntry {
+    Assimp::Importer*   imp   = nullptr;   // owns scene; session-lifetime (never freed)
+    const aiScene*      scene = nullptr;
+    TG_TypeShape*       shape = nullptr;   // merged slot-0 shape (listOfTypeVertices)
+    TG_TypeMultiShape*  multi = nullptr;   // for per-frame bbox refresh
+    std::vector<std::string> names;        // skeleton, parallel to clip globals
+    std::string         clip;
+    float               scale    = 1.0f;
+    float               groundDy = 0.0f;   // MC2-space Y offset applied at import
+    float               durationSec = 1.0f;
+    std::vector<ImportPartRec> parts;
+    float               clipTimeSec = 0.0f;
+    unsigned            lastFrame   = 0xFFFFFFFFu;
+};
+std::vector<ImportedAnimEntry> g_importedAnims;
+
+bool mechImportAnimateEnabled() {
+    // Opt-in, default OFF (static FORCE_CLIP bake stays the safe path).
+    static int v = [](){ const char* e = getenv("MC2_MECH_IMPORT_ANIMATE");
+                         return (e && e[0] == '1') ? 1 : 0; }();
+    return v != 0;
+}
+
+// Keep a dedicated parse alive for the runtime re-bake: the import's own Importer
+// is a stack local that frees its scene on return. Same flags → identical
+// post-processed mesh ordering/vertices as the merge that recorded `parts`.
+void RegisterImportedAnim(const char* path, TG_TypeMultiShape* out, const SkelBake& bake,
+                          const std::vector<ImportPartRec>& parts, float groundDy) {
+    TG_TypeNodePtr slot = out->GetTypeNode(0);
+    if (!slot || slot->GetNodeType() != SHAPE_NODE) return;
+    Assimp::Importer* imp = new Assimp::Importer();
+    const aiScene* scene = imp->ReadFile(path,
+        aiProcess_Triangulate | aiProcess_GenSmoothNormals |
+        aiProcess_JoinIdenticalVertices | aiProcess_ValidateDataStructure | aiProcess_SortByPType);
+    if (!scene) { delete imp; return; }
+    float durSec = 1.0f;
+    for (unsigned a = 0; a < scene->mNumAnimations; ++a) {
+        const aiAnimation* an = scene->mAnimations[a];
+        if (bake.forcedClip == an->mName.C_Str()) {
+            double tps = an->mTicksPerSecond != 0.0 ? an->mTicksPerSecond : 1000.0;
+            durSec = (float)(an->mDuration / tps);
+            break;
+        }
+    }
+    ImportedAnimEntry e;
+    e.imp = imp; e.scene = scene;
+    e.shape = static_cast<TG_TypeShape*>(slot);
+    e.multi = out;
+    e.names = bake.names;
+    e.clip = bake.forcedClip;
+    e.scale = bake.scale;
+    e.groundDy = groundDy;
+    e.durationSec = durSec > 1e-4f ? durSec : 1.0f;
+    e.parts = parts;
+    g_importedAnims.push_back(std::move(e));
+    MECH_SKEL_TRACE("file='%s' 1B-RUNTIME registered clip='%s' dur=%.3fs parts=%zu",
+                    path, bake.forcedClip.c_str(), durSec, parts.size());
+}
+
+} // namespace
+
+bool mc2mechanim::AnyImportedAnim() { return !g_importedAnims.empty(); }
+
+void mc2mechanim::TickImportedMechs(float dt, unsigned frameStamp) {
+    if (g_importedAnims.empty()) return;
+    for (ImportedAnimEntry& e : g_importedAnims) {
+        if (e.lastFrame == frameStamp) continue;   // once per frame (double-update safe)
+        e.lastFrame = frameStamp;
+        e.clipTimeSec += dt;
+        if (e.durationSec > 0.0f)
+            while (e.clipTimeSec >= e.durationSec) e.clipTimeSec -= e.durationSec;
+        const float frame = e.clipTimeSec * 30.0f;   // EvaluateClipGpuBones: t = frame/30*tps
+        std::vector<mc2skel::GpuBone> globals; double tt = 0, dd = 0;
+        if (!mc2skel::EvaluateClipGpuBones(e.scene, e.clip, frame, e.names, globals, &tt, &dd))
+            continue;
+        TG_TypeVertex* vt = e.shape->GetTypeVerticesMutable();
+        if (!vt) continue;
+        ResetBoundingBox(e.multi);
+        for (const ImportPartRec& pr : e.parts) {
+            const aiMesh* me = e.scene->mMeshes[pr.meshIndex];
+            const float* rm = (pr.boneIndex >= 0 && pr.boneIndex < (int)globals.size())
+                                  ? globals[pr.boneIndex].m : nullptr;
+            for (unsigned v = 0; v < pr.vCount && v < me->mNumVertices; ++v) {
+                aiVector3D p, n;
+                if (rm) {
+                    p = applyRowMajor16(rm, pr.off * me->mVertices[v]) * e.scale;
+                    n = rotRowMajor16(rm, aiMatrix3x3(pr.off) * me->mNormals[v]);
+                } else {
+                    p = me->mVertices[v] * e.scale;
+                    n = me->mNormals[v];
+                }
+                n.Normalize();
+                TG_TypeVertex& d = vt[pr.vOff + v];
+                d.position   = mechToMC2Pos(p);
+                d.position.y += e.groundDy;          // preserve the import-grounded offset
+                d.normal     = mechToMC2Vec(n);
+                if (d.position.x < e.multi->minBox.x) e.multi->minBox.x = d.position.x;
+                if (d.position.y < e.multi->minBox.y) e.multi->minBox.y = d.position.y;
+                if (d.position.z < e.multi->minBox.z) e.multi->minBox.z = d.position.z;
+                if (d.position.x > e.multi->maxBox.x) e.multi->maxBox.x = d.position.x;
+                if (d.position.y > e.multi->maxBox.y) e.multi->maxBox.y = d.position.y;
+                if (d.position.z > e.multi->maxBox.z) e.multi->maxBox.z = d.position.z;
+            }
+        }
+        ComputeBoundingBox(e.multi);
+    }
+}
+
+//=============================================================================
 // Public entry point.
 long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out, bool autoGround) {
 	if (!path || !out) return -1;
@@ -743,6 +893,10 @@ long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out, bool autoG
 	// be baked to the assembled bind pose below. Static GLB/props (no bones) skip
 	// this entirely -> unchanged import path.
 	SkelBake bake;
+	// 1B-RUNTIME state (used only on the skinned mech path).
+	std::vector<ImportPartRec> animParts;
+	bool animateImport = false;
+	float groundDyApplied = 0.0f;
 	bool sceneHasBones = false;
 	for (unsigned m = 0; m < scene->mNumMeshes; ++m)
 		if (scene->mMeshes[m]->mNumBones > 0) { sceneHasBones = true; break; }
@@ -771,6 +925,9 @@ long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out, bool autoG
 		}
 		for (size_t i = 0; i < bake.names.size(); ++i) bake.nameIdx[bake.names[i]] = (int)i;
 		bake.active = !bake.names.empty();
+		// 1B-RUNTIME: animate only with a valid forced clip (it names the loop) and
+		// the opt-in gate. Otherwise the static bind/posed bake stands.
+		animateImport = mechImportAnimateEnabled() && !bake.forcedClip.empty();
 
 		// Auto-scale the assembled bind pose to MC2 mech size: the skinned GLB is
 		// authored at Unity scale (~0.15u tall); stock-equivalent mechs are ~25u.
@@ -846,6 +1003,9 @@ long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out, bool autoG
 		out->SetImportedTextures(1, texNames, NULL);
 		MECH_SKEL_TRACE("file='%s' mech skin slot0 tex='%s'", path, baseTex.c_str());
 		ResetBoundingBox(out);
+		// 1B-RUNTIME: when animating, capture each part's layout so the merge can be
+		// registered for per-frame re-bake (requires a valid forced clip).
+		if (animateImport) bake.recParts = &animParts;
 		long r = PopulateMergedSkinnedShape(scene, out, bake);
 		if (r != 0) { ASSIMP_TRACE("  PopulateMergedSkinnedShape returned %ld", r); return r; }
 	} else {
@@ -907,8 +1067,15 @@ long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out, bool autoG
 					static_cast<TG_TypeShape*>(nd)->TranslateTypeVerticesY(dy);
 			}
 			out->minBox.y += dy; out->maxBox.y += dy;
+			groundDyApplied = dy;  // 1B-RUNTIME: re-bake must preserve this offset
 		}
 	}
+
+	// 1B-RUNTIME: register the merged skinned mech for per-frame re-bake. After
+	// auto-ground so the stored offset matches the static pose. Reuses the forced
+	// clip as the loop. Keeps its own Assimp scene alive (session lifetime).
+	if (animateImport && bake.active && !animParts.empty())
+		RegisterImportedAnim(path, out, bake, animParts, groundDyApplied);
 
 	ASSIMP_TRACE("  SUCCESS");
 	SPEW(("ASSIMP", "%s: %u meshes, %u materials imported",

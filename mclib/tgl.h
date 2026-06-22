@@ -656,6 +656,15 @@ class TG_TypeShape : public TG_TypeNode
 		{
 			return listOfTypeVertices;
 		}
+		// BT2018-SKEL-ENGINE-1B-RUNTIME: writable type-vertex access for the
+		// per-frame imported-mech re-bake (mech_anim_runtime / assimp_importer).
+		// Imported skinned mechs re-pose their merged type geometry in place each
+		// frame; CPU TransformMultiShape then re-reads it. Do NOT use for stock
+		// ASE shapes (their type geometry is immutable).
+		TG_TypeVertex* GetTypeVerticesMutable (void)
+		{
+			return listOfTypeVertices;
+		}
 		const TG_TypeTriangle* GetTypeTriangles (void) const
 		{
 			return listOfTypeTriangles;
