@@ -67,6 +67,38 @@ TEST_CASE("Normalized-then-hashed keys are slash-direction-invariant") {
     CHECK(elfHash(a) == elfHash(b));
 }
 
+// --- loose-file / mod-overlay index key (GAMEOS-PATHSEP-HARNESS-1) ----------
+// fst_normalize_loose_key folds CASE + SLASHES together — the canonical key
+// mclib/file.cpp's loose-file index now delegates to. Distinct from
+// fst_normalize_key (slash-only, FST elfHash path). A miss here = a mod file
+// shadow silently not applied because two spellings hashed to different keys.
+
+TEST_CASE("loose key folds case and backslashes in one pass") {
+    CHECK(fst_normalize_loose_key("Art\\Objects\\Mech_Atlas.TGA")
+          == "art/objects/mech_atlas.tga");
+    // Mixed separators + mixed case.
+    CHECK(fst_normalize_loose_key("DATA\\missions/Foo.FIT")
+          == "data/missions/foo.fit");
+}
+
+TEST_CASE("loose key canonicalizes spelling variants to ONE key") {
+    // The load-bearing property: every case/slash variant of a path collapses
+    // to the same index key, so a mod overlay matches the base asset.
+    const auto k = fst_normalize_loose_key("data/missions/foo.fit");
+    CHECK(fst_normalize_loose_key("DATA\\MISSIONS\\FOO.FIT") == k);
+    CHECK(fst_normalize_loose_key("Data/Missions\\Foo.fit") == k);
+}
+
+TEST_CASE("loose key is idempotent") {
+    const auto once = fst_normalize_loose_key("Art\\Foo.TGA");
+    CHECK(fst_normalize_loose_key(once.c_str()) == once);
+}
+
+TEST_CASE("loose key handles empty and null") {
+    CHECK(fst_normalize_loose_key("").empty());
+    CHECK(fst_normalize_loose_key(nullptr).empty());
+}
+
 // TODO when factored: add a known-collision pair test (two different
 // strings that produce the same elfHash, to assert the hash table's
 // secondary-key comparison path is exercised in CI).

@@ -57,6 +57,7 @@
 //#endif
 
 #include "platform_str.h"
+#include "fst_hash.h"   // fst_normalize_loose_key (mod-index key canonicalizer)
 
 //---------------------------------------------------------------------------
 // Mod overlay — session-scoped, single active mod.
@@ -200,9 +201,9 @@ static bool ShouldSearchMods(const char* fileName) {
 }
 
 static std::string NormalizeKey(const char* p) {
-    std::string s = p ? p : "";
-    for (char& c : s) { if (c == '\\') c = '/'; else c = (char)tolower((unsigned char)c); }
-    return s;
+    // Delegates to the leaf-TU normalizer (mclib/fst_hash.cpp) so the loose-file
+    // index key contract is unit-testable game-free (GAMEOS-PATHSEP-HARNESS-1).
+    return fst_normalize_loose_key(p);
 }
 
 // Index all files under dataDir (absolute, trailing '/') into idx (first-wins).

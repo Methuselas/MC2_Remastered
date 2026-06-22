@@ -37,3 +37,17 @@ extern "C" void fst_normalize_key(char* dst, const char* src)
     }
     *dst = '\0';
 }
+
+#include <cctype>
+
+// Byte-for-byte the loop previously inlined in mclib/file.cpp::NormalizeKey:
+// backslash -> '/', every other byte -> tolower. Folds case AND slashes so a
+// mod-overlay path resolves to one canonical index key regardless of how the
+// caller spelled it.
+std::string fst_normalize_loose_key(const char* src)
+{
+    std::string s = src ? src : "";
+    for (char& c : s)
+        c = (c == '\\') ? '/' : (char)std::tolower((unsigned char)c);
+    return s;
+}

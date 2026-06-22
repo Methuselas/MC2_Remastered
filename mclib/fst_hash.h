@@ -37,6 +37,17 @@ void fst_normalize_key(char* dst, const char* src);
 
 #ifdef __cplusplus
 }
+
+#include <string>
+
+// Loose-file / mod-overlay index key normalizer: lowercase + forward-slash in
+// one pass (the canonical key used by mclib/file.cpp's loose-file index, which
+// now delegates here). Distinct from fst_normalize_key(): that one is the FST
+// elfHash path and is slash-only (the engine lowercases separately via
+// S_strlwr); this one folds case AND slashes together so a mod path and its
+// case/slash variants resolve to ONE index key. tolower follows the existing
+// engine behavior (C locale; ASCII asset paths fold deterministically).
+std::string fst_normalize_loose_key(const char* src);
 #endif
 
 #endif // MCLIB_FST_HASH_H
