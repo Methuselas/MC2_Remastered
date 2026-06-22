@@ -956,6 +956,27 @@ GroundVehiclePtr GameObjectManager::newVehicle (void) {
 
 //---------------------------------------------------------------------------
 
+// WATCHID-LOAD-GUARD-1: rate-limited diagnostic for invalid watch data read
+// from an untrusted/corrupt/cross-version save. Emits a one-time stderr line
+// (visible without any diag tag) plus a rate-limited WATCHID_LOAD JSONL event.
+static void mc2_watchidLoadDiag(const char* what, long a, long b)
+{
+	static unsigned long s_loadDrops = 0;
+	++s_loadDrops;
+	if (s_loadDrops == 1)
+		fprintf(stderr, "[WATCHID_LOAD] invalid watch data on load (%s a=%ld b=%ld); "
+			"slot invalidated. Further occurrences rate-limited.\n", what, a, b);
+	if (mc2_diag::tagEnabled("WATCHID_LOAD") &&
+		(s_loadDrops == 1 || (s_loadDrops & 0xFF) == 0)) {
+		char _wl_buf[160];
+		snprintf(_wl_buf, sizeof(_wl_buf),
+			"{\"what\":\"%s\",\"a\":%ld,\"b\":%ld,\"drops\":%lu}", what, a, b, s_loadDrops);
+		mc2_diag::writeEvent("WATCHID_LOAD", 1, 0, _wl_buf);
+	}
+}
+
+//---------------------------------------------------------------------------
+
 void GameObjectManager::setWatchID (GameObjectPtr obj) {
 
 	if (obj->watchID == 0) {
@@ -4769,7 +4790,21 @@ void GameObjectManager::CopyFrom (ObjectManagerData *data)
 	maxVehicles         =    data->maxVehicles;
 	numMechs            =    data->numMechs;
 	numVehicles         =    data->numVehicles;
-	nextWatchID			=	 data->nextWatchId;
+
+	// WATCHID-LOAD-GUARD-1: nextWatchId is untrusted on-disk data. getByWatchID()
+	// reads watchList[watchID] for watchID < nextWatchID, and watchList is sized
+	// getMaxObjects()+1 (allocated in Load right after this), so a corrupt or
+	// cross-version nextWatchId would let a later getByWatchID() index out of
+	// bounds. Clamp to the allocation. The count fields above are already applied,
+	// so getMaxObjects() reflects the loaded scene. Never trust the serialized
+	// value blindly (mirrors the Save-side clamp in OBJMGR-WATCHID-BOUNDS-1).
+	const long _cap = getMaxObjects() + 1;
+	if (data->nextWatchId < 0 || (long)data->nextWatchId > _cap) {
+		mc2_watchidLoadDiag("nextWatchId", (long)data->nextWatchId, _cap);
+		nextWatchID = (data->nextWatchId < 0) ? 1 : (unsigned long)_cap;
+	} else {
+		nextWatchID = data->nextWatchId;
+	}
 }
 
 //-------------------------------------------------------------------
@@ -5421,9 +5456,24 @@ long GameObjectManager::Load (PacketFilePtr file, long packetNum)
 	// If none, let it be.  It'll be zero already
 	// DO NOT CALL getWatchID!!!!!!!
 	// That will assign them to objects which don't have them!!!!
-	for (int j=0;j<getMaxObjects();j++)
+	// WATCHID-LOAD-GUARD-1: watchSave[] is untrusted on-disk data. A corrupt or
+	// cross-version save can hold an index outside [0, maxObj]; objList is sized
+	// maxObj+1. Validate each entry before dereferencing objList. On an invalid
+	// index, invalidate that watch slot (treat the saved object reference as
+	// gone) and continue — never OOB-read objList, never crash the load. Loop is
+	// bounded by the allocated capacity (getMaxObjects()), not any serialized
+	// value.
+	const long _maxObj = getMaxObjects();
+	for (int j=0;j<_maxObj;j++)
 	{
-		watchList[j] = objList[watchSave[j]];
+		const int32_t _idx = watchSave[j];
+		if (_idx < 0 || (long)_idx > _maxObj)
+		{
+			watchList[j] = NULL;
+			mc2_watchidLoadDiag("watchSave", (long)_idx, _maxObj);
+			continue;
+		}
+		watchList[j] = objList[_idx];
 	}
 
 	free(watchSave);
