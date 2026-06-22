@@ -679,6 +679,9 @@ def main():
                             "MC2_R2B_STATIC_NATURAL_TRACE",
                             "MC2_REGFLUSH_DIAG_TRACE",
                             "MC2_STATIC_STALE_DROP_FATAL",
+                            # OMT-1-OVERLAY-MISSING-TEXTURE-GUARD: overlay/decal
+                            # resolve-fail counters + fallback-bind trace.
+                            "MC2_OVERLAY_TEXTURE_TRACE",
                             # GPU object batcher gate (bisect partner for terrain bug)
                             "MC2_GPU_OBJECTS",
                             # Shadow-lane gated features (smoke coverage for the

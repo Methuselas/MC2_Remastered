@@ -1241,6 +1241,98 @@ static gosTexture* lookupBatchTextureOrWarn(const std::vector<gosTexture*>& text
     return textureList[textureId];
 }
 
+// OMT-1-OVERLAY-MISSING-TEXTURE-GUARD ─────────────────────────────────────────
+// The overlay/decal batch draws previously did `glBindTexture(GL_TEXTURE_2D,
+// t ? id : 0)` — binding GL name 0 on a resolve-fail makes the sampler read an
+// INCOMPLETE texture, whose result is driver-defined (black on some GPUs,
+// garbage/magenta on others = a vendor-dependent mystery; cf. OMT recon). Route
+// resolve-fails to an explicit 1x1 magenta fallback + a deterministic
+// once-per-handle log + counters, so a missing overlay texture is visible AND
+// explained instead of undefined. NO bake/composite/cement/shader change — this
+// only hardens the per-draw texture BIND. Verbose summary: MC2_OVERLAY_TEXTURE_TRACE=1.
+namespace {
+struct OverlayTexStats {
+    uint64_t pushes = 0, resolved = 0, resolve_failed = 0,
+             bound_zero_prevented = 0, fallback_bound = 0;
+};
+OverlayTexStats g_overlayTexStats;
+GLuint g_overlayFallbackTex = 0;
+
+GLuint getOverlayFallbackTexture() {
+    if (g_overlayFallbackTex == 0) {
+        const unsigned char magenta[4] = { 255, 0, 255, 255 };  // 1x1 RGBA debug
+        glGenTextures(1, &g_overlayFallbackTex);
+        glBindTexture(GL_TEXTURE_2D, g_overlayFallbackTex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, magenta);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+    return g_overlayFallbackTex;
+}
+
+bool overlayTexTraceOn() {
+    static int c = -1;
+    if (c < 0) c = (getenv("MC2_OVERLAY_TEXTURE_TRACE") != nullptr) ? 1 : 0;
+    return c != 0;
+}
+
+// Once-per-handle dedup without pulling in <set> (handles are few + bounded to 64).
+bool overlayHandleAlreadyLogged(DWORD h) {
+    static DWORD seen[64];
+    static int   seenCount = 0;
+    for (int i = 0; i < seenCount; ++i) if (seen[i] == h) return true;
+    if (seenCount < 64) { seen[seenCount++] = h; return false; }  // new → log + record
+    return true;  // table full → suppress (bounds log volume)
+}
+
+// Bind the resolved batch texture, or an explicit 1x1 magenta fallback on
+// resolve-fail. NEVER binds GL name 0 on the resolve-fail path. Logs once per
+// failing handle (deterministic, with reason) and counts every category.
+void bindBatchTextureOrFallback(gosTexture* t, DWORD texHandle, const char* batchName) {
+    ++g_overlayTexStats.pushes;
+    const GLuint id = t ? (GLuint)t->getTextureId() : 0u;
+    if (t && id != 0u) {
+        ++g_overlayTexStats.resolved;
+        glBindTexture(GL_TEXTURE_2D, id);
+        return;
+    }
+    ++g_overlayTexStats.resolve_failed;
+    ++g_overlayTexStats.bound_zero_prevented;   // the bug this guard prevents
+    ++g_overlayTexStats.fallback_bound;
+    if (!overlayHandleAlreadyLogged(texHandle)) {
+        fprintf(stderr,
+            "[OVERLAY_TEXTURE v1] event=resolve_fail batch=%s texHandle=%u "
+            "fallback_bound=1 texture=<1x1 magenta debug> reason=%s\n",
+            batchName, (unsigned)texHandle,
+            (t && id == 0u) ? "resolved_but_gl_id_0" : "null_or_invalid_handle");
+        fflush(stderr);
+    }
+    glBindTexture(GL_TEXTURE_2D, getOverlayFallbackTexture());
+}
+
+// Cumulative counter summary; rate-limited, gated by MC2_OVERLAY_TEXTURE_TRACE.
+// Uses an internal tick (this file has no g_mc2FrameCounter in scope); the tick
+// advances once per drawTerrainOverlays call ≈ once per overlay-active frame.
+void overlayTexTraceSummary() {
+    if (!overlayTexTraceOn()) return;
+    static uint64_t s_tick = 0;
+    ++s_tick;
+    if ((s_tick % 300u) != 1u) return;
+    fprintf(stderr,
+        "[OVERLAY_TEXTURE v1] event=summary tick=%llu pushes=%llu resolved=%llu "
+        "resolve_failed=%llu bound_zero_prevented=%llu fallback_bound=%llu\n",
+        (unsigned long long)s_tick,
+        (unsigned long long)g_overlayTexStats.pushes,
+        (unsigned long long)g_overlayTexStats.resolved,
+        (unsigned long long)g_overlayTexStats.resolve_failed,
+        (unsigned long long)g_overlayTexStats.bound_zero_prevented,
+        (unsigned long long)g_overlayTexStats.fallback_bound);
+    fflush(stderr);
+}
+} // anonymous namespace (OMT-1)
+
 ////////////////////////////////////////////////////////////////////////////////
 class gosFont {
         friend class gosRenderer;
@@ -9404,7 +9496,7 @@ void gosRenderer::drawTerrainOverlays()
                 glUniform1i(overlayLocs_.tex1, 0);
             glActiveTexture(GL_TEXTURE0);
             gosTexture* t = lookupBatchTextureOrWarn(textureList_, entry.texHandle, "terrainOverlayBatch");
-            glBindTexture(GL_TEXTURE_2D, t ? t->getTextureId() : 0);
+            bindBatchTextureOrFallback(t, entry.texHandle, "terrainOverlayBatch");  // OMT-1: no bind-0 on resolve-fail
             glDrawArrays(GL_TRIANGLES, (GLint)entry.firstVert, (GLsizei)entry.vertCount);
         }
         glBindVertexArray((GLuint)prevVao);
@@ -9419,6 +9511,8 @@ void gosRenderer::drawTerrainOverlays()
     terrainOverlayBatch_.draws.clear();
 
     gos_InvalidateRenderStateCache();
+
+    overlayTexTraceSummary();  // OMT-1 counter summary (rate-limited, gated)
 
     render_contract::endPassScope(render_contract::PassIdentity::TerrainOverlay,
                                   "gosRenderer_drawTerrainOverlays");
@@ -9521,7 +9615,7 @@ bool gosRenderer::drawDecalStaticBatch(unsigned int vboGL,
                 glUniform1i(overlayLocs_.tex1, 0);
             glActiveTexture(GL_TEXTURE0);
             gosTexture* t = lookupBatchTextureOrWarn(textureList_, entry.texHandle, "decalStaticBatch");
-            glBindTexture(GL_TEXTURE_2D, t ? t->getTextureId() : 0);
+            bindBatchTextureOrFallback(t, entry.texHandle, "decalStaticBatch");  // OMT-1: no bind-0 on resolve-fail
             glDrawArrays(GL_TRIANGLES, (GLint)entry.firstVert, (GLsizei)entry.vertCount);
             if (i == 0) DECAL_GLPROBE("after_first_drawarrays");
         }
@@ -9595,7 +9689,7 @@ void gosRenderer::drawDecals()
                 glUniform1i(decalLocs_.tex1, 0);
             glActiveTexture(GL_TEXTURE0);
             gosTexture* t = lookupBatchTextureOrWarn(textureList_, entry.texHandle, "decalBatch");
-            glBindTexture(GL_TEXTURE_2D, t ? t->getTextureId() : 0);
+            bindBatchTextureOrFallback(t, entry.texHandle, "decalBatch");  // OMT-1: no bind-0 on resolve-fail
             glDrawArrays(GL_TRIANGLES, (GLint)entry.firstVert, (GLsizei)entry.vertCount);
         }
         glBindVertexArray((GLuint)prevVao);
