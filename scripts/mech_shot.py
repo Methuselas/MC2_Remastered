@@ -36,6 +36,7 @@ def main():
     ap.add_argument("--axis", default="", help="MC2_GLTF_AXIS override (optional)")
     ap.add_argument("--clip", default="", help="MC2_MECH_IMPORT_FORCE_CLIP — pose the imported mech to a clip frame (1B)")
     ap.add_argument("--clip-frame", type=int, default=0, help="MC2_MECH_IMPORT_FORCE_FRAME (with --clip)")
+    ap.add_argument("--view-file", default="", help="saved_view.txt (X=.. Y=.. Z=.. ROT=.. ANGLE=.. ALT=..) -> MC2_HZB_VIEW_FILE: pin camera to that exact view")
     args = ap.parse_args()
 
     exe = Path(args.exe).resolve()
@@ -71,6 +72,10 @@ def main():
     if args.clip:
         env["MC2_MECH_IMPORT_FORCE_CLIP"] = args.clip
         env["MC2_MECH_IMPORT_FORCE_FRAME"] = str(args.clip_frame)
+    if args.view_file:
+        # Pin the camera to an exact saved view (X/Y/Z/ROT/ANGLE/ALT). Author one
+        # in-game with Ctrl+Alt+V or the "Save Camera View" ImGui button.
+        env["MC2_HZB_VIEW_FILE"] = str(Path(args.view_file).resolve())
 
     cmd = [str(exe), "--profile", "stock", "--mission", args.mission, "--duration", str(args.duration)]
     print(f"[mech_shot] launching {exe.name} mission={args.mission} frame={args.frame}")
