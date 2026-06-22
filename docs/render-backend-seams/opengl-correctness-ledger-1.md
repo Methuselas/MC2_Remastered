@@ -44,6 +44,7 @@ Row schema: `id | subsystem | risk | vendor | status | evidence | commit | test 
 
 | id | subsystem | risk | vendor | status | evidence | commit | test | remaining action |
 |---|---|---|---|---|---|---|---|---|
+| NVIDIA-TREE-DISAPPEAR | objmgr R2b static-natural update-skip vs static-prop registry | H | NVIDIA (CPU defect vendor-independent; symptom NVIDIA-only) | FIXED `07a1f8ac` | **CPU update/touch CONTRACT bug, NOT a GPU class** (corrects the TREE-N* GPU hypotheses below — all PROVEN_COVERED/not-cause). R2b bare `continue` (objmgr.cpp) skipped update() → registered multi's cachedFrame_ frozen → registry flush drops it (gos_static_prop_registry.cpp:986). Black-tree-bug class reintroduced (.planning/PROJECT.md). Fix = stamp cachedFrame_ in skip path (gate MC2_R2B_TOUCH_PRESERVE default-on) + registry stale_after_drawn guard (counts/logs/opt-in-fatal) so it can't silently recur | `07a1f8ac` | **counter A/B**: preserve=0 → stale_after_drawn=15336 (tree typeIDs dropped, cachedFrame=frame-1); preserve=1 → 0, touched_liveness=11. tier1 PASS | on-NVIDIA eyeball pending user tester (AMD draws stale instance so symptom invisible there) |
 | WATER-THINRING-FENCE-1 | terrain/water thin-record ring | H | both (NVIDIA-leaning) | FIXED | g_thinBuffer was barrier-only; solid ring fenced. gos_terrain_water_stream.cpp | `bc424dc2` | tier1 5/5 normal+trace; MC2_WATER_THINRING_TRACE shows waited 0→1, 0 GL_TIMEOUT_EXPIRED | none |
 | RENDER-PASS-CONTRACT-ENFORCEMENT-1 | render-pass scope discipline (tooling) | — | both | FIXED | render_contract.cpp scope tracker | `8d250041` | tier1 5/5 gate on/off, 0 violations | extend scopes (ENFORCEMENT-2) |
 | TREE-N8 | static-prop cull → indirect draw barrier | H | NVIDIA | PROVEN_COVERED | barrier present + intentional: `gpu_cull_compute.cpp:1297` `glMemoryBarrier(SHADER_STORAGE\|COMMAND)` after patch dispatch, before MDI draw (verified) | — | none (refutes the #1 NVIDIA-tree hypothesis) |
@@ -98,5 +99,15 @@ Of 8 reconned items: **most GL-correctness debt is PROVEN_COVERED** (GL-state gu
 - ✅ item 7 PASS-DESC-POSTPROCESS — bloom/ACES/FXAA PROVEN_DEAD; state restore covered.
 - ✅ item 8 GLSL-UB-AUDIT-2 — the real findings (UB2-01/02/05 non-uniform flow).
 
-### Resolved: NVIDIA-tree config fork (CORRECTED 2026-06-21)
-User clarified: `MC2_VEGETATION_CARDS` is **shipped-DISABLED**, AND the tree-disappear predates veg cards entirely. → veg-cards path is NOT the cause; **TREE-N2 is de-prioritized** (still a real latent OOB worth fixing eventually, but not the tree symptom). The disappearing trees are the **static-prop TreeAppearance path**, which is PROVEN_COVERED on all known buffer/barrier/alignment hazard classes → the symptom is NOT the known class and needs a fresh NVIDIA capture to localize. Status: NEEDS_VENDOR_TEST, parked.
+### RESOLVED: NVIDIA-tree-disappear — root cause found + FIXED (2026-06-22)
+NOT a GPU class. The recon (TREE-N*) correctly cleared GPU buffer/barrier/alignment/veg-cards
+hypotheses — but missed the actual cause, which is a **CPU update/touch contract bug** the
+GPU-focused sweep didn't look for. User's deeper fan-out + RenderDoc A/B closed it:
+objmgr.cpp R2b "skip static-natural update" (DEFAULT-ON) bare-`continue`s static trees at
+turn>=3, skipping update() → the registered TG_MultiShape's `cachedFrame_` freezes → the
+static-prop registry flush (`gos_static_prop_registry.cpp:986`) drops every range whose
+`getCachedFrame()!=currentFrame` → tree instances never written to the SSBO → tree typeID
+draws absent in RenderDoc. This is the 2026-05-05 black-tree-bug class (the named cachedFrame_
+contract) **reintroduced** by the later R2b perf optimization. FIXED `07a1f8ac` (stamp in skip
+path + registry stale_after_drawn guard). Veg cards (shipped-DISABLED) were never involved;
+TREE-N2 OOB remains a separate real-but-latent item.
