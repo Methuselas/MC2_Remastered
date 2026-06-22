@@ -1586,6 +1586,7 @@ void Mech3DAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 	oldStateGoal = 1;			//Always start in Stand Mode
 
 	currentFrame = 0.0f;
+	lastAnimAdvanceFrame = 0xFFFFFFFFu;	//ANIM-CADENCE-FIX: no advance yet
 
 	pointLight = NULL;
 	lightId = 0xffffffff;
@@ -4882,10 +4883,26 @@ long Mech3DAppearance::update (bool animate)
 			{
 				if (!setFirstFrame)		//DO NOT ANIMATE ON FIRST FRAME!  Wait a bit!
 				{
-					if (inReverse)
-						currentFrame -= frameInc;
-					else
-						currentFrame += frameInc;
+					// ANIM-CADENCE-FIX (gate MC2_ANIM_CADENCE_FIX): advance the gait at MOST
+					// once per render frame. Mover::getLOSPosition() (mover.cpp:3528) calls a
+					// second appearance->update() in combat to refresh weapon-node geometry,
+					// which otherwise ticks the animation a 2nd time the same frame => visible
+					// double-step (proven: 19390 advanced_twice events, gestures 2/4/7 == the
+					// getLOSPosition gesture filter). If we already advanced this
+					// g_mc2FrameCounter, skip the increment; downstream geometry still
+					// recomputes at the current frame, so the LOS refresh gets valid nodes
+					// without an extra gait step.
+					static const bool s_animCadenceFix = (std::getenv("MC2_ANIM_CADENCE_FIX") != nullptr);
+					const bool _alreadyAdvanced = (s_animCadenceFix &&
+						lastAnimAdvanceFrame == (uint32_t)g_mc2FrameCounter);
+					if (!_alreadyAdvanced)
+					{
+						if (inReverse)
+							currentFrame -= frameInc;
+						else
+							currentFrame += frameInc;
+						lastAnimAdvanceFrame = (uint32_t)g_mc2FrameCounter;
+					}
 				}
 
 				// ANIM-MECH-DOUBLE-STEP-RECON-1: emit one event per gait advance.
