@@ -89,6 +89,7 @@ run_check "vfx_no_objectid"        "sh scripts/check-vfx-no-objectid.sh"
 run_check "destroy_invariant"      "sh scripts/check-destroy-invariant.sh"
 run_check "render_contract_gbuf1"  "sh scripts/check-render-contract-gbuffer1.sh"
 run_check "binding_slots"          "py -3 scripts/check-binding-slots.py --quiet"
+run_check "sampler_bindings"       "py -3 scripts/check-sampler-bindings.py --quiet"
 
 # ---------------------------------------------------------------------------
 # Summary table
