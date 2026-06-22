@@ -1,0 +1,39 @@
+{
+  "schema": "mech-glb-pack/v1",
+  "_comment": [
+    "MECH-IMPORT-GLB-PACK-MANIFEST-1: explicit source of truth for imported GLB",
+    "assets under data/tgl/. Each entry declares a source_type:",
+    "  tracked   = committed in git, must exist in the repo (small).",
+    "  external  = distributed via an external/deploy pack, too large for git;",
+    "              installed into data/tgl/ locally; absent by default is OK.",
+    "  generated = produced by a cook/import step (not committed, regenerable).",
+    "Enforced by tools/mech_glb_pack_contract_harness (no game launch, no",
+    "tg_import_dump by default). DO NOT commit large GLBs — declare them external.",
+    "To add an imported GLB: install/cook it under data/tgl/, add its registry/ini",
+    "wiring, and add an entry here. The harness fails if a tracked data/tgl GLB is",
+    "undeclared, or a tracked entry is missing, or a path escapes the repo."
+  ],
+  "entries": [
+    {
+      "mech_id": "flea",
+      "name": "Flea",
+      "glb": "data/tgl/Flea.glb",
+      "source_type": "external",
+      "notes": "BT2018 mech import, deploy-only (present in mc2-win64-v0.4 / v0.5.0 trees, not git-tracked)."
+    },
+    {
+      "mech_id": "hangar",
+      "name": "HangarGLB",
+      "glb": "data/tgl/HangarGLB.glb",
+      "source_type": "tracked",
+      "notes": "Imported structure GLB; small, git-tracked. Also in deploy_payload BUILDING_PBR_PAYLOAD."
+    },
+    {
+      "mech_id": "quonset",
+      "name": "QuonsetGLB",
+      "glb": "data/tgl/QuonsetGLB.glb",
+      "source_type": "tracked",
+      "notes": "Imported structure GLB; small, git-tracked. Also in deploy_payload BUILDING_PBR_PAYLOAD."
+    }
+  ]
+}

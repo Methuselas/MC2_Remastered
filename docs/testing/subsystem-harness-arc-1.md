@@ -9,9 +9,13 @@ id parity, dup ids, reads/writes range, no mid-array terminator, static
 producer/consumer closure — header self-flags field-value staleness),
 DEPLOY-RELEASE-TREE-CONTRACT-HARNESS-1 (Python; validates a DEPLOYED tree's
 runnable shape; explicit `--release-root`/`MC2_RELEASE_ROOT`, non-blocking when
-unconfigured). DEFERRED — FIT-PARSE (file subsystem), STATIC-PROP (classification
-entangled, extraction-gated like objmgr was). Next targets ranked in
-[harness-target-sweep-2.md](harness-target-sweep-2.md). Nine harnesses; runner green.
+unconfigured), MECH-IMPORT-GLB-PACK-MANIFEST-1 (Python; JSON manifest
+`docs/testing/mech_glb_external_pack.json` declares imported data/tgl GLBs with
+tracked/external/generated source types; Flea.glb = external/deploy-only; strict
+via `MC2_MECH_GLB_PACK_STRICT=1`). DEFERRED — FIT-PARSE (file subsystem),
+STATIC-PROP (classification entangled, extraction-gated like objmgr was). Next
+targets ranked in [harness-target-sweep-2.md](harness-target-sweep-2.md). Ten
+harnesses; runner green.
 
 ### deploy_release_tree_contract_harness usage
 `py -3 tools/deploy_release_tree_contract_harness/deploy_release_tree_contract_harness.py --release-root <deployed-tree>`
