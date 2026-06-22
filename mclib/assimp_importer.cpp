@@ -23,12 +23,22 @@
 #include <vector>
 #include <string>
 #include <set>
+#include <map>
+#include <array>
 #include <cstring>
 #include <cmath>
 #include <cstdio>
 
 #include "msl.h"
 #include "tgl.h"
+#include "mech_skel_import.h"  // BT2018-SKEL-ENGINE-1A: shared FK/skeleton math
+
+// BT2018-SKEL-ENGINE-1A — bind-pose bake trace (default OFF). MC2_MECH_SKEL_TRACE=1.
+static const bool s_mechSkelTrace = (getenv("MC2_MECH_SKEL_TRACE") != NULL);
+#define MECH_SKEL_TRACE(fmt, ...) \
+    do { if (s_mechSkelTrace) { \
+        fprintf(stderr, "[MECH_SKEL] " fmt "\n", ##__VA_ARGS__); \
+        fflush(stderr); } } while (0)
 
 // Track D — env-gated diagnostic trace (default OFF). Set MC2_ASSIMP_TRACE=1
 // to emit per-import checkpoint lines. Convention matches existing
@@ -94,6 +104,56 @@ inline Stuff::Vector3D toMC2Vec(const aiVector3D& v) {
 }
 // UV V-flip (spec §6).
 inline float toMC2V(float v) { return 1.0f - v; }
+
+//-----------------------------------------------------------------------------
+// BT2018-SKEL-ENGINE-1A — bind-pose bake context.
+//
+// When the source GLB is skinned (mech with a skeleton), each mesh-part's
+// vertices live in bone-local space and only the skeleton assembles them. The
+// rig stores a DIFFERENT inverse-bind per part for the same bone (proven in the
+// harness), so we bake each part's OWN offset into its vertices at import, then
+// apply the joint GLOBAL rest transform: v_world = restGlobal(bone) * offset * v
+// (all in glTF space, BEFORE toMC2Pos). Result = the assembled bind pose, the
+// same geometry the Python fk_bake static export produced. Animation is M2.
+//
+// Buildings/props/trees import with NO bones -> bake disabled -> unchanged path.
+struct SkelBake {
+    bool active = false;
+    std::vector<std::string> names;
+    std::vector<int> parents;
+    std::vector<std::array<float, 16>> invBind;
+    std::vector<mc2skel::GpuBone> rest;       // joint-global rest matrices, parallel to names
+    std::map<std::string, int> nameIdx;
+    float scale = 1.0f;                        // auto-scale bind pose to MC2 size
+    // counters (trace)
+    int importedParts = 0, partsSingleBone = 0, partsOffsetBaked = 0, droppedParts = 0;
+};
+
+// Apply a row-major float[16] (joint global) to an Assimp point (w=1).
+inline aiVector3D applyRowMajor16(const float* m, const aiVector3D& v) {
+    return aiVector3D(
+        m[0] * v.x + m[1] * v.y + m[2] * v.z + m[3],
+        m[4] * v.x + m[5] * v.y + m[6] * v.z + m[7],
+        m[8] * v.x + m[9] * v.y + m[10] * v.z + m[11]);
+}
+// Direction transform (3x3 part only; for normals).
+inline aiVector3D rotRowMajor16(const float* m, const aiVector3D& v) {
+    return aiVector3D(
+        m[0] * v.x + m[1] * v.y + m[2] * v.z,
+        m[4] * v.x + m[5] * v.y + m[6] * v.z,
+        m[8] * v.x + m[9] * v.y + m[10] * v.z);
+}
+
+// Damage/destruction/UI parts excluded from the intact bind-pose import (they
+// overlap the intact geometry; needed later for damage states — POC drops them).
+inline bool skelMeshDropped(const char* n) {
+    if (!n) return false;
+    std::string s = n;
+    for (char& c : s) c = (char)((c >= 'A' && c <= 'Z') ? c - 'A' + 'a' : c);
+    return s.find("_explode") != std::string::npos || s.find("_dmg") != std::string::npos
+        || s.find("blip") != std::string::npos || s.find("indc") != std::string::npos
+        || s.find("uix") != std::string::npos;
+}
 
 //-----------------------------------------------------------------------------
 // Validator. Returns -1 on hard error; 0 on pass.
@@ -323,12 +383,37 @@ void BuildTextureList(const aiScene* scene, TG_TypeMultiShape* out) {
 //
 // Returns 0 on success, -1 on failure.
 long ImportShapeFromMesh(const aiScene* scene, unsigned meshIdx,
-                         TG_TypeShape* outShape, TG_TypeMultiShape* outMulti) {
+                         TG_TypeShape* outShape, TG_TypeMultiShape* outMulti,
+                         SkelBake* bake = nullptr) {
 	const aiMesh* mesh = scene->mMeshes[meshIdx];
 	if (mesh->mNumVertices == 0 || mesh->mNumFaces == 0) {
 		// Empty mesh — leave shape inited but do not populate. Engine treats
 		// zero-vertex shapes as no-op renders (numVisibleFaces stays 0).
 		return 0;
+	}
+
+	// BT2018-SKEL-ENGINE-1A: skinned-mech import. Drop damage/debris/UI parts,
+	// then per-part decide the bind-pose bake (single bone, rigid).
+	bool doMeshBake = false;
+	const float* restM = nullptr;     // joint-global rest (row-major) for this part's bone
+	aiMatrix4x4 partOffset;           // this part's own inverse-bind
+	if (bake && bake->active) {
+		if (skelMeshDropped(mesh->mName.C_Str())) {
+			++bake->droppedParts;
+			return 0;  // leave an empty shape (renders nothing)
+		}
+		++bake->importedParts;
+		if (mesh->mNumBones >= 1) {
+			if (mesh->mNumBones == 1) ++bake->partsSingleBone;
+			const aiBone* bone = mesh->mBones[0];
+			auto it = bake->nameIdx.find(bone->mName.C_Str());
+			if (it != bake->nameIdx.end()) {
+				restM = bake->rest[it->second].m;
+				partOffset = bone->mOffsetMatrix;
+				doMeshBake = true;
+				++bake->partsOffsetBaked;
+			}
+		}
 	}
 	if (mesh->mNormals == NULL) {
 		// Should not happen because we pass aiProcess_GenSmoothNormals, but
@@ -375,8 +460,20 @@ long ImportShapeFromMesh(const aiScene* scene, unsigned meshIdx,
 	// black (matches ParseASEFile's default — engine's lighting kernel
 	// overwrites this every frame anyway).
 	for (unsigned v = 0; v < mesh->mNumVertices; v++) {
-		verts[v].position  = toMC2Pos(mesh->mVertices[v]);
-		verts[v].normal    = toMC2Vec(mesh->mNormals[v]);
+		if (doMeshBake) {
+			// Bind-pose bake: v_world = restGlobal(bone) * (offset_part * v),
+			// normal by the same rotation. All in glTF space; toMC2* applies the
+			// MC2 axis flip after, identical to the static (pre-baked) GLB path.
+			aiVector3D pLocal = partOffset * mesh->mVertices[v];
+			verts[v].position = toMC2Pos(applyRowMajor16(restM, pLocal) * bake->scale);
+			aiVector3D nLocal = aiMatrix3x3(partOffset) * mesh->mNormals[v];
+			aiVector3D nWorld = rotRowMajor16(restM, nLocal);
+			nWorld.Normalize();
+			verts[v].normal = toMC2Vec(nWorld);
+		} else {
+			verts[v].position  = toMC2Pos(mesh->mVertices[v]);
+			verts[v].normal    = toMC2Vec(mesh->mNormals[v]);
+		}
 		// Init OPAQUE WHITE, not black. Override render shapes (treeRenderShape/
 		// bldgRenderShape) are drawn by the GPU static-prop batcher, which reads
 		// a_aRGBLight from the type-level VBO (bdactor.cpp ~2698). The per-vertex
@@ -530,6 +627,50 @@ long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out, bool autoG
 		return -1;
 	}
 
+	// BT2018-SKEL-ENGINE-1A: if the scene is skinned (a mech with a skeleton),
+	// build the shared skeleton + rest-pose joint globals so each mesh-part can
+	// be baked to the assembled bind pose below. Static GLB/props (no bones) skip
+	// this entirely -> unchanged import path.
+	SkelBake bake;
+	bool sceneHasBones = false;
+	for (unsigned m = 0; m < scene->mNumMeshes; ++m)
+		if (scene->mMeshes[m]->mNumBones > 0) { sceneHasBones = true; break; }
+	if (sceneHasBones) {
+		mc2skel::BuildSkeleton(scene, bake.names, bake.parents, bake.invBind);
+		mc2skel::EvaluateRestGpuBones(scene, bake.names, bake.rest);
+		for (size_t i = 0; i < bake.names.size(); ++i) bake.nameIdx[bake.names[i]] = (int)i;
+		bake.active = !bake.names.empty();
+
+		// Auto-scale the assembled bind pose to MC2 mech size: the skinned GLB is
+		// authored at Unity scale (~0.15u tall); stock-equivalent mechs are ~25u.
+		// Measure the intact bind-pose extent (glTF space) and scale to target
+		// height (matches the Python fk_bake --target_height). Override via
+		// MC2_MECH_SKEL_HEIGHT. Single-pass measure over intact, bone-bound meshes.
+		if (bake.active) {
+			float targetH = 25.44f;
+			if (const char* e = getenv("MC2_MECH_SKEL_HEIGHT")) targetH = (float)atof(e);
+			float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+			for (unsigned m = 0; m < scene->mNumMeshes; ++m) {
+				const aiMesh* me = scene->mMeshes[m];
+				if (me->mNumBones == 0 || skelMeshDropped(me->mName.C_Str())) continue;
+				auto it = bake.nameIdx.find(me->mBones[0]->mName.C_Str());
+				if (it == bake.nameIdx.end()) continue;
+				const float* rm = bake.rest[it->second].m;
+				const aiMatrix4x4& off = me->mBones[0]->mOffsetMatrix;
+				for (unsigned v = 0; v < me->mNumVertices; ++v) {
+					aiVector3D p = applyRowMajor16(rm, off * me->mVertices[v]);
+					float c[3] = {p.x, p.y, p.z};
+					for (int k = 0; k < 3; ++k) { if (c[k] < lo[k]) lo[k] = c[k]; if (c[k] > hi[k]) hi[k] = c[k]; }
+				}
+			}
+			float ext = 0.0f;
+			for (int k = 0; k < 3; ++k) ext = (hi[k] - lo[k] > ext) ? (hi[k] - lo[k]) : ext;
+			if (ext > 1e-6f) bake.scale = targetH / ext;
+			MECH_SKEL_TRACE("file='%s' SKINNED: bones=%zu bindExtent=%.4f scale=%.2f -> targetH=%.1f",
+			                path, bake.names.size(), ext, bake.scale, targetH);
+		}
+	}
+
 	// Allocate the multi-shape's listOfTypeShapes[] and per-slot TG_TypeShape
 	// instances. One Assimp mesh → one TG_TypeShape (MVP; LODs not embedded).
 	ASSIMP_TRACE("  AllocateImportedShapes(%d)", (int)scene->mNumMeshes);
@@ -554,11 +695,19 @@ long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out, bool autoG
 		TG_TypeNodePtr slot = out->GetTypeNode((long)i);
 		if (!slot || slot->GetNodeType() != SHAPE_NODE)
 			continue;
-		long r = ImportShapeFromMesh(scene, i, static_cast<TG_TypeShape*>(slot), out);
+		long r = ImportShapeFromMesh(scene, i, static_cast<TG_TypeShape*>(slot), out,
+		                             bake.active ? &bake : nullptr);
 		if (r != 0) {
 			ASSIMP_TRACE("  ImportShapeFromMesh i=%u returned %ld", i, r);
 			return r;
 		}
+	}
+
+	if (bake.active) {
+		MECH_SKEL_TRACE("file='%s' bones=%zu imported_parts=%d single_bone=%d "
+		                "offset_baked=%d dropped=%d selected_clip=bindpose",
+		                path, bake.names.size(), bake.importedParts,
+		                bake.partsSingleBone, bake.partsOffsetBaked, bake.droppedParts);
 	}
 
 	ASSIMP_TRACE("  ComputeBoundingBox...");
