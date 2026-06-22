@@ -12,6 +12,7 @@
 // Plan: docs/superpowers/plans/2026-04-27-assimp-mech-importer.md
 // Findings: docs/superpowers/explorations/2026-05-02-track-d-mvp-adversarial-findings.md
 #include "assimp_importer.h"
+#include "mech_texname_derive.h"  // GLB-TEXNAME-DERIVE-EXTRACT-1 pure name rules
 
 #ifdef ENABLE_ASSIMP_IMPORTER
 
@@ -178,12 +179,8 @@ inline Stuff::Vector3D mechToMC2Vec(const aiVector3D& v) {
 // Damage/destruction/UI parts excluded from the intact bind-pose import (they
 // overlap the intact geometry; needed later for damage states — POC drops them).
 inline bool skelMeshDropped(const char* n) {
-    if (!n) return false;
-    std::string s = n;
-    for (char& c : s) c = (char)((c >= 'A' && c <= 'Z') ? c - 'A' + 'a' : c);
-    return s.find("_explode") != std::string::npos || s.find("_dmg") != std::string::npos
-        || s.find("blip") != std::string::npos || s.find("indc") != std::string::npos
-        || s.find("uix") != std::string::npos;
+    // GLB-TEXNAME-DERIVE-EXTRACT-1: shared with the game-free harness.
+    return mech_texname::isDroppedMeshName(n);
 }
 
 //-----------------------------------------------------------------------------
@@ -307,31 +304,6 @@ bool DeriveMC2TextureName(const aiScene* scene, const aiMaterial* mat,
 	}
 	const char* src = resolved.empty() ? raw : resolved.c_str();
 
-	// Strip directory, then strip extension.
-	std::string stem = StripPath(src);
-	const size_t dot = stem.find_last_of('.');
-	if (dot != std::string::npos)
-		stem.erase(dot);
-
-	// Sanitize: lowercase, keep [a-z0-9_-], map everything else to '_'.
-	for (size_t i = 0; i < stem.size(); ++i) {
-		char c = stem[i];
-		if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
-		const bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
-		              || c == '_' || c == '-';
-		stem[i] = ok ? c : '_';
-	}
-	if (stem.empty())
-		return false;
-
-	// Clamp stem so stem + ".tga" + NUL fits TG_Texture::textureName[256].
-	const size_t kMaxName = 256;
-	const size_t kExt = 4; // ".tga"
-	if (stem.size() + kExt + 1 > kMaxName)
-		stem.erase(kMaxName - kExt - 1);
-
-	stem += ".tga";
-
 	// Alpha-cutout detection. MC2's texture loader uses an "a_" name prefix as
 	// the alpha-channel convention (bdactor.cpp LoadOverrideRenderShapeTextures:
 	// names starting "a_" → gos_Texture_Alpha + SetTextureAlpha(true) → the
@@ -359,14 +331,15 @@ bool DeriveMC2TextureName(const aiScene* scene, const aiMaterial* mat,
 				wantAlpha = true;
 		}
 	}
-	if (wantAlpha && stem.compare(0, 2, "a_") != 0) {
-		// keep within textureName[256] after the 2-char prefix
-		if (stem.size() + 2 + 1 > 256)
-			stem.erase(256 - 2 - 1);
-		stem.insert(0, "a_");
-	}
 
-	outName.swap(stem);
+	// GLB-TEXNAME-DERIVE-EXTRACT-1: pure stem->sanitize->clamp->.tga->a_ rules in
+	// mech_texname_derive.h (same arithmetic), exercised game-free by
+	// tools/mech_texname_harness/. Empty stem -> no texture (legacy returned false).
+	std::string name = mech_texname::deriveName(src, wantAlpha);
+	if (name.empty())
+		return false;
+
+	outName.swap(name);
 	return true;
 }
 
