@@ -564,6 +564,102 @@ long ImportShapeFromMesh(const aiScene* scene, unsigned meshIdx,
 }
 
 //-----------------------------------------------------------------------------
+// BT2018-SKEL-ENGINE-1A: skinned mech -> ONE merged, bind-pose-baked shape.
+//
+// A skinned GLB has many mesh-parts (69 for the marauder); importing them as
+// per-mesh shapes left dropped parts as empty (NULL-vertex) shapes, which the
+// mech GPU/recipe path chokes on (crash + no render). The proven-good static
+// path is a SINGLE shape, so merge every intact baked part into one combined
+// vertex/triangle buffer (per-triangle material index preserved), matching the
+// fk_bake static export exactly. Caller has already done AllocateImportedShapes(1)
+// + BuildTextureList + ResetBoundingBox.
+long PopulateMergedSkinnedShape(const aiScene* scene, TG_TypeMultiShape* out, SkelBake& bake) {
+	std::vector<unsigned> parts;
+	DWORD totalV = 0, totalT = 0;
+	for (unsigned m = 0; m < scene->mNumMeshes; ++m) {
+		const aiMesh* me = scene->mMeshes[m];
+		if (me->mNumVertices == 0 || me->mNumFaces == 0) continue;
+		if (skelMeshDropped(me->mName.C_Str())) { ++bake.droppedParts; continue; }
+		if (me->mNumBones == 0) continue;  // skinned scene: skip any unrigged stray
+		parts.push_back(m); totalV += me->mNumVertices; totalT += me->mNumFaces;
+	}
+	if (parts.empty() || totalV == 0) { PAUSE(("[importer] skinned merge: no intact parts")); return -1; }
+
+	TG_TypeNodePtr slot = out->GetTypeNode(0);
+	if (!slot || slot->GetNodeType() != SHAPE_NODE) return -1;
+	TG_TypeShape* shape = static_cast<TG_TypeShape*>(slot);
+
+	TG_TypeVertexPtr verts = (TG_TypeVertexPtr)TG_Shape::tglHeap->Malloc(sizeof(TG_TypeVertex) * totalV);
+	TG_TypeTrianglePtr tris = (TG_TypeTrianglePtr)TG_Shape::tglHeap->Malloc(sizeof(TG_TypeTriangle) * totalT);
+	gosASSERT(verts != NULL && tris != NULL);
+	memset(verts, 0, sizeof(TG_TypeVertex) * totalV);
+	memset(tris, 0, sizeof(TG_TypeTriangle) * totalT);
+
+	DWORD vOff = 0, tOff = 0;
+	for (unsigned m : parts) {
+		const aiMesh* me = scene->mMeshes[m];
+		++bake.importedParts;
+		if (me->mNumBones == 1) ++bake.partsSingleBone;
+		const aiBone* bone = me->mBones[0];
+		auto it = bake.nameIdx.find(bone->mName.C_Str());
+		const float* rm = (it != bake.nameIdx.end()) ? bake.rest[it->second].m : nullptr;
+		aiMatrix4x4 off = bone->mOffsetMatrix;
+		if (rm) ++bake.partsOffsetBaked;
+		const bool hasUV = me->HasTextureCoords(0);
+
+		for (unsigned v = 0; v < me->mNumVertices; ++v) {
+			aiVector3D p, n;
+			if (rm) {
+				p = applyRowMajor16(rm, off * me->mVertices[v]) * bake.scale;
+				n = rotRowMajor16(rm, aiMatrix3x3(off) * me->mNormals[v]);
+			} else {
+				p = me->mVertices[v] * bake.scale;
+				n = me->mNormals[v];
+			}
+			n.Normalize();
+			TG_TypeVertex& vt = verts[vOff + v];
+			vt.position  = toMC2Pos(p);
+			vt.normal    = toMC2Vec(n);
+			vt.aRGBLight = 0xffffffff;
+			if (vt.position.x < out->minBox.x) out->minBox.x = vt.position.x;
+			if (vt.position.y < out->minBox.y) out->minBox.y = vt.position.y;
+			if (vt.position.z < out->minBox.z) out->minBox.z = vt.position.z;
+			if (vt.position.x > out->maxBox.x) out->maxBox.x = vt.position.x;
+			if (vt.position.y > out->maxBox.y) out->maxBox.y = vt.position.y;
+			if (vt.position.z > out->maxBox.z) out->maxBox.z = vt.position.z;
+		}
+		for (unsigned f = 0; f < me->mNumFaces; ++f) {
+			const aiFace& fc = me->mFaces[f];
+			if (fc.mNumIndices != 3) continue;
+			TG_TypeTriangle& t = tris[tOff + f];
+			t.Vertices[0] = vOff + fc.mIndices[0];
+			t.Vertices[1] = vOff + fc.mIndices[1];
+			t.Vertices[2] = vOff + fc.mIndices[2];
+			t.localTextureHandle = me->mMaterialIndex;
+			t.renderStateFlags = 0;
+			Stuff::Vector3D fn;
+			fn.x = verts[t.Vertices[0]].normal.x + verts[t.Vertices[1]].normal.x + verts[t.Vertices[2]].normal.x;
+			fn.y = verts[t.Vertices[0]].normal.y + verts[t.Vertices[1]].normal.y + verts[t.Vertices[2]].normal.y;
+			fn.z = verts[t.Vertices[0]].normal.z + verts[t.Vertices[1]].normal.z + verts[t.Vertices[2]].normal.z;
+			t.faceNormal = fn;
+			if (hasUV) {
+				t.uvdata.u0 = me->mTextureCoords[0][fc.mIndices[0]].x;
+				t.uvdata.v0 = toMC2V(me->mTextureCoords[0][fc.mIndices[0]].y);
+				t.uvdata.u1 = me->mTextureCoords[0][fc.mIndices[1]].x;
+				t.uvdata.v1 = toMC2V(me->mTextureCoords[0][fc.mIndices[1]].y);
+				t.uvdata.u2 = me->mTextureCoords[0][fc.mIndices[2]].x;
+				t.uvdata.v2 = toMC2V(me->mTextureCoords[0][fc.mIndices[2]].y);
+			}
+		}
+		vOff += me->mNumVertices; tOff += me->mNumFaces;
+	}
+
+	Stuff::Point3D zero; zero.x = zero.y = zero.z = 0.0f;
+	shape->InitFromImportedMesh("imported_mech", "None", zero, totalV, totalT, verts, tris);
+	return 0;
+}
+
+//-----------------------------------------------------------------------------
 // Multi-shape bounding box (min/max corner + extentRadius). Mirrors what the
 // ASE path does in LoadBinaryCopy: vertex-tight over every transformed vertex
 // (accumulated in ImportShapeFromMesh in multi-shape-local space), then
@@ -671,6 +767,16 @@ long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out, bool autoG
 		}
 	}
 
+	if (bake.active) {
+		// SKINNED MECH: merge every intact baked part into ONE shape (the proven
+		// static-GLB structure). Per-mesh shapes would leave dropped parts as empty
+		// NULL-vertex shapes that crash the mech GPU/recipe path.
+		out->AllocateImportedShapes(1);
+		BuildTextureList(scene, out);
+		ResetBoundingBox(out);
+		long r = PopulateMergedSkinnedShape(scene, out, bake);
+		if (r != 0) { ASSIMP_TRACE("  PopulateMergedSkinnedShape returned %ld", r); return r; }
+	} else {
 	// Allocate the multi-shape's listOfTypeShapes[] and per-slot TG_TypeShape
 	// instances. One Assimp mesh → one TG_TypeShape (MVP; LODs not embedded).
 	ASSIMP_TRACE("  AllocateImportedShapes(%d)", (int)scene->mNumMeshes);
@@ -702,6 +808,7 @@ long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out, bool autoG
 			return r;
 		}
 	}
+	}  // end else (non-skinned per-mesh path)
 
 	if (bake.active) {
 		MECH_SKEL_TRACE("file='%s' bones=%zu imported_parts=%d single_bone=%d "
