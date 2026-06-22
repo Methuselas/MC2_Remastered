@@ -87,6 +87,7 @@ All default-OFF/inert unless noted. See `docs/render-backend-seams/opengl-correc
 - `MC2_HEARTBEAT=1` — stderr heartbeat per second
 - `MC2_REVERSE_Z_TRACE=1` — reverse-Z lifecycle prints
 - `MC2_GL_DEBUG_FATAL=1` — abort on GL_DEBUG_SEVERITY_HIGH
+- `MC2_XFORM_PARITY_FATAL=1` — abort when F1-3C clip-space parity probe fails (ViewUniforms.worldToClipGL vs legacy terrain MVP, max_diff>1e-5). Default **OFF** = log-only. Host counterpart: `tests/unit/test_xform_convention.cpp` (XFORM-CONVENTION-HARNESS-1).
 
 ## RenderWorld arc
 

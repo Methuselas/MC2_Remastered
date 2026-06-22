@@ -349,6 +349,24 @@ void GameCamera::render (void)
 								        s_vuCompareFrame, maxDiff, ok);
 								fflush(stderr);
 							}
+							// XFORM-CONVENTION-HARNESS-1: promote the F1-3C parity probe to a
+							// HARD invariant when MC2_XFORM_PARITY_FATAL is set. Default OFF =
+							// byte-identical to the log-only behavior above. When the gate is
+							// set AND the ViewUniforms UBO payload diverges from the legacy
+							// terrain MVP, abort instead of silently rendering with a mismatched
+							// clip-space transform (the exact regression class this slice locks).
+							{
+								static const char* s_xformFatalEnv = std::getenv("MC2_XFORM_PARITY_FATAL");
+								static const bool s_xformFatal = (s_xformFatalEnv && s_xformFatalEnv[0] == '1');
+								if (s_xformFatal && ok == 0) {
+									fprintf(stderr,
+									        "[XFORM_PARITY_FATAL] ViewUniforms.worldToClipGL diverged from legacy "
+									        "terrain MVP: frame=%d max_diff=%.6f (>1e-5). MC2_XFORM_PARITY_FATAL=1 -> abort.\n",
+									        s_vuCompareFrame, maxDiff);
+									fflush(stderr);
+									abort();
+								}
+							}
 						}
 					}
 				}

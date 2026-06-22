@@ -1049,6 +1049,19 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "[FX_COST v1] stderr summary every 600 frames. "
         "mclib/fx_trace/fx_cost_split.*. Zero cost unset."
     },
+    {
+        "MC2_XFORM_PARITY_FATAL",
+        "MC2_XFORM_PARITY_FATAL",
+        EnvVarKind::Trace,
+        false,
+        "XFORM-CONVENTION-HARNESS-1: promote the F1-3C clip-space parity probe "
+        "(code/gamecam.cpp) to a HARD invariant. When =1 AND the ViewUniforms "
+        "UBO worldToClipGL diverges from the legacy terrain MVP (max_diff>1e-5), "
+        "abort() instead of only logging [VIEW_UNIFORMS v1] ok=0. Default-OFF = "
+        "byte-identical to log-only behavior (zero cost unset). Guards against "
+        "silent matrix space/handedness/reverse-Z/w-sign regressions; the GL-free "
+        "host counterpart is tests/unit/test_xform_convention.cpp."
+    },
 };
 
 // ---------------------------------------------------------------------------

@@ -39,9 +39,11 @@ add_executable(mc2_tests
     test_depth_hzb.cpp      # HZB-DEPTH-CONVENTION-TESTS-1: reverse-Z / HZB reduction contract
     test_host_services.cpp  # ENGINE-HOST-SERVICES-0: host-service contract + default impls
     test_tactical_overview.cpp   # TACTICAL-OVERVIEW-1: blend-state pure logic
+    test_xform_convention.cpp    # XFORM-CONVENTION-HARNESS-1: clip-space convention lock
 
     # Leaf-TU engine sources (no transitive engine include drag).
     ${MC2_WORKTREE_ROOT}/mclib/fst_hash.cpp
+    ${MC2_WORKTREE_ROOT}/mclib/xform_conventions.cpp  # XFORM-CONVENTION-HARNESS-1: GL-free leaf TU
     ${MC2_WORKTREE_ROOT}/RenderCore/RenderResourceRegistry.cpp
     ${MC2_WORKTREE_ROOT}/RenderCore/RenderDebugView.cpp
     ${MC2_WORKTREE_ROOT}/HostServices/DefaultHostServices.cpp  # ENGINE-HOST-SERVICES-0
@@ -52,6 +54,8 @@ target_include_directories(mc2_tests PRIVATE
     ${MC2_WORKTREE_ROOT}           # for "RenderCore/RenderPassContract.h" style includes
     ${MC2_WORKTREE_ROOT}/mclib
     ${MC2_WORKTREE_ROOT}/GameOS
+    ${MC2_WORKTREE_ROOT}/GameOS/include   # XFORM-CONVENTION-HARNESS-1: platform_str.h / gameos.hpp for stuff.hpp chain
+    ${MC2_WORKTREE_ROOT}/GameOS/gameos    # XFORM-CONVENTION-HARNESS-1: utils/vec.h pulled by gameos.hpp
     ${MC2_WORKTREE_ROOT}/RenderWorld
     ${MC2_WORKTREE_ROOT}/RenderCore
     ${MC2_WORKTREE_ROOT}/HostServices
@@ -65,6 +69,13 @@ target_include_directories(mc2_tests PRIVATE
 target_compile_definitions(mc2_tests PRIVATE
     LINUX_BUILD
     _CRT_SECURE_NO_WARNINGS
+    # XFORM-CONVENTION-HARNESS-1: mclib/xform_conventions.{h,cpp} pulls the
+    # Stuff::Matrix4D header chain (stuff.hpp -> gameos.hpp), which selects its
+    # platform branch on PLATFORM_WINDOWS and disables the x86 inline-asm matrix
+    # path on USE_ASSEMBLER_CODE=0 -- both match the main build's global defines
+    # (CMakeLists.txt:62,136). Header-include only; no GL context is created.
+    PLATFORM_WINDOWS
+    USE_ASSEMBLER_CODE=0
 )
 
 if(MSVC)
