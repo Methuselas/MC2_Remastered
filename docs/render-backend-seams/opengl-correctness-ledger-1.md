@@ -131,8 +131,24 @@ Adopt-not-port. Wire existing `gl_state_guard` RAII into GPU-direct passes. One 
 ### STRATEGIC CORRECTION (2026-06-22, post family-1) — narrow to tex-unit leak closure
 Original GLSTATE-GUARD-ADOPTION premise narrowed. Existing passes mostly hard-reset state and invalidate the cache; replacing that with RAII would be semantic churn, and the broad save/restore the audit implied does not exist. The live class is **unrestored texture-unit binding leakage into later 2D/menu/HUD consumers**. Continue as tex-unit leak closure only — mentally **GLSTATE-TEXUNIT-LEAK-GUARDS-1** (family 1 stays cataloged here). Drop the "~8-site invalidate list collapses" acceptance goal; those invalidates exist *because* passes hard-reset.
 
+Work was isolated in worktree `glstate-texunit` on branch `claude/glstate-texunit-leak-guards-1` (off nifty `beec2da8`) and merged back. (nifty was being concurrently mutated by another lane — shared-tree hazard, so this lane forked its own worktree.)
+
 **Per-family criterion (recon-first; edit ONLY on a proven live leak):**
 A. list texture-unit binds · B. does the pass restore prev binding? · C. what 2D/menu/HUD runs after? · D. if a leak reaches a later consumer → wrap with `GlScopedTextureUnit` · E. if the composite/final pass overwrites it before anything observes → leave it.
 YES: GL_TEXTURE_2D unit leaks; sampler/compare-mode only if an existing guard covers it. NO: depth/cull/blend hard-resets; viewport/scissor/VAO unless an existing guard already exists & span is simple; 2D_ARRAY unless proven to leak to a later 2D consumer; any new guard type in this slice.
 
 **Revised family priority:** 2. HUD/menu/2D overlays + decals → 3. particles/water/shoreline → 4. mech/static-prop/terrain batchers → 5. shadows LAST (2D_ARRAY/depth-compare heavy; touch only on a proven leak into ordinary 2D draw). Commit only families with a real fix; no-leak family = ledger note or skip.
+
+### CLOSURE (2026-06-22) — GLSTATE-TEXUNIT-LEAK-GUARDS-1 COMPLETE (1 real fix)
+Recon swept all five families for the unrestored-GL_TEXTURE_2D-unit-leak class. Result: the composite (family 1, `6de2cbb0`) was the ONLY live leak. Everything else already covered:
+
+| family | surface | verdict |
+|--------|---------|---------|
+| 1 post-process | composite unit-0/2 | ✅ FIXED `6de2cbb0` (only live leak) |
+| 2 HUD/menu/2D + decals | drawTerrainOverlays / drawDecals / drawDecalStaticBatch | already guarded (`GLSTATE-TEXTURE-UNIT0-RESTORE-1`); HUD via `applyRenderStates` re-bind → MASKED. No fix. |
+| 3 particles/water/shoreline | gos_particle_bridge, gos_vfx_mesh_bridge, renderWaterFastPath | per-fn manual save/restore epilogues cover unit-0/1 → MASKED. No fix. |
+| 4 mech/static-prop batchers | gos_mech_batcher (units 0-4), gos_static_prop_batcher (unit 0) | flush prologue saves + epilogue restores units 0-4 + active → MASKED. No fix. |
+| 5 shadows / 2D_ARRAY | drawMineStatic, terrain shadow/normal arrays, static-prop ORM/veg buckets | GL_TEXTURE_2D_ARRAY + depth-compare samplers — outside `GlScopedTextureUnit` scope → SKIP (not this class). |
+
+Net: the tex-unit-leak class is now closed for `GL_TEXTURE_2D` across the GPU-direct path. No new guard types added. The broad "adopt RAII everywhere / collapse invalidate list" goal was correctly dropped — those passes hard-reset by design.
+Residual (NOT this slice): 2D_ARRAY-target leak class (would need an array-aware guard variant) — open only if a RenderDoc NVIDIA inspection shows a 2D_ARRAY binding bleeding into a later array consumer. Vendor-visibility of all "MASKED via applyRenderStates" verdicts is AMD-tested-only; confirm on NVIDIA if certainty needed.
