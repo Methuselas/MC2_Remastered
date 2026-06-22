@@ -608,6 +608,43 @@ def main():
         except Exception:
             _fp_expected_sha = None
 
+    # SMOKE-FINGERPRINT-FULL-COVERAGE-1: the exe fingerprint only covers the exe
+    # sha; a STALE shader or PDB in the deploy target (NaN frame -> fake green)
+    # is invisible unless --verify-preflight is passed. Surface deployed-tree
+    # drift (stale/missing shaders/PDB/exe vs .deployed_manifest.csv) on EVERY
+    # run. Advisory by default (other sessions legitimately smoke partial trees);
+    # MC2_SMOKE_REQUIRE_FRESH=1 gates it to a hard pre-mission abort. Reuses
+    # deploy_payload.staleness_report (single-source sha256 — no reimplemented
+    # hashing).
+    _fresh_require = os.environ.get("MC2_SMOKE_REQUIRE_FRESH") == "1"
+    try:
+        from scripts import deploy_payload as _dp
+        _stale = _dp.staleness_report(str(Path(args.exe).resolve().parent))
+    except Exception as _exc:  # noqa: BLE001
+        _stale = None
+        print(f"[DEPLOY_STALENESS] check skipped: {_exc}", file=sys.stderr)
+    if _stale is not None:
+        if not _stale["has_manifest"]:
+            print("[DEPLOY_STALENESS] ADVISORY: no .deployed_manifest.csv — "
+                  "cannot verify shader/PDB freshness", file=sys.stderr)
+        elif not _stale["version_ok"]:
+            print("[DEPLOY_STALENESS] ADVISORY: unrecognized manifest version",
+                  file=sys.stderr)
+        elif _stale["stale"] or _stale["missing"]:
+            print(f"[DEPLOY_STALENESS] {'FAIL' if _fresh_require else 'WARNING'}: "
+                  f"{len(_stale['stale'])} stale, {len(_stale['missing'])} missing "
+                  f"vs manifest (src_commit={_stale['src_commit']})", file=sys.stderr)
+            for r in (_stale["stale"] + _stale["missing"])[:20]:
+                tag = "STALE" if r in _stale["stale"] else "MISSING"
+                print(f"[DEPLOY_STALENESS]   {tag}: {r}", file=sys.stderr)
+            if _fresh_require:
+                print("[runner] MC2_SMOKE_REQUIRE_FRESH=1: deployed tree drifted "
+                      "from manifest — aborting before missions", file=sys.stderr)
+                sys.exit(7)
+        else:
+            print(f"[DEPLOY_STALENESS] OK: {_stale['ok']} files match manifest "
+                  f"(src_commit={_stale['src_commit']})", file=sys.stderr)
+
     # VEG-SMOKE-FLOOR-1: only active when MC2_VEGETATION_CARDS=1.
     _veg_floor_active = os.environ.get("MC2_VEGETATION_CARDS") == "1"
     _veg_floor_failures: list[str] = []  # accumulated across all missions

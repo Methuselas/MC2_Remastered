@@ -550,30 +550,54 @@ def write_manifest_only(src_root, build_dir, exe_name, pdb_name, target_dir):
     log("manifest-only COMPLETE — .deployed_manifest.csv refreshed (no copy)")
 
 
-def verify_only(target_dir, strict):
+def staleness_report(target_dir):
+    """Pure: compare a deployed tree against its .deployed_manifest.csv by
+    re-hashing every listed file (single-source sha256_file). Returns a dict —
+    NO printing, NO sys.exit — so callers other than the CLI (run_smoke) can
+    surface drift without reimplementing the hashing/compare:
+
+      {has_manifest, version_ok, ok (int), stale [rel...], missing [rel...],
+       src_commit, manifest_path}
+    """
     path = os.path.join(target_dir, MANIFEST_NAME)
+    rep = {"manifest_path": path, "has_manifest": False, "version_ok": True,
+           "ok": 0, "stale": [], "missing": [], "src_commit": None}
     if not os.path.isfile(path):
-        msg = f"no manifest at {path} — target never deployed via this tool"
+        return rep
+    rep["has_manifest"] = True
+    with open(path, newline="") as f:
+        rows = list(csv.reader(f))
+    if not rows or rows[0][:2] != ["manifest_version", MANIFEST_VERSION]:
+        rep["version_ok"] = False
+        return rep
+    for row in rows[2:]:
+        if len(row) < 3:
+            continue
+        rel, expect_hash = row[0], row[1]
+        if rep["src_commit"] is None and len(row) >= 4:
+            rep["src_commit"] = row[3]
+        p = os.path.join(target_dir, rel)
+        if not os.path.isfile(p):
+            rep["missing"].append(rel)
+        elif sha256_file(p) != expect_hash:
+            rep["stale"].append(rel)
+        else:
+            rep["ok"] += 1
+    return rep
+
+
+def verify_only(target_dir, strict):
+    rep = staleness_report(target_dir)
+    if not rep["has_manifest"]:
+        msg = (f"no manifest at {rep['manifest_path']} — target never deployed "
+               "via this tool")
         if strict:
             fail(msg)
         log(f"ADVISORY: {msg}")
         return 0
-    stale, missing, ok = [], [], 0
-    with open(path, newline="") as f:
-        rows = list(csv.reader(f))
-    if not rows or rows[0][:2] != ["manifest_version", MANIFEST_VERSION]:
-        fail(f"unrecognized manifest version in {path}")
-    for row in rows[2:]:
-        if len(row) < 3:
-            continue
-        rel, expect_hash, _ = row[0], row[1], row[2]
-        p = os.path.join(target_dir, rel)
-        if not os.path.isfile(p):
-            missing.append(rel)
-        elif sha256_file(p) != expect_hash:
-            stale.append(rel)
-        else:
-            ok += 1
+    if not rep["version_ok"]:
+        fail(f"unrecognized manifest version in {rep['manifest_path']}")
+    stale, missing, ok = rep["stale"], rep["missing"], rep["ok"]
     log(f"verify: {ok} match, {len(stale)} stale, {len(missing)} missing")
     for r in stale:
         log(f"  STALE:   {r}")
