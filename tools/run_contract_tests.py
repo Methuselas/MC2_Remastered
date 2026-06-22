@@ -40,6 +40,7 @@ REGISTERED_HARNESSES = [
     "camera_frustum_harness",
     "mech_texname_harness",
     "icon_atlas_harness",
+    "timing_math_harness",
 ]
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

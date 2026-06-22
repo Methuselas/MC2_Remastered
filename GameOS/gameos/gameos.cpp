@@ -5,6 +5,7 @@
 #include <time.h>
 #include <stdlib.h> // rand
 #include "utils/timing.h"
+#include "utils/timing_math.h"
 
 #ifndef PLATFORM_WINDOWS
 #include <sys/statvfs.h> // statvfs
@@ -144,18 +145,10 @@ double __stdcall gos_GetElapsedTime( int RealTime )
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
     double time_sec = ts.tv_sec;
-    if(g_prev_elapsed_time_value < 0.0) {
-        g_prev_elapsed_time_value = time_sec;
-        return time_sec;
-    }
-    
-    if(Environment.MaxTimeDelta > 0 && time_sec - g_prev_elapsed_time_value > Environment.MaxTimeDelta) {
-        g_prev_elapsed_time_value += Environment.MaxTimeDelta;
-        return g_prev_elapsed_time_value;
-    }
-
-    g_prev_elapsed_time_value = time_sec;
-    return time_sec;
+    // Behavior-preserving delegation to the pure clamp (GAMEOS-TIMING-MATH-HARNESS-1).
+    g_prev_elapsed_time_value = timing_math::advance_elapsed_clamp(
+        g_prev_elapsed_time_value, time_sec, Environment.MaxTimeDelta);
+    return g_prev_elapsed_time_value;
 #endif
 }
 

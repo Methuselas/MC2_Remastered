@@ -1,4 +1,5 @@
 #include "timing.h"
+#include "timing_math.h"
 
 #ifdef PLATFORM_WINDOWS
 #include<windows.h>
@@ -61,8 +62,7 @@ namespace timing {
 		assert(initialized);
 #endif
 #ifdef PLATFORM_WINDOWS
-		ticks = (ticks * 1000) / Frequency.QuadPart;
-		return ticks;
+		return timing_math::ticks_to_ms(ticks, (uint64_t)Frequency.QuadPart);
 #else
 		return ticks;
 #endif
