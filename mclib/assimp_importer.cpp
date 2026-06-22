@@ -748,7 +748,8 @@ struct ImportedAnimEntry {
     aiMatrix4x4                AS1;              // A1·S (Z-up clip-side axis · scale)
     std::vector<float>         modelDelta;       // jointCount*16 row-major (placement-free)
     unsigned                   modelDeltaFrame = 0xFFFFFFFFu;
-    float                      gpuLift = 0.0f;   // world-up (Stuff.z) foot-ground lift
+    float                      gpuLift = 0.0f;   // world-up foot-ground lift (per-frame)
+    std::vector<aiVector3D>    boneLowest;       // per-bone lowest rest VBO vertex (model space)
 };
 std::vector<ImportedAnimEntry> g_importedAnims;
 
@@ -921,17 +922,19 @@ void RegisterImportedAnim(const char* path, TG_TypeMultiShape* out, const SkelBa
             for (unsigned v = 0; v < pr.vCount && (int)(pr.vOff + v) < nv; ++v)
                 e.perVertexBone[pr.vOff + v] = (unsigned char)(bi & 0xFF);
         }
-        // Auto foot-ground lift (world-up = Stuff.y, F[7]): measure the rest VBO's
-        // lowest vertex Y (the feet). Imported GLBs are pelvis-origin, so the feet sit
-        // below model y=0; lift the placed mech up by that drop so the feet meet the
-        // terrain. Direct per-model measurement (no scale/groundDy guesswork).
+        // Per-frame foot grounding: cache each bone's lowest rest VBO vertex (model
+        // space, world-up = Stuff.y). Each frame the tick transforms these by the bone
+        // model delta and lifts the placed mech so the lowest one sits on the terrain
+        // — so the walk stride's planted foot never buries (rest-only lift would).
         {
+            e.boneLowest.assign(bake.rest.size(), aiVector3D(0, 1e30f, 0));
             const TG_TypeVertex* tv = e.shape->GetTypeVertices();
             const int ntv = e.shape->GetNumTypeVertices();
-            float minY = 0.0f;
-            for (int vi = 0; vi < ntv; ++vi)
-                if (tv[vi].position.y < minY) minY = tv[vi].position.y;
-            e.gpuLift = -minY;   // 0 if already at/above y=0
+            for (int vi = 0; vi < ntv && vi < (int)e.perVertexBone.size(); ++vi) {
+                const int b = e.perVertexBone[vi];
+                if (b >= 0 && b < (int)e.boneLowest.size() && tv[vi].position.y < e.boneLowest[b].y)
+                    e.boneLowest[b] = aiVector3D(tv[vi].position.x, tv[vi].position.y, tv[vi].position.z);
+            }
         }
         MECH_SKEL_TRACE("file='%s' 1B-GPU registered joints=%zu verts=%d axis=%d lift=%.2f (bbox y[%.2f..%.2f])",
                         path, bake.rest.size(), nv, mechImportGpuAxis(), e.gpuLift,
@@ -1043,10 +1046,17 @@ void mc2mechanim::TickImportedMechs(float dt, unsigned frameStamp, const MechMot
         // this delta, placement composed by the batcher). Stored row-major.
         if (e.gpuMode) {
             const size_t n = (globals.size() < e.invMWrest.size()) ? globals.size() : e.invMWrest.size();
+            float lowestY = 1e30f;
             for (size_t i = 0; i < n; ++i) {
                 aiMatrix4x4 D = (e.AS1 * rowMajorToAi(globals[i].m)) * e.invMWrest[i];
                 aiToRowMajor(D, &e.modelDelta[i * 16]);
+                // Track the lowest animated foot (world-up = Stuff.y) for grounding.
+                if (i < e.boneLowest.size()) {
+                    const aiVector3D p = D * e.boneLowest[i];   // model_delta · rest-lowest
+                    if (p.y < lowestY) lowestY = p.y;
+                }
             }
+            e.gpuLift = (lowestY < 1e29f) ? -lowestY : 0.0f;   // lift lowest foot to y=0
             e.modelDeltaFrame = frameStamp;
             continue;
         }
