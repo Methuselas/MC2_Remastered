@@ -39,6 +39,12 @@ try:
     from scripts.smoke_lib import fingerprint as _fingerprint
 except Exception:
     _fingerprint = None
+# SMOKE-CRASH-SILENT-EVIDENCE-1: post-verdict environment evidence capture for
+# crash_silent / heartbeat_freeze. Import-safe; never affects the verdict.
+try:
+    from scripts.smoke_lib import crash_evidence as _crash_evidence
+except Exception:
+    _crash_evidence = None
 
 DEFAULT_EXE = Path(r"A:/Games/mc2-opengl/mc2-win64-v0.4c/mc2.exe")
 ARTIFACT_ROOT = ROOT / "tests" / "smoke" / "artifacts"
@@ -1121,6 +1127,24 @@ def main():
                     print(f"[runner] {_l}", file=sys.stderr)
             except Exception as _fpe:
                 print(f"[runner] [DEPLOY_FINGERPRINT] check skipped: {_fpe}",
+                      file=sys.stderr)
+
+        # SMOKE-CRASH-SILENT-EVIDENCE-1: on an external-termination / freeze
+        # verdict, capture cheap environment evidence (exit code, event-log TDR /
+        # AppError / WER hints, minidump presence, concurrent mc2.exe, GPU/driver,
+        # phase, stdout+heartbeat tail) so the flake can be classified. Strictly
+        # post-verdict and best-effort — never touches the verdict.
+        if _crash_evidence is not None and (
+                set(result.verdict.buckets) & _crash_evidence.EVIDENCE_BUCKETS):
+            try:
+                _crash_evidence.capture(
+                    e.stem, result, Path(cfg.exe[0]), artifact_dir,
+                    enum_procs_fn=_enum_mc2_processes)
+                print(f"[runner] [CRASH_EVIDENCE] {e.stem}: wrote "
+                      f"{e.stem}.crash_evidence.json (exit={result.exit_code} "
+                      f"buckets={','.join(result.verdict.buckets)})", file=sys.stderr)
+            except Exception as _cee:
+                print(f"[runner] [CRASH_EVIDENCE] capture skipped: {_cee}",
                       file=sys.stderr)
 
         key = baselines.key(cfg.profile, e.stem, tier, duration)
