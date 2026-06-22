@@ -189,12 +189,17 @@ vec2 hash22(vec2 p) {
     p3 += dot(p3, p3.yzx + 33.33);
     return fract((p3.xx + p3.yz) * p3.zy);
 }
-vec4 sampleAntiTileArr(int layer, vec2 uv, float scale) {
+// UB2-01: explicit gradients (ddx/ddy of the base uv, computed by the caller in
+// uniform control flow) so the three samples use textureGrad instead of implicit
+// LOD — this fn is called from inside non-uniform weight branches where implicit
+// derivatives are undefined (vendor-divergent / NVIDIA). The hash offsets are
+// piecewise-constant within a tile, so the base-uv gradient is the correct LOD.
+vec4 sampleAntiTileArr(int layer, vec2 uv, float scale, vec2 ddx, vec2 ddy) {
     vec2 off1 = hash22(floor(uv / scale)) * scale;
     vec2 off2 = hash22(floor(uv / scale) + vec2(7.0, 13.0)) * scale;
-    vec4 s0 = texture(matNormalArray, vec3(uv,        float(layer)));
-    vec4 s1 = texture(matNormalArray, vec3(uv + off1, float(layer)));
-    vec4 s2 = texture(matNormalArray, vec3(uv + off2, float(layer)));
+    vec4 s0 = textureGrad(matNormalArray, vec3(uv,        float(layer)), ddx, ddy);
+    vec4 s1 = textureGrad(matNormalArray, vec3(uv + off1, float(layer)), ddx, ddy);
+    vec4 s2 = textureGrad(matNormalArray, vec3(uv + off2, float(layer)), ddx, ddy);
     vec2 f = fract(uv / scale);
     float w1 = smoothstep(0.2, 0.5, f.x) * smoothstep(0.2, 0.5, f.y);
     float w2 = smoothstep(0.2, 0.5, 1.0 - f.x) * smoothstep(0.2, 0.5, 1.0 - f.y);
@@ -202,9 +207,13 @@ vec4 sampleAntiTileArr(int layer, vec2 uv, float scale) {
 }
 float chunkSampleDisplacement(vec2 uv, vec4 w) {
     float d = 0.0;
-    if (w.x > 0.01) d += w.x * texture(matNormalArray, vec3(uv, float(MAT_LAYER_ROCK))).a;
-    if (w.y > 0.01) d += w.y * texture(matNormalArray, vec3(uv, float(MAT_LAYER_GRASS))).a;
-    if (w.w > 0.01) d += w.w * texture(matNormalArray, vec3(uv, float(MAT_LAYER_CONCRETE))).a;
+    // UB2-01: POM displacement is sampled inside a data-dependent loop (chunkParallax)
+    // with per-fragment weight branches → implicit LOD is undefined here. Use
+    // textureLod(...,0.0): the displacement heightfield is read at base level
+    // (standard for POM), valid in any control flow.
+    if (w.x > 0.01) d += w.x * textureLod(matNormalArray, vec3(uv, float(MAT_LAYER_ROCK)),     0.0).a;
+    if (w.y > 0.01) d += w.y * textureLod(matNormalArray, vec3(uv, float(MAT_LAYER_GRASS)),    0.0).a;
+    if (w.w > 0.01) d += w.w * textureLod(matNormalArray, vec3(uv, float(MAT_LAYER_CONCRETE)), 0.0).a;
     return 1.0 - d;
 }
 // Parallax occlusion (fixed faux view dir, like legacy). Bounded 16 layers.
@@ -270,6 +279,18 @@ vec3 chunkDetailNormal(vec4 w, float snowWeight, vec2 worldXY) {
         uvRock += pomOff; uvGrass += pomOff; uvDirt += pomOff; uvConcrete += pomOff;
     }
 
+    // UB2-01: screen-space gradients of the FINAL (post-POM) per-layer UVs,
+    // computed here in uniform control flow. The per-layer sampling below lives
+    // inside non-uniform `if (w.* > 0.01)` weight branches; passing these explicit
+    // gradients to textureGrad makes the LOD well-defined there (implicit LOD in
+    // non-uniform flow is UB — vendor-divergent on NVIDIA). On uniform quads these
+    // gradients equal what implicit texture() would derive, so output is unchanged.
+    vec2 ddxRock  = dFdx(uvRock),     ddyRock  = dFdy(uvRock);
+    vec2 ddxGrass = dFdx(uvGrass),    ddyGrass = dFdy(uvGrass);
+    vec2 ddxDirt  = dFdx(uvDirt),     ddyDirt  = dFdy(uvDirt);
+    vec2 ddxConc  = dFdx(uvConcrete), ddyConc  = dFdy(uvConcrete);
+    vec2 ddxSnow  = dFdx(uvSnow),     ddySnow  = dFdy(uvSnow);
+
     // Anti-tile scale per material (legacy: tiling>=4 full, <=1 off). Near only.
     float atsRock  = mix(0.0, 3.0, clamp((matTiling.x - 1.0) / 3.0, 0.0, 1.0));
     float atsGrass = mix(0.0, 3.0, clamp((matTiling.y - 1.0) / 3.0, 0.0, 1.0));
@@ -277,33 +298,36 @@ vec3 chunkDetailNormal(vec4 w, float snowWeight, vec2 worldXY) {
     float atsConc  = mix(0.0, 3.0, clamp((matTiling.w - 1.0) / 3.0, 0.0, 1.0));
     bool  antiTile = true;  // gated per-layer by fw* (near) + ats below
 
+    // UB2-01: implicit texture() → textureGrad with the uniform-scope gradients
+    // above. The `if (w.* > 0.01)` weight branches stay (perf), but sampling is
+    // now LOD-defined inside them.
     vec3 dN = vec3(0.0);
     if (w.x > 0.01) {
         vec4 s = (antiTile && atsRock > 0.01 && fwRock > 0.5)
-               ? sampleAntiTileArr(MAT_LAYER_ROCK, uvRock, atsRock)
-               : texture(matNormalArray, vec3(uvRock, float(MAT_LAYER_ROCK)));
+               ? sampleAntiTileArr(MAT_LAYER_ROCK, uvRock, atsRock, ddxRock, ddyRock)
+               : textureGrad(matNormalArray, vec3(uvRock, float(MAT_LAYER_ROCK)), ddxRock, ddyRock);
         dN += w.x * (matNormalBoost.x / 3.0) * fwRock * (s.rgb * 2.0 - 1.0);
     }
     if (w.y > 0.01) {
         vec4 s = (antiTile && atsGrass > 0.01 && fwGrass > 0.5)
-               ? sampleAntiTileArr(MAT_LAYER_GRASS, uvGrass, atsGrass)
-               : texture(matNormalArray, vec3(uvGrass, float(MAT_LAYER_GRASS)));
+               ? sampleAntiTileArr(MAT_LAYER_GRASS, uvGrass, atsGrass, ddxGrass, ddyGrass)
+               : textureGrad(matNormalArray, vec3(uvGrass, float(MAT_LAYER_GRASS)), ddxGrass, ddyGrass);
         dN += w.y * matNormalBoost.y * fwGrass * (s.rgb * 2.0 - 1.0);
     }
     if (w.z > 0.01) {
         vec4 s = (antiTile && atsDirt > 0.01 && fwDirt > 0.5)
-               ? sampleAntiTileArr(MAT_LAYER_DIRT, uvDirt, atsDirt)
-               : texture(matNormalArray, vec3(uvDirt, float(MAT_LAYER_DIRT)));
+               ? sampleAntiTileArr(MAT_LAYER_DIRT, uvDirt, atsDirt, ddxDirt, ddyDirt)
+               : textureGrad(matNormalArray, vec3(uvDirt, float(MAT_LAYER_DIRT)), ddxDirt, ddyDirt);
         dN += w.z * matNormalBoost.z * fwDirt * (s.rgb * 2.0 - 1.0);
     }
     if (w.w > 0.01) {
         vec4 s = (antiTile && atsConc > 0.01 && fwConcrete > 0.5)
-               ? sampleAntiTileArr(MAT_LAYER_CONCRETE, uvConcrete, atsConc)
-               : texture(matNormalArray, vec3(uvConcrete, float(MAT_LAYER_CONCRETE)));
+               ? sampleAntiTileArr(MAT_LAYER_CONCRETE, uvConcrete, atsConc, ddxConc, ddyConc)
+               : textureGrad(matNormalArray, vec3(uvConcrete, float(MAT_LAYER_CONCRETE)), ddxConc, ddyConc);
         dN += w.w * matNormalBoost.w * fwConcrete * (s.rgb * 2.0 - 1.0);
     }
     if (snowWeight > 0.01) dN += snowWeight * 0.9 * fwSnow *
-        (texture(matNormalArray, vec3(uvSnow,  float(MAT_LAYER_SNOW))).rgb * 2.0 - 1.0);
+        (textureGrad(matNormalArray, vec3(uvSnow,  float(MAT_LAYER_SNOW)), ddxSnow, ddySnow).rgb * 2.0 - 1.0);
     return dN;
 }
 
@@ -467,10 +491,15 @@ void main() {
             // Cement normal: apply painted-concrete normal (MAT_LAYER_PAINTED_CONC) in the
             // cement-masked region so runways get real surface relief instead of flat shading.
             // Uses the same concrete UV tiling as chunkDetailNormal() (legacy parity).
+            // UB2-01: hoist uvC + its gradient + fwidth out of the non-uniform
+            // `pureConcrete` branch (uvC depends only on v_worldPos + uniforms, so
+            // this is uniform flow), then sample via textureGrad. Implicit LOD and
+            // fwidth() inside the per-fragment branch were UB (vendor-divergent).
+            vec2  uvC  = v_worldPos.xy * (detailNormalTiling.x / MAT_WORLD_UNITS_PER_TILE) * matTiling.w;
+            vec2  ddxC = dFdx(uvC), ddyC = dFdy(uvC);
+            float fwC  = clamp(1.0 - (length(fwidth(uvC)) - 0.5) * 2.0, 0.0, 1.0);
             if (pureConcrete > 0.001) {
-                vec2 uvC   = v_worldPos.xy * (detailNormalTiling.x / MAT_WORLD_UNITS_PER_TILE) * matTiling.w;
-                float fwC  = clamp(1.0 - (length(fwidth(uvC)) - 0.5) * 2.0, 0.0, 1.0);
-                vec4 cN    = texture(matNormalArray, vec3(uvC, float(MAT_LAYER_PAINTED_CONC)));
+                vec4 cN    = textureGrad(matNormalArray, vec3(uvC, float(MAT_LAYER_PAINTED_CONC)), ddxC, ddyC);
                 dN        += pureConcrete * matNormalBoost.w * fwC * (cN.rgb * 2.0 - 1.0);
             }
             // terrainNormalsFromHeightStrength scales the macro-slope tilt (default 1.0).
