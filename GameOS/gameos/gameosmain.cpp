@@ -364,15 +364,6 @@ static void handle_key_down( SDL_Keysym* keysym ) {
                 fprintf(stderr, "HUD Scale: %.2f\n", s);
             }
             break;
-        case SDLK_6:
-            if (alt_debug) {
-                gosPostProcess* pp = getGosPostProcess();
-                if (pp) {
-                    pp->godrayEnabled_ = !pp->godrayEnabled_;
-                    fprintf(stderr, "God Rays: %s\n", pp->godrayEnabled_ ? "ON" : "OFF");
-                }
-            }
-            break;
         case SDLK_7:
             if (alt_debug) {
                 gosPostProcess* pp = getGosPostProcess();

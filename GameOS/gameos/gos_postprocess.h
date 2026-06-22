@@ -219,11 +219,6 @@ public:
     bool prevFrameHadTerrain_;  // for clear color: blue-grey in gameplay, black in menus
     void markTerrainDrawn() { sceneHasTerrain_ = true; }
 
-    // God rays
-    bool godrayEnabled_;
-    void runGodRays();
-    void setSunScreenPos(float x, float y) { sunScreenPos_[0] = x; sunScreenPos_[1] = y; }
-
     // Shoreline
     bool shorelineEnabled_;
     void runShoreline();
@@ -427,12 +422,6 @@ private:
     glsl_program* screenShadowProg_;
     float inverseViewProj_[16];
     float viewProj_[16];
-
-    // God ray
-    glsl_program* godrayProg_;
-    GLuint godrayFBO_;
-    GLuint godrayColorTex_;  // half-res
-    float sunScreenPos_[2];
 
     // Shoreline
     glsl_program* shorelineProg_;

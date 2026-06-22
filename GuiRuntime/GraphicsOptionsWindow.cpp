@@ -2088,7 +2088,6 @@ void draw() {
                 ImGui::Unindent();
             }
             ImGui::Separator();
-            ImGui::Checkbox("God Rays",   &pp->godrayEnabled_);
             ImGui::Checkbox("Shorelines", &pp->shorelineEnabled_);
         } else {
             ImGui::TextDisabled("(post-process system unavailable)");

@@ -415,10 +415,6 @@ gosPostProcess::gosPostProcess()
     , cloudOctaves_(4)
     , sceneHasTerrain_(false)
     , prevFrameHadTerrain_(false)
-    , godrayEnabled_(false)  // disabled: no visible sky at RTS zoom. RAlt+6 to test.
-    , godrayProg_(nullptr)
-    , godrayFBO_(0)
-    , godrayColorTex_(0)
     , shorelineEnabled_(true)
     , shorelineProg_(nullptr)
     , ssaoEnabled_(false)
@@ -445,8 +441,6 @@ gosPostProcess::gosPostProcess()
     memset(viewProj_, 0, sizeof(viewProj_));
     showShadowDebug_ = false;
     shadowDebugMode_ = 0;
-    sunScreenPos_[0] = 0.5f;
-    sunScreenPos_[1] = 0.5f;
 }
 
 gosPostProcess::~gosPostProcess()
@@ -610,11 +604,6 @@ void gosPostProcess::init(int w, int h)
         "shaders/postprocess.vert", "shaders/cloud.frag", kShaderPrefix);
     if (!cloudProg_ || !cloudProg_->is_valid())
         fprintf(stderr, "gosPostProcess: failed to compile cloud shader\n");
-
-    godrayProg_ = glsl_program::makeProgram("godray",
-        "shaders/postprocess.vert", "shaders/godray.frag", kShaderPrefix);
-    if (!godrayProg_ || !godrayProg_->is_valid())
-        fprintf(stderr, "gosPostProcess: failed to compile godray shader\n");
 
     shorelineProg_ = glsl_program::makeProgram("shoreline",
         "shaders/postprocess.vert", "shaders/shoreline.frag", kShaderPrefix);
@@ -822,11 +811,6 @@ void gosPostProcess::destroy()
         cloudProg_ = nullptr;
     }
 
-    if (godrayProg_) {
-        glsl_program::deleteProgram("godray");
-        godrayProg_ = nullptr;
-    }
-
     if (shorelineProg_) {
         glsl_program::deleteProgram("shoreline");
         shorelineProg_ = nullptr;
@@ -1028,29 +1012,6 @@ void gosPostProcess::createFBOs(int w, int h)
             fprintf(stderr, "gosPostProcess: SSAO FBO incomplete (0x%x)\n", aoStatus);
     }
 
-    // --- God ray FBO (half resolution) ---
-    {
-        int ghw = w / 2, ghh = h / 2;
-        if (ghw < 1) ghw = 1;
-        if (ghh < 1) ghh = 1;
-
-        glGenTextures(1, &godrayColorTex_);
-        glBindTexture(GL_TEXTURE_2D, godrayColorTex_);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, ghw, ghh, 0, GL_RGBA, GL_FLOAT, NULL);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-        glGenFramebuffers(1, &godrayFBO_);
-        glBindFramebuffer(GL_FRAMEBUFFER, godrayFBO_);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, godrayColorTex_, 0);
-
-        GLenum grStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-        if (grStatus != GL_FRAMEBUFFER_COMPLETE)
-            fprintf(stderr, "gosPostProcess: god ray FBO incomplete (0x%x)\n", grStatus);
-    }
-
     // --- WATER-REFLECTION-RESOURCE-1: quarter-res reflection target ---
     // Substrate only: allocated + registered, but NO producer renders into it
     // until Phase C, so the texture reads black. Color (RGBA16F) + depth (D24).
@@ -1226,9 +1187,6 @@ void gosPostProcess::destroyFBOs()
             bloomColorTex_[i] = 0;
         }
     }
-    if (godrayColorTex_) { glDeleteTextures(1, &godrayColorTex_); godrayColorTex_ = 0; }
-    if (godrayFBO_) { glDeleteFramebuffers(1, &godrayFBO_); godrayFBO_ = 0; }
-
     // SSAO-GTAO-LITE-MVP-1: free half-res AO target.
     if (ssaoColorTex_) { glDeleteTextures(1, &ssaoColorTex_); ssaoColorTex_ = 0; }
     if (ssaoFBO_)      { glDeleteFramebuffers(1, &ssaoFBO_);   ssaoFBO_ = 0; }
@@ -2160,78 +2118,6 @@ void gosPostProcess::runCloudShadow()
                 (unsigned)sceneFBO_);
 }
 
-void gosPostProcess::runGodRays()
-{
-    ZoneScopedN("Render.GodRays");
-    TracyGpuZone("Render.GodRays");
-
-    if (!godrayEnabled_ || !sceneHasTerrain_ || !godrayProg_ || !godrayProg_->is_valid()) {
-        return;
-    }
-    static int gr_run = 0;
-    if (gr_run++ < 3)
-        fprintf(stderr, "GodRays RUNNING: sunPos=%.2f,%.2f halfRes=%dx%d\n",
-            sunScreenPos_[0], sunScreenPos_[1], width_/2, height_/2);
-
-    int hw = width_ / 2, hh = height_ / 2;
-    if (hw < 1) hw = 1;
-    if (hh < 1) hh = 1;
-
-    // Pass 1: Render god rays into half-res FBO
-    glBindFramebuffer(GL_FRAMEBUFFER, godrayFBO_);
-    glViewport(0, 0, hw, hh);
-    glClear(GL_COLOR_BUFFER_BIT);
-
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);
-    glDepthMask(GL_FALSE);
-
-    float elapsed = SmokeMode::fixedTimestepEnabled()
-                        ? (float)SmokeMode::fixedClockSeconds()
-                        : (float)SDL_GetTicks() / 1000.0f;
-
-    godrayProg_->setInt("sceneDepthTex", 0);
-    godrayProg_->setInt("sceneColorTex", 1);
-    godrayProg_->setFloat2("sunScreenPos", sunScreenPos_);
-    godrayProg_->setFloat("time", elapsed);
-    godrayProg_->apply();
-
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, sceneDepthTex_);
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, sceneColorTex_);
-
-    glBindVertexArray(quadVAO_);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-    glBindVertexArray(0);
-
-    // Pass 2: Additive composite onto scene at full res
-    glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
-    // M1.5: single-color composite (additive); helper preserves env shape.
-    setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
-    glViewport(0, 0, width_, height_);
-
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_ONE, GL_ONE);  // Additive
-
-    // Use bloom threshold shader as pass-through (threshold = -1 passes everything)
-    bloomThresholdProg_->setInt("sceneTex", 0);
-    bloomThresholdProg_->setFloat("threshold", -1.0f);
-    bloomThresholdProg_->apply();
-
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, godrayColorTex_);
-
-    glBindVertexArray(quadVAO_);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-    glBindVertexArray(0);
-
-    glDisable(GL_BLEND);
-    glDepthMask(GL_TRUE);
-    glEnable(GL_DEPTH_TEST);
-    glActiveTexture(GL_TEXTURE0);
-}
-
 void gosPostProcess::runShoreline()
 {
     ZoneScopedN("Render.Shoreline");
@@ -2425,9 +2311,6 @@ void gosPostProcess::endScene()
 
     // Shoreline foam pass (brightens water pixels adjacent to terrain)
     runShoreline();
-
-    // God rays pass (radial light scattering, additive)
-    runGodRays();
 
     // SSAO grounding pass (multiplicative darkening into scene color). Before
     // bloom so bloom extracts from the AO-darkened scene. Default-OFF (gated).
@@ -2671,20 +2554,6 @@ void gosPostProcess::renderSkybox(float sunDirX, float sunDirY, float sunDirZ)
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
     glUseProgram(0);
-
-    // Compute sun screen position by projecting sun direction through VP matrix
-    {
-        float sunWorld[4] = { sunDirX * 100000.0f, sunDirY * 100000.0f, sunDirZ * 100000.0f, 1.0f };
-        float clip[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-        // viewProj_ is column-major
-        for (int r = 0; r < 4; r++)
-            for (int c = 0; c < 4; c++)
-                clip[r] += viewProj_[c * 4 + r] * sunWorld[c];
-        if (clip[3] > 0.0f) {
-            sunScreenPos_[0] = (clip[0] / clip[3]) * 0.5f + 0.5f;
-            sunScreenPos_[1] = (clip[1] / clip[3]) * 0.5f + 0.5f;
-        }
-    }
 }
 
 void gosPostProcess::renderHdriSkybox(const float* viewMat, const float* projMat)
@@ -4442,16 +4311,5 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
                     i, px, py, pz, cz, cw, ndc, (ndc >= 0.0f && ndc <= 1.0f) ? 1 : 0);
             }
         }
-    }
-
-    // Compute sun screen position for god rays (project sun direction through VP matrix)
-    float sunWorld[4] = { fx * 100000.0f, fy * 100000.0f, fz * 100000.0f, 1.0f };
-    float clip[4] = {0, 0, 0, 0};
-    for (int r = 0; r < 4; r++)
-        for (int c = 0; c < 4; c++)
-            clip[r] += viewProj_[c * 4 + r] * sunWorld[c];
-    if (clip[3] > 0.0f) {
-        sunScreenPos_[0] = (clip[0] / clip[3]) * 0.5f + 0.5f;
-        sunScreenPos_[1] = (clip[1] / clip[3]) * 0.5f + 0.5f;
     }
 }
