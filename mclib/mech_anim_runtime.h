@@ -40,4 +40,29 @@ void TickImportedMechs(float frameLengthSec, unsigned frameStamp, const MechMoti
 // True once at least one imported mech anim is registered (gate on + bones).
 bool AnyImportedAnim();
 
+// --- BT2018-SKEL-GPU-PALETTE-PLACEMENT-1 (default OFF, MC2_MECH_IMPORT_GPU=1) ---
+// Imported mech rides the existing GPU skinned-mech path. The VBO keeps the proven
+// assembled-REST geometry (Y-up, mechToMC2Pos). Each frame we supply a per-bone
+// MODEL DELTA D_i = (A1·S·C_i)·(A2·S·R_i)^-1 that maps the Y-up rest vertex to the
+// Z-up animated MODEL pose (A2=mechToMC2Pos matches the VBO; A1=Z-up so the engine's
+// shapeToWorld + the shader's (-x,z,y) swap place it like a stock mech). Placement
+// is composed by the batcher from the actor's live node shapeToWorld:
+//   boneT_i = shapeToWorld_root · D_i. All args plain / void* (TG_TypeMultiShape*).
+bool ImportedGpuEnabled();
+
+// If `typeMulti` is a registered imported-GPU mech: returns joint count (>0), sets
+// *perVertexBone to a *numVerts-long uint8 per-type-vertex bone index. Else 0.
+int ImportedGpuTypeInfo(const void* typeMulti, const unsigned char** perVertexBone, int* numVerts);
+
+// Current per-frame MODEL-DELTA matrices for `typeMulti`: *mats16 -> count*16 floats,
+// each a row-major 4x4 (NOT placement-composed, NOT GpuMechBone-packed — the batcher
+// composes shapeToWorld and packs). Returns count (== joint count) or 0.
+int ImportedGpuModelDelta(const void* typeMulti, const float** mats16);
+
+// Lift to add to the placed palette translation so the imported mech's feet sit on
+// the terrain (imported GLBs are pelvis-origin). 0 if none.
+float ImportedGpuLift(const void* typeMulti);
+// Which world translation component the lift targets (0/1/2 = Stuff.x/y/z).
+int ImportedGpuLiftAxis();
+
 }  // namespace mc2mechanim

@@ -17,6 +17,7 @@
 #include "../../RenderWorld/RenderWorld.h"
 #include "gos_mech_killswitch.h"
 #include "gos_static_prop_batcher.h"  // for STATIC_PROP_RING_FRAMES cross-check
+#include "../../mclib/mech_anim_runtime.h"  // 1B-GPU: imported-mech model-delta skinning
 #include "gameos.hpp"                 // gos_InvalidateRenderStateCache
 #include "utils/shader_builder.h"
 #include "gos_postprocess.h"           // getGosPostProcess()->getDynamicLightSpaceMatrix()
@@ -1115,6 +1116,16 @@ void GpuMechBatcher::registerTypeLod(const Mech3DAppearanceType* mechType, int l
         return;
     }
 
+    // BT2018-SKEL-GPU-PALETTE-PLACEMENT-1: an imported animated mech is ONE merged
+    // node but skins over its full BT skeleton. Use its joint count as numBones and
+    // its per-vertex bone index for packing. Stock mechs (importJointCount==0) are
+    // byte-unchanged.
+    const unsigned char* importBoneIdx = nullptr;
+    int importNumVerts = 0;
+    const int importJointCount =
+        mc2mechanim::ImportedGpuTypeInfo((const void*)typeMulti, &importBoneIdx, &importNumVerts);
+    const bool importGpu = (importJointCount > 0 && importJointCount <= 255);
+
     static const bool s_nodeTrace = (getenv("MC2_MECH_NODE_TRACE") != nullptr);
     if (s_nodeTrace) {
         std::fprintf(stderr, "[MECHREG v1] event=register type=%p lod=%d numBones=%d\n",
@@ -1130,7 +1141,11 @@ void GpuMechBatcher::registerTypeLod(const Mech3DAppearanceType* mechType, int l
 
     GpuMechTypeLodRecord rec{};
     rec.firstBoneIndex = 0;
-    rec.numBones       = (uint32_t)numNodes;
+    rec.numBones       = importGpu ? (uint32_t)importJointCount : (uint32_t)numNodes;
+    rec.importedGpuType = importGpu ? (const void*)typeMulti : nullptr;
+    if (importGpu)
+        std::fprintf(stderr, "[MECH_IMPORT_GPU] registerTypeLod lod=%d numBones %d->%d verts=%d\n",
+                     lod, numNodes, importJointCount, importNumVerts);
     rec.firstPacket    = (uint32_t)s_packets.size();
     rec.packetCount    = 0;
     rec.vertexCount    = 0;
@@ -1215,8 +1230,15 @@ void GpuMechBatcher::registerTypeLod(const Mech3DAppearanceType* mechType, int l
                     std::memcpy(vert.normal,   &src.normal.x,   12);
                     vert.uv[0] = cornerU[c];
                     vert.uv[1] = cornerV[c];
-                    // boneIndices: .x = nodeIdx (rigid, Slice A), .yzw = 0
-                    vert.boneIndices[0] = (uint8_t)(nodeIdx & 0xFF);
+                    // boneIndices: .x = nodeIdx (rigid, Slice A), .yzw = 0.
+                    // 1B-GPU: imported mech uses its per-vertex BT bone index (one bone
+                    // per vertex) into the imported joint palette instead of nodeIdx.
+                    uint8_t boneSel = (uint8_t)(nodeIdx & 0xFF);
+                    if (importGpu && importBoneIdx) {
+                        const uint32_t gv = tri.Vertices[c];
+                        if ((int)gv < importNumVerts) boneSel = importBoneIdx[gv];
+                    }
+                    vert.boneIndices[0] = boneSel;
                     vert.boneIndices[1] = 0;
                     vert.boneIndices[2] = 0;
                     vert.boneIndices[3] = 0;
@@ -1512,16 +1534,49 @@ bool GpuMechBatcher::submitActor(const GpuMechSubmitDesc& desc) {
     // listOfShapes[i].shapeToWorld is a Stuff::LinearMatrix4D with entries[12]
     // stored column-major: entries[(col<<2)+row], 3 explicit cols + implicit col3=[0,0,0,1].
     // Row k extraction: [entries[k], entries[4+k], entries[8+k], w] where w=1 for row3 only.
-    const int numShapes = desc.mechShape->GetNumShapes();
-    for (int i = 0; i < numShapes && i < (int)rec.numBones; ++i) {
-        const TG_ShapeRec& sr = desc.mechShape->listOfShapes[i];
-        const float* e = (const float*)sr.shapeToWorld.entries;
-        GpuMechBone bone;
-        bone.row0[0]=e[0]; bone.row0[1]=e[4]; bone.row0[2]=e[ 8]; bone.row0[3]=0.0f;
-        bone.row1[0]=e[1]; bone.row1[1]=e[5]; bone.row1[2]=e[ 9]; bone.row1[3]=0.0f;
-        bone.row2[0]=e[2]; bone.row2[1]=e[6]; bone.row2[2]=e[10]; bone.row2[3]=0.0f;
-        bone.row3[0]=e[3]; bone.row3[1]=e[7]; bone.row3[2]=e[11]; bone.row3[3]=1.0f;
-        ps.bones.push_back(bone);
+    // BT2018-SKEL-GPU-PALETTE-PLACEMENT-1: imported animated mech sources its bone
+    // palette from boneT_i = shapeToWorld_root · model_delta_i. shapeToWorld_root is
+    // the single merged node's live transform (placement, set by _HierarchyOnly);
+    // model_delta_i (mc2mechanim, refreshed each frame) maps the Y-up rest VBO vertex
+    // to the Z-up animated MODEL pose. M_sw (row-major) = entries[0..11] + (0,0,0,1).
+    if (rec.importedGpuType) {
+        const float* md = nullptr;
+        const int mdCount = mc2mechanim::ImportedGpuModelDelta(rec.importedGpuType, &md);
+        const float lift = mc2mechanim::ImportedGpuLift(rec.importedGpuType);
+        const int   liftAxis = mc2mechanim::ImportedGpuLiftAxis();   // 0/1/2 = Stuff.x/y/z
+        const int   liftIdx = 3 + 4 * (liftAxis & 3);                // F[3]/F[7]/F[11]
+        float Msw[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+        if (desc.mechShape->GetNumShapes() > 0) {
+            const float* e = (const float*)desc.mechShape->listOfShapes[0].shapeToWorld.entries;
+            for (int k = 0; k < 12; ++k) Msw[k] = e[k];
+        }
+        for (int b = 0; b < mdCount && b < (int)rec.numBones && md; ++b) {
+            const float* D = md + (size_t)b * 16;
+            float F[16];                                   // F = Msw * D (row-major)
+            for (int r = 0; r < 4; ++r)
+                for (int c = 0; c < 4; ++c)
+                    F[r*4+c] = Msw[r*4+0]*D[0*4+c] + Msw[r*4+1]*D[1*4+c]
+                             + Msw[r*4+2]*D[2*4+c] + Msw[r*4+3]*D[3*4+c];
+            F[liftIdx] += lift;                            // foot-ground lift (world-up axis tunable)
+            GpuMechBone bone;                              // pack columns of F
+            bone.row0[0]=F[0]; bone.row0[1]=F[4]; bone.row0[2]=F[ 8]; bone.row0[3]=0.0f;
+            bone.row1[0]=F[1]; bone.row1[1]=F[5]; bone.row1[2]=F[ 9]; bone.row1[3]=0.0f;
+            bone.row2[0]=F[2]; bone.row2[1]=F[6]; bone.row2[2]=F[10]; bone.row2[3]=0.0f;
+            bone.row3[0]=F[3]; bone.row3[1]=F[7]; bone.row3[2]=F[11]; bone.row3[3]=1.0f;
+            ps.bones.push_back(bone);
+        }
+    } else {
+        const int numShapes = desc.mechShape->GetNumShapes();
+        for (int i = 0; i < numShapes && i < (int)rec.numBones; ++i) {
+            const TG_ShapeRec& sr = desc.mechShape->listOfShapes[i];
+            const float* e = (const float*)sr.shapeToWorld.entries;
+            GpuMechBone bone;
+            bone.row0[0]=e[0]; bone.row0[1]=e[4]; bone.row0[2]=e[ 8]; bone.row0[3]=0.0f;
+            bone.row1[0]=e[1]; bone.row1[1]=e[5]; bone.row1[2]=e[ 9]; bone.row1[3]=0.0f;
+            bone.row2[0]=e[2]; bone.row2[1]=e[6]; bone.row2[2]=e[10]; bone.row2[3]=0.0f;
+            bone.row3[0]=e[3]; bone.row3[1]=e[7]; bone.row3[2]=e[11]; bone.row3[3]=1.0f;
+            ps.bones.push_back(bone);
+        }
     }
     while ((int)ps.bones.size() < (int)rec.numBones) {
         GpuMechBone id{};

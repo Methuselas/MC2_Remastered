@@ -741,6 +741,14 @@ struct ImportedAnimEntry {
     int                 turnStreak = 0;    // consecutive frames turning-in-place
     std::string         pendingClip;       // candidate awaiting debounce
     int                 pendingStreak = 0; // consecutive frames wanting pendingClip
+    // 1B-GPU: model-delta skinning on the GPU mech path (VBO stays assembled rest).
+    bool                       gpuMode = false;
+    std::vector<unsigned char> perVertexBone;   // per type-vertex bone index (0..N-1)
+    std::vector<aiMatrix4x4>   invMWrest;        // (A2·S·R_i)^-1 per bone (A2 = VBO axis)
+    aiMatrix4x4                AS1;              // A1·S (Z-up clip-side axis · scale)
+    std::vector<float>         modelDelta;       // jointCount*16 row-major (placement-free)
+    unsigned                   modelDeltaFrame = 0xFFFFFFFFu;
+    float                      gpuLift = 0.0f;   // world-up (Stuff.z) foot-ground lift
 };
 std::vector<ImportedAnimEntry> g_importedAnims;
 
@@ -749,6 +757,80 @@ bool mechImportAnimateEnabled() {
     static int v = [](){ const char* e = getenv("MC2_MECH_IMPORT_ANIMATE");
                          return (e && e[0] == '1') ? 1 : 0; }();
     return v != 0;
+}
+
+// 1B-GPU: route the imported mech through the GPU skinned-mech path (default OFF).
+bool mechImportGpuEnabled() {
+    static int v = [](){ const char* e = getenv("MC2_MECH_IMPORT_GPU");
+                         return (e && e[0] == '1') ? 1 : 0; }();
+    return v != 0;
+}
+// GPU palette clip-side axis case. Default 2 (== mechToMC2Pos, the VBO axis): with
+// the actor shapeToWorld_root composed by the batcher, axis 2 stands the mech upright
+// (user-confirmed in-engine). Tunable for other rigs.
+int mechImportGpuAxis() {
+    static int v = [](){ const char* e = getenv("MC2_MECH_IMPORT_GPU_AXIS");
+                         return e ? atoi(e) : 2; }();
+    return v;
+}
+// World-up (Stuff.z, the shader's up after its (-x,z,y) swap) lift applied to the
+// imported GPU palette so the mech's feet sit on the terrain. Imported GLBs are
+// pelvis-origin (not foot-origin like stock ASE), so placement grounds the pelvis
+// and the feet sink; this lifts by the model's below-origin foot drop. Override/dial
+// with MC2_MECH_IMPORT_GPU_LIFT (world units); 0 (default) uses the auto value.
+float mechImportGpuLiftOverride(bool* hasOverride) {
+    static int has = 0;
+    static float v = [&](){ const char* e = getenv("MC2_MECH_IMPORT_GPU_LIFT");
+                            if (e) { has = 1; return (float)atof(e); } return 0.0f; }();
+    if (hasOverride) *hasOverride = (has != 0);
+    return v;
+}
+// Which world translation component the lift adds to (0=Stuff.x, 1=Stuff.y, 2=Stuff.z).
+// Default 1 (Stuff.y) — tuning which axis is world-up for the placed imported mech.
+int mechImportGpuLiftAxis() {
+    static int v = [](){ const char* e = getenv("MC2_MECH_IMPORT_GPU_LIFT_AXIS");
+                         return e ? atoi(e) : 1; }();
+    return v;
+}
+
+// Apply one of the four even-parity axis cases (mirrors the anon axisMap()).
+inline void applyAxisCase(int c, const aiVector3D& v, float& X, float& Y, float& Z) {
+    switch (c) {
+        case 0: X=-v.x; Y=-v.y; Z= v.z; break;
+        case 1: X=-v.x; Y= v.z; Z= v.y; break;   // Z-up (glTF Y -> Stuff Z)
+        default:
+        case 2: X=-v.x; Y= v.y; Z=-v.z; break;   // Y-up (== mechToMC2Pos, the VBO)
+        case 3: X=-v.x; Y=-v.z; Z=-v.y; break;
+    }
+}
+// Affine A for an axis case, with groundDy applied along the mapped up-axis
+// (= A·(0,1,0)). Row-major aiMatrix4x4; A·p == axis-mapped point + ground.
+aiMatrix4x4 buildAffineAxis(int c, float groundDy) {
+    float x1,y1,z1, x2,y2,z2, x3,y3,z3, gx,gy,gz;
+    applyAxisCase(c, aiVector3D(1,0,0), x1,y1,z1);
+    applyAxisCase(c, aiVector3D(0,1,0), x2,y2,z2);
+    applyAxisCase(c, aiVector3D(0,0,1), x3,y3,z3);
+    applyAxisCase(c, aiVector3D(0,1,0), gx,gy,gz);   // up direction
+    aiMatrix4x4 A;
+    A.a1=x1; A.a2=x2; A.a3=x3; A.a4=groundDy*gx;
+    A.b1=y1; A.b2=y2; A.b3=y3; A.b4=groundDy*gy;
+    A.c1=z1; A.c2=z2; A.c3=z3; A.c4=groundDy*gz;
+    A.d1=0;  A.d2=0;  A.d3=0;  A.d4=1;
+    return A;
+}
+inline aiMatrix4x4 rowMajorToAi(const float* m) {
+    aiMatrix4x4 r;
+    r.a1=m[0];  r.a2=m[1];  r.a3=m[2];  r.a4=m[3];
+    r.b1=m[4];  r.b2=m[5];  r.b3=m[6];  r.b4=m[7];
+    r.c1=m[8];  r.c2=m[9];  r.c3=m[10]; r.c4=m[11];
+    r.d1=m[12]; r.d2=m[13]; r.d3=m[14]; r.d4=m[15];
+    return r;
+}
+inline void aiToRowMajor(const aiMatrix4x4& M, float* out16) {
+    out16[0]=M.a1; out16[1]=M.a2; out16[2]=M.a3; out16[3]=M.a4;
+    out16[4]=M.b1; out16[5]=M.b2; out16[6]=M.b3; out16[7]=M.b4;
+    out16[8]=M.c1; out16[9]=M.c2; out16[10]=M.c3; out16[11]=M.c4;
+    out16[12]=M.d1; out16[13]=M.d2; out16[14]=M.d3; out16[15]=M.d4;
 }
 
 // Clip loop length in seconds, or -1 if the scene has no such clip.
@@ -813,14 +895,94 @@ void RegisterImportedAnim(const char* path, TG_TypeMultiShape* out, const SkelBa
     e.groundDy = groundDy;
     e.durationSec = d > 1e-4f ? d : 1.0f;
     e.parts = parts;
+
+    // 1B-GPU: precompute the model-delta inputs. VBO = A2·S·R_i·p̃ (A2 = mechToMC2Pos,
+    // Y-up, axis case 2). Per-frame model delta D_i = (A1·S·C_i)·(A2·S·R_i)^-1 maps the
+    // Y-up rest vertex to the Z-up animated MODEL pose (A1 = case `gpuAxis`). The batcher
+    // then composes the live shapeToWorld_root for placement.
+    if (mechImportGpuEnabled() && !bake.rest.empty()) {
+        e.gpuMode = true;
+        aiMatrix4x4 S; S.a1 = S.b2 = S.c3 = bake.scale; S.d4 = 1.0f;
+        const aiMatrix4x4 A2 = buildAffineAxis(2, groundDy);                  // VBO axis (Y-up)
+        const aiMatrix4x4 A1 = buildAffineAxis(mechImportGpuAxis(), groundDy); // clip axis (Z-up)
+        e.AS1 = A1 * S;
+        const aiMatrix4x4 A2S = A2 * S;
+        e.invMWrest.resize(bake.rest.size());
+        for (size_t i = 0; i < bake.rest.size(); ++i) {
+            aiMatrix4x4 MW = A2S * rowMajorToAi(bake.rest[i].m);
+            MW.Inverse();
+            e.invMWrest[i] = MW;
+        }
+        e.modelDelta.assign(bake.rest.size() * 16, 0.0f);
+        const int nv = e.shape->GetNumTypeVertices();
+        e.perVertexBone.assign(nv > 0 ? nv : 0, 0);
+        for (const ImportPartRec& pr : parts) {
+            const int bi = (pr.boneIndex >= 0) ? pr.boneIndex : 0;
+            for (unsigned v = 0; v < pr.vCount && (int)(pr.vOff + v) < nv; ++v)
+                e.perVertexBone[pr.vOff + v] = (unsigned char)(bi & 0xFF);
+        }
+        // Auto foot-ground lift (world-up = Stuff.y, F[7]): measure the rest VBO's
+        // lowest vertex Y (the feet). Imported GLBs are pelvis-origin, so the feet sit
+        // below model y=0; lift the placed mech up by that drop so the feet meet the
+        // terrain. Direct per-model measurement (no scale/groundDy guesswork).
+        {
+            const TG_TypeVertex* tv = e.shape->GetTypeVertices();
+            const int ntv = e.shape->GetNumTypeVertices();
+            float minY = 0.0f;
+            for (int vi = 0; vi < ntv; ++vi)
+                if (tv[vi].position.y < minY) minY = tv[vi].position.y;
+            e.gpuLift = -minY;   // 0 if already at/above y=0
+        }
+        MECH_SKEL_TRACE("file='%s' 1B-GPU registered joints=%zu verts=%d axis=%d lift=%.2f (bbox y[%.2f..%.2f])",
+                        path, bake.rest.size(), nv, mechImportGpuAxis(), e.gpuLift,
+                        out->minBox.y, out->maxBox.y);
+    }
+
     g_importedAnims.push_back(std::move(e));
-    MECH_SKEL_TRACE("file='%s' 1B-RUNTIME registered pinned='%s' active='%s' dur=%.3fs parts=%zu",
-                    path, bake.forcedClip.c_str(), e.activeClip.c_str(), e.durationSec, parts.size());
+    MECH_SKEL_TRACE("file='%s' 1B-RUNTIME registered pinned='%s' active='%s' dur=%.3fs parts=%zu gpu=%d",
+                    path, bake.forcedClip.c_str(), e.activeClip.c_str(), e.durationSec, parts.size(),
+                    (int)mechImportGpuEnabled());
 }
 
 } // namespace
 
 bool mc2mechanim::AnyImportedAnim() { return !g_importedAnims.empty(); }
+
+bool mc2mechanim::ImportedGpuEnabled() { return mechImportGpuEnabled(); }
+
+int mc2mechanim::ImportedGpuTypeInfo(const void* typeMulti,
+                                     const unsigned char** perVertexBone, int* numVerts) {
+    for (const ImportedAnimEntry& e : g_importedAnims) {
+        if (e.gpuMode && (const void*)e.multi == typeMulti) {
+            if (perVertexBone) *perVertexBone = e.perVertexBone.empty() ? nullptr : e.perVertexBone.data();
+            if (numVerts) *numVerts = (int)e.perVertexBone.size();
+            return (int)e.invMWrest.size();   // joint count
+        }
+    }
+    return 0;
+}
+
+int mc2mechanim::ImportedGpuModelDelta(const void* typeMulti, const float** mats16) {
+    for (const ImportedAnimEntry& e : g_importedAnims) {
+        if (e.gpuMode && (const void*)e.multi == typeMulti) {
+            if (mats16) *mats16 = e.modelDelta.empty() ? nullptr : e.modelDelta.data();
+            return (int)(e.modelDelta.size() / 16);
+        }
+    }
+    return 0;
+}
+
+float mc2mechanim::ImportedGpuLift(const void* typeMulti) {
+    for (const ImportedAnimEntry& e : g_importedAnims)
+        if (e.gpuMode && (const void*)e.multi == typeMulti) {
+            bool ovr = false;
+            float v = mechImportGpuLiftOverride(&ovr);
+            return ovr ? v : e.gpuLift;
+        }
+    return 0.0f;
+}
+
+int mc2mechanim::ImportedGpuLiftAxis() { return mechImportGpuLiftAxis(); }
 
 void mc2mechanim::TickImportedMechs(float dt, unsigned frameStamp, const MechMotion& motion) {
     if (g_importedAnims.empty()) return;
@@ -875,6 +1037,20 @@ void mc2mechanim::TickImportedMechs(float dt, unsigned frameStamp, const MechMot
         std::vector<mc2skel::GpuBone> globals; double tt = 0, dd = 0;
         if (!mc2skel::EvaluateClipGpuBones(e.scene, e.activeClip, frame, e.names, globals, &tt, &dd))
             continue;
+
+        // 1B-GPU: build the per-bone MODEL delta D_i = (A1·S·C_i)·(A2·S·R_i)^-1 and
+        // STOP (no CPU vertex re-bake — the GPU path skins the assembled-rest VBO with
+        // this delta, placement composed by the batcher). Stored row-major.
+        if (e.gpuMode) {
+            const size_t n = (globals.size() < e.invMWrest.size()) ? globals.size() : e.invMWrest.size();
+            for (size_t i = 0; i < n; ++i) {
+                aiMatrix4x4 D = (e.AS1 * rowMajorToAi(globals[i].m)) * e.invMWrest[i];
+                aiToRowMajor(D, &e.modelDelta[i * 16]);
+            }
+            e.modelDeltaFrame = frameStamp;
+            continue;
+        }
+
         TG_TypeVertex* vt = e.shape->GetTypeVerticesMutable();
         if (!vt) continue;
         ResetBoundingBox(e.multi);
@@ -960,7 +1136,15 @@ long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out, bool autoG
 		// instead — a STATIC posed import (no per-frame runtime yet). Same joint-
 		// global path (mc2skel::EvaluateClipGpuBones) the harness oracle uses, so
 		// mech_bone_parity --clip/--frame proves they match. Unknown clip -> rest.
-		if (const char* fc = getenv("MC2_MECH_IMPORT_FORCE_CLIP")) {
+		const char* fc = getenv("MC2_MECH_IMPORT_FORCE_CLIP");
+		if (mechImportGpuEnabled()) {
+			// 1B-GPU: VBO must be the assembled REST pose (the runtime model delta is
+			// relative to rest); ignore FORCE_CLIP for the static bake. The clip still
+			// drives the per-frame palette at runtime.
+			mc2skel::EvaluateRestGpuBones(scene, bake.names, bake.rest);
+			if (fc) bake.forcedClip = fc;   // FORCE_CLIP still pins the runtime clip
+			MECH_SKEL_TRACE("file='%s' GPU mode -> REST bake (runtime model-delta palette)", path);
+		} else if (fc) {
 			int ff = 0;
 			if (const char* fe = getenv("MC2_MECH_IMPORT_FORCE_FRAME")) ff = atoi(fe);
 			double bt = 0, bd = 0;
@@ -980,7 +1164,7 @@ long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out, bool autoG
 		// 1B-RUNTIME / 1C: opt-in gate enables per-frame animation. With a forced
 		// clip it loops that one clip (1B); without, the clip is chosen each frame
 		// from the mech's movement (1C). Gate off → static bind/posed bake stands.
-		animateImport = mechImportAnimateEnabled();
+		animateImport = mechImportAnimateEnabled() || mechImportGpuEnabled();
 
 		// Auto-scale the assembled bind pose to MC2 mech size: the skinned GLB is
 		// authored at Unity scale (~0.15u tall); stock-equivalent mechs are ~25u.

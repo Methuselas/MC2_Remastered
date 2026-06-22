@@ -86,6 +86,10 @@ struct GpuMechTypeLodRecord {
     uint32_t packetCount;
     uint32_t vertexCount;      // total triangle-soup vertices across all nodes
     const TG_TypeShape* sourceNode0; // for late-reg logging
+    // BT2018-SKEL-GPU-PALETTE-PLACEMENT-1: non-null for an imported animated mech
+    // type (the TG_TypeMultiShape*). submitActor sources this actor's bone palette
+    // from shapeToWorld_root · mc2mechanim model-delta instead of node shapeToWorld.
+    const void* importedGpuType = nullptr;
 };
 
 // Per-node per-texture-group draw record (CPU-side only, not uploaded).
