@@ -165,6 +165,36 @@ unsigned long long spflush_ConsumeRecipeRebuildsDelta() {
 unsigned long long spflush_GetRecipeRebuildTotal() {
     return s_spflush_recipe_rebuilds_total;
 }
+
+// ---------------------------------------------------------------------------
+// [TXMMGR_BOUNDS v1] — TXMMGR-BOUNDS-HARDEN-1 exhaustion counters.
+// Declared extern in txmmgr.h so the inline pool allocators + addVertices paths
+// can bump them. atomic+relaxed because addVertices/addRenderShape run on
+// frame-jobs workers; the increment only happens on the rare overflow path.
+// A teardown dump surfaces any nonzero counter even with the trace gate off, so
+// silent pool exhaustion can no longer pass unnoticed.
+// ---------------------------------------------------------------------------
+bool g_txmmgrBoundsTrace =
+    []() { const char* v = getenv("MC2_TXMMGR_BOUNDS_TRACE"); return v && v[0] == '1'; }();
+std::atomic<unsigned long long> g_txmmgr_vertex_block_exhausted{0};
+std::atomic<unsigned long long> g_txmmgr_block_exhausted{0};
+std::atomic<unsigned long long> g_txmmgr_add_vertices_overflow_prevented{0};
+std::atomic<unsigned long long> g_txmmgr_add_shape_overflow_prevented{0};
+namespace {
+struct TxmmgrBoundsDump {
+    ~TxmmgrBoundsDump() {
+        const unsigned long long a = g_txmmgr_vertex_block_exhausted.load();
+        const unsigned long long b = g_txmmgr_block_exhausted.load();
+        const unsigned long long c = g_txmmgr_add_vertices_overflow_prevented.load();
+        const unsigned long long d = g_txmmgr_add_shape_overflow_prevented.load();
+        if (a | b | c | d)
+            fprintf(stderr, "[TXMMGR_BOUNDS v1] SUMMARY vertex_block_exhausted=%llu block_exhausted=%llu "
+                    "add_vertices_overflow_prevented=%llu add_shape_overflow_prevented=%llu\n", a, b, c, d);
+    }
+};
+TxmmgrBoundsDump s_txmmgrBoundsDump;
+} // namespace
+
 #define TEX_LC(fmt, ...) \
     do { if (s_texLifecycleTrace) { printf("[TEX_LIFECYCLE v1] " fmt "\n", ##__VA_ARGS__); fflush(stdout); } } while (0)
 
@@ -925,7 +955,7 @@ void MC_TextureManager::addRenderShape(DWORD nodeId, TG_RenderShape* render_shap
 					rsManager->getBlock(masterTextureNodes[nodeId].hardwareVertexData->numShapes);
 			}
 
-			if (shapes < (masterTextureNodes[nodeId].hardwareVertexData->shapes + masterTextureNodes[nodeId].hardwareVertexData->numShapes))
+			if (shapes && shapes < (masterTextureNodes[nodeId].hardwareVertexData->shapes + masterTextureNodes[nodeId].hardwareVertexData->numShapes))
 			{
 				*shapes = *render_shape;
 				shapes++;
@@ -954,7 +984,7 @@ void MC_TextureManager::addRenderShape(DWORD nodeId, TG_RenderShape* render_shap
 					rsManager->getBlock(masterTextureNodes[nodeId].hardwareVertexData2->numShapes);
 			}
 
-			if (shapes < (masterTextureNodes[nodeId].hardwareVertexData2->shapes + masterTextureNodes[nodeId].hardwareVertexData2->numShapes))
+			if (shapes && shapes < (masterTextureNodes[nodeId].hardwareVertexData2->shapes + masterTextureNodes[nodeId].hardwareVertexData2->numShapes))
 			{
 				*shapes = *render_shape;
 				shapes++;
@@ -981,7 +1011,7 @@ void MC_TextureManager::addRenderShape(DWORD nodeId, TG_RenderShape* render_shap
 					rsManager->getBlock(masterTextureNodes[nodeId].hardwareVertexData3->numShapes);
 			}
 
-			if (shapes < (masterTextureNodes[nodeId].hardwareVertexData3->shapes + masterTextureNodes[nodeId].hardwareVertexData3->numShapes))
+			if (shapes && shapes < (masterTextureNodes[nodeId].hardwareVertexData3->shapes + masterTextureNodes[nodeId].hardwareVertexData3->numShapes))
 			{
 				*shapes = *render_shape;
 				shapes++;
@@ -1009,11 +1039,13 @@ void MC_TextureManager::addRenderShape(DWORD nodeId, TG_RenderShape* render_shap
 					rsManager->getBlock(hardwareVertexData->numShapes);
 			}
 
-			if (shapes <= (hardwareVertexData->shapes + hardwareVertexData->numShapes))
+			if (shapes && shapes < (hardwareVertexData->shapes + hardwareVertexData->numShapes))
 			{
 				*shapes = *render_shape;
 				shapes ++;
 			}
+			else if (shapes)
+				g_txmmgr_add_shape_overflow_prevented.fetch_add(1, std::memory_order_relaxed);
 
 			hardwareVertexData->currentShape = shapes;
 		}
@@ -1028,11 +1060,13 @@ void MC_TextureManager::addRenderShape(DWORD nodeId, TG_RenderShape* render_shap
 					rsManager->getBlock(hardwareVertexData2->numShapes);
 			}
 
-			if (shapes <= (hardwareVertexData2->shapes + hardwareVertexData2->numShapes))
+			if (shapes && shapes < (hardwareVertexData2->shapes + hardwareVertexData2->numShapes))
 			{
 				*shapes = *render_shape;
 				shapes ++;
 			}
+			else if (shapes)
+				g_txmmgr_add_shape_overflow_prevented.fetch_add(1, std::memory_order_relaxed);
 
 			hardwareVertexData2->currentShape = shapes;
 		}
@@ -1047,11 +1081,13 @@ void MC_TextureManager::addRenderShape(DWORD nodeId, TG_RenderShape* render_shap
 					rsManager->getBlock(hardwareVertexData3->numShapes);
 			}
 
-			if (shapes <= (hardwareVertexData3->shapes + hardwareVertexData3->numShapes))
+			if (shapes && shapes < (hardwareVertexData3->shapes + hardwareVertexData3->numShapes))
 			{
 				*shapes = *render_shape;
 				shapes ++;
 			}
+			else if (shapes)
+				g_txmmgr_add_shape_overflow_prevented.fetch_add(1, std::memory_order_relaxed);
 
 			hardwareVertexData3->currentShape = shapes;
 		}
@@ -1066,11 +1102,13 @@ void MC_TextureManager::addRenderShape(DWORD nodeId, TG_RenderShape* render_shap
 					rsManager->getBlock(hardwareVertexData4->numShapes);
 			}
 
-			if (shapes <= (hardwareVertexData4->shapes + hardwareVertexData4->numShapes))
+			if (shapes && shapes < (hardwareVertexData4->shapes + hardwareVertexData4->numShapes))
 			{
 				*shapes = *render_shape;
 				shapes ++;
 			}
+			else if (shapes)
+				g_txmmgr_add_shape_overflow_prevented.fetch_add(1, std::memory_order_relaxed);
 
 			hardwareVertexData4->currentShape = shapes;
 		}
@@ -1085,11 +1123,13 @@ void MC_TextureManager::addRenderShape(DWORD nodeId, TG_RenderShape* render_shap
 					rsManager->getBlock(hardwareVertexData5->numShapes);
 			}
 
-			if (shapes <= (hardwareVertexData5->shapes + hardwareVertexData5->numShapes))
+			if (shapes && shapes < (hardwareVertexData5->shapes + hardwareVertexData5->numShapes))
 			{
 				*shapes = *render_shape;
 				shapes ++;
 			}
+			else if (shapes)
+				g_txmmgr_add_shape_overflow_prevented.fetch_add(1, std::memory_order_relaxed);
 
 			hardwareVertexData5->currentShape = shapes;
 		}

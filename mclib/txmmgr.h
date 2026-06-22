@@ -31,6 +31,22 @@
 #include<string.h>
 #include<gameos.hpp>
 #include<mutex>  // std::recursive_mutex — FRAME-JOBS-2 precondition (vertex node allocators)
+#include<atomic> // TXMMGR-BOUNDS-HARDEN-1 exhaustion counters
+#include<cstdio> // TXMMGR-BOUNDS-HARDEN-1 trace emit
+
+// ---------------------------------------------------------------------------
+// TXMMGR-BOUNDS-HARDEN-1 — pool/block exhaustion guards (defined in txmmgr.cpp).
+// The vertex/shape pool allocators and the untextured addVertices/addRenderShape
+// paths previously advanced their cursor past capacity and relied on a
+// release-stripped gosASSERT — i.e. a silent OOB heap write on exhaustion. They
+// now fail safe (return nullptr / skip the copy). Counters accumulate only on the
+// rare overflow path; MC2_TXMMGR_BOUNDS_TRACE=1 emits a stderr line per event.
+// ---------------------------------------------------------------------------
+extern bool g_txmmgrBoundsTrace;
+extern std::atomic<unsigned long long> g_txmmgr_vertex_block_exhausted;
+extern std::atomic<unsigned long long> g_txmmgr_block_exhausted;
+extern std::atomic<unsigned long long> g_txmmgr_add_vertices_overflow_prevented;
+extern std::atomic<unsigned long long> g_txmmgr_add_shape_overflow_prevented;
 //----------------------------------------------------------------------
 enum MC_TextureKey
 {
@@ -255,10 +271,20 @@ class gos_VERTEXManager : public HeapManager
 		
 		gos_VERTEX *getVertexBlock(long numVertices)
 		{
+			// TXMMGR-BOUNDS-HARDEN-1: check capacity BEFORE advancing the cursor.
+			// Was: advance then gosASSERT (stripped in RelWithDebInfo) → returned a
+			// pointer past the committed heap and kept incrementing → OOB write.
+			if (numVertices < 0 || currentVertex + numVertices > totalVertices)
+			{
+				g_txmmgr_vertex_block_exhausted.fetch_add(1, std::memory_order_relaxed);
+				if (g_txmmgrBoundsTrace)
+					fprintf(stderr, "[TXMMGR_BOUNDS v1] vertex_block_exhausted need=%ld cur=%ld total=%ld\n",
+							numVertices, currentVertex, totalVertices);
+				return nullptr;
+			}
 			gos_VERTEX *start = reinterpret_cast<gos_VERTEX *>(getHeapPtr());
 			start = &(start[currentVertex]);
 			currentVertex += numVertices;
-			gosASSERT(currentVertex < totalVertices);
 			return start;
 		}
 
@@ -317,10 +343,19 @@ public:
 
 	T *getBlock(uint32_t num)
 	{
+		// TXMMGR-BOUNDS-HARDEN-1: check capacity BEFORE advancing the cursor
+		// (see gos_VERTEXManager::getVertexBlock). Fail safe on exhaustion.
+		if (current + static_cast<long>(num) > count)
+		{
+			g_txmmgr_block_exhausted.fetch_add(1, std::memory_order_relaxed);
+			if (g_txmmgrBoundsTrace)
+				fprintf(stderr, "[TXMMGR_BOUNDS v1] block_exhausted need=%u cur=%ld total=%ld\n",
+						num, current, count);
+			return nullptr;
+		}
 		T *start = reinterpret_cast<T*>(getHeapPtr());
 		start = &(start[current]);
 		current += num;
-		gosASSERT(current < count);
 		return start;
 	}
 
@@ -967,7 +1002,7 @@ class MC_TextureManager
 						gvManager->getVertexBlock(masterTextureNodes[nodeId].vertexData->numVertices);
 					}
 	
-					if (vertices < (masterTextureNodes[nodeId].vertexData->vertices + masterTextureNodes[nodeId].vertexData->numVertices))
+					if (vertices && vertices < (masterTextureNodes[nodeId].vertexData->vertices + masterTextureNodes[nodeId].vertexData->numVertices))
 					{
 						#if 0
 						if ((data[0].u > 64.0f) ||
@@ -1018,7 +1053,7 @@ class MC_TextureManager
 						gvManager->getVertexBlock(masterTextureNodes[nodeId].vertexData2->numVertices);
 					}
 	
-					if (vertices < (masterTextureNodes[nodeId].vertexData2->vertices + masterTextureNodes[nodeId].vertexData2->numVertices))
+					if (vertices && vertices < (masterTextureNodes[nodeId].vertexData2->vertices + masterTextureNodes[nodeId].vertexData2->numVertices))
 					{
 						#if 0
 						if ((data[0].u > 64.0f) ||
@@ -1067,7 +1102,7 @@ class MC_TextureManager
 						gvManager->getVertexBlock(masterTextureNodes[nodeId].vertexData3->numVertices);
 					}
 	
-					if (vertices < (masterTextureNodes[nodeId].vertexData3->vertices + masterTextureNodes[nodeId].vertexData3->numVertices))
+					if (vertices && vertices < (masterTextureNodes[nodeId].vertexData3->vertices + masterTextureNodes[nodeId].vertexData3->numVertices))
 					{
 						#if 0
 						if ((data[0].u > 64.0f) ||
@@ -1117,12 +1152,14 @@ class MC_TextureManager
 						gvManager->getVertexBlock(vertexData->numVertices);
 					}
 	
-					if (vertices <= (vertexData->vertices + vertexData->numVertices))
+					if (vertices && vertices < (vertexData->vertices + vertexData->numVertices))
 					{
 						memcpy(vertices,data,sizeof(gos_VERTEX) * 3);
 						vertices += 3;
 					}
-					
+					else if (vertices)
+						g_txmmgr_add_vertices_overflow_prevented.fetch_add(1, std::memory_order_relaxed);
+
 					vertexData->currentVertex = vertices;
 				}
 				else if (vertexData2 && vertexData2->flags == flags)
@@ -1136,12 +1173,14 @@ class MC_TextureManager
 						gvManager->getVertexBlock(vertexData2->numVertices);
 					}
 	
-					if (vertices <= (vertexData2->vertices + vertexData2->numVertices))
+					if (vertices && vertices < (vertexData2->vertices + vertexData2->numVertices))
 					{
 						memcpy(vertices,data,sizeof(gos_VERTEX) * 3);
 						vertices += 3;
 					}
-					
+					else if (vertices)
+						g_txmmgr_add_vertices_overflow_prevented.fetch_add(1, std::memory_order_relaxed);
+
 					vertexData2->currentVertex = vertices;
 				}
 				else if (vertexData3 && vertexData3->flags == flags)
@@ -1155,12 +1194,14 @@ class MC_TextureManager
 						gvManager->getVertexBlock(vertexData3->numVertices);
 					}
 	
-					if (vertices <= (vertexData3->vertices + vertexData3->numVertices))
+					if (vertices && vertices < (vertexData3->vertices + vertexData3->numVertices))
 					{
 						memcpy(vertices,data,sizeof(gos_VERTEX) * 3);
 						vertices += 3;
 					}
-					
+					else if (vertices)
+						g_txmmgr_add_vertices_overflow_prevented.fetch_add(1, std::memory_order_relaxed);
+
 					vertexData3->currentVertex = vertices;
 				}
 				else if (vertexData4 && vertexData4->flags == flags)
@@ -1174,12 +1215,14 @@ class MC_TextureManager
 						gvManager->getVertexBlock(vertexData4->numVertices);
 					}
 
-					if (vertices <= (vertexData4->vertices + vertexData4->numVertices))
+					if (vertices && vertices < (vertexData4->vertices + vertexData4->numVertices))
 					{
 						memcpy(vertices,data,sizeof(gos_VERTEX) * 3);
 						vertices += 3;
 					}
-					
+					else if (vertices)
+						g_txmmgr_add_vertices_overflow_prevented.fetch_add(1, std::memory_order_relaxed);
+
 					vertexData4->currentVertex = vertices;
 				}
 				else if (vertexData5 && vertexData5->flags == flags)
@@ -1193,11 +1236,13 @@ class MC_TextureManager
 							gvManager->getVertexBlock(vertexData5->numVertices);
 					}
 
-					if (vertices <= (vertexData5->vertices + vertexData5->numVertices))
+					if (vertices && vertices < (vertexData5->vertices + vertexData5->numVertices))
 					{
 						memcpy(vertices, data, sizeof(gos_VERTEX) * 3);
 						vertices += 3;
 					}
+					else if (vertices)
+						g_txmmgr_add_vertices_overflow_prevented.fetch_add(1, std::memory_order_relaxed);
 
 					vertexData5->currentVertex = vertices;
 				}
