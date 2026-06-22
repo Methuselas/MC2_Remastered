@@ -65,6 +65,18 @@ aiMatrix4x4 sampleChannel(const aiNodeAnim* ch, double t,
     if (rotationOnly) {
         // Keep bind translation+scale (rigid bone length); use channel rotation,
         // or the bind rotation when this channel carries no rotation keys.
+        //
+        // KNOWN ISSUE (accepted, do not "fix" the way below): the WALK clip shows
+        // MILD arm/leg clipping — the arms swing contralaterally (BT gait) and cross
+        // the legs. This is clip content (likely present in the original BT2018 too).
+        // A SELECTIVE rotation-only attempt (suppress translation only on the
+        // spine/pelvis, restore it for the limbs to "widen clearance") REGRESSED:
+        // the limbs' translation channels are NOT pure bone lengths — restoring them
+        // pulled the arm joints out to the heatsink "ears" (wrong place) and sank the
+        // legs below ground. Blanket rotation-only puts every joint in the CORRECT
+        // place; the residual walk clip-through is the lesser evil. If you revisit,
+        // the fix is an ANIMATION-TIMING change (phase-shift the arms vs the legs),
+        // NOT a per-bone translation change.
         aiVector3D defScl, defPos; aiQuaternion defRot;
         nodeDefault.Decompose(defScl, defRot, defPos);
         if (ch->mNumRotationKeys == 0) rot = defRot;
