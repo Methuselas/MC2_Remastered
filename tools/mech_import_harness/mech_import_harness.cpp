@@ -362,11 +362,20 @@ int doPose(const aiScene* s, const std::string& clipName, int frame,
 // 1C — dump the exact GpuMechBone[] payload the game will upload, as JSON.
 // Uses the SAME shared functions as pose(), so a green gpu-bones == correct
 // in-game skinning.
-int doGpuBones(const aiScene* s, const std::string& clipName, int frame, const std::string& outPath) {
+int doGpuBones(const aiScene* s, const std::string& clipName, int frame, const std::string& outPath, bool rest) {
     std::vector<std::string> names; std::vector<int> parents;
     std::vector<mc2skel::GpuBone> bones; std::map<std::string, int> nameIdx;
     double t = 0, dur = 0;
-    if (!poseBones(s, clipName, frame, names, parents, bones, nameIdx, t, dur)) {
+    std::string label = clipName;
+    if (rest) {
+        // Rest pose (no clip) — the joint-globals the engine's 1A bind-pose bake
+        // consumes. Parity target for MECH-BONE-PARITY-GATE-1 (engine dumps the
+        // same via MC2_MECH_SKEL_BONE_DUMP).
+        std::vector<std::array<float, 16>> invBind;
+        mc2skel::BuildSkeleton(s, names, parents, invBind);
+        mc2skel::EvaluateRestGpuBones(s, names, bones);
+        label = "rest";
+    } else if (!poseBones(s, clipName, frame, names, parents, bones, nameIdx, t, dur)) {
         std::fprintf(stderr, "ERROR: clip '%s' not found\n", clipName.c_str()); return 1;
     }
     // Checksum: sum of all matrix elements (stable across runs; cheap parity key).
@@ -376,7 +385,7 @@ int doGpuBones(const aiScene* s, const std::string& clipName, int frame, const s
     FILE* f = outPath.empty() ? stdout : std::fopen(outPath.c_str(), "w");
     if (!f) { std::fprintf(stderr, "ERROR: cannot write %s\n", outPath.c_str()); return 1; }
     std::fprintf(f, "{\n  \"clip\": \"%s\",\n  \"frame\": %d,\n  \"timeTicks\": %.3f,\n  \"durationTicks\": %.3f,\n",
-                 clipName.c_str(), frame, t, dur);
+                 label.c_str(), rest ? 0 : frame, t, dur);
     std::fprintf(f, "  \"boneCount\": %zu,\n  \"checksum\": %.6f,\n  \"bones\": [\n", names.size(), sum);
     for (size_t i = 0; i < names.size(); ++i) {
         std::fprintf(f, "    {\"index\": %zu, \"name\": \"%s\", \"parent\": %d, \"m\": [",
@@ -399,7 +408,7 @@ void usage(const char* exe) {
         "  %s inspect    <model.glb|.fbx>\n"
         "  %s validate   <model.glb|.fbx>   (exit nonzero on any failure)\n"
         "  %s pose       <model.glb|.fbx> --clip <name> --frame <n> [--out <pose.obj>] [--compare-rest]\n"
-        "  %s gpu-bones  <model.glb|.fbx> --clip <name> --frame <n> [--out <bones.json>]\n", exe, exe, exe, exe);
+        "  %s gpu-bones  <model.glb|.fbx> (--clip <name> --frame <n> | --rest) [--out <bones.json>]\n", exe, exe, exe, exe);
 }
 
 }  // namespace
@@ -431,15 +440,16 @@ int main(int argc, char** argv) {
         return doPose(scene, clip, frame, out, cmpRest);
     }
     if (mode == "gpu-bones") {
-        std::string clip, out; int frame = 0;
+        std::string clip, out; int frame = 0; bool rest = false;
         for (int i = 3; i < argc; ++i) {
             std::string a = argv[i];
             if (a == "--clip" && i + 1 < argc) clip = argv[++i];
             else if (a == "--frame" && i + 1 < argc) frame = std::atoi(argv[++i]);
             else if (a == "--out" && i + 1 < argc) out = argv[++i];
+            else if (a == "--rest") rest = true;
         }
-        if (clip.empty()) { std::fprintf(stderr, "ERROR: gpu-bones requires --clip <name>\n"); return 2; }
-        return doGpuBones(scene, clip, frame, out);
+        if (!rest && clip.empty()) { std::fprintf(stderr, "ERROR: gpu-bones requires --clip <name> or --rest\n"); return 2; }
+        return doGpuBones(scene, clip, frame, out, rest);
     }
     usage(argv[0]);
     return 2;

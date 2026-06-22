@@ -778,6 +778,29 @@ long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out, bool autoG
 			MECH_SKEL_TRACE("file='%s' SKINNED: bones=%zu bindExtent=%.4f scale=%.2f -> targetH=%.1f",
 			                path, bake.names.size(), ext, bake.scale, targetH);
 		}
+
+		// MECH-BONE-PARITY-GATE-1: dump the engine's REST joint-global bone
+		// matrices (the same mc2skel output the bake consumes) as JSON when
+		// MC2_MECH_SKEL_BONE_DUMP=<path> is set. Same shape as the harness
+		// `gpu-bones --rest` output, so a diff script can prove the engine and the
+		// CLI oracle compute identical bones (and, in 1B, identical per-frame).
+		if (const char* dumpPath = getenv("MC2_MECH_SKEL_BONE_DUMP")) {
+			if (FILE* bf = fopen(dumpPath, "w")) {
+				double sum = 0.0;
+				for (const auto& b : bake.rest) for (int k = 0; k < 16; ++k) sum += b.m[k];
+				fprintf(bf, "{\n  \"clip\": \"rest\",\n  \"frame\": 0,\n  \"boneCount\": %zu,\n  \"checksum\": %.6f,\n  \"bones\": [\n",
+				        bake.names.size(), sum);
+				for (size_t i = 0; i < bake.names.size(); ++i) {
+					fprintf(bf, "    {\"index\": %zu, \"name\": \"%s\", \"m\": [", i, bake.names[i].c_str());
+					for (int k = 0; k < 16; ++k) fprintf(bf, "%s%.6f", k ? ", " : "", bake.rest[i].m[k]);
+					fprintf(bf, "]}%s\n", i + 1 < bake.names.size() ? "," : "");
+				}
+				fprintf(bf, "  ]\n}\n");
+				fclose(bf);
+				MECH_SKEL_TRACE("bone dump -> %s (boneCount=%zu checksum=%.6f)",
+				                dumpPath, bake.names.size(), sum);
+			}
+		}
 	}
 
 	if (bake.active) {
