@@ -1,7 +1,20 @@
 # SUBSYSTEM-HARNESS-ARC-1 — cheap contract/edge-case harness layer
 
 **Status:** HARNESS-TEMPLATE-1 + SHADER-CONTRACT-HARNESS-1 +
-RENDER-STATE-CONTRACT-HARNESS-1 shipped. OBJMGR deferred (see below).
+RENDER-STATE-CONTRACT-HARNESS-1 + DEPLOY-ASSET-CONTRACT-HARNESS-1 shipped.
+OBJMGR + FIT-PARSE deferred (see below).
+
+## Python harnesses (since DEPLOY-ASSET-CONTRACT-HARNESS-1)
+
+When a contract's **source of truth is Python** (e.g. `scripts/deploy_payload.py`
+constants), a C++ harness would be fake-green by construction (it would duplicate
+the lists). Such harnesses are written in Python against the same contract:
+- `tools/contract_harness_common/contract_harness.py` — Python mirror of the C++
+  framework (`Harness`/`Ctx`, `--list/--test/--json/--seed`, same JSON shape,
+  exit 0/1/2, stdout-owned-by-framework / diagnostics-to-stderr, `in_default`).
+- `run_contract_tests.py` has TWO explicit registries (no discovery):
+  `REGISTERED_HARNESSES` (native exes, found across build dirs) and
+  `PY_HARNESSES` (repo-relative `.py`, invoked via the current interpreter).
 **Branch / worktree:** `claude/contract-harnesses-1` @ `A:/Games/mc2-contract-harnesses`
 **Base:** nifty HEAD `4c177ea7`.
 
@@ -186,6 +199,15 @@ stays generic.
    `render_contract.cpp`. Scope subsystem: balanced begin/end, end-without-begin,
    owner-mismatch, nested-ok, missing-end-at-frame-boundary, violation-counter.
    Order-audit (CONTRACT-3): correct-order, missing-writer. 8 tests, <1s.
+6. ~~`DEPLOY-ASSET-CONTRACT-HARNESS-1`~~ — **SHIPPED (first Python harness).**
+   Imports real `scripts/deploy_payload.py` constants; asserts source-tracked
+   payload exists (SUPPORT_SCRIPTS / EDITOR_SUPPORT_TREES / GAME_COOK_TOOLS /
+   BUILDING_PBR_PAYLOAD), no stale v0.4c target, repo-relative/no-escape paths.
+   Build artifacts (FFMPEG_DLLS/launcher/exe) excluded. 6 tests, <1s.
+
+**FIT-PARSE deferred:** parser is `FitIniFile : File`; tested path is I/O-coupled
+(`File::open` needs systemHeap + FST + gosASSERT) → dragging the file subsystem /
+over-stubbing risk. See [fit-parse-harness-1-recon.md](fit-parse-harness-1-recon.md).
 
 **OBJMGR deferred:** OBJMGR-CONTRACT-HARNESS recon (off current nifty `3da176d4`)
 found the watch-list edge cases already hardened (OBJMGR-WATCHID-BOUNDS-1 +

@@ -25,8 +25,10 @@ import os
 import subprocess
 import sys
 
-# Registry of harnesses. Each entry: the executable basename (no extension).
-# Add new harnesses here as they ship (objmgr_contract_harness, ...).
+# Explicit registries (NOT discovery — explicit beats clever; never auto-scan
+# build dirs for stray/experimental harnesses).
+#
+# Native/exe harnesses: executable basename (no extension), found across build dirs.
 REGISTERED_HARNESSES = [
     "contract_smoke_harness",
     "shader_contract_harness",
@@ -35,6 +37,13 @@ REGISTERED_HARNESSES = [
 ]
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Python harnesses: repo-relative path to the .py, invoked via `py -3 <path>`.
+# Used when the contract's source of truth is Python (e.g. deploy_payload.py),
+# where a C++ harness would be fake-green by construction.
+PY_HARNESSES = [
+    "tools/deploy_asset_contract_harness/deploy_asset_contract_harness.py",
+]
 
 
 def find_exe(name, build_dirs, config):
@@ -51,10 +60,12 @@ def find_exe(name, build_dirs, config):
     return None
 
 
-def run_harness(exe):
-    """Run a harness with --json, return (ok, parsed_or_raw)."""
+def run_harness(cmd):
+    """Run a harness command (list) with --json, return (ok, parsed_or_raw).
+    Works for native exes ([exe]) and Python harnesses ([python, script])."""
     try:
-        proc = subprocess.run([exe, "--json"], capture_output=True, text=True, timeout=60)
+        proc = subprocess.run(list(cmd) + ["--json"], capture_output=True,
+                              text=True, timeout=60)
     except Exception as e:  # noqa: BLE001
         return False, {"error": str(e)}
     ok = proc.returncode == 0
@@ -92,7 +103,20 @@ def main():
             missing.append(name)
             results.append({"harness": name, "status": "MISSING"})
             continue
-        ok, parsed = run_harness(exe)
+        ok, parsed = run_harness([exe])
+        results.append({"harness": name, "status": "PASS" if ok else "FAIL",
+                        "detail": parsed})
+
+    # Python harnesses: invoked via the current interpreter, source-of-truth lives
+    # in Python (no build step, always present in a checkout).
+    for rel in PY_HARNESSES:
+        path = rel if os.path.isabs(rel) else os.path.join(REPO_ROOT, rel)
+        name = os.path.splitext(os.path.basename(path))[0]
+        if not os.path.isfile(path):
+            missing.append(name)
+            results.append({"harness": name, "status": "MISSING"})
+            continue
+        ok, parsed = run_harness([sys.executable, path])
         results.append({"harness": name, "status": "PASS" if ok else "FAIL",
                         "detail": parsed})
 
