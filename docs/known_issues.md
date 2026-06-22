@@ -4,6 +4,35 @@ To report a new issue: [GitHub Issues](https://github.com/ThranduilsRing/mc2-ope
 
 ---
 
+## Smoke harness: intermittent `crash_silent` / `heartbeat_freeze` — HOW TO HANDLE
+
+A `--tier tier1` BATCH run intermittently fails ONE mission with `crash_silent`
+(0 frames, nonzero exit) or `heartbeat_freeze_play`; the failing mission VARIES
+run-to-run and **passes on an isolated `--mission <id>` re-run**. This is
+**ENVIRONMENT-SUSPECTED, not a confirmed regression** — do NOT treat a single
+isolated-passing flake as a code failure, and do NOT add a settle-delay or engine
+change on a hypothesis.
+
+**The way to handle it (in order):**
+1. Re-run the failing mission ALONE. If it passes, the batch result stands as
+   environmental — record it and move on.
+2. To classify, read the auto-captured evidence:
+   `tests/smoke/artifacts/<ts>/<mission>.crash_evidence.json`
+   (written by `SMOKE-CRASH-SILENT-EVIDENCE-1`, `scripts/smoke_lib/crash_evidence.py`).
+   It has the real exit code, whether a Windows display-driver TDR (event 4101) /
+   AppError (1000) / WER (1001) fired, minidump presence, the concurrent mc2.exe
+   list, GPU/driver, and the stdout+heartbeat tail.
+3. Only after the evidence points somewhere, run the A/B/C concurrency matrix
+   (solo 3× / with soak / with another direct mc2.exe). A settle-delay
+   (`SMOKE-INTER-MISSION-SETTLE-1`) is justified ONLY if the SOLO case flakes.
+
+Proven: it is NOT an ordinary caught C++ crash (that buckets `crash_no_summary`),
+NOT STARTUP-INIT-ASYNC-1 (tier1 bypasses MissionSelectionScreen), NOT a
+`--kill-existing` race (never use that flag). GPU TDR is plausible, **not proven**.
+Full verdict: `docs/testing/smoke-first-launch-crash-silent-recon-1.md`.
+
+---
+
 ## Editor: generated-map path divergence (architectural debt, no active bug)
 
 - **Generated maps use a divergent terrain bring-up (`EditorData::initTerrainFromTGA` ~1561-1731) instead of the proven stock `.pak` load path (`initTerrainFromPCV`/`Terrain::load`).** Greybeard ruled META-FIX = converge them; DEFERRED as justified debt. **Blocker:** no standalone generated-`.pak` writer exists — `tools/terrain_gen/pak_exporter.py` only `patch_pak()`s Packet 0 of a same-grid template (`--template-pak`); no tacmap/MOVE writer; shipping design is deliberately `.elev.r32`+burnin → `setVertexHeight` direct apply (terrain_gen.py:285). Completing it = full PacketFile writer = a dedicated terrain-export session, not an editor session. **NO active bug:** the hardened `EditorDebugOverlay` Terrain Probe (`MC2_TERRAIN_PROBE=1` headless, or Debug Overlays panel) proved the direct-apply path correct — `file==vert==mesh` (68-399), `water=0`, recipe+colormap ready. The earlier "71% underwater" was an `if(water)` miscount of `PostcompVertex.water` dither-marker bits (0x40/0x80); renderer uses `water & 1` (quad.cpp:1008). `eye->reset()` is NOT a terrain fix (`EditorCamera::reset()` only deletes sky+compass). Full record: `memory/debt_generated_map_pak_convergence.md`.
