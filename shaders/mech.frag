@@ -233,7 +233,17 @@ void main() {
     // Slice C2/C3/D: StandardLit GGX PBR surface-detail layer.
     // Gated by u_standardLitEnabled (MC2_STANDARD_LIT_V1=1) and sun presence.
     // Replaces the Blinn-Phong c.rgb with Cook-Torrance GGX result.
-    if (u_standardLitEnabled != 0 && v_mechSunFound != 0) {
+    //
+    // GLSL-UB-AUDIT-2 / UB2-02: the texture()+dFdx/dFdy sampling below is gated
+    // ONLY by u_standardLitEnabled (a uniform → dynamically-uniform control flow,
+    // so derivatives/implicit-LOD are well-defined). It must NOT be gated by
+    // v_mechSunFound, which is a `flat in int` that differs between triangles —
+    // a 2x2 quad straddling a triangle edge would diverge and the texture LOD /
+    // derivatives become undefined (vendor-divergent: bites NVIDIA). The
+    // sun-dependent APPLICATION (N_gbuf, lighting, c) stays under the inner
+    // v_mechSunFound guard, so output is byte-identical: when v_mechSunFound==0
+    // the samples are computed but discarded.
+    if (u_standardLitEnabled != 0) {
         vec3 N_vtx = normalize(v_normal);
 
         // PBR-LAYERED-1: sample both material layers via triplanar or UV.
@@ -266,6 +276,12 @@ void main() {
         float roughness = clamp(mix(ormPaint.g, orm61.g, wornMask), u_pbrRoughnessMin, u_pbrRoughnessMax);
         float metallic  = mix(ormPaint.b, orm61.b, wornMask) * u_pbrMetallicInfluence;
         vec3  N_pbr     = normalize(mix(N_paint, N_61, wornMask));
+
+        // UB2-02: sun-dependent application only. All texture sampling +
+        // derivatives above this point ran in uniform control flow; nothing
+        // below samples a texture with implicit LOD, so this inner branch on the
+        // flat varying v_mechSunFound is safe.
+        if (v_mechSunFound != 0) {
         N_gbuf = N_pbr;
 
         vec3 V = normalize(u_cameraWorldPos.xyz - v_worldPos);
@@ -313,6 +329,7 @@ void main() {
         else if (u_debugMode == 13) c = vec4(ormPaint.ggg, 1.0);          // paint roughness
         else if (u_debugMode == 14) c = vec4(N_paint * 0.5 + 0.5, 1.0);  // paint normal
         else if (u_debugMode == 15) c = vec4(wornMask, wornMask, wornMask, 1.0); // wear mask
+        }  // UB2-02 inner guard: if (v_mechSunFound != 0)
     }
 #endif  // MC2_USE_VIEW_UNIFORMS
 
