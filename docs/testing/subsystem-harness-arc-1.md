@@ -1,8 +1,10 @@
 # SUBSYSTEM-HARNESS-ARC-1 — cheap contract/edge-case harness layer
 
-**Status:** HARNESS-TEMPLATE-1 + SHADER-CONTRACT-HARNESS-1 +
-RENDER-STATE-CONTRACT-HARNESS-1 + DEPLOY-ASSET-CONTRACT-HARNESS-1 shipped.
-OBJMGR + FIT-PARSE deferred (see below).
+**Status:** SHIPPED — HARNESS-TEMPLATE-1, SHADER-CONTRACT-HARNESS-1,
+RENDER-STATE-CONTRACT-HARNESS-1, DEPLOY-ASSET-CONTRACT-HARNESS-1 (first Python),
+OBJMGR-CONTRACT-HARNESS-1 (parallel lane), IBL-REGISTRY-CONTRACT-HARNESS-1.
+DEFERRED — FIT-PARSE (file subsystem), STATIC-PROP (classification entangled,
+extraction-gated like objmgr was). Six harnesses; full runner green.
 
 ## Python harnesses (since DEPLOY-ASSET-CONTRACT-HARNESS-1)
 
@@ -204,6 +206,23 @@ stays generic.
    payload exists (SUPPORT_SCRIPTS / EDITOR_SUPPORT_TREES / GAME_COOK_TOOLS /
    BUILDING_PBR_PAYLOAD), no stale v0.4c target, repo-relative/no-escape paths.
    Build artifacts (FFMPEG_DLLS/launcher/exe) excluded. 6 tests, <1s.
+7. ~~`OBJMGR-CONTRACT-HARNESS-1`~~ — **SHIPPED via a parallel lane** (`8f670a0a`,
+   standalone watch-policy contract harness). The deferral was lifted when that
+   lane did the helper extraction.
+8. ~~`IBL-REGISTRY-CONTRACT-HARNESS-1`~~ — **SHIPPED.** Cheapest tier: links only
+   the header-only constexpr registries (`RenderCore/IblHdriRegistry.h` +
+   `IblShRegistry.h`), no .cpp/GL/3rdparty. Integrity: index0==default, every
+   sky-map name resolves (typo guard), all sky 1-21 mapped, out-of-range→default,
+   no duplicate set names, SH names resolve. Asset existence SEPARATED: default
+   `hdri_assets_inventory` (informational, never fails) + `hdri_assets_exist_strict`
+   (via `--test` or `MC2_IBL_ASSET_STRICT=1`). 8 default tests, <1s.
+   **STATIC-PROP deferred:** classification predicates (stableLightSkipEligible,
+   proxy/registration, currentness guards) are methods on the appearance/registry
+   classes — same entanglement class as objmgr; extraction-gated. See
+   [lighting-staticprop-harness-recon-1.md](lighting-staticprop-harness-recon-1.md).
+   **Open (separate from this harness):** 7/8 registry HDRIs are not git-tracked
+   — see IBL-HDRI-ASSET-PACK-RECON-1 (deploy-only vs gap; the strict test catches
+   drift without blocking clean checkouts).
 
 **FIT-PARSE deferred:** parser is `FitIniFile : File`; tested path is I/O-coupled
 (`File::open` needs systemHeap + FST + gosASSERT) → dragging the file subsystem /
