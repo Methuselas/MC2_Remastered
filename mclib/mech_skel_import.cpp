@@ -73,30 +73,12 @@ aiMatrix4x4 sampleChannel(const aiNodeAnim* ch, double t,
     return aiMatrix4x4(scl, rot, pos);
 }
 
-// MECH-WALK-LIMB-CLIP-FIX-1 — SELECTIVE rotation-only. The UB/LB lift came ONLY from
-// the spine/pelvis/root chain absorbing translation a rigid ball-joint waist can't.
-// The limb bones' translation channels, by contrast, are STATIC and encode the clip's
-// (rescaled) BONE LENGTHS — blanket rotation-only swaps those for the shorter bind
-// lengths, pulling the arms inboard/down and ~halving arm↔leg clearance (0.09→0.05) so
-// the walk clips. So suppress translation ONLY on the waist/root chain; keep the limbs'
-// full translation (restores correct limb lengths). Limb translation has ~zero animated
-// span, so this cannot reintroduce any per-frame waist lift.
-inline bool isWaistChainNode(const char* name) {
-    std::string s(name);
-    return s.find("Pelvis") != std::string::npos ||
-           s.find("Pitch")  != std::string::npos ||
-           s.find("Spine")  != std::string::npos ||
-           s.find("Root")   != std::string::npos;
-}
-
 void computeGlobals(const aiNode* n, const aiMatrix4x4& parent,
                     const std::map<std::string, const aiNodeAnim*>& chans, double t,
                     bool rotationOnly, std::map<std::string, aiMatrix4x4>& globals) {
     auto it = chans.find(n->mName.C_Str());
-    // Rotation-only suppression applies to the waist/root chain only (the UB/LB source).
-    const bool ro = rotationOnly && isWaistChainNode(n->mName.C_Str());
     aiMatrix4x4 local = (it != chans.end())
-                            ? sampleChannel(it->second, t, n->mTransformation, ro)
+                            ? sampleChannel(it->second, t, n->mTransformation, rotationOnly)
                             : n->mTransformation;
     aiMatrix4x4 global = parent * local;
     globals[n->mName.C_Str()] = global;
