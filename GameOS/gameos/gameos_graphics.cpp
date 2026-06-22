@@ -3434,6 +3434,12 @@ void gosRenderer::renderWaterFastPath(
         glBindVertexArray((GLuint)savedVAO);
     }
 
+    // WATER-THINRING-FENCE-1: fence the thin-record ring slot just drawn (both the
+    // armed-MDI and legacy-CPU branches reach here after their draw). The two
+    // early-returns above (recipeBuf==0, legacy thinCount==0) intentionally skip
+    // this — no draw consumed the slot in those cases.
+    WaterStream::EndThinRingFrameFence();
+
     // RENDER_STATES v1: water fast path bound textures directly on unit 0; the
     // applyRenderStates cache is now stale. Force a full re-apply on next call.
     invalidateRenderStateCache();

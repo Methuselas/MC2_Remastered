@@ -73,6 +73,53 @@ uint32_t g_thinSlot = 0;
 uint32_t g_thinSlotCapacity = 0;
 std::vector<WaterThinRecord> g_thinStaging;
 
+// WATER-THINRING-FENCE-1: per-slot GPU fences. A ring slot must not be
+// overwritten while a draw from kThinRingSlots frames ago is still reading it.
+// The existing glMemoryBarrier(SHADER_STORAGE) protects write-visibility within
+// a frame but NOT cross-frame CPU/GPU lifetime reuse — that race is what these
+// fences close. Mirrors the solid thin-ring fence lifecycle in
+// gos_terrain_indirect.cpp (wait-before-reuse at slot advance; create-after-draw
+// in the bridge). Trace gate: MC2_WATER_THINRING_TRACE=1.
+GLsync   g_thinFences[kThinRingSlots] = { nullptr, nullptr, nullptr };
+bool     g_thinRingTraceEnabled = false;
+bool     g_thinRingTraceQueried = false;
+uint32_t g_thinTraceSlot       = 0;   // captured at wait site, emitted at fence create
+uint32_t g_thinTraceBytes      = 0;
+int      g_thinTraceWaited     = 0;
+unsigned g_thinTraceWaitResult = 0;
+uint64_t g_thinTraceFrame      = 0;
+
+bool ThinRingTraceOn() {
+    if (!g_thinRingTraceQueried) {
+        g_thinRingTraceQueried = true;
+        const char* v = getenv("MC2_WATER_THINRING_TRACE");
+        g_thinRingTraceEnabled = (v && v[0] == '1');
+    }
+    return g_thinRingTraceEnabled;
+}
+
+// Call right AFTER advancing g_thinSlot and BEFORE writing the slot. Waits on
+// the fence guarding the slot about to be reused, then clears it. slotBytes is
+// for trace only. No-op (apart from trace bookkeeping) when no fence is present
+// (warmup / first kThinRingSlots frames).
+void WaitAndClearThinFenceForCurrentSlot(uint32_t slotBytes) {
+    int      waited = 0;
+    unsigned result = 0;
+    if (g_thinFences[g_thinSlot]) {
+        result = (unsigned)glClientWaitSync(g_thinFences[g_thinSlot],
+                                            GL_SYNC_FLUSH_COMMANDS_BIT, 10000000u /* 10ms */);
+        glDeleteSync(g_thinFences[g_thinSlot]);
+        g_thinFences[g_thinSlot] = nullptr;
+        waited = 1;
+    }
+    if (ThinRingTraceOn()) {
+        g_thinTraceSlot       = g_thinSlot;
+        g_thinTraceBytes      = slotBytes;
+        g_thinTraceWaited     = waited;
+        g_thinTraceWaitResult = result;
+    }
+}
+
 // Narrow-walk candidate vector. Populated by AppendNarrowCandidate during
 // the per-frame setupTextures loop; consumed by UploadAndBindThinRecords.
 // Default-on; env-gated `MC2_WATER_UPLOAD_NARROW=0` falls back to full walk.
@@ -677,6 +724,7 @@ uint32_t UploadAndBindThinRecords() {
     }
 
     g_thinSlot = (g_thinSlot + 1) % kThinRingSlots;
+    WaitAndClearThinFenceForCurrentSlot((uint32_t)slotBytes);   // WATER-THINRING-FENCE-1
     const GLintptr slotOffset = (GLintptr)(g_thinSlot * g_thinSlotCapacity);
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinBuffer);
@@ -1411,6 +1459,7 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
     // Must happen AFTER the windowCount==0 early-return so we don't burn a slot
     // on frames where no water quads are visible (stale-data draw on the next frame).
     g_thinSlot = (g_thinSlot + 1) % kThinRingSlots;
+    WaitAndClearThinFenceForCurrentSlot((uint32_t)thinSlotBytes);   // WATER-THINRING-FENCE-1
     const GLintptr thinSlotOffset = (GLintptr)(g_thinSlot * g_thinSlotCapacity);
 
     // Zero the bucket header (reset visibleCount to 0) before each dispatch.
@@ -2096,6 +2145,28 @@ GLuint GetIndirectCmdBuffer() {
     return g_waterIndirectCmdBuffer;
 }
 
+// WATER-THINRING-FENCE-1: create the GPU fence guarding the thin-record ring
+// slot that was produced + drawn this frame. Called once per frame from the
+// bridge (renderWaterFastPath) AFTER the water draw is submitted, mirroring the
+// solid path's post-draw glFenceSync. The next time this slot is reused (after
+// kThinRingSlots frames), WaitAndClearThinFenceForCurrentSlot() blocks on this
+// fence so the CPU/compute write cannot stomp a slot the GPU is still reading.
+void EndThinRingFrameFence() {
+    if (g_thinBuffer == 0) return;   // no ring allocated yet → nothing to fence
+    if (g_thinFences[g_thinSlot]) {
+        glDeleteSync(g_thinFences[g_thinSlot]);
+    }
+    g_thinFences[g_thinSlot] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    if (ThinRingTraceOn()) {
+        fprintf(stderr,
+            "WATER_THINRING: frame=%llu slot=%u bytes=%u waited=%d wait_result=0x%x fence_created=1\n",
+            (unsigned long long)g_thinTraceFrame, g_thinTraceSlot, g_thinTraceBytes,
+            g_thinTraceWaited, g_thinTraceWaitResult);
+        fflush(stderr);
+        ++g_thinTraceFrame;
+    }
+}
+
 // ----------------------------------------------------------------------------
 
 void ReleaseGlResources() {
@@ -2106,6 +2177,10 @@ void ReleaseGlResources() {
     if (g_thinBuffer != 0) {
         glDeleteBuffers(1, &g_thinBuffer);
         g_thinBuffer = 0;
+    }
+    // WATER-THINRING-FENCE-1: drop any outstanding ring fences with the buffer.
+    for (uint32_t i = 0; i < kThinRingSlots; ++i) {
+        if (g_thinFences[i]) { glDeleteSync(g_thinFences[i]); g_thinFences[i] = nullptr; }
     }
     g_recipeBufferUploadedCount = 0;
     g_thinSlotCapacity = 0;

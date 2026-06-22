@@ -172,6 +172,12 @@ bool IsGpuDrivenArmed();
 // Valid only when IsGpuDrivenArmed() is true.
 GLuint GetIndirectCmdBuffer();
 
+// WATER-THINRING-FENCE-1: fence the thin-record ring slot drawn this frame.
+// Call once per frame from the bridge AFTER the water draw is submitted (mirrors
+// the solid thin-ring post-draw fence). Closes the cross-frame CPU/GPU slot-reuse
+// race the barrier-only sync did not cover. Trace: MC2_WATER_THINRING_TRACE=1.
+void EndThinRingFrameFence();
+
 // When MC2_GPU_DRIVEN_PARITY=1: runs both CPU and GPU thin-record paths,
 // reads both back from SSBOs, and byte-compares by recipeIdx. Emits
 // [GPU_DRIVEN_WATER_PARITY v1] summary every 600 frames.

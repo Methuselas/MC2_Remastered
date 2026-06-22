@@ -667,6 +667,9 @@ def main():
                             "MC2_RING_TRACE",
                             # Probe 7: force glFinish() between compute and draw
                             "MC2_RING_FORCE_FINISH",
+                            # WATER-THINRING-FENCE-1: per-slot GLsync fence trace
+                            # on the water thin-record ring (diagnostics-only).
+                            "MC2_WATER_THINRING_TRACE",
                             # GPU object batcher gate (bisect partner for terrain bug)
                             "MC2_GPU_OBJECTS",
                             # Shadow-lane gated features (smoke coverage for the
