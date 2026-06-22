@@ -152,3 +152,16 @@ Recon swept all five families for the unrestored-GL_TEXTURE_2D-unit-leak class. 
 
 Net: the tex-unit-leak class is now closed for `GL_TEXTURE_2D` across the GPU-direct path. No new guard types added. The broad "adopt RAII everywhere / collapse invalidate list" goal was correctly dropped — those passes hard-reset by design.
 Residual (NOT this slice): 2D_ARRAY-target leak class (would need an array-aware guard variant) — open only if a RenderDoc NVIDIA inspection shows a 2D_ARRAY binding bleeding into a later array consumer. Vendor-visibility of all "MASKED via applyRenderStates" verdicts is AMD-tested-only; confirm on NVIDIA if certainty needed.
+
+### RENDER-BACKEND-SEAMS arc — status snapshot (2026-06-22)
+Strictness/visibility tooling banked; no immediate runtime correctness item left.
+
+| item | status |
+|------|--------|
+| VULKAN-READINESS-AUDIT-1 | ✅ banked (verdict: renderer Vulkan-shaped; gap = strictness BUILT-not-ADOPTED) |
+| GLSTATE-TEXUNIT-LEAK-GUARDS-1 (post-fx composite leak) | ✅ FIXED `6de2cbb0` (only live tex-unit leak; menu-bleed symptom gone) |
+| GPU-BINDING-SLOTS-LOCKSTEP-1 (binding-slot lockstep + occupancy checker) | ✅ SHIPPED `00dc79dd` — replaced the disproven flat-enum idea; CI checker + occupancy doc |
+| GLSTATE-SSBO-SLOT14-PARTICLE-UNBIND-1 | ✅ **PROVEN_COVERED / MOOT** — investigated, no bug: D-01 symmetric unbind already in `gos_particle_bridge.cpp` (499→537, 753→791, 1045→1150). NOT deferred. |
+| GpuBuffer/GpuRingBuffer wrapper adoption (design §4) | ⏸ architectural adoption, NOT a correctness patch — do NOT start by momentum; recon-only GPUBUFFER-WRAPPER-ADOPTION-PLAN-1 if revived |
+
+No open runtime correctness item in this arc. Remaining work is the (deferred, gated, per-subsystem) wrapper adoption — start only on explicit direction.
