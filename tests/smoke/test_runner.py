@@ -29,3 +29,103 @@ def test_run_fake_timeout(tmp_path):
     result = run_one(cfg)
     assert result.killed_by_timeout
     assert "timeout" in result.verdict.buckets
+
+
+# ---------------------------------------------------------------------------
+# SMOKE-SYNTHETIC-FIXTURES-ALL-BUCKETS — end-to-end bucket coverage.
+#
+# Each case spawns fake_mc2_fault.py (one fault per bucket) through the REAL
+# run_one() path so the full spawn -> capture -> parse_log -> evaluate chain is
+# exercised, not just the gate logic on a hand-built LogSummary. Every fault is
+# engineered to isolate exactly one bucket; we assert that bucket is present,
+# the run did not pass, and no foreign bucket leaked in.
+# ---------------------------------------------------------------------------
+
+def _run_fault(fault, *, load_to=60, play_to=3):
+    cfg = RunConfig(
+        exe=[sys.executable, str(FIX / "fake_mc2_fault.py"), "--fault", fault],
+        profile="stock", stem="mc2_01", duration=1,
+        heartbeat_timeout_load_s=load_to, heartbeat_timeout_play_s=play_to,
+        grace_s=5, env_extra={},
+    )
+    return run_one(cfg)
+
+
+def test_run_fault_instrumentation_missing():
+    r = _run_fault("instrumentation_missing")
+    assert r.verdict.buckets == ["instrumentation_missing"]
+    assert not r.verdict.passed
+
+
+def test_run_fault_crash_silent():
+    r = _run_fault("crash_silent")
+    assert r.exit_code != 0
+    assert r.verdict.buckets == ["crash_silent"]
+    assert not r.verdict.passed
+
+
+def test_run_fault_crash_no_summary():
+    r = _run_fault("crash_no_summary")
+    assert r.summary.crash_handler_hit
+    assert r.verdict.buckets == ["crash_no_summary"]
+    assert not r.verdict.passed
+
+
+def test_run_fault_engine_reported_fail():
+    r = _run_fault("engine_reported_fail")
+    assert r.summary.smoke_summary_result == "fail"
+    assert r.verdict.buckets == ["engine_reported_fail"]
+    assert not r.verdict.passed
+
+
+def test_run_fault_gl_error():
+    r = _run_fault("gl_error")
+    assert r.summary.gl_errors == 1
+    assert r.verdict.buckets == ["gl_error"]
+    assert not r.verdict.passed
+
+
+def test_run_fault_pool_null():
+    r = _run_fault("pool_null")
+    assert r.summary.pool_nulls == 1
+    assert r.verdict.buckets == ["pool_null"]
+    assert not r.verdict.passed
+
+
+def test_run_fault_asset_oob():
+    r = _run_fault("asset_oob")
+    assert r.summary.asset_oob == 1
+    assert r.verdict.buckets == ["asset_oob"]
+    assert not r.verdict.passed
+
+
+def test_run_fault_shader_error():
+    r = _run_fault("shader_error")
+    assert r.summary.shader_errors >= 1
+    assert r.verdict.buckets == ["shader_error"]
+    assert not r.verdict.passed
+
+
+def test_run_fault_missing_file():
+    r = _run_fault("missing_file")
+    assert r.summary.missing_files >= 1
+    assert r.verdict.buckets == ["missing_file"]
+    assert not r.verdict.passed
+
+
+def test_run_fault_heartbeat_freeze_load():
+    # Load heartbeat seen, mission_ready never reached. With load timeout 0 the
+    # positive gap to end-of-run trips the freeze deterministically.
+    r = _run_fault("heartbeat_freeze_load", load_to=0)
+    assert r.summary.mission_ready_ms is None
+    assert r.summary.heartbeats_load > 0
+    assert r.verdict.buckets == ["heartbeat_freeze_load"]
+    assert not r.verdict.passed
+
+
+def test_run_fault_heartbeat_freeze_play():
+    # mission_ready reached but no play-phase heartbeat at all -> definite freeze.
+    r = _run_fault("heartbeat_freeze_play")
+    assert r.summary.mission_ready_ms is not None
+    assert r.verdict.buckets == ["heartbeat_freeze_play"]
+    assert not r.verdict.passed
