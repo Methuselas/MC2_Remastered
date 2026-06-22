@@ -2,9 +2,14 @@
 
 **Status:** SHIPPED — HARNESS-TEMPLATE-1, SHADER-CONTRACT-HARNESS-1,
 RENDER-STATE-CONTRACT-HARNESS-1, DEPLOY-ASSET-CONTRACT-HARNESS-1 (first Python),
-OBJMGR-CONTRACT-HARNESS-1 (parallel lane), IBL-REGISTRY-CONTRACT-HARNESS-1.
+OBJMGR-CONTRACT-HARNESS-1 (parallel lane), IBL-REGISTRY-CONTRACT-HARNESS-1
+(+external-HDRI manifest), ICON-ATLAS-HARNESS-1 (+8-site row-count bug fix),
+RENDER-PASS-TABLE-HARNESS-1 (static table invariants over RenderPassContract.h:
+id parity, dup ids, reads/writes range, no mid-array terminator, static
+producer/consumer closure — header self-flags field-value staleness).
 DEFERRED — FIT-PARSE (file subsystem), STATIC-PROP (classification entangled,
-extraction-gated like objmgr was). Six harnesses; full runner green.
+extraction-gated like objmgr was). Next targets ranked in
+[harness-target-sweep-2.md](harness-target-sweep-2.md). Nine harnesses; runner green.
 
 ## Python harnesses (since DEPLOY-ASSET-CONTRACT-HARNESS-1)
 
