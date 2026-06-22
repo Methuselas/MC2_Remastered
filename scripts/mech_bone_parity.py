@@ -39,6 +39,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--glb", default=str(DEF_GLB))
     ap.add_argument("--eps", type=float, default=1e-4)
+    ap.add_argument("--clip", default="", help="forced clip name (default: rest pose)")
+    ap.add_argument("--frame", type=int, default=0, help="clip frame (with --clip)")
     ap.add_argument("--harness", default=str(DEF_HARNESS))
     ap.add_argument("--tgdump", default=str(DEF_TGDUMP))
     args = ap.parse_args()
@@ -51,12 +53,25 @@ def main():
     oracle_json = tmp / "oracle.json"
     engine_json = tmp / "engine.json"
 
-    # Oracle: harness gpu-bones --rest.
-    subprocess.run([args.harness, "gpu-bones", args.glb, "--rest", "--out", str(oracle_json)],
-                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    # Engine: tg_import_dump runs the real import bake; MC2_MECH_SKEL_BONE_DUMP writes bones.
+    posed = bool(args.clip)
+    label = f"{args.clip}@{args.frame}" if posed else "rest"
+    print(f"[bone_parity] pose = {label}")
+
+    # Oracle: harness gpu-bones (--rest | --clip/--frame).
+    oracle_cmd = [args.harness, "gpu-bones", args.glb, "--out", str(oracle_json)]
+    oracle_cmd += (["--clip", args.clip, "--frame", str(args.frame)] if posed else ["--rest"])
+    subprocess.run(oracle_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    # Engine: tg_import_dump runs the real import bake; MC2_MECH_SKEL_BONE_DUMP writes
+    # bones. MC2_MECH_IMPORT_FORCE_CLIP/_FRAME pose the bake to the same clip frame.
     env = os.environ.copy()
     env["MC2_MECH_SKEL_BONE_DUMP"] = str(engine_json)
+    if posed:
+        env["MC2_MECH_IMPORT_FORCE_CLIP"] = args.clip
+        env["MC2_MECH_IMPORT_FORCE_FRAME"] = str(args.frame)
+    else:
+        env.pop("MC2_MECH_IMPORT_FORCE_CLIP", None)
+        env.pop("MC2_MECH_IMPORT_FORCE_FRAME", None)
     subprocess.run([args.tgdump, args.glb], check=True, env=env,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 

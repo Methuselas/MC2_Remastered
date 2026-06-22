@@ -125,6 +125,8 @@ struct SkelBake {
     std::vector<mc2skel::GpuBone> rest;       // joint-global rest matrices, parallel to names
     std::map<std::string, int> nameIdx;
     float scale = 1.0f;                        // auto-scale bind pose to MC2 size
+    std::string forcedClip;                    // 1B: posed-clip bake (empty = rest)
+    int forcedFrame = 0;
     // counters (trace)
     int importedParts = 0, partsSingleBone = 0, partsOffsetBaked = 0, droppedParts = 0;
 };
@@ -746,7 +748,27 @@ long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out, bool autoG
 		if (scene->mMeshes[m]->mNumBones > 0) { sceneHasBones = true; break; }
 	if (sceneHasBones) {
 		mc2skel::BuildSkeleton(scene, bake.names, bake.parents, bake.invBind);
-		mc2skel::EvaluateRestGpuBones(scene, bake.names, bake.rest);
+		// BT2018-SKEL-ENGINE-1B: by default bake the REST (bind) pose. If
+		// MC2_MECH_IMPORT_FORCE_CLIP=<clipName> is set (+ optional
+		// MC2_MECH_IMPORT_FORCE_FRAME=<n>, default 0), bake that clip frame's pose
+		// instead — a STATIC posed import (no per-frame runtime yet). Same joint-
+		// global path (mc2skel::EvaluateClipGpuBones) the harness oracle uses, so
+		// mech_bone_parity --clip/--frame proves they match. Unknown clip -> rest.
+		if (const char* fc = getenv("MC2_MECH_IMPORT_FORCE_CLIP")) {
+			int ff = 0;
+			if (const char* fe = getenv("MC2_MECH_IMPORT_FORCE_FRAME")) ff = atoi(fe);
+			double bt = 0, bd = 0;
+			if (mc2skel::EvaluateClipGpuBones(scene, fc, (float)ff, bake.names, bake.rest, &bt, &bd)) {
+				bake.forcedClip = fc;
+				bake.forcedFrame = ff;
+				MECH_SKEL_TRACE("file='%s' FORCE_CLIP='%s' frame=%d (t=%.1f/%.1f) -> posed bake", path, fc, ff, bt, bd);
+			} else {
+				mc2skel::EvaluateRestGpuBones(scene, bake.names, bake.rest);
+				MECH_SKEL_TRACE("file='%s' FORCE_CLIP='%s' NOT FOUND -> rest pose", path, fc);
+			}
+		} else {
+			mc2skel::EvaluateRestGpuBones(scene, bake.names, bake.rest);
+		}
 		for (size_t i = 0; i < bake.names.size(); ++i) bake.nameIdx[bake.names[i]] = (int)i;
 		bake.active = !bake.names.empty();
 
@@ -788,8 +810,9 @@ long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out, bool autoG
 			if (FILE* bf = fopen(dumpPath, "w")) {
 				double sum = 0.0;
 				for (const auto& b : bake.rest) for (int k = 0; k < 16; ++k) sum += b.m[k];
-				fprintf(bf, "{\n  \"clip\": \"rest\",\n  \"frame\": 0,\n  \"boneCount\": %zu,\n  \"checksum\": %.6f,\n  \"bones\": [\n",
-				        bake.names.size(), sum);
+				const char* clipLabel = bake.forcedClip.empty() ? "rest" : bake.forcedClip.c_str();
+				fprintf(bf, "{\n  \"clip\": \"%s\",\n  \"frame\": %d,\n  \"boneCount\": %zu,\n  \"checksum\": %.6f,\n  \"bones\": [\n",
+				        clipLabel, bake.forcedFrame, bake.names.size(), sum);
 				for (size_t i = 0; i < bake.names.size(); ++i) {
 					fprintf(bf, "    {\"index\": %zu, \"name\": \"%s\", \"m\": [", i, bake.names[i].c_str());
 					for (int k = 0; k < 16; ++k) fprintf(bf, "%s%.6f", k ? ", " : "", bake.rest[i].m[k]);
