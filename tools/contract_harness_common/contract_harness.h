@@ -11,6 +11,10 @@
 //   * Uniform CLI: --list / --test <name> / --json / --seed <n>.
 //   * Exit code 0 == all selected tests PASS, nonzero == failure.
 //
+// STDOUT/STDERR CONTRACT: the framework owns stdout (the report / JSON). Tests
+// MUST write any human diagnostics to stderr (std::fprintf(stderr, ...)); writing
+// diagnostics to stdout corrupts --json output.
+//
 // Usage (a harness .cpp):
 //   #include "contract_harness.h"
 //   using namespace contract_harness;

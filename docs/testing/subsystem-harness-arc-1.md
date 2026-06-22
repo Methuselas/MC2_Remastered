@@ -1,6 +1,6 @@
 # SUBSYSTEM-HARNESS-ARC-1 — cheap contract/edge-case harness layer
 
-**Status:** HARNESS-TEMPLATE-1 shipped (this doc + reference harness).
+**Status:** HARNESS-TEMPLATE-1 + SHADER-CONTRACT-HARNESS-1 shipped.
 **Branch / worktree:** `claude/contract-harnesses-1` @ `A:/Games/mc2-contract-harnesses`
 **Base:** nifty HEAD `4c177ea7`.
 
@@ -109,6 +109,17 @@ int main(int argc, char** argv) {
 checks in a test report). A test fails by returning false or recording any
 `CH_CHECK`/`t.fail()`. Exceptions are caught and reported as failures.
 
+**stdout/stderr contract:** the framework owns stdout (report / JSON). Tests must
+write human diagnostics to **stderr** (`std::fprintf(stderr, ...)`). Writing to
+stdout corrupts `--json`. `run_contract_tests.py` reads each harness's stdout as
+JSON; harness diagnostics on stderr are passed through to the console.
+
+**Repo-relative harnesses** (those that scan source/assets, like the shader
+harness) bake the repo root via CMake `target_compile_definitions(...
+MC2_REPO_ROOT="${MC2_ROOT}")`, overridable at runtime with env
+`MC2_CONTRACT_REPO_ROOT`. This needs no new CLI flag, so the shared `Harness`
+stays generic.
+
 ## Runtime targets
 
 - Individual harness: **< 1 s**.
@@ -123,7 +134,7 @@ checks in a test report). A test fails by returning false or recording any
 | `objmgr_contract_harness` | watch-list math from `objmgr` if extractable | ObjectManager singletons, GameObject ctor chain | **HIGH** — full ObjectManager pulls game globals. First slice may use a narrow extracted helper for watch-list math (no silent duplication). |
 | `txmmgr_bounds_harness` | `getVertexBlock`/`getBlock` allocator from `txmmgr` | GL handles, texture upload, global tex manager init | **MED** — allocator cursor math may be extractable from GL. |
 | `fit_parse_harness` | `.fit`/`.mdf`/inifile parser TU | file IO globals, FST archive | **MED** — parser may need temp fixture files only. |
-| `shader_contract_harness` | none (filesystem inventory) | none | **LOW** — enumerates shader files + deploy manifest, no GL. |
+| `shader_contract_harness` (shipped) | none (filesystem/source scan) | none | **LOW** — scans engine source for `"shaders/X"` refs + enumerates shaders/, no GL. |
 | `render_state_contract_harness` | `RenderPassContract` logic | GL state, real renderer | **LOW** — contract begin/end nesting is mock-only. |
 
 ## How this fits with smoke
@@ -167,11 +178,14 @@ checks in a test report). A test fails by returning false or recording any
    `getBlock` (cursor unchanged on overflow), untextured add boundary cases.
 3. `FIT-PARSE-HARNESS-1` — malformed `.fit`/`.mdf` fail-safe, OOB inventory
    index, `readIdIntArray`/`readIdFloatArray` capacity, oversize multiline.
-4. `SHADER-CONTRACT-HARNESS-1` — expected shader file inventory, no removed
-   bloom/ACES/FXAA/godray refs survive, include/prefix inventory.
+4. ~~`SHADER-CONTRACT-HARNESS-1`~~ — **SHIPPED.** referenced-shaders-exist
+   (60 refs resolve), removed-postfx-absent (bloom/godray), shader inventory
+   (83 runtime shaders), #ifdef-symbol classification for the SPIR-V seam.
 5. `RENDER-STATE-CONTRACT-HARNESS-1` — pass begin/end nesting, missing-end,
    owner mismatch, declared read/write contract validation (mock-only).
 
-**Recommended next:** `SHADER-CONTRACT-HARNESS-1` — lowest entanglement (pure
-filesystem, no production link, no GL), so it validates the template against a
-real subsystem with minimal risk before tackling the entangled seams.
+**Recommended next:** `OBJMGR-CONTRACT-HARNESS-1` (per advisor ruling — order is
+template → shader → objmgr). The template is now proven on a real subsystem;
+objmgr is the high-value target but will hit ObjectManager/runtime global
+coupling, so its first slice must decide: link the real watch-list unit, extract
+a shared helper both call, or declare it too entangled to test cheaply yet.
