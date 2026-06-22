@@ -13,6 +13,7 @@
 #include "../../RenderCore/EngineView.h"
 #include "view_uniforms_gl.h"
 #include "gos_static_prop_registry.h"   // HZB-STATICPROP-CULL-RECON-1: real bounds for the probe
+#include "gl_state_guard.h"  // GLSTATE-GUARD-ADOPTION-1: GlScopedTextureUnit (composite tex-unit leak)
 
 #include <cassert>
 #include <cstdio>
@@ -2245,6 +2246,19 @@ void gosPostProcess::endScene()
         compositeProg_->setFloat3("u_lowLightTint", lowLightTint_);
 
         compositeProg_->apply();
+
+        // GLSTATE-GUARD-ADOPTION-1: the composite is the LAST tex-binding draw
+        // before gos_InvalidateRenderStateCache() (line ~2281). That invalidate
+        // does NOT track texture-unit state (see gl_state_guard.h L160-177), so
+        // the unit-0/unit-2 bindings set below otherwise leak past endScene into
+        // the next renderer (HUD/menu) — the reported "post-fx textures bleed
+        // into menus" symptom. These guards snapshot the prior unit-0/unit-2
+        // GL_TEXTURE_2D bindings + active unit on construction and restore them
+        // when this block exits at the closing brace below — which is BEFORE the
+        // invalidate call, satisfying the header's block-scope requirement.
+        // Restore-previous is behavior-neutral for the composite's own draw.
+        mc2gl::GlScopedTextureUnit unit0Guard(0);
+        mc2gl::GlScopedTextureUnit unit2Guard(2);
 
         // Bind scene color texture to unit 0
         glActiveTexture(GL_TEXTURE0);
