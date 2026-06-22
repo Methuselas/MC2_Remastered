@@ -127,3 +127,14 @@ Adopt-not-port. Wire existing `gl_state_guard` RAII into GPU-direct passes. One 
 | 3 | particles / decals | ⏳ | — | the family `GlScopedTextureUnit` was designed for (header L160-177) |
 | 4 | static-prop / mech batchers | ⏳ | — | |
 | 5 | shadows | ⏳ LAST | — | most historical weirdness |
+
+### STRATEGIC CORRECTION (2026-06-22, post family-1) — narrow to tex-unit leak closure
+Original GLSTATE-GUARD-ADOPTION premise narrowed. Existing passes mostly hard-reset state and invalidate the cache; replacing that with RAII would be semantic churn, and the broad save/restore the audit implied does not exist. The live class is **unrestored texture-unit binding leakage into later 2D/menu/HUD consumers**. Continue as tex-unit leak closure only — mentally **GLSTATE-TEXUNIT-LEAK-GUARDS-1** (family 1 stays cataloged here). Drop the "~8-site invalidate list collapses" acceptance goal; those invalidates exist *because* passes hard-reset.
+
+Work now isolated in worktree `A:/Games/mc2-opengl-src/.claude/worktrees/glstate-texunit` on branch `claude/glstate-texunit-leak-guards-1` (off nifty `beec2da8`); merge back to nifty at the end. (nifty was being concurrently mutated by another lane — shared-tree hazard, so this lane forked its own worktree.)
+
+**Per-family criterion (recon-first; edit ONLY on a proven live leak):**
+A. list texture-unit binds · B. does the pass restore prev binding? · C. what 2D/menu/HUD runs after? · D. if a leak reaches a later consumer → wrap with `GlScopedTextureUnit` · E. if the composite/final pass overwrites it before anything observes → leave it.
+YES: GL_TEXTURE_2D unit leaks; sampler/compare-mode only if an existing guard covers it. NO: depth/cull/blend hard-resets; viewport/scissor/VAO unless an existing guard already exists & span is simple; 2D_ARRAY unless proven to leak to a later 2D consumer; any new guard type in this slice.
+
+**Revised family priority:** 2. HUD/menu/2D overlays + decals → 3. particles/water/shoreline → 4. mech/static-prop/terrain batchers → 5. shadows LAST (2D_ARRAY/depth-compare heavy; touch only on a proven leak into ordinary 2D draw). Commit only families with a real fix; no-leak family = ledger note or skip.
