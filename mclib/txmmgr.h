@@ -661,7 +661,12 @@ class MC_TextureManager
 					masterTextureNodes[nodeId].hardwareVertexData2->flags = flags;
 					masterTextureNodes[nodeId].hardwareVertexData2->textureIndex = nodeId;
 				}
-				else if (masterTextureNodes[nodeId].vertexData &&
+				// TXMMGR-HARDWARE-FLAGS-FIX-1: was masterTextureNodes[nodeId].vertexData
+				// (the SOFTWARE gos_VERTEX node) — a cross-wire into the hardware ladder.
+				// The 3rd-slot presence guard must test the hardware node (always non-null
+				// here, created in the first-slot branch above); the software node is
+				// unrelated and mis-gated 3rd-slot creation, under-counting the reserve.
+				else if (masterTextureNodes[nodeId].hardwareVertexData &&
 					(masterTextureNodes[nodeId].hardwareVertexData->flags != flags) &&
 					masterTextureNodes[nodeId].hardwareVertexData2 &&
 					(masterTextureNodes[nodeId].hardwareVertexData2->flags != flags) &&
@@ -713,7 +718,7 @@ class MC_TextureManager
 					hardwareVertexData2->flags = flags;
 					hardwareVertexData2->textureIndex = 0;
 				}
-				else if (hardwareVertexData && (vertexData->flags != flags) &&
+				else if (hardwareVertexData && (hardwareVertexData->flags != flags) &&
 					hardwareVertexData2 && (hardwareVertexData2->flags != flags) &&
 					!hardwareVertexData3)
 				{
@@ -725,7 +730,7 @@ class MC_TextureManager
 					hardwareVertexData3->flags = flags;
 					hardwareVertexData3->textureIndex = 0;
 				}
-				else if (hardwareVertexData && (vertexData->flags != flags) &&
+				else if (hardwareVertexData && (hardwareVertexData->flags != flags) &&
 					hardwareVertexData2 && (hardwareVertexData2->flags != flags) &&
 					hardwareVertexData3 && (hardwareVertexData3->flags != flags) &&
 					!hardwareVertexData4)
@@ -738,7 +743,7 @@ class MC_TextureManager
 					hardwareVertexData4->flags = flags;
 					hardwareVertexData4->textureIndex = 0;
 				}
-				else if (hardwareVertexData && (vertexData->flags != flags) &&
+				else if (hardwareVertexData && (hardwareVertexData->flags != flags) &&
 					hardwareVertexData2 && (hardwareVertexData2->flags != flags) &&
 					hardwareVertexData3 && (hardwareVertexData3->flags != flags) &&
 					hardwareVertexData4 && (hardwareVertexData4->flags != flags) &&
