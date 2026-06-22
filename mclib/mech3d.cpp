@@ -3558,12 +3558,18 @@ void Mech3DAppearance::updateGeometry (void)
 	::mc2_cpu_proj_cost::SidecarScope _f3_skin_scope(
 	    ::mc2_cpu_proj_cost::SIDECAR_SKINNING_CHAIN);
 
-	// BT2018-SKEL-ENGINE-1B-RUNTIME: advance + re-pose imported skinned mechs once
-	// per frame BEFORE TransformMultiShape re-reads the shared type geometry below.
-	// Idempotent on g_mc2FrameCounter (the second combat update() is a no-op here);
-	// near-free when no imported animated mech is registered. Requires the CPU mech
-	// path (MC2_GPU_MECHS=0) so the re-baked type verts reach listOfVertices.
-	mc2mechanim::TickImportedMechs(frameLength, (unsigned)g_mc2FrameCounter);
+	// BT2018-SKEL-ENGINE-1B-RUNTIME / 1C: advance + re-pose imported skinned mechs
+	// once per frame BEFORE TransformMultiShape re-reads the shared type geometry
+	// below. Idempotent on g_mc2FrameCounter (the second combat update() is a no-op
+	// here); near-free when no imported animated mech is registered. 1C selects the
+	// clip from this mech's movement (gesture + position/leg-heading deltas).
+	{
+		mc2mechanim::MechMotion _mm;
+		_mm.gestureId = (int)currentGestureId;
+		_mm.px = position.x; _mm.py = position.y; _mm.pz = position.z;
+		_mm.legHeadingDeg = rotation;
+		mc2mechanim::TickImportedMechs(frameLength, (unsigned)g_mc2FrameCounter, _mm);
+	}
 
 	//Always override with our local instance.
 	mechShape->SetTextureHandle(0,localTextureHandle);

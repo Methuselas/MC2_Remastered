@@ -15,15 +15,29 @@
 
 namespace mc2mechanim {
 
+// Per-frame movement signals from the calling Mech3DAppearance, as plain scalars
+// (no engine types leak into this header). 1C uses these to pick the clip:
+//   gestureId     : Mech3DAppearance::currentGestureId (stock gesture, already
+//                   debounced by the transition state machine — free hysteresis)
+//   px,py,pz      : world position (diffed frame-to-frame for speed)
+//   legHeadingDeg : leg heading in degrees (diffed for turn-in-place direction)
+struct MechMotion {
+    int   gestureId = 0;
+    float px = 0.0f, py = 0.0f, pz = 0.0f;
+    float legHeadingDeg = 0.0f;
+};
+
 // Advance + re-bake every registered imported animated mech, once per frameStamp.
 // Idempotent on frameStamp (g_mc2FrameCounter), so it is safe to call from every
 // mech's updateGeometry — only the first call for a given frame does work. A
 // no-op (single branch) when no imported animated mech is registered.
-//   frameLengthSec : per-frame dt (timing.h `frameLength`)
-//   frameStamp     : the global frame counter (g_mc2FrameCounter)
-void TickImportedMechs(float frameLengthSec, unsigned frameStamp);
+//
+// 1C: unless a clip is PINNED (MC2_MECH_IMPORT_FORCE_CLIP), the active clip is
+// selected each frame from `motion` (idle / walk / run / turn). frameLengthSec is
+// the per-frame dt (timing.h `frameLength`).
+void TickImportedMechs(float frameLengthSec, unsigned frameStamp, const MechMotion& motion);
 
-// True once at least one imported mech anim is registered (gate on + clip + bones).
+// True once at least one imported mech anim is registered (gate on + bones).
 bool AnyImportedAnim();
 
 }  // namespace mc2mechanim

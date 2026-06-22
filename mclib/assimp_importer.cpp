@@ -727,13 +727,20 @@ struct ImportedAnimEntry {
     TG_TypeShape*       shape = nullptr;   // merged slot-0 shape (listOfTypeVertices)
     TG_TypeMultiShape*  multi = nullptr;   // for per-frame bbox refresh
     std::vector<std::string> names;        // skeleton, parallel to clip globals
-    std::string         clip;
+    std::string         pinnedClip;        // MC2_MECH_IMPORT_FORCE_CLIP (empty = 1C dynamic)
+    std::string         activeClip;        // clip currently playing
     float               scale    = 1.0f;
     float               groundDy = 0.0f;   // MC2-space Y offset applied at import
     float               durationSec = 1.0f;
     std::vector<ImportPartRec> parts;
     float               clipTimeSec = 0.0f;
     unsigned            lastFrame   = 0xFFFFFFFFu;
+    // 1C clip-selection state (previous-frame motion + switch debounce).
+    bool                havePrev = false;
+    float               prevPx = 0, prevPy = 0, prevPz = 0, prevHeading = 0;
+    int                 turnStreak = 0;    // consecutive frames turning-in-place
+    std::string         pendingClip;       // candidate awaiting debounce
+    int                 pendingStreak = 0; // consecutive frames wanting pendingClip
 };
 std::vector<ImportedAnimEntry> g_importedAnims;
 
@@ -742,6 +749,38 @@ bool mechImportAnimateEnabled() {
     static int v = [](){ const char* e = getenv("MC2_MECH_IMPORT_ANIMATE");
                          return (e && e[0] == '1') ? 1 : 0; }();
     return v != 0;
+}
+
+// Clip loop length in seconds, or -1 if the scene has no such clip.
+float clipDurationSec(const aiScene* scene, const std::string& clip) {
+    for (unsigned a = 0; a < scene->mNumAnimations; ++a) {
+        const aiAnimation* an = scene->mAnimations[a];
+        if (clip == an->mName.C_Str()) {
+            double tps = an->mTicksPerSecond != 0.0 ? an->mTicksPerSecond : 1000.0;
+            return (float)(an->mDuration / tps);
+        }
+    }
+    return -1.0f;
+}
+
+// 1C — map the mech's per-frame movement to a BT2018 clip name. Gesture (already
+// debounced by the stock transition state machine) drives the main states; a
+// rotation-rate test adds turn-in-place (there is no stock GestureTurn). Clip
+// names follow the atlas/marauder set; a missing clip falls back to idle in the
+// tick. Gesture ids: 2=Stand 4=Walk 7=Run 9=Reverse 13=Idle 20=Jump (mech3d.h).
+const char* selectClipForMotion(int gesture, float speed, float turnRate, int turnStreak) {
+    const float MOVE_EPS = 1.0f;    // world units/sec ≈ moving
+    const float TURN_EPS = 12.0f;   // deg/sec ≈ turning in place
+    const bool standing = (gesture != 4 && gesture != 7 && gesture != 9 && gesture != 20);
+    if (standing && speed < MOVE_EPS && turnStreak >= 3)
+        return (turnRate > 0.0f) ? "atlas_moveCoreTurnLeftIdle" : "atlas_moveCoreTurnRightIdle";
+    switch (gesture) {
+        case 7:  return "atlas_moveCoreRunFwd";
+        case 9:  return "atlas_moveCoreWalkBwd";
+        case 4:  return "atlas_moveCoreWalkFwd";
+        case 20: return "atlas_moveJumpUpIdle";
+        default: return (speed > MOVE_EPS) ? "atlas_moveCoreWalkFwd" : "atlas_moveCoreIdle";
+    }
 }
 
 // Keep a dedicated parse alive for the runtime re-bake: the import's own Importer
@@ -756,45 +795,85 @@ void RegisterImportedAnim(const char* path, TG_TypeMultiShape* out, const SkelBa
         aiProcess_Triangulate | aiProcess_GenSmoothNormals |
         aiProcess_JoinIdenticalVertices | aiProcess_ValidateDataStructure | aiProcess_SortByPType);
     if (!scene) { delete imp; return; }
-    float durSec = 1.0f;
-    for (unsigned a = 0; a < scene->mNumAnimations; ++a) {
-        const aiAnimation* an = scene->mAnimations[a];
-        if (bake.forcedClip == an->mName.C_Str()) {
-            double tps = an->mTicksPerSecond != 0.0 ? an->mTicksPerSecond : 1000.0;
-            durSec = (float)(an->mDuration / tps);
-            break;
-        }
-    }
     ImportedAnimEntry e;
     e.imp = imp; e.scene = scene;
     e.shape = static_cast<TG_TypeShape*>(slot);
     e.multi = out;
     e.names = bake.names;
-    e.clip = bake.forcedClip;
+    e.pinnedClip = bake.forcedClip;   // empty -> 1C dynamic selection
+    // Initial clip: the pinned clip if any, else idle. Fall back to whatever the
+    // scene's first clip is when even idle is absent, so the tick always animates.
+    e.activeClip = !bake.forcedClip.empty() ? bake.forcedClip : std::string("atlas_moveCoreIdle");
+    float d = clipDurationSec(scene, e.activeClip);
+    if (d < 0.0f && scene->mNumAnimations > 0) {
+        e.activeClip = scene->mAnimations[0]->mName.C_Str();
+        d = clipDurationSec(scene, e.activeClip);
+    }
     e.scale = bake.scale;
     e.groundDy = groundDy;
-    e.durationSec = durSec > 1e-4f ? durSec : 1.0f;
+    e.durationSec = d > 1e-4f ? d : 1.0f;
     e.parts = parts;
     g_importedAnims.push_back(std::move(e));
-    MECH_SKEL_TRACE("file='%s' 1B-RUNTIME registered clip='%s' dur=%.3fs parts=%zu",
-                    path, bake.forcedClip.c_str(), durSec, parts.size());
+    MECH_SKEL_TRACE("file='%s' 1B-RUNTIME registered pinned='%s' active='%s' dur=%.3fs parts=%zu",
+                    path, bake.forcedClip.c_str(), e.activeClip.c_str(), e.durationSec, parts.size());
 }
 
 } // namespace
 
 bool mc2mechanim::AnyImportedAnim() { return !g_importedAnims.empty(); }
 
-void mc2mechanim::TickImportedMechs(float dt, unsigned frameStamp) {
+void mc2mechanim::TickImportedMechs(float dt, unsigned frameStamp, const MechMotion& motion) {
     if (g_importedAnims.empty()) return;
+    if (dt <= 0.0f) dt = 1.0f / 30.0f;   // defensive: never divide by zero below
     for (ImportedAnimEntry& e : g_importedAnims) {
         if (e.lastFrame == frameStamp) continue;   // once per frame (double-update safe)
         e.lastFrame = frameStamp;
+
+        // 1C: pick the clip from movement unless pinned (FORCE_CLIP). Speed from
+        // position delta; turn rate from leg-heading delta (wrapped to ±180).
+        if (e.pinnedClip.empty()) {
+            float speed = 0.0f, turnRate = 0.0f;
+            if (e.havePrev) {
+                const float ddx = motion.px - e.prevPx, ddy = motion.py - e.prevPy, ddz = motion.pz - e.prevPz;
+                speed = sqrtf(ddx*ddx + ddy*ddy + ddz*ddz) / dt;
+                float dh = motion.legHeadingDeg - e.prevHeading;
+                while (dh > 180.0f) dh -= 360.0f;
+                while (dh < -180.0f) dh += 360.0f;
+                turnRate = dh / dt;
+            }
+            e.prevPx = motion.px; e.prevPy = motion.py; e.prevPz = motion.pz;
+            e.prevHeading = motion.legHeadingDeg; e.havePrev = true;
+            const bool standing = (motion.gestureId != 4 && motion.gestureId != 7 &&
+                                   motion.gestureId != 9 && motion.gestureId != 20);
+            e.turnStreak = (standing && speed < 1.0f && fabsf(turnRate) > 12.0f)
+                               ? (e.turnStreak + 1) : 0;
+            const char* want = selectClipForMotion(motion.gestureId, speed, turnRate, e.turnStreak);
+            // Debounce: only commit a clip change after it persists a few frames
+            // (speed jitter / gesture flicker otherwise thrashes the selection). Keep
+            // clipTimeSec CONTINUOUS across the switch — resetting it every frame is
+            // what froze the pose at frame 0. New clip's wrap handles a stale phase.
+            if (e.activeClip == want) {
+                e.pendingStreak = 0;
+            } else {
+                if (e.pendingClip == want) ++e.pendingStreak;
+                else { e.pendingClip = want; e.pendingStreak = 1; }
+                if (e.pendingStreak >= 4) {
+                    float nd = clipDurationSec(e.scene, want);
+                    if (nd >= 0.0f) {      // only switch to a clip the GLB actually has
+                        e.activeClip = want;
+                        e.durationSec = nd > 1e-4f ? nd : 1.0f;
+                    }
+                    e.pendingStreak = 0;
+                }
+            }
+        }
+
         e.clipTimeSec += dt;
         if (e.durationSec > 0.0f)
             while (e.clipTimeSec >= e.durationSec) e.clipTimeSec -= e.durationSec;
         const float frame = e.clipTimeSec * 30.0f;   // EvaluateClipGpuBones: t = frame/30*tps
         std::vector<mc2skel::GpuBone> globals; double tt = 0, dd = 0;
-        if (!mc2skel::EvaluateClipGpuBones(e.scene, e.clip, frame, e.names, globals, &tt, &dd))
+        if (!mc2skel::EvaluateClipGpuBones(e.scene, e.activeClip, frame, e.names, globals, &tt, &dd))
             continue;
         TG_TypeVertex* vt = e.shape->GetTypeVerticesMutable();
         if (!vt) continue;
@@ -898,9 +977,10 @@ long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out, bool autoG
 		}
 		for (size_t i = 0; i < bake.names.size(); ++i) bake.nameIdx[bake.names[i]] = (int)i;
 		bake.active = !bake.names.empty();
-		// 1B-RUNTIME: animate only with a valid forced clip (it names the loop) and
-		// the opt-in gate. Otherwise the static bind/posed bake stands.
-		animateImport = mechImportAnimateEnabled() && !bake.forcedClip.empty();
+		// 1B-RUNTIME / 1C: opt-in gate enables per-frame animation. With a forced
+		// clip it loops that one clip (1B); without, the clip is chosen each frame
+		// from the mech's movement (1C). Gate off → static bind/posed bake stands.
+		animateImport = mechImportAnimateEnabled();
 
 		// Auto-scale the assembled bind pose to MC2 mech size: the skinned GLB is
 		// authored at Unity scale (~0.15u tall); stock-equivalent mechs are ~25u.
