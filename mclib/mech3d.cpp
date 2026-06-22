@@ -26,6 +26,7 @@
 extern uint32_t g_mc2FrameCounter;  // defined mclib/tgl.cpp:3718 — ANIM_ADVANCE double-step probe
 #include "spotlight_diag.h"  // T1.16 — (E)-owned slot tagging for per-slot probe
 #include <cstdint>  // M2.5 (Q6 amendment 2): uint64_t for MLR mech draw counter
+#include <unordered_map>  // ANIM-CADENCE-GUARD-1: per-appearance last-advance frame stamp
 
 // M2.5 (Q6 amendment 2): always-on MLR mech draw counter. Incremented
 // at the legacy mechShape->Render(true) fallback site (~line 2623) so
@@ -4904,6 +4905,42 @@ long Mech3DAppearance::update (bool animate)
 						         "{\"ptr\":\"%p\",\"gesture\":%d,\"mechFrameRate\":%.3f,\"frameLength\":%.5f,\"frameInc\":%.4f,\"currentFrame\":%.3f}",
 						         (void*)this, (int)currentGestureId, mechFrameRate, frameLength, frameInc, currentFrame);
 						mc2_diag::writeEvent("ANIM_ADVANCE", 1, (uint64_t)g_mc2FrameCounter, _aa_buf);
+					}
+
+					// ANIM-CADENCE-GUARD-1 (non-fatal, recon — FRAME-CURRENTNESS-GUARDS-1).
+					// Make the "exactly one gait advance per mech appearance per frame"
+					// invariant observable. Recon (ANIM-MECH-DOUBLE-STEP) proved a single
+					// advance site today, but guard it so a future second advance path
+					// (worker prepass / touch-split) can't silently reintroduce the
+					// double-step. Per-appearance last-advance frame stamp via static map
+					// (no class-layout change → no full relink); a repeat advance in the
+					// same g_mc2FrameCounter == double advance. Map touched only when
+					// MC2_ANIM_CADENCE_GUARD set; events under MC2_DIAG_TAGS=ANIM_CADENCE.
+					{
+						static const bool s_animCadGuard = (std::getenv("MC2_ANIM_CADENCE_GUARD") != nullptr);
+						if (s_animCadGuard)
+						{
+							static std::unordered_map<void*, uint32_t> s_lastAdvanceFrame;
+							static uint64_t s_ac_advances = 0, s_ac_doubles = 0;
+							++s_ac_advances;
+							const uint32_t _ac_frame = (uint32_t)g_mc2FrameCounter;
+							auto _ac_it = s_lastAdvanceFrame.find((void*)this);
+							const bool _ac_double = (_ac_it != s_lastAdvanceFrame.end() && _ac_it->second == _ac_frame);
+							s_lastAdvanceFrame[(void*)this] = _ac_frame;
+							if (_ac_double)
+							{
+								++s_ac_doubles;
+								if (mc2_diag::tagEnabled("ANIM_CADENCE"))
+								{
+									char _ac_buf[256];
+									snprintf(_ac_buf, sizeof(_ac_buf),
+									         "{\"event\":\"advanced_twice_same_frame\",\"ptr\":\"%p\",\"gesture\":%d,\"frame\":%u,\"frameInc\":%.4f,\"doubles\":%llu,\"advances\":%llu}",
+									         (void*)this, (int)currentGestureId, _ac_frame, frameInc,
+									         (unsigned long long)s_ac_doubles, (unsigned long long)s_ac_advances);
+									mc2_diag::writeEvent("ANIM_CADENCE", 1, (uint64_t)_ac_frame, _ac_buf);
+								}
+							}
+						}
 					}
 				}
 

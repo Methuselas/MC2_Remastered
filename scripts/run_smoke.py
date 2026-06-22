@@ -680,6 +680,8 @@ def main():
                             "MC2_REGFLUSH_DIAG_TRACE",
                             "MC2_STATIC_STALE_DROP_FATAL",
                             "MC2_REGFLUSH_GUARD2",
+                            "MC2_TARGETING_GUARD",
+                            "MC2_ANIM_CADENCE_GUARD",
                             # GPU object batcher gate (bisect partner for terrain bug)
                             "MC2_GPU_OBJECTS",
                             # Shadow-lane gated features (smoke coverage for the

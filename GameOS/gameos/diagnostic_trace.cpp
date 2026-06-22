@@ -38,6 +38,8 @@ const std::unordered_set<std::string>& knownTags() {
         "CURSOR_TARGET",
         "OVERLAY_MAGENTA",
         "ANIM_ADVANCE",
+        "ANIM_CADENCE",
+        "TARGETING",
     };
     return tags;
 }
