@@ -166,25 +166,46 @@ def _enum_mc2_processes() -> list[tuple[int, str, str]]:
 _all_mc2_procs = _enum_mc2_processes
 
 
+def _exe_from_cmdline(cmd: str) -> str:
+    """Extract the leading executable path token from a process command line.
+
+    Handles a leading quoted path (`"C:\\dir\\mc2.exe" arg ...`) and an
+    unquoted path with no embedded spaces (`C:\\dir\\mc2.exe arg ...`). Returns
+    '' when no token can be isolated. This lets the CommandLine fallback in
+    _same_path_mc2 do an EXACT exe-path comparison instead of a substring test
+    (which made `mc2-win64-v0.4` spuriously match inside `mc2-win64-v0.4c`)."""
+    if not cmd:
+        return ""
+    s = cmd.strip()
+    if not s:
+        return ""
+    if s[0] in ('"', "'"):
+        q = s[0]
+        end = s.find(q, 1)
+        return s[1:end] if end != -1 else ""
+    # Unquoted: the exe is the token up to the first whitespace. Our deploy
+    # paths contain no spaces; a space-bearing unquoted path is unrecoverable
+    # and correctly yields a non-matching token (treated as foreign).
+    return s.split(None, 1)[0]
+
+
 def _same_path_mc2(procs: list[tuple[int, str, str]],
                    target_exe) -> list[tuple[int, str]]:
     """PURE filter: given (pid, exe_path, cmd) tuples, return only those PIDs
     whose exe was launched from OUR target_exe path.
 
     Normalizes both sides (resolve -> forward-slash -> casefold). For PIDs with
-    an empty ExecutablePath (access-denied), falls back to a CommandLine
-    substring match on the resolved target exe path OR its deploy directory.
-    If a null-path PID has no CommandLine hint either, it is treated as FOREIGN
-    (NOT blocked) -- safer for overlap: we never block on an unknown process.
+    an empty ExecutablePath (access-denied), reconstructs the exe path from the
+    CommandLine (_exe_from_cmdline) and EXACT-matches it against the target exe.
+    No substring/dir-prefix test: a `mc2-win64-v0.4` target must NOT block a
+    running `mc2-win64-v0.4c` instance — only the SAME deploy exe blocks.
+    If a null-path PID yields no usable CommandLine exe token, it is treated as
+    FOREIGN (NOT blocked) -- we never block on an unknown process.
     Foreign mc2.exe (a different deploy path) are never returned.
 
     Takes the process list as an argument so it can be unit-tested with
     synthetic inputs without launching anything."""
     tgt = _norm_path(str(target_exe))
-    try:
-        tgt_dir = _norm_path(str(Path(target_exe).resolve().parent))
-    except Exception:
-        tgt_dir = ""
     matched = []
     for pid, path, cmd in procs:
         npath = _norm_path(path)
@@ -192,13 +213,13 @@ def _same_path_mc2(procs: list[tuple[int, str, str]],
             if npath == tgt:
                 matched.append((pid, path))
             continue
-        # ExecutablePath empty -> fall back to CommandLine substring match.
-        ncmd = (cmd or "").replace("\\", "/").casefold()
-        if tgt and tgt in ncmd:
+        # ExecutablePath empty -> reconstruct the exe path from the CommandLine
+        # and EXACT-match it. No substring/dir-prefix test, so a v0.4 target
+        # never blocks a running v0.4c instance. Only the same deploy exe blocks.
+        ncmd_exe = _norm_path(_exe_from_cmdline(cmd))
+        if ncmd_exe and ncmd_exe == tgt:
             matched.append((pid, cmd))
-        elif tgt_dir and tgt_dir in ncmd:
-            matched.append((pid, cmd))
-        # else: null path + no cmdline hint -> FOREIGN (not blocked).
+        # else: different deploy path / no usable hint -> FOREIGN (not blocked).
     return matched
 
 
