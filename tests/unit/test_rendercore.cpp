@@ -348,10 +348,21 @@ TEST_CASE("RenderPassContract: only a registered PipelineId family may claim pip
     // PipelineRegistry registers the static-prop family + MechOpaque
     // (MECH-PIPELINEDESC-1):
     //   PipelineId { Invalid=0, StaticPropOpaque=1, StaticPropAlphaTest=2,
-    //                MechOpaque=3, Count_=4 }
+    //                MechOpaque=3, StaticPropDepth=4, Count_=5 }
     // (Terrain/Water/... remain "Future:" -- no PipelineId enumerator yet.)
-    // Lock that coverage so this proof can't silently widen.
-    CHECK(static_cast<uint32_t>(PipelineId::Count_) == 4u);
+    //
+    // StaticPropDepth (the camera depth-prepass) IS a real registered PipelineId
+    // family (full PipelineDesc row, wired via bindProgram/getPipelineDesc in
+    // gos_static_prop_batcher.cpp), but it is a SUB-STEP of the StaticPropOpaque
+    // render pass, not its own RenderPassId lane -- there is no
+    // RenderPassId::StaticPropDepth contract row, so it never claims
+    // pipelineDescRegistered on the contract side. The contract-side registered
+    // set therefore stays {StaticPropOpaque, MechOpaque}.
+    //
+    // Count_ is hardcoded as a tripwire: bump it (and re-examine the registered
+    // family set below) every time a PipelineId enumerator is added, so adding a
+    // pipeline forces re-validating this invariant instead of silently widening.
+    CHECK(static_cast<uint32_t>(PipelineId::Count_) == 5u);
     CHECK(static_cast<uint32_t>(PipelineId::Invalid) == 0u);
 
     // Every pass flagged true must be backed by a real (non-Invalid, in-range)
