@@ -10,6 +10,7 @@
 // Include Files
 #ifndef CAMERA_H
 #include"camera.h"
+#include"camera_frustum_math.h"
 #endif
 
 #ifndef TERRAIN_H
@@ -791,22 +792,11 @@ bool Camera::quadAabbInFrustum (const float planes[6][4],
                                 const Stuff::Vector3D& mn,
                                 const Stuff::Vector3D& mx) const
 {
-	for (int p = 0; p < 6; p++)
-	{
-		const float a = planes[p][0];
-		const float b = planes[p][1];
-		const float c = planes[p][2];
-		const float d = planes[p][3];
-
-		// p-vertex: the corner farthest along the plane normal.
-		const float px = (a >= 0.0f) ? mx.x : mn.x;
-		const float py = (b >= 0.0f) ? mx.y : mn.y;
-		const float pz = (c >= 0.0f) ? mx.z : mn.z;
-
-		if (a * px + b * py + c * pz + d < 0.0f)
-			return false;   // AABB entirely behind this plane
-	}
-	return true;
+	// CAMERA-FRUSTUM-HARNESS-1: delegate the pure test to camera_frustum_math.h
+	// (same arithmetic), adapting Stuff::Vector3D -> float[3] at the boundary.
+	const float fmn[3] = { mn.x, mn.y, mn.z };
+	const float fmx[3] = { mx.x, mx.y, mx.z };
+	return camera_frustum_math::aabbInFrustum(planes, fmn, fmx);
 }
 
 //---------------------------------------------------------------------------
@@ -836,29 +826,9 @@ static inline bool s_pointInScreenTri (const Stuff::Point3D& v0,
                                        const Stuff::Point3D& v2,
                                        long mouseX, long mouseY)
 {
-	Stuff::Vector3D line1, line2;
-	line1.Subtract(v0,v1);
-	line2.Subtract(v1,v2);
-
-	float order = line2.x * line1.y - line1.x * line2.y;
-	order = sign2(order);
-
-	float A0 = -(v0.y - v1.y);
-	float B0 = (v0.x - v1.x);
-	float C0 = -B0*(v0.y) - A0*(v0.x);
-	float D0 = A0 * mouseX + B0 * mouseY + C0;
-
-	float A1 = -(v1.y - v2.y);
-	float B1 = (v1.x - v2.x);
-	float C1 = -B1*(v1.y) - A1*(v1.x);
-	float D1 = A1 * mouseX + B1 * mouseY + C1;
-
-	float A2 = -(v2.y - v0.y);
-	float B2 = (v2.x - v0.x);
-	float C2 = -B2*(v2.y) - A2*(v2.x);
-	float D2 = A2 * mouseX + B2 * mouseY + C2;
-
-	return ((sign2(D0) == order) && (sign2(D0) == sign2(D1)) && (sign2(D0) == sign2(D2)));
+	// CAMERA-FRUSTUM-HARNESS-1: delegate to camera_frustum_math.h (same arithmetic).
+	return camera_frustum_math::pointInScreenTri(v0.x, v0.y, v1.x, v1.y,
+	                                             v2.x, v2.y, mouseX, mouseY);
 }
 
 static inline bool s_overThisTileProjected (const Stuff::Point3D corners[4],
