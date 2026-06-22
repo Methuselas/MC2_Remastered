@@ -852,8 +852,26 @@ float clipDurationSec(const aiScene* scene, const std::string& clip) {
 // names follow the atlas/marauder set; a missing clip falls back to idle in the
 // tick. Gesture ids: 2=Stand 4=Walk 7=Run 9=Reverse 13=Idle 20=Jump (mech3d.h).
 const char* selectClipForMotion(int gesture, float speed, float turnRate, int turnStreak) {
+    // BT2018-SKEL-ANIM-COVERAGE-1: combat / reaction gestures (mech3d.h ids) take
+    // precedence over locomotion. Hit-reacts (16-19) flow through currentGestureId on
+    // moderate hits; fall/knockdown (14/15) → prone-hold (23/24) → getup (21/22) flow
+    // through the transitionArray (incl. forced on death). Limp (11/12) has no BT clip
+    // → walk fallback. Knockdown is the only BT down/react family clip.
+    switch (gesture) {
+        case 16: return "atlas_hitReactLgtFwd";    // HitFront
+        case 17: return "atlas_hitReactLgtBwd";    // HitBack
+        case 18: return "atlas_hitReactLgtLeft";   // HitLeft
+        case 19: return "atlas_hitReactLgtRight";  // HitRight
+        case 14: case 15:                          // FallBackward / FallForward
+        case 21: case 22:                          // Rollover / GetUp
+        case 23: case 24:                          // Fallen prone (held at end by caller)
+            return "atlas_hitReactKnockdownInpl";
+        case 11: case 12:                          // Limp L/R (no BT limp clip)
+            return "atlas_moveCoreWalkFwd";
+        default: break;
+    }
+    // Locomotion + turn-in-place.
     const float MOVE_EPS = 1.0f;    // world units/sec ≈ moving
-    const float TURN_EPS = 12.0f;   // deg/sec ≈ turning in place
     const bool standing = (gesture != 4 && gesture != 7 && gesture != 9 && gesture != 20);
     if (standing && speed < MOVE_EPS && turnStreak >= 3)
         return (turnRate > 0.0f) ? "atlas_moveCoreTurnLeftIdle" : "atlas_moveCoreTurnRightIdle";
@@ -865,6 +883,9 @@ const char* selectClipForMotion(int gesture, float speed, float turnRate, int tu
         default: return (speed > MOVE_EPS) ? "atlas_moveCoreWalkFwd" : "atlas_moveCoreIdle";
     }
 }
+// Prone/fallen gestures hold the clip's last frame (a downed/destroyed mech must not
+// loop the knockdown). Other clips loop.
+inline bool gestureHoldsAtEnd(int gesture) { return gesture == 23 || gesture == 24; }
 
 // Keep a dedicated parse alive for the runtime re-bake: the import's own Importer
 // is a stack local that frees its scene on return. Same flags → identical
@@ -1033,9 +1054,13 @@ void mc2mechanim::TickImportedMechs(float dt, unsigned frameStamp, const MechMot
             }
         }
 
+        // Prone/fallen (dynamic selection) holds the last frame; everything else loops.
+        const bool holdAtEnd = e.pinnedClip.empty() && gestureHoldsAtEnd(motion.gestureId);
         e.clipTimeSec += dt;
-        if (e.durationSec > 0.0f)
-            while (e.clipTimeSec >= e.durationSec) e.clipTimeSec -= e.durationSec;
+        if (e.durationSec > 0.0f) {
+            if (holdAtEnd) { if (e.clipTimeSec > e.durationSec) e.clipTimeSec = e.durationSec; }
+            else while (e.clipTimeSec >= e.durationSec) e.clipTimeSec -= e.durationSec;
+        }
         const float frame = e.clipTimeSec * 30.0f;   // EvaluateClipGpuBones: t = frame/30*tps
         std::vector<mc2skel::GpuBone> globals; double tt = 0, dd = 0;
         if (!mc2skel::EvaluateClipGpuBones(e.scene, e.activeClip, frame, e.names, globals, &tt, &dd))
