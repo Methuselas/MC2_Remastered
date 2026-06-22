@@ -84,7 +84,7 @@ Correctness bugs first, then cleanup, then architecture. Each = its own behavior
 5. ✅ **DEAD-POST-FX-CLEANUP-1** — bloom/ACES/FXAA + god rays DELETED `92d3a821`+`9c2187d8` (tier1 5/5; live composite preserved).
 6. ✅ **POST-GODRAYS-FBBIND-1** — MOOT (god rays deleted, the FBO-restore gap is gone with it).
 
-**Queue clear.** All confirmed LIVE_BUGs fixed + all cleanup done. Remaining open items are NEEDS_VENDOR_TEST only (await a vendor run): on-NVIDIA tree-disappear visual confirm, empty shadow frags UB2-06/07, shadow PCF UB2-04. Plus deferred-low-risk: TREE-N2 veg-cards OOB (veg shipped-off), static-decal stale-handle rebake.
+**Queue clear.** All confirmed LIVE_BUGs fixed + all cleanup done. POST-FX-CLEANUP-CLOSURE-AUDIT-1 (grep/build/deploy/test sweep, 8 checks) = **CONFIRMED_CLEAN**: no runtime- or build-facing ghosts; only intentional retained refs (index-preserving registry entries annotated [REMOVED], auto-gen docs, historical notes). Remaining open items are NEEDS_VENDOR_TEST only (await a vendor run): on-NVIDIA tree-disappear visual confirm, empty shadow frags UB2-06/07, shadow PCF UB2-04. Plus deferred-low-risk: TREE-N2 veg-cards OOB (veg shipped-off), static-decal stale-handle rebake.
 
 All confirmed shader/CPU LIVE_BUGs in the queue are now FIXED. Remaining items are cleanup (dead-code) + a 1-line tidy. NEEDS_VENDOR_TEST items (empty shadow frags UB2-06/07, shadow PCF UB2-04, on-NVIDIA tree-disappear visual confirm) await a vendor run.
 
