@@ -83,14 +83,18 @@ the JSON `occupancy` map):
   billboard & tube-ribbon (pos/color/uv).
 - **Slot 20** — `LIGHT_DATA_SSBO_BINDING` vs terrain surface VB.
 
-## Known follow-up (separate slice — NOT this one)
+## Slot-14 particle/readback sharing — ALREADY MITIGATED (verified 2026-06-22)
 
-- **GLSTATE-SSBO-SLOT14-PARTICLE-UNBIND-1** — the particle bridge binds SSBO slot
-  14 and does not unbind it; the GPU-cull readback ring also uses slot 14
-  (`READBACK_SSBO_BINDING`). This is a *state-leak* (a later consumer can observe
-  a stale binding), the same class as the tex-unit leak slice — a runtime fix with
-  build+smoke+`MC2_GL_DEBUG_FATAL`, not a checker/registry change. Tracked
-  separately; this slice only *documents* the slot-14 sharing.
+The particle bridge shares SSBO slot 14 with the GPU-cull readback ring
+(`READBACK_SSBO_BINDING`). An older lane-D audit note recommended an explicit
+unbind; that fix (**"D-01"**) already landed. Verified: every particle-bridge
+slot-14 bind has a matching, unconditionally-reachable unbind-to-0 —
+`gos_particle_bridge.cpp` 499→537, 753→791, and 1045→1150 (the last cites D-01,
+mirroring `gpu_cull_compute.cpp:1187`). Both consumers bind-then-unbind-to-0
+symmetrically, so no later consumer observes a stale binding. The proposed
+GLSTATE-SSBO-SLOT14-PARTICLE-UNBIND-1 slice is therefore **MOOT** — no live leak
+remains. (A restore-previous guard would diverge from the established
+symmetric-unbind-to-0 convention for no behavior gain.)
 
 ## Scope boundaries (this slice)
 
