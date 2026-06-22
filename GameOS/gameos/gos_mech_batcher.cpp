@@ -1541,8 +1541,9 @@ bool GpuMechBatcher::submitActor(const GpuMechSubmitDesc& desc) {
     // to the Z-up animated MODEL pose. M_sw (row-major) = entries[0..11] + (0,0,0,1).
     if (rec.importedGpuType) {
         const float* md = nullptr;
-        const int mdCount = mc2mechanim::ImportedGpuModelDelta(rec.importedGpuType, &md);
-        const float lift = mc2mechanim::ImportedGpuLift(rec.importedGpuType);
+        // Per-actor palette + lift, keyed by this actor's instance shape (mechShape).
+        const int mdCount = mc2mechanim::ImportedGpuModelDelta((const void*)desc.mechShape, &md);
+        const float lift = mc2mechanim::ImportedGpuLift((const void*)desc.mechShape);
         const int   liftAxis = mc2mechanim::ImportedGpuLiftAxis();   // 0/1/2 = Stuff.x/y/z
         const int   liftIdx = 3 + 4 * (liftAxis & 3);                // F[3]/F[7]/F[11]
         float Msw[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};

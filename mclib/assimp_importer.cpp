@@ -721,6 +721,23 @@ void ComputeBoundingBox(TG_TypeMultiShape* out) {
 // type → actors animate in lockstep. Per-actor + GPU path are later slices.
 namespace {
 
+// PER-ACTOR animation state (BT2018-SKEL-GPU-PER-ACTOR-1). Each imported-mech actor
+// advances its OWN clip/time and produces its OWN model-delta palette, so two mechs of
+// the same chassis no longer animate in lockstep. The type entry below holds the shared
+// STATIC data (scene, skeleton, invMWrest, per-vertex bone…); this holds the per-frame
+// mutable state. (The CPU re-bake path uses one shared instance — it mutates the shared
+// listOfTypeVertices, so it cannot be per-actor without per-instance vertex buffers.)
+struct ActorAnimState {
+    std::string activeClip, pendingClip;
+    int   pendingStreak = 0, turnStreak = 0;
+    bool  havePrev = false;
+    float prevPx = 0, prevPy = 0, prevPz = 0, prevHeading = 0;
+    float clipTimeSec = 0.0f, durationSec = 1.0f;
+    unsigned lastFrame = 0xFFFFFFFFu;       // per-actor idempotency (combat double-update)
+    std::vector<float> modelDelta;          // jointCount*16 row-major (placement-free)
+    float gpuLift = 0.0f;                    // world-up foot-ground lift (per-frame)
+};
+
 struct ImportedAnimEntry {
     Assimp::Importer*   imp   = nullptr;   // owns scene; session-lifetime (never freed)
     const aiScene*      scene = nullptr;
@@ -728,30 +745,24 @@ struct ImportedAnimEntry {
     TG_TypeMultiShape*  multi = nullptr;   // for per-frame bbox refresh
     std::vector<std::string> names;        // skeleton, parallel to clip globals
     std::string         pinnedClip;        // MC2_MECH_IMPORT_FORCE_CLIP (empty = 1C dynamic)
-    std::string         activeClip;        // clip currently playing
+    std::string         initialClip;       // clip seeded into each new actor state
     float               scale    = 1.0f;
     float               groundDy = 0.0f;   // MC2-space Y offset applied at import
-    float               durationSec = 1.0f;
+    float               initialDuration = 1.0f;
     std::vector<ImportPartRec> parts;
-    float               clipTimeSec = 0.0f;
-    unsigned            lastFrame   = 0xFFFFFFFFu;
-    // 1C clip-selection state (previous-frame motion + switch debounce).
-    bool                havePrev = false;
-    float               prevPx = 0, prevPy = 0, prevPz = 0, prevHeading = 0;
-    int                 turnStreak = 0;    // consecutive frames turning-in-place
-    std::string         pendingClip;       // candidate awaiting debounce
-    int                 pendingStreak = 0; // consecutive frames wanting pendingClip
-    // 1B-GPU: model-delta skinning on the GPU mech path (VBO stays assembled rest).
+    // 1B-GPU static data (shared across actors).
     bool                       gpuMode = false;
     std::vector<unsigned char> perVertexBone;   // per type-vertex bone index (0..N-1)
     std::vector<aiMatrix4x4>   invMWrest;        // (A2·S·R_i)^-1 per bone (A2 = VBO axis)
     aiMatrix4x4                AS1;              // A1·S (Z-up clip-side axis · scale)
-    std::vector<float>         modelDelta;       // jointCount*16 row-major (placement-free)
-    unsigned                   modelDeltaFrame = 0xFFFFFFFFu;
-    float                      gpuLift = 0.0f;   // world-up foot-ground lift (per-frame)
     std::vector<aiVector3D>    boneLowest;       // per-bone lowest rest VBO vertex (model space)
+    // Per-frame state: GPU = one ActorAnimState per actor instance; CPU = one shared.
+    std::map<const void*, ActorAnimState> actors;  // keyed by actor instance (mechShape*)
+    ActorAnimState             cpuState;
 };
 std::vector<ImportedAnimEntry> g_importedAnims;
+// Prune actor states untouched for this many frames (dead/despawned actors).
+const unsigned ACTOR_STATE_STALE_FRAMES = 600u;
 
 bool mechImportAnimateEnabled() {
     // Opt-in, default OFF (static FORCE_CLIP bake stays the safe path).
@@ -907,15 +918,15 @@ void RegisterImportedAnim(const char* path, TG_TypeMultiShape* out, const SkelBa
     e.pinnedClip = bake.forcedClip;   // empty -> 1C dynamic selection
     // Initial clip: the pinned clip if any, else idle. Fall back to whatever the
     // scene's first clip is when even idle is absent, so the tick always animates.
-    e.activeClip = !bake.forcedClip.empty() ? bake.forcedClip : std::string("atlas_moveCoreIdle");
-    float d = clipDurationSec(scene, e.activeClip);
+    e.initialClip = !bake.forcedClip.empty() ? bake.forcedClip : std::string("atlas_moveCoreIdle");
+    float d = clipDurationSec(scene, e.initialClip);
     if (d < 0.0f && scene->mNumAnimations > 0) {
-        e.activeClip = scene->mAnimations[0]->mName.C_Str();
-        d = clipDurationSec(scene, e.activeClip);
+        e.initialClip = scene->mAnimations[0]->mName.C_Str();
+        d = clipDurationSec(scene, e.initialClip);
     }
     e.scale = bake.scale;
     e.groundDy = groundDy;
-    e.durationSec = d > 1e-4f ? d : 1.0f;
+    e.initialDuration = d > 1e-4f ? d : 1.0f;
     e.parts = parts;
 
     // 1B-GPU: precompute the model-delta inputs. VBO = A2·S·R_i·p̃ (A2 = mechToMC2Pos,
@@ -935,7 +946,6 @@ void RegisterImportedAnim(const char* path, TG_TypeMultiShape* out, const SkelBa
             MW.Inverse();
             e.invMWrest[i] = MW;
         }
-        e.modelDelta.assign(bake.rest.size() * 16, 0.0f);
         const int nv = e.shape->GetNumTypeVertices();
         e.perVertexBone.assign(nv > 0 ? nv : 0, 0);
         for (const ImportPartRec& pr : parts) {
@@ -957,15 +967,15 @@ void RegisterImportedAnim(const char* path, TG_TypeMultiShape* out, const SkelBa
                     e.boneLowest[b] = aiVector3D(tv[vi].position.x, tv[vi].position.y, tv[vi].position.z);
             }
         }
-        MECH_SKEL_TRACE("file='%s' 1B-GPU registered joints=%zu verts=%d axis=%d lift=%.2f (bbox y[%.2f..%.2f])",
-                        path, bake.rest.size(), nv, mechImportGpuAxis(), e.gpuLift,
+        MECH_SKEL_TRACE("file='%s' 1B-GPU registered joints=%zu verts=%d axis=%d (bbox y[%.2f..%.2f])",
+                        path, bake.rest.size(), nv, mechImportGpuAxis(),
                         out->minBox.y, out->maxBox.y);
     }
 
-    g_importedAnims.push_back(std::move(e));
     MECH_SKEL_TRACE("file='%s' 1B-RUNTIME registered pinned='%s' active='%s' dur=%.3fs parts=%zu gpu=%d",
-                    path, bake.forcedClip.c_str(), e.activeClip.c_str(), e.durationSec, parts.size(),
+                    path, bake.forcedClip.c_str(), e.initialClip.c_str(), e.initialDuration, parts.size(),
                     (int)mechImportGpuEnabled());
+    g_importedAnims.push_back(std::move(e));
 }
 
 } // namespace
@@ -986,137 +996,168 @@ int mc2mechanim::ImportedGpuTypeInfo(const void* typeMulti,
     return 0;
 }
 
-int mc2mechanim::ImportedGpuModelDelta(const void* typeMulti, const float** mats16) {
+int mc2mechanim::ImportedGpuModelDelta(const void* actorKey, const float** mats16) {
     for (const ImportedAnimEntry& e : g_importedAnims) {
-        if (e.gpuMode && (const void*)e.multi == typeMulti) {
-            if (mats16) *mats16 = e.modelDelta.empty() ? nullptr : e.modelDelta.data();
-            return (int)(e.modelDelta.size() / 16);
+        if (!e.gpuMode) continue;
+        auto it = e.actors.find(actorKey);
+        if (it != e.actors.end()) {
+            if (mats16) *mats16 = it->second.modelDelta.empty() ? nullptr : it->second.modelDelta.data();
+            return (int)(it->second.modelDelta.size() / 16);
         }
     }
     return 0;
 }
 
-float mc2mechanim::ImportedGpuLift(const void* typeMulti) {
-    for (const ImportedAnimEntry& e : g_importedAnims)
-        if (e.gpuMode && (const void*)e.multi == typeMulti) {
-            bool ovr = false;
-            float v = mechImportGpuLiftOverride(&ovr);
-            return ovr ? v : e.gpuLift;
-        }
+float mc2mechanim::ImportedGpuLift(const void* actorKey) {
+    bool ovr = false;
+    float v = mechImportGpuLiftOverride(&ovr);
+    if (ovr) return v;
+    for (const ImportedAnimEntry& e : g_importedAnims) {
+        if (!e.gpuMode) continue;
+        auto it = e.actors.find(actorKey);
+        if (it != e.actors.end()) return it->second.gpuLift;
+    }
     return 0.0f;
 }
 
 int mc2mechanim::ImportedGpuLiftAxis() { return mechImportGpuLiftAxis(); }
 
-void mc2mechanim::TickImportedMechs(float dt, unsigned frameStamp, const MechMotion& motion) {
+namespace {
+// Advance `s`'s clip selection (1C) + clip time one frame, then sample the active
+// clip's bone globals. Shared by the per-actor GPU path and the shared CPU path.
+// Returns false if the clip can't be evaluated (caller skips this frame).
+bool sampleActorClip(const ImportedAnimEntry& e, ActorAnimState& s, float dt,
+                     const mc2mechanim::MechMotion& motion, std::vector<mc2skel::GpuBone>& globals) {
+    if (e.pinnedClip.empty()) {
+        float speed = 0.0f, turnRate = 0.0f;
+        if (s.havePrev) {
+            const float ddx = motion.px - s.prevPx, ddy = motion.py - s.prevPy, ddz = motion.pz - s.prevPz;
+            speed = sqrtf(ddx*ddx + ddy*ddy + ddz*ddz) / dt;
+            float dh = motion.legHeadingDeg - s.prevHeading;
+            while (dh > 180.0f) dh -= 360.0f;
+            while (dh < -180.0f) dh += 360.0f;
+            turnRate = dh / dt;
+        }
+        s.prevPx = motion.px; s.prevPy = motion.py; s.prevPz = motion.pz;
+        s.prevHeading = motion.legHeadingDeg; s.havePrev = true;
+        const bool standing = (motion.gestureId != 4 && motion.gestureId != 7 &&
+                               motion.gestureId != 9 && motion.gestureId != 20);
+        s.turnStreak = (standing && speed < 1.0f && fabsf(turnRate) > 12.0f) ? (s.turnStreak + 1) : 0;
+        const char* want = selectClipForMotion(motion.gestureId, speed, turnRate, s.turnStreak);
+        if (s.activeClip == want) {
+            s.pendingStreak = 0;
+        } else {
+            if (s.pendingClip == want) ++s.pendingStreak;
+            else { s.pendingClip = want; s.pendingStreak = 1; }
+            if (s.pendingStreak >= 4) {
+                float nd = clipDurationSec(e.scene, want);
+                if (nd >= 0.0f) { s.activeClip = want; s.durationSec = nd > 1e-4f ? nd : 1.0f; }
+                s.pendingStreak = 0;
+            }
+        }
+    }
+    const bool holdAtEnd = e.pinnedClip.empty() && gestureHoldsAtEnd(motion.gestureId);
+    s.clipTimeSec += dt;
+    if (s.durationSec > 0.0f) {
+        if (holdAtEnd) { if (s.clipTimeSec > s.durationSec) s.clipTimeSec = s.durationSec; }
+        else while (s.clipTimeSec >= s.durationSec) s.clipTimeSec -= s.durationSec;
+    }
+    const float frame = s.clipTimeSec * 30.0f;
+    double tt = 0, dd = 0;
+    return mc2skel::EvaluateClipGpuBones(e.scene, s.activeClip, frame, e.names, globals, &tt, &dd);
+}
+
+// Build the GPU per-bone MODEL delta from sampled globals into s.modelDelta, plus the
+// per-frame foot-ground lift into s.gpuLift.
+void buildGpuModelDelta(const ImportedAnimEntry& e, ActorAnimState& s,
+                        const std::vector<mc2skel::GpuBone>& globals) {
+    const size_t n = (globals.size() < e.invMWrest.size()) ? globals.size() : e.invMWrest.size();
+    float lowestY = 1e30f;
+    for (size_t i = 0; i < n; ++i) {
+        aiMatrix4x4 D = (e.AS1 * rowMajorToAi(globals[i].m)) * e.invMWrest[i];
+        aiToRowMajor(D, &s.modelDelta[i * 16]);
+        if (i < e.boneLowest.size()) {
+            const aiVector3D p = D * e.boneLowest[i];
+            if (p.y < lowestY) lowestY = p.y;
+        }
+    }
+    s.gpuLift = (lowestY < 1e29f) ? -lowestY : 0.0f;
+}
+} // namespace
+
+void mc2mechanim::TickImportedMechs(float dt, unsigned frameStamp, const MechMotion& motion,
+                                    const void* actorKey, const void* typeKey) {
     if (g_importedAnims.empty()) return;
     if (dt <= 0.0f) dt = 1.0f / 30.0f;   // defensive: never divide by zero below
-    for (ImportedAnimEntry& e : g_importedAnims) {
-        if (e.lastFrame == frameStamp) continue;   // once per frame (double-update safe)
-        e.lastFrame = frameStamp;
+    // Find the type entry for this actor's chassis (keyed by its TG_TypeMultiShape).
+    ImportedAnimEntry* te = nullptr;
+    for (ImportedAnimEntry& en : g_importedAnims)
+        if ((const void*)en.multi == typeKey) { te = &en; break; }
+    if (!te) return;
+    ImportedAnimEntry& e = *te;
 
-        // 1C: pick the clip from movement unless pinned (FORCE_CLIP). Speed from
-        // position delta; turn rate from leg-heading delta (wrapped to ±180).
-        if (e.pinnedClip.empty()) {
-            float speed = 0.0f, turnRate = 0.0f;
-            if (e.havePrev) {
-                const float ddx = motion.px - e.prevPx, ddy = motion.py - e.prevPy, ddz = motion.pz - e.prevPz;
-                speed = sqrtf(ddx*ddx + ddy*ddy + ddz*ddz) / dt;
-                float dh = motion.legHeadingDeg - e.prevHeading;
-                while (dh > 180.0f) dh -= 360.0f;
-                while (dh < -180.0f) dh += 360.0f;
-                turnRate = dh / dt;
-            }
-            e.prevPx = motion.px; e.prevPy = motion.py; e.prevPz = motion.pz;
-            e.prevHeading = motion.legHeadingDeg; e.havePrev = true;
-            const bool standing = (motion.gestureId != 4 && motion.gestureId != 7 &&
-                                   motion.gestureId != 9 && motion.gestureId != 20);
-            e.turnStreak = (standing && speed < 1.0f && fabsf(turnRate) > 12.0f)
-                               ? (e.turnStreak + 1) : 0;
-            const char* want = selectClipForMotion(motion.gestureId, speed, turnRate, e.turnStreak);
-            // Debounce: only commit a clip change after it persists a few frames
-            // (speed jitter / gesture flicker otherwise thrashes the selection). Keep
-            // clipTimeSec CONTINUOUS across the switch — resetting it every frame is
-            // what froze the pose at frame 0. New clip's wrap handles a stale phase.
-            if (e.activeClip == want) {
-                e.pendingStreak = 0;
-            } else {
-                if (e.pendingClip == want) ++e.pendingStreak;
-                else { e.pendingClip = want; e.pendingStreak = 1; }
-                if (e.pendingStreak >= 4) {
-                    float nd = clipDurationSec(e.scene, want);
-                    if (nd >= 0.0f) {      // only switch to a clip the GLB actually has
-                        e.activeClip = want;
-                        e.durationSec = nd > 1e-4f ? nd : 1.0f;
-                    }
-                    e.pendingStreak = 0;
-                }
-            }
+    if (e.gpuMode) {
+        // PER-ACTOR: each actor instance advances its OWN clip + model-delta palette.
+        ActorAnimState& s = e.actors[actorKey];
+        if (s.modelDelta.empty()) {                 // first tick for this actor
+            s.activeClip   = e.initialClip;
+            s.durationSec  = e.initialDuration;
+            s.modelDelta.assign(e.invMWrest.size() * 16, 0.0f);
         }
-
-        // Prone/fallen (dynamic selection) holds the last frame; everything else loops.
-        const bool holdAtEnd = e.pinnedClip.empty() && gestureHoldsAtEnd(motion.gestureId);
-        e.clipTimeSec += dt;
-        if (e.durationSec > 0.0f) {
-            if (holdAtEnd) { if (e.clipTimeSec > e.durationSec) e.clipTimeSec = e.durationSec; }
-            else while (e.clipTimeSec >= e.durationSec) e.clipTimeSec -= e.durationSec;
+        if (s.lastFrame == frameStamp) return;      // per-actor idempotency (combat double-update)
+        s.lastFrame = frameStamp;
+        std::vector<mc2skel::GpuBone> globals;
+        if (sampleActorClip(e, s, dt, motion, globals))
+            buildGpuModelDelta(e, s, globals);
+        // Prune despawned actors' states (untouched for a while).
+        for (auto it = e.actors.begin(); it != e.actors.end(); ) {
+            const unsigned age = frameStamp - it->second.lastFrame;
+            if (it->first != actorKey && age < 0x80000000u && age > ACTOR_STATE_STALE_FRAMES)
+                it = e.actors.erase(it);
+            else ++it;
         }
-        const float frame = e.clipTimeSec * 30.0f;   // EvaluateClipGpuBones: t = frame/30*tps
-        std::vector<mc2skel::GpuBone> globals; double tt = 0, dd = 0;
-        if (!mc2skel::EvaluateClipGpuBones(e.scene, e.activeClip, frame, e.names, globals, &tt, &dd))
-            continue;
-
-        // 1B-GPU: build the per-bone MODEL delta D_i = (A1·S·C_i)·(A2·S·R_i)^-1 and
-        // STOP (no CPU vertex re-bake — the GPU path skins the assembled-rest VBO with
-        // this delta, placement composed by the batcher). Stored row-major.
-        if (e.gpuMode) {
-            const size_t n = (globals.size() < e.invMWrest.size()) ? globals.size() : e.invMWrest.size();
-            float lowestY = 1e30f;
-            for (size_t i = 0; i < n; ++i) {
-                aiMatrix4x4 D = (e.AS1 * rowMajorToAi(globals[i].m)) * e.invMWrest[i];
-                aiToRowMajor(D, &e.modelDelta[i * 16]);
-                // Track the lowest animated foot (world-up = Stuff.y) for grounding.
-                if (i < e.boneLowest.size()) {
-                    const aiVector3D p = D * e.boneLowest[i];   // model_delta · rest-lowest
-                    if (p.y < lowestY) lowestY = p.y;
-                }
-            }
-            e.gpuLift = (lowestY < 1e29f) ? -lowestY : 0.0f;   // lift lowest foot to y=0
-            e.modelDeltaFrame = frameStamp;
-            continue;
-        }
-
-        TG_TypeVertex* vt = e.shape->GetTypeVerticesMutable();
-        if (!vt) continue;
-        ResetBoundingBox(e.multi);
-        for (const ImportPartRec& pr : e.parts) {
-            const aiMesh* me = e.scene->mMeshes[pr.meshIndex];
-            const float* rm = (pr.boneIndex >= 0 && pr.boneIndex < (int)globals.size())
-                                  ? globals[pr.boneIndex].m : nullptr;
-            for (unsigned v = 0; v < pr.vCount && v < me->mNumVertices; ++v) {
-                aiVector3D p, n;
-                if (rm) {
-                    p = applyRowMajor16(rm, pr.off * me->mVertices[v]) * e.scale;
-                    n = rotRowMajor16(rm, aiMatrix3x3(pr.off) * me->mNormals[v]);
-                } else {
-                    p = me->mVertices[v] * e.scale;
-                    n = me->mNormals[v];
-                }
-                n.Normalize();
-                TG_TypeVertex& d = vt[pr.vOff + v];
-                d.position   = mechToMC2Pos(p);
-                d.position.y += e.groundDy;          // preserve the import-grounded offset
-                d.normal     = mechToMC2Vec(n);
-                if (d.position.x < e.multi->minBox.x) e.multi->minBox.x = d.position.x;
-                if (d.position.y < e.multi->minBox.y) e.multi->minBox.y = d.position.y;
-                if (d.position.z < e.multi->minBox.z) e.multi->minBox.z = d.position.z;
-                if (d.position.x > e.multi->maxBox.x) e.multi->maxBox.x = d.position.x;
-                if (d.position.y > e.multi->maxBox.y) e.multi->maxBox.y = d.position.y;
-                if (d.position.z > e.multi->maxBox.z) e.multi->maxBox.z = d.position.z;
-            }
-        }
-        ComputeBoundingBox(e.multi);
+        return;
     }
+
+    // CPU path (MC2_GPU_MECHS=0): ONE shared state re-bakes the shared
+    // listOfTypeVertices, so it is lockstep across actors of this chassis (per-actor
+    // would need per-instance vertex buffers — a deeper change; GPU is the per-actor path).
+    ActorAnimState& s = e.cpuState;
+    if (s.activeClip.empty()) { s.activeClip = e.initialClip; s.durationSec = e.initialDuration; }
+    if (s.lastFrame == frameStamp) return;
+    s.lastFrame = frameStamp;
+    std::vector<mc2skel::GpuBone> globals;
+    if (!sampleActorClip(e, s, dt, motion, globals)) return;
+    TG_TypeVertex* vt = e.shape->GetTypeVerticesMutable();
+    if (!vt) return;
+    ResetBoundingBox(e.multi);
+    for (const ImportPartRec& pr : e.parts) {
+        const aiMesh* me = e.scene->mMeshes[pr.meshIndex];
+        const float* rm = (pr.boneIndex >= 0 && pr.boneIndex < (int)globals.size())
+                              ? globals[pr.boneIndex].m : nullptr;
+        for (unsigned v = 0; v < pr.vCount && v < me->mNumVertices; ++v) {
+            aiVector3D p, n;
+            if (rm) {
+                p = applyRowMajor16(rm, pr.off * me->mVertices[v]) * e.scale;
+                n = rotRowMajor16(rm, aiMatrix3x3(pr.off) * me->mNormals[v]);
+            } else {
+                p = me->mVertices[v] * e.scale;
+                n = me->mNormals[v];
+            }
+            n.Normalize();
+            TG_TypeVertex& d = vt[pr.vOff + v];
+            d.position   = mechToMC2Pos(p);
+            d.position.y += e.groundDy;          // preserve the import-grounded offset
+            d.normal     = mechToMC2Vec(n);
+            if (d.position.x < e.multi->minBox.x) e.multi->minBox.x = d.position.x;
+            if (d.position.y < e.multi->minBox.y) e.multi->minBox.y = d.position.y;
+            if (d.position.z < e.multi->minBox.z) e.multi->minBox.z = d.position.z;
+            if (d.position.x > e.multi->maxBox.x) e.multi->maxBox.x = d.position.x;
+            if (d.position.y > e.multi->maxBox.y) e.multi->maxBox.y = d.position.y;
+            if (d.position.z > e.multi->maxBox.z) e.multi->maxBox.z = d.position.z;
+        }
+    }
+    ComputeBoundingBox(e.multi);
 }
 
 //=============================================================================

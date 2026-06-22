@@ -3568,7 +3568,11 @@ void Mech3DAppearance::updateGeometry (void)
 		_mm.gestureId = (int)currentGestureId;
 		_mm.px = position.x; _mm.py = position.y; _mm.pz = position.z;
 		_mm.legHeadingDeg = rotation;
-		mc2mechanim::TickImportedMechs(frameLength, (unsigned)g_mc2FrameCounter, _mm);
+		// PER-ACTOR: actorKey = this instance shape; typeKey = the chassis type shape
+		// (== the batcher's rec.importedGpuType / desc.mechShape keying).
+		const void* _typeKey = (mechType ? (const void*)mechType->mechShape[currentLOD] : nullptr);
+		mc2mechanim::TickImportedMechs(frameLength, (unsigned)g_mc2FrameCounter, _mm,
+		                               (const void*)mechShape, _typeKey);
 		// 1B-GPU not yet implemented: the GPU mech path draws from an immutable
 		// rest-pose VBO, so the CPU re-bake shows a FROZEN pose. Warn once so the
 		// symptom is self-explaining (run with MC2_GPU_MECHS=0). See

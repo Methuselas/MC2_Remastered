@@ -35,7 +35,12 @@ struct MechMotion {
 // 1C: unless a clip is PINNED (MC2_MECH_IMPORT_FORCE_CLIP), the active clip is
 // selected each frame from `motion` (idle / walk / run / turn). frameLengthSec is
 // the per-frame dt (timing.h `frameLength`).
-void TickImportedMechs(float frameLengthSec, unsigned frameStamp, const MechMotion& motion);
+//
+// PER-ACTOR (GPU path): call once per actor per frame with its own actorKey (the
+// actor's instance TG_MultiShape*) and typeKey (its TG_TypeMultiShape*). Each actor
+// advances its own clip/palette, so two mechs of one chassis no longer lockstep.
+void TickImportedMechs(float frameLengthSec, unsigned frameStamp, const MechMotion& motion,
+                       const void* actorKey, const void* typeKey);
 
 // True once at least one imported mech anim is registered (gate on + bones).
 bool AnyImportedAnim();
@@ -54,14 +59,15 @@ bool ImportedGpuEnabled();
 // *perVertexBone to a *numVerts-long uint8 per-type-vertex bone index. Else 0.
 int ImportedGpuTypeInfo(const void* typeMulti, const unsigned char** perVertexBone, int* numVerts);
 
-// Current per-frame MODEL-DELTA matrices for `typeMulti`: *mats16 -> count*16 floats,
-// each a row-major 4x4 (NOT placement-composed, NOT GpuMechBone-packed — the batcher
-// composes shapeToWorld and packs). Returns count (== joint count) or 0.
-int ImportedGpuModelDelta(const void* typeMulti, const float** mats16);
+// Current per-frame MODEL-DELTA matrices for THIS ACTOR (keyed by actorKey = the
+// instance TG_MultiShape*): *mats16 -> count*16 floats, each a row-major 4x4 (NOT
+// placement-composed, NOT GpuMechBone-packed — the batcher composes shapeToWorld and
+// packs). Returns count (== joint count) or 0.
+int ImportedGpuModelDelta(const void* actorKey, const float** mats16);
 
-// Lift to add to the placed palette translation so the imported mech's feet sit on
-// the terrain (imported GLBs are pelvis-origin). 0 if none.
-float ImportedGpuLift(const void* typeMulti);
+// Per-actor foot-ground lift to add to the placed palette translation (imported GLBs
+// are pelvis-origin). 0 if none.
+float ImportedGpuLift(const void* actorKey);
 // Which world translation component the lift targets (0/1/2 = Stuff.x/y/z).
 int ImportedGpuLiftAxis();
 
