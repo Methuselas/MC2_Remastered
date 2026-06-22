@@ -60,7 +60,7 @@ Row schema: `id | subsystem | risk | vendor | status | evidence | commit | test 
 | POSTPROCESS-CONTRACT-OBS-1 | postprocess passes not pass-scope-tracked | L | n/a (observability) | DEFERRED_LOW_RISK | render_contract scopes only on TerrainOverlay/Decal/UI/PostProcess-outer; no inner gos_postprocess pass scopes | — | — | fold into ENFORCEMENT-2 / PASS-DESC-POSTPROCESS so the tracker can catch leaks in bloom/shadow/skybox |
 
 | UB2-02 | mech.frag StandardLit PBR | H | both | FIXED `55f6cc71` | non-uniform branch on `flat in v_mechSunFound` wrapped `texture()`+`dFdx/dFdy`. Split: sampling now under uniform `u_standardLitEnabled`, application under inner `v_mechSunFound` | tier1 5/5, shader_ok prog=191, mechs render | none (gate MC2_STANDARD_LIT_V1 default-off; runtime no-op) |
-| UB2-01 | terrain_lod_chunk.frag detail normals + POM | H/M | both | LIVE_BUG (latent) | implicit-LOD `texture(matNormalArray)` inside per-fragment weight branches `:281-306`,`:195-201`; POM loop+break `:205-222,:265` | mip-seam A/B at material-boundary tiles | sample-always × weight, or textureGrad with pre-branch UVs |
+| UB2-01 | terrain_lod_chunk.frag detail normals + POM + cement | H/M | both | FIXED `f4208726` | implicit-LOD in non-uniform weight branches / anti-tile / POM loop / pureConcrete branch → textureGrad (uniform-scope gradients) + textureLod(0) for POM | **byte-exact visual gate PASS 9/9** (golden ub201-pre2, mc2_10/17/24) + tier1 5/5 | none — pixel-neutral on AMD, now NVIDIA-safe |
 | UB2-05 | building_pbr.frag | M | both | LIVE_BUG (latent) | conditional `discard` (ALPHA_TEST) precedes deriv+`texture()`: `:51-59`,`:35-38` | alpha-tested building edge A/B | move samples above discard / textureLod |
 | UB2-04 | shadow.hglsl PCF | M | both | NEEDS_VENDOR_TEST | `dFdx/dFdy(projCoords.z)`+`texture(shadow)` after divergent early-returns `:35-48,62-73,...`. Single-mip shadow blunts real impact | force-constant adaptiveScale A/B | compute gradient before returns, or document-and-accept |
 | UB2-06/07 | shadow_depth.frag / shadow_instanced.frag empty main | H(claimed)→ | AMD | NEEDS_VENDOR_TEST | empty `void main(){}` (`shadow_depth.frag:1-6`, `shadow_instanced.frag:2`); amd-driver-rules says needs explicit gl_FragDepth. **COUNTER-EVIDENCE: dev runs 7900 XTX, campaigns soak-clean WITH shadows → empirically working on AMD.** Carried unfixed since 2026-05-19 | confirm on AMD: do prop/mech shadows render? (they do today) | likely no-op; if ever broken, 1-line `gl_FragDepth=gl_FragCoord.z` |
@@ -75,10 +75,10 @@ Row schema: `id | subsystem | risk | vendor | status | evidence | commit | test 
 
 ## Prioritized fix queue (distilled from all 6 recons; reordered 2026-06-21 after veg-cards ruled out)
 Correctness bugs first, then cleanup, then architecture. Each = its own behavior-preserving, smoke-gated slice.
-1. **UB2-02** — `mech.frag` StandardLit non-uniform `texture()`/derivative (default-ON, every mech). Hoist samples above the `v_mechSunFound` branch. **← current slice.**
-2. **UB2-01** — `terrain_lod_chunk.frag` detail-normals/POM non-uniform LOD. Sample-always × weight.
-3. **OMT-1** — overlay/decal bind GL texture 0 on resolve-fail. Skip-draw or bind 1×1 white.
-4. **UB2-05** — building_pbr discard-before-sample. Move samples above discard.
+1. ✅ **UB2-02** — mech.frag StandardLit. FIXED `55f6cc71`.
+2. ✅ **UB2-01** — terrain_lod_chunk.frag detail-normals/POM/cement. FIXED `f4208726` (byte-exact visual gate PASS 9/9). Established the golden-gated-shader-fix flow (capture blessed golden on same exe → change → `run_visual.py compare` byte-exact).
+3. **OMT-1** — overlay/decal bind GL texture 0 on resolve-fail. Skip-draw or bind 1×1 white. **← next.** (C++ change → build+deploy+smoke.)
+4. **UB2-05** — building_pbr discard-before-sample (default-off gate, provable like mech). Move samples above discard.
 5. **POST-BLOOM/ACES/FXAA-DEAD-1** — delete dead bloom/ACES/FXAA (cleanup, not a bug; wrong for an RTS).
 6. **POST-GODRAYS-FBBIND-1** — 1-line FBO-restore tidy.
 
