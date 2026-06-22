@@ -1790,8 +1790,20 @@ long BattleMech::init (DWORD variantNum)
 		{
 			unsigned char spaceData;
 			mechFile->readUChar((102 + (97*variantNum))+curSpace,stupidNewSageColumns[curLocation], spaceData);
+
+			// MECH-INV-IDX-GUARD-1: spaceData is a raw .mdf byte (0-255) used to
+			// index ItemLocationToInvLocation[MAX_MOVER_INVENTORY_ITEMS]. A corrupt
+			// or out-of-range value (incl. the 0xff empty marker) would read past
+			// the array. Mirror the guarded sibling path below ("sebi" guard at the
+			// logistics read): treat out-of-range as an empty crit space.
+			if (spaceData >= MAX_MOVER_INVENTORY_ITEMS)
+			{
+				body[curLocation].criticalSpaces[curSpace].inventoryID = 0xff;
+				body[curLocation].criticalSpaces[curSpace].hit = false;
+				continue;
+			}
 			spaceData = ItemLocationToInvLocation[spaceData];
-			
+
 			body[curLocation].criticalSpaces[curSpace].inventoryID = spaceData;
 			body[curLocation].criticalSpaces[curSpace].hit = false;				//Everything always repaired now.
 			
@@ -3193,6 +3205,14 @@ long BattleMech::init (FitIniFile* mechFile) {
 
 			if (spaceData[0] < 255)
 			{
+				// MECH-INV-IDX-GUARD-1: spaceData[0] is a raw .mdf byte used to
+				// index inventory[MAX_MOVER_INVENTORY_ITEMS]. The bound check below
+				// was debug-only (#ifdef _DEBUG Assert) and compiled out of release,
+				// leaving an OOB write/read on a corrupt profile. Add the runtime
+				// guard the sibling binary-format path uses: skip out-of-range
+				// spaces (valid populated range is numOther+numWeapons+numAmmos).
+				if (spaceData[0] >= numOther+numWeapons+numAmmos)
+					continue;
 #ifdef _DEBUG
 			char msg[256];
 			sprintf(msg," Bad Mech Profile : %s ",mechFile->getFilename());
