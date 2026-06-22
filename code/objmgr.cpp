@@ -959,6 +959,30 @@ GroundVehiclePtr GameObjectManager::newVehicle (void) {
 void GameObjectManager::setWatchID (GameObjectPtr obj) {
 
 	if (obj->watchID == 0) {
+		// OBJMGR-WATCHID-BOUNDS-1: watchList is sized getMaxObjects()+1 at
+		// allocation and getMaxObjects() never grows after load, so valid
+		// indices are [0, getMaxObjects()]. On watch-ID exhaustion (long
+		// reinforcement churn burns a fresh slot per re-acquire) fail safe:
+		// leave the object un-watchable (watchID stays 0) instead of writing
+		// OOB. Reuse is deliberately avoided — it would reintroduce ABA /
+		// stale-target hazards. The Save-side clamp is independent (see ::Save).
+		if (nextWatchID > (unsigned long)getMaxObjects()) {
+			static unsigned long s_watchIdDrops = 0;
+			++s_watchIdDrops;
+			if (s_watchIdDrops == 1)
+				fprintf(stderr, "[WATCHID_BOUND] watch-ID space exhausted "
+					"(cap=%ld); object left un-watchable. Further drops rate-limited.\n",
+					getMaxObjects());
+			if (mc2_diag::tagEnabled("WATCHID_BOUND") &&
+				(s_watchIdDrops == 1 || (s_watchIdDrops & 0xFF) == 0)) {
+				char _wb_buf[128];
+				snprintf(_wb_buf, sizeof(_wb_buf),
+					"{\"nextWatchID\":%lu,\"cap\":%ld,\"drops\":%lu}",
+					nextWatchID, getMaxObjects(), s_watchIdDrops);
+				mc2_diag::writeEvent("WATCHID_BOUND", 1, 0, _wb_buf);
+			}
+			return;
+		}
 		watchList[nextWatchID] = obj;
 		obj->watchID = nextWatchID++;
 	}
@@ -4771,7 +4795,14 @@ long GameObjectManager::Save (PacketFilePtr file, long packetNum)
 			// If none, let it be.  It'll be zero already
 			// DO NOT CALL getWatchID!!!!!!!
 			// That will assign them to objects which don't have them!!!!
-			for (long j=0;j<=nextWatchID;j++)
+			// OBJMGR-WATCHID-BOUNDS-1: clamp independently of setWatchID —
+			// watchList and watchSave are both sized getMaxObjects()+1, so j must
+			// not exceed getMaxObjects(). Previously j<=nextWatchID could read
+			// watchList[j] / write watchSave[j] one past the allocation
+			// (nextWatchID can legitimately equal getMaxObjects()+1).
+			const long _watchHi = ((long)nextWatchID < getMaxObjects())
+				? (long)nextWatchID : getMaxObjects();
+			for (long j=0;j<=_watchHi;j++)
 			{
 				if (watchList[j] == objList[i])
 				{
