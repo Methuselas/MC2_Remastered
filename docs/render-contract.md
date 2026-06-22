@@ -15,6 +15,43 @@ Use this file when changing:
 If a proposed change does not fit one of the contract buckets below, the change
 is probably introducing a new bridge state and should be reconsidered.
 
+## Modern spine vs legacy dispatch (corrected 2026-06-22 RENDER-CONTRACT-INDEX-1)
+
+This document's Bucket A–D taxonomy is a **coordinate-space / submission-space**
+contract. It is *orthogonal* to two other axes that describe the same passes:
+- the **owner-lane spine** in `RenderCore/RenderPassContract.h` (5 `RenderPassId`
+  lanes: StaticPropOpaque, Terrain, MechOpaque, Shadow, VFX), and
+- the **callsite-tag taxonomy** in `mclib/render_contract.h` (`PassIdentity`,
+  15 values).
+
+A pass's bucket here (where its vertices live) is independent of whether it routes
+the modern RenderCore spine (ViewUniforms b=3 + PipelineDesc + snapshot-authoritative)
+or the legacy path. Which passes route the modern spine:
+- **Modern spine:** `StaticPropOpaque` and `MechOpaque` — both `viewUniformsBound=true`,
+  carry a PipelineDesc, and are snapshot-authoritative.
+- **Legacy:** `Terrain`, `Shadow`, `VFX` rows in `RenderPassContract.h` are `false`
+  on all three axes (no ViewUniforms, no PipelineDesc, not snapshot-authoritative).
+  Water / overlay / decal / grass / UI / post-process are un-enumerated **orphans**
+  (not even given a `RenderPassId` lane).
+
+Crucially, the modern spine owns **identity / lifecycle / visibility-reporting only**,
+**not dispatch**: even StaticPropOpaque and MechOpaque are still *flushed* by the
+legacy driver `MC_TextureManager::renderLists()` (`mclib/txmmgr.cpp:2251-3679`;
+static-prop flush `:3081`, mech flush `:3097`, shadow lanes `:2789-2812`).
+`RenderPassContract.h` is explicitly descriptive ("NOT a scheduler... the imperative
+frame loop continues to call each pass-owner's draw functions directly",
+`RenderPassContract.h:12-15`).
+
+The full per-pass routing table (owner subsystem, identity spine, dispatch driver,
+and the three modern-spine axes for all ~13 passes) lives in
+`docs/engine-standalone-seams.md` ("Modern-spine vs legacy pass routing"). See also
+`docs/render-backend-seams/render-contract-index-1.md`.
+
+> **Staleness note (corrected 2026-06-22 RENDER-CONTRACT-INDEX-1).** The staleness
+> flagged by the 2026-05-14 audit is mainly **OMISSION** — this doc never covered the
+> spine/dispatch dimension above — **not** wrong buckets. Do **NOT** rewrite the
+> Bucket A–D model; its VPL-retirement content (A1 / D1) is current.
+
 ## Core Rules
 
 ### Rule 1: Every render path has one authoritative submission space

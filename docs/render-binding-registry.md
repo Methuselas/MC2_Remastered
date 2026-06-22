@@ -1,5 +1,23 @@
 # Render Binding Registry
 
+> ## ⚠ SUPERSEDED FOR BUFFER BINDINGS (corrected 2026-06-22 RENDER-CONTRACT-INDEX-1)
+>
+> **For UBO / SSBO base-binding occupancy, DO NOT TRUST this doc.** The
+> authoritative source is now:
+> - `docs/render-backend-seams/binding-slot-occupancy.md`
+> - `docs/render-backend-seams/binding-slot-occupancy.json`
+> - enforced by `scripts/check-binding-slots.py` (registered in `scripts/check-contracts.sh`)
+>
+> Those artifacts encode the **multiplexed-per-pass** model proven by
+> GPU-BINDING-SLOTS-LOCKSTEP-1: a slot number is semantic ONLY inside a
+> pass/pipeline (slot 0 = 7 buffers, slot 2 = 6+, slot 7 = 4 across
+> mech/static-prop/cull/terrain/particle/gpu-driven). The flat-table model below
+> can encode a FALSE "one slot = one owner" picture. The tables here are retained
+> for historical / cross-reference value only — verify any buffer-binding claim
+> against the occupancy doc before acting on it.
+>
+> See also `docs/render-backend-seams/render-contract-index-1.md`.
+
 Inventory of runtime OpenGL binding-point conventions across the MC2 renderer.
 Snapshot of HEAD `2b5024c9` on branch `claude/nifty-mendeleev`. Generated for
 binding-conflict prevention; this is an **audit/lookup doc**, not an
@@ -102,6 +120,15 @@ via SSBO, not image-store.
 ---
 
 ## Texture sampler units
+
+> **⚠ STALE / DO-NOT-TRUST (corrected 2026-06-22 RENDER-CONTRACT-INDEX-1).**
+> The table below is self-admittedly non-exhaustive — notably the terrain
+> `matNormal0..matNormal4` samplers are **not** enumerated (see the note after
+> the table), and several units carry "varies" placeholders. Do not treat it as
+> a complete sampler-unit map. Authoritative sampler occupancy is being built as
+> `docs/render-backend-seams/sampler-unit-occupancy.{md,json}` under
+> SHADER-SAMPLER-BINDING-MANIFEST-1; use that once it lands. This table is
+> retained for historical value only.
 
 Samplers are wired implicitly through `glActiveTexture(GL_TEXTUREn)` +
 `glUniform1i(sampler_uniform_loc, n)`. The codebase does **not** use

@@ -12,6 +12,16 @@ small host-services contract and extracting two welded-in pieces, **not** a rewr
 > but it still has one backend-direction dependency on `GameOS/gos_postprocess.h`. That
 > is the hard blocker **B1** and the first Ring-2 cleanup.
 
+> **Note (corrected 2026-06-22 RENDER-CONTRACT-INDEX-1).** A modern-vs-legacy
+> pass-routing section has been added below (see "Modern-spine vs legacy pass
+> routing" + "RenderWorld API-spine inventory"). The key correction: RenderWorld
+> owns **identity / lifecycle / visibility-reporting** but **NOT dispatch**. The
+> modern GPU batchers (static-prop, mech) still *flush inside the legacy driver*
+> `MC_TextureManager::renderLists()` (`mclib/txmmgr.cpp:2251-3679`; static-prop
+> flush `:3081`, mech flush `:3097`, shadow lanes `:2789-2812`). The "agnostic
+> spine" is a description/visibility layer, not a render-graph executor.
+> Cross-reference `docs/render-backend-seams/render-contract-index-1.md`.
+
 ---
 
 ## Goal
@@ -264,6 +274,57 @@ exact-pixel goldens.
 | `MaterialGpu` normal/ORM/emissive slots | `MaterialGpu.h` (fields exist, all `kMaterialTexAbsent`) | DEFER (greenfield; gated on mech texture-identity decision) |
 | Shader reflection / schema CI | `tools/shader_reflect/` | DEFER (offline tooling, not a runtime dep) |
 | Mission / ObjectManager / AI / campaign | `code/*` | DEFER (Ring 3, out of scope) |
+
+---
+
+## Modern-spine vs legacy pass routing (corrected 2026-06-22 RENDER-CONTRACT-INDEX-1)
+
+RenderWorld/RenderCore/GameAdapters is the *identity & visibility* spine, not a
+render-graph executor. `RenderPassContract.h` is descriptive ("NOT a scheduler... the
+imperative frame loop continues to call each pass-owner's draw functions directly",
+`RenderPassContract.h:12-15`). All passes are still *dispatched* by the legacy
+enqueue/flush loop (`code/gamecam.cpp` enqueue; `mclib/txmmgr.cpp:2251-3679` flush;
+post-process after `gos_RendererEndFrame`).
+
+| Pass (PassIdentity) | RenderPassId | Owner subsystem | Identity/visibility spine | Dispatch driver | ViewUniforms (b=3) | PipelineDesc | Snapshot-authoritative |
+|---|---|---|---|---|---|---|---|
+| StaticProp | StaticPropOpaque (1) | GpuStaticPropBatcher | RenderWorld (upsert/markVisible/handle) | legacy renderLists() flush @ txmmgr :3081 | yes | yes | yes |
+| OpaqueObject (mechs) | MechOpaque (3) | GpuMechBatcher | RenderWorld route-only (registerMech, M2) | legacy renderLists() flush @ txmmgr :3097 | yes | yes | yes |
+| ShadowCaster | Shadow (4) | gosPostProcess + per-lane shadow programs | partial (static-prop/mech lanes via batchers) | legacy renderLists() flush @ txmmgr :2789-2812 | no | no | no |
+| TerrainBase | Terrain (2) | TerrainPatchStream / gos_terrain_indirect | legacy (CPU slim cull+reduction) | legacy renderLists() | no (passive snapshot row only) | no | no |
+| ParticleEffect | VFX (5) | mc2::particles::Batcher | none (object-ID prohibited) | post-renderLists, gamecam | no | no | no |
+| OpaqueObject (vehicles/legacy buildings) | MechOpaque (lossy) | static-prop batcher / TGL | partial / none | legacy renderLists() | mixed | mixed | partial |
+| AlphaObject | (orphan) | TGL / MLR | none | legacy / MLR immediate | no | no | no |
+| TerrainOverlay / TerrainDecal | (orphan) | quad.cpp M2d producer | none | legacy renderLists() | no | no | no |
+| Grass / VegetationCards | (orphan) | gos_postprocess / VegetationAdapter | none | post-renderLists, gamecam :520 | no | no | no |
+| Water | (orphan) | quad.cpp / renderWaterFastPath | none (intentional projected, Bucket B1) | legacy + post-renderLists fastpath :512 | no | no | no |
+| UI / HUD / text | (orphan) | GameOS 2D | none | post-renderLists | no | no | no |
+| PostProcess | (orphan) | gos_postprocess | none | after gos_RendererEndFrame | partial | no | no |
+| DebugOverlay | (orphan) | various | none | various | no | no | no |
+
+## RenderWorld API-spine inventory (corrected 2026-06-22 RENDER-CONTRACT-INDEX-1)
+
+- RenderWorld API (`RenderWorld/RenderWorld.h`): lifecycle init/destroy (:31-32),
+  upsertStaticProp (:40), adoptStaticPropRecipe (:49), destroy(handle) (:53),
+  markVisible (:58), isReady (:63), frameBannerTick (:72), registerMech/destroyMech
+  (:387/:398), queryVisibility (:428), extraction getStaticPropSlotCount/fillStaticPropSlots
+  (:447/:456). Owns: unified handle/record table (RenderObjectRecord :205, kind tag :166),
+  pick/lookup (lookupAtPixel :303), counters. Delegates: all GPU realize/draw to
+  GpuStaticPropRegistry/batchers.
+- VisibilityRequest.h: v0 reporting-only — counts by kind, NOT authoritative culling,
+  does NOT feed draw submission (:5-21). terrain=deferred, vfx=prohibited.
+- GameAdapters bridged today: StaticProp (StaticPropRenderAdapter.h — full lifecycle+sync),
+  Mech (MechRenderAdapter.h — route-only/M2, handle register/destroy; draw still
+  GpuMechBatcher), Sky (SkyRenderAdapter.h — route-only, no handle, HDRI fullscreen).
+  NOT bridged (bypass to txmmgr/tgl/legacy): terrain, water, overlays/decals,
+  grass/vegetation, particles/VFX, UI/HUD, post-process, legacy TGL/MLR.
+- RenderCore registries (all GL-free, zero-init process statics): PipelineRegistry,
+  RenderResourceRegistry (RenderResourceId enum, 8 slots, :10-21), RendererFeatureRegistry,
+  IblShRegistry, EngineView/ViewUniforms (binding=3, 144B).
+- GL-free firewall: scripts/check-include-firewall.sh + scripts/check-no-raw-gl-from-game.sh.
+  Proven GL-free: RenderCore/, RenderWorld/ headers. Residual B1: RenderWorld/RenderWorld.cpp:28
+  includes ../GameOS/gameos/gos_postprocess.h (backend-direction dependency — the hard
+  blocker). B5: RenderWorld logs via fprintf(stderr).
 
 ---
 

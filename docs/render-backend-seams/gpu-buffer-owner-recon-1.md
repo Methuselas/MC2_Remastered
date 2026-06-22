@@ -23,7 +23,15 @@ Part of the **RENDER-BACKEND-SEAMS** arc (slice 2). Prior slice: RENDER-PASS-CON
      batcher (instance/bone SSBOs) and static-prop batcher (instance/color/coalesce/base-instance).
      This is the most mature pattern and the de-facto template a `GpuBuffer` should generalize.
 
-2. **Ring/fence discipline is inconsistent — a live correctness smell, not just a Vulkan-prep
+2. **[MOOT / FIXED — corrected 2026-06-22 RENDER-CONTRACT-INDEX-1]** The
+   unfenced-water smell described below is **CLOSED**: WATER-THINRING-FENCE-1
+   shipped the missing fence. The water thin-ring now fences and waits exactly
+   like the solid path — `glFenceSync` at `gos_terrain_water_stream.cpp:2154`
+   (`EndThinRingFrameFence()`), waited/cleared at
+   `gos_terrain_water_stream.cpp:105` (`WaitAndClearThinFenceForCurrentSlot()`).
+   The original (now-historical) finding text follows.
+
+   **Ring/fence discipline is inconsistent — a live correctness smell, not just a Vulkan-prep
    issue.** Fenced 3-frame rings: mech instance/bone, static-prop instance/color/coalesce,
    terrain **solid** thin-record. **UNFENCED** (relies on slot-depth + a single
    `glMemoryBarrier(SHADER_STORAGE)` only): terrain **water** thin-record ring
@@ -144,6 +152,22 @@ Lifetime: **persistent** (mission/session), **ring-N** (N-frame fenced unless no
 6 `gosMesh` pairs (quads/tris/indexed_tris/lines/points/text), each VBO+IBO, `glBufferData`
 per-draw-batch. ~11 live buffers. `txmmgr.cpp` owns **zero** GPU buffers (textures only).
 
+> **Update-path naming clarification (corrected 2026-06-22 RENDER-CONTRACT-INDEX-1).**
+> Two SIMILARLY-NAMED, DIFFERENT functions — do not conflate them:
+> - `gos_UpdateBuffer` (defined `GameOS/gameos/gameos_graphics.cpp:8515`, decl
+>   `GameOS/include/gameos.hpp:2864`) is **near-dead**: exactly ONE runtime
+>   callsite, `mclib/txmmgr.cpp:2368` (scene-data UBO update). Not the HUD churn
+>   source.
+> - `updateBuffer` (the private 5-arg overload at
+>   `GameOS/gameos/utils/gl_utils.cpp:431`, declared in `utils/gl_utils.h:120`)
+>   is the **real per-draw orphan-realloc churn**: it is the gosMesh VBO/IBO/
+>   instance update path (HUD / gosMesh, the `vb_`/`ib_` row above), driven from
+>   the templated `updateBuffer(this->vb_, ...)` callers in `utils/gl_utils.h`.
+>   This churn is **NOT hitch-accounted** (does not route through the
+>   `MC2_GL_BufferData` macro), so it is invisible to Tier-1 hitch telemetry —
+>   the relevant target for §1.3 accounting-parity when HUD migrates to
+>   `GpuBuffer` (adoption slice B, TIER0-HUD).
+
 \* = diagnostic/trace-gated; exclude from residency accounting.
 
 ---
@@ -171,3 +195,10 @@ per-draw-batch. ~11 live buffers. `txmmgr.cpp` owns **zero** GPU buffers (textur
    reconcile): `gos_terrain_lod_chunk.cpp` (9 static buffers) → HUD meshes → postprocess quad.
    Defer Tier-1/Tier-2 until the wrapper subsumes the ring+fence semantics.
 4. Gate or drop the 4 diagnostic buffers (finding #4) so residency reporting is honest.
+
+---
+
+## Cross-references (added 2026-06-22 RENDER-CONTRACT-INDEX-1)
+- `docs/render-backend-seams/render-contract-index-1.md` — arc index for the RENDER-BACKEND-SEAMS / render-contract work; start there for current status of every finding in this recon.
+- `docs/render-backend-seams/binding-slot-occupancy.{md,json}` + `scripts/check-binding-slots.py` — authoritative buffer-binding occupancy (supersedes finding #3's "no single source of truth"; the multiplexed-per-pass model now has tooling).
+- `docs/render-backend-seams/gpu-buffer-wrapper-design-1.md` — the wrapper design scoped from this census (§3 flat-enum is superseded; §4 adoption order stands).

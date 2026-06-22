@@ -172,6 +172,22 @@ immutable buffer == delete+recreate+remap (GL immutable storage cannot resize).
 
 ## 3. Binding-slot registry (recon finding #3)
 
+> **⚠ SUPERSEDED (corrected 2026-06-22 RENDER-CONTRACT-INDEX-1).** The flat
+> `GpuBindingSlots.h` enum proposed in §3.2 below is SUPERSEDED by the
+> **multiplexed-per-pass** model from GPU-BINDING-SLOTS-LOCKSTEP-1. A flat
+> one-value-per-slot enum encodes a FALSE model: GPU base-binding slots are
+> intentionally multiplexed per pass (slot 0 = 7 buffers, slot 2 = 6+, slot 7 =
+> 4 across mech/static-prop/cull/terrain/particle/gpu-driven), so a slot number
+> is semantic ONLY inside a pass/pipeline. The flat enum was NOT built. The
+> shipped solution is check-time only:
+> - `scripts/check-binding-slots.py` (preprocessor-branch-aware C++↔GLSL lockstep + same-pass collision check)
+> - `docs/render-backend-seams/binding-slot-occupancy.{md,json}` (the occupancy map)
+>
+> The OD-1 "enum + per-pass occupancy table" recommendation resolved toward the
+> occupancy table alone (no flat enum). §4 below (per-subsystem GpuBuffer /
+> GpuRing adoption) is unaffected and remains valid future work. Read §3.1–3.3
+> as historical design rationale only.
+
 ### 3.1 The problem, from current code
 
 Slot assignment is scattered across per-subsystem headers with no cross-check:
