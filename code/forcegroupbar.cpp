@@ -191,7 +191,7 @@ void ForceGroupBar::renderOverviewIcons( Camera* eye, float alpha )
 	const float uIX  = ForceGroupIcon::unitIconX;
 	const float uIY  = ForceGroupIcon::unitIconY;
 	const int perLine     = (int)( texW / uIX );
-	const int iconsPerPage = (int)( texW / uIY );
+	const int iconsPerPage = (int)( texH / uIY );  // rows per page: texture HEIGHT / cell height
 	// Additive: RGB scales the texel, so encode the cross-fade in RGB (not alpha).
 	const unsigned long iconArgb = 0xff000000 | (aByte << 16) | (aByte << 8) | aByte;
 
@@ -330,7 +330,7 @@ int ForceGroupBar::renderOverviewSquadCards( Camera* eye, float alpha,
 	const float texW = (float)ForceGroupIcon::s_textureMemory->width;
 	const float texH = (float)ForceGroupIcon::s_textureMemory->height;
 	const float uIX = ForceGroupIcon::unitIconX, uIY = ForceGroupIcon::unitIconY;
-	const int perLine = (int)( texW / uIX ), iconsPerPage = (int)( texW / uIY );
+	const int perLine = (int)( texW / uIX ), iconsPerPage = (int)( texH / uIY );  // rows: texH/cellH
 	HGOSFONT3D font = ForceGroupIcon::gosFontHandle ? ForceGroupIcon::gosFontHandle->getTempHandle() : 0;
 	const unsigned long iconArgb = 0xff000000 | ( aB << 16 ) | ( aB << 8 ) | aB;
 
