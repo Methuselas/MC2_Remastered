@@ -116,3 +116,14 @@ draws absent in RenderDoc. This is the 2026-05-05 black-tree-bug class (the name
 contract) **reintroduced** by the later R2b perf optimization. FIXED `07a1f8ac` (stamp in skip
 path + registry stale_after_drawn guard). Veg cards (shipped-DISABLED) were never involved;
 TREE-N2 OOB remains a separate real-but-latent item.
+
+## GLSTATE-GUARD-ADOPTION-1 (first implementation off the recon — 2026-06-22)
+Adopt-not-port. Wire existing `gl_state_guard` RAII into GPU-direct passes. One pass family / commit, behavior-neutral, smoke-gated. Order: post-process → water → particles/decals → static-prop/mech batchers → shadows LAST.
+
+| # | Family | Status | Commit | Notes |
+|---|--------|--------|--------|-------|
+| 1 | post-process (`gos_postprocess.cpp`) | ✅ PARTIAL | `6de2cbb0` | Recon found post-fx is **hard-reset + single invalidate@2281**, NOT save/restore-previous — so depth/cull/blend guards would be a semantic change, and the only true save-previous patterns (viewport/VAO/compare-mode) have NO guard (would need new types). Narrowed (user: confirmed post-fx textures leaking into menus) to the genuine unrestored 2D tex-unit leak: composite unit-0/unit-2 bindings persist past invalidate (invalidate doesn't track tex units) → wrapped with `GlScopedTextureUnit`, block-scoped to close before invalidate. tier1 5/5, `MC2_GL_DEBUG_FATAL=1` clean, visual PASS. **Deferred in-family:** depth/cull/blend hard-reset paths, 2D_ARRAY shadow sites (runScreenShadow units 3/4, drawShadowDebugOverlay) — guard lacks array-target support. |
+| 2 | water fast path (`renderWaterFastPath`) | ⏳ next | — | |
+| 3 | particles / decals | ⏳ | — | the family `GlScopedTextureUnit` was designed for (header L160-177) |
+| 4 | static-prop / mech batchers | ⏳ | — | |
+| 5 | shadows | ⏳ LAST | — | most historical weirdness |
