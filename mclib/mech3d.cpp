@@ -4892,7 +4892,12 @@ long Mech3DAppearance::update (bool animate)
 					// g_mc2FrameCounter, skip the increment; downstream geometry still
 					// recomputes at the current frame, so the LOS refresh gets valid nodes
 					// without an extra gait step.
-					static const bool s_animCadenceFix = (std::getenv("MC2_ANIM_CADENCE_FIX") != nullptr);
+					// DEFAULT-ON killswitch (user-confirmed fix, mc2_17 Catapult/Bushwacker):
+					// disable with MC2_ANIM_CADENCE_FIX=0 to A/B the double-step.
+					static const bool s_animCadenceFix = []{
+						const char* _v = std::getenv("MC2_ANIM_CADENCE_FIX");
+						return !(_v && _v[0] == '0' && _v[1] == '\0');   // default-ON
+					}();
 					const bool _alreadyAdvanced = (s_animCadenceFix &&
 						lastAnimAdvanceFrame == (uint32_t)g_mc2FrameCounter);
 					if (!_alreadyAdvanced)
