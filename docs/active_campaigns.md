@@ -2,6 +2,12 @@
 
 > Pointer doc. Detail in memory/ handoffs and docs/. Add new campaigns at top.
 
+## 2026-06-22 — MECH-UBLB-ATTACHMENT-FIX-1 (BT2018 clip pose) — SHIPPED nifty (`570cfab4`)
+
+| Slice | Commit | Status | Notes |
+|---|---|---|---|
+| **Rotation-only retarget** | `570cfab4` | SHIPPED | BT2018 mech is RIGID (every part `bones=1`, no blend). Clips carry TRANSLATION channels on spine chain (`j_Pitch`/`j_Spine`/`j_Spine1`) + pelvis; a ball-joint waist can't absorb translation → rigid UB lifts off LB socket (constant ~0.0154 every clip/frame). Fix = rotation-only retarget in shared `mclib/mech_skel_import.cpp` (`sampleChannel`/`computeGlobals`): channel ROTATION only, keep bind translation+scale. Gate `MC2_MECH_ANIM_ROTATION_ONLY` default ON (`=0` = raw, byte-identical pre-fix). Spine2→Pelvis gap 0.0275→0.0091; **verified in-engine** mc2_24 `madcat` torso seated. **Overturns the prior "EvaluateClipGpuBones mis-composes / idle0 must==rest" diagnosis — FK was always correct; idle frame0 ≠ bind is expected.** Detail: memory `mech-ublb-rotation-only-retarget.md`. NEXT: 1B-runtime (per-frame re-bake → moving mech) → 1C gesture map. |
+
 ## 2026-06-22 — FRAME-CURRENTNESS-GUARDS-1 — MERGED nifty (`0dd12b39`)
 
 Targeted currentness sentinels + the mech double-step fix. Rejected a grand "frame-liveness framework" (greybeard: premature abstraction); shipped narrow guards at consumer boundaries instead. Built in worktree `claude/frame-currentness-guards-1` (off nifty `96378cc1`), merged via `0dd12b39`. Detail: memory `HANDOFF_2026_06_22_frame_currentness_guards` + `docs/frame-contracts/`.
