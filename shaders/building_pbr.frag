@@ -47,16 +47,22 @@ void main(void)
     PREC vec2 materialUv = Texcoord * max(u_buildingPbrControls.x, 0.001);
     PREC vec4 legacyAlbedo = texture(tex1, Texcoord);
 
+    // UB2-05: sample u_normalTex / u_ormTex and compute the derivative TBN
+    // (dFdx/dFdy live in derivativeTbnNormal) BEFORE the conditional ALPHA_TEST
+    // discard. Sampling / implicit-LOD / derivatives after a non-uniform discard
+    // are GLSL UB — a 2x2 quad with some pixels discarded yields undefined
+    // derivatives (vendor-divergent / bites NVIDIA). Hoisting keeps kept-pixel
+    // output byte-identical; discarded pixels just compute unused samples then
+    // discard. No material/lighting/color change.
+    MaterialGpu mat = materialTable_.materials[0];
+    PREC vec3 tangentNormal = texture(u_normalTex, materialUv).xyz * 2.0 - 1.0;
+    PREC vec3 pbrNormal = derivativeTbnNormal(normalize(Normal), WorldPos, materialUv, tangentNormal);
+    PREC vec3 orm = texture(u_ormTex, materialUv).rgb;
+
 #ifdef ALPHA_TEST
     if (legacyAlbedo.a < 0.5)
         discard;
 #endif
-
-    MaterialGpu mat = materialTable_.materials[0];
-    PREC vec3 tangentNormal = texture(u_normalTex, materialUv).xyz * 2.0 - 1.0;
-    PREC vec3 pbrNormal = derivativeTbnNormal(normalize(Normal), WorldPos, materialUv, tangentNormal);
-
-    PREC vec3 orm = texture(u_ormTex, materialUv).rgb;
     PREC float ao = orm.r;
     PREC float roughness = clamp((orm.g * mat.roughnessFactor) + u_buildingPbrControls.y, 0.04, 1.0);
     PREC float metallic = clamp(orm.b * mat.metallicFactor * u_buildingPbrControls.z, 0.0, 1.0);
