@@ -6,6 +6,7 @@ LogisticsComponent.cpp			: Implementation of the LogisticsComponent component.
 //===========================================================================//
 \*************************************************************************************************/
 #include"logisticscomponent.h"
+#include"logistics_csv.h"
 #include<gameos.hpp>
 #include"cmponent.h"
 
@@ -179,59 +180,24 @@ int LogisticsComponent::init( char* dataLine )
 	return ID;
 }
 
+// LOGISTICS-CSV-TOKENIZER-FIX-1: bodies delegate to the shared, hardened
+// tokenizer in code/logistics_csv.h (fixes the past-NUL cursor walk on malformed
+// rows; behavior-preserving on well-formed compbas.csv). The same header is
+// exercised game-free by tools/logistics_csv_harness/. Member signatures kept so
+// every call site in init() is unchanged.
 int LogisticsComponent::extractString( char*& pFileLine, char* pBuffer, int bufferLength )
 {
-	*pBuffer = 0;
-    int i = 0;
-	for ( ; i < 512; ++i )
-	{
-		if ( pFileLine[i] == '\n' )
-			break;
-		else if ( pFileLine[i] == ',' )
-			break;
-		else if ( pFileLine[i] == '\0')
-			break;
-	}
-
-	if ( i == 512 )
-		return false;
-
-	gosASSERT( i < bufferLength );
-	memcpy( pBuffer, pFileLine, i );
-	pBuffer[i] = '\0';
-	bufferLength = i + 1;
-	pFileLine += i + 1;
-
-	return i;
-
+	return logistics_csv::extractField( pFileLine, pBuffer, bufferLength );
 }
 
 int LogisticsComponent::extractInt( char*& pFileLine )
 {
-	char buffer[1024];
-
-	int count = extractString( pFileLine, buffer, 1024 );
-
-	if ( count > 0 )
-	{
-		return atoi( buffer );
-	}
-
-	return -1;
+	return logistics_csv::extractInt( pFileLine );
 }
 
 float LogisticsComponent::extractFloat( char*& pFileLine )
 {
-	char buffer[1024];
-
-	int count = extractString( pFileLine, buffer, 1024 );
-
-	if ( count > 0 )
-	{
-		return atof( buffer );
-	}
-
-	return -1;
+	return logistics_csv::extractFloat( pFileLine );
 }
 
 bool LogisticsComponent::compare( LogisticsComponent* second, int type )
