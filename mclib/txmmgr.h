@@ -61,10 +61,13 @@ enum MC_TextureKey
 #define MC_MAXTEXTURES				4096
 #define CACHED_OUT_HANDLE			0xFFFFFACE		//If this value is in gosTextureHandle, texture is cached out and must be cached in.
 #define MAX_MC2_GOS_TEXTURES		3000
-#define TEXTURE_CACHE_SIZE			(40*1024*1024)	//Extra space here to facilitate editting
-#define MAX_CACHE_SIZE				(40*1024*1024)	//Actual amount map must run in!
+#define TEXTURE_CACHE_SIZE			(128*1024*1024)	//Extra space here to facilitate editting (was 40MB; bumped for 2048^2 imported-mech TGAs)
+#define MAX_CACHE_SIZE				(128*1024*1024)	//Actual amount map must run in! (was 40MB)
 #define MC_MAXFACES					16000000		// MODEL-OVERRIDE: sized for override forests (was 200000, CPU-era cap)
-#define MAX_LZ_BUFFER_SIZE			((1024*1024*8) + 1024)
+// Holds one whole uncompressed TGA in flight. 2048x2048 RGBA = 16MB, so 8MB
+// overran on imported-mech textures (loadTexture memcpy READ violation). 32MB
+// covers 2048^2 with headroom; stock textures (<=512^2) unaffected.
+#define MAX_LZ_BUFFER_SIZE			((1024*1024*32) + 1024)
 
 #define MC2_ISTERRAIN				1
 #define MC2_DRAWSOLID				2
