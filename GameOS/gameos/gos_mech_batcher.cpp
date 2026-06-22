@@ -23,6 +23,7 @@
 #include "gos_postprocess.h"           // getGosPostProcess()->getDynamicLightSpaceMatrix()
 #include "../../mclib/txmmgr.h"       // mcTextureManager->get_gosTextureHandle (live resolve)
 #include <GL/glew.h>
+#include "gl_state_guard.h"            // GlStateGuard adoption: mc2gl::GlScopedSsboBinding
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -888,12 +889,19 @@ void GpuMechBatcher::flushShadow() {
     // buffer/SSBO bindings 0+1 here poisons gpu_cull::compute_dispatch()
     // and the indirect flush() that run after -> invisible mechs+props.
     // All early returns above precede any GL mutation.
-    GLint prevProgram = 0, prevVao = 0, prevElemBuf = 0, prevSsbo0 = 0, prevSsbo1 = 0;
+    GLint prevProgram = 0, prevVao = 0, prevElemBuf = 0;
     glGetIntegerv(GL_CURRENT_PROGRAM, &prevProgram);
     glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
     glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &prevElemBuf);
-    glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 0, &prevSsbo0);
-    glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 1, &prevSsbo1);
+    // GlStateGuard adoption: SSBO slots 0/1 restore-previous, replacing the
+    // hand-rolled prevSsbo0/prevSsbo1 save (was here) + restore (was at the end
+    // of this function). SHADER_STORAGE_BUFFER base bindings are global context
+    // state — independent of the VAO/program/element-buffer restored manually
+    // below — so the scope-exit restore order is immaterial. flushShadow() has
+    // no gos_InvalidateRenderStateCache() call, so function-scope guards are
+    // correct here (cf. gl_state_guard.h slice-2 scoping note).
+    mc2gl::GlScopedSsboBinding guardSsbo0(0);
+    mc2gl::GlScopedSsboBinding guardSsbo1(1);
 
     glUseProgram(shadowProg);
 
@@ -967,8 +975,7 @@ void GpuMechBatcher::flushShadow() {
     // ORDER MATTERS: restore VAO before element-buffer so glBindBuffer(ELEM)
     // writes into prevVao's state, not s_sharedVao's. Wrong order leaves
     // s_sharedVao.elemBuf=0 and flush() faults on the next indexed draw.
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, (GLuint)prevSsbo0);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, (GLuint)prevSsbo1);
+    // (SSBO slots 0/1 are restored by guardSsbo0/guardSsbo1 at scope exit.)
     glBindVertexArray((GLuint)prevVao);                          // VAO first
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, (GLuint)prevElemBuf); // then elem
     glUseProgram((GLuint)prevProgram);
