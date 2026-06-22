@@ -73,15 +73,16 @@ Row schema: `id | subsystem | risk | vendor | status | evidence | commit | test 
 | POST-WATERREFL-PLACEHOLDER-1 | waterReflFBO_ allocated, no producer | L | none | DEFERRED_LOW_RISK | `gos_postprocess.cpp:692-749` Phase-C placeholder, reads black | — | keep + doc "producer TBD" |
 | POST-STATE-RESTORE-1 | postprocess pass GL-state restore | M | both | PROVEN_COVERED | every live pass (HZB/SSAO/screenShadow/shoreline/godray) saves+restores viewport/depth/blend; endScene ends with gos_InvalidateRenderStateCache `:1917` | tier1 `MC2_GL_DEBUG_FATAL=1` | none (95% correct + cache-invalidate backstop) |
 
-## Prioritized fix queue (distilled from all 6 recons)
+## Prioritized fix queue (distilled from all 6 recons; reordered 2026-06-21 after veg-cards ruled out)
 Correctness bugs first, then cleanup, then architecture. Each = its own behavior-preserving, smoke-gated slice.
-1. **TREE-N2** — veg-cards blockVis SSBO OOB (`gos_vegetation.cpp:228-237` 1024-slot vs unbounded `chunkSide²` index). Veg cards are SHIPPED-ENABLED. Fix = size SSBO to actual blockCount + shader bounds-guard. Correct-by-construction; no NVIDIA repro needed. **Top pick.**
-2. **UB2-02** — `mech.frag` StandardLit non-uniform `texture()`/derivative (default-ON, every mech). Hoist samples above the `v_mechSunFound` branch.
-3. **UB2-01** — `terrain_lod_chunk.frag` detail-normals/POM non-uniform LOD. Sample-always × weight.
-4. **OMT-1** — overlay/decal bind GL texture 0 on resolve-fail. Skip-draw or bind 1×1 white.
-5. **UB2-05** — building_pbr discard-before-sample. Move samples above discard.
-6. **POST-BLOOM/ACES/FXAA-DEAD-1** — delete dead bloom/ACES/FXAA (cleanup, not a bug; shrinks surface; user says these are wrong for an RTS).
-7. **POST-GODRAYS-FBBIND-1** — 1-line FBO-restore tidy.
+1. **UB2-02** — `mech.frag` StandardLit non-uniform `texture()`/derivative (default-ON, every mech). Hoist samples above the `v_mechSunFound` branch. **← current slice.**
+2. **UB2-01** — `terrain_lod_chunk.frag` detail-normals/POM non-uniform LOD. Sample-always × weight.
+3. **OMT-1** — overlay/decal bind GL texture 0 on resolve-fail. Skip-draw or bind 1×1 white.
+4. **UB2-05** — building_pbr discard-before-sample. Move samples above discard.
+5. **POST-BLOOM/ACES/FXAA-DEAD-1** — delete dead bloom/ACES/FXAA (cleanup, not a bug; wrong for an RTS).
+6. **POST-GODRAYS-FBBIND-1** — 1-line FBO-restore tidy.
+
+Parked (NEEDS_VENDOR_TEST, no repro available): TREE-N2 veg-cards OOB (veg cards shipped-DISABLED — real latent bug but not the tree symptom), NVIDIA static-prop tree-disappear (predates veg cards; known classes all covered; needs fresh capture), UB2-04 shadow PCF derivatives, UB2-06/07 empty shadow frags (empirically fine on dev AMD).
 
 NEEDS_VENDOR_TEST (park until a vendor run is possible): UB2-04 (shadow PCF derivatives), UB2-06/07 (empty shadow frags — empirically fine on dev 7900 XTX), OMT-4 (indirect cement path).
 Hygiene: amend memory `uniform_uint_crash` (parse-time-fixed, rule over-broad).
@@ -97,5 +98,5 @@ Of 8 reconned items: **most GL-correctness debt is PROVEN_COVERED** (GL-state gu
 - ✅ item 7 PASS-DESC-POSTPROCESS — bloom/ACES/FXAA PROVEN_DEAD; state restore covered.
 - ✅ item 8 GLSL-UB-AUDIT-2 — the real findings (UB2-01/02/05 non-uniform flow).
 
-### Resolved: NVIDIA-tree config fork
-User confirmed `MC2_VEGETATION_CARDS` is **shipped-ENABLED** (but not on user's own machine; can't repro NVIDIA easily). → veg-cards path is live → **TREE-N2 (blockVis SSBO OOB) is the lead**, and is fixable correct-by-construction without an NVIDIA repro. Static-prop path remains PROVEN_COVERED.
+### Resolved: NVIDIA-tree config fork (CORRECTED 2026-06-21)
+User clarified: `MC2_VEGETATION_CARDS` is **shipped-DISABLED**, AND the tree-disappear predates veg cards entirely. → veg-cards path is NOT the cause; **TREE-N2 is de-prioritized** (still a real latent OOB worth fixing eventually, but not the tree symptom). The disappearing trees are the **static-prop TreeAppearance path**, which is PROVEN_COVERED on all known buffer/barrier/alignment hazard classes → the symptom is NOT the known class and needs a fresh NVIDIA capture to localize. Status: NEEDS_VENDOR_TEST, parked.
