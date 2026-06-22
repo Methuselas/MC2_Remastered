@@ -6,10 +6,21 @@ OBJMGR-CONTRACT-HARNESS-1 (parallel lane), IBL-REGISTRY-CONTRACT-HARNESS-1
 (+external-HDRI manifest), ICON-ATLAS-HARNESS-1 (+8-site row-count bug fix),
 RENDER-PASS-TABLE-HARNESS-1 (static table invariants over RenderPassContract.h:
 id parity, dup ids, reads/writes range, no mid-array terminator, static
-producer/consumer closure — header self-flags field-value staleness).
-DEFERRED — FIT-PARSE (file subsystem), STATIC-PROP (classification entangled,
-extraction-gated like objmgr was). Next targets ranked in
+producer/consumer closure — header self-flags field-value staleness),
+DEPLOY-RELEASE-TREE-CONTRACT-HARNESS-1 (Python; validates a DEPLOYED tree's
+runnable shape; explicit `--release-root`/`MC2_RELEASE_ROOT`, non-blocking when
+unconfigured). DEFERRED — FIT-PARSE (file subsystem), STATIC-PROP (classification
+entangled, extraction-gated like objmgr was). Next targets ranked in
 [harness-target-sweep-2.md](harness-target-sweep-2.md). Nine harnesses; runner green.
+
+### deploy_release_tree_contract_harness usage
+`py -3 tools/deploy_release_tree_contract_harness/deploy_release_tree_contract_harness.py --release-root <deployed-tree>`
+(or set `MC2_RELEASE_ROOT`). Unconfigured → all tests PASS as no-ops with a
+"not configured" diagnostic, so the aggregate runner stays green on a fresh
+checkout. `MC2_RELEASE_TREE_STRICT=1` (or `--test strict_full_runtime_payload`)
+additionally requires every FFmpeg DLL + the launcher. Imports `deploy_payload.py`
+constants — no duplicated lists. Validated against a known-good v0.4 tree
+(87 shaders, 8 .fst, all DLLs + launcher present).
 
 ## Python harnesses (since DEPLOY-ASSET-CONTRACT-HARNESS-1)
 
