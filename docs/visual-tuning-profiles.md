@@ -62,8 +62,8 @@ Invalid values: clamped to safe range where applicable.
 | `waterSkyTintStrength` | float | ≥0 | `MC2_WATER_SKYTINT` | Sky horizon tint on water |
 | `vfxBrightness` | float | 0–8 | `MC2_TUNE_VFX_BRIGHTNESS` | Particle overall brightness |
 | `vfxAdditiveBrightness` | float | 0–8 | `MC2_TUNE_VFX_ADDITIVE_BRIGHTNESS` | Additive blend brightness |
-| `bloomThreshold` | float | ≥0 | — | Bloom bright-pass cutoff (visible only with `MC2_HDR_POST`+`MC2_BLOOM`) |
-| `bloomIntensity` | float | ≥0 | — | Bloom composite weight (same gating) |
+| ~~`bloomThreshold`~~ | — | — | — | REMOVED 2026-06-22 (DEAD-POST-FX-CLEANUP-1): bloom deleted as wrong-for-RTS; key now ignored on load |
+| ~~`bloomIntensity`~~ | — | — | — | REMOVED 2026-06-22 (DEAD-POST-FX-CLEANUP-1): key now ignored on load |
 | `aoRadius` | float | ≥0 | — | SSAO sample radius (visible only with `MC2_SSAO`) |
 | `aoStrength` | float | ≥0 | — | SSAO darkening strength (same gating) |
 | `aoBias` | float | ≥0 | — | SSAO depth bias (same gating) |

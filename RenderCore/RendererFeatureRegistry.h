@@ -456,7 +456,7 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         "MC2_HDR_POST",
         EnvVarKind::Feature,
         false,
-        "HDR-POST-SCAFFOLD-1 (Track V): master gate for the HDR post-process stack on the existing RGBA16F scene FBO (gosPostProcess). Default-OFF; =1 enables. The scene color attachment is ALREADY RGBA16F, so this gate does not change buffer formats; it only enables exposure + ACES tonemap + bloom application from env/profile. When OFF, postprocess members keep their legacy defaults (exposure 1.0, tonemap/bloom off) -> byte-identical to pre-Track-V output (the unconditional sunset grade in postprocess.frag is preserved either way). Visual-only; no geometry/depth/objectId/UI change. Bloom + tonemap are independently gated (MC2_BLOOM / MC2_TONEMAP_ACES) and are inert unless this master gate is ON."
+        "[REMOVED 2026-06-22 DEAD-POST-FX-CLEANUP-1: HDR-post stack (bloom/ACES) deleted as wrong-for-RTS; this env var now has NO effect. Entry retained to preserve registry indices.] HDR-POST-SCAFFOLD-1 (Track V): master gate for the HDR post-process stack on the existing RGBA16F scene FBO (gosPostProcess). Default-OFF; =1 enables. The scene color attachment is ALREADY RGBA16F, so this gate does not change buffer formats; it only enables exposure + ACES tonemap + bloom application from env/profile. When OFF, postprocess members keep their legacy defaults (exposure 1.0, tonemap/bloom off) -> byte-identical to pre-Track-V output (the unconditional sunset grade in postprocess.frag is preserved either way). Visual-only; no geometry/depth/objectId/UI change. Bloom + tonemap are independently gated (MC2_BLOOM / MC2_TONEMAP_ACES) and are inert unless this master gate is ON."
     },
     // Bloom
     {
@@ -464,7 +464,7 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         "MC2_BLOOM",
         EnvVarKind::Feature,
         false,
-        "BLOOM-MVP-1 (Track V): threshold + half-res ping-pong bloom on the HDR scene (gosPostProcess::runBloom, already present). Default-OFF; =1 enables (sets bloomEnabled_). Auto-depends on MC2_HDR_POST (no effect unless the HDR post stack is ON). Conservative defaults threshold 0.6 / intensity 0.3; ImGui-tunable and per-mission profile fields bloomThreshold / bloomIntensity. When OFF, bloomEnabled_ stays false -> composite skips the bloom add -> byte-identical. UI/HUD are composited after endScene, so they never receive bloom."
+        "[REMOVED 2026-06-22 DEAD-POST-FX-CLEANUP-1: bloom deleted as wrong-for-RTS; this env var now has NO effect. Entry retained to preserve registry indices.] BLOOM-MVP-1 (Track V): threshold + half-res ping-pong bloom on the HDR scene (gosPostProcess::runBloom, already present). Default-OFF; =1 enables (sets bloomEnabled_). Auto-depends on MC2_HDR_POST (no effect unless the HDR post stack is ON). Conservative defaults threshold 0.6 / intensity 0.3; ImGui-tunable and per-mission profile fields bloomThreshold / bloomIntensity. When OFF, bloomEnabled_ stays false -> composite skips the bloom add -> byte-identical. UI/HUD are composited after endScene, so they never receive bloom."
     },
     // TonemapAces
     {
@@ -472,7 +472,7 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         "MC2_TONEMAP_ACES",
         EnvVarKind::Feature,
         false,
-        "TONEMAP-ACES-MVP-1 (Track V): ACES-ish filmic tonemap curve in the composite shader (postprocess.frag ACESFilm, already present). Default-OFF; =1 enables (sets tonemapEnabled_). Auto-depends on MC2_HDR_POST. Exposure tunable via gos_SetExposure / profile 'exposure'. When OFF, the enableTonemap uniform = 0 -> composite passes color*exposure through unchanged -> byte-identical (exposure default 1.0). UI is composited after endScene so there is no double-tonemap of HUD/ImGui."
+        "[REMOVED 2026-06-22 DEAD-POST-FX-CLEANUP-1: ACES tonemap deleted as wrong-for-RTS; this env var now has NO effect. Entry retained to preserve registry indices.] TONEMAP-ACES-MVP-1 (Track V): ACES-ish filmic tonemap curve in the composite shader (postprocess.frag ACESFilm, already present). Default-OFF; =1 enables (sets tonemapEnabled_). Auto-depends on MC2_HDR_POST. Exposure tunable via gos_SetExposure / profile 'exposure'. When OFF, the enableTonemap uniform = 0 -> composite passes color*exposure through unchanged -> byte-identical (exposure default 1.0). UI is composited after endScene so there is no double-tonemap of HUD/ImGui."
     },
     // Ssao
     {

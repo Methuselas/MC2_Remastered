@@ -70,8 +70,8 @@ Row schema: `id | subsystem | risk | vendor | status | evidence | commit | test 
 | UB2-10 | gos_grass.geom | — | — | PROVEN_DEAD | no loader (MEMORY terrain-overlay handoff) | — | none |
 | TEXHANDLE-1 | raw GL texture-id extraction (gos_GetTextureGLId / gos_GetGLTextureId), 15 call sites | L | n/a (architecture, not correctness) | PROVEN_COVERED | all 15 callers hold a live gosHandle or resolve from a validated live source each frame; all glBindTexture null-safe; NO use-after-free, NO stale-id-cached-across-frames. Sites: gameos_graphics.cpp:7606/5329/2621/2550/9407/9524/9598, gos_terrain_indirect.cpp:1165/3964, gos_mech_batcher.cpp:2168, gos_static_prop_batcher.cpp:3140/7131/7518/7809 | tier1 RenderDoc | NONE for correctness. Opaque-handle migration is GpuBuffer-arc work; easy-first order: font atlas → mech diag → static-prop buildtime dedupe |
 
-| POST-BLOOM/ACES/FXAA-DEAD-1 | postprocess bloom + ACES tonemap + FXAA | L | none | PROVEN_DEAD | bloom gated `hdrPostEnabled_&&bloomEnabled_` both default-OFF + composite force-0 `gos_postprocess.cpp:1824/1826`; FXAA `fxaaEnabled_=false` never set `:130`; shaders compiled but never dispatched | set the gates → confirm no change | safe-DELETE runBloom + bloomFBO_/textures + fxaa branch (separates dead from live; wrong-for-RTS per user) |
-| POST-GODRAYS-FBBIND-1 | god-rays pass-2 FBO restore | L | none | LIVE_BUG (benign) | `gos_postprocess.cpp:1698` binds sceneFBO_, never rebinds default; endScene `:1798` corrects it → semantic gap only | RAlt+6 godrays on | 1-line `glBindFramebuffer(0)` at :1722 |
+| DEAD-POST-FX-CLEANUP-1 | postprocess bloom + ACES tonemap + FXAA + god rays | L | none | REMOVED `92d3a821`+`9c2187d8` | bloom/ACES/FXAA PROVEN_DEAD (default-off, composite force-0) + god rays CONDITIONAL (default-off, RAlt+6) — all wrong-for-RTS. Deleted: members/FBOs/programs/runBloom/runGodRays/3 shader files (bloom_threshold,bloom_blur,godray)/ImGui/hotkeys/env-gates/postprocess.frag branches. LIVE composite preserved (sunset grade, exposure, ObjectIdDebug/Thermal/LowLight view-modes, HZB/SSAO/screen-shadow/shoreline/waterRefl) | tier1 5/5, composite renders, no shader-compile errors | none. NOTE: bloomThreshold/bloomIntensity profile keys + RendererFeatureRegistry MC2_HDR_POST/BLOOM/TONEMAP_ACES now inert (annotated removed) |
+| POST-GODRAYS-FBBIND-1 | god-rays pass-2 FBO restore | L | none | MOOT (god rays deleted) | the FBO-restore gap no longer exists — runGodRays() removed entirely by DEAD-POST-FX-CLEANUP-1 `92d3a821` | n/a | none |
 | POST-WATERREFL-PLACEHOLDER-1 | waterReflFBO_ allocated, no producer | L | none | DEFERRED_LOW_RISK | `gos_postprocess.cpp:692-749` Phase-C placeholder, reads black | — | keep + doc "producer TBD" |
 | POST-STATE-RESTORE-1 | postprocess pass GL-state restore | M | both | PROVEN_COVERED | every live pass (HZB/SSAO/screenShadow/shoreline/godray) saves+restores viewport/depth/blend; endScene ends with gos_InvalidateRenderStateCache `:1917` | tier1 `MC2_GL_DEBUG_FATAL=1` | none (95% correct + cache-invalidate backstop) |
 
@@ -81,8 +81,10 @@ Correctness bugs first, then cleanup, then architecture. Each = its own behavior
 2. ✅ **UB2-01** — terrain_lod_chunk.frag detail-normals/POM/cement. FIXED `f4208726` (byte-exact visual gate PASS 9/9). Established the golden-gated-shader-fix flow (capture blessed golden on same exe → change → `run_visual.py compare` byte-exact).
 3. ✅ **OMT-1** — overlay/decal bind-0 on resolve-fail. FIXED `36d6a254` (explicit 1×1 magenta fallback + log + counters; behavior-neutral on stock).
 4. ✅ **UB2-05** — building_pbr discard-before-sample. FIXED `1851b16d` (hoisted above discard; tier1 5/5, neutral).
-5. **DEAD-POST-FX-CLEANUP-1** — delete dead bloom/ACES/FXAA (PROVEN_DEAD; cleanup, not a bug; wrong for an RTS). **← next.**
-6. **POST-GODRAYS-FBBIND-1** — 1-line FBO-restore tidy.
+5. ✅ **DEAD-POST-FX-CLEANUP-1** — bloom/ACES/FXAA + god rays DELETED `92d3a821`+`9c2187d8` (tier1 5/5; live composite preserved).
+6. ✅ **POST-GODRAYS-FBBIND-1** — MOOT (god rays deleted, the FBO-restore gap is gone with it).
+
+**Queue clear.** All confirmed LIVE_BUGs fixed + all cleanup done. Remaining open items are NEEDS_VENDOR_TEST only (await a vendor run): on-NVIDIA tree-disappear visual confirm, empty shadow frags UB2-06/07, shadow PCF UB2-04. Plus deferred-low-risk: TREE-N2 veg-cards OOB (veg shipped-off), static-decal stale-handle rebake.
 
 All confirmed shader/CPU LIVE_BUGs in the queue are now FIXED. Remaining items are cleanup (dead-code) + a 1-line tidy. NEEDS_VENDOR_TEST items (empty shadow frags UB2-06/07, shadow PCF UB2-04, on-NVIDIA tree-disappear visual confirm) await a vendor run.
 
