@@ -144,9 +144,6 @@ const char* buildConfigString() {
 struct RenderPassState {
     bool shadow        = false;
     bool screenShadow  = false;
-    bool bloom         = false;
-    bool fxaa          = false;
-    bool tonemap       = false;
 };
 
 RenderPassState readPassState() {
@@ -154,9 +151,6 @@ RenderPassState readPassState() {
     if (const gosPostProcess* pp = getGosPostProcess()) {
         ps.shadow       = pp->shadowsEnabled_;
         ps.screenShadow = pp->screenShadowEnabled_;
-        ps.bloom        = pp->bloomEnabled_;
-        ps.fxaa         = pp->fxaaEnabled_;
-        ps.tonemap      = pp->tonemapEnabled_;
     }
     return ps;
 }
@@ -267,10 +261,7 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
     s << "  },\n";
     s << "  \"renderPasses\": {\n";
     s << "    \"shadow\": "; b(s, ps.shadow); s << ",\n";
-    s << "    \"screenShadow\": "; b(s, ps.screenShadow); s << ",\n";
-    s << "    \"bloom\": "; b(s, ps.bloom); s << ",\n";
-    s << "    \"fxaa\": "; b(s, ps.fxaa); s << ",\n";
-    s << "    \"tonemap\": "; b(s, ps.tonemap); s << "\n";
+    s << "    \"screenShadow\": "; b(s, ps.screenShadow); s << "\n";
     s << "  },\n";
     // SHADOW-OBSERVABILITY-1: live shadow/CSM runtime state. Emitted always
     // (zeros/false when CSM disabled). Lets an agent query the resolved gate +

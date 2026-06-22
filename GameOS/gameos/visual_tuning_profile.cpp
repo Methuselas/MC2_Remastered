@@ -20,8 +20,6 @@ extern float gos_GetWaterSkyTintStrength();
 extern void  gos_SetWaterSkyTintStrength(float v);
 extern float gos_GetExposure();
 extern void  gos_SetExposure(float v);
-extern void  gos_SetBloomThreshold(float v);
-extern void  gos_SetBloomIntensity(float v);
 extern void  gos_SetSsaoRadius(float v);
 extern void  gos_SetSsaoStrength(float v);
 extern void  gos_SetSsaoBias(float v);
@@ -35,8 +33,6 @@ extern float     gos_GetTerrainLightingV1Strength();
 extern float     gos_GetTerrainLightingV2Floor();
 // Getters for the post-stack keys (reader already had the setters above) so the
 // writer can round-trip the full reader vocabulary (fixes the 8-vs-13 asymmetry).
-extern float gos_GetBloomThreshold();
-extern float gos_GetBloomIntensity();
 extern float gos_GetSsaoRadius();
 extern float gos_GetSsaoStrength();
 extern float gos_GetSsaoBias();
@@ -198,14 +194,6 @@ static void applyKey(const char* key, float val, int& count) {
             gos_vfx_setLitStrength(val);
             count++;
         }
-    } else if (strcmp(key, "bloomThreshold") == 0) {
-        // BLOOM-MVP-1: per-mission bloom extract threshold. Only visible when
-        // MC2_HDR_POST + MC2_BLOOM are on; harmless otherwise (writes member).
-        gos_SetBloomThreshold(val);
-        count++;
-    } else if (strcmp(key, "bloomIntensity") == 0) {
-        gos_SetBloomIntensity(val);
-        count++;
     } else if (strcmp(key, "aoRadius") == 0) {
         // SSAO-GTAO-LITE-MVP-1: per-mission AO tunables. Only visible when
         // MC2_SSAO is on; harmless otherwise (writes member).
@@ -368,8 +356,6 @@ bool visualTuning_saveCurrentToMission() {
     // Post-stack keys the reader already accepts but the writer used to drop
     // (8-vs-13 asymmetry) -- round-trip them so "Set as Mission Defaults" keeps
     // any live bloom/AO tuning instead of silently losing it.
-    current["bloomThreshold"]            = gos_GetBloomThreshold();
-    current["bloomIntensity"]            = gos_GetBloomIntensity();
     current["aoRadius"]                  = gos_GetSsaoRadius();
     current["aoStrength"]                = gos_GetSsaoStrength();
     current["aoBias"]                    = gos_GetSsaoBias();

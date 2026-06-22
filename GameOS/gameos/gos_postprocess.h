@@ -54,8 +54,6 @@ public:
     // inverse(worldToClipGL), uploaded verbatim (same convention as invProj).
     void renderHdriSkyboxInvVP(const float* invVP16);
 
-    void runBloom();
-
     // Shadow mapping
     void initShadows();
     void destroyShadows();
@@ -169,16 +167,6 @@ public:
 
     // Toggles and parameters
     float exposure_;
-    bool bloomEnabled_;
-    bool fxaaEnabled_;
-    bool tonemapEnabled_;
-    float bloomIntensity_;
-    float bloomThreshold_;
-    // HDR-POST-SCAFFOLD-1 (Track V, MC2_HDR_POST): master gate for the HDR
-    // post stack. Resolved once from env at init(). When false (default),
-    // bloom + ACES tonemap are force-disabled in the composite regardless of
-    // their own member flags, so default output is byte-identical to legacy.
-    bool hdrPostEnabled_;
 
     void runScreenShadow();
     bool screenShadowEnabled_;
@@ -305,10 +293,6 @@ private:
     GLuint sceneObjectIdTex_ = 0;   // M1.5 R32UI MRT attachment-2 (gated on MC2_OBJECT_ID_BUFFER)
     GLuint sceneDepthCopyTex_ = 0;  // VFX-SOFT-PARTICLES-MVP-1 lazy depth copy (DEPTH24_STENCIL8)
 
-    // Bloom ping-pong FBOs (half resolution)
-    GLuint bloomFBO_[2];
-    GLuint bloomColorTex_[2];
-
     // WATER-REFLECTION-RESOURCE-1: quarter-res reflection target (color + depth).
     // Allocated in createFBOs, freed in destroyFBOs, registered in
     // RenderResourceRegistry. No producer until Phase C (reads black).
@@ -345,10 +329,6 @@ private:
     // to detect when a swap is actually needed).
     char          hdriCurrentPath_[256] = {};
     int           skyNumber_       = -1;     // SCENE-LIGHTING-STATE-1: last requested sky #
-
-    // Bloom shaders
-    glsl_program* bloomThresholdProg_;
-    glsl_program* bloomBlurProg_;
 
     // Dimensions
     int width_;
@@ -476,13 +456,6 @@ void  gos_SetLowLightGain(float v);
 float gos_GetLowLightGain();
 void  gos_SetLowLightTintG(float v); // green channel — the most impactful axis
 
-// TRACK-V post stack accessors (resolved from env at init; see gos_postprocess.cpp).
-bool gos_IsHdrPostEnabled();
-// BLOOM-MVP-1 tunables (profile + ImGui).
-void  gos_SetBloomThreshold(float v);
-void  gos_SetBloomIntensity(float v);
-float gos_GetBloomThreshold();
-float gos_GetBloomIntensity();
 // SSAO-GTAO-LITE-MVP-1 tunables (profile + ImGui).
 bool  gos_IsSsaoEnabled();
 void  gos_SetSsaoRadius(float v);

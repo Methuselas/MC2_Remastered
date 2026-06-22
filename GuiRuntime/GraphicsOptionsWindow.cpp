@@ -1927,10 +1927,7 @@ void draw() {
             // ── Track V: HDR post + grounding (live tuners) ──────────────────
             // All gates are plain runtime bools read every frame, so toggling
             // here takes effect immediately (env var seeds the startup state).
-            ImGui::SeparatorText("Track V (HDR / Bloom / Tonemap / SSAO)");
-            ImGui::Checkbox("HDR Post (master)##trackv", &pp->hdrPostEnabled_);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("MC2_HDR_POST. Master gate: Bloom + Tonemap are\nforced OFF in the composite when this is OFF.");
+            ImGui::SeparatorText("Track V (Exposure / SSAO)");
             ImGui::Indent();
             ImGui::SliderFloat("Exposure##trackv", &pp->exposure_, 0.0f, 4.0f);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("composite exposure multiplier (default 1.0)");
@@ -1998,21 +1995,6 @@ void draw() {
 
             ImGui::SeparatorText("Legacy / shared");
 
-            ImGui::Checkbox("Bloom", &pp->bloomEnabled_);
-            if (pp->bloomEnabled_) {
-                ImGui::Indent();
-                if (!pp->hdrPostEnabled_)
-                    ImGui::TextDisabled("(needs HDR Post master ON)");
-                ImGui::SliderFloat("Intensity##bloom", &pp->bloomIntensity_, 0.0f, 4.0f);
-                ImGui::SliderFloat("Threshold##bloom", &pp->bloomThreshold_, 0.0f, 4.0f);
-                ImGui::Unindent();
-            }
-            ImGui::Checkbox("FXAA",    &pp->fxaaEnabled_);
-            ImGui::Checkbox("Tonemap (ACES)", &pp->tonemapEnabled_);
-            if (pp->tonemapEnabled_ && !pp->hdrPostEnabled_) {
-                ImGui::Indent(); ImGui::TextDisabled("(needs HDR Post master ON)"); ImGui::Unindent();
-            }
-            ImGui::Separator();
             ImGui::Checkbox("Shadows##pp",      &pp->shadowsEnabled_);
             ImGui::Checkbox("Shadow Debug##pp", &pp->showShadowDebug_);
             if (pp->showShadowDebug_) {

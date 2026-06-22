@@ -239,15 +239,6 @@ static void handle_key_down( SDL_Keysym* keysym ) {
             if(alt_debug)
                 gos_RenderEnableDebugDrawCalls();
             break;
-        case SDLK_F1:
-            if (alt_debug) {
-                gosPostProcess* pp = getGosPostProcess();
-                if (pp) {
-                    pp->bloomEnabled_ = !pp->bloomEnabled_;
-                    fprintf(stderr, "Bloom: %s\n", pp->bloomEnabled_ ? "ON" : "OFF");
-                }
-            }
-            break;
         case SDLK_F2:
             if (alt_debug) {
                 gosPostProcess* pp = getGosPostProcess();
@@ -506,9 +497,7 @@ static void draw_screen( void )
     // Apply validation mode feature overrides
     if (pp && getValidateConfig().enabled) {
         ValidateConfig& vc = getValidateConfig();
-        if (vc.bloomOverride >= 0) pp->bloomEnabled_ = vc.bloomOverride;
         if (vc.shadowsOverride >= 0) pp->shadowsEnabled_ = vc.shadowsOverride;
-        if (vc.fxaaOverride >= 0) pp->fxaaEnabled_ = vc.fxaaOverride;
     }
 
     glCullFace(GL_FRONT);

@@ -265,18 +265,6 @@ void  gos_SetLowLightGain(float v)   { if (s_postProcess) s_postProcess->lowLigh
 float gos_GetLowLightGain()          { return s_postProcess ? s_postProcess->lowLightGain_ : 2.5f; }
 void  gos_SetLowLightTintG(float v)  { if (s_postProcess) s_postProcess->lowLightTint_[1] = (v < 0.0f ? 0.0f : (v > 2.0f ? 2.0f : v)); }
 
-bool gos_IsHdrPostEnabled() { return s_postProcess && s_postProcess->hdrPostEnabled_; }
-
-// BLOOM-MVP-1 tunables (profile + ImGui). Clamped to safe conservative ranges.
-void gos_SetBloomThreshold(float v) {
-    if (s_postProcess) s_postProcess->bloomThreshold_ = (v < 0.0f ? 0.0f : (v > 4.0f ? 4.0f : v));
-}
-void gos_SetBloomIntensity(float v) {
-    if (s_postProcess) s_postProcess->bloomIntensity_ = (v < 0.0f ? 0.0f : (v > 4.0f ? 4.0f : v));
-}
-float gos_GetBloomThreshold() { return s_postProcess ? s_postProcess->bloomThreshold_ : 1.2f; }
-float gos_GetBloomIntensity() { return s_postProcess ? s_postProcess->bloomIntensity_ : 0.15f; }
-
 // SSAO-GTAO-LITE-MVP-1 tunables (clamped to conservative ranges).
 bool  gos_IsSsaoEnabled() { return s_postProcess && s_postProcess->ssaoEnabled_; }
 void  gos_SetSsaoRadius(float v)   { if (s_postProcess) s_postProcess->aoRadius_   = (v < 0.1f ? 0.1f : (v > 64.0f ? 64.0f : v)); }
@@ -363,12 +351,6 @@ static const float kQuadVerts[] = {
 
 gosPostProcess::gosPostProcess()
     : exposure_(1.0f)
-    , bloomEnabled_(false)
-    , fxaaEnabled_(false)
-    , tonemapEnabled_(false)
-    , bloomIntensity_(0.15f)  // BLOOM-MVP-1 tuned 2026-05-29 (was 0.3; halved)
-    , bloomThreshold_(1.2f)   // BLOOM-MVP-1 tuned 2026-05-29 (was 0.6; doubled)
-    , hdrPostEnabled_(false)
     , sceneFBO_(0)
     , sceneColorTex_(0)
     , sceneDepthTex_(0)
@@ -377,8 +359,6 @@ gosPostProcess::gosPostProcess()
     , quadVBO_(0)
     , compositeProg_(nullptr)
     , skyboxProg_(nullptr)
-    , bloomThresholdProg_(nullptr)
-    , bloomBlurProg_(nullptr)
     , width_(0)
     , height_(0)
     , initialized_(false)
@@ -424,8 +404,6 @@ gosPostProcess::gosPostProcess()
     , aoBias_(0.0025f)
     , aoPower_(1.5f)
 {
-    bloomFBO_[0] = bloomFBO_[1] = 0;
-    bloomColorTex_[0] = bloomColorTex_[1] = 0;
     memset(staticLightSpaceMatrix_, 0, sizeof(staticLightSpaceMatrix_));
     memset(dynamicLightSpaceMatrix_, 0, sizeof(dynamicLightSpaceMatrix_));
     dynamicFullMapTex_ = 0;
@@ -530,51 +508,6 @@ void gosPostProcess::init(int w, int h)
                 "[HDRI_SKY v1] enabled=0 reason=env_gate MC2_HDRI_SKY=0\n");
         }
     }
-
-    // HDR-POST-SCAFFOLD-1 (Track V) master gate. Resolved once from env.
-    // Default OFF: scene is already RGBA16F, but bloom + ACES tonemap stay
-    // force-disabled so output is byte-identical to legacy. =1 enables the
-    // post stack; the sub-features have their own gates (MC2_BLOOM /
-    // MC2_TONEMAP_ACES) read in beginScene-time wiring elsewhere.
-    {
-        const char* hdrEnv = getenv("MC2_HDR_POST");
-        hdrPostEnabled_ = (hdrEnv && hdrEnv[0] && hdrEnv[0] != '0');
-        std::fprintf(stderr, "[HDR_POST v1] enabled=%d (MC2_HDR_POST=%s)\n",
-                     hdrPostEnabled_ ? 1 : 0, hdrEnv ? hdrEnv : "(unset)");
-
-        // BLOOM-MVP-1 (Track V, MC2_BLOOM): sub-feature of the HDR post stack.
-        // Sets bloomEnabled_; only takes effect when hdrPostEnabled_ (enforced
-        // in runBloom + composite). Conservative member defaults (threshold
-        // 0.6 / intensity 0.3) are ImGui- and profile-tunable.
-        const char* bloomEnv = getenv("MC2_BLOOM");
-        if (bloomEnv && bloomEnv[0] && bloomEnv[0] != '0')
-            bloomEnabled_ = true;
-        std::fprintf(stderr, "[BLOOM v1] enabled=%d (MC2_BLOOM=%s, requires MC2_HDR_POST)\n",
-                     (hdrPostEnabled_ && bloomEnabled_) ? 1 : 0,
-                     bloomEnv ? bloomEnv : "(unset)");
-
-        // TONEMAP-ACES-MVP-1 (Track V, MC2_TONEMAP_ACES): sub-feature of the
-        // HDR post stack. Sets tonemapEnabled_; the composite forces
-        // enableTonemap=0 unless hdrPostEnabled_, so this is inert without the
-        // master gate. ACES curve (postprocess.frag ACESFilm) already present;
-        // exposure is tunable via gos_SetExposure / profile 'exposure'.
-        const char* tonemapEnv = getenv("MC2_TONEMAP_ACES");
-        if (tonemapEnv && tonemapEnv[0] && tonemapEnv[0] != '0')
-            tonemapEnabled_ = true;
-        std::fprintf(stderr, "[TONEMAP_ACES v1] enabled=%d (MC2_TONEMAP_ACES=%s, requires MC2_HDR_POST)\n",
-                     (hdrPostEnabled_ && tonemapEnabled_) ? 1 : 0,
-                     tonemapEnv ? tonemapEnv : "(unset)");
-    }
-
-    bloomThresholdProg_ = glsl_program::makeProgram("bloom_threshold",
-        "shaders/postprocess.vert", "shaders/bloom_threshold.frag", kShaderPrefix);
-    if (!bloomThresholdProg_ || !bloomThresholdProg_->is_valid())
-        fprintf(stderr, "gosPostProcess: failed to compile bloom_threshold shader\n");
-
-    bloomBlurProg_ = glsl_program::makeProgram("bloom_blur",
-        "shaders/postprocess.vert", "shaders/bloom_blur.frag", kShaderPrefix);
-    if (!bloomBlurProg_ || !bloomBlurProg_->is_valid())
-        fprintf(stderr, "gosPostProcess: failed to compile bloom_blur shader\n");
 
     // Item 1 P5: inject MC2_SHADOW_CSM so the debug blit can sample an array layer.
     std::string shadowDebugPrefix = "#version 430\n";
@@ -787,15 +720,6 @@ void gosPostProcess::destroy()
     hdriReady_ = false;
     hdriEnabled_ = false;
 
-    if (bloomThresholdProg_) {
-        glsl_program::deleteProgram("bloom_threshold");
-        bloomThresholdProg_ = nullptr;
-    }
-    if (bloomBlurProg_) {
-        glsl_program::deleteProgram("bloom_blur");
-        bloomBlurProg_ = nullptr;
-    }
-
     if (shadowDebugProg_) {
         glsl_program::deleteProgram("shadow_debug");
         shadowDebugProg_ = nullptr;
@@ -963,31 +887,6 @@ void gosPostProcess::createFBOs(int w, int h)
         dd.glName    = sceneDepthTex_;
         dd.valid     = (status == GL_FRAMEBUFFER_COMPLETE);
         RenderCore::registerOrUpdateRenderResource(dd);
-    }
-
-    // --- Bloom ping-pong FBOs (half resolution) ---
-    int halfW = w / 2;
-    int halfH = h / 2;
-    if (halfW < 1) halfW = 1;
-    if (halfH < 1) halfH = 1;
-
-    for (int i = 0; i < 2; ++i) {
-        glGenFramebuffers(1, &bloomFBO_[i]);
-        glBindFramebuffer(GL_FRAMEBUFFER, bloomFBO_[i]);
-
-        glGenTextures(1, &bloomColorTex_[i]);
-        glBindTexture(GL_TEXTURE_2D, bloomColorTex_[i]);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, halfW, halfH, 0, GL_RGBA, GL_FLOAT, nullptr);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, bloomColorTex_[i], 0);
-
-        status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-        if (status != GL_FRAMEBUFFER_COMPLETE) {
-            fprintf(stderr, "gosPostProcess: bloom FBO[%d] incomplete (0x%x)\n", i, status);
-        }
     }
 
     // --- SSAO FBO (half resolution, single-channel R16F) ---
@@ -1177,16 +1076,6 @@ void gosPostProcess::destroyFBOs()
         glDeleteTextures(1, &sceneDepthCopyTex_);
         sceneDepthCopyTex_ = 0;
     }
-    for (int i = 0; i < 2; ++i) {
-        if (bloomFBO_[i]) {
-            glDeleteFramebuffers(1, &bloomFBO_[i]);
-            bloomFBO_[i] = 0;
-        }
-        if (bloomColorTex_[i]) {
-            glDeleteTextures(1, &bloomColorTex_[i]);
-            bloomColorTex_[i] = 0;
-        }
-    }
     // SSAO-GTAO-LITE-MVP-1: free half-res AO target.
     if (ssaoColorTex_) { glDeleteTextures(1, &ssaoColorTex_); ssaoColorTex_ = 0; }
     if (ssaoFBO_)      { glDeleteFramebuffers(1, &ssaoFBO_);   ssaoFBO_ = 0; }
@@ -1299,61 +1188,6 @@ void gosPostProcess::beginScene()
             Environment.drawableWidth, Environment.drawableHeight);
         fflush(stderr);
     }
-}
-
-void gosPostProcess::runBloom()
-{
-    if (!hdrPostEnabled_) return;  // HDR-POST-SCAFFOLD-1: master gate
-    if (!bloomEnabled_ || !bloomThresholdProg_ || !bloomBlurProg_) return;
-    if (!bloomThresholdProg_->is_valid() || !bloomBlurProg_->is_valid()) return;
-
-    int hw = width_ / 2, hh = height_ / 2;
-    if (hw < 1) hw = 1;
-    if (hh < 1) hh = 1;
-
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);
-    glDepthMask(GL_FALSE);
-
-    // Pass 1: Threshold — extract bright pixels from scene into bloomFBO_[0]
-    glBindFramebuffer(GL_FRAMEBUFFER, bloomFBO_[0]);
-    glViewport(0, 0, hw, hh);
-    glClear(GL_COLOR_BUFFER_BIT);
-
-    bloomThresholdProg_->setInt("sceneTex", 0);
-    bloomThresholdProg_->setFloat("threshold", bloomThreshold_);
-    bloomThresholdProg_->apply();  // flush uniforms + bind program
-
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, sceneColorTex_);
-
-    glBindVertexArray(quadVAO_);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-
-    // Pass 2+: Ping-pong Gaussian blur (2 iterations = 4 passes)
-    float texelSize[2] = { 1.0f / (float)hw, 1.0f / (float)hh };
-    bloomBlurProg_->setFloat2("texelSize", texelSize);
-    bloomBlurProg_->setInt("image", 0);
-
-    bool horiz = true;
-    for (int i = 0; i < 4; i++) {
-        int src = horiz ? 0 : 1;
-        int dst = horiz ? 1 : 0;
-
-        glBindFramebuffer(GL_FRAMEBUFFER, bloomFBO_[dst]);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, bloomColorTex_[src]);
-        bloomBlurProg_->setInt("horizontal", horiz ? 1 : 0);
-        bloomBlurProg_->apply();  // flush uniforms + bind program each pass
-        glDrawArrays(GL_TRIANGLES, 0, 6);
-
-        horiz = !horiz;
-    }
-    // Result is in bloomColorTex_[0]
-
-    glBindVertexArray(0);
-    glDepthMask(GL_TRUE);
-    glEnable(GL_DEPTH_TEST);
 }
 
 void gosPostProcess::runHzbReduce()
@@ -2312,8 +2146,7 @@ void gosPostProcess::endScene()
     // Shoreline foam pass (brightens water pixels adjacent to terrain)
     runShoreline();
 
-    // SSAO grounding pass (multiplicative darkening into scene color). Before
-    // bloom so bloom extracts from the AO-darkened scene. Default-OFF (gated).
+    // SSAO grounding pass (multiplicative darkening into scene color). Default-OFF (gated).
     runSSAO();
 
     // Edge fog: fades geometry near the map boundary into the cloud color.
@@ -2323,8 +2156,6 @@ void gosPostProcess::endScene()
     // OOB fog: applies fog color to far-plane pixels pointing toward ground.
     // After edge fog so the two cloud colors match seamlessly.
     runFogOob();
-
-    runBloom();
 
     // Bind default framebuffer
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -2359,18 +2190,9 @@ void gosPostProcess::endScene()
     if (compositeProg_ && compositeProg_->is_valid()) {
         // Set uniforms BEFORE apply() — apply() binds program + flushes dirty uniforms
         compositeProg_->setInt("sceneTex", 0);
-        compositeProg_->setInt("bloomTex", 1);
-        // HDR-POST-SCAFFOLD-1: master gate. When the HDR post stack is OFF,
-        // force bloom + ACES tonemap off regardless of their member flags so
-        // the default path is byte-identical to legacy (exposure stays 1.0
-        // no-op; the unconditional sunset grade in postprocess.frag is the
-        // pre-existing default look and is untouched).
-        const bool hdrOn = hdrPostEnabled_;
+        // The unconditional sunset grade + exposure in postprocess.frag are the
+        // pre-existing default look and are untouched.
         compositeProg_->setFloat("exposure", exposure_);
-        compositeProg_->setInt("enableBloom", (hdrOn && bloomEnabled_) ? 1 : 0);
-        compositeProg_->setInt("enableFXAA", fxaaEnabled_ ? 1 : 0);
-        compositeProg_->setInt("enableTonemap", (hdrOn && tonemapEnabled_) ? 1 : 0);
-        compositeProg_->setFloat("bloomIntensity", bloomIntensity_);
 
         float invSize[2] = { 1.0f / (float)width_, 1.0f / (float)height_ };
         compositeProg_->setFloat2("inverseScreenSize", invSize);
@@ -2427,10 +2249,6 @@ void gosPostProcess::endScene()
         // Bind scene color texture to unit 0
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, sceneColorTex_);
-
-        // Bind bloom texture to unit 1 (unused for now, bind first bloom tex)
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, bloomColorTex_[0]);
 
         // Bind object-ID texture to unit 2 (GL_R32UI; read only in ObjectIdDebug mode).
         // Only bind when the texture exists — if sceneObjectIdTex_==0 effectiveMode
