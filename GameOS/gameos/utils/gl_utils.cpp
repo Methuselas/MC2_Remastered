@@ -10,6 +10,7 @@
 #include "utils/camera.h"
 #include "utils/gl_render_constants.h"
 #include "utils/Image.h"
+#include "../mc2_hitch_trace.h"  // GPU-UPDATE-BUFFER-COUNTER-1: MC2_GL_BufferData_Owner (after GL/glew.h)
 
 uint32_t vec4_to_uint32(const vec4& v) {
 
@@ -433,7 +434,8 @@ void updateBuffer(GLuint buf, GLenum target, const GLvoid* buffer_data, GLsizei 
 	assert(buf && buffer_data);
 	glBindBuffer(target, buf);
     CHECK_GL_ERROR
-	glBufferData(target, buffer_size, buffer_data, type);
+	// GPU-UPDATE-BUFFER-COUNTER-1: gosMesh/HUD per-batch orphan-on-write churn.
+	MC2_GL_BufferData_Owner(target, buffer_size, buffer_data, type, Hud);
     CHECK_GL_ERROR
 	glBindBuffer(target, 0);
     CHECK_GL_ERROR

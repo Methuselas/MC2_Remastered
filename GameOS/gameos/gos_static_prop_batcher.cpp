@@ -7612,9 +7612,10 @@ void GpuStaticPropBatcher::drawStaticBuildingShadows(
 
     if (s_staticBldgShadowSsbo == 0) glGenBuffers(1, &s_staticBldgShadowSsbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_staticBldgShadowSsbo);
-    MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER,
+    // GPU-UPDATE-BUFFER-COUNTER-1: per-render transient shadow SSBO orphan-on-write.
+    MC2_GL_BufferData_Owner(GL_SHADER_STORAGE_BUFFER,
         static_cast<GLsizeiptr>(sorted.size() * sizeof(GpuStaticPropInstance)),
-        sorted.data(), GL_STATIC_DRAW);
+        sorted.data(), GL_STATIC_DRAW, StaticPropShadow);
 
     glUseProgram(shadowProg);
     const GLint lsLoc = glGetUniformLocation(shadowProg, "lightSpaceMatrix");
@@ -7755,9 +7756,10 @@ void GpuStaticPropBatcher::drawDynamicPropShadows(
 
     if (s_dynamicPropShadowSsbo == 0) glGenBuffers(1, &s_dynamicPropShadowSsbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_dynamicPropShadowSsbo);
-    MC2_GL_BufferData(GL_SHADER_STORAGE_BUFFER,
+    // GPU-UPDATE-BUFFER-COUNTER-1: per-frame transient shadow SSBO orphan-on-write.
+    MC2_GL_BufferData_Owner(GL_SHADER_STORAGE_BUFFER,
         static_cast<GLsizeiptr>(sorted.size() * sizeof(GpuStaticPropInstance)),
-        sorted.data(), GL_DYNAMIC_DRAW);   // rebuilt every frame
+        sorted.data(), GL_DYNAMIC_DRAW, StaticPropShadow);   // rebuilt every frame
 
     glUseProgram(shadowProg);
     const GLint lsLoc = glGetUniformLocation(shadowProg, "lightSpaceMatrix");

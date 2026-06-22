@@ -100,6 +100,7 @@ ALLOWLIST=(
     MC2_GOSFX_GROUP_LOG         # trace
     MC2_GPU_PARTICLES_LOG       # trace
     MC2_GPU_TRAIL_DISABLE       # feature -- promote-to-registry
+    MC2_GPUBUF_COUNTER          # trace -- GPU-UPDATE-BUFFER-COUNTER-1 per-frame orphan-on-write tally (default OFF)
     MC2_GL_DEBUG                # infra -- GL debug context
     MC2_GL_DEBUG_FATAL          # infra -- abort on GL_DEBUG_SEVERITY_HIGH
     MC2_GL_ERROR_DRAIN_SILENT   # infra

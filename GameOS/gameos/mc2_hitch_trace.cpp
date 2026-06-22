@@ -15,6 +15,10 @@
 bool                        g_mc2HitchEnabled = false;
 mc2_hitch::HitchFrameAccum  g_mc2HitchAccum   = {};
 
+// GPU-UPDATE-BUFFER-COUNTER-1 globals.
+bool                        g_mc2GpuBufCounter = false;
+bool                        g_mc2GpuBufAccumOn = false;
+
 // ---------------------------------------------------------------------------
 // Private state
 // ---------------------------------------------------------------------------
@@ -39,6 +43,15 @@ struct HitchInit {
                 "[HITCH_INIT] enabled threshold=%.1fms\n", s_thresholdMs);
             fflush(stderr);
         }
+        // GPU-UPDATE-BUFFER-COUNTER-1: independent default-OFF gate. OR-in the
+        // shared accumulation flag so the orphan macros count under either gate
+        // without forcing the rest of the hitch trace (threshold emit) on.
+        g_mc2GpuBufCounter = (getenv("MC2_GPUBUF_COUNTER") != nullptr);
+        g_mc2GpuBufAccumOn = g_mc2HitchEnabled || g_mc2GpuBufCounter;
+        if (g_mc2GpuBufCounter) {
+            fprintf(stderr, "[GPUBUF_INIT] enabled (per-frame orphan counter)\n");
+            fflush(stderr);
+        }
     }
 } s_hitchInit;
 
@@ -50,15 +63,46 @@ struct HitchInit {
 namespace mc2_hitch {
 
 void BeginFrame(uint32_t /*frame*/) {
-    if (!g_mc2HitchEnabled) return;
+    // Reset under either gate so the orphan counter sees per-frame deltas
+    // even when MC2_HITCH_TRACE is off.
+    if (!g_mc2GpuBufAccumOn) return;
     g_mc2HitchAccum = HitchFrameAccum{};
 }
 
 void EndFrame(uint32_t frame, double dtMs) {
-    if (!g_mc2HitchEnabled) return;
-    if (dtMs < s_thresholdMs) return;
+    if (!g_mc2GpuBufAccumOn) return;
 
     const HitchFrameAccum& a = g_mc2HitchAccum;
+
+    // GPU-UPDATE-BUFFER-COUNTER-1 — per-frame orphan emit. Driven ONLY by the
+    // MC2_GPUBUF_COUNTER gate (no hitch threshold), so the normally-invisible
+    // per-frame orphan-on-write churn is reported every frame.
+    if (g_mc2GpuBufCounter) {
+        using O = GpuBufOwner;
+        const unsigned gos = (unsigned)O::GosUpdateBuffer;
+        const unsigned hud = (unsigned)O::Hud;
+        const unsigned lit = (unsigned)O::LightSsbo;
+        const unsigned sps = (unsigned)O::StaticPropShadow;
+        uint32_t totCalls = 0;
+        uint64_t totBytes = 0;
+        for (unsigned i = 0; i < (unsigned)O::kCount; ++i) {
+            totCalls += a.gpuBufOrphanCalls[i];
+            totBytes += a.gpuBufOrphanBytes[i];
+        }
+        fprintf(stderr,
+            "[GPUBUF v1] frame=%u orphan_calls=%u orphan_bytes=%llu"
+            " by_owner=gos_UpdateBuffer:%u/%llu,hud:%u/%llu,light:%u/%llu,sp_shadow:%u/%llu\n",
+            frame, totCalls, (unsigned long long)totBytes,
+            a.gpuBufOrphanCalls[gos], (unsigned long long)a.gpuBufOrphanBytes[gos],
+            a.gpuBufOrphanCalls[hud], (unsigned long long)a.gpuBufOrphanBytes[hud],
+            a.gpuBufOrphanCalls[lit], (unsigned long long)a.gpuBufOrphanBytes[lit],
+            a.gpuBufOrphanCalls[sps], (unsigned long long)a.gpuBufOrphanBytes[sps]);
+        fflush(stderr);
+    }
+
+    // The rest of the hitch-trace emit is gated by MC2_HITCH_TRACE + threshold.
+    if (!g_mc2HitchEnabled) return;
+    if (dtMs < s_thresholdMs) return;
 
     // Primary summary line.
     fprintf(stderr,
