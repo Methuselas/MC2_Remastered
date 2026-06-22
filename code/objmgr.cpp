@@ -184,6 +184,62 @@ static bool mc2SkipStaticNaturalDiagEnabled (void)
 	return(cached != 0);
 }
 
+// R2B-STATIC-NATURAL-TOUCH-PRESERVE-1 ──────────────────────────────────────────
+// DEFAULT-ON kill switch. The R2b "skip static-natural update" fast path issues a
+// bare `continue` for static trees/pine-buildings at turn>=3, which skips update()
+// — the producer that stamps the registered multi-shape's cachedFrame_. The
+// static-prop registry flush (gos_static_prop_registry.cpp) drops any registered
+// multi whose cachedFrame_ != currentFrame, so the skipped prop is silently culled
+// from the instance SSBO and never drawn (the black-tree-bug class — see
+// .planning/PROJECT.md "cachedFrame_ stamp" — reintroduced by the R2b skip; the
+// GPU symptom is tree typeIDs entirely absent from the instanced draw). This gate
+// restores the minimal liveness stamp inside the skip path WITHOUT running the
+// expensive update. Set MC2_R2B_TOUCH_PRESERVE=0 to A/B (off => reproduce the
+// drop; the registry stale-drop counter goes nonzero for tree typeIDs).
+static bool mc2R2bTouchPreserveEnabled (void)
+{
+	static int cached = -1;
+	if (cached < 0) {
+		const char* v = getenv("MC2_R2B_TOUCH_PRESERVE");
+		cached = (v && v[0] == '0' && v[1] == '\0') ? 0 : 1;  // default-ON
+	}
+	return(cached != 0);
+}
+
+static bool mc2R2bTouchTraceEnabled (void)
+{
+	static int cached = -1;
+	if (cached < 0)
+		cached = (getenv("MC2_R2B_STATIC_NATURAL_TRACE") != nullptr) ? 1 : 0;
+	return(cached != 0);
+}
+
+// Stamp the static-registry liveness (cachedFrame_) of an appearance whose
+// expensive update() the R2b fast path is about to skip. Cheap: no transform, no
+// texture, no bounds — just advances the registered multi-shape's frame stamp so
+// the registry flush keeps it in the instance SSBO. Returns true if any shape was
+// stamped (for the touched_liveness trace counter).
+static inline bool mc2R2bTouchStaticLiveness (AppearancePtr appearance, uint32_t frame)
+{
+	if (!appearance) return false;
+	if (TreeAppearance* ta = dynamic_cast<TreeAppearance*>(appearance)) {
+		bool stamped = false;
+		for (long lod = 0; lod < MAX_LODS; ++lod)
+			if (ta->staticReg[lod].registered && ta->staticReg[lod].shape) {
+				ta->staticReg[lod].shape->setCachedFrame(frame);
+				stamped = true;
+			}
+		return stamped;
+	}
+	if (BldgAppearance* ba = dynamic_cast<BldgAppearance*>(appearance)) {
+		if (ba->staticReg.registered && ba->staticReg.shape) {
+			ba->staticReg.shape->setCachedFrame(frame);
+			return true;
+		}
+	}
+	return false;
+}
+
 static bool mc2StaticTypeNameStartsWith (const char* typeName, const char* prefix)
 {
 	return(typeName && prefix && (std::strncmp(typeName, prefix, std::strlen(prefix)) == 0));
@@ -2458,6 +2514,7 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 		long terrainObjectsVisited = 0;
 		long cullRecordsEmitted = 0;
 		long skippedStaticNatural = 0;
+		long touchedLiveness = 0;   // R2B-STATIC-NATURAL-TOUCH-PRESERVE-1: liveness stamps applied in the skip path
 		long eligibleStaticNatural = 0;
 		long staticNaturalCandidates = 0;
 		long fallingNaturalUpdated = 0;
@@ -2489,6 +2546,8 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 		long skippedStaticBuildings = 0;
 		long missBuildingNotStaticNow = 0;
 		const bool skipStaticNatural = mc2SkipStaticNaturalEnabled();
+		const bool r2bTouchPreserve = mc2R2bTouchPreserveEnabled();   // R2B-STATIC-NATURAL-TOUCH-PRESERVE-1
+		const bool r2bTouchTrace = mc2R2bTouchTraceEnabled();
 		const bool skipStaticBuildings = mc2SkipStaticBuildingsEnabled();
 		const bool skipStaticNaturalDiag = mc2SkipStaticNaturalDiagEnabled();
 		const uint32_t staticDiagFrame = g_mc2FrameCounter;
@@ -2682,6 +2741,14 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 							staticNaturalCandidates++;
 							if (skipStaticNatural && (turn >= 3) && !isFalling && !isJustCreated)
 							{
+								// R2B-STATIC-NATURAL-TOUCH-PRESERVE-1: skipping update()
+								// would freeze this tree's registered cachedFrame_, so the
+								// static-prop registry flush drops it from the instance SSBO
+								// (black-tree-bug class). Stamp liveness without the expensive
+								// update. Gated for A/B by MC2_R2B_TOUCH_PRESERVE.
+								if (r2bTouchPreserve &&
+								    mc2R2bTouchStaticLiveness(appearance, (uint32_t)g_mc2FrameCounter))
+									touchedLiveness++;
 								skippedStaticNatural++;
 								continue;
 							}
@@ -2711,6 +2778,12 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 									if (__powerObj && __powerObj->getStatus() == OBJECT_STATUS_DESTROYED)
 										appearance->setLightsOut(true);
 								}
+								// R2B-STATIC-NATURAL-TOUCH-PRESERVE-1: same liveness stamp as
+								// the tree branch — keep the skipped static building in the
+								// registry flush instead of letting cachedFrame_ go stale.
+								if (r2bTouchPreserve &&
+								    mc2R2bTouchStaticLiveness(appearance, (uint32_t)g_mc2FrameCounter))
+									touchedLiveness++;
 								skippedStaticNatural++;
 								continue;
 							}
@@ -2952,6 +3025,19 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 				SPEWALWAYS(("GOM_RECON", "frame=%u buildings=%ld gates=%ld turrets=%ld other=%ld updated=%ld",
 				             curFrame, recon_buildings, recon_gates, recon_turrets, recon_other, recon_updated));
 			}
+		}
+
+		// R2B-STATIC-NATURAL-TOUCH-PRESERVE-1 trace (MC2_R2B_STATIC_NATURAL_TRACE=1).
+		// touched_liveness should track skipped_full_update closely (every skipped
+		// REGISTERED static prop gets its cachedFrame_ stamped). Correlate with the
+		// registry's STATIC_PROP_REGISTRY stale-drop counter: with preserve=1 the
+		// tree-typeID stale drops go to ~0; with MC2_R2B_TOUCH_PRESERVE=0 they spike.
+		if (r2bTouchTrace && ((g_mc2FrameCounter <= 3u) || (g_mc2FrameCounter % 300u) == 0u)) {
+			std::fprintf(stderr,
+			    "R2B_STATIC_NATURAL: frame=%u skipped_full_update=%ld touched_liveness=%ld preserve=%d\n",
+			    (uint32_t)g_mc2FrameCounter, skippedStaticNatural, touchedLiveness,
+			    r2bTouchPreserve ? 1 : 0);
+			std::fflush(stderr);
 		}
 
 		if (skipStaticNaturalDiag) {

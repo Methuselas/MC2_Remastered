@@ -670,6 +670,15 @@ def main():
                             # WATER-THINRING-FENCE-1: per-slot GLsync fence trace
                             # on the water thin-record ring (diagnostics-only).
                             "MC2_WATER_THINRING_TRACE",
+                            # R2B-STATIC-NATURAL-TOUCH-PRESERVE-1: default-ON
+                            # killswitch + diagnostics for the static-natural
+                            # (tree/pine-building) registry stale-drop fix. Without
+                            # these allowlisted, Popen drops them and the gate-OFF
+                            # A/B (preserve=0) plus both trace streams are inert.
+                            "MC2_R2B_TOUCH_PRESERVE",
+                            "MC2_R2B_STATIC_NATURAL_TRACE",
+                            "MC2_REGFLUSH_DIAG_TRACE",
+                            "MC2_STATIC_STALE_DROP_FATAL",
                             # GPU object batcher gate (bisect partner for terrain bug)
                             "MC2_GPU_OBJECTS",
                             # Shadow-lane gated features (smoke coverage for the

@@ -881,6 +881,7 @@ void flush() {
     static uint64_t s_diag_ranges_total = 0;
     static uint64_t s_diag_ranges_tombstone = 0;
     static uint64_t s_diag_ranges_stale_frame = 0;
+    static uint64_t s_diag_ranges_stale_after_drawn = 0;  // R2B guard: stale drop of an already-drawn range
     static uint64_t s_diag_ranges_drawn = 0;
     static uint64_t s_diag_leaves_appended = 0;
     static uint64_t s_diag_total_ns = 0;
@@ -995,6 +996,40 @@ void flush() {
                         regIdx, rng.registeredOnFrame, currentFrame,
                         rng.multi->getCachedFrame());
                     fflush(stderr);
+                }
+            }
+            else {
+                // R2B-STATIC-NATURAL-TOUCH-PRESERVE-1 REGRESSION GUARD. A range that
+                // was already drawn at least once (firstFlushSeen) and is now stale =
+                // a steady-state REGISTERED prop whose per-frame cachedFrame_ stamp was
+                // skipped by some update/touch path (the black-tree-bug signature; the
+                // R2b static-natural skip was the reintroduction). This used to be a
+                // SILENT `continue`; surface it so it can never silently recur. Tree
+                // typeIDs appearing here in steady state = trees will vanish on screen.
+                // (Benign sibling: an actor that genuinely went off-screen also lands
+                // here via cull-gated update — so a few transient counts are expected;
+                // a PERSISTENT/GROWING count for an on-screen typeID is the bug.)
+                ++s_diag_ranges_stale_after_drawn;
+                const int tid = (rng.first < s_recipes.size())
+                                  ? static_cast<int>(s_recipes[rng.first].typeID) : -1;
+                static std::set<int> s_loggedStaleTypes;
+                if (s_loggedStaleTypes.insert(tid).second) {
+                    fprintf(stderr,
+                        "[STATIC_PROP_REGISTRY] event=stale_frame_drop_after_drawn typeID=%d "
+                        "regIdx=%u currentFrame=%u cachedFrame=%u "
+                        "(update/touch skip suspected — see R2B-STATIC-NATURAL-TOUCH-PRESERVE-1)\n",
+                        tid, regIdx, currentFrame, rng.multi->getCachedFrame());
+                    fflush(stderr);
+                }
+                // Opt-in teeth for CI / bisection: abort on the regression signature.
+                static const bool s_staleFatal =
+                    (getenv("MC2_STATIC_STALE_DROP_FATAL") != nullptr);
+                if (s_staleFatal) {
+                    fprintf(stderr,
+                        "[STATIC_PROP_REGISTRY] FATAL stale_frame_drop_after_drawn typeID=%d "
+                        "(MC2_STATIC_STALE_DROP_FATAL)\n", tid);
+                    fflush(stderr);
+                    std::abort();
                 }
             }
             ++s_diag_ranges_stale_frame;
@@ -1564,12 +1599,13 @@ void flush() {
             : 0.0;
         fprintf(stderr,
             "[REGFLUSH_DIAG v1] event=summary calls=%llu ranges_seen=%llu "
-            "tombstone=%llu stale_frame=%llu drawn=%llu leaves_appended=%llu liveSize=%zu "
+            "tombstone=%llu stale_frame=%llu stale_after_drawn=%llu drawn=%llu leaves_appended=%llu liveSize=%zu "
             "mean_us=%.2f\n",
             (unsigned long long)s_diag_flush_calls,
             (unsigned long long)s_diag_ranges_total,
             (unsigned long long)s_diag_ranges_tombstone,
             (unsigned long long)s_diag_ranges_stale_frame,
+            (unsigned long long)s_diag_ranges_stale_after_drawn,
             (unsigned long long)s_diag_ranges_drawn,
             (unsigned long long)s_diag_leaves_appended,
             s_liveRangeIndices.size(), mean_us);
