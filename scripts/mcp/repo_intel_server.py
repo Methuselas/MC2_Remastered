@@ -5,6 +5,7 @@ Read-only MCP wrapper around tools/repo_intel/repo_query.py.
 
 Exposes tools:
   repo.preflight      — branch + root guard + harness summary
+  repo.slice_preflight— anti-rediscovery / stale-base gate (PASS/WARN/STOP)
   repo.dirty          — dirty-file classification with optional guards
   repo.env_var        — env var index query (MC2_* variables)
   repo.shader_binding — GL binding point index query
@@ -172,6 +173,45 @@ def preflight(expect_branch: str = "", expect_root: str = "") -> str:
         root, cml,
         expect_branch = expect_branch or None,
         expect_root   = expect_root   or None,
+    )
+    return _j(result)
+
+
+@mcp.tool()
+def slice_preflight(slice: str = "", symbols: str = "", paths: str = "",
+                    base: str = "", nifty: str = "claude/nifty-mendeleev") -> str:
+    """
+    Anti-rediscovery / stale-base gate to run BEFORE writing a recon-derived fix
+    slice. Answers "should I proceed, or did a parallel lane already fix this /
+    has my branch base gone stale?" — read-only, no mutations.
+
+    Args (all optional but base+symbols give the strongest signal):
+      slice    — the slice name (e.g. "WATCHID-LOAD-GUARD-1"); checked against
+                 git log --grep (already landed?).
+      symbols  — comma/space-separated identifiers (e.g. "watchSave,getByWatchID");
+                 checked via git log -G across base..nifty (did someone change
+                 them since you forked?).
+      paths    — comma/space-separated repo-relative paths your slice will touch.
+      base     — the commit/branch your branch was cut from (enables drift checks).
+      nifty    — mainline ref (default claude/nifty-mendeleev).
+
+    Returns JSON with verdict: PASS / WARN / STOP.
+      STOP  = a target symbol changed on the mainline since base -> RE-RECON
+              against current HEAD before coding (it may already be fixed).
+      WARN  = slice name already in log, base is stale, paths changed, or dirty
+              files overlap your targets -> review before proceeding.
+      PASS  = clear to proceed.
+    """
+    root = _repo()
+    syms = [s for s in symbols.replace(",", " ").split() if s]
+    pth  = [p for p in paths.replace(",", " ").split() if p]
+    result = rq.slice_preflight(
+        root,
+        slice_name = slice or None,
+        symbols    = syms,
+        paths      = pth,
+        base       = base or None,
+        nifty      = nifty or "claude/nifty-mendeleev",
     )
     return _j(result)
 

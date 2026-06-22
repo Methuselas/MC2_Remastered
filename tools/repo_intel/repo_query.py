@@ -88,29 +88,29 @@ def _normalize_path(p: str) -> str:
 
 # Order matters: first match wins.
 _CLASSIFICATION_RULES = [
-    # protected — never touch
+    # protected - never touch
     (re.compile(r"^(build[^/]*/|3rdparty/|\.git/|releases?/|dist/)", re.I),
-     "protected", "build/3rdparty/git/release tree — never touch"),
+     "protected", "build/3rdparty/git/release tree - never touch"),
     # generated cmake/build artefacts
     (re.compile(r"\.(vcxproj|cmake_install\.cmake|sln)$", re.I),
      "protected", "generated build artefact"),
     (re.compile(r"CMakeCache\.txt$|CMakeFiles/", re.I),
-     "protected", "CMake cache/generated — never touch"),
+     "protected", "CMake cache/generated - never touch"),
     # deploy rail
     (re.compile(r"^scripts/deploy_payload\.py$", re.I),
-     "deploy_rail", "deploy harness — edit with care"),
+     "deploy_rail", "deploy harness - edit with care"),
     (re.compile(r"^scripts/run_smoke\.py$", re.I),
-     "deploy_rail", "smoke harness — edit with care"),
+     "deploy_rail", "smoke harness - edit with care"),
     # key source (render core, engine, game code, adapters)
     (re.compile(r"^(code|GameOS|mclib|RenderCore|GameAdapters)/", re.I),
-     "key_source", "key engine source — requires smoke gate before merge"),
+     "key_source", "key engine source - requires smoke gate before merge"),
     # shaders
     (re.compile(r"^shaders/.*\.(vert|frag|comp|geom|hglsl|tesc|tese)$", re.I),
-     "shader", "shader file — subject to shader discipline"),
+     "shader", "shader file - subject to shader discipline"),
     # docs / markdown
     (re.compile(r"^docs/|\.md$", re.I),
      "docs", "documentation"),
-    # tools and scripts (general — not deploy rail)
+    # tools and scripts (general - not deploy rail)
     (re.compile(r"^(tools|scripts)/", re.I),
      "normal", "tool/script"),
     # data assets
@@ -122,7 +122,7 @@ _CLASSIFICATION_RULES = [
     # test artifacts (baselines, visual captures, smoke outputs)
     (re.compile(r"^tests/", re.I),
      "normal", "test artifact"),
-    # graphify output (generated graph — not source)
+    # graphify output (generated graph - not source)
     (re.compile(r"^graphify-out/", re.I),
      "normal", "graphify-generated output"),
     # runtime / temp artifacts at repo root
@@ -139,7 +139,7 @@ def classify_file(rel_path: str):
     for pattern, cls, reason in _CLASSIFICATION_RULES:
         if pattern.search(rel_path):
             return cls, reason
-    return "unknown", "unclassified — treat as sensitive"
+    return "unknown", "unclassified - treat as sensitive"
 
 
 def get_dirty_state(repo_root: Path, expect_branch: str = None,
@@ -177,12 +177,12 @@ def get_dirty_state(repo_root: Path, expect_branch: str = None,
             branch_ok      = False
             branch_warning = (
                 f"current branch '{branch}' does not match expected "
-                f"'{expect_branch}' — work may have landed on the wrong branch"
+                f"'{expect_branch}' - work may have landed on the wrong branch"
             )
     else:
         branch_warning = "no expected branch supplied (pass --expect-branch to enable guard)"
 
-    # Root guard — catches shared-worktree contamination
+    # Root guard - catches shared-worktree contamination
     root_ok      = True
     root_warning = None
     actual_root  = str(repo_root)
@@ -191,7 +191,7 @@ def get_dirty_state(repo_root: Path, expect_branch: str = None,
             root_ok      = False
             root_warning = (
                 f"current worktree root '{actual_root}' does not match expected "
-                f"'{expect_root}' — agent is running in the wrong worktree"
+                f"'{expect_root}' - agent is running in the wrong worktree"
             )
     else:
         root_warning = "no expected root supplied (pass --expect-root to enable guard)"
@@ -267,7 +267,7 @@ _HARNESSES = {
         "note": "ALWAYS --keep-logs. NEVER --kill-existing. NEVER --duration >30.",
     },
     "tier1": {
-        "description": "Smoke test gate — tier1 5-mission full run",
+        "description": "Smoke test gate - tier1 5-mission full run",
         "search_patterns": [
             re.compile(
                 r"Canonical invocation.*?```(?:powershell)?\n(.+?)\n```",
@@ -341,7 +341,7 @@ def parse_harness(name: str, claude_md_path: Path):
     if ambiguous:
         result["warning"] = (
             f"Could not extract '{name}' command from {source}. "
-            "Do not invent a command — read CLAUDE.md manually."
+            "Do not invent a command - read CLAUDE.md manually."
         )
     return result
 
@@ -388,6 +388,130 @@ def preflight(repo_root: Path, claude_md_path: Path, expect_branch: str = None,
         "summary": summary,
         "dirty":   dirty,
         "harness": harness,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Slice preflight - anti-rediscovery / stale-base gate (DEV-EFFICIENCY-BOOTSTRAP-1)
+# ---------------------------------------------------------------------------
+
+def slice_preflight(repo_root, *, slice_name=None, symbols=None, paths=None,
+                    base=None, nifty="claude/nifty-mendeleev"):
+    """Read-only gate to run BEFORE a recon-derived fix slice. Answers
+    'should I proceed, or did someone already fix this / has my base gone stale?'
+
+    Verdict: PASS / WARN / STOP. STOP = a symbol in --symbols changed on the
+    mainline since --base (likely already fixed / will conflict) - re-recon
+    against current HEAD before writing code."""
+    symbols = symbols or []
+    paths   = paths or []
+    findings = []
+    verdict  = "PASS"
+    _rank = {"PASS": 0, "WARN": 1, "STOP": 2}
+
+    def bump(v):
+        nonlocal verdict
+        if _rank[v] > _rank[verdict]:
+            verdict = v
+
+    branch, _      = git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_root)
+    head, _        = git(["rev-parse", "--short", "HEAD"], cwd=repo_root)
+    nifty_head, nrc = git(["rev-parse", "--short", nifty], cwd=repo_root)
+    nifty_ok = (nrc == 0)
+
+    # 1. Has a commit already mentioned this slice name?
+    if slice_name:
+        log, _ = git(["log", "--oneline", "-i", "--grep", slice_name, "-n", "20"],
+                     cwd=repo_root)
+        hits = [l for l in log.splitlines() if l.strip()]
+        if hits:
+            bump("WARN")
+            findings.append({"check": "slice_name_in_log", "level": "WARN",
+                             "detail": f"{len(hits)} commit(s) already mention '{slice_name}'",
+                             "commits": hits})
+
+    # 2/3. Drift since base on the mainline (base..nifty): symbols (-G) and paths.
+    drift_range = None
+    if base and nifty_ok:
+        drift_range = f"{base}..{nifty}"
+        # base-staleness: how far the mainline moved since the fork point.
+        cnt, _ = git(["rev-list", "--count", drift_range], cwd=repo_root)
+        try:
+            ahead = int(cnt)
+        except ValueError:
+            ahead = 0
+        if ahead > 0:
+            lvl = "WARN" if ahead < 40 else "WARN"
+            bump(lvl)
+            findings.append({"check": "base_stale", "level": lvl,
+                             "detail": f"mainline {nifty} is {ahead} commit(s) ahead of base {base}"})
+
+        for sym in symbols:
+            log, _ = git(["log", "--oneline", "-G", sym, drift_range,
+                          *(["--"] + paths if paths else [])], cwd=repo_root)
+            hits = [l for l in log.splitlines() if l.strip()]
+            if hits:
+                bump("STOP")
+                findings.append({"check": "symbol_changed_since_base", "level": "STOP",
+                                 "symbol": sym,
+                                 "detail": f"'{sym}' changed on {nifty} since base - re-recon "
+                                           "against current HEAD before coding",
+                                 "commits": hits[:10]})
+
+        if paths:
+            log, _ = git(["log", "--oneline", drift_range, "--", *paths], cwd=repo_root)
+            hits = [l for l in log.splitlines() if l.strip()]
+            if hits:
+                bump("WARN")
+                findings.append({"check": "paths_changed_since_base", "level": "WARN",
+                                 "detail": f"{len(hits)} commit(s) touched the target paths on "
+                                           f"{nifty} since base",
+                                 "commits": hits[:10]})
+    elif base and not nifty_ok:
+        bump("WARN")
+        findings.append({"check": "nifty_ref", "level": "WARN",
+                         "detail": f"mainline ref '{nifty}' not found - drift checks skipped"})
+    else:
+        findings.append({"check": "base", "level": "INFO",
+                         "detail": "no --base given - drift/staleness checks skipped"})
+
+    # 4. Dirty files overlapping the target paths (foreign WIP on my targets).
+    if paths:
+        status_out, _ = git(["status", "--porcelain=v1"], cwd=repo_root, strip=False)
+        overlap = []
+        for line in status_out.splitlines():
+            if not line.strip():
+                continue
+            p = line[3:].strip()
+            if " -> " in p:
+                p = p.split(" -> ")[-1]
+            if any(p == tp or p.endswith("/" + tp) or tp.endswith(p) for tp in paths):
+                overlap.append(p)
+        if overlap:
+            bump("WARN")
+            findings.append({"check": "dirty_overlap", "level": "WARN",
+                             "detail": "uncommitted changes overlap target paths "
+                                       "(foreign WIP?) - do not sweep",
+                             "files": overlap})
+
+    summary = (f"[slice-preflight] {verdict}: slice={slice_name or '-'} branch={branch} "
+               f"head={head} nifty={nifty_head or '?'} "
+               f"checks={len(findings)} "
+               + ("(symbol changed since base - RE-RECON)" if verdict == "STOP" else
+                  "(review warnings)" if verdict == "WARN" else "(clear to proceed)"))
+
+    return {
+        "verdict":   verdict,
+        "summary":   summary,
+        "slice":     slice_name,
+        "branch":    branch,
+        "head":      head,
+        "nifty_head": nifty_head,
+        "base":      base,
+        "drift_range": drift_range,
+        "symbols":   symbols,
+        "paths":     paths,
+        "findings":  findings,
     }
 
 
@@ -459,7 +583,7 @@ def main():
             out_json({"error": "harness requires a name: build | deploy | smoke | tier1 | all"})
             sys.exit(1)
         if claude_md is None:
-            out_json({"error": "CLAUDE.md not found — cannot parse harnesses"})
+            out_json({"error": "CLAUDE.md not found - cannot parse harnesses"})
             sys.exit(1)
         name = args[1].lower()
         if name == "all":
@@ -469,12 +593,43 @@ def main():
 
     elif cmd == "preflight":
         if claude_md is None:
-            out_json({"error": "CLAUDE.md not found — cannot parse harnesses"})
+            out_json({"error": "CLAUDE.md not found - cannot parse harnesses"})
             sys.exit(1)
         result = preflight(repo_root, claude_md, expect_branch=expect_branch,
                            expect_root=expect_root)
         print(result["summary"])
         out_json(result)
+
+    elif cmd == "slice-preflight":
+        rest = args[1:]
+        slice_name = None
+        base = None
+        nifty = "claude/nifty-mendeleev"
+        symbols = []
+        paths = []
+        i = 0
+        while i < len(rest):
+            a = rest[i]
+            if a == "--slice" and i + 1 < len(rest):
+                i += 1; slice_name = rest[i]
+            elif a == "--base" and i + 1 < len(rest):
+                i += 1; base = rest[i]
+            elif a == "--nifty" and i + 1 < len(rest):
+                i += 1; nifty = rest[i]
+            elif a == "--symbols" and i + 1 < len(rest):
+                i += 1
+                symbols = [s for s in rest[i].replace(",", " ").split() if s]
+            elif a == "--paths":
+                i += 1
+                while i < len(rest) and not rest[i].startswith("--"):
+                    paths.append(rest[i]); i += 1
+                continue
+            i += 1
+        result = slice_preflight(repo_root, slice_name=slice_name, symbols=symbols,
+                                 paths=paths, base=base, nifty=nifty)
+        print(result["summary"], file=sys.stderr)
+        out_json(result)
+        sys.exit(2 if result["verdict"] == "STOP" else 0)
 
     elif cmd == "binding":
         from binding_index import query_binding
@@ -533,7 +688,7 @@ def main():
                            undocumented=undocumented, show_all=show_all))
 
     else:
-        out_json({"error": f"Unknown command '{cmd}'. Valid: dirty, harness, preflight, env, binding"})
+        out_json({"error": f"Unknown command '{cmd}'. Valid: dirty, harness, preflight, slice-preflight, env, binding"})
         sys.exit(1)
 
 
