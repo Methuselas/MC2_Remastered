@@ -35,6 +35,7 @@ REGISTERED_HARNESSES = [
     "render_state_contract_harness",
     "objmgr_contract_harness",
     "ibl_registry_contract_harness",
+    "icon_atlas_harness",
 ]
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -94,7 +95,7 @@ def main():
 
     build_dirs = args.build_dir or [
         "build64-contract", "build64-shader", "build64-renderstate",
-        "build64-objmgr", "build64-ibl", "build64-harness"]
+        "build64-objmgr", "build64-ibl", "build64-iconatlas", "build64-harness"]
 
     results = []
     missing = []
