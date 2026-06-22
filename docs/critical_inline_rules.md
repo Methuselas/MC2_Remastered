@@ -46,6 +46,7 @@ Four rules. No exceptions for new code.
 - **Vulkan-prep:** new GPU-resource code uses explicit device-mediated binding (`device.bindVertexBuffer(vb)`, NOT `vb.bind()`); assume zero implicit cross-call GL state. PREP not a port. Full: `memory/vulkan_prep_explicit_device_discipline.md`.
 - **Change discipline:** don't touch what you don't have to (every touch has blast radius); when you must, bring it to modern standard. Standalone cleanup slices need a blocking/debt justification. Full: `memory/minimal_touch_modern_when_touched.md`.
 - **C++17 features:** project standard is C++17 since 2026-05-24 (commit `5c03835`). For which features are allowed / cautioned / avoided, see `docs/cxx17-coding-rules.md`. Rule: language upgrade != feature spree; minimal touch + measured wins.
+- **Frame-currentness contract (review checklist, not a framework):** an optimization may skip expensive work, but it may NOT skip the cheap current-frame liveness stamp a downstream consumer needs to claim the object is current. When adding any per-frame `continue` / early-return that bypasses `update()`/`touch()`, ask: what stamp does this skip also drop (`cachedFrame_`, watch-ID currentness, animation advance), and who trusts it? The proven instance + counter pattern is R2B-STATIC-NATURAL-TOUCH-PRESERVE-1 (`07a1f8ac`); audits + guards in `docs/frame-contracts/`. AMD often tolerates a stale state NVIDIA drops — so surface the invalid contract with a consumer-boundary counter (e.g. `persistent_vanish`) even when the symptom is vendor-confined.
 
 ## Editor discipline
 
