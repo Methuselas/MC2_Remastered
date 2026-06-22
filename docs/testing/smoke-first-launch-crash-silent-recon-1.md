@@ -1,7 +1,16 @@
 # SMOKE-FIRST-LAUNCH-CRASH-SILENT-RECON-1 — verdict
 
-**Status:** RECON COMPLETE — no fix in this slice. Classification + cheap repro recipe.
+**Status:** RECON — **INCONCLUSIVE / ENVIRONMENT-SUSPECTED** (no fix). Next step is an evidence-capture
+slice (SMOKE-CRASH-SILENT-EVIDENCE-1), not a fix.
 **Against:** nifty `97b80c1a`.
+
+> **CORRECTION (supersedes the earlier "decisive GPU TDR" framing):** the evidence proves the *signature* of the
+> termination, NOT its unique cause. crash_silent (no summary, nonzero exit, no app crash-handler, no minidump) is an
+> **external / non-app-crash-style termination** — consistent with a GPU TDR/device-lost, but ALSO with a process
+> kill, loader/runtime failure, resource exhaustion, AV/security interference, a bad deploy payload, a transient
+> driver reset, or a runner/environment edge. GPU TDR is plausible, NOT proven. Concurrency (the v0.4c soak) is a
+> suspected contributor, not a proven root cause (clean batches have run with soaks active before). Classify as
+> environment-suspected and CAPTURE EXIT EVIDENCE before changing smoke timing or engine code.
 
 ## Symptom
 In full `--tier tier1` batch runs, exactly one mission intermittently reports
@@ -29,45 +38,50 @@ baselines — independent of any code change under test.
   crash_silent means nonzero exit with NO crash-handler output, and NO
   minidump/crash bundle is written. That is not an app-level C++ fault.
 
-## Classification (primary)
-**GPU driver TDR / device-lost under contention from a concurrently-running game
-instance** (the v0.4c soak lane, observed respawning mc2.exe throughout this
-session). Mechanism:
-- nonzero exit + no crash-handler + no dump == the OS/driver reset the GPU
-  (TDR) and tore the GL context out from under the process -> `crash_silent`.
-- the milder case is a GPU stall that doesn't TDR: the process stays alive but
-  stops emitting heartbeats past the play timeout -> `heartbeat_freeze_play`.
-- The smoke runner's concurrency lock (`smoke.lock`) prevents two SMOKE RUNS
-  from colliding, but it does NOT stop a separate soak/game mc2.exe on the same
-  GPU. So GPU contention is an open path even with a single smoke run.
+## What the termination signature DOES narrow it to
+crash_silent = `smoke_summary_result is None AND exit_code != 0` with
+`crash_handler_hit == False` and no minidump. That uniquely rules OUT an ordinary
+caught C++ fault (which buckets `crash_no_summary`) and a runner mislabel (the
+exit really is nonzero). It does NOT identify which external/non-app cause it is.
 
-Evidence: batch-only, mission-varies, passes-isolated, co-occurs with the live
-v0.4c soak; no crash bundle/minidump produced; clean 5/5 batches occurred when
-the soak was idle.
+## Candidate causes (NONE proven; ranked by current suspicion)
+1. GPU driver TDR / device-lost (plausible — but no event-log/exit-code evidence
+   captured yet to confirm a driver reset).
+2. Concurrent-resource contention from a separate soak/game mc2.exe on the same
+   GPU (the v0.4c lane was active). NOTE: weakened — clean batches HAVE run with
+   soaks active, so contention is a possible contributor, not a proven cause.
+3. Rapid GL-context create/destroy churn between back-to-back launches (intrinsic
+   runner/game churn) — would flake even solo.
+4. Process kill / loader-runtime failure / resource exhaustion / AV interference /
+   bad-deploy payload / transient driver reset / runner-environment edge.
 
-## Residual uncertainty
-Cannot yet fully exclude a SECONDARY intrinsic cause: rapid GL-context
-create/destroy churn between back-to-back missions (each mission spawns
-launcher -> mc2 -> create+destroy a GL context) could occasionally TDR even with
-no concurrent soak. Session evidence favors external contention (the clean
-batches), but a solo control run was not isolated from the soak.
+## Why not jump to a fix
+A settle-delay (SMOKE-INTER-MISSION-SETTLE-1) only helps if this is GL-teardown
+churn — treating a hypothesis as fact. First improve classification by capturing
+the exit evidence (next slice).
 
-## Cheap repro / settle recipe (no fix, ~2 batches)
-1. Confirm no other mc2.exe / soak is running:
-   `Get-CimInstance Win32_Process -Filter "Name='mc2.exe'"` -> empty.
-2. Run `--tier tier1` 3x back-to-back. If clean 15/15 -> external contention
-   confirmed (the flake needs a concurrent GPU consumer).
-3. If a solo batch still flakes -> intrinsic back-to-back context churn; then the
-   fix is a small inter-mission settle in the runner (drain/await GL teardown +
-   a short fixed delay before the next launch), NOT an engine change.
+## Next: capture evidence, THEN test the hypothesis
+**Slice SMOKE-CRASH-SILENT-EVIDENCE-1 (runner-only, no engine change, no settle
+delay)** — on a crash_silent verdict, record into the artifact dir: process exit
+code; Windows event-log hints (Display driver reset / TDR; Application Error;
+Windows Error Reporting); whether a crash-handler file/minidump exists; the
+concurrent mc2.exe process list; GPU/driver info if cheap; elapsed time since
+launch + mission phase; and the stdout/stderr + heartbeat tail. This turns the
+INCONCLUSIVE verdict into a classifiable one.
 
-## Recommended handling (until fixed)
+Then a small hypothesis matrix (each ~1 batch):
+- **A.** solo tier1 repeated 3x (no other mc2.exe).
+- **B.** tier1 while the soak is running.
+- **C.** tier1 while another direct-launched mc2.exe is running.
+Reading: only B/C flake -> concurrency/contention credible. A flakes -> intrinsic
+runner/game/deploy churn. None flake -> rare environmental.
+
+## Recommended handling (interim)
 - Treat a SINGLE tier1 batch mission that reports `crash_silent` /
-  `heartbeat_freeze_play` AND passes on isolated re-run as ENVIRONMENTAL — not a
-  regression. (This session applied that rule correctly.)
-- For a trustworthy clean signal, do not run tier1 concurrently with a soak on
-  the same GPU.
-- If it recurs in a verified-solo run, open SMOKE-INTER-MISSION-SETTLE-1 (runner
-  only): await GL-context teardown + short settle between missions.
+  `heartbeat_freeze_play` AND passes on isolated re-run as ENVIRONMENTAL/suspected
+  — not a confirmed regression. (This session applied that rule.)
+- Do NOT add a settle-delay or engine change yet — capture exit evidence first.
+- SMOKE-INTER-MISSION-SETTLE-1 is a CANDIDATE only if evidence later points to
+  GL-teardown churn (e.g. matrix case A flakes).
 
 Related: [[smoke-runner-block-mechanisms]], `run_smoke_kill_existing_causes_flaky_crash`.
