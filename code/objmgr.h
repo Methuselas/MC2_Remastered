@@ -16,6 +16,7 @@
 #ifndef DOBJMGR_H
 #include"dobjmgr.h"
 #endif
+#include "objmgr_watch_policy.h"  // OBJMGR-WATCH-POLICY-EXTRACT-1: shared watch bounds/index policy
 // Forward declaration for prewarmStaticPropLightBakes parameter.
 class Camera;
 
@@ -498,9 +499,8 @@ class GameObjectManager {
 		GameObjectPtr get (GameObjectHandle handle);
 
 		GameObjectPtr getByWatchID (unsigned long watchID) {
-			if ((watchID > 0) && (watchID < nextWatchID))
-				return(watchList[watchID]);
-			return(NULL);
+			// OBJMGR-WATCH-POLICY-EXTRACT-1: shared resolve predicate (behavior-identical).
+			return mc2watch::isResolvableWatchId(watchID, nextWatchID) ? watchList[watchID] : NULL;
 		}
 
 		long buildMoverLists (void);
