@@ -9,9 +9,11 @@
 # Links the REAL production contract TU (mclib/render_contract.cpp +
 # RenderCore/RenderResourceRegistry.cpp) — same set as tests/unit/
 # test_render_contract_3.cpp — so the harness exercises production logic, not a
-# copy. render_contract.cpp includes <GL/glew.h> for types, so glew32+opengl32
-# are link-time deps; the scope/order paths under test make NO GL calls and need
-# NO GL context. No game window, no mission data, no ObjectManager.
+# copy. render_contract.cpp includes <GL/glew.h> for TYPES only and calls just
+# glGetBooleanv/glGetIntegerv (GL 1.1 core), so opengl32 is the only link dep —
+# NO glew32.lib (see RENDER-STATE-HARNESS-CLEAN-LINK-1 below). The scope/order
+# paths under test make NO GL calls and need NO GL context. No game window, no
+# mission data, no ObjectManager.
 
 cmake_minimum_required(VERSION 3.16)
 project(render_state_contract_harness CXX)
@@ -43,8 +45,15 @@ target_compile_definitions(render_state_contract_harness PRIVATE
     _CRT_SECURE_NO_WARNINGS
 )
 
+# RENDER-STATE-HARNESS-CLEAN-LINK-1: render_contract.cpp's only GL references are
+# glGetBooleanv / glGetIntegerv — GL 1.1 *core* entry points exported by
+# opengl32, NOT glew extension pointers; <GL/glew.h> is included for TYPES only,
+# and RenderResourceRegistry.cpp makes no GL calls. So glew32.lib was never an
+# actual link dependency — and requiring 3rdparty/lib/x64/glew32.lib broke the
+# standalone build in a clean worktree (the .lib is only present after extracting
+# 3rdparty.zip). Link opengl32 alone; the harness still compiles the REAL
+# production contract TUs unchanged.
 target_link_libraries(render_state_contract_harness PRIVATE
-    ${MC2_ROOT}/3rdparty/lib/x64/glew32.lib
     opengl32
 )
 
