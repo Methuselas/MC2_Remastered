@@ -1,0 +1,35 @@
+# IBL HDRI EXTERNAL ASSET PACK MANIFEST  (IBL-HDRI-ASSET-PACK-MANIFEST-1)
+#
+# Declares the equirectangular HDRI sky backgrounds referenced by
+# RenderCore/IblHdriRegistry.h (kIblHdriSets[].exrPath) that are NOT tracked in
+# Git because they are too large for normal Git / Git LFS (the 16K EXRs run
+# ~100-200 MB each). They are distributed as an EXTERNAL PACK and installed into
+# data/hdr/ locally; the loader derives a cooked .ktx2 sidecar for GPU use.
+#
+# CONTRACT (enforced by tools/ibl_registry_contract_harness):
+#   Every HDRI referenced by the registry must be EITHER tracked-in-repo (present
+#   on disk) OR declared here as external. A referenced HDRI that is neither is a
+#   real dangling reference (typo / new sky added without an asset) and FAILS the
+#   default suite. Declared-external entries pass the default suite even when not
+#   present locally; MC2_IBL_ASSET_STRICT=1 (or --test hdri_assets_exist_strict)
+#   additionally requires every external asset to be installed locally.
+#
+# DO NOT commit these EXRs to Git. To add a new sky: cook/install the asset into
+# data/hdr/, add its registry entry, and add a line here.
+#
+# Format (pipe-delimited; '#' comments; blank lines ignored):
+#   <repo-relative-path> | <size-bytes-or-?> | <sha256-or-?> | <source/notes>
+# size/sha are advisory metadata for pack verification; '?' = not yet recorded.
+# Only the path field is contract-significant (the "declared external" set).
+#
+# NOTE: DaySkyHDRI063B_4K.exr is intentionally NOT listed here — it is small
+# enough to be tracked in-repo (data/hdr/DaySkyHDRI063B_4K.exr + .ktx2) and is
+# covered by the present-on-disk branch of the contract.
+
+data/hdr/pizzo_pernice_puresky_16k.exr   | ? | ? | Poly Haven "pizzo_pernice_puresky" 16K (day_clear / dramatic)
+data/hdr/citrus_orchard_puresky_16k.exr  | ? | ? | Poly Haven "citrus_orchard_puresky" 16K (day_warm)
+data/hdr/belfast_sunset_puresky_16k.exr  | ? | ? | Poly Haven "belfast_sunset_puresky" 16K (sunset)
+data/hdr/mud_road_puresky_16k.exr        | ? | ? | Poly Haven "mud_road_puresky" 16K (overcast)
+data/hdr/qwantani_night_puresky_16k.exr  | ? | ? | Poly Haven "qwantani_night_puresky" 16K (night)
+data/hdr/NightSkyHDRI007_16k.exr         | ? | ? | NightSkyHDRI007 16K, moon hotspot (night_moon)
+data/hdr/NightSkyHDRI008_16k.exr         | ? | ? | NightSkyHDRI008 16K, starfield no moon (night_stars)

@@ -26,6 +26,7 @@
 #include <climits>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <set>
 #include <string>
 #include <vector>
@@ -64,6 +65,38 @@ static bool hdriAssetPresent(const fs::path& root, const std::string& exrPath, s
         ktx += ".ktx2";
     if (fs::is_regular_file(root / ktx, ec)) { foundAs = ktx; return true; }
     return false;
+}
+
+// External-pack manifest: declares HDRIs too large for Git (installed locally).
+// Format: "<repo-relative-path> | size | sha | source"; '#' comments. Only the
+// first pipe field (the path) is contract-significant. See
+// docs/assets/ibl_hdri_external_pack.txt.
+static const char* kManifestRel = "docs/testing/ibl_hdri_external_pack.txt";
+
+static std::string trim(const std::string& s) {
+    size_t a = s.find_first_not_of(" \t\r\n");
+    if (a == std::string::npos) return "";
+    size_t b = s.find_last_not_of(" \t\r\n");
+    return s.substr(a, b - a + 1);
+}
+
+// Returns the set of declared external paths; sets ok=false if the manifest is
+// missing or unreadable (an undeclared-but-required contract still needs it).
+static std::set<std::string> loadExternalManifest(const fs::path& root, bool& ok) {
+    std::set<std::string> decl;
+    std::ifstream in(root / kManifestRel);
+    ok = in.good();
+    if (!ok) return decl;
+    std::string line;
+    while (std::getline(in, line)) {
+        std::string s = trim(line);
+        if (s.empty() || s[0] == '#') continue;
+        size_t bar = s.find('|');
+        std::string path = trim(bar == std::string::npos ? s : s.substr(0, bar));
+        for (char& c : path) if (c == '\\') c = '/';
+        if (!path.empty()) decl.insert(path);
+    }
+    return decl;
 }
 
 // ---- registry-integrity tests (pure, no filesystem) ------------------------
@@ -173,12 +206,57 @@ static bool test_hdri_assets_inventory(TestCtx& t) {
 }
 
 // Strict: FAIL on any absent referenced asset. Default-excluded unless
-// MC2_IBL_ASSET_STRICT=1; always runnable via --test.
+// MC2_IBL_ASSET_STRICT=1; always runnable via --test. An external-pack asset
+// counts as satisfied ONLY when actually installed locally (strict = local).
 static bool test_hdri_assets_exist_strict(TestCtx& t) {
     std::vector<std::string> missing;
     collectHdriMissing(repoRoot(), missing);
     for (const auto& m : missing)
         t.fail("referenced HDRI asset absent (.exr and .ktx2): " + m);
+    return t.failures == 0;
+}
+
+// DEFAULT CONTRACT: every registry HDRI must be EITHER present on disk
+// (tracked-in-repo / installed) OR declared in the external-pack manifest.
+// A reference that is neither is a real dangling reference (typo / new sky with
+// no asset and no manifest line) and FAILS. The known 16K external pack passes
+// because it is declared; clean checkouts stay green.
+static bool test_every_hdri_tracked_or_declared(TestCtx& t) {
+    const fs::path root = repoRoot();
+    bool manifestOk = false;
+    const std::set<std::string> declared = loadExternalManifest(root, manifestOk);
+    if (!manifestOk)
+        t.fail(std::string("external-pack manifest unreadable: ") + kManifestRel);
+    int present = 0, ext = 0;
+    for (size_t i = 0; i < rc::kIblHdriSetCount; ++i) {
+        std::string foundAs, path = rc::kIblHdriSets[i].exrPath;
+        for (char& c : path) if (c == '\\') c = '/';
+        if (hdriAssetPresent(root, path, foundAs)) { ++present; continue; }
+        if (declared.count(path)) { ++ext; continue; }
+        t.fail(std::string("HDRI '") + rc::kIblHdriSets[i].name +
+               "' -> " + path + " is neither tracked-on-disk nor declared external"
+               " (add the asset or a manifest line)");
+    }
+    std::fprintf(stderr, "    HDRI accounting: %d present, %d declared-external, "
+                 "%zu manifest entries\n", present, ext, declared.size());
+    return t.failures == 0;
+}
+
+// Hygiene: every manifest entry must correspond to a real registry exrPath
+// (catches a stale external declaration left behind after a registry edit).
+static bool test_manifest_entries_match_registry(TestCtx& t) {
+    bool manifestOk = false;
+    const std::set<std::string> declared = loadExternalManifest(repoRoot(), manifestOk);
+    if (!manifestOk) { t.fail("external-pack manifest unreadable"); return false; }
+    std::set<std::string> registryPaths;
+    for (size_t i = 0; i < rc::kIblHdriSetCount; ++i) {
+        std::string p = rc::kIblHdriSets[i].exrPath;
+        for (char& c : p) if (c == '\\') c = '/';
+        registryPaths.insert(p);
+    }
+    for (const auto& d : declared)
+        if (!registryPaths.count(d))
+            t.fail("stale manifest entry (no registry HDRI references it): " + d);
     return t.failures == 0;
 }
 
@@ -192,7 +270,9 @@ int main(int argc, char** argv) {
     h.add("no_duplicate_hdri_set_names",          test_no_duplicate_hdri_set_names);
     h.add("no_duplicate_sh_set_names",            test_no_duplicate_sh_set_names);
     h.add("sh_registry_names_resolve_if_referenced", test_sh_registry_names_resolve_if_referenced);
-    // asset existence (separated)
+    // asset accounting (separated from integrity)
+    h.add("every_hdri_tracked_or_declared",       test_every_hdri_tracked_or_declared);
+    h.add("manifest_entries_match_registry",      test_manifest_entries_match_registry);
     h.add("hdri_assets_inventory",                test_hdri_assets_inventory);
     // strict runs in the default suite only when MC2_IBL_ASSET_STRICT=1
     h.add("hdri_assets_exist_strict",             test_hdri_assets_exist_strict,
