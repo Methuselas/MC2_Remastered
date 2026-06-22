@@ -144,6 +144,17 @@ inline aiVector3D rotRowMajor16(const float* m, const aiVector3D& v) {
         m[8] * v.x + m[9] * v.y + m[10] * v.z);
 }
 
+// Fixed mech orientation (glTF Y-up -> MC2), confirmed in-game (== MC2_GLTF_AXIS=2:
+// X=-x, Y=+y, Z=-z) and baked as the skinned-mech default. Even parity (two flips)
+// so triangle winding is preserved. Buildings/props keep the global axisMap default;
+// the mech's own up-axis differs, so it carries its own fixed mapping here.
+inline Stuff::Point3D mechToMC2Pos(const aiVector3D& v) {
+    Stuff::Point3D p; p.x = -v.x; p.y = v.y; p.z = -v.z; return p;
+}
+inline Stuff::Vector3D mechToMC2Vec(const aiVector3D& v) {
+    Stuff::Vector3D n; n.x = -v.x; n.y = v.y; n.z = -v.z; return n;
+}
+
 // Damage/destruction/UI parts excluded from the intact bind-pose import (they
 // overlap the intact geometry; needed later for damage states — POC drops them).
 inline bool skelMeshDropped(const char* n) {
@@ -618,8 +629,8 @@ long PopulateMergedSkinnedShape(const aiScene* scene, TG_TypeMultiShape* out, Sk
 			}
 			n.Normalize();
 			TG_TypeVertex& vt = verts[vOff + v];
-			vt.position  = toMC2Pos(p);
-			vt.normal    = toMC2Vec(n);
+			vt.position  = mechToMC2Pos(p);   // fixed mech axis (== MC2_GLTF_AXIS=2)
+			vt.normal    = mechToMC2Vec(n);
 			vt.aRGBLight = 0xffffffff;
 			if (vt.position.x < out->minBox.x) out->minBox.x = vt.position.x;
 			if (vt.position.y < out->minBox.y) out->minBox.y = vt.position.y;
@@ -635,7 +646,9 @@ long PopulateMergedSkinnedShape(const aiScene* scene, TG_TypeMultiShape* out, Sk
 			t.Vertices[0] = vOff + fc.mIndices[0];
 			t.Vertices[1] = vOff + fc.mIndices[1];
 			t.Vertices[2] = vOff + fc.mIndices[2];
-			t.localTextureHandle = me->mMaterialIndex;
+			// Single skin slot 0 (the base atlas): resetPaintScheme binds the mech
+			// skin from texture slot 0, and the GLB's material 0 is a blip atlas.
+			t.localTextureHandle = 0;
 			t.renderStateFlags = 0;
 			Stuff::Vector3D fn;
 			fn.x = verts[t.Vertices[0]].normal.x + verts[t.Vertices[1]].normal.x + verts[t.Vertices[2]].normal.x;
@@ -743,7 +756,7 @@ long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out, bool autoG
 		// height (matches the Python fk_bake --target_height). Override via
 		// MC2_MECH_SKEL_HEIGHT. Single-pass measure over intact, bone-bound meshes.
 		if (bake.active) {
-			float targetH = 25.44f;
+			float targetH = 50.0f;  // confirmed in-game (marauder); override MC2_MECH_SKEL_HEIGHT
 			if (const char* e = getenv("MC2_MECH_SKEL_HEIGHT")) targetH = (float)atof(e);
 			float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
 			for (unsigned m = 0; m < scene->mNumMeshes; ++m) {
@@ -772,7 +785,20 @@ long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out, bool autoG
 		// static-GLB structure). Per-mesh shapes would leave dropped parts as empty
 		// NULL-vertex shapes that crash the mech GPU/recipe path.
 		out->AllocateImportedShapes(1);
-		BuildTextureList(scene, out);
+		// Mech skin = texture SLOT 0 (resetPaintScheme binds slot 0). The skinned
+		// GLB lists blip atlases at material 0/1, so build a single-slot list with
+		// the BASE atlas (the intact body's material) at slot 0; all merged tris
+		// reference slot 0. (Weapons/second-atlas mechs are a later slice.)
+		std::string baseTex = "NULLTXM";
+		for (unsigned m = 0; m < scene->mNumMeshes; ++m) {
+			const aiMesh* me = scene->mMeshes[m];
+			if (me->mNumVertices == 0 || me->mNumBones == 0 || skelMeshDropped(me->mName.C_Str())) continue;
+			std::string nm;
+			if (DeriveMC2TextureName(scene, scene->mMaterials[me->mMaterialIndex], nm)) { baseTex = nm; break; }
+		}
+		const char* texNames[1] = { baseTex.c_str() };
+		out->SetImportedTextures(1, texNames, NULL);
+		MECH_SKEL_TRACE("file='%s' mech skin slot0 tex='%s'", path, baseTex.c_str());
 		ResetBoundingBox(out);
 		long r = PopulateMergedSkinnedShape(scene, out, bake);
 		if (r != 0) { ASSIMP_TRACE("  PopulateMergedSkinnedShape returned %ld", r); return r; }
