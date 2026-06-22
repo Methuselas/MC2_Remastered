@@ -2,6 +2,17 @@
 
 > Pointer doc. Detail in memory/ handoffs and docs/. Add new campaigns at top.
 
+## 2026-06-22 — FRAME-CURRENTNESS-GUARDS-1 — MERGED nifty (`0dd12b39`)
+
+Targeted currentness sentinels + the mech double-step fix. Rejected a grand "frame-liveness framework" (greybeard: premature abstraction); shipped narrow guards at consumer boundaries instead. Built in worktree `claude/frame-currentness-guards-1` (off nifty `96378cc1`), merged via `0dd12b39`. Detail: memory `HANDOFF_2026_06_22_frame_currentness_guards` + `docs/frame-contracts/`.
+
+| Slice | Commit | Status | Notes |
+|-------|--------|--------|-------|
+| **ANIM-CADENCE-FIX (mech double-step)** | `07d27b2f` `7603d042` | SHIPPED | root cause: `Mover::getLOSPosition` (mover.cpp:3528) 2nd `appearance->update()` ticked gait twice/frame (gestures 2/4/7). Idempotent gait advance (`lastAnimAdvanceFrame`). **User-confirmed visual fix** (mc2_17 Catapult/Bushwacker). Default-ON, killswitch `MC2_ANIM_CADENCE_FIX=0` |
+| STATIC-REGISTRY-CURRENTNESS-GUARD-2 | `83d30112` | SHIPPED | generalizes R2b `stale_after_drawn` → per-typeID + `persistent_vanish` streak. A/B mc2_24 11→0. Gate `MC2_REGFLUSH_GUARD2` default-off |
+| TARGETING-CURRENTNESS-GUARD-1 | `1c3e7a43` `6c079c7e` | SHIPPED | chokepoint `Mover::handleTacticalOrder`; logs every player attack order (stale_wid/behind/far). mc2_17 manual: 50 orders all clean (whole-map bug NOT reproduced). Gate `MC2_TARGETING_GUARD` default-off |
+| Recon + review-rule | `be99dd51` `5d3606d3` | SHIPPED | `docs/frame-contracts/` (claim-audit, skip-safety, same-class-update — all clean); frame-currentness review-checklist line in `docs/critical_inline_rules.md` |
+
 ## 2026-06-22 — OpenGL correctness campaign + RENDER-BACKEND-SEAMS arc — SHIPPED nifty
 
 Run as a ledger, not a cleanup binge: `docs/render-backend-seams/opengl-correctness-ledger-1.md` (status taxonomy, queue CLEAR, closure audit CONFIRMED_CLEAN). Dual-benefit (NVIDIA GL correctness + Vulkan-prep seams).
