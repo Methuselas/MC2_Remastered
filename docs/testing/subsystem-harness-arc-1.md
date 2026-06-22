@@ -1,6 +1,7 @@
 # SUBSYSTEM-HARNESS-ARC-1 — cheap contract/edge-case harness layer
 
-**Status:** HARNESS-TEMPLATE-1 + SHADER-CONTRACT-HARNESS-1 shipped.
+**Status:** HARNESS-TEMPLATE-1 + SHADER-CONTRACT-HARNESS-1 +
+RENDER-STATE-CONTRACT-HARNESS-1 shipped. OBJMGR deferred (see below).
 **Branch / worktree:** `claude/contract-harnesses-1` @ `A:/Games/mc2-contract-harnesses`
 **Base:** nifty HEAD `4c177ea7`.
 
@@ -135,7 +136,7 @@ stays generic.
 | `txmmgr_bounds_harness` | `getVertexBlock`/`getBlock` allocator from `txmmgr` | GL handles, texture upload, global tex manager init | **MED** — allocator cursor math may be extractable from GL. |
 | `fit_parse_harness` | `.fit`/`.mdf`/inifile parser TU | file IO globals, FST archive | **MED** — parser may need temp fixture files only. |
 | `shader_contract_harness` (shipped) | none (filesystem/source scan) | none | **LOW** — scans engine source for `"shaders/X"` refs + enumerates shaders/, no GL. |
-| `render_state_contract_harness` | `RenderPassContract` logic | GL state, real renderer | **LOW** — contract begin/end nesting is mock-only. |
+| `render_state_contract_harness` (shipped) | `mclib/render_contract.cpp` + `RenderCore/RenderResourceRegistry.cpp` (the real TUs) | none | **LOW** — scope/order paths are pure-CPU. Link-time deps glew32+opengl32 (header types only, no GL context). Needs `3rdparty/lib/x64/glew32.lib` (unzip `3rdparty.zip` in the worktree). `getPassScopeViolationCount()` is cumulative process-wide → tests assert DELTAS. |
 
 ## How this fits with smoke
 
@@ -181,8 +182,18 @@ stays generic.
 4. ~~`SHADER-CONTRACT-HARNESS-1`~~ — **SHIPPED.** referenced-shaders-exist
    (60 refs resolve), removed-postfx-absent (bloom/godray), shader inventory
    (83 runtime shaders), #ifdef-symbol classification for the SPIR-V seam.
-5. `RENDER-STATE-CONTRACT-HARNESS-1` — pass begin/end nesting, missing-end,
-   owner mismatch, declared read/write contract validation (mock-only).
+5. ~~`RENDER-STATE-CONTRACT-HARNESS-1`~~ — **SHIPPED.** Links the real
+   `render_contract.cpp`. Scope subsystem: balanced begin/end, end-without-begin,
+   owner-mismatch, nested-ok, missing-end-at-frame-boundary, violation-counter.
+   Order-audit (CONTRACT-3): correct-order, missing-writer. 8 tests, <1s.
+
+**OBJMGR deferred:** OBJMGR-CONTRACT-HARNESS recon (off current nifty `3da176d4`)
+found the watch-list edge cases already hardened (OBJMGR-WATCHID-BOUNDS-1 +
+WATCHID-LOAD-GUARD-1). The only no-fake-green path is extracting
+`code/objmgr_watch_policy.h` — a tier1-gated production touch whose sole
+immediate value is testability of just-fixed code. **Deferred until a real
+objmgr watch/save change justifies the extraction.** See
+[objmgr-contract-harness-1-recon.md](objmgr-contract-harness-1-recon.md).
 
 **Recommended next:** `OBJMGR-CONTRACT-HARNESS-1` (per advisor ruling — order is
 template → shader → objmgr). The template is now proven on a real subsystem;
