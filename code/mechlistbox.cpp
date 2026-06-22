@@ -9,6 +9,7 @@ MechListBox.cpp			: Implementation of the MechListBox component.
 #include <cstdio>
 #include <cstdlib>
 #include"mechlistbox.h"
+#include"icon_atlas_cell.h"
 #include"logisticsmech.h"
 #include"paths.h"
 #include"inifile.h"
@@ -523,26 +524,17 @@ void MechListBox::initIcon( LogisticsMech* pMech, aObject& mechIcon )
 		if ( atlasW > 0 ) fileW = (float)atlasW;
 		if ( atlasH > 0 ) fileH = (float)atlasH;
 	}
-	// FLOOR (not round): floor(atlasW/cellW) columns. The old +0.5f invented a phantom
-	// column when the remainder >= half a cell (MCO 1024/40=25.6 -> 26), misplacing
-	// high-index icons. Retail (256/25) and MC2X (512/25) floor to the same value.
-	long cols = ( width > 0.f ) ? (long)( fileW / width + 0.01f ) : 10;
-	if ( cols < 1 ) cols = 10;
-
-	long xIndex = index % cols;
-	long yIndex = index / cols;
-
-	float fX = xIndex;
-	float fY = yIndex;
-
-	float u = (fX * width);
-	float v = (fY * height);
-
-	fX += 1.f;
-	fY += 1.f;
-
-	float u2 = (fX * width);
-	float v2 = (fY * height);
+	// Cell/UV math shared with logisticsmechicon.cpp via code/icon_atlas_cell.h
+	// (ICON-ATLAS-CELL-EXTRACT-1). FLOOR column count + epsilon + 10-col fallback;
+	// see that header for the MCO 1024/40 phantom-column rationale.
+	const icon_atlas::Cell cell = icon_atlas::cellForIndex( index, width, height, fileW );
+	const long cols = cell.cols;
+	const long xIndex = cell.col;
+	const long yIndex = cell.row;
+	const float u = cell.u;
+	const float v = cell.v;
+	const float u2 = cell.u2;
+	const float v2 = cell.v2;
 
 	mechIcon.setFileWidth( fileW );
 	mechIcon.setFileHeight( fileH );
