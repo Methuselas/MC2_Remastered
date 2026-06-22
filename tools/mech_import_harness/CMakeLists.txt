@@ -34,6 +34,12 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(ASSIMP_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
 add_subdirectory(${MC2_ROOT}/3rdparty/assimp ${CMAKE_BINARY_DIR}/out/3rdparty/assimp EXCLUDE_FROM_ALL)
 
-add_executable(mech_import_harness mech_import_harness.cpp)
+# Shared FK/skeleton math (1C): the SAME mclib TU the game importer links.
+# It includes only Assimp + std (no TG/gameos), so it links clean here.
+add_executable(mech_import_harness
+    mech_import_harness.cpp
+    ${MC2_ROOT}/mclib/mech_skel_import.cpp
+)
+target_include_directories(mech_import_harness PRIVATE ${MC2_ROOT}/mclib)
 target_link_libraries(mech_import_harness PRIVATE assimp::assimp)
 target_compile_features(mech_import_harness PRIVATE cxx_std_17)

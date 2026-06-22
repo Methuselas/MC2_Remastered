@@ -16,6 +16,9 @@
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
 
+#include "mech_skel_import.h"  // SHARED FK/skeleton math (1C) — same path the game uses
+
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -255,99 +258,70 @@ bool nameDropped(const std::string& n) {
         || s.find("uix") != std::string::npos;
 }
 
-const aiAnimation* findClip(const aiScene* s, const std::string& name) {
-    for (unsigned a = 0; a < s->mNumAnimations; ++a)
-        if (name == s->mAnimations[a]->mName.C_Str()) return s->mAnimations[a];
-    return nullptr;
+// FK / skeleton / clip math now lives in the SHARED module mclib/mech_skel_import.*
+// (mc2skel::BuildSkeleton, mc2skel::EvaluateClipGpuBones). Both `pose` and
+// `gpu-bones` below call it — and the game importer will too — so a green harness
+// guarantees the game receives the same bone matrices (no parallel impl).
+
+// Apply a row-major 4x4 (mc2skel::GpuBone) to a point.
+inline aiVector3D applyGpuBone(const mc2skel::GpuBone& b, const aiVector3D& v) {
+    return aiVector3D(
+        b.m[0] * v.x + b.m[1] * v.y + b.m[2] * v.z + b.m[3],
+        b.m[4] * v.x + b.m[5] * v.y + b.m[6] * v.z + b.m[7],
+        b.m[8] * v.x + b.m[9] * v.y + b.m[10] * v.z + b.m[11]);
 }
 
-// Sample one node-animation channel at tick time t -> local transform.
-aiMatrix4x4 sampleChannel(const aiNodeAnim* ch, double t) {
-    auto lerpVec = [&](const aiVectorKey* keys, unsigned n) -> aiVector3D {
-        if (n == 1) return keys[0].mValue;
-        unsigned i = 0; while (i + 1 < n && keys[i + 1].mTime <= t) ++i;
-        if (i + 1 >= n) return keys[n - 1].mValue;
-        double t0 = keys[i].mTime, t1 = keys[i + 1].mTime;
-        float f = (t1 > t0) ? (float)((t - t0) / (t1 - t0)) : 0.0f;
-        return keys[i].mValue * (1.0f - f) + keys[i + 1].mValue * f;
-    };
-    aiVector3D pos = ch->mNumPositionKeys ? lerpVec(ch->mPositionKeys, ch->mNumPositionKeys) : aiVector3D(0, 0, 0);
-    aiVector3D scl = ch->mNumScalingKeys ? lerpVec(ch->mScalingKeys, ch->mNumScalingKeys) : aiVector3D(1, 1, 1);
-    aiQuaternion rot;
-    if (ch->mNumRotationKeys == 1) rot = ch->mRotationKeys[0].mValue;
-    else if (ch->mNumRotationKeys > 1) {
-        unsigned i = 0; while (i + 1 < ch->mNumRotationKeys && ch->mRotationKeys[i + 1].mTime <= t) ++i;
-        if (i + 1 >= ch->mNumRotationKeys) rot = ch->mRotationKeys[ch->mNumRotationKeys - 1].mValue;
-        else {
-            double t0 = ch->mRotationKeys[i].mTime, t1 = ch->mRotationKeys[i + 1].mTime;
-            float f = (t1 > t0) ? (float)((t - t0) / (t1 - t0)) : 0.0f;
-            aiQuaternion::Interpolate(rot, ch->mRotationKeys[i].mValue, ch->mRotationKeys[i + 1].mValue, f);
-            rot.Normalize();
-        }
-    }
-    return aiMatrix4x4(scl, rot, pos);
-}
-
-void computeGlobals(const aiNode* n, const aiMatrix4x4& parent,
-                    const std::map<std::string, const aiNodeAnim*>& chans, double t,
-                    std::map<std::string, aiMatrix4x4>& globals) {
-    auto it = chans.find(n->mName.C_Str());
-    aiMatrix4x4 local = (it != chans.end()) ? sampleChannel(it->second, t) : n->mTransformation;
-    aiMatrix4x4 global = parent * local;
-    globals[n->mName.C_Str()] = global;
-    for (unsigned i = 0; i < n->mNumChildren; ++i)
-        computeGlobals(n->mChildren[i], global, chans, t, globals);
+// Build the skeleton + per-bone GPU skin matrices for a clip/frame via the SHARED
+// module, plus a name->index map. Returns false if the clip is missing.
+bool poseBones(const aiScene* s, const std::string& clip, int frame,
+               std::vector<std::string>& names, std::vector<int>& parents,
+               std::vector<mc2skel::GpuBone>& bones, std::map<std::string, int>& nameIdx,
+               double& t, double& dur) {
+    std::vector<std::array<float, 16>> invBind;
+    mc2skel::BuildSkeleton(s, names, parents, invBind);
+    if (!mc2skel::EvaluateClipGpuBones(s, clip, (float)frame, names, bones, &t, &dur))
+        return false;
+    nameIdx.clear();
+    for (size_t i = 0; i < names.size(); ++i) nameIdx[names[i]] = (int)i;
+    return true;
 }
 
 int doPose(const aiScene* s, const std::string& clipName, int frame,
            const std::string& outPath, bool compareRest) {
-    const aiAnimation* clip = findClip(s, clipName);
-    if (!clip) { std::fprintf(stderr, "ERROR: clip '%s' not found\n", clipName.c_str()); return 1; }
-    double tps = clip->mTicksPerSecond != 0.0 ? clip->mTicksPerSecond : 1000.0;
-    // --frame interpreted at 30 fps; clamp to clip duration.
-    double t = (double)frame / 30.0 * tps;
-    if (t > clip->mDuration) t = clip->mDuration;
-    if (t < 0) t = 0;
-
-    std::map<std::string, const aiNodeAnim*> chans;
-    for (unsigned c = 0; c < clip->mNumChannels; ++c)
-        chans[clip->mChannels[c]->mNodeName.C_Str()] = clip->mChannels[c];
-
-    std::map<std::string, aiMatrix4x4> globals;          // posed
-    computeGlobals(s->mRootNode, aiMatrix4x4(), chans, t, globals);
-    std::map<std::string, aiMatrix4x4> restG;            // rest (no clip)
-    if (compareRest) {
-        std::map<std::string, const aiNodeAnim*> none;
-        computeGlobals(s->mRootNode, aiMatrix4x4(), none, 0, restG);
+    std::vector<std::string> names; std::vector<int> parents;
+    std::vector<mc2skel::GpuBone> bones; std::map<std::string, int> nameIdx;
+    double t = 0, dur = 0;
+    if (!poseBones(s, clipName, frame, names, parents, bones, nameIdx, t, dur)) {
+        std::fprintf(stderr, "ERROR: clip '%s' not found\n", clipName.c_str()); return 1;
     }
-
-    std::printf("clip=%s frame=%d t=%.1f/%.1f ticks tps=%.0f bones=%zu\n",
-                clipName.c_str(), frame, t, clip->mDuration, tps, globals.size());
+    std::printf("clip=%s frame=%d t=%.1f/%.1f ticks bones=%zu\n",
+                clipName.c_str(), frame, t, dur, names.size());
 
     FILE* obj = nullptr;
     if (!outPath.empty()) { obj = std::fopen(outPath.c_str(), "w"); if (!obj) { std::fprintf(stderr, "ERROR: cannot write %s\n", outPath.c_str()); return 1; } }
 
     float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
     long emittedV = 0, emittedTris = 0, voff = 0, droppedMeshes = 0, nanV = 0;
-    int samplesShown = 0;
 
     for (unsigned m = 0; m < s->mNumMeshes; ++m) {
         const aiMesh* mesh = s->mMeshes[m];
         if (nameDropped(mesh->mName.C_Str()) || mesh->mNumBones == 0) { ++droppedMeshes; continue; }
-        // Per-vertex rigid skin (single bone weight=1; general Σ kept for safety).
+        // Rigid skin via the SHARED GPU bone matrices (single bone weight=1;
+        // general weighted blend kept for safety/parity with the engine path).
         std::vector<aiVector3D> out(mesh->mNumVertices, aiVector3D(0, 0, 0));
-        std::vector<float> wsum(mesh->mNumVertices, 0.0f);
         for (unsigned b = 0; b < mesh->mNumBones; ++b) {
+            auto bi = nameIdx.find(mesh->mBones[b]->mName.C_Str());
+            if (bi == nameIdx.end()) continue;
+            const mc2skel::GpuBone& gb = bones[bi->second];      // joint global (FK)
             const aiBone* bone = mesh->mBones[b];
-            auto git = globals.find(bone->mName.C_Str());
-            if (git == globals.end()) continue;
-            aiMatrix4x4 skin = git->second * bone->mOffsetMatrix;
+            const aiMatrix4x4& offset = bone->mOffsetMatrix;     // per-PART inverse bind
             for (unsigned w = 0; w < bone->mNumWeights; ++w) {
                 const aiVertexWeight& vw = bone->mWeights[w];
                 if (vw.mVertexId >= mesh->mNumVertices) continue;
-                aiVector3D p = skin * mesh->mVertices[vw.mVertexId];
-                out[vw.mVertexId] += p * vw.mWeight;
-                wsum[vw.mVertexId] += vw.mWeight;
+                // Bake part offset into the vertex (import-side step), then apply
+                // the shared joint global: world = global * (offset * v).
+                aiVector3D vlocal = offset * mesh->mVertices[vw.mVertexId];
+                out[vw.mVertexId] += applyGpuBone(gb, vlocal) * vw.mWeight;
             }
         }
         for (unsigned v = 0; v < mesh->mNumVertices; ++v) {
@@ -355,7 +329,6 @@ int doPose(const aiScene* s, const std::string& clipName, int frame,
             if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) { ++nanV; continue; }
             for (int k = 0; k < 3; ++k) { float c = p[k]; if (c < lo[k]) lo[k] = c; if (c > hi[k]) hi[k] = c; }
             if (obj) std::fprintf(obj, "v %.5f %.5f %.5f\n", p.x, p.y, p.z);
-            if (samplesShown < 5) { std::printf("  sample v[%u/%u] (%.3f, %.3f, %.3f)\n", v, m, p.x, p.y, p.z); ++samplesShown; }
             ++emittedV;
         }
         if (obj) for (unsigned f = 0; f < mesh->mNumFaces; ++f) {
@@ -367,24 +340,55 @@ int doPose(const aiScene* s, const std::string& clipName, int frame,
     }
     if (obj) std::fclose(obj);
 
-    std::printf("root transform (j_Root global):\n");
-    if (globals.count("j_Root")) { const aiMatrix4x4& r = globals["j_Root"];
-        std::printf("  [% .3f % .3f % .3f % .3f]\n", r.a1, r.a2, r.a3, r.a4); }
     std::printf("emitted verts=%ld tris=%ld droppedMeshes=%ld nanVerts=%ld\n", emittedV, emittedTris, droppedMeshes, nanV);
     std::printf("world bbox X[% .3f..% .3f] Y[% .3f..% .3f] Z[% .3f..% .3f] dims(%.3f, %.3f, %.3f)\n",
                 lo[0], hi[0], lo[1], hi[1], lo[2], hi[2], hi[0]-lo[0], hi[1]-lo[1], hi[2]-lo[2]);
     if (compareRest) {
+        std::vector<mc2skel::GpuBone> rest; double rt, rd;
+        mc2skel::EvaluateClipGpuBones(s, clipName, 0.0f, names, rest, &rt, &rd);
         float maxDelta = 0.0f; std::string worst;
-        for (auto& kv : globals) {
-            auto r = restG.find(kv.first); if (r == restG.end()) continue;
-            aiVector3D dp(kv.second.a4 - r->second.a4, kv.second.b4 - r->second.b4, kv.second.c4 - r->second.c4);
-            float d = dp.Length(); if (d > maxDelta) { maxDelta = d; worst = kv.first; }
+        for (size_t i = 0; i < bones.size() && i < rest.size(); ++i) {
+            float d = std::fabs(bones[i].m[3] - rest[i].m[3]) + std::fabs(bones[i].m[7] - rest[i].m[7]) + std::fabs(bones[i].m[11] - rest[i].m[11]);
+            if (d > maxDelta) { maxDelta = d; worst = names[i]; }
         }
-        std::printf("compare-rest: max bone translation delta=%.4f at %s\n", maxDelta, worst.c_str());
+        std::printf("compare-rest(frame0): max bone translation delta=%.4f at %s\n", maxDelta, worst.c_str());
     }
     if (!outPath.empty()) std::printf("wrote %s\n", outPath.c_str());
     if (nanV) { std::printf("FAIL: %ld NaN vertices in pose\n", nanV); return 1; }
     if (emittedV == 0) { std::printf("FAIL: no vertices emitted\n"); return 1; }
+    return 0;
+}
+
+// 1C — dump the exact GpuMechBone[] payload the game will upload, as JSON.
+// Uses the SAME shared functions as pose(), so a green gpu-bones == correct
+// in-game skinning.
+int doGpuBones(const aiScene* s, const std::string& clipName, int frame, const std::string& outPath) {
+    std::vector<std::string> names; std::vector<int> parents;
+    std::vector<mc2skel::GpuBone> bones; std::map<std::string, int> nameIdx;
+    double t = 0, dur = 0;
+    if (!poseBones(s, clipName, frame, names, parents, bones, nameIdx, t, dur)) {
+        std::fprintf(stderr, "ERROR: clip '%s' not found\n", clipName.c_str()); return 1;
+    }
+    // Checksum: sum of all matrix elements (stable across runs; cheap parity key).
+    double sum = 0.0; bool nan = false;
+    for (auto& b : bones) for (int k = 0; k < 16; ++k) { sum += b.m[k]; if (!std::isfinite(b.m[k])) nan = true; }
+
+    FILE* f = outPath.empty() ? stdout : std::fopen(outPath.c_str(), "w");
+    if (!f) { std::fprintf(stderr, "ERROR: cannot write %s\n", outPath.c_str()); return 1; }
+    std::fprintf(f, "{\n  \"clip\": \"%s\",\n  \"frame\": %d,\n  \"timeTicks\": %.3f,\n  \"durationTicks\": %.3f,\n",
+                 clipName.c_str(), frame, t, dur);
+    std::fprintf(f, "  \"boneCount\": %zu,\n  \"checksum\": %.6f,\n  \"bones\": [\n", names.size(), sum);
+    for (size_t i = 0; i < names.size(); ++i) {
+        std::fprintf(f, "    {\"index\": %zu, \"name\": \"%s\", \"parent\": %d, \"m\": [",
+                     i, names[i].c_str(), parents[i]);
+        for (int k = 0; k < 16; ++k) std::fprintf(f, "%s%.6f", k ? ", " : "", bones[i].m[k]);
+        std::fprintf(f, "]}%s\n", i + 1 < names.size() ? "," : "");
+    }
+    std::fprintf(f, "  ]\n}\n");
+    if (!outPath.empty()) { std::fclose(f); std::printf("wrote %s (bones=%zu checksum=%.6f)\n", outPath.c_str(), names.size(), sum); }
+
+    if (nan) { std::fprintf(stderr, "FAIL: NaN in GPU bone matrices\n"); return 1; }
+    if (names.empty()) { std::fprintf(stderr, "FAIL: zero bones\n"); return 1; }
     return 0;
 }
 
@@ -394,7 +398,8 @@ void usage(const char* exe) {
         "usage:\n"
         "  %s inspect    <model.glb|.fbx>\n"
         "  %s validate   <model.glb|.fbx>   (exit nonzero on any failure)\n"
-        "  %s pose       <model.glb|.fbx> --clip <name> --frame <n> [--out <pose.obj>] [--compare-rest]\n", exe, exe, exe);
+        "  %s pose       <model.glb|.fbx> --clip <name> --frame <n> [--out <pose.obj>] [--compare-rest]\n"
+        "  %s gpu-bones  <model.glb|.fbx> --clip <name> --frame <n> [--out <bones.json>]\n", exe, exe, exe, exe);
 }
 
 }  // namespace
@@ -424,6 +429,17 @@ int main(int argc, char** argv) {
         }
         if (clip.empty()) { std::fprintf(stderr, "ERROR: pose requires --clip <name>\n"); return 2; }
         return doPose(scene, clip, frame, out, cmpRest);
+    }
+    if (mode == "gpu-bones") {
+        std::string clip, out; int frame = 0;
+        for (int i = 3; i < argc; ++i) {
+            std::string a = argv[i];
+            if (a == "--clip" && i + 1 < argc) clip = argv[++i];
+            else if (a == "--frame" && i + 1 < argc) frame = std::atoi(argv[++i]);
+            else if (a == "--out" && i + 1 < argc) out = argv[++i];
+        }
+        if (clip.empty()) { std::fprintf(stderr, "ERROR: gpu-bones requires --clip <name>\n"); return 2; }
+        return doGpuBones(scene, clip, frame, out);
     }
     usage(argv[0]);
     return 2;
