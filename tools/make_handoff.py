@@ -75,6 +75,9 @@ def main():
     md.append("")
     md.append(f"**branch** `{branch}` @ `{head}`  |  **range** `{rng}`")
     md.append("")
+    md.append("> _AUTO (git): commits, files, prune list. MANUAL (you must write):"
+              " Proven / NOT-proven / Next - never infer proof from git data alone._")
+    md.append("")
     md.append("### Commits")
     md.append("```")
     md.append(commits or "(none)")

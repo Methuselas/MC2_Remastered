@@ -23,6 +23,28 @@ justification is not allowed. Documented history of additive slices netting
 ~0ms (`memory/feedback_offload_must_be_substitutive_not_additive.md`).
 Dispatch prompts MUST include "run the greybeard skill" verbatim.
 
+## Slice-preflight discipline (anti-rediscovery / stale-base gate)
+
+Before any **recon-derived fix slice** (a fix whose justification came from a
+recon doc / earlier session / shared queue), run:
+
+```powershell
+py -3 tools\repo_intel\repo_query.py slice-preflight ^
+  --base <branch-base-ref> --slice <SLICE_NAME> ^
+  --paths <target files> --symbols <key symbols>
+```
+
+- `verdict=STOP` (a target symbol changed on `base..nifty`) → **do not write code**;
+  re-recon against current HEAD first. The bug may already be fixed (this gate
+  encodes the lesson from the duplicated watchID / fit-parse / icon-divisor
+  re-recons — a parallel lane had already landed the fix).
+- `verdict=WARN` (slice name already in log / stale base / dirty overlap) → review
+  before proceeding.
+- **Mandatory** for shared-recon-queue work; advisory (still useful) for ordinary
+  implementation already based on fresh same-session recon.
+- MCP form `repo.slice_preflight(...)` once the `mc2-repo-intel` server is reloaded;
+  until then use the CLI. Do not block adoption on MCP availability.
+
 ## Documentation discipline
 
 Every cited symbol grep-verified AT WRITE-TIME. Applies at every stage.

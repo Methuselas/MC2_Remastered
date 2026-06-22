@@ -11,6 +11,7 @@ py -3 tools\repo_intel\repo_query.py preflight --expect-branch <branch> --expect
 - `branch_ok=false` or `root_ok=false`: **stop immediately**. Do not switch branches, stash, or repair.
 - `safe_to_touch=false`: report the PRECHECK line and elevated dirty files, wait for explicit direction.
 - Never share a physical worktree between parallel agents. A separate branch is not sufficient isolation.
+- **Recon-derived fix slice?** Also run `repo_query.py slice-preflight --base <ref> --slice <NAME> --paths <files> --symbols <syms>` first. `verdict=STOP` (symbol changed on base..nifty) → re-recon, do NOT code. Mandatory for shared-recon-queue work. See `docs/disciplines.md`.
 
 Lane → root map: nifty-mendeleev=`…/worktrees/nifty-mendeleev` · renderpass-contract-3=`…/worktrees/renderpass-contract-3` · veg-schema-dense=`…/worktrees/veg-schema-dense`
 
