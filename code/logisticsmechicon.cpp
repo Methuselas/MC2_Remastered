@@ -7,6 +7,7 @@
 
 #include"logisticsmechicon.h"
 #include"mechicon.h"
+#include"icon_atlas_cell.h"
 #include"logisticsmech.h"
 #include"logisticspilot.h"
 #include "../resource.h"
@@ -146,28 +147,17 @@ void LogisticsMechIcon::setMech( LogisticsMech* pNewMech )
 			if ( atlasW > 0 ) fileW = (float)atlasW;
 			if ( atlasH > 0 ) fileH = (float)atlasH;
 		}
-		// FLOOR (not round): a W-wide atlas of `width`-px cells holds floor(W/width)
-		// columns. The old +0.5f rounded UP when the remainder >= half a cell (e.g. MCO's
-		// 1024-wide / 40px atlas: 25.6 -> 26), inventing a phantom column that misplaced
-		// high-index icons. Epsilon guards float underflow on exact divisions. Retail
-		// (256/25=10.24) and MC2X (512/25=20.48) floor identically to the old value.
-		long cols = ( width > 0.f ) ? (long)( fileW / width + 0.01f ) : 10;
-		if ( cols < 1 ) cols = 10;
-
-		long xIndex = index % cols;
-		long yIndex = index / cols;
-
-		float fX = xIndex;
-		float fY = yIndex;
-
-		float u = (fX * width);
-		float v = (fY * height);
-
-		fX += 1.f;
-		fY += 1.f;
-
-		float u2 = (fX * width);
-		float v2 = (fY * height);
+		// Cell/UV math shared with mechlistbox.cpp via code/icon_atlas_cell.h
+		// (ICON-ATLAS-CELL-EXTRACT-1). FLOOR column count + epsilon + 10-col
+		// fallback; see that header for the MCO 1024/40 phantom-column rationale.
+		const icon_atlas::Cell cell = icon_atlas::cellForIndex( index, width, height, fileW );
+		const long cols = cell.cols;
+		const long xIndex = cell.col;
+		const long yIndex = cell.row;
+		const float u = cell.u;
+		const float v = cell.v;
+		const float u2 = cell.u2;
+		const float v2 = cell.v2;
 
 		icon.setFileWidth( fileW );
 		icon.setFileHeight( fileH );
