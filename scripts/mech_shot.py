@@ -29,11 +29,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--exe", default=str(DEFAULT_EXE))
     ap.add_argument("--mission", default="mc2_24")
-    ap.add_argument("--frame", type=int, default=600, help="capture at this frame counter")
+    ap.add_argument("--frame", type=int, default=120, help="capture at frame N (frames since intro complete)")
     ap.add_argument("--duration", type=int, default=30, help="engine run seconds (>= time to reach frame)")
     ap.add_argument("--out", default="", help="output PNG (default tests/smoke/artifacts/mech-shots/<mission>_f<frame>.png)")
     ap.add_argument("--height", default="", help="MC2_MECH_SKEL_HEIGHT override (optional)")
     ap.add_argument("--axis", default="", help="MC2_GLTF_AXIS override (optional)")
+    ap.add_argument("--clip", default="", help="MC2_MECH_IMPORT_FORCE_CLIP — pose the imported mech to a clip frame (1B)")
+    ap.add_argument("--clip-frame", type=int, default=0, help="MC2_MECH_IMPORT_FORCE_FRAME (with --clip)")
     args = ap.parse_args()
 
     exe = Path(args.exe).resolve()
@@ -52,14 +54,23 @@ def main():
     env.update({
         "MC2_ASSIMP_MECH_IMPORT": "1",
         "MC2_SMOKE_MODE": "1",            # enables --mission + skips launcher
-        "MC2_SMOKE_SEED": "0xC0FFEE",     # deterministic camera/AI -> reproducible frame
-        "MC2_SCREENSHOT_AT_FRAME": str(args.frame),
-        "MC2_SCREENSHOT_PATH": str(tga),
+        "MC2_SMOKE_SEED": "0xC0FFEE",     # deterministic camera/AI
+        # Use the gos_visual_diff capture harness: it GATES EDGE-SCROLL (so the
+        # grabbed mouse can't drift the camera) and captures the viewport at
+        # frame N (frames-since-intro), then exits. This is the stable path other
+        # sessions use; MC2_SCREENSHOT_AT_FRAME drifted because edge-scroll stayed on.
+        "MC2_VISUAL_DIFF_CAPTURE": "1",
+        "MC2_VISUAL_DIFF_OUT": str(tga),
+        "MC2_VISUAL_DIFF_FRAME_N": str(args.frame),
+        "MC2_VISUAL_DIFF_MISSION": args.mission,
     })
     if args.height:
         env["MC2_MECH_SKEL_HEIGHT"] = args.height
     if args.axis:
         env["MC2_GLTF_AXIS"] = args.axis
+    if args.clip:
+        env["MC2_MECH_IMPORT_FORCE_CLIP"] = args.clip
+        env["MC2_MECH_IMPORT_FORCE_FRAME"] = str(args.clip_frame)
 
     cmd = [str(exe), "--profile", "stock", "--mission", args.mission, "--duration", str(args.duration)]
     print(f"[mech_shot] launching {exe.name} mission={args.mission} frame={args.frame}")
