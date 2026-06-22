@@ -47,6 +47,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PY_HARNESSES = [
     "tools/deploy_asset_contract_harness/deploy_asset_contract_harness.py",
     "tools/deploy_release_tree_contract_harness/deploy_release_tree_contract_harness.py",
+    "tools/mech_glb_pack_contract_harness/mech_glb_pack_contract_harness.py",
 ]
 
 
