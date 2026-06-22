@@ -2,6 +2,26 @@
 
 > Pointer doc. Detail in memory/ handoffs and docs/. Add new campaigns at top.
 
+## 2026-06-22 — OpenGL correctness campaign + RENDER-BACKEND-SEAMS arc — SHIPPED nifty
+
+Run as a ledger, not a cleanup binge: `docs/render-backend-seams/opengl-correctness-ledger-1.md` (status taxonomy, queue CLEAR, closure audit CONFIRMED_CLEAN). Dual-benefit (NVIDIA GL correctness + Vulkan-prep seams).
+
+| Slice | Commit | Status | Notes |
+|-------|--------|--------|-------|
+| RENDER-PASS-CONTRACT-ENFORCEMENT-1 | `8d250041` | SHIPPED | non-fatal pass-scope tracker; gates `MC2_RENDER_PASS_CONTRACT_TRACE/ASSERT` (default-off) |
+| WATER-THINRING-FENCE-1 | `bc424dc2` | SHIPPED | fenced the unfenced water thin-record ring (solid was fenced); gate `MC2_WATER_THINRING_TRACE` |
+| UB2-02 mech.frag non-uniform sampling | `55f6cc71` | SHIPPED | hoist texture/derivative out of `flat v_mechSunFound` branch |
+| UB2-01 terrain non-uniform sampling | `f4208726` | SHIPPED | textureGrad/textureLod; **byte-exact visual gate 9/9** (golden ub201-pre2) |
+| **R2B tree-disappear (cachedFrame_)** | `07a1f8ac` | SHIPPED | reintroduced black-tree bug: R2b update-skip froze cachedFrame_ → registry dropped trees. Restored stamp + `stale_after_drawn` regression guard. A/B mc2_24 15336→0. Gate `MC2_R2B_TOUCH_PRESERVE` default-ON |
+| OMT-1 overlay resolve-fail guard | `36d6a254` | SHIPPED | no GL texture-0 bind on resolve-fail → 1×1 magenta fallback + log; gate `MC2_OVERLAY_TEXTURE_TRACE` |
+| UB2-05 building_pbr discard-before-sample | `1851b16d` | SHIPPED | sample/derivative hoisted above ALPHA_TEST discard |
+| DEAD-POST-FX-CLEANUP-1 (bloom/ACES/FXAA + god rays) | `92d3a821` `9c2187d8` `3e1f9e0a` | SHIPPED | deleted as wrong-for-RTS; removed `MC2_HDR_POST/BLOOM/TONEMAP_ACES`, RAlt+F1/RAlt+6 hotkeys, 3 shader files; LIVE composite (sunset/exposure/view-modes) preserved |
+| Docs: buffer-owner recon / GpuBuffer wrapper DESIGN / OMT-2-INDIRECT | `e5201fac` `68f98cb8` `b7406682` | SHIPPED | recon + design only (no wrapper code yet) |
+
+**Remaining (vendor-run only):** VENDOR-CERT-PACK-1 — on-NVIDIA visual confirm of the tree fix; empty shadow frags (UB2-06/07); shadow PCF derivatives (UB2-04). Plus DEFERRED_LOW_RISK: veg-cards blockVis OOB (TREE-N2, veg shipped-off), static-decal stale-handle rebake. Detail: `memory/render-backend-seams-arc.md`.
+
+---
+
 ## 2026-06-21 — Startup / load performance arc
 
 | Slice | Commits | Status | Notes |
