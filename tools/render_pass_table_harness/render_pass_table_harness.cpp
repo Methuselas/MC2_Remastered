@@ -199,6 +199,67 @@ static bool test_producer_consumer_closure_for_contract3(TestCtx& t) {
     return t.failures == 0;
 }
 
+// RENDER-PASS-DAG-CONTRACT-1: kFramePassOrder lists every real RenderPassId
+// (1..kRenderPassIdCount) exactly once, with no duplicates and no None(0).
+static bool test_frame_pass_order_complete(TestCtx& t) {
+    CH_CHECK(t, rc::kFramePassOrderCount == (int)rc::kRenderPassIdCount);
+
+    std::set<uint32_t> seen;
+    for (int i = 0; i < rc::kFramePassOrderCount; ++i) {
+        uint32_t id = (uint32_t)rc::kFramePassOrder[i];
+        if (id == (uint32_t)rc::RenderPassId::None) {
+            t.fail("kFramePassOrder slot " + std::to_string(i) + " is None (not a real pass)");
+            continue;
+        }
+        if (id < 1 || id > rc::kRenderPassIdCount)
+            t.fail("kFramePassOrder slot " + std::to_string(i) + " id=" + std::to_string(id) +
+                   " out of range [1," + std::to_string(rc::kRenderPassIdCount) + "]");
+        if (!seen.insert(id).second)
+            t.fail("kFramePassOrder duplicate id " + std::to_string(id) +
+                   " at slot " + std::to_string(i));
+    }
+    // Every real enum value appears in the order list.
+    for (uint32_t want = 1; want <= rc::kRenderPassIdCount; ++want)
+        if (!seen.count(want))
+            t.fail("kFramePassOrder missing RenderPassId value " + std::to_string(want));
+    return t.failures == 0;
+}
+
+// RENDER-PASS-DAG-CONTRACT-1: ordered-DAG read-before-write. Walking
+// kFramePassOrder in execution order, every resource a pass reads[] must have
+// been written by SOME earlier pass in the order (or be allowlisted external).
+// This is the dynamic "every read has a prior writer" DAG invariant, distinct
+// from the order-agnostic test_every_read_has_static_writer above.
+static bool test_ordered_dag_read_before_write(TestCtx& t) {
+    std::set<uint32_t> writtenSoFar = kExternallyProducedReads;
+    for (int i = 0; i < rc::kFramePassOrderCount; ++i) {
+        const rc::RenderPassContract* p = nullptr;
+        for (int k = 0; k < kPassCount; ++k)
+            if (kPasses[k].id == rc::kFramePassOrder[i]) { p = &kPasses[k]; break; }
+        if (!p) {
+            t.fail("kFramePassOrder slot " + std::to_string(i) +
+                   " has no matching contract row");
+            continue;
+        }
+        // Check this pass's reads against everything written by EARLIER passes.
+        for (int j = 0; j < 4; ++j) {
+            uint32_t r = rid(p->reads[j]);
+            if (r == kResUnknown) break;
+            if (!writtenSoFar.count(r))
+                t.fail(std::string(p->name) + " reads " + std::to_string(r) +
+                       " but no earlier pass in kFramePassOrder writes it "
+                       "(ordered-DAG read-before-write violation)");
+        }
+        // Now publish this pass's writes for downstream passes.
+        for (int j = 0; j < 4; ++j) {
+            uint32_t w = rid(p->writes[j]);
+            if (w == kResUnknown) break;
+            writtenSoFar.insert(w);
+        }
+    }
+    return t.failures == 0;
+}
+
 // Demo failure (inDefault=false): proves the failure path via --test only.
 static bool test_demo_intentional_fail(TestCtx& t) {
     CH_CHECK(t, kPassCount == 999);  // intentionally wrong
@@ -218,6 +279,8 @@ int main(int argc, char** argv) {
     h.add("no_mid_array_terminator_in_writes",        test_no_mid_array_terminator_in_writes);
     h.add("every_read_has_static_writer",             test_every_read_has_static_writer);
     h.add("producer_consumer_closure_for_contract3",  test_producer_consumer_closure_for_contract3);
+    h.add("frame_pass_order_complete",                 test_frame_pass_order_complete);
+    h.add("ordered_dag_read_before_write",             test_ordered_dag_read_before_write);
     h.add("demo_intentional_fail",                     test_demo_intentional_fail, /*inDefault=*/false);
     return h.run(argc, argv);
 }
