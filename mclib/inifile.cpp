@@ -786,7 +786,25 @@ long FitIniFile::open (FilePtr _parent, unsigned long fileSize, long numChild)
 		return(result);
 		
 	result = afterOpen();
-	
+
+	return(result);
+}
+
+//---------------------------------------------------------------------------
+// FITINI-INMEM-OPEN-1: parse a .fit from an in-memory buffer (caller-owned, not
+// copied). Mirrors the fName open: base in-RAM File::open(buffer,len), seek(0),
+// afterOpen(). No disk, no FST. Used by tools/fitini_inmem_harness to parse
+// .fit text game-free.
+long FitIniFile::open (const char* buffer, int bufferLength)
+{
+	long result = File::open(buffer, bufferLength);
+	if (result != NO_ERR)
+		return(result);
+
+	seek(0);
+
+	result = afterOpen();
+
 	return(result);
 }
 
