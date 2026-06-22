@@ -114,6 +114,11 @@ const PassStateContract&    stateContractFor(PassIdentity);
 const ShaderOutputContract& shaderOutputContractFor(PassIdentity);
 const char*                 passIdentityName(PassIdentity);
 
+// Lossy collapse of the fine-grained callsite-tag taxonomy (PassIdentity, 15)
+// onto the coarse owner-lane taxonomy (RenderCore::RenderPassId). Returns
+// RenderPassId::None for tags with no owner lane (Unknown, DebugOverlay).
+RenderCore::RenderPassId toRenderPassId(PassIdentity);
+
 // Debug assertion machinery. initRenderContractAssert() reads the
 // MC2_RENDER_CONTRACT_ASSERT env var; call it once at engine init
 // (after GL is up). assertPassContract() is a no-op if the env var

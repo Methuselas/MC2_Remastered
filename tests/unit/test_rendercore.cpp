@@ -385,6 +385,63 @@ TEST_CASE("RenderPassContract: passes with no PipelineId family are not flagged 
     }
 }
 
+// ---------------------------------------------------------------------------
+// RENDER-PASS-DAG-CONTRACT-1: widened pass enum + frame pass order.
+// (RenderCore-only checks. The toRenderPassId mapping is exercised in
+// test_render_contract_3, which links render_contract.cpp.)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("RenderPassContract: enum/table/order counts are all 11") {
+    CHECK(kRenderPassIdCount == 11u);
+    CHECK(kRenderPassContractCount == 11);
+    CHECK(kFramePassOrderCount == 11);
+}
+
+TEST_CASE("RenderPassContract: 6 new lanes resolve to unregistered contract rows") {
+    const RenderPassId newIds[] = {
+        RenderPassId::Water,
+        RenderPassId::PostProcess,
+        RenderPassId::VegetationCards,
+        RenderPassId::TerrainDecal,
+        RenderPassId::TerrainOverlay,
+        RenderPassId::UI,
+    };
+    for (RenderPassId want : newIds) {
+        const RenderPassContract* row = nullptr;
+        for (int i = 0; i < kRenderPassContractCount; ++i)
+            if (kRenderPassContracts[i].id == want) { row = &kRenderPassContracts[i]; break; }
+        REQUIRE(row != nullptr);
+        CHECK_FALSE(row->pipelineDescRegistered);
+    }
+}
+
+TEST_CASE("RenderPassContract: kFramePassOrder lists every real id exactly once, no None") {
+    int counts[12] = {0};  // index by RenderPassId value (1..11)
+    for (int i = 0; i < kFramePassOrderCount; ++i) {
+        uint32_t v = static_cast<uint32_t>(kFramePassOrder[i]);
+        CHECK(v != static_cast<uint32_t>(RenderPassId::None));
+        REQUIRE(v >= 1u);
+        REQUIRE(v <= kRenderPassIdCount);
+        ++counts[v];
+    }
+    for (uint32_t v = 1; v <= kRenderPassIdCount; ++v)
+        CHECK(counts[v] == 1);
+}
+
+TEST_CASE("RenderPassContract: Shadow + PostProcess carry non-default Vulkan metadata") {
+    const RenderPassContract* shadow = nullptr;
+    const RenderPassContract* post   = nullptr;
+    for (int i = 0; i < kRenderPassContractCount; ++i) {
+        if (kRenderPassContracts[i].id == RenderPassId::Shadow)      shadow = &kRenderPassContracts[i];
+        if (kRenderPassContracts[i].id == RenderPassId::PostProcess) post   = &kRenderPassContracts[i];
+    }
+    REQUIRE(shadow != nullptr);
+    REQUIRE(post != nullptr);
+    CHECK((shadow->depthLoadOp == LoadOp::Clear));
+    CHECK((shadow->depthFinalLayout == ImageLayout::ShaderReadOnly));
+    CHECK((post->colorFinalLayout == ImageLayout::Present));
+}
+
 } // TEST_SUITE("RenderCore")
 
 // ---------------------------------------------------------------------------

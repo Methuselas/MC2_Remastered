@@ -534,6 +534,32 @@ const char* passIdentityName(PassIdentity id) {
     return "Unknown";
 }
 
+// Lossy collapse of PassIdentity (fine-grained callsite tags) onto the coarse
+// owner-lane RenderCore::RenderPassId taxonomy. Several PassIdentity values map
+// onto one RenderPassId lane (documented per-case below); tags with no owner
+// lane collapse to RenderPassId::None.
+RenderCore::RenderPassId toRenderPassId(PassIdentity id) {
+    using R = RenderCore::RenderPassId;
+    switch (id) {
+        case PassIdentity::Unknown:         return R::None;
+        case PassIdentity::TerrainBase:     return R::Terrain;
+        case PassIdentity::TerrainOverlay:  return R::TerrainOverlay;
+        case PassIdentity::TerrainDecal:    return R::TerrainDecal;
+        case PassIdentity::Grass:           return R::Terrain;          // terrain-derived; gos_grass is dead
+        case PassIdentity::Water:           return R::Water;
+        case PassIdentity::OpaqueObject:    return R::MechOpaque;       // lossy: also vehicles + legacy buildings
+        case PassIdentity::AlphaObject:     return R::MechOpaque;       // lossy: alpha-tested/blended objects
+        case PassIdentity::StaticProp:      return R::StaticPropOpaque;
+        case PassIdentity::VegetationCards: return R::VegetationCards;
+        case PassIdentity::ParticleEffect:  return R::VFX;
+        case PassIdentity::UI:              return R::UI;
+        case PassIdentity::DebugOverlay:    return R::None;             // diagnostic only, no owner lane
+        case PassIdentity::ShadowCaster:    return R::Shadow;
+        case PassIdentity::PostProcess:     return R::PostProcess;
+    }
+    return RenderCore::RenderPassId::None;
+}
+
 void initRenderContractAssert() {
     const char* v = ::getenv("MC2_RENDER_CONTRACT_ASSERT");
     s_assertEnabled = (v && v[0] != '\0' && v[0] != '0');

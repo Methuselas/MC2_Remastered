@@ -45,17 +45,25 @@ namespace RenderCore {
 // hole.
 
 enum class RenderPassId : uint32_t {
+    None             = 0,   // null / dependsOn-terminator; never a contract row
     StaticPropOpaque = 1,
     Terrain          = 2,
     MechOpaque       = 3,
     Shadow           = 4,
     VFX              = 5,
+    Water            = 6,
+    PostProcess      = 7,
+    VegetationCards  = 8,
+    TerrainDecal     = 9,
+    TerrainOverlay   = 10,
+    UI               = 11,
     // KEEP _SentinelLast AT THE END. New pass ids must be added BEFORE it.
     _SentinelLast,
 };
 
-// Derived count of real (non-sentinel) pass ids. Pass ids start at 1, so
-// subtract 1 from the sentinel's underlying value.
+// Derived count of real (non-sentinel) pass ids. Pass ids start at 1 (None=0 is
+// the null terminator and is NOT counted), so subtract 1 from the sentinel's
+// underlying value.
 constexpr uint32_t kRenderPassIdCount =
     static_cast<uint32_t>(RenderPassId::_SentinelLast) - 1u;
 
@@ -76,6 +84,18 @@ constexpr inline BarrierKind operator|(BarrierKind a, BarrierKind b) {
     return static_cast<BarrierKind>(
         static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
 }
+
+// ---------------------------------------------------------------------------
+// Vulkan-shaped attachment metadata (descriptive)
+// ---------------------------------------------------------------------------
+// v0: descriptive only -- no runtime load/store or layout-transition behaviour.
+// Models the future RHI render-pass attachment description so a later Vulkan
+// port has the per-pass intent already recorded.
+enum class LoadOp  : uint8_t { Load = 0, Clear, DontCare };
+enum class StoreOp : uint8_t { Store = 0, DontCare };
+enum class ImageLayout : uint8_t {
+    Undefined = 0, ColorAttachment, DepthStencilAttachment, ShaderReadOnly, Present
+};
 
 // ---------------------------------------------------------------------------
 // Contract entry (descriptive)
@@ -111,6 +131,16 @@ struct RenderPassContract {
     // GL barrier needed after this pass's writes, before consumers can read.
     // v0: informational only; runtime enforcement is a future slice.
     BarrierKind barrierAfter = BarrierKind::None;
+
+    // v0 Vulkan render-pass metadata (descriptive; precise per-pass values are an
+    // incremental follow-up to be filled from a RenderDoc capture). Defaults model
+    // the common "load existing attachment, store result" opaque case.
+    LoadOp      colorLoadOp      = LoadOp::Load;
+    StoreOp     colorStoreOp     = StoreOp::Store;
+    LoadOp      depthLoadOp      = LoadOp::Load;
+    StoreOp     depthStoreOp     = StoreOp::Store;
+    ImageLayout colorFinalLayout = ImageLayout::ColorAttachment;
+    ImageLayout depthFinalLayout = ImageLayout::DepthStencilAttachment;
 };
 
 // ---------------------------------------------------------------------------
@@ -186,7 +216,15 @@ static constexpr RenderPassContract kRenderPassContracts[] = {
         "Three shadow lanes (terrain/mech/static-prop); counters live-read from inspectors.",
         /* reads[4]    */ {},
         /* writes[4]   */ { RenderResourceId::ShadowDynamicMap },
-        /* barrierAfter */ BarrierKind::TextureFetch
+        /* barrierAfter */ BarrierKind::TextureFetch,
+        // Depth-only pass: clears its depth target, and the resulting depth map
+        // is SAMPLED by later geometry/post passes -> ShaderReadOnly final layout.
+        /* colorLoadOp      */ LoadOp::Load,
+        /* colorStoreOp     */ StoreOp::Store,
+        /* depthLoadOp      */ LoadOp::Clear,
+        /* depthStoreOp     */ StoreOp::Store,
+        /* colorFinalLayout */ ImageLayout::ColorAttachment,
+        /* depthFinalLayout */ ImageLayout::ShaderReadOnly
     },
     {
         RenderPassId::VFX,
@@ -202,6 +240,97 @@ static constexpr RenderPassContract kRenderPassContracts[] = {
         /* writes[4]   */ { RenderResourceId::MainColor },
         /* barrierAfter */ BarrierKind::None
     },
+    {
+        RenderPassId::Water,
+        "Water",
+        "quad.cpp / renderWaterFastPath",
+        /*viewUniformsBound*/        false,
+        /*pipelineDescRegistered*/   false,
+        /*snapshotRowAuthoritative*/ false,
+        "Water Pass##water",
+        nullptr,
+        "Intentional projected path (Bucket B1); legacy quad water + optional MDI fastpath.",
+        /* reads[4]    */ { RenderResourceId::MainDepth },
+        /* writes[4]   */ { RenderResourceId::MainColor },
+        /* barrierAfter */ BarrierKind::Framebuffer
+    },
+    {
+        RenderPassId::PostProcess,
+        "PostProcess",
+        "gos_postprocess",
+        /*viewUniformsBound*/        false,
+        /*pipelineDescRegistered*/   false,
+        /*snapshotRowAuthoritative*/ false,
+        "PostProcess##pp",
+        nullptr,
+        "Composite chain after gos_RendererEndFrame: HZB/SSAO/screen-shadow/shoreline/godrays/composite.",
+        /* reads[4]    */ { RenderResourceId::MainColor, RenderResourceId::MainDepth, RenderResourceId::ShadowDynamicMap },
+        /* writes[4]   */ { RenderResourceId::MainColor },
+        /* barrierAfter */ BarrierKind::Framebuffer,
+        // Final on-screen pass -> color attachment ends in Present layout.
+        /* colorLoadOp      */ LoadOp::Load,
+        /* colorStoreOp     */ StoreOp::Store,
+        /* depthLoadOp      */ LoadOp::Load,
+        /* depthStoreOp     */ StoreOp::Store,
+        /* colorFinalLayout */ ImageLayout::Present,
+        /* depthFinalLayout */ ImageLayout::DepthStencilAttachment
+    },
+    {
+        RenderPassId::VegetationCards,
+        "VegetationCards",
+        "VegetationAdapter / gos_vegetation",
+        /*viewUniformsBound*/        false,
+        /*pipelineDescRegistered*/   false,
+        /*snapshotRowAuthoritative*/ false,
+        "Vegetation##veg",
+        "MC2_VEGETATION_CARDS",
+        "Instanced crossed-quad billboards, alpha-discard; post-renderLists.",
+        /* reads[4]    */ { RenderResourceId::MainDepth, RenderResourceId::ShadowDynamicMap },
+        /* writes[4]   */ { RenderResourceId::MainColor, RenderResourceId::MainDepth },
+        /* barrierAfter */ BarrierKind::Framebuffer
+    },
+    {
+        RenderPassId::TerrainDecal,
+        "TerrainDecal",
+        "craterManager / quad.cpp",
+        /*viewUniformsBound*/        false,
+        /*pipelineDescRegistered*/   false,
+        /*snapshotRowAuthoritative*/ false,
+        "TerrainDecal##td",
+        nullptr,
+        "Craters, footprints, scorch; coplanar decals blended onto terrain.",
+        /* reads[4]    */ { RenderResourceId::MainDepth },
+        /* writes[4]   */ { RenderResourceId::MainColor },
+        /* barrierAfter */ BarrierKind::Framebuffer
+    },
+    {
+        RenderPassId::TerrainOverlay,
+        "TerrainOverlay",
+        "quad.cpp M2d producer",
+        /*viewUniformsBound*/        false,
+        /*pipelineDescRegistered*/   false,
+        /*snapshotRowAuthoritative*/ false,
+        "TerrainOverlay##to",
+        nullptr,
+        "Perimeter cement / transitions; mostly colormap-baked, residual overlay quads.",
+        /* reads[4]    */ { RenderResourceId::MainDepth },
+        /* writes[4]   */ { RenderResourceId::MainColor },
+        /* barrierAfter */ BarrierKind::Framebuffer
+    },
+    {
+        RenderPassId::UI,
+        "UI",
+        "GameOS 2D / HUD",
+        /*viewUniformsBound*/        false,
+        /*pipelineDescRegistered*/   false,
+        /*snapshotRowAuthoritative*/ false,
+        "UI##ui",
+        nullptr,
+        "HUD, text, menu; screen-space, drawn after scene before post-composite.",
+        /* reads[4]    */ {},
+        /* writes[4]   */ { RenderResourceId::MainColor },
+        /* barrierAfter */ BarrierKind::None
+    },
 };
 
 static constexpr int kRenderPassContractCount =
@@ -211,5 +340,32 @@ static_assert(
     kRenderPassContractCount == static_cast<int>(kRenderPassIdCount),
     "kRenderPassContracts length must match kRenderPassIdCount "
     "(append the new RenderPassContract row when you append a RenderPassId).");
+
+// ---------------------------------------------------------------------------
+// Execution-ordered frame pass list (RENDER-PASS-DAG-CONTRACT-1)
+// ---------------------------------------------------------------------------
+// The order passes actually hit GL across a frame. Shadow resolves FIRST inside
+// renderLists() even though shadow-caster enqueue happens after geometry enqueue
+// — frameBegin() pre-seeds ShadowDynamicMap to paper over that; the canonical
+// dependency is Shadow-before-geometry, encoded here by position. Edges are
+// DERIVED from reads[]/writes[] against this order (see render_pass_table_harness),
+// not stored per-row, to avoid a second source of truth that can rot.
+static constexpr RenderPassId kFramePassOrder[] = {
+    RenderPassId::Shadow,
+    RenderPassId::StaticPropOpaque,
+    RenderPassId::Terrain,
+    RenderPassId::MechOpaque,
+    RenderPassId::TerrainDecal,
+    RenderPassId::TerrainOverlay,
+    RenderPassId::Water,
+    RenderPassId::VegetationCards,
+    RenderPassId::VFX,
+    RenderPassId::UI,
+    RenderPassId::PostProcess,
+};
+static constexpr int kFramePassOrderCount =
+    sizeof(kFramePassOrder) / sizeof(kFramePassOrder[0]);
+static_assert(kFramePassOrderCount == static_cast<int>(kRenderPassIdCount),
+    "kFramePassOrder must list every real RenderPassId exactly once.");
 
 } // namespace RenderCore

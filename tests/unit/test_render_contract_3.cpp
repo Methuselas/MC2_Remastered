@@ -71,6 +71,22 @@ static void test_vfx_reads_maindepth_after_geometry() {
     printf("PASS: vfx_reads_maindepth_satisfied\n");
 }
 
+// RENDER-PASS-DAG-CONTRACT-1: lossy PassIdentity -> RenderPassId mapping.
+static void test_to_render_pass_id_mapping() {
+    using PI = render_contract::PassIdentity;
+    using R  = RenderCore::RenderPassId;
+    RC3_CHECK(render_contract::toRenderPassId(PI::StaticProp)      == R::StaticPropOpaque);
+    RC3_CHECK(render_contract::toRenderPassId(PI::ShadowCaster)    == R::Shadow);
+    RC3_CHECK(render_contract::toRenderPassId(PI::Unknown)         == R::None);
+    RC3_CHECK(render_contract::toRenderPassId(PI::OpaqueObject)    == R::MechOpaque);
+    RC3_CHECK(render_contract::toRenderPassId(PI::AlphaObject)     == R::MechOpaque);
+    RC3_CHECK(render_contract::toRenderPassId(PI::DebugOverlay)    == R::None);
+    RC3_CHECK(render_contract::toRenderPassId(PI::Grass)           == R::Terrain);
+    RC3_CHECK(render_contract::toRenderPassId(PI::VegetationCards) == R::VegetationCards);
+    RC3_CHECK(render_contract::toRenderPassId(PI::PostProcess)     == R::PostProcess);
+    printf("PASS: to_render_pass_id_mapping\n");
+}
+
 int main() {
     // init from env vars first, then force-enable so CI (no env var) still runs.
     render_contract::initRenderPassOrder();
@@ -80,6 +96,7 @@ int main() {
     test_missing_writer_fires_violation();
     test_framebegin_resets_violations();
     test_vfx_reads_maindepth_after_geometry();
+    test_to_render_pass_id_mapping();
     printf("All render_contract_3 tests passed.\n");
     return 0;
 }
