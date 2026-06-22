@@ -609,7 +609,11 @@ static void draw_screen( void )
         // shadow/shoreline/godrays/bloom/composite). Single outer scope: the
         // inner stages call each other, and GL_TIME_ELAPSED cannot nest.
         gos_render_pass_timer::Begin(gos_render_pass_timer::Pass_Post);
+        render_contract::beginPassScope(render_contract::PassIdentity::PostProcess,
+                                        "gosPostProcess_endScene");
         pp->endScene();
+        render_contract::endPassScope(render_contract::PassIdentity::PostProcess,
+                                      "gosPostProcess_endScene");
         gos_render_pass_timer::End(gos_render_pass_timer::Pass_Post);
     }
 
@@ -1124,6 +1128,7 @@ int main(int argc, char** argv)
     render_contract::initRenderContractAssert();
     render_contract::initRenderPassTelemetry();   // [RENDER_PASS v1] (MC2_RENDER_PASS_TELEMETRY=1)
     render_contract::initRenderPassOrder();       // CONTRACT-3 (MC2_RENDER_PASS_ORDER=1)
+    render_contract::initRenderPassScope();        // ENFORCEMENT-1 (MC2_RENDER_PASS_CONTRACT_TRACE/ASSERT=1)
 
     if (GLEW_ARB_parallel_shader_compile) {
         glMaxShaderCompilerThreadsARB(0xFFFFFFFF);
@@ -1757,6 +1762,7 @@ int main(int argc, char** argv)
             }
             { ZoneScopedN("SwapWindow.SDL"); graphics::swap_window(win); }
             render_contract::renderPassTelemetryFrameTick();  // [RENDER_PASS v1] frame boundary
+            render_contract::renderPassScopeFrameBoundary();   // ENFORCEMENT-1 missing-end flush
             static bool s_first_frame_logged = false;
             if (!s_first_frame_logged) {
                 s_first_frame_logged = true;

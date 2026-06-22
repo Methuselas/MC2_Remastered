@@ -153,6 +153,39 @@ void initRenderPassTelemetry();              // reads env; call once after GL in
 void renderPassTelemetryFrameTick();         // call once per presented frame
 void noteRenderPass(PassIdentity id, const char* callerHint = nullptr);
 
+// ---- RENDER-PASS-CONTRACT-ENFORCEMENT-1: pass-scope tracking ----------------
+//
+// Turns RenderPassContract from documentation into runtime-observable truth by
+// tracking pass begin/end as a SCOPE STACK. Detects three discipline errors:
+//   - nesting        : a begin whose parent stack reaches the fixed depth cap
+//   - owner mismatch  : endPassScope(X) while the innermost open scope is Y
+//   - missing end     : scopes still open at the frame boundary
+//
+// DIAGNOSTICS ONLY. Never aborts, never mutates GL or render state. When both
+// gates are unset the hot-path cost is a single cached-bool branch. This is a
+// SEPARATE system from assertPassContract() (which aborts under
+// MC2_RENDER_CONTRACT_ASSERT) and from the CONTRACT-3 ordering audit
+// (MC2_RENDER_PASS_ORDER). It owns two distinct env gates:
+//   MC2_RENDER_PASS_CONTRACT_TRACE=1  -- log every begin/end with stack depth
+//   MC2_RENDER_PASS_CONTRACT_ASSERT=1 -- count + warn on discipline violations
+// TRACE implies tracking; ASSERT implies tracking + violation reporting. Either
+// gate alone enables the stack; neither => fully inert.
+//
+// Slice 1 wraps four unambiguous once-per-frame, self-contained scopes
+// (TerrainOverlay, TerrainDecal, PostProcess, UI/HUD). They do not mutually
+// nest, so the live stack stays flat; deeper scopes (scene/renderLists/shadow)
+// are deferred to a later slice once depth>1 behaviour is validated.
+//
+// Call initRenderPassScope() once after GL init (reads env). Call
+// renderPassScopeFrameBoundary() exactly once per presented frame, AFTER all
+// passes for the frame have ended, to flush missing-end violations and reset
+// the stack. Pass __func__ (or a static literal) as hint.
+void initRenderPassScope();
+void beginPassScope(PassIdentity id, const char* hint = nullptr);
+void endPassScope(PassIdentity id, const char* hint = nullptr);
+void renderPassScopeFrameBoundary();
+uint32_t getPassScopeViolationCount();   // cumulative since process start (test/inspect)
+
 } // namespace render_contract
 
 #endif // MC2_RENDER_CONTRACT_H

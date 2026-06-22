@@ -7324,6 +7324,9 @@ void gosRenderer::flushHUDBatch()
         return;
     }
 
+    render_contract::beginPassScope(render_contract::PassIdentity::UI,
+                                    "gosRenderer_flushHUDBatch");
+
     // HUD scale — shrink only in-game HUD (gated by gos_SetHudScaleActive, set
     // to true by mission->start() and false by mission->destroy()). Menus and
     // modal dialogs run through the same HUD buffer but stay at 100%; we skip
@@ -7409,6 +7412,9 @@ void gosRenderer::flushHUDBatch()
     // the next frame's non-exempt HUD recording. Callers (cursor sprite, modal
     // dialogs) set it true around their own draws; this is the single reset.
     s_hud_scale_exempt = false;
+
+    render_contract::endPassScope(render_contract::PassIdentity::UI,
+                                  "gosRenderer_flushHUDBatch");
 }
 
 void gosRenderer::flush()
@@ -9356,6 +9362,8 @@ void gosRenderer::drawTerrainOverlays()
 
     render_contract::noteRenderPass(render_contract::PassIdentity::TerrainOverlay,
                                     "gosRenderer_drawTerrainOverlays");
+    render_contract::beginPassScope(render_contract::PassIdentity::TerrainOverlay,
+                                    "gosRenderer_drawTerrainOverlays");
 
     glBindBuffer(GL_ARRAY_BUFFER, terrainOverlayBatch_.vbo);
     glBufferData(GL_ARRAY_BUFFER,
@@ -9405,6 +9413,9 @@ void gosRenderer::drawTerrainOverlays()
     terrainOverlayBatch_.draws.clear();
 
     gos_InvalidateRenderStateCache();
+
+    render_contract::endPassScope(render_contract::PassIdentity::TerrainOverlay,
+                                  "gosRenderer_drawTerrainOverlays");
 }
 
 // Slice A — draw the mission-static cement-overlay bake.
@@ -9541,6 +9552,8 @@ void gosRenderer::drawDecals()
 
     render_contract::noteRenderPass(render_contract::PassIdentity::TerrainDecal,
                                     "gosRenderer_drawDecals");
+    render_contract::beginPassScope(render_contract::PassIdentity::TerrainDecal,
+                                    "gosRenderer_drawDecals");
 
     glBindBuffer(GL_ARRAY_BUFFER, decalBatch_.vbo);
     glBufferData(GL_ARRAY_BUFFER,
@@ -9592,6 +9605,9 @@ void gosRenderer::drawDecals()
     decalBatch_.draws.clear();
 
     gos_InvalidateRenderStateCache();
+
+    render_contract::endPassScope(render_contract::PassIdentity::TerrainDecal,
+                                  "gosRenderer_drawDecals");
 }
 
 // ── Thin exported wrappers ────────────────────────────────────────────────────

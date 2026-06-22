@@ -806,4 +806,122 @@ uint32_t getFrameViolationCount() {
     return s_frame.violationCount;
 }
 
+// ---- RENDER-PASS-CONTRACT-ENFORCEMENT-1: pass-scope tracking -----------------
+//
+// A bounded scope stack. begin pushes, end pops-and-checks, the frame boundary
+// flushes any still-open scopes. Diagnostics only: every anomaly is logged to
+// stderr and counted; nothing aborts and no GL/render state is touched. The
+// stack is process-global (no GL dependency) and only mutated from the render
+// thread, matching the existing CONTRACT-3 / telemetry single-thread model.
+
+namespace {
+
+constexpr int kPassScopeMaxDepth = 8;   // slice 1 stays at depth 1; cap guards runaway begins
+
+struct PassScopeEntry {
+    PassIdentity id;
+    const char*  hint;   // borrowed literal / __func__; never owned
+};
+
+struct PassScopeState {
+    bool           traceEnabled    = false;
+    bool           assertEnabled   = false;
+    int            depth           = 0;
+    bool           overflowed      = false;  // latched once depth cap hit, until frame boundary
+    uint32_t       violationCount  = 0;       // cumulative since process start
+    PassScopeEntry stack[kPassScopeMaxDepth] = {};
+};
+static PassScopeState s_scope;
+
+static inline bool passScopeActive() {
+    return s_scope.traceEnabled || s_scope.assertEnabled;
+}
+
+static void passScopeViolation(const char* what, PassIdentity id, const char* hint) {
+    ++s_scope.violationCount;
+    if (!s_scope.assertEnabled) return;   // TRACE-only run: track silently, no verdict noise
+    fprintf(stderr,
+        "[RENDER_PASS_CONTRACT v1] VIOLATION(%s) pass=%s hint=%s depth=%d\n",
+        what, passIdentityName(id), hint ? hint : "?", s_scope.depth);
+    fflush(stderr);
+}
+
+} // anonymous namespace (scope-tracking helpers)
+
+void initRenderPassScope() {
+    const char* t = ::getenv("MC2_RENDER_PASS_CONTRACT_TRACE");
+    const char* a = ::getenv("MC2_RENDER_PASS_CONTRACT_ASSERT");
+    s_scope.traceEnabled  = (t && t[0] == '1');
+    s_scope.assertEnabled = (a && a[0] == '1');
+    s_scope.depth         = 0;
+    s_scope.overflowed    = false;
+    if (passScopeActive()) {
+        fprintf(stderr, "[RENDER_PASS_CONTRACT v1] scope tracking ACTIVE (trace=%d assert=%d)\n",
+                s_scope.traceEnabled ? 1 : 0, s_scope.assertEnabled ? 1 : 0);
+        fflush(stderr);
+    }
+}
+
+void beginPassScope(PassIdentity id, const char* hint) {
+    if (!passScopeActive()) return;
+    if (s_scope.depth >= kPassScopeMaxDepth) {
+        if (!s_scope.overflowed) {
+            s_scope.overflowed = true;
+            passScopeViolation("depth-cap", id, hint);   // counts once per overflow episode
+        }
+        return;   // refuse to push past the cap; do not corrupt the stack
+    }
+    if (s_scope.traceEnabled) {
+        fprintf(stderr, "[RENDER_PASS_CONTRACT v1] BEGIN depth=%d pass=%s hint=%s\n",
+                s_scope.depth, passIdentityName(id), hint ? hint : "?");
+        fflush(stderr);
+    }
+    s_scope.stack[s_scope.depth].id   = id;
+    s_scope.stack[s_scope.depth].hint = hint;
+    ++s_scope.depth;
+}
+
+void endPassScope(PassIdentity id, const char* hint) {
+    if (!passScopeActive()) return;
+    if (s_scope.depth <= 0) {
+        passScopeViolation("end-without-begin", id, hint);
+        return;
+    }
+    const PassScopeEntry& top = s_scope.stack[s_scope.depth - 1];
+    if (top.id != id) {
+        // Owner mismatch: closing a pass that is not the innermost open scope.
+        if (s_scope.assertEnabled) {
+            fprintf(stderr,
+                "[RENDER_PASS_CONTRACT v1] VIOLATION(owner-mismatch) end=%s hint=%s "
+                "but innermost open=%s (openedBy=%s) depth=%d\n",
+                passIdentityName(id), hint ? hint : "?",
+                passIdentityName(top.id), top.hint ? top.hint : "?", s_scope.depth);
+            fflush(stderr);
+        }
+        ++s_scope.violationCount;
+        // Recovery: pop the innermost so the stack still drains by frame end.
+    }
+    --s_scope.depth;
+    if (s_scope.traceEnabled) {
+        fprintf(stderr, "[RENDER_PASS_CONTRACT v1] END   depth=%d pass=%s hint=%s\n",
+                s_scope.depth, passIdentityName(id), hint ? hint : "?");
+        fflush(stderr);
+    }
+}
+
+void renderPassScopeFrameBoundary() {
+    if (!passScopeActive()) return;
+    if (s_scope.depth != 0) {
+        for (int i = s_scope.depth - 1; i >= 0; --i) {
+            passScopeViolation("missing-end", s_scope.stack[i].id, s_scope.stack[i].hint);
+        }
+    }
+    s_scope.depth      = 0;
+    s_scope.overflowed = false;
+}
+
+uint32_t getPassScopeViolationCount() {
+    return s_scope.violationCount;
+}
+
 } // namespace render_contract
