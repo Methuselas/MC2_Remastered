@@ -127,7 +127,13 @@ class FitIniFile : public File
 
 		virtual long open (const char* fName, FileMode _mode = READ, long numChildren = 50, bool doNotLower = false);
 		virtual long open (FilePtr _parent, unsigned long fileSize, long numChildren = 50);
-		
+		// FITINI-INMEM-OPEN-1: parse a .fit directly from an in-memory buffer
+		// (caller-owned, not copied) -- reuses the base in-RAM File::open(buffer,len)
+		// then runs afterOpen(). Enables game-free parsing without disk/FST. The
+		// explicit override is required: the two open() decls above otherwise
+		// name-hide the base File::open(const char*, int) buffer overload.
+		virtual long open (const char* buffer, int bufferLength);
+
 		virtual long create (const char* fName);
 		virtual long createWithCase(const char* fName );
 
