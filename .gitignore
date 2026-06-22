@@ -40,6 +40,8 @@ Tools
 .codelite
 *.session
 *.log
+# Smoke logparse test fixtures are intentionally tracked .log files.
+!tests/smoke/fixtures/*.log
 *.lib
 *.LIB
 *.so

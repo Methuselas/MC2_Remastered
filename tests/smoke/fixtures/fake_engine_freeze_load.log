@@ -1,0 +1,5 @@
+[INSTR v1] enabled: smoke=1 build=fake
+[SMOKE v1] event=banner mode=passive mission=mc2_01 profile=stock duration=60 seed=0x0
+[TIMING v1] event=mission_load_start elapsed_ms=1500.0
+[HEARTBEAT] frames=10 elapsed_ms=200 fps=50.0
+[HEARTBEAT] frames=20 elapsed_ms=400 fps=50.0
