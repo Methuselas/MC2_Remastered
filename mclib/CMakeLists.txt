@@ -106,6 +106,9 @@ set(SOURCES ${SOURCES}
 # it compiles to nothing when off.
 if(ENABLE_ASSIMP_IMPORTER)
     list(APPEND SOURCES assimp_importer.cpp)
+    # Shared skeleton/FK math (BT2018-SKEL-ENGINE-1). Same TU the standalone
+    # mech_import_harness links — one math path for tool and game.
+    list(APPEND SOURCES mech_skel_import.cpp)
 endif()
 
 include_directories(${COMMON_INCLUDE_DIRS} "./mclib" "../Editor" "../DirectX8/include" "./" "../code")

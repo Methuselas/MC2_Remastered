@@ -140,4 +140,17 @@ bool EvaluateClipGpuBones(const aiScene* scene,
     return true;
 }
 
+void EvaluateRestGpuBones(const aiScene* scene,
+                          const std::vector<std::string>& boneNames,
+                          std::vector<GpuBone>& out) {
+    std::map<std::string, const aiNodeAnim*> none;  // no clip -> node defaults (rest)
+    std::map<std::string, aiMatrix4x4> globals;
+    computeGlobals(scene->mRootNode, aiMatrix4x4(), none, 0.0, globals);
+    out.assign(boneNames.size(), GpuBone{});
+    for (size_t i = 0; i < boneNames.size(); ++i) {
+        auto g = globals.find(boneNames[i]);
+        rowMajor(g != globals.end() ? g->second : aiMatrix4x4(), out[i].m);
+    }
+}
+
 }  // namespace mc2skel

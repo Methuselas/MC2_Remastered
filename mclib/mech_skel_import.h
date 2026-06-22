@@ -53,4 +53,11 @@ bool EvaluateClipGpuBones(const aiScene* scene,
                           double* outTimeTicks = nullptr,
                           double* outDurTicks = nullptr);
 
+// Rest pose (no animation): per-bone joint-global from node default transforms,
+// parallel to boneNames. Used for bind-pose-parity import (bake each part's own
+// offset into its vertices, then world = restGlobal(bone) * (offset * vertex)).
+void EvaluateRestGpuBones(const aiScene* scene,
+                          const std::vector<std::string>& boneNames,
+                          std::vector<GpuBone>& out);
+
 }  // namespace mc2skel
