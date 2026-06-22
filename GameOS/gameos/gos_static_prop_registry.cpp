@@ -882,6 +882,19 @@ void flush() {
     static uint64_t s_diag_ranges_tombstone = 0;
     static uint64_t s_diag_ranges_stale_frame = 0;
     static uint64_t s_diag_ranges_stale_after_drawn = 0;  // R2B guard: stale drop of an already-drawn range
+    // STATIC-REGISTRY-CURRENTNESS-GUARD-2: generalize the R2b stale_after_drawn counter
+    // beyond the single tree case. The R2b counter fires for BOTH benign transient
+    // off-screen ranges (cull-gated update, resolves in 1-2 frames) AND the real bug
+    // (a live, already-drawn prop whose producer stamp froze → it vanishes on screen
+    // every frame). Gate MC2_REGFLUSH_GUARD2 adds the discriminator: per-typeID buckets
+    // + a consecutive-stale streak per regIdx. A streak crossing kVanishFrames = a
+    // prop that is being dropped persistently = the impossible state (claimed live but
+    // never drawn). Default-OFF (per-range map ops have cost); zero overhead when unset.
+    static const bool s_guard2 = (getenv("MC2_REGFLUSH_GUARD2") != nullptr);
+    static const uint32_t kVanishFrames = 16;  // off-screen returns in 1-2 frames; 16 (~0.3s) = not transient
+    static std::unordered_map<int, uint64_t> s_staleByType;       // typeID -> total stale_after_drawn
+    static std::unordered_map<uint32_t, uint32_t> s_staleStreak;  // regIdx -> consecutive stale-after-drawn frames
+    static uint64_t s_diag_persistent_vanish = 0;                 // streaks that crossed kVanishFrames (the bug signal)
     static uint64_t s_diag_ranges_drawn = 0;
     static uint64_t s_diag_leaves_appended = 0;
     static uint64_t s_diag_total_ns = 0;
@@ -1021,13 +1034,36 @@ void flush() {
                         tid, regIdx, currentFrame, rng.multi->getCachedFrame());
                     fflush(stderr);
                 }
+                // STATIC-REGISTRY-CURRENTNESS-GUARD-2: discriminate transient off-screen
+                // (benign) from persistent vanish (the bug). Per-typeID totals + a
+                // consecutive-stale streak per regIdx. Only when MC2_REGFLUSH_GUARD2 set.
+                bool persistentVanish = false;
+                if (s_guard2) {
+                    ++s_staleByType[tid];
+                    uint32_t& streak = s_staleStreak[regIdx];
+                    if (++streak == kVanishFrames) {
+                        ++s_diag_persistent_vanish;
+                        persistentVanish = true;
+                        fprintf(stderr,
+                            "[REGFLUSH_GUARD2] event=persistent_vanish typeID=%d regIdx=%u "
+                            "streak=%u currentFrame=%u cachedFrame=%u staleTotalForType=%llu "
+                            "(registered+drawn prop dropped every frame — producer stamp frozen)\n",
+                            tid, regIdx, streak, currentFrame, rng.multi->getCachedFrame(),
+                            (unsigned long long)s_staleByType[tid]);
+                        fflush(stderr);
+                    }
+                }
                 // Opt-in teeth for CI / bisection: abort on the regression signature.
+                // GUARD-2 narrows the fatal to the persistent-vanish case so a few
+                // benign off-screen transients don't trip CI; the legacy fatal (no
+                // guard2) still aborts on first stale_after_drawn for strict bisection.
                 static const bool s_staleFatal =
                     (getenv("MC2_STATIC_STALE_DROP_FATAL") != nullptr);
-                if (s_staleFatal) {
+                if (s_staleFatal && (!s_guard2 || persistentVanish)) {
                     fprintf(stderr,
                         "[STATIC_PROP_REGISTRY] FATAL stale_frame_drop_after_drawn typeID=%d "
-                        "(MC2_STATIC_STALE_DROP_FATAL)\n", tid);
+                        "(MC2_STATIC_STALE_DROP_FATAL%s)\n",
+                        tid, s_guard2 ? ", persistent_vanish" : "");
                     fflush(stderr);
                     std::abort();
                 }
@@ -1036,6 +1072,9 @@ void flush() {
             continue;
         }
         rng.firstFlushSeen = true;
+        // GUARD-2: a successful draw clears the consecutive-stale streak for this range
+        // so only persistent (never-drawn-again) ranges accumulate toward kVanishFrames.
+        if (s_guard2 && !s_staleStreak.empty()) s_staleStreak.erase(regIdx);
         ++s_diag_ranges_drawn;
         if (s_spflushEnabled) ++s_win_ranges_drawn; // [SPFLUSH_COST_SPLIT v1]
         // 2026-05-10 diag: env-gated dump of multi-leaf ranges (MC2_REGFLUSH_MULTI=1).
@@ -1610,6 +1649,21 @@ void flush() {
             (unsigned long long)s_diag_leaves_appended,
             s_liveRangeIndices.size(), mean_us);
         fflush(stderr);
+        // GUARD-2 addendum: persistent-vanish count + worst stale typeID. A nonzero
+        // persistent_vanish (or a single typeID dominating stale_by_type) is the
+        // actionable on-screen-vanish signal; transient off-screen noise stays low.
+        if (s_guard2) {
+            int worstType = -1; uint64_t worstCount = 0;
+            for (const auto& kv : s_staleByType)
+                if (kv.second > worstCount) { worstCount = kv.second; worstType = kv.first; }
+            fprintf(stderr,
+                "[REGFLUSH_GUARD2 v1] event=summary persistent_vanish=%llu "
+                "stale_types=%zu worst_typeID=%d worst_stale_total=%llu live_streaks=%zu\n",
+                (unsigned long long)s_diag_persistent_vanish,
+                s_staleByType.size(), worstType, (unsigned long long)worstCount,
+                s_staleStreak.size());
+            fflush(stderr);
+        }
     }
     // [SPFLUSH_COST_SPLIT v1] -- per-10-frame summary emit.
     // s_win_leaves_appended / s_win_ranges_drawn are incremented directly in the
