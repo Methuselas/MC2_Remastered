@@ -1544,7 +1544,17 @@ long BattleMech::init (DWORD variantNum)
 	for (long curItem = 0;curItem < MAX_MOVER_INVENTORY_ITEMS;curItem++)
 	{
 		mechFile->readUChar((26 + (97 * variantNum)) + curItem, 5, inventory[realItemNum].masterID);
-		
+
+		// MECH-INV-IDX-GUARD-1: masterID is read from an untrusted .mdf and used to
+		// index MasterComponent::masterList (sized numComponents). A corrupt, modded
+		// or truncated file can hold an out-of-range id; normalize it to the empty
+		// sentinel (0xff) so the slot is dropped like an unused one instead of
+		// indexing masterList out of bounds (the existing 255 check below then skips
+		// it). No-op for valid files, where every id is < numComponents.
+		if (inventory[realItemNum].masterID != 0xff &&
+			(long)inventory[realItemNum].masterID >= MasterComponent::numComponents)
+			inventory[realItemNum].masterID = 0xff;
+
 		if (inventory[realItemNum].masterID && (inventory[realItemNum].masterID != 255))
 		{
 			//---------------------------------------------------------------
@@ -1601,7 +1611,17 @@ long BattleMech::init (DWORD variantNum)
 	for (int curItem = 0;curItem < MAX_MOVER_INVENTORY_ITEMS;curItem++)
 	{
 		mechFile->readUChar((26 + (97 * variantNum)) + curItem, 5, inventory[realItemNum].masterID);
-		
+
+		// MECH-INV-IDX-GUARD-1: masterID is read from an untrusted .mdf and used to
+		// index MasterComponent::masterList (sized numComponents). A corrupt, modded
+		// or truncated file can hold an out-of-range id; normalize it to the empty
+		// sentinel (0xff) so the slot is dropped like an unused one instead of
+		// indexing masterList out of bounds (the existing 255 check below then skips
+		// it). No-op for valid files, where every id is < numComponents.
+		if (inventory[realItemNum].masterID != 0xff &&
+			(long)inventory[realItemNum].masterID >= MasterComponent::numComponents)
+			inventory[realItemNum].masterID = 0xff;
+
 		if (inventory[realItemNum].masterID && (inventory[realItemNum].masterID != 255))
 		{
 			//---------------------------------------------------------------
@@ -1669,7 +1689,17 @@ long BattleMech::init (DWORD variantNum)
 	for (int curItem = 0;curItem < MAX_MOVER_INVENTORY_ITEMS;curItem++)
 	{
 		mechFile->readUChar((26 + (97 * variantNum)) + curItem, 5, inventory[realItemNum].masterID);
-		
+
+		// MECH-INV-IDX-GUARD-1: masterID is read from an untrusted .mdf and used to
+		// index MasterComponent::masterList (sized numComponents). A corrupt, modded
+		// or truncated file can hold an out-of-range id; normalize it to the empty
+		// sentinel (0xff) so the slot is dropped like an unused one instead of
+		// indexing masterList out of bounds (the existing 255 check below then skips
+		// it). No-op for valid files, where every id is < numComponents.
+		if (inventory[realItemNum].masterID != 0xff &&
+			(long)inventory[realItemNum].masterID >= MasterComponent::numComponents)
+			inventory[realItemNum].masterID = 0xff;
+
 		if (inventory[realItemNum].masterID && (inventory[realItemNum].masterID != 255))
 		{
 			//---------------------------------------------------------------
