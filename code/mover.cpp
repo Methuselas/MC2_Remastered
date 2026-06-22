@@ -123,6 +123,8 @@
 #endif
 
 #include "move_recon.h"  // MC2_MOVE_RECON per-frame pathfinding cost instrumentation
+#include "../GameOS/gameos/diagnostic_trace.h"  // TARGETING-GUARD-1 chokepoint trace
+#include <cstdlib>  // TARGETING-GUARD-1: std::getenv
 
 //--------
 // DEFINES
@@ -3171,6 +3173,42 @@ bool Mover::hasNullSignature (void) {
 extern bool InitWayPath;
 
 long Mover::handleTacticalOrder (TacticalOrder tacOrder, long priority, bool queuePlayerOrder) {
+
+	// TARGETING-CURRENTNESS-GUARD-1 (chokepoint, non-fatal recon — FRAME-CURRENTNESS-GUARDS-1).
+	// EVERY player attack order from every GUI handler funnels through here (the GUI-side
+	// doAttack guard missed orders that route via other handlers). Log EVERY player
+	// attack order — not just anomalies — plus running totals, so a clean run (orders>0,
+	// stale=0) is distinguishable from a no-order run. Signals: stale_wid (the order's
+	// targetWID no longer resolves to a live object = stale/dead target accepted) and
+	// range (target distance from the ordered mover — an absurd range is the "eligible
+	// across the whole map" symptom). Gate MC2_TARGETING_GUARD + MC2_DIAG_TAGS=TARGETING.
+	{
+		static const bool s_tgtGuard = (std::getenv("MC2_TARGETING_GUARD") != nullptr);
+		if (s_tgtGuard &&
+		    tacOrder.origin == ORDER_ORIGIN_PLAYER &&
+		    tacOrder.code == TACTICAL_ORDER_ATTACK_OBJECT &&
+		    mc2_diag::tagEnabled("TARGETING"))
+		{
+			static uint64_t s_tg_orders = 0, s_tg_stale = 0, s_tg_far = 0;
+			++s_tg_orders;
+			GameObjectPtr _tg_tgt = ObjectManager->getByWatchID(tacOrder.targetWID);
+			const bool _tg_stale = (_tg_tgt == nullptr);
+			const float _tg_range = _tg_tgt ? (float)distanceFrom(_tg_tgt->getPosition()) : -1.0f;
+			const bool _tg_far = (_tg_range > 3000.0f);   // far-field hint (whole-map symptom)
+			if (_tg_stale) ++s_tg_stale;
+			if (_tg_far)   ++s_tg_far;
+			char _tg_buf[320];
+			snprintf(_tg_buf, sizeof(_tg_buf),
+			         "{\"site\":\"handleTacticalOrder\",\"order\":%llu,\"targetWID\":%d,"
+			         "\"stale_wid\":%d,\"range\":%.1f,\"far\":%d,"
+			         "\"totals\":{\"orders\":%llu,\"stale\":%llu,\"far\":%llu}}",
+			         (unsigned long long)s_tg_orders, (int)tacOrder.targetWID,
+			         _tg_stale?1:0, _tg_range, _tg_far?1:0,
+			         (unsigned long long)s_tg_orders, (unsigned long long)s_tg_stale,
+			         (unsigned long long)s_tg_far);
+			mc2_diag::writeEvent("TARGETING", 1, 0, _tg_buf);
+		}
+	}
 
 //queuePlayerOrder = true;
 if (queuePlayerOrder)

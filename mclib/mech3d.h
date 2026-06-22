@@ -362,6 +362,7 @@ class Mech3DAppearance: public ObjectAppearance
 		long						hitGestureId;			//What gesture should I go back to when hit?
 
 		float						currentFrame;			//One for each part.
+		uint32_t					lastAnimAdvanceFrame;	//ANIM-CADENCE-FIX: g_mc2FrameCounter of last gait advance (idempotency guard)
 		long						currentLOD;
 
 		TG_LightPtr					pointLight;

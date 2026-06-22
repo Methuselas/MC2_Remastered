@@ -2741,6 +2741,50 @@ void MissionInterfaceManager::doAttack()
 		return; // don't do if in waypoint mode
 	}
 
+	// TARGETING-CURRENTNESS-GUARD-1 (non-fatal, recon — FRAME-CURRENTNESS-GUARDS-1).
+	// Consumer-boundary observer: at the instant an attack order is about to issue,
+	// measure whether `target` is actually current — its watch-ID still resolves to
+	// the same object, it projects in front of the camera, and it lands near the
+	// cursor. This is the "eligible across the whole map" symptom (a stale/offscreen
+	// target accepted because doAttack only checks `!target` + friendly). No behavior
+	// change; this only counts/traces so we can prove whether bad orders actually
+	// issue before adding any suppression. Gate MC2_TARGETING_GUARD +
+	// MC2_DIAG_TAGS=TARGETING. Read via get_diagnostic_events("TARGETING").
+	{
+		static const bool s_tgtGuard = (std::getenv("MC2_TARGETING_GUARD") != nullptr);
+		if ( s_tgtGuard && eye && mc2_diag::tagEnabled("TARGETING") )
+		{
+			static uint64_t s_tg_orders = 0, s_tg_staleWID = 0, s_tg_behind = 0, s_tg_far = 0;
+			++s_tg_orders;
+			const bool _tg_staleWID = (ObjectManager->getByWatchID( target->getWatchID() ) != target);
+			Stuff::Vector3D _tg_pos = target->getPosition();
+			Stuff::Vector4D _tg_sp;
+			eye->projectForScreenXY( _tg_pos, _tg_sp );
+			const bool  _tg_behind = (_tg_sp.w <= 1e-4f);
+			const float _tg_dx = _tg_sp.x - (float)mouseX;
+			const float _tg_dy = _tg_sp.y - (float)mouseY;
+			const float _tg_distSq = _tg_dx*_tg_dx + _tg_dy*_tg_dy;
+			const bool  _tg_far = (_tg_distSq > 90000.0f);   // >300px from cursor
+			if (_tg_staleWID) ++s_tg_staleWID;
+			if (_tg_behind)   ++s_tg_behind;
+			if (_tg_far)      ++s_tg_far;
+			if (_tg_staleWID || _tg_behind || _tg_far)
+			{
+				char _tg_buf[384];
+				snprintf(_tg_buf, sizeof(_tg_buf),
+				         "{\"site\":\"doAttack\",\"stale_wid\":%d,\"behind\":%d,\"far_cursor\":%d,"
+				         "\"target_screen\":[%.1f,%.1f],\"w\":%.4f,\"mouse\":[%ld,%ld],\"dist_sq\":%.0f,"
+				         "\"is_mover\":%d,\"watch_id\":%d,"
+				         "\"totals\":{\"orders\":%llu,\"stale_wid\":%llu,\"behind\":%llu,\"far\":%llu}}",
+				         _tg_staleWID?1:0, _tg_behind?1:0, _tg_far?1:0,
+				         _tg_sp.x, _tg_sp.y, _tg_sp.w, (long)mouseX, (long)mouseY, _tg_distSq,
+				         target->isMover()?1:0, (int)target->getWatchID(),
+				         (unsigned long long)s_tg_orders, (unsigned long long)s_tg_staleWID,
+				         (unsigned long long)s_tg_behind, (unsigned long long)s_tg_far);
+				mc2_diag::writeEvent("TARGETING", 1, 0, _tg_buf);
+			}
+		}
+	}
 
 	TacticalOrder tacOrder;
 	bool bCapture =  target->isCaptureable(Team::home->getId());
