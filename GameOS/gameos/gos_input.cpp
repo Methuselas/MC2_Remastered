@@ -95,6 +95,15 @@ void beginUpdateMouseState() {
 static bool s_imguiWantsMouse = false;
 void setImguiWantsMouse(bool v) { s_imguiWantsMouse = v; }
 
+// IMGUI-PAUSE-INPUT-FIX-1: when a game MODAL (the pause menu) is up, the game must
+// win mouse input even if an ImGui window (e.g. Graphics Options, Ctrl+Shift+G) is
+// open and overlapping it. Without this, ImGui's WantCaptureMouse zeroes the button
+// state every frame, the pause menu's DOWN->UP click transition never fires, and the
+// RETURN/ABORT/EXIT buttons are dead (the "can't exit via menu" hang). Set per-frame
+// by MissionInterfaceManager::update from isPaused() && !isPausedWithoutMenu().
+static bool s_gameModalActive = false;
+void setGameModalActive(bool v) { s_gameModalActive = v; }
+
 void updateMouseState() {
     MouseInfo* mi = &g_mouse_info;
 
@@ -120,7 +129,9 @@ void updateMouseState() {
     Uint32 button_state = SDL_GetMouseState(NULL, NULL);
 #endif
 
-    if (s_imguiWantsMouse) button_state = 0;
+    // Gate ImGui-captured clicks out of game input — EXCEPT when a game modal (pause
+    // menu) is active, where the game must remain clickable through/over ImGui windows.
+    if (s_imguiWantsMouse && !s_gameModalActive) button_state = 0;
 
     int buttons[] = {SDL_BUTTON_LEFT, SDL_BUTTON_MIDDLE, SDL_BUTTON_RIGHT, SDL_BUTTON_X1, SDL_BUTTON_X2 };
 

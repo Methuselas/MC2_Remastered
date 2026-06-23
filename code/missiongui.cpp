@@ -45,6 +45,7 @@
 #include "../GameAdapters/StaticPropRenderAdapter.h"  // inspector: getRecipeShapeName
 #include "imgui.h"
 #endif
+#include "../GameOS/gameos/gos_input.h"  // IMGUI-PAUSE-INPUT-FIX-1: input::setGameModalActive
 
 #ifndef OBJMGR_H
 #include"objmgr.h"
@@ -543,6 +544,11 @@ namespace {
 
 void MissionInterfaceManager::update (void)
 {
+	// IMGUI-PAUSE-INPUT-FIX-1: tell the input layer when the pause menu is up so its
+	// clicks win over any open ImGui window (Graphics Options etc.). Set every frame,
+	// before any early return below, so it clears the moment the menu closes.
+	input::setGameModalActive(isPaused() && !isPausedWithoutMenu());
+
 	const std::chrono::steady_clock::time_point _mifT0 =
 		s_mfOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
 	if ( Environment.screenWidth != resolution )

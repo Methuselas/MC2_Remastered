@@ -56,6 +56,10 @@ void resetKeypress();
 // Set by the ImGui layer each frame after NewFrame(); gates game mouse input.
 void setImguiWantsMouse(bool v);
 
+// IMGUI-PAUSE-INPUT-FIX-1: set per-frame by the game; when true (pause menu up), the
+// ImGui mouse gate is bypassed so the pause menu stays clickable over ImGui windows.
+void setGameModalActive(bool v);
+
 }
 
 #endif //GOS_INPUT_H
