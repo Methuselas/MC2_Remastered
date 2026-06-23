@@ -2023,10 +2023,11 @@ long TG_MultiShape::TransformMultiShape_BuildRecipe (Stuff::Point3D *pos, Stuff:
 //-------------------------------------------------------------------------------
 long TG_MultiShape::TransformMultiShape_HierarchyOnly (Stuff::Point3D *pos, Stuff::UnitQuaternion *rot)
 {
-    s_buildRecipeOnly = true;
-    long result = TransformMultiShape(pos, rot);
-    s_buildRecipeOnly = false;
-    return result;
+    // ANIM-HIERARCHYONLY-DEDUP-1: this was a byte-identical copy of
+    // TransformMultiShape_BuildRecipe (same s_buildRecipeOnly mechanism). Kept as a
+    // distinct entry point for the GPU-mech-body callsite (semantic name) but now
+    // DELEGATES to the single implementation — no duplicated flag dance. Byte-identical.
+    return TransformMultiShape_BuildRecipe(pos, rot);
 }
 
 //-------------------------------------------------------------------------------
