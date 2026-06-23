@@ -93,6 +93,7 @@ run_check "sampler_bindings"       "py -3 scripts/check-sampler-bindings.py --qu
 run_check "pipeline_desc"          "py -3 scripts/check-pipeline-desc.py --quiet"
 run_check "shader_injectors"       "py -3 scripts/check-shader-injectors.py --quiet"
 run_check "pipeline_key"           "py -3 scripts/check-pipeline-key.py --quiet"
+run_check "spirv_artifacts"        "py -3 scripts/check-spirv-artifacts.py --quiet"
 
 # ---------------------------------------------------------------------------
 # Summary table

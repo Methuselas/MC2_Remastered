@@ -1,0 +1,17 @@
+{
+  "_comment": "OFFLINE-SHADER-VARIANT-BUILD-1 pilot manifest. Each pilot is a shader PROGRAM (a set of stages compiled together at runtime) and its enumerated variants (define-sets from shader-permutation-inventory.json). build_variants.py compiles each (pilot, variant, stage) to a deployable .spv + sidecar; check-spirv-artifacts.py verifies them. Start tiny: the postprocess composite pass (no variant macros, no UBO/SSBO blocks, location-based samplers, last-pass isolation).",
+  "spv_dir": "shaders/spv",
+  "pilots": [
+    {
+      "program": "postprocess",
+      "note": "composite/present pass: shaders/postprocess.{vert,frag} bound with kShaderPrefix (#version 430, no macros). gos_postprocess.cpp:457-461.",
+      "stages": {
+        "vert": "shaders/postprocess.vert",
+        "frag": "shaders/postprocess.frag"
+      },
+      "variants": [
+        { "name": "default", "defines": [] }
+      ]
+    }
+  ]
+}

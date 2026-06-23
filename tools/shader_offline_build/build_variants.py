@@ -1,0 +1,197 @@
+#!/usr/bin/env python3
+"""build_variants.py — OFFLINE-SHADER-VARIANT-BUILD-1
+
+Compile deployable OpenGL SPIR-V artifacts for the pilot shader families, WITHOUT
+changing any runtime code. This is the offline-bake half of the SPIR-V seam
+identified in spirv-consumer-pilot-recon-1.md; the runtime consumer
+(compile_shader branch + glSpecializeShader) is a SEPARATE later slice.
+
+Per (pilot, variant, stage):
+  - build the exact source the engine compiles (shader_common.build_shader_source
+    = #version prefix + flattened #includes + inventory define-set);
+  - compile to OpenGL SPIR-V with `glslangValidator -G --auto-map-locations`
+    and DELIBERATELY NOT `--auto-map-bindings` (so explicit layout(binding=)
+    decorations are preserved for runtime correctness — reflect.py's auto-mapped
+    .spv is reflection-only and must NOT be used at runtime);
+  - reflect with `spirv-cross --reflect`;
+  - emit a stable artifact name derived from shaderVariantId and a sidecar JSON
+    (base, stage, defines, specializationParams, reflected ubo/ssbo/sampler
+    bindings, source + spirv hash);
+  - compare reflected UBO/SSBO bindings against binding-slot-occupancy.json.
+
+Outputs go to shaders/spv/ (auto-deployed by deploy_payload.py's recursive walk).
+
+Usage:
+  py -3 tools/shader_offline_build/build_variants.py [--root R] [--quiet]
+  py -3 tools/shader_offline_build/build_variants.py --check   # verify, write nothing
+"""
+from __future__ import annotations
+import argparse
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
+import shader_common  # noqa: E402
+
+PILOTS = ROOT / "tools" / "shader_offline_build" / "pilots.json"
+BINDING_OCC = ROOT / "docs" / "render-backend-seams" / "binding-slot-occupancy.json"
+
+
+def sha256(text_or_bytes) -> str:
+    h = hashlib.sha256()
+    h.update(text_or_bytes if isinstance(text_or_bytes, bytes)
+             else text_or_bytes.encode("utf-8"))
+    return h.hexdigest()
+
+
+def variant_id(base: str, defines: list[str]) -> str:
+    """Stable shaderVariantId = hash of base + sorted normalized define-set."""
+    key = base + "|" + ";".join(sorted(defines))
+    return sha256(key)[:12]
+
+
+def artifact_name(base, stage, variant, vid):
+    return f"{base}.{stage}.{variant}.{vid[:8]}.spv"
+
+
+def sidecar_name(base, stage, variant):
+    return f"{base}.{stage}.{variant}.json"
+
+
+def occupancy_slots():
+    """Return {('SSBO'|'UBO', slot)} present in binding-slot-occupancy.json."""
+    if not BINDING_OCC.exists():
+        return None
+    occ = json.load(open(BINDING_OCC, encoding="utf-8")).get("occupancy", {})
+    out = set()
+    for key in occ:  # keys look like "SSBO:2" / "UBO:3"
+        ns, _, slot = key.partition(":")
+        if slot.isdigit():
+            out.add((ns, int(slot)))
+    return out
+
+
+def reflect(spv: Path, spirv_cross: str):
+    raw = json.loads(subprocess.run(
+        [spirv_cross, str(spv), "--reflect"],
+        capture_output=True, text=True, check=True).stdout)
+    def blocks(key):
+        return [{"name": b.get("name"), "binding": b.get("binding"),
+                 "set": b.get("set")} for b in raw.get(key, [])]
+    samplers = [{"name": t.get("name"), "type": t.get("type"),
+                 "location": t.get("location"), "binding": t.get("binding")}
+                for t in raw.get("textures", [])]
+    return {"ubos": blocks("ubos"), "ssbos": blocks("ssbos"),
+            "samplers": samplers,
+            "inputs": [{"name": i.get("name"), "location": i.get("location")}
+                       for i in raw.get("inputs", [])],
+            "outputs": [{"name": o.get("name"), "location": o.get("location")}
+                        for o in raw.get("outputs", [])]}
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--root", default=None)
+    ap.add_argument("--check", action="store_true",
+                    help="verify existing artifacts match; write nothing")
+    ap.add_argument("--quiet", action="store_true")
+    args = ap.parse_args()
+    root = Path(args.root) if args.root else ROOT
+
+    glslang = shader_common.find_tool("glslangValidator")
+    spirv_cross = shader_common.find_tool("spirv-cross")
+    if not glslang or not spirv_cross:
+        print("[build_variants] FAIL: glslangValidator/spirv-cross not found "
+              "(need Vulkan SDK on PATH or $VULKAN_SDK)", file=sys.stderr)
+        return 2
+
+    cfg = json.load(open(PILOTS, encoding="utf-8"))
+    spv_dir = root / cfg.get("spv_dir", "shaders/spv")
+    occ = occupancy_slots()
+    if not args.check:
+        spv_dir.mkdir(parents=True, exist_ok=True)
+
+    fails, built = [], []
+    for pilot in cfg["pilots"]:
+        base = pilot["program"]
+        for variant in pilot["variants"]:
+            vname, defines = variant["name"], variant.get("defines", [])
+            vid = variant_id(base, defines)
+            for stage, rel in pilot["stages"].items():
+                src_path = root / rel
+                src = shader_common.build_shader_source(src_path, defines)
+                src_hash = sha256(src)
+                art = artifact_name(base, stage, vname, vid)
+                spv_path = spv_dir / art
+                # compile to a temp source, then to the artifact path
+                with tempfile.TemporaryDirectory() as td:
+                    tmp = Path(td) / src_path.name
+                    tmp.write_text(src, encoding="utf-8")
+                    out = spv_path if not args.check else Path(td) / art
+                    r = subprocess.run(
+                        [glslang, "-G", "--auto-map-locations", "-S", stage,
+                         str(tmp), "-o", str(out)],
+                        capture_output=True, text=True)
+                    if r.returncode != 0 or not out.exists():
+                        fails.append(f"{art}: glslang failed: "
+                                     f"{(r.stdout + r.stderr).strip()[:300]}")
+                        continue
+                    spirv_hash = sha256(out.read_bytes())
+                    refl = reflect(out, spirv_cross)
+
+                # binding-manifest agreement (UBO/SSBO only; samplers are
+                # location-based default-uniforms here, not binding-base).
+                for blk in refl["ubos"] + refl["ssbos"]:
+                    b = blk.get("binding")
+                    if b is None:
+                        continue
+                    ns = "UBO" if blk in refl["ubos"] else "SSBO"
+                    if occ is not None and (ns, b) not in occ:
+                        fails.append(
+                            f"{art}: reflected {ns} '{blk['name']}' binding={b} "
+                            f"not present in binding-slot-occupancy.json (drift)")
+
+                sidecar = {
+                    "base": base, "stage": stage, "variant": vname,
+                    "defines": defines, "specializationParams": [],
+                    "artifact": art, "spv_dir": cfg.get("spv_dir", "shaders/spv"),
+                    "source_sha256": src_hash, "spirv_sha256": spirv_hash,
+                    "bindings": {"ubos": refl["ubos"], "ssbos": refl["ssbos"],
+                                 "samplers": refl["samplers"]},
+                    "interface": {"inputs": refl["inputs"],
+                                  "outputs": refl["outputs"]},
+                    "shaderVariantId": vid,
+                }
+                sc_path = spv_dir / sidecar_name(base, stage, vname)
+                if args.check:
+                    if not sc_path.exists():
+                        fails.append(f"{art}: sidecar missing {sc_path.name}")
+                    else:
+                        old = json.load(open(sc_path, encoding="utf-8"))
+                        if old.get("source_sha256") != src_hash:
+                            fails.append(f"{art}: source hash drift vs sidecar")
+                else:
+                    sc_path.write_text(json.dumps(sidecar, indent=2), encoding="utf-8")
+                built.append(art)
+
+    if not args.quiet:
+        mode = "CHECK" if args.check else "BUILD"
+        print(f"[build_variants] OFFLINE-SHADER-VARIANT-BUILD-1 ({mode})")
+        print(f"  output dir : {spv_dir.relative_to(root)}")
+        for a in built:
+            print(f"    {'ok' if a not in [f.split(':')[0] for f in fails] else 'FAIL'}  {a}")
+        for f in fails:
+            print(f"  FAIL: {f}")
+        print(f"  result: {'FAIL' if fails else 'PASS'} "
+              f"({len(built)} artifacts, {len(fails)} fail)")
+    return 1 if fails else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
