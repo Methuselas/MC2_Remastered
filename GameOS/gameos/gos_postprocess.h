@@ -233,6 +233,12 @@ public:
     float aoPower_;         // contrast curve
     void runSSAO();
 
+    // BT2018-BOX-DECAL-1: screen-space AABB decal volume. Reconstructs scene world
+    // pos from the depth COPY (reversed-Z), box-clips, normal-rejects, and composites
+    // a procedural decal into COLOR0 only. Default-OFF (MC2_BOX_DECAL). v1 = single
+    // camera-anchored debug box + procedural pattern (no texture/producers yet).
+    void drawBoxDecals();
+
     // EDGE-FOG-1: world-space map-edge fog on geometry pixels.
     // Fades terrain/props/mechs near the map boundary into the cloud color.
     // Default ON (MC2_EDGE_FOG=0 to disable).
@@ -295,6 +301,8 @@ private:
     void destroyFBOs();
     void createFullscreenQuad();
     void destroyFullscreenQuad();
+    void createBoxDecalCube();   // BT2018-BOX-DECAL-1: unit cube [-0.5,0.5], 8 verts / 36 idx
+    void destroyBoxDecalCube();
 
     // Scene FBO (full resolution, HDR)
     GLuint sceneFBO_;
@@ -317,6 +325,13 @@ private:
     // Fullscreen quad
     GLuint quadVAO_;
     GLuint quadVBO_;
+
+    // BT2018-BOX-DECAL-1: unit-cube geometry for the decal volume.
+    GLuint        boxCubeVAO_ = 0;
+    GLuint        boxCubeVBO_ = 0;
+    GLuint        boxCubeIBO_ = 0;
+    glsl_program* boxDecalProg_ = nullptr;
+    bool          boxDecalEnabled_ = false;
 
     // Composite shader
     glsl_program* compositeProg_;

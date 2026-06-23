@@ -452,6 +452,7 @@ void gosPostProcess::init(int w, int h)
 
     createFBOs(w, h);
     createFullscreenQuad();
+    createBoxDecalCube();   // BT2018-BOX-DECAL-1
 
     // Load shaders — version provided via prefix (shader files must NOT have #version).
     // 4.3 matches the GL context requirement (SSBO + std430 used by the static-prop
@@ -558,6 +559,19 @@ void gosPostProcess::init(int w, int h)
         "shaders/postprocess.vert", "shaders/ssao_apply.frag", kShaderPrefix);
     if (!ssaoApplyProg_ || !ssaoApplyProg_->is_valid())
         fprintf(stderr, "gosPostProcess: failed to compile ssao_apply shader\n");
+
+    // BT2018-BOX-DECAL-1: screen-space box-decal program. Its OWN vert (cube volume),
+    // not postprocess.vert. Default-OFF gate resolved once from env (SSAO style).
+    boxDecalProg_ = glsl_program::makeProgram("box_decal",
+        "shaders/box_decal.vert", "shaders/box_decal.frag", kShaderPrefix);
+    if (!boxDecalProg_ || !boxDecalProg_->is_valid())
+        fprintf(stderr, "gosPostProcess: failed to compile box_decal shader\n");
+    {
+        const char* e = getenv("MC2_BOX_DECAL");
+        boxDecalEnabled_ = (e && e[0] && e[0] != '0');
+        std::fprintf(stderr, "[BOX_DECAL v1] enabled=%d (MC2_BOX_DECAL=%s)\n",
+                     boxDecalEnabled_ ? 1 : 0, e ? e : "(unset)");
+    }
 
     // SSAO gate + debug, resolved once from env. Default OFF -> runSSAO()
     // skipped entirely (byte-identical). aoRadius/strength/bias keep their
@@ -700,6 +714,7 @@ void gosPostProcess::destroy()
 
     destroyFBOs();
     destroyFullscreenQuad();
+    destroyBoxDecalCube();   // BT2018-BOX-DECAL-1
 
     // CLUSTER-DEPTH-PYRAMID-NATIVE-1: release the gated pass's GL resources.
     // No-op when the gate was never enabled (nothing was allocated).
@@ -1188,6 +1203,133 @@ void gosPostProcess::destroyFullscreenQuad()
         glDeleteVertexArrays(1, &quadVAO_);
         quadVAO_ = 0;
     }
+}
+
+// BT2018-BOX-DECAL-1: unit cube [-0.5,0.5]^3, 8 corners / 36 indices (12 tris).
+void gosPostProcess::createBoxDecalCube()
+{
+    static const float kCubeVerts[24] = {
+        -0.5f,-0.5f,-0.5f,  0.5f,-0.5f,-0.5f,  0.5f, 0.5f,-0.5f,  -0.5f, 0.5f,-0.5f,
+        -0.5f,-0.5f, 0.5f,  0.5f,-0.5f, 0.5f,  0.5f, 0.5f, 0.5f,  -0.5f, 0.5f, 0.5f
+    };
+    // Outward-CCW winding (so Cull Front draws the BACK faces -> coverage persists
+    // even when the camera is inside the tall box).
+    static const unsigned int kCubeIdx[36] = {
+        0,1,2, 0,2,3,   // -Z
+        4,6,5, 4,7,6,   // +Z
+        0,4,5, 0,5,1,   // -Y
+        3,2,6, 3,6,7,   // +Y
+        0,3,7, 0,7,4,   // -X
+        1,5,6, 1,6,2    // +X
+    };
+    glGenVertexArrays(1, &boxCubeVAO_);
+    glBindVertexArray(boxCubeVAO_);
+    glGenBuffers(1, &boxCubeVBO_);
+    glBindBuffer(GL_ARRAY_BUFFER, boxCubeVBO_);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(kCubeVerts), kCubeVerts, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glGenBuffers(1, &boxCubeIBO_);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, boxCubeIBO_);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(kCubeIdx), kCubeIdx, GL_STATIC_DRAW);
+    glBindVertexArray(0);   // unbind VAO first (captures the IBO binding)
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+}
+
+void gosPostProcess::destroyBoxDecalCube()
+{
+    if (boxCubeIBO_) { glDeleteBuffers(1, &boxCubeIBO_);      boxCubeIBO_ = 0; }
+    if (boxCubeVBO_) { glDeleteBuffers(1, &boxCubeVBO_);      boxCubeVBO_ = 0; }
+    if (boxCubeVAO_) { glDeleteVertexArrays(1, &boxCubeVAO_); boxCubeVAO_ = 0; }
+}
+
+// Column-major mat4 * vec4 (matches GLSL `M * v` on a GL_FALSE-uploaded array — the
+// convention inverseViewProj_/viewProj_ use). out[i] = sum_c m[c*4 + i] * v[c].
+static void boxDecalMulColMajor(const float* m, const float* v, float* out)
+{
+    for (int i = 0; i < 4; ++i)
+        out[i] = m[i] * v[0] + m[4 + i] * v[1] + m[8 + i] * v[2] + m[12 + i] * v[3];
+}
+
+// BT2018-BOX-DECAL-1: screen-space AABB decal volume. Composites into COLOR0 only.
+void gosPostProcess::drawBoxDecals()
+{
+    ZoneScopedN("Render.BoxDecals");
+    TracyGpuZone("Render.BoxDecals");
+
+    if (!boxDecalEnabled_) return;
+    if (!sceneHasTerrain_) return;                 // suppress in menus
+    if (!boxDecalProg_ || !boxDecalProg_->is_valid()) return;
+
+    // Feedback-safe depth: refresh the COPY and sample IT — never the live bound
+    // depth attachment (sceneDepthTex_). Idempotent / lazy-alloc.
+    copySceneDepthForParticles();
+    if (sceneDepthCopyTex_ == 0) return;
+
+    // v1 anchor: unproject screen-center at mid-depth to a world point in view, and
+    // center a TALL box there so the decal drapes on terrain under the camera. The
+    // reconstruct frame is Y-up (mech.vert's (-x,z,y) swap is baked into the clip
+    // matrix), so the box up-axis is +Y. Producers / real placement = follow-up slice.
+    float ndcCenter[4] = { 0.0f, 0.0f, 0.5f, 1.0f };
+    float wc[4];
+    boxDecalMulColMajor(inverseViewProj_, ndcCenter, wc);
+    if (fabsf(wc[3]) < 1e-6f) return;
+    float center[3] = { wc[0] / wc[3], wc[1] / wc[3], wc[2] / wc[3] };
+
+    float halfXZ = 300.0f, strength = 0.85f;
+    if (const char* s = getenv("MC2_BOX_DECAL_SIZE"))     { float v = (float)atof(s); if (v > 1.0f)  halfXZ   = v; }
+    if (const char* s = getenv("MC2_BOX_DECAL_STRENGTH")) { float v = (float)atof(s); if (v >= 0.0f) strength = v; }
+    float half[3]   = { halfXZ, 4000.0f, halfXZ };   // tall on +Y to span terrain elevation
+    float upAxis[3] = { 0.0f, 1.0f, 0.0f };
+
+    glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
+    setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);   // COLOR0 only -> normal/objectId untouched
+    glViewport(0, 0, width_, height_);
+
+    // Draw the box BACK faces (Cull Front) with depth-test OFF: the FS box-clip +
+    // depth reconstruct decide coverage, which sidesteps the reversed-Z ZTest-direction
+    // trap and any feedback with the live depth attachment. Depth-write OFF.
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_FRONT);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    boxDecalProg_->setInt("u_sceneDepthTex", 0);
+    boxDecalProg_->setInt("u_sceneNormalTex", 1);
+    boxDecalProg_->setFloat3("u_boxCenter", center);
+    boxDecalProg_->setFloat3("u_boxHalf", half);
+    boxDecalProg_->setFloat3("u_decalUpAxis", upAxis);
+    boxDecalProg_->setFloat("u_normalRejectCos", 0.35f);   // skip faces tilted > ~70deg from up
+    boxDecalProg_->setFloat("u_decalStrength", strength);
+    float screenSz[2] = { (float)width_, (float)height_ };
+    boxDecalProg_->setFloat2("u_screenSize", screenSz);
+    boxDecalProg_->apply();
+
+    GLint loc;
+    loc = glGetUniformLocation(boxDecalProg_->shp_, "u_viewProj");
+    if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_FALSE, viewProj_);
+    loc = glGetUniformLocation(boxDecalProg_->shp_, "u_inverseViewProj");
+    if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_FALSE, inverseViewProj_);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, sceneDepthCopyTex_);   // the COPY, not the live attachment
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, sceneNormalTex_);
+
+    glBindVertexArray(boxCubeVAO_);
+    glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+    glBindVertexArray(0);
+
+    // Restore the depth/cull/blend baseline the following passes + composite expect.
+    glDisable(GL_BLEND);
+    glCullFace(GL_BACK);
+    glDisable(GL_CULL_FACE);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+    glActiveTexture(GL_TEXTURE0);
 }
 
 void gosPostProcess::beginScene()
@@ -2227,6 +2369,10 @@ void gosPostProcess::endScene()
 
     // SSAO grounding pass (multiplicative darkening into scene color). Default-OFF (gated).
     runSSAO();
+
+    // BT2018-BOX-DECAL-1: screen-space box decal composited into lit+shadowed+AO'd
+    // scene color, before fog/tonemap. Default-OFF (MC2_BOX_DECAL); no-op when gate off.
+    drawBoxDecals();
 
     // Edge fog: fades geometry near the map boundary into the cloud color.
     // After SSAO so AO-darkening is preserved under the fog.
