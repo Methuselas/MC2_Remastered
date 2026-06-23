@@ -110,6 +110,23 @@
 #include"logistics.h"
 #endif
 
+// ABL-OPCODE-BOUNDS-HARDEN gates (defined in mclib/ablxstd.cpp)
+extern bool s_ablArgGuard;
+extern bool s_ablRuntimeSoftfail;
+// ABL exec context: defined in mclib/ablxstd.cpp / mclib/ablexec.cpp
+extern int         execLineNumber;
+extern ABLModulePtr CurModule;
+extern int32_t     FileNumber;
+// Helper: emit arg-guard trace line from a void exec* binding.
+// Emits [ABL_ARG_GUARD] to stdout (always flushed for smoke-log capture).
+static inline void abl_arg_guard_log(const char* funcName, const char* paramName) {
+	const char* srcFile = (CurModule && FileNumber > -1) ? CurModule->getSourceFile(FileNumber) : "unavailable";
+	const char* modName = CurModule ? CurModule->getName() : "(unknown)";
+	printf("[ABL_ARG_GUARD] func=%s param=%s module=%s file=%s line=%d — null ptr, skipping\n",
+		funcName, paramName, modName, srcFile, execLineNumber);
+	fflush(stdout);
+}
+
 MoverGroupPtr			CurGroup = NULL;
 GameObjectPtr			CurObject = NULL;
 long					CurObjectClass = 0;
@@ -4389,6 +4406,16 @@ void execGetRelativePositionToObject (void) {
 	float distance = ABLi_popReal();
 	long flags = ABLi_popInteger();
 	float* relPos = ABLi_popRealPtr();
+
+	// H1: guard the proven crash site (ablmc2.cpp ~4397 null-write).
+	// relPos is NULL when the calling ABL script passes a wrong-type or missing
+	// argument. The write below faults without this check.
+	// Gate MC2_ABL_ARG_GUARD=1 enables the guard; gate OFF = byte-identical
+	// to previous behaviour (crash on bad script — same as before this patch).
+	if (s_ablArgGuard && !relPos) {
+		abl_arg_guard_log("execGetRelativePositionToObject", "relPos");
+		return;
+	}
 
 	GameObjectPtr object = getObject(objectId);
 	if (object && object->isMover()) {
