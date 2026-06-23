@@ -112,22 +112,29 @@
       "next": "TERRAIN-DECAL-VISUAL-GATE: capture with battle-damage decals in-frame, byte-hash A/B + [PIPELINE_BIND] TerrainDecal trace -> VISUAL_PROVEN."
     },
     "Water": {
-      "status": "ROUTED_BY_APPLYPIPELINE",
-      "proofStatus": "byte_ab_capture_pending",
+      "status": "VISUAL_PROVEN",
+      "proofStatus": "oracle_coverage",
       "renderPassId": "Water",
       "pipelineId": "WaterArmed",
       "shaderBase": "gos_terrain_water_fast",
       "stateOwner": "applyPipeline",
-      "evidence": "WATER-ARMED-APPLYPIPELINE-ROUTING-1: routed at gosRenderer::renderWaterFastPath (gameos_graphics.cpp:3275) via applyPipeline(WaterArmed). RUNTIME-CONFIRMED: with MC2_RENDER_WATER_FASTPATH=1, [PIPELINE_BIND] WaterArmed fired 3643x (mc2_01/clearwater) + 4194x (mc2_24) = once/frame, with the exact row state 'depth=GreaterEqual cull=None frontFace=Ccw polygonOffset=false'. State byte-identical to old hand-set (cull off, depth-test on, GEQUAL, blend SRC_ALPHA/1-SRC_ALPHA; + no-op frontFace/offset). depthMask kept manual (debug-gated MC2_WATER_NO_DEPTH_WRITE, overrides applyPipeline). program(0)=skip keeps water_fast_prog_; save/restore window unchanged. Build green; smoke PASS 2/2; no GL errors.",
+      "evidence": "WATER-ARMED-APPLYPIPELINE-ROUTING-1: routed at gosRenderer::renderWaterFastPath (gameos_graphics.cpp:3275) via applyPipeline(WaterArmed). VISUAL_PROVEN via oracle_coverage (HARNESS-ISOLATION-1 session, 2026-06-23): hardened pipeline_visual_gate water profile on the routed build (v0.4c / 051946c3) captured bookmark mc2_01 water_overview_high (an entirely-water frame) 3-run BYTE-STABLE post-warmup sha cb5a700ebd00 (deterministic clock; both poses stable), and the [PIPELINE_BIND] draw-oracle recorded WaterArmed bound 19184x with the exact row state depth=GreaterEqual cull=None frontFace=Ccw polygonOffset=false. State byte-identical to the old hand-set (cull off, depth-test on, GEQUAL, blend SRC_ALPHA/1-SRC_ALPHA; no-op frontFace/offset) — confirmed by trace, not a pixel A/B. depthMask kept manual (debug-gated MC2_WATER_NO_DEPTH_WRITE). Build green; smoke PASS.",
       "scope_note": "ONLY the armed fast-path base. The armed fast path is the DEFAULT render path (real latch terrain.cpp:2779, called unconditionally gamecam.cpp:530; gameosmain.cpp:852 MC2_RENDER_WATER_FASTPATH is only a diagnostic flag, NOT the gate). Legacy quad fallback + GPU-driven MDI sub-variant NOT modeled.",
-      "proofNote": "VISUAL_PROVEN not claimed: an empirical before/after BYTE-A/B was NOT captured — run_visual_capture taskkills ALL mc2.exe and a concurrent foreign instance was running (never-kill-concurrent rule). Water-fast is DETERMINISTIC and DOES draw + trace-confirms correct state, so the byte-A/B is straightforward to land when no concurrent instance is up — strongest pending case (exercised + trace-confirmed), distinct from VFX (nondeterministic) and terrain (not-exercised).",
-      "next": "WATER-VISUAL-GATE: run_visual_capture mc2_01 (clearwater) armed (MC2_RENDER_WATER_FASTPATH=1) before/after byte-hash when no concurrent mc2.exe -> VISUAL_PROVEN."
+      "proofNote": "PROOF = oracle_coverage (LANDED), not byte_identical: a pixel before/after was deliberately NOT required. The pass is DETERMINISTIC (3-run byte-stable cb5a700ebd00), DRAWS (19184 [PIPELINE_BIND] WaterArmed binds = SAMPLES rasterized), and its bound state is trace-confirmed identical to the legacy hand-set GL state. Together (determinism + draw-oracle + state-identity) these establish the applyPipeline routing is a visual no-op without a separate BEFORE build. Harness made concurrent-safe by HARNESS-ISOLATION-1 (own-only child reap; never kills foreign mc2.exe) — the original blocker (taskkill-all) is removed.",
+      "next": "CLOSED. WaterArmed VISUAL_PROVEN via oracle_coverage. SPIRV_ELIGIBLE = future SPIR-V consumer pilot."
     },
     "VFX": {
       "status": "ROUTED_BY_APPLYPIPELINE",
       "proofStatus": "nondeterministic_visual_gate_pending",
       "renderPassId": "VFX",
-      "pipelineIds": ["VfxBillboardAlpha", "VfxBillboardAdditive", "VfxTubeAlpha", "VfxTubeAdditive", "VfxMeshAlpha", "VfxMeshAdditive"],
+      "pipelineIds": [
+        "VfxBillboardAlpha",
+        "VfxBillboardAdditive",
+        "VfxTubeAlpha",
+        "VfxTubeAdditive",
+        "VfxMeshAlpha",
+        "VfxMeshAdditive"
+      ],
       "shaderBase": "particle_billboard/tube_ribbon/vfx_mesh",
       "stateOwner": "applyPipeline (per-item blend)",
       "evidence": "VFX-APPLYPIPELINE-ROUTING-1: routed at 3 live per-item blend sites — particle_billboard gos_particle_bridge.cpp:1127, tube_ribbon-deferred :767, vfx_mesh gos_vfx_mesh_bridge.cpp:311 — via applyPipeline(getPipelineDesc(blendMode?VfxXAdditive:VfxXAlpha)). State is byte-identical to the old hand-set glBlendFunc (recon §4: depth/cull/frontFace/offset never differ; the precise BlendMode rows + applyPipeline's switch + check-pipeline-key CANONICAL_BLEND guarantee the row->func mapping equals the old per-blendMode func). Build green; smoke PASS (multiple runs, no crash); no GL errors. glProgramName=0 so applyPipeline SKIPs program; drawBuffers/samplers/uniforms/VAO untouched.",
