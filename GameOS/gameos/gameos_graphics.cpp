@@ -629,6 +629,23 @@ static bool gosHudRingResidency() {
     return s_on;
 }
 
+// LIGHT-GROW-ONCE-SUBDATA-1 — gate state (default OFF). The AMD-safe
+// intermediate for the light SSBO orphan churn (NOT the full GpuStorageRing).
+//   MC2_GPUBUF_LIGHT_GROWONCE : keep the single persistent light SSBO (same
+//                               handle, slot 20 binding, shader/layout contract),
+//                               but stop the per-frame FULL glBufferData orphan
+//                               re-spec. Per frame upload ONLY the live used
+//                               bytes via glBufferSubData; grow the GL buffer
+//                               ONLY when used bytes exceed current capacity
+//                               (rare, amortized with +128-record headroom).
+// OFF (default) => the existing LIGHTSSBO-ORPHAN-1 path runs completely
+// UNCHANGED (byte-identical GL stream + output) — this is the kill switch.
+// Cached once on first query (single predicted-false branch when unset).
+static bool gosLightGrowOnceEnabled() {
+    static const bool s_on = (std::getenv("MC2_GPUBUF_LIGHT_GROWONCE") != nullptr);
+    return s_on;
+}
+
 class gosMesh {
     public:
         typedef WORD INDEX_TYPE;
@@ -8733,9 +8750,105 @@ static GLsizeiptr s_lightDataSsboBytes = 0;
 static const bool s_lightSsboTrace =
 	(getenv("MC2_LIGHTSSBO_TRACE") != nullptr);
 
+// LIGHT-GROW-ONCE-SUBDATA-1: per-record stride for headroom sizing.
+// Lockstep with mclib/tgl.h `static_assert(sizeof(TG_HWLightsData) == 1808)`.
+// gameos_graphics.cpp does NOT include tgl.h, so the value is mirrored here
+// (same convention as LIGHT_DATA_SSBO_BINDING being a hardcoded #define).
+// Headroom of +128 records matches the CPU backing grow step
+// (mclib/txmmgr.cpp addLightDataStructure, `lightDataStructuresCapacity + 128`)
+// so the GL grow cadence equals the CPU grow cadence — both amortized, rare.
+static constexpr GLsizeiptr kLightRecordStride = 1808;
+static constexpr GLsizeiptr kLightGrowHeadroomRecords = 128;
+
+// LIGHT-GROW-ONCE-SUBDATA-1: when MC2_GPUBUF_LIGHT_GROWONCE is ON, upload only
+// the live used bytes into the single persistent slot-20 SSBO via
+// glBufferSubData (no per-frame full glBufferData orphan re-spec). Grow ONLY
+// when used bytes exceed current GL capacity, sized with +128-record headroom
+// so grow is rare. Returns true if it handled the upload (ON path); false to
+// fall through to the unchanged OFF (orphan) path.
+//
+// CRITICAL NVIDIA CAVEAT (documented, NOT solved here — see slice + recon §3/§4):
+// glBufferSubData into the single live buffer that is read all-frame by every
+// lit draw (and cross-phase by the mech/static-prop batchers, txmmgr.cpp:485-492)
+// has a CROSS-FRAME in-flight-write hazard. On NVIDIA, SubData into a buffer the
+// GPU is still reading from the prior frame's draws STALLS the CPU until the GPU
+// finishes — exactly the ~80ms stall the LIGHTSSBO-ORPHAN-1 orphan path dodges.
+// On AMD this is tolerated (no stall), which is WHY this gate is default-OFF and
+// NVIDIA is a HARD BLOCKER before any default-on. Do NOT add an N-buffer rotation
+// to fix it — that is the full GpuStorageRing ring (explicitly out of scope here).
+static bool gos_LightDataSsbo_UploadGrowOnce(const void* data, size_t bytes)
+{
+	const GLsizeiptr want = (GLsizeiptr)bytes;
+	if (s_lightDataSsbo == 0) {
+		// First create: allocate at requested size + headroom, no data copy
+		// of trailing slack. Upload the live bytes via SubData.
+		const GLsizeiptr cap = want + kLightGrowHeadroomRecords * kLightRecordStride;
+		glGenBuffers(1, &s_lightDataSsbo);
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_lightDataSsbo);
+		// Allocate uninitialized capacity (nullptr) ONCE, then fill live bytes.
+		// GL_DYNAMIC_DRAW: rewritten-often, drawn-often (read every frame).
+		glBufferData(GL_SHADER_STORAGE_BUFFER, cap, nullptr, GL_DYNAMIC_DRAW);
+		s_lightDataSsboBytes = cap;
+		MC2_GL_BufferSubData(GL_SHADER_STORAGE_BUFFER, 0, want, data);
+		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, LIGHT_DATA_SSBO_BINDING, s_lightDataSsbo);
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+		if (s_lightSsboTrace) {
+			std::fprintf(stderr,
+			    "[LIGHTSSBO v1] event=growonce_create binding=%d capBytes=%td liveBytes=%zu\n",
+			    LIGHT_DATA_SSBO_BINDING, (ptrdiff_t)cap, bytes);
+			std::fflush(stderr);
+		}
+		return true;
+	}
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_lightDataSsbo);
+	if (want > s_lightDataSsboBytes) {
+		// RARE grow. The old buffer may be read in-flight by the prior frame's
+		// lit draws; a stall on the (rare) grow is acceptable, so DRAIN with
+		// glFinish before deleting it. Recreate at new capacity WITH +128-record
+		// headroom so growth amortizes, rebind to slot 20, log ONCE per grow.
+		// RF2 invariant preserved: glBindBufferBase (buffer->binding-point) is
+		// CONTEXT state and must re-follow the new storage; the program block
+		// binding (gos_BindLightDataStorageBlock) is PROGRAM state and is NOT
+		// re-issued here.
+		const GLsizeiptr newCap = want + kLightGrowHeadroomRecords * kLightRecordStride;
+		const GLsizeiptr oldCap = s_lightDataSsboBytes;
+		glFinish();  // drain any in-flight reads of the old store before delete
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+		glDeleteBuffers(1, &s_lightDataSsbo);
+		glGenBuffers(1, &s_lightDataSsbo);
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_lightDataSsbo);
+		glBufferData(GL_SHADER_STORAGE_BUFFER, newCap, nullptr, GL_DYNAMIC_DRAW);
+		s_lightDataSsboBytes = newCap;
+		MC2_GL_BufferSubData(GL_SHADER_STORAGE_BUFFER, 0, want, data);
+		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, LIGHT_DATA_SSBO_BINDING, s_lightDataSsbo);
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+		if (s_lightSsboTrace) {
+			std::fprintf(stderr,
+			    "[LIGHTSSBO v1] event=growonce_grow oldCap=%td newCap=%td liveBytes=%zu\n",
+			    (ptrdiff_t)oldCap, (ptrdiff_t)newCap, bytes);
+			std::fflush(stderr);
+		}
+		return true;
+	}
+	// Steady state: in-place partial update of the live bytes ONLY. No orphan,
+	// no full re-spec. This is the per-frame win — [GPUBUF v1] light owner
+	// orphan bytes drop to ~0 (routed through MC2_GL_BufferSubData, NOT the
+	// owner glBufferData macro, so the light orphan tally is not incremented).
+	MC2_GL_BufferSubData(GL_SHADER_STORAGE_BUFFER, 0, want, data);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, LIGHT_DATA_SSBO_BINDING, s_lightDataSsbo);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+	return true;
+}
+
 void __stdcall gos_LightDataSsbo_Upload(const void* data, size_t bytes)
 {
 	if (bytes == 0) return;
+	// LIGHT-GROW-ONCE-SUBDATA-1: ON path takes over entirely (grow-once +
+	// per-frame SubData). When OFF, fall through to the byte-identical legacy
+	// orphan path below — nothing in that path changes.
+	if (gosLightGrowOnceEnabled()) {
+		if (gos_LightDataSsbo_UploadGrowOnce(data, bytes)) return;
+	}
 	if (s_lightDataSsbo == 0) {
 		glGenBuffers(1, &s_lightDataSsbo);
 		glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_lightDataSsbo);
@@ -8789,6 +8902,23 @@ void __stdcall gos_LightDataSsbo_UploadSplit(const void* data, size_t prefixByte
 	if (totalBytes == 0) return;
 	if (prefixBytes > totalBytes) prefixBytes = totalBytes;  // clamp (S floored by count)
 	const char* base = static_cast<const char*>(data);
+
+	// LIGHT-GROW-ONCE-SUBDATA-1: when ON, the split (prefix/suffix) optimization
+	// is moot — the grow-once path keeps a persistent store, so SubData of the
+	// full live range is correct and cheap (no orphan to defeat prefixDirty, no
+	// full re-spec). Route the whole upload through the grow-once helper. The
+	// per-frame cost is one glBufferSubData of usedBytes (the win). See the
+	// NVIDIA in-flight caveat on gos_LightDataSsbo_UploadGrowOnce.
+	if (gosLightGrowOnceEnabled()) {
+		gos_LightDataSsbo_UploadGrowOnce(data, totalBytes);
+		if (s_lightSsboTrace) {
+			std::fprintf(stderr,
+			    "[LIGHTSSBO v2] event=growonce_split_subsumed total=%zu prefix=%zu\n",
+			    totalBytes, prefixBytes);
+			std::fflush(stderr);
+		}
+		return;
+	}
 
 	// Create or grow → full upload (prefix necessarily included; dirty cleared
 	// implicitly since the whole buffer is now fresh).
