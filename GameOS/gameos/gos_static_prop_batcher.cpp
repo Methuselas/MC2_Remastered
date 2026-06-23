@@ -7636,7 +7636,14 @@ void GpuStaticPropBatcher::drawStaticBuildingShadows(
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_sharedIbo);
 
     // Contact-acne bias (the static terrain prepass sets none).
-    glEnable(GL_POLYGON_OFFSET_FILL);
+    // SHADOW-CASTER-APPLYPIPELINE-ROUTING-1: enable polygon offset via the
+    // ShadowStaticProp pipeline row (polygonOffsetEnable=true). applyPipeline also
+    // re-asserts the identical shadow base (depth LESS, cull none, frontFace ccw,
+    // depthMask) — a redundant no-op vs the bracket. glProgramName=0 → the bound
+    // shadow program is untouched. The MAGNITUDE below and the teardown glDisable
+    // stay exactly where they are (factor/units ownership unchanged).
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::ShadowStaticProp), "ShadowStaticProp");
     glPolygonOffset(pp->shadowBiasFactor_, pp->shadowBiasUnits_);
 
     int typesDrawn = 0, instDrawn = 0, drawCalls = 0;
@@ -7783,7 +7790,13 @@ void GpuStaticPropBatcher::drawDynamicPropShadows(
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_sharedIbo);
 
     // Contact-acne bias (same as the building static pass).
-    glEnable(GL_POLYGON_OFFSET_FILL);
+    // SHADOW-CASTER-APPLYPIPELINE-ROUTING-1: enable polygon offset via the
+    // ShadowStaticProp pipeline row (polygonOffsetEnable=true). Re-asserts the
+    // identical shadow base (redundant no-op). MAGNITUDE below + teardown glDisable
+    // stay put (factor/units ownership unchanged); glProgramName=0 keeps the bound
+    // shadow program.
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::ShadowStaticProp), "ShadowStaticProp");
     glPolygonOffset(pp->shadowBiasFactor_, pp->shadowBiasUnits_);
 
     int typesDrawn = 0, instDrawn = 0, drawCalls = 0;
