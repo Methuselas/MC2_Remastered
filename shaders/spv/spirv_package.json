@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "slice": "SHADER-ARTIFACT-PACKAGE-METADATA-1",
+  "generator": "tools/shader_offline_build/build_variants.py",
+  "source_hash_canonicalization": "canon_source: strip '#line N // <path>' labels + normalize CRLF->LF",
+  "tools": {
+    "glslangValidator": "Glslang Version: 11:16.2.0",
+    "spirv_cross": "Git commit: vulkan-sdk-1.4.341.0-67-g1a616956 Timestamp: 2026-05-11T10:55:23",
+    "compile_flags": "-G --auto-map-locations (NOT --auto-map-bindings)"
+  },
+  "runtime": {
+    "env_gate": "MC2_SHADER_SPIRV=1 (default OFF)",
+    "required_extension": "GL_ARB_gl_spirv || GL 4.6",
+    "fallback_policy": "program-atomic GLSL fallback (any stage miss -> whole program GLSL)",
+    "fatal_gate": "MC2_SHADER_SPIRV_FATAL=1 (assert instead of fallback; default OFF)"
+  },
+  "pilot_families": [
+    "postprocess",
+    "mech"
+  ],
+  "excluded_families": [
+    "shadow_mech (shadow_mech.vert + shadow_instanced.frag) \u2014 separate program, stays GLSL",
+    "all non-pilot shader programs \u2014 stay GLSL"
+  ],
+  "variant_matrix": [
+    {
+      "base": "postprocess",
+      "variants": [
+        {
+          "name": "default",
+          "defines": [],
+          "variantId": "24eb244242a0",
+          "stages": {
+            "vert": "postprocess.vert.default.24eb2442.spv",
+            "frag": "postprocess.frag.default.24eb2442.spv"
+          }
+        }
+      ]
+    },
+    {
+      "base": "mech",
+      "variants": [
+        {
+          "name": "default",
+          "defines": [],
+          "variantId": "dbbae7d3535c",
+          "stages": {
+            "vert": "mech.vert.default.dbbae7d3.spv",
+            "frag": "mech.frag.default.dbbae7d3.spv"
+          }
+        },
+        {
+          "name": "objectid",
+          "defines": [
+            "MC2_OBJECT_ID_BUFFER=1"
+          ],
+          "variantId": "2a9778665edb",
+          "stages": {
+            "vert": "mech.vert.objectid.2a977866.spv",
+            "frag": "mech.frag.objectid.2a977866.spv"
+          }
+        },
+        {
+          "name": "viewuniforms",
+          "defines": [
+            "MC2_USE_VIEW_UNIFORMS=1"
+          ],
+          "variantId": "6c9161651b66",
+          "stages": {
+            "vert": "mech.vert.viewuniforms.6c916165.spv",
+            "frag": "mech.frag.viewuniforms.6c916165.spv"
+          }
+        },
+        {
+          "name": "objectid_viewuniforms",
+          "defines": [
+            "MC2_OBJECT_ID_BUFFER=1",
+            "MC2_USE_VIEW_UNIFORMS=1"
+          ],
+          "variantId": "02236e66af94",
+          "stages": {
+            "vert": "mech.vert.objectid_viewuniforms.02236e66.spv",
+            "frag": "mech.frag.objectid_viewuniforms.02236e66.spv"
+          }
+        }
+      ]
+    }
+  ],
+  "hashes": {
+    "spirv_index_sha256": "ba285fbaabcb18419fd6ea9c882808d3a7f17f2928829df86c4eef00a04f3c6c",
+    "sidecars_sha256": "a985f32e9715d9da676be12443cdb03e53d2c1d8c8ff25f0d6d199367ff396f4",
+    "source_set_sha256": "835472008a8a018f3571540b3ff09cd06fc0abe3ccd97c7f407ea3adb8e8d689"
+  }
+}

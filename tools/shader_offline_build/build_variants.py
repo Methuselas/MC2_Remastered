@@ -109,6 +109,92 @@ def reflect(spv: Path, spirv_cross: str):
                         for o in raw.get("outputs", [])]}
 
 
+PACKAGE_SCHEMA_VERSION = 1
+
+# --- SHADER-ARTIFACT-PACKAGE-METADATA-1 -------------------------------------
+# Canonical, portable content hashes over the deployed artifact set. Used by
+# BOTH this generator and scripts/check-shader-package.py (imported), so the
+# hashing stays in lockstep by construction. All inputs are content-based
+# (canonicalized JSON / portable source+spirv hashes) => identical across
+# worktrees and machines.
+def _canon_json(obj):
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"))
+
+
+def package_hashes(spv_dir: Path, index_records: list) -> dict:
+    idx = sorted(({"key": r["key"], "artifact": r["artifact"]}
+                  for r in index_records), key=lambda r: r["key"])
+    sidecars, sources = {}, []
+    for p in sorted(spv_dir.glob("*.json")):
+        if p.name in ("spirv_index.json", "spirv_package.json"):
+            continue
+        d = json.load(open(p, encoding="utf-8"))
+        sidecars[p.name] = d
+        sources.append([d.get("base"), d.get("stage"), d.get("variant"),
+                        d.get("source_sha256")])
+    return {
+        "spirv_index_sha256": sha256(_canon_json(idx)),
+        "sidecars_sha256": sha256(_canon_json({k: sidecars[k] for k in sorted(sidecars)})),
+        "source_set_sha256": sha256(_canon_json(sorted(sources))),
+    }
+
+
+def package_variant_matrix(cfg: dict) -> list:
+    out = []
+    for pilot in cfg["pilots"]:
+        base = pilot["program"]
+        rows = []
+        for v in pilot["variants"]:
+            name, defines = v["name"], sorted(v.get("defines", []))
+            vid = variant_id(base, defines)
+            rows.append({
+                "name": name, "defines": defines, "variantId": vid,
+                "stages": {st: artifact_name(base, st, name, vid)
+                           for st in pilot["stages"]},
+            })
+        out.append({"base": base, "variants": rows})
+    return out
+
+
+def _tool_version(exe) -> str:
+    if not exe:
+        return "not-found"
+    try:
+        r = subprocess.run([exe, "--version"], capture_output=True, text=True)
+        line = (r.stdout or r.stderr).splitlines()
+        return line[0].strip() if line else "unknown"
+    except Exception:
+        return "unknown"
+
+
+def build_package(cfg, spv_dir, index_records, glslang, spirv_cross):
+    return {
+        "schema_version": PACKAGE_SCHEMA_VERSION,
+        "slice": "SHADER-ARTIFACT-PACKAGE-METADATA-1",
+        "generator": "tools/shader_offline_build/build_variants.py",
+        "source_hash_canonicalization":
+            "canon_source: strip '#line N // <path>' labels + normalize CRLF->LF",
+        "tools": {
+            "glslangValidator": _tool_version(glslang),
+            "spirv_cross": _tool_version(spirv_cross),
+            "compile_flags": "-G --auto-map-locations (NOT --auto-map-bindings)",
+        },
+        "runtime": {
+            "env_gate": "MC2_SHADER_SPIRV=1 (default OFF)",
+            "required_extension": "GL_ARB_gl_spirv || GL 4.6",
+            "fallback_policy": "program-atomic GLSL fallback (any stage miss -> whole program GLSL)",
+            "fatal_gate": "MC2_SHADER_SPIRV_FATAL=1 (assert instead of fallback; default OFF)",
+        },
+        "pilot_families": [p["program"] for p in cfg["pilots"]],
+        "excluded_families": [
+            "shadow_mech (shadow_mech.vert + shadow_instanced.frag) — separate program, stays GLSL",
+            "all non-pilot shader programs — stay GLSL",
+        ],
+        "variant_matrix": package_variant_matrix(cfg),
+        "hashes": package_hashes(spv_dir, index_records),
+    }
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default=None)
@@ -219,6 +305,22 @@ def main():
                 fails.append("spirv_index.json out of sync with built variants")
     elif index:
         idx_path.write_text(json.dumps(idx_doc, indent=2), encoding="utf-8")
+
+    # SHADER-ARTIFACT-PACKAGE-METADATA-1: deterministic package metadata file.
+    pkg_path = spv_dir / "spirv_package.json"
+    if index:
+        pkg = build_package(cfg, spv_dir, index, glslang, spirv_cross)
+        if args.check:
+            if not pkg_path.exists():
+                fails.append("spirv_package.json missing — run build_variants.py")
+            else:
+                old = json.load(open(pkg_path, encoding="utf-8"))
+                # full compare incl tool versions (this mode re-ran the tools)
+                if old != pkg:
+                    diff = [k for k in set(old) | set(pkg) if old.get(k) != pkg.get(k)]
+                    fails.append(f"spirv_package.json stale (differs in: {sorted(diff)})")
+        else:
+            pkg_path.write_text(json.dumps(pkg, indent=2), encoding="utf-8")
 
     if not args.quiet:
         mode = "CHECK" if args.check else "BUILD"
