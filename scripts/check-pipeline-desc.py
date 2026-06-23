@@ -15,8 +15,8 @@ What it asserts (FAIL):
      static_assert at check time so a stale/unregistered extra row fails here.
   2. Every non-Invalid s_descs row declares ALL of PipelineDesc's declarative
      fields (glProgramName, blend, depthTest/Write/Func, cullMode,
-     colorAttachments, objectIdWriteEnabled, ssboBindingsMask). A row missing a
-     field fails — that is the "planted missing field" gate.
+     colorAttachments, objectIdWriteEnabled, frontFace, ssboBindingsMask). A row
+     missing a field fails — that is the "planted missing field" gate.
 
 What it documents (never fails the build):
   - render-pass compatibility: which PipelineId maps to a RenderPassContract row
@@ -49,6 +49,7 @@ PIPELINE_DESC_FIELDS = [
     "cullMode",
     "colorAttachments",
     "objectIdWriteEnabled",
+    "frontFace",   # PIPELINEKEY-RASTERSTATE-FRONTFACE-AUTHORITY-1 (positional: before ssboBindingsMask)
     "ssboBindingsMask",
 ]
 N_FIELDS = len(PIPELINE_DESC_FIELDS)
