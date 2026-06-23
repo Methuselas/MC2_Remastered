@@ -25,6 +25,16 @@ UNREGISTERED → DESCRIPTIVE_REGISTERED → ROUTED_BY_APPLYPIPELINE → VISUAL_P
 The proven per-pass arc: **descriptive registration → checker → applyPipeline
 routing → pixel-identical proof** (→ SPIR-V later, behind a parity gate).
 
+### `proofStatus` — for passes that can't byte-hash
+A pass routed through `applyPipeline` whose output is **nondeterministic** (e.g.
+VFX/particles: random spawn defeats a byte-hash A/B) may sit at
+`ROUTED_BY_APPLYPIPELINE` with an explicit `proofStatus`:
+`byte_identical` | `perceptual_ab` | `oracle_coverage` |
+`nondeterministic_visual_gate_pending`. The checker **forbids `VISUAL_PROVEN`
+while `proofStatus` is `*_pending`** — you cannot mark a pass proven on a gate
+that hasn't been landed. This keeps "routed + correct by construction" honestly
+distinct from "visually proven", instead of faking a byte-hash that can't hold.
+
 ## Current state (2026-06-23)
 
 | Pass | Status | RenderPassId | PipelineId |
@@ -38,7 +48,7 @@ routing → pixel-identical proof** (→ SPIR-V later, behind a parity gate).
 | TerrainOverlay | DESCRIPTIVE_REGISTERED | TerrainOverlay | TerrainOverlay |
 | TerrainDecal | DESCRIPTIVE_REGISTERED (first AlphaBlend row) | TerrainDecal | TerrainDecal |
 | Water (armed fast path) | DESCRIPTIVE_REGISTERED | Water | WaterArmed |
-| VFX | DESCRIPTIVE_REGISTERED | VFX | Vfx{Billboard,Tube,Mesh}{Alpha,Additive} (6) |
+| VFX | ROUTED_BY_APPLYPIPELINE (proof: nondeterministic_visual_gate_pending) | VFX | Vfx{Billboard,Tube,Mesh}{Alpha,Additive} (6) |
 | VegetationCards | UNREGISTERED | VegetationCards | — |
 | PostProcess | UNREGISTERED | PostProcess | — |
 | UI | DO_NOT_MODEL | UI | — |

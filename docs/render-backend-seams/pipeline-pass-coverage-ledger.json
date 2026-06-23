@@ -118,14 +118,15 @@
       "next": "route_applyPipeline -> visual_proven (later; water save/restores its own state so routing is more involved than terrain)"
     },
     "VFX": {
-      "status": "DESCRIPTIVE_REGISTERED",
+      "status": "ROUTED_BY_APPLYPIPELINE",
+      "proofStatus": "nondeterministic_visual_gate_pending",
       "renderPassId": "VFX",
       "pipelineIds": ["VfxBillboardAlpha", "VfxBillboardAdditive", "VfxTubeAlpha", "VfxTubeAdditive", "VfxMeshAlpha", "VfxMeshAdditive"],
       "shaderBase": "particle_billboard/tube_ribbon/vfx_mesh",
-      "stateOwner": "legacy/ad-hoc",
-      "evidence": "PipelineDesc rows [11-16] (6 = 3 programs x {AlphaBlend, Additive}). Invariant depthTest on / GEQUAL / depthWrite OFF / cull None / color0 / FUNC_ADD. Exact blend factors live in schema (BlendMode::Additive is coarse): billboard/mesh additive=SRC_ALPHA/ONE, tube additive=ONE/ONE. gos_particle_bridge.cpp + gos_vfx_mesh_bridge.cpp hand-set state (NOT applyPipeline-routed).",
-      "recon2": "VFX-APPLYPIPELINE-ROUTING-RECON-1 DONE (see vfx-applypipeline-routing-recon-1.md). Blend vocabulary now precise. Routing = per-item applyPipeline(VfxX) at 3 live blend sites (billboard :1127, tube-deferred :767, vfx_mesh :311); state byte-identical to hand-set (provably no-op); save/restore window already wraps it. PROOF CAVEAT: VFX spawn nondeterministic -> byte-hash capture FAILS; gate on MC2_VFX_ORACLE_TUBE_COVERAGE + A/B screenshot, not golden hash.",
-      "next": "VFX-APPLYPIPELINE-ROUTING-1 (behavior-bearing, GO): route 3 live per-item blend sites; gate MC2_PIPELINE_BIND_TRACE + no GL errors + smoke + VFX oracle-coverage/A-B (NOT byte-hash) -> VISUAL_PROVEN."
+      "stateOwner": "applyPipeline (per-item blend)",
+      "evidence": "VFX-APPLYPIPELINE-ROUTING-1: routed at 3 live per-item blend sites — particle_billboard gos_particle_bridge.cpp:1127, tube_ribbon-deferred :767, vfx_mesh gos_vfx_mesh_bridge.cpp:311 — via applyPipeline(getPipelineDesc(blendMode?VfxXAdditive:VfxXAlpha)). State is byte-identical to the old hand-set glBlendFunc (recon §4: depth/cull/frontFace/offset never differ; the precise BlendMode rows + applyPipeline's switch + check-pipeline-key CANONICAL_BLEND guarantee the row->func mapping equals the old per-blendMode func). Build green; smoke PASS (multiple runs, no crash); no GL errors. glProgramName=0 so applyPipeline SKIPs program; drawBuffers/samplers/uniforms/VAO untouched.",
+      "proofNote": "VISUAL_PROVEN NOT claimed. byte-hash is invalid (nondeterministic particle spawn) AND the runtime [PIPELINE_BIND] trace + visual A/B could not be landed in headless smoke this slice — the VFX/particle bridges only draw when effects actually spawn (combat), which idle tier1 smoke + the MC2_FX_FORCE_SPAWN fixture did not reliably produce in-frame, and the trace did not surface in the captured artifacts. Correctness rests on the state-equivalence argument (recon §4) + checker-guaranteed mapping, NOT on a runtime visual gate. Upgrade to VISUAL_PROVEN only when a real VFX-bearing A/B (oracle-coverage or eyes-on capture with confirmed in-frame particles) is obtained.",
+      "next": "VFX-VISUAL-GATE-1: land a VFX-bearing capture (force in-frame particles, e.g. combat scenario / soak cheat / fixed-effect bookmark) + [PIPELINE_BIND] trace showing all 6 VfxX rows + oracle coverage A/B; then ROUTED_BY_APPLYPIPELINE -> VISUAL_PROVEN. This is the generic 'prove a nondeterministic visual pass' problem for future particles/spray/smoke."
     },
     "VegetationCards": {
       "status": "UNREGISTERED",

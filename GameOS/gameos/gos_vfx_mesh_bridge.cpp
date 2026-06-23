@@ -20,6 +20,8 @@
 #include <gameos.hpp>
 #include <GL/glew.h>
 #include "utils/shader_builder.h"
+#include "../../RenderCore/PipelineRegistry.h"  // VFX-APPLYPIPELINE-ROUTING-1
+#include "pipeline_binder.h"                    // applyPipeline — VFX per-instance blend
 
 #include <cstdio>
 #include <cstdlib>
@@ -307,9 +309,14 @@ extern "C" void gos_vfx_mesh_flush(const GosVfxMeshUpload*   uploads,
         // so the active sampler never references an incomplete texture.
         glBindTexture(GL_TEXTURE_2D, glTex != 0 ? glTex : s_whiteTex);
 
-        // Per-instance blend mode from MLRState alpha mode.
-        if (inst.blendMode == 1) glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-        else                     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        // VFX-APPLYPIPELINE-ROUTING-1: per-instance blend via VfxMesh row
+        // (additive = AdditiveSrcAlphaOne = SRC_ALPHA/ONE; alpha = SRC_ALPHA/ONE_MINUS_SRC_ALPHA).
+        // Same GL state as the old hand-set; program(0)=skip keeps the vfx_mesh program.
+        pipeline_binder::applyPipeline(
+            RenderCore::getPipelineDesc(inst.blendMode == 1
+                ? RenderCore::PipelineId::VfxMeshAdditive
+                : RenderCore::PipelineId::VfxMeshAlpha),
+            inst.blendMode == 1 ? "VfxMeshAdditive" : "VfxMeshAlpha");
 
         glBindVertexArray(cm.vao);
         glDrawElements(GL_TRIANGLES, cm.indexCount, GL_UNSIGNED_SHORT, (const void*)0);

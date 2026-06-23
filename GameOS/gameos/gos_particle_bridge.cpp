@@ -17,6 +17,8 @@
 #include <gameos.hpp>
 #include <GL/glew.h>
 #include "utils/shader_builder.h"
+#include "../../RenderCore/PipelineRegistry.h"  // VFX-APPLYPIPELINE-ROUTING-1
+#include "pipeline_binder.h"                    // applyPipeline — VFX per-group blend
 #include "gos_postprocess.h"  // VFX-SOFT-PARTICLES-MVP-1: scene-depth copy + invViewProj
 #include "../../mclib/camera.h"  // VFX-LIT-PARTICLES-MVP-1: eye->light*/ambient* (same source as terrain)
 #include "gpu_cull_readback.h"  // READBACK_SSBO_BINDING (slot 14) — single source of truth
@@ -764,8 +766,14 @@ extern "C" void gos_tube_ribbon_flush_deferred(void) {
         // alpha into RGB via tex*v_color, then SRC_ALPHA scales by the small
         // age-ramped per-vertex alpha again) -> bright core + faint ghost ribbon
         // = the "extra tube / partial transparency" artifact. Match legacy.
-        if (rec.blendMode == 1) glBlendFunc(GL_ONE, GL_ONE);
-        else                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        // VFX-APPLYPIPELINE-ROUTING-1: per-record blend via VfxTube row
+        // (additive = AdditiveOneOne = ONE/ONE; alpha = SRC_ALPHA/ONE_MINUS_SRC_ALPHA).
+        // Same GL state as the old hand-set; program(0)=skip keeps the tube program.
+        pipeline_binder::applyPipeline(
+            RenderCore::getPipelineDesc(rec.blendMode == 1
+                ? RenderCore::PipelineId::VfxTubeAdditive
+                : RenderCore::PipelineId::VfxTubeAlpha),
+            rec.blendMode == 1 ? "VfxTubeAdditive" : "VfxTubeAlpha");
 
         glBindTexture(GL_TEXTURE_2D, glTex);
         glDrawElements(GL_TRIANGLES, (GLsizei)numIndices, GL_UNSIGNED_SHORT, (const void*)0);
@@ -1121,14 +1129,17 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
             if (s_loc_atlasColumns >= 0)
                 glUniform1ui(s_loc_atlasColumns, grp.atlasColumns);
 
-            // Per-group blend mode from MLRState (saved state restored after loop).
-            // 0 = standard alpha blend: GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA
-            // 1 = additive:             GL_SRC_ALPHA, GL_ONE
-            if (grp.blendMode == 1) {
-                glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-            } else {
-                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            }
+            // VFX-APPLYPIPELINE-ROUTING-1: per-group blend now driven by the
+            // VfxBillboard pipeline row (additive = AdditiveSrcAlphaOne = SRC_ALPHA/ONE;
+            // alpha = AlphaBlend = SRC_ALPHA/ONE_MINUS_SRC_ALPHA). applyPipeline also
+            // re-asserts the flush-level depth/cull (identical values) — provably the
+            // same GL state as the old hand-set glBlendFunc; program(0)=skip, so the
+            // bound particle program + uniforms + VAO are untouched.
+            pipeline_binder::applyPipeline(
+                RenderCore::getPipelineDesc(grp.blendMode == 1
+                    ? RenderCore::PipelineId::VfxBillboardAdditive
+                    : RenderCore::PipelineId::VfxBillboardAlpha),
+                grp.blendMode == 1 ? "VfxBillboardAdditive" : "VfxBillboardAlpha");
             // VFX-TUNING-UI-1: tell the FS whether this group is additive so the
             // additive-brightness scale applies only to additive groups.
             if (s_loc_vfxIsAdditive >= 0)
