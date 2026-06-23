@@ -338,10 +338,13 @@ static GLint s_loc_u_mechBackFillStrength    = -1;
 float g_importedMechGamma       = 1.0f;
 float g_importedMechAlbedoScale = 1.1f;
 float g_importedMechAoStrength  = 0.5f;   // AO-1: imported-mech AO multiply strength
+float g_importedMechNormalStrength = 1.0f; // NORMALS-1: imported-mech normal-map strength
 static GLint s_loc_u_importedGamma           = -1;
 static GLint s_loc_u_importedAlbedoScale     = -1;
 static GLint s_loc_u_mechAoTex               = -1;   // AO-1: AO sampler (unit 6)
 static GLint s_loc_u_aoStrength              = -1;
+static GLint s_loc_u_mechNormalTex           = -1;   // NORMALS-1: normal sampler (unit 7)
+static GLint s_loc_u_normalStrength          = -1;
 // Slice C1: StandardLit toggle. Returns -1 until mech.frag declares the uniform;
 // guarded with >= 0 at upload so no crash when shader lacks it.
 static GLint s_loc_u_standardLitEnabled      = -1;
@@ -665,6 +668,8 @@ static void loadProgramsIfNeeded() {
     s_loc_u_importedAlbedoScale     = loc("u_importedAlbedoScale");
     s_loc_u_mechAoTex               = loc("u_mechAoTex");    // AO-1
     s_loc_u_aoStrength              = loc("u_aoStrength");
+    s_loc_u_mechNormalTex           = loc("u_mechNormalTex"); // NORMALS-1
+    s_loc_u_normalStrength          = loc("u_normalStrength");
     // Slice C1: StandardLit toggle (default 0 = passthrough; shader may not declare it yet).
     s_loc_u_standardLitEnabled      = loc("u_standardLitEnabled");
     // Slice C2: PBR detail surface samplers + tile scale.
@@ -1277,6 +1282,57 @@ void GpuMechBatcher::registerTypeLod(const Mech3DAppearanceType* mechType, int l
                 const float cornerU[3] = { tri.uvdata.u0, tri.uvdata.u1, tri.uvdata.u2 };
                 const float cornerV[3] = { tri.uvdata.v0, tri.uvdata.v1, tri.uvdata.v2 };
 
+                // NORMALS-1: per-face UV-gradient tangent in object/local space (same frame
+                // as src.normal — the vert shader transforms both identically). Encoded
+                // octahedral into tangentOct for imported-GPU types ONLY; stock types keep
+                // the zero-fill below (VBO byte-identical). Degenerate UV (|det|~0) or zero-
+                // length tangent -> leave zero, which the frag treats as "no tangent" and
+                // falls back to v_normal. No NaN can escape (all divides are guarded).
+                int16_t faceTanOct[2] = { 0, 0 };
+                if (importGpu) {
+                    const TG_TypeVertex& p0 = typeShape->listOfTypeVertices[tri.Vertices[0]];
+                    const TG_TypeVertex& p1 = typeShape->listOfTypeVertices[tri.Vertices[1]];
+                    const TG_TypeVertex& p2 = typeShape->listOfTypeVertices[tri.Vertices[2]];
+                    const float e1x = p1.position.x - p0.position.x;
+                    const float e1y = p1.position.y - p0.position.y;
+                    const float e1z = p1.position.z - p0.position.z;
+                    const float e2x = p2.position.x - p0.position.x;
+                    const float e2y = p2.position.y - p0.position.y;
+                    const float e2z = p2.position.z - p0.position.z;
+                    const float du1 = cornerU[1] - cornerU[0];
+                    const float dv1 = cornerV[1] - cornerV[0];
+                    const float du2 = cornerU[2] - cornerU[0];
+                    const float dv2 = cornerV[2] - cornerV[0];
+                    const float det = du1 * dv2 - du2 * dv1;
+                    if (std::fabs(det) > 1e-8f) {
+                        const float r = 1.0f / det;
+                        float tx = r * (dv2 * e1x - dv1 * e2x);
+                        float ty = r * (dv2 * e1y - dv1 * e2y);
+                        float tz = r * (dv2 * e1z - dv1 * e2z);
+                        const float tl = std::sqrt(tx*tx + ty*ty + tz*tz);
+                        if (tl > 1e-8f) {
+                            tx /= tl; ty /= tl; tz /= tl;
+                            // octahedral encode: unit vec3 -> vec2 in [-1,1]
+                            const float invL1 = 1.0f / (std::fabs(tx) + std::fabs(ty) + std::fabs(tz));
+                            float ox = tx * invL1;
+                            float oy = ty * invL1;
+                            if (tz < 0.0f) {
+                                const float oxn = (1.0f - std::fabs(oy)) * (ox >= 0.0f ? 1.0f : -1.0f);
+                                const float oyn = (1.0f - std::fabs(ox)) * (oy >= 0.0f ? 1.0f : -1.0f);
+                                ox = oxn; oy = oyn;
+                            }
+                            auto packS = [](float v) -> int16_t {
+                                float s = v * 32767.0f;
+                                if (s >  32767.0f) s =  32767.0f;
+                                if (s < -32767.0f) s = -32767.0f;
+                                return (int16_t)std::lrintf(s);
+                            };
+                            faceTanOct[0] = packS(ox);
+                            faceTanOct[1] = packS(oy);
+                        }
+                    }
+                }
+
                 for (int c = 0; c < 3; ++c) {
                     const TG_TypeVertex& src =
                         typeShape->listOfTypeVertices[tri.Vertices[c]];
@@ -1303,9 +1359,10 @@ void GpuMechBatcher::registerTypeLod(const Mech3DAppearanceType* mechType, int l
                     vert.boneWeights[1] = 0;
                     vert.boneWeights[2] = 0;
                     vert.boneWeights[3] = 0;
-                    // tangentOct: zero-fill for stock (no .tglgpu sidecar)
-                    vert.tangentOct[0] = 0;
-                    vert.tangentOct[1] = 0;
+                    // tangentOct: NORMALS-1 face tangent for imported types; zero for stock
+                    // (no .tglgpu sidecar) -> frag falls back to v_normal.
+                    vert.tangentOct[0] = faceTanOct[0];
+                    vert.tangentOct[1] = faceTanOct[1];
                     vert.aRGBLight = src.aRGBLight;
 
                     s_stagingVbo.insert(s_stagingVbo.end(),
@@ -1881,6 +1938,8 @@ void GpuMechBatcher::flush() {
         uint32_t instanceCount;
         uint32_t aoTexHandle;   // AO-1: AO mcTextureManager slot (0=none; per-type, so
                                 // consistent within a bucket). Bound to unit 6 at draw.
+        uint32_t normalTexHandle; // NORMALS-1: normal-map slot (0=none; per-type).
+                                  // Bound to unit 7 at draw.
     };
     std::vector<DrawCall> drawCalls;
     drawCalls.reserve(buckets.size());
@@ -1906,6 +1965,8 @@ void GpuMechBatcher::flush() {
         dc.instanceCount   = (uint32_t)subs.size();
         // AO-1: AO is per-type, so all submits in this bucket share it; read from the first.
         dc.aoTexHandle     = subs.empty() ? 0u : s_pendingSubmits[subs[0]].desc.slot6TexHandle;
+        // NORMALS-1: normal map is per-type too; same bucket-share rule.
+        dc.normalTexHandle = subs.empty() ? 0u : s_pendingSubmits[subs[0]].desc.slot7TexHandle;
 
         for (uint32_t si : subs) {
             const PendingSubmit& ps   = s_pendingSubmits[si];
@@ -2045,6 +2106,10 @@ void GpuMechBatcher::flush() {
     glActiveTexture(GL_TEXTURE6);
     GLint prevTexUnit6 = 0; glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTexUnit6);
     GLint prevSampler6 = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, 6, &prevSampler6);
+    // NORMALS-1: save unit 7 (imported-mech normal map). Same leak guard.
+    glActiveTexture(GL_TEXTURE7);
+    GLint prevTexUnit7 = 0; glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTexUnit7);
+    GLint prevSampler7 = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, 7, &prevSampler7);
     glActiveTexture(GL_TEXTURE0);
     glActiveTexture(GL_TEXTURE0);
 
@@ -2123,6 +2188,8 @@ void GpuMechBatcher::flush() {
     if (s_loc_u_importedAlbedoScale >= 0) glUniform1f(s_loc_u_importedAlbedoScale, g_importedMechAlbedoScale);
     if (s_loc_u_mechAoTex           >= 0) glUniform1i(s_loc_u_mechAoTex,           6);  // AO-1: unit 6
     if (s_loc_u_aoStrength          >= 0) glUniform1f(s_loc_u_aoStrength,          g_importedMechAoStrength);
+    if (s_loc_u_mechNormalTex       >= 0) glUniform1i(s_loc_u_mechNormalTex,       7);  // NORMALS-1: unit 7
+    if (s_loc_u_normalStrength      >= 0) glUniform1f(s_loc_u_normalStrength,      g_importedMechNormalStrength);
     // Slice B1: lighting mode 0 = Slice A flat-white passthrough,
     // 1 = calc_light() per-vertex. Set per-flush from killswitch.
     if (s_loc_u_lightingMode >= 0)
@@ -2363,6 +2430,18 @@ void GpuMechBatcher::flush() {
             glBindSampler(6, 0);
             glActiveTexture(GL_TEXTURE0);
         }
+        // NORMALS-1: bind this type's normal map to unit 7 (same contract as AO unit 6).
+        // HAS_NORMAL bit is OFF for normal-less types, so an unbound unit 7 is never
+        // sampled. textureLod(...,0) in the frag avoids AMD mip strict-fail.
+        {
+            const DWORD nrmGos = (dc.normalTexHandle != 0u && dc.normalTexHandle != 0xFFFFFFFFu && mcTextureManager)
+                ? mcTextureManager->get_gosTextureHandle(dc.normalTexHandle) : 0u;
+            const uint32_t nrmGlId = nrmGos ? gos_GetGLTextureId((uint32_t)nrmGos) : 0u;
+            glActiveTexture(GL_TEXTURE7);
+            glBindTexture(GL_TEXTURE_2D, nrmGlId);
+            glBindSampler(7, 0);
+            glActiveTexture(GL_TEXTURE0);
+        }
         // The actual texture-black fix in Slice A is mech.frag's
         // textureLod(u_tex, v_uv, 0.0) — see memory/amd_auto_lod_strict_fail.md.
         // Sampler-state inheritance is defended by the glBindSampler(0,
@@ -2406,6 +2485,10 @@ void GpuMechBatcher::flush() {
     glActiveTexture(GL_TEXTURE6);
     glBindTexture(GL_TEXTURE_2D, (GLuint)prevTexUnit6);
     glBindSampler(6, (GLuint)prevSampler6);
+    // NORMALS-1: restore unit 7.
+    glActiveTexture(GL_TEXTURE7);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)prevTexUnit7);
+    glBindSampler(7, (GLuint)prevSampler7);
     glActiveTexture((GLenum)prevActiveTex);
     glBindSampler(0, (GLuint)prevSampler);
     glBindVertexArray((GLuint)prevVao);
@@ -2685,6 +2768,10 @@ extern "C" void  batcher_setImportedMechAoStrength(float s) {
     if (s < 0.0f) s = 0.0f; if (s > 1.0f) s = 1.0f; g_importedMechAoStrength = s;
 }
 extern "C" float batcher_getImportedMechAoStrength()         { return g_importedMechAoStrength; }
+extern "C" void  batcher_setImportedMechNormalStrength(float s) {
+    if (s < 0.0f) s = 0.0f; if (s > 1.0f) s = 1.0f; g_importedMechNormalStrength = s;
+}
+extern "C" float batcher_getImportedMechNormalStrength()     { return g_importedMechNormalStrength; }
 extern "C" void  batcher_setMechGlassRoughness(float r) {
     if (r < 0.04f) r = 0.04f;
     if (r > 1.0f)  r = 1.0f;

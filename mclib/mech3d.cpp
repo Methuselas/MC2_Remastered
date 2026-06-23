@@ -2103,6 +2103,27 @@ void Mech3DAppearance::resetPaintScheme (DWORD red, DWORD green, DWORD blue)
 		}
 	}
 
+	// NORMALS-1: load the imported-mech normal map once (same contract as AO: linear
+	// BC7, base-chassis, skin-independent). HAS_NORMAL is asserted at submit ONLY if
+	// normalValid, so a missing/failed normal never corrupts shading (v_normal fallback).
+	if (!normalValid && mechShape->GetNumShapes() > 0) {
+		const void* nrmTypeKey = mechType ? (const void*)mechType->mechShape[currentLOD] : nullptr;
+		const char* nrmName = mc2mechanim::ImportedMechNormalTexName(nrmTypeKey);
+		if (nrmName && nrmName[0]) {
+			char nrmPath[1024];
+			sprintf(nrmPath, "%s%d" PATH_SEPARATOR, tglPath, ObjectTextureSize);
+			FullPathFileName nrmFull;
+			nrmFull.init(nrmPath, (char*)nrmName, "");
+			if (textureOrKtxSidecarExists(nrmFull)) {
+				normalTextureHandle = mcTextureManager->loadTexture(nrmFull, gos_Texture_Solid,
+					gosHint_DontShrink);
+				normalValid = (normalTextureHandle != 0 && normalTextureHandle != 0xFFFFFFFFu);
+			}
+			if (!normalValid)
+				fprintf(stderr, "[MECH_IMPORT] normal '%s' not loaded -> no-op (v_normal)\n", nrmName);
+		}
+	}
+
 	//---------------------------------------------------------------------------------
 	// Simple really.  Toss the current texture, reload the RGB and reapply the colors
 
@@ -2879,6 +2900,9 @@ long Mech3DAppearance::render (long depthFixup)
 				// AO-1: carry the AO slot (0 when no/failed AO). HAS_AO bit (4) added
 				// below ONLY if aoValid, so the shader samples unit 6 iff a real AO loaded.
 				desc.slot6TexHandle = aoValid ? (uint32_t)aoTextureHandle : 0u;
+				// NORMALS-1: carry the normal-map slot. HAS_NORMAL bit (5) added below ONLY
+				// if normalValid, so the shader samples unit 7 iff a real normal map loaded.
+				desc.slot7TexHandle = normalValid ? (uint32_t)normalTextureHandle : 0u;
 				// Slice B1: use the dedup-cache slot populated by
 				// CacheGpuLightData() in update(). 0xFFFFFFFFu sentinel
 				// means "not yet cached" (e.g. spawn-frame before the
@@ -2902,6 +2926,7 @@ long Mech3DAppearance::render (long depthFixup)
 					(status == OBJECT_STATUS_SHUTDOWN);
 				desc.renderFlags    = lightsOut ? 0x2u : 0x0u;  // bit 1
 				if (aoValid) desc.renderFlags |= 0x10u;          // AO-1: bit 4 = HAS_AO (handle loaded)
+				if (normalValid) desc.renderFlags |= 0x20u;      // NORMALS-1: bit 5 = HAS_NORMAL (handle loaded)
 				desc.highlightARGB  = gpuHighlightARGB;
 				// Slice B2: pack actor hazeFactor [0,1] into the alpha
 				// byte of fogARGB. mech.vert combines it with

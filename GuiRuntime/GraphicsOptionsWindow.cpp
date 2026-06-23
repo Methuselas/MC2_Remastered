@@ -99,6 +99,8 @@ extern "C" float batcher_getImportedMechAlbedoScale(void);
 extern "C" void  batcher_setImportedMechAlbedoScale(float s);
 extern "C" float batcher_getImportedMechAoStrength(void);
 extern "C" void  batcher_setImportedMechAoStrength(float s);
+extern "C" float batcher_getImportedMechNormalStrength(void);
+extern "C" void  batcher_setImportedMechNormalStrength(float s);
 extern "C" int   batcher_getStandardLitEnabled(void);
 extern "C" void  batcher_setStandardLitEnabled(int on);
 extern "C" float batcher_getPbrMetallicInfluence(void);
@@ -1678,6 +1680,17 @@ static void drawMechSection() {
                               "an AO map are unaffected (white/no-op).");
         ImGui::SameLine();
         if (ImGui::SmallButton("Reset##impao")) batcher_setImportedMechAoStrength(0.5f);
+
+        float ns = batcher_getImportedMechNormalStrength();
+        if (ImGui::SliderFloat("Imported Normal Strength##mech", &ns, 0.0f, 1.0f, "%.2f"))
+            batcher_setImportedMechNormalStrength(ns);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Tangent-space normal-map strength, IMPORTED BT mechs with a\n"
+                              "normal map only. 0 = no-op (geometric normal / fallback-proven);\n"
+                              "1 = full map. Default 1.0. Mechs without a normal map are\n"
+                              "unaffected (v_normal fallback).");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##impnrm")) batcher_setImportedMechNormalStrength(1.0f);
     }
     ImGui::Spacing();
     ImGui::SeparatorText("Mech Lighting");

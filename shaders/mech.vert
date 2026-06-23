@@ -127,14 +127,22 @@ flat out uint v_objectIdRaw;
 // so the frag can sRGB->linear correct imported BT skins only. flat (integer varying).
 #ifdef MC2_IMPORTED_MECH_MATERIAL
 flat out uint v_importedMech;
+// BT2018-MECH-MATERIAL-NORMALS-1: world-space tangent for the imported-mech TBN.
+// Decoded from a_tangentOct (loc 5; batcher writes a UV-gradient face tangent for
+// imported types, zero for stock). Bitangent reconstructed in the frag as
+// cross(N,T) (handedness w=+1 for v1; mirrored-UV islands = documented residual).
+// Smooth varying: the face tangent is constant across a triangle's 3 corners, so
+// interpolation is well-behaved. Only consumed when HAS_NORMAL (v_importedMech bit2).
+out vec3 v_tangentGL;
 #endif
 
 void main() {
     uint instIdx = uint(u_instanceBase) + uint(gl_InstanceID);
     GpuMechInstance inst = instances[instIdx];
 #ifdef MC2_IMPORTED_MECH_MATERIAL
-    // bit0 = imported (renderFlags bit3), bit1 = HAS_AO (renderFlags bit4).
-    v_importedMech = (inst.renderFlags >> 3) & 3u;
+    // bit0 = imported (renderFlags bit3), bit1 = HAS_AO (renderFlags bit4),
+    // bit2 = HAS_NORMAL (renderFlags bit5). NORMALS-1 widened 3u -> 7u.
+    v_importedMech = (inst.renderFlags >> 3) & 7u;
 #endif
 
     // Bone transform: boneT is the transpose of the Stuff LinearMatrix4D.
@@ -229,6 +237,26 @@ void main() {
     // mech3d.cpp; .rgb of inst.fogRGB is unused for mechs.
     v_fogRGB         = vec4(g_scene.fogColor.rgb, inst.fogRGB.a);
     v_normal         = worldNormal;
+
+#ifdef MC2_IMPORTED_MECH_MATERIAL
+    // BT2018-MECH-MATERIAL-NORMALS-1: decode the octahedral tangent (loc 5), transform
+    // through the SAME bone matrix + Stuff->GL swap as the normal so T and N share a
+    // frame, then Gram-Schmidt against worldNormal. Stock verts carry a_tangentOct = 0
+    // which decodes to a degenerate dir; harmless because the frag only reads v_tangentGL
+    // when HAS_NORMAL is set (never for stock). octDecode: standard oct -> unit vec3.
+    vec2 te = a_tangentOct;                                  // GL_SHORT-normalized [-1,1]
+    vec3 tLocal = vec3(te.xy, 1.0 - abs(te.x) - abs(te.y));
+    if (tLocal.z < 0.0)
+        tLocal.xy = (1.0 - abs(tLocal.yx)) *
+                    vec2(tLocal.x >= 0.0 ? 1.0 : -1.0, tLocal.y >= 0.0 ? 1.0 : -1.0);
+    tLocal = normalize(tLocal);
+    vec3 tStuff = mat3(boneT) * tLocal;
+    vec3 tGL    = vec3(-tStuff.x, tStuff.z, tStuff.y);       // same swap as worldNormal
+    // Gram-Schmidt orthonormalize against the (already normalized) world normal.
+    tGL = tGL - worldNormal * dot(worldNormal, tGL);
+    float tLen = length(tGL);
+    v_tangentGL = (tLen > 1e-5) ? (tGL / tLen) : vec3(0.0);  // 0 -> frag falls back to v_normal
+#endif
 
 #ifdef MC2_USE_VIEW_UNIFORMS
     // MECH-SPECULAR-V1: forward world position and sun direction for the

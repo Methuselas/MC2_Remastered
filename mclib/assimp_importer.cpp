@@ -753,6 +753,8 @@ struct ImportedAnimEntry {
                                             // (from bt2018_mech_package.json "nodes").
     std::string aoTexName;                  // AO-1: materials.ao.tga (deriveName stem +
                                             // .tga); empty = no AO. Loaded -> unit 6.
+    std::string normalTexName;              // NORMALS-1: materials.normal.tga; empty = no
+                                            // normal map. Loaded -> unit 7.
     float               scale    = 1.0f;
     float               groundDy = 0.0f;   // MC2-space Y offset applied at import
     float               initialDuration = 1.0f;
@@ -911,7 +913,7 @@ inline bool gestureHoldsAtEnd(int gesture) { return gesture == 23 || gesture == 
 // <stem>.package.json. Minimal flat-map scan (no JSON dependency; the generator
 // controls the format). Leaves the map empty (→ legacy node lookup) if absent.
 void LoadMechPackage(const char* glbPath, std::map<std::string, std::string>& out,
-                     std::string& aoOut) {
+                     std::string& aoOut, std::string& normalOut) {
     if (!glbPath) return;
     std::string p(glbPath);
     size_t dot = p.rfind(".glb");
@@ -958,9 +960,21 @@ void LoadMechPackage(const char* glbPath, std::map<std::string, std::string>& ou
                     aoOut = buf.substr(v0 + 1, v1 - v0 - 1);
             }
         }
+        // NORMALS-1: materials.normal.tga (mirror the AO key; .ktx2 sidecar resolves it).
+        size_t nrmKey = buf.find("\"normal\"", mat);
+        if (nrmKey != std::string::npos) {
+            size_t tga = buf.find("\"tga\"", nrmKey);
+            if (tga != std::string::npos) {
+                size_t colon = buf.find(':', tga);
+                size_t v0 = (colon != std::string::npos) ? buf.find('"', colon + 1) : std::string::npos;
+                size_t v1 = (v0 != std::string::npos) ? buf.find('"', v0 + 1) : std::string::npos;
+                if (v0 != std::string::npos && v1 != std::string::npos)
+                    normalOut = buf.substr(v0 + 1, v1 - v0 - 1);
+            }
+        }
     }
-    fprintf(stderr, "[MECH_IMPORT] package '%s': %zu nodes, ao='%s'\n",
-            side.c_str(), out.size(), aoOut.c_str());
+    fprintf(stderr, "[MECH_IMPORT] package '%s': %zu nodes, ao='%s' normal='%s'\n",
+            side.c_str(), out.size(), aoOut.c_str(), normalOut.c_str());
 }
 
 // Keep a dedicated parse alive for the runtime re-bake: the import's own Importer
@@ -980,7 +994,7 @@ void RegisterImportedAnim(const char* path, TG_TypeMultiShape* out, const SkelBa
     e.shape = static_cast<TG_TypeShape*>(slot);
     e.multi = out;
     e.names = bake.names;
-    LoadMechPackage(path, e.nodeManifest, e.aoTexName);  // 1A nodes + AO-1 ao tex name
+    LoadMechPackage(path, e.nodeManifest, e.aoTexName, e.normalTexName);  // 1A nodes + AO + NORMALS tex names
     e.pinnedClip = bake.forcedClip;   // empty -> 1C dynamic selection
     // Initial clip: the pinned clip if any, else idle. Fall back to whatever the
     // scene's first clip is when even idle is absent, so the tick always animates.
@@ -1108,6 +1122,16 @@ const char* mc2mechanim::ImportedMechAoTexName(const void* typeKey) {
     for (const ImportedAnimEntry& e : g_importedAnims)
         if ((const void*)e.multi == typeKey)
             return e.aoTexName.empty() ? nullptr : e.aoTexName.c_str();
+    return nullptr;
+}
+
+// NORMALS-1: the imported mech's normal-map texture name (materials.normal.tga from the
+// package), or nullptr if this type isn't imported / declares no normal. The caller
+// (mech3d resetPaintScheme) loads it via mcTextureManager and binds it on unit 7.
+const char* mc2mechanim::ImportedMechNormalTexName(const void* typeKey) {
+    for (const ImportedAnimEntry& e : g_importedAnims)
+        if ((const void*)e.multi == typeKey)
+            return e.normalTexName.empty() ? nullptr : e.normalTexName.c_str();
     return nullptr;
 }
 

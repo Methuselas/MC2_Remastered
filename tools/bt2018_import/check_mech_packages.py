@@ -7,7 +7,10 @@ For each deployed <chassis>.package.json, verify package/data agreement:
   - HAS_AO in featureBits  IFF  materials.ao declared
   - if materials.ao declared -> its dump source (-Base-amb.png) exists
   - AO logicalFormat is linear-grayscale (never sRGB/color) and container documented
-  - normal declared -> noted (Slice 2B; not yet cooked/consumed)
+  - HAS_NORMAL in featureBits  IFF  materials.normal declared
+  - if materials.normal declared -> dump source (-Base-nrm.png) exists, cooked .ktx2
+    exists, logicalFormat is linear-normal-xyz (engine derives HAS_NORMAL at runtime
+    from whether the .ktx2 loads; this checker validates the bit anyway)
 
 Exit 0 = consistent. Non-zero = packages and data disagree. Read-only.
 
@@ -29,7 +32,7 @@ def main():
     if not pkgs:
         sys.exit(f"FAIL: no *.package.json in {args.deploy}")
 
-    errors, warns, n_ao = [], [], 0
+    errors, warns, n_ao, n_nrm = [], [], 0, 0
     for p in pkgs:
         name = os.path.basename(p)[:-len(".package.json")]
         d = json.load(open(p, encoding="utf-8"))
@@ -61,10 +64,28 @@ def main():
                     errors.append(f"{name}: AO dump source missing ({src})")
             else:
                 errors.append(f"{name}: AO source not a dump ref ({src!r})")
-        if "normal" in mats:
-            warns.append(f"{name}: normal declared (Slice 2B; not yet cooked/consumed)")
+        has_nrm_bit = "HAS_NORMAL" in feats
+        has_nrm_mat = "normal" in mats
+        if has_nrm_bit != has_nrm_mat:
+            errors.append(f"{name}: HAS_NORMAL bit({has_nrm_bit}) != materials.normal({has_nrm_mat})")
+        if has_nrm_mat:
+            n_nrm += 1
+            nm = mats["normal"]
+            if nm.get("logicalFormat") != "linear-normal-xyz":
+                errors.append(f"{name}: normal logicalFormat must be linear-normal-xyz, got {nm.get('logicalFormat')!r}")
+            if "container" not in nm:
+                warns.append(f"{name}: normal container not documented")
+            nsrc = nm.get("source", "")
+            if nsrc.startswith("dump:Texture2D/"):
+                if not os.path.isfile(os.path.join(tex2d, nsrc.split("/", 1)[1])):
+                    errors.append(f"{name}: normal dump source missing ({nsrc})")
+            else:
+                errors.append(f"{name}: normal source not a dump ref ({nsrc!r})")
+            # cooked artifact (HAS_NORMAL derives at runtime from the .ktx2 loading)
+            if not os.path.isfile(os.path.join(args.deploy, nm.get("ktx2", ""))):
+                errors.append(f"{name}: normal artifact missing ({nm.get('ktx2')})")
 
-    print(f"[check] packages={len(pkgs)} with-AO={n_ao} errors={len(errors)} warns={len(warns)}")
+    print(f"[check] packages={len(pkgs)} with-AO={n_ao} with-NORMAL={n_nrm} errors={len(errors)} warns={len(warns)}")
     for w in warns[:10]:
         print("  WARN  " + w)
     if len(warns) > 10:

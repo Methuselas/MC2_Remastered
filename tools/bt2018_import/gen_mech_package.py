@@ -59,7 +59,11 @@ def main():
     # chrTxrMech_<chassis>-Base-amb[.png] or with a -NNN export-index suffix
     # (e.g. shadowhawk-base-amb-001.png). Skip Unity '#hash' dupes.
     _ao_re = _re.compile(r"^chrtxrmech_(.+?)-base-amb(?:-\d+)?\.png$")
-    ao_index = {}  # lowercase chassis -> source png path
+    # NORMAL (-nrm) mirrors AO EXACTLY: dump-sourced, base-chassis-keyed,
+    # skin-independent. Pick the CLEAN base-chassis PNG (no Unity '#hash').
+    _nrm_re = _re.compile(r"^chrtxrmech_(.+?)-base-nrm(?:-\d+)?\.png$")
+    ao_index = {}   # lowercase chassis -> AO source png path
+    nrm_index = {}  # lowercase chassis -> normal source png path
     if os.path.isdir(tex2d):
         for fn in os.listdir(tex2d):
             if "#" in fn:
@@ -67,9 +71,13 @@ def main():
             m = _ao_re.match(fn.lower())
             if m:
                 ao_index.setdefault(m.group(1), os.path.join(tex2d, fn))
+            mn = _nrm_re.match(fn.lower())
+            if mn:
+                nrm_index.setdefault(mn.group(1), os.path.join(tex2d, fn))
 
     total_missing = 0
     ao_missing = []
+    nrm_missing = []
     for bt in mechs:
         glb = os.path.join(args.conversions, f"{bt}.glb")
         if not os.path.isfile(glb):
@@ -108,11 +116,10 @@ def main():
         if alb:
             materials["albedo"] = {"tga": alb + ".tga", "ktx2": alb + ".ktx2",
                                    "logicalFormat": "srgb-rgb", "container": "bc7"}
-        nrm = _img_stem("-base-nrm") or _img_stem("nrm")   # embedded in GLB (Slice 2B)
-        if nrm:  # declared for NORMALS-1; not yet consumed
-            materials["normal"] = {"tga": nrm + ".tga", "ktx2": nrm + ".ktx2",
-                                   "logicalFormat": "linear-normal-xyz", "container": "bc7"}
-        # AO from the DUMP (not GLB), keyed by base chassis (variant suffix stripped;
+        # AO + NORMAL from the DUMP (not GLB), keyed by base chassis (variant suffix
+        # stripped; both are geometry-based / skin-independent — one -Base-amb and one
+        # -Base-nrm per chassis). Normal mirrors AO EXACTLY: BC7 (the KTX_PRIMARY decoder
+        # only handles BC7 145/146; BC5 is decoder-blocked), full XYZ in RGB.
         # AO is skin-independent). logicalFormat = linear single-channel; the CURRENT
         # container is BC7 (compatibility — the KTX_PRIMARY decoder only handles BC7
         # 145/146; a BC4/R8 path does not exist yet). DO NOT treat AO as color/sRGB.
@@ -128,6 +135,17 @@ def main():
             feature_bits.append("HAS_AO")
         else:
             ao_missing.append(bt)
+        nrm_src = nrm_index.get(chassis)
+        if nrm_src:
+            nrm_stem = f"chrtxrmech_{chassis}-base-nrm"
+            materials["normal"] = {"tga": nrm_stem + ".tga", "ktx2": nrm_stem + ".ktx2",
+                                   "logicalFormat": "linear-normal-xyz",
+                                   "container": "bc7",
+                                   "source": "dump:Texture2D/" + os.path.basename(nrm_src),
+                                   "skinIndependent": True}
+            feature_bits.append("HAS_NORMAL")
+        else:
+            nrm_missing.append(bt)
         pkg = {
             "schema": "bt2018-mech-package/2",
             "chassisId": bt,
@@ -153,6 +171,10 @@ def main():
         print(f"[pkg] AO MISSING (no dump -Base-amb for base chassis) for {len(ao_missing)}: {sorted(ao_missing)}")
     else:
         print(f"[pkg] AO: all mechs resolved a dump -Base-amb source")
+    if nrm_missing:
+        print(f"[pkg] NORMAL MISSING (no dump -Base-nrm for base chassis) for {len(nrm_missing)}: {sorted(nrm_missing)}")
+    else:
+        print(f"[pkg] NORMAL: all mechs resolved a dump -Base-nrm source")
 
 
 if __name__ == "__main__":

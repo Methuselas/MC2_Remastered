@@ -125,6 +125,9 @@ struct GpuMechSubmitDesc {
     uint32_t                    slot6TexHandle; // AO-1: AO mcTextureManager SLOT INDEX
                                                // (0 = no AO). Resolved to a gos handle at
                                                // flush + bound to unit 6 when HAS_AO.
+    uint32_t                    slot7TexHandle; // NORMALS-1: normal-map mcTextureManager
+                                               // SLOT INDEX (0 = no normal). Resolved at
+                                               // flush + bound to unit 7 when HAS_NORMAL.
     uint32_t                    lightDataIndex; // Slice B1; 0 in Slice A
     uint32_t                    renderFlags;
     uint32_t                    highlightARGB;

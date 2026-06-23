@@ -440,6 +440,8 @@ class Mech3DAppearance: public ObjectAppearance
 		DWORD						localTextureHandle;
 		DWORD						aoTextureHandle = 0;   // AO-1: imported-mech AO slot (unit 6)
 		bool						aoValid = false;       // AO-1: AO handle loaded OK (gates HAS_AO)
+		DWORD						normalTextureHandle = 0; // NORMALS-1: imported-mech normal slot (unit 7)
+		bool						normalValid = false;     // NORMALS-1: normal handle loaded OK (gates HAS_NORMAL)
 		float						baseRootNodeHeight;
 
 		DWORD						psRed;

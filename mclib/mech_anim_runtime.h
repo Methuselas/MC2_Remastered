@@ -75,6 +75,11 @@ int ImportedGpuLiftAxis();
 // if not imported / no AO declared. Caller loads it + binds on texture unit 6.
 const char* ImportedMechAoTexName(const void* typeKey);
 
+// NORMALS-1: imported mech's normal-map texture name (materials.normal.tga from the
+// package), or nullptr if not imported / no normal declared. Caller loads it + binds on
+// texture unit 7.
+const char* ImportedMechNormalTexName(const void* typeKey);
+
 // BT2018-MECH-NODE-MANIFEST-1A. Resolve an MC2 semantic node name (e.g.
 // "weapon_rightarm", "hit_left") to the imported mech's animated joint WORLD
 // position, via the per-mech package manifest (mc2Name -> source joint) + the live

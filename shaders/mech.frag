@@ -48,6 +48,12 @@ uniform float u_importedGamma;        // exponent: 1.0 = neutral .. 2.2 = full s
 uniform float u_importedAlbedoScale;  // post-gamma brightness multiplier
 uniform sampler2D u_mechAoTex;        // AO-1: unit 6, linear grayscale (.r), imported only
 uniform float u_aoStrength;           // AO-1: 0 = no-op (== pre-AO look), 1 = full AO
+// BT2018-MECH-MATERIAL-NORMALS-1: tangent-space normal map (unit 7, BC7-linear, XYZ in
+// RGB). Sampled only when HAS_NORMAL (v_importedMech bit2) is set by the CPU, which
+// happens iff the .ktx2 handle loaded -> missing artifact = bit clear = v_normal fallback.
+uniform sampler2D u_mechNormalTex;    // NORMALS-1: unit 7
+uniform float u_normalStrength;       // NORMALS-1: 0 = no-op (geometric normal), 1 = full map
+in vec3 v_tangentGL;                  // NORMALS-1: world-space tangent from mech.vert
 #endif
 
 uniform sampler2D u_tex;
@@ -192,6 +198,23 @@ void main() {
         c.rgb *= mix(1.0, ao, u_aoStrength);
     }
 #endif
+
+    // BT2018-MECH-MATERIAL-NORMALS-1: the per-fragment shading normal. Defaults to the
+    // geometric world normal (byte-identical to pre-NORMALS-1 for stock + AO-only mechs).
+    // For imported mechs with HAS_NORMAL (v_importedMech bit2) and a non-degenerate
+    // tangent, perturb it by the tangent-space normal map. Bitangent = cross(N,T) with
+    // handedness w=+1 (mirrored-UV islands = documented residual). textureLod(...,0) avoids
+    // AMD mip strict-fail. Mix by u_normalStrength so 0 == no-op / fallback-proven.
+    vec3 Nshade = normalize(v_normal);
+#ifdef MC2_IMPORTED_MECH_MATERIAL
+    if ((v_importedMech & 4u) != 0u && dot(v_tangentGL, v_tangentGL) > 1e-8) {
+        vec3 T  = normalize(v_tangentGL - Nshade * dot(Nshade, v_tangentGL));
+        vec3 B  = cross(Nshade, T);                          // w = +1
+        vec3 nt = textureLod(u_mechNormalTex, v_uv, 0.0).xyz * 2.0 - 1.0;  // BC7 XYZ
+        vec3 Nmap = normalize(mat3(T, B, Nshade) * nt);
+        Nshade = normalize(mix(Nshade, Nmap, u_normalStrength));
+    }
+#endif
     // MECH-AMBIENT-1 (gated): conservative hemisphere ambient FILL. Lifts
     // shadowed/under-lit surfaces for readability without touching the lit
     // model, PBR, materials, or team-baked albedo. Keyed on the world normal's
@@ -199,7 +222,7 @@ void main() {
     // mech's own colour. u_mechAmbientV1Strength == 0.0 -> exact no-op
     // (byte-identical default path). Added before fog so it hazes consistently.
     {
-        vec3  Nw    = normalize(v_normal);
+        vec3  Nw    = Nshade;   // NORMALS-1: normal-mapped for imported mechs, else v_normal
         float upAmt = 0.5 + 0.5 * Nw.y;                       // 0 = down, 1 = up
         vec3  hemi  = mix(vec3(0.20, 0.18, 0.16),             // ground (warm/dark)
                           vec3(0.55, 0.60, 0.70), upAmt);     // sky (cool)
@@ -240,7 +263,7 @@ void main() {
             // lobe rather than a degenerate or negative exponent.
             float rough     = isGlass ? u_mechGlassRoughness : u_mechMetalRoughness;
             float specMul   = isGlass ? 1.6 : 1.0;  // glass cockpit slightly hotter (modest)
-            vec3  N = normalize(v_normal);                           // GL space (swapped in vert)
+            vec3  N = Nshade;       // NORMALS-1: normal-mapped (imported) else v_normal; GL space
             vec3  V = normalize(u_cameraWorldPos.xyz - v_worldPos);  // GL space
             // v_mechSunDirGL is the NEGATED surface->sun direction (lighting.hglsl
             // convention: light_dir.xyz = -(surface->sun)); negate to recover L.
@@ -260,7 +283,7 @@ void main() {
 #endif  // MC2_USE_VIEW_UNIFORMS
 
     // GBuffer normal; updated to PBR detail normal when StandardLit active.
-    vec3 N_gbuf = normalize(v_normal);
+    vec3 N_gbuf = Nshade;   // NORMALS-1: normal-mapped (imported) else v_normal
 
 #ifdef MC2_USE_VIEW_UNIFORMS
     // Slice C2/C3/D: StandardLit GGX PBR surface-detail layer.
