@@ -6077,8 +6077,15 @@ void execRequestHelp (void) {
 		friendlyPos.z = 0.0;
 		MoverPtr friendlies[MAX_MOVERS];
 		long commanderID = -1;
-		if (MPlayer || (CurWarrior->getTeam() == Team::home))
-			commanderID = CurWarrior->getCommander()->getId();
+		if (MPlayer || (CurWarrior->getTeam() == Team::home)) {
+			CommanderPtr _cmdr = CurWarrior->getCommander();
+			if (s_ablArgGuard && !_cmdr)
+				abl_arg_guard_log("execRequestHelp", "commander");
+			else if (_cmdr)
+				commanderID = _cmdr->getId();
+			else
+				commanderID = CurWarrior->getCommander()->getId();
+		}
 		long numFriendlies = getMoversWithinRadius(friendlies, friendlyPos, friendlyRadius, CurWarrior->getTeam()->getId(), commanderID, false, true, priority > 0);
 
 		GameObjectPtr enemy = ObjectManager->findByPartId(enemyPartID);
@@ -6111,8 +6118,15 @@ void execRequestTarget (void) {
 		MoverPtr friendlies[MAX_MOVERS];
 		MoverPtr enemies[MAX_MOVERS];
 		long commanderID = -1;
-		if (MPlayer || (CurWarrior->getTeam() == Team::home))
-			commanderID = CurWarrior->getCommander()->getId();
+		if (MPlayer || (CurWarrior->getTeam() == Team::home)) {
+			CommanderPtr _cmdr = CurWarrior->getCommander();
+			if (s_ablArgGuard && !_cmdr)
+				abl_arg_guard_log("execRequestTarget", "commander");
+			else if (_cmdr)
+				commanderID = _cmdr->getId();
+			else
+				commanderID = CurWarrior->getCommander()->getId();
+		}
 		long numFriendlies = getMoversWithinRadius(friendlies, friendlyPos, radius, CurWarrior->getTeam()->getId(), commanderID, false, true, true);
 		long numEnemies = getMoversWithinRadius(enemies, friendlyPos, radius, CurWarrior->getTeam()->getId(), -1,true, true, true);
 		GameObjectPtr bestTarget = NULL;
