@@ -157,4 +157,41 @@ const char* getPipelineVariantKey(PipelineId id) {
     return s_variantKeys[idx].c_str();
 }
 
+// VERTEXLAYOUT-AUTHORITY-1: canonical layout-name table, indexed by
+// VertexLayoutId. MUST stay lockstep with the enum's "// layout:" comments and
+// the pipeline-key schema (cross-checked by scripts/check-pipeline-key.py).
+static constexpr const char* kVertexLayoutNames[] = {
+    /* [0] Invalid          */ "",
+    /* [1] StaticProp40B    */ "static_prop_40B",
+    /* [2] MechGpuVertex48B */ "mech_GpuMechVertex_48B",
+};
+static_assert(
+    sizeof(kVertexLayoutNames) / sizeof(kVertexLayoutNames[0]) ==
+        static_cast<size_t>(VertexLayoutId::Count_),
+    "kVertexLayoutNames must have one entry per VertexLayoutId value.");
+
+const char* vertexLayoutName(VertexLayoutId id) {
+    const auto idx = static_cast<size_t>(id);
+    if (idx == 0u || idx >= static_cast<size_t>(VertexLayoutId::Count_))
+        return "";
+    return kVertexLayoutNames[idx];
+}
+
+// Per-PipelineId vertex-layout identity. Value-initialized to Invalid (0).
+static std::array<VertexLayoutId, static_cast<size_t>(PipelineId::Count_)> s_vertexLayouts;
+
+void recordPipelineVertexLayout(PipelineId id, VertexLayoutId layout) {
+    const auto idx = static_cast<size_t>(id);
+    if (idx == 0u || idx >= static_cast<size_t>(PipelineId::Count_))
+        return;
+    s_vertexLayouts[idx] = layout;
+}
+
+VertexLayoutId getPipelineVertexLayout(PipelineId id) {
+    const auto idx = static_cast<size_t>(id);
+    if (idx == 0u || idx >= static_cast<size_t>(PipelineId::Count_))
+        return VertexLayoutId::Invalid;
+    return s_vertexLayouts[idx];
+}
+
 } // namespace RenderCore

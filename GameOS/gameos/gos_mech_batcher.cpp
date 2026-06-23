@@ -579,8 +579,14 @@ static void loadProgramsIfNeeded() {
             glsl_program::shaderDefineKey(mechPrefix.c_str());
         RenderCore::recordPipelineVariantKey(RenderCore::PipelineId::MechOpaque,
                                              pkVariant.c_str());
-        fprintf(stderr, "[PIPELINE_VARIANT] pipeline=MechOpaque glProgram=%u key=%s\n",
-                s_mechProgram, pkVariant.c_str());
+        // VERTEXLAYOUT-AUTHORITY-1: the MechOpaque PipelineKey is (shaderVariant +
+        // vertexLayout). Record the fixed GpuMechVertex 48B VAO identity
+        // (gos_mech_batcher.cpp:1376-1382). Pure metadata; no GL change.
+        RenderCore::recordPipelineVertexLayout(RenderCore::PipelineId::MechOpaque,
+                                               RenderCore::VertexLayoutId::MechGpuVertex48B);
+        fprintf(stderr, "[PIPELINE_VARIANT] pipeline=MechOpaque glProgram=%u key=%s vertexLayout=%s\n",
+                s_mechProgram, pkVariant.c_str(),
+                RenderCore::vertexLayoutName(RenderCore::VertexLayoutId::MechGpuVertex48B));
         fflush(stderr);
     }
 

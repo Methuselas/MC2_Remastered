@@ -32,6 +32,24 @@ enum class PipelineId : uint32_t {
     Count_              = 5,   // sentinel — do not use as an ID
 };
 
+// VERTEXLAYOUT-AUTHORITY-1: stable repo-owned vertex-input layout identities —
+// the VAO half of a PSO key. Each value names a fixed, finite vertex layout used
+// by a registered pipeline. The canonical layout-name token in the trailing
+// "// layout: <name>" comment is AUTHORITATIVE: scripts/check-pipeline-key.py
+// parses it and cross-checks it against the pipeline-key schema's per-pipeline
+// vertexLayoutId/vertexLayout. Renaming a value or its layout string without
+// updating the schema (or vice versa) FAILS the pipeline_key gate.
+enum class VertexLayoutId : uint32_t {
+    Invalid          = 0,
+    StaticProp40B    = 1,   // layout: static_prop_40B (gos_static_prop_batcher.cpp:2310-2323)
+    MechGpuVertex48B = 2,   // layout: mech_GpuMechVertex_48B (gos_mech_batcher.cpp:1376-1382)
+    Count_           = 3,   // sentinel — do not use as an ID
+};
+
+// Canonical layout-name string for id (the same token recorded in the
+// pipeline-key schema). Returns "" for Invalid / out-of-range.
+const char* vertexLayoutName(VertexLayoutId id);
+
 // Return the static GL-state contract for id.
 // glProgramName is 0 until bindProgram() is called for that id.
 // Out-of-range or Invalid returns a zeroed sentinel (all false, all 0).
@@ -51,5 +69,13 @@ void bindProgram(PipelineId id, uint32_t glProgramName);
 // Empty until recorded; safe to call once at program build.
 void recordPipelineVariantKey(PipelineId id, const char* variantKey);
 const char* getPipelineVariantKey(PipelineId id);
+
+// VERTEXLAYOUT-AUTHORITY-1: record the vertex-input layout identity bound for
+// this pipeline id, into the pipeline-key path. Promotes vertexLayout from a
+// descriptive doc string to a recorded + checked axis. Pure metadata — does NOT
+// touch GL state, the VAO, or any draw. The MechOpaque PipelineKey is now
+// (shaderVariantId + vertexLayoutId). Invalid until recorded.
+void recordPipelineVertexLayout(PipelineId id, VertexLayoutId layout);
+VertexLayoutId getPipelineVertexLayout(PipelineId id);
 
 } // namespace RenderCore

@@ -54,6 +54,22 @@ def parse_enum_ids(text):
     return [n for n, _ in ids]
 
 
+def parse_vertex_layouts(text):
+    """VERTEXLAYOUT-AUTHORITY-1: VertexLayoutId enum value -> canonical layout
+    name from its '// layout: <token>' comment. Excludes Count_/Invalid. A value
+    with no layout comment maps to None (the checker flags it)."""
+    m = re.search(r"enum\s+class\s+VertexLayoutId\s*:[^{]*\{(.*?)\}", text, re.S)
+    if not m:
+        return {}
+    out = {}
+    for line in m.group(1).splitlines():
+        em = re.match(
+            r"\s*([A-Za-z_]\w*)\s*=\s*\d+\s*,?\s*(?://\s*layout:\s*(\S+))?", line)
+        if em and em.group(1) not in ("Count_", "Invalid"):
+            out[em.group(1)] = em.group(2)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default=None)
@@ -65,8 +81,10 @@ def main():
     schema = json.load(open(os.path.join(root, SCHEMA), encoding="utf-8"))
     inv = json.load(open(os.path.join(root, INVENTORY), encoding="utf-8"))
     inv_macros = {m["name"] for m in inv["macros"]}
-    enum_ids = parse_enum_ids(re.sub(r"/\*.*?\*/", "", read(
-        os.path.join(root, REGISTRY_H)), flags=re.S))
+    registry_raw = read(os.path.join(root, REGISTRY_H))
+    enum_ids = parse_enum_ids(re.sub(r"/\*.*?\*/", "", registry_raw, flags=re.S))
+    # VERTEXLAYOUT-AUTHORITY-1: raw text (// layout: comments preserved).
+    vlayouts = parse_vertex_layouts(registry_raw)
 
     fails, warns = [], []
 
@@ -107,6 +125,40 @@ def main():
         for sp in p.get("specializationParams", []):
             if isinstance(sp, dict) and not sp.get("type"):
                 fails.append(f"pipeline '{p['id']}' spec param '{sp.get('name')}' untyped")
+
+    # VERTEXLAYOUT-AUTHORITY-1: vertexLayout is now AUTHORITATIVE — recorded in
+    # RenderCore::VertexLayoutId and checked here. (1) The field must declare
+    # AUTHORITATIVE so the promotion cannot silently regress. (2) Every enum
+    # value must carry a canonical "// layout: <name>" comment. (3) Every
+    # registered pipeline must declare a vertexLayoutId that EXISTS in the enum
+    # (missing -> FAIL; stale/renamed enum value -> FAIL) whose canonical name
+    # EQUALS the pipeline's vertexLayout string (rename drift -> FAIL).
+    if field_status.get("vertexLayout") != "AUTHORITATIVE":
+        fails.append("field 'vertexLayout' must be AUTHORITATIVE "
+                     "(VERTEXLAYOUT-AUTHORITY-1 promotion); "
+                     f"found '{field_status.get('vertexLayout')}'")
+    if not vlayouts:
+        fails.append("VertexLayoutId enum not found / empty in "
+                     f"{REGISTRY_H} (vertex layout authority missing)")
+    for name, lname in vlayouts.items():
+        if not lname:
+            fails.append(f"VertexLayoutId '{name}' has no '// layout: <name>' "
+                         "canonical-name comment")
+    for p in schema.get("registered_pipelines", []):
+        vid = p.get("vertexLayoutId")
+        if not vid:
+            fails.append(f"pipeline '{p['id']}' has no vertexLayoutId "
+                         "(vertexLayout is authoritative — id is required)")
+            continue
+        if vid not in vlayouts:
+            fails.append(f"pipeline '{p['id']}' vertexLayoutId '{vid}' absent "
+                         f"from VertexLayoutId enum (stale/renamed)")
+            continue
+        canon = vlayouts[vid]
+        if canon and p.get("vertexLayout") != canon:
+            fails.append(
+                f"pipeline '{p['id']}' vertexLayout '{p.get('vertexLayout')}' "
+                f"!= enum canonical '{canon}' for {vid} (rename drift)")
 
     # SPIRV-MECHOPAQUE-PIPELINEKEY-INTEGRATION-1: cross-link the pipeline-key
     # contract to the baked SPIR-V artifact contract. For any registered pipeline
