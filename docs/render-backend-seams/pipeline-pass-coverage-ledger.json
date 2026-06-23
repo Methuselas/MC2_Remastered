@@ -118,13 +118,13 @@
       "next": "route_applyPipeline -> visual_proven (later; water save/restores its own state so routing is more involved than terrain)"
     },
     "VFX": {
-      "status": "UNREGISTERED",
+      "status": "DESCRIPTIVE_REGISTERED",
       "renderPassId": "VFX",
-      "pipelineId": null,
+      "pipelineIds": ["VfxBillboardAlpha", "VfxBillboardAdditive", "VfxTubeAlpha", "VfxTubeAdditive", "VfxMeshAlpha", "VfxMeshAdditive"],
       "shaderBase": "particle_billboard/tube_ribbon/vfx_mesh",
       "stateOwner": "legacy/ad-hoc",
-      "recon": "VFX-PIPELINE-REGISTRATION-RECON-1 DONE (see vfx-pipeline-registration-recon-1.md). FINITE_STABLE: 3 programs (particle_billboard/tube_ribbon/vfx_mesh) x {AlphaBlend, Additive} = 6 rows. Invariant: depthTest on, GEQUAL, depthWrite OFF, cull None, FUNC_ADD. QUIRK: additive factors diverge (tube=ONE/ONE; billboard+mesh=SRC_ALPHA/ONE) — BlendMode::Additive (=ONE/ONE in applyPipeline) only matches tube. None DO_NOT_MODEL.",
-      "next": "VFX-PIPELINE-REGISTRATION-1 — GO descriptive (6 rows, no new field; schema carries exact src/dst like TerrainDecal/WaterArmed). ROUTING DEFERRED behind prerequisite BLENDMODE-ADDITIVE-VOCABULARY-1 (distinguish SRC_ALPHA/ONE vs ONE/ONE before applyPipeline routing)."
+      "evidence": "PipelineDesc rows [11-16] (6 = 3 programs x {AlphaBlend, Additive}). Invariant depthTest on / GEQUAL / depthWrite OFF / cull None / color0 / FUNC_ADD. Exact blend factors live in schema (BlendMode::Additive is coarse): billboard/mesh additive=SRC_ALPHA/ONE, tube additive=ONE/ONE. gos_particle_bridge.cpp + gos_vfx_mesh_bridge.cpp hand-set state (NOT applyPipeline-routed).",
+      "next": "DO NOT route until BLENDMODE-ADDITIVE-VOCABULARY-1 splits Additive (SRC_ALPHA/ONE vs ONE/ONE) — applyPipeline's Additive=ONE/ONE would corrupt billboard/mesh. Then VFX-APPLYPIPELINE-ROUTING-RECON-1."
     },
     "VegetationCards": {
       "status": "UNREGISTERED",

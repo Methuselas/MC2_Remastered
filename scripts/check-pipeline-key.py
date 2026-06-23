@@ -241,6 +241,44 @@ def main():
             fails.append(f"PipelineDesc in {DESC_H} declares '{forbidden}' — "
                          "polygon-offset magnitude is dynamic state, must not be a field")
 
+    # VFX-PIPELINE-REGISTRATION-1: exact blend FACTORS are authoritative. The
+    # BlendMode enum is COARSE (one "Additive" cannot encode SRC_ALPHA/ONE vs
+    # ONE/ONE), so blend-enabled rows MUST carry explicit src/dst/equation and
+    # those must match the recon-verified ground truth below. This is the guard
+    # that FAILs if a row's additive factors are collapsed/drifted (e.g.
+    # billboard's SRC_ALPHA/ONE silently changed to ONE/ONE).
+    #   id -> (srcFactor, dstFactor, equation)
+    EXPECTED_BLEND = {
+        "TerrainDecal":         ("SRC_ALPHA", "ONE_MINUS_SRC_ALPHA", "FUNC_ADD"),
+        "WaterArmed":           ("SRC_ALPHA", "ONE_MINUS_SRC_ALPHA", "FUNC_ADD"),
+        "VfxBillboardAlpha":    ("SRC_ALPHA", "ONE_MINUS_SRC_ALPHA", "FUNC_ADD"),
+        "VfxBillboardAdditive": ("SRC_ALPHA", "ONE",                 "FUNC_ADD"),
+        "VfxTubeAlpha":         ("SRC_ALPHA", "ONE_MINUS_SRC_ALPHA", "FUNC_ADD"),
+        "VfxTubeAdditive":      ("ONE",       "ONE",                 "FUNC_ADD"),
+        "VfxMeshAlpha":         ("SRC_ALPHA", "ONE_MINUS_SRC_ALPHA", "FUNC_ADD"),
+        "VfxMeshAdditive":      ("SRC_ALPHA", "ONE",                 "FUNC_ADD"),
+    }
+    BLEND_ENABLED = {"AlphaBlend", "Additive"}
+    schema_ids_set = set(schema_ids)
+    for name, exp in EXPECTED_BLEND.items():
+        if name not in schema_ids_set:
+            fails.append(f"blend ground-truth pipeline '{name}' missing from schema "
+                         "(VFX/blend selector row absent)")
+    for p in schema.get("registered_pipelines", []):
+        bs = p.get("blendState", {})
+        factor = bs.get("factor")
+        # every blend-ENABLED row must declare explicit factors (no coarse-only)
+        if factor in BLEND_ENABLED:
+            triple = (bs.get("srcFactor"), bs.get("dstFactor"), bs.get("equation"))
+            if not all(triple):
+                fails.append(f"pipeline '{p['id']}' blend factor '{factor}' but "
+                             "missing explicit srcFactor/dstFactor/equation "
+                             "(BlendMode is coarse — exact factors are authoritative)")
+            elif p["id"] in EXPECTED_BLEND and triple != EXPECTED_BLEND[p["id"]]:
+                fails.append(f"pipeline '{p['id']}' blend factors {triple} != "
+                             f"recon-verified {EXPECTED_BLEND[p['id']]} "
+                             "(additive collapse / blend drift)")
+
     # SPIRV-MECHOPAQUE-PIPELINEKEY-INTEGRATION-1: cross-link the pipeline-key
     # contract to the baked SPIR-V artifact contract. For any registered pipeline
     # whose shaderVariantId.base is also a baked SPIR-V family, the schema's
