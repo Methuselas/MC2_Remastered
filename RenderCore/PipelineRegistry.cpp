@@ -265,7 +265,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
     // [12] VfxBillboardAdditive — particle_billboard, SRC_ALPHA/ONE (schema-exact)
     {
         /* glProgramName       */ 0u,
-        /* blend               */ BlendMode::Additive, // COARSE; exact = SRC_ALPHA/ONE in schema
+        /* blend               */ BlendMode::AdditiveSrcAlphaOne, // SRC_ALPHA/ONE
         /* depthTestEnable     */ true,
         /* depthWriteEnable    */ false,
         /* depthFunc           */ DepthFunc::GreaterEqual,
@@ -293,7 +293,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
     // [14] VfxTubeAdditive — tube_ribbon, ONE/ONE (DIFFERS from billboard/mesh; schema-exact)
     {
         /* glProgramName       */ 0u,
-        /* blend               */ BlendMode::Additive, // COARSE; exact = ONE/ONE in schema
+        /* blend               */ BlendMode::AdditiveOneOne, // ONE/ONE (differs from billboard/mesh)
         /* depthTestEnable     */ true,
         /* depthWriteEnable    */ false,
         /* depthFunc           */ DepthFunc::GreaterEqual,
@@ -321,7 +321,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
     // [16] VfxMeshAdditive — vfx_mesh, SRC_ALPHA/ONE (schema-exact)
     {
         /* glProgramName       */ 0u,
-        /* blend               */ BlendMode::Additive, // COARSE; exact = SRC_ALPHA/ONE in schema
+        /* blend               */ BlendMode::AdditiveSrcAlphaOne, // SRC_ALPHA/ONE (same as billboard)
         /* depthTestEnable     */ true,
         /* depthWriteEnable    */ false,
         /* depthFunc           */ DepthFunc::GreaterEqual,

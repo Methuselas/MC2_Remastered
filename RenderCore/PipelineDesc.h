@@ -28,8 +28,25 @@
 
 namespace RenderCore {
 
-// Must stay value-identical to render_contract::PassStateContract::BlendMode.
-enum class BlendMode : uint8_t { Opaque, AlphaBlend, AlphaTest, Additive };
+// Values 0..3 (Opaque/AlphaBlend/AlphaTest/Additive) MUST stay value-identical to
+// render_contract::PassStateContract::BlendMode (enum-parity static_asserts in
+// render_contract_pipeline.h). `Additive` (value 3) is a LEGACY COARSE value
+// (== glBlendFunc(ONE,ONE)) retained ONLY for the render-contract bridge; it
+// cannot distinguish the two additive blend funcs the engine actually uses.
+// BLENDMODE-ADDITIVE-VOCABULARY-1 adds the precise variants used by the pipeline
+// registry — do NOT use the coarse `Additive` in new registered PipelineDesc rows
+// (the pipeline-key checker rejects it; use AdditiveOneOne / AdditiveSrcAlphaOne).
+//   AlphaBlend          = SRC_ALPHA / ONE_MINUS_SRC_ALPHA
+//   AdditiveOneOne      = ONE / ONE                 (e.g. tube_ribbon)
+//   AdditiveSrcAlphaOne = SRC_ALPHA / ONE           (e.g. particle_billboard, vfx_mesh)
+enum class BlendMode : uint8_t {
+    Opaque              = 0,
+    AlphaBlend          = 1,
+    AlphaTest           = 2,
+    Additive            = 3,   // legacy coarse (ONE/ONE); render-contract bridge only
+    AdditiveOneOne      = 4,   // ONE / ONE
+    AdditiveSrcAlphaOne = 5,   // SRC_ALPHA / ONE
+};
 
 enum class CullMode  : uint8_t { None, Back, Front };
 
