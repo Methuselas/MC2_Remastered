@@ -10,7 +10,10 @@
         "frag": "shaders/postprocess.frag"
       },
       "variants": [
-        { "name": "default", "defines": [] }
+        {
+          "name": "default",
+          "defines": []
+        }
       ]
     },
     {
@@ -21,10 +24,81 @@
         "frag": "shaders/mech.frag"
       },
       "variants": [
-        { "name": "default",            "defines": [] },
-        { "name": "objectid",           "defines": ["MC2_OBJECT_ID_BUFFER=1"] },
-        { "name": "viewuniforms",       "defines": ["MC2_USE_VIEW_UNIFORMS=1"] },
-        { "name": "objectid_viewuniforms", "defines": ["MC2_OBJECT_ID_BUFFER=1", "MC2_USE_VIEW_UNIFORMS=1"] }
+        {
+          "name": "default",
+          "defines": []
+        },
+        {
+          "name": "objectid",
+          "defines": [
+            "MC2_OBJECT_ID_BUFFER=1"
+          ]
+        },
+        {
+          "name": "viewuniforms",
+          "defines": [
+            "MC2_USE_VIEW_UNIFORMS=1"
+          ]
+        },
+        {
+          "name": "objectid_viewuniforms",
+          "defines": [
+            "MC2_OBJECT_ID_BUFFER=1",
+            "MC2_USE_VIEW_UNIFORMS=1"
+          ]
+        }
+      ]
+    },
+    {
+      "program": "ssao",
+      "note": "SPIRV-POSTPROCESS-FAMILY-1: frag-only (postprocess.vert + ssao.frag, gos_postprocess.cpp:548). No material bindings.",
+      "stages": {
+        "frag": "shaders/ssao.frag"
+      },
+      "variants": [
+        {
+          "name": "default",
+          "defines": []
+        }
+      ]
+    },
+    {
+      "program": "fog_oob",
+      "note": "SPIRV-POSTPROCESS-FAMILY-1: frag-only (postprocess.vert + fog_oob.frag, gos_postprocess.cpp:572). out vec4 outFog @loc0. No material bindings.",
+      "stages": {
+        "frag": "shaders/fog_oob.frag"
+      },
+      "variants": [
+        {
+          "name": "default",
+          "defines": []
+        }
+      ]
+    },
+    {
+      "program": "edge_fog",
+      "note": "SPIRV-POSTPROCESS-FAMILY-1: frag-only (postprocess.vert + edge_fog.frag, gos_postprocess.cpp:591). out vec4 outFog @loc0. No material bindings.",
+      "stages": {
+        "frag": "shaders/edge_fog.frag"
+      },
+      "variants": [
+        {
+          "name": "default",
+          "defines": []
+        }
+      ]
+    },
+    {
+      "program": "hzb_reduce",
+      "note": "SPIRV-POSTPROCESS-FAMILY-1: frag-only (postprocess.vert + hzb_reduce.frag, gos_postprocess.cpp:607). No material bindings.",
+      "stages": {
+        "frag": "shaders/hzb_reduce.frag"
+      },
+      "variants": [
+        {
+          "name": "default",
+          "defines": []
+        }
       ]
     }
   ]

@@ -16,7 +16,11 @@
   },
   "pilot_families": [
     "postprocess",
-    "mech"
+    "mech",
+    "ssao",
+    "fog_oob",
+    "edge_fog",
+    "hzb_reduce"
   ],
   "excluded_families": [
     "shadow_mech (shadow_mech.vert + shadow_instanced.frag) \u2014 separate program, stays GLSL",
@@ -84,11 +88,63 @@
           }
         }
       ]
+    },
+    {
+      "base": "ssao",
+      "variants": [
+        {
+          "name": "default",
+          "defines": [],
+          "variantId": "cb20e1310521",
+          "stages": {
+            "frag": "ssao.frag.default.cb20e131.spv"
+          }
+        }
+      ]
+    },
+    {
+      "base": "fog_oob",
+      "variants": [
+        {
+          "name": "default",
+          "defines": [],
+          "variantId": "498ade97a4ed",
+          "stages": {
+            "frag": "fog_oob.frag.default.498ade97.spv"
+          }
+        }
+      ]
+    },
+    {
+      "base": "edge_fog",
+      "variants": [
+        {
+          "name": "default",
+          "defines": [],
+          "variantId": "07734eb02c4f",
+          "stages": {
+            "frag": "edge_fog.frag.default.07734eb0.spv"
+          }
+        }
+      ]
+    },
+    {
+      "base": "hzb_reduce",
+      "variants": [
+        {
+          "name": "default",
+          "defines": [],
+          "variantId": "ae9dd0144f82",
+          "stages": {
+            "frag": "hzb_reduce.frag.default.ae9dd014.spv"
+          }
+        }
+      ]
     }
   ],
   "hashes": {
-    "spirv_index_sha256": "ba285fbaabcb18419fd6ea9c882808d3a7f17f2928829df86c4eef00a04f3c6c",
-    "sidecars_sha256": "a985f32e9715d9da676be12443cdb03e53d2c1d8c8ff25f0d6d199367ff396f4",
-    "source_set_sha256": "835472008a8a018f3571540b3ff09cd06fc0abe3ccd97c7f407ea3adb8e8d689"
+    "spirv_index_sha256": "d72a61156a626f1cc53d73a883dea36ccc20332b2124974e695c64c8f5dcf264",
+    "sidecars_sha256": "1ba6a2760f857b6a7cc364645cbc2663fb5de7442fa9eb3255d943a439e0b847",
+    "source_set_sha256": "eb16ff07fc75371d9672ffb5318942ec9dc9b1ac6dde6a3d3d33358d4816daf5"
   }
 }

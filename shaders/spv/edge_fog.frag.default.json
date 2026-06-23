@@ -1,0 +1,38 @@
+{
+  "base": "edge_fog",
+  "stage": "frag",
+  "variant": "default",
+  "defines": [],
+  "specializationParams": [],
+  "artifact": "edge_fog.frag.default.07734eb0.spv",
+  "spv_dir": "shaders/spv",
+  "source_sha256": "b7a59eff1b767fdec5507c9b41abab0836f202855bd703d637b68e769470411e",
+  "spirv_sha256": "cf08c9acc1ac7176ed2eeb997459c58a1392b79cc11bfea411c3448062184e68",
+  "bindings": {
+    "ubos": [],
+    "ssbos": [],
+    "samplers": [
+      {
+        "name": "depthTex",
+        "type": "sampler2D",
+        "location": 0,
+        "binding": 0
+      }
+    ]
+  },
+  "interface": {
+    "inputs": [
+      {
+        "name": "TexCoord",
+        "location": 0
+      }
+    ],
+    "outputs": [
+      {
+        "name": "outFog",
+        "location": 0
+      }
+    ]
+  },
+  "shaderVariantId": "07734eb02c4f"
+}
