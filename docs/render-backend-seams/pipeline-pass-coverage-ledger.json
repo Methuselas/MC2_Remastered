@@ -124,7 +124,8 @@
       "shaderBase": "particle_billboard/tube_ribbon/vfx_mesh",
       "stateOwner": "legacy/ad-hoc",
       "evidence": "PipelineDesc rows [11-16] (6 = 3 programs x {AlphaBlend, Additive}). Invariant depthTest on / GEQUAL / depthWrite OFF / cull None / color0 / FUNC_ADD. Exact blend factors live in schema (BlendMode::Additive is coarse): billboard/mesh additive=SRC_ALPHA/ONE, tube additive=ONE/ONE. gos_particle_bridge.cpp + gos_vfx_mesh_bridge.cpp hand-set state (NOT applyPipeline-routed).",
-      "next": "DO NOT route until BLENDMODE-ADDITIVE-VOCABULARY-1 splits Additive (SRC_ALPHA/ONE vs ONE/ONE) — applyPipeline's Additive=ONE/ONE would corrupt billboard/mesh. Then VFX-APPLYPIPELINE-ROUTING-RECON-1."
+      "recon2": "VFX-APPLYPIPELINE-ROUTING-RECON-1 DONE (see vfx-applypipeline-routing-recon-1.md). Blend vocabulary now precise. Routing = per-item applyPipeline(VfxX) at 3 live blend sites (billboard :1127, tube-deferred :767, vfx_mesh :311); state byte-identical to hand-set (provably no-op); save/restore window already wraps it. PROOF CAVEAT: VFX spawn nondeterministic -> byte-hash capture FAILS; gate on MC2_VFX_ORACLE_TUBE_COVERAGE + A/B screenshot, not golden hash.",
+      "next": "VFX-APPLYPIPELINE-ROUTING-1 (behavior-bearing, GO): route 3 live per-item blend sites; gate MC2_PIPELINE_BIND_TRACE + no GL errors + smoke + VFX oracle-coverage/A-B (NOT byte-hash) -> VISUAL_PROVEN."
     },
     "VegetationCards": {
       "status": "UNREGISTERED",
