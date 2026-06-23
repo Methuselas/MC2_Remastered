@@ -67,9 +67,17 @@ void applyPipeline(const RenderCore::PipelineDesc& desc, const char* dbgName) {
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             break;
-        case RenderCore::BlendMode::Additive:
+        case RenderCore::BlendMode::Additive:        // legacy coarse == AdditiveOneOne
+        case RenderCore::BlendMode::AdditiveOneOne:
             glEnable(GL_BLEND);
             glBlendFunc(GL_ONE, GL_ONE);
+            break;
+        case RenderCore::BlendMode::AdditiveSrcAlphaOne:
+            // BLENDMODE-ADDITIVE-VOCABULARY-1: pre-multiplied-ish additive used by
+            // particle_billboard + vfx_mesh (alpha-scaled add), distinct from the
+            // ONE/ONE tube additive. applyPipeline can now express BOTH.
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE);
             break;
     }
 
