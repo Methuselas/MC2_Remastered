@@ -3272,11 +3272,17 @@ void gosRenderer::renderWaterFastPath(
     // discipline as the blend / depth-mask / depth-func state this path already
     // saves+restores below.
     GLboolean savedCullFace = glIsEnabled(GL_CULL_FACE);
-    glDisable(GL_CULL_FACE);
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (scene water)
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    // WATER-ARMED-APPLYPIPELINE-ROUTING-1: drive base FF state from the WaterArmed
+    // row (AlphaBlend SRC_ALPHA/ONE_MINUS_SRC_ALPHA, depth-test on, reverse-Z
+    // GEQUAL, cull None) — byte-identical to the old hand-set (+ no-op
+    // frontFace(CCW)/offset-disable). glProgramName=0 -> applyPipeline SKIPs
+    // program (the glUseProgram(prog) above stays). depthMask is NOT owned here:
+    // the debug-gated glDepthMask(s_waterNoDepthWrite?...) below sets it (and
+    // overrides applyPipeline's depthWriteEnable=true), preserving the
+    // MC2_WATER_NO_DEPTH_WRITE A/B gate. The existing save block + restore
+    // epilogue still own teardown.
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::WaterArmed), "WaterArmed");
     // OOB-FOG-WATER-DEPTH-1: water must write depth so runFogOob() (which
     // fires on rawDepth==0 far-plane pixels) skips water-covered pixels.
     // Without depth writes, OOB fog classifies water pixels as empty sky and

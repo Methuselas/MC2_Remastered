@@ -47,7 +47,7 @@ distinct from "visually proven", instead of faking a byte-hash that can't hold.
 | Terrain (main solid) | UNREGISTERED | Terrain | — |
 | TerrainOverlay | ROUTED_BY_APPLYPIPELINE (proof: pass_not_exercised_in_smoke) | TerrainOverlay | TerrainOverlay |
 | TerrainDecal | ROUTED_BY_APPLYPIPELINE (proof: pass_not_exercised_in_smoke) | TerrainDecal | TerrainDecal |
-| Water (armed fast path) | DESCRIPTIVE_REGISTERED | Water | WaterArmed |
+| Water (armed fast path) | ROUTED_BY_APPLYPIPELINE (proof: byte_ab_capture_pending) | Water | WaterArmed |
 | VFX | ROUTED_BY_APPLYPIPELINE (proof: nondeterministic_visual_gate_pending) | VFX | Vfx{Billboard,Tube,Mesh}{Alpha,Additive} (6) |
 | VegetationCards | UNREGISTERED | VegetationCards | — |
 | PostProcess | UNREGISTERED | PostProcess | — |

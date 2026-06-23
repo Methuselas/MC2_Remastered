@@ -166,7 +166,8 @@ def main():
             # claim VISUAL_PROVEN/SPIRV_ELIGIBLE while its proofStatus is pending.
             PROOF_LANDED  = {"byte_identical", "perceptual_ab", "oracle_coverage"}
             PROOF_PENDING = {"nondeterministic_visual_gate_pending",  # output is nondeterministic (e.g. VFX spawn)
-                             "pass_not_exercised_in_smoke"}           # deterministic but content-dependent; not drawn in tier1
+                             "pass_not_exercised_in_smoke",           # deterministic but content-dependent; not drawn in tier1
+                             "byte_ab_capture_pending"}               # deterministic + DRAWS + trace-confirms correct state; byte-A/B capture not yet run
             if ps not in (PROOF_LANDED | PROOF_PENDING):
                 fails.append(f"'{name}' proofStatus '{ps}' not in {sorted(PROOF_LANDED | PROOF_PENDING)}")
             if st in ("VISUAL_PROVEN", "SPIRV_ELIGIBLE") and ps in PROOF_PENDING:
