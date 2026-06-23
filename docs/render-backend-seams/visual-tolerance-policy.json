@@ -1,0 +1,14 @@
+{
+  "slice": "VISUAL-DIFF-PERCEPTUAL-HARNESS-1",
+  "_note": "Policy registry for scripts/visual_compare.py. Byte-exact is the DEFAULT and correct bar for deterministic-math shaders. The perceptual policy exists ONLY for procedural/noise shader families (FBM + smoothstep) where driver-GLSL vs glslang-SPIR-V ULP float-codegen flips smoothstep edges. Do NOT widen the allowlist to non-noise shaders.",
+  "default_policy": "byte_exact",
+  "policies": {
+    "byte_exact":    { "require_byte_identical": true },
+    "low_tolerance": { "max_abs_delta": 2, "changed_lsb": 2, "max_pct_changed": 0.05 },
+    "perceptual":    { "ssim_min": 0.985, "changed_lsb": 4, "max_pct_changed": 5.0 }
+  },
+  "allowlist": {
+    "cloud": "perceptual",
+    "shoreline": "perceptual"
+  }
+}

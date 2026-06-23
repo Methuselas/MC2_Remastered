@@ -96,6 +96,7 @@ run_check "pipeline_key"           "py -3 scripts/check-pipeline-key.py --quiet"
 run_check "spirv_artifacts"        "py -3 scripts/check-spirv-artifacts.py --quiet"
 run_check "spirv_reflection"       "py -3 scripts/check-spirv-reflection-contract.py --quiet"
 run_check "shader_package"         "py -3 scripts/check-shader-package.py --quiet"
+run_check "visual_compare"         "py -3 scripts/visual_compare.py --self-test"
 run_check "brain_fit_schema"       "py -3 scripts/check-brain-fit-schema.py --quiet"
 
 # ---------------------------------------------------------------------------
