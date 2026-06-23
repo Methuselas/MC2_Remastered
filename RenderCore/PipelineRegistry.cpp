@@ -53,6 +53,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* cullMode            */ CullMode::Back,
         /* colorAttachments    */ { true, true, false },
         /* objectIdWriteEnabled*/ false,           // TODO: flip when shader adds loc=2
+        /* frontFace           */ FrontFace::Ccw,  // GL default; explicit per row
         /* ssboBindingsMask    */ kStaticPropSsbos,
     },
 
@@ -68,6 +69,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* cullMode            */ CullMode::Back,
         /* colorAttachments    */ { true, true, false },
         /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,  // GL default; explicit per row
         /* ssboBindingsMask    */ kStaticPropSsbos,
     },
 
@@ -91,6 +93,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* cullMode            */ CullMode::Back,
         /* colorAttachments    */ { true, true, false },
         /* objectIdWriteEnabled*/ false,           // macro-gated in shader, not here
+        /* frontFace           */ FrontFace::Ccw,  // GL default; explicit per row
         /* ssboBindingsMask    */ 0u,              // mech binds its own SSBOs
     },
 
@@ -111,6 +114,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         // this row advertises the true write set: nothing color, depth only.
         /* colorAttachments    */ { false, false, false },
         /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,  // GL default; explicit per row
         /* ssboBindingsMask    */ kStaticPropSsbos,
     },
 

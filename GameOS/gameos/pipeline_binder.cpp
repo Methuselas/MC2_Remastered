@@ -73,6 +73,14 @@ void applyPipeline(const RenderCore::PipelineDesc& desc) {
             glCullFace(GL_FRONT);
             break;
     }
+
+    // --- Front-face winding ---
+    // PIPELINEKEY-RASTERSTATE-FRONTFACE-AUTHORITY-1: make winding explicit per
+    // pipeline instead of relying on the ambient process-wide default. All
+    // registered pipelines are Ccw (GL default), so this is a behavioral no-op
+    // today — it stops the registered set from depending on leaked global state.
+    // The legacy fixed-function face-flip path is independent of this call.
+    glFrontFace(desc.frontFace == RenderCore::FrontFace::Cw ? GL_CW : GL_CCW);
 }
 
 } // namespace pipeline_binder
