@@ -14,6 +14,8 @@
 #include "view_uniforms_gl.h"
 #include "gos_static_prop_registry.h"   // HZB-STATICPROP-CULL-RECON-1: real bounds for the probe
 #include "gl_state_guard.h"  // GLSTATE-GUARD-ADOPTION-1: GlScopedTextureUnit (composite tex-unit leak)
+#include "gos_cluster_depth_pyramid.h"  // CLUSTER-DEPTH-PYRAMID-NATIVE-1 (gated substrate)
+#include "gos_lightgrid_build.h"         // MC2-LIGHTGRID-BUILD-NATIVE-1 (gated, inert)
 
 #include <cassert>
 #include <cstdio>
@@ -695,6 +697,14 @@ void gosPostProcess::destroy()
 
     destroyFBOs();
     destroyFullscreenQuad();
+
+    // CLUSTER-DEPTH-PYRAMID-NATIVE-1: release the gated pass's GL resources.
+    // No-op when the gate was never enabled (nothing was allocated).
+    cluster_depth_pyramid::Shutdown();
+
+    // MC2-LIGHTGRID-BUILD-NATIVE-1: release the gated light-grid builder's GL
+    // resources. No-op when the gate was never enabled.
+    lightgrid_build::Shutdown();
 
     if (compositeProg_) {
         glsl_program::deleteProgram("postprocess");
@@ -2134,6 +2144,21 @@ void gosPostProcess::endScene()
     // consumers, no draw suppression -> no-op + byte-identical when OFF.
     runHzbReduce();
     runHzbProbe();   // diagnostic-only; reads the pyramid, suppresses no draws
+
+    // CLUSTER-DEPTH-PYRAMID-NATIVE-1: build a per-tile (min,max) depth image
+    // from the resolved scene depth, here where depth is fully populated and
+    // before any post pass. Gated (MC2_CLUSTER_DEPTH_PYRAMID, default OFF) ->
+    // no-op + byte-identical when OFF. Substrate only: no consumer of the
+    // output exists yet (no lighting / decal / material reader).
+    cluster_depth_pyramid::Run(sceneDepthTex_, width_, height_);
+
+    // MC2-LIGHTGRID-BUILD-NATIVE-1: build a per-tile light-bin grid from a native
+    // sphere cull-geometry buffer (derived from ObjectLights @ binding 20) and the
+    // depth pyramid's per-tile (min,max) image. Runs AFTER the depth pyramid (it
+    // samples that tile texture) and AFTER the light SSBO upload. Gated
+    // (MC2_LIGHTGRID_BUILD, default OFF) -> no-op + byte-identical when OFF.
+    // INERT: no shading consumer reads the grid; zero visual change.
+    lightgrid_build::Run(inverseViewProj_, width_, height_);
 
     // Post-process shadow pass: covers terrain, objects, and overlays in one
     // pass, with reduced terrain darkening to avoid obvious double-shadowing.

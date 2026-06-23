@@ -57,11 +57,32 @@ GLbitfield barrierBitsFor(GpuProducer p, GpuConsumer c) {
     // is read by the CPU.
     if (c == GpuConsumer::CpuMappedRead)
         return GL_CLIENT_MAPPED_BUFFER_BARRIER_BIT;
-    // glGetBufferSubData / glGetNamedBufferSubData: GL_BUFFER_UPDATE_BARRIER_BIT
-    // is the precise bit (spec §7.12.1). It subsumes SSBO write visibility for
-    // API-level reads, so SHADER_STORAGE_BARRIER_BIT is NOT additionally required.
+    // A compute dispatch wrote an SSBO that is then read back to CPU via
+    // glGetBufferSubData (MC2-LIGHTGRID-BUILD-NATIVE-1 parity readback of the
+    // compact light-index pool). The precise bit for API-level buffer reads is
+    // GL_BUFFER_UPDATE_BARRIER_BIT (spec §7.12.1) — it subsumes SSBO write
+    // visibility for API reads, so SHADER_STORAGE_BARRIER_BIT is not additionally
+    // required. Stated explicitly so this typed edge is self-documenting.
+    if (p == GpuProducer::ComputeShader && c == GpuConsumer::BufferReadback)
+        return GL_BUFFER_UPDATE_BARRIER_BIT;
+    // glGetBufferSubData / glGetNamedBufferSubData for any other producer:
+    // GL_BUFFER_UPDATE_BARRIER_BIT is the precise bit (spec §7.12.1).
     if (c == GpuConsumer::BufferReadback)
         return GL_BUFFER_UPDATE_BARRIER_BIT;
+    // A compute dispatch wrote an image2D/3D via imageStore (CLUSTER-DEPTH-
+    // PYRAMID-NATIVE-1). Two consumers:
+    //   - TextureReadback (glGetTexImage / glReadPixels API read): the precise
+    //     bit is GL_TEXTURE_UPDATE_BARRIER_BIT (spec §7.12.1 — orders imageStore
+    //     writes before API texture reads). GL_FRAMEBUFFER_BARRIER_BIT is not
+    //     needed (no FBO read of the image here).
+    //   - TextureSample (a later shader stage samples the image as a texture):
+    //     GL_TEXTURE_FETCH_BARRIER_BIT orders the imageStore before texel fetch.
+    if (p == GpuProducer::ComputeImageWrite) {
+        if (c == GpuConsumer::TextureReadback)
+            return GL_TEXTURE_UPDATE_BARRIER_BIT;
+        if (c == GpuConsumer::TextureSample)
+            return GL_TEXTURE_FETCH_BARRIER_BIT;
+    }
     return 0;  // unmapped edge
 }
 

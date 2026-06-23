@@ -111,6 +111,17 @@
 #include "../GameAdapters/StaticPropRenderAdapter.h"  // M1 Task 12
 #include "move_recon.h"  // MC2_MOVE_RECON per-frame pathfinding cost instrumentation
 
+// MC2_BRAIN_TASKQ gate — checked once at first runBrain call
+static bool s_brainTaskQEnabled     = false;
+static bool s_brainTaskQTraceEnabled = false;
+static bool s_brainTaskQGateChecked  = false;
+static void initBrainTaskQGate() {
+    if (s_brainTaskQGateChecked) return;
+    s_brainTaskQGateChecked  = true;
+    s_brainTaskQEnabled      = (std::getenv("MC2_BRAIN_TASKQ")       && std::atoi(std::getenv("MC2_BRAIN_TASKQ"))       != 0);
+    s_brainTaskQTraceEnabled = (std::getenv("MC2_BRAIN_TASKQ_TRACE") && std::atoi(std::getenv("MC2_BRAIN_TASKQ_TRACE")) != 0);
+}
+
 enum {
 	T_A = 0,
 	T = T_A,
@@ -928,6 +939,7 @@ void MechWarrior::init (bool create) {
 	for (int i = 0; i < NUM_MEMORY_CELLS; i++)
 		memory[i].integer = 0;
 	brain = NULL;
+	brainTaskQueue = nullptr;  // created on first brain fire if gate enabled
 	for (int i = 0; i < NUM_PILOT_ALARMS; i++)
 		brainAlarmCallback[i] = NULL;
 
@@ -1536,6 +1548,9 @@ void MechWarrior::destroy (void) {
 		delete brain;
 		brain = NULL;
 	}
+
+	delete brainTaskQueue;
+	brainTaskQueue = nullptr;
 
 	for (long i = 0; i < 2; i++)
 		if (moveOrders.path[i]) {
@@ -5021,6 +5036,17 @@ long MechWarrior::mainDecisionTree (void) {
 	//----------------------
 	// Update pilot brain...
 	if ((brainUpdate <= scenarioTime) && ((teamId == -1) || brainsEnabled[teamId])) {
+		// MC2_BRAIN_TASKQ: drain one task per brain cadence (inert stub — no tacOrder writes this slice)
+		initBrainTaskQGate();
+		if (s_brainTaskQEnabled) {
+			if (!brainTaskQueue) {
+				brainTaskQueue = new BrainTaskQueue();
+			}
+			if (s_brainTaskQTraceEnabled) {
+				brainTaskQueue->dumpTrace(vehicleWID);
+			}
+			brainTaskQueue->drain();  // discards task (stub); falls through to ABL unchanged
+		}
 		runBrain();
 		brainUpdate += BrainUpdateFrequency;
 	}
