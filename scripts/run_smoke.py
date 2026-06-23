@@ -26,6 +26,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from scripts.smoke_lib import baselines, manifest, report
+from scripts.smoke_lib.gates import Verdict as _Verdict
+from scripts.smoke_lib.logparse import LogSummary as _LogSummary
 from scripts.smoke_lib.runner import RunConfig, run_one
 # Cockpit is strictly post-verdict and must never affect the smoke verdict,
 # including via an import-time failure (e.g. SyntaxError in cockpit.py).
@@ -329,6 +331,81 @@ def _run_menu_canary(exe: Path, script_path: Path, artifact_dir: Path,
     sys.stdout.buffer.write(report_text.encode("utf-8"))
     sys.stdout.buffer.flush()
     return 0 if passed else 1
+
+
+def _modmission_env_guard(e, deploy_dir: Path, caller_env: dict) -> tuple[bool, dict, str]:
+    """SMOKE-MODMISSION-ENV-GUARDS-1: pre-launch guard for mod missions.
+
+    Returns (ok, env_overrides, error_msg).
+      ok=True  -> safe to launch; env_overrides must be merged into env_extra.
+      ok=False -> do NOT launch; error_msg is the single-line error to print.
+
+    Guards applied (only when e.mod is non-empty):
+      G1 AUTO-SET: Set MC2_ACTIVE_MOD/MC2_MOD_DEPS from manifest.  If caller
+         already set them and they DISAGREE, prefer manifest and log a warning.
+      G2 VALIDATE: mods/<mod>/data/missions/<stem>.fit must exist in deploy dir.
+         Also checks each dep dir exists; warns if absent.
+      G3 STALE-CACHE: Deletes mods/<mod>/.modindex-cache (and each dep's) in
+         deploy dir before launch to prevent the copied-deploy path staleness class.
+    """
+    if not e.mod:
+        return True, {}, ""
+
+    env_overrides: dict = {}
+    # G1: auto-set MC2_ACTIVE_MOD
+    caller_mod = caller_env.get("MC2_ACTIVE_MOD", "")
+    if caller_mod and caller_mod != e.mod:
+        print(f"[runner] [ENV-GUARD] WARNING: caller MC2_ACTIVE_MOD={caller_mod!r} "
+              f"disagrees with manifest mod={e.mod!r} for mission {e.stem!r} — "
+              f"using manifest value", file=sys.stderr)
+    env_overrides["MC2_ACTIVE_MOD"] = e.mod
+
+    # G1: auto-set MC2_MOD_DEPS
+    deps_list = [d.strip() for d in e.deps.split(",") if d.strip()] if e.deps else []
+    if deps_list:
+        caller_deps = caller_env.get("MC2_MOD_DEPS", "")
+        manifest_deps = ",".join(deps_list)
+        if caller_deps and caller_deps != manifest_deps:
+            print(f"[runner] [ENV-GUARD] WARNING: caller MC2_MOD_DEPS={caller_deps!r} "
+                  f"disagrees with manifest deps={manifest_deps!r} for mission "
+                  f"{e.stem!r} — using manifest value", file=sys.stderr)
+        env_overrides["MC2_MOD_DEPS"] = manifest_deps
+
+    # G2: validate mod dir + .fit file exist in deploy
+    mod_dir = deploy_dir / "mods" / e.mod
+    if not mod_dir.is_dir():
+        msg = (f"[runner] [ENV-GUARD] mod dir not found: {mod_dir} for mod={e.mod!r} "
+               f"(deploy={deploy_dir}) — check deploy/mod, NOT a code crash")
+        return False, {}, msg
+
+    fit_path = mod_dir / "data" / "missions" / f"{e.stem}.fit"
+    if not fit_path.is_file():
+        msg = (f"[runner] [ENV-GUARD] mission '{e.stem}' not found at {fit_path} "
+               f"for mod={e.mod!r} (deploy={deploy_dir}) — check deploy/mod, NOT a code crash")
+        return False, {}, msg
+
+    # G2: check dep dirs exist (warn only — a missing compat may still boot)
+    for dep in deps_list:
+        dep_dir = deploy_dir / "mods" / dep
+        if not dep_dir.is_dir():
+            print(f"[runner] [ENV-GUARD] WARNING: compat dep dir missing: {dep_dir} "
+                  f"for mod={e.mod!r} — mission may fail to load ABL/pak resources",
+                  file=sys.stderr)
+
+    # G3: clear stale .modindex-cache for mod + each dep
+    all_mods_to_clear = [e.mod] + deps_list
+    for mod_name in all_mods_to_clear:
+        cache_path = deploy_dir / "mods" / mod_name / ".modindex-cache"
+        try:
+            if cache_path.exists():
+                cache_path.unlink()
+                print(f"[runner] [ENV-GUARD] cleared stale .modindex-cache for {mod_name}",
+                      file=sys.stderr)
+        except Exception as _exc:
+            print(f"[runner] [ENV-GUARD] WARNING: could not clear .modindex-cache "
+                  f"for {mod_name}: {_exc}", file=sys.stderr)
+
+    return True, env_overrides, ""
 
 
 def select_missions(entries, missions):
@@ -768,6 +845,23 @@ def main():
             except Exception:
                 pass  # heartbeat failure is non-fatal
 
+        # SMOKE-MODMISSION-ENV-GUARDS-1: pre-launch env + .fit validation for mod missions.
+        _mod_ok, _mod_env, _mod_err = _modmission_env_guard(
+            e, deploy_dir=Path(args.exe).resolve().parent, caller_env=os.environ)
+        if not _mod_ok:
+            print(_mod_err, file=sys.stderr)
+            _env_miss_verdict = report.Row(
+                stem=e.stem,
+                verdict=_Verdict(passed=False,
+                                 buckets=["env_mission_not_found"],
+                                 details=[_mod_err]),
+                summary=_LogSummary(),
+            )
+            rows.append(_env_miss_verdict)
+            if args.fail_fast:
+                break
+            continue
+
         duration = args.duration or e.duration or 120
         tier = args.tier or "adhoc"
         cfg = RunConfig(
@@ -781,6 +875,9 @@ def main():
             allow_asset_oob=e.allow_asset_oob,
             env_extra={
                 "MC2_SMOKE_SEED": "0xC0FFEE",
+                # SMOKE-MODMISSION-ENV-GUARDS-1: inject MC2_ACTIVE_MOD/MC2_MOD_DEPS
+                # from manifest (already validated by _modmission_env_guard above).
+                **_mod_env,
                 # MC2_DIAGNOSTIC_TRACE_FILE is always absolute (computed above)
                 # so the engine writes to _exe_dir/debug_state/... regardless
                 # of where the smoke runner is invoked from.

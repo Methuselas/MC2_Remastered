@@ -45,7 +45,20 @@ def evaluate(s: LogSummary, cfg: GateConfig, *,
         buckets.append("engine_reported_fail")
         details.append(f"reason={s.smoke_summary_reason} stage={s.smoke_summary_stage}")
     elif s.smoke_summary_result is None and exit_code != 0:
-        buckets.append("crash_silent")
+        # SMOKE-MODMISSION-ENV-GUARDS-1: reclassify load-phase 0xC0000409 aborts
+        # where STOP("Unable to open Mission File") was seen and no play-phase
+        # heartbeat ever fired.  A mid-play 0xC0000409 (after profile_ready) stays
+        # crash_silent — only the load-phase case is reclassified.
+        _load_phase_abort = (
+            s.mission_load_fail_seen
+            and s.mission_ready_ms is None
+        )
+        if _load_phase_abort:
+            buckets.append("mission_load_fail")
+            details.append("engine STOP(Unable to open Mission File) during load "
+                           "— check mod= / MC2_ACTIVE_MOD / .fit path, NOT a code crash")
+        else:
+            buckets.append("crash_silent")
 
     if s.gl_errors > 0:
         buckets.append("gl_error"); details.append(f"{s.gl_errors} errors")
