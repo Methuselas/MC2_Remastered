@@ -1126,6 +1126,8 @@ void execGetFireRanges (void) {
 
 	float* ranges = ABLi_popRealPtr();
 
+	if (s_ablArgGuard && !ranges) { abl_arg_guard_log("execGetFireRanges", "ranges"); return; }
+
 	ranges[0] = WeaponRange[FIRERANGE_SHORT];
 	ranges[1] = WeaponRange[FIRERANGE_MEDIUM];
 	ranges[2] = WeaponRange[FIRERANGE_LONG];
@@ -3773,6 +3775,9 @@ void execGetSalvage (void) {
 	int* items = ABLi_popIntegerPtr();
 	int* quantities = ABLi_popIntegerPtr();
 
+	if (s_ablArgGuard && !items) { abl_arg_guard_log("execGetSalvage", "items"); return; }
+	if (s_ablArgGuard && !quantities) { abl_arg_guard_log("execGetSalvage", "quantities"); return; }
+
 	for (long i = 0; i < itemCount; i++) {
 		items[i] = -1;
 		quantities[i] = -1;
@@ -4940,6 +4945,9 @@ void execConvertCoords (void) {
 
 	ABLi_pushInteger(0);
 
+	if (s_ablArgGuard && !worldPos) { abl_arg_guard_log("execConvertCoords", "worldPos"); return; }
+	if (s_ablArgGuard && !cellPos) { abl_arg_guard_log("execConvertCoords", "cellPos"); return; }
+
 	if (convertType == 0) {
 		// world to cell
 		Stuff::Vector3D worldP;
@@ -4964,6 +4972,8 @@ void execCoreMoveTo (void) {
 
 	float* location = ABLi_popRealPtr();
 	unsigned long params = (unsigned long)ABLi_popInteger();
+
+	if (s_ablArgGuard && !location) { abl_arg_guard_log("execCoreMoveTo", "location"); ABLi_pushInteger(0); return; }
 
 	if (ABLi_getSkipOrder()) {
 		ABLi_pushInteger(1);
@@ -7433,6 +7443,8 @@ void execGetLastScan (void) {
 void execGetMapInfo (void) {
 
 	int* mapInfo = ABLi_popIntegerPtr();
+
+	if (s_ablArgGuard && !mapInfo) { abl_arg_guard_log("execGetMapInfo", "mapInfo"); return; }
 
 	mapInfo[0] = GameMap->getHeight();
 	mapInfo[1] = GameMap->getWidth();
