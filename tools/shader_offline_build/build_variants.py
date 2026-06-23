@@ -131,7 +131,12 @@ def main():
     if not args.check:
         spv_dir.mkdir(parents=True, exist_ok=True)
 
-    fails, built = [], []
+    def index_key(base, stage, defines):
+        # MUST match the runtime consumer's spirvDefineKey canonicalization:
+        # base|stage|";".join(sorted(defines)).
+        return f"{base}|{stage}|" + ";".join(sorted(defines))
+
+    fails, built, index = [], [], []
     for pilot in cfg["pilots"]:
         base = pilot["program"]
         for variant in pilot["variants"]:
@@ -192,7 +197,28 @@ def main():
                             fails.append(f"{art}: source hash drift vs sidecar")
                 else:
                     sc_path.write_text(json.dumps(sidecar, indent=2), encoding="utf-8")
+                # index record ("key" before "artifact" — the consumer pairs by
+                # order). Keep this canonicalization in lockstep with the C++
+                # spirvDefineKey() in shader_builder.cpp.
+                index.append({"key": index_key(base, stage, defines),
+                              "artifact": art, "variantId": vid,
+                              "base": base, "stage": stage,
+                              "defines": sorted(defines)})
                 built.append(art)
+
+    # Deployed variant index (one file the runtime consumer reads).
+    idx_path = spv_dir / "spirv_index.json"
+    idx_doc = {"slice": "SPIRV-KEYED-VARIANT-CONSUMER-1", "records": index}
+    if args.check:
+        if not idx_path.exists():
+            fails.append("spirv_index.json missing — run build_variants.py")
+        else:
+            old = json.load(open(idx_path, encoding="utf-8")).get("records", [])
+            if {r["key"]: r["artifact"] for r in old} != \
+               {r["key"]: r["artifact"] for r in index}:
+                fails.append("spirv_index.json out of sync with built variants")
+    elif index:
+        idx_path.write_text(json.dumps(idx_doc, indent=2), encoding="utf-8")
 
     if not args.quiet:
         mode = "CHECK" if args.check else "BUILD"

@@ -78,6 +78,14 @@ def main():
     spv_dir = root / cfg.get("spv_dir", "shaders/spv")
     occ = occupancy_slots(root)
 
+    # SPIRV-KEYED-VARIANT-CONSUMER-1: the runtime consumer resolves variants via
+    # this index (base|stage|sorted-defines -> artifact). Load it for coverage.
+    idx_path = spv_dir / "spirv_index.json"
+    index = {}
+    if idx_path.exists():
+        for r in json.load(open(idx_path, encoding="utf-8")).get("records", []):
+            index[r["key"]] = r["artifact"]
+
     fails, checked = [], []
     for pilot in cfg["pilots"]:
         base = pilot["program"]
@@ -115,6 +123,13 @@ def main():
                     if b is not None and occ is not None and ("SSBO", b) not in occ:
                         fails.append(f"{tag}: SSBO '{blk.get('name')}' binding={b} "
                                      f"absent from binding-slot-occupancy.json")
+                # 5: index coverage — the consumer keys on base|stage|sorted-defines.
+                ikey = f"{base}|{stage}|" + ";".join(sorted(defines))
+                if not idx_path.exists():
+                    fails.append(f"{tag}: spirv_index.json missing — run build_variants.py")
+                elif index.get(ikey) != meta.get("artifact"):
+                    fails.append(f"{tag}: index key '{ikey}' -> {index.get(ikey)} "
+                                 f"!= sidecar artifact {meta.get('artifact')}")
 
     report = {"summary": {"checked": len(checked), "fails": len(fails)},
               "artifacts": checked, "fails": fails}

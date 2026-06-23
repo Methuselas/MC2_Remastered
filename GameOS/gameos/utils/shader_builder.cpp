@@ -10,6 +10,8 @@
 #include <vector>
 #include <sstream>
 #include <string>
+#include <algorithm>
+#include <map>
 
 #include "diagnostic_trace.h"
 #include "gos_validate.h"
@@ -453,44 +455,108 @@ bool spirvPilotStage(const char* fname, std::string& base, std::string& stageSho
 // (postprocess.vert + postprocess.frag, no other stages, default variant) is a
 // pilot, so a program is all-SPIR-V or all-GLSL — never mixed.
 bool spirvCompositePilotProgram(const char* vp, const char* hp, const char* dp,
-                                const char* gp, const char* fp, const char* prefix)
+                                const char* gp, const char* fp, const char* /*prefix*/)
 {
     if (!spirvPilotEnabled()) return false;
-    if (prefix && std::strstr(prefix, "#define")) return false;  // default variant only
     if (hp || dp || gp) return false;                            // composite has none
+    // SPIRV-KEYED-VARIANT-CONSUMER-1: the #define-reject is GONE — variant
+    // selection is now keyed per-stage by define-set (trySpirvSpecialize). This
+    // gate only decides which PROGRAMS are pilots (program-atomic). A pilot stage
+    // whose define-set has no baked artifact still falls back atomically.
     return spirvEndsWith(vp, "postprocess.vert") &&
            spirvEndsWith(fp, "postprocess.frag");
 }
 
-// Minimal extraction of "artifact":"<name>" from the sidecar JSON (no JSON dep).
-std::string spirvArtifactFromSidecar(const std::string& path)
+// SPIRV-KEYED-VARIANT-CONSUMER-1: canonical define-set key from the runtime
+// prefix. MUST match the offline builder's canonicalization exactly:
+//   key = ";".join(sorted("NAME=VALUE" | "NAME" for each #define))
+// Only #define lines are considered (#version/#extension are skipped). This is
+// the COMPLETE realized define-set — a define present in the GLSL prefix but not
+// represented in any baked artifact yields a key with no index match => GLSL
+// fallback (no silent "some defines" matching).
+std::string spirvDefineKey(const char* prefix)
 {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) return "";
-    std::string txt((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    size_t k = txt.find("\"artifact\"");
-    if (k == std::string::npos) return "";
-    size_t c = txt.find(':', k);     if (c == std::string::npos) return "";
-    size_t q1 = txt.find('"', c);    if (q1 == std::string::npos) return "";
-    size_t q2 = txt.find('"', q1+1); if (q2 == std::string::npos) return "";
-    return txt.substr(q1 + 1, q2 - q1 - 1);
+    std::vector<std::string> defs;
+    if (prefix) {
+        std::istringstream ss(prefix);
+        std::string line;
+        while (std::getline(ss, line)) {
+            size_t p = line.find("#define");
+            if (p == std::string::npos) continue;
+            std::istringstream ls(line.substr(p + 7)); // after "#define"
+            std::string name, val;
+            ls >> name;
+            if (name.empty()) continue;
+            ls >> val;
+            defs.push_back(val.empty() ? name : (name + "=" + val));
+        }
+    }
+    std::sort(defs.begin(), defs.end());
+    std::string key;
+    for (size_t i = 0; i < defs.size(); ++i) { if (i) key += ";"; key += defs[i]; }
+    return key;
+}
+
+// Extract the quoted string value of `field` at/after `from`; advance `endpos`.
+static bool spirvJsonField(const std::string& t, size_t from, const char* field,
+                           std::string& out, size_t& endpos)
+{
+    size_t k = t.find(field, from);
+    if (k == std::string::npos) return false;
+    size_t c = t.find(':', k);     if (c == std::string::npos) return false;
+    size_t q1 = t.find('"', c);    if (q1 == std::string::npos) return false;
+    size_t q2 = t.find('"', q1+1); if (q2 == std::string::npos) return false;
+    out = t.substr(q1 + 1, q2 - q1 - 1);
+    endpos = q2 + 1;
+    return true;
+}
+
+// Deployed variant index: shaders/spv/spirv_index.json, written by
+// build_variants.py. Maps "base|stage|defkey" -> artifact filename. Parsed once
+// (records emit "key" before "artifact", so the pairing is order-stable).
+const std::map<std::string, std::string>& spirvIndex()
+{
+    static std::map<std::string, std::string> idx;
+    static bool loaded = false;
+    if (!loaded) {
+        loaded = true;
+        std::ifstream in("shaders/spv/spirv_index.json", std::ios::binary);
+        if (in) {
+            std::string t((std::istreambuf_iterator<char>(in)),
+                          std::istreambuf_iterator<char>());
+            size_t pos = 0;
+            std::string key, art;
+            size_t e1 = 0, e2 = 0;
+            while (spirvJsonField(t, pos, "\"key\"", key, e1) &&
+                   spirvJsonField(t, e1, "\"artifact\"", art, e2)) {
+                idx[key] = art;
+                pos = e2;
+            }
+        }
+    }
+    return idx;
 }
 
 // Specialize `shader` from the baked .spv. true => caller skips GLSL compile.
+// Keyed by the COMPLETE define-set: (base, stage, defkey) -> artifact via the
+// deployed index. A miss (unknown program, or a define-set with no baked
+// artifact) returns false => GLSL fallback.
 bool trySpirvSpecialize(GLuint shader, const char* fname, const char* prefix)
 {
     if (!spirvPilotEnabled()) return false;
-    // Non-default variant (prefix carries #defines) has no baked pilot artifact.
-    if (prefix && std::strstr(prefix, "#define")) return false;
     std::string base, stageShort;
     if (!spirvPilotStage(fname, base, stageShort)) return false;
 
-    const std::string sidecar = "shaders/spv/" + base + "." + stageShort + ".default.json";
-    const std::string artifact = spirvArtifactFromSidecar(sidecar);
-    if (artifact.empty()) {
-        log_info("[SPIRV] no sidecar/artifact for %s; GLSL fallback\n", fname);
+    const std::string defkey = spirvDefineKey(prefix);
+    const std::string key = base + "|" + stageShort + "|" + defkey;
+    const auto& idx = spirvIndex();
+    auto it = idx.find(key);
+    if (it == idx.end()) {
+        log_info("[SPIRV] no artifact for variant key '%s' (%s); GLSL fallback\n",
+                 key.c_str(), fname);
         return false;
     }
+    const std::string artifact = it->second;
     const std::string spvPath = "shaders/spv/" + artifact;
     std::ifstream in(spvPath, std::ios::binary | std::ios::ate);
     if (!in) {
@@ -520,11 +586,13 @@ bool trySpirvSpecialize(GLuint shader, const char* fname, const char* prefix)
         log_error("[SPIRV] glSpecializeShader failed %s; GLSL fallback\n", spvPath.c_str());
         return false;
     }
-    log_info("[SPIRV] loaded %s (specialized \"main\")\n", artifact.c_str());
+    log_info("[SPIRV] loaded %s key='%s' (specialized \"main\")\n",
+             artifact.c_str(), key.c_str());
     if (mc2_diag::tagEnabled("SHADER_COMPILE")) {
         std::ostringstream data;
         data << "{\"event\":\"spirv_loaded\",\"path\":\""
-             << diag_json_escape(std::string(fname)) << "\",\"artifact\":\""
+             << diag_json_escape(std::string(fname)) << "\",\"key\":\""
+             << diag_json_escape(key) << "\",\"artifact\":\""
              << diag_json_escape(artifact) << "\",\"result\":\"ok\"}";
         mc2_diag::writeEvent("SHADER_COMPILE", 1, 0, data.str().c_str());
     }
