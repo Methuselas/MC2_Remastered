@@ -112,14 +112,16 @@
       "next": "TERRAIN-DECAL-VISUAL-GATE: capture with battle-damage decals in-frame, byte-hash A/B + [PIPELINE_BIND] TerrainDecal trace -> VISUAL_PROVEN."
     },
     "Water": {
-      "status": "DESCRIPTIVE_REGISTERED",
+      "status": "ROUTED_BY_APPLYPIPELINE",
+      "proofStatus": "byte_ab_capture_pending",
       "renderPassId": "Water",
       "pipelineId": "WaterArmed",
       "shaderBase": "gos_terrain_water_fast",
-      "stateOwner": "legacy/ad-hoc",
-      "evidence": "PipelineDesc row [10] WaterArmed (source-verified gameos_graphics.cpp:3275-3288: AlphaBlend SRC_ALPHA/1-SRC_ALPHA, GEQUAL, depth-write ON, cull NONE — recon's 'opaque cull-back' was WRONG). Armed fast-path base only; gosRenderer::renderWaterFastPath still hand-sets state.",
-      "scope_note": "ONLY the armed fast-path base is modeled. Legacy quad fallback + GPU-driven MDI sub-variant are intentionally NOT modeled.",
-      "next": "route_applyPipeline -> visual_proven (later; water save/restores its own state so routing is more involved than terrain)"
+      "stateOwner": "applyPipeline",
+      "evidence": "WATER-ARMED-APPLYPIPELINE-ROUTING-1: routed at gosRenderer::renderWaterFastPath (gameos_graphics.cpp:3275) via applyPipeline(WaterArmed). RUNTIME-CONFIRMED: with MC2_RENDER_WATER_FASTPATH=1, [PIPELINE_BIND] WaterArmed fired 3643x (mc2_01/clearwater) + 4194x (mc2_24) = once/frame, with the exact row state 'depth=GreaterEqual cull=None frontFace=Ccw polygonOffset=false'. State byte-identical to old hand-set (cull off, depth-test on, GEQUAL, blend SRC_ALPHA/1-SRC_ALPHA; + no-op frontFace/offset). depthMask kept manual (debug-gated MC2_WATER_NO_DEPTH_WRITE, overrides applyPipeline). program(0)=skip keeps water_fast_prog_; save/restore window unchanged. Build green; smoke PASS 2/2; no GL errors.",
+      "scope_note": "ONLY the armed fast-path base (MC2_RENDER_WATER_FASTPATH=1, default-OFF). Legacy quad fallback + GPU-driven MDI sub-variant NOT modeled.",
+      "proofNote": "VISUAL_PROVEN not claimed: an empirical before/after BYTE-A/B was NOT captured — run_visual_capture taskkills ALL mc2.exe and a concurrent foreign instance was running (never-kill-concurrent rule). Water-fast is DETERMINISTIC and DOES draw + trace-confirms correct state, so the byte-A/B is straightforward to land when no concurrent instance is up — strongest pending case (exercised + trace-confirmed), distinct from VFX (nondeterministic) and terrain (not-exercised).",
+      "next": "WATER-VISUAL-GATE: run_visual_capture mc2_01 (clearwater) armed (MC2_RENDER_WATER_FASTPATH=1) before/after byte-hash when no concurrent mc2.exe -> VISUAL_PROVEN."
     },
     "VFX": {
       "status": "ROUTED_BY_APPLYPIPELINE",
