@@ -71,6 +71,12 @@ float ImportedGpuLift(const void* actorKey);
 // Which world translation component the lift targets (0/1/2 = Stuff.x/y/z).
 int ImportedGpuLiftAxis();
 
+// IMPORTED-ACTOR-STABLE-KEY-1: drop this actor's per-frame anim state (keyed by the
+// instance TG_MultiShape*). Call when that instance is destroyed/swapped (LOD change,
+// death-shape swap, final teardown) so a later allocation reusing the same address
+// cannot inherit a stale pose for a few frames. Safe/no-op if the key isn't present.
+void UnregisterImportedActor(const void* actorKey);
+
 // AO-1: imported mech's AO texture name (materials.ao.tga from the package), or nullptr
 // if not imported / no AO declared. Caller loads it + binds on texture unit 6.
 const char* ImportedMechAoTexName(const void* typeKey);

@@ -1075,6 +1075,14 @@ void RegisterImportedAnim(const char* path, TG_TypeMultiShape* out, const SkelBa
 
 bool mc2mechanim::AnyImportedAnim() { return !g_importedAnims.empty(); }
 
+// IMPORTED-ACTOR-STABLE-KEY-1: erase this actor's per-frame state from every imported
+// type so a freed-then-reused instance address can't inherit a stale pose. Idempotent.
+void mc2mechanim::UnregisterImportedActor(const void* actorKey) {
+    if (!actorKey) return;
+    for (ImportedAnimEntry& e : g_importedAnims)
+        e.actors.erase(actorKey);
+}
+
 bool mc2mechanim::ImportedGpuEnabled() { return mechImportGpuEnabled(); }
 
 int mc2mechanim::ImportedGpuTypeInfo(const void* typeMulti,
