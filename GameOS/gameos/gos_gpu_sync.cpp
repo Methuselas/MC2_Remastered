@@ -62,6 +62,20 @@ GLbitfield barrierBitsFor(GpuProducer p, GpuConsumer c) {
     // API-level reads, so SHADER_STORAGE_BARRIER_BIT is NOT additionally required.
     if (c == GpuConsumer::BufferReadback)
         return GL_BUFFER_UPDATE_BARRIER_BIT;
+    // A compute dispatch wrote an image2D/3D via imageStore (CLUSTER-DEPTH-
+    // PYRAMID-NATIVE-1). Two consumers:
+    //   - TextureReadback (glGetTexImage / glReadPixels API read): the precise
+    //     bit is GL_TEXTURE_UPDATE_BARRIER_BIT (spec §7.12.1 — orders imageStore
+    //     writes before API texture reads). GL_FRAMEBUFFER_BARRIER_BIT is not
+    //     needed (no FBO read of the image here).
+    //   - TextureSample (a later shader stage samples the image as a texture):
+    //     GL_TEXTURE_FETCH_BARRIER_BIT orders the imageStore before texel fetch.
+    if (p == GpuProducer::ComputeImageWrite) {
+        if (c == GpuConsumer::TextureReadback)
+            return GL_TEXTURE_UPDATE_BARRIER_BIT;
+        if (c == GpuConsumer::TextureSample)
+            return GL_TEXTURE_FETCH_BARRIER_BIT;
+    }
     return 0;  // unmapped edge
 }
 

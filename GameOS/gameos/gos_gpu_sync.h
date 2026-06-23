@@ -25,6 +25,7 @@ enum class GpuProducer {
     CpuCoherentWrite,  // CPU write through a persistent GL_MAP_COHERENT_BIT mapping
     ClearBuffer,       // glClear*BufferData / glClearNamedBufferSubData
     ComputeShader,     // a compute dispatch that wrote an SSBO / indirect-cmd buffer
+    ComputeImageWrite, // a compute dispatch that wrote an image2D/image3D via imageStore
 };
 
 enum class GpuConsumer {
@@ -35,6 +36,8 @@ enum class GpuConsumer {
     InstancedDraw,      // glDraw*Instanced* reads it (e.g. SSBO instance/bone data)
     CpuMappedRead,      // CPU reads through a persistent GL_MAP_PERSISTENT_BIT mapping
     BufferReadback,     // glGetBufferSubData / glGetNamedBufferSubData reads the buffer
+    TextureReadback,    // glGetTexImage / glReadPixels reads an image written via imageStore
+    TextureSample,      // a later shader stage samples the imageStore'd texture
 };
 
 // Issue the correct glMemoryBarrier for the producer->consumer edge. `tag` is a
