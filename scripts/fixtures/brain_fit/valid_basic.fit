@@ -1,0 +1,29 @@
+// valid_basic.fit — should PASS (exit 0)
+// Two Brain blocks with distinct unitRefs, valid OPORD types, known keys.
+
+SchemaVersion { version = 1 }
+
+Brain {
+    unitRef = "Warrior0"
+    combat.engage_range_check = 1
+    doctrine.hold_position    = 0
+    sensor.passive_mode       = 0
+    threshold.withdraw_health = 0.25
+    threshold.pursuit_range   = 500.0
+    tactic.IndirectFire = 0.4
+    tactic.HullDown     = 0.6
+    tactic.FightingWithdraw = 0.0
+    OPORD { slot = "Primary"   type = "Patrol"  looping = 1 }
+    OPORD { slot = "Secondary" type = "Guard"   looping = 0 }
+    fallback_policy = "HoldPosition"
+}
+
+Brain {
+    unitRef = "Warrior1"
+    doctrine.fire_at_will = 1
+    tactic.Pursue    = 0.7
+    tactic.HitAndRun = 0.3
+    OPORD { slot = "Primary" type = "Attack" waypointGroup = "target_wp" looping = 0 }
+    OPORD { slot = "Tertiary" type = "Withdraw" looping = 0 }
+    fallback_policy = "Withdraw"
+}

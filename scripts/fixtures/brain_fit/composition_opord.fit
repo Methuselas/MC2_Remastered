@@ -1,0 +1,14 @@
+// composition_opord.fit — should PASS with WARN W4 (archetype present)
+// Exercises composition OPORDs: Sentry, Ambush, Scout — all valid, normalize on load.
+
+SchemaVersion { version = 1 }
+Brain {
+    unitRef = "Warrior0"
+    archetype = "clan_ghost_bear"
+    tactic.StopAndFire = 0.5
+    tactic.Turret      = 0.5
+    OPORD { slot = "Primary"   type = "Sentry"  looping = 1 }
+    OPORD { slot = "Secondary" type = "Ambush"  looping = 0 }
+    OPORD { slot = "Tertiary"  type = "Scout"   looping = 0 }
+    fallback_policy = "HoldFire"
+}

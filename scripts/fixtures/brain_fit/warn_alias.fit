@@ -1,0 +1,8 @@
+// warn_alias.fit — should WARN W2 (alias used), exit 0
+
+SchemaVersion { version = 1 }
+Brain {
+    unitRef = "Warrior0"
+    HoldPosition = 0
+    OPORD { slot = "Primary" type = "Guard" }
+}

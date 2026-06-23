@@ -1,0 +1,5 @@
+// fail_duplicate_unitref.fit — should FAIL R2 (duplicate unitRef)
+
+SchemaVersion { version = 1 }
+Brain { unitRef = "Warrior0" OPORD { slot = "Primary" type = "Guard" } }
+Brain { unitRef = "Warrior0" OPORD { slot = "Primary" type = "Patrol" } }

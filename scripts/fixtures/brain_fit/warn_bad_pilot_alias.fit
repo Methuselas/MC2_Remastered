@@ -1,0 +1,13 @@
+// fail_bad_pilot_alias.fit — should WARN W2 on valid stat aliases
+// 'Leadership' and 'Discipline' are accepted GDD aliases (map to professionalism/decorum).
+// An unknown stat key 'stat.morale' is forward-compat WARN W1 only.
+// A stat key used as a switch with a non-float value is no error (parsed as switch).
+
+SchemaVersion { version = 1 }
+Brain {
+    unitRef = "Warrior0"
+    stat.leadership  = 1
+    stat.discipline  = 0
+    stat.morale      = 1
+    OPORD { slot = "Primary" type = "Patrol" }
+}

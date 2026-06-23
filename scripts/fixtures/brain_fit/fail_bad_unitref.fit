@@ -1,0 +1,8 @@
+// fail_bad_unitref.fit — should FAIL R1 (empty unitRef)
+
+SchemaVersion { version = 1 }
+Brain {
+    unitRef = ""
+    tactic.IndirectFire = 0.3
+    OPORD { slot = "Primary" type = "Guard" }
+}
