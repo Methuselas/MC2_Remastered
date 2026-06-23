@@ -55,8 +55,29 @@ PROFILES = {
                 "water (stock cameras minimize it). Confirm via [PIPELINE_BIND] "
                 "WaterArmed + visible water pixels.",
     },
-    # VFX profile lands in VFX-VISUAL-GATE-1 (reuses MC2_FX_FORCE_SPAWN +
-    # mc2_01_werewolf.json + MC2_VFX_ORACLE_TUBE_COVERAGE).
+    "vfx": {
+        "ledger_pass": "VFX",
+        "pipeline_row": "VfxTubeAdditive",   # tube ribbons (weapon fire)
+        "mission": "mc2_01",
+        "bookmark": "tests/visual/bookmarks/mc2_01_werewolf.json",
+        "trigger_frame": 147,                # werewolf fires ~frame 151
+        "settle": 4,
+        "duration": 45,
+        # MC2_FX_FORCE_SPAWN: 8 mechs fire all weapons once (dmgDone=0).
+        # MC2_VFX_ORACLE_TUBE_COVERAGE: occlusion-query the tube ribbon draw ->
+        # [VFX_ORACLE_TUBE coverage] samples=N to stderr (-> capture.log).
+        "force_env": {"MC2_FX_FORCE_SPAWN": "1",
+                      "MC2_VFX_ORACLE_TUBE_COVERAGE": "1"},
+        "runs": 1,                           # VFX spawn is NONDETERMINISTIC — no
+        "warmup": 0,                         # byte-stability; oracle is the proof
+        "gate": "oracle_coverage",
+        "note": "VFX is nondeterministic (particle spawn jitter) AND the werewolf "
+                "bookmark is single-pose (engine capture may not fire a PNG). So "
+                "this gate is LOG-BASED: it does not require a golden PNG or "
+                "byte-stability — it proves the pass RASTERIZED via the "
+                "MC2_VFX_ORACLE_TUBE_COVERAGE occlusion query (samples>0) and/or "
+                "[PIPELINE_BIND] VfxTube* binds. = oracle_coverage (LANDED).",
+    },
 }
 
 
@@ -95,6 +116,26 @@ def _row_drew(out_dir: Path, row: str) -> int:
     return n
 
 
+def _oracle_tube_samples(out_dir: Path) -> int:
+    """Max `samples=N` across all [VFX_ORACLE_TUBE coverage] lines in the capture
+    logs. >0 = the tube ribbon pass rasterized fragments into the scene FBO (the
+    occlusion-query 'did the pass draw' oracle). Log-based, so it works even when
+    the single-pose bookmark never fires a PNG."""
+    best = 0
+    for log in out_dir.rglob("*_capture.log"):
+        try:
+            for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
+                if "[VFX_ORACLE_TUBE coverage]" in line and "samples=" in line:
+                    try:
+                        tok = line.split("samples=", 1)[1].split()[0]
+                        best = max(best, int(tok))
+                    except (ValueError, IndexError):
+                        pass
+        except OSError:
+            pass
+    return best
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("profile", choices=sorted(PROFILES))
@@ -116,15 +157,47 @@ def main() -> int:
     print(f"[gate] profile={args.profile} pass={prof['ledger_pass']} "
           f"row={prof['pipeline_row']} gate={prof['gate']}")
 
-    # AFTER: 3-run byte-stability on the routed exe.
-    rc = _capture(args.exe, prof, after_dir, args.runs, args.warmup,
+    # Per-profile run plan (VFX is nondeterministic -> runs=1, no byte-stability).
+    runs = prof.get("runs", args.runs)
+    warmup = prof.get("warmup", args.warmup)
+
+    # AFTER capture on the routed exe.
+    rc = _capture(args.exe, prof, after_dir, runs, warmup,
                   trace=True, dry_run=args.dry_run)
     if args.dry_run:
         if args.before_exe:
-            _capture(args.before_exe, prof, base / "before", args.runs,
-                     args.warmup, trace=False, dry_run=True)
+            _capture(args.before_exe, prof, base / "before", runs,
+                     warmup, trace=False, dry_run=True)
         print("[gate] DRY-RUN complete (no launch).")
         return 0
+
+    # ── oracle_coverage gate (LOG-BASED) ──────────────────────────────────
+    # No golden PNG, no byte-stability: the proof the pass rasterized is the
+    # occlusion-query samples + [PIPELINE_BIND] binds in the capture log. This is
+    # robust to (a) nondeterministic spawn and (b) the single-pose bookmark not
+    # firing a PNG (engine bug-2). So we IGNORE the capture rc here.
+    if prof["gate"] == "oracle_coverage":
+        samples = _oracle_tube_samples(after_dir)
+        drew = _row_drew(after_dir, prof["pipeline_row"])
+        logs = list(after_dir.rglob("*_capture.log"))
+        print(f"[gate] oracle: tube samples={samples}  "
+              f"{prof['pipeline_row']} binds={drew}  logs={len(logs)}")
+        if not logs:
+            print("[gate] FAIL: no capture log — engine never launched/logged",
+                  file=sys.stderr)
+            return 1
+        if samples <= 0 and drew <= 0:
+            print("[gate] FAIL: pass did not rasterize (samples=0, binds=0) — "
+                  "check MC2_FX_FORCE_SPAWN fixture / bookmark frame / trigger",
+                  file=sys.stderr)
+            return 2
+        proof = ("occlusion samples>0" if samples > 0 else "[PIPELINE_BIND] binds>0")
+        print(f"[gate] PASS oracle_coverage for {prof['ledger_pass']} ({proof}). "
+              "Operator: set ledger proofStatus -> oracle_coverage + "
+              "status VISUAL_PROVEN.")
+        return 0
+
+    # ── byte_identical gate (golden PNG, deterministic) ───────────────────
     if rc != 0:
         print(f"[gate] FAIL: AFTER capture/stability rc={rc}", file=sys.stderr)
         return 1
@@ -139,8 +212,8 @@ def main() -> int:
 
     # Optional BEFORE/AFTER byte A/B.
     if args.before_exe:
-        rcb = _capture(args.before_exe, prof, base / "before", args.runs,
-                       args.warmup, trace=False, dry_run=False)
+        rcb = _capture(args.before_exe, prof, base / "before", runs,
+                       warmup, trace=False, dry_run=False)
         if rcb != 0:
             print(f"[gate] FAIL: BEFORE capture rc={rcb}", file=sys.stderr)
             return 1
