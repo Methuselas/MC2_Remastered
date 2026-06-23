@@ -100,6 +100,32 @@
           "defines": []
         }
       ]
+    },
+    {
+      "program": "cloud",
+      "note": "SPIRV-FBM-POSTPROCESS-PILOT-1: FBM cloud-shadow pass (postprocess.vert + cloud.frag, gos_postprocess.cpp:537). PERCEPTUAL gate only (procedural noise; byte-exact impossible across GLSL/SPIR-V compilers).",
+      "stages": {
+        "frag": "shaders/cloud.frag"
+      },
+      "variants": [
+        {
+          "name": "default",
+          "defines": []
+        }
+      ]
+    },
+    {
+      "program": "shoreline",
+      "note": "SPIRV-FBM-POSTPROCESS-PILOT-1: shoreline foam (postprocess.vert + shoreline.frag, gos_postprocess.cpp:542, #includes noise.hglsl). PERCEPTUAL gate only.",
+      "stages": {
+        "frag": "shaders/shoreline.frag"
+      },
+      "variants": [
+        {
+          "name": "default",
+          "defines": []
+        }
+      ]
     }
   ]
 }

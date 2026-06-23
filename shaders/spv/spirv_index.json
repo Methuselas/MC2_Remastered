@@ -126,6 +126,22 @@
       "base": "hzb_reduce",
       "stage": "frag",
       "defines": []
+    },
+    {
+      "key": "cloud|frag|",
+      "artifact": "cloud.frag.default.982ec002.spv",
+      "variantId": "982ec002a690",
+      "base": "cloud",
+      "stage": "frag",
+      "defines": []
+    },
+    {
+      "key": "shoreline|frag|",
+      "artifact": "shoreline.frag.default.3dac14be.spv",
+      "variantId": "3dac14bea7f7",
+      "base": "shoreline",
+      "stage": "frag",
+      "defines": []
     }
   ]
 }
