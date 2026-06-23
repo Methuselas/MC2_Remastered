@@ -90,6 +90,7 @@ run_check "destroy_invariant"      "sh scripts/check-destroy-invariant.sh"
 run_check "render_contract_gbuf1"  "sh scripts/check-render-contract-gbuffer1.sh"
 run_check "binding_slots"          "py -3 scripts/check-binding-slots.py --quiet"
 run_check "sampler_bindings"       "py -3 scripts/check-sampler-bindings.py --quiet"
+run_check "pipeline_desc"          "py -3 scripts/check-pipeline-desc.py --quiet"
 
 # ---------------------------------------------------------------------------
 # Summary table
