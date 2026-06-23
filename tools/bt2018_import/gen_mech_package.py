@@ -54,16 +54,19 @@ def main():
     # albedo + normal). It lives in the dump Texture2D/ as the chassis BASE atlas AO,
     # skin-independent (one -Base-amb per chassis, shared by BlackWidow/SLDF/BHA since
     # AO is geometry-based). Index the canonical (no Unity '#hash' dupe) -Base-amb pngs.
+    import re as _re
     tex2d = os.path.join(args.dump, "Texture2D")
+    # chrTxrMech_<chassis>-Base-amb[.png] or with a -NNN export-index suffix
+    # (e.g. shadowhawk-base-amb-001.png). Skip Unity '#hash' dupes.
+    _ao_re = _re.compile(r"^chrtxrmech_(.+?)-base-amb(?:-\d+)?\.png$")
     ao_index = {}  # lowercase chassis -> source png path
     if os.path.isdir(tex2d):
         for fn in os.listdir(tex2d):
-            low = fn.lower()
-            if "-base-amb.png" in low and "#" not in fn:  # canonical only
-                # chrTxrMech_<chassis>-Base-amb.png
-                m = low[len("chrtxrmech_"):].split("-base-amb")[0] if low.startswith("chrtxrmech_") else None
-                if m:
-                    ao_index[m] = os.path.join(tex2d, fn)
+            if "#" in fn:
+                continue
+            m = _ao_re.match(fn.lower())
+            if m:
+                ao_index.setdefault(m.group(1), os.path.join(tex2d, fn))
 
     total_missing = 0
     ao_missing = []
