@@ -1,0 +1,38 @@
+{
+  "base": "fog_oob",
+  "stage": "frag",
+  "variant": "default",
+  "defines": [],
+  "specializationParams": [],
+  "artifact": "fog_oob.frag.default.498ade97.spv",
+  "spv_dir": "shaders/spv",
+  "source_sha256": "dce27bd0abcbd23d32c4c39802a416ef16ddccde338081d9326da25f0fc691e7",
+  "spirv_sha256": "10000a1e3b48550b399b9c1f9b0d6b5f55b2307da5041bf386b1d6b72566ffc9",
+  "bindings": {
+    "ubos": [],
+    "ssbos": [],
+    "samplers": [
+      {
+        "name": "depthTex",
+        "type": "sampler2D",
+        "location": 0,
+        "binding": 0
+      }
+    ]
+  },
+  "interface": {
+    "inputs": [
+      {
+        "name": "TexCoord",
+        "location": 0
+      }
+    ],
+    "outputs": [
+      {
+        "name": "outFog",
+        "location": 0
+      }
+    ]
+  },
+  "shaderVariantId": "498ade97a4ed"
+}

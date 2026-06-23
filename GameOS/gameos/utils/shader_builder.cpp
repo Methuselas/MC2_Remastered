@@ -440,36 +440,55 @@ static bool spirvEndsWith(const char* fname, const char* suffix)
     return f.size() >= n && f.compare(f.size() - n, n, suffix) == 0;
 }
 
+// Pilot stage table: file-suffix -> (base, short stage). The base MUST match the
+// offline builder's pilots.json base so the keyed lookup resolves. Note many
+// programs share /postprocess.vert (composite + cloud/shoreline/ssao/fog/...);
+// it is baked ONCE as base "postprocess" and reused by every such program's vert
+// stage. shadow_mech is intentionally absent (stays GLSL).
+static const struct { const char* suffix; const char* base; const char* stage; }
+kSpirvPilotStages[] = {
+    {"/postprocess.vert", "postprocess", "vert"},
+    {"/postprocess.frag", "postprocess", "frag"},
+    {"/mech.vert",        "mech",        "vert"},
+    {"/mech.frag",        "mech",        "frag"},
+    // SPIRV-POSTPROCESS-FAMILY-1: frag-only family members (vert = postprocess.vert).
+    {"/ssao.frag",        "ssao",        "frag"},
+    {"/fog_oob.frag",     "fog_oob",     "frag"},
+    {"/edge_fog.frag",    "edge_fog",    "frag"},
+    {"/hzb_reduce.frag",  "hzb_reduce",  "frag"},
+};
+
+// Pilot PROGRAM table: exact (vert-suffix, frag-suffix) pairs that are pilots.
+// Matching by BOTH stage filenames keeps it program-atomic — a shared vert being
+// SPIR-V in one program and GLSL in a non-pilot program is fine (different
+// programs); a program is all-SPIR-V or all-GLSL, never mixed.
+static const struct { const char* vsuf; const char* fsuf; } kSpirvPilotPrograms[] = {
+    {"/postprocess.vert", "/postprocess.frag"},
+    {"/mech.vert",        "/mech.frag"},
+    {"/postprocess.vert", "/ssao.frag"},
+    {"/postprocess.vert", "/fog_oob.frag"},
+    {"/postprocess.vert", "/edge_fog.frag"},
+    {"/postprocess.vert", "/hzb_reduce.frag"},
+};
+
 // Pilot allowlist: fname -> (base, short stage). Returns false if not a pilot.
 bool spirvPilotStage(const char* fname, std::string& base, std::string& stageShort)
 {
-    if (spirvEndsWith(fname, "postprocess.vert")) { base = "postprocess"; stageShort = "vert"; return true; }
-    if (spirvEndsWith(fname, "postprocess.frag")) { base = "postprocess"; stageShort = "frag"; return true; }
-    // SPIRV-MECHOPAQUE-PILOT-BUILD-1: MechOpaque (mech.vert/frag). mech.vert is
-    // NOT shared with any other program; shadow_mech is a SEPARATE program and
-    // stays GLSL (not listed here).
-    if (spirvEndsWith(fname, "/mech.vert"))        { base = "mech";        stageShort = "vert"; return true; }
-    if (spirvEndsWith(fname, "/mech.frag"))        { base = "mech";        stageShort = "frag"; return true; }
+    for (const auto& s : kSpirvPilotStages) {
+        if (spirvEndsWith(fname, s.suffix)) { base = s.base; stageShort = s.stage; return true; }
+    }
     return false;
 }
 
 // Program-atomic pilot decision (called by makeProgram2 with the FULL stage set).
-// Decides which PROGRAMS are pilots; per-stage variant selection is keyed by
-// define-set in trySpirvSpecialize. A program is all-SPIR-V or all-GLSL, never
-// mixed (postprocess.vert is shared by cloud/shoreline/ssao/... so only the exact
-// composite pair qualifies — matching by BOTH stage filenames guarantees this).
 bool spirvCompositePilotProgram(const char* vp, const char* hp, const char* dp,
                                 const char* gp, const char* fp, const char* /*prefix*/)
 {
     if (!spirvPilotEnabled()) return false;
     if (hp || dp || gp) return false;                            // pilots are vert+frag only
-    // postprocess composite
-    if (spirvEndsWith(vp, "postprocess.vert") && spirvEndsWith(fp, "postprocess.frag"))
-        return true;
-    // MechOpaque (mech.vert + mech.frag exactly; shadow_mech uses a different
-    // frag so it never matches and stays GLSL)
-    if (spirvEndsWith(vp, "/mech.vert") && spirvEndsWith(fp, "/mech.frag"))
-        return true;
+    for (const auto& p : kSpirvPilotPrograms) {
+        if (spirvEndsWith(vp, p.vsuf) && spirvEndsWith(fp, p.fsuf)) return true;
+    }
     return false;
 }
 
