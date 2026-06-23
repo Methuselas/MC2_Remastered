@@ -241,6 +241,50 @@ def main():
             fails.append(f"PipelineDesc in {DESC_H} declares '{forbidden}' — "
                          "polygon-offset magnitude is dynamic state, must not be a field")
 
+    # BLENDMODE-ADDITIVE-VOCABULARY-1: blend FACTORS are authoritative and the
+    # factor NAME now encodes the exact GL func (no per-id truth table needed).
+    # CANONICAL_BLEND is the single source of factor->(src,dst,equation) truth.
+    # Rules for every registered pipeline row:
+    #   (1) its blendState.factor must be a real RenderCore::BlendMode value;
+    #   (2) the COARSE legacy "Additive" is FORBIDDEN in a registered row (it
+    #       cannot distinguish SRC_ALPHA/ONE from ONE/ONE — use the precise
+    #       AdditiveOneOne / AdditiveSrcAlphaOne; coarse Additive is reserved for
+    #       the render-contract bridge);
+    #   (3) a blend-ENABLED row must declare explicit srcFactor/dstFactor/equation;
+    #   (4) those MUST equal CANONICAL_BLEND[factor] — this FAILs if SRC_ALPHA/ONE
+    #       is collapsed into ONE/ONE (declared factors no longer match the name).
+    CANONICAL_BLEND = {
+        "AlphaBlend":          ("SRC_ALPHA", "ONE_MINUS_SRC_ALPHA", "FUNC_ADD"),
+        "AdditiveOneOne":      ("ONE",       "ONE",                 "FUNC_ADD"),
+        "AdditiveSrcAlphaOne": ("SRC_ALPHA", "ONE",                 "FUNC_ADD"),
+    }
+    blendmodes = parse_enum_values(desc_raw, "BlendMode")  # from PipelineDesc.h
+    NO_BLEND = {"Opaque", "AlphaTest"}
+    for p in schema.get("registered_pipelines", []):
+        bs = p.get("blendState", {})
+        factor = bs.get("factor")
+        if not factor:
+            continue
+        if blendmodes and factor not in blendmodes:
+            fails.append(f"pipeline '{p['id']}' blendState.factor '{factor}' is not "
+                         f"a RenderCore::BlendMode value {blendmodes} (stale/typo)")
+            continue
+        if factor == "Additive":
+            fails.append(f"pipeline '{p['id']}' uses the COARSE legacy blend factor "
+                         "'Additive' — registered rows must use the precise "
+                         "AdditiveOneOne / AdditiveSrcAlphaOne (BLENDMODE-ADDITIVE-VOCABULARY-1)")
+            continue
+        if factor in NO_BLEND:
+            continue
+        triple = (bs.get("srcFactor"), bs.get("dstFactor"), bs.get("equation"))
+        if not all(triple):
+            fails.append(f"pipeline '{p['id']}' blend factor '{factor}' but missing "
+                         "explicit srcFactor/dstFactor/equation")
+        elif factor in CANONICAL_BLEND and triple != CANONICAL_BLEND[factor]:
+            fails.append(f"pipeline '{p['id']}' blend factors {triple} != canonical "
+                         f"{CANONICAL_BLEND[factor]} for '{factor}' "
+                         "(blend collapse / drift — e.g. SRC_ALPHA/ONE flattened to ONE/ONE)")
+
     # SPIRV-MECHOPAQUE-PIPELINEKEY-INTEGRATION-1: cross-link the pipeline-key
     # contract to the baked SPIR-V artifact contract. For any registered pipeline
     # whose shaderVariantId.base is also a baked SPIR-V family, the schema's

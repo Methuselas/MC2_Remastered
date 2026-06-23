@@ -48,8 +48,21 @@ enum class PipelineId : uint32_t {
     // gos_tex_vertex.frag). DESCRIPTIVE (glProgramName=0, NOT routed). The legacy
     // quad fallback + the GPU-driven MDI sub-variant are deliberately NOT modeled.
     WaterArmed          = 10,  // armed water fast path (alpha blend, cull none, GEQUAL, depth-write)
-    // Future: VFX, DebugWireframe, ...
-    Count_              = 11,  // sentinel — do not use as an ID
+    // VFX-PIPELINE-REGISTRATION-1: the finite particle/VFX family. DESCRIPTIVE
+    // (glProgramName=0, NOT routed). 3 programs x AlphaBlend/Additive. Shared
+    // invariant: depthTest on, GEQUAL, depth-write OFF, cull None, color0 only,
+    // FUNC_ADD. The ADDITIVE factors DIVERGE per program — billboard/mesh use
+    // SRC_ALPHA/ONE, tube uses ONE/ONE; BlendMode::Additive cannot distinguish
+    // them, so the SCHEMA carries the exact src/dst and the checker treats those
+    // as authoritative. Routing waits on BLENDMODE-ADDITIVE-VOCABULARY-1.
+    VfxBillboardAlpha    = 11,  // particle_billboard, SRC_ALPHA/ONE_MINUS_SRC_ALPHA
+    VfxBillboardAdditive = 12,  // particle_billboard, SRC_ALPHA/ONE
+    VfxTubeAlpha         = 13,  // tube_ribbon, SRC_ALPHA/ONE_MINUS_SRC_ALPHA
+    VfxTubeAdditive      = 14,  // tube_ribbon, ONE/ONE  (differs from billboard/mesh)
+    VfxMeshAlpha         = 15,  // vfx_mesh, SRC_ALPHA/ONE_MINUS_SRC_ALPHA
+    VfxMeshAdditive      = 16,  // vfx_mesh, SRC_ALPHA/ONE
+    // Future: DebugWireframe, ...
+    Count_               = 17,  // sentinel — do not use as an ID
 };
 
 // VERTEXLAYOUT-AUTHORITY-1: stable repo-owned vertex-input layout identities —

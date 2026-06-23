@@ -238,6 +238,101 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* ssboBindingsMask    */ 0u,              // armed base binds its own buffers; MDI sub-path SSBOs not modeled
     },
 
+    // [11-16] VFX family — VFX-PIPELINE-REGISTRATION-1. DESCRIPTIVE (glProgramName=0,
+    // NOT routed; gos_particle_bridge.cpp / gos_vfx_mesh_bridge.cpp hand-set state).
+    // Shared invariant (source-verified): depthTest on, depth-WRITE OFF, reverse-Z
+    // GEQUAL, cull None (double-sided), frontFace Ccw, color0 only (all 3 VFX frags
+    // write a single output; no objectID — see vfx_no_objectid contract), FUNC_ADD.
+    // The ONLY variable is blend. BlendMode::Additive is COARSE: it cannot encode
+    // the SRC_ALPHA/ONE (billboard/mesh) vs ONE/ONE (tube) divergence — the SCHEMA
+    // blendState carries the exact src/dst and the checker enforces it. Until
+    // BLENDMODE-ADDITIVE-VOCABULARY-1 splits the enum, do NOT route these.
+
+    // [11] VfxBillboardAlpha — particle_billboard, SRC_ALPHA/ONE_MINUS_SRC_ALPHA
+    {
+        /* glProgramName       */ 0u,
+        /* blend               */ BlendMode::AlphaBlend,
+        /* depthTestEnable     */ true,
+        /* depthWriteEnable    */ false,
+        /* depthFunc           */ DepthFunc::GreaterEqual,
+        /* cullMode            */ CullMode::None,
+        /* colorAttachments    */ { true, false, false },
+        /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,
+        /* polygonOffsetEnable */ false,
+        /* ssboBindingsMask    */ 0u,
+    },
+    // [12] VfxBillboardAdditive — particle_billboard, SRC_ALPHA/ONE (schema-exact)
+    {
+        /* glProgramName       */ 0u,
+        /* blend               */ BlendMode::AdditiveSrcAlphaOne, // SRC_ALPHA/ONE
+        /* depthTestEnable     */ true,
+        /* depthWriteEnable    */ false,
+        /* depthFunc           */ DepthFunc::GreaterEqual,
+        /* cullMode            */ CullMode::None,
+        /* colorAttachments    */ { true, false, false },
+        /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,
+        /* polygonOffsetEnable */ false,
+        /* ssboBindingsMask    */ 0u,
+    },
+    // [13] VfxTubeAlpha — tube_ribbon, SRC_ALPHA/ONE_MINUS_SRC_ALPHA
+    {
+        /* glProgramName       */ 0u,
+        /* blend               */ BlendMode::AlphaBlend,
+        /* depthTestEnable     */ true,
+        /* depthWriteEnable    */ false,
+        /* depthFunc           */ DepthFunc::GreaterEqual,
+        /* cullMode            */ CullMode::None,
+        /* colorAttachments    */ { true, false, false },
+        /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,
+        /* polygonOffsetEnable */ false,
+        /* ssboBindingsMask    */ 0u,
+    },
+    // [14] VfxTubeAdditive — tube_ribbon, ONE/ONE (DIFFERS from billboard/mesh; schema-exact)
+    {
+        /* glProgramName       */ 0u,
+        /* blend               */ BlendMode::AdditiveOneOne, // ONE/ONE (differs from billboard/mesh)
+        /* depthTestEnable     */ true,
+        /* depthWriteEnable    */ false,
+        /* depthFunc           */ DepthFunc::GreaterEqual,
+        /* cullMode            */ CullMode::None,
+        /* colorAttachments    */ { true, false, false },
+        /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,
+        /* polygonOffsetEnable */ false,
+        /* ssboBindingsMask    */ 0u,
+    },
+    // [15] VfxMeshAlpha — vfx_mesh, SRC_ALPHA/ONE_MINUS_SRC_ALPHA
+    {
+        /* glProgramName       */ 0u,
+        /* blend               */ BlendMode::AlphaBlend,
+        /* depthTestEnable     */ true,
+        /* depthWriteEnable    */ false,
+        /* depthFunc           */ DepthFunc::GreaterEqual,
+        /* cullMode            */ CullMode::None,
+        /* colorAttachments    */ { true, false, false },
+        /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,
+        /* polygonOffsetEnable */ false,
+        /* ssboBindingsMask    */ 0u,
+    },
+    // [16] VfxMeshAdditive — vfx_mesh, SRC_ALPHA/ONE (schema-exact)
+    {
+        /* glProgramName       */ 0u,
+        /* blend               */ BlendMode::AdditiveSrcAlphaOne, // SRC_ALPHA/ONE (same as billboard)
+        /* depthTestEnable     */ true,
+        /* depthWriteEnable    */ false,
+        /* depthFunc           */ DepthFunc::GreaterEqual,
+        /* cullMode            */ CullMode::None,
+        /* colorAttachments    */ { true, false, false },
+        /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,
+        /* polygonOffsetEnable */ false,
+        /* ssboBindingsMask    */ 0u,
+    },
+
 }};
 
 static_assert(
