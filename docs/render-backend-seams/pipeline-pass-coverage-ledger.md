@@ -45,8 +45,8 @@ distinct from "visually proven", instead of faking a byte-hash that can't hold.
 | MechOpaque | SPIRV_ELIGIBLE | MechOpaque | MechOpaque |
 | ShadowTerrain / ShadowStaticProp / ShadowMech | VISUAL_PROVEN | Shadow | Shadow* |
 | Terrain (main solid) | UNREGISTERED | Terrain | — |
-| TerrainOverlay | DESCRIPTIVE_REGISTERED | TerrainOverlay | TerrainOverlay |
-| TerrainDecal | DESCRIPTIVE_REGISTERED (first AlphaBlend row) | TerrainDecal | TerrainDecal |
+| TerrainOverlay | ROUTED_BY_APPLYPIPELINE (proof: pass_not_exercised_in_smoke) | TerrainOverlay | TerrainOverlay |
+| TerrainDecal | ROUTED_BY_APPLYPIPELINE (proof: pass_not_exercised_in_smoke) | TerrainDecal | TerrainDecal |
 | Water (armed fast path) | DESCRIPTIVE_REGISTERED | Water | WaterArmed |
 | VFX | ROUTED_BY_APPLYPIPELINE (proof: nondeterministic_visual_gate_pending) | VFX | Vfx{Billboard,Tube,Mesh}{Alpha,Additive} (6) |
 | VegetationCards | UNREGISTERED | VegetationCards | — |

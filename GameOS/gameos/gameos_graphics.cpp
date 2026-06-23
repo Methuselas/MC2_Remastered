@@ -9729,11 +9729,11 @@ void gosRenderer::drawTerrainOverlays()
         terrainOverlayBatch_.verts.data(), GL_STREAM_DRAW);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-    glEnable(GL_DEPTH_TEST);
-    glDepthMask(GL_TRUE);
-    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (scene overlays/decals)
-    glDisable(GL_BLEND);
-    glDisable(GL_CULL_FACE);
+    // TERRAIN-OVERLAY-DECAL-APPLYPIPELINE-ROUTING-1: TerrainOverlay row (opaque,
+    // depth test+write, GEQUAL, cull none) — byte-identical to the old hand-set
+    // state. program(0)=skip keeps the manual overlay program bind below.
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::TerrainOverlay), "TerrainOverlay");
 
     glUseProgram(overlayProg_->shp_);
     float elapsed = SmokeMode::fixedTimestepEnabled()
@@ -9847,11 +9847,13 @@ bool gosRenderer::drawDecalStaticBatch(unsigned int vboGL,
     DECAL_GLPROBE("after_vao_block");
 
     // ---- State block: identical to drawTerrainOverlays() -------------------
-    glEnable(GL_DEPTH_TEST);
-    glDepthMask(GL_TRUE);
-    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (scene overlays/decals)
-    glDisable(GL_BLEND);
-    glDisable(GL_CULL_FACE);
+    // TERRAIN-OVERLAY-DECAL-APPLYPIPELINE-ROUTING-1: drive FF state from the
+    // TerrainOverlay row (opaque, depth test+write, reverse-Z GEQUAL, cull none).
+    // Byte-identical to the old hand-set state (+ no-op glFrontFace(CCW)/blendFunc/
+    // offset-disable). glProgramName=0 -> applyPipeline SKIPs program; the manual
+    // glUseProgram(overlayProg_) below stays.
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::TerrainOverlay), "TerrainOverlay");
 
     DECAL_GLPROBE("after_state_block");
     glUseProgram(overlayProg_->shp_);
@@ -9921,12 +9923,12 @@ void gosRenderer::drawDecals()
         decalBatch_.verts.data(), GL_STREAM_DRAW);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-    glEnable(GL_DEPTH_TEST);
-    glDepthMask(GL_FALSE);
-    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (scene decals)
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    glDisable(GL_CULL_FACE);
+    // TERRAIN-OVERLAY-DECAL-APPLYPIPELINE-ROUTING-1: TerrainDecal row (AlphaBlend
+    // SRC_ALPHA/ONE_MINUS_SRC_ALPHA, depth-test but depth-WRITE OFF, GEQUAL, cull
+    // none) — byte-identical to the old hand-set state. program(0)=skip keeps the
+    // manual decalProg_ bind below.
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::TerrainDecal), "TerrainDecal");
 
     glUseProgram(decalProg_->shp_);
     float elapsed = SmokeMode::fixedTimestepEnabled()

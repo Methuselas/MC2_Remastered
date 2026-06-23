@@ -162,12 +162,15 @@ def main():
         # VISUAL_PROVEN/SPIRV_ELIGIBLE must NOT carry a 'pending' proofStatus.
         ps = e.get("proofStatus")
         if ps is not None:
-            ALLOWED_PROOF = {"byte_identical", "perceptual_ab", "oracle_coverage",
-                             "nondeterministic_visual_gate_pending"}
-            if ps not in ALLOWED_PROOF:
-                fails.append(f"'{name}' proofStatus '{ps}' not in {sorted(ALLOWED_PROOF)}")
-            if st in ("VISUAL_PROVEN", "SPIRV_ELIGIBLE") and ps == "nondeterministic_visual_gate_pending":
-                fails.append(f"'{name}' claims {st} but proofStatus is still pending — "
+            # "landed" proofs vs "pending" (gate not yet obtained). A pass may not
+            # claim VISUAL_PROVEN/SPIRV_ELIGIBLE while its proofStatus is pending.
+            PROOF_LANDED  = {"byte_identical", "perceptual_ab", "oracle_coverage"}
+            PROOF_PENDING = {"nondeterministic_visual_gate_pending",  # output is nondeterministic (e.g. VFX spawn)
+                             "pass_not_exercised_in_smoke"}           # deterministic but content-dependent; not drawn in tier1
+            if ps not in (PROOF_LANDED | PROOF_PENDING):
+                fails.append(f"'{name}' proofStatus '{ps}' not in {sorted(PROOF_LANDED | PROOF_PENDING)}")
+            if st in ("VISUAL_PROVEN", "SPIRV_ELIGIBLE") and ps in PROOF_PENDING:
+                fails.append(f"'{name}' claims {st} but proofStatus '{ps}' is still pending — "
                              "do not mark proven while the visual gate is unresolved")
         if st == "SPIRV_ELIGIBLE" and spv is not None:
             base = e.get("shaderBase")
