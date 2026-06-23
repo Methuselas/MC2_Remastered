@@ -445,26 +445,32 @@ bool spirvPilotStage(const char* fname, std::string& base, std::string& stageSho
 {
     if (spirvEndsWith(fname, "postprocess.vert")) { base = "postprocess"; stageShort = "vert"; return true; }
     if (spirvEndsWith(fname, "postprocess.frag")) { base = "postprocess"; stageShort = "frag"; return true; }
+    // SPIRV-MECHOPAQUE-PILOT-BUILD-1: MechOpaque (mech.vert/frag). mech.vert is
+    // NOT shared with any other program; shadow_mech is a SEPARATE program and
+    // stays GLSL (not listed here).
+    if (spirvEndsWith(fname, "/mech.vert"))        { base = "mech";        stageShort = "vert"; return true; }
+    if (spirvEndsWith(fname, "/mech.frag"))        { base = "mech";        stageShort = "frag"; return true; }
     return false;
 }
 
-// Program-atomic pilot decision (called by makeProgram2 with the FULL stage
-// set). postprocess.vert is shared by many programs (cloud/shoreline/ssao/...),
-// so a per-stage allowlist would load SPIR-V for the vert while siblings keep a
-// GLSL frag -> SPIR-V/GLSL mixed link FAILS. Only the exact composite pair
-// (postprocess.vert + postprocess.frag, no other stages, default variant) is a
-// pilot, so a program is all-SPIR-V or all-GLSL — never mixed.
+// Program-atomic pilot decision (called by makeProgram2 with the FULL stage set).
+// Decides which PROGRAMS are pilots; per-stage variant selection is keyed by
+// define-set in trySpirvSpecialize. A program is all-SPIR-V or all-GLSL, never
+// mixed (postprocess.vert is shared by cloud/shoreline/ssao/... so only the exact
+// composite pair qualifies — matching by BOTH stage filenames guarantees this).
 bool spirvCompositePilotProgram(const char* vp, const char* hp, const char* dp,
                                 const char* gp, const char* fp, const char* /*prefix*/)
 {
     if (!spirvPilotEnabled()) return false;
-    if (hp || dp || gp) return false;                            // composite has none
-    // SPIRV-KEYED-VARIANT-CONSUMER-1: the #define-reject is GONE — variant
-    // selection is now keyed per-stage by define-set (trySpirvSpecialize). This
-    // gate only decides which PROGRAMS are pilots (program-atomic). A pilot stage
-    // whose define-set has no baked artifact still falls back atomically.
-    return spirvEndsWith(vp, "postprocess.vert") &&
-           spirvEndsWith(fp, "postprocess.frag");
+    if (hp || dp || gp) return false;                            // pilots are vert+frag only
+    // postprocess composite
+    if (spirvEndsWith(vp, "postprocess.vert") && spirvEndsWith(fp, "postprocess.frag"))
+        return true;
+    // MechOpaque (mech.vert + mech.frag exactly; shadow_mech uses a different
+    // frag so it never matches and stays GLSL)
+    if (spirvEndsWith(vp, "/mech.vert") && spirvEndsWith(fp, "/mech.frag"))
+        return true;
+    return false;
 }
 
 // SPIRV-KEYED-VARIANT-CONSUMER-1: canonical define-set key from the runtime
