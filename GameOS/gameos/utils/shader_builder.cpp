@@ -430,17 +430,36 @@ bool spirvFatal()
     return e && e[0] == '1';
 }
 
+static bool spirvEndsWith(const char* fname, const char* suffix)
+{
+    if (!fname) return false;
+    std::string f(fname);
+    size_t n = std::strlen(suffix);
+    return f.size() >= n && f.compare(f.size() - n, n, suffix) == 0;
+}
+
 // Pilot allowlist: fname -> (base, short stage). Returns false if not a pilot.
 bool spirvPilotStage(const char* fname, std::string& base, std::string& stageShort)
 {
-    std::string f(fname ? fname : "");
-    auto ends = [&](const char* s) {
-        size_t n = std::strlen(s);
-        return f.size() >= n && f.compare(f.size() - n, n, s) == 0;
-    };
-    if (ends("postprocess.vert")) { base = "postprocess"; stageShort = "vert"; return true; }
-    if (ends("postprocess.frag")) { base = "postprocess"; stageShort = "frag"; return true; }
+    if (spirvEndsWith(fname, "postprocess.vert")) { base = "postprocess"; stageShort = "vert"; return true; }
+    if (spirvEndsWith(fname, "postprocess.frag")) { base = "postprocess"; stageShort = "frag"; return true; }
     return false;
+}
+
+// Program-atomic pilot decision (called by makeProgram2 with the FULL stage
+// set). postprocess.vert is shared by many programs (cloud/shoreline/ssao/...),
+// so a per-stage allowlist would load SPIR-V for the vert while siblings keep a
+// GLSL frag -> SPIR-V/GLSL mixed link FAILS. Only the exact composite pair
+// (postprocess.vert + postprocess.frag, no other stages, default variant) is a
+// pilot, so a program is all-SPIR-V or all-GLSL — never mixed.
+bool spirvCompositePilotProgram(const char* vp, const char* hp, const char* dp,
+                                const char* gp, const char* fp, const char* prefix)
+{
+    if (!spirvPilotEnabled()) return false;
+    if (prefix && std::strstr(prefix, "#define")) return false;  // default variant only
+    if (hp || dp || gp) return false;                            // composite has none
+    return spirvEndsWith(vp, "postprocess.vert") &&
+           spirvEndsWith(fp, "postprocess.frag");
 }
 
 // Minimal extraction of "artifact":"<name>" from the sidecar JSON (no JSON dep).
@@ -514,7 +533,7 @@ bool trySpirvSpecialize(GLuint shader, const char* fname, const char* prefix)
 
 } // namespace
 
-glsl_shader* glsl_shader::makeShader(Shader_t stype, const char* fname, const char* prefix/* = nullptr*/)
+glsl_shader* glsl_shader::makeShader(Shader_t stype, const char* fname, const char* prefix/* = nullptr*/, bool trySpirv/* = false*/)
 {
     ZoneScopedN("Shader.MakeShader");
     std::string shader_source;
@@ -559,10 +578,17 @@ glsl_shader* glsl_shader::makeShader(Shader_t stype, const char* fname, const ch
         return 0;
     }
 
-    // SPIRV-CONSUMER-PILOT-BUILD-1: try the baked .spv first (default OFF, pilot
-    // only). On any miss this returns false and we fall through to GLSL compile.
-    const bool usedSpirv = trySpirvSpecialize(shader, fname, prefix);
-    if (!usedSpirv)
+    // SPIRV-CONSUMER-PILOT-BUILD-1: when the program-atomic pilot gate enabled
+    // it (trySpirv), the baked .spv MUST load — if it fails we return nullptr so
+    // makeProgram2 can rebuild the WHOLE program as GLSL (atomic; never a program
+    // with one SPIR-V stage + one GLSL stage, which would fail to link).
+    if (trySpirv && !trySpirvSpecialize(shader, fname, prefix))
+    {
+        glDeleteShader(shader);
+        delete pshader;
+        return nullptr;
+    }
+    if (!trySpirv)
     {
     const char* strings[] = { prefix == nullptr ? "" : prefix, shader_source.c_str() };
     std::string compileLog;
@@ -859,19 +885,36 @@ glsl_program* glsl_program::makeProgram2(const char* name, const char* vp, const
         return 0;
     }
 
-    glsl_shader* vsh;
-    { ZoneScopedN("Shader.Stage.Vertex"); vsh = glsl_shader::makeShader(glsl_shader::VERTEX, vp, prefix); }
-	if(!vsh)
-		return 0;
+    // SPIRV-CONSUMER-PILOT-BUILD-1: program-atomic pilot gate — either ALL
+    // stages of the composite pilot load SPIR-V or none do (no mixed links).
+    const bool spirvPilot = spirvCompositePilotProgram(vp, hp, dp, gp, fp, prefix);
 
-	glsl_shader* hsh = 0, *dsh = 0, *gsh = 0, *fsh = 0;
-	
-	if(fp)
-	{
-		{ ZoneScopedN("Shader.Stage.Fragment"); fsh = glsl_shader::makeShader(glsl_shader::FRAGMENT, fp, prefix); }
-		if(!fsh)
-			return 0;
-	}
+    glsl_shader* vsh = 0, *hsh = 0, *dsh = 0, *gsh = 0, *fsh = 0;
+    { ZoneScopedN("Shader.Stage.Vertex"); vsh = glsl_shader::makeShader(glsl_shader::VERTEX, vp, prefix, spirvPilot); }
+    if(spirvPilot && vsh && fp)
+    {
+        ZoneScopedN("Shader.Stage.Fragment"); fsh = glsl_shader::makeShader(glsl_shader::FRAGMENT, fp, prefix, true);
+    }
+    // Atomic pilot fallback: if ANY pilot stage SPIR-V load failed, discard the
+    // partial program and rebuild EVERY stage as GLSL (never a mixed SPIR-V/GLSL
+    // program -> would fail to link). Composite pilot has only vert+frag.
+    if(spirvPilot && (!vsh || (fp && !fsh)))
+    {
+        log_error("[SPIRV] pilot program %s: a stage failed SPIR-V; rebuilding all stages GLSL\n", name);
+        if(vsh) glsl_shader::deleteShader(vsh);
+        if(fsh) glsl_shader::deleteShader(fsh);
+        vsh = fsh = 0;
+    }
+    if(!vsh)
+    {
+        { ZoneScopedN("Shader.Stage.Vertex"); vsh = glsl_shader::makeShader(glsl_shader::VERTEX, vp, prefix); }
+        if(!vsh) return 0;
+    }
+    if(fp && !fsh)
+    {
+        { ZoneScopedN("Shader.Stage.Fragment"); fsh = glsl_shader::makeShader(glsl_shader::FRAGMENT, fp, prefix); }
+        if(!fsh) return 0;
+    }
     	
 	if(hp)
 	{

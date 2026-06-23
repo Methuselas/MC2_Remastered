@@ -84,7 +84,12 @@ struct glsl_shader
     static std::map<std::string, glsl_shader*> s_shaders[glsl_shader::NUM_SHADER_TYPES];
 
     bool reload(const char* prefix);
-    static glsl_shader* makeShader(Shader_t type, const char* fname, const char* prefix = nullptr);
+    // trySpirv (SPIRV-CONSUMER-PILOT-BUILD-1): when true AND the pilot gate
+    // passes, load the offline-baked .spv for this stage instead of compiling
+    // GLSL. Program-atomic: only makeProgram2 sets it true, and only for a
+    // fully-baked pilot program, so a program never mixes SPIR-V + GLSL stages.
+    // Default false => unchanged GLSL path for every other caller.
+    static glsl_shader* makeShader(Shader_t type, const char* fname, const char* prefix = nullptr, bool trySpirv = false);
     static void deleteShader(glsl_shader* psh);
 
     // returns time of least-recently modified file on which this shader depends
