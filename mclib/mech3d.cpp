@@ -915,25 +915,39 @@ Stuff::Vector3D Mech3DAppearance::getWeaponNodePosition (long nodeId)
 	}
 
 	//We already know we are using this node.  Do NOT increment recycle or nodeUsed!
-		
+
+	// 1A (BT2018-MECH-NODE-MANIFEST-1A): an imported mech's merged single shape has
+	// no named TG nodes, so the legacy lookup below returns origin. Resolve the
+	// firepoint from the package node manifest + live clip globals instead.
+	if (mechShape && mechShape->GetNumShapes() > 0) {
+		const void* tKey = mechType ? (const void*)mechType->mechShape[currentLOD] : nullptr;
+		float wp[3];
+		if (mc2mechanim::GetImportedNodeWorld((const void*)mechShape, tKey,
+				mechType->nodeData[nodeId].nodeId,
+				(const float*)mechShape->GetShapeRec(0)->shapeToWorld.entries, wp)) {
+			result.x = wp[0]; result.y = wp[1]; result.z = wp[2];
+			return result;
+		}
+	}
+
    	//-------------------------------------------
    	// Create Matrix to conform to.
    	Stuff::UnitQuaternion qRotation;
    	float yaw = rotation * DEGREES_TO_RADS;
    	qRotation = Stuff::EulerAngles(0.0f, yaw, 0.0f);
-   
+
    	Stuff::Point3D xlatPosition;
    	xlatPosition.x = -position.x;
    	xlatPosition.y = position.z;
    	xlatPosition.z = position.y;
-   
+
    	Stuff::UnitQuaternion torsoRot;
    	torsoRot = Stuff::EulerAngles(0.0f,(torsoRotation * DEGREES_TO_RADS),0.0f);
 	if (rotationalNodeIndex == -1)
 	   	rotationalNodeIndex = mechShape->SetNodeRotation("joint_torso",&torsoRot);
 
 	mechShape->SetNodeRotation(rotationalNodeIndex,&torsoRot);
-   
+
 	result = mechShape->GetTransformedNodePosition(&xlatPosition,&qRotation,mechType->nodeData[nodeId].nodeId);
 
 	if ((result.x == 0.0f) &&
@@ -2695,6 +2709,20 @@ long Mech3DAppearance::render (long depthFixup)
 			FILE* f = fopen("preview_debug.log","a");
 			if (f) { fprintf(f,"[PREVIEW] Mech3D::render EARLY-OUT mechShape=NULL (partial-import guard)\n"); fflush(f); fclose(f); }
 		}
+		// DIAG (GPU-MECH-EQUIV recon): capture the null-shape invisible cohort
+		// (Cohort B — broken appearance type with mechShape==NULL early-outs here,
+		// before both GPU submit and CPU fallback). Gated by MC2_MECH_RESTORE_TRACE.
+		{
+			static const bool s_mrtNull = (getenv("MC2_MECH_RESTORE_TRACE") != nullptr);
+			static int s_nullEmits = 0;
+			if (s_mrtNull && g_mechPreviewRenderDepth == 0 && s_nullEmits < 20000) {
+				++s_nullEmits;
+				std::fprintf(stderr,
+					"[MECHRESTORE v1] event=nullshape frame=%u actor=%lu type=%p status=%d\n",
+					(unsigned)g_mc2FrameCounter, (unsigned long)actorHandle_,
+					(void*)mechType, (int)status);
+			}
+		}
 		return NO_ERR;
 	}
 
@@ -2938,15 +2966,25 @@ long Mech3DAppearance::render (long depthFixup)
 				static const bool s_mechRestoreTrace =
 					(getenv("MC2_MECH_RESTORE_TRACE") != nullptr);
 				static int s_mechRestoreEmits = 0;
-				if (s_mechRestoreTrace && s_mechRestoreEmits < 2000) {
-					++s_mechRestoreEmits;
+				// DIAG (GPU-MECH-EQUIV recon): emit EVERY submitted=0 actor on a
+				// separate generous cap (the mech-bay preview consumes the 2000
+				// success cap before the mission roster renders). frame + inView
+				// let us tell persistent invisibility (same actor failing across
+				// many frames, in-view) from a 1-frame spawn transient, and
+				// cullSkip vs lateReg tells offscreen-cull from registration-fail.
+				static int s_mechRestoreFailEmits = 0;
+				const bool emitFail = (!gpuMechSubmitted && s_mechRestoreFailEmits < 20000);
+				if (s_mechRestoreTrace && (emitFail || s_mechRestoreEmits < 2000)) {
+					if (emitFail) ++s_mechRestoreFailEmits; else ++s_mechRestoreEmits;
 					std::fprintf(stderr,
-						"[MECHRESTORE v1] event=submit actor=%lu type=%p lod=%d "
-						"submitted=%d cullSkip=%d lateReg=%d finalized=%d status=%d\n",
+						"[MECHRESTORE v1] event=submit frame=%u actor=%lu type=%p lod=%d "
+						"submitted=%d cullSkip=%d lateReg=%d finalized=%d status=%d inView=%d\n",
+						(unsigned)g_mc2FrameCounter,
 						(unsigned long)actorHandle_, (void*)mechType, (int)currentLOD,
 						gpuMechSubmitted ? 1 : 0, mechGpuCullSkip ? 1 : 0,
 						GpuMechBatcher::instance().wasLastFailureLateRegistration() ? 1 : 0,
-						GpuMechBatcher::instance().isFinalized() ? 1 : 0, (int)status);
+						GpuMechBatcher::instance().isFinalized() ? 1 : 0, (int)status,
+						(int)inView);
 				}
 			}
 
@@ -6071,6 +6109,17 @@ Stuff::Vector3D Mech3DAppearance::getHitNodeLeft (void)
 
 	mechShape->SetNodeRotation(rotationalNodeIndex,&torsoRot);
 
+	// 1A: imported mech -> manifest-resolved hit node ("hit_left").
+	if (mechShape && mechShape->GetNumShapes() > 0) {
+		const void* tKey = mechType ? (const void*)mechType->mechShape[currentLOD] : nullptr;
+		float wp[3];
+		if (mc2mechanim::GetImportedNodeWorld((const void*)mechShape, tKey, "hit_left",
+				(const float*)mechShape->GetShapeRec(0)->shapeToWorld.entries, wp)) {
+			result.x = wp[0]; result.y = wp[1]; result.z = wp[2];
+			return result;
+		}
+	}
+
 	result = mechShape->GetTransformedNodePosition(&xlatPosition,&qRotation,hitLeftNodeIndex);
 
 	if ((result.x == 0.0f) &&
@@ -6113,7 +6162,18 @@ Stuff::Vector3D Mech3DAppearance::getHitNodeRight (void)
 	   	rotationalNodeIndex = mechShape->SetNodeRotation("joint_torso",&torsoRot);
 
 	mechShape->SetNodeRotation(rotationalNodeIndex,&torsoRot);
-   
+
+	// 1A: imported mech -> manifest-resolved hit node ("hit_right").
+	if (mechShape && mechShape->GetNumShapes() > 0) {
+		const void* tKey = mechType ? (const void*)mechType->mechShape[currentLOD] : nullptr;
+		float wp[3];
+		if (mc2mechanim::GetImportedNodeWorld((const void*)mechShape, tKey, "hit_right",
+				(const float*)mechShape->GetShapeRec(0)->shapeToWorld.entries, wp)) {
+			result.x = wp[0]; result.y = wp[1]; result.z = wp[2];
+			return result;
+		}
+	}
+
 	result = mechShape->GetTransformedNodePosition(&xlatPosition,&qRotation,hitRightNodeIndex);
 
 	if ((result.x == 0.0f) &&

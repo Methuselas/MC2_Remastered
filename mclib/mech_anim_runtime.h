@@ -71,4 +71,15 @@ float ImportedGpuLift(const void* actorKey);
 // Which world translation component the lift targets (0/1/2 = Stuff.x/y/z).
 int ImportedGpuLiftAxis();
 
+// BT2018-MECH-NODE-MANIFEST-1A. Resolve an MC2 semantic node name (e.g.
+// "weapon_rightarm", "hit_left") to the imported mech's animated joint WORLD
+// position, via the per-mech package manifest (mc2Name -> source joint) + the live
+// clip bone globals. rootToWorld12 = the actor's listOfShapes[0].shapeToWorld
+// .entries (row-major 3x4, 12 floats). Read-only: no FK mutation, no clip change.
+// Returns false (caller falls back to the legacy TG node lookup) when not an
+// imported mech, no manifest, the name is unmapped, or the joint/globals are absent.
+bool GetImportedNodeWorld(const void* actorKey, const void* typeKey,
+                          const char* mc2Name, const float* rootToWorld12,
+                          float outXYZ[3]);
+
 }  // namespace mc2mechanim

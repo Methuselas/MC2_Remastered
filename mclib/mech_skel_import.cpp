@@ -5,6 +5,7 @@
 #include <assimp/scene.h>
 #include <assimp/anim.h>
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -26,6 +27,32 @@ namespace {
 bool rotationOnlyEnabled() {
     const char* v = std::getenv("MC2_MECH_ANIM_ROTATION_ONLY");
     return !(v && v[0] == '0');  // default ON; only explicit "0" disables
+}
+
+// DIAGNOSTIC (default OFF): MC2_MECH_IMPORT_FORCE_POSE forces a single known static
+// pose on ONE leg bone, bypassing the clip entirely — decisive test for the
+// "lower body 180 reversed under animation / anim not playing" bug. Held static, no
+// clip/time dependence, so it fires even when clip playback is broken.
+//   =1 -> j_LThigh +90deg about local X    =2 -> +90 about local Y    =3 -> +90 about local Z
+int forcePoseMode() {
+    const char* v = std::getenv("MC2_MECH_IMPORT_FORCE_POSE");
+    return v ? std::atoi(v) : 0;
+}
+const char* forcePoseBone() {
+    const char* v = std::getenv("MC2_MECH_IMPORT_FORCE_BONE");
+    return (v && v[0]) ? v : "j_LThigh";
+}
+
+// FK walk with an extra local rotation injected on one named bone; all others rest.
+void computeGlobalsForced(const aiNode* n, const aiMatrix4x4& parent,
+                          const char* targetBone, const aiMatrix4x4& extraLocalRot,
+                          std::map<std::string, aiMatrix4x4>& globals) {
+    aiMatrix4x4 local = n->mTransformation;
+    if (std::strcmp(n->mName.C_Str(), targetBone) == 0) local = local * extraLocalRot;
+    aiMatrix4x4 global = parent * local;
+    globals[n->mName.C_Str()] = global;
+    for (unsigned i = 0; i < n->mNumChildren; ++i)
+        computeGlobalsForced(n->mChildren[i], global, targetBone, extraLocalRot, globals);
 }
 
 // Sample one node-animation channel at tick time t -> local transform.
@@ -152,15 +179,52 @@ bool EvaluateClipGpuBones(const aiScene* scene,
                           std::vector<GpuBone>& out,
                           double* outTimeTicks,
                           double* outDurTicks) {
+    // DIAGNOSTIC forced-pose branch (clip-independent; fires even if playback broken).
+    if (int fp = forcePoseMode()) {
+        aiMatrix4x4 extra;  // identity
+        const float a = 1.57079633f;  // 90 deg
+        if (fp == 1) aiMatrix4x4::RotationX(a, extra);
+        else if (fp == 2) aiMatrix4x4::RotationY(a, extra);
+        else if (fp == 3) aiMatrix4x4::RotationZ(a, extra);
+        std::map<std::string, aiMatrix4x4> globals;
+        computeGlobalsForced(scene->mRootNode, aiMatrix4x4(), forcePoseBone(), extra, globals);
+        out.assign(boneNames.size(), GpuBone{});
+        for (size_t i = 0; i < boneNames.size(); ++i) {
+            auto g = globals.find(boneNames[i]);
+            rowMajor(g != globals.end() ? g->second : aiMatrix4x4(), out[i].m);
+        }
+        if (outTimeTicks) *outTimeTicks = 0.0;
+        if (outDurTicks) *outDurTicks = 1.0;
+        return true;
+    }
+    const bool clipDiag = std::getenv("MC2_MECH_IMPORT_CLIP_DIAG") != nullptr;
     const aiAnimation* anim = nullptr;
     for (unsigned a = 0; a < scene->mNumAnimations; ++a)
         if (clip == scene->mAnimations[a]->mName.C_Str()) { anim = scene->mAnimations[a]; break; }
-    if (!anim) return false;
+    if (!anim) {
+        if (clipDiag) {
+            static int miss = 0;
+            if (miss++ < 12) {
+                std::fprintf(stderr, "[CLIP-DIAG] NOT FOUND clip='%s' (scene has %u anims; first few:",
+                             clip.c_str(), scene->mNumAnimations);
+                for (unsigned a = 0; a < scene->mNumAnimations && a < 4; ++a)
+                    std::fprintf(stderr, " '%s'", scene->mAnimations[a]->mName.C_Str());
+                std::fprintf(stderr, ")\n");
+            }
+        }
+        return false;
+    }
 
     double tps = anim->mTicksPerSecond != 0.0 ? anim->mTicksPerSecond : 1000.0;
     double t = (double)frame / 30.0 * tps;
     if (t > anim->mDuration) t = anim->mDuration;
     if (t < 0) t = 0;
+    if (clipDiag) {
+        static int hit = 0;
+        if (hit++ < 12)
+            std::fprintf(stderr, "[CLIP-DIAG] FOUND clip='%s' frame=%.2f t=%.2f dur=%.2f rotOnly=%d\n",
+                         clip.c_str(), (double)frame, t, anim->mDuration, (int)rotationOnlyEnabled());
+    }
     if (outTimeTicks) *outTimeTicks = t;
     if (outDurTicks) *outDurTicks = anim->mDuration;
 
