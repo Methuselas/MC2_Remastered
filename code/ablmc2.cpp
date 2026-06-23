@@ -115,6 +115,8 @@ extern bool s_ablArgGuard;
 extern bool s_ablRuntimeSoftfail;
 // ABL-BAD-NATIVE-ARG-REPRO-1 forward declaration (defined at end of file)
 static void runAblArgGuardRepro(void);
+// ABL-ARG-GUARD-2A-REPRO forward declaration (Point-variant sibling, defined at end of file)
+static void runAblArgGuardRepro2A(void);
 // ABL exec context: defined in mclib/ablxstd.cpp / mclib/ablexec.cpp
 extern int         execLineNumber;
 extern ABLModulePtr CurModule;
@@ -788,6 +790,15 @@ void execGetContactRelativePosition (void) {
 	float* range = ABLi_popRealPtr();
 	float* angle = ABLi_popRealPtr();
 
+	if (s_ablArgGuard && !range) {
+		abl_arg_guard_log("execGetContactRelativePosition", "range");
+		return;
+	}
+	if (s_ablArgGuard && !angle) {
+		abl_arg_guard_log("execGetContactRelativePosition", "angle");
+		return;
+	}
+
 	*range = -1.0;
 	*angle = 0.0;
 
@@ -953,6 +964,11 @@ void execGetObjectPosition (void) {
 
 	long objectId = ABLi_popInteger();
 	float* coordList = ABLi_popRealPtr();
+
+	if (s_ablArgGuard && !coordList) {
+		abl_arg_guard_log("execGetObjectPosition", "coordList");
+		return;
+	}
 
 	coordList[0] = 0.0;
 	coordList[1] = 0.0;
@@ -2957,7 +2973,12 @@ void execInArea (void) {
 	float* areaCenter = ABLi_popRealPtr();
 	float areaRadius = ABLi_popReal();
 	long minIn = ABLi_peekInteger();
-	
+
+	if (s_ablArgGuard && !areaCenter) {
+		abl_arg_guard_log("execInArea", "areaCenter");
+		return;
+	}
+
 	Stuff::Vector3D center;
 	center.x = areaCenter[0];
 	center.y = areaCenter[1];
@@ -4367,6 +4388,18 @@ void execGetRelativePositionToPoint (void) {
 	float distance = ABLi_popReal();
 	long flags = ABLi_popInteger();
 	float* relPos = ABLi_popRealPtr();
+
+	// H2: guard sibling of execGetRelativePositionToObject.
+	// pos is READ (curPos.x = pos[0..2]); relPos is WRITE (relPos[0..2] = newPos).
+	// Both crash on null. Guard both independently so each gets a distinct log line.
+	if (s_ablArgGuard && !pos) {
+		abl_arg_guard_log("execGetRelativePositionToPoint", "pos");
+		return;
+	}
+	if (s_ablArgGuard && !relPos) {
+		abl_arg_guard_log("execGetRelativePositionToPoint", "relPos");
+		return;
+	}
 
 	Stuff::Vector3D curPos;
 	curPos.x = pos[0];
@@ -8245,6 +8278,8 @@ static void runAblArgGuardRepro(void) {
         abl_arg_guard_log("execGetRelativePositionToObject[REPRO]", "relPos");
         printf("[ABL_REPRO] guard fired -- no crash -- PASS\n");
         fflush(stdout);
+        // Also run the 2A sibling repro (Point-variant pos + relPos cases).
+        runAblArgGuardRepro2A();
         return;
     }
 
@@ -8260,4 +8295,65 @@ static void runAblArgGuardRepro(void) {
     fflush(stdout);
 }
 
+// ABL-ARG-GUARD-2A-REPRO: exercise the Point-variant sibling guards (pos + relPos).
+// These mirror the runAblArgGuardRepro design: simulate the null-ptr that
+// ABLi_popRealPtr returns when tos->address == NULL, then hit the guard.
+// Gate ON  (MC2_ABL_ARG_GUARD=1): both cases log [ABL_ARG_GUARD] and skip.
+// Gate OFF: pos[0] / relPos[0] writes to 0x0 -> access violation.
+// This function is called from runAblArgGuardRepro when REPRO=1, only when
+// the Object-variant guard already returned (i.e. gate ON path reached this point).
+
+static void runAblArgGuardRepro2A(void) {
+    const char* repro_env = getenv("MC2_ABL_ARG_GUARD_REPRO");
+    if (!repro_env || repro_env[0] != '1')
+        return;
+
+    printf("[ABL_REPRO_2A] execGetRelativePositionToPoint sibling repro starting\n");
+    fflush(stdout);
+
+    // --- Case 1: null pos (the READ input) ---
+    {
+        float* pos = nullptr;
+        float* relPos_valid = (float*)0x1; // irrelevant — pos guard fires first
+        (void)relPos_valid;
+        printf("[ABL_REPRO_2A] case1: pos=NULL relPos_valid=%p\n", (void*)relPos_valid);
+        fflush(stdout);
+        if (s_ablArgGuard && !pos) {
+            abl_arg_guard_log("execGetRelativePositionToPoint[REPRO2A-pos]", "pos");
+            printf("[ABL_REPRO_2A] case1 guard fired -- no crash -- PASS\n");
+            fflush(stdout);
+        } else {
+            printf("[ABL_REPRO_2A] case1 guard OFF -- about to read pos[0] -> WILL CRASH\n");
+            fflush(stdout);
+            volatile float* vp = pos;
+            (void)vp[0]; // read from 0x0 -> access violation
+            printf("[ABL_REPRO_2A] case1 survived -- UNEXPECTED\n");
+            fflush(stdout);
+        }
+    }
+
+    // --- Case 2: null relPos (the WRITE output) ---
+    {
+        float dummy[3] = {1.0f, 2.0f, 0.0f};
+        float* pos_valid = dummy;
+        float* relPos = nullptr;
+        printf("[ABL_REPRO_2A] case2: pos_valid=%p relPos=NULL\n", (void*)pos_valid);
+        fflush(stdout);
+        if (s_ablArgGuard && !relPos) {
+            abl_arg_guard_log("execGetRelativePositionToPoint[REPRO2A-relPos]", "relPos");
+            printf("[ABL_REPRO_2A] case2 guard fired -- no crash -- PASS\n");
+            fflush(stdout);
+        } else {
+            printf("[ABL_REPRO_2A] case2 guard OFF -- about to write relPos[0] -> WILL CRASH\n");
+            fflush(stdout);
+            volatile float* vp = relPos;
+            vp[0] = 1.0f; // write to 0x0 -> access violation
+            printf("[ABL_REPRO_2A] case2 survived -- UNEXPECTED\n");
+            fflush(stdout);
+        }
+    }
+
+    printf("[ABL_REPRO_2A] done\n");
+    fflush(stdout);
+}
 
