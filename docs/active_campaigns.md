@@ -165,6 +165,17 @@ H-series is recon/diagnostic only — no behavior changes. Must complete before 
 - **VFX GPU sim Cardcloud parity**: `docs/vfx-gpu-sim-spec.md`
 - **HZB static-prop cull consumer**: first draw-affecting slice, spec needed
 
+## Compute substrate — light-grid lane
+
+Default-OFF, zero-visual-change GPU compute infrastructure. Build facts → parity-prove → consume later (the depth-pyramid discipline). Reference corpus (clean-room, read-only): BT2018 `ClusteredLighting` GLSL + MW5 disassembled compute (`G:\bt_assets\computeshaders_dump`, `G:\mw5_shaders\global_out`); recon docs `.claude/BT-COMPUTE-SHADER-TECHNIQUE-RECON-1.md`, `.claude/FROXEL-LIGHTGRID-RECON-1.md`.
+
+| Slice | Status | Detail |
+|---|---|---|
+| CLUSTER-DEPTH-PYRAMID-NATIVE-1 | **MERGED** `125b6e3e` | RG32F per-tile min/max depth substrate. Gates `MC2_CLUSTER_DEPTH_PYRAMID`/`_VERIFY`/`_PLANT` (OFF). Reversed-Z: near=MAX(G)/far=MIN(R). CPU/GPU parity proven; PLANT inspection-proven (runtime capture deferred — deploy-lock). `INFRA_PROVEN`. |
+| MC2-LIGHTGRID-BUILD-NATIVE-1 | **MERGED** `05600221` | Inert per-tile light-bin grid builder. `MC2LightCullSphere` (sphere-only; cone DEFERRED — no source data) from `ObjectLights@20`. BT-shaped append (LDS stage → one global atomic reserve). Gates `MC2_LIGHTGRID_BUILD`/`_VERIFY`/`_PLANT` (OFF). CPU/GPU parity proven (exact set), PLANT **runtime-captured**. 16-cap unchanged. `INFRA_PARITY_PROVEN`. |
+
+**Next (all DEFERRED, gated):** FROXEL-LIGHTGRID-RECON-1 verdict = GO-WITH-CONDITIONS for a shading consumer, but the **16-light cap lift** (`MAX_LIGHTS_IN_WORLD`, lighting.hglsl:23) is REQUIRED first — its own risk surface, must precede any shading payoff. Then NZ>1 froxel depth / shading consumer. No shading consumer exists yet.
+
 ## RenderWorld arc
 
 Steady-state ledger: `docs/renderworld_arc_status.md`. M1-M2 shipped; M3-M5 = DECISIONS (not ongoing work). Migration guide: `docs/renderworld_migration_guide.md`.
