@@ -736,6 +736,9 @@ struct ActorAnimState {
     unsigned lastFrame = 0xFFFFFFFFu;       // per-actor idempotency (combat double-update)
     std::vector<float> modelDelta;          // jointCount*16 row-major (placement-free)
     float gpuLift = 0.0f;                    // world-up foot-ground lift (per-frame)
+    std::vector<mc2skel::GpuBone> lastGlobals;  // 1A: last-frame clip bone GLOBALS (FK),
+                                                // parallel to ImportedAnimEntry::names —
+                                                // read by GetImportedNodeWorld for firepoints.
 };
 
 struct ImportedAnimEntry {
@@ -746,6 +749,8 @@ struct ImportedAnimEntry {
     std::vector<std::string> names;        // skeleton, parallel to clip globals
     std::string         pinnedClip;        // MC2_MECH_IMPORT_FORCE_CLIP (empty = 1C dynamic)
     std::string         initialClip;       // clip seeded into each new actor state
+    std::map<std::string, std::string> nodeManifest;  // 1A: MC2 node name -> source joint
+                                            // (from bt2018_mech_package.json "nodes").
     float               scale    = 1.0f;
     float               groundDy = 0.0f;   // MC2-space Y offset applied at import
     float               initialDuration = 1.0f;
@@ -756,6 +761,7 @@ struct ImportedAnimEntry {
     std::vector<aiMatrix4x4>   invMWrest;        // (A2·S·R_i)^-1 per bone (A2 = VBO axis)
     aiMatrix4x4                AS1;              // A1·S (Z-up clip-side axis · scale)
     std::vector<aiVector3D>    boneLowest;       // per-bone lowest rest VBO vertex (model space)
+    float                      restLift = 0.0f;  // static ground lift from REST pose (steady torso)
     // Per-frame state: GPU = one ActorAnimState per actor instance; CPU = one shared.
     std::map<const void*, ActorAnimState> actors;  // keyed by actor instance (mechShape*)
     ActorAnimState             cpuState;
@@ -898,6 +904,43 @@ const char* selectClipForMotion(int gesture, float speed, float turnRate, int tu
 // loop the knockdown). Other clips loop.
 inline bool gestureHoldsAtEnd(int gesture) { return gesture == 23 || gesture == 24; }
 
+// BT2018-MECH-NODE-MANIFEST-1A: load the per-mech package's "nodes" map
+// (MC2 semantic name -> source joint) from the GLB's sidecar
+// <stem>.package.json. Minimal flat-map scan (no JSON dependency; the generator
+// controls the format). Leaves the map empty (→ legacy node lookup) if absent.
+void LoadNodeManifest(const char* glbPath, std::map<std::string, std::string>& out) {
+    if (!glbPath) return;
+    std::string p(glbPath);
+    size_t dot = p.rfind(".glb");
+    std::string side = (dot != std::string::npos ? p.substr(0, dot) : p) + ".package.json";
+    FILE* f = fopen(side.c_str(), "rb");
+    if (!f) {
+        fprintf(stderr, "[MECH_IMPORT] no node manifest '%s' (firepoints -> legacy/origin)\n",
+                side.c_str());
+        return;
+    }
+    std::string buf;
+    char tmp[4096]; size_t n;
+    while ((n = fread(tmp, 1, sizeof(tmp), f)) > 0) buf.append(tmp, n);
+    fclose(f);
+    size_t b = buf.find("\"nodes\"");
+    if (b == std::string::npos) return;
+    b = buf.find('{', b);
+    size_t end = (b == std::string::npos) ? std::string::npos : buf.find('}', b);
+    if (b == std::string::npos || end == std::string::npos) return;
+    size_t i = b + 1;
+    while (i < end) {
+        size_t k0 = buf.find('"', i); if (k0 == std::string::npos || k0 >= end) break;
+        size_t k1 = buf.find('"', k0 + 1); if (k1 == std::string::npos || k1 >= end) break;
+        size_t colon = buf.find(':', k1 + 1); if (colon == std::string::npos || colon >= end) break;
+        size_t v0 = buf.find('"', colon + 1); if (v0 == std::string::npos || v0 >= end) break;
+        size_t v1 = buf.find('"', v0 + 1); if (v1 == std::string::npos || v1 > end) break;
+        out[buf.substr(k0 + 1, k1 - k0 - 1)] = buf.substr(v0 + 1, v1 - v0 - 1);
+        i = v1 + 1;
+    }
+    fprintf(stderr, "[MECH_IMPORT] node manifest '%s': %zu nodes\n", side.c_str(), out.size());
+}
+
 // Keep a dedicated parse alive for the runtime re-bake: the import's own Importer
 // is a stack local that frees its scene on return. Same flags → identical
 // post-processed mesh ordering/vertices as the merge that recorded `parts`.
@@ -915,6 +958,7 @@ void RegisterImportedAnim(const char* path, TG_TypeMultiShape* out, const SkelBa
     e.shape = static_cast<TG_TypeShape*>(slot);
     e.multi = out;
     e.names = bake.names;
+    LoadNodeManifest(path, e.nodeManifest);   // 1A: MC2 node name -> source joint
     e.pinnedClip = bake.forcedClip;   // empty -> 1C dynamic selection
     // Initial clip: the pinned clip if any, else idle. Fall back to whatever the
     // scene's first clip is when even idle is absent, so the tick always animates.
@@ -966,6 +1010,19 @@ void RegisterImportedAnim(const char* path, TG_TypeMultiShape* out, const SkelBa
                 if (b >= 0 && b < (int)e.boneLowest.size() && tv[vi].position.y < e.boneLowest[b].y)
                     e.boneLowest[b] = aiVector3D(tv[vi].position.x, tv[vi].position.y, tv[vi].position.z);
             }
+            // Static ground lift from the REST pose. Using the rest lift every frame
+            // (instead of recomputing the lowest animated vertex) keeps the torso
+            // vertically steady — the per-frame lowest oscillates as legs articulate,
+            // which caused a per-step "jack-in-a-box" bob. See buildGpuModelDelta.
+            float lowestY = 1e30f;
+            for (size_t i = 0; i < bake.rest.size() && i < e.invMWrest.size(); ++i) {
+                aiMatrix4x4 D = (e.AS1 * rowMajorToAi(bake.rest[i].m)) * e.invMWrest[i];
+                if (i < e.boneLowest.size()) {
+                    const aiVector3D p = D * e.boneLowest[i];
+                    if (p.y < lowestY) lowestY = p.y;
+                }
+            }
+            e.restLift = (lowestY < 1e29f) ? -lowestY : 0.0f;
         }
         MECH_SKEL_TRACE("file='%s' 1B-GPU registered joints=%zu verts=%d axis=%d (bbox y[%.2f..%.2f])",
                         path, bake.rest.size(), nv, mechImportGpuAxis(),
@@ -1022,6 +1079,97 @@ float mc2mechanim::ImportedGpuLift(const void* actorKey) {
 
 int mc2mechanim::ImportedGpuLiftAxis() { return mechImportGpuLiftAxis(); }
 
+// BT2018-MECH-NODE-MANIFEST-1A: resolve an MC2 semantic node name to the imported
+// mech's animated joint WORLD position. Read-only: no FK mutation, no clip change.
+//   model pos = translation of (AS1 * C_i)   [C_i = live clip global of the joint]
+//   world pos = Msw * model pos              [Msw = actor root shapeToWorld 3x4]
+//   + foot-ground lift on the world-up axis  [matches the GPU batcher placement]
+// Returns false (caller -> legacy TG node lookup) when not an imported mech, no
+// manifest, the name is unmapped, or the joint/globals are absent.
+bool mc2mechanim::GetImportedNodeWorld(const void* actorKey, const void* typeKey,
+                                       const char* mc2Name, const float* rootToWorld12,
+                                       float outXYZ[3]) {
+    if (!mc2Name || !rootToWorld12 || !outXYZ) return false;
+    const bool diag = std::getenv("MC2_MECH_NODE_DIAG") != nullptr;
+    for (ImportedAnimEntry& e : g_importedAnims) {
+        if ((const void*)e.multi != typeKey) continue;
+        if (e.nodeManifest.empty()) {
+            if (diag) { static int w=0; if (w++<8) fprintf(stderr, "[NODE-DIAG] '%s': manifest EMPTY\n", mc2Name); }
+            return false;
+        }
+        auto mit = e.nodeManifest.find(mc2Name);
+        if (mit == e.nodeManifest.end()) {
+            // De-numbered fallback: chassis name extra slots (weapon_lefttorso2,
+            // weapon_rightarm3, ...) map to the same joint as the base node name.
+            std::string base(mc2Name);
+            while (!base.empty() && base.back() >= '0' && base.back() <= '9') base.pop_back();
+            if (base != mc2Name) mit = e.nodeManifest.find(base);
+        }
+        if (mit == e.nodeManifest.end()) {
+            static int s_warnName = 0;
+            if (s_warnName++ < 8)
+                fprintf(stderr, "[MECH_IMPORT] node '%s' not in manifest (-> legacy)\n", mc2Name);
+            return false;
+        }
+        int idx = -1;
+        for (size_t i = 0; i < e.names.size(); ++i)
+            if (e.names[i] == mit->second) { idx = (int)i; break; }
+        if (idx < 0) {
+            static int s_warnJoint = 0;
+            if (s_warnJoint++ < 8)
+                fprintf(stderr, "[MECH_IMPORT] node '%s' joint '%s' absent (-> legacy)\n",
+                        mc2Name, mit->second.c_str());
+            return false;
+        }
+        ActorAnimState* s = nullptr;
+        auto ait = e.actors.find(actorKey);
+        if (ait != e.actors.end()) s = &ait->second;
+        else if (!e.cpuState.lastGlobals.empty()) s = &e.cpuState;  // CPU lockstep fallback
+        if (!s || idx >= (int)s->lastGlobals.size()) {
+            if (diag) { static int w=0; if (w++<8) fprintf(stderr,
+                "[NODE-DIAG] '%s' joint '%s' idx=%d: no actor state / lastGlobals empty (actors=%zu)\n",
+                mc2Name, mit->second.c_str(), idx, e.actors.size()); }
+            return false;
+        }
+        // F = Msw * (AS1 * C_i) yields the position in the SAME permuted frame the
+        // stock TG_MultiShape weapon-node path returns. Callers (mover.cpp:3501)
+        // index .z as the WORLD-VERTICAL component, matching mech3d.cpp's
+        // xlatPosition convention: caller_x = -Stuff.x; caller_y = Stuff.z;
+        // caller_z = Stuff.y. The output of Msw*(AS1*C_i) lands in
+        // (-x, z, y) of MC2/GL — measured here, wy is the elevation and wz is
+        // horizontal-2. Swap them so .y is horizontal-2 and .z is elevation,
+        // matching the stock path's contract.
+        // F = Msw * (AS1 * C_i); its translation (gx,gy,gz) = F[3],F[7],F[11] — the
+        // SAME composed node-world translation the batcher writes. The stock weapon
+        // node path (msl.cpp TG_MultiShape::GetTransformedNodePosition) reads a node's
+        // shapeToWorld.entries[3,7,11] and returns:
+        //     result.x = -entries[3];  result.z = entries[7];  result.y = entries[11];
+        // i.e. NEGATE x, and (.y,.z) = (entries[11], entries[7]). Mirror that exactly so
+        // an imported firepoint is in the identical frame callers (mover.cpp) consume
+        // (.z = world elevation). Lift is applied in the pre-permute frame on the
+        // liftAxis component, matching the batcher (F[3+4*liftAxis] += lift).
+        aiMatrix4x4 M = e.AS1 * rowMajorToAi(s->lastGlobals[idx].m);
+        const float mx = M.a4, my = M.b4, mz = M.c4;
+        const float* w = rootToWorld12;
+        float gx = w[0]*mx + w[1]*my + w[2]*mz  + w[3];
+        float gy = w[4]*mx + w[5]*my + w[6]*mz  + w[7];
+        float gz = w[8]*mx + w[9]*my + w[10]*mz + w[11];
+        const int la = mechImportGpuLiftAxis() & 3;
+        if (la == 0) gx += s->gpuLift; else if (la == 1) gy += s->gpuLift; else gz += s->gpuLift;
+        outXYZ[0] = -gx;   // result.x = -entries[3]
+        outXYZ[1] =  gz;   // result.y =  entries[11]
+        outXYZ[2] =  gy;   // result.z =  entries[7]  (world elevation)
+        if (diag) { static int w=0; if (w++<16) fprintf(stderr,
+            "[NODE-DIAG] '%s'->'%s' OK world=(%.1f,%.1f,%.1f) lift=%.2f\n",
+            mc2Name, mit->second.c_str(), outXYZ[0], outXYZ[1], outXYZ[2], s->gpuLift); }
+        return true;
+    }
+    if (diag) { static int w=0; if (w++<8) fprintf(stderr,
+        "[NODE-DIAG] '%s': no imported entry matched typeKey=%p (registered=%zu)\n",
+        mc2Name, typeKey, g_importedAnims.size()); }
+    return false;
+}
+
 namespace {
 // Advance `s`'s clip selection (1C) + clip time one frame, then sample the active
 // clip's bone globals. Shared by the per-actor GPU path and the shared CPU path.
@@ -1072,16 +1220,19 @@ bool sampleActorClip(const ImportedAnimEntry& e, ActorAnimState& s, float dt,
 void buildGpuModelDelta(const ImportedAnimEntry& e, ActorAnimState& s,
                         const std::vector<mc2skel::GpuBone>& globals) {
     const size_t n = (globals.size() < e.invMWrest.size()) ? globals.size() : e.invMWrest.size();
+    // Default: static rest lift (steady torso). MC2_MECH_IMPORT_DYNAMIC_LIFT=1 restores
+    // the old per-frame lowest-vertex lift (follows ground but bobs each step).
+    const bool dynamicLift = []{ const char* v = std::getenv("MC2_MECH_IMPORT_DYNAMIC_LIFT"); return v && v[0] == '1'; }();
     float lowestY = 1e30f;
     for (size_t i = 0; i < n; ++i) {
         aiMatrix4x4 D = (e.AS1 * rowMajorToAi(globals[i].m)) * e.invMWrest[i];
         aiToRowMajor(D, &s.modelDelta[i * 16]);
-        if (i < e.boneLowest.size()) {
+        if (dynamicLift && i < e.boneLowest.size()) {
             const aiVector3D p = D * e.boneLowest[i];
             if (p.y < lowestY) lowestY = p.y;
         }
     }
-    s.gpuLift = (lowestY < 1e29f) ? -lowestY : 0.0f;
+    s.gpuLift = dynamicLift ? ((lowestY < 1e29f) ? -lowestY : 0.0f) : e.restLift;
 }
 } // namespace
 
@@ -1107,8 +1258,10 @@ void mc2mechanim::TickImportedMechs(float dt, unsigned frameStamp, const MechMot
         if (s.lastFrame == frameStamp) return;      // per-actor idempotency (combat double-update)
         s.lastFrame = frameStamp;
         std::vector<mc2skel::GpuBone> globals;
-        if (sampleActorClip(e, s, dt, motion, globals))
+        if (sampleActorClip(e, s, dt, motion, globals)) {
             buildGpuModelDelta(e, s, globals);
+            s.lastGlobals = std::move(globals);   // 1A: firepoint/hit-node source
+        }
         // Prune despawned actors' states (untouched for a while).
         for (auto it = e.actors.begin(); it != e.actors.end(); ) {
             const unsigned age = frameStamp - it->second.lastFrame;
@@ -1128,6 +1281,7 @@ void mc2mechanim::TickImportedMechs(float dt, unsigned frameStamp, const MechMot
     s.lastFrame = frameStamp;
     std::vector<mc2skel::GpuBone> globals;
     if (!sampleActorClip(e, s, dt, motion, globals)) return;
+    s.lastGlobals = globals;                      // 1A: firepoint/hit-node source (shared CPU state)
     TG_TypeVertex* vt = e.shape->GetTypeVerticesMutable();
     if (!vt) return;
     ResetBoundingBox(e.multi);
@@ -1305,12 +1459,28 @@ long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out, bool autoG
 		// GLB lists blip atlases at material 0/1, so build a single-slot list with
 		// the BASE atlas (the intact body's material) at slot 0; all merged tris
 		// reference slot 0. (Weapons/second-atlas mechs are a later slice.)
+		// Pick the variant skin (Widow/BHA/SLDF) over the plain Base when a GLB ships
+		// both. A skin material name contains the variant token ("widow"/"bha"/"sldf");
+		// base is plain "<chassis>_base". First skinned mesh sets a fallback; the scan
+		// keeps going and upgrades to a variant if one shows up.
+		auto isVariantMat = [](const char* mn){
+			if (!mn) return false;
+			std::string s(mn); for (char& c : s) c = (char)tolower(c);
+			return s.find("widow") != std::string::npos
+			    || s.find("bha")   != std::string::npos
+			    || s.find("sldf")  != std::string::npos;
+		};
 		std::string baseTex = "NULLTXM";
+		bool gotVariant = false;
 		for (unsigned m = 0; m < scene->mNumMeshes; ++m) {
 			const aiMesh* me = scene->mMeshes[m];
 			if (me->mNumVertices == 0 || me->mNumBones == 0 || skelMeshDropped(me->mName.C_Str())) continue;
+			const aiMaterial* mat = scene->mMaterials[me->mMaterialIndex];
+			aiString matName; mat->Get(AI_MATKEY_NAME, matName);
 			std::string nm;
-			if (DeriveMC2TextureName(scene, scene->mMaterials[me->mMaterialIndex], nm)) { baseTex = nm; break; }
+			if (!DeriveMC2TextureName(scene, mat, nm)) continue;
+			if (isVariantMat(matName.C_Str())) { baseTex = nm; gotVariant = true; break; }
+			if (!gotVariant && baseTex == "NULLTXM") baseTex = nm;
 		}
 		const char* texNames[1] = { baseTex.c_str() };
 		out->SetImportedTextures(1, texNames, NULL);
