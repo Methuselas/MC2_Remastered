@@ -1,0 +1,112 @@
+{
+  "base": "mech",
+  "stage": "vert",
+  "variant": "viewuniforms",
+  "defines": [
+    "MC2_USE_VIEW_UNIFORMS=1"
+  ],
+  "specializationParams": [],
+  "artifact": "mech.vert.viewuniforms.6c916165.spv",
+  "spv_dir": "shaders/spv",
+  "source_sha256": "7f7efa65b0b4afa24913e35fc3b1216b9f9ec6a0f15958ca6de7d334aff58323",
+  "spirv_sha256": "96eea548edb4f5387c54b492f505b05fc6f383e085451ed877948f849057f274",
+  "bindings": {
+    "ubos": [
+      {
+        "name": "ViewUniformsBlock",
+        "binding": 3,
+        "set": 0
+      },
+      {
+        "name": "SceneData",
+        "binding": 1,
+        "set": 0
+      }
+    ],
+    "ssbos": [
+      {
+        "name": "LightsData",
+        "binding": 20,
+        "set": 0
+      },
+      {
+        "name": "InstanceBuffer",
+        "binding": 0,
+        "set": 0
+      },
+      {
+        "name": "BoneBuffer",
+        "binding": 1,
+        "set": 0
+      }
+    ],
+    "samplers": []
+  },
+  "interface": {
+    "inputs": [
+      {
+        "name": "a_boneWeights",
+        "location": 4
+      },
+      {
+        "name": "a_boneIndices",
+        "location": 3
+      },
+      {
+        "name": "a_position",
+        "location": 0
+      },
+      {
+        "name": "a_normal",
+        "location": 1
+      },
+      {
+        "name": "a_uv",
+        "location": 2
+      },
+      {
+        "name": "a_tangentOct",
+        "location": 5
+      },
+      {
+        "name": "a_aRGBLight",
+        "location": 6
+      }
+    ],
+    "outputs": [
+      {
+        "name": "v_uv",
+        "location": 0
+      },
+      {
+        "name": "v_litColor",
+        "location": 1
+      },
+      {
+        "name": "v_highlightColor",
+        "location": 2
+      },
+      {
+        "name": "v_fogRGB",
+        "location": 3
+      },
+      {
+        "name": "v_normal",
+        "location": 4
+      },
+      {
+        "name": "v_worldPos",
+        "location": 5
+      },
+      {
+        "name": "v_mechSunDirGL",
+        "location": 6
+      },
+      {
+        "name": "v_mechSunFound",
+        "location": 7
+      }
+    ]
+  },
+  "shaderVariantId": "6c9161651b66"
+}

@@ -12,6 +12,20 @@
       "variants": [
         { "name": "default", "defines": [] }
       ]
+    },
+    {
+      "program": "mech",
+      "note": "MechOpaque (PipelineId::MechOpaque): shaders/mech.{vert,frag} bound in gos_mech_batcher.cpp:552. Both variant macros are DEFAULT-ON, so stock runtime selects the both-on variant. shadow_mech is a SEPARATE program and stays GLSL. All 4 combos baked to cover kill-switch states.",
+      "stages": {
+        "vert": "shaders/mech.vert",
+        "frag": "shaders/mech.frag"
+      },
+      "variants": [
+        { "name": "default",            "defines": [] },
+        { "name": "objectid",           "defines": ["MC2_OBJECT_ID_BUFFER=1"] },
+        { "name": "viewuniforms",       "defines": ["MC2_USE_VIEW_UNIFORMS=1"] },
+        { "name": "objectid_viewuniforms", "defines": ["MC2_OBJECT_ID_BUFFER=1", "MC2_USE_VIEW_UNIFORMS=1"] }
+      ]
     }
   ]
 }

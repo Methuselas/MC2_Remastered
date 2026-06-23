@@ -1,0 +1,99 @@
+{
+  "base": "mech",
+  "stage": "vert",
+  "variant": "objectid",
+  "defines": [
+    "MC2_OBJECT_ID_BUFFER=1"
+  ],
+  "specializationParams": [],
+  "artifact": "mech.vert.objectid.2a977866.spv",
+  "spv_dir": "shaders/spv",
+  "source_sha256": "38be78f0ea2422585d92823fdc462cc3a09d04c938810781e0aeece66bc226c7",
+  "spirv_sha256": "ae8c0b4ed34d9a8d3d537d0c9dcdded03382d1bd95b575c5f6f78a86a2c8fb34",
+  "bindings": {
+    "ubos": [
+      {
+        "name": "SceneData",
+        "binding": 1,
+        "set": 0
+      }
+    ],
+    "ssbos": [
+      {
+        "name": "LightsData",
+        "binding": 20,
+        "set": 0
+      },
+      {
+        "name": "InstanceBuffer",
+        "binding": 0,
+        "set": 0
+      },
+      {
+        "name": "BoneBuffer",
+        "binding": 1,
+        "set": 0
+      }
+    ],
+    "samplers": []
+  },
+  "interface": {
+    "inputs": [
+      {
+        "name": "a_boneWeights",
+        "location": 4
+      },
+      {
+        "name": "a_boneIndices",
+        "location": 3
+      },
+      {
+        "name": "a_position",
+        "location": 0
+      },
+      {
+        "name": "a_normal",
+        "location": 1
+      },
+      {
+        "name": "a_uv",
+        "location": 2
+      },
+      {
+        "name": "a_tangentOct",
+        "location": 5
+      },
+      {
+        "name": "a_aRGBLight",
+        "location": 6
+      }
+    ],
+    "outputs": [
+      {
+        "name": "v_uv",
+        "location": 0
+      },
+      {
+        "name": "v_litColor",
+        "location": 1
+      },
+      {
+        "name": "v_highlightColor",
+        "location": 2
+      },
+      {
+        "name": "v_fogRGB",
+        "location": 3
+      },
+      {
+        "name": "v_normal",
+        "location": 4
+      },
+      {
+        "name": "v_objectIdRaw",
+        "location": 5
+      }
+    ]
+  },
+  "shaderVariantId": "2a9778665edb"
+}
