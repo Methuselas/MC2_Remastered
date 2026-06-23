@@ -57,9 +57,16 @@ GLbitfield barrierBitsFor(GpuProducer p, GpuConsumer c) {
     // is read by the CPU.
     if (c == GpuConsumer::CpuMappedRead)
         return GL_CLIENT_MAPPED_BUFFER_BARRIER_BIT;
-    // glGetBufferSubData / glGetNamedBufferSubData: GL_BUFFER_UPDATE_BARRIER_BIT
-    // is the precise bit (spec §7.12.1). It subsumes SSBO write visibility for
-    // API-level reads, so SHADER_STORAGE_BARRIER_BIT is NOT additionally required.
+    // A compute dispatch wrote an SSBO that is then read back to CPU via
+    // glGetBufferSubData (MC2-LIGHTGRID-BUILD-NATIVE-1 parity readback of the
+    // compact light-index pool). The precise bit for API-level buffer reads is
+    // GL_BUFFER_UPDATE_BARRIER_BIT (spec §7.12.1) — it subsumes SSBO write
+    // visibility for API reads, so SHADER_STORAGE_BARRIER_BIT is not additionally
+    // required. Stated explicitly so this typed edge is self-documenting.
+    if (p == GpuProducer::ComputeShader && c == GpuConsumer::BufferReadback)
+        return GL_BUFFER_UPDATE_BARRIER_BIT;
+    // glGetBufferSubData / glGetNamedBufferSubData for any other producer:
+    // GL_BUFFER_UPDATE_BARRIER_BIT is the precise bit (spec §7.12.1).
     if (c == GpuConsumer::BufferReadback)
         return GL_BUFFER_UPDATE_BARRIER_BIT;
     // A compute dispatch wrote an image2D/3D via imageStore (CLUSTER-DEPTH-

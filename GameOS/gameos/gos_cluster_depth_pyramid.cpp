@@ -280,4 +280,10 @@ void Shutdown() {
     s_tileW = s_tileH = s_srcW = s_srcH = 0;
 }
 
+// --- Accessors (MC2-LIGHTGRID-BUILD-NATIVE-1) -------------------------------
+unsigned int TileTexture() { return (unsigned int)s_tileTex; }
+int TileGridW()            { return s_tileW; }
+int TileGridH()            { return s_tileH; }
+int TileSize()             { return kTileSize; }
+
 }  // namespace cluster_depth_pyramid

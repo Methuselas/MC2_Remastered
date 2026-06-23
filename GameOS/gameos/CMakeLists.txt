@@ -44,6 +44,7 @@ set(SOURCES ${SOURCES}
     asset_scale.cpp
     gos_gpu_sync.cpp
     gos_cluster_depth_pyramid.cpp
+    gos_lightgrid_build.cpp
     gpu_driven_common.cpp
     gpu_cull_record.cpp
     gpu_cull_substrate.cpp

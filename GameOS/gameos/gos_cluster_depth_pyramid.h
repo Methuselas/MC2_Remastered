@@ -43,4 +43,14 @@ void Run(unsigned int sceneDepthTex, int width, int height);
 // was ever allocated.
 void Shutdown();
 
+// --- Accessors for a downstream consumer (MC2-LIGHTGRID-BUILD-NATIVE-1) ------
+// The per-tile (min,max) RG32F image written by the last Run(), and its tile
+// grid dimensions. Returns 0 / 0x0 when nothing has been built yet (gate OFF,
+// or before the first dispatch). Read-only — the lightgrid builder samples this
+// texture; it never mutates the pyramid's state.
+unsigned int TileTexture();
+int TileGridW();
+int TileGridH();
+int TileSize();
+
 }  // namespace cluster_depth_pyramid
