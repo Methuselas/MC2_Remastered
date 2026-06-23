@@ -215,6 +215,29 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* ssboBindingsMask    */ 0u,
     },
 
+    // [10] WaterArmed — the ARMED water fast-path base (renderWaterFastPath:
+    // gos_terrain_water_fast.vert + gos_tex_vertex.frag). DESCRIPTIVE;
+    // gosRenderer::renderWaterFastPath sets this by hand (and save/restores it).
+    // Source-verified state (gameos_graphics.cpp:3275-3288): GL_CULL_FACE DISABLED
+    // (CINEMATIC-WATER-CULL-1 — flat overlay mesh, must not be backface-culled),
+    // AlphaBlend (SRC_ALPHA/ONE_MINUS_SRC_ALPHA), depth-test on + reverse-Z GEQUAL,
+    // depth-WRITE ON by default (OOB-FOG-WATER-DEPTH-1; only MC2_WATER_NO_DEPTH_WRITE
+    // debug-gate flips it off). frag writes color0 + color1. NOTE: the legacy quad
+    // fallback and the GPU-driven MDI sub-variant are NOT modeled by this row.
+    {
+        /* glProgramName       */ 0u,
+        /* blend               */ BlendMode::AlphaBlend, // SRC_ALPHA / ONE_MINUS_SRC_ALPHA
+        /* depthTestEnable     */ true,
+        /* depthWriteEnable    */ true,            // default armed (MC2_WATER_NO_DEPTH_WRITE = debug A/B only)
+        /* depthFunc           */ DepthFunc::GreaterEqual, // reverse-Z (scene water)
+        /* cullMode            */ CullMode::None,  // water explicitly disables cull
+        /* colorAttachments    */ { true, true, false },
+        /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,
+        /* polygonOffsetEnable */ false,
+        /* ssboBindingsMask    */ 0u,              // armed base binds its own buffers; MDI sub-path SSBOs not modeled
+    },
+
 }};
 
 static_assert(

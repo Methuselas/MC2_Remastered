@@ -108,12 +108,14 @@
       "next": "route_applyPipeline -> visual_proven"
     },
     "Water": {
-      "status": "UNREGISTERED",
+      "status": "DESCRIPTIVE_REGISTERED",
       "renderPassId": "Water",
-      "pipelineId": null,
-      "shaderBase": "water_fast_prog_",
+      "pipelineId": "WaterArmed",
+      "shaderBase": "gos_terrain_water_fast",
       "stateOwner": "legacy/ad-hoc",
-      "next": "register ARMED fast-path base only (opaque GEQUAL depth-write cull-back); legacy quad fallback is data-driven, OUT OF SCOPE — WATER-ARMED-PIPELINE-REGISTRATION-1"
+      "evidence": "PipelineDesc row [10] WaterArmed (source-verified gameos_graphics.cpp:3275-3288: AlphaBlend SRC_ALPHA/1-SRC_ALPHA, GEQUAL, depth-write ON, cull NONE — recon's 'opaque cull-back' was WRONG). Armed fast-path base only; gosRenderer::renderWaterFastPath still hand-sets state.",
+      "scope_note": "ONLY the armed fast-path base is modeled. Legacy quad fallback + GPU-driven MDI sub-variant are intentionally NOT modeled.",
+      "next": "route_applyPipeline -> visual_proven (later; water save/restores its own state so routing is more involved than terrain)"
     },
     "VFX": {
       "status": "UNREGISTERED",
