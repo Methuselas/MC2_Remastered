@@ -138,6 +138,12 @@ struct glsl_program {
 
     static glsl_program* makeProgram(const char* name, const char* vsh, const char* fsh, const char* prefix = nullptr);
 	static glsl_program* makeProgram2(const char* name, const char* vp, const char* hp, const char* dp, const char* gp, const char* fp, int count = 0, const char** xfb_variables = 0, const char* prefix = nullptr);
+	// SPIRV-MECHOPAQUE-PIPELINEKEY-INTEGRATION-1: canonical define-set key from a
+	// program prefix — ";"-joined sorted "NAME=VALUE" #defines. This is the SAME
+	// canonicalization the SPIR-V variant consumer uses (spirvDefineKey), so the
+	// logical pipeline-variant identity a caller records is path-independent
+	// (GLSL vs SPIR-V both build from this prefix). Used by the pipeline-key path.
+	static std::string shaderDefineKey(const char* prefix);
 	static void deleteProgram(const char* name);
 	GLint getAttribLocation(const char* pattrib);
 

@@ -24,6 +24,7 @@
 #include <array>
 #include <cassert>
 #include <cstddef>
+#include <string>
 
 namespace RenderCore {
 
@@ -137,6 +138,23 @@ void bindProgram(PipelineId id, uint32_t glProgramName) {
     if (idx == 0u || idx >= static_cast<size_t>(PipelineId::Count_))
         return;
     s_descs[idx].glProgramName = glProgramName;
+}
+
+// SPIRV-MECHOPAQUE-PIPELINEKEY-INTEGRATION-1: per-PipelineId logical variant key.
+static std::array<std::string, static_cast<size_t>(PipelineId::Count_)> s_variantKeys;
+
+void recordPipelineVariantKey(PipelineId id, const char* variantKey) {
+    const auto idx = static_cast<size_t>(id);
+    if (idx == 0u || idx >= static_cast<size_t>(PipelineId::Count_))
+        return;
+    s_variantKeys[idx] = variantKey ? variantKey : "";
+}
+
+const char* getPipelineVariantKey(PipelineId id) {
+    const auto idx = static_cast<size_t>(id);
+    if (idx == 0u || idx >= static_cast<size_t>(PipelineId::Count_))
+        return "";
+    return s_variantKeys[idx].c_str();
 }
 
 } // namespace RenderCore

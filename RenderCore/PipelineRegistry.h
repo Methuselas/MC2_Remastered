@@ -42,4 +42,14 @@ const PipelineDesc& getPipelineDesc(PipelineId id);
 // No-op (with assert) if id is Invalid or out-of-range.
 void bindProgram(PipelineId id, uint32_t glProgramName);
 
+// SPIRV-MECHOPAQUE-PIPELINEKEY-INTEGRATION-1: record the selected logical
+// shader-variant identity (the canonical define-set key, e.g.
+// "mech|MC2_OBJECT_ID_BUFFER=1;MC2_USE_VIEW_UNIFORMS=1") for this pipeline id,
+// into the pipeline-key path. Derived from the program PREFIX, so it is the SAME
+// whether the stages were GLSL-compiled or SPIR-V-specialized (the SPIR-V branch
+// lives per-stage BELOW the bound program and cannot fork this accounting).
+// Empty until recorded; safe to call once at program build.
+void recordPipelineVariantKey(PipelineId id, const char* variantKey);
+const char* getPipelineVariantKey(PipelineId id);
+
 } // namespace RenderCore
