@@ -751,6 +751,8 @@ struct ImportedAnimEntry {
     std::string         initialClip;       // clip seeded into each new actor state
     std::map<std::string, std::string> nodeManifest;  // 1A: MC2 node name -> source joint
                                             // (from bt2018_mech_package.json "nodes").
+    std::string aoTexName;                  // AO-1: materials.ao.tga (deriveName stem +
+                                            // .tga); empty = no AO. Loaded -> unit 6.
     float               scale    = 1.0f;
     float               groundDy = 0.0f;   // MC2-space Y offset applied at import
     float               initialDuration = 1.0f;
@@ -908,7 +910,8 @@ inline bool gestureHoldsAtEnd(int gesture) { return gesture == 23 || gesture == 
 // (MC2 semantic name -> source joint) from the GLB's sidecar
 // <stem>.package.json. Minimal flat-map scan (no JSON dependency; the generator
 // controls the format). Leaves the map empty (→ legacy node lookup) if absent.
-void LoadNodeManifest(const char* glbPath, std::map<std::string, std::string>& out) {
+void LoadMechPackage(const char* glbPath, std::map<std::string, std::string>& out,
+                     std::string& aoOut) {
     if (!glbPath) return;
     std::string p(glbPath);
     size_t dot = p.rfind(".glb");
@@ -923,22 +926,41 @@ void LoadNodeManifest(const char* glbPath, std::map<std::string, std::string>& o
     char tmp[4096]; size_t n;
     while ((n = fread(tmp, 1, sizeof(tmp), f)) > 0) buf.append(tmp, n);
     fclose(f);
+    // "nodes" flat map
     size_t b = buf.find("\"nodes\"");
-    if (b == std::string::npos) return;
-    b = buf.find('{', b);
-    size_t end = (b == std::string::npos) ? std::string::npos : buf.find('}', b);
-    if (b == std::string::npos || end == std::string::npos) return;
-    size_t i = b + 1;
-    while (i < end) {
-        size_t k0 = buf.find('"', i); if (k0 == std::string::npos || k0 >= end) break;
-        size_t k1 = buf.find('"', k0 + 1); if (k1 == std::string::npos || k1 >= end) break;
-        size_t colon = buf.find(':', k1 + 1); if (colon == std::string::npos || colon >= end) break;
-        size_t v0 = buf.find('"', colon + 1); if (v0 == std::string::npos || v0 >= end) break;
-        size_t v1 = buf.find('"', v0 + 1); if (v1 == std::string::npos || v1 > end) break;
-        out[buf.substr(k0 + 1, k1 - k0 - 1)] = buf.substr(v0 + 1, v1 - v0 - 1);
-        i = v1 + 1;
+    if (b != std::string::npos) {
+        b = buf.find('{', b);
+        size_t end = (b == std::string::npos) ? std::string::npos : buf.find('}', b);
+        if (b != std::string::npos && end != std::string::npos) {
+            size_t i = b + 1;
+            while (i < end) {
+                size_t k0 = buf.find('"', i); if (k0 == std::string::npos || k0 >= end) break;
+                size_t k1 = buf.find('"', k0 + 1); if (k1 == std::string::npos || k1 >= end) break;
+                size_t colon = buf.find(':', k1 + 1); if (colon == std::string::npos || colon >= end) break;
+                size_t v0 = buf.find('"', colon + 1); if (v0 == std::string::npos || v0 >= end) break;
+                size_t v1 = buf.find('"', v0 + 1); if (v1 == std::string::npos || v1 > end) break;
+                out[buf.substr(k0 + 1, k1 - k0 - 1)] = buf.substr(v0 + 1, v1 - v0 - 1);
+                i = v1 + 1;
+            }
+        }
     }
-    fprintf(stderr, "[MECH_IMPORT] node manifest '%s': %zu nodes\n", side.c_str(), out.size());
+    // AO-1: materials.ao.tga (runtime texture name; .ktx2 sidecar resolves it).
+    size_t mat = buf.find("\"materials\"");
+    if (mat != std::string::npos) {
+        size_t aoKey = buf.find("\"ao\"", mat);
+        if (aoKey != std::string::npos) {
+            size_t tga = buf.find("\"tga\"", aoKey);
+            if (tga != std::string::npos) {
+                size_t colon = buf.find(':', tga);
+                size_t v0 = (colon != std::string::npos) ? buf.find('"', colon + 1) : std::string::npos;
+                size_t v1 = (v0 != std::string::npos) ? buf.find('"', v0 + 1) : std::string::npos;
+                if (v0 != std::string::npos && v1 != std::string::npos)
+                    aoOut = buf.substr(v0 + 1, v1 - v0 - 1);
+            }
+        }
+    }
+    fprintf(stderr, "[MECH_IMPORT] package '%s': %zu nodes, ao='%s'\n",
+            side.c_str(), out.size(), aoOut.c_str());
 }
 
 // Keep a dedicated parse alive for the runtime re-bake: the import's own Importer
@@ -958,7 +980,7 @@ void RegisterImportedAnim(const char* path, TG_TypeMultiShape* out, const SkelBa
     e.shape = static_cast<TG_TypeShape*>(slot);
     e.multi = out;
     e.names = bake.names;
-    LoadNodeManifest(path, e.nodeManifest);   // 1A: MC2 node name -> source joint
+    LoadMechPackage(path, e.nodeManifest, e.aoTexName);  // 1A nodes + AO-1 ao tex name
     e.pinnedClip = bake.forcedClip;   // empty -> 1C dynamic selection
     // Initial clip: the pinned clip if any, else idle. Fall back to whatever the
     // scene's first clip is when even idle is absent, so the tick always animates.
@@ -1078,6 +1100,16 @@ float mc2mechanim::ImportedGpuLift(const void* actorKey) {
 }
 
 int mc2mechanim::ImportedGpuLiftAxis() { return mechImportGpuLiftAxis(); }
+
+// AO-1: the imported mech's AO texture name (materials.ao.tga from the package), or
+// nullptr if this type isn't imported / declares no AO. The caller (mech3d
+// resetPaintScheme) loads it via mcTextureManager and binds it on unit 6.
+const char* mc2mechanim::ImportedMechAoTexName(const void* typeKey) {
+    for (const ImportedAnimEntry& e : g_importedAnims)
+        if ((const void*)e.multi == typeKey)
+            return e.aoTexName.empty() ? nullptr : e.aoTexName.c_str();
+    return nullptr;
+}
 
 // BT2018-MECH-NODE-MANIFEST-1A: resolve an MC2 semantic node name to the imported
 // mech's animated joint WORLD position. Read-only: no FK mutation, no clip change.

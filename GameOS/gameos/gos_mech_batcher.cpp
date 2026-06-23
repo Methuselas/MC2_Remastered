@@ -337,8 +337,11 @@ static GLint s_loc_u_mechBackFillStrength    = -1;
 // stock for both a light (marauder) and a dark (blackwidow) reference mech.
 float g_importedMechGamma       = 1.0f;
 float g_importedMechAlbedoScale = 1.1f;
+float g_importedMechAoStrength  = 0.5f;   // AO-1: imported-mech AO multiply strength
 static GLint s_loc_u_importedGamma           = -1;
 static GLint s_loc_u_importedAlbedoScale     = -1;
+static GLint s_loc_u_mechAoTex               = -1;   // AO-1: AO sampler (unit 6)
+static GLint s_loc_u_aoStrength              = -1;
 // Slice C1: StandardLit toggle. Returns -1 until mech.frag declares the uniform;
 // guarded with >= 0 at upload so no crash when shader lacks it.
 static GLint s_loc_u_standardLitEnabled      = -1;
@@ -639,6 +642,8 @@ static void loadProgramsIfNeeded() {
     // exist only when MC2_IMPORTED_MECH_MATERIAL is defined; guarded >= 0 at upload).
     s_loc_u_importedGamma           = loc("u_importedGamma");
     s_loc_u_importedAlbedoScale     = loc("u_importedAlbedoScale");
+    s_loc_u_mechAoTex               = loc("u_mechAoTex");    // AO-1
+    s_loc_u_aoStrength              = loc("u_aoStrength");
     // Slice C1: StandardLit toggle (default 0 = passthrough; shader may not declare it yet).
     s_loc_u_standardLitEnabled      = loc("u_standardLitEnabled");
     // Slice C2: PBR detail surface samplers + tile scale.
@@ -1853,6 +1858,8 @@ void GpuMechBatcher::flush() {
         uint32_t materialFlags;
         uint32_t instanceBase;
         uint32_t instanceCount;
+        uint32_t aoTexHandle;   // AO-1: AO mcTextureManager slot (0=none; per-type, so
+                                // consistent within a bucket). Bound to unit 6 at draw.
     };
     std::vector<DrawCall> drawCalls;
     drawCalls.reserve(buckets.size());
@@ -1876,6 +1883,8 @@ void GpuMechBatcher::flush() {
         dc.materialFlags   = key.materialFlags;
         dc.instanceBase    = instHead;
         dc.instanceCount   = (uint32_t)subs.size();
+        // AO-1: AO is per-type, so all submits in this bucket share it; read from the first.
+        dc.aoTexHandle     = subs.empty() ? 0u : s_pendingSubmits[subs[0]].desc.slot6TexHandle;
 
         for (uint32_t si : subs) {
             const PendingSubmit& ps   = s_pendingSubmits[si];
@@ -2011,6 +2020,11 @@ void GpuMechBatcher::flush() {
     glActiveTexture(GL_TEXTURE4);
     GLint prevTexUnit4 = 0; glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTexUnit4);
     GLint prevSampler4 = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, 4, &prevSampler4);
+    // AO-1: save unit 6 (imported-mech AO). Paranoid leak guard — restored below.
+    glActiveTexture(GL_TEXTURE6);
+    GLint prevTexUnit6 = 0; glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTexUnit6);
+    GLint prevSampler6 = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, 6, &prevSampler6);
+    glActiveTexture(GL_TEXTURE0);
     glActiveTexture(GL_TEXTURE0);
 
     // MECH-PIPELINEDESC-1: program + fixed-function state (depth test+write+func
@@ -2086,6 +2100,8 @@ void GpuMechBatcher::flush() {
     // BT2018-MECH-MATERIAL-GAMMA-1/TUNING-1: imported-mech albedo knobs (live ImGui).
     if (s_loc_u_importedGamma       >= 0) glUniform1f(s_loc_u_importedGamma,       g_importedMechGamma);
     if (s_loc_u_importedAlbedoScale >= 0) glUniform1f(s_loc_u_importedAlbedoScale, g_importedMechAlbedoScale);
+    if (s_loc_u_mechAoTex           >= 0) glUniform1i(s_loc_u_mechAoTex,           6);  // AO-1: unit 6
+    if (s_loc_u_aoStrength          >= 0) glUniform1f(s_loc_u_aoStrength,          g_importedMechAoStrength);
     // Slice B1: lighting mode 0 = Slice A flat-white passthrough,
     // 1 = calc_light() per-vertex. Set per-flush from killswitch.
     if (s_loc_u_lightingMode >= 0)
@@ -2313,6 +2329,19 @@ void GpuMechBatcher::flush() {
         }
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, glTexId);
+        // AO-1: bind this type's AO to unit 6. dc.aoTexHandle resolves slot -> live gos
+        // -> GL id; 0 -> bind 0 (the shader's HAS_AO bit is OFF for AO-less types, so an
+        // unbound unit 6 is never sampled -> no black). glBindSampler(6,0) clears any
+        // stale sampler-object; mech.frag uses textureLod(...,0) so no mip strict-fail.
+        {
+            const DWORD aoGos = (dc.aoTexHandle != 0u && dc.aoTexHandle != 0xFFFFFFFFu && mcTextureManager)
+                ? mcTextureManager->get_gosTextureHandle(dc.aoTexHandle) : 0u;
+            const uint32_t aoGlId = aoGos ? gos_GetGLTextureId((uint32_t)aoGos) : 0u;
+            glActiveTexture(GL_TEXTURE6);
+            glBindTexture(GL_TEXTURE_2D, aoGlId);
+            glBindSampler(6, 0);
+            glActiveTexture(GL_TEXTURE0);
+        }
         // The actual texture-black fix in Slice A is mech.frag's
         // textureLod(u_tex, v_uv, 0.0) — see memory/amd_auto_lod_strict_fail.md.
         // Sampler-state inheritance is defended by the glBindSampler(0,
@@ -2352,6 +2381,10 @@ void GpuMechBatcher::flush() {
     glActiveTexture(GL_TEXTURE4);
     glBindTexture(GL_TEXTURE_2D, (GLuint)prevTexUnit4);
     glBindSampler(4, (GLuint)prevSampler4);
+    // AO-1: restore unit 6.
+    glActiveTexture(GL_TEXTURE6);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)prevTexUnit6);
+    glBindSampler(6, (GLuint)prevSampler6);
     glActiveTexture((GLenum)prevActiveTex);
     glBindSampler(0, (GLuint)prevSampler);
     glBindVertexArray((GLuint)prevVao);
@@ -2627,6 +2660,10 @@ extern "C" void  batcher_setImportedMechAlbedoScale(float s) {
     if (s < 0.25f) s = 0.25f; if (s > 2.5f) s = 2.5f; g_importedMechAlbedoScale = s;
 }
 extern "C" float batcher_getImportedMechAlbedoScale()        { return g_importedMechAlbedoScale; }
+extern "C" void  batcher_setImportedMechAoStrength(float s) {
+    if (s < 0.0f) s = 0.0f; if (s > 1.0f) s = 1.0f; g_importedMechAoStrength = s;
+}
+extern "C" float batcher_getImportedMechAoStrength()         { return g_importedMechAoStrength; }
 extern "C" void  batcher_setMechGlassRoughness(float r) {
     if (r < 0.04f) r = 0.04f;
     if (r > 1.0f)  r = 1.0f;

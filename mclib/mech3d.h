@@ -438,6 +438,8 @@ class Mech3DAppearance: public ObjectAppearance
 		long						actorHandle_ = -1;
 
 		DWORD						localTextureHandle;
+		DWORD						aoTextureHandle = 0;   // AO-1: imported-mech AO slot (unit 6)
+		bool						aoValid = false;       // AO-1: AO handle loaded OK (gates HAS_AO)
 		float						baseRootNodeHeight;
 
 		DWORD						psRed;

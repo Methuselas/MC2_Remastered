@@ -71,6 +71,10 @@ float ImportedGpuLift(const void* actorKey);
 // Which world translation component the lift targets (0/1/2 = Stuff.x/y/z).
 int ImportedGpuLiftAxis();
 
+// AO-1: imported mech's AO texture name (materials.ao.tga from the package), or nullptr
+// if not imported / no AO declared. Caller loads it + binds on texture unit 6.
+const char* ImportedMechAoTexName(const void* typeKey);
+
 // BT2018-MECH-NODE-MANIFEST-1A. Resolve an MC2 semantic node name (e.g.
 // "weapon_rightarm", "hit_left") to the imported mech's animated joint WORLD
 // position, via the per-mech package manifest (mc2Name -> source joint) + the live

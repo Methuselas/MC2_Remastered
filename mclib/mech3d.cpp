@@ -2081,6 +2081,28 @@ void Mech3DAppearance::resetPaintScheme (DWORD red, DWORD green, DWORD blue)
 	if (!mechShape)
 		return;
 
+	// AO-1: load the imported-mech AO map once (independent of paint scheme; AO is
+	// linear grayscale, not recolored). Loaded here (before resetPaintScheme's early
+	// returns) so it runs on every path. HAS_AO is asserted at submit ONLY if aoValid,
+	// so a missing/failed AO never darkens the mech (white/no-op fallback).
+	if (!aoValid && mechShape->GetNumShapes() > 0) {
+		const void* aoTypeKey = mechType ? (const void*)mechType->mechShape[currentLOD] : nullptr;
+		const char* aoName = mc2mechanim::ImportedMechAoTexName(aoTypeKey);
+		if (aoName && aoName[0]) {
+			char aoPath[1024];
+			sprintf(aoPath, "%s%d" PATH_SEPARATOR, tglPath, ObjectTextureSize);
+			FullPathFileName aoFull;
+			aoFull.init(aoPath, (char*)aoName, "");
+			if (textureOrKtxSidecarExists(aoFull)) {
+				aoTextureHandle = mcTextureManager->loadTexture(aoFull, gos_Texture_Solid,
+					gosHint_DontShrink);
+				aoValid = (aoTextureHandle != 0 && aoTextureHandle != 0xFFFFFFFFu);
+			}
+			if (!aoValid)
+				fprintf(stderr, "[MECH_IMPORT] AO '%s' not loaded -> no-op (white)\n", aoName);
+		}
+	}
+
 	//---------------------------------------------------------------------------------
 	// Simple really.  Toss the current texture, reload the RGB and reapply the colors
 
@@ -2854,6 +2876,9 @@ long Mech3DAppearance::render (long depthFixup)
 				desc.mechType       = mechType;
 				desc.currentLOD     = (int)currentLOD;
 				desc.slot0TexHandle = (uint32_t)localTextureHandle;
+				// AO-1: carry the AO slot (0 when no/failed AO). HAS_AO bit (4) added
+				// below ONLY if aoValid, so the shader samples unit 6 iff a real AO loaded.
+				desc.slot6TexHandle = aoValid ? (uint32_t)aoTextureHandle : 0u;
 				// Slice B1: use the dedup-cache slot populated by
 				// CacheGpuLightData() in update(). 0xFFFFFFFFu sentinel
 				// means "not yet cached" (e.g. spawn-frame before the
@@ -2876,6 +2901,7 @@ long Mech3DAppearance::render (long depthFixup)
 					(status == OBJECT_STATUS_DISABLED) ||
 					(status == OBJECT_STATUS_SHUTDOWN);
 				desc.renderFlags    = lightsOut ? 0x2u : 0x0u;  // bit 1
+				if (aoValid) desc.renderFlags |= 0x10u;          // AO-1: bit 4 = HAS_AO (handle loaded)
 				desc.highlightARGB  = gpuHighlightARGB;
 				// Slice B2: pack actor hazeFactor [0,1] into the alpha
 				// byte of fogARGB. mech.vert combines it with

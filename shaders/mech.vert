@@ -133,7 +133,8 @@ void main() {
     uint instIdx = uint(u_instanceBase) + uint(gl_InstanceID);
     GpuMechInstance inst = instances[instIdx];
 #ifdef MC2_IMPORTED_MECH_MATERIAL
-    v_importedMech = (inst.renderFlags >> 3) & 1u;
+    // bit0 = imported (renderFlags bit3), bit1 = HAS_AO (renderFlags bit4).
+    v_importedMech = (inst.renderFlags >> 3) & 3u;
 #endif
 
     // Bone transform: boneT is the transpose of the Stuff LinearMatrix4D.

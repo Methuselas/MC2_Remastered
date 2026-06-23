@@ -97,6 +97,8 @@ extern "C" float batcher_getImportedMechGamma(void);
 extern "C" void  batcher_setImportedMechGamma(float g);
 extern "C" float batcher_getImportedMechAlbedoScale(void);
 extern "C" void  batcher_setImportedMechAlbedoScale(float s);
+extern "C" float batcher_getImportedMechAoStrength(void);
+extern "C" void  batcher_setImportedMechAoStrength(float s);
 extern "C" int   batcher_getStandardLitEnabled(void);
 extern "C" void  batcher_setStandardLitEnabled(int on);
 extern "C" float batcher_getPbrMetallicInfluence(void);
@@ -1666,6 +1668,16 @@ static void drawMechSection() {
                               "Raise to pull dark skins toward legacy parity.");
         ImGui::SameLine();
         if (ImGui::SmallButton("Reset##impscale")) batcher_setImportedMechAlbedoScale(1.0f);
+
+        float ao = batcher_getImportedMechAoStrength();
+        if (ImGui::SliderFloat("Imported AO Strength##mech", &ao, 0.0f, 1.0f, "%.2f"))
+            batcher_setImportedMechAoStrength(ao);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Ambient-occlusion multiply, IMPORTED BT mechs with AO only.\n"
+                              "0 = no-op (pre-AO look); 1 = full. Default 0.5. Mechs without\n"
+                              "an AO map are unaffected (white/no-op).");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##impao")) batcher_setImportedMechAoStrength(0.5f);
     }
     ImGui::Spacing();
     ImGui::SeparatorText("Mech Lighting");

@@ -46,6 +46,8 @@ flat in uint v_importedMech;
 // linear/PBR, so pow(2.2) crushes dark BT skins). Gamma is a knob, not the fix.
 uniform float u_importedGamma;        // exponent: 1.0 = neutral .. 2.2 = full sRGB decode
 uniform float u_importedAlbedoScale;  // post-gamma brightness multiplier
+uniform sampler2D u_mechAoTex;        // AO-1: unit 6, linear grayscale (.r), imported only
+uniform float u_aoStrength;           // AO-1: 0 = no-op (== pre-AO look), 1 = full AO
 #endif
 
 uniform sampler2D u_tex;
@@ -180,6 +182,16 @@ void main() {
 
     vec4 c = tex_color * v_litColor;
     c.rgb += v_highlightColor.rgb * v_highlightColor.a;
+#ifdef MC2_IMPORTED_MECH_MATERIAL
+    // AO-1: imported BT mechs with a valid AO map (renderFlags bit4 -> v_importedMech
+    // bit1). Linear grayscale, sample .r, conservative multiply. The HAS_AO bit is set
+    // by the CPU ONLY when the AO handle loaded, so this never samples a missing texture
+    // (white/no-op fallback = bit clear). textureLod(...,0) avoids AMD mip strict-fail.
+    if ((v_importedMech & 2u) != 0u) {
+        float ao = textureLod(u_mechAoTex, v_uv, 0.0).r;
+        c.rgb *= mix(1.0, ao, u_aoStrength);
+    }
+#endif
     // MECH-AMBIENT-1 (gated): conservative hemisphere ambient FILL. Lifts
     // shadowed/under-lit surfaces for readability without touching the lit
     // model, PBR, materials, or team-baked albedo. Keyed on the world normal's

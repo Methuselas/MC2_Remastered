@@ -122,6 +122,9 @@ struct GpuMechSubmitDesc {
                                                // TG_TypeShape::listOfTextures is a shared type-
                                                // level cache mutated by TransformMultiShape across
                                                // all actors — do NOT read it for slot 0.
+    uint32_t                    slot6TexHandle; // AO-1: AO mcTextureManager SLOT INDEX
+                                               // (0 = no AO). Resolved to a gos handle at
+                                               // flush + bound to unit 6 when HAS_AO.
     uint32_t                    lightDataIndex; // Slice B1; 0 in Slice A
     uint32_t                    renderFlags;
     uint32_t                    highlightARGB;
