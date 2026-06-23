@@ -35,8 +35,8 @@ routing → pixel-identical proof** (→ SPIR-V later, behind a parity gate).
 | MechOpaque | SPIRV_ELIGIBLE | MechOpaque | MechOpaque |
 | ShadowTerrain / ShadowStaticProp / ShadowMech | VISUAL_PROVEN | Shadow | Shadow* |
 | Terrain (main solid) | UNREGISTERED | Terrain | — |
-| TerrainOverlay | UNREGISTERED | TerrainOverlay | — |
-| TerrainDecal | UNREGISTERED | TerrainDecal | — |
+| TerrainOverlay | DESCRIPTIVE_REGISTERED | TerrainOverlay | TerrainOverlay |
+| TerrainDecal | DESCRIPTIVE_REGISTERED (first AlphaBlend row) | TerrainDecal | TerrainDecal |
 | Water | UNREGISTERED | Water | — |
 | VFX | UNREGISTERED | VFX | — |
 | VegetationCards | UNREGISTERED | VegetationCards | — |
@@ -61,9 +61,12 @@ routing → pixel-identical proof** (→ SPIR-V later, behind a parity gate).
 
 ## Next slices (use the ledger, don't re-recon)
 
-1. **TERRAIN-OVERLAY-DECAL-PIPELINE-REGISTRATION-1** — TerrainOverlay + TerrainDecal
-   UNREGISTERED → DESCRIPTIVE_REGISTERED (TerrainDecal = first AlphaBlend row).
+1. ~~TERRAIN-OVERLAY-DECAL-PIPELINE-REGISTRATION-1~~ **DONE** — TerrainOverlay +
+   TerrainDecal now DESCRIPTIVE_REGISTERED (TerrainDecal = first AlphaBlend row).
+   Their `next` is route_applyPipeline → VISUAL_PROVEN.
 2. **WATER-ARMED-PIPELINE-REGISTRATION-1** — Water armed fast-path base only.
 3. **VFX-PIPELINE-REGISTRATION-RECON-1** — the blend-selector family (later).
+4. (optional) route TerrainOverlay/TerrainDecal through applyPipeline (provably
+   no-op candidate) → VISUAL_PROVEN, when convenient.
 
 DO NOT re-open: UI, Picking, RoadsRunways (terminal `DO_NOT_MODEL`).
