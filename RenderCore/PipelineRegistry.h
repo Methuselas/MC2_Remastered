@@ -36,8 +36,15 @@ enum class PipelineId : uint32_t {
     ShadowTerrain       = 5,   // terrain -> static shadow map  (shadow_terrain)
     ShadowStaticProp    = 6,   // static/dynamic props -> shadow map (shadow_static_prop; polygon offset ON)
     ShadowMech          = 7,   // mech -> dynamic shadow map     (shadow_mech)
+    // TERRAIN-OVERLAY-DECAL-PIPELINE-REGISTRATION-1: terrain overlay + decal
+    // passes. DESCRIPTIVE ONLY (glProgramName=0, NOT routed through applyPipeline;
+    // state still hand-set in gosRenderer::drawTerrainOverlays / drawDecals). The
+    // rows state the truth so the pass-coverage ledger can move them forward.
+    // TerrainDecal is the first AlphaBlend pipeline row.
+    TerrainOverlay      = 8,   // terrain cement/perimeter overlay (terrain_overlay.frag, opaque)
+    TerrainDecal        = 9,   // bomb craters + mech footprints (decal.frag, alpha blend, depth-write OFF)
     // Future: Water, DebugWireframe, ...
-    Count_              = 8,   // sentinel — do not use as an ID
+    Count_              = 10,  // sentinel — do not use as an ID
 };
 
 // VERTEXLAYOUT-AUTHORITY-1: stable repo-owned vertex-input layout identities —

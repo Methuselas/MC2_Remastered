@@ -90,20 +90,22 @@
       "next": "needs_pass_reg_first: terrain MAIN solid pass — its own scoped slice (TERRAIN-SOLID-PIPELINE-REGISTRATION-RECON)"
     },
     "TerrainOverlay": {
-      "status": "UNREGISTERED",
+      "status": "DESCRIPTIVE_REGISTERED",
       "renderPassId": "TerrainOverlay",
-      "pipelineId": null,
-      "shaderBase": "overlayProg_",
+      "pipelineId": "TerrainOverlay",
+      "shaderBase": "terrain_overlay",
       "stateOwner": "legacy/ad-hoc",
-      "next": "register (PROMOTE NOW): opaque no-blend GEQUAL depth-write — TERRAIN-OVERLAY-DECAL-PIPELINE-REGISTRATION-1"
+      "evidence": "PipelineDesc row [8] (opaque, GEQUAL, depth-write, cull none, color0+1); gosRenderer::drawTerrainOverlays still hand-sets state (not applyPipeline-routed)",
+      "next": "route_applyPipeline (provably-no-op candidate) -> visual_proven"
     },
     "TerrainDecal": {
-      "status": "UNREGISTERED",
+      "status": "DESCRIPTIVE_REGISTERED",
       "renderPassId": "TerrainDecal",
-      "pipelineId": null,
-      "shaderBase": "decalProg_",
+      "pipelineId": "TerrainDecal",
+      "shaderBase": "decal",
       "stateOwner": "legacy/ad-hoc",
-      "next": "register (PROMOTE NOW): first AlphaBlend row (SRC_ALPHA/1-SRC_ALPHA, depth-test no-write) — validates blend-factor axis"
+      "evidence": "PipelineDesc row [9] — FIRST AlphaBlend row (SRC_ALPHA/1-SRC_ALPHA, depth-test no-write, GEQUAL, cull none); gosRenderer::drawDecals still hand-sets state",
+      "next": "route_applyPipeline -> visual_proven"
     },
     "Water": {
       "status": "UNREGISTERED",

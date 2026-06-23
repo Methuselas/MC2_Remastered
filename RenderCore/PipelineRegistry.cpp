@@ -176,6 +176,45 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* ssboBindingsMask    */ 0u,
     },
 
+    // [8] TerrainOverlay — cement/perimeter overlay (terrain_overlay.{vert,frag}).
+    // TERRAIN-OVERLAY-DECAL-PIPELINE-REGISTRATION-1: DESCRIPTIVE — states the truth
+    // (gosRenderer::drawTerrainOverlays/drawDecalStaticBatch set this by hand) but
+    // is NOT applyPipeline-driven; glProgramName stays 0. Opaque, reverse-Z GEQUAL,
+    // depth-write on, cull DISABLED (overlay tiles draw both faces). frag writes
+    // color0 (FragColor) + color1 (GBuffer1).
+    {
+        /* glProgramName       */ 0u,
+        /* blend               */ BlendMode::Opaque,
+        /* depthTestEnable     */ true,
+        /* depthWriteEnable    */ true,
+        /* depthFunc           */ DepthFunc::GreaterEqual, // reverse-Z (scene-space overlay)
+        /* cullMode            */ CullMode::None,
+        /* colorAttachments    */ { true, true, false },
+        /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,
+        /* polygonOffsetEnable */ false,           // overlay: no polygon offset (in-material blend)
+        /* ssboBindingsMask    */ 0u,              // binds its own VBO/texture; no SSBO
+    },
+
+    // [9] TerrainDecal — bomb craters + mech footprints (terrain_overlay.vert +
+    // decal.frag). DESCRIPTIVE; gosRenderer::drawDecals sets this by hand. The
+    // FIRST AlphaBlend pipeline row: GL_BLEND on, SRC_ALPHA/ONE_MINUS_SRC_ALPHA
+    // (BlendMode::AlphaBlend), depth-test on but depth-WRITE OFF (decals must not
+    // occlude), reverse-Z GEQUAL, cull disabled. frag writes color0 + color1.
+    {
+        /* glProgramName       */ 0u,
+        /* blend               */ BlendMode::AlphaBlend, // FIRST alpha-blend row
+        /* depthTestEnable     */ true,
+        /* depthWriteEnable    */ false,           // decals do not write depth
+        /* depthFunc           */ DepthFunc::GreaterEqual,
+        /* cullMode            */ CullMode::None,
+        /* colorAttachments    */ { true, true, false },
+        /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,
+        /* polygonOffsetEnable */ false,
+        /* ssboBindingsMask    */ 0u,
+    },
+
 }};
 
 static_assert(

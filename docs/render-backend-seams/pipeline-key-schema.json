@@ -320,6 +320,36 @@
       "polygonOffsetEnable": false,
       "colorMaskAttachmentMask": { "color0": false, "color1": false, "color2": false },
       "key_producible": "descriptive"
+    },
+    {
+      "id": "TerrainOverlay",
+      "pipelineDescRegistered": false,
+      "descriptive": "TERRAIN-OVERLAY-DECAL-PIPELINE-REGISTRATION-1: descriptive row, NOT applyPipeline-routed (gosRenderer::drawTerrainOverlays sets state by hand). vertexLayout deferred (WorldOverlayVert 28B, not yet a VertexLayoutId).",
+      "shaderVariantId": { "base": "terrain_overlay", "macros": [] },
+      "specializationParams": [],
+      "renderPassCompat": "TerrainOverlay (RenderPassId::TerrainOverlay)",
+      "depthState": { "test": true, "write": true, "func": "GreaterEqual" },
+      "blendState": { "factor": "Opaque" },
+      "cullState": { "mode": "None" },
+      "frontFace": "Ccw",
+      "polygonOffsetEnable": false,
+      "colorMaskAttachmentMask": { "color0": true, "color1": true, "color2": false },
+      "key_producible": "descriptive"
+    },
+    {
+      "id": "TerrainDecal",
+      "pipelineDescRegistered": false,
+      "descriptive": "TERRAIN-OVERLAY-DECAL-PIPELINE-REGISTRATION-1: descriptive row, NOT applyPipeline-routed (gosRenderer::drawDecals sets state by hand). FIRST AlphaBlend pipeline row — exercises the blend-factor axis. depthWrite=false (decals must not occlude). vertexLayout deferred.",
+      "shaderVariantId": { "base": "decal", "macros": [] },
+      "specializationParams": [],
+      "renderPassCompat": "TerrainDecal (RenderPassId::TerrainDecal)",
+      "depthState": { "test": true, "write": false, "func": "GreaterEqual" },
+      "blendState": { "factor": "AlphaBlend", "srcFactor": "SRC_ALPHA", "dstFactor": "ONE_MINUS_SRC_ALPHA", "equation": "FUNC_ADD" },
+      "cullState": { "mode": "None" },
+      "frontFace": "Ccw",
+      "polygonOffsetEnable": false,
+      "colorMaskAttachmentMask": { "color0": true, "color1": true, "color2": false },
+      "key_producible": "descriptive"
     }
   ],
   "excluded_draw_families": {
@@ -331,8 +361,6 @@
       "Water",
       "PostProcess",
       "VegetationCards",
-      "TerrainDecal",
-      "TerrainOverlay",
       "UI"
     ],
     "ssbo_vertexid_driven": [
