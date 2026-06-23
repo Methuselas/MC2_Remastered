@@ -98,6 +98,7 @@ run_check "spirv_reflection"       "py -3 scripts/check-spirv-reflection-contrac
 run_check "shader_package"         "py -3 scripts/check-shader-package.py --quiet"
 run_check "visual_compare"         "py -3 scripts/visual_compare.py --self-test"
 run_check "brain_fit_schema"       "py -3 scripts/check-brain-fit-schema.py --quiet"
+run_check "deploy_data_parity"     "py -3 scripts/check-deploy-data-parity.py --quiet"
 
 # ---------------------------------------------------------------------------
 # Summary table

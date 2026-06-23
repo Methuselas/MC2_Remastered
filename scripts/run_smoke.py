@@ -372,7 +372,21 @@ def main():
                          "path-aware)")
     ap.add_argument("--duration", type=int)
     ap.add_argument("--profile", default="stock")
-    ap.add_argument("--exe", default=str(DEFAULT_EXE))
+    ap.add_argument("--exe", default=None,
+                    help="explicit path to mc2.exe; skips auto-selection but still "
+                         "leases the folder (use --no-lease to bypass leasing)")
+    # Deploy-folder lease / checkout system (scripts/smoke_lib/deploy_lease.py).
+    # --deploy <name>: request a specific folder by short name (0.4/0.4c/0.4d-rc1/
+    #   0.5.0/0.5-testing). Error if that folder is busy-and-fresh.
+    # --no-lease: skip the lease system entirely (no coordination, legacy behavior).
+    ap.add_argument("--deploy",
+                    metavar="NAME",
+                    help="request a specific deploy folder by short name "
+                         "(0.4 / 0.4c / 0.4d-rc1 / 0.5.0 / 0.5-testing); "
+                         "error if that folder is busy and not stale")
+    ap.add_argument("--no-lease", action="store_true",
+                    help="skip the deploy-folder lease system entirely "
+                         "(no coordination; legacy single-session behavior)")
     # Tier 1.2 (docs/testing-strategy.md): opt-in safety net that promotes
     # GL_DEBUG_SEVERITY_HIGH from a silent log to abort(). Off by default.
     ap.add_argument("--gl-debug-fatal", action="store_true",
@@ -393,6 +407,88 @@ def main():
     args = ap.parse_args()
     if args.gl_debug_fatal:
         os.environ["MC2_GL_DEBUG_FATAL"] = "1"
+
+    # ----- Deploy-folder lease / auto-selection --------------------------
+    # Must run before any code that uses args.exe (coherence check, lock, etc.)
+    # so that args.exe is always a resolved, leased path before we proceed.
+    #
+    # Three cases:
+    #   --no-lease          : skip leasing; use args.exe as-is (default exe if None)
+    #   --exe GIVEN         : lease the folder it points to, skip auto-selection
+    #   --deploy NAME       : select named folder, lease it (error if busy)
+    #   (nothing given)     : auto-select first available preferred folder
+    _lease_folder: str | None = None  # the folder we hold a lease on (None = no-lease)
+
+    try:
+        from scripts.smoke_lib import deploy_lease as _deploy_lease
+        _lease_available = True
+    except Exception as _le:
+        print(f"[runner] [LEASE] deploy_lease import failed: {_le}; "
+              f"proceeding without leasing (--no-lease behavior)", file=sys.stderr)
+        _lease_available = False
+
+    if not _lease_available or args.no_lease:
+        # No-lease path: just ensure args.exe has a value
+        if args.exe is None:
+            args.exe = str(DEFAULT_EXE)
+        if args.no_lease and _lease_available:
+            print("[runner] [LEASE] --no-lease: skipping lease system",
+                  file=sys.stderr)
+    else:
+        # Lease path
+        _explicit_exe = args.exe  # None means "auto-select"
+        # Describe what this lease is for (recorded in the owner record).
+        _tier = getattr(args, "tier", None)
+        _missions = getattr(args, "mission", None)
+        if _tier:
+            _intended_test = f"tier:{_tier}"
+        elif _missions:
+            _intended_test = "missions:" + ",".join(_missions)
+        else:
+            _intended_test = "adhoc"
+        try:
+            if args.deploy:
+                # --deploy <name>: named folder, must exist and not be busy
+                _lease_folder = _deploy_lease.auto_acquire(
+                    explicit_folder=None,
+                    deploy_name=args.deploy,
+                    intended_test=_intended_test,
+                )
+                args.exe = str(
+                    (Path(_lease_folder) / "mc2.exe").resolve()
+                )
+            elif _explicit_exe is not None:
+                # --exe given: lease its folder, honor the explicit path
+                _lease_folder = _deploy_lease.auto_acquire(
+                    explicit_folder=_explicit_exe,
+                    deploy_name=None,
+                    intended_test=_intended_test,
+                )
+                # args.exe unchanged — caller specified exact exe
+            else:
+                # Auto-select: find first available preferred folder
+                _lease_folder = _deploy_lease.auto_acquire(
+                    explicit_folder=None,
+                    deploy_name=None,
+                    intended_test=_intended_test,
+                )
+                args.exe = str(
+                    (Path(_lease_folder) / "mc2.exe").resolve()
+                )
+        except (_deploy_lease.LeaseError,
+                _deploy_lease.NoFolderAvailable) as _lex:
+            print(f"[runner] {_lex}", file=sys.stderr)
+            sys.exit(6)
+
+        # Register a release on normal exit (try/finally below also covers
+        # exceptions; atexit covers os._exit / signal kills)
+        import atexit as _atexit
+        _atexit.register(lambda: _deploy_lease.release_lease(_lease_folder)
+                         if _lease_folder else None)
+
+    # Ensure args.exe is always set (defensive fallback — should never trigger)
+    if args.exe is None:
+        args.exe = str(DEFAULT_EXE)
 
     # ----- Deploy-coherence verify (preflight) ---------------------------
     # The target dir run_smoke would launch from = parent of --exe. We call
@@ -664,6 +760,14 @@ def main():
     )
 
     for e in selected:
+        # Lease heartbeat: refresh last_used timestamp at the start of each mission
+        # so a multi-mission run does not go stale mid-run.
+        if _lease_folder is not None and _lease_available:
+            try:
+                _deploy_lease.touch_lease(_lease_folder)
+            except Exception:
+                pass  # heartbeat failure is non-fatal
+
         duration = args.duration or e.duration or 120
         tier = args.tier or "adhoc"
         cfg = RunConfig(
@@ -1426,6 +1530,19 @@ def main():
             result="PASS" if passed else "FAIL",
             source="smoke",
         )
+
+    # Release the deploy-folder lease (success OR failure path).
+    # The atexit handler registered above is the backstop for os._exit / signals;
+    # this explicit release fires first on normal exits and any exception that
+    # propagates out of main().
+    if _lease_folder is not None and _lease_available:
+        try:
+            _deploy_lease.release_lease(_lease_folder)
+            _deploy_lease._log(f"[LEASE] released {_deploy_lease._short_name(_lease_folder)}")
+            _lease_folder = None  # prevent double-release by atexit
+        except Exception as _rel_exc:
+            print(f"[runner] [LEASE] release failed (non-fatal): {_rel_exc}",
+                  file=sys.stderr)
 
     sys.exit(0 if passed else 1)
 
