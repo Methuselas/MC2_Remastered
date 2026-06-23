@@ -43,12 +43,30 @@ def main():
     ap.add_argument("--manifest", required=True)
     ap.add_argument("--conversions", required=True)
     ap.add_argument("--deploy", required=True)
+    ap.add_argument("--dump", default="A:/Games/mc2-opengl/BattleTech_2018_Dump",
+                    help="BT2018 dump root (AO -amb maps live in Texture2D/, NOT the GLB)")
     args = ap.parse_args()
 
     with open(args.manifest, encoding="utf-8") as f:
         mechs = [r["btname"] for r in json.load(f)]
 
+    # AO (-amb) is NOT embedded in the GLB (FBX2glTF embedded only FBX-referenced
+    # albedo + normal). It lives in the dump Texture2D/ as the chassis BASE atlas AO,
+    # skin-independent (one -Base-amb per chassis, shared by BlackWidow/SLDF/BHA since
+    # AO is geometry-based). Index the canonical (no Unity '#hash' dupe) -Base-amb pngs.
+    tex2d = os.path.join(args.dump, "Texture2D")
+    ao_index = {}  # lowercase chassis -> source png path
+    if os.path.isdir(tex2d):
+        for fn in os.listdir(tex2d):
+            low = fn.lower()
+            if "-base-amb.png" in low and "#" not in fn:  # canonical only
+                # chrTxrMech_<chassis>-Base-amb.png
+                m = low[len("chrtxrmech_"):].split("-base-amb")[0] if low.startswith("chrtxrmech_") else None
+                if m:
+                    ao_index[m] = os.path.join(tex2d, fn)
+
     total_missing = 0
+    ao_missing = []
     for bt in mechs:
         glb = os.path.join(args.conversions, f"{bt}.glb")
         if not os.path.isfile(glb):
@@ -71,11 +89,49 @@ def main():
         if missing:
             total_missing += 1
             print(f"[pkg] WARN {bt}: source joints absent in rig: {missing}")
+
+        # MATERIAL-PACKAGE-CONTRACT: declare the material maps embedded in the GLB.
+        # The runtime tga-stem (deriveName = lowercase image stem + .tga) is what the
+        # engine resolves; the cooked artifact is <stem>.ktx2 (BC7). featureBits drive
+        # binding + shader. albedo is always present; ao/normal declared if embedded.
+        def _img_stem(substr, exclude="blip"):
+            for im in (g.images or []):
+                if im.name and substr in im.name.lower() and exclude not in im.name.lower():
+                    return os.path.splitext(im.name)[0].lower()  # chrtxrmech_<...>-<map>
+            return None
+        materials = {}
+        feature_bits = []
+        alb = _img_stem("-base-alb") or _img_stem("alb")   # embedded in GLB
+        if alb:
+            materials["albedo"] = {"tga": alb + ".tga", "ktx2": alb + ".ktx2",
+                                   "logicalFormat": "srgb-rgb", "container": "bc7"}
+        nrm = _img_stem("-base-nrm") or _img_stem("nrm")   # embedded in GLB (Slice 2B)
+        if nrm:  # declared for NORMALS-1; not yet consumed
+            materials["normal"] = {"tga": nrm + ".tga", "ktx2": nrm + ".ktx2",
+                                   "logicalFormat": "linear-normal-xyz", "container": "bc7"}
+        # AO from the DUMP (not GLB), keyed by base chassis (variant suffix stripped;
+        # AO is skin-independent). logicalFormat = linear single-channel; the CURRENT
+        # container is BC7 (compatibility — the KTX_PRIMARY decoder only handles BC7
+        # 145/146; a BC4/R8 path does not exist yet). DO NOT treat AO as color/sRGB.
+        chassis = bt.split("_")[0].lower()                 # warhammer_BlackWidow -> warhammer
+        ao_src = ao_index.get(chassis)
+        if ao_src:
+            ao_stem = f"chrtxrmech_{chassis}-base-amb"
+            materials["ao"] = {"tga": ao_stem + ".tga", "ktx2": ao_stem + ".ktx2",
+                               "logicalFormat": "linear-grayscale",
+                               "container": "bc7-compat",  # ideal BC4/R8; BC7 until decoder supports it
+                               "source": "dump:Texture2D/" + os.path.basename(ao_src),
+                               "skinIndependent": True}
+            feature_bits.append("HAS_AO")
+        else:
+            ao_missing.append(bt)
         pkg = {
-            "schema": "bt2018-mech-package/1",
+            "schema": "bt2018-mech-package/2",
             "chassisId": bt,
             "sourceGlb": f"{bt}.glb",
             "nodes": nodes,
+            "materials": materials,
+            "featureBits": feature_bits,
         }
         # source-of-truth copy next to the conversion
         asset_dir = os.path.join(args.conversions, bt)
@@ -86,9 +142,14 @@ def main():
         # engine sidecar: <deploy>/<bt>.package.json (read as <glbstem>.package.json)
         with open(os.path.join(args.deploy, f"{bt}.package.json"), "w", encoding="utf-8") as f:
             f.write(text)
-        print(f"[pkg] {bt}: {len(nodes)} nodes" + (" (with warnings)" if missing else ""))
+        print(f"[pkg] {bt}: {len(nodes)} nodes, materials={sorted(materials)} feat={feature_bits}"
+              + (" (joint warnings)" if missing else ""))
 
     print(f"\n[pkg] done: {len(mechs)} mechs, {total_missing} with missing-joint warnings")
+    if ao_missing:
+        print(f"[pkg] AO MISSING (no dump -Base-amb for base chassis) for {len(ao_missing)}: {sorted(ao_missing)}")
+    else:
+        print(f"[pkg] AO: all mechs resolved a dump -Base-amb source")
 
 
 if __name__ == "__main__":

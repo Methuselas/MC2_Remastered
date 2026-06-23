@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+"""BT2018-MECH-MATERIAL-PACKAGE-SCAFFOLD-1 checker — the consistency rung of the
+material-package feature ladder (package -> featureBits -> handles -> shader -> CHECK).
+
+For each deployed <chassis>.package.json, verify package/data agreement:
+  - albedo declared  -> its .ktx2 (or .tga) exists in deploy data/tgl
+  - HAS_AO in featureBits  IFF  materials.ao declared
+  - if materials.ao declared -> its dump source (-Base-amb.png) exists
+  - AO logicalFormat is linear-grayscale (never sRGB/color) and container documented
+  - normal declared -> noted (Slice 2B; not yet cooked/consumed)
+
+Exit 0 = consistent. Non-zero = packages and data disagree. Read-only.
+
+Usage:
+  py -3 check_mech_packages.py --deploy <release>/data/tgl \
+      --dump A:/Games/mc2-opengl/BattleTech_2018_Dump
+"""
+import argparse, glob, json, os, sys
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--deploy", required=True)
+    ap.add_argument("--dump", default="A:/Games/mc2-opengl/BattleTech_2018_Dump")
+    args = ap.parse_args()
+    tex2d = os.path.join(args.dump, "Texture2D")
+
+    pkgs = sorted(glob.glob(os.path.join(args.deploy, "*.package.json")))
+    if not pkgs:
+        sys.exit(f"FAIL: no *.package.json in {args.deploy}")
+
+    errors, warns, n_ao = [], [], 0
+    for p in pkgs:
+        name = os.path.basename(p)[:-len(".package.json")]
+        d = json.load(open(p, encoding="utf-8"))
+        mats = d.get("materials", {})
+        feats = set(d.get("featureBits", []))
+
+        if "albedo" not in mats:
+            errors.append(f"{name}: no albedo declared")
+        else:
+            a = mats["albedo"]
+            if not (os.path.isfile(os.path.join(args.deploy, a.get("ktx2", "")))
+                    or os.path.isfile(os.path.join(args.deploy, a.get("tga", "")))):
+                errors.append(f"{name}: albedo artifact missing ({a.get('ktx2')})")
+
+        has_ao_bit = "HAS_AO" in feats
+        has_ao_mat = "ao" in mats
+        if has_ao_bit != has_ao_mat:
+            errors.append(f"{name}: HAS_AO bit({has_ao_bit}) != materials.ao({has_ao_mat})")
+        if has_ao_mat:
+            n_ao += 1
+            ao = mats["ao"]
+            if ao.get("logicalFormat") != "linear-grayscale":
+                errors.append(f"{name}: AO logicalFormat must be linear-grayscale, got {ao.get('logicalFormat')!r}")
+            if "container" not in ao:
+                warns.append(f"{name}: AO container not documented")
+            src = ao.get("source", "")
+            if src.startswith("dump:Texture2D/"):
+                if not os.path.isfile(os.path.join(tex2d, src.split("/", 1)[1])):
+                    errors.append(f"{name}: AO dump source missing ({src})")
+            else:
+                errors.append(f"{name}: AO source not a dump ref ({src!r})")
+        if "normal" in mats:
+            warns.append(f"{name}: normal declared (Slice 2B; not yet cooked/consumed)")
+
+    print(f"[check] packages={len(pkgs)} with-AO={n_ao} errors={len(errors)} warns={len(warns)}")
+    for w in warns[:10]:
+        print("  WARN  " + w)
+    if len(warns) > 10:
+        print(f"  ... +{len(warns)-10} more warns")
+    for e in errors:
+        print("  ERROR " + e)
+    sys.exit(1 if errors else 0)
+
+
+if __name__ == "__main__":
+    main()
