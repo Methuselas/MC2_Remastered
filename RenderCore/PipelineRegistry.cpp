@@ -54,6 +54,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* colorAttachments    */ { true, true, false },
         /* objectIdWriteEnabled*/ false,           // TODO: flip when shader adds loc=2
         /* frontFace           */ FrontFace::Ccw,  // GL default; explicit per row
+        /* polygonOffsetEnable */ false,           // scene passes: no polygon offset
         /* ssboBindingsMask    */ kStaticPropSsbos,
     },
 
@@ -70,6 +71,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* colorAttachments    */ { true, true, false },
         /* objectIdWriteEnabled*/ false,
         /* frontFace           */ FrontFace::Ccw,  // GL default; explicit per row
+        /* polygonOffsetEnable */ false,           // scene passes: no polygon offset
         /* ssboBindingsMask    */ kStaticPropSsbos,
     },
 
@@ -94,6 +96,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* colorAttachments    */ { true, true, false },
         /* objectIdWriteEnabled*/ false,           // macro-gated in shader, not here
         /* frontFace           */ FrontFace::Ccw,  // GL default; explicit per row
+        /* polygonOffsetEnable */ false,           // scene passes: no polygon offset
         /* ssboBindingsMask    */ 0u,              // mech binds its own SSBOs
     },
 
@@ -115,7 +118,62 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* colorAttachments    */ { false, false, false },
         /* objectIdWriteEnabled*/ false,
         /* frontFace           */ FrontFace::Ccw,  // GL default; explicit per row
+        /* polygonOffsetEnable */ false,           // scene passes: no polygon offset
         /* ssboBindingsMask    */ kStaticPropSsbos,
+    },
+
+    // [5] ShadowTerrain — terrain -> static shadow map (shadow_terrain).
+    // SHADOW-CASTER-PIPELINE-REGISTRATION-1: DESCRIPTIVE row — states the truth
+    // but is NOT applyPipeline-driven (the pass bracket in gameos_graphics.cpp
+    // sets this state by hand; glProgramName stays 0, bindProgram wiring deferred
+    // to the active-routing slice). Forward-Z GL_LESS (opposite the scene's
+    // reverse-Z), depth-only, cull DISABLED, no polygon offset.
+    {
+        /* glProgramName       */ 0u,              // descriptive; not yet wired
+        /* blend               */ BlendMode::Opaque, // depth-only; GL_BLEND off
+        /* depthTestEnable     */ true,
+        /* depthWriteEnable    */ true,
+        /* depthFunc           */ DepthFunc::Less, // shadow map = forward-Z GL_LESS
+        /* cullMode            */ CullMode::None,  // shadow bracket disables cull
+        /* colorAttachments    */ { false, false, false }, // pure depth (dummy R8 never written)
+        /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,  // no glFrontFace in shadow; ambient default
+        /* polygonOffsetEnable */ false,           // terrain caster: no polygon offset
+        /* ssboBindingsMask    */ 0u,              // descriptive; pass binds its own
+    },
+
+    // [6] ShadowStaticProp — static/dynamic props -> shadow map (shadow_static_prop).
+    // The ONLY shadow caster that enables GL_POLYGON_OFFSET_FILL (gos_static_prop_
+    // batcher.cpp:7639/7787, factor/units 2.0/4.0 set by hand, ImGui-mutable — the
+    // magnitude is dynamic state, NOT modeled here). DESCRIPTIVE.
+    {
+        /* glProgramName       */ 0u,
+        /* blend               */ BlendMode::Opaque,
+        /* depthTestEnable     */ true,
+        /* depthWriteEnable    */ true,
+        /* depthFunc           */ DepthFunc::Less,
+        /* cullMode            */ CullMode::None,
+        /* colorAttachments    */ { false, false, false },
+        /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,
+        /* polygonOffsetEnable */ true,            // prop caster: polygon offset ON
+        /* ssboBindingsMask    */ 0u,
+    },
+
+    // [7] ShadowMech — mech -> dynamic shadow map (shadow_mech;
+    // GpuMechBatcher::flushShadow). DESCRIPTIVE; no polygon offset.
+    {
+        /* glProgramName       */ 0u,
+        /* blend               */ BlendMode::Opaque,
+        /* depthTestEnable     */ true,
+        /* depthWriteEnable    */ true,
+        /* depthFunc           */ DepthFunc::Less,
+        /* cullMode            */ CullMode::None,
+        /* colorAttachments    */ { false, false, false },
+        /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,
+        /* polygonOffsetEnable */ false,           // mech caster: no polygon offset
+        /* ssboBindingsMask    */ 0u,
     },
 
 }};

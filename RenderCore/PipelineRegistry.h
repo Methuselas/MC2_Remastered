@@ -28,8 +28,16 @@ enum class PipelineId : uint32_t {
     StaticPropAlphaTest = 2,   // alpha-tested geometry, alpha-on group (shader discard)
     MechOpaque          = 3,   // GPU mech batcher opaque pass (reverse-Z, cull back)
     StaticPropDepth     = 4,   // camera depth-prepass (depth-only, alpha discard)
-    // Future: Terrain, Water, DebugWireframe, ...
-    Count_              = 5,   // sentinel — do not use as an ID
+    // SHADOW-CASTER-PIPELINE-REGISTRATION-1: shadow-map caster passes. DESCRIPTIVE
+    // ONLY — these rows state the truth (depth-only, GL_LESS forward-Z, cull off)
+    // but are NOT routed through applyPipeline (pipelineDescRegistered stays false
+    // in RenderPassContract). They exist so polygonOffsetEnable is an authoritative
+    // per-pipeline fact. Active applyPipeline routing is a later, gated slice.
+    ShadowTerrain       = 5,   // terrain -> static shadow map  (shadow_terrain)
+    ShadowStaticProp    = 6,   // static/dynamic props -> shadow map (shadow_static_prop; polygon offset ON)
+    ShadowMech          = 7,   // mech -> dynamic shadow map     (shadow_mech)
+    // Future: Water, DebugWireframe, ...
+    Count_              = 8,   // sentinel — do not use as an ID
 };
 
 // VERTEXLAYOUT-AUTHORITY-1: stable repo-owned vertex-input layout identities —
