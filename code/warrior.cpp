@@ -122,6 +122,29 @@ static void initBrainTaskQGate() {
     s_brainTaskQTraceEnabled = (std::getenv("MC2_BRAIN_TASKQ_TRACE") && std::atoi(std::getenv("MC2_BRAIN_TASKQ_TRACE")) != 0);
 }
 
+// MC2_BRAIN_RUNTIME gate — checked once at first runBrain call (requires MC2_BRAIN_TASKQ=1)
+static bool             s_brainRuntimeEnabled      = false;
+static bool             s_brainRuntimeTraceEnabled  = false;
+static bool             s_brainRuntimeGateChecked   = false;
+static BrainRuntimeMode s_brainRuntimeForcedMode    = BrainRuntimeMode::Legacy;
+static void initBrainRuntimeGate() {
+    if (s_brainRuntimeGateChecked) return;
+    s_brainRuntimeGateChecked  = true;
+    s_brainRuntimeEnabled      = (std::getenv("MC2_BRAIN_RUNTIME")       && std::atoi(std::getenv("MC2_BRAIN_RUNTIME"))       != 0);
+    s_brainRuntimeTraceEnabled = (std::getenv("MC2_BRAIN_RUNTIME_TRACE") && std::atoi(std::getenv("MC2_BRAIN_RUNTIME_TRACE")) != 0);
+    // Mode source: MC2_BRAIN_RUNTIME_FORCE_MODE env override only (mission_ai.fit loader deferred)
+    const char* modeEnv = std::getenv("MC2_BRAIN_RUNTIME_FORCE_MODE");
+    if (modeEnv) {
+        if      (std::strcmp(modeEnv, "hybrid")   == 0) s_brainRuntimeForcedMode = BrainRuntimeMode::Hybrid;
+        else if (std::strcmp(modeEnv, "enhanced") == 0) s_brainRuntimeForcedMode = BrainRuntimeMode::Enhanced;
+        else                                             s_brainRuntimeForcedMode = BrainRuntimeMode::Legacy;
+    }
+    if (s_brainRuntimeEnabled && !s_brainTaskQEnabled) {
+        std::fprintf(stderr, "[BRAIN_RT] WARNING: MC2_BRAIN_RUNTIME=1 but MC2_BRAIN_TASKQ=0 — runtime staying inert\n");
+        s_brainRuntimeEnabled = false;
+    }
+}
+
 enum {
 	T_A = 0,
 	T = T_A,
@@ -940,6 +963,7 @@ void MechWarrior::init (bool create) {
 		memory[i].integer = 0;
 	brain = NULL;
 	brainTaskQueue = nullptr;  // created on first brain fire if gate enabled
+	brainRuntime = nullptr;    // MC2_BRAIN_RUNTIME: created on first brain cadence tick if gate enabled
 	for (int i = 0; i < NUM_PILOT_ALARMS; i++)
 		brainAlarmCallback[i] = NULL;
 
@@ -1551,6 +1575,8 @@ void MechWarrior::destroy (void) {
 
 	delete brainTaskQueue;
 	brainTaskQueue = nullptr;
+	delete brainRuntime;
+	brainRuntime = nullptr;
 
 	for (long i = 0; i < 2; i++)
 		if (moveOrders.path[i]) {
@@ -5047,6 +5073,31 @@ long MechWarrior::mainDecisionTree (void) {
 			}
 			brainTaskQueue->drain();  // discards task (stub); falls through to ABL unchanged
 		}
+		// MC2_BRAIN_RUNTIME: detect mode + compute arbitration (TRACE ONLY — never applied).
+		// ABL brain->execute() runs unconditionally below; no slots are written here.
+		initBrainRuntimeGate();
+		if (s_brainRuntimeEnabled && s_brainTaskQEnabled) {
+			if (!brainRuntime) {
+				brainRuntime = new MechBrainRuntime();
+				brainRuntime->mode = s_brainRuntimeForcedMode;
+			}
+			if (s_brainRuntimeTraceEnabled) {
+				uint8_t wouldOwn = brainRuntime->computeWouldOwnMask();
+				// Build human-readable slot list
+				char slotsBuf[32] = "(none)";
+				if (wouldOwn) {
+					slotsBuf[0] = '\0';
+					if (wouldOwn & kBrainOwnsGeneral) { if (slotsBuf[0]) std::strcat(slotsBuf, "|"); std::strcat(slotsBuf, "GENERAL"); }
+					if (wouldOwn & kBrainOwnsPlayer)  { if (slotsBuf[0]) std::strcat(slotsBuf, "|"); std::strcat(slotsBuf, "PLAYER");  }
+					if (wouldOwn & kBrainOwnsAlarm)   { if (slotsBuf[0]) std::strcat(slotsBuf, "|"); std::strcat(slotsBuf, "ALARM");   }
+				}
+				std::fprintf(stderr, "[BRAIN_RT] wid=%d mode=%s would-own %s (NOT applied)\n",
+					vehicleWID,
+					MechBrainRuntime::modeString(brainRuntime->mode),
+					slotsBuf);
+			}
+		}
+		// ABL runs unconditionally — this is the 1A contract: compute+trace only, never apply.
 		runBrain();
 		brainUpdate += BrainUpdateFrequency;
 	}

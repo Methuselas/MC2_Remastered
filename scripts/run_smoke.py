@@ -1343,7 +1343,16 @@ def main():
                             # MC2_STATIC_REG_PREWARM=1 enables prewarmStaticPropLightBakes().
                             # MC2_STATIC_REG_PREWARM_TRACE=1 adds per-object diagnostic.
                             "MC2_STATIC_REG_PREWARM",
-                            "MC2_STATIC_REG_PREWARM_TRACE")},
+                            "MC2_STATIC_REG_PREWARM_TRACE",
+                            # BRAIN-TASKQ-1 / BRAIN-RUNTIME-1A: ABL brain task queue
+                            # and runtime mode gates. Without these in the allowlist
+                            # Popen drops them and gate-ON smokes run with the feature
+                            # fully inert (gate-OFF behavior), masking integration regressions.
+                            "MC2_BRAIN_TASKQ",
+                            "MC2_BRAIN_TASKQ_TRACE",
+                            "MC2_BRAIN_RUNTIME",
+                            "MC2_BRAIN_RUNTIME_TRACE",
+                            "MC2_BRAIN_RUNTIME_FORCE_MODE")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission
