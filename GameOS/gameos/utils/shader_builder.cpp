@@ -630,6 +630,13 @@ bool trySpirvSpecialize(GLuint shader, const char* fname, const char* prefix)
 
 } // namespace
 
+// SPIRV-MECHOPAQUE-PIPELINEKEY-INTEGRATION-1: public canonical define-key, in
+// lockstep with the SPIR-V variant consumer (delegates to spirvDefineKey above).
+std::string glsl_program::shaderDefineKey(const char* prefix)
+{
+    return spirvDefineKey(prefix);
+}
+
 glsl_shader* glsl_shader::makeShader(Shader_t stype, const char* fname, const char* prefix/* = nullptr*/, bool trySpirv/* = false*/)
 {
     ZoneScopedN("Shader.MakeShader");

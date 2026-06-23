@@ -569,6 +569,21 @@ static void loadProgramsIfNeeded() {
     // geometry finalized, which calls loadProgramsIfNeeded first).
     RenderCore::bindProgram(RenderCore::PipelineId::MechOpaque, s_mechProgram);
 
+    // SPIRV-MECHOPAQUE-PIPELINEKEY-INTEGRATION-1: record the logical shader-variant
+    // identity (canonical define-set key) into the pipeline-key path. Derived from
+    // mechPrefix, so it is IDENTICAL whether the mech stages loaded as GLSL or
+    // SPIR-V — the SPIR-V artifact selection lives per-stage below this bound
+    // program and cannot fork pipeline-key accounting.
+    {
+        std::string pkVariant = std::string("mech|") +
+            glsl_program::shaderDefineKey(mechPrefix.c_str());
+        RenderCore::recordPipelineVariantKey(RenderCore::PipelineId::MechOpaque,
+                                             pkVariant.c_str());
+        fprintf(stderr, "[PIPELINE_VARIANT] pipeline=MechOpaque glProgram=%u key=%s\n",
+                s_mechProgram, pkVariant.c_str());
+        fflush(stderr);
+    }
+
     // Slice B1 (2026-05-09): MAJOR-3 from adversarial review.
     // shaders/include/lighting.hglsl declares LightsData[64] (~113 KB
     // std140). GL spec mandates only 16 KB minimum support; many

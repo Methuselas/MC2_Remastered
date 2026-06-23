@@ -108,6 +108,34 @@ def main():
             if isinstance(sp, dict) and not sp.get("type"):
                 fails.append(f"pipeline '{p['id']}' spec param '{sp.get('name')}' untyped")
 
+    # SPIRV-MECHOPAQUE-PIPELINEKEY-INTEGRATION-1: cross-link the pipeline-key
+    # contract to the baked SPIR-V artifact contract. For any registered pipeline
+    # whose shaderVariantId.base is also a baked SPIR-V family, the schema's
+    # variant macros MUST equal the macro-name set the package actually bakes
+    # (define names, stripped of "=VALUE"). This proves the runtime
+    # recordPipelineVariantKey identity, the pipeline-key schema, and the baked
+    # artifacts all describe the SAME MechOpaque variant space — SPIR-V selection
+    # cannot fork pipeline-key accounting.
+    pkg_path = os.path.join(root, "shaders/spv/spirv_package.json")
+    if os.path.exists(pkg_path):
+        pkg = json.load(open(pkg_path, encoding="utf-8"))
+        pkg_macros = {}
+        for fam in pkg.get("variant_matrix", []):
+            macs = set()
+            for v in fam.get("variants", []):
+                for d in v.get("defines", []):
+                    macs.add(d.split("=", 1)[0])
+            pkg_macros[fam["base"]] = macs
+        for p in schema.get("registered_pipelines", []):
+            base = p.get("shaderVariantId", {}).get("base")
+            if base in pkg_macros:
+                schema_macs = set(p["shaderVariantId"].get("macros", []))
+                if schema_macs != pkg_macros[base]:
+                    fails.append(
+                        f"pipeline '{p['id']}' shaderVariantId macros {sorted(schema_macs)} "
+                        f"!= baked '{base}' package macros {sorted(pkg_macros[base])} "
+                        f"(pipeline-key contract drifted from SPIR-V artifacts)")
+
     report = {
         "summary": {
             "schema_verdict": schema["summary"]["verdict_schema"],
