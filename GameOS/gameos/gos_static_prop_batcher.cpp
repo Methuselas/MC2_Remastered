@@ -1205,6 +1205,12 @@ void loadProgramsIfNeeded() {
     // discard, not a separate program object.
     RenderCore::bindProgram(RenderCore::PipelineId::StaticPropOpaque,    s_staticPropProgram);
     RenderCore::bindProgram(RenderCore::PipelineId::StaticPropAlphaTest, s_staticPropProgram);
+    // VERTEXLAYOUT-AUTHORITY-1: record the fixed static-prop 40B VAO identity
+    // (gos_static_prop_batcher.cpp:2310-2323) into the pipeline-key path. Both
+    // ids share the VAO; layout is invariant across legacy/coalesce/depth
+    // variants. Pure metadata; no GL change.
+    RenderCore::recordPipelineVertexLayout(RenderCore::PipelineId::StaticPropOpaque,    RenderCore::VertexLayoutId::StaticProp40B);
+    RenderCore::recordPipelineVertexLayout(RenderCore::PipelineId::StaticPropAlphaTest, RenderCore::VertexLayoutId::StaticProp40B);
     // Stage 2.D.1.1 (Item 2): cache parity uniform locations once at link time.
     s_loc_u_parityWrite        = glGetUniformLocation(s_staticPropProgram, "u_parityWrite");
     s_loc_u_parityVertsPerType = glGetUniformLocation(s_staticPropProgram, "u_parityVertsPerType");
@@ -1396,6 +1402,10 @@ void loadProgramsIfNeeded() {
             s_staticPropDepthProgram = depthObj->shp_;
             RenderCore::bindProgram(RenderCore::PipelineId::StaticPropDepth,
                                     s_staticPropDepthProgram);
+            // VERTEXLAYOUT-AUTHORITY-1: depth-prepass reuses static_prop.vert →
+            // same 40B VAO. Record it into the pipeline-key path.
+            RenderCore::recordPipelineVertexLayout(RenderCore::PipelineId::StaticPropDepth,
+                                                   RenderCore::VertexLayoutId::StaticProp40B);
             // u_drawIDBase exists ONLY in the coalesce variant; legacy returns -1
             // (and the prepass never uploads it on the legacy path).
             s_locsDepthCoalesce.drawIDBase =
@@ -7626,7 +7636,14 @@ void GpuStaticPropBatcher::drawStaticBuildingShadows(
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_sharedIbo);
 
     // Contact-acne bias (the static terrain prepass sets none).
-    glEnable(GL_POLYGON_OFFSET_FILL);
+    // SHADOW-CASTER-APPLYPIPELINE-ROUTING-1: enable polygon offset via the
+    // ShadowStaticProp pipeline row (polygonOffsetEnable=true). applyPipeline also
+    // re-asserts the identical shadow base (depth LESS, cull none, frontFace ccw,
+    // depthMask) — a redundant no-op vs the bracket. glProgramName=0 → the bound
+    // shadow program is untouched. The MAGNITUDE below and the teardown glDisable
+    // stay exactly where they are (factor/units ownership unchanged).
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::ShadowStaticProp), "ShadowStaticProp");
     glPolygonOffset(pp->shadowBiasFactor_, pp->shadowBiasUnits_);
 
     int typesDrawn = 0, instDrawn = 0, drawCalls = 0;
@@ -7773,7 +7790,13 @@ void GpuStaticPropBatcher::drawDynamicPropShadows(
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_sharedIbo);
 
     // Contact-acne bias (same as the building static pass).
-    glEnable(GL_POLYGON_OFFSET_FILL);
+    // SHADOW-CASTER-APPLYPIPELINE-ROUTING-1: enable polygon offset via the
+    // ShadowStaticProp pipeline row (polygonOffsetEnable=true). Re-asserts the
+    // identical shadow base (redundant no-op). MAGNITUDE below + teardown glDisable
+    // stay put (factor/units ownership unchanged); glProgramName=0 keeps the bound
+    // shadow program.
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::ShadowStaticProp), "ShadowStaticProp");
     glPolygonOffset(pp->shadowBiasFactor_, pp->shadowBiasUnits_);
 
     int typesDrawn = 0, instDrawn = 0, drawCalls = 0;

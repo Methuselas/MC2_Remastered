@@ -1,0 +1,44 @@
+{
+  "base": "shoreline",
+  "stage": "frag",
+  "variant": "default",
+  "defines": [],
+  "specializationParams": [],
+  "artifact": "shoreline.frag.default.3dac14be.spv",
+  "spv_dir": "shaders/spv",
+  "source_sha256": "5774a47a8bfaae69f81d6b91b0f5e9564a9ca6276d1be351854d746d17468588",
+  "spirv_sha256": "1db3100be2948a946b874c645980d15669a758ef37ceadecca5316e53967b5c3",
+  "bindings": {
+    "ubos": [],
+    "ssbos": [],
+    "samplers": [
+      {
+        "name": "sceneNormalTex",
+        "type": "sampler2D",
+        "location": 1,
+        "binding": 0
+      },
+      {
+        "name": "sceneDepthTex",
+        "type": "sampler2D",
+        "location": 0,
+        "binding": 0
+      }
+    ]
+  },
+  "interface": {
+    "inputs": [
+      {
+        "name": "TexCoord",
+        "location": 0
+      }
+    ],
+    "outputs": [
+      {
+        "name": "FragColor",
+        "location": 0
+      }
+    ]
+  },
+  "shaderVariantId": "3dac14bea7f7"
+}

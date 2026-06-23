@@ -31,6 +31,7 @@ import sys
 SCHEMA = "docs/render-backend-seams/pipeline-key-schema.json"
 INVENTORY = "docs/render-backend-seams/shader-permutation-inventory.json"
 REGISTRY_H = "RenderCore/PipelineRegistry.h"
+DESC_H = "RenderCore/PipelineDesc.h"
 
 ALLOWED_STATUS = {"AUTHORITATIVE", "PARTIAL", "DESCRIPTIVE", "MISSING"}
 
@@ -54,6 +55,38 @@ def parse_enum_ids(text):
     return [n for n, _ in ids]
 
 
+def parse_enum_values(text, enum_name):
+    """Bare enum-class value names (no '= N' required), excluding Count_/Invalid.
+    For RenderCore::FrontFace { Ccw, Cw } / CullMode { None, Back, Front }."""
+    m = re.search(r"enum\s+class\s+" + re.escape(enum_name) +
+                  r"\s*:[^{]*\{(.*?)\}", text, re.S)
+    if not m:
+        return []
+    body = re.sub(r"//.*", "", m.group(1))
+    out = []
+    for tok in body.split(","):
+        nm = tok.split("=")[0].strip()
+        if nm and nm not in ("Count_", "Invalid"):
+            out.append(nm)
+    return out
+
+
+def parse_vertex_layouts(text):
+    """VERTEXLAYOUT-AUTHORITY-1: VertexLayoutId enum value -> canonical layout
+    name from its '// layout: <token>' comment. Excludes Count_/Invalid. A value
+    with no layout comment maps to None (the checker flags it)."""
+    m = re.search(r"enum\s+class\s+VertexLayoutId\s*:[^{]*\{(.*?)\}", text, re.S)
+    if not m:
+        return {}
+    out = {}
+    for line in m.group(1).splitlines():
+        em = re.match(
+            r"\s*([A-Za-z_]\w*)\s*=\s*\d+\s*,?\s*(?://\s*layout:\s*(\S+))?", line)
+        if em and em.group(1) not in ("Count_", "Invalid"):
+            out[em.group(1)] = em.group(2)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default=None)
@@ -65,8 +98,14 @@ def main():
     schema = json.load(open(os.path.join(root, SCHEMA), encoding="utf-8"))
     inv = json.load(open(os.path.join(root, INVENTORY), encoding="utf-8"))
     inv_macros = {m["name"] for m in inv["macros"]}
-    enum_ids = parse_enum_ids(re.sub(r"/\*.*?\*/", "", read(
-        os.path.join(root, REGISTRY_H)), flags=re.S))
+    registry_raw = read(os.path.join(root, REGISTRY_H))
+    enum_ids = parse_enum_ids(re.sub(r"/\*.*?\*/", "", registry_raw, flags=re.S))
+    # VERTEXLAYOUT-AUTHORITY-1: raw text (// layout: comments preserved).
+    vlayouts = parse_vertex_layouts(registry_raw)
+    # PIPELINEKEY-RASTERSTATE-FRONTFACE-AUTHORITY-1: enums live in PipelineDesc.h
+    desc_raw = read(os.path.join(root, DESC_H))
+    frontfaces = parse_enum_values(desc_raw, "FrontFace")
+    cullmodes = parse_enum_values(desc_raw, "CullMode")
 
     fails, warns = [], []
 
@@ -107,6 +146,128 @@ def main():
         for sp in p.get("specializationParams", []):
             if isinstance(sp, dict) and not sp.get("type"):
                 fails.append(f"pipeline '{p['id']}' spec param '{sp.get('name')}' untyped")
+
+    # VERTEXLAYOUT-AUTHORITY-1: vertexLayout is now AUTHORITATIVE — recorded in
+    # RenderCore::VertexLayoutId and checked here. (1) The field must declare
+    # AUTHORITATIVE so the promotion cannot silently regress. (2) Every enum
+    # value must carry a canonical "// layout: <name>" comment. (3) Every
+    # registered pipeline must declare a vertexLayoutId that EXISTS in the enum
+    # (missing -> FAIL; stale/renamed enum value -> FAIL) whose canonical name
+    # EQUALS the pipeline's vertexLayout string (rename drift -> FAIL).
+    if field_status.get("vertexLayout") != "AUTHORITATIVE":
+        fails.append("field 'vertexLayout' must be AUTHORITATIVE "
+                     "(VERTEXLAYOUT-AUTHORITY-1 promotion); "
+                     f"found '{field_status.get('vertexLayout')}'")
+    if not vlayouts:
+        fails.append("VertexLayoutId enum not found / empty in "
+                     f"{REGISTRY_H} (vertex layout authority missing)")
+    for name, lname in vlayouts.items():
+        if not lname:
+            fails.append(f"VertexLayoutId '{name}' has no '// layout: <name>' "
+                         "canonical-name comment")
+    for p in schema.get("registered_pipelines", []):
+        vid = p.get("vertexLayoutId")
+        # SHADOW-CASTER-PIPELINE-REGISTRATION-1: descriptive shadow rows defer
+        # vertex-layout modeling — a pipeline that declares NEITHER vertexLayout
+        # NOR vertexLayoutId is exempt. A pipeline that declares one but not the
+        # other still FAILs (half-declared = drift).
+        if not vid and "vertexLayout" not in p:
+            continue
+        if not vid:
+            fails.append(f"pipeline '{p['id']}' has no vertexLayoutId "
+                         "(vertexLayout is authoritative — id is required)")
+            continue
+        if vid not in vlayouts:
+            fails.append(f"pipeline '{p['id']}' vertexLayoutId '{vid}' absent "
+                         f"from VertexLayoutId enum (stale/renamed)")
+            continue
+        canon = vlayouts[vid]
+        if canon and p.get("vertexLayout") != canon:
+            fails.append(
+                f"pipeline '{p['id']}' vertexLayout '{p.get('vertexLayout')}' "
+                f"!= enum canonical '{canon}' for {vid} (rename drift)")
+
+    # PIPELINEKEY-RASTERSTATE-FRONTFACE-AUTHORITY-1: rasterState frontFace (and
+    # the existing cullMode) are now repo-owned per-pipeline rows. (1) the field
+    # must be PARTIAL or AUTHORITATIVE (not MISSING/DESCRIPTIVE) so the promotion
+    # cannot silently regress; (2) the FrontFace enum must be present in
+    # PipelineDesc.h; (3) every registered pipeline must declare a frontFace
+    # whose value EXISTS in the enum (missing -> FAIL; stale/renamed -> FAIL);
+    # (4) its cullState.mode must be a valid CullMode value (zero-risk sibling
+    # check, mirrors the C++ row).
+    if field_status.get("rasterState") not in ("PARTIAL", "AUTHORITATIVE"):
+        fails.append("field 'rasterState' must be PARTIAL or AUTHORITATIVE "
+                     "(PIPELINEKEY-RASTERSTATE-FRONTFACE-AUTHORITY-1); "
+                     f"found '{field_status.get('rasterState')}'")
+    if not frontfaces:
+        fails.append("FrontFace enum not found / empty in "
+                     f"{DESC_H} (frontFace authority missing)")
+    for p in schema.get("registered_pipelines", []):
+        ff = p.get("frontFace")
+        if not ff:
+            fails.append(f"pipeline '{p['id']}' has no frontFace "
+                         "(rasterState frontFace is authoritative — required)")
+        elif ff not in frontfaces:
+            fails.append(f"pipeline '{p['id']}' frontFace '{ff}' absent from "
+                         f"FrontFace enum {frontfaces} (stale/renamed)")
+        mode = p.get("cullState", {}).get("mode")
+        if cullmodes and mode and mode not in cullmodes:
+            fails.append(f"pipeline '{p['id']}' cullState.mode '{mode}' absent "
+                         f"from CullMode enum {cullmodes} (stale/renamed)")
+
+    # SHADOW-CASTER-PIPELINE-REGISTRATION-1: polygonOffsetEnable is now an
+    # authoritative ENABLE/DISABLE-only subaxis. (1) every registered pipeline
+    # must declare a boolean polygonOffsetEnable (missing -> FAIL); (2) the
+    # PipelineDesc struct must carry the bool field (parsed from PipelineDesc.h);
+    # (3) the factor/units MAGNITUDES must NOT be modeled as static fields —
+    # neither a schema pipeline key nor a PipelineDesc field — because they are
+    # dynamic/ImGui state (FAIL if present).
+    if "polygonOffsetEnable" not in desc_raw:
+        fails.append(f"PipelineDesc in {DESC_H} has no polygonOffsetEnable field "
+                     "(SHADOW-CASTER-PIPELINE-REGISTRATION-1)")
+    for p in schema.get("registered_pipelines", []):
+        if not isinstance(p.get("polygonOffsetEnable"), bool):
+            fails.append(f"pipeline '{p['id']}' missing boolean polygonOffsetEnable "
+                         "(rasterState polygonOffset enable is authoritative)")
+        for forbidden in ("polygonOffsetFactor", "polygonOffsetUnits",
+                          "polygonOffsetBias", "depthBiasConstant", "depthBiasSlope"):
+            if forbidden in p:
+                fails.append(f"pipeline '{p['id']}' models polygon-offset magnitude "
+                             f"'{forbidden}' as a static field — factor/units are "
+                             "dynamic state, must NOT be keyed")
+    # factor/units must not be a static PipelineDesc field either
+    for forbidden in ("polygonOffsetFactor", "polygonOffsetUnits"):
+        if forbidden in desc_raw:
+            fails.append(f"PipelineDesc in {DESC_H} declares '{forbidden}' — "
+                         "polygon-offset magnitude is dynamic state, must not be a field")
+
+    # SPIRV-MECHOPAQUE-PIPELINEKEY-INTEGRATION-1: cross-link the pipeline-key
+    # contract to the baked SPIR-V artifact contract. For any registered pipeline
+    # whose shaderVariantId.base is also a baked SPIR-V family, the schema's
+    # variant macros MUST equal the macro-name set the package actually bakes
+    # (define names, stripped of "=VALUE"). This proves the runtime
+    # recordPipelineVariantKey identity, the pipeline-key schema, and the baked
+    # artifacts all describe the SAME MechOpaque variant space — SPIR-V selection
+    # cannot fork pipeline-key accounting.
+    pkg_path = os.path.join(root, "shaders/spv/spirv_package.json")
+    if os.path.exists(pkg_path):
+        pkg = json.load(open(pkg_path, encoding="utf-8"))
+        pkg_macros = {}
+        for fam in pkg.get("variant_matrix", []):
+            macs = set()
+            for v in fam.get("variants", []):
+                for d in v.get("defines", []):
+                    macs.add(d.split("=", 1)[0])
+            pkg_macros[fam["base"]] = macs
+        for p in schema.get("registered_pipelines", []):
+            base = p.get("shaderVariantId", {}).get("base")
+            if base in pkg_macros:
+                schema_macs = set(p["shaderVariantId"].get("macros", []))
+                if schema_macs != pkg_macros[base]:
+                    fails.append(
+                        f"pipeline '{p['id']}' shaderVariantId macros {sorted(schema_macs)} "
+                        f"!= baked '{base}' package macros {sorted(pkg_macros[base])} "
+                        f"(pipeline-key contract drifted from SPIR-V artifacts)")
 
     report = {
         "summary": {

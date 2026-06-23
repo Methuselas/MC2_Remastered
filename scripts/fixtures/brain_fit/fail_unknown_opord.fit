@@ -1,0 +1,7 @@
+// fail_unknown_opord.fit — should FAIL R3 (unknown OPORD type 'Blitz')
+
+SchemaVersion { version = 1 }
+Brain {
+    unitRef = "Warrior0"
+    OPORD { slot = "Primary" type = "Blitz" }
+}

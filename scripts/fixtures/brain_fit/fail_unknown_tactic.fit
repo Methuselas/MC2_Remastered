@@ -1,0 +1,8 @@
+// fail_unknown_tactic.fit — should FAIL R6 (negative float) + WARN W3 (unknown tactic name)
+
+SchemaVersion { version = 1 }
+Brain {
+    unitRef = "Warrior0"
+    tactic.FutureTactic = -0.5
+    OPORD { slot = "Primary" type = "Guard" }
+}

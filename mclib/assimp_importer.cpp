@@ -1163,14 +1163,6 @@ bool mc2mechanim::GetImportedNodeWorld(const void* actorKey, const void* typeKey
                 mc2Name, mit->second.c_str(), idx, e.actors.size()); }
             return false;
         }
-        // F = Msw * (AS1 * C_i) yields the position in the SAME permuted frame the
-        // stock TG_MultiShape weapon-node path returns. Callers (mover.cpp:3501)
-        // index .z as the WORLD-VERTICAL component, matching mech3d.cpp's
-        // xlatPosition convention: caller_x = -Stuff.x; caller_y = Stuff.z;
-        // caller_z = Stuff.y. The output of Msw*(AS1*C_i) lands in
-        // (-x, z, y) of MC2/GL — measured here, wy is the elevation and wz is
-        // horizontal-2. Swap them so .y is horizontal-2 and .z is elevation,
-        // matching the stock path's contract.
         // F = Msw * (AS1 * C_i); its translation (gx,gy,gz) = F[3],F[7],F[11] — the
         // SAME composed node-world translation the batcher writes. The stock weapon
         // node path (msl.cpp TG_MultiShape::GetTransformedNodePosition) reads a node's

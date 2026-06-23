@@ -50,6 +50,14 @@ extern long	MaxLoopIterations;
 extern DebuggerPtr		debugger;
 extern bool				NewStateSet;
 
+//----------
+// ABL crash-safety gates (ABL-OPCODE-BOUNDS-HARDEN)
+// MC2_ABL_ARG_GUARD=1      — enables dispatch-bounds soft path + out-ptr null guards
+// MC2_ABL_RUNTIME_SOFTFAIL=1 — log-and-continue instead of ABL_Fatal (requires ARG_GUARD)
+// Both default OFF: behaviour is byte-identical to pre-harden when gates are off.
+bool s_ablArgGuard      = (getenv("MC2_ABL_ARG_GUARD")        != NULL && getenv("MC2_ABL_ARG_GUARD")[0]        == '1');
+bool s_ablRuntimeSoftfail = (getenv("MC2_ABL_RUNTIME_SOFTFAIL") != NULL && getenv("MC2_ABL_RUNTIME_SOFTFAIL")[0] == '1');
+
 //--------
 // GLOBALS
 
@@ -989,6 +997,15 @@ TypePtr execStandardRoutineCall (SymTableNodePtr routineIdPtr, bool skipOrder) {
 				// FunctionInfoTable[key] and FunctionCallbackTable[key] and
 				// then call through a garbage pointer. Hard-bail here.
 				char err[255];
+				if (s_ablArgGuard && s_ablRuntimeSoftfail) {
+					// H2/H3: soft-fail — log and synthesize default return, do NOT abort.
+					const char* modName = CurModule ? CurModule->getName() : "(unknown)";
+					const char* srcFile = (CurModule && FileNumber > -1) ? CurModule->getSourceFile(FileNumber) : "unavailable";
+					sprintf(err, "[ABL_SOFTFAIL] key=%d func=(out-of-range) module=%s file=%s line=%d errCode=0 — key >= NumStandardFunctions(%d), skipping",
+						key, modName, srcFile, execLineNumber, NumStandardFunctions);
+					printf("%s\n", err); fflush(stdout);
+					return NULL;
+				}
 				sprintf(err, " ABL: Undefined ABL RoutineKey %d in %s:%d (>= %d) — bailing", key, CurModule->getName(), execLineNumber, NumStandardFunctions);
 				ABL_Fatal(0, err);
 				return NULL;

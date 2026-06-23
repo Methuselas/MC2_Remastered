@@ -33,10 +33,20 @@ enum class BlendMode : uint8_t { Opaque, AlphaBlend, AlphaTest, Additive };
 
 enum class CullMode  : uint8_t { None, Back, Front };
 
+// Front-face winding. GL default is Ccw (GL_CCW); MC2 has used the ambient
+// process-wide default and never authored it (only the shadow pass
+// save/restores it). PIPELINEKEY-RASTERSTATE-FRONTFACE-AUTHORITY-1 makes it an
+// explicit per-pipeline row so registered pipelines stop depending on leaked
+// global state. NOTE: the legacy fixed-function path encodes winding by flipping
+// the CULLED FACE (not glFrontFace) — that path is untouched by this field.
+enum class FrontFace : uint8_t { Ccw, Cw };
+
 // Depth comparison function. Matches GL_LESS / GL_GEQUAL etc. without
 // pulling in GL headers. LessEqual is the conventional forward-Z default;
-// GreaterEqual is the reverse-Z default used throughout MC2.
-enum class DepthFunc : uint8_t { LessEqual, GreaterEqual, Always, Equal };
+// GreaterEqual is the reverse-Z default used throughout MC2. Less = GL_LESS,
+// used by the shadow-caster passes (forward-Z shadow maps, opposite the scene's
+// reverse-Z) — see gameos_graphics.cpp:6155/6311/6400, gos_postprocess.cpp:3114.
+enum class DepthFunc : uint8_t { LessEqual, GreaterEqual, Always, Equal, Less };
 
 // Which GL_COLOR_ATTACHMENTx slots must be non-NONE in the active FBO.
 // Mirrors render_contract::RequiredAttachments; kept separate to avoid an
@@ -65,14 +75,33 @@ struct PipelineDesc {
     // require color2 bound without writing it (terrain does this).
     bool                objectIdWriteEnabled;
 
+    // Front-face winding for this pipeline (applied by applyPipeline() via
+    // glFrontFace). All registered pipelines are Ccw (the GL default) today;
+    // the field exists so the row states the truth instead of relying on
+    // ambient global state. Occupies one of the 3 padding bytes before
+    // ssboBindingsMask — no struct growth.
+    FrontFace           frontFace;
+
+    // Whether GL_POLYGON_OFFSET_FILL is enabled for this pipeline. ENABLE/DISABLE
+    // only — the factor/units MAGNITUDES are intentionally NOT modeled here: they
+    // are runtime-mutable (ImGui shadowBiasFactor_/Units_, gos_postprocess.h) and
+    // would blow the 20-byte budget, so they remain dynamic state (the Vulkan
+    // VK_DYNAMIC_STATE_DEPTH_BIAS analog). Only the shadow-caster prop pipeline
+    // sets this true today. SHADOW-CASTER-PIPELINE-REGISTRATION-1. Occupies a
+    // padding byte before ssboBindingsMask — no struct growth.
+    bool                polygonOffsetEnable;
+
     // Bit N set → SSBO binding slot N is required. Covers slots 0-31.
     // See binding table in the file header above.
     uint32_t            ssboBindingsMask;
 };
 
 // v1 added DepthFunc (1 byte after depthWriteEnable) which pushes
-// ssboBindingsMask to offset 16 after natural padding.  20 bytes is the
-// intentional new budget; keep repacking off unless the struct grows further.
+// ssboBindingsMask to offset 16 after natural padding.  FrontFace (v2) +
+// polygonOffsetEnable (v3) both drop into that same padding window, so the
+// struct stays at 20 bytes — the intentional budget; keep repacking off unless
+// the struct grows further. (3 padding bytes: frontFace + polygonOffsetEnable
+// used; one remains.)
 static_assert(sizeof(PipelineDesc) <= 20,
               "PipelineDesc must stay small; it lives in hot-path cache entries.");
 

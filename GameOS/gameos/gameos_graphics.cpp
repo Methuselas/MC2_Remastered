@@ -25,6 +25,8 @@
 #include "utils/string_utils.h"
 #include "utils/timing.h"
 #include "gos_render.h"
+#include "../../RenderCore/PipelineRegistry.h"   // SHADOW-CASTER-APPLYPIPELINE-ROUTING-1
+#include "pipeline_binder.h"                      // applyPipeline — shadow bracket FF state
 #include "gos_postprocess.h"
 #include "gos_profiler.h"
 #include "gos_gpu_sync.h"
@@ -6147,13 +6149,17 @@ void gosRenderer::beginShadowPrePass(bool clearDepth) {
     glBindFramebuffer(GL_FRAMEBUFFER, pp->getShadowFBO());
     int smSize = pp->getShadowMapSize();
     glViewport(0, 0, smSize, smSize);
-    glDepthMask(GL_TRUE);
+    // SHADOW-CASTER-APPLYPIPELINE-ROUTING-1: base fixed-function state from the
+    // ShadowTerrain pipeline row (depth test+write, GL_LESS forward-Z, cull none,
+    // frontFace ccw, polygon-offset off). Must precede the depth clear so
+    // depthMask=GL_TRUE lets the clear write. glProgramName=0 → program bind
+    // skipped (the pass binds its own shadow material). colorMask / FBO / viewport
+    // / clear / lightSpaceMatrix stay hand-set (not modeled by PipelineDesc).
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::ShadowTerrain), "ShadowTerrain");
     // Reverse-Z (U2) state-safe partition: shadow map stays forward-Z;
     // scene set glClearDepth(0), so force 1.0f around this shadow clear.
     if (clearDepth) { glClearDepth(1.0f); glClear(GL_DEPTH_BUFFER_BIT); glClearDepth(0.0f); }
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LESS);
-    glDisable(GL_CULL_FACE);
     render_contract::assertPassContract(render_contract::PassIdentity::ShadowCaster,
                                         "gosRenderer::beginShadowPrePass");
 
@@ -6390,15 +6396,18 @@ void gosRenderer::beginDynamicShadowPass() {
 
     glBindFramebuffer(GL_FRAMEBUFFER, pp->getDynamicShadowFBO());
     glViewport(0, 0, pp->getDynamicShadowMapSize(), pp->getDynamicShadowMapSize());
-    glDepthMask(GL_TRUE);
+    // SHADOW-CASTER-APPLYPIPELINE-ROUTING-1: base fixed-function state from the
+    // ShadowMech pipeline row (depth test+write, GL_LESS forward-Z, cull none,
+    // frontFace ccw, polygon-offset off). Before the clear so depthMask=GL_TRUE
+    // lets it write. Mech casters inherit this base; dynamic-prop casters re-enable
+    // polygon offset via applyPipeline(ShadowStaticProp) at their draw site.
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::ShadowMech), "ShadowMech");
     // Reverse-Z (U2) state-safe partition: dynamic shadow stays forward-Z;
     // scene set glClearDepth(0), so force 1.0f around this shadow clear.
     glClearDepth(1.0f);
     glClear(GL_DEPTH_BUFFER_BIT);
     glClearDepth(0.0f);
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LESS);
-    glDisable(GL_CULL_FACE);
 
     shadow_terrain_material_->apply();
     GLint lsmLoc = glGetUniformLocation(

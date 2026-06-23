@@ -24,6 +24,7 @@
 #include <array>
 #include <cassert>
 #include <cstddef>
+#include <string>
 
 namespace RenderCore {
 
@@ -52,6 +53,8 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* cullMode            */ CullMode::Back,
         /* colorAttachments    */ { true, true, false },
         /* objectIdWriteEnabled*/ false,           // TODO: flip when shader adds loc=2
+        /* frontFace           */ FrontFace::Ccw,  // GL default; explicit per row
+        /* polygonOffsetEnable */ false,           // scene passes: no polygon offset
         /* ssboBindingsMask    */ kStaticPropSsbos,
     },
 
@@ -67,6 +70,8 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* cullMode            */ CullMode::Back,
         /* colorAttachments    */ { true, true, false },
         /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,  // GL default; explicit per row
+        /* polygonOffsetEnable */ false,           // scene passes: no polygon offset
         /* ssboBindingsMask    */ kStaticPropSsbos,
     },
 
@@ -90,6 +95,8 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* cullMode            */ CullMode::Back,
         /* colorAttachments    */ { true, true, false },
         /* objectIdWriteEnabled*/ false,           // macro-gated in shader, not here
+        /* frontFace           */ FrontFace::Ccw,  // GL default; explicit per row
+        /* polygonOffsetEnable */ false,           // scene passes: no polygon offset
         /* ssboBindingsMask    */ 0u,              // mech binds its own SSBOs
     },
 
@@ -110,7 +117,102 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         // this row advertises the true write set: nothing color, depth only.
         /* colorAttachments    */ { false, false, false },
         /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,  // GL default; explicit per row
+        /* polygonOffsetEnable */ false,           // scene passes: no polygon offset
         /* ssboBindingsMask    */ kStaticPropSsbos,
+    },
+
+    // [5] ShadowTerrain — terrain -> static shadow map (shadow_terrain).
+    // SHADOW-CASTER-PIPELINE-REGISTRATION-1: DESCRIPTIVE row — states the truth
+    // but is NOT applyPipeline-driven (the pass bracket in gameos_graphics.cpp
+    // sets this state by hand; glProgramName stays 0, bindProgram wiring deferred
+    // to the active-routing slice). Forward-Z GL_LESS (opposite the scene's
+    // reverse-Z), depth-only, cull DISABLED, no polygon offset.
+    {
+        /* glProgramName       */ 0u,              // descriptive; not yet wired
+        /* blend               */ BlendMode::Opaque, // depth-only; GL_BLEND off
+        /* depthTestEnable     */ true,
+        /* depthWriteEnable    */ true,
+        /* depthFunc           */ DepthFunc::Less, // shadow map = forward-Z GL_LESS
+        /* cullMode            */ CullMode::None,  // shadow bracket disables cull
+        /* colorAttachments    */ { false, false, false }, // pure depth (dummy R8 never written)
+        /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,  // no glFrontFace in shadow; ambient default
+        /* polygonOffsetEnable */ false,           // terrain caster: no polygon offset
+        /* ssboBindingsMask    */ 0u,              // descriptive; pass binds its own
+    },
+
+    // [6] ShadowStaticProp — static/dynamic props -> shadow map (shadow_static_prop).
+    // The ONLY shadow caster that enables GL_POLYGON_OFFSET_FILL (gos_static_prop_
+    // batcher.cpp:7639/7787, factor/units 2.0/4.0 set by hand, ImGui-mutable — the
+    // magnitude is dynamic state, NOT modeled here). DESCRIPTIVE.
+    {
+        /* glProgramName       */ 0u,
+        /* blend               */ BlendMode::Opaque,
+        /* depthTestEnable     */ true,
+        /* depthWriteEnable    */ true,
+        /* depthFunc           */ DepthFunc::Less,
+        /* cullMode            */ CullMode::None,
+        /* colorAttachments    */ { false, false, false },
+        /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,
+        /* polygonOffsetEnable */ true,            // prop caster: polygon offset ON
+        /* ssboBindingsMask    */ 0u,
+    },
+
+    // [7] ShadowMech — mech -> dynamic shadow map (shadow_mech;
+    // GpuMechBatcher::flushShadow). DESCRIPTIVE; no polygon offset.
+    {
+        /* glProgramName       */ 0u,
+        /* blend               */ BlendMode::Opaque,
+        /* depthTestEnable     */ true,
+        /* depthWriteEnable    */ true,
+        /* depthFunc           */ DepthFunc::Less,
+        /* cullMode            */ CullMode::None,
+        /* colorAttachments    */ { false, false, false },
+        /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,
+        /* polygonOffsetEnable */ false,           // mech caster: no polygon offset
+        /* ssboBindingsMask    */ 0u,
+    },
+
+    // [8] TerrainOverlay — cement/perimeter overlay (terrain_overlay.{vert,frag}).
+    // TERRAIN-OVERLAY-DECAL-PIPELINE-REGISTRATION-1: DESCRIPTIVE — states the truth
+    // (gosRenderer::drawTerrainOverlays/drawDecalStaticBatch set this by hand) but
+    // is NOT applyPipeline-driven; glProgramName stays 0. Opaque, reverse-Z GEQUAL,
+    // depth-write on, cull DISABLED (overlay tiles draw both faces). frag writes
+    // color0 (FragColor) + color1 (GBuffer1).
+    {
+        /* glProgramName       */ 0u,
+        /* blend               */ BlendMode::Opaque,
+        /* depthTestEnable     */ true,
+        /* depthWriteEnable    */ true,
+        /* depthFunc           */ DepthFunc::GreaterEqual, // reverse-Z (scene-space overlay)
+        /* cullMode            */ CullMode::None,
+        /* colorAttachments    */ { true, true, false },
+        /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,
+        /* polygonOffsetEnable */ false,           // overlay: no polygon offset (in-material blend)
+        /* ssboBindingsMask    */ 0u,              // binds its own VBO/texture; no SSBO
+    },
+
+    // [9] TerrainDecal — bomb craters + mech footprints (terrain_overlay.vert +
+    // decal.frag). DESCRIPTIVE; gosRenderer::drawDecals sets this by hand. The
+    // FIRST AlphaBlend pipeline row: GL_BLEND on, SRC_ALPHA/ONE_MINUS_SRC_ALPHA
+    // (BlendMode::AlphaBlend), depth-test on but depth-WRITE OFF (decals must not
+    // occlude), reverse-Z GEQUAL, cull disabled. frag writes color0 + color1.
+    {
+        /* glProgramName       */ 0u,
+        /* blend               */ BlendMode::AlphaBlend, // FIRST alpha-blend row
+        /* depthTestEnable     */ true,
+        /* depthWriteEnable    */ false,           // decals do not write depth
+        /* depthFunc           */ DepthFunc::GreaterEqual,
+        /* cullMode            */ CullMode::None,
+        /* colorAttachments    */ { true, true, false },
+        /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,
+        /* polygonOffsetEnable */ false,
+        /* ssboBindingsMask    */ 0u,
     },
 
 }};
@@ -137,6 +239,60 @@ void bindProgram(PipelineId id, uint32_t glProgramName) {
     if (idx == 0u || idx >= static_cast<size_t>(PipelineId::Count_))
         return;
     s_descs[idx].glProgramName = glProgramName;
+}
+
+// SPIRV-MECHOPAQUE-PIPELINEKEY-INTEGRATION-1: per-PipelineId logical variant key.
+static std::array<std::string, static_cast<size_t>(PipelineId::Count_)> s_variantKeys;
+
+void recordPipelineVariantKey(PipelineId id, const char* variantKey) {
+    const auto idx = static_cast<size_t>(id);
+    if (idx == 0u || idx >= static_cast<size_t>(PipelineId::Count_))
+        return;
+    s_variantKeys[idx] = variantKey ? variantKey : "";
+}
+
+const char* getPipelineVariantKey(PipelineId id) {
+    const auto idx = static_cast<size_t>(id);
+    if (idx == 0u || idx >= static_cast<size_t>(PipelineId::Count_))
+        return "";
+    return s_variantKeys[idx].c_str();
+}
+
+// VERTEXLAYOUT-AUTHORITY-1: canonical layout-name table, indexed by
+// VertexLayoutId. MUST stay lockstep with the enum's "// layout:" comments and
+// the pipeline-key schema (cross-checked by scripts/check-pipeline-key.py).
+static constexpr const char* kVertexLayoutNames[] = {
+    /* [0] Invalid          */ "",
+    /* [1] StaticProp40B    */ "static_prop_40B",
+    /* [2] MechGpuVertex48B */ "mech_GpuMechVertex_48B",
+};
+static_assert(
+    sizeof(kVertexLayoutNames) / sizeof(kVertexLayoutNames[0]) ==
+        static_cast<size_t>(VertexLayoutId::Count_),
+    "kVertexLayoutNames must have one entry per VertexLayoutId value.");
+
+const char* vertexLayoutName(VertexLayoutId id) {
+    const auto idx = static_cast<size_t>(id);
+    if (idx == 0u || idx >= static_cast<size_t>(VertexLayoutId::Count_))
+        return "";
+    return kVertexLayoutNames[idx];
+}
+
+// Per-PipelineId vertex-layout identity. Value-initialized to Invalid (0).
+static std::array<VertexLayoutId, static_cast<size_t>(PipelineId::Count_)> s_vertexLayouts;
+
+void recordPipelineVertexLayout(PipelineId id, VertexLayoutId layout) {
+    const auto idx = static_cast<size_t>(id);
+    if (idx == 0u || idx >= static_cast<size_t>(PipelineId::Count_))
+        return;
+    s_vertexLayouts[idx] = layout;
+}
+
+VertexLayoutId getPipelineVertexLayout(PipelineId id) {
+    const auto idx = static_cast<size_t>(id);
+    if (idx == 0u || idx >= static_cast<size_t>(PipelineId::Count_))
+        return VertexLayoutId::Invalid;
+    return s_vertexLayouts[idx];
 }
 
 } // namespace RenderCore

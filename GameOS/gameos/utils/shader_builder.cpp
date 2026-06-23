@@ -453,6 +453,8 @@ kSpirvPilotStages[] = {
     {"/mech.frag",        "mech",        "frag"},
     // SPIRV-POSTPROCESS-FAMILY-1: frag-only family members (vert = postprocess.vert).
     {"/ssao.frag",        "ssao",        "frag"},
+    {"/cloud.frag",       "cloud",       "frag"},
+    {"/shoreline.frag",   "shoreline",   "frag"},
     {"/fog_oob.frag",     "fog_oob",     "frag"},
     {"/edge_fog.frag",    "edge_fog",    "frag"},
     {"/hzb_reduce.frag",  "hzb_reduce",  "frag"},
@@ -466,6 +468,8 @@ static const struct { const char* vsuf; const char* fsuf; } kSpirvPilotPrograms[
     {"/postprocess.vert", "/postprocess.frag"},
     {"/mech.vert",        "/mech.frag"},
     {"/postprocess.vert", "/ssao.frag"},
+    {"/postprocess.vert", "/cloud.frag"},
+    {"/postprocess.vert", "/shoreline.frag"},
     {"/postprocess.vert", "/fog_oob.frag"},
     {"/postprocess.vert", "/edge_fog.frag"},
     {"/postprocess.vert", "/hzb_reduce.frag"},
@@ -625,6 +629,13 @@ bool trySpirvSpecialize(GLuint shader, const char* fname, const char* prefix)
 }
 
 } // namespace
+
+// SPIRV-MECHOPAQUE-PIPELINEKEY-INTEGRATION-1: public canonical define-key, in
+// lockstep with the SPIR-V variant consumer (delegates to spirvDefineKey above).
+std::string glsl_program::shaderDefineKey(const char* prefix)
+{
+    return spirvDefineKey(prefix);
+}
 
 glsl_shader* glsl_shader::makeShader(Shader_t stype, const char* fname, const char* prefix/* = nullptr*/, bool trySpirv/* = false*/)
 {

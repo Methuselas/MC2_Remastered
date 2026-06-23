@@ -10,9 +10,22 @@
 
 #include <GL/glew.h>
 
+#include <cstdio>
+#include <cstdlib>
+
 namespace pipeline_binder {
 
-void applyPipeline(const RenderCore::PipelineDesc& desc) {
+// SHADOW-CASTER-APPLYPIPELINE-ROUTING-1: MC2_PIPELINE_BIND_TRACE (default OFF).
+static bool pipelineBindTraceEnabled() {
+    static int s_on = -1;
+    if (s_on < 0) {
+        const char* v = std::getenv("MC2_PIPELINE_BIND_TRACE");
+        s_on = (v && v[0] && v[0] != '0') ? 1 : 0;
+    }
+    return s_on != 0;
+}
+
+void applyPipeline(const RenderCore::PipelineDesc& desc, const char* dbgName) {
     // --- Program ---
     // 0 means not yet registered (bindProgram not called). Skip rather than
     // binding program 0, which would silently fall back to fixed-function.
@@ -30,6 +43,7 @@ void applyPipeline(const RenderCore::PipelineDesc& desc) {
             case RenderCore::DepthFunc::GreaterEqual: glDepthFn = GL_GEQUAL;  break;
             case RenderCore::DepthFunc::Always:       glDepthFn = GL_ALWAYS;  break;
             case RenderCore::DepthFunc::Equal:        glDepthFn = GL_EQUAL;   break;
+            case RenderCore::DepthFunc::Less:         glDepthFn = GL_LESS;    break;
         }
         glDepthFunc(glDepthFn);
     }
@@ -72,6 +86,40 @@ void applyPipeline(const RenderCore::PipelineDesc& desc) {
             glEnable(GL_CULL_FACE);
             glCullFace(GL_FRONT);
             break;
+    }
+
+    // --- Front-face winding ---
+    // PIPELINEKEY-RASTERSTATE-FRONTFACE-AUTHORITY-1: make winding explicit per
+    // pipeline instead of relying on the ambient process-wide default. All
+    // registered pipelines are Ccw (GL default), so this is a behavioral no-op
+    // today — it stops the registered set from depending on leaked global state.
+    // The legacy fixed-function face-flip path is independent of this call.
+    glFrontFace(desc.frontFace == RenderCore::FrontFace::Cw ? GL_CW : GL_CCW);
+
+    // --- Polygon offset (ENABLE/DISABLE only) ---
+    // SHADOW-CASTER-APPLYPIPELINE-ROUTING-1: drive GL_POLYGON_OFFSET_FILL from the
+    // pipeline row. The MAGNITUDE (glPolygonOffset factor/units) is intentionally
+    // NOT set here — it stays owned by the call site (runtime/ImGui shadowBias),
+    // paired with that site's existing teardown glDisable. Only ShadowStaticProp
+    // sets this true; for all others this disables (a no-op where offset is
+    // already off — e.g. the shadow brackets and scene passes).
+    if (desc.polygonOffsetEnable) glEnable(GL_POLYGON_OFFSET_FILL);
+    else                          glDisable(GL_POLYGON_OFFSET_FILL);
+
+    if (dbgName && pipelineBindTraceEnabled()) {
+        const char* df =
+            desc.depthFunc == RenderCore::DepthFunc::Less         ? "Less" :
+            desc.depthFunc == RenderCore::DepthFunc::LessEqual    ? "LessEqual" :
+            desc.depthFunc == RenderCore::DepthFunc::GreaterEqual ? "GreaterEqual" :
+            desc.depthFunc == RenderCore::DepthFunc::Equal        ? "Equal" : "Always";
+        const char* cm =
+            desc.cullMode == RenderCore::CullMode::None ? "None" :
+            desc.cullMode == RenderCore::CullMode::Back ? "Back" : "Front";
+        const char* ff = desc.frontFace == RenderCore::FrontFace::Cw ? "Cw" : "Ccw";
+        std::fprintf(stderr,
+            "[PIPELINE_BIND] %s depth=%s cull=%s frontFace=%s polygonOffset=%s\n",
+            dbgName, df, cm, ff, desc.polygonOffsetEnable ? "true" : "false");
+        std::fflush(stderr);
     }
 }
 
