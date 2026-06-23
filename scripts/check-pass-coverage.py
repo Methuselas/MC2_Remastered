@@ -136,10 +136,12 @@ def main():
             fails.append(f"'{name}' is DO_NOT_MODEL but has no reason")
 
         pid = e.get("pipelineId")
-        if pid:
-            ledger_pipe_ids.add(pid)
-            if pid not in pipe_ids:
-                fails.append(f"'{name}' pipelineId '{pid}' not in PipelineId enum (stale)")
+        # A family may map to MANY PipelineIds (e.g. VFX = 6 rows): support a
+        # `pipelineIds` list alongside the single `pipelineId`.
+        for one in ([pid] if pid else []) + list(e.get("pipelineIds", [])):
+            ledger_pipe_ids.add(one)
+            if one not in pipe_ids:
+                fails.append(f"'{name}' pipelineId '{one}' not in PipelineId enum (stale)")
         rpid = e.get("renderPassId")
         if rpid:
             ledger_pass_ids.add(rpid)

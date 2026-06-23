@@ -38,7 +38,7 @@ routing → pixel-identical proof** (→ SPIR-V later, behind a parity gate).
 | TerrainOverlay | DESCRIPTIVE_REGISTERED | TerrainOverlay | TerrainOverlay |
 | TerrainDecal | DESCRIPTIVE_REGISTERED (first AlphaBlend row) | TerrainDecal | TerrainDecal |
 | Water (armed fast path) | DESCRIPTIVE_REGISTERED | Water | WaterArmed |
-| VFX | UNREGISTERED | VFX | — |
+| VFX | DESCRIPTIVE_REGISTERED | VFX | Vfx{Billboard,Tube,Mesh}{Alpha,Additive} (6) |
 | VegetationCards | UNREGISTERED | VegetationCards | — |
 | PostProcess | UNREGISTERED | PostProcess | — |
 | UI | DO_NOT_MODEL | UI | — |
