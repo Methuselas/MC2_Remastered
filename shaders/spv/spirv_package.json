@@ -20,7 +20,9 @@
     "ssao",
     "fog_oob",
     "edge_fog",
-    "hzb_reduce"
+    "hzb_reduce",
+    "cloud",
+    "shoreline"
   ],
   "excluded_families": [
     "shadow_mech (shadow_mech.vert + shadow_instanced.frag) \u2014 separate program, stays GLSL",
@@ -140,11 +142,37 @@
           }
         }
       ]
+    },
+    {
+      "base": "cloud",
+      "variants": [
+        {
+          "name": "default",
+          "defines": [],
+          "variantId": "982ec002a690",
+          "stages": {
+            "frag": "cloud.frag.default.982ec002.spv"
+          }
+        }
+      ]
+    },
+    {
+      "base": "shoreline",
+      "variants": [
+        {
+          "name": "default",
+          "defines": [],
+          "variantId": "3dac14bea7f7",
+          "stages": {
+            "frag": "shoreline.frag.default.3dac14be.spv"
+          }
+        }
+      ]
     }
   ],
   "hashes": {
-    "spirv_index_sha256": "d72a61156a626f1cc53d73a883dea36ccc20332b2124974e695c64c8f5dcf264",
-    "sidecars_sha256": "1ba6a2760f857b6a7cc364645cbc2663fb5de7442fa9eb3255d943a439e0b847",
-    "source_set_sha256": "eb16ff07fc75371d9672ffb5318942ec9dc9b1ac6dde6a3d3d33358d4816daf5"
+    "spirv_index_sha256": "9bbd913e3463d0b9a503b29042a1a2107458b8bc1a69c5374155ddf1eec2acb8",
+    "sidecars_sha256": "d898f30e21fe08bb30611f7a896fe6ebd31123595d598eff71cd5a66bb3da7e9",
+    "source_set_sha256": "0f6d5695fd4c72b2dd8477d7c5606d7fa47bed15ef43604efd0751f407acf20f"
   }
 }
