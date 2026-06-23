@@ -38,12 +38,20 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import os
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+# WATER-VISUAL-GATE-1 concurrent-safety:
+#   _SKIP_KILL  — when True, do NOT taskkill foreign mc2.exe (set by --no-kill).
+#   _ORIG_CURSOR — saved desktop cursor pos, restored at exit so the harness
+#                  never leaves the mouse permanently warped.
+_SKIP_KILL = False
+_ORIG_CURSOR = None
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -69,9 +77,44 @@ def _load_bookmarks(path: Path) -> tuple[str, list[dict]]:
 
 
 def _kill_existing_mc2() -> None:
+    # WATER-VISUAL-GATE-1: --no-kill makes the harness concurrent-safe — never
+    # taskkill foreign/other-session mc2.exe. (Default keeps the legacy behavior
+    # for direct callers.)
+    if _SKIP_KILL:
+        print("[viscap] --no-kill: skipping global mc2.exe taskkill "
+              "(concurrent-safe)", file=sys.stderr)
+        return
     subprocess.run(["taskkill", "/F", "/IM", "mc2.exe"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(1)
+
+
+def _save_cursor() -> None:
+    """WATER-VISUAL-GATE-1: snapshot the desktop cursor once so we can restore it."""
+    global _ORIG_CURSOR
+    if os.name != "nt" or _ORIG_CURSOR is not None:
+        return
+    try:
+        import ctypes
+        pt = ctypes.wintypes.POINT() if hasattr(ctypes, "wintypes") else None
+        if pt is None:
+            import ctypes.wintypes
+            pt = ctypes.wintypes.POINT()
+        ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+        _ORIG_CURSOR = (int(pt.x), int(pt.y))
+    except Exception as e:
+        print(f"[viscap] WARN save cursor: {e}", file=sys.stderr)
+
+
+def _restore_cursor() -> None:
+    """Restore the cursor to where it was before the sweep parked it."""
+    if os.name != "nt" or _ORIG_CURSOR is None:
+        return
+    try:
+        import ctypes
+        ctypes.windll.user32.SetCursorPos(_ORIG_CURSOR[0], _ORIG_CURSOR[1])
+    except Exception as e:
+        print(f"[viscap] WARN restore cursor: {e}", file=sys.stderr)
 
 
 def park_cursor_center() -> None:
@@ -89,6 +132,7 @@ def park_cursor_center() -> None:
     """
     if os.name != "nt":
         return
+    _save_cursor()  # WATER-VISUAL-GATE-1: snapshot once before the first park
     try:
         import ctypes
         user32 = ctypes.windll.user32
@@ -413,7 +457,18 @@ def main() -> int:
                          "bookmarks drift (the drifters are recorded as "
                          "excluded_unstable). A small-but-real baseline. "
                          "Requires >=1 stable bookmark + engine fired.")
+    ap.add_argument("--no-kill", action="store_true",
+                    help="WATER-VISUAL-GATE-1: do NOT taskkill foreign mc2.exe "
+                         "(concurrent-safe). The capture still launches its own "
+                         "child exe; only the global taskkill is skipped.")
     args = ap.parse_args()
+
+    # WATER-VISUAL-GATE-1 concurrent-safety: opt out of the global kill, and
+    # always restore the desktop cursor on exit (the sweep parks it center).
+    global _SKIP_KILL
+    _SKIP_KILL = args.no_kill
+    _save_cursor()
+    atexit.register(_restore_cursor)
 
     exe = Path(args.exe)
     if not exe.exists():

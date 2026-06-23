@@ -1,0 +1,23 @@
+{
+  "schema_v": 1,
+  "mission": "mc2_01",
+  "_note": "WATER-VISUAL-GATE-1 candidate water-framing poses for clearwater. The stock mc2_01.json poses deliberately MINIMIZE water; these aim a high-wide + an oblique low-angle shot to put water IN-FRAME so the WaterArmed pass contributes visible pixels. CANDIDATE — framing not yet eyeball-verified; the gate confirms WaterArmed drew via [PIPELINE_BIND], but VISIBLE-water confirmation may require re-authoring from an in-game [BOOKMARK v1] dump (owner doc 2.1b) or an operator eyeball. Animation clock is pinned by MC2_SMOKE_FIXED_TIMESTEP + sim-freeze so water UV scroll is byte-stable.",
+  "bookmarks": [
+    {
+      "name": "water_overview_high",
+      "pos": [0.0, 0.0, 0.0],
+      "rot": 45.0,
+      "proj": 55.0,
+      "alt": 1900.0,
+      "covers": ["water", "terrain_splat"]
+    },
+    {
+      "name": "water_oblique_low",
+      "pos": [-600.0, -600.0, 0.0],
+      "rot": 30.0,
+      "proj": 12.0,
+      "alt": 500.0,
+      "covers": ["water", "shoreline"]
+    }
+  ]
+}
