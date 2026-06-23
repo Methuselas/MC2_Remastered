@@ -43,8 +43,13 @@ enum class PipelineId : uint32_t {
     // TerrainDecal is the first AlphaBlend pipeline row.
     TerrainOverlay      = 8,   // terrain cement/perimeter overlay (terrain_overlay.frag, opaque)
     TerrainDecal        = 9,   // bomb craters + mech footprints (decal.frag, alpha blend, depth-write OFF)
-    // Future: Water, DebugWireframe, ...
-    Count_              = 10,  // sentinel — do not use as an ID
+    // WATER-ARMED-PIPELINE-REGISTRATION-1: the ARMED water fast-path base only
+    // (gosRenderer::renderWaterFastPath, gos_terrain_water_fast.vert +
+    // gos_tex_vertex.frag). DESCRIPTIVE (glProgramName=0, NOT routed). The legacy
+    // quad fallback + the GPU-driven MDI sub-variant are deliberately NOT modeled.
+    WaterArmed          = 10,  // armed water fast path (alpha blend, cull none, GEQUAL, depth-write)
+    // Future: VFX, DebugWireframe, ...
+    Count_              = 11,  // sentinel — do not use as an ID
 };
 
 // VERTEXLAYOUT-AUTHORITY-1: stable repo-owned vertex-input layout identities —

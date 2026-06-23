@@ -350,15 +350,28 @@
       "polygonOffsetEnable": false,
       "colorMaskAttachmentMask": { "color0": true, "color1": true, "color2": false },
       "key_producible": "descriptive"
+    },
+    {
+      "id": "WaterArmed",
+      "pipelineDescRegistered": false,
+      "descriptive": "WATER-ARMED-PIPELINE-REGISTRATION-1: descriptive row for the ARMED water fast-path base only (gosRenderer::renderWaterFastPath, gos_terrain_water_fast.vert + gos_tex_vertex.frag). NOT applyPipeline-routed (state hand-set + save/restored). Legacy quad fallback + GPU-driven MDI sub-variant deliberately NOT modeled. Source-verified gameos_graphics.cpp:3275-3288. vertexLayout deferred.",
+      "shaderVariantId": { "base": "gos_terrain_water_fast", "macros": [] },
+      "specializationParams": [],
+      "renderPassCompat": "Water (RenderPassId::Water)",
+      "depthState": { "test": true, "write": true, "func": "GreaterEqual", "note": "depthWrite default-ON (OOB-FOG-WATER-DEPTH-1); MC2_WATER_NO_DEPTH_WRITE is a debug A/B gate only" },
+      "blendState": { "factor": "AlphaBlend", "srcFactor": "SRC_ALPHA", "dstFactor": "ONE_MINUS_SRC_ALPHA", "equation": "FUNC_ADD" },
+      "cullState": { "mode": "None", "note": "CINEMATIC-WATER-CULL-1: flat overlay mesh, cull explicitly disabled" },
+      "frontFace": "Ccw",
+      "polygonOffsetEnable": false,
+      "colorMaskAttachmentMask": { "color0": true, "color1": true, "color2": false },
+      "key_producible": "descriptive"
     }
   ],
   "excluded_draw_families": {
     "reason": "set fixed-function state ad-hoc (not pipelineDescRegistered); no PipelineDesc row",
     "families": [
       "Terrain",
-      "Shadow",
       "VFX",
-      "Water",
       "PostProcess",
       "VegetationCards",
       "UI"

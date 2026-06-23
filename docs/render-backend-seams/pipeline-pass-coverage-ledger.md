@@ -37,7 +37,7 @@ routing → pixel-identical proof** (→ SPIR-V later, behind a parity gate).
 | Terrain (main solid) | UNREGISTERED | Terrain | — |
 | TerrainOverlay | DESCRIPTIVE_REGISTERED | TerrainOverlay | TerrainOverlay |
 | TerrainDecal | DESCRIPTIVE_REGISTERED (first AlphaBlend row) | TerrainDecal | TerrainDecal |
-| Water | UNREGISTERED | Water | — |
+| Water (armed fast path) | DESCRIPTIVE_REGISTERED | Water | WaterArmed |
 | VFX | UNREGISTERED | VFX | — |
 | VegetationCards | UNREGISTERED | VegetationCards | — |
 | PostProcess | UNREGISTERED | PostProcess | — |
@@ -64,9 +64,13 @@ routing → pixel-identical proof** (→ SPIR-V later, behind a parity gate).
 1. ~~TERRAIN-OVERLAY-DECAL-PIPELINE-REGISTRATION-1~~ **DONE** — TerrainOverlay +
    TerrainDecal now DESCRIPTIVE_REGISTERED (TerrainDecal = first AlphaBlend row).
    Their `next` is route_applyPipeline → VISUAL_PROVEN.
-2. **WATER-ARMED-PIPELINE-REGISTRATION-1** — Water armed fast-path base only.
-3. **VFX-PIPELINE-REGISTRATION-RECON-1** — the blend-selector family (later).
-4. (optional) route TerrainOverlay/TerrainDecal through applyPipeline (provably
-   no-op candidate) → VISUAL_PROVEN, when convenient.
+2. ~~WATER-ARMED-PIPELINE-REGISTRATION-1~~ **DONE** — WaterArmed (armed fast-path
+   base) now DESCRIPTIVE_REGISTERED. AlphaBlend, cull None, GEQUAL, depth-write
+   (source-verified — NOT the recon's "opaque cull-back"). Legacy quad + MDI
+   sub-variant not modeled.
+3. **VFX-PIPELINE-REGISTRATION-RECON-1** — the blend-selector family (recon, not build).
+4. (optional) route TerrainOverlay/TerrainDecal/WaterArmed through applyPipeline
+   → VISUAL_PROVEN, when convenient (terrain are provably-no-op candidates; water
+   save/restores its own state so it is more involved).
 
 DO NOT re-open: UI, Picking, RoadsRunways (terminal `DO_NOT_MODEL`).
