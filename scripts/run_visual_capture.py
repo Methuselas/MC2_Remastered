@@ -52,6 +52,32 @@ from pathlib import Path
 #                  never leaves the mouse permanently warped.
 _SKIP_KILL = False
 _ORIG_CURSOR = None
+# HARNESS-ISOLATION-1: own-only-your-children. Every child mc2.exe we launch is
+# tracked here; we reap ONLY our own (terminate/kill) at run-start and atexit, and
+# NEVER taskkill a foreign/other-session mc2.exe. With MC2_SMOKE_SEED set (always),
+# the launcher-bootstrap skip-guard (gameosmain.cpp) fires, so each child is a single
+# mc2.exe with no grandchildren — a tracked-PID reap is sufficient (no Job Object).
+_ACTIVE: "list[subprocess.Popen]" = []
+
+
+def _reap_active() -> None:
+    """Terminate any still-alive child mc2.exe WE launched. Foreign instances are
+    never in _ACTIVE, so they are untouched."""
+    for proc in _ACTIVE:
+        try:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    try:
+                        proc.wait(timeout=5)
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"[viscap] WARN reap child: {e}", file=sys.stderr)
+    _ACTIVE.clear()
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -77,16 +103,15 @@ def _load_bookmarks(path: Path) -> tuple[str, list[dict]]:
 
 
 def _kill_existing_mc2() -> None:
-    # WATER-VISUAL-GATE-1: --no-kill makes the harness concurrent-safe — never
-    # taskkill foreign/other-session mc2.exe. (Default keeps the legacy behavior
-    # for direct callers.)
+    # HARNESS-ISOLATION-1: the harness is now ALWAYS concurrent-safe. It never
+    # taskkills foreign/other-session mc2.exe; instead it reaps ONLY its own tracked
+    # children (_reap_active). The legacy blanket `taskkill /F /IM mc2.exe` is GONE.
+    # `--no-kill` is retained as a deprecated no-op for callers (e.g. the gate) that
+    # still pass it; both paths now behave identically (own-only reap).
+    _reap_active()
     if _SKIP_KILL:
-        print("[viscap] --no-kill: skipping global mc2.exe taskkill "
-              "(concurrent-safe)", file=sys.stderr)
-        return
-    subprocess.run(["taskkill", "/F", "/IM", "mc2.exe"],
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    time.sleep(1)
+        print("[viscap] --no-kill (now default): own-children-only reap, "
+              "foreign mc2.exe untouched", file=sys.stderr)
 
 
 def _save_cursor() -> None:
@@ -155,6 +180,14 @@ def run_one(exe: Path, mission: str, bookmarks_path: Path, out_dir: Path,
     out_dir.mkdir(parents=True, exist_ok=True)
     file_mission, marks = _load_bookmarks(bookmarks_path)
     mission_token = file_mission or mission
+    # HARNESS-ISOLATION-1 / bug-2 guard: the engine bookmark iterator
+    # (gos_visual_capture.cpp) silently fails to fire the capture for a SINGLE-pose
+    # bookmark (engine_capture_fired=True but present=False). A >=2-pose bookmark
+    # fires fine. Until the engine ticket (HARNESS-SINGLEPOSE-2) lands, WARN loudly.
+    if len(marks) < 2:
+        print(f"[viscap] WARN single-pose bookmark ({len(marks)} pose) — engine "
+              f"capture iterator may silently NOT fire; add a 2nd pose. "
+              f"({bookmarks_path})", file=sys.stderr)
     expected_pngs = {
         m["name"]: out_dir / f"{mission_token}_{_safe_name(m['name'])}.png"
         for m in marks
@@ -203,6 +236,7 @@ def run_one(exe: Path, mission: str, bookmarks_path: Path, out_dir: Path,
     proc = subprocess.Popen(proc_args, stdout=log_fp, stderr=subprocess.STDOUT,
                             cwd=str(exe.parent), env=env,
                             startupinfo=startupinfo)
+    _ACTIVE.append(proc)  # HARNESS-ISOLATION-1: track for own-only reap
 
     # Poll for all expected PNGs, or process exit, or timeout. Re-park the
     # cursor every iteration so it stays pinned center through the ENTIRE sweep
@@ -469,6 +503,7 @@ def main() -> int:
     _SKIP_KILL = args.no_kill
     _save_cursor()
     atexit.register(_restore_cursor)
+    atexit.register(_reap_active)  # HARNESS-ISOLATION-1: never leave our child alive
 
     exe = Path(args.exe)
     if not exe.exists():
@@ -504,7 +539,11 @@ def main() -> int:
     # Multi-run stabilization mode.
     runs = []
     for i in range(1, n_runs + 1):
-        out_i = base_out.parent / f"{args.mission}_r{i}"
+        # HARNESS-ISOLATION-1: honor the FULL out-dir leaf. Was
+        # `base_out.parent / f"{mission}_r{i}"` which dropped the caller's leaf, so
+        # gate `after/` + `before/` both collapsed to `base/{mission}_rN` and
+        # clobbered each other. Now each owns `<out_dir>/rN`.
+        out_i = base_out / f"r{i}"
         r = run_one(exe, args.mission, bookmarks_path, out_i,
                     args.trigger_frame, args.settle, args.duration, det_clock)
         write_manifest(r, exe)
