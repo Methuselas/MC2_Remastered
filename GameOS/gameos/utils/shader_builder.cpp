@@ -5,6 +5,9 @@
 #include <assert.h>
 #include <stdio.h>
 #include <cstring>
+#include <cstdlib>
+#include <fstream>
+#include <vector>
 #include <sstream>
 #include <string>
 
@@ -398,6 +401,119 @@ bool compile_shader(GLenum shader, const char** strings, size_t count, std::stri
 }
 
 
+// ---------------------------------------------------------------------------
+// SPIRV-CONSUMER-PILOT-BUILD-1 — default-OFF runtime SPIR-V consumer.
+// Pilot scope: the postprocess composite vertex/fragment pair ONLY. Loads the
+// offline-baked .spv (OFFLINE-SHADER-VARIANT-BUILD-1) via glShaderBinary +
+// glSpecializeShader, replacing the runtime GLSL compile for that one family.
+// Any miss (env OFF / extension absent / hot-reload on / not a pilot shader /
+// non-default variant / artifact missing / specialize failure) returns false
+// so makeShader falls through to the unchanged GLSL path. Hot reload (reload())
+// is GLSL-only by construction and never reaches this code.
+// ---------------------------------------------------------------------------
+namespace {
+
+bool spirvPilotEnabled()
+{
+    const char* e = std::getenv("MC2_SHADER_SPIRV");
+    if (!e || e[0] != '1') return false;                 // default OFF
+    const char* hr = std::getenv("MC2_SHADER_HOT_RELOAD");
+    if (hr && hr[0] == '1') return false;                // dev loop stays GLSL
+    // GL 4.3 context request does NOT imply SPIR-V support — check at runtime.
+    if (!(GLEW_ARB_gl_spirv || GLEW_VERSION_4_6)) return false;
+    return true;
+}
+
+bool spirvFatal()
+{
+    const char* e = std::getenv("MC2_SHADER_SPIRV_FATAL");
+    return e && e[0] == '1';
+}
+
+// Pilot allowlist: fname -> (base, short stage). Returns false if not a pilot.
+bool spirvPilotStage(const char* fname, std::string& base, std::string& stageShort)
+{
+    std::string f(fname ? fname : "");
+    auto ends = [&](const char* s) {
+        size_t n = std::strlen(s);
+        return f.size() >= n && f.compare(f.size() - n, n, s) == 0;
+    };
+    if (ends("postprocess.vert")) { base = "postprocess"; stageShort = "vert"; return true; }
+    if (ends("postprocess.frag")) { base = "postprocess"; stageShort = "frag"; return true; }
+    return false;
+}
+
+// Minimal extraction of "artifact":"<name>" from the sidecar JSON (no JSON dep).
+std::string spirvArtifactFromSidecar(const std::string& path)
+{
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return "";
+    std::string txt((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    size_t k = txt.find("\"artifact\"");
+    if (k == std::string::npos) return "";
+    size_t c = txt.find(':', k);     if (c == std::string::npos) return "";
+    size_t q1 = txt.find('"', c);    if (q1 == std::string::npos) return "";
+    size_t q2 = txt.find('"', q1+1); if (q2 == std::string::npos) return "";
+    return txt.substr(q1 + 1, q2 - q1 - 1);
+}
+
+// Specialize `shader` from the baked .spv. true => caller skips GLSL compile.
+bool trySpirvSpecialize(GLuint shader, const char* fname, const char* prefix)
+{
+    if (!spirvPilotEnabled()) return false;
+    // Non-default variant (prefix carries #defines) has no baked pilot artifact.
+    if (prefix && std::strstr(prefix, "#define")) return false;
+    std::string base, stageShort;
+    if (!spirvPilotStage(fname, base, stageShort)) return false;
+
+    const std::string sidecar = "shaders/spv/" + base + "." + stageShort + ".default.json";
+    const std::string artifact = spirvArtifactFromSidecar(sidecar);
+    if (artifact.empty()) {
+        log_info("[SPIRV] no sidecar/artifact for %s; GLSL fallback\n", fname);
+        return false;
+    }
+    const std::string spvPath = "shaders/spv/" + artifact;
+    std::ifstream in(spvPath, std::ios::binary | std::ios::ate);
+    if (!in) {
+        log_info("[SPIRV] artifact missing %s; GLSL fallback\n", spvPath.c_str());
+        return false;
+    }
+    std::streamsize sz = in.tellg();
+    in.seekg(0);
+    std::vector<char> blob(sz > 0 ? (size_t)sz : 0);
+    if (sz <= 0 || !in.read(blob.data(), sz)) {
+        log_error("[SPIRV] failed to read %s; GLSL fallback\n", spvPath.c_str());
+        return false;
+    }
+
+    while (glGetError() != GL_NO_ERROR) { /* drain */ }
+    glShaderBinary(1, &shader, GL_SHADER_BINARY_FORMAT_SPIR_V, blob.data(), (GLsizei)sz);
+    if (glGetError() != GL_NO_ERROR) {
+        if (spirvFatal()) { log_error("[SPIRV] FATAL glShaderBinary %s\n", spvPath.c_str()); assert(false); }
+        log_error("[SPIRV] glShaderBinary rejected %s; GLSL fallback\n", spvPath.c_str());
+        return false;
+    }
+    glSpecializeShader(shader, "main", 0, nullptr, nullptr);
+    GLint ok = GL_FALSE;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
+    if (glGetError() != GL_NO_ERROR || ok != GL_TRUE) {
+        if (spirvFatal()) { log_error("[SPIRV] FATAL specialize %s\n", spvPath.c_str()); assert(false); }
+        log_error("[SPIRV] glSpecializeShader failed %s; GLSL fallback\n", spvPath.c_str());
+        return false;
+    }
+    log_info("[SPIRV] loaded %s (specialized \"main\")\n", artifact.c_str());
+    if (mc2_diag::tagEnabled("SHADER_COMPILE")) {
+        std::ostringstream data;
+        data << "{\"event\":\"spirv_loaded\",\"path\":\""
+             << diag_json_escape(std::string(fname)) << "\",\"artifact\":\""
+             << diag_json_escape(artifact) << "\",\"result\":\"ok\"}";
+        mc2_diag::writeEvent("SHADER_COMPILE", 1, 0, data.str().c_str());
+    }
+    return true;
+}
+
+} // namespace
+
 glsl_shader* glsl_shader::makeShader(Shader_t stype, const char* fname, const char* prefix/* = nullptr*/)
 {
     ZoneScopedN("Shader.MakeShader");
@@ -443,6 +559,11 @@ glsl_shader* glsl_shader::makeShader(Shader_t stype, const char* fname, const ch
         return 0;
     }
 
+    // SPIRV-CONSUMER-PILOT-BUILD-1: try the baked .spv first (default OFF, pilot
+    // only). On any miss this returns false and we fall through to GLSL compile.
+    const bool usedSpirv = trySpirvSpecialize(shader, fname, prefix);
+    if (!usedSpirv)
+    {
     const char* strings[] = { prefix == nullptr ? "" : prefix, shader_source.c_str() };
     std::string compileLog;
     if(!compile_shader(shader, strings, sizeof(strings)/sizeof(strings[0]), &compileLog))
@@ -483,6 +604,7 @@ glsl_shader* glsl_shader::makeShader(Shader_t stype, const char* fname, const ch
              << diag_json_escape(std::string(fname)) << "\",\"result\":\"ok\"}";
         mc2_diag::writeEvent("SHADER_COMPILE", 1, 0, data.str().c_str());
     }
+    } // !usedSpirv
     pshader->fname_ = fname;
     pshader->shader_ = shader;
     pshader->type_ = type;

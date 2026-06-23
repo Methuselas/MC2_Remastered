@@ -6,7 +6,7 @@
   "specializationParams": [],
   "artifact": "postprocess.vert.default.24eb2442.spv",
   "spv_dir": "shaders/spv",
-  "source_sha256": "cc099ea6e2fde07fe5e11b017248de8843e86f726fe26dba8a2bc199249669bb",
+  "source_sha256": "dfc6c4c9ffc8c8c3748323351cf986f85beca30d613ce94f513ad9dc2d4d3d35",
   "spirv_sha256": "cf169c2414b3ed8a2a189821be70b267a3b08bd22de84d990db0199dd65c582b",
   "bindings": {
     "ubos": [],

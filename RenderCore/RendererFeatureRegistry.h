@@ -1116,6 +1116,31 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "before default-on: SubData into the in-flight whole-frame/cross-phase light "
         "buffer STALLS on NVIDIA (the stall the orphan dodged); tolerated on AMD."
     },
+    // SPIRV-CONSUMER-PILOT-BUILD-1: runtime SPIR-V consumer (postprocess pilot).
+    {
+        "MC2_SHADER_SPIRV",
+        "MC2_SHADER_SPIRV",
+        EnvVarKind::Feature,
+        false,
+        "SPIRV-CONSUMER-PILOT-BUILD-1: DEFAULT-OFF. =1 loads the offline-baked "
+        "OpenGL SPIR-V (OFFLINE-SHADER-VARIANT-BUILD-1, shaders/spv/) for the "
+        "postprocess composite vert/frag pilot via glShaderBinary + "
+        "glSpecializeShader(\"main\") instead of runtime GLSL compile. Gated on "
+        "GLEW_ARB_gl_spirv||GL 4.6 (the 4.3 context request does not imply "
+        "support). Falls back to GLSL on: extension absent, artifact missing, "
+        "specialize failure, or MC2_SHADER_HOT_RELOAD=1 (dev loop stays GLSL). "
+        "Pilot allowlist only (postprocess); all other shaders stay GLSL."
+    },
+    {
+        "MC2_SHADER_SPIRV_FATAL",
+        "MC2_SHADER_SPIRV_FATAL",
+        EnvVarKind::Trace,
+        false,
+        "SPIRV-CONSUMER-PILOT-BUILD-1: DEFAULT-OFF debug gate. =1 makes a bad "
+        ".spv (glShaderBinary reject / specialize failure) assert/abort instead "
+        "of falling back to GLSL — used to surface artifact corruption in "
+        "testing. Default-OFF = silent-but-logged GLSL fallback."
+    },
 };
 
 // ---------------------------------------------------------------------------

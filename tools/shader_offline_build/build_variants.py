@@ -43,11 +43,25 @@ PILOTS = ROOT / "tools" / "shader_offline_build" / "pilots.json"
 BINDING_OCC = ROOT / "docs" / "render-backend-seams" / "binding-slot-occupancy.json"
 
 
+import re as _re
+
 def sha256(text_or_bytes) -> str:
     h = hashlib.sha256()
     h.update(text_or_bytes if isinstance(text_or_bytes, bytes)
              else text_or_bytes.encode("utf-8"))
     return h.hexdigest()
+
+
+def canon_source(s: str) -> str:
+    """Path-independent, newline-normalized form for a STABLE source hash.
+
+    build_shader_source emits `#line N // <absolute path>` markers whose path
+    varies per worktree; the .spv glslang produces is unaffected, but a raw
+    hash would drift across checkouts. Strip the path label (keep the line
+    number) and normalize newlines so source_sha256 is portable."""
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    s = _re.sub(r"(?m)^(#line\s+\d+)\s*//.*$", r"\1", s)
+    return s
 
 
 def variant_id(base: str, defines: list[str]) -> str:
@@ -126,7 +140,7 @@ def main():
             for stage, rel in pilot["stages"].items():
                 src_path = root / rel
                 src = shader_common.build_shader_source(src_path, defines)
-                src_hash = sha256(src)
+                src_hash = sha256(canon_source(src))
                 art = artifact_name(base, stage, vname, vid)
                 spv_path = spv_dir / art
                 # compile to a temp source, then to the artifact path

@@ -35,8 +35,18 @@ PILOTS = "tools/shader_offline_build/pilots.json"
 BINDING_OCC = "docs/render-backend-seams/binding-slot-occupancy.json"
 
 
+import re as _re
+
 def sha256(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
+
+
+def canon_source(s: str) -> str:
+    """Path-independent + newline-normalized source form (matches build_variants).
+    build_shader_source embeds `#line N // <abs path>` which varies per worktree;
+    strip the path label so the hash is portable across checkouts."""
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    return _re.sub(r"(?m)^(#line\s+\d+)\s*//.*$", r"\1", s)
 
 
 def variant_id(base, defines):
@@ -89,7 +99,7 @@ def main():
                 # 2: source hash in sync with current GLSL
                 try:
                     cur = shader_common.build_shader_source(root / rel, defines)
-                    if meta.get("source_sha256") != sha256(cur):
+                    if meta.get("source_sha256") != sha256(canon_source(cur)):
                         fails.append(f"{tag}: source drift - GLSL changed since bake "
                                      f"(rebuild with build_variants.py)")
                 except Exception as e:
