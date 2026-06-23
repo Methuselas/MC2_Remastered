@@ -902,6 +902,11 @@ def main():
                             # them and the fixture never fires.
                             "MC2_FX_FORCE_SPAWN",
                             "MC2_LOG",
+                            # ABL-BAD-NATIVE-ARG-REPRO-1 gates — must be allowlisted so
+                            # the repro hook and guard fire when set by the caller.
+                            "MC2_ABL_ARG_GUARD",
+                            "MC2_ABL_RUNTIME_SOFTFAIL",
+                            "MC2_ABL_ARG_GUARD_REPRO",
                             # MCO magic* AI behavior trace (code/ablmc2.cpp magicAiLog):
                             # logs whether ClanEagle brains call magicPatrol/Guard/Escort
                             # and what target the engine acquired. Allowlist or Popen drops it.

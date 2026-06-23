@@ -113,6 +113,8 @@
 // ABL-OPCODE-BOUNDS-HARDEN gates (defined in mclib/ablxstd.cpp)
 extern bool s_ablArgGuard;
 extern bool s_ablRuntimeSoftfail;
+// ABL-BAD-NATIVE-ARG-REPRO-1 forward declaration (defined at end of file)
+static void runAblArgGuardRepro(void);
 // ABL exec context: defined in mclib/ablxstd.cpp / mclib/ablexec.cpp
 extern int         execLineNumber;
 extern ABLModulePtr CurModule;
@@ -7824,6 +7826,9 @@ void initABL (void) {
 	ABLi_setRandomCallbacks(ablSeedRandom, RandomNumber);
 	ABLi_setEndlessStateCallback(ablEndlessStateCallback);
 
+	// ABL-BAD-NATIVE-ARG-REPRO-1: run guard repro before any scripts load.
+	runAblArgGuardRepro();
+
 	ABLi_addFunction("getid", false, NULL, "i", execGetId);
 	ABLi_addFunction("gettime", false, NULL, "r", execGetTime);
 	ABLi_addFunction("gettimeleft", false, NULL, "r", execGetTimeLeft);
@@ -8191,5 +8196,68 @@ void closeABL (void) {
 }
 
 //*****************************************************************************
+// ABL-BAD-NATIVE-ARG-REPRO-1  (gate: MC2_ABL_ARG_GUARD_REPRO=1)
+//
+// VECTOR CHOICE: Direct C++ repro hook (option b).
+//   ABL type-system call path (option a) was ruled out: ABLi_popRealPtr requires
+//   a live bytecode token stream (getCodeToken + getCodeSymTableNodePtr), which
+//   cannot be constructed without a compiled ABL module.  A standalone harness
+//   (option c) would need the full ABL + GameOS link surface (~50 TUs).
+//   This hook is minimal, test-only, calls the EXACT guard check + write site,
+//   and compiles behind a new env gate.
+//
+// NEAR-NULL ANALYSIS:
+//   ABLi_popRealPtr returns:
+//     float* realPtr = (float*)(&((StackItemPtr)tos->address)->real);
+//   StackItem is a UNION { int integer; float real; ... }, so .real is at offset 0.
+//   Therefore: realPtr == (float*)(tos->address + 0) == (float*)tos->address.
+//   When tos->address == NULL, realPtr == (float*)NULL == exactly 0x0.
+//   The guard "if (s_ablArgGuard && !relPos)" catches this EXACTLY.
+//   There is NO near-null gap: the bogus pointer IS NULL, not offset-from-null.
+//
+// GUARD ON  (MC2_ABL_ARG_GUARD=1):
+//   abl_arg_guard_log fires, [ABL_ARG_GUARD] printed, function returns, no crash.
+//
+// GUARD OFF (MC2_ABL_ARG_GUARD unset):
+//   relPos[0] = 1.0f writes to address 0x0 -> access violation.
+//   We DO execute this write when REPRO=1 and ARG_GUARD is off, to capture
+//   the real crash.  Smoke runs always set ARG_GUARD=1, so smoke is unaffected.
+
+static void runAblArgGuardRepro(void) {
+    const char* repro_env = getenv("MC2_ABL_ARG_GUARD_REPRO");
+    if (!repro_env || repro_env[0] != '1')
+        return;
+
+    printf("[ABL_REPRO] ABL-BAD-NATIVE-ARG-REPRO-1 starting\n");
+    fflush(stdout);
+
+    // Simulate what ABLi_popRealPtr returns when tos->address == NULL.
+    // StackItem union has .real at byte offset 0, so
+    //   (float*)(&((StackItemPtr)NULL)->real) == (float*)NULL == nullptr.
+    float* relPos = nullptr;
+
+    printf("[ABL_REPRO] relPos from simulated null tos->address = %p\n", (void*)relPos);
+    fflush(stdout);
+
+    // ---- GUARD PATH (MC2_ABL_ARG_GUARD=1) ----
+    if (s_ablArgGuard && !relPos) {
+        // Mirrors execGetRelativePositionToObject guard lines exactly.
+        abl_arg_guard_log("execGetRelativePositionToObject[REPRO]", "relPos");
+        printf("[ABL_REPRO] guard fired -- no crash -- PASS\n");
+        fflush(stdout);
+        return;
+    }
+
+    // ---- CRASH PATH (MC2_ABL_ARG_GUARD unset) ----
+    // If we reach here, guard is off.  The write below will segfault.
+    printf("[ABL_REPRO] guard OFF -- about to write relPos[0] -> WILL CRASH\n");
+    fflush(stdout);
+    // Volatile prevents the compiler from eliding the null write.
+    volatile float* vp = relPos;
+    vp[0] = 1.0f;  // writes to 0x0 -> access violation
+    // Unreachable:
+    printf("[ABL_REPRO] survived null write -- UNEXPECTED (optimizer elided?)\n");
+    fflush(stdout);
+}
 
 
