@@ -598,7 +598,13 @@ void execGetContacts (void) {
 	int* contactList = ABLi_popIntegerPtr();
 	int contactCriteria = ABLi_popInteger();
 	int sortCriteria = ABLi_popInteger();
-	
+
+	if (s_ablArgGuard && !contactList) {
+		abl_arg_guard_log("execGetContacts", "contactList");
+		ABLi_pushInteger(0);
+		return;
+	}
+
 	long numContacts = CurObject->getContacts(contactList, contactCriteria, sortCriteria);
 	ABLi_pushInteger(numContacts);
 
@@ -877,6 +883,12 @@ void execGetWeaponsReady (void) {
 	int* weaponList = ABLi_popIntegerPtr();
 	int listSize = ABLi_popInteger();
 
+	if (s_ablArgGuard && !weaponList) {
+		abl_arg_guard_log("execGetWeaponsReady", "weaponList");
+		ABLi_pushInteger(0);
+		return;
+	}
+
 	long numWeapons = 0;
 	if (CurObject->isMover())
 		numWeapons = ((MoverPtr)CurObject)->getWeaponsReady(weaponList, listSize);
@@ -891,6 +903,12 @@ void execGetWeaponsLocked (void) {
 	int* weaponList = ABLi_popIntegerPtr();
 	int listSize = ABLi_popInteger();
 
+	if (s_ablArgGuard && !weaponList) {
+		abl_arg_guard_log("execGetWeaponsLocked", "weaponList");
+		ABLi_pushInteger(0);
+		return;
+	}
+
 	long numWeapons = 0;
 	if (CurObject->isMover())
 		numWeapons = ((MoverPtr)CurObject)->getWeaponsLocked(weaponList, listSize);
@@ -904,6 +922,12 @@ void execGetWeaponsInRange (void) {
 
 	int* weaponList = ABLi_popIntegerPtr();
 	int listSize = ABLi_popInteger();
+
+	if (s_ablArgGuard && !weaponList) {
+		abl_arg_guard_log("execGetWeaponsInRange", "weaponList");
+		ABLi_pushInteger(0);
+		return;
+	}
 
 	GameObjectPtr target = CurWarrior->getCurrentTarget();
 	long numWeapons = 0;
@@ -1157,6 +1181,12 @@ void execGetAttackers (void) {
 	int* attackers = ABLi_popIntegerPtr();
 	float seconds = ABLi_popReal();
 
+	if (s_ablArgGuard && !attackers) {
+		abl_arg_guard_log("execGetAttackers", "attackers");
+		ABLi_pushInteger(0);
+		return;
+	}
+
 	long numAttackers = 0;
 	if (CurWarrior)
 		numAttackers = CurWarrior->getAttackers((unsigned int*)attackers, seconds);
@@ -1349,6 +1379,12 @@ void execGetUnitMates (void) {
 	long objectId = ABLi_popInteger();
 	int* mateList = ABLi_popIntegerPtr();
 
+	if (s_ablArgGuard && !mateList) {
+		abl_arg_guard_log("execGetUnitMates", "mateList");
+		ABLi_pushInteger(0);
+		return;
+	}
+
 	long numObjs = 0;
 	if ((objectId >= MIN_UNIT_PART_ID) && (objectId <= MAX_UNIT_PART_ID)) {
 		//--------------------------------------------
@@ -1487,6 +1523,12 @@ void execGetObjects (void) {
 
 	long criteria = ABLi_popInteger();
 	int* objList = ABLi_popIntegerPtr();
+
+	if (s_ablArgGuard && !objList) {
+		abl_arg_guard_log("execGetObjects", "objList");
+		ABLi_pushInteger(0);
+		return;
+	}
 
 	long numObjects = 0;
 	switch (criteria) {
@@ -1655,6 +1697,12 @@ void execOrderMoveTo (void) {
 
 	float* coordList = ABLi_popRealPtr();
 	bool run = ABLi_popBoolean();
+
+	if (s_ablArgGuard && !coordList) {
+		abl_arg_guard_log("execOrderMoveTo", "coordList");
+		ABLi_pushInteger(TACORDER_FAILURE);
+		return;
+	}
 
 	if (ABLi_getSkipOrder()) {
 		ABLi_pushInteger(1);
@@ -5388,7 +5436,7 @@ void execGetCameraPosition (void) {
 
 	//-----------------------------------------------------
 	//
-	//	GetCameraPosition 
+	//	GetCameraPosition
 	//
 	//		Sets the value passed in to the camera position.
 	//
@@ -5400,10 +5448,15 @@ void execGetCameraPosition (void) {
 
 	float* camPos = ABLi_popRealPtr();
 
+	if (s_ablArgGuard && !camPos) {
+		abl_arg_guard_log("execGetCameraPosition", "camPos");
+		return;
+	}
+
 	Stuff::Vector3D result(0.0,0.0,0.0);
 	if (eye)
 		result = eye->getPosition();
-	
+
 	camPos[0] = result.x;
 	camPos[1] = result.y;
 	camPos[2] = result.z;
@@ -5473,7 +5526,7 @@ void execGetCameraGoalPosition (void) {
 
 	//-----------------------------------------------------
 	//
-	//	GetCameraGoalPosition 
+	//	GetCameraGoalPosition
 	//
 	//		Gets the camera position to the value passed in.
 	//
@@ -5485,11 +5538,16 @@ void execGetCameraGoalPosition (void) {
 
 	float* camPos = ABLi_popRealPtr();
 
+	if (s_ablArgGuard && !camPos) {
+		abl_arg_guard_log("execGetCameraGoalPosition", "camPos");
+		return;
+	}
+
 	Stuff::Vector3D result(0.0,0.0,0.0);
-   
- 	if (eye)
+
+	if (eye)
 		result = eye->getGoalPosition();
-   
+
 	camPos[0] = result.x;
 	camPos[1] = result.y;
 	camPos[2] = result.z;
@@ -5501,7 +5559,7 @@ void execGetCameraRotation (void) {
 
 	//-----------------------------------------------------
 	//
-	//	GetCameraRotation 
+	//	GetCameraRotation
 	//
 	//		Sets the value passed in to the camera Rotation.
 	//
@@ -5513,10 +5571,15 @@ void execGetCameraRotation (void) {
 
 	float* camRot = ABLi_popRealPtr();
 
+	if (s_ablArgGuard && !camRot) {
+		abl_arg_guard_log("execGetCameraRotation", "camRot");
+		return;
+	}
+
 	Stuff::Vector3D result(0.0,0.0,0.0);
 	if (eye)
 		result = eye->getRotation();
-	
+
 	camRot[0] = result.x;
 	camRot[1] = result.y;
 	camRot[2] = result.z;
@@ -5587,7 +5650,7 @@ void execGetCameraGoalRotation (void) {
 
 	//-----------------------------------------------------
 	//
-	//	GetCameraGoalRotation 
+	//	GetCameraGoalRotation
 	//
 	//		Gets the camera Rotation into the value passed in.
 	//
@@ -5599,11 +5662,16 @@ void execGetCameraGoalRotation (void) {
 
 	float* camRot = ABLi_popRealPtr();
 
+	if (s_ablArgGuard && !camRot) {
+		abl_arg_guard_log("execGetCameraGoalRotation", "camRot");
+		return;
+	}
+
 	Stuff::Vector3D result(0.0,0.0,0.0);
-   
- 	if (eye)
+
+	if (eye)
 		result = eye->getGoalRotation();
-   
+
 	camRot[0] = result.x;
 	camRot[1] = result.y;
 	camRot[2] = result.z;
@@ -5708,7 +5776,7 @@ void execSetCameraVelocity (void) {
 
 	//-----------------------------------------------------
 	//
-	//	SetCameraVelocity 
+	//	SetCameraVelocity
 	//
 	//		Sets the camera velocity to the value passed in.
 	//
@@ -5719,6 +5787,11 @@ void execSetCameraVelocity (void) {
 	//-----------------------------------------------------
 
 	float* camVel = ABLi_popRealPtr();
+
+	if (s_ablArgGuard && !camVel) {
+		abl_arg_guard_log("execSetCameraVelocity", "camVel");
+		return;
+	}
 
 	Stuff::Vector3D result(0.0,0.0,0.0);
 	result.x = camVel[0];
@@ -5735,7 +5808,7 @@ void execGetCameraVelocity (void) {
 
 	//-----------------------------------------------------
 	//
-	//	GetCameraVelocity 
+	//	GetCameraVelocity
 	//
 	//		gets the camera velocity into the value passed in.
 	//
@@ -5747,11 +5820,16 @@ void execGetCameraVelocity (void) {
 
 	float* camVel = ABLi_popRealPtr();
 
+	if (s_ablArgGuard && !camVel) {
+		abl_arg_guard_log("execGetCameraVelocity", "camVel");
+		return;
+	}
+
 	Stuff::Vector3D result(0.0,0.0,0.0);
-   
- 	if (eye)
+
+	if (eye)
 		result = eye->getVelocity();
-   
+
 	camVel[0] = result.x;
 	camVel[1] = result.y;
 	camVel[2] = result.z;
@@ -5763,7 +5841,7 @@ void execSetCameraGoalVelocity (void) {
 
 	//-----------------------------------------------------
 	//
-	//	SetCameraGoalVelocity 
+	//	SetCameraGoalVelocity
 	//
 	//		Sets the camera Velocity Goal to the value passed in.
 	//
@@ -5776,6 +5854,11 @@ void execSetCameraGoalVelocity (void) {
 
 	float* camVel = ABLi_popRealPtr();
 	float time = ABLi_popReal();
+
+	if (s_ablArgGuard && !camVel) {
+		abl_arg_guard_log("execSetCameraGoalVelocity", "camVel");
+		return;
+	}
 
 	Stuff::Vector3D result(0.0,0.0,0.0);
 	result.x = camVel[0];
@@ -5794,7 +5877,7 @@ void execGetCameraGoalVelocity (void) {
 
 	//-----------------------------------------------------
 	//
-	//	GetCameraGoalVelocity 
+	//	GetCameraGoalVelocity
 	//
 	//		Sets the camera Velocity Goal into the value passed in.
 	//
@@ -5807,11 +5890,16 @@ void execGetCameraGoalVelocity (void) {
 
 	float* camVel = ABLi_popRealPtr();
 
+	if (s_ablArgGuard && !camVel) {
+		abl_arg_guard_log("execGetCameraGoalVelocity", "camVel");
+		return;
+	}
+
 	Stuff::Vector3D result(0.0,0.0,0.0);
-   
- 	if (eye)
+
+	if (eye)
 		result = eye->getGoalVelocity();
-   
+
 	camVel[0] = result.x;
 	camVel[1] = result.y;
 	camVel[2] = result.z;
@@ -7334,6 +7422,12 @@ void execGetWeapons (void) {
 	int* weaponList = ABLi_popIntegerPtr();
 	long infoType = ABLi_popInteger();
 
+	if (s_ablArgGuard && !weaponList) {
+		abl_arg_guard_log("execGetWeapons", "weaponList");
+		ABLi_pushInteger(0);
+		return;
+	}
+
 	long numWpns = 0;
 	if (CurObject->isMover()) {
 		MoverPtr mover = (MoverPtr)CurObject;
@@ -7369,6 +7463,12 @@ void execGetWeaponsStatus (void) {
 
 	int* weaponList = ABLi_popIntegerPtr();
 
+	if (s_ablArgGuard && !weaponList) {
+		abl_arg_guard_log("execGetWeaponsStatus", "weaponList");
+		ABLi_pushInteger(0);
+		return;
+	}
+
 	long status = 0;
 	if (CurObject && CurObject->isMover()) {
 		MoverPtr mover = (MoverPtr)CurObject;
@@ -7383,6 +7483,11 @@ void execSetMoveArea (void) {
 
 	float* center = ABLi_popRealPtr();
 	float radius = ABLi_popReal();
+
+	if (s_ablArgGuard && !center) {
+		abl_arg_guard_log("execSetMoveArea", "center");
+		return;
+	}
 
 	if (CurObject->isMover()) {
 		Stuff::Vector3D loc;
@@ -7455,6 +7560,12 @@ void execGetMapInfo (void) {
 void execIsOffMap (void) {
 
 	float* worldPos = ABLi_popRealPtr();
+
+	if (s_ablArgGuard && !worldPos) {
+		abl_arg_guard_log("execIsOffMap", "worldPos");
+		ABLi_pushBoolean(false);
+		return;
+	}
 
 	Stuff::Vector3D pos;
 	pos.x = worldPos[0];
