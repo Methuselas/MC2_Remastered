@@ -1,0 +1,177 @@
+{
+  "slice": "PIPELINE-KEY-SCHEMA-1",
+  "summary": {
+    "verdict_schema": "GO",
+    "verdict_implementation": "DEFER",
+    "headline": "Every registered pipeline can produce a STABLE PARTIAL logical PipelineKey from already-banked contracts. Authoritative today: depthState, cullMode, blend factor, color-attachment mask, renderPassCompat. Descriptive/not-yet-authoritative: shaderVariantId (no repo-owned enum — only runtime glProgramName + the informal unique_name_suffix_), specializationParams, vertexLayout (no id), materialLayout (per-pipeline mapping), rasterState (frontFace/polygonOffset unmodeled). Implementation (a real keyed cache) waits on SPIRV-CONSUMER-PILOT / OFFLINE-SHADER-VARIANT-BUILD.",
+    "can_every_registered_pipeline_produce_a_stable_logical_key": "YES (partial — authoritative core + explicitly-listed gaps)",
+    "smallest_pilot_family": "MechOpaque"
+  },
+  "status_legend": {
+    "AUTHORITATIVE": "value is owned + checked by a banked contract; safe to key on now",
+    "PARTIAL": "core value authoritative but a sub-axis is missing (named in gaps)",
+    "DESCRIPTIVE": "value is derivable/documented but not yet a repo-owned stable id; do NOT key on yet",
+    "MISSING": "not modeled anywhere; must be added before a real PSO key"
+  },
+  "fields": [
+    {
+      "field": "shaderVariantId",
+      "status": "DESCRIPTIVE",
+      "source": "SHADER-PERMUTATION-INVENTORY-1 (shader-permutation-inventory.json OFFLINE_VARIANT set) + runtime glProgramName + gosMaterialVariation.unique_name_suffix_ (gameos_graphics.cpp:356-357)",
+      "vk_mapping": "VkGraphicsPipelineCreateInfo.pStages (SPIR-V modules per variant)",
+      "authoritative": false,
+      "note": "Variant SPACE is finite/enumerable (inventory GO) but there is no repo-owned variant-id ENUM yet; glProgramName is a runtime GL name. Becomes authoritative when offline variants are baked + named."
+    },
+    {
+      "field": "specializationParams",
+      "status": "DESCRIPTIVE",
+      "source": "inventory SPECIALIZATION_CONSTANT class",
+      "vk_mapping": "VkSpecializationInfo",
+      "authoritative": false,
+      "params": [
+        {"name": "MC2_SHADOW_CSM_MAX", "type": "int", "role": "CSM cascade count / array bound", "source": "gameos_graphics.cpp:375 (mc2ShadowCsmCount())"},
+        {"name": "READBACK_SSBO_BINDING", "type": "int", "role": "cull readback SSBO binding index", "source": "gpu_cull_compute.cpp:284 (C++ const)"}
+      ],
+      "note": "Both numeric, typed, enumerable. Not consumed by the 4 registered raster pipelines directly (CSM rides the material/terrain path; READBACK is compute-cull)."
+    },
+    {
+      "field": "vertexLayout",
+      "status": "DESCRIPTIVE",
+      "source": "per-shape VAO setup (pipeline-state-contract-recon-1.md §3): static-prop 40B VAO (gos_static_prop_batcher.cpp:2310-2323), mech GpuMechVertex 48B (gos_mech_batcher.cpp:1376-1382)",
+      "vk_mapping": "VkPipelineVertexInputStateCreateInfo",
+      "authoritative": false,
+      "note": "Layouts are fixed + finite per shape type but there is no repo-owned vertexLayoutId enum yet. Candidate to bank next (small, closed set)."
+    },
+    {
+      "field": "renderPassCompat",
+      "status": "AUTHORITATIVE",
+      "source": "RENDER-PASS-DAG-CONTRACT-1 (RenderCore/RenderPassContract.h: RenderPassId + pipelineDescRegistered + kFramePassOrder)",
+      "vk_mapping": "VkGraphicsPipelineCreateInfo.renderPass/subpass (render-pass compatibility)",
+      "authoritative": true,
+      "note": "Checked by check-render-contract-gbuffer1 + the contract's own static_asserts."
+    },
+    {
+      "field": "materialLayout",
+      "status": "PARTIAL",
+      "source": "sampler-unit-occupancy.{md,json} + binding-slot-occupancy.{md,json} + check-sampler-bindings + check-binding-slots + check-material-gpu-mirror",
+      "vk_mapping": "VkPipelineLayout (descriptor-set layout: samplers + UBO/SSBO bindings)",
+      "authoritative": true,
+      "authoritative_subaxes": ["SSBO/UBO binding bases", "sampler-unit occupancy", "material std430 ABI"],
+      "descriptive_subaxes": ["per-pipeline descriptor-set grouping (which bindings belong to which pipeline is not yet a single owned record)"],
+      "note": "The binding/sampler/material ABIs are individually banked + checked; assembling them into one per-pipeline descriptor-layout record is the descriptive gap."
+    },
+    {
+      "field": "depthState",
+      "status": "AUTHORITATIVE",
+      "source": "PipelineDesc.{depthTestEnable,depthWriteEnable,depthFunc} (PIPELINE-DESC-OCCUPANCY-CHECK-1)",
+      "vk_mapping": "VkPipelineDepthStencilStateCreateInfo",
+      "authoritative": true
+    },
+    {
+      "field": "blendState",
+      "status": "PARTIAL",
+      "source": "PipelineDesc.blend (BlendMode factor)",
+      "vk_mapping": "VkPipelineColorBlendAttachmentState",
+      "authoritative": true,
+      "gaps": ["blendEquation (only factor modeled; GL_FUNC_ADD assumed, set nowhere)"]
+    },
+    {
+      "field": "cullState",
+      "status": "PARTIAL",
+      "source": "PipelineDesc.cullMode",
+      "vk_mapping": "VkPipelineRasterizationStateCreateInfo.cullMode",
+      "authoritative": true,
+      "gaps": ["frontFace (winding not in PipelineDesc; only the save/restore snapshot tracks it)"]
+    },
+    {
+      "field": "rasterState",
+      "status": "MISSING",
+      "source": "(not modeled in PipelineDesc)",
+      "vk_mapping": "VkPipelineRasterizationStateCreateInfo (frontFace, polygonMode, depthBias/polygonOffset)",
+      "authoritative": false,
+      "gaps": ["frontFace", "polygonOffset / depthBias", "polygonMode"],
+      "note": "Default GL state assumed today. Must be added to PipelineDesc before a real PSO."
+    },
+    {
+      "field": "colorMaskAttachmentMask",
+      "status": "PARTIAL",
+      "source": "PipelineDesc.colorAttachments (ColorAttachmentMask)",
+      "vk_mapping": "render-pass color attachments + VkPipelineColorBlendAttachmentState.colorWriteMask",
+      "authoritative": true,
+      "gaps": ["explicit per-channel colorWriteMask (StaticPropDepth masks color via external glColorMask, not the desc)"]
+    }
+  ],
+  "registered_pipelines": [
+    {
+      "id": "StaticPropOpaque",
+      "pipelineDescRegistered": true,
+      "shaderVariantId": {"base": "static_prop", "macros": ["MC2_COALESCE", "MC2_OBJECT_ID_BUFFER", "MC2_USE_VIEW_UNIFORMS", "MC2_STATICPROP_PBR_SLOTS"]},
+      "specializationParams": [],
+      "vertexLayout": "static_prop_40B",
+      "renderPassCompat": "StaticPropOpaque (registered)",
+      "depthState": {"test": true, "write": true, "func": "GreaterEqual"},
+      "blendState": {"factor": "Opaque"},
+      "cullState": {"mode": "Back"},
+      "colorMaskAttachmentMask": {"color0": true, "color1": true, "color2": false},
+      "key_producible": "partial"
+    },
+    {
+      "id": "StaticPropAlphaTest",
+      "pipelineDescRegistered": false,
+      "shaderVariantId": {"base": "static_prop", "macros": ["ALPHA_TEST", "MC2_COALESCE", "MC2_OBJECT_ID_BUFFER", "MC2_USE_VIEW_UNIFORMS", "MC2_STATICPROP_PBR_SLOTS"]},
+      "specializationParams": [],
+      "vertexLayout": "static_prop_40B",
+      "renderPassCompat": "sub-pass of StaticPropOpaque (runtime fetches Opaque desc; alpha = texture-array select + shader discard)",
+      "depthState": {"test": true, "write": true, "func": "GreaterEqual"},
+      "blendState": {"factor": "AlphaTest"},
+      "cullState": {"mode": "Back"},
+      "colorMaskAttachmentMask": {"color0": true, "color1": true, "color2": false},
+      "key_producible": "partial"
+    },
+    {
+      "id": "MechOpaque",
+      "pipelineDescRegistered": true,
+      "shaderVariantId": {"base": "mech", "macros": ["MC2_OBJECT_ID_BUFFER", "MC2_USE_VIEW_UNIFORMS"]},
+      "specializationParams": [],
+      "vertexLayout": "mech_GpuMechVertex_48B",
+      "renderPassCompat": "MechOpaque (registered)",
+      "depthState": {"test": true, "write": true, "func": "GreaterEqual"},
+      "blendState": {"factor": "Opaque"},
+      "cullState": {"mode": "Back"},
+      "colorMaskAttachmentMask": {"color0": true, "color1": true, "color2": false},
+      "key_producible": "partial"
+    },
+    {
+      "id": "StaticPropDepth",
+      "pipelineDescRegistered": false,
+      "shaderVariantId": {"base": "static_prop_depth", "macros": ["MC2_COALESCE", "MC2_STATICPROP_PBR_SLOTS"]},
+      "specializationParams": [],
+      "vertexLayout": "static_prop_40B",
+      "renderPassCompat": "sub-pass (camera depth-prepass; color masked by caller glColorMask)",
+      "depthState": {"test": true, "write": true, "func": "GreaterEqual"},
+      "blendState": {"factor": "AlphaTest"},
+      "cullState": {"mode": "Back"},
+      "colorMaskAttachmentMask": {"color0": false, "color1": false, "color2": false},
+      "key_producible": "partial"
+    }
+  ],
+  "excluded_draw_families": {
+    "reason": "set fixed-function state ad-hoc (not pipelineDescRegistered); no PipelineDesc row",
+    "families": ["Terrain", "Shadow", "VFX", "Water", "PostProcess", "VegetationCards", "TerrainDecal", "TerrainOverlay", "UI"],
+    "ssbo_vertexid_driven": ["particle/VFX-trail", "gpu-driven indirect terrain solid"],
+    "note": "These must be onboarded to PipelineDesc/Registry before they can carry a PipelineKey."
+  },
+  "pilot_family": {
+    "choice": "MechOpaque",
+    "why": "single program, single fixed VAO (GpuMechVertex 48B), already pipelineDescRegistered=true, already in reflect.py SHADER_VARIANTS (mech.{vert,frag} default/objectid/viewuniforms), smallest variant set (OBJECT_ID x USE_VIEW_UNIFORMS = 4). Cleanest target for eventual PSO validation.",
+    "runner_up": "StaticPropOpaque (registered + reflected, but up to 16 variants — larger surface)"
+  },
+  "answers": {
+    "can_every_registered_pipeline_produce_a_stable_logical_key": "YES, partial — all 4 produce the authoritative core (depth/cull/blend-factor/attachment-mask/render-pass-compat) plus a finite-but-not-yet-id'd shaderVariantId.",
+    "authoritative_vs_descriptive": "AUTHORITATIVE: depthState, renderPassCompat, materialLayout (binding/sampler/material ABI), blend factor, cull mode, attachment mask. DESCRIPTIVE: shaderVariantId, specializationParams, vertexLayout, per-pipeline descriptor grouping. MISSING: rasterState (frontFace/polygonOffset), blendEquation, colorWriteMask granularity.",
+    "excluded_families": "9 ad-hoc raster passes + 2 SSBO/gl_VertexID-driven families (see excluded_draw_families).",
+    "smallest_pilot": "MechOpaque."
+  },
+  "next": ["SPIRV-CONSUMER-PILOT-RECON-1", "OFFLINE-SHADER-VARIANT-BUILD-1"],
+  "exclusions": "No Vulkan, no SPIR-V consumer, no shader edits, no makeShader change, no material M4 unify, no pipeline-cache impl, no RenderDevice."
+}
