@@ -90,22 +90,26 @@
       "next": "needs_pass_reg_first: terrain MAIN solid pass — its own scoped slice (TERRAIN-SOLID-PIPELINE-REGISTRATION-RECON)"
     },
     "TerrainOverlay": {
-      "status": "DESCRIPTIVE_REGISTERED",
+      "status": "ROUTED_BY_APPLYPIPELINE",
+      "proofStatus": "pass_not_exercised_in_smoke",
       "renderPassId": "TerrainOverlay",
       "pipelineId": "TerrainOverlay",
       "shaderBase": "terrain_overlay",
-      "stateOwner": "legacy/ad-hoc",
-      "evidence": "PipelineDesc row [8] (opaque, GEQUAL, depth-write, cull none, color0+1); gosRenderer::drawTerrainOverlays still hand-sets state (not applyPipeline-routed)",
-      "next": "route_applyPipeline (provably-no-op candidate) -> visual_proven"
+      "stateOwner": "applyPipeline",
+      "evidence": "TERRAIN-OVERLAY-DECAL-APPLYPIPELINE-ROUTING-1: routed at gosRenderer::drawTerrainOverlays + drawDecalStaticBatch (gameos_graphics.cpp:9732/9850) via applyPipeline(TerrainOverlay). State byte-identical to old hand-set (opaque, depth test+write, GEQUAL, cull none; +no-op frontFace/blendFunc/offset). program(0)=skip keeps overlayProg_. Build green; tier1 5/5 PASS; no GL errors; mc2_24 capture == historical baseline (b11ff22a/e0fb9cc8/c6df715e).",
+      "proofNote": "VISUAL_PROVEN not claimed: the overlay pass is content-dependent (cement-perimeter tiles) and drew in ZERO tier1 missions (0 [PIPELINE_BIND] TerrainOverlay lines across all 5; the trace mechanism is proven live by Shadow* rows firing). Deterministic, so byte-hashable once exercised — upgrade on a cement-overlay mission A/B.",
+      "next": "TERRAIN-OVERLAY-VISUAL-GATE: capture on a cement-overlay mission, byte-hash A/B + [PIPELINE_BIND] TerrainOverlay trace -> VISUAL_PROVEN."
     },
     "TerrainDecal": {
-      "status": "DESCRIPTIVE_REGISTERED",
+      "status": "ROUTED_BY_APPLYPIPELINE",
+      "proofStatus": "pass_not_exercised_in_smoke",
       "renderPassId": "TerrainDecal",
       "pipelineId": "TerrainDecal",
       "shaderBase": "decal",
-      "stateOwner": "legacy/ad-hoc",
-      "evidence": "PipelineDesc row [9] — FIRST AlphaBlend row (SRC_ALPHA/1-SRC_ALPHA, depth-test no-write, GEQUAL, cull none); gosRenderer::drawDecals still hand-sets state",
-      "next": "route_applyPipeline -> visual_proven"
+      "stateOwner": "applyPipeline",
+      "evidence": "TERRAIN-OVERLAY-DECAL-APPLYPIPELINE-ROUTING-1: routed at gosRenderer::drawDecals (gameos_graphics.cpp:9924) via applyPipeline(TerrainDecal). State byte-identical to old hand-set (AlphaBlend SRC_ALPHA/1-SRC_ALPHA, depth-test no-write, GEQUAL, cull none). program(0)=skip keeps decalProg_. Build green; tier1 5/5 PASS; no GL errors.",
+      "proofNote": "VISUAL_PROVEN not claimed: decals are content-dependent (bomb craters + mech footprints from battle damage) and drew in ZERO tier1 missions. Deterministic, byte-hashable once exercised (e.g. combat / MC2_FX_FORCE_SPAWN impact mission).",
+      "next": "TERRAIN-DECAL-VISUAL-GATE: capture with battle-damage decals in-frame, byte-hash A/B + [PIPELINE_BIND] TerrainDecal trace -> VISUAL_PROVEN."
     },
     "Water": {
       "status": "DESCRIPTIVE_REGISTERED",
