@@ -3,7 +3,7 @@
   "summary": {
     "verdict_schema": "GO",
     "verdict_implementation": "DEFER",
-    "headline": "Every registered pipeline can produce a STABLE PARTIAL logical PipelineKey from already-banked contracts. Authoritative today: depthState, cullMode, blend factor, color-attachment mask, renderPassCompat. Descriptive/not-yet-authoritative: shaderVariantId (no repo-owned enum \u00e2\u20ac\u201d only runtime glProgramName + the informal unique_name_suffix_), specializationParams, vertexLayout (no id), materialLayout (per-pipeline mapping), rasterState (frontFace/polygonOffset unmodeled). Implementation (a real keyed cache) waits on SPIRV-CONSUMER-PILOT / OFFLINE-SHADER-VARIANT-BUILD.",
+    "headline": "Every registered pipeline can produce a STABLE PARTIAL logical PipelineKey from already-banked contracts. Authoritative today: depthState, cullMode, blend factor, color-attachment mask, renderPassCompat. Descriptive/not-yet-authoritative: shaderVariantId (no repo-owned enum \u00e2\u20ac\u201d only runtime glProgramName + the informal unique_name_suffix_), specializationParams, materialLayout (per-pipeline mapping), rasterState (frontFace/polygonOffset unmodeled). vertexLayout is now AUTHORITATIVE (VERTEXLAYOUT-AUTHORITY-1: repo-owned VertexLayoutId enum, recorded + checked). Implementation (a real keyed cache) waits on SPIRV-CONSUMER-PILOT / OFFLINE-SHADER-VARIANT-BUILD.",
     "can_every_registered_pipeline_produce_a_stable_logical_key": "YES (partial \u00e2\u20ac\u201d authoritative core + explicitly-listed gaps)",
     "smallest_pilot_family": "MechOpaque"
   },
@@ -46,11 +46,11 @@
     },
     {
       "field": "vertexLayout",
-      "status": "DESCRIPTIVE",
-      "source": "per-shape VAO setup (pipeline-state-contract-recon-1.md \u00c2\u00a73): static-prop 40B VAO (gos_static_prop_batcher.cpp:2310-2323), mech GpuMechVertex 48B (gos_mech_batcher.cpp:1376-1382)",
+      "status": "AUTHORITATIVE",
+      "source": "VERTEXLAYOUT-AUTHORITY-1: repo-owned RenderCore::VertexLayoutId enum (RenderCore/PipelineRegistry.h) with canonical layout-name comments; recorded at runtime via recordPipelineVertexLayout (gos_mech_batcher.cpp MechOpaque, gos_static_prop_batcher.cpp StaticProp*); cross-checked by scripts/check-pipeline-key.py against each pipeline's vertexLayoutId/vertexLayout. Underlying VAO setup: static-prop 40B (gos_static_prop_batcher.cpp:2310-2323), mech GpuMechVertex 48B (gos_mech_batcher.cpp:1376-1382)",
       "vk_mapping": "VkPipelineVertexInputStateCreateInfo",
-      "authoritative": false,
-      "note": "Layouts are fixed + finite per shape type but there is no repo-owned vertexLayoutId enum yet. Candidate to bank next (small, closed set)."
+      "authoritative": true,
+      "note": "Promoted DESCRIPTIVE -> AUTHORITATIVE. Layouts form a fixed, finite, repo-owned id space (VertexLayoutId). Each registered pipeline declares a vertexLayoutId; the checker FAILS on a missing id, a stale/renamed enum value, or a vertexLayout string that disagrees with the enum's canonical name."
     },
     {
       "field": "renderPassCompat",
@@ -142,6 +142,7 @@
       },
       "specializationParams": [],
       "vertexLayout": "static_prop_40B",
+      "vertexLayoutId": "StaticProp40B",
       "renderPassCompat": "StaticPropOpaque (registered)",
       "depthState": {
         "test": true,
@@ -176,6 +177,7 @@
       },
       "specializationParams": [],
       "vertexLayout": "static_prop_40B",
+      "vertexLayoutId": "StaticProp40B",
       "renderPassCompat": "sub-pass of StaticPropOpaque (runtime fetches Opaque desc; alpha = texture-array select + shader discard)",
       "depthState": {
         "test": true,
@@ -209,6 +211,7 @@
       },
       "specializationParams": [],
       "vertexLayout": "mech_GpuMechVertex_48B",
+      "vertexLayoutId": "MechGpuVertex48B",
       "renderPassCompat": "MechOpaque (registered)",
       "depthState": {
         "test": true,
@@ -240,6 +243,7 @@
       },
       "specializationParams": [],
       "vertexLayout": "static_prop_40B",
+      "vertexLayoutId": "StaticProp40B",
       "renderPassCompat": "sub-pass (camera depth-prepass; color masked by caller glColorMask)",
       "depthState": {
         "test": true,
@@ -286,7 +290,7 @@
   },
   "answers": {
     "can_every_registered_pipeline_produce_a_stable_logical_key": "YES, partial \u00e2\u20ac\u201d all 4 produce the authoritative core (depth/cull/blend-factor/attachment-mask/render-pass-compat) plus a finite-but-not-yet-id'd shaderVariantId.",
-    "authoritative_vs_descriptive": "AUTHORITATIVE: depthState, renderPassCompat, materialLayout (binding/sampler/material ABI), blend factor, cull mode, attachment mask. DESCRIPTIVE: shaderVariantId, specializationParams, vertexLayout, per-pipeline descriptor grouping. MISSING: rasterState (frontFace/polygonOffset), blendEquation, colorWriteMask granularity.",
+    "authoritative_vs_descriptive": "AUTHORITATIVE: depthState, renderPassCompat, vertexLayout (VERTEXLAYOUT-AUTHORITY-1), materialLayout (binding/sampler/material ABI), blend factor, cull mode, attachment mask. DESCRIPTIVE: shaderVariantId, specializationParams, per-pipeline descriptor grouping. MISSING: rasterState (frontFace/polygonOffset), blendEquation, colorWriteMask granularity.",
     "excluded_families": "9 ad-hoc raster passes + 2 SSBO/gl_VertexID-driven families (see excluded_draw_families).",
     "smallest_pilot": "MechOpaque."
   },
