@@ -106,18 +106,20 @@
     {
       "field": "rasterState",
       "status": "PARTIAL",
-      "source": "PIPELINEKEY-RASTERSTATE-FRONTFACE-AUTHORITY-1: PipelineDesc.frontFace (RenderCore::FrontFace enum) applied by applyPipeline (pipeline_binder.cpp glFrontFace); PipelineDesc.cullMode applied alongside. Cross-checked by scripts/check-pipeline-key.py against each pipeline's frontFace/cullState.",
+      "source": "PIPELINEKEY-RASTERSTATE-FRONTFACE-AUTHORITY-1 (frontFace/cullMode) + SHADOW-CASTER-PIPELINE-REGISTRATION-1 (polygonOffsetEnable): PipelineDesc.{frontFace,cullMode,polygonOffsetEnable}. frontFace/cullMode applied by applyPipeline; polygonOffsetEnable is DESCRIPTIVE for the shadow rows (not applyPipeline-driven). Cross-checked by scripts/check-pipeline-key.py against each pipeline row.",
       "vk_mapping": "VkPipelineRasterizationStateCreateInfo (frontFace, polygonMode, depthBias/polygonOffset)",
       "authoritative": true,
       "authoritative_subaxes": [
         "frontFace (RenderCore::FrontFace, per-pipeline row, checked)",
-        "cullMode (RenderCore::CullMode, per-pipeline row, checked)"
+        "cullMode (RenderCore::CullMode, per-pipeline row, checked)",
+        "polygonOffsetEnable (RenderCore PipelineDesc.polygonOffsetEnable bool, per-pipeline row, checked — ENABLE/DISABLE ONLY)"
       ],
       "gaps": [
-        "polygonOffset / depthBias (real consumers = unregistered shadow/terrain passes; depth bias is a shader axis, single-sourced in terrain_depth_bias.hglsl — NOT modeled here)",
+        "polygonOffset factor/units MAGNITUDE — intentionally EXCLUDED/DYNAMIC: runtime-mutable via ImGui (shadowBiasFactor_/Units_, gos_postprocess.h), the VK_DYNAMIC_STATE_DEPTH_BIAS analog; not a static key field",
+        "depthBias (shader axis, single-sourced in terrain_depth_bias.hglsl — NOT modeled here)",
         "polygonMode (only a future DebugWireframe pipeline needs it)"
       ],
-      "note": "Promoted MISSING -> PARTIAL. frontFace + cullMode are now repo-owned per-pipeline rows; all registered pipelines are Ccw + cull-back (GL default), so applyPipeline's glFrontFace is a behavioral no-op that ends the registered set's dependence on ambient global winding. polygonOffset/depthBias deferred to SHADOW-CASTER-PIPELINE-REGISTRATION."
+      "note": "frontFace + cullMode + polygonOffsetEnable are repo-owned per-pipeline rows. The 3 shadow-caster pipelines (ShadowTerrain/ShadowStaticProp/ShadowMech) are DESCRIPTIVE (pipelineDescRegistered=false, not applyPipeline-routed) — they exist so polygonOffsetEnable is an authoritative fact (only ShadowStaticProp=true). Polygon offset factor/units stay dynamic. Active applyPipeline routing of shadow state = SHADOW-CASTER-APPLYPIPELINE-ROUTING-1 (later, gated)."
     },
     {
       "field": "colorMaskAttachmentMask",
@@ -159,6 +161,7 @@
         "mode": "Back"
       },
       "frontFace": "Ccw",
+      "polygonOffsetEnable": false,
       "colorMaskAttachmentMask": {
         "color0": true,
         "color1": true,
@@ -195,6 +198,7 @@
         "mode": "Back"
       },
       "frontFace": "Ccw",
+      "polygonOffsetEnable": false,
       "colorMaskAttachmentMask": {
         "color0": true,
         "color1": true,
@@ -230,6 +234,7 @@
         "mode": "Back"
       },
       "frontFace": "Ccw",
+      "polygonOffsetEnable": false,
       "colorMaskAttachmentMask": {
         "color0": true,
         "color1": true,
@@ -263,12 +268,58 @@
         "mode": "Back"
       },
       "frontFace": "Ccw",
+      "polygonOffsetEnable": false,
       "colorMaskAttachmentMask": {
         "color0": false,
         "color1": false,
         "color2": false
       },
       "key_producible": "partial"
+    },
+    {
+      "id": "ShadowTerrain",
+      "pipelineDescRegistered": false,
+      "descriptive": "SHADOW-CASTER-PIPELINE-REGISTRATION-1: descriptive row, NOT applyPipeline-routed. vertexLayout deferred (not modeled this slice).",
+      "shaderVariantId": { "base": "shadow_terrain", "macros": [] },
+      "specializationParams": [],
+      "renderPassCompat": "Shadow (RenderPassId::Shadow)",
+      "depthState": { "test": true, "write": true, "func": "Less" },
+      "blendState": { "factor": "Opaque" },
+      "cullState": { "mode": "None" },
+      "frontFace": "Ccw",
+      "polygonOffsetEnable": false,
+      "colorMaskAttachmentMask": { "color0": false, "color1": false, "color2": false },
+      "key_producible": "descriptive"
+    },
+    {
+      "id": "ShadowStaticProp",
+      "pipelineDescRegistered": false,
+      "descriptive": "SHADOW-CASTER-PIPELINE-REGISTRATION-1: descriptive row, NOT applyPipeline-routed. The ONLY shadow caster with polygon offset ON (factor/units 2.0/4.0 are dynamic/ImGui, not modeled). vertexLayout deferred.",
+      "shaderVariantId": { "base": "shadow_static_prop", "macros": [] },
+      "specializationParams": [],
+      "renderPassCompat": "Shadow (RenderPassId::Shadow)",
+      "depthState": { "test": true, "write": true, "func": "Less" },
+      "blendState": { "factor": "Opaque" },
+      "cullState": { "mode": "None" },
+      "frontFace": "Ccw",
+      "polygonOffsetEnable": true,
+      "colorMaskAttachmentMask": { "color0": false, "color1": false, "color2": false },
+      "key_producible": "descriptive"
+    },
+    {
+      "id": "ShadowMech",
+      "pipelineDescRegistered": false,
+      "descriptive": "SHADOW-CASTER-PIPELINE-REGISTRATION-1: descriptive row, NOT applyPipeline-routed. vertexLayout deferred.",
+      "shaderVariantId": { "base": "shadow_mech", "macros": [] },
+      "specializationParams": [],
+      "renderPassCompat": "Shadow (RenderPassId::Shadow)",
+      "depthState": { "test": true, "write": true, "func": "Less" },
+      "blendState": { "factor": "Opaque" },
+      "cullState": { "mode": "None" },
+      "frontFace": "Ccw",
+      "polygonOffsetEnable": false,
+      "colorMaskAttachmentMask": { "color0": false, "color1": false, "color2": false },
+      "key_producible": "descriptive"
     }
   ],
   "excluded_draw_families": {

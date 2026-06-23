@@ -167,6 +167,12 @@ def main():
                          "canonical-name comment")
     for p in schema.get("registered_pipelines", []):
         vid = p.get("vertexLayoutId")
+        # SHADOW-CASTER-PIPELINE-REGISTRATION-1: descriptive shadow rows defer
+        # vertex-layout modeling — a pipeline that declares NEITHER vertexLayout
+        # NOR vertexLayoutId is exempt. A pipeline that declares one but not the
+        # other still FAILs (half-declared = drift).
+        if not vid and "vertexLayout" not in p:
+            continue
         if not vid:
             fails.append(f"pipeline '{p['id']}' has no vertexLayoutId "
                          "(vertexLayout is authoritative — id is required)")
@@ -208,6 +214,32 @@ def main():
         if cullmodes and mode and mode not in cullmodes:
             fails.append(f"pipeline '{p['id']}' cullState.mode '{mode}' absent "
                          f"from CullMode enum {cullmodes} (stale/renamed)")
+
+    # SHADOW-CASTER-PIPELINE-REGISTRATION-1: polygonOffsetEnable is now an
+    # authoritative ENABLE/DISABLE-only subaxis. (1) every registered pipeline
+    # must declare a boolean polygonOffsetEnable (missing -> FAIL); (2) the
+    # PipelineDesc struct must carry the bool field (parsed from PipelineDesc.h);
+    # (3) the factor/units MAGNITUDES must NOT be modeled as static fields —
+    # neither a schema pipeline key nor a PipelineDesc field — because they are
+    # dynamic/ImGui state (FAIL if present).
+    if "polygonOffsetEnable" not in desc_raw:
+        fails.append(f"PipelineDesc in {DESC_H} has no polygonOffsetEnable field "
+                     "(SHADOW-CASTER-PIPELINE-REGISTRATION-1)")
+    for p in schema.get("registered_pipelines", []):
+        if not isinstance(p.get("polygonOffsetEnable"), bool):
+            fails.append(f"pipeline '{p['id']}' missing boolean polygonOffsetEnable "
+                         "(rasterState polygonOffset enable is authoritative)")
+        for forbidden in ("polygonOffsetFactor", "polygonOffsetUnits",
+                          "polygonOffsetBias", "depthBiasConstant", "depthBiasSlope"):
+            if forbidden in p:
+                fails.append(f"pipeline '{p['id']}' models polygon-offset magnitude "
+                             f"'{forbidden}' as a static field — factor/units are "
+                             "dynamic state, must NOT be keyed")
+    # factor/units must not be a static PipelineDesc field either
+    for forbidden in ("polygonOffsetFactor", "polygonOffsetUnits"):
+        if forbidden in desc_raw:
+            fails.append(f"PipelineDesc in {DESC_H} declares '{forbidden}' — "
+                         "polygon-offset magnitude is dynamic state, must not be a field")
 
     # SPIRV-MECHOPAQUE-PIPELINEKEY-INTEGRATION-1: cross-link the pipeline-key
     # contract to the baked SPIR-V artifact contract. For any registered pipeline

@@ -30,6 +30,7 @@ void applyPipeline(const RenderCore::PipelineDesc& desc) {
             case RenderCore::DepthFunc::GreaterEqual: glDepthFn = GL_GEQUAL;  break;
             case RenderCore::DepthFunc::Always:       glDepthFn = GL_ALWAYS;  break;
             case RenderCore::DepthFunc::Equal:        glDepthFn = GL_EQUAL;   break;
+            case RenderCore::DepthFunc::Less:         glDepthFn = GL_LESS;    break;
         }
         glDepthFunc(glDepthFn);
     }
