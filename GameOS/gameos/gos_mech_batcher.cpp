@@ -325,6 +325,20 @@ static GLint s_loc_u_mechGlassLumaThresh     = -1;
 static GLint s_loc_u_mechGlassMaxChanThresh  = -1;
 static GLint s_loc_u_mechSpecDebugMask       = -1;
 static GLint s_loc_u_mechBackFillStrength    = -1;
+// BT2018-MECH-MATERIAL-TUNING-1: live ImGui-tunable imported-mech albedo knobs
+// (external linkage; bound by the Graphics Options "BT2018 Imported Skin" sliders).
+// Applied imported-mech-only in mech.frag (renderFlags bit 3); stock untouched.
+//
+// Defaults are GAMMA-NEUTRAL (1.0) + a mild brightness lift (1.1), NOT full sRGB
+// decode. Strict pow(2.2) is "technically sRGB-correct" but MC2's legacy Blinn mech
+// path is not a linear/PBR pipeline (no energy model / tone-map / env fill), so
+// linearizing only the albedo crushes dark BT skins while nothing downstream
+// compensates. User-dialed visual result: gamma 1.0 + scale 1.1 reads right against
+// stock for both a light (marauder) and a dark (blackwidow) reference mech.
+float g_importedMechGamma       = 1.0f;
+float g_importedMechAlbedoScale = 1.1f;
+static GLint s_loc_u_importedGamma           = -1;
+static GLint s_loc_u_importedAlbedoScale     = -1;
 // Slice C1: StandardLit toggle. Returns -1 until mech.frag declares the uniform;
 // guarded with >= 0 at upload so no crash when shader lacks it.
 static GLint s_loc_u_standardLitEnabled      = -1;
@@ -548,6 +562,11 @@ static void loadProgramsIfNeeded() {
     if (s_mechViewUniforms) {
         mechPrefix += "#define MC2_USE_VIEW_UNIFORMS 1\n";
     }
+    // BT2018-MECH-MATERIAL-GAMMA-1: enable the imported-mech sRGB->linear albedo
+    // correction. mech.vert forwards renderFlags bit 3; mech.frag linearizes albedo
+    // for imported mechs only. Always defined — stock mechs have the bit unset, so
+    // the runtime path is byte-identical for them (the varying is just always 0).
+    mechPrefix += "#define MC2_IMPORTED_MECH_MATERIAL 1\n";
 
     s_mechProgramObj = glsl_program::makeProgram(
         "mech", "shaders/mech.vert", "shaders/mech.frag", mechPrefix.c_str());
@@ -616,6 +635,10 @@ static void loadProgramsIfNeeded() {
     s_loc_u_mechGlassMaxChanThresh  = loc("u_mechGlassMaxChanThresh");
     s_loc_u_mechSpecDebugMask       = loc("u_mechSpecDebugMask");
     s_loc_u_mechBackFillStrength    = loc("u_mechBackFillStrength");
+    // BT2018-MECH-MATERIAL-GAMMA-1/TUNING-1: imported-mech albedo knobs (locations
+    // exist only when MC2_IMPORTED_MECH_MATERIAL is defined; guarded >= 0 at upload).
+    s_loc_u_importedGamma           = loc("u_importedGamma");
+    s_loc_u_importedAlbedoScale     = loc("u_importedAlbedoScale");
     // Slice C1: StandardLit toggle (default 0 = passthrough; shader may not declare it yet).
     s_loc_u_standardLitEnabled      = loc("u_standardLitEnabled");
     // Slice C2: PBR detail surface samplers + tile scale.
@@ -1862,6 +1885,12 @@ void GpuMechBatcher::flush() {
             inst.baseBoneOffset     = actorBoneBase[si];
             inst.lightDataIndex     = d.lightDataIndex;
             inst.renderFlags        = d.renderFlags;
+            // BT2018-MECH-MATERIAL-GAMMA-1: tag imported BT mechs (renderFlags bit 3)
+            // so the frag linearizes their sRGB-authored albedo. Stock types have
+            // importedGpuType == nullptr, so the bit stays clear (no-op for them).
+            if (ps.typeLodIdx < s_typeLodRecords.size() &&
+                s_typeLodRecords[ps.typeLodIdx].importedGpuType)
+                inst.renderFlags |= 0x8u;
             unpack(d.highlightARGB, inst.aRGBHighlight);
             unpack(d.fogARGB,       inst.fogRGB);
             // M2.5 (Q3 unconditional): carry the RenderWorld handle through
@@ -2054,6 +2083,9 @@ void GpuMechBatcher::flush() {
     // Static uniforms.
     glUniform1i(s_loc_u_tex,      0);
     glUniform1f(s_loc_u_fogValue, 1.0f);
+    // BT2018-MECH-MATERIAL-GAMMA-1/TUNING-1: imported-mech albedo knobs (live ImGui).
+    if (s_loc_u_importedGamma       >= 0) glUniform1f(s_loc_u_importedGamma,       g_importedMechGamma);
+    if (s_loc_u_importedAlbedoScale >= 0) glUniform1f(s_loc_u_importedAlbedoScale, g_importedMechAlbedoScale);
     // Slice B1: lighting mode 0 = Slice A flat-white passthrough,
     // 1 = calc_light() per-vertex. Set per-flush from killswitch.
     if (s_loc_u_lightingMode >= 0)
@@ -2586,6 +2618,15 @@ extern "C" void  batcher_setMechMetalRoughness(float r) {
     s_mechMetalRoughness = r;
 }
 extern "C" float batcher_getMechMetalRoughness()             { return s_mechMetalRoughness; }
+// BT2018-MECH-MATERIAL-GAMMA-1/TUNING-1: imported-mech albedo knobs (imported only).
+extern "C" void  batcher_setImportedMechGamma(float g) {
+    if (g < 1.0f) g = 1.0f; if (g > 2.4f) g = 2.4f; g_importedMechGamma = g;
+}
+extern "C" float batcher_getImportedMechGamma()              { return g_importedMechGamma; }
+extern "C" void  batcher_setImportedMechAlbedoScale(float s) {
+    if (s < 0.25f) s = 0.25f; if (s > 2.5f) s = 2.5f; g_importedMechAlbedoScale = s;
+}
+extern "C" float batcher_getImportedMechAlbedoScale()        { return g_importedMechAlbedoScale; }
 extern "C" void  batcher_setMechGlassRoughness(float r) {
     if (r < 0.04f) r = 0.04f;
     if (r > 1.0f)  r = 1.0f;

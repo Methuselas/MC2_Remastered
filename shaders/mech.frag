@@ -38,6 +38,15 @@ in vec3       v_worldPos;
 flat in vec3  v_mechSunDirGL;
 flat in int   v_mechSunFound;
 #endif
+// BT2018-MECH-MATERIAL-GAMMA-1: imported-mech marker (renderFlags bit 3).
+#ifdef MC2_IMPORTED_MECH_MATERIAL
+flat in uint v_importedMech;
+// Live-tunable (ImGui "BT2018 Imported Skin") imported-mech albedo knobs. Defaults
+// gamma-NEUTRAL 1.0 + mild lift 1.1 (NOT full sRGB decode — legacy Blinn path is not
+// linear/PBR, so pow(2.2) crushes dark BT skins). Gamma is a knob, not the fix.
+uniform float u_importedGamma;        // exponent: 1.0 = neutral .. 2.2 = full sRGB decode
+uniform float u_importedAlbedoScale;  // post-gamma brightness multiplier
+#endif
 
 uniform sampler2D u_tex;
 // Slice C2/C3/D + PBR-LAYERED-1: StandardLit GGX with two-layer triplanar material.
@@ -156,6 +165,18 @@ void main() {
     if ((u_materialFlags & ALPHA_TEST_BIT) != 0 && tex_color.a < 0.5) {
         discard;
     }
+
+#ifdef MC2_IMPORTED_MECH_MATERIAL
+    // BT2018-MECH-MATERIAL-GAMMA-1: imported BT skins are sRGB-authored PBR albedo.
+    // This legacy Blinn path samples them un-linearized, so they read ~2.2x too
+    // bright/flat (the StandardLit GGX branch already does pow(rgb,2.2)). Decode
+    // sRGB->linear ONCE, imported mechs only (renderFlags bit 3). Stock mechs:
+    // v_importedMech == 0 -> byte-identical no-op. Alpha already handled above.
+    if (v_importedMech != 0u) {
+        tex_color.rgb = pow(tex_color.rgb, vec3(u_importedGamma));
+        tex_color.rgb *= u_importedAlbedoScale;
+    }
+#endif
 
     vec4 c = tex_color * v_litColor;
     c.rgb += v_highlightColor.rgb * v_highlightColor.a;

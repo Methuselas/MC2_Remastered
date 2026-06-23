@@ -92,6 +92,11 @@ extern "C" float batcher_getMechSpecularStrength(void);
 extern "C" void  batcher_setMechSpecularStrength(float s);
 extern "C" float batcher_getMechMetalRoughness(void);
 extern "C" void  batcher_setMechMetalRoughness(float r);
+// BT2018-MECH-MATERIAL-GAMMA-1/TUNING-1: imported-mech albedo knobs (imported only).
+extern "C" float batcher_getImportedMechGamma(void);
+extern "C" void  batcher_setImportedMechGamma(float g);
+extern "C" float batcher_getImportedMechAlbedoScale(void);
+extern "C" void  batcher_setImportedMechAlbedoScale(float s);
 extern "C" int   batcher_getStandardLitEnabled(void);
 extern "C" void  batcher_setStandardLitEnabled(int on);
 extern "C" float batcher_getPbrMetallicInfluence(void);
@@ -1637,6 +1642,34 @@ static void drawEnvGatesSection() {
 
 // MECH-LIGHTING-UI-1: mech ambient/specular/PBR roughness controls.
 static void drawMechSection() {
+    // BT2018 imported-skin albedo correction (imported BT mechs ONLY; stock untouched).
+    // Imported skins are sRGB-authored PBR albedo; the legacy lighting path samples
+    // them un-linearized, so they read washed/flat. Gamma decodes sRGB->linear;
+    // Scale brings dark skins back to legacy brightness parity.
+    ImGui::SeparatorText("BT2018 Imported Skin");
+    {
+        float ig = batcher_getImportedMechGamma();
+        if (ImGui::SliderFloat("Imported Albedo Gamma##mech", &ig, 1.0f, 2.4f, "%.2f"))
+            batcher_setImportedMechGamma(ig);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("sRGB->linear exponent, IMPORTED BT mechs only.\n"
+                              "2.2 = full decode (over-darkens dark skins in legacy\n"
+                              "lighting); lower eases it. Stock mechs unaffected.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##impgamma")) batcher_setImportedMechGamma(2.2f);
+
+        float is = batcher_getImportedMechAlbedoScale();
+        if (ImGui::SliderFloat("Imported Albedo Scale##mech", &is, 0.25f, 2.5f, "%.2f"))
+            batcher_setImportedMechAlbedoScale(is);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Post-gamma brightness, IMPORTED BT mechs only.\n"
+                              "Raise to pull dark skins toward legacy parity.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##impscale")) batcher_setImportedMechAlbedoScale(1.0f);
+    }
+    ImGui::Spacing();
+    ImGui::SeparatorText("Mech Lighting");
+
     // Ambient
     bool ambOn = batcher_getMechAmbientEnabled() != 0;
     if (ImGui::Checkbox("Ambient##mech", &ambOn))

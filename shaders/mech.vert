@@ -123,10 +123,18 @@ flat out int  v_mechSunFound;
 #ifdef MC2_OBJECT_ID_BUFFER
 flat out uint v_objectIdRaw;
 #endif
+// BT2018-MECH-MATERIAL-GAMMA-1: forward the imported-mech marker (renderFlags bit 3)
+// so the frag can sRGB->linear correct imported BT skins only. flat (integer varying).
+#ifdef MC2_IMPORTED_MECH_MATERIAL
+flat out uint v_importedMech;
+#endif
 
 void main() {
     uint instIdx = uint(u_instanceBase) + uint(gl_InstanceID);
     GpuMechInstance inst = instances[instIdx];
+#ifdef MC2_IMPORTED_MECH_MATERIAL
+    v_importedMech = (inst.renderFlags >> 3) & 1u;
+#endif
 
     // Bone transform: boneT is the transpose of the Stuff LinearMatrix4D.
     // boneT * vec4(pos,1) yields the world position in the Stuff/MLR camera
