@@ -2113,8 +2113,11 @@ void Mech3DAppearance::resetPaintScheme (DWORD red, DWORD green, DWORD blue)
 	DWORD cchighlight1 = ((green >> 5) & 7) + (((green >> 13) & 7) << 3) + (((green >> 21) & 7) << 6);
 	DWORD cchighlight2 = ((blue >> 5) & 7) + (((blue >> 13) & 7) << 3) + (((blue >> 21) & 7) << 6);
 	DWORD paintInstance = (ccbase << 18) + (cchighlight1 << 9) + (cchighlight2);
-	
-	if (fileExists(textureName))
+
+	// KTX2-INFRA-1: accept a BC7 .ktx2 sidecar when the .tga is absent (homogeneous
+	// imported-mech textures ship as .ktx2 only; txmmgr KTX_PRIMARY decodes it). Was
+	// fileExists(textureName) — that skipped -> black mech for .ktx2-only deploys.
+	if (textureOrKtxSidecarExists(textureName))
 	{
 		// gosHint_MipmapFilter0: opt this texture into GL mipmap+trilinear
 		// via gosTexture::createHardwareTexture. Full mip chain is
