@@ -26,6 +26,10 @@
 #include"abl.h"
 #endif
 
+// ABL-OPCODE-BOUNDS-HARDEN gates (defined in ablxstd.cpp)
+extern bool s_ablArgGuard;
+extern bool s_ablRuntimeSoftfail;
+
 //***************************************************************************
 
 //----------
@@ -203,6 +207,16 @@ void runtimeError (int errCode) {
 	}
 
 	sprintf(message, "ABL RUNTIME ERROR %s [line %d] - (type %d) %s\n", (FileNumber > -1) ? CurModule->getSourceFile(FileNumber) : "unavailable", execLineNumber, errCode, runtimeErrorMessages[errCode]);
+	if (s_ablArgGuard && s_ablRuntimeSoftfail) {
+		// H3: log-and-continue instead of aborting the process.
+		char softMsg[512];
+		const char* srcFile = (FileNumber > -1) ? CurModule->getSourceFile(FileNumber) : "unavailable";
+		sprintf(softMsg, "[ABL_SOFTFAIL] func=(runtime) module=%s file=%s line=%d errCode=%d — %s",
+			CurModule ? CurModule->getName() : "(unknown)", srcFile, execLineNumber, errCode,
+			runtimeErrorMessages[errCode]);
+		printf("%s\n", softMsg); fflush(stdout);
+		return;
+	}
 	ABL_Fatal(-ABL_ERR_RUNTIME_ABORT, message);
 }
 
