@@ -3,7 +3,7 @@
   "summary": {
     "verdict_schema": "GO",
     "verdict_implementation": "DEFER",
-    "headline": "Every registered pipeline can produce a STABLE PARTIAL logical PipelineKey from already-banked contracts. Authoritative today: depthState, cullMode, blend factor, color-attachment mask, renderPassCompat. Descriptive/not-yet-authoritative: shaderVariantId (no repo-owned enum \u00e2\u20ac\u201d only runtime glProgramName + the informal unique_name_suffix_), specializationParams, materialLayout (per-pipeline mapping), rasterState (frontFace/polygonOffset unmodeled). vertexLayout is now AUTHORITATIVE (VERTEXLAYOUT-AUTHORITY-1: repo-owned VertexLayoutId enum, recorded + checked). Implementation (a real keyed cache) waits on SPIRV-CONSUMER-PILOT / OFFLINE-SHADER-VARIANT-BUILD.",
+    "headline": "Every registered pipeline can produce a STABLE PARTIAL logical PipelineKey from already-banked contracts. Authoritative today: depthState, cullMode, blend factor, color-attachment mask, renderPassCompat. Descriptive/not-yet-authoritative: shaderVariantId (no repo-owned enum \u00e2\u20ac\u201d only runtime glProgramName + the informal unique_name_suffix_), specializationParams, materialLayout (per-pipeline mapping), rasterState polygonOffset/depthBias (unregistered-pass consumers). vertexLayout is now AUTHORITATIVE (VERTEXLAYOUT-AUTHORITY-1); rasterState is PARTIAL — frontFace + cullMode authoritative (PIPELINEKEY-RASTERSTATE-FRONTFACE-AUTHORITY-1), polygonOffset/depthBias still a gap. Implementation (a real keyed cache) waits on SPIRV-CONSUMER-PILOT / OFFLINE-SHADER-VARIANT-BUILD.",
     "can_every_registered_pipeline_produce_a_stable_logical_key": "YES (partial \u00e2\u20ac\u201d authoritative core + explicitly-listed gaps)",
     "smallest_pilot_family": "MechOpaque"
   },
@@ -105,16 +105,19 @@
     },
     {
       "field": "rasterState",
-      "status": "MISSING",
-      "source": "(not modeled in PipelineDesc)",
+      "status": "PARTIAL",
+      "source": "PIPELINEKEY-RASTERSTATE-FRONTFACE-AUTHORITY-1: PipelineDesc.frontFace (RenderCore::FrontFace enum) applied by applyPipeline (pipeline_binder.cpp glFrontFace); PipelineDesc.cullMode applied alongside. Cross-checked by scripts/check-pipeline-key.py against each pipeline's frontFace/cullState.",
       "vk_mapping": "VkPipelineRasterizationStateCreateInfo (frontFace, polygonMode, depthBias/polygonOffset)",
-      "authoritative": false,
-      "gaps": [
-        "frontFace",
-        "polygonOffset / depthBias",
-        "polygonMode"
+      "authoritative": true,
+      "authoritative_subaxes": [
+        "frontFace (RenderCore::FrontFace, per-pipeline row, checked)",
+        "cullMode (RenderCore::CullMode, per-pipeline row, checked)"
       ],
-      "note": "Default GL state assumed today. Must be added to PipelineDesc before a real PSO."
+      "gaps": [
+        "polygonOffset / depthBias (real consumers = unregistered shadow/terrain passes; depth bias is a shader axis, single-sourced in terrain_depth_bias.hglsl — NOT modeled here)",
+        "polygonMode (only a future DebugWireframe pipeline needs it)"
+      ],
+      "note": "Promoted MISSING -> PARTIAL. frontFace + cullMode are now repo-owned per-pipeline rows; all registered pipelines are Ccw + cull-back (GL default), so applyPipeline's glFrontFace is a behavioral no-op that ends the registered set's dependence on ambient global winding. polygonOffset/depthBias deferred to SHADOW-CASTER-PIPELINE-REGISTRATION."
     },
     {
       "field": "colorMaskAttachmentMask",
@@ -155,6 +158,7 @@
       "cullState": {
         "mode": "Back"
       },
+      "frontFace": "Ccw",
       "colorMaskAttachmentMask": {
         "color0": true,
         "color1": true,
@@ -190,6 +194,7 @@
       "cullState": {
         "mode": "Back"
       },
+      "frontFace": "Ccw",
       "colorMaskAttachmentMask": {
         "color0": true,
         "color1": true,
@@ -224,6 +229,7 @@
       "cullState": {
         "mode": "Back"
       },
+      "frontFace": "Ccw",
       "colorMaskAttachmentMask": {
         "color0": true,
         "color1": true,
@@ -256,6 +262,7 @@
       "cullState": {
         "mode": "Back"
       },
+      "frontFace": "Ccw",
       "colorMaskAttachmentMask": {
         "color0": false,
         "color1": false,
@@ -290,7 +297,7 @@
   },
   "answers": {
     "can_every_registered_pipeline_produce_a_stable_logical_key": "YES, partial \u00e2\u20ac\u201d all 4 produce the authoritative core (depth/cull/blend-factor/attachment-mask/render-pass-compat) plus a finite-but-not-yet-id'd shaderVariantId.",
-    "authoritative_vs_descriptive": "AUTHORITATIVE: depthState, renderPassCompat, vertexLayout (VERTEXLAYOUT-AUTHORITY-1), materialLayout (binding/sampler/material ABI), blend factor, cull mode, attachment mask. DESCRIPTIVE: shaderVariantId, specializationParams, per-pipeline descriptor grouping. MISSING: rasterState (frontFace/polygonOffset), blendEquation, colorWriteMask granularity.",
+    "authoritative_vs_descriptive": "AUTHORITATIVE: depthState, renderPassCompat, vertexLayout (VERTEXLAYOUT-AUTHORITY-1), materialLayout (binding/sampler/material ABI), blend factor, cull mode, attachment mask. PARTIAL: rasterState (frontFace + cullMode authoritative; polygonOffset/depthBias gap). DESCRIPTIVE: shaderVariantId, specializationParams, per-pipeline descriptor grouping. MISSING: blendEquation, colorWriteMask granularity, rasterState polygonOffset/depthBias/polygonMode.",
     "excluded_families": "9 ad-hoc raster passes + 2 SSBO/gl_VertexID-driven families (see excluded_draw_families).",
     "smallest_pilot": "MechOpaque."
   },

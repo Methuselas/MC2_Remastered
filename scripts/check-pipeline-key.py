@@ -31,6 +31,7 @@ import sys
 SCHEMA = "docs/render-backend-seams/pipeline-key-schema.json"
 INVENTORY = "docs/render-backend-seams/shader-permutation-inventory.json"
 REGISTRY_H = "RenderCore/PipelineRegistry.h"
+DESC_H = "RenderCore/PipelineDesc.h"
 
 ALLOWED_STATUS = {"AUTHORITATIVE", "PARTIAL", "DESCRIPTIVE", "MISSING"}
 
@@ -52,6 +53,22 @@ def parse_enum_ids(text):
             ids.append((em.group(1), int(em.group(2))))
     ids.sort(key=lambda x: x[1])
     return [n for n, _ in ids]
+
+
+def parse_enum_values(text, enum_name):
+    """Bare enum-class value names (no '= N' required), excluding Count_/Invalid.
+    For RenderCore::FrontFace { Ccw, Cw } / CullMode { None, Back, Front }."""
+    m = re.search(r"enum\s+class\s+" + re.escape(enum_name) +
+                  r"\s*:[^{]*\{(.*?)\}", text, re.S)
+    if not m:
+        return []
+    body = re.sub(r"//.*", "", m.group(1))
+    out = []
+    for tok in body.split(","):
+        nm = tok.split("=")[0].strip()
+        if nm and nm not in ("Count_", "Invalid"):
+            out.append(nm)
+    return out
 
 
 def parse_vertex_layouts(text):
@@ -85,6 +102,10 @@ def main():
     enum_ids = parse_enum_ids(re.sub(r"/\*.*?\*/", "", registry_raw, flags=re.S))
     # VERTEXLAYOUT-AUTHORITY-1: raw text (// layout: comments preserved).
     vlayouts = parse_vertex_layouts(registry_raw)
+    # PIPELINEKEY-RASTERSTATE-FRONTFACE-AUTHORITY-1: enums live in PipelineDesc.h
+    desc_raw = read(os.path.join(root, DESC_H))
+    frontfaces = parse_enum_values(desc_raw, "FrontFace")
+    cullmodes = parse_enum_values(desc_raw, "CullMode")
 
     fails, warns = [], []
 
@@ -159,6 +180,34 @@ def main():
             fails.append(
                 f"pipeline '{p['id']}' vertexLayout '{p.get('vertexLayout')}' "
                 f"!= enum canonical '{canon}' for {vid} (rename drift)")
+
+    # PIPELINEKEY-RASTERSTATE-FRONTFACE-AUTHORITY-1: rasterState frontFace (and
+    # the existing cullMode) are now repo-owned per-pipeline rows. (1) the field
+    # must be PARTIAL or AUTHORITATIVE (not MISSING/DESCRIPTIVE) so the promotion
+    # cannot silently regress; (2) the FrontFace enum must be present in
+    # PipelineDesc.h; (3) every registered pipeline must declare a frontFace
+    # whose value EXISTS in the enum (missing -> FAIL; stale/renamed -> FAIL);
+    # (4) its cullState.mode must be a valid CullMode value (zero-risk sibling
+    # check, mirrors the C++ row).
+    if field_status.get("rasterState") not in ("PARTIAL", "AUTHORITATIVE"):
+        fails.append("field 'rasterState' must be PARTIAL or AUTHORITATIVE "
+                     "(PIPELINEKEY-RASTERSTATE-FRONTFACE-AUTHORITY-1); "
+                     f"found '{field_status.get('rasterState')}'")
+    if not frontfaces:
+        fails.append("FrontFace enum not found / empty in "
+                     f"{DESC_H} (frontFace authority missing)")
+    for p in schema.get("registered_pipelines", []):
+        ff = p.get("frontFace")
+        if not ff:
+            fails.append(f"pipeline '{p['id']}' has no frontFace "
+                         "(rasterState frontFace is authoritative — required)")
+        elif ff not in frontfaces:
+            fails.append(f"pipeline '{p['id']}' frontFace '{ff}' absent from "
+                         f"FrontFace enum {frontfaces} (stale/renamed)")
+        mode = p.get("cullState", {}).get("mode")
+        if cullmodes and mode and mode not in cullmodes:
+            fails.append(f"pipeline '{p['id']}' cullState.mode '{mode}' absent "
+                         f"from CullMode enum {cullmodes} (stale/renamed)")
 
     # SPIRV-MECHOPAQUE-PIPELINEKEY-INTEGRATION-1: cross-link the pipeline-key
     # contract to the baked SPIR-V artifact contract. For any registered pipeline
