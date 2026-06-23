@@ -81,6 +81,92 @@ for field in $EXPECTED; do
     fi
 done
 
+# --- MATERIAL-GPU-STRUCT-STRIDE-CHECK-1 -------------------------------------
+# Struct-ABI safety across ALL MaterialGpu[] producer/consumer lanes (the
+# "split-brain" the GPU-MATERIAL-CONTRACT-RECON-1 flagged: 3 SSBO tables —
+# static-prop binding 5 [shader-read], mech profile binding 7, mech per-actor
+# binding 2 — all share the ONE 32 B MaterialGpu struct). This guards the struct
+# ABI those lanes implicitly agree on; it is NOT a binding-number contract
+# (binding occupancy is WARN-covered by check-binding-slots.py) and NOT material
+# unification (M4, deferred — see docs/render-backend-seams/gpu-material-contract-recon-1.md).
+# It catches: a SECOND divergent MaterialGpu definition (C++ or GLSL) instead of
+# reusing the one struct / #include; removal of the 32 B size static_assert; a
+# GLSL MaterialTable buffer block whose element type is not MaterialGpu.
+STRIDE_PY='
+import os, re, sys
+root = sys.argv[1]
+CANON = ["albedoTex","normalTex","metallicRoughnessTex","emissiveTex",
+         "flags","baseColorFactor","metallicFactor","roughnessFactor"]
+viol = []
+
+def fields_in(path, start_re):
+    seen, ins = [], False
+    for line in open(path, encoding="utf-8", errors="replace"):
+        if re.search(start_re, line): ins = True
+        if ins:
+            for f in CANON:
+                if f not in seen and re.search(r"\b"+f+r"\b", line): seen.append(f)
+            if re.match(r"\s*\};", line) and seen: break
+    return seen
+
+# 1. C++ struct DEFINITIONS (brace; exclude forward decls "struct MaterialGpu;")
+cpp_defs = []
+for d in ["RenderCore","GameOS","mclib","code"]:
+    base = os.path.join(root, d)
+    for dp,_,fns in os.walk(base):
+        for fn in fns:
+            if not fn.endswith((".h",".hpp",".cpp",".cc",".cxx")): continue
+            p = os.path.join(dp, fn)
+            for line in open(p, encoding="utf-8", errors="replace"):
+                if re.search(r"\bstruct\b[^;]*\bMaterialGpu\b[^;]*\{", line):
+                    cpp_defs.append(os.path.relpath(p, root).replace("\\","/"))
+                    break
+if len(cpp_defs) != 1:
+    viol.append("expected exactly 1 C++ struct MaterialGpu definition, found %d: %s"
+                % (len(cpp_defs), cpp_defs))
+
+# 2. size static_assert present
+mg = os.path.join(root, "RenderCore", "MaterialGpu.h")
+if "sizeof(MaterialGpu) == 32" not in open(mg, encoding="utf-8", errors="replace").read():
+    viol.append("RenderCore/MaterialGpu.h lost its static_assert(sizeof(MaterialGpu) == 32)")
+
+# 3. GLSL struct DEFINITIONS — exactly 1 (the mirror); any def must match CANON
+glsl_defs = []
+shroot = os.path.join(root, "shaders")
+for dp,_,fns in os.walk(shroot):
+    for fn in fns:
+        if not fn.endswith((".frag",".vert",".comp",".tesc",".tese",".geom",".glsl",".hglsl")): continue
+        p = os.path.join(dp, fn); rel = os.path.relpath(p, root).replace("\\","/")
+        txt = open(p, encoding="utf-8", errors="replace").read()
+        if re.search(r"\bstruct\s+MaterialGpu\s*\{", txt):
+            glsl_defs.append(rel)
+            got = fields_in(p, r"\bstruct\s+MaterialGpu\s*\{")
+            if got != CANON:
+                viol.append("GLSL %s struct MaterialGpu fields %s != canonical %s" % (rel, got, CANON))
+if len(glsl_defs) != 1:
+    viol.append("expected exactly 1 GLSL struct MaterialGpu definition (the mirror), found %d: %s"
+                % (len(glsl_defs), glsl_defs))
+
+# 4. every GLSL "buffer MaterialTable {" block uses MaterialGpu as element type
+for dp,_,fns in os.walk(shroot):
+    for fn in fns:
+        if not fn.endswith((".frag",".vert",".comp",".tesc",".tese",".geom",".glsl",".hglsl")): continue
+        p = os.path.join(dp, fn); rel = os.path.relpath(p, root).replace("\\","/")
+        lines = open(p, encoding="utf-8", errors="replace").read().splitlines()
+        for i,l in enumerate(lines):
+            if re.search(r"\bbuffer\s+MaterialTable\b", l) and "//" not in l.split("buffer")[0]:
+                window = "\n".join(lines[i:i+12])
+                if "MaterialGpu" not in window:
+                    viol.append("GLSL %s:%d buffer MaterialTable block does not reference MaterialGpu" % (rel, i+1))
+
+for v in viol: print("ERROR (stride-check): " + v, file=sys.stderr)
+sys.exit(1 if viol else 0)
+'
+if ! python3 -c "$STRIDE_PY" "$REPO_ROOT"; then
+    echo "ERROR: MaterialGpu struct-stride/ABI cross-check failed (see above)." >&2
+    FAIL=1
+fi
+
 [ "$FAIL" -ne 0 ] && exit 1
-[ "$QUIET" -eq 0 ] && echo "OK: MaterialGpu field order matches (8 fields)"
+[ "$QUIET" -eq 0 ] && echo "OK: MaterialGpu field order matches (8 fields) + struct-ABI cross-check (1 C++ def, 1 GLSL def, size assert, MaterialTable element type)"
 exit 0
