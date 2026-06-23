@@ -1097,6 +1097,25 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "buffers ([GPUBUF v1] residency tag/kind/frames/vbBytes/ibBytes/liveFences). "
         "Diagnostic only; default-OFF."
     },
+    {
+        "MC2_GPUBUF_LIGHT_GROWONCE",
+        "MC2_GPUBUF_LIGHT_GROWONCE",
+        EnvVarKind::Feature,
+        false,
+        "LIGHT-GROW-ONCE-SUBDATA-1 (AMD-safe intermediate for the light SSBO orphan "
+        "churn; NOT the full GpuStorageRing ring). Keeps the single persistent light "
+        "SSBO (same handle, slot 20 binding, std430 layout/shader contract) but stops "
+        "the per-frame FULL glBufferData orphan re-spec (gameos_graphics.cpp "
+        "gos_LightDataSsbo_Upload/_UploadSplit): per frame uploads ONLY the live used "
+        "bytes via glBufferSubData; grows the GL buffer ONLY when used bytes exceed "
+        "capacity (rare; +128-record headroom matching the CPU backing step; grow "
+        "drains via glFinish before delete/recreate/rebind, logged once). Default-OFF "
+        "=> the existing LIGHTSSBO-ORPHAN-1 path runs UNCHANGED (byte-identical GL "
+        "stream + output; kill switch). ON => [GPUBUF v1] light orphan bytes drop to "
+        "~0 (only rare grow frames emit a glBufferData). NVIDIA is a HARD BLOCKER "
+        "before default-on: SubData into the in-flight whole-frame/cross-phase light "
+        "buffer STALLS on NVIDIA (the stall the orphan dodged); tolerated on AMD."
+    },
 };
 
 // ---------------------------------------------------------------------------
