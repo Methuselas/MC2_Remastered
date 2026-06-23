@@ -66,8 +66,15 @@ PROFILES = {
         # MC2_FX_FORCE_SPAWN: 8 mechs fire all weapons once (dmgDone=0).
         # MC2_VFX_ORACLE_TUBE_COVERAGE: occlusion-query the tube ribbon draw ->
         # [VFX_ORACLE_TUBE coverage] samples=N to stderr (-> capture.log).
+        # MC2_VFX_ORACLE_TUBE=1 enables the GPU tube-ribbon bridge (without it the
+        # bridge is gated off -> queue empty -> samples=0); _COVERAGE=1 wraps the
+        # ribbon draw in the occlusion query; _RENDER + GPU_PARTICLES select the
+        # GPU VFX path. Proven combo: ribbons=12 samples=3210 (mc2_01 werewolf).
         "force_env": {"MC2_FX_FORCE_SPAWN": "1",
-                      "MC2_VFX_ORACLE_TUBE_COVERAGE": "1"},
+                      "MC2_VFX_ORACLE_TUBE": "1",
+                      "MC2_VFX_ORACLE_TUBE_COVERAGE": "1",
+                      "MC2_VFX_ORACLE_RENDER": "1",
+                      "MC2_GPU_PARTICLES": "1"},
         "runs": 1,                           # VFX spawn is NONDETERMINISTIC — no
         "warmup": 0,                         # byte-stability; oracle is the proof
         "gate": "oracle_coverage",

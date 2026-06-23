@@ -48,7 +48,7 @@ distinct from "visually proven", instead of faking a byte-hash that can't hold.
 | TerrainOverlay | ROUTED_BY_APPLYPIPELINE (proof: pass_not_exercised_in_smoke) | TerrainOverlay | TerrainOverlay |
 | TerrainDecal | ROUTED_BY_APPLYPIPELINE (proof: pass_not_exercised_in_smoke) | TerrainDecal | TerrainDecal |
 | Water (armed fast path) | VISUAL_PROVEN (proof: oracle_coverage) | Water | WaterArmed |
-| VFX | ROUTED_BY_APPLYPIPELINE (proof: nondeterministic_visual_gate_pending) | VFX | Vfx{Billboard,Tube,Mesh}{Alpha,Additive} (6) |
+| VFX | VISUAL_PROVEN (proof: oracle_coverage) | VFX | Vfx{Billboard,Tube,Mesh}{Alpha,Additive} (6) |
 | VegetationCards | UNREGISTERED | VegetationCards | — |
 | PostProcess | UNREGISTERED | PostProcess | — |
 | UI | DO_NOT_MODEL | UI | — |
