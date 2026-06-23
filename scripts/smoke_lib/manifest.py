@@ -17,7 +17,7 @@ from typing import Optional
 
 VALID_TIERS = {"tier1", "tier2", "tier3", "skip"}
 VALID_KEYS = {"duration", "heartbeat_timeout_load", "heartbeat_timeout_play",
-              "profile", "active", "reason", "allow_asset_oob"}
+              "profile", "active", "reason", "allow_asset_oob", "mod", "deps"}
 
 
 @dataclass
@@ -31,6 +31,11 @@ class Entry:
     active: bool = False
     reason: str = ""
     allow_asset_oob: bool = False
+    # SMOKE-MODMISSION-ENV-GUARDS-1: structured mod fields.
+    # mod: exact mods/<DirName> for the mod this mission belongs to (empty = stock).
+    # deps: comma-separated compat layer dir names (e.g. "mc2x-compat,mco-compat").
+    mod: str = ""
+    deps: str = ""
     source_line: int = 0
 
 
@@ -75,5 +80,9 @@ def parse_manifest(path: Path) -> list[Entry]:
                 e.reason = v
             elif k == "allow_asset_oob":
                 e.allow_asset_oob = v.lower() in ("1", "true", "yes")
+            elif k == "mod":
+                e.mod = v
+            elif k == "deps":
+                e.deps = v
         out.append(e)
     return out

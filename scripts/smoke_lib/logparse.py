@@ -35,6 +35,13 @@ MISSING_FILE_PATTERNS = (
     re.compile(r"Missing file:", re.I),
 )
 
+# SMOKE-MODMISSION-ENV-GUARDS-1: detect engine STOP("Unable to open Mission File")
+# abort during load phase.  mission.cpp:2072 calls this when .fit resolution fails.
+MISSION_LOAD_FAIL_PATTERNS = (
+    re.compile(r"Unable to open Mission File", re.I),
+    re.compile(r"STOP\(.*Mission File", re.I),
+)
+
 
 @dataclass
 class PerfRow:
@@ -77,6 +84,9 @@ class LogSummary:
     smoke_summary_stage: Optional[str] = None
     destroys: int = 0
     perf: PerfRow = field(default_factory=PerfRow)
+    # SMOKE-MODMISSION-ENV-GUARDS-1: set True if the engine printed an
+    # "Unable to open Mission File" / STOP line before play phase started.
+    mission_load_fail_seen: bool = False
 
 
 def parse_log(text: str,
@@ -137,6 +147,12 @@ def parse_log(text: str,
             if p.search(line): s.shader_errors += 1; break
         for p in MISSING_FILE_PATTERNS:
             if p.search(line): s.missing_files += 1; break
+
+        if not in_play_phase:
+            for p in MISSION_LOAD_FAIL_PATTERNS:
+                if p.search(line):
+                    s.mission_load_fail_seen = True
+                    break
 
         m = SUMMARY_RE.search(line)
         if m:
