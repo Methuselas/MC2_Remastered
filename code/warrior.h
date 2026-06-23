@@ -47,6 +47,8 @@
 #include"dgvehicl.h"
 #endif
 
+#include "brain_task_queue.h"  // MC2_BRAIN_TASKQ: per-warrior brain task queue substrate
+
 #ifndef DTEAM_H
 #include"dteam.h"
 #endif
@@ -862,6 +864,7 @@ class MechWarrior {
 		// ABL Brain and Memory
 		MemoryCell				memory[NUM_MEMORY_CELLS];
 		ABLModulePtr			brain;
+		BrainTaskQueue*         brainTaskQueue = nullptr;   // MC2_BRAIN_TASKQ: mission-ephemeral, not serialized
 		int32_t                 warriorBrainHandle;
 		SymTableNodePtr			brainAlarmCallback[NUM_PILOT_ALARMS];
 		char					debugStrings[NUM_PILOT_DEBUG_STRINGS][MAXLEN_PILOT_DEBUG_STRING];
