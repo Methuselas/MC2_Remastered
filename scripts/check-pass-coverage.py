@@ -149,10 +149,26 @@ def main():
                 fails.append(f"'{name}' renderPassId '{rpid}' not in RenderPassId enum (stale)")
 
         if st in ROUTED_PLUS:
-            if not pid:
-                fails.append(f"'{name}' status {st} requires a pipelineId")
-            elif pid not in routed:
-                fails.append(f"'{name}' status {st} but no applyPipeline(...PipelineId::{pid}) evidence in sources")
+            # evidence required for the single pipelineId OR every id in pipelineIds
+            ids_for_evidence = ([pid] if pid else []) + list(e.get("pipelineIds", []))
+            if not ids_for_evidence:
+                fails.append(f"'{name}' status {st} requires a pipelineId / pipelineIds")
+            for one in ids_for_evidence:
+                if one not in routed:
+                    fails.append(f"'{name}' status {st} but no applyPipeline(...PipelineId::{one}) evidence in sources")
+        # VFX-APPLYPIPELINE-ROUTING-1: nondeterministic visual passes that are
+        # ROUTED but cannot get a byte-hash gate may declare a documented
+        # proofStatus instead of claiming VISUAL_PROVEN. Allowed values only;
+        # VISUAL_PROVEN/SPIRV_ELIGIBLE must NOT carry a 'pending' proofStatus.
+        ps = e.get("proofStatus")
+        if ps is not None:
+            ALLOWED_PROOF = {"byte_identical", "perceptual_ab", "oracle_coverage",
+                             "nondeterministic_visual_gate_pending"}
+            if ps not in ALLOWED_PROOF:
+                fails.append(f"'{name}' proofStatus '{ps}' not in {sorted(ALLOWED_PROOF)}")
+            if st in ("VISUAL_PROVEN", "SPIRV_ELIGIBLE") and ps == "nondeterministic_visual_gate_pending":
+                fails.append(f"'{name}' claims {st} but proofStatus is still pending — "
+                             "do not mark proven while the visual gate is unresolved")
         if st == "SPIRV_ELIGIBLE" and spv is not None:
             base = e.get("shaderBase")
             if base and base not in spv:
