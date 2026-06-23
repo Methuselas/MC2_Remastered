@@ -63,6 +63,7 @@ namespace gosFX { void DiagFrameTick(); }
 #include "gos_terrain_water_stream.h"
 #include "gpu_driven_common.h"
 #include "mc2_hitch_trace.h"  // GPU-UPDATE-BUFFER-COUNTER-1: MC2_GL_BufferData_Owner (include LAST, after all GL headers)
+#include "utils/gpu_ring_buffer.h"  // GPU-BUFFER-WRAPPER-TIER0-HUD-1: gated HUD/gosMesh persistent-coherent ring
 
 class gosRenderer;
 class gosFont;
@@ -603,6 +604,31 @@ class gosRenderMaterial {
 const std::string gosRenderMaterial::s_mvp = std::string("mvp");
 const std::string gosRenderMaterial::s_fog_color = std::string("fog_color");
 
+// ---------------------------------------------------------------------------
+// GPU-BUFFER-WRAPPER-TIER0-HUD-1 — gate state (default OFF).
+//   MC2_GPUBUF_RING            : route gosMesh::draw/drawIndexed through the
+//                                persistent-coherent fenced ring instead of the
+//                                per-batch glBufferData orphan. OFF => legacy
+//                                path, byte-identical GL stream + output.
+//   MC2_GPUBUF_RING_FORCE_WRAP : negative test — deterministically advance the
+//                                ring twice without an intervening endFrame so
+//                                the one-endFrame-per-beginFrame invariant trips
+//                                (proves the fence-per-frame guard is live).
+//   MC2_GPUBUF_RESIDENCY       : list the live HUD ring buffers once per frame.
+// Cached once on first query (single predicted-false branch when unset).
+static bool gosHudRingEnabled() {
+    static const bool s_on = (std::getenv("MC2_GPUBUF_RING") != nullptr);
+    return s_on;
+}
+static bool gosHudRingForceWrap() {
+    static const bool s_on = (std::getenv("MC2_GPUBUF_RING_FORCE_WRAP") != nullptr);
+    return s_on;
+}
+static bool gosHudRingResidency() {
+    static const bool s_on = (std::getenv("MC2_GPUBUF_RESIDENCY") != nullptr);
+    return s_on;
+}
+
 class gosMesh {
     public:
         typedef WORD INDEX_TYPE;
@@ -631,12 +657,40 @@ class gosMesh {
 
             gosASSERT(pmesh);
 
+            // GPU-BUFFER-WRAPPER-TIER0-HUD-1 (WATCHPOINT 4): drain + unmap +
+            // delete the ring buffers before the mesh goes away. ~GpuMeshRing
+            // does this; explicit delete keeps the lifetime obvious and ensures
+            // no GL buffer leaks across renderer teardown / device reset.
+            delete pmesh->ring_;
+            pmesh->ring_ = nullptr;
+
             delete[] pmesh->pvertex_data_;
             delete[] pmesh->pindex_data_;
 
             GLuint b[] = {pmesh->vb_, pmesh->ib_};
             glDeleteBuffers(sizeof(b)/sizeof(b[0]), b);
         }
+
+        // Lazily create (gate ON) and return the persistent-coherent ring for
+        // this mesh, or nullptr if creation/mapping failed (caller falls back to
+        // the legacy orphan path). Sized to this mesh's FIXED capacity x N slots.
+        mc2gpu::GpuMeshRing* ensureRing() {
+            if (ring_) return ring_->valid() ? ring_ : nullptr;
+            ring_ = new mc2gpu::GpuMeshRing();
+            char tag[48];
+            std::snprintf(tag, sizeof(tag), "gosMesh_p%d_v%d",
+                          (int)prim_type_, vertex_capacity_);
+            if (!ring_->create(tag,
+                               (uint32_t)sizeof(gos_VERTEX), (uint32_t)vertex_capacity_,
+                               (uint32_t)sizeof(INDEX_TYPE), (uint32_t)index_capacity_)) {
+                delete ring_;
+                ring_ = nullptr;
+                return nullptr;
+            }
+            return ring_;
+        }
+
+        mc2gpu::GpuMeshRing* ringIfLive() const { return ring_; }
 
         bool addVertices(gos_VERTEX* vertices, int count) {
             if(num_vertices_ + count <= vertex_capacity_) {
@@ -699,8 +753,9 @@ class gosMesh {
             , pvertex_data_(NULL)    
             , pindex_data_(NULL)    
             , prim_type_(prim_type)
-            , vb_(-1)  
-            ,ib_(-1) 
+            , vb_(-1)
+            ,ib_(-1)
+            , ring_(nullptr)
          {
          }
 
@@ -714,6 +769,11 @@ class gosMesh {
 
         GLuint vb_;
         GLuint ib_;
+
+        // GPU-BUFFER-WRAPPER-TIER0-HUD-1: lazily-created persistent-coherent ring
+        // (gate ON only). Owned by this mesh; destroyed in destroy(). nullptr =>
+        // legacy orphan path.
+        mc2gpu::GpuMeshRing* ring_;
 };
 
 const std::string gosMesh::s_tex1 = std::string("tex1");
@@ -725,13 +785,34 @@ void gosMesh::draw(gosRenderMaterial* material) const
     if(num_vertices_ == 0)
         return;
 
-    updateBuffer(vb_, GL_ARRAY_BUFFER, pvertex_data_, num_vertices_*sizeof(gos_VERTEX), GL_DYNAMIC_DRAW_ARB);
+    // GPU-BUFFER-WRAPPER-TIER0-HUD-1: ring path (gate ON) vs legacy orphan (OFF).
+    // The two branches differ ONLY in (a) how the current frame's vertices reach
+    // the GPU (memcpy into a coherent map vs glBufferData orphan) and (b) the
+    // first-vertex of the draw (slot base vs 0). Same data, same count, same
+    // primitive, same bind-to-0 epilogue => byte-identical draw-visible result.
+    mc2gpu::GpuMeshRing* ring =
+        gosHudRingEnabled() ? const_cast<gosMesh*>(this)->ensureRing() : nullptr;
+
+    GLint firstVertex = 0;
+    GLuint drawVb = vb_;
+    if (ring) {
+        ring->beginFrame();
+        if (gosHudRingForceWrap()) {
+            // NEGATIVE TEST: advance again with no intervening endFrame so the
+            // one-endFrame-per-beginFrame invariant trips (proves the guard).
+            ring->beginFrame();
+        }
+        firstVertex = ring->writeVertices(pvertex_data_, (uint32_t)num_vertices_);
+        drawVb = ring->vb();
+    } else {
+        updateBuffer(vb_, GL_ARRAY_BUFFER, pvertex_data_, num_vertices_*sizeof(gos_VERTEX), GL_DYNAMIC_DRAW_ARB);
+    }
 
     material->apply();
 
     material->setSamplerUnit(s_tex1, 0);
 
-	glBindBuffer(GL_ARRAY_BUFFER, vb_);
+	glBindBuffer(GL_ARRAY_BUFFER, drawVb);
     CHECK_GL_ERROR;
 
     material->applyVertexDeclaration();
@@ -752,13 +833,15 @@ void gosMesh::draw(gosRenderMaterial* material) const
             gosASSERT(0 && "Wrong primitive type");
     }
 
-    glDrawArrays(pt, 0, num_vertices_);
+    glDrawArrays(pt, firstVertex, num_vertices_);
 
     material->endVertexDeclaration();
     material->end();
 
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 
+    if (ring)
+        ring->endFrame();   // fence the slot AFTER the draw consumes it.
 }
 
 void gosMesh::drawIndexed(gosRenderMaterial* material) const
@@ -768,15 +851,38 @@ void gosMesh::drawIndexed(gosRenderMaterial* material) const
     if(num_vertices_ == 0)
         return;
 
-    updateBuffer(vb_, GL_ARRAY_BUFFER, pvertex_data_, num_vertices_*sizeof(gos_VERTEX), GL_DYNAMIC_DRAW);
-    updateBuffer(ib_, GL_ELEMENT_ARRAY_BUFFER, pindex_data_, num_indices_*sizeof(INDEX_TYPE), GL_DYNAMIC_DRAW);
+    // GPU-BUFFER-WRAPPER-TIER0-HUD-1: ring path (gate ON) vs legacy orphan (OFF).
+    // Ring path uses glDrawElementsBaseVertex so the same index data (offset 0
+    // relative to the slot) addresses the same vertices (shifted by baseVertex).
+    // The legacy branch is the EXACT original two-orphan + glDrawElements path.
+    mc2gpu::GpuMeshRing* ring =
+        gosHudRingEnabled() ? const_cast<gosMesh*>(this)->ensureRing() : nullptr;
+
+    GLint  baseVertex   = 0;
+    GLvoid* indexOffset = NULL;
+    GLuint drawVb = vb_;
+    GLuint drawIb = ib_;
+    if (ring) {
+        ring->beginFrame();
+        if (gosHudRingForceWrap()) {
+            // NEGATIVE TEST: see gosMesh::draw — trips the fence-per-frame guard.
+            ring->beginFrame();
+        }
+        baseVertex  = ring->writeVertices(pvertex_data_, (uint32_t)num_vertices_);
+        indexOffset = (GLvoid*)(uintptr_t)ring->writeIndices(pindex_data_, (uint32_t)num_indices_);
+        drawVb = ring->vb();
+        drawIb = ring->ib();
+    } else {
+        updateBuffer(vb_, GL_ARRAY_BUFFER, pvertex_data_, num_vertices_*sizeof(gos_VERTEX), GL_DYNAMIC_DRAW);
+        updateBuffer(ib_, GL_ELEMENT_ARRAY_BUFFER, pindex_data_, num_indices_*sizeof(INDEX_TYPE), GL_DYNAMIC_DRAW);
+    }
 
     material->apply();
 
     material->setSamplerUnit(s_tex1, 0);
 
-	glBindBuffer(GL_ARRAY_BUFFER, vb_);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ib_);
+	glBindBuffer(GL_ARRAY_BUFFER, drawVb);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, drawIb);
     CHECK_GL_ERROR;
 
     material->applyVertexDeclaration();
@@ -797,7 +903,11 @@ void gosMesh::drawIndexed(gosRenderMaterial* material) const
             gosASSERT(0 && "Wrong primitive type");
     }
 
-    glDrawElements(pt, num_indices_, getIndexSizeBytes()==2 ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT, NULL);
+    const GLenum idxType = getIndexSizeBytes()==2 ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT;
+    if (ring)
+        glDrawElementsBaseVertex(pt, num_indices_, idxType, indexOffset, baseVertex);
+    else
+        glDrawElements(pt, num_indices_, idxType, indexOffset);
 
     material->endVertexDeclaration();
     material->end();
@@ -805,6 +915,8 @@ void gosMesh::drawIndexed(gosRenderMaterial* material) const
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
+    if (ring)
+        ring->endFrame();   // fence the slot AFTER the draw consumes it.
 }
 
 void gosMesh::drawIndexed(HGOSBUFFER ib, HGOSBUFFER vb, HGOSVERTEXDECLARATION vdecl, gosRenderMaterial* material)
@@ -5510,6 +5622,20 @@ void gosRenderer::endFrame()
     // permanent black terrain. Menu / mech-bay frames never call ComputePreflight(),
     // so they never set the arm; the end-of-frame clear is a no-op for them.
     gos_terrain_indirect::BeginFrame();
+
+    // GPU-BUFFER-WRAPPER-TIER0-HUD-1 (acceptance #4): residency dump of the live
+    // HUD rings, throttled. Gated by MC2_GPUBUF_RESIDENCY; no-op otherwise.
+    if (gosHudRingResidency()) {
+        static uint32_t s_resCountdown = 0;
+        if (s_resCountdown == 0) {
+            s_resCountdown = 300;
+            gosMesh* meshes[] = { quads_, tris_, indexed_tris_, lines_, points_, text_ };
+            for (gosMesh* m : meshes) {
+                if (m && m->ringIfLive()) m->ringIfLive()->reportResidency();
+            }
+        }
+        --s_resCountdown;
+    }
 
     // RENDER_STATES v1: 600-frame summary line. Always-on counter; gated print.
     rsFrames_++;

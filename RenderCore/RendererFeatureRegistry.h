@@ -1062,6 +1062,41 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "silent matrix space/handedness/reverse-Z/w-sign regressions; the GL-free "
         "host counterpart is tests/unit/test_xform_convention.cpp."
     },
+    {
+        "MC2_GPUBUF_RING",
+        "MC2_GPUBUF_RING",
+        EnvVarKind::Feature,
+        false,
+        "GPU-BUFFER-WRAPPER-TIER0-HUD-1: route the fixed-capacity gosMesh HUD/2D "
+        "meshes (gameos_graphics.cpp draw/drawIndexed) through a 3-frame "
+        "persistent-coherent FENCED ring (utils/gpu_ring_buffer.h) instead of the "
+        "per-batch glBufferData orphan. Pilot of the GpuRingBuffer<N> shape for "
+        "Vulkan-readiness. Default-OFF => legacy orphan path, byte-identical GL "
+        "stream + output. ON => the [GPUBUF v1] hud orphan count drops to ~0 (ring "
+        "memcpys into a coherent map). Only the self-contained orphan-then-draw "
+        "gosMesh methods are routed; uploadBuffers() (terrain) stays on legacy."
+    },
+    {
+        "MC2_GPUBUF_RING_FORCE_WRAP",
+        "MC2_GPUBUF_RING_FORCE_WRAP",
+        EnvVarKind::Trace,
+        false,
+        "GPU-BUFFER-WRAPPER-TIER0-HUD-1 NEGATIVE TEST: deterministically advance "
+        "the HUD ring twice (beginFrame without an intervening endFrame) so the "
+        "one-endFrame-per-beginFrame / fence-per-frame invariant trips. Proves the "
+        "safety guard is live (logs [GPUBUF v1] event=begin_without_end; aborts "
+        "under a debug build). Requires MC2_GPUBUF_RING=1. Default-OFF; never set "
+        "in production."
+    },
+    {
+        "MC2_GPUBUF_RESIDENCY",
+        "MC2_GPUBUF_RESIDENCY",
+        EnvVarKind::Trace,
+        false,
+        "GPU-BUFFER-WRAPPER-TIER0-HUD-1: every ~300 frames list the live HUD ring "
+        "buffers ([GPUBUF v1] residency tag/kind/frames/vbBytes/ibBytes/liveFences). "
+        "Diagnostic only; default-OFF."
+    },
 };
 
 // ---------------------------------------------------------------------------
