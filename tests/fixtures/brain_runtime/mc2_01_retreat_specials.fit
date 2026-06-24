@@ -1,0 +1,10 @@
+FITini
+; DISPATCH-EFFECT-UNITRETREAT-1 fixture — canonical Unit.Retreat verb.
+; Warrior4 Enhanced mode (via mc2_01_ai.fit): DO Unit.Retreat issues
+; TACTICAL_ORDER_WITHDRAW exactly once.
+
+[BrainSpecial]
+
+[Body]
+st DO0 = "Unit.Retreat"
+st DO1 = "HOLD"
