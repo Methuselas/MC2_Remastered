@@ -22,7 +22,7 @@ features cannot silently fork between game and editor.
 | S3 | EDITOR-OBJECTID-PICK-BRIDGE — GPU ObjectID pick is PRIMARY | `45f6ee5a` | shipped |
 | S4 | editor/game lifecycle parity | `8b02ae3c` | doc-only |
 | S5 | editor/game pass-contract parity | `f8d8606a` | shipped |
-| S6 | GAME-EDITOR-RENDER-FRAME-DRIVER — shared `RenderFrameDriver` seam | `fbba4349` | shipped (editor real / game gated A/B) |
+| S6 | GAME-EDITOR-RENDER-FRAME-DRIVER — shared `RenderFrameDriver` seam | `52df0771` | shipped (editor real / game gated A/B) |
 
 ---
 
