@@ -112,9 +112,9 @@ bool g_useGpuMechShadowStateStrip = envFlagDefaultOn("MC2_GPU_MECH_SHADOW_STATE_
 // Opt-out: MC2_GPU_MECH_LEAF_SKIP=0
 bool g_useGpuMechLeafSkip = envFlagDefaultOn("MC2_GPU_MECH_LEAF_SKIP");
 
-// Slice D-sensor-skip: see gos_mech_killswitch.h.
-// Opt-out: MC2_GPU_MECH_SENSOR_SKIP=0
-bool g_useGpuMechSensorSkip = envFlagDefaultOn("MC2_GPU_MECH_SENSOR_SKIP");
+// MECH-KILLSWITCH-SENSORSKIP-RETIRE-1: MC2_GPU_MECH_SENSOR_SKIP retired to a
+// constant (was default-ON, strict no-op). Skip logic is now inline in
+// Mech3DAppearance::updateGeometry. See gos_mech_killswitch.h.
 
 // ---------------------------------------------------------------------------
 // File-static state
