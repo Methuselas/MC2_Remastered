@@ -47,11 +47,14 @@ struct MechPreviewRenderScope {
 	~MechPreviewRenderScope() { --g_mechPreviewRenderDepth; }
 };
 
-// Slice B1: gates VS-side calc_light() in mech.vert. Independent of
-// g_useGpuMechs so an operator can keep GPU mech rendering on while
-// flipping lighting off if a B1 regression surfaces. No effect when
-// g_useGpuMechs is off (the entire batcher path skips).
-extern bool g_useGpuMechLighting;
+// MECH-KILLSWITCH-LIGHTING-RETIRE-1 (2026-06-23): MC2_GPU_MECH_LIGHTING (Slice
+// B1, default-ON) RETIRED to constant. u_lightingMode is now always 1 (calc_light).
+// Safe: the low-UBO hardware guard that once forced this off was REMOVED by
+// [LIGHTSSBO v1] (LightsData is now an unbounded std430 SSBO, binding 20 —
+// gos_mech_batcher.cpp:616-642 "Gate removed"), so no runtime writer survived and
+// the flag was pure env-config. OFF was a visual degrade (unlit white mechs), never
+// shipped. Audit: MECH-KILLSWITCH-AUDIT-1. NOTE: if LightsData ever reverts to a UBO,
+// the hardware guard must return and this goes back to a runtime bool (default-true).
 
 // Slice C1: render-side mech cull. Skips submitActor for mechs the
 // GPU frustum/visibility shader marks invisible. RENDER-ONLY — does
@@ -59,12 +62,13 @@ extern bool g_useGpuMechLighting;
 // is off. Independent of MC2_GPU_CULL_LIFECYCLE.
 extern bool g_useGpuMechCull;
 
-// Slice C2: weighted multi-bone skinning in mech.vert. Off = rigid
-// per-bone (single boneIndices.x lookup, Slice A behavior). On =
-// weighted blend across all 4 bone slots. Stock data is byte-
-// identical between the two modes (boneWeights = 1,0,0,0 collapses);
-// the difference is only meaningful for imported meshes.
-extern bool g_useGpuMechSkin;
+// MECH-KILLSWITCH-SKIN-RETIRE-1 (2026-06-23): MC2_GPU_MECH_SKIN (Slice C2,
+// default-ON) RETIRED to constant. u_skinningMode is now always 1 (weighted).
+// Proven no-op: stock data is (1,0,0,0) → the weighted sum collapses to the
+// rigid single-bone result (mech.vert:156-169), and ALL 59 BT2018 imports are
+// single-bone-per-vertex at source (3.27M verts, 0 blended — verified). The
+// weighted branch stays as latent forward capacity for a future blend-skinned
+// importer (do NOT delete it). Audit: MECH-KILLSWITCH-AUDIT-1.
 
 // Slice C3-revised (2026-05-09): wire TransformMultiShape_PositionsOnly
 // for the GPU mech body. Skips the per-vertex CPU lighting kernel that
