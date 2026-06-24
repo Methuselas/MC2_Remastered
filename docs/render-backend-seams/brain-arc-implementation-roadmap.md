@@ -85,3 +85,44 @@ Order them by least-risky-first (probably Guard before MoveTo before Attack).
 ## Pickup points for any session
 
 If a session needs to pick up: read this doc + `memory/brain-ai-2.14-techscript-arc.md` + the most recent `brain-runtime-*.md` / `techscript-special-dispatch-*.md` in `docs/render-backend-seams/`. The next slice is whatever's next in the "What's left" section above. The discipline rules in this doc + `memory/integration-merge-verification-rules.md` are non-negotiable.
+
+---
+
+## Addendum (2026-06-24): Mod-campaign stress findings
+
+Recons completed: `techscript-call-chain-recon-1.md` and `mod-campaign-brain-stress-recon-1.md`. Three things change the picture:
+
+### Critical content gap
+**Only `carver_v_enhanced` ships in the BrainSpecial format the dispatcher reads.** Every other mod campaign (MCO, MC2X, MC2-Exodus) has raw `.abl` scripts and runs through the legacy ABL path. The modder pre-converted carver via tooling we don't have. So:
+- Today's runtime is proven by carver + synthetic fixtures; that's the legitimate state.
+- For MCO/MC2X to actually exercise the dispatcher, we need either: (a) an ABL→BrainSpecial converter slice (substantial), (b) hand-port one stress mission per campaign as we need it (cheap, targeted), or (c) defer mod-campaign stress until later. Recommendation: **(b) for the next several slices; queue (a) as its own arc** once the runtime is feature-complete enough that the converter target is stable.
+
+### Top 3 hardest mod campaigns (future stress fleet)
+- **MC2X-TCE** (76 missions) — `OPORD.Capture`/`Repair` (no engine callsite), wolfman 6-fragment include-chain (richest Call-chaining stress).
+- **MC2-Exodus** (55 missions, 1023 warrior ABLs) — module-syntax mission brains (different parse path), unsupported `coreSentry`/`coreMoveToObject`.
+- **MechCommanderOmnitech** (69 missions) — `coreAttackTactic` + `TACTIC_HIT_AND_RUN`/`JOUST` constants. **Only campaign exercising the 2.14 tactic-weight system** — the tactic-weight slice (currently mid-term-implicit) gets MCO as its stress target.
+
+### Low-hanging fruit (~100% supported after one more verb)
+**MCO-Wolf-Dragoons, MCO-dayofheroes, MCO-MercStar, MCO-DesertFox** — only `corePower` (✅) + `coreEject` (not yet). Adding `coreEject` as a small effect verb (insert between 1F-1J as `coreEject` slice) unlocks four mod campaigns of stress coverage (modulo the conversion gap above).
+
+### Novel verbs to anticipate (beyond carver vocabulary)
+- `OPORD.Capture`, `OPORD.Repair` (MC2X-TCE)
+- `coreSentry`, `coreEscort`, `coreMoveToObject` (semantically distinct from `MoveTo`, MC2-Exodus)
+- `coreAttackTactic` + tactic-weight constants (MCO) — ties directly into the 2.14 tactic-weight system
+- `coreWait` timer/delay primitive — needs scheduler integration
+
+### Stress mission picks per slice (recon recommendations)
+| Slice | Stress mission target |
+|---|---|
+| 1E TechSpecial.Call chaining | MC2X-TCE wolfman include-chain (after hand-port or converter) |
+| 1F-1J effect verbs (Guard/MoveTo/Attack/Retreat) | MCO-ClanEagle (Guard/Patrol stresses) |
+| coreEject effect verb (insert before 1G) | MCO-Wolf-Dragoons / dayofheroes (near-100% supported after) |
+| Tactic weights | MechCommanderOmnitech (only fleet member exercising tactic constants) |
+| 1K FSM DSL | MC2-Exodus module-syntax missions (highest FSM TODO density) |
+| 1K capture/repair verbs | MC2X-TCE OPORD.Capture / OPORD.Repair |
+
+### Process tweaks (per advisor + recon)
+- Effect-verb order: **Guard → MoveTo → Attack** (Attack has target resolution risk, MoveTo has pathing risk, Guard is least spicy). Locked.
+- **1L split**: `1L-A` trace-only recognition; `1L-B` Audio + Debug apply; `1L-C` Camera + Video + TriggerArea apply (Camera/Video affect mission timing/presentation — don't bundle with debug). Locked.
+- **1D Var mission-scope policy**: trace-only this slice; mission writes deferred until a guarded-single-writer (or read-mostly + serialized) design lands. Carver's vars are ALL `scope=Mission`, so under this policy carver chains *correctly* but Var state won't persist — a separate **`1D-M` mission-scope writes** slice unblocks full carver functional execution (no longer "later"; queue near-term after 1E).
+
