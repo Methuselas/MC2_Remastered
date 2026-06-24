@@ -1,8 +1,10 @@
 // TECHSCRIPT-SPECIAL-DISPATCH-1A — trace-only dispatcher shell.
 // TECHSCRIPT-SPECIAL-DISPATCH-1B — first real effect: Brain.CorePower false → POWERDOWN.
 // TECHSCRIPT-SPECIAL-DISPATCH-1C — FSM-TODO surfacer: raw line scan for TODO comments.
+// TECHSCRIPT-DISPATCH-1D — per-unit Var namespace + minimal store.
 // Gates: MC2_BRAIN_DISPATCH (parse+trace), MC2_BRAIN_DISPATCH_APPLY (effect layer, requires DISPATCH),
-//        MC2_BRAIN_DISPATCH_FSM_TODO (FSM TODO surfacer, requires DISPATCH).
+//        MC2_BRAIN_DISPATCH_FSM_TODO (FSM TODO surfacer, requires DISPATCH),
+//        MC2_BRAIN_DISPATCH_VAR (per-unit Var store, requires DISPATCH, default OFF).
 //
 // FORBIDDEN-CALL GUARD — executeSpecialBody_TraceOnly (1A, UNCHANGED):
 // Calls ONLY fprintf + loop. DOES NOT call setGeneralTacOrder or any order/movement function.
@@ -19,9 +21,15 @@
 // Verified by inspection: no warrior pointer, no MechWarrior type, no tac-order writes.
 // This is INFORMATION ONLY: it surfaces what FSM logic the auto-conversion dropped,
 // giving the modder an inventory of state machine structure that needs hand-porting.
+//
+// VAR HANDLER CONTRACT (1D — handleVarSet / handleVarGet):
+// Calls ONLY store->set/store->get + fprintf/fflush. ZERO calls to setGeneralTacOrder
+// or any order/movement/attack/OPORD function.
+// Verified by inspection: no warrior pointer, no tac-order type, no slot writes.
 
 #include "brain_special_dispatch.h"
 #include "warrior.h"   // MechWarrior — needed for executeSpecialBody_Apply setGeneralTacOrder call
+                       // warrior.h includes mech_brain_runtime.h which defines VarStore + VarScope
 #include "tacordr.h"   // TacticalOrder, TACTICAL_ORDER_POWERDOWN, ORDER_ORIGIN_SELF
 #include <cstdio>
 #include <cstring>
@@ -29,6 +37,10 @@
 #include <regex>
 #include <string>
 #include "inifile.h"   // FitIniFile — same header used by _ai.fit loader
+
+// ---------------------------------------------------------------------------
+// Forward declaration for gate helper (defined after helpers, used by execute functions).
+static bool s_dispatchVarGate();
 
 // ---------------------------------------------------------------------------
 // Recognized verb table for DISPATCH-1A.
@@ -61,13 +73,34 @@ static bool isRecognizedVerb(const char* verb) {
 // executeSpecialBody_TraceOnly
 //
 // FORBIDDEN-CALL CONTRACT: this function body contains ONLY fprintf + fflush
-// + loop + string comparison. No tac-order writes. No movement/attack orders.
-// No state writes to any warrior or mission object.
+// + loop + string comparison + (when DISPATCH_VAR=1) store->set/get via handleVarSet/Get.
+// No tac-order writes. No movement/attack orders. No state writes to warrior or mission.
 // Verified by inspection: no warrior pointer, no MechWarrior type, no
 // setGeneralTacOrder / setPlayerTacOrder / setAlarmTacOrder / requestHelp /
 // requestTarget / clearCurTacOrder / setMainGoal / calcTacOrder / coreMoveTo.
-void executeSpecialBody_TraceOnly(const BrainSpecialBody& body, int wid) {
+void executeSpecialBody_TraceOnly(const BrainSpecialBody& body, int wid, VarStore* varStore) {
+    const bool varGate = s_dispatchVarGate();
     for (const std::string& verb : body.verbs) {
+        // When DISPATCH_VAR=1, intercept Var.Set / Var.Get before the UNKNOWN fallthrough.
+        if (varGate) {
+            const char* vp = verb.c_str();
+            if (std::strncmp(vp, "Var.Set", 7) == 0 || std::strncmp(vp, "Var.Get", 7) == 0) {
+                char key[32], value[32];
+                uint8_t scope = 0;
+                bool ok = parseVarVerb(vp, key, value, &scope);
+                if (!ok) {
+                    std::fprintf(stderr, "[BRAIN_DISPATCH_VAR_PARSE_FAIL] verb=%s wid=%d (malformed)\n", vp, wid);
+                    std::fflush(stderr);
+                    continue;
+                }
+                bool isSet = (std::strncmp(vp, "Var.Set", 7) == 0);
+                if (isSet)
+                    handleVarSet(key, value, scope, varStore, wid);
+                else
+                    handleVarGet(key, scope, varStore, wid);
+                continue;
+            }
+        }
         if (isRecognizedVerb(verb.c_str())) {
             std::fprintf(stderr, "[BRAIN_DISPATCH] verb=%s wid=%d\n", verb.c_str(), wid);
         } else {
@@ -104,10 +137,31 @@ bool bodyHasPowerdown(const BrainSpecialBody& body) {
 //
 // Returns true if the Brain.CorePower false POWERDOWN effect was applied.
 // Caller uses the return value to suppress the synthetic HOLD_TASK (one GENERAL-slot write per tick).
-bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior, int wid) {
+bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior, int wid, VarStore* varStore) {
     bool appliedEffect = false;
+    const bool varGate = s_dispatchVarGate();
 
     for (const std::string& verb : body.verbs) {
+        // When DISPATCH_VAR=1, intercept Var.Set / Var.Get before other dispatch.
+        if (varGate) {
+            const char* vp = verb.c_str();
+            if (std::strncmp(vp, "Var.Set", 7) == 0 || std::strncmp(vp, "Var.Get", 7) == 0) {
+                char key[32], value[32];
+                uint8_t scope = 0;
+                bool ok = parseVarVerb(vp, key, value, &scope);
+                if (!ok) {
+                    std::fprintf(stderr, "[BRAIN_DISPATCH_VAR_PARSE_FAIL] verb=%s wid=%d (malformed)\n", vp, wid);
+                    std::fflush(stderr);
+                    continue;
+                }
+                bool isSet = (std::strncmp(vp, "Var.Set", 7) == 0);
+                if (isSet)
+                    handleVarSet(key, value, scope, varStore, wid);
+                else
+                    handleVarGet(key, scope, varStore, wid);
+                continue;
+            }
+        }
         if (verb == "Brain.CorePower false") {
             // ONLY permitted order call in this function (RELAXED-CALL GUARD).
             TacticalOrder pdOrder;
@@ -192,6 +246,166 @@ bool parseBrainSpecialBody(const char* missionName, BrainSpecialBody& outBody) {
         std::fflush(stderr);
     }
     return outBody.loaded;
+}
+
+// ---------------------------------------------------------------------------
+// TECHSCRIPT-DISPATCH-1D: parseVarVerb
+//
+// Parses "Var.Set \"<key>\" <value> [scope=Mission]" or
+//         "Var.Get \"<key>\" [scope=Mission]"
+// into outKey, outValue, outScope.
+// outValue is only meaningful for Var.Set; for Var.Get it is set to "".
+// outScope: 0=Unit (VarScope::Unit), 1=Mission (VarScope::Mission).
+// Returns true on success; false on malformed input (empty key; missing value for Set).
+//
+// FORBIDDEN-CALL CONTRACT: calls ONLY std::strchr/strstr/strncpy/snprintf. No orders.
+bool parseVarVerb(const char* verbStr, char outKey[32], char outValue[32], uint8_t* outScope) {
+    outKey[0] = '\0';
+    outValue[0] = '\0';
+    *outScope = 0;  // default Unit
+
+    // Determine whether this is Var.Set or Var.Get.
+    bool isSet = (std::strncmp(verbStr, "Var.Set", 7) == 0 && (verbStr[7] == ' ' || verbStr[7] == '\t' || verbStr[7] == '\0'));
+    bool isGet = (std::strncmp(verbStr, "Var.Get", 7) == 0 && (verbStr[7] == ' ' || verbStr[7] == '\t' || verbStr[7] == '\0'));
+    if (!isSet && !isGet)
+        return false;
+
+    // Skip verb token + whitespace.
+    const char* p = verbStr + 7;
+    while (*p == ' ' || *p == '\t') ++p;
+
+    // Parse key token — supports two forms:
+    //   "key"   — double-quoted (canonical spec form; used in non-FIT contexts)
+    //   [key]   — bracket-quoted (FIT-safe form; FIT outer-quotes can't embed '"')
+    char closeDelim = '\0';
+    if (*p == '"') {
+        closeDelim = '"';
+    } else if (*p == '[') {
+        closeDelim = ']';
+    } else {
+        return false;  // unrecognized key delimiter
+    }
+    ++p;  // skip opening delimiter
+    const char* keyStart = p;
+    const char* keyEnd = std::strchr(p, closeDelim);
+    if (!keyEnd)
+        return false;
+    size_t keyLen = (size_t)(keyEnd - keyStart);
+    if (keyLen == 0)
+        return false;
+    if (keyLen > 31) keyLen = 31;
+    std::strncpy(outKey, keyStart, keyLen);
+    outKey[keyLen] = '\0';
+
+    p = keyEnd + 1;  // skip closing delimiter
+
+    // Skip whitespace between key and value/scope.
+    while (*p == ' ' || *p == '\t') ++p;
+
+    if (isSet) {
+        // Parse value token (whitespace-delimited; may be quoted or unquoted).
+        if (*p == '\0')
+            return false;  // missing value for Set
+
+        if (*p == '"') {
+            // Quoted value.
+            ++p;
+            const char* vStart = p;
+            const char* vEnd = std::strchr(p, '"');
+            if (!vEnd) return false;
+            size_t vLen = (size_t)(vEnd - vStart);
+            if (vLen > 31) vLen = 31;
+            std::strncpy(outValue, vStart, vLen);
+            outValue[vLen] = '\0';
+            p = vEnd + 1;
+        } else {
+            // Unquoted value — read until whitespace.
+            const char* vStart = p;
+            while (*p && *p != ' ' && *p != '\t') ++p;
+            size_t vLen = (size_t)(p - vStart);
+            if (vLen > 31) vLen = 31;
+            std::strncpy(outValue, vStart, vLen);
+            outValue[vLen] = '\0';
+        }
+
+        // Skip whitespace after value.
+        while (*p == ' ' || *p == '\t') ++p;
+    }
+
+    // Detect optional "scope=Mission" trailing token.
+    if (std::strncmp(p, "scope=Mission", 13) == 0)
+        *outScope = 1;  // VarScope::Mission
+
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// TECHSCRIPT-DISPATCH-1D: handleVarSet
+//
+// FORBIDDEN-CALL CONTRACT: calls ONLY store->set + fprintf/fflush. No order functions.
+// Verified by inspection: no warrior pointer, no TacticalOrder, no slot writes.
+void handleVarSet(const char* key, const char* value, uint8_t scope, VarStore* store, int wid) {
+    if (scope == 1 /* Mission */) {
+        // Mission-scope writes are TRACE-ONLY in 1D: no shared global store.
+        // Rationale: avoid cross-warrior nondeterminism until a guarded single-writer policy is designed.
+        std::fprintf(stderr, "[BRAIN_DISPATCH_VAR_SET_MISSION_TRACE] key=%s value=%s wid=%d (write deferred -- no shared-global writes in 1D)\n",
+                     key, value, wid);
+        std::fflush(stderr);
+        return;
+    }
+    // Unit scope.
+    if (!store) {
+        std::fprintf(stderr, "[BRAIN_DISPATCH_VAR_SET] WARN: no varStore for wid=%d key=%s (store null)\n", wid, key);
+        std::fflush(stderr);
+        return;
+    }
+    bool ok = store->set(key, value, VarScope::Unit);
+    if (ok) {
+        std::fprintf(stderr, "[BRAIN_DISPATCH_VAR_SET] key=%s value=%s scope=Unit wid=%d\n", key, value, wid);
+    } else {
+        std::fprintf(stderr, "[BRAIN_DISPATCH_VAR_SET_FULL] wid=%d key=%s (cap=%d reached -- skipped)\n",
+                     wid, key, VarStore::kVarStoreCap);
+    }
+    std::fflush(stderr);
+}
+
+// ---------------------------------------------------------------------------
+// TECHSCRIPT-DISPATCH-1D: handleVarGet
+//
+// FORBIDDEN-CALL CONTRACT: calls ONLY store->get + fprintf/fflush. No order functions.
+void handleVarGet(const char* key, uint8_t scope, VarStore* store, int wid) {
+    if (scope == 1 /* Mission */) {
+        // Mission-scope reads are TRACE-ONLY in 1D (no shared store to read from).
+        std::fprintf(stderr, "[BRAIN_DISPATCH_VAR_GET_MISSION_TRACE] key=%s wid=%d (default -- mission scope read deferred)\n",
+                     key, wid);
+        std::fflush(stderr);
+        return;
+    }
+    // Unit scope.
+    const char* val = (store) ? store->get(key, VarScope::Unit) : "0";
+    bool isHit = store && (store->find(key, VarScope::Unit) != nullptr);
+    std::fprintf(stderr, "[BRAIN_DISPATCH_VAR_GET] key=%s value=%s scope=Unit wid=%d (%s)\n",
+                 key, val, wid, isHit ? "hit" : "default");
+    std::fflush(stderr);
+}
+
+// ---------------------------------------------------------------------------
+// Gate init helper for DISPATCH_VAR (used by both execute functions).
+static bool s_dispatchVarGate() {
+    static const bool kGate = ([](){
+        const char* v = std::getenv("MC2_BRAIN_DISPATCH_VAR");
+        if (v && std::atoi(v) != 0) {
+            const char* d = std::getenv("MC2_BRAIN_DISPATCH");
+            if (!d || std::atoi(d) == 0) {
+                std::fprintf(stderr, "[BRAIN_DISPATCH_VAR] WARNING: MC2_BRAIN_DISPATCH_VAR=1 requires MC2_BRAIN_DISPATCH=1 -- var handling is INERT\n");
+                std::fflush(stderr);
+                return false;
+            }
+            return true;
+        }
+        return false;
+    })();
+    return kGate;
 }
 
 // ---------------------------------------------------------------------------

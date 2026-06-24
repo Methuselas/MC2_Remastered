@@ -5,9 +5,75 @@
 // Gate: MC2_BRAIN_RUNTIME (default OFF). Requires MC2_BRAIN_TASKQ=1.
 // 1A contract: struct exists + mode detected + arbitration COMPUTED+TRACE-LOGGED ONLY.
 // NO slot writes, NO ABL short-circuit — those are BRAIN-RUNTIME-1B / DISPATCH-1.
+//
+// TECHSCRIPT-DISPATCH-1D: per-unit Var store.
+// Gate: MC2_BRAIN_DISPATCH_VAR=1 (requires MC2_BRAIN_DISPATCH=1).
+// Fixed-cap array of VarEntry (cap 32). Mission-ephemeral. NOT serialized.
 
 #include <cstdint>
 #include "brain_special_dispatch.h"
+
+// ---------------------------------------------------------------------------
+// Per-warrior Var store (TECHSCRIPT-DISPATCH-1D).
+// Allocated inline in MechBrainRuntime (no heap). Cap = kVarStoreCap entries.
+// Linear-scan get/set — 32 entries is fast enough; no STL containers here.
+
+enum class VarScope : uint8_t {
+    Unit    = 0,  // default; key auto-namespaced per warrior id at write time
+    Mission = 1,  // modder's scope=Mission — trace-only in 1D; no shared store write
+};
+
+struct VarEntry {
+    char     key[32];    // null-terminated key (truncated to 31 chars + '\0')
+    char     value[32];  // raw token text (int/bool/float/string all stored as-is)
+    VarScope scope;
+};
+
+struct VarStore {
+    static constexpr int kVarStoreCap = 32;
+    VarEntry entries[kVarStoreCap];
+    int      count = 0;
+
+    // Returns pointer to existing entry matching key+scope, or nullptr.
+    VarEntry* find(const char* k, VarScope sc) {
+        for (int i = 0; i < count; ++i)
+            if (entries[i].scope == sc && std::strncmp(entries[i].key, k, 31) == 0)
+                return &entries[i];
+        return nullptr;
+    }
+
+    // Returns const pointer (read-only lookup).
+    const VarEntry* find(const char* k, VarScope sc) const {
+        for (int i = 0; i < count; ++i)
+            if (entries[i].scope == sc && std::strncmp(entries[i].key, k, 31) == 0)
+                return &entries[i];
+        return nullptr;
+    }
+
+    // Returns false if cap reached (soft-fail; caller emits trace).
+    bool set(const char* k, const char* v, VarScope sc) {
+        VarEntry* e = find(k, sc);
+        if (e) {
+            // Overwrite existing.
+            std::strncpy(e->value, v, 31);
+            e->value[31] = '\0';
+            return true;
+        }
+        if (count >= kVarStoreCap)
+            return false;
+        VarEntry& ne = entries[count++];
+        std::strncpy(ne.key,   k, 31); ne.key[31]   = '\0';
+        std::strncpy(ne.value, v, 31); ne.value[31] = '\0';
+        ne.scope = sc;
+        return true;
+    }
+
+    // Returns stored value string, or "0" if not found.
+    const char* get(const char* k, VarScope sc) const {
+        const VarEntry* e = find(k, sc);
+        return e ? e->value : "0";
+    }
+};
 
 enum class BrainRuntimeMode : uint8_t {
     Legacy   = 0,  // ABL owns all slots exclusively; runtime inert
@@ -34,6 +100,7 @@ struct MechBrainRuntime {
     uint8_t          initialHoldPushed      = 0;    // 1 = initial HOLD_TASK already pushed (BRAIN-RUNTIME-1B)
     uint8_t          dispatchEffectApplied  = 0;    // 1 = BrainSpecial effect (POWERDOWN) applied once (DISPATCH-1B)
     BrainSpecialBody specialBody;  // parsed from _specials.fit; loaded when MC2_BRAIN_DISPATCH set
+    VarStore         varStore;     // per-unit Var namespace (DISPATCH-1D); populated by Var.Set/Var.Get
                                     // ABI: plain struct (no virtuals); sizeof increases by sizeof(vector)+sizeof(bool)
 
     // Compute which slots Brain WOULD own in this mode (trace-only; never applied in 1A).

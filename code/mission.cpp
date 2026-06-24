@@ -3111,9 +3111,15 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	{
 		const bool dispatchOn   = (std::getenv("MC2_BRAIN_DISPATCH")         && std::atoi(std::getenv("MC2_BRAIN_DISPATCH"))         != 0);
 		const bool fsmTodoOn    = (std::getenv("MC2_BRAIN_DISPATCH_FSM_TODO") && std::atoi(std::getenv("MC2_BRAIN_DISPATCH_FSM_TODO")) != 0);
+		const bool dispatchVarOn = (std::getenv("MC2_BRAIN_DISPATCH_VAR")     && std::atoi(std::getenv("MC2_BRAIN_DISPATCH_VAR"))     != 0);
 
 		if (fsmTodoOn && !dispatchOn) {
 			std::fprintf(stderr, "[BRAIN_DISPATCH_FSM_TODO] WARN: MC2_BRAIN_DISPATCH_FSM_TODO=1 requires MC2_BRAIN_DISPATCH=1 — inert\n");
+			std::fflush(stderr);
+		}
+		// TECHSCRIPT-DISPATCH-1D: gate-dependency check for DISPATCH_VAR.
+		if (dispatchVarOn && !dispatchOn) {
+			std::fprintf(stderr, "[BRAIN_DISPATCH_VAR] WARNING: MC2_BRAIN_DISPATCH_VAR=1 requires MC2_BRAIN_DISPATCH=1 -- var handling is INERT\n");
 			std::fflush(stderr);
 		}
 
