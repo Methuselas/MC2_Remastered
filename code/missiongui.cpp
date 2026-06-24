@@ -3563,9 +3563,11 @@ namespace {
 		static int cached = -1;
 		if (cached < 0)
 		{
-			// Default ON for this low-camera build; set MC2_LOWCAM_ZOOM_ANCHOR=0 to disable.
+			// Default OFF: the anchored path hooked zoomChoiceIn/Out (the dead
+			// secondary zoom) while real wheel-zoom is g_tacticalOverview.onWheel,
+			// so it panned instead of zooming. Needs rework before re-enable.
 			const char* v = getenv("MC2_LOWCAM_ZOOM_ANCHOR");
-			cached = (v && v[0] == '0') ? 0 : 1;
+			cached = (v && v[0] && v[0] != '0') ? 1 : 0;
 		}
 		return cached != 0;
 	}
