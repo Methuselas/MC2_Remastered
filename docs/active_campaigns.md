@@ -174,8 +174,22 @@ Default-OFF, zero-visual-change GPU compute infrastructure. Build facts → pari
 |---|---|---|
 | CLUSTER-DEPTH-PYRAMID-NATIVE-1 | **MERGED** `125b6e3e` | RG32F per-tile min/max depth substrate. Gates `MC2_CLUSTER_DEPTH_PYRAMID`/`_VERIFY`/`_PLANT` (OFF). Reversed-Z: near=MAX(G)/far=MIN(R). CPU/GPU parity proven; PLANT inspection-proven (runtime capture deferred — deploy-lock). `INFRA_PROVEN`. |
 | MC2-LIGHTGRID-BUILD-NATIVE-1 | **MERGED** `05600221` | Inert per-tile light-bin grid builder. `MC2LightCullSphere` (sphere-only; cone DEFERRED — no source data) from `ObjectLights@20`. BT-shaped append (LDS stage → one global atomic reserve). Gates `MC2_LIGHTGRID_BUILD`/`_VERIFY`/`_PLANT` (OFF). CPU/GPU parity proven (exact set), PLANT **runtime-captured**. 16-cap unchanged. `INFRA_PARITY_PROVEN`. |
+| POSTPROCESS-COMPUTE-BLUR-1 | **branch** `claude/postprocess-compute-blur-1` | Greenfield INERT GPU compute downsample (2x2 box) + separable 5-tap Gaussian blur (binomial `[1,4,6,4,1]/16`), ping-pong half-res RGBA16F. Vulkan-prep: typed-sync + ping-pong pattern. Gates `MC2_POSTPROCESS_COMPUTE_BLUR`/`_VERIFY`/`_PLANT` (OFF). Typed `gpuSyncBarrier` edges (`ComputeImageWrite→TextureSample`/`→TextureReadback`), no raw glMemoryBarrier. CPU/GPU parity PASS tol 1e-3 (worst 5.3e-4), PLANT runtime-captured FAIL. No consumer (substrate). mc2_24 GL-fatal PASS, gate-OFF byte-identical. `INFRA_PARITY_PROVEN`. Doc `docs/POSTPROCESS-COMPUTE-BLUR-1.md`. |
 | LIGHT-ABI-WIDEN-STAGE0-1 | **MERGED** `2c50c8f1` | Per-object GPU light record widened 16→32 slots (stride 1808→3600, N·112+16). 5-site lockstep + tripwire `scripts/check-light-abi-lockstep.py`. Runtime clamp kept 16. `ABI_WIDENED_PARITY_PROVEN`. |
 | LIGHT-CLAMP-RAISE-STAGE1-1 | **MERGED** `893346cf` | Runtime clamp raised 16→32 (`txmmgr.cpp kRuntimeLightClamp`). Default-OFF `MC2_LIGHT_CLAMP_PROBE` (high-water logger) + `MC2_LIGHT_CLAMP_FIXTURE` (synthetic >16 injector). New checker `scripts/check-light-loop-numlights-bound.py`. stock ≤16: `NO_VISUAL_CHANGE`; fixture >16: `VISUAL_PROVEN`. `RUNTIME_CLAMP_32_PROVEN`. |
+
+POSTPROCESS-COMPUTE-BLUR-1 ledger (machine-readable):
+
+```yaml
+POSTPROCESS_COMPUTE_BLUR:
+  type: COMPUTE_SUBSTRATE
+  gate_default: OFF
+  gate_off: BYTE_IDENTICAL
+  visual_change: NONE (no consumer)
+  parity: CPU_GPU_PROVEN (tol 1e-3, worst 5.3e-4)
+  sync: TYPED_GPUSYNCBARRIER
+  unlocks: future bloom/glow/DOF consumer
+```
 
 **Lane PARKED 2026-06-23.** The ABI (32) + runtime clamp (32) substrate is built and proven, but `MC2_LIGHT_CLAMP_PROBE` shows stock content uses **~2 lights/object** (mc2_24 light-dense canary high-water = 2). The raised capacity is latent/future-facing; froxel/clustered binning (pays off at hundreds of lights/tile) has **no stock payoff** and stays **DEFERRED indefinitely** until dense dynamic-light content exists. No shading consumer of the lightgrid built. Full state: memory `light-cap-lane-parked.md` + recon docs `.claude/{LIGHT-CAP-LIFT,LIGHT-CLAMP-RAISE-STAGE1}-RECON-1.md`.
 

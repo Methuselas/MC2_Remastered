@@ -18,6 +18,7 @@
 #include "pipeline_binder.h"                     // applyPipeline — composite FF state
 #include "gos_cluster_depth_pyramid.h"  // CLUSTER-DEPTH-PYRAMID-NATIVE-1 (gated substrate)
 #include "gos_lightgrid_build.h"         // MC2-LIGHTGRID-BUILD-NATIVE-1 (gated, inert)
+#include "gos_postprocess_blur.h"        // POSTPROCESS-COMPUTE-BLUR-1 (gated substrate)
 
 #include <cassert>
 #include <cstdio>
@@ -707,6 +708,10 @@ void gosPostProcess::destroy()
     // MC2-LIGHTGRID-BUILD-NATIVE-1: release the gated light-grid builder's GL
     // resources. No-op when the gate was never enabled.
     lightgrid_build::Shutdown();
+
+    // POSTPROCESS-COMPUTE-BLUR-1: release the gated blur substrate's GL
+    // resources. No-op when the gate was never enabled.
+    postprocess_blur::Shutdown();
 
     if (compositeProg_) {
         glsl_program::deleteProgram("postprocess");
@@ -2197,6 +2202,16 @@ void gosPostProcess::endScene()
     // (MC2_LIGHTGRID_BUILD, default OFF) -> no-op + byte-identical when OFF.
     // INERT: no shading consumer reads the grid; zero visual change.
     lightgrid_build::Run(inverseViewProj_, width_, height_);
+
+    // POSTPROCESS-COMPUTE-BLUR-1: greenfield GPU compute downsample + separable
+    // Gaussian blur SUBSTRATE (Vulkan-prep: typed-sync + ping-pong pattern).
+    // Runs after the other compute passes. Gated (MC2_POSTPROCESS_COMPUTE_BLUR,
+    // default OFF) -> no-op + byte-identical when OFF. INERT: NO bloom/glow/DOF
+    // consumer reads the blurred output; zero visual change. When ON, the live
+    // path blurs the feedback-safe scene-color copy if present (substrate only);
+    // the VERIFY sub-gate always proves CPU-vs-GPU parity on a controlled test
+    // pattern, independent of any consumer.
+    postprocess_blur::Run(getSceneColorCopyTexture(), width_, height_);
 
     // Post-process shadow pass: covers terrain, objects, and overlays in one
     // pass, with reduced terrain darkening to avoid obvious double-shadowing.
