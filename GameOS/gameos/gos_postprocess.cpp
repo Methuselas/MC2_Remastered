@@ -1058,6 +1058,38 @@ void gosPostProcess::copySceneDepthForParticles()
                        width_, height_, 1);
 }
 
+void gosPostProcess::copySceneColorForVfx()
+{
+    // VFX-SCENECOLOR-GRAB-1 (FRAME_RESOURCE_SUBSTRATE): snapshot the resolved
+    // scene COLOR into a dedicated texture so a future in-scene VFX/transparent
+    // pass can sample it WITHOUT a GL feedback loop (sceneColorTex_ is the bound
+    // FBO's COLOR_ATTACHMENT0 during the flush). Mirrors copySceneDepthForParticles
+    // exactly: same internal format as sceneColorTex_ (RGBA16F) -> a straight
+    // glCopyImageSubData (no blit/format-match constraint). Lazily allocated;
+    // full-res; freed + re-created on resize (destroyFBOs zeroes it). There is
+    // NO consumer yet — this slice only produces the resource (gate default OFF).
+    if (width_ <= 0 || height_ <= 0 || sceneColorTex_ == 0) return;
+
+    if (sceneColorCopyTex_ == 0) {
+        glGenTextures(1, &sceneColorCopyTex_);
+        glBindTexture(GL_TEXTURE_2D, sceneColorCopyTex_);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA16F, width_, height_);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+
+    // Texture-to-texture copy of the whole color image. Ordered after the
+    // opaque scene color is resolved but before the VFX/transparent flush that
+    // would sample it, so the snapshot is the scene as it stands pre-VFX.
+    // RGBA16F -> RGBA16F: same internalformat, GL-clean under glCopyImageSubData.
+    glCopyImageSubData(sceneColorTex_,     GL_TEXTURE_2D, 0, 0, 0, 0,
+                       sceneColorCopyTex_, GL_TEXTURE_2D, 0, 0, 0, 0,
+                       width_, height_, 1);
+}
+
 void gosPostProcess::destroyFBOs()
 {
     if (sceneFBO_) {
@@ -1088,6 +1120,10 @@ void gosPostProcess::destroyFBOs()
     if (sceneDepthCopyTex_) {  // VFX-SOFT-PARTICLES-MVP-1
         glDeleteTextures(1, &sceneDepthCopyTex_);
         sceneDepthCopyTex_ = 0;
+    }
+    if (sceneColorCopyTex_) {  // VFX-SCENECOLOR-GRAB-1
+        glDeleteTextures(1, &sceneColorCopyTex_);
+        sceneColorCopyTex_ = 0;
     }
     // SSAO-GTAO-LITE-MVP-1: free half-res AO target.
     if (ssaoColorTex_) { glDeleteTextures(1, &ssaoColorTex_); ssaoColorTex_ = 0; }

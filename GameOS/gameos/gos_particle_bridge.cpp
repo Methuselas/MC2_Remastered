@@ -168,6 +168,22 @@ void vfxSoftInitIfNeeded() {
     s_soft_initialized   = true;
 }
 
+// VFX-SCENECOLOR-GRAB-1: feedback-safe scene-COLOR copy (FRAME_RESOURCE_SUBSTRATE).
+// Gate MC2_VFX_SCENECOLOR_GRAB (default OFF -> byte-identical: no copy performed,
+// sceneColorCopyTex_ never allocated). When ON, the flush snapshots the resolved
+// scene color (pre-VFX) into pp->sceneColorCopyTex_ via one glCopyImageSubData so
+// a FUTURE distortion/refraction/soft-color slice can sample it without an FBO
+// feedback loop. THIS SLICE HAS NO CONSUMER — nothing samples the copy, so even
+// gate-ON is no visual change. No emission/lifetime/timing effect.
+bool  s_scenecolor_initialized = false;
+bool  s_scenecolor_enabled     = false;
+void vfxSceneColorGrabInitIfNeeded() {
+    if (s_scenecolor_initialized) return;
+    const char* v = std::getenv("MC2_VFX_SCENECOLOR_GRAB");
+    s_scenecolor_enabled     = (v && v[0] == '1');
+    s_scenecolor_initialized = true;
+}
+
 // VFX-LIT-PARTICLES-MVP-1: scene-lit alpha smoke/dust. Gate MC2_VFX_LIT_PARTICLES
 // (default OFF -> byte-identical). Strength = startup default MC2_TUNE_VFX_LIT_
 // STRENGTH (clamped 0..1) / per-mission "vfxLitStrength" profile key / ImGui
@@ -1026,6 +1042,18 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
         }
     }
     if (s_loc_softDistance >= 0) glUniform1f(s_loc_softDistance, softDist);
+
+    // ── VFX-SCENECOLOR-GRAB-1: feedback-safe scene-color snapshot ────────
+    // FRAME_RESOURCE_SUBSTRATE — produce the resource only. Same frame window as
+    // the soft-particle depth copy above (after opaque scene color is resolved,
+    // before this VFX flush draws). Gate OFF (default) -> no copy, byte-identical.
+    // Gate ON -> one glCopyImageSubData into pp->sceneColorCopyTex_; NOTHING
+    // samples it yet (no consumer) -> still no visual change.
+    vfxSceneColorGrabInitIfNeeded();
+    if (s_scenecolor_enabled) {
+        gosPostProcess* ppGrab = getGosPostProcess();
+        if (ppGrab) ppGrab->copySceneColorForVfx();
+    }
 
     // ── VFX-LIT-PARTICLES-MVP-1: scene lighting for alpha groups ─────
     // When OFF, upload strength 0 -> FS lit branch inert -> byte-identical.

@@ -70,6 +70,17 @@ public:
     // glCopyImageSubData is a same-format copy.
     GLuint getSceneDepthCopyTexture() const { return sceneDepthCopyTex_; }
     void   copySceneDepthForParticles();
+    // VFX-SCENECOLOR-GRAB-1: a feedback-safe copy of the resolved scene COLOR,
+    // taken in the same frame window as the depth copy (after the opaque scene
+    // color is resolved, before the in-scene VFX/transparent flush that would
+    // sample it — sceneColorTex_ is the active color attachment during the
+    // flush). FRAME_RESOURCE_SUBSTRATE: no consumer yet (distortion/refraction/
+    // soft-color particles are future slices). Gated by MC2_VFX_SCENECOLOR_GRAB
+    // at the bridge; lazily allocated on the first copy -> reads 0 and costs
+    // nothing until then. RGBA16F, full-res, matches sceneColorTex_ so
+    // glCopyImageSubData is a same-internalformat copy.
+    GLuint getSceneColorCopyTexture() const { return sceneColorCopyTex_; }
+    void   copySceneColorForVfx();
     // M1.5: readback hook for RenderWorld::lookupAtPixel.
     GLuint getSceneObjectIdTex() const { return sceneObjectIdTex_; }
     // WATER-REFLECTION-RESOURCE-1: 1/4-res reflection target (substrate only;
@@ -292,6 +303,7 @@ private:
     GLuint sceneNormalTex_;
     GLuint sceneObjectIdTex_ = 0;   // M1.5 R32UI MRT attachment-2 (gated on MC2_OBJECT_ID_BUFFER)
     GLuint sceneDepthCopyTex_ = 0;  // VFX-SOFT-PARTICLES-MVP-1 lazy depth copy (DEPTH24_STENCIL8)
+    GLuint sceneColorCopyTex_ = 0;  // VFX-SCENECOLOR-GRAB-1 lazy color copy (RGBA16F)
 
     // WATER-REFLECTION-RESOURCE-1: quarter-res reflection target (color + depth).
     // Allocated in createFBOs, freed in destroyFBOs, registered in
