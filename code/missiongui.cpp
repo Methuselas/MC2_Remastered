@@ -3563,9 +3563,10 @@ namespace {
 		static int cached = -1;
 		if (cached < 0)
 		{
-			// Default ON (v2 eased-anchor in Camera::update); set =0 to disable.
+			// Default OFF: anchored zoom still reads as a pan in practice; use the
+			// legacy fixed-pivot wheel zoom. Opt in with MC2_LOWCAM_ZOOM_ANCHOR=1.
 			const char* v = getenv("MC2_LOWCAM_ZOOM_ANCHOR");
-			cached = (v && v[0] == '0') ? 0 : 1;
+			cached = (v && v[0] && v[0] != '0') ? 1 : 0;
 		}
 		return cached != 0;
 	}

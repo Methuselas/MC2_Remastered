@@ -3255,7 +3255,7 @@ void Terrain::geometry (void)
 		// unconditional near-field bypass and outside the horizontal cone -> dropped.
 		// Widen the near-field bypass radius (purely additive: only admits more
 		// blocks; dilation/superset invariants preserved). Default 4x; =1 = stock.
-		static const float s_lowCamSolidNear = []{ const char* v = getenv("MC2_LOWCAM_SOLID_NEAR"); return v ? (float)atof(v) : 4.0f; }();
+		static const float s_lowCamSolidNear = []{ const char* v = getenv("MC2_LOWCAM_SOLID_NEAR"); return v ? (float)atof(v) : 6.0f; }();
 		const float kNearField = 768.0f * s_lowCamSolidNear;   // CLIP_THRESHOLD_DISTANCE
 		const float kExtent    = 384.0f;   // VERTEX_EXTENT_RADIUS
 		const float blockR     = (verticesBlockSide * 0.5f) * worldUnitsPerVertex * 1.5f;

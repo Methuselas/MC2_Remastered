@@ -702,7 +702,7 @@ class Camera
 			// objects still pop at low pitch. Scale the near-plane pad radius. Default
 			// 2.5x; MC2_LOWCAM_OBJ_NEARPAD_SCALE=k overrides (=1 = tight stock pad).
 			static const float s_objNearPadScale =
-			    []{ const char* v = std::getenv("MC2_LOWCAM_OBJ_NEARPAD_SCALE"); return v ? (float)atof(v) : 2.5f; }();
+			    []{ const char* v = std::getenv("MC2_LOWCAM_OBJ_NEARPAD_SCALE"); return v ? (float)atof(v) : 4.0f; }();
 			worldRadius *= s_objNearPadScale;
 
 			const int64_t _f3_cull_t0 = ::mc2_cpu_proj_cost::cull_admission_begin_ns();
