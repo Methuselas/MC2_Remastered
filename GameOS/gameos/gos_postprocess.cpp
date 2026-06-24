@@ -19,6 +19,7 @@
 #include "gos_cluster_depth_pyramid.h"  // CLUSTER-DEPTH-PYRAMID-NATIVE-1 (gated substrate)
 #include "gos_lightgrid_build.h"         // MC2-LIGHTGRID-BUILD-NATIVE-1 (gated, inert)
 #include "gos_postprocess_blur.h"        // POSTPROCESS-COMPUTE-BLUR-1 (gated substrate)
+#include "../../mclib/dynamic_decal_ring.h"  // DECAL-INTEGRATE-1: ring-fed projected decals
 
 #include <cassert>
 #include <cstdio>
@@ -571,6 +572,12 @@ void gosPostProcess::init(int w, int h)
         boxDecalEnabled_ = (e && e[0] && e[0] != '0');
         std::fprintf(stderr, "[BOX_DECAL v1] enabled=%d (MC2_BOX_DECAL=%s)\n",
                      boxDecalEnabled_ ? 1 : 0, e ? e : "(unset)");
+        // DECAL-INTEGRATE-1: MC2_PROJECTED_DECALS (default OFF). When ON, the box-decal
+        // pass is fed by the dynamic_decal_ring impact slots instead of the v1 test box.
+        const char* pd = getenv("MC2_PROJECTED_DECALS");
+        projectedDecalsEnabled_ = (pd && pd[0] && pd[0] != '0');
+        std::fprintf(stderr, "[PROJECTED_DECALS] enabled=%d (MC2_PROJECTED_DECALS=%s)\n",
+                     projectedDecalsEnabled_ ? 1 : 0, pd ? pd : "(unset)");
     }
 
     // SSAO gate + debug, resolved once from env. Default OFF -> runSSAO()
@@ -1258,30 +1265,45 @@ void gosPostProcess::drawBoxDecals()
     ZoneScopedN("Render.BoxDecals");
     TracyGpuZone("Render.BoxDecals");
 
-    if (!boxDecalEnabled_) return;
+    // DECAL-INTEGRATE-1: the projection pass is now a SECOND, opt-in consumer of the
+    // dynamic_decal_ring impact slots. Gate MC2_PROJECTED_DECALS (default OFF). When OFF,
+    // this pass does not run at all -> byte-identical, no GL state touched. The baked
+    // gos_PushDecal / drawDecals crater path is UNTOUCHED and runs regardless (parallel).
+    if (!projectedDecalsEnabled_) return;
     if (!sceneHasTerrain_) return;                 // suppress in menus
     if (!boxDecalProg_ || !boxDecalProg_->is_valid()) return;
+
+    // Snapshot live ring impact sites (pure read; does NOT advance/expire ring slots —
+    // that stays gatherToDecalBatch()'s job under MC2_DYNAMIC_DECALS). One projected
+    // decal per live impact. No live impacts -> nothing to draw, return early.
+    DynDecal::Slot slots[DynDecal::kCapacity];
+    float          slotAlpha[DynDecal::kCapacity];
+    int nSlots = DynDecal::snapshotLiveSlots(slots, slotAlpha, DynDecal::kCapacity);
+    if (nSlots <= 0) return;
 
     // Feedback-safe depth: refresh the COPY and sample IT — never the live bound
     // depth attachment (sceneDepthTex_). Idempotent / lazy-alloc.
     copySceneDepthForParticles();
     if (sceneDepthCopyTex_ == 0) return;
 
-    // v1 anchor: unproject screen-center at mid-depth to a world point in view, and
-    // center a TALL box there so the decal drapes on terrain under the camera. The
-    // reconstruct frame is Y-up (mech.vert's (-x,z,y) swap is baked into the clip
-    // matrix), so the box up-axis is +Y. Producers / real placement = follow-up slice.
-    float ndcCenter[4] = { 0.0f, 0.0f, 0.5f, 1.0f };
-    float wc[4];
-    boxDecalMulColMajor(inverseViewProj_, ndcCenter, wc);
-    if (fabsf(wc[3]) < 1e-6f) return;
-    float center[3] = { wc[0] / wc[3], wc[1] / wc[3], wc[2] / wc[3] };
-
-    float halfXZ = 300.0f, strength = 0.85f;
-    if (const char* s = getenv("MC2_BOX_DECAL_SIZE"))     { float v = (float)atof(s); if (v > 1.0f)  halfXZ   = v; }
+    float strength = 0.85f;
     if (const char* s = getenv("MC2_BOX_DECAL_STRENGTH")) { float v = (float)atof(s); if (v >= 0.0f) strength = v; }
-    float half[3]   = { halfXZ, 4000.0f, halfXZ };   // tall on +Y to span terrain elevation
-    float upAxis[3] = { 0.0f, 1.0f, 0.0f };
+
+    // Vertical span of the AABB on the reconstruct-frame up axis (+Y). The box is made
+    // tall so it drapes across terrain elevation under the impact; the FS world-AABB clip
+    // does the real coverage. Overridable for tuning.
+    float ySpan = 4000.0f;
+    if (const char* s = getenv("MC2_BOX_DECAL_YSPAN")) { float v = (float)atof(s); if (v > 1.0f) ySpan = v; }
+
+    // Normal-reject: SHIPPED DISABLED by default. The terrain GBuffer1 normal is a
+    // constant flat-up sentinel in a Z-up frame while the box up-axis here is Y-up, so a
+    // live dot()-reject would discard ALL terrain pixels (see DECAL-INTEGRATE-1 doc, the
+    // up-axis TODO). A threshold <= -1.5 makes the reject a no-op (never discards). Do
+    // NOT raise this without first reconciling u_decalUpAxis against the reconstruct frame.
+    float normalRejectCos = -1.5f;
+    if (const char* s = getenv("MC2_BOX_DECAL_NORMAL_REJECT")) { float v = (float)atof(s); normalRejectCos = v; }
+
+    float upAxis[3] = { 0.0f, 1.0f, 0.0f };   // reconstruct-frame up (Y-up). TODO: reconcile.
 
     glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
     setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);   // COLOR0 only -> normal/objectId untouched
@@ -1297,30 +1319,42 @@ void gosPostProcess::drawBoxDecals()
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    boxDecalProg_->setInt("u_sceneDepthTex", 0);
-    boxDecalProg_->setInt("u_sceneNormalTex", 1);
-    boxDecalProg_->setFloat3("u_boxCenter", center);
-    boxDecalProg_->setFloat3("u_boxHalf", half);
-    boxDecalProg_->setFloat3("u_decalUpAxis", upAxis);
-    boxDecalProg_->setFloat("u_normalRejectCos", 0.35f);   // skip faces tilted > ~70deg from up
-    boxDecalProg_->setFloat("u_decalStrength", strength);
-    float screenSz[2] = { (float)width_, (float)height_ };
-    boxDecalProg_->setFloat2("u_screenSize", screenSz);
-    boxDecalProg_->apply();
-
-    GLint loc;
-    loc = glGetUniformLocation(boxDecalProg_->shp_, "u_viewProj");
-    if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_FALSE, viewProj_);
-    loc = glGetUniformLocation(boxDecalProg_->shp_, "u_inverseViewProj");
-    if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_FALSE, inverseViewProj_);
-
+    // Bind samplers + textures once; per-slot we only re-push the box volume uniforms.
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, sceneDepthCopyTex_);   // the COPY, not the live attachment
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, sceneNormalTex_);
 
+    float screenSz[2] = { (float)width_, (float)height_ };
+
     glBindVertexArray(boxCubeVAO_);
-    glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+    for (int i = 0; i < nSlots; ++i) {
+        const DynDecal::Slot& sl = slots[i];
+
+        // World centre from the ring (MC2 world frame x=east, y=north, z=elev). The FS
+        // world-AABB clip is frame-consistent; a tall +Y box drapes over the terrain.
+        float center[3] = { sl.wx, sl.wy, sl.wz };
+        float half[3]   = { sl.radius, ySpan, sl.radius };
+        float strengthSlot = strength * slotAlpha[i];   // lifetime fade reuse
+
+        boxDecalProg_->setInt("u_sceneDepthTex", 0);
+        boxDecalProg_->setInt("u_sceneNormalTex", 1);
+        boxDecalProg_->setFloat3("u_boxCenter", center);
+        boxDecalProg_->setFloat3("u_boxHalf", half);
+        boxDecalProg_->setFloat3("u_decalUpAxis", upAxis);
+        boxDecalProg_->setFloat("u_normalRejectCos", normalRejectCos);
+        boxDecalProg_->setFloat("u_decalStrength", strengthSlot);
+        boxDecalProg_->setFloat2("u_screenSize", screenSz);
+        boxDecalProg_->apply();
+
+        GLint loc;
+        loc = glGetUniformLocation(boxDecalProg_->shp_, "u_viewProj");
+        if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_FALSE, viewProj_);
+        loc = glGetUniformLocation(boxDecalProg_->shp_, "u_inverseViewProj");
+        if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_FALSE, inverseViewProj_);
+
+        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+    }
     glBindVertexArray(0);
 
     // Restore the depth/cull/blend baseline the following passes + composite expect.

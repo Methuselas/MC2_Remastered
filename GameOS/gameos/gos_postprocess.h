@@ -332,6 +332,10 @@ private:
     GLuint        boxCubeIBO_ = 0;
     glsl_program* boxDecalProg_ = nullptr;
     bool          boxDecalEnabled_ = false;
+    // DECAL-INTEGRATE-1: MC2_PROJECTED_DECALS (default OFF). When ON, drawBoxDecals()
+    // consumes the dynamic_decal_ring live slots (one projected decal per impact) instead
+    // of the v1 hardcoded screen-center test box. OFF = projection pass does not run.
+    bool          projectedDecalsEnabled_ = false;
 
     // Composite shader
     glsl_program* compositeProg_;

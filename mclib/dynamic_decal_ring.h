@@ -59,4 +59,14 @@ void gatherToDecalBatch(float frameDeltaSec);
 // Returns the count of currently live (age < lifetime) slots.
 int liveCount();
 
+// ─── Read-only snapshot (DECAL-INTEGRATE-1) ──────────────────────────────────
+// Copy currently-live slots into outSlots (caller-supplied, capacity >= kCapacity).
+// Returns the number written. Pure read; does NOT advance ages or expire slots
+// (that remains gatherToDecalBatch()'s job). Lets a SECOND, parallel consumer
+// (the box-decal screen-space projector) read impact sites without disturbing the
+// baked gos_PushDecal path. Each returned slot carries a precomputed alpha [0,1]
+// in the unused high bits is NOT done — caller recomputes fade from age/lifetime if
+// needed; here we expose the raw Slot plus a parallel alpha array for convenience.
+int snapshotLiveSlots(Slot* outSlots, float* outAlpha, int maxOut);
+
 } // namespace DynDecal

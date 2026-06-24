@@ -204,4 +204,23 @@ int liveCount()
     return count;
 }
 
+int snapshotLiveSlots(Slot* outSlots, float* outAlpha, int maxOut)
+{
+    // Pure read; never mutates ring state. Safe to call from a parallel consumer
+    // even when MC2_DYNAMIC_DECALS is off (returns 0 since nothing was ever spawned).
+    if (!outSlots || maxOut <= 0) return 0;
+    if (!s_init) return 0;
+    int n = 0;
+    for (int i = 0; i < kCapacity && n < maxOut; ++i) {
+        const Slot& sl = s_slots[i];
+        if (sl.lifetimeMs == 0) continue;   // empty
+        float a = slotAlpha(sl);
+        if (a <= 0.0f) continue;            // fully faded
+        outSlots[n] = sl;
+        if (outAlpha) outAlpha[n] = a;
+        ++n;
+    }
+    return n;
+}
+
 } // namespace DynDecal

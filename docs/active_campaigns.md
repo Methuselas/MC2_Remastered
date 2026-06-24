@@ -2,6 +2,28 @@
 
 > Pointer doc. Detail in memory/ handoffs and docs/. Add new campaigns at top.
 
+## 2026-06-23 — DECAL-INTEGRATE-1 (ring-fed projected decals) — BUILT (`claude/decal-integrate-1`)
+
+Joins the two parked projected-decal branches: wires the runtime impact-decal RING
+producer (`decal-terrain-impact-mvp` @ `585d29c9` cherry-picked + 2 hunks reapplied) to
+the screen-space box-decal PROJECTION consumer (`box-decal-1` @ `86e634c0` cherry-picked
+clean). Box-decal now reads `dynamic_decal_ring` live slots (one projected decal per
+impact) instead of the v1 hardcoded screen-center test box. Parallel to baked craters,
+not canonical. Detail: `docs/DECAL-INTEGRATE-1.md`.
+
+```
+DECAL_INTEGRATE:
+  status: BUILT
+  gate_default: OFF (MC2_PROJECTED_DECALS)
+  gate_off: BYTE_IDENTICAL
+  ownership: PARALLEL_TO_BAKED (not canonical)
+  producer: dynamic_decal_ring
+  consumer: box_decal projection (now ring-fed, not hardcoded)
+  normal_reject: DISABLED_DEFAULT (up-axis frame TODO)
+  surface_class_masking: DEFERRED
+  visual_status: see docs/DECAL-INTEGRATE-1.md (non-deterministic / fixture-driven)
+```
+
 ## 2026-06-22 — MECH-UBLB-ATTACHMENT-FIX-1 (BT2018 clip pose) — SHIPPED nifty (`570cfab4`)
 
 | Slice | Commit | Status | Notes |
