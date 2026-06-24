@@ -3,7 +3,8 @@ FITini
 [BrainSpecial]
 
 [Body]
-st DO0 = "Brain.CorePower"
-st DO1 = "OPORD.CoreGuard"
-st DO2 = "Unit.InState"
-st DO3 = "Var.Set"
+st DO0 = "Brain.CorePower false"
+st DO1 = "Brain.CorePower"
+st DO2 = "OPORD.CoreGuard"
+st DO3 = "Unit.InState"
+st DO4 = "Var.Set"
