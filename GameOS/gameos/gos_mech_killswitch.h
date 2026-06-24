@@ -89,28 +89,17 @@ extern bool g_useGpuMechFastTransform;
 // slice gating discipline).
 extern bool g_useGpuMechShadowFastTransform;
 
-// Slice D-shadow-skip (2026-05-09): skip mechShadowShape->TransformMultiShape*
-// entirely when modern engine has terrain tessellation active. Recon proved
-// every byte produced by that call has zero consumer in modern + GPU mech
-// path: Mech3DAppearance::renderShadows early-returns on tessellation
-// (mech3d.cpp:3054), and modern dynamic shadows use g_shadowShapes[]
-// (txmmgr.cpp:130, 1589-1620), a separate data path. Independent of
-// g_useGpuMechs / fast-transform flags for bisect granularity. Requires
-// g_useGpuMechs=true AND gos_IsTerrainTessellationActive() to take effect.
-extern bool g_useGpuMechShadowSkip;
-
-// Slice D-shadow-state-strip (2026-05-09): skip the four state setters on
-// mechShadowShape (setAnimation/SetFrameNum/SetNodeRotation/SetLightList
-// at mech3d.cpp:3351-3355 and :3368-3376) when modern engine + GPU mech
-// path is engaged. Recon proved no consumer of these setters' effects
-// exists in this configuration: instance-state setters feed only
-// TransformMultiShape (already retired by D-shadow-skip), and SetLightList's
-// global-static side effect (s_listOfLights) is overwritten by mechShape's
-// identical call at mech3d.cpp:3407 before any consumer reads it.
-// Independent of g_useGpuMechs / fast-transform / shadow-skip flags for
-// bisect granularity. Requires g_useGpuMechs=true AND
-// gos_IsTerrainTessellationActive() to take effect (mirrors D-shadow-skip).
-extern bool g_useGpuMechShadowStateStrip;
+// MECH-KILLSWITCH-SHADOW-PAIR-RETIRE-1 (2026-06-23): the former
+// MC2_GPU_MECH_SHADOW_SKIP and MC2_GPU_MECH_SHADOW_STATE_STRIP killswitches
+// (Slice D-shadow-skip / D-shadow-state-strip, both default-ON) are RETIRED to
+// constants. On the modern tessellated GPU-mech path both were strict no-ops:
+// renderShadows early-returns on tessellation (mech3d.cpp:3520) and dynamic
+// shadows use the separate g_shadowShapes[] path, so the skipped shadow-shape
+// transform + the four stripped state setters had zero consumer. Both were
+// always on by default. Behavior now lives inline, still guarded by
+// g_useGpuMechs && gos_IsTerrainTessellationActive() (the real conditions; the
+// CPU / non-tess paths still do the work). Audit: MECH-KILLSWITCH-AUDIT-1.
+// (MC2_GPU_MECH_SHADOW_FAST_TRANSFORM is a DIFFERENT, still-live flag — untouched.)
 
 // Slice D-leaf-skip-v2 (2026-05-09): strip per-leaf body of mechShape->
 // TransformMultiShape* (per-leaf pool alloc + per-vertex screen-space
