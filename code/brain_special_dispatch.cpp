@@ -2,6 +2,9 @@
 // TECHSCRIPT-SPECIAL-DISPATCH-1B — first real effect: Brain.CorePower false → POWERDOWN.
 // TECHSCRIPT-SPECIAL-DISPATCH-1C — FSM-TODO surfacer: raw line scan for TODO comments.
 // TECHSCRIPT-DISPATCH-1D — per-unit Var namespace + minimal store.
+// DISPATCH-LOADER-RAW-1 — replace FitIniFile body reader with raw brace-block scanner
+//   that correctly loads inline-quoted verb args (DO Var.Set "foo" 1).
+//   FitIniFile fallback retained for legacy [BrainSpecial]/[Body]/DO0=... bracket form.
 // Gates: MC2_BRAIN_DISPATCH (parse+trace), MC2_BRAIN_DISPATCH_APPLY (effect layer, requires DISPATCH),
 //        MC2_BRAIN_DISPATCH_FSM_TODO (FSM TODO surfacer, requires DISPATCH),
 //        MC2_BRAIN_DISPATCH_VAR (per-unit Var store, requires DISPATCH, default OFF).
@@ -184,12 +187,205 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
 }
 
 // ---------------------------------------------------------------------------
-// parseBrainSpecialBody
+// DISPATCH-LOADER-RAW-1: parseBrainSpecialBody_RawScan
 //
-// Opens data/missions/<missionName>_specials.fit, seeks [BrainSpecial] block,
-// seeks [Body] sub-block, reads DO0..DON verb strings.
-// Returns true if at least one verb was loaded; false if file/block absent.
+// Raw line-scanner for the new brace-block TechSpecial format used by
+// carver_v_enhanced (and any other tool that emits inline-quoted DO args).
+//
+// Format parsed:
+//   TechSpecial {
+//       key  = "..."
+//       alias = "..."
+//       type = "..."
+//       sourceABLFunction = "..."
+//       Body {
+//           DO <rest-of-line>
+//           STOP
+//       }
+//   }
+//
+// Multiple TechSpecial blocks are parsed; ALL verbs from ALL bodies are
+// appended to outBody.verbs in file order.
+//
+// Safety caps (DISPATCH-LOADER-RAW-1):
+//   kMaxLineLen     = 512 bytes — lines longer than this are skipped with a trace.
+//   kMaxVerbsPerBody = 256 — excess DO lines within one Body block are skipped.
+//   kMaxBodies      = 256 — excess TechSpecial blocks are skipped entirely.
+//
+// FORBIDDEN-CALL CONTRACT:
+//   Calls ONLY std::ifstream + string ops + fprintf/fflush. No order functions.
+//   No warrior pointer. No tac-order writes. Verified by inspection.
+//
+// Returns true if at least one verb was loaded.
+static const int kMaxLineLen      = 512;
+static const int kMaxVerbsPerBody = 256;
+static const int kMaxBodies       = 256;
+
+static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody& outBody) {
+    std::ifstream inFile(fitPath);
+    if (!inFile.is_open())
+        return false;
+
+    // State machine:
+    //   OUTER      — scanning for "TechSpecial {"
+    //   IN_SPECIAL — inside TechSpecial block, scanning for "Body {"
+    //   IN_BODY    — inside Body block, collecting DO lines
+    enum { OUTER, IN_SPECIAL, IN_BODY } state = OUTER;
+
+    int bodiesFound = 0;
+    int verbsThisBody = 0;
+    std::string line;
+
+    while (std::getline(inFile, line)) {
+        // Guard line length.
+        if ((int)line.size() > kMaxLineLen) {
+            std::fprintf(stderr, "[BRAIN_DISPATCH_RAW] WARN: line too long (%d bytes) in %s — skipped\n",
+                         (int)line.size(), fitPath);
+            std::fflush(stderr);
+            continue;
+        }
+
+        // Strip trailing CR/LF/whitespace.
+        while (!line.empty() && (line.back() == '\r' || line.back() == '\n' ||
+                                  line.back() == ' '  || line.back() == '\t'))
+            line.pop_back();
+
+        // Find first non-whitespace.
+        size_t s = 0;
+        while (s < line.size() && (line[s] == ' ' || line[s] == '\t')) ++s;
+        const char* p = line.c_str() + s;
+
+        // Skip comment lines.
+        if (*p == ';')
+            continue;
+
+        if (state == OUTER) {
+            // Look for "TechSpecial {" (possibly with leading whitespace already stripped).
+            if (std::strncmp(p, "TechSpecial", 11) == 0) {
+                // Confirm '{' appears on same line (after optional whitespace).
+                const char* q = p + 11;
+                while (*q == ' ' || *q == '\t') ++q;
+                if (*q == '{') {
+                    if (bodiesFound >= kMaxBodies) {
+                        std::fprintf(stderr, "[BRAIN_DISPATCH_RAW] WARN: TechSpecial block cap (%d) reached in %s — skipping rest\n",
+                                     kMaxBodies, fitPath);
+                        std::fflush(stderr);
+                        break;
+                    }
+                    state = IN_SPECIAL;
+                    verbsThisBody = 0;
+                }
+            }
+        } else if (state == IN_SPECIAL) {
+            // Look for "Body {" or closing "}" (end of TechSpecial without a Body).
+            if (std::strncmp(p, "Body", 4) == 0) {
+                const char* q = p + 4;
+                while (*q == ' ' || *q == '\t') ++q;
+                if (*q == '{') {
+                    state = IN_BODY;
+                    ++bodiesFound;
+                }
+            } else if (*p == '}') {
+                // Closing brace of TechSpecial with no Body — return to OUTER.
+                state = OUTER;
+            }
+        } else { // IN_BODY
+            if (*p == '}') {
+                // End of Body block.
+                state = IN_SPECIAL;   // still inside TechSpecial; look for its closing '}'
+            } else if (std::strncmp(p, "STOP", 4) == 0 &&
+                       (p[4] == '\0' || p[4] == ' ' || p[4] == '\t' || p[4] == ';')) {
+                // STOP — skip (sentinel only, not a verb).
+            } else if (std::strncmp(p, "DO ", 3) == 0 || std::strncmp(p, "DO\t", 3) == 0) {
+                if (verbsThisBody >= kMaxVerbsPerBody) {
+                    std::fprintf(stderr, "[BRAIN_DISPATCH_RAW] WARN: verb cap (%d) per-body reached in %s — skipping rest of body\n",
+                                 kMaxVerbsPerBody, fitPath);
+                    std::fflush(stderr);
+                    // Drain to closing '}' without adding more verbs.
+                    continue;
+                }
+                // Extract the verb: everything after "DO " / "DO\t", trimmed.
+                const char* verbStart = p + 3;
+                while (*verbStart == ' ' || *verbStart == '\t') ++verbStart;
+
+                // Build verb string, stripping trailing whitespace and trailing ';'.
+                std::string verb(verbStart);
+                while (!verb.empty() && (verb.back() == ' ' || verb.back() == '\t'))
+                    verb.pop_back();
+                while (!verb.empty() && verb.back() == ';')
+                    verb.pop_back();
+                while (!verb.empty() && (verb.back() == ' ' || verb.back() == '\t'))
+                    verb.pop_back();
+
+                if (!verb.empty()) {
+                    outBody.verbs.push_back(std::move(verb));
+                    ++verbsThisBody;
+                }
+            }
+        }
+    }
+
+    return !outBody.verbs.empty();
+}
+
+// ---------------------------------------------------------------------------
+// parseBrainSpecialBody_FitIni
+//
+// Legacy FitIniFile-based loader.  Retained as fallback for bracket-form fixtures
+// ([BrainSpecial] / [Body] / DO0=...) that don't use the brace-block TechSpecial format.
+// This is the original parseBrainSpecialBody implementation, renamed.
+//
+// FORBIDDEN-CALL CONTRACT: calls FitIniFile API only. No order functions.
+static bool parseBrainSpecialBody_FitIni(const char* fitPath, BrainSpecialBody& outBody) {
+    FitIniFile* fit = new FitIniFile;
+    if (!fit)
+        return false;
+
+    if (fit->open(fitPath) != NO_ERR) {
+        delete fit;
+        return false;
+    }
+
+    if (fit->seekBlock("BrainSpecial") != NO_ERR) {
+        fit->close();
+        delete fit;
+        return false;
+    }
+
+    if (fit->seekBlock("Body") != NO_ERR) {
+        fit->close();
+        delete fit;
+        return false;
+    }
+
+    char keyBuf[16];
+    char verbBuf[64];
+    for (int i = 0; i < 64; ++i) {
+        std::snprintf(keyBuf, sizeof(keyBuf), "DO%d", i);
+        verbBuf[0] = '\0';
+        long result = fit->readIdString(keyBuf, verbBuf, (unsigned long)(sizeof(verbBuf) - 1));
+        if (result != NO_ERR)
+            break;
+        if (verbBuf[0] != '\0')
+            outBody.verbs.push_back(std::string(verbBuf));
+    }
+
+    fit->close();
+    delete fit;
+    return !outBody.verbs.empty();
+}
+
+// ---------------------------------------------------------------------------
+// parseBrainSpecialBody — public entry point (DISPATCH-LOADER-RAW-1)
+//
+// Strategy:
+//   1. Try raw brace-block scanner first (handles inline-quoted DO args).
+//   2. If no TechSpecial blocks found (raw scanner returned empty), fall back
+//      to the legacy FitIniFile-based [BrainSpecial]/[Body]/DO0= form.
+//   Both forms emit the same [BRAIN_DISPATCH] trace on success.
+//
 // Caller passes missionName like "mc2_01" (no path prefix, no extension).
+// Returns true if at least one verb was loaded.
 bool parseBrainSpecialBody(const char* missionName, BrainSpecialBody& outBody) {
     outBody.verbs.clear();
     outBody.loaded = false;
@@ -197,49 +393,23 @@ bool parseBrainSpecialBody(const char* missionName, BrainSpecialBody& outBody) {
     char fitPath[256];
     std::snprintf(fitPath, sizeof(fitPath), "data/missions/%s_specials.fit", missionName);
 
-    FitIniFile* fit = new FitIniFile;
-    if (!fit) {
-        return false;
-    }
+    // Try raw brace-block scanner first.
+    bool ok = parseBrainSpecialBody_RawScan(fitPath, outBody);
 
-    if (fit->open(fitPath) != NO_ERR) {
-        delete fit;
-        return false;
-    }
-
-    // Seek BrainSpecial block.
-    if (fit->seekBlock("BrainSpecial") != NO_ERR) {
-        fit->close();
-        delete fit;
-        return false;
-    }
-
-    // Seek Body sub-block inside BrainSpecial.
-    if (fit->seekBlock("Body") != NO_ERR) {
-        fit->close();
-        delete fit;
-        return false;
-    }
-
-    // Read DO0, DO1, ... until readIdString returns non-NO_ERR.
-    char keyBuf[16];
-    char verbBuf[64];
-    for (int i = 0; i < 64; ++i) {
-        std::snprintf(keyBuf, sizeof(keyBuf), "DO%d", i);
-        verbBuf[0] = '\0';
-        long result = fit->readIdString(keyBuf, verbBuf, (unsigned long)(sizeof(verbBuf) - 1));
-        if (result != NO_ERR) {
-            break;
-        }
-        if (verbBuf[0] != '\0') {
-            outBody.verbs.push_back(std::string(verbBuf));
+    if (!ok) {
+        // No TechSpecial brace blocks found — try legacy bracket-form fallback.
+        std::fprintf(stderr, "[BRAIN_DISPATCH_RAW] no TechSpecial blocks in %s — trying FitIni fallback\n",
+                     fitPath);
+        std::fflush(stderr);
+        ok = parseBrainSpecialBody_FitIni(fitPath, outBody);
+        if (ok) {
+            std::fprintf(stderr, "[BRAIN_DISPATCH_RAW] FitIni fallback loaded %s: %d verbs\n",
+                         fitPath, (int)outBody.verbs.size());
+            std::fflush(stderr);
         }
     }
 
-    fit->close();
-    delete fit;
-
-    if (!outBody.verbs.empty()) {
+    if (ok) {
         outBody.loaded = true;
         std::fprintf(stderr, "[BRAIN_DISPATCH] parsed %s_specials.fit: %d verbs\n",
                      missionName, (int)outBody.verbs.size());
