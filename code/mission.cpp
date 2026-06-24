@@ -3101,15 +3101,97 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	// TECHSCRIPT-SPECIAL-DISPATCH-1A: load per-warrior BrainSpecial body from <missionName>_specials.fit.
 	// Gate: MC2_BRAIN_DISPATCH=1 (default OFF). Requires MC2_BRAIN_RUNTIME=1 + MC2_BRAIN_RUNTIME_APPLY=1.
 	// File absence is silent. Only warriors with brainRuntime allocated (Enhanced mode) are loaded.
-	if (std::getenv("MC2_BRAIN_DISPATCH") && std::atoi(std::getenv("MC2_BRAIN_DISPATCH")) != 0) {
-		std::fprintf(stderr, "[BRAIN_DISPATCH] mission load: MC2_BRAIN_DISPATCH=1 mission=%s\n", missionName);
-		std::fflush(stderr);
-		for (unsigned long i = 1; i <= numWarriors; i++) {
-			MechWarriorPtr w = MechWarrior::warriorList[i];
-			if (w && w->getBrainRuntime()) {
-				parseBrainSpecialBody(missionName, w->getBrainRuntime()->specialBody);
-			}
+	//
+	// TECHSCRIPT-SPECIAL-DISPATCH-1C: gate MC2_BRAIN_DISPATCH_FSM_TODO=1 (requires MC2_BRAIN_DISPATCH=1).
+	// Runs a MISSION-LEVEL raw-text scan of the specials file for
+	// "; TODO: manual ABL line: <payload>" comments (stripped by FitIniFile).
+	// Emits [BRAIN_DISPATCH_FSM_TODO] summary + detail lines. Information only — no behavior change.
+	// Scan is done once per mission (not per-warrior) because the file is mission-level.
+	// Gate-OFF: byte-identical to pre-1C; no extra parsing, no extra traces.
+	{
+		const bool dispatchOn   = (std::getenv("MC2_BRAIN_DISPATCH")         && std::atoi(std::getenv("MC2_BRAIN_DISPATCH"))         != 0);
+		const bool fsmTodoOn    = (std::getenv("MC2_BRAIN_DISPATCH_FSM_TODO") && std::atoi(std::getenv("MC2_BRAIN_DISPATCH_FSM_TODO")) != 0);
+
+		if (fsmTodoOn && !dispatchOn) {
+			std::fprintf(stderr, "[BRAIN_DISPATCH_FSM_TODO] WARN: MC2_BRAIN_DISPATCH_FSM_TODO=1 requires MC2_BRAIN_DISPATCH=1 — inert\n");
+			std::fflush(stderr);
 		}
+
+		if (dispatchOn) {
+			std::fprintf(stderr, "[BRAIN_DISPATCH] mission load: MC2_BRAIN_DISPATCH=1 mission=%s\n", missionName);
+			std::fflush(stderr);
+
+			// 1A/1B: per-warrior verb parse (only for warriors with brainRuntime allocated).
+			for (unsigned long i = 1; i <= numWarriors; i++) {
+				MechWarriorPtr w = MechWarrior::warriorList[i];
+				if (w && w->getBrainRuntime()) {
+					parseBrainSpecialBody(missionName, w->getBrainRuntime()->specialBody);
+				}
+			}
+
+			// TECHSCRIPT-SPECIAL-DISPATCH-1C: FSM-TODO mission-level scan + trace.
+			// Done ONCE per mission (the specials file is mission-level, not per-warrior).
+			// Gate-OFF: this entire block is skipped; no ifstream open, no extra traces.
+			if (fsmTodoOn) {
+				// Use a temporary BrainSpecialBody for the scan — trace output is mission-level.
+				// fsmTodos are INFORMATION ONLY; they are not stored persistently here.
+				// (Future per-warrior storage is deferred — the file has one FSM skeleton shared
+				// by all warriors; per-warrior active-state gating is out of 1C scope.)
+				BrainSpecialBody tmpBody;
+				scanFsmTodosFromFile(missionName, tmpBody);
+
+				// Count by kind for the summary line.
+				int nStateDef = 0, nStateEnd = 0, nTrans = 0, nTransBack = 0, nOther = 0;
+				for (const FsmTodoEntry& e : tmpBody.fsmTodos) {
+					switch (e.kind) {
+						case FsmTodoKind::STATE_DEF:  ++nStateDef;  break;
+						case FsmTodoKind::STATE_END:  ++nStateEnd;  break;
+						case FsmTodoKind::TRANS:      ++nTrans;     break;
+						case FsmTodoKind::TRANS_BACK: ++nTransBack; break;
+						case FsmTodoKind::OTHER_TODO: ++nOther;     break;
+					}
+				}
+
+				// Summary line (always emitted when FSM_TODO gate is on, even if count=0).
+				// wid=-1 signals mission-level (no specific warrior context).
+				std::fprintf(stderr,
+					"[BRAIN_DISPATCH_FSM_TODO] mission=%s wid=-1 stateDefs=%d transitions=%d otherTodos=%d\n",
+					missionName, nStateDef, nTrans + nTransBack, nOther);
+				std::fflush(stderr);
+
+				// Detail lines: STATE_DEF, TRANS, TRANS_BACK, STATE_END only.
+				// OTHER_TODO is counted in summary but NOT detail-traced (noise suppression).
+				for (const FsmTodoEntry& e : tmpBody.fsmTodos) {
+					switch (e.kind) {
+						case FsmTodoKind::STATE_DEF:
+							std::fprintf(stderr,
+								"[BRAIN_DISPATCH_FSM_TODO] kind=STATE_DEF name=%s wid=-1\n",
+								e.name.c_str());
+							std::fflush(stderr);
+							break;
+						case FsmTodoKind::STATE_END:
+							std::fprintf(stderr,
+								"[BRAIN_DISPATCH_FSM_TODO] kind=STATE_END wid=-1\n");
+							std::fflush(stderr);
+							break;
+						case FsmTodoKind::TRANS:
+							std::fprintf(stderr,
+								"[BRAIN_DISPATCH_FSM_TODO] kind=TRANS target=%s wid=-1\n",
+								e.name.c_str());
+							std::fflush(stderr);
+							break;
+						case FsmTodoKind::TRANS_BACK:
+							std::fprintf(stderr,
+								"[BRAIN_DISPATCH_FSM_TODO] kind=TRANS_BACK wid=-1\n");
+							std::fflush(stderr);
+							break;
+						case FsmTodoKind::OTHER_TODO:
+							// Suppressed from detail trace (counted in summary only).
+							break;
+					}
+				}
+			} // fsmTodoOn
+		} // dispatchOn
 	}
 
 #ifdef LAB_ONLY

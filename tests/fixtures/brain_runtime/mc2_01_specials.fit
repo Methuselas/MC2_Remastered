@@ -8,3 +8,8 @@ st DO1 = "Brain.CorePower"
 st DO2 = "OPORD.CoreGuard"
 st DO3 = "Unit.InState"
 st DO4 = "Var.Set"
+; TODO: manual ABL line: state start;
+; TODO: manual ABL line: trans attack;
+; TODO: manual ABL line: transBack;
+; TODO: manual ABL line: endstate;
+; TODO: manual ABL line: real[3] worldLoc;
