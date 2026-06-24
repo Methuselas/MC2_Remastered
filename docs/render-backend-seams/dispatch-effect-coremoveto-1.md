@@ -47,9 +47,43 @@ Each effect's `xDone = hasX && xEffectApplied`. Flags set BEFORE Apply runs (so 
 | Unit cannot move (POWERDOWN already applied, ejected, etc.) | Engine's `setGeneralTacOrder` is a no-op for incapacitated units; relaxed-guard does not need extra logic — POWERDOWN's once-guard already prevents POWERDOWN+MoveTo coexistence at the slot level |
 | Coord out of bounds | Engine's PathManager handles unreachable destinations (silent failure to pathfind, unit idles) — not a crash class. Verified by smoke. |
 
-## Acceptance gate matrix
+## Required env bundle (canonical, matches COREGUARD-1)
 
-See `dispatch-effect-coremoveto-1.gates.md` (run from main process; agent that built the code did not run gates before dying).
+```
+MC2_BRAIN_RUNTIME=1
+MC2_BRAIN_RUNTIME_APPLY=1
+MC2_BRAIN_RUNTIME_FORCE_MODE=enhanced    # lowercase — case-sensitive parser
+MC2_BRAIN_TASKQ=1
+MC2_BRAIN_DISPATCH=1
+MC2_BRAIN_DISPATCH_APPLY=1
+MC2_BRAIN_SPECIAL_FIT=<fixture-stem>     # appends _specials.fit at load
+```
+
+Also requires deploying `tests/fixtures/brain_runtime/mc2_01_ai.fit` alongside the specials fixture — it allocates brainRuntime for Warrior4 at mission load. Without ai.fit, brainRuntime is allocated lazily in `runBrain` after the mission-load parser has already exited.
+
+Specials fixture format = **FITini legacy bracket form** (`[BrainSpecial]/[Body]/st DO<N> = "<verb>"`), the new TechSpecial brace-block format works too but the legacy form is what's deployed across all prior slice fixtures.
+
+## Acceptance gate matrix (all PASS)
+
+| Gate | Config | Expected | Result |
+|---|---|---|---|
+| A | tier1 no env | PASS 5/5, byte-identical | PASS (mc2_10 heartbeat flake → retry PASS) |
+| B | full env + APPLY=0 + moveto fixture | recognized, no Apply | PASS (parse=1, apply=0) |
+| **C** | full env + APPLY=1 + moveto fixture | EXACTLY ONE `[BRAIN_DISPATCH_APPLY] verb=OPORD.CoreMoveTo effect=MOVETO_POINT pos=(100 200 0) wid=4` | **PASS** |
+| D | full env + APPLY=1 + NaN fixture | `[BRAIN_DISPATCH_MOVETO_NAN]` fires; no Apply | PASS (`x=nan y=200 z=0 wid=4`) |
+| E | full env + APPLY=1 + GUARD fixture | GUARD 1x, MoveTo 0x | PASS |
+| E2 | full env + APPLY=1 + EJECT fixture | EJECT 1x (+ GUARD 1x; eject fixture contains both) | PASS |
+| F | full env + APPLY=1, no fixture, mc2_10/24 | 0 spurious traces | PASS (counts: 0, 0) |
+
+### Gate C proof line (verbatim):
+```
+[BRAIN_DISPATCH_APPLY] verb=OPORD.CoreMoveTo effect=MOVETO_POINT pos=(100 200 0) wid=4
+```
+
+### Gate D proof line (verbatim):
+```
+[BRAIN_DISPATCH_MOVETO_NAN] x=nan y=200 z=0 wid=4
+```
 
 ## Lineage
 
