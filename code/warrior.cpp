@@ -155,6 +155,72 @@ static void initBrainRuntimeGate() {
     }
 }
 
+// MC2_BRAIN_FIXED_TICK gate — checked once at first brain-cadence check
+// BRAIN-FIXED-TICK-1: fixed sim-time accumulator replaces per-warrior brainUpdate advance.
+// Gate OFF (default): byte-identical to baseline (brainUpdate += BrainUpdateFrequency).
+// Gate ON: global accumulator advanced by scenarioTime delta; integer tick index drives
+//          which warriors fire; per-warrior brainUpdate still used as stagger offset only.
+static bool  s_brainFixedTickEnabled     = false;
+static bool  s_brainFixedTickTrace       = false;
+static bool  s_brainFixedTickGateChecked = false;
+static float s_brainFixedTickHz          = 10.0f;   // default 10 Hz = 0.1 s period
+static float s_brainFixedTickPeriod      = 0.1f;    // 1.0 / hz, computed at init
+
+// Per-frame accumulator: how many sim-seconds have accumulated toward next fixed tick.
+// Advanced once per frame in updateBrainFixedTickAccumulator().
+// Not per-warrior — this is a global sim-time counter.
+static float    s_brainFixedTickAccum    = 0.0f;
+static float    s_brainFixedTickSimLast  = -1.0f;   // last scenarioTime seen; -1 = uninit
+static uint32_t s_brainTickIndex         = 0;       // monotonic tick counter, per-frame global
+static uint32_t s_brainTicksThisFrame    = 0;       // ticks fired in current frame (reset each frame)
+
+static void initBrainFixedTickGate() {
+    if (s_brainFixedTickGateChecked) return;
+    s_brainFixedTickGateChecked = true;
+    s_brainFixedTickEnabled = (std::getenv("MC2_BRAIN_FIXED_TICK") && std::atoi(std::getenv("MC2_BRAIN_FIXED_TICK")) != 0);
+    s_brainFixedTickTrace   = (std::getenv("MC2_BRAIN_FIXED_TICK_TRACE") && std::atoi(std::getenv("MC2_BRAIN_FIXED_TICK_TRACE")) != 0);
+    if (s_brainFixedTickEnabled) {
+        const char* hzEnv = std::getenv("MC2_BRAIN_FIXED_TICK_HZ");
+        float hz = hzEnv ? (float)std::atof(hzEnv) : 10.0f;
+        if (hz < 1.0f)  hz = 1.0f;
+        if (hz > 30.0f) hz = 30.0f;
+        s_brainFixedTickHz     = hz;
+        s_brainFixedTickPeriod = 1.0f / hz;
+        std::fprintf(stderr, "[BRAIN_FIXED_TICK] init: hz=%.1f period=%.4fs trace=%d\n",
+            s_brainFixedTickHz, s_brainFixedTickPeriod, (int)s_brainFixedTickTrace);
+        std::fflush(stderr);
+    }
+}
+
+// Called once per frame (at start of first warrior's updateActions for this frame) to
+// advance the accumulator by the sim-time delta and count whole ticks.
+// Returns true if at least one tick fired this frame (i.e., warriors may run brain).
+// All warriors within a single render frame share the same brainTickIndex window.
+static bool advanceBrainFixedTickAccumulator(float scenarioTime) {
+    if (s_brainFixedTickSimLast < 0.0f) {
+        // First call: seed last-time, no ticks yet.
+        s_brainFixedTickSimLast  = scenarioTime;
+        s_brainTicksThisFrame    = 0;
+        return false;
+    }
+    float dt = scenarioTime - s_brainFixedTickSimLast;
+    if (dt < 0.0f) dt = 0.0f;  // guard against rewind (save/load)
+    s_brainFixedTickSimLast = scenarioTime;
+    s_brainFixedTickAccum  += dt;
+    s_brainTicksThisFrame   = 0;
+    while (s_brainFixedTickAccum >= s_brainFixedTickPeriod) {
+        s_brainFixedTickAccum -= s_brainFixedTickPeriod;
+        ++s_brainTickIndex;
+        ++s_brainTicksThisFrame;
+    }
+    return (s_brainTicksThisFrame > 0);
+}
+
+// Track which frame we last advanced the accumulator for, so each render frame advances once.
+static uint32_t s_brainAccumLastFrame = 0xFFFFFFFFu;
+// g_mc2FrameCounter defined in mclib/tgl.cpp; incremented by GameOS frame-end.
+extern uint32_t g_mc2FrameCounter;
+
 enum {
 	T_A = 0,
 	T = T_A,
@@ -5212,6 +5278,18 @@ long MechWarrior::mainDecisionTree (void) {
 	
 	//----------------------
 	// Update pilot brain...
+	// BRAIN-FIXED-TICK-1: advance global sim-time accumulator once per render frame,
+	// before the per-warrior gate so even staggered-out warriors contribute to the advance.
+	initBrainFixedTickGate();
+	if (s_brainFixedTickEnabled && s_brainAccumLastFrame != g_mc2FrameCounter) {
+		s_brainAccumLastFrame = g_mc2FrameCounter;
+		bool ticked = advanceBrainFixedTickAccumulator(scenarioTime);
+		if (s_brainFixedTickTrace && ticked) {
+			std::fprintf(stderr, "[BRAIN_FIXED_TICK] tick=%u simTime=%.4f ranThisFrame=%u\n",
+				s_brainTickIndex, (double)scenarioTime, s_brainTicksThisFrame);
+			std::fflush(stderr);
+		}
+	}
 	if ((brainUpdate <= scenarioTime) && ((teamId == -1) || brainsEnabled[teamId])) {
 		// MC2_BRAIN_TASKQ: drain one task per brain cadence (inert stub — no tacOrder writes this slice)
 		initBrainTaskQGate();
@@ -5259,8 +5337,15 @@ long MechWarrior::mainDecisionTree (void) {
 		}
 		// runBrain() always called — short-circuit is gated inside it.
 		runBrain();
-		brainUpdate += BrainUpdateFrequency;
+		// BRAIN-FIXED-TICK-1: advance brainUpdate by fixed tick period (gate ON)
+		// or legacy BrainUpdateFrequency (gate OFF — byte-identical to baseline).
+		if (s_brainFixedTickEnabled) {
+			brainUpdate += s_brainFixedTickPeriod;
+		} else {
+			brainUpdate += BrainUpdateFrequency;
+		}
 	}
+
 
 	//------------------------------------------------------------------
 	// In case the brain set a new target, let's recalc weaponsStatus...
