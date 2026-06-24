@@ -46,7 +46,7 @@ static void EditorObjMgrTrace(const char* fmt, ...)
 #endif
 
 #include "EditorObjectMgr.h"
-#include "../GameOS/gameos/gos_static_prop_batcher.h"
+#include "../EditorBridge/EditorRenderBridge.h"  // GPU static-prop batcher/registry (firewall)
 
 
 #ifndef FILE_H
@@ -124,7 +124,6 @@ static void EditorObjMgrTrace(const char* fmt, ...)
 #include "../ARM/Microsoft.Xna.Arm.h"
 #include "EditorResourceFallback.h"
 #include "EditorResourceCatalog.h"
-#include "../GameOS/gameos/gos_static_prop_registry.h"
 #include "../GameAdapters/MechRenderAdapter.h"
 using namespace Microsoft::Xna::Arm;
 
@@ -2229,8 +2228,8 @@ void EditorObjectMgr::primeAllBuildingAppearanceTypes()
 			{
 				BldgAppearanceType* bat = static_cast<BldgAppearanceType*>(bldg.appearanceType);
 				for (int lod = 0; lod < MAX_LODS; ++lod)
-					GpuStaticPropBatcher::instance().registerMultiShape(bat->bldgShape[lod]);
-				GpuStaticPropBatcher::instance().registerMultiShape(bat->bldgDmgShape);
+					EditorBridge::registerStaticPropShape(bat->bldgShape[lod]);
+				EditorBridge::registerStaticPropShape(bat->bldgDmgShape);
 				++nPrimed;
 			}
 			else
@@ -3378,7 +3377,7 @@ EditorObject* EditorObjectMgr::findObjectByStaticRecipeIndex(int32_t recipeIndex
 
 void EditorObjectMgr::registerStaticPropsForMissionLoad()
 {
-	if (!GpuStaticPropRegistry::isMissionLoadRegEnabled())
+	if (!EditorBridge::staticPropMissionLoadRegEnabled())
 		return;
 	static const long homeRelations[9] = {0, 0, 2, 1, 1, 1, 1, 1, 1};
 	int total = 0, registered = 0;

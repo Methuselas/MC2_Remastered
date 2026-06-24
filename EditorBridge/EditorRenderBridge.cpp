@@ -23,6 +23,16 @@
 // GameOS (gos_VERTEX, gos_DrawLines, gos_SetRenderState, gos_GetViewport, Environment)
 #include "../GameOS/include/gameos.hpp"
 
+// GPU-internal headers (EDITOR-BRIDGE-GPU-FIREWALL-1). This carve-out TU is the
+// ONLY editor-facing seam allowed to include these; editor/ TUs route through
+// the lifecycle passthroughs below instead of including them directly.
+#include "../GameOS/gameos/gos_static_prop_batcher.h"   // GpuStaticPropBatcher, batcher_getTypeCount, TG_TypeMultiShape
+#include "../GameOS/gameos/gos_static_prop_registry.h"  // GpuStaticPropRegistry
+#include "../GameOS/gameos/gos_mech_batcher.h"          // GpuMechBatcher
+#include "../GameOS/gameos/gpu_cull_compute.h"           // gpu_cull::compute_*
+#include "../GameOS/gameos/gpu_cull_substrate.h"          // gpu_cull::substrate_shutdown
+#include "../GameOS/gameos/gpu_cull_readback.h"           // gpu_cull::readback_shutdown
+
 // ---- game-side globals wired by the editor at startup ----
 extern TerrainPtr land;   // defined in mclib/terrain.cpp
 extern CameraPtr  eye;    // defined in mclib/camera.cpp
@@ -298,6 +308,58 @@ void drawTerrainTileOutline(const TerrainTileOverlayDesc& desc) {
     drawLine(sx[2], sy[2], sx[3], sy[3], argb);  // S edge
     drawLine(sx[3], sy[3], sx[0], sy[0], argb);  // W edge
     popOverlayState();
+}
+
+// ---- Mission render-resource lifecycle (EDITOR-BRIDGE-GPU-FIREWALL-1) ----
+// Deliberately NOT gated on s_enabled: the batcher/registry/cull lifecycle must
+// run whenever the editor loads a map, independent of the pick-bridge enable
+// flag (which only gates pickAt/queryVisibility/overlay draws).
+
+void beginMissionRenderResources() {
+    GpuStaticPropBatcher::instance().onMapLoad();
+    GpuMechBatcher::instance().onMapLoad();
+    GpuStaticPropRegistry::init();
+}
+
+void endMissionRenderResources() {
+    // Locked 6-step order (mission.cpp:3272-3283). Must run while actor
+    // TG_MultiShape pointers are still valid (i.e. before EditorObjectMgr::clear()).
+    gpu_cull::readback_shutdown();
+    gpu_cull::compute_shutdown();
+    gpu_cull::substrate_shutdown();
+    GpuStaticPropBatcher::instance().onMapUnload();
+    GpuMechBatcher::instance().onMapUnload();
+    GpuStaticPropRegistry::destroy();
+}
+
+void finalizeMissionGeometry() {
+    GpuStaticPropBatcher::instance().finalizeGeometry();
+    GpuMechBatcher::instance().finalizeGeometry();
+    if (gpu_cull::compute_isEnabled()) {
+        gpu_cull::compute_buildIndirectBuffer(batcher_getTypeCount());
+    }
+}
+
+void staticPropFrameBegin() {
+    GpuStaticPropRegistry::frameBegin();
+}
+
+void mechFinalizePending() {
+    GpuMechBatcher::instance().finalizePending();
+}
+
+void cullComputeInit() {
+    gpu_cull::compute_init();
+}
+
+void registerStaticPropShape(void* multiShape) {
+    if (!multiShape) return;
+    GpuStaticPropBatcher::instance().registerMultiShape(
+        static_cast<TG_TypeMultiShape*>(multiShape));
+}
+
+bool staticPropMissionLoadRegEnabled() {
+    return GpuStaticPropRegistry::isMissionLoadRegEnabled();
 }
 
 } // namespace EditorBridge
