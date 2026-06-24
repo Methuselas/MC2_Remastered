@@ -2677,6 +2677,7 @@ bool Mech3DAppearance::recalcBounds (void)
 
 							BYTE alphaValue = mechShape->GetAlphaValue();
 							//mechShape->ClearAnimation();	//DO NOT do this with animating things!!
+							mc2mechanim::UnregisterImportedActor(mechShape);	// IMPORTED-ACTOR-STABLE-KEY-1
 							delete mechShape;
 							mechShape = NULL;
 
@@ -2701,6 +2702,7 @@ bool Mech3DAppearance::recalcBounds (void)
 
 							BYTE alphaValue = mechShape->GetAlphaValue();
 							//treeShape->ClearAnimation();
+							mc2mechanim::UnregisterImportedActor(mechShape);	// IMPORTED-ACTOR-STABLE-KEY-1
 							delete mechShape;
 							mechShape = NULL;
 
@@ -3560,6 +3562,7 @@ void Mech3DAppearance::setObjStatus (long oStatus)
 				if (mechType->mechForwardDmgShape)
 				{
 					mechShape->ClearAnimation();
+					mc2mechanim::UnregisterImportedActor(mechShape);	// IMPORTED-ACTOR-STABLE-KEY-1
 					delete mechShape;
 					mechShape = NULL;
 
@@ -3571,6 +3574,7 @@ void Mech3DAppearance::setObjStatus (long oStatus)
 				if (mechType->mechBackwardDmgShape)
 				{
 					mechShape->ClearAnimation();
+					mc2mechanim::UnregisterImportedActor(mechShape);	// IMPORTED-ACTOR-STABLE-KEY-1
 					delete mechShape;
 					mechShape = NULL;
 
@@ -5887,7 +5891,10 @@ void Mech3DAppearance::destroy (void)
 	spotlightsRegistered_ = false;
 
 	if ( mechShape )
+	{
+		mc2mechanim::UnregisterImportedActor(mechShape);	// IMPORTED-ACTOR-STABLE-KEY-1: final teardown
 		delete mechShape;
+	}
 	mechShape = NULL;
 
 	if (mechShadowShape)
