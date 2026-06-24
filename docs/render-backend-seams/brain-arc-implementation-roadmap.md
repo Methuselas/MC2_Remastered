@@ -126,3 +126,35 @@ Recons completed: `techscript-call-chain-recon-1.md` and `mod-campaign-brain-str
 - **1L split**: `1L-A` trace-only recognition; `1L-B` Audio + Debug apply; `1L-C` Camera + Video + TriggerArea apply (Camera/Video affect mission timing/presentation — don't bundle with debug). Locked.
 - **1D Var mission-scope policy**: trace-only this slice; mission writes deferred until a guarded-single-writer (or read-mostly + serialized) design lands. Carver's vars are ALL `scope=Mission`, so under this policy carver chains *correctly* but Var state won't persist — a separate **`1D-M` mission-scope writes** slice unblocks full carver functional execution (no longer "later"; queue near-term after 1E).
 
+
+---
+
+## Addendum (2026-06-24 #2): On-disk format gap (discovered building 1D)
+
+Sharper restatement of the mod-campaign content gap — discovered while implementing the Var parser.
+
+**`FitIniFile::readIdString` reads `"..."` literals**, which means our `[Body]` block storing each verb line as `st DO0 = "<line>"` cannot contain a quoted arg without ending the outer string at the first inner `"`. The modder writes `DO Var.Set "ScenarioResult" PLAYING scope=Mission` — that's `"..."` inside `"..."`, which FitIniFile truncates.
+
+Our 1D fixture works around it by using bracket syntax `Var.Set [foo] 1`, which the parser accepts as an alternate delimiter. But **carver's actual content uses `"..."` and would not load through our FitIniFile-based reader as-is.**
+
+Three options, in order of investment:
+1. **Raw line loader** for the `Body { ... DO ... }` block — bypass FitIniFile for that one sub-block (similar to how 1C scans TODO comments raw with `std::ifstream`). Single-file change; carver content loads as written.
+2. **Pre-conversion step** that rewrites carver `"foo"` to `[foo]` at deploy time — keeps the engine simple, adds tooling complexity.
+3. **Bracket as the canonical format** + require all content (carver + new) to use it. Worst for compatibility.
+
+Recommendation: **option 1** — write a raw `Body { DO ... }` scanner (the 1C TODO scanner is the model). Schedule as `DISPATCH-LOADER-RAW-1` slice; insert before 1E (`TechSpecial.Call`) because the Call recon found carver uses 31/46 missions worth of Call chains, and we want to read them as the modder wrote them, not via a converter.
+
+Net new slice order (revised):
+```
+DISPATCH-LOADER-RAW-1   ← NEW: raw-body scanner, no FitIniFile quote-truncation
+CALL-CHAIN-1A           ← reads through the new loader
+1F coreEject + Guard    ← unlocks 4 MCO low-hanging-fruit campaigns
+1D-M mission-scope writes ← unblocks full carver var state
+1G..1J other effect verbs
+1K FSM DSL
+1L-A/B/C trace families
+1M/1N/1O architectural
+```
+
+Until LOADER-RAW lands, all real-content stress tests need the bracket-syntax workaround (or hand-port). Our synthetic fixtures continue to work either way.
+
