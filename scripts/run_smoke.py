@@ -48,7 +48,10 @@ try:
 except Exception:
     _crash_evidence = None
 
-DEFAULT_EXE = Path(r"A:/Games/mc2-opengl/mc2-win64-v0.4c/mc2.exe")
+# No default exe path: callers must either pass --exe explicitly or let the
+# deploy-lease system auto-select the least-recently-used deploy folder. This
+# avoids drift toward a stale fixed default and keeps load balanced across
+# 0.4 / 0.4c / 0.4d-rc1 / 0.5.0 / 0.5-testing.
 ARTIFACT_ROOT = ROOT / "tests" / "smoke" / "artifacts"
 MANIFEST_PATH = ROOT / "tests" / "smoke" / "smoke_missions.txt"
 BASELINE_PATH = ROOT / "tests" / "smoke" / "baselines.json"
@@ -505,9 +508,13 @@ def main():
         _lease_available = False
 
     if not _lease_available or args.no_lease:
-        # No-lease path: just ensure args.exe has a value
+        # No-lease path: --exe is REQUIRED here (no default fallback anymore).
         if args.exe is None:
-            args.exe = str(DEFAULT_EXE)
+            reason = "lease system unavailable" if not _lease_available else "--no-lease set"
+            print(f"[runner] ERROR: {reason} and no --exe given. "
+                  "Pass --exe <path>/mc2.exe, --deploy <name>, or let the lease "
+                  "auto-acquire the least-recently-used folder.", file=sys.stderr)
+            sys.exit(6)
         if args.no_lease and _lease_available:
             print("[runner] [LEASE] --no-lease: skipping lease system",
                   file=sys.stderr)
@@ -563,9 +570,13 @@ def main():
         _atexit.register(lambda: _deploy_lease.release_lease(_lease_folder)
                          if _lease_folder else None)
 
-    # Ensure args.exe is always set (defensive fallback — should never trigger)
+    # Defensive: args.exe must be set by here (lease auto-acquire or explicit
+    # --exe/--deploy). If somehow still None, fail loudly rather than silently
+    # falling back to a default that doesn't exist anymore.
     if args.exe is None:
-        args.exe = str(DEFAULT_EXE)
+        print("[runner] ERROR: internal: args.exe is None after lease/exe resolution. "
+              "This is a bug — pass --exe explicitly to work around.", file=sys.stderr)
+        sys.exit(6)
 
     # ----- Deploy-coherence verify (preflight) ---------------------------
     # The target dir run_smoke would launch from = parent of --exe. We call
