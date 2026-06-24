@@ -87,7 +87,7 @@
       "pipelineId": "TerrainSolid",
       "shaderBase": "gos_terrain",
       "stateOwner": "legacy/ad-hoc (hand-set in gos_terrain_bridge_drawIndirect; NOT routed)",
-      "next": "TERRAIN-SOLID-LIVE-DRAWPATH-RECON-2 (read-only/probe-first): classify the actual terrain-solid draw that fires in deterministic capture + werewolf-armed (NOT the bridge, NOT 3528=water); name its caller chain; record terrain state at that real chokepoint. THEN TERRAIN-SOLID-APPLYPIPELINE-ROUTING-2: applyPipeline(TerrainSolid) at the real chokepoint, keep colorMask repair, [PIPELINE_BIND] binds>0 in capture, sha holds -> only THEN promote to ROUTED.",
+      "next": "RECON-2 DONE -> terrain-main-pipeline-registration-recon-2.md. ROUTING-1 routed the CORRECT modern pipe (not dead); it is unproven because no current bookmark solid-arms (IsFrameSolidArmed is camera-windowed). NEXT = TERRAIN-SOLID-ARMED-BOOKMARK-1 (author a ground-level bookmark facing solid terrain so the bridge fires) THEN re-gate ROUTING-1 (binds>0 + sha holds + colorMask intact) -> ONLY THEN promote to ROUTED_BY_APPLYPIPELINE. Do NOT route the legacy MLR path (deprecated). Fallback proof = RenderDoc on real armed gameplay (needs launch approval).",
       "proofBasis": "TERRAIN_CULL_STATE_PROBE_1",
       "evidence": "TERRAIN-SOLID-PIPELINE-REGISTRATION-1: descriptive TerrainSolid row (cull/frontFace probed, TERRAIN-CULL-STATE-PROBE-1). TERRAIN-SOLID-APPLYPIPELINE-ROUTING-1: applyPipeline(TerrainSolid) added at gos_terrain_bridge_drawIndirect, glColorMask(TRUE) shadow-leak repair PRESERVED. PARTIAL/UNPROVEN: capture (water + werewolf-armed) holds sha cb5a700e (NO REGRESSION) but [PIPELINE_BIND] TerrainSolid binds=0 — the routed bridge is NOT the live harness terrain-solid entrypoint. NOT promoted to ROUTED (zero binds is not routed). The bridge route may still be correct for a real-gameplay entrypoint; left in place pending RECON-2 which identifies the actual live draw chokepoint.",
       "routingStatus": "PARTIAL_ROUTED_UNPROVEN",
@@ -96,7 +96,7 @@
         "gos_terrain_bridge_drawIndirect (gameos_graphics.cpp ~4005)"
       ],
       "unverifiedLiveEntryPoints": [
-        "the actual capture/armed terrain-solid draw chokepoint — TBD by TERRAIN-SOLID-LIVE-DRAWPATH-RECON-2 (NOTE: gameos_graphics.cpp:3528 is the WATER MDI draw, NOT terrain — corrected)"
+        "MODERN bridge gos_terrain_bridge_drawIndirect IS the correct target (RECON-2); it binds 0 in capture only because current bookmarks do not camera-window-arm solid terrain -> capture falls to the deprecated legacy MLR path (txmmgr:2931, gos_SetRenderState). 3528=WATER (not terrain)."
       ],
       "colorMaskRepair": "PRESERVED",
       "captureNote": "NO_REGRESSION_CAPTURE_ONLY — sha cb5a700e holds (no regression, colorMask repair intact) but routed-bridge [PIPELINE_BIND] TerrainSolid binds=0 (not the live capture entrypoint)."
