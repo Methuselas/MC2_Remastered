@@ -400,6 +400,66 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* polygonOffsetEnable */ false,
         /* ssboBindingsMask    */ 0u,
     },
+    // [21-24] PostProcess MULTIPLY passes — runScreenShadow / runCloudShadow /
+    // runShoreline / runSSAO-apply. All identical state: Multiply (DST_COLOR/ZERO,
+    // scene *= mask), depth test+write OFF, cull None, color0 only. glProgramName=0
+    // -> each call site keeps binding its own program. State recon-proven.
+    // [21] PostProcessScreenShadow
+    {
+        /* glProgramName       */ 0u,
+        /* blend               */ BlendMode::Multiply,
+        /* depthTestEnable     */ false,
+        /* depthWriteEnable    */ false,
+        /* depthFunc           */ DepthFunc::Always,
+        /* cullMode            */ CullMode::None,
+        /* colorAttachments    */ { true, false, false },
+        /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,
+        /* polygonOffsetEnable */ false,
+        /* ssboBindingsMask    */ 0u,
+    },
+    // [22] PostProcessCloudShadow
+    {
+        /* glProgramName       */ 0u,
+        /* blend               */ BlendMode::Multiply,
+        /* depthTestEnable     */ false,
+        /* depthWriteEnable    */ false,
+        /* depthFunc           */ DepthFunc::Always,
+        /* cullMode            */ CullMode::None,
+        /* colorAttachments    */ { true, false, false },
+        /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,
+        /* polygonOffsetEnable */ false,
+        /* ssboBindingsMask    */ 0u,
+    },
+    // [23] PostProcessShoreline
+    {
+        /* glProgramName       */ 0u,
+        /* blend               */ BlendMode::Multiply,
+        /* depthTestEnable     */ false,
+        /* depthWriteEnable    */ false,
+        /* depthFunc           */ DepthFunc::Always,
+        /* cullMode            */ CullMode::None,
+        /* colorAttachments    */ { true, false, false },
+        /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,
+        /* polygonOffsetEnable */ false,
+        /* ssboBindingsMask    */ 0u,
+    },
+    // [24] PostProcessSsaoApply
+    {
+        /* glProgramName       */ 0u,
+        /* blend               */ BlendMode::Multiply,
+        /* depthTestEnable     */ false,
+        /* depthWriteEnable    */ false,
+        /* depthFunc           */ DepthFunc::Always,
+        /* cullMode            */ CullMode::None,
+        /* colorAttachments    */ { true, false, false },
+        /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,
+        /* polygonOffsetEnable */ false,
+        /* ssboBindingsMask    */ 0u,
+    },
 
 }};
 

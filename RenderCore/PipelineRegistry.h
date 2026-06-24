@@ -79,8 +79,16 @@ enum class PipelineId : uint32_t {
     // 8 frames unanimous at the dispatch chokepoint), NOT guessed. Writes color0 +
     // GBuffer1. Routing (+ the load-bearing glColorMask repair) is a later slice.
     TerrainSolid         = 20,  // main solid terrain (Opaque, GEQUAL reverse-Z, cull None)
+    // BLENDMODE-MULTIPLY-1: the four multiplicative post-fx darkening passes
+    // (scene *= mask). All Multiply (DST_COLOR/ZERO), depth test+write OFF, cull
+    // None, color0. State recon-proven (POSTPROCESS-PIPELINE-REGISTRATION-RECON-1
+    // + verified DST_COLOR/ZERO at gos_postprocess.cpp). ROUTED via applyPipeline.
+    PostProcessScreenShadow = 21,  // runScreenShadow (shadow_screen, Multiply)
+    PostProcessCloudShadow  = 22,  // runCloudShadow (cloud, Multiply)
+    PostProcessShoreline    = 23,  // runShoreline (shoreline, Multiply)
+    PostProcessSsaoApply    = 24,  // runSSAO apply (ssao_apply, Multiply)
     // Future: DebugWireframe, ...
-    Count_               = 21,  // sentinel — do not use as an ID
+    Count_               = 25,  // sentinel — do not use as an ID
 };
 
 // VERTEXLAYOUT-AUTHORITY-1: stable repo-owned vertex-input layout identities —

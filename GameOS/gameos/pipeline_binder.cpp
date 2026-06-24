@@ -79,6 +79,13 @@ void applyPipeline(const RenderCore::PipelineDesc& desc, const char* dbgName) {
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE);
             break;
+        case RenderCore::BlendMode::Multiply:
+            // BLENDMODE-MULTIPLY-1: DST_COLOR/ZERO — multiplicative DARKENING used by
+            // the post-fx screen-shadow / cloud-shadow / shoreline / SSAO-apply passes
+            // (scene *= mask). Distinct from every additive/alpha mode.
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_DST_COLOR, GL_ZERO);
+            break;
     }
 
     // --- Cull ---
@@ -133,7 +140,8 @@ void applyPipeline(const RenderCore::PipelineDesc& desc, const char* dbgName) {
             desc.blend == RenderCore::BlendMode::AlphaTest           ? "AlphaTest" :
             desc.blend == RenderCore::BlendMode::Additive            ? "Additive" :
             desc.blend == RenderCore::BlendMode::AdditiveOneOne      ? "AdditiveOneOne" :
-            desc.blend == RenderCore::BlendMode::AdditiveSrcAlphaOne ? "AdditiveSrcAlphaOne" : "?";
+            desc.blend == RenderCore::BlendMode::AdditiveSrcAlphaOne ? "AdditiveSrcAlphaOne" :
+            desc.blend == RenderCore::BlendMode::Multiply            ? "Multiply" : "?";
         std::fprintf(stderr,
             "[PIPELINE_BIND] %s depth=%s cull=%s frontFace=%s polygonOffset=%s blend=%s\n",
             dbgName, df, cm, ff, desc.polygonOffsetEnable ? "true" : "false", bm);

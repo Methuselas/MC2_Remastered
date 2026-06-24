@@ -1718,12 +1718,14 @@ void gosPostProcess::runSSAO()
     setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
     glViewport(0, 0, width_, height_);
 
-    if (ssaoDebug_ == 0) {
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_DST_COLOR, GL_ZERO);   // scene *= ao
-    } else {
-        glDisable(GL_BLEND);                  // overwrite with AO grayscale
-    }
+    // BLENDMODE-MULTIPLY-1: PostProcessSsaoApply row (Multiply = DST_COLOR/ZERO,
+    // scene *= ao). depth test+write OFF / cull None re-asserted (already set by SSAO
+    // pass 1; no-op). Byte-identical in the default path; the debug override
+    // (ssaoDebug_!=0 overwrites scene with AO grayscale) is preserved explicitly.
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessSsaoApply),
+        "PostProcessSsaoApply");
+    if (ssaoDebug_ != 0) glDisable(GL_BLEND);
 
     ssaoApplyProg_->setInt("ssaoTex", 0);
     float texel[2] = { 1.0f / (float)ssaoW_, 1.0f / (float)ssaoH_ };
@@ -1775,18 +1777,15 @@ void gosPostProcess::runScreenShadow()
     setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
     glViewport(0, 0, width_, height_);
 
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);
-    glDepthMask(GL_FALSE);
-
-    // Multiplicative blending: dst * src (shadow darkening)
-    // In debug mode, overwrite scene color entirely
-    if (screenShadowDebug_ == 0) {
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_DST_COLOR, GL_ZERO);
-    } else {
-        glDisable(GL_BLEND);
-    }
+    // BLENDMODE-MULTIPLY-1: drive FF state from the PostProcessScreenShadow row
+    // (Multiply = DST_COLOR/ZERO scene-darkening, depth test+write OFF, cull None).
+    // Byte-identical in the default path. The debug override (screenShadowDebug_!=0
+    // overwrites scene color) is preserved explicitly — applyPipeline sets Multiply,
+    // then debug disables blend.
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessScreenShadow),
+        "PostProcessScreenShadow");
+    if (screenShadowDebug_ != 0) glDisable(GL_BLEND);
 
     // Set uniforms BEFORE apply()
     const bool csmActive = (mc2ShadowCsmEnabled() && dynShadowArrayTex_ != 0);
@@ -1922,13 +1921,11 @@ void gosPostProcess::runCloudShadow()
     setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
     glViewport(0, 0, width_, height_);
 
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);
-    glDepthMask(GL_FALSE);
-
-    // Multiplicative: dst * src (cloud darkening).
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_DST_COLOR, GL_ZERO);
+    // BLENDMODE-MULTIPLY-1: PostProcessCloudShadow row (Multiply = DST_COLOR/ZERO
+    // cloud darkening, depth test+write OFF, cull None). Byte-identical to hand-set.
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessCloudShadow),
+        "PostProcessCloudShadow");
 
     cloudProg_->setInt("sceneDepthTex", 0);
     cloudProg_->setInt("u_cloudEnable", 1);   // gated in C++ above; 1 inside the pass
@@ -1977,13 +1974,12 @@ void gosPostProcess::runShoreline()
     setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
     glViewport(0, 0, width_, height_);
 
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);
-    glDepthMask(GL_FALSE);
-
-    // Multiplicative blend: values > 1.0 brighten water at shoreline
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_DST_COLOR, GL_ZERO);
+    // BLENDMODE-MULTIPLY-1: PostProcessShoreline row (Multiply = DST_COLOR/ZERO;
+    // mask values >1 brighten water at the shoreline). depth test+write OFF, cull
+    // None. Byte-identical to the hand-set state.
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessShoreline),
+        "PostProcessShoreline");
 
     shorelineProg_->setInt("sceneDepthTex", 0);
     shorelineProg_->setInt("sceneNormalTex", 1);
