@@ -31,23 +31,32 @@ It accumulates per-path `calls / avg_us / max_us` and emits a summary every 50 f
   `glBufferSubData` is blocking on a prior-frame GPU read → a real stall → justifies a
   particle ring / staging implementation slice in GL.
 
-## Measurement finding (important)
+## Measurement finding (DECISIVE)
 
-The probe **cannot be exercised by the automated deterministic capture harness.** On
-mc2_10 (the gosFX mission) under `run_visual_capture` — even with `MC2_FX_FORCE_SPAWN=1`
-firing 8 weapon events — the instrumented flush paths emitted **nothing** (≤10 calls,
-below the one-shot threshold), and no particle/tube activity markers appeared. The
-fixed-timestep + frozen-camera capture fires weapon *events* but does not tick the gosFX
-simulation enough to drive sustained particle/tube flushes.
+**The instrumented particle/tube bridge flush path is GATED OFF by default.** The GPU
+particle/tube bridge (`gos_particle_bridge_flush` / `gos_tube_ribbon_flush*` and their
+class-D SSBO uploads, bindings 14/15/16) only runs when **`MC2_GPU_PARTICLES`** is enabled
+(`mclib/particles/batcher.cpp:79`, `mclib/gosfx/effect.cpp:45`) — default OFF. With the
+gate off, particles/tubes render via the **legacy CPU path** and the class-D
+`glBufferSubData` uploads never execute.
 
-→ **The stall measurement must be taken in an interactive / soak session** (real-time
-gameplay with sustained FX — explosions, PPC fire, smoke), launched with
-`MC2_PARTICLE_FLUSH_STALL_TRACE=1` and `MC2_LOG=1`, then read the `[PARTICLE_FLUSH_STALL]`
-summaries from the log. That is a user-driven run, not an automated-capture step.
+Evidence:
+- Automated capture (mc2_10, `run_visual_capture`, even with `MC2_FX_FORCE_SPAWN=1` firing
+  8 weapon events): zero flushes.
+- **Interactive real gameplay (mc2_01, full-screen, user fired weapons + explosions, 8045
+  frames): zero `[PARTICLE_FLUSH_STALL]`, zero particle/tube markers** — because only
+  `MC2_PARTICLE_FLUSH_STALL_TRACE=1` was set, not `MC2_GPU_PARTICLES=1`. Build confirmed
+  (OBJBATCHER `gpu_drawn_note=legacy_path_only_v6_uses_submitted` = this build).
 
-This is itself a useful result: the particle/tube flush path is **not hot under the
-deterministic harness**, so any future class-D particle work must be validated against an
-interactive FX-heavy session, not tier1 capture.
+→ **Conclusion: the class-D particle/tube SSBO implicit-sync concern is MOOT on the
+default config — the buffers are dormant.** A stall is only possible (and only worth
+measuring) when `MC2_GPU_PARTICLES=1`. To get the number, re-run interactively with BOTH
+`MC2_GPU_PARTICLES=1` and `MC2_PARTICLE_FLUSH_STALL_TRACE=1` (and `MC2_LOG=1`), drive
+sustained FX, then read `[PARTICLE_FLUSH_STALL]`.
+
+Like the terrain-solid MDI bridge, the GPU particle bridge is a present-but-not-live path
+under default settings — so class-D particle work is unjustified unless/until
+`MC2_GPU_PARTICLES` becomes default or is being actively used.
 
 ## Acceptance status
 
