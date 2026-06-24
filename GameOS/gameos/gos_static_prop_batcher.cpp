@@ -12,6 +12,7 @@
 #include "draw_packet_emitter.h"
 #include "../../RenderCore/PipelineRegistry.h"   // direct include; do not rely on transitive
 #include "pipeline_binder.h"                     // applyPipeline — GL state from PipelineDesc
+#include "render_frame_plan.h"                   // STATIC-PROP-COLOR-LABEL-HARDENING-1: pass self-report
 #include "static_prop_dispatch_meta.h"
 #include "gos_postprocess.h"             // getGosPostProcess, getDynamicLightSpaceMatrix
 #include "gos_static_prop_killswitch.h"  // gos_GetGLTextureId
@@ -5136,7 +5137,10 @@ static bool flushDepthPrepassV6(
     // desc, then mask color. applyPipeline also (re)sets blend-off + cull-back,
     // matching the color pass.
     pipeline_binder::applyPipeline(
-        RenderCore::getPipelineDesc(RenderCore::PipelineId::StaticPropDepth));
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::StaticPropDepth),
+        "StaticPropDepth");   // STATIC-PROP-COLOR-LABEL-HARDENING-1: label the live depth-prepass bind
+    render_frame_plan::trace(render_frame_plan::Phase::StaticOpaque, "StaticPropDepth",
+        render_frame_plan::PathKind::Batcher, -1, "StaticPropDepth");
     glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
 
     // Re-assert the geometry bindings the v6 loop relies on. SSBO slot 0 (the
@@ -5373,7 +5377,10 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
     // PipelineDesc v1: DepthFunc::GreaterEqual encoded in the table row — no
     // explicit glDepthFunc() call needed here any more.
     pipeline_binder::applyPipeline(
-        RenderCore::getPipelineDesc(RenderCore::PipelineId::StaticPropOpaque));
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::StaticPropOpaque),
+        "StaticPropOpaque");  // STATIC-PROP-COLOR-LABEL-HARDENING-1: label the live color bind
+    render_frame_plan::trace(render_frame_plan::Phase::StaticOpaque, "StaticPropOpaque",
+        render_frame_plan::PathKind::Batcher, -1, "StaticPropOpaque");
     glBindVertexArray(s_sharedVao);
     // Explicit IBO rebind: GL_ELEMENT_ARRAY_BUFFER is VAO state and can be
     // left at 0 if flushShadow() or any other pass clobbers s_sharedVao's
@@ -6428,7 +6435,7 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                     RenderCore::getPipelineDesc(RenderCore::PipelineId::StaticPropOpaque);
                 colorDesc.depthFunc        = RenderCore::DepthFunc::Equal;
                 colorDesc.depthWriteEnable = false;
-                pipeline_binder::applyPipeline(colorDesc);
+                pipeline_binder::applyPipeline(colorDesc, "StaticPropOpaque");  // re-test variant (Equal depth)
                 // applyPipeline rebinds the program but NOT the VAO/IBO/SSBO/
                 // texture; re-assert the geometry bindings the color loop expects
                 // (the prepass left the OFF texture array bound, slot-2 bound, and
