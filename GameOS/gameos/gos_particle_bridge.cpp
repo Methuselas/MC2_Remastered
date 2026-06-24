@@ -21,6 +21,7 @@
 #include "pipeline_binder.h"                    // applyPipeline — VFX per-group blend
 #include "gos_postprocess.h"  // VFX-SOFT-PARTICLES-MVP-1: scene-depth copy + invViewProj
 #include "../../mclib/camera.h"  // VFX-LIT-PARTICLES-MVP-1: eye->light*/ambient* (same source as terrain)
+#include "particle_stall_probe.h"  // PARTICLE-FLUSH-STALL-MEASURE-1 (gated timing)
 #include "gpu_cull_readback.h"  // READBACK_SSBO_BINDING (slot 14) — single source of truth
 
 #include <cstdio>
@@ -476,6 +477,7 @@ extern "C" void gos_tube_ribbon_flush(const float*          positions,
                                       unsigned int          numIndices,
                                       unsigned int          gosHandle,
                                       int                   blendMode) {
+    mc2::ScopedFlushTimer _pfst(1, "tube");  // PARTICLE-FLUSH-STALL-MEASURE-1
     if (numVerts == 0 || numIndices == 0 ||
         positions == nullptr || colors == nullptr ||
         uvs == nullptr || indices == nullptr) return;
@@ -683,6 +685,7 @@ extern "C" void gos_tube_ribbon_flush_deferred(void) {
     mc2::fx_cost_split::roll_frame_and_maybe_emit();
 
     if (s_ribbonQueue.empty()) return;
+    mc2::ScopedFlushTimer _pfst(2, "tube_deferred");  // PARTICLE-FLUSH-STALL-MEASURE-1
 
     tubeEnsureInitialized();
     if (s_tubeInitFailed || s_tubeProg == nullptr || s_tubeProg->shp_ == 0) {
@@ -924,6 +927,7 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
                                           const mc2::particles::GroupInfo*   groups,
                                           unsigned int                       numGroups) {
     if (count == 0 || records == nullptr) return;
+    mc2::ScopedFlushTimer _pfst(0, "billboard");  // PARTICLE-FLUSH-STALL-MEASURE-1
 
     ensureInitialized();
 
