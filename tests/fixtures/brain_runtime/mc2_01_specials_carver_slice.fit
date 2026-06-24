@@ -1,0 +1,38 @@
+FITini
+; DISPATCH-LOADER-RAW-1 headline-proof fixture.
+; Slice of the REAL carver_v_enhanced mc2_01/mission_specials.fit content.
+; Verbatim TechSpecial block (mission.mc2_01.special.init, first 12 DO lines)
+; confirming the new raw loader extracts verbs the FitIniFile loader could not.
+
+TechSpecial {
+    key  = "mission.mc2_01.special.scenario_main"
+    alias = "Scenario.Main"
+    type = "MissionSpecial"
+    Body {
+        DO TechSpecial.Call "mission.mc2_01.special.init"
+        DO TechSpecial.Call "mission.mc2_01.special.update"
+        STOP
+    }
+}
+
+TechSpecial {
+    key  = "mission.mc2_01.special.init"
+    alias = "Mission.init"
+    type = "MissionSpecial"
+    sourceABLFunction = "init"
+    Body {
+        ; TODO: manual ABL line: ;
+        ; TODO: manual ABL line: real[3]		worldLoc;
+        ; TODO: manual ABL line: integer[2]		cellLoc;
+        DO Var.Set "ScenarioResult" PLAYING scope=Mission
+        DO Var.Set "PlayerForceDead" false scope=Mission
+        DO Var.Set "ClanForceDead" false scope=Mission
+        DO Var.Set "AlliedForceDead" false scope=Mission
+        DO Var.Set "ExitTimerSet" false scope=Mission
+        DO Var.Set "VictoryLevel" 0 scope=Mission
+        DO Var.Set "NextSecond" 1.0 scope=Mission
+        DO Var.Set "GeneralAlarmCounter" -1 scope=Mission
+        DO Var.Set "GeneralAlarm" false scope=Mission
+        STOP
+    }
+}

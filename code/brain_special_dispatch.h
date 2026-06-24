@@ -91,7 +91,10 @@ void executeSpecialBody_TraceOnly(const BrainSpecialBody& body, int wid, VarStor
 // Returns true if a recognized effect was applied (caller uses to suppress synthetic HOLD).
 bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior, int wid, VarStore* varStore = nullptr);
 
-// Parse BrainSpecial Body DO-verbs from open FitIniFile. Returns false if block absent.
+// DISPATCH-LOADER-RAW-1: Parse BrainSpecial/TechSpecial Body DO-verbs.
+// Primary: raw brace-block scanner (handles inline-quoted DO args).
+// Fallback: legacy FitIniFile [BrainSpecial]/[Body]/DO0=... bracket form.
+// Returns false if file absent or no verbs found.
 bool parseBrainSpecialBody(const char* missionName, BrainSpecialBody& outBody);
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,32 @@
+FITini
+; DISPATCH-LOADER-RAW-1 fixture — brace-block (raw) format.
+; Tests inline-quoted verb args that FitIniFile truncates at the first '"'.
+; Used by Gate C/D in the acceptance matrix.
+
+TechSpecial {
+    key  = "mission.mc2_01.special.init"
+    alias = "Mission.init"
+    type = "MissionSpecial"
+    sourceABLFunction = "init"
+    Body {
+        ; TODO: manual ABL line: state start;
+        ; TODO: manual ABL line: trans attack;
+        DO Brain.CorePower false
+        DO Brain.CorePower
+        DO Var.Set "foo" 1
+        DO Var.Set "shared" 5 scope=Mission
+        DO Var.Get "foo"
+        STOP
+    }
+}
+
+TechSpecial {
+    key  = "mission.mc2_01.special.update"
+    alias = "Mission.update"
+    type = "MissionSpecial"
+    Body {
+        DO Var.Set "Flag1" false scope=Mission
+        DO OPORD.CoreGuard
+        STOP
+    }
+}
