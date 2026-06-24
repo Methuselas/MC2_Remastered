@@ -1007,7 +1007,8 @@ unsigned long Camera::inverseProject (Stuff::Vector2DOf<long> &screenPos, Stuff:
 	// Origin/dir are derived ENTIRELY from the render matrix (no getPosition()
 	// ground-focus trap). Fallbacks: terrain fixed-point -> z=0 ground plane.
 	// Default OFF; legacy forward-projection path below is byte-identical when off.
-	static const bool s_lowCamPick = (std::getenv("MC2_LOWCAM_PICK") != nullptr);
+	// Default ON for this low-camera build; set MC2_LOWCAM_PICK=0 to disable.
+	static const bool s_lowCamPick = []{ const char* v = std::getenv("MC2_LOWCAM_PICK"); return !(v && v[0]=='0'); }();
 	if (s_lowCamPick && land)
 	{
 		Stuff::Matrix4D M = worldToClipGL();

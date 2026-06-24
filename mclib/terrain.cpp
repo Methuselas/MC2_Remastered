@@ -1594,7 +1594,8 @@ long Terrain::update (void)
 		// terrain AABB frustum test so near terrain isn't culled at a low/grazing
 		// pitch (near plane at NearPlaneDistance=-400). Other 5 planes intact;
 		// default OFF -> byte-identical to today.
-		static const bool s_lowCamNear = (getenv("MC2_LOWCAM_TERRAIN_NEAR") != nullptr);
+		// Default ON for this low-camera build; set MC2_LOWCAM_TERRAIN_NEAR=0 to disable.
+		static const bool s_lowCamNear = []{ const char* v = getenv("MC2_LOWCAM_TERRAIN_NEAR"); return !(v && v[0]=='0'); }();
 		static bool s_cullDiagDone = false;
 		if (!s_cullDiagDone && gCurrentFrame == 2) {
 			s_cullDiagDone = true;

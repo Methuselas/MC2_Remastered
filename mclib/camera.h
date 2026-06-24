@@ -674,8 +674,9 @@ class Camera
 		inline bool projectForObjectAdmissionSphere (Stuff::Vector3D& point,
 		                                             Stuff::Vector4D& screen,
 		                                             float worldRadius) {
+			// Default ON for this low-camera build; set MC2_LOWCAM_OBJ_NEARPAD=0 to disable.
 			static const bool s_lowcamObjNearPad =
-			    (std::getenv("MC2_LOWCAM_OBJ_NEARPAD") != nullptr);
+			    []{ const char* v = std::getenv("MC2_LOWCAM_OBJ_NEARPAD"); return !(v && v[0]=='0'); }();
 			if (!s_lowcamObjNearPad || worldRadius <= 0.0f)
 				return projectForObjectAdmission(point, screen);
 

@@ -3563,8 +3563,9 @@ namespace {
 		static int cached = -1;
 		if (cached < 0)
 		{
+			// Default ON for this low-camera build; set MC2_LOWCAM_ZOOM_ANCHOR=0 to disable.
 			const char* v = getenv("MC2_LOWCAM_ZOOM_ANCHOR");
-			cached = (v && v[0] && v[0] != '0') ? 1 : 0;
+			cached = (v && v[0] == '0') ? 0 : 1;
 		}
 		return cached != 0;
 	}
