@@ -13,6 +13,7 @@
 #include "../../RenderCore/PipelineRegistry.h"   // direct include; do not rely on transitive
 #include "pipeline_binder.h"                     // applyPipeline — GL state from PipelineDesc
 #include "render_frame_plan.h"                   // STATIC-PROP-COLOR-LABEL-HARDENING-1: pass self-report
+#include "mdi_submit.h"                          // MDI-SUBMISSION-SCAFFOLD-1
 #include "static_prop_dispatch_meta.h"
 #include "gos_postprocess.h"             // getGosPostProcess, getDynamicLightSpaceMatrix
 #include "gos_static_prop_killswitch.h"  // gos_GetGLTextureId
@@ -5381,6 +5382,13 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
         "StaticPropOpaque");  // STATIC-PROP-COLOR-LABEL-HARDENING-1: label the live color bind
     render_frame_plan::trace(render_frame_plan::Phase::StaticOpaque, "StaticPropOpaque",
         render_frame_plan::PathKind::Batcher, -1, "StaticPropOpaque");
+    // MDI-SUBMISSION-SCAFFOLD-1: flush-level submission self-report. Per-variant command
+    // counts (s_alphaOff/OnCmdCount, BC7 buckets) and the CPU fallback are computed later
+    // in this function; this names the static-prop indirect submitter family (live default
+    // = GPU-produced coalesce v6 reading gpu_cull's indirect buffer). commands=-1 here
+    // (not yet known at bind time); the [STATIC_PROP]/[DRAW_PACKET_V6] traces carry counts.
+    mdi_submit::trace("StaticPropOpaque", "MultiDrawElementsIndirect", -1,
+                      "GPU", "gpu_cull_indirect", false);
     glBindVertexArray(s_sharedVao);
     // Explicit IBO rebind: GL_ELEMENT_ARRAY_BUFFER is VAO state and can be
     // left at 0 if flushShadow() or any other pass clobbers s_sharedVao's
