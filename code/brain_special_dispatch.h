@@ -131,8 +131,11 @@ bool bodyHasCoreMoveTo(const BrainSpecialBody& body);
 // DISPATCH-EFFECT-COREATTACK-1: Returns true if body contains OPORD.CoreAttack (prefix match).
 bool bodyHasCoreAttack(const BrainSpecialBody& body);
 
-// DISPATCH-EFFECT-COREATTACK-1: Returns true if body has ANY GENERAL-slot-claiming effect verb.
-// (currently: POWERDOWN || EJECT || GUARD || MOVETO || ATTACK)
+// DISPATCH-EFFECT-UNITRETREAT-1: Returns true if body contains Unit.Retreat or coreRetreat alias.
+bool bodyHasUnitRetreat(const BrainSpecialBody& body);
+
+// DISPATCH-EFFECT-UNITRETREAT-1: Returns true if body has ANY GENERAL-slot-claiming effect verb.
+// (currently: POWERDOWN || EJECT || GUARD || MOVETO || ATTACK || RETREAT)
 bool bodyHasEffect(const BrainSpecialBody& body);
 
 // TRACE ONLY. Zero effects. No orders. No state writes.

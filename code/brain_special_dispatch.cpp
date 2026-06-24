@@ -376,6 +376,8 @@ static const char* aliasToCanonical(const char* verb) {
         return "Brain.CorePower";
     if (std::strcmp(verb, "coreGuard") == 0)
         return "OPORD.CoreGuard";
+    if (std::strcmp(verb, "coreRetreat") == 0)
+        return "Unit.Retreat";
     return verb;
 }
 
@@ -441,12 +443,24 @@ bool bodyHasCoreAttack(const BrainSpecialBody& body) {
 }
 
 // ---------------------------------------------------------------------------
-// bodyHasEffect — DISPATCH-EFFECT-COREATTACK-1 (extended from COREMOVETO-1)
+// bodyHasUnitRetreat — DISPATCH-EFFECT-UNITRETREAT-1
+// Returns true if the body contains a Unit.Retreat (or coreRetreat alias) verb token.
+bool bodyHasUnitRetreat(const BrainSpecialBody& body) {
+    for (const std::string& verb : body.verbs) {
+        const char* canonical = aliasToCanonical(verb.c_str());
+        if (std::strcmp(canonical, "Unit.Retreat") == 0)
+            return true;
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// bodyHasEffect — DISPATCH-EFFECT-UNITRETREAT-1 (extended from COREATTACK-1)
 // Returns true if the body has ANY effect verb that claims the GENERAL slot
-// (currently: POWERDOWN, EJECT, GUARD, MOVETO, or ATTACK).
+// (currently: POWERDOWN, EJECT, GUARD, MOVETO, ATTACK, or RETREAT).
 bool bodyHasEffect(const BrainSpecialBody& body) {
     return bodyHasPowerdown(body) || bodyHasUnitEject(body) || bodyHasCoreGuard(body)
-        || bodyHasCoreMoveTo(body) || bodyHasCoreAttack(body);
+        || bodyHasCoreMoveTo(body) || bodyHasCoreAttack(body) || bodyHasUnitRetreat(body);
 }
 
 // ---------------------------------------------------------------------------
@@ -456,17 +470,18 @@ bool bodyHasEffect(const BrainSpecialBody& body) {
 //
 // RELAXED-CALL GUARD CONTRACT:
 //   The ONLY order function called here is warrior->setGeneralTacOrder().
-//   Permitted verbs (FIVE total): Brain.CorePower false → POWERDOWN,
+//   Permitted verbs (SIX total): Brain.CorePower false → POWERDOWN,
 //   Unit.Eject (or coreEject alias) → EJECT, OPORD.CoreGuard (or coreGuard alias) → GUARD,
-//   OPORD.CoreMoveTo x y z → MOVETO_POINT, OPORD.CoreAttack <wid> → ATTACK_OBJECT.
+//   OPORD.CoreMoveTo x y z → MOVETO_POINT, OPORD.CoreAttack <wid> → ATTACK_OBJECT,
+//   Unit.Retreat (or coreRetreat alias) → WITHDRAW.
 //   All other verbs produce [BRAIN_DISPATCH] or [BRAIN_DISPATCH_UNKNOWN] trace only.
 //   FORBIDDEN in this function: orderAttackObject, setAttackTarget, setSituationOpenFire,
 //   setPlayerTacOrder, setAlarmTacOrder, requestHelp,
 //   requestTarget, calcTacOrder, coreMoveTo, setMainGoal, clearCurTacOrder,
 //   any movement/attack/OPORD-advance/commander function NOT listed above.
-//   Verified by inspection: exactly five setGeneralTacOrder call-sites below; no other order calls.
+//   Verified by inspection: exactly six setGeneralTacOrder call-sites below; no other order calls.
 //
-// Returns true if a GENERAL-slot effect (POWERDOWN, EJECT, or GUARD) was applied.
+// Returns true if a GENERAL-slot effect (POWERDOWN, EJECT, GUARD, MOVETO, ATTACK, or RETREAT) was applied.
 // Caller uses the return value to suppress the synthetic HOLD_TASK (one GENERAL-slot write per tick).
 //
 // CALL-CHAIN-1A NOTE: TechSpecial.Call verbs in the ROOT body are dispatched trace-only
@@ -689,6 +704,15 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
                     appliedEffect = true;
                 }
             }
+        } else if (std::strcmp(vpCanon, "Unit.Retreat") == 0) {
+            // DISPATCH-EFFECT-UNITRETREAT-1: Unit.Retreat (or alias coreRetreat) → TACTICAL_ORDER_WITHDRAW.
+            // ROOT BODY ONLY. Fires exactly once (retreatEffectApplied once-guard in warrior.cpp).
+            TacticalOrder retreatOrder;
+            retreatOrder.init(ORDER_ORIGIN_SELF, TACTICAL_ORDER_WITHDRAW, false);
+            warrior->setGeneralTacOrder(retreatOrder);
+            std::fprintf(stderr, "[BRAIN_DISPATCH_APPLY] verb=Unit.Retreat effect=WITHDRAW wid=%d\n", wid);
+            std::fflush(stderr);
+            appliedEffect = true;
         } else if (isRecognizedVerb(vpCanon)) {
             // Recognized but no effect implemented this slice — trace only.
             std::fprintf(stderr, "[BRAIN_DISPATCH] verb=%s wid=%d (apply-mode: no effect this verb)\n", vp, wid);

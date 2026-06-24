@@ -1,0 +1,10 @@
+FITini
+; DISPATCH-EFFECT-UNITRETREAT-1 fixture — alias coreRetreat verb.
+; Warrior4 Enhanced mode (via mc2_01_ai.fit): DO coreRetreat resolves to
+; Unit.Retreat and issues TACTICAL_ORDER_WITHDRAW exactly once.
+
+[BrainSpecial]
+
+[Body]
+st DO0 = "coreRetreat"
+st DO1 = "HOLD"

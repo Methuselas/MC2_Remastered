@@ -2282,7 +2282,7 @@ long MechWarrior::runBrain (void) {
 
 		bool dispatcherAppliedEffect = false;
 		if (s_dispatchApply && brainRuntime && brainRuntime->specialBody.loaded) {
-			// DISPATCH-EFFECT-COREATTACK-1: bodyHasEffect() now covers POWERDOWN, EJECT, GUARD, MOVETO, ATTACK.
+			// DISPATCH-EFFECT-UNITRETREAT-1: bodyHasEffect() now covers POWERDOWN, EJECT, GUARD, MOVETO, ATTACK, RETREAT.
 			// CALL-CHAIN-1A: dispatch ALL loaded bodies (not just effect bodies).
 			// executeSpecialBody_Apply traces all verbs; applies effect ONCE if present.
 			// The HOLD suppression only triggers when an effect verb was actually applied
@@ -2295,7 +2295,8 @@ long MechWarrior::runBrain (void) {
 			const bool hasGuard     = bodyHasCoreGuard(brainRuntime->specialBody);
 			const bool hasMoveTo    = bodyHasCoreMoveTo(brainRuntime->specialBody);
 			const bool hasAttack    = bodyHasCoreAttack(brainRuntime->specialBody);
-			const bool hasEffect    = hasPowerdown || hasEject || hasGuard || hasMoveTo || hasAttack;
+			const bool hasRetreat   = bodyHasUnitRetreat(brainRuntime->specialBody);
+			const bool hasEffect    = hasPowerdown || hasEject || hasGuard || hasMoveTo || hasAttack || hasRetreat;
 
 			// Once-guard: if the effect was already applied, suppress HOLD without re-applying.
 			const bool powerdownDone = hasPowerdown && brainRuntime->dispatchEffectApplied;
@@ -2303,7 +2304,8 @@ long MechWarrior::runBrain (void) {
 			const bool guardDone     = hasGuard     && brainRuntime->guardEffectApplied;
 			const bool moveToDone    = hasMoveTo    && brainRuntime->moveToEffectApplied;
 			const bool attackDone    = hasAttack    && brainRuntime->attackEffectApplied;
-			const bool alreadyDone   = hasEffect && ((!hasPowerdown || powerdownDone) && (!hasEject || ejectDone) && (!hasGuard || guardDone) && (!hasMoveTo || moveToDone) && (!hasAttack || attackDone));
+			const bool retreatDone   = hasRetreat   && brainRuntime->retreatEffectApplied;
+			const bool alreadyDone   = hasEffect && ((!hasPowerdown || powerdownDone) && (!hasEject || ejectDone) && (!hasGuard || guardDone) && (!hasMoveTo || moveToDone) && (!hasAttack || attackDone) && (!hasRetreat || retreatDone));
 
 			if (!alreadyDone) {
 				if (hasEffect) {
@@ -2320,6 +2322,8 @@ long MechWarrior::runBrain (void) {
 						brainRuntime->moveToEffectApplied = 1;
 					if (hasAttack && !brainRuntime->attackEffectApplied)
 						brainRuntime->attackEffectApplied = 1;
+					if (hasRetreat && !brainRuntime->retreatEffectApplied)
+						brainRuntime->retreatEffectApplied = 1;
 					bool applied = executeSpecialBody_Apply(brainRuntime->specialBody, this, vehicleWID,
 					                                        &brainRuntime->varStore, idx, "");
 					if (applied)
