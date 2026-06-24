@@ -28,6 +28,7 @@
 #include "../../RenderCore/PipelineRegistry.h"   // SHADOW-CASTER-APPLYPIPELINE-ROUTING-1
 #include "pipeline_binder.h"                      // applyPipeline — shadow bracket FF state
 #include "render_frame_plan.h"                    // RENDER-FRAME-PLAN-SCAFFOLD-1
+#include "mdi_submit.h"                            // MDI-SUBMISSION-SCAFFOLD-1
 #include "gos_postprocess.h"
 #include "gos_profiler.h"
 #include "gos_gpu_sync.h"
@@ -3529,6 +3530,8 @@ void gosRenderer::renderWaterFastPath(
         const GLsizei drawCount = (detailTex != 0) ? 2 : 1;
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, WaterStream::GetIndirectCmdBuffer());
         glMultiDrawArraysIndirect(GL_TRIANGLES, nullptr, drawCount, 0);
+        mdi_submit::trace("WaterFastPath", "MultiDrawArraysIndirect", (int)drawCount,
+                          "GPU", "WaterStreamIndirect", false);
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
 
         // Restore unit 2 — mirror unit-1 force-clear + sampler restore.
@@ -4258,6 +4261,8 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
     const bool indirectWireframe = g_gos_renderer->getTerrainWireframe();
     if (indirectWireframe) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
     glMultiDrawArraysIndirect(GL_TRIANGLES, nullptr, (GLsizei)cmdCount, 0);
+    mdi_submit::trace("TerrainSolid", "MultiDrawArraysIndirect", (int)cmdCount,
+                      "GPU", "g_indirectCmdBuffer", false);
     if (indirectWireframe) glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
     // Reset useAtlasColormap so M2 fast path (shares this program) doesn't
@@ -4491,6 +4496,8 @@ bool gos_terrain_bridge_drawMaskSolid(uint32_t solidMaskSSBO,
     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, s_indirectCmdBuf);
     glBufferSubData(GL_DRAW_INDIRECT_BUFFER, 0, sizeof(cmd), &cmd);
     glDrawArraysIndirect(GL_TRIANGLES, nullptr);
+    mdi_submit::trace("TerrainMaskSolid", "DrawArraysIndirect", 1,
+                      "CPU", "s_indirectCmdBuf", false);
 
     // ---- Restore -----------------------------------------------------------
     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
@@ -4650,6 +4657,8 @@ bool gos_terrain_bridge_drawMaskWater(uint32_t waterMaskSSBO,
     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, s_waterIndirectCmdBuf);
     glBufferSubData(GL_DRAW_INDIRECT_BUFFER, 0, sizeof(cmd), &cmd);
     glDrawArraysIndirect(GL_TRIANGLES, nullptr);
+    mdi_submit::trace("TerrainMaskWater", "DrawArraysIndirect", 1,
+                      "CPU", "s_waterIndirectCmdBuf", false);
 
     // ---- Restore -----------------------------------------------------------
     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
