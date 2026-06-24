@@ -3124,7 +3124,14 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 		}
 
 		if (dispatchOn) {
-			std::fprintf(stderr, "[BRAIN_DISPATCH] mission load: MC2_BRAIN_DISPATCH=1 mission=%s\n", missionName);
+			// DISPATCH-EFFECT-UNITEJECT-1: MC2_BRAIN_SPECIAL_FIT allows test-fixture override.
+			// When set, ALL warriors load from <override>_specials.fit instead of <mission>_specials.fit.
+			// Intended for smoke gate verification only. Default: missionName (standard behavior).
+			const char* specialFitEnv = std::getenv("MC2_BRAIN_SPECIAL_FIT");
+			const char* specialFitName = (specialFitEnv && specialFitEnv[0] != '\0') ? specialFitEnv : missionName;
+
+			std::fprintf(stderr, "[BRAIN_DISPATCH] mission load: MC2_BRAIN_DISPATCH=1 mission=%s special_fit=%s\n",
+			             missionName, specialFitName);
 			std::fflush(stderr);
 
 			// 1A/1B: per-warrior verb parse (only for warriors with brainRuntime allocated).
@@ -3135,7 +3142,7 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 			for (unsigned long i = 1; i <= numWarriors; i++) {
 				MechWarriorPtr w = MechWarrior::warriorList[i];
 				if (w && w->getBrainRuntime()) {
-					parseBrainSpecialBody(missionName, w->getBrainRuntime()->specialBody,
+					parseBrainSpecialBody(specialFitName, w->getBrainRuntime()->specialBody,
 					                      &w->getBrainRuntime()->specialIndex);
 				}
 			}
@@ -3149,7 +3156,7 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 				// (Future per-warrior storage is deferred — the file has one FSM skeleton shared
 				// by all warriors; per-warrior active-state gating is out of 1C scope.)
 				BrainSpecialBody tmpBody;
-				scanFsmTodosFromFile(missionName, tmpBody);
+				scanFsmTodosFromFile(specialFitName, tmpBody);
 
 				// Count by kind for the summary line.
 				int nStateDef = 0, nStateEnd = 0, nTrans = 0, nTransBack = 0, nOther = 0;

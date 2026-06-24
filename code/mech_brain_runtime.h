@@ -99,6 +99,7 @@ struct MechBrainRuntime {
     uint32_t         lastRequestOrdersFrame = 0;    // g_mc2FrameCounter at last RequestOrdersTask push
     uint8_t          initialHoldPushed      = 0;    // 1 = initial HOLD_TASK already pushed (BRAIN-RUNTIME-1B)
     uint8_t          dispatchEffectApplied  = 0;    // 1 = BrainSpecial effect (POWERDOWN) applied once (DISPATCH-1B)
+    uint8_t          ejectEffectApplied     = 0;    // 1 = Unit.Eject EJECT order issued once (DISPATCH-EFFECT-UNITEJECT-1)
     BrainSpecialBody specialBody;  // parsed from _specials.fit; loaded when MC2_BRAIN_DISPATCH set
     VarStore         varStore;     // per-unit Var namespace (DISPATCH-1D); populated by Var.Set/Var.Get
                                     // ABI: plain struct (no virtuals); sizeof increases by sizeof(vector)+sizeof(bool)
