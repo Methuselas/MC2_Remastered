@@ -1072,6 +1072,38 @@ bool parseBrainSpecialBody(const char* missionName, BrainSpecialBody& outBody,
 }
 
 // ---------------------------------------------------------------------------
+// BRAIN-DISPATCH-HARNESS-1: parseBrainSpecialBodyFromPath
+//
+// Explicit-path variant of parseBrainSpecialBody for offline harness use.
+// Directly opens fitPath without the "data/missions/<name>_specials.fit" construction.
+// Same scanner logic (raw brace-block first, FitIni fallback).
+bool parseBrainSpecialBodyFromPath(const char* fitPath, BrainSpecialBody& outBody,
+                                    SpecialIndex* outIndex) {
+    outBody.verbs.clear();
+    outBody.loaded = false;
+
+    bool ok = parseBrainSpecialBody_RawScan(fitPath, outBody, outIndex);
+    if (!ok) {
+        std::fprintf(stderr, "[BRAIN_DISPATCH_RAW] no TechSpecial blocks in %s — trying FitIni fallback\n", fitPath);
+        std::fflush(stderr);
+        ok = parseBrainSpecialBody_FitIni(fitPath, outBody);
+        if (ok) {
+            std::fprintf(stderr, "[BRAIN_DISPATCH_RAW] FitIni fallback loaded %s: %d verbs\n",
+                         fitPath, (int)outBody.verbs.size());
+            std::fflush(stderr);
+        }
+    }
+    if (ok) {
+        outBody.loaded = true;
+        std::fprintf(stderr, "[BRAIN_DISPATCH] parsed %s: %d verbs (index=%d blocks)\n",
+                     fitPath, (int)outBody.verbs.size(),
+                     outIndex ? (int)outIndex->size() : 0);
+        std::fflush(stderr);
+    }
+    return outBody.loaded;
+}
+
+// ---------------------------------------------------------------------------
 // TECHSCRIPT-DISPATCH-1D: parseVarVerb
 //
 // Parses "Var.Set \"<key>\" <value> [scope=Mission]" or

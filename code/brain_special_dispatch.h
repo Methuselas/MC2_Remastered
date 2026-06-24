@@ -197,6 +197,13 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
 bool parseBrainSpecialBody(const char* missionName, BrainSpecialBody& outBody,
                             SpecialIndex* outIndex = nullptr);
 
+// BRAIN-DISPATCH-HARNESS-1: explicit-path variant for offline harness use.
+// Directly opens fitPath (absolute or CWD-relative) without the "data/missions/" prefix logic.
+// Same parser logic as parseBrainSpecialBody; index populated if outIndex is non-null.
+// Intended for test/harness use only — game code uses parseBrainSpecialBody(missionName).
+bool parseBrainSpecialBodyFromPath(const char* fitPath, BrainSpecialBody& outBody,
+                                    SpecialIndex* outIndex = nullptr);
+
 // ---------------------------------------------------------------------------
 // TECHSCRIPT-DISPATCH-1D: Var.Set / Var.Get parser + handler.
 //
