@@ -319,6 +319,12 @@ class Camera
 		float            		cameraAltitude;
 		float					cameraAltitudeDesired;	//What would I like the camera to be at!  Maybe smaller due to low angle!
 
+		// [MOUSE-ANCHORED-ZOOM-1 v2] eased zoom-anchor state (see beginZoomAnchor / update()).
+		bool					zoomAnchorActive = false;
+		float					zoomAnchorH0 = 1.0f;
+		Stuff::Vector3D			zoomAnchorWorld;
+		Stuff::Vector3D			zoomAnchorPivot;
+
 		static float			globalScaleFactor;		//Global Rescale Factor.
 
 		static float			MaxClipDistance;
@@ -474,6 +480,19 @@ class Camera
 		bool getUsePerspective (void)
 		{
 			return(usePerspective);
+		}
+
+		// [MOUSE-ANCHORED-ZOOM-1 v2] Arm the eased zoom anchor. anchoredZoom captures
+		// the cursor world point A, the ACTUAL altitude h0, and the pivot T0 at the
+		// wheel event; Camera::update() then shifts position toward A locked to the
+		// eased altitude until it settles. See camera.cpp update().
+		void beginZoomAnchor (const Stuff::Vector3D& A, float h0, const Stuff::Vector3D& T0)
+		{
+			if (h0 < 1.0f) h0 = 1.0f;
+			zoomAnchorWorld = A;
+			zoomAnchorPivot = T0;
+			zoomAnchorH0    = h0;
+			zoomAnchorActive = true;
 		}
 
 		void setCameraRotation (float angle, float angleWorld);
@@ -679,6 +698,12 @@ class Camera
 			    []{ const char* v = std::getenv("MC2_LOWCAM_OBJ_NEARPAD"); return !(v && v[0]=='0'); }();
 			if (!s_lowcamObjNearPad || worldRadius <= 0.0f)
 				return projectForObjectAdmission(point, screen);
+			// [LOW-CAMERA-OBJECT-CULL-1 v2] getExtentRadius() is a tight extent; near
+			// objects still pop at low pitch. Scale the near-plane pad radius. Default
+			// 2.5x; MC2_LOWCAM_OBJ_NEARPAD_SCALE=k overrides (=1 = tight stock pad).
+			static const float s_objNearPadScale =
+			    []{ const char* v = std::getenv("MC2_LOWCAM_OBJ_NEARPAD_SCALE"); return v ? (float)atof(v) : 2.5f; }();
+			worldRadius *= s_objNearPadScale;
 
 			const int64_t _f3_cull_t0 = ::mc2_cpu_proj_cost::cull_admission_begin_ns();
 

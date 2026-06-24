@@ -841,6 +841,38 @@ static unsigned long parityReport (Stuff::Vector2DOf<long> &screenPos,
 }
 
 //---------------------------------------------------------------------------
+// [LOW-CAMERA] Guard-free general 4x4 inverse (Gauss-Jordan, partial pivot).
+// Stuff::Matrix4D::Invert flags any det < SMALL(1e-4) singular -> ×1e30 garbage,
+// which is EVERY reverse-Z projective matrix (the documented "Invert(
+// worldToClipGL()) UNRELIABLE in the game" trap, camera.h). Used ONLY by the
+// inverse-VP cursor->world helpers below (preview + mouse-anchored zoom); the
+// global Matrix4D::Invert is left byte-identical, and terrain PICKING uses the
+// forward-projection path, not this — so no working path is affected.
+static bool lowCamInvert4x4 (const Stuff::Matrix4D& M, Stuff::Matrix4D& out)
+{
+	double a[4][8];
+	for (int r = 0; r < 4; ++r)
+		for (int c = 0; c < 4; ++c)
+		{ a[r][c] = (double)M(r,c); a[r][c+4] = (r==c)?1.0:0.0; }
+	for (int col = 0; col < 4; ++col)
+	{
+		int piv = col; double best = fabs(a[col][col]);
+		for (int r = col+1; r < 4; ++r)
+			if (fabs(a[r][col]) > best) { best = fabs(a[r][col]); piv = r; }
+		if (best < 1e-20) return false;
+		if (piv != col) for (int k = 0; k < 8; ++k) { double t=a[col][k]; a[col][k]=a[piv][k]; a[piv][k]=t; }
+		double inv = 1.0 / a[col][col];
+		for (int k = 0; k < 8; ++k) a[col][k] *= inv;
+		for (int r = 0; r < 4; ++r) if (r != col)
+		{ double f=a[r][col]; for (int k=0;k<8;++k) a[r][k]-=f*a[col][k]; }
+	}
+	for (int r = 0; r < 4; ++r)
+		for (int c = 0; c < 4; ++c)
+			out(r,c) = (float)a[r][c+4];
+	return true;
+}
+
+//---------------------------------------------------------------------------
 // O(1) screen -> z=0 ground-plane unproject. No quad scan, no terrain pick.
 // See header. Mirrors the matrix-inverse unproject used by the LOD-chunk pick
 // path, then intersects the camera ray with the world z=0 plane.
@@ -852,7 +884,7 @@ bool Camera::screenToGroundPlaneApprox (long screenX, long screenY, Stuff::Vecto
 
 	Stuff::Matrix4D M = worldToClipGL();
 	Stuff::Matrix4D Minv;
-	Minv.Invert(M);
+	if (!lowCamInvert4x4(M, Minv)) return false;
 
 	const float w = screenResolution.x;
 	const float h = screenResolution.y;
@@ -900,7 +932,7 @@ bool Camera::screenToTerrainApprox (long screenX, long screenY, Stuff::Vector3D 
 
 	Stuff::Matrix4D M = worldToClipGL();
 	Stuff::Matrix4D Minv;
-	Minv.Invert(M);
+	if (!lowCamInvert4x4(M, Minv)) return false;
 
 	const float w = screenResolution.x;
 	const float h = screenResolution.y;
@@ -2164,6 +2196,24 @@ long Camera::update (void)
 		float _tm = AltitudeMaximumLo + ((AltitudeMaximumHi - AltitudeMaximumLo) * _ap);
 		if (_tm > 0.0f)
 			newScaleFactor = 1.0f - ((cameraAltitude - AltitudeMinimum) / _tm);
+	}
+
+	// [MOUSE-ANCHORED-ZOOM-1 v2] eased pivot shift toward the cursor anchor,
+	// phase-locked to the just-eased cameraAltitude so the world point under the
+	// cursor stays put as zoom resolves (vs the prior single-shot shift that
+	// panned). frac grows 0 -> final as altitude eases from h0 to the target.
+	// Armed only by beginZoomAnchor (gated MC2_LOWCAM_ZOOM_ANCHOR in anchoredZoom).
+	if (zoomAnchorActive)
+	{
+		float frac = 1.0f - (cameraAltitude / zoomAnchorH0);
+		if (frac > 1.0f) frac = 1.0f;
+		if (frac < -1.0f) frac = -1.0f;
+		Stuff::Vector3D Tnew = zoomAnchorPivot;
+		Tnew.x = zoomAnchorPivot.x + (zoomAnchorWorld.x - zoomAnchorPivot.x) * frac;
+		Tnew.y = zoomAnchorPivot.y + (zoomAnchorWorld.y - zoomAnchorPivot.y) * frac;
+		setPosition(Tnew, false);   // instant, no swoop double-smoothing
+		if (fabsf(cameraAltitude - cameraAltitudeDesired) < 0.1f)
+			zoomAnchorActive = false;   // settled -> release
 	}
 
 	calculateProjectionConstants();
