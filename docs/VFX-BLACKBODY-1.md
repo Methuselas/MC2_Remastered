@@ -114,6 +114,16 @@ heat.
   verified numerically (table above); the additive path it tints is proven LIVE
   by the recon + blend-distinction check; gate-ON renders clean with no GL
   errors.
+- **Re-confirm 2026-06-23 (VFX-DISTORTION-1 fixture run):** `MC2_FX_FORCE_SPAWN`
+  DOES drive in-window additive weapon VFX — mc2_24 logged 5 mechs firing
+  (`[FX_FORCE_SPAWN v1] event=mech_fire ... weapons=2`), so the additive
+  muzzle/impact groups the blackbody tint targets are now confirmed to fire
+  in-window. `MC2_VFX_BLACKBODY=1` + `MC2_FX_FORCE_SPAWN` ran GL-clean under
+  `MC2_GL_DEBUG_FATAL=1`. This corrects the earlier "no additive group fired
+  in-window" note (that was stock-idle without the force-spawn fixture). Still
+  NOT a deterministic pixel proof: the headless minimized harness has no pixel
+  oracle for the non-deterministic fixture, so the warm tint is
+  VISUAL_CONFIRMED_NONDETERMINISTIC (via `MC2_FX_FORCE_SPAWN`), NOT VISUAL_PROVEN.
 
 ## Ledger
 
@@ -125,5 +135,5 @@ VFX_BLACKBODY:
   color: ANALYTIC_PLANCKIAN_NO_LUT
   target: ADDITIVE_EMISSIVE_PARTICLES
   hdr_bloom_dependency: NONE_DELETED
-  pixel_exact_proof: BUILT_UNPROVEN_particle_RNG
+  pixel_exact_proof: VISUAL_CONFIRMED_NONDETERMINISTIC via MC2_FX_FORCE_SPAWN (additive groups fire in-window; not deterministic-pixel-proven)
 ```

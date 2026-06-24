@@ -217,6 +217,33 @@ void vfxBlackbodyInitIfNeeded() {
     s_blackbody_initialized = true;
 }
 
+// VFX-DISTORTION-1: heat-haze refraction for the distortion alpha group. Gate
+// MC2_VFX_DISTORTION (default OFF -> byte-identical; the FS u_vfxDistort branch is
+// dead). REQUIRES the scene-color grab (VFX-SCENECOLOR-GRAB-1): if the grab is
+// absent the bridge forces u_vfxDistort=0 so nothing samples a GL-0 texture.
+// FIXTURE: MC2_VFX_DISTORT_FIXTURE (default OFF) tags every alpha group
+// (blendMode==0) as a distortion group so the effect is observable on stock
+// smoke/dust without any content effect->distortion mapping (out of scope). When
+// the fixture is OFF, the gate is inert today (no content tags a distortion group
+// yet) -> still byte-identical even with MC2_VFX_DISTORTION=1.
+bool  s_distort_initialized = false;
+bool  s_distort_enabled     = false;   // MC2_VFX_DISTORTION
+bool  s_distort_fixture     = false;   // MC2_VFX_DISTORT_FIXTURE
+float s_distortAmp          = 0.04f;   // screen-UV wobble amplitude (small)
+void vfxDistortInitIfNeeded() {
+    if (s_distort_initialized) return;
+    const char* en = std::getenv("MC2_VFX_DISTORTION");
+    s_distort_enabled = (en && en[0] == '1');
+    const char* fx = std::getenv("MC2_VFX_DISTORT_FIXTURE");
+    s_distort_fixture = (fx && fx[0] == '1');
+    const char* amp = std::getenv("MC2_VFX_DISTORT_AMP");
+    if (amp && amp[0] != '\0') {
+        float a = (float)std::atof(amp);
+        if (a > 0.0f && a < 0.5f) s_distortAmp = a;  // clamp to sane subtle range
+    }
+    s_distort_initialized = true;
+}
+
 // P0-4: Cached uniform locations — populated once in ensureInitialized()
 // after the program links. -2 = not yet queried; -1 = not found (GLSL may
 // strip unused uniforms); >= 0 = valid location.
@@ -242,6 +269,11 @@ GLint s_loc_vfxAlphaScale         = -2;
 GLint s_loc_vfxIsAdditive         = -2;
 // VFX-BLACKBODY-1: blackbody emissive-tint enable uniform (default 0 = OFF).
 GLint s_loc_vfxBlackbody          = -2;
+// VFX-DISTORTION-1: heat-haze refraction uniforms (default inert).
+GLint s_loc_sceneColor      = -2;
+GLint s_loc_vfxDistort      = -2;
+GLint s_loc_time            = -2;
+GLint s_loc_distortAmp      = -2;
 // VFX-SHADER-AGE-FADE-PARITY-1: age-driven soft death fade (default 0.0 = OFF).
 GLint s_loc_vfxAgeFade            = -2;
 // VFX-SOFT-PARTICLES-MVP-1: soft-particle depth-fade uniforms.
@@ -316,6 +348,12 @@ void ensureInitialized() {
         s_loc_vfxAlphaScale         = glGetUniformLocation(s_prog->shp_, "u_vfxAlphaScale");
         s_loc_vfxIsAdditive         = glGetUniformLocation(s_prog->shp_, "u_vfxIsAdditive");
         s_loc_vfxBlackbody          = glGetUniformLocation(s_prog->shp_, "u_vfxBlackbody");
+        // VFX-DISTORTION-1: heat-haze uniforms (may be -1 if dead-code elim strips
+        // them while MC2_VFX_DISTORTION is OFF).
+        s_loc_sceneColor   = glGetUniformLocation(s_prog->shp_, "u_sceneColor");
+        s_loc_vfxDistort   = glGetUniformLocation(s_prog->shp_, "u_vfxDistort");
+        s_loc_time         = glGetUniformLocation(s_prog->shp_, "u_time");
+        s_loc_distortAmp   = glGetUniformLocation(s_prog->shp_, "u_distortAmp");
         // VFX-SHADER-AGE-FADE-PARITY-1: age fade (VS uniform; may be -1 if
         // dead-code elim strips it when MC2_TUNE_VFX_AGE_FADE is not set).
         s_loc_vfxAgeFade            = glGetUniformLocation(s_prog->shp_, "u_vfxAgeFade");
@@ -1055,6 +1093,38 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
         if (ppGrab) ppGrab->copySceneColorForVfx();
     }
 
+    // ── VFX-DISTORTION-1: heat-haze refraction setup ─────────────────────
+    // Bind the pre-VFX scene-color grab on tex UNIT 2 (save/restore, mirroring the
+    // unit-1 depth restore) so the distortion alpha group can sample it. Upload
+    // u_time ONCE PER FLUSH (monotonic seconds accumulated from gos_GetElapsedTime).
+    // Default u_vfxDistort=0 here; the draw loop raises it only for the distortion
+    // group. distortActive REQUIRES both the gate AND the grab resource to be live;
+    // if the grab is absent (MC2_VFX_SCENECOLOR_GRAB unset) distortActive stays
+    // false -> u_vfxDistort never set to 1 -> nothing samples a GL-0 texture.
+    GLint savedTex2D2  = 0;
+    bool  distortActive = false;
+    vfxDistortInitIfNeeded();
+    if (s_distort_enabled) {
+        gosPostProcess* ppd = getGosPostProcess();
+        const GLuint colorCopy = ppd ? ppd->getSceneColorCopyTexture() : 0u;
+        if (colorCopy != 0) {
+            distortActive = true;
+            glActiveTexture(GL_TEXTURE2);
+            glGetIntegerv(GL_TEXTURE_BINDING_2D, &savedTex2D2);
+            glBindTexture(GL_TEXTURE_2D, colorCopy);
+            glBindSampler(2, 0);  // use the texture's own LINEAR/CLAMP params
+            glActiveTexture(GL_TEXTURE0);
+            if (s_loc_sceneColor >= 0) glUniform1i(s_loc_sceneColor, 2);
+            if (s_loc_distortAmp >= 0) glUniform1f(s_loc_distortAmp, s_distortAmp);
+            // Monotonic seconds: accumulate the per-call delta once per flush.
+            static double s_distortClockSec = 0.0;
+            s_distortClockSec += gos_GetElapsedTime(1);
+            if (s_loc_time >= 0) glUniform1f(s_loc_time, (float)s_distortClockSec);
+        }
+    }
+    // Default: distortion off for all groups; raised per-group in the draw loop.
+    if (s_loc_vfxDistort >= 0) glUniform1i(s_loc_vfxDistort, 0);
+
     // ── VFX-LIT-PARTICLES-MVP-1: scene lighting for alpha groups ─────
     // When OFF, upload strength 0 -> FS lit branch inert -> byte-identical.
     // Sun/ambient come from the global camera (eye), the same source terrain
@@ -1201,6 +1271,16 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
             if (s_loc_vfxBlackbody >= 0)
                 glUniform1i(s_loc_vfxBlackbody,
                             (s_blackbody_enabled && grp.blendMode == 1) ? 1 : 0);
+            // VFX-DISTORTION-1: enable heat-haze refraction for the distortion
+            // alpha group ONLY. distortActive already requires the gate AND a live
+            // scene-color grab. The FIXTURE (MC2_VFX_DISTORT_FIXTURE) tags every
+            // alpha group (blendMode==0) as distortion so the effect is observable
+            // without content effect->distortion mapping (out of scope). Additive
+            // groups are never distortion (refraction replaces dst, not adds).
+            // Fixture OFF -> no group is tagged -> byte-identical even gate-ON.
+            if (s_loc_vfxDistort >= 0)
+                glUniform1i(s_loc_vfxDistort,
+                            (distortActive && s_distort_fixture && grp.blendMode == 0) ? 1 : 0);
 
             // Bind the resolved texture.
             glBindTexture(GL_TEXTURE_2D, glTex);
@@ -1224,6 +1304,13 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
     if (softActive) {
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, (GLuint)savedTex2D1);
+        glActiveTexture(GL_TEXTURE0);
+    }
+    // VFX-DISTORTION-1: restore unit-2 binding used for the scene-color grab
+    // (mirrors the unit-1 restore above — avoids the tex-unit-leak class).
+    if (distortActive) {
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, (GLuint)savedTex2D2);
         glActiveTexture(GL_TEXTURE0);
     }
     glBindTexture(GL_TEXTURE_2D, (GLuint)savedTex2D0);

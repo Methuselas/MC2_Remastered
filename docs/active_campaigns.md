@@ -120,6 +120,7 @@ Tier1 5/5 PASS. Item 8 fires when NVIDIA hardware available.
 - TERRAIN-CLASSIFY-TUNING-1 + Mech ImGui section (3d5457d0) — see handoff
 - PERF-GPU-CULL-READBACK-ID-CACHE-1 (ef03162a) — merge to nifty pending
 - VFX-WEAPON-FX-RESTORE-OPUS-1 (9dfff4a9) — shipped
+- VFX-DISTORTION-1 — BUILT (gate `MC2_VFX_DISTORTION`, default OFF; requires `MC2_VFX_SCENECOLOR_GRAB`). Heat-haze: distortion alpha group refracts the pre-VFX scene-color grab at a procedural (in-house value-noise) screen-UV offset, soft-clipped by scene depth; reuses `VfxBillboardAlpha` (no new pipeline/blend). Fixture `MC2_VFX_DISTORT_FIXTURE` tags alpha groups for observability. gate-OFF byte-identical. See `docs/VFX-DISTORTION-1.md`.
 - Colormap BC7 KTX2 arc (7768d4e5) — shipped; .burnin soak + dead helpers pending
 - perf session: setupTextures gate + water intro + recalcBounds (d65552ab)
 

@@ -67,6 +67,39 @@ uniform vec3  u_vfxAmbientColor;  // scene ambient color (0..1)
 // so hot flashes ramp warm-white -> orange the way real fire/plume/impact light does.
 uniform int u_vfxBlackbody;       // 1 = apply blackbody emissive tint (additive only)
 
+// VFX-DISTORTION-1: heat-haze refraction. Gate MC2_VFX_DISTORTION (default OFF).
+// u_vfxDistort == 0 -> branch skipped, byte-identical to today. When 1 (set only
+// for the distortion alpha group, only while the gate is ON AND the scene-color
+// grab is present), this ALPHA fragment REPLACES dst with the pre-VFX scene color
+// sampled at a procedurally-wobbled screen UV (in-house value-noise offset, NO
+// imported noise/normal/LUT art). Soft-clip (u_softDistance) gates replace strength
+// so haze does not bleed over near geometry. Requires VFX-SCENECOLOR-GRAB-1; if the
+// grab is absent the bridge forces u_vfxDistort=0 -> inert (no GL-0 sampler bind).
+uniform sampler2D u_sceneColor;   // pre-VFX scene-color snapshot (RGBA16F)
+uniform int   u_vfxDistort;       // 1 = this group is a distortion (heat-haze) group
+uniform float u_time;             // seconds, monotonic; uploaded once per flush
+uniform float u_distortAmp;       // screen-UV wobble amplitude (~0.03-0.05, small)
+
+// In-house 2-octave value-noise fbm. AUTHORED, not imported: a hash-based
+// value noise (no texture, no table, no third-party code) used only to give the
+// procedural screen-UV offset an organic shimmer instead of a pure sine grid.
+float vd_hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+}
+float vd_valnoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    float a = vd_hash(i + vec2(0.0, 0.0));
+    float b = vd_hash(i + vec2(1.0, 0.0));
+    float c = vd_hash(i + vec2(0.0, 1.0));
+    float d = vd_hash(i + vec2(1.0, 1.0));
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+float vd_fbm(vec2 p) {
+    return 0.6 * vd_valnoise(p) + 0.4 * vd_valnoise(p * 2.03 + 7.0);
+}
+
 // Analytic Planckian-locus -> linear RGB approximation. AUTHORED, not imported:
 // this is an MC2-native rational/exponential fit hand-tuned to the qualitative
 // shape of the blackbody (Planckian) chromaticity curve over ~1000K..6500K. It is
@@ -110,6 +143,44 @@ void main() {
     if (v_is_head == 1u) finalColor.rgb *= 1.5;
     // Also discard genuinely transparent pixels
     if (finalColor.a < 0.01) discard;
+
+    // VFX-DISTORTION-1: heat-haze refraction. Runs ONLY for the distortion alpha
+    // group (u_vfxDistort==1, set by the bridge only when the gate is ON and the
+    // scene-color grab is present) and only outside debug views. Replaces dst with
+    // the pre-VFX scene color sampled at a procedurally-wobbled screen UV. The blend
+    // is the existing ALPHA pipeline (SRC_ALPHA/ONE_MINUS_SRC_ALPHA): outputting the
+    // warped scene as rgb with a moderate alpha cross-fades dst toward the refracted
+    // sample, so the background visibly wobbles behind the haze card. Amp is kept
+    // SMALL for subtlety. The soft-clip (u_softDistance) machinery below still scales
+    // the final alpha, so haze does not bleed over near geometry.
+    if (u_vfxDistort == 1 && u_debugMode == 0) {
+        vec2 suv = gl_FragCoord.xy / u_screenSize;
+        // Procedural offset: cheap sine base + in-house fbm shimmer, animated by
+        // u_time. Authored, no imported art. Amplitude in screen-UV space.
+        float F = 9.0;
+        vec2 base = vec2(sin(v_uv.y * F + u_time), cos(v_uv.x * F + u_time));
+        float n = vd_fbm(v_uv * 6.0 + u_time * 0.7) - 0.5;
+        vec2 offset = u_distortAmp * (base + vec2(n, -n));
+        vec3 warped = textureLod(u_sceneColor, clamp(suv + offset, 0.0, 1.0), 0.0).rgb;
+        // Replace strength = card coverage (finalColor.a) so the haze fades at the
+        // card edges; further scaled by the soft-clip below.
+        outColor = vec4(warped, finalColor.a);
+        // Soft-clip: scale replace strength down where the card approaches opaque
+        // scene behind it (reuse the alpha-only depth-fade). u_softDistance==0
+        // (soft-particles gate OFF) -> branch skipped, full strength.
+        if (u_softDistance > 0.0) {
+            vec2 dsuv = gl_FragCoord.xy / u_screenSize;
+            float sceneDepth = textureLod(u_sceneDepth, dsuv, 0.0).r;
+            if (sceneDepth > 0.0001) {
+                vec3 wScene = sp_reconstructWorld(dsuv, sceneDepth);
+                vec3 wFrag  = sp_reconstructWorld(dsuv, gl_FragCoord.z);
+                float fade  = clamp(distance(wScene, wFrag) / u_softDistance, 0.0, 1.0);
+                outColor.a *= fade;
+            }
+        }
+        outColor.a *= u_vfxAlphaScale;
+        return;
+    }
 
     if (u_debugMode == 1) {
         // Albedo: raw atlas texel, drop vertex-color tint; keep final alpha so
