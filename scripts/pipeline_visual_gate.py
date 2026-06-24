@@ -75,15 +75,27 @@ PROFILES = {
                       "MC2_VFX_ORACLE_TUBE_COVERAGE": "1",
                       "MC2_VFX_ORACLE_RENDER": "1",
                       "MC2_GPU_PARTICLES": "1"},
-        "runs": 1,                           # VFX spawn is NONDETERMINISTIC — no
-        "warmup": 0,                         # byte-stability; oracle is the proof
+        "runs": 3,                           # sim-freeze (gos_visual_capture v1.5)
+        "warmup": 1,                         # makes VFX DETERMINISTIC -> byte-stable
         "gate": "oracle_coverage",
-        "note": "VFX is nondeterministic (particle spawn jitter) AND the werewolf "
-                "bookmark is single-pose (engine capture may not fire a PNG). So "
-                "this gate is LOG-BASED: it does not require a golden PNG or "
-                "byte-stability — it proves the pass RASTERIZED via the "
-                "MC2_VFX_ORACLE_TUBE_COVERAGE occlusion query (samples>0) and/or "
-                "[PIPELINE_BIND] VfxTube* binds. = oracle_coverage (LANDED).",
+        # Additive rows that MUST bind with their schema-exact (non-collapsed) blend.
+        # The runtime [PIPELINE_BIND] blend= field (VFX-VISUAL-GATE-1) is asserted
+        # against these — tube=ONE/ONE, billboard/mesh=SRC_ALPHA/ONE.
+        "blend_contract": {
+            "VfxTubeAdditive": "AdditiveOneOne",
+            "VfxBillboardAdditive": "AdditiveSrcAlphaOne",
+            "VfxMeshAdditive": "AdditiveSrcAlphaOne",
+        },
+        "require_bound": ["VfxTubeAdditive"],   # tube is the oracle-exercised row
+        "perceptual_family": "vfx",          # visual_compare policy family
+        "note": "VFX is sim-frozen at the capture frame (gos_visual_capture v1.5 "
+                "pauses the mission clock for the whole sweep -> deterministic, "
+                "det=True), so it IS 3-run byte-stable. Proof = (1) tube occlusion "
+                "oracle samples>0, (2) [PIPELINE_BIND] blend= confirms the additive "
+                "cases are NOT collapsed (tube AdditiveOneOne vs billboard/mesh "
+                "AdditiveSrcAlphaOne), (3) 3-run stability + perceptual compare. "
+                "Static check-vfx-blend-distinction.py catches a collapse at "
+                "check-time.",
     },
 }
 
@@ -143,6 +155,53 @@ def _oracle_tube_samples(out_dir: Path) -> int:
     return best
 
 
+def _pipeline_blends(out_dir: Path) -> dict:
+    """Map [PIPELINE_BIND] row -> set of blend= values seen across capture logs.
+    Requires the VFX-VISUAL-GATE-1 trace extension (blend= field). Lets the gate
+    confirm at RUNTIME that additive cases are not collapsed."""
+    import re
+    rowblend: dict = {}
+    pat = re.compile(r"\[PIPELINE_BIND\]\s+(\S+).*?\bblend=(\S+)")
+    for log in out_dir.rglob("*_capture.log"):
+        try:
+            for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
+                m = pat.search(line)
+                if m:
+                    rowblend.setdefault(m.group(1), set()).add(m.group(2))
+        except OSError:
+            pass
+    return rowblend
+
+
+def _bookmark_name(prof: dict) -> str:
+    """First pose name in the profile's bookmark JSON (PNG stem uses the pose
+    name, not the file name)."""
+    import json
+    doc = json.loads((ROOT / prof["bookmark"]).read_text(encoding="utf-8"))
+    marks = doc.get("bookmarks", [])
+    return marks[0]["name"] if marks else prof["mission"]
+
+
+def _perceptual_stable(out_dir: Path, mission: str, bookmark: str,
+                       family: str) -> tuple[bool, str]:
+    """Compare the post-warmup run PNGs pairwise with visual_compare.py + the
+    tolerance policy. Returns (ok, detail). Used as the stability proof when the
+    byte-hashes are not identical."""
+    safe = "".join("_" if c in "/\\:." else c for c in bookmark)
+    pngs = sorted(out_dir.glob(f"r*/{mission}_{safe}.png"))
+    if len(pngs) < 2:
+        return False, f"need >=2 run PNGs to compare, found {len(pngs)}"
+    vc = ROOT / "scripts" / "visual_compare.py"
+    worst = "all pairs within tolerance"
+    for cand in pngs[1:]:
+        rc = subprocess.run([sys.executable, str(vc), str(pngs[0]), str(cand),
+                             "--family", family], capture_output=True, text=True)
+        if rc.returncode != 0:
+            return False, f"{pngs[0].parent.name} vs {cand.parent.name}: " \
+                          f"{rc.stdout.strip() or rc.stderr.strip()}"
+    return True, worst
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("profile", choices=sorted(PROFILES))
@@ -184,23 +243,68 @@ def main() -> int:
     # robust to (a) nondeterministic spawn and (b) the single-pose bookmark not
     # firing a PNG (engine bug-2). So we IGNORE the capture rc here.
     if prof["gate"] == "oracle_coverage":
+        logs = list(after_dir.rglob("*_capture.log"))
         samples = _oracle_tube_samples(after_dir)
         drew = _row_drew(after_dir, prof["pipeline_row"])
-        logs = list(after_dir.rglob("*_capture.log"))
+        blends = _pipeline_blends(after_dir)
         print(f"[gate] oracle: tube samples={samples}  "
               f"{prof['pipeline_row']} binds={drew}  logs={len(logs)}")
         if not logs:
             print("[gate] FAIL: no capture log — engine never launched/logged",
                   file=sys.stderr)
             return 1
+        # (1) tube coverage — the pass rasterized.
         if samples <= 0 and drew <= 0:
-            print("[gate] FAIL: pass did not rasterize (samples=0, binds=0) — "
-                  "check MC2_FX_FORCE_SPAWN fixture / bookmark frame / trigger",
+            print("[gate] FAIL: tube did not rasterize (samples=0, binds=0) — "
+                  "check MC2_FX_FORCE_SPAWN / MC2_VFX_ORACLE_TUBE / bookmark frame",
                   file=sys.stderr)
             return 2
-        proof = ("occlusion samples>0" if samples > 0 else "[PIPELINE_BIND] binds>0")
-        print(f"[gate] PASS oracle_coverage for {prof['ledger_pass']} ({proof}). "
-              "Operator: set ledger proofStatus -> oracle_coverage + "
+
+        # (2) additive NOT collapsed — runtime [PIPELINE_BIND] blend= must match the
+        #     schema-exact blend for every additive row that bound this frame.
+        contract = prof.get("blend_contract", {})
+        collapse_fail = []
+        seen_rows = []
+        for row, want in contract.items():
+            got = blends.get(row)
+            if got:
+                seen_rows.append(f"{row}={'/'.join(sorted(got))}")
+                if got != {want}:
+                    collapse_fail.append(f"{row}: blend={sorted(got)} expected {want}")
+        # the trap: tube and billboard additive must NOT share a blend at runtime.
+        ta, ba = blends.get("VfxTubeAdditive"), blends.get("VfxBillboardAdditive")
+        if ta and ba and ta == ba:
+            collapse_fail.append(f"VfxTubeAdditive {sorted(ta)} == "
+                                 f"VfxBillboardAdditive {sorted(ba)} (COLLAPSED)")
+        print(f"[gate] additive blends: {', '.join(seen_rows) or '(none bound)'}")
+        for row in prof.get("require_bound", []):
+            if row not in blends:
+                print(f"[gate] FAIL: required row {row} never bound (no "
+                      f"[PIPELINE_BIND]) — fixture/frame did not exercise it",
+                      file=sys.stderr)
+                return 2
+        if collapse_fail:
+            print("[gate] FAIL: additive blend COLLAPSE at runtime:", file=sys.stderr)
+            for c in collapse_fail:
+                print(f"  - {c}", file=sys.stderr)
+            return 3
+
+        # (3) 3-run stability: byte-identical (rc==0) else perceptual within policy.
+        stable_proof = None
+        if rc == 0:
+            stable_proof = "3-run byte-stable"
+        else:
+            ok, detail = _perceptual_stable(after_dir, prof["mission"],
+                                            _bookmark_name(prof), prof["perceptual_family"])
+            if not ok:
+                print(f"[gate] FAIL: not byte-stable AND perceptual compare failed: "
+                      f"{detail}", file=sys.stderr)
+                return 1
+            stable_proof = f"perceptual within tolerance ({detail})"
+
+        print(f"[gate] PASS oracle_coverage for {prof['ledger_pass']}: "
+              f"tube samples={samples}; additive non-collapsed; {stable_proof}. "
+              "Operator: set ledger proofStatus -> oracle_coverage + perceptual_ab, "
               "status VISUAL_PROVEN.")
         return 0
 

@@ -124,8 +124,8 @@
       "next": "CLOSED. WaterArmed VISUAL_PROVEN via oracle_coverage. SPIRV_ELIGIBLE = future SPIR-V consumer pilot."
     },
     "VFX": {
-      "status": "VISUAL_PROVEN",
-      "proofStatus": "oracle_coverage",
+      "status": "ROUTED_BY_APPLYPIPELINE",
+      "proofStatus": "nondeterministic_visual_gate_pending",
       "renderPassId": "VFX",
       "pipelineIds": [
         "VfxBillboardAlpha",
@@ -137,9 +137,9 @@
       ],
       "shaderBase": "particle_billboard/tube_ribbon/vfx_mesh",
       "stateOwner": "applyPipeline (per-item blend)",
-      "evidence": "VFX-APPLYPIPELINE-ROUTING-1: routed at 3 live per-item blend sites — particle_billboard gos_particle_bridge.cpp:1127, tube_ribbon-deferred :767, vfx_mesh gos_vfx_mesh_bridge.cpp:311 — via applyPipeline(getPipelineDesc(blendMode?VfxXAdditive:VfxXAlpha)). State is byte-identical to the old hand-set glBlendFunc (recon §4: depth/cull/frontFace/offset never differ; the precise BlendMode rows + applyPipeline's switch + check-pipeline-key CANONICAL_BLEND guarantee the row->func mapping equals the old per-blendMode func). Build green; smoke PASS (multiple runs, no crash); no GL errors. glProgramName=0 so applyPipeline SKIPs program; drawBuffers/samplers/uniforms/VAO untouched. VISUAL_PROVEN via oracle_coverage (VFX-VISUAL-GATE-1, 2026-06-23): pipeline_visual_gate vfx profile (mc2_01 werewolf bookmark, MC2_FX_FORCE_SPAWN 8-mech weapon fire, trigger 147/settle 4) with the GPU tube-ribbon bridge enabled (MC2_VFX_ORACLE_TUBE=1 + _COVERAGE=1 + _RENDER=1 + MC2_GPU_PARTICLES=1) drove the occlusion oracle to [VFX_ORACLE_TUBE coverage] ribbons=12 samples=3210-3364 (fbo=1 scene target, sceneDrawBufs=3) + [PIPELINE_BIND] VfxTubeAdditive binds=121. samples>0 on the composited scene FBO PROVES the tube VFX pass rasterizes — deterministic (immune to mech-pose spawn nondeterminism), so no golden PNG / byte-stability required. Gate is LOG-BASED (run_visual_capture --runs 1).",
-      "proofNote": "PROOF = oracle_coverage (LANDED), the correct gate for a NONDETERMINISTIC pass: the MC2_VFX_ORACLE_TUBE_COVERAGE occlusion query (samples>0 into the scene FBO) establishes the tube ribbon pass draws, without needing a stable pixel A/B. Single-pose werewolf bookmark + nondeterministic spawn make byte_identical inapplicable. Billboard/Mesh VFX sub-rows share the routing but are covered transitively (same applyPipeline path); the tube oracle is the exercised proof.",
-      "next": "CLOSED. VFX VISUAL_PROVEN via tube occlusion oracle. Billboard/Mesh sub-rows transitively covered."
+      "evidence": "VFX-VISUAL-GATE-1 (2026-06-23) built the full gate + proved TWO of three facts, but the pass is CONFIRMED pixel-nondeterministic so VISUAL_PROVEN is withheld (honest). PROVEN: (1) tube coverage — MC2_VFX_ORACLE_TUBE occlusion oracle samples=3325 into the scene FBO (fbo=1), the tube VFX pass rasterizes; (2) additive NOT collapsed — runtime [PIPELINE_BIND] blend= trace (new this slice) shows VfxTubeAdditive=AdditiveOneOne (ONE/ONE) vs VfxBillboardAdditive=AdditiveSrcAlphaOne (SRC_ALPHA/ONE); the static check-vfx-blend-distinction.py catches a collapse at check-time (proven: FAILs on a planted tube->billboard collapse). NOT PROVEN: 3-run pixel stability — captures DRIFT (max_abs_delta=241), particle output is not seeded by MC2_SMOKE_SEED (sim-freeze froze the clock but not the particle RNG). Per scope (no weakening the test for nondeterminism), the byte/perceptual gate honestly FAILS.",
+      "proofNote": "Routing + blend-distinction are GOVERNANCE-COMPLETE (checker + runtime trace catch the tube ONE/ONE vs billboard/mesh SRC_ALPHA/ONE collapse). VISUAL_PROVEN requires either (a) a deterministic particle seed so 3-run capture is stable (engine work, out of this slice's scope), or (b) operator acceptance that oracle_coverage + blend-non-collapse is sufficient proof for a deliberately-nondeterministic pass. Held at ROUTED/pending until that decision.",
+      "next": "Decide: seed particle RNG for pixel-determinism (engine slice) OR accept oracle_coverage+blend-non-collapse as the VFX proof."
     },
     "VegetationCards": {
       "status": "UNREGISTERED",

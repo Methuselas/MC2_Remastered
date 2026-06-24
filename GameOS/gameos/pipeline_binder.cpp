@@ -124,9 +124,19 @@ void applyPipeline(const RenderCore::PipelineDesc& desc, const char* dbgName) {
             desc.cullMode == RenderCore::CullMode::None ? "None" :
             desc.cullMode == RenderCore::CullMode::Back ? "Back" : "Front";
         const char* ff = desc.frontFace == RenderCore::FrontFace::Cw ? "Cw" : "Ccw";
+        // VFX-VISUAL-GATE-1: emit BlendMode so the visual gate confirms at runtime
+        // that the additive cases are NOT collapsed — tube = ONE/ONE
+        // (AdditiveOneOne), billboard/mesh = SRC_ALPHA/ONE (AdditiveSrcAlphaOne).
+        const char* bm =
+            desc.blend == RenderCore::BlendMode::Opaque              ? "Opaque" :
+            desc.blend == RenderCore::BlendMode::AlphaBlend          ? "AlphaBlend" :
+            desc.blend == RenderCore::BlendMode::AlphaTest           ? "AlphaTest" :
+            desc.blend == RenderCore::BlendMode::Additive            ? "Additive" :
+            desc.blend == RenderCore::BlendMode::AdditiveOneOne      ? "AdditiveOneOne" :
+            desc.blend == RenderCore::BlendMode::AdditiveSrcAlphaOne ? "AdditiveSrcAlphaOne" : "?";
         std::fprintf(stderr,
-            "[PIPELINE_BIND] %s depth=%s cull=%s frontFace=%s polygonOffset=%s\n",
-            dbgName, df, cm, ff, desc.polygonOffsetEnable ? "true" : "false");
+            "[PIPELINE_BIND] %s depth=%s cull=%s frontFace=%s polygonOffset=%s blend=%s\n",
+            dbgName, df, cm, ff, desc.polygonOffsetEnable ? "true" : "false", bm);
         std::fflush(stderr);
     }
 }
