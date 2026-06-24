@@ -61,8 +61,13 @@ enum class PipelineId : uint32_t {
     VfxTubeAdditive      = 14,  // tube_ribbon, ONE/ONE  (differs from billboard/mesh)
     VfxMeshAlpha         = 15,  // vfx_mesh, SRC_ALPHA/ONE_MINUS_SRC_ALPHA
     VfxMeshAdditive      = 16,  // vfx_mesh, SRC_ALPHA/ONE
+    // POSTPROCESS-COMPOSITE-REGISTRATION-1: endScene final composite (fullscreen
+    // quad, postprocess.frag). ROUTED via applyPipeline. Opaque (force no blend —
+    // composite must fully overwrite the backbuffer; a gosFX additive leak would
+    // otherwise saturate RGBA8 to white), depth test+write OFF, cull None, color0.
+    PostProcessComposite = 17,  // endScene composite (postprocess.frag, opaque, no depth)
     // Future: DebugWireframe, ...
-    Count_               = 17,  // sentinel — do not use as an ID
+    Count_               = 18,  // sentinel — do not use as an ID
 };
 
 // VERTEXLAYOUT-AUTHORITY-1: stable repo-owned vertex-input layout identities —

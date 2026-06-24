@@ -50,7 +50,7 @@ distinct from "visually proven", instead of faking a byte-hash that can't hold.
 | Water (armed fast path) | VISUAL_PROVEN (proof: oracle_coverage) | Water | WaterArmed |
 | VFX | ROUTED_BY_APPLYPIPELINE (proof: nondeterministic_visual_gate_pending) | VFX | Vfx{Billboard,Tube,Mesh}{Alpha,Additive} (6) |
 | VegetationCards | UNREGISTERED | VegetationCards | — |
-| PostProcess | UNREGISTERED | PostProcess | — |
+| PostProcess (composite) | ROUTED_BY_APPLYPIPELINE (proof: byte_identical) | PostProcess | PostProcessComposite |
 | UI | DO_NOT_MODEL | UI | — |
 | Picking | DO_NOT_MODEL | — | — |
 | RoadsRunways | DO_NOT_MODEL | — | — |

@@ -14,6 +14,8 @@
 #include "view_uniforms_gl.h"
 #include "gos_static_prop_registry.h"   // HZB-STATICPROP-CULL-RECON-1: real bounds for the probe
 #include "gl_state_guard.h"  // GLSTATE-GUARD-ADOPTION-1: GlScopedTextureUnit (composite tex-unit leak)
+#include "../../RenderCore/PipelineRegistry.h"  // POSTPROCESS-COMPOSITE-REGISTRATION-1
+#include "pipeline_binder.h"                     // applyPipeline — composite FF state
 #include "gos_cluster_depth_pyramid.h"  // CLUSTER-DEPTH-PYRAMID-NATIVE-1 (gated substrate)
 #include "gos_lightgrid_build.h"         // MC2-LIGHTGRID-BUILD-NATIVE-1 (gated, inert)
 
@@ -2201,16 +2203,21 @@ void gosPostProcess::endScene()
         }
     }
 
-    // Disable depth test and face culling for fullscreen quad
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);
-    glDepthMask(GL_FALSE);
-    // gosFX/MLR additive draws (gos_Alpha_OneOne) leak GL_BLEND+GL_ONE/GL_ONE
-    // state into the composite. With an RGBA8 backbuffer that clamps at 1.0,
-    // the additive accumulation saturates to white over ~1s — pylon power
-    // generator effect on mc2_05/mc2_24 was the canary. Composite is meant
-    // to fully overwrite the backbuffer; force opaque.
-    glDisable(GL_BLEND);
+    // POSTPROCESS-COMPOSITE-REGISTRATION-1: drive the fullscreen-quad fixed-function
+    // state from the PostProcessComposite pipeline row instead of hand-setting it.
+    // Byte-identical to the prior hand-set: depth test OFF, depth-write OFF (mask
+    // FALSE), cull None, and Opaque = GL_BLEND OFF. The "force opaque" matters
+    // because gosFX/MLR additive draws (gos_Alpha_OneOne) leak GL_BLEND+ONE/ONE into
+    // the composite; with an RGBA8 backbuffer that clamps at 1.0 the additive
+    // accumulation saturates to white over ~1s (pylon power-generator canary on
+    // mc2_05/mc2_24). Composite must fully overwrite the backbuffer. glProgramName=0
+    // in the row, so compositeProg_->apply() below still binds the program;
+    // applyPipeline only sets the fixed-function state. (The binder also sets a
+    // neutral glBlendFunc(ONE,ZERO) + frontFace Ccw + depthFunc Always — all inert
+    // for this blend-off, cull-off, depth-off draw.)
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessComposite),
+        "PostProcessComposite");
 
     // Draw fullscreen quad with composite shader
     if (compositeProg_ && compositeProg_->is_valid()) {

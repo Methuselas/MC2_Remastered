@@ -332,6 +332,23 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* polygonOffsetEnable */ false,
         /* ssboBindingsMask    */ 0u,
     },
+    // [17] PostProcessComposite — endScene final composite (postprocess.frag).
+    // Opaque (force no blend; fully overwrites the backbuffer), depth test+write
+    // OFF, cull None, color0 only. glProgramName=0 -> the call site keeps binding
+    // compositeProg_; applyPipeline only sets the fixed-function state.
+    {
+        /* glProgramName       */ 0u,
+        /* blend               */ BlendMode::Opaque,
+        /* depthTestEnable     */ false,
+        /* depthWriteEnable    */ false,
+        /* depthFunc           */ DepthFunc::Always,
+        /* cullMode            */ CullMode::None,
+        /* colorAttachments    */ { true, false, false },
+        /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,
+        /* polygonOffsetEnable */ false,
+        /* ssboBindingsMask    */ 0u,
+    },
 
 }};
 

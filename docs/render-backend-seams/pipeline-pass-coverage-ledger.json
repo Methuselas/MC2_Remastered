@@ -150,12 +150,15 @@
       "next": "recon later (instanced cards; alpha-test)"
     },
     "PostProcess": {
-      "status": "UNREGISTERED",
+      "status": "ROUTED_BY_APPLYPIPELINE",
       "renderPassId": "PostProcess",
-      "pipelineId": null,
+      "pipelineId": "PostProcessComposite",
       "shaderBase": "postprocess/ssao/fog/composite",
-      "stateOwner": "legacy/ad-hoc",
-      "next": "RECON DONE -> postprocess-pipeline-registration-recon-1.md. 14 draws/12 passes. REGISTER-NOW (set-only, Opaque/AlphaBlend, SPIR-V pilots): composite (Opaque), edgeFog+fogOob (AlphaBlend). BLOCKED on new BlendMode::Multiply (DST_COLOR/ZERO): screenShadow/cloud/shoreline/ssaoApply. DEFER: ssao1+hzbReduce (own-FBO/viewport), HDRI family (save/restore breaks applyPipeline set-only + no SPIR-V). DO_NOT_MODEL: shadowDebug (debug), dead skybox. Next slice = POSTPROCESS-COMPOSITE-REGISTRATION-1 (smallest blast radius)."
+      "stateOwner": "applyPipeline (composite); legacy/ad-hoc (rest of chain)",
+      "next": "Next post-fx slices (recon order): POSTPROCESS-FOG-REGISTRATION-1 (edgeFog+fogOob, AlphaBlend, SPIR-V pilots); then BLENDMODE-MULTIPLY-1 -> screenShadow/cloud/shoreline/ssaoApply. DEFER HDRI (restore contract) + ssao1/hzb (own FBO/viewport). DO_NOT_MODEL shadowDebug + dead skybox.",
+      "proofStatus": "byte_identical",
+      "scope_note": "ONLY the endScene final composite sub-pass (postprocess.frag) is registered (PipelineId::PostProcessComposite, Opaque/no-depth/no-cull) and ROUTED via applyPipeline (gos_postprocess.cpp ~2204, POSTPROCESS-COMPOSITE-REGISTRATION-1). The fog/screenShadow/cloud/shoreline/ssao/skybox chain remains UNREGISTERED — see postprocess-pipeline-registration-recon-1.md for the register plan + blockers (BlendMode::Multiply for the 4 multiplicative passes; HDRI save/restore contract).",
+      "evidence": "Composite routing proven BYTE-IDENTICAL: with composite routed via applyPipeline, mc2_01 water_overview_high captured sha cb5a700ebd00dd0b — identical to the banked pre-routing baseline (the composite is the final pass writing the backbuffer, so an identical whole-frame sha proves the routing is a perfect no-op, incl. no downstream state leak from the binder's inert frontFace/depthFunc/blendFunc sets). [PIPELINE_BIND] PostProcessComposite fired 3304x (once/frame)."
     },
     "UI": {
       "status": "DO_NOT_MODEL",
