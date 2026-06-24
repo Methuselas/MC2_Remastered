@@ -697,6 +697,72 @@
         "color2": false
       },
       "key_producible": "descriptive"
+    },
+    {
+      "id": "PostProcessEdgeFog",
+      "pipelineDescRegistered": true,
+      "descriptive": "POSTPROCESS-FOG-REGISTRATION-1: runEdgeFog (edge_fog.frag), AlphaBlend, routed via applyPipeline (gos_postprocess.cpp ~2031). depth test+write OFF, cull None, color0.",
+      "shaderVariantId": {
+        "base": "edge_fog",
+        "macros": []
+      },
+      "specializationParams": [],
+      "renderPassCompat": "PostProcess (RenderPassId::PostProcess)",
+      "depthState": {
+        "test": false,
+        "write": false,
+        "func": "Always"
+      },
+      "blendState": {
+        "factor": "AlphaBlend",
+        "srcFactor": "SRC_ALPHA",
+        "dstFactor": "ONE_MINUS_SRC_ALPHA",
+        "equation": "FUNC_ADD"
+      },
+      "cullState": {
+        "mode": "None"
+      },
+      "frontFace": "Ccw",
+      "polygonOffsetEnable": false,
+      "colorMaskAttachmentMask": {
+        "color0": true,
+        "color1": false,
+        "color2": false
+      },
+      "key_producible": "descriptive"
+    },
+    {
+      "id": "PostProcessFogOob",
+      "pipelineDescRegistered": true,
+      "descriptive": "POSTPROCESS-FOG-REGISTRATION-1: runFogOob (fog_oob.frag), AlphaBlend, routed via applyPipeline. State-twin of EdgeFog.",
+      "shaderVariantId": {
+        "base": "fog_oob",
+        "macros": []
+      },
+      "specializationParams": [],
+      "renderPassCompat": "PostProcess (RenderPassId::PostProcess)",
+      "depthState": {
+        "test": false,
+        "write": false,
+        "func": "Always"
+      },
+      "blendState": {
+        "factor": "AlphaBlend",
+        "srcFactor": "SRC_ALPHA",
+        "dstFactor": "ONE_MINUS_SRC_ALPHA",
+        "equation": "FUNC_ADD"
+      },
+      "cullState": {
+        "mode": "None"
+      },
+      "frontFace": "Ccw",
+      "polygonOffsetEnable": false,
+      "colorMaskAttachmentMask": {
+        "color0": true,
+        "color1": false,
+        "color2": false
+      },
+      "key_producible": "descriptive"
     }
   ],
   "excluded_draw_families": {

@@ -2028,13 +2028,14 @@ void gosPostProcess::runEdgeFog()
     setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
     glViewport(0, 0, width_, height_);
 
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);
-    glDepthMask(GL_FALSE);
-
-    // SRC_ALPHA blend: shader emits (fogColor, alpha), blends over existing scene.
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    // POSTPROCESS-FOG-REGISTRATION-1: drive FF state from the PostProcessEdgeFog
+    // row instead of hand-setting it. Byte-identical: depth test+write OFF, cull
+    // None, AlphaBlend (SRC_ALPHA/ONE_MINUS_SRC_ALPHA). glProgramName=0 -> the
+    // edgeFogProg_->apply() below still binds the program. Teardown (glDisable
+    // BLEND / glDepthMask TRUE / glEnable DEPTH_TEST) stays owned by this site.
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessEdgeFog),
+        "PostProcessEdgeFog");
 
     // invViewProj: same GL_FALSE / row-major convention as SSAO and other passes.
     edgeFogProg_->apply();
@@ -2081,15 +2082,14 @@ void gosPostProcess::runFogOob()
     setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
     glViewport(0, 0, width_, height_);
 
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);
-    glDepthMask(GL_FALSE);
-
-    // SRC_ALPHA blend: OOB pixels emit (fogColor, opacity), sky pixels emit (0,0).
-    // Result = fogColor * opacity + sceneColor * (1 - opacity).
-    // sceneColorTex_ is never sampled — no read/write feedback loop.
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    // POSTPROCESS-FOG-REGISTRATION-1: drive FF state from the PostProcessFogOob row.
+    // Byte-identical: depth test+write OFF, cull None, AlphaBlend
+    // (SRC_ALPHA/ONE_MINUS_SRC_ALPHA). fogOobProg_->apply() below binds the program.
+    // OOB pixels emit (fogColor, opacity), sky pixels (0,0); sceneColorTex_ never
+    // sampled (no read/write feedback). Teardown stays owned by this site.
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessFogOob),
+        "PostProcessFogOob");
 
     // Other post-process passes upload inverseViewProj_ with GL_FALSE (row-major
     // data as-is), which in GLSL gives (W^{-1})^T * v — the correct clip->world
