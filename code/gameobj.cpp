@@ -2102,7 +2102,11 @@ bool GameObject::onScreen (void) {
 		Stuff::Vector3D objPosition = position;
 		// [PROJECTZ:BoolAdmission id=gameobj_visibility_admit]
 		PROJECTZ_SITE("gameobj_visibility_admit", "BoolAdmission");
-		isVisible = eye->projectForObjectAdmission(objPosition, screenPos);
+		// [LOW-CAMERA-OBJECT-CULL-1 / FIX-3] sphere-aware admit pads the near
+		// plane by the object's bounding radius (gate MC2_LOWCAM_OBJ_NEARPAD;
+		// OFF = byte-identical to projectForObjectAdmission). getExtentRadius()
+		// is the object-type bounding radius (world units; <=0 falls back).
+		isVisible = eye->projectForObjectAdmissionSphere(objPosition, screenPos, getExtentRadius());
 	}
 
 	if (isVisible) {

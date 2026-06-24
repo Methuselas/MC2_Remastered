@@ -1590,6 +1590,12 @@ long Terrain::update (void)
 		// Diagnostic: one-shot dump of planes + first superchunk AABB + camera pos.
 		// MC2_TERRAIN_LOD_CHUNK_NO_CULL=1 bypasses frustum so GPU path can be tested.
 		static const bool s_noCull = (getenv("MC2_TERRAIN_LOD_CHUNK_NO_CULL") != nullptr);
+		// [LOW-CAMERA-TERRAIN-CULL-1 / FIX-2] When set, drop the near plane from the
+		// terrain AABB frustum test so near terrain isn't culled at a low/grazing
+		// pitch (near plane at NearPlaneDistance=-400). Other 5 planes intact;
+		// default OFF -> byte-identical to today.
+		// Default ON for this low-camera build; set MC2_LOWCAM_TERRAIN_NEAR=0 to disable.
+		static const bool s_lowCamNear = []{ const char* v = getenv("MC2_LOWCAM_TERRAIN_NEAR"); return !(v && v[0]=='0'); }();
 		static bool s_cullDiagDone = false;
 		if (!s_cullDiagDone && gCurrentFrame == 2) {
 			s_cullDiagDone = true;
@@ -1709,7 +1715,10 @@ long Terrain::update (void)
 				scMn.x = sc.worldMinX; scMn.y = sc.worldMinY; scMn.z = sc.worldMinZ;
 				scMx.x = sc.worldMaxX; scMx.y = sc.worldMaxY; scMx.z = sc.worldMaxZ;
 
-				sc.inFrustum = s_noCull ? true : eye->quadAabbInFrustum(planes, scMn, scMx);
+				// [LOW-CAMERA-TERRAIN-CULL-1 / FIX-2] skip-near variant when gated.
+				sc.inFrustum = s_noCull ? true
+					: (s_lowCamNear ? eye->quadAabbInFrustumSkipNear(planes, scMn, scMx)
+					                : eye->quadAabbInFrustum(planes, scMn, scMx));
 				if (!sc.inFrustum)
 				{
 					// Cull all constituent blocks without testing them.
@@ -1752,7 +1761,10 @@ long Terrain::update (void)
 						bmMx.z = 2500.0f;
 
 						// CRIT-1: write inFrustum BEFORE any continue.
-						bool passedCull = s_noCull ? true : eye->quadAabbInFrustum(planes, bmMn, bmMx);
+						// [LOW-CAMERA-TERRAIN-CULL-1 / FIX-2] skip-near variant when gated.
+						bool passedCull = s_noCull ? true
+							: (s_lowCamNear ? eye->quadAabbInFrustumSkipNear(planes, bmMn, bmMx)
+							                : eye->quadAabbInFrustum(planes, bmMn, bmMx));
 						bm.inFrustum = passedCull;
 
 						// Phase 5: compute block center in MC2 world space and choose LOD.
@@ -3236,7 +3248,15 @@ void Terrain::geometry (void)
 		s_prodBlock.assign(nB, 0);
 
 		const float hMapW      = float(halfVerticesMapSide) * worldUnitsPerVertex;
-		const float kNearField = 768.0f;   // CLIP_THRESHOLD_DISTANCE
+		// [LOW-CAMERA-TERRAIN-CULL-1 v2] The angular solid-window producer (this
+		// loop) is the SECOND terrain visibility gate — independent of the frustum
+		// inFrustum set we relaxed via MC2_LOWCAM_TERRAIN_NEAR. At grazing pitch,
+		// near terrain spread SIDEWAYS of the look vector falls just past the
+		// unconditional near-field bypass and outside the horizontal cone -> dropped.
+		// Widen the near-field bypass radius (purely additive: only admits more
+		// blocks; dilation/superset invariants preserved). Default 4x; =1 = stock.
+		static const float s_lowCamSolidNear = []{ const char* v = getenv("MC2_LOWCAM_SOLID_NEAR"); return v ? (float)atof(v) : 6.0f; }();
+		const float kNearField = 768.0f * s_lowCamSolidNear;   // CLIP_THRESHOLD_DISTANCE
 		const float kExtent    = 384.0f;   // VERTEX_EXTENT_RADIUS
 		const float blockR     = (verticesBlockSide * 0.5f) * worldUnitsPerVertex * 1.5f;
 
