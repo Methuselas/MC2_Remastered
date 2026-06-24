@@ -1,0 +1,20 @@
+FITini
+; TECHSCRIPT-CALL-CHAIN-1A unknown-target fixture.
+; Engine-owned normative proof (addendum #3).
+; Tests soft-fail on unresolved TechSpecial.Call target.
+; Gate E (DISPATCH=1 CALL=1):
+;   Expect: [BRAIN_DISPATCH_CALL_UNKNOWN] from=root target=nonexistent.key wid=...
+;   No crash. Execution continues past the unresolved call.
+
+TechSpecial {
+    key  = "mission.test.scenario_main"
+    alias = "Scenario.Main"
+    type = "MissionSpecial"
+    sourceABLFunction = "scenario_main"
+    Body {
+        DO OPORD.CoreGuard
+        DO TechSpecial.Call "nonexistent.key"
+        DO Brain.CorePower
+        STOP
+    }
+}

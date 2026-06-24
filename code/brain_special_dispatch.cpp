@@ -5,16 +5,28 @@
 // DISPATCH-LOADER-RAW-1 — replace FitIniFile body reader with raw brace-block scanner
 //   that correctly loads inline-quoted verb args (DO Var.Set "foo" 1).
 //   FitIniFile fallback retained for legacy [BrainSpecial]/[Body]/DO0=... bracket form.
+// TECHSCRIPT-CALL-CHAIN-1A — TechSpecial.Call chaining (parse + index + trace ONLY).
+//   Gate: MC2_BRAIN_DISPATCH_CALL=1 (requires MC2_BRAIN_DISPATCH=1; warns + inert otherwise).
+//   Index: parseBrainSpecialBody_RawScan populates a SpecialIndex (key→BrainSpecialBody*).
+//   Dispatch: TechSpecial.Call "<key>" verb recurses into the named body (trace only).
+//   Depth limit: 8 (kCallChainMaxDepth). Per-tick visited set (std::vector<std::string>).
+//   NO effects in chained bodies: Brain.CorePower false in a CALLED body traces but does NOT
+//   call setGeneralTacOrder. Chained-effect execution is deferred to CALL-CHAIN-1B.
+//   FORBIDDEN-CALL CONTRACT (chained dispatch): pure trace + recursion. No order functions.
+//   PURE VERB-STREAM COMPOSITION: chaining introduces NO new order function calls.
+//
 // Gates: MC2_BRAIN_DISPATCH (parse+trace), MC2_BRAIN_DISPATCH_APPLY (effect layer, requires DISPATCH),
 //        MC2_BRAIN_DISPATCH_FSM_TODO (FSM TODO surfacer, requires DISPATCH),
-//        MC2_BRAIN_DISPATCH_VAR (per-unit Var store, requires DISPATCH, default OFF).
+//        MC2_BRAIN_DISPATCH_VAR (per-unit Var store, requires DISPATCH, default OFF),
+//        MC2_BRAIN_DISPATCH_CALL (call chaining, requires DISPATCH, default OFF).
 //
-// FORBIDDEN-CALL GUARD — executeSpecialBody_TraceOnly (1A, UNCHANGED):
-// Calls ONLY fprintf + loop. DOES NOT call setGeneralTacOrder or any order/movement function.
-// Verified: no warrior pointer, no MechWarrior type exists in this TU.
+// FORBIDDEN-CALL GUARD — executeSpecialBody_TraceOnly / executeSpecialBody_TraceOnlyChained (1A):
+// Calls ONLY fprintf + loop + recursive chained dispatch. DOES NOT call setGeneralTacOrder
+// or any order/movement function. Verified: no warrior pointer, no MechWarrior type here.
 //
 // RELAXED-CALL GUARD — executeSpecialBody_Apply (1B):
-// The ONLY permitted order call is warrior->setGeneralTacOrder() (for Brain.CorePower false → POWERDOWN).
+// The ONLY permitted order call is warrior->setGeneralTacOrder() (for Brain.CorePower false → POWERDOWN)
+// IN THE ROOT BODY ONLY. Chained bodies (via TechSpecial.Call) are trace-only in 1A.
 // STILL FORBIDDEN: setPlayerTacOrder, setAlarmTacOrder, requestHelp, requestTarget,
 // calcTacOrder, coreMoveTo, setMainGoal, clearCurTacOrder, any movement/attack/OPORD-advance/
 // commander function. All other verbs → trace only, zero effect.
@@ -22,8 +34,6 @@
 // FSM-TODO SCANNER (1C — scanFsmTodosFromFile):
 // Calls ONLY std::ifstream + std::regex + fprintf. NO order functions, NO movement/attack/OPORD calls.
 // Verified by inspection: no warrior pointer, no MechWarrior type, no tac-order writes.
-// This is INFORMATION ONLY: it surfaces what FSM logic the auto-conversion dropped,
-// giving the modder an inventory of state machine structure that needs hand-porting.
 //
 // VAR HANDLER CONTRACT (1D — handleVarSet / handleVarGet):
 // Calls ONLY store->set/store->get + fprintf/fflush. ZERO calls to setGeneralTacOrder
@@ -40,6 +50,40 @@
 #include <regex>
 #include <string>
 #include "inifile.h"   // FitIniFile — same header used by _ai.fit loader
+
+// ---------------------------------------------------------------------------
+// TECHSCRIPT-CALL-CHAIN-1A: depth limit for TechSpecial.Call recursion.
+// Corpus max observed depth = 2; limit set to 8 per recon recommendation.
+static constexpr int kCallChainMaxDepth = 8;
+
+// specialIndexFind — linear-scan lookup by key (case-sensitive).
+// Returns pointer into idx for the found entry, or nullptr.
+const SpecialIndexEntry* specialIndexFind(const SpecialIndex& idx, const std::string& key) {
+    for (const SpecialIndexEntry& e : idx) {
+        if (e.key == key)
+            return &e;
+    }
+    return nullptr;
+}
+
+// ---------------------------------------------------------------------------
+// Gate helper for DISPATCH_CALL (TECHSCRIPT-CALL-CHAIN-1A).
+static bool s_dispatchCallGate() {
+    static const bool kGate = ([](){
+        const char* v = std::getenv("MC2_BRAIN_DISPATCH_CALL");
+        if (v && std::atoi(v) != 0) {
+            const char* d = std::getenv("MC2_BRAIN_DISPATCH");
+            if (!d || std::atoi(d) == 0) {
+                std::fprintf(stderr, "[BRAIN_DISPATCH_CALL] WARNING: MC2_BRAIN_DISPATCH_CALL=1 requires MC2_BRAIN_DISPATCH=1 — call chaining is INERT\n");
+                std::fflush(stderr);
+                return false;
+            }
+            return true;
+        }
+        return false;
+    })();
+    return kGate;
+}
 
 // ---------------------------------------------------------------------------
 // Forward declaration for gate helper (defined after helpers, used by execute functions).
@@ -73,20 +117,214 @@ static bool isRecognizedVerb(const char* verb) {
 }
 
 // ---------------------------------------------------------------------------
+// parseCallVerbKey — parse the quoted key from a TechSpecial.Call verb string.
+// Supports:  TechSpecial.Call "key"   (double-quoted)
+//            TechSpecial.Call [key]   (bracket-quoted, FIT-safe)
+// outKey must be at least 128 chars.
+// Returns true on success, false on malformed input (missing delimiter, empty key).
+static bool parseCallVerbKey(const char* verbStr, char outKey[128]) {
+    outKey[0] = '\0';
+    // Skip "TechSpecial.Call" prefix.
+    static const char kPrefix[] = "TechSpecial.Call";
+    const size_t kPrefixLen = sizeof(kPrefix) - 1;
+    if (std::strncmp(verbStr, kPrefix, kPrefixLen) != 0)
+        return false;
+    const char* p = verbStr + kPrefixLen;
+    // Skip whitespace.
+    while (*p == ' ' || *p == '\t') ++p;
+    // Detect delimiter.
+    char closeDelim = '\0';
+    if (*p == '"')       { closeDelim = '"'; }
+    else if (*p == '[')  { closeDelim = ']'; }
+    else                  return false;
+    ++p; // skip open delimiter
+    const char* keyStart = p;
+    const char* keyEnd   = std::strchr(p, closeDelim);
+    if (!keyEnd) return false;
+    size_t keyLen = (size_t)(keyEnd - keyStart);
+    if (keyLen == 0) return false;
+    if (keyLen > 127) keyLen = 127;
+    std::strncpy(outKey, keyStart, keyLen);
+    outKey[keyLen] = '\0';
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// executeSpecialBody_TraceOnlyChained
+//
+// TECHSCRIPT-CALL-CHAIN-1A: recursive verb-stream trace for called bodies.
+//
+// FORBIDDEN-CALL CONTRACT:
+//   This function calls ONLY fprintf + fflush + loop + recursive calls to itself.
+//   NO setGeneralTacOrder, NO order/movement/attack function.
+//   NO effects executed on chained bodies (1A: trace only; 1B will add effect dispatch).
+//   Brain.CorePower false in a CALLED body is traced but does NOT call setGeneralTacOrder.
+//   This is PURE VERB-STREAM COMPOSITION.
+//   Verified by inspection: no warrior pointer, no MechWarrior type, no TacticalOrder.
+void executeSpecialBody_TraceOnlyChained(const BrainSpecialBody& body,
+                                          int wid,
+                                          const SpecialIndex& index,
+                                          int depth,
+                                          std::vector<std::string>& visited,
+                                          const char* fromKey,
+                                          VarStore* varStore)
+{
+    // Trace each verb in the called body with depth marker.
+    for (const std::string& verb : body.verbs) {
+        const char* vp = verb.c_str();
+
+        // Handle nested TechSpecial.Call within a called body.
+        if (std::strncmp(vp, "TechSpecial.Call", 16) == 0 &&
+            (vp[16] == ' ' || vp[16] == '\t' || vp[16] == '\0')) {
+            char callKey[128];
+            if (!parseCallVerbKey(vp, callKey)) {
+                std::fprintf(stderr, "[BRAIN_DISPATCH_CALL_UNKNOWN] from=%s target=<parse-fail> depth=%d wid=%d\n",
+                             fromKey, depth, wid);
+                std::fflush(stderr);
+                continue;
+            }
+            // Depth limit check.
+            if (depth >= kCallChainMaxDepth) {
+                std::fprintf(stderr, "[BRAIN_DISPATCH_CALL_DEPTH] depth=%d max=%d wid=%d\n",
+                             depth, kCallChainMaxDepth, wid);
+                std::fflush(stderr);
+                continue;
+            }
+            // Cycle guard.
+            for (const std::string& vis : visited) {
+                if (vis == callKey) {
+                    std::fprintf(stderr, "[BRAIN_DISPATCH_CALL_CYCLE] from=%s to=%s depth=%d wid=%d\n",
+                                 fromKey, callKey, depth, wid);
+                    std::fflush(stderr);
+                    goto next_verb_chained;
+                }
+            }
+            {
+                // Resolve key.
+                const SpecialIndexEntry* target = specialIndexFind(index, callKey);
+                if (!target) {
+                    std::fprintf(stderr, "[BRAIN_DISPATCH_CALL_UNKNOWN] from=%s target=%s wid=%d\n",
+                                 fromKey, callKey, wid);
+                    std::fflush(stderr);
+                    continue;
+                }
+                // Emit call trace, recurse.
+                std::fprintf(stderr, "[BRAIN_DISPATCH_CALL] from=%s to=%s depth=%d wid=%d\n",
+                             fromKey, callKey, depth + 1, wid);
+                std::fflush(stderr);
+                visited.push_back(callKey);
+                executeSpecialBody_TraceOnlyChained(target->body, wid, index,
+                                                    depth + 1, visited, callKey, varStore);
+                visited.pop_back();
+            }
+            next_verb_chained:;
+            continue;
+        }
+
+        // Var.* handling (when DISPATCH_VAR=1) — reuse the 1D handlers.
+        if (s_dispatchVarGate() && varStore) {
+            if (std::strncmp(vp, "Var.Set", 7) == 0 || std::strncmp(vp, "Var.Get", 7) == 0) {
+                char key[32], value[32];
+                uint8_t scope = 0;
+                bool ok = parseVarVerb(vp, key, value, &scope);
+                if (!ok) {
+                    std::fprintf(stderr, "[BRAIN_DISPATCH_VAR_PARSE_FAIL] verb=%s wid=%d depth=%d (malformed)\n",
+                                 vp, wid, depth);
+                    std::fflush(stderr);
+                    continue;
+                }
+                bool isSet = (std::strncmp(vp, "Var.Set", 7) == 0);
+                if (isSet) handleVarSet(key, value, scope, varStore, wid);
+                else       handleVarGet(key, scope, varStore, wid);
+                continue;
+            }
+        }
+
+        // Standard verb trace with depth.
+        // NOTE: Brain.CorePower false in a CALLED body traces as recognized but
+        // does NOT call setGeneralTacOrder (1A: no chained effects; deferred to 1B).
+        if (isRecognizedVerb(vp)) {
+            std::fprintf(stderr, "[BRAIN_DISPATCH] depth=%d verb=%s wid=%d\n", depth, vp, wid);
+        } else {
+            std::fprintf(stderr, "[BRAIN_DISPATCH_UNKNOWN] depth=%d verb=%s wid=%d\n", depth, vp, wid);
+        }
+        std::fflush(stderr);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // executeSpecialBody_TraceOnly
 //
 // FORBIDDEN-CALL CONTRACT: this function body contains ONLY fprintf + fflush
-// + loop + string comparison + (when DISPATCH_VAR=1) store->set/get via handleVarSet/Get.
+// + loop + string comparison + (when DISPATCH_VAR=1) store->set/get via handleVarSet/Get
+// + (when DISPATCH_CALL=1) recursive executeSpecialBody_TraceOnlyChained.
 // No tac-order writes. No movement/attack orders. No state writes to warrior or mission.
 // Verified by inspection: no warrior pointer, no MechWarrior type, no
 // setGeneralTacOrder / setPlayerTacOrder / setAlarmTacOrder / requestHelp /
 // requestTarget / clearCurTacOrder / setMainGoal / calcTacOrder / coreMoveTo.
-void executeSpecialBody_TraceOnly(const BrainSpecialBody& body, int wid, VarStore* varStore) {
-    const bool varGate = s_dispatchVarGate();
+void executeSpecialBody_TraceOnly(const BrainSpecialBody& body, int wid, VarStore* varStore,
+                                   const SpecialIndex* index, const char* callerKey) {
+    const bool varGate  = s_dispatchVarGate();
+    const bool callGate = s_dispatchCallGate() && (index != nullptr);
+
+    // Per-tick visited set for cycle guard (CALL-CHAIN-1A).
+    // Created here (root dispatch); passed into chained calls by reference.
+    std::vector<std::string> visited;
+    if (callerKey && callerKey[0] != '\0')
+        visited.push_back(std::string(callerKey));
+
     for (const std::string& verb : body.verbs) {
+        const char* vp = verb.c_str();
+
+        // CALL-CHAIN-1A: TechSpecial.Call "<key>" handling.
+        if (callGate && std::strncmp(vp, "TechSpecial.Call", 16) == 0 &&
+            (vp[16] == ' ' || vp[16] == '\t' || vp[16] == '\0')) {
+            char callKey[128];
+            if (!parseCallVerbKey(vp, callKey)) {
+                std::fprintf(stderr, "[BRAIN_DISPATCH_CALL_UNKNOWN] from=%s target=<parse-fail> wid=%d\n",
+                             callerKey ? callerKey : "root", wid);
+                std::fflush(stderr);
+                continue;
+            }
+            // Depth limit (root call = depth 1).
+            if (kCallChainMaxDepth < 1) {
+                std::fprintf(stderr, "[BRAIN_DISPATCH_CALL_DEPTH] depth=1 max=%d wid=%d\n",
+                             kCallChainMaxDepth, wid);
+                std::fflush(stderr);
+                continue;
+            }
+            // Cycle guard.
+            bool cycle = false;
+            for (const std::string& vis : visited) {
+                if (vis == callKey) { cycle = true; break; }
+            }
+            if (cycle) {
+                std::fprintf(stderr, "[BRAIN_DISPATCH_CALL_CYCLE] from=%s to=%s depth=1 wid=%d\n",
+                             callerKey ? callerKey : "root", callKey, wid);
+                std::fflush(stderr);
+                continue;
+            }
+            // Resolve key.
+            const SpecialIndexEntry* target = specialIndexFind(*index, callKey);
+            if (!target) {
+                std::fprintf(stderr, "[BRAIN_DISPATCH_CALL_UNKNOWN] from=%s target=%s wid=%d\n",
+                             callerKey ? callerKey : "root", callKey, wid);
+                std::fflush(stderr);
+                continue;
+            }
+            // Emit call trace, then recurse.
+            std::fprintf(stderr, "[BRAIN_DISPATCH_CALL] from=%s to=%s depth=1 wid=%d\n",
+                         callerKey ? callerKey : "root", callKey, wid);
+            std::fflush(stderr);
+            visited.push_back(std::string(callKey));
+            executeSpecialBody_TraceOnlyChained(target->body, wid, *index,
+                                                 1, visited, callKey, varStore);
+            visited.pop_back();
+            continue;
+        }
+
         // When DISPATCH_VAR=1, intercept Var.Set / Var.Get before the UNKNOWN fallthrough.
         if (varGate) {
-            const char* vp = verb.c_str();
             if (std::strncmp(vp, "Var.Set", 7) == 0 || std::strncmp(vp, "Var.Get", 7) == 0) {
                 char key[32], value[32];
                 uint8_t scope = 0;
@@ -104,10 +342,10 @@ void executeSpecialBody_TraceOnly(const BrainSpecialBody& body, int wid, VarStor
                 continue;
             }
         }
-        if (isRecognizedVerb(verb.c_str())) {
-            std::fprintf(stderr, "[BRAIN_DISPATCH] verb=%s wid=%d\n", verb.c_str(), wid);
+        if (isRecognizedVerb(vp)) {
+            std::fprintf(stderr, "[BRAIN_DISPATCH] verb=%s wid=%d\n", vp, wid);
         } else {
-            std::fprintf(stderr, "[BRAIN_DISPATCH_UNKNOWN] verb=%s wid=%d\n", verb.c_str(), wid);
+            std::fprintf(stderr, "[BRAIN_DISPATCH_UNKNOWN] verb=%s wid=%d\n", vp, wid);
         }
         std::fflush(stderr);
     }
@@ -140,14 +378,71 @@ bool bodyHasPowerdown(const BrainSpecialBody& body) {
 //
 // Returns true if the Brain.CorePower false POWERDOWN effect was applied.
 // Caller uses the return value to suppress the synthetic HOLD_TASK (one GENERAL-slot write per tick).
-bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior, int wid, VarStore* varStore) {
+//
+// CALL-CHAIN-1A NOTE: TechSpecial.Call verbs in the ROOT body are dispatched trace-only
+// (chained bodies traced without effects). Brain.CorePower false in a CALLED body is
+// traced but does NOT call setGeneralTacOrder. Chained-effect execution = CALL-CHAIN-1B.
+bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior, int wid,
+                               VarStore* varStore, const SpecialIndex* index,
+                               const char* callerKey) {
     bool appliedEffect = false;
-    const bool varGate = s_dispatchVarGate();
+    const bool varGate  = s_dispatchVarGate();
+    const bool callGate = s_dispatchCallGate() && (index != nullptr);
+
+    // Per-tick visited set for cycle guard.
+    std::vector<std::string> visited;
+    if (callerKey && callerKey[0] != '\0')
+        visited.push_back(std::string(callerKey));
 
     for (const std::string& verb : body.verbs) {
+        const char* vp = verb.c_str();
+
+        // CALL-CHAIN-1A: TechSpecial.Call handling (trace only — no chained effects in 1A).
+        if (callGate && std::strncmp(vp, "TechSpecial.Call", 16) == 0 &&
+            (vp[16] == ' ' || vp[16] == '\t' || vp[16] == '\0')) {
+            char callKey[128];
+            if (!parseCallVerbKey(vp, callKey)) {
+                std::fprintf(stderr, "[BRAIN_DISPATCH_CALL_UNKNOWN] from=%s target=<parse-fail> wid=%d\n",
+                             callerKey ? callerKey : "root", wid);
+                std::fflush(stderr);
+                continue;
+            }
+            if (kCallChainMaxDepth < 1) {
+                std::fprintf(stderr, "[BRAIN_DISPATCH_CALL_DEPTH] depth=1 max=%d wid=%d\n",
+                             kCallChainMaxDepth, wid);
+                std::fflush(stderr);
+                continue;
+            }
+            bool cycle = false;
+            for (const std::string& vis : visited) {
+                if (vis == callKey) { cycle = true; break; }
+            }
+            if (cycle) {
+                std::fprintf(stderr, "[BRAIN_DISPATCH_CALL_CYCLE] from=%s to=%s depth=1 wid=%d\n",
+                             callerKey ? callerKey : "root", callKey, wid);
+                std::fflush(stderr);
+                continue;
+            }
+            const SpecialIndexEntry* target = specialIndexFind(*index, callKey);
+            if (!target) {
+                std::fprintf(stderr, "[BRAIN_DISPATCH_CALL_UNKNOWN] from=%s target=%s wid=%d\n",
+                             callerKey ? callerKey : "root", callKey, wid);
+                std::fflush(stderr);
+                continue;
+            }
+            std::fprintf(stderr, "[BRAIN_DISPATCH_CALL] from=%s to=%s depth=1 wid=%d\n",
+                         callerKey ? callerKey : "root", callKey, wid);
+            std::fflush(stderr);
+            // Recurse trace-only (1A: no effects in chained bodies).
+            visited.push_back(std::string(callKey));
+            executeSpecialBody_TraceOnlyChained(target->body, wid, *index,
+                                                 1, visited, callKey, varStore);
+            visited.pop_back();
+            continue;
+        }
+
         // When DISPATCH_VAR=1, intercept Var.Set / Var.Get before other dispatch.
         if (varGate) {
-            const char* vp = verb.c_str();
             if (std::strncmp(vp, "Var.Set", 7) == 0 || std::strncmp(vp, "Var.Get", 7) == 0) {
                 char key[32], value[32];
                 uint8_t scope = 0;
@@ -167,18 +462,19 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
         }
         if (verb == "Brain.CorePower false") {
             // ONLY permitted order call in this function (RELAXED-CALL GUARD).
+            // NOTE: This fires only for the ROOT body. Chained-body POWERDOWN = 1B.
             TacticalOrder pdOrder;
             pdOrder.init(ORDER_ORIGIN_SELF, TACTICAL_ORDER_POWERDOWN);
             warrior->setGeneralTacOrder(pdOrder);
             std::fprintf(stderr, "[BRAIN_DISPATCH_APPLY] verb=Brain.CorePower effect=POWERDOWN wid=%d\n", wid);
             std::fflush(stderr);
             appliedEffect = true;
-        } else if (isRecognizedVerb(verb.c_str())) {
+        } else if (isRecognizedVerb(vp)) {
             // Recognized but no effect implemented this slice — trace only.
-            std::fprintf(stderr, "[BRAIN_DISPATCH] verb=%s wid=%d (apply-mode: no effect this verb)\n", verb.c_str(), wid);
+            std::fprintf(stderr, "[BRAIN_DISPATCH] verb=%s wid=%d (apply-mode: no effect this verb)\n", vp, wid);
             std::fflush(stderr);
         } else {
-            std::fprintf(stderr, "[BRAIN_DISPATCH_UNKNOWN] verb=%s wid=%d\n", verb.c_str(), wid);
+            std::fprintf(stderr, "[BRAIN_DISPATCH_UNKNOWN] verb=%s wid=%d\n", vp, wid);
             std::fflush(stderr);
         }
     }
@@ -221,20 +517,65 @@ static const int kMaxLineLen      = 512;
 static const int kMaxVerbsPerBody = 256;
 static const int kMaxBodies       = 256;
 
-static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody& outBody) {
+// parseBrainSpecialBody_RawScan
+//
+// TECHSCRIPT-CALL-CHAIN-1A: extended to also populate outIndex (if non-null).
+// For each TechSpecial block, the key= field is captured into a SpecialIndexEntry
+// alongside the block's Body verbs. This is unconditional (not gated) — the index
+// is always populated when the raw scanner runs, regardless of DISPATCH_CALL state.
+// The gate controls runtime call resolution only.
+//
+// Entry-body selection rule (for outBody — the existing single-body member):
+//   1. First TechSpecial block whose key contains "scenario_main" (case-sensitive).
+//   2. Else first block whose type field = "MissionSpecial".
+//   3. Else the first block found.
+// If no blocks are found, outBody remains empty.
+//
+// Helper: parse a quoted string value from "key = \"...\""  or  "key = [...]".
+// Returns the value token or "" on failure.
+static std::string parseQuotedField(const char* p) {
+    while (*p == ' ' || *p == '\t') ++p;
+    char closeDelim = '\0';
+    if (*p == '"')      closeDelim = '"';
+    else if (*p == '[') closeDelim = ']';
+    else                return "";
+    ++p;
+    const char* end = std::strchr(p, closeDelim);
+    if (!end) return "";
+    return std::string(p, end);
+}
+
+static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody& outBody,
+                                           SpecialIndex* outIndex) {
     std::ifstream inFile(fitPath);
     if (!inFile.is_open())
         return false;
 
     // State machine:
     //   OUTER      — scanning for "TechSpecial {"
-    //   IN_SPECIAL — inside TechSpecial block, scanning for "Body {"
+    //   IN_SPECIAL — inside TechSpecial block, scanning for "Body {" or key=/type= fields
     //   IN_BODY    — inside Body block, collecting DO lines
     enum { OUTER, IN_SPECIAL, IN_BODY } state = OUTER;
 
     int bodiesFound = 0;
     int verbsThisBody = 0;
     std::string line;
+
+    // Per-block state (reset on each TechSpecial {).
+    std::string currentKey;
+    std::string currentType;
+    std::vector<std::string> currentVerbs;
+
+    // Entry-body selection tracking.
+    // We collect ALL blocks into the index, then choose outBody post-scan.
+    // indexEntries built in parallel.
+    // (outBody is set from the selected block at the end.)
+    struct RawBlock {
+        std::string key;
+        std::string type;
+        std::vector<std::string> verbs;
+    };
+    std::vector<RawBlock> rawBlocks;
 
     while (std::getline(inFile, line)) {
         // Guard line length.
@@ -260,13 +601,12 @@ static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody&
             continue;
 
         if (state == OUTER) {
-            // Look for "TechSpecial {" (possibly with leading whitespace already stripped).
+            // Look for "TechSpecial {".
             if (std::strncmp(p, "TechSpecial", 11) == 0) {
-                // Confirm '{' appears on same line (after optional whitespace).
                 const char* q = p + 11;
                 while (*q == ' ' || *q == '\t') ++q;
                 if (*q == '{') {
-                    if (bodiesFound >= kMaxBodies) {
+                    if ((int)rawBlocks.size() >= kMaxBodies) {
                         std::fprintf(stderr, "[BRAIN_DISPATCH_RAW] WARN: TechSpecial block cap (%d) reached in %s — skipping rest\n",
                                      kMaxBodies, fitPath);
                         std::fflush(stderr);
@@ -274,11 +614,28 @@ static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody&
                     }
                     state = IN_SPECIAL;
                     verbsThisBody = 0;
+                    currentKey.clear();
+                    currentType.clear();
+                    currentVerbs.clear();
                 }
             }
         } else if (state == IN_SPECIAL) {
-            // Look for "Body {" or closing "}" (end of TechSpecial without a Body).
-            if (std::strncmp(p, "Body", 4) == 0) {
+            // Look for key=, type=, "Body {", or closing "}".
+            if (std::strncmp(p, "key", 3) == 0) {
+                const char* q = p + 3;
+                while (*q == ' ' || *q == '\t') ++q;
+                if (*q == '=') {
+                    ++q;
+                    currentKey = parseQuotedField(q);
+                }
+            } else if (std::strncmp(p, "type", 4) == 0) {
+                const char* q = p + 4;
+                while (*q == ' ' || *q == '\t') ++q;
+                if (*q == '=') {
+                    ++q;
+                    currentType = parseQuotedField(q);
+                }
+            } else if (std::strncmp(p, "Body", 4) == 0) {
                 const char* q = p + 4;
                 while (*q == ' ' || *q == '\t') ++q;
                 if (*q == '{') {
@@ -286,12 +643,24 @@ static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody&
                     ++bodiesFound;
                 }
             } else if (*p == '}') {
-                // Closing brace of TechSpecial with no Body — return to OUTER.
+                // Closing brace of TechSpecial with no Body — commit block (no verbs).
+                RawBlock rb;
+                rb.key  = currentKey;
+                rb.type = currentType;
+                // no verbs
+                rawBlocks.push_back(std::move(rb));
                 state = OUTER;
             }
         } else { // IN_BODY
             if (*p == '}') {
-                // End of Body block.
+                // End of Body block — commit the block.
+                {
+                    RawBlock rb;
+                    rb.key   = currentKey;
+                    rb.type  = currentType;
+                    rb.verbs = currentVerbs;
+                    rawBlocks.push_back(std::move(rb));
+                }
                 state = IN_SPECIAL;   // still inside TechSpecial; look for its closing '}'
             } else if (std::strncmp(p, "STOP", 4) == 0 &&
                        (p[4] == '\0' || p[4] == ' ' || p[4] == '\t' || p[4] == ';')) {
@@ -301,14 +670,11 @@ static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody&
                     std::fprintf(stderr, "[BRAIN_DISPATCH_RAW] WARN: verb cap (%d) per-body reached in %s — skipping rest of body\n",
                                  kMaxVerbsPerBody, fitPath);
                     std::fflush(stderr);
-                    // Drain to closing '}' without adding more verbs.
                     continue;
                 }
-                // Extract the verb: everything after "DO " / "DO\t", trimmed.
                 const char* verbStart = p + 3;
                 while (*verbStart == ' ' || *verbStart == '\t') ++verbStart;
 
-                // Build verb string, stripping trailing whitespace and trailing ';'.
                 std::string verb(verbStart);
                 while (!verb.empty() && (verb.back() == ' ' || verb.back() == '\t'))
                     verb.pop_back();
@@ -318,14 +684,52 @@ static bool parseBrainSpecialBody_RawScan(const char* fitPath, BrainSpecialBody&
                     verb.pop_back();
 
                 if (!verb.empty()) {
-                    outBody.verbs.push_back(std::move(verb));
+                    currentVerbs.push_back(std::move(verb));
                     ++verbsThisBody;
                 }
             }
         }
     }
 
-    return !outBody.verbs.empty();
+    if (rawBlocks.empty())
+        return false;
+
+    // Populate outIndex (all blocks, unconditionally).
+    if (outIndex) {
+        outIndex->clear();
+        for (const RawBlock& rb : rawBlocks) {
+            SpecialIndexEntry entry;
+            entry.key        = rb.key;
+            entry.body.verbs = rb.verbs;
+            entry.body.loaded = !rb.verbs.empty();
+            outIndex->push_back(std::move(entry));
+        }
+    }
+
+    // Entry-body selection: populate outBody from chosen block.
+    //   Rule 1: first block whose key contains "scenario_main".
+    //   Rule 2: else first block with type == "MissionSpecial".
+    //   Rule 3: else first block found.
+    const RawBlock* chosen = nullptr;
+    for (const RawBlock& rb : rawBlocks) {
+        if (rb.key.find("scenario_main") != std::string::npos) {
+            chosen = &rb; break;
+        }
+    }
+    if (!chosen) {
+        for (const RawBlock& rb : rawBlocks) {
+            if (rb.type == "MissionSpecial") { chosen = &rb; break; }
+        }
+    }
+    if (!chosen)
+        chosen = &rawBlocks[0];
+
+    // Migrate chosen block's verbs into outBody.
+    // (verbs from ALL blocks were previously all merged; now only the entry-body is outBody.
+    //  Callers that want all verbs should iterate the index.)
+    outBody.verbs = chosen->verbs;
+
+    return !outBody.verbs.empty() || !rawBlocks.empty();
 }
 
 // ---------------------------------------------------------------------------
@@ -386,7 +790,8 @@ static bool parseBrainSpecialBody_FitIni(const char* fitPath, BrainSpecialBody& 
 //
 // Caller passes missionName like "mc2_01" (no path prefix, no extension).
 // Returns true if at least one verb was loaded.
-bool parseBrainSpecialBody(const char* missionName, BrainSpecialBody& outBody) {
+bool parseBrainSpecialBody(const char* missionName, BrainSpecialBody& outBody,
+                            SpecialIndex* outIndex) {
     outBody.verbs.clear();
     outBody.loaded = false;
 
@@ -394,10 +799,12 @@ bool parseBrainSpecialBody(const char* missionName, BrainSpecialBody& outBody) {
     std::snprintf(fitPath, sizeof(fitPath), "data/missions/%s_specials.fit", missionName);
 
     // Try raw brace-block scanner first.
-    bool ok = parseBrainSpecialBody_RawScan(fitPath, outBody);
+    // CALL-CHAIN-1A: outIndex forwarded (may be nullptr if caller doesn't need it).
+    bool ok = parseBrainSpecialBody_RawScan(fitPath, outBody, outIndex);
 
     if (!ok) {
         // No TechSpecial brace blocks found — try legacy bracket-form fallback.
+        // NOTE: legacy FitIni form does NOT populate the index (no TechSpecial blocks).
         std::fprintf(stderr, "[BRAIN_DISPATCH_RAW] no TechSpecial blocks in %s — trying FitIni fallback\n",
                      fitPath);
         std::fflush(stderr);
@@ -411,8 +818,9 @@ bool parseBrainSpecialBody(const char* missionName, BrainSpecialBody& outBody) {
 
     if (ok) {
         outBody.loaded = true;
-        std::fprintf(stderr, "[BRAIN_DISPATCH] parsed %s_specials.fit: %d verbs\n",
-                     missionName, (int)outBody.verbs.size());
+        std::fprintf(stderr, "[BRAIN_DISPATCH] parsed %s_specials.fit: %d verbs (index=%d blocks)\n",
+                     missionName, (int)outBody.verbs.size(),
+                     outIndex ? (int)outIndex->size() : 0);
         std::fflush(stderr);
     }
     return outBody.loaded;

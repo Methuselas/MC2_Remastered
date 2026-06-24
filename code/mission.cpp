@@ -3128,10 +3128,15 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 			std::fflush(stderr);
 
 			// 1A/1B: per-warrior verb parse (only for warriors with brainRuntime allocated).
+			// TECHSCRIPT-CALL-CHAIN-1A: pass specialIndex so the raw scanner populates it.
+			// The index is per-warrior-runtime (each warrior gets its own copy); content
+			// is identical across warriors for the same mission (all read the same file).
+			// This is acceptable for 1A: index is small (<10 blocks), mission-ephemeral.
 			for (unsigned long i = 1; i <= numWarriors; i++) {
 				MechWarriorPtr w = MechWarrior::warriorList[i];
 				if (w && w->getBrainRuntime()) {
-					parseBrainSpecialBody(missionName, w->getBrainRuntime()->specialBody);
+					parseBrainSpecialBody(missionName, w->getBrainRuntime()->specialBody,
+					                      &w->getBrainRuntime()->specialIndex);
 				}
 			}
 

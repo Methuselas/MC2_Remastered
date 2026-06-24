@@ -2281,22 +2281,47 @@ long MechWarrior::runBrain (void) {
 		})();
 
 		bool dispatcherAppliedEffect = false;
-		if (s_dispatchApply && brainRuntime && brainRuntime->specialBody.loaded
-		    && bodyHasPowerdown(brainRuntime->specialBody)) {
-			// Dispatcher owns the GENERAL slot for this body: suppress synthetic HOLD every
-			// tick (so a later tick's HOLD/STOP can't overwrite POWERDOWN), but APPLY the
-			// effect + log ONCE (dispatchEffectApplied guard). Re-issuing POWERDOWN every tick
-			// would reset the order so it never completes — apply once and let it run.
-			dispatcherAppliedEffect = true;
-			if (!brainRuntime->dispatchEffectApplied) {
-				brainRuntime->dispatchEffectApplied = 1;
-				executeSpecialBody_Apply(brainRuntime->specialBody, this, vehicleWID, &brainRuntime->varStore);
+		if (s_dispatchApply && brainRuntime && brainRuntime->specialBody.loaded) {
+			// CALL-CHAIN-1A: dispatch ALL loaded bodies (not just POWERDOWN bodies).
+			// executeSpecialBody_Apply traces all verbs; applies POWERDOWN ONCE if present.
+			// The HOLD suppression only triggers when POWERDOWN was actually applied
+			// (dispatcherAppliedEffect=true ← Apply return value true).
+			const SpecialIndex* idx = brainRuntime->specialIndex.empty()
+			    ? nullptr : &brainRuntime->specialIndex;
+			// Apply is called every tick for trace continuity; POWERDOWN once-guard is inside.
+			// For the suppress-HOLD decision: only suppress when POWERDOWN was requested.
+			if (!brainRuntime->dispatchEffectApplied || !bodyHasPowerdown(brainRuntime->specialBody)) {
+				// POWERDOWN once-guard: if already applied, skip Apply (it would re-issue every tick).
+				// But for bodies WITHOUT POWERDOWN, we still want per-tick trace.
+				if (bodyHasPowerdown(brainRuntime->specialBody)) {
+					// POWERDOWN body: apply once, suppress HOLD slot write thereafter.
+					if (!brainRuntime->dispatchEffectApplied) {
+						brainRuntime->dispatchEffectApplied = 1;
+						bool applied = executeSpecialBody_Apply(brainRuntime->specialBody, this, vehicleWID,
+						                                        &brainRuntime->varStore, idx, "");
+						if (applied)
+							dispatcherAppliedEffect = true;
+					} else {
+						// Already applied POWERDOWN — just suppress HOLD slot.
+						dispatcherAppliedEffect = true;
+					}
+				} else {
+					// No POWERDOWN — trace-dispatch every tick (no slot ownership; HOLD fires normally).
+					executeSpecialBody_Apply(brainRuntime->specialBody, this, vehicleWID,
+					                        &brainRuntime->varStore, idx, "");
+					// dispatcherAppliedEffect stays false → HOLD fires as normal.
+				}
+			} else {
+				// POWERDOWN already applied — suppress HOLD without re-applying.
+				dispatcherAppliedEffect = true;
 			}
-			if (brainTaskQueue) {
-				BrainTaskEntry task;
-				while (brainTaskQueue->drainWithTask(task)) {
-					// Discard queued tasks — dispatcher owns GENERAL slot this body.
-					// warrior.cpp:1B-supersede: HOLD_TASK silenced (no setGeneralTacOrder STOP write).
+			if (dispatcherAppliedEffect) {
+				if (brainTaskQueue) {
+					BrainTaskEntry task;
+					while (brainTaskQueue->drainWithTask(task)) {
+						// Discard queued tasks — dispatcher owns GENERAL slot this body.
+						// warrior.cpp:1B-supersede: HOLD_TASK silenced (no setGeneralTacOrder STOP write).
+					}
 				}
 			}
 		}
@@ -2319,8 +2344,12 @@ long MechWarrior::runBrain (void) {
 		}
 
 		// TECHSCRIPT-SPECIAL-DISPATCH trace path (1A behavior preserved when APPLY=0).
+		// CALL-CHAIN-1A: pass index for TechSpecial.Call resolution.
 		if (!s_dispatchApply && brainRuntime && brainRuntime->specialBody.loaded) {
-			executeSpecialBody_TraceOnly(brainRuntime->specialBody, vehicleWID, &brainRuntime->varStore);
+			const SpecialIndex* idx = brainRuntime->specialIndex.empty()
+			    ? nullptr : &brainRuntime->specialIndex;
+			executeSpecialBody_TraceOnly(brainRuntime->specialBody, vehicleWID,
+			                             &brainRuntime->varStore, idx, "");
 		}
 		brainErr = 0;
 	}
