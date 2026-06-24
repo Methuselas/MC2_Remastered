@@ -155,7 +155,7 @@
       "pipelineId": null,
       "shaderBase": "postprocess/ssao/fog/composite",
       "stateOwner": "legacy/ad-hoc",
-      "next": "recon later: several post-fx shaders are ALREADY offline SPIR-V pilots (composite/ssao/fog_oob/edge_fog/hzb_reduce/cloud/shoreline) but NONE are PipelineDesc-registered; full-screen passes, per-channel colorMaski — model only if a PSO consumer needs it"
+      "next": "RECON DONE -> postprocess-pipeline-registration-recon-1.md. 14 draws/12 passes. REGISTER-NOW (set-only, Opaque/AlphaBlend, SPIR-V pilots): composite (Opaque), edgeFog+fogOob (AlphaBlend). BLOCKED on new BlendMode::Multiply (DST_COLOR/ZERO): screenShadow/cloud/shoreline/ssaoApply. DEFER: ssao1+hzbReduce (own-FBO/viewport), HDRI family (save/restore breaks applyPipeline set-only + no SPIR-V). DO_NOT_MODEL: shadowDebug (debug), dead skybox. Next slice = POSTPROCESS-COMPOSITE-REGISTRATION-1 (smallest blast radius)."
     },
     "UI": {
       "status": "DO_NOT_MODEL",
