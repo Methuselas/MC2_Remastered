@@ -2095,7 +2095,12 @@ void GatherLightsParameters(TG_HWLightsData* lights)
 	}());
 
 	uint32_t num_lights = 0;
-	const uint32_t max_num_lights = MAX_HW_LIGHTS_IN_WORLD;
+	// LIGHT-ABI-WIDEN-STAGE0-1: runtime population stays CLAMPED at 16 even though
+	// the GPU ABI cap (MAX_HW_LIGHTS_IN_WORLD) widened to 32. Stage 0 is a pure ABI
+	// widening — the box got bigger, but we still only put 16 things in it. Do NOT
+	// change this to MAX_HW_LIGHTS_IN_WORLD; that is the Stage 1 clamp-raise (later).
+	static constexpr uint32_t kRuntimeLightClamp = 16;
+	const uint32_t max_num_lights = kRuntimeLightClamp;
 
 	const TG_LightPtr* listOfLights = TG_Shape::s_listOfLights;
 	const DWORD numLights = TG_Shape::s_numLights;

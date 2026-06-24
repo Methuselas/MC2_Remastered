@@ -296,7 +296,12 @@ typedef struct _TG_Light
 
 typedef  TG_Light *TG_LightPtr;
 
-#define MAX_HW_LIGHTS_IN_WORLD	16
+// LIGHT-ABI-WIDEN-STAGE0-1: C++ per-object GPU ABI cap. Widened 16->32 in
+// lockstep with shaders/include/lighting.hglsl MAX_LIGHTS_IN_WORLD. This is the
+// record inner-array size, NOT a runtime clamp — runtime population stays 16
+// (txmmgr.cpp GatherLightsParameters hardcodes 16). DIFFERENT from this header's
+// MAX_LIGHTS_IN_WORLD (=1024, the global scene light pool — do not conflate).
+#define MAX_HW_LIGHTS_IN_WORLD	32
 
 // Slice 2 (object-offload) — Stage 2.C: TG_HWLightsData extended with
 // per-light falloff distances. lightFalloff[i] = (closeDistance,
@@ -304,15 +309,15 @@ typedef  TG_Light *TG_LightPtr;
 // lockstep with the GLSL `ObjectLights` struct in
 // shaders/include/lighting.hglsl (`vec4 light_falloff[16]`).
 //
-// Layout (std140-equivalent):
-//   lightToWorld[16][16] : offset    0,   1024 B
-//   lightDir[16][4]      : offset 1024,    256 B
-//   lightColor[16][4]    : offset 1280,    256 B
-//   lightFalloff[16][4]  : offset 1536,    256 B   (NEW Stage 2.C)
-//   numLights_           : offset 1792,      4 B
-//   pad[3]               : offset 1796,     12 B
-//   total                                   1808 B per ObjectLights
-//   UBO                                  32 × 1808 = 57856 B (under 64 KB)
+// Layout (std140-equivalent) — LIGHT-ABI-WIDEN-STAGE0-1 widened N=16->32:
+//   lightToWorld[32][16] : offset    0,   2048 B
+//   lightDir[32][4]      : offset 2048,    512 B
+//   lightColor[32][4]    : offset 2560,    512 B
+//   lightFalloff[32][4]  : offset 3072,    512 B   (Stage 2.C field)
+//   numLights_           : offset 3584,      4 B
+//   pad[3]               : offset 3588,     12 B
+//   total                                   3600 B per ObjectLights
+//   (size = N*112 + 16; N=32 -> 3600)
 //
 // Schema-version note: the prior 1552-byte layout (without lightFalloff)
 // is the "Stage-2.A scope rule" reference layout; cdcdb7d shipped without
@@ -336,8 +341,8 @@ struct TG_HWLightsData {
     }
 };
 
-// LOCKSTEP with lighting.hglsl ObjectLights SSBO (1808B); int pad[3] absorbs the GLSL ivec4 numLights tail — do not insert fields before the tail without updating both sides.
-static_assert(sizeof(TG_HWLightsData) == 1808, "TG_HWLightsData must be 1808 B — lockstep with lighting.hglsl ObjectLights");
+// LOCKSTEP with lighting.hglsl ObjectLights SSBO (3600B, N=32); int pad[3] absorbs the GLSL ivec4 numLights tail — do not insert fields before the tail without updating both sides.
+static_assert(sizeof(TG_HWLightsData) == 3600, "TG_HWLightsData must be 3600 B (N=32) — lockstep with lighting.hglsl ObjectLights");
 
 typedef TG_HWLightsData* TG_HWLightsDataPtr;
 

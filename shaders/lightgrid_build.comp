@@ -25,9 +25,11 @@
 #endif
 
 // Hard light cap (lockstep with shaders/include/lighting.hglsl MAX_LIGHTS_IN_WORLD
-// and the C++ side). This lane does NOT lift the cap -- it builds + validates at 16.
+// and the C++ side). LIGHT-ABI-WIDEN-STAGE0-1 widened the per-object ABI 16->32;
+// this binding-20 reader mirror MUST agree with the record stride (LG_ObjectLights
+// inner-array size) or the sphere-build reads garbage. Runtime population still 16.
 #ifndef LIGHTGRID_MAX_LIGHTS
-#define LIGHTGRID_MAX_LIGHTS 16
+#define LIGHTGRID_MAX_LIGHTS 32
 #endif
 
 // ---------------------------------------------------------------------------

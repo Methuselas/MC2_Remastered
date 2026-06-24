@@ -8766,13 +8766,16 @@ static const bool s_lightSsboTrace =
 	(getenv("MC2_LIGHTSSBO_TRACE") != nullptr);
 
 // LIGHT-GROW-ONCE-SUBDATA-1: per-record stride for headroom sizing.
-// Lockstep with mclib/tgl.h `static_assert(sizeof(TG_HWLightsData) == 1808)`.
+// Lockstep with mclib/tgl.h `static_assert(sizeof(TG_HWLightsData) == 3600)`.
 // gameos_graphics.cpp does NOT include tgl.h, so the value is mirrored here
 // (same convention as LIGHT_DATA_SSBO_BINDING being a hardcoded #define).
+// LIGHT-ABI-WIDEN-STAGE0-1: widened 1808->3600 (per-object cap N=16->32). This
+// hand-copied literal is the sneakiest drift site — scripts/check-light-abi-lockstep.py
+// fails CI if it disagrees with the other 4 lockstep sites.
 // Headroom of +128 records matches the CPU backing grow step
 // (mclib/txmmgr.cpp addLightDataStructure, `lightDataStructuresCapacity + 128`)
 // so the GL grow cadence equals the CPU grow cadence — both amortized, rare.
-static constexpr GLsizeiptr kLightRecordStride = 1808;
+static constexpr GLsizeiptr kLightRecordStride = 3600;
 static constexpr GLsizeiptr kLightGrowHeadroomRecords = 128;
 
 // LIGHT-GROW-ONCE-SUBDATA-1: when MC2_GPUBUF_LIGHT_GROWONCE is ON, upload only

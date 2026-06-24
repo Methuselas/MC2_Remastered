@@ -20,7 +20,17 @@
 #define 	TG_LIGHT_POINT					3
 #define		TG_LIGHT_SPOT					4
 #define		TG_LIGHT_TERRAIN				5
-#define MAX_LIGHTS_IN_WORLD 16
+// LIGHT-ABI-WIDEN-STAGE0-1: per-OBJECT GPU ABI cap (record inner-array size).
+// Widened 16->32 as a pure ABI widening; runtime population stays clamped at 16
+// (mclib/txmmgr.cpp GatherLightsParameters). LOCKSTEP set (all 5 must agree —
+// see scripts/check-light-abi-lockstep.py and docs/LIGHT-ABI-WIDEN-STAGE0-1.md):
+//   1. this line                              (per-object GPU ABI cap)
+//   2. mclib/tgl.h MAX_HW_LIGHTS_IN_WORLD     (C++ ABI cap)
+//   3. mclib/tgl.h sizeof(TG_HWLightsData) static_assert (== 3600)
+//   4. GameOS/gameos/gameos_graphics.cpp kLightRecordStride (== 3600)
+//   5. shaders/lightgrid_build.comp LIGHTGRID_MAX_LIGHTS
+// NOTE (TRAP): this is NOT tgl.h's MAX_LIGHTS_IN_WORLD (=1024 global pool).
+#define MAX_LIGHTS_IN_WORLD 32
 
 #define Stuff_SMALL                         1e-4
 
