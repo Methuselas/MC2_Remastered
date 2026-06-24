@@ -24,17 +24,19 @@
 // Calls ONLY fprintf + loop + recursive chained dispatch. DOES NOT call setGeneralTacOrder
 // or any order/movement function. Verified: no warrior pointer, no MechWarrior type here.
 //
-// RELAXED-CALL GUARD — executeSpecialBody_Apply (1B + UNITEJECT + COREGUARD + COREMOVETO):
+// RELAXED-CALL GUARD — executeSpecialBody_Apply (1B + UNITEJECT + COREGUARD + COREMOVETO + COREATTACK):
 // Permitted order calls: warrior->setGeneralTacOrder() for:
 //   Brain.CorePower false                 → TACTICAL_ORDER_POWERDOWN
 //   Unit.Eject (or alias coreEject)       → TACTICAL_ORDER_EJECT
 //   OPORD.CoreGuard                       → TACTICAL_ORDER_GUARD
-//   OPORD.CoreMoveTo x y z [params=N]     → TACTICAL_ORDER_MOVETO_POINT (with NaN-coord soft-fail guard)
+//   OPORD.CoreMoveTo x y z [params=N]     → TACTICAL_ORDER_MOVETO_POINT (NaN-coord soft-fail guard)
+//   OPORD.CoreAttack <target_wid>         → TACTICAL_ORDER_ATTACK_OBJECT (triple-guard: bad-WID/self/friendly)
 // All fire IN THE ROOT BODY ONLY. Chained bodies (via TechSpecial.Call) are trace-only in 1A.
-// STILL FORBIDDEN: setPlayerTacOrder, setAlarmTacOrder, requestHelp, requestTarget,
-// calcTacOrder, coreMoveTo (the C++ Mover method, distinct from the OPORD DSL verb), setMainGoal,
-// clearCurTacOrder, any movement/attack/OPORD-advance/commander function. All other verbs → trace only.
-// DISPATCH-EFFECT-COREMOVETO-1: OPORD.CoreMoveTo added (bare-numeric x y z, NaN guard, pure once-guard).
+// STILL FORBIDDEN: orderAttackObject (forbidden side-effects), setAttackTarget, setSituationOpenFire,
+// setPlayerTacOrder, setAlarmTacOrder, requestHelp, requestTarget, calcTacOrder,
+// coreMoveTo (the C++ Mover method, distinct from the OPORD DSL verb), setMainGoal,
+// clearCurTacOrder, any movement/attack/OPORD-advance/commander function NOT listed above.
+// DISPATCH-EFFECT-COREATTACK-1: OPORD.CoreAttack added (bare-integer WID, triple-guard, pure once-guard).
 //
 // FSM-TODO SCANNER (1C — scanFsmTodosFromFile):
 // Calls ONLY std::ifstream + std::regex + fprintf. NO order functions, NO movement/attack/OPORD calls.
@@ -49,6 +51,8 @@
 #include "warrior.h"   // MechWarrior — needed for executeSpecialBody_Apply setGeneralTacOrder call
                        // warrior.h includes mech_brain_runtime.h which defines VarStore + VarScope
 #include "tacordr.h"   // TacticalOrder, TACTICAL_ORDER_POWERDOWN, ORDER_ORIGIN_SELF
+#include "gameobj.h"   // GameObjectPtr, GameObject::getWatchID/getTeam — DISPATCH-EFFECT-COREATTACK-1
+#include "objmgr.h"    // ObjectManager (global) — DISPATCH-EFFECT-COREATTACK-1
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -101,6 +105,7 @@ static bool s_dispatchVarGate();
 static const char* const kRecognizedVerbs[] = {
     "Brain.CorePower",
     "Brain.CoreAttack",
+    "OPORD.CoreAttack",
     "OPORD.CoreGuard",
     "OPORD.CorePatrol",
     "OPORD.CoreMoveTo",
@@ -423,12 +428,25 @@ bool bodyHasCoreMoveTo(const BrainSpecialBody& body) {
 }
 
 // ---------------------------------------------------------------------------
-// bodyHasEffect — DISPATCH-EFFECT-COREMOVETO-1 (extended from COREGUARD-1)
+// bodyHasCoreAttack — DISPATCH-EFFECT-COREATTACK-1
+// Returns true if the body contains an OPORD.CoreAttack verb token.
+// Token-prefix match: first word of the stored verb string must equal "OPORD.CoreAttack".
+bool bodyHasCoreAttack(const BrainSpecialBody& body) {
+    for (const std::string& verb : body.verbs) {
+        if (std::strncmp(verb.c_str(), "OPORD.CoreAttack", 16) == 0
+            && (verb.size() == 16 || verb[16] == ' '))
+            return true;
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// bodyHasEffect — DISPATCH-EFFECT-COREATTACK-1 (extended from COREMOVETO-1)
 // Returns true if the body has ANY effect verb that claims the GENERAL slot
-// (currently: POWERDOWN, EJECT, GUARD, or MOVETO).
+// (currently: POWERDOWN, EJECT, GUARD, MOVETO, or ATTACK).
 bool bodyHasEffect(const BrainSpecialBody& body) {
     return bodyHasPowerdown(body) || bodyHasUnitEject(body) || bodyHasCoreGuard(body)
-        || bodyHasCoreMoveTo(body);
+        || bodyHasCoreMoveTo(body) || bodyHasCoreAttack(body);
 }
 
 // ---------------------------------------------------------------------------
@@ -438,14 +456,15 @@ bool bodyHasEffect(const BrainSpecialBody& body) {
 //
 // RELAXED-CALL GUARD CONTRACT:
 //   The ONLY order function called here is warrior->setGeneralTacOrder().
-//   Permitted verbs (FOUR total): Brain.CorePower false → POWERDOWN,
+//   Permitted verbs (FIVE total): Brain.CorePower false → POWERDOWN,
 //   Unit.Eject (or coreEject alias) → EJECT, OPORD.CoreGuard (or coreGuard alias) → GUARD,
-//   OPORD.CoreMoveTo x y z → MOVETO_POINT.
+//   OPORD.CoreMoveTo x y z → MOVETO_POINT, OPORD.CoreAttack <wid> → ATTACK_OBJECT.
 //   All other verbs produce [BRAIN_DISPATCH] or [BRAIN_DISPATCH_UNKNOWN] trace only.
-//   FORBIDDEN in this function: setPlayerTacOrder, setAlarmTacOrder, requestHelp,
+//   FORBIDDEN in this function: orderAttackObject, setAttackTarget, setSituationOpenFire,
+//   setPlayerTacOrder, setAlarmTacOrder, requestHelp,
 //   requestTarget, calcTacOrder, coreMoveTo, setMainGoal, clearCurTacOrder,
-//   any movement/attack/OPORD-advance/commander function.
-//   Verified by inspection: exactly three setGeneralTacOrder call-sites below; no other order calls.
+//   any movement/attack/OPORD-advance/commander function NOT listed above.
+//   Verified by inspection: exactly five setGeneralTacOrder call-sites below; no other order calls.
 //
 // Returns true if a GENERAL-slot effect (POWERDOWN, EJECT, or GUARD) was applied.
 // Caller uses the return value to suppress the synthetic HOLD_TASK (one GENERAL-slot write per tick).
@@ -615,6 +634,59 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
                         std::fflush(stderr);
                         appliedEffect = true;
                     }
+                }
+            }
+        } else if (std::strncmp(vpCanon, "OPORD.CoreAttack", 16) == 0
+                   && (vpCanon[16] == ' ' || vpCanon[16] == '\0')) {
+            // DISPATCH-EFFECT-COREATTACK-1: OPORD.CoreAttack <wid>
+            //
+            // Arg parser — bare-integer WID:
+            //   Token after "OPORD.CoreAttack" is the decimal WID (strtol).
+            //   Zero or negative WID → soft-fail [BRAIN_DISPATCH_ATTACK_BAD_WID].
+            //   Non-numeric token → soft-fail [BRAIN_DISPATCH_ATTACK_PARSE_FAIL].
+            // Triple guard (single lookup):
+            //   1. target not found → [BRAIN_DISPATCH_ATTACK_BAD_WID] reason=not_found
+            //   2. target WID == self WID → [BRAIN_DISPATCH_ATTACK_SELF]
+            //   3. target same team → [BRAIN_DISPATCH_ATTACK_FRIENDLY]
+            // ANTI-PATTERN: do NOT call orderAttackObject — it has forbidden side-effects.
+            // Construct TacticalOrder by hand mirroring missiongui.cpp:2805.
+            const char* aargs = vpCanon + 16;
+            while (*aargs == ' ') ++aargs;
+            char* aendp = nullptr;
+            long parsedWID = std::strtol(aargs, &aendp, 10);
+            if (aendp == aargs) {
+                std::fprintf(stderr, "[BRAIN_DISPATCH_ATTACK_PARSE_FAIL] verb=%s wid=%d\n", vp, wid);
+                std::fflush(stderr);
+            } else if (parsedWID <= 0) {
+                std::fprintf(stderr, "[BRAIN_DISPATCH_ATTACK_BAD_WID] wid=%ld wid=%d\n", parsedWID, wid);
+                std::fflush(stderr);
+            } else {
+                GameObjectPtr target = ObjectManager->getByWatchID((long)parsedWID);
+                if (!target) {
+                    std::fprintf(stderr, "[BRAIN_DISPATCH_ATTACK_BAD_WID] wid=%ld reason=not_found wid=%d\n", parsedWID, wid);
+                    std::fflush(stderr);
+                } else if (target->getWatchID() == (long)wid) {
+                    std::fprintf(stderr, "[BRAIN_DISPATCH_ATTACK_SELF] wid=%ld wid=%d\n", parsedWID, wid);
+                    std::fflush(stderr);
+                } else if (target->getTeam() == warrior->getTeam()) {
+                    std::fprintf(stderr, "[BRAIN_DISPATCH_ATTACK_FRIENDLY] wid=%ld wid=%d\n", parsedWID, wid);
+                    std::fflush(stderr);
+                } else {
+                    // Construct TacticalOrder by hand — mirror missiongui.cpp:2805.
+                    // FORBIDDEN: orderAttackObject, setAttackTarget, setSituationOpenFire.
+                    TacticalOrder attackOrder;
+                    attackOrder.init(ORDER_ORIGIN_SELF, TACTICAL_ORDER_ATTACK_OBJECT, false);
+                    attackOrder.targetWID = (long)parsedWID;
+                    attackOrder.attackParams.type   = ATTACK_TO_DESTROY;
+                    attackOrder.attackParams.method = ATTACKMETHOD_RANGED;
+                    attackOrder.attackParams.range  = FIRERANGE_OPTIMAL;
+                    attackOrder.attackParams.pursue = true;
+                    attackOrder.moveParams.wayPath.mode[0] = TRAVEL_MODE_FAST;
+                    warrior->setGeneralTacOrder(attackOrder);
+                    std::fprintf(stderr, "[BRAIN_DISPATCH_APPLY] verb=OPORD.CoreAttack effect=ATTACK_OBJECT targetWID=%ld wid=%d\n",
+                                 parsedWID, wid);
+                    std::fflush(stderr);
+                    appliedEffect = true;
                 }
             }
         } else if (isRecognizedVerb(vpCanon)) {

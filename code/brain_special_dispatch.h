@@ -41,11 +41,15 @@
 //   Verified by inspection.
 //
 // RELAXED-CALL GUARD (1B — executeSpecialBody_Apply):
-//   The ONLY order function this path may call is setGeneralTacOrder (for Brain.CorePower false → POWERDOWN).
-//   STILL FORBIDDEN: setPlayerTacOrder, setAlarmTacOrder, requestHelp, requestTarget,
+//   The ONLY order function this path may call is setGeneralTacOrder.
+//   Permitted verbs (FIVE total): Brain.CorePower false → POWERDOWN,
+//   Unit.Eject (or coreEject alias) → EJECT, OPORD.CoreGuard (or coreGuard alias) → GUARD,
+//   OPORD.CoreMoveTo x y z → MOVETO_POINT, OPORD.CoreAttack <wid> → ATTACK_OBJECT.
+//   STILL FORBIDDEN: orderAttackObject, setAttackTarget, setSituationOpenFire,
+//   setPlayerTacOrder, setAlarmTacOrder, requestHelp, requestTarget,
 //   calcTacOrder, coreMoveTo, setMainGoal, clearCurTacOrder, any movement/attack/
-//   OPORD-advance/commander function.
-//   All other verbs (Brain.CoreAttack, OPORD.*, Unit.Retreat, Unit.InState, Var.*) → trace only, NO effect.
+//   OPORD-advance/commander function NOT listed above.
+//   All other verbs (Unit.Retreat, Unit.InState, Var.*) → trace only, NO effect.
 //
 // FSM-TODO SCANNER (1C — scanFsmTodosFromFile):
 //   Calls ONLY std::ifstream + std::regex + fprintf. NO order functions, NO movement/attack/OPORD calls.
@@ -124,8 +128,11 @@ bool bodyHasCoreGuard(const BrainSpecialBody& body);
 // DISPATCH-EFFECT-COREMOVETO-1: Returns true if body contains OPORD.CoreMoveTo (prefix match).
 bool bodyHasCoreMoveTo(const BrainSpecialBody& body);
 
-// DISPATCH-EFFECT-COREMOVETO-1: Returns true if body has ANY GENERAL-slot-claiming effect verb.
-// (currently: POWERDOWN || EJECT || GUARD || MOVETO)
+// DISPATCH-EFFECT-COREATTACK-1: Returns true if body contains OPORD.CoreAttack (prefix match).
+bool bodyHasCoreAttack(const BrainSpecialBody& body);
+
+// DISPATCH-EFFECT-COREATTACK-1: Returns true if body has ANY GENERAL-slot-claiming effect verb.
+// (currently: POWERDOWN || EJECT || GUARD || MOVETO || ATTACK)
 bool bodyHasEffect(const BrainSpecialBody& body);
 
 // TRACE ONLY. Zero effects. No orders. No state writes.
