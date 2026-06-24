@@ -3552,6 +3552,56 @@ int MissionInterfaceManager::scrollRight()
 	eye->moveRight(scrollFactor);
 	return 1;
 }
+// [MOUSE-ANCHORED-ZOOM-1 / FIX-4] Mouse-anchored zoom helper. Gated by
+// MC2_LOWCAM_ZOOM_ANCHOR (default OFF -> legacy fixed-pivot zoom unchanged).
+// Capture cursor world point A, scroll-target T and pre-step altitude h0 BEFORE
+// the zoom, run the supplied legacy zoom (calling the member fn), then shift the
+// scroll target so A stays under the cursor: T_new = T + (A - T)*(1 - h1/h0).
+namespace {
+	bool lowcamZoomAnchorEnabled()
+	{
+		static int cached = -1;
+		if (cached < 0)
+		{
+			const char* v = getenv("MC2_LOWCAM_ZOOM_ANCHOR");
+			cached = (v && v[0] && v[0] != '0') ? 1 : 0;
+		}
+		return cached != 0;
+	}
+}
+
+void MissionInterfaceManager::anchoredZoom(long mx, long my, int (MissionInterfaceManager::*zoomFn)())
+{
+	// OFF path: byte-identical to legacy — just run the zoom.
+	if (!lowcamZoomAnchorEnabled() || !eye || !eye->getUsePerspective())
+	{
+		(this->*zoomFn)();
+		return;
+	}
+
+	Stuff::Vector3D A;
+	bool haveA = eye->screenToTerrainApprox(mx, my, A);
+	float h0 = eye->getCameraAltitudeDesired();
+	if (h0 < 1.0f) h0 = 1.0f;
+	Stuff::Vector3D T = eye->getPosition();
+
+	(this->*zoomFn)();
+
+	// Fallback: cursor->world failed -> leave legacy fixed-pivot zoom, no jump.
+	if (!haveA)
+		return;
+
+	float h1 = eye->getCameraAltitudeDesired();
+	float frac = 1.0f - (h1 / h0);
+	if (frac > 1.0f) frac = 1.0f;
+	if (frac < -1.0f) frac = -1.0f;
+
+	Stuff::Vector3D Tnew = T;
+	Tnew.x = T.x + (A.x - T.x) * frac;
+	Tnew.y = T.y + (A.y - T.y) * frac;
+	eye->setPosition(Tnew);
+}
+
 int MissionInterfaceManager::zoomOut()
 {
 	float frameFactor = frameLength / baseFrameLength;
@@ -4435,13 +4485,14 @@ bool MissionInterfaceManager::moveCameraAround( bool lineOfSight, bool passable,
 			                           frameLength, /*worldOwnsWheel=*/true);
 			//Mouse wheel just picks zooms now.
 			//float actualZoom = zoomInc * abs(mouseWheelDelta) * 0.0001f * eye->getScaleFactor();
+			// [MOUSE-ANCHORED-ZOOM-1 / FIX-4] zoom toward cursor when gated on.
 			if (mouseWheelDelta > 0)
 			{
-				zoomChoiceOut();
+				anchoredZoom(userInput->getMouseX(), userInput->getMouseY(), &MissionInterfaceManager::zoomChoiceOut);
 			}
 			else
 			{
-				zoomChoiceIn();
+				anchoredZoom(userInput->getMouseX(), userInput->getMouseY(), &MissionInterfaceManager::zoomChoiceIn);
 			}
 
 			if ( target )
@@ -4464,13 +4515,14 @@ bool MissionInterfaceManager::moveCameraAround( bool lineOfSight, bool passable,
 		                           frameLength, /*worldOwnsWheel=*/true);
 		//Mouse wheel just picks zooms now.
 		//float actualZoom = zoomInc * abs(mouseWheelDelta) * 0.0001f * eye->getScaleFactor();
+		// [MOUSE-ANCHORED-ZOOM-1 / FIX-4] zoom toward cursor when gated on.
 		if (mouseWheelDelta > 0)
 		{
-			zoomChoiceOut();
+			anchoredZoom(userInput->getMouseX(), userInput->getMouseY(), &MissionInterfaceManager::zoomChoiceOut);
 		}
 		else
 		{
-			zoomChoiceIn();
+			anchoredZoom(userInput->getMouseX(), userInput->getMouseY(), &MissionInterfaceManager::zoomChoiceIn);
 		}
 
 		if ( target )

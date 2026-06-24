@@ -42,6 +42,16 @@ ObjectAdmissionPredicateMode objectAdmissionPredicateMode();
 // LegacyProjectionResult::rawClip; do NOT pass the post-divide screen vector.
 bool clipSpaceFrustumAdmit(const Stuff::Vector4D& rawClip);
 
+// Sphere-aware admit. Pads the frustum test by worldRadius*projScale so an
+// object whose center has crossed a plane (notably the near plane) is still
+// admitted while its bounding sphere is in view. projScale = max xyz-norm of
+// the view-projection matrix rows/cols that produce clip.x/clip.y (see the
+// definition comment + gpu_cull.comp). Lockstep GLSL: gpu_cull_predicate.glsl
+// clipSpaceFrustumAdmitSphere. Used by Camera::projectForObjectAdmissionSphere
+// ([LOW-CAMERA-OBJECT-CULL-1 / FIX-3]).
+bool clipSpaceFrustumAdmitSphere(const Stuff::Vector4D& rawClip, float worldRadius,
+                                 float projScale);
+
 // Self-test entry point. Runs the unit cases listed in
 // docs/superpowers/plans/2026-05-06-track-a1-object-admission-predicate.md
 // Task 3. Prints `[OBJECT_ADMISSION v1] event=selftest_pass|fail case=<name>`

@@ -722,6 +722,22 @@ bool Camera::quadAabbInFrustum (const float planes[6][4],
 }
 
 //---------------------------------------------------------------------------
+// [LOW-CAMERA-TERRAIN-CULL-1 / FIX-2] Near-plane-relaxed variant. Same as
+// quadAabbInFrustum but skips plane index 4 (near). Used by the terrain
+// LOD-chunk cull (gated by MC2_LOWCAM_TERRAIN_NEAR) so terrain within the
+// near-plane distance of a low-pitched eye is not spuriously culled. At a high
+// camera angle near terrain already passes the near plane, so dropping that
+// term is a no-op there.
+bool Camera::quadAabbInFrustumSkipNear (const float planes[6][4],
+                                        const Stuff::Vector3D& mn,
+                                        const Stuff::Vector3D& mx) const
+{
+	const float fmn[3] = { mn.x, mn.y, mn.z };
+	const float fmx[3] = { mx.x, mx.y, mx.z };
+	return camera_frustum_math::aabbInFrustumSkipPlane(planes, fmn, fmx, 4);
+}
+
+//---------------------------------------------------------------------------
 // F6 T2: per-frame frustum-planes cache. Terrain::geometry calls
 // cacheFrustumPlanes() once per frame (outside both slimReduce and
 // setupTextures loops); both then read via getCachedFrustumPlanes().
@@ -825,6 +841,39 @@ static unsigned long parityReport (Stuff::Vector2DOf<long> &screenPos,
 }
 
 //---------------------------------------------------------------------------
+// [LOW-CAMERA] Guard-free general 4x4 inverse (Gauss-Jordan, partial pivot).
+// Stuff::Matrix4D::Invert flags any det < SMALL(1e-4) as singular and returns
+// ×1e30 garbage — which is EVERY reverse-Z projective matrix (negative det).
+// That is the documented "Invert(worldToClipGL()) UNRELIABLE in the game" trap
+// (camera.h). This local helper sidesteps it for the inverse-VP unproject ONLY,
+// leaving the global Matrix4D::Invert (used engine-wide) byte-identical so the
+// already-working forward-projection pick path is untouched. Row-vector layout
+// preserved: out(r,c) consistent with M(r,c) so existing unproject math holds.
+static bool lowCamInvert4x4 (const Stuff::Matrix4D& M, Stuff::Matrix4D& out)
+{
+	double a[4][8];
+	for (int r = 0; r < 4; ++r)
+		for (int c = 0; c < 4; ++c)
+		{ a[r][c] = (double)M(r,c); a[r][c+4] = (r==c)?1.0:0.0; }
+	for (int col = 0; col < 4; ++col)
+	{
+		int piv = col; double best = fabs(a[col][col]);
+		for (int r = col+1; r < 4; ++r)
+			if (fabs(a[r][col]) > best) { best = fabs(a[r][col]); piv = r; }
+		if (best < 1e-20) return false;            // truly singular
+		if (piv != col) for (int k = 0; k < 8; ++k) { double t=a[col][k]; a[col][k]=a[piv][k]; a[piv][k]=t; }
+		double inv = 1.0 / a[col][col];
+		for (int k = 0; k < 8; ++k) a[col][k] *= inv;
+		for (int r = 0; r < 4; ++r) if (r != col)
+		{ double f=a[r][col]; for (int k=0;k<8;++k) a[r][k]-=f*a[col][k]; }
+	}
+	for (int r = 0; r < 4; ++r)
+		for (int c = 0; c < 4; ++c)
+			out(r,c) = (float)a[r][c+4];
+	return true;
+}
+
+//---------------------------------------------------------------------------
 // O(1) screen -> z=0 ground-plane unproject. No quad scan, no terrain pick.
 // See header. Mirrors the matrix-inverse unproject used by the LOD-chunk pick
 // path, then intersects the camera ray with the world z=0 plane.
@@ -836,7 +885,7 @@ bool Camera::screenToGroundPlaneApprox (long screenX, long screenY, Stuff::Vecto
 
 	Stuff::Matrix4D M = worldToClipGL();
 	Stuff::Matrix4D Minv;
-	Minv.Invert(M);
+	if (!lowCamInvert4x4(M, Minv)) return false;
 
 	const float w = screenResolution.x;
 	const float h = screenResolution.y;
@@ -884,7 +933,7 @@ bool Camera::screenToTerrainApprox (long screenX, long screenY, Stuff::Vector3D 
 
 	Stuff::Matrix4D M = worldToClipGL();
 	Stuff::Matrix4D Minv;
-	Minv.Invert(M);
+	if (!lowCamInvert4x4(M, Minv)) return false;
 
 	const float w = screenResolution.x;
 	const float h = screenResolution.y;
@@ -947,6 +996,70 @@ unsigned long Camera::inverseProject (Stuff::Vector2DOf<long> &screenPos, Stuff:
 	{
 		point.x = point.y = point.z = 0.0f;
 		return 0;
+	}
+
+	//-----------------------------------------------------------
+	// [LOW-CAMERA-PICK-RAY-1 / FIX-1] Gated true inverse-VP ray pick for
+	// movement orders. Unblocked by FIX-0 (Matrix4D::Invert det-sign fix): the
+	// worldToClipGL()^-1 unproject is now reliable, so we build a world-space
+	// pixel ray and take the FIRST heightfield hit (correct occlusion + robust
+	// at grazing angles, unlike the forward-projection nearest-center tiebreak).
+	// Origin/dir are derived ENTIRELY from the render matrix (no getPosition()
+	// ground-focus trap). Fallbacks: terrain fixed-point -> z=0 ground plane.
+	// Default OFF; legacy forward-projection path below is byte-identical when off.
+	static const bool s_lowCamPick = (std::getenv("MC2_LOWCAM_PICK") != nullptr);
+	if (s_lowCamPick && land)
+	{
+		Stuff::Matrix4D M = worldToClipGL();
+		Stuff::Matrix4D Minv;
+		const bool invOk = lowCamInvert4x4(M, Minv);
+		const float w = screenResolution.x;
+		const float h = screenResolution.y;
+		if (invOk && w > 0.0f && h > 0.0f)
+		{
+			const float ndcX =  2.0f * (float(screenPos.x) / w) - 1.0f;
+			const float ndcY =  1.0f - 2.0f * (float(screenPos.y) / h);
+			auto unprojectNDC = [&](float nz) -> Stuff::Vector3D {
+				float wx = ndcX*Minv(0,0) + ndcY*Minv(1,0) + nz*Minv(2,0) + Minv(3,0);
+				float wy = ndcX*Minv(0,1) + ndcY*Minv(1,1) + nz*Minv(2,1) + Minv(3,1);
+				float wz = ndcX*Minv(0,2) + ndcY*Minv(1,2) + nz*Minv(2,2) + Minv(3,2);
+				float ww = ndcX*Minv(0,3) + ndcY*Minv(1,3) + nz*Minv(2,3) + Minv(3,3);
+				const float iw = (fabsf(ww) > 1e-8f) ? (1.0f/ww) : 0.0f;
+				Stuff::Vector3D v; v.x = wx*iw; v.y = wy*iw; v.z = wz*iw; return v;
+			};
+			auto glToMC2 = [](const Stuff::Vector3D& g) -> Stuff::Vector3D {
+				Stuff::Vector3D r; r.x = -g.x; r.y = g.z; r.z = g.y; return r;
+			};
+			// REVERSE-Z ZERO_TO_ONE: near=NDC z=1, far=NDC z=0.
+			Stuff::Vector3D ro = glToMC2(unprojectNDC(1.0f));   // near = ray origin
+			Stuff::Vector3D rf = glToMC2(unprojectNDC(0.0f));   // far
+			float rdx = rf.x - ro.x, rdy = rf.y - ro.y, rdz = rf.z - ro.z;
+			const float rlen = sqrtf(rdx*rdx + rdy*rdy + rdz*rdz);
+			if (rlen > 1e-6f)
+			{
+				const float inv = 1.0f / rlen;
+				rdx *= inv; rdy *= inv; rdz *= inv;
+				float hx, hy, hz;
+				if (Terrain::raycastTerrain(ro.x, ro.y, ro.z, rdx, rdy, rdz, &hx, &hy, &hz))
+				{
+					point.x = hx; point.y = hy; point.z = hz;
+					static const bool s_t = (std::getenv("MC2_LOWCAM_PICK_TRACE") != nullptr);
+					if (s_t) fprintf(stderr, "[LOW-CAMERA-PICK-RAY-1] mode=raycast "
+						"px=(%ld,%ld) eye=(%.1f,%.1f,%.1f) hit=(%.1f,%.1f,%.1f)\n",
+						(long)screenPos.x, (long)screenPos.y, ro.x, ro.y, ro.z, hx, hy, hz);
+					return 0;
+				}
+				// Fallback A: terrain fixed-point iteration.
+				Stuff::Vector3D fp;
+				if (screenToTerrainApprox(screenPos.x, screenPos.y, fp))
+				{ point = fp; return 0; }
+				// Fallback B: z=0 ground plane.
+				Stuff::Vector3D gp;
+				if (screenToGroundPlaneApprox(screenPos.x, screenPos.y, gp))
+				{ point = gp; return 0; }
+			}
+		}
+		// Ray construction failed -> fall through to legacy forward-projection.
 	}
 
 	//-----------------------------------------------------------
@@ -2762,6 +2875,65 @@ void Camera::setCameraOrigin (void)
 	
 	if (usePerspective)
 		clipToWorld.Invert(worldToClip);
+
+	// [LOW-CAMERA-INVERSE-DET-PROOF] one-shot, MC2_INVERSE_DET_PROOF=1.
+	// Proves the Matrix4D::Invert(matrix.cpp:921) guard `det < SMALL(1e-4)`
+	// corrupts the inverse of worldToClipGL() (negative/tiny det of a reverse-Z
+	// projective matrix -> flagged singular -> ×1e30 garbage). Compares the
+	// shipped Invert against a guard-free Gauss-Jordan ground truth on the REAL
+	// render matrix. Residual = max|M·Minv − I|. Expect: stuff-Invert residual
+	// huge (>>1), gauss residual ~0 -> confirms FIX-0. Silent unless gated.
+	static const bool s_detProof = (getenv("MC2_INVERSE_DET_PROOF") != nullptr);
+	if (s_detProof && usePerspective)
+	{
+		static bool s_done = false;
+		if (!s_done)
+		{
+			s_done = true;
+			Stuff::Matrix4D M = worldToClipGL();
+			// ---- guard-free 4x4 Gauss-Jordan inverse (ground truth) ----
+			double a[4][8];
+			for (int r = 0; r < 4; ++r)
+				for (int c = 0; c < 4; ++c)
+				{ a[r][c] = (double)M(r,c); a[r][c+4] = (r==c)?1.0:0.0; }
+			bool ok = true;
+			for (int col = 0; col < 4 && ok; ++col)
+			{
+				int piv = col; double best = fabs(a[col][col]);
+				for (int r = col+1; r < 4; ++r)
+					if (fabs(a[r][col]) > best) { best = fabs(a[r][col]); piv = r; }
+				if (best < 1e-20) { ok = false; break; }
+				if (piv != col) for (int k = 0; k < 8; ++k) { double t=a[col][k]; a[col][k]=a[piv][k]; a[piv][k]=t; }
+				double inv = 1.0/a[col][col];
+				for (int k = 0; k < 8; ++k) a[col][k] *= inv;
+				for (int r = 0; r < 4; ++r) if (r != col)
+				{ double f=a[r][col]; for (int k=0;k<8;++k) a[r][k]-=f*a[col][k]; }
+			}
+			// raw determinant (Laplace, sign-honest) for reporting
+			double det =
+				(double)M(0,0)*((double)M(1,1)*((double)M(2,2)*M(3,3)-(double)M(2,3)*M(3,2))
+				 -(double)M(1,2)*((double)M(2,1)*M(3,3)-(double)M(2,3)*M(3,1))
+				 +(double)M(1,3)*((double)M(2,1)*M(3,2)-(double)M(2,2)*M(3,1)));
+			// residual of shipped Invert
+			Stuff::Matrix4D Sinv = M; Sinv.Invert(M);
+			double resStuff = 0.0, resGauss = 0.0;
+			for (int r = 0; r < 4; ++r) for (int c = 0; c < 4; ++c)
+			{
+				double idS = 0.0, idG = 0.0;
+				for (int k = 0; k < 4; ++k)
+				{ idS += (double)M(r,k)*(double)Sinv(k,c); idG += (double)M(r,k)*a[k][c+4]; }
+				double tgt = (r==c)?1.0:0.0;
+				if (fabs(idS-tgt) > resStuff) resStuff = fabs(idS-tgt);
+				if (fabs(idG-tgt) > resGauss) resGauss = fabs(idG-tgt);
+			}
+			fprintf(stderr,
+				"[LOW-CAMERA-INVERSE-DET-PROOF] det(worldToClipGL)=%.6e gauss_ok=%d "
+				"resid_stuffInvert=%.6e resid_gauss=%.6e SMALL=%.1e "
+				"-> %s\n",
+				det, ok?1:0, resStuff, resGauss, (double)Stuff::SMALL,
+				(resStuff > 1e-2 && resGauss < 1e-3) ? "FIX-0_CONFIRMED" : "INCONCLUSIVE");
+		}
+	}
 }
 
 //---------------------------------------------------------------------------

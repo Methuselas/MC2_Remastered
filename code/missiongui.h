@@ -394,6 +394,8 @@ public:
 		int zoomIn();
 		int zoomChoiceOut();
 		int zoomChoiceIn();
+		// [MOUSE-ANCHORED-ZOOM-1 / FIX-4] mouse-anchored zoom wrapper (gated).
+		void anchoredZoom(long mx, long my, int (MissionInterfaceManager::*zoomFn)());
 		int rotateLeft();
 		int rotateRight();
 		int tiltUp();

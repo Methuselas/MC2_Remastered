@@ -1590,6 +1590,11 @@ long Terrain::update (void)
 		// Diagnostic: one-shot dump of planes + first superchunk AABB + camera pos.
 		// MC2_TERRAIN_LOD_CHUNK_NO_CULL=1 bypasses frustum so GPU path can be tested.
 		static const bool s_noCull = (getenv("MC2_TERRAIN_LOD_CHUNK_NO_CULL") != nullptr);
+		// [LOW-CAMERA-TERRAIN-CULL-1 / FIX-2] When set, drop the near plane from the
+		// terrain AABB frustum test so near terrain isn't culled at a low/grazing
+		// pitch (near plane at NearPlaneDistance=-400). Other 5 planes intact;
+		// default OFF -> byte-identical to today.
+		static const bool s_lowCamNear = (getenv("MC2_LOWCAM_TERRAIN_NEAR") != nullptr);
 		static bool s_cullDiagDone = false;
 		if (!s_cullDiagDone && gCurrentFrame == 2) {
 			s_cullDiagDone = true;
@@ -1709,7 +1714,10 @@ long Terrain::update (void)
 				scMn.x = sc.worldMinX; scMn.y = sc.worldMinY; scMn.z = sc.worldMinZ;
 				scMx.x = sc.worldMaxX; scMx.y = sc.worldMaxY; scMx.z = sc.worldMaxZ;
 
-				sc.inFrustum = s_noCull ? true : eye->quadAabbInFrustum(planes, scMn, scMx);
+				// [LOW-CAMERA-TERRAIN-CULL-1 / FIX-2] skip-near variant when gated.
+				sc.inFrustum = s_noCull ? true
+					: (s_lowCamNear ? eye->quadAabbInFrustumSkipNear(planes, scMn, scMx)
+					                : eye->quadAabbInFrustum(planes, scMn, scMx));
 				if (!sc.inFrustum)
 				{
 					// Cull all constituent blocks without testing them.
@@ -1752,7 +1760,10 @@ long Terrain::update (void)
 						bmMx.z = 2500.0f;
 
 						// CRIT-1: write inFrustum BEFORE any continue.
-						bool passedCull = s_noCull ? true : eye->quadAabbInFrustum(planes, bmMn, bmMx);
+						// [LOW-CAMERA-TERRAIN-CULL-1 / FIX-2] skip-near variant when gated.
+						bool passedCull = s_noCull ? true
+							: (s_lowCamNear ? eye->quadAabbInFrustumSkipNear(planes, bmMn, bmMx)
+							                : eye->quadAabbInFrustum(planes, bmMn, bmMx));
 						bm.inFrustum = passedCull;
 
 						// Phase 5: compute block center in MC2 world space and choose LOD.

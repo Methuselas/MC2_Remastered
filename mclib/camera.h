@@ -62,6 +62,7 @@ namespace mc2_cpu_proj_cost {
 #include<stuff/stuff.hpp>
 #include<float.h>   // FLT_MAX for trueSignedRhw sentinel
 #include<cmath>     // isfinite for MC2_PROJECTZ_FINITE_CHECK invariant
+#include<cstdlib>   // std::getenv for [LOW-CAMERA-OBJECT-CULL-1 / FIX-3] gate
 
 inline signed short int float2short(float _in)
 {
@@ -463,6 +464,18 @@ class Camera
 			return(cameraAltitude);
 		}
 
+		// [MOUSE-ANCHORED-ZOOM-1 / FIX-4] read post-step desired altitude (h1).
+		float getCameraAltitudeDesired (void)
+		{
+			return(cameraAltitudeDesired);
+		}
+
+		// [MOUSE-ANCHORED-ZOOM-1 / FIX-4] perspective vs parallel projection.
+		bool getUsePerspective (void)
+		{
+			return(usePerspective);
+		}
+
 		void setCameraRotation (float angle, float angleWorld);
 		float getCameraRotation (void);
 
@@ -646,6 +659,74 @@ class Camera
 
 			::mc2_cpu_proj_cost::cull_admission_end_ns(_f3_cull_t0);
 			return ret;
+		}
+
+		// [LOW-CAMERA-OBJECT-CULL-1 / FIX-3] Sphere-aware object admission.
+		// Identical to projectForObjectAdmission EXCEPT the Modern point-frustum
+		// admit is replaced by clipSpaceFrustumAdmitSphere(rawClip, worldRadius,
+		// projScale) so a whole object whose CENTER has crossed the near plane is
+		// still admitted while its bounding sphere remains in front of the eye.
+		// Gated by MC2_LOWCAM_OBJ_NEARPAD (default OFF). When OFF, or when the
+		// predicate is in Legacy mode / radius<=0, behaviour is byte-identical to
+		// projectForObjectAdmission. projScale = max column-xyz-norm (cols 0/1) of
+		// worldToClip — the SAME matrix that produced rawClip (see projectZ:503),
+		// matching the documented clipSpaceFrustumAdmitSphere contract / gpu_cull.comp.
+		inline bool projectForObjectAdmissionSphere (Stuff::Vector3D& point,
+		                                             Stuff::Vector4D& screen,
+		                                             float worldRadius) {
+			static const bool s_lowcamObjNearPad =
+			    (std::getenv("MC2_LOWCAM_OBJ_NEARPAD") != nullptr);
+			if (!s_lowcamObjNearPad || worldRadius <= 0.0f)
+				return projectForObjectAdmission(point, screen);
+
+			const int64_t _f3_cull_t0 = ::mc2_cpu_proj_cost::cull_admission_begin_ns();
+
+			ProjectZBypassMode bypassMode = projectZBypassMode();
+			const bool isModern = (objectAdmissionPredicateMode() == ObjectAdmissionPredicateMode::Modern);
+			bool ret;
+
+			if (!isModern) {
+				// Legacy screen-rect path is unchanged by the near-pad slice.
+				::mc2_cpu_proj_cost::cull_admission_end_ns(_f3_cull_t0);
+				return projectForObjectAdmission(point, screen);
+			}
+
+			if (bypassMode == ProjectZBypassMode::Bypass) {
+				// Pure bypass: GL-NDC clip. projScale from worldToClipGL (the GL
+				// matrix that produced this clip). Note: clipSpaceFrustumAdmitSphere
+				// uses the D3D [0,w] depth convention; the bypass GL clip is fed
+				// through the same predicate as the strict bypass admit would be,
+				// padded only on the near plane via the shared tol.
+				ModernClipResult r = projectModernClipGL(point);
+				const Stuff::Matrix4D M = worldToClipGL();
+				const float projScale = objectNearPadProjScale(M);
+				ret = clipSpaceFrustumAdmitSphere(r.clip, worldRadius, projScale);
+			} else {
+				LegacyProjectionResult result;
+#pragma warning(push)
+#pragma warning(disable: 4996)
+				projectZ(point, screen, &result);
+#pragma warning(pop)
+				const float projScale = objectNearPadProjScale(worldToClip);
+				ret = clipSpaceFrustumAdmitSphere(result.rawClip, worldRadius, projScale);
+			}
+
+			::mc2_cpu_proj_cost::cull_admission_end_ns(_f3_cull_t0);
+			return ret;
+		}
+
+		// [LOW-CAMERA-OBJECT-CULL-1 / FIX-3] projScale helper: max over the x/y
+		// clip-component columns of the xyz coefficient magnitude. Mirrors the
+		// gpu_cull.comp derivation (there: row norms of the column-major viewProj;
+		// here: column norms of the row-vector worldToClip). Depth-independent.
+		static inline float objectNearPadProjScale (const Stuff::Matrix4D& M) {
+			auto colNorm = [&](int c) {
+				const float a = M(0, c), b = M(1, c), d = M(2, c);
+				return sqrtf(a * a + b * b + d * d);
+			};
+			const float nx = colNorm(0);
+			const float ny = colNorm(1);
+			return (nx > ny) ? nx : ny;
 		}
 
 		// Effect billboard admission — bool gates submission; same wedge-class hazard as terrain.
@@ -991,6 +1072,15 @@ class Camera
 		bool quadAabbInFrustum (const float planes[6][4],
 		                        const Stuff::Vector3D& mn,
 		                        const Stuff::Vector3D& mx) const;
+
+		// [LOW-CAMERA-TERRAIN-CULL-1 / FIX-2] As quadAabbInFrustum, but omits the
+		// near plane (index 4 in the {left,right,bottom,top,near,far} order) so the
+		// terrain LOD-chunk cull does not drop terrain near the eye at a low /
+		// grazing pitch. The other 5 planes (left/right/top/bottom/far) are tested
+		// identically — this is NOT a global cull-widen. Terrain-only; gated.
+		bool quadAabbInFrustumSkipNear (const float planes[6][4],
+		                                const Stuff::Vector3D& mn,
+		                                const Stuff::Vector3D& mx) const;
 
 		// F6 T2: per-frame frustum-planes cache, populated by Terrain::geometry
 		// once per frame before the setupTextures loop. Shared with
