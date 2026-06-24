@@ -47,11 +47,14 @@ struct MechPreviewRenderScope {
 	~MechPreviewRenderScope() { --g_mechPreviewRenderDepth; }
 };
 
-// Slice B1: gates VS-side calc_light() in mech.vert. Independent of
-// g_useGpuMechs so an operator can keep GPU mech rendering on while
-// flipping lighting off if a B1 regression surfaces. No effect when
-// g_useGpuMechs is off (the entire batcher path skips).
-extern bool g_useGpuMechLighting;
+// MECH-KILLSWITCH-LIGHTING-RETIRE-1 (2026-06-23): MC2_GPU_MECH_LIGHTING (Slice
+// B1, default-ON) RETIRED to constant. u_lightingMode is now always 1 (calc_light).
+// Safe: the low-UBO hardware guard that once forced this off was REMOVED by
+// [LIGHTSSBO v1] (LightsData is now an unbounded std430 SSBO, binding 20 —
+// gos_mech_batcher.cpp:616-642 "Gate removed"), so no runtime writer survived and
+// the flag was pure env-config. OFF was a visual degrade (unlit white mechs), never
+// shipped. Audit: MECH-KILLSWITCH-AUDIT-1. NOTE: if LightsData ever reverts to a UBO,
+// the hardware guard must return and this goes back to a runtime bool (default-true).
 
 // Slice C1: render-side mech cull. Skips submitActor for mechs the
 // GPU frustum/visibility shader marks invisible. RENDER-ONLY — does

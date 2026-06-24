@@ -6,8 +6,8 @@
 generator_version: "1.0.0"
 registry_entry_count: 94
 registry_env_flag_count: 92
-sweep_flag_count: 609
-flag_count: 618
+sweep_flag_count: 608
+flag_count: 617
 flags:
   - name: MC2_ABL_ARG_GUARD
     default: unknown
@@ -1404,7 +1404,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:89
+      - GameOS/gameos/gos_mech_batcher.cpp:88
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: no
@@ -1412,7 +1412,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:97
+      - GameOS/gameos/gos_mech_batcher.cpp:96
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: no
@@ -1420,15 +1420,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:113
-    registered: no
-    in_smoke_passthrough: no
-    documented_in_tier1_env_vars: no
-  - name: MC2_GPU_MECH_LIGHTING
-    default: unknown
-    declared_in: null
-    referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:85
+      - GameOS/gameos/gos_mech_batcher.cpp:112
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: no
@@ -1436,7 +1428,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:117
+      - GameOS/gameos/gos_mech_batcher.cpp:116
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: no
@@ -1444,7 +1436,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:101
+      - GameOS/gameos/gos_mech_batcher.cpp:100
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: no
@@ -1452,7 +1444,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:105
+      - GameOS/gameos/gos_mech_batcher.cpp:104
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: no
@@ -1460,7 +1452,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:109
+      - GameOS/gameos/gos_mech_batcher.cpp:108
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: no
@@ -1842,7 +1834,7 @@ flags:
     declared_in: null
     referenced_at:
       - GameOS/gameos/gameos_graphics.cpp:8766
-      - GameOS/gameos/gos_mech_batcher.cpp:636
+      - GameOS/gameos/gos_mech_batcher.cpp:635
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: yes
@@ -1983,7 +1975,7 @@ flags:
     referenced_at:
       - GameOS/gameos/gameosmain.cpp:960
       - GameOS/gameos/gos_materials.cpp:45
-      - GameOS/gameos/gos_mech_batcher.cpp:530
+      - GameOS/gameos/gos_mech_batcher.cpp:529
     referenced_at_more: 1
     registered: yes
     in_smoke_passthrough: yes
@@ -2016,7 +2008,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:191
+      - GameOS/gameos/gos_mech_batcher.cpp:190
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: yes
@@ -2024,7 +2016,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:195
+      - GameOS/gameos/gos_mech_batcher.cpp:194
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: no
@@ -2040,7 +2032,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:252
+      - GameOS/gameos/gos_mech_batcher.cpp:251
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: yes
@@ -2048,7 +2040,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:1777
+      - GameOS/gameos/gos_mech_batcher.cpp:1776
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: no
@@ -2056,7 +2048,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:2217
+      - GameOS/gameos/gos_mech_batcher.cpp:2216
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: no
@@ -2064,7 +2056,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:235
+      - GameOS/gameos/gos_mech_batcher.cpp:234
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: no
@@ -2072,7 +2064,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:242
+      - GameOS/gameos/gos_mech_batcher.cpp:241
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: no
@@ -2080,7 +2072,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:228
+      - GameOS/gameos/gos_mech_batcher.cpp:227
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: no
@@ -2088,7 +2080,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:305
+      - GameOS/gameos/gos_mech_batcher.cpp:304
       - GuiRuntime/GraphicsOptionsWindow.cpp:1799
     registered: no
     in_smoke_passthrough: no
@@ -2185,7 +2177,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:1781
+      - GameOS/gameos/gos_mech_batcher.cpp:1780
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: no
@@ -2201,7 +2193,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:221
+      - GameOS/gameos/gos_mech_batcher.cpp:220
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: no
@@ -2218,7 +2210,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:1190
+      - GameOS/gameos/gos_mech_batcher.cpp:1189
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: no
@@ -2226,7 +2218,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:163
+      - GameOS/gameos/gos_mech_batcher.cpp:162
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: no
@@ -2234,7 +2226,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:170
+      - GameOS/gameos/gos_mech_batcher.cpp:169
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: no
@@ -2290,8 +2282,8 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:1144
-      - GameOS/gameos/gos_mech_batcher.cpp:1616
+      - GameOS/gameos/gos_mech_batcher.cpp:1143
+      - GameOS/gameos/gos_mech_batcher.cpp:1615
       - code/saveload.cpp:1422
     referenced_at_more: 6
     registered: no
@@ -2325,7 +2317,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:211
+      - GameOS/gameos/gos_mech_batcher.cpp:210
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: no
@@ -2333,7 +2325,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:207
+      - GameOS/gameos/gos_mech_batcher.cpp:206
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: yes
@@ -2342,8 +2334,8 @@ flags:
     declared_in: null
     referenced_at:
       - GameOS/gameos/gos_materials.cpp:437
-      - GameOS/gameos/gos_mech_batcher.cpp:1813
-      - GameOS/gameos/gos_mech_batcher.cpp:2149
+      - GameOS/gameos/gos_mech_batcher.cpp:1812
+      - GameOS/gameos/gos_mech_batcher.cpp:2148
     referenced_at_more: 4
     registered: no
     in_smoke_passthrough: no
@@ -2352,7 +2344,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:2401
+      - GameOS/gameos/gos_mech_batcher.cpp:2400
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: no
@@ -2360,7 +2352,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:138
+      - GameOS/gameos/gos_mech_batcher.cpp:137
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: yes
@@ -2368,7 +2360,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:144
+      - GameOS/gameos/gos_mech_batcher.cpp:143
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: no
@@ -2707,7 +2699,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:282
+      - GameOS/gameos/gos_mech_batcher.cpp:281
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: no
@@ -2715,7 +2707,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:264
+      - GameOS/gameos/gos_mech_batcher.cpp:263
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: yes
@@ -2723,7 +2715,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:276
+      - GameOS/gameos/gos_mech_batcher.cpp:275
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: yes
@@ -2731,7 +2723,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:270
+      - GameOS/gameos/gos_mech_batcher.cpp:269
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: yes
@@ -2739,7 +2731,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:2147
+      - GameOS/gameos/gos_mech_batcher.cpp:2146
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: yes
@@ -2747,7 +2739,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:295
+      - GameOS/gameos/gos_mech_batcher.cpp:294
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: yes
@@ -2755,7 +2747,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:299
+      - GameOS/gameos/gos_mech_batcher.cpp:298
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: no
@@ -2763,7 +2755,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:289
+      - GameOS/gameos/gos_mech_batcher.cpp:288
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: yes
@@ -3272,7 +3264,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:1019
+      - GameOS/gameos/gos_mech_batcher.cpp:1018
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: no
@@ -3384,8 +3376,8 @@ flags:
     declared_in: RenderCore/RendererFeatureRegistry.h (kFeatureTable)
     doc: "Dynamic object shadow caster pass (GpuStaticPropBatcher + GpuMechBatcher flushShadow). Opt-in MC2_SHADOW_ENABLE=1. VAO restore order fixed (SHADOW-DYNAMIC-RESTORE-1); prop-invisibility-with-shadows..."
     referenced_at:
+      - GameOS/gameos/gos_mech_batcher.cpp:917
       - GameOS/gameos/gos_mech_batcher.cpp:918
-      - GameOS/gameos/gos_mech_batcher.cpp:919
       - GameOS/gameos/gos_static_prop_batcher.cpp:7410
     referenced_at_more: 1
     registered: yes
@@ -3598,7 +3590,7 @@ flags:
     declared_in: RenderCore/RendererFeatureRegistry.h (kFeatureTable)
     doc: "MECH-EXTRACTION-0: mech snapshot extraction (observe-only, no GL mutation). Extracts ExtractedMechPacket[] from RenderSnapshot. Default-off; =1 enables."
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:2554
+      - GameOS/gameos/gos_mech_batcher.cpp:2553
       - GameOS/gameos/render_snapshot.cpp:245
     registered: yes
     in_smoke_passthrough: yes
@@ -3689,7 +3681,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:514
+      - GameOS/gameos/gos_mech_batcher.cpp:513
       - GameOS/gameos/gos_static_prop_batcher.cpp:80
     registered: no
     in_smoke_passthrough: no
@@ -3739,7 +3731,7 @@ flags:
     default: unknown
     declared_in: null
     referenced_at:
-      - GameOS/gameos/gos_mech_batcher.cpp:260
+      - GameOS/gameos/gos_mech_batcher.cpp:259
     registered: no
     in_smoke_passthrough: no
     documented_in_tier1_env_vars: yes
