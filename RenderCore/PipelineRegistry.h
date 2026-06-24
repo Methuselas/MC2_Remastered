@@ -72,8 +72,15 @@ enum class PipelineId : uint32_t {
     // (separate rows for per-pass [PIPELINE_BIND] trace identity).
     PostProcessEdgeFog   = 18,  // runEdgeFog (edge_fog.frag, alpha blend, no depth)
     PostProcessFogOob    = 19,  // runFogOob (fog_oob.frag, alpha blend, no depth)
+    // TERRAIN-SOLID-PIPELINE-REGISTRATION-1: the MAIN solid terrain pass (live =
+    // GPU-indirect thin MDI, gos_terrain_thin.vert + gos_terrain.frag). DESCRIPTIVE
+    // ONLY (glProgramName=0, NOT routed — state still hand-set in the bridge). cull
+    // = None / frontFace = Ccw are EMPIRICALLY PROBED (TERRAIN-CULL-STATE-PROBE-1,
+    // 8 frames unanimous at the dispatch chokepoint), NOT guessed. Writes color0 +
+    // GBuffer1. Routing (+ the load-bearing glColorMask repair) is a later slice.
+    TerrainSolid         = 20,  // main solid terrain (Opaque, GEQUAL reverse-Z, cull None)
     // Future: DebugWireframe, ...
-    Count_               = 20,  // sentinel — do not use as an ID
+    Count_               = 21,  // sentinel — do not use as an ID
 };
 
 // VERTEXLAYOUT-AUTHORITY-1: stable repo-owned vertex-input layout identities —

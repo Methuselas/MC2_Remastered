@@ -82,12 +82,14 @@
       "next": "spirv_eligible (depth-parity gate)"
     },
     "Terrain": {
-      "status": "UNREGISTERED",
+      "status": "DESCRIPTIVE_REGISTERED",
       "renderPassId": "Terrain",
-      "pipelineId": null,
+      "pipelineId": "TerrainSolid",
       "shaderBase": "gos_terrain",
-      "stateOwner": "legacy/ad-hoc",
-      "next": "CULL PROBE DONE (TERRAIN-CULL-STATE-PROBE-1): terrain renders cull=DISABLED frontFace=CCW (8 frames unanimous at the txmmgr:2868 dispatch chokepoint) -> cullMode=None, frontFace=Ccw. Blocker #1 RESOLVED. Descriptive row now unblocked: glProgramName=0, Opaque, depthTest+write ON, GEQUAL reverse-Z, cull None, frontFace Ccw, colorAttachments {t,t,f}, objectId false. NEXT = TERRAIN-SOLID-PIPELINE-REGISTRATION-1 (descriptive) -> TERRAIN-SOLID-APPLYPIPELINE-ROUTING-1 (keep the glColorMask(TRUE) shadow-leak repair call-site; blocker #2). Probe kept gated default-OFF (MC2_TERRAIN_CULL_PROBE) at txmmgr.cpp."
+      "stateOwner": "legacy/ad-hoc (hand-set in gos_terrain_bridge_drawIndirect; NOT routed)",
+      "next": "TERRAIN-SOLID-APPLYPIPELINE-ROUTING-1 (GO-with-conditions): route the bridge draw via applyPipeline, KEEP the glColorMask(TRUE) shadow-leak repair call-site (applyPipeline does not own colorMask), byte/visual-gate clean, no shadow color-mask leak regression -> promote to ROUTED_BY_APPLYPIPELINE only after proof. LOD-chunk = separate later row (cull None, MRT).",
+      "proofBasis": "TERRAIN_CULL_STATE_PROBE_1",
+      "evidence": "TERRAIN-SOLID-PIPELINE-REGISTRATION-1: descriptive row TerrainSolid added (glProgramName=0, NOT applyPipeline-routed). State stated truthfully: Opaque, depthTest+write ON, GEQUAL reverse-Z (gameos_graphics.cpp:4006), colorAttachments {color0,GBuffer1}={t,t,f}, objectId not written. cullMode=None / frontFace=Ccw are EMPIRICALLY PROBED (TERRAIN-CULL-STATE-PROBE-1, commit 19020b9f: cull DISABLED, CCW, 8 frames unanimous at the txmmgr:2868 dispatch chokepoint) — not guessed. No behavior change (descriptive only); no routing, no colorMask movement."
     },
     "TerrainOverlay": {
       "status": "ROUTED_BY_APPLYPIPELINE",

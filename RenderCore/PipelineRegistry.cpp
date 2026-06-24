@@ -379,6 +379,27 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* polygonOffsetEnable */ false,
         /* ssboBindingsMask    */ 0u,
     },
+    // [20] TerrainSolid — main solid terrain (live = GPU-indirect thin MDI,
+    // gos_terrain_thin.vert + gos_terrain.frag). DESCRIPTIVE ONLY (glProgramName=0,
+    // NOT routed — state still hand-set in gos_terrain_bridge_drawIndirect). Opaque,
+    // depthTest+write ON, GEQUAL reverse-Z. cullMode=None / frontFace=Ccw are
+    // EMPIRICALLY PROBED (TERRAIN-CULL-STATE-PROBE-1: cull DISABLED, CCW, 8 frames
+    // unanimous at the dispatch chokepoint) — not guessed from water/prose. The frag
+    // writes color0 (FragColor) + color1 (GBuffer1) -> {true,true,false}; objectId
+    // (color2) NOT written.
+    {
+        /* glProgramName       */ 0u,
+        /* blend               */ BlendMode::Opaque,
+        /* depthTestEnable     */ true,
+        /* depthWriteEnable    */ true,
+        /* depthFunc           */ DepthFunc::GreaterEqual,
+        /* cullMode            */ CullMode::None,
+        /* colorAttachments    */ { true, true, false },
+        /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,
+        /* polygonOffsetEnable */ false,
+        /* ssboBindingsMask    */ 0u,
+    },
 
 }};
 

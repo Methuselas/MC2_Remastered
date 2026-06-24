@@ -763,6 +763,42 @@
         "color2": false
       },
       "key_producible": "descriptive"
+    },
+    {
+      "id": "TerrainSolid",
+      "pipelineDescRegistered": false,
+      "descriptive": "TERRAIN-SOLID-PIPELINE-REGISTRATION-1: main solid terrain (live = GPU-indirect thin MDI, gos_terrain_thin.vert + gos_terrain.frag). DESCRIPTIVE (glProgramName=0, NOT applyPipeline-routed; state hand-set in gos_terrain_bridge_drawIndirect). cull=None/frontFace=Ccw EMPIRICALLY PROBED (TERRAIN-CULL-STATE-PROBE-1, 8 frames unanimous at dispatch chokepoint). Routing + the glColorMask(TRUE) shadow-leak repair are a later slice.",
+      "shaderVariantId": {
+        "base": "gos_terrain",
+        "macros": []
+      },
+      "specializationParams": [],
+      "renderPassCompat": "Terrain (RenderPassId::Terrain)",
+      "depthState": {
+        "test": true,
+        "write": true,
+        "func": "GreaterEqual",
+        "note": "reverse-Z, explicit GEQUAL at gameos_graphics.cpp:4006"
+      },
+      "blendState": {
+        "factor": "Opaque",
+        "srcFactor": "ONE",
+        "dstFactor": "ZERO",
+        "equation": "FUNC_ADD",
+        "note": "GL_BLEND disabled (opaque terrain)"
+      },
+      "cullState": {
+        "mode": "None",
+        "note": "PROBED: GL_CULL_FACE disabled (terrain inherits ambient; never set at draw)"
+      },
+      "frontFace": "Ccw",
+      "polygonOffsetEnable": false,
+      "colorMaskAttachmentMask": {
+        "color0": true,
+        "color1": true,
+        "color2": false
+      },
+      "key_producible": "descriptive"
     }
   ],
   "excluded_draw_families": {
