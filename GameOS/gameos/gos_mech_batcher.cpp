@@ -100,13 +100,10 @@ bool g_useGpuMechFastTransform = envFlagDefaultOn("MC2_GPU_MECH_FAST_TRANSFORM")
 // Opt-out: MC2_GPU_MECH_SHADOW_FAST_TRANSFORM=0
 bool g_useGpuMechShadowFastTransform = envFlagDefaultOn("MC2_GPU_MECH_SHADOW_FAST_TRANSFORM");
 
-// Slice D-shadow-skip: see gos_mech_killswitch.h. Skip mechShadowShape transform.
-// Opt-out: MC2_GPU_MECH_SHADOW_SKIP=0
-bool g_useGpuMechShadowSkip = envFlagDefaultOn("MC2_GPU_MECH_SHADOW_SKIP");
-
-// Slice D-shadow-state-strip: see gos_mech_killswitch.h.
-// Opt-out: MC2_GPU_MECH_SHADOW_STATE_STRIP=0
-bool g_useGpuMechShadowStateStrip = envFlagDefaultOn("MC2_GPU_MECH_SHADOW_STATE_STRIP");
+// MECH-KILLSWITCH-SHADOW-PAIR-RETIRE-1: MC2_GPU_MECH_SHADOW_SKIP and
+// MC2_GPU_MECH_SHADOW_STATE_STRIP retired to constants (both default-ON,
+// strict no-ops on the tessellated GPU-mech path). Logic now inline in
+// Mech3DAppearance::updateGeometry. See gos_mech_killswitch.h.
 
 // Slice D-leaf-skip-v2: see gos_mech_killswitch.h.
 // Opt-out: MC2_GPU_MECH_LEAF_SKIP=0

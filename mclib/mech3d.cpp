@@ -3708,9 +3708,10 @@ void Mech3DAppearance::updateGeometry (void)
 	// global-static side effect (SetLightList writing s_listOfLights) is
 	// overwritten by mechShape's identical call at mech3d.cpp:3407 before
 	// any consumer reads it.
+	// MECH-KILLSWITCH-SHADOW-PAIR-RETIRE-1: former MC2_GPU_MECH_SHADOW_STATE_STRIP
+	// (default-ON, strict no-op on tessellated GPU-mech path) retired to constant.
 	const bool stripShadowState =
 		g_useGpuMechs &&
-		g_useGpuMechShadowStateStrip &&
 		gos_IsTerrainTessellationActive();
 
 	if ((status == OBJECT_STATUS_DESTROYED) ||
@@ -4033,7 +4034,8 @@ void Mech3DAppearance::updateGeometry (void)
 			// hardcodes gVertex.argb to 0x3f000000 and reads
 			// listOfShadowTVertices populated by MultiTransformShadows
 			// (which still dispatches at msl.cpp:1765 in that branch).
-			if (g_useGpuMechs && g_useGpuMechShadowSkip && gos_IsTerrainTessellationActive()) {
+			// MECH-KILLSWITCH-SHADOW-PAIR-RETIRE-1: former MC2_GPU_MECH_SHADOW_SKIP retired.
+			if (g_useGpuMechs && gos_IsTerrainTessellationActive()) {
 				// Skip — modern engine has no consumer.
 			} else if (g_useGpuMechs && g_useGpuMechShadowFastTransform) {
 				mechShadowShape->TransformMultiShape_PositionsOnly(&xlatPosition, &qRotation);
