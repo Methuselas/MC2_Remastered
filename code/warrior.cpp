@@ -2260,21 +2260,66 @@ long MechWarrior::runBrain (void) {
 			brainRuntime->initialHoldPushed = 1;
 			brainTaskQueue->push(/*tier=*/0, /*frame_ms=*/0, vehicleWID, BrainTaskType::BRAIN_TASK_HOLD);
 		}
-		if (brainTaskQueue) {
-			BrainTaskEntry task;
-			while (brainTaskQueue->drainWithTask(task)) {
-				if (task.type == BrainTaskType::BRAIN_TASK_HOLD) {
-					TacticalOrder holdOrder;
-					holdOrder.init(ORDER_ORIGIN_SELF, TACTICAL_ORDER_STOP);
-					setGeneralTacOrder(holdOrder);
-					std::fprintf(stderr, "[BRAIN_RT] HOLD_TASK applied wid=%d\n", vehicleWID);
+		// TECHSCRIPT-SPECIAL-DISPATCH-1B: DISPATCH_APPLY gate check.
+		// When MC2_BRAIN_DISPATCH=1 + MC2_BRAIN_DISPATCH_APPLY=1 and the body contains a
+		// recognized effect verb (Brain.CorePower false → POWERDOWN), the dispatcher owns
+		// the GENERAL-slot write this tick. The synthetic HOLD_TASK is suppressed to ensure
+		// EXACTLY ONE GENERAL-slot write per tick.
+		// When DISPATCH_APPLY=0, synthetic HOLD fires as 1B-runtime default (unchanged).
+		static const bool s_dispatchApply = ([](){
+			const char* v = std::getenv("MC2_BRAIN_DISPATCH_APPLY");
+			if (v && std::atoi(v) != 0) {
+				const char* d = std::getenv("MC2_BRAIN_DISPATCH");
+				if (!d || std::atoi(d) == 0) {
+					std::fprintf(stderr, "[BRAIN_DISPATCH] WARNING: MC2_BRAIN_DISPATCH_APPLY=1 requires MC2_BRAIN_DISPATCH=1 — apply is INERT\n");
 					std::fflush(stderr);
+					return false;
 				}
-				// Other task types: discard (no handler this slice).
+				return true;
+			}
+			return false;
+		})();
+
+		bool dispatcherAppliedEffect = false;
+		if (s_dispatchApply && brainRuntime && brainRuntime->specialBody.loaded
+		    && bodyHasPowerdown(brainRuntime->specialBody)) {
+			// Dispatcher owns the GENERAL slot for this body: suppress synthetic HOLD every
+			// tick (so a later tick's HOLD/STOP can't overwrite POWERDOWN), but APPLY the
+			// effect + log ONCE (dispatchEffectApplied guard). Re-issuing POWERDOWN every tick
+			// would reset the order so it never completes — apply once and let it run.
+			dispatcherAppliedEffect = true;
+			if (!brainRuntime->dispatchEffectApplied) {
+				brainRuntime->dispatchEffectApplied = 1;
+				executeSpecialBody_Apply(brainRuntime->specialBody, this, vehicleWID);
+			}
+			if (brainTaskQueue) {
+				BrainTaskEntry task;
+				while (brainTaskQueue->drainWithTask(task)) {
+					// Discard queued tasks — dispatcher owns GENERAL slot this body.
+					// warrior.cpp:1B-supersede: HOLD_TASK silenced (no setGeneralTacOrder STOP write).
+				}
 			}
 		}
-		// TECHSCRIPT-SPECIAL-DISPATCH-1A: trace-only, does NOT replace HOLD logic above
-		if (brainRuntime && brainRuntime->specialBody.loaded) {
+
+		if (!dispatcherAppliedEffect) {
+			// Synthetic HOLD path (1B-runtime default) — fires when dispatcher did NOT take slot.
+			if (brainTaskQueue) {
+				BrainTaskEntry task;
+				while (brainTaskQueue->drainWithTask(task)) {
+					if (task.type == BrainTaskType::BRAIN_TASK_HOLD) {
+						TacticalOrder holdOrder;
+						holdOrder.init(ORDER_ORIGIN_SELF, TACTICAL_ORDER_STOP);
+						setGeneralTacOrder(holdOrder);
+						std::fprintf(stderr, "[BRAIN_RT] HOLD_TASK applied wid=%d\n", vehicleWID);
+						std::fflush(stderr);
+					}
+					// Other task types: discard (no handler this slice).
+				}
+			}
+		}
+
+		// TECHSCRIPT-SPECIAL-DISPATCH trace path (1A behavior preserved when APPLY=0).
+		if (!s_dispatchApply && brainRuntime && brainRuntime->specialBody.loaded) {
 			executeSpecialBody_TraceOnly(brainRuntime->specialBody, vehicleWID);
 		}
 		brainErr = 0;
