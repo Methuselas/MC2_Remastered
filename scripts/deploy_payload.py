@@ -631,6 +631,20 @@ TARGET_PRESETS = {
     },
 }
 
+# DEPLOY-TARGET-GUARD: deploy ONLY to one of the canonical deploy folders. Each full
+# install is ~5GB; spinning up a per-lane/per-experiment deploy folder (e.g.
+# mc2-<lane>-test) bloats A:/Games/mc2-opengl by tens of GB. Deploy is REFUSED to any
+# target not in this set unless --allow-new-target is passed (deliberate new install /
+# release cut). The 5 folders below are the shared dev deploy targets — pick a free one
+# (md5-verify after; a sibling may hold the lease).
+DEPLOY_ALLOWLIST = {
+    "mc2-win64-v0.4",
+    "mc2-win64-v0.4c",
+    "mc2-win64-0.4c",
+    "mc2-win64-abl-validate",
+    "mc2-win64-v0.3",
+}
+
 
 def main():
     ap = argparse.ArgumentParser(
@@ -669,6 +683,10 @@ def main():
                     "that --verify-only checks does not go stale.")
     ap.add_argument("--strict", action="store_true",
                     help="with --verify-only: drift = nonzero exit")
+    ap.add_argument("--allow-new-target", action="store_true",
+                    help="DELIBERATELY deploy to a NON-canonical / new ~5GB install "
+                         "(release cut, fresh install). Off by default — deploys are "
+                         "forced to the canonical DEPLOY_ALLOWLIST to stop per-lane bloat.")
     args = ap.parse_args()
 
     preset = TARGET_PRESETS.get(args.target) if args.target else None
@@ -695,9 +713,23 @@ def main():
         write_manifest_only(src_root, build_dir, exe_name, pdb_name, target)
         return
 
+    # DEPLOY-TARGET-GUARD: force deploys to the canonical deploy folders; never create
+    # or deploy into per-lane ~5GB installs that bloat A:/Games/mc2-opengl.
+    if not args.allow_new_target:
+        base = os.path.basename(os.path.normpath(target))
+        if base not in DEPLOY_ALLOWLIST:
+            fail(f"deploy target '{target}'\n"
+                 f"  basename '{base}' is NOT a canonical deploy folder.\n"
+                 f"  Deploy ONLY to: {sorted(DEPLOY_ALLOWLIST)}\n"
+                 f"  (under A:/Games/mc2-opengl). Each full install is ~5GB — do NOT spin "
+                 f"up per-lane/per-experiment deploy folders; pick a FREE canonical folder "
+                 f"and md5-verify after.\n"
+                 f"  If you REALLY need a new install (release cut), pass --allow-new-target.")
+
     if not os.path.isdir(target):
         fail(f"target dir does not exist: {target} (refusing to create deploy "
-             "targets — wrong-target trap, Mistake C)")
+             "targets — wrong-target trap, Mistake C). Pass --allow-new-target only "
+             "for a deliberate new install.")
 
     log(f"source root: {src_root}")
     log(f"build dir:   {build_dir}")
