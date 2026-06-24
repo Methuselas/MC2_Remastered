@@ -28,8 +28,9 @@ struct MechBrainRuntime {
     float            tacticWeights[8]    = {};      // FIT-loaded tactic weights (zeroed; loader deferred to later slice)
     uint8_t          weightsNormalized   = 0;       // 1 = sum enforced to 1.0 at load time
     uint8_t          pendingEventMask    = 0;       // PilotAlarmType event bits
-    uint8_t          _pad[2]             = {};
+    uint8_t          _pad[1]             = {};
     uint32_t         lastRequestOrdersFrame = 0;    // g_mc2FrameCounter at last RequestOrdersTask push
+    uint8_t          initialHoldPushed      = 0;    // 1 = initial HOLD_TASK already pushed (BRAIN-RUNTIME-1B)
 
     // Compute which slots Brain WOULD own in this mode (trace-only; never applied in 1A).
     // Returns bitmask of kBrainOwns* flags.

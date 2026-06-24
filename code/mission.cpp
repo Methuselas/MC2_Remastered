@@ -333,6 +333,9 @@ extern bool 			invulnerableON;		//Used for tutorials so mechs can take damage, b
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include "mech_brain_runtime.h"  // BRAIN-RUNTIME-1B: per-unit mode loading from _ai.fit
+#include "brain_task_queue.h"    // BRAIN-RUNTIME-1B: BrainTaskType
 namespace {
 	static const bool s_misSplit = (getenv("MC2_MISSION_SPLIT") != nullptr);
 	enum { MS_LAND_UPDATE=0, MS_PATHMGR, MS_CLEAR_BLOCKS, MS_CLEAR_VERTS,
@@ -3028,9 +3031,71 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 			result = MechWarrior::warriorList[i]->loadBrainParameters(missionFile, i);
 			//Assert(result == NO_ERR, result, " Could not load Warrior Brain Parameters ");
 		}
-				
-	}	
-	
+
+	}
+
+	// BRAIN-RUNTIME-1B: load per-unit Brain blocks from <missionName>_ai.fit.
+	// Gate: MC2_BRAIN_RUNTIME=1 (default OFF). File absence is silent (no fixture = all Legacy).
+	// Single-warrior fixture only: one Brain block keyed "Brain". unitRef "Warrior%d" -> idx.
+	// MC2_BRAIN_RUNTIME_FORCE_MODE (if set) overrides all per-unit modes as a post-load global.
+	if (std::getenv("MC2_BRAIN_RUNTIME") && std::atoi(std::getenv("MC2_BRAIN_RUNTIME")) != 0) {
+		char aiFitName[256];
+		// missionName is the raw name like "mc2_01"; missionPath is "data/missions/".
+		std::snprintf(aiFitName, sizeof(aiFitName), "%s%s_ai.fit", missionPath, missionName);
+		std::fprintf(stderr, "[BRAIN_RT] mission load: MC2_BRAIN_RUNTIME=1 mission=%s seeking %s\n", missionName, aiFitName);
+		std::fflush(stderr);
+		FitIniFile* aiFit = new FitIniFile;
+		if (aiFit && aiFit->open(aiFitName) == NO_ERR) {
+			// Seek the single "Brain" block (single-warrior fixture; multi-block not supported this slice).
+			if (aiFit->seekBlock("Brain") == NO_ERR) {
+				char unitRefBuf[32] = {};
+				long modeValLong = 0;
+				long unitRefResult  = aiFit->readIdString("unitRef",  unitRefBuf, 31);
+				long modeResult     = aiFit->readIdLong("mode", modeValLong);
+				if (unitRefResult == NO_ERR && modeResult == NO_ERR) {
+					// Parse "Warrior%d" -> 1-based index.
+					int warriorIdx = -1;
+					std::sscanf(unitRefBuf, "Warrior%d", &warriorIdx);
+					if (warriorIdx >= 1 && warriorIdx <= (int)numWarriors) {
+						MechWarriorPtr w = MechWarrior::warriorList[warriorIdx];
+						if (w) {
+							BrainRuntimeMode fitMode = BrainRuntimeMode::Legacy;
+							switch (modeValLong) {
+								case 1: fitMode = BrainRuntimeMode::Hybrid;   break;
+								case 2: fitMode = BrainRuntimeMode::Enhanced; break;
+								default: break;
+							}
+							// setBrainRuntimeMode allocates brainRuntime if needed + sets mode.
+							w->setBrainRuntimeMode(fitMode);
+							std::fprintf(stderr, "[BRAIN_RT] FIT load warriorIdx=%d unitRef=%s mode=%s\n",
+								warriorIdx,
+								unitRefBuf,
+								MechBrainRuntime::modeString(fitMode));
+							std::fflush(stderr);
+						}
+					} else {
+						std::fprintf(stderr, "[BRAIN_RT] WARNING: _ai.fit Brain block unitRef=%s idx=%d out of range [1..%lu]\n",
+							unitRefBuf, warriorIdx, (unsigned long)numWarriors);
+					}
+				}
+			}
+			aiFit->close();
+		}
+		// MC2_BRAIN_RUNTIME_FORCE_MODE overrides all per-unit modes (post-load global override).
+		const char* forceModeEnv = std::getenv("MC2_BRAIN_RUNTIME_FORCE_MODE");
+		if (forceModeEnv) {
+			BrainRuntimeMode forced = BrainRuntimeMode::Legacy;
+			if      (std::strcmp(forceModeEnv, "hybrid")   == 0) forced = BrainRuntimeMode::Hybrid;
+			else if (std::strcmp(forceModeEnv, "enhanced") == 0) forced = BrainRuntimeMode::Enhanced;
+			for (unsigned long i = 1; i <= numWarriors; i++) {
+				MechWarriorPtr w = MechWarrior::warriorList[i];
+				if (w && w->getBrainRuntime())
+					w->setBrainRuntimeMode(forced);
+			}
+		}
+		delete aiFit;
+	}
+
 #ifdef LAB_ONLY
 	x=GetCycles();
 	MCTimeWarriorLoad=x-x1;
