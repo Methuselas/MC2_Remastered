@@ -55,6 +55,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* objectIdWriteEnabled*/ false,           // TODO: flip when shader adds loc=2
         /* frontFace           */ FrontFace::Ccw,  // GL default; explicit per row
         /* polygonOffsetEnable */ false,           // scene passes: no polygon offset
+        /* drawBuffers         */ DrawBufferSet::MainSceneMRT,
         /* ssboBindingsMask    */ kStaticPropSsbos,
     },
 
@@ -72,6 +73,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* objectIdWriteEnabled*/ false,
         /* frontFace           */ FrontFace::Ccw,  // GL default; explicit per row
         /* polygonOffsetEnable */ false,           // scene passes: no polygon offset
+        /* drawBuffers         */ DrawBufferSet::MainSceneMRT,
         /* ssboBindingsMask    */ kStaticPropSsbos,
     },
 
@@ -97,6 +99,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* objectIdWriteEnabled*/ false,           // macro-gated in shader, not here
         /* frontFace           */ FrontFace::Ccw,  // GL default; explicit per row
         /* polygonOffsetEnable */ false,           // scene passes: no polygon offset
+        /* drawBuffers         */ DrawBufferSet::MainSceneMRT,
         /* ssboBindingsMask    */ 0u,              // mech binds its own SSBOs
     },
 
@@ -119,6 +122,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* objectIdWriteEnabled*/ false,
         /* frontFace           */ FrontFace::Ccw,  // GL default; explicit per row
         /* polygonOffsetEnable */ false,           // scene passes: no polygon offset
+        /* drawBuffers         */ DrawBufferSet::Unspecified,
         /* ssboBindingsMask    */ kStaticPropSsbos,
     },
 
@@ -139,6 +143,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* objectIdWriteEnabled*/ false,
         /* frontFace           */ FrontFace::Ccw,  // no glFrontFace in shadow; ambient default
         /* polygonOffsetEnable */ false,           // terrain caster: no polygon offset
+        /* drawBuffers         */ DrawBufferSet::ShadowDepthOnly,
         /* ssboBindingsMask    */ 0u,              // descriptive; pass binds its own
     },
 
@@ -157,6 +162,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* objectIdWriteEnabled*/ false,
         /* frontFace           */ FrontFace::Ccw,
         /* polygonOffsetEnable */ true,            // prop caster: polygon offset ON
+        /* drawBuffers         */ DrawBufferSet::ShadowDepthOnly,
         /* ssboBindingsMask    */ 0u,
     },
 
@@ -173,6 +179,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* objectIdWriteEnabled*/ false,
         /* frontFace           */ FrontFace::Ccw,
         /* polygonOffsetEnable */ false,           // mech caster: no polygon offset
+        /* drawBuffers         */ DrawBufferSet::ShadowDepthOnly,
         /* ssboBindingsMask    */ 0u,
     },
 
@@ -193,6 +200,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* objectIdWriteEnabled*/ false,
         /* frontFace           */ FrontFace::Ccw,
         /* polygonOffsetEnable */ false,           // overlay: no polygon offset (in-material blend)
+        /* drawBuffers         */ DrawBufferSet::MainSceneMRT,
         /* ssboBindingsMask    */ 0u,              // binds its own VBO/texture; no SSBO
     },
 
@@ -212,6 +220,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* objectIdWriteEnabled*/ false,
         /* frontFace           */ FrontFace::Ccw,
         /* polygonOffsetEnable */ false,
+        /* drawBuffers         */ DrawBufferSet::MainSceneMRT,
         /* ssboBindingsMask    */ 0u,
     },
 
@@ -235,6 +244,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* objectIdWriteEnabled*/ false,
         /* frontFace           */ FrontFace::Ccw,
         /* polygonOffsetEnable */ false,
+        /* drawBuffers         */ DrawBufferSet::MainSceneMRT,
         /* ssboBindingsMask    */ 0u,              // armed base binds its own buffers; MDI sub-path SSBOs not modeled
     },
 
@@ -260,6 +270,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* objectIdWriteEnabled*/ false,
         /* frontFace           */ FrontFace::Ccw,
         /* polygonOffsetEnable */ false,
+        /* drawBuffers         */ DrawBufferSet::MainSceneMRT,
         /* ssboBindingsMask    */ 0u,
     },
     // [12] VfxBillboardAdditive — particle_billboard, SRC_ALPHA/ONE (schema-exact)
@@ -274,6 +285,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* objectIdWriteEnabled*/ false,
         /* frontFace           */ FrontFace::Ccw,
         /* polygonOffsetEnable */ false,
+        /* drawBuffers         */ DrawBufferSet::MainSceneMRT,
         /* ssboBindingsMask    */ 0u,
     },
     // [13] VfxTubeAlpha — tube_ribbon, SRC_ALPHA/ONE_MINUS_SRC_ALPHA
@@ -288,6 +300,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* objectIdWriteEnabled*/ false,
         /* frontFace           */ FrontFace::Ccw,
         /* polygonOffsetEnable */ false,
+        /* drawBuffers         */ DrawBufferSet::SingleColor0,
         /* ssboBindingsMask    */ 0u,
     },
     // [14] VfxTubeAdditive — tube_ribbon, ONE/ONE (DIFFERS from billboard/mesh; schema-exact)
@@ -302,6 +315,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* objectIdWriteEnabled*/ false,
         /* frontFace           */ FrontFace::Ccw,
         /* polygonOffsetEnable */ false,
+        /* drawBuffers         */ DrawBufferSet::SingleColor0,
         /* ssboBindingsMask    */ 0u,
     },
     // [15] VfxMeshAlpha — vfx_mesh, SRC_ALPHA/ONE_MINUS_SRC_ALPHA
@@ -316,6 +330,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* objectIdWriteEnabled*/ false,
         /* frontFace           */ FrontFace::Ccw,
         /* polygonOffsetEnable */ false,
+        /* drawBuffers         */ DrawBufferSet::MainSceneMRT,
         /* ssboBindingsMask    */ 0u,
     },
     // [16] VfxMeshAdditive — vfx_mesh, SRC_ALPHA/ONE (schema-exact)
@@ -330,6 +345,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* objectIdWriteEnabled*/ false,
         /* frontFace           */ FrontFace::Ccw,
         /* polygonOffsetEnable */ false,
+        /* drawBuffers         */ DrawBufferSet::MainSceneMRT,
         /* ssboBindingsMask    */ 0u,
     },
     // [17] PostProcessComposite — endScene final composite (postprocess.frag).
@@ -347,6 +363,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* objectIdWriteEnabled*/ false,
         /* frontFace           */ FrontFace::Ccw,
         /* polygonOffsetEnable */ false,
+        /* drawBuffers         */ DrawBufferSet::SingleColor0,
         /* ssboBindingsMask    */ 0u,
     },
     // [18] PostProcessEdgeFog — runEdgeFog (edge_fog.frag). AlphaBlend
@@ -363,6 +380,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* objectIdWriteEnabled*/ false,
         /* frontFace           */ FrontFace::Ccw,
         /* polygonOffsetEnable */ false,
+        /* drawBuffers         */ DrawBufferSet::SingleColor0,
         /* ssboBindingsMask    */ 0u,
     },
     // [19] PostProcessFogOob — runFogOob (fog_oob.frag). Same state as EdgeFog.
@@ -377,6 +395,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* objectIdWriteEnabled*/ false,
         /* frontFace           */ FrontFace::Ccw,
         /* polygonOffsetEnable */ false,
+        /* drawBuffers         */ DrawBufferSet::SingleColor0,
         /* ssboBindingsMask    */ 0u,
     },
     // [20] TerrainSolid — main solid terrain (live = GPU-indirect thin MDI,
@@ -398,6 +417,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* objectIdWriteEnabled*/ false,
         /* frontFace           */ FrontFace::Ccw,
         /* polygonOffsetEnable */ false,
+        /* drawBuffers         */ DrawBufferSet::MainSceneMRT,
         /* ssboBindingsMask    */ 0u,
     },
     // [21-24] PostProcess MULTIPLY passes — runScreenShadow / runCloudShadow /
@@ -416,6 +436,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* objectIdWriteEnabled*/ false,
         /* frontFace           */ FrontFace::Ccw,
         /* polygonOffsetEnable */ false,
+        /* drawBuffers         */ DrawBufferSet::SingleColor0,
         /* ssboBindingsMask    */ 0u,
     },
     // [22] PostProcessCloudShadow
@@ -430,6 +451,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* objectIdWriteEnabled*/ false,
         /* frontFace           */ FrontFace::Ccw,
         /* polygonOffsetEnable */ false,
+        /* drawBuffers         */ DrawBufferSet::SingleColor0,
         /* ssboBindingsMask    */ 0u,
     },
     // [23] PostProcessShoreline
@@ -444,6 +466,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* objectIdWriteEnabled*/ false,
         /* frontFace           */ FrontFace::Ccw,
         /* polygonOffsetEnable */ false,
+        /* drawBuffers         */ DrawBufferSet::SingleColor0,
         /* ssboBindingsMask    */ 0u,
     },
     // [24] PostProcessSsaoApply
@@ -458,6 +481,7 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* objectIdWriteEnabled*/ false,
         /* frontFace           */ FrontFace::Ccw,
         /* polygonOffsetEnable */ false,
+        /* drawBuffers         */ DrawBufferSet::SingleColor0,
         /* ssboBindingsMask    */ 0u,
     },
 

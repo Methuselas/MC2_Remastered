@@ -75,6 +75,21 @@ struct ColorAttachmentMask {
     bool color2;   // GL_COLOR_ATTACHMENT2 — R32_UINT object ID (M1.5+)
 };
 
+// DRAWBUFFER-OWNERSHIP-1: the draw-buffer set this pass renders into, made an explicit
+// per-pass field instead of being inherited implicitly from whatever the previous pass
+// left bound (the "draw to SingleColor but assume MRT" latent risk). DESCRIPTIVE: this
+// is NOT emitted by applyPipeline — the recon ruling keeps draw-buffer binding out of
+// applyPipeline, and the gos_postprocess setSceneDrawBuffers() chokepoint stays the
+// single live authority. check-drawbuffer-ownership.py keeps this field in lockstep with
+// colorAttachments, the live call sites, and the render_pass_attachment.h contract table.
+enum class DrawBufferSet : uint8_t {
+    Unspecified = 0,   // not classified, or depth-only with caller-managed color mask
+    MainSceneMRT,      // {COLOR0, COLOR1[, COLOR2]} — setSceneDrawBuffers(MainSceneMRT)
+    SingleColor0,      // {COLOR0} only            — setSceneDrawBuffers(SingleColor)
+    ShadowDepthOnly,   // depth-only shadow FBO (dummy color attachment)
+    Backbuffer,        // default framebuffer (FBO 0)
+};
+
 struct PipelineDesc {
     // GL program object name (same underlying type as GLuint). Non-owning.
     // Zero = unset / invalid. Matches DrawPacket::pipelineId when used as
@@ -109,17 +124,22 @@ struct PipelineDesc {
     // padding byte before ssboBindingsMask — no struct growth.
     bool                polygonOffsetEnable;
 
+    // DRAWBUFFER-OWNERSHIP-1: declared draw-buffer set (see DrawBufferSet above).
+    // Descriptive metadata; occupies the last remaining padding byte before
+    // ssboBindingsMask — no struct growth.
+    DrawBufferSet       drawBuffers;
+
     // Bit N set → SSBO binding slot N is required. Covers slots 0-31.
     // See binding table in the file header above.
     uint32_t            ssboBindingsMask;
 };
 
 // v1 added DepthFunc (1 byte after depthWriteEnable) which pushes
-// ssboBindingsMask to offset 16 after natural padding.  FrontFace (v2) +
-// polygonOffsetEnable (v3) both drop into that same padding window, so the
-// struct stays at 20 bytes — the intentional budget; keep repacking off unless
-// the struct grows further. (3 padding bytes: frontFace + polygonOffsetEnable
-// used; one remains.)
+// ssboBindingsMask to offset 16 after natural padding.  FrontFace (v2),
+// polygonOffsetEnable (v3) and drawBuffers (v4, DRAWBUFFER-OWNERSHIP-1) all drop
+// into that same padding window, so the struct stays at 20 bytes — the intentional
+// budget. All 3 padding bytes (frontFace + polygonOffsetEnable + drawBuffers) are
+// now used; a further field needs a repack or a struct-size bump.
 static_assert(sizeof(PipelineDesc) <= 20,
               "PipelineDesc must stay small; it lives in hot-path cache entries.");
 

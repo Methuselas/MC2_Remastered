@@ -100,6 +100,7 @@ run_check "multiply_blend"         "py -3 scripts/check-multiply-blend.py --quie
 run_check "colormask_ownership"    "py -3 scripts/check-colormask-ownership.py --quiet"
 run_check "pass_attachment"        "py -3 scripts/check-pass-attachment-contract.py --quiet"
 run_check "frame_feedback"         "py -3 scripts/check-frame-resource-feedback.py --quiet"
+run_check "drawbuffer_ownership"   "py -3 scripts/check-drawbuffer-ownership.py --quiet"
 run_check "spirv_artifacts"        "py -3 scripts/check-spirv-artifacts.py --quiet"
 run_check "spirv_reflection"       "py -3 scripts/check-spirv-reflection-contract.py --quiet"
 run_check "shader_package"         "py -3 scripts/check-shader-package.py --quiet"

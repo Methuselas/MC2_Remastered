@@ -226,6 +226,13 @@ static void setSceneDrawBuffers(SceneDrawBufferMode mode,
     if (mode == SceneDrawBufferMode::SingleColor) {
         GLenum bufs[1] = { GL_COLOR_ATTACHMENT0 };
         glDrawBuffers(1, bufs);
+        // DRAWBUFFER-OWNERSHIP-1: self-report draw-set transitions at the single
+        // chokepoint so the frame trace shows which set is live per pass (catches a
+        // pass running under the wrong inherited set). Gated by the frame-plan gate.
+        if (render_frame_plan::traceEnabled()) {
+            std::fprintf(stderr, "[DRAWBUF] set=SingleColor0 attachments={0}\n");
+            std::fflush(stderr);
+        }
         return;
     }
 
@@ -242,6 +249,11 @@ static void setSceneDrawBuffers(SceneDrawBufferMode mode,
             GL_COLOR_ATTACHMENT1
         };
         glDrawBuffers(2, bufs);
+    }
+    if (render_frame_plan::traceEnabled()) {
+        std::fprintf(stderr, "[DRAWBUF] set=MainSceneMRT attachments={0,1%s}\n",
+                     oid ? ",2" : "");
+        std::fflush(stderr);
     }
 }
 
