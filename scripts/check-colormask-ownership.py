@@ -21,11 +21,10 @@ REGISTRY = ROOT / "RenderCore" / "PipelineRegistry.cpp"
 BINDER = ROOT / "GameOS" / "gameos" / "pipeline_binder.cpp"
 
 # Rows that opt in to colorMask ownership. KEEP IN SYNC with rowOwnsColorMask().
-# CURRENTLY EMPTY: the byte-gate proved a single-pass opt-in (composite) LEAKS its
-# per-attachment masks into the next-frame MRT draw, so the first opt-in is deferred
-# to the full colorMask rollout. This checker stays as the black-frame guard that any
-# future opt-in must pass (color0 must remain true).
-OPTED_IN: set[str] = set()
+# Composite re-opts-in under COLORMASK-ROLLOUT-1 (the beginScene all-TRUE keystone heals
+# its set-only leak each frame). This checker is the black-frame guard: an opted-in row
+# masking color0 (the scene color attachment) OFF would draw black -> FAIL.
+OPTED_IN = {"PostProcessComposite"}
 
 ROW_HEADER = re.compile(r"//\s*\[(\d+)\]\s*([A-Za-z]\w+)\b")
 COLOR_ATT = re.compile(

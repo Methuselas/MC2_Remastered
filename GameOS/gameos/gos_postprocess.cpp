@@ -1159,6 +1159,18 @@ void gosPostProcess::beginScene()
     sceneHasTerrain_ = false;  // reset each frame; set by markTerrainDrawn()
 
     glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
+
+    // COLORMASK-ROLLOUT-1 (keystone): assert the steady-state color mask (all
+    // attachments writable) at frame begin, before the clear + the first MRT scene
+    // draw. In normal frames this is a no-op (the mask is already all-TRUE), so it is
+    // byte-identical — but it HEALS any prior-frame set-only colorMask leak (e.g. a
+    // future applyPipeline opt-in that left attachment 1/2 masked off), guaranteeing
+    // terrain's GBuffer1 + objectId writes are never silently suppressed. Legacy
+    // bridges keep their own save/restore; this only sets a known-good baseline so
+    // incremental PipelineDesc colorMask opt-in is safe. (Resets the indexed masks
+    // too, so a prior glColorMaski leak on attachment 1/2 cannot persist.)
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+
     // Bind both draw buffers so the upcoming glClear in gameosmain.cpp clears
     // both COLOR0 and COLOR1 (the GBuffer1 normal/post-shadow-mask attachment).
     // After the clear, gameosmain.cpp calls pp->clearGBuffer1() to overwrite

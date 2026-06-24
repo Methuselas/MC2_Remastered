@@ -41,20 +41,19 @@ static bool pipelineColorMaskEnabled() {
     return s_on != 0;
 }
 
-// Opt-in set (row metadata, keyed by the applyPipeline dbgName). CURRENTLY EMPTY.
+// Opt-in set (row metadata, keyed by the applyPipeline dbgName).
 //
-// ★ FINDING (COLORMASK-OWNERSHIP-1 byte-gate): a single-pass colorMask opt-in LEAKS.
-// We tried composite ({t,f,f}); with the gate ON the water frame sha changed
-// (cb5a700e -> 8d40ce4a). Cause: composite emits glColorMaski(1,FALSE)(2,FALSE), and
-// since composite is the LAST world pass those masks leak into the NEXT frame's MRT
-// scene draw -> GBuffer1/objectId stop being written. So colorMask ownership CANNOT be
-// incremental-single-pass: it needs either a FULL rollout (every MRT-writing pass also
-// asserts its mask, so the leak self-heals) or a per-pass mask restore. Until then no
-// row opts in -> behavior is preserved everywhere (gate-OFF AND gate-ON byte-identical
-// while the set is empty). The mechanism + checker + gate ship ready for the rollout.
+// History: COLORMASK-OWNERSHIP-1 proved a single set-only opt-in LEAKS — composite
+// ({t,f,f}) emits glColorMaski(1,FALSE)(2,FALSE) and, being the LAST world pass, those
+// masks leaked into the NEXT frame's MRT scene draw (GBuffer1/objectId dropped; sha
+// cb5a700e -> 8d40ce4a). COLORMASK-ROLLOUT-1 adds the KEYSTONE: gosPostProcess::beginScene
+// asserts glColorMask(all TRUE) before the first MRT draw, so any prior-frame set-only leak
+// is healed at frame begin. With the keystone in place composite opt-in is SAFE again
+// (its 1/2=FALSE mask is reset next beginScene before any MRT consumer) and gate-ON is
+// byte-identical. TerrainSolidLODChunk opts in during its own routing slice, NOT here.
 static bool rowOwnsColorMask(const char* dbgName) {
-    (void)dbgName;
-    return false;  // opt-in deferred to the full colorMask rollout (see finding above)
+    if (!dbgName) return false;
+    return std::strcmp(dbgName, "PostProcessComposite") == 0;
 }
 
 void applyPipeline(const RenderCore::PipelineDesc& desc, const char* dbgName) {
