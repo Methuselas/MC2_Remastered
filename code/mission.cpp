@@ -44,6 +44,8 @@
 
 extern void visualTuning_applyProfile(const char*);  // MISSION-VISUAL-TUNING-1
 
+#include "brain_special_dispatch.h"  // TECHSCRIPT-SPECIAL-DISPATCH-1A: parseBrainSpecialBody
+
 #ifndef COLLSN_H
 #include"collsn.h"
 #endif
@@ -3094,6 +3096,20 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 			}
 		}
 		delete aiFit;
+	}
+
+	// TECHSCRIPT-SPECIAL-DISPATCH-1A: load per-warrior BrainSpecial body from <missionName>_specials.fit.
+	// Gate: MC2_BRAIN_DISPATCH=1 (default OFF). Requires MC2_BRAIN_RUNTIME=1 + MC2_BRAIN_RUNTIME_APPLY=1.
+	// File absence is silent. Only warriors with brainRuntime allocated (Enhanced mode) are loaded.
+	if (std::getenv("MC2_BRAIN_DISPATCH") && std::atoi(std::getenv("MC2_BRAIN_DISPATCH")) != 0) {
+		std::fprintf(stderr, "[BRAIN_DISPATCH] mission load: MC2_BRAIN_DISPATCH=1 mission=%s\n", missionName);
+		std::fflush(stderr);
+		for (unsigned long i = 1; i <= numWarriors; i++) {
+			MechWarriorPtr w = MechWarrior::warriorList[i];
+			if (w && w->getBrainRuntime()) {
+				parseBrainSpecialBody(missionName, w->getBrainRuntime()->specialBody);
+			}
+		}
 	}
 
 #ifdef LAB_ONLY
