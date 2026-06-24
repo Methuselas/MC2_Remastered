@@ -313,6 +313,22 @@ void __stdcall InitGameOS(HINSTANCE /*hInstance*/, HWND hWindow, char* commandLi
 #ifdef TRACY_ENABLE
                 TracyGpuContext;
 #endif
+                // EDITOR-CLIPCONTROL-PARITY-1: the editor shares the game's shaders,
+                // which assume the reverse-Z [0,1] NDC depth convention established by
+                // glClipControl(GL_ZERO_TO_ONE). The game sets this once at boot
+                // (gameosmain.cpp ~1150); the editor previously never set it, so editor
+                // depth was [-1,1] against [0,1]-expecting shaders -> wrong depth /
+                // z-fighting. Mirror the game's fail-closed contract exactly: refuse to
+                // start rather than render garbage depth. Must precede gos_CreateRenderer.
+                if (GLEW_ARB_clip_control || GLEW_VERSION_4_5) {
+                    glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE);
+                    EditorGameOSTrace("InitGameOS: clip_control=enabled origin=lower_left depth=zero_to_one");
+                } else {
+                    EditorGameOSTrace("InitGameOS: clip_control=unsupported fatal=1");
+                    gosASSERT(false);
+                    abort();
+                }
+
                 EditorGameOSTrace("InitGameOS: before gos_CreateRenderer context=%p window=%p", g_editorRenderContext, g_editorRenderWindow);
                 gos_CreateRenderer(g_editorRenderContext, g_editorRenderWindow, w, h);
                 EditorGameOSTrace("InitGameOS: after gos_CreateRenderer renderer=%p", getGosRenderer());
@@ -597,13 +613,19 @@ DWORD __stdcall RunGameOSLogic()
     // the Remastered terrain shader manages its own uniform matrices and
     // setting glMatrixMode/glFrustum would shadow them, leaving terrain gray.
     // gos_RendererBeginFrame() is responsible for all per-frame shader state.
+    // EDITOR-CLIPCONTROL-PARITY-1: the shared scene render path is reverse-Z
+    // (U2) — far plane = depth 0, GL_GEQUAL. The game clears the scene to
+    // glClearDepth(0.0). The editor previously used GL_LEQUAL + the GL default
+    // clearDepth(1.0), which clears the scene-FBO depth to the NEAR plane under
+    // reverse-Z -> every GEQUAL draw fails -> garbage/empty depth. Match game.
     glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL);
+    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL
     glDepthMask(GL_TRUE);
 
     // When pp_editor->beginScene() ran, the scene FBO is now bound — this
     // glClear hits the scene FBO's color/depth attachments, not FBO 0.
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClearDepth(0.0f);       // reverse-Z (U2): far plane = depth 0 (match game scene clear)
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     // F3 render-contract: stamp GBuffer1 with the post-shadow-eligible
