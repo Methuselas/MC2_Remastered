@@ -87,7 +87,7 @@
       "pipelineId": null,
       "shaderBase": "gos_terrain",
       "stateOwner": "legacy/ad-hoc",
-      "next": "needs_pass_reg_first: terrain MAIN solid pass — its own scoped slice (TERRAIN-SOLID-PIPELINE-REGISTRATION-RECON)"
+      "next": "RECON DONE -> terrain-main-pipeline-registration-recon-1.md. Live = GPU-indirect thin MDI (gameos_graphics.cpp:4251, gos_terrain_thin.vert+gos_terrain.frag, MC2_TERRAIN_INDIRECT default-ON). State: depthTest/GEQUAL reverse-Z/depthWrite ON, blend OFF, colorAttachments {color0,GBuffer1} = {t,t,f}, objectId NOT written. Registerable as ONE row BUT 2 blockers: (1) cull/frontFace NEVER set at draw (inherits ambient) -> must probe empirically before naming cullMode (risk: blank/half-cull); (2) applyPipeline doesn't set glColorMask, so the load-bearing glColorMask(TRUE) shadow-leak repair (4011) must stay at the call site. Sequence: TERRAIN-CULL-STATE-PROBE-1 -> TERRAIN-SOLID-PIPELINE-REGISTRATION-1 (descriptive) -> TERRAIN-SOLID-APPLYPIPELINE-ROUTING-1 (byte-gate). LOD-chunk = separate later row (cull None, MRT). DEFER until cull probed."
     },
     "TerrainOverlay": {
       "status": "ROUTED_BY_APPLYPIPELINE",
