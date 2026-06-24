@@ -158,3 +158,39 @@ CALL-CHAIN-1A           ← reads through the new loader
 
 Until LOADER-RAW lands, all real-content stress tests need the bracket-syntax workaround (or hand-port). Our synthetic fixtures continue to work either way.
 
+
+---
+
+## Addendum (2026-06-24 #3): Authority model — engine owns the spec
+
+Disambiguating the multiple "Carver V" things and locking in the authority hierarchy.
+
+**Disambiguation:**
+- **Carver V** — the base stock MC2 campaign (loads with no mods active).
+- **MCO Carver V** — MCO mod's version of the stock campaign.
+- **MC2X CVE-G** — MC2X mod's version.
+- **`carver_v_enhanced`** — a modder's framework-sketch fixture (the "TechScript" / `mission_specials.fit` content we'd been analyzing). NON-CANONICAL.
+
+**Authority model (locked):**
+
+```
+Canonical spec:     engine-owned BrainSpecial / TechScript DSL
+Compatibility corpus: carver_v_enhanced and other mod campaigns
+Migration inputs:    legacy ABL, carver-shaped experiments, hand-ports
+Runtime contract:    normalized internal BrainSpecialBody, not source-file quirks
+```
+
+**Implications:**
+- Our fixture format IS the spec. The bracket form `[foo]`, the brace-block DSL, whatever the engine reads — that's normative.
+- `carver_v_enhanced` was a napkin sketch from the modder scoping out what the framework could look like. Useful design inspiration; not the law; may even be wrong in places.
+- Converter tooling emits OUR spec, not a clone of carver syntax. We pick the spec; mod content adapts to us (manually or via converter).
+- The `LOADER-RAW-1` raw scanner is "engine-owned brace/body DSL loads without FitIniFile string-shape limitations" — NOT "real carver content now loads." Carver-shaped fixtures are stress-shape probes, not requirements.
+- Mod-campaign stress: hand-port one stress mission per slice into our spec; full converter is a later arc we design.
+
+**Bad pressure this removes:** "every weird upstream phrase must work forever." Replaced with: "every engine-owned fixture must work forever; converters adapt external formats into our shape." That's exactly how you avoid rebuilding ABL chaos under a new name.
+
+**Adjusted acceptance defaults for the rest of the arc:**
+- Synthetic canonical fixtures are fully legitimate proofs.
+- Carver-shaped fixtures are optional stress-shape probes, not acceptance gates.
+- Each effect verb: canonical fixture + one behavior + one slot write + APPLY-off trace-only + APPLY-on effect + justified forbidden-call exception.
+
