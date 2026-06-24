@@ -24,19 +24,20 @@
 // Calls ONLY fprintf + loop + recursive chained dispatch. DOES NOT call setGeneralTacOrder
 // or any order/movement function. Verified: no warrior pointer, no MechWarrior type here.
 //
-// RELAXED-CALL GUARD — executeSpecialBody_Apply (1B + UNITEJECT + COREGUARD + COREMOVETO + COREATTACK):
+// RELAXED-CALL GUARD — executeSpecialBody_Apply (1B + UNITEJECT + COREGUARD + COREMOVETO + COREATTACK + UNITRETREAT):
 // Permitted order calls: warrior->setGeneralTacOrder() for:
 //   Brain.CorePower false                 → TACTICAL_ORDER_POWERDOWN
 //   Unit.Eject (or alias coreEject)       → TACTICAL_ORDER_EJECT
 //   OPORD.CoreGuard                       → TACTICAL_ORDER_GUARD
 //   OPORD.CoreMoveTo x y z [params=N]     → TACTICAL_ORDER_MOVETO_POINT (NaN-coord soft-fail guard)
 //   OPORD.CoreAttack <target_wid>         → TACTICAL_ORDER_ATTACK_OBJECT (triple-guard: bad-WID/self/friendly)
+//   Unit.Retreat (or alias coreRetreat)   → TACTICAL_ORDER_WITHDRAW (no-arg, engine owns withdraw nav)
 // All fire IN THE ROOT BODY ONLY. Chained bodies (via TechSpecial.Call) are trace-only in 1A.
 // STILL FORBIDDEN: orderAttackObject (forbidden side-effects), setAttackTarget, setSituationOpenFire,
 // setPlayerTacOrder, setAlarmTacOrder, requestHelp, requestTarget, calcTacOrder,
 // coreMoveTo (the C++ Mover method, distinct from the OPORD DSL verb), setMainGoal,
 // clearCurTacOrder, any movement/attack/OPORD-advance/commander function NOT listed above.
-// DISPATCH-EFFECT-COREATTACK-1: OPORD.CoreAttack added (bare-integer WID, triple-guard, pure once-guard).
+// DISPATCH-EFFECT-UNITRETREAT-1: Unit.Retreat + coreRetreat alias added (no-arg, pure once-guard).
 //
 // FSM-TODO SCANNER (1C — scanFsmTodosFromFile):
 // Calls ONLY std::ifstream + std::regex + fprintf. NO order functions, NO movement/attack/OPORD calls.
