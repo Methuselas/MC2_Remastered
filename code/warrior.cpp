@@ -2282,9 +2282,9 @@ long MechWarrior::runBrain (void) {
 
 		bool dispatcherAppliedEffect = false;
 		if (s_dispatchApply && brainRuntime && brainRuntime->specialBody.loaded) {
-			// DISPATCH-EFFECT-UNITEJECT-1: bodyHasEffect() now covers POWERDOWN and EJECT.
+			// DISPATCH-EFFECT-COREGUARD-1: bodyHasEffect() now covers POWERDOWN, EJECT, and GUARD.
 			// CALL-CHAIN-1A: dispatch ALL loaded bodies (not just effect bodies).
-			// executeSpecialBody_Apply traces all verbs; applies POWERDOWN or EJECT ONCE if present.
+			// executeSpecialBody_Apply traces all verbs; applies POWERDOWN/EJECT/GUARD ONCE if present.
 			// The HOLD suppression only triggers when an effect verb was actually applied
 			// (dispatcherAppliedEffect=true ← Apply return value true).
 			const SpecialIndex* idx = brainRuntime->specialIndex.empty()
@@ -2292,12 +2292,14 @@ long MechWarrior::runBrain (void) {
 
 			const bool hasPowerdown = bodyHasPowerdown(brainRuntime->specialBody);
 			const bool hasEject     = bodyHasUnitEject(brainRuntime->specialBody);
-			const bool hasEffect    = hasPowerdown || hasEject;
+			const bool hasGuard     = bodyHasCoreGuard(brainRuntime->specialBody);
+			const bool hasEffect    = hasPowerdown || hasEject || hasGuard;
 
 			// Once-guard: if the effect was already applied, suppress HOLD without re-applying.
 			const bool powerdownDone = hasPowerdown && brainRuntime->dispatchEffectApplied;
 			const bool ejectDone     = hasEject     && brainRuntime->ejectEffectApplied;
-			const bool alreadyDone   = hasEffect && ((!hasPowerdown || powerdownDone) && (!hasEject || ejectDone));
+			const bool guardDone     = hasGuard     && brainRuntime->guardEffectApplied;
+			const bool alreadyDone   = hasEffect && ((!hasPowerdown || powerdownDone) && (!hasEject || ejectDone) && (!hasGuard || guardDone));
 
 			if (!alreadyDone) {
 				if (hasEffect) {
@@ -2308,6 +2310,8 @@ long MechWarrior::runBrain (void) {
 						brainRuntime->dispatchEffectApplied = 1;
 					if (hasEject && !brainRuntime->ejectEffectApplied)
 						brainRuntime->ejectEffectApplied = 1;
+					if (hasGuard && !brainRuntime->guardEffectApplied)
+						brainRuntime->guardEffectApplied = 1;
 					bool applied = executeSpecialBody_Apply(brainRuntime->specialBody, this, vehicleWID,
 					                                        &brainRuntime->varStore, idx, "");
 					if (applied)

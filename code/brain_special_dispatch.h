@@ -118,8 +118,11 @@ bool bodyHasPowerdown(const BrainSpecialBody& body);
 // DISPATCH-EFFECT-UNITEJECT-1: Returns true if body contains Unit.Eject or coreEject alias.
 bool bodyHasUnitEject(const BrainSpecialBody& body);
 
-// DISPATCH-EFFECT-UNITEJECT-1: Returns true if body has ANY GENERAL-slot-claiming effect verb.
-// (currently: POWERDOWN || EJECT)
+// DISPATCH-EFFECT-COREGUARD-1: Returns true if body contains OPORD.CoreGuard or coreGuard alias.
+bool bodyHasCoreGuard(const BrainSpecialBody& body);
+
+// DISPATCH-EFFECT-COREGUARD-1: Returns true if body has ANY GENERAL-slot-claiming effect verb.
+// (currently: POWERDOWN || EJECT || GUARD)
 bool bodyHasEffect(const BrainSpecialBody& body);
 
 // TRACE ONLY. Zero effects. No orders. No state writes.

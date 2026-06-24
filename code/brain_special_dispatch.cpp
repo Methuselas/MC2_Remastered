@@ -366,6 +366,8 @@ static const char* aliasToCanonical(const char* verb) {
         return "Unit.Eject";
     if (std::strcmp(verb, "corePower") == 0)
         return "Brain.CorePower";
+    if (std::strcmp(verb, "coreGuard") == 0)
+        return "OPORD.CoreGuard";
     return verb;
 }
 
@@ -393,11 +395,23 @@ bool bodyHasUnitEject(const BrainSpecialBody& body) {
 }
 
 // ---------------------------------------------------------------------------
-// bodyHasEffect — DISPATCH-EFFECT-UNITEJECT-1
+// bodyHasCoreGuard — DISPATCH-EFFECT-COREGUARD-1
+// Returns true if the body contains an OPORD.CoreGuard (or coreGuard alias) verb token.
+bool bodyHasCoreGuard(const BrainSpecialBody& body) {
+    for (const std::string& verb : body.verbs) {
+        const char* canonical = aliasToCanonical(verb.c_str());
+        if (std::strcmp(canonical, "OPORD.CoreGuard") == 0)
+            return true;
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// bodyHasEffect — DISPATCH-EFFECT-COREGUARD-1 (extended from UNITEJECT-1)
 // Returns true if the body has ANY effect verb that claims the GENERAL slot
-// (currently: POWERDOWN or EJECT).
+// (currently: POWERDOWN, EJECT, or GUARD).
 bool bodyHasEffect(const BrainSpecialBody& body) {
-    return bodyHasPowerdown(body) || bodyHasUnitEject(body);
+    return bodyHasPowerdown(body) || bodyHasUnitEject(body) || bodyHasCoreGuard(body);
 }
 
 // ---------------------------------------------------------------------------
@@ -407,14 +421,15 @@ bool bodyHasEffect(const BrainSpecialBody& body) {
 //
 // RELAXED-CALL GUARD CONTRACT:
 //   The ONLY order function called here is warrior->setGeneralTacOrder().
-//   Called for exactly ONE verb: "Brain.CorePower false" → TACTICAL_ORDER_POWERDOWN.
+//   Permitted verbs (THREE total): Brain.CorePower false → POWERDOWN,
+//   Unit.Eject (or coreEject alias) → EJECT, OPORD.CoreGuard (or coreGuard alias) → GUARD.
 //   All other verbs produce [BRAIN_DISPATCH] or [BRAIN_DISPATCH_UNKNOWN] trace only.
 //   FORBIDDEN in this function: setPlayerTacOrder, setAlarmTacOrder, requestHelp,
 //   requestTarget, calcTacOrder, coreMoveTo, setMainGoal, clearCurTacOrder,
 //   any movement/attack/OPORD-advance/commander function.
-//   Verified by inspection: only one setGeneralTacOrder call below; no other order calls.
+//   Verified by inspection: exactly three setGeneralTacOrder call-sites below; no other order calls.
 //
-// Returns true if the Brain.CorePower false POWERDOWN effect was applied.
+// Returns true if a GENERAL-slot effect (POWERDOWN, EJECT, or GUARD) was applied.
 // Caller uses the return value to suppress the synthetic HOLD_TASK (one GENERAL-slot write per tick).
 //
 // CALL-CHAIN-1A NOTE: TechSpecial.Call verbs in the ROOT body are dispatched trace-only
@@ -517,6 +532,15 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
             ejectOrder.init(ORDER_ORIGIN_SELF, TACTICAL_ORDER_EJECT);
             warrior->setGeneralTacOrder(ejectOrder);
             std::fprintf(stderr, "[BRAIN_DISPATCH_APPLY] verb=Unit.Eject effect=EJECT wid=%d\n", wid);
+            std::fflush(stderr);
+            appliedEffect = true;
+        } else if (std::strcmp(vpCanon, "OPORD.CoreGuard") == 0) {
+            // DISPATCH-EFFECT-COREGUARD-1: OPORD.CoreGuard (or alias coreGuard) → TACTICAL_ORDER_GUARD.
+            // ROOT BODY ONLY. Fires exactly once (guardEffectApplied once-guard in warrior.cpp).
+            TacticalOrder guardOrder;
+            guardOrder.init(ORDER_ORIGIN_SELF, TACTICAL_ORDER_GUARD);
+            warrior->setGeneralTacOrder(guardOrder);
+            std::fprintf(stderr, "[BRAIN_DISPATCH_APPLY] verb=OPORD.CoreGuard effect=GUARD wid=%d\n", wid);
             std::fflush(stderr);
             appliedEffect = true;
         } else if (isRecognizedVerb(vpCanon)) {
