@@ -34,6 +34,12 @@ EditorCamera.h			: Interface for the EditorCamera component.
 #endif
 
 #include "../EditorBridge/EditorRenderBridge.h"  // GPU batcher/registry lifecycle (firewall)
+#include <GL/glew.h>                              // GLint/GL_VIEWPORT/glGetIntegerv for the
+                                                  // throttled [PICKW] viewport diag below. Was
+                                                  // transitively pulled by the gos_*_batcher/registry
+                                                  // headers removed in EDITOR-BRIDGE-GPU-FIREWALL-1;
+                                                  // glew is a raw-GL header, not one of the 4 GPU-
+                                                  // subsystem headers the editor firewall forbids.
 #include "../GameOS/gameos/view_uniforms_gl.h"  // setCurrentView + uploadViewUniforms
 #include "EditorGpuTimer.h"                      // MC2_EDITOR_GPU_TIMERS per-pass GPU timing
 

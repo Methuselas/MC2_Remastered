@@ -203,6 +203,21 @@ void InitDW(void)
 }
 
 // ---------------------------------------------------------------------------
+// mc2_hzb_dump_camera_view  (HZB occlusion-cull debug capture stub)
+// ---------------------------------------------------------------------------
+// PRE-EXISTING editor-link gap, NOT part of EDITOR-GAME-RUNTIME-PARITY-ARC:
+// commit fe0f2a9c added an HZB camera capture/replay tool. Its definition lives
+// in code/gamecam.cpp (a game TU not linked into EditRel), but GuiRuntime/
+// EditorInspector.cpp (shared by the editor) calls it from drawImGui(). EditRel
+// has no HZB cull capture, so provide a clean no-op shim — same pattern as the
+// other GameOS symbols this file supplies. (Surfaced now because this arc made
+// EditRel link/build for the first time in this worktree.)
+extern "C" void mc2_hzb_dump_camera_view(void)
+{
+    // No-op: HZB camera-view capture is a game-only debug tool; absent in EditRel.
+}
+
+// ---------------------------------------------------------------------------
 // InitGameOS
 // ---------------------------------------------------------------------------
 // In the original windows.lib this initialised DirectX, registered the
