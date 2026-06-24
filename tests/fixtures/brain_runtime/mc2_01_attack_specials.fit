@@ -1,0 +1,11 @@
+FITini
+; DISPATCH-EFFECT-COREATTACK-1: bad-WID gate fixture (mc2_01).
+; WID=0 always fails the bad-WID guard (parsedWID <= 0 check).
+; Proves the soft-fail path: BRAIN_DISPATCH_ATTACK_BAD_WID fires, no Apply.
+; Warrior4 (wid=4) uses this body under MC2_BRAIN_SPECIAL_FIT=mc2_01_attack.
+
+[BrainSpecial]
+
+[Body]
+st DO0 = "OPORD.CoreAttack 0"
+st DO1 = "HOLD"
