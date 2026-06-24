@@ -245,6 +245,7 @@ ALLOWLIST=(
     MC2_SUBSTRATE_COALESCE_LEGACY  # legacy
     MC2_SUBSTRATE_COALESCE_TRACE  # trace
     MC2_TERRAIN_CULL_WIDE         # feature -- promote-to-registry
+    MC2_TERRAIN_CULL_PROBE        # trace -- TERRAIN-CULL-STATE-PROBE-1 (ambient cull readback)
     MC2_TERRAIN_ADMISSION_LEGACY  # legacy
     MC2_TERRAIN_COST_SPLIT      # feature -- promote-to-registry
     MC2_TERRAIN_DEBUG_MODE      # trace

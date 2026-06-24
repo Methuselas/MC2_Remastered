@@ -75,6 +75,27 @@ polygonOffsetEnable  = false
 4. SEPARATE later: LOD-chunk row (cullMode=None per gos_terrain_lod_chunk.cpp:592,
    colorAttachments color1=true, MRT GBuffer1) — opt-in path, its own slice.
 
+## ✅ BLOCKER #1 RESOLVED — TERRAIN-CULL-STATE-PROBE-1 (2026-06-23)
+Probed the live ambient cull/frontFace at the terrain-solid dispatch CHOKEPOINT
+(txmmgr.cpp:2868, before the indirect/patch-stream/legacy branch — none of which set
+cull). mc2_01, 8 consecutive frames, **unanimous**:
+```
+[TERRAIN_CULL_PROBE] path=dispatch cull=disabled cullMode=FRONT frontFace=CCW
+```
+→ terrain renders with **GL_CULL_FACE DISABLED, frontFace CCW**. So the row is
+**cullMode = None, frontFace = Ccw** — which reproduces the ambient EXACTLY (registering
+it is a behavior no-op, no blank/half-cull risk). (Note: the probe had to sit at the
+dispatch chokepoint, not the indirect bridge or patch-stream flush — in capture/smoke
+mode the water frame is NOT solid-armed, so neither of those per-path probes fired; the
+chokepoint covers all three paths.) Probe kept gated default-OFF (MC2_TERRAIN_CULL_PROBE)
+at txmmgr.cpp for future re-verification.
+
+Remaining blocker #2 (glColorMask repair must stay call-site) still stands for the
+ROUTING slice. The DESCRIPTIVE registration (TERRAIN-SOLID-PIPELINE-REGISTRATION-1) is
+now UNBLOCKED: glProgramName=0, blend=Opaque, depthTest+write ON, depthFunc=GreaterEqual,
+**cullMode=None, frontFace=Ccw**, colorAttachments={t,t,f}, objectIdWriteEnabled=false,
+polygonOffsetEnable=false.
+
 ## DO NOT
 - Cover indirect + LOD-chunk with one row (different cull + the LOD path is opt-in).
 - Route before the cull probe (risk: blanked/half-culled terrain).
