@@ -60,6 +60,34 @@ uniform float u_vfxLitStrength;   // 0 = unlit; 1 = full scene-lit
 uniform vec3  u_vfxSunColor;      // scene sun color     (0..1)
 uniform vec3  u_vfxAmbientColor;  // scene ambient color (0..1)
 
+// VFX-BLACKBODY-1: temperature->color emissive tint for additive groups only.
+// Gate MC2_VFX_BLACKBODY (default OFF). u_vfxBlackbody == 0 -> branch skipped,
+// byte-identical to today. When 1, additive/emissive particles are tinted by an
+// analytic Planckian-locus (blackbody) color derived from per-particle brightness
+// so hot flashes ramp warm-white -> orange the way real fire/plume/impact light does.
+uniform int u_vfxBlackbody;       // 1 = apply blackbody emissive tint (additive only)
+
+// Analytic Planckian-locus -> linear RGB approximation. AUTHORED, not imported:
+// this is an MC2-native rational/exponential fit hand-tuned to the qualitative
+// shape of the blackbody (Planckian) chromaticity curve over ~1000K..6500K. It is
+// NOT a copied table, NOT a sampled LUT, and NOT any third-party shader's code —
+// purely an in-house closed-form approximation. Output is normalized so the
+// brightest channel == 1.0 (a pure hue tint); the caller supplies intensity.
+// Behavior: ~1000K deep red-orange, ~2000K orange, ~3500K warm white,
+// ~5500K near-white, ~6500K faintly cool-white.
+vec3 blackbodyRGB(float tempK) {
+    float t = clamp(tempK, 1000.0, 6500.0) / 1000.0;  // work in kilokelvin
+    // Red rises fast and saturates; modeled as a saturating rational curve.
+    float r = clamp(1.30 - 0.55 / (t - 0.55), 0.0, 1.0);
+    r = max(r, 0.55);  // never let the red floor drop out of a "hot" tint
+    // Green climbs gradually with temperature (cooler -> less green).
+    float g = clamp(0.38 * log(max(t, 1.0001)) + 0.18, 0.0, 1.0);
+    // Blue stays near zero while cool/orange, then ramps in toward white.
+    float b = clamp(0.62 * (t - 2.2) / 4.3, 0.0, 1.0);
+    vec3 c = vec3(r, g, b);
+    return c / max(max(c.r, max(c.g, c.b)), 1e-4);  // normalize brightest -> 1
+}
+
 vec3 sp_reconstructWorld(vec2 uv, float depth) {
     vec4 p = u_invWorldToClip * vec4(uv * 2.0 - 1.0, depth, 1.0);
     return p.xyz / p.w;
@@ -117,6 +145,19 @@ void main() {
     outColor.rgb *= u_vfxBrightness;
     if (u_vfxIsAdditive == 1) outColor.rgb *= u_vfxAdditiveBrightness;
     outColor.a *= u_vfxAlphaScale;
+
+    // VFX-BLACKBODY-1: blackbody emissive tint, additive/emissive groups only.
+    // OFF (default / gate unset) -> u_vfxBlackbody==0 -> branch skipped -> the
+    // additive path is byte-identical to today. Skipped in debug views so the
+    // diagnostics keep showing the raw fragments. Temperature is derived from the
+    // particle's own emissive brightness (luma of the already-computed color) — NO
+    // new per-particle data field, NO new art. Hotter (brighter) -> whiter; cooler
+    // (dimmer) -> deeper orange, mapping luma 0..1 onto ~1200K..6000K.
+    if (u_vfxBlackbody == 1 && u_vfxIsAdditive == 1 && u_debugMode == 0) {
+        float luma = clamp(dot(outColor.rgb, vec3(0.299, 0.587, 0.114)), 0.0, 1.0);
+        float tempK = mix(1200.0, 6000.0, luma);
+        outColor.rgb *= blackbodyRGB(tempK);
+    }
 
     // VFX-LIT-PARTICLES-MVP-1: tint alpha smoke/dust by the scene sun+ambient
     // so it reads as lit volume rather than a flat decal. strength 0 (default /

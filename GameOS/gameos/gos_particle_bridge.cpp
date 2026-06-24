@@ -186,6 +186,21 @@ void vfxLitInitIfNeeded() {
     s_lit_initialized = true;
 }
 
+// VFX-BLACKBODY-1: blackbody (temperature->color) emissive tint for additive
+// groups. Gate MC2_VFX_BLACKBODY (default OFF -> byte-identical). When OFF the
+// bridge uploads u_vfxBlackbody=0 so the FS tint branch is skipped entirely.
+// When ON, only additive/emissive groups get u_vfxBlackbody=1 in the draw loop;
+// alpha groups are never tinted. No emission/lifetime/timing effect, no new
+// per-particle data — temperature is derived in-shader from emissive brightness.
+bool  s_blackbody_initialized = false;
+bool  s_blackbody_enabled     = false;
+void vfxBlackbodyInitIfNeeded() {
+    if (s_blackbody_initialized) return;
+    const char* v = std::getenv("MC2_VFX_BLACKBODY");
+    s_blackbody_enabled     = (v && v[0] == '1');
+    s_blackbody_initialized = true;
+}
+
 // P0-4: Cached uniform locations — populated once in ensureInitialized()
 // after the program links. -2 = not yet queried; -1 = not found (GLSL may
 // strip unused uniforms); >= 0 = valid location.
@@ -209,6 +224,8 @@ GLint s_loc_vfxBrightness         = -2;
 GLint s_loc_vfxAdditiveBrightness = -2;
 GLint s_loc_vfxAlphaScale         = -2;
 GLint s_loc_vfxIsAdditive         = -2;
+// VFX-BLACKBODY-1: blackbody emissive-tint enable uniform (default 0 = OFF).
+GLint s_loc_vfxBlackbody          = -2;
 // VFX-SHADER-AGE-FADE-PARITY-1: age-driven soft death fade (default 0.0 = OFF).
 GLint s_loc_vfxAgeFade            = -2;
 // VFX-SOFT-PARTICLES-MVP-1: soft-particle depth-fade uniforms.
@@ -282,6 +299,7 @@ void ensureInitialized() {
         s_loc_vfxAdditiveBrightness = glGetUniformLocation(s_prog->shp_, "u_vfxAdditiveBrightness");
         s_loc_vfxAlphaScale         = glGetUniformLocation(s_prog->shp_, "u_vfxAlphaScale");
         s_loc_vfxIsAdditive         = glGetUniformLocation(s_prog->shp_, "u_vfxIsAdditive");
+        s_loc_vfxBlackbody          = glGetUniformLocation(s_prog->shp_, "u_vfxBlackbody");
         // VFX-SHADER-AGE-FADE-PARITY-1: age fade (VS uniform; may be -1 if
         // dead-code elim strips it when MC2_TUNE_VFX_AGE_FADE is not set).
         s_loc_vfxAgeFade            = glGetUniformLocation(s_prog->shp_, "u_vfxAgeFade");
@@ -971,6 +989,11 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
     if (s_loc_vfxAgeFade            >= 0) glUniform1f(s_loc_vfxAgeFade,            s_vfxAgeFade);
     // u_vfxIsAdditive defaults to alpha (0); set per-group in the draw loop.
     if (s_loc_vfxIsAdditive         >= 0) glUniform1i(s_loc_vfxIsAdditive, 0);
+    // VFX-BLACKBODY-1: gate-OFF (default) uploads 0 here and never raises it, so
+    // the FS tint branch is dead -> byte-identical. Gate-ON raises it to 1 ONLY
+    // for additive groups in the per-group draw loop below.
+    vfxBlackbodyInitIfNeeded();
+    if (s_loc_vfxBlackbody          >= 0) glUniform1i(s_loc_vfxBlackbody, 0);
 
     // ── VFX-SOFT-PARTICLES-MVP-1: depth-fade setup ───────────────────
     // When the gate is OFF we upload u_softDistance=0 so the FS fade branch is
@@ -1144,6 +1167,12 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
             // additive-brightness scale applies only to additive groups.
             if (s_loc_vfxIsAdditive >= 0)
                 glUniform1i(s_loc_vfxIsAdditive, grp.blendMode == 1 ? 1 : 0);
+            // VFX-BLACKBODY-1: enable the blackbody emissive tint only for
+            // additive/emissive groups, and only while the gate is ON. Alpha
+            // groups (smoke/dust) keep u_vfxBlackbody=0 -> never tinted.
+            if (s_loc_vfxBlackbody >= 0)
+                glUniform1i(s_loc_vfxBlackbody,
+                            (s_blackbody_enabled && grp.blendMode == 1) ? 1 : 0);
 
             // Bind the resolved texture.
             glBindTexture(GL_TEXTURE_2D, glTex);
