@@ -133,6 +133,27 @@ static unsigned long s_spotDiagPackActiveSum = 0;
 static unsigned long s_spotDiagPackInactSum  = 0;
 static unsigned long s_spotDiagPackPointSum  = 0;
 
+// LIGHT-CLAMP-RAISE-STAGE1-1 — small env helper (default OFF; "1" only).
+static inline bool lightClampEnvFlagDefaultOff(const char* name) {
+    const char* v = getenv(name);
+    return v && v[0] == '1' && v[1] == '\0';
+}
+
+// MC2_LIGHT_CLAMP_PROBE (default OFF) — pure observation. Tracks the per-object
+// HIGH-WATER populated light count across all GatherLightsParameters calls and
+// emits a summary line. Answers "do stock missions ever exceed 16 lights/object?"
+// Does NOT change behavior when ON.
+static const bool    s_lightClampProbe        = lightClampEnvFlagDefaultOff("MC2_LIGHT_CLAMP_PROBE");
+static uint32_t      s_lightClampProbeHighWater = 0;
+static unsigned long s_lightClampProbeCalls     = 0;
+
+// MC2_LIGHT_CLAMP_FIXTURE (default OFF) — synthetic injector of deterministic
+// extra point lights into slots [populated..32) to prove slots >16 ever render.
+// NEVER writes past ABI cap 32 (clamps injection to slot 31). NEVER changes
+// stock behavior unless explicitly enabled. Yells a clear log line when active.
+static const bool    s_lightClampFixture      = lightClampEnvFlagDefaultOff("MC2_LIGHT_CLAMP_FIXTURE");
+static bool          s_lightClampFixtureYelled = false;
+
 // ---------------------------------------------------------------------------
 // [SPFLUSH_COST_SPLIT v1] — txmmgr-side RDTSC accumulator.
 // Measures the batcher_prepareBaseInstanceTable() + bucket-upload span each
@@ -2095,11 +2116,13 @@ void GatherLightsParameters(TG_HWLightsData* lights)
 	}());
 
 	uint32_t num_lights = 0;
-	// LIGHT-ABI-WIDEN-STAGE0-1: runtime population stays CLAMPED at 16 even though
-	// the GPU ABI cap (MAX_HW_LIGHTS_IN_WORLD) widened to 32. Stage 0 is a pure ABI
-	// widening — the box got bigger, but we still only put 16 things in it. Do NOT
-	// change this to MAX_HW_LIGHTS_IN_WORLD; that is the Stage 1 clamp-raise (later).
-	static constexpr uint32_t kRuntimeLightClamp = 16;
+	// LIGHT-CLAMP-RAISE-STAGE1-1: runtime population now reaches the full GPU ABI
+	// cap (MAX_HW_LIGHTS_IN_WORLD = 32). Stage 0 widened the struct/stride to 32;
+	// this slice "allows putting 32 in the box". Safe because every shader per-light
+	// loop is min(numLights.x, MAX_LIGHTS_IN_WORLD)-bound (cost/reads follow the
+	// populated count), and the break below (last write = slot 31) is the overrun
+	// guard. The break loop is cap-agnostic — it just trips later now.
+	static constexpr uint32_t kRuntimeLightClamp = MAX_HW_LIGHTS_IN_WORLD; // 32
 	const uint32_t max_num_lights = kRuntimeLightClamp;
 
 	const TG_LightPtr* listOfLights = TG_Shape::s_listOfLights;
@@ -2216,7 +2239,81 @@ void GatherLightsParameters(TG_HWLightsData* lights)
 		s_lightDumpDone = true;
 	}
 
+	// MC2_LIGHT_CLAMP_FIXTURE (default OFF) — deterministic synthetic point lights
+	// injected into slots [num_lights..32) to PROVE slots >16 ever populate AND
+	// render. NEVER writes past slot 31 (ABI cap 32). NEVER fires unless the env
+	// gate is "1". Deterministic: fixed color/dir/falloff derived from slot index.
+	if (s_lightClampFixture && num_lights < MAX_HW_LIGHTS_IN_WORLD) {
+		const uint32_t injectStart = num_lights;
+		// Fill to the cap; the loop bound (< MAX_HW_LIGHTS_IN_WORLD) guarantees the
+		// last written slot is 31 — never an overrun of the 32-wide arrays.
+		while (num_lights < MAX_HW_LIGHTS_IN_WORLD) {
+			const uint32_t s = num_lights;
+
+			// Identity lightToWorld (point light at origin-relative offset baked
+			// into dir is unused; point lights use position via lightToWorld).
+			for (int c = 0; c < 16; ++c)
+				lights->lightToWorld[s][c] = (c % 5 == 0) ? 1.0f : 0.0f; // identity
+
+			// Deterministic direction (unused for POINT but populate for uniformity).
+			lights->lightDir[s][0] = 0.0f;
+			lights->lightDir[s][1] = -1.0f;
+			lights->lightDir[s][2] = 0.0f;
+			lights->lightDir[s][3] = (float)TG_LIGHT_POINT;
+
+			// Deterministic bright color that cycles by slot so the extra lights
+			// are visibly distinct when they contribute.
+			lights->lightColor[s][0] = ((s & 1) ? 1.0f : 0.25f);
+			lights->lightColor[s][1] = ((s & 2) ? 1.0f : 0.25f);
+			lights->lightColor[s][2] = ((s & 4) ? 1.0f : 0.25f);
+			lights->lightColor[s][3] = 1.0f;
+
+			// Wide falloff so the synthetic lights actually reach the object.
+			lights->lightFalloff[s][0] = 0.0f;       // closeDistance
+			lights->lightFalloff[s][1] = 1000.0f;    // farDistance
+			lights->lightFalloff[s][2] = 1.0f / 1000.0f; // oneOverDistance
+			lights->lightFalloff[s][3] = 0.0f;
+
+			++num_lights;
+		}
+
+		if (!s_lightClampFixtureYelled) {
+			s_lightClampFixtureYelled = true;
+			std::fprintf(stderr,
+				"[LIGHT_CLAMP_FIXTURE] ON: injected %u synthetic point lights into "
+				"object %p slots %u..%u (ABI cap %d). This DELIBERATELY changes "
+				"rendered lighting — gate MC2_LIGHT_CLAMP_FIXTURE.\n",
+				num_lights - injectStart, (void*)lights,
+				injectStart, num_lights - 1, MAX_HW_LIGHTS_IN_WORLD);
+			std::fflush(stderr);
+		}
+	}
+
 	lights->numLights_ = num_lights;
+
+	// MC2_LIGHT_CLAMP_PROBE (default OFF) — pure observation, no behavior change.
+	// Track per-object high-water populated light count; emit on each new high
+	// plus a periodic summary so the per-mission peak is visible in logs.
+	if (s_lightClampProbe) {
+		++s_lightClampProbeCalls;
+		if (num_lights > s_lightClampProbeHighWater) {
+			s_lightClampProbeHighWater = num_lights;
+			std::fprintf(stderr,
+				"[LIGHT_CLAMP_PROBE] new high-water populated lights/object = %u "
+				"(ABI cap %d, runtime clamp %u) after %lu calls\n",
+				s_lightClampProbeHighWater, MAX_HW_LIGHTS_IN_WORLD,
+				(unsigned)max_num_lights, s_lightClampProbeCalls);
+			std::fflush(stderr);
+		}
+		if ((s_lightClampProbeCalls % 2000) == 0) {
+			std::fprintf(stderr,
+				"[LIGHT_CLAMP_PROBE] summary: high-water=%u over %lu calls "
+				"(exceeds_16=%s)\n",
+				s_lightClampProbeHighWater, s_lightClampProbeCalls,
+				(s_lightClampProbeHighWater > 16) ? "YES" : "no");
+			std::fflush(stderr);
+		}
+	}
 
 	// T1.15 [SPOT_DIAG v1] pack-probe emit. First-call always-on; summary
 	// every 600 calls when env=1.
