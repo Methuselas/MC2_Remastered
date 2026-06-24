@@ -200,7 +200,12 @@ public:
 	
 	bool save( FitIniFile* file, int warriorNumber, bool usePBrain = false );
 	bool load( FitIniFile* file, int warriorNumber );
-}; 
+
+	// Read-only accessors for the editor AI/Brain inspector panel (UnitBrainPanel).
+	const char* getBrainName() const { return brainName; }
+	long        getNumCells() const { return numCells; }
+	long        getNumStaticVars() const { return numStaticVars; }
+};
 
 //*************************************************************************************************
 
@@ -234,6 +239,9 @@ public:
 	void setSelfRepairBehaviorEnabled(bool val) { selfRepairBehaviorEnabled = val; }
 
 	inline Pilot*	getPilot() { return &pilot; }
+
+	// Read-only brain access for the editor AI/Brain inspector panel (UnitBrainPanel).
+	const Brain&	getBrain() const { return brain; }
 
 	void setVariant( unsigned long newVar ){ variant = newVar; }
 	inline int getVariant() const { return variant; }

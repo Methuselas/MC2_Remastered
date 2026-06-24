@@ -81,6 +81,7 @@
 #include "EditorRecent.h"
 #include "SceneOutliner.h"
 #include "InspectorPanel.h"
+#include "UnitBrainPanel.h"   // AI / Brain / Orders inspector panel
 #include "TelemetryPanel.h"
 #include "AssetBrowser.h"
 #include "GameplayDebugger.h"
@@ -5086,6 +5087,11 @@ void EditorInterface::renderToolbarImGui()
 	if (ImGui::Button("Inspector", ImVec2(-1.f, 0.f)))
 		InspectorPanel::Toggle();
 	InspectorPanel::Draw();
+
+	// AI / Brain / Orders — selected unit's AI brain + scaffolded orders/stance.
+	if (ImGui::Button("AI / Brain / Orders", ImVec2(-1.f, 0.f)))
+		UnitBrainPanel::Toggle();
+	UnitBrainPanel::Draw();
 
 	// Telemetry — read-only live editor state (fps / counts / undo / dirty / map).
 	if (ImGui::Button("Telemetry", ImVec2(-1.f, 0.f)))
