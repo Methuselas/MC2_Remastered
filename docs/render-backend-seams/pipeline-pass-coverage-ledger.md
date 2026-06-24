@@ -44,7 +44,7 @@ distinct from "visually proven", instead of faking a byte-hash that can't hold.
 | StaticPropDepth | ROUTED_BY_APPLYPIPELINE | StaticPropOpaque | StaticPropDepth |
 | MechOpaque | SPIRV_ELIGIBLE | MechOpaque | MechOpaque |
 | ShadowTerrain / ShadowStaticProp / ShadowMech | VISUAL_PROVEN | Shadow | Shadow* |
-| Terrain (main solid) | DESCRIPTIVE_REGISTERED (proof: TERRAIN_CULL_STATE_PROBE_1) | Terrain | TerrainSolid |
+| Terrain (lod-chunk solid) | ROUTED_BY_APPLYPIPELINE (proof: byte_identical + bind-positive) | Terrain | TerrainSolid |
 | TerrainOverlay | ROUTED_BY_APPLYPIPELINE (proof: pass_not_exercised_in_smoke) | TerrainOverlay | TerrainOverlay |
 | TerrainDecal | ROUTED_BY_APPLYPIPELINE (proof: pass_not_exercised_in_smoke) | TerrainDecal | TerrainDecal |
 | Water (armed fast path) | VISUAL_PROVEN (proof: oracle_coverage) | Water | WaterArmed |

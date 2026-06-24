@@ -82,14 +82,21 @@
       "next": "spirv_eligible (depth-parity gate)"
     },
     "Terrain": {
-      "status": "DESCRIPTIVE_REGISTERED",
+      "status": "ROUTED_BY_APPLYPIPELINE",
       "renderPassId": "Terrain",
       "pipelineId": "TerrainSolid",
       "shaderBase": "gos_terrain",
-      "stateOwner": "legacy/ad-hoc (hand-set in gos_terrain_bridge_drawIndirect; NOT routed)",
-      "next": "TERRAIN-SOLID-APPLYPIPELINE-ROUTING-1 (GO-with-conditions): route the bridge draw via applyPipeline, KEEP the glColorMask(TRUE) shadow-leak repair call-site (applyPipeline does not own colorMask), byte/visual-gate clean, no shadow color-mask leak regression -> promote to ROUTED_BY_APPLYPIPELINE only after proof. LOD-chunk = separate later row (cull None, MRT).",
-      "proofBasis": "TERRAIN_CULL_STATE_PROBE_1",
-      "evidence": "TERRAIN-SOLID-PIPELINE-REGISTRATION-1: descriptive row TerrainSolid added (glProgramName=0, NOT applyPipeline-routed). State stated truthfully: Opaque, depthTest+write ON, GEQUAL reverse-Z (gameos_graphics.cpp:4006), colorAttachments {color0,GBuffer1}={t,t,f}, objectId not written. cullMode=None / frontFace=Ccw are EMPIRICALLY PROBED (TERRAIN-CULL-STATE-PROBE-1, commit 19020b9f: cull DISABLED, CCW, 8 frames unanimous at the txmmgr:2868 dispatch chokepoint) — not guessed. No behavior change (descriptive only); no routing, no colorMask movement."
+      "stateOwner": "applyPipeline(TerrainSolid) at the LOD-chunk draw; colorMask via beginScene keystone",
+      "next": "Terrain SOLID is routed+proven. Remaining terrain-family routing (separate slices): overlays/decals, mask/water/mine/surface, water fast path. The bridge PARTIAL route can be cleaned up later (it is dead under default lod-chunk).",
+      "proofBasis": "frame_trace_bind_positive + byte_visual_gate",
+      "evidence": "TERRAIN-LODCHUNK-APPLYPIPELINE-ROUTING-1 (proven): routed the live default terrain-solid (lod-chunk) draw via applyPipeline(TerrainSolid). Byte-gate v0.4c water: sha cb5a700e HELD (no regression; GBuffer1 + markTerrainDrawn/sceneHasTerrain preserved; colorMask via the COLORMASK-ROLLOUT-1 beginScene keystone), [PIPELINE_BIND] TerrainSolid binds=2843 (>0), [FRAME_PLAN] pass=TerrainSolidLODChunk path=ApplyPipeline pipeline=TerrainSolid x2843. State matches the row exactly (cull probed None/Ccw). The bridge 0-bind confusion is fully explained + resolved.",
+      "routingStatus": "ROUTED_BY_APPLYPIPELINE",
+      "proofStatus": "byte_identical",
+      "proofPath": "TerrainSolidLODChunk",
+      "scope_note": "ONLY the LIVE terrain-SOLID path is routed: TerrainSolidLODChunk (gos_terrain_lod_chunk.cpp, the default-ON lod-chunk draw) now asserts applyPipeline(TerrainSolid). NOT routed / still separate: terrain overlays/decals, terrain mask/water/mine/surface indirect, the legacy MLR fallback, and the water fast path. The old indirect bridge route (routing-1, PARTIAL) is superseded as the live target by lod-chunk — bridge only runs under the vestigial MC2_TERRAIN_LOD_CHUNK=0.",
+      "routedEntryPoints": [
+        "TerrainSolidLODChunk (gos_terrain_lod_chunk.cpp) — LIVE default, applyPipeline(TerrainSolid), proven binds=2843"
+      ]
     },
     "TerrainOverlay": {
       "status": "ROUTED_BY_APPLYPIPELINE",
@@ -159,12 +166,16 @@
       "stateOwner": "applyPipeline (composite); legacy/ad-hoc (rest of chain)",
       "next": "Next post-fx slices (recon order): POSTPROCESS-FOG-REGISTRATION-1 (edgeFog+fogOob, AlphaBlend, SPIR-V pilots); then BLENDMODE-MULTIPLY-1 -> screenShadow/cloud/shoreline/ssaoApply. DEFER HDRI (restore contract) + ssao1/hzb (own FBO/viewport). DO_NOT_MODEL shadowDebug + dead skybox.",
       "proofStatus": "byte_identical",
-      "scope_note": "Routed sub-passes: (1) endScene composite (PostProcessComposite, Opaque) — BYTE-PROVEN (water sha cb5a700e identical pre/post-routing). (2) runEdgeFog (PostProcessEdgeFog, AlphaBlend) + (3) runFogOob (PostProcessFogOob, AlphaBlend) — now ROUTED via applyPipeline (gos_postprocess.cpp), byte-identical BY CONSTRUCTION (applyPipeline(AlphaBlend) == the exact hand-set glEnable(BLEND)+glBlendFunc(SRC_ALPHA,ONE_MINUS_SRC_ALPHA)). Their runtime VISUAL proof is oracle_coverage-PENDING: fog is volumetric/nondeterministic (byte gate inapplicable, per VFX precedent) AND does NOT fire in the water-overview frame — needs an edge-boundary outward pose to exercise + confirm [PIPELINE_BIND] EdgeFog/FogOob blend=AlphaBlend. Rest of chain (screenShadow/cloud/shoreline/ssao/skybox) UNREGISTERED — see recon.",
+      "scope_note": "Routed post-fx sub-passes: composite (PostProcessComposite, Opaque) BYTE-PROVEN; edgeFog+fogOob (AlphaBlend) byte-identical-by-construction; BLENDMODE-MULTIPLY-1 screenShadow+cloudShadow+shoreline (PostProcess{ScreenShadow,CloudShadow,Shoreline}, Multiply=DST_COLOR/ZERO) BYTE-PROVEN — fired ~3098x with runtime [PIPELINE_BIND] blend=Multiply, sha cb5a700e held (no regression); ssaoApply (PostProcessSsaoApply, Multiply) routed byte-identical-by-construction (ssao off in the gate frame, same routing as the proven 3). The remaining chain (HDRI skybox, ssao-pass1, hzbReduce) is DEFERRED; shadowDebug + dead skybox = DO_NOT_MODEL. New BlendMode::Multiply vocabulary + binder case + check-multiply-blend.py (planted-negative proven) shipped.",
       "evidence": "Composite routing proven BYTE-IDENTICAL: with composite routed via applyPipeline, mc2_01 water_overview_high captured sha cb5a700ebd00dd0b — identical to the banked pre-routing baseline (the composite is the final pass writing the backbuffer, so an identical whole-frame sha proves the routing is a perfect no-op, incl. no downstream state leak from the binder's inert frontFace/depthFunc/blendFunc sets). [PIPELINE_BIND] PostProcessComposite fired 3304x (once/frame).",
       "pipelineIds": [
         "PostProcessComposite",
         "PostProcessEdgeFog",
-        "PostProcessFogOob"
+        "PostProcessFogOob",
+        "PostProcessScreenShadow",
+        "PostProcessCloudShadow",
+        "PostProcessShoreline",
+        "PostProcessSsaoApply"
       ]
     },
     "UI": {

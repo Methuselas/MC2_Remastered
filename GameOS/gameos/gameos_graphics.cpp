@@ -27,6 +27,7 @@
 #include "gos_render.h"
 #include "../../RenderCore/PipelineRegistry.h"   // SHADOW-CASTER-APPLYPIPELINE-ROUTING-1
 #include "pipeline_binder.h"                      // applyPipeline — shadow bracket FF state
+#include "render_frame_plan.h"                    // RENDER-FRAME-PLAN-SCAFFOLD-1
 #include "gos_postprocess.h"
 #include "gos_profiler.h"
 #include "gos_gpu_sync.h"
@@ -3283,6 +3284,8 @@ void gosRenderer::renderWaterFastPath(
     // epilogue still own teardown.
     pipeline_binder::applyPipeline(
         RenderCore::getPipelineDesc(RenderCore::PipelineId::WaterArmed), "WaterArmed");
+    render_frame_plan::trace(render_frame_plan::Phase::Water, "WaterFastPath",
+        render_frame_plan::PathKind::ApplyPipeline, 1, "WaterArmed");
     // OOB-FOG-WATER-DEPTH-1: water must write depth so runFogOob() (which
     // fires on rawDepth==0 far-plane pixels) skips water-covered pixels.
     // Without depth writes, OOB fog classifies water pixels as empty sky and
@@ -4002,15 +4005,21 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
     }
 
     // ---- Depth + color state for opaque terrain ----------------------------
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (opaque terrain)
-    glDepthMask(GL_TRUE);
-    // M5: undo any prior shadow-pass glColorMask(FALSE,...) from
-    // gos_postprocess.cpp:1134/1156 — without this the indirect path draws
-    // nothing on the frame following a shadow pass.
+    // TERRAIN-SOLID-APPLYPIPELINE-ROUTING-1: drive depth/blend/cull from the
+    // TerrainSolid pipeline row instead of hand-setting them. Byte-identical:
+    // depthTest ON, GEQUAL reverse-Z, depthWrite ON, blend OFF (Opaque), and
+    // cull None / frontFace Ccw — the latter two are the EMPIRICALLY PROBED ambient
+    // (TERRAIN-CULL-STATE-PROBE-1), so naming them is a no-op, not a change.
+    // glProgramName=0: the program is already bound above by
+    // terrainBindThinUniformsForPatchStream.
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::TerrainSolid), "TerrainSolid");
+    // M5 (LOAD-BEARING — DO NOT REMOVE): undo any prior shadow-pass
+    // glColorMask(FALSE,...) from gos_postprocess.cpp:1134/1156. applyPipeline does
+    // NOT own colorMask state, so this repair MUST stay explicit here — without it
+    // the indirect path draws nothing on the frame following a shadow pass. It is
+    // NOT redundant until the pipeline system owns color-mask state.
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-    // No blend for opaque terrain SOLID pass.
-    glDisable(GL_BLEND);
     render_contract::assertPassContract(render_contract::PassIdentity::TerrainBase,
                                         "gos_TerrainLodChunk_SubmitDrawCommands");
 

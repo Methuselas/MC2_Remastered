@@ -12,6 +12,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 namespace pipeline_binder {
 
@@ -23,6 +24,36 @@ static bool pipelineBindTraceEnabled() {
         s_on = (v && v[0] && v[0] != '0') ? 1 : 0;
     }
     return s_on != 0;
+}
+
+// COLORMASK-OWNERSHIP-1: MC2_PIPELINE_COLORMASK (default OFF). When ON, applyPipeline
+// emits per-attachment glColorMaski from desc.colorAttachments — but ONLY for rows that
+// have OPTED IN (rowOwnsColorMask). This is deliberately opt-in/gated: making colorMask
+// globally owned at once is how you get a beautiful black frame (old paths depend on raw
+// colorMask side effects; HUD/post helpers have their own rules). Non-opt-in rows keep
+// the legacy behavior (colorMask untouched here).
+static bool pipelineColorMaskEnabled() {
+    static int s_on = -1;
+    if (s_on < 0) {
+        const char* v = std::getenv("MC2_PIPELINE_COLORMASK");
+        s_on = (v && v[0] && v[0] != '0') ? 1 : 0;
+    }
+    return s_on != 0;
+}
+
+// Opt-in set (row metadata, keyed by the applyPipeline dbgName).
+//
+// History: COLORMASK-OWNERSHIP-1 proved a single set-only opt-in LEAKS — composite
+// ({t,f,f}) emits glColorMaski(1,FALSE)(2,FALSE) and, being the LAST world pass, those
+// masks leaked into the NEXT frame's MRT scene draw (GBuffer1/objectId dropped; sha
+// cb5a700e -> 8d40ce4a). COLORMASK-ROLLOUT-1 adds the KEYSTONE: gosPostProcess::beginScene
+// asserts glColorMask(all TRUE) before the first MRT draw, so any prior-frame set-only leak
+// is healed at frame begin. With the keystone in place composite opt-in is SAFE again
+// (its 1/2=FALSE mask is reset next beginScene before any MRT consumer) and gate-ON is
+// byte-identical. TerrainSolidLODChunk opts in during its own routing slice, NOT here.
+static bool rowOwnsColorMask(const char* dbgName) {
+    if (!dbgName) return false;
+    return std::strcmp(dbgName, "PostProcessComposite") == 0;
 }
 
 void applyPipeline(const RenderCore::PipelineDesc& desc, const char* dbgName) {
@@ -79,6 +110,13 @@ void applyPipeline(const RenderCore::PipelineDesc& desc, const char* dbgName) {
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE);
             break;
+        case RenderCore::BlendMode::Multiply:
+            // BLENDMODE-MULTIPLY-1: DST_COLOR/ZERO — multiplicative DARKENING used by
+            // the post-fx screen-shadow / cloud-shadow / shoreline / SSAO-apply passes
+            // (scene *= mask). Distinct from every additive/alpha mode.
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_DST_COLOR, GL_ZERO);
+            break;
     }
 
     // --- Cull ---
@@ -114,6 +152,19 @@ void applyPipeline(const RenderCore::PipelineDesc& desc, const char* dbgName) {
     if (desc.polygonOffsetEnable) glEnable(GL_POLYGON_OFFSET_FILL);
     else                          glDisable(GL_POLYGON_OFFSET_FILL);
 
+    // COLORMASK-OWNERSHIP-1: opt-in, gated. Emit whole-attachment colorMask from the
+    // row's colorAttachments so the pass asserts its own write-mask instead of relying
+    // on an ambient raw-GL repair (e.g. the terrain shadow-leak glColorMask(TRUE)).
+    // Default OFF + opt-in -> legacy behavior preserved everywhere else.
+    if (pipelineColorMaskEnabled() && rowOwnsColorMask(dbgName)) {
+        const GLboolean c0 = desc.colorAttachments.color0 ? GL_TRUE : GL_FALSE;
+        const GLboolean c1 = desc.colorAttachments.color1 ? GL_TRUE : GL_FALSE;
+        const GLboolean c2 = desc.colorAttachments.color2 ? GL_TRUE : GL_FALSE;
+        glColorMaski(0, c0, c0, c0, c0);
+        glColorMaski(1, c1, c1, c1, c1);
+        glColorMaski(2, c2, c2, c2, c2);
+    }
+
     if (dbgName && pipelineBindTraceEnabled()) {
         const char* df =
             desc.depthFunc == RenderCore::DepthFunc::Less         ? "Less" :
@@ -133,7 +184,8 @@ void applyPipeline(const RenderCore::PipelineDesc& desc, const char* dbgName) {
             desc.blend == RenderCore::BlendMode::AlphaTest           ? "AlphaTest" :
             desc.blend == RenderCore::BlendMode::Additive            ? "Additive" :
             desc.blend == RenderCore::BlendMode::AdditiveOneOne      ? "AdditiveOneOne" :
-            desc.blend == RenderCore::BlendMode::AdditiveSrcAlphaOne ? "AdditiveSrcAlphaOne" : "?";
+            desc.blend == RenderCore::BlendMode::AdditiveSrcAlphaOne ? "AdditiveSrcAlphaOne" :
+            desc.blend == RenderCore::BlendMode::Multiply            ? "Multiply" : "?";
         std::fprintf(stderr,
             "[PIPELINE_BIND] %s depth=%s cull=%s frontFace=%s polygonOffset=%s blend=%s\n",
             dbgName, df, cm, ff, desc.polygonOffsetEnable ? "true" : "false", bm);

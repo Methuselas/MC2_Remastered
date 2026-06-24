@@ -46,6 +46,7 @@ enum class BlendMode : uint8_t {
     Additive            = 3,   // legacy coarse (ONE/ONE); render-contract bridge only
     AdditiveOneOne      = 4,   // ONE / ONE
     AdditiveSrcAlphaOne = 5,   // SRC_ALPHA / ONE
+    Multiply            = 6,   // DST_COLOR / ZERO (post-fx darkening: shadow/AO/shoreline)
 };
 
 enum class CullMode  : uint8_t { None, Back, Front };

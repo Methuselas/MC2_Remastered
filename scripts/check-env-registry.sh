@@ -205,6 +205,8 @@ ALLOWLIST=(
     MC2_REGFLUSH_MULTI          # trace
     MC2_REGFLUSH_TYPEHIST       # trace
     MC2_RENDER_CONTRACT_ASSERT  # infra -- contract assertion
+    MC2_RENDER_FRAME_PLAN_TRACE  # trace -- RENDER-FRAME-PLAN-SCAFFOLD-1 (per-frame pass tattle)
+    MC2_PIPELINE_COLORMASK       # feature -- COLORMASK-OWNERSHIP-1 (opt-in colorMask via applyPipeline)
     MC2_RENDER_WATER_FASTPATH   # feature -- promote-to-registry
     MC2_RENDER_WATER_FASTPATH_DEBUG  # trace
     MC2_RENDER_WATER_PARITY_CHECK  # parity

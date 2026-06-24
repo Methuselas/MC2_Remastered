@@ -16,6 +16,7 @@
 #include "gl_state_guard.h"  // GLSTATE-GUARD-ADOPTION-1: GlScopedTextureUnit (composite tex-unit leak)
 #include "../../RenderCore/PipelineRegistry.h"  // POSTPROCESS-COMPOSITE-REGISTRATION-1
 #include "pipeline_binder.h"                     // applyPipeline — composite FF state
+#include "render_frame_plan.h"                   // RENDER-FRAME-PLAN-SCAFFOLD-1
 #include "gos_cluster_depth_pyramid.h"  // CLUSTER-DEPTH-PYRAMID-NATIVE-1 (gated substrate)
 #include "gos_lightgrid_build.h"         // MC2-LIGHTGRID-BUILD-NATIVE-1 (gated, inert)
 #include "gos_postprocess_blur.h"        // POSTPROCESS-COMPUTE-BLUR-1 (gated substrate)
@@ -1375,6 +1376,18 @@ void gosPostProcess::beginScene()
     sceneHasTerrain_ = false;  // reset each frame; set by markTerrainDrawn()
 
     glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
+
+    // COLORMASK-ROLLOUT-1 (keystone): assert the steady-state color mask (all
+    // attachments writable) at frame begin, before the clear + the first MRT scene
+    // draw. In normal frames this is a no-op (the mask is already all-TRUE), so it is
+    // byte-identical — but it HEALS any prior-frame set-only colorMask leak (e.g. a
+    // future applyPipeline opt-in that left attachment 1/2 masked off), guaranteeing
+    // terrain's GBuffer1 + objectId writes are never silently suppressed. Legacy
+    // bridges keep their own save/restore; this only sets a known-good baseline so
+    // incremental PipelineDesc colorMask opt-in is safe. (Resets the indexed masks
+    // too, so a prior glColorMaski leak on attachment 1/2 cannot persist.)
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+
     // Bind both draw buffers so the upcoming glClear in gameosmain.cpp clears
     // both COLOR0 and COLOR1 (the GBuffer1 normal/post-shadow-mask attachment).
     // After the clear, gameosmain.cpp calls pp->clearGBuffer1() to overwrite
@@ -1935,12 +1948,16 @@ void gosPostProcess::runSSAO()
     setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
     glViewport(0, 0, width_, height_);
 
-    if (ssaoDebug_ == 0) {
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_DST_COLOR, GL_ZERO);   // scene *= ao
-    } else {
-        glDisable(GL_BLEND);                  // overwrite with AO grayscale
-    }
+    // BLENDMODE-MULTIPLY-1: PostProcessSsaoApply row (Multiply = DST_COLOR/ZERO,
+    // scene *= ao). depth test+write OFF / cull None re-asserted (already set by SSAO
+    // pass 1; no-op). Byte-identical in the default path; the debug override
+    // (ssaoDebug_!=0 overwrites scene with AO grayscale) is preserved explicitly.
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessSsaoApply),
+        "PostProcessSsaoApply");
+    if (ssaoDebug_ != 0) glDisable(GL_BLEND);
+    render_frame_plan::trace(render_frame_plan::Phase::PostProcess, "SsaoApply",
+        render_frame_plan::PathKind::ApplyPipeline, 1, "PostProcessSsaoApply");
 
     ssaoApplyProg_->setInt("ssaoTex", 0);
     float texel[2] = { 1.0f / (float)ssaoW_, 1.0f / (float)ssaoH_ };
@@ -1992,18 +2009,17 @@ void gosPostProcess::runScreenShadow()
     setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
     glViewport(0, 0, width_, height_);
 
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);
-    glDepthMask(GL_FALSE);
-
-    // Multiplicative blending: dst * src (shadow darkening)
-    // In debug mode, overwrite scene color entirely
-    if (screenShadowDebug_ == 0) {
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_DST_COLOR, GL_ZERO);
-    } else {
-        glDisable(GL_BLEND);
-    }
+    // BLENDMODE-MULTIPLY-1: drive FF state from the PostProcessScreenShadow row
+    // (Multiply = DST_COLOR/ZERO scene-darkening, depth test+write OFF, cull None).
+    // Byte-identical in the default path. The debug override (screenShadowDebug_!=0
+    // overwrites scene color) is preserved explicitly — applyPipeline sets Multiply,
+    // then debug disables blend.
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessScreenShadow),
+        "PostProcessScreenShadow");
+    if (screenShadowDebug_ != 0) glDisable(GL_BLEND);
+    render_frame_plan::trace(render_frame_plan::Phase::PostProcess, "ScreenShadow",
+        render_frame_plan::PathKind::ApplyPipeline, 1, "PostProcessScreenShadow");
 
     // Set uniforms BEFORE apply()
     const bool csmActive = (mc2ShadowCsmEnabled() && dynShadowArrayTex_ != 0);
@@ -2139,13 +2155,13 @@ void gosPostProcess::runCloudShadow()
     setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
     glViewport(0, 0, width_, height_);
 
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);
-    glDepthMask(GL_FALSE);
-
-    // Multiplicative: dst * src (cloud darkening).
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_DST_COLOR, GL_ZERO);
+    // BLENDMODE-MULTIPLY-1: PostProcessCloudShadow row (Multiply = DST_COLOR/ZERO
+    // cloud darkening, depth test+write OFF, cull None). Byte-identical to hand-set.
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessCloudShadow),
+        "PostProcessCloudShadow");
+    render_frame_plan::trace(render_frame_plan::Phase::PostProcess, "CloudShadow",
+        render_frame_plan::PathKind::ApplyPipeline, 1, "PostProcessCloudShadow");
 
     cloudProg_->setInt("sceneDepthTex", 0);
     cloudProg_->setInt("u_cloudEnable", 1);   // gated in C++ above; 1 inside the pass
@@ -2194,13 +2210,14 @@ void gosPostProcess::runShoreline()
     setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
     glViewport(0, 0, width_, height_);
 
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);
-    glDepthMask(GL_FALSE);
-
-    // Multiplicative blend: values > 1.0 brighten water at shoreline
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_DST_COLOR, GL_ZERO);
+    // BLENDMODE-MULTIPLY-1: PostProcessShoreline row (Multiply = DST_COLOR/ZERO;
+    // mask values >1 brighten water at the shoreline). depth test+write OFF, cull
+    // None. Byte-identical to the hand-set state.
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessShoreline),
+        "PostProcessShoreline");
+    render_frame_plan::trace(render_frame_plan::Phase::PostProcess, "Shoreline",
+        render_frame_plan::PathKind::ApplyPipeline, 1, "PostProcessShoreline");
 
     shorelineProg_->setInt("sceneDepthTex", 0);
     shorelineProg_->setInt("sceneNormalTex", 1);
@@ -2253,6 +2270,8 @@ void gosPostProcess::runEdgeFog()
     pipeline_binder::applyPipeline(
         RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessEdgeFog),
         "PostProcessEdgeFog");
+    render_frame_plan::trace(render_frame_plan::Phase::PostProcess, "EdgeFog",
+        render_frame_plan::PathKind::ApplyPipeline, 1, "PostProcessEdgeFog");
 
     // invViewProj: same GL_FALSE / row-major convention as SSAO and other passes.
     edgeFogProg_->apply();
@@ -2307,6 +2326,8 @@ void gosPostProcess::runFogOob()
     pipeline_binder::applyPipeline(
         RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessFogOob),
         "PostProcessFogOob");
+    render_frame_plan::trace(render_frame_plan::Phase::PostProcess, "FogOob",
+        render_frame_plan::PathKind::ApplyPipeline, 1, "PostProcessFogOob");
 
     // Other post-process passes upload inverseViewProj_ with GL_FALSE (row-major
     // data as-is), which in GLSL gives (W^{-1})^T * v — the correct clip->world
@@ -2449,6 +2470,8 @@ void gosPostProcess::endScene()
     pipeline_binder::applyPipeline(
         RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessComposite),
         "PostProcessComposite");
+    render_frame_plan::trace(render_frame_plan::Phase::PostProcess, "Composite",
+        render_frame_plan::PathKind::ApplyPipeline, 1, "PostProcessComposite");
 
     // Draw fullscreen quad with composite shader
     if (compositeProg_ && compositeProg_->is_valid()) {
