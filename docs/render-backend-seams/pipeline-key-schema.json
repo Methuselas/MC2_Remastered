@@ -3,8 +3,8 @@
   "summary": {
     "verdict_schema": "GO",
     "verdict_implementation": "DEFER",
-    "headline": "Every registered pipeline can produce a STABLE PARTIAL logical PipelineKey from already-banked contracts. Authoritative today: depthState, cullMode, blend factor, color-attachment mask, renderPassCompat. Descriptive/not-yet-authoritative: shaderVariantId (no repo-owned enum \u00e2\u20ac\u201d only runtime glProgramName + the informal unique_name_suffix_), specializationParams, materialLayout (per-pipeline mapping), rasterState polygonOffset/depthBias (unregistered-pass consumers). vertexLayout is now AUTHORITATIVE (VERTEXLAYOUT-AUTHORITY-1); rasterState is PARTIAL — frontFace + cullMode authoritative (PIPELINEKEY-RASTERSTATE-FRONTFACE-AUTHORITY-1), polygonOffset/depthBias still a gap. Implementation (a real keyed cache) waits on SPIRV-CONSUMER-PILOT / OFFLINE-SHADER-VARIANT-BUILD.",
-    "can_every_registered_pipeline_produce_a_stable_logical_key": "YES (partial \u00e2\u20ac\u201d authoritative core + explicitly-listed gaps)",
+    "headline": "Every registered pipeline can produce a STABLE PARTIAL logical PipelineKey from already-banked contracts. Authoritative today: depthState, cullMode, blend factor, color-attachment mask, renderPassCompat. Descriptive/not-yet-authoritative: shaderVariantId (no repo-owned enum â€” only runtime glProgramName + the informal unique_name_suffix_), specializationParams, materialLayout (per-pipeline mapping), rasterState polygonOffset/depthBias (unregistered-pass consumers). vertexLayout is now AUTHORITATIVE (VERTEXLAYOUT-AUTHORITY-1); rasterState is PARTIAL — frontFace + cullMode authoritative (PIPELINEKEY-RASTERSTATE-FRONTFACE-AUTHORITY-1), polygonOffset/depthBias still a gap. Implementation (a real keyed cache) waits on SPIRV-CONSUMER-PILOT / OFFLINE-SHADER-VARIANT-BUILD.",
+    "can_every_registered_pipeline_produce_a_stable_logical_key": "YES (partial â€” authoritative core + explicitly-listed gaps)",
     "smallest_pilot_family": "MechOpaque"
   },
   "status_legend": {
@@ -280,180 +280,422 @@
       "id": "ShadowTerrain",
       "pipelineDescRegistered": false,
       "descriptive": "SHADOW-CASTER-PIPELINE-REGISTRATION-1: descriptive row, NOT applyPipeline-routed. vertexLayout deferred (not modeled this slice).",
-      "shaderVariantId": { "base": "shadow_terrain", "macros": [] },
+      "shaderVariantId": {
+        "base": "shadow_terrain",
+        "macros": []
+      },
       "specializationParams": [],
       "renderPassCompat": "Shadow (RenderPassId::Shadow)",
-      "depthState": { "test": true, "write": true, "func": "Less" },
-      "blendState": { "factor": "Opaque" },
-      "cullState": { "mode": "None" },
+      "depthState": {
+        "test": true,
+        "write": true,
+        "func": "Less"
+      },
+      "blendState": {
+        "factor": "Opaque"
+      },
+      "cullState": {
+        "mode": "None"
+      },
       "frontFace": "Ccw",
       "polygonOffsetEnable": false,
-      "colorMaskAttachmentMask": { "color0": false, "color1": false, "color2": false },
+      "colorMaskAttachmentMask": {
+        "color0": false,
+        "color1": false,
+        "color2": false
+      },
       "key_producible": "descriptive"
     },
     {
       "id": "ShadowStaticProp",
       "pipelineDescRegistered": false,
       "descriptive": "SHADOW-CASTER-PIPELINE-REGISTRATION-1: descriptive row, NOT applyPipeline-routed. The ONLY shadow caster with polygon offset ON (factor/units 2.0/4.0 are dynamic/ImGui, not modeled). vertexLayout deferred.",
-      "shaderVariantId": { "base": "shadow_static_prop", "macros": [] },
+      "shaderVariantId": {
+        "base": "shadow_static_prop",
+        "macros": []
+      },
       "specializationParams": [],
       "renderPassCompat": "Shadow (RenderPassId::Shadow)",
-      "depthState": { "test": true, "write": true, "func": "Less" },
-      "blendState": { "factor": "Opaque" },
-      "cullState": { "mode": "None" },
+      "depthState": {
+        "test": true,
+        "write": true,
+        "func": "Less"
+      },
+      "blendState": {
+        "factor": "Opaque"
+      },
+      "cullState": {
+        "mode": "None"
+      },
       "frontFace": "Ccw",
       "polygonOffsetEnable": true,
-      "colorMaskAttachmentMask": { "color0": false, "color1": false, "color2": false },
+      "colorMaskAttachmentMask": {
+        "color0": false,
+        "color1": false,
+        "color2": false
+      },
       "key_producible": "descriptive"
     },
     {
       "id": "ShadowMech",
       "pipelineDescRegistered": false,
       "descriptive": "SHADOW-CASTER-PIPELINE-REGISTRATION-1: descriptive row, NOT applyPipeline-routed. vertexLayout deferred.",
-      "shaderVariantId": { "base": "shadow_mech", "macros": [] },
+      "shaderVariantId": {
+        "base": "shadow_mech",
+        "macros": []
+      },
       "specializationParams": [],
       "renderPassCompat": "Shadow (RenderPassId::Shadow)",
-      "depthState": { "test": true, "write": true, "func": "Less" },
-      "blendState": { "factor": "Opaque" },
-      "cullState": { "mode": "None" },
+      "depthState": {
+        "test": true,
+        "write": true,
+        "func": "Less"
+      },
+      "blendState": {
+        "factor": "Opaque"
+      },
+      "cullState": {
+        "mode": "None"
+      },
       "frontFace": "Ccw",
       "polygonOffsetEnable": false,
-      "colorMaskAttachmentMask": { "color0": false, "color1": false, "color2": false },
+      "colorMaskAttachmentMask": {
+        "color0": false,
+        "color1": false,
+        "color2": false
+      },
       "key_producible": "descriptive"
     },
     {
       "id": "TerrainOverlay",
       "pipelineDescRegistered": false,
       "descriptive": "TERRAIN-OVERLAY-DECAL-PIPELINE-REGISTRATION-1: descriptive row, NOT applyPipeline-routed (gosRenderer::drawTerrainOverlays sets state by hand). vertexLayout deferred (WorldOverlayVert 28B, not yet a VertexLayoutId).",
-      "shaderVariantId": { "base": "terrain_overlay", "macros": [] },
+      "shaderVariantId": {
+        "base": "terrain_overlay",
+        "macros": []
+      },
       "specializationParams": [],
       "renderPassCompat": "TerrainOverlay (RenderPassId::TerrainOverlay)",
-      "depthState": { "test": true, "write": true, "func": "GreaterEqual" },
-      "blendState": { "factor": "Opaque" },
-      "cullState": { "mode": "None" },
+      "depthState": {
+        "test": true,
+        "write": true,
+        "func": "GreaterEqual"
+      },
+      "blendState": {
+        "factor": "Opaque"
+      },
+      "cullState": {
+        "mode": "None"
+      },
       "frontFace": "Ccw",
       "polygonOffsetEnable": false,
-      "colorMaskAttachmentMask": { "color0": true, "color1": true, "color2": false },
+      "colorMaskAttachmentMask": {
+        "color0": true,
+        "color1": true,
+        "color2": false
+      },
       "key_producible": "descriptive"
     },
     {
       "id": "TerrainDecal",
       "pipelineDescRegistered": false,
       "descriptive": "TERRAIN-OVERLAY-DECAL-PIPELINE-REGISTRATION-1: descriptive row, NOT applyPipeline-routed (gosRenderer::drawDecals sets state by hand). FIRST AlphaBlend pipeline row — exercises the blend-factor axis. depthWrite=false (decals must not occlude). vertexLayout deferred.",
-      "shaderVariantId": { "base": "decal", "macros": [] },
+      "shaderVariantId": {
+        "base": "decal",
+        "macros": []
+      },
       "specializationParams": [],
       "renderPassCompat": "TerrainDecal (RenderPassId::TerrainDecal)",
-      "depthState": { "test": true, "write": false, "func": "GreaterEqual" },
-      "blendState": { "factor": "AlphaBlend", "srcFactor": "SRC_ALPHA", "dstFactor": "ONE_MINUS_SRC_ALPHA", "equation": "FUNC_ADD" },
-      "cullState": { "mode": "None" },
+      "depthState": {
+        "test": true,
+        "write": false,
+        "func": "GreaterEqual"
+      },
+      "blendState": {
+        "factor": "AlphaBlend",
+        "srcFactor": "SRC_ALPHA",
+        "dstFactor": "ONE_MINUS_SRC_ALPHA",
+        "equation": "FUNC_ADD"
+      },
+      "cullState": {
+        "mode": "None"
+      },
       "frontFace": "Ccw",
       "polygonOffsetEnable": false,
-      "colorMaskAttachmentMask": { "color0": true, "color1": true, "color2": false },
+      "colorMaskAttachmentMask": {
+        "color0": true,
+        "color1": true,
+        "color2": false
+      },
       "key_producible": "descriptive"
     },
     {
       "id": "WaterArmed",
       "pipelineDescRegistered": false,
       "descriptive": "WATER-ARMED-PIPELINE-REGISTRATION-1: descriptive row for the ARMED water fast-path base only (gosRenderer::renderWaterFastPath, gos_terrain_water_fast.vert + gos_tex_vertex.frag). NOT applyPipeline-routed (state hand-set + save/restored). Legacy quad fallback + GPU-driven MDI sub-variant deliberately NOT modeled. Source-verified gameos_graphics.cpp:3275-3288. vertexLayout deferred.",
-      "shaderVariantId": { "base": "gos_terrain_water_fast", "macros": [] },
+      "shaderVariantId": {
+        "base": "gos_terrain_water_fast",
+        "macros": []
+      },
       "specializationParams": [],
       "renderPassCompat": "Water (RenderPassId::Water)",
-      "depthState": { "test": true, "write": true, "func": "GreaterEqual", "note": "depthWrite default-ON (OOB-FOG-WATER-DEPTH-1); MC2_WATER_NO_DEPTH_WRITE is a debug A/B gate only" },
-      "blendState": { "factor": "AlphaBlend", "srcFactor": "SRC_ALPHA", "dstFactor": "ONE_MINUS_SRC_ALPHA", "equation": "FUNC_ADD" },
-      "cullState": { "mode": "None", "note": "CINEMATIC-WATER-CULL-1: flat overlay mesh, cull explicitly disabled" },
+      "depthState": {
+        "test": true,
+        "write": true,
+        "func": "GreaterEqual",
+        "note": "depthWrite default-ON (OOB-FOG-WATER-DEPTH-1); MC2_WATER_NO_DEPTH_WRITE is a debug A/B gate only"
+      },
+      "blendState": {
+        "factor": "AlphaBlend",
+        "srcFactor": "SRC_ALPHA",
+        "dstFactor": "ONE_MINUS_SRC_ALPHA",
+        "equation": "FUNC_ADD"
+      },
+      "cullState": {
+        "mode": "None",
+        "note": "CINEMATIC-WATER-CULL-1: flat overlay mesh, cull explicitly disabled"
+      },
       "frontFace": "Ccw",
       "polygonOffsetEnable": false,
-      "colorMaskAttachmentMask": { "color0": true, "color1": true, "color2": false },
+      "colorMaskAttachmentMask": {
+        "color0": true,
+        "color1": true,
+        "color2": false
+      },
       "key_producible": "descriptive"
     },
     {
       "id": "VfxBillboardAlpha",
       "pipelineDescRegistered": false,
       "descriptive": "VFX-PIPELINE-REGISTRATION-1: particle_billboard, alpha. DESCRIPTIVE (gos_particle_bridge.cpp). vertexLayout deferred (gl_VertexID, SSBO 14).",
-      "shaderVariantId": { "base": "particle_billboard", "macros": [] },
+      "shaderVariantId": {
+        "base": "particle_billboard",
+        "macros": []
+      },
       "specializationParams": [],
       "renderPassCompat": "VFX (RenderPassId::VFX)",
-      "depthState": { "test": true, "write": false, "func": "GreaterEqual" },
-      "blendState": { "factor": "AlphaBlend", "srcFactor": "SRC_ALPHA", "dstFactor": "ONE_MINUS_SRC_ALPHA", "equation": "FUNC_ADD" },
-      "cullState": { "mode": "None" },
+      "depthState": {
+        "test": true,
+        "write": false,
+        "func": "GreaterEqual"
+      },
+      "blendState": {
+        "factor": "AlphaBlend",
+        "srcFactor": "SRC_ALPHA",
+        "dstFactor": "ONE_MINUS_SRC_ALPHA",
+        "equation": "FUNC_ADD"
+      },
+      "cullState": {
+        "mode": "None"
+      },
       "frontFace": "Ccw",
       "polygonOffsetEnable": false,
-      "colorMaskAttachmentMask": { "color0": true, "color1": false, "color2": false },
+      "colorMaskAttachmentMask": {
+        "color0": true,
+        "color1": false,
+        "color2": false
+      },
       "key_producible": "descriptive"
     },
     {
       "id": "VfxBillboardAdditive",
       "pipelineDescRegistered": false,
       "descriptive": "VFX-PIPELINE-REGISTRATION-1: particle_billboard, additive. BlendMode::Additive is COARSE — exact factors SRC_ALPHA/ONE recorded below are authoritative (gos_particle_bridge.cpp:1128).",
-      "shaderVariantId": { "base": "particle_billboard", "macros": [] },
+      "shaderVariantId": {
+        "base": "particle_billboard",
+        "macros": []
+      },
       "specializationParams": [],
       "renderPassCompat": "VFX (RenderPassId::VFX)",
-      "depthState": { "test": true, "write": false, "func": "GreaterEqual" },
-      "blendState": { "factor": "AdditiveSrcAlphaOne", "srcFactor": "SRC_ALPHA", "dstFactor": "ONE", "equation": "FUNC_ADD" },
-      "cullState": { "mode": "None" },
+      "depthState": {
+        "test": true,
+        "write": false,
+        "func": "GreaterEqual"
+      },
+      "blendState": {
+        "factor": "AdditiveSrcAlphaOne",
+        "srcFactor": "SRC_ALPHA",
+        "dstFactor": "ONE",
+        "equation": "FUNC_ADD"
+      },
+      "cullState": {
+        "mode": "None"
+      },
       "frontFace": "Ccw",
       "polygonOffsetEnable": false,
-      "colorMaskAttachmentMask": { "color0": true, "color1": false, "color2": false },
+      "colorMaskAttachmentMask": {
+        "color0": true,
+        "color1": false,
+        "color2": false
+      },
       "key_producible": "descriptive"
     },
     {
       "id": "VfxTubeAlpha",
       "pipelineDescRegistered": false,
       "descriptive": "VFX-PIPELINE-REGISTRATION-1: tube_ribbon, alpha. DESCRIPTIVE (gos_particle_bridge.cpp). vertexLayout deferred (SSBO 14/15/16 + IBO).",
-      "shaderVariantId": { "base": "tube_ribbon", "macros": [] },
+      "shaderVariantId": {
+        "base": "tube_ribbon",
+        "macros": []
+      },
       "specializationParams": [],
       "renderPassCompat": "VFX (RenderPassId::VFX)",
-      "depthState": { "test": true, "write": false, "func": "GreaterEqual" },
-      "blendState": { "factor": "AlphaBlend", "srcFactor": "SRC_ALPHA", "dstFactor": "ONE_MINUS_SRC_ALPHA", "equation": "FUNC_ADD" },
-      "cullState": { "mode": "None" },
+      "depthState": {
+        "test": true,
+        "write": false,
+        "func": "GreaterEqual"
+      },
+      "blendState": {
+        "factor": "AlphaBlend",
+        "srcFactor": "SRC_ALPHA",
+        "dstFactor": "ONE_MINUS_SRC_ALPHA",
+        "equation": "FUNC_ADD"
+      },
+      "cullState": {
+        "mode": "None"
+      },
       "frontFace": "Ccw",
       "polygonOffsetEnable": false,
-      "colorMaskAttachmentMask": { "color0": true, "color1": false, "color2": false },
+      "colorMaskAttachmentMask": {
+        "color0": true,
+        "color1": false,
+        "color2": false
+      },
       "key_producible": "descriptive"
     },
     {
       "id": "VfxTubeAdditive",
       "pipelineDescRegistered": false,
       "descriptive": "VFX-PIPELINE-REGISTRATION-1: tube_ribbon, additive. ★ exact factors ONE/ONE (gos_particle_bridge.cpp:767) — DIFFER from billboard/mesh SRC_ALPHA/ONE; BlendMode::Additive cannot encode the difference, these factors are authoritative.",
-      "shaderVariantId": { "base": "tube_ribbon", "macros": [] },
+      "shaderVariantId": {
+        "base": "tube_ribbon",
+        "macros": []
+      },
       "specializationParams": [],
       "renderPassCompat": "VFX (RenderPassId::VFX)",
-      "depthState": { "test": true, "write": false, "func": "GreaterEqual" },
-      "blendState": { "factor": "AdditiveOneOne", "srcFactor": "ONE", "dstFactor": "ONE", "equation": "FUNC_ADD" },
-      "cullState": { "mode": "None" },
+      "depthState": {
+        "test": true,
+        "write": false,
+        "func": "GreaterEqual"
+      },
+      "blendState": {
+        "factor": "AdditiveOneOne",
+        "srcFactor": "ONE",
+        "dstFactor": "ONE",
+        "equation": "FUNC_ADD"
+      },
+      "cullState": {
+        "mode": "None"
+      },
       "frontFace": "Ccw",
       "polygonOffsetEnable": false,
-      "colorMaskAttachmentMask": { "color0": true, "color1": false, "color2": false },
+      "colorMaskAttachmentMask": {
+        "color0": true,
+        "color1": false,
+        "color2": false
+      },
       "key_producible": "descriptive"
     },
     {
       "id": "VfxMeshAlpha",
       "pipelineDescRegistered": false,
       "descriptive": "VFX-PIPELINE-REGISTRATION-1: vfx_mesh, alpha. DESCRIPTIVE (gos_vfx_mesh_bridge.cpp). vertexLayout deferred (fixed VAO pos3+uv2, u16 EBO).",
-      "shaderVariantId": { "base": "vfx_mesh", "macros": [] },
+      "shaderVariantId": {
+        "base": "vfx_mesh",
+        "macros": []
+      },
       "specializationParams": [],
       "renderPassCompat": "VFX (RenderPassId::VFX)",
-      "depthState": { "test": true, "write": false, "func": "GreaterEqual" },
-      "blendState": { "factor": "AlphaBlend", "srcFactor": "SRC_ALPHA", "dstFactor": "ONE_MINUS_SRC_ALPHA", "equation": "FUNC_ADD" },
-      "cullState": { "mode": "None" },
+      "depthState": {
+        "test": true,
+        "write": false,
+        "func": "GreaterEqual"
+      },
+      "blendState": {
+        "factor": "AlphaBlend",
+        "srcFactor": "SRC_ALPHA",
+        "dstFactor": "ONE_MINUS_SRC_ALPHA",
+        "equation": "FUNC_ADD"
+      },
+      "cullState": {
+        "mode": "None"
+      },
       "frontFace": "Ccw",
       "polygonOffsetEnable": false,
-      "colorMaskAttachmentMask": { "color0": true, "color1": false, "color2": false },
+      "colorMaskAttachmentMask": {
+        "color0": true,
+        "color1": false,
+        "color2": false
+      },
       "key_producible": "descriptive"
     },
     {
       "id": "VfxMeshAdditive",
       "pipelineDescRegistered": false,
       "descriptive": "VFX-PIPELINE-REGISTRATION-1: vfx_mesh, additive. exact factors SRC_ALPHA/ONE (gos_vfx_mesh_bridge.cpp:311) — same as billboard, DIFFER from tube ONE/ONE.",
-      "shaderVariantId": { "base": "vfx_mesh", "macros": [] },
+      "shaderVariantId": {
+        "base": "vfx_mesh",
+        "macros": []
+      },
       "specializationParams": [],
       "renderPassCompat": "VFX (RenderPassId::VFX)",
-      "depthState": { "test": true, "write": false, "func": "GreaterEqual" },
-      "blendState": { "factor": "AdditiveSrcAlphaOne", "srcFactor": "SRC_ALPHA", "dstFactor": "ONE", "equation": "FUNC_ADD" },
-      "cullState": { "mode": "None" },
+      "depthState": {
+        "test": true,
+        "write": false,
+        "func": "GreaterEqual"
+      },
+      "blendState": {
+        "factor": "AdditiveSrcAlphaOne",
+        "srcFactor": "SRC_ALPHA",
+        "dstFactor": "ONE",
+        "equation": "FUNC_ADD"
+      },
+      "cullState": {
+        "mode": "None"
+      },
       "frontFace": "Ccw",
       "polygonOffsetEnable": false,
-      "colorMaskAttachmentMask": { "color0": true, "color1": false, "color2": false },
+      "colorMaskAttachmentMask": {
+        "color0": true,
+        "color1": false,
+        "color2": false
+      },
+      "key_producible": "descriptive"
+    },
+    {
+      "id": "PostProcessComposite",
+      "pipelineDescRegistered": true,
+      "descriptive": "POSTPROCESS-COMPOSITE-REGISTRATION-1: endScene final composite (fullscreen quad, postprocess.vert + postprocess.frag). ROUTED via applyPipeline (gos_postprocess.cpp ~2204). Opaque = GL_BLEND forced OFF (composite fully overwrites the backbuffer; gosFX additive leak would saturate RGBA8 to white). depth test+write OFF, cull None, color0 only.",
+      "shaderVariantId": {
+        "base": "postprocess",
+        "macros": []
+      },
+      "specializationParams": [],
+      "renderPassCompat": "PostProcess (RenderPassId::PostProcess)",
+      "depthState": {
+        "test": false,
+        "write": false,
+        "func": "Always",
+        "note": "fullscreen composite; depth test+write disabled"
+      },
+      "blendState": {
+        "factor": "Opaque",
+        "srcFactor": "ONE",
+        "dstFactor": "ZERO",
+        "equation": "FUNC_ADD",
+        "note": "GL_BLEND disabled; neutral ONE/ZERO baseline set by binder"
+      },
+      "cullState": {
+        "mode": "None",
+        "note": "fullscreen quad, cull disabled"
+      },
+      "frontFace": "Ccw",
+      "polygonOffsetEnable": false,
+      "colorMaskAttachmentMask": {
+        "color0": true,
+        "color1": false,
+        "color2": false
+      },
       "key_producible": "descriptive"
     }
   ],
@@ -474,10 +716,10 @@
   "pilot_family": {
     "choice": "MechOpaque",
     "why": "single program, single fixed VAO (GpuMechVertex 48B), already pipelineDescRegistered=true, already in reflect.py SHADER_VARIANTS (mech.{vert,frag} default/objectid/viewuniforms), smallest variant set (OBJECT_ID x USE_VIEW_UNIFORMS = 4). Cleanest target for eventual PSO validation.",
-    "runner_up": "StaticPropOpaque (registered + reflected, but up to 16 variants \u00e2\u20ac\u201d larger surface)"
+    "runner_up": "StaticPropOpaque (registered + reflected, but up to 16 variants â€” larger surface)"
   },
   "answers": {
-    "can_every_registered_pipeline_produce_a_stable_logical_key": "YES, partial \u00e2\u20ac\u201d all 4 produce the authoritative core (depth/cull/blend-factor/attachment-mask/render-pass-compat) plus a finite-but-not-yet-id'd shaderVariantId.",
+    "can_every_registered_pipeline_produce_a_stable_logical_key": "YES, partial â€” all 4 produce the authoritative core (depth/cull/blend-factor/attachment-mask/render-pass-compat) plus a finite-but-not-yet-id'd shaderVariantId.",
     "authoritative_vs_descriptive": "AUTHORITATIVE: depthState, renderPassCompat, vertexLayout (VERTEXLAYOUT-AUTHORITY-1), materialLayout (binding/sampler/material ABI), blend factor, cull mode, attachment mask. PARTIAL: rasterState (frontFace + cullMode authoritative; polygonOffset/depthBias gap). DESCRIPTIVE: shaderVariantId, specializationParams, per-pipeline descriptor grouping. MISSING: blendEquation, colorWriteMask granularity, rasterState polygonOffset/depthBias/polygonMode.",
     "excluded_families": "9 ad-hoc raster passes + 2 SSBO/gl_VertexID-driven families (see excluded_draw_families).",
     "smallest_pilot": "MechOpaque."
