@@ -12,6 +12,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 namespace pipeline_binder {
 
@@ -23,6 +24,37 @@ static bool pipelineBindTraceEnabled() {
         s_on = (v && v[0] && v[0] != '0') ? 1 : 0;
     }
     return s_on != 0;
+}
+
+// COLORMASK-OWNERSHIP-1: MC2_PIPELINE_COLORMASK (default OFF). When ON, applyPipeline
+// emits per-attachment glColorMaski from desc.colorAttachments — but ONLY for rows that
+// have OPTED IN (rowOwnsColorMask). This is deliberately opt-in/gated: making colorMask
+// globally owned at once is how you get a beautiful black frame (old paths depend on raw
+// colorMask side effects; HUD/post helpers have their own rules). Non-opt-in rows keep
+// the legacy behavior (colorMask untouched here).
+static bool pipelineColorMaskEnabled() {
+    static int s_on = -1;
+    if (s_on < 0) {
+        const char* v = std::getenv("MC2_PIPELINE_COLORMASK");
+        s_on = (v && v[0] && v[0] != '0') ? 1 : 0;
+    }
+    return s_on != 0;
+}
+
+// Opt-in set (row metadata, keyed by the applyPipeline dbgName). CURRENTLY EMPTY.
+//
+// ★ FINDING (COLORMASK-OWNERSHIP-1 byte-gate): a single-pass colorMask opt-in LEAKS.
+// We tried composite ({t,f,f}); with the gate ON the water frame sha changed
+// (cb5a700e -> 8d40ce4a). Cause: composite emits glColorMaski(1,FALSE)(2,FALSE), and
+// since composite is the LAST world pass those masks leak into the NEXT frame's MRT
+// scene draw -> GBuffer1/objectId stop being written. So colorMask ownership CANNOT be
+// incremental-single-pass: it needs either a FULL rollout (every MRT-writing pass also
+// asserts its mask, so the leak self-heals) or a per-pass mask restore. Until then no
+// row opts in -> behavior is preserved everywhere (gate-OFF AND gate-ON byte-identical
+// while the set is empty). The mechanism + checker + gate ship ready for the rollout.
+static bool rowOwnsColorMask(const char* dbgName) {
+    (void)dbgName;
+    return false;  // opt-in deferred to the full colorMask rollout (see finding above)
 }
 
 void applyPipeline(const RenderCore::PipelineDesc& desc, const char* dbgName) {
@@ -120,6 +152,19 @@ void applyPipeline(const RenderCore::PipelineDesc& desc, const char* dbgName) {
     // already off — e.g. the shadow brackets and scene passes).
     if (desc.polygonOffsetEnable) glEnable(GL_POLYGON_OFFSET_FILL);
     else                          glDisable(GL_POLYGON_OFFSET_FILL);
+
+    // COLORMASK-OWNERSHIP-1: opt-in, gated. Emit whole-attachment colorMask from the
+    // row's colorAttachments so the pass asserts its own write-mask instead of relying
+    // on an ambient raw-GL repair (e.g. the terrain shadow-leak glColorMask(TRUE)).
+    // Default OFF + opt-in -> legacy behavior preserved everywhere else.
+    if (pipelineColorMaskEnabled() && rowOwnsColorMask(dbgName)) {
+        const GLboolean c0 = desc.colorAttachments.color0 ? GL_TRUE : GL_FALSE;
+        const GLboolean c1 = desc.colorAttachments.color1 ? GL_TRUE : GL_FALSE;
+        const GLboolean c2 = desc.colorAttachments.color2 ? GL_TRUE : GL_FALSE;
+        glColorMaski(0, c0, c0, c0, c0);
+        glColorMaski(1, c1, c1, c1, c1);
+        glColorMaski(2, c2, c2, c2, c2);
+    }
 
     if (dbgName && pipelineBindTraceEnabled()) {
         const char* df =
