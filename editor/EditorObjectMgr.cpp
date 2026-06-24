@@ -1861,8 +1861,13 @@ void EditorObjectMgr::select( const Stuff::Vector4D& pos1, const Stuff::Vector4D
 			if ( !pAppearance )
 				continue;
 
-			eye->projectZ( pAppearance->position, screenPos );
-			if ( screenPos.x >= xMin && screenPos.x <= xMax			
+			// BUG1 (zoomed-in marquee): use the modern GL forward projection (the same
+			// one getObjectAtScreenPosition / the drag jacobian use) instead of legacy
+			// projectZ. projectZ diverges from the rendered camera when zoomed in, so
+			// object centers landed outside the screen rect and nothing got selected.
+			if ( !EditorObjectMgr_ProjectScreenXY_GL( pAppearance->position, screenPos ) )
+				continue;
+			if ( screenPos.x >= xMin && screenPos.x <= xMax
 				 && screenPos.y >= yMin && screenPos.y <= yMax )
 			{
 				pAppearance->selected = true;
@@ -1878,8 +1883,13 @@ void EditorObjectMgr::select( const Stuff::Vector4D& pos1, const Stuff::Vector4D
 			if ( !pAppearance )
 				continue;
 
-			eye->projectZ( pAppearance->position, screenPos );
-			if ( screenPos.x >= xMin && screenPos.x <= xMax			
+			// BUG1 (zoomed-in marquee): use the modern GL forward projection (the same
+			// one getObjectAtScreenPosition / the drag jacobian use) instead of legacy
+			// projectZ. projectZ diverges from the rendered camera when zoomed in, so
+			// object centers landed outside the screen rect and nothing got selected.
+			if ( !EditorObjectMgr_ProjectScreenXY_GL( pAppearance->position, screenPos ) )
+				continue;
+			if ( screenPos.x >= xMin && screenPos.x <= xMax
 				 && screenPos.y >= yMin && screenPos.y <= yMax )
 			{
 				pAppearance->selected = true;
@@ -1896,9 +1906,10 @@ void EditorObjectMgr::select( const Stuff::Vector4D& pos1, const Stuff::Vector4D
 				continue;
 
 			Stuff::Vector3D pos = pObject->getPosition();
-			eye->projectZ( pos, screenPos );
-		
-			if ( screenPos.x >= xMin && screenPos.x <= xMax			
+			if ( !EditorObjectMgr_ProjectScreenXY_GL( pos, screenPos ) )   // BUG1: modern projection
+				continue;
+
+			if ( screenPos.x >= xMin && screenPos.x <= xMax
 				 && screenPos.y >= yMin && screenPos.y <= yMax )
 			{
 				pAppearance->selected = true;

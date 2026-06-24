@@ -1657,7 +1657,22 @@ void EditorInterface::handleLeftButtonDown( int PosX, int PosY )
 				}
 			}
 			m_pDragAction = new ModifyBuildingAction;
-			m_pDragAction->addBuildingInfo( *pHit );
+			// Group drag: if the grabbed object is part of a multi-selection, record
+			// EVERY selected object's start state so the whole group is one undoable
+			// move (and handleMouseMove translates them all). Otherwise just the grab.
+			EditorObjectMgr* pDragMgr = EditorObjectMgr::instance();
+			if ( pHit->isSelected() && pDragMgr->getSelectionCount() > 1 )
+			{
+				EditorObjectMgr::EDITOR_OBJECT_LIST sel = pDragMgr->getSelectedObjectList();
+				for ( EditorObjectMgr::EDITOR_OBJECT_LIST::EIterator it = sel.Begin();
+					!it.IsDone(); it++ )
+					if ( *it && (*it)->appearance() )
+						m_pDragAction->addBuildingInfo( **it );
+			}
+			else
+			{
+				m_pDragAction->addBuildingInfo( *pHit );
+			}
 			lastClickPos = vector;
 			return;
 		}
@@ -1776,32 +1791,53 @@ void EditorInterface::handleMouseMove( int PosX, int PosY )
 		float dsy = (float)( PosY - m_dragLastScreenY );
 		m_dragLastScreenX = PosX;
 		m_dragLastScreenY = PosY;
-		Stuff::Vector3D newPos = pDragApp->position;
+		// World translation for this frame (J^-1 * screen delta), computed once from
+		// the grabbed object's jacobian and applied as a RIGID delta to the group.
+		float worldDx = 0.f, worldDy = 0.f;
 		if ( fabsf( det ) > 1e-9f )
 		{
-			// world delta = J^-1 * screen delta.
 			const float invDet = 1.0f / det;
-			newPos.x += (  Jyy * dsx - Jxy * dsy ) * invDet;
-			newPos.y += ( -Jyx * dsx + Jxx * dsy ) * invDet;
+			worldDx = (  Jyy * dsx - Jxy * dsy ) * invDet;
+			worldDy = ( -Jyx * dsx + Jxx * dsy ) * invDet;
 		}
-		newPos.z = m_dragObjStartPos.z;
-		int row = 0, col = 0;
-		land->worldToCell( newPos, row, col );
-		EditorObjectMgr::instance()->moveBuilding( m_pDragObject, row, col );
-		if ( m_pDragObject->appearance() )
-		{
-			ObjectAppearance* pApp = m_pDragObject->appearance();
-			newPos.z = land->getTerrainElevation( newPos );
-			pApp->position = newPos;
+
+		// Apply the same world delta to one object (free move + cell/link bookkeeping
+		// + recipe re-bake). Used for both the single grab and each group member.
+		auto dragMoveOne = [&]( EditorObject* pObj ) {
+			if ( !pObj ) return;
+			ObjectAppearance* pApp = pObj->appearance();
+			if ( !pApp ) return;
+			Stuff::Vector3D np = pApp->position;
+			np.x += worldDx;
+			np.y += worldDy;
+			int row = 0, col = 0;
+			land->worldToCell( np, row, col );
+			EditorObjectMgr::instance()->moveBuilding( pObj, row, col );
+			np.z = land->getTerrainElevation( np );
+			pApp->position = np;
 			// Invalidate the baked static recipe BEFORE update() so update() runs
 			// unregistered and re-transforms from the free position; the next render
 			// re-bakes at the free pose. Invalidate-after-update never re-bakes.
 			pApp->invalidateStaticRegistration();
 			pApp->update();
-			// Re-bake the static recipe at the new pose (invalidate only destroys
-			// the old recipe; nothing else re-registers it, so the GPU would keep
-			// drawing the last baked/snapped modelMatrix).
+			// Re-bake the static recipe at the new pose (invalidate only destroys the
+			// old recipe; nothing else re-registers it).
 			pApp->registerStatic();
+		};
+
+		// BUG3 (group drag): if the grabbed object is part of a multi-selection, move
+		// the WHOLE selection by the same world delta. Otherwise move just the grab.
+		EditorObjectMgr* pMoveMgr = EditorObjectMgr::instance();
+		if ( m_pDragObject->isSelected() && pMoveMgr->getSelectionCount() > 1 )
+		{
+			EditorObjectMgr::EDITOR_OBJECT_LIST sel = pMoveMgr->getSelectedObjectList();
+			for ( EditorObjectMgr::EDITOR_OBJECT_LIST::EIterator it = sel.Begin();
+				!it.IsDone(); it++ )
+				dragMoveOne( *it );
+		}
+		else
+		{
+			dragMoveOne( m_pDragObject );
 		}
 		m_dragObjMoved = true;
 		return;

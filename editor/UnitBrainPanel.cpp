@@ -74,18 +74,21 @@ void UnitBrainPanel::Draw()
 	if (!s_open)
 		return;
 
-	ImGui::SetNextWindowSize(ImVec2(320.f, 420.f), ImGuiCond_FirstUseEver);
-	if (!ImGui::Begin("AI / Brain / Orders", &s_open))
-	{
-		ImGui::End();
+	// Rendered INLINE inside the docked "Tools" window (renderToolbarImGui calls
+	// this right after the toggle button) — no floating ImGui::Begin window, so the
+	// panel stays docked in the right-hand tool column like the other overlays.
+	// A child region with a border visually groups it and gives it its own scroll.
+	ImGui::Separator();
+	if (!ImGui::CollapsingHeader("AI / Brain / Orders", ImGuiTreeNodeFlags_DefaultOpen))
 		return;
-	}
+
+	ImGui::BeginChild("UnitBrainPanelBody", ImVec2(0.f, 300.f), true);
 
 	EditorObjectMgr* mgr = EditorObjectMgr::instance();
 	if (!mgr)
 	{
 		ImGui::TextDisabled("No map loaded.");
-		ImGui::End();
+		ImGui::EndChild();
 		return;
 	}
 
@@ -94,7 +97,7 @@ void UnitBrainPanel::Draw()
 	if (!obj)
 	{
 		ImGui::TextDisabled("Select a unit to view its AI / orders.");
-		ImGui::End();
+		ImGui::EndChild();
 		return;
 	}
 
@@ -103,7 +106,7 @@ void UnitBrainPanel::Draw()
 	{
 		ImGui::TextDisabled("Selected object is not a unit.");
 		ImGui::Text("Category: %s", InspectorPanel::CategoryToken(obj));
-		ImGui::End();
+		ImGui::EndChild();
 		return;
 	}
 
@@ -174,5 +177,5 @@ void UnitBrainPanel::Draw()
 			"action, then bind to the brain-dispatch order delivery.");
 	}
 
-	ImGui::End();
+	ImGui::EndChild();
 }
