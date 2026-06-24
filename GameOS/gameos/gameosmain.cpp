@@ -1,5 +1,6 @@
 #include "gameos.hpp"
 #include "gos_render.h"
+#include "gos_render_context.h"        // InitializeRenderContextConventions (shared game/editor)
 #include "render_snapshot.h"
 #include "draw_packet_emitter.h"       // DrawPacket v0
 #include "gos_static_prop_batcher.h"   // batcher_getSortedPacketCount — explicit, do not rely on transitive
@@ -1129,33 +1130,12 @@ int main(int argc, char** argv)
 		glDebugMessageCallbackARB((GLDEBUGPROC)&OpenGLDebugLog, NULL);
 	}
 
-    // GL_ARB_clip_control: align hardware depth convention with engine's
-    // existing D3D-style projection matrices. cameraToClip
-    // (mclib/camera.cpp:1942-1965) produces clip-space [0, w] by deliberate
-    // design; without clip control, hardware default expects [-w, w] and
-    // compresses our output into window depth [0.5, 1.0] — half precision
-    // wasted. With ZERO_TO_ONE, hardware natively expects [0, w], NDC z is
-    // [0, 1], window depth uses full [0, 1] range.
-    //
-    // **Fail-closed contract:** the four shader edits in this slice
-    // (gos_terrain.tese, gos_terrain_thin.vert, shadow_screen.frag,
-    // ssao.frag) remove their depth-range workaround remaps unconditionally.
-    // Running without glClipControl(GL_ZERO_TO_ONE) would feed [0,1] NDC z
-    // to hardware expecting [-1,1] and produce garbage depth. So if the
-    // extension is somehow unavailable at runtime, we MUST refuse to start
-    // rather than ship broken rendering.
-    //
-    // Plan: docs/superpowers/plans/2026-05-06-clip-control-adoption.md
-    if (GLEW_ARB_clip_control || GLEW_VERSION_4_5) {
-        glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE);
-        printf("[INSTR v1] clip_control=enabled origin=lower_left depth=zero_to_one\n");
-        fflush(stdout);
-    } else {
-        printf("[INSTR v1] clip_control=unsupported fatal=1\n");
-        fflush(stdout);
-        gosASSERT(false);
-        abort();
-    }
+    // GAMEOS-RENDER-CONTEXT-PARITY-1: clip-control + reverse-Z depth baseline
+    // are established by the shared function so the game and the editor cannot
+    // diverge. The fail-closed contract (abort if glClipControl is unavailable)
+    // lives inside InitializeRenderContextConventions. The full clip-control
+    // rationale was moved there. See gos_render_context.{h,cpp}.
+    InitializeRenderContextConventions(RenderHostKind::Game);
 
     SPEW(("GRAPHICS", "Status: Using GLEW %s\n", glewGetString(GLEW_VERSION)));
     //if ((!GLEW_ARB_vertex_program || !GLEW_ARB_fragment_program))

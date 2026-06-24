@@ -36,6 +36,7 @@
 
 #include <gameos.hpp>          // gos_RendererBeginFrame / EndFrame / HandleEvents
 #include "gos_render.h"        // graphics::make_current_context etc.
+#include "gos_render_context.h"  // InitializeRenderContextConventions (shared game/editor parity)
 #include "gos_input.h"         // input::beginUpdateMouseState etc.
 #include "camera.h"            // extern eye + fgetScreenResX (pick-cache coherence diag)
 #include "gos_postprocess.h"   // gosPostProcess + getGosPostProcess() — needed for
@@ -313,21 +314,16 @@ void __stdcall InitGameOS(HINSTANCE /*hInstance*/, HWND hWindow, char* commandLi
 #ifdef TRACY_ENABLE
                 TracyGpuContext;
 #endif
-                // EDITOR-CLIPCONTROL-PARITY-1: the editor shares the game's shaders,
-                // which assume the reverse-Z [0,1] NDC depth convention established by
-                // glClipControl(GL_ZERO_TO_ONE). The game sets this once at boot
-                // (gameosmain.cpp ~1150); the editor previously never set it, so editor
-                // depth was [-1,1] against [0,1]-expecting shaders -> wrong depth /
-                // z-fighting. Mirror the game's fail-closed contract exactly: refuse to
-                // start rather than render garbage depth. Must precede gos_CreateRenderer.
-                if (GLEW_ARB_clip_control || GLEW_VERSION_4_5) {
-                    glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE);
-                    EditorGameOSTrace("InitGameOS: clip_control=enabled origin=lower_left depth=zero_to_one");
-                } else {
-                    EditorGameOSTrace("InitGameOS: clip_control=unsupported fatal=1");
-                    gosASSERT(false);
-                    abort();
-                }
+                // GAMEOS-RENDER-CONTEXT-PARITY-1: the editor shares the game's
+                // shaders, which assume the reverse-Z [0,1] NDC depth convention.
+                // Both hosts now establish clip-control + the reverse-Z depth
+                // baseline through ONE shared function so they cannot diverge
+                // (this class of bug is what Slice 0 fixed inline). The
+                // fail-closed contract (abort if glClipControl is unavailable)
+                // lives inside the shared function. Must precede gos_CreateRenderer.
+                EditorGameOSTrace("InitGameOS: before InitializeRenderContextConventions(Editor)");
+                InitializeRenderContextConventions(RenderHostKind::Editor);
+                EditorGameOSTrace("InitGameOS: after InitializeRenderContextConventions(Editor)");
 
                 EditorGameOSTrace("InitGameOS: before gos_CreateRenderer context=%p window=%p", g_editorRenderContext, g_editorRenderWindow);
                 gos_CreateRenderer(g_editorRenderContext, g_editorRenderWindow, w, h);

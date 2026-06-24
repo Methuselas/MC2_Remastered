@@ -100,6 +100,7 @@ run_check "visual_compare"         "py -3 scripts/visual_compare.py --self-test"
 run_check "brain_fit_schema"       "py -3 scripts/check-brain-fit-schema.py --quiet"
 run_check "deploy_data_parity"     "py -3 scripts/check-deploy-data-parity.py --quiet"
 run_check "pass_coverage"          "py -3 scripts/check-pass-coverage.py --quiet"
+run_check "render_ctx_parity"      "py -3 scripts/check-editor-game-render-context-parity.py --quiet"
 
 # ---------------------------------------------------------------------------
 # Summary table
