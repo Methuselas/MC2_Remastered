@@ -41,6 +41,9 @@ SelectionBrush::SelectionBrush( bool Area, int newRadius )
 
 	lastPos.x = lastPos.y = lastPos.z = lastPos.w = 0.0f;		//Keep the FPU exception from going off!
 	m_lastDragScreen.x = m_lastDragScreen.y = 0.0f;			//Keep the FPU exception from going off!
+	m_marqueeFirstScreen.x = m_marqueeFirstScreen.y = m_marqueeFirstScreen.z = m_marqueeFirstScreen.w = 0.0f;
+	m_marqueeLastScreen = m_marqueeFirstScreen;
+	m_marqueeStarted = false;
 	smoothRadius = newRadius;
 	bFirstClick = false;
 
@@ -62,6 +65,7 @@ bool SelectionBrush::beginPaint()
 
 	bPainting = true;
 	bFirstClick = !bFirstClick;
+	m_marqueeStarted = false;   // BUG1: fresh screen-space marquee rect per drag
 	return true;
 }
 Action* SelectionBrush::endPaint()
@@ -103,14 +107,18 @@ Action* SelectionBrush::endPaint()
 		}
 	}
 
-	if ( lastWorldPos != firstWorldPos )
+	// BUG1: select using the SCREEN-space marquee rect captured during the drag.
+	// Old path: project firstWorldPos/lastWorldPos (built via the broken inverseProject)
+	// back to screen — under zoom-in those world points were garbage/equal so the rect was
+	// empty and nothing got selected. The marquee is inherently a screen rectangle, so use
+	// the recorded screen corners directly. EditorObjectMgr::select / selectVerticesInRect
+	// both take screen-space Vector4D corners and forward-project candidates to test them.
+	if ( m_marqueeStarted &&
+		( m_marqueeFirstScreen.x != m_marqueeLastScreen.x ||
+		  m_marqueeFirstScreen.y != m_marqueeLastScreen.y ) )
 	{
-		Stuff::Vector4D lastPos;
-		Stuff::Vector4D endPos;
-		eye->projectZ( firstWorldPos, endPos );
-		eye->projectZ( lastWorldPos, lastPos );
-		EditorObjectMgr::instance()->select( lastPos, endPos );
-		land->selectVerticesInRect( lastPos, endPos,  (GetAsyncKeyState( VK_CONTROL )) );
+		EditorObjectMgr::instance()->select( m_marqueeLastScreen, m_marqueeFirstScreen );
+		land->selectVerticesInRect( m_marqueeLastScreen, m_marqueeFirstScreen, (GetAsyncKeyState( VK_CONTROL )) );
 	}
 
 	if (EditorInterface::instance()->ObjectSelectOnlyMode())
@@ -217,38 +225,57 @@ bool SelectionBrush::paint( Stuff::Vector3D& worldPos, int screenX, int screenY 
 					return true;
 				}
 
-				Stuff::Vector3D newPos = pApp->position;
-				// world delta = J^-1 * screen delta.
+				// BUG3 (group move): the jacobian above is computed once at the grabbed
+				// ANCHOR (pDragBuilding). Convert this frame's cursor pixel delta into a
+				// single WORLD translation, then apply that SAME rigid translation to every
+				// selected object so a multi-select group moves together. For a single
+				// selection the loop runs once == the previous behavior.
 				const float invDet = 1.0f / det;
-				newPos.x += (  Jyy * dsx - Jxy * dsy ) * invDet;
-				newPos.y += ( -Jyx * dsx + Jxx * dsy ) * invDet;
-				newPos.z = land->getTerrainElevation( newPos );
+				const float worldDx = (  Jyy * dsx - Jxy * dsy ) * invDet;
+				const float worldDy = ( -Jyx * dsx + Jxx * dsy ) * invDet;
 
-				int newCellI, newCellJ;
-				land->worldToCell( newPos, newCellJ, newCellI );
+				EditorObjectMgr::EDITOR_OBJECT_LIST sel =
+					EditorObjectMgr::instance()->getSelectedObjectList();
+				for ( EditorObjectMgr::EDITOR_OBJECT_LIST::EIterator it = sel.Begin();
+					!it.IsDone(); it++ )
+				{
+					EditorObject* pSel = *it;
+					if ( !pSel )
+						continue;
+					ObjectAppearance* pSelApp = pSel->appearance();
+					if ( !pSelApp )
+						continue;
 
-				pCurModifyBuildingAction->addBuildingInfo(*pMutable);
-				// Free (un-snapped) move: moveBuilding keeps cell/link bookkeeping
-				// current, then we override its grid-snapped position with the
-				// jacobian-advanced free position so buildings track the cursor exactly.
-				EditorObjectMgr::instance()->moveBuilding( pMutable, newCellJ, newCellI );
-				pApp->position = newPos;
-				// Invalidate the baked static recipe BEFORE update() so update()
-				// runs UNREGISTERED and re-transforms from the free position; the
-				// next render then re-bakes the recipe at the free pose. If
-				// invalidate came after update(), update() takes the still-
-				// registered PositionsOnly path and never re-bakes -> snap-back.
-				pApp->invalidateStaticRegistration();
-				pApp->update();
-				// Re-bake the static recipe at the new pose. invalidate() only
-				// destroys the old recipe (registered=false); update() does NOT
-				// re-register, and render-time late-spawn registration is off by
-				// default -- so without this explicit re-register the GPU keeps
-				// drawing the last baked (snapped) modelMatrix.
-				pApp->registerStatic();
+					Stuff::Vector3D newPos = pSelApp->position;
+					newPos.x += worldDx;
+					newPos.y += worldDy;
+					newPos.z = land->getTerrainElevation( newPos );
 
-				lastRow = newCellI;
-				lastCol = newCellJ;
+					int newCellI, newCellJ;
+					land->worldToCell( newPos, newCellJ, newCellI );
+
+					pCurModifyBuildingAction->addBuildingInfo(*pSel);
+					// Free (un-snapped) move: moveBuilding keeps cell/link bookkeeping
+					// current, then we override its grid-snapped position with the
+					// jacobian-advanced free position so objects track the cursor exactly.
+					EditorObjectMgr::instance()->moveBuilding( pSel, newCellJ, newCellI );
+					pSelApp->position = newPos;
+					// Invalidate the baked static recipe BEFORE update() so update()
+					// runs UNREGISTERED and re-transforms from the free position; the
+					// next render then re-bakes the recipe at the free pose. If
+					// invalidate came after update(), update() takes the still-
+					// registered PositionsOnly path and never re-bakes -> snap-back.
+					pSelApp->invalidateStaticRegistration();
+					pSelApp->update();
+					// Re-bake the static recipe at the new pose (see single-move note).
+					pSelApp->registerStatic();
+
+					if ( pSel == pMutable )
+					{
+						lastRow = newCellI;
+						lastCol = newCellJ;
+					}
+				}
 			}
 		}
 		return true;
@@ -293,7 +320,17 @@ bool SelectionBrush::paint( Stuff::Vector3D& worldPos, int screenX, int screenY 
 	{
 		long bShift = GetAsyncKeyState( VK_SHIFT );
 		long bCtrl = GetAsyncKeyState( VK_CONTROL );
-	
+
+		// BUG1: record the marquee corners in SCREEN space (endPos = current cursor).
+		// endPaint selects with these directly instead of round-tripping world positions
+		// through the broken inverseProject, which collapsed under zoom-in.
+		if ( !m_marqueeStarted )
+		{
+			m_marqueeFirstScreen = endPos;
+			m_marqueeStarted = true;
+		}
+		m_marqueeLastScreen = endPos;
+
 		Stuff::Vector2DOf<long> screenPos;
 		screenPos.x = screenX;
 		screenPos.y = screenY;
@@ -377,13 +414,12 @@ bool SelectionBrush::paint( Stuff::Vector3D& worldPos, int screenX, int screenY 
 void SelectionBrush::render( int screenX, int screenY )
 {
 	
-	if ( bPainting && !bDrag && !pDragBuilding)
+	if ( bPainting && !bDrag && !pDragBuilding && m_marqueeStarted )
 	{
 		//------------------------------------------
-		Stuff::Vector4D Screen;
-		eye->projectZ( firstWorldPos, Screen );
-		
-		GUI_RECT rect = { screenX, screenY, (long)Screen.x, (long)Screen.y };
+		// BUG1: draw the rubber band from the recorded SCREEN-space start corner to the
+		// live cursor (was projectZ(firstWorldPos), which drew an empty rect under zoom).
+		GUI_RECT rect = { screenX, screenY, (long)m_marqueeFirstScreen.x, (long)m_marqueeFirstScreen.y };
 		drawRect( rect, 0x30ffffff );
 		drawEmptyRect( rect, 0xff000000, 0xff000000 );
 	}
@@ -393,9 +429,13 @@ void SelectionBrush::render( int screenX, int screenY )
 		!GetAsyncKeyState( KEY_LSHIFT ) && !GetAsyncKeyState( KEY_LCONTROL ) )
 	{
 		
-		if ( EditorObjectMgr::instance()->getSelectionCount() == 1 )
+		if ( EditorObjectMgr::instance()->getSelectionCount() >= 1 )
 		{
-			// only drag move one building at a time
+			// BUG2/BUG3: hovering ANY selected object (single OR group) grabs it as the
+			// drag ANCHOR and shows the move (hand) cursor. Was `== 1`, which on a group
+			// fell through to the terrain-vertex scan below and showed the deform/hills
+			// cursor (BUG2) and never let the group move (BUG3). paint() translates the
+			// whole selection by the anchor's jacobian delta.
 			//
 			// Hover-grab pick: use the FORWARD screen-space picker (the same one the
 			// working single-click path uses), NOT eye->inverseProject. inverseProject
