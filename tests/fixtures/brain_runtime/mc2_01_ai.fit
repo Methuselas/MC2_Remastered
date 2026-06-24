@@ -1,0 +1,6 @@
+FITini
+
+[Brain]
+st unitRef = "Warrior4"
+l mode = 2
+st opord = "Guard"

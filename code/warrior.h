@@ -1423,6 +1423,13 @@ class MechWarrior {
 
 		long loadBrainParameters (FitIniFile* brainFile, long warriorId);
 
+		// BRAIN-RUNTIME-1B: allocate brainRuntime if needed and set its mode.
+		// Called from mission.cpp after loading _ai.fit Brain block.
+		void setBrainRuntimeMode (BrainRuntimeMode fitMode);
+
+		// BRAIN-RUNTIME-1B: direct access for mission loader (public accessor).
+		MechBrainRuntime* getBrainRuntime () { return brainRuntime; }
+
 		bool injure (float numWounds, bool checkEject = true);
 
 		void eject (void);

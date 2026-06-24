@@ -125,6 +125,7 @@ static void initBrainTaskQGate() {
 // MC2_BRAIN_RUNTIME gate — checked once at first runBrain call (requires MC2_BRAIN_TASKQ=1)
 static bool             s_brainRuntimeEnabled      = false;
 static bool             s_brainRuntimeTraceEnabled  = false;
+static bool             s_brainRuntimeApplyEnabled  = false;   // MC2_BRAIN_RUNTIME_APPLY=1 (BRAIN-RUNTIME-1B)
 static bool             s_brainRuntimeGateChecked   = false;
 static BrainRuntimeMode s_brainRuntimeForcedMode    = BrainRuntimeMode::Legacy;
 static void initBrainRuntimeGate() {
@@ -132,7 +133,14 @@ static void initBrainRuntimeGate() {
     s_brainRuntimeGateChecked  = true;
     s_brainRuntimeEnabled      = (std::getenv("MC2_BRAIN_RUNTIME")       && std::atoi(std::getenv("MC2_BRAIN_RUNTIME"))       != 0);
     s_brainRuntimeTraceEnabled = (std::getenv("MC2_BRAIN_RUNTIME_TRACE") && std::atoi(std::getenv("MC2_BRAIN_RUNTIME_TRACE")) != 0);
-    // Mode source: MC2_BRAIN_RUNTIME_FORCE_MODE env override only (mission_ai.fit loader deferred)
+    // MC2_BRAIN_RUNTIME_APPLY=1 enables actual slot writes + short-circuit (BRAIN-RUNTIME-1B).
+    // Requires MC2_BRAIN_RUNTIME=1; warn+stay inert if APPLY=1 but RUNTIME=0.
+    s_brainRuntimeApplyEnabled = (std::getenv("MC2_BRAIN_RUNTIME_APPLY") && std::atoi(std::getenv("MC2_BRAIN_RUNTIME_APPLY")) != 0);
+    if (s_brainRuntimeApplyEnabled && !s_brainRuntimeEnabled) {
+        std::fprintf(stderr, "[BRAIN_RT] WARNING: MC2_BRAIN_RUNTIME_APPLY=1 but MC2_BRAIN_RUNTIME=0 — apply staying inert\n");
+        s_brainRuntimeApplyEnabled = false;
+    }
+    // Mode source: MC2_BRAIN_RUNTIME_FORCE_MODE env override only; per-unit FIT loader may override per-warrior.
     const char* modeEnv = std::getenv("MC2_BRAIN_RUNTIME_FORCE_MODE");
     if (modeEnv) {
         if      (std::strcmp(modeEnv, "hybrid")   == 0) s_brainRuntimeForcedMode = BrainRuntimeMode::Hybrid;
@@ -141,7 +149,8 @@ static void initBrainRuntimeGate() {
     }
     if (s_brainRuntimeEnabled && !s_brainTaskQEnabled) {
         std::fprintf(stderr, "[BRAIN_RT] WARNING: MC2_BRAIN_RUNTIME=1 but MC2_BRAIN_TASKQ=0 — runtime staying inert\n");
-        s_brainRuntimeEnabled = false;
+        s_brainRuntimeEnabled      = false;
+        s_brainRuntimeApplyEnabled = false;
     }
 }
 
@@ -2201,51 +2210,91 @@ long MechWarrior::runBrain (void) {
 	ModuleInfo moduleInfo;
 	brain->getInfo(&moduleInfo);
 
-	brain->execute();
-	//--------------------------------------------------------------
-	// Well, we'll just set it every frame so it doesn't screw up :)
-	setUseGoalPlan(!MPlayer && (getCommander() != Commander::home));
+	// BRAIN-RUNTIME-1B: check if this warrior is under Enhanced runtime control.
+	// If so, skip brain->execute() and the ABL-derived tac order, push+drain HOLD once.
+	// CurGroup/CurWarrior clear and clearAlarmsHistory() run UNCONDITIONALLY below.
+	bool enhancedApply = s_brainRuntimeEnabled && s_brainRuntimeApplyEnabled
+	                     && brainRuntime
+	                     && (brainRuntime->mode == BrainRuntimeMode::Enhanced);
 
-	if (useGoalPlan) {
-		TacticalOrder tacOrder;
-		long result = calcTacOrder(mainGoalAction, mainGoalObjectWID, mainGoalLocation, mainGoalControlRadius, 0, 1, 150.0, 300, tacOrder);
-		if (result == 0) {
-			if (tacOrder.code != TACTICAL_ORDER_NONE) {
-				if (getCommander() == Commander::home)
-					setPlayerTacOrder(tacOrder);
-				else
-					setGeneralTacOrder(tacOrder);
+	long brainErr = 0;
+	if (!enhancedApply) {
+		// ── Legacy ABL path ──────────────────────────────────────────────────────────
+		brain->execute();
+		//--------------------------------------------------------------
+		// Well, we'll just set it every frame so it doesn't screw up :)
+		setUseGoalPlan(!MPlayer && (getCommander() != Commander::home));
+
+		if (useGoalPlan) {
+			TacticalOrder tacOrder;
+			long result = calcTacOrder(mainGoalAction, mainGoalObjectWID, mainGoalLocation, mainGoalControlRadius, 0, 1, 150.0, 300, tacOrder);
+			if (result == 0) {
+				if (tacOrder.code != TACTICAL_ORDER_NONE) {
+					if (getCommander() == Commander::home)
+						setPlayerTacOrder(tacOrder);
+					else
+						setGeneralTacOrder(tacOrder);
+				}
+				}
+			else if (result > 0) {
+				setMainGoal(GOAL_ACTION_NONE, NULL, NULL, -1.0);
+				clearCurTacOrder();
 			}
-			}
-		else if (result > 0) {
-			setMainGoal(GOAL_ACTION_NONE, NULL, NULL, -1.0);
-			clearCurTacOrder();
 		}
+
+		brainErr = brain->getInteger();
+		switch (brainErr) {
+			case 0:
+				//------------
+				// No error...
+				break;
+			case 1:
+				//-----------------------------------------------
+				// General purpose error, for now, so bomb out...
+				break;
+		}
+	} else {
+		// ── APPLY=1 + Enhanced: skip ABL execute; push HOLD once, drain+apply ───────
+		if (brainTaskQueue && !brainRuntime->initialHoldPushed) {
+			brainRuntime->initialHoldPushed = 1;
+			brainTaskQueue->push(/*tier=*/0, /*frame_ms=*/0, vehicleWID, BrainTaskType::BRAIN_TASK_HOLD);
+		}
+		if (brainTaskQueue) {
+			BrainTaskEntry task;
+			while (brainTaskQueue->drainWithTask(task)) {
+				if (task.type == BrainTaskType::BRAIN_TASK_HOLD) {
+					TacticalOrder holdOrder;
+					holdOrder.init(ORDER_ORIGIN_SELF, TACTICAL_ORDER_STOP);
+					setGeneralTacOrder(holdOrder);
+					std::fprintf(stderr, "[BRAIN_RT] HOLD_TASK applied wid=%d\n", vehicleWID);
+					std::fflush(stderr);
+				}
+				// Other task types: discard (no handler this slice).
+			}
+		}
+		brainErr = 0;
 	}
 
+	// UNCONDITIONAL housekeeping — runs for BOTH paths (preserves Legacy invariant).
 	CurGroup = NULL;
 	CurObject = NULL;
 	CurObjectClass = 0;
 	CurWarrior = NULL;
 	CurContact = NULL;
 
-	//-------------------------------------------------
-	// All brain modules should return an error code...
-	long brainErr = brain->getInteger();
-	switch (brainErr) {
-		case 0:
-			//------------
-			// No error...
-			break;
-		case 1:
-			//-----------------------------------------------
-			// General purpose error, for now, so bomb out...
-			break;
-	}
-
 	clearAlarmsHistory();
 
 	return(brainErr);
+}
+
+//---------------------------------------------------------------------------
+// BRAIN-RUNTIME-1B: public accessor used by mission.cpp FIT loader.
+
+void MechWarrior::setBrainRuntimeMode (BrainRuntimeMode fitMode) {
+	if (!brainRuntime) {
+		brainRuntime = new MechBrainRuntime();
+	}
+	brainRuntime->mode = fitMode;
 }
 
 //---------------------------------------------------------------------------
@@ -5071,17 +5120,26 @@ long MechWarrior::mainDecisionTree (void) {
 			if (s_brainTaskQTraceEnabled) {
 				brainTaskQueue->dumpTrace(vehicleWID);
 			}
-			brainTaskQueue->drain();  // discards task (stub); falls through to ABL unchanged
+			// Task queue allocated here; consumed inside runBrain() per BRAIN-RUNTIME-1B.
 		}
-		// MC2_BRAIN_RUNTIME: detect mode + compute arbitration (TRACE ONLY — never applied).
-		// ABL brain->execute() runs unconditionally below; no slots are written here.
+
+		// MC2_BRAIN_RUNTIME: init struct and set mode from global forced mode (per-unit FIT override applied at mission load).
 		initBrainRuntimeGate();
 		if (s_brainRuntimeEnabled && s_brainTaskQEnabled) {
 			if (!brainRuntime) {
 				brainRuntime = new MechBrainRuntime();
+				// Set mode: per-unit FIT loader (mission_ai.fit) may have already set brainRuntime->mode
+				// at mission load via loadBrainRuntimeFromFit(). If not yet created, use global forced mode.
 				brainRuntime->mode = s_brainRuntimeForcedMode;
 			}
-			if (s_brainRuntimeTraceEnabled) {
+		}
+
+		// BRAIN-RUNTIME-1B seam: short-circuit logic lives INSIDE runBrain().
+		// APPLY=0: trace-log the would-own mask (1A behavior, byte-identical to baseline).
+		// APPLY=1+Enhanced: runBrain() skips brain->execute(), pushes/drains HOLD_TASK.
+		// All paths: CurGroup/CurWarrior clear + clearAlarmsHistory() run inside runBrain().
+		if (s_brainRuntimeEnabled && s_brainTaskQEnabled && brainRuntime) {
+			if (s_brainRuntimeTraceEnabled && !s_brainRuntimeApplyEnabled) {
 				uint8_t wouldOwn = brainRuntime->computeWouldOwnMask();
 				// Build human-readable slot list
 				char slotsBuf[32] = "(none)";
@@ -5097,7 +5155,7 @@ long MechWarrior::mainDecisionTree (void) {
 					slotsBuf);
 			}
 		}
-		// ABL runs unconditionally — this is the 1A contract: compute+trace only, never apply.
+		// runBrain() always called — short-circuit is gated inside it.
 		runBrain();
 		brainUpdate += BrainUpdateFrequency;
 	}
