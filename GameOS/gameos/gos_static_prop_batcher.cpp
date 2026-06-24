@@ -1758,6 +1758,12 @@ void accumulateMonotonicAndMaybeEmit(bool forceEmit) {
                "eligible_actors=%llu submitted_instances=%llu "
                "submitted_children=%llu skipped_children=%llu "
                "cpu_fallback=%llu gpu_drawn_instances=%llu "
+               // STALE-COUNTER-RETIRE-1: gpu_drawn_instances is incremented ONLY on the
+               // legacy/per-type path (line ~7011, CPU-side TypeRangeSsbo.instanceCount).
+               // Under the live GPU-authority coalesce-v6 / C1b path the instance counts
+               // are GPU-authored into the indirect buffer and never read back, so this
+               // reads 0 there. submitted_instances is the honest live-path signal.
+               "gpu_drawn_note=legacy_path_only_v6_uses_submitted "
                "fallback_rate=%.4f "
                "submit_buildings=%llu submit_trees=%llu "
                "submit_generics=%llu submit_legacy=%llu "
@@ -7008,6 +7014,13 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
         // Gate F: count actors that produced ≥1 packet draw this frame.
         // Per-type increment, not per-packet — we want "actors drawn,"
         // not "draw-call count."
+        // STALE-COUNTER-RETIRE-1: this is the ONLY increment of gpu_drawn_instances and it
+        // reads the CPU-side TypeRangeSsbo.instanceCount, which is meaningful only on this
+        // legacy/per-type path. The live GPU-authority coalesce-v6 / C1b path authors
+        // instance counts on the GPU (indirect buffer) and never reaches here, so the
+        // counter stays 0 there. The [OBJBATCHER v1] summary carries gpu_drawn_note to say
+        // so; read submitted_instances for the live signal. (Do NOT add a per-frame GPU
+        // readback to "fix" this — that would stall the frame.)
         s_counters.gpu_drawn_instances += r.instanceCount;
 
         // [INSTDIAG] MC2_STATIC_INST_DIAG=1 — peek the EXACT instance data the GPU will
