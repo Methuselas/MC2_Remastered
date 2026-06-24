@@ -350,3 +350,66 @@ Doc-only change; no compilation impact. No `mc2` smoke tier covers `EditRel.exe`
 so the behavioural lifecycle (editor map load → unload in the locked order) is
 asserted by code inspection against the game path, not by an automated editor
 smoke run.
+
+---
+
+## Slice 5 — EDITOR-PASS-CONTRACT-PARITY-1 (pass-contract governance)
+
+Extends the arc from *context* parity (clip-control, Slice 1) and *lifecycle*
+parity (mission render-resource ordering, Slice 2/3) to **pass-contract**
+parity: the render-governance pattern (governed `RenderPassId` + descriptive
+contract table in `RenderCore/RenderPassContract.h`) applied to the editor.
+
+### What shipped
+
+- **`docs/render-backend-seams/editor-pass-contract-parity.json`** — the
+  declared parity table (source of truth): one row per governed `RenderPassId`
+  plus the 4 editor-only synthetic passes, each with `game` / `editor` status,
+  `classification` (shared / editor-only / game-only / override), and rationale.
+- **`docs/render-backend-seams/editor-pass-contract-parity.md`** — the human
+  ledger: how the editor renders (shared `Environment.UpdateRenderers()` +
+  `pp_editor` begin/end + object-id MRT), the parity table, checker mechanism,
+  negative test, and maintenance contract.
+- **`scripts/check-editor-pass-contract-parity.py`** — the checker. Reads the
+  enum + the JSON table and FAILs on undeclared drift (a governed pass with no
+  declared editor relationship), stale entries, and internal inconsistency.
+  Registered in `scripts/check-contracts.sh` as `editor_pass_parity`.
+
+### Finding (parity already holds — doc/checker-only outcome)
+
+All **11** governed passes are `shared`: the editor has no private world
+renderer; `editor->render()` drives the same shared pass set as the game under
+one contract. **0 game-only, 0 override.** The 4 **editor-only** passes
+(gizmos, selection overlay, brush preview, object-id readback/pick viz) are
+authoring affordances with no governed `RenderPassId`, explicitly classified as
+editor-only. The object-id MRT **write** (`COLOR_ATTACHMENT2`) is shared; only
+the editor-side readback is editor-only.
+
+No code render path changed. This slice is governance infrastructure: it pins
+the (already-correct) editor/game pass relationship so a future render feature
+that adds/renumbers/re-pipelines a governed pass cannot silently drift the
+editor — the checker fails until the table is updated to match.
+
+### Dependency
+
+The checker depends on `RenderCore/RenderPassContract.h` (`enum RenderPassId`),
+which is **committed on this branch** (not foreign WIP). The foreign untracked
+`mclib/render_contract.*`, `RenderCore/RenderPassContract.h` working-copy edits,
+and `render_contract*` harness WIP were treated as read-only reference and NOT
+staged.
+
+### Checker output (this tree)
+
+```
+PASS: editor/game pass-contract parity (11 governed passes all declared; 4 editor-only, 0 override)
+```
+
+Negative test: deleting the `Water` row makes the checker emit
+`governed RenderPassId::Water has NO entry ... -> undeclared editor/game pass
+drift` and exit 1; restoring it returns exit 0.
+
+### Build-time risk
+
+None. Pure static check + docs; no compilation, no GL, no relink. `EditRel.exe`
+is not covered by any smoke tier, so editor pass behaviour remains asserted by
+code inspection against the shared game path, not an automated editor smoke run.
