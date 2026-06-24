@@ -1,0 +1,10 @@
+FITini
+; DISPATCH-EFFECT-COREMOVETO-1 NaN-guard fixture.
+; Proves [BRAIN_DISPATCH_MOVETO_NAN] fires and NO setGeneralTacOrder is called.
+; Use with MC2_BRAIN_SPECIAL_FIT=mc2_01_moveto_nan.
+
+[BrainSpecial]
+
+[Body]
+st DO0 = "OPORD.CoreMoveTo nan 200 0"
+st DO1 = "HOLD"

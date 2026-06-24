@@ -24,15 +24,17 @@
 // Calls ONLY fprintf + loop + recursive chained dispatch. DOES NOT call setGeneralTacOrder
 // or any order/movement function. Verified: no warrior pointer, no MechWarrior type here.
 //
-// RELAXED-CALL GUARD — executeSpecialBody_Apply (1B):
+// RELAXED-CALL GUARD — executeSpecialBody_Apply (1B + UNITEJECT + COREGUARD + COREMOVETO):
 // Permitted order calls: warrior->setGeneralTacOrder() for:
-//   Brain.CorePower false → TACTICAL_ORDER_POWERDOWN
-//   Unit.Eject (or alias coreEject) → TACTICAL_ORDER_EJECT
-// Both fire IN THE ROOT BODY ONLY. Chained bodies (via TechSpecial.Call) are trace-only in 1A.
+//   Brain.CorePower false                 → TACTICAL_ORDER_POWERDOWN
+//   Unit.Eject (or alias coreEject)       → TACTICAL_ORDER_EJECT
+//   OPORD.CoreGuard                       → TACTICAL_ORDER_GUARD
+//   OPORD.CoreMoveTo x y z [params=N]     → TACTICAL_ORDER_MOVETO_POINT (with NaN-coord soft-fail guard)
+// All fire IN THE ROOT BODY ONLY. Chained bodies (via TechSpecial.Call) are trace-only in 1A.
 // STILL FORBIDDEN: setPlayerTacOrder, setAlarmTacOrder, requestHelp, requestTarget,
-// calcTacOrder, coreMoveTo, setMainGoal, clearCurTacOrder, any movement/attack/OPORD-advance/
-// commander function. All other verbs → trace only, zero effect.
-// DISPATCH-EFFECT-UNITEJECT-1: Unit.Eject + coreEject alias added.
+// calcTacOrder, coreMoveTo (the C++ Mover method, distinct from the OPORD DSL verb), setMainGoal,
+// clearCurTacOrder, any movement/attack/OPORD-advance/commander function. All other verbs → trace only.
+// DISPATCH-EFFECT-COREMOVETO-1: OPORD.CoreMoveTo added (bare-numeric x y z, NaN guard, pure once-guard).
 //
 // FSM-TODO SCANNER (1C — scanFsmTodosFromFile):
 // Calls ONLY std::ifstream + std::regex + fprintf. NO order functions, NO movement/attack/OPORD calls.
@@ -47,6 +49,7 @@
 #include "warrior.h"   // MechWarrior — needed for executeSpecialBody_Apply setGeneralTacOrder call
                        // warrior.h includes mech_brain_runtime.h which defines VarStore + VarScope
 #include "tacordr.h"   // TacticalOrder, TACTICAL_ORDER_POWERDOWN, ORDER_ORIGIN_SELF
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -407,11 +410,25 @@ bool bodyHasCoreGuard(const BrainSpecialBody& body) {
 }
 
 // ---------------------------------------------------------------------------
-// bodyHasEffect — DISPATCH-EFFECT-COREGUARD-1 (extended from UNITEJECT-1)
+// bodyHasCoreMoveTo — DISPATCH-EFFECT-COREMOVETO-1
+// Returns true if the body contains an OPORD.CoreMoveTo verb token.
+// Token-prefix match: first word of the stored verb string must equal "OPORD.CoreMoveTo".
+bool bodyHasCoreMoveTo(const BrainSpecialBody& body) {
+    for (const std::string& verb : body.verbs) {
+        if (std::strncmp(verb.c_str(), "OPORD.CoreMoveTo", 16) == 0
+            && (verb.size() == 16 || verb[16] == ' '))
+            return true;
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// bodyHasEffect — DISPATCH-EFFECT-COREMOVETO-1 (extended from COREGUARD-1)
 // Returns true if the body has ANY effect verb that claims the GENERAL slot
-// (currently: POWERDOWN, EJECT, or GUARD).
+// (currently: POWERDOWN, EJECT, GUARD, or MOVETO).
 bool bodyHasEffect(const BrainSpecialBody& body) {
-    return bodyHasPowerdown(body) || bodyHasUnitEject(body) || bodyHasCoreGuard(body);
+    return bodyHasPowerdown(body) || bodyHasUnitEject(body) || bodyHasCoreGuard(body)
+        || bodyHasCoreMoveTo(body);
 }
 
 // ---------------------------------------------------------------------------
@@ -421,8 +438,9 @@ bool bodyHasEffect(const BrainSpecialBody& body) {
 //
 // RELAXED-CALL GUARD CONTRACT:
 //   The ONLY order function called here is warrior->setGeneralTacOrder().
-//   Permitted verbs (THREE total): Brain.CorePower false → POWERDOWN,
-//   Unit.Eject (or coreEject alias) → EJECT, OPORD.CoreGuard (or coreGuard alias) → GUARD.
+//   Permitted verbs (FOUR total): Brain.CorePower false → POWERDOWN,
+//   Unit.Eject (or coreEject alias) → EJECT, OPORD.CoreGuard (or coreGuard alias) → GUARD,
+//   OPORD.CoreMoveTo x y z → MOVETO_POINT.
 //   All other verbs produce [BRAIN_DISPATCH] or [BRAIN_DISPATCH_UNKNOWN] trace only.
 //   FORBIDDEN in this function: setPlayerTacOrder, setAlarmTacOrder, requestHelp,
 //   requestTarget, calcTacOrder, coreMoveTo, setMainGoal, clearCurTacOrder,
@@ -543,6 +561,62 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
             std::fprintf(stderr, "[BRAIN_DISPATCH_APPLY] verb=OPORD.CoreGuard effect=GUARD wid=%d\n", wid);
             std::fflush(stderr);
             appliedEffect = true;
+        } else if (std::strncmp(vpCanon, "OPORD.CoreMoveTo", 16) == 0) {
+            // DISPATCH-EFFECT-COREMOVETO-1: OPORD.CoreMoveTo x y z [params=N]
+            //
+            // Arg parser — bare-numeric form only:
+            //   verb text after "OPORD.CoreMoveTo" is split by whitespace.
+            //   First three numeric tokens are x y z (float via std::strtof).
+            //   Optional trailing "params=N" token (int, default 0) is parsed but not
+            //   used this slice (reserved for future movement-mode expansion).
+            //   On any parse failure: soft-fail trace, skip order.
+            //   NaN guard: std::isnan(x||y||z) → soft-fail trace, skip order.
+            const char* args = vpCanon + 16; // points past "OPORD.CoreMoveTo"
+            while (*args == ' ') ++args;     // skip leading spaces
+            char* endp = nullptr;
+            float mx = std::strtof(args, &endp);
+            if (endp == args) {
+                std::fprintf(stderr, "[BRAIN_DISPATCH_MOVETO_PARSE_FAIL] verb=%s wid=%d\n", vp, wid);
+                std::fflush(stderr);
+            } else {
+                args = endp;
+                while (*args == ' ') ++args;
+                float my = std::strtof(args, &endp);
+                if (endp == args) {
+                    std::fprintf(stderr, "[BRAIN_DISPATCH_MOVETO_PARSE_FAIL] verb=%s wid=%d\n", vp, wid);
+                    std::fflush(stderr);
+                } else {
+                    args = endp;
+                    while (*args == ' ') ++args;
+                    float mz = std::strtof(args, &endp);
+                    if (endp == args) {
+                        std::fprintf(stderr, "[BRAIN_DISPATCH_MOVETO_PARSE_FAIL] verb=%s wid=%d\n", vp, wid);
+                        std::fflush(stderr);
+                    } else if (std::isnan(mx) || std::isnan(my) || std::isnan(mz)) {
+                        std::fprintf(stderr, "[BRAIN_DISPATCH_MOVETO_NAN] x=%g y=%g z=%g wid=%d\n", mx, my, mz, wid);
+                        std::fflush(stderr);
+                    } else {
+                        // Build TacticalOrder following missiongui.cpp:4161 exactly.
+                        LocationNode moveNode;
+                        moveNode.location.x = mx;
+                        moveNode.location.y = my;
+                        moveNode.location.z = mz;
+                        moveNode.run  = true;
+                        moveNode.next = nullptr;
+                        TacticalOrder moveOrder;
+                        moveOrder.init(ORDER_ORIGIN_SELF, TACTICAL_ORDER_MOVETO_POINT, false);
+                        moveOrder.initWayPath(&moveNode);
+                        moveOrder.moveParams.wait = false;
+                        moveOrder.moveParams.wayPath.mode[0] = TRAVEL_MODE_FAST;
+                        moveOrder.pack(nullptr, nullptr);
+                        warrior->setGeneralTacOrder(moveOrder);
+                        std::fprintf(stderr, "[BRAIN_DISPATCH_APPLY] verb=OPORD.CoreMoveTo effect=MOVETO_POINT pos=(%g %g %g) wid=%d\n",
+                                     mx, my, mz, wid);
+                        std::fflush(stderr);
+                        appliedEffect = true;
+                    }
+                }
+            }
         } else if (isRecognizedVerb(vpCanon)) {
             // Recognized but no effect implemented this slice — trace only.
             std::fprintf(stderr, "[BRAIN_DISPATCH] verb=%s wid=%d (apply-mode: no effect this verb)\n", vp, wid);

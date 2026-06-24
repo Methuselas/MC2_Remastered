@@ -101,6 +101,7 @@ struct MechBrainRuntime {
     uint8_t          dispatchEffectApplied  = 0;    // 1 = BrainSpecial effect (POWERDOWN) applied once (DISPATCH-1B)
     uint8_t          ejectEffectApplied     = 0;    // 1 = Unit.Eject EJECT order issued once (DISPATCH-EFFECT-UNITEJECT-1)
     uint8_t          guardEffectApplied     = 0;    // 1 = OPORD.CoreGuard GUARD order issued once (DISPATCH-EFFECT-COREGUARD-1)
+    uint8_t          moveToEffectApplied    = 0;    // 1 = OPORD.CoreMoveTo MOVETO_POINT order issued once (DISPATCH-EFFECT-COREMOVETO-1)
     BrainSpecialBody specialBody;  // parsed from _specials.fit; loaded when MC2_BRAIN_DISPATCH set
     VarStore         varStore;     // per-unit Var namespace (DISPATCH-1D); populated by Var.Set/Var.Get
                                     // ABI: plain struct (no virtuals); sizeof increases by sizeof(vector)+sizeof(bool)

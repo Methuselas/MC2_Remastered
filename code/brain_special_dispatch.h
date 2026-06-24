@@ -121,8 +121,11 @@ bool bodyHasUnitEject(const BrainSpecialBody& body);
 // DISPATCH-EFFECT-COREGUARD-1: Returns true if body contains OPORD.CoreGuard or coreGuard alias.
 bool bodyHasCoreGuard(const BrainSpecialBody& body);
 
-// DISPATCH-EFFECT-COREGUARD-1: Returns true if body has ANY GENERAL-slot-claiming effect verb.
-// (currently: POWERDOWN || EJECT || GUARD)
+// DISPATCH-EFFECT-COREMOVETO-1: Returns true if body contains OPORD.CoreMoveTo (prefix match).
+bool bodyHasCoreMoveTo(const BrainSpecialBody& body);
+
+// DISPATCH-EFFECT-COREMOVETO-1: Returns true if body has ANY GENERAL-slot-claiming effect verb.
+// (currently: POWERDOWN || EJECT || GUARD || MOVETO)
 bool bodyHasEffect(const BrainSpecialBody& body);
 
 // TRACE ONLY. Zero effects. No orders. No state writes.
