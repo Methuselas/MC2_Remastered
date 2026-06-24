@@ -66,8 +66,14 @@ enum class PipelineId : uint32_t {
     // composite must fully overwrite the backbuffer; a gosFX additive leak would
     // otherwise saturate RGBA8 to white), depth test+write OFF, cull None, color0.
     PostProcessComposite = 17,  // endScene composite (postprocess.frag, opaque, no depth)
+    // POSTPROCESS-FOG-REGISTRATION-1: the two fullscreen fog passes that blend into
+    // the scene FBO before composite. Both AlphaBlend (SRC_ALPHA/ONE_MINUS_SRC_ALPHA),
+    // depth test+write OFF, cull None, color0. ROUTED via applyPipeline. State-twins
+    // (separate rows for per-pass [PIPELINE_BIND] trace identity).
+    PostProcessEdgeFog   = 18,  // runEdgeFog (edge_fog.frag, alpha blend, no depth)
+    PostProcessFogOob    = 19,  // runFogOob (fog_oob.frag, alpha blend, no depth)
     // Future: DebugWireframe, ...
-    Count_               = 18,  // sentinel — do not use as an ID
+    Count_               = 20,  // sentinel — do not use as an ID
 };
 
 // VERTEXLAYOUT-AUTHORITY-1: stable repo-owned vertex-input layout identities —

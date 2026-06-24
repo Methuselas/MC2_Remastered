@@ -349,6 +349,36 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* polygonOffsetEnable */ false,
         /* ssboBindingsMask    */ 0u,
     },
+    // [18] PostProcessEdgeFog — runEdgeFog (edge_fog.frag). AlphaBlend
+    // (SRC_ALPHA/ONE_MINUS_SRC_ALPHA), depth test+write OFF, cull None, color0.
+    // glProgramName=0 -> call site keeps binding edgeFogProg_.
+    {
+        /* glProgramName       */ 0u,
+        /* blend               */ BlendMode::AlphaBlend,
+        /* depthTestEnable     */ false,
+        /* depthWriteEnable    */ false,
+        /* depthFunc           */ DepthFunc::Always,
+        /* cullMode            */ CullMode::None,
+        /* colorAttachments    */ { true, false, false },
+        /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,
+        /* polygonOffsetEnable */ false,
+        /* ssboBindingsMask    */ 0u,
+    },
+    // [19] PostProcessFogOob — runFogOob (fog_oob.frag). Same state as EdgeFog.
+    {
+        /* glProgramName       */ 0u,
+        /* blend               */ BlendMode::AlphaBlend,
+        /* depthTestEnable     */ false,
+        /* depthWriteEnable    */ false,
+        /* depthFunc           */ DepthFunc::Always,
+        /* cullMode            */ CullMode::None,
+        /* colorAttachments    */ { true, false, false },
+        /* objectIdWriteEnabled*/ false,
+        /* frontFace           */ FrontFace::Ccw,
+        /* polygonOffsetEnable */ false,
+        /* ssboBindingsMask    */ 0u,
+    },
 
 }};
 
