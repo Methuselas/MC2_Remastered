@@ -40,16 +40,19 @@
 //   no state writes, no effects in chained bodies (effects deferred to CALL-CHAIN-1B).
 //   Verified by inspection.
 //
-// RELAXED-CALL GUARD (1B — executeSpecialBody_Apply):
-//   The ONLY order function this path may call is setGeneralTacOrder.
-//   Permitted verbs (FIVE total): Brain.CorePower false → POWERDOWN,
+// RELAXED-CALL GUARD (1B — executeSpecialBody_Apply + commitBrainIntents):
+//   Permitted verbs (SIX total): Brain.CorePower false → POWERDOWN,
 //   Unit.Eject (or coreEject alias) → EJECT, OPORD.CoreGuard (or coreGuard alias) → GUARD,
-//   OPORD.CoreMoveTo x y z → MOVETO_POINT, OPORD.CoreAttack <wid> → ATTACK_OBJECT.
+//   OPORD.CoreMoveTo x y z → MOVETO_POINT, OPORD.CoreAttack <wid> → ATTACK_OBJECT,
+//   Unit.Retreat (or coreRetreat alias) → WITHDRAW.
+//   BRAIN-DECISION-INTENT-QUEUE-1 (gate MC2_BRAIN_INTENT_QUEUE):
+//     Gate OFF: executeSpecialBody_Apply calls warrior->setGeneralTacOrder() directly (6 sites).
+//     Gate ON:  executeSpecialBody_Apply emits BrainOrderIntents; commitBrainIntents() is the
+//               ONLY function that calls warrior->setGeneralTacOrder() (6 sites there).
 //   STILL FORBIDDEN: orderAttackObject, setAttackTarget, setSituationOpenFire,
 //   setPlayerTacOrder, setAlarmTacOrder, requestHelp, requestTarget,
 //   calcTacOrder, coreMoveTo, setMainGoal, clearCurTacOrder, any movement/attack/
 //   OPORD-advance/commander function NOT listed above.
-//   All other verbs (Unit.Retreat, Unit.InState, Var.*) → trace only, NO effect.
 //
 // FSM-TODO SCANNER (1C — scanFsmTodosFromFile):
 //   Calls ONLY std::ifstream + std::regex + fprintf. NO order functions, NO movement/attack/OPORD calls.
@@ -59,8 +62,9 @@
 #include <string>
 #include <cstring>   // strncmp/strncpy used in VarStore inline methods (pulled via mech_brain_runtime.h too)
 
-class MechWarrior;   // forward decl — executeSpecialBody_Apply needs the warrior pointer
-struct VarStore;     // forward decl — Var.Set/Get handlers take a VarStore* (defined in mech_brain_runtime.h)
+class MechWarrior;        // forward decl — executeSpecialBody_Apply needs the warrior pointer
+struct VarStore;          // forward decl — Var.Set/Get handlers take a VarStore* (defined in mech_brain_runtime.h)
+struct MechBrainRuntime;  // forward decl — commitBrainIntents takes a MechBrainRuntime*
 
 // ---------------------------------------------------------------------------
 // TECHSCRIPT-SPECIAL-DISPATCH-1C: FSM TODO marker classification.
@@ -183,6 +187,16 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
                                VarStore* varStore = nullptr,
                                const SpecialIndex* index = nullptr,
                                const char* callerKey = nullptr);
+
+// BRAIN-DECISION-INTENT-QUEUE-1: commit all pending intents for this warrior.
+// Called right after executeSpecialBody_Apply returns, when MC2_BRAIN_INTENT_QUEUE=1.
+// Drains runtime->pendingIntents[], reconstructs the TacticalOrder for each, and calls
+// warrior->setGeneralTacOrder().  This is the ONLY path that calls setGeneralTacOrder
+// when gate ON — the verb handlers no longer call it directly.
+// Emits [BRAIN_INTENT_COMMIT] verb=<v> order=<type> tick=<brainTick> wid=<W> per intent.
+// After draining, sets pendingIntentCount to 0.
+// warrior and runtime must be non-null (caller guards).
+void commitBrainIntents(MechWarrior* warrior, struct MechBrainRuntime* runtime);
 
 // DISPATCH-LOADER-RAW-1: Parse BrainSpecial/TechSpecial Body DO-verbs.
 // Primary: raw brace-block scanner (handles inline-quoted DO args).

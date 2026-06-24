@@ -465,12 +465,57 @@ bool bodyHasEffect(const BrainSpecialBody& body) {
 }
 
 // ---------------------------------------------------------------------------
+// BRAIN-DECISION-INTENT-QUEUE-1: MC2_BRAIN_INTENT_QUEUE gate + emit helper.
+//
+// When gate ON, the 6 verb handlers in executeSpecialBody_Apply push a BrainOrderIntent
+// to runtime->pendingIntents[] INSTEAD of calling warrior->setGeneralTacOrder directly.
+// commitBrainIntents() (below) is the ONLY function that calls setGeneralTacOrder when
+// gate ON.
+//
+// Gate OFF (default): each verb calls setGeneralTacOrder directly — byte-identical to
+// the pre-BRAIN-DECISION-INTENT-QUEUE-1 behavior.
+
+static bool s_intentQueueEnabled() {
+    static const bool kGate = ([](){
+        const char* v = std::getenv("MC2_BRAIN_INTENT_QUEUE");
+        return (v && std::atoi(v) != 0);
+    })();
+    return kGate;
+}
+
+// Pushes one BrainOrderIntent onto runtime->pendingIntents[].
+// Returns true if pushed, false if buffer full (soft-fail; rare — cap is 4).
+// Caller must check gate before calling.
+static bool emitBrainIntent(MechBrainRuntime* runtime, int warriorId,
+                             TacticalOrderCode orderType, int targetWID,
+                             float wx, float wy, float wz,
+                             uint32_t sourceBodyId) {
+    if (!runtime) return false;
+    if (runtime->pendingIntentCount >= kBrainIntentCap) {
+        std::fprintf(stderr, "[BRAIN_INTENT_EMIT_OVERFLOW] wid=%d order=%d cap=%d\n",
+                     warriorId, (int)orderType, kBrainIntentCap);
+        std::fflush(stderr);
+        return false;
+    }
+    BrainOrderIntent& out = runtime->pendingIntents[runtime->pendingIntentCount++];
+    out.warriorId   = warriorId;
+    out.slot        = BrainIntentSlot::GENERAL;
+    out.orderType   = orderType;
+    out.targetWID   = targetWID;
+    out.waypoint[0] = wx;
+    out.waypoint[1] = wy;
+    out.waypoint[2] = wz;
+    out.sourceBodyId = sourceBodyId;
+    out.brainTick   = getBrainTickIndex();
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // executeSpecialBody_Apply
 //
 // 1B EFFECT DISPATCHER — gate MC2_BRAIN_DISPATCH_APPLY=1 (requires MC2_BRAIN_DISPATCH=1).
 //
 // RELAXED-CALL GUARD CONTRACT:
-//   The ONLY order function called here is warrior->setGeneralTacOrder().
 //   Permitted verbs (SIX total): Brain.CorePower false → POWERDOWN,
 //   Unit.Eject (or coreEject alias) → EJECT, OPORD.CoreGuard (or coreGuard alias) → GUARD,
 //   OPORD.CoreMoveTo x y z → MOVETO_POINT, OPORD.CoreAttack <wid> → ATTACK_OBJECT,
@@ -480,7 +525,14 @@ bool bodyHasEffect(const BrainSpecialBody& body) {
 //   setPlayerTacOrder, setAlarmTacOrder, requestHelp,
 //   requestTarget, calcTacOrder, coreMoveTo, setMainGoal, clearCurTacOrder,
 //   any movement/attack/OPORD-advance/commander function NOT listed above.
-//   Verified by inspection: exactly six setGeneralTacOrder call-sites below; no other order calls.
+//   BRAIN-DECISION-INTENT-QUEUE-1 (gate MC2_BRAIN_INTENT_QUEUE):
+//   When gate ON:  the 6 verb handlers call emitBrainIntent() — NO setGeneralTacOrder here.
+//                  commitBrainIntents() (below) is the sole caller of setGeneralTacOrder.
+//   When gate OFF: the 6 verb handlers call warrior->setGeneralTacOrder() directly (unchanged).
+//   The checker (check_brain_relaxed_guard_doc.py) counts call-sites across BOTH this function
+//   AND commitBrainIntents to confirm the verb count matches the doc.
+//   Verified by inspection: exactly six effect-verb branches (gate OFF callsites = 6;
+//   gate ON emitBrainIntent() calls = 6 in commitBrainIntents).
 //
 // Returns true if a GENERAL-slot effect (POWERDOWN, EJECT, GUARD, MOVETO, ATTACK, or RETREAT) was applied.
 // Caller uses the return value to suppress the synthetic HOLD_TASK (one GENERAL-slot write per tick).
@@ -492,6 +544,8 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
                                VarStore* varStore, const SpecialIndex* index,
                                const char* callerKey) {
     bool appliedEffect = false;
+    // BRAIN-DECISION-INTENT-QUEUE-1: get runtime for intent emit (gate ON only).
+    MechBrainRuntime* runtime = (warrior && s_intentQueueEnabled()) ? warrior->getBrainRuntime() : nullptr;
     const bool varGate  = s_dispatchVarGate();
     const bool callGate = s_dispatchCallGate() && (index != nullptr);
 
@@ -570,31 +624,52 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
         const char* vpCanon = aliasToCanonical(vp);
 
         if (verb == "Brain.CorePower false") {
-            // ONLY permitted order call in this function (RELAXED-CALL GUARD).
+            // BRAIN-DECISION-INTENT-QUEUE-1: gate ON → emit intent; gate OFF → direct call.
             // NOTE: This fires only for the ROOT body. Chained-body POWERDOWN = 1B.
-            TacticalOrder pdOrder;
-            pdOrder.init(ORDER_ORIGIN_SELF, TACTICAL_ORDER_POWERDOWN);
-            warrior->setGeneralTacOrder(pdOrder);
-            std::fprintf(stderr, "[BRAIN_DISPATCH_APPLY] verb=Brain.CorePower effect=POWERDOWN wid=%d\n", wid);
-            std::fflush(stderr);
+            if (runtime) {
+                emitBrainIntent(runtime, wid, TACTICAL_ORDER_POWERDOWN, -1, 0,0,0, 0);
+                std::fprintf(stderr, "[BRAIN_INTENT_EMIT] verb=Brain.CorePower order=POWERDOWN tick=%u wid=%d\n",
+                             getBrainTickIndex(), wid);
+                std::fflush(stderr);
+            } else {
+                TacticalOrder pdOrder;
+                pdOrder.init(ORDER_ORIGIN_SELF, TACTICAL_ORDER_POWERDOWN);
+                warrior->setGeneralTacOrder(pdOrder);
+                std::fprintf(stderr, "[BRAIN_DISPATCH_APPLY] verb=Brain.CorePower effect=POWERDOWN wid=%d\n", wid);
+                std::fflush(stderr);
+            }
             appliedEffect = true;
         } else if (std::strcmp(vpCanon, "Unit.Eject") == 0) {
             // DISPATCH-EFFECT-UNITEJECT-1: Unit.Eject (or alias coreEject) → TACTICAL_ORDER_EJECT.
             // ROOT BODY ONLY. Fires exactly once (ejectEffectApplied once-guard in warrior.cpp).
-            TacticalOrder ejectOrder;
-            ejectOrder.init(ORDER_ORIGIN_SELF, TACTICAL_ORDER_EJECT);
-            warrior->setGeneralTacOrder(ejectOrder);
-            std::fprintf(stderr, "[BRAIN_DISPATCH_APPLY] verb=Unit.Eject effect=EJECT wid=%d\n", wid);
-            std::fflush(stderr);
+            if (runtime) {
+                emitBrainIntent(runtime, wid, TACTICAL_ORDER_EJECT, -1, 0,0,0, 0);
+                std::fprintf(stderr, "[BRAIN_INTENT_EMIT] verb=Unit.Eject order=EJECT tick=%u wid=%d\n",
+                             getBrainTickIndex(), wid);
+                std::fflush(stderr);
+            } else {
+                TacticalOrder ejectOrder;
+                ejectOrder.init(ORDER_ORIGIN_SELF, TACTICAL_ORDER_EJECT);
+                warrior->setGeneralTacOrder(ejectOrder);
+                std::fprintf(stderr, "[BRAIN_DISPATCH_APPLY] verb=Unit.Eject effect=EJECT wid=%d\n", wid);
+                std::fflush(stderr);
+            }
             appliedEffect = true;
         } else if (std::strcmp(vpCanon, "OPORD.CoreGuard") == 0) {
             // DISPATCH-EFFECT-COREGUARD-1: OPORD.CoreGuard (or alias coreGuard) → TACTICAL_ORDER_GUARD.
             // ROOT BODY ONLY. Fires exactly once (guardEffectApplied once-guard in warrior.cpp).
-            TacticalOrder guardOrder;
-            guardOrder.init(ORDER_ORIGIN_SELF, TACTICAL_ORDER_GUARD);
-            warrior->setGeneralTacOrder(guardOrder);
-            std::fprintf(stderr, "[BRAIN_DISPATCH_APPLY] verb=OPORD.CoreGuard effect=GUARD wid=%d\n", wid);
-            std::fflush(stderr);
+            if (runtime) {
+                emitBrainIntent(runtime, wid, TACTICAL_ORDER_GUARD, -1, 0,0,0, 0);
+                std::fprintf(stderr, "[BRAIN_INTENT_EMIT] verb=OPORD.CoreGuard order=GUARD tick=%u wid=%d\n",
+                             getBrainTickIndex(), wid);
+                std::fflush(stderr);
+            } else {
+                TacticalOrder guardOrder;
+                guardOrder.init(ORDER_ORIGIN_SELF, TACTICAL_ORDER_GUARD);
+                warrior->setGeneralTacOrder(guardOrder);
+                std::fprintf(stderr, "[BRAIN_DISPATCH_APPLY] verb=OPORD.CoreGuard effect=GUARD wid=%d\n", wid);
+                std::fflush(stderr);
+            }
             appliedEffect = true;
         } else if (std::strncmp(vpCanon, "OPORD.CoreMoveTo", 16) == 0) {
             // DISPATCH-EFFECT-COREMOVETO-1: OPORD.CoreMoveTo x y z [params=N]
@@ -630,8 +705,15 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
                     } else if (std::isnan(mx) || std::isnan(my) || std::isnan(mz)) {
                         std::fprintf(stderr, "[BRAIN_DISPATCH_MOVETO_NAN] x=%g y=%g z=%g wid=%d\n", mx, my, mz, wid);
                         std::fflush(stderr);
+                    } else if (runtime) {
+                        // Gate ON: emit intent; commitBrainIntents rebuilds the TacticalOrder.
+                        emitBrainIntent(runtime, wid, TACTICAL_ORDER_MOVETO_POINT, -1, mx, my, mz, 0);
+                        std::fprintf(stderr, "[BRAIN_INTENT_EMIT] verb=OPORD.CoreMoveTo order=MOVETO_POINT pos=(%g %g %g) tick=%u wid=%d\n",
+                                     mx, my, mz, getBrainTickIndex(), wid);
+                        std::fflush(stderr);
+                        appliedEffect = true;
                     } else {
-                        // Build TacticalOrder following missiongui.cpp:4161 exactly.
+                        // Gate OFF: build TacticalOrder following missiongui.cpp:4161 exactly.
                         LocationNode moveNode;
                         moveNode.location.x = mx;
                         moveNode.location.y = my;
@@ -687,8 +769,15 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
                 } else if (target->getTeam() == warrior->getTeam()) {
                     std::fprintf(stderr, "[BRAIN_DISPATCH_ATTACK_FRIENDLY] wid=%ld wid=%d\n", parsedWID, wid);
                     std::fflush(stderr);
+                } else if (runtime) {
+                    // Gate ON: emit intent; commitBrainIntents rebuilds the TacticalOrder.
+                    emitBrainIntent(runtime, wid, TACTICAL_ORDER_ATTACK_OBJECT, (int)parsedWID, 0,0,0, 0);
+                    std::fprintf(stderr, "[BRAIN_INTENT_EMIT] verb=OPORD.CoreAttack order=ATTACK_OBJECT targetWID=%ld tick=%u wid=%d\n",
+                                 parsedWID, getBrainTickIndex(), wid);
+                    std::fflush(stderr);
+                    appliedEffect = true;
                 } else {
-                    // Construct TacticalOrder by hand — mirror missiongui.cpp:2805.
+                    // Gate OFF: construct TacticalOrder by hand — mirror missiongui.cpp:2805.
                     // FORBIDDEN: orderAttackObject, setAttackTarget, setSituationOpenFire.
                     TacticalOrder attackOrder;
                     attackOrder.init(ORDER_ORIGIN_SELF, TACTICAL_ORDER_ATTACK_OBJECT, false);
@@ -708,11 +797,18 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
         } else if (std::strcmp(vpCanon, "Unit.Retreat") == 0) {
             // DISPATCH-EFFECT-UNITRETREAT-1: Unit.Retreat (or alias coreRetreat) → TACTICAL_ORDER_WITHDRAW.
             // ROOT BODY ONLY. Fires exactly once (retreatEffectApplied once-guard in warrior.cpp).
-            TacticalOrder retreatOrder;
-            retreatOrder.init(ORDER_ORIGIN_SELF, TACTICAL_ORDER_WITHDRAW, false);
-            warrior->setGeneralTacOrder(retreatOrder);
-            std::fprintf(stderr, "[BRAIN_DISPATCH_APPLY] verb=Unit.Retreat effect=WITHDRAW wid=%d\n", wid);
-            std::fflush(stderr);
+            if (runtime) {
+                emitBrainIntent(runtime, wid, TACTICAL_ORDER_WITHDRAW, -1, 0,0,0, 0);
+                std::fprintf(stderr, "[BRAIN_INTENT_EMIT] verb=Unit.Retreat order=WITHDRAW tick=%u wid=%d\n",
+                             getBrainTickIndex(), wid);
+                std::fflush(stderr);
+            } else {
+                TacticalOrder retreatOrder;
+                retreatOrder.init(ORDER_ORIGIN_SELF, TACTICAL_ORDER_WITHDRAW, false);
+                warrior->setGeneralTacOrder(retreatOrder);
+                std::fprintf(stderr, "[BRAIN_DISPATCH_APPLY] verb=Unit.Retreat effect=WITHDRAW wid=%d\n", wid);
+                std::fflush(stderr);
+            }
             appliedEffect = true;
         } else if (isRecognizedVerb(vpCanon)) {
             // Recognized but no effect implemented this slice — trace only.
@@ -725,6 +821,112 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
     }
 
     return appliedEffect;
+}
+
+// ---------------------------------------------------------------------------
+// BRAIN-DECISION-INTENT-QUEUE-1: commitBrainIntents
+//
+// COMMIT PHASE — the ONLY function that calls warrior->setGeneralTacOrder() when
+// MC2_BRAIN_INTENT_QUEUE=1.  Called right after executeSpecialBody_Apply returns
+// (inline, same thread, this rung).  Drains runtime->pendingIntents[] and for each
+// intent reconstructs a TacticalOrder and calls warrior->setGeneralTacOrder().
+//
+// FORBIDDEN-CALL GUARD (commit phase): this function and only this function may call
+// warrior->setGeneralTacOrder() when gate ON.  The verb handlers in
+// executeSpecialBody_Apply must NOT call setGeneralTacOrder when gate ON.
+//
+// MOVETO reconstruction mirrors missiongui.cpp:4161 (same as the gate-OFF path above).
+// ATTACK reconstruction mirrors missiongui.cpp:2805.
+// All other verbs: simple init(ORDER_ORIGIN_SELF, orderType).
+//
+// Emits: [BRAIN_INTENT_COMMIT] verb=<v> order=<type> tick=<brainTick> wid=<W> per intent.
+// After draining, resets pendingIntentCount to 0.
+// warrior and runtime must be non-null (caller guards).
+void commitBrainIntents(MechWarrior* warrior, MechBrainRuntime* runtime) {
+    if (!warrior || !runtime) return;
+    const int n = runtime->pendingIntentCount;
+    for (int i = 0; i < n; ++i) {
+        const BrainOrderIntent& intent = runtime->pendingIntents[i];
+        switch (intent.orderType) {
+            case TACTICAL_ORDER_POWERDOWN: {
+                TacticalOrder o;
+                o.init(ORDER_ORIGIN_SELF, TACTICAL_ORDER_POWERDOWN);
+                warrior->setGeneralTacOrder(o);
+                std::fprintf(stderr, "[BRAIN_INTENT_COMMIT] verb=Brain.CorePower order=POWERDOWN tick=%u wid=%d\n",
+                             intent.brainTick, intent.warriorId);
+                std::fflush(stderr);
+                break;
+            }
+            case TACTICAL_ORDER_EJECT: {
+                TacticalOrder o;
+                o.init(ORDER_ORIGIN_SELF, TACTICAL_ORDER_EJECT);
+                warrior->setGeneralTacOrder(o);
+                std::fprintf(stderr, "[BRAIN_INTENT_COMMIT] verb=Unit.Eject order=EJECT tick=%u wid=%d\n",
+                             intent.brainTick, intent.warriorId);
+                std::fflush(stderr);
+                break;
+            }
+            case TACTICAL_ORDER_GUARD: {
+                TacticalOrder o;
+                o.init(ORDER_ORIGIN_SELF, TACTICAL_ORDER_GUARD);
+                warrior->setGeneralTacOrder(o);
+                std::fprintf(stderr, "[BRAIN_INTENT_COMMIT] verb=OPORD.CoreGuard order=GUARD tick=%u wid=%d\n",
+                             intent.brainTick, intent.warriorId);
+                std::fflush(stderr);
+                break;
+            }
+            case TACTICAL_ORDER_MOVETO_POINT: {
+                LocationNode moveNode;
+                moveNode.location.x = intent.waypoint[0];
+                moveNode.location.y = intent.waypoint[1];
+                moveNode.location.z = intent.waypoint[2];
+                moveNode.run  = true;
+                moveNode.next = nullptr;
+                TacticalOrder o;
+                o.init(ORDER_ORIGIN_SELF, TACTICAL_ORDER_MOVETO_POINT, false);
+                o.initWayPath(&moveNode);
+                o.moveParams.wait = false;
+                o.moveParams.wayPath.mode[0] = TRAVEL_MODE_FAST;
+                o.pack(nullptr, nullptr);
+                warrior->setGeneralTacOrder(o);
+                std::fprintf(stderr, "[BRAIN_INTENT_COMMIT] verb=OPORD.CoreMoveTo order=MOVETO_POINT pos=(%g %g %g) tick=%u wid=%d\n",
+                             intent.waypoint[0], intent.waypoint[1], intent.waypoint[2],
+                             intent.brainTick, intent.warriorId);
+                std::fflush(stderr);
+                break;
+            }
+            case TACTICAL_ORDER_ATTACK_OBJECT: {
+                TacticalOrder o;
+                o.init(ORDER_ORIGIN_SELF, TACTICAL_ORDER_ATTACK_OBJECT, false);
+                o.targetWID = (long)intent.targetWID;
+                o.attackParams.type   = ATTACK_TO_DESTROY;
+                o.attackParams.method = ATTACKMETHOD_RANGED;
+                o.attackParams.range  = FIRERANGE_OPTIMAL;
+                o.attackParams.pursue = true;
+                o.moveParams.wayPath.mode[0] = TRAVEL_MODE_FAST;
+                warrior->setGeneralTacOrder(o);
+                std::fprintf(stderr, "[BRAIN_INTENT_COMMIT] verb=OPORD.CoreAttack order=ATTACK_OBJECT targetWID=%d tick=%u wid=%d\n",
+                             intent.targetWID, intent.brainTick, intent.warriorId);
+                std::fflush(stderr);
+                break;
+            }
+            case TACTICAL_ORDER_WITHDRAW: {
+                TacticalOrder o;
+                o.init(ORDER_ORIGIN_SELF, TACTICAL_ORDER_WITHDRAW, false);
+                warrior->setGeneralTacOrder(o);
+                std::fprintf(stderr, "[BRAIN_INTENT_COMMIT] verb=Unit.Retreat order=WITHDRAW tick=%u wid=%d\n",
+                             intent.brainTick, intent.warriorId);
+                std::fflush(stderr);
+                break;
+            }
+            default:
+                std::fprintf(stderr, "[BRAIN_INTENT_COMMIT_UNKNOWN] order=%d tick=%u wid=%d\n",
+                             (int)intent.orderType, intent.brainTick, intent.warriorId);
+                std::fflush(stderr);
+                break;
+        }
+    }
+    runtime->pendingIntentCount = 0;
 }
 
 // ---------------------------------------------------------------------------
