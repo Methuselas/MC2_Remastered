@@ -82,24 +82,21 @@
       "next": "spirv_eligible (depth-parity gate)"
     },
     "Terrain": {
-      "status": "DESCRIPTIVE_REGISTERED",
+      "status": "ROUTED_BY_APPLYPIPELINE",
       "renderPassId": "Terrain",
       "pipelineId": "TerrainSolid",
       "shaderBase": "gos_terrain",
-      "stateOwner": "legacy/ad-hoc (hand-set in gos_terrain_bridge_drawIndirect; NOT routed)",
-      "next": "RECON-2 DONE -> terrain-main-pipeline-registration-recon-2.md. ROUTING-1 routed the CORRECT modern pipe (not dead); it is unproven because no current bookmark solid-arms (IsFrameSolidArmed is camera-windowed). NEXT = TERRAIN-SOLID-ARMED-BOOKMARK-1 (author a ground-level bookmark facing solid terrain so the bridge fires) THEN re-gate ROUTING-1 (binds>0 + sha holds + colorMask intact) -> ONLY THEN promote to ROUTED_BY_APPLYPIPELINE. Do NOT route the legacy MLR path (deprecated). Fallback proof = RenderDoc on real armed gameplay (needs launch approval).",
-      "proofBasis": "TERRAIN_CULL_STATE_PROBE_1",
-      "evidence": "TERRAIN-SOLID-PIPELINE-REGISTRATION-1: descriptive TerrainSolid row (cull/frontFace probed, TERRAIN-CULL-STATE-PROBE-1). TERRAIN-SOLID-APPLYPIPELINE-ROUTING-1: applyPipeline(TerrainSolid) added at gos_terrain_bridge_drawIndirect, glColorMask(TRUE) shadow-leak repair PRESERVED. PARTIAL/UNPROVEN: capture (water + werewolf-armed) holds sha cb5a700e (NO REGRESSION) but [PIPELINE_BIND] TerrainSolid binds=0 — the routed bridge is NOT the live harness terrain-solid entrypoint. NOT promoted to ROUTED (zero binds is not routed). The bridge route may still be correct for a real-gameplay entrypoint; left in place pending RECON-2 which identifies the actual live draw chokepoint.",
-      "routingStatus": "PARTIAL_ROUTED_UNPROVEN",
-      "proofStatus": "pass_not_exercised_in_smoke",
+      "stateOwner": "applyPipeline(TerrainSolid) at the LOD-chunk draw; colorMask via beginScene keystone",
+      "next": "Terrain SOLID is routed+proven. Remaining terrain-family routing (separate slices): overlays/decals, mask/water/mine/surface, water fast path. The bridge PARTIAL route can be cleaned up later (it is dead under default lod-chunk).",
+      "proofBasis": "frame_trace_bind_positive + byte_visual_gate",
+      "evidence": "TERRAIN-LODCHUNK-APPLYPIPELINE-ROUTING-1 (proven): routed the live default terrain-solid (lod-chunk) draw via applyPipeline(TerrainSolid). Byte-gate v0.4c water: sha cb5a700e HELD (no regression; GBuffer1 + markTerrainDrawn/sceneHasTerrain preserved; colorMask via the COLORMASK-ROLLOUT-1 beginScene keystone), [PIPELINE_BIND] TerrainSolid binds=2843 (>0), [FRAME_PLAN] pass=TerrainSolidLODChunk path=ApplyPipeline pipeline=TerrainSolid x2843. State matches the row exactly (cull probed None/Ccw). The bridge 0-bind confusion is fully explained + resolved.",
+      "routingStatus": "ROUTED_BY_APPLYPIPELINE",
+      "proofStatus": "byte_identical",
+      "proofPath": "TerrainSolidLODChunk",
+      "scope_note": "ONLY the LIVE terrain-SOLID path is routed: TerrainSolidLODChunk (gos_terrain_lod_chunk.cpp, the default-ON lod-chunk draw) now asserts applyPipeline(TerrainSolid). NOT routed / still separate: terrain overlays/decals, terrain mask/water/mine/surface indirect, the legacy MLR fallback, and the water fast path. The old indirect bridge route (routing-1, PARTIAL) is superseded as the live target by lod-chunk — bridge only runs under the vestigial MC2_TERRAIN_LOD_CHUNK=0.",
       "routedEntryPoints": [
-        "gos_terrain_bridge_drawIndirect (gameos_graphics.cpp ~4005)"
-      ],
-      "unverifiedLiveEntryPoints": [
-        "LOD-CHUNK path (terrain_lod_chunk.frag, gos_terrain_lod_chunk.cpp:887) is the DEFAULT-ON live terrain-solid draw (frame-trace confirmed) and the real routing target; the modern bridge (routing-1) is suppressed by lod-chunk; legacy MLR only when both off."
-      ],
-      "colorMaskRepair": "PRESERVED",
-      "captureNote": "PARTIAL banked. TERRAIN-SOLID-ARMED-BOOKMARK-1 attempted 5 poses (water_overview, werewolf, 3 land views at alt 350/800/1200 framing solid terrain — confirmed distinct terrain shas): [PIPELINE_BIND] TerrainSolid binds=0 in ALL. The deterministic capture sweep NEVER solid-arms the modern bridge (first_arm logs but no captured frame is armed; likely sim-freeze / the SOLID gate-off in setupTextures suppresses modern solid arming in smoke/capture). sha holds where comparable = NO REGRESSION. Modern-bridge ROUTED proof requires RenderDoc on real armed gameplay (deferred, launch-approval) — NOT achievable via the current deterministic harness. Bookmark mc2_01_terrain_solid.json banked for that future proof. || RENDER-FRAME-PLAN-SCAFFOLD-1 CORRECTION (2026-06-23, frame-trace): the LIVE capture/default terrain-solid path is the LOD-CHUNK path (terrain_lod_chunk.frag via Terrain::flushDrawCommands, gamecam.cpp:508), NOT legacy MLR (recon-2 was wrong) and NOT the modern bridge. mc2TerrainLodChunkEnabled() is DEFAULT-ON (opt-out vestigial), so it OWNS terrain and SUPPRESSES DrawIndirect (txmmgr:2907) -> the routed bridge binds 0x. CONSEQUENCE: the real TerrainSolid routing target is the LOD-CHUNK draw (gos_terrain_lod_chunk.cpp:887, cull None, MRT GBuffer1), not the bridge. The bridge route (routing-1) is correct only for the vestigial MC2_TERRAIN_LOD_CHUNK=0 path. Re-target before any ROUTED promotion."
+        "TerrainSolidLODChunk (gos_terrain_lod_chunk.cpp) — LIVE default, applyPipeline(TerrainSolid), proven binds=2843"
+      ]
     },
     "TerrainOverlay": {
       "status": "ROUTED_BY_APPLYPIPELINE",

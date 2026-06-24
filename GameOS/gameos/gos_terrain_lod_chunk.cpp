@@ -5,6 +5,8 @@
 #include <gameos.hpp>          // Item 1: mc2ShadowCsmEnabled/Count (CSM shader define)
 #include <string>
 #include "gl_state_guard.h"    // GlStateGuard slice 2: composable depth/blend/cull RAII
+#include "../../RenderCore/PipelineRegistry.h"  // TERRAIN-LODCHUNK-APPLYPIPELINE-ROUTING-1
+#include "pipeline_binder.h"                     // applyPipeline(TerrainSolid)
 #include "../../mclib/render_contract.h"  // [RENDER_PASS v1] noteRenderPass
 #include <cstdio>
 #include <cstdlib>
@@ -591,6 +593,20 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         glDepthFunc(s_wantDepthFunc);   // reverse-Z opaque terrain
         glDisable(GL_CULL_FACE);        // double-sided (see comment above)
     }
+
+    // TERRAIN-LODCHUNK-APPLYPIPELINE-ROUTING-1: make the TerrainSolid pipeline row the
+    // AUTHORITATIVE fixed-function state for the live terrain-solid path (this LOD-chunk
+    // draw is the default; the bridge is suppressed by mc2TerrainLodChunkEnabled). Both
+    // branches above already SET + save/restore the identical state (RAII guards when
+    // MC2_GLSTATEGUARD_TERRAIN on, manual otherwise); this re-asserts it from the row so
+    // the state is row-owned and [PIPELINE_BIND] TerrainSolid fires (the proof hook). It
+    // is byte-identical: depth ON / GEQUAL / depthWrite ON / blend Opaque / cull None, and
+    // the row's frontFace=Ccw + polygonOffset=off are the ambient defaults (no-ops).
+    // colorMask is owned by the COLORMASK-ROLLOUT-1 beginScene keystone. glProgramName=0
+    // -> glUseProgram(s_terrainProgram) below still binds the program. (The default-OFF
+    // s_depthAlways debug override is intentionally not modeled — the row forces GEQUAL.)
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::TerrainSolid), "TerrainSolid");
 
     glUseProgram(s_terrainProgram);
     glBindVertexArray(s_patchVao);

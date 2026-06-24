@@ -2926,7 +2926,7 @@ void MC_TextureManager::renderLists (void)
 			if (modernHandled && armed && !mc2TerrainLodChunkEnabled())
 				trace(Phase::TerrainOpaque, "TerrainSolid", PathKind::ApplyPipeline, -1, "TerrainSolid");      // modern indirect bridge (routed)
 			else if (modernHandled && armed)
-				trace(Phase::TerrainOpaque, "TerrainSolidLODChunk", PathKind::RawGL, -1, "None");              // LOD-chunk owns it
+				trace(Phase::TerrainOpaque, "TerrainSolidLODChunk", PathKind::ApplyPipeline, -1, "TerrainSolid");  // LOD-chunk, routed (ROUTING-1)
 			else if (modernHandled)
 				trace(Phase::TerrainOpaque, "TerrainSolidThin", PathKind::RawGL, -1, "None");                 // un-armed patch-stream flush
 			else
