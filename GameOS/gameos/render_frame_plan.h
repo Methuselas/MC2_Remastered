@@ -18,6 +18,8 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include "render_pass_attachment.h"
+
 namespace render_frame_plan {
 
 enum class Phase {
@@ -85,10 +87,18 @@ inline const char* pathName(PathKind k) {
 inline void trace(Phase phase, const char* pass, PathKind path,
                   int draws, const char* pipeline) {
     if (!traceEnabled()) return;
+    // RENDER-PASS-ATTACHMENT-SCAFFOLD-1: enrich the line with the pass's attachment
+    // contract (target / draw-buffer set / writes / reads) when one is registered.
+    // Pure lookup over a constexpr table — no GL, no state. Passes without a contract
+    // print the original line unchanged.
+    char attach[160];
+    attach[0] = '\0';
+    if (const render_pass_attachment::Contract* c = render_pass_attachment::find(pass))
+        render_pass_attachment::format(*c, attach, sizeof(attach));
     std::fprintf(stderr,
-        "[FRAME_PLAN] phase=%s pass=%s path=%s draws=%d pipeline=%s\n",
+        "[FRAME_PLAN] phase=%s pass=%s path=%s draws=%d pipeline=%s%s\n",
         phaseName(phase), pass, pathName(path), draws,
-        pipeline ? pipeline : "None");
+        pipeline ? pipeline : "None", attach);
     std::fflush(stderr);
 }
 
