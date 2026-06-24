@@ -1,0 +1,10 @@
+// DISPATCH-EFFECT-COREMOVETO-1 NaN-guard fixture.
+// Proves [BRAIN_DISPATCH_MOVETO_NAN] fires and NO setGeneralTacOrder is called.
+TechSpecial {
+    key  = "moveto_nan_test"
+    type = "dispatch"
+    Body {
+        DO OPORD.CoreMoveTo nan 200 0
+        STOP
+    }
+}

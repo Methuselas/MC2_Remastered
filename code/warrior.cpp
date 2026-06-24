@@ -2293,13 +2293,15 @@ long MechWarrior::runBrain (void) {
 			const bool hasPowerdown = bodyHasPowerdown(brainRuntime->specialBody);
 			const bool hasEject     = bodyHasUnitEject(brainRuntime->specialBody);
 			const bool hasGuard     = bodyHasCoreGuard(brainRuntime->specialBody);
-			const bool hasEffect    = hasPowerdown || hasEject || hasGuard;
+			const bool hasMoveTo    = bodyHasCoreMoveTo(brainRuntime->specialBody);
+			const bool hasEffect    = hasPowerdown || hasEject || hasGuard || hasMoveTo;
 
 			// Once-guard: if the effect was already applied, suppress HOLD without re-applying.
 			const bool powerdownDone = hasPowerdown && brainRuntime->dispatchEffectApplied;
 			const bool ejectDone     = hasEject     && brainRuntime->ejectEffectApplied;
 			const bool guardDone     = hasGuard     && brainRuntime->guardEffectApplied;
-			const bool alreadyDone   = hasEffect && ((!hasPowerdown || powerdownDone) && (!hasEject || ejectDone) && (!hasGuard || guardDone));
+			const bool moveToDone    = hasMoveTo    && brainRuntime->moveToEffectApplied;
+			const bool alreadyDone   = hasEffect && ((!hasPowerdown || powerdownDone) && (!hasEject || ejectDone) && (!hasGuard || guardDone) && (!hasMoveTo || moveToDone));
 
 			if (!alreadyDone) {
 				if (hasEffect) {
@@ -2312,6 +2314,8 @@ long MechWarrior::runBrain (void) {
 						brainRuntime->ejectEffectApplied = 1;
 					if (hasGuard && !brainRuntime->guardEffectApplied)
 						brainRuntime->guardEffectApplied = 1;
+					if (hasMoveTo && !brainRuntime->moveToEffectApplied)
+						brainRuntime->moveToEffectApplied = 1;
 					bool applied = executeSpecialBody_Apply(brainRuntime->specialBody, this, vehicleWID,
 					                                        &brainRuntime->varStore, idx, "");
 					if (applied)

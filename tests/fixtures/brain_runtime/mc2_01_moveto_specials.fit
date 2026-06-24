@@ -1,0 +1,10 @@
+// DISPATCH-EFFECT-COREMOVETO-1 fixture — mc2_01 map (coordinates in-bounds).
+// DO OPORD.CoreMoveTo x y z — safe small values guaranteed in-bounds for mc2_01.
+TechSpecial {
+    key  = "moveto_test"
+    type = "dispatch"
+    Body {
+        DO OPORD.CoreMoveTo 100 200 0
+        STOP
+    }
+}
