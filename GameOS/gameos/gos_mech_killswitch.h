@@ -59,12 +59,13 @@ extern bool g_useGpuMechLighting;
 // is off. Independent of MC2_GPU_CULL_LIFECYCLE.
 extern bool g_useGpuMechCull;
 
-// Slice C2: weighted multi-bone skinning in mech.vert. Off = rigid
-// per-bone (single boneIndices.x lookup, Slice A behavior). On =
-// weighted blend across all 4 bone slots. Stock data is byte-
-// identical between the two modes (boneWeights = 1,0,0,0 collapses);
-// the difference is only meaningful for imported meshes.
-extern bool g_useGpuMechSkin;
+// MECH-KILLSWITCH-SKIN-RETIRE-1 (2026-06-23): MC2_GPU_MECH_SKIN (Slice C2,
+// default-ON) RETIRED to constant. u_skinningMode is now always 1 (weighted).
+// Proven no-op: stock data is (1,0,0,0) → the weighted sum collapses to the
+// rigid single-bone result (mech.vert:156-169), and ALL 59 BT2018 imports are
+// single-bone-per-vertex at source (3.27M verts, 0 blended — verified). The
+// weighted branch stays as latent forward capacity for a future blend-skinned
+// importer (do NOT delete it). Audit: MECH-KILLSWITCH-AUDIT-1.
 
 // Slice C3-revised (2026-05-09): wire TransformMultiShape_PositionsOnly
 // for the GPU mech body. Skips the per-vertex CPU lighting kernel that

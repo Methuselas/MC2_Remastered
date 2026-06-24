@@ -88,9 +88,9 @@ bool g_useGpuMechLighting = envFlagDefaultOn("MC2_GPU_MECH_LIGHTING");
 // Opt-out: MC2_GPU_MECH_CULL=0
 bool g_useGpuMechCull = envFlagDefaultOn("MC2_GPU_MECH_CULL");
 
-// Slice C2: weighted multi-bone skinning. Requires g_useGpuMechs=true.
-// Opt-out: MC2_GPU_MECH_SKIN=0
-bool g_useGpuMechSkin = envFlagDefaultOn("MC2_GPU_MECH_SKIN");
+// MECH-KILLSWITCH-SKIN-RETIRE-1: MC2_GPU_MECH_SKIN retired to constant
+// (default-ON, proven no-op — stock + all imports single-bone). u_skinningMode
+// fed constant 1; weighted branch kept as forward capacity. See gos_mech_killswitch.h.
 
 // Slice C3-revised: see gos_mech_killswitch.h. Body-only fast transform.
 // Opt-out: MC2_GPU_MECH_FAST_TRANSFORM=0
@@ -967,7 +967,7 @@ void GpuMechBatcher::flushShadow() {
     const GLint baseLoc = glGetUniformLocation(shadowProg, "u_instanceBase");
 
     if (smLoc >= 0)
-        glUniform1i(smLoc, g_useGpuMechSkin ? 1 : 0);
+        glUniform1i(smLoc, 1);   // SKIN-RETIRE-1: weighted skinning always on (no-op for single-bone data)
 
     glBindVertexArray(s_sharedVao);
     // Same root cause as GpuStaticPropBatcher::flushShadow: do not rely on
@@ -2197,7 +2197,7 @@ void GpuMechBatcher::flush() {
     // Slice C2: skinning mode 0 = rigid per-bone (Slice A), 1 = weighted
     // multi-bone blend. Stock data is byte-identical across modes.
     if (s_loc_u_skinningMode >= 0)
-        glUniform1i(s_loc_u_skinningMode, g_useGpuMechSkin ? 1 : 0);
+        glUniform1i(s_loc_u_skinningMode, 1);   // SKIN-RETIRE-1: weighted skinning always on
     if (s_mechBatcherTrace) {
         static int s_uniDiagPrinted = 0;
         if (s_uniDiagPrinted < 2) {
