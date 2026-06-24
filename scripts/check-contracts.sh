@@ -101,6 +101,7 @@ run_check "colormask_ownership"    "py -3 scripts/check-colormask-ownership.py -
 run_check "pass_attachment"        "py -3 scripts/check-pass-attachment-contract.py --quiet"
 run_check "frame_feedback"         "py -3 scripts/check-frame-resource-feedback.py --quiet"
 run_check "drawbuffer_ownership"   "py -3 scripts/check-drawbuffer-ownership.py --quiet"
+run_check "static_prop_family"     "py -3 scripts/check-static-prop-family.py --quiet"
 run_check "spirv_artifacts"        "py -3 scripts/check-spirv-artifacts.py --quiet"
 run_check "spirv_reflection"       "py -3 scripts/check-spirv-reflection-contract.py --quiet"
 run_check "shader_package"         "py -3 scripts/check-shader-package.py --quiet"
