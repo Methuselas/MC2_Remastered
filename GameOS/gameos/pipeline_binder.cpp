@@ -51,9 +51,24 @@ static bool pipelineColorMaskEnabled() {
 // is healed at frame begin. With the keystone in place composite opt-in is SAFE again
 // (its 1/2=FALSE mask is reset next beginScene before any MRT consumer) and gate-ON is
 // byte-identical. TerrainSolidLODChunk opts in during its own routing slice, NOT here.
+//
+// COLORMASK-ROLLOUT-POSTFX-1: extend opt-in to the rest of the PostProcess phase
+// family. All of these run AFTER the MRT scene/GBuffer is consumed and only modulate
+// the scene color attachment (color0); their registry rows are {true,false,false}, so
+// masking color1(GBuffer1/normals)/color2(objectId) OFF here PREVENTS a post-fx pass
+// from scribbling into the GBuffer, while color0=true keeps the frame non-black. Same
+// safety profile as composite (proven byte-identical gate-ON): the beginScene all-TRUE
+// keystone heals the set-only 1/2=FALSE leak before the next frame's MRT draw. Each name
+// MUST stay in sync with check-colormask-ownership.py OPTED_IN (drift guard enforces it).
 static bool rowOwnsColorMask(const char* dbgName) {
     if (!dbgName) return false;
-    return std::strcmp(dbgName, "PostProcessComposite") == 0;
+    return std::strcmp(dbgName, "PostProcessComposite")    == 0
+        || std::strcmp(dbgName, "PostProcessSsaoApply")    == 0
+        || std::strcmp(dbgName, "PostProcessScreenShadow") == 0
+        || std::strcmp(dbgName, "PostProcessCloudShadow")  == 0
+        || std::strcmp(dbgName, "PostProcessShoreline")    == 0
+        || std::strcmp(dbgName, "PostProcessEdgeFog")      == 0
+        || std::strcmp(dbgName, "PostProcessFogOob")       == 0;
 }
 
 void applyPipeline(const RenderCore::PipelineDesc& desc, const char* dbgName) {
