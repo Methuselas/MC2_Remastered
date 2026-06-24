@@ -2547,6 +2547,9 @@ void gosPostProcess::endScene()
         mc2gl::GlScopedTextureUnit unit2Guard(2);
 
         // Bind scene color texture to unit 0
+        // FEEDBACK-SAFE: composite resolve — the draw target is the backbuffer (FBO 0,
+        // bound earlier in endScene), NOT sceneFBO_, so sampling sceneColorTex_ here
+        // reads the resolved scene into a different target. Not a feedback loop.
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, sceneColorTex_);
 
