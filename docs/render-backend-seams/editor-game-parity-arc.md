@@ -254,3 +254,99 @@ checker bug) and are not introduced here.
   paths) must still finalize batcher geometry and tear down in the locked order.
   The lifecycle wrappers preserve the exact call order; a smoke-equivalent editor
   load/unload is the real check (no `mc2` smoke tier covers `EditRel.exe`).
+
+---
+
+## Slice 4 — EDITOR-RENDER-LIFECYCLE-PARITY-1
+
+**Goal:** editor's static-prop-registry / GPU-cull / postprocess render-RESOURCE
+lifecycle (init / destroy / frameBegin / frameEnd ordering) must match the
+mission (game) path, and the static-prop registry must NOT be force-disabled in
+the editor. Use the Slice-2 bridge seam (commit `81f41482`).
+
+### Registry-force-off finding: **STALE** (TD premise disproven)
+
+The TD claimed `MC2_STATIC_PROP_REGISTRY` is hardcoded to `0` in the editor.
+**It is not.** Evidence:
+
+- `run-editor.bat` sets **only** `MC2_EDITOR_TRACE=1` — no registry gate.
+- `editor/EditorMFC.cpp:172-189` `editor_set_default_env_vars()`: the only env
+  forced is `MC2_SNAPSHOT_STATIC_PROP_BUILD=0` (live-builder, unrelated). Lines
+  178-179 explicitly document that the `MC2_STATIC_PROP_REGISTRY` sidestep was
+  **retired 2026-05-25** — *"editor now runs canonical default-ON chain."*
+- No `_putenv`/`SetEnvironmentVariable` anywhere in `editor/` touches
+  `MC2_STATIC_PROP_REGISTRY` (grep of editor TUs: only `MC2_EDITOR_TRACE`,
+  `MC2_SNAPSHOT_STATIC_PROP_BUILD`, `MC2_ACTIVE_MOD` are set).
+- The gate default is `true`: `GameOS/gameos/gos_static_prop_registry.cpp:124`
+  `parseEnvBoolWithDefault("MC2_STATIC_PROP_REGISTRY", true)`.
+
+Conclusion: the registry is **ENABLED** in the editor (default-on, same as the
+game). Several docs still claim "Editor sets =0" (`docs/tier1_env_vars.md:19`,
+`docs/engine-closure-audit.md:151,200`, `docs/modding/renderer-feature-flags.md`,
+`docs/v-staticprop-visual-review-audit.md:123`) — those notes are themselves
+**stale** relative to the 2026-05-25 EditorMFC retirement. No force-off exists to
+remove; therefore **no killswitch was added** (none is needed — the canonical
+`MC2_STATIC_PROP_REGISTRY` gate already serves as the on/off switch, default-on
+in both paths).
+
+### Lifecycle ordering diff: game vs editor — **PARITY HOLDS**
+
+Canonical game ordering (current `code/mission.cpp` + `code/gamecam.cpp`; the
+line numbers in the editor comments have drifted but the *symbol order* is exact):
+
+| Phase | Game call site | Editor call site |
+|---|---|---|
+| batcher onMapLoad ×2 + Registry::init | `mission.cpp:2218` StaticProp::beginMissionEarly + MechBatcher.onMapLoad + beginMissionLate(Registry::init) | `EditorData.cpp:448,1660` `EditorBridge::beginMissionRenderResources()` |
+| RenderWorld::init | beginMissionLate (`StaticPropRenderAdapter.cpp:72`) | `EditorData.cpp:449,1661` `GameAdapters::StaticProp::beginMission()` |
+| Mech::beginMission | `mission.cpp:2221` | `EditorData.cpp:450,1662` |
+| substrate_init → compute_init → terrain_lighting → readback_init → shadow priming | `mission.cpp:3567-3590+` | `EditorData.cpp:459-472,1666-1672` (same order; `setNumObjects` step skipped — editor has no `ObjectManager`) |
+| finalizeGeometry ×2 + buildIndirect | `mission.cpp:3896-3903` | `EditorData.cpp:526,1701` `EditorBridge::finalizeMissionGeometry()` |
+| per-frame `frameBegin` BEFORE terrain render | `gamecam.cpp:457` StaticProp::frameBegin then land->render | `EditorCamera.h:269` `staticPropFrameBegin()` then `land->render()` |
+| per-frame mech finalizePending | logistics late path | `EditorCamera.h:274` `mechFinalizePending()` |
+| teardown: readback_shutdown → compute_shutdown → substrate_shutdown → onMapUnload ×2 → Registry::destroy → RenderWorld::destroy | `mission.cpp:4058-4073` (6-step) + endMissionLate(RenderWorld::destroy) | `EditorData.cpp:178` `endMissionRenderResources()` (6-step) + `:179` `StaticProp::endMission()` (RenderWorld::destroy) |
+
+**No step is skipped or reordered.** Specific points verified:
+
+- GPU-cull dispatch path: editor inits `substrate`/`compute`/`readback` in the
+  same order as the game, and tears them down first in the 6-step teardown.
+- RenderWorld init/destroy is **balanced** in the editor: init at map-load
+  (`StaticProp::beginMission`), destroy at map-unload (`StaticProp::endMission`,
+  ordered after `Registry::destroy`, exactly as the game's `endMissionLate`).
+- Postprocess begin/end is **not** part of either camera-render lifecycle — it is
+  driven engine-side by GameOS (`gos_RendererEndFrame`) for both the game and the
+  editor, so there is no editor-specific postprocess gap to close. The TD's
+  "postprocess begin/end" concern does not apply to this seam.
+- Both editor map-load entry points (PCV load `initTerrainFromPCV` and new-map
+  `initTerrainFromTGA`) carry the identical begin → cull-init → finalize chain.
+
+### What changed
+
+**Nothing in code.** This is a *parity-already-holds, doc-only* outcome. The
+Slice-2 bridge (`beginMissionRenderResources` / `endMissionRenderResources` /
+`finalizeMissionGeometry` / `staticPropFrameBegin` / `mechFinalizePending` /
+`cullComputeInit`) already routes the editor through the exact game ordering, and
+the registry is already enabled in the editor. No bridge methods were added or
+reordered; no force-off was removed; no killswitch was introduced. The advisor
+scope guard (no shared GameOS-init object) is respected by default — no new
+abstraction was built.
+
+### Killswitch
+
+**None added.** The existing `MC2_STATIC_PROP_REGISTRY` env gate (default-on in
+both game and editor) is the on/off switch. Setting it to `0` disables the
+registry identically in both paths.
+
+### Checker output (this slice's tree — unchanged from base, no diff)
+
+- `scripts/check-editor-game-render-context-parity.py`: **PASS** (exit 0).
+- `scripts/check-include-firewall.sh`: `editor/` scope **clean** (0 editor
+  violations). The 2 reported violations are the same pre-existing,
+  unrelated `RenderCore/RendererFeatureRegistry.h` string-literal false-positives
+  documented in the Slice-2/3 sections above — not introduced here.
+
+### Build-time verification risk
+
+Doc-only change; no compilation impact. No `mc2` smoke tier covers `EditRel.exe`,
+so the behavioural lifecycle (editor map load → unload in the locked order) is
+asserted by code inspection against the game path, not by an automated editor
+smoke run.
