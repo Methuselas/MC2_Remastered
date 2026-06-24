@@ -87,9 +87,19 @@
       "pipelineId": "TerrainSolid",
       "shaderBase": "gos_terrain",
       "stateOwner": "legacy/ad-hoc (hand-set in gos_terrain_bridge_drawIndirect; NOT routed)",
-      "next": "TERRAIN-SOLID-APPLYPIPELINE-ROUTING-1 (GO-with-conditions): route the bridge draw via applyPipeline, KEEP the glColorMask(TRUE) shadow-leak repair call-site (applyPipeline does not own colorMask), byte/visual-gate clean, no shadow color-mask leak regression -> promote to ROUTED_BY_APPLYPIPELINE only after proof. LOD-chunk = separate later row (cull None, MRT).",
+      "next": "TERRAIN-SOLID-LIVE-DRAWPATH-RECON-2 (read-only/probe-first): classify the actual terrain-solid draw that fires in deterministic capture + werewolf-armed (NOT the bridge, NOT 3528=water); name its caller chain; record terrain state at that real chokepoint. THEN TERRAIN-SOLID-APPLYPIPELINE-ROUTING-2: applyPipeline(TerrainSolid) at the real chokepoint, keep colorMask repair, [PIPELINE_BIND] binds>0 in capture, sha holds -> only THEN promote to ROUTED.",
       "proofBasis": "TERRAIN_CULL_STATE_PROBE_1",
-      "evidence": "TERRAIN-SOLID-PIPELINE-REGISTRATION-1: descriptive row TerrainSolid added (glProgramName=0, NOT applyPipeline-routed). State stated truthfully: Opaque, depthTest+write ON, GEQUAL reverse-Z (gameos_graphics.cpp:4006), colorAttachments {color0,GBuffer1}={t,t,f}, objectId not written. cullMode=None / frontFace=Ccw are EMPIRICALLY PROBED (TERRAIN-CULL-STATE-PROBE-1, commit 19020b9f: cull DISABLED, CCW, 8 frames unanimous at the txmmgr:2868 dispatch chokepoint) — not guessed. No behavior change (descriptive only); no routing, no colorMask movement."
+      "evidence": "TERRAIN-SOLID-PIPELINE-REGISTRATION-1: descriptive TerrainSolid row (cull/frontFace probed, TERRAIN-CULL-STATE-PROBE-1). TERRAIN-SOLID-APPLYPIPELINE-ROUTING-1: applyPipeline(TerrainSolid) added at gos_terrain_bridge_drawIndirect, glColorMask(TRUE) shadow-leak repair PRESERVED. PARTIAL/UNPROVEN: capture (water + werewolf-armed) holds sha cb5a700e (NO REGRESSION) but [PIPELINE_BIND] TerrainSolid binds=0 — the routed bridge is NOT the live harness terrain-solid entrypoint. NOT promoted to ROUTED (zero binds is not routed). The bridge route may still be correct for a real-gameplay entrypoint; left in place pending RECON-2 which identifies the actual live draw chokepoint.",
+      "routingStatus": "PARTIAL_ROUTED_UNPROVEN",
+      "proofStatus": "pass_not_exercised_in_smoke",
+      "routedEntryPoints": [
+        "gos_terrain_bridge_drawIndirect (gameos_graphics.cpp ~4005)"
+      ],
+      "unverifiedLiveEntryPoints": [
+        "the actual capture/armed terrain-solid draw chokepoint — TBD by TERRAIN-SOLID-LIVE-DRAWPATH-RECON-2 (NOTE: gameos_graphics.cpp:3528 is the WATER MDI draw, NOT terrain — corrected)"
+      ],
+      "colorMaskRepair": "PRESERVED",
+      "captureNote": "NO_REGRESSION_CAPTURE_ONLY — sha cb5a700e holds (no regression, colorMask repair intact) but routed-bridge [PIPELINE_BIND] TerrainSolid binds=0 (not the live capture entrypoint)."
     },
     "TerrainOverlay": {
       "status": "ROUTED_BY_APPLYPIPELINE",
