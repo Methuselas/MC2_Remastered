@@ -71,6 +71,7 @@
 #include "gos_postprocess.h"
 #include "gos_profiler.h"
 #include "../GameOS/gameos/gos_static_prop_batcher.h"
+#include "../GameOS/gameos/render_frame_plan.h"  // RENDER-FRAME-PLAN-SCAFFOLD-1
 #include "../GameOS/gameos/render_snapshot.h"  // getLastRenderSnapshot() for snap-cull (v2.3)
 #include "../GameOS/gameos/gos_static_prop_registry.h"  // Stage 3.C: flush()
 #include "../GameOS/gameos/gos_mech_batcher.h"
@@ -2913,6 +2914,23 @@ void MC_TextureManager::renderLists (void)
 			// Un-armed frame: gate-off did not fire, legacy admits filled
 			// TerrainPatchStream normally. M2 thin-record-direct draw runs SOLID.
 			modernHandled = TerrainPatchStream::flush();
+		}
+
+		// RENDER-FRAME-PLAN-SCAFFOLD-1: tattle WHICH terrain-solid branch drew this
+		// frame. This is the rake-prevention trace — capture takes the legacy MLR
+		// branch (modern bridge not armed), which bound TerrainSolid 0x and confused
+		// the routing recon. Observe only; no behavior change.
+		if (render_frame_plan::traceEnabled()) {
+			using namespace render_frame_plan;
+			const bool armed = gos_terrain_indirect::IsFrameSolidArmed();
+			if (modernHandled && armed && !mc2TerrainLodChunkEnabled())
+				trace(Phase::TerrainOpaque, "TerrainSolid", PathKind::ApplyPipeline, -1, "TerrainSolid");      // modern indirect bridge (routed)
+			else if (modernHandled && armed)
+				trace(Phase::TerrainOpaque, "TerrainSolidLODChunk", PathKind::RawGL, -1, "None");              // LOD-chunk owns it
+			else if (modernHandled)
+				trace(Phase::TerrainOpaque, "TerrainSolidThin", PathKind::RawGL, -1, "None");                 // un-armed patch-stream flush
+			else
+				trace(Phase::TerrainOpaque, "TerrainLegacyMLR", PathKind::MLR, -1, "None");                   // legacy master-node fall-through
 		}
 
 		// [TERRAIN_SURFACE] PR-2 (Wave 1, ADDITIVE / DEFAULT-OFF / DELETES

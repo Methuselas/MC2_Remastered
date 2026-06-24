@@ -16,6 +16,7 @@
 #include "gl_state_guard.h"  // GLSTATE-GUARD-ADOPTION-1: GlScopedTextureUnit (composite tex-unit leak)
 #include "../../RenderCore/PipelineRegistry.h"  // POSTPROCESS-COMPOSITE-REGISTRATION-1
 #include "pipeline_binder.h"                     // applyPipeline — composite FF state
+#include "render_frame_plan.h"                   // RENDER-FRAME-PLAN-SCAFFOLD-1
 #include "gos_cluster_depth_pyramid.h"  // CLUSTER-DEPTH-PYRAMID-NATIVE-1 (gated substrate)
 #include "gos_lightgrid_build.h"         // MC2-LIGHTGRID-BUILD-NATIVE-1 (gated, inert)
 
@@ -1726,6 +1727,8 @@ void gosPostProcess::runSSAO()
         RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessSsaoApply),
         "PostProcessSsaoApply");
     if (ssaoDebug_ != 0) glDisable(GL_BLEND);
+    render_frame_plan::trace(render_frame_plan::Phase::PostProcess, "SsaoApply",
+        render_frame_plan::PathKind::ApplyPipeline, 1, "PostProcessSsaoApply");
 
     ssaoApplyProg_->setInt("ssaoTex", 0);
     float texel[2] = { 1.0f / (float)ssaoW_, 1.0f / (float)ssaoH_ };
@@ -1786,6 +1789,8 @@ void gosPostProcess::runScreenShadow()
         RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessScreenShadow),
         "PostProcessScreenShadow");
     if (screenShadowDebug_ != 0) glDisable(GL_BLEND);
+    render_frame_plan::trace(render_frame_plan::Phase::PostProcess, "ScreenShadow",
+        render_frame_plan::PathKind::ApplyPipeline, 1, "PostProcessScreenShadow");
 
     // Set uniforms BEFORE apply()
     const bool csmActive = (mc2ShadowCsmEnabled() && dynShadowArrayTex_ != 0);
@@ -1926,6 +1931,8 @@ void gosPostProcess::runCloudShadow()
     pipeline_binder::applyPipeline(
         RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessCloudShadow),
         "PostProcessCloudShadow");
+    render_frame_plan::trace(render_frame_plan::Phase::PostProcess, "CloudShadow",
+        render_frame_plan::PathKind::ApplyPipeline, 1, "PostProcessCloudShadow");
 
     cloudProg_->setInt("sceneDepthTex", 0);
     cloudProg_->setInt("u_cloudEnable", 1);   // gated in C++ above; 1 inside the pass
@@ -1980,6 +1987,8 @@ void gosPostProcess::runShoreline()
     pipeline_binder::applyPipeline(
         RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessShoreline),
         "PostProcessShoreline");
+    render_frame_plan::trace(render_frame_plan::Phase::PostProcess, "Shoreline",
+        render_frame_plan::PathKind::ApplyPipeline, 1, "PostProcessShoreline");
 
     shorelineProg_->setInt("sceneDepthTex", 0);
     shorelineProg_->setInt("sceneNormalTex", 1);
@@ -2032,6 +2041,8 @@ void gosPostProcess::runEdgeFog()
     pipeline_binder::applyPipeline(
         RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessEdgeFog),
         "PostProcessEdgeFog");
+    render_frame_plan::trace(render_frame_plan::Phase::PostProcess, "EdgeFog",
+        render_frame_plan::PathKind::ApplyPipeline, 1, "PostProcessEdgeFog");
 
     // invViewProj: same GL_FALSE / row-major convention as SSAO and other passes.
     edgeFogProg_->apply();
@@ -2086,6 +2097,8 @@ void gosPostProcess::runFogOob()
     pipeline_binder::applyPipeline(
         RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessFogOob),
         "PostProcessFogOob");
+    render_frame_plan::trace(render_frame_plan::Phase::PostProcess, "FogOob",
+        render_frame_plan::PathKind::ApplyPipeline, 1, "PostProcessFogOob");
 
     // Other post-process passes upload inverseViewProj_ with GL_FALSE (row-major
     // data as-is), which in GLSL gives (W^{-1})^T * v — the correct clip->world
@@ -2214,6 +2227,8 @@ void gosPostProcess::endScene()
     pipeline_binder::applyPipeline(
         RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessComposite),
         "PostProcessComposite");
+    render_frame_plan::trace(render_frame_plan::Phase::PostProcess, "Composite",
+        render_frame_plan::PathKind::ApplyPipeline, 1, "PostProcessComposite");
 
     // Draw fullscreen quad with composite shader
     if (compositeProg_ && compositeProg_->is_valid()) {

@@ -27,6 +27,7 @@
 #include "gos_render.h"
 #include "../../RenderCore/PipelineRegistry.h"   // SHADOW-CASTER-APPLYPIPELINE-ROUTING-1
 #include "pipeline_binder.h"                      // applyPipeline — shadow bracket FF state
+#include "render_frame_plan.h"                    // RENDER-FRAME-PLAN-SCAFFOLD-1
 #include "gos_postprocess.h"
 #include "gos_profiler.h"
 #include "gos_gpu_sync.h"
@@ -3283,6 +3284,8 @@ void gosRenderer::renderWaterFastPath(
     // epilogue still own teardown.
     pipeline_binder::applyPipeline(
         RenderCore::getPipelineDesc(RenderCore::PipelineId::WaterArmed), "WaterArmed");
+    render_frame_plan::trace(render_frame_plan::Phase::Water, "WaterFastPath",
+        render_frame_plan::PathKind::ApplyPipeline, 1, "WaterArmed");
     // OOB-FOG-WATER-DEPTH-1: water must write depth so runFogOob() (which
     // fires on rawDepth==0 far-plane pixels) skips water-covered pixels.
     // Without depth writes, OOB fog classifies water pixels as empty sky and
