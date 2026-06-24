@@ -1,0 +1,222 @@
+{
+  "$schema": "brain-fixture-manifest-v1",
+  "description": "BRAIN-DISPATCH-HARNESS-1: fixture corpus manifest for offline dispatch harness. One entry per .fit file in tests/fixtures/brain_runtime/. Anti-orphan invariant: every .fit MUST have an entry here.",
+  "fixtures": [
+    {
+      "name": "powerdown-legacy",
+      "file": "mc2_01_specials.fit",
+      "mission": "mc2_01",
+      "format": "legacy-fitini",
+      "gates_required": ["MC2_BRAIN_DISPATCH=1"],
+      "expected_bodyHasPowerdown": true,
+      "expected_bodyHasCoreGuard": true,
+      "expected_bodyHasEffect": true,
+      "expected_effect_intent": "POWERDOWN once (Brain.CorePower false) + GUARD",
+      "expected_trace_substrings": [
+        "[BRAIN_DISPATCH] verb=Brain.CorePower false"
+      ]
+    },
+    {
+      "name": "attack-bad-wid",
+      "file": "mc2_01_attack_specials.fit",
+      "mission": "mc2_01",
+      "format": "legacy-fitini",
+      "gates_required": ["MC2_BRAIN_DISPATCH=1"],
+      "expected_bodyHasCoreAttack": true,
+      "expected_bodyHasEffect": true,
+      "expected_effect_intent": "BAD_WID soft-fail (parsedWID <= 0)",
+      "expected_trace_substrings": [
+        "[BRAIN_DISPATCH] verb=OPORD.CoreAttack 0"
+      ]
+    },
+    {
+      "name": "eject-canonical",
+      "file": "mc2_01_eject_specials.fit",
+      "mission": "mc2_01",
+      "format": "legacy-fitini",
+      "gates_required": ["MC2_BRAIN_DISPATCH=1"],
+      "expected_bodyHasUnitEject": true,
+      "expected_bodyHasCoreGuard": true,
+      "expected_bodyHasEffect": true,
+      "expected_effect_intent": "EJECT once",
+      "expected_trace_substrings": [
+        "[BRAIN_DISPATCH] verb=Unit.Eject"
+      ]
+    },
+    {
+      "name": "eject-alias",
+      "file": "mc2_01_ejectalias_specials.fit",
+      "mission": "mc2_01",
+      "format": "legacy-fitini",
+      "gates_required": ["MC2_BRAIN_DISPATCH=1"],
+      "expected_bodyHasUnitEject": true,
+      "expected_bodyHasEffect": true,
+      "expected_effect_intent": "EJECT once (alias coreEject -> Unit.Eject)",
+      "expected_trace_substrings": [
+        "verb=coreEject"
+      ]
+    },
+    {
+      "name": "guard-canonical",
+      "file": "mc2_01_guard_specials.fit",
+      "mission": "mc2_01",
+      "format": "legacy-fitini",
+      "gates_required": ["MC2_BRAIN_DISPATCH=1"],
+      "expected_bodyHasCoreGuard": true,
+      "expected_bodyHasEffect": true,
+      "expected_effect_intent": "GUARD once",
+      "expected_trace_substrings": [
+        "[BRAIN_DISPATCH] verb=OPORD.CoreGuard"
+      ]
+    },
+    {
+      "name": "moveto-canonical",
+      "file": "mc2_01_moveto_specials.fit",
+      "mission": "mc2_01",
+      "format": "legacy-fitini",
+      "gates_required": ["MC2_BRAIN_DISPATCH=1"],
+      "expected_bodyHasCoreMoveTo": true,
+      "expected_bodyHasEffect": true,
+      "expected_effect_intent": "MOVETO_POINT once, coords (100 200 0)",
+      "expected_trace_substrings": [
+        "[BRAIN_DISPATCH] verb=OPORD.CoreMoveTo 100 200 0"
+      ]
+    },
+    {
+      "name": "moveto-nan-guard",
+      "file": "mc2_01_moveto_nan_specials.fit",
+      "mission": "mc2_01",
+      "format": "legacy-fitini",
+      "gates_required": ["MC2_BRAIN_DISPATCH=1"],
+      "expected_bodyHasCoreMoveTo": true,
+      "expected_bodyHasEffect": true,
+      "expected_effect_intent": "NaN guard soft-fail (no setGeneralTacOrder)",
+      "expected_trace_substrings": [
+        "[BRAIN_DISPATCH] verb=OPORD.CoreMoveTo nan 200 0"
+      ]
+    },
+    {
+      "name": "retreat-canonical",
+      "file": "mc2_01_retreat_specials.fit",
+      "mission": "mc2_01",
+      "format": "legacy-fitini",
+      "gates_required": ["MC2_BRAIN_DISPATCH=1"],
+      "expected_bodyHasUnitRetreat": true,
+      "expected_bodyHasEffect": true,
+      "expected_effect_intent": "WITHDRAW once",
+      "expected_trace_substrings": [
+        "[BRAIN_DISPATCH] verb=Unit.Retreat"
+      ]
+    },
+    {
+      "name": "retreat-alias",
+      "file": "mc2_01_retreatalias_specials.fit",
+      "mission": "mc2_01",
+      "format": "legacy-fitini",
+      "gates_required": ["MC2_BRAIN_DISPATCH=1"],
+      "expected_bodyHasUnitRetreat": true,
+      "expected_bodyHasEffect": true,
+      "expected_effect_intent": "WITHDRAW once (alias coreRetreat -> Unit.Retreat)",
+      "expected_trace_substrings": [
+        "verb=coreRetreat"
+      ]
+    },
+    {
+      "name": "callchain-depth2",
+      "file": "mc2_01_specials_callchain.fit",
+      "mission": "mc2_01",
+      "format": "brace-block",
+      "gates_required": ["MC2_BRAIN_DISPATCH=1", "MC2_BRAIN_DISPATCH_CALL=1"],
+      "expected_bodyHasEffect": false,
+      "expected_effect_intent": "depth-2 chaining trace-only (no effects in called bodies, 1A)",
+      "expected_trace_substrings": [
+        "[BRAIN_DISPATCH_CALL]",
+        "to=mission.test.special.init"
+      ]
+    },
+    {
+      "name": "callchain-cycle",
+      "file": "mc2_01_specials_callchain_cycle.fit",
+      "mission": "mc2_01",
+      "format": "brace-block",
+      "gates_required": ["MC2_BRAIN_DISPATCH=1", "MC2_BRAIN_DISPATCH_CALL=1"],
+      "expected_bodyHasEffect": false,
+      "expected_effect_intent": "cycle-detected soft-fail; no infinite recursion",
+      "expected_trace_substrings": [
+        "[BRAIN_DISPATCH_CALL_CYCLE]"
+      ]
+    },
+    {
+      "name": "callchain-unknown",
+      "file": "mc2_01_specials_callchain_unknown.fit",
+      "mission": "mc2_01",
+      "format": "brace-block",
+      "gates_required": ["MC2_BRAIN_DISPATCH=1", "MC2_BRAIN_DISPATCH_CALL=1"],
+      "expected_bodyHasCoreGuard": true,
+      "expected_bodyHasEffect": true,
+      "expected_effect_intent": "unknown-target soft-fail; execution continues past unresolved call",
+      "expected_trace_substrings": [
+        "[BRAIN_DISPATCH_CALL_UNKNOWN]",
+        "target=nonexistent.key"
+      ]
+    },
+    {
+      "name": "carver-slice",
+      "file": "mc2_01_specials_carver_slice.fit",
+      "mission": "mc2_01",
+      "format": "brace-block",
+      "gates_required": ["MC2_BRAIN_DISPATCH=1"],
+      "expected_bodyHasEffect": false,
+      "expected_effect_intent": "carver_v_enhanced format — Var.Set verbs parsed, trace-only",
+      "expected_trace_substrings": [
+        "[BRAIN_DISPATCH]"
+      ]
+    },
+    {
+      "name": "raw-brace-block",
+      "file": "mc2_01_specials_raw.fit",
+      "mission": "mc2_01",
+      "format": "brace-block",
+      "gates_required": ["MC2_BRAIN_DISPATCH=1"],
+      "expected_bodyHasPowerdown": true,
+      "expected_bodyHasEffect": true,
+      "expected_effect_intent": "raw brace-block format with inline-quoted DO args",
+      "expected_trace_substrings": [
+        "[BRAIN_DISPATCH] verb=Brain.CorePower false"
+      ]
+    },
+    {
+      "name": "ai-smoke-mc2_01",
+      "file": "mc2_01_ai.fit",
+      "mission": "mc2_01",
+      "format": "legacy-fitini",
+      "gates_required": [],
+      "partial": true,
+      "expected_effect_intent": "parser smoke — no BrainSpecial block; expected to load=false gracefully",
+      "notes": "mc2_01_ai.fit has [Brain] not [BrainSpecial]; parseBrainSpecialBody returns false gracefully"
+    },
+    {
+      "name": "ai-smoke-mc2_17",
+      "file": "mc2_17_ai.fit",
+      "mission": "mc2_17",
+      "format": "legacy-fitini",
+      "gates_required": [],
+      "partial": true,
+      "expected_effect_intent": "parser smoke — no BrainSpecial block; expected to load=false gracefully",
+      "notes": "mc2_17_ai.fit has [Brain] not [BrainSpecial]; parseBrainSpecialBody returns false gracefully"
+    },
+    {
+      "name": "attack-live-wid-mc2_17",
+      "file": "mc2_17_attack_live_specials.fit",
+      "mission": "mc2_17",
+      "format": "legacy-fitini",
+      "gates_required": ["MC2_BRAIN_DISPATCH=1"],
+      "expected_bodyHasCoreAttack": true,
+      "expected_bodyHasEffect": true,
+      "expected_effect_intent": "ATTACK_OBJECT with live WID=49 (soft-fail in harness: no live ObjectManager)",
+      "expected_trace_substrings": [
+        "[BRAIN_DISPATCH] verb=OPORD.CoreAttack 49"
+      ]
+    }
+  ]
+}
