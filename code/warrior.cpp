@@ -11,6 +11,7 @@
 #ifndef MCLIB_H
 #include"mclib.h"
 #endif
+#include "brain_special_dispatch.h"  // TECHSCRIPT-SPECIAL-DISPATCH-1A: executeSpecialBody_TraceOnly
 
 #ifndef WARRIOR_H
 #include"warrior.h"
@@ -2271,6 +2272,10 @@ long MechWarrior::runBrain (void) {
 				}
 				// Other task types: discard (no handler this slice).
 			}
+		}
+		// TECHSCRIPT-SPECIAL-DISPATCH-1A: trace-only, does NOT replace HOLD logic above
+		if (brainRuntime && brainRuntime->specialBody.loaded) {
+			executeSpecialBody_TraceOnly(brainRuntime->specialBody, vehicleWID);
 		}
 		brainErr = 0;
 	}
