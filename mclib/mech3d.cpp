@@ -3676,16 +3676,21 @@ void Mech3DAppearance::updateGeometry (void)
 		const void* _typeKey = (mechType ? (const void*)mechType->mechShape[currentLOD] : nullptr);
 		mc2mechanim::TickImportedMechs(frameLength, (unsigned)g_mc2FrameCounter, _mm,
 		                               (const void*)mechShape, _typeKey);
-		// 1B-GPU not yet implemented: the GPU mech path draws from an immutable
-		// rest-pose VBO, so the CPU re-bake shows a FROZEN pose. Warn once so the
-		// symptom is self-explaining (run with MC2_GPU_MECHS=0). See
-		// docs/bt2018-skel-1b-gpu-recon.md.
-		if (g_useGpuMechs && mc2mechanim::AnyImportedAnim()) {
+		// ANIM-FROZEN-WARNING-FIX-1: imported-mech GPU animation IS implemented and
+		// working at shipped defaults (per-actor model-delta palette; proven by
+		// IMPORTED-GPU-ANIM-READPATH-RECON-1). It is armed by MC2_MECH_IMPORT_GPU.
+		// The pose is only FROZEN when the GPU mech path is on but that import-GPU
+		// gate is OFF (the stock per-node branch then draws the immutable rest VBO).
+		// So warn ONLY in that genuinely-frozen case (was firing unconditionally and
+		// LYING whenever the import-GPU path was armed). Both workarounds given.
+		if (g_useGpuMechs && mc2mechanim::AnyImportedAnim() &&
+		    !mc2mechanim::ImportedGpuEnabled()) {
 			static bool s_warnedImportGpu = false;
 			if (!s_warnedImportGpu) {
 				s_warnedImportGpu = true;
-				fprintf(stderr, "[MECH_IMPORT] animated imported mech on GPU path shows a "
-				                "FROZEN pose; run with MC2_GPU_MECHS=0 (1B-GPU pending)\n");
+				fprintf(stderr, "[MECH_IMPORT] animated imported mech with the import-GPU "
+				                "palette OFF shows a FROZEN pose; set MC2_MECH_IMPORT_GPU=1 "
+				                "(or run MC2_GPU_MECHS=0)\n");
 			}
 		}
 	}
