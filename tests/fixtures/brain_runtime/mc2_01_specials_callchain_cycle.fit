@@ -1,0 +1,44 @@
+FITini
+; TECHSCRIPT-CALL-CHAIN-1A cycle guard fixture.
+; Engine-owned normative proof (addendum #3).
+; Tests cycle detection: A calls B, B calls A.
+; Gate D (DISPATCH=1 CALL=1):
+;   Expect: [BRAIN_DISPATCH_CALL] from=root to=mission.test.cycle.a depth=1
+;           [BRAIN_DISPATCH] depth=1 verb=OPORD.CoreGuard
+;           [BRAIN_DISPATCH_CALL] from=mission.test.cycle.a to=mission.test.cycle.b depth=2
+;           [BRAIN_DISPATCH] depth=2 verb=Brain.CoreAttack
+;           [BRAIN_DISPATCH_CALL_CYCLE] from=mission.test.cycle.b to=mission.test.cycle.a depth=2 wid=...
+;   The cycle guard fires when B tries to call A (A is in the visited set).
+
+TechSpecial {
+    key  = "mission.test.scenario_main"
+    alias = "Scenario.Main"
+    type = "MissionSpecial"
+    sourceABLFunction = "scenario_main"
+    Body {
+        DO TechSpecial.Call "mission.test.cycle.a"
+        STOP
+    }
+}
+
+TechSpecial {
+    key  = "mission.test.cycle.a"
+    alias = "Cycle.A"
+    type = "MissionSpecial"
+    Body {
+        DO OPORD.CoreGuard
+        DO TechSpecial.Call "mission.test.cycle.b"
+        STOP
+    }
+}
+
+TechSpecial {
+    key  = "mission.test.cycle.b"
+    alias = "Cycle.B"
+    type = "MissionSpecial"
+    Body {
+        DO Brain.CoreAttack
+        DO TechSpecial.Call "mission.test.cycle.a"
+        STOP
+    }
+}

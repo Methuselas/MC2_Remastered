@@ -5,6 +5,15 @@
 //   "; TODO: manual ABL line: <payload>" comments (stripped by FitIniFile) and emit
 //   structured [BRAIN_DISPATCH_FSM_TODO] traces (information only, no behavior change).
 // TECHSCRIPT-DISPATCH-1D — per-unit Var namespace + minimal store.
+// TECHSCRIPT-CALL-CHAIN-1A — TechSpecial.Call chaining (parse + index + trace ONLY).
+//   Gate: MC2_BRAIN_DISPATCH_CALL=1 (requires MC2_BRAIN_DISPATCH=1; warns + inert otherwise).
+//   At mission load: parseBrainSpecialBody_RawScan populates a per-mission
+//   specialIndex (std::vector<SpecialIndexEntry>) stored on MechBrainRuntime.
+//   At dispatch time: "TechSpecial.Call <key>" verb resolves the target in the index,
+//   recursively iterates its body's verbs emitting trace lines with depth prefix.
+//   NO effects are executed within chained bodies in 1A (apply-mode chaining deferred to 1B).
+//   Cycle guard: per-tick std::vector<std::string> visited set, cleared on dispatch entry.
+//   Depth limit: 8 (matches recon recommendation; corpus max depth = 2, zero cycles found).
 //   Gate: MC2_BRAIN_DISPATCH_VAR=1 (requires MC2_BRAIN_DISPATCH=1; default OFF).
 //   Var.Set "<key>" <value> [scope=Mission]  — stores per-warrior or traces mission-scope.
 //   Var.Get "<key>" [scope=Mission]          — reads per-warrior store, traces result.
@@ -19,12 +28,17 @@
 //   MC2_BRAIN_DISPATCH_FSM_TODO=1 alone           → warns + is inert (DISPATCH required)
 //   MC2_BRAIN_DISPATCH=1 + MC2_BRAIN_DISPATCH_VAR=1 → Var.Set/Get handled; per-unit store active
 //   MC2_BRAIN_DISPATCH_VAR=1 alone                → warns + is inert (DISPATCH required)
+//   MC2_BRAIN_DISPATCH=1 + MC2_BRAIN_DISPATCH_CALL=1 → TechSpecial.Call chaining; index + recurse + trace
+//   MC2_BRAIN_DISPATCH_CALL=1 alone               → warns + is inert (DISPATCH required)
 //
-// FORBIDDEN-CALL GUARD (1A — executeSpecialBody_TraceOnly):
+// FORBIDDEN-CALL GUARD (1A — executeSpecialBody_TraceOnly / executeSpecialBody_TraceOnlyChained):
 //   MUST NOT call ANY of: setGeneralTacOrder, setPlayerTacOrder, setAlarmTacOrder,
 //   requestHelp, requestTarget, clearCurTacOrder, setMainGoal, calcTacOrder, coreMoveTo,
 //   or ANY movement/attack/order function.
-//   Calls ONLY: token parsing + fprintf. Verified by inspection.
+//   Calls ONLY: token parsing + fprintf + recursive dispatch (chained bodies).
+//   CALL-CHAIN-1A: chaining is PURE VERB-STREAM COMPOSITION — no new order function calls,
+//   no state writes, no effects in chained bodies (effects deferred to CALL-CHAIN-1B).
+//   Verified by inspection.
 //
 // RELAXED-CALL GUARD (1B — executeSpecialBody_Apply):
 //   The ONLY order function this path may call is setGeneralTacOrder (for Brain.CorePower false → POWERDOWN).
@@ -72,15 +86,65 @@ struct BrainSpecialBody {
     std::vector<FsmTodoEntry>  fsmTodos;
 };
 
+// ---------------------------------------------------------------------------
+// TECHSCRIPT-CALL-CHAIN-1A: per-mission TechSpecial index.
+//
+// One entry per TechSpecial block found by parseBrainSpecialBody_RawScan.
+// Stored as a flat vector (small: typically <10 entries; linear-scan is fine).
+// No STL hash — intentional per spec (small, mission-ephemeral, no pointer ordering).
+// Lifecycle: mission-ephemeral, same as specialBody. Cleared at mission teardown via
+// MechBrainRuntime destructor (std::vector auto-destructs).
+//
+// Entry-body selection rule (for the existing `specialBody` member on MechBrainRuntime):
+//   1. First TechSpecial block whose key contains "scenario_main" (case-sensitive).
+//   2. Else first block with type="MissionSpecial".
+//   3. Else the first block found.
+//   Documented here and in brain_special_dispatch.cpp.
+struct SpecialIndexEntry {
+    std::string     key;   // from key= field in TechSpecial block
+    BrainSpecialBody body; // verbs collected from that block's Body { DO ... } section
+};
+
+using SpecialIndex = std::vector<SpecialIndexEntry>;
+
+// Looks up a key in the index (linear scan, case-sensitive).
+// Returns pointer to entry if found, nullptr if not found.
+// Does NOT take ownership; pointer is valid for index lifetime.
+const SpecialIndexEntry* specialIndexFind(const SpecialIndex& idx, const std::string& key);
+
 // Returns true if body contains the Brain.CorePower false (POWERDOWN) verb.
 bool bodyHasPowerdown(const BrainSpecialBody& body);
 
 // TRACE ONLY. Zero effects. No orders. No state writes.
 // Gate: MC2_BRAIN_DISPATCH=1.
 // varStore: pass &brainRuntime->varStore when DISPATCH_VAR=1; nullptr is safe (gate-off path).
-// FORBIDDEN-CALL CONTRACT: calls ONLY fprintf + fflush + loop + store->set/get.
+// index: pass &brainRuntime->specialIndex when DISPATCH_CALL=1; nullptr is safe (gate-off path).
+// FORBIDDEN-CALL CONTRACT: calls ONLY fprintf + fflush + loop + store->set/get +
+//   recursive executeSpecialBody_TraceOnlyChained (when DISPATCH_CALL=1).
 //   No setGeneralTacOrder, no order/movement/attack function.
-void executeSpecialBody_TraceOnly(const BrainSpecialBody& body, int wid, VarStore* varStore = nullptr);
+void executeSpecialBody_TraceOnly(const BrainSpecialBody& body, int wid,
+                                   VarStore* varStore = nullptr,
+                                   const SpecialIndex* index = nullptr,
+                                   const char* callerKey = nullptr);
+
+// Internal recursive call-chain dispatch (TECHSCRIPT-CALL-CHAIN-1A).
+// Called from executeSpecialBody_TraceOnly / executeSpecialBody_Apply when a
+// TechSpecial.Call verb is encountered and DISPATCH_CALL=1.
+// depth: current recursion depth (starts at 1 for the first call).
+// visited: per-tick cycle-guard set (caller creates, passes by reference).
+// fromKey: key of the calling body (for trace), or "root" if called from root body.
+// FORBIDDEN-CALL CONTRACT: pure trace + recursion. No order functions. No effects.
+//   Chained effects (Brain.CorePower etc.) in called bodies are NOT applied in 1A.
+//   Chained verbs trace as [BRAIN_DISPATCH depth=N] or [BRAIN_DISPATCH_UNKNOWN depth=N].
+// DEPTH LIMIT: 8 (hardcoded; matches recon recommendation).
+// CYCLE GUARD: key already in visited → [BRAIN_DISPATCH_CALL_CYCLE] + skip.
+void executeSpecialBody_TraceOnlyChained(const BrainSpecialBody& body,
+                                          int wid,
+                                          const SpecialIndex& index,
+                                          int depth,
+                                          std::vector<std::string>& visited,
+                                          const char* fromKey,
+                                          VarStore* varStore = nullptr);
 
 // 1B EFFECT DISPATCHER.
 // Applies the ONE recognized effect when MC2_BRAIN_DISPATCH_APPLY=1:
@@ -88,14 +152,27 @@ void executeSpecialBody_TraceOnly(const BrainSpecialBody& body, int wid, VarStor
 // All other verbs: trace only, no effect (Var.* handled when DISPATCH_VAR=1).
 // warrior must be non-null (caller guards).
 // varStore: pass &brainRuntime->varStore when DISPATCH_VAR=1; nullptr is safe.
+// index: pass &brainRuntime->specialIndex when DISPATCH_CALL=1; nullptr is safe.
+// CALL-CHAIN-1A NOTE: TechSpecial.Call verbs in the ROOT body are dispatched for trace only
+//   (chained bodies traced without effects). Chained-effect execution is CALL-CHAIN-1B.
 // Returns true if a recognized effect was applied (caller uses to suppress synthetic HOLD).
-bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior, int wid, VarStore* varStore = nullptr);
+bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior, int wid,
+                               VarStore* varStore = nullptr,
+                               const SpecialIndex* index = nullptr,
+                               const char* callerKey = nullptr);
 
 // DISPATCH-LOADER-RAW-1: Parse BrainSpecial/TechSpecial Body DO-verbs.
 // Primary: raw brace-block scanner (handles inline-quoted DO args).
 // Fallback: legacy FitIniFile [BrainSpecial]/[Body]/DO0=... bracket form.
 // Returns false if file absent or no verbs found.
-bool parseBrainSpecialBody(const char* missionName, BrainSpecialBody& outBody);
+//
+// TECHSCRIPT-CALL-CHAIN-1A: if outIndex is non-null, the raw brace-block scanner also
+// populates it with one SpecialIndexEntry per TechSpecial block found.
+// The entry-body selection rule (for outBody) is documented in brain_special_dispatch.h
+// under SpecialIndexEntry. The index is populated regardless of DISPATCH_CALL gate state
+// (build-time unconditional) — the gate controls runtime call resolution only.
+bool parseBrainSpecialBody(const char* missionName, BrainSpecialBody& outBody,
+                            SpecialIndex* outIndex = nullptr);
 
 // ---------------------------------------------------------------------------
 // TECHSCRIPT-DISPATCH-1D: Var.Set / Var.Get parser + handler.

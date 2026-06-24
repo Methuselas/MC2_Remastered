@@ -102,6 +102,13 @@ struct MechBrainRuntime {
     BrainSpecialBody specialBody;  // parsed from _specials.fit; loaded when MC2_BRAIN_DISPATCH set
     VarStore         varStore;     // per-unit Var namespace (DISPATCH-1D); populated by Var.Set/Var.Get
                                     // ABI: plain struct (no virtuals); sizeof increases by sizeof(vector)+sizeof(bool)
+    // TECHSCRIPT-CALL-CHAIN-1A: per-mission TechSpecial index.
+    // One entry per TechSpecial block parsed from <mission>_specials.fit.
+    // Lifecycle: mission-ephemeral (same as specialBody). Cleared at mission teardown.
+    // Populated by parseBrainSpecialBody() alongside specialBody.
+    // Shared across warriors for the same mission (all warriors load the same file;
+    // this copy is per-warrior-runtime but content is identical — acceptable for 1A's small index).
+    SpecialIndex     specialIndex;
 
     // Compute which slots Brain WOULD own in this mode (trace-only; never applied in 1A).
     // Returns bitmask of kBrainOwns* flags.
