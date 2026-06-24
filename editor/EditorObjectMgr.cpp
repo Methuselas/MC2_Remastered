@@ -3346,6 +3346,36 @@ Unit* EditorObjectMgr::findUnitByMechHandle(RenderCore::RenderObjectHandle h)
 	return nullptr;
 }
 
+EditorObject* EditorObjectMgr::findObjectByStaticRecipeIndex(int32_t recipeIndex)
+{
+	// EDITOR-OBJECTID-PICK-BRIDGE-1 (Slice 3). recipeIndex < 0 is the "no
+	// static recipe" sentinel (Appearance::getStaticRecipeIndex default) and
+	// must never match -- guard so an unregistered object is not spuriously
+	// returned.
+	if (recipeIndex < 0)
+		return nullptr;
+
+	// buildings holds EditorObject* for set-dressing; units holds Unit*
+	// (Unit : public EditorObject). Both expose appearance()->getStaticRecipeIndex().
+	for (BUILDING_LIST::EIterator iter = buildings.Begin(); !iter.IsDone(); iter++)
+	{
+		EditorObject* obj = *iter;
+		if (!obj || !obj->appearance())
+			continue;
+		if (obj->appearance()->getStaticRecipeIndex() == recipeIndex)
+			return obj;
+	}
+	for (UNIT_LIST::EIterator mIter = units.Begin(); !mIter.IsDone(); mIter++)
+	{
+		Unit* unit = *mIter;
+		if (!unit || !unit->appearance())
+			continue;
+		if (unit->appearance()->getStaticRecipeIndex() == recipeIndex)
+			return unit;
+	}
+	return nullptr;
+}
+
 void EditorObjectMgr::registerStaticPropsForMissionLoad()
 {
 	if (!GpuStaticPropRegistry::isMissionLoadRegEnabled())

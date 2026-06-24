@@ -88,6 +88,7 @@
 #include "UndoHistoryPanel.h"
 #include "CommandPalette.h"
 #include "gameplay_pick.h"  // tryGameplayPick: shared pick spine, no game-object deps
+#include "../EditorBridge/EditorRenderBridge.h"  // EDITOR-OBJECTID-PICK-BRIDGE-1: GPU ObjectID pick seam
 #include "gameos.hpp"       // gos_GetViewport, Environment (drawableWidth/Height)
 #include "gos_render.h"     // graphics::make_current_context
 #include "gos_postprocess.h" // gosPostProcess + getGosPostProcess() — OID scan diagnostic
@@ -4019,12 +4020,79 @@ static bool EditorInterface_IsDoubleClickDistance(int x1, int y1, int x2, int y2
 	return abs(x2 - x1) <= cx && abs(y2 - y1) <= cy;
 }
 
-static EditorObject* EditorInterface_PickObjectAtScreenPoint(int screenX, int screenY)
+// EDITOR-OBJECTID-PICK-BRIDGE-1 (Slice 3): GPU ObjectID pick is the PRIMARY
+// editor object-selection path; the legacy CPU forward-projection picker is the
+// documented killswitch fallback. Default ON; set MC2_EDITOR_GPU_PICK=0 to fall
+// back to CPU forward-project (e.g. if the GPU readback regresses on a vendor).
+// Convention matches GameOS/gameos/gos_mech_batcher.cpp envFlagDefaultOn:
+// unset -> on, exactly "0" -> off, any other value -> on.
+static bool EditorInterface_GpuPickEnabled()
+{
+	static const bool s_enabled = []() {
+		const char* v = getenv("MC2_EDITOR_GPU_PICK");
+		if (v == nullptr) return true;                 // unset -> on (new default)
+		if (v[0] == '0' && v[1] == '\0') return false; // exactly "0" -> off
+		return true;                                   // any other value -> on
+	}();
+	return s_enabled;
+}
+
+// CPU forward-projection picker. Kept as the killswitch fallback for the GPU
+// path and as the press-time drag-grab picker (OnLButtonDown).
+static EditorObject* EditorInterface_PickObjectAtScreenPoint_CPU(int screenX, int screenY)
 {
 	if (!EditorObjectMgr::instance())
 		return NULL;
 
 	return EditorObjectMgr::instance()->getObjectAtScreenPosition(screenX, screenY);
+}
+
+static EditorObject* EditorInterface_PickObjectAtScreenPoint(int screenX, int screenY)
+{
+	EditorObjectMgr* mgr = EditorObjectMgr::instance();
+	if (!mgr)
+		return NULL;
+
+	// ---- PRIMARY: GPU ObjectID readback via the single EditorBridge seam ----
+	// EditorBridge::pickAt() owns the screen->FBO coord transform + glReadPixels
+	// + RenderWorld handle lookup. It returns Kind::StaticProp / Kind::Mech on an
+	// object hit, Kind::Terrain on a ground click, Kind::Miss otherwise. We only
+	// consume StaticProp / Mech here; Terrain and Miss fall through to the CPU
+	// forward-projection picker so a ground click still resolves the nearest
+	// object exactly as before (CPU behaviour is unchanged on a terrain hit).
+	if (EditorInterface_GpuPickEnabled() && EditorBridge::isEnabled())
+	{
+		EditorBridge::EditorPickResult pick = EditorBridge::pickAt(screenX, screenY);
+
+		if (pick.kind == EditorBridge::EditorPickResult::Kind::StaticProp)
+		{
+			// Reverse the GPU handle back to the EditorObject. handle.index()
+			// equals the GpuStaticPropRegistry recipeIndex (identity mapping,
+			// RenderWorld.h handleToRecipeIndex); the owning editor object's
+			// appearance carries the same recipeIndex.
+			const int32_t recipeIndex = static_cast<int32_t>(pick.handle.index());
+			if (EditorObject* obj = mgr->findObjectByStaticRecipeIndex(recipeIndex))
+				return obj;
+			// GPU hit a static prop the editor has no EditorObject for (e.g.
+			// terrain-baked vegetation forests with no per-instance editor object).
+			// Fall through to CPU rather than returning a miss.
+		}
+		else if (pick.kind == EditorBridge::EditorPickResult::Kind::Mech)
+		{
+			// Best-effort: editor scenes rarely place live mechs, but if one is
+			// present its Unit carries the RenderWorld handle (findUnitByMechHandle).
+			// NOTE: mech gameObjectId is still 0 (MechRenderAdapter), but the
+			// handle bits ARE the stable identity here, so this resolves cleanly.
+			if (EditorObject* unit = mgr->findUnitByMechHandle(pick.handle))
+				return unit;
+			// Unresolved mech -> CPU fallback (documented best-effort).
+		}
+		// Kind::Terrain or Kind::Miss -> CPU forward-projection (ground click /
+		// background): preserves the legacy "nearest projected object" behaviour.
+	}
+
+	// ---- FALLBACK: CPU forward-projection (killswitch + terrain/miss path) ----
+	return EditorInterface_PickObjectAtScreenPoint_CPU(screenX, screenY);
 }
 
 static bool EditorInterface_SelectObjectAtScreenPoint(int screenX, int screenY, bool toggle)
