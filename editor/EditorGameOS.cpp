@@ -37,6 +37,7 @@
 #include <gameos.hpp>          // gos_RendererBeginFrame / EndFrame / HandleEvents
 #include "gos_render.h"        // graphics::make_current_context etc.
 #include "gos_render_context.h"  // InitializeRenderContextConventions (shared game/editor parity)
+#include "render_frame_driver.h" // RenderFrameDriver_RenderWorld — Slice 6 shared render seam
 #include "gos_input.h"         // input::beginUpdateMouseState etc.
 #include "camera.h"            // extern eye + fgetScreenResX (pick-cache coherence diag)
 #include "gos_postprocess.h"   // gosPostProcess + getGosPostProcess() — needed for
@@ -652,24 +653,56 @@ DWORD __stdcall RunGameOSLogic()
     }
 #endif
     EditorFramePhase_Begin();
-    gos_RendererBeginFrame();
-    EditorFramePhase_Mark("beginFrame");
 
+    // GAME-EDITOR-RENDER-FRAME-DRIVER-1 (Slice 6): the editor now drives the
+    // shared per-frame world-render dispatch through the ONE named seam both
+    // hosts call — RenderFrameDriver_RenderWorld — instead of hand-inlining the
+    // BeginFrame/UpdateRenderers/EndFrame trio. This is the REAL adoption (the
+    // editor is the host that rots). Editor-only steps (DoGameLogic, the !land
+    // skip, ImGui/overlays/RTT) stay OUTSIDE the driver, exactly as the parity
+    // TD rule requires ("editor may add overlays but not own a parallel render
+    // implementation").
+    //
     // DoGameLogic must always run — it drives EditorInterface::update() which
-    // processes MapGeneratorDialog::TakeAction() (Generate/Preview clicks).
-    // UpdateRenderers requires terrain (land != NULL); skip it when no map
-    // is loaded (e.g. while the generator dialog is open at startup).
+    // processes MapGeneratorDialog::TakeAction() (Generate/Preview clicks). It
+    // is hoisted to BEFORE the render dispatch so the seam wraps exactly the
+    // game's contiguous trio (the game runs GameLogic well before its render
+    // bracket; gameosmain.cpp ~1249 vs ~578). This restores the canonical
+    // logic-before-render order. NOTE (by Methuselas, carried forward): the
+    // editor terrain path was historically sensitive to this BeginFrame/
+    // DoGameLogic/UpdateRenderers/EndFrame handoff — hoisting DoGameLogic out
+    // of the bracket must be revalidated by an editor build + terrain load
+    // test (this is exactly the Slice-6 editor build/load gate).
     if (Environment.DoGameLogic)
         Environment.DoGameLogic();
     EditorFramePhase_Mark("doLogic");
 
+    // UpdateRenderers requires terrain (land != NULL); under MC2_IMGUI we skip
+    // the world dispatch when no map is loaded (e.g. while the generator dialog
+    // is open at startup). The driver always runs BeginFrame/UpdateRenderers/
+    // EndFrame, so when there is no land we keep the editor's pre-existing
+    // behavior — run BeginFrame + EndFrame but skip the world update — outside
+    // the seam rather than entering the driver. With land present, the full
+    // dispatch goes through the shared driver.
+    bool runWorldThroughDriver = true;
 #ifdef MC2_IMGUI
-    if (land)
+    if (!land)
+        runWorldThroughDriver = false;
 #endif
-        Environment.UpdateRenderers();
+    if (runWorldThroughDriver) {
+        RenderFrameDesc rfd;
+        rfd.host = RenderHostKind::Editor;
+        rfd.drawEditorOverlays = true;
+        rfd.editorSelectable = true;
+        RenderFrameDriver_RenderWorld(rfd);
+    } else {
+        // No-land editor path: preserve exact prior behavior (Begin + End,
+        // world update skipped) without routing through the always-update
+        // driver.
+        gos_RendererBeginFrame();
+        gos_RendererEndFrame();
+    }
     EditorFramePhase_Mark("updRend");
-
-    gos_RendererEndFrame();
     EditorFramePhase_Mark("endFrame");
 
     // Composite scene FBO → default FB (tone-map, FXAA, bloom, shadow overlay).

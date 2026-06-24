@@ -1,6 +1,7 @@
 #include "gameos.hpp"
 #include "gos_render.h"
 #include "gos_render_context.h"        // InitializeRenderContextConventions (shared game/editor)
+#include "render_frame_driver.h"       // RenderFrameDriver_RenderWorld — Slice 6 shared render seam (gated)
 #include "render_snapshot.h"
 #include "draw_packet_emitter.h"       // DrawPacket v0
 #include "gos_static_prop_batcher.h"   // batcher_getSortedPacketCount — explicit, do not rely on transitive
@@ -574,9 +575,27 @@ static void draw_screen( void )
 
     {
         ZoneScopedN("Camera.UpdateRenderers");
-        { ZoneScopedN("Camera.UpdateRenderers gos_RendererBeginFrame"); gos_RendererBeginFrame(); }
-        Environment.UpdateRenderers();
-        { ZoneScopedN("Camera.UpdateRenderers gos_RendererEndFrame"); gos_RendererEndFrame(); }
+        // GAME-EDITOR-RENDER-FRAME-DRIVER-1 (Slice 6): gated A/B adoption of the
+        // shared RenderFrameDriver seam. Default OFF — MC2_RENDER_FRAME_DRIVER
+        // unset keeps the EXACT inline trio below (tier1 smoke stays
+        // byte-identical). Set MC2_RENDER_FRAME_DRIVER=1 to route the game's
+        // world dispatch through the same RenderFrameDriver_RenderWorld the
+        // editor adopts unconditionally, proving the seam is genuinely shared.
+        // Exit criteria to flip default-ON + delete the inline path: a build +
+        // tier1 smoke A/B that is byte-identical with the gate OFF vs ON.
+        // The Tracy sub-zones and frameBannerTick stay OUTSIDE the seam (they
+        // are game-only), so both branches keep them identically.
+        static const bool s_useRenderFrameDriver =
+            (std::getenv("MC2_RENDER_FRAME_DRIVER") != nullptr);
+        if (s_useRenderFrameDriver) {
+            RenderFrameDesc rfd;
+            rfd.host = RenderHostKind::Game;
+            RenderFrameDriver_RenderWorld(rfd);
+        } else {
+            { ZoneScopedN("Camera.UpdateRenderers gos_RendererBeginFrame"); gos_RendererBeginFrame(); }
+            Environment.UpdateRenderers();
+            { ZoneScopedN("Camera.UpdateRenderers gos_RendererEndFrame"); gos_RendererEndFrame(); }
+        }
         RenderWorld::frameBannerTick();  // M1 Task 14 (m2 fix: post-EndFrame)
     }
 

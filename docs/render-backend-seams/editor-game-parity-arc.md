@@ -8,6 +8,24 @@ legacy CPU-only editor paths to documented fallbacks.
 
 ---
 
+## ARC-COMPLETE — Slice ledger (0–6)
+
+The arc is complete with Slice 6: the per-frame world-render sequence the two
+hosts already shared is now formalized behind one named seam, so future render
+features cannot silently fork between game and editor.
+
+| Slice | Name | Commit | Status |
+|---|---|---|---|
+| S0 | EDITOR-CLIPCONTROL — editor sets reverse-Z clip-control | `e2ea10af` | shipped |
+| S1 | GAMEOS-RENDER-CONTEXT-PARITY — shared `InitializeRenderContextConventions` | `ec42fb44` | shipped |
+| S2 | editor GPU-include firewall | `81f41482` | shipped |
+| S3 | EDITOR-OBJECTID-PICK-BRIDGE — GPU ObjectID pick is PRIMARY | `45f6ee5a` | shipped |
+| S4 | editor/game lifecycle parity | `8b02ae3c` | doc-only |
+| S5 | editor/game pass-contract parity | `f8d8606a` | shipped |
+| S6 | GAME-EDITOR-RENDER-FRAME-DRIVER — shared `RenderFrameDriver` seam | `fbba4349` | shipped (editor real / game gated A/B) |
+
+---
+
 ## Slice 3 — EDITOR-OBJECTID-PICK-BRIDGE-1: GPU ObjectID pick is PRIMARY
 
 ### Summary
@@ -413,3 +431,127 @@ drift` and exit 1; restoring it returns exit 0.
 None. Pure static check + docs; no compilation, no GL, no relink. `EditRel.exe`
 is not covered by any smoke tier, so editor pass behaviour remains asserted by
 code inspection against the shared game path, not an automated editor smoke run.
+
+---
+
+## Slice 6 — GAME-EDITOR-RENDER-FRAME-DRIVER-1: shared RenderFrameDriver seam (capstone)
+
+### Summary
+
+Slices 0–5 verified the editor already drives world rendering through the SAME
+shared calls as the game. The only thing missing was a NAMED shared driver so
+the sequence cannot silently fork again. This slice formalizes the already-shared
+per-frame world-render dispatch behind one entry point both hosts call.
+
+This is a SEAM FORMALIZATION, not a renderer rewrite.
+
+### Driver API + layer
+
+`GameOS/gameos/render_frame_driver.{h,cpp}` — compiled into the shared gameos
+source list (`${SOURCES}` in `GameOS/gameos/CMakeLists.txt`), exactly like
+`gos_render_context.cpp` (Slice 1). That list builds BOTH the `gameos` (game)
+and `gameos_editor` (EditRel) static libs (`gameos_editor` only removes
+`gos_render.cpp`), so the driver is genuinely linkable by both hosts.
+
+```cpp
+struct RenderFrameDesc {
+    RenderHostKind host = RenderHostKind::Game;  // reused from gos_render_context.h
+    bool drawEditorOverlays = false;             // editor=true (behavior tag only)
+    bool editorSelectable    = false;            // editor=true (pick/ObjectID intent)
+};
+void RenderFrameDriver_RenderWorld(const RenderFrameDesc& desc);
+```
+
+`RenderHostKind` is REUSED from `gos_render_context.h` (not duplicated).
+`desc` is intentionally minimal: world/camera state already flows through the
+existing globals (`eye`, `land`, `Environment`), so the driver reads those
+directly. The flags are present for future intra-seam branching; today the
+three dispatch calls are identical for both hosts (that is the point), so `desc`
+is not yet read.
+
+### Inside vs outside the seam
+
+INSIDE (the driver owns, byte-for-byte identical in both hosts today):
+
+```cpp
+gos_RendererBeginFrame();
+Environment.UpdateRenderers();   // => Camera::render world dispatch
+gos_RendererEndFrame();
+```
+
+OUTSIDE (host-specific, stays at each call site):
+- `gosPostProcess` `beginScene()`/`endScene()`/`resize()`/`clearGBuffer1()`,
+  the scene/depth clears, clear-color selection.
+- `gos_RendererHandleEvents()` (event pump).
+- `Environment.DoGameLogic()` (logic tick — header note: render ops not allowed
+  during it; the game runs it well before its render bracket, gameosmain ~1249).
+- Editor overlays / gizmos / ImGui / RTT-present; the game's HUD / Tracy
+  sub-zones / `RenderWorld::frameBannerTick()`.
+
+Per the parity TD rule: "the editor may add overlays but not own a parallel
+render implementation." Overlays bracket the driver; they do not enter it.
+
+### Adoption asymmetry (deliberate, risk-controlled)
+
+- **Editor — REAL adoption (unconditional).** `editor/EditorGameOS.cpp`
+  `RunGameOSLogic` routes its world dispatch through
+  `RenderFrameDriver_RenderWorld({host=Editor, drawEditorOverlays=true,
+  editorSelectable=true})`. `DoGameLogic()` is HOISTED to before the driver
+  call (the editor previously interleaved it between BeginFrame and
+  UpdateRenderers) so the seam wraps exactly the game's contiguous trio. The
+  `!land` startup case (no map loaded) preserves prior behavior — BeginFrame +
+  EndFrame with the world update skipped — OUTSIDE the driver (the driver always
+  runs the full trio). ImGui / overlays / RTT-present stay where they were.
+
+- **Game — GATED A/B adoption (default OFF).** `GameOS/gameos/gameosmain.cpp`
+  keeps the EXACT inline trio by default; env `MC2_RENDER_FRAME_DRIVER` (unset =
+  OFF) routes the game loop through `RenderFrameDriver_RenderWorld({host=Game})`
+  for A/B proof. Default-OFF keeps tier1 smoke byte-identical and does not bet an
+  unverified refactor on the hot loop. The Tracy sub-zones and `frameBannerTick`
+  stay outside the seam in both branches.
+
+This makes the seam REAL and SHARED — both hosts can call it — without risking
+tier1 on an unverified inline-path removal.
+
+### Reorder caveat (flagged, not silently assumed safe)
+
+The editor historically interleaved `DoGameLogic()` between BeginFrame and
+UpdateRenderers, guarded by a `by Methuselas` warning: "Do not reorder
+BeginFrame/DoGameLogic/UpdateRenderers/EndFrame ... unless the Editor terrain
+path is revalidated." Slice 6 hoists `DoGameLogic()` out of the bracket (to the
+canonical game order: logic before render). This is a hot-path reorder that
+CANNOT be certified without a build + editor terrain load test. It is exactly
+the Slice-6 editor build/load gate below — the human must revalidate editor
+terrain rendering when building EditRel.exe.
+
+### Exit criteria — flip the game gate to default-ON + delete the inline path
+
+1. Build `mc2.exe` (RelWithDebInfo) — compiles `render_frame_driver.cpp` into
+   `gameos`, links clean.
+2. tier1 smoke A/B: gate OFF (default) vs `MC2_RENDER_FRAME_DRIVER=1`, both
+   5/5 and byte-identical. Once proven, flip `MC2_RENDER_FRAME_DRIVER` default
+   to ON and remove the inline trio from `gameosmain.cpp`.
+
+### Build-time verification plan (human)
+
+- **Editor:** build `EditRel.exe` (driver compiled into `gameos_editor`), load a
+  map, confirm terrain + props render and Ctrl+Shift+LMB pick still works
+  (revalidates the hoisted-DoGameLogic reorder per the Methuselas caveat).
+- **Game:** build `mc2.exe`; run tier1 smoke with `MC2_RENDER_FRAME_DRIVER`
+  UNSET (must equal the pre-Slice-6 baseline), then with
+  `MC2_RENDER_FRAME_DRIVER=1` (A/B — must be byte-identical).
+
+### Checkers (all clean post-change)
+
+- `scripts/check-include-firewall.sh` — exit 0 (the 2 reported lines are
+  pre-existing doc-string matches in `RenderCore/RendererFeatureRegistry.h`;
+  `render_frame_driver.{h,cpp}` and `EditorGameOS.cpp` introduce no new
+  violations — the driver pulls in no GPU/RenderCore headers).
+- `scripts/check-editor-game-render-context-parity.py` — PASS.
+- `scripts/check-editor-pass-contract-parity.py` — PASS (11 governed passes).
+
+### CMake change
+
+`render_frame_driver.cpp` added to the shared `${SOURCES}` list in
+`GameOS/gameos/CMakeLists.txt` (one line, after `gos_render_context.cpp`) — lands
+in both `gameos` and `gameos_editor` automatically.
