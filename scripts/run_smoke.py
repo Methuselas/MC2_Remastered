@@ -1353,7 +1353,11 @@ def main():
                             "MC2_BRAIN_RUNTIME",
                             "MC2_BRAIN_RUNTIME_TRACE",
                             "MC2_BRAIN_RUNTIME_FORCE_MODE",
-                            "MC2_BRAIN_RUNTIME_APPLY")},
+                            "MC2_BRAIN_RUNTIME_APPLY",
+                            "MC2_BRAIN_DISPATCH",
+                            "MC2_BRAIN_DISPATCH_APPLY",
+                            "MC2_BRAIN_DISPATCH_FSM_TODO",
+                            "MC2_BRAIN_DISPATCH_VAR")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission

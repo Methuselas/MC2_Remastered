@@ -7,7 +7,12 @@ st DO0 = "Brain.CorePower false"
 st DO1 = "Brain.CorePower"
 st DO2 = "OPORD.CoreGuard"
 st DO3 = "Unit.InState"
-st DO4 = "Var.Set"
+st DO4 = "Var.Set [foo] 1"
+st DO5 = "Var.Set [bar] hello"
+st DO6 = "Var.Set [shared] 5 scope=Mission"
+st DO7 = "Var.Get [foo]"
+st DO8 = "Var.Get [nope]"
+st DO9 = "Var.Get [shared] scope=Mission"
 ; TODO: manual ABL line: state start;
 ; TODO: manual ABL line: trans attack;
 ; TODO: manual ABL line: transBack;

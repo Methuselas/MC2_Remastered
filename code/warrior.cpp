@@ -2290,7 +2290,7 @@ long MechWarrior::runBrain (void) {
 			dispatcherAppliedEffect = true;
 			if (!brainRuntime->dispatchEffectApplied) {
 				brainRuntime->dispatchEffectApplied = 1;
-				executeSpecialBody_Apply(brainRuntime->specialBody, this, vehicleWID);
+				executeSpecialBody_Apply(brainRuntime->specialBody, this, vehicleWID, &brainRuntime->varStore);
 			}
 			if (brainTaskQueue) {
 				BrainTaskEntry task;
@@ -2320,7 +2320,7 @@ long MechWarrior::runBrain (void) {
 
 		// TECHSCRIPT-SPECIAL-DISPATCH trace path (1A behavior preserved when APPLY=0).
 		if (!s_dispatchApply && brainRuntime && brainRuntime->specialBody.loaded) {
-			executeSpecialBody_TraceOnly(brainRuntime->specialBody, vehicleWID);
+			executeSpecialBody_TraceOnly(brainRuntime->specialBody, vehicleWID, &brainRuntime->varStore);
 		}
 		brainErr = 0;
 	}
