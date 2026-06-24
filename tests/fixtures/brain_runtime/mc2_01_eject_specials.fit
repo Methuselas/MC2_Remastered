@@ -1,0 +1,11 @@
+FITini
+; DISPATCH-EFFECT-UNITEJECT-1 fixture — canonical Unit.Eject verb.
+; Warrior4 Enhanced mode: DO Unit.Eject issues TACTICAL_ORDER_EJECT exactly once.
+; Gate C proof fixture. Use with MC2_BRAIN_SPECIAL_FIT=mc2_01_eject.
+
+[BrainSpecial]
+
+[Body]
+st DO0 = "Unit.Eject"
+st DO1 = "OPORD.CoreGuard"
+st DO2 = "HOLD"

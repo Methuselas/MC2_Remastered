@@ -2282,37 +2282,44 @@ long MechWarrior::runBrain (void) {
 
 		bool dispatcherAppliedEffect = false;
 		if (s_dispatchApply && brainRuntime && brainRuntime->specialBody.loaded) {
-			// CALL-CHAIN-1A: dispatch ALL loaded bodies (not just POWERDOWN bodies).
-			// executeSpecialBody_Apply traces all verbs; applies POWERDOWN ONCE if present.
-			// The HOLD suppression only triggers when POWERDOWN was actually applied
+			// DISPATCH-EFFECT-UNITEJECT-1: bodyHasEffect() now covers POWERDOWN and EJECT.
+			// CALL-CHAIN-1A: dispatch ALL loaded bodies (not just effect bodies).
+			// executeSpecialBody_Apply traces all verbs; applies POWERDOWN or EJECT ONCE if present.
+			// The HOLD suppression only triggers when an effect verb was actually applied
 			// (dispatcherAppliedEffect=true ← Apply return value true).
 			const SpecialIndex* idx = brainRuntime->specialIndex.empty()
 			    ? nullptr : &brainRuntime->specialIndex;
-			// Apply is called every tick for trace continuity; POWERDOWN once-guard is inside.
-			// For the suppress-HOLD decision: only suppress when POWERDOWN was requested.
-			if (!brainRuntime->dispatchEffectApplied || !bodyHasPowerdown(brainRuntime->specialBody)) {
-				// POWERDOWN once-guard: if already applied, skip Apply (it would re-issue every tick).
-				// But for bodies WITHOUT POWERDOWN, we still want per-tick trace.
-				if (bodyHasPowerdown(brainRuntime->specialBody)) {
-					// POWERDOWN body: apply once, suppress HOLD slot write thereafter.
-					if (!brainRuntime->dispatchEffectApplied) {
+
+			const bool hasPowerdown = bodyHasPowerdown(brainRuntime->specialBody);
+			const bool hasEject     = bodyHasUnitEject(brainRuntime->specialBody);
+			const bool hasEffect    = hasPowerdown || hasEject;
+
+			// Once-guard: if the effect was already applied, suppress HOLD without re-applying.
+			const bool powerdownDone = hasPowerdown && brainRuntime->dispatchEffectApplied;
+			const bool ejectDone     = hasEject     && brainRuntime->ejectEffectApplied;
+			const bool alreadyDone   = hasEffect && ((!hasPowerdown || powerdownDone) && (!hasEject || ejectDone));
+
+			if (!alreadyDone) {
+				if (hasEffect) {
+					// Effect body: apply once, suppress HOLD slot write thereafter.
+					// Set the appropriate once-guard flag BEFORE calling Apply so a re-entrant
+					// tick (edge case) can't fire a second order.
+					if (hasPowerdown && !brainRuntime->dispatchEffectApplied)
 						brainRuntime->dispatchEffectApplied = 1;
-						bool applied = executeSpecialBody_Apply(brainRuntime->specialBody, this, vehicleWID,
-						                                        &brainRuntime->varStore, idx, "");
-						if (applied)
-							dispatcherAppliedEffect = true;
-					} else {
-						// Already applied POWERDOWN — just suppress HOLD slot.
+					if (hasEject && !brainRuntime->ejectEffectApplied)
+						brainRuntime->ejectEffectApplied = 1;
+					bool applied = executeSpecialBody_Apply(brainRuntime->specialBody, this, vehicleWID,
+					                                        &brainRuntime->varStore, idx, "");
+					if (applied)
 						dispatcherAppliedEffect = true;
-					}
 				} else {
-					// No POWERDOWN — trace-dispatch every tick (no slot ownership; HOLD fires normally).
+					// No effect verb — trace-dispatch every tick (no slot ownership; HOLD fires normally).
 					executeSpecialBody_Apply(brainRuntime->specialBody, this, vehicleWID,
 					                        &brainRuntime->varStore, idx, "");
 					// dispatcherAppliedEffect stays false → HOLD fires as normal.
 				}
 			} else {
-				// POWERDOWN already applied — suppress HOLD without re-applying.
+				// Effect already applied — suppress HOLD without re-applying.
 				dispatcherAppliedEffect = true;
 			}
 			if (dispatcherAppliedEffect) {

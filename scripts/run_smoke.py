@@ -1357,7 +1357,13 @@ def main():
                             "MC2_BRAIN_DISPATCH",
                             "MC2_BRAIN_DISPATCH_APPLY",
                             "MC2_BRAIN_DISPATCH_FSM_TODO",
-                            "MC2_BRAIN_DISPATCH_VAR")},
+                            "MC2_BRAIN_DISPATCH_VAR",
+                            # DISPATCH-EFFECT-UNITEJECT-1: fixture override gate.
+                            # MC2_BRAIN_SPECIAL_FIT=<name> redirects parseBrainSpecialBody
+                            # to load <name>_specials.fit instead of <mission>_specials.fit.
+                            # Required for Gates B/C/D/E eject fixture validation.
+                            "MC2_BRAIN_SPECIAL_FIT",
+                            "MC2_BRAIN_DISPATCH_CALL")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission

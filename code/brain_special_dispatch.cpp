@@ -25,11 +25,14 @@
 // or any order/movement function. Verified: no warrior pointer, no MechWarrior type here.
 //
 // RELAXED-CALL GUARD — executeSpecialBody_Apply (1B):
-// The ONLY permitted order call is warrior->setGeneralTacOrder() (for Brain.CorePower false → POWERDOWN)
-// IN THE ROOT BODY ONLY. Chained bodies (via TechSpecial.Call) are trace-only in 1A.
+// Permitted order calls: warrior->setGeneralTacOrder() for:
+//   Brain.CorePower false → TACTICAL_ORDER_POWERDOWN
+//   Unit.Eject (or alias coreEject) → TACTICAL_ORDER_EJECT
+// Both fire IN THE ROOT BODY ONLY. Chained bodies (via TechSpecial.Call) are trace-only in 1A.
 // STILL FORBIDDEN: setPlayerTacOrder, setAlarmTacOrder, requestHelp, requestTarget,
 // calcTacOrder, coreMoveTo, setMainGoal, clearCurTacOrder, any movement/attack/OPORD-advance/
 // commander function. All other verbs → trace only, zero effect.
+// DISPATCH-EFFECT-UNITEJECT-1: Unit.Eject + coreEject alias added.
 //
 // FSM-TODO SCANNER (1C — scanFsmTodosFromFile):
 // Calls ONLY std::ifstream + std::regex + fprintf. NO order functions, NO movement/attack/OPORD calls.
@@ -99,6 +102,7 @@ static const char* const kRecognizedVerbs[] = {
     "OPORD.CorePatrol",
     "OPORD.CoreMoveTo",
     "Unit.Retreat",
+    "Unit.Eject",
     "HOLD",
     nullptr  // sentinel
 };
@@ -352,6 +356,20 @@ void executeSpecialBody_TraceOnly(const BrainSpecialBody& body, int wid, VarStor
 }
 
 // ---------------------------------------------------------------------------
+// aliasToCanonical — DISPATCH-EFFECT-UNITEJECT-1
+// Maps legacy ABL-style verb aliases to canonical dispatch verb names.
+//   "coreEject"  → "Unit.Eject"
+//   "corePower"  → "Brain.CorePower" (future; mapped here for completeness)
+// Returns the canonical form if the input is a known alias; otherwise returns input unchanged.
+static const char* aliasToCanonical(const char* verb) {
+    if (std::strcmp(verb, "coreEject") == 0)
+        return "Unit.Eject";
+    if (std::strcmp(verb, "corePower") == 0)
+        return "Brain.CorePower";
+    return verb;
+}
+
+// ---------------------------------------------------------------------------
 // bodyHasPowerdown
 // Returns true if the body contains the Brain.CorePower false verb token.
 bool bodyHasPowerdown(const BrainSpecialBody& body) {
@@ -360,6 +378,26 @@ bool bodyHasPowerdown(const BrainSpecialBody& body) {
             return true;
     }
     return false;
+}
+
+// ---------------------------------------------------------------------------
+// bodyHasUnitEject — DISPATCH-EFFECT-UNITEJECT-1
+// Returns true if the body contains a Unit.Eject (or coreEject alias) verb token.
+bool bodyHasUnitEject(const BrainSpecialBody& body) {
+    for (const std::string& verb : body.verbs) {
+        const char* canonical = aliasToCanonical(verb.c_str());
+        if (std::strcmp(canonical, "Unit.Eject") == 0)
+            return true;
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// bodyHasEffect — DISPATCH-EFFECT-UNITEJECT-1
+// Returns true if the body has ANY effect verb that claims the GENERAL slot
+// (currently: POWERDOWN or EJECT).
+bool bodyHasEffect(const BrainSpecialBody& body) {
+    return bodyHasPowerdown(body) || bodyHasUnitEject(body);
 }
 
 // ---------------------------------------------------------------------------
@@ -460,6 +498,9 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
                 continue;
             }
         }
+        // DISPATCH-EFFECT-UNITEJECT-1: alias resolution before effect dispatch.
+        const char* vpCanon = aliasToCanonical(vp);
+
         if (verb == "Brain.CorePower false") {
             // ONLY permitted order call in this function (RELAXED-CALL GUARD).
             // NOTE: This fires only for the ROOT body. Chained-body POWERDOWN = 1B.
@@ -469,7 +510,16 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
             std::fprintf(stderr, "[BRAIN_DISPATCH_APPLY] verb=Brain.CorePower effect=POWERDOWN wid=%d\n", wid);
             std::fflush(stderr);
             appliedEffect = true;
-        } else if (isRecognizedVerb(vp)) {
+        } else if (std::strcmp(vpCanon, "Unit.Eject") == 0) {
+            // DISPATCH-EFFECT-UNITEJECT-1: Unit.Eject (or alias coreEject) → TACTICAL_ORDER_EJECT.
+            // ROOT BODY ONLY. Fires exactly once (ejectEffectApplied once-guard in warrior.cpp).
+            TacticalOrder ejectOrder;
+            ejectOrder.init(ORDER_ORIGIN_SELF, TACTICAL_ORDER_EJECT);
+            warrior->setGeneralTacOrder(ejectOrder);
+            std::fprintf(stderr, "[BRAIN_DISPATCH_APPLY] verb=Unit.Eject effect=EJECT wid=%d\n", wid);
+            std::fflush(stderr);
+            appliedEffect = true;
+        } else if (isRecognizedVerb(vpCanon)) {
             // Recognized but no effect implemented this slice — trace only.
             std::fprintf(stderr, "[BRAIN_DISPATCH] verb=%s wid=%d (apply-mode: no effect this verb)\n", vp, wid);
             std::fflush(stderr);

@@ -115,6 +115,13 @@ const SpecialIndexEntry* specialIndexFind(const SpecialIndex& idx, const std::st
 // Returns true if body contains the Brain.CorePower false (POWERDOWN) verb.
 bool bodyHasPowerdown(const BrainSpecialBody& body);
 
+// DISPATCH-EFFECT-UNITEJECT-1: Returns true if body contains Unit.Eject or coreEject alias.
+bool bodyHasUnitEject(const BrainSpecialBody& body);
+
+// DISPATCH-EFFECT-UNITEJECT-1: Returns true if body has ANY GENERAL-slot-claiming effect verb.
+// (currently: POWERDOWN || EJECT)
+bool bodyHasEffect(const BrainSpecialBody& body);
+
 // TRACE ONLY. Zero effects. No orders. No state writes.
 // Gate: MC2_BRAIN_DISPATCH=1.
 // varStore: pass &brainRuntime->varStore when DISPATCH_VAR=1; nullptr is safe (gate-off path).

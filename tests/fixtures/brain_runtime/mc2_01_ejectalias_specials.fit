@@ -1,0 +1,11 @@
+FITini
+; DISPATCH-EFFECT-UNITEJECT-1 fixture — coreEject alias form.
+; Verifies aliasToCanonical("coreEject") -> "Unit.Eject" -> same TACTICAL_ORDER_EJECT effect.
+; Gate D proof fixture. Use with MC2_BRAIN_SPECIAL_FIT=mc2_01_ejectalias.
+
+[BrainSpecial]
+
+[Body]
+st DO0 = "coreEject"
+st DO1 = "OPORD.CoreGuard"
+st DO2 = "HOLD"
