@@ -335,6 +335,20 @@
         "expected_count": 1,
         "notes": "Once-guard proof: single POWERDOWN verb produces exactly 1 order per Apply+Commit run (gate-OFF and gate-ON). Demonstrates the contract that each effect verb fires at most once per body."
       }
+    },
+    {
+      "name": "varmission-roundtrip",
+      "file": "mc2_01_varmission_specials.fit",
+      "mission": "mc2_01",
+      "format": "raw-brace",
+      "gates_required": ["MC2_BRAIN_DISPATCH=1", "MC2_BRAIN_DISPATCH_VAR=1", "MC2_BRAIN_VAR_MISSION=1"],
+      "notes": "TECHSCRIPT-DISPATCH-1D-M: mission-scope Var round-trip. Var.Set mflag=7 then Var.Get mflag; gate ON: BRAIN_VAR_MISSION_SET + BRAIN_VAR_MISSION_GET with val=7. Gate OFF traces-only.",
+      "expected_trace_substrings": [
+        "BRAIN_VAR_MISSION_SET",
+        "key=mflag",
+        "val=7",
+        "BRAIN_VAR_MISSION_GET"
+      ]
     }
   ]
 }

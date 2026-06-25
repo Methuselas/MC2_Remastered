@@ -451,6 +451,8 @@ int main(int argc, char** argv) {
     (void)_putenv("MC2_BRAIN_DISPATCH=1");
     (void)_putenv("MC2_BRAIN_DISPATCH_CALL=1");
     (void)_putenv("MC2_BRAIN_DISPATCH_VAR=1");
+    // TECHSCRIPT-DISPATCH-1D-M: enable mission-scope Var store for varmission-roundtrip fixture.
+    (void)_putenv("MC2_BRAIN_VAR_MISSION=1");
     if (applyMode) {
         (void)_putenv("MC2_BRAIN_DISPATCH_APPLY=1");
     }

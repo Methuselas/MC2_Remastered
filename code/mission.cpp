@@ -3112,6 +3112,14 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 		const bool dispatchOn   = (std::getenv("MC2_BRAIN_DISPATCH")         && std::atoi(std::getenv("MC2_BRAIN_DISPATCH"))         != 0);
 		const bool fsmTodoOn    = (std::getenv("MC2_BRAIN_DISPATCH_FSM_TODO") && std::atoi(std::getenv("MC2_BRAIN_DISPATCH_FSM_TODO")) != 0);
 		const bool dispatchVarOn = (std::getenv("MC2_BRAIN_DISPATCH_VAR")     && std::atoi(std::getenv("MC2_BRAIN_DISPATCH_VAR"))     != 0);
+		const bool missionVarOn  = (std::getenv("MC2_BRAIN_VAR_MISSION")      && std::atoi(std::getenv("MC2_BRAIN_VAR_MISSION"))      != 0);
+
+		// TECHSCRIPT-DISPATCH-1D-M: reset mission-scope Var store at every mission load.
+		// resetMissionVarStore() is always safe to call (no-op if store already empty).
+		// Gate: only reset when MC2_BRAIN_VAR_MISSION=1 to avoid noise in gate-OFF runs.
+		if (missionVarOn) {
+			resetMissionVarStore();
+		}
 
 		if (fsmTodoOn && !dispatchOn) {
 			std::fprintf(stderr, "[BRAIN_DISPATCH_FSM_TODO] WARN: MC2_BRAIN_DISPATCH_FSM_TODO=1 requires MC2_BRAIN_DISPATCH=1 — inert\n");

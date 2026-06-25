@@ -257,6 +257,18 @@ void handleVarGet(const char* key, uint8_t scope, VarStore* store, int wid);
 int scanFsmTodosFromFile(const char* missionName, BrainSpecialBody& outBody);
 
 // ---------------------------------------------------------------------------
+// TECHSCRIPT-DISPATCH-1D-M: mission-scope Var store management.
+//
+// resetMissionVarStore() — clears the global g_missionVarStore.
+//   Call at mission load (before warriors execute their first specials tick).
+//   Gate: no gate guard; always safe to call (zero-cost when store count=0).
+//   Defined in brain_special_dispatch.cpp.
+//
+// See code/brain_mission_var_store.h for MissionVarStore struct + policy doc.
+#include "brain_mission_var_store.h"
+void resetMissionVarStore();
+
+// ---------------------------------------------------------------------------
 // BRAIN-WORLD-SNAPSHOT-1: snapshot gate.
 //
 // s_brainSnapshotEnabled() — returns true when MC2_BRAIN_SNAPSHOT=1.

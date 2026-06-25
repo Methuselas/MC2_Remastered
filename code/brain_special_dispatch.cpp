@@ -49,6 +49,7 @@
 // Verified by inspection: no warrior pointer, no tac-order type, no slot writes.
 
 #include "brain_special_dispatch.h"
+#include "brain_mission_var_store.h" // TECHSCRIPT-DISPATCH-1D-M: MissionVarStore global
 #include "brain_world_snapshot.h" // BRAIN-WORLD-SNAPSHOT-1: BrainWorldSnapshot POD + gate
 #include "warrior.h"   // MechWarrior — needed for executeSpecialBody_Apply setGeneralTacOrder call
                        // warrior.h includes mech_brain_runtime.h which defines VarStore + VarScope
@@ -62,6 +63,41 @@
 #include <regex>
 #include <string>
 #include "inifile.h"   // FitIniFile — same header used by _ai.fit loader
+
+// ---------------------------------------------------------------------------
+// TECHSCRIPT-DISPATCH-1D-M: MissionVarStore global definition.
+// Mission-ephemeral: reset via resetMissionVarStore() at each mission load.
+// Not serialized.
+MissionVarStore g_missionVarStore;
+
+// Gate helper for MC2_BRAIN_VAR_MISSION (1D-M).
+// Requires MC2_BRAIN_DISPATCH_VAR=1 to be meaningful, but has its own separate gate
+// so it can be turned on independently. Warns if turned on without DISPATCH_VAR.
+static bool s_missionVarGate() {
+    static const bool kGate = ([](){
+        const char* v = std::getenv("MC2_BRAIN_VAR_MISSION");
+        if (v && std::atoi(v) != 0) {
+            const char* dv = std::getenv("MC2_BRAIN_DISPATCH_VAR");
+            if (!dv || std::atoi(dv) == 0) {
+                std::fprintf(stderr, "[BRAIN_VAR_MISSION] WARNING: MC2_BRAIN_VAR_MISSION=1 requires MC2_BRAIN_DISPATCH_VAR=1 — mission-scope writes/reads are INERT\n");
+                std::fflush(stderr);
+                return false;
+            }
+            return true;
+        }
+        return false;
+    })();
+    return kGate;
+}
+
+// resetMissionVarStore — clears g_missionVarStore.
+// Call at mission load before warriors execute their first tick.
+// Safe to call at any time (no-op if store is already empty).
+void resetMissionVarStore() {
+    g_missionVarStore.reset();
+    std::fprintf(stderr, "[BRAIN_VAR_MISSION_RESET] g_missionVarStore cleared\n");
+    std::fflush(stderr);
+}
 
 // ---------------------------------------------------------------------------
 // TECHSCRIPT-CALL-CHAIN-1A: depth limit for TechSpecial.Call recursion.
@@ -1426,14 +1462,40 @@ bool parseVarVerb(const char* verbStr, char outKey[32], char outValue[32], uint8
 // Verified by inspection: no warrior pointer, no TacticalOrder, no slot writes.
 void handleVarSet(const char* key, const char* value, uint8_t scope, VarStore* store, int wid) {
     if (scope == 1 /* Mission */) {
-        // Mission-scope writes are TRACE-ONLY in 1D: no shared global store.
-        // Rationale: avoid cross-warrior nondeterminism until a guarded single-writer policy is designed.
-        std::fprintf(stderr, "[BRAIN_DISPATCH_VAR_SET_MISSION_TRACE] key=%s value=%s wid=%d (write deferred -- no shared-global writes in 1D)\n",
-                     key, value, wid);
+        // TECHSCRIPT-DISPATCH-1D-M: MC2_BRAIN_VAR_MISSION gate ON → real write to g_missionVarStore.
+        // Gate OFF → trace-only (1D deferred behavior preserved).
+        if (!s_missionVarGate()) {
+            std::fprintf(stderr, "[BRAIN_DISPATCH_VAR_SET_MISSION_TRACE] key=%s value=%s wid=%d (write deferred -- MC2_BRAIN_VAR_MISSION not set)\n",
+                         key, value, wid);
+            std::fflush(stderr);
+            return;
+        }
+        // Guarded-single-writer: WID-order-wins within same tick.
+        // brainTick via getBrainTickIndex() — available in dispatch.cpp context.
+        uint32_t tick = getBrainTickIndex();
+        bool conflict = false;
+        bool ok = g_missionVarStore.trySet(key, value, wid, tick, &conflict);
+        if (conflict) {
+            // A higher-WID already wrote this key this tick — lower WID suppressed.
+            // Retrieve the winning value and prevWID for the conflict trace.
+            const MissionVarEntry* e = g_missionVarStore.find(key);
+            int prevWid = e ? e->lastWriterWID : -1;
+            std::fprintf(stderr, "[BRAIN_VAR_MISSION_CONFLICT] key=%s wid=%d prevWid=%d tick=%u (higher-WID wins; this write suppressed)\n",
+                         key, wid, prevWid, tick);
+            std::fflush(stderr);
+            return;
+        }
+        if (!ok) {
+            std::fprintf(stderr, "[BRAIN_VAR_MISSION_SET_FULL] key=%s wid=%d (cap=%d reached -- skipped)\n",
+                         key, wid, MissionVarStore::kMissionVarStoreCap);
+            std::fflush(stderr);
+            return;
+        }
+        std::fprintf(stderr, "[BRAIN_VAR_MISSION_SET] key=%s val=%s wid=%d tick=%u\n", key, value, wid, tick);
         std::fflush(stderr);
         return;
     }
-    // Unit scope.
+    // Unit scope (unchanged from 1D).
     if (!store) {
         std::fprintf(stderr, "[BRAIN_DISPATCH_VAR_SET] WARN: no varStore for wid=%d key=%s (store null)\n", wid, key);
         std::fflush(stderr);
@@ -1455,13 +1517,22 @@ void handleVarSet(const char* key, const char* value, uint8_t scope, VarStore* s
 // FORBIDDEN-CALL CONTRACT: calls ONLY store->get + fprintf/fflush. No order functions.
 void handleVarGet(const char* key, uint8_t scope, VarStore* store, int wid) {
     if (scope == 1 /* Mission */) {
-        // Mission-scope reads are TRACE-ONLY in 1D (no shared store to read from).
-        std::fprintf(stderr, "[BRAIN_DISPATCH_VAR_GET_MISSION_TRACE] key=%s wid=%d (default -- mission scope read deferred)\n",
-                     key, wid);
+        // TECHSCRIPT-DISPATCH-1D-M: MC2_BRAIN_VAR_MISSION gate ON → real read from g_missionVarStore.
+        // Gate OFF → trace-only default-only (1D deferred behavior preserved).
+        if (!s_missionVarGate()) {
+            std::fprintf(stderr, "[BRAIN_DISPATCH_VAR_GET_MISSION_TRACE] key=%s wid=%d (default -- MC2_BRAIN_VAR_MISSION not set)\n",
+                         key, wid);
+            std::fflush(stderr);
+            return;
+        }
+        const char* val = g_missionVarStore.get(key);
+        bool isHit = (g_missionVarStore.find(key) != nullptr);
+        std::fprintf(stderr, "[BRAIN_VAR_MISSION_GET] key=%s val=%s wid=%d (%s)\n",
+                     key, val, wid, isHit ? "hit" : "default");
         std::fflush(stderr);
         return;
     }
-    // Unit scope.
+    // Unit scope (unchanged from 1D).
     const char* val = (store) ? store->get(key, VarScope::Unit) : "0";
     bool isHit = store && (store->find(key, VarScope::Unit) != nullptr);
     std::fprintf(stderr, "[BRAIN_DISPATCH_VAR_GET] key=%s value=%s scope=Unit wid=%d (%s)\n",
