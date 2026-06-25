@@ -16,6 +16,9 @@ public:
     // Called by executeSpecialBody_Apply (all 6 effect verbs, gate OFF)
     virtual void setGeneralTacOrder(const TacticalOrder& order) {}
 
+    // DISPATCH-INTENT-CLEARMOVEORDERS-1: called by commitBrainIntents on a CLEAR_MOVE intent.
+    virtual void clearMoveOrders() {}
+
     // Called by executeSpecialBody_Apply (friendly-fire check)
     virtual TeamPtr getTeam() { return nullptr; }
 
@@ -48,6 +51,9 @@ public:
     // setGeneralTacOrder sink — count calls for gated-verb verification.
     int orderCount = 0;
     void setGeneralTacOrder(const TacticalOrder& order) override { ++orderCount; }
+    // DISPATCH-INTENT-CLEARMOVEORDERS-1: count clearMoveOrders() commits for verification.
+    int clearMoveCount = 0;
+    void clearMoveOrders() override { ++clearMoveCount; }
 };
 
 #endif // WARRIOR_H

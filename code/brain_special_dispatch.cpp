@@ -41,6 +41,10 @@
 // coreMoveTo (the C++ Mover method, distinct from the OPORD DSL verb), setMainGoal,
 // clearCurTacOrder, any movement/attack/OPORD-advance/commander function NOT listed above.
 // DISPATCH-EFFECT-UNITRETREAT-1: Unit.Retreat + coreRetreat alias added (no-arg, pure once-guard).
+// DISPATCH-INTENT-CLEARMOVEORDERS-1: clearMoveOrders() is a movement function and therefore
+// FORBIDDEN in this dispatch function. Unit.ClearMoveOrders emits a CLEAR_MOVE intent ONLY;
+// the single permitted warrior->clearMoveOrders() call lives in commitBrainIntents. The
+// check_brain_relaxed_guard_doc.py checker enforces that clearMoveOrders appears nowhere else.
 //
 // FSM-TODO SCANNER (1C — scanFsmTodosFromFile):
 // Calls ONLY std::ifstream + std::regex + fprintf. NO order functions, NO movement/attack/OPORD calls.
@@ -200,6 +204,7 @@ static const char* const kRecognizedVerbs[] = {
     "OPORD.CoreMoveTo",
     "Unit.Retreat",
     "Unit.Eject",
+    "Unit.ClearMoveOrders",   // DISPATCH-INTENT-CLEARMOVEORDERS-1: movement-queue scrub (intent-modelled)
     "HOLD",
     // BRAIN-FSM-1K-A: FSM state verbs (gate MC2_BRAIN_FSM, default OFF)
     "Unit.SetState",
@@ -639,12 +644,38 @@ static bool emitBrainIntent(MechBrainRuntime* runtime, int warriorId,
     BrainOrderIntent& out = runtime->pendingIntents[runtime->pendingIntentCount++];
     out.warriorId   = warriorId;
     out.slot        = BrainIntentSlot::GENERAL;
+    out.kind        = BrainIntentKind::ORDER;   // pendingIntents slots are reused — set kind explicitly
     out.orderType   = orderType;
     out.targetWID   = targetWID;
     out.waypoint[0] = wx;
     out.waypoint[1] = wy;
     out.waypoint[2] = wz;
     out.sourceBodyId = sourceBodyId;
+    out.brainTick   = getBrainTickIndex();
+    return true;
+}
+
+// DISPATCH-INTENT-CLEARMOVEORDERS-1: emit a CLEAR_MOVE intent (movement-queue scrub).
+// Intent-only — the actual warrior->clearMoveOrders() runs in commitBrainIntents (the sole
+// contract-permitted mutator). Mirrors emitBrainIntent's overflow + tick-stamp handling.
+static bool emitBrainClearMoveIntent(MechBrainRuntime* runtime, int warriorId) {
+    if (!runtime) return false;
+    if (runtime->pendingIntentCount >= kBrainIntentCap) {
+        std::fprintf(stderr, "[BRAIN_INTENT_EMIT_OVERFLOW] wid=%d order=CLEAR_MOVE cap=%d\n",
+                     warriorId, kBrainIntentCap);
+        std::fflush(stderr);
+        return false;
+    }
+    BrainOrderIntent& out = runtime->pendingIntents[runtime->pendingIntentCount++];
+    out.warriorId   = warriorId;
+    out.slot        = BrainIntentSlot::GENERAL;
+    out.kind        = BrainIntentKind::CLEAR_MOVE;
+    out.orderType   = TACTICAL_ORDER_NONE;   // unused for CLEAR_MOVE
+    out.targetWID   = -1;
+    out.waypoint[0] = 0.0f;
+    out.waypoint[1] = 0.0f;
+    out.waypoint[2] = 0.0f;
+    out.sourceBodyId = 0;
     out.brainTick   = getBrainTickIndex();
     return true;
 }
@@ -971,6 +1002,28 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
                 std::fflush(stderr);
             }
             appliedEffect = true;
+        } else if (std::strncmp(vpCanon, "Unit.ClearMoveOrders", 20) == 0 &&
+                   (vpCanon[20] == ' ' || vpCanon[20] == '\0')) {
+            // DISPATCH-INTENT-CLEARMOVEORDERS-1: scrub the engine movement queue. Intent-ONLY.
+            // Prefix-match (20 chars): carver emits "Unit.ClearMoveOrders 1" — the trailing DO
+            // arg is ABL syntax noise; clearMoveOrders() takes no parameter.
+            // The warrior->clearMoveOrders() call lives in commitBrainIntents (the sole
+            // contract-permitted mutator); calling it here would violate the FORBIDDEN-CALL
+            // contract (unlisted movement function) and bypass the WID-ordered commit phase.
+            // Does NOT set appliedEffect — this is a prologue scrub, not a GENERAL-slot order, so
+            // it must not suppress the synthetic HOLD or claim the slot. patrolActive / FSM state /
+            // Vars / target are intentionally left UNTOUCHED (frozen scope: movement-only).
+            if (runtime) {
+                emitBrainClearMoveIntent(runtime, wid);
+                std::fprintf(stderr, "[BRAIN_INTENT_EMIT] verb=Unit.ClearMoveOrders order=CLEAR_MOVE tick=%u wid=%d\n",
+                             getBrainTickIndex(), wid);
+                std::fflush(stderr);
+            } else {
+                // Intent queue OFF: cannot scrub here (direct call forbidden). Trace + no-op,
+                // mirroring the patrol NO_QUEUE path. Live use requires MC2_BRAIN_INTENT_QUEUE=1.
+                std::fprintf(stderr, "[BRAIN_CLEARMOVE_NO_QUEUE] wid=%d: requires MC2_BRAIN_INTENT_QUEUE=1\n", wid);
+                std::fflush(stderr);
+            }
         } else if (s_brainPatrolGate() && std::strncmp(vpCanon, "OPORD.CorePatrol", 16) == 0 &&
                    (vpCanon[16] == ' ' || vpCanon[16] == '\0')) {
             // BRAIN-OPORD-COREPATROL-1: OPORD.CorePatrol x1 y1 z1 x2 y2 z2 ... [loop|once]
@@ -1254,6 +1307,9 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
 // MC2_BRAIN_INTENT_QUEUE=1.  Called right after executeSpecialBody_Apply returns
 // (inline, same thread, this rung).  Drains runtime->pendingIntents[] and for each
 // intent reconstructs a TacticalOrder and calls warrior->setGeneralTacOrder().
+// DISPATCH-INTENT-CLEARMOVEORDERS-1: also the ONLY function that may call
+// warrior->clearMoveOrders() (CLEAR_MOVE intents) — a movement scrub, not a slot order,
+// so it is handled before the orderType switch and does not count toward the 6 verbs.
 //
 // FORBIDDEN-CALL GUARD (commit phase): this function and only this function may call
 // warrior->setGeneralTacOrder() when gate ON.  The verb handlers in
@@ -1271,6 +1327,17 @@ void commitBrainIntents(MechWarrior* warrior, MechBrainRuntime* runtime) {
     const int n = runtime->pendingIntentCount;
     for (int i = 0; i < n; ++i) {
         const BrainOrderIntent& intent = runtime->pendingIntents[i];
+        // DISPATCH-INTENT-CLEARMOVEORDERS-1: CLEAR_MOVE is a movement-queue scrub, not a
+        // GENERAL-slot order. commitBrainIntents is the ONLY function the FORBIDDEN-CALL
+        // contract permits to mutate warrior order/movement state, so the clearMoveOrders()
+        // call lives here. Movement-only: does not touch patrol/FSM/Var/target state.
+        if (intent.kind == BrainIntentKind::CLEAR_MOVE) {
+            warrior->clearMoveOrders();
+            std::fprintf(stderr, "[BRAIN_INTENT_COMMIT] verb=Unit.ClearMoveOrders order=CLEAR_MOVE tick=%u wid=%d\n",
+                         intent.brainTick, intent.warriorId);
+            std::fflush(stderr);
+            continue;
+        }
         switch (intent.orderType) {
             case TACTICAL_ORDER_POWERDOWN: {
                 TacticalOrder o;
