@@ -318,6 +318,16 @@ def main() -> None:
             _save_terrain_type(masks.terrain_type, out / "terrain_type.png")
             print("  height.png  slope.png  altitude.png  valley.png  terrain_type.png")
 
+            # MAP-FEATURE-MASKS-1 (A1): semantic feature maps.
+            _save_gray(masks.curvature,      out / "curvature.png")
+            _save_gray(masks.flow,           out / "flow.png")
+            _save_gray(masks.ridge,          out / "ridge.png")
+            _save_gray(masks.wetness,        out / "wetness.png")
+            _save_gray(masks.shoreline,      out / "shoreline.png")
+            _save_gray(masks.traversability, out / "traversability.png")
+            print("  curvature.png  flow.png  ridge.png  wetness.png  "
+                  "shoreline.png  traversability.png")
+
         recipe.to_json(out / f"{name}.recipe.json")
         print(f"  {name}.recipe.json")
 
