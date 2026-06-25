@@ -388,16 +388,33 @@ namespace EditorDebugOverlay
 {
 
 // --- Patrol/Move path overlay (UnitBrainPanel) -----------------------------
-// Screen-space helpers built on gos_DrawLines (same primitive as the grid).
+// All segments for the whole overlay are accumulated into one vertex list and
+// drawn with a SINGLE gos_DrawLines per frame. The old one-gos_DrawLines-per-dash
+// approach produced hundreds of draw calls when zoomed in (long on-screen paths ->
+// many dashes) and lagged hard. Batched, it is one (or a few chunked) draw calls.
+static std::vector<gos_VERTEX> s_patrolVerts;
+
 static void patrolSeg( float x0, float y0, float x1, float y1, DWORD argb )
 {
-	gos_VERTEX seg[2];
-	memset( seg, 0, sizeof( seg ) );
-	seg[0].rhw = seg[1].rhw = 1.0f;
-	seg[0].argb = seg[1].argb = argb;
-	seg[0].x = x0; seg[0].y = y0;
-	seg[1].x = x1; seg[1].y = y1;
-	gos_DrawLines( seg, 2 );
+	gos_VERTEX a; memset( &a, 0, sizeof( a ) );
+	a.rhw = 1.0f; a.argb = argb;
+	gos_VERTEX b = a;
+	a.x = x0; a.y = y0;
+	b.x = x1; b.y = y1;
+	s_patrolVerts.push_back( a );
+	s_patrolVerts.push_back( b );
+}
+
+static void patrolFlush()
+{
+	// Chunk to stay well within any gos_DrawLines batch limit.
+	const size_t kChunk = 4000;   // even (line list = pairs)
+	for ( size_t off = 0; off < s_patrolVerts.size(); off += kChunk )
+	{
+		size_t n = s_patrolVerts.size() - off; if ( n > kChunk ) n = kChunk;
+		gos_DrawLines( &s_patrolVerts[off], (int)n );
+	}
+	s_patrolVerts.clear();
 }
 
 // Dashed line between two screen points.
@@ -407,7 +424,11 @@ static void patrolDashed( float x0, float y0, float x1, float y1, DWORD argb )
 	const float len = sqrtf( dx * dx + dy * dy );
 	if ( len < 1.0f ) { patrolSeg( x0, y0, x1, y1, argb ); return; }
 	const float ux = dx / len, uy = dy / len;
-	const float dash = 10.0f, gap = 7.0f, step = dash + gap;
+	float step = 17.0f;                              // dash(10) + gap(7)
+	// Cap dashes per segment (huge zoomed-in on-screen lines) — widen the step so a
+	// segment never emits more than ~256 dashes regardless of on-screen length.
+	if ( len / step > 256.0f ) step = len / 256.0f;
+	const float dash = step * 0.6f;
 	for ( float s = 0.f; s < len; s += step )
 	{
 		float a = s, b = s + dash; if ( b > len ) b = len;
@@ -442,33 +463,36 @@ static void drawOnePatrol( Camera* eye, Unit* unit )
 		return;
 	unit->importPatrolFromBrainIfNeeded();   // show existing brain-.abl patrols too
 
-	DWORD col = (DWORD)unit->getColor();
-	if ( col == 0 ) col = 0xcfffffff;               // team "none" -> translucent white
-	col = ( col & 0x00ffffff ) | 0xcf000000;        // force a visible alpha
+	// Selected unit's path is emphasized (full alpha + bold + bright connector) so
+	// you can tell which unit owns which path; others are dimmer.
+	const bool sel = unit->isSelected();
+	DWORD base = (DWORD)unit->getColor();
+	if ( base == 0 ) base = 0x00ffffff;             // team "none" -> white
+	base &= 0x00ffffff;
+	const DWORD col  = base | ( sel ? 0xff000000u : 0xa0000000u );
+	const DWORD ccol = base | ( sel ? 0xff000000u : 0x60000000u );   // connector
+
+	// Unit's own screen position (connector start + guard ring center).
+	const Stuff::Vector3D& up = unit->getPosition();
+	float uX, uY;
+	const bool uok = projectPtGL( eye, up.x, up.y, land->getTerrainElevation( up ) + 12.0f, uX, uY );
 
 	const std::vector<Stuff::Vector3D>& wps = unit->getWaypoints();
 	if ( wps.empty() )
 	{
-		// Guard brains hold their spawn position -> draw a guard ring at the unit
-		// so "this unit guards here" is visible even without a patrol path.
-		if ( unit->getBrainBehavior() == Unit::BRAIN_GUARD )
+		// Guard brains hold their spawn position -> draw a guard ring at the unit.
+		if ( unit->getBrainBehavior() == Unit::BRAIN_GUARD && uok )
 		{
-			const Stuff::Vector3D& gp = unit->getPosition();
-			float gz = land->getTerrainElevation( gp ) + 12.0f;
-			float cx, cy;
-			if ( projectPtGL( eye, gp.x, gp.y, gz, cx, cy ) )
+			const float r = 14.0f;
+			float px = 0.f, py = 0.f; bool have = false;
+			for ( int k = 0; k <= 8; ++k )
 			{
-				const float r = 14.0f;
-				float px = 0.f, py = 0.f; bool have = false;
-				for ( int k = 0; k <= 8; ++k )
-				{
-					float a = (float)k * 0.78539816f;   // 45 deg steps -> octagon
-					float x = cx + r * cosf( a ), y = cy + r * sinf( a );
-					if ( have ) patrolSeg( px, py, x, y, col );
-					px = x; py = y; have = true;
-				}
-				patrolDot( cx, cy, 4.0f, col );
+				float a = (float)k * 0.78539816f;
+				float x = uX + r * cosf( a ), y = uY + r * sinf( a );
+				if ( have ) patrolSeg( px, py, x, y, col );
+				px = x; py = y; have = true;
 			}
+			patrolDot( uX, uY, sel ? 5.0f : 4.0f, col );
 		}
 		return;
 	}
@@ -493,13 +517,28 @@ static void drawOnePatrol( Camera* eye, Unit* unit )
 		patrolDashed( sx[a], sy[a], sx[b], sy[b], col );
 		float dx = sx[b] - sx[a], dy = sy[b] - sy[a];
 		float len = sqrtf( dx * dx + dy * dy );
+		// Bold the selected unit's path with +/- perpendicular offset copies.
+		if ( sel && len > 1e-3f )
+		{
+			float ox = -dy / len * 1.5f, oy = dx / len * 1.5f;
+			patrolDashed( sx[a] + ox, sy[a] + oy, sx[b] + ox, sy[b] + oy, col );
+			patrolDashed( sx[a] - ox, sy[a] - oy, sx[b] - ox, sy[b] - oy, col );
+		}
 		if ( len > 1e-3f )
 			patrolArrow( ( sx[a] + sx[b] ) * 0.5f, ( sy[a] + sy[b] ) * 0.5f, dx / len, dy / len, col );
 	}
 
 	for ( size_t i = 0; i < wps.size(); ++i )
 		if ( ok[i] )
-			patrolDot( sx[i], sy[i], 5.0f, col );
+			patrolDot( sx[i], sy[i], sel ? 6.0f : 5.0f, col );
+
+	// Connector: tie the path to its unit (unit position -> first waypoint), so it
+	// is obvious which unit owns which path even with every path drawn at once.
+	if ( uok && ok[0] )
+	{
+		patrolDashed( uX, uY, sx[0], sy[0], ccol );
+		patrolDot( uX, uY, 3.0f, ccol );
+	}
 }
 
 // Draw EVERY unit's patrol/move path (each in its own team color), only while the
@@ -521,9 +560,23 @@ void RenderPatrolPaths( Camera* eye )
 	gos_SetRenderState( gos_State_ZCompare,   0 );
 	gos_SetRenderState( gos_State_ZWrite,     0 );
 
+	// Accumulate every unit's path into one vertex list, drawn in a single
+	// gos_DrawLines (chunked). Non-selected first, selected last so the emphasized
+	// path renders on top. patrolFlush() issues the batched draw + clears.
+	s_patrolVerts.clear();
 	EditorObjectMgr::UNIT_LIST units = mgr->getUnits();
-	for ( EditorObjectMgr::UNIT_LIST::EIterator it = units.Begin(); !it.IsDone(); it++ )
-		drawOnePatrol( eye, *it );
+	for ( int pass = 0; pass < 2; ++pass )
+		for ( EditorObjectMgr::UNIT_LIST::EIterator it = units.Begin(); !it.IsDone(); it++ )
+		{
+			Unit* u = *it;
+			if ( !u )
+				continue;
+			const bool wantSel = ( pass == 1 );
+			if ( u->isSelected() != wantSel )
+				continue;
+			drawOnePatrol( eye, u );
+		}
+	patrolFlush();
 }
 
 void RenderWorldOverlay( Camera* eye )
