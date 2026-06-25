@@ -306,6 +306,8 @@ Unit::Unit( int align )
 	variant = 0;
 	orderType = ORDER_NONE;
 	stance = 2;   // AttitudeType ATTITUDE_NORMAL
+	orderAuthored = false;
+	importChecked = false;
 }
 
 Unit::~Unit()
@@ -333,6 +335,8 @@ Unit::Unit( const Unit& src ) : EditorObject( src )
 		orderType = src.orderType;
 		stance = src.stance;
 		waypoints = src.waypoints;
+		orderAuthored = src.orderAuthored;
+		importChecked = src.importChecked;
 	}
 
 	variant = 0;
@@ -459,9 +463,10 @@ bool Unit::save( FitIniFile* file, int WarriorNumber, int controlDataType, char*
 	file->writeIdULong( "SquadNum", getSquad() );
 	file->writeIdULong( "NumAlternatives", pAlternativeInstances->Count() );
 
-	// Patrol/Move order authoring (additive — only written when an order exists,
-	// so stock missions are byte-unchanged; load() defaults to ORDER_NONE/empty).
-	if ( orderType != ORDER_NONE || !waypoints.empty() )
+	// Patrol/Move order authoring (additive — only written when the user has
+	// AUTHORED an order in-editor, so stock missions whose patrol lives in the
+	// brain .abl and was only imported for display are NOT rewritten).
+	if ( orderAuthored && ( orderType != ORDER_NONE || !waypoints.empty() ) )
 	{
 		file->writeIdLong( "OrderType", orderType );
 		file->writeIdLong( "OrderStance", stance );
@@ -541,6 +546,8 @@ bool Unit::load( FitIniFile* file, int warriorNumber )
 	orderType = ORDER_NONE;
 	stance = 2;
 	waypoints.clear();
+	orderAuthored = false;
+	importChecked = false;
 	{
 		long tmpOrder = ORDER_NONE;
 		if ( NO_ERR == file->readIdLong( "OrderType", tmpOrder ) )
@@ -551,6 +558,9 @@ bool Unit::load( FitIniFile* file, int warriorNumber )
 		unsigned long wpCount = 0;
 		if ( NO_ERR == file->readIdULong( "WaypointCount", wpCount ) )
 		{
+			// Editor-authored order present in the .fit -> it owns persistence.
+			orderAuthored = true;
+			importChecked = true;   // do not overwrite with a brain import
 			for ( unsigned long i = 0; i < wpCount; ++i )
 			{
 				Stuff::Vector3D wp; wp.x = wp.y = wp.z = 0.0f;
@@ -609,11 +619,98 @@ Unit& Unit::operator=( const Unit& src )
 		orderType = src.orderType;
 		stance = src.stance;
 		waypoints = src.waypoints;
+		orderAuthored = src.orderAuthored;
+		importChecked = src.importChecked;
 
 		EditorObject::operator=( src );
 	}
 
 	return *this;
+}
+
+// Parse a patrol brain .abl for its startPatrolPath[i,0/1] waypoint literals.
+// The unit's brain file (brainName.abl at warriorPath) is exactly the script the
+// engine loads, so existing stock patrols live here as explicit XY coordinates:
+//   startPatrolState[1] = <count>;
+//   startPatrolPath[0, 0] = <x>;  startPatrolPath[0, 1] = <y>;  ...
+// (also matches base variants like startBase1PatrolPath[i,j]). z is left 0; the
+// overlay re-samples terrain elevation when drawing.
+static bool EditorImportPatrolWaypoints( const char* brainName, std::vector<Stuff::Vector3D>& out )
+{
+	out.clear();
+	if ( !brainName || !brainName[0] )
+		return false;
+
+	char path[512];
+	sprintf( path, "%s%s.abl", warriorPath, brainName );
+	File f;
+	if ( NO_ERR != f.open( path ) )
+		return false;
+
+	std::vector<float> xs, ys;
+	std::vector<unsigned char> hasX, hasY;
+	char line[1024];
+	while ( !f.eof() )
+	{
+		long n = f.readLine( (MemoryPtr)line, (long)sizeof( line ) - 1 );
+		if ( n <= 0 )
+			break;
+		if ( n >= (long)sizeof( line ) ) n = (long)sizeof( line ) - 1;
+		line[n] = 0;
+
+		const char* p = strstr( line, "PatrolPath[" );
+		if ( !p )
+			continue;
+		p += 11;   // strlen("PatrolPath[")
+		int idx = -1, comp = -1;
+		if ( sscanf( p, "%d , %d", &idx, &comp ) != 2 &&
+			 sscanf( p, "%d,%d", &idx, &comp ) != 2 )
+			continue;
+		const char* eq = strchr( p, '=' );
+		if ( !eq )
+			continue;
+		float val = (float)atof( eq + 1 );
+		if ( idx < 0 || idx > 4096 )
+			continue;
+		if ( comp == 0 )
+		{
+			if ( (int)xs.size() <= idx ) { xs.resize( idx + 1, 0.f ); hasX.resize( idx + 1, 0 ); }
+			xs[idx] = val; hasX[idx] = 1;
+		}
+		else if ( comp == 1 )
+		{
+			if ( (int)ys.size() <= idx ) { ys.resize( idx + 1, 0.f ); hasY.resize( idx + 1, 0 ); }
+			ys[idx] = val; hasY[idx] = 1;
+		}
+	}
+
+	size_t count = xs.size() < ys.size() ? xs.size() : ys.size();
+	for ( size_t i = 0; i < count; ++i )
+	{
+		if ( i < hasX.size() && i < hasY.size() && hasX[i] && hasY[i] )
+		{
+			Stuff::Vector3D wp; wp.x = xs[i]; wp.y = ys[i]; wp.z = 0.0f;
+			out.push_back( wp );
+		}
+	}
+	return !out.empty();
+}
+
+void Unit::importPatrolFromBrainIfNeeded()
+{
+	if ( importChecked )
+		return;
+	importChecked = true;
+	// Preserve any editor-authored or already-present order; only fill in when empty.
+	if ( orderAuthored || !waypoints.empty() || orderType != ORDER_NONE )
+		return;
+	std::vector<Stuff::Vector3D> wps;
+	if ( EditorImportPatrolWaypoints( brain.getBrainName(), wps ) )
+	{
+		waypoints = wps;
+		orderType = ORDER_PATROL;
+		// orderAuthored stays false -> display only; not rewritten on save.
+	}
 }
 
 void Unit::setSquad(unsigned long newSquad) {

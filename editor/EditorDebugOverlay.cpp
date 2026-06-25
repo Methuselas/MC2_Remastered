@@ -415,26 +415,13 @@ static void patrolArrow( float mx, float my, float ux, float uy, DWORD argb )
 	patrolSeg( mx, my, mx + bx * h - px * h * 0.5f, my + by * h - py * h * 0.5f, argb );
 }
 
-// Draw the selected unit's patrol/move path, only while the AI/Brain panel is
-// open. Team-color dashed line + dots at points + direction arrows; Patrol draws
-// the closing loop segment, Move stops at the last point.
-void RenderPatrolPaths( Camera* eye )
+// Draw one unit's patrol/move path: team-color dashed line + dots at points +
+// direction arrows. Patrol draws the closing loop segment; Move stops at the end.
+static void drawOnePatrol( Camera* eye, Unit* unit )
 {
-	if ( !eye || !UnitBrainPanel::IsOpen() || !terrainLoaded() )
-		return;
-	EditorObjectMgr* mgr = EditorObjectMgr::instance();
-	if ( !mgr )
-		return;
-
-	EditorObjectMgr::EDITOR_OBJECT_LIST sel = mgr->getSelectedObjectList();
-	Unit* unit = NULL;
-	for ( EditorObjectMgr::EDITOR_OBJECT_LIST::EIterator it = sel.Begin(); !it.IsDone(); it++ )
-	{
-		Unit* u = dynamic_cast<Unit*>( *it );
-		if ( u ) { unit = u; break; }
-	}
 	if ( !unit )
 		return;
+	unit->importPatrolFromBrainIfNeeded();   // show existing brain-.abl patrols too
 
 	const std::vector<Stuff::Vector3D>& wps = unit->getWaypoints();
 	if ( wps.empty() )
@@ -471,6 +458,21 @@ void RenderPatrolPaths( Camera* eye )
 	for ( size_t i = 0; i < wps.size(); ++i )
 		if ( ok[i] )
 			patrolDot( sx[i], sy[i], 5.0f, col );
+}
+
+// Draw EVERY unit's patrol/move path (each in its own team color), only while the
+// AI/Brain/Orders panel is open. Units with no waypoints are skipped inside.
+void RenderPatrolPaths( Camera* eye )
+{
+	if ( !eye || !UnitBrainPanel::IsOpen() || !terrainLoaded() )
+		return;
+	EditorObjectMgr* mgr = EditorObjectMgr::instance();
+	if ( !mgr )
+		return;
+
+	EditorObjectMgr::UNIT_LIST units = mgr->getUnits();
+	for ( EditorObjectMgr::UNIT_LIST::EIterator it = units.Begin(); !it.IsDone(); it++ )
+		drawOnePatrol( eye, *it );
 }
 
 void RenderWorldOverlay( Camera* eye )

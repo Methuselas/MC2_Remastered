@@ -60,6 +60,7 @@ void applyOrderEdit( Unit* unit, Mutate mut )
 	ModifyUnitOrderAction* act = new ModifyUnitOrderAction();
 	act->capture( unit );
 	mut();
+	unit->setOrderAuthored( true );   // editor now owns this unit's order -> persisted on save
 	act->commit( unit );
 	ActionUndoMgr::instance->AddAction( act );
 }
@@ -172,6 +173,10 @@ void UnitBrainPanel::Draw()
 		ImGui::End();
 		return;
 	}
+
+	// Pull in an existing patrol from the unit's brain .abl (display only) the
+	// first time we show it, so stock patrols appear without any edit.
+	unit->importPatrolFromBrainIfNeeded();
 
 	if (selCount > 1)
 		ImGui::TextDisabled("%d objects selected (showing first unit)", selCount);

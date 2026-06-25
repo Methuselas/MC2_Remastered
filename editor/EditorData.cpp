@@ -501,6 +501,17 @@ bool EditorData::initTerrainFromPCV( const char* fileName )
 	EditorObjectMgr::instance()->load( pFile, 1 );
 	EditorDataTrace("EditorData::initTerrainFromPCV: after EditorObjectMgr::load");
 
+	// Pull in existing patrols for EVERY loaded unit on mission open: parse each
+	// unit's brain .abl (startPatrolPath literals) so the AI/Brain panel + viewport
+	// overlay show stock patrols immediately, without selecting each unit first.
+	// Display-only (orderAuthored stays false) -> stock missions are not rewritten.
+	{
+		EditorObjectMgr::UNIT_LIST allUnits = EditorObjectMgr::instance()->getUnits();
+		for ( EditorObjectMgr::UNIT_LIST::EIterator it = allUnits.Begin(); !it.IsDone(); it++ )
+			if ( *it )
+				(*it)->importPatrolFromBrainIfNeeded();
+	}
+
 	// Mirrors Mission::init Track B — must run after load() (types registered) and
 	// before finalizeGeometry() (VBO upload). Sets per-instance position/rotation in
 	// GpuStaticPropRegistry so objectIdRaw is nonzero and static_prop.frag can write

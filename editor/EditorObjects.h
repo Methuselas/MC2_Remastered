@@ -265,6 +265,17 @@ public:
 	void removeLastWaypoint() { if ( !waypoints.empty() ) waypoints.pop_back(); }
 	void clearWaypoints() { waypoints.clear(); }
 
+	// orderAuthored: the user edited orders in-editor, so the new .fit fields are
+	// written on save. Pure display imports (existing-patrol .abl) leave it false,
+	// so stock missions are not rewritten just by viewing them.
+	bool isOrderAuthored() const { return orderAuthored; }
+	void setOrderAuthored( bool v ) { orderAuthored = v; }
+
+	// Lazily import an existing patrol from this unit's brain .abl (the
+	// startPatrolPath[i,0/1] literals) for display, if no editor-authored order
+	// exists yet. Idempotent (one attempt per unit).
+	void importPatrolFromBrainIfNeeded();
+
 	CUnitList *pAlternativeInstances;
 	unsigned long tmpNumAlternativeInstances;
 	unsigned long tmpAlternativeStartIndex;
@@ -284,6 +295,8 @@ protected:
 	int orderType;   // UnitOrderType (default ORDER_NONE)
 	int stance;      // AttitudeType index (default 2 = Normal)
 	std::vector<Stuff::Vector3D> waypoints;
+	bool orderAuthored;   // transient (NOT saved): user edited orders in-editor
+	bool importChecked;   // transient (NOT saved): brain-.abl patrol import attempted
 
 	unsigned long baseColor;
 	unsigned long highlightColor;
