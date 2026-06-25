@@ -1411,6 +1411,46 @@ void EditorObjectMgr::render()
 	// batcher; the flush happens later via mcTextureManager->renderLists().
 	// See docs/superpowers/plans/2026-05-25-editor-rebuild.md S2 followup.
 
+	// EDITOR-STATIC-PREWARM-1: the editor registers static props (registerStatic
+	// arms needsFullBakeNextFrame) but, unlike the game's Mission::init -> objmgr
+	// prewarmStaticPropLightBakes, NEVER drains the H4 latch. A static editor scene
+	// never re-bakes in-view, so a prop's per-instance lightDataIndex is captured by
+	// markVisible() while still stale (latch armed / slot not yet baked) and, being
+	// static, is never re-captured -> STABLE wrong light on the same few props:
+	// RED when the stale slot aliases a neighbour's live row (e.g. an LRM unit's
+	// pulsing highlight), BLACK when it lands on a zero/empty slot. Drain the latch
+	// here -- once the camera has lights and BEFORE the buildings/trees render loop
+	// below captures slots -- by baking each latched prop's correct light slot
+	// (prewarmStaticLightBake sets cachedGpuLightIndex + clears the latch,
+	// bdactor.cpp:4131-4135). Retries each frame until lights are up and all latched
+	// props are baked; then one-shot done. Killswitch MC2_EDITOR_STATIC_PREWARM_OFF.
+	{
+		static bool s_prewarmDone = false;
+		static const bool s_prewarmOff = (getenv("MC2_EDITOR_STATIC_PREWARM_OFF") != nullptr);
+		if (!s_prewarmDone && !s_prewarmOff && eye && eye->getNumLights() > 0)
+		{
+			int attempted = 0, baked = 0, remaining = 0;
+			for (BUILDING_LIST::EIterator it = buildings.Begin(); !it.IsDone(); it++)
+			{
+				EditorObject* o = *it;
+				if (!o || !o->appearance()) continue;
+				ObjectAppearance* a = o->appearance();
+				if (!a->isStaticRegistered() || !a->needsPrewarmBake()) continue;
+				++attempted;
+				if (a->prewarmStaticLightBake(eye)) ++baked;
+			}
+			for (BUILDING_LIST::EIterator it = buildings.Begin(); !it.IsDone(); it++)
+			{
+				EditorObject* o = *it;
+				if (o && o->appearance() && o->appearance()->needsPrewarmBake()) ++remaining;
+			}
+			if (remaining == 0) s_prewarmDone = true;
+			fprintf(stderr, "[EDITOR_STATIC_PREWARM] attempted=%d baked=%d remaining=%d done=%d\n",
+			        attempted, baked, remaining, s_prewarmDone ? 1 : 0);
+			fflush(stderr);
+		}
+	}
+
 	static long s_emrFrame = 0;
 	++s_emrFrame;
 	const bool s_emrLog = (s_emrFrame == 1 || s_emrFrame == 5 || s_emrFrame == 30 || s_emrFrame == 120);
