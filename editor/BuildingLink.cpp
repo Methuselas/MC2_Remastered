@@ -12,6 +12,25 @@
 #include "EditorObjectMgr.h"
 #include <algorithm>
 #include "celine.h"
+#include "Camera.h"
+
+//-------------------------------------------------------------------------------------------------
+// Modern GL forward projection (projectModernClipGL + viewport remap). Legacy
+// projectZ diverges/rejects when zoomed in (X-collapse). False = behind near plane.
+static bool projectPtGL_link( Camera* eye, const Stuff::Vector3D& wp, float& sx, float& sy )
+{
+	if ( !eye ) return false;
+	ModernClipResult r = eye->projectModernClipGL( wp );
+	if ( r.clip.w <= 1e-4f ) return false;
+	float vmx = 0.f, vmy = 0.f, vax = 0.f, vay = 0.f;
+	gos_GetViewport( &vmx, &vmy, &vax, &vay );
+	const float ndcX = r.clip.x / r.clip.w;
+	const float ndcY = r.clip.y / r.clip.w;
+	sx = vax + ( ndcX * 0.5f + 0.5f ) * vmx;
+	sy = vay + ( 1.0f - ( ndcY * 0.5f + 0.5f ) ) * vmy;
+	if ( !( sx == sx ) || !( sy == sy ) ) return false;
+	return true;
+}
 
 
 BuildingLink::BuildingLink( const EditorObject* pParent )
@@ -298,11 +317,6 @@ static bool isInView(const Point3D &position)
 
 void BuildingLink::render()
 {
-	Stuff::Vector4D parentScreen;
-	eye->projectZ( parent.pos, parentScreen );
-
-	Stuff::Vector4D childScreen;
-	
 	for ( EList< Info, const Info& >::EConstIterator iter = children.Begin();
 	!iter.IsDone(); iter++ )
 	{
@@ -334,22 +348,23 @@ void BuildingLink::render()
 
 			if (p1IsInView || p2IsInView)
 			{
-				Stuff::Vector4D screenPos1;
-				eye->projectZ( p1, screenPos1 );
-				Stuff::Vector4D screenPos2;
-				eye->projectZ( p2, screenPos2 );
+				// Modern zoom-correct projection (legacy projectZ X-collapses on zoom).
+				float s1x, s1y, s2x, s2y;
+				if ( projectPtGL_link( eye, p1, s1x, s1y ) &&
+				     projectPtGL_link( eye, p2, s2x, s2y ) )   // skip segment if either rejects
+				{
+					Stuff::Vector4D vertices[2];
+					vertices[0].x = s1x;
+					vertices[0].y = s1y;
+					vertices[1].x = s2x;
+					vertices[1].y = s2y;
 
-				Stuff::Vector4D vertices[2];
-				vertices[0].x = screenPos1.x;
-				vertices[0].y = screenPos1.y;
-				vertices[1].x = screenPos2.x;
-				vertices[1].y = screenPos2.y;
+					vertices[0].z = vertices[1].z = 0.1f;
+					vertices[0].w = vertices[1].w = 0.9999f;
 
-				vertices[0].z = vertices[1].z = 0.1f;
-				vertices[0].w = vertices[1].w = 0.9999f;
-
-				LineElement elem( vertices[0], vertices[1], 0xffff0000, 0, -1 );
-				elem.draw();
+					LineElement elem( vertices[0], vertices[1], 0xffff0000, 0, -1 );
+					elem.draw();
+				}
 			}
 
 			p1 = p2;

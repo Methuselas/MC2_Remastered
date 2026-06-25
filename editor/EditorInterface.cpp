@@ -81,6 +81,7 @@
 #include "EditorRecent.h"
 #include "SceneOutliner.h"
 #include "InspectorPanel.h"
+#include "UnitBrainPanel.h"   // AI / Brain / Orders inspector panel
 #include "TelemetryPanel.h"
 #include "AssetBrowser.h"
 #include "GameplayDebugger.h"
@@ -88,6 +89,7 @@
 #include "UndoHistoryPanel.h"
 #include "CommandPalette.h"
 #include "gameplay_pick.h"  // tryGameplayPick: shared pick spine, no game-object deps
+#include "../EditorBridge/EditorRenderBridge.h"  // EDITOR-OBJECTID-PICK-BRIDGE-1: GPU ObjectID pick seam
 #include "gameos.hpp"       // gos_GetViewport, Environment (drawableWidth/Height)
 #include "gos_render.h"     // graphics::make_current_context
 #include "gos_postprocess.h" // gosPostProcess + getGosPostProcess() — OID scan diagnostic
@@ -1600,6 +1602,19 @@ void EditorInterface::handleLeftButtonDown( int PosX, int PosY )
 	Stuff::Vector2DOf<long> v2( PosX, PosY );
 	eye->inverseProject( v2, vector );
 
+	// Waypoint placement mode (UnitBrainPanel "Add Waypoints"): drop a patrol/move
+	// waypoint at the SAME click world position the editor uses to place buildings
+	// (eye->inverseProject -> vector). The bridge pick returns 0,0 here, so use the
+	// building-placement coordinate; snap Z to terrain.
+	if ( UnitBrainPanel::WaypointPlaceActive() )
+	{
+		Stuff::Vector3D wp = vector;
+		if ( land )
+			wp.z = land->getTerrainElevation( wp );
+		if ( UnitBrainPanel::HandlePlacementClick( wp.x, wp.y, wp.z ) )
+			return;
+	}
+
 	// Object drag-move: in the select/pointer tool, a press that lands on an
 	// object grabs it for dragging (and selects it) instead of starting a
 	// terrain/area paint. The drag itself runs in handleMouseMove().
@@ -1655,7 +1670,22 @@ void EditorInterface::handleLeftButtonDown( int PosX, int PosY )
 				}
 			}
 			m_pDragAction = new ModifyBuildingAction;
-			m_pDragAction->addBuildingInfo( *pHit );
+			// Group drag: if the grabbed object is part of a multi-selection, record
+			// EVERY selected object's start state so the whole group is one undoable
+			// move (and handleMouseMove translates them all). Otherwise just the grab.
+			EditorObjectMgr* pDragMgr = EditorObjectMgr::instance();
+			if ( pHit->isSelected() && pDragMgr->getSelectionCount() > 1 )
+			{
+				EditorObjectMgr::EDITOR_OBJECT_LIST sel = pDragMgr->getSelectedObjectList();
+				for ( EditorObjectMgr::EDITOR_OBJECT_LIST::EIterator it = sel.Begin();
+					!it.IsDone(); it++ )
+					if ( *it && (*it)->appearance() )
+						m_pDragAction->addBuildingInfo( **it );
+			}
+			else
+			{
+				m_pDragAction->addBuildingInfo( *pHit );
+			}
 			lastClickPos = vector;
 			return;
 		}
@@ -1774,32 +1804,53 @@ void EditorInterface::handleMouseMove( int PosX, int PosY )
 		float dsy = (float)( PosY - m_dragLastScreenY );
 		m_dragLastScreenX = PosX;
 		m_dragLastScreenY = PosY;
-		Stuff::Vector3D newPos = pDragApp->position;
+		// World translation for this frame (J^-1 * screen delta), computed once from
+		// the grabbed object's jacobian and applied as a RIGID delta to the group.
+		float worldDx = 0.f, worldDy = 0.f;
 		if ( fabsf( det ) > 1e-9f )
 		{
-			// world delta = J^-1 * screen delta.
 			const float invDet = 1.0f / det;
-			newPos.x += (  Jyy * dsx - Jxy * dsy ) * invDet;
-			newPos.y += ( -Jyx * dsx + Jxx * dsy ) * invDet;
+			worldDx = (  Jyy * dsx - Jxy * dsy ) * invDet;
+			worldDy = ( -Jyx * dsx + Jxx * dsy ) * invDet;
 		}
-		newPos.z = m_dragObjStartPos.z;
-		int row = 0, col = 0;
-		land->worldToCell( newPos, row, col );
-		EditorObjectMgr::instance()->moveBuilding( m_pDragObject, row, col );
-		if ( m_pDragObject->appearance() )
-		{
-			ObjectAppearance* pApp = m_pDragObject->appearance();
-			newPos.z = land->getTerrainElevation( newPos );
-			pApp->position = newPos;
+
+		// Apply the same world delta to one object (free move + cell/link bookkeeping
+		// + recipe re-bake). Used for both the single grab and each group member.
+		auto dragMoveOne = [&]( EditorObject* pObj ) {
+			if ( !pObj ) return;
+			ObjectAppearance* pApp = pObj->appearance();
+			if ( !pApp ) return;
+			Stuff::Vector3D np = pApp->position;
+			np.x += worldDx;
+			np.y += worldDy;
+			int row = 0, col = 0;
+			land->worldToCell( np, row, col );
+			EditorObjectMgr::instance()->moveBuilding( pObj, row, col );
+			np.z = land->getTerrainElevation( np );
+			pApp->position = np;
 			// Invalidate the baked static recipe BEFORE update() so update() runs
 			// unregistered and re-transforms from the free position; the next render
 			// re-bakes at the free pose. Invalidate-after-update never re-bakes.
 			pApp->invalidateStaticRegistration();
 			pApp->update();
-			// Re-bake the static recipe at the new pose (invalidate only destroys
-			// the old recipe; nothing else re-registers it, so the GPU would keep
-			// drawing the last baked/snapped modelMatrix).
+			// Re-bake the static recipe at the new pose (invalidate only destroys the
+			// old recipe; nothing else re-registers it).
 			pApp->registerStatic();
+		};
+
+		// BUG3 (group drag): if the grabbed object is part of a multi-selection, move
+		// the WHOLE selection by the same world delta. Otherwise move just the grab.
+		EditorObjectMgr* pMoveMgr = EditorObjectMgr::instance();
+		if ( m_pDragObject->isSelected() && pMoveMgr->getSelectionCount() > 1 )
+		{
+			EditorObjectMgr::EDITOR_OBJECT_LIST sel = pMoveMgr->getSelectedObjectList();
+			for ( EditorObjectMgr::EDITOR_OBJECT_LIST::EIterator it = sel.Begin();
+				!it.IsDone(); it++ )
+				dragMoveOne( *it );
+		}
+		else
+		{
+			dragMoveOne( m_pDragObject );
 		}
 		m_dragObjMoved = true;
 		return;
@@ -2805,6 +2856,9 @@ void EditorInterface::render()
 	// Phase 2: diagnostic world overlays (chunk/superchunk grid, water bounds).
 	// Pure visual; same frame/projection context as the foliage preview.
 	EditorDebugOverlay::RenderWorldOverlay( eye );
+
+	// Selected unit's patrol/move path overlay (only while the AI/Brain panel is open).
+	EditorDebugOverlay::RenderPatrolPaths( eye );
 
 	ModifyStyle( 0, WS_HSCROLL | WS_VSCROLL );
 
@@ -4019,12 +4073,79 @@ static bool EditorInterface_IsDoubleClickDistance(int x1, int y1, int x2, int y2
 	return abs(x2 - x1) <= cx && abs(y2 - y1) <= cy;
 }
 
-static EditorObject* EditorInterface_PickObjectAtScreenPoint(int screenX, int screenY)
+// EDITOR-OBJECTID-PICK-BRIDGE-1 (Slice 3): GPU ObjectID pick is the PRIMARY
+// editor object-selection path; the legacy CPU forward-projection picker is the
+// documented killswitch fallback. Default ON; set MC2_EDITOR_GPU_PICK=0 to fall
+// back to CPU forward-project (e.g. if the GPU readback regresses on a vendor).
+// Convention matches GameOS/gameos/gos_mech_batcher.cpp envFlagDefaultOn:
+// unset -> on, exactly "0" -> off, any other value -> on.
+static bool EditorInterface_GpuPickEnabled()
+{
+	static const bool s_enabled = []() {
+		const char* v = getenv("MC2_EDITOR_GPU_PICK");
+		if (v == nullptr) return true;                 // unset -> on (new default)
+		if (v[0] == '0' && v[1] == '\0') return false; // exactly "0" -> off
+		return true;                                   // any other value -> on
+	}();
+	return s_enabled;
+}
+
+// CPU forward-projection picker. Kept as the killswitch fallback for the GPU
+// path and as the press-time drag-grab picker (OnLButtonDown).
+static EditorObject* EditorInterface_PickObjectAtScreenPoint_CPU(int screenX, int screenY)
 {
 	if (!EditorObjectMgr::instance())
 		return NULL;
 
 	return EditorObjectMgr::instance()->getObjectAtScreenPosition(screenX, screenY);
+}
+
+static EditorObject* EditorInterface_PickObjectAtScreenPoint(int screenX, int screenY)
+{
+	EditorObjectMgr* mgr = EditorObjectMgr::instance();
+	if (!mgr)
+		return NULL;
+
+	// ---- PRIMARY: GPU ObjectID readback via the single EditorBridge seam ----
+	// EditorBridge::pickAt() owns the screen->FBO coord transform + glReadPixels
+	// + RenderWorld handle lookup. It returns Kind::StaticProp / Kind::Mech on an
+	// object hit, Kind::Terrain on a ground click, Kind::Miss otherwise. We only
+	// consume StaticProp / Mech here; Terrain and Miss fall through to the CPU
+	// forward-projection picker so a ground click still resolves the nearest
+	// object exactly as before (CPU behaviour is unchanged on a terrain hit).
+	if (EditorInterface_GpuPickEnabled() && EditorBridge::isEnabled())
+	{
+		EditorBridge::EditorPickResult pick = EditorBridge::pickAt(screenX, screenY);
+
+		if (pick.kind == EditorBridge::EditorPickResult::Kind::StaticProp)
+		{
+			// Reverse the GPU handle back to the EditorObject. handle.index()
+			// equals the GpuStaticPropRegistry recipeIndex (identity mapping,
+			// RenderWorld.h handleToRecipeIndex); the owning editor object's
+			// appearance carries the same recipeIndex.
+			const int32_t recipeIndex = static_cast<int32_t>(pick.handle.index());
+			if (EditorObject* obj = mgr->findObjectByStaticRecipeIndex(recipeIndex))
+				return obj;
+			// GPU hit a static prop the editor has no EditorObject for (e.g.
+			// terrain-baked vegetation forests with no per-instance editor object).
+			// Fall through to CPU rather than returning a miss.
+		}
+		else if (pick.kind == EditorBridge::EditorPickResult::Kind::Mech)
+		{
+			// Best-effort: editor scenes rarely place live mechs, but if one is
+			// present its Unit carries the RenderWorld handle (findUnitByMechHandle).
+			// NOTE: mech gameObjectId is still 0 (MechRenderAdapter), but the
+			// handle bits ARE the stable identity here, so this resolves cleanly.
+			if (EditorObject* unit = mgr->findUnitByMechHandle(pick.handle))
+				return unit;
+			// Unresolved mech -> CPU fallback (documented best-effort).
+		}
+		// Kind::Terrain or Kind::Miss -> CPU forward-projection (ground click /
+		// background): preserves the legacy "nearest projected object" behaviour.
+	}
+
+	// ---- FALLBACK: CPU forward-projection (killswitch + terrain/miss path) ----
+	return EditorInterface_PickObjectAtScreenPoint_CPU(screenX, screenY);
 }
 
 static bool EditorInterface_SelectObjectAtScreenPoint(int screenX, int screenY, bool toggle)
@@ -4648,6 +4769,14 @@ void EditorInterface::OnRButtonUp(UINT nFlags, CPoint point)
 
 BOOL EditorInterface::OnMouseWheel(UINT nFlags, short zDelta, CPoint pt)
 {
+	// Null-guard the camera: a mouse-wheel message can arrive during editor startup
+	// before `eye` (the camera) is created — the camera-zoom path below derefs
+	// eye->getScaleFactor()/ZoomIn/Out and READ-violated at 0x310 on a wheel during
+	// init. Nothing to rotate or zoom without a camera, so consume and bail. (Same
+	// bug class as the EditorObjectMgr::instance() guard further down.)
+	if ( !eye )
+		return TRUE;
+
 	//--------------------------------------------------
 	// Mouse-wheel rotation. When a placement brush is active the wheel rotates
 	// the placement cursor; otherwise, if objects are selected, it rotates the
@@ -5018,6 +5147,11 @@ void EditorInterface::renderToolbarImGui()
 	if (ImGui::Button("Inspector", ImVec2(-1.f, 0.f)))
 		InspectorPanel::Toggle();
 	InspectorPanel::Draw();
+
+	// AI / Brain / Orders — selected unit's AI brain + scaffolded orders/stance.
+	if (ImGui::Button("AI / Brain / Orders", ImVec2(-1.f, 0.f)))
+		UnitBrainPanel::Toggle();
+	UnitBrainPanel::Draw();
 
 	// Telemetry — read-only live editor state (fps / counts / undo / dirty / map).
 	if (ImGui::Button("Telemetry", ImVec2(-1.f, 0.f)))

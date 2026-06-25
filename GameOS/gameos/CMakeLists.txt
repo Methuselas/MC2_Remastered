@@ -11,6 +11,8 @@ set(SOURCES ${SOURCES}
     gameos_debugging.cpp
     gameos_sound.cpp
     gos_render.cpp
+    gos_render_context.cpp
+    render_frame_driver.cpp
     gos_hdri.cpp
     gos_postprocess.cpp
     gos_static_prop_batcher.cpp

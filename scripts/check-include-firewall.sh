@@ -21,6 +21,16 @@ cd "$ROOT"
 # Do NOT add it to SCOPE_DIRS.
 SCOPE_DIRS="RenderCore RenderWorld Visibility MeshRenderer MaterialSystem DebugRenderer RenderDeviceGL EditorBridge HostServices"
 
+# EDITOR-BRIDGE-GPU-FIREWALL-1: editor/ is a header-ONLY scope. Unlike the
+# RenderWorld-boundary modules above, the mission editor legitimately includes
+# game-logic headers and references game-logic symbols (Appearance, ObjectManager,
+# Mission, ...) -- those are NOT violations here. The ONLY thing forbidden in
+# editor/ is direct inclusion of the GPU-internal batcher/registry/cull headers;
+# all editor GPU access must route through EditorBridge::*. So editor/ is checked
+# against EDITOR_FORBIDDEN_HEADERS only, never against FORBIDDEN_SYMBOLS.
+EDITOR_HEADER_ONLY_DIRS="editor"
+EDITOR_FORBIDDEN_HEADERS="gos_static_prop_batcher.h gos_static_prop_registry.h gos_mech_batcher.h gpu_cull_compute.h"
+
 # Forbidden headers (any include of these from SCOPE_DIRS is a violation).
 # C1 fix: RenderCore must stay pure -- gos_static_prop_batcher.h pulls
 # <GL/glew.h> + Stuff/Stuff.hpp transitively; that violates Section 12
@@ -111,11 +121,35 @@ for dir in $SCOPE_DIRS; do
     done
 done
 
+# EDITOR-BRIDGE-GPU-FIREWALL-1: header-only firewall for editor/.
+# Forbids direct GPU-internal-header includes; game-logic symbols are allowed.
+for dir in $EDITOR_HEADER_ONLY_DIRS; do
+    if [ ! -d "$dir" ]; then continue; fi
+    for hdr in $EDITOR_FORBIDDEN_HEADERS; do
+        : > "$TMPHITS"
+        grep -rn "include.*${hdr}" "$dir" > "$TMPHITS" 2>/dev/null || true
+        if [ -s "$TMPHITS" ]; then
+            while IFS= read -r line; do
+                [ -z "$line" ] && continue
+                file="$(printf '%s' "$line" | cut -d: -f1)"
+                if allowlisted "$file"; then
+                    continue
+                fi
+                if is_comment_line "$line"; then
+                    continue
+                fi
+                echo "VIOLATION: editor/ must route GPU access through EditorBridge -- forbidden include of ${hdr} in ${line}" >&2
+                VIOLATIONS=$((VIOLATIONS+1))
+            done < "$TMPHITS"
+        fi
+    done
+done
+
 if [ "$VIOLATIONS" -gt 0 ]; then
     echo "" >&2
     echo "scripts/check-include-firewall.sh: ${VIOLATIONS} violation(s)" >&2
     echo "Spec: docs/superpowers/specs/2026-05-22-renderworld-boundary-spec.md section 12" >&2
     exit 1
 fi
-echo "scripts/check-include-firewall.sh: clean (scope: ${SCOPE_DIRS})"
+echo "scripts/check-include-firewall.sh: clean (scope: ${SCOPE_DIRS}; editor header-only: ${EDITOR_HEADER_ONLY_DIRS})"
 exit 0

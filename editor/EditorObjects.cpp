@@ -304,6 +304,12 @@ Unit::Unit( int align )
 	highlightColor = 0x00c0c0c0;
 	highlightColor2 = 0x00808080;
 	variant = 0;
+	orderType = ORDER_NONE;
+	stance = 2;   // AttitudeType ATTITUDE_NORMAL
+	orderAuthored = false;
+	importChecked = false;
+	brainFsm[0] = 0;
+	brainBehavior = BRAIN_UNKNOWN;
 }
 
 Unit::~Unit()
@@ -328,6 +334,13 @@ Unit::Unit( const Unit& src ) : EditorObject( src )
 		pAlternativeInstances = new CUnitList;
 		(*pAlternativeInstances) = *(src.pAlternativeInstances);
 		squad = src.squad;
+		orderType = src.orderType;
+		stance = src.stance;
+		waypoints = src.waypoints;
+		orderAuthored = src.orderAuthored;
+		importChecked = src.importChecked;
+		strncpy( brainFsm, src.brainFsm, sizeof( brainFsm ) ); brainFsm[sizeof( brainFsm ) - 1] = 0;
+		brainBehavior = src.brainBehavior;
 	}
 
 	variant = 0;
@@ -454,6 +467,23 @@ bool Unit::save( FitIniFile* file, int WarriorNumber, int controlDataType, char*
 	file->writeIdULong( "SquadNum", getSquad() );
 	file->writeIdULong( "NumAlternatives", pAlternativeInstances->Count() );
 
+	// Patrol/Move order authoring (additive — only written when the user has
+	// AUTHORED an order in-editor, so stock missions whose patrol lives in the
+	// brain .abl and was only imported for display are NOT rewritten).
+	if ( orderAuthored && ( orderType != ORDER_NONE || !waypoints.empty() ) )
+	{
+		file->writeIdLong( "OrderType", orderType );
+		file->writeIdLong( "OrderStance", stance );
+		file->writeIdULong( "WaypointCount", (unsigned long)waypoints.size() );
+		for ( size_t i = 0; i < waypoints.size(); ++i )
+		{
+			char k[64];
+			sprintf( k, "Waypoint%uX", (unsigned)i ); file->writeIdFloat( k, waypoints[i].x );
+			sprintf( k, "Waypoint%uY", (unsigned)i ); file->writeIdFloat( k, waypoints[i].y );
+			sprintf( k, "Waypoint%uZ", (unsigned)i ); file->writeIdFloat( k, waypoints[i].z );
+		}
+	}
+
 	return true;
 }
 
@@ -514,6 +544,40 @@ bool Unit::load( FitIniFile* file, int warriorNumber )
 		file->readIdULong( "AlternativeStartIndex", tmpAlternativeStartIndex );
 	}
 
+	// Patrol/Move order authoring (additive — absent in stock missions; defaults
+	// to ORDER_NONE / Normal stance / no waypoints). Read from the Part block,
+	// before the Warrior seekBlock below.
+	orderType = ORDER_NONE;
+	stance = 2;
+	waypoints.clear();
+	orderAuthored = false;
+	importChecked = false;
+	{
+		long tmpOrder = ORDER_NONE;
+		if ( NO_ERR == file->readIdLong( "OrderType", tmpOrder ) )
+			orderType = (int)tmpOrder;
+		long tmpStance = 2;
+		if ( NO_ERR == file->readIdLong( "OrderStance", tmpStance ) )
+			stance = (int)tmpStance;
+		unsigned long wpCount = 0;
+		if ( NO_ERR == file->readIdULong( "WaypointCount", wpCount ) )
+		{
+			// Editor-authored order present in the .fit -> it owns persistence.
+			// (Leave importChecked false so brain fsm/behavior still get analyzed;
+			// the patrol-import is guarded by orderAuthored/non-empty waypoints.)
+			orderAuthored = true;
+			for ( unsigned long i = 0; i < wpCount; ++i )
+			{
+				Stuff::Vector3D wp; wp.x = wp.y = wp.z = 0.0f;
+				char k[64];
+				sprintf( k, "Waypoint%luX", i ); file->readIdFloat( k, wp.x );
+				sprintf( k, "Waypoint%luY", i ); file->readIdFloat( k, wp.y );
+				sprintf( k, "Waypoint%luZ", i ); file->readIdFloat( k, wp.z );
+				waypoints.push_back( wp );
+			}
+		}
+	}
+
 	char blockId[256];
 	sprintf(blockId,"Warrior%d",warriorNumber);
 	file->seekBlock(blockId);
@@ -557,11 +621,158 @@ Unit& Unit::operator=( const Unit& src )
 		setVariant(src.getVariant());
 		(*pAlternativeInstances) = *(src.pAlternativeInstances);
 		squad = src.squad;
+		orderType = src.orderType;
+		stance = src.stance;
+		waypoints = src.waypoints;
+		orderAuthored = src.orderAuthored;
+		importChecked = src.importChecked;
+		strncpy( brainFsm, src.brainFsm, sizeof( brainFsm ) ); brainFsm[sizeof( brainFsm ) - 1] = 0;
+		brainBehavior = src.brainBehavior;
 
 		EditorObject::operator=( src );
 	}
 
 	return *this;
+}
+
+// Parse a patrol brain .abl for its startPatrolPath[i,0/1] waypoint literals.
+// The unit's brain file (brainName.abl at warriorPath) is exactly the script the
+// engine loads, so existing stock patrols live here as explicit XY coordinates:
+//   startPatrolState[1] = <count>;
+//   startPatrolPath[0, 0] = <x>;  startPatrolPath[0, 1] = <y>;  ...
+// (also matches base variants like startBase1PatrolPath[i,j]). z is left 0; the
+// overlay re-samples terrain elevation when drawing.
+// Analyze a unit's brain .abl (the exact script the engine loads from
+// <warriorPath><brainName>.abl): extract any patrol path (startPatrolPath[i,0/1]
+// literals), the fsm name, and a coarse behavior tag. Returns true if the file
+// opened (even with no patrol). fsmOut/behaviorOut are always written.
+static bool EditorAnalyzeBrain( const char* brainName, std::vector<Stuff::Vector3D>& wpOut,
+	char* fsmOut, size_t fsmCap, int& behaviorOut )
+{
+	wpOut.clear();
+	if ( fsmOut && fsmCap ) fsmOut[0] = 0;
+	behaviorOut = Unit::BRAIN_UNKNOWN;
+	if ( !brainName || !brainName[0] )
+		return false;
+
+	char path[512];
+	sprintf( path, "%s%s.abl", warriorPath, brainName );
+	File f;
+	long openRc = f.open( path );
+	if ( getenv( "MC2_PATROL_TRACE" ) || getenv( "MC2_EDITOR_TRACE" ) )
+	{
+		fprintf( stderr, "[PATROL] open '%s' rc=%ld (warriorPath='%s' brain='%s')\n",
+			path, openRc, warriorPath, brainName );
+		fflush( stderr );
+	}
+	if ( NO_ERR != openRc )
+		return false;
+
+	std::vector<float> xs, ys;
+	std::vector<unsigned char> hasX, hasY;
+	bool sawPatrol = false, sawGuard = false, sawAttack = false;
+	char line[1024];
+	while ( !f.eof() )
+	{
+		long n = f.readLine( (MemoryPtr)line, (long)sizeof( line ) - 1 );
+		if ( n <= 0 )
+			break;
+		if ( n >= (long)sizeof( line ) ) n = (long)sizeof( line ) - 1;
+		line[n] = 0;
+
+		// fsm name: "fsm <name>;" (first occurrence).
+		if ( fsmOut && fsmCap && !fsmOut[0] )
+		{
+			const char* fp = strstr( line, "fsm " );
+			if ( fp == line || ( fp && ( fp == line || fp[-1] == '\t' || fp[-1] == ' ' ) ) )
+			{
+				fp += 4;
+				while ( *fp == ' ' || *fp == '\t' ) ++fp;
+				size_t k = 0;
+				while ( fp[k] && fp[k] != ';' && fp[k] != ' ' && fp[k] != '\t' && fp[k] != '\r' && fp[k] != '\n' && k < fsmCap - 1 )
+				{ fsmOut[k] = fp[k]; ++k; }
+				fsmOut[k] = 0;
+			}
+		}
+
+		// Behavior keyword sniff (coarse).
+		if ( strstr( line, "PATROL_TYPE" ) || strstr( line, "PatrolPath" ) ) sawPatrol = true;
+		if ( strstr( line, "guard" ) || strstr( line, "Guard" ) )            sawGuard  = true;
+		if ( strstr( line, "attack" ) || strstr( line, "Attack" ) )          sawAttack = true;
+
+		// Patrol path literals.
+		const char* p = strstr( line, "PatrolPath[" );
+		if ( !p )
+			continue;
+		p += 11;   // strlen("PatrolPath[")
+		int idx = -1, comp = -1;
+		if ( sscanf( p, "%d , %d", &idx, &comp ) != 2 &&
+			 sscanf( p, "%d,%d", &idx, &comp ) != 2 )
+			continue;
+		const char* eq = strchr( p, '=' );
+		if ( !eq )
+			continue;
+		float val = (float)atof( eq + 1 );
+		if ( idx < 0 || idx > 4096 )
+			continue;
+		if ( comp == 0 )
+		{
+			if ( (int)xs.size() <= idx ) { xs.resize( idx + 1, 0.f ); hasX.resize( idx + 1, 0 ); }
+			xs[idx] = val; hasX[idx] = 1;
+		}
+		else if ( comp == 1 )
+		{
+			if ( (int)ys.size() <= idx ) { ys.resize( idx + 1, 0.f ); hasY.resize( idx + 1, 0 ); }
+			ys[idx] = val; hasY[idx] = 1;
+		}
+	}
+
+	size_t count = xs.size() < ys.size() ? xs.size() : ys.size();
+	for ( size_t i = 0; i < count; ++i )
+		if ( i < hasX.size() && i < hasY.size() && hasX[i] && hasY[i] )
+		{
+			// .abl PatrolPath coords are raw world coords, same frame as unit
+			// PositionX/Y (verified: mc2_01_Pat1 unit (3434,1983) sits next to its
+			// startBase1PatrolPath[0]=(3008,1472); both mc2_01 and mc2_03 patrol coords
+			// span the same +/- world range as their unit positions). No transform.
+			Stuff::Vector3D wp; wp.x = xs[i]; wp.y = ys[i]; wp.z = 0.0f;
+			wpOut.push_back( wp );
+		}
+
+	// Classify: patrol path wins; else guard/attack by keyword; else idle.
+	if ( sawPatrol || !wpOut.empty() ) behaviorOut = Unit::BRAIN_PATROL;
+	else if ( sawGuard )               behaviorOut = Unit::BRAIN_GUARD;
+	else if ( sawAttack )              behaviorOut = Unit::BRAIN_ATTACK;
+	else                               behaviorOut = Unit::BRAIN_IDLE;
+	return true;
+}
+
+void Unit::importPatrolFromBrainIfNeeded()
+{
+	if ( importChecked )
+		return;
+	importChecked = true;
+
+	std::vector<Stuff::Vector3D> wps;
+	EditorAnalyzeBrain( brain.getBrainName(), wps, brainFsm, sizeof( brainFsm ), brainBehavior );
+
+	// Import the patrol for display only when there is no editor-authored / existing order.
+	if ( !( orderAuthored || !waypoints.empty() || orderType != ORDER_NONE ) && !wps.empty() )
+	{
+		waypoints = wps;
+		orderType = ORDER_PATROL;
+		// orderAuthored stays false -> display only; not rewritten on save.
+	}
+
+	// MC2_PATROL_TRACE=1: dump unit position vs first imported waypoint so any
+	// remaining coordinate-frame mismatch can be read off directly.
+	if ( ( getenv( "MC2_PATROL_TRACE" ) || getenv( "MC2_EDITOR_TRACE" ) ) && !wps.empty() && appearance() )
+	{
+		fprintf( stderr, "[PATROL] brain=%s unitPos=(%.0f,%.0f) wp0=(%.0f,%.0f) wpN=%u\n",
+			brain.getBrainName(), appearance()->position.x, appearance()->position.y,
+			wps[0].x, wps[0].y, (unsigned)wps.size() );
+		fflush( stderr );
+	}
 }
 
 void Unit::setSquad(unsigned long newSquad) {

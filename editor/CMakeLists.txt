@@ -101,6 +101,9 @@ target_link_libraries(EditRel PRIVATE
     rendercore
     renderworld
     gameadapters
+    editorbridge   # EDITOR-BRIDGE-GPU-FIREWALL-1: editor TUs now route GPU access
+                   # through EditorBridge (was direct GPU-header includes), so EditRel
+                   # must link the bridge static lib that defines those symbols.
 
     # windows provides platform shims (string, IO, mmsystem) — no WinMain or InitGameOS.
     windows

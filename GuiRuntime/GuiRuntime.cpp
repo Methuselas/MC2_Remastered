@@ -185,7 +185,8 @@ static void BuildEditorDockspace() {
             // and the tiny "MC2 Editor" status line are intentionally left as overlays.
             static const char* kPanels[] = {
                 "Tools", "Mission Tools", "Place Tool", "Map Generator", "Objects",
-                "Object Inspector", "Inspector", "Scene Outliner", "Asset Browser",
+                "Object Inspector", "Inspector", "AI / Brain / Orders",
+                "Scene Outliner", "Asset Browser",
                 "Debug Overlays", "Task Monitor", "Foliage Detail", "Renderer Features",
                 "Mission Save Readiness", "Graphics Options  [Ctrl+Shift+G]"
             };

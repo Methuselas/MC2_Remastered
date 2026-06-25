@@ -46,6 +46,14 @@ class SelectionBrush: public Brush
 		// so it is unreliable as the per-frame screen delta base for the jacobian move.
 		Stuff::Vector2DOf<float>	m_lastDragScreen;
 
+		// BUG1 (zoomed-in marquee): track the rubber-band rectangle in SCREEN space
+		// directly. The previous path built firstWorldPos/lastWorldPos via the broken
+		// eye->inverseProject (documented X-collapse) and endPaint re-projected them to
+		// screen — under zoom that produced an empty/garbage rect so nothing selected.
+		Stuff::Vector4D		m_marqueeFirstScreen;
+		Stuff::Vector4D		m_marqueeLastScreen;
+		bool				m_marqueeStarted;
+
 		bool bPainting;
 		bool bArea;
 		bool bDrag;

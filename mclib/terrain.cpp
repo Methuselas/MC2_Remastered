@@ -3648,6 +3648,25 @@ float Terrain::getTerrainElevation( long tileR, long tileC )
 }
 
 //---------------------------------------------------------------------------
+// getTerrainType: declared in terrain.h since forever but never implemented —
+// no game code path called it, so the missing definition stayed latent. The
+// editor pick bridge (EditorRenderBridge.cpp, EDITOR-OBJECTID-PICK-BRIDGE-1)
+// is the first real caller, which surfaced it as an EditRel link error. Mirror
+// the sibling tile accessors: world->tile via worldToTile, then the per-tile
+// terrainType from MapData::getTerrain. getTerrain gosASSERTs its bounds, so
+// guard OOB here and return -1 (the bridge's documented "unavailable" sentinel).
+short Terrain::getTerrainType (const Stuff::Vector3D &position)
+{
+	int tileR = 0, tileC = 0;
+	worldToTile(position, tileR, tileC);
+	if (tileR < 0 || tileC < 0 ||
+		tileR >= Terrain::realVerticesMapSide ||
+		tileC >= Terrain::realVerticesMapSide)
+		return -1;
+	return static_cast<short>(mapData->getTerrain(tileR, tileC));
+}
+
+//---------------------------------------------------------------------------
 unsigned long Terrain::getTexture( long tileR, long tileC )
 {
 	return mapData->getTexture( tileR, tileC );

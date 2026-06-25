@@ -15,6 +15,8 @@ class FitIniFile;
 
 #include "ObjectAppearance.h"
 
+#include <vector>
+
 #ifndef HEAP_H
 #include <heap.h>
 #endif
@@ -200,7 +202,12 @@ public:
 	
 	bool save( FitIniFile* file, int warriorNumber, bool usePBrain = false );
 	bool load( FitIniFile* file, int warriorNumber );
-}; 
+
+	// Read-only accessors for the editor AI/Brain inspector panel (UnitBrainPanel).
+	const char* getBrainName() const { return brainName; }
+	long        getNumCells() const { return numCells; }
+	long        getNumStaticVars() const { return numStaticVars; }
+};
 
 //*************************************************************************************************
 
@@ -235,8 +242,46 @@ public:
 
 	inline Pilot*	getPilot() { return &pilot; }
 
+	// Read-only brain access for the editor AI/Brain inspector panel (UnitBrainPanel).
+	const Brain&	getBrain() const { return brain; }
+
 	void setVariant( unsigned long newVar ){ variant = newVar; }
 	inline int getVariant() const { return variant; }
+
+	// --- Patrol / Move order authoring (editor-side) -----------------------
+	// MOVE = traverse the waypoints once (one-way); PATROL = cycle them as a
+	// closed loop (a move order is the open-path subset of a patrol). Stance
+	// mirrors AttitudeType (code/tacordr.h) by index. All persisted additively
+	// in the mission .fit; runtime delivery is wired later via the brain dispatch.
+	enum UnitOrderType { ORDER_NONE = 0, ORDER_MOVE = 1, ORDER_PATROL = 2 };
+
+	int  getOrderType() const { return orderType; }
+	void setOrderType( int t ) { orderType = t; }
+	int  getStance() const { return stance; }
+	void setStance( int s ) { stance = s; }
+	const std::vector<Stuff::Vector3D>& getWaypoints() const { return waypoints; }
+	unsigned long getWaypointCount() const { return (unsigned long)waypoints.size(); }
+	void addWaypoint( const Stuff::Vector3D& wp ) { waypoints.push_back( wp ); }
+	void removeLastWaypoint() { if ( !waypoints.empty() ) waypoints.pop_back(); }
+	void clearWaypoints() { waypoints.clear(); }
+
+	// orderAuthored: the user edited orders in-editor, so the new .fit fields are
+	// written on save. Pure display imports (existing-patrol .abl) leave it false,
+	// so stock missions are not rewritten just by viewing them.
+	bool isOrderAuthored() const { return orderAuthored; }
+	void setOrderAuthored( bool v ) { orderAuthored = v; }
+
+	// Lazily analyze this unit's brain .abl (one attempt): import an existing
+	// patrol (startPatrolPath literals) for display when no editor-authored order
+	// exists, and extract the fsm name + a behavior tag for the panel.
+	void importPatrolFromBrainIfNeeded();
+
+	// Brain summary (filled by importPatrolFromBrainIfNeeded). Behavior is a coarse
+	// classification of the brain .abl; fsm is the script's fsm name.
+	enum BrainBehavior { BRAIN_UNKNOWN = 0, BRAIN_PATROL, BRAIN_GUARD, BRAIN_ATTACK, BRAIN_IDLE };
+	const char* getBrainFsm() const { return brainFsm; }
+	int getBrainBehavior() const { return brainBehavior; }
+	const char* getBrainName() const { return brain.getBrainName(); }
 
 	CUnitList *pAlternativeInstances;
 	unsigned long tmpNumAlternativeInstances;
@@ -252,6 +297,15 @@ protected:
 	int lanceIndex; // number within lance 1 to 12
 	unsigned long squad;
 	Pilot	pilot;
+
+	// Patrol/Move order authoring (see public accessors above).
+	int orderType;   // UnitOrderType (default ORDER_NONE)
+	int stance;      // AttitudeType index (default 2 = Normal)
+	std::vector<Stuff::Vector3D> waypoints;
+	bool orderAuthored;   // transient (NOT saved): user edited orders in-editor
+	bool importChecked;   // transient (NOT saved): brain-.abl patrol import attempted
+	char brainFsm[64];    // transient: fsm name parsed from the brain .abl
+	int  brainBehavior;   // transient: BrainBehavior tag parsed from the brain .abl
 
 	unsigned long baseColor;
 	unsigned long highlightColor;

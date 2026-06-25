@@ -397,6 +397,20 @@ class Camera
 			activeLights = NULL;
 			terrainLights = NULL;
 
+			// Class invariant: the light COUNTS must be 0 whenever the light
+			// arrays are NULL. The ctor zeroed the array pointers but left the
+			// counts uninitialized — they are only set to 0 inside
+			// Camera::init(FitIniFilePtr) (camera.cpp:453), which allocates the
+			// arrays. The editor generate-map path (EditorData::initTerrainFromTGA)
+			// never calls eye->init() (only the load path initTerrainFromPCV does),
+			// so a freshly generated map reached gos_terrain_lighting::PackAndDispatch
+			// with terrainLights==NULL and numTerrainLights==garbage(>2) ->
+			// getTerrainLight read terrainLights[2] = NULL+0x10 (0xC0000005). Zero the
+			// counts here so the invariant holds from construction in every init path.
+			numLights = 0;
+			numActiveLights = 0;
+			numTerrainLights = 0;
+
 			fogStart = fogFull = 0.0;
 			dayFogColor = 0xffffffff;
 			fogTransparency = 1.0;
@@ -1260,7 +1274,11 @@ class Camera
 
 		TG_LightPtr getTerrainLight (long index)
 		{
-			if ((index >= 0) && (index < numTerrainLights) && terrainLights[index])
+			// Defense in depth: guard the null array base before indexing it —
+			// numTerrainLights and terrainLights are set together in init(), but a
+			// not-yet-init'd camera can have a stale/garbage count with a NULL array
+			// (see ctor note). Without the `terrainLights &&` check this indexes NULL.
+			if ((index >= 0) && (index < numTerrainLights) && terrainLights && terrainLights[index])
 				return terrainLights[index];
 				
 			return NULL;

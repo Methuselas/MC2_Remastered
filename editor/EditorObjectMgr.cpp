@@ -46,7 +46,7 @@ static void EditorObjMgrTrace(const char* fmt, ...)
 #endif
 
 #include "EditorObjectMgr.h"
-#include "../GameOS/gameos/gos_static_prop_batcher.h"
+#include "../EditorBridge/EditorRenderBridge.h"  // GPU static-prop batcher/registry (firewall)
 
 
 #ifndef FILE_H
@@ -124,7 +124,6 @@ static void EditorObjMgrTrace(const char* fmt, ...)
 #include "../ARM/Microsoft.Xna.Arm.h"
 #include "EditorResourceFallback.h"
 #include "EditorResourceCatalog.h"
-#include "../GameOS/gameos/gos_static_prop_registry.h"
 #include "../GameAdapters/MechRenderAdapter.h"
 using namespace Microsoft::Xna::Arm;
 
@@ -172,6 +171,10 @@ inline float agsqrt( float _a, float _b )
 	return sqrt(_a*_a + _b*_b);
 }
 
+// Forward decl: GL-correct world->screen projection (defined below). Used by the
+// pick helpers, which precede the definition.
+static bool EditorObjectMgr_ProjectScreenXY_GL(const Stuff::Vector3D& wp, Stuff::Vector4D& sp);
+
 static bool EditorObjectMgr_PointInsideAppearance(ObjectAppearance* pAppearance, int screenX, int screenY, bool allowPerPoly)
 {
 	if (!pAppearance)
@@ -215,8 +218,12 @@ static void EditorObjectMgr_ConsiderScreenCenter(EditorObject* pObject, int scre
 
 	ObjectAppearance* pApp = pObject->appearance();
 
+	// Modern zoom-correct projection (projectModernClipGL + viewport remap) — the
+	// legacy projectZ diverges/rejects when zoomed in (X-collapse). If the center
+	// projects behind the near plane, this object is not pickable -> skip.
 	Stuff::Vector4D center;
-	eye->projectZ(pApp->position, center);
+	if (!EditorObjectMgr_ProjectScreenXY_GL(pApp->position, center))
+		return;
 
 	// Size-aware pick radius: project a world point one extent-radius from the
 	// object center and measure the screen-space gap, so large objects (walls,
@@ -230,7 +237,10 @@ static void EditorObjectMgr_ConsiderScreenCenter(EditorObject* pObject, int scre
 	Stuff::Vector3D edgeWorld = pApp->position;
 	edgeWorld.x += worldRadius;
 	Stuff::Vector4D edge;
-	eye->projectZ(edgeWorld, edge);
+	// If the edge point rejects, fall back to the floored pixel radius below by
+	// reusing center.x/y (zero screen gap -> screenRadius clamps to the floor).
+	if (!EditorObjectMgr_ProjectScreenXY_GL(edgeWorld, edge))
+		edge = center;
 	float rdx = edge.x - center.x;
 	float rdy = edge.y - center.y;
 	float screenRadius = sqrtf(rdx * rdx + rdy * rdy);
@@ -1509,7 +1519,9 @@ void EditorObjectMgr::render()
 		Stuff::Vector3D pos = (*dIter)->getPosition();
 		Stuff::Vector4D screen;
 
-		eye->projectZ( pos, screen );
+		// Modern zoom-correct projection — legacy projectZ X-collapses on zoom.
+		if ( !EditorObjectMgr_ProjectScreenXY_GL( pos, screen ) )
+			continue;  // behind near plane -> skip marker
 
 		GUI_RECT Rect;
 		Rect.top = screen.y - 3;
@@ -1862,8 +1874,13 @@ void EditorObjectMgr::select( const Stuff::Vector4D& pos1, const Stuff::Vector4D
 			if ( !pAppearance )
 				continue;
 
-			eye->projectZ( pAppearance->position, screenPos );
-			if ( screenPos.x >= xMin && screenPos.x <= xMax			
+			// BUG1 (zoomed-in marquee): use the modern GL forward projection (the same
+			// one getObjectAtScreenPosition / the drag jacobian use) instead of legacy
+			// projectZ. projectZ diverges from the rendered camera when zoomed in, so
+			// object centers landed outside the screen rect and nothing got selected.
+			if ( !EditorObjectMgr_ProjectScreenXY_GL( pAppearance->position, screenPos ) )
+				continue;
+			if ( screenPos.x >= xMin && screenPos.x <= xMax
 				 && screenPos.y >= yMin && screenPos.y <= yMax )
 			{
 				pAppearance->selected = true;
@@ -1879,8 +1896,13 @@ void EditorObjectMgr::select( const Stuff::Vector4D& pos1, const Stuff::Vector4D
 			if ( !pAppearance )
 				continue;
 
-			eye->projectZ( pAppearance->position, screenPos );
-			if ( screenPos.x >= xMin && screenPos.x <= xMax			
+			// BUG1 (zoomed-in marquee): use the modern GL forward projection (the same
+			// one getObjectAtScreenPosition / the drag jacobian use) instead of legacy
+			// projectZ. projectZ diverges from the rendered camera when zoomed in, so
+			// object centers landed outside the screen rect and nothing got selected.
+			if ( !EditorObjectMgr_ProjectScreenXY_GL( pAppearance->position, screenPos ) )
+				continue;
+			if ( screenPos.x >= xMin && screenPos.x <= xMax
 				 && screenPos.y >= yMin && screenPos.y <= yMax )
 			{
 				pAppearance->selected = true;
@@ -1897,9 +1919,10 @@ void EditorObjectMgr::select( const Stuff::Vector4D& pos1, const Stuff::Vector4D
 				continue;
 
 			Stuff::Vector3D pos = pObject->getPosition();
-			eye->projectZ( pos, screenPos );
-		
-			if ( screenPos.x >= xMin && screenPos.x <= xMax			
+			if ( !EditorObjectMgr_ProjectScreenXY_GL( pos, screenPos ) )   // BUG1: modern projection
+				continue;
+
+			if ( screenPos.x >= xMin && screenPos.x <= xMax
 				 && screenPos.y >= yMin && screenPos.y <= yMax )
 			{
 				pAppearance->selected = true;
@@ -2229,8 +2252,8 @@ void EditorObjectMgr::primeAllBuildingAppearanceTypes()
 			{
 				BldgAppearanceType* bat = static_cast<BldgAppearanceType*>(bldg.appearanceType);
 				for (int lod = 0; lod < MAX_LODS; ++lod)
-					GpuStaticPropBatcher::instance().registerMultiShape(bat->bldgShape[lod]);
-				GpuStaticPropBatcher::instance().registerMultiShape(bat->bldgDmgShape);
+					EditorBridge::registerStaticPropShape(bat->bldgShape[lod]);
+				EditorBridge::registerStaticPropShape(bat->bldgDmgShape);
 				++nPrimed;
 			}
 			else
@@ -3346,9 +3369,39 @@ Unit* EditorObjectMgr::findUnitByMechHandle(RenderCore::RenderObjectHandle h)
 	return nullptr;
 }
 
+EditorObject* EditorObjectMgr::findObjectByStaticRecipeIndex(int32_t recipeIndex)
+{
+	// EDITOR-OBJECTID-PICK-BRIDGE-1 (Slice 3). recipeIndex < 0 is the "no
+	// static recipe" sentinel (Appearance::getStaticRecipeIndex default) and
+	// must never match -- guard so an unregistered object is not spuriously
+	// returned.
+	if (recipeIndex < 0)
+		return nullptr;
+
+	// buildings holds EditorObject* for set-dressing; units holds Unit*
+	// (Unit : public EditorObject). Both expose appearance()->getStaticRecipeIndex().
+	for (BUILDING_LIST::EIterator iter = buildings.Begin(); !iter.IsDone(); iter++)
+	{
+		EditorObject* obj = *iter;
+		if (!obj || !obj->appearance())
+			continue;
+		if (obj->appearance()->getStaticRecipeIndex() == recipeIndex)
+			return obj;
+	}
+	for (UNIT_LIST::EIterator mIter = units.Begin(); !mIter.IsDone(); mIter++)
+	{
+		Unit* unit = *mIter;
+		if (!unit || !unit->appearance())
+			continue;
+		if (unit->appearance()->getStaticRecipeIndex() == recipeIndex)
+			return unit;
+	}
+	return nullptr;
+}
+
 void EditorObjectMgr::registerStaticPropsForMissionLoad()
 {
-	if (!GpuStaticPropRegistry::isMissionLoadRegEnabled())
+	if (!EditorBridge::staticPropMissionLoadRegEnabled())
 		return;
 	static const long homeRelations[9] = {0, 0, 2, 1, 1, 1, 1, 1, 1};
 	int total = 0, registered = 0;

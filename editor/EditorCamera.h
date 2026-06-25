@@ -33,8 +33,13 @@ EditorCamera.h			: Interface for the EditorCamera component.
 #include "objstatus.h"
 #endif
 
-#include "../GameOS/gameos/gos_static_prop_registry.h"
-#include "../GameOS/gameos/gos_mech_batcher.h"
+#include "../EditorBridge/EditorRenderBridge.h"  // GPU batcher/registry lifecycle (firewall)
+#include <GL/glew.h>                              // GLint/GL_VIEWPORT/glGetIntegerv for the
+                                                  // throttled [PICKW] viewport diag below. Was
+                                                  // transitively pulled by the gos_*_batcher/registry
+                                                  // headers removed in EDITOR-BRIDGE-GPU-FIREWALL-1;
+                                                  // glew is a raw-GL header, not one of the 4 GPU-
+                                                  // subsystem headers the editor firewall forbids.
 #include "../GameOS/gameos/view_uniforms_gl.h"  // setCurrentView + uploadViewUniforms
 #include "EditorGpuTimer.h"                      // MC2_EDITOR_GPU_TIMERS per-pass GPU timing
 
@@ -267,12 +272,12 @@ public:
 				theSky->render(1);
 			EditorGpuTimer_Mark("sky");
 
-			GpuStaticPropRegistry::frameBegin();               // step 2 — game line 198
+			EditorBridge::staticPropFrameBegin();              // step 2 — game line 198
 
 			// Absorb any mech types registered after finalizeGeometry() (late
 			// placement in the editor). Mirrors logistics.cpp:814 (VPL-#11).
 			// No-op when s_pendingLateTypes==false (single branch, ~1ns).
-			GpuMechBatcher::instance().finalizePending();
+			EditorBridge::mechFinalizePending();
 
 			if (land)
 				land->render();                                // step 3 — game line 199

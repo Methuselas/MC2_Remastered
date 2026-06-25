@@ -103,6 +103,8 @@ run_check "brain_fixture_deploy"   "py -3 scripts/check_brain_fixture_deploy_syn
 run_check "brain_relaxed_guard"    "py -3 scripts/check_brain_relaxed_guard_doc.py --quiet"
 run_check "deploy_data_parity"     "py -3 scripts/check-deploy-data-parity.py --quiet"
 run_check "pass_coverage"          "py -3 scripts/check-pass-coverage.py --quiet"
+run_check "render_ctx_parity"      "py -3 scripts/check-editor-game-render-context-parity.py --quiet"
+run_check "editor_pass_parity"     "py -3 scripts/check-editor-pass-contract-parity.py --quiet"
 
 # ---------------------------------------------------------------------------
 # Summary table

@@ -36,6 +36,8 @@
 
 #include <gameos.hpp>          // gos_RendererBeginFrame / EndFrame / HandleEvents
 #include "gos_render.h"        // graphics::make_current_context etc.
+#include "gos_render_context.h"  // InitializeRenderContextConventions (shared game/editor parity)
+#include "render_frame_driver.h" // RenderFrameDriver_RenderWorld — Slice 6 shared render seam
 #include "gos_input.h"         // input::beginUpdateMouseState etc.
 #include "camera.h"            // extern eye + fgetScreenResX (pick-cache coherence diag)
 #include "gos_postprocess.h"   // gosPostProcess + getGosPostProcess() — needed for
@@ -201,6 +203,21 @@ void InitDW(void)
 }
 
 // ---------------------------------------------------------------------------
+// mc2_hzb_dump_camera_view  (HZB occlusion-cull debug capture stub)
+// ---------------------------------------------------------------------------
+// PRE-EXISTING editor-link gap, NOT part of EDITOR-GAME-RUNTIME-PARITY-ARC:
+// commit fe0f2a9c added an HZB camera capture/replay tool. Its definition lives
+// in code/gamecam.cpp (a game TU not linked into EditRel), but GuiRuntime/
+// EditorInspector.cpp (shared by the editor) calls it from drawImGui(). EditRel
+// has no HZB cull capture, so provide a clean no-op shim — same pattern as the
+// other GameOS symbols this file supplies. (Surfaced now because this arc made
+// EditRel link/build for the first time in this worktree.)
+extern "C" void mc2_hzb_dump_camera_view(void)
+{
+    // No-op: HZB camera-view capture is a game-only debug tool; absent in EditRel.
+}
+
+// ---------------------------------------------------------------------------
 // InitGameOS
 // ---------------------------------------------------------------------------
 // In the original windows.lib this initialised DirectX, registered the
@@ -313,6 +330,17 @@ void __stdcall InitGameOS(HINSTANCE /*hInstance*/, HWND hWindow, char* commandLi
 #ifdef TRACY_ENABLE
                 TracyGpuContext;
 #endif
+                // GAMEOS-RENDER-CONTEXT-PARITY-1: the editor shares the game's
+                // shaders, which assume the reverse-Z [0,1] NDC depth convention.
+                // Both hosts now establish clip-control + the reverse-Z depth
+                // baseline through ONE shared function so they cannot diverge
+                // (this class of bug is what Slice 0 fixed inline). The
+                // fail-closed contract (abort if glClipControl is unavailable)
+                // lives inside the shared function. Must precede gos_CreateRenderer.
+                EditorGameOSTrace("InitGameOS: before InitializeRenderContextConventions(Editor)");
+                InitializeRenderContextConventions(RenderHostKind::Editor);
+                EditorGameOSTrace("InitGameOS: after InitializeRenderContextConventions(Editor)");
+
                 EditorGameOSTrace("InitGameOS: before gos_CreateRenderer context=%p window=%p", g_editorRenderContext, g_editorRenderWindow);
                 gos_CreateRenderer(g_editorRenderContext, g_editorRenderWindow, w, h);
                 EditorGameOSTrace("InitGameOS: after gos_CreateRenderer renderer=%p", getGosRenderer());
@@ -597,13 +625,19 @@ DWORD __stdcall RunGameOSLogic()
     // the Remastered terrain shader manages its own uniform matrices and
     // setting glMatrixMode/glFrustum would shadow them, leaving terrain gray.
     // gos_RendererBeginFrame() is responsible for all per-frame shader state.
+    // EDITOR-CLIPCONTROL-PARITY-1: the shared scene render path is reverse-Z
+    // (U2) — far plane = depth 0, GL_GEQUAL. The game clears the scene to
+    // glClearDepth(0.0). The editor previously used GL_LEQUAL + the GL default
+    // clearDepth(1.0), which clears the scene-FBO depth to the NEAR plane under
+    // reverse-Z -> every GEQUAL draw fails -> garbage/empty depth. Match game.
     glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL);
+    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL
     glDepthMask(GL_TRUE);
 
     // When pp_editor->beginScene() ran, the scene FBO is now bound — this
     // glClear hits the scene FBO's color/depth attachments, not FBO 0.
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClearDepth(0.0f);       // reverse-Z (U2): far plane = depth 0 (match game scene clear)
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     // F3 render-contract: stamp GBuffer1 with the post-shadow-eligible
@@ -634,24 +668,56 @@ DWORD __stdcall RunGameOSLogic()
     }
 #endif
     EditorFramePhase_Begin();
-    gos_RendererBeginFrame();
-    EditorFramePhase_Mark("beginFrame");
 
+    // GAME-EDITOR-RENDER-FRAME-DRIVER-1 (Slice 6): the editor now drives the
+    // shared per-frame world-render dispatch through the ONE named seam both
+    // hosts call — RenderFrameDriver_RenderWorld — instead of hand-inlining the
+    // BeginFrame/UpdateRenderers/EndFrame trio. This is the REAL adoption (the
+    // editor is the host that rots). Editor-only steps (DoGameLogic, the !land
+    // skip, ImGui/overlays/RTT) stay OUTSIDE the driver, exactly as the parity
+    // TD rule requires ("editor may add overlays but not own a parallel render
+    // implementation").
+    //
     // DoGameLogic must always run — it drives EditorInterface::update() which
-    // processes MapGeneratorDialog::TakeAction() (Generate/Preview clicks).
-    // UpdateRenderers requires terrain (land != NULL); skip it when no map
-    // is loaded (e.g. while the generator dialog is open at startup).
+    // processes MapGeneratorDialog::TakeAction() (Generate/Preview clicks). It
+    // is hoisted to BEFORE the render dispatch so the seam wraps exactly the
+    // game's contiguous trio (the game runs GameLogic well before its render
+    // bracket; gameosmain.cpp ~1249 vs ~578). This restores the canonical
+    // logic-before-render order. NOTE (by Methuselas, carried forward): the
+    // editor terrain path was historically sensitive to this BeginFrame/
+    // DoGameLogic/UpdateRenderers/EndFrame handoff — hoisting DoGameLogic out
+    // of the bracket must be revalidated by an editor build + terrain load
+    // test (this is exactly the Slice-6 editor build/load gate).
     if (Environment.DoGameLogic)
         Environment.DoGameLogic();
     EditorFramePhase_Mark("doLogic");
 
+    // UpdateRenderers requires terrain (land != NULL); under MC2_IMGUI we skip
+    // the world dispatch when no map is loaded (e.g. while the generator dialog
+    // is open at startup). The driver always runs BeginFrame/UpdateRenderers/
+    // EndFrame, so when there is no land we keep the editor's pre-existing
+    // behavior — run BeginFrame + EndFrame but skip the world update — outside
+    // the seam rather than entering the driver. With land present, the full
+    // dispatch goes through the shared driver.
+    bool runWorldThroughDriver = true;
 #ifdef MC2_IMGUI
-    if (land)
+    if (!land)
+        runWorldThroughDriver = false;
 #endif
-        Environment.UpdateRenderers();
+    if (runWorldThroughDriver) {
+        RenderFrameDesc rfd;
+        rfd.host = RenderHostKind::Editor;
+        rfd.drawEditorOverlays = true;
+        rfd.editorSelectable = true;
+        RenderFrameDriver_RenderWorld(rfd);
+    } else {
+        // No-land editor path: preserve exact prior behavior (Begin + End,
+        // world update skipped) without routing through the always-update
+        // driver.
+        gos_RendererBeginFrame();
+        gos_RendererEndFrame();
+    }
     EditorFramePhase_Mark("updRend");
-
-    gos_RendererEndFrame();
     EditorFramePhase_Mark("endFrame");
 
     // Composite scene FBO → default FB (tone-map, FXAA, bloom, shadow overlay).
