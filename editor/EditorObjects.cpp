@@ -308,6 +308,8 @@ Unit::Unit( int align )
 	stance = 2;   // AttitudeType ATTITUDE_NORMAL
 	orderAuthored = false;
 	importChecked = false;
+	brainFsm[0] = 0;
+	brainBehavior = BRAIN_UNKNOWN;
 }
 
 Unit::~Unit()
@@ -337,6 +339,8 @@ Unit::Unit( const Unit& src ) : EditorObject( src )
 		waypoints = src.waypoints;
 		orderAuthored = src.orderAuthored;
 		importChecked = src.importChecked;
+		strncpy( brainFsm, src.brainFsm, sizeof( brainFsm ) ); brainFsm[sizeof( brainFsm ) - 1] = 0;
+		brainBehavior = src.brainBehavior;
 	}
 
 	variant = 0;
@@ -559,8 +563,9 @@ bool Unit::load( FitIniFile* file, int warriorNumber )
 		if ( NO_ERR == file->readIdULong( "WaypointCount", wpCount ) )
 		{
 			// Editor-authored order present in the .fit -> it owns persistence.
+			// (Leave importChecked false so brain fsm/behavior still get analyzed;
+			// the patrol-import is guarded by orderAuthored/non-empty waypoints.)
 			orderAuthored = true;
-			importChecked = true;   // do not overwrite with a brain import
 			for ( unsigned long i = 0; i < wpCount; ++i )
 			{
 				Stuff::Vector3D wp; wp.x = wp.y = wp.z = 0.0f;
@@ -621,6 +626,8 @@ Unit& Unit::operator=( const Unit& src )
 		waypoints = src.waypoints;
 		orderAuthored = src.orderAuthored;
 		importChecked = src.importChecked;
+		strncpy( brainFsm, src.brainFsm, sizeof( brainFsm ) ); brainFsm[sizeof( brainFsm ) - 1] = 0;
+		brainBehavior = src.brainBehavior;
 
 		EditorObject::operator=( src );
 	}
@@ -635,9 +642,16 @@ Unit& Unit::operator=( const Unit& src )
 //   startPatrolPath[0, 0] = <x>;  startPatrolPath[0, 1] = <y>;  ...
 // (also matches base variants like startBase1PatrolPath[i,j]). z is left 0; the
 // overlay re-samples terrain elevation when drawing.
-static bool EditorImportPatrolWaypoints( const char* brainName, std::vector<Stuff::Vector3D>& out )
+// Analyze a unit's brain .abl (the exact script the engine loads from
+// <warriorPath><brainName>.abl): extract any patrol path (startPatrolPath[i,0/1]
+// literals), the fsm name, and a coarse behavior tag. Returns true if the file
+// opened (even with no patrol). fsmOut/behaviorOut are always written.
+static bool EditorAnalyzeBrain( const char* brainName, std::vector<Stuff::Vector3D>& wpOut,
+	char* fsmOut, size_t fsmCap, int& behaviorOut )
 {
-	out.clear();
+	wpOut.clear();
+	if ( fsmOut && fsmCap ) fsmOut[0] = 0;
+	behaviorOut = Unit::BRAIN_UNKNOWN;
 	if ( !brainName || !brainName[0] )
 		return false;
 
@@ -649,6 +663,7 @@ static bool EditorImportPatrolWaypoints( const char* brainName, std::vector<Stuf
 
 	std::vector<float> xs, ys;
 	std::vector<unsigned char> hasX, hasY;
+	bool sawPatrol = false, sawGuard = false, sawAttack = false;
 	char line[1024];
 	while ( !f.eof() )
 	{
@@ -658,6 +673,27 @@ static bool EditorImportPatrolWaypoints( const char* brainName, std::vector<Stuf
 		if ( n >= (long)sizeof( line ) ) n = (long)sizeof( line ) - 1;
 		line[n] = 0;
 
+		// fsm name: "fsm <name>;" (first occurrence).
+		if ( fsmOut && fsmCap && !fsmOut[0] )
+		{
+			const char* fp = strstr( line, "fsm " );
+			if ( fp == line || ( fp && ( fp == line || fp[-1] == '\t' || fp[-1] == ' ' ) ) )
+			{
+				fp += 4;
+				while ( *fp == ' ' || *fp == '\t' ) ++fp;
+				size_t k = 0;
+				while ( fp[k] && fp[k] != ';' && fp[k] != ' ' && fp[k] != '\t' && fp[k] != '\r' && fp[k] != '\n' && k < fsmCap - 1 )
+				{ fsmOut[k] = fp[k]; ++k; }
+				fsmOut[k] = 0;
+			}
+		}
+
+		// Behavior keyword sniff (coarse).
+		if ( strstr( line, "PATROL_TYPE" ) || strstr( line, "PatrolPath" ) ) sawPatrol = true;
+		if ( strstr( line, "guard" ) || strstr( line, "Guard" ) )            sawGuard  = true;
+		if ( strstr( line, "attack" ) || strstr( line, "Attack" ) )          sawAttack = true;
+
+		// Patrol path literals.
 		const char* p = strstr( line, "PatrolPath[" );
 		if ( !p )
 			continue;
@@ -686,14 +722,18 @@ static bool EditorImportPatrolWaypoints( const char* brainName, std::vector<Stuf
 
 	size_t count = xs.size() < ys.size() ? xs.size() : ys.size();
 	for ( size_t i = 0; i < count; ++i )
-	{
 		if ( i < hasX.size() && i < hasY.size() && hasX[i] && hasY[i] )
 		{
 			Stuff::Vector3D wp; wp.x = xs[i]; wp.y = ys[i]; wp.z = 0.0f;
-			out.push_back( wp );
+			wpOut.push_back( wp );
 		}
-	}
-	return !out.empty();
+
+	// Classify: patrol path wins; else guard/attack by keyword; else idle.
+	if ( sawPatrol || !wpOut.empty() ) behaviorOut = Unit::BRAIN_PATROL;
+	else if ( sawGuard )               behaviorOut = Unit::BRAIN_GUARD;
+	else if ( sawAttack )              behaviorOut = Unit::BRAIN_ATTACK;
+	else                               behaviorOut = Unit::BRAIN_IDLE;
+	return true;
 }
 
 void Unit::importPatrolFromBrainIfNeeded()
@@ -701,11 +741,12 @@ void Unit::importPatrolFromBrainIfNeeded()
 	if ( importChecked )
 		return;
 	importChecked = true;
-	// Preserve any editor-authored or already-present order; only fill in when empty.
-	if ( orderAuthored || !waypoints.empty() || orderType != ORDER_NONE )
-		return;
+
 	std::vector<Stuff::Vector3D> wps;
-	if ( EditorImportPatrolWaypoints( brain.getBrainName(), wps ) )
+	EditorAnalyzeBrain( brain.getBrainName(), wps, brainFsm, sizeof( brainFsm ), brainBehavior );
+
+	// Import the patrol for display only when there is no editor-authored / existing order.
+	if ( !( orderAuthored || !waypoints.empty() || orderType != ORDER_NONE ) && !wps.empty() )
 	{
 		waypoints = wps;
 		orderType = ORDER_PATROL;

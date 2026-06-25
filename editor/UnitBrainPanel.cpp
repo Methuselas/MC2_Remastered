@@ -20,9 +20,12 @@
 #include "EditorObjects.h"
 #include "InspectorPanel.h"   // CategoryToken (shared category labelling)
 #include "Action.h"           // ModifyUnitOrderAction + ActionUndoMgr (undo + dirty)
+#include "Paths.h"            // warriorPath (brain .abl location)
+#include "File.h"             // File (raw brain .abl viewer)
 
 #include <cstdio>
 #include <cstring>
+#include <string>
 
 namespace {
 
@@ -99,6 +102,46 @@ const char* const kAttitudeNames[] = {
 	"Cautious", "Conservative", "Normal", "Aggressive", "Berserker", "Suicidal"
 };
 const int kAttitudeCount = (int)(sizeof(kAttitudeNames) / sizeof(kAttitudeNames[0]));
+
+const char* brainBehaviorName( int b )
+{
+	switch ( b )
+	{
+		case Unit::BRAIN_PATROL: return "Patrol";
+		case Unit::BRAIN_GUARD:  return "Guard";
+		case Unit::BRAIN_ATTACK: return "Attack";
+		case Unit::BRAIN_IDLE:   return "Idle / static";
+		default:                 return "Unknown";
+	}
+}
+
+// Load a brain .abl as text for the raw viewer, cached by brain name so we only
+// hit disk when the selection's brain changes.
+const char* loadBrainText( const char* brainName )
+{
+	static std::string s_text;
+	static std::string s_loadedFor;
+	if ( !brainName || !brainName[0] ) { s_text.clear(); s_loadedFor.clear(); return ""; }
+	if ( s_loadedFor == brainName ) return s_text.c_str();
+	s_loadedFor = brainName;
+	s_text.clear();
+
+	char path[512];
+	sprintf( path, "%s%s.abl", warriorPath, brainName );
+	File f;
+	if ( NO_ERR != f.open( path ) ) { s_text = "(brain .abl not found)"; return s_text.c_str(); }
+	char line[1024];
+	while ( !f.eof() )
+	{
+		long n = f.readLine( (MemoryPtr)line, (long)sizeof( line ) - 1 );
+		if ( n <= 0 ) break;
+		if ( n >= (long)sizeof( line ) ) n = (long)sizeof( line ) - 1;
+		line[n] = 0;
+		s_text += line;
+		s_text += '\n';
+	}
+	return s_text.c_str();
+}
 
 } // namespace
 
@@ -199,15 +242,44 @@ void UnitBrainPanel::Draw()
 
 	ImGui::Separator();
 
-	// --- AI Brain (what this unit runs) -----------------------------------
+	// --- Chassis (the mech/vehicle + its asset refs the .arm tracks) -------
+	if (ImGui::CollapsingHeader("Chassis", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		EditorObjectMgr* m = EditorObjectMgr::instance();
+		const char* file = m ? m->getFileName(obj->getID()) : nullptr;   // chassis CSV (e.g. Madcat)
+		ImGui::Text("Chassis:  %s", (file && file[0]) ? file : "(unknown)");
+		ImGui::Text("Variant:  %d", unit->getVariant());
+		ImGui::Text("Pilot:    %s", (pilotName && pilotName[0]) ? pilotName : "(none)");
+	}
+
+	// --- AI Brain (what this unit actually runs) --------------------------
 	if (ImGui::CollapsingHeader("AI Brain", ImGuiTreeNodeFlags_DefaultOpen))
 	{
 		const Brain& brain = unit->getBrain();
 		const char* bn = brain.getBrainName();
 		ImGui::Text("Brain script: %s", (bn && bn[0]) ? bn : "(none / default)");
-		ImGui::Text("ABL cells:    %ld", brain.getNumCells());
-		ImGui::Text("Static vars:  %ld", brain.getNumStaticVars());
-		ImGui::TextDisabled("This is the AI program the unit runs at mission start.");
+		const char* fsm = unit->getBrainFsm();
+		if (fsm && fsm[0])
+			ImGui::Text("FSM:          %s", fsm);
+		ImGui::Text("Behavior:     %s", brainBehaviorName(unit->getBrainBehavior()));
+		ImGui::Text("ABL cells:    %ld   Static vars: %ld",
+			brain.getNumCells(), brain.getNumStaticVars());
+
+		// Raw .abl script viewer (read-only, loaded on demand, cached by name).
+		if (ImGui::TreeNode("View .abl script"))
+		{
+			if (bn && bn[0])
+			{
+				const char* txt = loadBrainText(bn);
+				ImGui::InputTextMultiline("##ablsrc", const_cast<char*>(txt),
+					strlen(txt) + 1, ImVec2(-1.f, 220.f), ImGuiInputTextFlags_ReadOnly);
+			}
+			else
+			{
+				ImGui::TextDisabled("(no brain script for this unit)");
+			}
+			ImGui::TreePop();
+		}
 	}
 
 	// --- Orders & Stance (live editing; persists to the mission .fit) ------

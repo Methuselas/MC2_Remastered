@@ -271,10 +271,17 @@ public:
 	bool isOrderAuthored() const { return orderAuthored; }
 	void setOrderAuthored( bool v ) { orderAuthored = v; }
 
-	// Lazily import an existing patrol from this unit's brain .abl (the
-	// startPatrolPath[i,0/1] literals) for display, if no editor-authored order
-	// exists yet. Idempotent (one attempt per unit).
+	// Lazily analyze this unit's brain .abl (one attempt): import an existing
+	// patrol (startPatrolPath literals) for display when no editor-authored order
+	// exists, and extract the fsm name + a behavior tag for the panel.
 	void importPatrolFromBrainIfNeeded();
+
+	// Brain summary (filled by importPatrolFromBrainIfNeeded). Behavior is a coarse
+	// classification of the brain .abl; fsm is the script's fsm name.
+	enum BrainBehavior { BRAIN_UNKNOWN = 0, BRAIN_PATROL, BRAIN_GUARD, BRAIN_ATTACK, BRAIN_IDLE };
+	const char* getBrainFsm() const { return brainFsm; }
+	int getBrainBehavior() const { return brainBehavior; }
+	const char* getBrainName() const { return brain.getBrainName(); }
 
 	CUnitList *pAlternativeInstances;
 	unsigned long tmpNumAlternativeInstances;
@@ -297,6 +304,8 @@ protected:
 	std::vector<Stuff::Vector3D> waypoints;
 	bool orderAuthored;   // transient (NOT saved): user edited orders in-editor
 	bool importChecked;   // transient (NOT saved): brain-.abl patrol import attempted
+	char brainFsm[64];    // transient: fsm name parsed from the brain .abl
+	int  brainBehavior;   // transient: BrainBehavior tag parsed from the brain .abl
 
 	unsigned long baseColor;
 	unsigned long highlightColor;

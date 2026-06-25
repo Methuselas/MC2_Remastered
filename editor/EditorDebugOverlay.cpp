@@ -423,13 +423,36 @@ static void drawOnePatrol( Camera* eye, Unit* unit )
 		return;
 	unit->importPatrolFromBrainIfNeeded();   // show existing brain-.abl patrols too
 
-	const std::vector<Stuff::Vector3D>& wps = unit->getWaypoints();
-	if ( wps.empty() )
-		return;
-
 	DWORD col = (DWORD)unit->getColor();
 	if ( col == 0 ) col = 0xcfffffff;               // team "none" -> translucent white
 	col = ( col & 0x00ffffff ) | 0xcf000000;        // force a visible alpha
+
+	const std::vector<Stuff::Vector3D>& wps = unit->getWaypoints();
+	if ( wps.empty() )
+	{
+		// Guard brains hold their spawn position -> draw a guard ring at the unit
+		// so "this unit guards here" is visible even without a patrol path.
+		if ( unit->getBrainBehavior() == Unit::BRAIN_GUARD )
+		{
+			const Stuff::Vector3D& gp = unit->getPosition();
+			float gz = land->getTerrainElevation( gp ) + 12.0f;
+			float cx, cy;
+			if ( projectPt( eye, gp.x, gp.y, gz, cx, cy ) )
+			{
+				const float r = 14.0f;
+				float px = 0.f, py = 0.f; bool have = false;
+				for ( int k = 0; k <= 8; ++k )
+				{
+					float a = (float)k * 0.78539816f;   // 45 deg steps -> octagon
+					float x = cx + r * cosf( a ), y = cy + r * sinf( a );
+					if ( have ) patrolSeg( px, py, x, y, col );
+					px = x; py = y; have = true;
+				}
+				patrolDot( cx, cy, 4.0f, col );
+			}
+		}
+		return;
+	}
 
 	const bool loop = ( unit->getOrderType() == Unit::ORDER_PATROL );
 	const float lift = 12.0f;
