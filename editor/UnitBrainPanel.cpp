@@ -74,20 +74,22 @@ void UnitBrainPanel::Draw()
 	if (!s_open)
 		return;
 
-	// Rendered INLINE inside the docked "Tools" window (renderToolbarImGui calls
-	// this right after the toggle button) — no floating ImGui::Begin window, so the
-	// panel stays docked in the right-hand tool column like the other overlays. The
-	// toggle button already owns the "AI / Brain / Orders" label/ID, so do NOT repeat
-	// it as a CollapsingHeader here (that caused a Dear ImGui duplicate-ID error). A
-	// bordered child region visually groups the body and gives it its own scroll.
-	ImGui::Separator();
-	ImGui::BeginChild("UnitBrainPanelBody", ImVec2(0.f, 300.f), true);
+	// Its own panel, exactly like InspectorPanel — a standalone window that docks in
+	// the editor layout (not inline in the Tools column). The toggle button in
+	// renderToolbarImGui owns the "AI / Brain / Orders" label; give the WINDOW the
+	// same title (window title vs button are different ID scopes, so no clash).
+	ImGui::SetNextWindowSize(ImVec2(320.f, 420.f), ImGuiCond_FirstUseEver);
+	if (!ImGui::Begin("AI / Brain / Orders", &s_open))
+	{
+		ImGui::End();
+		return;
+	}
 
 	EditorObjectMgr* mgr = EditorObjectMgr::instance();
 	if (!mgr)
 	{
 		ImGui::TextDisabled("No map loaded.");
-		ImGui::EndChild();
+		ImGui::End();
 		return;
 	}
 
@@ -96,7 +98,7 @@ void UnitBrainPanel::Draw()
 	if (!obj)
 	{
 		ImGui::TextDisabled("Select a unit to view its AI / orders.");
-		ImGui::EndChild();
+		ImGui::End();
 		return;
 	}
 
@@ -105,7 +107,7 @@ void UnitBrainPanel::Draw()
 	{
 		ImGui::TextDisabled("Selected object is not a unit.");
 		ImGui::Text("Category: %s", InspectorPanel::CategoryToken(obj));
-		ImGui::EndChild();
+		ImGui::End();
 		return;
 	}
 
@@ -176,5 +178,5 @@ void UnitBrainPanel::Draw()
 			"action, then bind to the brain-dispatch order delivery.");
 	}
 
-	ImGui::EndChild();
+	ImGui::End();
 }
