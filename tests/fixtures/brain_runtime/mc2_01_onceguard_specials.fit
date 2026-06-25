@@ -1,0 +1,10 @@
+FITini
+; BRAIN-DISPATCH-HARNESS-V2: once-guard offline proof fixture.
+; A single POWERDOWN verb — Apply fires exactly once (gate-OFF: 1 order; gate-ON: 1 commit).
+; Proves offline: effect-verb body produces exactly 1 order per Apply+Commit run, not 0 or 2.
+
+[BrainSpecial]
+
+[Body]
+st DO0 = "Brain.CorePower false"
+st DO1 = "HOLD"

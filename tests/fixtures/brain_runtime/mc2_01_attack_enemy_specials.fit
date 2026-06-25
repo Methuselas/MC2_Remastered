@@ -1,0 +1,10 @@
+FITini
+; DISPATCH-EFFECT-COREATTACK-V2: valid enemy target WID=77.
+; Harness configures fake object WID=77 on a different team than the warrior.
+; Expected: ATTACK_OBJECT recorded once (gate-OFF), ATTACK_OBJECT committed once (gate-ON).
+
+[BrainSpecial]
+
+[Body]
+st DO0 = "OPORD.CoreAttack 77"
+st DO1 = "HOLD"

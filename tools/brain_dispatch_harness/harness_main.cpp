@@ -1,10 +1,18 @@
-// BRAIN-DISPATCH-HARNESS-1: offline dispatch harness main.
+// BRAIN-DISPATCH-HARNESS-V2: offline dispatch harness main.
 //
-// Runs parseBrainSpecialBody + bodyHasX + executeSpecialBody_TraceOnly against
-// the fixture corpus, validating against manifest.json expected entries.
-// No game launch required. No Apply exercised in v1 (deferred).
+// V1 (BRAIN-DISPATCH-HARNESS-1): parse + bodyHasX + TraceOnly — 15 checks.
+// V2 (BRAIN-DISPATCH-HARNESS-V2): adds Apply A/B effect-identity mode:
+//   --apply-mode: run executeSpecialBody_Apply + commitBrainIntents per fixture,
+//   capture TacOrderSink contents, assert apply_expectation from manifest.
+//   Gate state (OFF/ON) is determined by MC2_BRAIN_INTENT_QUEUE env var at startup.
+//   Run twice (gate-OFF then gate-ON) from scripts/run_brain_apply_ab.sh to prove
+//   A/B identity: gate-OFF orders == gate-ON committed orders.
 //
-// CLI: brain_dispatch_harness --manifest <path> [--fixture-dir <dir>] [--json]
+// V1 mode (default, no --apply-mode):
+//   Same as BRAIN-DISPATCH-HARNESS-1: 15 parse/bodyHasX/TraceOnly checks.
+//   Back-compat: v1 15/15 always pass; v2 is additive.
+//
+// CLI: brain_dispatch_harness --manifest <path> [--fixture-dir <dir>] [--json] [--apply-mode]
 //
 // Exit codes: 0 = all pass, 1 = one or more FAIL, 2 = manifest unreadable.
 
@@ -14,6 +22,11 @@
 #include "stubs/include/tacordr.h"
 #include "stubs/include/gameobj.h"
 #include "stubs/include/inifile.h"
+
+// V2 new stubs
+#include "stubs/tac_order_sink.h"
+#include "stubs/recording_warrior.h"
+#include "stubs/configurable_objmgr.h"
 
 // Real dispatch API (code/brain_special_dispatch.h — LEAF, no engine deps)
 #include "brain_special_dispatch.h"
@@ -34,12 +47,11 @@
 #include <vector>
 #ifdef _WIN32
 #include <io.h>      // _dup, _dup2, _close, _fileno
-#include <cstdlib>   // _putenv_s
+#include <cstdlib>   // _putenv
 #endif
 
 // ---------------------------------------------------------------------------
 // Minimal JSON parser — enough for our manifest schema.
-// We use a simple tokenizer; no external JSON library required.
 // ---------------------------------------------------------------------------
 
 struct JsonValue;
@@ -160,10 +172,7 @@ static JsonValue parseJsonFile(const std::string& path, std::string& err) {
 // stderr capture helpers
 // ---------------------------------------------------------------------------
 
-// Redirect stderr to a named temp file for the duration of the lambda.
-// Returns the captured stderr text.
 static std::string captureStderr(const std::function<void()>& fn) {
-    // Use a fixed temp filename in the current directory.
     static int s_captureId = 0;
     char tmpName[64];
     std::snprintf(tmpName, sizeof(tmpName), "_harness_stderr_%d.tmp", ++s_captureId);
@@ -181,7 +190,6 @@ static std::string captureStderr(const std::function<void()>& fn) {
     std::fflush(stderr);
     _dup2(oldStderr, 2);
     _close(oldStderr);
-    // Read back
     std::rewind(tmp);
     std::string result;
     char buf[1024];
@@ -214,22 +222,47 @@ static std::string captureStderr(const std::function<void()>& fn) {
 }
 
 // ---------------------------------------------------------------------------
-// FakeGameObjectManager — for CoreAttack WID lookup in Apply (deferred v2)
+// V2: Apply expectation
 // ---------------------------------------------------------------------------
-class FakeGameObjectManager : public GameObjectManager {
-public:
-    GameObjectPtr getByWatchID(long) override { return nullptr; }
+
+// Object table role for ATTACK guard tests.
+enum class AttackRole {
+    None,           // no object in table (absent WID → bad-wid)
+    EnemyTarget,    // different team from warrior → should produce ATTACK_OBJECT
+    SelfTarget,     // same WID as warrior → ATTACK_SELF guard fires
+    FriendlyTarget, // same team as warrior → ATTACK_FRIENDLY guard fires
+};
+
+struct ApplyExpectation {
+    bool          hasExpectation     = false;
+
+    // Expected TacticalOrderCode for gate-OFF and gate-ON (must match for A/B identity).
+    // -1 means "no order expected" (guards fire).
+    int           expectedOrderCode  = -1;  // TACTICAL_ORDER_* or -1
+    int           expectedCount      = 1;   // expected number of orders in sink (0 or 1)
+    long          expectedTargetWID  = 0;   // for ATTACK_OBJECT
+
+    // MOVETO: expected waypoint (approximate comparison).
+    bool          checkWaypoint      = false;
+    float         expectedX = 0, expectedY = 0, expectedZ = 0;
+
+    // ATTACK guard scenario: how to configure the fake object table.
+    AttackRole    attackRole         = AttackRole::None;
+    long          attackFakeObjWID   = 0;   // WID of the fake object to put in table
+
+    // Once-guard: body fires exactly once per run.
+    // (proven by expectedCount=1 even if body has the verb)
 };
 
 // ---------------------------------------------------------------------------
-// Manifest fixture entry
+// Fixture entry (V1 + V2)
 // ---------------------------------------------------------------------------
 struct FixtureEntry {
     std::string name;
     std::string file;
-    std::string mission;   // derived from file name (e.g. "mc2_01_specials.fit" -> "mc2_01")
+    std::string mission;
     bool        partial = false;
-    // Expected assertions
+    // V1 assertions
     bool expectedLoaded               = true;
     bool expectedBodyHasPowerdown     = false;
     bool expectedBodyHasUnitEject     = false;
@@ -239,22 +272,49 @@ struct FixtureEntry {
     bool expectedBodyHasUnitRetreat   = false;
     bool expectedBodyHasEffect        = false;
     std::vector<std::string> expectedTraceSubstrings;
+
+    // V2 apply expectation
+    ApplyExpectation applyExp;
 };
 
-// Derive mission name from fixture filename:
-// "mc2_01_specials_callchain.fit" -> "mc2_01_specials_callchain"
-// The harness calls parseBrainSpecialBody(missionName, ...) which builds path
-// "data/missions/<missionName>_specials.fit" — so we strip "_specials.fit" suffix.
-// But the harness will use direct file path instead (see below).
-static std::string missionFromFile(const std::string& fname) {
-    // Strip ".fit" extension
-    std::string s = fname;
-    if (s.size() > 4 && s.substr(s.size()-4) == ".fit")
-        s = s.substr(0, s.size()-4);
-    // If ends with "_specials", strip it
-    if (s.size() > 9 && s.substr(s.size()-9) == "_specials")
-        s = s.substr(0, s.size()-9);
-    return s;
+static ApplyExpectation applyExpFromJson(const JsonValue& jv) {
+    ApplyExpectation e;
+    if (!jv.isObj()) return e;
+    e.hasExpectation = true;
+
+    if (jv.has("expected_order_code")) {
+        const std::string& s = jv.at("expected_order_code").str();
+        if (s == "TACTICAL_ORDER_POWERDOWN")     e.expectedOrderCode = (int)TACTICAL_ORDER_POWERDOWN;
+        else if (s == "TACTICAL_ORDER_EJECT")    e.expectedOrderCode = (int)TACTICAL_ORDER_EJECT;
+        else if (s == "TACTICAL_ORDER_GUARD")    e.expectedOrderCode = (int)TACTICAL_ORDER_GUARD;
+        else if (s == "TACTICAL_ORDER_MOVETO_POINT") e.expectedOrderCode = (int)TACTICAL_ORDER_MOVETO_POINT;
+        else if (s == "TACTICAL_ORDER_ATTACK_OBJECT") e.expectedOrderCode = (int)TACTICAL_ORDER_ATTACK_OBJECT;
+        else if (s == "TACTICAL_ORDER_WITHDRAW") e.expectedOrderCode = (int)TACTICAL_ORDER_WITHDRAW;
+        else if (s == "NONE")                    e.expectedOrderCode = -1;
+    }
+    if (jv.has("expected_count")) e.expectedCount = (int)jv.at("expected_count").nval;
+    if (jv.has("expected_target_wid")) e.expectedTargetWID = (long)jv.at("expected_target_wid").nval;
+
+    if (jv.has("expected_waypoint")) {
+        const JsonValue& wp = jv.at("expected_waypoint");
+        if (wp.isArr() && wp.arr().size() >= 3) {
+            e.checkWaypoint = true;
+            e.expectedX = (float)wp.arr()[0].nval;
+            e.expectedY = (float)wp.arr()[1].nval;
+            e.expectedZ = (float)wp.arr()[2].nval;
+        }
+    }
+
+    if (jv.has("attack_role")) {
+        const std::string& r = jv.at("attack_role").str();
+        if (r == "enemy")    e.attackRole = AttackRole::EnemyTarget;
+        else if (r == "self")     e.attackRole = AttackRole::SelfTarget;
+        else if (r == "friendly") e.attackRole = AttackRole::FriendlyTarget;
+        else if (r == "absent")   e.attackRole = AttackRole::None;
+    }
+    if (jv.has("attack_fake_obj_wid")) e.attackFakeObjWID = (long)jv.at("attack_fake_obj_wid").nval;
+
+    return e;
 }
 
 static FixtureEntry entryFromJson(const JsonValue& jv) {
@@ -276,68 +336,87 @@ static FixtureEntry entryFromJson(const JsonValue& jv) {
         for (const JsonValue& sv : jv.at("expected_trace_substrings").arr())
             e.expectedTraceSubstrings.push_back(sv.str());
     }
+
+    if (jv.has("apply_expectation"))
+        e.applyExp = applyExpFromJson(jv.at("apply_expectation"));
+
     return e;
 }
 
 // ---------------------------------------------------------------------------
-// Path resolution helpers
+// V2: Run Apply + Commit for a fixture, capture sink contents.
+// warrior.warriorWID = 1, warrior.warriorTeam = &s_warriorTeam
+// Returns: trace captured, sink populated.
 // ---------------------------------------------------------------------------
 
-// The real parseBrainSpecialBody builds "data/missions/<missionName>_specials.fit"
-// and opens it relative to CWD. For the harness we need to open the fixture file
-// directly. Strategy: we chdir to the fixture dir so the built path is correct —
-// OR we implement a thin wrapper that accepts an explicit path.
-//
-// Simplest approach: invoke parseBrainSpecialBody with a synthetic missionName
-// that makes the built path match the fixture. We compute missionName such that
-// "data/missions/<missionName>_specials.fit" == fixtureDir/file.
-//
-// Since we can't control the path prefix easily, we instead set CWD to a temp
-// directory with a "data/missions/" subdirectory containing symlinks — but that's
-// complex. Simpler: just use a mission name that includes a relative path prefix.
-//
-// ACTUAL APPROACH: The dispatch.cpp builds: "data/missions/<missionName>_specials.fit"
-// If we chdir to <fixtureDir>/../.. (i.e., the worktree root) and the fixture dir
-// is "tests/fixtures/brain_runtime/", we'd need "data/missions/" to exist there.
-//
-// Simplest correct approach: Copy/symlink? No.
-// Even simpler: compute missionName = "../../tests/fixtures/brain_runtime/" + baseStem
-// so the path becomes "data/missions/../../tests/fixtures/brain_runtime/<stem>_specials.fit"
-// when CWD = worktree root.
-//
-// Actually the cleanest: just call parseBrainSpecialBody_RawScan directly via a
-// thin wrapper that takes absolute path. But parseBrainSpecialBody_RawScan is static.
-//
-// FINAL APPROACH: Pass a missionName that contains relative path tokens so the
-// constructed path resolves correctly from CWD. Set CWD = worktreeRoot.
-// missionName = "../../tests/fixtures/brain_runtime/<stem>"
-// => fitPath = "data/missions/../../tests/fixtures/brain_runtime/<stem>_specials.fit"
-//           = "tests/fixtures/brain_runtime/<stem>_specials.fit" (after .. resolution)
-// This works on both Windows and Linux.
+// Shared team instances for guard testing.
+static Team s_warriorTeam;    // warrior's own team
+static Team s_enemyTeam;      // distinct team (different pointer)
 
-static std::string makeHarnessMissionName(const std::string& fixtureFile) {
-    // Strip ".fit" extension
-    std::string s = fixtureFile;
-    if (s.size() > 4 && s.substr(s.size()-4) == ".fit")
-        s = s.substr(0, s.size()-4);
-    // Strip "_specials" suffix if present (so parseBrainSpecialBody re-appends it)
-    // If the file already has "_specials" in name, the final path will be:
-    //   data/missions/../../tests/fixtures/brain_runtime/<s>_specials.fit
-    // But if s doesn't end in _specials, the constructed path won't match.
-    // Since ALL brain fixture files ARE named <stem>_specials.fit or <stem>.fit,
-    // we handle both cases.
-    bool endsInSpecials = (s.size() > 9 && s.substr(s.size()-9) == "_specials");
-    if (endsInSpecials) {
-        // Strip _specials; parseBrainSpecialBody will re-add it
-        s = s.substr(0, s.size()-9);
+static ConfigurableGameObjectManager s_configObjMgr;
+static TacOrderSink                  s_sink;
+
+struct ApplyRunResult {
+    TacOrderSink sink;
+    std::string  traceOutput;
+    bool         applyReturnedTrue; // executeSpecialBody_Apply return value
+};
+
+static ApplyRunResult runApply(const BrainSpecialBody& body, const SpecialIndex& index,
+                               const ApplyExpectation& exp, bool intentQueueGateIsOn) {
+    ApplyRunResult res;
+
+    // Configure object manager based on attack_role.
+    s_configObjMgr.clear();
+    static FakeGameObject s_fakeObj1, s_fakeObj2;
+
+    if (exp.attackRole != AttackRole::None && exp.attackFakeObjWID > 0) {
+        long wid = exp.attackFakeObjWID;
+        FakeGameObject* obj = &s_fakeObj1;
+        obj->fakeWID = wid;
+        if (exp.attackRole == AttackRole::FriendlyTarget)
+            obj->fakeTeam = &s_warriorTeam;   // same team = friendly
+        else if (exp.attackRole == AttackRole::SelfTarget)
+            obj->fakeTeam = &s_warriorTeam;   // same team for self (WID check fires first)
+        else // EnemyTarget
+            obj->fakeTeam = &s_enemyTeam;     // different team = enemy
+        s_configObjMgr.addObject(wid, obj);
     }
-    // parseBrainSpecialBody appends "_specials.fit" to missionName
-    // So for "mc2_01_ai.fit" (no _specials suffix), we'd need missionName = "mc2_01_ai"
-    // and parseBrainSpecialBody would look for "mc2_01_ai_specials.fit" — WRONG.
-    //
-    // For non-_specials files, we can't use parseBrainSpecialBody directly.
-    // Mark these as "direct" path (handled separately below via raw scan directly).
-    return "../../tests/fixtures/brain_runtime/" + s;
+    ObjectManager = &s_configObjMgr;
+
+    // Set up recording warrior.
+    RecordingMechWarrior warrior;
+    warrior.warriorWID  = 1;
+    warrior.warriorTeam = &s_warriorTeam;
+
+    // For SelfTarget: the fake obj WID must match warrior WID.
+    if (exp.attackRole == AttackRole::SelfTarget)
+        warrior.warriorWID = exp.attackFakeObjWID;
+
+    warrior.resetRuntime();
+
+    // Set up sink.
+    s_sink.clear();
+    g_activeSink = &s_sink;
+
+    res.traceOutput = captureStderr([&]() {
+        res.applyReturnedTrue = executeSpecialBody_Apply(body, &warrior, (int)warrior.warriorWID,
+                                                         nullptr,  // varStore
+                                                         &index,
+                                                         nullptr); // callerKey
+
+        // commitBrainIntents only if gate is ON.
+        // Gate is determined by MC2_BRAIN_INTENT_QUEUE env var (static inside dispatch.cpp).
+        // When gate is ON, runtime != nullptr inside Apply, intents are queued.
+        // commitBrainIntents drains them.
+        if (intentQueueGateIsOn) {
+            commitBrainIntents(&warrior, &warrior.brainRuntime);
+        }
+    });
+
+    res.sink = s_sink;
+    g_activeSink = nullptr;
+    return res;
 }
 
 // ---------------------------------------------------------------------------
@@ -348,7 +427,8 @@ int main(int argc, char** argv) {
     // --- Parse CLI ---
     std::string manifestPath;
     std::string fixtureDir = "tests/fixtures/brain_runtime";
-    bool        jsonOutput = false;
+    bool        jsonOutput  = false;
+    bool        applyMode   = false;
 
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--manifest") == 0 && i+1 < argc)
@@ -357,12 +437,29 @@ int main(int argc, char** argv) {
             fixtureDir = argv[++i];
         else if (std::strcmp(argv[i], "--json") == 0)
             jsonOutput = true;
+        else if (std::strcmp(argv[i], "--apply-mode") == 0)
+            applyMode = true;
     }
 
     if (manifestPath.empty()) {
-        std::fprintf(stderr, "Usage: brain_dispatch_harness --manifest <path> [--fixture-dir <dir>] [--json]\n");
+        std::fprintf(stderr, "Usage: brain_dispatch_harness --manifest <path> [--fixture-dir <dir>] [--json] [--apply-mode]\n");
         return 2;
     }
+
+    // Set required env gates BEFORE any dispatch call (static initializers).
+    // In apply mode we set MC2_BRAIN_DISPATCH_APPLY=1 as well.
+    (void)_putenv("MC2_BRAIN_DISPATCH=1");
+    (void)_putenv("MC2_BRAIN_DISPATCH_CALL=1");
+    (void)_putenv("MC2_BRAIN_DISPATCH_VAR=1");
+    if (applyMode) {
+        (void)_putenv("MC2_BRAIN_DISPATCH_APPLY=1");
+    }
+    // MC2_BRAIN_INTENT_QUEUE is read from the environment as-is.
+    // The caller sets it before invoking the harness for gate-ON runs.
+
+    // Detect intent queue gate state (read BEFORE first static-init call).
+    const char* intentQueueEnv = std::getenv("MC2_BRAIN_INTENT_QUEUE");
+    bool intentQueueGateOn = (intentQueueEnv && std::atoi(intentQueueEnv) != 0);
 
     // --- Load manifest ---
     std::string jsonErr;
@@ -380,23 +477,18 @@ int main(int argc, char** argv) {
     for (const JsonValue& jv : manifest.at("fixtures").arr())
         fixtures.push_back(entryFromJson(jv));
 
-    // --- Set up fake ObjectManager for Apply path ---
-    static FakeGameObjectManager s_fakeObjMgr;
-    ObjectManager = &s_fakeObjMgr;
-
-    // --- Set required env gates ---
-    // The harness always runs with DISPATCH=1 (parse+trace) and CALL=1 (for callchain fixtures).
-    // Gates are read once via static initializers — set BEFORE first dispatch call.
-    // Note: _putenv on Windows updates getenv() correctly.
-    (void)_putenv("MC2_BRAIN_DISPATCH=1");
-    (void)_putenv("MC2_BRAIN_DISPATCH_CALL=1");
-    (void)_putenv("MC2_BRAIN_DISPATCH_VAR=1");
+    // V1: set up simple fake object manager (returns nullptr for all lookups).
+    static class SimpleFakeObjMgr : public GameObjectManager {
+    public:
+        GameObjectPtr getByWatchID(long) override { return nullptr; }
+    } s_simpleFakeObjMgr;
 
     // --- Results ---
     int passCount = 0, failCount = 0, skipCount = 0;
     struct Result {
         std::string name;
         std::string status; // PASS / FAIL / SKIP
+        std::string mode;   // "v1" or "v2-apply"
         std::vector<std::string> failures;
     };
     std::vector<Result> results;
@@ -405,116 +497,30 @@ int main(int argc, char** argv) {
     for (const FixtureEntry& fix : fixtures) {
         Result res;
         res.name = fix.name;
+        res.mode = "v1";
 
         // Build path to fixture file
         std::string fitPath = fixtureDir + "/" + fix.file;
 
-        // Derive missionName for parseBrainSpecialBody call.
-        // parseBrainSpecialBody(missionName, ...) opens "data/missions/<missionName>_specials.fit"
-        // We need: data/missions/<missionName>_specials.fit == fixtureDir/file
-        // Solution: missionName = "../../<fixtureDir>/<stem_no_fit_no_specials_suffix>"
-        // Then the constructed path = "data/missions/../../<fixtureDir>/<stem>_specials.fit"
-        // which resolves to "<fixtureDir>/<stem>_specials.fit" from worktree root.
-        //
-        // For fixtures that DO end in "_specials.fit": strip "_specials" → parseBrainSpecialBody re-adds it.
-        // For fixtures that DON'T end in "_specials.fit": must pass the FULL stem so that
-        //   parseBrainSpecialBody appends "_specials.fit" and the result is wrong — handled as partial.
-        //   Instead, synthesize a path that matches: use stem_no_fit as the whole segment,
-        //   so the constructed path = "data/missions/../../<dir>/<stem_no_fit>_specials.fit"
-        //   which equals <dir>/<stem_no_fit>_specials.fit — this won't match the actual file.
-        //   These fixtures are marked partial and the body won't load — that's expected.
-        //
-        // Special case: files like "mc2_01_specials_callchain.fit" DO end in something that
-        // contains "_specials" but not as the LAST suffix. They DON'T have "_specials.fit".
-        // We need to pass missionName such that the constructed path matches the actual file.
-        // Strategy: strip ".fit" from file → get stem.
-        //   If stem ends in "_specials": strip it, pass "../../<dir>/<baseStem>"
-        //     → constructed path = "data/missions/../../<dir>/<baseStem>_specials.fit" ✓
-        //   Else: pass "../../<dir>/<stem>"
-        //     → constructed path = "data/missions/../../<dir>/<stem>_specials.fit" ✗ (won't match)
-        //     → HOWEVER for brace-block files the raw scanner IS called with this path...
-        //     Since the file IS "mc2_01_specials_callchain.fit" and not
-        //     "mc2_01_specials_callchain_specials.fit", this fails.
-        //
-        // REAL FIX: for brace-block files that don't end in "_specials.fit", compute
-        // missionName to make the path match the actual file minus "_specials.fit".
-        // Wait — ALL specials fixture files in our corpus that have content end in "_specials.fit"
-        // OR are brace-block files that also end in "_specials.fit" (checking the actual files).
-        //
-        // Checking: mc2_01_specials_callchain.fit — does NOT end in _specials.fit
-        //   → actual stem = "mc2_01_specials_callchain" (no _specials suffix)
-        //   → missionName = "../../tests/fixtures/brain_runtime/mc2_01_specials_callchain"
-        //   → parseBrainSpecialBody looks for: "data/missions/../../tests/fixtures/brain_runtime/mc2_01_specials_callchain_specials.fit"
-        //   → this file does NOT exist; RawScan fails; FitIni fallback fails; loaded=false
-        //
-        // THIS IS A NAMING MISMATCH. The fixture file is named "..._callchain.fit" not
-        // "..._callchain_specials.fit". parseBrainSpecialBody ALWAYS appends "_specials.fit".
-        //
-        // SOLUTION: for non-_specials-ending files, we DON'T use parseBrainSpecialBody.
-        // Instead, we duplicate the raw-scan logic inline, passing fitPath directly.
-        // Since parseBrainSpecialBody_RawScan is static, we expose it via a thin public wrapper.
-        // For v1: just mark non-_specials brace files as needing direct-path loading.
-        //
-        // ALTERNATE SOLUTION: add a public entry point parseBrainSpecialBodyFromPath in dispatch.cpp.
-        // But that changes the TU. For PURE harness we'll use a renamed file convention:
-        // we just pass the full path via the data/missions relative trick differently.
-        //
-        // ACTUAL SIMPLEST SOLUTION: Use a directory structure that matches the path.
-        // Create a "data/missions/" symlink/dir under build dir... complex.
-        //
-        // BEST PRAGMATIC SOLUTION: For non-_specials brace files, strip ".fit" and nothing else.
-        // That makes the constructed path: "data/missions/../../<dir>/<stem>_specials.fit"
-        // = "<dir>/<stem>_specials.fit" which is the wrong name.
-        //
-        // WORKING APPROACH: rename the fixture files in the harness copy OR use the right naming.
-        // Since we can't rename corpus files, the clean fix is to add parseBrainSpecialBodyFromPath().
-        // For now: mark brace-block non-_specials files as handled via a workaround. We call
-        // parseBrainSpecialBody with a missionName whose constructed path = actual fixture path.
-        // For "mc2_01_specials_callchain.fit":
-        //   we want: "data/missions/<X>_specials.fit" == "tests/fixtures/brain_runtime/mc2_01_specials_callchain.fit"
-        //   So X = "../../tests/fixtures/brain_runtime/mc2_01_specials_callchain"
-        //   and the file looked for = "data/missions/../../tests/fixtures/brain_runtime/mc2_01_specials_callchain_specials.fit"
-        //   = "tests/fixtures/brain_runtime/mc2_01_specials_callchain_specials.fit"
-        //   That's wrong because the file is "mc2_01_specials_callchain.fit" not "_callchain_specials.fit".
-        //
-        // TRUTH: We need parseBrainSpecialBody to look for the EXACT file path.
-        // The ONLY way without modifying dispatch.cpp is to pre-process the fixture path.
-        // Since the callchain file IS "mc2_01_specials_callchain.fit" (non-standard naming),
-        // we need a public API. ADDING parseBrainSpecialBodyFromPath to dispatch.cpp is minimal:
-        // just expose the path directly.
-        //
-        // For THIS harness, we call parseBrainSpecialBody with missionName such that the path
-        // resolves correctly. The callchain files DO end in something other than _specials.
-        // We'll use a secondary approach: create the "correct" path symlink in a temp dir.
-        // Actually, SIMPLEST: just set CWD = fixture dir temporarily and call with bare stem name.
-        //
-        // In fixture dir CWD: parseBrainSpecialBody("mc2_01_specials_callchain", ...) builds
-        // "data/missions/mc2_01_specials_callchain_specials.fit" — still wrong!
-        //
-        // THE REAL FIX: expose parseBrainSpecialBodyFromPath publicly.
-        // This is a 3-line addition to brain_special_dispatch.h/.cpp.
-
-        // Use parseBrainSpecialBodyFromPath (explicit-path API added in BRAIN-DISPATCH-HARNESS-1)
-        // so we don't need to reverse-engineer the "data/missions/<X>_specials.fit" path logic.
-
         BrainSpecialBody body;
         SpecialIndex     index;
 
-        // Capture stderr from parseBrainSpecialBodyFromPath + executeSpecialBody_TraceOnly
+        // V1: parse + TraceOnly (always runs, even in apply-mode for back-compat).
         std::string traceOutput = captureStderr([&]() {
+            // Reset object manager for v1 pass.
+            ObjectManager = &s_simpleFakeObjMgr;
             parseBrainSpecialBodyFromPath(fitPath.c_str(), body, &index);
             if (body.loaded) {
                 executeSpecialBody_TraceOnly(body, /*wid=*/1, nullptr, &index, nullptr);
             }
         });
 
-        // --- Assertions ---
+        // --- V1 Assertions ---
         if (fix.partial) {
-            // Partial entries: just verify it loads without crash
             res.status = "SKIP";
             ++skipCount;
             results.push_back(res);
-            continue;
+            goto next_fixture;
         }
 
         // 1. loaded
@@ -526,8 +532,6 @@ int main(int argc, char** argv) {
             // 2. bodyHasX checks
             if (fix.expectedBodyHasPowerdown  && !bodyHasPowerdown(body))
                 res.failures.push_back("expected bodyHasPowerdown=true");
-            if (!fix.expectedBodyHasPowerdown && bodyHasPowerdown(body) && fix.expectedBodyHasPowerdown == false && !fix.name.empty())
-                {} // not checking negatives unless explicitly set
             if (fix.expectedBodyHasUnitEject  && !bodyHasUnitEject(body))
                 res.failures.push_back("expected bodyHasUnitEject=true");
             if (fix.expectedBodyHasCoreGuard  && !bodyHasCoreGuard(body))
@@ -546,9 +550,80 @@ int main(int argc, char** argv) {
         for (const std::string& sub : fix.expectedTraceSubstrings) {
             if (traceOutput.find(sub) == std::string::npos) {
                 res.failures.push_back("trace missing substring: '" + sub + "'");
-                // Show first 400 chars of trace for diagnosis
                 if (res.failures.size() == 1)
                     res.failures.push_back("  trace preview: " + traceOutput.substr(0, 400));
+            }
+        }
+
+        // --- V2 Apply assertions (only in --apply-mode, only if fixture has apply_expectation) ---
+        if (applyMode && fix.applyExp.hasExpectation && body.loaded) {
+            res.mode = "v2-apply";
+            const ApplyExpectation& ae = fix.applyExp;
+
+            ApplyRunResult ar = runApply(body, index, ae, intentQueueGateOn);
+
+            // Assert expected order count.
+            int actualCount = (int)ar.sink.orders.size();
+            if (actualCount != ae.expectedCount) {
+                char buf[256];
+                std::snprintf(buf, sizeof(buf),
+                    "apply: expected %d order(s) in sink, got %d (gate_%s) trace: %.200s",
+                    ae.expectedCount, actualCount,
+                    intentQueueGateOn ? "ON" : "OFF",
+                    ar.traceOutput.c_str());
+                res.failures.push_back(buf);
+            }
+
+            // Assert expected order code (if orders expected).
+            if (ae.expectedCount > 0 && ae.expectedOrderCode >= 0 && !ar.sink.orders.empty()) {
+                TacticalOrderCode expectedCode = (TacticalOrderCode)ae.expectedOrderCode;
+                if (ar.sink.orders[0].code != expectedCode) {
+                    char buf[256];
+                    std::snprintf(buf, sizeof(buf),
+                        "apply: expected order code %d, got %d (gate_%s)",
+                        ae.expectedOrderCode, (int)ar.sink.orders[0].code,
+                        intentQueueGateOn ? "ON" : "OFF");
+                    res.failures.push_back(buf);
+                }
+            }
+
+            // Assert ATTACK target WID.
+            if (ae.expectedCount > 0 && ae.expectedOrderCode == (int)TACTICAL_ORDER_ATTACK_OBJECT
+                && ae.expectedTargetWID != 0 && !ar.sink.orders.empty()) {
+                if (ar.sink.orders[0].targetWID != ae.expectedTargetWID) {
+                    char buf[256];
+                    std::snprintf(buf, sizeof(buf),
+                        "apply: ATTACK targetWID expected %ld got %ld (gate_%s)",
+                        ae.expectedTargetWID, ar.sink.orders[0].targetWID,
+                        intentQueueGateOn ? "ON" : "OFF");
+                    res.failures.push_back(buf);
+                }
+            }
+
+            // Assert MOVETO waypoint (approximate).
+            if (ae.checkWaypoint && ae.expectedCount > 0 && !ar.sink.orders.empty()) {
+                const RecordedOrder& ro = ar.sink.orders[0];
+                float dx = ro.waypointX - ae.expectedX;
+                float dy = ro.waypointY - ae.expectedY;
+                float dz = ro.waypointZ - ae.expectedZ;
+                if (dx*dx + dy*dy + dz*dz > 0.01f) {
+                    char buf[256];
+                    std::snprintf(buf, sizeof(buf),
+                        "apply: MOVETO waypoint expected (%.1f %.1f %.1f) got (%.1f %.1f %.1f) (gate_%s)",
+                        ae.expectedX, ae.expectedY, ae.expectedZ,
+                        ro.waypointX, ro.waypointY, ro.waypointZ,
+                        intentQueueGateOn ? "ON" : "OFF");
+                    res.failures.push_back(buf);
+                }
+            }
+
+            // Assert no order for guard-fire cases.
+            if (ae.expectedCount == 0 && !ar.sink.orders.empty()) {
+                char buf[256];
+                std::snprintf(buf, sizeof(buf),
+                    "apply: expected 0 orders (guard should fire), got %d order(s) (gate_%s)",
+                    (int)ar.sink.orders.size(), intentQueueGateOn ? "ON" : "OFF");
+                res.failures.push_back(buf);
             }
         }
 
@@ -560,18 +635,25 @@ int main(int argc, char** argv) {
             ++failCount;
         }
         results.push_back(res);
+        continue;
+
+        next_fixture:;
     }
 
     // --- Output ---
+    const char* modeLabel = applyMode
+        ? (intentQueueGateOn ? "v2-apply gate=ON" : "v2-apply gate=OFF")
+        : "v1-parse";
+
     if (jsonOutput) {
-        std::printf("{\n  \"pass\": %d, \"fail\": %d, \"skip\": %d,\n  \"results\": [\n", passCount, failCount, skipCount);
+        std::printf("{\n  \"mode\": \"%s\",\n  \"pass\": %d, \"fail\": %d, \"skip\": %d,\n  \"results\": [\n",
+                    modeLabel, passCount, failCount, skipCount);
         for (size_t i = 0; i < results.size(); ++i) {
             const Result& r = results[i];
             std::printf("    {\"name\": \"%s\", \"status\": \"%s\"", r.name.c_str(), r.status.c_str());
             if (!r.failures.empty()) {
                 std::printf(", \"failures\": [");
                 for (size_t j = 0; j < r.failures.size(); ++j) {
-                    // Escape quotes in failure message
                     std::string f = r.failures[j];
                     std::string esc;
                     for (char c : f) { if (c=='"') esc+="\\\""; else esc+=c; }
@@ -583,7 +665,8 @@ int main(int argc, char** argv) {
         }
         std::printf("  ]\n}\n");
     } else {
-        std::printf("brain_dispatch_harness: %d fixtures (%d pass, %d fail, %d skip)\n",
+        std::printf("brain_dispatch_harness [%s]: %d fixtures (%d pass, %d fail, %d skip)\n",
+                    modeLabel,
                     (int)results.size(), passCount, failCount, skipCount);
         for (const Result& r : results) {
             std::printf("  %-50s  %s\n", r.name.c_str(), r.status.c_str());
