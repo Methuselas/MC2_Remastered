@@ -493,6 +493,15 @@ void RenderPatrolPaths( Camera* eye )
 	if ( !mgr )
 		return;
 
+	// Same overlay render state as RenderWorldOverlay — alpha-blended, no texture,
+	// always-on-top (ZCompare/ZWrite off). Without this the gos_DrawLines for the
+	// path inherit arbitrary state (textured / z-tested) and never show.
+	gos_SetRenderState( gos_State_Texture,   0 );
+	gos_SetRenderState( gos_State_AlphaMode,  gos_Alpha_AlphaInvAlpha );
+	gos_SetRenderState( gos_State_AlphaTest,  0 );
+	gos_SetRenderState( gos_State_ZCompare,   0 );
+	gos_SetRenderState( gos_State_ZWrite,     0 );
+
 	EditorObjectMgr::UNIT_LIST units = mgr->getUnits();
 	for ( EditorObjectMgr::UNIT_LIST::EIterator it = units.Begin(); !it.IsDone(); it++ )
 		drawOnePatrol( eye, *it );
