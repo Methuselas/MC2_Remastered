@@ -15,6 +15,24 @@ HeightBrush.cpp : see HeightBrush.h
 #include <math.h>
 
 //-------------------------------------------------------------------------------------------------
+// Modern GL forward projection (projectModernClipGL + viewport remap) -- the same
+// zoom-correct transform object selection uses. Legacy projectZ diverges/rejects
+// when zoomed in (X-collapse). Returns false (skip primitive) behind the near plane.
+static bool projectPtGL_brush( Camera* eye, const Stuff::Vector3D& wp, float& sx, float& sy )
+{
+	ModernClipResult r = eye->projectModernClipGL( wp );
+	if ( r.clip.w <= 1e-4f ) return false;
+	float vmx = 0.f, vmy = 0.f, vax = 0.f, vay = 0.f;
+	gos_GetViewport( &vmx, &vmy, &vax, &vay );
+	const float ndcX = r.clip.x / r.clip.w;
+	const float ndcY = r.clip.y / r.clip.w;
+	sx = vax + ( ndcX * 0.5f + 0.5f ) * vmx;
+	sy = vay + ( 1.0f - ( ndcY * 0.5f + 0.5f ) ) * vmy;
+	if ( !( sx == sx ) || !( sy == sy ) ) return false;
+	return true;
+}
+
+//-------------------------------------------------------------------------------------------------
 HeightBrush::HeightBrush( Mode m, float r, float s )
 	: mode( m ), radius( r ), strength( s ), pCurAction( NULL )
 {
@@ -193,12 +211,13 @@ void HeightBrush::render( int screenX, int screenY )
 	eye->inverseProject( sp, center );
 	center.z = land->getTerrainElevation( center );
 
-	Stuff::Vector4D centerS;
-	eye->projectZ( center, centerS );
+	float centerSx = 0.f, centerSy = 0.f;
+	const bool centerOk = projectPtGL_brush( eye, center, centerSx, centerSy );
 
 	// Project the rim of the brush footprint onto the terrain.
 	const int N = 48;
-	Stuff::Vector4D rim[N + 1];
+	float rimX[N + 1], rimY[N + 1];
+	bool  rimOk[N + 1];
 	for ( int k = 0; k <= N; ++k )
 	{
 		const float ang = (float)k / (float)N * 6.2831853f;
@@ -206,7 +225,7 @@ void HeightBrush::render( int screenX, int screenY )
 		wp.x += cosf( ang ) * radius;
 		wp.y += sinf( ang ) * radius;
 		wp.z = land->getTerrainElevation( wp );
-		eye->projectZ( wp, rim[k] );
+		rimOk[k] = projectPtGL_brush( eye, wp, rimX[k], rimY[k] );
 	}
 
 	gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_AlphaInvAlpha );
@@ -218,23 +237,28 @@ void HeightBrush::render( int screenX, int screenY )
 	gos_SetRenderState( gos_State_ZWrite,   0 );
 
 	// Filled translucent magenta disc (triangle fan from the centre to the rim).
+	if ( centerOk )
 	for ( int k = 0; k < N; ++k )
 	{
+		if ( !rimOk[k] || !rimOk[k+1] )
+			continue;  // skip tris touching a near-plane-rejected rim point
 		gos_VERTEX t[3];
 		memset( t, 0, sizeof( t ) );
-		t[0].x = centerS.x; t[0].y = centerS.y; t[0].rhw = 1.0f; t[0].argb = 0x40ff00ff;
-		t[1].x = rim[k].x;  t[1].y = rim[k].y;  t[1].rhw = 1.0f; t[1].argb = 0x40ff00ff;
-		t[2].x = rim[k+1].x;t[2].y = rim[k+1].y;t[2].rhw = 1.0f; t[2].argb = 0x40ff00ff;
+		t[0].x = centerSx;  t[0].y = centerSy;  t[0].rhw = 1.0f; t[0].argb = 0x40ff00ff;
+		t[1].x = rimX[k];   t[1].y = rimY[k];   t[1].rhw = 1.0f; t[1].argb = 0x40ff00ff;
+		t[2].x = rimX[k+1]; t[2].y = rimY[k+1]; t[2].rhw = 1.0f; t[2].argb = 0x40ff00ff;
 		gos_DrawTriangles( t, 3 );
 	}
 
 	// Bright magenta outline ring on top.
 	for ( int k = 0; k < N; ++k )
 	{
+		if ( !rimOk[k] || !rimOk[k+1] )
+			continue;  // skip segments touching a near-plane-rejected rim point
 		gos_VERTEX v[2];
 		memset( v, 0, sizeof( v ) );
-		v[0].x = rim[k].x;   v[0].y = rim[k].y;   v[0].rhw = 1.0f; v[0].argb = 0xffff00ff;
-		v[1].x = rim[k+1].x; v[1].y = rim[k+1].y; v[1].rhw = 1.0f; v[1].argb = 0xffff00ff;
+		v[0].x = rimX[k];   v[0].y = rimY[k];   v[0].rhw = 1.0f; v[0].argb = 0xffff00ff;
+		v[1].x = rimX[k+1]; v[1].y = rimY[k+1]; v[1].rhw = 1.0f; v[1].argb = 0xffff00ff;
 		gos_DrawLines( v, 2 );
 	}
 

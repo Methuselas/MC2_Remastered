@@ -171,6 +171,10 @@ inline float agsqrt( float _a, float _b )
 	return sqrt(_a*_a + _b*_b);
 }
 
+// Forward decl: GL-correct world->screen projection (defined below). Used by the
+// pick helpers, which precede the definition.
+static bool EditorObjectMgr_ProjectScreenXY_GL(const Stuff::Vector3D& wp, Stuff::Vector4D& sp);
+
 static bool EditorObjectMgr_PointInsideAppearance(ObjectAppearance* pAppearance, int screenX, int screenY, bool allowPerPoly)
 {
 	if (!pAppearance)
@@ -214,8 +218,12 @@ static void EditorObjectMgr_ConsiderScreenCenter(EditorObject* pObject, int scre
 
 	ObjectAppearance* pApp = pObject->appearance();
 
+	// Modern zoom-correct projection (projectModernClipGL + viewport remap) — the
+	// legacy projectZ diverges/rejects when zoomed in (X-collapse). If the center
+	// projects behind the near plane, this object is not pickable -> skip.
 	Stuff::Vector4D center;
-	eye->projectZ(pApp->position, center);
+	if (!EditorObjectMgr_ProjectScreenXY_GL(pApp->position, center))
+		return;
 
 	// Size-aware pick radius: project a world point one extent-radius from the
 	// object center and measure the screen-space gap, so large objects (walls,
@@ -229,7 +237,10 @@ static void EditorObjectMgr_ConsiderScreenCenter(EditorObject* pObject, int scre
 	Stuff::Vector3D edgeWorld = pApp->position;
 	edgeWorld.x += worldRadius;
 	Stuff::Vector4D edge;
-	eye->projectZ(edgeWorld, edge);
+	// If the edge point rejects, fall back to the floored pixel radius below by
+	// reusing center.x/y (zero screen gap -> screenRadius clamps to the floor).
+	if (!EditorObjectMgr_ProjectScreenXY_GL(edgeWorld, edge))
+		edge = center;
 	float rdx = edge.x - center.x;
 	float rdy = edge.y - center.y;
 	float screenRadius = sqrtf(rdx * rdx + rdy * rdy);
@@ -1508,7 +1519,9 @@ void EditorObjectMgr::render()
 		Stuff::Vector3D pos = (*dIter)->getPosition();
 		Stuff::Vector4D screen;
 
-		eye->projectZ( pos, screen );
+		// Modern zoom-correct projection — legacy projectZ X-collapses on zoom.
+		if ( !EditorObjectMgr_ProjectScreenXY_GL( pos, screen ) )
+			continue;  // behind near plane -> skip marker
 
 		GUI_RECT Rect;
 		Rect.top = screen.y - 3;

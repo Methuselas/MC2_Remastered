@@ -345,21 +345,19 @@ namespace
 		{
 			if ( !obj || !obj->appearance() )
 				return;
-			Stuff::Vector3D wpos = obj->getPosition();  // mutable copy (projectForScreenXY takes Vector3D&)
+			Stuff::Vector3D wpos = obj->getPosition();
 
-			Stuff::Vector4D scr;
-			if ( !eye->projectForScreenXY( wpos, scr ) )
-				return;
-			if ( scr.w <= 1e-4f )
-				return;
-			if ( scr.x != scr.x || scr.y != scr.y )   // NaN guard
+			// Modern zoom-correct projection (projectPtGL) — legacy projectForScreenXY
+			// diverges/rejects when zoomed in (X-collapse), making labels jump/vanish.
+			float scrX = 0.f, scrY = 0.f;
+			if ( !projectPtGL( eye, wpos.x, wpos.y, wpos.z, scrX, scrY ) )
 				return;
 
 			char buf[64];
 			const char* name = obj->getDisplayName();
 			snprintf( buf, sizeof(buf), "id:%ld %s", obj->getID(), name ? name : "?" );
 
-			const ImVec2 pos( scr.x + 2.f, scr.y - 14.f );
+			const ImVec2 pos( scrX + 2.f, scrY - 14.f );
 			// Drop shadow one pixel offset for contrast over bright terrain.
 			dl->AddText( ImVec2( pos.x + 1.f, pos.y + 1.f ), colShadow, buf );
 			dl->AddText( pos, colText, buf );
