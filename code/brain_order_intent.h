@@ -38,6 +38,9 @@ enum class BrainIntentSlot : uint8_t {
 enum class BrainIntentKind : uint8_t {
     ORDER      = 0,
     CLEAR_MOVE = 1,
+    // UNITQUERY-SETTARGETPRIORITY-1: a per-warrior target-priority list write,
+    // committed via MechWarrior::setTargetPriority(). policyArgs = {slot,type,p1,p2,p3}.
+    TARGET_POLICY = 2,
 };
 
 // ---------------------------------------------------------------------------
@@ -60,6 +63,9 @@ struct BrainOrderIntent {
     float             waypoint[3];  // MOVETO_POINT: x/y/z destination; zeroed otherwise
     uint32_t          sourceBodyId; // 0 = root body; future: index into SpecialIndex
     uint32_t          brainTick;    // s_brainTickIndex at time of emission
+    // UNITQUERY-SETTARGETPRIORITY-1: TARGET_POLICY payload = {slot,type,p1,p2,p3};
+    // zeroed otherwise. Passed verbatim to MechWarrior::setTargetPriority() on commit.
+    int32_t           policyArgs[5];
 };
 
 // ---------------------------------------------------------------------------
@@ -67,7 +73,9 @@ struct BrainOrderIntent {
 // Fixed cap 4: at most one intent per effect per mission due to once-guards;
 // the buffer is sized to hold all 6 verbs if they somehow all fired together
 // (defensive), plus 2 spare.  Inline in MechBrainRuntime (no heap).
-static constexpr int kBrainIntentCap = 4;
+// UNITQUERY-SETTARGETPRIORITY-1: raised 4→8. carver issues up to ~3-4 TARGET_POLICY
+// writes (priority-list slots) per body, possibly alongside another order intent.
+static constexpr int kBrainIntentCap = 8;
 
 // ---------------------------------------------------------------------------
 // Accessor for the monotonic brain tick counter defined in warrior.cpp.

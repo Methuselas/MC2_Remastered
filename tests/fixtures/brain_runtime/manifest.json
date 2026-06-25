@@ -503,6 +503,32 @@
         "CLEAR_MOVE intent emitted",
         "commitBrainIntents calls clearMoveOrders() once"
       ]
+    },
+    {
+      "name": "settargetpriority-intent",
+      "file": "mc2_01_settargetpriority_specials.fit",
+      "mission": "mc2_01",
+      "format": "legacy-fitini",
+      "gates_required": [
+        "MC2_BRAIN_DISPATCH=1",
+        "MC2_BRAIN_DISPATCH_APPLY=1",
+        "MC2_BRAIN_INTENT_QUEUE=1"
+      ],
+      "notes": "UNITQUERY-SETTARGETPRIORITY-1: symbolic args resolved (TARGET_PRIORITY_MOVER->2, CONTACT flag-sum->97) then TARGET_POLICY intent committed via setTargetPriority. No setGeneralTacOrder.",
+      "apply_expectation": {
+        "expected_order_code": "NONE",
+        "expected_count": 0,
+        "apply_trace_substrings": [
+          "[BRAIN_INTENT_EMIT] verb=UnitQuery.SetTargetpriority order=TARGET_POLICY slot=1 type=2 p1=0 p2=200 crit=97",
+          "[BRAIN_INTENT_COMMIT] verb=UnitQuery.SetTargetpriority order=TARGET_POLICY slot=1 type=2"
+        ],
+        "requires_intent_queue": true
+      },
+      "harness_proven": [
+        "symbolic args resolved to ints",
+        "TARGET_POLICY intent emitted",
+        "commit calls setTargetPriority with resolved values"
+      ]
     }
   ]
 }
