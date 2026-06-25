@@ -180,6 +180,7 @@ static bool s_brainCommitPhaseEnabled() {
 static const char* const kRecognizedVerbs[] = {
     "Brain.CorePower",
     "Brain.CoreAttack",
+    "Brain.CoreEject",   // BRAIN-ALIAS-COREVERBS-1: carver_v_enhanced alias → Unit.Eject
     "OPORD.CoreAttack",
     "OPORD.CoreGuard",
     "OPORD.CorePatrol",
@@ -454,6 +455,12 @@ void executeSpecialBody_TraceOnly(const BrainSpecialBody& body, int wid, VarStor
 static const char* aliasToCanonical(const char* verb) {
     if (std::strcmp(verb, "coreEject") == 0)
         return "Unit.Eject";
+    // BRAIN-ALIAS-COREVERBS-1: carver_v_enhanced emits Brain.CoreEject (657 uses) — a
+    // no-arg eject. Map it to the canonical Unit.Eject so the EJECT handler fires.
+    // (Brain.CoreAttack carries a WID arg, so it is aliased at the handler prefix-check
+    // instead — see executeSpecialBody_Apply, since aliasToCanonical is exact-strcmp only.)
+    if (std::strcmp(verb, "Brain.CoreEject") == 0)
+        return "Unit.Eject";
     if (std::strcmp(verb, "corePower") == 0)
         return "Brain.CorePower";
     if (std::strcmp(verb, "coreGuard") == 0)
@@ -517,7 +524,10 @@ bool bodyHasCoreMoveTo(const BrainSpecialBody& body) {
 // Token-prefix match: first word of the stored verb string must equal "OPORD.CoreAttack".
 bool bodyHasCoreAttack(const BrainSpecialBody& body) {
     for (const std::string& verb : body.verbs) {
-        if (std::strncmp(verb.c_str(), "OPORD.CoreAttack", 16) == 0
+        // BRAIN-ALIAS-COREVERBS-1: Brain.CoreAttack (carver_v_enhanced) shares the
+        // OPORD.CoreAttack effect/slot; match either spelling (both 16-char prefixes).
+        if ((std::strncmp(verb.c_str(), "OPORD.CoreAttack", 16) == 0
+             || std::strncmp(verb.c_str(), "Brain.CoreAttack", 16) == 0)
             && (verb.size() == 16 || verb[16] == ' '))
             return true;
     }
@@ -858,9 +868,13 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
                     }
                 }
             }
-        } else if (std::strncmp(vpCanon, "OPORD.CoreAttack", 16) == 0
+        } else if ((std::strncmp(vpCanon, "OPORD.CoreAttack", 16) == 0
+                    || std::strncmp(vpCanon, "Brain.CoreAttack", 16) == 0)
                    && (vpCanon[16] == ' ' || vpCanon[16] == '\0')) {
             // DISPATCH-EFFECT-COREATTACK-1: OPORD.CoreAttack <wid>
+            // BRAIN-ALIAS-COREVERBS-1: Brain.CoreAttack (carver_v_enhanced, 571 uses) shares
+            // this handler. Both prefixes are exactly 16 chars, so the vpCanon+16 arg parser
+            // below is identical for either spelling.
             //
             // Arg parser — bare-integer WID:
             //   Token after "OPORD.CoreAttack" is the decimal WID (strtol).
