@@ -304,6 +304,8 @@ Unit::Unit( int align )
 	highlightColor = 0x00c0c0c0;
 	highlightColor2 = 0x00808080;
 	variant = 0;
+	orderType = ORDER_NONE;
+	stance = 2;   // AttitudeType ATTITUDE_NORMAL
 }
 
 Unit::~Unit()
@@ -328,6 +330,9 @@ Unit::Unit( const Unit& src ) : EditorObject( src )
 		pAlternativeInstances = new CUnitList;
 		(*pAlternativeInstances) = *(src.pAlternativeInstances);
 		squad = src.squad;
+		orderType = src.orderType;
+		stance = src.stance;
+		waypoints = src.waypoints;
 	}
 
 	variant = 0;
@@ -454,6 +459,22 @@ bool Unit::save( FitIniFile* file, int WarriorNumber, int controlDataType, char*
 	file->writeIdULong( "SquadNum", getSquad() );
 	file->writeIdULong( "NumAlternatives", pAlternativeInstances->Count() );
 
+	// Patrol/Move order authoring (additive — only written when an order exists,
+	// so stock missions are byte-unchanged; load() defaults to ORDER_NONE/empty).
+	if ( orderType != ORDER_NONE || !waypoints.empty() )
+	{
+		file->writeIdLong( "OrderType", orderType );
+		file->writeIdLong( "OrderStance", stance );
+		file->writeIdULong( "WaypointCount", (unsigned long)waypoints.size() );
+		for ( size_t i = 0; i < waypoints.size(); ++i )
+		{
+			char k[64];
+			sprintf( k, "Waypoint%uX", (unsigned)i ); file->writeIdFloat( k, waypoints[i].x );
+			sprintf( k, "Waypoint%uY", (unsigned)i ); file->writeIdFloat( k, waypoints[i].y );
+			sprintf( k, "Waypoint%uZ", (unsigned)i ); file->writeIdFloat( k, waypoints[i].z );
+		}
+	}
+
 	return true;
 }
 
@@ -514,6 +535,34 @@ bool Unit::load( FitIniFile* file, int warriorNumber )
 		file->readIdULong( "AlternativeStartIndex", tmpAlternativeStartIndex );
 	}
 
+	// Patrol/Move order authoring (additive — absent in stock missions; defaults
+	// to ORDER_NONE / Normal stance / no waypoints). Read from the Part block,
+	// before the Warrior seekBlock below.
+	orderType = ORDER_NONE;
+	stance = 2;
+	waypoints.clear();
+	{
+		long tmpOrder = ORDER_NONE;
+		if ( NO_ERR == file->readIdLong( "OrderType", tmpOrder ) )
+			orderType = (int)tmpOrder;
+		long tmpStance = 2;
+		if ( NO_ERR == file->readIdLong( "OrderStance", tmpStance ) )
+			stance = (int)tmpStance;
+		unsigned long wpCount = 0;
+		if ( NO_ERR == file->readIdULong( "WaypointCount", wpCount ) )
+		{
+			for ( unsigned long i = 0; i < wpCount; ++i )
+			{
+				Stuff::Vector3D wp; wp.x = wp.y = wp.z = 0.0f;
+				char k[64];
+				sprintf( k, "Waypoint%luX", i ); file->readIdFloat( k, wp.x );
+				sprintf( k, "Waypoint%luY", i ); file->readIdFloat( k, wp.y );
+				sprintf( k, "Waypoint%luZ", i ); file->readIdFloat( k, wp.z );
+				waypoints.push_back( wp );
+			}
+		}
+	}
+
 	char blockId[256];
 	sprintf(blockId,"Warrior%d",warriorNumber);
 	file->seekBlock(blockId);
@@ -557,6 +606,9 @@ Unit& Unit::operator=( const Unit& src )
 		setVariant(src.getVariant());
 		(*pAlternativeInstances) = *(src.pAlternativeInstances);
 		squad = src.squad;
+		orderType = src.orderType;
+		stance = src.stance;
+		waypoints = src.waypoints;
 
 		EditorObject::operator=( src );
 	}

@@ -18,6 +18,8 @@
 #include "vertex.h"                                   // PostcompVertex (.elevation/.water)
 #include "../GameOS/gameos/gos_terrain_indirect.h"    // IsDenseRecipeReady()
 #include "EditorObjectMgr.h"                          // object ID overlay
+#include "EditorObjects.h"                            // Unit + waypoints (patrol path overlay)
+#include "UnitBrainPanel.h"                           // IsOpen() gate for the patrol overlay
 
 #ifdef MC2_IMGUI
 #include "imgui.h"
@@ -365,6 +367,111 @@ namespace
 
 namespace EditorDebugOverlay
 {
+
+// --- Patrol/Move path overlay (UnitBrainPanel) -----------------------------
+// Screen-space helpers built on gos_DrawLines (same primitive as the grid).
+static void patrolSeg( float x0, float y0, float x1, float y1, DWORD argb )
+{
+	gos_VERTEX seg[2];
+	memset( seg, 0, sizeof( seg ) );
+	seg[0].rhw = seg[1].rhw = 1.0f;
+	seg[0].argb = seg[1].argb = argb;
+	seg[0].x = x0; seg[0].y = y0;
+	seg[1].x = x1; seg[1].y = y1;
+	gos_DrawLines( seg, 2 );
+}
+
+// Dashed line between two screen points.
+static void patrolDashed( float x0, float y0, float x1, float y1, DWORD argb )
+{
+	const float dx = x1 - x0, dy = y1 - y0;
+	const float len = sqrtf( dx * dx + dy * dy );
+	if ( len < 1.0f ) { patrolSeg( x0, y0, x1, y1, argb ); return; }
+	const float ux = dx / len, uy = dy / len;
+	const float dash = 10.0f, gap = 7.0f, step = dash + gap;
+	for ( float s = 0.f; s < len; s += step )
+	{
+		float a = s, b = s + dash; if ( b > len ) b = len;
+		patrolSeg( x0 + ux * a, y0 + uy * a, x0 + ux * b, y0 + uy * b, argb );
+	}
+}
+
+// Small diamond marker at a screen point.
+static void patrolDot( float x, float y, float r, DWORD argb )
+{
+	patrolSeg( x - r, y, x, y - r, argb );
+	patrolSeg( x, y - r, x + r, y, argb );
+	patrolSeg( x + r, y, x, y + r, argb );
+	patrolSeg( x, y + r, x - r, y, argb );
+}
+
+// Arrowhead at (mx,my) pointing along unit dir (ux,uy) — two back-swept barbs.
+static void patrolArrow( float mx, float my, float ux, float uy, DWORD argb )
+{
+	const float h = 10.0f;
+	const float bx = -ux, by = -uy;   // backwards along the segment
+	const float px = -uy, py = ux;    // screen-perpendicular
+	patrolSeg( mx, my, mx + bx * h + px * h * 0.5f, my + by * h + py * h * 0.5f, argb );
+	patrolSeg( mx, my, mx + bx * h - px * h * 0.5f, my + by * h - py * h * 0.5f, argb );
+}
+
+// Draw the selected unit's patrol/move path, only while the AI/Brain panel is
+// open. Team-color dashed line + dots at points + direction arrows; Patrol draws
+// the closing loop segment, Move stops at the last point.
+void RenderPatrolPaths( Camera* eye )
+{
+	if ( !eye || !UnitBrainPanel::IsOpen() || !terrainLoaded() )
+		return;
+	EditorObjectMgr* mgr = EditorObjectMgr::instance();
+	if ( !mgr )
+		return;
+
+	EditorObjectMgr::EDITOR_OBJECT_LIST sel = mgr->getSelectedObjectList();
+	Unit* unit = NULL;
+	for ( EditorObjectMgr::EDITOR_OBJECT_LIST::EIterator it = sel.Begin(); !it.IsDone(); it++ )
+	{
+		Unit* u = dynamic_cast<Unit*>( *it );
+		if ( u ) { unit = u; break; }
+	}
+	if ( !unit )
+		return;
+
+	const std::vector<Stuff::Vector3D>& wps = unit->getWaypoints();
+	if ( wps.empty() )
+		return;
+
+	DWORD col = (DWORD)unit->getColor();
+	if ( col == 0 ) col = 0xcfffffff;               // team "none" -> translucent white
+	col = ( col & 0x00ffffff ) | 0xcf000000;        // force a visible alpha
+
+	const bool loop = ( unit->getOrderType() == Unit::ORDER_PATROL );
+	const float lift = 12.0f;
+
+	std::vector<unsigned char> ok( wps.size(), 0 );
+	std::vector<float> sx( wps.size(), 0.f ), sy( wps.size(), 0.f );
+	for ( size_t i = 0; i < wps.size(); ++i )
+	{
+		float z = land->getTerrainElevation( wps[i] ) + lift;
+		ok[i] = projectPt( eye, wps[i].x, wps[i].y, z, sx[i], sy[i] ) ? 1 : 0;
+	}
+
+	const size_t segCount = loop ? wps.size() : ( wps.size() ? wps.size() - 1 : 0 );
+	for ( size_t i = 0; i < segCount; ++i )
+	{
+		size_t a = i, b = ( i + 1 ) % wps.size();
+		if ( !loop && b == 0 ) break;
+		if ( !ok[a] || !ok[b] ) continue;
+		patrolDashed( sx[a], sy[a], sx[b], sy[b], col );
+		float dx = sx[b] - sx[a], dy = sy[b] - sy[a];
+		float len = sqrtf( dx * dx + dy * dy );
+		if ( len > 1e-3f )
+			patrolArrow( ( sx[a] + sx[b] ) * 0.5f, ( sy[a] + sy[b] ) * 0.5f, dx / len, dy / len, col );
+	}
+
+	for ( size_t i = 0; i < wps.size(); ++i )
+		if ( ok[i] )
+			patrolDot( sx[i], sy[i], 5.0f, col );
+}
 
 void RenderWorldOverlay( Camera* eye )
 {

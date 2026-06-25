@@ -1598,6 +1598,16 @@ void EditorInterface::handleLeftButtonDown( int PosX, int PosY )
 	// the same space as handleMouseMove (which also offsets). No-op when RTT off.
 	EditorRttClientToViewport( PosX, PosY );
 
+	// Waypoint placement mode (UnitBrainPanel "Add Waypoints"): drop a patrol/move
+	// waypoint at the terrain point under the cursor and consume the click. Uses the
+	// bridge terrain pick (same modern pick path as object selection).
+	if ( UnitBrainPanel::WaypointPlaceActive() )
+	{
+		EditorBridge::EditorPickResult pr = EditorBridge::pickAt( PosX, PosY );
+		if ( UnitBrainPanel::HandlePlacementClick( pr.worldX, pr.worldY, pr.worldZ ) )
+			return;
+	}
+
 	Stuff::Vector3D vector;
 	Stuff::Vector2DOf<long> v2( PosX, PosY );
 	eye->inverseProject( v2, vector );
@@ -2843,6 +2853,9 @@ void EditorInterface::render()
 	// Phase 2: diagnostic world overlays (chunk/superchunk grid, water bounds).
 	// Pure visual; same frame/projection context as the foliage preview.
 	EditorDebugOverlay::RenderWorldOverlay( eye );
+
+	// Selected unit's patrol/move path overlay (only while the AI/Brain panel is open).
+	EditorDebugOverlay::RenderPatrolPaths( eye );
 
 	ModifyStyle( 0, WS_HSCROLL | WS_VSCROLL );
 

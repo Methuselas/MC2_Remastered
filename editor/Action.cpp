@@ -435,6 +435,8 @@ VertexInfo::VertexInfo( long newRow, long newColumn )
 #include "EditorObjectMgr.h"
 #endif
 
+#include "EditorObjects.h"   // Unit (ModifyUnitOrderAction)
+
 ModifyBuildingAction::EditorAppearanceSnapshot::EditorAppearanceSnapshot()
 {
     /*
@@ -769,3 +771,56 @@ void ModifyBuildingAction::updateNotedObjectPositions()
         iter4++;
     }
 }
+
+//*************************************************************************************************
+// ModifyUnitOrderAction — undo/redo for patrol/move order authoring (UnitBrainPanel)
+//*************************************************************************************************
+
+static void EditorOrderSnapFromUnit( Unit* unit, int& orderType, int& stance,
+	std::vector<Stuff::Vector3D>& waypoints )
+{
+	orderType = unit->getOrderType();
+	stance    = unit->getStance();
+	waypoints = unit->getWaypoints();
+}
+
+void ModifyUnitOrderAction::capture( Unit* unit )
+{
+	if ( !unit )
+		return;
+	m_unitId = unit->getID();
+	EditorOrderSnapFromUnit( unit, m_before.orderType, m_before.stance, m_before.waypoints );
+}
+
+void ModifyUnitOrderAction::commit( Unit* unit )
+{
+	if ( !unit )
+		return;
+	EditorOrderSnapFromUnit( unit, m_after.orderType, m_after.stance, m_after.waypoints );
+}
+
+bool ModifyUnitOrderAction::apply( const Snap& s )
+{
+	// Re-find the unit by editor id so a since-deleted unit is a safe no-op (no
+	// stale pointer). getUnits() returns a copy of the live unit list.
+	EditorObjectMgr* mgr = EditorObjectMgr::instance();
+	if ( !mgr )
+		return false;
+	EditorObjectMgr::UNIT_LIST list = mgr->getUnits();
+	for ( EditorObjectMgr::UNIT_LIST::EIterator it = list.Begin(); !it.IsDone(); it++ )
+	{
+		Unit* u = *it;
+		if ( !u || u->getID() != m_unitId )
+			continue;
+		u->setOrderType( s.orderType );
+		u->setStance( s.stance );
+		u->clearWaypoints();
+		for ( size_t i = 0; i < s.waypoints.size(); ++i )
+			u->addWaypoint( s.waypoints[i] );
+		return true;
+	}
+	return false;
+}
+
+bool ModifyUnitOrderAction::redo() { return apply( m_after ); }
+bool ModifyUnitOrderAction::undo() { return apply( m_before ); }

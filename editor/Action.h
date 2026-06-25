@@ -30,6 +30,8 @@ class Action;
 #include "objectappearance.h"
 #endif
 
+#include <vector>
+
 // Abstract base class for all action objects
 class Action
 {
@@ -191,6 +193,29 @@ private:
 // TU (FlattenBrush.h etc.), so including it here breaks their winsock ordering.
 // The full Forest type is needed only in Action.cpp, which includes Forest.h.
 class Forest;
+class Unit;
+
+// Undo/redo for the patrol/move order authoring (UnitBrainPanel). Snapshots a
+// unit's order state (type/stance/waypoints) before and after an edit. undo/redo
+// re-find the unit by its editor id (scan EditorObjectMgr units) and apply the
+// snapshot, so an order edit on a since-deleted unit is a safe no-op. Pushing the
+// action also marks the mission dirty (ActionUndoMgr net-change tracking).
+class ModifyUnitOrderAction : public Action
+{
+public:
+    ModifyUnitOrderAction() : Action( "Modify Unit Order" ), m_unitId( 0 ) {}
+    virtual ~ModifyUnitOrderAction() {}
+    virtual bool redo();
+    virtual bool undo();
+    void capture( Unit* unit );   // call BEFORE the edit: records id + before-state
+    void commit( Unit* unit );    // call AFTER the edit: records after-state
+private:
+    struct Snap { int orderType; int stance; std::vector<Stuff::Vector3D> waypoints; };
+    bool apply( const Snap& s );
+    long m_unitId;
+    Snap m_before;
+    Snap m_after;
+};
 
 // Undo/redo action for EditorObjectMgr::createForest().
 // undo()  -- removes the forest that was just created (by captured ID).

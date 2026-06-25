@@ -15,6 +15,8 @@ class FitIniFile;
 
 #include "ObjectAppearance.h"
 
+#include <vector>
+
 #ifndef HEAP_H
 #include <heap.h>
 #endif
@@ -246,6 +248,23 @@ public:
 	void setVariant( unsigned long newVar ){ variant = newVar; }
 	inline int getVariant() const { return variant; }
 
+	// --- Patrol / Move order authoring (editor-side) -----------------------
+	// MOVE = traverse the waypoints once (one-way); PATROL = cycle them as a
+	// closed loop (a move order is the open-path subset of a patrol). Stance
+	// mirrors AttitudeType (code/tacordr.h) by index. All persisted additively
+	// in the mission .fit; runtime delivery is wired later via the brain dispatch.
+	enum UnitOrderType { ORDER_NONE = 0, ORDER_MOVE = 1, ORDER_PATROL = 2 };
+
+	int  getOrderType() const { return orderType; }
+	void setOrderType( int t ) { orderType = t; }
+	int  getStance() const { return stance; }
+	void setStance( int s ) { stance = s; }
+	const std::vector<Stuff::Vector3D>& getWaypoints() const { return waypoints; }
+	unsigned long getWaypointCount() const { return (unsigned long)waypoints.size(); }
+	void addWaypoint( const Stuff::Vector3D& wp ) { waypoints.push_back( wp ); }
+	void removeLastWaypoint() { if ( !waypoints.empty() ) waypoints.pop_back(); }
+	void clearWaypoints() { waypoints.clear(); }
+
 	CUnitList *pAlternativeInstances;
 	unsigned long tmpNumAlternativeInstances;
 	unsigned long tmpAlternativeStartIndex;
@@ -260,6 +279,11 @@ protected:
 	int lanceIndex; // number within lance 1 to 12
 	unsigned long squad;
 	Pilot	pilot;
+
+	// Patrol/Move order authoring (see public accessors above).
+	int orderType;   // UnitOrderType (default ORDER_NONE)
+	int stance;      // AttitudeType index (default 2 = Normal)
+	std::vector<Stuff::Vector3D> waypoints;
 
 	unsigned long baseColor;
 	unsigned long highlightColor;

@@ -19,6 +19,7 @@
 #include "EditorObjectMgr.h"
 #include "EditorObjects.h"
 #include "InspectorPanel.h"   // CategoryToken (shared category labelling)
+#include "Action.h"           // ModifyUnitOrderAction + ActionUndoMgr (undo + dirty)
 
 #include <cstdio>
 #include <cstring>
@@ -26,6 +27,42 @@
 namespace {
 
 bool s_open = false;
+
+// Waypoint placement mode state (see header). Target is held by editor id so a
+// changed selection or a deleted unit never dangles.
+bool s_placeActive = false;
+long s_placeTargetId = 0;
+
+// Find a Unit by editor id (placement target / re-find). getUnits() is a copy.
+Unit* findUnitById( long id )
+{
+	EditorObjectMgr* mgr = EditorObjectMgr::instance();
+	if ( !mgr )
+		return nullptr;
+	EditorObjectMgr::UNIT_LIST list = mgr->getUnits();
+	for ( EditorObjectMgr::UNIT_LIST::EIterator it = list.Begin(); !it.IsDone(); it++ )
+		if ( *it && (*it)->getID() == id )
+			return *it;
+	return nullptr;
+}
+
+// Run an order-state mutation on a unit as one undoable + dirty-marking edit.
+template <typename Mutate>
+void applyOrderEdit( Unit* unit, Mutate mut )
+{
+	if ( !unit )
+		return;
+	if ( !ActionUndoMgr::instance )
+	{
+		mut();   // no undo manager (shouldn't happen in-editor) — still apply
+		return;
+	}
+	ModifyUnitOrderAction* act = new ModifyUnitOrderAction();
+	act->capture( unit );
+	mut();
+	act->commit( unit );
+	ActionUndoMgr::instance->AddAction( act );
+}
 
 // First selected object from the shared selection list (viewport + Scene
 // Outliner both feed it), mirroring InspectorPanel's selection access.
@@ -65,9 +102,34 @@ const int kAttitudeCount = (int)(sizeof(kAttitudeNames) / sizeof(kAttitudeNames[
 } // namespace
 
 void UnitBrainPanel::Open()  { s_open = true; }
-void UnitBrainPanel::Close() { s_open = false; }
-void UnitBrainPanel::Toggle(){ s_open = !s_open; }
+void UnitBrainPanel::Close() { s_open = false; EndWaypointPlace(); }
+void UnitBrainPanel::Toggle(){ s_open = !s_open; if ( !s_open ) EndWaypointPlace(); }
 bool UnitBrainPanel::IsOpen(){ return s_open; }
+
+bool UnitBrainPanel::WaypointPlaceActive()   { return s_placeActive; }
+long UnitBrainPanel::WaypointPlaceTargetId() { return s_placeTargetId; }
+void UnitBrainPanel::BeginWaypointPlace( long unitId ) { s_placeActive = true;  s_placeTargetId = unitId; }
+void UnitBrainPanel::EndWaypointPlace()                { s_placeActive = false; s_placeTargetId = 0; }
+
+bool UnitBrainPanel::HandlePlacementClick( float worldX, float worldY, float worldZ )
+{
+	if ( !s_placeActive )
+		return false;
+	Unit* unit = findUnitById( s_placeTargetId );
+	if ( !unit )
+	{
+		EndWaypointPlace();
+		return false;
+	}
+	Stuff::Vector3D wp; wp.x = worldX; wp.y = worldY; wp.z = worldZ;
+	applyOrderEdit( unit, [&]() {
+		// Adding a path implies an order — default a None unit to PATROL on first point.
+		if ( unit->getOrderType() == Unit::ORDER_NONE )
+			unit->setOrderType( Unit::ORDER_PATROL );
+		unit->addWaypoint( wp );
+	} );
+	return true;
+}
 
 void UnitBrainPanel::Draw()
 {
@@ -143,39 +205,57 @@ void UnitBrainPanel::Draw()
 		ImGui::TextDisabled("This is the AI program the unit runs at mission start.");
 	}
 
-	// --- Orders & Stance (scaffold — "this is where this goes") ------------
+	// --- Orders & Stance (live editing; persists to the mission .fit) ------
 	if (ImGui::CollapsingHeader("Orders & Stance", ImGuiTreeNodeFlags_DefaultOpen))
 	{
-		ImGui::TextWrapped(
-			"Initial orders, patrol path and stance for this unit go here. "
-			"Editing is not wired yet: the editor does not persist per-unit "
-			"orders today (they are runtime-only), and runtime delivery is "
-			"tied to the in-flight TECHSCRIPT brain dispatch "
-			"(MC2_BRAIN_DISPATCH*, default-OFF). The controls below show the "
-			"intended shape.");
+		// Order type: None / Move (one-way) / Patrol (closed loop).
+		static const char* const kOrderNames[] = { "None", "Move (one-way)", "Patrol (loop)" };
+		int orderType = unit->getOrderType();
+		if (ImGui::Combo("Order", &orderType, kOrderNames, 3))
+			applyOrderEdit(unit, [&]() { unit->setOrderType(orderType); });
 
-		ImGui::Spacing();
+		// Stance / attitude.
+		int stance = unit->getStance();
+		if (ImGui::Combo("Stance", &stance, kAttitudeNames, kAttitudeCount))
+			applyOrderEdit(unit, [&]() { unit->setStance(stance); });
 
-		// Stance / attitude (preview — not persisted yet).
-		ImGui::BeginDisabled(true);
-		static int s_attitude = 2; // Normal — display default
-		ImGui::Combo("Stance", &s_attitude, kAttitudeNames, kAttitudeCount);
-		ImGui::EndDisabled();
+		ImGui::Separator();
+		ImGui::Text("Waypoints: %lu", unit->getWaypointCount());
 
-		ImGui::Spacing();
-
-		// Patrol waypoints (preview — not persisted yet).
-		ImGui::Text("Patrol waypoints: %d", 0);
-		ImGui::BeginDisabled(true);
-		ImGui::Button("Add waypoint (click map)");
+		// Placement mode toggle (this unit). While active, map clicks append points.
+		const bool placingThis = s_placeActive && (s_placeTargetId == obj->getID());
+		if (placingThis)
+		{
+			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.25f, 0.15f, 1.0f));
+			if (ImGui::Button("Click map to add… (Stop)"))
+				UnitBrainPanel::EndWaypointPlace();
+			ImGui::PopStyleColor();
+		}
+		else
+		{
+			if (ImGui::Button("Add Waypoints"))
+				UnitBrainPanel::BeginWaypointPlace(obj->getID());
+		}
 		ImGui::SameLine();
-		ImGui::Button("Clear path");
-		ImGui::EndDisabled();
+		if (ImGui::Button("Remove Last") && unit->getWaypointCount() > 0)
+			applyOrderEdit(unit, [&]() { unit->removeLastWaypoint(); });
+		ImGui::SameLine();
+		if (ImGui::Button("Clear") && unit->getWaypointCount() > 0)
+			applyOrderEdit(unit, [&]() { unit->clearWaypoints(); });
 
-		ImGui::Spacing();
+		// Point list.
+		const std::vector<Stuff::Vector3D>& wps = unit->getWaypoints();
+		if (!wps.empty() && ImGui::BeginChild("wplist", ImVec2(0.f, 90.f), true))
+		{
+			for (size_t i = 0; i < wps.size(); ++i)
+				ImGui::Text("%2u:  %.0f, %.0f", (unsigned)i, wps[i].x, wps[i].y);
+		}
+		if (!wps.empty())
+			ImGui::EndChild();
+
 		ImGui::TextDisabled(
-			"Next slice: editor-side order/waypoint persistence + an undo "
-			"action, then bind to the brain-dispatch order delivery.");
+			"Authoring + persistence are live. Units actually executing the "
+			"order in-game is wired later via the brain dispatch.");
 	}
 
 	ImGui::End();
