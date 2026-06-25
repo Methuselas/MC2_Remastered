@@ -105,6 +105,13 @@ struct MechBrainRuntime {
     uint8_t          moveToEffectApplied    = 0;    // 1 = OPORD.CoreMoveTo MOVETO_POINT order issued once (DISPATCH-EFFECT-COREMOVETO-1)
     uint8_t          attackEffectApplied   = 0;    // 1 = OPORD.CoreAttack ATTACK_OBJECT order issued once (DISPATCH-EFFECT-COREATTACK-1)
     uint8_t          retreatEffectApplied  = 0;    // 1 = Unit.Retreat WITHDRAW order issued once (DISPATCH-EFFECT-UNITRETREAT-1)
+    // BRAIN-FSM-1K-A: per-warrior FSM state fields.
+    // Gate: MC2_BRAIN_FSM (default OFF).  Mission-ephemeral — zeroed by default ctor (brace-init).
+    // currentState[0]=='\0' = unnamed default state; InState guards always fail (safe no-op for non-FSM brains).
+    // prevState filled by SetState (prevState←currentState before overwrite).
+    // SetStatePrev swaps currentState↔prevState.  One level of stack = sufficient for transBack pattern.
+    char             currentState[32]     = {};   // current FSM state name, "" = no-FSM / default
+    char             prevState[32]        = {};   // for Unit.SetStatePrev (transBack equivalent)
     BrainSpecialBody specialBody;  // parsed from _specials.fit; loaded when MC2_BRAIN_DISPATCH set
     VarStore         varStore;     // per-unit Var namespace (DISPATCH-1D); populated by Var.Set/Var.Get
                                     // ABI: plain struct (no virtuals); sizeof increases by sizeof(vector)+sizeof(bool)
