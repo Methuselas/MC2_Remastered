@@ -1,6 +1,6 @@
 {
   "$schema": "brain-fixture-manifest-v1",
-  "description": "BRAIN-DISPATCH-HARNESS-1: fixture corpus manifest for offline dispatch harness. One entry per .fit file in tests/fixtures/brain_runtime/. Anti-orphan invariant: every .fit MUST have an entry here.",
+  "description": "BRAIN-DISPATCH-HARNESS-V2: fixture corpus manifest. V1 (parse/bodyHasX/TraceOnly) + V2 (Apply A/B effect-identity). Anti-orphan invariant: every .fit MUST have an entry here.",
   "fixtures": [
     {
       "name": "powerdown-legacy",
@@ -11,10 +11,14 @@
       "expected_bodyHasPowerdown": true,
       "expected_bodyHasCoreGuard": true,
       "expected_bodyHasEffect": true,
-      "expected_effect_intent": "POWERDOWN once (Brain.CorePower false) + GUARD",
       "expected_trace_substrings": [
         "[BRAIN_DISPATCH] verb=Brain.CorePower false"
-      ]
+      ],
+      "apply_expectation": {
+        "expected_order_code": "TACTICAL_ORDER_POWERDOWN",
+        "expected_count": 2,
+        "notes": "Body has Brain.CorePower false + OPORD.CoreGuard = 2 effect verbs -> 2 orders in sink. A/B identity: gate-OFF and gate-ON both produce 2 orders, first order POWERDOWN."
+      }
     },
     {
       "name": "attack-bad-wid",
@@ -24,10 +28,16 @@
       "gates_required": ["MC2_BRAIN_DISPATCH=1"],
       "expected_bodyHasCoreAttack": true,
       "expected_bodyHasEffect": true,
-      "expected_effect_intent": "BAD_WID soft-fail (parsedWID <= 0)",
       "expected_trace_substrings": [
         "[BRAIN_DISPATCH] verb=OPORD.CoreAttack 0"
-      ]
+      ],
+      "apply_expectation": {
+        "expected_order_code": "NONE",
+        "expected_count": 0,
+        "attack_role": "absent",
+        "attack_fake_obj_wid": 0,
+        "notes": "WID=0 (<=0): bad-WID guard fires; no object in table; NO order issued. Guard result is gate-invariant."
+      }
     },
     {
       "name": "eject-canonical",
@@ -38,10 +48,14 @@
       "expected_bodyHasUnitEject": true,
       "expected_bodyHasCoreGuard": true,
       "expected_bodyHasEffect": true,
-      "expected_effect_intent": "EJECT once",
       "expected_trace_substrings": [
         "[BRAIN_DISPATCH] verb=Unit.Eject"
-      ]
+      ],
+      "apply_expectation": {
+        "expected_order_code": "TACTICAL_ORDER_EJECT",
+        "expected_count": 2,
+        "notes": "Body has Unit.Eject + OPORD.CoreGuard = 2 effect verbs -> 2 orders. First order EJECT. A/B identity."
+      }
     },
     {
       "name": "eject-alias",
@@ -51,10 +65,14 @@
       "gates_required": ["MC2_BRAIN_DISPATCH=1"],
       "expected_bodyHasUnitEject": true,
       "expected_bodyHasEffect": true,
-      "expected_effect_intent": "EJECT once (alias coreEject -> Unit.Eject)",
       "expected_trace_substrings": [
         "verb=coreEject"
-      ]
+      ],
+      "apply_expectation": {
+        "expected_order_code": "TACTICAL_ORDER_EJECT",
+        "expected_count": 2,
+        "notes": "coreEject alias + OPORD.CoreGuard = 2 effects. First order EJECT. A/B identity."
+      }
     },
     {
       "name": "guard-canonical",
@@ -64,10 +82,14 @@
       "gates_required": ["MC2_BRAIN_DISPATCH=1"],
       "expected_bodyHasCoreGuard": true,
       "expected_bodyHasEffect": true,
-      "expected_effect_intent": "GUARD once",
       "expected_trace_substrings": [
         "[BRAIN_DISPATCH] verb=OPORD.CoreGuard"
-      ]
+      ],
+      "apply_expectation": {
+        "expected_order_code": "TACTICAL_ORDER_GUARD",
+        "expected_count": 1,
+        "notes": "gate-OFF: direct GUARD; gate-ON: emit->commit GUARD. A/B identity."
+      }
     },
     {
       "name": "moveto-canonical",
@@ -77,10 +99,15 @@
       "gates_required": ["MC2_BRAIN_DISPATCH=1"],
       "expected_bodyHasCoreMoveTo": true,
       "expected_bodyHasEffect": true,
-      "expected_effect_intent": "MOVETO_POINT once, coords (100 200 0)",
       "expected_trace_substrings": [
         "[BRAIN_DISPATCH] verb=OPORD.CoreMoveTo 100 200 0"
-      ]
+      ],
+      "apply_expectation": {
+        "expected_order_code": "TACTICAL_ORDER_MOVETO_POINT",
+        "expected_count": 1,
+        "expected_waypoint": [100.0, 200.0, 0.0],
+        "notes": "gate-OFF: direct MOVETO_POINT(100,200,0); gate-ON: emit->commit MOVETO_POINT(100,200,0). A/B identity + waypoint check."
+      }
     },
     {
       "name": "moveto-nan-guard",
@@ -90,10 +117,14 @@
       "gates_required": ["MC2_BRAIN_DISPATCH=1"],
       "expected_bodyHasCoreMoveTo": true,
       "expected_bodyHasEffect": true,
-      "expected_effect_intent": "NaN guard soft-fail (no setGeneralTacOrder)",
       "expected_trace_substrings": [
         "[BRAIN_DISPATCH] verb=OPORD.CoreMoveTo nan 200 0"
-      ]
+      ],
+      "apply_expectation": {
+        "expected_order_code": "NONE",
+        "expected_count": 0,
+        "notes": "NaN coord guard fires; NO order issued regardless of gate state."
+      }
     },
     {
       "name": "retreat-canonical",
@@ -103,10 +134,14 @@
       "gates_required": ["MC2_BRAIN_DISPATCH=1"],
       "expected_bodyHasUnitRetreat": true,
       "expected_bodyHasEffect": true,
-      "expected_effect_intent": "WITHDRAW once",
       "expected_trace_substrings": [
         "[BRAIN_DISPATCH] verb=Unit.Retreat"
-      ]
+      ],
+      "apply_expectation": {
+        "expected_order_code": "TACTICAL_ORDER_WITHDRAW",
+        "expected_count": 1,
+        "notes": "gate-OFF: direct WITHDRAW; gate-ON: emit->commit WITHDRAW. A/B identity."
+      }
     },
     {
       "name": "retreat-alias",
@@ -116,10 +151,14 @@
       "gates_required": ["MC2_BRAIN_DISPATCH=1"],
       "expected_bodyHasUnitRetreat": true,
       "expected_bodyHasEffect": true,
-      "expected_effect_intent": "WITHDRAW once (alias coreRetreat -> Unit.Retreat)",
       "expected_trace_substrings": [
         "verb=coreRetreat"
-      ]
+      ],
+      "apply_expectation": {
+        "expected_order_code": "TACTICAL_ORDER_WITHDRAW",
+        "expected_count": 1,
+        "notes": "coreRetreat alias; same A/B identity as canonical retreat."
+      }
     },
     {
       "name": "callchain-depth2",
@@ -128,7 +167,6 @@
       "format": "brace-block",
       "gates_required": ["MC2_BRAIN_DISPATCH=1", "MC2_BRAIN_DISPATCH_CALL=1"],
       "expected_bodyHasEffect": false,
-      "expected_effect_intent": "depth-2 chaining trace-only (no effects in called bodies, 1A)",
       "expected_trace_substrings": [
         "[BRAIN_DISPATCH_CALL]",
         "to=mission.test.special.init"
@@ -141,7 +179,6 @@
       "format": "brace-block",
       "gates_required": ["MC2_BRAIN_DISPATCH=1", "MC2_BRAIN_DISPATCH_CALL=1"],
       "expected_bodyHasEffect": false,
-      "expected_effect_intent": "cycle-detected soft-fail; no infinite recursion",
       "expected_trace_substrings": [
         "[BRAIN_DISPATCH_CALL_CYCLE]"
       ]
@@ -154,7 +191,6 @@
       "gates_required": ["MC2_BRAIN_DISPATCH=1", "MC2_BRAIN_DISPATCH_CALL=1"],
       "expected_bodyHasCoreGuard": true,
       "expected_bodyHasEffect": true,
-      "expected_effect_intent": "unknown-target soft-fail; execution continues past unresolved call",
       "expected_trace_substrings": [
         "[BRAIN_DISPATCH_CALL_UNKNOWN]",
         "target=nonexistent.key"
@@ -167,7 +203,6 @@
       "format": "brace-block",
       "gates_required": ["MC2_BRAIN_DISPATCH=1"],
       "expected_bodyHasEffect": false,
-      "expected_effect_intent": "carver_v_enhanced format — Var.Set verbs parsed, trace-only",
       "expected_trace_substrings": [
         "[BRAIN_DISPATCH]"
       ]
@@ -180,10 +215,14 @@
       "gates_required": ["MC2_BRAIN_DISPATCH=1"],
       "expected_bodyHasPowerdown": true,
       "expected_bodyHasEffect": true,
-      "expected_effect_intent": "raw brace-block format with inline-quoted DO args",
       "expected_trace_substrings": [
         "[BRAIN_DISPATCH] verb=Brain.CorePower false"
-      ]
+      ],
+      "apply_expectation": {
+        "expected_order_code": "TACTICAL_ORDER_POWERDOWN",
+        "expected_count": 1,
+        "notes": "raw brace-block POWERDOWN; same A/B identity as legacy-fitini powerdown."
+      }
     },
     {
       "name": "ai-smoke-mc2_01",
@@ -192,7 +231,6 @@
       "format": "legacy-fitini",
       "gates_required": [],
       "partial": true,
-      "expected_effect_intent": "parser smoke — no BrainSpecial block; expected to load=false gracefully",
       "notes": "mc2_01_ai.fit has [Brain] not [BrainSpecial]; parseBrainSpecialBody returns false gracefully"
     },
     {
@@ -202,7 +240,6 @@
       "format": "legacy-fitini",
       "gates_required": [],
       "partial": true,
-      "expected_effect_intent": "parser smoke — no BrainSpecial block; expected to load=false gracefully",
       "notes": "mc2_17_ai.fit has [Brain] not [BrainSpecial]; parseBrainSpecialBody returns false gracefully"
     },
     {
@@ -213,10 +250,91 @@
       "gates_required": ["MC2_BRAIN_DISPATCH=1"],
       "expected_bodyHasCoreAttack": true,
       "expected_bodyHasEffect": true,
-      "expected_effect_intent": "ATTACK_OBJECT with live WID=49 (soft-fail in harness: no live ObjectManager)",
       "expected_trace_substrings": [
         "[BRAIN_DISPATCH] verb=OPORD.CoreAttack 49"
-      ]
+      ],
+      "apply_expectation": {
+        "expected_order_code": "NONE",
+        "expected_count": 0,
+        "attack_role": "absent",
+        "attack_fake_obj_wid": 0,
+        "notes": "WID=49 absent from fake table -> bad-wid(not_found) guard fires; no order issued."
+      }
+    },
+    {
+      "name": "attack-valid-enemy",
+      "file": "mc2_01_attack_enemy_specials.fit",
+      "mission": "mc2_01",
+      "format": "legacy-fitini",
+      "gates_required": ["MC2_BRAIN_DISPATCH=1"],
+      "expected_bodyHasCoreAttack": true,
+      "expected_bodyHasEffect": true,
+      "expected_trace_substrings": [
+        "[BRAIN_DISPATCH] verb=OPORD.CoreAttack 77"
+      ],
+      "apply_expectation": {
+        "expected_order_code": "TACTICAL_ORDER_ATTACK_OBJECT",
+        "expected_count": 1,
+        "expected_target_wid": 77,
+        "attack_role": "enemy",
+        "attack_fake_obj_wid": 77,
+        "notes": "Valid enemy WID=77 (different team); triple guard passes; ATTACK_OBJECT issued once. A/B identity: gate-OFF and gate-ON both produce 1 ATTACK_OBJECT(targetWID=77)."
+      }
+    },
+    {
+      "name": "attack-self-guard",
+      "file": "mc2_01_attack_self_specials.fit",
+      "mission": "mc2_01",
+      "format": "legacy-fitini",
+      "gates_required": ["MC2_BRAIN_DISPATCH=1"],
+      "expected_bodyHasCoreAttack": true,
+      "expected_bodyHasEffect": true,
+      "expected_trace_substrings": [
+        "[BRAIN_DISPATCH] verb=OPORD.CoreAttack 1"
+      ],
+      "apply_expectation": {
+        "expected_order_code": "NONE",
+        "expected_count": 0,
+        "attack_role": "self",
+        "attack_fake_obj_wid": 1,
+        "notes": "Self-attack guard: fake obj WID=1 == warrior WID=1; ATTACK_SELF fires; NO order issued."
+      }
+    },
+    {
+      "name": "attack-friendly-guard",
+      "file": "mc2_01_attack_friendly_specials.fit",
+      "mission": "mc2_01",
+      "format": "legacy-fitini",
+      "gates_required": ["MC2_BRAIN_DISPATCH=1"],
+      "expected_bodyHasCoreAttack": true,
+      "expected_bodyHasEffect": true,
+      "expected_trace_substrings": [
+        "[BRAIN_DISPATCH] verb=OPORD.CoreAttack 55"
+      ],
+      "apply_expectation": {
+        "expected_order_code": "NONE",
+        "expected_count": 0,
+        "attack_role": "friendly",
+        "attack_fake_obj_wid": 55,
+        "notes": "Friendly-fire guard: fake obj WID=55 same team as warrior; ATTACK_FRIENDLY fires; NO order issued."
+      }
+    },
+    {
+      "name": "once-guard-powerdown",
+      "file": "mc2_01_onceguard_specials.fit",
+      "mission": "mc2_01",
+      "format": "legacy-fitini",
+      "gates_required": ["MC2_BRAIN_DISPATCH=1"],
+      "expected_bodyHasPowerdown": true,
+      "expected_bodyHasEffect": true,
+      "expected_trace_substrings": [
+        "[BRAIN_DISPATCH] verb=Brain.CorePower false"
+      ],
+      "apply_expectation": {
+        "expected_order_code": "TACTICAL_ORDER_POWERDOWN",
+        "expected_count": 1,
+        "notes": "Once-guard proof: single POWERDOWN verb produces exactly 1 order per Apply+Commit run (gate-OFF and gate-ON). Demonstrates the contract that each effect verb fires at most once per body."
+      }
     }
   ]
 }

@@ -1,0 +1,10 @@
+FITini
+; DISPATCH-EFFECT-COREATTACK-V2: friendly-fire guard.
+; Harness configures fake object WID=55 on the SAME team as the warrior.
+; Expected: [BRAIN_DISPATCH_ATTACK_FRIENDLY] logged; NO ATTACK_OBJECT order issued.
+
+[BrainSpecial]
+
+[Body]
+st DO0 = "OPORD.CoreAttack 55"
+st DO1 = "HOLD"

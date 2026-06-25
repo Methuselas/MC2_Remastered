@@ -27,6 +27,7 @@ add_executable(brain_dispatch_harness
     stubs/tacorder_stub.cpp
     stubs/inifile_stub.cpp
     stubs/brain_tick_stub.cpp   # BRAIN-DECISION-INTENT-QUEUE-1: stub for getBrainTickIndex()
+    stubs/tac_order_sink.cpp    # BRAIN-DISPATCH-HARNESS-V2: g_activeSink global
 )
 
 # Include path order is critical:
