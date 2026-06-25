@@ -23,6 +23,31 @@ namespace BeautySidecarPreview
 	static bool s_autoApplyDone = false;
 	static char s_status[256] = "no sidecar loaded";
 
+	// B7b heatmap: retained delta + toggle (no terrain mutation needed to view).
+	static std::vector<float> s_delta;
+	static int   s_deltaSide   = 0;
+	static float s_deltaMaxAbs = 0.0f;
+	static bool  s_showHeatmap = false;
+
+	// Sidecar dirs are named by the mission FILE stem (mc2_01.beauty). Use the
+	// terrain/colormap name (Terrain::terrainName, set on load to the mission stem,
+	// terrain.cpp:640) — NOT EditorData::MissionName(), which returns the .fit
+	// display TITLE (e.g. "Operation ...") and never matches the sidecar filename.
+	static const char* missionStem()
+	{
+		if (Terrain::terrainName && Terrain::terrainName[0])
+			return Terrain::terrainName;
+		return EditorData::instance ? EditorData::instance->MissionName().Data() : "";
+	}
+
+	static void retainDelta(const std::vector<float>& d, int side)
+	{
+		s_delta = d;
+		s_deltaSide = side;
+		s_deltaMaxAbs = 0.0f;
+		for (float v : d) { float a = v < 0 ? -v : v; if (a > s_deltaMaxAbs) s_deltaMaxAbs = a; }
+	}
+
 	// Locate <mission>.beauty/height_delta.r32 in a few candidate dirs (editor
 	// CWD = deploy root). Returns true + fills delta/side on success.
 	static bool readDelta(const char* mission, std::vector<float>& delta, int& side)
@@ -64,11 +89,12 @@ namespace BeautySidecarPreview
 	bool Apply()
 	{
 		if (!land || !Terrain::mapData) { strcpy(s_status, "no terrain loaded"); return false; }
-		const char* mission = EditorData::instance ? EditorData::instance->MissionName().Data() : "";
+		const char* mission = missionStem();
 
 		std::vector<float> delta;
 		int dside = 0;
 		if (!readDelta(mission, delta, dside)) return false;   // status set inside
+		retainDelta(delta, dside);                             // for the heatmap overlay
 
 		const int side = land->realVerticesMapSide;
 		if (dside != side) {
@@ -117,6 +143,27 @@ namespace BeautySidecarPreview
 	int         ChangedCount() { return s_changed; }
 	const char* Status()       { return s_status; }
 
+	// B7b: load delta for the heatmap WITHOUT mutating terrain.
+	bool LoadDeltaForPreview()
+	{
+		const char* mission = missionStem();
+		std::vector<float> delta;
+		int dside = 0;
+		if (!readDelta(mission, delta, dside)) return false;
+		retainDelta(delta, dside);
+		int nz = 0;
+		for (float v : delta) if (v != 0.0f) ++nz;
+		snprintf(s_status, sizeof(s_status), "loaded delta: %d changed cells, max|d|=%.2fwu (%s)",
+		         nz, s_deltaMaxAbs, mission);
+		return true;
+	}
+
+	bool         HasDelta()    { return s_deltaSide > 0 && !s_delta.empty(); }
+	int          DeltaSide()   { return s_deltaSide; }
+	float        DeltaMaxAbs() { return s_deltaMaxAbs; }
+	const float* DeltaData()   { return s_delta.empty() ? nullptr : s_delta.data(); }
+	bool         ShowHeatmap() { return s_showHeatmap && HasDelta(); }
+
 	void DrawImGui()
 	{
 		ImGui::SeparatorText("Beauty Sidecar Preview");
@@ -126,6 +173,16 @@ namespace BeautySidecarPreview
 		if (ImGui::Button("Restore Original Terrain", ImVec2(-1.f, 0.f)))
 			Restore();
 		ImGui::EndDisabled();
+		// B7b: heatmap preview — toggle auto-loads the delta (no terrain edit).
+		if (ImGui::Checkbox("Show delta heatmap", &s_showHeatmap)) {
+			if (s_showHeatmap && !HasDelta())
+				LoadDeltaForPreview();   // status reflects success/failure
+		}
+		if (ImGui::Button("Reload Delta (heatmap)", ImVec2(-1.f, 0.f)))
+			LoadDeltaForPreview();
+		if (HasDelta())
+			ImGui::TextDisabled("raised=red  lowered=blue  max|d|=%.1fwu  grid=%d",
+			                    s_deltaMaxAbs, s_deltaSide);
 		ImGui::TextWrapped("%s", s_status);
 	}
 

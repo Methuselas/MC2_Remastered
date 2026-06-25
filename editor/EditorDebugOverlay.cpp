@@ -14,6 +14,7 @@
 
 #include "Camera.h"
 #include "Terrain.h"
+#include "BeautySidecarPreview.h"   // B7b delta heatmap overlay
 #include "FoliageRender.h"
 #include "vertex.h"                                   // PostcompVertex (.elevation/.water)
 #include "../GameOS/gameos/gos_terrain_indirect.h"    // IsDenseRecipeReady()
@@ -577,6 +578,66 @@ void RenderPatrolPaths( Camera* eye )
 	patrolFlush();
 }
 
+// B7b: draw the loaded beauty-sidecar delta as a terrain heatmap — a small cross
+// per changed cell, RED where elevation is raised, BLUE where lowered, sized by
+// |delta|/max. Reuses the same screen-projection (projectPt) + render state the
+// grid overlay uses. Grid side must match the live terrain.
+void drawBeautyHeatmap( Camera* eye )
+{
+	const int    side  = BeautySidecarPreview::DeltaSide();
+	const float* delta = BeautySidecarPreview::DeltaData();
+	const int    terrSide = (int)Terrain::realVerticesMapSide;
+	if ( !delta || side <= 0 || side != terrSide )
+	{
+		static int s_warned = 0;
+		if ( s_warned < 3 ) { ++s_warned;
+			fprintf( stderr, "[BEAUTY_HEATMAP] skip: deltaSide=%d terrainSide=%d delta=%p\n",
+			         side, terrSide, (void*)delta ); fflush( stderr ); }
+		return;
+	}
+	const float maxAbs = BeautySidecarPreview::DeltaMaxAbs();
+	const float invMax = ( maxAbs > 1e-4f ) ? 1.0f / maxAbs : 0.0f;
+	const float wupv = Terrain::worldUnitsPerVertex;
+	const float tlx  = Terrain::mapTopLeft3d.x;
+	const float tly  = Terrain::mapTopLeft3d.y;
+
+	gos_VERTEX seg[2];
+	memset( seg, 0, sizeof( seg ) );
+	seg[0].rhw = seg[1].rhw = 1.0f;
+
+	int drawn = 0, changed = 0, projfail = 0;
+	const int kMaxMarkers = 4000;   // safety cap on draw count
+	for ( int r = 0; r < side && drawn < kMaxMarkers; ++r )
+	{
+		for ( int c = 0; c < side && drawn < kMaxMarkers; ++c )
+		{
+			const float d = delta[ r * side + c ];
+			if ( d == 0.0f )
+				continue;
+			++changed;
+			const float wx = tlx + (float)c * wupv;
+			const float wy = tly - (float)r * wupv;
+			float sx, sy;
+			if ( !projectPt( eye, wx, wy, sampleZ( wx, wy ), sx, sy ) )
+				{ ++projfail; continue; }
+			const float t    = ( ( d < 0 ? -d : d ) * invMax );   // 0..1
+			const float half = 5.0f + 9.0f * t;                   // marker size px
+			const DWORD argb = ( d > 0.0f ) ? packARGB( 255, 40, 40 )    // raised = red
+			                                : packARGB( 60, 120, 255 );  // lowered = blue
+			seg[0].argb = seg[1].argb = argb;
+			seg[0].x = sx - half; seg[0].y = sy; seg[1].x = sx + half; seg[1].y = sy;
+			gos_DrawLines( seg, 2 );
+			seg[0].x = sx; seg[0].y = sy - half; seg[1].x = sx; seg[1].y = sy + half;
+			gos_DrawLines( seg, 2 );
+			++drawn;
+		}
+	}
+	static int s_logged = 0;
+	if ( s_logged < 3 ) { ++s_logged;
+		fprintf( stderr, "[BEAUTY_HEATMAP] side=%d changed=%d projected_fail=%d drawn=%d maxAbs=%.2f\n",
+		         side, changed, projfail, drawn, maxAbs ); fflush( stderr ); }
+}
+
 void RenderWorldOverlay( Camera* eye )
 {
 	if ( !eye )
@@ -589,7 +650,8 @@ void RenderWorldOverlay( Camera* eye )
 
 	if ( !terrainLoaded() )
 		return;
-	if ( !s_showChunkGrid && !s_showSuperchunkGrid && !s_showWaterDebug )
+	if ( !s_showChunkGrid && !s_showSuperchunkGrid && !s_showWaterDebug
+	     && !BeautySidecarPreview::ShowHeatmap() )
 		return;
 
 	// Overlay render state -- match FoliageRender: alpha-blended, no texture, drawn
@@ -611,6 +673,9 @@ void RenderWorldOverlay( Camera* eye )
 
 	if ( s_showWaterDebug )
 		drawWaterBounds( eye );
+
+	if ( BeautySidecarPreview::ShowHeatmap() )
+		drawBeautyHeatmap( eye );
 
 	// Restore state for subsequent editor overlays (selection/brush quads).
 	gos_SetRenderState( gos_State_ZCompare, 1 );

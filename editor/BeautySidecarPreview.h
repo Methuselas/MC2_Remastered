@@ -35,6 +35,17 @@ namespace BeautySidecarPreview
 	// One-shot env-gated auto-apply (MC2_EDITOR_BEAUTY_AUTOAPPLY) so the headless
 	// editor smoke exercises the path. Safe to call every frame.
 	void MaybeAutoApply();
+
+	// --- B7b delta heatmap preview ---------------------------------------------
+	// Load the sidecar delta WITHOUT mutating terrain (for the heatmap overlay).
+	bool LoadDeltaForPreview();
+	// Loaded delta (row-major side*side world-unit deltas) for the overlay to draw.
+	bool         HasDelta();
+	int          DeltaSide();
+	float        DeltaMaxAbs();
+	const float* DeltaData();   // size DeltaSide()^2, or null
+	// Heatmap toggle (driven by the Tools-panel checkbox, read by EditorDebugOverlay).
+	bool ShowHeatmap();
 }
 
 #endif // BEAUTY_SIDECAR_PREVIEW_H
