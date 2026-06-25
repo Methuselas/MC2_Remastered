@@ -2505,6 +2505,19 @@ long MechWarrior::runBrain (void) {
 			}
 		}
 
+		// BRAIN-OPORD-COREPATROL-1: per-tick patrol advance.
+		// Gate: MC2_BRAIN_PATROL (default OFF).  No-op when gate OFF or patrolActive==false.
+		// Called unconditionally (outside alreadyDone guard) so arrival is polled every tick.
+		// tickPatrolAdvance handles arrival poll, cursor advance, and MOVETO_POINT re-emit.
+		// moveToEffectApplied is NOT touched — patrol manages its own cursor guard.
+		if (brainRuntime) {
+			bool patrolAdvanced = tickPatrolAdvance(this, brainRuntime, vehicleWID);
+			if (patrolAdvanced) {
+				// Patrol re-emitted a MOVETO_POINT — suppress HOLD so the order isn't stomped.
+				dispatcherAppliedEffect = true;
+			}
+		}
+
 		if (!dispatcherAppliedEffect) {
 			// Synthetic HOLD path (1B-runtime default) — fires when dispatcher did NOT take slot.
 			if (brainTaskQueue) {

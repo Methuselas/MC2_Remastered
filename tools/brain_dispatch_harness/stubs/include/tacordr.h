@@ -12,6 +12,13 @@
 // ---- Constants ----
 #define MAX_WAYPTS 15
 
+// BRAIN-OPORD-COREPATROL-1: arrival status codes.
+// In the real engine (tacordr.h), TACORDER_SUCCESS is defined as 1.
+// Stub provides the same value; status() always returns TACORDER_RUNNING so
+// the harness never triggers cursor advance (arrival is smoke-only).
+#define TACORDER_SUCCESS  1
+#define TACORDER_RUNNING  0
+
 // ---- Enums ----
 
 typedef enum { ORDER_ORIGIN_PLAYER, ORDER_ORIGIN_COMMANDER, ORDER_ORIGIN_SELF } OrderOriginType;
@@ -140,6 +147,11 @@ public:
     void pack(GameObjectPtr, GameObjectPtr) { /* stub — no-op for harness */ }
 
     void destroy() {}
+
+    // BRAIN-OPORD-COREPATROL-1: arrival poll.
+    // Stub always returns TACORDER_RUNNING — arrival detection is smoke-only.
+    // The harness never triggers tickPatrolAdvance cursor advance.
+    long status(void* /*warrior*/) const { return TACORDER_RUNNING; }
 
     void* operator new(size_t sz);
     void  operator delete(void* p);
