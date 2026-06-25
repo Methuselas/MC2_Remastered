@@ -132,6 +132,8 @@ static GLint s_locLightingV2     = -1;
 static GLint s_locNfhStrength    = -1;
 static GLint s_locUseRockSlopeBias = -1;  // TERRAIN-SLOPE-BIAS-VISUAL-1 (B4a)
 static GLint s_locRockSlopeBiasStr = -1;
+static GLint s_locUseTriplanarCliff = -1; // TERRAIN-CLIFF-MATERIAL-TRIPLANAR-1
+static GLint s_locCliffTriplanarStr = -1;
 static GLint s_locPomParams      = -1;
 static GLint s_locMatProfile     = -1;
 // Step 5c: cement catalog atlas (tex3) accessors from gos_terrain_indirect.cpp.
@@ -427,6 +429,8 @@ void gos_TerrainLodChunk_Init()
             s_locNfhStrength = glGetUniformLocation(s_terrainProgram, "terrainNormalsFromHeightStrength");
             s_locUseRockSlopeBias = glGetUniformLocation(s_terrainProgram, "useRockSlopeBias");
             s_locRockSlopeBiasStr = glGetUniformLocation(s_terrainProgram, "rockSlopeBiasStrength");
+            s_locUseTriplanarCliff = glGetUniformLocation(s_terrainProgram, "useTriplanarCliff");
+            s_locCliffTriplanarStr = glGetUniformLocation(s_terrainProgram, "cliffTriplanarStrength");
             s_locPomParams   = glGetUniformLocation(s_terrainProgram, "pomParams");
             s_locMatProfile  = glGetUniformLocation(s_terrainProgram, "g_terrainMaterialProfile");
             s_locCementAtlas    = glGetUniformLocation(s_terrainProgram, "u_cementAtlas");
@@ -850,6 +854,22 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
                     if (v > 0.0f) sbStr = v;
                 }
                 glUniform1f(s_locRockSlopeBiasStr, sbStr);
+            }
+        }
+        // TERRAIN-CLIFF-MATERIAL-TRIPLANAR-1: env gate MC2_TERRAIN_CLIFF_TRIPLANAR,
+        // default OFF -> uploads 0 -> frag block no-op (byte-identical). Strength via
+        // MC2_TERRAIN_CLIFF_TRIPLANAR_STRENGTH (default 1.0).
+        {
+            int tcOn = 0;
+            if (const char* e = getenv("MC2_TERRAIN_CLIFF_TRIPLANAR")) tcOn = (e[0] && e[0] != '0') ? 1 : 0;
+            if (s_locUseTriplanarCliff >= 0) glUniform1i(s_locUseTriplanarCliff, tcOn);
+            if (s_locCliffTriplanarStr >= 0) {
+                float tcStr = 1.0f;
+                if (const char* s = getenv("MC2_TERRAIN_CLIFF_TRIPLANAR_STRENGTH")) {
+                    float v = (float)atof(s);
+                    if (v > 0.0f) tcStr = v;
+                }
+                glUniform1f(s_locCliffTriplanarStr, tcStr);
             }
         }
         if (s_locPomParams   >= 0) glUniform4f(s_locPomParams,   gos_GetTerrainPOMScale(), 8.0f, 32.0f, 0.0f);
