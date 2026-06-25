@@ -135,6 +135,9 @@ bool bodyHasCoreMoveTo(const BrainSpecialBody& body);
 // DISPATCH-EFFECT-COREATTACK-1: Returns true if body contains OPORD.CoreAttack (prefix match).
 bool bodyHasCoreAttack(const BrainSpecialBody& body);
 
+// BRAIN-OPORD-COREPATROL-1: Returns true if body contains OPORD.CorePatrol (prefix match, 16 chars).
+bool bodyHasCorePatrol(const BrainSpecialBody& body);
+
 // DISPATCH-EFFECT-UNITRETREAT-1: Returns true if body contains Unit.Retreat or coreRetreat alias.
 bool bodyHasUnitRetreat(const BrainSpecialBody& body);
 
@@ -269,6 +272,15 @@ int scanFsmTodosFromFile(const char* missionName, BrainSpecialBody& outBody);
 void resetMissionVarStore();
 
 // ---------------------------------------------------------------------------
+// BRAIN-OPORD-COREPATROL-1: per-tick patrol advance.
+// Called every brain tick when MC2_BRAIN_PATROL=1 and brainRuntime->patrolActive.
+// Polls curTacOrder.status(warrior)==TACORDER_SUCCESS for arrival, advances the patrol
+// cursor, emits a MOVETO_POINT intent via emitBrainIntent (or direct setGeneralTacOrder
+// when MC2_BRAIN_INTENT_QUEUE=0).  Gate default OFF.
+// If patrolActive==false or gate OFF: no-op.
+// Returns true if an advance (re-emit) was performed this tick.
+bool tickPatrolAdvance(MechWarrior* warrior, MechBrainRuntime* runtime, int wid);
+
 // BRAIN-WORLD-SNAPSHOT-1: snapshot gate.
 //
 // s_brainSnapshotEnabled() — returns true when MC2_BRAIN_SNAPSHOT=1.

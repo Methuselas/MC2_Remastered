@@ -252,6 +252,11 @@ struct ApplyExpectation {
 
     // Once-guard: body fires exactly once per run.
     // (proven by expectedCount=1 even if body has the verb)
+
+    // BRAIN-OPORD-COREPATROL-1: apply-path trace substring checks.
+    // Checked against ar.traceOutput (Apply stderr capture), NOT TraceOnly.
+    // Use this for verbs whose trace is emitted by executeSpecialBody_Apply only.
+    std::vector<std::string> applyTraceSubstrings;
 };
 
 // ---------------------------------------------------------------------------
@@ -319,6 +324,12 @@ static ApplyExpectation applyExpFromJson(const JsonValue& jv) {
         else if (r == "absent")   e.attackRole = AttackRole::None;
     }
     if (jv.has("attack_fake_obj_wid")) e.attackFakeObjWID = (long)jv.at("attack_fake_obj_wid").nval;
+
+    // BRAIN-OPORD-COREPATROL-1: apply-path trace substring checks.
+    if (jv.has("apply_trace_substrings")) {
+        for (const JsonValue& sv : jv.at("apply_trace_substrings").arr())
+            e.applyTraceSubstrings.push_back(sv.str());
+    }
 
     return e;
 }
@@ -463,6 +474,15 @@ int main(int argc, char** argv) {
     (void)_putenv("MC2_BRAIN_DISPATCH_VAR=1");
     // TECHSCRIPT-DISPATCH-1D-M: enable mission-scope Var store for varmission-roundtrip fixture.
     (void)_putenv("MC2_BRAIN_VAR_MISSION=1");
+    // BRAIN-OPORD-COREPATROL-1: enable patrol verb handler for patrol fixtures.
+    // MC2_BRAIN_INTENT_QUEUE=1 is set globally so patrol apply_expectation fixtures
+    // can prove MOVETO_POINT is committed via intent queue.
+    // FSM sequential fixtures drain pendingIntents via commitBrainIntents after each body
+    // so orderCount is correct regardless of intent queue gate state.
+    (void)_putenv("MC2_BRAIN_PATROL=1");
+    (void)_putenv("MC2_BRAIN_INTENT_QUEUE=1");
+    // BRAIN-FSM-1K-A/B: enable FSM verbs for fsm-* fixtures.
+    (void)_putenv("MC2_BRAIN_FSM=1");
     if (applyMode) {
         (void)_putenv("MC2_BRAIN_DISPATCH_APPLY=1");
     }
@@ -581,6 +601,10 @@ int main(int argc, char** argv) {
                 for (const SpecialIndexEntry& entry : index) {
                     executeSpecialBody_Apply(entry.body, &fsmWarrior, /*wid=*/1,
                                              &fsmWarrior.fsmRuntime.varStore, &index, entry.key.c_str());
+                    // Drain intent buffer after each body so orderCount is correct
+                    // regardless of MC2_BRAIN_INTENT_QUEUE gate state.
+                    if (fsmWarrior.fsmRuntime.pendingIntentCount > 0)
+                        commitBrainIntents(&fsmWarrior, &fsmWarrior.fsmRuntime);
                 }
             });
             for (const std::string& sub : fix.expectedTraceSubstrings) {
@@ -671,6 +695,16 @@ int main(int argc, char** argv) {
                     "apply: expected 0 orders (guard should fire), got %d order(s) (gate_%s)",
                     (int)ar.sink.orders.size(), intentQueueGateOn ? "ON" : "OFF");
                 res.failures.push_back(buf);
+            }
+
+            // BRAIN-OPORD-COREPATROL-1: apply-path trace substring checks.
+            // Checked against ar.traceOutput (executeSpecialBody_Apply stderr capture).
+            for (const std::string& sub : ae.applyTraceSubstrings) {
+                if (ar.traceOutput.find(sub) == std::string::npos) {
+                    res.failures.push_back("apply trace missing substring: '" + sub + "'");
+                    if (res.failures.size() == 1)
+                        res.failures.push_back("  apply trace preview: " + ar.traceOutput.substr(0, 400));
+                }
             }
         }
 

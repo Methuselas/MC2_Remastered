@@ -28,6 +28,12 @@ public:
     // s_intentQueueEnabled() path is always taken via the (runtime == nullptr) check.
     virtual MechBrainRuntime* getBrainRuntime() { return nullptr; }
 
+    // BRAIN-OPORD-COREPATROL-1: patrol arrival poll accessor.
+    // Returns a stub TacticalOrder whose status() always returns TACORDER_RUNNING,
+    // so the harness never triggers cursor advance (arrival is smoke-only).
+    TacticalOrder stubCurOrder;
+    virtual TacticalOrder* getCurTacOrder() { return &stubCurOrder; }
+
     // BRAIN-FSM-1K-A: FSM-capable warrior stub.
     // Subclass FsmMechWarrior (below) provides a real runtime for FSM state tests.
 };

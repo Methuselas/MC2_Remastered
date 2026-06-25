@@ -366,6 +366,27 @@
       ]
     },
     {
+      "name": "patrol-start-loop",
+      "file": "mc2_01_patrol_specials.fit",
+      "mission": "mc2_01",
+      "format": "legacy-fitini",
+      "gates_required": ["MC2_BRAIN_DISPATCH=1", "MC2_BRAIN_DISPATCH_APPLY=1", "MC2_BRAIN_PATROL=1", "MC2_BRAIN_INTENT_QUEUE=1"],
+      "expected_bodyHasCorePatrol": true,
+      "expected_bodyHasEffect": false,
+      "notes": "BRAIN-OPORD-COREPATROL-1: bodyHasCorePatrol=true; effect-via-patrol is a separate mechanism. apply_expectation proves PATROL_START fires, count=2, loop=1, and MOVETO_POINT committed to wp0 (100 100 0) via intent queue. apply_trace_substrings checks Apply-path stderr (not TraceOnly). Arrival/cursor-advance is smoke-only (requires live TacticalOrder::status).",
+      "apply_expectation": {
+        "expected_order_code": "TACTICAL_ORDER_MOVETO_POINT",
+        "expected_count": 1,
+        "expected_waypoint": [100, 100, 0],
+        "apply_trace_substrings": [
+          "[BRAIN_PATROL_START] count=2 loop=1",
+          "[BRAIN_PATROL_EMIT] index=0 pos=(100 100 0)"
+        ]
+      },
+      "harness_proven": ["PATROL_START fires", "count=2 parsed", "loop=1 parsed", "MOVETO_POINT committed to wp0 via intent queue"],
+      "smoke_only": ["PATROL_ADVANCE arrival detection", "cursor cycling", "PATROL_DONE for once-mode"]
+    },
+    {
       "name": "fsm-setstateif-conditional-transition",
       "file": "mc2_01_fsm_setstateif_specials.fit",
       "mission": "mc2_01",

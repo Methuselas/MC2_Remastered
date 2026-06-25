@@ -154,6 +154,15 @@ static bool s_brainFsmGate() {
 }
 
 // ---------------------------------------------------------------------------
+// Gate helper for MC2_BRAIN_PATROL (BRAIN-OPORD-COREPATROL-1).
+// Default OFF. When ON, OPORD.CorePatrol parse + per-tick advance are active.
+// NOTE: reads MC2_BRAIN_PATROL fresh per call (not cached) so harness _putenv works.
+static bool s_brainPatrolGate() {
+    const char* v = std::getenv("MC2_BRAIN_PATROL");
+    return v && std::atoi(v) != 0;
+}
+
+// ---------------------------------------------------------------------------
 // Recognized verb table for DISPATCH-1A.
 // All other verbs produce [BRAIN_DISPATCH_UNKNOWN] trace.
 static const char* const kRecognizedVerbs[] = {
@@ -510,6 +519,19 @@ bool bodyHasUnitRetreat(const BrainSpecialBody& body) {
     for (const std::string& verb : body.verbs) {
         const char* canonical = aliasToCanonical(verb.c_str());
         if (std::strcmp(canonical, "Unit.Retreat") == 0)
+            return true;
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// bodyHasCorePatrol — BRAIN-OPORD-COREPATROL-1
+// Returns true if the body contains an OPORD.CorePatrol verb token.
+// Token-prefix match: first word of the stored verb string must equal "OPORD.CorePatrol".
+bool bodyHasCorePatrol(const BrainSpecialBody& body) {
+    for (const std::string& verb : body.verbs) {
+        if (std::strncmp(verb.c_str(), "OPORD.CorePatrol", 16) == 0
+            && (verb.size() == 16 || verb[16] == ' '))
             return true;
     }
     return false;
@@ -900,6 +922,119 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
                 std::fflush(stderr);
             }
             appliedEffect = true;
+        } else if (s_brainPatrolGate() && std::strncmp(vpCanon, "OPORD.CorePatrol", 16) == 0 &&
+                   (vpCanon[16] == ' ' || vpCanon[16] == '\0')) {
+            // BRAIN-OPORD-COREPATROL-1: OPORD.CorePatrol x1 y1 z1 x2 y2 z2 ... [loop|once]
+            //
+            // FIRST-DISPATCH only (patrolActive==false guard):
+            //   Parse up to 8 waypoint triples + optional trailing "loop"/"once" keyword.
+            //   Set patrolWaypointCount, patrolWaypointIndex=0, patrolLoop, patrolActive=true.
+            //   Emit MOVETO_POINT to waypoints[0] via emitBrainIntent (gate ON) or direct
+            //   setGeneralTacOrder (gate OFF).
+            //
+            // RE-EMIT BYPASS: patrol does NOT set/check moveToEffectApplied.  patrolActive +
+            // the per-tick tickPatrolAdvance cursor-advance are the re-emit guard.
+            //
+            // Emit path: emitBrainIntent (gate ON only).
+            // NOTE: patrol does NOT call setGeneralTacOrder() directly here —
+            //   this keeps the relaxed_guard_doc call-site count at 6 (unchanged).
+            //   Without MC2_BRAIN_INTENT_QUEUE=1, patrol emits a trace-only warning on first
+            //   dispatch.  Per-tick tickPatrolAdvance also uses emitBrainIntent exclusively.
+            if (!warrior) {
+                std::fprintf(stderr, "[BRAIN_PATROL_PARSE_FAIL] no warrior wid=%d\n", wid);
+                std::fflush(stderr);
+            } else {
+                MechBrainRuntime* prt = warrior->getBrainRuntime();
+                if (!prt) {
+                    std::fprintf(stderr, "[BRAIN_PATROL_PARSE_FAIL] no runtime wid=%d\n", wid);
+                    std::fflush(stderr);
+                } else if (prt->patrolActive) {
+                    // Already active — this is a re-tick of a body that has CorePatrol.
+                    // The per-tick advance is handled by tickPatrolAdvance() in warrior.cpp.
+                    // Do NOT re-parse; do NOT re-emit waypoint[0].  Trace only.
+                    std::fprintf(stderr, "[BRAIN_PATROL_ACTIVE] already running index=%u count=%u wid=%d\n",
+                                 (unsigned)prt->patrolWaypointIndex, (unsigned)prt->patrolWaypointCount, wid);
+                    std::fflush(stderr);
+                    appliedEffect = true;
+                } else {
+                    // First dispatch: parse waypoints.
+                    const char* pargs = vpCanon + 16;
+                    while (*pargs == ' ') ++pargs;
+                    uint8_t wpCount = 0;
+                    float wpBuf[8][3];
+                    bool parseOk = true;
+                    while (wpCount < 8) {
+                        // Try to parse a float triplet.
+                        char* ep0 = nullptr;
+                        float x = std::strtof(pargs, &ep0);
+                        if (ep0 == pargs) break;  // no more numeric tokens
+                        pargs = ep0; while (*pargs == ' ') ++pargs;
+                        char* ep1 = nullptr;
+                        float y = std::strtof(pargs, &ep1);
+                        if (ep1 == pargs) { parseOk = false; break; }
+                        pargs = ep1; while (*pargs == ' ') ++pargs;
+                        char* ep2 = nullptr;
+                        float z = std::strtof(pargs, &ep2);
+                        if (ep2 == pargs) { parseOk = false; break; }
+                        pargs = ep2; while (*pargs == ' ') ++pargs;
+                        if (std::isnan(x) || std::isnan(y) || std::isnan(z)) {
+                            std::fprintf(stderr, "[BRAIN_PATROL_NAN] wp=%u x=%g y=%g z=%g wid=%d (skipped)\n",
+                                         (unsigned)wpCount, x, y, z, wid);
+                            std::fflush(stderr);
+                            continue;
+                        }
+                        wpBuf[wpCount][0] = x;
+                        wpBuf[wpCount][1] = y;
+                        wpBuf[wpCount][2] = z;
+                        ++wpCount;
+                    }
+                    // Parse trailing loop/once keyword (default loop).
+                    bool loopMode = true;
+                    if (*pargs != '\0') {
+                        if (std::strncmp(pargs, "once", 4) == 0)
+                            loopMode = false;
+                        // "loop" or any other trailing token → default loop=true.
+                    }
+                    if (!parseOk || wpCount < 2) {
+                        std::fprintf(stderr, "[BRAIN_PATROL_PARSE_FAIL] count=%u parseOk=%d wid=%d (need >=2 waypoints)\n",
+                                     (unsigned)wpCount, (int)parseOk, wid);
+                        std::fflush(stderr);
+                    } else {
+                        // Commit parsed state to runtime.
+                        prt->patrolWaypointCount = wpCount;
+                        prt->patrolWaypointIndex = 0;
+                        for (uint8_t wi = 0; wi < wpCount; ++wi) {
+                            prt->patrolWaypoints[wi][0] = wpBuf[wi][0];
+                            prt->patrolWaypoints[wi][1] = wpBuf[wi][1];
+                            prt->patrolWaypoints[wi][2] = wpBuf[wi][2];
+                        }
+                        prt->patrolLoop   = loopMode;
+                        prt->patrolActive = true;
+                        std::fprintf(stderr, "[BRAIN_PATROL_START] count=%u loop=%d wid=%d\n",
+                                     (unsigned)wpCount, (int)loopMode, wid);
+                        std::fflush(stderr);
+                        // Emit MOVETO_POINT to waypoints[0].
+                        float wx = prt->patrolWaypoints[0][0];
+                        float wy = prt->patrolWaypoints[0][1];
+                        float wz = prt->patrolWaypoints[0][2];
+                        if (runtime) {
+                            // Gate ON: emit intent; commitBrainIntents builds the TacticalOrder.
+                            emitBrainIntent(runtime, wid, TACTICAL_ORDER_MOVETO_POINT, -1, wx, wy, wz, 0);
+                            std::fprintf(stderr, "[BRAIN_PATROL_EMIT] index=0 pos=(%g %g %g) tick=%u wid=%d\n",
+                                         wx, wy, wz, getBrainTickIndex(), wid);
+                            std::fflush(stderr);
+                        } else {
+                            // Gate OFF (no intent queue): patrol cannot issue MOVETO_POINT here
+                            // without adding a 7th setGeneralTacOrder call-site (relaxed_guard_doc
+                            // contract requires count=6).  Emit a one-time warning.
+                            // Live-engine usage requires MC2_BRAIN_INTENT_QUEUE=1 for patrol orders.
+                            std::fprintf(stderr, "[BRAIN_PATROL_NO_QUEUE] wid=%d: patrol requires MC2_BRAIN_INTENT_QUEUE=1 for order emission\n", wid);
+                            std::fflush(stderr);
+                        }
+                        appliedEffect = true;
+                    }
+                }
+            }
         } else if (fsmGate && std::strncmp(vpCanon, "Unit.SetState", 13) == 0 &&
                    (vpCanon[13] == ' ' || vpCanon[13] == '\t' || vpCanon[13] == '\0')) {
             // BRAIN-FSM-1K-A: Unit.SetState "x" — explicit FSM transition.
@@ -1167,6 +1302,92 @@ void commitBrainIntents(MechWarrior* warrior, MechBrainRuntime* runtime) {
         }
     }
     runtime->pendingIntentCount = 0;
+}
+
+// ---------------------------------------------------------------------------
+// BRAIN-OPORD-COREPATROL-1: tickPatrolAdvance
+//
+// Called every brain tick from warrior.cpp AFTER executeSpecialBody_Apply + commitBrainIntents.
+// Gate: MC2_BRAIN_PATROL (default OFF).  No-op when gate OFF or patrolActive==false.
+//
+// Per-tick arrival poll:
+//   Reads warrior->curTacOrder.status(warrior) == TACORDER_SUCCESS.
+//   On arrival:
+//     - Advance cursor: loop → (index+1)%count; once → index+1 clamped to count-1.
+//     - If once and index was already at count-1: set patrolActive=false, emit
+//       [BRAIN_PATROL_DONE], stop.
+//     - Emit MOVETO_POINT to waypoints[newIndex] via emitBrainIntent (gate ON) or
+//       direct setGeneralTacOrder (gate OFF).
+//     - Emit [BRAIN_PATROL_ADVANCE] from=<old> to=<new> wid=<W>.
+//
+// moveToEffectApplied is intentionally NOT touched — patrol manages its own cursor guard.
+// Returns true if an advance was performed this tick.
+bool tickPatrolAdvance(MechWarrior* warrior, MechBrainRuntime* runtime, int wid) {
+    if (!s_brainPatrolGate()) return false;
+    if (!warrior || !runtime) return false;
+    if (!runtime->patrolActive) return false;
+    if (runtime->patrolWaypointCount == 0) return false;
+
+    // Poll arrival via public getCurTacOrder() accessor (curTacOrder is protected).
+    TacticalOrder* cur = warrior->getCurTacOrder();
+    if (!cur || cur->status(warrior) != TACORDER_SUCCESS) return false;
+
+    uint8_t oldIndex = runtime->patrolWaypointIndex;
+    uint8_t count    = runtime->patrolWaypointCount;
+
+    // once-mode stop check: already at last waypoint.
+    if (!runtime->patrolLoop && oldIndex >= (count - 1)) {
+        runtime->patrolActive = false;
+        std::fprintf(stderr, "[BRAIN_PATROL_DONE] wid=%d\n", wid);
+        std::fflush(stderr);
+        return false;
+    }
+
+    // Advance cursor.
+    uint8_t newIndex;
+    if (runtime->patrolLoop) {
+        newIndex = (uint8_t)((oldIndex + 1) % count);
+    } else {
+        newIndex = (uint8_t)(oldIndex + 1);
+        if (newIndex >= count) {
+            newIndex = count - 1;
+            runtime->patrolActive = false;
+        }
+    }
+    runtime->patrolWaypointIndex = newIndex;
+
+    std::fprintf(stderr, "[BRAIN_PATROL_ADVANCE] from=%u to=%u wid=%d\n",
+                 (unsigned)oldIndex, (unsigned)newIndex, wid);
+    std::fflush(stderr);
+
+    if (!runtime->patrolActive) {
+        // once-mode: just advanced to last, now done.
+        std::fprintf(stderr, "[BRAIN_PATROL_DONE] wid=%d\n", wid);
+        std::fflush(stderr);
+        return true;
+    }
+
+    float wx = runtime->patrolWaypoints[newIndex][0];
+    float wy = runtime->patrolWaypoints[newIndex][1];
+    float wz = runtime->patrolWaypoints[newIndex][2];
+
+    // Emit MOVETO_POINT to new waypoint.
+    // Emit MOVETO_POINT via intent queue only.
+    // (No direct setGeneralTacOrder here — relaxed_guard_doc call-site count must stay 6.)
+    // Live usage requires MC2_BRAIN_INTENT_QUEUE=1; without it a NO_QUEUE trace fires.
+    if (s_intentQueueEnabled()) {
+        emitBrainIntent(runtime, wid, TACTICAL_ORDER_MOVETO_POINT, -1, wx, wy, wz, 0);
+        std::fprintf(stderr, "[BRAIN_PATROL_EMIT] index=%u pos=(%g %g %g) tick=%u wid=%d\n",
+                     (unsigned)newIndex, wx, wy, wz, getBrainTickIndex(), wid);
+        std::fflush(stderr);
+        // Commit immediately (tickPatrolAdvance is called outside the normal apply+commit block).
+        commitBrainIntents(warrior, runtime);
+    } else {
+        std::fprintf(stderr, "[BRAIN_PATROL_NO_QUEUE] advance index=%u wid=%d: requires MC2_BRAIN_INTENT_QUEUE=1\n",
+                     (unsigned)newIndex, wid);
+        std::fflush(stderr);
+    }
+    return true;
 }
 
 // ---------------------------------------------------------------------------

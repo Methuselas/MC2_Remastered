@@ -123,6 +123,18 @@ struct MechBrainRuntime {
     // this copy is per-warrior-runtime but content is identical — acceptable for 1A's small index).
     SpecialIndex     specialIndex;
 
+    // BRAIN-OPORD-COREPATROL-1: per-warrior patrol cursor + waypoint table.
+    // Gate: MC2_BRAIN_PATROL (default OFF).  Mission-ephemeral — zeroed by default ctor.
+    // patrolActive==false: patrol inert (gate OFF or parse not yet done, or once-complete).
+    // patrolLoop: true=cycle to first on completion; false=stop after last waypoint.
+    // Re-emit model: patrol emits MOVETO_POINT via emitBrainIntent each cursor advance.
+    // moveToEffectApplied is intentionally NOT touched by patrol (separate per-verb flag).
+    uint8_t patrolWaypointCount   = 0;      // number of loaded waypoints (0..8)
+    uint8_t patrolWaypointIndex   = 0;      // current cursor (0..patrolWaypointCount-1)
+    float   patrolWaypoints[8][3] = {};     // x/y/z per waypoint, inline coords
+    bool    patrolLoop            = true;   // true=loop, false=stop after last
+    bool    patrolActive          = false;  // true=patrol running
+
     // BRAIN-DECISION-INTENT-QUEUE-1: per-warrior pending intent buffer.
     // Gate: MC2_BRAIN_INTENT_QUEUE (default OFF).
     // When gate ON, executeSpecialBody_Apply emits BrainOrderIntents here instead of
