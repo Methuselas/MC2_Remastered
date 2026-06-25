@@ -255,3 +255,15 @@ void handleVarGet(const char* key, uint8_t scope, VarStore* store, int wid);
 // Returns count of FSM TODO lines found (0 if file absent or no TODO lines).
 // FORBIDDEN-CALL CONTRACT: calls ONLY std::ifstream + classify + fprintf. No order functions.
 int scanFsmTodosFromFile(const char* missionName, BrainSpecialBody& outBody);
+
+// ---------------------------------------------------------------------------
+// BRAIN-WORLD-SNAPSHOT-1: snapshot gate.
+//
+// s_brainSnapshotEnabled() — returns true when MC2_BRAIN_SNAPSHOT=1.
+//   Gate default OFF.  Gate OFF = byte-identical to pre-snapshot behavior.
+//
+// BrainWorldSnapshot struct is defined in brain_world_snapshot.h (POD, no engine headers).
+// buildBrainWorldSnapshot() is a static helper defined in warrior.cpp (needs protected
+// member access to MechWarrior fields).  Callers outside warrior.cpp use only the gate query.
+#include "brain_world_snapshot.h"
+bool s_brainSnapshotEnabled();
