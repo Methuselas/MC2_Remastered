@@ -364,6 +364,22 @@
         "[BRAIN_FSM_INSTATE] state=patrol match=0",
         "[BRAIN_FSM_SETSTATEPREV]"
       ]
+    },
+    {
+      "name": "fsm-setstateif-conditional-transition",
+      "file": "mc2_01_fsm_setstateif_specials.fit",
+      "mission": "mc2_01",
+      "format": "raw-brace",
+      "fsm_sequential": true,
+      "gates_required": ["MC2_BRAIN_DISPATCH=1", "MC2_BRAIN_DISPATCH_APPLY=1", "MC2_BRAIN_DISPATCH_VAR=1", "MC2_BRAIN_FSM=1"],
+      "notes": "BRAIN-FSM-1K-B: Var.Set primes unit var; SetStateIf match=1 transitions to engage (early return); InState engage gate open (CoreGuard records); SetStateIf match=0 (ready=1 != 9) no-op, body continues. Uses fsm_sequential=true (state persists across 4 bodies on one FsmMechWarrior).",
+      "expected_trace_substrings": [
+        "[BRAIN_FSM_SETSTATEIF] var=ready",
+        "match=1",
+        "to=engage",
+        "[BRAIN_FSM_SETSTATEIF] var=ready",
+        "match=0"
+      ]
     }
   ]
 }
