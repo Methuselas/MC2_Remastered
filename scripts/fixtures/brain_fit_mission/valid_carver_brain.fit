@@ -1,0 +1,14 @@
+[Warrior1]
+st Brain = ""
+st LegacyBrain = "PBrain"
+Brain {
+	sourceABLBrain = "PBrain"
+	compatibilityMode = "Enhanced"
+	PrimaryOPORD { type = PlayerControlled }
+	Tactics {
+		Standard = 1.00
+		Suppress = 0.50
+		Flank = 0.25
+		EngageRadius = 250.0
+	}
+}

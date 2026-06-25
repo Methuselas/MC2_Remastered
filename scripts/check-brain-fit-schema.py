@@ -46,6 +46,9 @@ OPORD_TYPES = {
     "Patrol", "Guard", "MoveTo", "Escort", "Attack",
     "Withdraw", "Capture", "Refit", "Follow", "HoldFire",
     "Sentry", "Ambush", "Scout",
+    # BRAIN-SCHEMA-CARVER-COMPAT-1: carver_v_enhanced uses PlayerControlled for
+    # player-driven units (277 uses). Real OPORD type — was an R3 FAIL before.
+    "PlayerControlled",
 }
 OPORD_COMPOSITION = {"Sentry", "Ambush", "Scout"}
 
@@ -55,6 +58,9 @@ OPORD_SLOTS = {"Primary", "Secondary", "Tertiary"}
 TACTIC_NAMES = {
     "IndirectFire", "HullDown", "FightingWithdraw", "Pursue", "HitAndRun",
     "StopAndFire", "Flank", "Joust", "Turret",
+    # BRAIN-SCHEMA-CARVER-COMPAT-1: carver_v_enhanced tactic-weight names —
+    # were W3 (unknown-tactic) warnings before.
+    "Standard", "Suppress",
 }
 
 # Canonical switch key groups.
@@ -342,6 +348,83 @@ def _validate_brain(brain_node, filepath, findings):
     return unit_ref
 
 
+# BRAIN-SCHEMA-CARVER-COMPAT-1: carver mission.fit Brain {} dialect.
+# Differs from the _ai.fit schema: OPORD is expressed as PrimaryOPORD/SecondaryOPORD/
+# TertiaryOPORD { type = ... } blocks (not OPORD { slot=... }), and tactic weights as a
+# Tactics { <Name> = <weight> } block (not tactic.<Name> = keys). Rule codes are M-prefixed
+# to distinguish from the _ai.fit rules.
+
+# Non-tactic numeric knobs that legitimately appear inside Tactics {} — not tactic names.
+TACTICS_KNOBS = {"AttackerHelpRadius", "DefenderHelpRadius", "EngageRadius"}
+
+
+def _validate_brain_mission(brain_node, filepath, findings):
+    """Validate a carver mission.fit Brain {} block. Returns a display tag."""
+    kvs = _kv_dict(brain_node['children'])
+    tag = kvs.get('sourceABLBrain', '') or kvs.get('unitRef', '') or '(brain)'
+
+    # MW4: archetype resolver deferred (mirror W4).
+    if 'archetype' in kvs:
+        findings.append(Finding('WARN', 'MW4', filepath, tag,
+                                 f"archetype='{kvs['archetype']}' present; resolver deferred to BRAIN-ARCHETYPE-FIT-1"))
+
+    for blk in _child_blocks(brain_node['children']):
+        name = blk['name']
+        bkvs = _kv_dict(blk['children'])
+        # *OPORD blocks (PrimaryOPORD / SecondaryOPORD / TertiaryOPORD): validate type=.
+        if name.endswith('OPORD'):
+            otype = bkvs.get('type', '')
+            if otype == '':
+                continue  # blank type = OPORD slot present but unset — carver does this; allowed
+            if otype not in OPORD_TYPES:
+                findings.append(Finding('FAIL', 'M3', filepath, tag,
+                                         f"{name}.type '{otype}' not in OPORD enum"))
+        # Tactics { <Name> = <weight> } block.
+        elif name == 'Tactics':
+            for k, v in bkvs.items():
+                if k in TACTICS_KNOBS:
+                    continue  # numeric knob, not a tactic name
+                # M6: weight must be a non-negative float.
+                try:
+                    fv = float(v)
+                    if fv < 0.0:
+                        findings.append(Finding('FAIL', 'M6', filepath, tag,
+                                                 f"tactic '{k}' = {v} is negative (must be >= 0.0)"))
+                except ValueError:
+                    findings.append(Finding('FAIL', 'M6', filepath, tag,
+                                             f"tactic '{k}' value '{v}' is not a float"))
+                # MW3: unknown tactic name (forward-compat).
+                if k not in TACTIC_NAMES:
+                    findings.append(Finding('WARN', 'MW3', filepath, tag,
+                                             f"unknown tactic name '{k}' (forward-compat)"))
+    return tag
+
+
+def check_mission_file(filepath, quiet=False):
+    """Check a carver mission.fit file's Brain {} blocks. Returns list of Finding."""
+    findings = []
+    try:
+        with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+            text = f.read()
+    except OSError as e:
+        findings.append(Finding('FAIL', 'R0', filepath, 'file', f"cannot open: {e}"))
+        return findings
+    try:
+        nodes = parse_fit(text)
+    except ParseError as e:
+        findings.append(Finding('FAIL', 'PARSE', filepath, 'file', f"parse error: {e}"))
+        return findings
+
+    brain_blocks = _child_blocks(nodes, 'Brain')
+    for brain in brain_blocks:
+        _validate_brain_mission(brain, filepath, findings)
+
+    n_fails = sum(1 for f in findings if f.severity == 'FAIL')
+    if n_fails == 0 and not quiet:
+        print(f"PASS  brain_mission  {os.path.basename(filepath)}  {len(brain_blocks)} Brain block(s) validated")
+    return findings
+
+
 def check_file(filepath, quiet=False):
     """Check a single *_ai.fit file. Returns list of Finding."""
     findings = []
@@ -402,6 +485,25 @@ def find_ai_fit_files(root):
     return glob.glob(pattern, recursive=True)
 
 
+_BRAIN_BLOCK_RE = re.compile(r'\bBrain\s*\{')
+
+
+def find_mission_fit_files(root):
+    """BRAIN-SCHEMA-CARVER-COMPAT-1: mission.fit files that contain a Brain {} block.
+    Stock mission.fit (legacy ABL, no Brain {}) is skipped via a cheap substring
+    pre-filter — so this pass has zero false positives on non-carver content."""
+    pattern = os.path.join(root, 'data', 'missions', '**', 'mission.fit')
+    out = []
+    for fp in glob.glob(pattern, recursive=True):
+        try:
+            with open(fp, 'r', encoding='utf-8', errors='replace') as f:
+                if _BRAIN_BLOCK_RE.search(f.read()):
+                    out.append(fp)
+        except OSError:
+            pass
+    return out
+
+
 def check_fixtures(fixtures_dir, quiet=False):
     """Check all .fit files in the fixtures directory."""
     if not os.path.isdir(fixtures_dir):
@@ -429,6 +531,8 @@ def main():
 
     root = os.path.abspath(args.root)
     fixtures_dir = args.fixtures or os.path.join(root, 'scripts', 'fixtures', 'brain_fit')
+    # BRAIN-SCHEMA-CARVER-COMPAT-1: separate fixtures for the mission.fit Brain {} dialect.
+    mission_fixtures_dir = os.path.join(root, 'scripts', 'fixtures', 'brain_fit_mission')
 
     # Two independent passes:
     #  1. REAL missions (data/missions/**/*_ai.fit): any FAIL = a real contract
@@ -440,6 +544,9 @@ def main():
     #     must never turn the CI gate red.
     mission_files = find_ai_fit_files(root)
     fixture_files = check_fixtures(fixtures_dir)
+    # BRAIN-SCHEMA-CARVER-COMPAT-1: mission.fit Brain {} pass + its fixture self-test.
+    mission_fit_files = find_mission_fit_files(root)
+    mission_fixture_files = check_fixtures(mission_fixtures_dir)
 
     all_findings = []
     mission_fail = 0
@@ -476,7 +583,37 @@ def main():
                   f"expected {'FAIL' if expect_fail else 'no FAIL'}, "
                   f"got {'FAIL' if has_fail else 'no FAIL'}")
 
-    total = len(mission_files) + len(fixture_files)
+    # Pass 1b — real carver mission.fit Brain {} blocks (only files with a Brain {} block).
+    for fpath in mission_fit_files:
+        findings = check_mission_file(fpath, quiet=args.quiet)
+        for f in findings:
+            all_findings.append(f)
+            if f.severity == 'FAIL':
+                mission_fail += 1
+            elif f.severity == 'WARN':
+                warn_count += 1
+            if not args.quiet:
+                print(str(f))
+
+    # Pass 2b — mission.fit fixture self-test (same fail_* convention).
+    for fpath in sorted(mission_fixture_files):
+        name = os.path.basename(fpath)
+        findings = check_mission_file(fpath, quiet=args.quiet)
+        has_fail = any(f.severity == 'FAIL' for f in findings)
+        expect_fail = name.startswith('fail_')
+        for f in findings:
+            all_findings.append(f)
+            if f.severity == 'WARN':
+                warn_count += 1
+            if not args.quiet:
+                print(str(f))
+        if has_fail != expect_fail:
+            selftest_fail += 1
+            print(f"FAIL  brain_mission  {name}  self-test mismatch: "
+                  f"expected {'FAIL' if expect_fail else 'no FAIL'}, "
+                  f"got {'FAIL' if has_fail else 'no FAIL'}")
+
+    total = len(mission_files) + len(fixture_files) + len(mission_fit_files) + len(mission_fixture_files)
     if total == 0:
         if not args.quiet:
             print("PASS  brain_fit  (no *_ai.fit files found — legacy ABL fallback)")
@@ -487,15 +624,17 @@ def main():
 
     fail_count = mission_fail + selftest_fail
     if not args.quiet:
-        print(f"\nbrain_fit: {len(mission_files)} mission + {len(fixture_files)} "
-              f"fixture file(s) - {mission_fail} mission FAIL, "
-              f"{selftest_fail} self-test mismatch, {warn_count} WARN")
+        print(f"\nbrain_fit: {len(mission_files)} ai.fit + {len(mission_fit_files)} mission.fit + "
+              f"{len(fixture_files) + len(mission_fixture_files)} fixture file(s) - "
+              f"{mission_fail} FAIL, {selftest_fail} self-test mismatch, {warn_count} WARN")
 
     if args.json:
         out = {
             'result': 'FAIL' if fail_count > 0 else 'PASS',
             'mission_files': mission_files,
+            'mission_fit_files': mission_fit_files,
             'fixture_files': fixture_files,
+            'mission_fixture_files': mission_fixture_files,
             'mission_fail': mission_fail,
             'selftest_fail': selftest_fail,
             'findings': [
