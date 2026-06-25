@@ -236,6 +236,13 @@ enum class AttackRole {
 struct ApplyExpectation {
     bool          hasExpectation     = false;
 
+    // HARNESS-INTENT-GATE-SCOPE-1: fixture's order emission REQUIRES the intent queue
+    // (e.g. patrol — emits only via emitBrainIntent, no direct setGeneralTacOrder fallback).
+    // When true, apply assertions are SKIPPED in a gate-OFF process (the order legitimately
+    // cannot be emitted without the queue), keeping the A/B gate-OFF control meaningful for
+    // the 6 dual-path effect verbs.
+    bool          requiresIntentQueue = false;
+
     // Expected TacticalOrderCode for gate-OFF and gate-ON (must match for A/B identity).
     // -1 means "no order expected" (guards fire).
     int           expectedOrderCode  = -1;  // TACTICAL_ORDER_* or -1
@@ -330,6 +337,10 @@ static ApplyExpectation applyExpFromJson(const JsonValue& jv) {
         for (const JsonValue& sv : jv.at("apply_trace_substrings").arr())
             e.applyTraceSubstrings.push_back(sv.str());
     }
+
+    // HARNESS-INTENT-GATE-SCOPE-1: intent-queue-only fixtures (patrol) opt out of the gate-OFF check.
+    if (jv.has("requires_intent_queue"))
+        e.requiresIntentQueue = jv.at("requires_intent_queue").isBoolTrue();
 
     return e;
 }
@@ -475,12 +486,13 @@ int main(int argc, char** argv) {
     // TECHSCRIPT-DISPATCH-1D-M: enable mission-scope Var store for varmission-roundtrip fixture.
     (void)_putenv("MC2_BRAIN_VAR_MISSION=1");
     // BRAIN-OPORD-COREPATROL-1: enable patrol verb handler for patrol fixtures.
-    // MC2_BRAIN_INTENT_QUEUE=1 is set globally so patrol apply_expectation fixtures
-    // can prove MOVETO_POINT is committed via intent queue.
-    // FSM sequential fixtures drain pendingIntents via commitBrainIntents after each body
-    // so orderCount is correct regardless of intent queue gate state.
     (void)_putenv("MC2_BRAIN_PATROL=1");
-    (void)_putenv("MC2_BRAIN_INTENT_QUEUE=1");
+    // HARNESS-INTENT-GATE-SCOPE-1: do NOT force MC2_BRAIN_INTENT_QUEUE globally — that
+    // overrode the A/B runner's gate-OFF pass. Default it ON only when the caller did not
+    // set it (so a bare harness run still exercises patrol + the intent path), but an
+    // explicit caller value (the A/B runner sets =0 for the OFF pass) is respected.
+    if (std::getenv("MC2_BRAIN_INTENT_QUEUE") == nullptr)
+        (void)_putenv("MC2_BRAIN_INTENT_QUEUE=1");
     // BRAIN-FSM-1K-A/B: enable FSM verbs for fsm-* fixtures.
     (void)_putenv("MC2_BRAIN_FSM=1");
     if (applyMode) {
@@ -627,7 +639,11 @@ int main(int argc, char** argv) {
         }
 
         // --- V2 Apply assertions (only in --apply-mode, only if fixture has apply_expectation) ---
-        if (applyMode && fix.applyExp.hasExpectation && body.loaded) {
+        if (applyMode && fix.applyExp.hasExpectation && body.loaded
+            && !(fix.applyExp.requiresIntentQueue && !intentQueueGateOn)) {
+            // HARNESS-INTENT-GATE-SCOPE-1: skip intent-queue-only fixtures (patrol) in a
+            // gate-OFF process — their order can't be emitted without the queue, so asserting
+            // it there would falsely fail. The 6 dual-path effect verbs still run both gates.
             res.mode = "v2-apply";
             const ApplyExpectation& ae = fix.applyExp;
 

@@ -41,7 +41,9 @@ function Run-HarnessApply {
     if ($GateOn) {
         $env:MC2_BRAIN_INTENT_QUEUE = "1"
     } else {
-        Remove-Item Env:MC2_BRAIN_INTENT_QUEUE -ErrorAction SilentlyContinue
+        # HARNESS-INTENT-GATE-SCOPE-1: set "0" explicitly (not unset) so the harness's
+        # default-when-unset does NOT flip the OFF pass back to ON. This is the real gate-OFF control.
+        $env:MC2_BRAIN_INTENT_QUEUE = "0"
     }
     & $HarnessExe --manifest $ManifestPath --fixture-dir $FixtureDir --apply-mode
     return $LASTEXITCODE
