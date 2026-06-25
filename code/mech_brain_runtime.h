@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include "brain_special_dispatch.h"
+#include "brain_order_intent.h"
 
 // ---------------------------------------------------------------------------
 // Per-warrior Var store (TECHSCRIPT-DISPATCH-1D).
@@ -114,6 +115,15 @@ struct MechBrainRuntime {
     // Shared across warriors for the same mission (all warriors load the same file;
     // this copy is per-warrior-runtime but content is identical — acceptable for 1A's small index).
     SpecialIndex     specialIndex;
+
+    // BRAIN-DECISION-INTENT-QUEUE-1: per-warrior pending intent buffer.
+    // Gate: MC2_BRAIN_INTENT_QUEUE (default OFF).
+    // When gate ON, executeSpecialBody_Apply emits BrainOrderIntents here instead of
+    // calling setGeneralTacOrder directly.  commitBrainIntents() drains the buffer inline.
+    // Cap = kBrainIntentCap (4).  Mission-ephemeral.  NOT serialized.
+    // pendingIntentCount is reset to 0 at the start of each commitBrainIntents() call.
+    BrainOrderIntent pendingIntents[kBrainIntentCap];
+    int              pendingIntentCount = 0;
 
     // Compute which slots Brain WOULD own in this mode (trace-only; never applied in 1A).
     // Returns bitmask of kBrainOwns* flags.

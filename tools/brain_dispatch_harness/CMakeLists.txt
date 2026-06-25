@@ -26,6 +26,7 @@ add_executable(brain_dispatch_harness
     stubs/objmgr_stub.cpp
     stubs/tacorder_stub.cpp
     stubs/inifile_stub.cpp
+    stubs/brain_tick_stub.cpp   # BRAIN-DECISION-INTENT-QUEUE-1: stub for getBrainTickIndex()
 )
 
 # Include path order is critical:

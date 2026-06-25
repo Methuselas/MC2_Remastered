@@ -174,6 +174,9 @@ static float    s_brainFixedTickSimLast  = -1.0f;   // last scenarioTime seen; -
 static uint32_t s_brainTickIndex         = 0;       // monotonic tick counter, per-frame global
 static uint32_t s_brainTicksThisFrame    = 0;       // ticks fired in current frame (reset each frame)
 
+// BRAIN-DECISION-INTENT-QUEUE-1: accessor so brain_special_dispatch.cpp can stamp intents.
+uint32_t getBrainTickIndex() { return s_brainTickIndex; }
+
 static void initBrainFixedTickGate() {
     if (s_brainFixedTickGateChecked) return;
     s_brainFixedTickGateChecked = true;
@@ -2345,6 +2348,12 @@ long MechWarrior::runBrain (void) {
 			}
 			return false;
 		})();
+		// BRAIN-DECISION-INTENT-QUEUE-1: gate check (default OFF).
+		// When ON: executeSpecialBody_Apply emits intents; commitBrainIntents drains them.
+		static const bool s_intentQueue = ([](){
+			const char* v = std::getenv("MC2_BRAIN_INTENT_QUEUE");
+			return (v && std::atoi(v) != 0);
+		})();
 
 		bool dispatcherAppliedEffect = false;
 		if (s_dispatchApply && brainRuntime && brainRuntime->specialBody.loaded) {
@@ -2392,12 +2401,17 @@ long MechWarrior::runBrain (void) {
 						brainRuntime->retreatEffectApplied = 1;
 					bool applied = executeSpecialBody_Apply(brainRuntime->specialBody, this, vehicleWID,
 					                                        &brainRuntime->varStore, idx, "");
+					// BRAIN-DECISION-INTENT-QUEUE-1: drain pending intents inline (gate ON only).
+					// commitBrainIntents is the sole caller of setGeneralTacOrder when gate ON.
+					if (s_intentQueue) commitBrainIntents(this, brainRuntime);
 					if (applied)
 						dispatcherAppliedEffect = true;
 				} else {
 					// No effect verb — trace-dispatch every tick (no slot ownership; HOLD fires normally).
 					executeSpecialBody_Apply(brainRuntime->specialBody, this, vehicleWID,
 					                        &brainRuntime->varStore, idx, "");
+					// Gate ON: drain (no-op since no effect verbs; defensive).
+					if (s_intentQueue) commitBrainIntents(this, brainRuntime);
 					// dispatcherAppliedEffect stays false → HOLD fires as normal.
 				}
 			} else {

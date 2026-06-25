@@ -102,13 +102,17 @@ def count_inline_guard_verbs(lines):
     return -1  # not found
 
 
-def count_callsites_in_apply(lines):
-    """Count warrior->setGeneralTacOrder( lines inside executeSpecialBody_Apply."""
+def count_callsites_in_function(lines, func_pattern_str):
+    """Count warrior->setGeneralTacOrder( lines inside a named function.
+
+    func_pattern_str: regex string that matches the function's opening line.
+    Returns the count of matching lines found within the function body.
+    """
     in_func = False
     depth = 0
-    started = False  # True once we've seen the opening brace
+    started = False
     count = 0
-    func_pattern = re.compile(r'^bool\s+executeSpecialBody_Apply\s*\(')
+    func_pattern = re.compile(func_pattern_str)
     for line in lines:
         stripped = line.rstrip()
         if not in_func:
@@ -124,6 +128,35 @@ def count_callsites_in_apply(lines):
             break
         if "warrior->setGeneralTacOrder(" in stripped:
             count += 1
+    return count
+
+
+def count_callsites_in_apply(lines):
+    """Count warrior->setGeneralTacOrder( lines inside executeSpecialBody_Apply.
+
+    BRAIN-DECISION-INTENT-QUEUE-1: the gate-OFF path keeps all 6 callsites here
+    (inside 'else' branches); the gate-ON emit path does NOT call setGeneralTacOrder.
+    The checker counts the gate-OFF branches which must still equal 6.
+    """
+    return count_callsites_in_function(lines, r'^bool\s+executeSpecialBody_Apply\s*\(')
+
+
+def count_callsites_in_commit(lines):
+    """Count warrior->setGeneralTacOrder( lines inside commitBrainIntents.
+
+    BRAIN-DECISION-INTENT-QUEUE-1: commitBrainIntents is the sole caller of
+    setGeneralTacOrder when MC2_BRAIN_INTENT_QUEUE=1.  Its callsite count must
+    also equal the verb count (one per verb = 6).
+    Returns -1 if the function is not found (checker emits WARN, not FAIL — the
+    commit function is new and may not exist in older branches).
+    """
+    count = count_callsites_in_function(lines, r'^void\s+commitBrainIntents\s*\(')
+    # count_callsites_in_function returns 0 if function not found — distinguish:
+    # If the function doesn't exist in source, count will be 0 and in_func never set.
+    # Detect absence by checking if function header is present at all.
+    commit_present = any(re.match(r'^void\s+commitBrainIntents\s*\(', line.rstrip()) for line in lines)
+    if not commit_present:
+        return -1
     return count
 
 
@@ -151,25 +184,41 @@ def main():
     header_count   = count_header_guard_verbs(lines)
     inline_count   = count_inline_guard_verbs(lines)
     callsite_count = count_callsites_in_apply(lines)
+    commit_count   = count_callsites_in_commit(lines)
 
-    findings.append(("INFO", f"header_guard_verbs={header_count}  inline_guard_verbs={inline_count}  callsite_count={callsite_count}"))
+    if commit_count >= 0:
+        findings.append(("INFO", f"header_guard_verbs={header_count}  inline_guard_verbs={inline_count}  "
+                                  f"apply_callsite_count={callsite_count}  commit_callsite_count={commit_count}"))
+    else:
+        findings.append(("INFO", f"header_guard_verbs={header_count}  inline_guard_verbs={inline_count}  "
+                                  f"apply_callsite_count={callsite_count}  commit_callsite_count=absent"))
 
-    ok = (header_count == inline_count == callsite_count)
+    ok_apply  = (header_count == inline_count == callsite_count)
+    ok_commit = (commit_count < 0) or (commit_count == callsite_count)
+    ok = ok_apply and ok_commit
 
     if header_count != callsite_count:
-        findings.append(("FAIL", f"header doc ({header_count} verbs) != callsite count ({callsite_count})"))
+        findings.append(("FAIL", f"header doc ({header_count} verbs) != apply callsite count ({callsite_count})"))
     if inline_count != callsite_count:
-        findings.append(("FAIL", f"inline doc ({inline_count} verbs) != callsite count ({callsite_count})"))
+        findings.append(("FAIL", f"inline doc ({inline_count} verbs) != apply callsite count ({callsite_count})"))
     if header_count != inline_count:
         findings.append(("FAIL", f"header doc ({header_count}) != inline doc ({inline_count})"))
+    if commit_count >= 0 and commit_count != callsite_count:
+        findings.append(("FAIL", f"commitBrainIntents callsite count ({commit_count}) != apply callsite count ({callsite_count}) — verb drift"))
+    if commit_count < 0:
+        findings.append(("WARN", "commitBrainIntents not found in source — BRAIN-DECISION-INTENT-QUEUE-1 not yet landed"))
 
     if ok:
-        findings.append(("PASS", f"all three counts agree: {callsite_count} permitted verbs"))
+        if commit_count >= 0:
+            findings.append(("PASS", f"all counts agree: {callsite_count} permitted verbs (apply={callsite_count}, commit={commit_count})"))
+        else:
+            findings.append(("PASS", f"apply counts agree: {callsite_count} permitted verbs (commit function absent — pre-rung5)"))
 
     _report(findings, args)
 
     fail_count = sum(1 for lvl, _ in findings if lvl == "FAIL")
     return 1 if fail_count > 0 else 0
+
 
 
 def _report(findings, args):
