@@ -5464,6 +5464,20 @@ long MechWarrior::mainDecisionTree (void) {
 				// body from the mission-level cache so this warrior dispatches like the
 				// _ai.fit-recorded ones. No-op when the cache is empty (gate-OFF / no file).
 				applyCachedSpecialBodyToRuntime(brainRuntime);
+			} else {
+				// GAP-A-ROBUSTNESS-1: a brainRuntime can be eager-allocated BEFORE this point by
+				// the [Tactics] loader (mission.cpp setBrainRuntimeMode(Legacy), so tactic weights
+				// can attach). That pre-empts the lazy-alloc branch above — so without this, the
+				// mission-level specials cache is never applied AND the runtime stays Legacy →
+				// enhancedApply==false → no Enhanced dispatch (observed: TACTIC_WEIGHTS=1 collapses
+				// multi-warrior patrol 70→1). When a forced mode is set (FORCE_MODE != Legacy),
+				// honor it over the eager Legacy default; then apply the cached specials. Both are
+				// no-ops if already satisfied (idempotent — safe to run every tick).
+				if (s_brainRuntimeForcedMode != BrainRuntimeMode::Legacy &&
+				    brainRuntime->mode != s_brainRuntimeForcedMode) {
+					brainRuntime->mode = s_brainRuntimeForcedMode;
+				}
+				applyCachedSpecialBodyToRuntime(brainRuntime);
 			}
 		}
 
