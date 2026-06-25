@@ -36,6 +36,8 @@
 #include "../GameOS/gameos/gos_static_prop_registry.h" // Task 5: mission-load bulk registration
 #include "move_recon.h"  // MC2_MOVE_RECON per-frame pathfinding cost instrumentation
 #include "frame_jobs.h"  // FRAME-JOBS-1: parallelForRange worker pool
+#include "brain_special_dispatch.h"  // BRAIN-COMMIT-PHASE-1: commitAllBrainIntents
+#include "warrior.h"                 // BRAIN-COMMIT-PHASE-1: MechWarrior, getBrainRuntime
 #include <atomic>
 extern std::atomic<int> g_workerResubmitCalls;  // FRAME-JOBS-2D: msl.cpp
 
@@ -3216,6 +3218,57 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 
 		for (long i = 0; i < numRemoved; i++)
 			mission->removeMover(removeList[i]);
+
+		// BRAIN-COMMIT-PHASE-1: deferred intent commit phase (MC2_BRAIN_COMMIT_PHASE=1).
+		// Runs AFTER all mechs and vehicles have called update() (runBrain/updateActions).
+		// Requires MC2_BRAIN_INTENT_QUEUE=1; gate OFF = no-op (inline-commit path unchanged).
+		// Warriors are committed in ascending WID order for deterministic multi-warrior ordering.
+		// Each warrior with pendingIntentCount > 0 gets commitBrainIntents() called once.
+		// Emits: [BRAIN_COMMIT_PHASE] committed=<n> warriors in WID order
+		{
+			static const bool s_commitPhaseGate = ([](){
+				const char* v = std::getenv("MC2_BRAIN_COMMIT_PHASE");
+				return (v && std::atoi(v) != 0);
+			})();
+			static const bool s_intentQueueGate = ([](){
+				const char* v = std::getenv("MC2_BRAIN_INTENT_QUEUE");
+				return (v && std::atoi(v) != 0);
+			})();
+			if (s_commitPhaseGate && s_intentQueueGate && numMovers > 0) {
+				// Collect (WID, mover) pairs for stable ordering.
+				static std::vector<std::pair<long, MoverPtr>> s_commitOrder;
+				s_commitOrder.clear();
+				for (long mi = 0; mi < numMovers; mi++) {
+					MoverPtr mover = moverList[mi];
+					if (!mover || !mover->getExists()) continue;
+					MechWarriorPtr pilot = mover->getPilot();
+					if (!pilot) continue;
+					MechBrainRuntime* rt = pilot->getBrainRuntime();
+					if (!rt || rt->pendingIntentCount <= 0) continue;
+					s_commitOrder.emplace_back(mover->getWatchID(), mover);
+				}
+				// Sort ascending by WID — deterministic, not pointer/iteration order.
+				std::sort(s_commitOrder.begin(), s_commitOrder.end(),
+				          [](const std::pair<long, MoverPtr>& a, const std::pair<long, MoverPtr>& b){
+				              return a.first < b.first;
+				          });
+				int committed = 0;
+				for (auto& kv : s_commitOrder) {
+					MoverPtr mover = kv.second;
+					if (!mover->getExists()) continue;  // destroyed during this frame's mover loop
+					MechWarriorPtr pilot = mover->getPilot();
+					if (!pilot) continue;
+					MechBrainRuntime* rt = pilot->getBrainRuntime();
+					if (!rt || rt->pendingIntentCount <= 0) continue;
+					commitBrainIntents(pilot, rt);
+					++committed;
+				}
+				if (committed > 0) {
+					std::fprintf(stderr, "[BRAIN_COMMIT_PHASE] committed=%d warriors in WID order\n", committed);
+					std::fflush(stderr);
+				}
+			}
+		}
 	}
 
 	if (other) {
