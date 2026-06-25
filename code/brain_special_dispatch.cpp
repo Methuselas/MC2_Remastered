@@ -174,6 +174,19 @@ static bool s_brainCommitPhaseEnabled() {
     return kGate;
 }
 
+// TACTIC-WEIGHTS-B: MC2_TACTIC_WEIGHTS_B gate (default OFF). When ON, the brain's
+// already-selected tactic (runtime->selectedTactic, populated by selectTacticForWarrior
+// under MC2_TACTIC_WEIGHTS) is written into the attack order's attackParams.tactic.
+// Needs BOTH gates: WEIGHTS to populate selectedTactic, WEIGHTS_B to wire it. With B
+// OFF the field is left at its init default (TACTIC_NONE) → byte-identical to pre-B.
+static bool s_tacticWeightsBEnabled() {
+    static const bool kGate = ([](){
+        const char* v = std::getenv("MC2_TACTIC_WEIGHTS_B");
+        return (v && std::atoi(v) != 0);
+    })();
+    return kGate;
+}
+
 // ---------------------------------------------------------------------------
 // Recognized verb table for DISPATCH-1A.
 // All other verbs produce [BRAIN_DISPATCH_UNKNOWN] trace.
@@ -924,6 +937,16 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
                     attackOrder.attackParams.method = ATTACKMETHOD_RANGED;
                     attackOrder.attackParams.range  = FIRERANGE_OPTIMAL;
                     attackOrder.attackParams.pursue = true;
+                    // TACTIC-WEIGHTS-B: wire selected tactic. Local `runtime` is null on this
+                    // gate-OFF path, so read selectedTactic via warrior->getBrainRuntime().
+                    if (s_tacticWeightsBEnabled()) {
+                        MechBrainRuntime* rtB = warrior->getBrainRuntime();
+                        if (rtB) {
+                            attackOrder.attackParams.tactic = (TacticType)rtB->selectedTactic;
+                            std::fprintf(stderr, "[BRAIN_TACTIC_B] applied tactic=%d wid=%d\n", rtB->selectedTactic, wid);
+                            std::fflush(stderr);
+                        }
+                    }
                     attackOrder.moveParams.wayPath.mode[0] = TRAVEL_MODE_FAST;
                     warrior->setGeneralTacOrder(attackOrder);
                     std::fprintf(stderr, "[BRAIN_DISPATCH_APPLY] verb=OPORD.CoreAttack effect=ATTACK_OBJECT targetWID=%ld wid=%d\n",
@@ -1304,6 +1327,12 @@ void commitBrainIntents(MechWarrior* warrior, MechBrainRuntime* runtime) {
                 o.attackParams.method = ATTACKMETHOD_RANGED;
                 o.attackParams.range  = FIRERANGE_OPTIMAL;
                 o.attackParams.pursue = true;
+                // TACTIC-WEIGHTS-B: wire selected tactic (runtime non-null per caller guard).
+                if (s_tacticWeightsBEnabled()) {
+                    o.attackParams.tactic = (TacticType)runtime->selectedTactic;
+                    std::fprintf(stderr, "[BRAIN_TACTIC_B] applied tactic=%d wid=%d\n", runtime->selectedTactic, intent.warriorId);
+                    std::fflush(stderr);
+                }
                 o.moveParams.wayPath.mode[0] = TRAVEL_MODE_FAST;
                 warrior->setGeneralTacOrder(o);
                 std::fprintf(stderr, "[BRAIN_INTENT_COMMIT] verb=OPORD.CoreAttack order=ATTACK_OBJECT targetWID=%d tick=%u wid=%d\n",
