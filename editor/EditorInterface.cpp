@@ -81,6 +81,7 @@
 #include "EditorRecent.h"
 #include "SceneOutliner.h"
 #include "BeautySidecarPreview.h"
+#include "UnitActionFlowPanel.h"
 #include "InspectorPanel.h"
 #include "UnitBrainPanel.h"   // AI / Brain / Orders inspector panel
 #include "TelemetryPanel.h"
