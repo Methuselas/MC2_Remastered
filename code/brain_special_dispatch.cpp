@@ -171,6 +171,8 @@ static const char* const kRecognizedVerbs[] = {
     "Unit.SetStatePrev",
     "Unit.InState",
     "Unit.NotInState",
+    // BRAIN-FSM-1K-B: conditional FSM transition (gate MC2_BRAIN_FSM, requires MC2_BRAIN_DISPATCH_VAR)
+    "Unit.SetStateIf",
     nullptr  // sentinel
 };
 
@@ -971,6 +973,83 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
             if (match) stateGateOpen = false;
             std::fprintf(stderr, "[BRAIN_FSM_NOTINSTATE] state=%s match=%d wid=%d\n", testState, match, wid);
             std::fflush(stderr);
+        } else if (fsmGate && std::strncmp(vpCanon, "Unit.SetStateIf", 15) == 0 &&
+                   (vpCanon[15] == ' ' || vpCanon[15] == '\t' || vpCanon[15] == '\0')) {
+            // BRAIN-FSM-1K-B: Unit.SetStateIf "stateName" "varKey" "varValue"
+            // If Var store (unit scope) varKey == varValue → SetState transition (prevState←currentState; currentState←stateName); early return.
+            // If no match → no-op; body continues.
+            // Requires MC2_BRAIN_DISPATCH_VAR=1. If VAR gate OFF, emits one-time warning and is INERT.
+            //
+            // Parse 3 quoted args: stateName, varKey, varValue.
+            MechBrainRuntime* fsm_rt = warrior ? warrior->getBrainRuntime() : nullptr;
+            // Requires-VAR guard (mirror 1D-M pattern): FSM ON but VAR OFF → inert + one-time warning.
+            if (!varGate) {
+                static bool s_setstateif_var_warn = false;
+                if (!s_setstateif_var_warn) {
+                    s_setstateif_var_warn = true;
+                    std::fprintf(stderr, "[BRAIN_FSM_SETSTATEIF] WARNING: Unit.SetStateIf requires MC2_BRAIN_DISPATCH_VAR=1 — verb is INERT\n");
+                    std::fflush(stderr);
+                }
+                // INERT: no transition, body continues.
+            } else {
+                // Parse three quoted args: "stateName" "varKey" "varValue"
+                const char* sp = vpCanon + 15;
+                while (*sp == ' ' || *sp == '\t') ++sp;
+
+                // Arg 1: stateName
+                char stateName[32] = {};
+                if (*sp == '"') ++sp;
+                int ni = 0;
+                while (*sp && *sp != '"' && ni < 31) stateName[ni++] = *sp++;
+                stateName[ni] = '\0';
+                if (*sp == '"') ++sp;
+                while (*sp == ' ' || *sp == '\t') ++sp;
+
+                // Arg 2: varKey
+                char varKey[32] = {};
+                if (*sp == '"') ++sp;
+                ni = 0;
+                while (*sp && *sp != '"' && ni < 31) varKey[ni++] = *sp++;
+                varKey[ni] = '\0';
+                if (*sp == '"') ++sp;
+                while (*sp == ' ' || *sp == '\t') ++sp;
+
+                // Arg 3: varValue (expected value)
+                char varValue[32] = {};
+                if (*sp == '"') ++sp;
+                ni = 0;
+                while (*sp && *sp != '"' && ni < 31) varValue[ni++] = *sp++;
+                varValue[ni] = '\0';
+
+                // Read unit-scope var (unit-scope only; mission-scope deferred to future slice).
+                const char* curVal = (varStore && varKey[0] != '\0')
+                    ? varStore->get(varKey, VarScope::Unit)
+                    : "0";
+
+                int match = (std::strcmp(curVal, varValue) == 0) ? 1 : 0;
+
+                if (match) {
+                    // Perform SetState transition: prevState←currentState; currentState←stateName.
+                    if (fsm_rt) {
+                        std::strncpy(fsm_rt->prevState, fsm_rt->currentState, 31);
+                        fsm_rt->prevState[31] = '\0';
+                        std::strncpy(fsm_rt->currentState, stateName, 31);
+                        fsm_rt->currentState[31] = '\0';
+                        std::fprintf(stderr, "[BRAIN_FSM_SETSTATEIF] var=%s cur=%s want=%s match=1 from=%s to=%s wid=%d\n",
+                                     varKey, curVal, varValue, fsm_rt->prevState, fsm_rt->currentState, wid);
+                    } else {
+                        std::fprintf(stderr, "[BRAIN_FSM_SETSTATEIF] var=%s cur=%s want=%s match=1 from=(no-rt) to=%s wid=%d\n",
+                                     varKey, curVal, varValue, stateName, wid);
+                    }
+                    std::fflush(stderr);
+                    return appliedEffect;  // early exit on match — same semantics as SetState
+                } else {
+                    std::fprintf(stderr, "[BRAIN_FSM_SETSTATEIF] var=%s cur=%s want=%s match=0 wid=%d\n",
+                                 varKey, curVal, varValue, wid);
+                    std::fflush(stderr);
+                    // No transition; body continues.
+                }
+            }
         } else if (isRecognizedVerb(vpCanon)) {
             // Recognized but no effect implemented this slice — trace only.
             std::fprintf(stderr, "[BRAIN_DISPATCH] verb=%s wid=%d (apply-mode: no effect this verb)\n", vp, wid);
