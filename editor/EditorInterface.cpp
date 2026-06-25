@@ -4769,6 +4769,14 @@ void EditorInterface::OnRButtonUp(UINT nFlags, CPoint point)
 
 BOOL EditorInterface::OnMouseWheel(UINT nFlags, short zDelta, CPoint pt)
 {
+	// Null-guard the camera: a mouse-wheel message can arrive during editor startup
+	// before `eye` (the camera) is created — the camera-zoom path below derefs
+	// eye->getScaleFactor()/ZoomIn/Out and READ-violated at 0x310 on a wheel during
+	// init. Nothing to rotate or zoom without a camera, so consume and bail. (Same
+	// bug class as the EditorObjectMgr::instance() guard further down.)
+	if ( !eye )
+		return TRUE;
+
 	//--------------------------------------------------
 	// Mouse-wheel rotation. When a placement brush is active the wheel rotates
 	// the placement cursor; otherwise, if objects are selected, it rotates the
