@@ -40,7 +40,8 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mission_terrain_analyzer import (  # noqa: E402
     read_packets, locate_mapdata, extract_layers, read_water_elevation,
-    WORLD_UNITS_PER_VERTEX,
+    derive_masks, detect_pyramid_islands, read_object_footprints, _dilate,
+    WORLD_UNITS_PER_VERTEX, CLIFF_SLOPE_DEG,
 )
 
 
@@ -63,6 +64,69 @@ def upsample_corner_pinned(elev: np.ndarray, factor: int) -> np.ndarray:
     return out
 
 
+def _box3(a: np.ndarray) -> np.ndarray:
+    p = np.pad(a, 1, mode="edge")
+    return (p[0:-2, 0:-2] + p[0:-2, 1:-1] + p[0:-2, 2:] +
+            p[1:-1, 0:-2] + p[1:-1, 1:-1] + p[1:-1, 2:] +
+            p[2:, 0:-2] + p[2:, 1:-1] + p[2:, 2:]) / 9.0
+
+
+def _fine_mask(mask: np.ndarray, factor: int) -> np.ndarray:
+    """Upsample a coarse bool mask to fine grid (nearest)."""
+    N = mask.shape[0]; V = (N - 1) * factor + 1
+    idx = np.clip((np.arange(V) + factor // 2) // factor, 0, N - 1)
+    return mask[np.ix_(idx, idx)]
+
+
+def _value_noise(V: int, cells: int, seed: int) -> np.ndarray:
+    """Deterministic value noise in [-1,1] at the fine resolution (bilinear-upsampled
+    random lattice)."""
+    rs = np.random.RandomState(seed)
+    g = ((rs.uniform(-1.0, 1.0, (cells, cells)) + 1.0) * 127.5).astype(np.uint8)
+    img = np.asarray(Image.fromarray(g, "L").resize((V, V), Image.BILINEAR), dtype=np.float64)
+    return img / 127.5 - 1.0
+
+
+def reshape_visual(base: np.ndarray, elev: np.ndarray, factor: int,
+                   region_fine: np.ndarray, protect_fine: np.ndarray,
+                   corner_clamp: float, max_delta: float, passes: int,
+                   erosion_amp: float = 6.0) -> np.ndarray:
+    """De-pyramid: round the blocky ramps (iterative fine-grid smoothing) AND break
+    the radial pyramid symmetry with multi-octave erosion noise (the "eroded rocky
+    island" look — pure smoothing alone only makes islands MORE pyramid-like).
+    Coarse-vertex movement clamped to `corner_clamp` ("don't let units float");
+    protected (structural) cells pinned to the bilinear baseline; total deviation
+    clamped to `max_delta`."""
+    work = base.copy()
+    V = base.shape[0]
+    edit = region_fine & ~protect_fine
+
+    # 1) round the ramps.
+    for _ in range(passes):
+        avg = _box3(work)
+        work = np.where(edit, work + 0.6 * (avg - work), work)
+        work[protect_fine] = base[protect_fine]
+
+    # 2) erosion: 2-octave value noise, amplitude scaled by local steepness so flats
+    #    stay calm and slopes get rocky break-up. Asymmetric -> lowers pyramid score.
+    if erosion_amp > 0.0:
+        gy, gx = np.gradient(work)
+        steep = np.clip(np.sqrt(gx * gx + gy * gy) / (WORLD_UNITS_PER_VERTEX / factor) / 0.6, 0.0, 1.0)
+        noise = 0.65 * _value_noise(V, max(8, V // 14), 1234) + 0.35 * _value_noise(V, max(16, V // 7), 5678)
+        work = np.where(edit, work + noise * steep * erosion_amp, work)
+
+    # 3) clamp corner movement + total deviation; pin protected.
+    work[protect_fine] = base[protect_fine]
+    cor = work[::factor, ::factor]
+    cor_clamped = elev + np.clip(cor - elev, -corner_clamp, corner_clamp)
+    # distribute the corner correction so we don't reintroduce facets: just set corners,
+    # the surrounding fine verts already smooth toward them next time; acceptable for v1.
+    work[::factor, ::factor] = cor_clamped
+    work = base + np.clip(work - base, -max_delta, max_delta)
+    work[protect_fine] = base[protect_fine]
+    return work
+
+
 def nearest_coarse(elev: np.ndarray, factor: int) -> np.ndarray:
     """The blocky reference: each visual cell = its containing coarse value."""
     N = elev.shape[0]
@@ -77,7 +141,14 @@ def _save_gray(a: np.ndarray, path: Path):
     Image.fromarray(n, mode="L").save(path)
 
 
-def bake(mission: str, missions_dir: Path, out_root: Path, factor: int) -> dict:
+def _pyramid_top_score(elev, water_mask, land_mask):
+    pyr, _ = detect_pyramid_islands(elev, land_mask, water_mask)
+    return float(pyr[0]["score"]) if pyr else 0.0
+
+
+def bake(mission: str, missions_dir: Path, out_root: Path, factor: int,
+         reshape: bool = False, corner_clamp: float = 0.0,
+         max_delta: float = 40.0, passes: int = 24) -> dict:
     pak = missions_dir / f"{mission}.pak"
     if not pak.is_file():
         return {"mission": mission, "error": f"not found: {pak}"}
@@ -86,12 +157,38 @@ def bake(mission: str, missions_dir: Path, out_root: Path, factor: int) -> dict:
         return {"mission": mission, "error": "no MapData packet"}
     _, side, blocks = md
     water_elev = read_water_elevation(missions_dir / f"{mission}.fit")
-    elev = extract_layers(side, blocks, water_elev)["elev"]   # (N,N) world units
+    layers = extract_layers(side, blocks, water_elev)
+    elev = layers["elev"]   # (N,N) world units
 
     visual = upsample_corner_pinned(elev, factor)
     V = visual.shape[0]
 
-    # Corner-pin proof: visual[i*factor, j*factor] must equal elev exactly.
+    reshape_info = None
+    if reshape:
+        masks = derive_masks(elev, layers["water"], layers["overlay"])
+        _pyr, pyr_mask = detect_pyramid_islands(elev, masks["land"], layers["water"])
+        foot, _o, _ = read_object_footprints(read_packets(pak), side)
+        protect = _dilate(layers["overlay"] | foot)
+        # Reshape region: pyramid islands + steep land slopes (the blocky ramps).
+        region = (pyr_mask | (masks["slope_deg"] > CLIFF_SLOPE_DEG)) & masks["land"]
+        region_fine = _fine_mask(region, factor)
+        protect_fine = _fine_mask(protect, factor)
+        base = visual.copy()
+        visual = reshape_visual(base, elev, factor, region_fine, protect_fine,
+                                corner_clamp, max_delta, passes)
+        score_before = _pyramid_top_score(elev, layers["water"], masks["land"])
+        vis_coarse = visual[::factor, ::factor][:side, :side]
+        score_after = _pyramid_top_score(vis_coarse, layers["water"], masks["land"])
+        reshape_info = {
+            "corner_clamp_wu": corner_clamp, "max_delta_wu": max_delta, "passes": passes,
+            "reshape_region_cells": int(region.sum()),
+            "pyramid_top_score_before": score_before,
+            "pyramid_top_score_after": score_after,
+            "max_corner_move_wu": float(np.abs(vis_coarse - elev).max()),
+        }
+
+    # Corner-pin proof: visual[i*factor, j*factor] vs elev (== for bilinear; <=
+    # corner_clamp for reshape).
     corners = visual[::factor, ::factor]
     max_corner_err = float(np.abs(corners - elev).max())
 
@@ -110,14 +207,17 @@ def bake(mission: str, missions_dir: Path, out_root: Path, factor: int) -> dict:
         "visual_side": int(V),
         "world_units_per_vertex_coarse": WORLD_UNITS_PER_VERTEX,
         "world_units_per_vertex_visual": WORLD_UNITS_PER_VERTEX / factor,
-        "corner_pinned": True,
-        "max_corner_error_wu": max_corner_err,         # MUST be 0.0
+        "corner_pinned": not reshape,
+        "max_corner_error_wu": max_corner_err,    # 0 for bilinear; <=corner_clamp for reshape
+        "reshape": reshape_info,
         "elevation_wu": {"min": float(elev.min()), "max": float(elev.max())},
         "visual_delta_wu": {"max_abs": float(np.abs(delta).max()),
                             "mean_abs": float(np.abs(delta).mean())},
         "visual_height_file": f"visual_height_{factor}x.r32",
-        "note": "boring bilinear bake; corners exact; no reshape yet; render-only "
-                "(gameplay heightfield untouched).",
+        "note": ("reshaped (de-pyramid) visual height; coarse corners clamped to "
+                 "corner_clamp; protected pinned; render-only.") if reshape else
+                ("boring bilinear bake; corners exact; render-only "
+                 "(gameplay heightfield untouched)."),
     }
     (beauty / "visual_height_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     return report
@@ -129,18 +229,29 @@ def main() -> int:
     ap.add_argument("--missions-dir", default="A:/Games/Carver5-feasibility/data/missions")
     ap.add_argument("--out", default="tests/terrain/beautify")
     ap.add_argument("--factor", type=int, default=4)
+    ap.add_argument("--reshape", action="store_true", help="de-pyramid reshape (else boring bilinear)")
+    ap.add_argument("--corner-clamp", type=float, default=0.0, help="max coarse-vertex move (wu)")
+    ap.add_argument("--max-delta", type=float, default=40.0, help="max visual deviation (wu)")
+    ap.add_argument("--passes", type=int, default=24)
     args = ap.parse_args()
     missions_dir = Path(args.missions_dir)
     out_root = Path(args.out)
     rc = 0
     for m in args.missions:
-        rep = bake(m, missions_dir, out_root, args.factor)
+        rep = bake(m, missions_dir, out_root, args.factor, args.reshape,
+                   args.corner_clamp, args.max_delta, args.passes)
         if rep.get("error"):
             print(f"[visual-bake] {m}: ERROR {rep['error']}", file=sys.stderr); rc = 1; continue
-        ok = rep["max_corner_error_wu"] == 0.0
+        cap = (0.0 if not args.reshape else args.corner_clamp) + 1e-4
+        ok = rep["max_corner_error_wu"] <= cap
+        extra = ""
+        if rep.get("reshape"):
+            ri = rep["reshape"]
+            extra = (f" pyr_score {ri['pyramid_top_score_before']:.2f}->{ri['pyramid_top_score_after']:.2f}"
+                     f" corner_move<={ri['max_corner_move_wu']:.1f}wu")
         print(f"[visual-bake] {m}: coarse={rep['coarse_side']} -> visual={rep['visual_side']} "
               f"(x{rep['factor']}) corner_err={rep['max_corner_error_wu']:.3g} "
-              f"{'PASS' if ok else 'FAIL'}  delta_max={rep['visual_delta_wu']['max_abs']:.2f}wu "
+              f"{'PASS' if ok else 'FAIL'}  delta_max={rep['visual_delta_wu']['max_abs']:.2f}wu{extra} "
               f"-> {out_root / (m + '.beauty')}")
         if not ok:
             rc = 1

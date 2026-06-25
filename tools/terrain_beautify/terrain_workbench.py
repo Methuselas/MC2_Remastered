@@ -185,8 +185,11 @@ def run(mission: str, missions_dir: Path, beauty_root: Path, out_root: Path) -> 
             visual = np.fromfile(vf, "<f4").reshape(V, V).astype(np.float64)
             cs = coarse_from_visual(visual, side, factor)
             cerr = float(np.abs(cs - elev).max())
-            chk("corner_pin", "PASS" if cerr == 0.0 else "FAIL",
-                f"max corner error = {cerr:.3g}wu (want 0)")
+            # Reshaped bakes intentionally move corners up to corner_clamp; bilinear
+            # bakes must be exact. Read the bound from the report.
+            clamp = (vmeta.get("reshape") or {}).get("corner_clamp_wu", 0.0)
+            chk("corner_pin", "PASS" if cerr <= clamp + 1e-4 else "FAIL",
+                f"max corner move = {cerr:.3g}wu (clamp {clamp:.1f})")
             # blockiness: compare visual (sampled at coarse) vs original — should be == (bilinear
             # preserves coarse), and visual-fine should be smoother than nearest-up.
             b_near = blockiness(nearest_up(elev, factor))
