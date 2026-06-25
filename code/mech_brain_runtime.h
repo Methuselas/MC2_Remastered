@@ -93,8 +93,12 @@ struct MechBrainRuntime {
     uint8_t          activeOpordSlot     = 0;       // 0=GENERAL,1=PLAYER,2=ALARM — which slot is "running"
     uint8_t          opordFallbackPolicy = 0;       // 0=HOLD(default); 1=LOOP_PRIMARY; 2=WITHDRAW; 3=KEEP_REQUESTING
     uint8_t          completionFlags     = 0;       // bit0=primary done,bit1=secondary done,bit2=tertiary done
-    float            tacticWeights[8]    = {};      // FIT-loaded tactic weights (zeroed; loader deferred to later slice)
+    float            tacticWeights[8]    = {};      // FIT-loaded tactic weights (zeroed; loader deferred to TACTIC-WEIGHTS-A)
     uint8_t          weightsNormalized   = 0;       // 1 = sum enforced to 1.0 at load time
+    // TACTIC-WEIGHTS-A: per-warrior selected tactic (mission-ephemeral; default TACTIC_NONE=0).
+    // Written by selectTacticForWarrior() in warrior.cpp when MC2_TACTIC_WEIGHTS=1.
+    // TRACE-ONLY: NOT wired into attackParams.tactic (deferred to TACTIC-WEIGHTS-B).
+    int              selectedTactic      = 0;       // TacticType enum value
     uint8_t          pendingEventMask    = 0;       // PilotAlarmType event bits
     uint8_t          _pad[1]             = {};
     uint32_t         lastRequestOrdersFrame = 0;    // g_mc2FrameCounter at last RequestOrdersTask push
