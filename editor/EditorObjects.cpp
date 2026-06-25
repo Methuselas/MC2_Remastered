@@ -724,10 +724,11 @@ static bool EditorAnalyzeBrain( const char* brainName, std::vector<Stuff::Vector
 	for ( size_t i = 0; i < count; ++i )
 		if ( i < hasX.size() && i < hasY.size() && hasX[i] && hasY[i] )
 		{
-			// .abl PatrolPath Y is negated vs editor/mission world Y (verified from
-			// mc2_03.fit unit PositionY < 0 while mc2_03_patrol_01.abl Y > 0; X signs
-			// match). Flip Y so the path lands in editor world space.
-			Stuff::Vector3D wp; wp.x = xs[i]; wp.y = -ys[i]; wp.z = 0.0f;
+			// .abl PatrolPath coords are raw world coords, same frame as unit
+			// PositionX/Y (verified: mc2_01_Pat1 unit (3434,1983) sits next to its
+			// startBase1PatrolPath[0]=(3008,1472); both mc2_01 and mc2_03 patrol coords
+			// span the same +/- world range as their unit positions). No transform.
+			Stuff::Vector3D wp; wp.x = xs[i]; wp.y = ys[i]; wp.z = 0.0f;
 			wpOut.push_back( wp );
 		}
 
