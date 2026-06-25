@@ -2355,6 +2355,16 @@ long MechWarrior::runBrain (void) {
 			const char* v = std::getenv("MC2_BRAIN_INTENT_QUEUE");
 			return (v && std::atoi(v) != 0);
 		})();
+		// BRAIN-COMMIT-PHASE-1: deferred commit gate (default OFF).
+		// Requires MC2_BRAIN_INTENT_QUEUE=1 to be meaningful.
+		// Gate ON → inline commitBrainIntents calls are SKIPPED here; intents persist in
+		//   runtime->pendingIntents[] until commitAllBrainIntents() drains them in WID order
+		//   after the full warrior update loop in objmgr.cpp (GameObjectManager::update).
+		// Gate OFF → commitBrainIntents runs inline per-warrior (rung-5 behavior, unchanged).
+		static const bool s_brainCommitPhase = ([](){
+			const char* v = std::getenv("MC2_BRAIN_COMMIT_PHASE");
+			return (v && std::atoi(v) != 0);
+		})();
 
 		// BRAIN-WORLD-SNAPSHOT-1: static populate helper (main-thread only).
 		// Accesses protected MechWarrior members — must remain in warrior.cpp.
@@ -2465,16 +2475,19 @@ long MechWarrior::runBrain (void) {
 					bool applied = executeSpecialBody_Apply(brainRuntime->specialBody, this, vehicleWID,
 					                                        &brainRuntime->varStore, idx, "");
 					// BRAIN-DECISION-INTENT-QUEUE-1: drain pending intents inline (gate ON only).
+					// BRAIN-COMMIT-PHASE-1: when s_brainCommitPhase is ON, skip inline commit —
+					//   intents stay in runtime->pendingIntents[] for commitAllBrainIntents().
 					// commitBrainIntents is the sole caller of setGeneralTacOrder when gate ON.
-					if (s_intentQueue) commitBrainIntents(this, brainRuntime);
+					if (s_intentQueue && !s_brainCommitPhase) commitBrainIntents(this, brainRuntime);
 					if (applied)
 						dispatcherAppliedEffect = true;
 				} else {
 					// No effect verb — trace-dispatch every tick (no slot ownership; HOLD fires normally).
 					executeSpecialBody_Apply(brainRuntime->specialBody, this, vehicleWID,
 					                        &brainRuntime->varStore, idx, "");
-					// Gate ON: drain (no-op since no effect verbs; defensive).
-					if (s_intentQueue) commitBrainIntents(this, brainRuntime);
+					// Gate ON + commit-phase OFF: drain inline (no-op since no effect verbs; defensive).
+					// Gate ON + commit-phase ON: leave empty pendingIntents for the phase (no-op there too).
+					if (s_intentQueue && !s_brainCommitPhase) commitBrainIntents(this, brainRuntime);
 					// dispatcherAppliedEffect stays false → HOLD fires as normal.
 				}
 			} else {
