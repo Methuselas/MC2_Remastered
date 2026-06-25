@@ -76,12 +76,11 @@ void UnitBrainPanel::Draw()
 
 	// Rendered INLINE inside the docked "Tools" window (renderToolbarImGui calls
 	// this right after the toggle button) — no floating ImGui::Begin window, so the
-	// panel stays docked in the right-hand tool column like the other overlays.
-	// A child region with a border visually groups it and gives it its own scroll.
+	// panel stays docked in the right-hand tool column like the other overlays. The
+	// toggle button already owns the "AI / Brain / Orders" label/ID, so do NOT repeat
+	// it as a CollapsingHeader here (that caused a Dear ImGui duplicate-ID error). A
+	// bordered child region visually groups the body and gives it its own scroll.
 	ImGui::Separator();
-	if (!ImGui::CollapsingHeader("AI / Brain / Orders", ImGuiTreeNodeFlags_DefaultOpen))
-		return;
-
 	ImGui::BeginChild("UnitBrainPanelBody", ImVec2(0.f, 300.f), true);
 
 	EditorObjectMgr* mgr = EditorObjectMgr::instance();
