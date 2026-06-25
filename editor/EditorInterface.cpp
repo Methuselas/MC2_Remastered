@@ -80,6 +80,7 @@
 #include "EditorModProject.h"
 #include "EditorRecent.h"
 #include "SceneOutliner.h"
+#include "BeautySidecarPreview.h"
 #include "InspectorPanel.h"
 #include "UnitBrainPanel.h"   // AI / Brain / Orders inspector panel
 #include "TelemetryPanel.h"
@@ -5124,6 +5125,11 @@ void EditorInterface::renderToolbarImGui()
 	ImGui::Button("Foliage Detail  (in progress)", ImVec2(-1.f, 0.f));
 	ImGui::EndDisabled();
 	MapGeneratorDialog::DrawFoliagePanel();
+
+	// Beauty Sidecar Preview (EDITOR-SIDECAR-PREVIEW-1) — apply/restore an offline
+	// terrain beautify delta on the live terrain.
+	BeautySidecarPreview::MaybeAutoApply();
+	BeautySidecarPreview::DrawImGui();
 
 	// Mission Save Checklist — shows why .pak save is ready/blocked + warnings.
 	if (ImGui::Button("Mission Checklist", ImVec2(-1.f, 0.f)))
