@@ -658,7 +658,14 @@ static bool EditorAnalyzeBrain( const char* brainName, std::vector<Stuff::Vector
 	char path[512];
 	sprintf( path, "%s%s.abl", warriorPath, brainName );
 	File f;
-	if ( NO_ERR != f.open( path ) )
+	long openRc = f.open( path );
+	if ( getenv( "MC2_PATROL_TRACE" ) )
+	{
+		fprintf( stderr, "[PATROL] open '%s' rc=%ld (warriorPath='%s' brain='%s')\n",
+			path, openRc, warriorPath, brainName );
+		fflush( stderr );
+	}
+	if ( NO_ERR != openRc )
 		return false;
 
 	std::vector<float> xs, ys;

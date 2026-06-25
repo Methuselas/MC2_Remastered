@@ -1598,19 +1598,22 @@ void EditorInterface::handleLeftButtonDown( int PosX, int PosY )
 	// the same space as handleMouseMove (which also offsets). No-op when RTT off.
 	EditorRttClientToViewport( PosX, PosY );
 
-	// Waypoint placement mode (UnitBrainPanel "Add Waypoints"): drop a patrol/move
-	// waypoint at the terrain point under the cursor and consume the click. Uses the
-	// bridge terrain pick (same modern pick path as object selection).
-	if ( UnitBrainPanel::WaypointPlaceActive() )
-	{
-		EditorBridge::EditorPickResult pr = EditorBridge::pickAt( PosX, PosY );
-		if ( UnitBrainPanel::HandlePlacementClick( pr.worldX, pr.worldY, pr.worldZ ) )
-			return;
-	}
-
 	Stuff::Vector3D vector;
 	Stuff::Vector2DOf<long> v2( PosX, PosY );
 	eye->inverseProject( v2, vector );
+
+	// Waypoint placement mode (UnitBrainPanel "Add Waypoints"): drop a patrol/move
+	// waypoint at the SAME click world position the editor uses to place buildings
+	// (eye->inverseProject -> vector). The bridge pick returns 0,0 here, so use the
+	// building-placement coordinate; snap Z to terrain.
+	if ( UnitBrainPanel::WaypointPlaceActive() )
+	{
+		Stuff::Vector3D wp = vector;
+		if ( land )
+			wp.z = land->getTerrainElevation( wp );
+		if ( UnitBrainPanel::HandlePlacementClick( wp.x, wp.y, wp.z ) )
+			return;
+	}
 
 	// Object drag-move: in the select/pointer tool, a press that lands on an
 	// object grabs it for dragging (and selects it) instead of starting a
