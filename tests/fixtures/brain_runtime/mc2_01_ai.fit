@@ -4,3 +4,17 @@ FITini
 st unitRef = "Warrior4"
 l mode = 2
 st opord = "Guard"
+
+; TACTIC-WEIGHTS-A fixture: sample tactic weights for LEAD determinism smoke.
+; MC2_TACTIC_WEIGHTS=1 + MC2_BRAIN_MISSION_SEED=<fixed> -> identical [BRAIN_TACTIC_SELECT] traces.
+; Weights are normalized at load time; raw sum here ~1.0 for readability.
+[Tactics]
+f StopAndFire      = 0.30
+f Joust            = 0.15
+f FlankLeft        = 0.10
+f FlankRight       = 0.10
+f IndirectFire     = 0.12
+f HullDown         = 0.08
+f FightingWithdraw = 0.07
+f Pursue           = 0.05
+f HitAndRun        = 0.03

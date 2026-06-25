@@ -117,7 +117,13 @@ typedef enum {
 	TACTIC_STOP_AND_FIRE,
 	TACTIC_TURRET,
 	TACTIC_JOUST,
-	NUM_TACTICS
+	// TACTIC-WEIGHTS-A: GDD tactic additions (append; existing numeric values unchanged).
+	TACTIC_INDIRECT_FIRE,     // 7  — stand-off indirect suppression
+	TACTIC_HULL_DOWN,         // 8  — cover-crest discipline
+	TACTIC_FIGHTING_WITHDRAW, // 9  — deliberate fighting withdrawal
+	TACTIC_PURSUE,            // 10 — aggressive pursuit of fleeing targets
+	TACTIC_HIT_AND_RUN,       // 11 — harass-then-disengage
+	NUM_TACTICS               // 12
 } TacticType;
 
 typedef enum {

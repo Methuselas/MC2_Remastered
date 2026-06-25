@@ -112,6 +112,7 @@
 #include "../GameOS/gameos/gos_static_prop_registry.h"  // Task 6: late-spawn registerStaticProp
 #include "../GameAdapters/StaticPropRenderAdapter.h"  // M1 Task 12
 #include "move_recon.h"  // MC2_MOVE_RECON per-frame pathfinding cost instrumentation
+#include "brain_tactic_select.h"  // TACTIC-WEIGHTS-A: Wang-hash deterministic tactic selection
 
 // MC2_BRAIN_TASKQ gate — checked once at first runBrain call
 static bool s_brainTaskQEnabled     = false;
@@ -2544,6 +2545,47 @@ long MechWarrior::runBrain (void) {
 			                             &brainRuntime->varStore, idx, "");
 		}
 		brainErr = 0;
+	}
+
+	// TACTIC-WEIGHTS-A: deterministic weighted tactic selection (TRACE-ONLY).
+	// Gate: MC2_TACTIC_WEIGHTS=1 (default OFF).
+	// Runs for BOTH legacy+enhanced paths; NO behavior write (deferred to TACTIC-WEIGHTS-B).
+	// missionSeed: MC2_BRAIN_MISSION_SEED env override, else 0xDEADBEEF placeholder.
+	{
+		static bool   s_tacticWeightsEnabled  = false;
+		static bool   s_tacticWeightsChecked  = false;
+		static uint32_t s_missionSeed         = 0xDEADBEEFu;
+		if (!s_tacticWeightsChecked) {
+			s_tacticWeightsChecked = true;
+			const char* v = std::getenv("MC2_TACTIC_WEIGHTS");
+			s_tacticWeightsEnabled = (v && std::atoi(v) != 0);
+			const char* seedEnv = std::getenv("MC2_BRAIN_MISSION_SEED");
+			if (seedEnv && seedEnv[0] != '\0')
+				s_missionSeed = (uint32_t)std::strtoul(seedEnv, nullptr, 0);
+		}
+		if (s_tacticWeightsEnabled && brainRuntime) {
+			// Collect pilot stats for modulation
+			int gunnery       = (int)(unsigned char)skills[MWS_GUNNERY];
+			int pilotAggr     = (int)(unsigned char)aggressiveness;
+			int pilotCourage  = (int)(unsigned char)courage;
+
+			// Wang hash: deterministic per (wid, brainTick, missionSeed)
+			uint32_t h = tacticWang((int)vehicleWID, s_brainTickIndex, s_missionSeed);
+
+			// Apply pilot modulation to FIT-loaded base weights
+			float wEff[NUM_TACTICS] = {};
+			applyPilotModulation(brainRuntime->tacticWeights, wEff, NUM_TACTICS,
+			                     gunnery, pilotAggr, pilotCourage);
+
+			// Weighted pick — pure, deterministic
+			int chosen = selectTactic(wEff, NUM_TACTICS, h);
+			brainRuntime->selectedTactic = chosen;
+
+			// Emit trace (no behavior write)
+			std::fprintf(stderr, "[BRAIN_TACTIC_SELECT] wid=%d tick=%u tactic=%s(%d)\n",
+			             vehicleWID, s_brainTickIndex, tacticName(chosen), chosen);
+			std::fflush(stderr);
+		}
 	}
 
 	// UNCONDITIONAL housekeeping — runs for BOTH paths (preserves Legacy invariant).

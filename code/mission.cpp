@@ -338,6 +338,8 @@ extern bool 			invulnerableON;		//Used for tutorials so mechs can take damage, b
 #include <cstring>
 #include "mech_brain_runtime.h"  // BRAIN-RUNTIME-1B: per-unit mode loading from _ai.fit
 #include "brain_task_queue.h"    // BRAIN-RUNTIME-1B: BrainTaskType
+#include "brain_tactic_select.h" // TACTIC-WEIGHTS-A: tacticName, applyPilotModulation (no mutation at load)
+#include "tacordr.h"             // TACTIC-WEIGHTS-A: TacticType enum + NUM_TACTICS
 namespace {
 	static const bool s_misSplit = (getenv("MC2_MISSION_SPLIT") != nullptr);
 	enum { MS_LAND_UPDATE=0, MS_PATHMGR, MS_CLEAR_BLOCKS, MS_CLEAR_VERTS,
@@ -3096,6 +3098,73 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 			}
 		}
 		delete aiFit;
+	}
+
+	// TACTIC-WEIGHTS-A: load [Tactics] block from <missionName>_ai.fit into tacticWeights[].
+	// Gate: MC2_TACTIC_WEIGHTS=1 (default OFF).
+	// File absence is silent. Block absence is silent (all weights stay zero).
+	// Format: one float entry per tactic by short name, e.g. "f StopAndFire = 0.30"
+	// Normalisation is enforced at load time (sum→1); weightsNormalized flag set.
+	// Both raw-zero and absent-block warriors keep tacticWeights all-zero (FIT fallback
+	// uses uniform weights via the all-zero branch in applyPilotModulation).
+	if (std::getenv("MC2_TACTIC_WEIGHTS") && std::atoi(std::getenv("MC2_TACTIC_WEIGHTS")) != 0) {
+		char tacFitName[256];
+		std::snprintf(tacFitName, sizeof(tacFitName), "%s%s_ai.fit", missionPath, missionName);
+		FitIniFile* tacFit = new FitIniFile;
+		if (tacFit && tacFit->open(tacFitName) == NO_ERR) {
+			if (tacFit->seekBlock("Tactics") == NO_ERR) {
+				// Parse known tactic names; missing keys silently default to 0.
+				struct { const char* name; int idx; } kTacticKeys[] = {
+					{ "None",             TACTIC_NONE             },
+					{ "FlankLeft",        TACTIC_FLANK_LEFT       },
+					{ "FlankRight",       TACTIC_FLANK_RIGHT      },
+					{ "FlankRear",        TACTIC_FLANK_REAR       },
+					{ "StopAndFire",      TACTIC_STOP_AND_FIRE    },
+					{ "Turret",           TACTIC_TURRET           },
+					{ "Joust",            TACTIC_JOUST            },
+					{ "IndirectFire",     TACTIC_INDIRECT_FIRE    },
+					{ "HullDown",         TACTIC_HULL_DOWN        },
+					{ "FightingWithdraw", TACTIC_FIGHTING_WITHDRAW},
+					{ "Pursue",           TACTIC_PURSUE           },
+					{ "HitAndRun",        TACTIC_HIT_AND_RUN      },
+				};
+				float loadedWeights[NUM_TACTICS] = {};
+				for (auto& kv : kTacticKeys) {
+					float val = 0.0f;
+					if (tacFit->readIdFloat(kv.name, val) == NO_ERR)
+						loadedWeights[kv.idx] = (val < 0.0f) ? 0.0f : val;
+				}
+				// Normalize
+				float sum = 0.0f;
+				for (int i = 0; i < NUM_TACTICS; i++) sum += loadedWeights[i];
+				if (sum > 0.0f) {
+					float inv = 1.0f / sum;
+					for (int i = 0; i < NUM_TACTICS; i++) loadedWeights[i] *= inv;
+				}
+				// Distribute to all warriors that have a brainRuntime
+				int loadCount = 0;
+				for (unsigned long i = 1; i <= numWarriors; i++) {
+					MechWarriorPtr w = MechWarrior::warriorList[i];
+					if (w) {
+						if (!w->getBrainRuntime()) {
+							// Allocate runtime so tactic weights are accessible even for Legacy warriors.
+							w->setBrainRuntimeMode(BrainRuntimeMode::Legacy);
+						}
+						MechBrainRuntime* rt = w->getBrainRuntime();
+						if (rt) {
+							std::memcpy(rt->tacticWeights, loadedWeights, sizeof(rt->tacticWeights));
+							rt->weightsNormalized = 1;
+							loadCount++;
+						}
+					}
+				}
+				std::fprintf(stderr, "[BRAIN_TACTIC_SELECT] [Tactics] loaded from %s: %d warriors weighted\n",
+				             tacFitName, loadCount);
+				std::fflush(stderr);
+			}
+			tacFit->close();
+		}
+		delete tacFit;
 	}
 
 	// TECHSCRIPT-SPECIAL-DISPATCH-1A: load per-warrior BrainSpecial body from <missionName>_specials.fit.
