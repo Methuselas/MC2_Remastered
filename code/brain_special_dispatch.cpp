@@ -162,6 +162,18 @@ static bool s_brainPatrolGate() {
     return v && std::atoi(v) != 0;
 }
 
+// BRAIN-COMMIT-PHASE-1 (GAP B): MC2_BRAIN_COMMIT_PHASE gate (default OFF).
+// Mirrors warrior.cpp's s_brainCommitPhase / objmgr.cpp's s_commitPhaseGate.
+// When ON, patrol-emitted intents must be left in pendingIntents for the deferred
+// WID-ordered drain (objmgr.cpp) instead of being self-committed inline here.
+static bool s_brainCommitPhaseEnabled() {
+    static const bool kGate = ([](){
+        const char* v = std::getenv("MC2_BRAIN_COMMIT_PHASE");
+        return (v && std::atoi(v) != 0);
+    })();
+    return kGate;
+}
+
 // ---------------------------------------------------------------------------
 // Recognized verb table for DISPATCH-1A.
 // All other verbs produce [BRAIN_DISPATCH_UNKNOWN] trace.
@@ -1380,8 +1392,14 @@ bool tickPatrolAdvance(MechWarrior* warrior, MechBrainRuntime* runtime, int wid)
         std::fprintf(stderr, "[BRAIN_PATROL_EMIT] index=%u pos=(%g %g %g) tick=%u wid=%d\n",
                      (unsigned)newIndex, wx, wy, wz, getBrainTickIndex(), wid);
         std::fflush(stderr);
-        // Commit immediately (tickPatrolAdvance is called outside the normal apply+commit block).
-        commitBrainIntents(warrior, runtime);
+        // GAP B: tickPatrolAdvance runs outside the normal apply+commit block, so with
+        // commit-phase OFF it must self-commit inline. With commit-phase ON, leave the
+        // intent in pendingIntents so the deferred WID-ordered drain (objmgr.cpp) picks
+        // it up — self-committing here would drain pendingIntentCount→0 and the deferred
+        // phase would report committed=0.
+        if (!s_brainCommitPhaseEnabled()) {
+            commitBrainIntents(warrior, runtime);
+        }
     } else {
         std::fprintf(stderr, "[BRAIN_PATROL_NO_QUEUE] advance index=%u wid=%d: requires MC2_BRAIN_INTENT_QUEUE=1\n",
                      (unsigned)newIndex, wid);
@@ -1732,6 +1750,47 @@ bool parseBrainSpecialBody(const char* missionName, BrainSpecialBody& outBody,
         std::fflush(stderr);
     }
     return outBody.loaded;
+}
+
+// ---------------------------------------------------------------------------
+// GAP-A MULTI-WARRIOR SPECIALS: mission-level specials cache.
+//
+// The _specials.fit body is mission-level — identical for every warrior. At mission
+// load (mission.cpp), only warriors whose brainRuntime is already allocated (named in
+// _ai.fit) get their specialBody parsed. Warriors whose brainRuntime is allocated
+// LAZILY inside runBrain (warrior.cpp) miss that parse window, so their specialBody
+// stays loaded=false and they never dispatch. This cache parses the file ONCE at
+// mission load and lets lazily-allocated runtimes copy the parsed body in.
+//
+// Lifecycle: mission-ephemeral. Reset + populated once per mission load when
+// MC2_BRAIN_DISPATCH=1. Copy is by value — BrainSpecialBody and SpecialIndex are pure
+// value types (no internal pointers), so the per-runtime copy is self-contained.
+static BrainSpecialBody g_missionSpecialBody;
+static SpecialIndex     g_missionSpecialIndex;
+static bool             g_missionSpecialCached = false;
+
+void resetMissionSpecialCache() {
+    g_missionSpecialBody = BrainSpecialBody();
+    g_missionSpecialIndex.clear();
+    g_missionSpecialCached = false;
+}
+
+void cacheMissionSpecialBody(const char* specialFitName) {
+    resetMissionSpecialCache();
+    if (parseBrainSpecialBody(specialFitName, g_missionSpecialBody, &g_missionSpecialIndex)) {
+        g_missionSpecialCached = g_missionSpecialBody.loaded;
+    }
+}
+
+bool applyCachedSpecialBodyToRuntime(MechBrainRuntime* rt) {
+    if (!rt) return false;
+    if (!g_missionSpecialCached) return false;
+    if (rt->specialBody.loaded) return false;  // already parsed its own copy at load
+    rt->specialBody  = g_missionSpecialBody;
+    rt->specialIndex = g_missionSpecialIndex;
+    std::fprintf(stderr, "[BRAIN_DISPATCH] GAP-A: applied cached specials to lazily-alloc'd runtime\n");
+    std::fflush(stderr);
+    return true;
 }
 
 // ---------------------------------------------------------------------------

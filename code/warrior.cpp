@@ -5456,6 +5456,11 @@ long MechWarrior::mainDecisionTree (void) {
 				// Set mode: per-unit FIT loader (mission_ai.fit) may have already set brainRuntime->mode
 				// at mission load via loadBrainRuntimeFromFit(). If not yet created, use global forced mode.
 				brainRuntime->mode = s_brainRuntimeForcedMode;
+				// GAP-A MULTI-WARRIOR SPECIALS: this runtime was allocated lazily — AFTER the
+				// mission.cpp specials-load loop — so its specialBody is empty. Copy the parsed
+				// body from the mission-level cache so this warrior dispatches like the
+				// _ai.fit-recorded ones. No-op when the cache is empty (gate-OFF / no file).
+				applyCachedSpecialBodyToRuntime(brainRuntime);
 			}
 		}
 

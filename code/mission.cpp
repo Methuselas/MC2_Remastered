@@ -3183,6 +3183,11 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 		const bool dispatchVarOn = (std::getenv("MC2_BRAIN_DISPATCH_VAR")     && std::atoi(std::getenv("MC2_BRAIN_DISPATCH_VAR"))     != 0);
 		const bool missionVarOn  = (std::getenv("MC2_BRAIN_VAR_MISSION")      && std::atoi(std::getenv("MC2_BRAIN_VAR_MISSION"))      != 0);
 
+		// GAP-A: reset the mission-level specials cache at every mission load (unconditional;
+		// produces no trace, so gate-OFF runs stay byte-identical). Prevents a stale cache
+		// from a prior dispatch-ON mission leaking into a later one.
+		resetMissionSpecialCache();
+
 		// TECHSCRIPT-DISPATCH-1D-M: reset mission-scope Var store at every mission load.
 		// resetMissionVarStore() is always safe to call (no-op if store already empty).
 		// Gate: only reset when MC2_BRAIN_VAR_MISSION=1 to avoid noise in gate-OFF runs.
@@ -3216,6 +3221,12 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 			// The index is per-warrior-runtime (each warrior gets its own copy); content
 			// is identical across warriors for the same mission (all read the same file).
 			// This is acceptable for 1A: index is small (<10 blocks), mission-ephemeral.
+			//
+			// GAP-A MULTI-WARRIOR SPECIALS: parse mission-level specials body ONCE into the
+			// dispatch cache. Warriors whose brainRuntime is allocated lazily in runBrain
+			// (not named in _ai.fit) copy from this cache on first tick, so every warrior
+			// dispatches -- not just the _ai.fit-recorded ones.
+			cacheMissionSpecialBody(specialFitName);
 			for (unsigned long i = 1; i <= numWarriors; i++) {
 				MechWarriorPtr w = MechWarrior::warriorList[i];
 				if (w && w->getBrainRuntime()) {
