@@ -58,10 +58,21 @@ This sidesteps symbolic args AND the var-store entirely for patrol/guard. All
 mutations still route through the intent→commit chokepoint.
 
 ## Open questions before building the consumer
-1. Does the engine load `mission.fit` `[WarriorN]` `Brain {}` blocks at all today?
-   (Almost certainly NOT — these are carver-new; stock uses `_ai.fit`/ABL.) Need
-   to find where `mission.fit` warrior records are parsed and add a `Brain {}`
-   reader.
+1. **RESOLVED (follow-up recon 2026-06-25):** the engine does NOT read the inline
+   `Brain {}` brace-block today, and **`FitIniFile` CANNOT see it** — `FitIniFile`
+   (`mclib/inifile.cpp`) is a flat `[section]` + typed-prefix (`l `/`f `/`st `)
+   reader; a block start is only a line beginning with `[` (`inifile.cpp:67-92`),
+   so `Brain {` / `PrimaryOPORD {` / `Waypoint {` brace lines are invisible to every
+   `seekBlock`/`readId*` call (they carry no typed prefix and no `[`). The
+   `[WarriorN]` loop at `code/mission.cpp:2951-3022` reads `st Profile`, `st Brain`
+   (the ABL module name — `mission.cpp:2989` `readIdString("Brain",…)` returns the
+   blanked `st Brain = ""`, NOT the brace block). So the consumer must **RAW-SCAN**
+   mission.fit (like the brain RawScan parser / `_validate_brain_mission`), index by
+   `[Warrior%d]` header lines, and parse the brace content manually. Hook: a second
+   pass after `code/mission.cpp:~3037`, mirroring the BRAIN-RUNTIME-1B `_ai.fit`
+   second-file pattern at `mission.cpp:3041`; `MechWarrior::warriorList[i]` is the
+   per-index target. (Recon 16 tool-uses; crux = "FitIniFile has zero brace-block
+   API" verified against inifile.cpp.)
 2. Authority: when BOTH a declarative `mission.fit Brain{}` AND an imperative
    tick TechSpecial (`BrainTrigger run=…tick`) exist for a unit, which drives?
    Likely: declarative config sets standing OPORD; tick script handles dynamic
