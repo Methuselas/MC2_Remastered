@@ -12,6 +12,7 @@
 #include"mclib.h"
 #endif
 #include "brain_special_dispatch.h"  // TECHSCRIPT-SPECIAL-DISPATCH-1A: executeSpecialBody_TraceOnly
+                                     // BRAIN-WORLD-SNAPSHOT-1: s_brainSnapshotEnabled, buildBrainWorldSnapshot
 
 #ifndef WARRIOR_H
 #include"warrior.h"
@@ -2355,6 +2356,47 @@ long MechWarrior::runBrain (void) {
 			return (v && std::atoi(v) != 0);
 		})();
 
+		// BRAIN-WORLD-SNAPSHOT-1: static populate helper (main-thread only).
+		// Accesses protected MechWarrior members — must remain in warrior.cpp.
+		// Called below when s_brainSnapshotEnabled() is true (gate ON).
+		// FORBIDDEN: must not call setGeneralTacOrder or any order/movement/attack function.
+		auto buildBrainWorldSnapshotLocal = [&](BrainWorldSnapshot& out) {
+			// Warrior identity: vehicleWID is in scope and is the WID passed to dispatch.
+			// MechWarrior itself is not a GameObject; vehicleWID == warrior's vehicle WatchID.
+			out.warriorId = (int32_t)vehicleWID;
+
+			// Team ID: deferred to rung 7/8 — ATTACK friendly-fire still reads live.
+			out.teamId = 0;
+
+			// Liveness: query the vehicle (MoverPtr from getVehicle() — may be null; guard it).
+			{
+				MoverPtr veh = getVehicle();
+				out.isDisabled = (veh && veh->isDisabled()) ? 1u : 0u;
+			}
+			out.commanderIsHome = 0u; // deferred — commander identity not queried this rung
+
+			// Main goal (protected MechWarrior fields; directly accessible in warrior.cpp)
+			out.mainGoalObjectWID     = (int32_t)mainGoalObjectWID;
+			out.mainGoalLocation[0]   = mainGoalLocation.x;
+			out.mainGoalLocation[1]   = mainGoalLocation.y;
+			out.mainGoalLocation[2]   = mainGoalLocation.z;
+			out.mainGoalControlRadius = mainGoalControlRadius;
+
+			// Attack orders target WID (protected field, directly accessible in warrior.cpp)
+			out.attackOrderTargetWID = (int32_t)attackOrders.targetWID;
+
+			// Once-guard flags — the primary snapshot surface for rung 6
+			out.effectApplied[BSNAPFX_POWERDOWN] = brainRuntime->dispatchEffectApplied;
+			out.effectApplied[BSNAPFX_EJECT]     = brainRuntime->ejectEffectApplied;
+			out.effectApplied[BSNAPFX_GUARD]     = brainRuntime->guardEffectApplied;
+			out.effectApplied[BSNAPFX_MOVETO]    = brainRuntime->moveToEffectApplied;
+			out.effectApplied[BSNAPFX_ATTACK]    = brainRuntime->attackEffectApplied;
+			out.effectApplied[BSNAPFX_RETREAT]   = brainRuntime->retreatEffectApplied;
+
+			// Debug tick stamp
+			out.brainTick = getBrainTickIndex();
+		};
+
 		bool dispatcherAppliedEffect = false;
 		if (s_dispatchApply && brainRuntime && brainRuntime->specialBody.loaded) {
 			// DISPATCH-EFFECT-UNITRETREAT-1: bodyHasEffect() now covers POWERDOWN, EJECT, GUARD, MOVETO, ATTACK, RETREAT.
@@ -2373,13 +2415,34 @@ long MechWarrior::runBrain (void) {
 			const bool hasRetreat   = bodyHasUnitRetreat(brainRuntime->specialBody);
 			const bool hasEffect    = hasPowerdown || hasEject || hasGuard || hasMoveTo || hasAttack || hasRetreat;
 
+			// BRAIN-WORLD-SNAPSHOT-1: capture world state before once-guard reads (gate ON only).
+			// Gate OFF: snap is zero-initialised and unused — reads fall through to live runtime.
+			BrainWorldSnapshot snap = {};
+			const bool snapshotGate = s_brainSnapshotEnabled();
+			if (snapshotGate)
+				buildBrainWorldSnapshotLocal(snap);
+
 			// Once-guard: if the effect was already applied, suppress HOLD without re-applying.
-			const bool powerdownDone = hasPowerdown && brainRuntime->dispatchEffectApplied;
-			const bool ejectDone     = hasEject     && brainRuntime->ejectEffectApplied;
-			const bool guardDone     = hasGuard     && brainRuntime->guardEffectApplied;
-			const bool moveToDone    = hasMoveTo    && brainRuntime->moveToEffectApplied;
-			const bool attackDone    = hasAttack    && brainRuntime->attackEffectApplied;
-			const bool retreatDone   = hasRetreat   && brainRuntime->retreatEffectApplied;
+			// Gate ON:  read from snapshot.effectApplied[N] (the seam for future off-thread emit).
+			// Gate OFF: read live from runtime (byte-identical to pre-snapshot behavior).
+			const bool powerdownDone = hasPowerdown && (snapshotGate
+			    ? snap.effectApplied[BSNAPFX_POWERDOWN]
+			    : brainRuntime->dispatchEffectApplied);
+			const bool ejectDone     = hasEject     && (snapshotGate
+			    ? snap.effectApplied[BSNAPFX_EJECT]
+			    : brainRuntime->ejectEffectApplied);
+			const bool guardDone     = hasGuard     && (snapshotGate
+			    ? snap.effectApplied[BSNAPFX_GUARD]
+			    : brainRuntime->guardEffectApplied);
+			const bool moveToDone    = hasMoveTo    && (snapshotGate
+			    ? snap.effectApplied[BSNAPFX_MOVETO]
+			    : brainRuntime->moveToEffectApplied);
+			const bool attackDone    = hasAttack    && (snapshotGate
+			    ? snap.effectApplied[BSNAPFX_ATTACK]
+			    : brainRuntime->attackEffectApplied);
+			const bool retreatDone   = hasRetreat   && (snapshotGate
+			    ? snap.effectApplied[BSNAPFX_RETREAT]
+			    : brainRuntime->retreatEffectApplied);
 			const bool alreadyDone   = hasEffect && ((!hasPowerdown || powerdownDone) && (!hasEject || ejectDone) && (!hasGuard || guardDone) && (!hasMoveTo || moveToDone) && (!hasAttack || attackDone) && (!hasRetreat || retreatDone));
 
 			if (!alreadyDone) {

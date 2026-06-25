@@ -49,6 +49,7 @@
 // Verified by inspection: no warrior pointer, no tac-order type, no slot writes.
 
 #include "brain_special_dispatch.h"
+#include "brain_world_snapshot.h" // BRAIN-WORLD-SNAPSHOT-1: BrainWorldSnapshot POD + gate
 #include "warrior.h"   // MechWarrior — needed for executeSpecialBody_Apply setGeneralTacOrder call
                        // warrior.h includes mech_brain_runtime.h which defines VarStore + VarScope
 #include "tacordr.h"   // TacticalOrder, TACTICAL_ORDER_POWERDOWN, ORDER_ORIGIN_SELF
@@ -482,6 +483,28 @@ static bool s_intentQueueEnabled() {
     })();
     return kGate;
 }
+
+// ---------------------------------------------------------------------------
+// BRAIN-WORLD-SNAPSHOT-1: MC2_BRAIN_SNAPSHOT gate (default OFF).
+//
+// Gate OFF (default): once-guards in warrior.cpp read live runtime->*EffectApplied
+//   directly — byte-identical to pre-snapshot behavior.
+// Gate ON: once-guards read snapshot.effectApplied[N] populated by
+//   buildBrainWorldSnapshot() called right before the once-guard block.
+//   The live runtime writes (*EffectApplied = 1) are NOT moved this rung.
+//
+// IDs-not-pointers: snapshot stores WatchIDs, not pointers. ATTACK target
+//   team + existence still read live via ObjectManager::getByWatchID (deferred
+//   to rung 7/8 when a target/contact table snapshot is added).
+bool s_brainSnapshotEnabled() {
+    static const bool kGate = ([](){
+        const char* v = std::getenv("MC2_BRAIN_SNAPSHOT");
+        return (v && std::atoi(v) != 0);
+    })();
+    return kGate;
+}
+
+// buildBrainWorldSnapshot — defined in warrior.cpp (static helper; needs protected access).
 
 // Pushes one BrainOrderIntent onto runtime->pendingIntents[].
 // Returns true if pushed, false if buffer full (soft-fail; rare — cap is 4).
