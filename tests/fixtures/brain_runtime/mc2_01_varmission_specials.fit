@@ -1,0 +1,14 @@
+; TECHSCRIPT-DISPATCH-1D-M: harness fixture for mission-scope Var round-trip.
+; Tests: Var.Set "mflag" 7 scope=Mission, then Var.Get "mflag" scope=Mission.
+; Expected with MC2_BRAIN_VAR_MISSION=1:
+;   [BRAIN_VAR_MISSION_SET] key=mflag val=7 wid=<W>
+;   [BRAIN_VAR_MISSION_GET] key=mflag val=7 wid=<W>
+TechSpecial {
+    key   = "varmission_roundtrip"
+    type  = "MissionSpecial"
+    Body {
+        DO Var.Set "mflag" 7 scope=Mission
+        DO Var.Get "mflag" scope=Mission
+        STOP
+    }
+}

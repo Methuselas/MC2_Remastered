@@ -253,6 +253,15 @@ public:
 	// RenderWorld handle via syncSpawn. Used by the ImGui mech inspector fallback.
 	Unit* findUnitByMechHandle(RenderCore::RenderObjectHandle h);
 
+	// EDITOR-OBJECTID-PICK-BRIDGE-1 (Slice 3): reverse-map a GPU ObjectID
+	// StaticProp recipe back to the EditorObject that owns it. The GPU pick
+	// returns a RenderObjectHandle whose index() equals the GpuStaticPropRegistry
+	// recipeIndex (identity mapping, RenderWorld.h handleToRecipeIndex); each
+	// editor object's appearance carries that same recipeIndex via
+	// Appearance::getStaticRecipeIndex(). Linear scan over buildings+units
+	// (O(props), click-rate only). Returns nullptr if no live object matches.
+	EditorObject* findObjectByStaticRecipeIndex(int32_t recipeIndex);
+
 	int getNextAvailableForestID();
 	long createForest( const Forest& settings );
 	void editForest( long& ID,  const Forest& newSettings );

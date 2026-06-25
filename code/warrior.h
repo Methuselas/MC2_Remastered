@@ -48,6 +48,7 @@
 #endif
 
 #include "brain_task_queue.h"  // MC2_BRAIN_TASKQ: per-warrior brain task queue substrate
+#include "mech_brain_runtime.h"  // MC2_BRAIN_RUNTIME: per-warrior brain runtime state
 
 #ifndef DTEAM_H
 #include"dteam.h"
@@ -865,6 +866,7 @@ class MechWarrior {
 		MemoryCell				memory[NUM_MEMORY_CELLS];
 		ABLModulePtr			brain;
 		BrainTaskQueue*         brainTaskQueue = nullptr;   // MC2_BRAIN_TASKQ: mission-ephemeral, not serialized
+		MechBrainRuntime*       brainRuntime = nullptr;    // MC2_BRAIN_RUNTIME: mission-ephemeral, not serialized
 		int32_t                 warriorBrainHandle;
 		SymTableNodePtr			brainAlarmCallback[NUM_PILOT_ALARMS];
 		char					debugStrings[NUM_PILOT_DEBUG_STRINGS][MAXLEN_PILOT_DEBUG_STRING];
@@ -1420,6 +1422,13 @@ class MechWarrior {
 		long runBrain (void);
 
 		long loadBrainParameters (FitIniFile* brainFile, long warriorId);
+
+		// BRAIN-RUNTIME-1B: allocate brainRuntime if needed and set its mode.
+		// Called from mission.cpp after loading _ai.fit Brain block.
+		void setBrainRuntimeMode (BrainRuntimeMode fitMode);
+
+		// BRAIN-RUNTIME-1B: direct access for mission loader (public accessor).
+		MechBrainRuntime* getBrainRuntime () { return brainRuntime; }
 
 		bool injure (float numWounds, bool checkEject = true);
 

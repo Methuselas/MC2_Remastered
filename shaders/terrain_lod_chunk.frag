@@ -144,6 +144,8 @@ uniform float snowBrightnessDampen; // <1 darkens detected snow (snowWeight-gate
 uniform float terrainLightingV1Strength;       // hemisphere ambient; 0 = off (env-gated default off)
 uniform float terrainLightingV2ShadowFillFloor;// shadow-aware fill floor; 1 = no influence
 uniform float terrainNormalsFromHeightStrength;// macro-slope strength scalar (default 1.0)
+uniform int   useRockSlopeBias;                 // TERRAIN-SLOPE-BIAS-VISUAL-1: 0=off (byte-identical)
+uniform float rockSlopeBiasStrength;            // rock-weight bias on steep slopes (default 1.0)
 uniform vec4  pomParams;                        // .x=scale(0=off), .y=minLayers, .z=maxLayers
 uniform int   g_terrainMaterialProfile;         // 0=legacy, 1=sand(mc2_24 dirt-gate widen)
 // Legacy Texcoord is [0,1] per MC2 TILE = MAPCELL_DIM(3) * 128 world units. The
@@ -458,6 +460,24 @@ void main() {
     // Material weights + snow (shared by detail normal AND colour tint).
     vec4  matWeights; float snowWeight;
     chunkWeights(base, matWeights, snowWeight);
+
+    // TERRAIN-SLOPE-BIAS-VISUAL-1 (B4a): optionally push material weights toward
+    // rock on steep MACRO slopes so the rock detail normal + tint (not just the
+    // cliff-block colour darken below) read as a real rock face. Keyed off the
+    // un-perturbed macro slope — the detail-perturbed N would fire everywhere
+    // (same reason the cliff block uses macroNz). Runs BEFORE the cement mix so
+    // concrete/runway still overrides. Default OFF (useRockSlopeBias==0) →
+    // byte-identical to the pre-slice path.
+    if (useRockSlopeBias != 0) {
+        float biasNz = abs(smoothTerrainNormal(v_worldPos.xy).z);
+        float steep  = smoothstep(0.85, 0.55, biasNz);   // 0 flat .. 1 cliff (cliff-block band)
+        float rb     = clamp(steep * rockSlopeBiasStrength, 0.0, 1.0);
+        matWeights.x += rb * (matWeights.y + matWeights.z);  // grass/dirt -> rock
+        matWeights.y *= (1.0 - rb);
+        matWeights.z *= (1.0 - rb);
+        float biasTot = matWeights.x + matWeights.y + matWeights.z + matWeights.w;
+        if (biasTot > 0.01) matWeights /= biasTot;
+    }
 
     // Step 5b: concrete/cement. TerrainType ~3 at cement vertices (interpolated,
     // so boundary patches blend). pureConcrete pushes weights fully to concrete

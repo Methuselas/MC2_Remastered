@@ -11,8 +11,27 @@
 #include "LinkBrush.h"
 #include "BuildingLink.h"
 #include "EditorObjectMgr.h"
+#include "Camera.h"
 
-LinkBrush::LinkBrush( bool Link ) 
+//-------------------------------------------------------------------------------------------------
+// Modern GL forward projection (projectModernClipGL + viewport remap). Legacy
+// projectZ diverges/rejects when zoomed in (X-collapse). False = behind near plane.
+static bool projectPtGL_link( Camera* eye, const Stuff::Vector3D& wp, float& sx, float& sy )
+{
+	if ( !eye ) return false;
+	ModernClipResult r = eye->projectModernClipGL( wp );
+	if ( r.clip.w <= 1e-4f ) return false;
+	float vmx = 0.f, vmy = 0.f, vax = 0.f, vay = 0.f;
+	gos_GetViewport( &vmx, &vmy, &vax, &vay );
+	const float ndcX = r.clip.x / r.clip.w;
+	const float ndcY = r.clip.y / r.clip.w;
+	sx = vax + ( ndcX * 0.5f + 0.5f ) * vmx;
+	sy = vay + ( 1.0f - ( ndcY * 0.5f + 0.5f ) ) * vmy;
+	if ( !( sx == sx ) || !( sy == sy ) ) return false;
+	return true;
+}
+
+LinkBrush::LinkBrush( bool Link )
 {
 	// here we need to get all of the links on the map
 	// and add an interface element for each one. 
@@ -335,17 +354,25 @@ void LinkBrush::render( int screenX, int screenY )
 	if ( parent )
 	{
 		Stuff::Vector3D parentPos = parent->getPosition();
-		Stuff::Vector4D screenPos;
 		Stuff::Vector4D curScreen;
 		curScreen.x = screenX;
 		curScreen.y = screenY;
 		curScreen.z = 0.1f;		//Gotta set Z or QNAN and crash!
 		curScreen.w = 0.9999f;	//Gotta set W, too!
 
-		eye->projectZ( parentPos, screenPos );
-	
-		LineElement elem( curScreen, screenPos, 0xffff0000, 0, -1 );
-		elem.draw();
+		// Modern zoom-correct projection (legacy projectZ X-collapses on zoom).
+		float pX, pY;
+		if ( projectPtGL_link( eye, parentPos, pX, pY ) )   // skip line if parent rejects
+		{
+			Stuff::Vector4D screenPos;
+			screenPos.x = pX;
+			screenPos.y = pY;
+			screenPos.z = 0.1f;
+			screenPos.w = 0.9999f;
+
+			LineElement elem( curScreen, screenPos, 0xffff0000, 0, -1 );
+			elem.draw();
+		}
 
 	}
 }

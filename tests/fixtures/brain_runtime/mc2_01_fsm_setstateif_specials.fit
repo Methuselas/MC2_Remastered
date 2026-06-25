@@ -1,0 +1,47 @@
+FITini
+; BRAIN-FSM-1K-B fixture — exercises Unit.SetStateIf conditional transition.
+; Gate: MC2_BRAIN_FSM=1, MC2_BRAIN_DISPATCH_VAR=1.
+; Uses raw brace-block format (TechSpecial { ... Body { ... } }).
+;
+; Sequence (run in order by harness via fsm_sequential=true):
+;   setstateif_setup : Var.Set "ready" "1" — prime unit var store.
+;   setstateif_match : Unit.SetStateIf "engage" "ready" "1" — match=1 → transition to engage; early return.
+;   setstateif_guard : Unit.InState "engage" → OPORD.CoreGuard — gate OPEN after match, CoreGuard records.
+;   setstateif_nomatch : Unit.SetStateIf "flee" "ready" "9" — match=0 (ready="1"≠"9") → no transition; stays engage.
+
+TechSpecial {
+    alias = "setstateif_setup"
+    type  = "UPDATE"
+    Body {
+        DO Var.Set "ready" "1"
+        STOP
+    }
+}
+
+TechSpecial {
+    alias = "setstateif_match"
+    type  = "ALARM"
+    Body {
+        DO Unit.SetStateIf "engage" "ready" "1"
+        STOP
+    }
+}
+
+TechSpecial {
+    alias = "setstateif_guard"
+    type  = "UPDATE"
+    Body {
+        DO Unit.InState "engage"
+        DO OPORD.CoreGuard
+        STOP
+    }
+}
+
+TechSpecial {
+    alias = "setstateif_nomatch"
+    type  = "ALARM"
+    Body {
+        DO Unit.SetStateIf "flee" "ready" "9"
+        STOP
+    }
+}

@@ -1,0 +1,47 @@
+FITini
+; BRAIN-FSM-1K-A fixture — exercises all 4 FSM verbs with gate MC2_BRAIN_FSM=1.
+; Uses raw brace-block format (TechSpecial { ... Body { ... } }).
+;
+; Sequence (run in order by harness):
+;   fsm_setstate   : Unit.SetState "engage" — transition from "" to "engage"; early return.
+;   fsm_instate_match : Unit.InState "engage" — match=1 (gate OPEN); OPORD.CoreGuard fires.
+;   fsm_instate_mismatch : Unit.InState "patrol" — match=0 (gate CLOSED); OPORD.CoreGuard skipped.
+;   fsm_setstateprev : Unit.SetStatePrev — swap currentState↔prevState (now back to ""); early return.
+
+TechSpecial {
+    alias = "fsm_setstate"
+    type  = "ALARM"
+    Body {
+        DO Unit.SetState "engage"
+        STOP
+    }
+}
+
+TechSpecial {
+    alias = "fsm_instate_match"
+    type  = "UPDATE"
+    Body {
+        DO Unit.InState "engage"
+        DO OPORD.CoreGuard
+        STOP
+    }
+}
+
+TechSpecial {
+    alias = "fsm_instate_mismatch"
+    type  = "UPDATE"
+    Body {
+        DO Unit.InState "patrol"
+        DO OPORD.CoreGuard
+        STOP
+    }
+}
+
+TechSpecial {
+    alias = "fsm_setstateprev"
+    type  = "ALARM"
+    Body {
+        DO Unit.SetStatePrev
+        STOP
+    }
+}

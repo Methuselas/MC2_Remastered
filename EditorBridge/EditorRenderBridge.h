@@ -107,4 +107,53 @@ void drawSelectionBounds(const EditorAabb& bounds, SelectionBoundsStyle style = 
 // Overlay draw discipline: same as drawSelectionBounds.
 void drawTerrainTileOutline(const TerrainTileOverlayDesc& desc);
 
+// ---- Mission render-resource lifecycle (EDITOR-BRIDGE-GPU-FIREWALL-1) ----
+//
+// These passthroughs let editor TUs orchestrate the GPU static-prop/mech
+// batchers, the static-prop registry, and the gpu_cull compute pass WITHOUT
+// including the GPU-internal headers (gos_static_prop_batcher.h,
+// gos_static_prop_registry.h, gos_mech_batcher.h, gpu_cull_compute.h). The
+// bridge owns those includes (carve-out TU) so editor/ stays firewalled.
+//
+// All return plain int/bool/void -- no GPU/Stuff structs cross this header.
+// These are NOT gated on MC2_EDITOR_MODE (s_enabled): the editor must drive
+// the batcher lifecycle regardless of the pick-bridge enable flag, mirroring
+// the game runtime which calls these engine-side unconditionally.
+
+// Mission load: GpuStaticPropBatcher::onMapLoad() + GpuMechBatcher::onMapLoad()
+// + GpuStaticPropRegistry::init(). Call once per map load, before geometry
+// registration. Mirrors code/mission.cpp:1693-1695.
+void beginMissionRenderResources();
+
+// Mission unload teardown (6-step, locked order). Mirrors mission.cpp:3272-3283:
+// gpu_cull readback/compute/substrate shutdown, batcher onMapUnload x2,
+// registry destroy. Call before EditorObjectMgr::clear().
+void endMissionRenderResources();
+
+// Finalize batcher geometry (VBO/IBO upload) for both batchers, then build the
+// gpu_cull indirect buffer if the compute path is enabled. Mirrors
+// mission.cpp:3136-3143. Call after all types are registered.
+void finalizeMissionGeometry();
+
+// Per-frame: GpuStaticPropRegistry::frameBegin(). Clears the per-frame live list.
+// Call once per editor frame before land->render(). Mirrors gamecam.cpp:198.
+void staticPropFrameBegin();
+
+// Per-frame: GpuMechBatcher::finalizePending(). Absorbs mech types registered
+// after finalizeGeometry() (late editor placement). No-op when none pending.
+void mechFinalizePending();
+
+// gpu_cull compute pass init (gpu_cull::compute_init()). Substrate/readback init
+// are driven separately by the editor (those headers are not firewalled).
+void cullComputeInit();
+
+// Register one static-prop TG_TypeMultiShape with GpuStaticPropBatcher. The
+// shape pointer is opaque to the editor (passed as void*); the bridge casts it
+// back to TG_TypeMultiShape* internally. No-op if multiShape is null.
+void registerStaticPropShape(void* multiShape);
+
+// True iff MC2_STATIC_PROP_MISSION_LOAD_REG=1 (GpuStaticPropRegistry gate).
+// Gates the editor's mission-load bulk static-prop registration walk.
+bool staticPropMissionLoadRegEnabled();
+
 } // namespace EditorBridge

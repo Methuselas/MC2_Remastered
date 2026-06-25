@@ -44,6 +44,8 @@
 
 extern void visualTuning_applyProfile(const char*);  // MISSION-VISUAL-TUNING-1
 
+#include "brain_special_dispatch.h"  // TECHSCRIPT-SPECIAL-DISPATCH-1A: parseBrainSpecialBody
+
 #ifndef COLLSN_H
 #include"collsn.h"
 #endif
@@ -333,6 +335,11 @@ extern bool 			invulnerableON;		//Used for tutorials so mechs can take damage, b
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include "mech_brain_runtime.h"  // BRAIN-RUNTIME-1B: per-unit mode loading from _ai.fit
+#include "brain_task_queue.h"    // BRAIN-RUNTIME-1B: BrainTaskType
+#include "brain_tactic_select.h" // TACTIC-WEIGHTS-A: tacticName, applyPilotModulation (no mutation at load)
+#include "tacordr.h"             // TACTIC-WEIGHTS-A: TacticType enum + NUM_TACTICS
 namespace {
 	static const bool s_misSplit = (getenv("MC2_MISSION_SPLIT") != nullptr);
 	enum { MS_LAND_UPDATE=0, MS_PATHMGR, MS_CLEAR_BLOCKS, MS_CLEAR_VERTS,
@@ -3028,9 +3035,260 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 			result = MechWarrior::warriorList[i]->loadBrainParameters(missionFile, i);
 			//Assert(result == NO_ERR, result, " Could not load Warrior Brain Parameters ");
 		}
-				
-	}	
-	
+
+	}
+
+	// BRAIN-RUNTIME-1B: load per-unit Brain blocks from <missionName>_ai.fit.
+	// Gate: MC2_BRAIN_RUNTIME=1 (default OFF). File absence is silent (no fixture = all Legacy).
+	// Single-warrior fixture only: one Brain block keyed "Brain". unitRef "Warrior%d" -> idx.
+	// MC2_BRAIN_RUNTIME_FORCE_MODE (if set) overrides all per-unit modes as a post-load global.
+	if (std::getenv("MC2_BRAIN_RUNTIME") && std::atoi(std::getenv("MC2_BRAIN_RUNTIME")) != 0) {
+		char aiFitName[256];
+		// missionName is the raw name like "mc2_01"; missionPath is "data/missions/".
+		std::snprintf(aiFitName, sizeof(aiFitName), "%s%s_ai.fit", missionPath, missionName);
+		std::fprintf(stderr, "[BRAIN_RT] mission load: MC2_BRAIN_RUNTIME=1 mission=%s seeking %s\n", missionName, aiFitName);
+		std::fflush(stderr);
+		FitIniFile* aiFit = new FitIniFile;
+		if (aiFit && aiFit->open(aiFitName) == NO_ERR) {
+			// Seek the single "Brain" block (single-warrior fixture; multi-block not supported this slice).
+			if (aiFit->seekBlock("Brain") == NO_ERR) {
+				char unitRefBuf[32] = {};
+				long modeValLong = 0;
+				long unitRefResult  = aiFit->readIdString("unitRef",  unitRefBuf, 31);
+				long modeResult     = aiFit->readIdLong("mode", modeValLong);
+				if (unitRefResult == NO_ERR && modeResult == NO_ERR) {
+					// Parse "Warrior%d" -> 1-based index.
+					int warriorIdx = -1;
+					std::sscanf(unitRefBuf, "Warrior%d", &warriorIdx);
+					if (warriorIdx >= 1 && warriorIdx <= (int)numWarriors) {
+						MechWarriorPtr w = MechWarrior::warriorList[warriorIdx];
+						if (w) {
+							BrainRuntimeMode fitMode = BrainRuntimeMode::Legacy;
+							switch (modeValLong) {
+								case 1: fitMode = BrainRuntimeMode::Hybrid;   break;
+								case 2: fitMode = BrainRuntimeMode::Enhanced; break;
+								default: break;
+							}
+							// setBrainRuntimeMode allocates brainRuntime if needed + sets mode.
+							w->setBrainRuntimeMode(fitMode);
+							std::fprintf(stderr, "[BRAIN_RT] FIT load warriorIdx=%d unitRef=%s mode=%s\n",
+								warriorIdx,
+								unitRefBuf,
+								MechBrainRuntime::modeString(fitMode));
+							std::fflush(stderr);
+						}
+					} else {
+						std::fprintf(stderr, "[BRAIN_RT] WARNING: _ai.fit Brain block unitRef=%s idx=%d out of range [1..%lu]\n",
+							unitRefBuf, warriorIdx, (unsigned long)numWarriors);
+					}
+				}
+			}
+			aiFit->close();
+		}
+		// MC2_BRAIN_RUNTIME_FORCE_MODE overrides all per-unit modes (post-load global override).
+		const char* forceModeEnv = std::getenv("MC2_BRAIN_RUNTIME_FORCE_MODE");
+		if (forceModeEnv) {
+			BrainRuntimeMode forced = BrainRuntimeMode::Legacy;
+			if      (std::strcmp(forceModeEnv, "hybrid")   == 0) forced = BrainRuntimeMode::Hybrid;
+			else if (std::strcmp(forceModeEnv, "enhanced") == 0) forced = BrainRuntimeMode::Enhanced;
+			for (unsigned long i = 1; i <= numWarriors; i++) {
+				MechWarriorPtr w = MechWarrior::warriorList[i];
+				if (w && w->getBrainRuntime())
+					w->setBrainRuntimeMode(forced);
+			}
+		}
+		delete aiFit;
+	}
+
+	// TACTIC-WEIGHTS-A: load [Tactics] block from <missionName>_ai.fit into tacticWeights[].
+	// Gate: MC2_TACTIC_WEIGHTS=1 (default OFF).
+	// File absence is silent. Block absence is silent (all weights stay zero).
+	// Format: one float entry per tactic by short name, e.g. "f StopAndFire = 0.30"
+	// Normalisation is enforced at load time (sum→1); weightsNormalized flag set.
+	// Both raw-zero and absent-block warriors keep tacticWeights all-zero (FIT fallback
+	// uses uniform weights via the all-zero branch in applyPilotModulation).
+	if (std::getenv("MC2_TACTIC_WEIGHTS") && std::atoi(std::getenv("MC2_TACTIC_WEIGHTS")) != 0) {
+		char tacFitName[256];
+		std::snprintf(tacFitName, sizeof(tacFitName), "%s%s_ai.fit", missionPath, missionName);
+		FitIniFile* tacFit = new FitIniFile;
+		if (tacFit && tacFit->open(tacFitName) == NO_ERR) {
+			if (tacFit->seekBlock("Tactics") == NO_ERR) {
+				// Parse known tactic names; missing keys silently default to 0.
+				struct { const char* name; int idx; } kTacticKeys[] = {
+					{ "None",             TACTIC_NONE             },
+					{ "FlankLeft",        TACTIC_FLANK_LEFT       },
+					{ "FlankRight",       TACTIC_FLANK_RIGHT      },
+					{ "FlankRear",        TACTIC_FLANK_REAR       },
+					{ "StopAndFire",      TACTIC_STOP_AND_FIRE    },
+					{ "Turret",           TACTIC_TURRET           },
+					{ "Joust",            TACTIC_JOUST            },
+					{ "IndirectFire",     TACTIC_INDIRECT_FIRE    },
+					{ "HullDown",         TACTIC_HULL_DOWN        },
+					{ "FightingWithdraw", TACTIC_FIGHTING_WITHDRAW},
+					{ "Pursue",           TACTIC_PURSUE           },
+					{ "HitAndRun",        TACTIC_HIT_AND_RUN      },
+				};
+				float loadedWeights[NUM_TACTICS] = {};
+				for (auto& kv : kTacticKeys) {
+					float val = 0.0f;
+					if (tacFit->readIdFloat(kv.name, val) == NO_ERR)
+						loadedWeights[kv.idx] = (val < 0.0f) ? 0.0f : val;
+				}
+				// Normalize
+				float sum = 0.0f;
+				for (int i = 0; i < NUM_TACTICS; i++) sum += loadedWeights[i];
+				if (sum > 0.0f) {
+					float inv = 1.0f / sum;
+					for (int i = 0; i < NUM_TACTICS; i++) loadedWeights[i] *= inv;
+				}
+				// Distribute to all warriors that have a brainRuntime
+				int loadCount = 0;
+				for (unsigned long i = 1; i <= numWarriors; i++) {
+					MechWarriorPtr w = MechWarrior::warriorList[i];
+					if (w) {
+						if (!w->getBrainRuntime()) {
+							// Allocate runtime so tactic weights are accessible even for Legacy warriors.
+							w->setBrainRuntimeMode(BrainRuntimeMode::Legacy);
+						}
+						MechBrainRuntime* rt = w->getBrainRuntime();
+						if (rt) {
+							std::memcpy(rt->tacticWeights, loadedWeights, sizeof(rt->tacticWeights));
+							rt->weightsNormalized = 1;
+							loadCount++;
+						}
+					}
+				}
+				std::fprintf(stderr, "[BRAIN_TACTIC_SELECT] [Tactics] loaded from %s: %d warriors weighted\n",
+				             tacFitName, loadCount);
+				std::fflush(stderr);
+			}
+			tacFit->close();
+		}
+		delete tacFit;
+	}
+
+	// TECHSCRIPT-SPECIAL-DISPATCH-1A: load per-warrior BrainSpecial body from <missionName>_specials.fit.
+	// Gate: MC2_BRAIN_DISPATCH=1 (default OFF). Requires MC2_BRAIN_RUNTIME=1 + MC2_BRAIN_RUNTIME_APPLY=1.
+	// File absence is silent. Only warriors with brainRuntime allocated (Enhanced mode) are loaded.
+	//
+	// TECHSCRIPT-SPECIAL-DISPATCH-1C: gate MC2_BRAIN_DISPATCH_FSM_TODO=1 (requires MC2_BRAIN_DISPATCH=1).
+	// Runs a MISSION-LEVEL raw-text scan of the specials file for
+	// "; TODO: manual ABL line: <payload>" comments (stripped by FitIniFile).
+	// Emits [BRAIN_DISPATCH_FSM_TODO] summary + detail lines. Information only — no behavior change.
+	// Scan is done once per mission (not per-warrior) because the file is mission-level.
+	// Gate-OFF: byte-identical to pre-1C; no extra parsing, no extra traces.
+	{
+		const bool dispatchOn   = (std::getenv("MC2_BRAIN_DISPATCH")         && std::atoi(std::getenv("MC2_BRAIN_DISPATCH"))         != 0);
+		const bool fsmTodoOn    = (std::getenv("MC2_BRAIN_DISPATCH_FSM_TODO") && std::atoi(std::getenv("MC2_BRAIN_DISPATCH_FSM_TODO")) != 0);
+		const bool dispatchVarOn = (std::getenv("MC2_BRAIN_DISPATCH_VAR")     && std::atoi(std::getenv("MC2_BRAIN_DISPATCH_VAR"))     != 0);
+		const bool missionVarOn  = (std::getenv("MC2_BRAIN_VAR_MISSION")      && std::atoi(std::getenv("MC2_BRAIN_VAR_MISSION"))      != 0);
+
+		// TECHSCRIPT-DISPATCH-1D-M: reset mission-scope Var store at every mission load.
+		// resetMissionVarStore() is always safe to call (no-op if store already empty).
+		// Gate: only reset when MC2_BRAIN_VAR_MISSION=1 to avoid noise in gate-OFF runs.
+		if (missionVarOn) {
+			resetMissionVarStore();
+		}
+
+		if (fsmTodoOn && !dispatchOn) {
+			std::fprintf(stderr, "[BRAIN_DISPATCH_FSM_TODO] WARN: MC2_BRAIN_DISPATCH_FSM_TODO=1 requires MC2_BRAIN_DISPATCH=1 — inert\n");
+			std::fflush(stderr);
+		}
+		// TECHSCRIPT-DISPATCH-1D: gate-dependency check for DISPATCH_VAR.
+		if (dispatchVarOn && !dispatchOn) {
+			std::fprintf(stderr, "[BRAIN_DISPATCH_VAR] WARNING: MC2_BRAIN_DISPATCH_VAR=1 requires MC2_BRAIN_DISPATCH=1 -- var handling is INERT\n");
+			std::fflush(stderr);
+		}
+
+		if (dispatchOn) {
+			// DISPATCH-EFFECT-UNITEJECT-1: MC2_BRAIN_SPECIAL_FIT allows test-fixture override.
+			// When set, ALL warriors load from <override>_specials.fit instead of <mission>_specials.fit.
+			// Intended for smoke gate verification only. Default: missionName (standard behavior).
+			const char* specialFitEnv = std::getenv("MC2_BRAIN_SPECIAL_FIT");
+			const char* specialFitName = (specialFitEnv && specialFitEnv[0] != '\0') ? specialFitEnv : missionName;
+
+			std::fprintf(stderr, "[BRAIN_DISPATCH] mission load: MC2_BRAIN_DISPATCH=1 mission=%s special_fit=%s\n",
+			             missionName, specialFitName);
+			std::fflush(stderr);
+
+			// 1A/1B: per-warrior verb parse (only for warriors with brainRuntime allocated).
+			// TECHSCRIPT-CALL-CHAIN-1A: pass specialIndex so the raw scanner populates it.
+			// The index is per-warrior-runtime (each warrior gets its own copy); content
+			// is identical across warriors for the same mission (all read the same file).
+			// This is acceptable for 1A: index is small (<10 blocks), mission-ephemeral.
+			for (unsigned long i = 1; i <= numWarriors; i++) {
+				MechWarriorPtr w = MechWarrior::warriorList[i];
+				if (w && w->getBrainRuntime()) {
+					parseBrainSpecialBody(specialFitName, w->getBrainRuntime()->specialBody,
+					                      &w->getBrainRuntime()->specialIndex);
+				}
+			}
+
+			// TECHSCRIPT-SPECIAL-DISPATCH-1C: FSM-TODO mission-level scan + trace.
+			// Done ONCE per mission (the specials file is mission-level, not per-warrior).
+			// Gate-OFF: this entire block is skipped; no ifstream open, no extra traces.
+			if (fsmTodoOn) {
+				// Use a temporary BrainSpecialBody for the scan — trace output is mission-level.
+				// fsmTodos are INFORMATION ONLY; they are not stored persistently here.
+				// (Future per-warrior storage is deferred — the file has one FSM skeleton shared
+				// by all warriors; per-warrior active-state gating is out of 1C scope.)
+				BrainSpecialBody tmpBody;
+				scanFsmTodosFromFile(specialFitName, tmpBody);
+
+				// Count by kind for the summary line.
+				int nStateDef = 0, nStateEnd = 0, nTrans = 0, nTransBack = 0, nOther = 0;
+				for (const FsmTodoEntry& e : tmpBody.fsmTodos) {
+					switch (e.kind) {
+						case FsmTodoKind::STATE_DEF:  ++nStateDef;  break;
+						case FsmTodoKind::STATE_END:  ++nStateEnd;  break;
+						case FsmTodoKind::TRANS:      ++nTrans;     break;
+						case FsmTodoKind::TRANS_BACK: ++nTransBack; break;
+						case FsmTodoKind::OTHER_TODO: ++nOther;     break;
+					}
+				}
+
+				// Summary line (always emitted when FSM_TODO gate is on, even if count=0).
+				// wid=-1 signals mission-level (no specific warrior context).
+				std::fprintf(stderr,
+					"[BRAIN_DISPATCH_FSM_TODO] mission=%s wid=-1 stateDefs=%d transitions=%d otherTodos=%d\n",
+					missionName, nStateDef, nTrans + nTransBack, nOther);
+				std::fflush(stderr);
+
+				// Detail lines: STATE_DEF, TRANS, TRANS_BACK, STATE_END only.
+				// OTHER_TODO is counted in summary but NOT detail-traced (noise suppression).
+				for (const FsmTodoEntry& e : tmpBody.fsmTodos) {
+					switch (e.kind) {
+						case FsmTodoKind::STATE_DEF:
+							std::fprintf(stderr,
+								"[BRAIN_DISPATCH_FSM_TODO] kind=STATE_DEF name=%s wid=-1\n",
+								e.name.c_str());
+							std::fflush(stderr);
+							break;
+						case FsmTodoKind::STATE_END:
+							std::fprintf(stderr,
+								"[BRAIN_DISPATCH_FSM_TODO] kind=STATE_END wid=-1\n");
+							std::fflush(stderr);
+							break;
+						case FsmTodoKind::TRANS:
+							std::fprintf(stderr,
+								"[BRAIN_DISPATCH_FSM_TODO] kind=TRANS target=%s wid=-1\n",
+								e.name.c_str());
+							std::fflush(stderr);
+							break;
+						case FsmTodoKind::TRANS_BACK:
+							std::fprintf(stderr,
+								"[BRAIN_DISPATCH_FSM_TODO] kind=TRANS_BACK wid=-1\n");
+							std::fflush(stderr);
+							break;
+						case FsmTodoKind::OTHER_TODO:
+							// Suppressed from detail trace (counted in summary only).
+							break;
+					}
+				}
+			} // fsmTodoOn
+		} // dispatchOn
+	}
+
 #ifdef LAB_ONLY
 	x=GetCycles();
 	MCTimeWarriorLoad=x-x1;

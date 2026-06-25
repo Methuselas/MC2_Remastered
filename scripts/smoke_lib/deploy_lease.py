@@ -355,24 +355,46 @@ def auto_acquire(
             _log(f"[LEASE] acquired {_short_name(folder)} (--exe)")
         return folder
 
-    # Auto-select — entire walk under ONE lock so selection+write is atomic.
+    # Auto-select — LRU ORDER (least-recently-used folder picked first):
+    # never-leased folders rank as oldest (picked before any leased one); among
+    # leased candidates, the one with the oldest last_used_utc wins. This spreads
+    # load across deploy folders instead of biasing toward a fixed preference
+    # order. Selection+write happens under ONE lock so it's atomic.
     with _registry_lock():
         reg = _read_registry()
         busy_entries: list[str] = []
+
+        # Build candidate list: (name, folder, last_used_ts_or_None) for folders
+        # that actually exist and have an mc2.exe.
+        candidates: list[tuple[str, str, Optional[float]]] = []
         for name, folder in DEPLOY_FOLDERS:
             if not _folder_has_exe(folder):
                 _log(f"[LEASE] {name} ({folder}) skipped — folder missing or no mc2.exe")
                 continue
             entry = reg.get(_folder_key(folder))
+            ts = _parse_utc(entry.get("last_used_utc", "")) if entry else None
+            candidates.append((name, folder, ts))
+
+        # LRU sort: never-leased (ts=None) ranks oldest -> picked first; then
+        # ascending timestamp (older leased folders before newer ones). Stable
+        # tiebreak by DEPLOY_FOLDERS declaration order via the candidates list
+        # already being built in that order.
+        candidates.sort(key=lambda c: (c[2] is not None, c[2] if c[2] is not None else 0.0))
+
+        # Walk LRU-ordered, take first non-busy. If a folder is busy and fresh,
+        # log and try next; if free or stale, acquire.
+        for name, folder, _ts in candidates:
+            entry = reg.get(_folder_key(folder))
             if entry and not _is_stale(entry):
                 age = _age_secs(entry.get("last_used_utc", ""))
                 age_min = f"{int(age // 60)}m" if age is not None else "?m"
                 _log(f"[LEASE] {name} busy (owner pid {entry.get('pid')}, "
-                     f"host {entry.get('hostname')}, {age_min} old) -> trying next")
+                     f"host {entry.get('hostname')}, {age_min} old) -> trying next (LRU)")
                 busy_entries.append(f"{name} (pid={entry.get('pid')}, age={age_min})")
                 continue
             _acquire_locked(folder, intended_test)
-            _log(f"[LEASE] acquired {name} (was {'stale' if entry else 'free'})")
+            label = "never used" if _ts is None else ("stale" if entry else "free")
+            _log(f"[LEASE] acquired {name} via LRU (was {label})")
             return folder
 
     holders = "; ".join(busy_entries) if busy_entries else "all folders missing mc2.exe"

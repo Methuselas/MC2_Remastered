@@ -1,0 +1,12 @@
+FITini
+; BRAIN-OPORD-COREPATROL-1 fixture — canonical OPORD.CorePatrol verb.
+; Two waypoints, loop semantics.
+; Gate: MC2_BRAIN_DISPATCH=1 MC2_BRAIN_DISPATCH_APPLY=1 MC2_BRAIN_PATROL=1
+; Expected: BRAIN_PATROL_START count=2 loop=1 + MOVETO_POINT emitted to wp0 (100 100 0).
+; Arrival/advance = smoke-only (tickPatrolAdvance polls live curTacOrder.status()).
+
+[BrainSpecial]
+
+[Body]
+st DO0 = "OPORD.CorePatrol 100 100 0 200 200 0 loop"
+st DO1 = "HOLD"

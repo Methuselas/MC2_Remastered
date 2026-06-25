@@ -1,0 +1,52 @@
+FITini
+; TECHSCRIPT-CALL-CHAIN-1A canonical fixture.
+; Engine-owned normative proof (addendum #3: engine owns spec; carver non-canonical).
+; Tests depth-2 TechSpecial.Call chaining: scenario_main calls init then update.
+; Gate matrix: Gate C (DISPATCH=1 APPLY=1 TASKQ=1 RUNTIME=1 CALL=1)
+;   Expect: [BRAIN_DISPATCH_CALL] from=mission.test.scenario_main to=mission.test.special.init depth=1
+;           [BRAIN_DISPATCH] depth=1 verb=Brain.CorePower false   (chained; NOT applied in 1A)
+;           [BRAIN_DISPATCH] depth=1 verb=Brain.CorePower
+;           [BRAIN_DISPATCH_UNKNOWN] depth=1 verb=Var.Set "init.done" 1
+;           [BRAIN_DISPATCH_CALL] from=mission.test.scenario_main to=mission.test.special.update depth=1
+;           [BRAIN_DISPATCH_UNKNOWN] depth=1 verb=OPORD.CorePatrol ...
+;   1B POWERDOWN: fires ONLY if Brain.CorePower false is in ROOT body.
+;   It is NOT in scenario_main (only in the called init body), so POWERDOWN does NOT fire.
+;   This proves 1A's "no chained effects" rule.
+
+TechSpecial {
+    key  = "mission.test.scenario_main"
+    alias = "Scenario.Main"
+    type = "MissionSpecial"
+    sourceABLFunction = "scenario_main"
+    Body {
+        DO TechSpecial.Call "mission.test.special.init"
+        DO TechSpecial.Call "mission.test.special.update"
+        STOP
+    }
+}
+
+TechSpecial {
+    key  = "mission.test.special.init"
+    alias = "Special.Init"
+    type = "MissionSpecial"
+    sourceABLFunction = "special_init"
+    Body {
+        DO Brain.CorePower false
+        DO Brain.CorePower
+        DO Var.Set "init.done" 1
+        STOP
+    }
+}
+
+TechSpecial {
+    key  = "mission.test.special.update"
+    alias = "Special.Update"
+    type = "MissionSpecial"
+    sourceABLFunction = "special_update"
+    Body {
+        DO OPORD.CoreGuard
+        DO Unit.InState "attacking"
+        DO UnknownVerb.DoSomething "arg1"
+        STOP
+    }
+}

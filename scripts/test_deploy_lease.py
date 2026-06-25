@@ -177,20 +177,26 @@ finally:
 
 
 # ---------------------------------------------------------------------------
-# TEST C: lease older than 1h is treated as free and taken over
+# TEST C: lease older than 1h is treated as free and taken over (under LRU,
+# when no never-used folder is available — never-used always wins under LRU)
 # ---------------------------------------------------------------------------
-run_test("C: stale lease (>1h) is taken over")
+run_test("C: stale lease (>1h) is taken over when no never-used folder available")
 h = Harness()
 h.install()
 try:
-    # Inject stale lease on 0.4: 73 minutes old
-    h.inject_lease("0.4", pid=99992, age_secs=73 * 60)
+    # LRU semantics: never-used folders rank oldest and win over stale-leased
+    # ones. To exercise STALE TAKEOVER specifically, all other folders must be
+    # fresh-leased (busy+fresh -> skipped, not selected). Only stale 0.4 is
+    # takeable, so LRU picks it as the oldest takeable candidate.
+    h.inject_lease("0.4", pid=99992, age_secs=73 * 60)   # stale (will be taken)
+    for fresh_name in ("0.4c", "0.4d-rc1", "0.5.0", "0.5-testing"):
+        if fresh_name in h.folders:
+            h.inject_lease(fresh_name, pid=99000 + (abs(hash(fresh_name)) % 999), age_secs=10)
     old_pid = h.read_reg()[_mod._folder_key(h.path("0.4"))]["pid"]
     check("old lease present with foreign pid", old_pid == 99992)
-    # auto_acquire should take over 0.4
     folder = _mod.auto_acquire(explicit_folder=None, deploy_name=None)
     got_04 = Path(folder).resolve() == h.folders["0.4"].resolve()
-    check("stale 0.4 taken over (acquired 0.4)", got_04, detail=folder)
+    check("stale 0.4 taken over (acquired 0.4) under LRU", got_04, detail=folder)
     new_entry = h.read_reg()[_mod._folder_key(folder)]
     check("new pid is ours", new_entry["pid"] == os.getpid())
     _mod.release_lease(folder)
@@ -297,6 +303,59 @@ try:
         raised = True
     check("NoFolderAvailable when no folders have mc2.exe", raised)
 
+finally:
+    h.cleanup()
+
+
+# ---------------------------------------------------------------------------
+# TEST G: LRU semantics — never-used > oldest-leased > newer-leased
+# ---------------------------------------------------------------------------
+run_test("G: LRU ordering — never-used wins over leased; oldest-leased wins among leased")
+
+# G1: never-used candidate wins over a fresh leased candidate.
+h = Harness()
+h.install()
+try:
+    # Lease 0.4 fresh (recent timestamp); leave 0.4c never-used.
+    h.inject_lease("0.4", pid=88888, age_secs=10)  # fresh -> busy
+    # auto_acquire under LRU: never-used 0.4c (None timestamp) ranks oldest,
+    # but 0.4 is busy+fresh so it's skipped. Result: 0.4c picked.
+    folder = _mod.auto_acquire(explicit_folder=None, deploy_name=None)
+    got_4c = Path(folder).resolve() == h.folders["0.4c"].resolve()
+    check("never-used 0.4c picked over fresh-leased 0.4", got_4c, detail=folder)
+    _mod.release_lease(folder)
+finally:
+    h.cleanup()
+
+# G2: among multiple leased+stale candidates, the OLDEST is taken first.
+h = Harness()
+h.install()
+try:
+    # Mark ALL folders leased with varying ages; none never-used.
+    h.inject_lease("0.4",         pid=70001, age_secs=200 * 60)  # 200min - oldest
+    h.inject_lease("0.4c",        pid=70002, age_secs=100 * 60)  # 100min
+    h.inject_lease("0.4d-rc1",    pid=70003, age_secs= 90 * 60)  #  90min
+    h.inject_lease("0.5.0",       pid=70004, age_secs= 80 * 60)  #  80min
+    h.inject_lease("0.5-testing", pid=70005, age_secs= 70 * 60)  #  70min
+    # All are stale (>TTL=60min). LRU picks the OLDEST stale candidate = 0.4 (200min).
+    folder = _mod.auto_acquire(explicit_folder=None, deploy_name=None)
+    got_4 = Path(folder).resolve() == h.folders["0.4"].resolve()
+    check("oldest-stale 0.4 (200m) picked over newer-stale candidates", got_4, detail=folder)
+    _mod.release_lease(folder)
+finally:
+    h.cleanup()
+
+# G3: among ALL never-used, declaration order tiebreak (stable sort).
+h = Harness()
+h.install()
+try:
+    # No leases. All folders never-used. LRU sort: all candidates have ts=None,
+    # so they sort-tie; stable sort preserves DEPLOY_FOLDERS declaration order.
+    # Result: 0.4 (first declared) wins.
+    folder = _mod.auto_acquire(explicit_folder=None, deploy_name=None)
+    got_4 = Path(folder).resolve() == h.folders["0.4"].resolve()
+    check("all never-used: declaration order tiebreak picks 0.4 first", got_4, detail=folder)
+    _mod.release_lease(folder)
 finally:
     h.cleanup()
 

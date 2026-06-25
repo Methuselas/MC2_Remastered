@@ -3552,6 +3552,53 @@ int MissionInterfaceManager::scrollRight()
 	eye->moveRight(scrollFactor);
 	return 1;
 }
+// [MOUSE-ANCHORED-ZOOM-1 / FIX-4] Mouse-anchored zoom helper. Gated by
+// MC2_LOWCAM_ZOOM_ANCHOR (default OFF -> legacy fixed-pivot zoom unchanged).
+// Capture cursor world point A, scroll-target T and pre-step altitude h0 BEFORE
+// the zoom, run the supplied legacy zoom (calling the member fn), then shift the
+// scroll target so A stays under the cursor: T_new = T + (A - T)*(1 - h1/h0).
+namespace {
+	bool lowcamZoomAnchorEnabled()
+	{
+		static int cached = -1;
+		if (cached < 0)
+		{
+			// Default OFF: anchored zoom still reads as a pan in practice; use the
+			// legacy fixed-pivot wheel zoom. Opt in with MC2_LOWCAM_ZOOM_ANCHOR=1.
+			const char* v = getenv("MC2_LOWCAM_ZOOM_ANCHOR");
+			cached = (v && v[0] && v[0] != '0') ? 1 : 0;
+		}
+		return cached != 0;
+	}
+}
+
+void MissionInterfaceManager::anchoredZoom(long mx, long my, int (MissionInterfaceManager::*zoomFn)())
+{
+	// OFF path: byte-identical to legacy — just run the zoom.
+	if (!lowcamZoomAnchorEnabled() || !eye || !eye->getUsePerspective())
+	{
+		(this->*zoomFn)();
+		return;
+	}
+
+	// [MOUSE-ANCHORED-ZOOM-1 v2] The prior single-shot position shift PANNED:
+	// it used h1=cameraAltitudeDesired (the instant setpoint) but the camera's
+	// ACTUAL altitude eases toward it over ~5 frames (Camera::update), so the
+	// pivot snapped the full distance on frame 0 while altitude barely moved.
+	// Fix: capture cursor-world A, the ACTUAL altitude h0, and pivot T0 here,
+	// then let Camera::update() shift the pivot each frame LOCKED to the eased
+	// altitude (frac = 1 - cameraAltitude/h0) until it settles. ZOOMs, no pan.
+	Stuff::Vector3D A;
+	bool haveA = eye->screenToTerrainApprox(mx, my, A);
+
+	(this->*zoomFn)();   // updates cameraAltitudeDesired (the zoom target)
+
+	// Fallback: cursor->world failed -> leave legacy fixed-pivot zoom, no jump.
+	if (!haveA)
+		return;
+	eye->beginZoomAnchor(A, eye->getCameraAltitude(), eye->getPosition());
+}
+
 int MissionInterfaceManager::zoomOut()
 {
 	float frameFactor = frameLength / baseFrameLength;
@@ -4435,13 +4482,14 @@ bool MissionInterfaceManager::moveCameraAround( bool lineOfSight, bool passable,
 			                           frameLength, /*worldOwnsWheel=*/true);
 			//Mouse wheel just picks zooms now.
 			//float actualZoom = zoomInc * abs(mouseWheelDelta) * 0.0001f * eye->getScaleFactor();
+			// [MOUSE-ANCHORED-ZOOM-1 / FIX-4] zoom toward cursor when gated on.
 			if (mouseWheelDelta > 0)
 			{
-				zoomChoiceOut();
+				anchoredZoom(userInput->getMouseX(), userInput->getMouseY(), &MissionInterfaceManager::zoomChoiceOut);
 			}
 			else
 			{
-				zoomChoiceIn();
+				anchoredZoom(userInput->getMouseX(), userInput->getMouseY(), &MissionInterfaceManager::zoomChoiceIn);
 			}
 
 			if ( target )
@@ -4464,13 +4512,14 @@ bool MissionInterfaceManager::moveCameraAround( bool lineOfSight, bool passable,
 		                           frameLength, /*worldOwnsWheel=*/true);
 		//Mouse wheel just picks zooms now.
 		//float actualZoom = zoomInc * abs(mouseWheelDelta) * 0.0001f * eye->getScaleFactor();
+		// [MOUSE-ANCHORED-ZOOM-1 / FIX-4] zoom toward cursor when gated on.
 		if (mouseWheelDelta > 0)
 		{
-			zoomChoiceOut();
+			anchoredZoom(userInput->getMouseX(), userInput->getMouseY(), &MissionInterfaceManager::zoomChoiceOut);
 		}
 		else
 		{
-			zoomChoiceIn();
+			anchoredZoom(userInput->getMouseX(), userInput->getMouseY(), &MissionInterfaceManager::zoomChoiceIn);
 		}
 
 		if ( target )

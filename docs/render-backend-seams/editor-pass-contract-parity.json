@@ -1,0 +1,144 @@
+{
+  "_schema": "EDITOR-PASS-CONTRACT-PARITY-1",
+  "_doc": "Declared parity between game and editor for each governed render pass. Source of truth for scripts/check-editor-pass-contract-parity.py. The checker FAILs on undeclared drift (a governed RenderPassId present in RenderPassContract.h but absent here) and on internal inconsistency (unknown classification, missing rationale, classification/status contradiction).",
+  "_classification_values": ["shared", "editor-only", "game-only", "override"],
+  "_governed_source": "RenderCore/RenderPassContract.h (enum RenderPassId, kRenderPassContracts[])",
+  "_editor_render_path": "editor/EditorGameOS.cpp pp_editor->beginScene() (MRT incl. COLOR_ATTACHMENT2 object-id) -> Environment.UpdateRenderers() (editor/Editor.cpp -> editor->render(), the SAME shared world renderer the game runs) -> pp_editor->endScene() (PostProcess composite).",
+  "passes": [
+    {
+      "passId": "StaticPropOpaque",
+      "owner": "GpuStaticPropBatcher",
+      "game": "rendered",
+      "editor": "rendered",
+      "classification": "shared",
+      "rationale": "Editor runs the identical GpuStaticPropBatcher via Environment.UpdateRenderers()->editor->render(). Same PassId, same PipelineDesc, same scene-FBO attachment contract (beginScene MRT). No editor override.",
+      "killSwitchEnv": "MC2_STATIC_PROP_REGISTRY"
+    },
+    {
+      "passId": "Terrain",
+      "owner": "TerrainPatchStream",
+      "game": "rendered",
+      "editor": "rendered",
+      "classification": "shared",
+      "rationale": "Editor renders terrain through the same shared world renderer. Identical PassId/pipeline/attachments. Editor map-edit mutates terrain data, not the pass contract.",
+      "killSwitchEnv": null
+    },
+    {
+      "passId": "MechOpaque",
+      "owner": "GpuMechBatcher",
+      "game": "rendered",
+      "editor": "rendered",
+      "classification": "shared",
+      "rationale": "Editor places/previews mechs through the same GpuMechBatcher pass. Same contract.",
+      "killSwitchEnv": null
+    },
+    {
+      "passId": "Shadow",
+      "owner": "gosPostProcess + per-lane shadow programs",
+      "game": "rendered",
+      "editor": "rendered",
+      "classification": "shared",
+      "rationale": "Shadow pass is part of the shared renderer/post-process driven by the same getGosPostProcess() instance (pp_editor) the editor begins/ends. Same depth attachment contract.",
+      "killSwitchEnv": null
+    },
+    {
+      "passId": "VFX",
+      "owner": "mc2::particles::Batcher",
+      "game": "rendered",
+      "editor": "rendered",
+      "classification": "shared",
+      "rationale": "Particle/VFX batcher runs inside the shared world renderer. Same PassId/pipeline. Editor may quiesce gameplay-spawned effects but the pass contract is identical when active.",
+      "killSwitchEnv": null
+    },
+    {
+      "passId": "Water",
+      "owner": "quad.cpp / renderWaterFastPath",
+      "game": "rendered",
+      "editor": "rendered",
+      "classification": "shared",
+      "rationale": "Water fast path renders through the same shared terrain/water draw. Same attachment + depth-fudge contract.",
+      "killSwitchEnv": null
+    },
+    {
+      "passId": "PostProcess",
+      "owner": "gos_postprocess",
+      "game": "rendered",
+      "editor": "rendered",
+      "classification": "shared",
+      "rationale": "The editor frame is bracketed by the SAME gosPostProcess instance: pp_editor->beginScene()/endScene() in editor/EditorGameOS.cpp mirror gameosmain.cpp. The only editor delta is the composite TARGET viewport (render-to-texture bottom-left region vs full FBO0) — a host-level blit destination, NOT a change to the PostProcess PassId, pipeline, or attachment formats. Declared as shared (not override) because the governed contract — pipeline + attachment formats incl. COLOR_ATTACHMENT2 object-id MRT — is byte-identical; only the final glViewport differs.",
+      "killSwitchEnv": null
+    },
+    {
+      "passId": "VegetationCards",
+      "owner": "VegetationAdapter / gos_vegetation",
+      "game": "rendered",
+      "editor": "rendered",
+      "classification": "shared",
+      "rationale": "Vegetation cards render via the shared renderer. Same contract.",
+      "killSwitchEnv": null
+    },
+    {
+      "passId": "TerrainDecal",
+      "owner": "craterManager / quad.cpp",
+      "game": "rendered",
+      "editor": "rendered",
+      "classification": "shared",
+      "rationale": "Terrain decals render through the shared terrain draw. Same coplanar-decal depth contract.",
+      "killSwitchEnv": null
+    },
+    {
+      "passId": "TerrainOverlay",
+      "owner": "quad.cpp M2d producer",
+      "game": "rendered",
+      "editor": "rendered",
+      "classification": "shared",
+      "rationale": "Terrain overlay (cement/road/transition) renders through the shared terrain draw. Same contract.",
+      "killSwitchEnv": null
+    },
+    {
+      "passId": "UI",
+      "owner": "GameOS 2D / HUD",
+      "game": "rendered",
+      "editor": "rendered",
+      "classification": "shared",
+      "rationale": "The governed UI pass (GameOS 2D draw) is shared. Note: the editor ADDS its own ImGui/dockspace + gizmo UI on top, but that is the editor-only chrome enumerated below, not a mutation of the governed UI PassId.",
+      "killSwitchEnv": null
+    },
+    {
+      "passId": "_editor_only:Gizmos",
+      "owner": "editor (EditorInterface / Action)",
+      "game": "absent",
+      "editor": "rendered",
+      "classification": "editor-only",
+      "rationale": "Translation/rotation manipulator gizmos drawn over the scene for object placement. Legitimately not a game pass — no gameplay frame renders manipulators. Not governed; no game PassId to drift against.",
+      "killSwitchEnv": null
+    },
+    {
+      "passId": "_editor_only:SelectionOverlay",
+      "owner": "editor (EditorObjectMgr)",
+      "game": "absent",
+      "editor": "rendered",
+      "classification": "editor-only",
+      "rationale": "Selection highlight / bounding outlines for the currently-selected object(s). Editor authoring affordance only.",
+      "killSwitchEnv": null
+    },
+    {
+      "passId": "_editor_only:BrushPreview",
+      "owner": "editor (BuildingBrush)",
+      "game": "absent",
+      "editor": "rendered",
+      "classification": "editor-only",
+      "rationale": "Paint/place brush footprint preview (terrain texture brush, building stamp). Authoring-time visualization; no game equivalent.",
+      "killSwitchEnv": null
+    },
+    {
+      "passId": "_editor_only:ObjectIdReadbackViz",
+      "owner": "editor (EditorGameOS lookupAtPixel / COLOR_ATTACHMENT2)",
+      "game": "absent",
+      "editor": "rendered",
+      "classification": "editor-only",
+      "rationale": "The object-id MRT (COLOR_ATTACHMENT2) IS written by the shared PostProcess/scene FBO in BOTH game and editor; what is editor-only is the READBACK + pick visualization (Ctrl+Shift+LMB lookupAtPixel). The attachment-write contract is covered by the shared PostProcess row; only the readback/debug-viz consumer is editor-only and unguverned.",
+      "killSwitchEnv": null
+    }
+  ]
+}

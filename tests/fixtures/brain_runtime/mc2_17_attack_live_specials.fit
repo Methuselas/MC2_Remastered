@@ -1,0 +1,13 @@
+FITini
+; DISPATCH-EFFECT-COREATTACK-1: live target soak fixture (mc2_17).
+; WID=49 = Warrior49, mc2_17 team0 (enemy), verified present in HOLD_TASK traces.
+; Discovery: ran mc2_17 30s with MC2_BRAIN_DISPATCH=1 MC2_BRAIN_RUNTIME=1, observed
+;   HOLD_TASK wid=49 in stderr log; mc2_17.fit shows Warrior49 on TeamID=0 (enemy of team1/player).
+; Warrior4 (wid=4, team1=player) issues ATTACK_OBJECT targetWID=49 exactly once.
+; Engine auto-clears target-WID on target death (warrior.cpp:5195-5198).
+
+[BrainSpecial]
+
+[Body]
+st DO0 = "OPORD.CoreAttack 49"
+st DO1 = "HOLD"

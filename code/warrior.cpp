@@ -11,6 +11,8 @@
 #ifndef MCLIB_H
 #include"mclib.h"
 #endif
+#include "brain_special_dispatch.h"  // TECHSCRIPT-SPECIAL-DISPATCH-1A: executeSpecialBody_TraceOnly
+                                     // BRAIN-WORLD-SNAPSHOT-1: s_brainSnapshotEnabled, buildBrainWorldSnapshot
 
 #ifndef WARRIOR_H
 #include"warrior.h"
@@ -110,6 +112,7 @@
 #include "../GameOS/gameos/gos_static_prop_registry.h"  // Task 6: late-spawn registerStaticProp
 #include "../GameAdapters/StaticPropRenderAdapter.h"  // M1 Task 12
 #include "move_recon.h"  // MC2_MOVE_RECON per-frame pathfinding cost instrumentation
+#include "brain_tactic_select.h"  // TACTIC-WEIGHTS-A: Wang-hash deterministic tactic selection
 
 // MC2_BRAIN_TASKQ gate — checked once at first runBrain call
 static bool s_brainTaskQEnabled     = false;
@@ -121,6 +124,107 @@ static void initBrainTaskQGate() {
     s_brainTaskQEnabled      = (std::getenv("MC2_BRAIN_TASKQ")       && std::atoi(std::getenv("MC2_BRAIN_TASKQ"))       != 0);
     s_brainTaskQTraceEnabled = (std::getenv("MC2_BRAIN_TASKQ_TRACE") && std::atoi(std::getenv("MC2_BRAIN_TASKQ_TRACE")) != 0);
 }
+
+// MC2_BRAIN_RUNTIME gate — checked once at first runBrain call (requires MC2_BRAIN_TASKQ=1)
+static bool             s_brainRuntimeEnabled      = false;
+static bool             s_brainRuntimeTraceEnabled  = false;
+static bool             s_brainRuntimeApplyEnabled  = false;   // MC2_BRAIN_RUNTIME_APPLY=1 (BRAIN-RUNTIME-1B)
+static bool             s_brainRuntimeGateChecked   = false;
+static BrainRuntimeMode s_brainRuntimeForcedMode    = BrainRuntimeMode::Legacy;
+static void initBrainRuntimeGate() {
+    if (s_brainRuntimeGateChecked) return;
+    s_brainRuntimeGateChecked  = true;
+    s_brainRuntimeEnabled      = (std::getenv("MC2_BRAIN_RUNTIME")       && std::atoi(std::getenv("MC2_BRAIN_RUNTIME"))       != 0);
+    s_brainRuntimeTraceEnabled = (std::getenv("MC2_BRAIN_RUNTIME_TRACE") && std::atoi(std::getenv("MC2_BRAIN_RUNTIME_TRACE")) != 0);
+    // MC2_BRAIN_RUNTIME_APPLY=1 enables actual slot writes + short-circuit (BRAIN-RUNTIME-1B).
+    // Requires MC2_BRAIN_RUNTIME=1; warn+stay inert if APPLY=1 but RUNTIME=0.
+    s_brainRuntimeApplyEnabled = (std::getenv("MC2_BRAIN_RUNTIME_APPLY") && std::atoi(std::getenv("MC2_BRAIN_RUNTIME_APPLY")) != 0);
+    if (s_brainRuntimeApplyEnabled && !s_brainRuntimeEnabled) {
+        std::fprintf(stderr, "[BRAIN_RT] WARNING: MC2_BRAIN_RUNTIME_APPLY=1 but MC2_BRAIN_RUNTIME=0 — apply staying inert\n");
+        s_brainRuntimeApplyEnabled = false;
+    }
+    // Mode source: MC2_BRAIN_RUNTIME_FORCE_MODE env override only; per-unit FIT loader may override per-warrior.
+    const char* modeEnv = std::getenv("MC2_BRAIN_RUNTIME_FORCE_MODE");
+    if (modeEnv) {
+        if      (std::strcmp(modeEnv, "hybrid")   == 0) s_brainRuntimeForcedMode = BrainRuntimeMode::Hybrid;
+        else if (std::strcmp(modeEnv, "enhanced") == 0) s_brainRuntimeForcedMode = BrainRuntimeMode::Enhanced;
+        else                                             s_brainRuntimeForcedMode = BrainRuntimeMode::Legacy;
+    }
+    if (s_brainRuntimeEnabled && !s_brainTaskQEnabled) {
+        std::fprintf(stderr, "[BRAIN_RT] WARNING: MC2_BRAIN_RUNTIME=1 but MC2_BRAIN_TASKQ=0 — runtime staying inert\n");
+        s_brainRuntimeEnabled      = false;
+        s_brainRuntimeApplyEnabled = false;
+    }
+}
+
+// MC2_BRAIN_FIXED_TICK gate — checked once at first brain-cadence check
+// BRAIN-FIXED-TICK-1: fixed sim-time accumulator replaces per-warrior brainUpdate advance.
+// Gate OFF (default): byte-identical to baseline (brainUpdate += BrainUpdateFrequency).
+// Gate ON: global accumulator advanced by scenarioTime delta; integer tick index drives
+//          which warriors fire; per-warrior brainUpdate still used as stagger offset only.
+static bool  s_brainFixedTickEnabled     = false;
+static bool  s_brainFixedTickTrace       = false;
+static bool  s_brainFixedTickGateChecked = false;
+static float s_brainFixedTickHz          = 10.0f;   // default 10 Hz = 0.1 s period
+static float s_brainFixedTickPeriod      = 0.1f;    // 1.0 / hz, computed at init
+
+// Per-frame accumulator: how many sim-seconds have accumulated toward next fixed tick.
+// Advanced once per frame in updateBrainFixedTickAccumulator().
+// Not per-warrior — this is a global sim-time counter.
+static float    s_brainFixedTickAccum    = 0.0f;
+static float    s_brainFixedTickSimLast  = -1.0f;   // last scenarioTime seen; -1 = uninit
+static uint32_t s_brainTickIndex         = 0;       // monotonic tick counter, per-frame global
+static uint32_t s_brainTicksThisFrame    = 0;       // ticks fired in current frame (reset each frame)
+
+// BRAIN-DECISION-INTENT-QUEUE-1: accessor so brain_special_dispatch.cpp can stamp intents.
+uint32_t getBrainTickIndex() { return s_brainTickIndex; }
+
+static void initBrainFixedTickGate() {
+    if (s_brainFixedTickGateChecked) return;
+    s_brainFixedTickGateChecked = true;
+    s_brainFixedTickEnabled = (std::getenv("MC2_BRAIN_FIXED_TICK") && std::atoi(std::getenv("MC2_BRAIN_FIXED_TICK")) != 0);
+    s_brainFixedTickTrace   = (std::getenv("MC2_BRAIN_FIXED_TICK_TRACE") && std::atoi(std::getenv("MC2_BRAIN_FIXED_TICK_TRACE")) != 0);
+    if (s_brainFixedTickEnabled) {
+        const char* hzEnv = std::getenv("MC2_BRAIN_FIXED_TICK_HZ");
+        float hz = hzEnv ? (float)std::atof(hzEnv) : 10.0f;
+        if (hz < 1.0f)  hz = 1.0f;
+        if (hz > 30.0f) hz = 30.0f;
+        s_brainFixedTickHz     = hz;
+        s_brainFixedTickPeriod = 1.0f / hz;
+        std::fprintf(stderr, "[BRAIN_FIXED_TICK] init: hz=%.1f period=%.4fs trace=%d\n",
+            s_brainFixedTickHz, s_brainFixedTickPeriod, (int)s_brainFixedTickTrace);
+        std::fflush(stderr);
+    }
+}
+
+// Called once per frame (at start of first warrior's updateActions for this frame) to
+// advance the accumulator by the sim-time delta and count whole ticks.
+// Returns true if at least one tick fired this frame (i.e., warriors may run brain).
+// All warriors within a single render frame share the same brainTickIndex window.
+static bool advanceBrainFixedTickAccumulator(float scenarioTime) {
+    if (s_brainFixedTickSimLast < 0.0f) {
+        // First call: seed last-time, no ticks yet.
+        s_brainFixedTickSimLast  = scenarioTime;
+        s_brainTicksThisFrame    = 0;
+        return false;
+    }
+    float dt = scenarioTime - s_brainFixedTickSimLast;
+    if (dt < 0.0f) dt = 0.0f;  // guard against rewind (save/load)
+    s_brainFixedTickSimLast = scenarioTime;
+    s_brainFixedTickAccum  += dt;
+    s_brainTicksThisFrame   = 0;
+    while (s_brainFixedTickAccum >= s_brainFixedTickPeriod) {
+        s_brainFixedTickAccum -= s_brainFixedTickPeriod;
+        ++s_brainTickIndex;
+        ++s_brainTicksThisFrame;
+    }
+    return (s_brainTicksThisFrame > 0);
+}
+
+// Track which frame we last advanced the accumulator for, so each render frame advances once.
+static uint32_t s_brainAccumLastFrame = 0xFFFFFFFFu;
+// g_mc2FrameCounter defined in mclib/tgl.cpp; incremented by GameOS frame-end.
+extern uint32_t g_mc2FrameCounter;
 
 enum {
 	T_A = 0,
@@ -940,6 +1044,7 @@ void MechWarrior::init (bool create) {
 		memory[i].integer = 0;
 	brain = NULL;
 	brainTaskQueue = nullptr;  // created on first brain fire if gate enabled
+	brainRuntime = nullptr;    // MC2_BRAIN_RUNTIME: created on first brain cadence tick if gate enabled
 	for (int i = 0; i < NUM_PILOT_ALARMS; i++)
 		brainAlarmCallback[i] = NULL;
 
@@ -1551,6 +1656,8 @@ void MechWarrior::destroy (void) {
 
 	delete brainTaskQueue;
 	brainTaskQueue = nullptr;
+	delete brainRuntime;
+	brainRuntime = nullptr;
 
 	for (long i = 0; i < 2; i++)
 		if (moveOrders.path[i]) {
@@ -2175,51 +2282,332 @@ long MechWarrior::runBrain (void) {
 	ModuleInfo moduleInfo;
 	brain->getInfo(&moduleInfo);
 
-	brain->execute();
-	//--------------------------------------------------------------
-	// Well, we'll just set it every frame so it doesn't screw up :)
-	setUseGoalPlan(!MPlayer && (getCommander() != Commander::home));
+	// BRAIN-RUNTIME-1B: check if this warrior is under Enhanced runtime control.
+	// If so, skip brain->execute() and the ABL-derived tac order, push+drain HOLD once.
+	// CurGroup/CurWarrior clear and clearAlarmsHistory() run UNCONDITIONALLY below.
+	bool enhancedApply = s_brainRuntimeEnabled && s_brainRuntimeApplyEnabled
+	                     && brainRuntime
+	                     && (brainRuntime->mode == BrainRuntimeMode::Enhanced);
 
-	if (useGoalPlan) {
-		TacticalOrder tacOrder;
-		long result = calcTacOrder(mainGoalAction, mainGoalObjectWID, mainGoalLocation, mainGoalControlRadius, 0, 1, 150.0, 300, tacOrder);
-		if (result == 0) {
-			if (tacOrder.code != TACTICAL_ORDER_NONE) {
-				if (getCommander() == Commander::home)
-					setPlayerTacOrder(tacOrder);
-				else
-					setGeneralTacOrder(tacOrder);
+	long brainErr = 0;
+	if (!enhancedApply) {
+		// ── Legacy ABL path ──────────────────────────────────────────────────────────
+		brain->execute();
+		//--------------------------------------------------------------
+		// Well, we'll just set it every frame so it doesn't screw up :)
+		setUseGoalPlan(!MPlayer && (getCommander() != Commander::home));
+
+		if (useGoalPlan) {
+			TacticalOrder tacOrder;
+			long result = calcTacOrder(mainGoalAction, mainGoalObjectWID, mainGoalLocation, mainGoalControlRadius, 0, 1, 150.0, 300, tacOrder);
+			if (result == 0) {
+				if (tacOrder.code != TACTICAL_ORDER_NONE) {
+					if (getCommander() == Commander::home)
+						setPlayerTacOrder(tacOrder);
+					else
+						setGeneralTacOrder(tacOrder);
+				}
+				}
+			else if (result > 0) {
+				setMainGoal(GOAL_ACTION_NONE, NULL, NULL, -1.0);
+				clearCurTacOrder();
 			}
+		}
+
+		brainErr = brain->getInteger();
+		switch (brainErr) {
+			case 0:
+				//------------
+				// No error...
+				break;
+			case 1:
+				//-----------------------------------------------
+				// General purpose error, for now, so bomb out...
+				break;
+		}
+	} else {
+		// ── APPLY=1 + Enhanced: skip ABL execute; push HOLD once, drain+apply ───────
+		if (brainTaskQueue && !brainRuntime->initialHoldPushed) {
+			brainRuntime->initialHoldPushed = 1;
+			brainTaskQueue->push(/*tier=*/0, /*frame_ms=*/0, vehicleWID, BrainTaskType::BRAIN_TASK_HOLD);
+		}
+		// TECHSCRIPT-SPECIAL-DISPATCH-1B: DISPATCH_APPLY gate check.
+		// When MC2_BRAIN_DISPATCH=1 + MC2_BRAIN_DISPATCH_APPLY=1 and the body contains a
+		// recognized effect verb (Brain.CorePower false → POWERDOWN), the dispatcher owns
+		// the GENERAL-slot write this tick. The synthetic HOLD_TASK is suppressed to ensure
+		// EXACTLY ONE GENERAL-slot write per tick.
+		// When DISPATCH_APPLY=0, synthetic HOLD fires as 1B-runtime default (unchanged).
+		static const bool s_dispatchApply = ([](){
+			const char* v = std::getenv("MC2_BRAIN_DISPATCH_APPLY");
+			if (v && std::atoi(v) != 0) {
+				const char* d = std::getenv("MC2_BRAIN_DISPATCH");
+				if (!d || std::atoi(d) == 0) {
+					std::fprintf(stderr, "[BRAIN_DISPATCH] WARNING: MC2_BRAIN_DISPATCH_APPLY=1 requires MC2_BRAIN_DISPATCH=1 — apply is INERT\n");
+					std::fflush(stderr);
+					return false;
+				}
+				return true;
 			}
-		else if (result > 0) {
-			setMainGoal(GOAL_ACTION_NONE, NULL, NULL, -1.0);
-			clearCurTacOrder();
+			return false;
+		})();
+		// BRAIN-DECISION-INTENT-QUEUE-1: gate check (default OFF).
+		// When ON: executeSpecialBody_Apply emits intents; commitBrainIntents drains them.
+		static const bool s_intentQueue = ([](){
+			const char* v = std::getenv("MC2_BRAIN_INTENT_QUEUE");
+			return (v && std::atoi(v) != 0);
+		})();
+		// BRAIN-COMMIT-PHASE-1: deferred commit gate (default OFF).
+		// Requires MC2_BRAIN_INTENT_QUEUE=1 to be meaningful.
+		// Gate ON → inline commitBrainIntents calls are SKIPPED here; intents persist in
+		//   runtime->pendingIntents[] until commitAllBrainIntents() drains them in WID order
+		//   after the full warrior update loop in objmgr.cpp (GameObjectManager::update).
+		// Gate OFF → commitBrainIntents runs inline per-warrior (rung-5 behavior, unchanged).
+		static const bool s_brainCommitPhase = ([](){
+			const char* v = std::getenv("MC2_BRAIN_COMMIT_PHASE");
+			return (v && std::atoi(v) != 0);
+		})();
+
+		// BRAIN-WORLD-SNAPSHOT-1: static populate helper (main-thread only).
+		// Accesses protected MechWarrior members — must remain in warrior.cpp.
+		// Called below when s_brainSnapshotEnabled() is true (gate ON).
+		// FORBIDDEN: must not call setGeneralTacOrder or any order/movement/attack function.
+		auto buildBrainWorldSnapshotLocal = [&](BrainWorldSnapshot& out) {
+			// Warrior identity: vehicleWID is in scope and is the WID passed to dispatch.
+			// MechWarrior itself is not a GameObject; vehicleWID == warrior's vehicle WatchID.
+			out.warriorId = (int32_t)vehicleWID;
+
+			// Team ID: deferred to rung 7/8 — ATTACK friendly-fire still reads live.
+			out.teamId = 0;
+
+			// Liveness: query the vehicle (MoverPtr from getVehicle() — may be null; guard it).
+			{
+				MoverPtr veh = getVehicle();
+				out.isDisabled = (veh && veh->isDisabled()) ? 1u : 0u;
+			}
+			out.commanderIsHome = 0u; // deferred — commander identity not queried this rung
+
+			// Main goal (protected MechWarrior fields; directly accessible in warrior.cpp)
+			out.mainGoalObjectWID     = (int32_t)mainGoalObjectWID;
+			out.mainGoalLocation[0]   = mainGoalLocation.x;
+			out.mainGoalLocation[1]   = mainGoalLocation.y;
+			out.mainGoalLocation[2]   = mainGoalLocation.z;
+			out.mainGoalControlRadius = mainGoalControlRadius;
+
+			// Attack orders target WID (protected field, directly accessible in warrior.cpp)
+			out.attackOrderTargetWID = (int32_t)attackOrders.targetWID;
+
+			// Once-guard flags — the primary snapshot surface for rung 6
+			out.effectApplied[BSNAPFX_POWERDOWN] = brainRuntime->dispatchEffectApplied;
+			out.effectApplied[BSNAPFX_EJECT]     = brainRuntime->ejectEffectApplied;
+			out.effectApplied[BSNAPFX_GUARD]     = brainRuntime->guardEffectApplied;
+			out.effectApplied[BSNAPFX_MOVETO]    = brainRuntime->moveToEffectApplied;
+			out.effectApplied[BSNAPFX_ATTACK]    = brainRuntime->attackEffectApplied;
+			out.effectApplied[BSNAPFX_RETREAT]   = brainRuntime->retreatEffectApplied;
+
+			// Debug tick stamp
+			out.brainTick = getBrainTickIndex();
+		};
+
+		bool dispatcherAppliedEffect = false;
+		if (s_dispatchApply && brainRuntime && brainRuntime->specialBody.loaded) {
+			// DISPATCH-EFFECT-UNITRETREAT-1: bodyHasEffect() now covers POWERDOWN, EJECT, GUARD, MOVETO, ATTACK, RETREAT.
+			// CALL-CHAIN-1A: dispatch ALL loaded bodies (not just effect bodies).
+			// executeSpecialBody_Apply traces all verbs; applies effect ONCE if present.
+			// The HOLD suppression only triggers when an effect verb was actually applied
+			// (dispatcherAppliedEffect=true ← Apply return value true).
+			const SpecialIndex* idx = brainRuntime->specialIndex.empty()
+			    ? nullptr : &brainRuntime->specialIndex;
+
+			const bool hasPowerdown = bodyHasPowerdown(brainRuntime->specialBody);
+			const bool hasEject     = bodyHasUnitEject(brainRuntime->specialBody);
+			const bool hasGuard     = bodyHasCoreGuard(brainRuntime->specialBody);
+			const bool hasMoveTo    = bodyHasCoreMoveTo(brainRuntime->specialBody);
+			const bool hasAttack    = bodyHasCoreAttack(brainRuntime->specialBody);
+			const bool hasRetreat   = bodyHasUnitRetreat(brainRuntime->specialBody);
+			const bool hasEffect    = hasPowerdown || hasEject || hasGuard || hasMoveTo || hasAttack || hasRetreat;
+
+			// BRAIN-WORLD-SNAPSHOT-1: capture world state before once-guard reads (gate ON only).
+			// Gate OFF: snap is zero-initialised and unused — reads fall through to live runtime.
+			BrainWorldSnapshot snap = {};
+			const bool snapshotGate = s_brainSnapshotEnabled();
+			if (snapshotGate)
+				buildBrainWorldSnapshotLocal(snap);
+
+			// Once-guard: if the effect was already applied, suppress HOLD without re-applying.
+			// Gate ON:  read from snapshot.effectApplied[N] (the seam for future off-thread emit).
+			// Gate OFF: read live from runtime (byte-identical to pre-snapshot behavior).
+			const bool powerdownDone = hasPowerdown && (snapshotGate
+			    ? snap.effectApplied[BSNAPFX_POWERDOWN]
+			    : brainRuntime->dispatchEffectApplied);
+			const bool ejectDone     = hasEject     && (snapshotGate
+			    ? snap.effectApplied[BSNAPFX_EJECT]
+			    : brainRuntime->ejectEffectApplied);
+			const bool guardDone     = hasGuard     && (snapshotGate
+			    ? snap.effectApplied[BSNAPFX_GUARD]
+			    : brainRuntime->guardEffectApplied);
+			const bool moveToDone    = hasMoveTo    && (snapshotGate
+			    ? snap.effectApplied[BSNAPFX_MOVETO]
+			    : brainRuntime->moveToEffectApplied);
+			const bool attackDone    = hasAttack    && (snapshotGate
+			    ? snap.effectApplied[BSNAPFX_ATTACK]
+			    : brainRuntime->attackEffectApplied);
+			const bool retreatDone   = hasRetreat   && (snapshotGate
+			    ? snap.effectApplied[BSNAPFX_RETREAT]
+			    : brainRuntime->retreatEffectApplied);
+			const bool alreadyDone   = hasEffect && ((!hasPowerdown || powerdownDone) && (!hasEject || ejectDone) && (!hasGuard || guardDone) && (!hasMoveTo || moveToDone) && (!hasAttack || attackDone) && (!hasRetreat || retreatDone));
+
+			if (!alreadyDone) {
+				if (hasEffect) {
+					// Effect body: apply once, suppress HOLD slot write thereafter.
+					// Set the appropriate once-guard flag BEFORE calling Apply so a re-entrant
+					// tick (edge case) can't fire a second order.
+					if (hasPowerdown && !brainRuntime->dispatchEffectApplied)
+						brainRuntime->dispatchEffectApplied = 1;
+					if (hasEject && !brainRuntime->ejectEffectApplied)
+						brainRuntime->ejectEffectApplied = 1;
+					if (hasGuard && !brainRuntime->guardEffectApplied)
+						brainRuntime->guardEffectApplied = 1;
+					if (hasMoveTo && !brainRuntime->moveToEffectApplied)
+						brainRuntime->moveToEffectApplied = 1;
+					if (hasAttack && !brainRuntime->attackEffectApplied)
+						brainRuntime->attackEffectApplied = 1;
+					if (hasRetreat && !brainRuntime->retreatEffectApplied)
+						brainRuntime->retreatEffectApplied = 1;
+					bool applied = executeSpecialBody_Apply(brainRuntime->specialBody, this, vehicleWID,
+					                                        &brainRuntime->varStore, idx, "");
+					// BRAIN-DECISION-INTENT-QUEUE-1: drain pending intents inline (gate ON only).
+					// BRAIN-COMMIT-PHASE-1: when s_brainCommitPhase is ON, skip inline commit —
+					//   intents stay in runtime->pendingIntents[] for commitAllBrainIntents().
+					// commitBrainIntents is the sole caller of setGeneralTacOrder when gate ON.
+					if (s_intentQueue && !s_brainCommitPhase) commitBrainIntents(this, brainRuntime);
+					if (applied)
+						dispatcherAppliedEffect = true;
+				} else {
+					// No effect verb — trace-dispatch every tick (no slot ownership; HOLD fires normally).
+					executeSpecialBody_Apply(brainRuntime->specialBody, this, vehicleWID,
+					                        &brainRuntime->varStore, idx, "");
+					// Gate ON + commit-phase OFF: drain inline (no-op since no effect verbs; defensive).
+					// Gate ON + commit-phase ON: leave empty pendingIntents for the phase (no-op there too).
+					if (s_intentQueue && !s_brainCommitPhase) commitBrainIntents(this, brainRuntime);
+					// dispatcherAppliedEffect stays false → HOLD fires as normal.
+				}
+			} else {
+				// Effect already applied — suppress HOLD without re-applying.
+				dispatcherAppliedEffect = true;
+			}
+			if (dispatcherAppliedEffect) {
+				if (brainTaskQueue) {
+					BrainTaskEntry task;
+					while (brainTaskQueue->drainWithTask(task)) {
+						// Discard queued tasks — dispatcher owns GENERAL slot this body.
+						// warrior.cpp:1B-supersede: HOLD_TASK silenced (no setGeneralTacOrder STOP write).
+					}
+				}
+			}
+		}
+
+		// BRAIN-OPORD-COREPATROL-1: per-tick patrol advance.
+		// Gate: MC2_BRAIN_PATROL (default OFF).  No-op when gate OFF or patrolActive==false.
+		// Called unconditionally (outside alreadyDone guard) so arrival is polled every tick.
+		// tickPatrolAdvance handles arrival poll, cursor advance, and MOVETO_POINT re-emit.
+		// moveToEffectApplied is NOT touched — patrol manages its own cursor guard.
+		if (brainRuntime) {
+			bool patrolAdvanced = tickPatrolAdvance(this, brainRuntime, vehicleWID);
+			if (patrolAdvanced) {
+				// Patrol re-emitted a MOVETO_POINT — suppress HOLD so the order isn't stomped.
+				dispatcherAppliedEffect = true;
+			}
+		}
+
+		if (!dispatcherAppliedEffect) {
+			// Synthetic HOLD path (1B-runtime default) — fires when dispatcher did NOT take slot.
+			if (brainTaskQueue) {
+				BrainTaskEntry task;
+				while (brainTaskQueue->drainWithTask(task)) {
+					if (task.type == BrainTaskType::BRAIN_TASK_HOLD) {
+						TacticalOrder holdOrder;
+						holdOrder.init(ORDER_ORIGIN_SELF, TACTICAL_ORDER_STOP);
+						setGeneralTacOrder(holdOrder);
+						std::fprintf(stderr, "[BRAIN_RT] HOLD_TASK applied wid=%d\n", vehicleWID);
+						std::fflush(stderr);
+					}
+					// Other task types: discard (no handler this slice).
+				}
+			}
+		}
+
+		// TECHSCRIPT-SPECIAL-DISPATCH trace path (1A behavior preserved when APPLY=0).
+		// CALL-CHAIN-1A: pass index for TechSpecial.Call resolution.
+		if (!s_dispatchApply && brainRuntime && brainRuntime->specialBody.loaded) {
+			const SpecialIndex* idx = brainRuntime->specialIndex.empty()
+			    ? nullptr : &brainRuntime->specialIndex;
+			executeSpecialBody_TraceOnly(brainRuntime->specialBody, vehicleWID,
+			                             &brainRuntime->varStore, idx, "");
+		}
+		brainErr = 0;
+	}
+
+	// TACTIC-WEIGHTS-A: deterministic weighted tactic selection (TRACE-ONLY).
+	// Gate: MC2_TACTIC_WEIGHTS=1 (default OFF).
+	// Runs for BOTH legacy+enhanced paths; NO behavior write (deferred to TACTIC-WEIGHTS-B).
+	// missionSeed: MC2_BRAIN_MISSION_SEED env override, else 0xDEADBEEF placeholder.
+	{
+		static bool   s_tacticWeightsEnabled  = false;
+		static bool   s_tacticWeightsChecked  = false;
+		static uint32_t s_missionSeed         = 0xDEADBEEFu;
+		if (!s_tacticWeightsChecked) {
+			s_tacticWeightsChecked = true;
+			const char* v = std::getenv("MC2_TACTIC_WEIGHTS");
+			s_tacticWeightsEnabled = (v && std::atoi(v) != 0);
+			const char* seedEnv = std::getenv("MC2_BRAIN_MISSION_SEED");
+			if (seedEnv && seedEnv[0] != '\0')
+				s_missionSeed = (uint32_t)std::strtoul(seedEnv, nullptr, 0);
+		}
+		if (s_tacticWeightsEnabled && brainRuntime) {
+			// Collect pilot stats for modulation
+			int gunnery       = (int)(unsigned char)skills[MWS_GUNNERY];
+			int pilotAggr     = (int)(unsigned char)aggressiveness;
+			int pilotCourage  = (int)(unsigned char)courage;
+
+			// Wang hash: deterministic per (wid, brainTick, missionSeed)
+			uint32_t h = tacticWang((int)vehicleWID, s_brainTickIndex, s_missionSeed);
+
+			// Apply pilot modulation to FIT-loaded base weights
+			float wEff[NUM_TACTICS] = {};
+			applyPilotModulation(brainRuntime->tacticWeights, wEff, NUM_TACTICS,
+			                     gunnery, pilotAggr, pilotCourage);
+
+			// Weighted pick — pure, deterministic
+			int chosen = selectTactic(wEff, NUM_TACTICS, h);
+			brainRuntime->selectedTactic = chosen;
+
+			// Emit trace (no behavior write)
+			std::fprintf(stderr, "[BRAIN_TACTIC_SELECT] wid=%d tick=%u tactic=%s(%d)\n",
+			             vehicleWID, s_brainTickIndex, tacticName(chosen), chosen);
+			std::fflush(stderr);
 		}
 	}
 
+	// UNCONDITIONAL housekeeping — runs for BOTH paths (preserves Legacy invariant).
 	CurGroup = NULL;
 	CurObject = NULL;
 	CurObjectClass = 0;
 	CurWarrior = NULL;
 	CurContact = NULL;
 
-	//-------------------------------------------------
-	// All brain modules should return an error code...
-	long brainErr = brain->getInteger();
-	switch (brainErr) {
-		case 0:
-			//------------
-			// No error...
-			break;
-		case 1:
-			//-----------------------------------------------
-			// General purpose error, for now, so bomb out...
-			break;
-	}
-
 	clearAlarmsHistory();
 
 	return(brainErr);
+}
+
+//---------------------------------------------------------------------------
+// BRAIN-RUNTIME-1B: public accessor used by mission.cpp FIT loader.
+
+void MechWarrior::setBrainRuntimeMode (BrainRuntimeMode fitMode) {
+	if (!brainRuntime) {
+		brainRuntime = new MechBrainRuntime();
+	}
+	brainRuntime->mode = fitMode;
 }
 
 //---------------------------------------------------------------------------
@@ -5035,6 +5423,18 @@ long MechWarrior::mainDecisionTree (void) {
 	
 	//----------------------
 	// Update pilot brain...
+	// BRAIN-FIXED-TICK-1: advance global sim-time accumulator once per render frame,
+	// before the per-warrior gate so even staggered-out warriors contribute to the advance.
+	initBrainFixedTickGate();
+	if (s_brainFixedTickEnabled && s_brainAccumLastFrame != g_mc2FrameCounter) {
+		s_brainAccumLastFrame = g_mc2FrameCounter;
+		bool ticked = advanceBrainFixedTickAccumulator(scenarioTime);
+		if (s_brainFixedTickTrace && ticked) {
+			std::fprintf(stderr, "[BRAIN_FIXED_TICK] tick=%u simTime=%.4f ranThisFrame=%u\n",
+				s_brainTickIndex, (double)scenarioTime, s_brainTicksThisFrame);
+			std::fflush(stderr);
+		}
+	}
 	if ((brainUpdate <= scenarioTime) && ((teamId == -1) || brainsEnabled[teamId])) {
 		// MC2_BRAIN_TASKQ: drain one task per brain cadence (inert stub — no tacOrder writes this slice)
 		initBrainTaskQGate();
@@ -5045,11 +5445,52 @@ long MechWarrior::mainDecisionTree (void) {
 			if (s_brainTaskQTraceEnabled) {
 				brainTaskQueue->dumpTrace(vehicleWID);
 			}
-			brainTaskQueue->drain();  // discards task (stub); falls through to ABL unchanged
+			// Task queue allocated here; consumed inside runBrain() per BRAIN-RUNTIME-1B.
 		}
+
+		// MC2_BRAIN_RUNTIME: init struct and set mode from global forced mode (per-unit FIT override applied at mission load).
+		initBrainRuntimeGate();
+		if (s_brainRuntimeEnabled && s_brainTaskQEnabled) {
+			if (!brainRuntime) {
+				brainRuntime = new MechBrainRuntime();
+				// Set mode: per-unit FIT loader (mission_ai.fit) may have already set brainRuntime->mode
+				// at mission load via loadBrainRuntimeFromFit(). If not yet created, use global forced mode.
+				brainRuntime->mode = s_brainRuntimeForcedMode;
+			}
+		}
+
+		// BRAIN-RUNTIME-1B seam: short-circuit logic lives INSIDE runBrain().
+		// APPLY=0: trace-log the would-own mask (1A behavior, byte-identical to baseline).
+		// APPLY=1+Enhanced: runBrain() skips brain->execute(), pushes/drains HOLD_TASK.
+		// All paths: CurGroup/CurWarrior clear + clearAlarmsHistory() run inside runBrain().
+		if (s_brainRuntimeEnabled && s_brainTaskQEnabled && brainRuntime) {
+			if (s_brainRuntimeTraceEnabled && !s_brainRuntimeApplyEnabled) {
+				uint8_t wouldOwn = brainRuntime->computeWouldOwnMask();
+				// Build human-readable slot list
+				char slotsBuf[32] = "(none)";
+				if (wouldOwn) {
+					slotsBuf[0] = '\0';
+					if (wouldOwn & kBrainOwnsGeneral) { if (slotsBuf[0]) std::strcat(slotsBuf, "|"); std::strcat(slotsBuf, "GENERAL"); }
+					if (wouldOwn & kBrainOwnsPlayer)  { if (slotsBuf[0]) std::strcat(slotsBuf, "|"); std::strcat(slotsBuf, "PLAYER");  }
+					if (wouldOwn & kBrainOwnsAlarm)   { if (slotsBuf[0]) std::strcat(slotsBuf, "|"); std::strcat(slotsBuf, "ALARM");   }
+				}
+				std::fprintf(stderr, "[BRAIN_RT] wid=%d mode=%s would-own %s (NOT applied)\n",
+					vehicleWID,
+					MechBrainRuntime::modeString(brainRuntime->mode),
+					slotsBuf);
+			}
+		}
+		// runBrain() always called — short-circuit is gated inside it.
 		runBrain();
-		brainUpdate += BrainUpdateFrequency;
+		// BRAIN-FIXED-TICK-1: advance brainUpdate by fixed tick period (gate ON)
+		// or legacy BrainUpdateFrequency (gate OFF — byte-identical to baseline).
+		if (s_brainFixedTickEnabled) {
+			brainUpdate += s_brainFixedTickPeriod;
+		} else {
+			brainUpdate += BrainUpdateFrequency;
+		}
 	}
+
 
 	//------------------------------------------------------------------
 	// In case the brain set a new target, let's recalc weaponsStatus...

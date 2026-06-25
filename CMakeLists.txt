@@ -343,6 +343,8 @@ set(SOURCES
     "code/team.cpp"
     "code/terrobj.cpp"
     "code/turret.cpp"
+    "code/brain_special_dispatch.cpp"
+    "code/brain_tactic_select.cpp"
     "code/warrior.cpp"
     "code/weaponbolt.cpp"
     "code/ablmc2.cpp"

@@ -62,6 +62,7 @@ namespace mc2_cpu_proj_cost {
 #include<stuff/stuff.hpp>
 #include<float.h>   // FLT_MAX for trueSignedRhw sentinel
 #include<cmath>     // isfinite for MC2_PROJECTZ_FINITE_CHECK invariant
+#include<cstdlib>   // std::getenv for [LOW-CAMERA-OBJECT-CULL-1 / FIX-3] gate
 
 inline signed short int float2short(float _in)
 {
@@ -318,6 +319,12 @@ class Camera
 		float            		cameraAltitude;
 		float					cameraAltitudeDesired;	//What would I like the camera to be at!  Maybe smaller due to low angle!
 
+		// [MOUSE-ANCHORED-ZOOM-1 v2] eased zoom-anchor state (see beginZoomAnchor / update()).
+		bool					zoomAnchorActive = false;
+		float					zoomAnchorH0 = 1.0f;
+		Stuff::Vector3D			zoomAnchorWorld;
+		Stuff::Vector3D			zoomAnchorPivot;
+
 		static float			globalScaleFactor;		//Global Rescale Factor.
 
 		static float			MaxClipDistance;
@@ -390,6 +397,20 @@ class Camera
 			activeLights = NULL;
 			terrainLights = NULL;
 
+			// Class invariant: the light COUNTS must be 0 whenever the light
+			// arrays are NULL. The ctor zeroed the array pointers but left the
+			// counts uninitialized — they are only set to 0 inside
+			// Camera::init(FitIniFilePtr) (camera.cpp:453), which allocates the
+			// arrays. The editor generate-map path (EditorData::initTerrainFromTGA)
+			// never calls eye->init() (only the load path initTerrainFromPCV does),
+			// so a freshly generated map reached gos_terrain_lighting::PackAndDispatch
+			// with terrainLights==NULL and numTerrainLights==garbage(>2) ->
+			// getTerrainLight read terrainLights[2] = NULL+0x10 (0xC0000005). Zero the
+			// counts here so the invariant holds from construction in every init path.
+			numLights = 0;
+			numActiveLights = 0;
+			numTerrainLights = 0;
+
 			fogStart = fogFull = 0.0;
 			dayFogColor = 0xffffffff;
 			fogTransparency = 1.0;
@@ -461,6 +482,31 @@ class Camera
 		float getCameraAltitude (void)
 		{
 			return(cameraAltitude);
+		}
+
+		// [MOUSE-ANCHORED-ZOOM-1 / FIX-4] read post-step desired altitude (h1).
+		float getCameraAltitudeDesired (void)
+		{
+			return(cameraAltitudeDesired);
+		}
+
+		// [MOUSE-ANCHORED-ZOOM-1 / FIX-4] perspective vs parallel projection.
+		bool getUsePerspective (void)
+		{
+			return(usePerspective);
+		}
+
+		// [MOUSE-ANCHORED-ZOOM-1 v2] Arm the eased zoom anchor. anchoredZoom captures
+		// the cursor world point A, the ACTUAL altitude h0, and the pivot T0 at the
+		// wheel event; Camera::update() then shifts position toward A locked to the
+		// eased altitude until it settles. See camera.cpp update().
+		void beginZoomAnchor (const Stuff::Vector3D& A, float h0, const Stuff::Vector3D& T0)
+		{
+			if (h0 < 1.0f) h0 = 1.0f;
+			zoomAnchorWorld = A;
+			zoomAnchorPivot = T0;
+			zoomAnchorH0    = h0;
+			zoomAnchorActive = true;
 		}
 
 		void setCameraRotation (float angle, float angleWorld);
@@ -646,6 +692,81 @@ class Camera
 
 			::mc2_cpu_proj_cost::cull_admission_end_ns(_f3_cull_t0);
 			return ret;
+		}
+
+		// [LOW-CAMERA-OBJECT-CULL-1 / FIX-3] Sphere-aware object admission.
+		// Identical to projectForObjectAdmission EXCEPT the Modern point-frustum
+		// admit is replaced by clipSpaceFrustumAdmitSphere(rawClip, worldRadius,
+		// projScale) so a whole object whose CENTER has crossed the near plane is
+		// still admitted while its bounding sphere remains in front of the eye.
+		// Gated by MC2_LOWCAM_OBJ_NEARPAD (default OFF). When OFF, or when the
+		// predicate is in Legacy mode / radius<=0, behaviour is byte-identical to
+		// projectForObjectAdmission. projScale = max column-xyz-norm (cols 0/1) of
+		// worldToClip — the SAME matrix that produced rawClip (see projectZ:503),
+		// matching the documented clipSpaceFrustumAdmitSphere contract / gpu_cull.comp.
+		inline bool projectForObjectAdmissionSphere (Stuff::Vector3D& point,
+		                                             Stuff::Vector4D& screen,
+		                                             float worldRadius) {
+			// Default ON for this low-camera build; set MC2_LOWCAM_OBJ_NEARPAD=0 to disable.
+			static const bool s_lowcamObjNearPad =
+			    []{ const char* v = std::getenv("MC2_LOWCAM_OBJ_NEARPAD"); return !(v && v[0]=='0'); }();
+			if (!s_lowcamObjNearPad || worldRadius <= 0.0f)
+				return projectForObjectAdmission(point, screen);
+			// [LOW-CAMERA-OBJECT-CULL-1 v2] getExtentRadius() is a tight extent; near
+			// objects still pop at low pitch. Scale the near-plane pad radius. Default
+			// 2.5x; MC2_LOWCAM_OBJ_NEARPAD_SCALE=k overrides (=1 = tight stock pad).
+			static const float s_objNearPadScale =
+			    []{ const char* v = std::getenv("MC2_LOWCAM_OBJ_NEARPAD_SCALE"); return v ? (float)atof(v) : 4.0f; }();
+			worldRadius *= s_objNearPadScale;
+
+			const int64_t _f3_cull_t0 = ::mc2_cpu_proj_cost::cull_admission_begin_ns();
+
+			ProjectZBypassMode bypassMode = projectZBypassMode();
+			const bool isModern = (objectAdmissionPredicateMode() == ObjectAdmissionPredicateMode::Modern);
+			bool ret;
+
+			if (!isModern) {
+				// Legacy screen-rect path is unchanged by the near-pad slice.
+				::mc2_cpu_proj_cost::cull_admission_end_ns(_f3_cull_t0);
+				return projectForObjectAdmission(point, screen);
+			}
+
+			if (bypassMode == ProjectZBypassMode::Bypass) {
+				// Pure bypass: GL-NDC clip. projScale from worldToClipGL (the GL
+				// matrix that produced this clip). Note: clipSpaceFrustumAdmitSphere
+				// uses the D3D [0,w] depth convention; the bypass GL clip is fed
+				// through the same predicate as the strict bypass admit would be,
+				// padded only on the near plane via the shared tol.
+				ModernClipResult r = projectModernClipGL(point);
+				const Stuff::Matrix4D M = worldToClipGL();
+				const float projScale = objectNearPadProjScale(M);
+				ret = clipSpaceFrustumAdmitSphere(r.clip, worldRadius, projScale);
+			} else {
+				LegacyProjectionResult result;
+#pragma warning(push)
+#pragma warning(disable: 4996)
+				projectZ(point, screen, &result);
+#pragma warning(pop)
+				const float projScale = objectNearPadProjScale(worldToClip);
+				ret = clipSpaceFrustumAdmitSphere(result.rawClip, worldRadius, projScale);
+			}
+
+			::mc2_cpu_proj_cost::cull_admission_end_ns(_f3_cull_t0);
+			return ret;
+		}
+
+		// [LOW-CAMERA-OBJECT-CULL-1 / FIX-3] projScale helper: max over the x/y
+		// clip-component columns of the xyz coefficient magnitude. Mirrors the
+		// gpu_cull.comp derivation (there: row norms of the column-major viewProj;
+		// here: column norms of the row-vector worldToClip). Depth-independent.
+		static inline float objectNearPadProjScale (const Stuff::Matrix4D& M) {
+			auto colNorm = [&](int c) {
+				const float a = M(0, c), b = M(1, c), d = M(2, c);
+				return sqrtf(a * a + b * b + d * d);
+			};
+			const float nx = colNorm(0);
+			const float ny = colNorm(1);
+			return (nx > ny) ? nx : ny;
 		}
 
 		// Effect billboard admission — bool gates submission; same wedge-class hazard as terrain.
@@ -992,6 +1113,15 @@ class Camera
 		                        const Stuff::Vector3D& mn,
 		                        const Stuff::Vector3D& mx) const;
 
+		// [LOW-CAMERA-TERRAIN-CULL-1 / FIX-2] As quadAabbInFrustum, but omits the
+		// near plane (index 4 in the {left,right,bottom,top,near,far} order) so the
+		// terrain LOD-chunk cull does not drop terrain near the eye at a low /
+		// grazing pitch. The other 5 planes (left/right/top/bottom/far) are tested
+		// identically — this is NOT a global cull-widen. Terrain-only; gated.
+		bool quadAabbInFrustumSkipNear (const float planes[6][4],
+		                                const Stuff::Vector3D& mn,
+		                                const Stuff::Vector3D& mx) const;
+
 		// F6 T2: per-frame frustum-planes cache, populated by Terrain::geometry
 		// once per frame before the setupTextures loop. Shared with
 		// TerrainQuad::setupTextures' water-corner admission path.
@@ -1144,7 +1274,11 @@ class Camera
 
 		TG_LightPtr getTerrainLight (long index)
 		{
-			if ((index >= 0) && (index < numTerrainLights) && terrainLights[index])
+			// Defense in depth: guard the null array base before indexing it —
+			// numTerrainLights and terrainLights are set together in init(), but a
+			// not-yet-init'd camera can have a stale/garbage count with a NULL array
+			// (see ctor note). Without the `terrainLights &&` check this indexes NULL.
+			if ((index >= 0) && (index < numTerrainLights) && terrainLights && terrainLights[index])
 				return terrainLights[index];
 				
 			return NULL;

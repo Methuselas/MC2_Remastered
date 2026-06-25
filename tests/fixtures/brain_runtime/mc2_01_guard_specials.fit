@@ -1,0 +1,10 @@
+FITini
+; DISPATCH-EFFECT-COREGUARD-1 fixture — canonical OPORD.CoreGuard verb.
+; Warrior4 Enhanced mode: DO OPORD.CoreGuard issues TACTICAL_ORDER_GUARD exactly once.
+; Gate C proof fixture. Use with MC2_BRAIN_SPECIAL_FIT=mc2_01_guard.
+
+[BrainSpecial]
+
+[Body]
+st DO0 = "OPORD.CoreGuard"
+st DO1 = "HOLD"

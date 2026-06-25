@@ -1,0 +1,11 @@
+FITini
+; DISPATCH-EFFECT-COREMOVETO-1 fixture — canonical OPORD.CoreMoveTo verb.
+; Warrior4 Enhanced mode (via mc2_01_ai.fit): DO OPORD.CoreMoveTo 100 200 0
+; issues TACTICAL_ORDER_MOVETO_POINT exactly once with parsed world coords.
+; Gate C proof fixture. Use with MC2_BRAIN_SPECIAL_FIT=mc2_01_moveto.
+
+[BrainSpecial]
+
+[Body]
+st DO0 = "OPORD.CoreMoveTo 100 200 0"
+st DO1 = "HOLD"

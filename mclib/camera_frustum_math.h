@@ -35,6 +35,28 @@ inline bool aabbInFrustum(const float planes[6][4],
     return true;
 }
 
+// [LOW-CAMERA-TERRAIN-CULL-1 / FIX-2] Variant that skips one plane index
+// (e.g. the near plane, index 4 in the {left,right,bottom,top,near,far} order).
+// Used by the terrain LOD-chunk cull so near terrain is not dropped at a low /
+// grazing camera pitch (the near plane sits at NearPlaneDistance=-400, clipping
+// terrain blocks within ~400 units of the eye). All other planes are tested
+// identically to aabbInFrustum(); pass skipPlane<0 to test all 6 (== aabbInFrustum).
+inline bool aabbInFrustumSkipPlane(const float planes[6][4],
+                                   const float mn[3], const float mx[3],
+                                   int skipPlane) {
+    for (int p = 0; p < 6; ++p) {
+        if (p == skipPlane) continue;
+        const float a = planes[p][0], b = planes[p][1],
+                    c = planes[p][2], d = planes[p][3];
+        const float px = (a >= 0.0f) ? mx[0] : mn[0];
+        const float py = (b >= 0.0f) ? mx[1] : mn[1];
+        const float pz = (c >= 0.0f) ? mx[2] : mn[2];
+        if (a * px + b * py + c * pz + d < 0.0f)
+            return false;
+    }
+    return true;
+}
+
 // Screen-space point-in-triangle (the body of s_pointInScreenTri) on plain
 // screen-XY floats. Returns true if (mouseX,mouseY) is inside triangle
 // (v0,v1,v2). Identical arithmetic to the original.

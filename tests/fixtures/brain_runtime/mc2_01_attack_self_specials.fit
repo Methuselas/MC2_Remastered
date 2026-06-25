@@ -1,0 +1,10 @@
+FITini
+; DISPATCH-EFFECT-COREATTACK-V2: self-attack guard.
+; Harness configures fake object WID=1 — same WID as the warrior (warriorWID=1).
+; Expected: [BRAIN_DISPATCH_ATTACK_SELF] logged; NO ATTACK_OBJECT order issued.
+
+[BrainSpecial]
+
+[Body]
+st DO0 = "OPORD.CoreAttack 1"
+st DO1 = "HOLD"

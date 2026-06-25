@@ -722,6 +722,22 @@ bool Camera::quadAabbInFrustum (const float planes[6][4],
 }
 
 //---------------------------------------------------------------------------
+// [LOW-CAMERA-TERRAIN-CULL-1 / FIX-2] Near-plane-relaxed variant. Same as
+// quadAabbInFrustum but skips plane index 4 (near). Used by the terrain
+// LOD-chunk cull (gated by MC2_LOWCAM_TERRAIN_NEAR) so terrain within the
+// near-plane distance of a low-pitched eye is not spuriously culled. At a high
+// camera angle near terrain already passes the near plane, so dropping that
+// term is a no-op there.
+bool Camera::quadAabbInFrustumSkipNear (const float planes[6][4],
+                                        const Stuff::Vector3D& mn,
+                                        const Stuff::Vector3D& mx) const
+{
+	const float fmn[3] = { mn.x, mn.y, mn.z };
+	const float fmx[3] = { mx.x, mx.y, mx.z };
+	return camera_frustum_math::aabbInFrustumSkipPlane(planes, fmn, fmx, 4);
+}
+
+//---------------------------------------------------------------------------
 // F6 T2: per-frame frustum-planes cache. Terrain::geometry calls
 // cacheFrustumPlanes() once per frame (outside both slimReduce and
 // setupTextures loops); both then read via getCachedFrustumPlanes().
@@ -825,6 +841,38 @@ static unsigned long parityReport (Stuff::Vector2DOf<long> &screenPos,
 }
 
 //---------------------------------------------------------------------------
+// [LOW-CAMERA] Guard-free general 4x4 inverse (Gauss-Jordan, partial pivot).
+// Stuff::Matrix4D::Invert flags any det < SMALL(1e-4) singular -> ×1e30 garbage,
+// which is EVERY reverse-Z projective matrix (the documented "Invert(
+// worldToClipGL()) UNRELIABLE in the game" trap, camera.h). Used ONLY by the
+// inverse-VP cursor->world helpers below (preview + mouse-anchored zoom); the
+// global Matrix4D::Invert is left byte-identical, and terrain PICKING uses the
+// forward-projection path, not this — so no working path is affected.
+static bool lowCamInvert4x4 (const Stuff::Matrix4D& M, Stuff::Matrix4D& out)
+{
+	double a[4][8];
+	for (int r = 0; r < 4; ++r)
+		for (int c = 0; c < 4; ++c)
+		{ a[r][c] = (double)M(r,c); a[r][c+4] = (r==c)?1.0:0.0; }
+	for (int col = 0; col < 4; ++col)
+	{
+		int piv = col; double best = fabs(a[col][col]);
+		for (int r = col+1; r < 4; ++r)
+			if (fabs(a[r][col]) > best) { best = fabs(a[r][col]); piv = r; }
+		if (best < 1e-20) return false;
+		if (piv != col) for (int k = 0; k < 8; ++k) { double t=a[col][k]; a[col][k]=a[piv][k]; a[piv][k]=t; }
+		double inv = 1.0 / a[col][col];
+		for (int k = 0; k < 8; ++k) a[col][k] *= inv;
+		for (int r = 0; r < 4; ++r) if (r != col)
+		{ double f=a[r][col]; for (int k=0;k<8;++k) a[r][k]-=f*a[col][k]; }
+	}
+	for (int r = 0; r < 4; ++r)
+		for (int c = 0; c < 4; ++c)
+			out(r,c) = (float)a[r][c+4];
+	return true;
+}
+
+//---------------------------------------------------------------------------
 // O(1) screen -> z=0 ground-plane unproject. No quad scan, no terrain pick.
 // See header. Mirrors the matrix-inverse unproject used by the LOD-chunk pick
 // path, then intersects the camera ray with the world z=0 plane.
@@ -836,7 +884,7 @@ bool Camera::screenToGroundPlaneApprox (long screenX, long screenY, Stuff::Vecto
 
 	Stuff::Matrix4D M = worldToClipGL();
 	Stuff::Matrix4D Minv;
-	Minv.Invert(M);
+	if (!lowCamInvert4x4(M, Minv)) return false;
 
 	const float w = screenResolution.x;
 	const float h = screenResolution.y;
@@ -884,7 +932,7 @@ bool Camera::screenToTerrainApprox (long screenX, long screenY, Stuff::Vector3D 
 
 	Stuff::Matrix4D M = worldToClipGL();
 	Stuff::Matrix4D Minv;
-	Minv.Invert(M);
+	if (!lowCamInvert4x4(M, Minv)) return false;
 
 	const float w = screenResolution.x;
 	const float h = screenResolution.y;
@@ -1136,6 +1184,91 @@ unsigned long Camera::inverseProject (Stuff::Vector2DOf<long> &screenPos, Stuff:
 	}
 
 	//-----------------------------------------------------------
+	// [LOW-CAMERA-PICK-RAY-1 v2] Two root causes make the legacy picker mis-land
+	// at LOW/grazing pitch (greybeard + adversarial recon, both in the EXISTING
+	// forward-projection picker — NOT a raycast):
+	//   (A) the 100-tile cap (closestTiles[100]) fills in MAP ORDER, so at low
+	//       pitch the frustum admits >>100 tiles and the true tile under the
+	//       cursor is dropped before it is ever projected; and
+	//   (B) the Stage-2 tiebreak is DEPTH-BLIND (corners[].z=0; picks the tile
+	//       whose nearest projected corner is closest in SCREEN space), so among
+	//       the many tiles a grazing ray pierces it readily picks a FAR one.
+	// Fix = single pass (no cap) + pick the FRONTMOST tile that CONTAINS the
+	// cursor (min eye-distance), reusing the same projection + containment test.
+	// Gated MC2_LOWCAM_PICK (default ON; =0 -> exact legacy two-stage below).
+	static const bool s_lowCamPick =
+		[]{ const char* v = std::getenv("MC2_LOWCAM_PICK"); return !(v && v[0]=='0'); }();
+	static const bool s_capTrace = (std::getenv("MC2_PICK_CAP_TRACE") != nullptr);
+
+	if (s_lowCamPick)
+	{
+		long admitted = 0, contained = 0;
+		double bestEyeDistSq = 1.0e30;
+		TerrainQuadPtr t = land->getQuadList();
+		for (long i = 0; i < (long)numTiles; i++, t++)
+		{
+			Stuff::Vector3D mn, mx;
+			mn.x = mx.x = t->vertices[0]->vx;
+			mn.y = mx.y = t->vertices[0]->vy;
+			mn.z = mx.z = t->vertices[0]->pVertex->elevation;
+			for (int c = 1; c < 4; c++)
+			{
+				const float vx = t->vertices[c]->vx;
+				const float vy = t->vertices[c]->vy;
+				const float vz = t->vertices[c]->pVertex->elevation;
+				if (vx < mn.x) mn.x = vx; if (vx > mx.x) mx.x = vx;
+				if (vy < mn.y) mn.y = vy; if (vy > mx.y) mx.y = vy;
+				if (vz < mn.z) mn.z = vz; if (vz > mx.z) mx.z = vz;
+			}
+			if (!quadAabbInFrustum(planes, mn, mx))
+				continue;
+			admitted++;
+
+			Stuff::Point3D corners[4];
+			bool valid[4];
+			float cx = 0.0f, cy = 0.0f, cz = 0.0f;   // world tile center
+			for (int c = 0; c < 4; c++)
+			{
+				Stuff::Vector3D wp;
+				wp.x = t->vertices[c]->vx;
+				wp.y = t->vertices[c]->vy;
+				wp.z = t->vertices[c]->pVertex->elevation;
+				cx += wp.x; cy += wp.y; cz += wp.z;
+				Stuff::Vector4D sc;
+				eye->projectForSelectionPicking(wp, sc);
+				corners[c].x = sc.x;
+				corners[c].y = sc.y;
+				corners[c].z = 0.0f;
+				valid[c] = (sc.x >= 0.0f) && (sc.y >= 0.0f) &&
+				           (sc.x <= screenResolution.x) &&
+				           (sc.y <= screenResolution.y) &&
+				           (sc.z >= 0.0f) && (sc.z < 1.0f);
+			}
+			if (!s_overThisTileProjected(corners, valid, screenPos.x, screenPos.y))
+				continue;
+			contained++;
+			// Frontmost = smallest eye distance among containing tiles. physicalPos
+			// is the true camera eye (MC2 world); getPosition() is the ground-focus.
+			cx *= 0.25f; cy *= 0.25f; cz *= 0.25f;
+			const double ex = (double)cx - (double)physicalPos.x;
+			const double ey = (double)cy - (double)physicalPos.y;
+			const double ez = (double)cz - (double)physicalPos.z;
+			const double eyeDistSq = ex*ex + ey*ey + ez*ez;
+			if (eyeDistSq < bestEyeDistSq)
+			{
+				bestEyeDistSq = eyeDistSq;
+				closestTile = t;
+			}
+		}
+		if (s_capTrace)
+			fprintf(stderr, "[PICK_CAP] mode=lowcam numTiles=%lu admitted=%ld "
+				"contained=%ld cursor=(%ld,%ld) hit=%d\n",
+				numTiles, admitted, contained,
+				(long)screenPos.x, (long)screenPos.y, closestTile ? 1 : 0);
+	}
+	else
+	{
+	//-----------------------------------------------------------
 	// Stage 1: frustum-AABB admission over all quads. RAW world AABB built
 	// from vertices[0..3]->vx/.vy/->pVertex->elevation (unrotated world
 	// coords per vertex.h:75). Keep the existing cap-100 + guard.
@@ -1213,6 +1346,7 @@ unsigned long Camera::inverseProject (Stuff::Vector2DOf<long> &screenPos, Stuff:
 				}
 			}
 		}
+	}
 	}
 
 	if (closestTile)
@@ -2062,6 +2196,24 @@ long Camera::update (void)
 		float _tm = AltitudeMaximumLo + ((AltitudeMaximumHi - AltitudeMaximumLo) * _ap);
 		if (_tm > 0.0f)
 			newScaleFactor = 1.0f - ((cameraAltitude - AltitudeMinimum) / _tm);
+	}
+
+	// [MOUSE-ANCHORED-ZOOM-1 v2] eased pivot shift toward the cursor anchor,
+	// phase-locked to the just-eased cameraAltitude so the world point under the
+	// cursor stays put as zoom resolves (vs the prior single-shot shift that
+	// panned). frac grows 0 -> final as altitude eases from h0 to the target.
+	// Armed only by beginZoomAnchor (gated MC2_LOWCAM_ZOOM_ANCHOR in anchoredZoom).
+	if (zoomAnchorActive)
+	{
+		float frac = 1.0f - (cameraAltitude / zoomAnchorH0);
+		if (frac > 1.0f) frac = 1.0f;
+		if (frac < -1.0f) frac = -1.0f;
+		Stuff::Vector3D Tnew = zoomAnchorPivot;
+		Tnew.x = zoomAnchorPivot.x + (zoomAnchorWorld.x - zoomAnchorPivot.x) * frac;
+		Tnew.y = zoomAnchorPivot.y + (zoomAnchorWorld.y - zoomAnchorPivot.y) * frac;
+		setPosition(Tnew, false);   // instant, no swoop double-smoothing
+		if (fabsf(cameraAltitude - cameraAltitudeDesired) < 0.1f)
+			zoomAnchorActive = false;   // settled -> release
 	}
 
 	calculateProjectionConstants();
