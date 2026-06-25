@@ -119,8 +119,8 @@ def apply_sidecar(pak_path: Path, beauty: Path, out_pak: Path,
     cur_hash = sha256_file(pak_path)
     if cur_hash != meta["baseHash"] and not allow_hash_mismatch:
         raise ValueError(
-            f"baseHash mismatch: sidecar expects {meta['baseHash'][:12]}…, "
-            f"target .pak is {cur_hash[:12]}… (refusing — wrong/modified terrain). "
+            f"baseHash mismatch: sidecar expects {meta['baseHash'][:12]}..., "
+            f"target .pak is {cur_hash[:12]}... (refusing — wrong/modified terrain). "
             "Pass allow_hash_mismatch to override.")
 
     raw = bytearray(Path(pak_path).read_bytes())
@@ -186,7 +186,7 @@ def _cmd_apply(args) -> int:
     stats = apply_sidecar(Path(args.pak), Path(args.sidecar), Path(args.out),
                           allow_hash_mismatch=args.allow_hash_mismatch)
     print(f"[sidecar] apply: {stats['mission']} changed={stats['changed_cells']} "
-          f"max|Δ|={stats['max_abs_delta_wu']:.2f}wu baseHash_ok={stats['baseHash_ok']} "
+          f"max|d|={stats['max_abs_delta_wu']:.2f}wu baseHash_ok={stats['baseHash_ok']} "
           f"-> {stats['out_pak']}")
     return 0
 
