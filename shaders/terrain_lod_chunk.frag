@@ -565,7 +565,7 @@ void main() {
     // TERRAIN-CLIFF-MATERIAL-TRIPLANAR-1: on steep cells, project the ROCK normal
     // map from WORLD axes (triplanar) instead of the top-down per-tile UV — kills
     // the vertical UV stretch on cliff faces and gives the wall real rock relief.
-    // Prototype reuses MAT_LAYER_ROCK (no cliff art ships). Default OFF
+    // Uses MAT_LAYER_MARBLE_CLIFF (mat5_normal.tga, marble_cliff_01). Default OFF
     // (useTriplanarCliff==0) -> byte-identical.
     if (useTriplanarCliff != 0) {
         float cb = smoothstep(0.85, 0.55, abs(macroNz));
@@ -578,9 +578,9 @@ void main() {
             // tangent-space rock normals sampled in each world plane.
             // textureLod(...,0): explicit LOD is valid inside this non-uniform branch
             // (implicit derivatives would be UB / vendor-divergent — UB2 discipline).
-            vec3 nX = textureLod(matNormalArray, vec3(wp.yz / ts, float(MAT_LAYER_ROCK)), 0.0).rgb * 2.0 - 1.0;
-            vec3 nY = textureLod(matNormalArray, vec3(wp.xz / ts, float(MAT_LAYER_ROCK)), 0.0).rgb * 2.0 - 1.0;
-            vec3 nZ = textureLod(matNormalArray, vec3(wp.xy / ts, float(MAT_LAYER_ROCK)), 0.0).rgb * 2.0 - 1.0;
+            vec3 nX = textureLod(matNormalArray, vec3(wp.yz / ts, float(MAT_LAYER_MARBLE_CLIFF)), 0.0).rgb * 2.0 - 1.0;
+            vec3 nY = textureLod(matNormalArray, vec3(wp.xz / ts, float(MAT_LAYER_MARBLE_CLIFF)), 0.0).rgb * 2.0 - 1.0;
+            vec3 nZ = textureLod(matNormalArray, vec3(wp.xy / ts, float(MAT_LAYER_MARBLE_CLIFF)), 0.0).rgb * 2.0 - 1.0;
             // reorient each plane's tangent normal into world space + blend by axis weight.
             vec3 triTilt = vec3(0.0, nX.x, nX.y) * wn.x
                          + vec3(nY.x, 0.0, nY.y) * wn.y
@@ -588,7 +588,7 @@ void main() {
             vec3 triN = normalize(mN + triTilt * cliffTriplanarStrength);
             N = normalize(mix(N, triN, cb));
             // groove relief: darken by the rock displacement on the dominant wall plane.
-            float disp = textureLod(matNormalArray, vec3(wp.xy / ts, float(MAT_LAYER_ROCK)), 0.0).a;
+            float disp = textureLod(matNormalArray, vec3(wp.xy / ts, float(MAT_LAYER_MARBLE_CLIFF)), 0.0).a;
             baseColor *= mix(1.0, 0.72 + 0.28 * disp, cb);
         }
     }
