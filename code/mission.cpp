@@ -2873,21 +2873,39 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 
 	//----------------------
 	// Load ABL Libraries...
-	long numErrors, numLinesProcessed;
-	FullPathFileName libraryFileName;
-	libraryFileName.init(missionPath, "orders", ".abx");
-	ABLModulePtr library = ABLi_loadLibrary(libraryFileName, &numErrors, &numLinesProcessed);
-	gosASSERT(library != NULL);
-
-	FullPathFileName libraryFileName1;
-	libraryFileName1.init(missionPath, "miscfunc", ".abx");
-	library = ABLi_loadLibrary(libraryFileName1, &numErrors, &numLinesProcessed);
-	gosASSERT(library != NULL);
-
-	FullPathFileName libraryFileName2;
-	libraryFileName2.init(missionPath, "corebrain", ".abx");
-	library = ABLi_loadLibrary(libraryFileName2, &numErrors, &numLinesProcessed);
-	gosASSERT(library != NULL);
+	long numErrors = 0, numLinesProcessed = 0;
+	// ABL-CORE-LIBRARY-MOUNT-1: declarative core-library table (replaces three hardcoded
+	// gosASSERT'd loads). orders/miscfunc are universal; corebrain (MCO / wolfman-MC2X) and
+	// mc2xcore (cveg / MC2X-R52) are the two core-brain variants — load whichever a mod
+	// provides, so MC2X- and MCO-lineage mod missions (e.g. DarkRain "torrin") get their core
+	// brain orders + eternals (corePatrol/coreGuard/coreRepair/noAttackCode/wxmCode/…) defined.
+	// Absent optional cores are a clean no-op (stock/MCO ship no mc2xcore.abx). Our Enhanced
+	// brain (MC2_BRAIN_*) layers on top via the _ai.fit/_specials.fit loader below — this only
+	// provides the native ABL base. Soft-fail (log, no crash) so a missing lib degrades rather
+	// than asserting. Trace with MC2_ABL_CORE_TRACE=1.
+	static const struct AblCoreLib { const char* name; bool required; } kAblCoreLibs[] = {
+		{ "orders",    true  },
+		{ "miscfunc",  true  },
+		{ "corebrain", false },   // MCO / wolfman-MC2X core
+		{ "mc2xcore",  false },   // cveg / MC2X-R52 core
+	};
+	const bool ablCoreTrace = (std::getenv("MC2_ABL_CORE_TRACE") && std::atoi(std::getenv("MC2_ABL_CORE_TRACE")) != 0);
+	for (const AblCoreLib& lib : kAblCoreLibs) {
+		FullPathFileName libPath;
+		libPath.init(missionPath, lib.name, ".abx");
+		if (!fileExists(libPath, FILE_ON_DISK | FILE_ON_FST)) {
+			if (lib.required)
+				std::fprintf(stderr, "[ABL_CORE] WARN: required library %s.abx not found at %s\n", lib.name, missionPath);
+			else if (ablCoreTrace)
+				std::fprintf(stderr, "[ABL_CORE] optional library %s.abx absent — skipped\n", lib.name);
+			continue;
+		}
+		numErrors = 0;
+		ABLModulePtr library = ABLi_loadLibrary(libPath, &numErrors, &numLinesProcessed);
+		if (ablCoreTrace || !library || numErrors > 0)
+			std::fprintf(stderr, "[ABL_CORE] load %s.abx -> %s (errors=%ld)\n",
+			             lib.name, library ? "OK" : "NULL", numErrors);
+	}
 
 	//---------------------------
 	// Load the mission script...
