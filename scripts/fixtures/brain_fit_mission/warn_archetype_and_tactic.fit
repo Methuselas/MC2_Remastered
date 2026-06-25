@@ -1,0 +1,9 @@
+[Warrior3]
+Brain {
+	sourceABLBrain = "PBrain3"
+	archetype = "Archetype.Clan.Standard"
+	SecondaryOPORD { type = Guard }
+	Tactics {
+		NotARealTactic = 0.7
+	}
+}
