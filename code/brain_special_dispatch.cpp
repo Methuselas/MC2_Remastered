@@ -41,6 +41,10 @@
 // coreMoveTo (the C++ Mover method, distinct from the OPORD DSL verb), setMainGoal,
 // clearCurTacOrder, any movement/attack/OPORD-advance/commander function NOT listed above.
 // DISPATCH-EFFECT-UNITRETREAT-1: Unit.Retreat + coreRetreat alias added (no-arg, pure once-guard).
+// DISPATCH-INTENT-CLEARMOVEORDERS-1: clearMoveOrders() is a movement function and therefore
+// FORBIDDEN in this dispatch function. Unit.ClearMoveOrders emits a CLEAR_MOVE intent ONLY;
+// the single permitted warrior->clearMoveOrders() call lives in commitBrainIntents. The
+// check_brain_relaxed_guard_doc.py checker enforces that clearMoveOrders appears nowhere else.
 //
 // FSM-TODO SCANNER (1C — scanFsmTodosFromFile):
 // Calls ONLY std::ifstream + std::regex + fprintf. NO order functions, NO movement/attack/OPORD calls.
@@ -162,18 +166,45 @@ static bool s_brainPatrolGate() {
     return v && std::atoi(v) != 0;
 }
 
+// BRAIN-COMMIT-PHASE-1 (GAP B): MC2_BRAIN_COMMIT_PHASE gate (default OFF).
+// Mirrors warrior.cpp's s_brainCommitPhase / objmgr.cpp's s_commitPhaseGate.
+// When ON, patrol-emitted intents must be left in pendingIntents for the deferred
+// WID-ordered drain (objmgr.cpp) instead of being self-committed inline here.
+static bool s_brainCommitPhaseEnabled() {
+    static const bool kGate = ([](){
+        const char* v = std::getenv("MC2_BRAIN_COMMIT_PHASE");
+        return (v && std::atoi(v) != 0);
+    })();
+    return kGate;
+}
+
+// TACTIC-WEIGHTS-B: MC2_TACTIC_WEIGHTS_B gate (default OFF). When ON, the brain's
+// already-selected tactic (runtime->selectedTactic, populated by selectTacticForWarrior
+// under MC2_TACTIC_WEIGHTS) is written into the attack order's attackParams.tactic.
+// Needs BOTH gates: WEIGHTS to populate selectedTactic, WEIGHTS_B to wire it. With B
+// OFF the field is left at its init default (TACTIC_NONE) → byte-identical to pre-B.
+static bool s_tacticWeightsBEnabled() {
+    static const bool kGate = ([](){
+        const char* v = std::getenv("MC2_TACTIC_WEIGHTS_B");
+        return (v && std::atoi(v) != 0);
+    })();
+    return kGate;
+}
+
 // ---------------------------------------------------------------------------
 // Recognized verb table for DISPATCH-1A.
 // All other verbs produce [BRAIN_DISPATCH_UNKNOWN] trace.
 static const char* const kRecognizedVerbs[] = {
     "Brain.CorePower",
     "Brain.CoreAttack",
+    "Brain.CoreEject",   // BRAIN-ALIAS-COREVERBS-1: carver_v_enhanced alias → Unit.Eject
     "OPORD.CoreAttack",
     "OPORD.CoreGuard",
     "OPORD.CorePatrol",
     "OPORD.CoreMoveTo",
     "Unit.Retreat",
     "Unit.Eject",
+    "Unit.ClearMoveOrders",   // DISPATCH-INTENT-CLEARMOVEORDERS-1: movement-queue scrub (intent-modelled)
     "HOLD",
     // BRAIN-FSM-1K-A: FSM state verbs (gate MC2_BRAIN_FSM, default OFF)
     "Unit.SetState",
@@ -442,6 +473,12 @@ void executeSpecialBody_TraceOnly(const BrainSpecialBody& body, int wid, VarStor
 static const char* aliasToCanonical(const char* verb) {
     if (std::strcmp(verb, "coreEject") == 0)
         return "Unit.Eject";
+    // BRAIN-ALIAS-COREVERBS-1: carver_v_enhanced emits Brain.CoreEject (657 uses) — a
+    // no-arg eject. Map it to the canonical Unit.Eject so the EJECT handler fires.
+    // (Brain.CoreAttack carries a WID arg, so it is aliased at the handler prefix-check
+    // instead — see executeSpecialBody_Apply, since aliasToCanonical is exact-strcmp only.)
+    if (std::strcmp(verb, "Brain.CoreEject") == 0)
+        return "Unit.Eject";
     if (std::strcmp(verb, "corePower") == 0)
         return "Brain.CorePower";
     if (std::strcmp(verb, "coreGuard") == 0)
@@ -505,7 +542,10 @@ bool bodyHasCoreMoveTo(const BrainSpecialBody& body) {
 // Token-prefix match: first word of the stored verb string must equal "OPORD.CoreAttack".
 bool bodyHasCoreAttack(const BrainSpecialBody& body) {
     for (const std::string& verb : body.verbs) {
-        if (std::strncmp(verb.c_str(), "OPORD.CoreAttack", 16) == 0
+        // BRAIN-ALIAS-COREVERBS-1: Brain.CoreAttack (carver_v_enhanced) shares the
+        // OPORD.CoreAttack effect/slot; match either spelling (both 16-char prefixes).
+        if ((std::strncmp(verb.c_str(), "OPORD.CoreAttack", 16) == 0
+             || std::strncmp(verb.c_str(), "Brain.CoreAttack", 16) == 0)
             && (verb.size() == 16 || verb[16] == ' '))
             return true;
     }
@@ -604,12 +644,38 @@ static bool emitBrainIntent(MechBrainRuntime* runtime, int warriorId,
     BrainOrderIntent& out = runtime->pendingIntents[runtime->pendingIntentCount++];
     out.warriorId   = warriorId;
     out.slot        = BrainIntentSlot::GENERAL;
+    out.kind        = BrainIntentKind::ORDER;   // pendingIntents slots are reused — set kind explicitly
     out.orderType   = orderType;
     out.targetWID   = targetWID;
     out.waypoint[0] = wx;
     out.waypoint[1] = wy;
     out.waypoint[2] = wz;
     out.sourceBodyId = sourceBodyId;
+    out.brainTick   = getBrainTickIndex();
+    return true;
+}
+
+// DISPATCH-INTENT-CLEARMOVEORDERS-1: emit a CLEAR_MOVE intent (movement-queue scrub).
+// Intent-only — the actual warrior->clearMoveOrders() runs in commitBrainIntents (the sole
+// contract-permitted mutator). Mirrors emitBrainIntent's overflow + tick-stamp handling.
+static bool emitBrainClearMoveIntent(MechBrainRuntime* runtime, int warriorId) {
+    if (!runtime) return false;
+    if (runtime->pendingIntentCount >= kBrainIntentCap) {
+        std::fprintf(stderr, "[BRAIN_INTENT_EMIT_OVERFLOW] wid=%d order=CLEAR_MOVE cap=%d\n",
+                     warriorId, kBrainIntentCap);
+        std::fflush(stderr);
+        return false;
+    }
+    BrainOrderIntent& out = runtime->pendingIntents[runtime->pendingIntentCount++];
+    out.warriorId   = warriorId;
+    out.slot        = BrainIntentSlot::GENERAL;
+    out.kind        = BrainIntentKind::CLEAR_MOVE;
+    out.orderType   = TACTICAL_ORDER_NONE;   // unused for CLEAR_MOVE
+    out.targetWID   = -1;
+    out.waypoint[0] = 0.0f;
+    out.waypoint[1] = 0.0f;
+    out.waypoint[2] = 0.0f;
+    out.sourceBodyId = 0;
     out.brainTick   = getBrainTickIndex();
     return true;
 }
@@ -846,9 +912,13 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
                     }
                 }
             }
-        } else if (std::strncmp(vpCanon, "OPORD.CoreAttack", 16) == 0
+        } else if ((std::strncmp(vpCanon, "OPORD.CoreAttack", 16) == 0
+                    || std::strncmp(vpCanon, "Brain.CoreAttack", 16) == 0)
                    && (vpCanon[16] == ' ' || vpCanon[16] == '\0')) {
             // DISPATCH-EFFECT-COREATTACK-1: OPORD.CoreAttack <wid>
+            // BRAIN-ALIAS-COREVERBS-1: Brain.CoreAttack (carver_v_enhanced, 571 uses) shares
+            // this handler. Both prefixes are exactly 16 chars, so the vpCanon+16 arg parser
+            // below is identical for either spelling.
             //
             // Arg parser — bare-integer WID:
             //   Token after "OPORD.CoreAttack" is the decimal WID (strtol).
@@ -898,6 +968,16 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
                     attackOrder.attackParams.method = ATTACKMETHOD_RANGED;
                     attackOrder.attackParams.range  = FIRERANGE_OPTIMAL;
                     attackOrder.attackParams.pursue = true;
+                    // TACTIC-WEIGHTS-B: wire selected tactic. Local `runtime` is null on this
+                    // gate-OFF path, so read selectedTactic via warrior->getBrainRuntime().
+                    if (s_tacticWeightsBEnabled()) {
+                        MechBrainRuntime* rtB = warrior->getBrainRuntime();
+                        if (rtB) {
+                            attackOrder.attackParams.tactic = (TacticType)rtB->selectedTactic;
+                            std::fprintf(stderr, "[BRAIN_TACTIC_B] applied tactic=%d wid=%d\n", rtB->selectedTactic, wid);
+                            std::fflush(stderr);
+                        }
+                    }
                     attackOrder.moveParams.wayPath.mode[0] = TRAVEL_MODE_FAST;
                     warrior->setGeneralTacOrder(attackOrder);
                     std::fprintf(stderr, "[BRAIN_DISPATCH_APPLY] verb=OPORD.CoreAttack effect=ATTACK_OBJECT targetWID=%ld wid=%d\n",
@@ -922,6 +1002,28 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
                 std::fflush(stderr);
             }
             appliedEffect = true;
+        } else if (std::strncmp(vpCanon, "Unit.ClearMoveOrders", 20) == 0 &&
+                   (vpCanon[20] == ' ' || vpCanon[20] == '\0')) {
+            // DISPATCH-INTENT-CLEARMOVEORDERS-1: scrub the engine movement queue. Intent-ONLY.
+            // Prefix-match (20 chars): carver emits "Unit.ClearMoveOrders 1" — the trailing DO
+            // arg is ABL syntax noise; clearMoveOrders() takes no parameter.
+            // The warrior->clearMoveOrders() call lives in commitBrainIntents (the sole
+            // contract-permitted mutator); calling it here would violate the FORBIDDEN-CALL
+            // contract (unlisted movement function) and bypass the WID-ordered commit phase.
+            // Does NOT set appliedEffect — this is a prologue scrub, not a GENERAL-slot order, so
+            // it must not suppress the synthetic HOLD or claim the slot. patrolActive / FSM state /
+            // Vars / target are intentionally left UNTOUCHED (frozen scope: movement-only).
+            if (runtime) {
+                emitBrainClearMoveIntent(runtime, wid);
+                std::fprintf(stderr, "[BRAIN_INTENT_EMIT] verb=Unit.ClearMoveOrders order=CLEAR_MOVE tick=%u wid=%d\n",
+                             getBrainTickIndex(), wid);
+                std::fflush(stderr);
+            } else {
+                // Intent queue OFF: cannot scrub here (direct call forbidden). Trace + no-op,
+                // mirroring the patrol NO_QUEUE path. Live use requires MC2_BRAIN_INTENT_QUEUE=1.
+                std::fprintf(stderr, "[BRAIN_CLEARMOVE_NO_QUEUE] wid=%d: requires MC2_BRAIN_INTENT_QUEUE=1\n", wid);
+                std::fflush(stderr);
+            }
         } else if (s_brainPatrolGate() && std::strncmp(vpCanon, "OPORD.CorePatrol", 16) == 0 &&
                    (vpCanon[16] == ' ' || vpCanon[16] == '\0')) {
             // BRAIN-OPORD-COREPATROL-1: OPORD.CorePatrol x1 y1 z1 x2 y2 z2 ... [loop|once]
@@ -1205,6 +1307,9 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
 // MC2_BRAIN_INTENT_QUEUE=1.  Called right after executeSpecialBody_Apply returns
 // (inline, same thread, this rung).  Drains runtime->pendingIntents[] and for each
 // intent reconstructs a TacticalOrder and calls warrior->setGeneralTacOrder().
+// DISPATCH-INTENT-CLEARMOVEORDERS-1: also the ONLY function that may call
+// warrior->clearMoveOrders() (CLEAR_MOVE intents) — a movement scrub, not a slot order,
+// so it is handled before the orderType switch and does not count toward the 6 verbs.
 //
 // FORBIDDEN-CALL GUARD (commit phase): this function and only this function may call
 // warrior->setGeneralTacOrder() when gate ON.  The verb handlers in
@@ -1222,6 +1327,17 @@ void commitBrainIntents(MechWarrior* warrior, MechBrainRuntime* runtime) {
     const int n = runtime->pendingIntentCount;
     for (int i = 0; i < n; ++i) {
         const BrainOrderIntent& intent = runtime->pendingIntents[i];
+        // DISPATCH-INTENT-CLEARMOVEORDERS-1: CLEAR_MOVE is a movement-queue scrub, not a
+        // GENERAL-slot order. commitBrainIntents is the ONLY function the FORBIDDEN-CALL
+        // contract permits to mutate warrior order/movement state, so the clearMoveOrders()
+        // call lives here. Movement-only: does not touch patrol/FSM/Var/target state.
+        if (intent.kind == BrainIntentKind::CLEAR_MOVE) {
+            warrior->clearMoveOrders();
+            std::fprintf(stderr, "[BRAIN_INTENT_COMMIT] verb=Unit.ClearMoveOrders order=CLEAR_MOVE tick=%u wid=%d\n",
+                         intent.brainTick, intent.warriorId);
+            std::fflush(stderr);
+            continue;
+        }
         switch (intent.orderType) {
             case TACTICAL_ORDER_POWERDOWN: {
                 TacticalOrder o;
@@ -1278,6 +1394,12 @@ void commitBrainIntents(MechWarrior* warrior, MechBrainRuntime* runtime) {
                 o.attackParams.method = ATTACKMETHOD_RANGED;
                 o.attackParams.range  = FIRERANGE_OPTIMAL;
                 o.attackParams.pursue = true;
+                // TACTIC-WEIGHTS-B: wire selected tactic (runtime non-null per caller guard).
+                if (s_tacticWeightsBEnabled()) {
+                    o.attackParams.tactic = (TacticType)runtime->selectedTactic;
+                    std::fprintf(stderr, "[BRAIN_TACTIC_B] applied tactic=%d wid=%d\n", runtime->selectedTactic, intent.warriorId);
+                    std::fflush(stderr);
+                }
                 o.moveParams.wayPath.mode[0] = TRAVEL_MODE_FAST;
                 warrior->setGeneralTacOrder(o);
                 std::fprintf(stderr, "[BRAIN_INTENT_COMMIT] verb=OPORD.CoreAttack order=ATTACK_OBJECT targetWID=%d tick=%u wid=%d\n",
@@ -1380,8 +1502,14 @@ bool tickPatrolAdvance(MechWarrior* warrior, MechBrainRuntime* runtime, int wid)
         std::fprintf(stderr, "[BRAIN_PATROL_EMIT] index=%u pos=(%g %g %g) tick=%u wid=%d\n",
                      (unsigned)newIndex, wx, wy, wz, getBrainTickIndex(), wid);
         std::fflush(stderr);
-        // Commit immediately (tickPatrolAdvance is called outside the normal apply+commit block).
-        commitBrainIntents(warrior, runtime);
+        // GAP B: tickPatrolAdvance runs outside the normal apply+commit block, so with
+        // commit-phase OFF it must self-commit inline. With commit-phase ON, leave the
+        // intent in pendingIntents so the deferred WID-ordered drain (objmgr.cpp) picks
+        // it up — self-committing here would drain pendingIntentCount→0 and the deferred
+        // phase would report committed=0.
+        if (!s_brainCommitPhaseEnabled()) {
+            commitBrainIntents(warrior, runtime);
+        }
     } else {
         std::fprintf(stderr, "[BRAIN_PATROL_NO_QUEUE] advance index=%u wid=%d: requires MC2_BRAIN_INTENT_QUEUE=1\n",
                      (unsigned)newIndex, wid);
@@ -1732,6 +1860,47 @@ bool parseBrainSpecialBody(const char* missionName, BrainSpecialBody& outBody,
         std::fflush(stderr);
     }
     return outBody.loaded;
+}
+
+// ---------------------------------------------------------------------------
+// GAP-A MULTI-WARRIOR SPECIALS: mission-level specials cache.
+//
+// The _specials.fit body is mission-level — identical for every warrior. At mission
+// load (mission.cpp), only warriors whose brainRuntime is already allocated (named in
+// _ai.fit) get their specialBody parsed. Warriors whose brainRuntime is allocated
+// LAZILY inside runBrain (warrior.cpp) miss that parse window, so their specialBody
+// stays loaded=false and they never dispatch. This cache parses the file ONCE at
+// mission load and lets lazily-allocated runtimes copy the parsed body in.
+//
+// Lifecycle: mission-ephemeral. Reset + populated once per mission load when
+// MC2_BRAIN_DISPATCH=1. Copy is by value — BrainSpecialBody and SpecialIndex are pure
+// value types (no internal pointers), so the per-runtime copy is self-contained.
+static BrainSpecialBody g_missionSpecialBody;
+static SpecialIndex     g_missionSpecialIndex;
+static bool             g_missionSpecialCached = false;
+
+void resetMissionSpecialCache() {
+    g_missionSpecialBody = BrainSpecialBody();
+    g_missionSpecialIndex.clear();
+    g_missionSpecialCached = false;
+}
+
+void cacheMissionSpecialBody(const char* specialFitName) {
+    resetMissionSpecialCache();
+    if (parseBrainSpecialBody(specialFitName, g_missionSpecialBody, &g_missionSpecialIndex)) {
+        g_missionSpecialCached = g_missionSpecialBody.loaded;
+    }
+}
+
+bool applyCachedSpecialBodyToRuntime(MechBrainRuntime* rt) {
+    if (!rt) return false;
+    if (!g_missionSpecialCached) return false;
+    if (rt->specialBody.loaded) return false;  // already parsed its own copy at load
+    rt->specialBody  = g_missionSpecialBody;
+    rt->specialIndex = g_missionSpecialIndex;
+    std::fprintf(stderr, "[BRAIN_DISPATCH] GAP-A: applied cached specials to lazily-alloc'd runtime\n");
+    std::fflush(stderr);
+    return true;
 }
 
 // ---------------------------------------------------------------------------

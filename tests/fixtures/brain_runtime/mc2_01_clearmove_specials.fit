@@ -1,0 +1,10 @@
+FITini
+; DISPATCH-INTENT-CLEARMOVEORDERS-1 fixture — Unit.ClearMoveOrders emits a CLEAR_MOVE intent;
+; commitBrainIntents scrubs movement via warrior->clearMoveOrders(). Intent-only, no setGeneralTacOrder.
+; Use with MC2_BRAIN_SPECIAL_FIT=mc2_01_clearmove + MC2_BRAIN_INTENT_QUEUE=1.
+
+[BrainSpecial]
+
+[Body]
+st DO0 = "Unit.ClearMoveOrders 1"
+st DO1 = "HOLD"

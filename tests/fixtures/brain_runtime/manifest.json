@@ -478,6 +478,31 @@
         "[BRAIN_FSM_SETSTATEIF] var=ready",
         "match=0"
       ]
+    },
+    {
+      "name": "clearmoveorders-intent",
+      "file": "mc2_01_clearmove_specials.fit",
+      "mission": "mc2_01",
+      "format": "legacy-fitini",
+      "gates_required": [
+        "MC2_BRAIN_DISPATCH=1",
+        "MC2_BRAIN_DISPATCH_APPLY=1",
+        "MC2_BRAIN_INTENT_QUEUE=1"
+      ],
+      "notes": "DISPATCH-INTENT-CLEARMOVEORDERS-1: emits CLEAR_MOVE intent; commit calls clearMoveOrders(). No setGeneralTacOrder; movement-only scrub.",
+      "apply_expectation": {
+        "expected_order_code": "NONE",
+        "expected_count": 0,
+        "apply_trace_substrings": [
+          "[BRAIN_INTENT_EMIT] verb=Unit.ClearMoveOrders order=CLEAR_MOVE",
+          "[BRAIN_INTENT_COMMIT] verb=Unit.ClearMoveOrders order=CLEAR_MOVE"
+        ],
+        "requires_intent_queue": true
+      },
+      "harness_proven": [
+        "CLEAR_MOVE intent emitted",
+        "commitBrainIntents calls clearMoveOrders() once"
+      ]
     }
   ]
 }

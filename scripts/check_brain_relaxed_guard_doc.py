@@ -102,10 +102,11 @@ def count_inline_guard_verbs(lines):
     return -1  # not found
 
 
-def count_callsites_in_function(lines, func_pattern_str):
-    """Count warrior->setGeneralTacOrder( lines inside a named function.
+def count_callsites_in_function(lines, func_pattern_str, needle="warrior->setGeneralTacOrder("):
+    """Count `needle` lines inside a named function.
 
     func_pattern_str: regex string that matches the function's opening line.
+    needle: substring to count (default: setGeneralTacOrder call).
     Returns the count of matching lines found within the function body.
     """
     in_func = False
@@ -126,9 +127,22 @@ def count_callsites_in_function(lines, func_pattern_str):
             started = True
         if started and depth <= 0:
             break
-        if "warrior->setGeneralTacOrder(" in stripped:
+        if needle in stripped:
             count += 1
     return count
+
+
+def count_clearmove_total(lines):
+    """Count `warrior->clearMoveOrders(` calls anywhere in the source (code lines only)."""
+    return sum(1 for line in lines
+               if "warrior->clearMoveOrders(" in line.rstrip()
+               and not line.lstrip().startswith("//"))
+
+
+def count_clearmove_in_commit(lines):
+    """Count `warrior->clearMoveOrders(` calls inside commitBrainIntents only."""
+    return count_callsites_in_function(lines, r'^void\s+commitBrainIntents\s*\(',
+                                       needle="warrior->clearMoveOrders(")
 
 
 def count_callsites_in_apply(lines):
@@ -186,6 +200,12 @@ def main():
     callsite_count = count_callsites_in_apply(lines)
     commit_count   = count_callsites_in_commit(lines)
 
+    # DISPATCH-INTENT-CLEARMOVEORDERS-1: clearMoveOrders() is a movement function and is
+    # FORBIDDEN in dispatch. Every call must live inside commitBrainIntents (the sole
+    # permitted mutator). total > commit ⇒ a direct/forbidden call leaked into dispatch.
+    clearmove_total  = count_clearmove_total(lines)
+    clearmove_commit = count_clearmove_in_commit(lines)
+
     if commit_count >= 0:
         findings.append(("INFO", f"header_guard_verbs={header_count}  inline_guard_verbs={inline_count}  "
                                   f"apply_callsite_count={callsite_count}  commit_callsite_count={commit_count}"))
@@ -195,7 +215,7 @@ def main():
 
     ok_apply  = (header_count == inline_count == callsite_count)
     ok_commit = (commit_count < 0) or (commit_count == callsite_count)
-    ok = ok_apply and ok_commit
+    ok = ok_apply and ok_commit and (clearmove_total == clearmove_commit)
 
     if header_count != callsite_count:
         findings.append(("FAIL", f"header doc ({header_count} verbs) != apply callsite count ({callsite_count})"))
@@ -207,6 +227,14 @@ def main():
         findings.append(("FAIL", f"commitBrainIntents callsite count ({commit_count}) != apply callsite count ({callsite_count}) — verb drift"))
     if commit_count < 0:
         findings.append(("WARN", "commitBrainIntents not found in source — BRAIN-DECISION-INTENT-QUEUE-1 not yet landed"))
+
+    # DISPATCH-INTENT-CLEARMOVEORDERS-1 invariant.
+    clearmove_ok = (clearmove_total == clearmove_commit)
+    findings.append(("INFO", f"clearMoveOrders_total={clearmove_total}  clearMoveOrders_in_commit={clearmove_commit}"))
+    if not clearmove_ok:
+        findings.append(("FAIL", f"warrior->clearMoveOrders() called outside commitBrainIntents "
+                                  f"({clearmove_total} total vs {clearmove_commit} in commit) — "
+                                  f"FORBIDDEN-CALL contract violation (DISPATCH-INTENT-CLEARMOVEORDERS-1)"))
 
     if ok:
         if commit_count >= 0:

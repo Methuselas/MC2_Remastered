@@ -272,6 +272,18 @@ int scanFsmTodosFromFile(const char* missionName, BrainSpecialBody& outBody);
 void resetMissionVarStore();
 
 // ---------------------------------------------------------------------------
+// GAP-A MULTI-WARRIOR SPECIALS: mission-level specials cache.
+//   cacheMissionSpecialBody(name) — parse <name>_specials.fit ONCE at mission load.
+//   resetMissionSpecialCache()    — clear the cache (call at mission load before caching).
+//   applyCachedSpecialBodyToRuntime(rt) — copy cached body+index into a runtime that
+//     has none yet (lazily-allocated warriors). No-op if cache empty or rt already loaded.
+//   All defined in brain_special_dispatch.cpp. Mission-ephemeral; gate MC2_BRAIN_DISPATCH.
+struct MechBrainRuntime;
+void resetMissionSpecialCache();
+void cacheMissionSpecialBody(const char* specialFitName);
+bool applyCachedSpecialBodyToRuntime(struct MechBrainRuntime* rt);
+
+// ---------------------------------------------------------------------------
 // BRAIN-OPORD-COREPATROL-1: per-tick patrol advance.
 // Called every brain tick when MC2_BRAIN_PATROL=1 and brainRuntime->patrolActive.
 // Polls curTacOrder.status(warrior)==TACORDER_SUCCESS for arrival, advances the patrol

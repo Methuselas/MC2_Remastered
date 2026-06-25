@@ -29,6 +29,18 @@ enum class BrainIntentSlot : uint8_t {
 };
 
 // ---------------------------------------------------------------------------
+// DISPATCH-INTENT-CLEARMOVEORDERS-1: intent kind discriminator.
+// ORDER (default): orderType is a real TACTICAL_ORDER_* issued via setGeneralTacOrder.
+// CLEAR_MOVE: a movement-queue scrub committed via warrior->clearMoveOrders() — NOT a
+//   GENERAL-slot order. orderType is unused (TACTICAL_ORDER_NONE). Modelled as an intent
+//   (not a direct dispatch call) so the mutation stays inside commitBrainIntents, the sole
+//   contract-permitted order/movement mutator.
+enum class BrainIntentKind : uint8_t {
+    ORDER      = 0,
+    CLEAR_MOVE = 1,
+};
+
+// ---------------------------------------------------------------------------
 // BrainOrderIntent: per-emit intent record.
 // Emitted by each of the 6 verb handlers when MC2_BRAIN_INTENT_QUEUE=1.
 // Committed by commitBrainIntents() immediately after executeSpecialBody_Apply returns.
@@ -42,7 +54,8 @@ enum class BrainIntentSlot : uint8_t {
 struct BrainOrderIntent {
     int               warriorId;    // vehicleWID of the emitting warrior
     BrainIntentSlot   slot;         // always GENERAL for the 6 current verbs
-    TacticalOrderCode orderType;    // which TACTICAL_ORDER_* to issue on commit
+    BrainIntentKind   kind = BrainIntentKind::ORDER;  // ORDER vs CLEAR_MOVE (DISPATCH-INTENT-CLEARMOVEORDERS-1)
+    TacticalOrderCode orderType;    // which TACTICAL_ORDER_* to issue on commit (unused when kind==CLEAR_MOVE)
     int               targetWID;    // ATTACK_OBJECT: target watch-ID; -1 otherwise
     float             waypoint[3];  // MOVETO_POINT: x/y/z destination; zeroed otherwise
     uint32_t          sourceBodyId; // 0 = root body; future: index into SpecialIndex
