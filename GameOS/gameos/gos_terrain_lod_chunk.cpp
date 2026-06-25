@@ -128,6 +128,8 @@ extern int   g_terrainMaterialProfile;   // global; 0 = legacy
 static GLint s_locLightingV1     = -1;
 static GLint s_locLightingV2     = -1;
 static GLint s_locNfhStrength    = -1;
+static GLint s_locUseRockSlopeBias = -1;  // TERRAIN-SLOPE-BIAS-VISUAL-1 (B4a)
+static GLint s_locRockSlopeBiasStr = -1;
 static GLint s_locPomParams      = -1;
 static GLint s_locMatProfile     = -1;
 // Step 5c: cement catalog atlas (tex3) accessors from gos_terrain_indirect.cpp.
@@ -421,6 +423,8 @@ void gos_TerrainLodChunk_Init()
             s_locLightingV1  = glGetUniformLocation(s_terrainProgram, "terrainLightingV1Strength");
             s_locLightingV2  = glGetUniformLocation(s_terrainProgram, "terrainLightingV2ShadowFillFloor");
             s_locNfhStrength = glGetUniformLocation(s_terrainProgram, "terrainNormalsFromHeightStrength");
+            s_locUseRockSlopeBias = glGetUniformLocation(s_terrainProgram, "useRockSlopeBias");
+            s_locRockSlopeBiasStr = glGetUniformLocation(s_terrainProgram, "rockSlopeBiasStrength");
             s_locPomParams   = glGetUniformLocation(s_terrainProgram, "pomParams");
             s_locMatProfile  = glGetUniformLocation(s_terrainProgram, "g_terrainMaterialProfile");
             s_locCementAtlas    = glGetUniformLocation(s_terrainProgram, "u_cementAtlas");
@@ -816,6 +820,22 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         if (s_locLightingV1  >= 0) glUniform1f(s_locLightingV1,  s_v1Env ? gos_GetTerrainLightingV1Strength() : 0.0f);
         if (s_locLightingV2  >= 0) glUniform1f(s_locLightingV2,  s_v2Env ? gos_GetTerrainLightingV2Floor()    : 1.0f);
         if (s_locNfhStrength >= 0) glUniform1f(s_locNfhStrength, gos_GetTerrainNormalsFromHeightStrength());
+        // TERRAIN-SLOPE-BIAS-VISUAL-1 (B4a): env gate MC2_TERRAIN_SLOPE_BIAS, default
+        // OFF. When unset/0 the gate uploads 0 and the frag block is a no-op
+        // (byte-identical). Strength via MC2_TERRAIN_SLOPE_BIAS_STRENGTH (default 1.0).
+        {
+            int sbOn = 0;
+            if (const char* e = getenv("MC2_TERRAIN_SLOPE_BIAS")) sbOn = (e[0] && e[0] != '0') ? 1 : 0;
+            if (s_locUseRockSlopeBias >= 0) glUniform1i(s_locUseRockSlopeBias, sbOn);
+            if (s_locRockSlopeBiasStr >= 0) {
+                float sbStr = 1.0f;
+                if (const char* s = getenv("MC2_TERRAIN_SLOPE_BIAS_STRENGTH")) {
+                    float v = (float)atof(s);
+                    if (v > 0.0f) sbStr = v;
+                }
+                glUniform1f(s_locRockSlopeBiasStr, sbStr);
+            }
+        }
         if (s_locPomParams   >= 0) glUniform4f(s_locPomParams,   gos_GetTerrainPOMScale(), 8.0f, 32.0f, 0.0f);
         if (s_locMatProfile  >= 0) glUniform1i(s_locMatProfile,  g_terrainMaterialProfile);
     }
