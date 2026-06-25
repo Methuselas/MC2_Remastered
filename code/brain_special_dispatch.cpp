@@ -45,6 +45,9 @@
 // FORBIDDEN in this dispatch function. Unit.ClearMoveOrders emits a CLEAR_MOVE intent ONLY;
 // the single permitted warrior->clearMoveOrders() call lives in commitBrainIntents. The
 // check_brain_relaxed_guard_doc.py checker enforces that clearMoveOrders appears nowhere else.
+// UNITQUERY-SETTARGETPRIORITY-1: same model for warrior->setTargetPriority() — the verb
+// emits a TARGET_POLICY intent ONLY; the single permitted setTargetPriority() call lives in
+// commitBrainIntents; the checker enforces it appears nowhere else in dispatch.
 //
 // FSM-TODO SCANNER (1C — scanFsmTodosFromFile):
 // Calls ONLY std::ifstream + std::regex + fprintf. NO order functions, NO movement/attack/OPORD calls.
@@ -56,6 +59,7 @@
 // Verified by inspection: no warrior pointer, no tac-order type, no slot writes.
 
 #include "brain_special_dispatch.h"
+#include "brain_symbol_resolve.h"    // UNITQUERY-SETTARGETPRIORITY-1: symbolic-arg resolver
 #include "brain_mission_var_store.h" // TECHSCRIPT-DISPATCH-1D-M: MissionVarStore global
 #include "brain_world_snapshot.h" // BRAIN-WORLD-SNAPSHOT-1: BrainWorldSnapshot POD + gate
 #include "warrior.h"   // MechWarrior — needed for executeSpecialBody_Apply setGeneralTacOrder call
@@ -205,6 +209,7 @@ static const char* const kRecognizedVerbs[] = {
     "Unit.Retreat",
     "Unit.Eject",
     "Unit.ClearMoveOrders",   // DISPATCH-INTENT-CLEARMOVEORDERS-1: movement-queue scrub (intent-modelled)
+    "UnitQuery.SetTargetpriority",  // UNITQUERY-SETTARGETPRIORITY-1: target-priority list write (intent)
     "HOLD",
     // BRAIN-FSM-1K-A: FSM state verbs (gate MC2_BRAIN_FSM, default OFF)
     "Unit.SetState",
@@ -680,6 +685,35 @@ static bool emitBrainClearMoveIntent(MechBrainRuntime* runtime, int warriorId) {
     return true;
 }
 
+// UNITQUERY-SETTARGETPRIORITY-1: emit a TARGET_POLICY intent (per-warrior target-priority
+// list write). Applied via MechWarrior::setTargetPriority() in commitBrainIntents (the sole
+// permitted mutator). policyArgs = {slot,type,param1,param2,param3} (already symbol-resolved).
+static bool emitBrainTargetPolicyIntent(MechBrainRuntime* runtime, int warriorId,
+                                        long slot, long type, long p1, long p2, long p3) {
+    if (!runtime) return false;
+    if (runtime->pendingIntentCount >= kBrainIntentCap) {
+        std::fprintf(stderr, "[BRAIN_INTENT_EMIT_OVERFLOW] wid=%d order=TARGET_POLICY cap=%d\n",
+                     warriorId, kBrainIntentCap);
+        std::fflush(stderr);
+        return false;
+    }
+    BrainOrderIntent& out = runtime->pendingIntents[runtime->pendingIntentCount++];
+    out.warriorId   = warriorId;
+    out.slot        = BrainIntentSlot::GENERAL;
+    out.kind        = BrainIntentKind::TARGET_POLICY;
+    out.orderType   = TACTICAL_ORDER_NONE;
+    out.targetWID   = -1;
+    out.waypoint[0] = 0.0f; out.waypoint[1] = 0.0f; out.waypoint[2] = 0.0f;
+    out.sourceBodyId = 0;
+    out.brainTick   = getBrainTickIndex();
+    out.policyArgs[0] = (int32_t)slot;
+    out.policyArgs[1] = (int32_t)type;
+    out.policyArgs[2] = (int32_t)p1;
+    out.policyArgs[3] = (int32_t)p2;
+    out.policyArgs[4] = (int32_t)p3;
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // executeSpecialBody_Apply
 //
@@ -1024,6 +1058,49 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
                 std::fprintf(stderr, "[BRAIN_CLEARMOVE_NO_QUEUE] wid=%d: requires MC2_BRAIN_INTENT_QUEUE=1\n", wid);
                 std::fflush(stderr);
             }
+        } else if (std::strncmp(vpCanon, "UnitQuery.SetTargetpriority", 27) == 0 &&
+                   (vpCanon[27] == ' ' || vpCanon[27] == '\0')) {
+            // UNITQUERY-SETTARGETPRIORITY-1: per-warrior target-priority list write.
+            // Format: UnitQuery.SetTargetpriority <slot> <type-sym> <p1> <p2> <criteria-expr>
+            //   slot/p1/p2 = bare ints; type = TARGET_PRIORITY_* symbol; criteria = the rest
+            //   of the line, a '+'-joined CONTACT_CRITERIA_* expression (or bare -1).
+            // carver passes SYMBOLS (ABL pre-compiled them; our RawScan sees raw text), so the
+            // args are resolved by brain_symbol_resolve. Intent-ONLY: setTargetPriority() runs
+            // in commitBrainIntents (sole permitted mutator). Does NOT set appliedEffect — this
+            // is target-selection config, not a GENERAL-slot order; must not suppress HOLD.
+            const char* a = vpCanon + 27;
+            long args5[5] = {0, 0, 0, 0, 0};
+            bool parsed = true;
+            for (int fi = 0; fi < 4 && parsed; ++fi) {
+                while (*a == ' ' || *a == '\t') ++a;
+                const char* ts = a;
+                while (*a && *a != ' ' && *a != '\t') ++a;
+                size_t tl = (size_t)(a - ts);
+                char tok[64];
+                if (tl == 0 || tl >= sizeof(tok)) { parsed = false; break; }
+                std::memcpy(tok, ts, tl); tok[tl] = '\0';
+                long v = 0;
+                if (!brainResolveSymbolToken(tok, &v)) { parsed = false; break; }
+                args5[fi] = v;
+            }
+            if (parsed) {
+                while (*a == ' ' || *a == '\t') ++a;   // 5th field = rest-of-line expression
+                long crit = 0;
+                if (*a == '\0' || !brainResolveIntExpr(a, &crit)) parsed = false;
+                else args5[4] = crit;
+            }
+            if (!parsed) {
+                std::fprintf(stderr, "[BRAIN_DISPATCH_TARGETPRIORITY_PARSE_FAIL] verb=%s wid=%d\n", vp, wid);
+                std::fflush(stderr);
+            } else if (runtime) {
+                emitBrainTargetPolicyIntent(runtime, wid, args5[0], args5[1], args5[2], args5[3], args5[4]);
+                std::fprintf(stderr, "[BRAIN_INTENT_EMIT] verb=UnitQuery.SetTargetpriority order=TARGET_POLICY slot=%ld type=%ld p1=%ld p2=%ld crit=%ld tick=%u wid=%d\n",
+                             args5[0], args5[1], args5[2], args5[3], args5[4], getBrainTickIndex(), wid);
+                std::fflush(stderr);
+            } else {
+                std::fprintf(stderr, "[BRAIN_TARGETPRIORITY_NO_QUEUE] wid=%d: requires MC2_BRAIN_INTENT_QUEUE=1\n", wid);
+                std::fflush(stderr);
+            }
         } else if (s_brainPatrolGate() && std::strncmp(vpCanon, "OPORD.CorePatrol", 16) == 0 &&
                    (vpCanon[16] == ' ' || vpCanon[16] == '\0')) {
             // BRAIN-OPORD-COREPATROL-1: OPORD.CorePatrol x1 y1 z1 x2 y2 z2 ... [loop|once]
@@ -1310,6 +1387,8 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
 // DISPATCH-INTENT-CLEARMOVEORDERS-1: also the ONLY function that may call
 // warrior->clearMoveOrders() (CLEAR_MOVE intents) — a movement scrub, not a slot order,
 // so it is handled before the orderType switch and does not count toward the 6 verbs.
+// UNITQUERY-SETTARGETPRIORITY-1: likewise the ONLY function that may call
+// warrior->setTargetPriority() (TARGET_POLICY intents); also handled before the switch.
 //
 // FORBIDDEN-CALL GUARD (commit phase): this function and only this function may call
 // warrior->setGeneralTacOrder() when gate ON.  The verb handlers in
@@ -1335,6 +1414,17 @@ void commitBrainIntents(MechWarrior* warrior, MechBrainRuntime* runtime) {
             warrior->clearMoveOrders();
             std::fprintf(stderr, "[BRAIN_INTENT_COMMIT] verb=Unit.ClearMoveOrders order=CLEAR_MOVE tick=%u wid=%d\n",
                          intent.brainTick, intent.warriorId);
+            std::fflush(stderr);
+            continue;
+        }
+        // UNITQUERY-SETTARGETPRIORITY-1: TARGET_POLICY writes one target-priority list slot.
+        // commitBrainIntents is the ONLY function permitted to call setTargetPriority (a clean
+        // single-field setter — no order/movement side effects). WID-ordered like all commits.
+        if (intent.kind == BrainIntentKind::TARGET_POLICY) {
+            warrior->setTargetPriority(intent.policyArgs[0], intent.policyArgs[1],
+                                       intent.policyArgs[2], intent.policyArgs[3], intent.policyArgs[4]);
+            std::fprintf(stderr, "[BRAIN_INTENT_COMMIT] verb=UnitQuery.SetTargetpriority order=TARGET_POLICY slot=%d type=%d tick=%u wid=%d\n",
+                         intent.policyArgs[0], intent.policyArgs[1], intent.brainTick, intent.warriorId);
             std::fflush(stderr);
             continue;
         }
@@ -1799,7 +1889,11 @@ static bool parseBrainSpecialBody_FitIni(const char* fitPath, BrainSpecialBody& 
     }
 
     char keyBuf[16];
-    char verbBuf[64];
+    // UNITQUERY-SETTARGETPRIORITY-1: 64→256. Symbolic verbs (e.g. UnitQuery.SetTargetpriority
+    // with a '+'-joined CONTACT_CRITERIA_* expression) exceed 63 chars and were silently
+    // truncated. The RawScan/brace-block path uses std::string (no cap); only this legacy
+    // FitIni reader had the fixed buffer.
+    char verbBuf[256];
     for (int i = 0; i < 64; ++i) {
         std::snprintf(keyBuf, sizeof(keyBuf), "DO%d", i);
         verbBuf[0] = '\0';

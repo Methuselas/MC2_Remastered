@@ -1,0 +1,11 @@
+FITini
+; UNITQUERY-SETTARGETPRIORITY-1 fixture — symbolic args (TARGET_PRIORITY_MOVER, CONTACT_CRITERIA_*
+; '+'-expression) resolved by brain_symbol_resolve, emitted as a TARGET_POLICY intent, and
+; committed via setTargetPriority(). Resolves to slot=1 type=2 p1=0 p2=200 crit=97 (1+32+64).
+; Use with MC2_BRAIN_SPECIAL_FIT=mc2_01_settargetpriority + MC2_BRAIN_INTENT_QUEUE=1.
+
+[BrainSpecial]
+
+[Body]
+st DO0 = "UnitQuery.SetTargetpriority 1 TARGET_PRIORITY_MOVER 0 200 CONTACT_CRITERIA_ENEMY + CONTACT_CRITERIA_VISUAL_OR_SENSOR + CONTACT_CRITERIA_NOT_DISABLED"
+st DO1 = "HOLD"

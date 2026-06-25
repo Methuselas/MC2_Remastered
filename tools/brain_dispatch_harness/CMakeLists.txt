@@ -23,6 +23,7 @@ set(MCLIB_DIR    "${REPO_ROOT}/mclib")
 add_executable(brain_dispatch_harness
     harness_main.cpp
     dispatch_wrapper.cpp        # includes stubs THEN code/brain_special_dispatch.cpp
+    "${CODE_DIR}/brain_symbol_resolve.cpp"  # UNITQUERY-SETTARGETPRIORITY-1: pure resolver (no engine deps)
     stubs/objmgr_stub.cpp
     stubs/tacorder_stub.cpp
     stubs/inifile_stub.cpp

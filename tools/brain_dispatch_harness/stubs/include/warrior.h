@@ -19,6 +19,9 @@ public:
     // DISPATCH-INTENT-CLEARMOVEORDERS-1: called by commitBrainIntents on a CLEAR_MOVE intent.
     virtual void clearMoveOrders() {}
 
+    // UNITQUERY-SETTARGETPRIORITY-1: called by commitBrainIntents on a TARGET_POLICY intent.
+    virtual long setTargetPriority(long index, long type, long p1, long p2, long p3) { return 0; }
+
     // Called by executeSpecialBody_Apply (friendly-fire check)
     virtual TeamPtr getTeam() { return nullptr; }
 
@@ -54,6 +57,15 @@ public:
     // DISPATCH-INTENT-CLEARMOVEORDERS-1: count clearMoveOrders() commits for verification.
     int clearMoveCount = 0;
     void clearMoveOrders() override { ++clearMoveCount; }
+    // UNITQUERY-SETTARGETPRIORITY-1: record setTargetPriority() commits (count + last args).
+    int  targetPriorityCount = 0;
+    long lastTargetPriority[5] = {0,0,0,0,0};
+    long setTargetPriority(long index, long type, long p1, long p2, long p3) override {
+        ++targetPriorityCount;
+        lastTargetPriority[0] = index; lastTargetPriority[1] = type;
+        lastTargetPriority[2] = p1; lastTargetPriority[3] = p2; lastTargetPriority[4] = p3;
+        return 0;
+    }
 };
 
 #endif // WARRIOR_H
