@@ -638,6 +638,49 @@ void drawBeautyHeatmap( Camera* eye )
 		         side, changed, projfail, drawn, maxAbs ); fflush( stderr ); }
 }
 
+// B7c: draw the protected-zone mask — a marker per protected cell, RED for
+// structural (roads/buildings, "do not touch"), BLUE for water. Water is
+// downsampled to keep the draw count bounded. Grid must match the live terrain.
+void drawProtectedOverlay( Camera* eye )
+{
+	const int            side = BeautySidecarPreview::ProtectedSide();
+	const unsigned char* prot = BeautySidecarPreview::ProtectedData();
+	if ( !prot || side <= 0 || side != (int)Terrain::realVerticesMapSide )
+		return;
+	const float wupv = Terrain::worldUnitsPerVertex;
+	const float tlx  = Terrain::mapTopLeft3d.x;
+	const float tly  = Terrain::mapTopLeft3d.y;
+
+	gos_VERTEX seg[2];
+	memset( seg, 0, sizeof( seg ) );
+	seg[0].rhw = seg[1].rhw = 1.0f;
+
+	int drawn = 0;
+	const int kMaxMarkers = 6000;
+	for ( int r = 0; r < side && drawn < kMaxMarkers; ++r )
+	{
+		for ( int c = 0; c < side && drawn < kMaxMarkers; ++c )
+		{
+			const unsigned char lv = prot[ r * side + c ];
+			if ( lv == 0 ) continue;
+			if ( lv == 1 && ( ( r ^ c ) & 1 ) ) continue;   // downsample water
+			const float wx = tlx + (float)c * wupv;
+			const float wy = tly - (float)r * wupv;
+			float sx, sy;
+			if ( !projectPt( eye, wx, wy, sampleZ( wx, wy ), sx, sy ) ) continue;
+			const DWORD argb = ( lv == 2 ) ? packARGB( 255, 40, 40 )    // structural = red
+			                               : packARGB( 40, 120, 255 );  // water = blue
+			const float half = ( lv == 2 ) ? 4.0f : 2.5f;
+			seg[0].argb = seg[1].argb = argb;
+			seg[0].x = sx - half; seg[0].y = sy; seg[1].x = sx + half; seg[1].y = sy;
+			gos_DrawLines( seg, 2 );
+			seg[0].x = sx; seg[0].y = sy - half; seg[1].x = sx; seg[1].y = sy + half;
+			gos_DrawLines( seg, 2 );
+			++drawn;
+		}
+	}
+}
+
 void RenderWorldOverlay( Camera* eye )
 {
 	if ( !eye )
@@ -651,7 +694,7 @@ void RenderWorldOverlay( Camera* eye )
 	if ( !terrainLoaded() )
 		return;
 	if ( !s_showChunkGrid && !s_showSuperchunkGrid && !s_showWaterDebug
-	     && !BeautySidecarPreview::ShowHeatmap() )
+	     && !BeautySidecarPreview::ShowHeatmap() && !BeautySidecarPreview::ShowProtected() )
 		return;
 
 	// Overlay render state -- match FoliageRender: alpha-blended, no texture, drawn
@@ -673,6 +716,9 @@ void RenderWorldOverlay( Camera* eye )
 
 	if ( s_showWaterDebug )
 		drawWaterBounds( eye );
+
+	if ( BeautySidecarPreview::ShowProtected() )
+		drawProtectedOverlay( eye );
 
 	if ( BeautySidecarPreview::ShowHeatmap() )
 		drawBeautyHeatmap( eye );

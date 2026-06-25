@@ -110,7 +110,13 @@ def main() -> int:
     water_elev = read_water_elevation(Path(args.missions_dir) / f"{args.mission}.fit")
     layers = extract_layers(side, blocks, water_elev)
     foot, _objs, _ = read_object_footprints(read_packets(pak), side)
-    protect_hard = layers["overlay"] | foot | layers["water"]
+    # Hard-protect ONLY gameplay structures (road/runway/bridge overlays + building
+    # footprints). NOT water: `elev <= waterElevation` also captures gently-sloped
+    # SHORE land, which froze a ~3-tile inland band and left <10% editable. The
+    # advisor's plan beautifies shorelines (gentle, clamped) rather than freezing
+    # them, so water/shore are editable here; water is still shown in the overlay
+    # (protected.r8 level 1) as informational.
+    protect_hard = layers["overlay"] | foot
 
     delta, stats = compute_smooth_delta(
         layers["elev"], protect_hard, args.max_delta, args.passes, args.ugly_percentile)
@@ -118,6 +124,14 @@ def main() -> int:
     note = (f"B3 smooth: max_delta={args.max_delta} passes={args.passes} "
             f"ugly_pct={args.ugly_percentile}")
     beauty = sidecar.write_sidecar(Path(args.out), args.mission, pak, delta, note=note)
+
+    # B7c protected-zone overlay: per-cell protection level for the editor to draw.
+    #   2 = structural hard (road/runway/bridge overlays + building footprints,
+    #       1-ring dilated) -> "do not touch"; 1 = water; 0 = editable.
+    structural = _dilate(layers["overlay"] | foot)
+    prot = np.where(structural, 2, np.where(layers["water"], 1, 0)).astype(np.uint8)
+    prot.tofile(beauty / "protected.r8")
+
     print(f"[smooth] {args.mission}: ugly={stats['ugly_cells']} "
           f"changed={stats['changed_cells']} max|d|={stats['max_abs_delta_wu']:.2f}wu "
           f"mean|d|={stats['mean_abs_delta_wu']:.2f}wu protected={stats['protected_cells']} "

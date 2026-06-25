@@ -46,6 +46,13 @@ namespace BeautySidecarPreview
 	const float* DeltaData();   // size DeltaSide()^2, or null
 	// Heatmap toggle (driven by the Tools-panel checkbox, read by EditorDebugOverlay).
 	bool ShowHeatmap();
+
+	// --- B7c protected-zone overlay --------------------------------------------
+	// protected.r8: per-cell level (2=structural hard, 1=water, 0=editable).
+	bool                 HasProtected();
+	int                  ProtectedSide();
+	const unsigned char* ProtectedData();   // size ProtectedSide()^2, or null
+	bool                 ShowProtected();
 }
 
 #endif // BEAUTY_SIDECAR_PREVIEW_H

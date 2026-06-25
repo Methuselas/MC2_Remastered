@@ -29,6 +29,11 @@ namespace BeautySidecarPreview
 	static float s_deltaMaxAbs = 0.0f;
 	static bool  s_showHeatmap = false;
 
+	// B7c protected-zone overlay.
+	static std::vector<unsigned char> s_protected;
+	static int  s_protSide      = 0;
+	static bool s_showProtected = false;
+
 	// Sidecar dirs are named by the mission FILE stem (mc2_01.beauty). Use the
 	// terrain/colormap name (Terrain::terrainName, set on load to the mission stem,
 	// terrain.cpp:640) — NOT EditorData::MissionName(), which returns the .fit
@@ -164,6 +169,36 @@ namespace BeautySidecarPreview
 	const float* DeltaData()   { return s_delta.empty() ? nullptr : s_delta.data(); }
 	bool         ShowHeatmap() { return s_showHeatmap && HasDelta(); }
 
+	// B7c: load <mission>.beauty/protected.r8 (uint8 side*side). No terrain edit.
+	static bool LoadProtected()
+	{
+		const char* mission = missionStem();
+		if (!mission || !mission[0]) return false;
+		const char* fmts[] = {
+			"data/missions/%s.beauty/protected.r8",
+			"%s.beauty/protected.r8",
+			"tests/terrain/beautify/%s.beauty/protected.r8",
+		};
+		char path[512];
+		FILE* fp = nullptr;
+		for (int i = 0; i < 3 && !fp; ++i) { snprintf(path, sizeof(path), fmts[i], mission); fp = fopen(path, "rb"); }
+		if (!fp) return false;
+		fseek(fp, 0, SEEK_END); long bytes = ftell(fp); fseek(fp, 0, SEEK_SET);
+		int s = (int)(sqrt((double)bytes) + 0.5);
+		if (s * s != bytes || bytes <= 0) { fclose(fp); return false; }
+		s_protected.resize((size_t)bytes);
+		size_t got = fread(s_protected.data(), 1, (size_t)bytes, fp);
+		fclose(fp);
+		if (got != (size_t)bytes) { s_protected.clear(); return false; }
+		s_protSide = s;
+		return true;
+	}
+
+	bool                 HasProtected()  { return s_protSide > 0 && !s_protected.empty(); }
+	int                  ProtectedSide() { return s_protSide; }
+	const unsigned char* ProtectedData() { return s_protected.empty() ? nullptr : s_protected.data(); }
+	bool                 ShowProtected() { return s_showProtected && HasProtected(); }
+
 	void DrawImGui()
 	{
 		ImGui::SeparatorText("Beauty Sidecar Preview");
@@ -183,6 +218,12 @@ namespace BeautySidecarPreview
 		if (HasDelta())
 			ImGui::TextDisabled("raised=red  lowered=blue  max|d|=%.1fwu  grid=%d",
 			                    s_deltaMaxAbs, s_deltaSide);
+		// B7c: protected-zone overlay — toggle auto-loads protected.r8.
+		if (ImGui::Checkbox("Show protected zones", &s_showProtected)) {
+			if (s_showProtected && !HasProtected()) LoadProtected();
+		}
+		if (HasProtected())
+			ImGui::TextDisabled("red=structural no-touch (roads/buildings)  blue=water (info)  rest=editable");
 		ImGui::TextWrapped("%s", s_status);
 	}
 
