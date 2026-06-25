@@ -33,6 +33,9 @@
 //   OPORD.CoreAttack <target_wid>         → TACTICAL_ORDER_ATTACK_OBJECT (triple-guard: bad-WID/self/friendly)
 //   Unit.Retreat (or alias coreRetreat)   → TACTICAL_ORDER_WITHDRAW (no-arg, engine owns withdraw nav)
 // All fire IN THE ROOT BODY ONLY. Chained bodies (via TechSpecial.Call) are trace-only in 1A.
+// BRAIN-FSM-1K-A NOTE: Unit.SetState / Unit.SetStatePrev / Unit.InState / Unit.NotInState are NOT
+// order calls — they write currentState/prevState fields or set stateGateOpen only.
+// FSM verbs NEVER call setGeneralTacOrder. The relaxed_guard_doc checker count = 6 (unchanged).
 // STILL FORBIDDEN: orderAttackObject (forbidden side-effects), setAttackTarget, setSituationOpenFire,
 // setPlayerTacOrder, setAlarmTacOrder, requestHelp, requestTarget, calcTacOrder,
 // coreMoveTo (the C++ Mover method, distinct from the OPORD DSL verb), setMainGoal,
@@ -138,6 +141,19 @@ static bool s_dispatchCallGate() {
 static bool s_dispatchVarGate();
 
 // ---------------------------------------------------------------------------
+// Gate helper for MC2_BRAIN_FSM (BRAIN-FSM-1K-A).
+// Default OFF. When ON, FSM verbs (SetState/SetStatePrev/InState/NotInState)
+// are active.  When OFF, FSM verb strings fall through to the isRecognizedVerb
+// path (trace-only [BRAIN_DISPATCH] line) — byte-identical for brains without FSM verbs.
+static bool s_brainFsmGate() {
+    static const bool kGate = ([](){
+        const char* v = std::getenv("MC2_BRAIN_FSM");
+        return v && std::atoi(v) != 0;
+    })();
+    return kGate;
+}
+
+// ---------------------------------------------------------------------------
 // Recognized verb table for DISPATCH-1A.
 // All other verbs produce [BRAIN_DISPATCH_UNKNOWN] trace.
 static const char* const kRecognizedVerbs[] = {
@@ -150,6 +166,11 @@ static const char* const kRecognizedVerbs[] = {
     "Unit.Retreat",
     "Unit.Eject",
     "HOLD",
+    // BRAIN-FSM-1K-A: FSM state verbs (gate MC2_BRAIN_FSM, default OFF)
+    "Unit.SetState",
+    "Unit.SetStatePrev",
+    "Unit.InState",
+    "Unit.NotInState",
     nullptr  // sentinel
 };
 
@@ -607,6 +628,11 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
     MechBrainRuntime* runtime = (warrior && s_intentQueueEnabled()) ? warrior->getBrainRuntime() : nullptr;
     const bool varGate  = s_dispatchVarGate();
     const bool callGate = s_dispatchCallGate() && (index != nullptr);
+    // BRAIN-FSM-1K-A: stateGateOpen — stack-local, reset true at body entry.
+    // Unit.InState / Unit.NotInState set this false on mismatch; subsequent verbs are skipped.
+    // ONE continue check at top of loop; the 6 effect handlers are UNCHANGED.
+    const bool fsmGate = s_brainFsmGate();
+    bool stateGateOpen = true;
 
     // Per-tick visited set for cycle guard.
     std::vector<std::string> visited;
@@ -615,6 +641,9 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
 
     for (const std::string& verb : body.verbs) {
         const char* vp = verb.c_str();
+
+        // BRAIN-FSM-1K-A: gate check — skip effect verbs after a failed InState/NotInState.
+        if (!stateGateOpen) continue;
 
         // CALL-CHAIN-1A: TechSpecial.Call handling (trace only — no chained effects in 1A).
         if (callGate && std::strncmp(vp, "TechSpecial.Call", 16) == 0 &&
@@ -869,6 +898,79 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
                 std::fflush(stderr);
             }
             appliedEffect = true;
+        } else if (fsmGate && std::strncmp(vpCanon, "Unit.SetState", 13) == 0 &&
+                   (vpCanon[13] == ' ' || vpCanon[13] == '\t' || vpCanon[13] == '\0')) {
+            // BRAIN-FSM-1K-A: Unit.SetState "x" — explicit FSM transition.
+            // prevState←currentState; currentState←x; early return (no order call).
+            // NOTE: NOT an order call — relaxed_guard_doc setGeneralTacOrder count = 6 (unchanged).
+            MechBrainRuntime* fsm_rt = warrior ? warrior->getBrainRuntime() : nullptr;
+            if (fsm_rt) {
+                // Parse quoted state name: verb is "Unit.SetState \"stateName\""
+                const char* sp = vpCanon + 13;
+                while (*sp == ' ' || *sp == '\t') ++sp;
+                if (*sp == '"') ++sp;
+                char newState[32] = {};
+                int ni = 0;
+                while (*sp && *sp != '"' && ni < 31) newState[ni++] = *sp++;
+                newState[ni] = '\0';
+                std::strncpy(fsm_rt->prevState, fsm_rt->currentState, 31);
+                fsm_rt->prevState[31] = '\0';
+                std::strncpy(fsm_rt->currentState, newState, 31);
+                fsm_rt->currentState[31] = '\0';
+                std::fprintf(stderr, "[BRAIN_FSM_SETSTATE] from=%s to=%s wid=%d\n",
+                             fsm_rt->prevState, fsm_rt->currentState, wid);
+                std::fflush(stderr);
+            }
+            return appliedEffect;  // early exit — no subsequent verbs after SetState
+        } else if (fsmGate && std::strcmp(vpCanon, "Unit.SetStatePrev") == 0) {
+            // BRAIN-FSM-1K-A: Unit.SetStatePrev — transBack equivalent, swaps currentState↔prevState.
+            // Early return (no order call).
+            MechBrainRuntime* fsm_rt = warrior ? warrior->getBrainRuntime() : nullptr;
+            if (fsm_rt) {
+                char tmp[32];
+                std::memcpy(tmp, fsm_rt->prevState, 32);
+                std::strncpy(fsm_rt->prevState, fsm_rt->currentState, 31);
+                fsm_rt->prevState[31] = '\0';
+                std::memcpy(fsm_rt->currentState, tmp, 32);
+                std::fprintf(stderr, "[BRAIN_FSM_SETSTATEPREV] now=%s wid=%d\n",
+                             fsm_rt->currentState, wid);
+                std::fflush(stderr);
+            }
+            return appliedEffect;  // early exit — no subsequent verbs after SetStatePrev
+        } else if (fsmGate && std::strncmp(vpCanon, "Unit.InState", 12) == 0 &&
+                   (vpCanon[12] == ' ' || vpCanon[12] == '\t' || vpCanon[12] == '\0')) {
+            // BRAIN-FSM-1K-A: Unit.InState "x" — guard verb; does NOT call any order function.
+            // If currentState != x, stateGateOpen←false; subsequent verbs in this body are skipped.
+            MechBrainRuntime* fsm_rt = warrior ? warrior->getBrainRuntime() : nullptr;
+            const char* sp = vpCanon + 12;
+            while (*sp == ' ' || *sp == '\t') ++sp;
+            if (*sp == '"') ++sp;
+            char testState[32] = {};
+            int ni = 0;
+            while (*sp && *sp != '"' && ni < 31) testState[ni++] = *sp++;
+            testState[ni] = '\0';
+            const char* cur = fsm_rt ? fsm_rt->currentState : "";
+            int match = (std::strcmp(cur, testState) == 0) ? 1 : 0;
+            if (!match) stateGateOpen = false;
+            std::fprintf(stderr, "[BRAIN_FSM_INSTATE] state=%s match=%d wid=%d\n", testState, match, wid);
+            std::fflush(stderr);
+        } else if (fsmGate && std::strncmp(vpCanon, "Unit.NotInState", 15) == 0 &&
+                   (vpCanon[15] == ' ' || vpCanon[15] == '\t' || vpCanon[15] == '\0')) {
+            // BRAIN-FSM-1K-A: Unit.NotInState "x" — inverse guard; does NOT call any order function.
+            // If currentState == x, stateGateOpen←false; subsequent verbs in this body are skipped.
+            MechBrainRuntime* fsm_rt = warrior ? warrior->getBrainRuntime() : nullptr;
+            const char* sp = vpCanon + 15;
+            while (*sp == ' ' || *sp == '\t') ++sp;
+            if (*sp == '"') ++sp;
+            char testState[32] = {};
+            int ni = 0;
+            while (*sp && *sp != '"' && ni < 31) testState[ni++] = *sp++;
+            testState[ni] = '\0';
+            const char* cur = fsm_rt ? fsm_rt->currentState : "";
+            int match = (std::strcmp(cur, testState) == 0) ? 1 : 0;
+            if (match) stateGateOpen = false;
+            std::fprintf(stderr, "[BRAIN_FSM_NOTINSTATE] state=%s match=%d wid=%d\n", testState, match, wid);
+            std::fflush(stderr);
         } else if (isRecognizedVerb(vpCanon)) {
             // Recognized but no effect implemented this slice — trace only.
             std::fprintf(stderr, "[BRAIN_DISPATCH] verb=%s wid=%d (apply-mode: no effect this verb)\n", vp, wid);

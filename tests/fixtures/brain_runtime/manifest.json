@@ -349,6 +349,21 @@
         "val=7",
         "BRAIN_VAR_MISSION_GET"
       ]
+    },
+    {
+      "name": "fsm-state-transitions",
+      "file": "mc2_01_fsm_specials.fit",
+      "mission": "mc2_01",
+      "format": "raw-brace",
+      "fsm_sequential": true,
+      "gates_required": ["MC2_BRAIN_DISPATCH=1", "MC2_BRAIN_DISPATCH_APPLY=1", "MC2_BRAIN_FSM=1"],
+      "notes": "BRAIN-FSM-1K-A: SetState fires transition; InState match=1 opens gate (CoreGuard fires); InState match=0 closes gate (CoreGuard NOT fired); SetStatePrev restores prior state. Uses fsm_sequential=true to run all 4 bodies on one FsmMechWarrior (state persists).",
+      "expected_trace_substrings": [
+        "[BRAIN_FSM_SETSTATE] from= to=engage",
+        "[BRAIN_FSM_INSTATE] state=engage match=1",
+        "[BRAIN_FSM_INSTATE] state=patrol match=0",
+        "[BRAIN_FSM_SETSTATEPREV]"
+      ]
     }
   ]
 }

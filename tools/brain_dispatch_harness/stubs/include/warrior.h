@@ -27,6 +27,21 @@ public:
     // The harness exercises TraceOnly + Apply gate-OFF; stub returns nullptr so
     // s_intentQueueEnabled() path is always taken via the (runtime == nullptr) check.
     virtual MechBrainRuntime* getBrainRuntime() { return nullptr; }
+
+    // BRAIN-FSM-1K-A: FSM-capable warrior stub.
+    // Subclass FsmMechWarrior (below) provides a real runtime for FSM state tests.
+};
+
+// FsmMechWarrior — warrior stub that provides a real MechBrainRuntime for FSM harness tests.
+// Used by the fsm-state-transitions fixture via the recording driver.
+// BRAIN-FSM-1K-A.
+class FsmMechWarrior : public MechWarrior {
+public:
+    MechBrainRuntime fsmRuntime;
+    MechBrainRuntime* getBrainRuntime() override { return &fsmRuntime; }
+    // setGeneralTacOrder sink — count calls for gated-verb verification.
+    int orderCount = 0;
+    void setGeneralTacOrder(const TacticalOrder& order) override { ++orderCount; }
 };
 
 #endif // WARRIOR_H

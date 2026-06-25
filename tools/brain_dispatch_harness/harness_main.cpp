@@ -275,6 +275,12 @@ struct FixtureEntry {
 
     // V2 apply expectation
     ApplyExpectation applyExp;
+
+    // BRAIN-FSM-1K-A: fsm_sequential fixture type.
+    // When true, harness runs ALL TechSpecial bodies in the index sequentially
+    // on one FsmMechWarrior (so state persists across bodies).
+    // Trace substrings are checked against the combined Apply trace output.
+    bool fsmSequential = false;
 };
 
 static ApplyExpectation applyExpFromJson(const JsonValue& jv) {
@@ -339,6 +345,10 @@ static FixtureEntry entryFromJson(const JsonValue& jv) {
 
     if (jv.has("apply_expectation"))
         e.applyExp = applyExpFromJson(jv.at("apply_expectation"));
+
+    // BRAIN-FSM-1K-A: fsm_sequential flag.
+    if (jv.has("fsm_sequential"))
+        e.fsmSequential = jv.at("fsm_sequential").isBoolTrue();
 
     return e;
 }
@@ -548,12 +558,47 @@ int main(int argc, char** argv) {
                 res.failures.push_back("expected bodyHasEffect=true");
         }
 
-        // 3. trace substring checks
+        // 3. trace substring checks (V1 TraceOnly; FSM sequential fixtures use fsmTrace below)
+        if (!fix.fsmSequential) {
         for (const std::string& sub : fix.expectedTraceSubstrings) {
             if (traceOutput.find(sub) == std::string::npos) {
                 res.failures.push_back("trace missing substring: '" + sub + "'");
                 if (res.failures.size() == 1)
                     res.failures.push_back("  trace preview: " + traceOutput.substr(0, 400));
+            }
+        }
+        }
+
+        // --- BRAIN-FSM-1K-A: FSM sequential run ---
+        // Runs ALL index bodies in order on one FsmMechWarrior (state persists across bodies).
+        // Checks trace substrings against combined Apply trace.  Only runs when applyMode=true
+        // and fix.fsmSequential=true.
+        if (applyMode && fix.fsmSequential && body.loaded && !index.empty()) {
+            res.mode = "v2-fsm-sequential";
+            FsmMechWarrior fsmWarrior;
+            // fsmWarrior.fsmRuntime already zero-inited by MechBrainRuntime default ctor.
+            std::string fsmTrace = captureStderr([&]() {
+                for (const SpecialIndexEntry& entry : index) {
+                    executeSpecialBody_Apply(entry.body, &fsmWarrior, /*wid=*/1,
+                                             &fsmWarrior.fsmRuntime.varStore, &index, entry.key.c_str());
+                }
+            });
+            for (const std::string& sub : fix.expectedTraceSubstrings) {
+                if (fsmTrace.find(sub) == std::string::npos) {
+                    res.failures.push_back("fsm trace missing substring: '" + sub + "'");
+                    if (res.failures.size() == 1)
+                        res.failures.push_back("  fsm trace preview: " + fsmTrace.substr(0, 600));
+                }
+            }
+            // Additional gated-verb check: CoreGuard should fire for instate_match (orders>0)
+            // but NOT fire for instate_mismatch (gated out). FsmMechWarrior.orderCount tracks this.
+            // For the fsm fixture: SetState exits early (0 orders), instate_match fires CoreGuard (1 order),
+            // instate_mismatch gated (0 orders), SetStatePrev exits early (0 orders). Total = 1 order.
+            if (fsmWarrior.orderCount != 1) {
+                char buf[128];
+                std::snprintf(buf, sizeof(buf),
+                    "fsm: expected 1 order from gate-open CoreGuard, got %d", fsmWarrior.orderCount);
+                res.failures.push_back(buf);
             }
         }
 
