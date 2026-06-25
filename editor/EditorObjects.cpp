@@ -724,7 +724,10 @@ static bool EditorAnalyzeBrain( const char* brainName, std::vector<Stuff::Vector
 	for ( size_t i = 0; i < count; ++i )
 		if ( i < hasX.size() && i < hasY.size() && hasX[i] && hasY[i] )
 		{
-			Stuff::Vector3D wp; wp.x = xs[i]; wp.y = ys[i]; wp.z = 0.0f;
+			// .abl PatrolPath Y is negated vs editor/mission world Y (verified from
+			// mc2_03.fit unit PositionY < 0 while mc2_03_patrol_01.abl Y > 0; X signs
+			// match). Flip Y so the path lands in editor world space.
+			Stuff::Vector3D wp; wp.x = xs[i]; wp.y = -ys[i]; wp.z = 0.0f;
 			wpOut.push_back( wp );
 		}
 
@@ -751,6 +754,16 @@ void Unit::importPatrolFromBrainIfNeeded()
 		waypoints = wps;
 		orderType = ORDER_PATROL;
 		// orderAuthored stays false -> display only; not rewritten on save.
+	}
+
+	// MC2_PATROL_TRACE=1: dump unit position vs first imported waypoint so any
+	// remaining coordinate-frame mismatch can be read off directly.
+	if ( getenv( "MC2_PATROL_TRACE" ) && !wps.empty() && appearance() )
+	{
+		fprintf( stderr, "[PATROL] brain=%s unitPos=(%.0f,%.0f) wp0=(%.0f,%.0f) wpN=%u\n",
+			brain.getBrainName(), appearance()->position.x, appearance()->position.y,
+			wps[0].x, wps[0].y, (unsigned)wps.size() );
+		fflush( stderr );
 	}
 }
 
