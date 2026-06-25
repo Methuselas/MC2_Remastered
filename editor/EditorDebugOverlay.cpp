@@ -84,6 +84,25 @@ namespace
 		return true;
 	}
 
+	// Modern GL forward projection (projectModernClipGL + viewport remap) — the same
+	// zoom-correct transform object selection uses. The legacy projectForScreenXY
+	// (projectZ) above diverges/rejects when zoomed in, which made the patrol overlay
+	// vanish on zoom. Used by the patrol/guard overlay.
+	bool projectPtGL( Camera* eye, float wx, float wy, float wz, float& sx, float& sy )
+	{
+		Stuff::Vector3D world; world.x = wx; world.y = wy; world.z = wz;
+		ModernClipResult r = eye->projectModernClipGL( world );
+		if ( r.clip.w <= 1e-4f ) return false;
+		float vmx = 0.f, vmy = 0.f, vax = 0.f, vay = 0.f;
+		gos_GetViewport( &vmx, &vmy, &vax, &vay );
+		const float ndcX = r.clip.x / r.clip.w;
+		const float ndcY = r.clip.y / r.clip.w;
+		sx = vax + ( ndcX * 0.5f + 0.5f ) * vmx;
+		sy = vay + ( 1.0f - ( ndcY * 0.5f + 0.5f ) ) * vmy;
+		if ( !( sx == sx ) || !( sy == sy ) ) return false;
+		return true;
+	}
+
 	// Draw a connected world polyline (list of world XY samples at a given plane).
 	// horizontal=true -> line runs along +X at fixed row world-y; else along -Y.
 	void drawGridLine( Camera* eye, bool horizontal, float fixedWorld,
@@ -437,7 +456,7 @@ static void drawOnePatrol( Camera* eye, Unit* unit )
 			const Stuff::Vector3D& gp = unit->getPosition();
 			float gz = land->getTerrainElevation( gp ) + 12.0f;
 			float cx, cy;
-			if ( projectPt( eye, gp.x, gp.y, gz, cx, cy ) )
+			if ( projectPtGL( eye, gp.x, gp.y, gz, cx, cy ) )
 			{
 				const float r = 14.0f;
 				float px = 0.f, py = 0.f; bool have = false;
@@ -462,7 +481,7 @@ static void drawOnePatrol( Camera* eye, Unit* unit )
 	for ( size_t i = 0; i < wps.size(); ++i )
 	{
 		float z = land->getTerrainElevation( wps[i] ) + lift;
-		ok[i] = projectPt( eye, wps[i].x, wps[i].y, z, sx[i], sy[i] ) ? 1 : 0;
+		ok[i] = projectPtGL( eye, wps[i].x, wps[i].y, z, sx[i], sy[i] ) ? 1 : 0;
 	}
 
 	const size_t segCount = loop ? wps.size() : ( wps.size() ? wps.size() - 1 : 0 );
