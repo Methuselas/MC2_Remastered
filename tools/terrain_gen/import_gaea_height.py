@@ -58,6 +58,13 @@ def run(cfg: dict, out_root: Path) -> dict:
     size = int(cfg["size"])
     name = cfg["name"]
     h_raw, color, src = read_gaea(Path(cfg["height_file"]), res)
+    # Optional separate Gaea COLOR export (e.g. Combine_Out.r32) for the colormap.
+    if cfg.get("color_file") and color is None:
+        craw = np.fromfile(Path(cfg["color_file"]), dtype="<f4")
+        if craw.size == res * res * 3:
+            color = np.clip(craw.reshape(res, res, 3).astype(np.float64), 0, 1)
+        else:
+            print(f"[gaea-import] WARN color_file is {craw.size} floats != res^2*3; ignoring")
 
     # normalize -> [0,1], orientation guard (Gaea image-Y-down vs MC2 row-major).
     hn = (h_raw - h_raw.min()) / (h_raw.max() - h_raw.min() + 1e-9)
@@ -124,7 +131,8 @@ def run(cfg: dict, out_root: Path) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--recipe", help="gaea recipe json (overrides individual flags)")
-    ap.add_argument("--height-file"); ap.add_argument("--res", type=int, default=512)
+    ap.add_argument("--height-file"); ap.add_argument("--color-file")
+    ap.add_argument("--res", type=int, default=512)
     ap.add_argument("--size", type=int, default=120)
     ap.add_argument("--template-pak"); ap.add_argument("--name", default="gaea_test_01")
     ap.add_argument("--biome", default="temperate_hills")
@@ -140,9 +148,9 @@ def main() -> int:
     else:
         if not (a.height_file and a.template_pak):
             ap.error("need --recipe OR (--height-file and --template-pak)")
-        cfg = {"name": a.name, "height_file": a.height_file, "height_resolution": a.res,
-               "size": a.size, "template_pak": a.template_pak, "biome": a.biome,
-               "flip_y": not a.no_flip, "water_percentile": a.water_pct,
+        cfg = {"name": a.name, "height_file": a.height_file, "color_file": a.color_file,
+               "height_resolution": a.res, "size": a.size, "template_pak": a.template_pak,
+               "biome": a.biome, "flip_y": not a.no_flip, "water_percentile": a.water_pct,
                "height": {"min_elevation": a.min_elev, "max_elevation": a.max_elev}}
     rep = run(cfg, Path(a.out))
     print(f"[gaea-import] {rep['name']}: src={rep['height_source']} "
