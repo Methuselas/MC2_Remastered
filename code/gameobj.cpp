@@ -77,6 +77,7 @@
 #include <stdlib.h>  // getenv
 #include <stdio.h>   // printf, fflush
 #include <stdint.h>
+#include "../GameOS/gameos/diagnostic_trace.h"   // COMBAT-TRACE-1: weapon-fire JSONL events
 
 //---------------------------------------------------------------------------
 extern GameLog* CombatLog;
@@ -596,6 +597,19 @@ void OpenWeaponFireLog (void) {
 //---------------------------------------------------------------------------
 
 void LogWeaponFireChunk (WeaponFireChunkPtr chunk, GameObjectPtr attacker, GameObjectPtr target) {
+	// COMBAT-TRACE-1: every weapon fire (mech/vehicle/turret — all 10 fire sites) routes
+	// through here, so emitting one diagnostic event captures all combat engagement
+	// headlessly: attacker/target watch-IDs + team-IDs. Opt-in via MC2_DIAG_TAGS=...,COMBAT;
+	// the tagEnabled() short-circuit makes it zero-cost otherwise. getWatchID(false) avoids
+	// the assign side-effect in this trace path (live combatants already have a WID).
+	if (mc2_diag::tagEnabled("COMBAT") && attacker && target) {
+		char _cbf[160];
+		snprintf(_cbf, sizeof(_cbf),
+			"{\"ev\":\"fire\",\"a_wid\":%lu,\"a_team\":%ld,\"t_wid\":%lu,\"t_team\":%ld}",
+			attacker->getWatchID(false), attacker->getTeamId(),
+			target->getWatchID(false), target->getTeamId());
+		mc2_diag::writeEvent("COMBAT", 1, g_mc2FrameCounter, _cbf);
+	}
 #ifdef LOGWEAPONFIRECHUNKS
 
 	if (!WeaponFireLog)

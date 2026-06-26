@@ -40,6 +40,7 @@ const std::unordered_set<std::string>& knownTags() {
         "ANIM_ADVANCE",
         "ANIM_CADENCE",
         "TARGETING",
+        "COMBAT",   // COMBAT-TRACE-1: weapon-fire events (attacker/target wid+team). Opt-in.
     };
     return tags;
 }

@@ -115,6 +115,7 @@
 #include "../resource.h"
 #include "../GameOS/gameos/gpu_cull_readback.h"  // C3: GPU visibility queries
 #include "../GameOS/gameos/gos_profiler.h"  // Tracy sub-zones for vehicles update
+#include "../GameOS/gameos/diagnostic_trace.h"  // COMBAT-TRACE-1: weapon-hit JSONL events
 
 // C3: env-gated lifecycle routing killswitch (same env var as objmgr.cpp).
 // MC2_GPU_CULL_LIFECYCLE=1 routes AI canBeSeen() combat gates to GPU-lagged visibility.
@@ -4320,6 +4321,17 @@ long GroundVehicle::handleWeaponHit (WeaponShotInfoPtr shotInfo, bool addMultipl
 		return(NO_ERR);
 
 	printHandleWeaponHitDebugInfo(shotInfo);
+
+	// COMBAT-TRACE-1: see BattleMech::handleWeaponHit. Same universal hit chokepoint for vehicles.
+	if (mc2_diag::tagEnabled("COMBAT")) {
+		GameObjectPtr _cbAtk = ObjectManager->getByWatchID(shotInfo->attackerWID);
+		char _cbf[192];
+		snprintf(_cbf, sizeof(_cbf),
+			"{\"ev\":\"hit\",\"a_wid\":%u,\"a_team\":%ld,\"t_wid\":%lu,\"t_team\":%ld,\"dmg\":%.1f}",
+			(unsigned)shotInfo->attackerWID, _cbAtk ? _cbAtk->getTeamId() : -1L,
+			getWatchID(false), getTeamId(), (double)shotInfo->damage);
+		mc2_diag::writeEvent("COMBAT", 1, 0, _cbf);
+	}
 
 	if (getTeam() && Team::noPain[getTeamId()])
 		return(NO_ERR);
