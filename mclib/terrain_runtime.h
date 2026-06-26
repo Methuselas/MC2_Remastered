@@ -47,11 +47,26 @@ namespace TerrainRuntime
 	// Render/visual surface height. == gameplay height today; may diverge later.
 	float sampleVisualHeight(const Stuff::Vector3D& worldPos);
 
+	// Decal chokepoint: terrain decals (craters, impact rings) sit ON the rendered
+	// surface, so they belong on VISUAL height — unlike grounding, which stays on
+	// gameplay height (TERRAIN-RUNTIME-CONSUMER-DECALS-1). Gate
+	// MC2_TERRAIN_RUNTIME_DECALS (default-OFF). Byte-identical today
+	// (sampleVisualHeight == gameplay); the future split is exactly where decals
+	// (visual) and units (gameplay) must diverge to avoid z-fight.
+	float decalElevation(const Stuff::Vector3D& worldPos);
+
 	// Flat water plane level. == land->getWaterElevation() (position ignored today).
 	float sampleWaterLevel(const Stuff::Vector3D& worldPos);
 
 	// Material / terrain class at world pos. == land->getTerrainType(pos).
 	int sampleMaterialId(const Stuff::Vector3D& worldPos);
+
+	// Gameplay water classification (deep/shallow/dry) at a position — the
+	// chokepoint every gameplay water-threshold query routes through
+	// (TERRAIN-RUNTIME-CONSUMER-WATER-1). == land->getWater(pos) today (single
+	// impl, so no gate). The future gameplay/visual split keeps water-class on
+	// gameplay height here, independent of the visual waterline mesh.
+	long sampleWaterClass(const Stuff::Vector3D& worldPos);
 
 	// Derived feature query in [0,1]. Live for FM_Cliff / FM_Shoreline; the
 	// remaining masks return 0 until their data layer exists.

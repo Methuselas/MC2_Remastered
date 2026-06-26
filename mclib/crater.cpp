@@ -20,6 +20,8 @@
 #include"terrain.h"
 #endif
 
+#include"terrain_runtime.h"   // TERRAIN-RUNTIME-CONSUMER-DECALS-1
+
 #ifndef CIDENT_H
 #include"cident.h"
 #endif
@@ -254,10 +256,10 @@ long CraterManager::addCrater (long craterType, Stuff::Vector3D &position, float
 		craterList[currentCrater].position[2].Add(craterList[currentCrater].position[2],position);
 		craterList[currentCrater].position[3].Add(craterList[currentCrater].position[3],position);
 		
-		craterList[currentCrater].position[0].z = land->getTerrainElevation(craterList[currentCrater].position[0]);
-		craterList[currentCrater].position[1].z = land->getTerrainElevation(craterList[currentCrater].position[1]);
-		craterList[currentCrater].position[2].z = land->getTerrainElevation(craterList[currentCrater].position[2]);
-		craterList[currentCrater].position[3].z = land->getTerrainElevation(craterList[currentCrater].position[3]);
+		craterList[currentCrater].position[0].z = TerrainRuntime::decalElevation(craterList[currentCrater].position[0]);
+		craterList[currentCrater].position[1].z = TerrainRuntime::decalElevation(craterList[currentCrater].position[1]);
+		craterList[currentCrater].position[2].z = TerrainRuntime::decalElevation(craterList[currentCrater].position[2]);
+		craterList[currentCrater].position[3].z = TerrainRuntime::decalElevation(craterList[currentCrater].position[3]);
 
 		// MC2_DYNAMIC_DECALS: spawn a dynamic impact ring that fades over time.
 		// The existing craterList entry above is permanent (no fade); the dynamic

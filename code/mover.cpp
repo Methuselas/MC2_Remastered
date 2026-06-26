@@ -11,6 +11,7 @@
 #ifndef MCLIB_h
 #include"mclib.h"
 #endif
+#include"terrain_runtime.h"   // TERRAIN-RUNTIME-CONSUMER-WATER-1
 
 #ifndef GAMEOBJ_H
 #include"gameobj.h"
@@ -4426,7 +4427,7 @@ bool Mover::canMoveHere (Stuff::Vector3D worldPos) {
 
 	//--------------------------------------------------------
 	// Otherwise, I'm a ground mover and there may be water...
-	return(land->getWater(worldPos) < 2);
+	return(TerrainRuntime::sampleWaterClass(worldPos) < 2);
 }
 
 //-----------------------------------------------------------------------------

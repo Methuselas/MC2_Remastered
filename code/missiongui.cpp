@@ -28,6 +28,7 @@
 #include"missiongui.h"
 #endif
 #include "tacticaloverview.h"
+#include"terrain_runtime.h"   // TERRAIN-RUNTIME-CONSUMER-WATER-1
 
 // M1.6 + M2.6: IsStaticPropPickEnabled, lookupAtPixel, setLastGameplayPick,
 // clearLastGameplayPick, getLastGameplayPick, IsObjectIdBufferEnabled,
@@ -4742,7 +4743,7 @@ bool MissionInterfaceManager::canAddVehicle( const Stuff::Vector3D& pos )
 		if ( Team::home->teamLineOfSight(pos, 0.0f) )
 		{
 			if ( GameMap->getPassable( pos )
-				&& (!land->getWater(pos) ))
+				&& (!TerrainRuntime::sampleWaterClass(pos) ))
 				return true;
 			else 
 				return false;

@@ -165,10 +165,20 @@ Parity gate: legacy-direct == API result, byte-identical, gate default-OFF.
 2. (remaining height consumers — UI markers, ablmc2 strike, team/tacordr/mover-path,
    weather, camera-grounding — can adopt `groundElevation` later; not hot grounding)
 3. water threshold + shore (subtle straddle of one constant)
+   — ✅ TERRAIN-RUNTIME-CONSUMER-WATER-1 (2026-06-25). Added `sampleWaterClass(pos)`
+     (pure forward to `land->getWater`; single impl so no gate). Relocated the 3 gameplay
+     water-class callers onto it: `mover.cpp:4429`, `move.cpp:1030`, `missiongui.cpp:4745`.
+     Editor water callers left. Byte-identical; mc2_24 golden PASS. Keeps gameplay
+     water-class on gameplay height, independent of the visual waterline mesh.
 4. craters / decal ring (z-fight)
-5. vegetation placement + gates
-6. picking
-Pathfinding/passability = separate axis (packet-4 MOVE), defer.
+   — ✅ TERRAIN-RUNTIME-CONSUMER-DECALS-1 (2026-06-25). Added `decalElevation(pos)` →
+     VISUAL height (gate `MC2_TERRAIN_RUNTIME_DECALS`, default-OFF, byte-identical). Decals
+     intentionally route to VISUAL (they sit on the rendered surface) — the exact site where
+     they must diverge from unit grounding (gameplay) to avoid z-fight. Migrated `crater.cpp`
+     (4) + `dynamic_decal_ring.cpp` (1). Gate-OFF + gate-ON mc2_24 PASS, golden PASS.
+5. vegetation placement + gates  (not started — separate consumer class)
+6. picking  (not started — camera/editor class)
+Pathfinding/passability + mines = separate axis (packet-4 MOVE / GameMap), defer.
 
 **Do NOT** make visual height authoritative, change grounding before render proof,
 require stock-map conversion, or treat colormap as the final material model.

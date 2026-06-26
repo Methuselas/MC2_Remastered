@@ -11,6 +11,7 @@
 #ifndef MCLIB_H
 #include"mclib.h"
 #endif
+#include"terrain_runtime.h"   // TERRAIN-RUNTIME-CONSUMER-WATER-1
 
 #ifndef MOVE_H
 #include"move.h"
@@ -1027,7 +1028,7 @@ long MissionMap::init (long cellHeight, long cellWidth, long curPlanet, MissionM
 				setBuildGate(row, col, false);
 				Stuff::Vector3D worldPos;
 				land->cellToWorld(row, col, worldPos);
-				long cellWaterType = land->getWater(worldPos);
+				long cellWaterType = TerrainRuntime::sampleWaterClass(worldPos);
 				if (cellWaterType == WATER_TYPE_SHALLOW)
 					setShallowWater(row, col, true);
 				if (cellWaterType == WATER_TYPE_DEEP)

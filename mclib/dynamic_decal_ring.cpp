@@ -22,6 +22,8 @@
 #include "terrain.h"
 #endif
 
+#include "terrain_runtime.h"   // TERRAIN-RUNTIME-CONSUMER-DECALS-1
+
 #include "gameos.hpp"  // gos_PushDecal, WorldOverlayVert
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -92,7 +94,7 @@ void elevate(float x, float y, float& z)
     if (!land) return;
     Stuff::Vector3D p;
     p.x = x; p.y = y; p.z = 0.0f;
-    z = land->getTerrainElevation(p);
+    z = TerrainRuntime::decalElevation(p);
 }
 
 // Push a decal quad as two triangles via gos_PushDecal.

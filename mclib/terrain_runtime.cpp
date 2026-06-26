@@ -47,6 +47,20 @@ float sampleVisualHeight(const Stuff::Vector3D& worldPos)
 	return land ? land->getTerrainElevation(worldPos) : 0.0f;
 }
 
+float decalElevation(const Stuff::Vector3D& worldPos)
+{
+	if (!land)
+		return 0.0f;
+	// Gate = the future flip-point where decals follow the VISUAL surface while
+	// units stay on gameplay height. Both branches byte-identical today.
+	static const bool s_gate = []() {
+		const char* v = getenv("MC2_TERRAIN_RUNTIME_DECALS");
+		return v && v[0] == '1' && v[1] == '\0';   // default OFF
+	}();
+	return s_gate ? sampleVisualHeight(worldPos)
+	              : land->getTerrainElevation(worldPos);
+}
+
 float sampleWaterLevel(const Stuff::Vector3D& /*worldPos*/)
 {
 	// Flat plane today (waterDepth). Position reserved for a future
@@ -57,6 +71,12 @@ float sampleWaterLevel(const Stuff::Vector3D& /*worldPos*/)
 int sampleMaterialId(const Stuff::Vector3D& worldPos)
 {
 	return land ? (int)land->getTerrainType(worldPos) : 0;
+}
+
+long sampleWaterClass(const Stuff::Vector3D& worldPos)
+{
+	// Pure forward — single legacy impl, byte-identical relocation onto the spine.
+	return land ? land->getWater(worldPos) : 0;
 }
 
 float sampleFeatureMask(const Stuff::Vector3D& worldPos, FeatureMask kind)
