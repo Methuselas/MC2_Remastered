@@ -74,6 +74,7 @@ set(SOURCES ${SOURCES}
     mapdata.cpp
     quad.cpp
     terrain.cpp
+    terrain_runtime.cpp
     terrtxm.cpp
     terrtxm2.cpp
     burnin_jpeg_decode.cpp

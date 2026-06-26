@@ -49,6 +49,8 @@
 #include"../GameOS/gameos/gos_frame_pass_stats.h"     // [FRAME_PASS_STATS v1] chunk draw count
 #include"../GameOS/gameos/utils/logging.h"            // Terrain LOD chunk Phase 2: throttled false-negative log
 #include"terrain_admission_mode.h"  // F6 T2: shared isModern() flag for terrain.cpp + quad.cpp
+#include"terrain_runtime.h"  // TERRAIN-RUNTIME-API-1: compat seam + gated parity walk
+#include <cstdio>            // TERRAIN-RUNTIME-API-1: parity self-test log
 
 #include"move.h"   // MC2_TERRAIN_MINE_AB diagnostic: GameMap (extern MissionMapPtr)
 #include <vector>
@@ -1489,6 +1491,44 @@ extern float textureOffset;
 long Terrain::update (void)
 {
 	ZoneScopedN("Terrain::update");
+
+	//-----------------------------------------------------------------
+	// TERRAIN-RUNTIME-API-1 parity self-test (gate MC2_TERRAIN_RUNTIME_PARITY=1).
+	// Read-only, runs once. Proves the TerrainRuntime compat seam links and
+	// returns byte-identical values to the legacy accessors it forwards to.
+	// In-scope here to the inline getCellPos cell helper.
+	// One-shot: evaluate the gate exactly once (first frame with a live grid),
+	// so the OFF path costs nothing per frame after that.
+	static bool s_runtimeParityChecked = false;
+	if (!s_runtimeParityChecked && realVerticesMapSide > 0)
+	{
+		s_runtimeParityChecked = true;
+		if (TerrainRuntime::parityGateEnabled())
+		{
+		const int cells[][2] = { {3,3}, {30,30}, {90,90}, {150,150} };
+		int samples = 0, mismGame = 0, mismVis = 0, mismMat = 0, mismWater = 0;
+		const float legacyWater = getWaterElevation();
+		for (int i = 0; i < 4; ++i)
+		{
+			Stuff::Vector3D pos;
+			getCellPos(cells[i][0], cells[i][1], pos);   // fills xy + z=legacy elevation
+			if (!Terrain::IsValidTerrainPosition(pos))
+				continue;
+			++samples;
+			const float legGame = getTerrainElevation(pos);
+			const int   legMat  = (int)getTerrainType(pos);
+			if (TerrainRuntime::sampleGameplayHeight(pos) != legGame)  ++mismGame;
+			if (TerrainRuntime::sampleVisualHeight(pos)   != legGame)  ++mismVis;
+			if (TerrainRuntime::sampleMaterialId(pos)     != legMat)   ++mismMat;
+			if (TerrainRuntime::sampleWaterLevel(pos)     != legacyWater) ++mismWater;
+		}
+		printf("[TERRAIN_RUNTIME v1] parity self-test: side=%ld samples=%d "
+		       "mismatch{gameplay=%d visual=%d material=%d water=%d}\n",
+		       realVerticesMapSide, samples, mismGame, mismVis, mismMat, mismWater);
+		fflush(stdout);
+		} // gate-enabled
+	} // one-shot
+
 	//-----------------------------------------------------------------
 	// Startup the Terrain Color Map
 	if ( terrainTextures2  && !(terrainTextures2->colorMapStarted))
