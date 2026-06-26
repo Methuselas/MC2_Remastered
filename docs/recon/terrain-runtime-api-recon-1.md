@@ -185,6 +185,32 @@ require stock-map conversion, or treat colormap as the final material model.
 
 ---
 
+## 7. ⏸ PAUSED 2026-06-25 + verification finding
+
+**SHIPPED + committed (local nifty, NOT pushed):** obj 1 spine `76cb8449`, obj 2 grounding
+`e0c4c0c3`+`5aa9aff4`, obj 3+4 water+decals `d8cc1b01`. Deployed v0.5.0 == HEAD.
+
+**NOT done (paused):** obj 5 vegetation (was built+smoke-PASS, then **reverted** —
+`VegetationAdapter.cpp` card-Z→visual / gates→gameplay split is the intended shape, re-apply
+on resume), obj 6 picking (camera.cpp, never started). Mines/passability = deferred axis.
+
+**VERIFICATION FINDING (blocks pixel-golden for these consumers):** `run_visual.py compare`
+byte-compare is **non-deterministic on live missions**. Proof: mc2_24 captured with the SAME
+binary, gate-OFF, twice → different sha256 per bookmark both times (and again gate-ON). Cause
+= live combat (movers/AI/particles/weapon-spawned decals) isn't frame-reproducible even with
+`fixed_clock`. So OFF-vs-ON sha diff = same noise as OFF-vs-OFF; it cannot prove byte-identity.
+The smoke `[visual-advisory] ... PASS` line is a STALE cached result (fixed 2026-06-22 ts), NOT
+a fresh compare — do not cite it as a golden.
+
+**What these slices ARE verified by:** (1) byte-identity by construction — every migrated site
+returns exactly the legacy value (pure forwarder); (2) smoke PASS + Δdestroys=0 + no crash,
+gate-OFF and gate-ON. A deterministic pixel-golden for grounding/decals is infeasible (those
+consumers only render on moving objects in non-deterministic combat). Resume options: accept
+construction+smoke, OR build a frozen early-frame (pre-combat) A/B capture, OR diff-review the
+subagent-done mech/gvehicl/warrior sweeps.
+
+---
+
 ## 6. Known landmines (user field notes 2026-06-25 — will bite later)
 
 These do NOT block the pure pass-through pass but constrain the MAT / FM / VH axes.
