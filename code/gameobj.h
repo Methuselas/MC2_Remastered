@@ -596,13 +596,25 @@ class GameObject {
 		}
 
 		//NEVER call this with forceStatus UNLESS you are recovering a mech!!!
-		void setStatus (long newStatus, bool forceStatus = false) 
+		// COMBAT-TRACE-1: out-of-line death-event emitter (defined in gameobj.cpp, which has the
+		// diag include). Keeps the widely-included gameobj.h free of the diagnostic_trace header.
+		void emitCombatDeathTrace (long newStatus);
+
+		void setStatus (long newStatus, bool forceStatus = false)
 		{
+			// COMBAT-TRACE-1: detect the alive -> DISABLED/DESTROYED transition (a combat kill;
+			// DISABLED = mech taken out, DESTROYED = blown up) before status is overwritten, then
+			// emit a death event. Fires only on the transition (helper no-ops unless COMBAT tag on).
+			const bool _wasAlive = (status != OBJECT_STATUS_DESTROYED) && (status != OBJECT_STATUS_DISABLED);
+
 			if (((status != OBJECT_STATUS_DESTROYED) && (status != OBJECT_STATUS_DISABLED)) || forceStatus)
 				status = newStatus;
 
 			if (newStatus == OBJECT_STATUS_DESTROYED)
 				status = newStatus;
+
+			if (_wasAlive && (newStatus == OBJECT_STATUS_DISABLED || newStatus == OBJECT_STATUS_DESTROYED))
+				emitCombatDeathTrace(newStatus);
 		}
 
 		virtual bool isCrippled (void) {
