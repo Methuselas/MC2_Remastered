@@ -131,6 +131,7 @@
 #include "../GameOS/gameos/gpu_cull_readback.h"  // C3: GPU visibility queries
 #include "../GameAdapters/MechRenderAdapter.h"  // M2: mech spawn/destroy adapter
 #include "move_recon.h"  // MC2_MOVE_RECON per-frame pathfinding cost instrumentation
+#include "../GameOS/gameos/diagnostic_trace.h"  // COMBAT-TRACE-1: weapon-hit JSONL events
 
 // C3: env-gated lifecycle routing killswitch (same env var as objmgr.cpp).
 // MC2_GPU_CULL_LIFECYCLE=1 routes AI canBeSeen() combat gates to GPU-lagged visibility.
@@ -7577,7 +7578,22 @@ long BattleMech::handleWeaponHit (WeaponShotInfoPtr shotInfo, bool addMultiplayC
 		return(NO_ERR);
 
 	printHandleWeaponHitDebugInfo(shotInfo);
-	
+
+	// COMBAT-TRACE-1: weapon HIT resolution is the universal combat chokepoint — scripted ABL
+	// attacks (ablmc2.cpp) AND normal weapon fire both land here (unlike LogWeaponFireChunk,
+	// which is the multiplayer chunk-send path that never runs in single-player). Emitting here
+	// captures all combat headlessly: attacker/target wid+team + damage. Opt-in via
+	// MC2_DIAG_TAGS=...,COMBAT (tagEnabled short-circuits to zero cost otherwise).
+	if (mc2_diag::tagEnabled("COMBAT")) {
+		GameObjectPtr _cbAtk = ObjectManager->getByWatchID(shotInfo->attackerWID);
+		char _cbf[192];
+		snprintf(_cbf, sizeof(_cbf),
+			"{\"ev\":\"hit\",\"a_wid\":%u,\"a_team\":%ld,\"t_wid\":%lu,\"t_team\":%ld,\"dmg\":%.1f}",
+			(unsigned)shotInfo->attackerWID, _cbAtk ? _cbAtk->getTeamId() : -1L,
+			getWatchID(false), getTeamId(), (double)shotInfo->damage);
+		mc2_diag::writeEvent("COMBAT", 1, 0, _cbf);
+	}
+
 	if ((getTeam() && Team::noPain[getTeamId()]) || localInvulnerable)
 		return(NO_ERR);
 
