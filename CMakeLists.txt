@@ -345,6 +345,7 @@ set(SOURCES
     "code/turret.cpp"
     "code/brain_special_dispatch.cpp"
     "code/brain_symbol_resolve.cpp"
+    "code/brain_missionfit_oporbd.cpp"
     "code/brain_tactic_select.cpp"
     "code/warrior.cpp"
     "code/weaponbolt.cpp"
