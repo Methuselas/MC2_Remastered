@@ -12,6 +12,8 @@
 #include"mclib.h"
 #endif
 
+#include"terrain_runtime.h"   // TERRAIN-RUNTIME-CONSUMER-GROUNDING-1
+
 #ifndef TEAM_H
 #include"team.h"
 #endif
@@ -822,7 +824,19 @@ long Building::update (void)
 			{
 				windowsVisible = turn;
 	
-				float zPos = land->getTerrainElevation(position);
+				// TERRAIN-RUNTIME-CONSUMER-GROUNDING-1: first consumer migrated onto
+				// the TerrainRuntime spine. Gate MC2_TERRAIN_RUNTIME_GROUNDING
+				// (default-OFF = exact legacy call). Byte-identical today —
+				// sampleGameplayHeight forwards to getTerrainElevation. Buildings
+				// keep GAMEPLAY height (footprint + shadow casters); a future
+				// visual/gameplay split can flip this site deliberately.
+				static const bool s_groundingApi = []() {
+					const char* v = getenv("MC2_TERRAIN_RUNTIME_GROUNDING");
+					return v && v[0] == '1' && v[1] == '\0';   // default OFF
+				}();
+				float zPos = s_groundingApi
+					? TerrainRuntime::sampleGameplayHeight(position)
+					: land->getTerrainElevation(position);
 				position.z = zPos;
 				setPosition(position);
 

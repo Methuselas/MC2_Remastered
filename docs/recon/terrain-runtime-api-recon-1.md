@@ -153,6 +153,11 @@ Parity gate: legacy-direct == API result, byte-identical, gate default-OFF.
 
 **Migration priority (highest break-surface first):**
 1. prop/building/object grounding (load-bearing, feeds shadow casters)
+   — ✅ TERRAIN-RUNTIME-CONSUMER-GROUNDING-1 (2026-06-25): `bldng.cpp:825`
+     `Building::update` grounding routed through `sampleGameplayHeight` behind gate
+     `MC2_TERRAIN_RUNTIME_GROUNDING` (default-OFF = exact legacy). Gate-OFF mc2_01+24
+     PASS byte-identical; gate-ON mc2_24 PASS Δdestroys=0, visual-advisory PASS.
+     Remaining grounding sites (objmgr/gameobj object-grounding) = next.
 2. unit grounding (hot, ~21 sites)
 3. water threshold + shore (subtle straddle of one constant)
 4. craters / decal ring (z-fight)
