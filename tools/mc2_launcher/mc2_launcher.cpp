@@ -94,6 +94,7 @@
 #define IDC_GFX_FRAMECAP_EDIT  1531  // FPS edit control
 #define IDC_GFX_VSYNC_CHK      1532  // "Enable VSync" checkbox
 #define IDC_GFX_VRAM_TEXT      1540  // multi-line STATIC for VRAM estimate
+#define IDC_GFX_PRESET_BASE    1560  // preset buttons: +0=Low +1=Medium +2=High +3=Ultra
 
 #define WM_APP_IMPORT_DONE (WM_APP + 1)
 
@@ -107,7 +108,7 @@
 // Capped to keep the dialog manageable.
 #define TEXPACK_DLG_SLOTS 7  // 1 "None" + up to 6 packs
 
-enum CompatKind { CK_UNKNOWN = 0, CK_MCO = 1, CK_MC2X = 2 };
+enum CompatKind { CK_UNKNOWN = 0, CK_MCO = 1, CK_MC2X = 2, CK_PENDING = 3 };
 
 struct ModEntry {
     char folderName[256];   // OS directory name — passed as MC2_ACTIVE_MOD / MC2_MOD_DEPS
@@ -242,6 +243,15 @@ static const char* k_shadSizeValues[]   = { "2048", "4096", "8192" };
 static const char* k_shadQualLabels[]   = { "Low (2048)", "Medium (4096)", "High (8192)" };
 static const int   k_texVramMB[]        = { 40, 160, 640, 2560 };  // texture array VRAM by tier
 static const int   k_shadVramMB[]       = { 64, 256, 1024 };       // shadow map VRAM by quality (4 cascades)
+
+struct GfxPreset { int texQual; int shadQual; bool frameCap; int fps; };
+static const GfxPreset k_gfxPresets[] = {
+    { 0, 0, true,  60  },   // Low
+    { 1, 1, true,  60  },   // Medium
+    { 2, 2, true,  165 },   // High
+    { 3, 2, false, 165 },   // Ultra (uncapped)
+};
+static const char* k_gfxPresetLabels[] = { "Low", "Medium", "High", "Ultra" };
 
 // Graphics Options dialog window handle.
 static HWND s_hGraphicsDlg = NULL;
@@ -790,7 +800,7 @@ static void RecalcVram(char* out, int outSz) {
         "  %s\r\n"
         "  (16K BC6H ~128 MB, 16K RGBA16F ~1 GB)\r\n"
         "  Base overhead: %d MB\r\n"
-        "  " "\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95\xe2\x80\x95" "\r\n"
+        "  ---------------------\r\n"
         "  (excl. terrain, water, mission geometry)",
         totalMB, texMB, shadMB, fboMB, hdriLine, baseMB);
     out[outSz-1] = '\0';
@@ -846,9 +856,30 @@ static LRESULT CALLBACK GraphicsDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
 
         int y = GFX_MARGIN;
 
-        // --- Texture Packs ---
+        // --- Presets ---
         {
-            HWND hTP = CreateWindowA("STATIC", "Texture Packs",
+            HWND hPrLbl = CreateWindowA("STATIC", "Presets",
+                WS_CHILD | WS_VISIBLE | SS_LEFT,
+                GFX_MARGIN, y, GFX_DLG_W - 2*GFX_MARGIN, GFX_SEC_H,
+                hwnd, (HMENU)(INT_PTR)-1, s_hInst, NULL);
+            SendMessageA(hPrLbl, WM_SETFONT, (WPARAM)hFontBold, TRUE);
+            y += GFX_SEC_STEP;
+
+            int nPr = 4;
+            int prW = (GFX_DLG_W - 2*GFX_MARGIN - (nPr-1)*8) / nPr;
+            for (int i = 0; i < nPr; i++) {
+                HWND hPr = CreateWindowA("BUTTON", k_gfxPresetLabels[i],
+                    WS_CHILD | WS_VISIBLE,
+                    GFX_MARGIN + i * (prW + 8), y, prW, GFX_BTN_H,
+                    hwnd, (HMENU)(INT_PTR)(IDC_GFX_PRESET_BASE + i), s_hInst, NULL);
+                SendMessageA(hPr, WM_SETFONT, (WPARAM)hFont, TRUE);
+            }
+            y += GFX_BTN_H + 8;
+        }
+
+        // --- Texture Pack Mods (installed art replacements — mutually exclusive) ---
+        {
+            HWND hTP = CreateWindowA("STATIC", "Texture Pack Mods  (installed art replacements)",
                 WS_CHILD | WS_VISIBLE | SS_LEFT,
                 GFX_MARGIN, y, GFX_DLG_W - 2*GFX_MARGIN, GFX_SEC_H,
                 hwnd, (HMENU)(INT_PTR)-1, s_hInst, NULL);
@@ -887,8 +918,8 @@ static LRESULT CALLBACK GraphicsDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
         }
         y += 6;
 
-        // --- Texture Quality ---
-        HWND hS = CreateWindowA("STATIC", "Texture Quality",
+        // --- Texture Resolution (engine-side atlas detail — not a mod) ---
+        HWND hS = CreateWindowA("STATIC", "Texture Resolution  (engine atlas detail level)",
             WS_CHILD | WS_VISIBLE | SS_LEFT,
             GFX_MARGIN, y, GFX_DLG_W - 2*GFX_MARGIN, GFX_SEC_H,
             hwnd, (HMENU)(INT_PTR)-1, s_hInst, NULL);
@@ -1036,6 +1067,34 @@ static LRESULT CALLBACK GraphicsDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
             s_gfxTexQual = savedTq; s_gfxShadQual = savedSq;
         }
 
+        // Preset button clicked: apply preset values to all controls.
+        int pidx = (int)id - IDC_GFX_PRESET_BASE;
+        if (pidx >= 0 && pidx < 4 && notif == BN_CLICKED) {
+            const GfxPreset& p = k_gfxPresets[pidx];
+            for (int i = 0; i < 4; i++) {
+                HWND h = GetDlgItem(hwnd, IDC_GFX_TEXQUAL_BASE + i);
+                if (h) SendMessageA(h, BM_SETCHECK, (i == p.texQual) ? BST_CHECKED : BST_UNCHECKED, 0);
+            }
+            for (int i = 0; i < 3; i++) {
+                HWND h = GetDlgItem(hwnd, IDC_GFX_SHADQUAL_BASE + i);
+                if (h) SendMessageA(h, BM_SETCHECK, (i == p.shadQual) ? BST_CHECKED : BST_UNCHECKED, 0);
+            }
+            HWND hCk = GetDlgItem(hwnd, IDC_GFX_FRAMECAP_CHK);
+            HWND hEd = GetDlgItem(hwnd, IDC_GFX_FRAMECAP_EDIT);
+            if (hCk) SendMessageA(hCk, BM_SETCHECK, p.frameCap ? BST_CHECKED : BST_UNCHECKED, 0);
+            if (hEd) {
+                char fpsBuf[16]; _snprintf(fpsBuf, sizeof(fpsBuf), "%d", p.fps);
+                SetWindowTextA(hEd, fpsBuf);
+            }
+            // Update VRAM display for the preset.
+            int savedTq = s_gfxTexQual, savedSq = s_gfxShadQual;
+            s_gfxTexQual = p.texQual; s_gfxShadQual = p.shadQual;
+            char vramBuf[512]; RecalcVram(vramBuf, sizeof(vramBuf));
+            HWND hVt = GetDlgItem(hwnd, IDC_GFX_VRAM_TEXT);
+            if (hVt) SetWindowTextA(hVt, vramBuf);
+            s_gfxTexQual = savedTq; s_gfxShadQual = savedSq;
+        }
+
         if (id == IDC_GFX_OK) {
             GfxDialogReadControls(hwnd);
             SaveGfxJson();
@@ -1088,6 +1147,8 @@ static void ShowGraphicsDialog(HWND owner) {
 
     // Compute dialog height: sections + rows + VRAM box + buttons.
     int contentH = GFX_MARGIN;
+    // Presets: 1 header + 1 button row
+    contentH += GFX_SEC_STEP + GFX_BTN_H + 8;
     // Texture Packs: 1 header + (nSlots) rows  (at least 1 "None" row or placeholder)
     {
         int nPackSlots = s_texQualCount + 1;
@@ -1335,7 +1396,7 @@ static void ScanMods(const char* modsPath) {
             _snprintf(e.folderName, sizeof(e.folderName), "%s", fd.cFileName);
             _snprintf(e.name, sizeof(e.name), "%s", name);
             e.isCompat = false; e.isCampaign = true;
-            e.needs = DetectCompat(modDir);
+            e.needs = CK_PENDING;   // lazy: detected on first selection, not at startup
             e.radioGroup[0] = '\0';
         }
     } while (FindNextFileA(h, &fd));
@@ -1468,13 +1529,21 @@ static void UpdateForSelection() {
     // sel 0 = Stock (base game); sel-1 indexes s_campaigns.
     const char* status = "Stock campaign. Pick a base only if needed; stack any add-ons.";
     if (sel > 0 && sel <= s_campCount) {
+        // Lazy compat detection: first time a campaign is selected, scan its files.
+        // Deferred from ScanMods to keep startup fast (no I/O before window appears).
+        if (s_campaigns[sel-1].needs == CK_PENDING) {
+            char modDir[MAX_PATH];
+            _snprintf(modDir, sizeof(modDir), "%s%s", s_modsPath, s_campaigns[sel-1].folderName);
+            modDir[sizeof(modDir)-1] = '\0';
+            s_campaigns[sel-1].needs = DetectCompat(modDir);
+        }
         CompatKind needs = s_campaigns[sel-1].needs;
         int baseIdx = BaseIndexForKind(needs);   // index into s_bases[], or -1
         if (needs == CK_MCO && baseIdx >= 0)
             status = "Detected: MechCommander Omnitech campaign. mco-compat base auto-selected.";
         else if (needs == CK_MC2X && baseIdx >= 0)
             status = "Detected: MC2X campaign. mc2x-compat base auto-selected.";
-        else if (needs != CK_UNKNOWN)
+        else if (needs == CK_MCO || needs == CK_MC2X)
             status = "Detected a compat need, but no matching base layer is installed.";
         else
             status = "Could not auto-detect. If this is an MC2X pack, pick a base; pure-stock needs none.";
@@ -1566,7 +1635,7 @@ static void DoLaunch(HWND hwnd) {
         // Warn ONLY for a campaign that auto-NEEDS a compat base (MCO/MC2X
         // detected) but the base radio is still "None". An auto-undetected
         // campaign (pure-stock-range) is assumed fine; Stock is handled above.
-        if (baseSlot == 0 && camp.needs != CK_UNKNOWN) {
+        if (baseSlot == 0 && (camp.needs == CK_MCO || camp.needs == CK_MC2X)) {
             char msg[512];
             _snprintf(msg, sizeof(msg),
                 "Campaign \"%s\" selected with NO compatibility base picked.\n\n%s\n\nLaunch anyway?",
@@ -2246,6 +2315,25 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         SendMessageA(s_hFasterWeapons, WM_SETFONT, (WPARAM)hFont, TRUE);
         SendMessageA(s_hFasterWeapons, BM_SETCHECK, BST_UNCHECKED, 0);  // default OFF
 
+        // Tooltip for Faster Weapons: explain what the two env vars actually do.
+        {
+            HWND hTip = CreateWindowExA(0, TOOLTIPS_CLASSA, NULL,
+                WS_POPUP | TTS_ALWAYSTIP | TTS_BALLOON,
+                CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+                hwnd, NULL, s_hInst, NULL);
+            if (hTip) {
+                TOOLINFOA ti = {}; ti.cbSize = sizeof(ti);
+                ti.uFlags  = TTF_IDISHWND | TTF_SUBCLASS;
+                ti.hwnd    = hwnd;
+                ti.uId     = (UINT_PTR)s_hFasterWeapons;
+                ti.lpszText = (LPSTR)"Projectiles fly straight (no arc) and travel at 2x speed.\r\n"
+                                     "Affects all weapons globally. Experimental — may unbalance\r\n"
+                                     "some missions or affect AI targeting.";
+                SendMessageA(hTip, TTM_ADDTOOLA, 0, (LPARAM)&ti);
+                SendMessageA(hTip, TTM_SETMAXTIPWIDTH, 0, 260);
+            }
+        }
+
         HWND hOptBtn = CreateWindowA("BUTTON", "Engine Options...",
             WS_CHILD | WS_VISIBLE,
             LP_RCOL_X, LP_OPT_BTN_Y, LP_RCOL_W, LP_ROW_H,
@@ -2352,6 +2440,41 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR lpCmd, int) {
     _snprintf(s_modsPath, sizeof(s_modsPath), "%smods\\", s_launcherDir);
     s_modsPath[sizeof(s_modsPath)-1] = '\0';
 
+    // Headless diagnostic: skip single-instance guard and GUI entirely.
+    if (lpCmd && strstr(lpCmd, "--list")) {
+        EnvVarsSetDefaults(); GfxSetDefaults();
+        _snprintf(s_envJsonPath, sizeof(s_envJsonPath), "%slauncher_env.json", s_launcherDir);
+        s_envJsonPath[sizeof(s_envJsonPath)-1] = '\0';
+        LoadEnvJson(); LoadGfxJson(); LoadMainPageJson();
+        ScanMods(s_modsPath);
+        // Eagerly resolve compat kind for all campaigns (deferred from ScanMods for GUI speed).
+        for (int i = 0; i < s_campCount; i++) {
+            if (s_campaigns[i].needs == CK_PENDING) {
+                char modDir[MAX_PATH];
+                _snprintf(modDir, sizeof(modDir), "%s%s", s_modsPath, s_campaigns[i].folderName);
+                modDir[sizeof(modDir)-1] = '\0';
+                s_campaigns[i].needs = DetectCompat(modDir);
+            }
+        }
+        PrintListing();
+        return 0;
+    }
+
+    // Single-instance guard: if a launcher window already exists, raise it and exit.
+    // Without this, slow mod-scanning means multiple instances queue up before the
+    // first window appears, resulting in N windows popping at once.
+    HANDLE hMutex = CreateMutexA(NULL, TRUE, "MC2LauncherSingleInstance");
+    if (hMutex && GetLastError() == ERROR_ALREADY_EXISTS) {
+        HWND hExist = FindWindowA("MC2LauncherWnd", NULL);
+        if (hExist) {
+            ShowWindow(hExist, SW_RESTORE);
+            SetForegroundWindow(hExist);
+        }
+        CloseHandle(hMutex);
+        return 0;
+    }
+    // hMutex held open for the lifetime of this process — do not CloseHandle.
+
     // Env-var options: set defaults then load persisted values from launcher_env.json.
     _snprintf(s_envJsonPath, sizeof(s_envJsonPath), "%slauncher_env.json", s_launcherDir);
     s_envJsonPath[sizeof(s_envJsonPath)-1] = '\0';
@@ -2372,8 +2495,6 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR lpCmd, int) {
             }
         }
     }
-
-    if (lpCmd && strstr(lpCmd, "--list")) { PrintListing(); return 0; }
 
     // Always show the GUI. (Previously, "no campaigns discovered" launched the base game
     // directly and skipped the launcher entirely — which hid the GUI and its Import button
