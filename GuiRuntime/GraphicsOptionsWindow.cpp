@@ -2026,6 +2026,38 @@ void draw() {
                 }
                 ImGui::Unindent();
             }
+
+            // POST-FX-FXAA-1: post anti-aliasing tunables. pp->fxaa* members are
+            // read every frame by endScene(), so edits take effect immediately.
+            // Env (MC2_FXAA / _SUBPIX / _EDGE_THRESHOLD / _EDGE_THRESHOLD_MIN)
+            // seeds startup; these sliders override live.
+            ImGui::SeparatorText("FXAA (post anti-aliasing)");
+            ImGui::Checkbox("Enable##fxaa", &pp->fxaaEnabled_);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("MC2_FXAA. Edge-smoothing on the composited scene (before UI).\n"
+                                  "Fixes terrain / map-edge jaggies on straight lines. Does NOT\n"
+                                  "fully kill camera-motion edge crawl — use render-scale/SSAA for that.");
+            ImGui::BeginDisabled(!pp->fxaaEnabled_);
+            ImGui::SliderFloat("Subpixel##fxaa",    &pp->fxaaSubpix_,           0.0f,   1.0f,   "%.3f");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Subpixel aliasing removal. Higher = softer thin features.\n"
+                                  "Sharper preset = 0.25, Stronger = 0.50.");
+            ImGui::SliderFloat("Edge thresh##fxaa", &pp->fxaaEdgeThreshold_,    0.063f, 0.333f, "%.3f");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Min local contrast to antialias. Lower = catches more edges.\n"
+                                  "Sharper preset = 0.166, Stronger = 0.125.");
+            ImGui::SliderFloat("Edge min##fxaa",    &pp->fxaaEdgeThresholdMin_, 0.0312f, 0.0833f, "%.4f");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Dark-region contrast floor.\nSharper preset = 0.0833, Stronger = 0.0625.");
+            if (ImGui::SmallButton("Sharper##fxaa")) {
+                pp->fxaaSubpix_ = 0.25f; pp->fxaaEdgeThreshold_ = 0.166f; pp->fxaaEdgeThresholdMin_ = 0.0833f;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Stronger##fxaa")) {
+                pp->fxaaSubpix_ = 0.50f; pp->fxaaEdgeThreshold_ = 0.125f; pp->fxaaEdgeThresholdMin_ = 0.0625f;
+            }
+            ImGui::EndDisabled();
+
             // VIEWMODE-POSTPROCESS-PRESENTATION-1: view-mode selector.
             // Gated on MC2_VIEWMODE_FRAMEWORK (resolved once at init); when OFF
             // the combo is hidden and endScene() forces Visual (byte-identical).

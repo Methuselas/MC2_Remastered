@@ -24,10 +24,69 @@ uniform int u_engineIdxBase;
 uniform float u_lowLightGain;  // luminance amplification (default 2.5)
 uniform vec3  u_lowLightTint;  // green-phosphor tint (default 0.7,1.0,0.6)
 
+// POST-FX-FXAA-1: FXAA post anti-aliasing on the scene color, BEFORE the grade
+// below. UI is drawn after the whole composite, so it is never touched. Default
+// OFF (u_fxaaEnabled==0 -> single tap = byte-identical); flat (sub-threshold)
+// regions also return the center tap unchanged. Tunables (subpix / edge
+// thresholds) live-driven from gosPostProcess members. Algorithm: classic
+// FXAA edge-direction + 2/4-tap blend (Lottes), the widely-shipped compact form.
+uniform int   u_fxaaEnabled;
+uniform float u_fxaaSubpix;            // subpixel aliasing removal (0..1)
+uniform float u_fxaaEdgeThreshold;     // min local contrast to act on (0.063..0.333)
+uniform float u_fxaaEdgeThresholdMin;  // dark-region contrast floor
+
+float fxaaLuma(vec3 c) { return sqrt(dot(c, vec3(0.299, 0.587, 0.114))); }
+
+vec3 fxaaFilter(vec2 uv, vec2 rcp) {
+    vec3  rgbM  = texture(sceneTex, uv).rgb;
+    float lumaM = fxaaLuma(rgbM);
+    float lumaN = fxaaLuma(texture(sceneTex, uv + vec2(0.0, -rcp.y)).rgb);
+    float lumaS = fxaaLuma(texture(sceneTex, uv + vec2(0.0,  rcp.y)).rgb);
+    float lumaE = fxaaLuma(texture(sceneTex, uv + vec2( rcp.x, 0.0)).rgb);
+    float lumaW = fxaaLuma(texture(sceneTex, uv + vec2(-rcp.x, 0.0)).rgb);
+
+    float rangeMin = min(lumaM, min(min(lumaN, lumaS), min(lumaE, lumaW)));
+    float rangeMax = max(lumaM, max(max(lumaN, lumaS), max(lumaE, lumaW)));
+    float range    = rangeMax - rangeMin;
+
+    // Flat region -> leave the pixel exactly as-is.
+    if (range < max(u_fxaaEdgeThresholdMin, rangeMax * u_fxaaEdgeThreshold))
+        return rgbM;
+
+    float lumaNW = fxaaLuma(texture(sceneTex, uv + vec2(-rcp.x, -rcp.y)).rgb);
+    float lumaNE = fxaaLuma(texture(sceneTex, uv + vec2( rcp.x, -rcp.y)).rgb);
+    float lumaSW = fxaaLuma(texture(sceneTex, uv + vec2(-rcp.x,  rcp.y)).rgb);
+    float lumaSE = fxaaLuma(texture(sceneTex, uv + vec2( rcp.x,  rcp.y)).rgb);
+
+    vec2 dir;
+    dir.x = -((lumaNW + lumaNE) - (lumaSW + lumaSE));
+    dir.y =  ((lumaNW + lumaSW) - (lumaNE + lumaSE));
+
+    // subpix lowers dirReduce -> longer search -> more subpixel smoothing.
+    float dirReduce = max((lumaNW + lumaNE + lumaSW + lumaSE) * 0.25 * (1.0 - u_fxaaSubpix), 1.0 / 128.0);
+    float rcpDirMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);
+    const float SPAN_MAX = 8.0;
+    dir = clamp(dir * rcpDirMin, vec2(-SPAN_MAX), vec2(SPAN_MAX)) * rcp;
+
+    vec3 rgbA = 0.5 * (
+        texture(sceneTex, uv + dir * (1.0 / 3.0 - 0.5)).rgb +
+        texture(sceneTex, uv + dir * (2.0 / 3.0 - 0.5)).rgb);
+    vec3 rgbB = rgbA * 0.5 + 0.25 * (
+        texture(sceneTex, uv + dir * -0.5).rgb +
+        texture(sceneTex, uv + dir *  0.5).rgb);
+
+    float lumaB = fxaaLuma(rgbB);
+    return (lumaB < rangeMin || lumaB > rangeMax) ? rgbA : rgbB;
+}
+
 void main()
 {
     // Scene sample with exposure (no gamma — pipeline is already sRGB).
-    vec3 color = texture(sceneTex, TexCoord).rgb * exposure;
+    // POST-FX-FXAA-1: optionally antialias the scene color first (gate OFF =
+    // single tap = byte-identical).
+    vec3 color = ((u_fxaaEnabled != 0)
+        ? fxaaFilter(TexCoord, inverseScreenSize)
+        : texture(sceneTex, TexCoord).rgb) * exposure;
 
     // --- Sunset filter (subtle) ---
     // Light warm grade + gentle vignette + soft top-of-screen warmth.

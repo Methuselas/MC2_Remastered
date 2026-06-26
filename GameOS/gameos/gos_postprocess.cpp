@@ -606,6 +606,23 @@ void gosPostProcess::init(int w, int h)
                      ssaoEnv ? ssaoEnv : "(unset)", aoRadius_, aoStrength_, aoBias_);
     }
 
+    // POST-FX-FXAA-1: FXAA gate + tunables, resolved once from env. Default OFF
+    // -> composite uploads u_fxaaEnabled=0 -> single tap (byte-identical).
+    // Defaults = "sharper" preset (subpix 0.25 / edge 0.166 / edgeMin 0.0833).
+    {
+        const char* fxEnv = getenv("MC2_FXAA");
+        fxaaEnabled_         = (fxEnv && fxEnv[0] && fxEnv[0] != '0');
+        fxaaSubpix_          = 0.25f;
+        fxaaEdgeThreshold_   = 0.166f;
+        fxaaEdgeThresholdMin_= 0.0833f;
+        if (const char* s = getenv("MC2_FXAA_SUBPIX"))            { float v = (float)atof(s); if (v >= 0.0f) fxaaSubpix_ = v; }
+        if (const char* s = getenv("MC2_FXAA_EDGE_THRESHOLD"))    { float v = (float)atof(s); if (v >  0.0f) fxaaEdgeThreshold_ = v; }
+        if (const char* s = getenv("MC2_FXAA_EDGE_THRESHOLD_MIN")){ float v = (float)atof(s); if (v >  0.0f) fxaaEdgeThresholdMin_ = v; }
+        std::fprintf(stderr, "[FXAA v1] enabled=%d subpix=%.3f edge=%.3f edgeMin=%.4f (MC2_FXAA=%s)\n",
+                     fxaaEnabled_ ? 1 : 0, fxaaSubpix_, fxaaEdgeThreshold_, fxaaEdgeThresholdMin_,
+                     fxEnv ? fxEnv : "(unset)");
+    }
+
     // OOB-FOG-1: far-plane fog over the out-of-bounds region. Default ON.
     {
         fogOobProg_ = glsl_program::makeProgram("fog_oob",
@@ -2495,6 +2512,13 @@ void gosPostProcess::endScene()
 
         float invSize[2] = { 1.0f / (float)width_, 1.0f / (float)height_ };
         compositeProg_->setFloat2("inverseScreenSize", invSize);
+
+        // POST-FX-FXAA-1: gate + tunables. enabled=0 -> shader single-taps the
+        // scene (byte-identical). Set before apply() like the others.
+        compositeProg_->setInt  ("u_fxaaEnabled",        fxaaEnabled_ ? 1 : 0);
+        compositeProg_->setFloat("u_fxaaSubpix",         fxaaSubpix_);
+        compositeProg_->setFloat("u_fxaaEdgeThreshold",  fxaaEdgeThreshold_);
+        compositeProg_->setFloat("u_fxaaEdgeThresholdMin", fxaaEdgeThresholdMin_);
 
         // VIEWMODE-POSTPROCESS-PRESENTATION-1: resolve effective view mode.
         // Gate OFF -> forced 0 (Visual). ObjectIdDebug requires sceneObjectIdTex_;

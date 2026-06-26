@@ -179,6 +179,15 @@ public:
     // Toggles and parameters
     float exposure_;
 
+    // POST-FX-FXAA-1: FXAA post anti-aliasing. Default-OFF (byte-identical).
+    // Seeded from env (MC2_FXAA / MC2_FXAA_SUBPIX / MC2_FXAA_EDGE_THRESHOLD /
+    // MC2_FXAA_EDGE_THRESHOLD_MIN) at init; live-tunable via Graphics Options
+    // (Ctrl+Shift+G). Defaults = the "sharper" preset.
+    bool  fxaaEnabled_;
+    float fxaaSubpix_;
+    float fxaaEdgeThreshold_;
+    float fxaaEdgeThresholdMin_;
+
     void runScreenShadow();
     bool screenShadowEnabled_;
     int screenShadowDebug_;  // 0=normal, 1=visualize
