@@ -628,6 +628,25 @@ void LogWeaponFireChunk (WeaponFireChunkPtr chunk, GameObjectPtr attacker, GameO
 
 //---------------------------------------------------------------------------
 
+// COMBAT-TRACE-1: emit a death event when an object transitions to DISABLED/DESTROYED.
+// Called from GameObject::setStatus (gameobj.h) only on the alive->dead transition, so the
+// per-call cost is paid once per kill; tagEnabled() short-circuits when COMBAT is off.
+// No attacker context here (setStatus is on the dying object) — wid/team/class + the JSONL
+// ts_ms timestamp are enough to count + time kills. {ev:disabled|destroyed, wid, team, class}.
+void GameObject::emitCombatDeathTrace (long newStatus)
+{
+	if (!mc2_diag::tagEnabled("COMBAT"))
+		return;
+	char _cbf[160];
+	snprintf(_cbf, sizeof(_cbf),
+		"{\"ev\":\"%s\",\"wid\":%lu,\"team\":%ld,\"class\":%d}",
+		(newStatus == OBJECT_STATUS_DESTROYED) ? "destroyed" : "disabled",
+		getWatchID(false), getTeamId(), (int)getObjectClass());
+	mc2_diag::writeEvent("COMBAT", 1, 0, _cbf);
+}
+
+//---------------------------------------------------------------------------
+
 void WeaponFireChunk::buildMoverTarget (GameObjectPtr target,
 										long _weaponIndex,
 										bool _hit,
