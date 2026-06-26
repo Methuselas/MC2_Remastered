@@ -425,6 +425,41 @@ void TerrainTextures::initializeStatistics()
 //---------------------------------------------------------------------------
 long TerrainTextures::textureFromMemoryAlpha (MemoryPtr ourRAM, long mipLevel)
 {
+	// TERRAIN-ROAD-COLORKEY-TRANSPARENCY-1: this is the keyed (alpha) terrain-tile
+	// upload boundary — the single shared path for every createTransition tile
+	// (prebaked .txm and runtime build). MC2's magenta 0xFF00FF is the legacy
+	// transparent colorkey, but textureFromMemoryRaw uploads raw and does NOT
+	// honor gos_Texture_Keyed, so road/transition tiles whose non-road background
+	// is magenta (e.g. forceAlphaOpaque slammed every pixel opaque, or the base
+	// type texture is a magenta placeholder) render as an opaque full-tile magenta
+	// patch under the road overlay. Convert the colorkey to alpha=0 here so the
+	// overlay draw blends it away and the terrain base shows through. Exact
+	// near-magenta (reserved colorkey) — real terrain art never uses it. The
+	// tolerance also catches anti-aliased colorkey edges produced by the
+	// createTransition combine's linear blend (e.g. 254,20,250), which an exact
+	// 0xFF00FF match leaves as a thin opaque fringe. `mipLevel` is the tile width
+	// in texels (see textureFromMemoryRaw width arg). Solid cement tiles
+	// (textureFromMemory, gos_Texture_Solid) are unaffected.
+	// Zero the WHOLE pixel (RGB + alpha), not just alpha: the tile is sampled with
+	// GL_LINEAR, so road-edge texels interpolate against the keyed background. If we
+	// left RGB=magenta at alpha 0, that magenta RGB bleeds into the road edge under
+	// linear filtering and shows as a magenta fringe outlining every road. Zeroing
+	// RGB makes the keyed region transparent-black so edges fade cleanly to the
+	// terrain underneath with no colored halo.
+	{
+		DWORD* px = (DWORD*)ourRAM;                 // BGRA-in-memory: B=byte0,G=byte1,R=byte2
+		const long n = mipLevel * mipLevel;
+		for (long i = 0; i < n; ++i) {
+			const DWORD c = px[i];
+			const long b = (long)(c & 0xFFu), g = (long)((c >> 8) & 0xFFu), r = (long)((c >> 16) & 0xFFu);
+			// Chroma-based magenta test: red AND blue both clearly dominate green.
+			// Catches pure 0xFF00FF and the anti-aliased magenta->cement edge pixels
+			// (e.g. 200,108,200) that a flat g<80 cutoff leaves as a thin pink seam.
+			// Greys (r~=g~=b), road asphalt, and cement never satisfy r>g+K && b>g+K.
+			if (r > 150 && b > 150 && r > g + 40 && b > g + 40)
+				px[i] = 0u;                         // transparent black -> no magenta/pink fringe
+		}
+	}
 	textures[nextAvailable].mcTextureNodeIndex = mcTextureManager->textureFromMemoryRaw((DWORD *)ourRAM,gos_Texture_Keyed,gosHint_DisableMipmap | gosHint_DontShrink,mipLevel);
 	mcTextureManager->setTextureNeverFlush(textures[nextAvailable].mcTextureNodeIndex, 0x1);
 
