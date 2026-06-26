@@ -826,7 +826,8 @@ long Terrain::init( unsigned long verticesPerMapSide, PacketFile* pakFile, unsig
 			{
 				static const bool s_visualHeightGate = []() {
 					const char* v = getenv("MC2_TERRAIN_VISUAL_HEIGHT");
-					return v && v[0] && v[0] != '0';
+					const char* d = getenv("MC2_TERRAIN_VISUAL_DISPLACE");  // displace implies load
+					return (v && v[0] && v[0] != '0') || (d && d[0] && d[0] != '0');
 				}();
 				const int mapSide = (int)realVerticesMapSide;
 				if (s_visualHeightGate && mapSide > 1)

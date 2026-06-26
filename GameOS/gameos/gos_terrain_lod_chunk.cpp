@@ -46,6 +46,7 @@ namespace gos_terrain_indirect { bool IsFrameSolidArmed(); }
 
 static GLuint s_heightSsbo = 0;   // GL handle; 0 = not yet allocated
 static GLuint s_visualHeightSsbo = 0; // TERRAIN-VISUAL-HEIGHT-SAMPLE-1: 4x visual heightfield (binding 26)
+static int    s_visualSide       = 0; // V = (mapSide-1)*4+1, fine grid side (0 = bake not loaded)
 static GLuint s_typeSsbo   = 0;   // Step 5b: per-vertex terrainType SSBO (binding 24)
 static GLuint s_cementSsbo = 0;   // Step 5c: per-vertex cement word SSBO (binding 25)
 static int    s_mapSide    = 0;   // mapSide stored at last UploadHeightFull
@@ -138,6 +139,8 @@ static GLint s_locCliffTriplanarStr = -1;
 static GLint s_locMacroVariation    = -1; // TERRAIN-MACRO-VARIATION-1
 static GLint s_locEdgeFeather        = -1; // TERRAIN-EDGE-FEATHER-1
 static GLint s_locEdgeFeatherStr     = -1;
+static GLint s_locVisualDisplace     = -1; // TERRAIN-VISUAL-HEIGHT-SAMPLE-1
+static GLint s_locVisualSide         = -1;
 static GLint s_locPomParams      = -1;
 static GLint s_locMatProfile     = -1;
 // Step 5c: cement catalog atlas (tex3) accessors from gos_terrain_indirect.cpp.
@@ -438,6 +441,8 @@ void gos_TerrainLodChunk_Init()
             s_locMacroVariation    = glGetUniformLocation(s_terrainProgram, "macroVariationStrength");
             s_locEdgeFeather       = glGetUniformLocation(s_terrainProgram, "u_edgeFeather");
             s_locEdgeFeatherStr    = glGetUniformLocation(s_terrainProgram, "u_edgeFeatherStrength");
+            s_locVisualDisplace    = glGetUniformLocation(s_terrainProgram, "u_visualDisplace");
+            s_locVisualSide        = glGetUniformLocation(s_terrainProgram, "u_visualSide");
             s_locPomParams   = glGetUniformLocation(s_terrainProgram, "pomParams");
             s_locMatProfile  = glGetUniformLocation(s_terrainProgram, "g_terrainMaterialProfile");
             s_locCementAtlas    = glGetUniformLocation(s_terrainProgram, "u_cementAtlas");
@@ -644,6 +649,20 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     // Step 5c: cement word SSBO.
     if (s_cementSsbo != 0)
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_CEMENT_SSBO_BINDING, s_cementSsbo);
+
+    // TERRAIN-VISUAL-HEIGHT-SAMPLE-1: resolve geometry-displacement activation once
+    // per frame. Active = MC2_TERRAIN_VISUAL_DISPLACE on AND the 4x bake loaded.
+    // Bind binding 26 for the whole draw; the per-chunk u_visualDisplace gates the
+    // near (LOD0) band only. Default OFF -> u_visualDisplace stays 0 -> byte-identical.
+    static const bool s_visualDisplaceGate = []() {
+        const char* v = getenv("MC2_TERRAIN_VISUAL_DISPLACE");
+        return v && v[0] && v[0] != '0';
+    }();
+    const bool visualDisplaceActive = s_visualDisplaceGate && s_visualHeightSsbo != 0 && s_visualSide > 0;
+    if (visualDisplaceActive)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_VISUAL_HEIGHT_SSBO_BINDING, s_visualHeightSsbo);
+    if (s_locVisualSide >= 0)
+        glUniform1i(s_locVisualSide, s_visualSide);
 
     // Upload per-frame uniforms (same for every patch).
     if (s_locMapSide >= 0)
@@ -950,7 +969,17 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
 
         if (qcX <= 0 || qcY <= 0) continue;
 
-        const PatchShape& patch = getOrBuildPatch(qcX, qcY, cmd.lodStep);
+        // TERRAIN-VISUAL-HEIGHT-SAMPLE-1: displace only the near (LOD0) band. The
+        // displaced patch is the SAME builder requested at 4x finer stride (1x over
+        // 4*qc cells) -> fine grid + skirts for free; the vert reinterprets
+        // localOffset as fine units and corner-pins the edges. Default OFF path uses
+        // the original coarse patch (byte-identical).
+        const bool displaceThis = visualDisplaceActive && cmd.lodStep == 1;
+        const PatchShape& patch = displaceThis
+            ? getOrBuildPatch(qcX * 4, qcY * 4, 1)
+            : getOrBuildPatch(qcX, qcY, cmd.lodStep);
+        if (s_locVisualDisplace >= 0)
+            glUniform1i(s_locVisualDisplace, displaceThis ? 1 : 0);
 
         // Per-block uniforms (shared by main patch and skirt).
         if (s_locBlockOriginX >= 0)
@@ -1038,6 +1067,8 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_HEIGHT_SSBO_BINDING, 0);
+    if (visualDisplaceActive)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_VISUAL_HEIGHT_SSBO_BINDING, 0);
     if (!useGuards) {
         // Phase 10.3: restore inherited cull/depth/blend state (legacy path).
         if (prevCullFace)   glEnable(GL_CULL_FACE);
@@ -1116,8 +1147,8 @@ void gos_TerrainLodChunk_UploadVisualHeightFull(const float* visualHeights, int 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_visualHeightSsbo);
     glBufferData(GL_SHADER_STORAGE_BUFFER, bytes, visualHeights, GL_STATIC_DRAW);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-    // No glBindBufferBase here: nothing samples binding 26 in Stage 1. Stage 2
-    // binds it when the displaced interior verts read it.
+    s_visualSide = V;   // remembered for the displaced draw (u_visualSide)
+    // Bound to base 26 in the draw only when displacement is active.
     fprintf(stderr, "[VISUAL_HEIGHT v1] SSBO uploaded binding=%u V=%d bytes=%lld first=%.3f\n",
             TERRAIN_VISUAL_HEIGHT_SSBO_BINDING, V, (long long)bytes, visualHeights[0]);
     fflush(stderr);

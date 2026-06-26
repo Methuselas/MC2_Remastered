@@ -30,6 +30,14 @@ layout(binding = 23, std430) readonly buffer TerrainHeightBuf {
 layout(binding = 24, std430) readonly buffer TerrainTypeBuf {
     float terrainTypes[];
 };
+// TERRAIN-VISUAL-HEIGHT-SAMPLE-1: 4x VISUAL heightfield (render-only geometry
+// displacement). V*V row-major, V=(mapSide-1)*4+1. Read ONLY in the displaced
+// branch below; binding unbound / u_visualDisplace==0 -> never sampled.
+layout(binding = 26, std430) readonly buffer TerrainVisualHeightBuf {
+    float heightsFine[];
+};
+uniform int u_visualDisplace;  // 0 = off (byte-identical); 1 = corner-pinned interior displace
+uniform int u_visualSide;      // V = (mapSide-1)*4+1
 out vec3  v_worldPos;
 out float v_terrainType;
 
@@ -40,6 +48,59 @@ float sampleH(int mx, int my) {
 }
 
 void main() {
+    // TERRAIN-VISUAL-HEIGHT-SAMPLE-1: corner-pinned interior subdivision. When on,
+    // this patch is a 4x-finer grid: localOffset is in FINE (1/4-coarse) units.
+    // INTERIOR verts take the 4x visual height (binding 26). CHUNK-EDGE verts (and
+    // skirts) stay on the COARSE line — coarse-interpolated between coarse verts at
+    // the neighbour's stitch stride (else stride 1) — so stitch / skirt / LOD seams
+    // are pixel-identical to the coarse path and no cracks form. Default OFF ->
+    // falls through to the original coarse path below (byte-identical).
+    if (u_visualDisplace != 0) {
+        int qx4 = u_quadCountX * 4;
+        int qy4 = u_quadCountY * 4;
+        int lx  = localOffset.x;
+        int ly  = localOffset.y;
+        int fx  = clamp(u_blockOriginX * 4 + lx, 0, u_visualSide - 1);
+        int fy  = clamp(u_blockOriginY * 4 + ly, 0, u_visualSide - 1);
+        float hh;
+        bool onEdge = (lx == 0 || lx == qx4 || ly == 0 || ly == qy4) || (isSkirtFlag != 0);
+        if (onEdge) {
+            float coarseAlong; bool alongX; int Sc;
+            if      (ly == 0)   { coarseAlong = float(lx) * 0.25; alongX = true;  Sc = (u_edgeStitch)       & 0xFF; }
+            else if (ly == qy4) { coarseAlong = float(lx) * 0.25; alongX = true;  Sc = (u_edgeStitch >> 8)  & 0xFF; }
+            else if (lx == 0)   { coarseAlong = float(ly) * 0.25; alongX = false; Sc = (u_edgeStitch >> 16) & 0xFF; }
+            else                { coarseAlong = float(ly) * 0.25; alongX = false; Sc = (u_edgeStitch >> 24) & 0xFF; }
+            if (Sc < 1) Sc = 1;
+            float c0 = floor(coarseAlong / float(Sc)) * float(Sc);
+            float c1 = c0 + float(Sc);
+            float tt = (coarseAlong - c0) / float(Sc);
+            float h0, h1;
+            if (alongX) {
+                int fyC = u_blockOriginY + (ly == 0 ? 0 : u_quadCountY);
+                h0 = sampleH(u_blockOriginX + int(c0), fyC);
+                h1 = sampleH(u_blockOriginX + int(c1), fyC);
+            } else {
+                int fxC = u_blockOriginX + (lx == 0 ? 0 : u_quadCountX);
+                h0 = sampleH(fxC, u_blockOriginY + int(c0));
+                h1 = sampleH(fxC, u_blockOriginY + int(c1));
+            }
+            hh = mix(h0, h1, tt);
+        } else {
+            hh = heightsFine[fx + fy * u_visualSide];
+        }
+        hh -= float(isSkirtFlag) * u_skirtDepth;
+        float wX = float(fx) * 32.0 - u_halfMap;
+        float wY = u_halfMap - float(fy) * 32.0;
+        int mtx = clamp(u_blockOriginX + (lx >> 2), 0, u_mapSide - 1);
+        int mty = clamp(u_blockOriginY + (ly >> 2), 0, u_mapSide - 1);
+        v_worldPos    = vec3(wX, wY, hh);
+        v_terrainType = terrainTypes[mtx + mty * u_mapSide];
+        vec4 clipD = u_worldToClipGL * vec4(wX, wY, hh, 1.0);
+        clipD.z += 2.0 * TERRAIN_DEPTH_FUDGE * clipD.w;
+        gl_Position = clipD;
+        return;
+    }
+
     int mapX = clamp(u_blockOriginX + localOffset.x, 0, u_mapSide - 1);
     int mapY = clamp(u_blockOriginY + localOffset.y, 0, u_mapSide - 1);
     float h = heights[mapX + mapY * u_mapSide];
