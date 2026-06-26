@@ -876,7 +876,7 @@ static bool lowCamInvert4x4 (const Stuff::Matrix4D& M, Stuff::Matrix4D& out)
 // O(1) screen -> z=0 ground-plane unproject. No quad scan, no terrain pick.
 // See header. Mirrors the matrix-inverse unproject used by the LOD-chunk pick
 // path, then intersects the camera ray with the world z=0 plane.
-bool Camera::screenToGroundPlaneApprox (long screenX, long screenY, Stuff::Vector3D &outWorld)
+bool Camera::screenToGroundPlaneApprox (long screenX, long screenY, Stuff::Vector3D &outWorld, float z_plane)
 {
 	outWorld.x = outWorld.y = outWorld.z = 0.0f;
 	if (turn < 4)
@@ -916,10 +916,10 @@ bool Camera::screenToGroundPlaneApprox (long screenX, long screenY, Stuff::Vecto
 	const float dz = rf.z - ro.z;
 	if (fabsf(dz) < 1e-6f) { outWorld = ro; outWorld.z = 0.0f; return false; }
 
-	const float t = (0.0f - ro.z) / dz;   // intersect z=0 ground plane
+	const float t = (z_plane - ro.z) / dz;
 	outWorld.x = ro.x + t * (rf.x - ro.x);
 	outWorld.y = ro.y + t * (rf.y - ro.y);
-	outWorld.z = 0.0f;
+	outWorld.z = z_plane;
 	return true;
 }
 

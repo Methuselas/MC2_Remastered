@@ -1148,18 +1148,20 @@ class Camera
 		// cheap, approximate overlays (e.g. the tacmap view rectangle) where
 		// exact terrain intersection is unnecessary. Do NOT substitute for
 		// inverseProject() when a real terrain hit is required.
-		bool screenToGroundPlaneApprox (long screenX, long screenY, Stuff::Vector3D &outWorld);
+		bool screenToGroundPlaneApprox (long screenX, long screenY, Stuff::Vector3D &outWorld, float z_plane = 0.0f);
 
 		// screenToTerrainApprox: screenToGroundPlaneApprox refined onto the
 		// terrain surface by iterating the plane height (fixed 3 steps, O(1),
 		// no quad scan).
-		// WARNING (2026-06-11): BOTH approx unprojectors ride
-		// Matrix4D::Invert(worldToClipGL()), which is UNRELIABLE in the game
-		// camera - far-plane unproject lands above the camera (ray inverts)
-		// and the X response collapses (see the Phase 7B raycast-picker notes
-		// in inverseProject). Round-trip-verified broken via MC2_FL_TRACE.
-		// For screen->world in game use inverseProject (production picker).
-		// These remain only for the editor paths that already depend on them.
+		// WARNING: approx unprojectors compute a ray-plane intersection (z-plane
+		// or iterated terrain step) and diverge from the actual terrain surface on
+		// elevated or sloped terrain. The old Matrix4D::Invert path was numerically
+		// broken for reverse-Z (replaced by lowCamInvert4x4 in 4942e7d2), so the
+		// math is now correct, but the z-plane approximation remains incorrect for
+		// terrain sculpting. For any paint/pick that requires the exact terrain
+		// surface hit use inverseProject (forward-projection quad scanner).
+		// These approx functions remain for non-sculpt editor paths and cursor
+		// overlay (brush centre display), where O(1) performance matters.
 		bool screenToTerrainApprox (long screenX, long screenY, Stuff::Vector3D &outWorld);
 
 		// getClosestVertex: screen-click -> terrain vertex (row,col).

@@ -1726,6 +1726,15 @@ void EditorInterface::handleMouseMove( int PosX, int PosY )
 	// Precise terrain picks remain where they matter: click (handleLeftButtonDown)
 	// and the object drag-move jacobian (4 inverseProject calls just below).
 	eye->screenToGroundPlaneApprox( v2.x, v2.y, vector );
+	// One-step elevation refinement for terrain sculpting: screenToGroundPlaneApprox
+	// intersects z=0; on elevated terrain the x,y diverges from the actual brush cell.
+	// Re-intersect at the terrain z so HeightBrush paints where the cursor visually lands.
+	if ( painting && land )
+	{
+		const float ze = land->getTerrainElevation( vector );
+		if ( fabsf( ze ) > 0.5f )
+			eye->screenToGroundPlaneApprox( v2.x, v2.y, vector, ze );
+	}
 
 	// Object drag-move: while an object is grabbed, follow the cursor by moving
 	// it to the cell under the mouse. moveBuilding() snaps to the cell grid and
@@ -1869,10 +1878,27 @@ void EditorInterface::handleMouseMove( int PosX, int PosY )
 		// click in different locations". The bug was latent until the per-move
 		// unproject went O(1) approx (315ddec9) and diverged from the click cell.
 		// Recompute precisely only during an active LMB paint stroke and only for
-		// BuildingBrush, so the per-move cursor perf win is preserved and
-		// ScatterBrush (intentional drag-scatter, not a BuildingBrush) is unaffected.
+		// terrain-sculpt brushes (HeightBrush, FlattenBrush) and BuildingBrush, so
+		// the per-move cursor perf win is preserved and ScatterBrush (intentional
+		// drag-scatter) is unaffected.
+		//
+		// HeightBrush / FlattenBrush mirror fix: these brushes paint the TERRAIN
+		// SURFACE. handleLeftButtonDown uses inverseProject (correct terrain hit);
+		// handleMouseMove used screenToGroundPlaneApprox (z-plane intersection),
+		// which diverges from the actual terrain surface on elevated or sloped
+		// terrain. Windows synthesizes a WM_MOUSEMOVE immediately after LButtonDown,
+		// so a single click fires paint() TWICE -- once at the correct terrain hit
+		// and once at the diverging approx position. With a tilted camera on elevated
+		// terrain the two positions can fall on OPPOSITE sides of the camera
+		// look-at point, producing the observed bilateral mirror stroke.
+		// Fix: use the same precise inverseProject path for all terrain-sculpt
+		// brushes during an active stroke (painting == true), matching the existing
+		// BuildingBrush guard. The per-move cursor position (vector) remains approx
+		// for the cursor overlay / non-painting hover display.
 		Stuff::Vector3D paintPos = vector;
-		if ( dynamic_cast<BuildingBrush*>( curBrush ) )
+		if ( dynamic_cast<BuildingBrush*>( curBrush ) ||
+		     dynamic_cast<HeightBrush*>( curBrush )   ||
+		     dynamic_cast<FlattenBrush*>( curBrush ) )
 		{
 			Stuff::Vector2DOf<long> vp( PosX, PosY );
 			eye->inverseProject( vp, paintPos );
