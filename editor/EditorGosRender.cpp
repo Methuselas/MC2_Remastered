@@ -13,6 +13,7 @@
 #ifdef PLATFORM_WINDOWS
 #include <windows.h>
 #include <windowsx.h>
+#include <mmsystem.h>   // timeBeginPeriod / timeGetTime (editor frame limiter)
 #endif
 #include <stdio.h>
 #include <stdlib.h>
@@ -675,8 +676,35 @@ SDL_GLContext getSDLGLContext() noexcept
 }
 
 //==============================================================================
+// Editor frame-rate limiter. The editor has no gameplay clock, so its render
+// loop runs as fast as the GPU allows (hundreds of fps) and spins the card for
+// no benefit. Cap to ~60fps. Override with MC2_EDITOR_FPS_CAP (0 = uncapped).
+// Called once per presented frame from swap_window (the single present site).
+static void editorFrameLimit()
+{
+    static int   s_capFps = -2;   // -2 = uninitialized
+    static DWORD s_lastMs = 0;
+    if (s_capFps == -2)
+    {
+        s_capFps = 60;
+        const char* e = getenv("MC2_EDITOR_FPS_CAP");
+        if (e && *e) s_capFps = atoi(e);
+        timeBeginPeriod(1);       // 1ms Sleep() granularity (editor main() skips gameosmain's call)
+        s_lastMs = timeGetTime();
+        return;                   // first frame: just stamp
+    }
+    if (s_capFps <= 0) return;    // uncapped
+    const DWORD targetMs = (DWORD)(1000 / s_capFps);   // 60 -> 16ms (~62fps)
+    DWORD elapsed = timeGetTime() - s_lastMs;
+    if (elapsed < targetMs)
+        ::Sleep(targetMs - elapsed);
+    s_lastMs = timeGetTime();
+}
+
+//==============================================================================
 void swap_window(RenderWindowHandle h)
 {
+    editorFrameLimit();
     RenderWindow* rw = (RenderWindow*)h;
     assert(rw && rw->window_);
 #ifdef PLATFORM_WINDOWS

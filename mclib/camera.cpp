@@ -2563,7 +2563,16 @@ void Camera::setOrthogonal(void)
 		bottom_clip = right_clip * ((float)Environment.screenHeight / (float)Environment.screenWidth);
 		near_clip = -2000.0;
 		far_clip = 8000.0;
-		
+		// EDITOR-FAR-CLIP-1 (parallel/ortho mirror): the editor zooms the eye far
+		// outside the map, so terrain crosses the FAR side of this orthographic depth
+		// slab (stock far = 8000) and gets clipped in the GPU-indirect pzOk gate
+		// (u_worldToClipGL). Extend ONLY the far plane in the editor; leave near at
+		// -2000 (widening near broke the reverse-Z depth window). Game byte-identical.
+		{
+			extern bool InEditor;
+			if (InEditor) far_clip = 400000.0;
+		}
+
 		//
 		//------------------------------------------------------------------------
 		// Set up the camera to clip matrix.  This matrix takes camera space
@@ -2604,6 +2613,26 @@ void Camera::setOrthogonal(void)
 		float far_clip,near_clip;
 		near_clip = Camera::NearPlaneDistance;
 		far_clip = Camera::FarPlaneDistance;
+
+		// EDITOR-FAR-CLIP-1: the editor zooms the eye far outside the map, so the
+		// terrain crosses the stock far plane (61555) and gets depth-clipped in the
+		// GPU-indirect path (u_worldToClipGL) -> "can't see past some distance".
+		// Extend the far plane in the EDITOR by default (InEditor) so the whole map
+		// draws from any zoom. Reverse-Z keeps depth precision fine across the larger
+		// range. MC2_EDITOR_FAR_CLIP=<value> overrides; the game is unaffected.
+		// LIVE InEditor check (NOT static const): setOrthogonal runs during early
+		// camera init, BEFORE InitializeGameEngine() sets InEditor=true, so a
+		// static-const capture froze this at false and the override never applied
+		// (measured: far map corners stayed beyond the small scaled far plane).
+		extern bool InEditor;
+		float editorFar = 0.0f;
+		{
+			const char* v = getenv("MC2_EDITOR_FAR_CLIP");
+			if (v && *v) { float f = (float)atof(v); editorFar = (f > 1000.0f) ? f : 400000.0f; }
+			else if (InEditor) editorFar = 400000.0f;
+		}
+		if (editorFar > far_clip)
+			far_clip = editorFar;
 
 		float horizontal_fov = camera_fov * DEGREES_TO_RADS;
 		float height2width = ((float)Environment.screenHeight / (float)Environment.screenWidth);
