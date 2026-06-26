@@ -45,6 +45,7 @@
 extern void visualTuning_applyProfile(const char*);  // MISSION-VISUAL-TUNING-1
 
 #include "brain_special_dispatch.h"  // TECHSCRIPT-SPECIAL-DISPATCH-1A: parseBrainSpecialBody
+#include "brain_missionfit_oporbd.h"  // BRAIN-MISSIONFIT-OPORD-CONSUMER-1: declarative mission.fit OPORD parser
 
 #ifndef COLLSN_H
 #include"collsn.h"
@@ -3054,6 +3055,55 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 			//Assert(result == NO_ERR, result, " Could not load Warrior Brain Parameters ");
 		}
 
+	}
+
+	// BRAIN-MISSIONFIT-OPORD-CONSUMER-1: drive declarative patrol from the inline Brain{}
+	// PrimaryOPORD blocks in mission.fit (carver_v_enhanced format). FitIniFile cannot see
+	// brace-blocks, so raw-scan the mission.fit text via the File class (VFS/mod-overlay aware —
+	// NOT fopen). Gate MC2_BRAIN_MISSIONFIT_OPORD (default OFF). Populates the existing
+	// MechBrainRuntime patrol structures (BRAIN-OPORD-COREPATROL-1); the brain bundle drives them
+	// (the patrol FIELDS persist through later _ai.fit/tactic loaders, which only touch mode).
+	if (std::getenv("MC2_BRAIN_MISSIONFIT_OPORD") && std::atoi(std::getenv("MC2_BRAIN_MISSIONFIT_OPORD")) != 0) {
+		File mfFile;
+		if (mfFile.open(missionFileName) == NO_ERR) {
+			unsigned long mfSz = mfFile.getLength();
+			char* mfBuf = (char*)malloc(mfSz + 1);
+			if (mfBuf) {
+				mfFile.read((MemoryPtr)mfBuf, (long)mfSz);
+				mfBuf[mfSz] = '\0';
+				MissionFitOpord mfRecs[64];
+				int mfN = parseMissionFitOpords(mfBuf, mfRecs, 64);
+				int mfApplied = 0;
+				for (int r = 0; r < mfN; ++r) {
+					const MissionFitOpord& o = mfRecs[r];
+					if (o.warriorIndex < 1 || (unsigned long)o.warriorIndex > numWarriors) continue;
+					if (std::strncmp(o.primaryType, "Patrol", 6) != 0 || o.waypointCount == 0) continue;
+					MechWarriorPtr w = MechWarrior::warriorList[o.warriorIndex];
+					if (!w) continue;
+					if (!w->getBrainRuntime()) w->setBrainRuntimeMode(BrainRuntimeMode::Enhanced);
+					MechBrainRuntime* rt = w->getBrainRuntime();
+					if (!rt) continue;
+					int wc = (o.waypointCount > 8) ? 8 : o.waypointCount;
+					for (int wi = 0; wi < wc; ++wi) {
+						Stuff::Vector3D wp; wp.x = o.waypoints[wi].x; wp.y = o.waypoints[wi].y; wp.z = 0.0f;
+						float z = land ? land->getTerrainElevation(wp) : 0.0f;
+						rt->patrolWaypoints[wi][0] = o.waypoints[wi].x;
+						rt->patrolWaypoints[wi][1] = o.waypoints[wi].y;
+						rt->patrolWaypoints[wi][2] = z;
+					}
+					rt->patrolWaypointCount = (uint8_t)wc;
+					rt->patrolWaypointIndex = 0;
+					rt->patrolLoop = o.loop;
+					rt->patrolActive = true;
+					++mfApplied;
+					std::fprintf(stderr, "[MISSIONFIT_OPORD] wid-idx=%d Patrol: %d wp loop=%d (declarative)\n",
+						o.warriorIndex, wc, (int)o.loop);
+				}
+				std::fprintf(stderr, "[MISSIONFIT_OPORD] parsed %d Brain{} OPORD record(s), applied %d patrol(s)\n", mfN, mfApplied);
+				free(mfBuf);
+			}
+			mfFile.close();
+		}
 	}
 
 	// BRAIN-RUNTIME-1B: load per-unit Brain blocks from <missionName>_ai.fit.
