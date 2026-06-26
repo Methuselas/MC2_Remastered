@@ -11,6 +11,7 @@
 #ifndef MCLIB_H
 #include"mclib.h"
 #include "gos_crashbundle.h"
+#include"terrain_runtime.h"
 #endif
 
 #ifndef GAMEOBJ_H
@@ -368,7 +369,7 @@ void DebugWeaponFireChunk (WeaponFireChunkPtr chunk1, WeaponFireChunkPtr chunk2,
 		else if (chunk1->targetType == WEAPONFIRECHUNK_TARGET_LOCATION) {
 			targetPoint.x = (float)chunk1->targetCell[1] * Terrain::worldUnitsPerCell + Terrain::worldUnitsPerCell / 2 - Terrain::worldUnitsMapSide / 2;
 			targetPoint.y = (Terrain::worldUnitsMapSide / 2) - ((float)chunk1->targetCell[0] * Terrain::worldUnitsPerCell) - Terrain::worldUnitsPerCell / 2;
-			targetPoint.z = (float)land->getTerrainElevation(targetPoint);
+			targetPoint.z = (float)TerrainRuntime::groundElevation(targetPoint);
 			isTargetPoint = true;
 		}
 
@@ -440,7 +441,7 @@ void DebugWeaponFireChunk (WeaponFireChunkPtr chunk1, WeaponFireChunkPtr chunk2,
 		else if (chunk2->targetType == WEAPONFIRECHUNK_TARGET_LOCATION) {
 			targetPoint.x = (float)chunk2->targetCell[1] * Terrain::worldUnitsPerCell + Terrain::worldUnitsPerCell / 2 - Terrain::worldUnitsMapSide / 2;
 			targetPoint.y = (Terrain::worldUnitsMapSide / 2) - ((float)chunk2->targetCell[0] * Terrain::worldUnitsPerCell) - Terrain::worldUnitsPerCell / 2;
-			targetPoint.z = (float)land->getTerrainElevation(targetPoint);
+			targetPoint.z = (float)TerrainRuntime::groundElevation(targetPoint);
 			isTargetPoint = true;
 		}
 
@@ -2095,7 +2096,7 @@ inline bool GameObject::lineOfSight (GameObjectPtr target, float startExtRad, bo
 //	{
 //		if (land->IsGameSelectTerrainPosition(getLOSPosition()))
 //		{
-			float elev = land->getTerrainElevation(getLOSPosition());
+			float elev = TerrainRuntime::groundElevation(getLOSPosition());
 			float localStart = getLOSPosition().z - elev;
 
 			Stuff::Vector3D targetPosition = target->getLOSPosition();

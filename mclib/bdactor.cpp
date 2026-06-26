@@ -599,6 +599,8 @@ static void submitBuildingFootprintShadow(const BldgAppearance* appearance)
 #include"txmmgr.h"
 #endif
 
+#include"terrain_runtime.h"
+
 #ifndef TIMING_H
 #include"timing.h"
 #endif
@@ -1290,7 +1292,7 @@ Stuff::Vector3D BldgAppearance::getWeaponNodePosition (long nodeId)
    
    	Stuff::Point3D xlatPosition;
    	xlatPosition.x = -position.x;
-   	xlatPosition.y = land->getTerrainElevation(position);
+   	xlatPosition.y = TerrainRuntime::groundElevation(position);
    	xlatPosition.z = position.y;
    
    	Stuff::UnitQuaternion torsoRot;
@@ -3953,7 +3955,7 @@ void BldgAppearance::registerStatic() {
 	rot = Stuff::EulerAngles(0.0f, yaw, 0.0f);
 	Stuff::Point3D xlatPosition;
 	xlatPosition.x = -position.x;
-	xlatPosition.y = land ? land->getTerrainElevation(position) : 0.0f;
+	xlatPosition.y = TerrainRuntime::groundElevation(position);
 	xlatPosition.z = position.y;
 	bldgShape->TransformMultiShape_BuildRecipe(&xlatPosition, &rot);
 
@@ -6703,7 +6705,7 @@ void TreeAppearance::registerStatic() {
 	rot = Stuff::EulerAngles(pitchAngle, yawAngle, 0.0f);
 	Stuff::Point3D xlatPosition;
 	xlatPosition.x = -position.x;
-	xlatPosition.y = land ? land->getTerrainElevation(position) : 0.0f;
+	xlatPosition.y = TerrainRuntime::groundElevation(position);
 	xlatPosition.z = position.y;
 
 	// TREE-OVERRIDE-LOD-MVP M-A (load-bearing): build the recipe AND capture the

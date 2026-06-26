@@ -29,6 +29,7 @@
 #include "../GameOS/gameos/diagnostic_trace.h"  // FRAME-JOBS-1: JSONL trace emit
 #include "objmgr_watch_policy.h"  // OBJMGR-WATCH-POLICY-EXTRACT-1: shared watch bounds/index policy
 #include "gos_static_prop_killswitch.h"  // g_useGpuStaticProps
+#include "terrain_runtime.h"
 #include "static_update_counters.h"      // g_staticUpdateRunCount/SkipCount/EmitSummary
 #include "../GameOS/gameos/gpu_cull_substrate.h"       // C0: GPU cull substrate SSBO upload
 #include "../GameOS/gameos/gpu_cull_parity.h"         // C0-4: AABB parity check
@@ -4664,7 +4665,7 @@ void GameObjectManager::updateAppearancesOnly( bool terrain, bool movers, bool o
 							// Must force here as well.
 							Stuff::Vector3D pos = objList[objIndex]->getPosition();
 							float rot = objList[objIndex]->getRotation();
-							pos.z = land->getTerrainElevation(pos);
+							pos.z = TerrainRuntime::groundElevation(pos);
 							long drawFlags = objList[objIndex]->drawFlags;
 							int teamID = objList[objIndex]->getTeamId();
 							objList[objIndex]->getAppearance()->setObjectParameters(pos,rot,drawFlags,teamID,Team::getRelation(teamID, Team::home->getId()));
@@ -4692,7 +4693,7 @@ void GameObjectManager::updateAppearancesOnly( bool terrain, bool movers, bool o
 					// Must force here as well.
 					Stuff::Vector3D pos = mechs[i]->getPosition();
 					float rot = mechs[i]->getRotation();
-					pos.z = land->getTerrainElevation(pos);
+					pos.z = TerrainRuntime::groundElevation(pos);
 					bool selected = mechs[i]->isSelected();
 					int teamID = mechs[i]->getTeamId();
 					mechs[i]->getAppearance()->setObjectParameters(pos,rot,mechs[i]->drawFlags,teamID,Team::getRelation(teamID, Team::home->getId()));
@@ -4713,7 +4714,7 @@ void GameObjectManager::updateAppearancesOnly( bool terrain, bool movers, bool o
 					// Must force here as well.
 					Stuff::Vector3D pos = vehicles[i]->getPosition();
 					float rot = vehicles[i]->getRotation();
-					pos.z = land->getTerrainElevation(pos);
+					pos.z = TerrainRuntime::groundElevation(pos);
 					if ((pos.z < MapData::waterDepth))
 						pos.z = MapData::waterDepth;
 					bool selected = vehicles[i]->isSelected();
@@ -4740,7 +4741,7 @@ void GameObjectManager::updateAppearancesOnly( bool terrain, bool movers, bool o
 						// Must force here as well.
 						Stuff::Vector3D pos = turrets[i]->getPosition();
 						float rot = turrets[i]->getRotation();
-						pos.z = land->getTerrainElevation(pos);
+						pos.z = TerrainRuntime::groundElevation(pos);
 						bool selected = turrets[i]->isSelected();
 						int teamID = turrets[i]->getTeamId();
 						turrets[i]->getAppearance()->setObjectParameters(pos,rot,selected,teamID,Team::getRelation(teamID, Team::home->getId()));

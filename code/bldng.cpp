@@ -824,19 +824,9 @@ long Building::update (void)
 			{
 				windowsVisible = turn;
 	
-				// TERRAIN-RUNTIME-CONSUMER-GROUNDING-1: first consumer migrated onto
-				// the TerrainRuntime spine. Gate MC2_TERRAIN_RUNTIME_GROUNDING
-				// (default-OFF = exact legacy call). Byte-identical today —
-				// sampleGameplayHeight forwards to getTerrainElevation. Buildings
-				// keep GAMEPLAY height (footprint + shadow casters); a future
-				// visual/gameplay split can flip this site deliberately.
-				static const bool s_groundingApi = []() {
-					const char* v = getenv("MC2_TERRAIN_RUNTIME_GROUNDING");
-					return v && v[0] == '1' && v[1] == '\0';   // default OFF
-				}();
-				float zPos = s_groundingApi
-					? TerrainRuntime::sampleGameplayHeight(position)
-					: land->getTerrainElevation(position);
+				// TERRAIN-RUNTIME-CONSUMER-GROUNDING-1: grounding routed through the
+				// spine chokepoint (gate MC2_TERRAIN_RUNTIME_GROUNDING, byte-identical).
+				float zPos = TerrainRuntime::groundElevation(position);
 				position.z = zPos;
 				setPosition(position);
 

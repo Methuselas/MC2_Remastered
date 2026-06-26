@@ -152,13 +152,18 @@ TerrainRuntime::sampleFeatureMask(x,y,kind)// == legacy-derived (slope/overlay),
 Parity gate: legacy-direct == API result, byte-identical, gate default-OFF.
 
 **Migration priority (highest break-surface first):**
-1. prop/building/object grounding (load-bearing, feeds shadow casters)
-   — ✅ TERRAIN-RUNTIME-CONSUMER-GROUNDING-1 (2026-06-25): `bldng.cpp:825`
-     `Building::update` grounding routed through `sampleGameplayHeight` behind gate
-     `MC2_TERRAIN_RUNTIME_GROUNDING` (default-OFF = exact legacy). Gate-OFF mc2_01+24
-     PASS byte-identical; gate-ON mc2_24 PASS Δdestroys=0, visual-advisory PASS.
-     Remaining grounding sites (objmgr/gameobj object-grounding) = next.
-2. unit grounding (hot, ~21 sites)
+1. prop/building/object grounding (load-bearing, feeds shadow casters) + unit grounding
+   — ✅ TERRAIN-RUNTIME-CONSUMER-GROUNDING-1 (2026-06-25). Added the spine grounding
+     chokepoint `TerrainRuntime::groundElevation(pos)` (gate `MC2_TERRAIN_RUNTIME_GROUNDING`,
+     default-OFF, byte-identical, single future flip-point). Migrated ~47 grounding sites
+     onto it: `bldng.cpp` (Building::update) + `mech.cpp` (15) + `gvehicl.cpp` (15) +
+     `warrior.cpp` (6) + `gate.cpp` (1) + `objmgr.cpp` (4) + `gameobj.cpp` (3) +
+     `bdactor.cpp` (3, incl. null-guarded). Left untouched: `GameMap->getTerrainElevation`,
+     tile-form `(r,c)`, and weapon-impact/path-waypoint vs grounding distinction is moot
+     (all want gameplay height). Gate-OFF + gate-ON mc2_24 PASS, Δdestroys=0, visual-advisory
+     (golden) PASS both states.
+2. (remaining height consumers — UI markers, ablmc2 strike, team/tacordr/mover-path,
+   weather, camera-grounding — can adopt `groundElevation` later; not hot grounding)
 3. water threshold + shore (subtle straddle of one constant)
 4. craters / decal ring (z-fight)
 5. vegetation placement + gates

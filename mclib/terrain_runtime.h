@@ -35,6 +35,15 @@ namespace TerrainRuntime
 	// Gameplay-authoritative surface height. == land->getTerrainElevation(pos).
 	float sampleGameplayHeight(const Stuff::Vector3D& worldPos);
 
+	// Grounding chokepoint: the single seam every per-frame object/unit Z-onto-
+	// terrain call routes through (TERRAIN-RUNTIME-CONSUMER-GROUNDING-1). Gate
+	// MC2_TERRAIN_RUNTIME_GROUNDING (default-OFF). Byte-identical to legacy today
+	// (== sampleGameplayHeight == land->getTerrainElevation); returns 0 if no
+	// terrain. This is the one place a future gameplay/visual split decides how
+	// grounding samples height. Use this, not raw land->getTerrainElevation, at
+	// grounding sites.
+	float groundElevation(const Stuff::Vector3D& worldPos);
+
 	// Render/visual surface height. == gameplay height today; may diverge later.
 	float sampleVisualHeight(const Stuff::Vector3D& worldPos);
 

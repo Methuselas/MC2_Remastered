@@ -15,6 +15,7 @@
 #endif
 
 #include "gos_static_prop_killswitch.h"  // g_useGpuStaticProps
+#include"terrain_runtime.h"
 
 #ifndef MCLIB_H
 #include"mclib.h"
@@ -356,7 +357,7 @@ long Gate::update (void)
 			{
 				windowsVisible = turn;
 	
-				float zPos = land->getTerrainElevation(position);
+				float zPos = TerrainRuntime::groundElevation(position);
 				position.z = zPos;
 				setPosition(position);
 			}

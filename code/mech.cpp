@@ -12,6 +12,8 @@
 #include"mclib.h"
 #endif
 
+#include"terrain_runtime.h"
+
 #ifndef GAMEOBJ_H
 #include"gameobj.h"
 #endif
@@ -6068,7 +6070,7 @@ long BattleMech::update (void)
 			setVelocity(vel);
 	
 			newPosition.Add(position, vel);
-			newPosition.z = land->getTerrainElevation(newPosition);
+			newPosition.z = TerrainRuntime::groundElevation(newPosition);
 			if ((getMoveType() == MOVETYPE_AIR) &&
 				(newPosition.z < MapData::waterDepth))
 				newPosition.z = MapData::waterDepth;
@@ -6081,7 +6083,7 @@ long BattleMech::update (void)
 			setVelocity(vel);
 			
 			newPosition.Add(position, vel);
-			newPosition.z = land->getTerrainElevation(newPosition);
+			newPosition.z = TerrainRuntime::groundElevation(newPosition);
 		}
 
 		if (newMoveChunk) {
@@ -6118,7 +6120,7 @@ long BattleMech::update (void)
 
 		mineCheck();
 
-		float zPos = land->getTerrainElevation(position);
+		float zPos = TerrainRuntime::groundElevation(position);
 		position.z = zPos;
 		if ((getMoveType() == MOVETYPE_AIR) &&
 			(zPos < MapData::waterDepth))
@@ -6198,7 +6200,7 @@ long BattleMech::update (void)
 
 		Stuff::Vector3D newPosition;
 		newPosition.Add(position, vel);
-		newPosition.z = land->getTerrainElevation(newPosition);
+		newPosition.z = TerrainRuntime::groundElevation(newPosition);
 
 		setPosition(newPosition);
 
@@ -6264,7 +6266,7 @@ long BattleMech::update (void)
 
 		Stuff::Vector3D newPosition;
 		newPosition.Add(position, vel);
-		newPosition.z = land->getTerrainElevation(newPosition);
+		newPosition.z = TerrainRuntime::groundElevation(newPosition);
 
 		setPosition(newPosition);
 
@@ -6654,8 +6656,8 @@ void BattleMech::render (void)
 				{
 					Stuff::Vector3D startPos = path->stepList[i].destination;
 					Stuff::Vector3D endPos = path->stepList[i+1].destination;
-					startPos.z = land->getTerrainElevation(startPos);
-					endPos.z = land->getTerrainElevation(endPos);
+					startPos.z = TerrainRuntime::groundElevation(startPos);
+					endPos.z = TerrainRuntime::groundElevation(endPos);
 					
 					// [PROJECTZ:ScreenXYOracle id=mech_path_step_start]
 					eye->projectForScreenXY(startPos,lineStart);
@@ -8506,14 +8508,14 @@ long BattleMech::fireWeapon (GameObjectPtr target, float targetTime, long weapon
 							positionOffset = *targetPoint;
 		
 						positionOffset.x += missRadius;
-						positionOffset.z = land->getTerrainElevation(positionOffset);
+						positionOffset.z = TerrainRuntime::groundElevation(positionOffset);
 
 						bool canSeeHit = lineOfSight(positionOffset,true);
 
 						if (!canSeeHit)
 						{
 							positionOffset.x -= (missRadius * 2.0f);
-							positionOffset.z = land->getTerrainElevation(positionOffset);
+							positionOffset.z = TerrainRuntime::groundElevation(positionOffset);
 
 							canSeeHit = lineOfSight(positionOffset,true); 
 
@@ -8522,14 +8524,14 @@ long BattleMech::fireWeapon (GameObjectPtr target, float targetTime, long weapon
 								positionOffset.x += missRadius;
 								positionOffset.y += missRadius;
 
-								positionOffset.z = land->getTerrainElevation(positionOffset);
+								positionOffset.z = TerrainRuntime::groundElevation(positionOffset);
 
 								canSeeHit = lineOfSight(positionOffset,true);
 
 								if (!canSeeHit)
 								{
 									positionOffset.y -= (missRadius * 2.0f);
-									positionOffset.z = land->getTerrainElevation(positionOffset);
+									positionOffset.z = TerrainRuntime::groundElevation(positionOffset);
 
 									canSeeHit = lineOfSight(positionOffset,true);
 
@@ -8617,14 +8619,14 @@ long BattleMech::fireWeapon (GameObjectPtr target, float targetTime, long weapon
 					positionOffset = *targetPoint;
 
 				positionOffset.x += missRadius;
-				positionOffset.z = land->getTerrainElevation(positionOffset);
+				positionOffset.z = TerrainRuntime::groundElevation(positionOffset);
 
 				bool canSeeHit = lineOfSight(positionOffset,true);
 
 				if (!canSeeHit)
 				{
 					positionOffset.x -= (missRadius * 2.0f);
-					positionOffset.z = land->getTerrainElevation(positionOffset);
+					positionOffset.z = TerrainRuntime::groundElevation(positionOffset);
 
 					canSeeHit = lineOfSight(positionOffset,true); 
 
@@ -8633,14 +8635,14 @@ long BattleMech::fireWeapon (GameObjectPtr target, float targetTime, long weapon
 						positionOffset.x += missRadius;
 						positionOffset.y += missRadius;
 
-						positionOffset.z = land->getTerrainElevation(positionOffset);
+						positionOffset.z = TerrainRuntime::groundElevation(positionOffset);
 
 						canSeeHit = lineOfSight(positionOffset,true);
 
 						if (!canSeeHit)
 						{
 							positionOffset.y -= (missRadius * 2.0f);
-							positionOffset.z = land->getTerrainElevation(positionOffset);
+							positionOffset.z = TerrainRuntime::groundElevation(positionOffset);
 
 							canSeeHit = lineOfSight(positionOffset,true);
 

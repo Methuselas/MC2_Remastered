@@ -25,6 +25,20 @@ float sampleGameplayHeight(const Stuff::Vector3D& worldPos)
 	return land ? land->getTerrainElevation(worldPos) : 0.0f;
 }
 
+float groundElevation(const Stuff::Vector3D& worldPos)
+{
+	if (!land)
+		return 0.0f;
+	// Gate exists for A/B + as the future gameplay/visual split flip-point.
+	// Both branches are byte-identical today.
+	static const bool s_gate = []() {
+		const char* v = getenv("MC2_TERRAIN_RUNTIME_GROUNDING");
+		return v && v[0] == '1' && v[1] == '\0';   // default OFF
+	}();
+	return s_gate ? sampleGameplayHeight(worldPos)
+	              : land->getTerrainElevation(worldPos);
+}
+
 float sampleVisualHeight(const Stuff::Vector3D& worldPos)
 {
 	// Render surface. SAME buffer as gameplay today; a future visual-height

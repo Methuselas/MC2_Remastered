@@ -113,6 +113,7 @@
 #include "../GameAdapters/StaticPropRenderAdapter.h"  // M1 Task 12
 #include "move_recon.h"  // MC2_MOVE_RECON per-frame pathfinding cost instrumentation
 #include "brain_tactic_select.h"  // TACTIC-WEIGHTS-A: Wang-hash deterministic tactic selection
+#include"terrain_runtime.h"  // TERRAIN-RUNTIME-CONSUMER-GROUNDING-1
 
 // MC2_BRAIN_TASKQ gate — checked once at first runBrain call
 static bool s_brainTaskQEnabled     = false;
@@ -2875,13 +2876,13 @@ long MechWarrior::setMoveGoal (unsigned long type, Stuff::Vector3D* location, Ga
 			break;
 		case MOVEGOAL_LOCATION:
 			if (location->z < -10.0)
-				location->z = land->getTerrainElevation(*location);
+				location->z = TerrainRuntime::groundElevation(*location);
 			moveOrders.goalLocation = *location;
 			moveOrders.goalObjectWID = 0;
 			break;
 		default:
 			if (location->z < -10.0)
-				location->z = land->getTerrainElevation(*location);
+				location->z = TerrainRuntime::groundElevation(*location);
 			moveOrders.goalLocation = *location;
 			//if (!obj)
 			//	obj = ObjectManager->get(type);
@@ -7963,7 +7964,7 @@ void MechWarrior::drawWaypointPath()
 			else if ( pos.x != 0 && pos.y != 0  )
 			{
 
-				pos.z = land->getTerrainElevation( pos );
+				pos.z = TerrainRuntime::groundElevation( pos );
 				// [PROJECTZ:ScreenXYOracle id=warrior_tac_order_preview_start]
 				eye->projectForScreenXY( tmpPos, screenPos1 );
 				// [PROJECTZ:ScreenXYOracle id=warrior_tac_order_preview_end]
@@ -8068,7 +8069,7 @@ void MechWarrior::drawOverviewMovePath( unsigned long color )
 	first.z = getCurTacOrder()->moveParams.wayPath.points[2];
 	if ( !tacOrderQueueLooping && first.x != 0.0f && first.y != 0.0f )
 	{
-		first.z = land->getTerrainElevation( first );
+		first.z = TerrainRuntime::groundElevation( first );
 		pts[np++] = first;
 	}
 	for ( int i = 0; i < numTacOrdersQueued && np < kMaxPts; i++ )
@@ -8170,7 +8171,7 @@ bool MechWarrior::getMoveDestination( Stuff::Vector3D& out )
 	first.y = getCurTacOrder()->moveParams.wayPath.points[1];
 	if ( first.x != 0.0f && first.y != 0.0f )
 	{
-		first.z = land->getTerrainElevation( first );
+		first.z = TerrainRuntime::groundElevation( first );
 		out = first;
 		return true;
 	}
@@ -8189,7 +8190,7 @@ void MechWarrior::updateDrawWaypointPath()
 			//------------------------------------------------
 			tacOrderQueue[i].marker->update();
 			
-			float zPos = land->getTerrainElevation(tacOrderQueue[i].point);
+			float zPos = TerrainRuntime::groundElevation(tacOrderQueue[i].point);
 			tacOrderQueue[i].point.z = zPos;
 		}
 	}

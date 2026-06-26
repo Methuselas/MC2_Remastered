@@ -112,6 +112,7 @@
 #include"tacticaloverview.h"  // maskWorldBars: hide health bars in overview
 #endif
 
+#include"terrain_runtime.h"
 #include "../resource.h"
 #include "../GameOS/gameos/gpu_cull_readback.h"  // C3: GPU visibility queries
 #include "../GameOS/gameos/gos_profiler.h"  // Tracy sub-zones for vehicles update
@@ -3214,7 +3215,7 @@ long GroundVehicle::update (void)
 				Stuff::Vector3D posDiff = dVel;
 				posDiff *= frameLength;
 				position.Add(position,posDiff);
-				float elev = land->getTerrainElevation(position); 
+				float elev = TerrainRuntime::groundElevation(position);
 				if (position.z < elev)
 				{
 					position.z = elev;
@@ -3236,7 +3237,7 @@ long GroundVehicle::update (void)
 		}
 		else
 		{
-			float elev = land->getTerrainElevation(position); 
+			float elev = TerrainRuntime::groundElevation(position);
 			if (position.z < elev)
 			{
 				position.z = elev;
@@ -3564,7 +3565,7 @@ long GroundVehicle::update (void)
 	{
 		Stuff::Vector3D newPosition;
 		newPosition.Add(position, vel);
-		newPosition.z = land->getTerrainElevation(newPosition);
+		newPosition.z = TerrainRuntime::groundElevation(newPosition);
 		if ((moveLevel == 1) && (newPosition.z < Terrain::waterElevation))
 			newPosition.z = Terrain::waterElevation;
 		int newCellRow = 0;
@@ -3580,7 +3581,7 @@ long GroundVehicle::update (void)
 
 	Stuff::Vector3D newPosition;
 	newPosition.Add(position, vel);
-	newPosition.z = land->getTerrainElevation(newPosition);
+	newPosition.z = TerrainRuntime::groundElevation(newPosition);
 	if ((moveLevel == 1) && (newPosition.z < Terrain::waterElevation))
 		newPosition.z = Terrain::waterElevation;
 
@@ -3681,7 +3682,7 @@ long GroundVehicle::update (void)
 	//------------------------------------------------------------------------------
 	// Now that we have our new position, glue mech to terrain by
 	// changing z to match terrainElevation at that point, IF VEHICLE IS VISIBLE!!!!
-	float zPos = land->getTerrainElevation(position);
+	float zPos = TerrainRuntime::groundElevation(position);
 	position.z = zPos;
 	if ((moveLevel == 1) && (zPos < MapData::waterDepth))
 		position.z = MapData::waterDepth;
@@ -4009,8 +4010,8 @@ void GroundVehicle::render (void)
 				{
 					Stuff::Vector3D startPos = path->stepList[i].destination;
 					Stuff::Vector3D endPos = path->stepList[i+1].destination;
-					startPos.z = land->getTerrainElevation(startPos);
-					endPos.z = land->getTerrainElevation(endPos);
+					startPos.z = TerrainRuntime::groundElevation(startPos);
+					endPos.z = TerrainRuntime::groundElevation(endPos);
 					
 					// [PROJECTZ:ScreenXYOracle id=gvehicl_path_step_start]
 					eye->projectForScreenXY(startPos,lineStart);
@@ -4930,14 +4931,14 @@ long GroundVehicle::fireWeapon (GameObjectPtr target, float targetTime, long wea
 						positionOffset = *targetPoint;
 	
 					positionOffset.x += missRadius;
-					positionOffset.z = land->getTerrainElevation(positionOffset);
+					positionOffset.z = TerrainRuntime::groundElevation(positionOffset);
 
 					bool canSeeHit = lineOfSight(positionOffset,true);
 
 					if (!canSeeHit)
 					{
 						positionOffset.x -= (missRadius * 2.0f);
-						positionOffset.z = land->getTerrainElevation(positionOffset);
+						positionOffset.z = TerrainRuntime::groundElevation(positionOffset);
 
 						canSeeHit = lineOfSight(positionOffset,true); 
 
@@ -4946,14 +4947,14 @@ long GroundVehicle::fireWeapon (GameObjectPtr target, float targetTime, long wea
 							positionOffset.x += missRadius;
 							positionOffset.y += missRadius;
 
-							positionOffset.z = land->getTerrainElevation(positionOffset);
+							positionOffset.z = TerrainRuntime::groundElevation(positionOffset);
 
 							canSeeHit = lineOfSight(positionOffset,true);
 
 							if (!canSeeHit)
 							{
 								positionOffset.y -= (missRadius * 2.0f);
-								positionOffset.z = land->getTerrainElevation(positionOffset);
+								positionOffset.z = TerrainRuntime::groundElevation(positionOffset);
 
 								canSeeHit = lineOfSight(positionOffset,true);
 
@@ -5034,14 +5035,14 @@ long GroundVehicle::fireWeapon (GameObjectPtr target, float targetTime, long wea
 					positionOffset = *targetPoint;
 
 				positionOffset.x += missRadius;
-				positionOffset.z = land->getTerrainElevation(positionOffset);
+				positionOffset.z = TerrainRuntime::groundElevation(positionOffset);
 
 				bool canSeeHit = lineOfSight(positionOffset,true);
 
 				if (!canSeeHit)
 				{
 					positionOffset.x -= (missRadius * 2.0f);
-					positionOffset.z = land->getTerrainElevation(positionOffset);
+					positionOffset.z = TerrainRuntime::groundElevation(positionOffset);
 
 					canSeeHit = lineOfSight(positionOffset,true); 
 
@@ -5050,14 +5051,14 @@ long GroundVehicle::fireWeapon (GameObjectPtr target, float targetTime, long wea
 						positionOffset.x += missRadius;
 						positionOffset.y += missRadius;
 
-						positionOffset.z = land->getTerrainElevation(positionOffset);
+						positionOffset.z = TerrainRuntime::groundElevation(positionOffset);
 
 						canSeeHit = lineOfSight(positionOffset,true);
 
 						if (!canSeeHit)
 						{
 							positionOffset.y -= (missRadius * 2.0f);
-							positionOffset.z = land->getTerrainElevation(positionOffset);
+							positionOffset.z = TerrainRuntime::groundElevation(positionOffset);
 
 							canSeeHit = lineOfSight(positionOffset,true);
 
