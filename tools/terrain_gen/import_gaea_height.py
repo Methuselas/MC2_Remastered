@@ -53,6 +53,38 @@ def _resize01(a: np.ndarray, n: int) -> np.ndarray:
     return np.clip(np.asarray(Image.fromarray(a.astype(np.float32), "F").resize((n, n), Image.BILINEAR)), 0, 1)
 
 
+def write_clean_pak(template: str, out_pak: Path, pkt0: bytes, clear_objects: bool = True) -> int:
+    """Rewrite a .pak: packet 0 = our terrain, packet 1 (terrain objects) emptied to
+    count=0 so the template's buildings/links do NOT come along, and the seek table
+    rebuilt for the resized packet. (patch_pak only swaps same-size packet 0, which
+    inherits ALL the template's object/move packets -> a gaea map wearing the
+    template's city.) Returns the new object count (0 when cleared)."""
+    import struct as _s
+    raw = Path(template).read_bytes()
+    magic, first = _s.unpack_from('<II', raw, 0)
+    n = first // 4 - 2
+    ent = [_s.unpack_from('<I', raw, 8 + 4 * i)[0] for i in range(n)]
+    packets = []
+    for i in range(n):
+        t = (ent[i] >> 29) & 7
+        off = ent[i] & ((1 << 29) - 1)
+        end = (ent[i + 1] & ((1 << 29) - 1)) if i + 1 < n else len(raw)
+        packets.append([t, raw[off:end]])
+    packets[0][1] = pkt0                                   # our gaea terrain
+    if clear_objects and n > 1:
+        packets[1] = [0, _s.pack('<i', 0)]                # terrain objects: count=0 (RAW)
+    # re-serialize with a fresh seek table (offsets shift because packet 1 resized).
+    new_first = 8 + n * 4
+    entries, body, off = [], bytearray(), new_first
+    for (t, d) in packets:
+        entries.append(((t & 7) << 29) | (off & ((1 << 29) - 1)))
+        body += d
+        off += len(d)
+    hdr = _s.pack('<II', magic, new_first) + b''.join(_s.pack('<I', e) for e in entries)
+    out_pak.write_bytes(hdr + bytes(body))
+    return 0 if clear_objects else -1
+
+
 def run(cfg: dict, out_root: Path) -> dict:
     res = int(cfg["height_resolution"])
     size = int(cfg["size"])
@@ -89,7 +121,10 @@ def run(cfg: dict, out_root: Path) -> dict:
     out.mkdir(parents=True, exist_ok=True)
     exp = PakExporter()
     pkt0 = exp.build_packet0(coarse.astype(np.float32), masks, recipe)
-    exp.patch_pak(cfg["template_pak"], str(out / f"{name}.pak"), pkt0)
+    # Clean map by default: empty the template's terrain-objects packet so the gaea
+    # terrain doesn't inherit the template's buildings/links (patch_pak would).
+    write_clean_pak(cfg["template_pak"], out / f"{name}.pak", pkt0,
+                    clear_objects=not cfg.get("keep_objects", False))
 
     elev = (coarse * recipe.height.max_elevation + recipe.height.min_elevation).astype("<f4")
     elev.tofile(str(out / f"{name}.elev.r32"))
@@ -140,6 +175,7 @@ def main() -> int:
     ap.add_argument("--min-elev", type=float, default=0.0)
     ap.add_argument("--water-pct", type=float, default=30.0)
     ap.add_argument("--no-flip", action="store_true")
+    ap.add_argument("--keep-objects", action="store_true")
     ap.add_argument("--out", default="tests/terrain/gaea")
     a = ap.parse_args()
 
@@ -151,7 +187,7 @@ def main() -> int:
         cfg = {"name": a.name, "height_file": a.height_file, "color_file": a.color_file,
                "height_resolution": a.res, "size": a.size, "template_pak": a.template_pak,
                "biome": a.biome, "flip_y": not a.no_flip, "water_percentile": a.water_pct,
-               "height": {"min_elevation": a.min_elev, "max_elevation": a.max_elev}}
+               "height": {"min_elevation": a.min_elev, "max_elevation": a.max_elev}, "keep_objects": a.keep_objects}
     rep = run(cfg, Path(a.out))
     print(f"[gaea-import] {rep['name']}: src={rep['height_source']} "
           f"gaea{rep['gaea_res']}->mc2 {rep['mc2_grid']}^2  water={rep['water_elevation_wu']:.0f}wu "
