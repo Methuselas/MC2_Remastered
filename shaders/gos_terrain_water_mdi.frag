@@ -13,6 +13,7 @@
 #define PREC highp
 
 #include <include/render_contract.hglsl>
+#include <include/edge_haze.hglsl>   // WATER-EDGE-FEATHER-1: edgeHazeAmount + EDGE_HAZE_SKY
 
 in PREC vec4 Color;
 in PREC vec2 Texcoord;
@@ -23,6 +24,16 @@ in PREC vec3  WorldPos;           // water-v1: surface pos (Fresnel view vector)
 
 layout (location=0) out PREC vec4 FragColor;
 layout (location=1) out PREC vec4 GBuffer1;
+
+// WATER-EDGE-FEATHER-1: dissolve the hard map-edge WATER rim into the fog'd
+// horizon (companion to terrain TERRAIN-EDGE-FEATHER-1). Water is alpha-blended,
+// so the feather BOTH tints col toward EDGE_HAZE_SKY AND lifts alpha toward 0 at
+// the rim — a tint-only fade would leave a hazed-but-opaque line. Default OFF
+// (u_waterEdgeFeather==0 -> skipped -> byte-identical). u_halfMap = WORLD-unit
+// map half-extent (matches WorldPos.xy raw MC2 world units).
+uniform int   u_waterEdgeFeather;
+uniform float u_waterEdgeFeatherStrength;
+uniform float u_halfMap;
 
 uniform sampler2D tex1;
 uniform sampler2D tex2;
@@ -297,7 +308,14 @@ void main(void)
             return;
         }
 
-        FragColor = vec4(col, shore * WATER_MAX_ALPHA);  // shore ramp preserved; capped so deep water is mildly transparent
+        PREC float waterA = shore * WATER_MAX_ALPHA;
+        // WATER-EDGE-FEATHER-1: tint + dissolve the map-edge rim (see header).
+        if (u_waterEdgeFeather != 0 && u_halfMap > 0.0) {
+            float h = clamp(edgeHazeAmount(WorldPos.xy, u_halfMap) * u_waterEdgeFeatherStrength, 0.0, 1.0);
+            col    = mix(col, EDGE_HAZE_SKY, h);   // tint toward horizon haze
+            waterA *= (1.0 - h);                   // dissolve: alpha -> 0 at the rim
+        }
+        FragColor = vec4(col, waterA);  // shore ramp preserved; capped so deep water is mildly transparent
         GBuffer1  = rc_gbuffer1_screenShadowEligible(vec3(0.0, 0.0, 1.0));
         return;
     }

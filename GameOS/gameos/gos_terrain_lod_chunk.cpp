@@ -134,6 +134,9 @@ static GLint s_locUseRockSlopeBias = -1;  // TERRAIN-SLOPE-BIAS-VISUAL-1 (B4a)
 static GLint s_locRockSlopeBiasStr = -1;
 static GLint s_locUseTriplanarCliff = -1; // TERRAIN-CLIFF-MATERIAL-TRIPLANAR-1
 static GLint s_locCliffTriplanarStr = -1;
+static GLint s_locMacroVariation    = -1; // TERRAIN-MACRO-VARIATION-1
+static GLint s_locEdgeFeather        = -1; // TERRAIN-EDGE-FEATHER-1
+static GLint s_locEdgeFeatherStr     = -1;
 static GLint s_locPomParams      = -1;
 static GLint s_locMatProfile     = -1;
 // Step 5c: cement catalog atlas (tex3) accessors from gos_terrain_indirect.cpp.
@@ -431,6 +434,9 @@ void gos_TerrainLodChunk_Init()
             s_locRockSlopeBiasStr = glGetUniformLocation(s_terrainProgram, "rockSlopeBiasStrength");
             s_locUseTriplanarCliff = glGetUniformLocation(s_terrainProgram, "useTriplanarCliff");
             s_locCliffTriplanarStr = glGetUniformLocation(s_terrainProgram, "cliffTriplanarStrength");
+            s_locMacroVariation    = glGetUniformLocation(s_terrainProgram, "macroVariationStrength");
+            s_locEdgeFeather       = glGetUniformLocation(s_terrainProgram, "u_edgeFeather");
+            s_locEdgeFeatherStr    = glGetUniformLocation(s_terrainProgram, "u_edgeFeatherStrength");
             s_locPomParams   = glGetUniformLocation(s_terrainProgram, "pomParams");
             s_locMatProfile  = glGetUniformLocation(s_terrainProgram, "g_terrainMaterialProfile");
             s_locCementAtlas    = glGetUniformLocation(s_terrainProgram, "u_cementAtlas");
@@ -870,6 +876,40 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
                     if (v > 0.0f) tcStr = v;
                 }
                 glUniform1f(s_locCliffTriplanarStr, tcStr);
+            }
+        }
+        // TERRAIN-MACRO-VARIATION-1: env gate MC2_TERRAIN_MACRO_VARIATION, default
+        // OFF -> uploads 0 -> frag block skipped (byte-identical). Strength via
+        // MC2_TERRAIN_MACRO_VARIATION_STRENGTH (default 1.0).
+        if (s_locMacroVariation >= 0) {
+            float mvStr = 0.0f;
+            if (const char* e = getenv("MC2_TERRAIN_MACRO_VARIATION")) {
+                if (e[0] && e[0] != '0') {
+                    mvStr = 1.0f;
+                    if (const char* s = getenv("MC2_TERRAIN_MACRO_VARIATION_STRENGTH")) {
+                        float v = (float)atof(s);
+                        if (v > 0.0f) mvStr = v;
+                    }
+                }
+            }
+            glUniform1f(s_locMacroVariation, mvStr);
+        }
+        // TERRAIN-EDGE-FEATHER-1: env gate MC2_TERRAIN_EDGE_FEATHER, default OFF
+        // -> uploads 0 -> frag block skipped (byte-identical). Fades the terrain
+        // colormap to sky/haze over the last ~tile band so the hard straight
+        // map-perimeter line dissolves into the fog. Strength via
+        // MC2_TERRAIN_EDGE_FEATHER_STRENGTH (default 1.0).
+        {
+            int efOn = 0;
+            if (const char* e = getenv("MC2_TERRAIN_EDGE_FEATHER")) efOn = (e[0] && e[0] != '0') ? 1 : 0;
+            if (s_locEdgeFeather >= 0) glUniform1i(s_locEdgeFeather, efOn);
+            if (s_locEdgeFeatherStr >= 0) {
+                float efStr = 1.0f;
+                if (const char* s = getenv("MC2_TERRAIN_EDGE_FEATHER_STRENGTH")) {
+                    float v = (float)atof(s);
+                    if (v > 0.0f) efStr = v;
+                }
+                glUniform1f(s_locEdgeFeatherStr, efStr);
             }
         }
         if (s_locPomParams   >= 0) glUniform4f(s_locPomParams,   gos_GetTerrainPOMScale(), 8.0f, 32.0f, 0.0f);

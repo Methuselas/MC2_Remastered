@@ -3421,6 +3421,28 @@ void gosRenderer::renderWaterFastPath(
         setMF         ("frameCos",        frameCos);
         setMF         ("frameCosAlpha",   frameCosAlpha);
         setMF         ("maxMinUV",        maxMinUV);
+        // WATER-EDGE-FEATHER-1: dissolve the hard map-edge water rim into the
+        // fog'd horizon (companion to TERRAIN-EDGE-FEATHER-1). Gate
+        // MC2_WATER_EDGE_FEATHER default-OFF -> upload 0 -> frag block skipped
+        // (byte-identical). Strength MC2_WATER_EDGE_FEATHER_STRENGTH (default 1.0).
+        // halfMap = the canonical WORLD-unit half-extent (gosPostProcess::
+        // getMapHalfExtent), the SAME value the legacy terrain edge-haze + post-fx
+        // edge_fog use against WorldPos.xy (raw MC2 world units). Origin-centered.
+        {
+            static const int s_waterEdgeFeather = []() {
+                const char* e = getenv("MC2_WATER_EDGE_FEATHER");
+                return (e && e[0] && e[0] != '0') ? 1 : 0;
+            }();
+            static const float s_waterEdgeFeatherStr = []() {
+                const char* s = getenv("MC2_WATER_EDGE_FEATHER_STRENGTH");
+                float v = (s ? (float)atof(s) : 0.0f);
+                return v > 0.0f ? v : 1.0f;
+            }();
+            gosPostProcess* ppW = getGosPostProcess();
+            setMI("u_waterEdgeFeather",         s_waterEdgeFeather);
+            setMF("u_waterEdgeFeatherStrength", s_waterEdgeFeatherStr);
+            setMF("u_halfMap",                  ppW ? ppW->getMapHalfExtent() : 0.0f);
+        }
         // CINEMATIC-WATER-WHITE-1: same fix as non-MDI path above — read current
         // render state, not stale fog_color_. See comment block above. (time uses
         // the SmokeMode fixed-timestep clock when active, for deterministic capture.)

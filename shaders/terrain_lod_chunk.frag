@@ -11,6 +11,7 @@
 #include <include/shadow.hglsl>
 #define PREC highp                // noise.hglsl uses PREC (legacy frag defines it)
 #include <include/noise.hglsl>   // fbm() for the colour break-up (matches legacy)
+#include <include/edge_haze.hglsl> // TERRAIN-EDGE-FEATHER-1: edgeHazeAmount + EDGE_HAZE_SKY (legacy parity)
 
 in vec3  v_worldPos;
 in float v_terrainType;       // Step 5b: interpolated per-vertex terrainType (concrete)
@@ -150,6 +151,9 @@ uniform int   useTriplanarCliff;                // TERRAIN-CLIFF-MATERIAL-TRIPLA
 uniform float cliffTriplanarStrength;           // triplanar rock normal/relief strength (default 1.0)
 uniform vec4  pomParams;                        // .x=scale(0=off), .y=minLayers, .z=maxLayers
 uniform int   g_terrainMaterialProfile;         // 0=legacy, 1=sand(mc2_24 dirt-gate widen)
+uniform float macroVariationStrength;           // TERRAIN-MACRO-VARIATION-1: 0=off (byte-identical)
+uniform int   u_edgeFeather;                    // TERRAIN-EDGE-FEATHER-1: 0=off (byte-identical)
+uniform float u_edgeFeatherStrength;            // edge-haze blend amount (default 1.0)
 // Legacy Texcoord is [0,1] per MC2 TILE = MAPCELL_DIM(3) * 128 world units. The
 // chunk frag has world coords, so divide by this to get the per-tile UV before
 // per-material tiling. (Using /128 = per CELL was ~3x too dense -> sub-pixel
@@ -602,6 +606,27 @@ void main() {
     // Snow brightness dampen — only detected-snow fragments (snowWeight) are darkened.
     baseColor *= mix(1.0, snowBrightnessDampen, snowWeight);
 
+    // TERRAIN-MACRO-VARIATION-1: large-scale TINT + SATURATION breakup so flat,
+    // same-material areas stop reading as one stretched texture. The existing
+    // breakup block above is brightness-only; this adds colour/warmth/saturation
+    // variation across ~1000 WU zones. Uniform-flow branch (macroVariationStrength
+    // is a uniform); fbm is derivative-free math, so no UB. Default OFF
+    // (macroVariationStrength==0 -> block skipped -> byte-identical).
+    if (macroVariationStrength > 0.0) {
+        float mzA = fbm(v_worldPos.xy * 0.0011,        4) * 0.5 + 0.5;  // brightness/saturation field
+        float mzB = fbm(v_worldPos.xy * 0.0009 + 47.0, 3) * 0.5 + 0.5;  // warm<->cool tint field
+        float macroBright = mix(0.88, 1.12, mzA);
+        vec3  warmTint    = vec3(1.06, 1.005, 0.90);   // drier / sun-bleached zones
+        vec3  coolTint    = vec3(0.93, 1.00,  1.05);   // lusher / shaded zones
+        vec3  macroTint   = mix(warmTint, coolTint, mzB);
+        float luma        = dot(baseColor, vec3(0.299, 0.587, 0.114));
+        // desaturate worn zones (mzA low), keep vivid in others (mzA high)
+        vec3  macroCol    = mix(vec3(luma), baseColor, mix(0.84, 1.05, mzA)) * macroBright * macroTint;
+        // keep authored surfaces clean: no macro variation on snow or concrete/cement
+        float applyMask   = (1.0 - snowWeight) * (1.0 - pureConcrete);
+        baseColor = mix(baseColor, macroCol, macroVariationStrength * applyMask);
+    }
+
     // --- Lighting: NdotL relief band + sun shadow (baked; GBuffer1 stays
     // shadowHandled_flatUp so the compositor does not re-shadow terrain). ---
     float NdotL       = dot(N, terrainLightDir.xyz);
@@ -674,6 +699,21 @@ void main() {
             if ((u_diag & 1) == 0) GBuffer1 = vec4(0.5, 0.5, 1.0, 1.0);
             return;
         }
+    }
+
+    // TERRAIN-EDGE-FEATHER-1: fade the last ~one-tile band of terrain to sky/haze
+    // colour so the hard, perfectly-straight map-perimeter silhouette dissolves
+    // into the fog/horizon instead of cutting a knife edge. Ports the legacy
+    // gos_terrain.frag edge-haze (edge_haze.hglsl) that the LodChunk path lost.
+    // Colour-only (no depth/geometry change); the screen-space edge_fog/fog_oob
+    // cloud pass already covers the hard depth edge behind the faded band.
+    // Uniform-flow branch; default OFF (u_edgeFeather==0 -> skipped -> byte-identical).
+    // u_halfMap>0 guard: s_halfMap inits 0 and is only set in the submit path;
+    // edgeHazeAmount(_, 0) would wash the whole map grey if the gate armed before
+    // the first upload (greybeard footgun). Skip until halfMap is real.
+    if (u_edgeFeather != 0 && u_halfMap > 0.0) {
+        float haze = edgeHazeAmount(v_worldPos.xy, u_halfMap) * u_edgeFeatherStrength;
+        lit = mix(lit, EDGE_HAZE_SKY, clamp(haze, 0.0, 1.0));
     }
 
     fragColor = vec4(lit, 1.0);                                     // alpha forced 1.0
