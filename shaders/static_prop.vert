@@ -276,11 +276,13 @@ void main() {
     // `invariant gl_Position` guarantees depth prepass + color pass are
     // bit-identical after the bias, so the depth-prepass GL_EQUAL gate holds.
     vec4 clip = u_worldToClipGL * world;
-    // STATIC-PROP-DEPTH-NOFUDGE: terrain has TERRAIN_DEPTH_FUDGE = -0.002
-    // (pushed to depth D-0.004). Props at true depth D naturally win
-    // GL_GEQUAL vs terrain without their own fudge. Without this fudge,
-    // vegetation at true depth D also passes GL_GREATER vs props at D, which
-    // is the correct behavior (vegetation appears behind props, over terrain).
+    // TERRAIN-DEPTH-BIAS-OWNERSHIP-1: terrain now writes TRUE depth (0). Props
+    // take OBJECT_DEPTH_BIAS (> OVERLAY) so they sit ON TOP of cement/road
+    // transition tiles (no sinking) and win the GEQUAL tie over coplanar ground,
+    // while the bias is tiny enough that the reverse-Z world band is sub-visible
+    // (no show-through behind distant terrain). invariant gl_Position keeps the
+    // depth-prepass GL_EQUAL gate exact (single VS).
+    clip.z += OBJECT_DEPTH_BIAS * clip.w;
     gl_Position = clip;
 
     // Slice 2 (object-offload) — Stage 2.C.2: GPU vertex lighting.

@@ -15,6 +15,7 @@
 #define MC2_STATIC_PROP_LIGHTING
 
 #include <include/lighting.hglsl>
+#include <include/terrain_depth_bias.hglsl>  // TERRAIN-DEPTH-BIAS-OWNERSHIP-1: OBJECT_DEPTH_BIAS
 
 // MECH-VIEWUNIFORMS-BLOCKBINDING-1: gated mech ViewUniforms consumer.
 // MC2_USE_VIEW_UNIFORMS is injected by gos_mech_batcher.cpp ONLY when the
@@ -179,7 +180,12 @@ void main() {
     vec3 worldNormal = normalize(vec3(-normalStuff.x, normalStuff.z, normalStuff.y));
 
     // F1 Stage A: direct GL clip emit.
-    gl_Position = u_worldToClipGL * vec4(worldMC2, 1.0);
+    // TERRAIN-DEPTH-BIAS-OWNERSHIP-1: mechs take OBJECT_DEPTH_BIAS so they sit on
+    // top of cement/road transition tiles over true-depth terrain (tiny -> no
+    // distance show-through).
+    vec4 clip = u_worldToClipGL * vec4(worldMC2, 1.0);
+    clip.z += OBJECT_DEPTH_BIAS * clip.w;
+    gl_Position = clip;
     // No clip.w sign test — per memory/clip_w_sign_trap.md, clip.w sign
     // is not front/back in MC2 world coords; static_prop.vert omits this too.
 

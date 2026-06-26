@@ -158,11 +158,13 @@ void main()
     v_lodFade     = lodFade;
     v_tilt        = (cardRole == 3u) ? 0.25 : float(cardRole) * 0.5;  // 0=vert, 0.5=tilt, 1=top, 0.25=ground
 
-    // VEGETATION-DEPTH-BIAS: shift by 1× TERRAIN_DEPTH_FUDGE (−0.002), NOT 2×.
-    // Terrain chunk applies 2× (−0.004). With GL_GREATER:
-    //   D−0.002 > D−0.004 = TRUE  → veg wins over coplanar terrain surface ✓
-    //   D−0.002 > D       = FALSE → veg stays behind static props ✓
+    // VEGETATION-DEPTH-BIAS (TERRAIN-DEPTH-BIAS-OWNERSHIP-1): terrain now writes
+    // TRUE depth (0), so veg can no longer ride on the old -0.002 vs -0.004 gap.
+    // Use a small explicit positive VEG_DEPTH_BIAS so veg wins the GEQUAL tie over
+    // the coplanar ground (cards visible on terrain) while props (true depth, 0)
+    // still draw in front of veg at the ground line. VEG_DEPTH_BIAS < OVERLAY so
+    // road/decals stay on top of grass.
     vec4 clip = u_worldToClipGL * vec4(worldPos, 1.0);
-    clip.z += TERRAIN_DEPTH_FUDGE * clip.w;
+    clip.z += VEG_DEPTH_BIAS * clip.w;
     gl_Position = clip;
 }

@@ -40,9 +40,27 @@
 // header.
 #ifndef TERRAIN_DEPTH_BIAS_HGLSL
 #define TERRAIN_DEPTH_BIAS_HGLSL
-const float TERRAIN_DEPTH_FUDGE      = -0.002;   // reverse-Z: was 0.002
-const float WATER_DEPTH_BIAS         = -0.00175; // < 0 water LOSES GEQUAL tie; WATER_DEPTH_FUDGE_FAST=-0.00375 < TERRAIN=-0.002 (bumped halfway-again toward |0.004| bound to fully kill cliff-bleed)
-const float OVERLAY_DEPTH_BIAS       = 0.00005;  // > 0 decals win GEQUAL tie; reduced from 0.0005 (was beating buildings at RTS zoom)
-const float WATER_DEPTH_FUDGE_RASTER = -0.0025;  // RASTER regime; flips for reverse-Z (fence-seam reconciled)
-const float WATER_DEPTH_FUDGE_FAST   = TERRAIN_DEPTH_FUDGE + WATER_DEPTH_BIAS;  // -0.0025; FAST regime (matrix-share co-planar)
+// TERRAIN-DEPTH-BIAS-OWNERSHIP-1: terrain opaque now writes TRUE depth (0). The
+// old -0.002 (net -0.004 via VS+FS / 2x chunk) recessed terrain by a CONSTANT
+// NDC offset, which under reverse-Z is a world-depth band that GROWS
+// hyperbolically with distance -> distant terrain sat tens-to-hundreds of units
+// behind true depth, so every opaque object on it (trees, rocks, turrets,
+// generators, buildings, mechs) won the depth test and poked through. With
+// terrain at true depth, objects (which write true depth) occlude correctly at
+// all ranges. The co-planar layers below keep SMALL relative epsilons off true
+// terrain (distance-independent NDC tie-breaks). Layered contract, reverse-Z /
+// GEQUAL (larger NDC z = nearer = wins), all relative to true terrain (0):
+//   terrain 0 < VEG < OVERLAY < OBJECT < WATER(surface)
+// - VEG/OVERLAY win over bare ground; OBJECT (props/buildings/turrets/mechs) sits
+//   ABOVE overlays so it does NOT sink into cement/road transition tiles, yet is
+//   tiny enough (0.0001) that its reverse-Z world band is sub-visible (no
+//   show-through). WATER surface sits slightly ahead so a lake wins over its
+//   (deeper) lake-bottom terrain — matches the old net (+0.00025 vs terrain).
+const float TERRAIN_DEPTH_FUDGE      = 0.0;       // true opaque depth (was -0.002; net -0.004)
+const float VEG_DEPTH_BIAS           = 0.00003;   // > 0 veg wins over ground, < OVERLAY
+const float OVERLAY_DEPTH_BIAS       = 0.00005;   // > 0 decals/cement win over terrain & veg
+const float OBJECT_DEPTH_BIAS        = 0.0001;    // > OVERLAY: props/buildings/mechs sit on top of cement; tiny -> no distance show-through
+const float WATER_DEPTH_BIAS         = 0.00025;   // > 0 water surface wins over (deeper) lake-bottom terrain (old net was +0.00025)
+const float WATER_DEPTH_FUDGE_RASTER = 0.00025;   // RASTER regime: same surface bias (intro water visible)
+const float WATER_DEPTH_FUDGE_FAST   = 0.00025;   // FAST regime: water surface ahead of true terrain
 #endif

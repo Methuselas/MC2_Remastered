@@ -1,6 +1,7 @@
 //#version 420
 
 #include <include/lighting.hglsl>
+#include <include/terrain_depth_bias.hglsl>  // TERRAIN-DEPTH-BIAS-OWNERSHIP-1: OBJECT_DEPTH_BIAS
 
 layout(location = 0) in vec3 pos;
 layout(location = 1) in vec3 normal;
@@ -46,6 +47,11 @@ void main(void)
         vec4 p2 = projection_ * vec4(p.xyz,1);
         gl_Position = p2 / p.w;
     }
+    // TERRAIN-DEPTH-BIAS-OWNERSHIP-1: buildings/turrets/generators take
+    // OBJECT_DEPTH_BIAS (BOTH projection paths) so they sit on top of cement/road
+    // transition tiles (no sinking) over true-depth terrain; tiny -> no distance
+    // show-through.
+    gl_Position.z += OBJECT_DEPTH_BIAS * gl_Position.w;
 
     Normal = (world_ * vec4(normal, 0)).xyz;
     Texcoord = texcoord;

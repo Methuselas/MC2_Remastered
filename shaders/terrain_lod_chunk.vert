@@ -8,12 +8,12 @@ uniform float u_halfMap;
 uniform float u_skirtDepth;   // Phase 6: world-unit depth to pull skirt verts downward
 uniform mat4  u_worldToClipGL;
 
-// Reverse-Z terrain depth bias applied PRE-DIVIDE in clip space (NOT via frag
-// gl_FragDepth — that disables early-Z / Hi-Z on AMD and caused decal tearing at
-// the cement boundary under camera motion). 2x to match the legacy thin path net
-// depth (-0.004): gos_terrain_thin.vert:194 (+FUDGE*w) + gos_terrain.frag:957
-// (+FUDGE). Lockstep with shaders/include/terrain_depth_bias.hglsl.
-const float TERRAIN_DEPTH_FUDGE = -0.002;
+// TERRAIN-DEPTH-BIAS-OWNERSHIP-1: terrain opaque writes TRUE depth now (0). The
+// old -0.002 (applied 2x here = net -0.004 to match the thin VS+FS path) recessed
+// distant terrain by a distance-growing world band and let objects poke through.
+// Lockstep with shaders/include/terrain_depth_bias.hglsl (TERRAIN_DEPTH_FUDGE=0).
+// Kept as a local const (this VS does not include the header).
+const float TERRAIN_DEPTH_FUDGE = 0.0;
 
 // Phase 10.4 edge stitching: this block's quad extent + per-edge COARSER-neighbor
 // stride. u_edgeStitch packs 4 bytes: N=bits0-7, S=8-15, W=16-23, E=24-31; each

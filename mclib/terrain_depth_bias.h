@@ -60,22 +60,28 @@
 // >=0.002 over terrain -> proven lake-bottom punch-through, 2026-05-06 /
 // gos_terrain_water_fast.vert:327-364). Current |absolute| 0.0025 < 0.004
 // bound. Expressed for the now-negative signs: water-abs > 2*TERRAIN.
+// TERRAIN-DEPTH-BIAS-OWNERSHIP-1: terrain opaque now writes TRUE depth (0). The
+// old -0.002 (net -0.004 GPU / per-vertex CPU) recessed terrain by a constant NDC
+// offset whose reverse-Z WORLD equivalent grows with distance, so distant terrain
+// sat far behind true depth and every opaque object on it poked through. Terrain
+// at true depth -> objects (true depth) occlude correctly. Co-planar layers below
+// keep SMALL relative epsilons off true terrain (overlay wins, water loses, veg
+// wins by a hair). LOCKSTEP with shaders/include/terrain_depth_bias.hglsl.
 namespace mc2depth {
-constexpr float TERRAIN_DEPTH_FUDGE      = -0.002f;   // reverse-Z: was 0.002f
-// Fix B co-planar signed epsilons (FAST / matrix-share regime):
-constexpr float WATER_DEPTH_BIAS         = -0.00175f; // < 0 water LOSES GEQUAL tie; FAST=-0.00375 < TERRAIN=-0.002 (bumped halfway-again toward |0.004| punch-through bound to fully kill cliff-bleed at grazing/long-zoom)
-constexpr float OVERLAY_DEPTH_BIAS       =  0.00005f; // > 0 decals win GEQUAL tie; reduced from 0.0005f (was beating buildings at RTS zoom)
-constexpr float WATER_DEPTH_FUDGE_FAST   = TERRAIN_DEPTH_FUDGE + WATER_DEPTH_BIAS;   // -0.0025f; FAST regime
-// RASTER regime (legacy CPU-raster water; flips for reverse-Z, reconciled at
-// the inverseProjectZ fence seam -- design Section 9):
-constexpr float WATER_DEPTH_DELTA_RASTER = -0.0005f;  // reverse-Z: was 0.0005f
-constexpr float WATER_DEPTH_FUDGE_RASTER = TERRAIN_DEPTH_FUDGE + WATER_DEPTH_DELTA_RASTER; // -0.0025f
-// Back-compat alias: the legacy CPU raster consumer name. quad.cpp's
-// WATER_DEPTH_FUDGE consumers (wz + WATER_DEPTH_FUDGE) are the RASTER regime.
-constexpr float WATER_DEPTH_FUDGE        = WATER_DEPTH_FUDGE_RASTER;                       // -0.0025f
+// Layered contract, reverse-Z / GEQUAL: terrain 0 < VEG < OVERLAY < OBJECT < WATER.
+constexpr float TERRAIN_DEPTH_FUDGE      = 0.0f;      // true opaque depth (was -0.002f)
+constexpr float VEG_DEPTH_BIAS           =  0.00003f; // > 0 veg wins over ground, < OVERLAY
+constexpr float OVERLAY_DEPTH_BIAS       =  0.00005f; // > 0 decals/cement win over terrain & veg
+constexpr float OBJECT_DEPTH_BIAS        =  0.0001f;  // > OVERLAY: props/buildings/mechs on top of cement; tiny -> no show-through
+constexpr float WATER_DEPTH_BIAS         =  0.00025f; // > 0 water surface wins over deeper lake-bottom terrain (old net +0.00025)
+constexpr float WATER_DEPTH_FUDGE_FAST   =  0.00025f; // FAST regime: water surface ahead of true terrain
+constexpr float WATER_DEPTH_FUDGE_RASTER =  0.00025f; // RASTER regime: same surface bias
+// Back-compat alias: the legacy CPU raster consumer name (quad.cpp wz + WATER_DEPTH_FUDGE).
+constexpr float WATER_DEPTH_FUDGE        = WATER_DEPTH_FUDGE_RASTER;                       // 0.00025f
 
 static_assert(
-    OVERLAY_DEPTH_BIAS > 0.0f && WATER_DEPTH_BIAS < 0.0f &&
-    (TERRAIN_DEPTH_FUDGE + WATER_DEPTH_BIAS) > 2.0f * TERRAIN_DEPTH_FUDGE,
-    "Reverse-Z depth ordering invariant: OVERLAY>0 (decals win), WATER<0 (loses GEQUAL tie), |water-abs|<2*|terrain|");
+    VEG_DEPTH_BIAS > 0.0f && VEG_DEPTH_BIAS < OVERLAY_DEPTH_BIAS &&
+    OVERLAY_DEPTH_BIAS < OBJECT_DEPTH_BIAS &&
+    WATER_DEPTH_BIAS > 0.0f && WATER_DEPTH_BIAS < 0.004f,
+    "True-depth layered ordering: 0 < VEG < OVERLAY < OBJECT < WATER, |water|<0.004 bound");
 }
