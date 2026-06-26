@@ -16,6 +16,7 @@ static_assert(sizeof(TerrainDrawCommand) == 16, "TerrainDrawCommand must be 16 b
 constexpr uint32_t TERRAIN_HEIGHT_SSBO_BINDING = 23u;
 constexpr uint32_t TERRAIN_TYPE_SSBO_BINDING   = 24u;  // Step 5b: per-vertex terrainType (concrete)
 constexpr uint32_t TERRAIN_CEMENT_SSBO_BINDING = 25u;  // Step 5c: per-vertex cement word (valid|layerIdx)
+constexpr uint32_t TERRAIN_VISUAL_HEIGHT_SSBO_BINDING = 26u; // TERRAIN-VISUAL-HEIGHT-SAMPLE-1: 4x VISUAL heightfield (render-only)
 
 // Submit block draw commands for the current frame.
 // count==0 is a strict no-op. mclib calls this via Terrain::flushDrawCommands() only.
@@ -41,6 +42,11 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
 // Upload full heightfield to GPU SSBO at map load.
 // elevations: float[mapSide*mapSide] row-major.
 void gos_TerrainLodChunk_UploadHeightFull(const float* elevations, int mapSide);
+
+// TERRAIN-VISUAL-HEIGHT-SAMPLE-1 Stage 1: upload the 4x VISUAL heightfield bake to
+// a dedicated SSBO (binding 26). visualHeights: float[V*V] row-major, V=(mapSide-1)*4+1.
+// Stage 1 is load+log only — NO geometry samples binding 26 yet (Stage 2 displaces).
+void gos_TerrainLodChunk_UploadVisualHeightFull(const float* visualHeights, int V);
 
 // Step 5b: upload per-vertex terrainType (0..N; cement/concrete ~3) to its SSBO.
 // types: float[mapSide*mapSide] row-major (parallel to the heightfield).

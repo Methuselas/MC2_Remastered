@@ -816,6 +816,85 @@ long Terrain::init( unsigned long verticesPerMapSide, PacketFile* pakFile, unsig
 			gos_TerrainLodChunk_UploadHeightFull(elev.data(), (int)realVerticesMapSide);
 			gos_TerrainLodChunk_UploadTerrainTypeFull(ttype.data(), (int)realVerticesMapSide);
 
+			// TERRAIN-VISUAL-HEIGHT-SAMPLE-1 Stage 1 (loader, log-only). Gate
+			// MC2_TERRAIN_VISUAL_HEIGHT default-OFF -> no load, no SSBO
+			// (byte-identical). Loads the 4x VISUAL heightfield bake into SSBO
+			// binding 26 for future corner-pinned interior displacement (Stage 2).
+			// Path: MC2_TERRAIN_VISUAL_HEIGHT_FILE override, else
+			// data/missions/<mission-stem>.beauty/visual_height_4x.r32. NO geometry
+			// consumes binding 26 yet, so this is render-invariant.
+			{
+				static const bool s_visualHeightGate = []() {
+					const char* v = getenv("MC2_TERRAIN_VISUAL_HEIGHT");
+					return v && v[0] && v[0] != '0';
+				}();
+				const int mapSide = (int)realVerticesMapSide;
+				if (s_visualHeightGate && mapSide > 1)
+				{
+					const int V = (mapSide - 1) * 4 + 1;
+					char vhPath[600];
+					if (const char* ov = getenv("MC2_TERRAIN_VISUAL_HEIGHT_FILE"))
+					{
+						strncpy(vhPath, ov, sizeof(vhPath) - 1);
+						vhPath[sizeof(vhPath) - 1] = '\0';
+					}
+					else
+					{
+						const char* nm = terrainName ? terrainName : "";
+						const char* bs = strrchr(nm, '\\');
+						const char* fs = strrchr(nm, '/');
+						const char* slash = (fs > bs) ? fs : bs;
+						char stem[160];
+						strncpy(stem, slash ? slash + 1 : nm, sizeof(stem) - 1);
+						stem[sizeof(stem) - 1] = '\0';
+						if (char* dot = strrchr(stem, '.')) *dot = '\0';
+						snprintf(vhPath, sizeof(vhPath),
+						         "data/missions/%s.beauty/visual_height_4x.r32", stem);
+					}
+					FILE* vf = fopen(vhPath, "rb");
+					if (!vf)
+					{
+						printf("[VISUAL_HEIGHT v1] bake NOT FOUND path=%s (gate on, V=%d mapSide=%d)\n",
+						       vhPath, V, mapSide);
+						fflush(stdout);
+					}
+					else
+					{
+						fseek(vf, 0, SEEK_END);
+						long vsz = ftell(vf);
+						fseek(vf, 0, SEEK_SET);
+						const size_t want = (size_t)V * (size_t)V * sizeof(float);
+						if ((size_t)vsz != want)
+						{
+							printf("[VISUAL_HEIGHT v1] SIZE MISMATCH path=%s got=%ld want=%zu (V=%d mapSide=%d)\n",
+							       vhPath, vsz, want, V, mapSide);
+							fflush(stdout);
+							fclose(vf);
+						}
+						else
+						{
+							std::vector<float> vh((size_t)V * (size_t)V);
+							size_t rd = fread(vh.data(), sizeof(float), vh.size(), vf);
+							fclose(vf);
+							if (rd != vh.size())
+							{
+								printf("[VISUAL_HEIGHT v1] READ FAIL path=%s read=%zu want=%zu\n",
+								       vhPath, rd, vh.size());
+								fflush(stdout);
+							}
+							else
+							{
+								gos_TerrainLodChunk_UploadVisualHeightFull(vh.data(), V);
+								printf("[VISUAL_HEIGHT v1] LOADED path=%s V=%d mapSide=%d bytes=%zu "
+								       "(Stage 1: SSBO only, geometry unchanged)\n",
+								       vhPath, V, mapSide, want);
+								fflush(stdout);
+							}
+						}
+					}
+				}
+			}
+
 			// Step 5c: flag blocks containing concrete (material 3). The cement
 			// word is per-tile; a coarse-LOD triangle spans several tiles and gets
 			// one tile's word -> torn runways. The LOD pass clamps these blocks fine.

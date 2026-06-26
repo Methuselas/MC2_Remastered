@@ -45,6 +45,7 @@ namespace gos_terrain_indirect { bool IsFrameSolidArmed(); }
 // ---------------------------------------------------------------------------
 
 static GLuint s_heightSsbo = 0;   // GL handle; 0 = not yet allocated
+static GLuint s_visualHeightSsbo = 0; // TERRAIN-VISUAL-HEIGHT-SAMPLE-1: 4x visual heightfield (binding 26)
 static GLuint s_typeSsbo   = 0;   // Step 5b: per-vertex terrainType SSBO (binding 24)
 static GLuint s_cementSsbo = 0;   // Step 5c: per-vertex cement word SSBO (binding 25)
 static int    s_mapSide    = 0;   // mapSide stored at last UploadHeightFull
@@ -491,6 +492,11 @@ void gos_TerrainLodChunk_Destroy()
         s_locForceColor     = -1;
     }
 
+    if (s_visualHeightSsbo != 0)
+    {
+        glDeleteBuffers(1, &s_visualHeightSsbo);
+        s_visualHeightSsbo = 0;
+    }
     if (s_heightSsbo != 0)
     {
         glDeleteBuffers(1, &s_heightSsbo);
@@ -1087,6 +1093,34 @@ void gos_TerrainLodChunk_UploadHeightFull(const float* elevations, int mapSide)
         fflush(stderr);
     }
 #endif
+}
+
+// TERRAIN-VISUAL-HEIGHT-SAMPLE-1 Stage 1: upload the 4x VISUAL heightfield bake to
+// a dedicated SSBO (binding 26). Lazily allocated. NO geometry samples it yet —
+// Stage 2 (corner-pinned interior subdivision) consumes it. Load+log only here.
+void gos_TerrainLodChunk_UploadVisualHeightFull(const float* visualHeights, int V)
+{
+    if (!visualHeights || V <= 0)
+        return;
+    if (s_visualHeightSsbo == 0)
+    {
+        glGenBuffers(1, &s_visualHeightSsbo);
+        if (s_visualHeightSsbo == 0)
+        {
+            fprintf(stderr, "[VISUAL_HEIGHT v1] glGenBuffers failed\n");
+            fflush(stderr);
+            return;
+        }
+    }
+    GLsizeiptr bytes = (GLsizeiptr)V * (GLsizeiptr)V * (GLsizeiptr)sizeof(float);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_visualHeightSsbo);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, bytes, visualHeights, GL_STATIC_DRAW);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    // No glBindBufferBase here: nothing samples binding 26 in Stage 1. Stage 2
+    // binds it when the displaced interior verts read it.
+    fprintf(stderr, "[VISUAL_HEIGHT v1] SSBO uploaded binding=%u V=%d bytes=%lld first=%.3f\n",
+            TERRAIN_VISUAL_HEIGHT_SSBO_BINDING, V, (long long)bytes, visualHeights[0]);
+    fflush(stderr);
 }
 
 // Step 5b: per-vertex terrainType upload (parallel to the heightfield). Used by
