@@ -47,9 +47,13 @@ _MAX_FILE_READS   = 4000              # total distinct file reads cap
 _TIER_A_CAP       = 150
 _TIER_B_CAP       = 200
 
-# Markers that, in a doc/ledger, indicate a gate was removed/superseded.
-_LEDGER_MARKERS = ("REMOVED", "REVERTED", "DELETED", "DEAD", "MOOT",
-                   "SHELVED", "SUPERSEDED")
+# DELETE-INTENT markers that, in a doc/ledger, indicate a gate was actually
+# removed/reverted. These DRIVE the ledger_removed SIGNAL (TIER_A).
+_LEDGER_MARKERS = ("REMOVED", "DELETED", "REVERTED")
+# History/status words that are advisory only — they describe a gate's lifecycle
+# but do NOT by themselves imply deletion. Surfaced as `history_marker` but they
+# must not classify a gate as TIER_A on their own.
+_HISTORY_MARKERS = ("DEAD", "MOOT", "SUPERSEDED", "SHELVED")
 
 _DIAG_NAME_RE = re.compile(r"_(TRACE|DIAG|DEBUG|PROBE)\b")
 
@@ -57,7 +61,7 @@ _GATE_NAME_RE = re.compile(r"MC2_[A-Z0-9_]+")
 
 # getenv-style call we care about for result-unused analysis.
 _GETENV_CALL_RE = re.compile(
-    r'(?:getenv|envFlag(?:Default(?:On|Off))?|getEnvVar)\s*\(\s*"(MC2_[A-Z0-9_]+)"\s*\)'
+    r'(?:std::)?(?:getenv|envFlag\w*|selftestEnvFlag|getEnvVar)\s*\(\s*"(MC2_[A-Z0-9_]+)"\s*\)'
 )
 
 _NOTE = (
@@ -141,10 +145,20 @@ def _if0_line_set(lines):
 # Ledger (md) scan — name -> marker
 # ---------------------------------------------------------------------------
 
-def _build_ledger_map(root: Path) -> dict:
-    """Scan .claude/*.md and docs/**/*.md once. Return {gate_name: marker} when a
-    gate name appears on/near a line carrying a removal marker (same line, +/- 2)."""
-    out = {}
+def _build_ledger_map(root: Path) -> tuple:
+    """Scan .claude/*.md and docs/**/*.md once.
+
+    Returns (delete_map, history_map):
+      delete_map  — {gate_name: marker} when a gate name appears on the SAME line
+                    as a DELETE-INTENT marker (REMOVED/DELETED/REVERTED). Drives
+                    the ledger_removed SIGNAL. A real same-line hit may override a
+                    stray earlier hit (no first-match-lock).
+      history_map — {gate_name: marker} for advisory-only history words
+                    (DEAD/MOOT/SUPERSEDED/SHELVED), same-line. Surfaced but does
+                    NOT classify a gate as TIER_A.
+    """
+    delete_map = {}
+    history_map = {}
     md_files = []
     for sub in (".claude", "docs"):
         base = root / sub
@@ -156,7 +170,8 @@ def _build_ledger_map(root: Path) -> dict:
                 if fn.lower().endswith(".md"):
                     md_files.append(Path(dp) / fn)
 
-    marker_re = re.compile(r'\b(' + "|".join(_LEDGER_MARKERS) + r')\b')
+    delete_re  = re.compile(r'\b(' + "|".join(_LEDGER_MARKERS) + r')\b')
+    history_re = re.compile(r'\b(' + "|".join(_HISTORY_MARKERS) + r')\b')
     for f in md_files:
         try:
             if f.stat().st_size > _MAX_FILE_BYTES:
@@ -164,34 +179,54 @@ def _build_ledger_map(root: Path) -> dict:
             lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
             continue
-        marker_lines = {}  # line_idx -> marker token
-        for i, ln in enumerate(lines):
-            m = marker_re.search(ln)
-            if m:
-                marker_lines[i] = m.group(1)
-        if not marker_lines:
-            continue
-        for i, ln in enumerate(lines):
+        for ln in lines:
+            del_m  = delete_re.search(ln)
+            hist_m = history_re.search(ln) if not del_m else None
+            if not del_m and not hist_m:
+                continue
             for name in set(_GATE_NAME_RE.findall(ln)):
-                if name in out:
-                    continue
-                # marker on same line or within +/- 2 lines
-                for j in range(i - 2, i + 3):
-                    if j in marker_lines:
-                        out[name] = marker_lines[j]
-                        break
-    return out
+                # Same-line delete-intent overrides any prior proximity hit.
+                if del_m:
+                    delete_map[name] = del_m.group(1)
+                elif hist_m and name not in history_map:
+                    history_map[name] = hist_m.group(1)
+    return delete_map, history_map
 
 
 # ---------------------------------------------------------------------------
 # Per-gate evidence
 # ---------------------------------------------------------------------------
 
+# Cached-bool / module-global idiom: a getenv result captured into a static or
+# file-scope variable. The consumer of such a var lives elsewhere (often another
+# TU), so the result is USED-by-default — never flag these as result_unused.
+_CACHED_BOOL_RE = re.compile(
+    r'^\s*(?:static\s+)?(?:const\s+)?'
+    r'(?:bool|char\s*\*|const\s+char\s*\*|auto)\s+\w+\s*=\s*'
+    r'.*(?:getenv|envFlag\w*|selftestEnvFlag)')
+
+
+def _enclosing_function_end(lines, idx) -> int:
+    """Best-effort: from reader line `idx`, walk forward by brace depth to the end
+    of the enclosing function. Returns an exclusive end index. Bounded by a sane
+    cap so a malformed/global context never scans unboundedly."""
+    cap = min(len(lines), idx + 400)
+    depth = 0
+    seen_open = False
+    for k in range(idx, cap):
+        depth += lines[k].count("{") - lines[k].count("}")
+        if lines[k].count("{"):
+            seen_open = True
+        if seen_open and depth <= 0:
+            return k + 1
+    return cap
+
+
 def _result_unused_at(lines, line_no, gate_name) -> bool:
     """Best-effort lexical: is this getenv(gate) result unused?
     True when the getenv call appears as a bare statement (no '=' assignment and
     not inside an if/while/return/argument context) OR is assigned to a var that
-    never appears again in the +/-_USE_WINDOW window."""
+    never appears again in the use-search window."""
     idx = line_no - 1
     if idx < 0 or idx >= len(lines):
         return False
@@ -199,11 +234,15 @@ def _result_unused_at(lines, line_no, gate_name) -> bool:
     if not _GETENV_CALL_RE.search(line):
         # The reader may be a wrapper not matching; cannot judge — say used.
         return False
-    before = line.split("getenv")[0] if "getenv" in line else line
+
+    # Cached-bool / module-global idiom is USED-by-default (consumer elsewhere).
+    if _CACHED_BOOL_RE.search(line):
+        return False
+
     # Bare call: line is essentially just `getenv("X");` with nothing consuming it.
     stripped = line.strip()
     bare = bool(re.match(
-        r'^(?:getenv|envFlag(?:Default(?:On|Off))?|getEnvVar)\s*\(\s*"'
+        r'^(?:std::)?(?:getenv|envFlag\w*|selftestEnvFlag|getEnvVar)\s*\(\s*"'
         + re.escape(gate_name) + r'"\s*\)\s*;?\s*$',
         stripped))
     if bare:
@@ -211,15 +250,25 @@ def _result_unused_at(lines, line_no, gate_name) -> bool:
 
     # Assignment form: `<type> var = getenv("X");` — capture LHS var name.
     m = re.search(
-        r'([A-Za-z_]\w*)\s*=\s*(?:getenv|envFlag(?:Default(?:On|Off))?|getEnvVar)\s*\(\s*"'
+        r'([A-Za-z_]\w*)\s*=\s*(?:std::)?(?:getenv|envFlag\w*|selftestEnvFlag|getEnvVar)\s*\(\s*"'
         + re.escape(gate_name) + r'"',
         line)
     if m:
         var = m.group(1)
-        # Skip common throwaway sentinels.
-        lo = max(0, idx - _USE_WINDOW)
-        hi = min(len(lines), idx + _USE_WINDOW + 1)
         var_re = re.compile(r'\b' + re.escape(var) + r'\b')
+        # Same-line consumption (e.g. `const char* e = getenv(X); return e && ...`,
+        # common in one-line lambdas) counts as USED — search the reader line tail
+        # after the assignment match.
+        if var_re.search(line[m.end():]):
+            return False
+        # Detect file-scope/global LHS (column-0 assignment, no leading indent):
+        # scan the whole file. Otherwise scan to the end of the enclosing function.
+        is_global = (line[:1] not in (" ", "\t"))
+        if is_global:
+            lo, hi = 0, len(lines)
+        else:
+            lo = max(0, idx - _USE_WINDOW)
+            hi = _enclosing_function_end(lines, idx)
         uses = 0
         for k in range(lo, hi):
             if k == idx:
@@ -231,7 +280,8 @@ def _result_unused_at(lines, line_no, gate_name) -> bool:
     return False
 
 
-def _classify_gate(entry, fc: _FileCache, if0_cache: dict, ledger_map: dict):
+def _classify_gate(entry, fc: _FileCache, if0_cache: dict,
+                   ledger_map: dict, history_map: dict):
     """Return (tier, evidence_dict) for one gate entry."""
     name = entry["name"]
     readers = entry.get("readers", []) or []
@@ -248,8 +298,12 @@ def _classify_gate(entry, fc: _FileCache, if0_cache: dict, ledger_map: dict):
 
     in_if0 = False
     result_unused = False
+    header_reader = False
+    cross_tu_global = False
     for r in code_readers:
         rel = r["file"]
+        if Path(rel).suffix.lower() in {".h", ".hpp", ".hglsl"}:
+            header_reader = True
         lines = fc.lines(rel)
         if lines is None:
             continue
@@ -264,9 +318,20 @@ def _classify_gate(entry, fc: _FileCache, if0_cache: dict, ledger_map: dict):
                 in_if0 = True
         if _result_unused_at(lines, r["line"], name):
             result_unused = True
+        # cross_tu_global (best-effort): getenv feeds a non-static file-scope
+        # symbol — assignment at column 0 with no leading `static`.
+        ridx = r["line"] - 1
+        if 0 <= ridx < len(lines):
+            rline = lines[ridx]
+            if (rline[:1] not in (" ", "\t")
+                    and not rline.lstrip().startswith("static")
+                    and re.search(r'=\s*(?:std::)?(?:getenv|envFlag\w*|'
+                                  r'selftestEnvFlag|getEnvVar)\s*\(', rline)):
+                cross_tu_global = True
 
-    ledger_marker = ledger_map.get(name)
+    ledger_marker  = ledger_map.get(name)
     ledger_removed = ledger_marker is not None
+    history_marker = history_map.get(name)
 
     name_class = "DIAG" if _DIAG_NAME_RE.search(name) else "FEATURE"
 
@@ -292,6 +357,22 @@ def _classify_gate(entry, fc: _FileCache, if0_cache: dict, ledger_map: dict):
     else:
         tier = "C"
 
+    # ---- Confidence sub-tier (TIER_A only) ----
+    confidence = None
+    if tier == "A":
+        if reasons == ["in_if0"]:
+            confidence = "A1"
+        elif "result_unused" in reasons:
+            confidence = "A2"
+        else:  # ledger_removed / doc_only driven
+            confidence = "A3"
+
+    risk_flags = []
+    if header_reader:
+        risk_flags.append("header_reader")
+    if cross_tu_global:
+        risk_flags.append("cross_tu_global")
+
     evidence = {
         "name": name,
         "reader_count": reader_count,
@@ -302,10 +383,13 @@ def _classify_gate(entry, fc: _FileCache, if0_cache: dict, ledger_map: dict):
         "result_unused": result_unused,
         "ledger_removed": ledger_removed,
         "ledger_marker": ledger_marker,
+        "history_marker": history_marker,
         "name_class": name_class,
         "in_registry": in_registry,
         "in_tier1_doc": in_tier1,
         "reason": reasons,
+        "confidence": confidence,
+        "risk_flags": risk_flags,
         "readers": readers[:6],
     }
     return tier, evidence
@@ -333,7 +417,7 @@ def dead_gate_scan(repo_root, tier: str = "all", name: str = "") -> dict:
 
     fc = _FileCache(root)
     if0_cache = {}
-    ledger_map = _build_ledger_map(root)
+    ledger_map, history_map = _build_ledger_map(root)
 
     tier_a, tier_b = [], []
     tier_c_count = 0
@@ -343,15 +427,18 @@ def dead_gate_scan(repo_root, tier: str = "all", name: str = "") -> dict:
         if name_filter and name_filter not in gname:
             continue
         entry = gates[gname]
-        t, ev = _classify_gate(entry, fc, if0_cache, ledger_map)
+        t, ev = _classify_gate(entry, fc, if0_cache, ledger_map, history_map)
         totals_tier[t] += 1
 
         if t == "A":
             tier_a.append({
                 "name": ev["name"],
                 "reason": ev["reason"],
+                "confidence": ev["confidence"],
+                "risk_flags": ev["risk_flags"],
                 "readers": ev["readers"],
                 "ledger_marker": ev["ledger_marker"],
+                "history_marker": ev["history_marker"],
             })
         elif t == "B":
             tier_b.append({

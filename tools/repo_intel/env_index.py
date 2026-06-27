@@ -31,10 +31,16 @@ _REGISTRY_ENTRY = re.compile(
     re.MULTILINE | re.DOTALL,
 )
 
-# Match direct getenv("MC2_*") and common thin wrappers:
-#   envFlagDefaultOn("MC2_*"), envFlagDefaultOff("MC2_*"), getEnvVar("MC2_*")
+# Match direct getenv("MC2_*"), std::getenv, and common thin wrappers:
+#   envFlag*("MC2_*") (envFlagOn/envFlag/envFlagDefaultOn/...), selftestEnvFlag("MC2_*"),
+#   getEnvVar("MC2_*").
 _GETENV_VAR    = re.compile(
-    r'(?:getenv|envFlag(?:Default(?:On|Off))?|getEnvVar)\s*\(\s*"(MC2_[A-Z_0-9]+)"'
+    r'(?:std::)?(?:getenv|envFlag\w*|selftestEnvFlag|getEnvVar)\s*\(\s*"(MC2_[A-Z0-9_]+)"'
+)
+# Fallback: a "MC2_*" literal as the sole/first argument to ANY call. Catches
+# unknown per-TU helper wrappers that the explicit alternation above misses.
+_GETENV_VAR_ANYCALL = re.compile(
+    r'\w+\s*\(\s*"(MC2_[A-Z0-9_]+)"'
 )
 _TIER1_VAR     = re.compile(r'`(MC2_[A-Z_0-9]+)(?:=[^`]*)?`')
 _TIER1_DEFAULT = re.compile(r'Default\s+\*\*(ON|OFF)\*\*', re.IGNORECASE)
@@ -126,8 +132,19 @@ def _grep_getenv(repo_root: Path) -> dict:
                 continue
             rel = str(fpath.relative_to(repo_root)).replace("\\", "/")
             for lineno, line in enumerate(text.splitlines(), 1):
+                seen_on_line = set()
                 for m in _GETENV_VAR.finditer(line):
                     name = m.group(1)
+                    seen_on_line.add(name)
+                    readers.setdefault(name, []).append({"file": rel, "line": lineno})
+                # Fallback: treat a "MC2_*" literal passed as the first arg to ANY
+                # call as a code reader too (covers custom per-TU wrappers). Skip
+                # names already captured by the explicit pass on this line.
+                for m in _GETENV_VAR_ANYCALL.finditer(line):
+                    name = m.group(1)
+                    if name in seen_on_line:
+                        continue
+                    seen_on_line.add(name)
                     readers.setdefault(name, []).append({"file": rel, "line": lineno})
 
     return readers
