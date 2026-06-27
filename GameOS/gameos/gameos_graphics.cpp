@@ -9315,6 +9315,16 @@ void gos_GetTerrainCameraPos(float* x, float* y, float* z) {
 // is throttled (frames {1,5,30,120}) — silent at steady state.
 long g_mvpDiagFrame = 0;
 
+// [MVP_EARLY v1] MVP-PUBLISH-EARLY-HOIST. Records the g_mvpDiagFrame counter
+// value observed at the gated early world-to-clip publish in Mission::update
+// (code/mission.cpp, right after eye->update()). ComputeDispatch
+// (gos_terrain_indirect.cpp) re-reads g_mvpDiagFrame at its own MVP read and
+// compares against this to prove same-frame currency: with the hoist ON the
+// two are equal (snapshot is current-frame); with it OFF the dispatch read
+// trails by one (the stale previous-frame camera). -1 = no early publish yet
+// this process (gate OFF or pre-mission). Set ONLY by the early publish path.
+long g_mvpEarlyPublishSeq = -1;
+
 void __stdcall gos_SetWorldToClipGL(const Stuff::Matrix4D& mat)
 {
     if (!g_gos_renderer) return;

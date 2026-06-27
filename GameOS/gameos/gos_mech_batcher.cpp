@@ -46,6 +46,42 @@ extern "C" uint64_t consumeAndResetMlrMechDraws();
 static_assert(MECH_RING_FRAMES == STATIC_PROP_RING_FRAMES,
               "MECH_RING_FRAMES must match STATIC_PROP_RING_FRAMES");
 
+// PROP-FIXB-MVP (mech mirror): symmetric-mirror of the terrain Fix-B
+// frame-of-reference (see gos_terrain_lod_chunk.cpp ~:33-41 +
+// docs/superpowers/specs/2026-05-18-AUTHORITATIVE-zfight-matrix-share-design.md
+// §11). When the solid pass is armed the LOD-chunk terrain draws with the
+// snapshotted dispatch MVP (frame N-1) while the default mech path uploads the
+// LIVE current-frame MVP -> a 1-frame matrix-share lag -> depth shimmer at the
+// mech-foot/terrain contact under camera motion. Mirroring the SAME consume
+// expression makes the default mech draw agree with terrain depth. The snapshot
+// itself is NOT touched; this only CONSUMES the published terrain snapshot.
+// Applies ONLY to the default (non-UBO) path — the s_mechViewUniforms UBO path
+// is untouched. Same gate (MC2_PROP_FIXB_MVP) as the static-prop sites so the
+// whole object family shares one matrix policy. Signatures copied verbatim from
+// gos_terrain_lod_chunk.cpp.
+extern "C" const float* gos_terrain_indirect_getDispatchMvp16();
+namespace gos_terrain_indirect { bool IsFrameSolidArmed(); }
+
+// MC2_PROP_FIXB_MVP — default ON (=0 reverts, killswitch). Consume the
+// dispatch-MVP snapshot when the solid pass is armed (un-armed arm returns the
+// live pointer anyway). Sampled once at process start.
+static bool s_mechFixBMvpEnabled() {
+    static const bool on = []() {
+        const char* v = std::getenv("MC2_PROP_FIXB_MVP");
+        return !(v && std::atoi(v) == 0);  // default ON; only =0 reverts
+    }();
+    return on;
+}
+static const float* gos_GetMechFixBMVPMat4() {
+    if (!s_mechFixBMvpEnabled())
+        return gos_GetTerrainMVPMat4();
+    const float* mvp = gos_terrain_indirect::IsFrameSolidArmed()
+                       ? gos_terrain_indirect_getDispatchMvp16()
+                       : gos_GetTerrainMVPMat4();
+    if (!mvp) mvp = gos_GetTerrainMVPMat4();
+    return mvp;
+}
+
 // Default-on flip (2026-05-09): all GPU mech killswitches now default to ON.
 // Helper returns true unless the env var is explicitly set to "0". Operators
 // can opt out per-flag via MC2_GPU_MECH_<FLAG>=0. Pre-flip pattern was
@@ -2276,8 +2312,15 @@ void GpuMechBatcher::flush() {
     // legacy uniform is #ifndef'd out) and this upload would be a no-op anyway;
     // skip it explicitly. Default path (gate OFF) uploads the legacy uniform
     // exactly as before.
+    // PROP-FIXB-MVP: the default (non-UBO) path uploads the Fix-B-mirrored MVP
+    // so the mech foot/terrain contact shares the terrain dispatch snapshot when
+    // armed (gate ON). Gate OFF -> gos_GetMechFixBMVPMat4() returns the live MVP,
+    // byte-identical to before. `terrainMVP` (live) is left untouched above so
+    // the MECH_VU_DIAG probe keeps comparing the LIVE MVP against the binding-3
+    // UBO. nullptr-safety: helper never returns null unless live is null too, so
+    // the original `&& terrainMVP` guard still covers the null case.
     if (!s_mechViewUniforms && s_loc_terrainMVP >= 0 && terrainMVP)
-        glUniformMatrix4fv(s_loc_terrainMVP, 1, GL_FALSE, terrainMVP);
+        glUniformMatrix4fv(s_loc_terrainMVP, 1, GL_FALSE, gos_GetMechFixBMVPMat4());
     const float* mm = gos_GetProj2ScreenMat4();
     if (s_loc_u_mvp >= 0 && mm)
         glUniformMatrix4fv(s_loc_u_mvp, 1, GL_TRUE, mm);
