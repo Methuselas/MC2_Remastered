@@ -2473,6 +2473,30 @@ void gosPostProcess::endScene()
     // 16:9 target) un-stretches when drawn into a 4:3 rect. Mouse is remapped
     // box-relative in gameos_input so pick stays aligned with the visible box.
     {
+        // [OOB-LETTERBOX v1] (gate MC2_OOB_LETTERBOX, default ON; =0 reverts).
+        // When the backbuffer is larger than the scene FBO — e.g. a smoke run
+        // that STARTS minimized (FBO sized to the minimized drawable, backbuffer
+        // larger), or a menu where the window exceeds the render res — the
+        // composite quad below only covers glViewport(0,0,width_,height_) (the
+        // bottom-left); the rest of the backbuffer is never written and shows
+        // stale/alternating swapchain content -> a blue/black ~2Hz strobe in the
+        // out-of-bounds border (user-reported headache; also seen in menus).
+        // Clear the WHOLE backbuffer to black first so the OOB stays a stable
+        // black letterbox. glClear ignores glViewport (only scissor bounds it),
+        // so disable scissor for the clear. No-op in normal play: the composite
+        // quad overdraws the full backbuffer. FORCE-43 already cleared in its own
+        // branch; this generalizes it to ALL composite paths.
+        static const bool s_oobLetterbox = []() {
+            const char* v = getenv("MC2_OOB_LETTERBOX");
+            return !(v && v[0] == '0');
+        }();
+        if (s_oobLetterbox) {
+            const GLboolean prevScissor = glIsEnabled(GL_SCISSOR_TEST);
+            if (prevScissor) glDisable(GL_SCISSOR_TEST);
+            glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            if (prevScissor) glEnable(GL_SCISSOR_TEST);
+        }
         int bx, by, bw, bh;
         if (gos_Compute43Box(width_, height_, &bx, &by, &bw, &bh)) {
             glViewport(0, 0, width_, height_);
