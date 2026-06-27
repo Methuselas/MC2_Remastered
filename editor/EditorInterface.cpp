@@ -2800,17 +2800,20 @@ void EditorInterface::update()
 	// handleLeftButtonDown), Locate needs NO click: it fires here, the per-frame
 	// main-thread tick, as soon as the modal stack is gone. Center the camera on
 	// the target world XY and (only when a live, appearance-backed object was
-	// forwarded) select/highlight it, then disarm, leave ObjectSelectOnlyMode, and
-	// reopen the objectives dialog chain so the user lands back where they were.
+	// forwarded) select/highlight it, then disarm and leave ObjectSelectOnlyMode.
+	// Locate means "show it on the map": do NOT reopen the objectives dialog chain.
+	// The old Team() reopen re-posted the objectives dialog in a stuck/locked state
+	// over the camera result, forcing the user to close it before the jump was
+	// usable. Leaving the dialogs closed shows the camera result immediately. (The
+	// SEPARATE pendingPickReopen consumer above keeps its Team() call.)
 	if ( objectivesEditState.pendingLocate )
 	{
 		const float locX = objectivesEditState.pendingLocateX;
 		const float locY = objectivesEditState.pendingLocateY;
 		EditorObject *pLocObj = objectivesEditState.pendingLocateObj;
 
-		// Disarm BEFORE reopening the dialog chain (Team() runs a nested modal):
-		// the flag must be clear so the re-opened ObjectiveDlg does not see a stale
-		// pendingLocate, and update() cannot re-enter while the modal is up.
+		// Disarm the flags up front so a later frame's update() cannot re-fire this
+		// consumer on stale state.
 		objectivesEditState.pendingLocate = false;
 		objectivesEditState.pendingLocateObj = 0;
 
@@ -2827,12 +2830,9 @@ void EditorInterface::update()
 		if ( eye )
 			eye->setPosition( Stuff::Vector3D( locX, locY, 0.0f ), true );
 
-		// Leave the object-select handoff and reopen the objectives dialog chain so
-		// the camera move is visible and the user resumes editing. Team(alignment)
-		// re-posts CObjectives::EditDialog -> ObjectivesDlg -> ObjectiveDlg, exactly
-		// like the marker pick's Team() reopen.
+		// Leave the object-select handoff. Do NOT reopen the objectives dialog
+		// chain: Locate ends with the dialogs closed so the camera move is visible.
 		ObjectSelectOnlyMode( false );
-		Team( objectivesEditState.alignment );
 		return;
 	}
 

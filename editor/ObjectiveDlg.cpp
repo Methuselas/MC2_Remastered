@@ -931,12 +931,29 @@ void ObjectiveDlg::OnObjectiveLocateConditionButton()
 			locX = pos.x;
 			locY = pos.y;
 		}
+	} else if (CAreaObjectiveCondition *pA =
+			dynamic_cast<CAreaObjectiveCondition *>(pCond)) {
+		// BUG B fix (2): an AREA condition's location is its target center (set via
+		// "Pick center"). There is no object to select -- camera move only, so
+		// pLocObj stays null. TargetCenterX/Y are plain floats, always valid.
+		locX = pA->TargetCenterX();
+		locY = pA->TargetCenterY();
+		haveTarget = true;
+	}
+
+	if (!haveTarget && (0 != m_ModifiedObjective.DisplayMarker())) {
+		// BUG B fix (3): the condition itself is not locatable, but the objective has
+		// a display marker (set via "Pick from map"). Locate the marker -- camera
+		// move only, no object to select. MarkerX/Y are plain floats, always valid.
+		locX = m_ModifiedObjective.MarkerX();
+		locY = m_ModifiedObjective.MarkerY();
+		haveTarget = true;
 	}
 
 	if (!haveTarget) {
-		// BUG B fix: this condition species has no map location (only specific-unit
-		// / specific-structure conditions are locatable). Say so instead of a bare
-		// beep, which gave the user no idea why nothing happened.
+		// BUG B fix: no map location at all -- the condition species is not locatable
+		// (unit/structure/area) and the objective has no display marker. Say so
+		// instead of a bare beep, which gave the user no idea why nothing happened.
 		AfxMessageBox(_T("This condition type has no map location to locate."));
 		return;
 	}
