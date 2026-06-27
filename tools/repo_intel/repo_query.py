@@ -15,6 +15,9 @@ Usage:
     python tools/repo_intel/repo_query.py binding 5
     python tools/repo_intel/repo_query.py binding --conflicts
     python tools/repo_intel/repo_query.py binding --namespace ssbo
+    python tools/repo_intel/repo_query.py dead-gate-scan
+    python tools/repo_intel/repo_query.py dead-gate-scan --tier A
+    python tools/repo_intel/repo_query.py dead-gate-scan --name HDR
 
 Guards (apply to dirty + preflight):
     --expect-branch BRANCH   fail if not on BRANCH (branch contamination guard)
@@ -803,6 +806,29 @@ def main():
         out_json(query_binding(repo_root, binding=binding_n, namespace=namespace,
                                conflicts=conflicts, show_all=show_all))
 
+    elif cmd == "dead-gate-scan":
+        from dead_gate_scan import dead_gate_scan
+        rest = args[1:]
+        tier = "all"
+        name = ""
+        i = 0
+        while i < len(rest):
+            a = rest[i]
+            if a.startswith("--tier"):
+                if "=" in a:
+                    tier = a.split("=", 1)[1]
+                elif i + 1 < len(rest):
+                    i += 1
+                    tier = rest[i]
+            elif a.startswith("--name"):
+                if "=" in a:
+                    name = a.split("=", 1)[1]
+                elif i + 1 < len(rest):
+                    i += 1
+                    name = rest[i]
+            i += 1
+        out_json(dead_gate_scan(repo_root, tier=tier, name=name))
+
     elif cmd == "env":
         from env_index import query_env
         rest = args[1:]
@@ -830,7 +856,7 @@ def main():
                            undocumented=undocumented, show_all=show_all))
 
     else:
-        out_json({"error": f"Unknown command '{cmd}'. Valid: dirty, harness, preflight, slice-preflight, commit-plan, env, binding"})
+        out_json({"error": f"Unknown command '{cmd}'. Valid: dirty, harness, preflight, slice-preflight, commit-plan, env, binding, dead-gate-scan"})
         sys.exit(1)
 
 

@@ -47,6 +47,7 @@ import repo_query  as rq
 import env_index   as ei
 import binding_index as bi
 import grep_tool   as gt
+import dead_gate_scan as dgs
 
 # ---------------------------------------------------------------------------
 # Server
@@ -296,6 +297,42 @@ def env_var(
         undocumented = undocumented,
         show_all     = show_all,
     )
+    return _j(result)
+
+
+@mcp.tool()
+def dead_gate_scan(tier: str = "all", name: str = "") -> str:
+    """
+    ADVISORY, READ-ONLY classifier of MC2_* env gates by DELETABILITY EVIDENCE.
+    NEVER deletes anything. Deletion is ALWAYS human-gated — verify each entry
+    by hand before removing a gate.
+
+    ⚠ DEFAULT-OFF IS *NOT* DEAD. Default-OFF is the project's deliberate
+    feature-gate system. Default-OFF gates include LIVE FIXES
+    (e.g. MC2_ANIM_CADENCE_FIX) and SHIPPED FEATURES
+    (e.g. MC2_ASSIMP_MECH_IMPORT). A gate's default STATE is IRRELEVANT to
+    deletability. This tool classifies by CODE-PATH EVIDENCE ONLY.
+
+    Tiers:
+      TIER_A_dead       — orphaned/dead code path (in_if0, unused getenv result,
+                          ledger-removed-but-reader-lingers, or doc_only string
+                          litter). REVIEW THEN DELETE — still human-gated.
+      TIER_B_diag_strip — single-reader *_TRACE/_DIAG/_DEBUG/_PROBE diagnostic
+                          not in registry/tier1-doc. Strippable clutter (gated
+                          off either way, low risk).
+      TIER_C_keep       — feature/fix/guard gates. DO NOT DELETE (count only).
+
+    Args:
+      tier — "A" | "B" | "all" (default). Filters which tier lists are emitted;
+             totals always reflect the full classification.
+      name — optional substring filter on gate name (e.g. "HDR", "BLOOM").
+
+    Returns JSON: {confidence, note, totals, tier_a:[{name,reason,readers,
+    ledger_marker}], tier_b:[{name,reader_file}], tier_c_count}. tier_a is the
+    actionable list (capped ~150, tier_a_truncated flag if more).
+    """
+    root   = _repo()
+    result = dgs.dead_gate_scan(root, tier=tier, name=name)
     return _j(result)
 
 
