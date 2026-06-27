@@ -254,7 +254,7 @@ BEGIN
     PUSHBUTTON      "...",IDC_HIGHLIGHT1EDIT,413,43,11,13
     EDITTEXT        IDC_HIGHLIGHT2,433,43,40,13,ES_AUTOHSCROLL
     PUSHBUTTON      "...",IDC_HIGHILIGHT2EDIT2,475,43,11,13
-    CONTROL         "Display Marker",IDC_OBJECTIVE_DISPLAY_MARKER_CHECK,
+    CONTROL         "Show objective marker",IDC_OBJECTIVE_DISPLAY_MARKER_CHECK,
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,307,68,65,13
     EDITTEXT        IDC_OBJECTIVE_X_EDITBOX,387,81,41,13,ES_AUTOHSCROLL
     EDITTEXT        IDC_OBJECTIVE_Y_EDITBOX,443,81,41,13,ES_AUTOHSCROLL
@@ -272,13 +272,13 @@ BEGIN
     CONTROL         "All previous primary objectives must be completed",
                     IDC_OBJECTIVE_ALL_PREVIOUS_CHECK,"Button",
                     BS_AUTOCHECKBOX | BS_MULTILINE | WS_TABSTOP,13,172,77,26
-    CONTROL         "Hidden Trigger",IDC_OBJECTIVE_HIDDEN_TRIGGER_CHECK,
+    CONTROL         "Hidden (not shown to player)",IDC_OBJECTIVE_HIDDEN_TRIGGER_CHECK,
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,13,212,63,10
-    CONTROL         "Activate On Flag",IDC_OBJECTIVE_ACTIVATE_ON_FLAG_CHECK,
+    CONTROL         "Starts when flag is set",IDC_OBJECTIVE_ACTIVATE_ON_FLAG_CHECK,
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,13,233,69,10
     EDITTEXT        IDC_OBJECTIVE_ACTIVATE_FLAG_EDITBOX,25,246,59,14,
                     ES_AUTOHSCROLL
-    CONTROL         "Reset Status On Flag",
+    CONTROL         "Reset when flag is set",
                     IDC_OBJECTIVE_RESET_STATUS_ON_FLAG_CHECK,"Button",
                     BS_AUTOCHECKBOX | WS_TABSTOP,13,272,83,10
     EDITTEXT        IDC_OBJECTIVE_RESET_STATUS_FLAG_EDITBOX,25,285,59,14,
@@ -341,32 +341,32 @@ BEGIN
                     33,14,ES_AUTOHSCROLL | ES_READONLY | ES_NUMBER
     EDITTEXT        IDC_OBJECTIVE_DESCRIPTION_EDIT,60,55,155,30,ES_MULTILINE | 
                     ES_AUTOVSCROLL | ES_READONLY
-    LTEXT           "Priority",IDC_OBJECTIVE_PRIORITY_STATIC,13,97,39,10
-    GROUPBOX        "Objective Success",IDC_STATIC,98,101,259,216
-    LTEXT           "Type of condition to add",
+    LTEXT           "Objective Type",IDC_OBJECTIVE_PRIORITY_STATIC,13,97,70,10
+    GROUPBOX        "Completion",IDC_STATIC,98,101,259,216
+    LTEXT           "Add completion condition",
                     IDC_OBJECTIVE_TYPE_OF_CONDITION_STATIC,104,114,165,9
     LTEXT           "Conditions",IDC_OBJECTIVE_CONDITIONS_STATIC,104,144,164,
                     10
-    LTEXT           "Type of action to add",
+    LTEXT           "Add completion action",
                     IDC_OBJECTIVE_TYPE_OF_ACTION_STATIC,104,212,132,8
     LTEXT           "Actions",IDC_OBJECTIVE_ACTIONS_STATIC,104,240,104,8
-    GROUPBOX        "Objective Failure",IDC_STATIC,367,101,259,242
-    LTEXT           "Type of condition to add",
+    GROUPBOX        "Failure",IDC_STATIC,367,101,259,242
+    LTEXT           "Add failure condition",
                     IDC_OBJECTIVE_TYPE_OF_CONDITION_STATIC2,373,114,165,9
     LTEXT           "Conditions*",IDC_OBJECTIVE_CONDITIONS_STATIC2,373,144,
                     164,10
-    LTEXT           "Type of action to add",
+    LTEXT           "Add failure action",
                     IDC_OBJECTIVE_TYPE_OF_ACTION_STATIC2,373,213,165,9
     LTEXT           "Actions",IDC_OBJECTIVE_ACTIONS_STATIC2,373,241,164,10
     LTEXT           "*Note: Failure of any success condition already implies failure of the objective. Use this area for additional failure conditions or to address success conditions whose failure cannot be determined automatically (i.e. ""Flag Is Set"").",
                     IDC_STATIC,375,298,174,43
-    GROUPBOX        "Logistics Model",IDC_STATIC,303,6,244,57
+    GROUPBOX        "Marker / target display model",IDC_STATIC,303,6,244,57
     LTEXT           "&Base Color",IDC_STATIC,311,32,36,9
     LTEXT           "Highlight Color 1",IDC_STATIC,371,32,52,9
     LTEXT           "Highlight Color 2",IDC_STATIC,433,32,55,9
     GROUPBOX        "",IDC_STATIC,303,63,189,34
-    CTEXT           "Marker Location",IDC_OBJECTIVE_MARKER_LOCATION_STATIC,
-                    401,70,61,11
+    CTEXT           "Objective marker position",IDC_OBJECTIVE_MARKER_LOCATION_STATIC,
+                    401,70,88,11
     LTEXT           "x",IDC_OBJECTIVE_X_STATIC,377,84,8,11
     LTEXT           "y",IDC_OBJECTIVE_Y_STATIC,434,82,8,11
     LTEXT           "C-Bills",IDC_OBJECTIVE_RESOURCE_POINTS_STATIC,508,70,26,
@@ -693,9 +693,9 @@ BEGIN
     EDITTEXT        IDC_CA_NAME_EDIT,60,26,155,14,ES_AUTOHSCROLL | 
                     ES_READONLY
     PUSHBUTTON      "Edit...",IDC_CA_NAME_EDIT_BUTTON,221,26,33,14
-    EDITTEXT        IDC_CA_CBILLS_EDIT,38,56,40,14,ES_AUTOHSCROLL | 
+    EDITTEXT        IDC_CA_CBILLS_EDIT,67,56,40,14,ES_AUTOHSCROLL |
                     ES_NUMBER
-    PUSHBUTTON      "Browse",IDC_CA_FINAL_VIDEO_BROWSE_BUTTON,57,78,50,14
+    PUSHBUTTON      "Browse",IDC_CA_FINAL_VIDEO_BROWSE_BUTTON,65,78,50,14
     EDITTEXT        IDC_CA_FINAL_VIDEO_EDIT,115,78,106,14,ES_AUTOHSCROLL
     LISTBOX         IDC_CA_GROUP_LIST,15,121,146,93,LBS_NOINTEGRALHEIGHT | 
                     WS_VSCROLL | WS_TABSTOP
@@ -704,10 +704,10 @@ BEGIN
     PUSHBUTTON      "Edit",IDC_CA_EDIT_BUTTON,167,153,50,14
     PUSHBUTTON      "Move Up",IDC_CA_MOVE_UP_BUTTON,167,169,50,14
     PUSHBUTTON      "Move Down",IDC_CA_MOVE_DOWN_BUTTON,167,185,50,14
-    GROUPBOX        "Campaign Name",IDC_STATIC,13,13,248,34
-    LTEXT           "CBills",IDC_STATIC,15,59,18,8
-    LTEXT           "Final Video",IDC_STATIC,16,81,36,8
-    LTEXT           "Groups",IDC_STATIC,16,107,24,8
+    GROUPBOX        "Campaign Title",IDC_STATIC,13,13,248,34
+    LTEXT           "Starting C-Bills",IDC_STATIC,15,59,50,8
+    LTEXT           "Campaign Final Video",IDC_STATIC,16,81,47,8
+    LTEXT           "Operations",IDC_STATIC,16,107,40,8
     DEFPUSHBUTTON   "Save",ID_CA_SAVE_BUTTON,269,23,50,14
 END
 
@@ -719,13 +719,13 @@ BEGIN
     EDITTEXT        IDC_GR_LABEL_EDIT,57,13,167,14,ES_AUTOHSCROLL
     EDITTEXT        IDC_GR_NUM_MISSIONS_TO_COMPLETE_EDIT,143,35,39,14,
                     ES_AUTOHSCROLL | ES_NUMBER
-    PUSHBUTTON      "Browse",IDC_GR_OPERATION_FILE_BROWSE_BUTTON,57,58,50,14
+    PUSHBUTTON      "Browse",IDC_GR_OPERATION_FILE_BROWSE_BUTTON,66,58,50,14
     EDITTEXT        IDC_GR_OPERATION_FILE_EDIT,116,58,161,14,ES_AUTOHSCROLL
     PUSHBUTTON      "Browse",IDC_GR_PREVIDEO_FILE_BROWSE_BUTTON,57,79,50,14
     EDITTEXT        IDC_GR_PREVIDEO_FILE_EDIT,116,79,161,14,ES_AUTOHSCROLL
-    PUSHBUTTON      "Browse",IDC_GR_VIDEO_FILE_BROWSE_BUTTON,58,101,50,14
+    PUSHBUTTON      "Browse",IDC_GR_VIDEO_FILE_BROWSE_BUTTON,66,101,50,14
     EDITTEXT        IDC_GR_VIDEO_FILE_EDIT,117,101,161,14,ES_AUTOHSCROLL
-    COMBOBOX        IDC_GR_TUNE_COMBO,36,128,48,91,CBS_DROPDOWN | WS_VSCROLL | 
+    COMBOBOX        IDC_GR_TUNE_COMBO,40,128,48,91,CBS_DROPDOWN | WS_VSCROLL |
                     WS_TABSTOP
     LISTBOX         IDC_GR_MISSION_LIST,7,170,191,74,LBS_NOINTEGRALHEIGHT | 
                     WS_VSCROLL | WS_TABSTOP
@@ -734,14 +734,14 @@ BEGIN
     PUSHBUTTON      "Edit",IDC_GR_EDIT_BUTTON,206,202,50,14
     DEFPUSHBUTTON   "OK",IDOK,297,7,50,14
     PUSHBUTTON      "Cancel",IDCANCEL,297,24,50,14
-    LTEXT           "Group Label",IDC_STATIC,7,16,40,8
-    LTEXT           "Number of missions required to complete",IDC_STATIC,7,
+    LTEXT           "Operation Name",IDC_STATIC,7,16,48,8
+    LTEXT           "Missions Required to Advance",IDC_STATIC,7,
                     38,128,8
-    LTEXT           "Operation File",IDC_STATIC,7,61,44,8
-    LTEXT           "Pre-Video File",IDC_STATIC,7,82,44,8
-    LTEXT           "Video File",IDC_STATIC,8,103,32,8
-    LTEXT           "Tune",IDC_STATIC,7,129,18,8
-    LTEXT           "Missions",IDC_STATIC,8,154,28,8
+    LTEXT           "Operation Definition File",IDC_STATIC,7,61,57,8
+    LTEXT           "Briefing Video",IDC_STATIC,7,82,48,8
+    LTEXT           "Debrief / Operation Video",IDC_STATIC,8,103,56,8
+    LTEXT           "Music Track",IDC_STATIC,7,129,30,8
+    LTEXT           "Mission List",IDC_STATIC,8,154,40,8
 END
 
 IDD_MISSION_DIALOG DIALOG DISCARDABLE  0, 0, 372, 145

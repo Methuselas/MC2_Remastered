@@ -108,11 +108,19 @@ static void setGroupListBoxValues(CListBox &GroupListBox, const CGroupList &Grou
 	GroupListBox.ResetContent();
 	CGroupList::EConstIterator it;
 	for (it = GroupList.Begin(); !it.IsDone(); it++) {
+		// CRASH FIX (CampaignDialog.cpp:116 UAF): CGroupList::EConstIterator
+		// operator*() returns CGroupData BY VALUE, so `(*it).m_MissionList.Begin()`
+		// returns an iterator into a TEMPORARY that is destroyed at the end of the
+		// statement -- the inner for-loop then walks freed memory. Bind the group to
+		// a named const reference once (lifetime-extends the temporary across the
+		// whole loop body) and iterate THAT. All m_MissionList iterators below are
+		// now into `grp`, which lives the full iteration.
+		const CGroupData & grp = *it;
 		CString tmpCStr;
-		if ((*it).m_Label.IsEmpty()) {
+		if (grp.m_Label.IsEmpty()) {
 			CString missions;
 			CMissionList::EConstIterator mit;
-			for (mit = (*it).m_MissionList.Begin(); !mit.IsDone(); mit++) {
+			for (mit = grp.m_MissionList.Begin(); !mit.IsDone(); mit++) {
 				if (!missions.IsEmpty()) { missions += _TEXT(", "); }
 				missions += (*mit).m_MissionFile;
 			}
@@ -123,7 +131,7 @@ static void setGroupListBoxValues(CListBox &GroupListBox, const CGroupList &Grou
 			}
 		} else {
 			tmpCStr = _TEXT("[");
-			tmpCStr += ((*it).m_Label);
+			tmpCStr += (grp.m_Label);
 			tmpCStr += _TEXT("] ");
 		}
 
@@ -132,13 +140,13 @@ static void setGroupListBoxValues(CListBox &GroupListBox, const CGroupList &Grou
 		CString warnCStr;
 		bool firstWarn = true;
 		// 1. No missions in this operation.
-		if (0 == (*it).m_MissionList.Count()) {
+		if (0 == grp.m_MissionList.Count()) {
 			if (!firstWarn) { warnCStr += _TEXT("; "); }
 			warnCStr += _TEXT("no missions");
 			firstWarn = false;
 		}
 		// 2. Completion requirement exceeds the number of missions present.
-		if ((*it).m_NumMissionsToComplete > (int)(*it).m_MissionList.Count()) {
+		if (grp.m_NumMissionsToComplete > (int)grp.m_MissionList.Count()) {
 			if (!firstWarn) { warnCStr += _TEXT("; "); }
 			warnCStr += _TEXT("requires more missions than exist");
 			firstWarn = false;
@@ -147,7 +155,7 @@ static void setGroupListBoxValues(CListBox &GroupListBox, const CGroupList &Grou
 		{
 			bool emptyMissionFile = false;
 			CMissionList::EConstIterator vmit;
-			for (vmit = (*it).m_MissionList.Begin(); !vmit.IsDone(); vmit++) {
+			for (vmit = grp.m_MissionList.Begin(); !vmit.IsDone(); vmit++) {
 				if ((*vmit).m_MissionFile.IsEmpty()) { emptyMissionFile = true; break; }
 			}
 			if (emptyMissionFile) {
@@ -160,8 +168,8 @@ static void setGroupListBoxValues(CListBox &GroupListBox, const CGroupList &Grou
 		//    "standin" (e.g. standin.bik, see code/controlgui.cpp). Could not confirm a
 		//    single canonical token, so assume any case-insensitive "standin" substring.
 		{
-			CString preVid = (*it).m_PreVideoFile; preVid.MakeLower();
-			CString vid    = (*it).m_VideoFile;    vid.MakeLower();
+			CString preVid = grp.m_PreVideoFile; preVid.MakeLower();
+			CString vid    = grp.m_VideoFile;    vid.MakeLower();
 			if ((preVid.Find(_TEXT("standin")) >= 0) || (vid.Find(_TEXT("standin")) >= 0)) {
 				if (!firstWarn) { warnCStr += _TEXT("; "); }
 				warnCStr += _TEXT("placeholder video");
