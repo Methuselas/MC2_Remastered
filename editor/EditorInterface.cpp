@@ -5251,7 +5251,7 @@ void EditorInterface::renderToolbarImGui()
 	if (!GuiRuntime::AutoDockActive())
 		ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - toolbarW - 16.0f, 16.0f), ImGuiCond_Once);
 	ImGui::SetNextWindowSize(ImVec2(toolbarW, 0.f), ImGuiCond_Once);
-	ImGui::Begin("Tools", nullptr, ImGuiWindowFlags_NoScrollbar);
+	ImGui::Begin("Tools", nullptr, 0);
 
 	// UI scale control — affects every editor panel (FontGlobalScale). +/- and a
 	// slider; the value persists for the session.
