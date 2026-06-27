@@ -200,11 +200,32 @@ struct PatchShape {
 
 static std::map<uint32_t, PatchShape> s_patchCache;
 
-static uint32_t patchKey(int qcX, int qcY, int lodStep)
+// MC2_TERRAIN_LOD_CHECKER_DIAG (default ON, read once, static-cached). When ON,
+// the per-quad triangle diagonal honors the same per-cell checkerboard used by
+// grounding (worldQuadUVMode, mapdata.cpp:116), the road/cement overlay bake
+// (gos_terrain_indirect.cpp:4404) and water/shadow/GPU-compute terrain, instead
+// of the fixed TL-BR diagonal. The chunk render was the sole TL-BR outlier, which
+// made roads/cement vanish on slopes (user-confirmed fixed). Set =0 to revert to
+// the prior fixed TL-BR behaviour (killswitch).
+static bool terrainLodCheckerDiagEnabled()
+{
+    static const bool s_on = [](){
+        const char* v = std::getenv("MC2_TERRAIN_LOD_CHECKER_DIAG");
+        return !(v && v[0] == '0');   // default ON; only "=0" reverts
+    }();
+    return s_on;
+}
+
+// patchKey now also carries the 2-bit block-origin parity (X&1, Y&1) so the
+// shared (qcX,qcY,lodStep) patch cache distinguishes the two checkerboard
+// phasings. Gate OFF -> parity bits always 0 (only the fixed-TL-BR patch built).
+static uint32_t patchKey(int qcX, int qcY, int lodStep, int parityX, int parityY)
 {
     return ((uint32_t)qcX & 0xFF)
          | (((uint32_t)qcY    & 0xFF) << 8)
-         | (((uint32_t)lodStep & 0xFF) << 16);
+         | (((uint32_t)lodStep & 0xFF) << 16)
+         | (((uint32_t)(parityX & 1)) << 24)
+         | (((uint32_t)(parityY & 1)) << 25);
 }
 
 // Build sample positions along one axis, always including far edge.
@@ -218,9 +239,19 @@ static std::vector<int> makeSamplePositions(int quadCount, int lodStep)
     return pos;
 }
 
-static const PatchShape& getOrBuildPatch(int qcX, int qcY, int lodStep)
+// checkerDiag: when true, emit the per-cell checkerboard diagonal keyed on
+// ABSOLUTE world-tile parity (blockOriginParity + mapped sample cell), matching
+// worldQuadUVMode. parityX/parityY are blockOriginX&1 / blockOriginY&1.
+// Caller MUST only pass checkerDiag=true for lodStep==1 (and not the 4x
+// visualDisplace path) — coarse LOD per-cell parity is ill-defined.
+static const PatchShape& getOrBuildPatch(int qcX, int qcY, int lodStep,
+                                         bool checkerDiag, int parityX, int parityY)
 {
-    uint32_t key = patchKey(qcX, qcY, lodStep);
+    // parity bits only meaningful when the checkerboard is active; keep the
+    // fixed-TL-BR cache entry under parity (0,0) so gate-OFF is byte-identical.
+    const int keyParX = checkerDiag ? (parityX & 1) : 0;
+    const int keyParY = checkerDiag ? (parityY & 1) : 0;
+    uint32_t key = patchKey(qcX, qcY, lodStep, keyParX, keyParY);
     auto it = s_patchCache.find(key);
     if (it != s_patchCache.end()) return it->second;
 
@@ -234,7 +265,16 @@ static const PatchShape& getOrBuildPatch(int qcX, int qcY, int lodStep)
         for (int xx : xs)
             verts.push_back({(int16_t)xx, (int16_t)yy});
 
-    // Two CCW triangles per quad cell: TL, BL, BR  /  TL, BR, TR
+    // Two CCW triangles per quad cell.
+    //   FIXED / BOTTOMRIGHT (TL-BR diagonal): {TL,BL,BR} + {TL,BR,TR}
+    //   BOTTOMLEFT          (TR-BL diagonal): {TL,BL,TR} + {BL,BR,TR}
+    // Both keep the SAME front-face (CCW) winding as the original fixed split,
+    // so backface culling is unchanged. The diagonal choice mirrors
+    // worldQuadUVMode(absRow,absCol): BOTTOMRIGHT when (absY&1)==(absX&1).
+    // absX = parityX*blockBase + xs[i] ; we have blockOriginX&1 in parityX and
+    // the sample's local cell coord xs[i] -> absolute cell parity is the XOR.
+    // NOTE xs[i] is the LOD-decimated map-cell coordinate (lodStep==1 here, so
+    // xs[i] is exactly the cell index), used directly — NOT the raw loop i.
     std::vector<uint16_t> indices;
     int W = (int)xs.size();
     for (int j = 0; j < (int)ys.size() - 1; ++j) {
@@ -243,7 +283,23 @@ static const PatchShape& getOrBuildPatch(int qcX, int qcY, int lodStep)
             uint16_t tr = (uint16_t)(j*W+i+1);
             uint16_t bl = (uint16_t)((j+1)*W+i);
             uint16_t br = (uint16_t)((j+1)*W+i+1);
-            indices.insert(indices.end(), {tl, bl, br, tl, br, tr});
+
+            bool bottomRight = true;  // fixed default == BOTTOMRIGHT (TL-BR)
+            if (checkerDiag) {
+                // Absolute map cell of this quad's TL corner. xs/ys are local
+                // sample positions; with lodStep==1 they equal the local cell
+                // index. Add block-origin parity for absolute world parity.
+                const int absX = (parityX & 1) ^ (xs[i] & 1);
+                const int absY = (parityY & 1) ^ (ys[j] & 1);
+                // worldQuadUVMode: BOTTOMRIGHT when (tileR&1)==(tileC&1).
+                bottomRight = (absY == absX);
+            }
+
+            if (bottomRight) {
+                indices.insert(indices.end(), {tl, bl, br, tl, br, tr});
+            } else {
+                indices.insert(indices.end(), {tl, bl, tr, bl, br, tr});
+            }
         }
     }
 
@@ -975,9 +1031,16 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         // localOffset as fine units and corner-pins the edges. Default OFF path uses
         // the original coarse patch (byte-identical).
         const bool displaceThis = visualDisplaceActive && cmd.lodStep == 1;
+        // Checkerboard diagonal applies ONLY to lodStep==1 fine cells on the
+        // normal (non-4x-displace) path — coarse LOD (lodStep>1) per-cell parity
+        // is ill-defined and the 4x heightsFine path is a separate follow-up;
+        // both keep the existing fixed TL-BR diagonal.
+        const bool checkerDiag = terrainLodCheckerDiagEnabled()
+                                 && !displaceThis && cmd.lodStep == 1;
         const PatchShape& patch = displaceThis
-            ? getOrBuildPatch(qcX * 4, qcY * 4, 1)
-            : getOrBuildPatch(qcX, qcY, cmd.lodStep);
+            ? getOrBuildPatch(qcX * 4, qcY * 4, 1, /*checkerDiag*/false, 0, 0)
+            : getOrBuildPatch(qcX, qcY, cmd.lodStep, checkerDiag,
+                              cmd.blockOriginX & 1, cmd.blockOriginY & 1);
         if (s_locVisualDisplace >= 0)
             glUniform1i(s_locVisualDisplace, displaceThis ? 1 : 0);
 
