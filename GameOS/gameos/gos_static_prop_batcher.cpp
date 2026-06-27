@@ -55,6 +55,44 @@ static const bool s_alphaTrace = (getenv("MC2_ALPHA_TEST_TRACE") != nullptr);
 #define ALPHA_TRACE(fmt, ...) \
     do { if (s_alphaTrace) { printf("[ALPHA_TEST] " fmt "\n", ##__VA_ARGS__); fflush(stdout); } } while (0)
 
+// PROP-FIXB-MVP: symmetric-mirror of the terrain Fix-B frame-of-reference (see
+// gos_terrain_lod_chunk.cpp ~:33-41 + docs/superpowers/specs/
+// 2026-05-18-AUTHORITATIVE-zfight-matrix-share-design.md §11). When the solid
+// pass is armed, the LOD-chunk terrain draws with the snapshotted dispatch MVP
+// (frame N-1), but objects upload the LIVE current-frame MVP -> a 1-frame
+// matrix-share lag -> depth shimmer at the object/terrain contact under camera
+// motion. Mirroring the SAME consume expression here makes object draws agree
+// with the terrain depth they sit on. The snapshot itself is NOT touched; this
+// only CONSUMES the already-published terrain snapshot. Signatures copied
+// verbatim from gos_terrain_lod_chunk.cpp.
+extern "C" const float* gos_terrain_indirect_getDispatchMvp16();
+namespace gos_terrain_indirect { bool IsFrameSolidArmed(); }
+
+// MC2_PROP_FIXB_MVP — default ON (=0 reverts, killswitch). Consume the
+// dispatch-MVP snapshot when the solid pass is armed so object draws agree with
+// terrain depth during camera motion (the un-armed arm returns the live pointer
+// anyway, so this is byte-identical when the solid pass is not armed). Sampled
+// once at process start.
+static bool s_propFixBMvpEnabled() {
+    static const bool on = []() {
+        const char* v = std::getenv("MC2_PROP_FIXB_MVP");
+        return !(v && std::atoi(v) == 0);  // default ON; only =0 reverts
+    }();
+    return on;
+}
+// Returns the MVP the object draw should upload (GL_FALSE, axisSwap*worldToClip).
+// Gate OFF -> live terrain MVP. Gate ON + solid pass armed -> dispatch snapshot,
+// with live-MVP nullptr-safety identical to the terrain chunk fallback.
+static const float* gos_GetObjectFixBMVPMat4() {
+    if (!s_propFixBMvpEnabled())
+        return gos_GetTerrainMVPMat4();
+    const float* mvp = gos_terrain_indirect::IsFrameSolidArmed()
+                       ? gos_terrain_indirect_getDispatchMvp16()
+                       : gos_GetTerrainMVPMat4();
+    if (!mvp) mvp = gos_GetTerrainMVPMat4();
+    return mvp;
+}
+
 // MC2_TEX_HANDOFF_TRACE=1 — logs texture handle resolution at register and draw time.
 // Prints once per unique (multiShape,slot) pair at registration, and once per draw type
 // at flush (first flush only). Use to diagnose the GPU-path upscale-texture miss.
@@ -5760,7 +5798,7 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
         // to frames {1,5,30,120} to keep silent at steady state.
         {
             extern long g_mvpDiagFrame;
-            const float* mvpPtr = gos_GetTerrainMVPMat4();
+            const float* mvpPtr = gos_GetObjectFixBMVPMat4();
             if (g_mvpDiagFrame == 1 || g_mvpDiagFrame == 5 ||
                 g_mvpDiagFrame == 30 || g_mvpDiagFrame == 120) {
                 if (mvpPtr) {
@@ -6913,7 +6951,7 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
         // worldToClip, row-major rewritten in gamecam.cpp, uploaded GL_FALSE.
         {
             const GLint locTerrainMVP = glGetUniformLocation(s_staticPropProgram, "u_worldToClipGL");
-            const float* terrainMVP = gos_GetTerrainMVPMat4();
+            const float* terrainMVP = gos_GetObjectFixBMVPMat4();
             if (locTerrainMVP >= 0 && terrainMVP)
                 glUniformMatrix4fv(locTerrainMVP, 1, GL_FALSE, terrainMVP);
             const GLint locMVP = glGetUniformLocation(s_staticPropProgram, "u_mvp");
