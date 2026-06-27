@@ -151,6 +151,7 @@ static GLint    s_locCementAtlas    = -1;
 static GLint    s_locUseCement      = -1;
 static GLint    s_locCementGridSide = -1;
 static GLint    s_locCementWUPT     = -1;
+static GLint    s_locCementDiagConnect = -1;  // CEMENT-DIAG-CONNECT-1 gate uniform
 static constexpr GLint kChunkTexUnitCement = 3;  // matches legacy tex3
 // Stage B: transition mask array (GL_TEXTURE_2D_ARRAY, unit 11).
 extern GLuint gos_terrain_indirect_getTransitionMaskArrayGL();
@@ -530,6 +531,7 @@ void gos_TerrainLodChunk_Init()
             s_locUseCement      = glGetUniformLocation(s_terrainProgram, "u_useCement");
             s_locCementGridSide = glGetUniformLocation(s_terrainProgram, "u_cementGridSide");
             s_locCementWUPT     = glGetUniformLocation(s_terrainProgram, "u_cementWUPT");
+            s_locCementDiagConnect = glGetUniformLocation(s_terrainProgram, "u_cementDiagConnect");
             s_locTransitionMaskArray = glGetUniformLocation(s_terrainProgram, "u_transitionMaskArray");
             s_locUseTransitionMask   = glGetUniformLocation(s_terrainProgram, "u_useTransitionMask");
             printf("[TerrainLodChunk] shader loaded prog=%u "
@@ -886,6 +888,13 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         bool cementReady = gos_terrain_indirect_isCementAtlasReady();
         if (s_locUseCement >= 0)
             glUniform1i(s_locUseCement, (cementReady && s_cementSsbo != 0) ? 1 : 0);
+        // CEMENT-DIAG-CONNECT-1: env gate MC2_TERRAIN_CEMENT_DIAG_CONNECT, default OFF
+        // -> uploads 0 -> frag diagonal-fill block skipped (byte-identical).
+        if (s_locCementDiagConnect >= 0) {
+            int diagOn = 0;
+            if (const char* e = getenv("MC2_TERRAIN_CEMENT_DIAG_CONNECT")) diagOn = (e[0] && e[0] != '0') ? 1 : 0;
+            glUniform1i(s_locCementDiagConnect, diagOn);
+        }
         if (cementReady) {
             if (s_locCementGridSide >= 0)
                 glUniform1i(s_locCementGridSide, gos_terrain_indirect_getCementAtlasGridSide());

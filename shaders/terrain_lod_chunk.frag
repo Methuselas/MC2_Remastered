@@ -24,6 +24,10 @@ uniform sampler2D  u_cementAtlas;
 uniform int        u_useCement;
 uniform int        u_cementGridSide;
 uniform float      u_cementWUPT;   // world units per cement tile (= 128)
+// CEMENT-DIAG-CONNECT-1 (gate MC2_TERRAIN_CEMENT_DIAG_CONNECT): 0 = off (byte-identical).
+// When non-zero, a non-cement tile fills its corner quadrant toward any diagonally
+// adjacent SOLID cement tile (hard quadrant cut, no feather).
+uniform int        u_cementDiagConnect;
 // Stage B: transition mask array (14 layers R8, unit 11).
 uniform sampler2DArray u_transitionMaskArray;
 uniform int            u_useTransitionMask;
@@ -423,6 +427,35 @@ void main() {
         } else {
             base = cementColor;
             cementHit = true;
+        }
+    }
+
+    // CEMENT-DIAG-CONNECT-1 (gate u_cementDiagConnect): when the current tile is NOT
+    // a solid cement hit, fill the corner quadrant of this tile toward any diagonally
+    // adjacent SOLID cement tile so two diagonal cement squares merge across the shared
+    // corner. Hard quadrant cut (no feather) preserves blocky cement edges. Transition
+    // (alpha bit30) neighbors are NOT bridged. Off => this whole block is skipped.
+    if (u_cementDiagConnect != 0 && u_useCement != 0 && !cementHit) {
+        // Sub-tile position; cTileUV.x grows with +ctX, cTileUV.y grows with +ctY.
+        vec2 dTileUV = fract(vec2(v_worldPos.x, -v_worldPos.y) / u_cementWUPT);
+        int  dGridSide = u_cementGridSide;
+        if (dGridSide < 1) dGridSide = 1;
+        // Pick the diagonal neighbor toward the quadrant this fragment lies in.
+        int dnX = (dTileUV.x > 0.5) ? (ctX + 1) : (ctX - 1);
+        int dnY = (dTileUV.y > 0.5) ? (ctY + 1) : (ctY - 1);
+        if (dnX >= 0 && dnX < u_mapSide && dnY >= 0 && dnY < u_mapSide) {
+            uint dnw = cementWordsF[dnX + dnY * u_mapSide];
+            bool dnValid      = (dnw & 0x80000000u) != 0u;
+            bool dnTransition = (dnw & 0x40000000u) != 0u;
+            if (dnValid && !dnTransition) {
+                uint dLayerIdx = dnw & 0xFFFFu;
+                int  dCol = int(dLayerIdx) % dGridSide;
+                int  dRow = int(dLayerIdx) / dGridSide;
+                // Use this tile's own sub-tile UV so the fill aligns with the grid.
+                vec2 dAtlasUV = (vec2(float(dCol), float(dRow)) + dTileUV) / float(dGridSide);
+                base = texture(u_cementAtlas, dAtlasUV).rgb;
+                cementHit = true;
+            }
         }
     }
 
