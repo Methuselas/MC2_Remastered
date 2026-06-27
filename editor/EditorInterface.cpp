@@ -1942,7 +1942,8 @@ void EditorInterface::handleMouseMove( int PosX, int PosY )
 		Stuff::Vector3D paintPos = vector;
 		if ( dynamic_cast<BuildingBrush*>( curBrush ) ||
 		     dynamic_cast<HeightBrush*>( curBrush )   ||
-		     dynamic_cast<FlattenBrush*>( curBrush ) )
+		     dynamic_cast<FlattenBrush*>( curBrush )  ||
+		     dynamic_cast<TerrainBrush*>( curBrush ) )   // Paint-Material brush: same terrain-surface mirror fix
 		{
 			Stuff::Vector2DOf<long> vp( PosX, PosY );
 			eye->inverseProject( vp, paintPos );
