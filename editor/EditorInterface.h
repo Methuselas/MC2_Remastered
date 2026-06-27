@@ -84,6 +84,12 @@ private:
 public:
 
 	static EditorInterface* instance(){ return s_instance; }
+	// EDITOR-CRASH-HARDENING-1: called from the object-delete broadcast
+	// (EditorObjectMgr::deleteBuilding/deleteSelectedObjects) so a delete that
+	// happens while a drag pointer is held cannot leave m_pDragObject dangling
+	// (UAF: set ~:1632, derefed ~:1764/1855/1864). Mirrors the selection-cache
+	// scrub (selectedObjects.RemoveIfThere) on the same delete path.
+	void notifyObjectDeleted( const EditorObject* pObj );
 	// Open a mission by explicit .pak path (same load path as FileOpen's success branch,
 	// minus the file dialog). Used by the Mod Project "Import Mission" flow.
 	void OpenMissionByPath(const char* pakPath);

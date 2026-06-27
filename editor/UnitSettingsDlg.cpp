@@ -770,15 +770,18 @@ void UnitSettingsDlg::updateMemberVariables()
 
 	Pilot* pPilot = pUnit->getPilot();
 
-	const char* defaultPilot = pPilot->info->fileName;
+	// EDITOR-CRASH-HARDENING-1: pPilot and pPilot->info can be NULL (Pilot::info
+	// defaults to 0, EditorObjects.h:137); mirror save-path guard EditorObjects.cpp:1018-1021.
+	const char* defaultPilot = (pPilot && pPilot->info) ? pPilot->info->fileName : nullptr;
 
 	for ( UNIT_LIST::EIterator iter = units.Begin(); !iter.IsDone(); iter++ )
 	{
 		pPilot = (*iter)->getPilot();
 
-		const char* tmpName = pPilot->info->fileName;
+		// EDITOR-CRASH-HARDENING-1: skip compare when pilot or its info is NULL.
+		const char* tmpName = (pPilot && pPilot->info) ? pPilot->info->fileName : nullptr;
 
-		if ( stricmp( tmpName, defaultPilot ) != 0 )
+		if ( !defaultPilot || !tmpName || stricmp( tmpName, defaultPilot ) != 0 )
 		{
 			defaultPilot = 0;
 			break;
@@ -805,12 +808,17 @@ void UnitSettingsDlg::updateMemberVariables()
 	}
 }
 
-void UnitSettingsDlg::OnCancel() 
+void UnitSettingsDlg::OnCancel()
 {
-	pAction->undo();
-	delete pAction;
-	pAction = NULL;
-	
+	// EDITOR-CRASH-HARDENING-1: pAction can be NULL (ctor sets it NULL; only
+	// assigned in OnInitDialog) if dialog is dismissed before init.
+	if ( pAction )
+	{
+		pAction->undo();
+		delete pAction;
+		pAction = NULL;
+	}
+
 	CDialog::OnCancel();
 }
 

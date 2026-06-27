@@ -55,6 +55,9 @@ Action* Eraser::endPaint()
 #define DEFAULT_TERRAIN		2
 bool Eraser::paint( Stuff::Vector3D& worldPos, int screenX, int screenY )
 {
+	if ( !land )
+		return false;  // EDITOR-CRASH-HARDENING-1: no terrain -> worldToTileCell/getOverlay deref NULL (sibling StampBrush.cpp:66)
+
 	EditorObject* pInfo = EditorObjectMgr::instance()->getObjectAtPosition( worldPos );
 	if ( pInfo )
 	{
@@ -125,6 +128,9 @@ bool Eraser::canPaint( Stuff::Vector3D& worldPos, int screenX, int screenY, int 
 	if ( EditorObjectMgr::instance()->getObjectAtPosition( worldPos ) )
 		return true;
 
+	if ( !land )
+		return false;  // EDITOR-CRASH-HARDENING-1: no terrain -> worldToTileCell/getOverlay deref NULL (sibling StampBrush.cpp:66)
+
 	int tileRow, tileCol;
 	int cellRow, cellCol;
 
@@ -157,6 +163,9 @@ bool Eraser::canPaint( Stuff::Vector3D& worldPos, int screenX, int screenY, int 
 
 Action* Eraser::applyToSelection()
 {
+	if ( !land )
+		return NULL;  // EDITOR-CRASH-HARDENING-1: no terrain -> realVerticesMapSide loop derefs NULL (sibling StampBrush.cpp:66)
+
 	EraserAction* pRetAction = new EraserAction;
 
 	{

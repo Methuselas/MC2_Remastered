@@ -136,6 +136,19 @@ namespace BeautySidecarPreview
 	void Restore()
 	{
 		if (!s_applied || !land || s_side <= 0) return;
+		// EDITOR-CRASH-HARDENING-1: if a different-size map was loaded after Apply,
+		// s_side (old grid) no longer matches the live terrain -> setVertexHeight(i,..)
+		// for i<s_side*s_side writes OOB into the new (smaller) vertex grid, and a
+		// null Terrain::mapData would crash calcLight(). Drop the stale snapshot and
+		// bail rather than corrupt memory.
+		if (!Terrain::mapData || s_side != land->realVerticesMapSide ||
+		    (int)s_origElev.size() != s_side * s_side) {
+			s_applied = false;
+			s_origElev.clear();
+			s_side = 0;
+			strcpy(s_status, "restore skipped: terrain changed since apply");
+			return;
+		}
 		const int total = s_side * s_side;
 		for (int i = 0; i < total; ++i) land->setVertexHeight(i, s_origElev[(size_t)i]);
 		Terrain::mapData->calcLight();

@@ -1998,6 +1998,22 @@ void EditorInterface::handleMouseMove( int PosX, int PosY )
 
 
 
+// EDITOR-CRASH-HARDENING-1: scrub the drag pointer when the object it points at
+// is being deleted (e.g. delete-during-drag), so the next handleMouseMove cannot
+// deref a freed object. Discard the in-flight drag undo action too — it captured a
+// snapshot of the now-dead object and its undo() would relocate a freed pointer.
+// Mirrors the m_pDragAction teardown in handleLeftButtonUp below.
+void EditorInterface::notifyObjectDeleted( const EditorObject* pObj )
+{
+	if ( m_pDragObject == pObj )
+	{
+		delete m_pDragAction;
+		m_pDragAction = NULL;
+		m_pDragObject = NULL;
+		m_dragObjMoved = false;
+	}
+}
+
 void EditorInterface::handleLeftButtonUp( int PosX, int PosY )
 {
 	if ( !eye || !eye->active  )
@@ -2210,19 +2226,22 @@ void EditorInterface::handleKeyDown( int Key )
 		EditorObjectMgr::EDITOR_OBJECT_LIST selectedObjectsList = EditorObjectMgr::instance()->getSelectedObjectList();
 		EditorObjectMgr::EDITOR_OBJECT_LIST::EIterator it = selectedObjectsList.Begin();
 		const EditorObject* pInfo = (*it);
-		if ( pInfo )
+		// EDITOR-CRASH-HARDENING-1: appearance() can be NULL; guard before ->position
+		// (mirror sibling readout ~line 1975).
+		const ObjectAppearance* pAppearance = pInfo ? pInfo->appearance() : NULL;
+		if ( pAppearance )
 		{
 			Stuff::Point3D eyePosition(eye->getCameraOrigin());
 			Stuff::Point3D objPosition;
-			objPosition.x = -pInfo->appearance()->position.x;
-			objPosition.y = pInfo->appearance()->position.z;
-			objPosition.z = pInfo->appearance()->position.y;
-	
+			objPosition.x = -pAppearance->position.x;
+			objPosition.y = pAppearance->position.z;
+			objPosition.z = pAppearance->position.y;
+
 			Stuff::Vector3D Distance;
 			Distance.Subtract(objPosition,eyePosition);
 			eyeDistance = Distance.GetApproximateLength();
 		}
-	}	
+	}
 
 	// need to put this value in the appropriate place.
 	sprintf( buffer, "%.3f", eyeDistance);
@@ -4877,19 +4896,22 @@ BOOL EditorInterface::OnMouseWheel(UINT nFlags, short zDelta, CPoint pt)
 		EditorObjectMgr::EDITOR_OBJECT_LIST selectedObjectsList = EditorObjectMgr::instance()->getSelectedObjectList();
 		EditorObjectMgr::EDITOR_OBJECT_LIST::EIterator it = selectedObjectsList.Begin();
 		const EditorObject* pInfo = (*it);
-		if ( pInfo )
+		// EDITOR-CRASH-HARDENING-1: appearance() can be NULL; guard before ->position
+		// (mirror sibling readout ~line 1975).
+		const ObjectAppearance* pAppearance = pInfo ? pInfo->appearance() : NULL;
+		if ( pAppearance )
 		{
 			Stuff::Point3D eyePosition(eye->getCameraOrigin());
 			Stuff::Point3D objPosition;
-			objPosition.x = -pInfo->appearance()->position.x;
-			objPosition.y = pInfo->appearance()->position.z;
-			objPosition.z = pInfo->appearance()->position.y;
-	
+			objPosition.x = -pAppearance->position.x;
+			objPosition.y = pAppearance->position.z;
+			objPosition.z = pAppearance->position.y;
+
 			Stuff::Vector3D Distance;
 			Distance.Subtract(objPosition,eyePosition);
 			eyeDistance = Distance.GetApproximateLength();
 		}
-	}	
+	}
 
 	// need to put this value in the appropriate place.
 	char buffer[1024];
@@ -6301,6 +6323,12 @@ void EditorInterface::rotateSelectedObjects( int direction )
 	EditorObjectMgr::EDITOR_OBJECT_LIST::EIterator iter = selectedObjects.Begin();
 	while (!iter.IsDone())
 	{
+		// EDITOR-CRASH-HARDENING-1: appearance() can be NULL; skip (sibling applyObjectTransform:6401).
+		if ( !(*iter) || !(*iter)->appearance() )
+		{
+			iter++;
+			continue;
+		}
 		pAction->addBuildingInfo(*(*iter));
 		int id = (*iter)->getID();
 		int fitID = EditorObjectMgr::instance()->getFitID(id);
@@ -6377,6 +6405,12 @@ void EditorInterface::rotateSelectedObjectsDegrees( float deg )
 	EditorObjectMgr::EDITOR_OBJECT_LIST::EIterator iter = selectedObjects.Begin();
 	while (!iter.IsDone())
 	{
+		// EDITOR-CRASH-HARDENING-1: appearance() can be NULL; skip (sibling applyObjectTransform:6401).
+		if ( !(*iter) || !(*iter)->appearance() )
+		{
+			iter++;
+			continue;
+		}
 		pAction->addBuildingInfo(*(*iter));
 		(*iter)->appearance()->rotation += deg;
 		// Recompute transform + re-bake the static GPU recipe so static props

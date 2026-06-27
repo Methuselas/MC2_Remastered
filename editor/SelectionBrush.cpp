@@ -157,10 +157,13 @@ float SelectionBrush::calcNewHeight( int vertexRow, int vertexCol, float deltaSc
 
 bool SelectionBrush::paint( Stuff::Vector3D& worldPos, int screenX, int screenY )
 {
+	if ( !land )
+		return false;  // EDITOR-CRASH-HARDENING-1: no terrain -> land deref in every paint branch (sibling StampBrush.cpp:66)
+
 	Stuff::Vector4D endPos;
 	endPos.x = (float)screenX;
 	endPos.y = (float)screenY;
-	
+
 	if ( pDragBuilding )
 	{
 		const EditorObject* pObject = pDragBuilding;

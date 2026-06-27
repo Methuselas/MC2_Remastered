@@ -345,8 +345,17 @@ inline unsigned long EditorObjectMgr::getIndexInGroup( long id )
 {
 	return ((id >> 8) & 0x00ff);
 }
+// EDITOR-CRASH-HARDENING-1: a dropzone/unresolved object ID decodes to an
+// out-of-range group (e.g. group=255) -> groups[group]/buildings[index] OOB.
+// Mirror the explicit bounds guard in getType() (EditorObjectMgr.cpp:2857-2863):
+// group < groups.Count() && index < buildings.Count(); return a safe sentinel.
+#define EOM_DECODE_INBOUNDS( ID ) \
+	( getGroup( ID ) < (unsigned long)groups.Count() \
+	  && getIndexInGroup( ID ) < (unsigned long)groups[getGroup( ID )].buildings.Count() )
+
 inline EditorObjectMgr::BuildingType	EditorObjectMgr::getSpecialType( int ID )
 {
+	if ( !EOM_DECODE_INBOUNDS( ID ) ) return UNSPECIAL;
 	return groups[getGroup( ID )].buildings[getIndexInGroup( ID )].specialType;
 }
 inline EditorObjectMgr::BuildingType EditorObjectMgr::getBuildingSpecialType( int group, int idx ) const
@@ -360,38 +369,49 @@ inline const char* EditorObjectMgr::getBuildingName( int group, int idx ) const
 
 inline bool EditorObjectMgr::isAlignable( int ID )
 {
+	if ( !EOM_DECODE_INBOUNDS( ID ) ) return false;
 	return groups[getGroup( ID )].buildings[getIndexInGroup( ID )].alignable;
 }
 
 inline int EditorObjectMgr::getAppearanceType( int ID )
 {
-	return groups[getGroup( ID )].buildings[getIndexInGroup( ID )].appearanceType->getAppearanceClass();
+	if ( !EOM_DECODE_INBOUNDS( ID ) ) return 0;
+	// EDITOR-CRASH-HARDENING-1: appearanceType can be NULL for some entries.
+	AppearanceType* pAppr = groups[getGroup( ID )].buildings[getIndexInGroup( ID )].appearanceType;
+	if ( !pAppr ) return 0;
+	return pAppr->getAppearanceClass();
 }
 
 inline int EditorObjectMgr::getObjectTypeNum( int ID )
 {
+	if ( !EOM_DECODE_INBOUNDS( ID ) ) return 0;
 	return groups[getGroup( ID )].buildings[getIndexInGroup( ID )].objectTypeNum;
 }
 
 inline const char* EditorObjectMgr::getFileName( int ID ) const
 {
+	if ( !EOM_DECODE_INBOUNDS( ID ) ) return NULL;
 	return groups[getGroup( ID )].buildings[getIndexInGroup( ID )].fileName;
 }
 
 inline const char* EditorObjectMgr::getTGAFileName( int ID ) const
 {
+	if ( !EOM_DECODE_INBOUNDS( ID ) ) return NULL;
 	return groups[getGroup( ID )].buildings[getIndexInGroup( ID )].tgaName;
 }
 
 inline DWORD EditorObjectMgr::getTacMapColor( int ID ) const
 {
+	if ( !EOM_DECODE_INBOUNDS( ID ) ) return 0;
 	return groups[getGroup( ID )].buildings[getIndexInGroup( ID )].writeOnTacMap;
 }
 
 inline float EditorObjectMgr::getScale( int ID )
 {
+	if ( !EOM_DECODE_INBOUNDS( ID ) ) return 0.0f;
 	return groups[getGroup( ID )].buildings[getIndexInGroup( ID )].scale;
 }
+#undef EOM_DECODE_INBOUNDS
 
 //*************************************************************************************************
 #endif  // end of file ( EditorObjectMgr.h )

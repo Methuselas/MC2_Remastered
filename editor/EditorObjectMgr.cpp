@@ -48,6 +48,10 @@ static void EditorObjMgrTrace(const char* fmt, ...)
 #include "EditorObjectMgr.h"
 #include "../EditorBridge/EditorRenderBridge.h"  // GPU static-prop batcher/registry (firewall)
 
+#ifndef EDITORINTERFACE_H
+#include "EditorInterface.h"  // EDITOR-CRASH-HARDENING-1: notifyObjectDeleted (drag-pointer UAF scrub)
+#endif
+
 
 #ifndef FILE_H
 #include "File.h"
@@ -697,14 +701,18 @@ bool EditorObjectMgr::canAddBuilding( const Stuff::Vector3D& position,
 								unsigned long indexWithinGroup )
 {
 	
+	if ( !land )
+		return false;  // EDITOR-CRASH-HARDENING-1: no terrain -> worldToCell derefs NULL
+
 	int realCellI, realCellJ;
 	land->worldToCell( position, realCellJ, realCellI );
-	
+
 	EditorObject * cellObject = getObjectAtCell( realCellJ, realCellI );
 
 	if ( cellObject )
 	{
-		if (cellObject->appearance()->rotation == rotation )
+		// EDITOR-CRASH-HARDENING-1: appearance() can be NULL; guard before ->rotation.
+		if (cellObject->appearance() && cellObject->appearance()->rotation == rotation )
 			return false;
 	}
 	
@@ -1226,6 +1234,9 @@ bool	EditorObjectMgr::deleteBuilding( const EditorObject* pInfo )
 				&& pInfo->cellRow == (*iter)->cellRow
 				&& pInfo->appearance() == (*iter)->appearance() )
 			{
+				// EDITOR-CRASH-HARDENING-1: scrub drag pointer before freeing (UAF guard).
+				if ( EditorInterface::instance() )
+					EditorInterface::instance()->notifyObjectDeleted(*iter);
 				delete (*iter);
 				selectedObjects.RemoveIfThere(*iter);
 				EditorData::instance->handleObjectInvalidation(*iter);
@@ -1242,6 +1253,9 @@ bool	EditorObjectMgr::deleteBuilding( const EditorObject* pInfo )
 			if( pInfo->cellColumn == (*mIter)->cellColumn
 				&& pInfo->cellRow == (*mIter)->cellRow )
 			{
+				// EDITOR-CRASH-HARDENING-1: scrub drag pointer before freeing (UAF guard).
+				if ( EditorInterface::instance() )
+					EditorInterface::instance()->notifyObjectDeleted(*mIter);
 				delete( *mIter );
 				selectedObjects.RemoveIfThere(*mIter);
 				EditorData::instance->handleObjectInvalidation(*mIter);
@@ -1256,6 +1270,9 @@ bool	EditorObjectMgr::deleteBuilding( const EditorObject* pInfo )
 			if( pInfo->cellColumn == (*dIter)->cellColumn
 				&& pInfo->cellRow == (*dIter)->cellRow )
 			{
+				// EDITOR-CRASH-HARDENING-1: scrub drag pointer before freeing (UAF guard).
+				if ( EditorInterface::instance() )
+					EditorInterface::instance()->notifyObjectDeleted(*dIter);
 				delete( *dIter );
 				selectedObjects.RemoveIfThere(*dIter);
 				EditorData::instance->handleObjectInvalidation(*dIter);
@@ -1905,6 +1922,11 @@ bool EditorObjectMgr::getBuildingFromID( int fitID, unsigned long& group, unsign
 //*************************************************************************************************
 int	EditorObjectMgr::getFitID( int id ) const
 {
+	// EDITOR-CRASH-HARDENING-1: dropzone/unresolved id decodes OOB group/index.
+	// Mirror getType() guard (EditorObjectMgr.cpp:2857-2863).
+	if ( getGroup(id) >= (unsigned long)groups.Count()
+		|| getIndexInGroup(id) >= (unsigned long)groups[getGroup(id)].buildings.Count() )
+		return 0;
 	return groups[getGroup(id)].buildings[getIndexInGroup(id)].fitID;
 }
 
@@ -1912,18 +1934,30 @@ int	EditorObjectMgr::getFitID( int id ) const
 //*************************************************************************************************
 bool EditorObjectMgr::getBlocksLineOfFire( int id ) const
 {
+	// EDITOR-CRASH-HARDENING-1: dropzone/unresolved id decodes OOB group/index.
+	if ( getGroup(id) >= (unsigned long)groups.Count()
+		|| getIndexInGroup(id) >= (unsigned long)groups[getGroup(id)].buildings.Count() )
+		return false;
 	return groups[getGroup(id)].buildings[getIndexInGroup(id)].blocksLineOfFire;
 
 }
 //*************************************************************************************************
 bool EditorObjectMgr::getIsHoverCraft( int id ) const
 {
+	// EDITOR-CRASH-HARDENING-1: dropzone/unresolved id decodes OOB group/index.
+	if ( getGroup(id) >= (unsigned long)groups.Count()
+		|| getIndexInGroup(id) >= (unsigned long)groups[getGroup(id)].buildings.Count() )
+		return false;
 	return groups[getGroup(id)].buildings[getIndexInGroup(id)].isHoverCraft;
 
 }
 //*************************************************************************************************
 __int64	EditorObjectMgr::getImpassability( int id )
 {
+	// EDITOR-CRASH-HARDENING-1: dropzone/unresolved id decodes OOB group/index.
+	if ( getGroup(id) >= (unsigned long)groups.Count()
+		|| getIndexInGroup(id) >= (unsigned long)groups[getGroup(id)].buildings.Count() )
+		return 0;
 	return groups[getGroup(id)].buildings[getIndexInGroup(id)].impassability;
 }
 
@@ -2182,8 +2216,13 @@ void EditorObjectMgr::deleteSelectedObjects()
 	for ( BUILDING_LIST::EIterator iter = buildings.End();
 		!iter.IsDone();  )
 		{
-			if ( (*iter)->appearance()->selected )
+			// EDITOR-CRASH-HARDENING-1: appearance() can be NULL; guard before ->selected
+			// (mirror syncSelectedObjectPointerList above, ~line 2177).
+			if ( (*iter)->appearance() && (*iter)->appearance()->selected )
 			{
+				// EDITOR-CRASH-HARDENING-1: scrub drag pointer for removed object (UAF guard).
+				if ( EditorInterface::instance() )
+					EditorInterface::instance()->notifyObjectDeleted(*iter);
 				BUILDING_LIST::EIterator tmpIter = iter;
 				iter --;
 				buildings.Delete( tmpIter );
@@ -2195,8 +2234,12 @@ void EditorObjectMgr::deleteSelectedObjects()
 		for ( UNIT_LIST::EIterator uIter = units.End();
 		!uIter.IsDone(); )
 		{
-			if ( (*uIter)->appearance()->selected )
+			// EDITOR-CRASH-HARDENING-1: appearance() can be NULL; guard before ->selected.
+			if ( (*uIter)->appearance() && (*uIter)->appearance()->selected )
 			{
+				// EDITOR-CRASH-HARDENING-1: scrub drag pointer for removed object (UAF guard).
+				if ( EditorInterface::instance() )
+					EditorInterface::instance()->notifyObjectDeleted(*uIter);
 				UNIT_LIST::EIterator tmpIter = uIter;
 				uIter --;
 				units.Delete( tmpIter );
@@ -2208,8 +2251,12 @@ void EditorObjectMgr::deleteSelectedObjects()
 		for ( DROP_LIST::EIterator dIter = dropZones.End();
 		!dIter.IsDone(); )
 		{
-			if ( (*dIter)->appearance()->selected )
+			// EDITOR-CRASH-HARDENING-1: appearance() can be NULL; guard before ->selected.
+			if ( (*dIter)->appearance() && (*dIter)->appearance()->selected )
 			{
+				// EDITOR-CRASH-HARDENING-1: scrub drag pointer for removed object (UAF guard).
+				if ( EditorInterface::instance() )
+					EditorInterface::instance()->notifyObjectDeleted(*dIter);
 				DROP_LIST::EIterator tmpIter = dIter;
 				dIter --;
 				dropZones.Delete( tmpIter );
