@@ -529,8 +529,21 @@ void main() {
                 dN        += pureConcrete * matNormalBoost.w * fwC * (cN.rgb * 2.0 - 1.0);
             }
             // terrainNormalsFromHeightStrength scales the macro-slope tilt (default 1.0).
+            // TERRAIN-DETAIL-ANTI-TILE-1: tie the high-frequency detail normal to
+            // the chunk LOD tier so it stops forming a repeating "carpet" with
+            // distance. baseN (height-derived macro slope) is left at full strength
+            // — only the tiled detail (dN) fades.
+            //   u_lodStep 1 = LOD0 (full) · 2 = LOD1 (fade) · >=4 = LOD2+ (gone).
+            // Gate flag rides in detailNormalStrength.z (>0.5 = ON, set by C++);
+            // .y = LOD1 strength. OFF => lodDetailMul=1.0 => byte-identical.
+            float lodDetailMul = 1.0;
+            if (detailNormalStrength.z > 0.5) {
+                lodDetailMul = (u_lodStep <= 1) ? 1.0
+                             : (u_lodStep <= 2) ? detailNormalStrength.y
+                             : 0.0;
+            }
             vec3 pert = vec3(baseN.xy / max(baseN.z, 0.2) * terrainNormalsFromHeightStrength
-                             + dN.xy * detailNormalStrength.x, 1.0);
+                             + dN.xy * detailNormalStrength.x * lodDetailMul, 1.0);
             N = normalize(pert);
         }
     }

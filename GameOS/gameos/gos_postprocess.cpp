@@ -196,7 +196,7 @@ bool mc2CloudShadowEnabled()
 {
     static const bool s_on = []() {
         const char* v = getenv("MC2_CLOUD_SHADOW");
-        if (!v || !v[0]) return true;            // default ON
+        if (!v || !v[0]) return false;           // default OFF
         return !(v[0] == '0' && v[1] == '\0');
     }();
     return s_on;
@@ -2152,8 +2152,7 @@ void gosPostProcess::runScreenShadow()
 // Fullscreen procedural cloud-shadow pass. Replaces the four inline cloud
 // blocks (gos_terrain / terrain_overlay / decal / shadow_screen). Runs AFTER
 // runScreenShadow; multiplicative (GL_DST_COLOR, GL_ZERO) onto the scene color.
-// World XY is reconstructed from sceneDepthTex_ via inverseViewProj_, exactly
-// like runScreenShadow.
+// Screen-space UV (TexCoord) — no world-position reconstruction or inverseViewProj needed.
 void gosPostProcess::runCloudShadow()
 {
     ZoneScopedN("Render.CloudShadow");

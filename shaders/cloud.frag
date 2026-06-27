@@ -5,9 +5,10 @@
 // decal.frag / shadow_screen.frag. Runs AFTER runScreenShadow as a separate
 // multiplicative (GL_DST_COLOR, GL_ZERO) fullscreen pass.
 //
-// World XY is reconstructed from scene depth EXACTLY like shadow_screen.frag
-// (same inverseViewProj + ZERO_TO_ONE NDC reconstruction). Sky/cleared pixels
-// (reverse-Z depth ~0.0) output 1.0 so the background is untouched.
+// World position reconstructed from scene depth via inverseViewProj (ZERO_TO_ONE
+// reversed-Z, same convention as shadow_screen.frag). worldPos.xz is the terrain
+// ground plane; scroll animates the shadow across the terrain in world space.
+// Sky pixels (reverse-Z depth ~0.0) output 1.0 so the background is untouched.
 
 #define PREC highp
 
@@ -71,10 +72,8 @@ uniform int   u_cloudOctaves;    // default 4
 vec3 reconstructWorldPos(vec2 uv, float depth)
 {
     vec2 ndc_xy = uv * 2.0 - 1.0;
-    // glClipControl(ZERO_TO_ONE): window depth and NDC z share [0,1]; pass
-    // through. inverseViewProj inverts the D3D-style matrix natively.
-    float ndc_z = depth;
-    vec4 worldPos4 = inverseViewProj * vec4(ndc_xy, ndc_z, 1.0);
+    // glClipControl(ZERO_TO_ONE): window depth and NDC z share [0,1]; pass through.
+    vec4 worldPos4 = inverseViewProj * vec4(ndc_xy, depth, 1.0);
     return worldPos4.xyz / worldPos4.w;
 }
 
@@ -94,14 +93,10 @@ void main()
 
     vec3 worldPos = reconstructWorldPos(TexCoord, depth);
 
-    int   oct   = clamp(u_cloudOctaves, 1, 6);
-    // SHADOW-CLOUD-STREAK-FIX: wrap time so scroll can't dominate the spatial term,
-    // and decorrelate the two UV axes so a near-constant reconstructed axis (fixed
-    // oblique camera) can't collapse the FBM field into 1D streaks. worldPos.xz is
-    // correct (GL-world ground plane), do not change to .xy.
+    int   oct      = clamp(u_cloudOctaves, 1, 6);
     float tWrapped = mod(u_time, 1000.0);
-    vec2  g  = worldPos.xz * u_cloudScale;
-    vec2  uv = vec2(g.x + 0.5 * g.y, g.y - 0.5 * g.x) + tWrapped * u_cloudScroll;
+
+    vec2  uv    = worldPos.xz * u_cloudScale + tWrapped * u_cloudScroll;
     float n     = fbm(uv, oct) * 0.5 + 0.5;
     float clear = smoothstep(u_cloudThreshold.x, u_cloudThreshold.y, n);
     float factor = mix(1.0 - u_cloudStrength, 1.0, clear);

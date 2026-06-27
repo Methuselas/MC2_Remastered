@@ -5130,6 +5130,26 @@ static uint32_t buildLiveV6Arrays(
 // (per-bucket array bind differs from the simple OFF/ON bind — handled in a
 // later slice). It does NOT touch SSBO slot 0 (the coalesce instance range
 // bound earlier in flush()) so that binding survives for the color loop.
+// OBJECT-TERRAIN-COPLANAR-OFFSET-1: slope-scaled polygon offset for opaque world
+// objects (props/buildings/turrets/mechs) so they win the coplanar GEQUAL tie
+// over true-depth terrain WITHOUT the constant-NDC-bias tradeoff (too small ->
+// far-zoom z-fight; too large -> near show-through). Polygon offset tracks the
+// per-fragment depth slope/precision, which is the correct shape for this.
+// Gated default-OFF (gate OFF == committed TERRAIN-DEPTH-CONTRACT-1 behavior).
+// Tunable; reverse-Z/GEQUAL so sign is determined by tuning (start -1/-1).
+static bool objPolyOffsetEnabled() {
+    static const char* e = std::getenv("MC2_OBJECT_POLY_OFFSET");
+    return e != nullptr && e[0] != '0';
+}
+static float objPolyOffsetFactor() {
+    static const float v = [](){ const char* s = std::getenv("MC2_OBJECT_POLY_OFFSET_FACTOR"); return (s && s[0]) ? (float)atof(s) : -1.0f; }();
+    return v;
+}
+static float objPolyOffsetUnits() {
+    static const float v = [](){ const char* s = std::getenv("MC2_OBJECT_POLY_OFFSET_UNITS"); return (s && s[0]) ? (float)atof(s) : -1.0f; }();
+    return v;
+}
+
 static bool flushDepthPrepassV6(
     const std::vector<RenderCore::DrawPacket>&  dispatchPackets,
     const std::vector<StaticPropDispatchMeta>&  dispatchMeta,
@@ -5138,6 +5158,11 @@ static bool flushDepthPrepassV6(
     int                                         debugAddrMode_)  // IMPORTANT-1: mode-8 bypass parity
 {
     ZoneScopedN("GpuSP.DepthPrepass");
+
+    // OBJECT-TERRAIN-COPLANAR-OFFSET-1: skip the prepass when the polygon-offset
+    // gate is on, so the color pass uses single-pass GEQUAL (no GL_EQUAL parity
+    // constraint) and the offset applied to the color draw fully governs depth.
+    if (objPolyOffsetEnabled()) return false;
 
     static const bool s_prepassEnabled =
         (std::getenv("MC2_STATIC_PROP_DEPTH_PREPASS") != nullptr);
@@ -6502,6 +6527,13 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                 glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_sharedIbo);
             }
 
+            // OBJECT-TERRAIN-COPLANAR-OFFSET-1: slope-scaled depth push so object
+            // bodies win the coplanar tie over true-depth terrain (gate default OFF).
+            const bool s_objPO = objPolyOffsetEnabled();
+            if (s_objPO) {
+                glEnable(GL_POLYGON_OFFSET_FILL);
+                glPolygonOffset(objPolyOffsetFactor(), objPolyOffsetUnits());
+            }
             if (!skipDispatch)
             for (uint32_t i = 0u; i < totalCmds; ++i) {
                 const StaticPropDispatchMeta& m  = (*pDispatchMeta)[i];
@@ -6578,6 +6610,8 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
 
                 ++s_v6FrameDrawsIssued;
             }
+
+            if (s_objPO) glDisable(GL_POLYGON_OFFSET_FILL);  // OBJECT-TERRAIN-COPLANAR-OFFSET-1
 
             if (enteredOnGroup)
                 glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOff);

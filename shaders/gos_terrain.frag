@@ -724,8 +724,16 @@ void main(void)
         detailN += pureConcrete * normalBoost.w * fwConcrete * (cementNormalSample.rgb * 2.0 - 1.0);
     }
 
+    // TERRAIN-DETAIL-ANTI-TILE-1: tie detail-normal strength to terrain LOD so it
+    // stops forming a repeating "carpet" at distance. lodNear is 1.0 at LOD0 (full
+    // detail), fades 1->0 across the LOD boundary, and is 0 in the far/mid tiers —
+    // matching the discrete u_lodStep gating on the LOD-chunk path.
+    // Gate flag rides in detailNormalStrength.z (>0.5 = ON, set by C++); OFF =>
+    // detailMul stays 1.0 => byte-identical render.
+    PREC float detailMul = (detailNormalStrength.z > 0.5) ? lodNear : 1.0;
+
     PREC vec3 N;
-    N.xy = detailN.xy * detailNormalStrength.x;
+    N.xy = detailN.xy * detailNormalStrength.x * detailMul;
     // TERRAIN-NORMALS-FROM-HEIGHT-1: when the gate is enabled, add the
     // macroscopic slope (height-derived) into the local-z-up tangent-plane
     // parametrization the detail normal map writes into. Detail normals

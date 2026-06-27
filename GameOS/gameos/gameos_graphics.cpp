@@ -2306,7 +2306,7 @@ class gosRenderer {
         // Terrain splatting textures (from main source, needed for material normal maps)
         vec4 terrain_light_dir_;
         float terrain_detail_tiling_ = 1.0f;
-        float terrain_detail_strength_ = 4.0f;
+        float terrain_detail_strength_ = 1.0f;  // global detail-normal multiplier; was 4.0 (too loud, carpet at distance)
         GLuint terrain_mat_normal_[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
         GLuint terrain_normal_array_tex_   = 0;     // GL_TEXTURE_2D_ARRAY; 0 = not built
         bool   terrain_normal_array_dirty_ = false; // rebuild needed at next bind
@@ -2316,7 +2316,7 @@ class gosRenderer {
         float terrain_pom_scale_ = 0.02f;
         float terrain_world_scale_ = 15360.0f;
         // Per-material normal boost: [rock, grass, dirt, concrete]; matches shader const default.
-        float terrain_mat_normal_boost_[4] = { 0.9f, 1.1f, 1.1f, 2.5f };
+        float terrain_mat_normal_boost_[4] = { 0.9f, 0.5f, 1.1f, 2.5f };  // grass 1.1->0.5: detail normal was too loud, formed tiling carpet at distance
         // Per-material UV tiling: [rock, grass, dirt, concrete]; snow separate.
         // Grass default lowered 12→2 to reduce excessive normal-map repetition.
         float terrain_mat_tiling_[4] = { 3.0f, 2.0f, 1.0f, 6.0f };
@@ -6658,6 +6658,35 @@ int mc2LightingDebugMode()
     return -1;                                 // unknown -> safe fallback (keep existing)
 }
 
+// TERRAIN-DETAIL-ANTI-TILE-1: pack distance-fade + macro-noise knobs into the
+// unused .yzw of the detailNormalStrength uniform (the shader reads only .x today).
+// Gate MC2_TERRAIN_DETAIL_ANTITILE; default OFF => all three return 0 =>
+// detailNormalStrength stays {strength,0,0,0} => byte-identical render.
+//   .y = fadeStart (world units)   .z = fadeEnd (world units)   .w = macroStrength
+// Read once. Returns pointer to a static float[3].
+static const float* mc2_detailAntiTileYZW()
+{
+    static float s_yzw[3] = { 0.0f, 0.0f, 0.0f };
+    static bool s_init = false;
+    if (!s_init) {
+        s_init = true;
+        const char* g = getenv("MC2_TERRAIN_DETAIL_ANTITILE");
+        if (g && *g && strcmp(g, "0") != 0) {
+            auto envF = [](const char* k, float def) -> float {
+                const char* v = getenv(k);
+                return (v && *v) ? (float)atof(v) : def;
+            };
+            float start = envF("MC2_TERRAIN_DETAIL_FADE_START", 1000.0f);
+            float end   = envF("MC2_TERRAIN_DETAIL_FADE_END",   3000.0f);
+            if (end < start + 1.0f) end = start + 1.0f;   // keep fade band positive
+            s_yzw[0] = start;
+            s_yzw[1] = end;
+            s_yzw[2] = envF("MC2_TERRAIN_DETAIL_MACRO_STRENGTH", 0.35f);
+        }
+    }
+    return s_yzw;
+}
+
 void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
 {
     if (!material) return;
@@ -6722,7 +6751,8 @@ void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
 
     if (tl.terrainLightDir >= 0)        glUniform4fv(tl.terrainLightDir, 1, (const float*)&terrain_light_dir_);
     float tiling[4]      = { terrain_detail_tiling_, 0.0f, 0.0f, 0.0f };
-    float strength[4]    = { terrain_detail_strength_, 0.0f, 0.0f, 0.0f };
+    const float* _datYZW = mc2_detailAntiTileYZW();  // TERRAIN-DETAIL-ANTI-TILE-1 (yzw=0 when gate OFF)
+    float strength[4]    = { terrain_detail_strength_, _datYZW[0], _datYZW[1], _datYZW[2] };
     float pomP[4]        = { terrain_pom_scale_, 8.0f, 32.0f, 0.0f };
     float worldScaleV[4] = { terrain_world_scale_, 0.0f, 0.0f, 0.0f };
     float cellP[4]       = { terrain_cell_scale_, terrain_cell_jitter_, terrain_cell_rotation_, 0.0f };
@@ -6857,7 +6887,8 @@ int gosRenderer::terrainBindThinUniformsForPatchStream(glsl_program* overridePro
         glUniform1f(tl.mapHalfExtent, halfExt);
     }
     float tiling[4]      = { terrain_detail_tiling_, 0.0f, 0.0f, 0.0f };
-    float strength[4]    = { terrain_detail_strength_, 0.0f, 0.0f, 0.0f };
+    const float* _datYZW = mc2_detailAntiTileYZW();  // TERRAIN-DETAIL-ANTI-TILE-1 (yzw=0 when gate OFF)
+    float strength[4]    = { terrain_detail_strength_, _datYZW[0], _datYZW[1], _datYZW[2] };
     float pomP[4]        = { terrain_pom_scale_, 8.0f, 32.0f, 0.0f };
     float worldScaleV[4] = { terrain_world_scale_, 0.0f, 0.0f, 0.0f };
     float cellP[4]       = { terrain_cell_scale_, terrain_cell_jitter_, terrain_cell_rotation_, 0.0f };
@@ -7011,7 +7042,8 @@ void gosRenderer::terrainDrawIndexedPatches(gosRenderMaterial* material, gosMesh
     if (tl.terrainLightDir >= 0) glUniform4fv(tl.terrainLightDir, 1, (const float*)&terrain_light_dir_);
     float tiling[4] = { terrain_detail_tiling_, 0.0f, 0.0f, 0.0f };
     if (tl.detailNormalTiling >= 0) glUniform4fv(tl.detailNormalTiling, 1, tiling);
-    float strength[4] = { terrain_detail_strength_, 0.0f, 0.0f, 0.0f };
+    const float* _datYZW = mc2_detailAntiTileYZW();  // TERRAIN-DETAIL-ANTI-TILE-1 (yzw=0 when gate OFF)
+    float strength[4] = { terrain_detail_strength_, _datYZW[0], _datYZW[1], _datYZW[2] };
     if (tl.detailNormalStrength >= 0) glUniform4fv(tl.detailNormalStrength, 1, strength);
     // C1 tactical: push mission-gated material profile to terrain classifier.
     // Default 0 = LEGACY = exact pre-C1 byte-for-byte rendering.
@@ -9057,12 +9089,23 @@ void __stdcall gos_SetupObjectShadows(HGOSRENDERMATERIAL material)
 
 	GLuint shp = material->getShader()->shp_;
 
-	// Upload terrainMVP for GPU projection (MC2 world → clip space)
+	// Upload terrainMVP for GPU projection (MC2 world → clip space).
+	// OBJECT-DECAL-MATRIX-SHARE-1: on solid-armed frames terrain + the cement/road
+	// decals (drawDecalStaticBatch) project through the BAKED dispatch matrix
+	// (getDispatchMvp16). Objects (buildings/turrets/generators + legacy shapes via
+	// this path) used the LIVE camera matrix, which lags the baked snapshot as the
+	// camera zooms — so a turret base and the coplanar cement decal drifted apart
+	// and the turret sank at some zooms. Project objects through the SAME baked
+	// matrix when armed so the coplanar ordering is fixed (OBJECT_DEPTH_BIAS then
+	// cleanly decides). Fall back to live pre-arm / first frame.
 	if (g_gos_renderer->isTerrainMVPValid()) {
 		GLint mvpLoc = glGetUniformLocation(shp, "u_worldToClipGL");
 		if (mvpLoc >= 0) {
-			const mat4& mvp = g_gos_renderer->getTerrainMVP();
-			glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, (const float*)&mvp);
+			const float* mvp = gos_terrain_indirect::IsFrameSolidArmed()
+				? gos_terrain_indirect_getDispatchMvp16()
+				: (const float*)&g_gos_renderer->getTerrainMVP();
+			if (!mvp) mvp = (const float*)&g_gos_renderer->getTerrainMVP();
+			glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, mvp);
 		}
 	}
 

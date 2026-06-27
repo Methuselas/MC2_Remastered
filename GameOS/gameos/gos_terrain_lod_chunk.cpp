@@ -164,6 +164,31 @@ extern void  gos_GetTerrainClassDirt(float*, float*, float*, float*);
 extern float gos_GetTerrainDetailTiling();
 extern float gos_GetTerrainDetailStrength();
 
+// TERRAIN-DETAIL-ANTI-TILE-1: pack LOD-tier detail-normal fade knobs into the
+// unused .yzw of detailNormalStrength (the chunk frag reads only .x today).
+//   .y = LOD1 detail strength   .z = enable flag (>0.5)   .w = macro strength
+// Gate MC2_TERRAIN_DETAIL_ANTITILE; default OFF => {0,0,0} => byte-identical.
+// Read once. Returns pointer to a static float[3] {y,z,w}.
+static const float* mc2_chunkDetailAntiTileYZW()
+{
+    static float s_yzw[3] = { 0.0f, 0.0f, 0.0f };
+    static bool s_init = false;
+    if (!s_init) {
+        s_init = true;
+        const char* g = getenv("MC2_TERRAIN_DETAIL_ANTITILE");
+        if (g && *g && strcmp(g, "0") != 0) {
+            auto envF = [](const char* k, float def) -> float {
+                const char* v = getenv(k);
+                return (v && *v) ? (float)atof(v) : def;
+            };
+            s_yzw[0] = envF("MC2_TERRAIN_DETAIL_LOD1_STRENGTH", 0.4f);  // .y LOD1 fade
+            s_yzw[1] = 1.0f;                                            // .z enable
+            s_yzw[2] = envF("MC2_TERRAIN_DETAIL_MACRO_STRENGTH", 0.0f); // .w macro (chunk: off)
+        }
+    }
+    return s_yzw;
+}
+
 // Phase 10: colormap atlas accessors (defined in gos_terrain_indirect.cpp,
 // global free functions). Same atlas tex1 + UV params the legacy gos_terrain.frag
 // useAtlasColormap path consumes.
@@ -847,7 +872,8 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         if (s_locClassGrass     >= 0) glUniform4f(s_locClassGrass,     cg[0], cg[1], cg[2], cg[3]);
         if (s_locClassDirt      >= 0) glUniform4f(s_locClassDirt,      cd[0], cd[1], cd[2], cd[3]);
         if (s_locDetailTiling   >= 0) glUniform4f(s_locDetailTiling,   dt, 0.0f, 0.0f, 0.0f);
-        if (s_locDetailStrength >= 0) glUniform4f(s_locDetailStrength, ds, 0.0f, 0.0f, 0.0f);
+        const float* _datYZW = mc2_chunkDetailAntiTileYZW();  // TERRAIN-DETAIL-ANTI-TILE-1 (yzw=0 when gate OFF)
+        if (s_locDetailStrength >= 0) glUniform4f(s_locDetailStrength, ds, _datYZW[0], _datYZW[1], _datYZW[2]);
 
         float tr[3]={0.36f,0.37f,0.40f}; gos_GetTerrainTintRock(&tr[0],&tr[1],&tr[2]);
         float tg[3]={0.35f,0.42f,0.25f}; gos_GetTerrainTintGrass(&tg[0],&tg[1],&tg[2]);
