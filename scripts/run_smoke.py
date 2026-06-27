@@ -685,10 +685,19 @@ def main():
     except FileExistsError:
         # May be stale (previous run crashed without cleanup). Check the PID.
         try:
+            import csv as _csv
             _stale_pid = int(_LOCK_PATH.read_text().strip())
-            _still_alive = subprocess.run(
+            _tl = subprocess.run(
                 ["tasklist", "/FI", f"PID eq {_stale_pid}", "/NH", "/FO", "CSV"],
-                capture_output=True, text=True).stdout.count(str(_stale_pid)) > 0
+                capture_output=True, text=True).stdout
+            # Robust: match the exact PID column (CSV field 1), not a substring of
+            # the whole output. The old .count(str(pid)) gave false-positives on
+            # PID-substring / PID-reuse, wrongly reporting a DEAD lock as alive and
+            # blocking the run with exit 5 (observed 2026-06-27).
+            _still_alive = any(
+                len(_row) >= 2 and _row[1].strip() == str(_stale_pid)
+                for _row in _csv.reader(_tl.splitlines())
+            )
         except Exception:
             _still_alive = False
         if _still_alive:
