@@ -51,6 +51,7 @@ void ObjectivesDlg::DoDataExchange(CDataExchange* pDX)
 BEGIN_MESSAGE_MAP(ObjectivesDlg, CDialog)
 	//{{AFX_MSG_MAP(ObjectivesDlg)
 	ON_BN_CLICKED(IDC_OBJECTIVES_ADD_BUTTON, OnObjectivesAddButton)
+	ON_BN_CLICKED(IDC_OBJECTIVES_ADD_FROM_TEMPLATE_BUTTON, OnObjectivesAddFromTemplateButton)
 	ON_BN_CLICKED(IDC_OBJECTIVES_REMOVE_BUTTON, OnObjectivesRemoveButton)
 	ON_BN_CLICKED(IDC_OBJECTIVES_EDIT_BUTTON, OnObjectivesEditButton)
 	ON_BN_CLICKED(IDC_OBJECTIVES_COPY_BUTTON, OnObjectivesCopyButton)
@@ -58,6 +59,55 @@ BEGIN_MESSAGE_MAP(ObjectivesDlg, CDialog)
 	ON_BN_CLICKED(IDC_OBJECTIVES_MOVE_DOWN_BUTTON, OnObjectivesMoveDownButton)
 	//}}AFX_MSG_MAP
 END_MESSAGE_MAP()
+
+/////////////////////////////////////////////////////////////////////////////
+// CObjectiveTemplateDlg -- tiny modal preset picker (Slice 1, pick-free)
+
+// Human-readable preset labels. Order MUST match CObjectiveTemplateDlg::EPreset
+// and the apply switch in OnObjectivesAddFromTemplateButton.
+static const char *kObjectiveTemplatePresetLabels[] = {
+	"Hidden trigger (flag-driven)",
+	"Destroy N enemy units",
+	"Move any unit to area (set coords later)",
+};
+
+CObjectiveTemplateDlg::CObjectiveTemplateDlg(CWnd* pParent /*=NULL*/)
+	: CDialog(CObjectiveTemplateDlg::IDD, pParent)
+{
+	m_selectedPreset = -1;
+}
+
+void CObjectiveTemplateDlg::DoDataExchange(CDataExchange* pDX)
+{
+	CDialog::DoDataExchange(pDX);
+	DDX_Control(pDX, IDC_OBJECTIVE_TEMPLATE_COMBO, m_PresetCombo);
+}
+
+BEGIN_MESSAGE_MAP(CObjectiveTemplateDlg, CDialog)
+END_MESSAGE_MAP()
+
+BOOL CObjectiveTemplateDlg::OnInitDialog()
+{
+	CDialog::OnInitDialog();
+	m_PresetCombo.ResetContent();
+	for (int i = 0; i < CObjectiveTemplateDlg::PRESET_COUNT; ++i) {
+		m_PresetCombo.AddString(kObjectiveTemplatePresetLabels[i]);
+	}
+	m_PresetCombo.SetCurSel(0);
+	return TRUE;
+}
+
+void CObjectiveTemplateDlg::OnOK()
+{
+	int sel = m_PresetCombo.GetCurSel();
+	if ((CB_ERR == sel) || (sel < 0) || (sel >= CObjectiveTemplateDlg::PRESET_COUNT)) {
+		// No valid preset chosen; keep the dialog open rather than committing junk.
+		AfxMessageBox(_T("Select a preset first."));
+		return;
+	}
+	m_selectedPreset = sel;
+	CDialog::OnOK();
+}
 
 /////////////////////////////////////////////////////////////////////////////
 // ObjectivesDlg message handlers
@@ -192,7 +242,137 @@ void ObjectivesDlg::OnObjectivesAddButton()
 	}
 }
 
-void ObjectivesDlg::OnObjectivesRemoveButton() 
+// Slice 1 "Add from Template..." -- pre-populate a CObjective for the chosen
+// PICK-FREE preset, then ride the IDENTICAL ADD path: call EditDialog() and reuse
+// the same ObjectSelectOnlyMode re-entry / append-on-true tail as
+// OnObjectivesAddButton. No new objectiveFunction value, no new edit-state field;
+// because the preset is fully applied BEFORE the first EditDialog(), this is a
+// normal ADD that happens to start with content. None of the Slice 1 presets call
+// a map-pick on construction, so they never enter ObjectSelectOnlyMode at all --
+// but if the user triggers a pick from inside CObjective::EditDialog (e.g. the area
+// "Pick center"), the existing ADD replay path carries the pre-populated objective
+// through unchanged.
+void ObjectivesDlg::OnObjectivesAddFromTemplateButton()
+{
+	// In ObjectSelectOnlyMode the dialog is mid-handoff (re-opened to replay an
+	// in-progress ADD/EDIT); do not start a new template flow on top of it.
+	if (EditorInterface::instance()->ObjectSelectOnlyMode()) {
+		return;
+	}
+
+	// 1) Pick a preset (Cancel -> bail).
+	CObjectiveTemplateDlg templateDlg(this);
+	if (IDOK != templateDlg.DoModal()) {
+		return;
+	}
+	int preset = templateDlg.SelectedPreset();
+	if ((preset < 0) || (preset >= CObjectiveTemplateDlg::PRESET_COUNT)) {
+		return;
+	}
+
+	// 2) Build + pre-populate the new objective.
+	int alignment = m_ModifiedObjectives.Alignment();
+	CObjective *pNewObjective = new CObjective(alignment);
+	assert(pNewObjective);
+	if (0 == pNewObjective) {
+		return;
+	}
+
+	switch (preset) {
+	case CObjectiveTemplateDlg::PRESET_HIDDEN_TRIGGER: {
+		// Hidden, flag-driven trigger objective. Activation flag specifics left
+		// for the user to tune; we provide a sensible default success condition
+		// (flag0 is set) plus an action that sets a flag so the trigger does
+		// something. The CBooleanFlagIsSet / CSetBooleanFlag ctors already default
+		// to flag0/true.
+		pNewObjective->Title(_TEXT("Hidden trigger"));
+		pNewObjective->Description(_TEXT("Flag-driven hidden trigger. Set the activation/condition flags."));
+		pNewObjective->IsHiddenTrigger(true);
+
+		CObjectiveCondition *pCond =
+			CObjective::new_CObjectiveCondition(BOOLEAN_FLAG_IS_SET, alignment);
+		if (0 != pCond) {
+			pNewObjective->Append(pCond);
+		}
+		CObjectiveAction *pAct =
+			CObjective::new_CObjectiveAction(SET_BOOLEAN_FLAG, alignment);
+		if (0 != pAct) {
+			pNewObjective->m_actionList.Append(pAct);
+		}
+		break;
+	}
+	case CObjectiveTemplateDlg::PRESET_DESTROY_N_ENEMY: {
+		// Destroy N enemy units. Primary priority; default N = 1.
+		pNewObjective->Title(_TEXT("Destroy enemy units"));
+		pNewObjective->Description(_TEXT("Destroy the required number of enemy units."));
+		pNewObjective->Priority(1);
+
+		CObjectiveCondition *pCond =
+			CObjective::new_CObjectiveCondition(DESTROY_NUMBER_OF_ENEMY_UNITS, alignment);
+		if (0 != pCond) {
+			CNumberOfEnemyUnitsObjectiveCondition *pNum =
+				dynamic_cast<CNumberOfEnemyUnitsObjectiveCondition *>(pCond);
+			if (0 != pNum) {
+				pNum->Num(1);
+			}
+			pNewObjective->Append(pCond);
+		}
+		break;
+	}
+	case CObjectiveTemplateDlg::PRESET_MOVE_TO_AREA: {
+		// Move any unit to area. Center left at 0,0 (user sets later via the area
+		// "Pick center"); default a non-zero radius so the area is not degenerate.
+		pNewObjective->Title(_TEXT("Move to area"));
+		pNewObjective->Description(_TEXT("Move any unit into the target area. Set the area center via Edit."));
+
+		CObjectiveCondition *pCond =
+			CObjective::new_CObjectiveCondition(MOVE_ANY_UNIT_TO_AREA, alignment);
+		if (0 != pCond) {
+			CAreaObjectiveCondition *pArea =
+				dynamic_cast<CAreaObjectiveCondition *>(pCond);
+			if (0 != pArea) {
+				pArea->TargetCenterX(0.0f);
+				pArea->TargetCenterY(0.0f);
+				pArea->TargetRadius(256.0f);
+			}
+			pNewObjective->Append(pCond);
+		}
+		break;
+	}
+	default:
+		// Unknown preset -- clean up and bail.
+		delete pNewObjective; pNewObjective = 0;
+		return;
+	}
+
+	// 3) Hand off to the normal Objective edit dialog (author tweaks), then reuse
+	// the IDENTICAL tail of OnObjectivesAddButton.
+	bool result = pNewObjective->EditDialog();
+
+	if (EditorInterface::instance()->ObjectSelectOnlyMode()) {
+		/* close the dialog and enter ObjectSelectOnlyMode */
+		UpdateData(TRUE);
+		EditorInterface::instance()->objectivesEditState.objectiveFunction = CObjectivesEditState::ADD;
+		EditorInterface::instance()->objectivesEditState.alignment = m_ModifiedObjectives.Alignment();
+		EditorInterface::instance()->objectivesEditState.ModifiedObjectives = m_ModifiedObjectives;
+		EditorInterface::instance()->objectivesEditState.nSelectionIndex = m_List.GetCurSel();
+		delete pNewObjective; pNewObjective = 0;
+		EndDialog(IDOK);
+		return;
+	} else {
+		if (true == result) {
+			m_ModifiedObjectives.Append(pNewObjective);
+			m_List.SetCurSel(m_List.GetCount() - 1);
+			syncObjectivesListWithListBox(&m_ModifiedObjectives, &m_List);
+			nSelectionIndex = m_List.GetCurSel();
+		} else {
+			delete pNewObjective; pNewObjective = 0;
+		}
+		return;
+	}
+}
+
+void ObjectivesDlg::OnObjectivesRemoveButton()
 {
 	nSelectionIndex = m_List.GetCurSel();
 	if ((0 <= nSelectionIndex) && (m_ModifiedObjectives.Count() > nSelectionIndex)) {

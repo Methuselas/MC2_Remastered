@@ -14,6 +14,40 @@
 #include "Objective.h"
 
 /////////////////////////////////////////////////////////////////////////////
+// CObjectiveTemplateDlg dialog -- tiny modal preset picker (Slice 1).
+// Presets are PICK-FREE (no map pick). The selected preset index is read back
+// via SelectedPreset() after DoModal() returns IDOK.
+
+class CObjectiveTemplateDlg : public CDialog
+{
+public:
+	// Preset enum. Keep in lockstep with the combo-box population order in
+	// OnInitDialog and with the apply switch in ObjectivesDlg::OnObjectivesAddFromTemplateButton.
+	enum EPreset {
+		PRESET_HIDDEN_TRIGGER = 0,
+		PRESET_DESTROY_N_ENEMY,
+		PRESET_MOVE_TO_AREA,
+		PRESET_COUNT
+	};
+
+	CObjectiveTemplateDlg(CWnd* pParent = NULL);
+
+	enum { IDD = IDD_OBJECTIVE_TEMPLATE };
+
+	int SelectedPreset() const { return m_selectedPreset; }
+
+protected:
+	virtual void DoDataExchange(CDataExchange* pDX);
+	virtual BOOL OnInitDialog();
+	virtual void OnOK();
+
+	CComboBox m_PresetCombo;
+	int m_selectedPreset;
+
+	DECLARE_MESSAGE_MAP()
+};
+
+/////////////////////////////////////////////////////////////////////////////
 // ObjectivesDlg dialog
 
 class ObjectivesDlg : public CDialog
@@ -49,6 +83,7 @@ protected:
 	// Generated message map functions
 	//{{AFX_MSG(ObjectivesDlg)
 	afx_msg void OnObjectivesAddButton();
+	afx_msg void OnObjectivesAddFromTemplateButton();
 	afx_msg void OnObjectivesRemoveButton();
 	afx_msg void OnObjectivesEditButton();
 	afx_msg void OnObjectivesCopyButton();

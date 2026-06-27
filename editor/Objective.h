@@ -132,6 +132,7 @@ public:
 	virtual EString InstanceDescription();
 	virtual void CastAndCopy(const CObjectiveCondition *pMaster) { (*this) = (*(dynamic_cast<const CNumberOfEnemyUnitsObjectiveCondition *>(pMaster))); }
 	int Num() { return m_num; }   // readable-line accessor (additive)
+	void Num(int v) { m_num = v; }   // template-preset setter (additive)
 };
 
 class CDestroyNumberOfEnemyUnits: public CNumberOfEnemyUnitsObjectiveCondition {
