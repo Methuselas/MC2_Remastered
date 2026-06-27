@@ -107,32 +107,27 @@ void CCampaignDialog::OnCaExit()
 static void setGroupListBoxValues(CListBox &GroupListBox, const CGroupList &GroupList) {
 	GroupListBox.ResetContent();
 	CGroupList::EConstIterator it;
+	int opIndex = 0;
 	for (it = GroupList.Begin(); !it.IsDone(); it++) {
-		// CRASH FIX (CampaignDialog.cpp:116 UAF): CGroupList::EConstIterator
-		// operator*() returns CGroupData BY VALUE, so `(*it).m_MissionList.Begin()`
-		// returns an iterator into a TEMPORARY that is destroyed at the end of the
-		// statement -- the inner for-loop then walks freed memory. Bind the group to
+		// CRASH FIX (UAF): CGroupList::EConstIterator operator*() returns CGroupData
+		// BY VALUE, so calling .m_MissionList.Begin() on `(*it)` directly returns an
+		// iterator into a TEMPORARY destroyed at end-of-statement. Bind the group to
 		// a named const reference once (lifetime-extends the temporary across the
-		// whole loop body) and iterate THAT. All m_MissionList iterators below are
-		// now into `grp`, which lives the full iteration.
+		// whole loop body) and use THAT for every member access below.
 		const CGroupData & grp = *it;
+		++opIndex;
+
+		// Row label: show the operation NAME (m_Label). Operations are just mission
+		// groupings with no special in-game meaning, so when unnamed (the stock
+		// case) fall back to "Operation N" by index -- NOT the mission list (the
+		// missions are shown in the Group editor's Mission List). Labeled ops read
+		// "Operation N: <label>".
 		CString tmpCStr;
 		if (grp.m_Label.IsEmpty()) {
-			CString missions;
-			CMissionList::EConstIterator mit;
-			for (mit = grp.m_MissionList.Begin(); !mit.IsDone(); mit++) {
-				if (!missions.IsEmpty()) { missions += _TEXT(", "); }
-				missions += (*mit).m_MissionFile;
-			}
-			if (missions.IsEmpty()) {
-				tmpCStr = _TEXT("(empty operation)");
-			} else {
-				tmpCStr = missions;
-			}
+			tmpCStr.Format(_TEXT("Operation %d"), opIndex);
 		} else {
-			tmpCStr = _TEXT("[");
-			tmpCStr += (grp.m_Label);
-			tmpCStr += _TEXT("] ");
+			tmpCStr.Format(_TEXT("Operation %d: "), opIndex);
+			tmpCStr += grp.m_Label;
 		}
 
 		// At-a-glance validation warnings, mirroring the objectives list (<!> suffix).
