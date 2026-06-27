@@ -409,7 +409,6 @@ void main() {
     // Step 5c: cement catalog override.
     // cw bit layout: bit31=VALID, bit30=IS_TRANSITION, bits29:24=maskId, bits15:0=layerIdx.
     bool cementHit = false;
-    float cementTransAlpha = 0.0;  // CONCRETE-EDGE-DIAGONAL-MASK-1: analytic transition coverage.
     int  ctX = clamp(int(floor((v_worldPos.x + u_halfMap) / 128.0)), 0, u_mapSide - 1);
     int  ctY = clamp(int(floor((u_halfMap - v_worldPos.y) / 128.0)), 0, u_mapSide - 1);
     uint cw  = cementWordsF[ctX + ctY * u_mapSide];
@@ -424,40 +423,7 @@ void main() {
         vec2 cAtlasUV = (vec2(float(cCol), float(cRow)) + cTileUV) / float(cGridSide);
         vec3 cementColor = texture(u_cementAtlas, cAtlasUV).rgb;
         if (isTransition) {
-            // CONCRETE-EDGE-DIAGONAL-MASK-1 (Slice 1): draw the cement transition
-            // edge analytically in the lit terrain path instead of via the legacy
-            // warm-darkened, hard-thresholded overlay decal. Recover the 4-corner
-            // config from maskId (bits 29:24); maskId+1 == binNumber, with
-            // c0=bit3,c1=bit2,c2=bit1,c3=bit0 (matches deriveMaskIdFromCorners /
-            // BuildTransitionMaskArray, gos_terrain_indirect.cpp:798/806). Compute
-            // the SAME bilinear-corner-weight + smoothstep coverage that
-            // BuildTransitionMaskArray bakes, but per-fragment on cTileUV, then
-            // blend the SOLID cement atlas tile (cementColor above) over the
-            // original terrain so the edge is lit/shadowed identically to the
-            // interior. Self-guarded by u_useTransitionMask so it disables if the
-            // substrate is absent (then the legacy overlay still draws).
-            if (u_useTransitionMask != 0) {
-                uint maskId = (cw >> 24) & 0x3Fu;
-                uint bn     = maskId + 1u;
-                float fc0 = ((bn & 8u) != 0u) ? 1.0 : 0.0;
-                float fc1 = ((bn & 4u) != 0u) ? 1.0 : 0.0;
-                float fc2 = ((bn & 2u) != 0u) ? 1.0 : 0.0;
-                float fc3 = ((bn & 1u) != 0u) ? 1.0 : 0.0;
-                float u = cTileUV.x;
-                float v = cTileUV.y;
-                float w0 = (1.0 - u) * (1.0 - v);  // corner 0: UV(0,0)
-                float w1 =        u  * (1.0 - v);  // corner 1: UV(1,0)
-                float w2 =        u  *        v;   // corner 2: UV(1,1)
-                float w3 = (1.0 - u) *        v;   // corner 3: UV(0,1)
-                float cov = fc0 * w0 + fc1 * w1 + fc2 * w2 + fc3 * w3;
-                cov = cov * cov * (3.0 - 2.0 * cov);  // smoothstep sharpening
-                float alpha = smoothstep(0.45, 0.55, cov);
-                base = mix(base, cementColor, alpha);
-                // Drive concrete material/lighting by coverage (NOT a hard hit):
-                // the terrain side (alpha~0) keeps terrain weights/lighting, the
-                // cement side (alpha~1) reads as full concrete like the interior.
-                cementTransAlpha = alpha;
-            }
+            // Transition: legacy overlay draw handles cement blend. Shader pass-through.
         } else {
             base = cementColor;
             cementHit = true;
@@ -558,9 +524,6 @@ void main() {
     // flattens lighting. Matches legacy gos_terrain.frag:539-548,738,772.
     float pureConcrete       = smoothstep(2.0, 3.0, v_terrainType);
     if (cementHit) pureConcrete = 1.0;  // cement atlas hit -> full concrete (base already set)
-    // CONCRETE-EDGE-DIAGONAL-MASK-1: push concrete on the covered side of an
-    // analytic transition edge so it is lit identically to interior cement.
-    pureConcrete = max(pureConcrete, cementTransAlpha);
     float concreteColorBlend = sqrt(clamp(pureConcrete, 0.0, 1.0));
     matWeights = mix(matWeights, vec4(0.0, 0.0, 0.0, 1.0), pureConcrete);
     snowWeight *= (1.0 - pureConcrete);
