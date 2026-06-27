@@ -1228,12 +1228,16 @@ void EditorData::refreshTerrainAfterEdit()
 	// Invalidate and rebuild all recipe slots. Uses InvalidateAllRecipes() (O(N),
 	// calls PopulateRecipeCementWords once) instead of the old per-vertex loop
 	// (O(N²), called PopulateRecipeCementWords N times).
-	// NOTE: RebuildCementAtlas() was tried here but caused normal/detail texture
-	// tiling to reset across the whole map (glGetTexImage stalls break GL state
-	// mid-frame). Road overlays render correctly via the decal VBO path
-	// (BuildDecalStaticVBO uses overlayHandle from alpha-cement face cache entries),
-	// so the cement atlas rebuild is not needed on every brush stroke.
+	// NOTE: RebuildCementAtlas() must NOT be called here. Calling it mid-frame
+	// caused normal/detail texture tiling to reset across the whole map
+	// (glGetTexImage stalls break GL state mid-frame). Solid cement fill DOES
+	// need a fresh atlas (newly-painted quads have no atlas layer index otherwise
+	// -> interior renders blank, only the decal edge path draws), so instead of
+	// rebuilding here we MARK the atlas dirty and let RebuildCementAtlasIfDirty()
+	// run the rebuild at FRAME-START (EditorGameOS), before any terrain/GL draws,
+	// where the readback is safe.
 	gos_terrain_indirect::InvalidateAllRecipes();
+	gos_terrain_indirect::MarkCementAtlasDirty();
 
 	// Belt-and-suspenders: after any brush stroke the decal VBO must be
 	// rebuilt even if setTerrain()'s own MarkDecalDirty() was somehow skipped.

@@ -4299,6 +4299,28 @@ void RebuildCementAtlas() {
     BuildCementCatalogAtlas();
 }
 
+// Deferred cement-atlas rebuild (mirror MarkDecalDirty/RebuildDecalStaticVBOIfDirty
+// debounce discipline). RebuildCementAtlas() does a glGetTexImage readback, which
+// breaks in-flight GL draw state if called MID-FRAME (the editor used to call it
+// straight from refreshTerrainAfterEdit and that reset normal/detail tiling
+// map-wide). So instead a cement-affecting brush stroke MARKS the atlas dirty here,
+// and RebuildCementAtlasIfDirty() fires the actual rebuild at FRAME-START — before
+// any terrain/GL draws — where the readback is safe. BuildCementCatalogAtlas()
+// itself save/restores GL_ACTIVE_TEXTURE + GL_TEXTURE_BINDING_2D + pack/unpack
+// alignment (gos_terrain_indirect.cpp:1231-1273) and only touches GL_TEXTURE0, so
+// the rebuild does not intrinsically disturb normal/detail bindings.
+static bool g_cementAtlasDirty = false;
+
+void MarkCementAtlasDirty() {
+    g_cementAtlasDirty = true;
+}
+
+void RebuildCementAtlasIfDirty() {
+    if (!g_cementAtlasDirty) return;
+    g_cementAtlasDirty = false;
+    RebuildCementAtlas();
+}
+
 // Mirror MarkMineDirty — idempotent; multiple cement mutations between paints
 // debounce to one rebuild via the dirty flag.
 void MarkDecalDirty() {

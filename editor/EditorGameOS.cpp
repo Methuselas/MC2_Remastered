@@ -38,6 +38,7 @@
 #include "gos_render.h"        // graphics::make_current_context etc.
 #include "gos_render_context.h"  // InitializeRenderContextConventions (shared game/editor parity)
 #include "render_frame_driver.h" // RenderFrameDriver_RenderWorld — Slice 6 shared render seam
+#include "../GameOS/gameos/gos_terrain_indirect.h" // RebuildCementAtlasIfDirty() — deferred cement-atlas rebuild at frame-start
 #include "gos_input.h"         // input::beginUpdateMouseState etc.
 #include "camera.h"            // extern eye + fgetScreenResX (pick-cache coherence diag)
 #include "gos_postprocess.h"   // gosPostProcess + getGosPostProcess() — needed for
@@ -704,6 +705,18 @@ DWORD __stdcall RunGameOSLogic()
     if (!land)
         runWorldThroughDriver = false;
 #endif
+
+    // Deferred cement-atlas rebuild at a SAFE frame boundary. A cement brush
+    // stroke (EditorData::refreshTerrainAfterEdit) marks the atlas dirty rather
+    // than rebuilding inline, because RebuildCementAtlas() does a glGetTexImage
+    // readback that breaks in-flight GL draw state if run mid-frame (it used to
+    // reset normal/detail tiling map-wide). This is the frame-start safe point:
+    // the GL context is current and NO terrain/world draws have started yet, so
+    // the readback is safe. Must stay BEFORE RenderFrameDriver_RenderWorld (the
+    // terrain draw) so newly-painted solid cement quads get an atlas layer index
+    // and fill in this frame.
+    gos_terrain_indirect::RebuildCementAtlasIfDirty();
+
     if (runWorldThroughDriver) {
         RenderFrameDesc rfd;
         rfd.host = RenderHostKind::Editor;

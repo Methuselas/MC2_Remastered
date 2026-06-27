@@ -388,6 +388,8 @@ const ::TerrainQuadRecipe* RecipeForVertexNum(int32_t vn);  // nullptr for vn<0 
 void InvalidateRecipeForVertexNum(int32_t vn);             // precise; CPU recompute + mark dirty
 void InvalidateAllRecipes();                               // whole-map; rebuild all slots + mark dirty
 void RebuildCementAtlas();                                 // (re)build GPU cement atlas from textures[]
+void MarkCementAtlasDirty();                                // schedule a deferred cement-atlas rebuild (debounced)
+void RebuildCementAtlasIfDirty();                           // frame-start safe point: rebuild if marked dirty (no mid-frame readback)
 
 // Internal helper used by Stage 3's preflight too
 void FlushDirtyRecipeSlotsToGPU();  // glBufferSubData per dirty slot
