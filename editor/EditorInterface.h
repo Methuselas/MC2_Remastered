@@ -102,6 +102,11 @@ public:
 	void renderMissionToolsImGui();  // Test Mission (launch game) + Build Mod Package
 	void setSculptBrush( int mode );
 	void setStampBrush( int type );
+	// TERRAIN-MATERIAL-PAINT-1 (Slice 1): surface the dormant TerrainBrush. Installs
+	// a TerrainBrush painting the given TerrainType via the single-source setActiveBrush
+	// path (same as setSculptBrush/setStampBrush). 'terrainType' is a TerrainType enum
+	// value (mclib/dmapdata.h); brushId/menuId use a synthetic-negative range.
+	void setPaintMaterialBrush( int terrainType );
 	void renderTerrainSelection();
 
 	// Editable Inspector v1: set one object's world XY + absolute yaw through the
@@ -382,6 +387,8 @@ private:
 	bool						m_scatterMode;     // object brush scatters in a radius vs single place
 	float						m_stampRadius;
 	float						m_stampStrength;
+	int							m_paintMaterialType;   // active Paint-Material TerrainType (for button highlight)
+	float						m_paintMaterialSize;   // Paint-Material brush Size (reserved; TerrainBrush is single-vertex in Slice 1)
 	float						m_waterHeight;     // live water-elevation slider value
 	bool						m_pendGenerateMission; // deferred: run generator outside the ImGui pass
 

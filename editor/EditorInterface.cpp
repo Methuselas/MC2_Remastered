@@ -938,6 +938,8 @@ EditorInterface::EditorInterface()
 	m_scatterMode = false;
 	m_stampRadius = 400.0f;
 	m_stampStrength = 50.0f;
+	m_paintMaterialType = -1;       // no material brush active yet
+	m_paintMaterialSize = 400.0f;   // reserved (TerrainBrush is single-vertex in Slice 1)
 	m_waterHeight = 0.0f;
 	m_pendGenerateMission = false;
 
@@ -1605,6 +1607,37 @@ void EditorInterface::handleLeftButtonDown( int PosX, int PosY )
 	Stuff::Vector3D vector;
 	Stuff::Vector2DOf<long> v2( PosX, PosY );
 	eye->inverseProject( v2, vector );
+
+	// Slice 1 -- Marker XY map-picker (PICKER-SELECT-POINT-RECON-1, Option B).
+	// The Objective dialog's "Pick from map" button armed pendingPickPoint and
+	// unwound the modal stack. This one click delivers the world XY (vector, set
+	// by inverseProject above). Capture it, disarm the pick, flag the result, and
+	// re-open the objectives dialog chain (still in ObjectSelectOnlyMode, exactly
+	// like the unit/building object-pick re-open in SelectionBrush::endPaint). The
+	// re-opened ObjectiveDlg::OnInitDialog consumes pendingPickResultReady, writes
+	// the marker fields, and clears ObjectSelectOnlyMode. Checked BEFORE the
+	// waypoint/object-pick handling so the point pick takes priority.
+	if ( ObjectSelectOnlyMode() && objectivesEditState.pendingPickPoint )
+	{
+		// inverseProject ALWAYS yields a usable on-map world coord: it returns 0 on a
+		// real terrain hit (camera.cpp:1488) and 1 on an off-map miss that still
+		// clamps to the nearest on-map vertex (camera.cpp:1482) -- BOTH are valid
+		// points to accept. The only degenerate is the camera-not-ready case
+		// (turn < 4), which zeroes the point (camera.cpp:997) and is unreachable
+		// during an interactive pick. So guard on the zeroed POINT, not the return
+		// code (return 0 is the COMMON hit case -- gating on it would reject every
+		// valid click). Skip only an exact (0,0) so a later real click can deliver.
+		if ( vector.x != 0.0f || vector.y != 0.0f )
+		{
+			objectivesEditState.pendingPickX = vector.x;
+			objectivesEditState.pendingPickY = vector.y;
+			objectivesEditState.pendingPickPoint = false;
+			objectivesEditState.pendingPickResultReady = true;
+			ReleaseCapture();
+			Team( objectivesEditState.alignment );
+		}
+		return;
+	}
 
 	// Waypoint placement mode (UnitBrainPanel "Add Waypoints"): drop a patrol/move
 	// waypoint at the SAME click world position the editor uses to place buildings
@@ -5031,6 +5064,19 @@ void EditorInterface::setStampBrush( int type )
 	setActiveBrush( new StampBrush( (StampBrush::Type)type, m_stampRadius, m_stampStrength ), brushId, brushId );
 }
 
+// TERRAIN-MATERIAL-PAINT-1 (Slice 1): revive the dormant editor/TerrainBrush.h in the
+// modern Tools panel. TerrainBrush takes only a TerrainType (mclib/dmapdata.h) and is
+// single-vertex (no radius/strength) -- Slice 2 adds a radius loop. Install via the same
+// single-source setActiveBrush path setSculptBrush/setStampBrush use so the active-tool
+// (currentBrushID/currentBrushMenuID) state stays correct. Synthetic-negative brushId
+// (distinct from the sculpt -100.. and stamp -200.. ranges).
+void EditorInterface::setPaintMaterialBrush( int terrainType )
+{
+	const int brushId = -300 - terrainType;
+	setActiveBrush( new TerrainBrush( terrainType ), brushId, brushId );
+	m_paintMaterialType = terrainType;   // drives the active-button highlight
+}
+
 #ifdef MC2_IMGUI
 // Visibility for the Phase 1d wrapper panels (toggled from the Tools palette).
 static bool s_placePanelOpen   = false;
@@ -5375,6 +5421,41 @@ void EditorInterface::renderToolbarImGui()
 			st->setRadius(m_stampRadius);
 		if (ImGui::SliderFloat("StampAmt", &m_stampStrength, 1.0f, 500.0f, "%.0f") && st)
 			st->setStrength(m_stampStrength);
+	}
+
+	ImGui::Separator();
+	ImGui::Text("Paint Material");
+	{
+		// TERRAIN-MATERIAL-PAINT-1 (Slice 1): surface the dormant TerrainBrush.
+		// Each button installs a TerrainBrush painting one TerrainType (mclib/dmapdata.h)
+		// via setPaintMaterialBrush() -> setActiveBrush() (same path as Sculpt/Stamp).
+		// The 4 buttons map to the 4 visual PBR buckets the renderer blends
+		// (terrain_mat_layers.hglsl): Rock->Mountain(6), Grass(9), Dirt(4), Concrete(10).
+		TerrainBrush* tb = dynamic_cast<TerrainBrush*>(curBrush);
+		struct PM { const char* label; int type; };
+		static const PM pm[] = {
+			{ "Rock",     MC_MOUNTAIN_TYPE },
+			{ "Grass",    MC_GRASS_TYPE    },
+			{ "Dirt",     MC_DIRT_TYPE     },
+			{ "Concrete", MC_CONCRETE_TYPE },
+		};
+		for (int i = 0; i < 4; ++i)
+		{
+			// Highlight only while a TerrainBrush is the active tool AND it matches the
+			// last material we installed (TerrainBrush exposes no type getter).
+			const bool pactive = tb && (m_paintMaterialType == pm[i].type);
+			if (pactive)
+				ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.55f, 0.20f, 1.0f));
+			if (ImGui::Button(pm[i].label, ImVec2(-1.f, 0.f)))
+				setPaintMaterialBrush(pm[i].type);
+			if (pactive)
+				ImGui::PopStyleColor();
+		}
+		// Size is reserved: TerrainBrush is single-vertex in Slice 1 (Slice 2 adds a
+		// radius loop), so this slider only stores intent for that future brush.
+		ImGui::SliderFloat("PaintSize", &m_paintMaterialSize, 64.0f, 3000.0f, "%.0f");
+		// LOD-chunk colormap caveat: only concrete is type-gated in-shader today.
+		ImGui::TextWrapped("Concrete paints live; grass/dirt/rock may need a reload to show (LOD-chunk colormap).");
 	}
 
 	ImGui::Separator();

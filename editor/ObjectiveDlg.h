@@ -129,6 +129,9 @@ protected:
 	afx_msg void OnObjectiveViewFailureActionButton();
 	afx_msg void OnObjectiveClearLogisticsModelButton();
 	//}}AFX_MSG
+	// Slice 1 -- Marker XY map-picker. Hands off to a terrain point pick and
+	// re-opens this dialog with the picked X/Y filled in (Option B handoff).
+	afx_msg void OnObjectivePickMarkerButton();
 	DECLARE_MESSAGE_MAP()
 
 	void DoColorBox( CWnd* pWnd );

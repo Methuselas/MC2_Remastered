@@ -421,6 +421,7 @@
 #define ID_CA_EXIT                      2031
 #define IDC_GR_LABEL_EDIT               2032
 #define ID_CA_SAVE_BUTTON               2032
+#define IDC_OBJECTIVE_PICK_MARKER_BUTTON 2033
 #define IDS_SELECT_SLOPES               40001
 #define ID_FOG                          40002
 #define ID_FILE_SAVEAS                  40003

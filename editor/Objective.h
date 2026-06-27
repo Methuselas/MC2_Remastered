@@ -131,6 +131,7 @@ public:
 	virtual bool EditDialog();
 	virtual EString InstanceDescription();
 	virtual void CastAndCopy(const CObjectiveCondition *pMaster) { (*this) = (*(dynamic_cast<const CNumberOfEnemyUnitsObjectiveCondition *>(pMaster))); }
+	int Num() { return m_num; }   // readable-line accessor (additive)
 };
 
 class CDestroyNumberOfEnemyUnits: public CNumberOfEnemyUnitsObjectiveCondition {
@@ -156,6 +157,11 @@ public:
 	virtual bool RefersTo(const EditorObject *pObj) { return (pObj == ((const EditorObject *)m_pUnit)); }
 	virtual bool NoteThePositionsOfObjectsReferenced();
 	virtual bool RestoreObjectPointerReferencesFromNotedPositions();
+	// readable-line accessors (additive). UnitPtr() may be null; deref only when set.
+	Unit *UnitPtr() { return m_pUnit; }
+	float NotedX() { return m_LastNotedPositionX; }
+	float NotedY() { return m_LastNotedPositionY; }
+	EString ReadableTarget();
 };
 
 class CSpecificEnemyUnitObjectiveCondition: public CSpecificUnitObjectiveCondition { /*abstract class*/
@@ -193,6 +199,11 @@ public:
 	virtual bool RefersTo(const EditorObject *pObj) { return (pObj == m_pBuilding); }
 	virtual bool NoteThePositionsOfObjectsReferenced();
 	virtual bool RestoreObjectPointerReferencesFromNotedPositions();
+	// readable-line accessors (additive). BuildingPtr() may be null; deref only when set.
+	EditorObject *BuildingPtr() { return m_pBuilding; }
+	float NotedX() { return m_LastNotedPositionX; }
+	float NotedY() { return m_LastNotedPositionY; }
+	EString ReadableTarget();
 };
 
 class CSpecificEnemyStructureObjectiveCondition: public CSpecificStructureObjectiveCondition { /*abstract class*/
@@ -308,6 +319,10 @@ public:
 	virtual bool EditDialog();
 	virtual EString InstanceDescription();
 	virtual void CastAndCopy(const CObjectiveCondition *pMaster) { (*this) = (*(dynamic_cast<const CAreaObjectiveCondition *>(pMaster))); }
+	// readable-line + picker accessors (additive).
+	float TargetCenterX() { return m_targetCenterX; }
+	float TargetCenterY() { return m_targetCenterY; }
+	float TargetRadius()  { return m_targetRadius; }
 };
 
 class CMoveAnyUnitToArea: public CAreaObjectiveCondition {
@@ -352,6 +367,8 @@ public:
 	EString Description();
 	EString InstanceDescription();
 	void CastAndCopy(const CObjectiveCondition *pMaster) { (*this) = (*(dynamic_cast<const CBooleanFlagIsSet *>(pMaster))); }
+	const char *FlagID() { return m_flagID.Data(); }   // readable-line accessors (additive)
+	bool FlagValue() { return m_value; }
 };
 
 class CElapsedMissionTime: public CObjectiveCondition {
@@ -367,6 +384,7 @@ public:
 	EString Description();
 	EString InstanceDescription();
 	void CastAndCopy(const CObjectiveCondition *pMaster) { (*this) = (*(dynamic_cast<const CElapsedMissionTime *>(pMaster))); }
+	float Time() { return m_time; }   // readable-line accessor (additive)
 };
 
 enum action_species_type {
@@ -425,6 +443,7 @@ public:
 	EString Description();
 	EString InstanceDescription();
 	void CastAndCopy(const CObjectiveAction *pMaster) { (*this) = (*(dynamic_cast<const CPlayBIK *>(pMaster))); }
+	const char *Pathname() { return m_pathname.Data(); }   // readable-line accessor (additive)
 };
 
 class CPlayWAV: public CObjectiveAction {
@@ -442,6 +461,7 @@ public:
 	EString Description();
 	EString InstanceDescription();
 	void CastAndCopy(const CObjectiveAction *pMaster) { (*this) = (*(dynamic_cast<const CPlayWAV *>(pMaster))); }
+	const char *Pathname() { return m_pathname.Data(); }   // readable-line accessor (additive)
 };
 
 class CDisplayTextMessage: public CObjectiveAction {
@@ -459,6 +479,7 @@ public:
 	EString Description();
 	EString InstanceDescription();
 	void CastAndCopy(const CObjectiveAction *pMaster) { (*this) = (*(dynamic_cast<const CDisplayTextMessage *>(pMaster))); }
+	const char *Message() { return m_message.Data(); }   // readable-line accessor (additive)
 };
 
 class CDisplayResourceTextMessage: public CObjectiveAction {
@@ -476,6 +497,7 @@ public:
 	EString Description();
 	EString InstanceDescription();
 	void CastAndCopy(const CObjectiveAction *pMaster) { (*this) = (*(dynamic_cast<const CDisplayResourceTextMessage *>(pMaster))); }
+	int ResourceStringID() { return m_resourceStringID; }   // readable-line accessor (additive)
 };
 
 class CSetBooleanFlag: public CObjectiveAction {
@@ -494,6 +516,8 @@ public:
 	EString Description();
 	EString InstanceDescription();
 	void CastAndCopy(const CObjectiveAction *pMaster) { (*this) = (*(dynamic_cast<const CSetBooleanFlag *>(pMaster))); }
+	const char *FlagID() { return m_flagID.Data(); }   // readable-line accessors (additive)
+	bool FlagValue() { return m_value; }
 };
 
 class CMakeNewTechnologyAvailable: public CObjectiveAction {
@@ -511,6 +535,7 @@ public:
 	EString Description();
 	EString InstanceDescription();
 	void CastAndCopy(const CObjectiveAction *pMaster) { (*this) = (*(dynamic_cast<const CMakeNewTechnologyAvailable *>(pMaster))); }
+	const char *PurchaseFile() { return m_purchaseFilePathname.Data(); }   // readable-line accessor (additive)
 };
 
 class  CObjectiveConditionList : public EList <CObjectiveCondition *, CObjectiveCondition *> {
@@ -683,6 +708,16 @@ public:
 	void *pModifiedUnitPtr;
 	void *pModifiedBuildingPtr;
 
+	/* Slice 1 -- Marker XY map-picker (PICKER-SELECT-POINT-RECON-1, Option B).
+	pendingPickPoint: set true when the objective dialog hands off for a terrain
+	point pick; consumed by EditorInterface::handleLeftButtonDown which writes the
+	clicked world XY into pendingPickX/Y and sets pendingPickResultReady so the
+	re-opened ObjectiveDlg loads the picked coordinates exactly once. */
+	bool  pendingPickPoint;
+	bool  pendingPickResultReady;
+	float pendingPickX;
+	float pendingPickY;
+
 	CObjectivesEditState() {
 		Clear();
 	}
@@ -700,6 +735,10 @@ public:
 		nFailureActionSpeciesSelectionIndex = -1;
 		pModifiedUnitPtr = 0;
 		pModifiedBuildingPtr = 0;
+		pendingPickPoint = false;
+		pendingPickResultReady = false;
+		pendingPickX = 0.0f;
+		pendingPickY = 0.0f;
 	}
 };
 //*************************************************************************************************

@@ -1,10 +1,12 @@
 /***************************************************************
 * FILENAME: ObjectivesSummaryPanel.cpp
-* DESCRIPTION: Read-only objectives explainer. See ObjectivesSummaryPanel.h.
+* DESCRIPTION: Read-only objectives explainer / mission-logic viewer.
+*   Phase 2: three-pane shell (Objective List | WHEN/THEN flow | Inspector).
 *   Walks EditorData::instance->TeamsRef() -> per team CObjectives (an EList of
-*   CObjective*). For each objective renders a card: title/priority/visibility/
-*   activation/marker, then a WHEN block (success conditions), THEN block
-*   (actions) and a Failure block (failure conditions/actions).
+*   CObjective*). LEFT pane lists every objective (grouped by team) with status
+*   badges and a Selectable; CENTER pane renders the selected objective's
+*   readable activation + WHEN/THEN/Failure flow; RIGHT pane dumps the raw
+*   scalar fields (inspector).
 *
 *   Condition/action lines are built from Description() (the type label) +
 *   InstanceDescription() (the params). CRITICAL: the specific-unit and
@@ -14,7 +16,9 @@
 *   "(object ref)" note, never InstanceDescription(). Area/flag/time/count
 *   InstanceDescription() impls touch no object pointer and are safe.
 *
-*   PURE-ADDITIVE, READ-ONLY: no mutate buttons, no save/load.
+*   PURE-ADDITIVE, READ-ONLY: no mutate buttons, no save/load. Selection is a raw
+*   CObjective* compared by identity; a mission reload simply clears it (the old
+*   pointer no longer appears in the rebuilt list).
 * DATE: 2026-06-27
 ****************************************************************/
 
@@ -32,13 +36,16 @@
 #include "EString.h"
 
 #include <cstdio>
+#include <cstring>
 
 // GAME_MAX_PLAYERS is pulled in transitively (CTeams holds CTeam[GAME_MAX_PLAYERS]).
 
 // ---------------------------------------------------------------------------
-// Panel state
+// Panel + selection state
 // ---------------------------------------------------------------------------
-static bool s_open = false;
+static bool        s_open    = false;
+static CObjective* s_sel     = nullptr;   // selected objective (identity compare)
+static int         s_selTeam = -1;        // team the selection belongs to (label only)
 
 void ObjectivesSummaryPanel::Open()   { s_open = true; }
 void ObjectivesSummaryPanel::Close()  { s_open = false; }
@@ -122,31 +129,50 @@ static void objDrawAction(CObjectiveAction* act)
         ImGui::BulletText("%s", label);
 }
 
-// Render the full card for one objective.
-static void objDrawObjective(CObjective* obj, int objIndex)
+// Compose a short status-badge string for the list row, e.g. "[Primary][Hidden]".
+static void objBadges(CObjective* obj, char* out, size_t cap)
+{
+    out[0] = '\0';
+    if (!obj || cap == 0) return;
+    if (obj->Priority() == 1)   std::strncat(out, "[Primary]", cap - std::strlen(out) - 1);
+    if (obj->IsHiddenTrigger()) std::strncat(out, "[Hidden]",  cap - std::strlen(out) - 1);
+    else                        std::strncat(out, "[Visible]", cap - std::strlen(out) - 1);
+    if (obj->DisplayMarker())   std::strncat(out, "[Marker]",  cap - std::strlen(out) - 1);
+}
+
+// Build the readable title text for a row / header.
+static void objTitleText(CObjective* obj, int objIndex, char* out, size_t cap)
+{
+    if (obj->TitleUseResourceString())
+    {
+        std::snprintf(out, cap, "%d: (resource string #%d)", objIndex,
+                      obj->TitleResourceStringID());
+        return;
+    }
+    EString title = obj->Title();
+    const char* t = title.Data();
+    std::snprintf(out, cap, "%d: %s", objIndex, (t && t[0]) ? t : "(untitled)");
+}
+
+// CENTER pane: readable activation + WHEN/THEN/Failure flow for one objective.
+static void objDrawFlow(CObjective* obj)
 {
     if (!obj)
     {
-        ImGui::TextDisabled("Objective %d: (null)", objIndex);
+        ImGui::TextDisabled("Select an objective from the list.");
         return;
     }
 
-    // Title (resource-string objectives have no inline text; show a placeholder).
-    EString title = obj->Title();
-    const char* titleStr = title.Data();
-    char header[160];
-    if (obj->TitleUseResourceString())
-        std::snprintf(header, sizeof(header), "Objective %d: (resource string #%d)",
-                      objIndex, obj->TitleResourceStringID());
-    else
-        std::snprintf(header, sizeof(header), "Objective %d: %s",
-                      objIndex, (titleStr && titleStr[0]) ? titleStr : "(untitled)");
+    char title[160];
+    objTitleText(obj, 0, title, sizeof(title));   // index shown by the list, not here
+    const char* colon = std::strchr(title, ':');
+    ImGui::TextWrapped("%s", colon ? colon + 2 : title);
 
-    if (!ImGui::TreeNodeEx((void*)obj, ImGuiTreeNodeFlags_DefaultOpen, "%s", header))
-        return;
+    char badges[64];
+    objBadges(obj, badges, sizeof(badges));
+    ImGui::TextDisabled("%s", badges);
+    ImGui::Separator();
 
-    // Type / priority. Priority 1 is the editor's "primary" marker (see
-    // ObjectivesDlg list flags).
     ImGui::Text("Priority: %d%s", obj->Priority(),
                 (obj->Priority() == 1) ? " (primary)" : "");
     ImGui::Text("Visibility: %s", obj->IsHiddenTrigger() ? "Hidden trigger" : "Visible");
@@ -162,8 +188,11 @@ static void objDrawObjective(CObjective* obj, int objIndex)
         const char* f = flag.Data();
         ImGui::BulletText("Activates on flag: %s", (f && f[0]) ? f : "(flag)");
     }
+    if (!obj->PreviousPrimaryObjectiveMustBeComplete() &&
+        !obj->AllPreviousPrimaryObjectivesMustBeComplete() &&
+        !obj->ActivateOnFlag())
+        ImGui::BulletText("Active from mission start");
 
-    // Marker.
     if (obj->DisplayMarker())
         ImGui::Text("Marker: shown at (%.1f, %.1f)", obj->MarkerX(), obj->MarkerY());
     else
@@ -174,26 +203,18 @@ static void objDrawObjective(CObjective* obj, int objIndex)
     ImGui::Separator();
     ImGui::TextUnformatted("WHEN (success conditions)");
     if (obj->Count() == 0)
-    {
         ImGui::TextDisabled("  (no conditions)");
-    }
     else
-    {
         for (CObjective::condition_list_type::EIterator it = obj->Begin(); !it.IsDone(); it++)
             objDrawCondition(*it);
-    }
 
     // THEN: actions fired on success.
     ImGui::TextUnformatted("THEN (actions)");
     if (obj->m_actionList.Count() == 0)
-    {
         ImGui::TextDisabled("  (no actions)");
-    }
     else
-    {
         for (CObjective::action_list_type::EIterator it = obj->m_actionList.Begin(); !it.IsDone(); it++)
             objDrawAction(*it);
-    }
 
     // Failure block (only if present).
     if (obj->m_failureConditionList.Count() > 0 || obj->m_failureActionList.Count() > 0)
@@ -213,8 +234,45 @@ static void objDrawObjective(CObjective* obj, int objIndex)
             for (CObjective::action_list_type::EIterator it = obj->m_failureActionList.Begin(); !it.IsDone(); it++)
                 objDrawAction(*it);
     }
+}
 
-    ImGui::TreePop();
+// RIGHT pane: raw scalar fields for the selected objective.
+static void objDrawInspector(CObjective* obj)
+{
+    if (!obj)
+    {
+        ImGui::TextDisabled("(no selection)");
+        return;
+    }
+
+    ImGui::Text("Priority:        %d", obj->Priority());
+    ImGui::Text("Resource pts:    %d", obj->ResourcePoints());
+    ImGui::Text("Hidden trigger:  %s", obj->IsHiddenTrigger() ? "yes" : "no");
+    ImGui::Text("Display marker:  %s", obj->DisplayMarker() ? "yes" : "no");
+    ImGui::Text("Marker X/Y:      %.1f / %.1f", obj->MarkerX(), obj->MarkerY());
+    ImGui::Separator();
+    ImGui::Text("Prev primary req:    %s", obj->PreviousPrimaryObjectiveMustBeComplete() ? "yes" : "no");
+    ImGui::Text("All prev primary:    %s", obj->AllPreviousPrimaryObjectivesMustBeComplete() ? "yes" : "no");
+    ImGui::Text("Activate on flag:    %s", obj->ActivateOnFlag() ? "yes" : "no");
+    {
+        EString flag = obj->ActivateFlagID();
+        const char* f = flag.Data();
+        ImGui::Text("Activate flag id:    %s", (f && f[0]) ? f : "(none)");
+    }
+    ImGui::Text("Reset on flag:       %s", obj->ResetStatusOnFlag() ? "yes" : "no");
+    {
+        EString flag = obj->ResetStatusFlagID();
+        const char* f = flag.Data();
+        ImGui::Text("Reset flag id:       %s", (f && f[0]) ? f : "(none)");
+    }
+    ImGui::Separator();
+    ImGui::Text("Success conditions:  %lu", (unsigned long)obj->Count());
+    ImGui::Text("Success actions:     %lu", (unsigned long)obj->m_actionList.Count());
+    ImGui::Text("Failure conditions:  %lu", (unsigned long)obj->m_failureConditionList.Count());
+    ImGui::Text("Failure actions:     %lu", (unsigned long)obj->m_failureActionList.Count());
+    ImGui::Separator();
+    ImGui::Text("Title resource str:  %s", obj->TitleUseResourceString() ? "yes" : "no");
+    ImGui::Text("Model ID:            %ld", obj->ModelID());
 }
 
 // ---------------------------------------------------------------------------
@@ -225,14 +283,14 @@ void ObjectivesSummaryPanel::Draw()
     if (!s_open)
         return;
 
-    ImGui::SetNextWindowSize(ImVec2(420.f, 480.f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(800.f, 520.f), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Objectives Overview", &s_open))
     {
         ImGui::End();
         return;
     }
 
-    ImGui::TextDisabled("Read-only objective overview. Edit via the legacy Objectives dialog.");
+    ImGui::TextDisabled("Read-only mission-logic viewer. Edit via the legacy Objectives dialog.");
     ImGui::Separator();
 
     if (!EditorData::instance)
@@ -243,31 +301,70 @@ void ObjectivesSummaryPanel::Draw()
     }
 
     CTeams& teams = EditorData::instance->TeamsRef();
+
+    // Validate the current selection still exists in the live data; otherwise drop
+    // it (mission reloads rebuild the objective objects).
+    bool selStillValid = false;
+
+    // ---- LEFT pane: objective list grouped by team -------------------------
+    ImGui::BeginChild("obj_list", ImVec2(250.f, 0.f), true);
     for (int t = 0; t < GAME_MAX_PLAYERS; ++t)
     {
         CObjectives& objs = teams.TeamRef(t).ObjectivesRef();
-
-        char teamHdr[64];
-        std::snprintf(teamHdr, sizeof(teamHdr), "Team %d  (%lu objective%s)###objteam%d",
-                      t, (unsigned long)objs.Count(),
-                      (objs.Count() == 1) ? "" : "s", t);
-
-        if (!ImGui::CollapsingHeader(teamHdr))
+        if (objs.Count() == 0)
             continue;
 
-        ImGui::Indent();
-        if (objs.Count() == 0)
+        char teamHdr[64];
+        std::snprintf(teamHdr, sizeof(teamHdr), "Team %d (%lu)###objteam%d",
+                      t, (unsigned long)objs.Count(), t);
+        if (!ImGui::CollapsingHeader(teamHdr, ImGuiTreeNodeFlags_DefaultOpen))
+            continue;
+
+        int idx = 0;
+        for (CObjectives::EIterator it = objs.Begin(); !it.IsDone(); it++, ++idx)
         {
-            ImGui::TextDisabled("(no objectives)");
+            CObjective* obj = *it;
+            if (!obj)
+                continue;
+
+            char title[160], badges[64], row[240];
+            objTitleText(obj, idx, title, sizeof(title));
+            objBadges(obj, badges, sizeof(badges));
+            std::snprintf(row, sizeof(row), "%s  %s###obj_%p", title, badges, (void*)obj);
+
+            bool selected = (obj == s_sel);
+            if (ImGui::Selectable(row, selected))
+            {
+                s_sel = obj;
+                s_selTeam = t;
+            }
+            if (obj == s_sel)
+                selStillValid = true;
         }
-        else
-        {
-            int idx = 0;
-            for (CObjectives::EIterator it = objs.Begin(); !it.IsDone(); it++, ++idx)
-                objDrawObjective(*it, idx);
-        }
-        ImGui::Unindent();
     }
+    ImGui::EndChild();
+
+    if (!selStillValid)
+    {
+        s_sel = nullptr;
+        s_selTeam = -1;
+    }
+
+    // ---- CENTER pane: WHEN/THEN flow ---------------------------------------
+    ImGui::SameLine();
+    ImGui::BeginChild("obj_flow", ImVec2(-230.f, 0.f), true);
+    if (s_sel && s_selTeam >= 0)
+        ImGui::TextDisabled("Team %d", s_selTeam);
+    objDrawFlow(s_sel);
+    ImGui::EndChild();
+
+    // ---- RIGHT pane: inspector ---------------------------------------------
+    ImGui::SameLine();
+    ImGui::BeginChild("obj_inspector", ImVec2(0.f, 0.f), true);
+    ImGui::TextUnformatted("Inspector");
+    ImGui::Separator();
+    objDrawInspector(s_sel);
+    ImGui::EndChild();
 
     ImGui::End();
 }

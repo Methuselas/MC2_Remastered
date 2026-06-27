@@ -96,6 +96,39 @@ static void syncObjectivesListWithListBox(const CObjectives *pObjectives, CListB
 		}
 		tmpEStr += _TEXT("] ");
 		tmpEStr += ((*it)->LocalizedTitle());
+		// At-a-glance validation warnings (data-only; read-only logic).
+		EString warnEStr;
+		bool firstWarn = true;
+		if ((*it)->Count() == 0) {
+			if (!firstWarn) { warnEStr += _TEXT("; "); }
+			warnEStr += _TEXT("no success condition");
+			firstWarn = false;
+		}
+		if ((*it)->IsHiddenTrigger() && (*it)->DisplayMarker()) {
+			if (!firstWarn) { warnEStr += _TEXT("; "); }
+			warnEStr += _TEXT("hidden but has marker");
+			firstWarn = false;
+		}
+		if ((*it)->ActivateOnFlag()) {
+			const char *pActivateFlag = (*it)->ActivateFlagID().Data();
+			if ((0 == pActivateFlag) || (0 == pActivateFlag[0])) {
+				if (!firstWarn) { warnEStr += _TEXT("; "); }
+				warnEStr += _TEXT("unnamed activate flag");
+				firstWarn = false;
+			}
+		}
+		if ((*it)->ResetStatusOnFlag()) {
+			const char *pResetFlag = (*it)->ResetStatusFlagID().Data();
+			if ((0 == pResetFlag) || (0 == pResetFlag[0])) {
+				if (!firstWarn) { warnEStr += _TEXT("; "); }
+				warnEStr += _TEXT("unnamed reset flag");
+				firstWarn = false;
+			}
+		}
+		if (!firstWarn) {
+			tmpEStr += _TEXT("   <!> ");
+			tmpEStr += warnEStr;
+		}
 		pList->AddString(tmpEStr.Data());
 		it++;
 	}

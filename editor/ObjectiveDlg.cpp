@@ -128,10 +128,186 @@ BEGIN_MESSAGE_MAP(ObjectiveDlg, CDialog)
 	ON_BN_CLICKED(IDC_OBJECTIVE_VIEW_FAILURE_ACTION_BUTTON, OnObjectiveViewFailureActionButton)
 	ON_BN_CLICKED(IDC_OBJECTIVE_CLEAR_LOGISTICS_MODEL_BUTTON, OnObjectiveClearLogisticsModelButton)
 	//}}AFX_MSG_MAP
+	ON_BN_CLICKED(IDC_OBJECTIVE_PICK_MARKER_BUTTON, OnObjectivePickMarkerButton)
 END_MESSAGE_MAP()
 
 /////////////////////////////////////////////////////////////////////////////
 // ObjectiveDlg message handlers
+
+// --- Readable WHEN/THEN line formatting -------------------------------------
+// Build a plain-English sentence for one condition/action, keyed on Species().
+// Replaces the old "TypeLabel  rawParams" dump. Object-ref species (specific
+// unit/structure) read coordinates from the SAFE noted-position accessors
+// (NotedX/NotedY) and NEVER deref the live object pointer -- the engine
+// InstanceDescription() for those species derefs m_pUnit/m_pBuilding unguarded
+// and asserts the display name, which is unsafe from the editor list.
+EString objReadableCondition(CObjectiveCondition *cond) {
+	EString out;
+	if (!cond) { out = "(empty condition)"; return out; }
+
+	switch (cond->Species())
+	{
+	case DESTROY_ALL_ENEMY_UNITS:               out = "Destroy all enemy units"; break;
+	case CAPTURE_OR_DESTROY_ALL_ENEMY_UNITS:    out = "Capture or destroy all enemy units"; break;
+	case DEAD_OR_FLED_ALL_ENEMY_UNITS:          out = "All enemy units dead or fled"; break;
+	case DESTROY_ENEMY_UNIT_GROUP:              out = "Destroy an enemy unit group"; break;
+	case CAPTURE_OR_DESTROY_ENEMY_UNIT_GROUP:   out = "Capture or destroy an enemy unit group"; break;
+	case DEAD_OR_FLED_ENEMY_UNIT_GROUP:         out = "An enemy unit group is dead or fled"; break;
+
+	case DESTROY_NUMBER_OF_ENEMY_UNITS:
+	case CAPTURE_OR_DESTROY_NUMBER_OF_ENEMY_UNITS:
+	case DEAD_OR_FLED_NUMBER_OF_ENEMY_UNITS:
+	{
+		int n = 0;
+		if (CNumberOfEnemyUnitsObjectiveCondition *p =
+				dynamic_cast<CNumberOfEnemyUnitsObjectiveCondition *>(cond))
+			n = p->Num();
+		const char *verb =
+			(cond->Species() == DESTROY_NUMBER_OF_ENEMY_UNITS) ? "Destroy" :
+			(cond->Species() == CAPTURE_OR_DESTROY_NUMBER_OF_ENEMY_UNITS) ? "Capture or destroy" :
+			"Disable (dead or fled)";
+		out.Format("%s %d enemy unit%s", verb, n, (n == 1) ? "" : "s");
+		break;
+	}
+
+	case DESTROY_SPECIFIC_ENEMY_UNIT:
+	case CAPTURE_OR_DESTROY_SPECIFIC_ENEMY_UNIT:
+	case DEAD_OR_FLED_SPECIFIC_ENEMY_UNIT:
+	case CAPTURE_UNIT:
+	case GUARD_SPECIFIC_UNIT:
+	{
+		EString tgt;
+		if (CSpecificUnitObjectiveCondition *p =
+				dynamic_cast<CSpecificUnitObjectiveCondition *>(cond))
+			tgt = p->ReadableTarget();
+		else
+			tgt = "(unresolved)";
+		const char *verb =
+			(cond->Species() == DESTROY_SPECIFIC_ENEMY_UNIT) ? "Destroy" :
+			(cond->Species() == CAPTURE_OR_DESTROY_SPECIFIC_ENEMY_UNIT) ? "Capture or destroy" :
+			(cond->Species() == DEAD_OR_FLED_SPECIFIC_ENEMY_UNIT) ? "Disable (dead or fled)" :
+			(cond->Species() == CAPTURE_UNIT) ? "Capture" : "Guard";
+		const char *noun = (cond->Species() == GUARD_SPECIFIC_UNIT) ? "friendly unit" : "enemy unit";
+		out.Format("%s %s: %s", verb, noun, tgt.Data());
+		break;
+	}
+
+	case DESTROY_SPECIFIC_STRUCTURE:
+	case CAPTURE_OR_DESTROY_SPECIFIC_STRUCTURE:
+	case CAPTURE_STRUCTURE:
+	case GUARD_SPECIFIC_STRUCTURE:
+	{
+		EString tgt;
+		if (CSpecificStructureObjectiveCondition *p =
+				dynamic_cast<CSpecificStructureObjectiveCondition *>(cond))
+			tgt = p->ReadableTarget();
+		else
+			tgt = "(unresolved)";
+		const char *verb =
+			(cond->Species() == DESTROY_SPECIFIC_STRUCTURE) ? "Destroy" :
+			(cond->Species() == CAPTURE_OR_DESTROY_SPECIFIC_STRUCTURE) ? "Capture or destroy" :
+			(cond->Species() == CAPTURE_STRUCTURE) ? "Capture" : "Guard";
+		const char *noun = (cond->Species() == GUARD_SPECIFIC_STRUCTURE) ? "friendly structure" : "structure";
+		out.Format("%s %s: %s", verb, noun, tgt.Data());
+		break;
+	}
+
+	case MOVE_ANY_UNIT_TO_AREA:
+	case MOVE_ALL_UNITS_TO_AREA:
+	case MOVE_ALL_SURVIVING_UNITS_TO_AREA:
+	case MOVE_ALL_SURVIVING_MECHS_TO_AREA:
+	{
+		float x = 0.f, y = 0.f, r = 0.f;
+		if (CAreaObjectiveCondition *p = dynamic_cast<CAreaObjectiveCondition *>(cond))
+		{ x = p->TargetCenterX(); y = p->TargetCenterY(); r = p->TargetRadius(); }
+		const char *who =
+			(cond->Species() == MOVE_ANY_UNIT_TO_AREA) ? "any unit" :
+			(cond->Species() == MOVE_ALL_UNITS_TO_AREA) ? "all units" :
+			(cond->Species() == MOVE_ALL_SURVIVING_UNITS_TO_AREA) ? "all surviving units" :
+			"all surviving 'Mechs";
+		out.Format("Move %s into area (%.0f, %.0f) radius %.0f", who, x, y, r);
+		break;
+	}
+
+	case BOOLEAN_FLAG_IS_SET:
+	{
+		const char *flag = "flag"; bool val = true;
+		if (CBooleanFlagIsSet *p = dynamic_cast<CBooleanFlagIsSet *>(cond))
+		{ const char *f = p->FlagID(); if (f && f[0]) flag = f; val = p->FlagValue(); }
+		out.Format("When flag '%s' is %s", flag, val ? "set" : "clear");
+		break;
+	}
+
+	case ELAPSED_MISSION_TIME:
+	{
+		float t = 0.f;
+		if (CElapsedMissionTime *p = dynamic_cast<CElapsedMissionTime *>(cond))
+			t = p->Time();
+		out.Format("After %.0f seconds of mission time", t);
+		break;
+	}
+
+	default:
+		out = cond->Description();   // unknown species -> engine label fallback
+		break;
+	}
+	return out;
+}
+
+EString objReadableAction(CObjectiveAction *act) {
+	EString out;
+	if (!act) { out = "(empty action)"; return out; }
+
+	switch (act->Species())
+	{
+	case PLAY_BIK:
+	{
+		const char *p = "(movie)";
+		if (CPlayBIK *a = dynamic_cast<CPlayBIK *>(act)) { const char *s = a->Pathname(); if (s && s[0]) p = s; }
+		out.Format("Play movie %s", p);
+		break;
+	}
+	case PLAY_WAV:
+	{
+		const char *p = "(sound)";
+		if (CPlayWAV *a = dynamic_cast<CPlayWAV *>(act)) { const char *s = a->Pathname(); if (s && s[0]) p = s; }
+		out.Format("Play sound %s", p);
+		break;
+	}
+	case DISPLAY_TEXT_MESSAGE:
+	{
+		const char *m = "";
+		if (CDisplayTextMessage *a = dynamic_cast<CDisplayTextMessage *>(act)) { const char *s = a->Message(); if (s) m = s; }
+		out.Format("Show message: \"%s\"", m);
+		break;
+	}
+	case DISPLAY_RESOURCE_TEXT_MESSAGE:
+	{
+		int id = 0;
+		if (CDisplayResourceTextMessage *a = dynamic_cast<CDisplayResourceTextMessage *>(act)) id = a->ResourceStringID();
+		out.Format("Show message (resource string #%d)", id);
+		break;
+	}
+	case SET_BOOLEAN_FLAG:
+	{
+		const char *flag = "flag"; bool val = true;
+		if (CSetBooleanFlag *a = dynamic_cast<CSetBooleanFlag *>(act)) { const char *f = a->FlagID(); if (f && f[0]) flag = f; val = a->FlagValue(); }
+		out.Format("Set flag '%s' to %s", flag, val ? "set" : "clear");
+		break;
+	}
+	case MAKE_NEW_TECHNOLOGY_AVAILABLE:
+	{
+		const char *p = "(file)";
+		if (CMakeNewTechnologyAvailable *a = dynamic_cast<CMakeNewTechnologyAvailable *>(act)) { const char *s = a->PurchaseFile(); if (s && s[0]) p = s; }
+		out.Format("Unlock technology from %s", p);
+		break;
+	}
+	default:
+		out = act->Description();
+		break;
+	}
+	return out;
+}
 
 static void syncConditionsListWithListBox(const CObjective::condition_list_type *pConditionList, CListBox *pList) {
 	pList->ResetContent();
@@ -139,7 +315,7 @@ static void syncConditionsListWithListBox(const CObjective::condition_list_type 
 	CObjective::condition_list_type::EConstIterator it = pConditionList->Begin();
 	while (!it.IsDone())
 	{
-		tmpStr = (*it)->Description() + "  " + (*it)->InstanceDescription();
+		tmpStr = objReadableCondition(*it);
 		pList->AddString(tmpStr.Data());
 		it++;
 	}
@@ -151,7 +327,7 @@ static void syncActionsListWithListBox(const CObjective::action_list_type *pActi
 	CObjective::action_list_type::EConstIterator it = pActionList->Begin();
 	while (!it.IsDone())
 	{
-		tmpStr = (*it)->Description() + "  " + (*it)->InstanceDescription();
+		tmpStr = objReadableAction(*it);
 		pList->AddString(tmpStr.Data());
 		it++;
 	}
@@ -549,6 +725,45 @@ BOOL ObjectiveDlg::OnInitDialog()
 
 	LoadDialogValues();
 
+	// Slice 1 -- Marker XY map-picker result delivery. If we just returned from a
+	// terrain point pick (handleLeftButtonDown set pendingPickResultReady), write
+	// the captured world XY into the marker fields, settle the editor out of the
+	// object-select handoff, and stop -- do NOT fall through to the condition-pick
+	// re-post below (this re-entry is for the marker pick, not a condition pick).
+	{
+		EditorInterface *pEditor = EditorInterface::instance();
+		if ((0 != pEditor) && pEditor->objectivesEditState.pendingPickResultReady) {
+			m_XEdit = pEditor->objectivesEditState.pendingPickX;
+			m_YEdit = pEditor->objectivesEditState.pendingPickY;
+			m_ModifiedObjective.MarkerX(m_XEdit);
+			m_ModifiedObjective.MarkerY(m_YEdit);
+			// Picking a point implies the user wants the marker shown -- turn the
+			// Display Marker checkbox on (both the objective field and the DDX member
+			// bound to IDC_OBJECTIVE_DISPLAY_MARKER_CHECK) before UpdateData pushes it.
+			m_ModifiedObjective.DisplayMarker(true);
+			m_DisplayMarkerCheckButton = TRUE;
+			UpdateData(FALSE);
+
+			// One-shot: clear the result flag and leave object-select-only mode so
+			// the normal modal accept/cancel flow resumes from here.
+			pEditor->objectivesEditState.pendingPickResultReady = false;
+			pEditor->objectivesEditState.pendingPickPoint = false;
+			pEditor->ObjectSelectOnlyMode(false);
+			return TRUE;
+		}
+	}
+
+	// Marker-pick was armed but no point was delivered (user cancelled/ESC before
+	// clicking the map). Disarm cleanly and do NOT fall into the condition re-post.
+	if (EditorInterface::instance() &&
+	    EditorInterface::instance()->objectivesEditState.pendingPickPoint &&
+	    !EditorInterface::instance()->objectivesEditState.pendingPickResultReady)
+	{
+		EditorInterface::instance()->objectivesEditState.pendingPickPoint = false;
+		EditorInterface::instance()->ObjectSelectOnlyMode(false);
+		// fall through to normal (non-select-only) init below
+	}
+
 	if (EditorInterface::instance()->ObjectSelectOnlyMode()) {
 		/* The dialog is already initialized. */
 		if (CObjectivesEditState::SUCCESS_CONDITION == EditorInterface::instance()->objectivesEditState.listID) {
@@ -566,7 +781,55 @@ BOOL ObjectiveDlg::OnInitDialog()
 	              // EXCEPTION: OCX Property Pages should return FALSE
 }
 
-void ObjectiveDlg::OnObjectiveAddConditionButton() 
+// Slice 1 -- Marker XY map-picker (PICKER-SELECT-POINT-RECON-1, Option B).
+// Mirrors the ObjectSelectOnlyMode handoff used by the condition object pickers
+// (OnObjectiveAddConditionButton): save the in-progress objective into the
+// editor singleton, flip the editor into selection mode, then EndDialog so the
+// whole nested-modal stack unwinds and the editor render loop runs. The next
+// terrain left-click is consumed by EditorInterface::handleLeftButtonDown, which
+// writes the picked world XY into objectivesEditState.pendingPickX/Y, sets
+// pendingPickResultReady, and re-opens the objectives dialog chain (Team ->
+// CObjectives::EditDialog -> ObjectivesDlg re-posts EDIT -> CObjective::EditDialog
+// -> this dialog). OnInitDialog then loads the picked XY exactly once.
+void ObjectiveDlg::OnObjectivePickMarkerButton()
+{
+	EditorInterface *pEditor = EditorInterface::instance();
+	if (0 == pEditor) {
+		return;
+	}
+
+	// Capture the current control state (incl. the X/Y editboxes and the marker
+	// checkbox) into m_ModifiedObjective so nothing the user typed is lost.
+	SaveDialogValues();
+
+	pEditor->objectivesEditState.ModifiedObjective = m_ModifiedObjective;
+	// Restore the same combo selections the ordinary object-pick handoff stashes,
+	// so the re-opened dialog comes back to the same condition/action species.
+	// NOTE: objectiveFunction (ADD vs EDIT) is intentionally NOT set here -- the
+	// parent ObjectivesDlg::OnObjectives{Add,Edit}Button handler that opened this
+	// ObjectiveDlg sets it during its own ObjectSelectOnlyMode unwind (see
+	// OnObjectivesAddButton/OnObjectivesEditButton), so forcing it here would break
+	// the ADD re-open path.
+	pEditor->objectivesEditState.listID = CObjectivesEditState::SUCCESS_CONDITION;
+	pEditor->objectivesEditState.nConditionSpeciesSelectionIndex = (&m_ComboBox)->GetCurSel();
+	pEditor->objectivesEditState.nActionSpeciesSelectionIndex = (&m_ActionComboBox)->GetCurSel();
+	pEditor->objectivesEditState.nFailureConditionSpeciesSelectionIndex = (&m_FailureConditionComboBox)->GetCurSel();
+	pEditor->objectivesEditState.nFailureActionSpeciesSelectionIndex = (&m_FailureActionComboBox)->GetCurSel();
+
+	// Arm the one-shot terrain point pick. Result delivery clears pendingPickPoint
+	// and sets pendingPickResultReady (consumed by OnInitDialog).
+	pEditor->objectivesEditState.pendingPickPoint = true;
+	pEditor->objectivesEditState.pendingPickResultReady = false;
+
+	// Put the editor into selection mode and the objective-select-only handoff
+	// mode, exactly like the unit/building pickers, so the re-open machinery fires.
+	pEditor->SelectionMode();
+	pEditor->ObjectSelectOnlyMode(true);
+
+	EndDialog(IDOK);
+}
+
+void ObjectiveDlg::OnObjectiveAddConditionButton()
 {
 	{
 		DWORD comboboxSelection = (&m_ComboBox)->GetCurSel();
@@ -1040,10 +1303,13 @@ void ObjectiveDlg::OnObjectiveViewConditionButton()
 	int nSelectionIndex = m_List.GetCurSel();
 	if ((LB_ERR != nSelectionIndex) && (0 <= nSelectionIndex) && (m_ModifiedObjective.Count() > nSelectionIndex)) {
 		CObjective::condition_list_type::EConstIterator it = m_ModifiedObjective.Begin();
-		EString tmpEStr = (*it)->Description() + "  " + (*it)->InstanceDescription();
-		ViewConditionOrActionDlg viewDlg;
-		viewDlg.m_Edit = tmpEStr.Data();
-		viewDlg.DoModal();
+		for (int i = 0; i < nSelectionIndex && !it.IsDone(); ++i) it++;
+		if (!it.IsDone()) {
+			EString tmpEStr = objReadableCondition(*it);
+			ViewConditionOrActionDlg viewDlg;
+			viewDlg.m_Edit = tmpEStr.Data();
+			viewDlg.DoModal();
+		}
 	}
 }
 
@@ -1052,10 +1318,13 @@ void ObjectiveDlg::OnObjectiveViewActionButton()
 	int nSelectionIndex = m_ActionList.GetCurSel();
 	if ((LB_ERR != nSelectionIndex) && (0 <= nSelectionIndex) && (m_ModifiedObjective.m_actionList.Count() > nSelectionIndex)) {
 		CObjective::action_list_type::EConstIterator it = m_ModifiedObjective.m_actionList.Begin();
-		EString tmpEStr = (*it)->Description() + "  " + (*it)->InstanceDescription();
-		ViewConditionOrActionDlg viewDlg;
-		viewDlg.m_Edit = tmpEStr.Data();
-		viewDlg.DoModal();
+		for (int i = 0; i < nSelectionIndex && !it.IsDone(); ++i) it++;
+		if (!it.IsDone()) {
+			EString tmpEStr = objReadableAction(*it);
+			ViewConditionOrActionDlg viewDlg;
+			viewDlg.m_Edit = tmpEStr.Data();
+			viewDlg.DoModal();
+		}
 	}
 }
 
@@ -1064,10 +1333,13 @@ void ObjectiveDlg::OnObjectiveViewFailureConditionButton()
 	int nSelectionIndex = m_FailureConditionList.GetCurSel();
 	if ((LB_ERR != nSelectionIndex) && (0 <= nSelectionIndex) && (m_ModifiedObjective.m_failureConditionList.Count() > nSelectionIndex)) {
 		CObjective::condition_list_type::EConstIterator it = m_ModifiedObjective.m_failureConditionList.Begin();
-		EString tmpEStr = (*it)->Description() + "  " + (*it)->InstanceDescription();
-		ViewConditionOrActionDlg viewDlg;
-		viewDlg.m_Edit = tmpEStr.Data();
-		viewDlg.DoModal();
+		for (int i = 0; i < nSelectionIndex && !it.IsDone(); ++i) it++;
+		if (!it.IsDone()) {
+			EString tmpEStr = objReadableCondition(*it);
+			ViewConditionOrActionDlg viewDlg;
+			viewDlg.m_Edit = tmpEStr.Data();
+			viewDlg.DoModal();
+		}
 	}
 }
 
@@ -1076,10 +1348,13 @@ void ObjectiveDlg::OnObjectiveViewFailureActionButton()
 	int nSelectionIndex = m_FailureActionList.GetCurSel();
 	if ((LB_ERR != nSelectionIndex) && (0 <= nSelectionIndex) && (m_ModifiedObjective.m_failureActionList.Count() > nSelectionIndex)) {
 		CObjective::action_list_type::EConstIterator it = m_ModifiedObjective.m_failureActionList.Begin();
-		EString tmpEStr = (*it)->Description() + "  " + (*it)->InstanceDescription();
-		ViewConditionOrActionDlg viewDlg;
-		viewDlg.m_Edit = tmpEStr.Data();
-		viewDlg.DoModal();
+		for (int i = 0; i < nSelectionIndex && !it.IsDone(); ++i) it++;
+		if (!it.IsDone()) {
+			EString tmpEStr = objReadableAction(*it);
+			ViewConditionOrActionDlg viewDlg;
+			viewDlg.m_Edit = tmpEStr.Data();
+			viewDlg.DoModal();
+		}
 	}
 }
 

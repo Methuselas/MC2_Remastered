@@ -273,6 +273,18 @@ EString CSpecificUnitObjectiveCondition::InstanceDescription() {
 	return tmpEStr;
 }
 
+EString CSpecificUnitObjectiveCondition::ReadableTarget() {
+	EString s;
+	if (m_pUnit) {
+		Stuff::Vector3D pos = m_pUnit->getPosition();
+		const char *name = m_pUnit->getDisplayName();
+		s.Format("%s  (%.0f, %.0f)", (name && name[0]) ? name : "unit", pos.x, pos.y);
+	} else {
+		s.Format("unresolved unit  (%.0f, %.0f)", m_LastNotedPositionX, m_LastNotedPositionY);
+	}
+	return s;
+}
+
 bool CSpecificUnitObjectiveCondition::NoteThePositionsOfObjectsReferenced() {
 	bool retval = false;
 	if (m_pUnit) {
@@ -385,6 +397,18 @@ EString CSpecificStructureObjectiveCondition::InstanceDescription() {
 	assert(szDisplayName);
 	tmpEStr.Format("(pos: %.3f, %.3f) %s", pos.x, pos.y, szDisplayName);
 	return tmpEStr;
+}
+
+EString CSpecificStructureObjectiveCondition::ReadableTarget() {
+	EString s;
+	if (m_pBuilding) {
+		Stuff::Vector3D pos = m_pBuilding->getPosition();
+		const char *name = m_pBuilding->getDisplayName();
+		s.Format("%s  (%.0f, %.0f)", (name && name[0]) ? name : "structure", pos.x, pos.y);
+	} else {
+		s.Format("unresolved structure  (%.0f, %.0f)", m_LastNotedPositionX, m_LastNotedPositionY);
+	}
+	return s;
 }
 
 bool CSpecificStructureObjectiveCondition::NoteThePositionsOfObjectsReferenced() {

@@ -109,9 +109,23 @@ static void setGroupListBoxValues(CListBox &GroupListBox, const CGroupList &Grou
 	CGroupList::EConstIterator it;
 	for (it = GroupList.Begin(); !it.IsDone(); it++) {
 		CString tmpCStr;
-		tmpCStr = _TEXT("[");
-		tmpCStr += ((*it).m_Label);
-		tmpCStr += _TEXT("] ");
+		if ((*it).m_Label.IsEmpty()) {
+			CString missions;
+			CMissionList::EConstIterator mit;
+			for (mit = (*it).m_MissionList.Begin(); !mit.IsDone(); mit++) {
+				if (!missions.IsEmpty()) { missions += _TEXT(", "); }
+				missions += (*mit).m_MissionFile;
+			}
+			if (missions.IsEmpty()) {
+				tmpCStr = _TEXT("(empty operation)");
+			} else {
+				tmpCStr = missions;
+			}
+		} else {
+			tmpCStr = _TEXT("[");
+			tmpCStr += ((*it).m_Label);
+			tmpCStr += _TEXT("] ");
+		}
 		GroupListBox.AddString(tmpCStr);
 	}
 }
