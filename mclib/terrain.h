@@ -381,6 +381,11 @@ class Terrain
 		static void getUserSettings( long& min, long& max, int& terrainType );
 
 		void recalcWater();
+		// TERRAIN-MATERIAL-PAINT Slice 0 (BUG 1): re-upload the per-vertex
+		// terrain-TYPE SSBO consumed by the live LOD-chunk frag so painted
+		// material shows immediately (no mission reload). Mirrors the load-time
+		// build+upload at terrain.cpp ttype[] loop. Additive editor-lane helper.
+		void refreshTerrainTypeSSBO();
 		void reCalcLight(bool doShadows = false);
 		void clearShadows();
 

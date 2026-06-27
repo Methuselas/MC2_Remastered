@@ -732,7 +732,12 @@ BOOL ObjectiveDlg::OnInitDialog()
 	// re-post below (this re-entry is for the marker pick, not a condition pick).
 	{
 		EditorInterface *pEditor = EditorInterface::instance();
-		if ((0 != pEditor) && pEditor->objectivesEditState.pendingPickResultReady) {
+		// Only consume a MARKER pick here. The area-center pick (Slice 2) shares the
+		// same pending-pick fields but is consumed by TargetAreaDlg::OnInitDialog;
+		// swallowing it here would corrupt the objective marker and the re-entry would
+		// never re-reach TargetAreaDlg. The discriminator keeps the two disjoint.
+		if ((0 != pEditor) && pEditor->objectivesEditState.pendingPickResultReady &&
+		    (CObjectivesEditState::PICK_MARKER == pEditor->objectivesEditState.pendingPickTarget)) {
 			m_XEdit = pEditor->objectivesEditState.pendingPickX;
 			m_YEdit = pEditor->objectivesEditState.pendingPickY;
 			m_ModifiedObjective.MarkerX(m_XEdit);
@@ -748,6 +753,7 @@ BOOL ObjectiveDlg::OnInitDialog()
 			// the normal modal accept/cancel flow resumes from here.
 			pEditor->objectivesEditState.pendingPickResultReady = false;
 			pEditor->objectivesEditState.pendingPickPoint = false;
+			pEditor->objectivesEditState.pendingPickTarget = CObjectivesEditState::PICK_NONE;
 			pEditor->ObjectSelectOnlyMode(false);
 			return TRUE;
 		}
@@ -755,11 +761,17 @@ BOOL ObjectiveDlg::OnInitDialog()
 
 	// Marker-pick was armed but no point was delivered (user cancelled/ESC before
 	// clicking the map). Disarm cleanly and do NOT fall into the condition re-post.
+	// Restrict to a MARKER pick: an AREA pick (armed/cancelled) must keep its pending
+	// state here so the condition re-post below re-reaches TargetAreaDlg, which owns
+	// the area pick's consume/disarm. Only the marker pick is consumed/disarmed in
+	// this dialog.
 	if (EditorInterface::instance() &&
 	    EditorInterface::instance()->objectivesEditState.pendingPickPoint &&
-	    !EditorInterface::instance()->objectivesEditState.pendingPickResultReady)
+	    !EditorInterface::instance()->objectivesEditState.pendingPickResultReady &&
+	    (CObjectivesEditState::PICK_MARKER == EditorInterface::instance()->objectivesEditState.pendingPickTarget))
 	{
 		EditorInterface::instance()->objectivesEditState.pendingPickPoint = false;
+		EditorInterface::instance()->objectivesEditState.pendingPickTarget = CObjectivesEditState::PICK_NONE;
 		EditorInterface::instance()->ObjectSelectOnlyMode(false);
 		// fall through to normal (non-select-only) init below
 	}
@@ -817,9 +829,12 @@ void ObjectiveDlg::OnObjectivePickMarkerButton()
 	pEditor->objectivesEditState.nFailureActionSpeciesSelectionIndex = (&m_FailureActionComboBox)->GetCurSel();
 
 	// Arm the one-shot terrain point pick. Result delivery clears pendingPickPoint
-	// and sets pendingPickResultReady (consumed by OnInitDialog).
+	// and sets pendingPickResultReady (consumed by OnInitDialog). Tag as a MARKER
+	// pick so the OnInitDialog consumer (which shares the pick fields with the
+	// area-center pick) only fires for a marker pick.
 	pEditor->objectivesEditState.pendingPickPoint = true;
 	pEditor->objectivesEditState.pendingPickResultReady = false;
+	pEditor->objectivesEditState.pendingPickTarget = CObjectivesEditState::PICK_MARKER;
 
 	// Put the editor into selection mode and the objective-select-only handoff
 	// mode, exactly like the unit/building pickers, so the re-open machinery fires.

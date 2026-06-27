@@ -12,6 +12,8 @@ TerrainBrush.h		: Interface for the TerrainBrush component. used to paint textur
 #endif
 #include "Action.h"
 
+#include <set>
+
 class TerrainBrush: public Brush
 {
 	public:
@@ -24,50 +26,20 @@ class TerrainBrush: public Brush
 			terrainType = Type;
 			s_lastType = Type;
 			pAction = NULL;
+			radius  = s_lastRadius;
 		}
 		virtual ~TerrainBrush(){}
 
-		bool beginPaint()
-		{
-			if ( pAction )
-			{
-				gosASSERT( false );
-			}
-
-			pAction = new ActionPaintTile;
-
-			gosASSERT( pAction );
-
-			return true;
-		}
-		Action* endPaint()
-		{
-			Action* pRetAction = pAction;
-			pAction  = NULL;
-			return pRetAction;
-		}
-		virtual bool paint( Stuff::Vector3D& worldPos, int screenX, int screenY )
-		{
-			long tileC;
-			long tileR;
-
-			Stuff::Vector2DOf<long> screenPos( screenX, screenY );
-
-			eye->getClosestVertex( screenPos, tileR, tileC );
-
-			if ( tileR < Terrain::realVerticesMapSide && tileR > -1 
-				&& tileC < Terrain::realVerticesMapSide && tileC > -1 )
-			{
-				pAction->addChangedVertexInfo( tileR, tileC );	// for undo
-				land->setTerrain( tileR, tileC, terrainType );
-				return true;
-			}
-
-			return false;
-		}
-		virtual bool canPaint( Stuff::Vector3D& worldPos, int screenX, int screenY, int flags ) { return true; } 
+		bool beginPaint();
+		Action* endPaint();
+		virtual bool paint( Stuff::Vector3D& worldPos, int screenX, int screenY );
+		virtual bool canPaint( Stuff::Vector3D& worldPos, int screenX, int screenY, int flags ) { return true; }
+		virtual void render( int screenX, int screenY );
 
 		virtual Action* applyToSelection();
+
+		void  setRadius( float r ) { radius = r; s_lastRadius = r; }
+		float getRadius() const    { return radius; }
 
 
 
@@ -78,8 +50,11 @@ class TerrainBrush: public Brush
 		TerrainBrush& operator=( const TerrainBrush& TerrainBrush );
 
 		int terrainType;
+		float radius;                       // world units; 0 => single closest vertex
+		std::set<int> touchedThisStroke;    // one apply per vertex per stroke
 
 		static int s_lastType;
+		static float s_lastRadius;
 
 		ActionPaintTile* pAction;
 };

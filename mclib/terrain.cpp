@@ -4168,6 +4168,38 @@ void Terrain::recalcWater()
 }
 
 //---------------------------------------------------------------------------
+// TERRAIN-MATERIAL-PAINT Slice 0 (BUG 1): re-run the load-time ttype[] build
+// loop (terrain.cpp ~802-817) from blocks[].terrainType via terrainTypeToMaterial
+// and re-upload the per-vertex type SSBO. The live LOD-chunk frag reads this SSBO
+// every frame (v_terrainType), but it was uploaded only once at mission load and
+// had no dirty/patch path, so painted material did not appear until reload. Call
+// this at end-of-stroke from the material brush. Editor-lane additive helper.
+void Terrain::refreshTerrainTypeSSBO()
+{
+	if (!mapData || !mapData->getBlocks())
+		return;
+	const int n = (int)realVerticesMapSide * (int)realVerticesMapSide;
+	if (n <= 0)
+		return;
+	std::vector<float> ttype((size_t)n);
+	const PostcompVertex* blks = mapData->getBlocks();
+	// MUST mirror the load-time mapping (terrain.cpp ttype[] loop) and the
+	// duplicated terrainTypeToMaterial in quad.cpp / gos_terrain_indirect.cpp.
+	auto terrainTypeToMaterial = [](DWORD t) -> float {
+		switch (t) {
+			case 3:  case 8:  case 9:  case 12:           return 1.0f; // Grass
+			case 2:  case 4:                              return 2.0f; // Dirt
+			case 10: case 13: case 14: case 15: case 16:
+			case 17: case 18: case 19: case 20:           return 3.0f; // Concrete
+			default:                                      return 0.0f; // Rock
+		}
+	};
+	for (int i = 0; i < n; ++i)
+		ttype[i] = terrainTypeToMaterial(blks[i].terrainType);
+	gos_TerrainLodChunk_UploadTerrainTypeFull(ttype.data(), (int)realVerticesMapSide);
+}
+
+//---------------------------------------------------------------------------
 void Terrain::reCalcLight(bool doShadows)
 {
 	recalcLight = true;

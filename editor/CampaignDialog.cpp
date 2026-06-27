@@ -126,6 +126,53 @@ static void setGroupListBoxValues(CListBox &GroupListBox, const CGroupList &Grou
 			tmpCStr += ((*it).m_Label);
 			tmpCStr += _TEXT("] ");
 		}
+
+		// At-a-glance validation warnings, mirroring the objectives list (<!> suffix).
+		// Data-only/read-only; no mutation of campaign data.
+		CString warnCStr;
+		bool firstWarn = true;
+		// 1. No missions in this operation.
+		if (0 == (*it).m_MissionList.Count()) {
+			if (!firstWarn) { warnCStr += _TEXT("; "); }
+			warnCStr += _TEXT("no missions");
+			firstWarn = false;
+		}
+		// 2. Completion requirement exceeds the number of missions present.
+		if ((*it).m_NumMissionsToComplete > (int)(*it).m_MissionList.Count()) {
+			if (!firstWarn) { warnCStr += _TEXT("; "); }
+			warnCStr += _TEXT("requires more missions than exist");
+			firstWarn = false;
+		}
+		// 3. Any mission with an empty filename.
+		{
+			bool emptyMissionFile = false;
+			CMissionList::EConstIterator vmit;
+			for (vmit = (*it).m_MissionList.Begin(); !vmit.IsDone(); vmit++) {
+				if ((*vmit).m_MissionFile.IsEmpty()) { emptyMissionFile = true; break; }
+			}
+			if (emptyMissionFile) {
+				if (!firstWarn) { warnCStr += _TEXT("; "); }
+				warnCStr += _TEXT("empty mission filename");
+				firstWarn = false;
+			}
+		}
+		// 4. Placeholder/stand-in briefing video. The stock placeholder convention is
+		//    "standin" (e.g. standin.bik, see code/controlgui.cpp). Could not confirm a
+		//    single canonical token, so assume any case-insensitive "standin" substring.
+		{
+			CString preVid = (*it).m_PreVideoFile; preVid.MakeLower();
+			CString vid    = (*it).m_VideoFile;    vid.MakeLower();
+			if ((preVid.Find(_TEXT("standin")) >= 0) || (vid.Find(_TEXT("standin")) >= 0)) {
+				if (!firstWarn) { warnCStr += _TEXT("; "); }
+				warnCStr += _TEXT("placeholder video");
+				firstWarn = false;
+			}
+		}
+		if (!firstWarn) {
+			tmpCStr += _TEXT("   <!> ");
+			tmpCStr += warnCStr;
+		}
+
 		GroupListBox.AddString(tmpCStr);
 	}
 }

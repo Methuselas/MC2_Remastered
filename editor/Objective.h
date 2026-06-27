@@ -323,6 +323,12 @@ public:
 	float TargetCenterX() { return m_targetCenterX; }
 	float TargetCenterY() { return m_targetCenterY; }
 	float TargetRadius()  { return m_targetRadius; }
+	// Slice 2 -- area "Pick center" map-picker setters (additive). TargetAreaDlg
+	// writes the picked world XY into the referenced center on pick re-entry;
+	// radius is left untouched. Also needed by the templates slice.
+	void TargetCenterX(float v) { m_targetCenterX = v; }
+	void TargetCenterY(float v) { m_targetCenterY = v; }
+	void TargetRadius(float v)  { m_targetRadius  = v; }
 };
 
 class CMoveAnyUnitToArea: public CAreaObjectiveCondition {
@@ -718,6 +724,21 @@ public:
 	float pendingPickX;
 	float pendingPickY;
 
+	/* Slice 2 -- area "Pick center" map-picker (PICKER-SELECT-POINT-RECON-1).
+	The marker pick (Slice 1) and the area-center pick share pendingPickPoint/
+	pendingPickResultReady/pendingPickX/Y (only one pick is in flight at a time),
+	so a discriminator is required: the re-opened ObjectiveDlg::OnInitDialog marker
+	consumer must NOT swallow an area pick result (it would corrupt the objective
+	marker and never re-reach TargetAreaDlg), and TargetAreaDlg::OnInitDialog must
+	consume ONLY an area pick. Set when arming; cleared back to PICK_NONE when the
+	matching consumer reads the result or on cancelled-pick disarm. */
+	enum pick_target_type {
+		PICK_NONE,
+		PICK_MARKER,
+		PICK_AREA
+	};
+	pick_target_type pendingPickTarget;
+
 	CObjectivesEditState() {
 		Clear();
 	}
@@ -739,6 +760,7 @@ public:
 		pendingPickResultReady = false;
 		pendingPickX = 0.0f;
 		pendingPickY = 0.0f;
+		pendingPickTarget = PICK_NONE;
 	}
 };
 //*************************************************************************************************

@@ -5073,7 +5073,9 @@ void EditorInterface::setStampBrush( int type )
 void EditorInterface::setPaintMaterialBrush( int terrainType )
 {
 	const int brushId = -300 - terrainType;
-	setActiveBrush( new TerrainBrush( terrainType ), brushId, brushId );
+	TerrainBrush* tb = new TerrainBrush( terrainType );
+	tb->setRadius( m_paintMaterialSize );   // Slice 0: radius-fill (mirrors sculpt)
+	setActiveBrush( tb, brushId, brushId );
 	m_paintMaterialType = terrainType;   // drives the active-button highlight
 }
 
@@ -5451,9 +5453,10 @@ void EditorInterface::renderToolbarImGui()
 			if (pactive)
 				ImGui::PopStyleColor();
 		}
-		// Size is reserved: TerrainBrush is single-vertex in Slice 1 (Slice 2 adds a
-		// radius loop), so this slider only stores intent for that future brush.
-		ImGui::SliderFloat("PaintSize", &m_paintMaterialSize, 64.0f, 3000.0f, "%.0f");
+		// Slice 0: TerrainBrush now fills all vertices within this world-space radius
+		// (mirrors the sculpt brush). Update the live brush as the slider moves.
+		if (ImGui::SliderFloat("PaintSize", &m_paintMaterialSize, 64.0f, 3000.0f, "%.0f") && tb)
+			tb->setRadius(m_paintMaterialSize);
 		// LOD-chunk colormap caveat: only concrete is type-gated in-shader today.
 		ImGui::TextWrapped("Concrete paints live; grass/dirt/rock may need a reload to show (LOD-chunk colormap).");
 	}
