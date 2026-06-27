@@ -4,13 +4,14 @@
 *   The editor keeps no always-loaded campaign object, so this panel loads a
 *   campaign .fit on demand via the same Win32 GetOpenFileNameA idiom the Map
 *   Generator import uses, reads it into a file-static CCampaignData, and renders
-*   the operation/mission outline with cheap data-only validation badges.
+*   a designer-facing overview: a top-level campaign summary block, an aggregated
+*   warnings roll-up, and per-operation cards with data-only validation badges.
 *
 *   CCampaignData::Read() (CampaignData.cpp:225) may assert() on a malformed
 *   file; that is acceptable in RelWithDebInfo per the slice contract -- we do
 *   not add engine guards.
 *
-*   PURE-ADDITIVE, READ-ONLY: no save, no editing.
+*   PURE-ADDITIVE, READ-ONLY: no save, no editing, no mutation of CCampaignData.
 * DATE: 2026-06-27
 ****************************************************************/
 
@@ -28,6 +29,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdarg>
+#include <cctype>
 
 // ---------------------------------------------------------------------------
 // Panel state
@@ -76,14 +78,52 @@ static void campWarn(const char* fmt, ...)
     std::vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.78f, 0.20f, 1.0f));
-    ImGui::BulletText("[warning] %s", buf);
+    ImGui::TextWrapped("[warning] %s", buf);
+    ImGui::PopStyleColor();
+}
+
+// Inline colored badge (e.g. "[Unnamed]"); call SameLine() before/after to chain.
+static void campBadge(const char* text, const ImVec4& col)
+{
+    ImGui::PushStyleColor(ImGuiCol_Text, col);
+    ImGui::TextUnformatted(text);
     ImGui::PopStyleColor();
 }
 
 // CString -> const char* for display (MFC CString has operator LPCTSTR()).
 static const char* campStr(const CString& s) { return (const char*)s; }
 static bool        campEmpty(const CString& s) { return s.GetLength() == 0; }
-static bool        campIs(const CString& s, const char* lit) { return std::strcmp((const char*)s, lit) == 0; }
+
+// Case-insensitive "standin" substring test (data-only placeholder detection).
+static bool campIsStandin(const CString& s)
+{
+    const char* p = (const char*)s;
+    if (!p || !*p)
+        return false;
+    for (; *p; ++p)
+    {
+        const char* a = p;
+        const char* b = "standin";
+        while (*a && *b &&
+               (std::tolower((unsigned char)*a) == std::tolower((unsigned char)*b)))
+        {
+            ++a;
+            ++b;
+        }
+        if (!*b)
+            return true;
+    }
+    return false;
+}
+
+// Total missions across every operation (data-only aggregation).
+static unsigned long campTotalMissions(const CCampaignData& camp)
+{
+    unsigned long total = 0;
+    for (CGroupList::EConstIterator git = camp.m_GroupList.Begin(); !git.IsDone(); git++)
+        total += (*git).m_MissionList.Count();
+    return total;
+}
 
 // ---------------------------------------------------------------------------
 // Panel
@@ -93,12 +133,15 @@ void CampaignSummaryPanel::Draw()
     if (!s_open)
         return;
 
-    ImGui::SetNextWindowSize(ImVec2(460.f, 520.f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(480.f, 560.f), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Campaign Overview", &s_open))
     {
         ImGui::End();
         return;
     }
+
+    const ImVec4 kWarnCol(1.0f, 0.78f, 0.20f, 1.0f);
+    const ImVec4 kInfoCol(0.55f, 0.78f, 1.0f, 1.0f);
 
     ImGui::TextDisabled("Read-only campaign overview. Edit via the legacy Campaign dialog.");
     ImGui::Separator();
@@ -131,41 +174,118 @@ void CampaignSummaryPanel::Draw()
 
     if (!s_loaded)
     {
-        ImGui::TextDisabled("No campaign loaded. Use the button above.");
+        ImGui::TextDisabled("Load a campaign .fit to view its overview.");
         ImGui::End();
         return;
     }
 
-    // -- Campaign header ----------------------------------------------------
+    const unsigned long opCount      = s_campaign.m_GroupList.Count();
+    const unsigned long totalMissions = campTotalMissions(s_campaign);
+
+    // -- Campaign summary block (designer labels) ---------------------------
+    ImGui::TextColored(kInfoCol, "CAMPAIGN SUMMARY");
     if (s_campaign.m_NameUseResourceString)
-        ImGui::Text("Campaign: (resource string #%d)", s_campaign.m_NameResourceStringID);
+        ImGui::Text("Campaign Title: (resource string #%d)", s_campaign.m_NameResourceStringID);
     else
-        ImGui::Text("Campaign: %s",
+        ImGui::Text("Campaign Title: %s",
                     campEmpty(s_campaign.m_Name) ? "(unnamed)" : campStr(s_campaign.m_Name));
     ImGui::Text("Starting C-Bills: %d", s_campaign.m_CBills);
-    ImGui::Text("Final video: %s",
+    ImGui::Text("Structure: %lu Operations, %lu Missions total", opCount, totalMissions);
+    ImGui::Text("Finale: %s",
                 campEmpty(s_campaign.m_FinalVideo) ? "(none)" : campStr(s_campaign.m_FinalVideo));
-
-    const unsigned long opCount = s_campaign.m_GroupList.Count();
-    ImGui::Text("Operations: %lu", opCount);
-
-    // Campaign-level validation.
-    if (opCount == 0)
-        campWarn("Campaign has 0 operations.");
 
     ImGui::Separator();
 
-    // -- Operations ---------------------------------------------------------
-    int opIndex = 0;
-    for (CGroupList::EIterator git = s_campaign.m_GroupList.Begin(); !git.IsDone(); git++, ++opIndex)
+    // -- Aggregated warnings roll-up ----------------------------------------
+    // Collected campaign-level + per-operation; data-only, cheap. Mirrors the
+    // inline per-op badges below so a designer can triage the whole campaign
+    // from the top of the panel.
+    ImGui::TextColored(kInfoCol, "WARNINGS");
     {
-        CGroupData& grp = *git;
+        int warnCount = 0;
+
+        if (opCount == 0)
+        {
+            campWarn("Campaign has no operations.");
+            ++warnCount;
+        }
+        if (campEmpty(s_campaign.m_FinalVideo))
+        {
+            campWarn("Final video missing.");
+            ++warnCount;
+        }
+
+        int opIdx = 0;
+        for (CGroupList::EConstIterator git = s_campaign.m_GroupList.Begin();
+             !git.IsDone(); git++, ++opIdx)
+        {
+            const CGroupData& grp = *git;
+            const unsigned long mc = grp.m_MissionList.Count();
+
+            if (mc == 0)
+            {
+                campWarn("Operation %d: no missions.", opIdx);
+                ++warnCount;
+            }
+            if ((unsigned long)grp.m_NumMissionsToComplete > mc)
+            {
+                campWarn("Operation %d: requires %d missions but only %lu exist.",
+                         opIdx, grp.m_NumMissionsToComplete, mc);
+                ++warnCount;
+            }
+            if (campEmpty(grp.m_Label))
+            {
+                campWarn("Operation %d: no label.", opIdx);
+                ++warnCount;
+            }
+            if (campIsStandin(grp.m_PreVideoFile))
+            {
+                campWarn("Operation %d: briefing video is a STANDIN placeholder.", opIdx);
+                ++warnCount;
+            }
+            if (campIsStandin(grp.m_VideoFile))
+            {
+                campWarn("Operation %d: operation/debrief video is a STANDIN placeholder.", opIdx);
+                ++warnCount;
+            }
+            for (CMissionList::EConstIterator mit = grp.m_MissionList.Begin();
+                 !mit.IsDone(); mit++)
+            {
+                if (campEmpty((*mit).m_MissionFile))
+                {
+                    campWarn("Operation %d: has a mission with an empty filename.", opIdx);
+                    ++warnCount;
+                    break;
+                }
+            }
+        }
+
+        if (warnCount == 0)
+            ImGui::TextDisabled("No warnings. Campaign data looks complete.");
+    }
+
+    ImGui::Separator();
+
+    // -- Operation cards ----------------------------------------------------
+    ImGui::TextColored(kInfoCol, "OPERATIONS");
+
+    int opIndex = 0;
+    for (CGroupList::EConstIterator git = s_campaign.m_GroupList.Begin();
+         !git.IsDone(); git++, ++opIndex)
+    {
+        const CGroupData& grp = *git;
         const unsigned long missionCount = grp.m_MissionList.Count();
+        const bool unnamed   = campEmpty(grp.m_Label);
+        const bool standinPre = campIsStandin(grp.m_PreVideoFile);
+        const bool standinVid = campIsStandin(grp.m_VideoFile);
+        const bool noMissions = (missionCount == 0);
+        const bool reqExceeds =
+            ((unsigned long)grp.m_NumMissionsToComplete > missionCount);
 
         char opHdr[160];
         std::snprintf(opHdr, sizeof(opHdr), "Operation %d: %s###op%d",
                       opIndex,
-                      campEmpty(grp.m_Label) ? "(no label)" : campStr(grp.m_Label),
+                      unnamed ? "Unnamed" : campStr(grp.m_Label),
                       opIndex);
 
         if (!ImGui::CollapsingHeader(opHdr, ImGuiTreeNodeFlags_DefaultOpen))
@@ -173,25 +293,48 @@ void CampaignSummaryPanel::Draw()
 
         ImGui::Indent();
 
-        // Progression, in plain English.
-        ImGui::Text("Complete %d of %lu missions to advance",
-                    grp.m_NumMissionsToComplete, missionCount);
-        if (missionCount > 0)
+        // Badge row (inline colored chips, data-only).
         {
-            if ((unsigned long)grp.m_NumMissionsToComplete == missionCount)
-                ImGui::TextDisabled("  (all required)");
-            else if ((unsigned long)grp.m_NumMissionsToComplete < missionCount)
-                ImGui::TextDisabled("  (may skip %lu)",
-                                    missionCount - (unsigned long)grp.m_NumMissionsToComplete);
+            char nofm[32];
+            std::snprintf(nofm, sizeof(nofm), "[%d of %lu]",
+                          grp.m_NumMissionsToComplete, missionCount);
+            campBadge(nofm, kInfoCol);
+            if (unnamed)     { ImGui::SameLine(); campBadge("[Unnamed]", kWarnCol); }
+            if (noMissions)  { ImGui::SameLine(); campBadge("[No missions]", kWarnCol); }
+            if (reqExceeds)  { ImGui::SameLine(); campBadge("[Requires>Exists]", kWarnCol); }
+            if (standinPre || standinVid)
+            {
+                ImGui::SameLine();
+                campBadge("[Stand-in video]", kWarnCol);
+            }
         }
 
-        ImGui::Text("Operation file: %s",
-                    campEmpty(grp.m_OperationFile) ? "(none)" : campStr(grp.m_OperationFile));
-        ImGui::Text("Briefing: %s",
+        // Progression, in plain English.
+        if (missionCount > 0 &&
+            (unsigned long)grp.m_NumMissionsToComplete >= missionCount)
+        {
+            ImGui::Text("All missions required (%lu of %lu)",
+                        missionCount, missionCount);
+        }
+        else if (missionCount > 0)
+        {
+            ImGui::Text("Complete %d of %lu missions to advance",
+                        grp.m_NumMissionsToComplete, missionCount);
+            ImGui::TextDisabled("Player may skip %lu",
+                                missionCount - (unsigned long)grp.m_NumMissionsToComplete);
+        }
+        else
+        {
+            ImGui::Text("Missions Required to Advance: %d", grp.m_NumMissionsToComplete);
+        }
+
+        ImGui::Text("Briefing Video: %s",
                     campEmpty(grp.m_PreVideoFile) ? "(none)" : campStr(grp.m_PreVideoFile));
-        ImGui::Text("Video: %s",
+        ImGui::Text("Operation/Debrief Video: %s",
                     campEmpty(grp.m_VideoFile) ? "(none)" : campStr(grp.m_VideoFile));
-        ImGui::Text("Music tune: %d", grp.m_TuneNumber);
+        ImGui::Text("Operation File: %s",
+                    campEmpty(grp.m_OperationFile) ? "(none)" : campStr(grp.m_OperationFile));
+        ImGui::Text("Music Track: %d", grp.m_TuneNumber);
 
         // Missions.
         if (missionCount == 0)
@@ -201,32 +344,12 @@ void CampaignSummaryPanel::Draw()
         else
         {
             ImGui::Text("Missions:");
-            for (CMissionList::EIterator mit = grp.m_MissionList.Begin(); !mit.IsDone(); mit++)
+            for (CMissionList::EConstIterator mit = grp.m_MissionList.Begin();
+                 !mit.IsDone(); mit++)
             {
-                CMissionData& m = *mit;
+                const CMissionData& m = *mit;
                 ImGui::BulletText("%s",
                     campEmpty(m.m_MissionFile) ? "(empty filename)" : campStr(m.m_MissionFile));
-            }
-        }
-
-        // Per-operation validation badges (data-only, cheap).
-        if (missionCount == 0)
-            campWarn("Operation has 0 missions.");
-        if ((unsigned long)grp.m_NumMissionsToComplete > missionCount)
-            campWarn("NumMissionsToComplete (%d) exceeds mission count (%lu).",
-                     grp.m_NumMissionsToComplete, missionCount);
-        if (campEmpty(grp.m_Label))
-            campWarn("Operation label is empty.");
-        if (campIs(grp.m_VideoFile, "STANDIN"))
-            campWarn("Video is a STANDIN placeholder.");
-        if (campIs(grp.m_PreVideoFile, "STANDIN"))
-            campWarn("Briefing video is a STANDIN placeholder.");
-        for (CMissionList::EIterator mit = grp.m_MissionList.Begin(); !mit.IsDone(); mit++)
-        {
-            if (campEmpty((*mit).m_MissionFile))
-            {
-                campWarn("An operation mission has an empty filename.");
-                break;
             }
         }
 
