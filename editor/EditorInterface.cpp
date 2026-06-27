@@ -1634,7 +1634,16 @@ void EditorInterface::handleLeftButtonDown( int PosX, int PosY )
 			objectivesEditState.pendingPickPoint = false;
 			objectivesEditState.pendingPickResultReady = true;
 			ReleaseCapture();
-			Team( objectivesEditState.alignment );
+			// BUG A fix: do NOT call Team() here. This runs inside WM_LBUTTONDOWN
+			// dispatch while MFC still holds SetCapture(); re-entering a nested
+			// DoModal from mouse-down-with-capture loses the WM_LBUTTONUP and the
+			// click never reaches a clean state (user had to ESC 2-3 times). Arm a
+			// flag instead and let EditorInterface::update() -- a per-frame point
+			// with no modal/capture on the stack -- reopen the dialog chain via
+			// Team(), exactly like the Locate path. ObjectSelectOnlyMode stays true
+			// through the reopen; the re-opened dialog's consumer clears
+			// pendingPickResultReady. Covers both marker and area-center picks.
+			objectivesEditState.pendingPickReopen = true;
 		}
 		return;
 	}
@@ -2768,6 +2777,22 @@ void EditorInterface::update()
 	// Drain finished async editor tasks (terrain gen, etc.) and fire their
 	// main-thread result callbacks.  MUST run on the main thread; this is it.
 	EditorTaskRunner::PumpMainThread();
+
+	// BUG A fix -- deferred pick re-open. handleLeftButtonDown captured the picked
+	// world XY (marker or area-center) and armed pendingPickReopen instead of
+	// calling Team() under mouse capture. Reopen the objectives dialog chain HERE,
+	// the per-frame point with no modal/capture on the stack -- mirroring the
+	// pendingLocate consumer below. pendingPickResultReady stays set: the re-opened
+	// ObjectiveDlg/TargetAreaDlg OnInitDialog consumer reads and clears it (and the
+	// pendingPickTarget discriminator routes marker vs area). Do NOT clear
+	// pendingPickResultReady or leave ObjectSelectOnlyMode here. Distinct flag from
+	// pendingLocate, and this returns, so only one consumer fires per frame.
+	if ( objectivesEditState.pendingPickReopen )
+	{
+		objectivesEditState.pendingPickReopen = false;
+		Team( objectivesEditState.alignment );
+		return;
+	}
 
 	// Slice 3 -- Locate (PICKER-SELECT-POINT-RECON-1 section 6). The Objective
 	// dialog's "Locate" button armed pendingLocate and EndDialog'd to unwind the

@@ -724,6 +724,16 @@ public:
 	float pendingPickX;
 	float pendingPickY;
 
+	/* Slice 2 fix (BUG A) -- defer the pick re-open to EditorInterface::update().
+	handleLeftButtonDown captures the click on mouse-DOWN while MFC still holds
+	SetCapture(); re-entering a nested DoModal from there (the old direct Team()
+	call) lost the WM_LBUTTONUP and forced the user to ESC several times. Mirror
+	the Locate pattern: handleLeftButtonDown only ARMS this flag (after capturing
+	the XY + ReleaseCapture), and update() -- the per-frame point with no modal/
+	capture on the stack -- reopens the dialog chain via Team(alignment). Covers
+	BOTH the marker pick and the area "Pick center" pick (shared capture block). */
+	bool  pendingPickReopen;
+
 	/* Slice 2 -- area "Pick center" map-picker (PICKER-SELECT-POINT-RECON-1).
 	The marker pick (Slice 1) and the area-center pick share pendingPickPoint/
 	pendingPickResultReady/pendingPickX/Y (only one pick is in flight at a time),
@@ -778,6 +788,7 @@ public:
 		pendingPickResultReady = false;
 		pendingPickX = 0.0f;
 		pendingPickY = 0.0f;
+		pendingPickReopen = false;
 		pendingPickTarget = PICK_NONE;
 		pendingLocate = false;
 		pendingLocateX = 0.0f;

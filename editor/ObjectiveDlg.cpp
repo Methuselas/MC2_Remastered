@@ -442,6 +442,14 @@ void ObjectiveDlg::LoadDialogValues() {
 	m_ResetStatusFlagIDEdit = m_ModifiedObjective.ResetStatusFlagID().Data();
 
 	syncConditionsListWithListBox((&m_ModifiedObjective), (&m_List));
+	// BUG B fix: pre-select the first success condition so "Locate" (which acts on
+	// the success list selection, m_List) has a target. LoadDialogValues never
+	// SetCurSel'd the list, so a lone/first condition left GetCurSel()==LB_ERR and
+	// Locate silently no-op'd. Only default when the list has items and nothing is
+	// already selected. Locate serves the success list only, so only m_List needs it.
+	if ((m_List.GetCount() > 0) && (LB_ERR == m_List.GetCurSel())) {
+		m_List.SetCurSel(0);
+	}
 	syncActionsListWithListBox(&(m_ModifiedObjective.m_actionList), (&m_ActionList));
 	syncConditionsListWithListBox(&(m_ModifiedObjective.m_failureConditionList), (&m_FailureConditionList));
 	syncActionsListWithListBox(&(m_ModifiedObjective.m_failureActionList), (&m_FailureActionList));
@@ -876,7 +884,10 @@ void ObjectiveDlg::OnObjectiveLocateConditionButton()
 	int nSelectionIndex = m_List.GetCurSel();
 	if ((LB_ERR == nSelectionIndex) || (0 > nSelectionIndex) ||
 	    (m_ModifiedObjective.Count() <= nSelectionIndex)) {
-		return;   // no selection -> no-op
+		// BUG B fix: no condition selected -> tell the user instead of silently
+		// doing nothing (the old no-op made Locate look broken).
+		AfxMessageBox(_T("Select a condition first, then Locate."));
+		return;
 	}
 	CObjective::condition_list_type::EConstIterator it = m_ModifiedObjective.Begin();
 	for (int i = 0; i < nSelectionIndex && !it.IsDone(); ++i) it++;
@@ -923,8 +934,10 @@ void ObjectiveDlg::OnObjectiveLocateConditionButton()
 	}
 
 	if (!haveTarget) {
-		// Non-locatable condition species -> quiet no-op (per spec).
-		MessageBeep(MB_OK);
+		// BUG B fix: this condition species has no map location (only specific-unit
+		// / specific-structure conditions are locatable). Say so instead of a bare
+		// beep, which gave the user no idea why nothing happened.
+		AfxMessageBox(_T("This condition type has no map location to locate."));
 		return;
 	}
 
