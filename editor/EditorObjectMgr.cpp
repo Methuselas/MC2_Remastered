@@ -1152,6 +1152,53 @@ EditorObject* EditorObjectMgr::addBuilding( const Stuff::Vector3D& position, uns
 	if ( scale != 1.0 )
 		info->appearance()->scale( scale );
 
+	// META-FIX (editor UI hardening): addBuilding is the single creation
+	// primitive every place/paste/load path routes through, yet it historically
+	// never registered the new prop. A freshly-placed building/tree was left
+	// unregistered -> never entered the GPU static-prop recipe -> drew neither
+	// body nor static shadow (the draw-time recovery in BldgAppearance::render
+	// does NOT self-heal placed props in the editor: [BLDG_DIAG] notreg pool
+	// never drains, while markVis==staticNow for the load-registered props that
+	// DO draw). The 8 sibling edit paths (paste EditorInterface.cpp:6310, undo
+	// Action.cpp:622, settings BuildingSettingsDlg.cpp:203, move
+	// SelectionBrush.cpp:271, ...) each call registerStatic() to compensate;
+	// fold it into the primitive so all paths are correct-by-construction.
+	// Scope matches registerStaticPropsForMissionLoad() (the proven load walk):
+	// everything in the `buildings` list (buildings / trees / nav markers).
+	// Units (GV_TYPE/MECH_TYPE, separate `units` list) are EXCLUDED --
+	// registerStatic() corrupts a Unit (see EditorInterface.cpp:6462).
+	// registerStatic() is idempotent (guards on staticReg.registered), so the
+	// sibling calls become harmless no-ops. Must run AFTER final position /
+	// rotation / scale above, since registerStatic bakes shapeToWorld from the
+	// current transform.
+	if ( info && info->appearance() && (type != GV_TYPE) && (type != MECH_TYPE) )
+	{
+		ObjectAppearance* a = info->appearance();
+		// META-FIX part 1 (registration): addBuilding is the single creation
+		// primitive every place/paste/load path routes through, yet historically
+		// never registered the new prop. registerStatic arms the GPU static-prop
+		// recipe (idempotent; sibling place/edit paths become no-ops). Scope ==
+		// registerStaticPropsForMissionLoad (buildings/trees/nav markers); units
+		// (separate list) excluded -- registerStatic corrupts a Unit (see
+		// EditorInterface.cpp:6462). Must run AFTER final position/rotation/scale.
+		a->registerStatic();
+
+		// META-FIX part 2 (the actual invisibility): registerStatic ARMS the H4
+		// light-bake latch (needsFullBakeNextFrame). The editor's render-loop
+		// drain pass (EDITOR-STATIC-PREWARM-1, ~line 1465) that clears it is
+		// ONE-SHOT -- s_prewarmDone latches true once the LOAD-time props are
+		// baked, and never runs again. So a building placed AFTER load keeps the
+		// latch armed forever -> IsStaticNow() stays false (bdactor.cpp:4147) ->
+		// the static color path (markVisible) skips it while the shadow pass
+		// still draws the registered recipe == "shadow but no body" (the reported
+		// symptom). Drain the latch immediately for the placed prop, exactly as
+		// the game does per-object in GameObjectManager::prewarmStaticPropLightBakes
+		// (code/objmgr.cpp:1648). Post-load the camera has lights so the bake
+		// succeeds; eye->update() ran above. If lights aren't up yet the latch
+		// stays armed and the one-shot render-loop pass still covers it.
+		if ( eye && eye->getNumLights() > 0 )
+			a->prewarmStaticLightBake( eye );
+	}
 
 	return info;
 }
@@ -1472,10 +1519,13 @@ void EditorObjectMgr::render()
 			!iter.IsDone(); iter++ )
 		{
 			currentFloatHelp = 0;
-			if (renderTrees || (!renderTrees && ((*iter)->appearance()->getAppearanceClass() != TREE_APPR_TYPE)))
+			const bool passTreeFilter =
+				renderTrees || (!renderTrees && ((*iter)->appearance()->getAppearanceClass() != TREE_APPR_TYPE));
+			if (passTreeFilter)
 			{
 				++bTreeFiltered;
-				if ( (*iter)->appearance()->recalcBounds() )
+				const bool rb = (*iter)->appearance()->recalcBounds();
+				if ( rb )
 				{
 					++bRecalcPassed;
 					if ( (*iter)->getDamage() )
@@ -2292,25 +2342,59 @@ void EditorObjectMgr::primeAllBuildingAppearanceTypes()
 			{
 				BldgAppearanceType* bat = static_cast<BldgAppearanceType*>(bldg.appearanceType);
 				for (int lod = 0; lod < MAX_LODS; ++lod)
+				{
 					EditorBridge::registerStaticPropShape(bat->bldgShape[lod]);
+					// EDITOR-RUNTIME-STATIC-TYPE-PRIME-1: register the RENDER shape too.
+					// BldgAppearance::registerStatic (bdactor.cpp) registers
+					// getBldgRenderShape(lod), and the static-prop draw replays that
+					// shape — it differs from stock bldgShape[lod] when a render
+					// override is present. Priming only bldgShape[] left such a type's
+					// render geometry unregistered, so a runtime placement after the
+					// one-shot finalizeGeometry() late-dropped to CPU-fallback and drew
+					// nothing. Idempotent for stock (getBldgRenderShape == bldgShape).
+					TG_TypeMultiShape* bRenderShape = bat->getBldgRenderShape(lod);
+					EditorBridge::registerStaticPropShape(bRenderShape);
+					// EDITOR-STATIC-TEXTURE-PREWARM-1: load the render-shape's
+					// textures from disk now so finalizeGeometry()'s
+					// getWidth(nodeIdx) probe sees a real width (else
+					// layerForPacket=-1 -> packet dropped -> invisible body).
+					// Mirrors the stock on-map per-instance loader; damage shapes
+					// are intentionally NOT prewarmed (they load at destruction).
+					if (bRenderShape)
+						Bldg_ForceRenderShapeTexturesResident(bRenderShape);
+				}
 				EditorBridge::registerStaticPropShape(bat->bldgDmgShape);
 				++nPrimed;
 			}
 			else
 			{
-				// TREED_TYPE — TreeAppearanceType; registration mirrors
-				// TreeAppearance::init (treeactor.cpp).  We only need the
-				// shape registered, not a full appearance instance.
-				// TreeAppearanceType stores its shape as treeShape[lod];
-				// cast and call registerMultiShape for each LOD.
-				// NOTE: if TreeAppearanceType layout changes, revisit this cast.
-				// For now use the same pattern as BldgAppearanceType (both derive
-				// from AppearanceType; shapes are TG_TypeMultiShape*).
-				// We skip trees here because the TreeAppearance::init already
-				// calls registerMultiShape unconditionally at placement time and
-				// tree types are typically present in the map (forests).
-				// Bridging the gap only for buildings is sufficient for the bug.
-				(void)0;
+				// TREED_TYPE — previously SKIPPED here on the assumption that
+				// TreeAppearance::init registers the shape at placement and tree
+				// types are always present in the map. That assumption FAILS for a
+				// tree type placed from the asset browser that is NOT on the loaded
+				// map: its registerMultiShape runs AFTER the one-shot
+				// finalizeGeometry() latch -> [GPUPROPS] late registerType ->
+				// CPU-fallback -> invisible body (shadow still draws). Prime the tree
+				// RENDER shapes here, before finalize, mirroring
+				// TreeAppearance::registerStatic (bdactor.cpp): the render shape per
+				// populated LOD (stock treeShape[] when no override) + the damage
+				// shape. registerStaticPropShape ignores NULL shapes.
+				TreeAppearanceType* tat = static_cast<TreeAppearanceType*>(bldg.appearanceType);
+				const int lodCount = (tat->treeRenderShapeLodCount > 0)
+				                       ? (int)tat->treeRenderShapeLodCount : MAX_LODS;
+				for (int lod = 0; lod < lodCount; ++lod)
+				{
+					EditorBridge::registerStaticPropShape(tat->treeShape[lod]);
+					TG_TypeMultiShape* tRenderShape = tat->getTreeRenderShape(lod);
+					EditorBridge::registerStaticPropShape(tRenderShape);
+					// EDITOR-STATIC-TEXTURE-PREWARM-1: same prewarm as buildings —
+					// force tree render-shape textures resident before finalize so
+					// the texture probe yields a valid width. Damage shape excluded.
+					if (tRenderShape)
+						Bldg_ForceRenderShapeTexturesResident(tRenderShape);
+				}
+				EditorBridge::registerStaticPropShape(tat->treeDmgShape);
+				++nPrimed;
 			}
 		}
 	}

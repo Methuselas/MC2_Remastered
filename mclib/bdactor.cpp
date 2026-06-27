@@ -738,6 +738,17 @@ static void LoadOverrideRenderShapeTextures(TG_TypeMultiShape* rs)
 		}
 	}
 }
+
+// EDITOR-STATIC-TEXTURE-PREWARM-1: public seam over LoadOverrideRenderShapeTextures.
+// Only the editor palette prime path calls this (see bdactor.h). Keeps the helper
+// static while letting the editor TU force a type render-shape's textures resident
+// before its one-shot finalizeGeometry() texture probe runs. NULL-guarded by the
+// helper itself (also guards mcTextureManager).
+void Bldg_ForceRenderShapeTexturesResident(TG_TypeMultiShape* rs)
+{
+	if (rs)
+		LoadOverrideRenderShapeTextures(rs);
+}
 //-----------------------------------------------------------------------------
 // class BldgAppearanceType
 void BldgAppearanceType::init (const char * fileName)
@@ -4002,6 +4013,34 @@ void BldgAppearance::registerStatic() {
 		if (seamProbe)
 			fprintf(stderr, "[SEAMPROBE] bldg buildRecipe HIT name=%s leaf=%d child=%p node=%s typeID=%u\n",
 				appearType->name, i, (void*)child, child->getNodeName(), inst.typeID), fflush(stderr);
+		// EDITOR-STATIC-RECIPE-FROM-TYPE-1: the recipe is built from the INSTANCE
+		// bldgShape (a CreateFrom copy, bdactor.cpp:1440). For a building placed at
+		// runtime in the editor, that copy's leaf child->myType registers AFTER the
+		// one-shot finalizeGeometry() latch -> it gets a typeID in s_typeIndex but
+		// its geometry is NOT in the immutable VBO (batcher_getTypeDrawInfo
+		// indexCount==0) -> the draw replays an empty type -> invisible body (shadow
+		// still draws from the correct worldCenter record). Re-point the recipe at the
+		// canonical TYPE render-shape leaf (getBldgRenderShape, primed by
+		// primeAllBuildingAppearanceTypes BEFORE finalize, so it carries real VBO
+		// geometry); the instance still supplies transform/light/flags. Editor-only:
+		// in-game the instance leaves register pre-finalize, so this is a no-op. Guard:
+		// only re-point when the canonical leaf resolves to a typeID that actually has
+		// finalized geometry, else leave inst.typeID untouched.
+		{
+			extern bool InEditor;   // mech3d.cpp
+			if (InEditor && appearType) {
+				TG_TypeMultiShape* typeRS = appearType->getBldgRenderShape(0);
+				if (typeRS && i < typeRS->GetNumShapes()) {
+					TG_TypeNodePtr typeLeaf = typeRS->GetTypeNode(i);
+					uint32_t canonId = 0, idxc = 0, fi = 0, ic = 0; int32_t bv = 0;
+					const bool gotId = typeLeaf && batcher_typeIdForTypeShape((const void*)typeLeaf, &canonId);
+					const bool gotGeo = gotId && batcher_getTypeDrawInfo(canonId, &idxc, &fi, &bv, &ic);
+					if (gotGeo && idxc > 0) {
+						inst.typeID = canonId;
+					}
+				}
+			}
+		}
 		batch.push_back(inst);
 		++diag_added;
 	}
@@ -6777,6 +6816,28 @@ void TreeAppearance::registerStatic() {
 			if (seamProbe)
 				fprintf(stderr, "[SEAMPROBE] tree buildRecipe HIT name=%s lod=%d leaf=%d child=%p node=%s typeID=%u\n",
 					appearType->name, lod, i, (void*)child, child->getNodeName(), inst.typeID), fflush(stderr);
+			// EDITOR-STATIC-RECIPE-FROM-TYPE-1 (mirror of BldgAppearance::registerStatic):
+			// re-point the recipe at the canonical primed TYPE leaf
+			// (getTreeRenderShape(lod), which carries finalized VBO geometry) instead of
+			// the CreateFrom instance copy's leaf, which late-registers after the editor
+			// finalize latch -> typeID with no geometry -> invisible. Editor-only no-op
+			// in-game. See the building site for full rationale.
+			{
+				extern bool InEditor;   // mech3d.cpp
+				if (InEditor && appearType) {
+					TG_TypeMultiShape* typeRS = appearType->getTreeRenderShape(lod);
+					if (typeRS && i < typeRS->GetNumShapes()) {
+						TG_TypeNodePtr typeLeaf = typeRS->GetTypeNode(i);
+						uint32_t canonId = 0, idxc = 0, fi = 0, ic = 0; int32_t bv = 0;
+						if (typeLeaf
+						    && batcher_typeIdForTypeShape((const void*)typeLeaf, &canonId)
+						    && batcher_getTypeDrawInfo(canonId, &idxc, &fi, &bv, &ic)
+						    && idxc > 0) {
+							inst.typeID = canonId;
+						}
+					}
+				}
+			}
 			batch.push_back(inst);
 			++t_diag_added;
 		}

@@ -766,5 +766,13 @@ class TreeAppearance : public ObjectAppearance
 
 //***************************************************************************
 
+// EDITOR-STATIC-TEXTURE-PREWARM-1: public seam over the static helper
+// LoadOverrideRenderShapeTextures (bdactor.cpp). The editor palette prime path
+// (EditorObjectMgr::primeAllBuildingAppearanceTypes) calls this to force every
+// placeable type's render-shape textures resident on disk BEFORE the one-shot
+// finalizeGeometry() probe, which reads mcTextureManager->getWidth(nodeIdx).
+// Without it the probe sees width 0 -> layerForPacket=-1 -> packet dropped ->
+// invisible body. The helper stays static; this wrapper is the only export.
+void Bldg_ForceRenderShapeTexturesResident(TG_TypeMultiShape* rs);
 
 #endif

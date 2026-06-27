@@ -384,6 +384,14 @@ private:
 // Returns 0 if geometry is not yet finalized.
 uint32_t batcher_getTypeCount();
 
+// [PLACE_TYPE_TEST] DIAG: query whether a leaf TG_TypeShape* is registered /
+// late-dropped in the batcher type table. See gos_static_prop_batcher.cpp.
+void batcher_queryTypeShape(const void* typeShape, int* outRegistered, int* outFailed);
+
+// EDITOR-STATIC-RECIPE-FROM-TYPE-1: resolve a leaf TG_TypeShape* to its finalized
+// typeID. Returns false if not registered. See gos_static_prop_batcher.cpp.
+bool batcher_typeIdForTypeShape(const void* typeShape, uint32_t* outTypeId);
+
 // Per-type geometry info for indirect draw command construction.
 // typeID:          index in [0, batcher_getTypeCount())
 // outIndexCount:   total index count across all packets for this type

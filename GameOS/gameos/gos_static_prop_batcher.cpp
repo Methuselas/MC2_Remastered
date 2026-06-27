@@ -3968,6 +3968,50 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             }
         } // end s_materialGpuEnabled (sidecar)
 
+        // MC2_EDITOR_STATIC_PRIME_DIAG=1 — compact aggregate DrawCmd census at
+        // finalize. Counts types that carry geometry vs types that ended up with
+        // a live DrawCmd vs types whose every packet was dropped at the
+        // texture-unavailable skip rule (no layer -> no DrawCmd -> invisible).
+        // Aggregate-only; bounded; behind the env gate.
+        static const bool s_editorStaticPrimeDiag =
+            (getenv("MC2_EDITOR_STATIC_PRIME_DIAG") != nullptr);
+        if (s_editorStaticPrimeDiag) {
+            // O(1) presence lookup: mark each globalPktIdx that made it into
+            // s_sortedPacketOrder. Built once before the type loop.
+            std::vector<char> inSorted(s_packets.size(), 0);
+            for (uint32_t s = 0; s < s_sortedPacketOrder.size(); ++s) {
+                const uint32_t gp = s_sortedPacketOrder[s];
+                if (gp < inSorted.size()) inSorted[gp] = 1;
+            }
+
+            uint32_t typesWithGeom = 0;
+            uint32_t typesWithDrawCmd = 0;
+            uint32_t typesDroppedNoLayer = 0;
+            for (uint32_t typeID = 0; typeID < s_types.size(); ++typeID) {
+                const auto& type = s_types[typeID];
+                if (type.packetCount == 0u) continue;
+                ++typesWithGeom;
+
+                int hasDrawCmd = 0;
+                for (uint32_t pIdx = 0; pIdx < type.packetCount; ++pIdx) {
+                    const uint32_t globalPktIdx = type.firstPacket + pIdx;
+                    if (globalPktIdx < inSorted.size() && inSorted[globalPktIdx]) {
+                        hasDrawCmd = 1;
+                        break;
+                    }
+                }
+
+                if (hasDrawCmd) ++typesWithDrawCmd;
+                else            ++typesDroppedNoLayer;
+            }
+            std::fprintf(stderr,
+                "[EDITOR_STATIC_PRIME] typesWithGeom=%u typesWithDrawCmd=%u "
+                "typesDroppedNoLayer=%u alphaOffCmd=%u alphaOnCmd=%u\n",
+                typesWithGeom, typesWithDrawCmd, typesDroppedNoLayer,
+                s_alphaOffCmdCount, s_alphaOnCmdCount);
+            std::fflush(stderr);
+        }
+
         std::vector<PerDrawEntry> entries(s_sortedPacketOrder.size());
         std::vector<uint32_t> cmdToBucket(s_sortedPacketOrder.size());
         for (uint32_t i = 0; i < s_sortedPacketOrder.size(); ++i) {
@@ -8199,6 +8243,31 @@ bool GpuStaticPropBatcher::buildRecipeFromShape(
 
 uint32_t batcher_getTypeCount() {
     return static_cast<uint32_t>(s_types.size());
+}
+
+// [PLACE_TYPE_TEST] DIAG: is this leaf TG_TypeShape* registered (in the finalized
+// VBO via s_typeIndex), and/or did it hit the late-register drop (s_failedTypes)?
+// Lets the placement site report whether the EXACT shape it draws was primed.
+// EDITOR-STATIC-RECIPE-FROM-TYPE-1: resolve a leaf TG_TypeShape* to its typeID
+// in the finalized type table. Lets the editor re-point a runtime placement's
+// recipe at the canonical (primed, geometry-bearing) TYPE leaf instead of the
+// post-finalize CreateFrom instance copy. Returns false if not registered.
+bool batcher_typeIdForTypeShape(const void* typeShape, uint32_t* outTypeId) {
+    const TG_TypeShape* ts = static_cast<const TG_TypeShape*>(typeShape);
+    if (!ts) return false;
+    auto it = s_typeIndex.find(ts);
+    if (it == s_typeIndex.end()) return false;
+    if (outTypeId) *outTypeId = it->second;
+    return true;
+}
+
+void batcher_queryTypeShape(const void* typeShape, int* outRegistered, int* outFailed) {
+    const TG_TypeShape* ts = static_cast<const TG_TypeShape*>(typeShape);
+    if (outRegistered) *outRegistered = (ts && s_typeIndex.count(ts)) ? 1 : 0;
+    if (outFailed) {
+        auto it = ts ? s_failedTypes.find(ts) : s_failedTypes.end();
+        *outFailed = (it != s_failedTypes.end() && it->second) ? 1 : 0;
+    }
 }
 
 

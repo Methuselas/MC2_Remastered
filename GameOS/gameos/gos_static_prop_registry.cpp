@@ -1159,7 +1159,6 @@ void flush() {
              rootMtx[11],  // raw.y =  stuff.z
              rootMtx[7],   // raw.z =  stuff.y (elev)
         };
-
         // [SEAMPROBE] stage 9 (override branch): per-recipe flush-emit census
         // keyed to override typeIDs (hangar=33, tc1_1=41/42/43). Proves whether
         // the override recipe reaches the substrate emit loop each frame
