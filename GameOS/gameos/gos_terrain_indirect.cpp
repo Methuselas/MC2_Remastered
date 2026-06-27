@@ -4382,6 +4382,20 @@ void BuildDecalStaticVBO() {
             const DWORD overlayHandle = e->overlayHandle;
             if (overlayHandle == 0xffffffffu) continue;
 
+            // CONCRETE-EDGE-DIAGONAL-MASK-1 (Slice 2): cement-transition (clean
+            // diagonal) edges are now drawn analytically in the lit terrain frag
+            // (terrain_lod_chunk.frag transition branch), so skip emitting them
+            // here to avoid a double-draw / seam under the old warm-darkened art.
+            // Gate ONLY on isCement && isAlpha (the exact transition predicate,
+            // mapdata.cpp:280-302) — NOT on overlayHandle alone (the 9964d5a->
+            // 4dd2c89 road-kill regression class). Roads/runways are isAlpha but
+            // NOT isCement and never set overlayHandle, so they are untouched;
+            // SOLID/decayed cement is isCement but NOT isAlpha (no overlayHandle)
+            // and likewise unaffected. Default-on; flip the constant to revert.
+            static constexpr bool kSkipCementTransitionDecals = true;
+            if (kSkipCementTransitionDecals && e->isCement() && e->isAlpha())
+                continue;
+
             const DWORD overlayTexId = tex_resolve(overlayHandle);
             if (overlayTexId == 0) continue;
 
