@@ -35,8 +35,43 @@ from terrain_gen.pak_exporter import PakExporter                                
 from terrain_gen.terrain_gen import _write_fit                                       # noqa: E402
 
 
+def _read_image_height(height_file: Path):
+    """Decode a heightmap stored as an IMAGE (EXR/PNG/TIFF — Gaea or Blender export)
+    rather than a raw .r32. Returns (height[H,W] float64, color[H,W,3] or None) or
+    None if PIL cannot open it (caller falls back to raw .r32 parsing). Greyscale ->
+    height; RGB/RGBA -> luminance height + RGB colormap placeholder. 16-bit PNG and
+    32-bit float EXR/TIFF are read at full precision; res is inferred from the image."""
+    try:
+        img = Image.open(height_file)
+    except Exception:
+        return None
+    arr = np.asarray(img).astype(np.float64)
+    color = None
+    if arr.ndim == 3:
+        rgb = arr[..., :3]
+        h = rgb @ np.array([0.299, 0.587, 0.114])
+        # only treat as a colormap if it carries real chroma (not a grey-packed height)
+        if np.ptp(rgb, axis=2).max() > 1e-6:
+            cmax = rgb.max() if rgb.max() > 0 else 1.0
+            color = np.clip(rgb / cmax, 0, 1)
+    else:
+        h = arr
+    return h, color
+
+
 def read_gaea(height_file: Path, res: int):
-    """Return (height01[res,res], color01[res,res,3] or None, source_label)."""
+    """Return (height01[res,res], color01[res,res,3] or None, source_label).
+
+    Accepts EITHER a raw single-/three-channel float .r32 (Gaea raw export; --res
+    must match) OR an image heightfield (EXR/PNG/TIFF — Gaea OR Blender export), in
+    which case the resolution is taken from the image and --res is ignored."""
+    if height_file.suffix.lower() in (".exr", ".png", ".tif", ".tiff", ".jpg", ".jpeg"):
+        img = _read_image_height(height_file)
+        if img is not None:
+            h, color = img
+            label = "image heightfield (%dx%d %s)" % (h.shape[1], h.shape[0],
+                                                       height_file.suffix.lower())
+            return h.astype(np.float64), color, label
     raw = np.fromfile(height_file, dtype="<f4")
     if raw.size == res * res:
         h = raw.reshape(res, res).astype(np.float64)
@@ -117,18 +152,34 @@ def run(cfg: dict, out_root: Path) -> dict:
 
     masks = MaterialClassifier().classify(coarse.astype(np.float32), recipe)
 
-    out = out_root / name
+    # By default each import gets its own <out_root>/<name>/ subdir (Gaea CLI flow).
+    # flat_out=True writes the artifacts DIRECTLY into out_root with no <name> subdir
+    # — this is what the editor "Import from..." button uses so the files land at
+    # terrain_gen_out/<name>.elev.r32 etc., exactly where the editor apply path reads.
+    out = out_root if cfg.get("flat_out") else out_root / name
     out.mkdir(parents=True, exist_ok=True)
     exp = PakExporter()
-    pkt0 = exp.build_packet0(coarse.astype(np.float32), masks, recipe)
-    # Clean map by default: empty the template's terrain-objects packet so the gaea
-    # terrain doesn't inherit the template's buildings/links (patch_pak would).
-    write_clean_pak(cfg["template_pak"], out / f"{name}.pak", pkt0,
-                    clear_objects=not cfg.get("keep_objects", False))
 
+    # The .pak + .fit are only emitted when a stock template .pak is supplied
+    # (build_packet0 produces the terrain packet, but write_clean_pak PATCHES a
+    # template). Without a template (e.g. the editor "Import from..." button) we
+    # still emit everything the editor apply path consumes — .elev.r32,
+    # .burnin.tga, .preview.png — but SKIP the .pak/.fit step.
+    have_template = bool(cfg.get("template_pak"))
+    if have_template:
+        pkt0 = exp.build_packet0(coarse.astype(np.float32), masks, recipe)
+        # Clean map by default: empty the template's terrain-objects packet so the gaea
+        # terrain doesn't inherit the template's buildings/links (patch_pak would).
+        write_clean_pak(cfg["template_pak"], out / f"{name}.pak", pkt0,
+                        clear_objects=not cfg.get("keep_objects", False))
+
+    # .elev.r32 grid is size x size (= recipe.size). The editor reads it as
+    # MapSizeToVertexSide(mapSizeIndex), so the dialog MUST pass
+    # --size = the vertex-side for the selected map size (cellSide + 1).
     elev = (coarse * recipe.height.max_elevation + recipe.height.min_elevation).astype("<f4")
     elev.tofile(str(out / f"{name}.elev.r32"))
-    _write_fit(out / f"{name}.fit", f"{name}.burnin", recipe)
+    if have_template:
+        _write_fit(out / f"{name}.fit", f"{name}.burnin", recipe)
 
     # colormap (burnin): use the Gaea color directly if present, else hillshade of height.
     burnin_res = recipe.burnin_resolution()
@@ -148,15 +199,18 @@ def run(cfg: dict, out_root: Path) -> dict:
     pg = (_resize01(hn, 256) * 255).astype(np.uint8)
     Image.fromarray(np.stack([pg, pg, pg], -1), "RGB").save(str(out / f"{name}.preview.png"))
 
+    outputs = [f"{name}.elev.r32", f"{name}.burnin.tga",
+               f"{name}.visual_height.r32", f"{name}.preview.png"]
+    if have_template:
+        outputs = [f"{name}.pak", f"{name}.fit"] + outputs
     rep = {
         "name": name, "height_source": src, "colormap_source": cmap_src,
-        "gaea_res": res, "mc2_grid": size, "template_pak": cfg["template_pak"],
+        "gaea_res": res, "mc2_grid": size, "template_pak": cfg.get("template_pak"),
         "elevation_wu": {"min": recipe.height.min_elevation, "max": recipe.height.max_elevation},
         "water_level_norm": water_level,
         "water_elevation_wu": water_level * recipe.height.max_elevation + recipe.height.min_elevation,
         "flip_y": cfg.get("flip_y", True),
-        "outputs": [f"{name}.pak", f"{name}.elev.r32", f"{name}.fit",
-                    f"{name}.burnin.tga", f"{name}.visual_height.r32", f"{name}.preview.png"],
+        "outputs": outputs,
         "out_dir": str(out),
     }
     (out / f"{name}.import_report.json").write_text(json.dumps(rep, indent=2), encoding="utf-8")
@@ -177,17 +231,24 @@ def main() -> int:
     ap.add_argument("--no-flip", action="store_true")
     ap.add_argument("--keep-objects", action="store_true")
     ap.add_argument("--out", default="tests/terrain/gaea")
+    ap.add_argument("--flat-out", action="store_true",
+                    help="write artifacts directly into --out (no <name>/ subdir); "
+                         "used by the editor 'Import from...' button")
     a = ap.parse_args()
 
     if a.recipe:
         cfg = json.loads(Path(a.recipe).read_text())
     else:
-        if not (a.height_file and a.template_pak):
-            ap.error("need --recipe OR (--height-file and --template-pak)")
+        # Only --height-file is mandatory. --template-pak is OPTIONAL: when given,
+        # a .pak/.fit are patched from the template; when absent (the editor
+        # "Import from..." path) only the heightfield/colormap/preview are emitted.
+        if not a.height_file:
+            ap.error("need --recipe OR --height-file (--template-pak is optional)")
         cfg = {"name": a.name, "height_file": a.height_file, "color_file": a.color_file,
                "height_resolution": a.res, "size": a.size, "template_pak": a.template_pak,
                "biome": a.biome, "flip_y": not a.no_flip, "water_percentile": a.water_pct,
-               "height": {"min_elevation": a.min_elev, "max_elevation": a.max_elev}, "keep_objects": a.keep_objects}
+               "height": {"min_elevation": a.min_elev, "max_elevation": a.max_elev},
+               "keep_objects": a.keep_objects, "flat_out": a.flat_out}
     rep = run(cfg, Path(a.out))
     print(f"[gaea-import] {rep['name']}: src={rep['height_source']} "
           f"gaea{rep['gaea_res']}->mc2 {rep['mc2_grid']}^2  water={rep['water_elevation_wu']:.0f}wu "

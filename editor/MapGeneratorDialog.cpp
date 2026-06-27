@@ -138,6 +138,12 @@ struct DialogState {
     int  biomeIndex      = 0;    // Temperate Forest default
     int  mapSizeIndex    = 3;    // 120x120 default
 
+    // "Import from..." heightfield (Gaea / Blender / EXR). When importHeightPath is
+    // set, the Import button runs import_gaea_height.py to write terrain_gen_out/genmap.*
+    // and applies via the same path as Generate. importColorPath is optional.
+    char importHeightPath[1024] = "";
+    char importColorPath[1024]  = "";
+
     float maxElevation   = 600.f;
     float minElevation   = 0.f;
     float meanHeight     = 0.5f; // 0..1 slider: controls elevation baseline
@@ -325,6 +331,31 @@ static std::string BuildTerrainGenCmd(bool preview) {
     return std::string(cmd);
 }
 
+// Open a Win32 file picker and copy the chosen path into dst (size dstLen).
+// Returns true if the user picked a file. Mirrors the GetOpenFileName idiom the
+// MFC editor TUs use (CFileDialog wraps this same call). The owner is the active
+// window so the dialog is parented correctly over the editor.
+static bool BrowseForFile(const char* filter, char* dst, size_t dstLen) {
+    char path[1024] = "";
+    if (dst && dst[0]) {
+        strncpy(path, dst, sizeof(path) - 1);
+        path[sizeof(path) - 1] = '\0';
+    }
+    OPENFILENAMEA ofn;
+    memset(&ofn, 0, sizeof(ofn));
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner   = ::GetActiveWindow();
+    ofn.lpstrFilter = filter;
+    ofn.lpstrFile   = path;
+    ofn.nMaxFile    = sizeof(path);
+    ofn.Flags       = OFN_FILEMUSTEXIST | OFN_HIDEREADONLY | OFN_NOCHANGEDIR;
+    if (!GetOpenFileNameA(&ofn))
+        return false;
+    strncpy(dst, path, dstLen - 1);
+    dst[dstLen - 1] = '\0';
+    return true;
+}
+
 // Free the existing preview texture (if any).
 static void FreePreviewTexture() {
     if (s_state.previewTexID) {
@@ -421,6 +452,58 @@ void MapGeneratorDialog::Draw() {
     }
     // Text scales via the global io.FontGlobalScale (set once for all panels); no
     // per-window font scale here (that double-applied DPI -- see sc above).
+
+    // --- Import from heightfield (prominent, above the procedural controls) ---
+    // Bring an external heightmap (Gaea OR Blender export -- both emit EXR/PNG
+    // heightfields) in as the editor terrain. Runs import_gaea_height.py, then
+    // applies via the SAME path as Generate (genmap.* -> ApplyPendingGenerate).
+    {
+        const bool taskBusyTop = EditorTaskRunner::HasActiveTasks();
+        if (ImGui::CollapsingHeader("Import from heightfield (Gaea / Blender / EXR)",
+                                    ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Indent();
+
+            ImGui::Text("Height file");
+            ImGui::SetNextItemWidth(330.f * sc);
+            ImGui::InputText("##importHeight", s_state.importHeightPath,
+                             sizeof(s_state.importHeightPath),
+                             ImGuiInputTextFlags_ReadOnly);
+            ImGui::SameLine();
+            if (ImGui::Button("Browse...##height", ImVec2(90.f * sc, 0))) {
+                BrowseForFile(
+                    "Heightfields (*.exr;*.png;*.tif;*.tiff;*.r16;*.r32)\0"
+                    "*.exr;*.png;*.tif;*.tiff;*.r16;*.r32\0"
+                    "All files\0*.*\0",
+                    s_state.importHeightPath, sizeof(s_state.importHeightPath));
+            }
+
+            ImGui::Text("Color file (optional)");
+            ImGui::SetNextItemWidth(330.f * sc);
+            ImGui::InputText("##importColor", s_state.importColorPath,
+                             sizeof(s_state.importColorPath),
+                             ImGuiInputTextFlags_ReadOnly);
+            ImGui::SameLine();
+            if (ImGui::Button("Browse...##color", ImVec2(90.f * sc, 0))) {
+                BrowseForFile(
+                    "Images (*.png;*.exr;*.jpg;*.tga)\0*.png;*.exr;*.jpg;*.tga\0"
+                    "All files\0*.*\0",
+                    s_state.importColorPath, sizeof(s_state.importColorPath));
+            }
+
+            ImGui::TextDisabled("Uses the Size / Biome / Peak Height below.");
+
+            const bool canImport = !taskBusyTop && s_state.importHeightPath[0] != '\0';
+            if (!canImport) ImGui::BeginDisabled();
+            if (ImGui::Button("Import", ImVec2(-1.f, 0))) {
+                snprintf(s_state.statusMsg, sizeof(s_state.statusMsg), "Queuing import...");
+                s_state.pendingAction = PendingAction::Import;
+            }
+            if (!canImport) ImGui::EndDisabled();
+
+            ImGui::Unindent();
+        }
+        ImGui::Separator();
+    }
 
     // --- Biome ---
     ImGui::Text("Biome");
@@ -939,6 +1022,72 @@ void MapGeneratorDialog::ExecuteGenerate() {
     EditorTaskRunner::StartTask(spec);
     snprintf(s_state.statusMsg, sizeof(s_state.statusMsg),
         "Generating in background... (Task Monitor)");
+}
+
+// Import: run import_gaea_height.py on an external heightfield (Gaea / Blender /
+// EXR/PNG) to write terrain_gen_out/genmap.* (--flat-out, no template), then apply
+// to the editor on the MAIN thread via the SAME machinery as Generate
+// (s_pendingApply* -> GenerateReady() -> ApplyPendingGenerate()).
+void MapGeneratorDialog::ExecuteImport() {
+    if (EditorTaskRunner::HasActiveTasks()) {
+        snprintf(s_state.statusMsg, sizeof(s_state.statusMsg),
+            "A generation task is already running.");
+        return;
+    }
+    if (s_state.importHeightPath[0] == '\0') {
+        snprintf(s_state.statusMsg, sizeof(s_state.statusMsg),
+            "Import: choose a height file first.");
+        return;
+    }
+
+    // --size MUST be the vertex-side for the selected map size (cellSide + 1):
+    // the apply path (initTerrainFromTGA) reads genmap.elev.r32 as
+    // MapSizeToVertexSide(mapSizeIndex)^2. The importer writes its elev.r32 at
+    // exactly --size^2, so these must match.
+    const int sideN = EditorData::MapSizeToVertexSide(s_state.mapSizeIndex);
+
+    // --flat-out drops genmap.* directly in terrain_gen_out\ (no <name>/ subdir),
+    // exactly where EditorData::generateFromDialogParams reads them.
+    char cmd[2048];
+    int n = snprintf(cmd, sizeof(cmd),
+        "py -3 -u tools\\terrain_gen\\import_gaea_height.py "
+        "--height-file \"%s\" ",
+        s_state.importHeightPath);
+    if (s_state.importColorPath[0] != '\0') {
+        n += snprintf(cmd + n, sizeof(cmd) - n,
+            "--color-file \"%s\" ", s_state.importColorPath);
+    }
+    snprintf(cmd + n, sizeof(cmd) - n,
+        "--name genmap --out terrain_gen_out --flat-out "
+        "--size %d --biome %s --max-elev %.1f",
+        sideN, k_biomeKeys[s_state.biomeIndex], (double)s_state.maxElevation);
+
+    // Snapshot params NOW so later slider changes can't alter this run's apply
+    // (identical to ExecuteGenerate -- import applies via the same path).
+    s_pendingApplySizeIdx = s_state.mapSizeIndex;
+    s_pendingApplyBiome   = k_biomeKeys[s_state.biomeIndex];
+
+    EditorTaskRunner::TaskSpec spec;
+    spec.name        = "Import heightfield";
+    spec.commandLine = cmd;
+    spec.onSuccessMainThread = [](const EditorTaskRunner::TaskResult&) {
+        // Same as Generate: signal readiness; update() drives
+        // eye->reset() -> ApplyPendingGenerate() -> setPos. Also refresh the
+        // thumbnail from the genmap.preview.png the importer wrote.
+        LoadPreviewPNG();
+        s_generateReady = true;
+    };
+    spec.onFailureMainThread = [](const EditorTaskRunner::TaskResult& r) {
+        snprintf(s_state.statusMsg, sizeof(s_state.statusMsg),
+            "Import failed (exit %d). See Task Monitor log.", r.exitCode);
+    };
+    spec.onCancelMainThread = []() {
+        snprintf(s_state.statusMsg, sizeof(s_state.statusMsg),
+            "Import cancelled (map unchanged).");
+    };
+    EditorTaskRunner::StartTask(spec);
+    snprintf(s_state.statusMsg, sizeof(s_state.statusMsg),
+        "Importing heightfield in background... (Task Monitor)");
 }
 
 // Load a pre-baked flat preset produced by tools/terrain_gen/gen_presets.py.

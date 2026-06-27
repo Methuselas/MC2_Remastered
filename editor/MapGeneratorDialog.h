@@ -23,6 +23,7 @@ namespace MapGeneratorDialog {
         Preview,      // run python --preview, load thumbnail
         Generate,     // run python full, apply to editor, close dialog
         LoadPreset,   // copy pre-baked preset files then apply (no python run)
+        Import,       // run import_gaea_height.py on an external heightfield, apply
     };
 
     // Open (or re-open) the dialog.  Call from toolbar "Generate Map" button
@@ -48,6 +49,10 @@ namespace MapGeneratorDialog {
     // callback (drained by EditorTaskRunner::PumpMainThread()).
     void ExecutePreview();
     void ExecuteGenerate();
+    // Import an external heightfield (Gaea / Blender / EXR/PNG). Runs
+    // import_gaea_height.py to write terrain_gen_out/genmap.* then applies via the
+    // SAME s_pendingApply* / GenerateReady() / ApplyPendingGenerate() path as Generate.
+    void ExecuteImport();
     // Load a pre-baked flat preset (no Python run).
     // Checks terrain_gen_presets/<biome>_<sizeN>/ for pre-generated files.
     void ExecuteLoadPreset();

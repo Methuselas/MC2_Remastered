@@ -2763,6 +2763,13 @@ void EditorInterface::update()
 			// once the subprocess succeeds (see below).
 			MapGeneratorDialog::ExecuteGenerate();
 		}
+		else if (act == MapGeneratorDialog::PendingAction::Import)
+		{
+			// Import an external heightfield (Gaea / Blender / EXR). Async, and
+			// applies via the SAME deferred path as Generate (GenerateReady() ->
+			// ApplyPendingGenerate()), so no separate apply needed here.
+			MapGeneratorDialog::ExecuteImport();
+		}
 		else if (act == MapGeneratorDialog::PendingAction::LoadPreset)
 		{
 			// Load pre-baked flat preset: same camera/UI setup as Generate.
