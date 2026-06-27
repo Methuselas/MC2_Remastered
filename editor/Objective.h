@@ -739,6 +739,24 @@ public:
 	};
 	pick_target_type pendingPickTarget;
 
+	/* Slice 3 -- Locate (PICKER-SELECT-POINT-RECON-1 section 6). Distinct from the
+	pick fields above: Locate is a read-only "center camera on + select the target
+	of the selected condition" operation, NOT a map pick. The ObjectiveDlg "Locate"
+	handler extracts the target world XY (and, when safe, the live EditorObject*)
+	from the selected specific-unit / specific-structure condition, sets pendingLocate
+	plus the coords/obj, enters ObjectSelectOnlyMode, and EndDialog(IDOK) to unwind
+	the modal stack. EditorInterface::update() (the per-frame main-thread tick that
+	runs once the modal stack is gone -- NO map click required) consumes pendingLocate:
+	unselectAll + (guarded) select(*pendingLocateObj) + eye->setPosition(XY), then
+	clears the flag, leaves ObjectSelectOnlyMode, and reopens the objectives dialog
+	chain via Team(alignment). pendingLocateObj may be null (stale/deleted target or
+	missing appearance) -> the camera still centers on pendingLocateX/Y and the
+	select() is skipped. */
+	bool          pendingLocate;
+	float         pendingLocateX;
+	float         pendingLocateY;
+	EditorObject *pendingLocateObj;
+
 	CObjectivesEditState() {
 		Clear();
 	}
@@ -761,6 +779,10 @@ public:
 		pendingPickX = 0.0f;
 		pendingPickY = 0.0f;
 		pendingPickTarget = PICK_NONE;
+		pendingLocate = false;
+		pendingLocateX = 0.0f;
+		pendingLocateY = 0.0f;
+		pendingLocateObj = 0;
 	}
 };
 //*************************************************************************************************

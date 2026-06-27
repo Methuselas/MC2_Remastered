@@ -423,6 +423,7 @@
 #define ID_CA_SAVE_BUTTON               2032
 #define IDC_OBJECTIVE_PICK_MARKER_BUTTON 2033
 #define IDC_TARGET_AREA_PICK_CENTER_BUTTON 2034
+#define IDC_OBJECTIVE_LOCATE_CONDITION_BUTTON 2035
 #define IDS_SELECT_SLOPES               40001
 #define ID_FOG                          40002
 #define ID_FILE_SAVEAS                  40003
@@ -594,7 +595,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        165
 #define _APS_NEXT_COMMAND_VALUE         40144
-#define _APS_NEXT_CONTROL_VALUE         1226
+#define _APS_NEXT_CONTROL_VALUE         2036
 #define _APS_NEXT_SYMED_VALUE           102
 #endif
 #endif

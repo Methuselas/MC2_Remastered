@@ -129,6 +129,7 @@ BEGIN_MESSAGE_MAP(ObjectiveDlg, CDialog)
 	ON_BN_CLICKED(IDC_OBJECTIVE_CLEAR_LOGISTICS_MODEL_BUTTON, OnObjectiveClearLogisticsModelButton)
 	//}}AFX_MSG_MAP
 	ON_BN_CLICKED(IDC_OBJECTIVE_PICK_MARKER_BUTTON, OnObjectivePickMarkerButton)
+	ON_BN_CLICKED(IDC_OBJECTIVE_LOCATE_CONDITION_BUTTON, OnObjectiveLocateConditionButton)
 END_MESSAGE_MAP()
 
 /////////////////////////////////////////////////////////////////////////////
@@ -838,6 +839,112 @@ void ObjectiveDlg::OnObjectivePickMarkerButton()
 
 	// Put the editor into selection mode and the objective-select-only handoff
 	// mode, exactly like the unit/building pickers, so the re-open machinery fires.
+	pEditor->SelectionMode();
+	pEditor->ObjectSelectOnlyMode(true);
+
+	EndDialog(IDOK);
+}
+
+// Slice 3 -- Locate (PICKER-SELECT-POINT-RECON-1 section 6). Center the editor
+// camera on the selected SUCCESS condition's target and (when safe) select it.
+// Locatable conditions are the specific-unit and specific-structure species;
+// every other species (area / flag / time / all / number / group) is a no-op.
+//
+// The camera move + select cannot happen inside this modal handler (the editor
+// render loop is frozen until the dialog returns). We follow the same B-pattern
+// handoff as the marker pick: stash the target into objectivesEditState.pending-
+// Locate*, enter ObjectSelectOnlyMode, save the dialog state (so the chain can
+// re-open exactly like the marker pick), and EndDialog(IDOK). The actual
+// unselectAll / select / setPosition run later, with NO map click, in
+// EditorInterface::update() once the modal stack has unwound; it then reopens the
+// objectives dialog via Team(alignment) so the user lands back in the editor.
+//
+// Target extraction is fully guarded: the live EditorObject* (UnitPtr/BuildingPtr)
+// is a raw pointer that may dangle and whose appearance() may be null
+// (EditorObject::getPosition derefs appearance()->position unguarded). We only
+// carry the live ptr forward when it is non-null AND appearance() != null; the
+// camera target always falls back to the always-valid NotedX()/NotedY() floats.
+void ObjectiveDlg::OnObjectiveLocateConditionButton()
+{
+	EditorInterface *pEditor = EditorInterface::instance();
+	if (0 == pEditor) {
+		return;
+	}
+
+	// Resolve the selected SUCCESS condition by advancing the iterator to the
+	// listbox selection index (same safe pattern as OnObjectiveViewConditionButton).
+	int nSelectionIndex = m_List.GetCurSel();
+	if ((LB_ERR == nSelectionIndex) || (0 > nSelectionIndex) ||
+	    (m_ModifiedObjective.Count() <= nSelectionIndex)) {
+		return;   // no selection -> no-op
+	}
+	CObjective::condition_list_type::EConstIterator it = m_ModifiedObjective.Begin();
+	for (int i = 0; i < nSelectionIndex && !it.IsDone(); ++i) it++;
+	if (it.IsDone()) {
+		return;
+	}
+	CObjectiveCondition *pCond = *it;
+	if (0 == pCond) {
+		return;
+	}
+
+	// Extract target XY + (guarded) live object ptr. Default: not locatable.
+	bool          haveTarget = false;
+	float         locX = 0.0f, locY = 0.0f;
+	EditorObject *pLocObj = 0;
+
+	if (CSpecificUnitObjectiveCondition *pU =
+			dynamic_cast<CSpecificUnitObjectiveCondition *>(pCond)) {
+		// NotedX/Y are always valid (plain floats restored at load/save).
+		locX = pU->NotedX();
+		locY = pU->NotedY();
+		haveTarget = true;
+		Unit *pUnit = pU->UnitPtr();   // may be null (stale/deleted)
+		// Only forward the live ptr if it is safe to deref AND select: appearance()
+		// must be non-null (getPosition derefs appearance()->position unguarded).
+		if (pUnit && ((EditorObject *)pUnit)->appearance()) {
+			pLocObj = (EditorObject *)pUnit;
+			const Stuff::Vector3D &pos = pLocObj->getPosition();
+			locX = pos.x;
+			locY = pos.y;
+		}
+	} else if (CSpecificStructureObjectiveCondition *pS =
+			dynamic_cast<CSpecificStructureObjectiveCondition *>(pCond)) {
+		locX = pS->NotedX();
+		locY = pS->NotedY();
+		haveTarget = true;
+		EditorObject *pBld = pS->BuildingPtr();   // may be null (stale/deleted)
+		if (pBld && pBld->appearance()) {
+			pLocObj = pBld;
+			const Stuff::Vector3D &pos = pLocObj->getPosition();
+			locX = pos.x;
+			locY = pos.y;
+		}
+	}
+
+	if (!haveTarget) {
+		// Non-locatable condition species -> quiet no-op (per spec).
+		MessageBeep(MB_OK);
+		return;
+	}
+
+	// Save the in-progress objective + combo selections so the re-opened dialog
+	// chain restores to the same state (mirrors OnObjectivePickMarkerButton).
+	SaveDialogValues();
+	pEditor->objectivesEditState.ModifiedObjective = m_ModifiedObjective;
+	pEditor->objectivesEditState.listID = CObjectivesEditState::SUCCESS_CONDITION;
+	pEditor->objectivesEditState.nConditionSpeciesSelectionIndex = (&m_ComboBox)->GetCurSel();
+	pEditor->objectivesEditState.nActionSpeciesSelectionIndex = (&m_ActionComboBox)->GetCurSel();
+	pEditor->objectivesEditState.nFailureConditionSpeciesSelectionIndex = (&m_FailureConditionComboBox)->GetCurSel();
+	pEditor->objectivesEditState.nFailureActionSpeciesSelectionIndex = (&m_FailureActionComboBox)->GetCurSel();
+
+	// Arm the no-click Locate. Consumed by EditorInterface::update() (NOT a map
+	// click). Distinct from the pick fields -- Locate is its own operation.
+	pEditor->objectivesEditState.pendingLocate = true;
+	pEditor->objectivesEditState.pendingLocateX = locX;
+	pEditor->objectivesEditState.pendingLocateY = locY;
+	pEditor->objectivesEditState.pendingLocateObj = pLocObj;   // may be null -> camera only
+
 	pEditor->SelectionMode();
 	pEditor->ObjectSelectOnlyMode(true);
 

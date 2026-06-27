@@ -132,6 +132,10 @@ protected:
 	// Slice 1 -- Marker XY map-picker. Hands off to a terrain point pick and
 	// re-opens this dialog with the picked X/Y filled in (Option B handoff).
 	afx_msg void OnObjectivePickMarkerButton();
+	// Slice 3 -- Locate. Centers the editor camera on the selected SUCCESS
+	// condition's target (specific unit / structure) and selects it in the 3D
+	// view. No-op for non-locatable conditions (area/flag/time/all/number/group).
+	afx_msg void OnObjectiveLocateConditionButton();
 	DECLARE_MESSAGE_MAP()
 
 	void DoColorBox( CWnd* pWnd );

@@ -2769,6 +2769,48 @@ void EditorInterface::update()
 	// main-thread result callbacks.  MUST run on the main thread; this is it.
 	EditorTaskRunner::PumpMainThread();
 
+	// Slice 3 -- Locate (PICKER-SELECT-POINT-RECON-1 section 6). The Objective
+	// dialog's "Locate" button armed pendingLocate and EndDialog'd to unwind the
+	// modal stack. Unlike the marker pick (which waits for a map click in
+	// handleLeftButtonDown), Locate needs NO click: it fires here, the per-frame
+	// main-thread tick, as soon as the modal stack is gone. Center the camera on
+	// the target world XY and (only when a live, appearance-backed object was
+	// forwarded) select/highlight it, then disarm, leave ObjectSelectOnlyMode, and
+	// reopen the objectives dialog chain so the user lands back where they were.
+	if ( objectivesEditState.pendingLocate )
+	{
+		const float locX = objectivesEditState.pendingLocateX;
+		const float locY = objectivesEditState.pendingLocateY;
+		EditorObject *pLocObj = objectivesEditState.pendingLocateObj;
+
+		// Disarm BEFORE reopening the dialog chain (Team() runs a nested modal):
+		// the flag must be clear so the re-opened ObjectiveDlg does not see a stale
+		// pendingLocate, and update() cannot re-enter while the modal is up.
+		objectivesEditState.pendingLocate = false;
+		objectivesEditState.pendingLocateObj = 0;
+
+		EditorObjectMgr *pMgr = EditorObjectMgr::instance();
+		if ( pMgr )
+		{
+			pMgr->unselectAll();
+			// select() internally re-checks appearance() and no-ops if null, but we
+			// only forwarded ptrs that were non-null with a non-null appearance.
+			if ( pLocObj )
+				pMgr->select( *pLocObj, true );
+		}
+
+		if ( eye )
+			eye->setPosition( Stuff::Vector3D( locX, locY, 0.0f ), true );
+
+		// Leave the object-select handoff and reopen the objectives dialog chain so
+		// the camera move is visible and the user resumes editing. Team(alignment)
+		// re-posts CObjectives::EditDialog -> ObjectivesDlg -> ObjectiveDlg, exactly
+		// like the marker pick's Team() reopen.
+		ObjectSelectOnlyMode( false );
+		Team( objectivesEditState.alignment );
+		return;
+	}
+
 #ifdef MC2_IMGUI
 	// An async Generate task has finished -> apply the terrain here on the main thread
 	// in the EXACT order the old blocking Generate path (and LoadPreset) used.
