@@ -45,6 +45,35 @@ py -3 tools\repo_intel\repo_query.py slice-preflight ^
 - MCP form `repo.slice_preflight(...)` once the `mc2-repo-intel` server is reloaded;
   until then use the CLI. Do not block adoption on MCP availability.
 
+## repo-intel MCP commands (token-cut / faster-findings)
+
+Added 2026-06-27 (`7b0448fa`). All additive; MCP tools go live after a server
+restart, CLI works immediately. Aimed at parallel multi-session work on the
+shared multi-lane dirty tree.
+
+- **`preflight` / `dirty` now digest by default** — preflight no longer dumps the
+  full ~239-file dirty list (mostly `tests/visual/baselines/*.png`); it returns
+  `class_counts` + only the elevated (non-safe-class) files. MCP `dirty(full=True)`
+  or CLI `repo_query.py dirty` (no flag = full) restores the complete list.
+- **`commit-plan`** — lane attribution for the multiplexed dirty tree. Flags dirty
+  files whose added `MC2_*`/identifier tokens belong to a **different** slice's
+  `.claude/*.md` doc, so you stage only your slice. CLI:
+  `repo_query.py commit-plan --slice <NAME> [--base <ref>] [--paths f1 f2 ...]`;
+  MCP `repo.commit_plan(slice=, paths=, base=)`. Heuristic/advisory — verify before
+  staging. (Catches e.g. a foreign `MC2_OBJECT_POLY_OFFSET` hunk interleaved in a
+  static-prop file.) Pairs with selective `git apply --cached` to commit clean.
+- **`repo.diag_tag(tag, log=, last_n=, log_path=)`** (`mc2-render-state`) — greps the
+  latest editor/game stderr for a printf diag tag prefix (e.g. `EDITOR_STATIC_PRIME`,
+  `BLDG_CMD_DIAG`) and returns only matching lines + any `SUMMARY` line. The
+  run→verify loop without tailing the whole log. `log="editor"` reads
+  `editor-stderr.log` (override dir via `MC2_EDITOR_DEPLOY_DIR`).
+- **`repo.symbol(..., in_ref="HEAD", def_context=N)`** — `in_ref` reports whether the
+  symbol exists in a ref (new-vs-already-landed, same question slice-preflight asks);
+  `def_context` attaches body lines to the first definition; `caller_files` always
+  lists unique calling files. One call instead of grep + git-grep + Read.
+- **`repo.grep(..., mode="files"|"count")`** — snippet-free reduced output for cheap
+  exploratory sweeps (`content` is the default, unchanged).
+
 ## Documentation discipline
 
 Every cited symbol grep-verified AT WRITE-TIME. Applies at every stage.
