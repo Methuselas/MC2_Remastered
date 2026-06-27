@@ -32,6 +32,9 @@ from mcp.server.fastmcp import FastMCP
 # ---------------------------------------------------------------------------
 
 _DEPLOY_DIR = Path(os.environ.get("MC2_DEPLOY_DIR", "A:/Games/mc2-opengl/mc2-win64-v0.4"))
+_EDITOR_DEPLOY_DIR = Path(os.environ.get(
+    "MC2_EDITOR_DEPLOY_DIR",
+    "A:/Games/mc2-opengl/releases/0.5 testing/mc2-win64-v0.5.0"))
 _STATE_DIR = _DEPLOY_DIR / "debug_state"
 _LATEST = _STATE_DIR / "latest_render_state.json"
 _HISTORY_SLOTS = 8
@@ -518,6 +521,75 @@ def _latest_artifact_dir() -> Path | None:
 
     dirs.sort(key=_sort_key, reverse=True)
     return dirs[0]
+
+
+@mcp.tool()
+def diag_tag(tag: str, log: str = "editor", last_n: int = 80,
+             log_path: str = "") -> str:
+    """
+    Grep the latest editor/game stderr log for a printf diagnostic tag prefix
+    and return ONLY the matching lines plus any SUMMARY line — for the
+    run -> verify loop without tailing the whole log.
+
+    A diag tag is a bracketed printf prefix the engine emits, e.g.
+    EDITOR_STATIC_PRIME or BLDG_CMD_DIAG. This tool returns lines containing
+    the literal "[<tag>]".
+
+    Args:
+      tag      — the tag name WITHOUT brackets (e.g. "EDITOR_STATIC_PRIME").
+      log      — "editor" (default; editor-stderr.log in the editor deploy dir)
+                 or "game" (mc2-stderr.log in the game deploy dir, falling back
+                 to the latest smoke artifact stderr).
+      last_n   — cap the returned matching lines [1..500] (default 80).
+      log_path — explicit log file path; overrides `log`.
+
+    Returns JSON: {tag, log_path, match_count, returned, summary_lines, lines}.
+    """
+    last_n = max(1, min(int(last_n), 500))
+
+    if log_path:
+        path = Path(log_path)
+    elif log == "editor":
+        path = _EDITOR_DEPLOY_DIR / "editor-stderr.log"
+    else:  # "game"
+        path = _DEPLOY_DIR / "mc2-stderr.log"
+        if not path.exists():
+            adir = _latest_artifact_dir()
+            if adir is not None:
+                fallback = adir / "mc2-stderr.log"
+                if fallback.exists():
+                    path = fallback
+
+    if not path.exists():
+        return json.dumps({
+            "error": "no_log",
+            "path": str(path),
+            "tip": ("run editor/game; editor-stderr.log is written by "
+                    "run-editor.bat"),
+        }, indent=2)
+
+    needle = f"[{tag}]"
+    matches = []
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                if needle in line:
+                    matches.append(line.rstrip("\n"))
+    except OSError as e:
+        return json.dumps({"error": "read_error", "path": str(path),
+                           "detail": str(e)}, indent=2)
+
+    summary_lines = [m for m in matches if "SUMMARY" in m]
+    kept = matches[-last_n:]
+
+    return json.dumps({
+        "tag": tag,
+        "log_path": str(path),
+        "match_count": len(matches),
+        "returned": len(kept),
+        "summary_lines": summary_lines,
+        "lines": kept,
+    }, indent=2)
 
 
 @mcp.tool()

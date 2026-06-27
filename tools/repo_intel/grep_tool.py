@@ -230,6 +230,7 @@ def grep_source(
     exclude_globs: Optional[list] = None,
     case_sensitive: bool = True,
     max_results: int = 200,
+    mode: str = "content",
 ) -> dict:
     """
     Grep the source tree for pattern.
@@ -237,7 +238,9 @@ def grep_source(
     Default excludes: .git build64 releases 3rdparty .claude
                       tests/smoke/artifacts *.log *.jsonl binaries
 
-    Returns: {matches, match_count, truncated, confidence="lexical"}
+    mode="content" (default): {matches, match_count, truncated, confidence}
+    mode="files": {files, file_count, match_count, truncated, confidence} (no snippets)
+    mode="count": {match_count, file_count, truncated, confidence} (no snippets)
     """
     inc = list(include_globs or [])
     exc = list(exclude_globs or [])
@@ -249,9 +252,31 @@ def grep_source(
         return {"error": f"invalid regex: {e}", "confidence": "lexical"}
 
     result = _try_rg(root, pattern, inc, exc, case_sensitive, max_results)
-    if result is not None:
+    if result is None:
+        result = _py_grep(root, pattern, inc, exc, case_sensitive, max_results)
+    if "error" in result:
         return result
-    return _py_grep(root, pattern, inc, exc, case_sensitive, max_results)
+
+    if mode == "content":
+        return result
+
+    files = sorted({m["file"] for m in result["matches"]})
+    if mode == "files":
+        return {
+            "files":       files,
+            "file_count":  len(files),
+            "match_count": result["match_count"],
+            "truncated":   result["truncated"],
+            "confidence":  "lexical",
+        }
+    if mode == "count":
+        return {
+            "match_count": result["match_count"],
+            "file_count":  len(files),
+            "truncated":   result["truncated"],
+            "confidence":  "lexical",
+        }
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -287,12 +312,18 @@ def symbol_lookup(
     root: Path,
     symbol: str,
     max_results: int = 300,
+    in_ref: str = "",
+    def_context: int = 0,
 ) -> dict:
     """
     Best-effort lexical symbol lookup.
 
     Searches for \\bsymbol\\b, then splits hits into definition-candidates
     and references using C++ heuristics.
+
+    in_ref (e.g. "HEAD"): reports whether the symbol is already present in that
+        git ref — answers "is this new vs existing".
+    def_context > 0: attaches N lines of body context to the first definition.
 
     NOT clangd, NOT AST, NOT graphify.
     Definition heuristics may misclassify — verify with Read tool.
@@ -310,13 +341,57 @@ def symbol_lookup(
     for m in all_hits["matches"]:
         (definitions if _is_definition(m["snippet"], esc) else references).append(m)
 
-    return {
-        "symbol":      symbol,
-        "definitions": definitions,
-        "references":  references,
-        "match_count": all_hits["match_count"],
-        "truncated":   all_hits["truncated"],
-        "confidence":  "lexical",
-        "note":        "Lexical only — not clangd, not AST, not graphify. "
-                       "Definition heuristics are best-effort; verify with Read.",
+    caller_files = sorted({m["file"] for m in references})
+
+    result = {
+        "symbol":       symbol,
+        "definitions":  definitions,
+        "references":   references,
+        "caller_files": caller_files,
+        "match_count":  all_hits["match_count"],
+        "truncated":    all_hits["truncated"],
+        "confidence":   "lexical",
+        "note":         "Lexical only — not clangd, not AST, not graphify. "
+                        "Definition heuristics are best-effort; verify with Read.",
     }
+
+    # in_ref: presence-in-ref check via fixed-string git grep.
+    if in_ref:
+        present = False
+        match_count = 0
+        try:
+            r = subprocess.run(
+                ["git", "-C", str(root), "grep", "-n", "-F", symbol, in_ref],
+                capture_output=True, text=True, timeout=15,
+                stdin=subprocess.DEVNULL,
+            )
+            lines = [l for l in r.stdout.splitlines() if l.strip()]
+            match_count = len(lines)
+            present = r.returncode == 0 and match_count > 0
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            present = False
+            match_count = 0
+        result["in_ref"] = {
+            "ref":         in_ref,
+            "present":     present,
+            "match_count": match_count,
+        }
+
+    # def_context: attach body context to the first definition.
+    if def_context > 0 and definitions:
+        ctx_n = min(def_context, 60)
+        d0 = definitions[0]
+        try:
+            fpath = Path(root) / d0["file"]
+            with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                file_lines = f.readlines()
+            start = max(0, d0["line"] - 1)
+            end = min(len(file_lines), start + ctx_n)
+            d0["context"] = [
+                f"{i + 1}: {file_lines[i].rstrip()}"
+                for i in range(start, end)
+            ]
+        except (OSError, KeyError):
+            pass
+
+    return result

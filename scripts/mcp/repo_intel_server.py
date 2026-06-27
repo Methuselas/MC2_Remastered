@@ -217,7 +217,7 @@ def slice_preflight(slice: str = "", symbols: str = "", paths: str = "",
 
 
 @mcp.tool()
-def dirty(expect_branch: str = "", expect_root: str = "") -> str:
+def dirty(expect_branch: str = "", expect_root: str = "", full: bool = False) -> str:
     """
     Return dirty-file classification for the current worktree.
 
@@ -225,12 +225,45 @@ def dirty(expect_branch: str = "", expect_root: str = "") -> str:
     safe_to_touch=false means at least one file needs user acknowledgement before edits.
 
     Pass expect_branch and expect_root to enable branch + root guards.
+
+    DIGEST DEFAULT (token cut): by default this lists ONLY elevated (non-safe)
+    files and returns class_counts + omitted_safe_count for the rest. Pass
+    full=true to restore the complete file list (every dirty path).
     """
     root   = _repo()
     result = rq.get_dirty_state(
         root,
         expect_branch = expect_branch or None,
         expect_root   = expect_root   or None,
+        digest        = (not full),
+    )
+    return _j(result)
+
+
+@mcp.tool()
+def commit_plan(slice: str = "", paths: Optional[list] = None,
+                base: str = "HEAD") -> str:
+    """
+    Lane attribution for a multi-lane dirty tree — flags dirty files/hunks whose
+    added tokens belong to a DIFFERENT slice's .claude doc, so you can stage only
+    your slice. Heuristic/advisory.
+
+    Args:
+      slice — your slice name (e.g. "EDITOR-STATIC-TEXTURE-PREWARM-1"); used to
+              tell this-slice .claude docs from foreign ones.
+      paths — repo-relative paths to attribute; default = all elevated dirty files.
+      base  — diff base (default HEAD) for extracting added tokens.
+
+    Returns JSON: {slice, base, confidence, note, files:[{path, recommendation,
+      foreign_signals, this_slice_signals, hunk_count}]}.
+    recommendation: stage / skip_or_selective / review_mixed.
+    """
+    root   = _repo()
+    result = rq.commit_plan(
+        root,
+        slice_name = slice,
+        paths      = paths,
+        base       = base,
     )
     return _j(result)
 
@@ -329,6 +362,7 @@ def repo_grep(
     exclude_globs: Optional[list] = None,
     case_sensitive: bool = True,
     max_results: int = 200,
+    mode: str = "content",
 ) -> str:
     """
     Lexical grep over the MC2 source tree.
@@ -343,8 +377,11 @@ def repo_grep(
       exclude_globs  — additional globs to exclude
       case_sensitive — default True
       max_results    — cap (default 200); set higher for broad sweeps
+      mode           — "content" (default, full snippets) | "files" (unique file
+                       list only) | "count" (counts only). "files"/"count" are
+                       cheaper — no snippets — for exploratory sweeps.
 
-    Returns: {matches:[{file, line, snippet}], match_count, truncated, confidence:"lexical"}
+    Returns (mode="content"): {matches:[{file, line, snippet}], match_count, truncated, confidence:"lexical"}
     """
     root = _repo()
     result = gt.grep_source(
@@ -354,6 +391,7 @@ def repo_grep(
         exclude_globs = exclude_globs,
         case_sensitive = case_sensitive,
         max_results   = max_results,
+        mode          = mode,
     )
     return _j(result)
 
@@ -362,6 +400,8 @@ def repo_grep(
 def repo_symbol(
     symbol: str,
     max_results: int = 300,
+    in_ref: str = "",
+    def_context: int = 0,
 ) -> str:
     """
     Best-effort lexical symbol lookup. NOT clangd, NOT AST, NOT graphify.
@@ -375,13 +415,25 @@ def repo_symbol(
       "where is TG_SetRenderShapePbrOverride called?"
       "which files reference RenderObjectDesc::gameObjectId?"
 
+    Optional:
+      in_ref="HEAD"   — reports presence-in-ref (is the symbol already in HEAD,
+                        i.e. existing vs new) via fixed-string git grep.
+      def_context=N   — attaches N lines of body context to the FIRST definition.
+      caller_files    — always returned: unique list of files that reference it.
+
     Returns:
       {symbol, definitions:[{file,line,snippet}], references:[{file,line,snippet}],
-       match_count, truncated, confidence:"lexical",
-       note:"Lexical only — not clangd, not AST, not graphify."}
+       caller_files:[...], match_count, truncated, confidence:"lexical",
+       note:"Lexical only — not clangd, not AST, not graphify.",
+       in_ref:{ref,present,match_count} (when in_ref given)}
     """
     root = _repo()
-    result = gt.symbol_lookup(root, symbol, max_results=max_results)
+    result = gt.symbol_lookup(
+        root, symbol,
+        max_results = max_results,
+        in_ref      = in_ref,
+        def_context = def_context,
+    )
     return _j(result)
 
 

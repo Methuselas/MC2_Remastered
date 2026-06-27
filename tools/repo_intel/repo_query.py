@@ -143,7 +143,7 @@ def classify_file(rel_path: str):
 
 
 def get_dirty_state(repo_root: Path, expect_branch: str = None,
-                    expect_root: str = None):
+                    expect_root: str = None, digest: bool = False):
     branch, _ = git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_root)
     head, _    = git(["rev-parse", "--short", "HEAD"],      cwd=repo_root)
     status_out, _ = git(["status", "--porcelain=v1"],        cwd=repo_root, strip=False)
@@ -168,6 +168,10 @@ def get_dirty_state(repo_root: Path, expect_branch: str = None,
 
     dirty        = bool(files)
     unsafe_files = [f for f in files if f["class"] not in _SAFE_CLASSES]
+
+    class_counts = {}
+    for f in files:
+        class_counts[f["class"]] = class_counts.get(f["class"], 0) + 1
 
     # Branch guard
     branch_ok      = True
@@ -199,6 +203,23 @@ def get_dirty_state(repo_root: Path, expect_branch: str = None,
     safe_to_touch = not bool(unsafe_files) and branch_ok and root_ok
     requires_ack  = not safe_to_touch
 
+    # Digest mode: omit SAFE-class files from the listing (token cut) but keep
+    # full counts. Behavior with digest=False is unchanged.
+    if digest:
+        listed_files = [f for f in files if f["class"] not in _SAFE_CLASSES]
+        omitted_safe = len(files) - len(listed_files)
+    else:
+        listed_files = files
+        omitted_safe = 0
+
+    summary = (
+        f"{len(files)} dirty file(s); "
+        f"{len(unsafe_files)} require ack"
+        if dirty else "clean"
+    )
+    if digest and omitted_safe:
+        summary += f" (digest: {omitted_safe} safe files omitted)"
+
     result = {
         "repo_root":         actual_root,
         "branch":            branch,
@@ -206,13 +227,12 @@ def get_dirty_state(repo_root: Path, expect_branch: str = None,
         "dirty":             dirty,
         "safe_to_touch":     safe_to_touch,
         "requires_user_ack": requires_ack,
-        "files":             files,
-        "summary": (
-            f"{len(files)} dirty file(s); "
-            f"{len(unsafe_files)} require ack"
-            if dirty else "clean"
-        ),
+        "files":             listed_files,
+        "class_counts":      class_counts,
+        "summary":           summary,
     }
+    if digest:
+        result["omitted_safe_count"] = omitted_safe
     if expect_branch:
         result["expected_branch"] = expect_branch
         result["branch_ok"]       = branch_ok
@@ -358,7 +378,7 @@ def all_harnesses(claude_md_path: Path):
 def preflight(repo_root: Path, claude_md_path: Path, expect_branch: str = None,
               expect_root: str = None):
     dirty   = get_dirty_state(repo_root, expect_branch=expect_branch,
-                               expect_root=expect_root)
+                               expect_root=expect_root, digest=True)
     harness = all_harnesses(claude_md_path)
 
     all_documented = all(
@@ -516,6 +536,107 @@ def slice_preflight(repo_root, *, slice_name=None, symbols=None, paths=None,
 
 
 # ---------------------------------------------------------------------------
+# Commit plan - lane attribution for the multi-lane dirty tree
+# ---------------------------------------------------------------------------
+
+_TOKEN_RE = re.compile(r"MC2_[A-Z0-9_]+|\b[A-Za-z_][A-Za-z0-9_]{6,}\b")
+_GATE_RE  = re.compile(r"MC2_[A-Z0-9_]+")
+
+
+def _normalize_slice(name):
+    return re.sub(r"[^A-Za-z0-9]", "", name or "").upper()
+
+
+def _build_lane_index(repo_root):
+    """Scan .claude/*.md docs; return list of (doc_name, norm_name, tokens)."""
+    lanes = []
+    claude_dir = Path(repo_root) / ".claude"
+    if not claude_dir.is_dir():
+        return lanes
+    for doc in sorted(claude_dir.glob("*.md")):
+        try:
+            text = doc.read_text(encoding="utf-8", errors="replace")[:6144]
+        except OSError:
+            continue
+        tokens = set(_GATE_RE.findall(text))
+        lanes.append((doc.name, _normalize_slice(doc.name), tokens))
+    return lanes
+
+
+def commit_plan(repo_root, slice_name="", paths=None, base="HEAD"):
+    """Heuristic, advisory lane attribution. Flags dirty files/hunks whose
+    added tokens are mentioned ONLY in a foreign .claude/*.md slice doc, so a
+    multi-lane dirty tree can be staged selectively."""
+    repo_root = Path(repo_root)
+
+    # Target paths: explicit, else elevated dirty files.
+    if paths:
+        target_paths = list(paths)
+    else:
+        ds = get_dirty_state(repo_root)
+        target_paths = [f["path"] for f in ds["files"]
+                        if f["class"] not in _SAFE_CLASSES]
+
+    lanes = _build_lane_index(repo_root)
+    norm_slice = _normalize_slice(slice_name)
+    # Partition lane docs into this-slice vs foreign.
+    this_docs = []
+    foreign_docs = []
+    for doc_name, norm_name, tokens in lanes:
+        if norm_slice and norm_slice in norm_name:
+            this_docs.append((doc_name, tokens))
+        else:
+            foreign_docs.append((doc_name, tokens))
+
+    files_out = []
+    for path in target_paths:
+        diff, _ = git(["diff", base, "--", path], cwd=repo_root, strip=False)
+        added_tokens = set()
+        hunk_count = 0
+        for line in diff.splitlines():
+            if line.startswith("@@"):
+                hunk_count += 1
+            elif line.startswith("+") and not line.startswith("+++"):
+                added_tokens.update(_TOKEN_RE.findall(line))
+
+        foreign_signals = []
+        this_slice_signals = []
+        for tok in sorted(added_tokens):
+            this_hit = [d for d, toks in this_docs if tok in toks]
+            foreign_hit = [d for d, toks in foreign_docs if tok in toks]
+            if this_hit:
+                this_slice_signals.append(tok)
+            elif foreign_hit:
+                foreign_signals.append({"token": tok, "docs": sorted(foreign_hit)})
+
+        foreign_signals = foreign_signals[:25]
+
+        if foreign_signals and norm_slice and this_slice_signals:
+            recommendation = "review_mixed"
+        elif foreign_signals:
+            recommendation = "skip_or_selective"
+        else:
+            recommendation = "stage"
+
+        files_out.append({
+            "path":               path,
+            "recommendation":     recommendation,
+            "foreign_signals":    foreign_signals,
+            "this_slice_signals": this_slice_signals[:20],
+            "hunk_count":         hunk_count,
+        })
+
+    return {
+        "slice":      slice_name,
+        "base":       base,
+        "confidence": "heuristic",
+        "note": ("Lexical lane attribution via .claude/*.md token mentions - "
+                 "advisory, verify before staging"),
+        "files":      files_out,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -631,6 +752,27 @@ def main():
         out_json(result)
         sys.exit(2 if result["verdict"] == "STOP" else 0)
 
+    elif cmd == "commit-plan":
+        rest = args[1:]
+        slice_name = ""
+        base = "HEAD"
+        paths = []
+        i = 0
+        while i < len(rest):
+            a = rest[i]
+            if a == "--slice" and i + 1 < len(rest):
+                i += 1; slice_name = rest[i]
+            elif a == "--base" and i + 1 < len(rest):
+                i += 1; base = rest[i]
+            elif a == "--paths":
+                i += 1
+                while i < len(rest) and not rest[i].startswith("--"):
+                    paths.append(rest[i]); i += 1
+                continue
+            i += 1
+        out_json(commit_plan(repo_root, slice_name=slice_name,
+                             paths=(paths or None), base=base))
+
     elif cmd == "binding":
         from binding_index import query_binding
         rest      = args[1:]
@@ -688,7 +830,7 @@ def main():
                            undocumented=undocumented, show_all=show_all))
 
     else:
-        out_json({"error": f"Unknown command '{cmd}'. Valid: dirty, harness, preflight, slice-preflight, env, binding"})
+        out_json({"error": f"Unknown command '{cmd}'. Valid: dirty, harness, preflight, slice-preflight, commit-plan, env, binding"})
         sys.exit(1)
 
 
