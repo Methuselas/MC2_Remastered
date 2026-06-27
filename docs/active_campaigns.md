@@ -2,6 +2,25 @@
 
 > Pointer doc. Detail in memory/ handoffs and docs/. Add new campaigns at top.
 
+## 2026-06-27 — DEPTH/Z-FIGHT/FOG FOLLOWUPS — SHIPPED + MERGED nifty (`e0cd4ff5`)
+
+Three render bugs from `.claude/HANDOFF-depth-precision-fog-followups.md`, all user-confirmed
+fixed and merged (built on a fork `claude/depth-fog-followups-1` off `c982817e`, merged clean).
+Each took the long way — most effort spent discarding the wrong axis (depth precision, geometry,
+fog, skybox); the unlock each time was a precise user symptom detail.
+
+| Fix | Commit | Gate (default ON, =0 reverts) | Root cause |
+|---|---|---|---|
+| **Roads vanish on slopes** | `ea3cc267` | `MC2_TERRAIN_LOD_CHECKER_DIAG` | LOD-chunk render IBO was the lone fixed-TL-BR triangle diagonal vs the per-cell CHECKERBOARD `worldQuadUVMode` used by grounding/overlay/water/shadow/GPU-compute → on ~50% of cells the two triangulations cross on warped quads, terrain occludes the road center. Render now honors the checkerboard. |
+| **Building/object base z-fight on ZOOM** | `7f43ee37` | `MC2_PROP_FIXB_MVP` + `MC2_MVP_PUBLISH_EARLY` | Motion 1-frame whole-scene MVP lag: terrain compute snapshot (`g_dispatchMvp16`) was taken in UPDATE while the camera MVP was published in RENDER → terrain co-trailed by a frame; objects used live MVP → diverged during zoom. Fix-B = objects consume the same snapshot; early-publish = snapshot captures the current frame (kills the lag at source). NOT depth precision (D32F null) / NOT geometry / NOT bias. |
+| **OOB blue/black screen strobe** | `6773853b` | `MC2_OOB_LETTERBOX` | When the backbuffer > scene FBO (smoke-minimized start; menus where window > render res), the composite quad covered only the FBO region; the rest of the backbuffer was never cleared → alternating swapchain content (old HDRI-sky-blue vs black) strobed. Fix = clear the backbuffer black before the composite blit. NOT the fog (de-animating u_time was a no-op), NOT the legacy skybox (off), NOT the HDRI toggling (it renders every gameplay frame). |
+
+Prior-session parked render WIP preserved in `aa97244d` (gated default-OFF): TERRAIN-DETAIL-ANTI-TILE-1,
+OBJECT-DECAL-MATRIX-SHARE-1 + OBJECT-TERRAIN-COPLANAR-OFFSET-1 (superseded by the above), cloud-shadow UV.
+Editor WIP left untouched. Memory: [[building-zfight-is-grounding-not-depth]], [[live-terrain-path-is-lod-chunk]],
+[[oob-strobe-is-uncleared-backbuffer]]. OPEN/NEXT: world renders small in a larger window (HUD-RES-CLAMP
+sets projection aspect to 800×600); making the world FILL the window is the shelved hor+ widescreen arc.
+
 ## 2026-06-23 — DECAL-INTEGRATE-1 (ring-fed projected decals) — BUILT (`claude/decal-integrate-1`)
 
 Joins the two parked projected-decal branches: wires the runtime impact-decal RING
