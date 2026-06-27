@@ -83,6 +83,8 @@
 #include "BeautySidecarPreview.h"
 #include "UnitActionFlowPanel.h"
 #include "InspectorPanel.h"
+#include "ObjectivesSummaryPanel.h"   // read-only objectives explainer
+#include "CampaignSummaryPanel.h"     // read-only campaign explainer
 #include "UnitBrainPanel.h"   // AI / Brain / Orders inspector panel
 #include "TelemetryPanel.h"
 #include "AssetBrowser.h"
@@ -2371,6 +2373,34 @@ void EditorInterface::KillCurBrush()
 	ChangeCursor( IDC_MC2ARROW );
 }
 
+// EDITOR-SIMPLIFY-S1: single source of truth for the active tool.
+//
+// Previously every brush-switch site inlined the same triplet
+//   KillCurBrush(); curBrush = new XBrush(...); currentBrushID = ...;  [currentBrushMenuID = ...]
+// and several sites forgot to update currentBrushMenuID, which left the ImGui
+// toolbar highlight (currentBrushMenuID == tools[i].cmdId, ~:5272) stale/wrong for
+// those tools. This helper folds the COMMON teardown + assignment into one place:
+//   - KillCurBrush() (delete old brush, curBrush=NULL, selecting=false, default cursor)
+//   - curBrush / currentBrushID / currentBrushMenuID set together.
+// Call sites keep their own ChangeCursor() (cursor is per-tool) and any site-specific
+// state. currentBrushID values are UNCHANGED (other code range-tests them); only
+// currentBrushMenuID is now always set consistently.
+//
+// menuId convention:
+//   - tools WITH a toolbar entry (Select/Flatten/Erase/Mine/Link/Damage): pass the
+//     toolbar tools[].cmdId (the base ID_OTHER_* — independent of any +variant offset
+//     baked into currentBrushID) so the highlight matches.
+//   - tools WITHOUT a toolbar entry (object placement, overlay, terrain, sculpt,
+//     stamp, drop-zone): pass brushId. These ids never equal a tools[].cmdId, so the
+//     highlight check simply never lights up for them — which is correct.
+void EditorInterface::setActiveBrush( Brush* newBrush, int brushId, int menuId )
+{
+	KillCurBrush();
+	curBrush          = newBrush;
+	currentBrushID    = brushId;
+	currentBrushMenuID = menuId;
+}
+
 int EditorInterface::PaintDirtRoad()
 {
 	return PaintOverlay( DIRT_ROAD, PAINT_OVERLAY_DIRT );
@@ -2414,10 +2444,9 @@ int EditorInterface::PaintDamagedBridge()
 
 int EditorInterface::PaintOverlay( int type, int message )
 {
-	KillCurBrush();
-	curBrush = new OverlayBrush( type );
+	// No toolbar entry -> menuId = brushId (message). Highlight never matches it.
+	setActiveBrush( new OverlayBrush( type ), message, message );
 	ChangeCursor( IDC_PAINT );
-	currentBrushID = message;
 
 	return true;
 }
@@ -2433,10 +2462,9 @@ int EditorInterface::PaintTerrain( int type )
 	}
 	else
 	{
-			KillCurBrush();
-			curBrush = new TerrainBrush( type );
+			// No toolbar entry -> menuId = brushId (type). Highlight never matches it.
+			setActiveBrush( new TerrainBrush( type ), type, type );
 			ChangeCursor( IDC_PAINT );
-			currentBrushID = type;
 
 	}
 	return true;
@@ -2647,16 +2675,14 @@ bool EditorInterface::selectBuildingObject( int group, int indexInGroup )
 		return false;
 	}
 
-	KillCurBrush();
 	// Scatter mode paints many jittered copies in a radius (the generalised forest
 	// brush); normal mode places one object per click.
-	if ( m_scatterMode )
-		curBrush = new ScatterBrush( group, indexInGroup, alignment );
-	else
-		curBrush = new BuildingBrush( group, indexInGroup, alignment );
+	Brush* objBrush = m_scatterMode
+		? (Brush*)new ScatterBrush( group, indexInGroup, alignment )
+		: (Brush*)new BuildingBrush( group, indexInGroup, alignment );
 	const int message = objectMessageId( group, indexInGroup );
-	currentBrushID = message;
-	currentBrushMenuID = message;
+	// Object placement has no toolbar entry; menuId == brushId == message (unchanged).
+	setActiveBrush( objBrush, message, message );
 
 	g_objectRecentRing.push( group, indexInGroup );
 	return true;
@@ -2694,11 +2720,8 @@ int EditorInterface::Erase()
 	}
 	else if (0 == dynamic_cast<Eraser *>(curBrush))
 	{
-		KillCurBrush();
-		curBrush = new Eraser();
+		setActiveBrush( new Eraser(), ID_OTHER_ERASE, ID_OTHER_ERASE );
 		ChangeCursor( IDC_ERASER );
-		currentBrushID = ID_OTHER_ERASE;
-		currentBrushMenuID = ID_OTHER_ERASE;
 	}
 	
 	return true;
@@ -3153,12 +3176,8 @@ int EditorInterface::Select()
 	}
 	else
 	{
-		KillCurBrush();
-
 		int radius = GetParent()->GetMenu()->GetMenuState( ID_DRAGNORMAL, MF_BYCOMMAND ) & MF_CHECKED? -1 : smoothRadius;
-		curBrush = new SelectionBrush( false, radius );
-		currentBrushID = IDS_SELECT;
-		currentBrushMenuID = ID_OTHER_SELECT;
+		setActiveBrush( new SelectionBrush( false, radius ), IDS_SELECT, ID_OTHER_SELECT );
 
 		ChangeCursor( IDC_MC2ARROW );
 	}
@@ -3181,11 +3200,8 @@ int EditorInterface::Flatten()
 	}
 	else if (0 == dynamic_cast<FlattenBrush *>(curBrush))
 	{
-		KillCurBrush();
-		curBrush = new FlattenBrush();
+		setActiveBrush( new FlattenBrush(), IDS_FLATTEN, ID_OTHER_FLATTEN );
 		ChangeCursor( IDC_FLATTEN );
-		currentBrushID = IDS_FLATTEN;
-		currentBrushMenuID = ID_OTHER_FLATTEN;
 	}
 
 	return true;
@@ -3832,11 +3848,11 @@ int EditorInterface::Damage( bool bDamage )
 		DamageBrush *pCurDamageBrush = dynamic_cast<DamageBrush *>(curBrush);
 		if ((0 == pCurDamageBrush) || (pCurDamageBrush->damage != bDamage))
 		{
-			KillCurBrush();
-
-			curBrush = new DamageBrush( bDamage );
+			// Toolbar entry is the base ID_OTHER_DAMAGE; brushId keeps the +bDamage
+			// variant so range-tests are unchanged, menuId is the toolbar base so the
+			// highlight matches for both damage and repair variants.
+			setActiveBrush( new DamageBrush( bDamage ), ID_OTHER_DAMAGE + bDamage, ID_OTHER_DAMAGE );
 			ChangeCursor( IDC_HAMMER + !bDamage );
-			currentBrushID = ID_OTHER_DAMAGE + bDamage;
 		}
 	}
 
@@ -3854,11 +3870,8 @@ int EditorInterface::LayMines()
 	}
 	else if (0 == dynamic_cast<MineBrush *>(curBrush))
 	{
-		KillCurBrush();
-
-		curBrush = new MineBrush();
+		setActiveBrush( new MineBrush(), ID_OTHER_LAYMINES, ID_OTHER_LAYMINES );
 		ChangeCursor( IDC_HAMMER ); // need a minebrush cursor
-		currentBrushID = ID_OTHER_LAYMINES;
 	}
 	return true;
 }
@@ -4011,11 +4024,9 @@ int EditorInterface::Link( bool bLink )
 	LinkBrush *pCurLinkBrush = dynamic_cast<LinkBrush *>(curBrush);
 	if ((0 == pCurLinkBrush) || (pCurLinkBrush->bLink != bLink))
 	{
-		KillCurBrush();
-
-		curBrush = new LinkBrush( bLink );
+		// Toolbar entry is the base ID_OTHER_LINK; brushId keeps the +bLink variant.
+		setActiveBrush( new LinkBrush( bLink ), ID_OTHER_LINK + bLink, ID_OTHER_LINK );
 		ChangeCursor( IDC_LINK + !bLink );
-		currentBrushID = ID_OTHER_LINK + bLink;
 	}
 
 	return 1;
@@ -4023,8 +4034,6 @@ int EditorInterface::Link( bool bLink )
 
 int EditorInterface::DropZone( bool bVTol )
 {
-	KillCurBrush();
-
 	int alignment = EDITOR_TEAM1;
 	
 	// you'll need this for multiplayer
@@ -4039,8 +4048,8 @@ int EditorInterface::DropZone( bool bVTol )
 		}
 	}*/
 	
-	curBrush = new DropZoneBrush( alignment, bVTol );
-	currentBrushID = ID_DROPZONES_ADD + bVTol;
+	// No toolbar entry -> menuId = brushId. Highlight never matches it.
+	setActiveBrush( new DropZoneBrush( alignment, bVTol ), ID_DROPZONES_ADD + bVTol, ID_DROPZONES_ADD + bVTol );
 	ChangeCursor( IDC_DROPZONE );
 
 	return true;
@@ -4179,7 +4188,32 @@ static EditorObject* EditorInterface_PickObjectAtScreenPoint(int screenX, int sc
 			// appearance carries the same recipeIndex.
 			const int32_t recipeIndex = static_cast<int32_t>(pick.handle.index());
 			if (EditorObject* obj = mgr->findObjectByStaticRecipeIndex(recipeIndex))
-				return obj;
+			{
+				// EDITOR-PICK-DUP-OID: GPU ObjectID is per-type not per-instance --
+				// the GpuStaticPropRegistry's typeID->recipeIndex map keeps only the
+				// LAST recipe registered for a typeID, so N same-type buildings all
+				// resolve to the most-recently-placed instance. The other N-1 render
+				// fine but the GPU readback hands back the wrong (duplicate) object,
+				// which is elsewhere on the map -> they become un-pickable.
+				//
+				// Cross-check against the CPU per-instance forward-projection picker,
+				// which projects every object with the SAME projection + pixel
+				// tolerance (EditorObjectMgr_ProjectScreenXY_GL inside
+				// getObjectAtScreenPosition) and returns the nearest one actually
+				// under the cursor. If the CPU picker agrees the GPU object is at the
+				// click (or there is no CPU per-instance picker available), accept the
+				// GPU hit unchanged (unique-type case). Otherwise the GPU resolved a
+				// same-type duplicate that does NOT project near the cursor -- discard
+				// it and trust the per-instance CPU result (which may be null).
+				//
+				// Scoped to StaticProp hits only: the per-type OID collision is a
+				// static-prop registry artifact. Mech/unit hits (Kind::Mech below)
+				// carry stable per-instance handle bits and are NOT cross-checked.
+				EditorObject* cpuObj = mgr->getObjectAtScreenPosition(screenX, screenY);
+				if (cpuObj == NULL || cpuObj == obj)
+					return obj;            // unique-type / GPU object is under cursor
+				return cpuObj;             // same-type duplicate -> CPU instance wins
+			}
 			// GPU hit a static prop the editor has no EditorObject for (e.g.
 			// terrain-baked vegetation forests with no per-instance editor object).
 			// Fall through to CPU rather than returning a miss.
@@ -4200,6 +4234,16 @@ static EditorObject* EditorInterface_PickObjectAtScreenPoint(int screenX, int sc
 
 	// ---- FALLBACK: CPU forward-projection (killswitch + terrain/miss path) ----
 	return EditorInterface_PickObjectAtScreenPoint_CPU(screenX, screenY);
+}
+
+// EDITOR-BRUSH-SCREENPICK-1: public seam so the brushes (eraser/damage/link) pick the
+// SAME way the Select tool does -- GPU ObjectID readback primary (pixel-exact: handles a
+// zoomed-in click on a prop's edge, which the CPU center+tolerance picker misses), with
+// CPU forward-projection fallback. screenX/screenY must be viewport-local (the brush
+// dispatch already applies EditorRttClientToViewport before paint, like the Select path).
+EditorObject* EditorPickObjectAtScreen(int screenX, int screenY)
+{
+	return EditorInterface_PickObjectAtScreenPoint(screenX, screenY);
 }
 
 static bool EditorInterface_SelectObjectAtScreenPoint(int screenX, int screenY, bool toggle)
@@ -4797,28 +4841,8 @@ void EditorInterface::OnRButtonUp(UINT nFlags, CPoint point)
 		syncScrollBars();
 	}
 
-	// is there anything under the mouse
-	/*Stuff::Vector3D pos;
-	Stuff::Vector2DOf<long> screen;
-	screen.x = point.x;
-	screen.y = point.y;
-	eye->inverseProject( screen, pos ); 
-
-	EditorObject* pObject = EditorObjectMgr::instance()->getObjectAtPosition( pos );
-	Unit* pUnit = dynamic_cast<Unit*>(pObject);
-
-	if ( pUnit )
-	{
-		CMenu Menu;
-		Menu.LoadMenu( IDR_POPUP );
-		CMenu* pPopUp = Menu.GetSubMenu( 0 );
-
-		ClientToScreen( &point );
-
-		pPopUp->TrackPopupMenu( nFlags, point.x, point.y, this ); 
-
-		CWnd ::OnRButtonUp(nFlags, point);
-	}*/
+	// (Removed: dead commented-out MFC TrackPopupMenu right-click menu —
+	// EDITOR-SIMPLIFY S0. The live right-click flow lives in OnRButtonUp/ImGui.)
 }
 
 BOOL EditorInterface::OnMouseWheel(UINT nFlags, short zDelta, CPoint pt)
@@ -4992,18 +5016,19 @@ void EditorInterface::renderTerrainSelection()
 
 void EditorInterface::setSculptBrush( int mode )
 {
-	KillCurBrush();
-	curBrush = new HeightBrush( (HeightBrush::Mode)mode, m_sculptRadius, m_sculptStrength );
-	currentBrushID = -100 - mode;   // synthetic sentinel (not IDS_SELECT, not the object range)
-	currentBrushMenuID = -1;
+	// Synthetic-negative brushId preserved (not IDS_SELECT, not the object range).
+	// No toolbar entry; sculpt highlight is driven separately off curBrush's mode
+	// (~:5289), so menuId = brushId is just a stable non-matching value.
+	const int brushId = -100 - mode;
+	setActiveBrush( new HeightBrush( (HeightBrush::Mode)mode, m_sculptRadius, m_sculptStrength ), brushId, brushId );
 }
 
 void EditorInterface::setStampBrush( int type )
 {
-	KillCurBrush();
-	curBrush = new StampBrush( (StampBrush::Type)type, m_stampRadius, m_stampStrength );
-	currentBrushID = -200 - type;   // synthetic sentinel
-	currentBrushMenuID = -1;
+	// Synthetic-negative brushId preserved. No toolbar entry; menuId = brushId is a
+	// stable non-matching value.
+	const int brushId = -200 - type;
+	setActiveBrush( new StampBrush( (StampBrush::Type)type, m_stampRadius, m_stampStrength ), brushId, brushId );
 }
 
 #ifdef MC2_IMGUI
@@ -5209,6 +5234,16 @@ void EditorInterface::renderToolbarImGui()
 	if (ImGui::Button("Inspector", ImVec2(-1.f, 0.f)))
 		InspectorPanel::Toggle();
 	InspectorPanel::Draw();
+
+	// Objectives Overview — read-only objectives explainer (per-team WHEN/THEN cards).
+	if (ImGui::Button("Objectives", ImVec2(-1.f, 0.f)))
+		ObjectivesSummaryPanel::Toggle();
+	ObjectivesSummaryPanel::Draw();
+
+	// Campaign Overview — read-only campaign explainer (load a .fit on demand).
+	if (ImGui::Button("Campaign", ImVec2(-1.f, 0.f)))
+		CampaignSummaryPanel::Toggle();
+	CampaignSummaryPanel::Draw();
 
 	// AI / Brain / Orders — selected unit's AI brain + scaffolded orders/stance.
 	if (ImGui::Button("AI / Brain / Orders", ImVec2(-1.f, 0.f)))

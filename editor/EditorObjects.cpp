@@ -40,6 +40,23 @@
 
 // ARM
 #include "../ARM/Microsoft.Xna.Arm.h"
+
+// EDITOR-STATIC-DEDRAW: free an editor object's appearance, invalidating its static-prop
+// RENDER recipe FIRST. Appearance::destroy() is virtual -> Bldg/TreeAppearance::destroy()
+// call invalidateStaticRegistration() (clears the GpuStaticPropRegistry RecipeRange). A
+// bare `delete appearance` runs only the (empty) ~ObjectAppearance and NEVER calls
+// destroy(), so a deleted building/tree kept rendering as a ghost once placed props began
+// registering static recipes (EDITOR-STATIC-TEXTURE-PREWARM-1). destroy() nulls what it
+// frees, so the following delete is a safe memory free with no double-free.
+static void EditorFreeObjectAppearance( ObjectAppearance*& app )
+{
+	if ( app )
+	{
+		app->destroy();
+		delete app;
+		app = NULL;
+	}
+}
 #include "EditorResourceFallback.h"
 using namespace Microsoft::Xna::Arm;
 extern IProviderEngine* armProvider;
@@ -105,7 +122,7 @@ EditorObject& EditorObject::operator=( const EditorObject& src )
 			appearInfo->refCount --;
 			if ( appearInfo->refCount < 1 )
 			{
-				delete appearInfo->appearance;
+				EditorFreeObjectAppearance(appearInfo->appearance);
 				appearInfo->appearance = NULL;
 
 				delete appearInfo;
@@ -134,7 +151,7 @@ EditorObject::~EditorObject()
 		appearInfo->refCount --;
 		if ( appearInfo->refCount < 1 )
 		{
-			delete appearInfo->appearance;
+			EditorFreeObjectAppearance(appearInfo->appearance);
 			appearInfo->appearance = NULL;
 
 			delete appearInfo;
@@ -207,7 +224,7 @@ void EditorObject::setAppearance( int Group, int indexInGroup )
 			appearInfo->refCount --;
 			if ( appearInfo->refCount < 1 )
 			{
-				delete appearInfo->appearance;
+				EditorFreeObjectAppearance(appearInfo->appearance);
 				appearInfo->appearance = NULL;
 			
 				delete appearInfo;

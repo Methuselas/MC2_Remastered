@@ -13,6 +13,10 @@
 #include "EditorObjectMgr.h"
 #include "Camera.h"
 
+// EDITOR-BRUSH-SCREENPICK-1: GPU-primary object pick (defined in EditorInterface.cpp),
+// same picker the Select tool uses. Avoids pulling the heavy EditorInterface.h in here.
+extern EditorObject* EditorPickObjectAtScreen(int screenX, int screenY);
+
 //-------------------------------------------------------------------------------------------------
 // Modern GL forward projection (projectModernClipGL + viewport remap). Legacy
 // projectZ diverges/rejects when zoomed in (X-collapse). False = behind near plane.
@@ -69,7 +73,7 @@ bool LinkBrush::paint( Stuff::Vector3D& worldPos, int screenX, int screenY )
 	if ( !bLink )
 		return unPaint( worldPos, screenX, screenY );
 	
-	const EditorObject* pObject = EditorObjectMgr::instance()->getObjectAtPosition( worldPos );
+	const EditorObject* pObject = EditorPickObjectAtScreen( screenX, screenY );  // EDITOR-BRUSH-SCREENPICK-1
 
 	if ( !pObject )
 		return 0;
@@ -148,8 +152,8 @@ bool LinkBrush::canPaint( Stuff::Vector3D& pos, int x, int y, int flags )
 	if ( !bLink )
 		return canUnPaint( pos, x, y, flags );
 	
-	const EditorObject* pObject = EditorObjectMgr::instance()->getObjectAtPosition( pos );
-		
+	const EditorObject* pObject = EditorPickObjectAtScreen( x, y );  // EDITOR-BRUSH-SCREENPICK-1
+
 	if ( !pObject )
 		return false;
 
@@ -171,8 +175,8 @@ bool LinkBrush::canPaint( Stuff::Vector3D& pos, int x, int y, int flags )
 bool LinkBrush::canUnPaint( Stuff::Vector3D& pos, int x, int y, int flags )
 { 
 
-	const EditorObject* pBuilding = EditorObjectMgr::instance()->getObjectAtPosition( pos );
-	
+	const EditorObject* pBuilding = EditorPickObjectAtScreen( x, y );  // EDITOR-BRUSH-SCREENPICK-1
+
 	if ( !pBuilding )
 		return false;
 
@@ -300,7 +304,7 @@ bool LinkBrush::LinkAction::undo( )
 bool LinkBrush::unPaint( Stuff::Vector3D& pos, int XPos, int yPos )
 {
  
-	const EditorObject* pBuilding = EditorObjectMgr::instance()->getObjectAtPosition( pos );
+	const EditorObject* pBuilding = EditorPickObjectAtScreen( XPos, yPos );  // EDITOR-BRUSH-SCREENPICK-1
 
 	if ( pBuilding )
 	{

@@ -1234,6 +1234,16 @@ bool	EditorObjectMgr::deleteBuilding( const EditorObject* pInfo )
 				&& pInfo->cellRow == (*iter)->cellRow
 				&& pInfo->appearance() == (*iter)->appearance() )
 			{
+				// EDITOR-STATIC-DEDRAW: invalidate the static-prop RENDER recipe on
+				// scene-delete so the prop stops drawing immediately. The undo system
+				// clones/snapshots the object (sharing the appearance), so the appearance
+				// usually outlives this delete (appearInfo refCount > 1) and ~appearance's
+				// destroy()-driven invalidate never fires -> the deleted building/tree
+				// kept rendering as a ghost. invalidateStaticRegistration() is virtual +
+				// public (same as the registerStatic() the editor already calls); undo
+				// re-registers via registerStatic() (editor/Action.cpp:622).
+				if ( (*iter)->appearance() )
+					(*iter)->appearance()->invalidateStaticRegistration();
 				// EDITOR-CRASH-HARDENING-1: scrub drag pointer before freeing (UAF guard).
 				if ( EditorInterface::instance() )
 					EditorInterface::instance()->notifyObjectDeleted(*iter);
@@ -2220,6 +2230,10 @@ void EditorObjectMgr::deleteSelectedObjects()
 			// (mirror syncSelectedObjectPointerList above, ~line 2177).
 			if ( (*iter)->appearance() && (*iter)->appearance()->selected )
 			{
+				// EDITOR-STATIC-DEDRAW: invalidate the static-prop recipe so the prop
+				// stops drawing (the shared/undo-held appearance keeps it registered
+				// otherwise -> ghost). undo re-registers (editor/Action.cpp:622).
+				(*iter)->appearance()->invalidateStaticRegistration();
 				// EDITOR-CRASH-HARDENING-1: scrub drag pointer for removed object (UAF guard).
 				if ( EditorInterface::instance() )
 					EditorInterface::instance()->notifyObjectDeleted(*iter);
@@ -2254,6 +2268,8 @@ void EditorObjectMgr::deleteSelectedObjects()
 			// EDITOR-CRASH-HARDENING-1: appearance() can be NULL; guard before ->selected.
 			if ( (*dIter)->appearance() && (*dIter)->appearance()->selected )
 			{
+				// EDITOR-STATIC-DEDRAW: invalidate the static-prop recipe before removal.
+				(*dIter)->appearance()->invalidateStaticRegistration();
 				// EDITOR-CRASH-HARDENING-1: scrub drag pointer for removed object (UAF guard).
 				if ( EditorInterface::instance() )
 					EditorInterface::instance()->notifyObjectDeleted(*dIter);

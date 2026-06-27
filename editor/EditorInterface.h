@@ -322,6 +322,14 @@ private:
 	// helpers
 	void KillCurBrush();
 
+	// EDITOR-SIMPLIFY-S1: single source of truth for the active tool. Tears down the
+	// old brush (KillCurBrush) and sets curBrush/currentBrushID/currentBrushMenuID in
+	// one place. Call sites keep their own ChangeCursor() and any site-specific logic.
+	// menuId convention: pass the toolbar tools[].cmdId for tools that have a toolbar
+	// entry (so the highlight matches); for tools with no toolbar entry, pass brushId
+	// (a stable sentinel — the highlight check never matches a non-toolbar id).
+	void setActiveBrush( Brush* newBrush, int brushId, int menuId );
+
 	void addBuildingsToNewMenu();
 
 	void rotateSelectedObjects( int direction );
