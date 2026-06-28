@@ -588,7 +588,11 @@ int LogisticsVariant::getArmor( ) const
 	{
 		if ( components[i].component->getType() == COMPONENT_FORM_BULK )
 		{
-			retArmor += 32;			
+			// Armor points per BULK unit come from the component's value
+			// (compbas Damage column), not a hardcoded 32 — so ferro-fibrous
+			// (value 64) gives double the armor of basic Armor Plating (value 32).
+			int pts = (int)components[i].component->getDamage();
+			retArmor += pts > 0 ? pts : 32;
 		}
 	}
 
@@ -630,7 +634,11 @@ int LogisticsVariant::canAddComponent( LogisticsComponent* pComponent, long& x, 
 
 	if ( pComponent->getType() == COMPONENT_FORM_JUMPJET  )
 	{
-		if ( !chassis->canHaveJumpJets )
+		// MC2_JUMPJETS_ALL (default OFF; launcher Engine Option): allow jump jets
+		// on any chassis, bypassing the per-chassis canHaveJumpJets restriction
+		// (e.g. mount JJ on a Mad Cat). The one-JJ-per-mech rule still applies.
+		static const bool s_jumpjetsAll = ( getenv( "MC2_JUMPJETS_ALL" ) != nullptr );
+		if ( !chassis->canHaveJumpJets && !s_jumpjetsAll )
 			return JUMPJETS_NOT_ALLOWED;
 		else if ( hasJumpJets() )
 			return ONLY_ONE_JUMPJET_ALLOWED;
@@ -702,7 +710,8 @@ int LogisticsVariant::canAddComponent( LogisticsComponent* pComponent, long& x, 
 
 	if ( pComponent->getType() == COMPONENT_FORM_BULK )
 	{
-		if ( getArmor() + 32 > getMaxArmor() )
+		int pts = (int)pComponent->getDamage();
+		if ( getArmor() + ( pts > 0 ? pts : 32 ) > getMaxArmor() )
 			return NO_MORE_ARMOR;
 	}
 
