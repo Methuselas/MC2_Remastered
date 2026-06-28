@@ -298,6 +298,10 @@ bool tickPatrolAdvance(MechWarrior* warrior, MechBrainRuntime* runtime, int wid)
 // actively engaging (caller suppresses patrol advance). Gate MC2_BRAIN_ENGAGE (default OFF).
 bool tickEngageNearest(MechWarrior* warrior, MechBrainRuntime* runtime, int wid);
 
+// BRAIN-OPORD-MOVE-1: non-patrol OPORD movement (Escort follow, ReturnToPost leash) when the unit
+// is not engaging or patrolling. Returns true if it issued a MOVETO. Gate MC2_BRAIN_ENGAGE.
+bool tickOpordMove(MechWarrior* warrior, MechBrainRuntime* runtime, int wid);
+
 // BRAIN-WORLD-SNAPSHOT-1: snapshot gate.
 //
 // s_brainSnapshotEnabled() — returns true when MC2_BRAIN_SNAPSHOT=1.

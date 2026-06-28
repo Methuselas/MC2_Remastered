@@ -1619,6 +1619,57 @@ bool tickEngageNearest(MechWarrior* warrior, MechBrainRuntime* runtime, int wid)
 }
 
 // ---------------------------------------------------------------------------
+// BRAIN-OPORD-MOVE-1: tickOpordMove — non-patrol OPORD movement when NOT engaging.
+//
+//   Escort      : move toward the escortee unit (follow + defend).
+//   ReturnToPost: a Guard/Sentry unit that pursued a threat walks back to its post once clear.
+//
+// Called from runBrain AFTER tickEngageNearest returns false (no current threat) and only when
+// the unit is not patrolling. Emits MOVETO_POINT via the intent queue, throttled so we re-order
+// only when meaningfully off-target (avoids per-tick order spam). Returns true if it issued a move.
+// Gate: MC2_BRAIN_ENGAGE (shares the OPORD-runtime gate set).
+bool tickOpordMove(MechWarrior* warrior, MechBrainRuntime* runtime, int wid) {
+    if (!s_brainEngageGate()) return false;
+    if (!warrior || !runtime) return false;
+    MoverPtr veh = warrior->getVehicle();
+    if (!veh || veh->isDisabled()) return false;
+    if (!s_intentQueueEnabled()) return false;
+    // Throttle: only re-evaluate the move every 16 brain ticks.
+    if ((getBrainTickIndex() % 16u) != 0u) return false;
+
+    // Escort — follow the escortee.
+    if (runtime->escortMoving && runtime->escortTargetWID != 0) {
+        GameObjectPtr e = ObjectManager->getByWatchID(runtime->escortTargetWID);
+        if (e && !e->isDisabled()) {
+            Stuff::Vector3D ep = e->getPosition();
+            float d = veh->distanceFrom(ep);
+            if (d > 120.0f) {                            // stay within ~120 of the escortee
+                emitBrainIntent(runtime, wid, TACTICAL_ORDER_MOVETO_POINT, -1, ep.x, ep.y, ep.z, 0);
+                if (!s_brainCommitPhaseEnabled()) commitBrainIntents(warrior, runtime);
+                std::fprintf(stderr, "[BRAIN_ESCORT_MOVE] wid=%d to=(%g %g) d=%.0f\n", wid, ep.x, ep.y, d);
+                std::fflush(stderr);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // ReturnToPost — a guard that wandered (pursuing a now-cleared threat) walks back to its post.
+    if (runtime->guardHold && runtime->swReturnToPost == 1 && runtime->postSet) {
+        Stuff::Vector3D post; post.x = runtime->postPos[0]; post.y = runtime->postPos[1]; post.z = runtime->postPos[2];
+        float d = veh->distanceFrom(post);
+        if (d > 100.0f) {                                // returned-to-post tolerance
+            emitBrainIntent(runtime, wid, TACTICAL_ORDER_MOVETO_POINT, -1, post.x, post.y, post.z, 0);
+            if (!s_brainCommitPhaseEnabled()) commitBrainIntents(warrior, runtime);
+            std::fprintf(stderr, "[BRAIN_RETURN_POST] wid=%d d=%.0f\n", wid, d);
+            std::fflush(stderr);
+            return true;
+        }
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
 // BRAIN-OPORD-COREPATROL-1: tickPatrolAdvance
 //
 // Called every brain tick from warrior.cpp AFTER executeSpecialBody_Apply + commitBrainIntents.

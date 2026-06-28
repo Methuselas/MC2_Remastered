@@ -2575,12 +2575,12 @@ long MechWarrior::runBrain (void) {
 			bool engaging = tickEngageNearest(this, brainRuntime, vehicleWID);
 			if (engaging) {
 				dispatcherAppliedEffect = true;
-			} else {
-				bool patrolAdvanced = tickPatrolAdvance(this, brainRuntime, vehicleWID);
-				if (patrolAdvanced) {
-					// Patrol re-emitted a MOVETO_POINT — suppress HOLD so the order isn't stomped.
-					dispatcherAppliedEffect = true;
-				}
+			} else if (tickPatrolAdvance(this, brainRuntime, vehicleWID)) {
+				// Patrol re-emitted a MOVETO_POINT — suppress HOLD so the order isn't stomped.
+				dispatcherAppliedEffect = true;
+			} else if (tickOpordMove(this, brainRuntime, vehicleWID)) {
+				// BRAIN-OPORD-MOVE-1: Escort follow / ReturnToPost leash issued a move.
+				dispatcherAppliedEffect = true;
 			}
 		}
 
