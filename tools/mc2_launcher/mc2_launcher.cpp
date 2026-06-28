@@ -189,6 +189,7 @@ static const EnvVarDef k_envVars[] = {
     // --- Cheats (interactive play) ---
     { "MC2_CHEAT_INFINITE_MONEY",    "Infinite Money",                        true,  "",     "Cheats" },
     { "MC2_CHEAT_SALVAGE_ALL",       "Salvage Everything",                    true,  "",     "Cheats" },
+    { "MC2_PURCHASE_ALL",            "Purchase All (every mech/weapon/pilot)", true, "",     "Cheats" },
 };
 static const int k_envVarCount = (int)(sizeof(k_envVars) / sizeof(k_envVars[0]));
 
