@@ -3163,7 +3163,10 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 					if (!w->getBrainRuntime()) w->setBrainRuntimeMode(BrainRuntimeMode::Enhanced);
 					MechBrainRuntime* rt = w->getBrainRuntime();
 					if (!rt) continue;
-					rt->engageRadius         = 0.0f;   // detection is team-contact based; 0 = no extra distance tighten
+					// EngageRadius = per-unit COMMITMENT radius: the team SHARES the contact (all know the
+					// enemy exists) but a unit only attacks once the threat is within its own EngageRadius,
+					// so distant units keep patrolling/holding instead of the whole map swarming one sighting.
+					rt->engageRadius         = (b.engageRadius >= 0) ? b.engageRadius : ad.engageRadius;
 					rt->swAttackerHelpRadius = (b.attackerHelpRadius >= 0) ? b.attackerHelpRadius : ad.attackerHelpRadius;
 					rt->swDefenderHelpRadius = (b.defenderHelpRadius >= 0) ? b.defenderHelpRadius : ad.defenderHelpRadius;
 					rt->swRequestHelp        = (b.requestHelp  >= 0) ? (int8_t)b.requestHelp  : (int8_t)ad.requestHelp;

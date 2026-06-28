@@ -1575,6 +1575,13 @@ bool tickEngageNearest(MechWarrior* warrior, MechBrainRuntime* runtime, int wid)
         }
     }
 
+    // EngageRadius localization: the team shares the contact (the unit KNOWS the enemy exists),
+    // but it only commits to attacking once the threat is within its own EngageRadius — distant
+    // units keep patrolling/holding instead of the whole map swarming a single sighting.
+    // engageRadius<=0 means "no commitment limit" (engage any detected contact).
+    if (tgtWID && runtime->engageRadius > 0.0f && tcNear > runtime->engageRadius)
+        tgtWID = 0;
+
     // Throttled diagnostic (MC2_BRAIN_ENGAGE_TRACE=1): detected-contact count + nearest distance.
     if (std::getenv("MC2_BRAIN_ENGAGE_TRACE") && (getBrainTickIndex() % 64u) == 0u) {
         std::fprintf(stderr, "[BRAIN_ENGAGE_EVAL] wid=%d teamContacts=%ld tcNear=%.0f tgt=%lu\n",
