@@ -700,7 +700,7 @@ void main() {
         if (cliffBlend > 0.01) {
             float luma = dot(baseColor, vec3(0.299, 0.587, 0.114));
             vec3  cliffColor = mix(vec3(luma), tintRock, 0.6) * 0.8;
-            baseColor = mix(baseColor, cliffColor, cliffBlend * 0.7);
+            baseColor = mix(baseColor, cliffColor, cliffBlend * 0.7 * (1.0 - pureConcrete));
         }
     }
 
@@ -739,7 +739,7 @@ void main() {
         float lowFreq  = fbm(v_worldPos.xy * 0.0035, 3) * 0.5 + 0.5;
         float highFreq = fbm(v_worldPos.xy * 0.018,  2) * 0.5 + 0.5;
         float breakup  = mix(0.78, 1.18, mix(lowFreq, highFreq, 0.55));
-        baseColor *= mix(1.0, breakup, 1.0 - snowWeight);
+        baseColor *= mix(1.0, breakup, (1.0 - snowWeight) * (1.0 - pureConcrete));
     }
     // Snow brightness dampen — only detected-snow fragments (snowWeight) are darkened.
     baseColor *= mix(1.0, snowBrightnessDampen, snowWeight);
@@ -770,7 +770,7 @@ void main() {
     float NdotL       = dot(N, terrainLightDir.xyz);
     float diffuse     = clamp(NdotL, 0.02, 1.0);
     float normalLight = ((u_diag & 4) != 0) ? 1.0 : mix(0.35, 1.20, diffuse);
-    normalLight = mix(normalLight, 1.0, pureConcrete * 0.85);  // cement: flatter lit
+    normalLight = mix(normalLight, 1.0, pureConcrete);  // cement: fully flat-lit slab
 
     float shadow = 1.0;
     if ((u_diag & 8) == 0) {
@@ -778,6 +778,12 @@ void main() {
         float staticS = calcShadow(v_worldPos, shadowN, terrainLightDir.xyz, 16);
         float dynS    = calcDynamicShadow(v_worldPos, shadowN, terrainLightDir.xyz, 8);
         shadow = min(staticS, dynS);
+        // CEMENT-CLEAN-LIGHTING-1: concrete/cement is an authored flat slab. The
+        // terrain STATIC self-shadow (calcShadow) lands as world-fixed blotches that
+        // do not tile with the cement atlas (the "spots bleeding through" report).
+        // Drop static shadow on concrete but KEEP the dynamic building shadow so
+        // structures still cast onto roads/pads.
+        shadow = mix(shadow, dynS, pureConcrete);
     }
 
     // DEBUG-VIZ (exact-value escape on u_diag; bitmask modes never reach 30/31):
