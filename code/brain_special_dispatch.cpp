@@ -1541,6 +1541,8 @@ void commitBrainIntents(MechWarrior* warrior, MechBrainRuntime* runtime) {
 bool tickEngageNearest(MechWarrior* warrior, MechBrainRuntime* runtime, int wid) {
     if (!s_brainEngageGate()) return false;
     if (!warrior || !runtime) return false;
+    // Scout observes only — it moves its route and reports contacts but never engages.
+    if (runtime->scoutObserveOnly) return false;
     // Armed when the unit has an active combatant OPORD (Patrol walks+engages; Guard/Sentry/Escort
     // hold/move+engage).
     if (!runtime->patrolActive && !runtime->guardHold && !runtime->escortMoving) return false;

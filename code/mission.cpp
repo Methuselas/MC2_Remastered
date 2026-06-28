@@ -3250,6 +3250,25 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 							}
 							rt->guardHold = true; ++mfOther; break;
 						}
+						case 5:     // Ambush - hidden until a threat is near, then strike (reuses sentry asleep/woken)
+							rt->guardHold = true; rt->sentryAsleep = true; ++mfOther; break;
+						case 6: {   // Scout - move the route observing only; never engages
+							int wc = (b.primary.waypointCount > 8) ? 8 : b.primary.waypointCount;
+							if (wc > 0) {
+								for (int wi = 0; wi < wc; ++wi) {
+									Stuff::Vector3D wp; wp.x = b.primary.waypoints[wi].x; wp.y = b.primary.waypoints[wi].y; wp.z = 0.0f;
+									float z = land ? land->getTerrainElevation(wp) : 0.0f;
+									rt->patrolWaypoints[wi][0] = b.primary.waypoints[wi].x;
+									rt->patrolWaypoints[wi][1] = b.primary.waypoints[wi].y;
+									rt->patrolWaypoints[wi][2] = z;
+								}
+								rt->patrolWaypointCount = (uint8_t)wc;
+								rt->patrolWaypointIndex = 0;
+								rt->patrolLoop = b.primary.loop;
+								rt->patrolActive = true;
+							}
+							rt->scoutObserveOnly = true; ++mfOther; break;
+						}
 						default:    // MoveTo / Attack / Withdraw / Ambush / Scout -> hold + engage (verb wiring TBD)
 							rt->guardHold = true; ++mfOther; break;
 					}

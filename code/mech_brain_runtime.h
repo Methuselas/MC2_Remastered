@@ -171,8 +171,11 @@ struct MechBrainRuntime {
     float        postPos[3]           = {};
     bool         postSet              = false;
     // Sentry: powered down until a threat is detected (WakeOnAttack), then wakes + engages.
+    // Ambush reuses the same asleep/woken pair (hidden until a threat is detected, then strikes).
     bool         sentryAsleep         = false;
     bool         sentryWoken          = false;
+    // Scout: move the route observing only — never engages (observe + report, do not fight).
+    bool         scoutObserveOnly     = false;
     // Escort: follow + defend a target unit.
     unsigned long escortTargetWID     = 0;              // 0 = none
     bool         escortMoving         = false;
