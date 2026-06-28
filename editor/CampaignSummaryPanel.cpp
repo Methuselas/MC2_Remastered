@@ -133,8 +133,11 @@ void CampaignSummaryPanel::Draw()
     if (!s_open)
         return;
 
-    ImGui::SetNextWindowSize(ImVec2(480.f, 560.f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Campaign Overview", &s_open))
+    // NoDocking + UI-scale default so it floats resizable (never trapped in the
+    // narrow autodock column) and stays readable at HiDPI font sizes.
+    const float k = ImGui::GetIO().FontGlobalScale > 0.f ? ImGui::GetIO().FontGlobalScale : 1.f;
+    ImGui::SetNextWindowSize(ImVec2(480.f * k, 560.f * k), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Campaign Overview", &s_open, ImGuiWindowFlags_NoDocking))
     {
         ImGui::End();
         return;

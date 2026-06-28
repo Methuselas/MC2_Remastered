@@ -95,6 +95,7 @@ public:
 	void OpenMissionByPath(const char* pakPath);
 	void renderToolbarImGui();
 	void renderObjectCompanionPanel();
+	void renderObjectInfoPanel();
 
 	// Modder-friendly wrapper panels (Phase 1d). Each surfaces EXISTING editor
 	// state/flows through ImGui; no new placement/launch/package systems.

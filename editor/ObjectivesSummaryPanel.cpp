@@ -497,8 +497,13 @@ void ObjectivesSummaryPanel::Draw()
     if (!s_open)
         return;
 
-    ImGui::SetNextWindowSize(ImVec2(820.f, 520.f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Objectives Overview", &s_open))
+    // Float free + NoDocking so the autodock right-column can never swallow it into
+    // the narrow tab strip (where a single window can't be resized). Default size +
+    // the child-pane widths below scale with the editor UI scale (FontGlobalScale)
+    // so the 3-pane layout stays readable at HiDPI font sizes.
+    const float k = ImGui::GetIO().FontGlobalScale > 0.f ? ImGui::GetIO().FontGlobalScale : 1.f;
+    ImGui::SetNextWindowSize(ImVec2(820.f * k, 520.f * k), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Objectives Overview", &s_open, ImGuiWindowFlags_NoDocking))
     {
         ImGui::End();
         return;
@@ -521,7 +526,7 @@ void ObjectivesSummaryPanel::Draw()
     bool selStillValid = false;
 
     // ---- LEFT pane: objective list grouped by team, then category ----------
-    ImGui::BeginChild("obj_list", ImVec2(280.f, 0.f), true);
+    ImGui::BeginChild("obj_list", ImVec2(280.f * k, 0.f), true);
     bool anyObjectives = false;
     for (int t = 0; t < GAME_MAX_PLAYERS; ++t)
     {
@@ -550,7 +555,7 @@ void ObjectivesSummaryPanel::Draw()
 
     // ---- CENTER pane: readable card ----------------------------------------
     ImGui::SameLine();
-    ImGui::BeginChild("obj_flow", ImVec2(-230.f, 0.f), true);
+    ImGui::BeginChild("obj_flow", ImVec2(-230.f * k, 0.f), true);
     if (s_sel && s_selTeam >= 0)
         ImGui::TextDisabled("Team %d", s_selTeam);
     objDrawFlow(s_sel);

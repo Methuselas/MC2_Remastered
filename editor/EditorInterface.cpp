@@ -5400,44 +5400,104 @@ void EditorInterface::renderToolbarImGui()
 		CommandPalette::Toggle();
 	CommandPalette::Draw();
 
-	// Place Tool — scatter mode + params + active brush (wraps existing brushes).
-	if (ImGui::Button("Place Tool", ImVec2(-1.f, 0.f)))
-		s_placePanelOpen = !s_placePanelOpen;
-	renderPlacePanelImGui();
-
-	// Mission Tools — Test Mission (launch game) + Build Mod Package.
-	if (ImGui::Button("Mission Tools", ImVec2(-1.f, 0.f)))
-		s_missionToolsOpen = !s_missionToolsOpen;
-	renderMissionToolsImGui();
-
-	// Playtest in Game (Slice 1): one-click save -> launch mc2.exe -> capture log.
-	// Stop while running; status (state / exit code / last line) below the button.
+	// === Authoring mode selector (contextual tool settings) =================
+	// EDITOR-CONTEXTUAL-TOOLS-1: one active mode; only its controls render below,
+	// replacing the old flat wall where every tool's settings stacked at once.
+	// s_toolMode tracks the active brush (brush-pointer change = re-derive) so a
+	// brush switch from the legacy menu or a hotkey moves the selector too; the
+	// non-brush modes (Relief/Mission/Place-help) are pure UI and therefore stick.
+	ImGui::Separator();
+	enum ToolMode { MODE_SELECT = 0, MODE_SCULPT, MODE_STAMP, MODE_PAINT, MODE_RELIEF, MODE_PLACE, MODE_MISSION };
+	static int   s_toolMode = MODE_SELECT;
+	static void* s_lastBrushForMode = (void*)-1;
+	if (curBrush != s_lastBrushForMode)
 	{
-		const bool running = EditorPlaytest::IsRunning();
-		if (running)
-		{
-			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.25f, 0.25f, 1.0f));
-			if (ImGui::Button("Stop Playtest", ImVec2(-1.f, 0.f)))
-				EditorPlaytest::Stop();
-			ImGui::PopStyleColor();
-		}
-		else
-		{
-			const bool can = EditorPlaytest::CanPlaytest();
-			if (!can) ImGui::BeginDisabled();
-			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.30f, 1.0f));
-			if (ImGui::Button("Playtest", ImVec2(-1.f, 0.f)))
-				EditorPlaytest::Start();
-			ImGui::PopStyleColor();
-			if (!can) ImGui::EndDisabled();
-			if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !can)
-				ImGui::SetTooltip("Load + save a mission first.");
-		}
-		ImGui::TextWrapped("%s", EditorPlaytest::StatusLine());
+		s_lastBrushForMode = curBrush;
+		if      (dynamic_cast<HeightBrush*>(curBrush))   s_toolMode = MODE_SCULPT;
+		else if (dynamic_cast<StampBrush*>(curBrush))    s_toolMode = MODE_STAMP;
+		else if (dynamic_cast<TerrainBrush*>(curBrush))  s_toolMode = MODE_PAINT;
+		else if (dynamic_cast<BuildingBrush*>(curBrush) ||
+		         dynamic_cast<ScatterBrush*>(curBrush))  s_toolMode = MODE_PLACE;
+		else                                             s_toolMode = MODE_SELECT;
 	}
-
+	{
+		struct ModeDef { const char* label; int mode; };
+		static const ModeDef modes[] = {
+			{ "Select",  MODE_SELECT  }, { "Sculpt",  MODE_SCULPT },
+			{ "Stamp",   MODE_STAMP   }, { "Paint",   MODE_PAINT  },
+			{ "Relief",  MODE_RELIEF  }, { "Place",   MODE_PLACE  },
+			{ "Mission", MODE_MISSION },
+		};
+		const int nModes = (int)(sizeof(modes) / sizeof(modes[0]));
+		const float colW = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+		for (int i = 0; i < nModes; ++i)
+		{
+			const bool on = (s_toolMode == modes[i].mode);
+			if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.45f, 0.80f, 1.0f));
+			if (ImGui::Button(modes[i].label, ImVec2(colW, 0.f)))
+			{
+				s_toolMode = modes[i].mode;
+				// Arm the matching brush on entering a brush-backed mode so it is
+				// usable immediately (no second click in the sub-controls).
+				if      (modes[i].mode == MODE_SCULPT && !dynamic_cast<HeightBrush*>(curBrush))  setSculptBrush(0);
+				else if (modes[i].mode == MODE_STAMP  && !dynamic_cast<StampBrush*>(curBrush))   setStampBrush(0);
+				else if (modes[i].mode == MODE_PAINT  && !dynamic_cast<TerrainBrush*>(curBrush)) setPaintMaterialBrush(m_paintMaterialType);
+			}
+			if (on) ImGui::PopStyleColor();
+			if ((i % 2) == 0 && i + 1 < nModes) ImGui::SameLine();
+		}
+	}
 	ImGui::Separator();
 
+	// Place Tool / Mission Tools own their own windows and must submit every frame
+	// regardless of the active mode, or an already-open window would vanish.
+	renderPlacePanelImGui();
+	renderMissionToolsImGui();
+
+	if (s_toolMode == MODE_PLACE)
+	{
+		// Place Tool — scatter mode + params + active brush (wraps existing brushes).
+		if (ImGui::Button("Place Tool", ImVec2(-1.f, 0.f)))
+			s_placePanelOpen = !s_placePanelOpen;
+		ImGui::TextWrapped("Pick an object from the Objects menu to start placing. The "
+			"Objects palette (sibling swap / recent) appears on the left while a "
+			"placement brush is active.");
+	}
+
+	if (s_toolMode == MODE_MISSION)
+	{
+		// Mission Tools — Test Mission (launch game) + Build Mod Package.
+		if (ImGui::Button("Mission Tools", ImVec2(-1.f, 0.f)))
+			s_missionToolsOpen = !s_missionToolsOpen;
+
+		// Playtest in Game: one-click save -> launch mc2.exe -> capture log. Stop
+		// while running; status (state / exit code / last line) below the button.
+		{
+			const bool running = EditorPlaytest::IsRunning();
+			if (running)
+			{
+				ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.25f, 0.25f, 1.0f));
+				if (ImGui::Button("Stop Playtest", ImVec2(-1.f, 0.f)))
+					EditorPlaytest::Stop();
+				ImGui::PopStyleColor();
+			}
+			else
+			{
+				const bool can = EditorPlaytest::CanPlaytest();
+				if (!can) ImGui::BeginDisabled();
+				ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.30f, 1.0f));
+				if (ImGui::Button("Playtest", ImVec2(-1.f, 0.f)))
+					EditorPlaytest::Start();
+				ImGui::PopStyleColor();
+				if (!can) ImGui::EndDisabled();
+				if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !can)
+					ImGui::SetTooltip("Load + save a mission first.");
+			}
+			ImGui::TextWrapped("%s", EditorPlaytest::StatusLine());
+		}
+	}
+
+	if (s_toolMode == MODE_SELECT)
 	for (int i = 0; i < (int)(sizeof(tools) / sizeof(tools[0])); ++i)
 	{
 		const bool active = (currentBrushMenuID == tools[i].cmdId);
@@ -5449,10 +5509,10 @@ void EditorInterface::renderToolbarImGui()
 			ImGui::PopStyleColor();
 	}
 
-	ImGui::Separator();
-	ImGui::Text("Sculpt Terrain");
-	HeightBrush* hb = dynamic_cast<HeightBrush*>(curBrush);
+	if (s_toolMode == MODE_SCULPT)
 	{
+		ImGui::Text("Sculpt Terrain");
+		HeightBrush* hb = dynamic_cast<HeightBrush*>(curBrush);
 		struct SM { const char* label; int mode; };
 		static const SM sm[] = { { "Raise", 0 }, { "Lower", 1 }, { "Smooth", 2 } };
 		for (int i = 0; i < 3; ++i)
@@ -5471,9 +5531,9 @@ void EditorInterface::renderToolbarImGui()
 			hb->setStrength(m_sculptStrength);
 	}
 
-	ImGui::Separator();
-	ImGui::Text("Terrain Stamp");
+	if (s_toolMode == MODE_STAMP)
 	{
+		ImGui::Text("Terrain Stamp");
 		StampBrush* st = dynamic_cast<StampBrush*>(curBrush);
 		struct SD { const char* label; int type; };
 		static const SD sd[] = { { "Pad", 0 }, { "Crater", 1 }, { "Hill", 2 } };
@@ -5493,9 +5553,9 @@ void EditorInterface::renderToolbarImGui()
 			st->setStrength(m_stampStrength);
 	}
 
-	ImGui::Separator();
-	ImGui::Text("Paint Material");
+	if (s_toolMode == MODE_PAINT)
 	{
+		ImGui::Text("Paint Material");
 		// TERRAIN-MATERIAL-PAINT-1 (Slice 1): surface the dormant TerrainBrush.
 		// Each button installs a TerrainBrush painting one TerrainType (mclib/dmapdata.h)
 		// via setPaintMaterialBrush() -> setActiveBrush() (same path as Sculpt/Stamp).
@@ -5529,9 +5589,9 @@ void EditorInterface::renderToolbarImGui()
 		ImGui::TextWrapped("Concrete paints live; grass/dirt/rock may need a reload to show (LOD-chunk colormap).");
 	}
 
-	ImGui::Separator();
-	ImGui::Text("Terrain Relief");
+	if (s_toolMode == MODE_RELIEF)
 	{
+		ImGui::Text("Terrain Relief");
 		// Amplify/flatten the whole heightmap about its mean (exaggerate hills +
 		// deepen basins, or smooth toward flat). Repeatable per click.
 		if (ImGui::Button("Amplify x1.5", ImVec2(-1.f, 0.f)))
@@ -5565,6 +5625,7 @@ void EditorInterface::renderToolbarImGui()
 	ImGui::End();
 
 	renderObjectCompanionPanel();
+	renderObjectInfoPanel();
 }
 
 // Companion panel for object placement: when a BuildingBrush is active, show the
@@ -5788,6 +5849,103 @@ void EditorInterface::renderObjectCompanionPanel()
 	if (pendGroup >= 0)
 		selectBuildingObject(pendGroup, pendIndex);
 }
+
+// ---------------------------------------------------------------------------
+// Object info panel (left-pinned overlay): shows the FIRST selected object's
+// identity/position and the common manipulation actions (locate, rotate,
+// inspector, delete). Overlay (NOT a dockspace split) on purpose -- a left dock
+// would shift the scene viewport origin and break mouse picking; an overlay
+// window floats over the viewport without reflowing it. Selection retrieval
+// mirrors InspectorPanel's null-safe path (EditorObjectMgr::instance() +
+// getSelectedObjectList()); every deref is guarded since the editor god-class
+// crashes easily on a half-built selection.
+// ---------------------------------------------------------------------------
+void EditorInterface::renderObjectInfoPanel()
+{
+	// Left "current object" DOCK COLUMN. Pinned flush-left, full viewport height so
+	// it reads as a docked left column (not a floating popup). It is NOT a real
+	// dockspace split: a true left dock would shrink the scene from the left and
+	// shift its origin, drifting object picking (gated on the projZ->GL slice, see
+	// PROJZ-GL-UNIFICATION-RECON-1). Pinned-overlay instead — it covers only the
+	// scene's left strip; picking in the rest of the scene stays correct. Always
+	// pos/size + NoSavedSettings so a stale imgui.ini can never float or hide it.
+	ImGuiIO& objIo = ImGui::GetIO();
+	const float w    = 270.0f * s_uiScale;
+	const float topY = 26.0f * s_uiScale;   // clear the main menu bar
+	ImGui::SetNextWindowPos(ImVec2(0.0f, topY), ImGuiCond_Always);
+	ImGui::SetNextWindowSize(ImVec2(w, objIo.DisplaySize.y - topY), ImGuiCond_Always);
+	ImGui::SetNextWindowBgAlpha(0.92f);
+	ImGui::Begin("Object", nullptr,
+		ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+		ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
+		ImGuiWindowFlags_NoFocusOnAppearing);
+
+	EditorObjectMgr* mgr = EditorObjectMgr::instance();
+	int sel = mgr ? mgr->getSelectionCount() : 0;
+	if (sel == 0)
+	{
+		ImGui::TextDisabled("No selection");
+		ImGui::TextWrapped("Select mode: click an object to inspect/manipulate it.");
+		ImGui::End();
+		return;
+	}
+
+	// First selected object via the same null-safe list walk InspectorPanel uses.
+	EditorObject* obj = nullptr;
+	{
+		EditorObjectMgr::EDITOR_OBJECT_LIST list = mgr->getSelectedObjectList();
+		for (EditorObjectMgr::EDITOR_OBJECT_LIST::EIterator it = list.Begin(); !it.IsDone(); it++)
+		{
+			if (*it)
+			{
+				obj = (*it);
+				break;
+			}
+		}
+	}
+
+	// getPosition() derefs appearance() unconditionally, so the appearance guard
+	// here also makes the position read below safe.
+	if (!obj || !obj->appearance())
+	{
+		ImGui::TextDisabled("Selection not ready");
+		ImGui::End();
+		return;
+	}
+
+	const char* name = obj->getDisplayName();
+	ImGui::Text("%s", (name && name[0]) ? name : "(unnamed)");
+	ImGui::Text("ID %ld   %s", obj->getID(), InspectorPanel::CategoryToken(obj));
+	const Stuff::Vector3D& p = obj->getPosition();
+	ImGui::Text("Pos  %.0f, %.0f, %.0f", p.x, p.y, p.z);
+	if (sel > 1)
+		ImGui::TextDisabled("(+%d more selected)", sel - 1);
+
+	ImGui::Separator();
+
+	if (ImGui::Button("Locate (center camera)", ImVec2(-1.f, 0.f)))
+	{
+		if (eye)
+			eye->setPosition(obj->getPosition(), false);
+	}
+
+	if (ImGui::Button("Rotate -45", ImVec2(ImGui::GetContentRegionAvail().x * 0.5f - 4, 0.f)))
+		rotateSelectedObjects(-1);
+	ImGui::SameLine();
+	if (ImGui::Button("Rotate +45", ImVec2(-1.f, 0.f)))
+		rotateSelectedObjects(1);
+
+	if (ImGui::Button("Open Inspector (full detail)", ImVec2(-1.f, 0.f)))
+		InspectorPanel::Open();
+
+	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.25f, 0.25f, 1.0f));
+	if (ImGui::Button("Delete", ImVec2(-1.f, 0.f)))
+		mgr->deleteSelectedObjects();
+	ImGui::PopStyleColor();
+
+	ImGui::End();
+}
+
 // ---------------------------------------------------------------------------
 // Place Tool panel (Phase 1d): a single always-available control surface for the
 // EXISTING object-placement brushes. Shows the active brush, toggles scatter
