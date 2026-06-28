@@ -2255,8 +2255,19 @@ long MechWarrior::runBrain (void) {
 //		if (teamId != Team::home->getId())
 //		return(0);
 
-	if (!brain)
-		return(0);
+	// PATROL-DRIVE-1 / pure-Enhanced: inline-Brain warriors (TechScript/Enhanced) carry NO
+	// legacy ABL brain (brain==NULL), but their behavior is driven by the Enhanced runtime
+	// further down this function (patrol tick, dispatch). The legacy ABL path (brain->execute)
+	// is the only consumer of `brain`. So bail on NULL brain ONLY when there is also no
+	// Enhanced runtime to run — otherwise fall through and let the runtime drive. Stock
+	// warriors always have a brain, so this is byte-identical for stock.
+	if (!brain) {
+		const bool enhancedRuntimeActive =
+			s_brainRuntimeEnabled && s_brainRuntimeApplyEnabled &&
+			brainRuntime && (brainRuntime->mode == BrainRuntimeMode::Enhanced);
+		if (!enhancedRuntimeActive)
+			return(0);
+	}
 
 	//----------------------------------
 	// Param 1 is the ID of this mech...
@@ -2281,7 +2292,8 @@ long MechWarrior::runBrain (void) {
 	curEventID = 0;
 	curEventTrigger = 0;
 	ModuleInfo moduleInfo;
-	brain->getInfo(&moduleInfo);
+	if (brain)                       // PATROL-DRIVE-1: inline-Brain warriors have no ABL brain.
+		brain->getInfo(&moduleInfo); // moduleInfo is only consumed by the legacy ABL path below.
 
 	// BRAIN-RUNTIME-1B: check if this warrior is under Enhanced runtime control.
 	// If so, skip brain->execute() and the ABL-derived tac order, push+drain HOLD once.

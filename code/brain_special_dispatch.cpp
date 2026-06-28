@@ -1189,6 +1189,7 @@ bool executeSpecialBody_Apply(const BrainSpecialBody& body, MechWarrior* warrior
                         }
                         prt->patrolLoop   = loopMode;
                         prt->patrolActive = true;
+                        prt->patrolStarted = true;  // PATROL-DRIVE-1: this path emits waypoint[0] below; skip the tickPatrolAdvance kick.
                         std::fprintf(stderr, "[BRAIN_PATROL_START] count=%u loop=%d wid=%d\n",
                                      (unsigned)wpCount, (int)loopMode, wid);
                         std::fflush(stderr);
@@ -1539,6 +1540,33 @@ bool tickPatrolAdvance(MechWarrior* warrior, MechBrainRuntime* runtime, int wid)
     if (!warrior || !runtime) return false;
     if (!runtime->patrolActive) return false;
     if (runtime->patrolWaypointCount == 0) return false;
+
+    // PATROL-DRIVE-1: initial kick. A freshly-activated patrol (declarative mission.fit OPORD
+    // populate) has no outstanding MOVETO order, so the arrival-poll below would never fire and
+    // the unit would sit idle. Drive to the CURRENT waypoint once, then let the arrival-poll
+    // advance cursor on every subsequent arrival. (The CorePatrol special begin-path emits
+    // waypoint[0] itself and sets patrolStarted=true, so it skips this kick.)
+    if (!runtime->patrolStarted) {
+        runtime->patrolStarted = true;
+        uint8_t idx = runtime->patrolWaypointIndex;
+        float kx = runtime->patrolWaypoints[idx][0];
+        float ky = runtime->patrolWaypoints[idx][1];
+        float kz = runtime->patrolWaypoints[idx][2];
+        if (s_intentQueueEnabled()) {
+            emitBrainIntent(runtime, wid, TACTICAL_ORDER_MOVETO_POINT, -1, kx, ky, kz, 0);
+            std::fprintf(stderr, "[BRAIN_PATROL_KICK] index=%u pos=(%g %g %g) tick=%u wid=%d\n",
+                         (unsigned)idx, kx, ky, kz, getBrainTickIndex(), wid);
+            std::fflush(stderr);
+            if (!s_brainCommitPhaseEnabled()) {
+                commitBrainIntents(warrior, runtime);
+            }
+        } else {
+            std::fprintf(stderr, "[BRAIN_PATROL_NO_QUEUE] kick index=%u wid=%d: requires MC2_BRAIN_INTENT_QUEUE=1\n",
+                         (unsigned)idx, wid);
+            std::fflush(stderr);
+        }
+        return true;
+    }
 
     // Poll arrival via public getCurTacOrder() accessor (curTacOrder is protected).
     TacticalOrder* cur = warrior->getCurTacOrder();

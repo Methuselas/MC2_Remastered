@@ -138,6 +138,12 @@ struct MechBrainRuntime {
     float   patrolWaypoints[8][3] = {};     // x/y/z per waypoint, inline coords
     bool    patrolLoop            = true;   // true=loop, false=stop after last
     bool    patrolActive          = false;  // true=patrol running
+    // PATROL-DRIVE-1: a freshly-activated patrol (declarative mission.fit OPORD populate OR
+    // the CorePatrol special begin-path) has no outstanding MOVETO order. tickPatrolAdvance
+    // only advances on arrival of a prior order, so it would never START. patrolStarted gates
+    // a one-time initial MOVETO kick to the current waypoint. Set true after the kick (or by
+    // the special begin-path which emits waypoint[0] itself).
+    bool    patrolStarted         = false;  // true once the initial MOVETO kick was emitted
 
     // BRAIN-DECISION-INTENT-QUEUE-1: per-warrior pending intent buffer.
     // Gate: MC2_BRAIN_INTENT_QUEUE (default OFF).
