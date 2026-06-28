@@ -293,6 +293,11 @@ bool applyCachedSpecialBodyToRuntime(struct MechBrainRuntime* rt);
 // Returns true if an advance (re-emit) was performed this tick.
 bool tickPatrolAdvance(MechWarrior* warrior, MechBrainRuntime* runtime, int wid);
 
+// BRAIN-ENGAGE-1: per-tick autonomous threat engagement. Acquires the nearest live enemy within
+// runtime->engageRadius and issues an ATTACK_OBJECT order via the intent queue. Returns true while
+// actively engaging (caller suppresses patrol advance). Gate MC2_BRAIN_ENGAGE (default OFF).
+bool tickEngageNearest(MechWarrior* warrior, MechBrainRuntime* runtime, int wid);
+
 // BRAIN-WORLD-SNAPSHOT-1: snapshot gate.
 //
 // s_brainSnapshotEnabled() — returns true when MC2_BRAIN_SNAPSHOT=1.

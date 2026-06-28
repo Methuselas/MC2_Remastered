@@ -67,6 +67,8 @@
 #include "tacordr.h"   // TacticalOrder, TACTICAL_ORDER_POWERDOWN, ORDER_ORIGIN_SELF
 #include "gameobj.h"   // GameObjectPtr, GameObject::getWatchID/getTeam — DISPATCH-EFFECT-COREATTACK-1
 #include "objmgr.h"    // ObjectManager (global) — DISPATCH-EFFECT-COREATTACK-1
+#include "mover.h"     // Mover::getContacts / getVehicle MoverPtr — BRAIN-ENGAGE-1
+#include "dcontact.h"  // CONTACT_SORT_DISTANCE, MAX_CONTACTS_PER_SENSOR — BRAIN-ENGAGE-1
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -167,6 +169,14 @@ static bool s_brainFsmGate() {
 // NOTE: reads MC2_BRAIN_PATROL fresh per call (not cached) so harness _putenv works.
 static bool s_brainPatrolGate() {
     const char* v = std::getenv("MC2_BRAIN_PATROL");
+    return v && std::atoi(v) != 0;
+}
+
+// BRAIN-ENGAGE-1: MC2_BRAIN_ENGAGE gate (default OFF). When ON, Patrol/Guard runtimes with
+// engageRadius>0 auto-acquire the nearest enemy in range and fire (tickEngageNearest).
+// Read fresh per call (harness _putenv friendly), matching s_brainPatrolGate.
+static bool s_brainEngageGate() {
+    const char* v = std::getenv("MC2_BRAIN_ENGAGE");
     return v && std::atoi(v) != 0;
 }
 
@@ -1515,6 +1525,101 @@ void commitBrainIntents(MechWarrior* warrior, MechBrainRuntime* runtime) {
         }
     }
     runtime->pendingIntentCount = 0;
+}
+
+// ---------------------------------------------------------------------------
+// BRAIN-ENGAGE-1: tickEngageNearest
+//
+// Per-tick autonomous threat engagement for Patrol/Guard OPORDs (discussion #19: Patrol/Guard
+// "engage threats within radius"). Acquires the nearest live enemy within runtime->engageRadius
+// and issues a contract-blessed TACTICAL_ORDER_ATTACK_OBJECT via the intent queue — the same
+// path CoreAttack uses, with an auto-selected target instead of a hardcoded WID. Re-emits only
+// when the target changes (a persistent target keeps its pursue-attack order). Returns true while
+// actively engaging so the caller suppresses patrol advance (fight in place, don't walk off).
+// Gate: MC2_BRAIN_ENGAGE (default OFF).
+bool tickEngageNearest(MechWarrior* warrior, MechBrainRuntime* runtime, int wid) {
+    if (!s_brainEngageGate()) return false;
+    if (!warrior || !runtime) return false;
+    if (runtime->engageRadius <= 0.0f) return false;
+
+    MoverPtr veh = warrior->getVehicle();
+    if (!veh || veh->isDisabled()) return false;
+
+    // Effective radius: env override for tuning without a rebuild (MC2_BRAIN_ENGAGE_RADIUS).
+    float effRadius = runtime->engageRadius;
+    { const char* re = std::getenv("MC2_BRAIN_ENGAGE_RADIUS");
+      if (re && re[0]) effRadius = (float)std::atof(re); }
+    const bool losGate = !(std::getenv("MC2_BRAIN_ENGAGE_NOLOS") && std::atoi(std::getenv("MC2_BRAIN_ENGAGE_NOLOS")) != 0);
+
+    // Nearest live enemy within radius. Sensor-independent brute walk over the mover list (most
+    // MC2 units have no sensorSystem, so getContacts() returns 0 — they engage VISUALLY). Mirror
+    // the proven pattern at warrior.cpp:~8789.
+    unsigned long tgtWID = 0;
+    float nearestEnemyD = 1e30f; long enemyCount = 0, losCount = 0;   // diagnostics
+    MoverPtr nearestAny = nullptr;                                    // nearest enemy (uncapped, for LOS probe)
+    {
+        long numMovers = ObjectManager->getNumMovers();
+        MoverPtr best = nullptr;
+        float    bestD = effRadius;
+        for (long i = 0; i < numMovers; ++i) {
+            MoverPtr m = ObjectManager->getMover(i);
+            if (!m || m == veh) continue;
+            if (m->isDisabled()) continue;
+            if (!veh->isEnemy(m->getTeam())) continue;
+            float d = veh->distanceFrom(m->getPosition());
+            ++enemyCount; if (d < nearestEnemyD) { nearestEnemyD = d; nearestAny = m; }   // uncapped diag
+            if (d > bestD) continue;
+            // VISUAL engagement: gate on TERRAIN line-of-sight. checkVisibleBits=false — the
+            // visible-bits are the player's fog-of-war and are not set for AI-vs-AI sightlines
+            // (with the default true the gate blocks every target). startExtRad=0, terrain-only.
+            if (losGate && !veh->lineOfSight(m->getPosition(), false)) continue;
+            ++losCount;
+            bestD = d; best = m;
+        }
+        if (best) tgtWID = best->getWatchID();
+    }
+
+    // Throttled diagnostic (MC2_BRAIN_ENGAGE_TRACE=1): real enemy counts + nearest distance + a
+    // DIRECT line-of-sight probe on the nearest enemy (both checkVisibleBits variants) to see
+    // whether lineOfSight itself works for these units.
+    if (std::getenv("MC2_BRAIN_ENGAGE_TRACE") && (getBrainTickIndex() % 64u) == 0u) {
+        int losObj = -1, losPt = -1;
+        if (nearestAny) {
+            losObj = veh->lineOfSight((GameObjectPtr)nearestAny, 0.0f, false) ? 1 : 0;
+            losPt  = veh->lineOfSight(nearestAny->getPosition(), false) ? 1 : 0;
+        }
+        std::fprintf(stderr, "[BRAIN_ENGAGE_EVAL] wid=%d enemies=%ld nearest=%.0f effR=%.0f los_obj=%d los_pt=%d tgt=%lu\n",
+                     wid, enemyCount, (enemyCount ? nearestEnemyD : -1.0f), effRadius, losObj, losPt, tgtWID);
+        std::fflush(stderr);
+    }
+
+    if (tgtWID == 0) {
+        // No enemy in range — disengage so patrol/idle resumes next tick.
+        if (runtime->engageTargetWID != 0) {
+            runtime->engageTargetWID = 0;
+            std::fprintf(stderr, "[BRAIN_ENGAGE_CLEAR] wid=%d\n", wid);
+            std::fflush(stderr);
+        }
+        return false;
+    }
+
+    // Enemy in range. Issue/refresh the attack order only on target change (pursue-attack
+    // persists across ticks for the same target).
+    if (tgtWID != runtime->engageTargetWID) {
+        runtime->engageTargetWID = tgtWID;
+        if (s_intentQueueEnabled()) {
+            emitBrainIntent(runtime, wid, TACTICAL_ORDER_ATTACK_OBJECT, (int)tgtWID, 0, 0, 0, 0);
+            std::fprintf(stderr, "[BRAIN_ENGAGE] target=%lu tick=%u wid=%d\n",
+                         tgtWID, getBrainTickIndex(), wid);
+            std::fflush(stderr);
+            if (!s_brainCommitPhaseEnabled())
+                commitBrainIntents(warrior, runtime);
+        } else {
+            std::fprintf(stderr, "[BRAIN_ENGAGE_NO_QUEUE] wid=%d requires MC2_BRAIN_INTENT_QUEUE=1\n", wid);
+            std::fflush(stderr);
+        }
+    }
+    return true;  // actively engaging — caller suppresses patrol advance
 }
 
 // ---------------------------------------------------------------------------

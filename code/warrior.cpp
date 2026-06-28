@@ -2569,10 +2569,18 @@ long MechWarrior::runBrain (void) {
 		// tickPatrolAdvance handles arrival poll, cursor advance, and MOVETO_POINT re-emit.
 		// moveToEffectApplied is NOT touched — patrol manages its own cursor guard.
 		if (brainRuntime) {
-			bool patrolAdvanced = tickPatrolAdvance(this, brainRuntime, vehicleWID);
-			if (patrolAdvanced) {
-				// Patrol re-emitted a MOVETO_POINT — suppress HOLD so the order isn't stomped.
+			// BRAIN-ENGAGE-1: engagement takes priority over patrol. If a threat is in range the
+			// unit attacks (and we suppress patrol advance so it fights instead of walking off);
+			// otherwise patrol/idle proceeds as before. Both emit via the intent queue.
+			bool engaging = tickEngageNearest(this, brainRuntime, vehicleWID);
+			if (engaging) {
 				dispatcherAppliedEffect = true;
+			} else {
+				bool patrolAdvanced = tickPatrolAdvance(this, brainRuntime, vehicleWID);
+				if (patrolAdvanced) {
+					// Patrol re-emitted a MOVETO_POINT — suppress HOLD so the order isn't stomped.
+					dispatcherAppliedEffect = true;
+				}
 			}
 		}
 

@@ -145,6 +145,15 @@ struct MechBrainRuntime {
     // the special begin-path which emits waypoint[0] itself).
     bool    patrolStarted         = false;  // true once the initial MOVETO kick was emitted
 
+    // BRAIN-ENGAGE-1: autonomous threat engagement for Patrol/Guard OPORDs (discussion #19:
+    // "Patrol = walk route AND engage threats within radius"; "Guard = hold position, engage").
+    // Without this, declarative-brain units patrol/idle but never fire (parity: 0 weapon hits
+    // vs the ABL brain's 13). engageRadius>0 arms the per-tick engage emitter (tickEngageNearest);
+    // engageTargetWID tracks the current attack target so we re-emit only on target change.
+    float        engageRadius      = 0.0f;  // 0 = disarmed; >0 = engage nearest enemy within this range
+    unsigned long engageTargetWID  = 0;     // current attack target watch-ID (0 = not engaging)
+    bool         guardHold         = false; // true = Guard OPORD (hold position + engage; no patrol)
+
     // BRAIN-DECISION-INTENT-QUEUE-1: per-warrior pending intent buffer.
     // Gate: MC2_BRAIN_INTENT_QUEUE (default OFF).
     // When gate ON, executeSpecialBody_Apply emits BrainOrderIntents here instead of

@@ -3151,15 +3151,31 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 				MissionFitOpord mfRecs[64];
 				int mfN = parseMissionFitOpords(mfBuf, mfRecs, 64);
 				int mfApplied = 0;
+				int mfGuard   = 0;
 				for (int r = 0; r < mfN; ++r) {
 					const MissionFitOpord& o = mfRecs[r];
 					if (o.warriorIndex < 1 || (unsigned long)o.warriorIndex > numWarriors) continue;
-					if (std::strncmp(o.primaryType, "Patrol", 6) != 0 || o.waypointCount == 0) continue;
+					// OPORD-TYPES-1: Patrol (walk+engage) and Guard (hold+engage) are active
+					// combatants; PlayerControlled/Escort/Sentry left to default. Without Guard the
+					// bulk of carver units (Guard >> Patrol) would be inert and never fire.
+					const bool isGuard = (std::strncmp(o.primaryType, "Guard", 5) == 0);
+					if (std::strncmp(o.primaryType, "Patrol", 6) != 0 && !isGuard) continue;
+					if (!isGuard && o.waypointCount == 0) continue;
 					MechWarriorPtr w = MechWarrior::warriorList[o.warriorIndex];
 					if (!w) continue;
 					if (!w->getBrainRuntime()) w->setBrainRuntimeMode(BrainRuntimeMode::Enhanced);
 					MechBrainRuntime* rt = w->getBrainRuntime();
 					if (!rt) continue;
+					// BRAIN-ENGAGE-1: arm autonomous engagement for both OPORD types (carver
+					// EngageRadius=300; per-Brain EngageRadius parse is a follow-up).
+					rt->engageRadius = 3000.0f;  // generous visual cap; point-LOS gates real visibility (carver EngageRadius=300 << real enemy distances 760-1693)
+					if (isGuard) {
+						rt->guardHold = true;
+						++mfGuard;
+						std::fprintf(stderr, "[MISSIONFIT_OPORD] wid-idx=%d Guard: hold+engage=%.0f (declarative)\n",
+							o.warriorIndex, rt->engageRadius);
+						continue;
+					}
 					int wc = (o.waypointCount > 8) ? 8 : o.waypointCount;
 					for (int wi = 0; wi < wc; ++wi) {
 						Stuff::Vector3D wp; wp.x = o.waypoints[wi].x; wp.y = o.waypoints[wi].y; wp.z = 0.0f;
@@ -3176,7 +3192,7 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 					std::fprintf(stderr, "[MISSIONFIT_OPORD] wid-idx=%d Patrol: %d wp loop=%d (declarative)\n",
 						o.warriorIndex, wc, (int)o.loop);
 				}
-				std::fprintf(stderr, "[MISSIONFIT_OPORD] parsed %d Brain{} OPORD record(s), applied %d patrol(s)\n", mfN, mfApplied);
+				std::fprintf(stderr, "[MISSIONFIT_OPORD] parsed %d Brain{} OPORD record(s), applied %d patrol(s) %d guard(s)\n", mfN, mfApplied, mfGuard);
 				free(mfBuf);
 			}
 			mfFile.close();
