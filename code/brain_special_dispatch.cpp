@@ -1663,6 +1663,7 @@ bool tickEngageNearest(MechWarrior* warrior, MechBrainRuntime* runtime, int wid)
 // the unit is not patrolling. Emits MOVETO_POINT via the intent queue, throttled so we re-order
 // only when meaningfully off-target (avoids per-tick order spam). Returns true if it issued a move.
 // Gate: MC2_BRAIN_ENGAGE (shares the OPORD-runtime gate set).
+static bool advanceOpordSlot(MechBrainRuntime* runtime, int wid);  // BRAIN-OPORD-PROGRESS-1 (defined below)
 bool tickOpordMove(MechWarrior* warrior, MechBrainRuntime* runtime, int wid) {
     if (!s_brainEngageGate()) return false;
     if (!warrior || !runtime) return false;
@@ -1672,9 +1673,14 @@ bool tickOpordMove(MechWarrior* warrior, MechBrainRuntime* runtime, int wid) {
     // Throttle: only re-evaluate the move every 16 brain ticks.
     if ((getBrainTickIndex() % 16u) != 0u) return false;
 
-    // Escort — follow the escortee.
+    // Escort — follow the escortee (or hand off to the next slot if the escortee is gone).
     if (runtime->escortMoving && runtime->escortTargetWID != 0) {
         GameObjectPtr e = ObjectManager->getByWatchID(runtime->escortTargetWID);
+        if (!e || e->isDisabled()) {                 // escortee dead/gone — Escort complete
+            runtime->escortMoving = false;
+            advanceOpordSlot(runtime, wid);
+            return false;
+        }
         if (e && !e->isDisabled()) {
             Stuff::Vector3D ep = e->getPosition();
             float d = veh->distanceFrom(ep);
@@ -1702,6 +1708,26 @@ bool tickOpordMove(MechWarrior* warrior, MechBrainRuntime* runtime, int wid) {
         }
     }
     return false;
+}
+
+// ---------------------------------------------------------------------------
+// BRAIN-OPORD-PROGRESS-1: advance Primary -> Secondary -> Tertiary when the active slot completes.
+// A finite OPORD (a non-looping Patrol/MoveTo/Withdraw reaching its destination, or an Escort that
+// lost its target) hands off to the next slot. The successor's hold/engage behavior is activated by
+// TYPE — carver's Secondary is almost always Guard, and secondary/tertiary route waypoints are not
+// stored (finite-move successors with their own routes are not a carver pattern). Terminal OPORDs
+// (looping Patrol, Guard, Sentry) never reach here. Returns true if it advanced a slot.
+static bool advanceOpordSlot(MechBrainRuntime* runtime, int wid) {
+    if (!runtime || runtime->opordCursor >= 2) return false;
+    uint8_t next = runtime->opordType[runtime->opordCursor + 1];
+    if (next == 255 || next == 9) return false;          // no further slot / PlayerControlled
+    runtime->opordCursor++;
+    if (next == 7) { runtime->guardHold = true; runtime->engageRadius = 0.0f; }  // Attack: aggressive
+    else           { runtime->guardHold = true; }                                // Guard/Sentry/...: hold+engage
+    std::fprintf(stderr, "[BRAIN_OPORD_PROGRESS] wid=%d -> slot=%u type=%u\n",
+                 wid, (unsigned)runtime->opordCursor, (unsigned)next);
+    std::fflush(stderr);
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -1767,6 +1793,7 @@ bool tickPatrolAdvance(MechWarrior* warrior, MechBrainRuntime* runtime, int wid)
         runtime->patrolActive = false;
         std::fprintf(stderr, "[BRAIN_PATROL_DONE] wid=%d\n", wid);
         std::fflush(stderr);
+        advanceOpordSlot(runtime, wid);   // BRAIN-OPORD-PROGRESS-1: hand off to the next OPORD slot
         return false;
     }
 
@@ -1791,6 +1818,7 @@ bool tickPatrolAdvance(MechWarrior* warrior, MechBrainRuntime* runtime, int wid)
         // once-mode: just advanced to last, now done.
         std::fprintf(stderr, "[BRAIN_PATROL_DONE] wid=%d\n", wid);
         std::fflush(stderr);
+        advanceOpordSlot(runtime, wid);   // BRAIN-OPORD-PROGRESS-1: hand off to the next OPORD slot
         return true;
     }
 
