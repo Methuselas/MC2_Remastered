@@ -1547,65 +1547,28 @@ bool tickEngageNearest(MechWarrior* warrior, MechBrainRuntime* runtime, int wid)
     MoverPtr veh = warrior->getVehicle();
     if (!veh || veh->isDisabled()) return false;
 
-    // Detection radius = the engine's global VISUAL sighting radius (MaxVisualRadius =
-    // gamesys MaxVisualRange * sqrt(2)) — the range at which a unit can visually spot an enemy.
-    // A unit must NOT engage enemies it could not see; the LOS raycast below adds terrain
-    // occlusion on top. (getVisualRange() returns a tiny ~100 constant; the unit sensorSystem
-    // range only covers a fraction of the battlefield — neither models visual sighting.) The
-    // brain's EngageRadius switch may FURTHER restrict (never extend) this; env override tunes.
-    extern float MaxVisualRadius;
-    float effRadius = MaxVisualRadius;
-    if (effRadius <= 0.0f) {                                         // fallback if gamesys unread
-        if (SensorSystem* ss = veh->getSensorSystem()) effRadius = ss->getEffectiveRange();
-    }
-    if (effRadius <= 0.0f) effRadius = 800.0f;                       // last-resort fallback
-    if (runtime->engageRadius > 0.0f && runtime->engageRadius < effRadius)
-        effRadius = runtime->engageRadius;                          // brain policy may tighten detection
-    { const char* re = std::getenv("MC2_BRAIN_ENGAGE_RADIUS");       // test override
-      if (re && re[0]) effRadius = (float)std::atof(re); }
-    const bool losGate = !(std::getenv("MC2_BRAIN_ENGAGE_NOLOS") && std::atoi(std::getenv("MC2_BRAIN_ENGAGE_NOLOS")) != 0);
-
-    // Nearest live enemy within radius. Sensor-independent brute walk over the mover list (most
-    // MC2 units have no sensorSystem, so getContacts() returns 0 — they engage VISUALLY). Mirror
-    // the proven pattern at warrior.cpp:~8789.
+    // Detection = the engine's TEAM CONTACT list: enemies this unit's team has actually detected.
+    // getContacts() already incorporates per-unit sensor-tier ranges (basic/intermediate/advanced),
+    // team sensor sharing, visual sighting and ECM — the engine's full visibility model. So we
+    // engage ONLY enemies the team can genuinely perceive, never enemies the unit has no way of
+    // knowing exist. Patrol/scripted movement closes the distance until enemies enter detection;
+    // we do NOT preempt that movement except to fight a genuinely-detected threat.
     unsigned long tgtWID = 0;
-    float nearestEnemyD = 1e30f; long enemyCount = 0, losCount = 0;   // diagnostics
-    MoverPtr nearestAny = nullptr;                                    // nearest enemy (uncapped, for LOS probe)
+    long teamContacts = 0;
+    float tcNear = -1.0f;
     {
-        long numMovers = ObjectManager->getNumMovers();
-        MoverPtr best = nullptr;
-        float    bestD = effRadius;
-        for (long i = 0; i < numMovers; ++i) {
-            MoverPtr m = ObjectManager->getMover(i);
-            if (!m || m == veh) continue;
-            if (m->isDisabled()) continue;
-            if (!veh->isEnemy(m->getTeam())) continue;
-            float d = veh->distanceFrom(m->getPosition());
-            ++enemyCount; if (d < nearestEnemyD) { nearestEnemyD = d; nearestAny = m; }   // uncapped diag
-            if (d > bestD) continue;
-            // VISUAL engagement: gate on TERRAIN line-of-sight. checkVisibleBits=false — the
-            // visible-bits are the player's fog-of-war and are not set for AI-vs-AI sightlines
-            // (with the default true the gate blocks every target). startExtRad=0, terrain-only.
-            if (losGate && !veh->lineOfSight(m->getPosition(), false)) continue;
-            ++losCount;
-            bestD = d; best = m;
+        int cl[MAX_CONTACTS_PER_SENSOR];
+        teamContacts = veh->getContacts(cl, (1 | 64), CONTACT_SORT_DISTANCE);  // ENEMY|NOT_DISABLED, nearest first
+        if (teamContacts > 0) {
+            GameObjectPtr c0 = ObjectManager->get(cl[0]);                       // contact list holds handles
+            if (c0) { tgtWID = c0->getWatchID(); tcNear = veh->distanceFrom(c0->getPosition()); }
         }
-        if (best) tgtWID = best->getWatchID();
     }
 
-    // Throttled diagnostic (MC2_BRAIN_ENGAGE_TRACE=1): real enemy counts + nearest distance + a
-    // DIRECT line-of-sight probe on the nearest enemy (both checkVisibleBits variants) to see
-    // whether lineOfSight itself works for these units.
+    // Throttled diagnostic (MC2_BRAIN_ENGAGE_TRACE=1): detected-contact count + nearest distance.
     if (std::getenv("MC2_BRAIN_ENGAGE_TRACE") && (getBrainTickIndex() % 64u) == 0u) {
-        int losPt = -1;
-        if (nearestAny) losPt = veh->lineOfSight(nearestAny->getPosition(), false) ? 1 : 0;
-        // Team-contact probe: enemies the TEAM has detected (ENEMY|NOT_DISABLED), distance-sorted.
-        int cl[MAX_CONTACTS_PER_SENSOR];
-        long gc = veh->getContacts(cl, (1 | 64), CONTACT_SORT_DISTANCE);
-        float gcNear = -1.0f;
-        if (gc > 0) { GameObjectPtr c0 = ObjectManager->get(cl[0]); if (c0) gcNear = veh->distanceFrom(c0->getPosition()); }
-        std::fprintf(stderr, "[BRAIN_ENGAGE_EVAL] wid=%d enemies=%ld nearest=%.0f effR=%.0f los_pt=%d teamContacts=%ld tcNear=%.0f tgt=%lu\n",
-                     wid, enemyCount, (enemyCount ? nearestEnemyD : -1.0f), effRadius, losPt, gc, gcNear, tgtWID);
+        std::fprintf(stderr, "[BRAIN_ENGAGE_EVAL] wid=%d teamContacts=%ld tcNear=%.0f tgt=%lu\n",
+                     wid, teamContacts, tcNear, tgtWID);
         std::fflush(stderr);
     }
 
