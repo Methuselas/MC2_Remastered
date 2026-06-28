@@ -4382,6 +4382,15 @@ void BuildDecalStaticVBO() {
             const DWORD overlayHandle = e->overlayHandle;
             if (overlayHandle == 0xffffffffu) continue;
 
+            // CEMENT-HARD-EDGE-1 (Slice 2, default-on; re-apply of reverted 322ef8b4):
+            // Cement transition edges are now drawn analytically in the chunk frag
+            // (terrain_lod_chunk.frag, neighbor-derived hard mask). Skip the legacy
+            // gray cement-transition decal so it does not double-draw / seam over the
+            // new frag edge. Gate STRICTLY on isCement()&&isAlpha(): roads/runways carry
+            // no cement word (isCement()==false) and solid/decayed cement is isAlpha()==
+            // false, so both are still emitted here.
+            if (e->isCement() && e->isAlpha()) continue;
+
             const DWORD overlayTexId = tex_resolve(overlayHandle);
             if (overlayTexId == 0) continue;
 

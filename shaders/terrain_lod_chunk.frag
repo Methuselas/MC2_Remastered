@@ -409,6 +409,7 @@ void main() {
     // Step 5c: cement catalog override.
     // cw bit layout: bit31=VALID, bit30=IS_TRANSITION, bits29:24=maskId, bits15:0=layerIdx.
     bool cementHit = false;
+    float cementTransAlpha = 0.0;  // CEMENT-HARD-EDGE-1: neighbor-derived transition coverage
     int  ctX = clamp(int(floor((v_worldPos.x + u_halfMap) / 128.0)), 0, u_mapSide - 1);
     int  ctY = clamp(int(floor((u_halfMap - v_worldPos.y) / 128.0)), 0, u_mapSide - 1);
     uint cw  = cementWordsF[ctX + ctY * u_mapSide];
@@ -423,7 +424,95 @@ void main() {
         vec2 cAtlasUV = (vec2(float(cCol), float(cRow)) + cTileUV) / float(cGridSide);
         vec3 cementColor = texture(u_cementAtlas, cAtlasUV).rgb;
         if (isTransition) {
-            // Transition: legacy overlay draw handles cement blend. Shader pass-through.
+            // CEMENT-HARD-EDGE-1 (default-on; self-disables if u_useTransitionMask==0):
+            // Render the SAME solid cement atlas tile as the interior, cut by a HARD
+            // mask derived from NEIGHBOR WHOLE-TILE cement state (NOT the wonky maskId).
+            // The current tile is cement. Each of the 4 tile corners is "filled" iff
+            // ALL 3 neighbor tiles meeting at that corner are cement (VALID bit31 set;
+            // solid OR transition both count). cTileUV.x grows with +ctX, cTileUV.y
+            // grows with +ctY (same convention as the solid branch / diag-connect block),
+            // so corner (u,v): (0,0)=TL[-x,-y], (1,0)=TR[+x,-y], (1,1)=BR[+x,+y],
+            // (0,1)=BL[-x,+y]. Bilinear-interpolate the 4 binary corners then HARD step
+            // at 0.5 -> exact full / straight half-plane / diagonal corner-cut. No curves.
+            if (u_useTransitionMask != 0) {
+                // isCementTile(dx,dy): neighbor (ctX+dx, ctY+dy) has VALID cement word.
+                // Out-of-bounds => not cement. Macro-style inline to keep 8 samples flat.
+                bool nXm = false, nXp = false, nYm = false, nYp = false;
+                bool nXmYm = false, nXpYm = false, nXpYp = false, nXmYp = false;
+                int xm = ctX - 1, xp = ctX + 1, ym = ctY - 1, yp = ctY + 1;
+                if (xm >= 0)                          nXm   = (cementWordsF[xm + ctY * u_mapSide] & 0x80000000u) != 0u;
+                if (xp <  u_mapSide)                  nXp   = (cementWordsF[xp + ctY * u_mapSide] & 0x80000000u) != 0u;
+                if (ym >= 0)                          nYm   = (cementWordsF[ctX + ym * u_mapSide] & 0x80000000u) != 0u;
+                if (yp <  u_mapSide)                  nYp   = (cementWordsF[ctX + yp * u_mapSide] & 0x80000000u) != 0u;
+                if (xm >= 0 && ym >= 0)               nXmYm = (cementWordsF[xm + ym * u_mapSide] & 0x80000000u) != 0u;
+                if (xp <  u_mapSide && ym >= 0)       nXpYm = (cementWordsF[xp + ym * u_mapSide] & 0x80000000u) != 0u;
+                if (xp <  u_mapSide && yp < u_mapSide) nXpYp = (cementWordsF[xp + yp * u_mapSide] & 0x80000000u) != 0u;
+                if (xm >= 0 && yp < u_mapSide)        nXmYp = (cementWordsF[xm + yp * u_mapSide] & 0x80000000u) != 0u;
+                // Corner filled iff all 3 neighbors meeting at it are cement.
+                float cTL = (nXm   && nYm   && nXmYm) ? 1.0 : 0.0;  // UV (0,0)
+                float cTR = (nXp   && nYm   && nXpYm) ? 1.0 : 0.0;  // UV (1,0)
+                float cBR = (nXp   && nYp   && nXpYp) ? 1.0 : 0.0;  // UV (1,1)
+                float cBL = (nXm   && nYp   && nXmYp) ? 1.0 : 0.0;  // UV (0,1)
+                float u = cTileUV.x, v = cTileUV.y;
+                // CEMENT-HARD-EDGE-1: explicit marching-squares half-plane tests.
+                // Bilinear+step gives a CURVED (hyperbolic) cut for 1- and 3-corner
+                // configs; instead branch on the 4-bit corner config and use straight
+                // half-plane comparisons so every edge is a 45-degree diagonal or an
+                // axis-aligned straight split (hard 0/1, never a curve).
+                // Bit packing: cTL=8, cTR=4, cBR=2, cBL=1.
+                int cfg = (cTL > 0.5 ? 8 : 0)
+                        | (cTR > 0.5 ? 4 : 0)
+                        | (cBR > 0.5 ? 2 : 0)
+                        | (cBL > 0.5 ? 1 : 0);
+                float alpha = 0.0;
+                // No orthogonal "interior fill" override: a boundary tile whose only
+                // terrain neighbor is DIAGONAL must still take its corner cut. The
+                // triple cfg below trims that 1/8 outer-corner triangle to the tile-edge
+                // MIDPOINTS, so the cement edge stays on the true outline instead of
+                // poking the tile's outer VERTEX past it. Truly interior tiles (all 8
+                // neighbors cement) are cfg==15 -> full, so nothing drops.
+                if (cfg == 0) {
+                    alpha = 0.0;
+                } else if (cfg == 15) {
+                    alpha = 1.0;
+                // --- single corner: small triangle at that corner ---
+                } else if (cfg == 8) {        // cTL only
+                    alpha = (u + v < 0.5) ? 1.0 : 0.0;
+                } else if (cfg == 4) {        // cTR only
+                    alpha = ((1.0 - u) + v < 0.5) ? 1.0 : 0.0;
+                } else if (cfg == 2) {        // cBR only
+                    alpha = ((1.0 - u) + (1.0 - v) < 0.5) ? 1.0 : 0.0;
+                } else if (cfg == 1) {        // cBL only
+                    alpha = (u + (1.0 - v) < 0.5) ? 1.0 : 0.0;
+                // --- triple: fill all but the missing corner's triangle ---
+                // --- triple: fill all but the missing corner's triangle ---
+                } else if (cfg == 7) {        // missing cTL
+                    alpha = (u + v >= 0.5) ? 1.0 : 0.0;
+                } else if (cfg == 11) {       // missing cTR
+                    alpha = ((1.0 - u) + v >= 0.5) ? 1.0 : 0.0;
+                } else if (cfg == 13) {       // missing cBR
+                    alpha = ((1.0 - u) + (1.0 - v) >= 0.5) ? 1.0 : 0.0;
+                } else if (cfg == 14) {       // missing cBL
+                    alpha = (u + (1.0 - v) >= 0.5) ? 1.0 : 0.0;
+                // --- two adjacent: straight half ---
+                } else if (cfg == 12) {       // cTL+cTR, top
+                    alpha = (v < 0.5) ? 1.0 : 0.0;
+                } else if (cfg == 6) {        // cTR+cBR, right
+                    alpha = (u >= 0.5) ? 1.0 : 0.0;
+                } else if (cfg == 3) {        // cBR+cBL, bottom
+                    alpha = (v >= 0.5) ? 1.0 : 0.0;
+                } else if (cfg == 9) {        // cBL+cTL, left
+                    alpha = (u < 0.5) ? 1.0 : 0.0;
+                // --- two diagonal: opposite triangles (saddle) ---
+                } else if (cfg == 10) {       // cTL+cBR
+                    alpha = ((u + v < 0.5) || ((1.0 - u) + (1.0 - v) < 0.5)) ? 1.0 : 0.0;
+                } else if (cfg == 5) {        // cTR+cBL
+                    alpha = (((1.0 - u) + v < 0.5) || (u + (1.0 - v) < 0.5)) ? 1.0 : 0.0;
+                }
+                base = mix(base, cementColor, alpha);
+                cementTransAlpha = alpha;
+                if (alpha > 0.5) cementHit = true;
+            }
         } else {
             base = cementColor;
             cementHit = true;
@@ -524,6 +613,9 @@ void main() {
     // flattens lighting. Matches legacy gos_terrain.frag:539-548,738,772.
     float pureConcrete       = smoothstep(2.0, 3.0, v_terrainType);
     if (cementHit) pureConcrete = 1.0;  // cement atlas hit -> full concrete (base already set)
+    // CEMENT-HARD-EDGE-1: light the cement side of a transition tile identically to the
+    // interior (no seam); the terrain side (alpha==0) keeps terrain lighting.
+    pureConcrete = max(pureConcrete, cementTransAlpha);
     float concreteColorBlend = sqrt(clamp(pureConcrete, 0.0, 1.0));
     matWeights = mix(matWeights, vec4(0.0, 0.0, 0.0, 1.0), pureConcrete);
     snowWeight *= (1.0 - pureConcrete);
