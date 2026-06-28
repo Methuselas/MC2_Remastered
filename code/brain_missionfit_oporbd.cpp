@@ -244,6 +244,8 @@ void brainResetRecord(MissionFitBrain& b, int warrior) {
     b.returnToPost        = -1;
     b.wakeOnAttack        = -1;
     b.poweredDown         = -1;
+    b.posX                = -1.0f;
+    b.posY                = -1.0f;
     slotReset(b.primary);
     slotReset(b.secondary);
     slotReset(b.tertiary);
@@ -297,7 +299,13 @@ int parseMissionFitBrains(const char* text, MissionFitBrain* out, int maxOut) {
 
     int count = 0;
     int curWarrior = -1;
+    int curPart = -1;            // N from a [PartN] placement block (carries the unit's spawn pos)
     bool inBrain = false;
+    // [PartN] positions collected in a pass-independent table (a Part block may appear before OR
+    // after its Warrior brain block), assigned onto the brain records by index at the end.
+    static const int kMaxPart = 128;
+    float partX[kMaxPart], partY[kMaxPart];
+    for (int i = 0; i < kMaxPart; ++i) { partX[i] = -1e9f; partY[i] = -1e9f; }
     bool haveRecord = false;
     int brainDepth = 0;          // brace depth relative to inside the Brain block (Brain body = 1)
     SubKind sub = SubKind::None; // active sub-block
@@ -326,7 +334,18 @@ int parseMissionFitBrains(const char* text, MissionFitBrain* out, int maxOut) {
             sub = SubKind::None; subDepth = 0;
             curWarrior = (std::strncmp(lb, "[Warrior", 8) == 0)
                        ? (int)std::strtol(lb + 8, nullptr, 10) : -1;
+            // [PartN] placement block (N is a digit immediately after "[Part"); carries the unit's
+            // spawn position, which the editor matches against the selected unit to pick its brain.
+            curPart = (std::strncmp(lb, "[Part", 5) == 0 && lb[5] >= '0' && lb[5] <= '9')
+                    ? (int)std::strtol(lb + 5, nullptr, 10) : -1;
             continue;
+        }
+
+        // Collect spawn position from a [PartN] block into the part table (assigned to brains below).
+        if (!inBrain && curPart >= 0 && curPart < kMaxPart) {
+            float pv;
+            if (lineKeyFloat(buf, "PositionX", &pv)) partX[curPart] = pv;
+            if (lineKeyFloat(buf, "PositionY", &pv)) partY[curPart] = pv;
         }
 
         if (!inBrain) {
@@ -428,5 +447,15 @@ int parseMissionFitBrains(const char* text, MissionFitBrain* out, int maxOut) {
 
     // Flush trailing record (text ended inside a Brain block).
     if (inBrain && haveRecord && count < maxOut) out[count++] = cur;
+
+    // Assign collected [PartN] spawn positions onto the brain records by warrior index
+    // (order-independent: a Part block may precede or follow its Warrior brain block).
+    for (int r = 0; r < count; ++r) {
+        int n = out[r].warriorIndex;
+        if (n >= 0 && n < kMaxPart) {
+            out[r].posX = partX[n];
+            out[r].posY = partY[n];
+        }
+    }
     return count;
 }

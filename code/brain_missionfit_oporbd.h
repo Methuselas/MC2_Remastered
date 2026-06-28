@@ -58,6 +58,8 @@ struct MissionFitBrain {
     int   warriorIndex;                               // N from [WarriorN]
     char  archetype[48];                              // e.g. "Archetype.InnerSphere.Standard", '\0' absent
     char  compatibilityMode[16];                      // "Legacy"/"Hybrid"/"Enhanced", '\0' absent
+    float posX;                                       // spawn X from the matching [PartN] block, <= -1e8 if absent (coords may be negative)
+    float posY;                                       // spawn Y from the matching [PartN] block, <= -1e8 if absent
 
     // Brain switches (the set the carver corpus actually uses).
     float engageRadius;                               // EngageRadius, <0 absent
