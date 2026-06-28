@@ -1,0 +1,70 @@
+#pragma once
+// BRAIN-ARCHETYPE-1: declarative Brain archetype presets (discussion #19 "BrainArchetype").
+//
+// An archetype is a named collection of default brain-switch values. A Brain{} block names one
+// via `archetype = "Archetype.Faction.Variant"`; the unit inherits the preset's switch defaults,
+// and any switch the Brain{} block sets explicitly OVERRIDES the preset. This is the resolution
+// the engine consumer applies (mission.cpp): preset first, then per-Brain overrides.
+//
+// Pure + header-only (no engine headers) so it is unit-testable and usable from the consumer.
+// The four presets below are the ones the carver_v_enhanced corpus references
+// (InnerSphere.Standard, Clan.Standard, Mercenary.Standard, PlayerControlled); the table is
+// substring-matched so faction variants (e.g. "Archetype.InnerSphere.Davion") fall back to the
+// faction Standard. Adding presets = one row.
+
+#include <cstring>
+
+struct BrainArchetypeDefaults {
+    float engageRadius;        // detection/engagement willingness radius
+    float attackerHelpRadius;  // call for help when attacking within this radius
+    float defenderHelpRadius;  // call for help when defending within this radius
+    int   requestHelp;         // 0/1 — will this unit request help
+    int   returnToPost;        // 0/1 — return to guard post after pursuing (vs press the attack)
+    int   playerControlled;    // 0/1 — unit is player-driven (skip AI activation)
+};
+
+// Fills `out` with the named archetype's defaults. Returns true if a preset matched (false →
+// out left at a neutral Inner-Sphere-ish default, still usable).
+inline bool brainArchetypeLookup(const char* name, BrainArchetypeDefaults& out) {
+    // Neutral default (used when name is empty/unknown).
+    out = BrainArchetypeDefaults{ 300.0f, 100.0f, 125.0f, 1, 1, 0 };
+    if (!name || !name[0]) return false;
+
+    // PlayerControlled — unit is driven by the player; AI switches inert.
+    if (std::strstr(name, "PlayerControlled")) {
+        out = BrainArchetypeDefaults{ 0.0f, 0.0f, 0.0f, 0, 0, 1 };
+        return true;
+    }
+    // Clan — honor doctrine: tighter help (fight your own duels), hold post.
+    if (std::strstr(name, "Clan")) {
+        out = BrainArchetypeDefaults{ 350.0f, 80.0f, 100.0f, 0, 1, 0 };
+        return true;
+    }
+    // Mercenary — aggressive: press the attack (do not return to post), readily call/answer help.
+    if (std::strstr(name, "Mercenary")) {
+        out = BrainArchetypeDefaults{ 300.0f, 120.0f, 120.0f, 1, 0, 0 };
+        return true;
+    }
+    // Inner Sphere — balanced doctrine (also the default for unrecognised faction variants).
+    if (std::strstr(name, "InnerSphere")) {
+        out = BrainArchetypeDefaults{ 300.0f, 100.0f, 125.0f, 1, 1, 0 };
+        return true;
+    }
+    return false;
+}
+
+// OPORD type token -> id (0..9), 255 = unknown/none. Shared by parser-consumer + runtime.
+inline uint8_t brainOpordTypeId(const char* type) {
+    if (!type || !type[0]) return 255;
+    if (!std::strcmp(type, "Patrol"))           return 0;
+    if (!std::strcmp(type, "Guard"))            return 1;
+    if (!std::strcmp(type, "MoveTo"))           return 2;
+    if (!std::strcmp(type, "Sentry"))           return 3;
+    if (!std::strcmp(type, "Escort"))           return 4;
+    if (!std::strcmp(type, "Ambush"))           return 5;
+    if (!std::strcmp(type, "Scout"))            return 6;
+    if (!std::strcmp(type, "Attack"))           return 7;
+    if (!std::strcmp(type, "Withdraw"))         return 8;
+    if (!std::strcmp(type, "PlayerControlled")) return 9;
+    return 255;
+}

@@ -1541,11 +1541,21 @@ void commitBrainIntents(MechWarrior* warrior, MechBrainRuntime* runtime) {
 bool tickEngageNearest(MechWarrior* warrior, MechBrainRuntime* runtime, int wid) {
     if (!s_brainEngageGate()) return false;
     if (!warrior || !runtime) return false;
-    // Armed when the unit has an active combatant OPORD (Patrol walks+engages, Guard holds+engages).
-    if (!runtime->patrolActive && !runtime->guardHold) return false;
+    // Armed when the unit has an active combatant OPORD (Patrol walks+engages; Guard/Sentry/Escort
+    // hold/move+engage).
+    if (!runtime->patrolActive && !runtime->guardHold && !runtime->escortMoving) return false;
 
     MoverPtr veh = warrior->getVehicle();
     if (!veh || veh->isDisabled()) return false;
+
+    // A sleeping Sentry only engages once a detected enemy has woken it (WakeOnAttack).
+    if (runtime->sentryAsleep && !runtime->sentryWoken) {
+        int wcl[8]; long wn = veh->getContacts(wcl, (1 | 64), 0);
+        if (wn <= 0) return false;                  // still asleep, nothing detected
+        runtime->sentryWoken = true;
+        std::fprintf(stderr, "[BRAIN_SENTRY_WAKE] wid=%d\n", wid);
+        std::fflush(stderr);
+    }
 
     // Detection = the engine's TEAM CONTACT list: enemies this unit's team has actually detected.
     // getContacts() already incorporates per-unit sensor-tier ranges (basic/intermediate/advanced),

@@ -154,6 +154,29 @@ struct MechBrainRuntime {
     unsigned long engageTargetWID  = 0;     // current attack target watch-ID (0 = not engaging)
     bool         guardHold         = false; // true = Guard OPORD (hold position + engage; no patrol)
 
+    // BRAIN-FULL-1: the complete declarative Brain{} state (populated from parseMissionFitBrains,
+    // after archetype-preset resolution + individual-switch override). Sentinels < 0 / -1 = absent.
+    // OPORD type ids: 0=Patrol 1=Guard 2=MoveTo 3=Sentry 4=Escort 5=Ambush 6=Scout 7=Attack
+    //                 8=Withdraw 9=PlayerControlled 255=none
+    uint8_t      opordType[3]        = {255, 255, 255}; // primary/secondary/tertiary
+    uint8_t      opordCursor         = 0;               // active slot (0..2); advances on completion
+    // Brain switches.
+    float        swAttackerHelpRadius = -1.0f;
+    float        swDefenderHelpRadius = -1.0f;
+    int8_t       swRequestHelp        = -1;             // -1 absent, 0/1
+    int8_t       swReturnToPost        = -1;
+    int8_t       swWakeOnAttack        = -1;            // Sentry
+    int8_t       swPoweredDown         = -1;            // Sentry
+    // Guard/Sentry post (hold position; ReturnToPost returns here after pursuit).
+    float        postPos[3]           = {};
+    bool         postSet              = false;
+    // Sentry: powered down until a threat is detected (WakeOnAttack), then wakes + engages.
+    bool         sentryAsleep         = false;
+    bool         sentryWoken          = false;
+    // Escort: follow + defend a target unit.
+    unsigned long escortTargetWID     = 0;              // 0 = none
+    bool         escortMoving         = false;
+
     // BRAIN-DECISION-INTENT-QUEUE-1: per-warrior pending intent buffer.
     // Gate: MC2_BRAIN_INTENT_QUEUE (default OFF).
     // When gate ON, executeSpecialBody_Apply emits BrainOrderIntents here instead of

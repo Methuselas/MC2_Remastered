@@ -46,6 +46,7 @@ extern void visualTuning_applyProfile(const char*);  // MISSION-VISUAL-TUNING-1
 
 #include "brain_special_dispatch.h"  // TECHSCRIPT-SPECIAL-DISPATCH-1A: parseBrainSpecialBody
 #include "brain_missionfit_oporbd.h"  // BRAIN-MISSIONFIT-OPORD-CONSUMER-1: declarative mission.fit OPORD parser
+#include "brain_archetype.h"  // BRAIN-ARCHETYPE-1
 
 #ifndef COLLSN_H
 #include"collsn.h"
@@ -3148,51 +3149,70 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 			if (mfBuf) {
 				mfFile.read((MemoryPtr)mfBuf, (long)mfSz);
 				mfBuf[mfSz] = '\0';
-				MissionFitOpord mfRecs[64];
-				int mfN = parseMissionFitOpords(mfBuf, mfRecs, 64);
-				int mfApplied = 0;
-				int mfGuard   = 0;
+				MissionFitBrain* mfBrains = (MissionFitBrain*)malloc(sizeof(MissionFitBrain) * 128);
+				int mfN = mfBrains ? parseMissionFitBrains(mfBuf, mfBrains, 128) : 0;
+				int mfPatrol = 0, mfGuard = 0, mfSentry = 0, mfEscort = 0, mfOther = 0;
 				for (int r = 0; r < mfN; ++r) {
-					const MissionFitOpord& o = mfRecs[r];
-					if (o.warriorIndex < 1 || (unsigned long)o.warriorIndex > numWarriors) continue;
-					// OPORD-TYPES-1: Patrol (walk+engage) and Guard (hold+engage) are active
-					// combatants; PlayerControlled/Escort/Sentry left to default. Without Guard the
-					// bulk of carver units (Guard >> Patrol) would be inert and never fire.
-					const bool isGuard = (std::strncmp(o.primaryType, "Guard", 5) == 0);
-					if (std::strncmp(o.primaryType, "Patrol", 6) != 0 && !isGuard) continue;
-					if (!isGuard && o.waypointCount == 0) continue;
-					MechWarriorPtr w = MechWarrior::warriorList[o.warriorIndex];
+					const MissionFitBrain& b = mfBrains[r];
+					if (b.warriorIndex < 1 || (unsigned long)b.warriorIndex > numWarriors) continue;
+					uint8_t pType = brainOpordTypeId(b.primary.type);
+					BrainArchetypeDefaults ad; brainArchetypeLookup(b.archetype, ad);  // archetype presets; switches override
+					if (ad.playerControlled || pType == 9 || pType == 255) continue;   // player / unknown -> default path
+					MechWarriorPtr w = MechWarrior::warriorList[b.warriorIndex];
 					if (!w) continue;
 					if (!w->getBrainRuntime()) w->setBrainRuntimeMode(BrainRuntimeMode::Enhanced);
 					MechBrainRuntime* rt = w->getBrainRuntime();
 					if (!rt) continue;
-					// BRAIN-ENGAGE-1: arm autonomous engagement for both OPORD types (carver
-					// EngageRadius=300; per-Brain EngageRadius parse is a follow-up).
-					rt->engageRadius = 0.0f;  // 0 = no brain restriction; tickEngageNearest uses the unit's real visual range (getVisualRange) + LOS. Per-Brain EngageRadius parse is a follow-up.
-					if (isGuard) {
-						rt->guardHold = true;
-						++mfGuard;
-						std::fprintf(stderr, "[MISSIONFIT_OPORD] wid-idx=%d Guard: hold+engage=%.0f (declarative)\n",
-							o.warriorIndex, rt->engageRadius);
-						continue;
+					rt->engageRadius         = 0.0f;   // detection is team-contact based; 0 = no extra distance tighten
+					rt->swAttackerHelpRadius = (b.attackerHelpRadius >= 0) ? b.attackerHelpRadius : ad.attackerHelpRadius;
+					rt->swDefenderHelpRadius = (b.defenderHelpRadius >= 0) ? b.defenderHelpRadius : ad.defenderHelpRadius;
+					rt->swRequestHelp        = (b.requestHelp  >= 0) ? (int8_t)b.requestHelp  : (int8_t)ad.requestHelp;
+					rt->swReturnToPost       = (b.returnToPost >= 0) ? (int8_t)b.returnToPost : (int8_t)ad.returnToPost;
+					rt->swWakeOnAttack       = (int8_t)b.wakeOnAttack;
+					rt->swPoweredDown        = (int8_t)b.poweredDown;
+					rt->opordType[0] = pType;
+					rt->opordType[1] = brainOpordTypeId(b.secondary.type);
+					rt->opordType[2] = brainOpordTypeId(b.tertiary.type);
+					rt->opordCursor  = 0;
+					if (w->getVehicle()) {
+						Stuff::Vector3D vp = w->getVehicle()->getPosition();
+						rt->postPos[0] = vp.x; rt->postPos[1] = vp.y; rt->postPos[2] = vp.z; rt->postSet = true;
 					}
-					int wc = (o.waypointCount > 8) ? 8 : o.waypointCount;
-					for (int wi = 0; wi < wc; ++wi) {
-						Stuff::Vector3D wp; wp.x = o.waypoints[wi].x; wp.y = o.waypoints[wi].y; wp.z = 0.0f;
-						float z = land ? land->getTerrainElevation(wp) : 0.0f;
-						rt->patrolWaypoints[wi][0] = o.waypoints[wi].x;
-						rt->patrolWaypoints[wi][1] = o.waypoints[wi].y;
-						rt->patrolWaypoints[wi][2] = z;
+					switch (pType) {
+						case 0: {   // Patrol
+							int wc = (b.primary.waypointCount > 8) ? 8 : b.primary.waypointCount;
+							if (wc <= 0) { rt->guardHold = true; ++mfGuard; break; }
+							for (int wi = 0; wi < wc; ++wi) {
+								Stuff::Vector3D wp; wp.x = b.primary.waypoints[wi].x; wp.y = b.primary.waypoints[wi].y; wp.z = 0.0f;
+								float z = land ? land->getTerrainElevation(wp) : 0.0f;
+								rt->patrolWaypoints[wi][0] = b.primary.waypoints[wi].x;
+								rt->patrolWaypoints[wi][1] = b.primary.waypoints[wi].y;
+								rt->patrolWaypoints[wi][2] = z;
+							}
+							rt->patrolWaypointCount = (uint8_t)wc;
+							rt->patrolWaypointIndex = 0;
+							rt->patrolLoop   = b.primary.loop;
+							rt->patrolActive = true;
+							++mfPatrol; break;
+						}
+						case 1:     // Guard
+							rt->guardHold = true; ++mfGuard; break;
+						case 3:     // Sentry
+							rt->guardHold = true; rt->sentryAsleep = (rt->swPoweredDown == 1); ++mfSentry; break;
+						case 4: {   // Escort
+							int ei = b.primary.escortTargetIndex;
+							if (ei >= 1 && (unsigned long)ei <= numWarriors && MechWarrior::warriorList[ei] &&
+							    MechWarrior::warriorList[ei]->getVehicle())
+								rt->escortTargetWID = MechWarrior::warriorList[ei]->getVehicle()->getWatchID();
+							rt->escortMoving = true; rt->guardHold = true; ++mfEscort; break;
+						}
+						default:    // MoveTo / Attack / Withdraw / Ambush / Scout -> hold + engage (verb wiring TBD)
+							rt->guardHold = true; ++mfOther; break;
 					}
-					rt->patrolWaypointCount = (uint8_t)wc;
-					rt->patrolWaypointIndex = 0;
-					rt->patrolLoop = o.loop;
-					rt->patrolActive = true;
-					++mfApplied;
-					std::fprintf(stderr, "[MISSIONFIT_OPORD] wid-idx=%d Patrol: %d wp loop=%d (declarative)\n",
-						o.warriorIndex, wc, (int)o.loop);
 				}
-				std::fprintf(stderr, "[MISSIONFIT_OPORD] parsed %d Brain{} OPORD record(s), applied %d patrol(s) %d guard(s)\n", mfN, mfApplied, mfGuard);
+				std::fprintf(stderr, "[MISSIONFIT_OPORD] parsed %d Brain{} record(s): patrol=%d guard=%d sentry=%d escort=%d other=%d\n",
+					mfN, mfPatrol, mfGuard, mfSentry, mfEscort, mfOther);
+				if (mfBrains) free(mfBrains);
 				free(mfBuf);
 			}
 			mfFile.close();
