@@ -313,6 +313,48 @@ def check_locks(target_dir, exe_name):
 # Payload enumeration
 # ---------------------------------------------------------------------------
 
+def check_exe_fresh(exe_src, build_dir, allow_stale_exe):
+    """Mistake E: stale exe deployed because the source exe was not relinked.
+
+    The linked exe must be NEWER than every compiled .obj that feeds it. An incremental build
+    that compiled objects but did not relink the exe — or a deploy racing a still-running build —
+    leaves the exe OLDER than its objects, so deploy faithfully copies a stale binary (this
+    actually happened: a deploy shipped a pre-slice exe ~2.5 KB smaller than the rebuilt one).
+    Compare exe mtime against the newest .obj under build64/mc2.dir/<config>/.
+    """
+    if not os.path.isfile(exe_src):
+        return
+    exe_m = os.path.getmtime(exe_src)
+    bd = os.path.abspath(build_dir).rstrip(os.sep)
+    cfg = os.path.basename(bd)                      # e.g. RelWithDebInfo
+    b64 = bd
+    while b64 and os.path.basename(b64) != "build64":
+        parent = os.path.dirname(b64)
+        if parent == b64:
+            b64 = ""
+            break
+        b64 = parent
+    if not b64:
+        return                                      # non-standard layout; skip the guard
+    objdir = os.path.join(b64, "mc2.dir", cfg)
+    newest_m, newest_p = 0.0, None
+    for root, _dirs, files in os.walk(objdir):
+        for f in files:
+            if f.endswith(".obj"):
+                m = os.path.getmtime(os.path.join(root, f))
+                if m > newest_m:
+                    newest_m, newest_p = m, os.path.join(root, f)
+    if newest_p and newest_m > exe_m + 1.0:         # 1s slack for filesystem timestamp jitter
+        msg = (f"STALE EXE (Mistake E): {exe_src}\n"
+               f"  exe mtime {exe_m:.0f} is OLDER than object {newest_p}\n"
+               f"  obj mtime {newest_m:.0f} — the build did not relink (incremental skip or a\n"
+               f"  deploy racing an in-flight build). Rebuild the exe before deploying.")
+        if allow_stale_exe:
+            log(f"WARNING (--allow-stale-exe): {msg}")
+        else:
+            fail(msg + "\n  (override: --allow-stale-exe)")
+
+
 def enumerate_payload(src_root, build_dir, exe_name, pdb_name,
                       require_build=True):
     """Returns list of (src_abspath, target_relpath, kind).
@@ -673,6 +715,8 @@ def main():
                     "with --target)")
     ap.add_argument("--allow-stale-pdb", action="store_true",
                     help="downgrade PDB staleness to a warning")
+    ap.add_argument("--allow-stale-exe", action="store_true",
+                    help="downgrade stale-exe (exe older than its .obj files) to a warning")
     ap.add_argument("--verify-only", action="store_true",
                     help="re-check existing target against its manifest; no copy")
     ap.add_argument("--write-manifest-only", action="store_true",
@@ -736,6 +780,7 @@ def main():
     log(f"target:      {target}")
 
     check_locks(target, exe_name)
+    check_exe_fresh(os.path.join(build_dir, exe_name), build_dir, args.allow_stale_exe)
     items = enumerate_payload(src_root, build_dir, exe_name, pdb_name)
     log(f"payload: {len(items)} files "
         f"({sum(1 for *_x, k in items if k == 'shader')} shaders)")
