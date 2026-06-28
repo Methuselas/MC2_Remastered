@@ -621,6 +621,15 @@ int		LogisticsVariant::getMaxHeat() const
 
 	return heat + chassis->maxHeat;
 }
+// MC2_JUMPJETS_ALL (default OFF; launcher Engine Option): allow jump jets on any
+// chassis (e.g. mount JJ on a Mad Cat). Centralized here so the mech-bay JJ slot,
+// its drop target, and the add-component validation all agree.
+bool LogisticsChassis::jumpJetsAllowed() const
+{
+	static const bool s_jumpjetsAll = ( getenv( "MC2_JUMPJETS_ALL" ) != nullptr );
+	return canHaveJumpJets || s_jumpjetsAll;
+}
+
 // if you pass in -1's for x and y, we'll figure out where it can go, and return where it went
 int LogisticsVariant::canAddComponent( LogisticsComponent* pComponent, long& x, long& y ) const
 {
@@ -634,11 +643,9 @@ int LogisticsVariant::canAddComponent( LogisticsComponent* pComponent, long& x, 
 
 	if ( pComponent->getType() == COMPONENT_FORM_JUMPJET  )
 	{
-		// MC2_JUMPJETS_ALL (default OFF; launcher Engine Option): allow jump jets
-		// on any chassis, bypassing the per-chassis canHaveJumpJets restriction
-		// (e.g. mount JJ on a Mad Cat). The one-JJ-per-mech rule still applies.
-		static const bool s_jumpjetsAll = ( getenv( "MC2_JUMPJETS_ALL" ) != nullptr );
-		if ( !chassis->canHaveJumpJets && !s_jumpjetsAll )
+		// jumpJetsAllowed() honors MC2_JUMPJETS_ALL, so the mech-bay JJ slot
+		// (mechlabscreen.cpp:356/1576) and this drop check agree.
+		if ( !chassis->jumpJetsAllowed() )
 			return JUMPJETS_NOT_ALLOWED;
 		else if ( hasJumpJets() )
 			return ONLY_ONE_JUMPJET_ALLOWED;

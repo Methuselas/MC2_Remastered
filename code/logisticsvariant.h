@@ -50,7 +50,7 @@ public:
 	long			getMaxArmor() const { return maxArmor; }
 	int				getSensorID() const;
 	int				getECM() const;
-	bool			jumpJetsAllowed() const { return canHaveJumpJets; }
+	bool			jumpJetsAllowed() const;   // honors MC2_JUMPJETS_ALL gate
 	// VEHICLE-AUTO-PILOT-1: true for a LogisticsVehicle chassis (set in
 	// LogisticsVehicle::init). Logistics-safe vehicle discriminator — does NOT need the
 	// mission-only objTypeManager that loadObjectType derefs (which is null at the
