@@ -181,7 +181,22 @@ int LogisticsChassis::getArmorClass() const
 
 int LogisticsChassis::getDisplaySpeed() const
 {
-	switch( (long)speed )
+	return getDisplaySpeedForSpeed( (long)speed );
+}
+
+// Next discrete move-speed class up the 5/10/15/19/23/27/31/35 ladder.
+static long bumpSpeedClass( long s )
+{
+	static const long ladder[] = { 5, 10, 15, 19, 23, 27, 31, 35 };
+	for ( int i = 0; i < 7; i++ )
+		if ( s <= ladder[i] )
+			return ladder[i + 1];
+	return s;   // already top class
+}
+
+int LogisticsChassis::getDisplaySpeedForSpeed( long speed ) const
+{
+	switch( speed )
 	{
 	case 5:
 		return 17;
@@ -599,14 +614,33 @@ int LogisticsVariant::getArmor( ) const
 	return retArmor;
 }
 
+bool LogisticsVariant::hasXLEngine() const
+{
+	static const bool s_engineXL = ( getenv( "MC2_ENGINE_XL" ) != nullptr );
+	if ( !s_engineXL )
+		return false;
+	for ( int i = 0; i < componentCount; ++i )
+		if ( components[i].component->getType() == COMPONENT_FORM_ENGINE )
+			return true;
+	return false;
+}
+
+long LogisticsVariant::effectiveSpeed() const
+{
+	long s = (long)chassis->speed;
+	if ( hasXLEngine() )
+		s = bumpSpeedClass( s );
+	return s;
+}
+
 int LogisticsVariant::getSpeed() const
 {
-	return chassis->speed;
+	return effectiveSpeed();
 }
 
 int LogisticsVariant::getDisplaySpeed() const
 {
-	return chassis->getDisplaySpeed();
+	return chassis->getDisplaySpeedForSpeed( effectiveSpeed() );
 }
 int		LogisticsVariant::getMaxHeat() const
 {

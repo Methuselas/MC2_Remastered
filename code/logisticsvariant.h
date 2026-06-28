@@ -45,6 +45,7 @@ public:
 	int				getArmorClass() const;
 	float			getSpeed() const { return speed; }
 	int				getDisplaySpeed() const;
+	int				getDisplaySpeedForSpeed( long s ) const;
 	void			setScale( float newScale ) { scale = newScale; }
 	float			getScale() const { return scale; }
 	long			getMaxArmor() const { return maxArmor; }
@@ -151,6 +152,8 @@ protected:
 		int				getMaxJumpRange() const;
 		int				getSpeed() const;
 		int				getDisplaySpeed() const;
+		bool			hasXLEngine() const;
+		long			effectiveSpeed() const;
 
 		int				getVariantID() const { return ID & 0x00ffffff; }
 		const EString&		getSmallIconFileName() const { return chassis->iconFileNames[0]; }
