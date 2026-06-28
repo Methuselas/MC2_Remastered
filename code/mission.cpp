@@ -3052,22 +3052,40 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 				brainFileName.init(warriorPath, moduleName, ".abl");
 			}
 			
-			long moduleHandle = ABLi_preProcess(brainFileName, &numErrors, &numLinesProcessed);
-			gosASSERT(moduleHandle >= 0);
-			if (moduleHandle >= 0 && numErrors == 0)
-				soakBrainsLoaded++;
+			// BRAIN-EMPTY-BRAIN-SKIP-1: inline Brain{} (TechScript/Enhanced) missions leave the
+			// warrior "Brain" field empty — the brain lives in the mission.fit Brain{} block, not a
+			// .abl file. Without a guard the empty name builds "warriors/.abl" and ABLi_preProcess
+			// STOPs (FATAL: missing ABL), so the mission never reaches the inline-Brain consumers
+			// (e.g. BRAIN-MISSIONFIT-OPORD-CONSUMER-1 below). Gate MC2_BRAIN_INLINE_EMPTY_SKIP
+			// (default OFF). Stock missions always name a brain, so stock is byte-identical — the
+			// guard only fires on an empty, non-MPlayer name.
+			static const bool inlineEmptySkip =
+				(std::getenv("MC2_BRAIN_INLINE_EMPTY_SKIP") &&
+				 std::atoi(std::getenv("MC2_BRAIN_INLINE_EMPTY_SKIP")) != 0);
+			if (inlineEmptySkip && !MPlayer && moduleName[0] == '\0')
+			{
+				// No legacy ABL brain; the inline Brain{} block drives this warrior.
+				pilot->setBrainName("");
+			}
 			else
 			{
-				soakBrainsFailed++;
-				printf("[SOAK] WARN abl brain load failed name=%s errors=%ld\n",
-					moduleName, (long)numErrors);
-			}
+				long moduleHandle = ABLi_preProcess(brainFileName, &numErrors, &numLinesProcessed);
+				gosASSERT(moduleHandle >= 0);
+				if (moduleHandle >= 0 && numErrors == 0)
+					soakBrainsLoaded++;
+				else
+				{
+					soakBrainsFailed++;
+					printf("[SOAK] WARN abl brain load failed name=%s errors=%ld\n",
+						moduleName, (long)numErrors);
+				}
 
 #ifdef _DEBUG
-			long error =
+				long error =
 #endif
-				pilot->setBrain(moduleHandle);
-			gosASSERT(error == 0);
+					pilot->setBrain(moduleHandle);
+				gosASSERT(error == 0);
+			}
 		}
 	}
 	if (std::getenv("MC2_SOAK_AUTOWIN") != nullptr || soakBrainsFailed > 0)
