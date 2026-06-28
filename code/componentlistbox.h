@@ -88,7 +88,7 @@ class ComponentIconListBox : public aListBox
 public:
 	ComponentIconListBox();
 	virtual ~ComponentIconListBox();
-	void setType( int Type, int orThisType, int orThis);
+	void setType( int Type, int orThisType, int orThis, int orThis2 = -1 );
 	virtual void update();
 
 	LogisticsComponent* getComponent();

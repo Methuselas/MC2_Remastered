@@ -348,7 +348,7 @@ void ComponentListItem::startDrag()
 }
 //*************************************************************************************************
 
-void ComponentIconListBox::setType( int newType, int otherNewType, int orThis )
+void ComponentIconListBox::setType( int newType, int otherNewType, int orThis, int orThis2 )
 {
 	if ( newType == type && itemCount )
 		return;
@@ -392,9 +392,10 @@ void ComponentIconListBox::setType( int newType, int otherNewType, int orThis )
 		{
 			if ( (*iter)->getComponent()->isAvailable() )
 			{
-				if ( (*iter)->getComponent()->getType() == type || 
+				if ( (*iter)->getComponent()->getType() == type ||
 					(*iter)->getComponent()->getType() == otherNewType ||
-					 (*iter)->getComponent()->getType() == orThis )
+					 (*iter)->getComponent()->getType() == orThis ||
+					 ( orThis2 != -1 && (*iter)->getComponent()->getType() == orThis2 ) )
 				{
 					if ( (*iter)->globalX() > globalX() )
 					{
