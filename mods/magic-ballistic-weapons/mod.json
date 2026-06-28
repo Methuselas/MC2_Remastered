@@ -1,0 +1,9 @@
+{
+  "schema": "mc2-mod/1",
+  "id": "magic-ballistic-weapons",
+  "name": "Magic Ballistic Weapons",
+  "version": "1.0.0",
+  "type": "assets",
+  "dependencies": [],
+  "description": "Ballistic-focused weapon rebalance toward MechCommander Gold values. New systems: SRM/Clan SRM/Streak SRM-6, Heavy Thunderbolt, Clan L/M/H LBX, double heat sinks, MG with 200 ammo. Ballistic weapons shrunk 2 squares. Includes weapon art TGAs. Overrides data/objects/{compbas,effects}.csv + data/art/*.tga."
+}

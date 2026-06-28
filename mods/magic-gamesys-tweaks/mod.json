@@ -1,0 +1,9 @@
+{
+  "schema": "mc2-mod/1",
+  "id": "magic-gamesys-tweaks",
+  "name": "Magic Gamesys Tweaks",
+  "version": "1.0.0",
+  "type": "assets",
+  "dependencies": [],
+  "description": "Game-system tuning via gamesys.fit: LOS and max weapon range 250; weapon range bands 0-80/50-160/80-240; basic sensor gains range; weapons always 100% for player and AI; AI pilot skill by class (Green 50 / Regular 75 / Veteran 100 / Elite 125). type=assets so the launcher treats it as a stackable add-on, NOT a campaign (gamesys.fit is in data/missions but is tuning, not playable missions)."
+}

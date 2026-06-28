@@ -1,0 +1,4 @@
+# Mod payloads are game data (CSV/FIT/TGA/binary) shipped to the install
+# verbatim — never apply EOL normalization, it can corrupt the bytes the
+# engine reads. Treat everything under mods/ as binary.
+* -text

@@ -53,12 +53,14 @@
 #endif
 #define UNICODE 0
 #include <windows.h>
+#include <shellapi.h>
 #include <shlobj.h>
 #include <commctrl.h>
 #include <process.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
 #define IDC_MODLIST   1001
 #define IDC_LAUNCH    1002
@@ -69,7 +71,8 @@
 #define IDC_IMPORT    1007
 #define IDC_ADDONLBL  1008  // "Add-ons (stack any):" label
 #define IDC_BASE0     1050  // base radios: IDC_BASE0 + slot index (slot 0 = "None")
-#define IDC_ADDON0    1100  // add-on checkboxes: IDC_ADDON0 + slot index
+#define IDC_ADDON0    1100  // (legacy) add-on checkboxes: IDC_ADDON0 + slot index
+#define IDC_ADDONLIST 1110  // add-on checkbox ListView (replaces fixed add-on slots)
 #define IDC_FASTERWEAPONS 1300  // gameplay toggle (NOT a mod): faster weapons
 
 // Progress-dialog controls.
@@ -102,8 +105,7 @@
 // FIXED set of base-radio slots: slot 0 is always "None"; the rest hold detected
 // base layers (mco-compat, mc2x-compat). 1 None + up to 3 bases.
 #define BASE_SLOTS  4
-// FIXED set of stackable add-on checkbox slots (created once).
-#define ADDON_SLOTS 4
+// Add-ons are now an unbounded checkbox ListView (no fixed slot cap).
 // Max texture-pack radio slots shown in Graphics dialog (slot 0 = "None"; +1..N = packs).
 // Capped to keep the dialog manageable.
 #define TEXPACK_DLG_SLOTS 7  // 1 "None" + up to 6 packs
@@ -117,6 +119,7 @@ struct ModEntry {
     bool isCampaign;        // has data/missions
     CompatKind needs;       // auto-detected compat for a campaign
     char radioGroup[64];    // mod.json "radioGroup" — routes to a mutually-exclusive radio bank
+    char desc[1024];        // mod.json "description" — shown in the launcher description pane
 };
 
 static ModEntry s_campaigns[MAX_MODS];
@@ -135,10 +138,10 @@ static int      s_texQualCount = 0;
 static HINSTANCE s_hInst;
 static HWND      s_hMainWnd;
 static HWND      s_hListBox;
-static HWND      s_hDesc;
 static HWND      s_hImport;
 static HWND      s_hBase[BASE_SLOTS];     // FIXED radio slots — slot 0 = "None"; never destroy
-static HWND      s_hAddon[ADDON_SLOTS];      // FIXED add-on checkbox slots — never destroy
+static HWND      s_hAddonList;            // add-on checkbox ListView (unbounded, scrolls)
+static HWND      s_hDescBox;              // multiline read-only description pane
 static HWND      s_hFasterWeapons;        // gameplay toggle (NOT a mod): faster weapons
 
 static char      s_launcherDir[MAX_PATH];   // trailing-slash launcher directory
@@ -415,8 +418,8 @@ static void SaveMainPageSelections() {
     // Add-ons: comma-delimited checked folder names
     {
         s_savedAddons[0] = '\0';
-        for (int i = 0; i < s_addonCount && i < ADDON_SLOTS; i++) {
-            if (s_hAddon[i] && SendMessageA(s_hAddon[i], BM_GETCHECK, 0, 0) == BST_CHECKED) {
+        for (int i = 0; i < s_addonCount; i++) {
+            if (s_hAddonList && ListView_GetCheckState(s_hAddonList, i)) {
                 if (s_savedAddons[0])
                     strncat(s_savedAddons, ",", sizeof(s_savedAddons)-strlen(s_savedAddons)-1);
                 strncat(s_savedAddons, s_addons[i].folderName,
@@ -470,9 +473,9 @@ static void RestoreMainPageSelections() {
             char* e = tok + strlen(tok) - 1;
             while (e > tok && *e == ' ') *e-- = '\0';
             if (tok[0]) {
-                for (int i = 0; i < s_addonCount && i < ADDON_SLOTS; i++) {
-                    if (s_hAddon[i] && _stricmp(s_addons[i].folderName, tok) == 0) {
-                        SendMessageA(s_hAddon[i], BM_SETCHECK, BST_CHECKED, 0);
+                for (int i = 0; i < s_addonCount; i++) {
+                    if (s_hAddonList && _stricmp(s_addons[i].folderName, tok) == 0) {
+                        ListView_SetCheckState(s_hAddonList, i, TRUE);
                         break;
                     }
                 }
@@ -1327,7 +1330,7 @@ static void ScanMods(const char* modsPath) {
         if (!DirExists(dataDir)) continue;
 
         // Optional mod.json for nicer names / explicit type / radioGroup.
-        char name[256] = "", type[32] = "", radioGroup[64] = "";
+        char name[256] = "", type[32] = "", radioGroup[64] = "", desc[1024] = "";
         HANDLE fh = CreateFileA(jsonPath, GENERIC_READ, FILE_SHARE_READ, NULL,
                                 OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
         if (fh != INVALID_HANDLE_VALUE) {
@@ -1336,6 +1339,7 @@ static void ScanMods(const char* modsPath) {
             JsonGetString(buf, "name", name, sizeof(name));
             JsonGetString(buf, "type", type, sizeof(type));
             JsonGetString(buf, "radioGroup", radioGroup, sizeof(radioGroup));
+            JsonGetString(buf, "description", desc, sizeof(desc));
         }
         if (!name[0]) _snprintf(name, sizeof(name), "%s", fd.cFileName);
 
@@ -1372,6 +1376,7 @@ static void ScanMods(const char* modsPath) {
                 ModEntry& e = s_bases[s_baseCount++];
                 _snprintf(e.folderName, sizeof(e.folderName), "%s", fd.cFileName);
                 _snprintf(e.name, sizeof(e.name), "%s", name);
+                _snprintf(e.desc, sizeof(e.desc), "%s", desc);
                 e.isCompat = true; e.isCampaign = false; e.needs = CK_UNKNOWN;
                 e.radioGroup[0] = '\0';
             } else if (isTexQual) {
@@ -1379,6 +1384,7 @@ static void ScanMods(const char* modsPath) {
                 ModEntry& e = s_texQual[s_texQualCount++];
                 _snprintf(e.folderName, sizeof(e.folderName), "%s", fd.cFileName);
                 _snprintf(e.name, sizeof(e.name), "%s", name);
+                _snprintf(e.desc, sizeof(e.desc), "%s", desc);
                 e.isCompat = false; e.isCampaign = false; e.needs = CK_UNKNOWN;
                 _snprintf(e.radioGroup, sizeof(e.radioGroup), "%s", radioGroup);
             } else {
@@ -1386,6 +1392,7 @@ static void ScanMods(const char* modsPath) {
                 ModEntry& e = s_addons[s_addonCount++];
                 _snprintf(e.folderName, sizeof(e.folderName), "%s", fd.cFileName);
                 _snprintf(e.name, sizeof(e.name), "%s", name);
+                _snprintf(e.desc, sizeof(e.desc), "%s", desc);
                 e.isCompat = true; e.isCampaign = false; e.needs = CK_UNKNOWN;
                 e.radioGroup[0] = '\0';
             }
@@ -1395,6 +1402,7 @@ static void ScanMods(const char* modsPath) {
             ModEntry& e = s_campaigns[s_campCount++];
             _snprintf(e.folderName, sizeof(e.folderName), "%s", fd.cFileName);
             _snprintf(e.name, sizeof(e.name), "%s", name);
+            _snprintf(e.desc, sizeof(e.desc), "%s", desc);
             e.isCompat = false; e.isCampaign = true;
             e.needs = CK_PENDING;   // lazy: detected on first selection, not at startup
             e.radioGroup[0] = '\0';
@@ -1424,37 +1432,40 @@ static int BaseIndexForKind(CompatKind k) {
 // radios, add-ons, texture-quality, and options.  The listbox fills the full
 // height of the right column so both columns bottom out at the same Y.
 #define LP_MARGIN     10
+// LEFT column: campaign listbox (scrolls) with the compatibility-base radios
+// stacked beneath it. RIGHT column: the add-on checkbox ListView (scrolls) with
+// the Faster-weapons toggle beneath it. A full-width Description box spans below
+// both columns, then the Engine/Graphics aux buttons, then Launch/Cancel.
 #define LP_LIST_X     LP_MARGIN
 #define LP_LIST_Y     40
 #define LP_LIST_W     320
-#define LP_RCOL_X     (LP_LIST_X + LP_LIST_W + 15)   // right column left edge
-#define LP_RCOL_W     230                             // right column width
-#define LP_RLBL_Y     14                              // base label Y (matches left label)
-#define LP_ROW_H      20                              // radio/checkbox height
-#define LP_ROW_STEP   22                              // radio/checkbox vertical step
+#define LP_LIST_H     168                             // campaign list (fixed; scrolls)
+#define LP_RLBL_Y     14                              // top label row (campaign + add-on)
 #define LP_LBL_H      18                              // sub-group label height
-// Base radio group: label at LP_LIST_Y row top, radios stacked below it.
-#define LP_BASE_LBL_Y LP_LIST_Y                                    // base group label top
-#define LP_BASE_Y     (LP_BASE_LBL_Y + LP_LBL_H + 2)              // first base radio top
-// Add-on group: a gap below the base radios, then label, then checkboxes.
-#define LP_ADDON_LBL_Y (LP_BASE_Y + BASE_SLOTS * LP_ROW_STEP + 10) // add-on group label top
-#define LP_ADDON_Y    (LP_ADDON_LBL_Y + LP_LBL_H + 2)            // first add-on checkbox top
-#define LP_ADDON_BOTTOM (LP_ADDON_Y + ADDON_SLOTS * LP_ROW_STEP)  // bottom of add-on slots
-// Options group: directly below add-ons (texture-quality section moved to Graphics dialog).
-#define LP_OPT_LBL_Y  (LP_ADDON_BOTTOM + 14)                      // "Options:" label top
-#define LP_OPT_Y      (LP_OPT_LBL_Y + LP_LBL_H + 2)               // faster-weapons checkbox top
-#define LP_OPT_BTN_Y  (LP_OPT_Y + LP_ROW_STEP + 4)                // "Engine Options..." button top
-#define LP_GFX_BTN_Y  (LP_OPT_BTN_Y + LP_ROW_H + 4)              // "Graphics..." button top
-#define LP_RCOL_BOTTOM (LP_GFX_BTN_Y + LP_ROW_H + 2)              // bottom of right column
-// Listbox fills the full height of the right column.
-#define LP_LIST_H     (LP_RCOL_BOTTOM - LP_LIST_Y)
-#define LP_LCOL_BOTTOM LP_RCOL_BOTTOM
-// Bottom (status + buttons) below both columns.
-#define LP_COLS_BOTTOM LP_RCOL_BOTTOM
+#define LP_ROW_H      20                              // radio/checkbox height
+#define LP_ROW_STEP   22                              // radio vertical step
+// Base radios: under the campaign list (left column).
+#define LP_BASE_LBL_Y (LP_LIST_Y + LP_LIST_H + 12)   // base group label top
+#define LP_BASE_Y     (LP_BASE_LBL_Y + LP_LBL_H + 2) // first base radio top
+#define LP_BASE_BOTTOM (LP_BASE_Y + BASE_SLOTS * LP_ROW_STEP)
+#define LP_LCOL_BOTTOM LP_BASE_BOTTOM
+// Right column: add-on ListView + Faster-weapons toggle (bottom-aligned to left col).
+#define LP_RCOL_X     (LP_LIST_X + LP_LIST_W + 15)   // right column left edge
+#define LP_RCOL_W     230                            // right column width
+#define LP_FW_Y       (LP_LCOL_BOTTOM - LP_ROW_H)    // faster-weapons toggle top
+#define LP_ADDON_LIST_Y LP_LIST_Y                    // add-on ListView top (aligns campaign list)
+#define LP_ADDON_LIST_H (LP_FW_Y - 6 - LP_ADDON_LIST_Y)
+#define LP_RCOL_BOTTOM LP_LCOL_BOTTOM
+#define LP_COLS_BOTTOM LP_LCOL_BOTTOM
+// Description box (full width, below both columns) — ~2x the old height.
+#define LP_DESC_LBL_Y (LP_COLS_BOTTOM + 8)           // "Description" label top
+#define LP_DESC_Y     (LP_DESC_LBL_Y + LP_LBL_H + 2) // description box top
+#define LP_DESC_H     90
+// Aux buttons (Engine Options / Graphics) then Launch/Cancel.
+#define LP_AUX_BTN_Y  (LP_DESC_Y + LP_DESC_H + 8)
+#define LP_AUX_BTN_H  26
 #define LP_CLIENT_W   (LP_RCOL_X + LP_RCOL_W + LP_MARGIN)  // 10+320+15+230+10 = 585
-#define LP_BOTTOM_Y   (LP_COLS_BOTTOM + 8)            // status STATIC top (below both columns)
-#define LP_DESC_H     34
-#define LP_BTN_Y      (LP_BOTTOM_Y + LP_DESC_H + 6)   // Launch/Cancel row top
+#define LP_BTN_Y      (LP_AUX_BTN_Y + LP_AUX_BTN_H + 8)    // Launch/Cancel row top
 #define LP_BTN_H      28
 
 // Show/hide + relabel the FIXED base-radio slots from the current s_bases[] set.
@@ -1486,24 +1497,26 @@ static void RefreshBaseSlots() {
                          (i == 0) ? BST_CHECKED : BST_UNCHECKED, 0);
 }
 
-// Show/hide + relabel the FIXED add-on checkbox slots from s_addons[]. Never
-// destroys/recreates a window — geometry is constant. With no add-ons deployed,
-// all slots hide and only the "Add-ons (stack any):" label remains visible.
-static void RefreshAddonSlots() {
-    for (int i = 0; i < ADDON_SLOTS; i++) {
-        if (!s_hAddon[i]) continue;
-        if (i < s_addonCount) {
-            char label[300];
-            _snprintf(label, sizeof(label), "%s  (%s)",
-                      s_addons[i].name, s_addons[i].folderName);
-            label[sizeof(label)-1] = '\0';
-            SetWindowTextA(s_hAddon[i], label);
-            ShowWindow(s_hAddon[i], SW_SHOW);
-        } else {
-            SetWindowTextA(s_hAddon[i], "");
-            SendMessageA(s_hAddon[i], BM_SETCHECK, BST_UNCHECKED, 0);
-            ShowWindow(s_hAddon[i], SW_HIDE);
-        }
+// Repopulate the add-on checkbox ListView from s_addons[]. Clears all rows and
+// inserts one per add-on (unbounded — no fixed slot cap). Check state resets to
+// unchecked; RestoreMainPageSelections re-applies the saved checks afterwards.
+static void RefreshAddonList() {
+    if (!s_hAddonList) return;
+    ListView_DeleteAllItems(s_hAddonList);
+    for (int i = 0; i < s_addonCount; i++) {
+        char label[512];
+        _snprintf(label, sizeof(label), "%s  (%s)",
+                  s_addons[i].name, s_addons[i].folderName);
+        label[sizeof(label)-1] = '\0';
+        LVITEMA it = {};
+        it.mask = LVIF_TEXT;
+        it.iItem = i;
+        it.iSubItem = 0;
+        it.pszText = label;
+        // Explicit ...A message: the ListView_* macros gate on #ifdef UNICODE,
+        // which is DEFINED (as 0) here, so the macro would send the WIDE message
+        // and misread our ANSI text as UTF-16 (ASCII byte-pairs -> CJK glyphs).
+        SendMessageA(s_hAddonList, LVM_INSERTITEMA, 0, (LPARAM)&it);
     }
 }
 
@@ -1522,6 +1535,45 @@ static int SelectedBaseSlot() {
         if (s_hBase[i] && SendMessageA(s_hBase[i], BM_GETCHECK, 0, 0) == BST_CHECKED)
             return i;
     return 0;
+}
+
+// Built-in description for entries that ship no mod.json "description" (Stock,
+// the compat bases). Matched case-insensitively on folder name; returns "" if
+// none, so the caller can fall back to the mod's own description.
+static const char* BuiltinBlurb(const char* folderName) {
+    if (!folderName || !folderName[0])
+        return "Stock MechCommander 2 base game. No mods active. Pick a base only "
+               "if a campaign needs one; stack any add-ons on top.";
+    if (ContainsCI(folderName, "mco-compat"))
+        return "MechCommander Omnitech compatibility base. Replaces object2.pak / "
+               "buildings.csv so MCO campaigns load. Mutually exclusive with other bases.";
+    if (ContainsCI(folderName, "mc2x-compat"))
+        return "MC2X 'fat pack' compatibility base. Replaces object2.pak / "
+               "buildings.csv for MC2X content. Mutually exclusive with other bases.";
+    return "";
+}
+
+// Set the description pane text. NULL/empty shows a neutral placeholder.
+static void SetDescBox(const char* text) {
+    if (!s_hDescBox) return;
+    SetWindowTextA(s_hDescBox, (text && text[0]) ? text : "(no description provided)");
+}
+
+// Show the description for a base radio slot (0 = None).
+static void DescribeBase(int slot) {
+    if (slot <= 0 || (slot - 1) >= s_baseCount) {
+        SetDescBox(BuiltinBlurb(""));   // None -> stock blurb
+        return;
+    }
+    const ModEntry& b = s_bases[slot - 1];
+    SetDescBox(b.desc[0] ? b.desc : BuiltinBlurb(b.folderName));
+}
+
+// Show the description for the focused add-on row.
+static void DescribeAddon(int row) {
+    if (row < 0 || row >= s_addonCount) return;
+    const ModEntry& a = s_addons[row];
+    SetDescBox(a.desc[0] ? a.desc : BuiltinBlurb(a.folderName));
 }
 
 static void UpdateForSelection() {
@@ -1555,11 +1607,36 @@ static void UpdateForSelection() {
         // Stock: base radio -> None. Add-on checkboxes preserved.
         SelectBaseRadio(0);
     }
-    SetWindowTextA(s_hDesc, status);
+    // Description pane: campaign blurb (mod.json description or Stock built-in)
+    // followed by the auto-detect/compat status line.
+    char text[2048];
+    const char* campDesc = (sel > 0 && sel <= s_campCount && s_campaigns[sel-1].desc[0])
+                         ? s_campaigns[sel-1].desc
+                         : (sel <= 0 ? BuiltinBlurb("") : "");
+    if (campDesc[0])
+        _snprintf(text, sizeof(text), "%s\r\n\r\n%s", campDesc, status);
+    else
+        _snprintf(text, sizeof(text), "%s", status);
+    text[sizeof(text)-1] = '\0';
+    SetDescBox(text);
 }
 
 // Reset + re-scan mods, repopulate listbox + compat slots. Used after import.
 static void RescanAndRepopulate(const char* selectFolder) {
+    // Preserve the live add-on check state across the ListView rebuild below:
+    // RefreshAddonList() -> ListView_DeleteAllItems() wipes per-row check state
+    // (the old fixed-slot HWNDs kept it; the ListView does not). Campaign/base
+    // selection is re-derived from selectFolder + auto-detect, so only the
+    // stacked add-on checks need carrying over. Captured by folder name so it
+    // survives reordering/additions from the rescan.
+    char prevAddons[1024]; prevAddons[0] = '\0';
+    for (int i = 0; i < s_addonCount; i++) {
+        if (s_hAddonList && ListView_GetCheckState(s_hAddonList, i)) {
+            if (prevAddons[0]) strncat(prevAddons, ",", sizeof(prevAddons)-strlen(prevAddons)-1);
+            strncat(prevAddons, s_addons[i].folderName, sizeof(prevAddons)-strlen(prevAddons)-1);
+        }
+    }
+
     s_campCount = 0;
     s_baseCount = 0;
     s_addonCount = 0;
@@ -1587,8 +1664,86 @@ static void RescanAndRepopulate(const char* selectFolder) {
     }
     SendMessageA(s_hListBox, LB_SETCURSEL, wantSel, 0);
     RefreshBaseSlots();
-    RefreshAddonSlots();
+    RefreshAddonList();
+    // Re-apply the preserved add-on checks against the freshly-inserted rows.
+    if (prevAddons[0]) {
+        char buf[1024]; _snprintf(buf, sizeof(buf), "%s", prevAddons); buf[sizeof(buf)-1] = '\0';
+        char* ctx = NULL;
+        for (char* tok = strtok_s(buf, ",", &ctx); tok; tok = strtok_s(NULL, ",", &ctx)) {
+            for (int i = 0; i < s_addonCount; i++)
+                if (_stricmp(s_addons[i].folderName, tok) == 0) {
+                    ListView_SetCheckState(s_hAddonList, i, TRUE);
+                    break;
+                }
+        }
+    }
     UpdateForSelection();
+}
+
+// ---- Mod-pack installer (drag-drop .exe onto window) ----------------------
+
+static void CopyToClipboard(HWND hwnd, const char* text) {
+    if (!OpenClipboard(hwnd)) return;
+    EmptyClipboard();
+    HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, strlen(text) + 1);
+    if (hMem) {
+        memcpy(GlobalLock(hMem), text, strlen(text) + 1);
+        GlobalUnlock(hMem);
+        SetClipboardData(CF_TEXT, hMem);
+    }
+    CloseClipboard();
+}
+
+static void TryInstallModPack(HWND hwnd, const char* exePath) {
+    // Derive target folder name from the exe filename (lowercase, spaces->dashes).
+    const char* fname = strrchr(exePath, '\\');
+    fname = fname ? fname + 1 : exePath;
+    char modName[256];
+    _snprintf(modName, sizeof(modName), "%s", fname);
+    char* dot = strrchr(modName, '.');
+    if (dot && _stricmp(dot, ".exe") == 0) *dot = '\0';
+    for (char* p = modName; *p; p++) {
+        *p = (char)tolower((unsigned char)*p);
+        if (*p == ' ') *p = '-';
+    }
+
+    char targetDir[MAX_PATH];
+    _snprintf(targetDir, sizeof(targetDir), "%s%s", s_modsPath, modName);
+
+    // Copy target path to clipboard so user can paste if the installer asks.
+    CopyToClipboard(hwnd, targetDir);
+
+    char msg[MAX_PATH + 512];
+    _snprintf(msg, sizeof(msg),
+        "Run installer?\n\n%s\n\n"
+        "Target folder (copied to clipboard):\n%s\n\n"
+        "The installer will be asked to install there automatically.\n"
+        "If it shows its own UI, paste the path above when asked.",
+        exePath, targetDir);
+    if (MessageBoxA(hwnd, msg, "Install Mod Pack", MB_YESNO | MB_ICONQUESTION) != IDYES)
+        return;
+
+    // Pass target dir via NSIS /D= and Inno /DIR= simultaneously.
+    char params[MAX_PATH + 64];
+    _snprintf(params, sizeof(params), "/S /D=%s /SILENT /DIR=\"%s\"", targetDir, targetDir);
+
+    SHELLEXECUTEINFOA sei = {};
+    sei.cbSize       = sizeof(sei);
+    sei.fMask        = SEE_MASK_NOCLOSEPROCESS;
+    sei.hwnd         = hwnd;
+    sei.lpFile       = exePath;
+    sei.lpParameters = params;
+    sei.nShow        = SW_SHOWNORMAL;
+    if (!ShellExecuteExA(&sei)) {
+        MessageBoxA(hwnd, "Failed to start installer.", "Error", MB_ICONERROR | MB_OK);
+        return;
+    }
+
+    WaitForSingleObject(sei.hProcess, INFINITE);
+    CloseHandle(sei.hProcess);
+
+    // Rescan and refresh the campaign list.
+    RescanAndRepopulate("");
 }
 
 // ---- Launch mc2.exe -------------------------------------------------------
@@ -1603,8 +1758,8 @@ static void DoLaunch(HWND hwnd) {
     // if not "None", goes last.
     char deps[1024] = "";
     int addonChecked = 0;
-    for (int i = 0; i < s_addonCount && i < ADDON_SLOTS; i++) {
-        if (SendMessageA(s_hAddon[i], BM_GETCHECK, 0, 0) == BST_CHECKED) {
+    for (int i = 0; i < s_addonCount; i++) {
+        if (s_hAddonList && ListView_GetCheckState(s_hAddonList, i)) {
             if (deps[0]) strncat(deps, ",", sizeof(deps)-strlen(deps)-1);
             strncat(deps, s_addons[i].folderName, sizeof(deps)-strlen(deps)-1);
             addonChecked++;
@@ -1996,8 +2151,8 @@ static void SetMainControlsEnabled(BOOL en) {
     EnableWindow(GetDlgItem(s_hMainWnd, IDC_CANCEL), en);
     for (int i = 0; i < BASE_SLOTS; i++)
         if (s_hBase[i]) EnableWindow(s_hBase[i], en);
-    for (int i = 0; i < ADDON_SLOTS; i++)
-        if (s_hAddon[i]) EnableWindow(s_hAddon[i], en);
+    if (s_hAddonList) EnableWindow(s_hAddonList, en);
+    if (s_hFasterWeapons) EnableWindow(s_hFasterWeapons, en);
 }
 
 // Start the worker thread + show the modal progress dialog. s_importForce must
@@ -2232,15 +2387,27 @@ static void OnImportDone(HWND hwnd) {
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
+    case WM_DROPFILES: {
+        HDROP hDrop = (HDROP)wParam;
+        char droppedPath[MAX_PATH] = {};
+        DragQueryFileA(hDrop, 0, droppedPath, sizeof(droppedPath));
+        DragFinish(hDrop);
+        const char* ext = strrchr(droppedPath, '.');
+        if (ext && _stricmp(ext, ".exe") == 0)
+            TryInstallModPack(hwnd, droppedPath);
+        break;
+    }
+
     case WM_CREATE: {
         s_hMainWnd = hwnd;
+        DragAcceptFiles(hwnd, TRUE);
         HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
 
-        // ---- LEFT COLUMN: campaign label + Import button + campaign listbox ----
-        // Top row: label (top-left of left column) + Import button (top-right of
-        // left column, above the listbox, as before relative to the campaign section).
+        // ---- LEFT COLUMN: campaign label + Import button + campaign listbox +
+        //      compatibility-base radios beneath it ----
         HWND hLabel = CreateWindowA("STATIC", "Campaign (pick one):",
-            WS_CHILD | WS_VISIBLE, LP_LIST_X, 14, 220, 18, hwnd, (HMENU)IDC_LABEL, s_hInst, NULL);
+            WS_CHILD | WS_VISIBLE, LP_LIST_X, LP_RLBL_Y, 220, LP_LBL_H,
+            hwnd, (HMENU)IDC_LABEL, s_hInst, NULL);
         SendMessageA(hLabel, WM_SETFONT, (WPARAM)hFont, TRUE);
 
         s_hImport = CreateWindowA("BUTTON", "Import...",
@@ -2257,10 +2424,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             SendMessageA(s_hListBox, LB_ADDSTRING, 0, (LPARAM)s_campaigns[i].name);
         SendMessageA(s_hListBox, LB_SETCURSEL, 0, 0);
 
-        // ---- RIGHT COLUMN: base-radio group (top) + add-on checkbox group ----
-        // Sub-group 1: "Compatibility Base (pick one):" label + radios.
+        // "Compatibility Base (pick one):" label + radios (left column, under list).
         HWND hBaseLbl = CreateWindowA("STATIC", "Compatibility Base (pick one):",
-            WS_CHILD | WS_VISIBLE, LP_RCOL_X, LP_BASE_LBL_Y, LP_RCOL_W, LP_LBL_H,
+            WS_CHILD | WS_VISIBLE, LP_LIST_X, LP_BASE_LBL_Y, LP_LIST_W, LP_LBL_H,
             hwnd, (HMENU)IDC_BASELBL, s_hInst, NULL);
         SendMessageA(hBaseLbl, WM_SETFONT, (WPARAM)hFont, TRUE);
 
@@ -2272,45 +2438,44 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             DWORD st = WS_CHILD | BS_AUTORADIOBUTTON;
             if (i == 0) st |= WS_GROUP;   // start of the exclusive radio group
             s_hBase[i] = CreateWindowA("BUTTON", "", st,
-                LP_RCOL_X, by, LP_RCOL_W, LP_ROW_H,
+                LP_LIST_X, by, LP_LIST_W, LP_ROW_H,
                 hwnd, (HMENU)(INT_PTR)(IDC_BASE0 + i), s_hInst, NULL);
             SendMessageA(s_hBase[i], WM_SETFONT, (WPARAM)hFont, TRUE);
         }
 
-        // Sub-group 2: "Add-ons (stack any):" label + stackable checkboxes.
-        // A WS_GROUP STATIC after the radios terminates the radio group so the
-        // add-on checkboxes are not pulled into it.
+        // ---- RIGHT COLUMN: "Add-ons (stack any):" label + scrolling checkbox
+        //      ListView + Faster-weapons toggle beneath it ----
         HWND hAddonLbl = CreateWindowA("STATIC", "Add-ons (stack any):",
-            WS_CHILD | WS_VISIBLE | WS_GROUP, LP_RCOL_X, LP_ADDON_LBL_Y, LP_RCOL_W, LP_LBL_H,
+            WS_CHILD | WS_VISIBLE, LP_RCOL_X, LP_RLBL_Y, LP_RCOL_W, LP_LBL_H,
             hwnd, (HMENU)IDC_ADDONLBL, s_hInst, NULL);
         SendMessageA(hAddonLbl, WM_SETFONT, (WPARAM)hFont, TRUE);
 
-        // FIXED add-on checkbox slots: stacked vertically below the add-on label.
-        // Geometry never changes — refresh = show/hide + relabel only. With no
-        // add-ons deployed, all hide and just the label shows (that's fine).
-        for (int i = 0; i < ADDON_SLOTS; i++) {
-            int cy = LP_ADDON_Y + i * LP_ROW_STEP;
-            s_hAddon[i] = CreateWindowA("BUTTON", "",
-                WS_CHILD | BS_AUTOCHECKBOX,
-                LP_RCOL_X, cy, LP_RCOL_W, LP_ROW_H,
-                hwnd, (HMENU)(INT_PTR)(IDC_ADDON0 + i), s_hInst, NULL);
-            SendMessageA(s_hAddon[i], WM_SETFONT, (WPARAM)hFont, TRUE);
+        // Add-on ListView: report mode + checkboxes, single (header-less) column.
+        // Unbounded — scrolls when add-ons exceed the visible height. No fixed cap.
+        s_hAddonList = CreateWindowExA(0, WC_LISTVIEWA, NULL,
+            WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP | WS_GROUP |
+            LVS_REPORT | LVS_SINGLESEL | LVS_NOCOLUMNHEADER | LVS_SHOWSELALWAYS,
+            LP_RCOL_X, LP_ADDON_LIST_Y, LP_RCOL_W, LP_ADDON_LIST_H,
+            hwnd, (HMENU)(INT_PTR)IDC_ADDONLIST, s_hInst, NULL);
+        SendMessageA(s_hAddonList, WM_SETFONT, (WPARAM)hFont, TRUE);
+        ListView_SetExtendedListViewStyle(s_hAddonList,
+            LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT);
+        {
+            LVCOLUMNA col = {};
+            col.mask = LVCF_WIDTH;
+            col.cx = LP_RCOL_W - 4 - GetSystemMetrics(SM_CXVSCROLL);
+            SendMessageA(s_hAddonList, LVM_INSERTCOLUMNA, 0, (LPARAM)&col);  // ...A: see InsertItem note
         }
+
         RefreshBaseSlots();    // show/hide + label per current scan; default None
-        RefreshAddonSlots();   // show/hide + label per current scan
+        RefreshAddonList();    // populate ListView rows per current scan
 
-        // Sub-group 3: gameplay "Options:" label + Faster-weapons toggle. This is
-        // NOT a mod -- the checkbox drives engine env vars on Launch, separate from
-        // the MC2_ACTIVE_MOD/MC2_MOD_DEPS mod logic. A WS_GROUP STATIC terminates
-        // any preceding group; the checkbox defaults UNCHECKED.
-        HWND hOptLbl = CreateWindowA("STATIC", "Options:",
-            WS_CHILD | WS_VISIBLE | WS_GROUP, LP_RCOL_X, LP_OPT_LBL_Y, LP_RCOL_W, LP_LBL_H,
-            hwnd, (HMENU)(INT_PTR)-1, s_hInst, NULL);
-        SendMessageA(hOptLbl, WM_SETFONT, (WPARAM)hFont, TRUE);
-
+        // Faster-weapons toggle — grouped under the add-ons pane. NOT a mod: it
+        // drives engine env vars on Launch, separate from MC2_ACTIVE_MOD/
+        // MC2_MOD_DEPS. WS_GROUP terminates the base radio group. Defaults OFF.
         s_hFasterWeapons = CreateWindowA("BUTTON", "Faster weapons (experimental)",
-            WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-            LP_RCOL_X, LP_OPT_Y, LP_RCOL_W, LP_ROW_H,
+            WS_CHILD | WS_VISIBLE | WS_GROUP | BS_AUTOCHECKBOX,
+            LP_RCOL_X, LP_FW_Y, LP_RCOL_W, LP_ROW_H,
             hwnd, (HMENU)(INT_PTR)IDC_FASTERWEAPONS, s_hInst, NULL);
         SendMessageA(s_hFasterWeapons, WM_SETFONT, (WPARAM)hFont, TRUE);
         SendMessageA(s_hFasterWeapons, BM_SETCHECK, BST_UNCHECKED, 0);  // default OFF
@@ -2334,24 +2499,33 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
         }
 
+        // ---- DESCRIPTION (full width, below both columns) ----
+        HWND hDescLbl = CreateWindowA("STATIC", "Description:",
+            WS_CHILD | WS_VISIBLE, LP_MARGIN, LP_DESC_LBL_Y, 220, LP_LBL_H,
+            hwnd, (HMENU)(INT_PTR)-1, s_hInst, NULL);
+        SendMessageA(hDescLbl, WM_SETFONT, (WPARAM)hFont, TRUE);
+
+        // Multiline read-only pane. Updates on campaign / base / add-on focus.
+        s_hDescBox = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "",
+            WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL,
+            LP_MARGIN, LP_DESC_Y, LP_CLIENT_W - 2 * LP_MARGIN, LP_DESC_H,
+            hwnd, (HMENU)IDC_DESC, s_hInst, NULL);
+        SendMessageA(s_hDescBox, WM_SETFONT, (WPARAM)hFont, TRUE);
+
+        // ---- AUX buttons (Engine Options / Graphics) ----
         HWND hOptBtn = CreateWindowA("BUTTON", "Engine Options...",
             WS_CHILD | WS_VISIBLE,
-            LP_RCOL_X, LP_OPT_BTN_Y, LP_RCOL_W, LP_ROW_H,
+            LP_MARGIN, LP_AUX_BTN_Y, 150, LP_AUX_BTN_H,
             hwnd, (HMENU)(INT_PTR)IDC_OPTIONS, s_hInst, NULL);
         SendMessageA(hOptBtn, WM_SETFONT, (WPARAM)hFont, TRUE);
 
         HWND hGfxBtn = CreateWindowA("BUTTON", "Graphics...",
             WS_CHILD | WS_VISIBLE,
-            LP_RCOL_X, LP_GFX_BTN_Y, LP_RCOL_W, LP_ROW_H,
+            LP_MARGIN + 160, LP_AUX_BTN_Y, 150, LP_AUX_BTN_H,
             hwnd, (HMENU)(INT_PTR)IDC_GRAPHICS, s_hInst, NULL);
         SendMessageA(hGfxBtn, WM_SETFONT, (WPARAM)hFont, TRUE);
 
-        // ---- BOTTOM (spans full width below BOTH columns): status + buttons ----
-        s_hDesc = CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE | SS_LEFT,
-            LP_MARGIN, LP_BOTTOM_Y, LP_CLIENT_W - 2 * LP_MARGIN, LP_DESC_H,
-            hwnd, (HMENU)IDC_DESC, s_hInst, NULL);
-        SendMessageA(s_hDesc, WM_SETFONT, (WPARAM)hFont, TRUE);
-
+        // ---- BOTTOM: Launch / Cancel ----
         int btnW = (LP_CLIENT_W - 2 * LP_MARGIN - 10) / 2;   // two buttons + 10px gap
         HWND hLaunch = CreateWindowA("BUTTON", "Launch",
             WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, LP_MARGIN, LP_BTN_Y, btnW, LP_BTN_H,
@@ -2366,9 +2540,24 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         break;
     }
 
+    case WM_NOTIFY: {
+        LPNMHDR nh = (LPNMHDR)lParam;
+        if (nh && nh->idFrom == IDC_ADDONLIST && nh->code == LVN_ITEMCHANGED) {
+            LPNMLISTVIEW lv = (LPNMLISTVIEW)lParam;
+            // Update the description pane when the focused row changes.
+            if (lv->uChanged & LVIF_STATE && (lv->uNewState & LVIS_FOCUSED))
+                DescribeAddon(lv->iItem);
+        }
+        break;
+    }
+
     case WM_COMMAND:
         if (LOWORD(wParam) == IDC_MODLIST && HIWORD(wParam) == LBN_SELCHANGE)
             UpdateForSelection();
+        // Base radio clicked: show that base's description.
+        if (LOWORD(wParam) >= IDC_BASE0 && LOWORD(wParam) < IDC_BASE0 + BASE_SLOTS &&
+            HIWORD(wParam) == BN_CLICKED)
+            DescribeBase((int)LOWORD(wParam) - IDC_BASE0);
         if (LOWORD(wParam) == IDC_IMPORT && HIWORD(wParam) == BN_CLICKED)
             OnImportButton(hwnd);
         if (LOWORD(wParam) == IDC_OPTIONS && HIWORD(wParam) == BN_CLICKED)
@@ -2504,7 +2693,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR lpCmd, int) {
 
     // Init common controls (marquee progress bar) + COM (SHBrowseForFolder).
     INITCOMMONCONTROLSEX icc = {}; icc.dwSize = sizeof(icc);
-    icc.dwICC = ICC_PROGRESS_CLASS | ICC_STANDARD_CLASSES;
+    icc.dwICC = ICC_PROGRESS_CLASS | ICC_STANDARD_CLASSES | ICC_LISTVIEW_CLASSES;
     InitCommonControlsEx(&icc);
     CoInitialize(NULL);
 
@@ -2517,9 +2706,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR lpCmd, int) {
     RegisterClassA(&wc);
 
     // Size the window to fit the two-column layout (must match WM_CREATE geometry):
-    //   LEFT col: listbox at (10,40) 320x200; RIGHT col: base label + BASE_SLOTS
-    //   radios, then add-on label + ADDON_SLOTS checkboxes; BOTTOM (full width):
-    //   status STATIC then Launch/Cancel. Client height clears the taller column.
+    //   LEFT col: campaign listbox + base radios beneath; RIGHT col: add-on
+    //   ListView + faster-weapons toggle; then full-width Description box, the
+    //   Engine/Graphics aux buttons, and Launch/Cancel. Height clears LP_BTN_Y.
     DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
     int clientW = LP_CLIENT_W;                           // 10+320+15+230+10 = 585
     int clientH = LP_BTN_Y + LP_BTN_H + LP_MARGIN;       // bottom button row + margin
