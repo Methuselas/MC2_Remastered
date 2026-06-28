@@ -3168,7 +3168,7 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 					if (!rt) continue;
 					// BRAIN-ENGAGE-1: arm autonomous engagement for both OPORD types (carver
 					// EngageRadius=300; per-Brain EngageRadius parse is a follow-up).
-					rt->engageRadius = 3000.0f;  // generous visual cap; point-LOS gates real visibility (carver EngageRadius=300 << real enemy distances 760-1693)
+					rt->engageRadius = 0.0f;  // 0 = no brain restriction; tickEngageNearest uses the unit's real visual range (getVisualRange) + LOS. Per-Brain EngageRadius parse is a follow-up.
 					if (isGuard) {
 						rt->guardHold = true;
 						++mfGuard;

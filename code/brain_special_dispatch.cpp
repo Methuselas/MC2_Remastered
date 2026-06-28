@@ -69,6 +69,7 @@
 #include "objmgr.h"    // ObjectManager (global) — DISPATCH-EFFECT-COREATTACK-1
 #include "mover.h"     // Mover::getContacts / getVehicle MoverPtr — BRAIN-ENGAGE-1
 #include "dcontact.h"  // CONTACT_SORT_DISTANCE, MAX_CONTACTS_PER_SENSOR — BRAIN-ENGAGE-1
+#include "contact.h"   // SensorSystem::getEffectiveRange — BRAIN-ENGAGE-1 detection range
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -1540,14 +1541,27 @@ void commitBrainIntents(MechWarrior* warrior, MechBrainRuntime* runtime) {
 bool tickEngageNearest(MechWarrior* warrior, MechBrainRuntime* runtime, int wid) {
     if (!s_brainEngageGate()) return false;
     if (!warrior || !runtime) return false;
-    if (runtime->engageRadius <= 0.0f) return false;
+    // Armed when the unit has an active combatant OPORD (Patrol walks+engages, Guard holds+engages).
+    if (!runtime->patrolActive && !runtime->guardHold) return false;
 
     MoverPtr veh = warrior->getVehicle();
     if (!veh || veh->isDisabled()) return false;
 
-    // Effective radius: env override for tuning without a rebuild (MC2_BRAIN_ENGAGE_RADIUS).
-    float effRadius = runtime->engageRadius;
-    { const char* re = std::getenv("MC2_BRAIN_ENGAGE_RADIUS");
+    // Detection radius = the engine's global VISUAL sighting radius (MaxVisualRadius =
+    // gamesys MaxVisualRange * sqrt(2)) — the range at which a unit can visually spot an enemy.
+    // A unit must NOT engage enemies it could not see; the LOS raycast below adds terrain
+    // occlusion on top. (getVisualRange() returns a tiny ~100 constant; the unit sensorSystem
+    // range only covers a fraction of the battlefield — neither models visual sighting.) The
+    // brain's EngageRadius switch may FURTHER restrict (never extend) this; env override tunes.
+    extern float MaxVisualRadius;
+    float effRadius = MaxVisualRadius;
+    if (effRadius <= 0.0f) {                                         // fallback if gamesys unread
+        if (SensorSystem* ss = veh->getSensorSystem()) effRadius = ss->getEffectiveRange();
+    }
+    if (effRadius <= 0.0f) effRadius = 800.0f;                       // last-resort fallback
+    if (runtime->engageRadius > 0.0f && runtime->engageRadius < effRadius)
+        effRadius = runtime->engageRadius;                          // brain policy may tighten detection
+    { const char* re = std::getenv("MC2_BRAIN_ENGAGE_RADIUS");       // test override
       if (re && re[0]) effRadius = (float)std::atof(re); }
     const bool losGate = !(std::getenv("MC2_BRAIN_ENGAGE_NOLOS") && std::atoi(std::getenv("MC2_BRAIN_ENGAGE_NOLOS")) != 0);
 
@@ -1583,13 +1597,15 @@ bool tickEngageNearest(MechWarrior* warrior, MechBrainRuntime* runtime, int wid)
     // DIRECT line-of-sight probe on the nearest enemy (both checkVisibleBits variants) to see
     // whether lineOfSight itself works for these units.
     if (std::getenv("MC2_BRAIN_ENGAGE_TRACE") && (getBrainTickIndex() % 64u) == 0u) {
-        int losObj = -1, losPt = -1;
-        if (nearestAny) {
-            losObj = veh->lineOfSight((GameObjectPtr)nearestAny, 0.0f, false) ? 1 : 0;
-            losPt  = veh->lineOfSight(nearestAny->getPosition(), false) ? 1 : 0;
-        }
-        std::fprintf(stderr, "[BRAIN_ENGAGE_EVAL] wid=%d enemies=%ld nearest=%.0f effR=%.0f los_obj=%d los_pt=%d tgt=%lu\n",
-                     wid, enemyCount, (enemyCount ? nearestEnemyD : -1.0f), effRadius, losObj, losPt, tgtWID);
+        int losPt = -1;
+        if (nearestAny) losPt = veh->lineOfSight(nearestAny->getPosition(), false) ? 1 : 0;
+        // Team-contact probe: enemies the TEAM has detected (ENEMY|NOT_DISABLED), distance-sorted.
+        int cl[MAX_CONTACTS_PER_SENSOR];
+        long gc = veh->getContacts(cl, (1 | 64), CONTACT_SORT_DISTANCE);
+        float gcNear = -1.0f;
+        if (gc > 0) { GameObjectPtr c0 = ObjectManager->get(cl[0]); if (c0) gcNear = veh->distanceFrom(c0->getPosition()); }
+        std::fprintf(stderr, "[BRAIN_ENGAGE_EVAL] wid=%d enemies=%ld nearest=%.0f effR=%.0f los_pt=%d teamContacts=%ld tcNear=%.0f tgt=%lu\n",
+                     wid, enemyCount, (enemyCount ? nearestEnemyD : -1.0f), effRadius, losPt, gc, gcNear, tgtWID);
         std::fflush(stderr);
     }
 
