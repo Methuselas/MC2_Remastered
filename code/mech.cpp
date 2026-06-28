@@ -2245,13 +2245,31 @@ void BattleMech::resetComponents (long totalComponents, long *componentList)
 				continue;
 				break;
 
+			case COMPONENT_FORM_ENGINE:
+			{
+				// MC2_ENGINE_XL (default OFF): an XL engine (master id 2 = XL
+				// Fusion, 3 = Clan XL) added in the mech bay is an additive speed
+				// upgrade, not a real inventory engine. Bump move speed one class
+				// (~+20%) and skip adding it to inventory (so it never reaches the
+				// REALLY-BAD path below). resetComponents runs once per mech build,
+				// so the multiply does not compound.
+				static const bool s_engineXL = ( getenv( "MC2_ENGINE_XL" ) != nullptr );
+				if ( s_engineXL &&
+					 ( componentList[newItems] == 2 || componentList[newItems] == 3 ) )
+				{
+					maxMoveSpeed *= 1.2f;
+					continue;
+				}
+				STOP(("Invalid component added in Logistics %d",componentList[newItems]));
+				break;
+			}
+
 			case COMPONENT_FORM_COCKPIT:
 			case COMPONENT_FORM_LIFESUPPORT:
 			case COMPONENT_FORM_GYROSCOPE:
 			case COMPONENT_FORM_POWER_AMPLIFIER:
 			case COMPONENT_FORM_CASE:
 			case COMPONENT_FORM_ACTUATOR:
-			case COMPONENT_FORM_ENGINE:
 				//If any of these are in Heidi's list its REALLY BAD
 				STOP(("Invalid component added in Logistics %d",componentList[newItems]));
 				break;
