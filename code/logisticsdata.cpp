@@ -1836,24 +1836,14 @@ long LogisticsData::updateAvailability()
 
 	bNewWeapons = 0;
 
-	// MC2_PURCHASE_ALL: unlock every component, mech variant, and pilot
-	// regardless of the mission purchase file (or its absence). Lets modded
-	// gear (e.g. the Magic clan double heat sinks) be bought in any mission.
-	// Default OFF; the launcher exposes it as an Engine Option.
+	// MC2_PURCHASE_ALL (default OFF; launcher Engine Option): unlock every
+	// COMPONENT/weapon so modded gear (e.g. the Magic clan double heat sinks)
+	// is buyable. It only forces AllComponents below — it does NOT blanket-mark
+	// mechs/pilots, so the mission's own [Mechs]/[Pilots] lists still bound the
+	// roster (no random modded chassis like the imported Marauder leaking in;
+	// stock campaign mechs all become buildable since every component is now
+	// available).
 	static const bool s_purchaseAll = ( getenv( "MC2_PURCHASE_ALL" ) != nullptr );
-	if ( s_purchaseAll )
-	{
-		for ( COMPONENT_LIST::EIterator cIter = components.Begin(); !cIter.IsDone(); cIter++ )
-			(*cIter).setAvailable( 1 );
-		for ( VARIANT_LIST::EIterator vIter = variants.Begin(); !vIter.IsDone(); vIter++ )
-			(*vIter)->setAvailable( true );
-		for ( PILOT_LIST::EIterator pIter = pilots.Begin(); !pIter.IsDone(); pIter++ )
-			(*pIter).setAvailable( true );
-		bNewWeapons = true;
-		bNewMechs = true;
-		LOG_LOGISTICS_UA( "updateAvailability: MC2_PURCHASE_ALL -> everything available" );
-		return NO_ERR;
-	}
 
 	EString purchaseFileName = missionInfo->getCurrentPurchaseFile();
 	purchaseFileName.MakeLower();
@@ -1904,6 +1894,8 @@ long LogisticsData::updateAvailability()
 
 	bool bAll = 0;
 	file.readIdBoolean( "AllComponents", bAll );
+	if ( s_purchaseAll )
+		bAll = true;   // MC2_PURCHASE_ALL: unlock all components/weapons (mechs stay file-bounded)
 	for ( int i = 0; i < 255; i++ )
 	{
 		if ( bAll )
