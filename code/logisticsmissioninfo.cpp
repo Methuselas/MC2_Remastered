@@ -906,6 +906,33 @@ const EString& LogisticsMissionInfo::getCurrentPurchaseFile() const
 	return pGroup->infos[currentMission]->purchaseFileName;
 }
 
+long LogisticsMissionInfo::getAllPurchaseFiles( const char** list, long& maxCount )
+{
+	long count = 0;
+	long maxOut = maxCount;
+	for ( long g = 0; g < groupCount; g++ )
+	{
+		MISSION_LIST::EIterator iter = groups[g].infos.Begin();
+		while ( !iter.IsDone() )
+		{
+			const char* pf = (*iter)->purchaseFileName;
+			iter++;
+			if ( !pf || !pf[0] )
+				continue;
+			bool dup = false;
+			for ( long k = 0; k < count && k < maxOut; k++ )
+				if ( list[k] && _stricmp( list[k], pf ) == 0 ) { dup = true; break; }
+			if ( dup )
+				continue;
+			if ( count < maxOut )
+				list[count] = pf;
+			count++;
+		}
+	}
+	maxCount = count;
+	return ( count > maxOut ) ? NEED_BIGGER_ARRAY : 0;
+}
+
 long LogisticsMissionInfo::getCurrentDropWeight() const
 {
 	MissionGroup* pGroup = &groups[currentStage];

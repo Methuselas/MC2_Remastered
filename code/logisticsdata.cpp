@@ -1941,6 +1941,20 @@ long LogisticsData::updateAvailability()
 		appendAvailability( pFileNames[i], available );
 	}
 
+	// MC2_PURCHASE_ALL: campaign-level roster. Fold in the [Mechs]/[Pilots] of
+	// EVERY mission's purchase file across all stages, not just this mission's,
+	// so the buyable roster is the union the campaign ever offers. Components are
+	// already all available (bAll above), so every listed chassis is buildable.
+	if ( s_purchaseAll )
+	{
+		const char* allPF[1024];
+		long pfCount = 1024;
+		missionInfo->getAllPurchaseFiles( allPF, pfCount );
+		for ( long i = 0; i < pfCount && i < 1024; i++ )
+			appendAvailability( allPF[i], available );
+		LOG_LOGISTICS_UA( "updateAvailability: MC2_PURCHASE_ALL campaign-wide (%ld purchase files)", pfCount );
+	}
+
 	// go through comonent list, and set 'em
 	for (COMPONENT_LIST::EIterator cIter = components.Begin(); !cIter.IsDone(); cIter++ )
 	{

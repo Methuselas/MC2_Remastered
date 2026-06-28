@@ -86,6 +86,10 @@ class LogisticsMissionInfo
 //		long				getMaxPlayers() const { return maxPlayers; }
 
 		int					getAdditionalPurachaseFiles( const char** list, long& maxCount );
+		// Every mission's purchase file across ALL campaign stages/groups
+		// (campaign-wide, deduped). Used by MC2_PURCHASE_ALL to unlock the union
+		// of all mechs the campaign ever offers, not just the current mission's.
+		long				getAllPurchaseFiles( const char** list, long& maxCount );
 		void				addBonusPurchaseFile( const char* fileName ); // extra bonus
 
 		bool				skipLogistics();
