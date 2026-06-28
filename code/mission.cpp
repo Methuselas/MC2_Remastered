@@ -3098,7 +3098,15 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	if (loadBrainParameters) {
 		//---------------------------------------------------------------
 		// Load the brain parameter file and load 'em for each warrior...
+		// BRAIN-EMPTY-BRAIN-SKIP-1: inline-Brain warriors carry no ABL brain (skipped above),
+		// so loadBrainParameters would Fatal(0,"NULL brain"). Skip them under the same gate.
+		static const bool inlineEmptySkipParams =
+			(std::getenv("MC2_BRAIN_INLINE_EMPTY_SKIP") &&
+			 std::atoi(std::getenv("MC2_BRAIN_INLINE_EMPTY_SKIP")) != 0);
 		for (unsigned long i = 1; i <= numWarriors; i++) {
+			if (inlineEmptySkipParams && MechWarrior::warriorList[i] &&
+			    !MechWarrior::warriorList[i]->getBrain())
+				continue;
 			result = MechWarrior::warriorList[i]->loadBrainParameters(missionFile, i);
 			//Assert(result == NO_ERR, result, " Could not load Warrior Brain Parameters ");
 		}
