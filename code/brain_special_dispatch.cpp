@@ -1582,6 +1582,16 @@ bool tickEngageNearest(MechWarrior* warrior, MechBrainRuntime* runtime, int wid)
     if (tgtWID && runtime->engageRadius > 0.0f && tcNear > runtime->engageRadius)
         tgtWID = 0;
 
+    // RequestHelp (answering side): if an ally summoned us, engage the assigned target regardless
+    // of our own EngageRadius — we were called to help. Clear the assignment once it is dead/gone.
+    if (runtime->helpTargetWID != 0) {
+        GameObjectPtr h = ObjectManager->getByWatchID(runtime->helpTargetWID);
+        if (h && !h->isDisabled() && veh->isEnemy(h->getTeam()))
+            tgtWID = runtime->helpTargetWID;            // answer the call (overrides EngageRadius)
+        else
+            runtime->helpTargetWID = 0;                 // target gone; stop helping
+    }
+
     // Throttled diagnostic (MC2_BRAIN_ENGAGE_TRACE=1): detected-contact count + nearest distance.
     if (std::getenv("MC2_BRAIN_ENGAGE_TRACE") && (getBrainTickIndex() % 64u) == 0u) {
         std::fprintf(stderr, "[BRAIN_ENGAGE_EVAL] wid=%d teamContacts=%ld tcNear=%.0f tgt=%lu\n",
@@ -1610,6 +1620,31 @@ bool tickEngageNearest(MechWarrior* warrior, MechBrainRuntime* runtime, int wid)
             std::fflush(stderr);
             if (!s_brainCommitPhaseEnabled())
                 commitBrainIntents(warrior, runtime);
+            // RequestHelp (calling side): summon allies within AttackerHelpRadius to this target.
+            // Localized reinforcement (carver AttackerHelpRadius=100) — NOT a map-wide swarm. A
+            // summoned ally engages the target via its helpTargetWID override; nearby sentries wake.
+            if (runtime->swRequestHelp == 1 && runtime->swAttackerHelpRadius > 0.0f) {
+                long nm = ObjectManager->getNumMovers();
+                int called = 0;
+                for (long i = 0; i < nm; ++i) {
+                    MoverPtr m = ObjectManager->getMover(i);
+                    if (!m || m == veh || m->isDisabled()) continue;
+                    if (veh->isEnemy(m->getTeam())) continue;                 // allies only
+                    if (veh->distanceFrom(m->getPosition()) > runtime->swAttackerHelpRadius) continue;
+                    MechWarriorPtr ally = m->getPilot();
+                    if (!ally) continue;
+                    MechBrainRuntime* art = ally->getBrainRuntime();
+                    if (!art) continue;
+                    art->helpTargetWID = tgtWID;
+                    if (art->sentryAsleep) art->sentryWoken = true;           // a nearby fight wakes a sentry
+                    ++called;
+                }
+                if (called > 0) {
+                    std::fprintf(stderr, "[BRAIN_REQUEST_HELP] wid=%d called=%d radius=%.0f target=%lu\n",
+                                 wid, called, runtime->swAttackerHelpRadius, tgtWID);
+                    std::fflush(stderr);
+                }
+            }
         } else {
             std::fprintf(stderr, "[BRAIN_ENGAGE_NO_QUEUE] wid=%d requires MC2_BRAIN_INTENT_QUEUE=1\n", wid);
             std::fflush(stderr);

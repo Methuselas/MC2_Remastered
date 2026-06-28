@@ -176,6 +176,10 @@ struct MechBrainRuntime {
     // Escort: follow + defend a target unit.
     unsigned long escortTargetWID     = 0;              // 0 = none
     bool         escortMoving         = false;
+    // RequestHelp: when an ally within AttackerHelpRadius calls for help, this unit is assigned
+    // the caller's target and will engage it regardless of its own EngageRadius (it was summoned).
+    // Cleared once the target is no longer a live contact. Localized reinforcement (no map swarm).
+    unsigned long helpTargetWID       = 0;              // 0 = not answering a help call
 
     // BRAIN-DECISION-INTENT-QUEUE-1: per-warrior pending intent buffer.
     // Gate: MC2_BRAIN_INTENT_QUEUE (default OFF).
