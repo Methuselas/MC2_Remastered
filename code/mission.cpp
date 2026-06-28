@@ -3214,6 +3214,42 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 								rt->escortTargetWID = MechWarrior::warriorList[ei]->getVehicle()->getWatchID();
 							rt->escortMoving = true; rt->guardHold = true; ++mfEscort; break;
 						}
+						case 2: {   // MoveTo - move to destination once, then hold + engage
+							int wc = (b.primary.waypointCount > 8) ? 8 : b.primary.waypointCount;
+							if (wc > 0) {
+								for (int wi = 0; wi < wc; ++wi) {
+									Stuff::Vector3D wp; wp.x = b.primary.waypoints[wi].x; wp.y = b.primary.waypoints[wi].y; wp.z = 0.0f;
+									float z = land ? land->getTerrainElevation(wp) : 0.0f;
+									rt->patrolWaypoints[wi][0] = b.primary.waypoints[wi].x;
+									rt->patrolWaypoints[wi][1] = b.primary.waypoints[wi].y;
+									rt->patrolWaypoints[wi][2] = z;
+								}
+								rt->patrolWaypointCount = (uint8_t)wc;
+								rt->patrolWaypointIndex = 0;
+								rt->patrolLoop = false;   // move once to destination, do not loop
+								rt->patrolActive = true;
+							}
+							rt->guardHold = true; ++mfOther; break;
+						}
+						case 7:     // Attack - aggressive: engage any detected enemy (no EngageRadius limit)
+							rt->guardHold = true; rt->engageRadius = 0.0f; ++mfOther; break;
+						case 8: {   // Withdraw - move to rally point (primary waypoint) once, then hold
+							int wc = (b.primary.waypointCount > 8) ? 8 : b.primary.waypointCount;
+							if (wc > 0) {
+								for (int wi = 0; wi < wc; ++wi) {
+									Stuff::Vector3D wp; wp.x = b.primary.waypoints[wi].x; wp.y = b.primary.waypoints[wi].y; wp.z = 0.0f;
+									float z = land ? land->getTerrainElevation(wp) : 0.0f;
+									rt->patrolWaypoints[wi][0] = b.primary.waypoints[wi].x;
+									rt->patrolWaypoints[wi][1] = b.primary.waypoints[wi].y;
+									rt->patrolWaypoints[wi][2] = z;
+								}
+								rt->patrolWaypointCount = (uint8_t)wc;
+								rt->patrolWaypointIndex = 0;
+								rt->patrolLoop = false;   // move once to destination, do not loop
+								rt->patrolActive = true;
+							}
+							rt->guardHold = true; ++mfOther; break;
+						}
 						default:    // MoveTo / Attack / Withdraw / Ambush / Scout -> hold + engage (verb wiring TBD)
 							rt->guardHold = true; ++mfOther; break;
 					}
