@@ -3177,6 +3177,11 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 					rt->opordType[1] = brainOpordTypeId(b.secondary.type);
 					rt->opordType[2] = brainOpordTypeId(b.tertiary.type);
 					rt->opordCursor  = 0;
+					// Load weighted Tactics (MC2_TACTIC_WEIGHTS selects per tick; _WEIGHTS_B applies to attacks).
+					for (int ti = 0; ti < b.tacticCount; ++ti) {
+						int tidx = brainTacticNameToIndex(b.tacticName[ti]);
+						if (tidx >= 0 && tidx < 12) rt->tacticWeights[tidx] = b.tacticWeight[ti];
+					}
 					if (w->getVehicle()) {
 						Stuff::Vector3D vp = w->getVehicle()->getPosition();
 						rt->postPos[0] = vp.x; rt->postPos[1] = vp.y; rt->postPos[2] = vp.z; rt->postSet = true;

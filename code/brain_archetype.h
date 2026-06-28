@@ -53,6 +53,24 @@ inline bool brainArchetypeLookup(const char* name, BrainArchetypeDefaults& out) 
     return false;
 }
 
+// Tactic name (from a Brain Tactics block) -> TacticType index (tacordr.h enum, NUM_TACTICS=12),
+// -1 = unknown. Maps the discussion #19 tactic aliases onto the engine's tactic enum.
+inline int brainTacticNameToIndex(const char* name) {
+    if (!name || !name[0]) return -1;
+    if (!std::strcmp(name, "FlankLeft"))                                  return 1;  // TACTIC_FLANK_LEFT
+    if (!std::strcmp(name, "FlankRight") || !std::strcmp(name, "Flank"))  return 2;  // TACTIC_FLANK_RIGHT
+    if (!std::strcmp(name, "FlankRear")  || !std::strcmp(name, "Rear"))   return 3;  // TACTIC_FLANK_REAR
+    if (!std::strcmp(name, "Standard")   || !std::strcmp(name, "StopAndFire")) return 4; // TACTIC_STOP_AND_FIRE
+    if (!std::strcmp(name, "Turret"))                                     return 5;  // TACTIC_TURRET
+    if (!std::strcmp(name, "Joust"))                                      return 6;  // TACTIC_JOUST
+    if (!std::strcmp(name, "IndirectFire") || !std::strcmp(name, "Suppress")) return 7; // TACTIC_INDIRECT_FIRE
+    if (!std::strcmp(name, "HullDown"))                                   return 8;  // TACTIC_HULL_DOWN
+    if (!std::strcmp(name, "FightingWithdraw") || !std::strcmp(name, "Rearguard")) return 9; // TACTIC_FIGHTING_WITHDRAW
+    if (!std::strcmp(name, "Pursue"))                                     return 10; // TACTIC_PURSUE
+    if (!std::strcmp(name, "HitAndRun"))                                  return 11; // TACTIC_HIT_AND_RUN
+    return -1;
+}
+
 // OPORD type token -> id (0..9), 255 = unknown/none. Shared by parser-consumer + runtime.
 inline uint8_t brainOpordTypeId(const char* type) {
     if (!type || !type[0]) return 255;
