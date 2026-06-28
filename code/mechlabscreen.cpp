@@ -1294,6 +1294,28 @@ void	MechLabScreen::setComponent( LogisticsComponent* pComponent, bool bMessageF
 			rects[20].setHelpID( 0 );
 
 		}
+		else if ( pCurComponent->getType() == COMPONENT_FORM_ENGINE )
+		{
+			// XL engine upgrade: not a weapon — show a minimal safe panel and do
+			// NOT fall into the weapon branch (which indexes rangeColors[] by
+			// getRangeType(), == NO_RANGE(3) for an engine => out of bounds).
+			showJumpJetItems( 1 );
+			attributeMeters[4].showGUIWindow( 0 );
+			textObjects[7].setText( "" );
+			textObjects[8].setText( "" );
+			textObjects[9].setText( "" );
+			textObjects[10].setText( "" );
+			textObjects[13].setText( "" );
+			textObjects[15].setText( "" );
+			for ( int i = 0; i < 4; i++ )
+				attributeMeters[i].showGUIWindow( 0 );
+			attributeMeters[7].showGUIWindow( false );
+			rects[16].setHelpID( 0 );
+			rects[17].setHelpID( 0 );
+			rects[18].setHelpID( 0 );
+			rects[19].setHelpID( 0 );
+			rects[20].setHelpID( 0 );
+		}
 		else
 		{
 			uint32_t rangeColors[3] = {0xff6e7c00, 0xff005392,0xffa21600  };
