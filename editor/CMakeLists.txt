@@ -24,6 +24,10 @@ set(EDITOR_BRIDGE_SOURCES
     # gui_runtime which the editor already links.  Needed so OnLButtonUp can
     # call tryGameplayPick for the Ctrl+Shift+LMB inspector pick.
     "${CMAKE_SOURCE_DIR}/code/gameplay_pick.cpp"
+    # brain_missionfit_oporbd.cpp: pure declarative-Brain parser (no engine deps), used by
+    # UnitBrainPanel's read-only "Declarative Brain" view. Compiled in directly so the editor
+    # link resolves parseMissionFitBrains without depending on the game lib.
+    "${CMAKE_SOURCE_DIR}/code/brain_missionfit_oporbd.cpp"
 )
 
 foreach(_editor_bridge_source IN LISTS EDITOR_BRIDGE_SOURCES)

@@ -21,8 +21,13 @@
 #include "EditorObjects.h"
 #include "InspectorPanel.h"   // CategoryToken (shared category labelling)
 #include "Action.h"           // ModifyUnitOrderAction + ActionUndoMgr (undo + dirty)
-#include "Paths.h"            // warriorPath (brain .abl location)
+#include "Paths.h"            // warriorPath (brain .abl location) + missionPath
 #include "File.h"             // File (raw brain .abl viewer)
+#include "EditorData.h"       // EditorData::getMapName (current mission.fit name)
+#include "cident.h"           // FullPathFileName (build mission.fit path)
+#include "brain_missionfit_oporbd.h"  // parseMissionFitBrains (declarative Brain{} blocks)
+// The parser TU (code/brain_missionfit_oporbd.cpp) is compiled into EditRel via
+// EDITOR_BRIDGE_SOURCES in editor/CMakeLists.txt (same as gameplay_pick.cpp).
 
 #include <cstdio>
 #include <cstring>
@@ -142,6 +147,98 @@ const char* loadBrainText( const char* brainName )
 		s_text += '\n';
 	}
 	return s_text.c_str();
+}
+
+// --- Declarative Brain (mission.fit) -----------------------------------------
+// READ-ONLY: parse the CURRENT mission.fit's inline Brain{} blocks and match the
+// selected unit to one by spawn position. Cached by fit-path string so we only
+// re-read+parse when the constructed mission.fit path changes (not every frame).
+MissionFitBrain s_brains[128];
+int             s_brainCount = 0;
+char            s_lastPath[512] = { 0 };
+
+// Re-read + re-parse mission.fit only when the path differs from last time.
+// Returns false (and clears the cache) when there is no current map.
+bool refreshMissionFitBrains()
+{
+	const char* mapName = EditorData::getMapName();
+	if ( !mapName || !mapName[0] )
+	{
+		s_brainCount = 0;
+		s_lastPath[0] = 0;
+		return false;
+	}
+
+	FullPathFileName fitName;
+	fitName.init( missionPath, mapName, ".fit" );
+	const char* path = (const char*)fitName;
+	if ( !path || !path[0] )
+	{
+		s_brainCount = 0;
+		s_lastPath[0] = 0;
+		return false;
+	}
+
+	if ( 0 == strcmp( s_lastPath, path ) )
+		return true;   // already parsed this fit
+
+	strncpy( s_lastPath, path, sizeof( s_lastPath ) - 1 );
+	s_lastPath[sizeof( s_lastPath ) - 1] = 0;
+	s_brainCount = 0;
+
+	File f;
+	if ( NO_ERR != f.open( path ) )
+		return true;   // no fit on disk yet (count stays 0)
+
+	long sz = f.getLength();
+	if ( sz > 0 )
+	{
+		char* buf = (char*)malloc( sz + 1 );
+		if ( buf )
+		{
+			f.read( (MemoryPtr)buf, sz );
+			buf[sz] = 0;
+			s_brainCount = parseMissionFitBrains( buf, s_brains, 128 );
+			free( buf );
+		}
+	}
+	return true;
+}
+
+// Match a unit's world (x,y) to the nearest declarative brain within tolerance.
+// Returns nullptr if none qualifies.
+const MissionFitBrain* matchBrainForPos( float ux, float uy )
+{
+	const float kTol = 50.0f;
+	const MissionFitBrain* best = nullptr;
+	float bestD2 = kTol * kTol;
+	for ( int i = 0; i < s_brainCount; ++i )
+	{
+		const MissionFitBrain& b = s_brains[i];
+		if ( b.posX <= -1e8f )
+			continue;
+		float dx = b.posX - ux;
+		float dy = b.posY - uy;
+		float d2 = dx * dx + dy * dy;
+		if ( d2 <= bestD2 )
+		{
+			bestD2 = d2;
+			best = &b;
+		}
+	}
+	return best;
+}
+
+// Render one OPORD slot (read-only). No-ops if the slot is absent.
+void drawOpordSlot( const char* label, const MissionFitOpordSlot& s )
+{
+	if ( !s.type[0] )
+		return;
+	ImGui::Text( "%s: %s%s", label, s.type, s.loop ? " (loop)" : "" );
+	if ( s.escortTargetIndex >= 0 )
+		ImGui::Text( "    escort -> Warrior %d", s.escortTargetIndex );
+	for ( int w = 0; w < s.waypointCount; ++w )
+		ImGui::TextDisabled( "    wp %d: (%.1f, %.1f)", w, s.waypoints[w].x, s.waypoints[w].y );
 }
 
 } // namespace
@@ -284,6 +381,69 @@ void UnitBrainPanel::Draw()
 
 		// ABL-FLOW-1: condition/trigger/action flow extracted from the .abl text.
 		UnitActionFlowPanel::DrawInline((bn && bn[0]) ? loadBrainText(bn) : "");
+	}
+
+	// --- Declarative Brain (mission.fit) — READ-ONLY ----------------------
+	// Inline Brain{} block from the current mission.fit, matched to this unit
+	// by spawn position. Parsed by parseMissionFitBrains (carver_v_enhanced).
+	if (ImGui::CollapsingHeader("Declarative Brain (mission.fit)"))
+	{
+		if (!EditorData::getMapName())
+		{
+			ImGui::TextDisabled("No map loaded.");
+		}
+		else
+		{
+			refreshMissionFitBrains();
+			const Stuff::Vector3D& p = obj->getPosition();
+			const MissionFitBrain* b = matchBrainForPos((float)p.x, (float)p.y);
+			if (!b)
+			{
+				ImGui::TextDisabled("No declarative brain matches this unit (or mission.fit has none).");
+			}
+			else
+			{
+				if (b->archetype[0])
+					ImGui::Text("Archetype: %s", b->archetype);
+				else
+					ImGui::TextDisabled("Archetype: (none)");
+				if (b->compatibilityMode[0])
+					ImGui::Text("Compatibility: %s", b->compatibilityMode);
+				else
+					ImGui::TextDisabled("Compatibility: (none)");
+
+				ImGui::Separator();
+				drawOpordSlot("Primary",   b->primary);
+				drawOpordSlot("Secondary", b->secondary);
+				drawOpordSlot("Tertiary",  b->tertiary);
+				if (!b->primary.type[0] && !b->secondary.type[0] && !b->tertiary.type[0])
+					ImGui::TextDisabled("OPORDs: (none)");
+
+				ImGui::Separator();
+				if (b->engageRadius >= 0.0f)
+					ImGui::Text("EngageRadius: %.1f", b->engageRadius);
+				if (b->requestHelp != -1)
+					ImGui::Text("RequestHelp: %s", b->requestHelp ? "yes" : "no");
+				if (b->returnToPost != -1)
+					ImGui::Text("ReturnToPost: %s", b->returnToPost ? "yes" : "no");
+				if (b->wakeOnAttack != -1)
+					ImGui::Text("WakeOnAttack: %s", b->wakeOnAttack ? "yes" : "no");
+				if (b->poweredDown != -1)
+					ImGui::Text("PoweredDown: %s", b->poweredDown ? "yes" : "no");
+				if (b->attackerHelpRadius >= 0.0f)
+					ImGui::Text("AttackerHelpRadius: %.1f", b->attackerHelpRadius);
+				if (b->defenderHelpRadius >= 0.0f)
+					ImGui::Text("DefenderHelpRadius: %.1f", b->defenderHelpRadius);
+
+				if (b->tacticCount > 0)
+				{
+					ImGui::Separator();
+					ImGui::Text("Tactics:");
+					for (int t = 0; t < b->tacticCount; ++t)
+						ImGui::Text("    %s = %.2f", b->tacticName[t], b->tacticWeight[t]);
+				}
+			}
+		}
 	}
 
 	// --- Orders & Stance (live editing; persists to the mission .fit) ------
