@@ -2947,6 +2947,27 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	
 	result = missionFile->readIdString("ScenarioScript",missionScriptName,79);
 	gosASSERT(result == NO_ERR);
+
+	// FULL-CAMPAIGN-1: TechScript/Enhanced-converted missions (carver_v_enhanced) leave
+	// ScenarioScript empty — the per-warrior brains move to inline Brain{} blocks and mission
+	// logic to *_specials.fit — but preserve the original scenario name as LegacyScenarioScript.
+	// An empty name builds "<missionPath>/.abl" and ABLi_preProcess STOPs before the mission can
+	// load. Fall back to the legacy name so the original scenario ABL (objectives/events) still
+	// drives. Gate MC2_BRAIN_INLINE_EMPTY_SKIP (default OFF); stock ScenarioScript is never empty
+	// so stock is byte-identical.
+	if (missionScriptName[0] == '\0' &&
+	    std::getenv("MC2_BRAIN_INLINE_EMPTY_SKIP") &&
+	    std::atoi(std::getenv("MC2_BRAIN_INLINE_EMPTY_SKIP")) != 0) {
+		char legacyScriptName[80] = {0};
+		if (missionFile->readIdString("LegacyScenarioScript", legacyScriptName, 79) == NO_ERR &&
+		    legacyScriptName[0] != '\0') {
+			strncpy(missionScriptName, legacyScriptName, 79);
+			missionScriptName[79] = '\0';
+			std::fprintf(stderr, "[MISSIONFIT_OPORD] empty ScenarioScript -> LegacyScenarioScript '%s'\n",
+			             missionScriptName);
+		}
+	}
+
 	visualTuning_applyProfile(missionScriptName);  // MISSION-VISUAL-TUNING-1
 
 	FullPathFileName brainFileName;
