@@ -4386,10 +4386,22 @@ void BuildDecalStaticVBO() {
             // Cement transition edges are now drawn analytically in the chunk frag
             // (terrain_lod_chunk.frag, neighbor-derived hard mask). Skip the legacy
             // gray cement-transition decal so it does not double-draw / seam over the
-            // new frag edge. Gate STRICTLY on isCement()&&isAlpha(): roads/runways carry
-            // no cement word (isCement()==false) and solid/decayed cement is isAlpha()==
-            // false, so both are still emitted here.
-            if (e->isCement() && e->isAlpha()) continue;
+            // new frag edge.
+            //
+            // CEMENT-ROAD-SPLIT-1: the earlier "isCement()&&isAlpha() is concrete-only"
+            // assumption was WRONG. isCement() is a MISNOMER for "uses the cement/
+            // transition texture machinery": terrtxm.cpp:1493 sets CEMENT_FLAG on EVERY
+            // createTransition — roads/runways/bridges included (see the explicit comment
+            // terrtxm.cpp:1501-1504 "If we are a road ... ALPHA is TRUE"). So &Overlays
+            // road/runway/bridge tiles ALSO satisfy isCement()&&isAlpha() and were being
+            // wrongly skipped, making dirt/regular roads vanish. The frag cement-word
+            // edge system only ever covers cement TERRAIN-TYPE tiles (10, 13-20), never
+            // the &Overlays road system, so skip the legacy decal ONLY for a true
+            // concrete transition: isCement()&&isAlpha() AND no road overlay on the tile.
+            Overlays decalOverlayType = INVALID_OVERLAY;
+            DWORD    decalOverlayOffset = 0;
+            Terrain::mapData->getOverlay(tileR, tileC, decalOverlayType, decalOverlayOffset);
+            if (e->isCement() && e->isAlpha() && decalOverlayType == INVALID_OVERLAY) continue;
 
             const DWORD overlayTexId = tex_resolve(overlayHandle);
             if (overlayTexId == 0) continue;
