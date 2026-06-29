@@ -89,6 +89,7 @@ extern int g_terrainMaterialProfile;
 // reads (object shadows) MUST use gos_GetObjectDrawMVP. Enforced by
 // scripts/check-object-mvp-currency.py.
 #include "gos_object_draw_mvp.h"
+#include "../../RenderCore/terrain_path_telemetry.h"  // TERRAIN-PATH-TELEMETRY-1
 extern const float*     gos_GetTerrainMVPMat4();
 
 static const DWORD INVALID_TEXTURE_ID = 0;
@@ -7290,6 +7291,7 @@ void gosRenderer::drawIndexedTris(gos_VERTEX* vertices, int num_vertices, WORD* 
         terrainDrawIndexedPatches(tmat, indexed_tris_);
         // Mark terrain drawn so post-process effects know to run (god rays, shorelines)
         { gosPostProcess* pp = getGosPostProcess(); if (pp) pp->markTerrainDrawn(); }
+        RenderCore::framegraph::noteTerrainPath(RenderCore::framegraph::TerrainPath::LegacyMLR);  // TERRAIN-PATH-TELEMETRY-1
         indexed_tris_->rewind();
     } else {
         // When tessellation is active, skip SOLID fallback terrain draws (tessellation

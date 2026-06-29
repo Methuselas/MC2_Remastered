@@ -6,6 +6,7 @@
 #include <string>
 #include "gl_state_guard.h"    // GlStateGuard slice 2: composable depth/blend/cull RAII
 #include "../../RenderCore/PipelineRegistry.h"  // TERRAIN-LODCHUNK-APPLYPIPELINE-ROUTING-1
+#include "../../RenderCore/terrain_path_telemetry.h"  // TERRAIN-PATH-TELEMETRY-1
 #include "pipeline_binder.h"                     // applyPipeline(TerrainSolid)
 #include "../../mclib/render_contract.h"  // [RENDER_PASS v1] noteRenderPass
 #include <cstdio>
@@ -1158,6 +1159,7 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     // all four passes silently skip (root cause of the dead cloud-shadow pass).
     if (gosPostProcess* pp = getGosPostProcess())
         pp->markTerrainDrawn();
+    RenderCore::framegraph::noteTerrainPath(RenderCore::framegraph::TerrainPath::LODChunk);  // TERRAIN-PATH-TELEMETRY-1
 
     // Restore GL state.
     glDisableVertexAttribArray(0);

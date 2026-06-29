@@ -345,6 +345,16 @@ def get_render_health() -> str:
             lines.append(f"  fbo_samples:      {fbo_samples}")
             lines.append(f"  fbo_mismatch:     {fbo_miss}{' *** FAIL' if fbo_miss not in (0, '?') else ''}")
 
+    # TERRAIN-PATH-TELEMETRY-1: which terrain-solid branch drew (retirement evidence).
+    tp = data.get("terrain_path", {})
+    if tp:
+        lines.append("")
+        lines.append("terrain_path (draws):")
+        lines.append(f"  lod_chunk:    {tp.get('lod_chunk', '?')} (authority)")
+        lines.append(f"  indirect:     {tp.get('indirect', '?')} (deprecated)")
+        lines.append(f"  patch_stream: {tp.get('patch_stream', '?')}")
+        lines.append(f"  legacy_mlr:   {tp.get('legacy_mlr', '?')} (deprecated)")
+
     if any_fail:
         lines.insert(0, "HEALTH: FAIL — nonzero counters detected")
     elif not ok:

@@ -19,6 +19,7 @@
 #include "gos_terrain_lighting.h"      // gos_terrain_lighting::GetOutputSsbo()
 #include "gos_static_prop_killswitch.h" // gos_GetTerrainMVPMat4()
 #include "gos_postprocess.h"            // WATER-TERRAIN-REFLECTION-1: reflection FBO
+#include "../../RenderCore/terrain_path_telemetry.h"  // TERRAIN-PATH-TELEMETRY-1
 // WATER-TERRAIN-REFLECTION-1: install a mirror MVP into the terrain_mvp_ cache
 // (defined __stdcall in gameos_graphics.cpp; same cache gos_GetTerrainMVPMat4 reads).
 void __stdcall gos_SetTerrainMVP(const float* matrix16);
@@ -3747,6 +3748,7 @@ bool DrawIndirect() {
     // chunk default today -> byte-identical on the default path.
     if (s_frameSolidCmdCount > 0) {
         if (gosPostProcess* pp = getGosPostProcess()) pp->markTerrainDrawn();
+        RenderCore::framegraph::noteTerrainPath(RenderCore::framegraph::TerrainPath::IndirectBridge);  // TERRAIN-PATH-TELEMETRY-1
     }
 
     return true;

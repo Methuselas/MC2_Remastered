@@ -1,6 +1,7 @@
 // GameOS/gameos/gos_terrain_patch_stream.cpp
 #include "gos_terrain_patch_stream.h"
 #include "gos_terrain_bridge.h"   // gos_terrain_bridge_* free functions (Task 0)
+#include "../../RenderCore/terrain_path_telemetry.h"  // TERRAIN-PATH-TELEMETRY-1
 
 #include <algorithm>  // std::sort (bucket sort/merge)
 #include <cstdio>
@@ -1499,6 +1500,7 @@ bool TerrainPatchStream::flush()
     if (gosPostProcess* pp = getGosPostProcess()) {
         pp->markTerrainDrawn();
     }
+    RenderCore::framegraph::noteTerrainPath(RenderCore::framegraph::TerrainPath::PatchStreamThin);  // TERRAIN-PATH-TELEMETRY-1
 
     if (s_quadRecordsOn && s_recordBuf) {
         if (!s_recordBannerSeen) {

@@ -10,6 +10,7 @@
 #include "gos_frame_pass_stats.h"   // [FRAME_PASS_STATS v1] additive JSON section
 #include "gos_frame_context.h"      // RENDER-FRAME-CONTEXT-1 read-only mirror (file scope!)
 #include "../../RenderCore/frame_graph_validate.h"  // FRAME-GRAPH-SKELETON-1 validator (file scope!)
+#include "../../RenderCore/terrain_path_telemetry.h" // TERRAIN-PATH-TELEMETRY-1 (file scope!)
 #include "../../code/unitprofile.h" // UNIT-PROFILE-SEAM-1 witness bridge (POD only)
 
 // Texture name lookup for mech node indices (mcTextureManager slot → name string).
@@ -242,6 +243,18 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
         // FRAME-GRAPH-FBO-LEDGER-1: passes rendering into the WRONG logical target.
         s << "    \"fbo_mismatches\": " << mc2_fbo_mismatch_count() << ",\n";
         s << "    \"fbo_samples\": " << mc2_fbo_samples() << "\n";
+        s << "  },\n";
+    }
+    // TERRAIN-PATH-TELEMETRY-1: which terrain-solid branch actually drew (retirement
+    // evidence). LOD-chunk is the authority; MLR/indirect should be 0 outside explicit
+    // diagnostic modes.
+    {
+        using TP = RenderCore::framegraph::TerrainPath;
+        s << "  \"terrain_path\": {\n";
+        s << "    \"lod_chunk\": "     << RenderCore::framegraph::terrainPathCount(TP::LODChunk)        << ",\n";
+        s << "    \"indirect\": "      << RenderCore::framegraph::terrainPathCount(TP::IndirectBridge)  << ",\n";
+        s << "    \"patch_stream\": "  << RenderCore::framegraph::terrainPathCount(TP::PatchStreamThin) << ",\n";
+        s << "    \"legacy_mlr\": "    << RenderCore::framegraph::terrainPathCount(TP::LegacyMLR)       << "\n";
         s << "  },\n";
     }
     s << "  \"mission\": {\n";
