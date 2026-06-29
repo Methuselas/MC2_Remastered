@@ -42,6 +42,7 @@ add_executable(mc2_tests
     test_xform_convention.cpp    # XFORM-CONVENTION-HARNESS-1: clip-space convention lock
     test_capability.cpp     # UNIT-PROFILE-SEAM-1
     test_view_currency.cpp  # VIEW-EPOCH-DEDUPE-1: object MVP currency kernel (offline)
+    test_frame_graph.cpp    # FRAME-GRAPH-SKELETON-1: resource-DAG validation (offline)
 
     # Leaf-TU engine sources (no transitive engine include drag).
     ${MC2_WORKTREE_ROOT}/mclib/fst_hash.cpp

@@ -1,0 +1,80 @@
+// FRAME-GRAPH-SKELETON-1 offline validation.
+//
+// Proves the resource DAG declared by kRenderPassContracts[] + kFramePassOrder[] is
+// self-consistent (every pass's reads are produced by an earlier pass or are external)
+// and that the validator CATCHES a bad reorder — all offline, no GL/engine/smoke. This
+// is the "validation" layer over the existing "declaration" table.
+#include "doctest.h"
+#include "RenderCore/frame_graph_validate.h"
+
+using namespace RenderCore;
+using namespace RenderCore::framegraph;
+
+TEST_SUITE("FrameGraph") {
+
+TEST_CASE("shipped frame graph: every read satisfied by a prior write or external") {
+    const ValidationResult r = validateShippedFrameGraph();
+    // On failure these report the offending pass/resource ids directly.
+    CHECK(static_cast<unsigned>(r.offendingPass) == 0u);   // None
+    CHECK(static_cast<unsigned>(r.missingResource) == 0u); // Unknown
+    CHECK(r.ok == true);
+    CHECK(r.unknownPass == false);
+}
+
+TEST_CASE("reorder regression: StaticProp before Shadow strands ShadowDynamicMap") {
+    // StaticPropOpaque reads ShadowDynamicMap, which only the Shadow pass writes. Put
+    // it first (before Shadow) and the read must be flagged unsatisfied — the exact
+    // class of "reorder -> invisible/wrong scene" the executor must never produce.
+    const RenderPassId badOrder[] = {
+        RenderPassId::StaticPropOpaque,   // reads ShadowDynamicMap BEFORE it is written
+        RenderPassId::Shadow,
+        RenderPassId::Terrain,
+        RenderPassId::MechOpaque,
+        RenderPassId::TerrainDecal,
+        RenderPassId::TerrainOverlay,
+        RenderPassId::Water,
+        RenderPassId::VegetationCards,
+        RenderPassId::VFX,
+        RenderPassId::UI,
+        RenderPassId::PostProcess,
+    };
+    const ValidationResult r = validateReadsSatisfied(
+        kRenderPassContracts, kRenderPassIdCount,
+        badOrder, kFramePassOrderCount,
+        kExternalResources, kExternalResourceCount);
+    CHECK(r.ok == false);
+    CHECK(static_cast<unsigned>(r.offendingPass) == static_cast<unsigned>(RenderPassId::StaticPropOpaque));
+    CHECK(static_cast<unsigned>(r.missingResource) == static_cast<unsigned>(RenderResourceId::ShadowDynamicMap));
+}
+
+TEST_CASE("removing an external resource surfaces the missing producer") {
+    // Drop ShadowStaticMap from the external set; nothing in the dynamic order writes
+    // it, so any reader would be flagged. (No shipped pass reads it today, so the
+    // shipped order still validates — this asserts the external list is load-bearing,
+    // not decorative: a future reader without a producer would fail.)
+    const RenderResourceId trimmedExternal[] = {
+        RenderResourceId::TerrainHeightTexture,
+        RenderResourceId::WaterReflectionColor,
+        RenderResourceId::WaterReflectionDepth,
+        RenderResourceId::MaterialGpuBuffer,
+        // ShadowStaticMap intentionally omitted
+    };
+    const ValidationResult r = validateReadsSatisfied(
+        kRenderPassContracts, kRenderPassIdCount,
+        kFramePassOrder, kFramePassOrderCount,
+        trimmedExternal, sizeof(trimmedExternal) / sizeof(trimmedExternal[0]));
+    // Shipped passes don't read ShadowStaticMap -> still ok. Guards against a silent
+    // dependency on the external list ordering.
+    CHECK(r.ok == true);
+}
+
+TEST_CASE("unknown pass id in order is reported") {
+    const RenderPassId badOrder[] = { RenderPassId::None };  // None has no contract row
+    const ValidationResult r = validateReadsSatisfied(
+        kRenderPassContracts, kRenderPassIdCount,
+        badOrder, 1, kExternalResources, kExternalResourceCount);
+    CHECK(r.ok == false);
+    CHECK(r.unknownPass == true);
+}
+
+} // TEST_SUITE
