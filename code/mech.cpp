@@ -737,6 +737,9 @@ long BattleMechType::init (FilePtr objFile, unsigned long fileSize)
 	dynamics.setType(DYNAMICS_MECH);
 	dynamics.init(&mechCSVFile);
 	
+	// UNIT-PROFILE-SEAM-1: optional .fit [UnitProfile] data read (additive).
+	populateProfileFromFit(mechFile, profile());
+
 	//------------------------------------------------------------------
 	// Initialize the base object Type from the current file.
 	result = ObjectType::init(&mechFile);
@@ -2774,11 +2777,17 @@ void BattleMech::resetComponents (long totalComponents, long *componentList)
 	setThreatRating(-1);
 
 	maxWeaponDamage = calcMaxTargetDamage();
-	
+
 	// local variable needs to be set for class
     //sebi: no really...
 	// should set it to zero ?
 	//numJumpJets = numJumpJets;
+
+	// UNIT-PROFILE-SEAM-1: capability fact mirrors installed-equipment truth.
+	// numJumpJets is instance state; write the shared type baseline from it
+	// (idempotent for stock chassis; per-variant divergence deferred).
+	if (getObjectType())
+		getObjectType()->profile().baselineCapabilities.set(CAP_JUMP, (numJumpJets > 0));
 }
 
 long BattleMech::init (FitIniFile* mechFile) {
@@ -3424,6 +3433,12 @@ long BattleMech::init (FitIniFile* mechFile) {
 				SensorManager->addTeamSensor(teamId, sensorSystem);
 		}
 	}
+
+	// UNIT-PROFILE-SEAM-1: capability fact mirrors installed-equipment truth.
+	// numJumpJets is instance state; write the shared type baseline from it
+	// (idempotent for stock chassis; per-variant divergence deferred).
+	if (getObjectType())
+		getObjectType()->profile().baselineCapabilities.set(CAP_JUMP, (numJumpJets > 0));
 
 	return(NO_ERR);
 }
@@ -9406,6 +9421,12 @@ void BattleMech::Load (MechData *data)
 
 	if (!data->sensorOK)
 		sensorSystem->broken = true;
+
+	// UNIT-PROFILE-SEAM-1: numJumpJets is authoritative only after Load.
+	if (getObjectType())
+		getObjectType()->profile().baselineCapabilities.set(CAP_JUMP, (numJumpJets > 0));
+	runtime.currentCapabilities = getObjectType()
+		? getObjectType()->profile().baselineCapabilities : CapabilitySet();
 }
 
 //***************************************************************************

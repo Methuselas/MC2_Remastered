@@ -340,6 +340,7 @@ set(SOURCES
     "code/objmgr.cpp"
     "code/objtype.cpp"
     "code/unitprofile.cpp"
+    "code/unitprofile_fit.cpp"
     "code/tacordr.cpp"
     "code/team.cpp"
     "code/terrobj.cpp"

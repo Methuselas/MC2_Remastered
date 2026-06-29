@@ -14,4 +14,7 @@ class UnitProfile {                  // static, on ObjectType (flyweight)
 struct UnitRuntimeState {            // mutable, on Mover
     CapabilitySet currentCapabilities;
 };
+
+class FitIniFile;                      // fwd; keep heavy I/O header out of unitprofile.h
+void populateProfileFromFit(FitIniFile& fit, UnitProfile& profile);
 #endif // UNITPROFILE_H

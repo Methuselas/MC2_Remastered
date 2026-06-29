@@ -398,6 +398,10 @@ long GroundVehicleType::init (FilePtr objFile, unsigned long fileSize) {
 	dynamics.setType(DYNAMICS_GROUNDVEHICLE);
 	dynamics.init(&vehicleFile);
 
+	// UNIT-PROFILE-SEAM-1: optional .fit [UnitProfile] data read — SOLE
+	// jump-capability populator for vehicles (no jump component to scan).
+	populateProfileFromFit(vehicleFile, profile());
+
 	//------------------------------------------------------------------
 	// Initialize the base object Type from the current file.
 	result = ObjectType::init(&vehicleFile);
