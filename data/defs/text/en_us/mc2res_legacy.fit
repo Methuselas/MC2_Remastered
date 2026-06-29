@@ -22955,7 +22955,7 @@ String {
 
 String {
     key = "legacy.mc2res.32026"
-    text = "Vehicle Ferro-Fibrous Armor"
+    text = "Ferro Fibrous"
     legacyId = 32026
     legacySymbol = "IDS_COMP26"
     source = "mc2res"
@@ -37156,7 +37156,7 @@ String {
 
 String {
     key = "legacy.mc2res.46026"
-    text = "VEHICLE FERRO-FIBROUS ARMOR"
+    text = "FERRO FIBROUS"
     legacyId = 46026
     legacySymbol = "IDS_HELP_COMP26"
     source = "mc2res"
