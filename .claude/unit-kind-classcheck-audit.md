@@ -97,3 +97,55 @@ A vehicle's capability baseline stays **default-empty** unless its `.fit` carrie
 an optional additive `[UnitProfile] Jump = TRUE` block (the slice-1
 data-extensibility proof). No redundant `set(CAP_JUMP, false)` is added. Stock
 `.fit`s have no `[UnitProfile]` block (grep-confirmed) → stock parity preserved.
+
+---
+
+## Task 8 — full two-bucket catalog (migration blueprint)
+
+> **Anchor drift note (re-grepped at Task 8 HEAD):** the jump gates seeded
+> above as `:3256`/`:3262` are at **`mover.cpp:3264`** (`bool canJump = (getObjectClass() == BATTLEMECH);`,
+> rewired) and **`mover.cpp:3270`** (`if (getObjectClass() == BATTLEMECH) {`,
+> the passability guard, NOT rewired) in the current tree. Re-grep the quoted
+> strings; do not trust line numbers.
+
+Entry schema: `file / line · pattern · current behavior · axis` /
+`transitional (slice-1 intent query, if any) · future facet query` /
+`owning facet · slice · risk`.
+
+### Bucket 1 — migration-relevant GAMEPLAY decisions
+
+| anchor | pattern | current behavior · axis | transitional / future query | owning facet · slice · risk |
+|---|---|---|---|---|
+| `mover.cpp:3264` | `bool canJump = (getObjectClass()==BATTLEMECH)` | seeds per-order jump permission · **locomotion (jump)** | **NOW:** gated `canPerform(UnitAction::Jump)`. **FUTURE:** unchanged — fact already on capability facet | capability(fact)+locomotion(executor) · **SLICE 1 (fact); LOCOMOTION-DATA-1 (executor)** · **LOW / behavior-identical gate-ON** — executor still class-gated via `BattleMech::hasJumpExecutor()=true`; only the fact is decoupled |
+| `mover.cpp:3270` | `if (getObjectClass()==BATTLEMECH) {` (passability guard) | gates `worldToCell`/`getPassable` map check before jump · **locomotion (jump)** | **NOW:** none. **FUTURE:** `if (hasJumpExecutor())` or a locomotion-facet "needs-passable-landing" query | locomotion · **LOCOMOTION-DATA-1** · **LOW** — already dead for non-mechs: `canJump` (from :3264) is false → rejected at `:3276 if(!canJump)` before this block matters |
+| `mover.cpp:801` | `run && (mover->getObjectClass()==BATTLEMECH)` | run/locomotion gate · **locomotion (gait)** | none this slice | locomotion · LOCOMOTION-DATA-1 · MED (movement behavior) |
+
+### Bucket 2 — NON-gameplay (FX / damage / refit / spawn / class-specific subsystems)
+
+| anchor | pattern | axis / nature | bucket rationale |
+|---|---|---|---|
+| `mover.cpp:517` | `(mover->getObjectClass()==BATTLEMECH) && ...->inJump` | FX/anim read of jump-state | reads instance `inJump`, not a capability; FX layer, no migration |
+| `mover.cpp:2435` | `if (getObjectClass()==BATTLEMECH)` | mech-specific subsystem branch | class-specific data access (mech-only members) — not a capability gate |
+| `mover.cpp:2450` | `if (getObjectClass()==BATTLEMECH) {` | mech-specific subsystem branch | as above |
+| `mover.cpp:2630` | `if (getObjectClass()==BATTLEMECH) {` | mech-specific branch | as above |
+| `mover.cpp:2649` | `else if (getObjectClass()==GROUNDVEHICLE) {` | vehicle-specific branch | class-specific data access — not a capability gate |
+| `mover.cpp:3603/3631/3698` | `if (getObjectClass()==BATTLEMECH)` | mech-specific subsystem | class-specific behavior, no facet candidate this arc |
+| `mover.cpp:4831/5050/5125/5232/5499` | `getObjectClass()==ELEMENTAL` | elemental-specific (group/special) | class-specific elemental behavior; would need an elemental facet, deferred |
+| `mover.cpp:5360` | `if (getObjectClass()==BATTLEMECH)` | jump-state (`inJump`) read | instance-state read, not a capability gate |
+| `mover.cpp:6066` | `!refitBuddyWID && getObjectClass()==BATTLEMECH` | refit eligibility | refit subsystem — possible future "refit" facet, low priority |
+| `mover.cpp:6556/6726/6885` | `(getObjectClass()==BATTLEMECH)` | damage-state / armor | damage model is mech-structural, not an ability — separate facet if ever |
+
+(Other TUs — `controlgui.cpp`, `forcegroupbar.cpp`, `mechicon.cpp`,
+`missiongui.cpp`, `warrior.cpp` — consume `canJump()` / jump range and flow
+through the rewired seam automatically once gate-ON; they are not class-checks
+and need no migration.)
+
+### Completeness check (Task 8, Step 3)
+
+Every **gameplay-bucket** `getObjectClass()==KIND` is accounted for: the one
+migration-relevant jump-permission gate (`mover.cpp:3264`) is **migrated this
+slice** (fact decoupled; executor coupling assigned to `LOCOMOTION-DATA-1`); the
+companion passability guard (`:3270`) and the run/gait gate (`:801`) are
+**assigned to `LOCOMOTION-DATA-1`**. All remaining Bucket-2 sites are
+non-gameplay (class-specific subsystem access, FX, damage, refit, elemental
+specials) and carry no slice obligation this arc.
