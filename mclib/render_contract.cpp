@@ -819,8 +819,19 @@ RenderCore::framegraph::DepthWriteState sampleDepthWrite() {
 } // namespace
 
 void ambientProbeAtPassBegin(RenderCore::RenderPassId id) {
-    static const bool s_probe = (::getenv("MC2_AMBIENT_PROBE") != nullptr);
-    if (!s_probe) return;
+    // FRAME-GRAPH-AMBIENT-GUARD-1: promoted from default-OFF probe to DEFAULT-ON guard
+    // for the verified axes (colorMask/depthFunc/depthWrite; blend stays Inherit ->
+    // skipped, the probe disproved it as per-pass). Read-only (glGet + count); rendering
+    // stays byte-identical. Disable for perf-sensitive runs via
+    // MC2_FRAMEGRAPH_AMBIENT_GUARD=0. CI hard-fail via MC2_FRAMEGRAPH_AMBIENT_FATAL=1.
+    // The "fail dev/smoke if mismatch>0" tier is scripts/check-ambient-guard.py (reads
+    // the dump counter), so a bad ambient handoff trips immediately instead of surfacing
+    // later as flicker / missing geometry / wrong depth.
+    static const bool s_guardEnabled = []{
+        const char* v = ::getenv("MC2_FRAMEGRAPH_AMBIENT_GUARD");
+        return !(v && v[0] == '0');   // default ON; only =0 disables
+    }();
+    if (!s_guardEnabled) return;
     const RenderCore::framegraph::AmbientContract* decl =
         RenderCore::framegraph::findAmbient(id);
     if (!decl) return;
@@ -834,15 +845,24 @@ void ambientProbeAtPassBegin(RenderCore::RenderPassId id) {
         RenderCore::framegraph::compareAmbient(*decl, live);
     if (mm.any()) {
         ++g_ambientMismatchCount;
-        fprintf(stderr,
-            "[AMBIENT_PROBE] pass=\"%s\" cmMiss=%d dfMiss=%d blendMiss=%d dwMiss=%d "
-            "(decl cm=%d df=%d bl=%d dw=%d | live cm=%d df=%d bl=%d dw=%d)\n",
-            decl->note ? decl->note : "?",
-            (int)mm.colorMask, (int)mm.depthFunc, (int)mm.blend, (int)mm.depthWrite,
-            (int)decl->colorMaskOnEntry, (int)decl->depthFunc, (int)decl->blend, (int)decl->depthWrite,
-            (int)live.colorMask, (int)live.depthFunc, (int)live.blend, (int)live.depthWrite);
-        fflush(stderr);
-        static const bool s_fatal = (::getenv("MC2_AMBIENT_ASSERT_FATAL") != nullptr);
+        // Throttle logging (first N per process); the dump counter is the source of
+        // truth. Each line carries pass + per-axis decl-vs-live so it debugs, not just trips.
+        static unsigned s_logged = 0;
+        if (s_logged < 32u) {
+            ++s_logged;
+            fprintf(stderr,
+                "[AMBIENT_GUARD] phase=begin pass=\"%s\" cmMiss=%d dfMiss=%d dwMiss=%d "
+                "(decl cm=%d df=%d dw=%d | live cm=%d df=%d dw=%d)\n",
+                decl->note ? decl->note : "?",
+                (int)mm.colorMask, (int)mm.depthFunc, (int)mm.depthWrite,
+                (int)decl->colorMaskOnEntry, (int)decl->depthFunc, (int)decl->depthWrite,
+                (int)live.colorMask, (int)live.depthFunc, (int)live.depthWrite);
+            fflush(stderr);
+        }
+        static const bool s_fatal = []{
+            return ::getenv("MC2_FRAMEGRAPH_AMBIENT_FATAL") != nullptr
+                || ::getenv("MC2_AMBIENT_ASSERT_FATAL") != nullptr;  // legacy alias
+        }();
         if (s_fatal) abort();
     }
 }
