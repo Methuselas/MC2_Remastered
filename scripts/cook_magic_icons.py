@@ -80,6 +80,18 @@ def main():
     out = io.StringIO()
     csv.writer(out, lineterminator="\n").writerows(rows)
     open(args.compbas, "w", newline="").write(out.getvalue())
+
+    # Invalidate the per-mod file index cache so the engine re-scans and picks up
+    # the newly-added icon files. Without this, NEW files are invisible to the
+    # game (the cache only knows the paths present when it was built).
+    for d in args.out:
+        # d = <mod>/data/art ; cache lives at <mod>/.modindex-cache
+        mod_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(d))))
+        cache = os.path.join(mod_root, ".modindex-cache")
+        if os.path.isfile(cache):
+            os.remove(cache)
+            print(f"  invalidated {cache}")
+
     print(f"cooked {cooked} per-component 128x128 icon(s); {skipped} FST-resolved left untouched")
 
 
