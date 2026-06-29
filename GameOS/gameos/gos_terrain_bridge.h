@@ -12,8 +12,8 @@
 // Forward decls for opaque pointer types used in signatures.
 class gosRenderMaterial;
 
-// Returns the active terrain material (the one terrainDrawIndexedPatches
-// uses). Live pointer — do NOT cache across frames.
+// Returns the active terrain material (retired terrainDrawIndexedPatches formerly used this;
+// now used by bridge/LOD-chunk paths). Live pointer — do NOT cache across frames.
 gosRenderMaterial* gos_terrain_bridge_getMaterial();
 
 // Returns the GL program ID of the terrain material's currently-applied
@@ -22,8 +22,8 @@ gosRenderMaterial* gos_terrain_bridge_getMaterial();
 // stall. Returns 0 if no terrain material is resident yet.
 unsigned int gos_terrain_bridge_getShaderProgram();
 
-// Sets every direct uniform + texture bind that terrainDrawIndexedPatches
-// sets EXCEPT the per-batch VBO upload. Call once per flush() before
+// Sets every direct uniform + texture bind for the terrain material
+// (mirrors what the retired terrainDrawIndexedPatches set) EXCEPT the per-batch VBO upload. Call once per flush() before
 // issuing per-bucket glDrawArrays. The function internally calls
 // material->apply() (which calls glUseProgram), so direct glUniform*
 // calls inside it are AFTER apply() per AMD rule line 10.

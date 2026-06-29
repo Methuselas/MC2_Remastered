@@ -1749,7 +1749,6 @@ class gosRenderer {
 		void drawIndexedTris(HGOSBUFFER ib, HGOSBUFFER vb, HGOSVERTEXDECLARATION vdecl, const float* mvp);
 		void drawIndexedTris(HGOSBUFFER ib, HGOSBUFFER vb, HGOSVERTEXDECLARATION vdecl);
         void drawText(const char* text);
-        void terrainDrawIndexedPatches(gosRenderMaterial* material, gosMesh* mesh);
         void terrainBindUniformsForPatchStream(gosRenderMaterial* material);
         // Returns ssboRecordBase uniform location in the thin program, or -1.
         // If overrideProg is non-null, binds uniforms to that program instead
@@ -1946,7 +1945,7 @@ class gosRenderer {
         float getTerrainDebugMode() const { return terrain_debug_mode_; }
 
         // F1 Stage A-pre Task 7b: store probe-only worldToClipGL for upload at
-        // draw time inside terrainBindUniformsForPatchStream / terrainDrawIndexedPatches.
+        // draw time inside terrainBindUniformsForPatchStream (terrainDrawIndexedPatches retired).
         void setWorldToClipGLProbeMatrix(const float* M16) {
             memcpy(probeWorldToClipGL_, M16, 16 * sizeof(float));
             probeWorldToClipGLValid_ = true;
@@ -6322,7 +6321,7 @@ void gosRenderer::drawShadowBatchTessellated(gos_VERTEX* vertices, int numVerts,
             glUniformMatrix4fv(sl.lightSpaceMatrix, 1, GL_FALSE, lsm);
     }
 
-    // Upload tessellation uniforms via direct GL (same pattern as terrainDrawIndexedPatches)
+    // Upload tessellation uniforms via direct GL (same pattern as terrainBindUniformsForPatchStream)
     float tessParams[4] = { terrain_tess_level_, terrain_tess_level_, 0.0f, 0.0f };
     float tessDist[4] = { terrain_tess_dist_near_, terrain_tess_dist_far_, 0.0f, 0.0f };
     float tessDisp[4] = { 0.0f, terrain_displace_scale_, 0.0f, 0.0f };  // no Phong in shadow
@@ -7049,213 +7048,11 @@ void gosRenderer::terrainOverrideThinMVP(const float* mvp4x4)
     glUniformMatrix4fv(tl.terrainMVP, 1, GL_FALSE, mvp4x4);
 }
 
-void gosRenderer::terrainDrawIndexedPatches(gosRenderMaterial* material, gosMesh* mesh) {
-    ZoneScopedN("Terrain.DrawPatches");
-    TracyGpuZone("Terrain.DrawPatches");
-    int nv = mesh->getNumVertices();
-    int ni = mesh->getNumIndices();
-    if (nv == 0) return;
-
-    // Upload main VBO + IBO
-    mesh->uploadBuffers();
-
-    // Apply shader first (glUseProgram + upload cached uniforms)
-    material->apply();
-    material->setSamplerUnit(gosMesh::s_tex1, 0);
-
-    // Set tessellation uniforms via direct GL calls (bypass uniform cache)
-    GLuint shp = material->getShader()->shp_;
-    cacheTerrainUniformLocations(shp);
-    const auto& tl = terrainLocs_;
-
-    float tessParams[4] = { terrain_tess_level_, terrain_tess_level_, 0.0f, 0.0f };
-    float tessDist[4] = { terrain_tess_dist_near_, terrain_tess_dist_far_, 0.0f, 0.0f };
-    float tessDisp[4] = { terrain_phong_alpha_, terrain_displace_scale_, 0.0f, 0.0f };
-
-    if (tl.tessLevel >= 0) glUniform4fv(tl.tessLevel, 1, tessParams);
-    if (tl.tessDistanceRange >= 0) glUniform4fv(tl.tessDistanceRange, 1, tessDist);
-    if (tl.tessDisplace >= 0) glUniform4fv(tl.tessDisplace, 1, tessDisp);
-    if (tl.cameraPos >= 0) glUniform4fv(tl.cameraPos, 1, (const float*)&terrain_camera_pos_);
-    // TERRAIN-DEBUG-VIEWS-1: match the other two terrain upload sites — env var
-    // MC2_TERRAIN_DEBUG_MODE overrides the runtime member. Keeping the three
-    // sites in lockstep avoids divergence where the env var only affects some
-    // terrain draws (silent debug-mode drift was the historical failure mode).
-    {
-        float debugMode = terrain_debug_mode_;
-        if (const char* envDebug = getenv("MC2_TERRAIN_DEBUG_MODE")) {
-            debugMode = (float)atof(envDebug);
-        }
-        { int lvm = mc2LightingDebugMode(); if (lvm >= 0) debugMode = (float)lvm; }  // LIGHTING-DEBUG-VIEWS-1A
-        float tessDebugVec[4] = { debugMode, 0.0f, 0.0f, 0.0f };
-        if (tl.tessDebug >= 0) glUniform4fv(tl.tessDebug, 1, tessDebugVec);
-        if (tl.pathTint >= 0)  glUniform1i(tl.pathTint, mc2ShaderPathTint());  // MC2_SHADER_PATH_TINT
-    }
-
-    // Map half-extent for off-map edge haze (fades meta-ring terrain to sky).
-    if (tl.mapHalfExtent >= 0) {
-        gosPostProcess* pp = getGosPostProcess();
-        float halfExt = pp ? pp->getMapHalfExtent() : 0.0f;
-        glUniform1f(tl.mapHalfExtent, halfExt);
-    }
-
-    // Upload terrainMVP (axisSwap*worldToClip) via direct GL
-    if (terrain_mvp_valid_) {
-        if (tl.terrainMVP >= 0)
-            glUniformMatrix4fv(tl.terrainMVP, 1, GL_FALSE, (const float*)&terrain_mvp_);
-    }
-    // F1 Task 7b: probe-only worldToClipGL flat uniform. Same convention as
-    // terrainMVP: GL_FALSE + row-major C++ storage.
-    if (probeWorldToClipGLValid_ && tl.worldToClipGL >= 0)
-        glUniformMatrix4fv(tl.worldToClipGL, 1, GL_FALSE, probeWorldToClipGL_);
-
-    // Bind terrain splatting uniforms (light, tiling, POM, cell bomb)
-    if (tl.terrainLightDir >= 0) glUniform4fv(tl.terrainLightDir, 1, (const float*)&terrain_light_dir_);
-    float tiling[4] = { terrain_detail_tiling_, 0.0f, 0.0f, 0.0f };
-    if (tl.detailNormalTiling >= 0) glUniform4fv(tl.detailNormalTiling, 1, tiling);
-    const float* _datYZW = mc2_detailAntiTileYZW();  // TERRAIN-DETAIL-ANTI-TILE-1 (yzw=0 when gate OFF)
-    float strength[4] = { terrain_detail_strength_, _datYZW[0], _datYZW[1], _datYZW[2] };
-    if (tl.detailNormalStrength >= 0) glUniform4fv(tl.detailNormalStrength, 1, strength);
-    // C1 tactical: push mission-gated material profile to terrain classifier.
-    // Default 0 = LEGACY = exact pre-C1 byte-for-byte rendering.
-    if (tl.terrainMaterialProfile >= 0) glUniform1i(tl.terrainMaterialProfile, g_terrainMaterialProfile);
-    float pomP[4] = { terrain_pom_scale_, 8.0f, 32.0f, 0.0f };
-    if (tl.pomParams >= 0) glUniform4fv(tl.pomParams, 1, pomP);
-    float worldScaleV[4] = { terrain_world_scale_, 0.0f, 0.0f, 0.0f };
-    if (tl.terrainWorldScale >= 0) glUniform4fv(tl.terrainWorldScale, 1, worldScaleV);
-    float cellP[4] = { terrain_cell_scale_, terrain_cell_jitter_, terrain_cell_rotation_, 0.0f };
-    if (tl.cellBombParams >= 0) glUniform4fv(tl.cellBombParams, 1, cellP);
-    if (tl.matNormalBoost >= 0)       glUniform4fv(tl.matNormalBoost, 1, terrain_mat_normal_boost_);
-    if (tl.matTiling >= 0)            glUniform4fv(tl.matTiling, 1, terrain_mat_tiling_);
-    if (tl.matTilingSnow >= 0)        glUniform1f(tl.matTilingSnow, terrain_mat_tiling_snow_);
-    if (tl.tintStrengthScale >= 0)    glUniform1f(tl.tintStrengthScale, terrain_tint_strength_scale_);
-    if (tl.snowBrightnessDampen >= 0) glUniform1f(tl.snowBrightnessDampen, terrain_snow_brightness_dampen_);
-    if (tl.tintRock  >= 0)            glUniform3fv(tl.tintRock,  1, terrain_tint_rock_);
-    if (tl.tintGrass >= 0)            glUniform3fv(tl.tintGrass, 1, terrain_tint_grass_);
-    if (tl.tintDirt  >= 0)            glUniform3fv(tl.tintDirt,  1, terrain_tint_dirt_);
-    if (tl.terrainClassGrass >= 0)    glUniform4fv(tl.terrainClassGrass, 1, terrain_class_grass_);
-    if (tl.terrainClassDirt  >= 0)    glUniform4fv(tl.terrainClassDirt,  1, terrain_class_dirt_);
-    if (tl.time >= 0) {
-        float elapsed = SmokeMode::fixedTimestepEnabled()
-                        ? (float)SmokeMode::fixedClockSeconds()
-                        : (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
-        glUniform1f(tl.time, elapsed);
-    }
-
-    // Bind per-material normal maps (units per kTerrainMatNormalUnits: 5,6,7,8,12)
-    if (terrainNormalArrayEnabled()) {
-        if (terrain_normal_array_dirty_) buildTerrainNormalArray();
-        if (terrain_normal_array_tex_ != 0 && tl.matNormalArray >= 0) {
-            glUniform1i(tl.matNormalArray, kTerrainTexUnitNormalArray);
-            glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitNormalArray);
-            glBindTexture(GL_TEXTURE_2D_ARRAY, terrain_normal_array_tex_);
-        }
-    } else {
-        for (int i = 0; i < 5; i++) {
-            if (terrain_mat_normal_[i] != 0 && tl.matNormal[i] >= 0) {
-                glUniform1i(tl.matNormal[i], kTerrainMatNormalUnits[i]);
-                glActiveTexture(GL_TEXTURE0 + kTerrainMatNormalUnits[i]);
-                glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[i]);
-            }
-        }
-    }
-    // TERRAIN-NORMALS-FROM-HEIGHT-1
-    bindTerrainHeightTexUniforms(tl.terrainHeightTex, tl.terrainHeightParams,
-                                 tl.useTerrainNormalsFromHeight,
-                                 tl.terrainNormalsFromHeightStrength,
-                                 terrain_nfh_strength_,
-                                 tl.terrainLightingV1Strength,
-                                 terrain_lighting_v1_strength_,
-                                 tl.terrainLightingV2ShadowFillFloor,
-                                 terrain_lighting_v2_floor_);
-    glActiveTexture(GL_TEXTURE0);
-
-    // Shadow map binding (unit 9 = static, unit 10 = dynamic)
-    {
-        gosPostProcess* pp = getGosPostProcess();
-        if (pp && pp->shadowsEnabled_) {
-            if (tl.lightSpaceMatrix >= 0) glUniformMatrix4fv(tl.lightSpaceMatrix, 1, GL_FALSE, pp->getLightSpaceMatrix());
-            if (tl.enableShadows >= 0) glUniform1i(tl.enableShadows, 1);
-            if (tl.shadowSoftness >= 0) glUniform1f(tl.shadowSoftness, terrain_shadow_softness_);
-            if (tl.shadowMap >= 0) {
-                glUniform1i(tl.shadowMap, kTerrainTexUnitStaticShadow);
-                glActiveTexture(GL_TEXTURE0 + kTerrainTexUnitStaticShadow);
-                glBindTexture(GL_TEXTURE_2D, pp->getShadowTexture());
-                glActiveTexture(GL_TEXTURE0);
-            }
-            // Dynamic object shadow map (unit kTerrainTexUnitDynamicShadow)
-            if (pp->getDynamicShadowFBO()) {
-                uploadDynamicShadowUniforms(tl, pp, kTerrainTexUnitDynamicShadow);
-            } else {
-                if (tl.enableDynamicShadows >= 0) glUniform1i(tl.enableDynamicShadows, 0);
-            }
-        } else {
-            if (tl.enableShadows >= 0) glUniform1i(tl.enableShadows, 0);
-            if (tl.enableDynamicShadows >= 0) glUniform1i(tl.enableDynamicShadows, 0);
-        }
-    }
-
-    // Bind main VBO and set standard vertex attribs
-    glBindBuffer(GL_ARRAY_BUFFER, mesh->getVB());
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh->getIB());
-    material->applyVertexDeclaration();
-
-    // Bind extra VBO for world pos + normal (locations 4-5)
-    // Use per-batch extras from texture manager (aligned with main VBO by construction)
-    const gos_TERRAIN_EXTRA* batchExtras = terrain_batch_extras_;
-    int batchExtrasCount = terrain_batch_extras_count_;
-    if (batchExtras && batchExtrasCount > 0) {
-        updateBuffer(terrain_extra_vb_, GL_ARRAY_BUFFER,
-            batchExtras, batchExtrasCount * sizeof(gos_TERRAIN_EXTRA), GL_DYNAMIC_DRAW);
-    }
-    glBindBuffer(GL_ARRAY_BUFFER, terrain_extra_vb_);
-    GLint worldPosLoc = glGetAttribLocation(material->getShader()->shp_, "worldPos");
-    GLint worldNormLoc = glGetAttribLocation(material->getShader()->shp_, "worldNorm");
-    if (worldPosLoc >= 0) {
-        glEnableVertexAttribArray(worldPosLoc);
-        glVertexAttribPointer(worldPosLoc, 3, GL_FLOAT, GL_FALSE,
-            sizeof(gos_TERRAIN_EXTRA), (void*)0);
-    }
-    if (worldNormLoc >= 0) {
-        glEnableVertexAttribArray(worldNormLoc);
-        glVertexAttribPointer(worldNormLoc, 3, GL_FLOAT, GL_FALSE,
-            sizeof(gos_TERRAIN_EXTRA), (void*)(3 * sizeof(float)));
-    }
-
-    // Shadow depth is now written in a separate pre-pass (beginShadowPrePass/drawShadowBatch/endShadowPrePass)
-    // called from renderLists() before the shading loop — no per-batch shadow work here.
-
-    // Wireframe overlay
-    if (terrain_wireframe_) {
-        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-    }
-
-    // Set patch vertices and draw
-    glPatchParameteri(GL_PATCH_VERTICES, 3);
-    {
-        GLenum err = glGetError(); // clear any pending
-        glDrawElements(GL_PATCHES, ni,
-            mesh->getIndexSizeBytes() == 2 ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT, NULL);
-        err = glGetError();
-        static int gl_err_count = 0;
-        if (err != GL_NO_ERROR && gl_err_count++ < 5) {
-            printf("[TESS] GL ERROR after glDrawElements(GL_PATCHES): 0x%x ni=%d nv=%d\n", err, ni, nv);
-            fflush(stdout);
-        }
-    }
-
-    // Cleanup
-    if (worldPosLoc >= 0) glDisableVertexAttribArray(worldPosLoc);
-    if (worldNormLoc >= 0) glDisableVertexAttribArray(worldNormLoc);
-
-    material->endVertexDeclaration();
-    material->end();
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-
-    if (terrain_wireframe_) {
-        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-    }
-}
+// TERRAIN-DEADCODE-DELETE-1: gosRenderer::terrainDrawIndexedPatches deleted.
+// The legacy tess-solid terrain funnel is retired — terrain renders via the LOD-chunk path.
+// The sole call site at gameos_graphics.cpp (the :7291 if-branch) is now a skip+tripwire.
+// Helpers called by this function (cacheTerrainUniformLocations, terrainBindThinUniformsForPatchStream,
+// bindTerrainHeightTexUniforms) remain in use by the shadow pre-pass and bridge paths.
 
 void gosRenderer::drawIndexedTris(gos_VERTEX* vertices, int num_vertices, WORD* indices, int num_indices) {
     ZoneScopedN("DrawIndexedTris.Basic");
@@ -7289,19 +7086,13 @@ void gosRenderer::drawIndexedTris(gos_VERTEX* vertices, int num_vertices, WORD* 
 
     // Terrain tessellation path
     if (curStates_[gos_State_Terrain] && !curStates_[gos_State_Overlay] && terrain_material_ && terrain_batch_extras_count_ > 0 && terrain_draw_enabled_) {
-        ZoneScopedN("Terrain.TessDraw");
-        TracyGpuZone("Terrain.TessDraw");
-        gosRenderMaterial* tmat = terrain_material_;
-        tmat->setTransform(projection_);
-        tmat->setFogColor(fog_color_);
-        // terrainMVP uploaded via direct GL in terrainDrawIndexedPatches
-        // [RENDER_CONTRACT:Pass=TerrainBase id=gosRenderer_terrainDrawIndexedPatches]
-        render_contract::noteRenderPass(render_contract::PassIdentity::TerrainBase,
-                                        "gosRenderer_terrainDrawIndexedPatches");
-        terrainDrawIndexedPatches(tmat, indexed_tris_);
-        // Mark terrain drawn so post-process effects know to run (god rays, shorelines)
-        { gosPostProcess* pp = getGosPostProcess(); if (pp) pp->markTerrainDrawn(); }
-        RenderCore::framegraph::noteTerrainPath(RenderCore::framegraph::TerrainPath::LegacyMLR);  // TERRAIN-PATH-TELEMETRY-1
+        // TERRAIN-DEADCODE-DELETE-1: the legacy gosRenderer tess-solid terrain draw
+        // (terrainDrawIndexedPatches) is retired — all terrain renders via the LOD-chunk
+        // path (gos_terrain_lod_chunk.cpp / gamecam.cpp:508). This funnel branch is
+        // unreachable post terrain-retire (terrain_path.legacy_mlr==0 confirms). If terrain
+        // geometry ever reaches here, SKIP it (must not fall through to the basic renderer,
+        // which would mis-draw terrain) and fire the telemetry counter as a regression tripwire.
+        RenderCore::framegraph::noteTerrainPath(RenderCore::framegraph::TerrainPath::LegacyMLR);
         indexed_tris_->rewind();
     } else {
         // When tessellation is active, skip SOLID fallback terrain draws (tessellation
