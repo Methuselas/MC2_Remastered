@@ -307,10 +307,14 @@ void MechLabScreen::begin()
 		{
 			float tons = pVariant->getChassis()->getMaxWeight();
 			int cls = ( tons <= 35 ) ? 0 : ( tons <= 55 ) ? 1 : ( tons <= 75 ) ? 2 : 3;
-			static const int   baseW[4] = { 2, 3, 2, 3 };
-			static const int   baseH[4] = { 1, 1, 2, 2 };
-			static const int   clanW[4] = { 1, 2, 2, 3 };
-			static const int   clanH[4] = { 1, 1, 1, 1 };
+			// Footprints stay <=2 wide: the mech grid + selRects[2][5] only support
+			// 2-wide components (a 3-wide index reads past selRects into
+			// selJumpJetRect -> engine shows the JJ ghost). Cells: Light2 Med3
+			// Heavy4 Assault6 (base); 1/2/2/3 (clan).
+			static const int   baseW[4] = { 2, 1, 2, 2 };  // L  M  H  A
+			static const int   baseH[4] = { 1, 3, 2, 3 };  // 2  3  4  6 cells
+			static const int   clanW[4] = { 1, 2, 2, 1 };
+			static const int   clanH[4] = { 1, 1, 1, 3 };  // 1  2  2  3 cells
 			static const float heatByCls[4] = { 8.0f, 12.0f, 16.0f, 20.0f };
 			LogisticsComponent* xl  = LogisticsData::instance->getComponent( 2 );
 			LogisticsComponent* cxl = LogisticsData::instance->getComponent( 3 );
@@ -866,7 +870,11 @@ void MechLabScreen::render(int xOffset, int yOffset)
 			{
 				long left, right;
 				diagramToScreen( i, j, left, right );
-				tmpRect = &selRects[pSelectedComponent->getComponentWidth()-1][pSelectedComponent->getComponentHeight()-1];
+				{
+					int sw = pSelectedComponent->getComponentWidth();  if (sw<1) sw=1; if (sw>2) sw=2;
+					int sh = pSelectedComponent->getComponentHeight(); if (sh<1) sh=1; if (sh>5) sh=5;
+					tmpRect = &selRects[sw-1][sh-1];   // clamp: selRects is [2][5]
+				}
 				tmpRect->moveTo( left + xOffset, right + yOffset );
 			}
 			
@@ -1523,7 +1531,11 @@ void MechLabScreen::beginDrag( LogisticsComponent* pComponent )
 			dragIcon.setUVs( 0.f, 0.f, sizeX * 48.f, sizeY * 32.f );
 			dragIcon.setColor( 0xffffffff );
 
-			selRect = &selRects[sizeX-1][sizeY-1];
+			{
+				int cw = sizeX; if (cw<1) cw=1; if (cw>2) cw=2;
+				int ch = sizeY; if (ch<1) ch=1; if (ch>5) ch=5;
+				selRect = &selRects[cw-1][ch-1];   // clamp: selRects is [2][5]
+			}
 
 			if ( pComponent->getType() == COMPONENT_FORM_JUMPJET )
 			{
