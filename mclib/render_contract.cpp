@@ -806,6 +806,16 @@ RenderCore::framegraph::DepthFuncState sampleDepthFunc() {
     if (df == GL_LESS)   return D::ShadowLess;
     return D::Inherit;
 }
+RenderCore::framegraph::BlendState sampleBlend() {
+    using B = RenderCore::framegraph::BlendState;
+    return glIsEnabled(GL_BLEND) ? B::On : B::Off;
+}
+RenderCore::framegraph::DepthWriteState sampleDepthWrite() {
+    GLboolean w = GL_TRUE;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &w);
+    using D = RenderCore::framegraph::DepthWriteState;
+    return w ? D::On : D::Off;
+}
 } // namespace
 
 void ambientProbeAtPassBegin(RenderCore::RenderPassId id) {
@@ -816,18 +826,21 @@ void ambientProbeAtPassBegin(RenderCore::RenderPassId id) {
     if (!decl) return;
     ++g_ambientProbeSamples;   // a declared pass was sampled this call (probe is live)
     RenderCore::framegraph::AmbientSample live;
-    live.colorMask = sampleColorMask();
-    live.depthFunc = sampleDepthFunc();
+    live.colorMask  = sampleColorMask();
+    live.depthFunc  = sampleDepthFunc();
+    live.blend      = sampleBlend();
+    live.depthWrite = sampleDepthWrite();
     const RenderCore::framegraph::AmbientMismatch mm =
         RenderCore::framegraph::compareAmbient(*decl, live);
     if (mm.any()) {
         ++g_ambientMismatchCount;
         fprintf(stderr,
-            "[AMBIENT_PROBE] pass=\"%s\" colorMaskMiss=%d depthFuncMiss=%d "
-            "(decl cm=%d df=%d | live cm=%d df=%d)\n",
-            decl->note ? decl->note : "?", (int)mm.colorMask, (int)mm.depthFunc,
-            (int)decl->colorMaskOnEntry, (int)decl->depthFunc,
-            (int)live.colorMask, (int)live.depthFunc);
+            "[AMBIENT_PROBE] pass=\"%s\" cmMiss=%d dfMiss=%d blendMiss=%d dwMiss=%d "
+            "(decl cm=%d df=%d bl=%d dw=%d | live cm=%d df=%d bl=%d dw=%d)\n",
+            decl->note ? decl->note : "?",
+            (int)mm.colorMask, (int)mm.depthFunc, (int)mm.blend, (int)mm.depthWrite,
+            (int)decl->colorMaskOnEntry, (int)decl->depthFunc, (int)decl->blend, (int)decl->depthWrite,
+            (int)live.colorMask, (int)live.depthFunc, (int)live.blend, (int)live.depthWrite);
         fflush(stderr);
         static const bool s_fatal = (::getenv("MC2_AMBIENT_ASSERT_FATAL") != nullptr);
         if (s_fatal) abort();

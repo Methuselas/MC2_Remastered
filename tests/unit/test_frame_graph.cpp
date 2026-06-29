@@ -142,8 +142,46 @@ TEST_CASE("compareAmbient: pure cross-check logic (declared vs sampled)") {
     CHECK(mc.depthFunc == false);
 
     // Unclassifiable live value (Inherit) is skipped -> no false positive.
-    AmbientSample unknown;  // both Inherit
+    AmbientSample unknown;  // all Inherit
     CHECK(compareAmbient(*terrain, unknown).any() == false);
+}
+
+TEST_CASE("ambient ledger-2: depth-write declared ON; blend left Inherit (probe-proven)") {
+    // depthWrite is a clean per-pass axis (runtime probe: dwMiss=0). blend is NOT --
+    // the probe proved GL_BLEND is globally enabled even in opaque passes, so it is left
+    // Inherit (asserting Off produced 5881/9804 false mismatches). This test locks that
+    // finding: depthWrite ON, blend Inherit, for shadow + opaque passes.
+    const RenderPassId opaque[] = {
+        RenderPassId::Shadow, RenderPassId::StaticPropOpaque,
+        RenderPassId::Terrain, RenderPassId::MechOpaque
+    };
+    for (int i = 0; i < 4; ++i) {
+        const AmbientContract* a = findAmbient(opaque[i]);
+        REQUIRE(a != nullptr);
+        CHECK(static_cast<unsigned>(a->depthWrite) == static_cast<unsigned>(DepthWriteState::On));
+        CHECK(static_cast<unsigned>(a->blend)      == static_cast<unsigned>(BlendState::Inherit));
+    }
+}
+
+TEST_CASE("compareAmbient: blend + depth-write axes cross-check (pure, synthetic decl)") {
+    // Table-independent: exercise the pure compare with a decl that DECLARES blend, so
+    // the logic is tested even though no shipped pass declares blend (it's Inherit there).
+    AmbientContract decl{};                 // all Inherit / false / nullptr
+    decl.depthWrite = DepthWriteState::On;
+    decl.blend      = BlendState::Off;
+
+    AmbientSample good; good.blend = BlendState::Off; good.depthWrite = DepthWriteState::On;
+    CHECK(compareAmbient(decl, good).any() == false);
+
+    AmbientSample badBlend = good; badBlend.blend = BlendState::On;
+    CHECK(compareAmbient(decl, badBlend).blend == true);
+
+    AmbientSample badDW = good; badDW.depthWrite = DepthWriteState::Off;
+    CHECK(compareAmbient(decl, badDW).depthWrite == true);
+
+    // Inherit live -> skipped (no false positive even though declared).
+    AmbientSample inheritBlend = good; inheritBlend.blend = BlendState::Inherit;
+    CHECK(compareAmbient(decl, inheritBlend).blend == false);
 }
 
 } // TEST_SUITE

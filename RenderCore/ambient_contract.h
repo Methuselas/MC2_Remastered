@@ -37,6 +37,26 @@ enum class DepthFuncState : uint8_t { Inherit = 0, SceneGEqual, ShadowLess };
 // ShadowMap = the shadow atlas size.
 enum class ViewportKind : uint8_t { Inherit = 0, MainScene, ShadowMap };
 
+// FRAME-GRAPH-AMBIENT-LEDGER-2 axes, both samplable (glIsEnabled(GL_BLEND),
+// glGetBooleanv(GL_DEPTH_WRITEMASK)).
+//
+// *** depthWrite IS a clean per-pass axis: declared ON for shadow+opaque, the runtime
+//     probe confirmed dwMiss=0 across ~9.8k samples. Kept + verified.
+//
+// *** blend is NOT a per-pass axis in THIS engine: the runtime probe (MC2_AMBIENT_PROBE)
+//     proved GL_BLEND is GLOBALLY ENABLED (live bl=On) even during opaque passes -- MC2
+//     leaves blend enabled and controls via the blend FUNC, not the enable. The textbook
+//     "opaque => blend OFF" was wrong here (5881/9804 false mismatches when declared Off).
+//     So blend is left Inherit (not asserted). This is exactly why the probe ships first:
+//     measure reality before declaring. A per-pass blend contract would need the blend
+//     FUNC/equation, not the enable bit -- deferred.
+//
+// Deferred axes with NO stable per-pass declarable value (recon §2): bound FBO (dynamic
+// GLuint), scissor/stencil (frame-global, inherited), tex-unit latches (NVIDIA leak), VAO
+// (endScene save/restore). Those need a different model than a per-pass enum.
+enum class BlendState      : uint8_t { Inherit = 0, On, Off };
+enum class DepthWriteState : uint8_t { Inherit = 0, On, Off };
+
 // Sparse: only passes with a notable ambient contract are listed. Absent = no special
 // ambient requirement declared yet (the ledger grows incrementally).
 struct AmbientContract {
@@ -49,6 +69,9 @@ struct AmbientContract {
     bool           producesTerrainLatch;    // sets markTerrainDrawn / sceneHasTerrain_
     bool           consumesTerrainLatch;    // bails if !sceneHasTerrain_ (post sub-passes)
     const char*    note;
+    // LEDGER-2 axes (default Inherit so existing rows are unaffected unless they opt in).
+    BlendState      blend      = BlendState::Inherit;
+    DepthWriteState depthWrite = DepthWriteState::Inherit;
 };
 
 static constexpr AmbientContract kPassAmbient[] = {
@@ -58,12 +81,14 @@ static constexpr AmbientContract kPassAmbient[] = {
       ColorMaskState::AllOff, /*reassert*/ false, /*disables*/ true,
       DepthFuncState::ShadowLess, ViewportKind::ShadowMap,
       /*producesLatch*/ false, /*consumesLatch*/ false,
-      "depth-only; color write OFF; GL_LESS; shadow-atlas viewport" },
+      "depth-only; color write OFF; GL_LESS; shadow-atlas viewport",
+      /*blend*/ BlendState::Inherit, /*depthWrite*/ DepthWriteState::On },
 
     { RenderPassId::StaticPropOpaque,
       ColorMaskState::Inherit, false, false,
       DepthFuncState::SceneGEqual, ViewportKind::MainScene,
-      false, false, "reverse-Z scene opaque" },
+      false, false, "reverse-Z scene opaque",
+      /*blend*/ BlendState::Inherit, /*depthWrite*/ DepthWriteState::On },
 
     // Terrain: re-asserts glColorMask(TRUE) after shadow disabled it (the load-bearing
     // shadow-leak repair, gameos_graphics.cpp ~:1418/3501) AND sets the markTerrainDrawn
@@ -72,12 +97,14 @@ static constexpr AmbientContract kPassAmbient[] = {
       ColorMaskState::AllOn,  /*reassert*/ true,  /*disables*/ false,
       DepthFuncState::SceneGEqual, ViewportKind::MainScene,
       /*producesLatch*/ true, /*consumesLatch*/ false,
-      "re-asserts glColorMask(TRUE); sets sceneHasTerrain_ latch" },
+      "re-asserts glColorMask(TRUE); sets sceneHasTerrain_ latch",
+      /*blend*/ BlendState::Inherit, /*depthWrite*/ DepthWriteState::On },
 
     { RenderPassId::MechOpaque,
       ColorMaskState::Inherit, false, false,
       DepthFuncState::SceneGEqual, ViewportKind::MainScene,
-      false, false, "reverse-Z scene opaque" },
+      false, false, "reverse-Z scene opaque",
+      /*blend*/ BlendState::Inherit, /*depthWrite*/ DepthWriteState::On },
 
     // PostProcess: screenShadow/cloudShadow/shoreline/edgeFog/fogOob bail if
     // !sceneHasTerrain_ (gos_postprocess.cpp :1303/1936/2030/2173/2234/2284/2341) -> the
@@ -110,13 +137,17 @@ inline const AmbientContract* findAmbient(RenderPassId id) {
 // differ -- that mismatch is DATA (it tells us the entry-vs-established boundary), which
 // is exactly why the runtime probe ships default-OFF and diagnostic, not as a guard.
 struct AmbientSample {
-    ColorMaskState colorMask = ColorMaskState::Inherit;
-    DepthFuncState depthFunc = DepthFuncState::Inherit;
+    ColorMaskState  colorMask  = ColorMaskState::Inherit;
+    DepthFuncState  depthFunc  = DepthFuncState::Inherit;
+    BlendState      blend      = BlendState::Inherit;
+    DepthWriteState depthWrite = DepthWriteState::Inherit;
 };
 struct AmbientMismatch {
-    bool colorMask = false;
-    bool depthFunc = false;
-    bool any() const { return colorMask || depthFunc; }
+    bool colorMask  = false;
+    bool depthFunc  = false;
+    bool blend      = false;
+    bool depthWrite = false;
+    bool any() const { return colorMask || depthFunc || blend || depthWrite; }
 };
 inline AmbientMismatch compareAmbient(const AmbientContract& decl, const AmbientSample& live) {
     AmbientMismatch m;
@@ -126,6 +157,12 @@ inline AmbientMismatch compareAmbient(const AmbientContract& decl, const Ambient
     if (decl.depthFunc != DepthFuncState::Inherit &&
         live.depthFunc != DepthFuncState::Inherit)
         m.depthFunc = (decl.depthFunc != live.depthFunc);
+    if (decl.blend != BlendState::Inherit &&
+        live.blend != BlendState::Inherit)
+        m.blend = (decl.blend != live.blend);
+    if (decl.depthWrite != DepthWriteState::Inherit &&
+        live.depthWrite != DepthWriteState::Inherit)
+        m.depthWrite = (decl.depthWrite != live.depthWrite);
     return m;
 }
 
