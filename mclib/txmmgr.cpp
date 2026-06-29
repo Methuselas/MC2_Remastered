@@ -80,6 +80,7 @@
 #include "../GameOS/gameos/gos_terrain_indirect.h"
 #include "../GameOS/gameos/gos_render_pass_timer.h"
 #include "../GameOS/gameos/gos_terrain_bridge.h"   // [TERRAIN_SURFACE] PR-2 surface validation draw
+#include "../RenderCore/terrain_path_telemetry.h"  // LEGACY-MLR-DELETE-1: tripwire noteTerrainPath(LegacyMLR)
 #include "../GameOS/gameos/gos_terrain_mask_dispatch.h"  // B4 Stage 1b: mask-SOLID draw
 #include "../GameOS/gameos/gpu_cull_compute.h"  // C1b: compute_dispatch() moved here from mission.cpp
 #include "../GameOS/gameos/gpu_cull_substrate.h"
@@ -3054,18 +3055,21 @@ void MC_TextureManager::renderLists (void)
 				if ((masterVertexNodes[i].flags & MC2_DRAWSOLID) &&
 					(masterVertexNodes[i].vertices))
 				{
-					if (modernHandled && (masterVertexNodes[i].flags & MC2_ISTERRAIN)) {
+					// LEGACY-MLR-DELETE-1: legacy masterVertexNode terrain draw retired. Terrain solid is
+					// owned by LOD-chunk (gamecam.cpp:508) / indirect bridge / patch-stream. A terrain node
+					// must NOT draw via this shared MC2_DRAWSOLID loop. Always skip terrain here. If a terrain
+					// node arrives with modernHandled==false, no modern path drew terrain this frame — a real
+					// regression (terrain would be invisible). Fire the LegacyMLR telemetry counter as a loud
+					// tripwire so it surfaces in terrain_path.legacy_mlr instead of silently vanishing.
+					if (masterVertexNodes[i].flags & MC2_ISTERRAIN) {
+						if (!modernHandled)
+							RenderCore::framegraph::noteTerrainPath(RenderCore::framegraph::TerrainPath::LegacyMLR);
 						masterVertexNodes[i].currentVertex = masterVertexNodes[i].vertices;
 						continue;
 					}
 
-					if (masterVertexNodes[i].flags & MC2_ISTERRAIN) {
-						gos_SetRenderState( gos_State_TextureAddress, gos_TextureClamp );
-						gos_SetRenderState( gos_State_Terrain, 1 );
-					} else {
-						gos_SetRenderState( gos_State_TextureAddress, gos_TextureWrap );
-						gos_SetRenderState( gos_State_Terrain, 0 );
-					}
+					gos_SetRenderState( gos_State_TextureAddress, gos_TextureWrap );
+					gos_SetRenderState( gos_State_Terrain, 0 );
 
 					DWORD totalVertices = masterVertexNodes[i].numVertices;
 					if (masterVertexNodes[i].currentVertex != (masterVertexNodes[i].vertices + masterVertexNodes[i].numVertices))
@@ -3073,15 +3077,8 @@ void MC_TextureManager::renderLists (void)
 						totalVertices = masterVertexNodes[i].currentVertex - masterVertexNodes[i].vertices;
 					}
 
-					// Set per-node terrain extras for tessellation VBO alignment
-					if ((masterVertexNodes[i].flags & MC2_ISTERRAIN) && masterVertexNodes[i].extras) {
-						int extraCount = masterVertexNodes[i].currentExtra
-							? (int)(masterVertexNodes[i].currentExtra - masterVertexNodes[i].extras)
-							: 0;
-						gos_SetTerrainBatchExtras(masterVertexNodes[i].extras, extraCount);
-					} else {
-						gos_SetTerrainBatchExtras(NULL, 0);
-					}
+					// LEGACY-MLR-DELETE-1: dead (terrain skipped above); non-terrain nodes never have terrain extras.
+					gos_SetTerrainBatchExtras(NULL, 0);
 
 					if (totalVertices && (totalVertices < MAX_SENDDOWN))
 					{
