@@ -8,6 +8,7 @@
 #include "RenderCore/frame_graph_validate.h"
 #include "RenderCore/ambient_contract.h"
 #include "RenderCore/fbo_ledger.h"
+#include "RenderCore/terrain_subpass_contract.h"
 
 using namespace RenderCore;
 using namespace RenderCore::framegraph;
@@ -217,6 +218,133 @@ TEST_CASE("fbo ledger: scene passes declare MainColor target; others undeclared"
     CHECK(rid(declaredFboTarget(RenderPassId::TerrainDecal))     == mc);
     // PostProcess intentionally undeclared (timing-uncertain at the sample seam).
     CHECK(rid(declaredFboTarget(RenderPassId::PostProcess)) == rid(RenderResourceId::Unknown));
+}
+
+TEST_CASE("terrain subpass table: 4 rows, writes all MainColor+MainDepth, all read ShadowDynamicMap first") {
+    auto rid = [](RenderResourceId r){ return static_cast<unsigned>(r); };
+    CHECK(kTerrainSubPassCount == 4);
+    CHECK(allTerrainSubPassesWriteMainColorDepth() == true);
+    for (int i = 0; i < kTerrainSubPassCount; ++i) {
+        CHECK(rid(kTerrainSubPasses[i].reads[0]) == rid(RenderResourceId::ShadowDynamicMap));
+    }
+}
+
+TEST_CASE("terrain subpass table: Indirect declares Command barrier; others None") {
+    auto bk = [](BarrierKind b){ return static_cast<unsigned>(b); };
+    const TerrainSubPass* indirect = findTerrainSubPass(TerrainPath::IndirectBridge);
+    REQUIRE(indirect != nullptr);
+    CHECK(bk(indirect->barrierAfter) == bk(BarrierKind::Command));
+
+    const TerrainPath others[] = { TerrainPath::LODChunk, TerrainPath::PatchStreamThin, TerrainPath::LegacyMLR };
+    for (int i = 0; i < 3; ++i) {
+        const TerrainSubPass* s = findTerrainSubPass(others[i]);
+        REQUIRE(s != nullptr);
+        CHECK(bk(s->barrierAfter) == bk(BarrierKind::None));
+    }
+}
+
+TEST_CASE("terrain subpass table: Indirect reads recipe/thin/cement/mask; LODChunk reads HeightSsbo instead") {
+    const TerrainSubPass* indirect = findTerrainSubPass(TerrainPath::IndirectBridge);
+    REQUIRE(indirect != nullptr);
+    // verify all 4 Indirect-specific reads are present
+    bool hasRecipe = false, hasThin = false, hasCement = false, hasMask = false;
+    for (int i = 0; i < 6; ++i) {
+        if (indirect->reads[i] == RenderResourceId::TerrainRecipeBuffer) hasRecipe = true;
+        if (indirect->reads[i] == RenderResourceId::TerrainThinBuffer)   hasThin   = true;
+        if (indirect->reads[i] == RenderResourceId::CementAtlas)         hasCement = true;
+        if (indirect->reads[i] == RenderResourceId::TransitionMaskArray) hasMask   = true;
+    }
+    CHECK(hasRecipe == true);
+    CHECK(hasThin   == true);
+    CHECK(hasCement == true);
+    CHECK(hasMask   == true);
+
+    const TerrainSubPass* lod = findTerrainSubPass(TerrainPath::LODChunk);
+    REQUIRE(lod != nullptr);
+    bool lodHasRecipe = false, lodHasThin = false, lodHasHeight = false;
+    for (int i = 0; i < 6; ++i) {
+        if (lod->reads[i] == RenderResourceId::TerrainRecipeBuffer) lodHasRecipe = true;
+        if (lod->reads[i] == RenderResourceId::TerrainThinBuffer)   lodHasThin   = true;
+        if (lod->reads[i] == RenderResourceId::TerrainHeightSsbo)   lodHasHeight = true;
+    }
+    CHECK(lodHasRecipe == false);
+    CHECK(lodHasThin   == false);
+    CHECK(lodHasHeight == true);
+}
+
+TEST_CASE("terrain subpass table: mvpSource and drawSite per branch") {
+    auto ms = [](TerrainMvpSource m){ return static_cast<unsigned>(m); };
+    auto ds = [](TerrainDrawSite d){ return static_cast<unsigned>(d); };
+    const TerrainSubPass* indirect = findTerrainSubPass(TerrainPath::IndirectBridge);
+    REQUIRE(indirect != nullptr);
+    CHECK(ms(indirect->mvpSource) == ms(TerrainMvpSource::SnapshotEpoch));
+
+    const TerrainSubPass* patch = findTerrainSubPass(TerrainPath::PatchStreamThin);
+    REQUIRE(patch != nullptr);
+    CHECK(ms(patch->mvpSource) == ms(TerrainMvpSource::Live));
+
+    const TerrainSubPass* legacy = findTerrainSubPass(TerrainPath::LegacyMLR);
+    REQUIRE(legacy != nullptr);
+    CHECK(ms(legacy->mvpSource) == ms(TerrainMvpSource::Live));
+
+    const TerrainSubPass* lod = findTerrainSubPass(TerrainPath::LODChunk);
+    REQUIRE(lod != nullptr);
+    CHECK(ds(lod->drawSite) == ds(TerrainDrawSite::Gamecam));
+
+    const TerrainPath renderListsPaths[] = { TerrainPath::IndirectBridge, TerrainPath::PatchStreamThin, TerrainPath::LegacyMLR };
+    for (int i = 0; i < 3; ++i) {
+        const TerrainSubPass* s = findTerrainSubPass(renderListsPaths[i]);
+        REQUIRE(s != nullptr);
+        CHECK(ds(s->drawSite) == ds(TerrainDrawSite::RenderLists));
+    }
+}
+
+TEST_CASE("terrain subpass latch audit: Indirect latch miss is CURRENT REALITY (HIGH finding tripwire)") {
+    auto tp = [](TerrainPath p){ return static_cast<int>(p); };
+    // Every branch declares producesTerrainLatch=true.
+    for (int i = 0; i < kTerrainSubPassCount; ++i)
+        CHECK(kTerrainSubPasses[i].producesTerrainLatch == true);
+
+    // Indirect does NOT actually call markTerrainDrawn — the recon §4 HIGH finding.
+    // allDeclaredLatchProducersImplemented() == false encodes the current reality.
+    // NOTE: This test will START FAILING (by design) once the Indirect markTerrainDrawn fix lands.
+    // At that point flip latchActuallyImplemented for IndirectBridge to true and update
+    // allImplemented CHECK to == true. This is the intended tripwire.
+    CHECK(allDeclaredLatchProducersImplemented() == false);
+    CHECK(tp(firstUnimplementedLatchProducer())  == tp(TerrainPath::IndirectBridge));
+
+    const TerrainSubPass* indirect = findTerrainSubPass(TerrainPath::IndirectBridge);
+    REQUIRE(indirect != nullptr);
+    CHECK(indirect->latchActuallyImplemented == false);
+
+    const TerrainPath implementedPaths[] = { TerrainPath::LODChunk, TerrainPath::PatchStreamThin, TerrainPath::LegacyMLR };
+    for (int i = 0; i < 3; ++i) {
+        const TerrainSubPass* s = findTerrainSubPass(implementedPaths[i]);
+        REQUIRE(s != nullptr);
+        CHECK(s->latchActuallyImplemented == true);
+    }
+}
+
+TEST_CASE("terrain subpass active-branch probe: pure kernel with synthetic counter arrays") {
+    auto tp = [](TerrainPath p){ return static_cast<int>(p); };
+    // counts {1994,0,0,0} -> drew==1, dominant==LODChunk
+    {
+        unsigned long c[4] = { 1994, 0, 0, 0 };
+        CHECK(terrainPathsThatDrew(c) == 1);
+        CHECK(tp(dominantTerrainPath(c)) == tp(TerrainPath::LODChunk));
+    }
+    // counts {0,0,0,0} -> drew==0, dominant==TerrainPath::Count (none)
+    {
+        unsigned long c[4] = { 0, 0, 0, 0 };
+        CHECK(terrainPathsThatDrew(c) == 0);
+        CHECK(tp(dominantTerrainPath(c)) == tp(TerrainPath::Count));
+    }
+    // counts {5,9,0,0} -> dominant==IndirectBridge, drew==2
+    {
+        unsigned long c[4] = { 5, 9, 0, 0 };
+        CHECK(terrainPathsThatDrew(c) == 2);
+        CHECK(tp(dominantTerrainPath(c)) == tp(TerrainPath::IndirectBridge));
+    }
 }
 
 } // TEST_SUITE

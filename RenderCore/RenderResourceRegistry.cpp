@@ -51,6 +51,12 @@ const char* toString(RenderResourceId id) {
         case RenderResourceId::ShadowDynamicMap:     return "ShadowDynamicMap";
         case RenderResourceId::WaterReflectionColor: return "WaterReflectionColor";
         case RenderResourceId::WaterReflectionDepth: return "WaterReflectionDepth";
+        case RenderResourceId::Backbuffer:           return "Backbuffer";
+        case RenderResourceId::TerrainRecipeBuffer:  return "TerrainRecipeBuffer";
+        case RenderResourceId::TerrainThinBuffer:    return "TerrainThinBuffer";
+        case RenderResourceId::CementAtlas:          return "CementAtlas";
+        case RenderResourceId::TransitionMaskArray:  return "TransitionMaskArray";
+        case RenderResourceId::TerrainHeightSsbo:    return "TerrainHeightSsbo";
         case RenderResourceId::Count:                return "Count";
     }
     return "unknown";

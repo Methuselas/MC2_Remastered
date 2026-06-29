@@ -18,6 +18,11 @@ enum class RenderResourceId : uint16_t {
     WaterReflectionColor = 7,   // WATER-REFLECTION-RESOURCE-1: 1/4-res reflection RT (color)
     WaterReflectionDepth = 8,   // WATER-REFLECTION-RESOURCE-1: 1/4-res reflection RT (depth)
     Backbuffer           = 9,   // FRAME-GRAPH-FBO-LEDGER-1: default framebuffer (GL name 0)
+    TerrainRecipeBuffer  = 10,  // TERRAIN-SUBPASS-MODEL-1: Indirect: recipe SSBO (slot1)
+    TerrainThinBuffer    = 11,  // TERRAIN-SUBPASS-MODEL-1: Indirect/PatchStream: thin-record SSBO (slot2)
+    CementAtlas          = 12,  // TERRAIN-SUBPASS-MODEL-1: Indirect: cement atlas (unit3)
+    TransitionMaskArray  = 13,  // TERRAIN-SUBPASS-MODEL-1: Indirect: transition-mask 2D_ARRAY (unit4)
+    TerrainHeightSsbo    = 14,  // TERRAIN-SUBPASS-MODEL-1: LOD-chunk: height SSBO (distinct from static TerrainHeightTexture)
     Count
 };
 
