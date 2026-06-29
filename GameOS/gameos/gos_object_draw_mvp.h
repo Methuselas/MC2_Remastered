@@ -18,6 +18,7 @@
 // scripts/check-object-mvp-currency.py.
 
 #include <cstdlib>
+#include "../../RenderCore/view_currency.h"   // pure currency kernel (single source of truth)
 
 extern const float*     gos_GetTerrainMVPMat4();                       // live MVP
 extern "C" const float* gos_terrain_indirect_getDispatchMvp16();       // snapshot
@@ -42,11 +43,13 @@ void          gos_object_mvp_note_used();
 // live MVP, which is always a correct projection of current-position geometry.
 static inline const float* gos_GetObjectDrawMVP(bool fixBEnabled) {
     if (fixBEnabled && gos_terrain_indirect::IsFrameSolidArmed()) {
-        if (gos_terrain_indirect_getDispatchMvpViewEpoch() == g_viewContentEpoch) {
-            if (const float* m = gos_terrain_indirect_getDispatchMvp16()) {
-                gos_object_mvp_note_used();   // depth-matched snapshot -> z-fight fix active
-                return m;                     // snapshot belongs to THIS view -> safe
-            }
+        const float* snap = gos_terrain_indirect_getDispatchMvp16();
+        if (mc2::view_currency::objectMvpUseSnapshot(
+                /*fixBEnabled*/true, /*armed*/true,
+                gos_terrain_indirect_getDispatchMvpViewEpoch(), g_viewContentEpoch,
+                snap != nullptr)) {
+            gos_object_mvp_note_used();   // depth-matched snapshot -> z-fight fix active
+            return snap;                  // snapshot belongs to THIS view -> safe
         }
         gos_object_mvp_note_stale();      // armed but snapshot is from another view
     }

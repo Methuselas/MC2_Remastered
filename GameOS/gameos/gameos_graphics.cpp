@@ -9471,21 +9471,15 @@ void __stdcall gos_SetWorldToClipGL(const Stuff::Matrix4D& mat)
     ++g_mvpDiagFrame;
 
     // VIEW-EPOCH-DEDUPE-1: advance the semantic view-content epoch only on a real
-    // matrix change (max abs element delta > epsilon). Identical same-camera
-    // republishes (early-publish then gamecam) leave it unchanged, so the dispatch
-    // snapshot is not false-staled and object draw keeps the depth-matched snapshot.
+    // matrix change. Identical same-camera republishes (early-publish then gamecam)
+    // leave it unchanged, so the dispatch snapshot is not false-staled and object draw
+    // keeps the depth-matched snapshot. Logic lives in the pure kernel so the offline
+    // unit harness (tests/unit/test_view_currency.cpp) verifies the SAME code.
     {
-        float maxDelta = 1e30f;            // first publish: force one bump
-        if (g_havePrevPublishedWtc) {
-            maxDelta = 0.0f;
-            for (int i = 0; i < 16; ++i) {
-                float d = M[i] - g_prevPublishedWtc[i];
-                if (d < 0.0f) d = -d;
-                if (d > maxDelta) maxDelta = d;
-            }
-        }
         static const float kViewEpsilon = 1e-6f;  // ignore redundant republish, not real motion
-        if (maxDelta > kViewEpsilon) ++g_viewContentEpoch;
+        if (mc2::view_currency::viewContentChanged(g_prevPublishedWtc, M,
+                                                   g_havePrevPublishedWtc, kViewEpsilon))
+            ++g_viewContentEpoch;
         for (int i = 0; i < 16; ++i) g_prevPublishedWtc[i] = M[i];
         g_havePrevPublishedWtc = true;
     }
