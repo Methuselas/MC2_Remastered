@@ -44,6 +44,11 @@ class LogisticsComponent
 		inline const char* getPictureFileName() const { return pictureFileName; }
 		inline int		getComponentWidth() const { return iconX; }
 		inline int		getComponentHeight() const { return iconY; }
+		// MC2_ENGINE_XL: XL engines get a weight-class-dependent footprint + heat,
+		// applied per current mech on mech-bay entry (mechlabscreen). Mutating the
+		// shared component is safe — only one mech is edited at a time.
+		void			setEngineProfile( int w, int h, float heatVal )
+							{ iconX = w; iconY = h; heat = heatVal; }
 		bool			compare( LogisticsComponent* second, int type );
 		bool			isAvailable(){ return bAvailable; }
 		void			setAvailable(bool avail){ bAvailable = avail; }

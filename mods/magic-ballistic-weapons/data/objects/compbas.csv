@@ -1,8 +1,8 @@
 Component Table,Type,Name,crit hits,Recycle (if ammo = #shots),Heat,Weight,Damage (if ammo = explosive dam),BR,RP,Range,Location Head,Location CT,Location LT,Location RT,Location LA,Location RA,Location LL,Location RL,"Missile type (0=Energy,1=Ballistic,LRM,ST,SRM)","Fields (1=streak,2=inferno,4=LBX,8=Artillery)",Special FX ID,Ammo Master ID,Logistics Icon 1,Logistics Icon 2,String Index,Mechlipidia String,Icon X ,Icon Y
 0,undefined,undefined,0,na,na,0,na,0,0,0,0,0,0,0,0,0,0,0,na,0,0,0,0,0,32000,34000,,
 1,Engine,Fusion Engine,6,NA,NA,0,NA,0,0,0,No,6,No,No,No,No,No,No,na,0,0,0,0,0,32001,34001,,
-2,Engine,XL Fusion Engine,12,na,na,0,na,0,1000,0,No,6,3,3,No,No,No,No,na,0,0,0,MCL_MC_XLEngine.tga,MCL_MC_HEATSINK,32002,34002,1,2
-3,Engine,C XL Fusion Engine,10,na,na,0,na,0,1000,0,No,6,2,2,No,No,No,No,na,0,0,0,MCL_MC_ClanXLEngine.tga,MCL_MC_HEATSINK,32003,34003,1,1
+2,Engine,XL Fusion Engine,12,na,na,0,na,0,1500,0,No,6,3,3,No,No,No,No,na,0,0,0,MCL_MC_XLEngine.tga,MCL_MC_HEATSINK,32002,34002,1,2
+3,Engine,C XL Fusion Engine,10,na,na,0,na,0,3500,0,No,6,2,2,No,No,No,No,na,0,0,0,MCL_MC_ClanXLEngine.tga,MCL_MC_HEATSINK,32003,34003,1,1
 4,Actuator,Arm Actuator,3,NA,NA,0,NA,0,0,0,No,No,No,No,Yes,Yes,No,No,na,0,0,0,0,0,32004,34004,,
 5,Actuator,Leg Actuator,3,NA,NA,0,NA,0,0,0,No,No,No,No,No,No,Yes,Yes,na,0,0,0,0,0,32005,34005,,
 6,Cockpit,Cockpit,1,NA,NA,0,NA,0,0,0,1,No,No,No,No,No,No,No,na,0,0,0,0,0,32006,34006,,

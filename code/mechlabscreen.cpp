@@ -250,6 +250,26 @@ void MechLabScreen::begin()
 		}
 		pVariant = mechToMod->getVariant();
 
+		// MC2_ENGINE_XL: size the XL-engine components' footprint + heat to this
+		// mech's weight class before the bay is shown. Base XL: Light 2x1/h8,
+		// Medium 3x1/h12, Heavy 2x2/h16, Assault 3x2/h20. Clan XL: 1x1/2x1/2x1/3x1
+		// (same heat). All placement/render sites read getComponentWidth/Height,
+		// so this one hook drives the whole UI.
+		if ( pVariant && pVariant->getChassis() )
+		{
+			float tons = pVariant->getChassis()->getMaxWeight();
+			int cls = ( tons <= 35 ) ? 0 : ( tons <= 55 ) ? 1 : ( tons <= 75 ) ? 2 : 3;
+			static const int   baseW[4] = { 2, 3, 2, 3 };
+			static const int   baseH[4] = { 1, 1, 2, 2 };
+			static const int   clanW[4] = { 1, 2, 2, 3 };
+			static const int   clanH[4] = { 1, 1, 1, 1 };
+			static const float heatByCls[4] = { 8.0f, 12.0f, 16.0f, 20.0f };
+			LogisticsComponent* xl  = LogisticsData::instance->getComponent( 2 );
+			LogisticsComponent* cxl = LogisticsData::instance->getComponent( 3 );
+			if ( xl )  xl->setEngineProfile( baseW[cls], baseH[cls], heatByCls[cls] );
+			if ( cxl ) cxl->setEngineProfile( clanW[cls], clanH[cls], heatByCls[cls] );
+		}
+
 		variantList.ListBox().removeAllItems(true);
 
 		int maxCount = 0;

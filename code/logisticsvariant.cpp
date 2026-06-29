@@ -691,6 +691,14 @@ int LogisticsVariant::canAddComponent( LogisticsComponent* pComponent, long& x, 
 	}
 	else if ( x == -2 && y == -2 ) // trying to put something illegal in jump jet slot
 		return COMPONENT_SLOT_FULL;
+
+	// Only one XL engine upgrade per mech.
+	if ( pComponent->getType() == COMPONENT_FORM_ENGINE )
+	{
+		for ( int i = 0; i < componentCount; ++i )
+			if ( components[i].component->getType() == COMPONENT_FORM_ENGINE )
+				return ADD_COMPONENT_FAILED;
+	}
 		 
 
 	if ( x!= -1 && y != -1 )
