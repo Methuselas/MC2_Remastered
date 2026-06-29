@@ -8,6 +8,7 @@
 #include "../../RenderCore/RendererFeatureRegistry.h"
 #include "../../RenderCore/RenderResourceRegistry.h"
 #include "gos_frame_pass_stats.h"   // [FRAME_PASS_STATS v1] additive JSON section
+#include "gos_frame_context.h"      // RENDER-FRAME-CONTEXT-1 read-only mirror (file scope!)
 #include "../../code/unitprofile.h" // UNIT-PROFILE-SEAM-1 witness bridge (POD only)
 
 // Texture name lookup for mech node indices (mcTextureManager slot → name string).
@@ -197,6 +198,20 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
     s << "  \"dump_kind\": \"" << (dumpKind ? dumpKind : "periodic") << "\",\n";
     s << "  \"written_at_epoch\": " << writtenAtEpoch << ",\n";
     s << "  \"frame\": " << static_cast<unsigned long long>(snap.frameIndex) << ",\n";
+    // RENDER-FRAME-CONTEXT-1: read-only mirror of the authoritative per-frame
+    // globals + the additive self-check (mirror_ok is true by construction in this
+    // slice; mismatch_count becomes load-bearing after the authority-inversion slice).
+    {
+        const RenderFrameContext fc = gos_FrameCtx();
+        const bool fcOk = gos_FrameCtxValidate();
+        s << "  \"frame_context\": {\n";
+        s << "    \"engine_frame\": " << static_cast<unsigned long long>(fc.engineFrame) << ",\n";
+        s << "    \"view_epoch\": " << static_cast<long long>(fc.viewEpoch) << ",\n";
+        s << "    \"stale_mvp_reads\": " << fc.staleMvpReads << ",\n";
+        s << "    \"mismatch_count\": " << gos_framectx_mismatch_count() << ",\n";
+        s << "    \"mirror_ok\": "; b(s, fcOk); s << "\n";
+        s << "  },\n";
+    }
     s << "  \"mission\": {\n";
     s << "    \"name\": \"" << jsonEscape(missionKnown ? missionName : "") << "\",\n";
     s << "    \"known\": "; b(s, missionKnown); s << "\n";

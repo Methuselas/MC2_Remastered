@@ -9392,6 +9392,25 @@ long g_mvpDiagFrame = 0;
 // catches it instead of a player on NVIDIA three days later.
 static unsigned long g_objMvpStaleCount = 0;
 unsigned long gos_object_mvp_stale_count() { return g_objMvpStaleCount; }
+
+// RENDER-FRAME-CONTEXT-1 (M-guard): counts divergences between the read-only
+// gos_FrameCtx() mirror and the authoritative globals. No-op by construction in
+// the additive slice (the mirror reads those globals); becomes load-bearing when
+// the authority-inversion slice makes the globals shims. MC2_FRAMECTX_MISMATCH_FATAL=1
+// aborts so CI catches a desync instead of it going silent.
+static unsigned long g_framectxMismatchCount = 0;
+unsigned long gos_framectx_mismatch_count() { return g_framectxMismatchCount; }
+void gos_framectx_note_mismatch(const char* what) {
+    ++g_framectxMismatchCount;
+    static const bool s_fatal = (std::getenv("MC2_FRAMECTX_MISMATCH_FATAL") != nullptr);
+    if (s_fatal) {
+        fprintf(stderr, "[FRAMECTX] FATAL: frame-context mirror diverged from "
+                        "authoritative global (%s); count=%lu\n",
+                        what ? what : "?", g_framectxMismatchCount);
+        fflush(stderr);
+        abort();
+    }
+}
 void gos_object_mvp_note_stale() {
     ++g_objMvpStaleCount;
     static const bool s_fatal = (std::getenv("MC2_OBJ_MVP_STALE_FATAL") != nullptr);
