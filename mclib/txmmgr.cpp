@@ -3010,9 +3010,18 @@ void MC_TextureManager::renderLists (void)
 			// world-space surface and the indirect path draws first (land->render),
 			// causing the coarser LOD chunk mesh to fail the depth test.
 			if (mc2TerrainLodChunkEnabled()) {
-				modernHandled = true;   // chunks handle it; mark handled to suppress legacy fall-through
+				modernHandled = true;   // chunks handle it (existing)
 			} else {
-				modernHandled = gos_terrain_indirect::DrawIndirect();
+				// INDIRECT-BRIDGE-RETIRE-1: indirect-bridge SOLID terrain draw retired (deprecated branch,
+				// terrain_path.indirect proven 0 in default/smoke/capture/editor). LOD-chunk owns terrain.
+				// Do NOT DrawIndirect(); fire the telemetry counter as a regression tripwire. modernHandled
+				// MUST be true here: on armed frames setupTextures already fired SOLID gate-off so PatchStream
+				// has no SOLID records — a false value would fall through to the (now terrain-skipping) shared
+				// loop and could mis-fire the LegacyMLR tripwire. NOTE: DrawIndirect() itself is RETAINED
+				// (RenderWaterReflectionPass calls it internally, gos_terrain_indirect.cpp:3817); only this
+				// txmmgr SOLID-draw caller is retired.
+				RenderCore::framegraph::noteTerrainPath(RenderCore::framegraph::TerrainPath::IndirectBridge);
+				modernHandled = true;
 			}
 		} else if (TerrainPatchStream::isReady() && !TerrainPatchStream::isOverflowed()) {
 			// PATCHSTREAM-THIN-RETIRE-1: patch-stream-thin terrain draw retired (deprecated branch,
