@@ -3154,6 +3154,14 @@ bool Mover::hasActiveProbe (void) {
 
 //---------------------------------------------------------------------------
 
+void Mover::onTypeBound (void) {
+	// UNIT-PROFILE-SEAM-1: current capability state starts from type baseline.
+	if (getObjectType())
+		runtime.currentCapabilities = getObjectType()->profile().baselineCapabilities;
+}
+
+//---------------------------------------------------------------------------
+
 float Mover::getEcmRange (void) {
 
 	if ((ecm != 255))

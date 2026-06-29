@@ -830,6 +830,7 @@ class Mover : public GameObject {
 		// Team
 		//MoverGroupPtr		group;							// what group am I a member of?
 		char				teamId;
+		UnitRuntimeState	runtime;						// UNIT-PROFILE-SEAM-1
 		char				groupId;
 		int32_t				squadId;
 		int32_t				selectionIndex;					// > 0 when in selected group
@@ -1652,6 +1653,9 @@ class Mover : public GameObject {
 		virtual bool canJump (void) {
 			return(false);
 		}
+
+		// UNIT-PROFILE-SEAM-1: copy type baseline -> runtime at the type-bind seam.
+		virtual void onTypeBound (void);
 
 		virtual float getJumpRange (long* numOffsets = NULL, long* jumpCost = NULL) {
 			if (numOffsets)

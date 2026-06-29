@@ -1693,6 +1693,9 @@ void GameObject::init (bool create, ObjectTypePtr _type) {
 //	id = _type->getName();
 #endif
 	objectClass = GAMEOBJECT;
+
+	// UNIT-PROFILE-SEAM-1: type now bound; let subclasses seed runtime state.
+	onTypeBound();
 }
 
 //---------------------------------------------------------------------------

@@ -451,6 +451,10 @@ class GameObject {
 		
 		virtual void init (bool create, ObjectTypePtr _type);
 
+		// UNIT-PROFILE-SEAM-1: hook fired at end of init(bool,ObjectTypePtr)
+		// once the type is bound. Base no-op; Mover copies type baseline->runtime.
+		virtual void onTypeBound (void) {}
+
 		virtual long init (FitIniFile* objProfile) {
 			return(NO_ERR);
 		}
