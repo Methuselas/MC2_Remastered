@@ -2707,6 +2707,11 @@ void gosPostProcess::drawShadowDebugOverlay()
     glBindTexture(texTarget, tex);
     glTexParameteri(texTarget, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
 
+    // GLSTATE-SHADOWDEBUG-2DARRAY-1: unbind unit-0's 2D_ARRAY so it doesn't
+    // leak into the HUD/UI pass (or escape executorOwnEnd under broader ownership).
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(texTarget, 0);
+
     glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
     glDepthMask(GL_TRUE);
     glEnable(GL_DEPTH_TEST);
