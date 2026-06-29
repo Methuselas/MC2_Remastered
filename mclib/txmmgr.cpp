@@ -3015,9 +3015,19 @@ void MC_TextureManager::renderLists (void)
 				modernHandled = gos_terrain_indirect::DrawIndirect();
 			}
 		} else if (TerrainPatchStream::isReady() && !TerrainPatchStream::isOverflowed()) {
-			// Un-armed frame: gate-off did not fire, legacy admits filled
-			// TerrainPatchStream normally. M2 thin-record-direct draw runs SOLID.
-			modernHandled = TerrainPatchStream::flush();
+			// PATCHSTREAM-THIN-RETIRE-1: patch-stream-thin terrain draw retired (deprecated branch,
+			// terrain_path.patch_stream proven 0 in default/smoke/capture/editor). LOD-chunk owns
+			// terrain. Do NOT flush()-draw; fire the telemetry counter as a regression tripwire so
+			// patch_stream>0 surfaces if a reachable config ever needed it. modernHandled stays false
+			// (no gate-off fired for un-armed frames) — matching the prior flush()-returns semantics
+			// when it drew nothing.
+			// NOTE: flush() side-effects audit — flush() does: (a) draw calls, (b) glFenceSync on
+			// current slot, (c) markTerrainDrawn() on post-process, (d) noteTerrainPath(PatchStreamThin).
+			// The ring slot advance is in beginFrame() NOT flush(), so skipping flush() does not break
+			// the ring. The getLastFlush* snapshot getters read statics reset by beginFrame() each frame
+			// — they will correctly read 0 when this branch is not flushing. markTerrainDrawn() is NOT
+			// called here because no terrain was drawn. NO load-bearing non-draw side effects are lost.
+			RenderCore::framegraph::noteTerrainPath(RenderCore::framegraph::TerrainPath::PatchStreamThin);
 		}
 
 		// RENDER-FRAME-PLAN-SCAFFOLD-1: tattle WHICH terrain-solid branch drew this
