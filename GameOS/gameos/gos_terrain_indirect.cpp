@@ -27,6 +27,7 @@ void __stdcall gos_SetTerrainMVP(const float* matrix16);
 // (defined in gameos_graphics.cpp), so the externs MUST live OUTSIDE namespace
 // gos_terrain_indirect or the linker mangles them as namespace-scoped symbols.
 extern long g_mvpDiagFrame;
+extern long g_viewContentEpoch;   // VIEW-EPOCH-DEDUPE-1 semantic view-content epoch
 extern long g_mvpEarlyPublishSeq;
 
 #include <vector>
@@ -3341,9 +3342,11 @@ void ComputeDispatch() {
         // Water-consistency fix: full MVP snapshot (see decl). This is the
         // exact matrix terrain-solid's Fix-B clipPos bake uses this frame.
         memcpy(g_dispatchMvp16, mvp, sizeof(float) * 16);
-        // RENDER-VIEW-CURRENCY-1: stamp the snapshot with the view epoch it was
-        // sourced under, so object/mech consumers can prove same-view currency.
-        g_dispatchMvpViewEpoch = ::g_mvpDiagFrame;
+        // RENDER-VIEW-CURRENCY-1 / VIEW-EPOCH-DEDUPE-1: stamp the snapshot with the
+        // semantic VIEW-CONTENT epoch it was sourced under (bumps only on real camera
+        // change, NOT on the redundant early+gamecam republish), so object/mech
+        // consumers prove same-view currency without false-staling every frame.
+        g_dispatchMvpViewEpoch = ::g_viewContentEpoch;
 
         // ── [DEPTH_TRANSITION v1] zoom-step depth-pop diagnostic ───────────
         // Env-gated MC2_DEPTH_TRANSITION_PROBE (cached static const bool;

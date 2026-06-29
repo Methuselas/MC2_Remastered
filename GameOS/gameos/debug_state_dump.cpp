@@ -207,6 +207,8 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
         s << "  \"frame_context\": {\n";
         s << "    \"engine_frame\": " << static_cast<unsigned long long>(fc.engineFrame) << ",\n";
         s << "    \"view_epoch\": " << static_cast<long long>(fc.viewEpoch) << ",\n";
+        s << "    \"view_content_epoch\": " << static_cast<long long>(fc.viewContentEpoch) << ",\n";
+        s << "    \"mvp_snapshot_used\": " << fc.mvpSnapshotUsed << ",\n";
         s << "    \"stale_mvp_reads\": " << fc.staleMvpReads << ",\n";
         s << "    \"mismatch_count\": " << gos_framectx_mismatch_count() << ",\n";
         s << "    \"mirror_ok\": "; b(s, fcOk); s << "\n";

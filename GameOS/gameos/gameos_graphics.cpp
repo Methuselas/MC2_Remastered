@@ -9392,6 +9392,12 @@ long g_mvpDiagFrame = 0;
 // catches it instead of a player on NVIDIA three days later.
 static unsigned long g_objMvpStaleCount = 0;
 unsigned long gos_object_mvp_stale_count() { return g_objMvpStaleCount; }
+// VIEW-EPOCH-DEDUPE-1: counts the snapshot-USED path (object draw projected through
+// the depth-matched dispatch snapshot = the FixB z-fight fix active). Paired with
+// the stale counter it proves the fix is live, not merely "fewer fallbacks".
+static unsigned long g_objMvpUsedCount = 0;
+unsigned long gos_object_mvp_used_count() { return g_objMvpUsedCount; }
+void gos_object_mvp_note_used() { ++g_objMvpUsedCount; }
 
 // RENDER-FRAME-CONTEXT-1 (M-guard): counts divergences between the read-only
 // gos_FrameCtx() mirror and the authoritative globals. No-op by construction in
@@ -9433,6 +9439,18 @@ void gos_object_mvp_note_stale() {
 // this process (gate OFF or pre-mission). Set ONLY by the early publish path.
 long g_mvpEarlyPublishSeq = -1;
 
+// VIEW-EPOCH-DEDUPE-1: semantic VIEW-CONTENT epoch. g_mvpDiagFrame is a raw publish
+// counter that bumps on EVERY gos_SetWorldToClipGL (~2x/frame: the early-publish at
+// mission.cpp + the gamecam publish, usually the SAME camera). The object/mech MVP
+// currency check must NOT treat a redundant same-camera republish as a view change,
+// or it false-stales the dispatch snapshot every frame and silently disables the
+// FixB z-fight fix (telemetry: stale_mvp_reads ~= frame count). This epoch bumps
+// ONLY when the published world-to-clip CONTENT actually changes; real camera motion
+// still advances it (so vanish/flicker stays fixed). Consumed via gos_object_draw_mvp.h.
+long g_viewContentEpoch = 0;
+static float g_prevPublishedWtc[16] = { 0 };
+static bool  g_havePrevPublishedWtc = false;
+
 void __stdcall gos_SetWorldToClipGL(const Stuff::Matrix4D& mat)
 {
     if (!g_gos_renderer) return;
@@ -9451,6 +9469,26 @@ void __stdcall gos_SetWorldToClipGL(const Stuff::Matrix4D& mat)
     // [MVP_DIAG v1] S2.7 — log set_mvp entry. Throttled to frames
     // {1,5,30,120}. row0 is M[0..3] AFTER the column->row repack.
     ++g_mvpDiagFrame;
+
+    // VIEW-EPOCH-DEDUPE-1: advance the semantic view-content epoch only on a real
+    // matrix change (max abs element delta > epsilon). Identical same-camera
+    // republishes (early-publish then gamecam) leave it unchanged, so the dispatch
+    // snapshot is not false-staled and object draw keeps the depth-matched snapshot.
+    {
+        float maxDelta = 1e30f;            // first publish: force one bump
+        if (g_havePrevPublishedWtc) {
+            maxDelta = 0.0f;
+            for (int i = 0; i < 16; ++i) {
+                float d = M[i] - g_prevPublishedWtc[i];
+                if (d < 0.0f) d = -d;
+                if (d > maxDelta) maxDelta = d;
+            }
+        }
+        static const float kViewEpsilon = 1e-6f;  // ignore redundant republish, not real motion
+        if (maxDelta > kViewEpsilon) ++g_viewContentEpoch;
+        for (int i = 0; i < 16; ++i) g_prevPublishedWtc[i] = M[i];
+        g_havePrevPublishedWtc = true;
+    }
     if (g_mvpDiagFrame == 1 || g_mvpDiagFrame == 5 ||
         g_mvpDiagFrame == 30 || g_mvpDiagFrame == 120) {
         fprintf(stderr,

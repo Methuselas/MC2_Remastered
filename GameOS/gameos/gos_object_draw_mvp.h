@@ -21,23 +21,32 @@
 
 extern const float*     gos_GetTerrainMVPMat4();                       // live MVP
 extern "C" const float* gos_terrain_indirect_getDispatchMvp16();       // snapshot
-extern "C" long         gos_terrain_indirect_getDispatchMvpViewEpoch();// its epoch
+extern "C" long         gos_terrain_indirect_getDispatchMvpViewEpoch();// its view-content epoch
 namespace gos_terrain_indirect { bool IsFrameSolidArmed(); }
-extern long g_mvpDiagFrame;   // authoritative view epoch (gameos_graphics.cpp)
+// VIEW-EPOCH-DEDUPE-1: compare against the semantic VIEW-CONTENT epoch (bumps only on
+// real camera change), NOT the raw publish counter g_mvpDiagFrame (~2x/frame), which
+// false-staled the snapshot every frame and disabled the FixB z-fight fix.
+extern long g_viewContentEpoch;
 
-// M2 — stale-read telemetry. Defined once in gameos_graphics.cpp. The counter is
-// surfaced in the debug-state dump; MC2_OBJ_MVP_STALE_FATAL=1 aborts (CI use).
+// Telemetry (defined once in gameos_graphics.cpp; surfaced in the debug-state dump):
+//   stale = armed but snapshot was from another view -> fell back to live MVP
+//   used  = projected through the depth-matched snapshot -> FixB z-fight fix active
+// MC2_OBJ_MVP_STALE_FATAL=1 aborts on a stale read (CI use).
 unsigned long gos_object_mvp_stale_count();
 void          gos_object_mvp_note_stale();
+unsigned long gos_object_mvp_used_count();
+void          gos_object_mvp_note_used();
 
 // fixBEnabled = the per-consumer MC2_PROP_FIXB_MVP killswitch (preserved). Returns
 // the dispatch snapshot ONLY when it belongs to the current view; otherwise the
 // live MVP, which is always a correct projection of current-position geometry.
 static inline const float* gos_GetObjectDrawMVP(bool fixBEnabled) {
     if (fixBEnabled && gos_terrain_indirect::IsFrameSolidArmed()) {
-        if (gos_terrain_indirect_getDispatchMvpViewEpoch() == g_mvpDiagFrame) {
-            if (const float* m = gos_terrain_indirect_getDispatchMvp16())
-                return m;                 // snapshot belongs to THIS view -> safe
+        if (gos_terrain_indirect_getDispatchMvpViewEpoch() == g_viewContentEpoch) {
+            if (const float* m = gos_terrain_indirect_getDispatchMvp16()) {
+                gos_object_mvp_note_used();   // depth-matched snapshot -> z-fight fix active
+                return m;                     // snapshot belongs to THIS view -> safe
+            }
         }
         gos_object_mvp_note_stale();      // armed but snapshot is from another view
     }
