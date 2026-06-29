@@ -6,6 +6,7 @@
 // is the "validation" layer over the existing "declaration" table.
 #include "doctest.h"
 #include "RenderCore/frame_graph_validate.h"
+#include "RenderCore/ambient_contract.h"
 
 using namespace RenderCore;
 using namespace RenderCore::framegraph;
@@ -75,6 +76,19 @@ TEST_CASE("unknown pass id in order is reported") {
         badOrder, 1, kExternalResources, kExternalResourceCount);
     CHECK(r.ok == false);
     CHECK(r.unknownPass == true);
+}
+
+TEST_CASE("ambient ledger: colorMask handshake is declared (shadow OFF, terrain re-assert)") {
+    // The recon's #1 executor blocker, as a tested invariant. If a future edit drops
+    // the terrain colorMask re-assert (or the shadow color-write-off declaration), this
+    // fails offline instead of shipping an invisible scene.
+    CHECK(colorMaskHandshakeDeclared() == true);
+    const AmbientContract* shadow = findAmbient(RenderPassId::Shadow);
+    REQUIRE(shadow != nullptr);
+    CHECK(shadow->disablesColorWrite == true);
+    const AmbientContract* terrain = findAmbient(RenderPassId::Terrain);
+    REQUIRE(terrain != nullptr);
+    CHECK(terrain->reassertsColorMaskAllOn == true);
 }
 
 } // TEST_SUITE

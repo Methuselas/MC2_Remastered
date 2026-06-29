@@ -9,6 +9,7 @@
 #include "../../RenderCore/RenderResourceRegistry.h"
 #include "gos_frame_pass_stats.h"   // [FRAME_PASS_STATS v1] additive JSON section
 #include "gos_frame_context.h"      // RENDER-FRAME-CONTEXT-1 read-only mirror (file scope!)
+#include "../../RenderCore/frame_graph_validate.h"  // FRAME-GRAPH-SKELETON-1 validator (file scope!)
 #include "../../code/unitprofile.h" // UNIT-PROFILE-SEAM-1 witness bridge (POD only)
 
 // Texture name lookup for mech node indices (mcTextureManager slot → name string).
@@ -212,6 +213,19 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
         s << "    \"stale_mvp_reads\": " << fc.staleMvpReads << ",\n";
         s << "    \"mismatch_count\": " << gos_framectx_mismatch_count() << ",\n";
         s << "    \"mirror_ok\": "; b(s, fcOk); s << "\n";
+        s << "  },\n";
+    }
+    // FRAME-GRAPH-SKELETON-1: resource-DAG validity of the shipped pass table+order.
+    // Compile-time-constant (static table); surfaced so the MCP/inspector report it and
+    // a future table edit that strands a resource is visible at runtime too.
+    {
+        const RenderCore::framegraph::ValidationResult fg =
+            RenderCore::framegraph::validateShippedFrameGraph();
+        s << "  \"frame_graph\": {\n";
+        s << "    \"valid\": "; b(s, fg.ok); s << ",\n";
+        s << "    \"offending_pass\": " << static_cast<unsigned>(fg.offendingPass) << ",\n";
+        s << "    \"missing_resource\": " << static_cast<unsigned>(fg.missingResource) << ",\n";
+        s << "    \"unknown_pass\": "; b(s, fg.unknownPass); s << "\n";
         s << "  },\n";
     }
     s << "  \"mission\": {\n";

@@ -314,6 +314,20 @@ def get_render_health() -> str:
         lines.append(f"  mismatch_count:     {mm}{' *** FAIL' if mm_fail else ''}")
         lines.append(f"  mirror_ok:          {mok}{' *** FAIL' if mok_fail else ''}")
 
+    # FRAME-GRAPH-SKELETON-1: resource-DAG validity of the shipped pass table.
+    fg = data.get("frame_graph", {})
+    if fg:
+        fg_valid = fg.get("valid", True)
+        if fg_valid is False:
+            any_fail = True
+        lines.append("")
+        lines.append("frame_graph:")
+        lines.append(f"  valid:            {fg_valid}{'' if fg_valid else ' *** FAIL'}")
+        if fg_valid is False:
+            lines.append(f"  offending_pass:   {fg.get('offending_pass', '?')}")
+            lines.append(f"  missing_resource: {fg.get('missing_resource', '?')}")
+            lines.append(f"  unknown_pass:     {fg.get('unknown_pass', '?')}")
+
     if any_fail:
         lines.insert(0, "HEALTH: FAIL — nonzero counters detected")
     elif not ok:
