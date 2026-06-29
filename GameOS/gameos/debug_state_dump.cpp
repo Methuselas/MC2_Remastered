@@ -29,6 +29,7 @@ extern "C" unsigned long mc2_framegraph_dryrun_out_of_order();
 extern "C" unsigned long mc2_framegraph_dryrun_unobserved();
 extern "C" unsigned long mc2_framegraph_dryrun_terrain_mutex();
 extern "C" unsigned long mc2_framegraph_dryrun_latch_miss();
+extern "C" unsigned long mc2_framegraph_dryrun_known_early_suppressed();
 
 #include <chrono>
 #include <cstdlib>
@@ -259,7 +260,8 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
         s << "      \"out_of_order\": " << mc2_framegraph_dryrun_out_of_order() << ",\n";
         s << "      \"unobserved_total\": " << mc2_framegraph_dryrun_unobserved() << ",\n";
         s << "      \"terrain_mutex_violations\": " << mc2_framegraph_dryrun_terrain_mutex() << ",\n";
-        s << "      \"latch_miss_frames\": " << mc2_framegraph_dryrun_latch_miss() << "\n";
+        s << "      \"latch_miss_frames\": " << mc2_framegraph_dryrun_latch_miss() << ",\n";
+        s << "      \"known_early_suppressed\": " << mc2_framegraph_dryrun_known_early_suppressed() << "\n";
         s << "    }\n";
         s << "  },\n";
     }

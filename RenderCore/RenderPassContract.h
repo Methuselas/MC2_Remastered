@@ -342,21 +342,34 @@ static_assert(
     "(append the new RenderPassContract row when you append a RenderPassId).");
 
 // ---------------------------------------------------------------------------
-// Execution-ordered frame pass list (RENDER-PASS-DAG-CONTRACT-1)
+// Logical dependency skeleton (RENDER-PASS-DAG-CONTRACT-1)
 // ---------------------------------------------------------------------------
-// The order passes actually hit GL across a frame. Shadow resolves FIRST inside
-// renderLists() even though shadow-caster enqueue happens after geometry enqueue
-// — frameBegin() pre-seeds ShadowDynamicMap to paper over that; the canonical
-// dependency is Shadow-before-geometry, encoded here by position. Edges are
-// DERIVED from reads[]/writes[] against this order (see render_pass_table_harness),
-// not stored per-row, to avoid a second source of truth that can rot.
+// kFramePassOrder encodes the LOGICAL dependency ordering of passes — Shadow must
+// produce ShadowDynamicMap before geometry reads it, etc. It is NOT a literal
+// "the order passes hit GL" timeline: the 2026-06-09 LOD-chunk terrain hoist moved
+// the default terrain draw to gamecam.cpp:508 BEFORE renderLists(), so Terrain
+// actually fires before StaticPropOpaque at runtime (even though it is listed after
+// it here). This is a config-variable draw-site: LOD-chunk=Gamecam (pre-renderLists),
+// the other three branches=RenderLists. The draw-site is modeled in
+// TerrainSubPass::drawSite (terrain_subpass_contract.h), and the dry-run kernel
+// suppresses the resulting apparent out-of-order event via knownEarlyDrawSite
+// (frame_pass_trace.h markEntryKnownEarly / DryRunReport::knownEarlySuppressed).
+// Do NOT reorder this array to match the LOD-chunk runtime sequence — that would
+// break the other three non-default branches whose draw-site IS renderLists.
+//
+// Shadow resolves FIRST inside renderLists() even though shadow-caster enqueue
+// happens after geometry enqueue — frameBegin() pre-seeds ShadowDynamicMap to
+// paper over that. Edges are DERIVED from reads[]/writes[] against this order
+// (see render_pass_table_harness), not stored per-row, to avoid a second source
+// of truth that can rot.
 static constexpr RenderPassId kFramePassOrder[] = {
     RenderPassId::Shadow,
-    RenderPassId::StaticPropOpaque,
-    RenderPassId::Terrain,
-    RenderPassId::MechOpaque,
-    RenderPassId::TerrainDecal,
-    RenderPassId::TerrainOverlay,
+    RenderPassId::MechOpaque,       // noteRenderPass at renderLists() preamble (txmmgr.cpp:2361) —
+                                    // fires before GpuStaticPropBatcher::flush
+    RenderPassId::StaticPropOpaque, // GpuStaticPropBatcher::flush fires after renderLists preamble
+    RenderPassId::Terrain,          // LODChunk fires pre-renderLists (Gamecam site, see comment above)
+    RenderPassId::TerrainOverlay,   // gos_DrawTerrainOverlays fires before gos_DrawDecals in renderLists
+    RenderPassId::TerrainDecal,     // gos_DrawDecals follows overlays (txmmgr.cpp:3275/3311)
     RenderPassId::Water,
     RenderPassId::VegetationCards,
     RenderPassId::VFX,

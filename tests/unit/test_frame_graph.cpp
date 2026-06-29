@@ -376,12 +376,16 @@ TEST_CASE("dryrun (a): all 11 declared passes fired in declared order -> clean")
 TEST_CASE("dryrun (b): only 7 observable passes fired, 4 invisible -> unobserved!=diverged") {
     // The 4 passes with NO noteRenderPass callsite today (recon): Shadow, Water, VFX, Veg.
     // Everything else fires in declared order. Must yield ZERO false alarms.
+    // NOTE: kFramePassOrder now reflects the real engine fire order:
+    // MechOpaque(slot1) before StaticPropOpaque(slot2) — MechOpaque fires at the top of
+    // renderLists() (txmmgr.cpp:2361); StaticProp fires after GpuStaticPropBatcher::flush.
+    // TerrainOverlay(slot4) fires before TerrainDecal(slot5) — txmmgr.cpp:3275/3311.
     const RenderPassId fired[] = {
+        RenderPassId::MechOpaque,
         RenderPassId::StaticPropOpaque,
         RenderPassId::Terrain,
-        RenderPassId::MechOpaque,
+        RenderPassId::TerrainOverlay,  // fires before Decal in renderLists
         RenderPassId::TerrainDecal,
-        RenderPassId::TerrainOverlay,
         RenderPassId::UI,
         RenderPassId::PostProcess,
     };
@@ -394,15 +398,18 @@ TEST_CASE("dryrun (b): only 7 observable passes fired, 4 invisible -> unobserved
     CHECK(r.terrainMutexViolation == false);
 }
 
-TEST_CASE("dryrun (c): two passes swapped -> outOfOrder>0 with an offender") {
-    // Record Terrain BEFORE StaticPropOpaque (declared order is StaticProp then Terrain).
+TEST_CASE("dryrun (c): two NON-whitelisted passes swapped -> outOfOrder>0 with an offender") {
+    // Swap StaticPropOpaque before MechOpaque (declared order: Mech then StaticProp).
+    // Neither has knownEarlyDrawSite, so generic out-of-order detection must fire.
+    // NOTE: kFramePassOrder now has MechOpaque(slot1) before StaticPropOpaque(slot2)
+    // to match actual engine fire order. Reversing them here is the intentional OOO case.
     const RenderPassId fired[] = {
         RenderPassId::Shadow,
-        RenderPassId::Terrain,            // recorded before its declared predecessor
-        RenderPassId::StaticPropOpaque,
+        RenderPassId::StaticPropOpaque,   // recorded before its declared predecessor MechOpaque
         RenderPassId::MechOpaque,
+        RenderPassId::Terrain,
+        RenderPassId::TerrainOverlay,    // correct order (Overlay before Decal)
         RenderPassId::TerrainDecal,
-        RenderPassId::TerrainOverlay,
         RenderPassId::Water,
         RenderPassId::VegetationCards,
         RenderPassId::VFX,
@@ -414,6 +421,7 @@ TEST_CASE("dryrun (c): two passes swapped -> outOfOrder>0 with an offender") {
         framegraph::dryRunCompare(t, kFramePassOrder, kFramePassOrderCount);
     CHECK(r.outOfOrderCount > 0);
     CHECK(static_cast<unsigned>(r.firstOutOfOrderPass) != 0u);   // an offender was identified
+    CHECK(r.knownEarlySuppressed == 0);   // no whitelist suppression for these passes
 }
 
 TEST_CASE("dryrun (d): latch-miss is data-driven regression guard (false for both IndirectBridge and LODChunk)") {
@@ -445,6 +453,49 @@ TEST_CASE("dryrun (e): two terrain branches drew -> mutex violation") {
     const framegraph::DryRunReport r =
         framegraph::dryRunCompare(t, kFramePassOrder, kFramePassOrderCount);
     CHECK(r.terrainMutexViolation == true);
+}
+
+TEST_CASE("dryrun (f): Option B knownEarlyDrawSite suppression proof") {
+    // DRYRUN-DRAWSITE-ORDER-1: Terrain fires before StaticPropOpaque in the LOD-chunk path
+    // (gamecam.cpp:508 pre-renderLists). This is an apparent out-of-order vs kFramePassOrder.
+    // Without knownEarly -> outOfOrderCount>0 (kernel detects it). With knownEarly -> suppressed.
+    //
+    // Record Terrain before StaticPropOpaque (the LOD-chunk runtime sequence).
+    // The LOD-chunk runtime fire order: Terrain early, then renderLists (Mech, StaticProp, Overlays...)
+    const RenderPassId fired[] = {
+        RenderPassId::Shadow,
+        RenderPassId::Terrain,            // fires pre-renderLists in LOD-chunk path
+        RenderPassId::MechOpaque,         // fires first in renderLists preamble
+        RenderPassId::StaticPropOpaque,   // fires after GpuStaticPropBatcher::flush
+        RenderPassId::TerrainOverlay,
+        RenderPassId::TerrainDecal,
+        RenderPassId::Water,
+        RenderPassId::VegetationCards,
+        RenderPassId::VFX,
+        RenderPassId::UI,
+        RenderPassId::PostProcess,
+    };
+
+    // WITHOUT knownEarly: kernel detects the out-of-order and no suppression occurs.
+    {
+        framegraph::FramePassTrace t = buildTrace(fired, kFramePassOrderCount);
+        const framegraph::DryRunReport r =
+            framegraph::dryRunCompare(t, kFramePassOrder, kFramePassOrderCount);
+        CHECK(r.outOfOrderCount > 0);
+        CHECK(r.knownEarlySuppressed == 0);
+    }
+
+    // WITH terrain entry marked knownEarly: suppressed into knownEarlySuppressed, NOT outOfOrder.
+    // This proves Option B suppression is the cause of the clean report, not a kernel hole.
+    {
+        framegraph::FramePassTrace t = buildTrace(fired, kFramePassOrderCount);
+        framegraph::markEntryKnownEarly(t, RenderPassId::Terrain,
+                                        kFramePassOrder, kFramePassOrderCount);
+        const framegraph::DryRunReport r =
+            framegraph::dryRunCompare(t, kFramePassOrder, kFramePassOrderCount);
+        CHECK(r.outOfOrderCount == 0);
+        CHECK(r.knownEarlySuppressed > 0);
+    }
 }
 
 } // TEST_SUITE

@@ -704,11 +704,12 @@ FramePassTrace g_dryrunTrace;
 bool           g_dryrunTraceInit = false;
 
 // Accumulated across all frames since process start (surfaced via extern "C" below).
-unsigned long g_dryrunFrames          = 0;  // frames compared
-unsigned long g_dryrunOutOfOrder      = 0;  // total out-of-order events
-unsigned long g_dryrunUnobservedTotal = 0;  // total unobserved declared-slot occurrences
-unsigned long g_dryrunTerrainMutexViol = 0; // frames with >1 terrain branch drawing
-unsigned long g_dryrunLatchMissFrames  = 0; // frames whose dominant branch declares-but-misses latch
+unsigned long g_dryrunFrames              = 0;  // frames compared
+unsigned long g_dryrunOutOfOrder          = 0;  // total out-of-order events
+unsigned long g_dryrunUnobservedTotal     = 0;  // total unobserved declared-slot occurrences
+unsigned long g_dryrunTerrainMutexViol    = 0;  // frames with >1 terrain branch drawing
+unsigned long g_dryrunLatchMissFrames     = 0;  // frames whose dominant branch declares-but-misses latch
+unsigned long g_dryrunKnownEarlySuppressed = 0; // DRYRUN-DRAWSITE-ORDER-1: suppressed early-draw events
 
 void dryrunEnsureFrameInit() {
     if (!g_dryrunTraceInit) {
@@ -742,13 +743,29 @@ void dryrunFrameBoundary() {
     g_dryrunTrace.terrainBranch    = RenderCore::framegraph::dominantTerrainPath(tcounts);
     g_dryrunTrace.terrainDrewCount = RenderCore::framegraph::terrainPathsThatDrew(tcounts);
 
+    // DRYRUN-DRAWSITE-ORDER-1: if the dominant terrain branch draws pre-renderLists (Gamecam
+    // draw-site, i.e. LOD-chunk), mark the Terrain entry as knownEarlyDrawSite so
+    // dryRunCompare suppresses its out-of-order event into knownEarlySuppressed rather than
+    // outOfOrderCount. The draw-site is data-driven from the contract table — no hardcode.
+    {
+        const RenderCore::framegraph::TerrainPath dom = g_dryrunTrace.terrainBranch;
+        const RenderCore::framegraph::TerrainSubPass* sp =
+            RenderCore::framegraph::findTerrainSubPass(dom);
+        if (sp && sp->drawSite == RenderCore::framegraph::TerrainDrawSite::Gamecam) {
+            RenderCore::framegraph::markEntryKnownEarly(
+                g_dryrunTrace, RenderCore::RenderPassId::Terrain,
+                RenderCore::kFramePassOrder, RenderCore::kFramePassOrderCount);
+        }
+    }
+
     const RenderCore::framegraph::DryRunReport rep =
         RenderCore::framegraph::dryRunCompare(g_dryrunTrace,
             RenderCore::kFramePassOrder, RenderCore::kFramePassOrderCount);
 
     ++g_dryrunFrames;
-    g_dryrunOutOfOrder      += static_cast<unsigned long>(rep.outOfOrderCount);
-    g_dryrunUnobservedTotal += static_cast<unsigned long>(rep.unobservedCount);
+    g_dryrunOutOfOrder           += static_cast<unsigned long>(rep.outOfOrderCount);
+    g_dryrunUnobservedTotal      += static_cast<unsigned long>(rep.unobservedCount);
+    g_dryrunKnownEarlySuppressed += static_cast<unsigned long>(rep.knownEarlySuppressed);
     if (rep.terrainMutexViolation)  ++g_dryrunTerrainMutexViol;
     if (rep.terrainLatchMissActive) ++g_dryrunLatchMissFrames;
 
@@ -774,12 +791,13 @@ void dryrunFrameBoundary() {
 } // namespace (FRAME-GRAPH-EXECUTOR-DRYRUN-1)
 
 // Read by the debug-state dump (GameOS, no GL include) via extern "C".
-extern "C" unsigned long mc2_framegraph_dryrun_enabled()       { return dryrunEnabled() ? 1ul : 0ul; }
-extern "C" unsigned long mc2_framegraph_dryrun_frames()        { return g_dryrunFrames; }
-extern "C" unsigned long mc2_framegraph_dryrun_out_of_order()  { return g_dryrunOutOfOrder; }
-extern "C" unsigned long mc2_framegraph_dryrun_unobserved()    { return g_dryrunUnobservedTotal; }
-extern "C" unsigned long mc2_framegraph_dryrun_terrain_mutex() { return g_dryrunTerrainMutexViol; }
-extern "C" unsigned long mc2_framegraph_dryrun_latch_miss()    { return g_dryrunLatchMissFrames; }
+extern "C" unsigned long mc2_framegraph_dryrun_enabled()            { return dryrunEnabled() ? 1ul : 0ul; }
+extern "C" unsigned long mc2_framegraph_dryrun_frames()             { return g_dryrunFrames; }
+extern "C" unsigned long mc2_framegraph_dryrun_out_of_order()       { return g_dryrunOutOfOrder; }
+extern "C" unsigned long mc2_framegraph_dryrun_unobserved()         { return g_dryrunUnobservedTotal; }
+extern "C" unsigned long mc2_framegraph_dryrun_terrain_mutex()      { return g_dryrunTerrainMutexViol; }
+extern "C" unsigned long mc2_framegraph_dryrun_latch_miss()         { return g_dryrunLatchMissFrames; }
+extern "C" unsigned long mc2_framegraph_dryrun_known_early_suppressed() { return g_dryrunKnownEarlySuppressed; }
 
 void noteRenderPass(PassIdentity id, const char* callerHint) {
     ambientProbeAtPassBegin(toRenderPassId(id));   // self-gated; before the telemetry gate

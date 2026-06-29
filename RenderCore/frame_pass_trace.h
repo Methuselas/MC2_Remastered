@@ -37,10 +37,16 @@ namespace RenderCore { namespace framegraph {
 // slot so a recorded pass maps directly onto its kFramePassOrder position; the order in
 // which slots were filled (recordSeq) gives the observed sequence for the order check.
 struct FramePassEntry {
-    RenderPassId     id          = RenderPassId::None;
-    bool             fired       = false;
-    int              sequenceIdx = -1;                         // monotonic record order this frame
-    RenderResourceId fboTarget   = RenderResourceId::Unknown;  // resolved bound draw-FBO (optional)
+    RenderPassId     id                 = RenderPassId::None;
+    bool             fired              = false;
+    int              sequenceIdx        = -1;                         // monotonic record order this frame
+    RenderResourceId fboTarget          = RenderResourceId::Unknown;  // resolved bound draw-FBO (optional)
+    bool             knownEarlyDrawSite = false;  // DRYRUN-DRAWSITE-ORDER-1: pass legitimately fires
+                                                  // BEFORE its kFramePassOrder slot (config-variable
+                                                  // draw-site, e.g. LOD-chunk terrain draws pre-renderLists).
+                                                  // When true, an out-of-order detection for this pass
+                                                  // is suppressed and counted in knownEarlySuppressed
+                                                  // rather than outOfOrderCount.
 };
 
 // One per kFramePassOrderCount slot. Filled at runtime behind the MC2_FRAMEGRAPH_DRYRUN gate;
@@ -59,6 +65,9 @@ struct DryRunReport {
     int          firedCount             = 0;
     int          unobservedCount        = 0;
     int          outOfOrderCount        = 0;
+    int          knownEarlySuppressed   = 0;   // DRYRUN-DRAWSITE-ORDER-1: out-of-order events
+                                               // suppressed because the entry had knownEarlyDrawSite.
+                                               // Non-zero proves the suppression fired (not a hole).
     bool         terrainMutexViolation  = false;
     bool         terrainLatchMissActive = false;
     RenderPassId firstOutOfOrderPass    = RenderPassId::None;
@@ -130,9 +139,17 @@ inline DryRunReport dryRunCompare(const FramePassTrace& trace,
         ++r.firedCount;
         // In declared order, record sequences of fired passes must be strictly increasing.
         if (e.sequenceIdx < prevSeq) {
-            ++r.outOfOrderCount;
-            if (r.firstOutOfOrderPass == RenderPassId::None)
-                r.firstOutOfOrderPass = e.id;
+            if (e.knownEarlyDrawSite) {
+                // DRYRUN-DRAWSITE-ORDER-1: this pass has a config-variable draw-site that
+                // legitimately fires before its kFramePassOrder slot (e.g. LOD-chunk terrain
+                // draws in gamecam.cpp pre-renderLists). Count the suppression so it is
+                // observable; do NOT increment outOfOrderCount or record firstOutOfOrderPass.
+                ++r.knownEarlySuppressed;
+            } else {
+                ++r.outOfOrderCount;
+                if (r.firstOutOfOrderPass == RenderPassId::None)
+                    r.firstOutOfOrderPass = e.id;
+            }
         } else {
             prevSeq = e.sequenceIdx;
         }
@@ -141,6 +158,17 @@ inline DryRunReport dryRunCompare(const FramePassTrace& trace,
     r.terrainMutexViolation  = (trace.terrainDrewCount > 1);
     r.terrainLatchMissActive = terrainBranchLatchMisses(trace.terrainBranch);
     return r;
+}
+
+// DRYRUN-DRAWSITE-ORDER-1: mark the entry for `id` as having a known-early draw-site so
+// dryRunCompare will suppress its out-of-order event into knownEarlySuppressed instead of
+// outOfOrderCount. Call this BEFORE dryRunCompare (at the frame boundary, after recording
+// is complete but before the compare). Pure; safe to call from the runtime.
+inline void markEntryKnownEarly(FramePassTrace& t, RenderPassId id,
+                                const RenderPassId* order, int orderCount) {
+    const int slot = declaredOrderIndex(id, order, orderCount);
+    if (slot < 0 || slot >= kFramePassOrderCount) return;
+    t.entries[slot].knownEarlyDrawSite = true;
 }
 
 }} // namespace RenderCore::framegraph
