@@ -121,4 +121,29 @@ TEST_CASE("ambient ledger: depth func declarations match the reverse-Z / shadow 
     }
 }
 
+TEST_CASE("compareAmbient: pure cross-check logic (declared vs sampled)") {
+    const AmbientContract* terrain = findAmbient(RenderPassId::Terrain);
+    REQUIRE(terrain != nullptr);  // colorMask=AllOn, depthFunc=SceneGEqual
+
+    // Live matches declaration -> no mismatch.
+    AmbientSample good; good.colorMask = ColorMaskState::AllOn; good.depthFunc = DepthFuncState::SceneGEqual;
+    CHECK(compareAmbient(*terrain, good).any() == false);
+
+    // Wrong depth func -> depthFunc mismatch only.
+    AmbientSample badDepth; badDepth.colorMask = ColorMaskState::AllOn; badDepth.depthFunc = DepthFuncState::ShadowLess;
+    AmbientMismatch md = compareAmbient(*terrain, badDepth);
+    CHECK(md.depthFunc == true);
+    CHECK(md.colorMask == false);
+
+    // Wrong color mask -> colorMask mismatch only.
+    AmbientSample badColor; badColor.colorMask = ColorMaskState::AllOff; badColor.depthFunc = DepthFuncState::SceneGEqual;
+    AmbientMismatch mc = compareAmbient(*terrain, badColor);
+    CHECK(mc.colorMask == true);
+    CHECK(mc.depthFunc == false);
+
+    // Unclassifiable live value (Inherit) is skipped -> no false positive.
+    AmbientSample unknown;  // both Inherit
+    CHECK(compareAmbient(*terrain, unknown).any() == false);
+}
+
 } // TEST_SUITE

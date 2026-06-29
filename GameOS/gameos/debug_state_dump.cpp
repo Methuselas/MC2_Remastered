@@ -15,6 +15,9 @@
 // Texture name lookup for mech node indices (mcTextureManager slot → name string).
 // Defined in gos_mech_batcher.cpp; not declared in any header.
 extern "C" const char* gos_getMechTextureNameByNodeIdx(uint32_t nodeIdx);
+// FRAME-GRAPH-AMBIENT-RUNTIME-1: ambient-probe mismatch count (mclib/render_contract.cpp).
+extern "C" unsigned long mc2_ambient_mismatch_count();
+extern "C" unsigned long mc2_ambient_probe_samples();
 
 #include <chrono>
 #include <cstdlib>
@@ -225,7 +228,14 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
         s << "    \"valid\": "; b(s, fg.ok); s << ",\n";
         s << "    \"offending_pass\": " << static_cast<unsigned>(fg.offendingPass) << ",\n";
         s << "    \"missing_resource\": " << static_cast<unsigned>(fg.missingResource) << ",\n";
-        s << "    \"unknown_pass\": "; b(s, fg.unknownPass); s << "\n";
+        s << "    \"unknown_pass\": "; b(s, fg.unknownPass); s << ",\n";
+        // Runtime ambient cross-check (default-OFF probe MC2_AMBIENT_PROBE). 0 when the
+        // probe is disabled or live GL ambient state matched the declared ledger.
+        s << "    \"ambient_probe_mismatches\": " << mc2_ambient_mismatch_count() << ",\n";
+        // Declared passes actually sampled by the probe. 0 = probe disabled OR never
+        // fired (distinguishes "ran clean" from "never ran"). >0 with mismatches 0 =
+        // live GL ambient state matched the declared ledger at the sampled seams.
+        s << "    \"ambient_probe_samples\": " << mc2_ambient_probe_samples() << "\n";
         s << "  },\n";
     }
     s << "  \"mission\": {\n";

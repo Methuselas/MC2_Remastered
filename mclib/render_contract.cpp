@@ -28,6 +28,7 @@
 
 #include "RenderCore/RenderPassContract.h"
 #include "RenderCore/RenderResourceRegistry.h"
+#include "RenderCore/ambient_contract.h"   // FRAME-GRAPH-AMBIENT-RUNTIME-1 cross-check
 
 namespace render_contract {
 
@@ -660,7 +661,13 @@ void renderPassTelemetryFrameTick() {
     ++s_telemetryFrame;
 }
 
+// FRAME-GRAPH-AMBIENT-RUNTIME-1: defined below; called here at the most-covered pass
+// seam (noteRenderPass fires for every pass owner every frame, independent of the
+// telemetry gate below). Self-gated on MC2_AMBIENT_PROBE.
+void ambientProbeAtPassBegin(RenderCore::RenderPassId id);
+
 void noteRenderPass(PassIdentity id, const char* callerHint) {
+    ambientProbeAtPassBegin(toRenderPassId(id));   // self-gated; before the telemetry gate
     if (!s_telemetryEnabled) return;
     // Sample frame 1 (first full frame) then every kTelemetryFrameInterval.
     if (s_telemetryFrame % kTelemetryFrameInterval != 1) return;
@@ -771,7 +778,68 @@ void frameBegin() {
     ++s_frame.telemetryTick;
 }
 
+// FRAME-GRAPH-AMBIENT-RUNTIME-1: default-OFF diagnostic probe. Samples live GL ambient
+// state at pass entry and compares against the declared ambient ledger
+// (RenderCore/ambient_contract.h) via the pure compareAmbient(). Counts divergences;
+// MC2_AMBIENT_ASSERT_FATAL aborts. Default OFF because it is a LEDGER-VS-REALITY
+// validation tool, not yet a guard: colorMask is re-asserted mid-pass, so an entry-time
+// mismatch is DATA about the entry/established boundary, not necessarily a bug. The
+// pure comparison is offline-tested (tests/unit/test_frame_graph.cpp); only sampling is
+// here. This is the bridge from "ambient state declared" to "ambient state verified".
+namespace {
+unsigned long g_ambientMismatchCount = 0;
+unsigned long g_ambientProbeSamples  = 0;  // declared passes actually compared (proves it ran)
+
+RenderCore::framegraph::ColorMaskState sampleColorMask() {
+    GLboolean m[4] = { GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE };
+    glGetBooleanv(GL_COLOR_WRITEMASK, m);
+    using C = RenderCore::framegraph::ColorMaskState;
+    if (m[0] && m[1] && m[2] && m[3]) return C::AllOn;
+    if (!m[0] && !m[1] && !m[2] && !m[3]) return C::AllOff;
+    return C::Inherit;   // mixed/partial -> unclassifiable, skipped by compareAmbient
+}
+RenderCore::framegraph::DepthFuncState sampleDepthFunc() {
+    GLint df = 0;
+    glGetIntegerv(GL_DEPTH_FUNC, &df);
+    using D = RenderCore::framegraph::DepthFuncState;
+    if (df == GL_GEQUAL) return D::SceneGEqual;
+    if (df == GL_LESS)   return D::ShadowLess;
+    return D::Inherit;
+}
+} // namespace
+
+void ambientProbeAtPassBegin(RenderCore::RenderPassId id) {
+    static const bool s_probe = (::getenv("MC2_AMBIENT_PROBE") != nullptr);
+    if (!s_probe) return;
+    const RenderCore::framegraph::AmbientContract* decl =
+        RenderCore::framegraph::findAmbient(id);
+    if (!decl) return;
+    ++g_ambientProbeSamples;   // a declared pass was sampled this call (probe is live)
+    RenderCore::framegraph::AmbientSample live;
+    live.colorMask = sampleColorMask();
+    live.depthFunc = sampleDepthFunc();
+    const RenderCore::framegraph::AmbientMismatch mm =
+        RenderCore::framegraph::compareAmbient(*decl, live);
+    if (mm.any()) {
+        ++g_ambientMismatchCount;
+        fprintf(stderr,
+            "[AMBIENT_PROBE] pass=\"%s\" colorMaskMiss=%d depthFuncMiss=%d "
+            "(decl cm=%d df=%d | live cm=%d df=%d)\n",
+            decl->note ? decl->note : "?", (int)mm.colorMask, (int)mm.depthFunc,
+            (int)decl->colorMaskOnEntry, (int)decl->depthFunc,
+            (int)live.colorMask, (int)live.depthFunc);
+        fflush(stderr);
+        static const bool s_fatal = (::getenv("MC2_AMBIENT_ASSERT_FATAL") != nullptr);
+        if (s_fatal) abort();
+    }
+}
+
+// Read by the debug-state dump (GameOS, no GL include) via extern "C".
+extern "C" unsigned long mc2_ambient_mismatch_count() { return g_ambientMismatchCount; }
+extern "C" unsigned long mc2_ambient_probe_samples()  { return g_ambientProbeSamples;  }
+
 void beginPass(RenderCore::RenderPassId id) {
+    ambientProbeAtPassBegin(id);   // self-gated (MC2_AMBIENT_PROBE); runs before order gate
     if (!s_frame.orderEnabled) return;
     const RenderCore::RenderPassContract* c = findPassContract(id);
     if (!c) return;

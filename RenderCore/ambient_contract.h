@@ -98,6 +98,37 @@ inline const AmbientContract* findAmbient(RenderPassId id) {
     return nullptr;
 }
 
+// --- Runtime cross-check support (FRAME-GRAPH-AMBIENT-RUNTIME-1) -------------------
+// The COMPARISON is pure and offline-testable; only the GL SAMPLING is runtime
+// (mclib/render_contract.cpp samples glGet* into an AmbientSample, then calls this).
+// A live value the caller could not classify is left Inherit and SKIPPED, so an
+// undeclared-or-unclassifiable axis never produces a false positive. Only axes the
+// ledger DECLARES (non-Inherit) are compared.
+//
+// CAVEAT (semantics): colorMaskOnEntry models the state a pass ESTABLISHES, which for
+// terrain is re-asserted mid-pass. Sampling at beginPass-ENTRY may therefore legitimately
+// differ -- that mismatch is DATA (it tells us the entry-vs-established boundary), which
+// is exactly why the runtime probe ships default-OFF and diagnostic, not as a guard.
+struct AmbientSample {
+    ColorMaskState colorMask = ColorMaskState::Inherit;
+    DepthFuncState depthFunc = DepthFuncState::Inherit;
+};
+struct AmbientMismatch {
+    bool colorMask = false;
+    bool depthFunc = false;
+    bool any() const { return colorMask || depthFunc; }
+};
+inline AmbientMismatch compareAmbient(const AmbientContract& decl, const AmbientSample& live) {
+    AmbientMismatch m;
+    if (decl.colorMaskOnEntry != ColorMaskState::Inherit &&
+        live.colorMask        != ColorMaskState::Inherit)
+        m.colorMask = (decl.colorMaskOnEntry != live.colorMask);
+    if (decl.depthFunc != DepthFuncState::Inherit &&
+        live.depthFunc != DepthFuncState::Inherit)
+        m.depthFunc = (decl.depthFunc != live.depthFunc);
+    return m;
+}
+
 // Landmine #1 (recon §2): SOME pass must disable color write (shadow) and SOME pass
 // must re-assert it (terrain). Drop the terrain re-assert -> invisible scene.
 inline bool colorMaskHandshakeDeclared() {

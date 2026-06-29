@@ -327,6 +327,15 @@ def get_render_health() -> str:
             lines.append(f"  offending_pass:   {fg.get('offending_pass', '?')}")
             lines.append(f"  missing_resource: {fg.get('missing_resource', '?')}")
             lines.append(f"  unknown_pass:     {fg.get('unknown_pass', '?')}")
+        # Runtime ambient cross-check (MC2_AMBIENT_PROBE). samples>0 proves the probe
+        # fired; mismatches>0 = live GL ambient state diverged from the declared ledger.
+        amb_samples = fg.get("ambient_probe_samples", 0)
+        amb_miss = fg.get("ambient_probe_mismatches", 0)
+        if amb_samples or amb_miss:
+            if amb_miss not in (0, "?"):
+                any_fail = True
+            lines.append(f"  ambient_samples:  {amb_samples}")
+            lines.append(f"  ambient_mismatch: {amb_miss}{' *** FAIL' if amb_miss not in (0, '?') else ''}")
 
     if any_fail:
         lines.insert(0, "HEALTH: FAIL — nonzero counters detected")
