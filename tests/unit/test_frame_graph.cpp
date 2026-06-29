@@ -300,27 +300,26 @@ TEST_CASE("terrain subpass table: mvpSource and drawSite per branch") {
     }
 }
 
-TEST_CASE("terrain subpass latch audit: Indirect latch miss is CURRENT REALITY (HIGH finding tripwire)") {
+TEST_CASE("terrain subpass latch audit: all reachable branches set markTerrainDrawn (regression guard)") {
     auto tp = [](TerrainPath p){ return static_cast<int>(p); };
     // Every branch declares producesTerrainLatch=true.
     for (int i = 0; i < kTerrainSubPassCount; ++i)
         CHECK(kTerrainSubPasses[i].producesTerrainLatch == true);
 
-    // Indirect does NOT actually call markTerrainDrawn — the recon §4 HIGH finding.
-    // allDeclaredLatchProducersImplemented() == false encodes the current reality.
-    // NOTE: This test will START FAILING (by design) once the Indirect markTerrainDrawn fix lands.
-    // At that point flip latchActuallyImplemented for IndirectBridge to true and update
-    // allImplemented CHECK to == true. This is the intended tripwire.
-    CHECK(allDeclaredLatchProducersImplemented() == false);
-    CHECK(tp(firstUnimplementedLatchProducer())  == tp(TerrainPath::IndirectBridge));
+    // TERRAIN-INDIRECT-LATCH-FIX-1 (26ee9bdd) closed the IndirectBridge gap: all four
+    // branches now call markTerrainDrawn. This is now a REGRESSION GUARD — if any branch's
+    // markTerrainDrawn is removed and latchActuallyImplemented is not also set false, this
+    // test will trip, catching the regression offline before it ships.
+    CHECK(allDeclaredLatchProducersImplemented() == true);
+    CHECK(tp(firstUnimplementedLatchProducer())  == tp(TerrainPath::Count));  // Count = none missing
 
-    const TerrainSubPass* indirect = findTerrainSubPass(TerrainPath::IndirectBridge);
-    REQUIRE(indirect != nullptr);
-    CHECK(indirect->latchActuallyImplemented == false);
-
-    const TerrainPath implementedPaths[] = { TerrainPath::LODChunk, TerrainPath::PatchStreamThin, TerrainPath::LegacyMLR };
-    for (int i = 0; i < 3; ++i) {
-        const TerrainSubPass* s = findTerrainSubPass(implementedPaths[i]);
+    // All four branches must have latchActuallyImplemented == true.
+    const TerrainPath allPaths[] = {
+        TerrainPath::LODChunk, TerrainPath::IndirectBridge,
+        TerrainPath::PatchStreamThin, TerrainPath::LegacyMLR
+    };
+    for (int i = 0; i < 4; ++i) {
+        const TerrainSubPass* s = findTerrainSubPass(allPaths[i]);
         REQUIRE(s != nullptr);
         CHECK(s->latchActuallyImplemented == true);
     }
@@ -417,14 +416,18 @@ TEST_CASE("dryrun (c): two passes swapped -> outOfOrder>0 with an offender") {
     CHECK(static_cast<unsigned>(r.firstOutOfOrderPass) != 0u);   // an offender was identified
 }
 
-TEST_CASE("dryrun (d): IndirectBridge dominant -> latch-miss; LODChunk -> clean") {
+TEST_CASE("dryrun (d): latch-miss is data-driven regression guard (false for both IndirectBridge and LODChunk)") {
+    // TERRAIN-INDIRECT-LATCH-FIX-1 (26ee9bdd) closed the IndirectBridge latch gap.
+    // Now ALL rows have latchActuallyImplemented=true, so terrainLatchMissActive==false
+    // for ANY dominant branch. This test re-encodes that reality and would re-trip if a
+    // row's latchActuallyImplemented were regressed back to false.
     framegraph::FramePassTrace t = buildTrace(kFramePassOrder, kFramePassOrderCount);
     t.terrainBranch    = framegraph::TerrainPath::IndirectBridge;
     t.terrainDrewCount = 1;
     {
         const framegraph::DryRunReport r =
             framegraph::dryRunCompare(t, kFramePassOrder, kFramePassOrderCount);
-        CHECK(r.terrainLatchMissActive == true);   // recon §4 HIGH
+        CHECK(r.terrainLatchMissActive == false);  // fix landed; no longer a miss
         CHECK(r.terrainMutexViolation == false);
     }
     t.terrainBranch = framegraph::TerrainPath::LODChunk;

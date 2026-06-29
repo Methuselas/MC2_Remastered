@@ -74,8 +74,11 @@ static constexpr TerrainSubPass kTerrainSubPasses[] = {
         TerrainMvpSource::SnapshotEpoch,
         TerrainDrawSite::RenderLists,
         /* producesTerrainLatch     */ true,
-        /* latchActuallyImplemented */ false,  // recon §4 HIGH: DrawIndirect never calls markTerrainDrawn
-        "recon §4 HIGH: DrawIndirect never calls markTerrainDrawn -> kills 5 post sub-passes when chunk-OFF+armed",
+        /* latchActuallyImplemented */ true,   // markTerrainDrawn now called gos_terrain_indirect.cpp:3750
+                                               // (TERRAIN-INDIRECT-LATCH-FIX-1 / 26ee9bdd);
+                                               // conditional on s_frameSolidCmdCount>0, like the legacy path
+        "markTerrainDrawn called gos_terrain_indirect.cpp:3750 (TERRAIN-INDIRECT-LATCH-FIX-1/26ee9bdd); "
+        "conditional on s_frameSolidCmdCount>0 -- all four branches now set the latch (regression guard)",
     },
     {
         TerrainPath::PatchStreamThin,
@@ -133,8 +136,9 @@ inline const TerrainSubPass* findTerrainSubPass(TerrainPath p) {
 // ---------------------------------------------------------------------------
 // LATCH-AUDIT kernel
 // Returns false if any row has producesTerrainLatch && !latchActuallyImplemented.
-// When the Indirect markTerrainDrawn fix lands, this will start returning true
-// (all implemented) — at which point update both latchActuallyImplemented and tests.
+// All four branches now return true (TERRAIN-INDIRECT-LATCH-FIX-1 / 26ee9bdd closed the
+// IndirectBridge gap). This is now a REGRESSION GUARD: if any branch's markTerrainDrawn
+// is removed and latchActuallyImplemented is not flipped back to false, tests will catch it.
 // ---------------------------------------------------------------------------
 inline bool allDeclaredLatchProducersImplemented() {
     for (int i = 0; i < kTerrainSubPassCount; ++i)
