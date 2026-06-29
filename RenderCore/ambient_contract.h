@@ -1,51 +1,93 @@
 #pragma once
-// FRAME-GRAPH-SKELETON-1 (ambient ledger, DECLARATIONS ONLY).
+// FRAME-GRAPH-AMBIENT-LEDGER-1 (DECLARATIONS ONLY).
 //
-// The frame-graph resource validator (frame_graph_validate.h) checks the resource DAG,
-// but the recon (docs/render-backend-seams/frame-graph-recon-1.md) found the real
-// executor blocker is AMBIENT GL state that applyPipeline does NOT own: colorMask,
-// viewport, scissor, depth func/write, blend, bound FBO, and cross-pass latches
-// (markTerrainDrawn / sceneHasTerrain_). An executor that reorders passes would strand
-// that state (e.g. colorMask FALSE -> invisible scene).
+// The resource validator (frame_graph_validate.h) checks the GPU-resource DAG. The
+// recon (docs/render-backend-seams/frame-graph-recon-1.md §2) found the real executor
+// blocker is AMBIENT GL state that applyPipeline does NOT own (~8 of ~13 axes):
+// colorMask, viewport, scissor/stencil, depth func, blend, bound FBO, tex-unit latches,
+// clip-control/reverse-Z, VAO, and cross-phase latches (markTerrainDrawn /
+// sceneHasTerrain_). An executor that reorders passes strands that state (colorMask
+// FALSE -> invisible scene; terrain latch unset -> 4 post passes silently bail).
 //
-// This file is the FIRST step: declare the per-pass ambient contract as data, starting
-// with the single most dangerous axis the recon named -- the colorMask handshake
-// (shadow lanes set per-attachment write OFF; terrain re-asserts RGBA write ON before
-// the color-writing passes that follow). It is DECLARATIVE ONLY: no runtime
-// enforcement, no scheduling. It exists so the handshake is a TESTED invariant (a
-// future edit dropping the terrain re-assert fails offline) and so a later
-// FRAME-GRAPH-AMBIENT-LEDGER slice has a data home to grow into. Do NOT build an
-// executor against this until the ledger is complete and validated.
+// This file declares the per-pass ambient contract as DATA so the two documented
+// landmine handshakes become TESTED invariants (a future edit that drops one fails
+// offline, not as an invisible scene three days later). It is declarative only: NO
+// runtime enforcement, NO scheduling. Static-grep enforcement of the live code lives in
+// scripts/check-colormask-ownership.py / check-drawbuffer-ownership.py; this is the
+// machine-readable model an executor would later diff against. DO NOT build an executor
+// against this until the ledger is complete AND a runtime cross-check exists.
+//
+// All file:line refs are from the recon and are drift-prone; re-grep before trusting.
 #include "RenderPassContract.h"
 
 namespace RenderCore { namespace framegraph {
 
 enum class ColorMaskState : uint8_t {
-    Inherit = 0,  // pass does not establish a colorMask; inherits prior state
-    AllOn,        // pass requires/establishes RGBA write enabled
-    AllOff,       // pass writes depth only (color write disabled)
+    Inherit = 0,  // pass does not establish colorMask; inherits prior state
+    AllOn,        // RGBA write enabled
+    AllOff,       // depth-only (color write disabled)
 };
 
-// Sparse: only passes with a notable ambient contract are listed. Absent = Inherit /
-// no special ambient requirement (today). Grows as the ledger is filled.
+// Reverse-Z scene depth uses GL_GEQUAL; shadow passes use GL_LESS
+// (mclib/render_contract.cpp:493-506). Inherit = pass does not set depth func.
+enum class DepthFuncState : uint8_t { Inherit = 0, SceneGEqual, ShadowLess };
+
+// Viewport is owned by no one (inherited / ad-hoc re-set). Declared so an executor can
+// detect a pass running under the wrong viewport. MainScene = full color target;
+// ShadowMap = the shadow atlas size.
+enum class ViewportKind : uint8_t { Inherit = 0, MainScene, ShadowMap };
+
+// Sparse: only passes with a notable ambient contract are listed. Absent = no special
+// ambient requirement declared yet (the ledger grows incrementally).
 struct AmbientContract {
     RenderPassId   id;
     ColorMaskState colorMaskOnEntry;        // colorMask state this pass establishes
     bool           reassertsColorMaskAllOn; // restores RGBA write for FOLLOWING passes
     bool           disablesColorWrite;      // depth-only pass (leaves color write OFF)
+    DepthFuncState depthFunc;               // depth comparison this pass establishes
+    ViewportKind   viewport;                // viewport this pass renders under
+    bool           producesTerrainLatch;    // sets markTerrainDrawn / sceneHasTerrain_
+    bool           consumesTerrainLatch;    // bails if !sceneHasTerrain_ (post sub-passes)
     const char*    note;
 };
 
 static constexpr AmbientContract kPassAmbient[] = {
-    // Shadow lanes render depth-only and set per-attachment color write OFF
-    // (gos_postprocess.cpp colorMaski FALSE). If a later color pass runs without a
-    // re-assert, the scene is invisible -> the handshake below is load-bearing.
-    { RenderPassId::Shadow,  ColorMaskState::AllOff, /*reassert*/ false, /*disables*/ true,
-      "depth-only; sets per-attachment color write OFF" },
-    // Terrain re-asserts glColorMask(TRUE) (gameos_graphics.cpp ~:1418/3501), restoring
-    // RGBA write that the shadow pass disabled, for every color-writing pass after it.
-    { RenderPassId::Terrain, ColorMaskState::AllOn,  /*reassert*/ true,  /*disables*/ false,
-      "re-asserts glColorMask(TRUE) after shadow disabled it" },
+    // Shadow: depth-only; sets per-attachment color write OFF (gos_postprocess.cpp
+    // :2798-2799/:3470/:3492), GL_LESS depth, renders into the shadow atlas.
+    { RenderPassId::Shadow,
+      ColorMaskState::AllOff, /*reassert*/ false, /*disables*/ true,
+      DepthFuncState::ShadowLess, ViewportKind::ShadowMap,
+      /*producesLatch*/ false, /*consumesLatch*/ false,
+      "depth-only; color write OFF; GL_LESS; shadow-atlas viewport" },
+
+    { RenderPassId::StaticPropOpaque,
+      ColorMaskState::Inherit, false, false,
+      DepthFuncState::SceneGEqual, ViewportKind::MainScene,
+      false, false, "reverse-Z scene opaque" },
+
+    // Terrain: re-asserts glColorMask(TRUE) after shadow disabled it (the load-bearing
+    // shadow-leak repair, gameos_graphics.cpp ~:1418/3501) AND sets the markTerrainDrawn
+    // / sceneHasTerrain_ latch that 4 post sub-passes depend on.
+    { RenderPassId::Terrain,
+      ColorMaskState::AllOn,  /*reassert*/ true,  /*disables*/ false,
+      DepthFuncState::SceneGEqual, ViewportKind::MainScene,
+      /*producesLatch*/ true, /*consumesLatch*/ false,
+      "re-asserts glColorMask(TRUE); sets sceneHasTerrain_ latch" },
+
+    { RenderPassId::MechOpaque,
+      ColorMaskState::Inherit, false, false,
+      DepthFuncState::SceneGEqual, ViewportKind::MainScene,
+      false, false, "reverse-Z scene opaque" },
+
+    // PostProcess: screenShadow/cloudShadow/shoreline/edgeFog/fogOob bail if
+    // !sceneHasTerrain_ (gos_postprocess.cpp :1303/1936/2030/2173/2234/2284/2341) -> the
+    // terrain latch is a hard cross-phase dependency; reorder terrain after post and 4
+    // passes silently vanish.
+    { RenderPassId::PostProcess,
+      ColorMaskState::Inherit, false, false,
+      DepthFuncState::Inherit, ViewportKind::MainScene,
+      /*producesLatch*/ false, /*consumesLatch*/ true,
+      "consumes sceneHasTerrain_; FORCE-43 viewport re-set before composite" },
 };
 static constexpr int kPassAmbientCount =
     sizeof(kPassAmbient) / sizeof(kPassAmbient[0]);
@@ -56,10 +98,8 @@ inline const AmbientContract* findAmbient(RenderPassId id) {
     return nullptr;
 }
 
-// The recon's #1 executor blocker, as a checkable invariant: SOME pass must disable
-// color write (shadow) and SOME pass must re-assert it (terrain). If a future edit
-// drops the terrain re-assert, this returns false and the offline test fails -- instead
-// of shipping an invisible scene.
+// Landmine #1 (recon §2): SOME pass must disable color write (shadow) and SOME pass
+// must re-assert it (terrain). Drop the terrain re-assert -> invisible scene.
 inline bool colorMaskHandshakeDeclared() {
     bool anyDisables = false, anyReasserts = false;
     for (int i = 0; i < kPassAmbientCount; ++i) {
@@ -67,6 +107,17 @@ inline bool colorMaskHandshakeDeclared() {
         if (kPassAmbient[i].reassertsColorMaskAllOn) anyReasserts = true;
     }
     return anyDisables && anyReasserts;
+}
+
+// Landmine #2 (recon §2): SOME pass must SET the terrain latch and SOME pass CONSUMES
+// it. Drop the producer -> 4 post passes silently bail (documented landmine).
+inline bool terrainLatchHandshakeDeclared() {
+    bool anyProduces = false, anyConsumes = false;
+    for (int i = 0; i < kPassAmbientCount; ++i) {
+        if (kPassAmbient[i].producesTerrainLatch) anyProduces = true;
+        if (kPassAmbient[i].consumesTerrainLatch) anyConsumes = true;
+    }
+    return anyProduces && anyConsumes;
 }
 
 }} // namespace RenderCore::framegraph

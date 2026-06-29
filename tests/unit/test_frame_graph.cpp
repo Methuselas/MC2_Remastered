@@ -91,4 +91,34 @@ TEST_CASE("ambient ledger: colorMask handshake is declared (shadow OFF, terrain 
     CHECK(terrain->reassertsColorMaskAllOn == true);
 }
 
+TEST_CASE("ambient ledger: terrain latch handshake declared (terrain sets, post consumes)") {
+    // Recon landmine #2: markTerrainDrawn/sceneHasTerrain_ is a cross-phase latch; if a
+    // producer is removed, screenShadow/cloudShadow/shoreline/edgeFog/fogOob silently
+    // bail. This makes the producer/consumer pairing a tested invariant.
+    CHECK(terrainLatchHandshakeDeclared() == true);
+    const AmbientContract* terrain = findAmbient(RenderPassId::Terrain);
+    REQUIRE(terrain != nullptr);
+    CHECK(terrain->producesTerrainLatch == true);
+    const AmbientContract* post = findAmbient(RenderPassId::PostProcess);
+    REQUIRE(post != nullptr);
+    CHECK(post->consumesTerrainLatch == true);
+}
+
+TEST_CASE("ambient ledger: depth func declarations match the reverse-Z / shadow contract") {
+    // Scene passes use reverse-Z GL_GEQUAL; shadow uses GL_LESS (render_contract.cpp).
+    const AmbientContract* shadow = findAmbient(RenderPassId::Shadow);
+    REQUIRE(shadow != nullptr);
+    CHECK(static_cast<unsigned>(shadow->depthFunc) ==
+          static_cast<unsigned>(DepthFuncState::ShadowLess));
+    const RenderPassId scenePasses[] = {
+        RenderPassId::StaticPropOpaque, RenderPassId::Terrain, RenderPassId::MechOpaque
+    };
+    for (int i = 0; i < 3; ++i) {
+        const AmbientContract* a = findAmbient(scenePasses[i]);
+        REQUIRE(a != nullptr);
+        CHECK(static_cast<unsigned>(a->depthFunc) ==
+              static_cast<unsigned>(DepthFuncState::SceneGEqual));
+    }
+}
+
 } // TEST_SUITE
