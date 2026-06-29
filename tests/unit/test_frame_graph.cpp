@@ -7,6 +7,7 @@
 #include "doctest.h"
 #include "RenderCore/frame_graph_validate.h"
 #include "RenderCore/ambient_contract.h"
+#include "RenderCore/fbo_ledger.h"
 
 using namespace RenderCore;
 using namespace RenderCore::framegraph;
@@ -182,6 +183,40 @@ TEST_CASE("compareAmbient: blend + depth-write axes cross-check (pure, synthetic
     // Inherit live -> skipped (no false positive even though declared).
     AmbientSample inheritBlend = good; inheritBlend.blend = BlendState::Inherit;
     CHECK(compareAmbient(decl, inheritBlend).blend == false);
+}
+
+TEST_CASE("fbo ledger: register/resolve + default-FBO + unregistered") {
+    FboLedger led;
+    led.reset();
+    led.registerFbo(7u, RenderResourceId::MainColor);
+    led.registerFbo(10u, RenderResourceId::ShadowDynamicMap);
+    auto rid = [](RenderResourceId r){ return static_cast<unsigned>(r); };
+    CHECK(rid(led.resolve(7u))  == rid(RenderResourceId::MainColor));
+    CHECK(rid(led.resolve(10u)) == rid(RenderResourceId::ShadowDynamicMap));
+    CHECK(rid(led.resolve(0u))  == rid(RenderResourceId::Backbuffer));   // default framebuffer
+    CHECK(rid(led.resolve(99u)) == rid(RenderResourceId::Unknown));      // unregistered -> skipped
+    // re-register updates in place
+    led.registerFbo(7u, RenderResourceId::WaterReflectionColor);
+    CHECK(rid(led.resolve(7u))  == rid(RenderResourceId::WaterReflectionColor));
+}
+
+TEST_CASE("fbo ledger: mismatch logic skips Unknown on either side") {
+    // declared==actual -> ok; differ -> mismatch; Unknown either side -> skipped.
+    CHECK(fboMismatch(RenderResourceId::MainColor, RenderResourceId::MainColor)        == false);
+    CHECK(fboMismatch(RenderResourceId::MainColor, RenderResourceId::ShadowDynamicMap) == true);
+    CHECK(fboMismatch(RenderResourceId::Unknown,   RenderResourceId::MainColor)        == false);
+    CHECK(fboMismatch(RenderResourceId::MainColor, RenderResourceId::Unknown)          == false);
+}
+
+TEST_CASE("fbo ledger: scene passes declare MainColor target; others undeclared") {
+    auto rid = [](RenderResourceId r){ return static_cast<unsigned>(r); };
+    const unsigned mc = rid(RenderResourceId::MainColor);
+    CHECK(rid(declaredFboTarget(RenderPassId::StaticPropOpaque)) == mc);
+    CHECK(rid(declaredFboTarget(RenderPassId::Terrain))          == mc);
+    CHECK(rid(declaredFboTarget(RenderPassId::TerrainOverlay))   == mc);
+    CHECK(rid(declaredFboTarget(RenderPassId::TerrainDecal))     == mc);
+    // PostProcess intentionally undeclared (timing-uncertain at the sample seam).
+    CHECK(rid(declaredFboTarget(RenderPassId::PostProcess)) == rid(RenderResourceId::Unknown));
 }
 
 } // TEST_SUITE

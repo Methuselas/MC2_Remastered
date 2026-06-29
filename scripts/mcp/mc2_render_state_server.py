@@ -336,6 +336,14 @@ def get_render_health() -> str:
                 any_fail = True
             lines.append(f"  ambient_samples:  {amb_samples}")
             lines.append(f"  ambient_mismatch: {amb_miss}{' *** FAIL' if amb_miss not in (0, '?') else ''}")
+        # FRAME-GRAPH-FBO-LEDGER-1: bound-FBO-vs-declared-target guard.
+        fbo_samples = fg.get("fbo_samples", 0)
+        fbo_miss = fg.get("fbo_mismatches", 0)
+        if fbo_samples or fbo_miss:
+            if fbo_miss not in (0, "?"):
+                any_fail = True
+            lines.append(f"  fbo_samples:      {fbo_samples}")
+            lines.append(f"  fbo_mismatch:     {fbo_miss}{' *** FAIL' if fbo_miss not in (0, '?') else ''}")
 
     if any_fail:
         lines.insert(0, "HEALTH: FAIL — nonzero counters detected")

@@ -18,6 +18,9 @@ extern "C" const char* gos_getMechTextureNameByNodeIdx(uint32_t nodeIdx);
 // FRAME-GRAPH-AMBIENT-RUNTIME-1: ambient-probe mismatch count (mclib/render_contract.cpp).
 extern "C" unsigned long mc2_ambient_mismatch_count();
 extern "C" unsigned long mc2_ambient_probe_samples();
+// FRAME-GRAPH-FBO-LEDGER-1: bound-FBO-vs-declared-target guard counters.
+extern "C" unsigned long mc2_fbo_mismatch_count();
+extern "C" unsigned long mc2_fbo_samples();
 
 #include <chrono>
 #include <cstdlib>
@@ -235,7 +238,10 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
         // Declared passes actually sampled by the probe. 0 = probe disabled OR never
         // fired (distinguishes "ran clean" from "never ran"). >0 with mismatches 0 =
         // live GL ambient state matched the declared ledger at the sampled seams.
-        s << "    \"ambient_probe_samples\": " << mc2_ambient_probe_samples() << "\n";
+        s << "    \"ambient_probe_samples\": " << mc2_ambient_probe_samples() << ",\n";
+        // FRAME-GRAPH-FBO-LEDGER-1: passes rendering into the WRONG logical target.
+        s << "    \"fbo_mismatches\": " << mc2_fbo_mismatch_count() << ",\n";
+        s << "    \"fbo_samples\": " << mc2_fbo_samples() << "\n";
         s << "  },\n";
     }
     s << "  \"mission\": {\n";

@@ -10,6 +10,7 @@
 #include "gameos.hpp"      // gos_InvalidateRenderStateCache (RENDER_STATES v1)
 #include "../../RenderWorld/RenderWorld.h"  // M1.5: IsObjectIdBufferEnabled
 #include "../../RenderCore/RenderResourceRegistry.h"
+#include "../../RenderCore/fbo_ledger.h"   // FRAME-GRAPH-FBO-LEDGER-1: GLuint->logical target
 #include "../../RenderCore/EngineView.h"
 #include "view_uniforms_gl.h"
 #include "gos_static_prop_registry.h"   // HZB-STATICPROP-CULL-RECON-1: real bounds for the probe
@@ -851,6 +852,7 @@ void gosPostProcess::createFBOs(int w, int h)
 {
     // --- Scene FBO (full resolution, HDR) ---
     glGenFramebuffers(1, &sceneFBO_);
+    RenderCore::framegraph::fboLedger().registerFbo(sceneFBO_, RenderCore::RenderResourceId::MainColor);  // FBO-LEDGER-1
     glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
 
     // Color attachment: RGBA16F
@@ -1008,6 +1010,7 @@ void gosPostProcess::createFBOs(int w, int h)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
         glGenFramebuffers(1, &waterReflFBO_);
+        RenderCore::framegraph::fboLedger().registerFbo(waterReflFBO_, RenderCore::RenderResourceId::WaterReflectionColor);  // FBO-LEDGER-1
         glBindFramebuffer(GL_FRAMEBUFFER, waterReflFBO_);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, waterReflColorTex_, 0);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,  GL_TEXTURE_2D, waterReflDepthTex_, 0);
@@ -3382,6 +3385,7 @@ void gosPostProcess::initShadows()
         "shaders/shadow_depth.vert", "shaders/shadow_depth.frag", kShaderPrefix);
 
     glGenFramebuffers(1, &shadowFBO_);
+    RenderCore::framegraph::fboLedger().registerFbo(shadowFBO_, RenderCore::RenderResourceId::ShadowStaticMap);  // FBO-LEDGER-1
     glBindFramebuffer(GL_FRAMEBUFFER, shadowFBO_);
 
     glGenTextures(1, &shadowDepthTex_);
@@ -3709,6 +3713,7 @@ void gosPostProcess::initDynamicShadows()
     dynShadowMapSize_ = mc2ShadowMapSize();   // CSM-REDESIGN: env-tunable, default 8192
 
     glGenFramebuffers(1, &dynShadowFBO_);
+    RenderCore::framegraph::fboLedger().registerFbo(dynShadowFBO_, RenderCore::RenderResourceId::ShadowDynamicMap);  // FBO-LEDGER-1
     glBindFramebuffer(GL_FRAMEBUFFER, dynShadowFBO_);
 
     glGenTextures(1, &dynShadowDepthTex_);
@@ -3811,6 +3816,7 @@ void gosPostProcess::initDynamicShadows()
 
         // One FBO; per-cascade we attach a single layer via glFramebufferTextureLayer.
         glGenFramebuffers(1, &dynShadowArrayFBO_);
+        RenderCore::framegraph::fboLedger().registerFbo(dynShadowArrayFBO_, RenderCore::RenderResourceId::ShadowDynamicMap);  // FBO-LEDGER-1
         glBindFramebuffer(GL_FRAMEBUFFER, dynShadowArrayFBO_);
         glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, dynShadowArrayTex_, 0, 0);
         glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, dynShadowArrayDummyColorTex_, 0, 0);

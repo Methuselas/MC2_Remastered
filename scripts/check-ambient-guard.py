@@ -50,12 +50,22 @@ def main():
         print(f"check-ambient-guard: INCONCLUSIVE — guard sampled 0 passes ({path}). "
               "Run the engine with the guard enabled (default-ON).", file=sys.stderr)
         return 2
+    fbo_mism = fg.get("fbo_mismatches", 0)
+    failed = False
     if mism not in (0, "?"):
         print(f"check-ambient-guard: FAIL — {mism} ambient mismatch(es) over {samples} "
               f"samples ({path}). See [AMBIENT_GUARD] lines in the engine log for the "
               "offending pass + axis (declared vs live).", file=sys.stderr)
+        failed = True
+    if fbo_mism not in (0, "?"):
+        print(f"check-ambient-guard: FAIL — {fbo_mism} FBO target mismatch(es) "
+              f"({path}). See [FBO_GUARD] lines for the pass + declared vs actual target.",
+              file=sys.stderr)
+        failed = True
+    if failed:
         return 1
-    print(f"check-ambient-guard: OK — 0 mismatches over {samples} samples ({path.name})")
+    print(f"check-ambient-guard: OK — 0 ambient + 0 FBO mismatches over {samples} samples "
+          f"({path.name})")
     return 0
 
 if __name__ == "__main__":

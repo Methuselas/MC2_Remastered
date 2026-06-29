@@ -29,6 +29,7 @@
 #include "RenderCore/RenderPassContract.h"
 #include "RenderCore/RenderResourceRegistry.h"
 #include "RenderCore/ambient_contract.h"   // FRAME-GRAPH-AMBIENT-RUNTIME-1 cross-check
+#include "RenderCore/fbo_ledger.h"         // FRAME-GRAPH-FBO-LEDGER-1 cross-check
 
 namespace render_contract {
 
@@ -789,6 +790,8 @@ void frameBegin() {
 namespace {
 unsigned long g_ambientMismatchCount = 0;
 unsigned long g_ambientProbeSamples  = 0;  // declared passes actually compared (proves it ran)
+unsigned long g_fboMismatchCount     = 0;  // FRAME-GRAPH-FBO-LEDGER-1
+unsigned long g_fboSamples           = 0;
 
 RenderCore::framegraph::ColorMaskState sampleColorMask() {
     GLboolean m[4] = { GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE };
@@ -832,44 +835,72 @@ void ambientProbeAtPassBegin(RenderCore::RenderPassId id) {
         return !(v && v[0] == '0');   // default ON; only =0 disables
     }();
     if (!s_guardEnabled) return;
-    const RenderCore::framegraph::AmbientContract* decl =
-        RenderCore::framegraph::findAmbient(id);
-    if (!decl) return;
-    ++g_ambientProbeSamples;   // a declared pass was sampled this call (probe is live)
-    RenderCore::framegraph::AmbientSample live;
-    live.colorMask  = sampleColorMask();
-    live.depthFunc  = sampleDepthFunc();
-    live.blend      = sampleBlend();
-    live.depthWrite = sampleDepthWrite();
-    const RenderCore::framegraph::AmbientMismatch mm =
-        RenderCore::framegraph::compareAmbient(*decl, live);
-    if (mm.any()) {
-        ++g_ambientMismatchCount;
-        // Throttle logging (first N per process); the dump counter is the source of
-        // truth. Each line carries pass + per-axis decl-vs-live so it debugs, not just trips.
-        static unsigned s_logged = 0;
-        if (s_logged < 32u) {
-            ++s_logged;
-            fprintf(stderr,
-                "[AMBIENT_GUARD] phase=begin pass=\"%s\" cmMiss=%d dfMiss=%d dwMiss=%d "
-                "(decl cm=%d df=%d dw=%d | live cm=%d df=%d dw=%d)\n",
-                decl->note ? decl->note : "?",
-                (int)mm.colorMask, (int)mm.depthFunc, (int)mm.depthWrite,
-                (int)decl->colorMaskOnEntry, (int)decl->depthFunc, (int)decl->depthWrite,
-                (int)live.colorMask, (int)live.depthFunc, (int)live.depthWrite);
-            fflush(stderr);
+    static const bool s_fatal = []{
+        return ::getenv("MC2_FRAMEGRAPH_AMBIENT_FATAL") != nullptr
+            || ::getenv("MC2_AMBIENT_ASSERT_FATAL") != nullptr;   // legacy alias
+    }();
+
+    // --- AMBIENT axes (colorMask / depthFunc / depthWrite) -----------------------
+    if (const RenderCore::framegraph::AmbientContract* decl =
+            RenderCore::framegraph::findAmbient(id)) {
+        ++g_ambientProbeSamples;
+        RenderCore::framegraph::AmbientSample live;
+        live.colorMask  = sampleColorMask();
+        live.depthFunc  = sampleDepthFunc();
+        live.blend      = sampleBlend();
+        live.depthWrite = sampleDepthWrite();
+        const RenderCore::framegraph::AmbientMismatch mm =
+            RenderCore::framegraph::compareAmbient(*decl, live);
+        if (mm.any()) {
+            ++g_ambientMismatchCount;
+            static unsigned s_logged = 0;
+            if (s_logged < 32u) {
+                ++s_logged;
+                fprintf(stderr,
+                    "[AMBIENT_GUARD] phase=begin pass=\"%s\" cmMiss=%d dfMiss=%d dwMiss=%d "
+                    "(decl cm=%d df=%d dw=%d | live cm=%d df=%d dw=%d)\n",
+                    decl->note ? decl->note : "?",
+                    (int)mm.colorMask, (int)mm.depthFunc, (int)mm.depthWrite,
+                    (int)decl->colorMaskOnEntry, (int)decl->depthFunc, (int)decl->depthWrite,
+                    (int)live.colorMask, (int)live.depthFunc, (int)live.depthWrite);
+                fflush(stderr);
+            }
+            if (s_fatal) abort();
         }
-        static const bool s_fatal = []{
-            return ::getenv("MC2_FRAMEGRAPH_AMBIENT_FATAL") != nullptr
-                || ::getenv("MC2_AMBIENT_ASSERT_FATAL") != nullptr;  // legacy alias
-        }();
-        if (s_fatal) abort();
+    }
+
+    // --- FBO target (FRAME-GRAPH-FBO-LEDGER-1) -----------------------------------
+    // Independent of the ambient contract: a pass may declare an FBO target but no
+    // ambient row (e.g. TerrainOverlay/Decal). Sample the bound draw FBO, resolve it to
+    // a logical target via the ledger, compare to the pass's declared target.
+    const RenderCore::RenderResourceId fboDecl =
+        RenderCore::framegraph::declaredFboTarget(id);
+    if (fboDecl != RenderCore::RenderResourceId::Unknown) {
+        ++g_fboSamples;
+        GLint bound = 0;
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &bound);
+        const RenderCore::RenderResourceId actual =
+            RenderCore::framegraph::fboLedger().resolve(static_cast<unsigned>(bound));
+        if (RenderCore::framegraph::fboMismatch(fboDecl, actual)) {
+            ++g_fboMismatchCount;
+            static unsigned s_fboLogged = 0;
+            if (s_fboLogged < 32u) {
+                ++s_fboLogged;
+                fprintf(stderr,
+                    "[FBO_GUARD] phase=begin passId=%u declTarget=%u actualTarget=%u boundFbo=%d\n",
+                    (unsigned)id, (unsigned)fboDecl, (unsigned)actual, (int)bound);
+                fflush(stderr);
+            }
+            if (s_fatal) abort();
+        }
     }
 }
 
 // Read by the debug-state dump (GameOS, no GL include) via extern "C".
 extern "C" unsigned long mc2_ambient_mismatch_count() { return g_ambientMismatchCount; }
 extern "C" unsigned long mc2_ambient_probe_samples()  { return g_ambientProbeSamples;  }
+extern "C" unsigned long mc2_fbo_mismatch_count()     { return g_fboMismatchCount;     }
+extern "C" unsigned long mc2_fbo_samples()            { return g_fboSamples;           }
 
 void beginPass(RenderCore::RenderPassId id) {
     ambientProbeAtPassBegin(id);   // self-gated (MC2_AMBIENT_PROBE); runs before order gate
