@@ -28,3 +28,12 @@ TEST_CASE("CapabilitySet: per-bit isolation") {
             CHECK(c.has(static_cast<Capability>(j)) == (i == j));
     }
 }
+
+#include "unitprofile.h"
+TEST_CASE("gate parse: unset/empty/zero=off; else=on") {
+    CHECK_FALSE(mc2_unitprofile_parse_enabled(nullptr));
+    CHECK_FALSE(mc2_unitprofile_parse_enabled(""));
+    CHECK_FALSE(mc2_unitprofile_parse_enabled("0"));
+    CHECK(mc2_unitprofile_parse_enabled("1"));
+    CHECK(mc2_unitprofile_parse_enabled("true"));
+}

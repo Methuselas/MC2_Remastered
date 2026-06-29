@@ -49,6 +49,7 @@ add_executable(mc2_tests
     ${MC2_WORKTREE_ROOT}/RenderCore/RenderDebugView.cpp
     ${MC2_WORKTREE_ROOT}/HostServices/DefaultHostServices.cpp  # ENGINE-HOST-SERVICES-0
     ${MC2_WORKTREE_ROOT}/code/tacticaloverview_state.cpp  # TACTICAL-OVERVIEW-1
+    ${MC2_WORKTREE_ROOT}/code/unitprofile.cpp   # UNIT-PROFILE-SEAM-1
 )
 
 target_include_directories(mc2_tests PRIVATE
