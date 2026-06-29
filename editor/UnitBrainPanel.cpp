@@ -170,15 +170,18 @@ bool refreshMissionFitBrains()
 		return false;
 	}
 
-	FullPathFileName fitName;
-	fitName.init( missionPath, mapName, ".fit" );
-	const char* path = (const char*)fitName;
-	if ( !path || !path[0] )
-	{
-		s_brainCount = 0;
-		s_lastPath[0] = 0;
-		return false;
-	}
+	// getMapName() returns the FULL loaded .pak path (e.g. "...\mc2_24\mc2_24.pak"); the mission
+	// .fit sits next to it. Swap the trailing ".pak" -> ".fit" (mirrors EditorData camFileName
+	// Replace). Do NOT prepend missionPath — mapName is already an absolute path.
+	char pathBuf[512];
+	strncpy( pathBuf, mapName, sizeof( pathBuf ) - 1 );
+	pathBuf[sizeof( pathBuf ) - 1] = 0;
+	size_t plen = strlen( pathBuf );
+	if ( plen >= 4 && 0 == _stricmp( pathBuf + plen - 4, ".pak" ) )
+		strcpy( pathBuf + plen - 4, ".fit" );             // mc2_24.pak -> mc2_24.fit
+	else if ( plen + 4 < sizeof( pathBuf ) )
+		strcpy( pathBuf + plen, ".fit" );                 // no .pak ext: just append
+	const char* path = pathBuf;
 
 	if ( 0 == strcmp( s_lastPath, path ) )
 		return true;   // already parsed this fit
