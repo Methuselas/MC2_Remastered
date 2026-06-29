@@ -1,98 +1,56 @@
 #!/usr/bin/env python3
-"""Cook Magic mod component icons to MC2's actual convention.
+"""Cook the Magic weapon icons to 64x64 full-art TGAs (matching stock energy icons).
 
-The mech-bay/list/mechlopedia draw a component icon with:
-    icon.resize( IconX*48, IconY*32 )
-    icon.setUVs ( 0, 0, IconX*48, IconY*32 )       (componentlistbox.cpp:56-57)
-i.e. it samples the TOP-LEFT (IconX*48 x IconY*32) texel region of the texture.
-Stock/FST icons are 128x128 POWER-OF-TWO canvases with the art placed in that
-top-left region. Non-power-of-two textures (96x64 etc.) get padded by the GPU and
-mis-sample -> the art shrinks into a corner (this was the ballistic/missile bug).
+MC2 component icons are authored 64x64 with the art filling the canvas (the stock
+energy-weapon icons are 64x64). The detail/info box and the component list both
+expect that size; a larger texture (e.g. 128) gets sampled at the smaller region
+and renders tiny in the corner. So: resize each archive source (128) to 64x64,
+full art, keeping the original MCL_MC_* filename the compbas references.
 
-So each icon must be a 128x128 pow2 TGA with the weapon art scaled to fill the
-top-left IconX*48 x IconY*32 region, transparent elsewhere. Because the sampled
-region depends on the COMPONENT's footprint, an icon shared by components with
-different footprints needs separate files -> we emit ONE file per component
-(mcl_cmp_<id>.tga) and rewrite that component's Logistics Icon 1 to point at it.
-
-Reads/writes the mod compbas.csv (updates icon col 24) and writes the TGAs.
-TGA art is gitignored, so this script is the reproducible source of truth.
+TGA art is gitignored, so this is the reproducible source of truth. Also deletes
+the mod's .modindex-cache so the engine re-scans (new/changed files otherwise
+stay invisible).
 
 Usage:
   py -3 scripts/cook_magic_icons.py \
       --src "A:/Games/Magic_MC2_archive/4. Weapons/Art-weapons" \
-      --compbas mods/magic-ballistic-weapons/data/objects/compbas.csv \
       --out mods/magic-ballistic-weapons/data/art [--out <install art> ...]
 """
-import argparse, csv, glob, io, os, sys
+import argparse, glob, os, sys
 try:
     from PIL import Image
 except ImportError:
     sys.exit("Pillow required: py -3 -m pip install pillow")
 
-CANVAS = 128           # power-of-two canvas (matches stock icons)
-CELL_W, CELL_H = 48, 32
+SIZE = 64
 DEFAULT_SRC = r"A:/Games/Magic_MC2_archive/4. Weapons/Art-weapons"
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", default=DEFAULT_SRC)
-    ap.add_argument("--compbas", required=True)
     ap.add_argument("--out", action="append", required=True)
     args = ap.parse_args()
 
-    srcs = {os.path.splitext(os.path.basename(p))[0].lower(): p
-            for p in glob.glob(os.path.join(args.src, "*.tga"))}
+    srcs = sorted(glob.glob(os.path.join(args.src, "*.tga")))
+    if not srcs:
+        sys.exit(f"no .tga in {args.src}")
     for d in args.out:
         os.makedirs(d, exist_ok=True)
 
-    rows = list(csv.reader(open(args.compbas, newline="")))
-    cooked = skipped = 0
-    for r in rows:
-        if not r or not r[0].strip().isdigit() or len(r) < 29:
-            continue
-        cid = int(r[0])
-        icon = r[23].strip()
-        if not icon or icon == "0":
-            continue
-        try:
-            ix, iy = int(r[27]), int(r[28])
-        except ValueError:
-            continue
-        if ix <= 0 or iy <= 0:
-            continue
-        key = os.path.splitext(icon)[0].lower()
-        sp = srcs.get(key)
-        if not sp:
-            skipped += 1            # FST-resolved (energy etc.) -- leave untouched
-            continue
-        rw, rh = ix * CELL_W, iy * CELL_H        # sampled region in texels
-        art = Image.open(sp).convert("RGBA").resize((rw, rh), Image.LANCZOS)
-        canvas = Image.new("RGBA", (CANVAS, CANVAS), (0, 0, 0, 0))
-        canvas.alpha_composite(art, (0, 0))      # top-left region
-        name = f"mcl_cmp_{cid}.tga"
+    n = 0
+    for src in srcs:
+        im = Image.open(src).convert("RGBA").resize((SIZE, SIZE), Image.LANCZOS)
+        name = os.path.basename(src)
         for d in args.out:
-            canvas.save(os.path.join(d, name), compression=None)
-        r[23] = name                             # Logistics Icon 1 -> per-component file
-        cooked += 1
+            im.save(os.path.join(d, name), compression=None)
+        n += 1
 
-    out = io.StringIO()
-    csv.writer(out, lineterminator="\n").writerows(rows)
-    open(args.compbas, "w", newline="").write(out.getvalue())
-
-    # Invalidate the per-mod file index cache so the engine re-scans and picks up
-    # the newly-added icon files. Without this, NEW files are invisible to the
-    # game (the cache only knows the paths present when it was built).
     for d in args.out:
-        # d = <mod>/data/art ; cache lives at <mod>/.modindex-cache
-        mod_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(d))))
-        cache = os.path.join(mod_root, ".modindex-cache")
+        cache = os.path.join(os.path.dirname(os.path.dirname(d)), ".modindex-cache")
         if os.path.isfile(cache):
             os.remove(cache)
-            print(f"  invalidated {cache}")
-
-    print(f"cooked {cooked} per-component 128x128 icon(s); {skipped} FST-resolved left untouched")
+    print(f"cooked {n} icon(s) -> {SIZE}x{SIZE} full-art; caches invalidated")
 
 
 if __name__ == "__main__":
