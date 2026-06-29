@@ -81,9 +81,14 @@ extern int g_terrainMaterialProfile;
 // Fix B: forward-declared TU-wide so the symmetric-mirror at the GPU-water
 // binds in renderWaterFastPath (earlier in this file than the historical
 // probe-accessor block) can see them. Linkage matches definitions:
-// gos_terrain_indirect_getDispatchMvp16 is extern "C" (gos_terrain_indirect.cpp);
-// gos_GetTerrainMVPMat4 is C++ linkage (defined later in this file).
-extern "C" const float* gos_terrain_indirect_getDispatchMvp16();
+// gos_GetTerrainMVPMat4 is C++ linkage (defined later in this file). The raw
+// dispatch-MVP snapshot getter + the view-epoch-checked object accessor
+// (gos_GetObjectDrawMVP) come from gos_object_draw_mvp.h (RENDER-VIEW-CURRENCY-1).
+// This TU is a MIXED consumer: terrain-phase reads (water/overlay/decal) use the
+// raw snapshot legitimately and are tagged TERRAIN-PHASE-RAW-MVP-OK; object-phase
+// reads (object shadows) MUST use gos_GetObjectDrawMVP. Enforced by
+// scripts/check-object-mvp-currency.py.
+#include "gos_object_draw_mvp.h"
 extern const float*     gos_GetTerrainMVPMat4();
 
 static const DWORD INVALID_TEXTURE_ID = 0;
@@ -3232,7 +3237,7 @@ void gosRenderer::renderWaterFastPath(
 
     const float* wMvpWaterNonMdi =
         gos_terrain_indirect::IsFrameSolidArmed()
-            ? gos_terrain_indirect_getDispatchMvp16()
+            ? gos_terrain_indirect_getDispatchMvp16()  // TERRAIN-PHASE-RAW-MVP-OK
             : gos_GetTerrainMVPMat4();
     if (!wMvpWaterNonMdi) wMvpWaterNonMdi = gos_GetTerrainMVPMat4();  // safety: pre-arm/first frame
     setMat4Direct("u_worldToClipGL", wMvpWaterNonMdi);
@@ -3439,7 +3444,7 @@ void gosRenderer::renderWaterFastPath(
 
         const float* wMvpWaterMdi =
             gos_terrain_indirect::IsFrameSolidArmed()
-                ? gos_terrain_indirect_getDispatchMvp16()
+                ? gos_terrain_indirect_getDispatchMvp16()  // TERRAIN-PHASE-RAW-MVP-OK  // TERRAIN-PHASE-RAW-MVP-OK
                 : gos_GetTerrainMVPMat4();
         if (!wMvpWaterMdi) wMvpWaterMdi = gos_GetTerrainMVPMat4();  // safety: pre-arm/first frame
         setMMat4Direct("u_worldToClipGL", wMvpWaterMdi);
@@ -9155,9 +9160,18 @@ void __stdcall gos_SetupObjectShadows(HGOSRENDERMATERIAL material)
 	if (g_gos_renderer->isTerrainMVPValid()) {
 		GLint mvpLoc = glGetUniformLocation(shp, "u_worldToClipGL");
 		if (mvpLoc >= 0) {
-			const float* mvp = gos_terrain_indirect::IsFrameSolidArmed()
-				? gos_terrain_indirect_getDispatchMvp16()
-				: (const float*)&g_gos_renderer->getTerrainMVP();
+			// OBJECT-SHADOW-MVP-CURRENCY-1: this projects OBJECT geometry
+			// (buildings/turrets/generators + legacy shapes), so a stale-view
+			// dispatch snapshot drifts/sinks them on zoom/rotate — the same class
+			// as RENDER-VIEW-CURRENCY-1, previously hidden in this terrain-phase TU.
+			// Route through the view-epoch-checked accessor: snapshot only when its
+			// epoch is current, else live MVP. Killswitch shares the object family's
+			// MC2_PROP_FIXB_MVP gate.
+			static const bool s_objShadowFixB = []{
+				const char* v = std::getenv("MC2_PROP_FIXB_MVP");
+				return !(v && std::atoi(v) == 0);   // default ON; only =0 reverts
+			}();
+			const float* mvp = gos_GetObjectDrawMVP(s_objShadowFixB);
 			if (!mvp) mvp = (const float*)&g_gos_renderer->getTerrainMVP();
 			glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, mvp);
 		}
@@ -10006,7 +10020,7 @@ void gosRenderer::drawTerrainOverlays()
                         : (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
     const float* fixBMvpOverlay =
         gos_terrain_indirect::IsFrameSolidArmed()
-            ? gos_terrain_indirect_getDispatchMvp16()
+            ? gos_terrain_indirect_getDispatchMvp16()  // TERRAIN-PHASE-RAW-MVP-OK
             : gos_GetTerrainMVPMat4();
     if (!fixBMvpOverlay) fixBMvpOverlay = gos_GetTerrainMVPMat4();
     uploadOverlayUniforms_(overlayProg_->shp_, overlayLocs_, elapsed, fixBMvpOverlay);
@@ -10127,7 +10141,7 @@ bool gosRenderer::drawDecalStaticBatch(unsigned int vboGL,
                         : (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
     const float* fixBMvpDecalStatic =
         gos_terrain_indirect::IsFrameSolidArmed()
-            ? gos_terrain_indirect_getDispatchMvp16()
+            ? gos_terrain_indirect_getDispatchMvp16()  // TERRAIN-PHASE-RAW-MVP-OK
             : gos_GetTerrainMVPMat4();
     if (!fixBMvpDecalStatic) fixBMvpDecalStatic = gos_GetTerrainMVPMat4();
     uploadOverlayUniforms_(overlayProg_->shp_, overlayLocs_, elapsed, fixBMvpDecalStatic);
@@ -10201,7 +10215,7 @@ void gosRenderer::drawDecals()
                         : (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
     const float* fixBMvpDecals =
         gos_terrain_indirect::IsFrameSolidArmed()
-            ? gos_terrain_indirect_getDispatchMvp16()
+            ? gos_terrain_indirect_getDispatchMvp16()  // TERRAIN-PHASE-RAW-MVP-OK
             : gos_GetTerrainMVPMat4();
     if (!fixBMvpDecals) fixBMvpDecals = gos_GetTerrainMVPMat4();
     uploadOverlayUniforms_(decalProg_->shp_, decalLocs_, elapsed, fixBMvpDecals);

@@ -401,12 +401,13 @@ void UnitBrainPanel::Draw()
 			refreshMissionFitBrains();
 			const Stuff::Vector3D& p = obj->getPosition();
 
-			// Diagnostics (so a "no match" can be debugged without a rebuild): the path we
-			// read, how many brains parsed, the selected unit's world pos, and the NEAREST
-			// brain (uncapped) so coordinate-system mismatches are visible.
-			ImGui::TextDisabled("fit: %s", s_lastPath[0] ? s_lastPath : "(none)");
-			ImGui::TextDisabled("brains: %d   unit pos: (%.1f, %.1f)", s_brainCount, (float)p.x, (float)p.y);
+			// Diagnostics (collapsed): the path we read, how many brains parsed, the selected
+			// unit's world pos, and the NEAREST brain (uncapped) so a "no match" / coordinate
+			// mismatch can be debugged without a rebuild.
+			if (ImGui::TreeNode("debug"))
 			{
+				ImGui::TextDisabled("fit: %s", s_lastPath[0] ? s_lastPath : "(none)");
+				ImGui::TextDisabled("brains: %d   unit pos: (%.1f, %.1f)", s_brainCount, (float)p.x, (float)p.y);
 				const MissionFitBrain* nb = nullptr; float nd2 = 1e30f;
 				for (int i = 0; i < s_brainCount; ++i)
 				{
@@ -418,8 +419,8 @@ void UnitBrainPanel::Draw()
 				if (nb)
 					ImGui::TextDisabled("nearest: W%d (%.1f,%.1f) dist=%.1f",
 						nb->warriorIndex, nb->posX, nb->posY, (float)sqrt((double)nd2));
+				ImGui::TreePop();
 			}
-			ImGui::Separator();
 
 			const MissionFitBrain* b = matchBrainForPos((float)p.x, (float)p.y);
 			if (!b)

@@ -25,17 +25,28 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# Terrain-coupled draw paths + the sanctioned accessor/definition. Basenames.
-ALLOWLIST = {
+# Whole-file allow: pure terrain-coupled TUs + the sanctioned accessor/definition.
+# Every raw snapshot read in these files is same-phase-as-publish (currency is
+# structural) or is the definition/accessor itself. Basenames.
+FULL_ALLOW = {
     "gos_terrain_indirect.cpp",    # defines the snapshot + getter
     "gos_terrain_indirect.h",
     "gos_object_draw_mvp.h",       # the currency-checked accessor (only sanctioned reader)
-    "gameos_graphics.cpp",         # water / overlay / decal — terrain phase (correct as-is)
     "gos_terrain_lod_chunk.cpp",   # terrain solid draw
-    "gos_terrain_water_stream.cpp",# water fast path
+    "gos_terrain_water_stream.cpp",# water fast path (pure water)
     "gos_terrain_water_fast.vert", # (shader, never matches the C symbol; harmless)
     "debug_renderer.cpp",          # diagnostics dump
 }
+
+# MIXED TUs: contain BOTH legitimate terrain-phase reads (water/overlay/decal) and
+# object-phase draw. A raw snapshot read here is allowed ONLY on a line carrying the
+# TERRAIN-PHASE-RAW-MVP-OK tag. Object-phase reads (e.g. object shadows) must instead
+# use gos_GetObjectDrawMVP(). This closes the hole that let gos_SetupObjectShadows
+# read the raw snapshot blind under a whole-file allowlist (OBJECT-SHADOW-MVP-CURRENCY-1).
+MARKER_REQUIRED = {
+    "gameos_graphics.cpp",
+}
+MARKER = "TERRAIN-PHASE-RAW-MVP-OK"
 
 # The raw phase-private symbol. gos_GetObjectDrawMVP / getDispatchMvpViewEpoch /
 # getDispatchMvpFrameIdx / getDispatchMvpFp are NOT this — only the matrix getter.
@@ -51,18 +62,23 @@ def main() -> int:
         if not base.is_dir():
             continue
         for f in base.rglob("*"):
-            if f.suffix not in EXTS or f.name in ALLOWLIST:
+            if f.suffix not in EXTS or f.name in FULL_ALLOW:
                 continue
+            marker_ok = f.name in MARKER_REQUIRED
             try:
                 text = f.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
             for i, line in enumerate(text.splitlines(), 1):
                 # Strip // line-comment and single-line /* */ so prose mentioning
-                # the symbol (e.g. "phase-private" NOTEs) is not a violation.
+                # the symbol (e.g. "phase-private" NOTEs) is not a violation. Read
+                # the marker from the FULL line (comments included) before stripping.
+                tagged = MARKER in line
                 code = re.sub(r"/\*.*?\*/", "", line)
                 code = code.split("//", 1)[0]
                 if RAW.search(code):
+                    if marker_ok and tagged:
+                        continue   # tagged terrain-phase read in a mixed TU — allowed
                     violations.append((f.relative_to(ROOT), i, line.strip()))
 
     if violations:
