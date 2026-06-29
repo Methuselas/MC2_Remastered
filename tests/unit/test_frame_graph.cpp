@@ -9,6 +9,7 @@
 #include "RenderCore/ambient_contract.h"
 #include "RenderCore/fbo_ledger.h"
 #include "RenderCore/terrain_subpass_contract.h"
+#include "RenderCore/frame_pass_trace.h"   // FRAME-GRAPH-EXECUTOR-DRYRUN-1 pure kernel
 
 using namespace RenderCore;
 using namespace RenderCore::framegraph;
@@ -345,6 +346,102 @@ TEST_CASE("terrain subpass active-branch probe: pure kernel with synthetic count
         CHECK(terrainPathsThatDrew(c) == 2);
         CHECK(tp(dominantTerrainPath(c)) == tp(TerrainPath::IndirectBridge));
     }
+}
+
+// ---------------------------------------------------------------------------
+// FRAME-GRAPH-EXECUTOR-DRYRUN-1: pure dryRunCompare() kernel (offline, no engine).
+// Fabricated traces only — proves fired-set/order/terrain-mutex/latch-miss classification
+// and (critically) that UNOBSERVED passes are NOT counted as divergences.
+// ---------------------------------------------------------------------------
+
+// Helper: build a trace where the listed passes fired, in the listed RECORD order.
+static framegraph::FramePassTrace buildTrace(const RenderPassId* firedInRecordOrder, int count) {
+    framegraph::FramePassTrace t;
+    framegraph::resetTrace(t, kFramePassOrder, kFramePassOrderCount);
+    for (int i = 0; i < count; ++i)
+        framegraph::recordPassFired(t, firedInRecordOrder[i],
+                                    RenderResourceId::MainColor, kFramePassOrder, kFramePassOrderCount);
+    return t;
+}
+
+TEST_CASE("dryrun (a): all 11 declared passes fired in declared order -> clean") {
+    framegraph::FramePassTrace t = buildTrace(kFramePassOrder, kFramePassOrderCount);
+    const framegraph::DryRunReport r =
+        framegraph::dryRunCompare(t, kFramePassOrder, kFramePassOrderCount);
+    CHECK(r.firedCount == kFramePassOrderCount);
+    CHECK(r.unobservedCount == 0);
+    CHECK(r.outOfOrderCount == 0);
+    CHECK(r.terrainMutexViolation == false);
+}
+
+TEST_CASE("dryrun (b): only 7 observable passes fired, 4 invisible -> unobserved!=diverged") {
+    // The 4 passes with NO noteRenderPass callsite today (recon): Shadow, Water, VFX, Veg.
+    // Everything else fires in declared order. Must yield ZERO false alarms.
+    const RenderPassId fired[] = {
+        RenderPassId::StaticPropOpaque,
+        RenderPassId::Terrain,
+        RenderPassId::MechOpaque,
+        RenderPassId::TerrainDecal,
+        RenderPassId::TerrainOverlay,
+        RenderPassId::UI,
+        RenderPassId::PostProcess,
+    };
+    framegraph::FramePassTrace t = buildTrace(fired, 7);
+    const framegraph::DryRunReport r =
+        framegraph::dryRunCompare(t, kFramePassOrder, kFramePassOrderCount);
+    CHECK(r.firedCount == 7);
+    CHECK(r.unobservedCount == 4);          // Shadow, Water, VFX, VegetationCards
+    CHECK(r.outOfOrderCount == 0);          // PROVES unobserved is NOT a divergence
+    CHECK(r.terrainMutexViolation == false);
+}
+
+TEST_CASE("dryrun (c): two passes swapped -> outOfOrder>0 with an offender") {
+    // Record Terrain BEFORE StaticPropOpaque (declared order is StaticProp then Terrain).
+    const RenderPassId fired[] = {
+        RenderPassId::Shadow,
+        RenderPassId::Terrain,            // recorded before its declared predecessor
+        RenderPassId::StaticPropOpaque,
+        RenderPassId::MechOpaque,
+        RenderPassId::TerrainDecal,
+        RenderPassId::TerrainOverlay,
+        RenderPassId::Water,
+        RenderPassId::VegetationCards,
+        RenderPassId::VFX,
+        RenderPassId::UI,
+        RenderPassId::PostProcess,
+    };
+    framegraph::FramePassTrace t = buildTrace(fired, kFramePassOrderCount);
+    const framegraph::DryRunReport r =
+        framegraph::dryRunCompare(t, kFramePassOrder, kFramePassOrderCount);
+    CHECK(r.outOfOrderCount > 0);
+    CHECK(static_cast<unsigned>(r.firstOutOfOrderPass) != 0u);   // an offender was identified
+}
+
+TEST_CASE("dryrun (d): IndirectBridge dominant -> latch-miss; LODChunk -> clean") {
+    framegraph::FramePassTrace t = buildTrace(kFramePassOrder, kFramePassOrderCount);
+    t.terrainBranch    = framegraph::TerrainPath::IndirectBridge;
+    t.terrainDrewCount = 1;
+    {
+        const framegraph::DryRunReport r =
+            framegraph::dryRunCompare(t, kFramePassOrder, kFramePassOrderCount);
+        CHECK(r.terrainLatchMissActive == true);   // recon §4 HIGH
+        CHECK(r.terrainMutexViolation == false);
+    }
+    t.terrainBranch = framegraph::TerrainPath::LODChunk;
+    {
+        const framegraph::DryRunReport r =
+            framegraph::dryRunCompare(t, kFramePassOrder, kFramePassOrderCount);
+        CHECK(r.terrainLatchMissActive == false);
+    }
+}
+
+TEST_CASE("dryrun (e): two terrain branches drew -> mutex violation") {
+    framegraph::FramePassTrace t = buildTrace(kFramePassOrder, kFramePassOrderCount);
+    t.terrainBranch    = framegraph::TerrainPath::LODChunk;
+    t.terrainDrewCount = 2;
+    const framegraph::DryRunReport r =
+        framegraph::dryRunCompare(t, kFramePassOrder, kFramePassOrderCount);
+    CHECK(r.terrainMutexViolation == true);
 }
 
 } // TEST_SUITE

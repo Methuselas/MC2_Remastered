@@ -30,6 +30,8 @@
 #include "RenderCore/RenderResourceRegistry.h"
 #include "RenderCore/ambient_contract.h"   // FRAME-GRAPH-AMBIENT-RUNTIME-1 cross-check
 #include "RenderCore/fbo_ledger.h"         // FRAME-GRAPH-FBO-LEDGER-1 cross-check
+#include "RenderCore/frame_pass_trace.h"           // FRAME-GRAPH-EXECUTOR-DRYRUN-1 pure kernel
+#include "RenderCore/terrain_subpass_contract.h"   // dominantTerrainPathLive / terrainPathsThatDrew
 
 namespace render_contract {
 
@@ -657,7 +659,13 @@ void initRenderPassTelemetry() {
     }
 }
 
+// FRAME-GRAPH-EXECUTOR-DRYRUN-1: per-frame boundary hook (defined in the anon namespace
+// below). Forward-declared here so the once-per-presented-frame tick can drive it. Self-gated
+// inside on MC2_FRAMEGRAPH_DRYRUN, so it is inert (and gate-independent of telemetry) by default.
+namespace { void dryrunFrameBoundary(); }
+
 void renderPassTelemetryFrameTick() {
+    dryrunFrameBoundary();   // gate-independent caller; self-gated inside. Runs every frame.
     if (!s_telemetryEnabled) return;
     ++s_telemetryFrame;
 }
@@ -667,8 +675,115 @@ void renderPassTelemetryFrameTick() {
 // telemetry gate below). Self-gated on MC2_AMBIENT_PROBE.
 void ambientProbeAtPassBegin(RenderCore::RenderPassId id);
 
+// ---- FRAME-GRAPH-EXECUTOR-DRYRUN-1: per-frame observe-and-diff recorder ------
+//
+// Self-gated on MC2_FRAMEGRAPH_DRYRUN (read once). DEFAULT-OFF, byte-identical when unset:
+// the recorder does nothing, no new GL calls, no counter work. When enabled it FILLS a
+// process-static current-frame FramePassTrace at each noteRenderPass callsite (id collapsed to
+// the coarse RenderPassId, monotonic record order, bound draw-FBO resolved via the SAME ledger
+// the FBO guard uses — no new sampling logic), then at the per-frame boundary snapshots the
+// dominant terrain branch + drew-count, runs the pure dryRunCompare(), and ACCUMULATES the
+// result into process-static counters. Pure comparison lives in RenderCore/frame_pass_trace.h.
+//
+// Unobserved != diverged: only 7 of 11 passes hit this seam today (recon). Passes that never
+// record are classified UNOBSERVED by the kernel, never "missing fire" -> zero false alarms.
+namespace {
+
+using namespace RenderCore;
+using namespace RenderCore::framegraph;
+
+bool dryrunEnabled() {
+    static const bool s = []{
+        const char* v = ::getenv("MC2_FRAMEGRAPH_DRYRUN");
+        return v && v[0] == '1';
+    }();
+    return s;
+}
+
+FramePassTrace g_dryrunTrace;
+bool           g_dryrunTraceInit = false;
+
+// Accumulated across all frames since process start (surfaced via extern "C" below).
+unsigned long g_dryrunFrames          = 0;  // frames compared
+unsigned long g_dryrunOutOfOrder      = 0;  // total out-of-order events
+unsigned long g_dryrunUnobservedTotal = 0;  // total unobserved declared-slot occurrences
+unsigned long g_dryrunTerrainMutexViol = 0; // frames with >1 terrain branch drawing
+unsigned long g_dryrunLatchMissFrames  = 0; // frames whose dominant branch declares-but-misses latch
+
+void dryrunEnsureFrameInit() {
+    if (!g_dryrunTraceInit) {
+        resetTrace(g_dryrunTrace, RenderCore::kFramePassOrder, RenderCore::kFramePassOrderCount);
+        g_dryrunTraceInit = true;
+    }
+}
+
+// Called from noteRenderPass when the gate is on. Records the fired pass into the trace.
+void dryrunRecordPass(RenderCore::RenderPassId id) {
+    if (id == RenderCore::RenderPassId::None) return;   // tags with no owner lane
+    dryrunEnsureFrameInit();
+    // Resolve the bound draw FBO to a logical target via the existing ledger (no new sampling).
+    GLint bound = 0;
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &bound);
+    const RenderCore::RenderResourceId fbo =
+        RenderCore::framegraph::fboLedger().resolve(static_cast<unsigned>(bound));
+    recordPassFired(g_dryrunTrace, id, fbo,
+                    RenderCore::kFramePassOrder, RenderCore::kFramePassOrderCount);
+}
+
+// Called once per presented frame (gate-independent caller; self-gated inside).
+void dryrunFrameBoundary() {
+    if (!dryrunEnabled()) return;
+    dryrunEnsureFrameInit();
+    // Snapshot terrain branch + how many branches drew this frame (no globals in the kernel).
+    unsigned long tcounts[static_cast<int>(RenderCore::framegraph::TerrainPath::Count)];
+    for (int i = 0; i < static_cast<int>(RenderCore::framegraph::TerrainPath::Count); ++i)
+        tcounts[i] = RenderCore::framegraph::terrainPathCount(
+                         static_cast<RenderCore::framegraph::TerrainPath>(i));
+    g_dryrunTrace.terrainBranch    = RenderCore::framegraph::dominantTerrainPath(tcounts);
+    g_dryrunTrace.terrainDrewCount = RenderCore::framegraph::terrainPathsThatDrew(tcounts);
+
+    const RenderCore::framegraph::DryRunReport rep =
+        RenderCore::framegraph::dryRunCompare(g_dryrunTrace,
+            RenderCore::kFramePassOrder, RenderCore::kFramePassOrderCount);
+
+    ++g_dryrunFrames;
+    g_dryrunOutOfOrder      += static_cast<unsigned long>(rep.outOfOrderCount);
+    g_dryrunUnobservedTotal += static_cast<unsigned long>(rep.unobservedCount);
+    if (rep.terrainMutexViolation)  ++g_dryrunTerrainMutexViol;
+    if (rep.terrainLatchMissActive) ++g_dryrunLatchMissFrames;
+
+    // Log the first N divergences to stderr like the ambient guard does.
+    if (rep.outOfOrderCount > 0 || rep.terrainMutexViolation) {
+        static unsigned s_logged = 0;
+        if (s_logged < 32u) {
+            ++s_logged;
+            fprintf(stderr,
+                "[FRAMEGRAPH_DRYRUN] frame=%lu fired=%d unobserved=%d outOfOrder=%d "
+                "firstOOO=%u terrainMutex=%d latchMiss=%d\n",
+                g_dryrunFrames, rep.firedCount, rep.unobservedCount, rep.outOfOrderCount,
+                (unsigned)rep.firstOutOfOrderPass,
+                (int)rep.terrainMutexViolation, (int)rep.terrainLatchMissActive);
+            fflush(stderr);
+        }
+    }
+
+    // Reset for the next frame.
+    resetTrace(g_dryrunTrace, RenderCore::kFramePassOrder, RenderCore::kFramePassOrderCount);
+}
+
+} // namespace (FRAME-GRAPH-EXECUTOR-DRYRUN-1)
+
+// Read by the debug-state dump (GameOS, no GL include) via extern "C".
+extern "C" unsigned long mc2_framegraph_dryrun_enabled()       { return dryrunEnabled() ? 1ul : 0ul; }
+extern "C" unsigned long mc2_framegraph_dryrun_frames()        { return g_dryrunFrames; }
+extern "C" unsigned long mc2_framegraph_dryrun_out_of_order()  { return g_dryrunOutOfOrder; }
+extern "C" unsigned long mc2_framegraph_dryrun_unobserved()    { return g_dryrunUnobservedTotal; }
+extern "C" unsigned long mc2_framegraph_dryrun_terrain_mutex() { return g_dryrunTerrainMutexViol; }
+extern "C" unsigned long mc2_framegraph_dryrun_latch_miss()    { return g_dryrunLatchMissFrames; }
+
 void noteRenderPass(PassIdentity id, const char* callerHint) {
     ambientProbeAtPassBegin(toRenderPassId(id));   // self-gated; before the telemetry gate
+    if (dryrunEnabled()) dryrunRecordPass(toRenderPassId(id));  // FRAME-GRAPH-EXECUTOR-DRYRUN-1
     if (!s_telemetryEnabled) return;
     // Sample frame 1 (first full frame) then every kTelemetryFrameInterval.
     if (s_telemetryFrame % kTelemetryFrameInterval != 1) return;

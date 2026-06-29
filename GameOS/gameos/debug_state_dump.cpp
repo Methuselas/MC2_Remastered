@@ -22,6 +22,13 @@ extern "C" unsigned long mc2_ambient_probe_samples();
 // FRAME-GRAPH-FBO-LEDGER-1: bound-FBO-vs-declared-target guard counters.
 extern "C" unsigned long mc2_fbo_mismatch_count();
 extern "C" unsigned long mc2_fbo_samples();
+// FRAME-GRAPH-EXECUTOR-DRYRUN-1: per-frame observe-and-diff accumulators (default-OFF gate).
+extern "C" unsigned long mc2_framegraph_dryrun_enabled();
+extern "C" unsigned long mc2_framegraph_dryrun_frames();
+extern "C" unsigned long mc2_framegraph_dryrun_out_of_order();
+extern "C" unsigned long mc2_framegraph_dryrun_unobserved();
+extern "C" unsigned long mc2_framegraph_dryrun_terrain_mutex();
+extern "C" unsigned long mc2_framegraph_dryrun_latch_miss();
 
 #include <chrono>
 #include <cstdlib>
@@ -242,7 +249,18 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
         s << "    \"ambient_probe_samples\": " << mc2_ambient_probe_samples() << ",\n";
         // FRAME-GRAPH-FBO-LEDGER-1: passes rendering into the WRONG logical target.
         s << "    \"fbo_mismatches\": " << mc2_fbo_mismatch_count() << ",\n";
-        s << "    \"fbo_samples\": " << mc2_fbo_samples() << "\n";
+        s << "    \"fbo_samples\": " << mc2_fbo_samples() << ",\n";
+        // FRAME-GRAPH-EXECUTOR-DRYRUN-1: per-frame fired-set/order/terrain-mutex/latch diff
+        // (default-OFF gate MC2_FRAMEGRAPH_DRYRUN). unobserved_total counts declared-slot
+        // occurrences with NO record this frame (the 4 invisible passes) — NOT divergences.
+        s << "    \"frame_graph_dryrun\": {\n";
+        s << "      \"enabled\": " << (mc2_framegraph_dryrun_enabled() ? "true" : "false") << ",\n";
+        s << "      \"frames\": " << mc2_framegraph_dryrun_frames() << ",\n";
+        s << "      \"out_of_order\": " << mc2_framegraph_dryrun_out_of_order() << ",\n";
+        s << "      \"unobserved_total\": " << mc2_framegraph_dryrun_unobserved() << ",\n";
+        s << "      \"terrain_mutex_violations\": " << mc2_framegraph_dryrun_terrain_mutex() << ",\n";
+        s << "      \"latch_miss_frames\": " << mc2_framegraph_dryrun_latch_miss() << "\n";
+        s << "    }\n";
         s << "  },\n";
     }
     // TERRAIN-PATH-TELEMETRY-1: which terrain-solid branch actually drew (retirement
