@@ -65,8 +65,10 @@ static const bool s_alphaTrace = (getenv("MC2_ALPHA_TEST_TRACE") != nullptr);
 // with the terrain depth they sit on. The snapshot itself is NOT touched; this
 // only CONSUMES the already-published terrain snapshot. Signatures copied
 // verbatim from gos_terrain_lod_chunk.cpp.
-extern "C" const float* gos_terrain_indirect_getDispatchMvp16();
-namespace gos_terrain_indirect { bool IsFrameSolidArmed(); }
+#include "gos_object_draw_mvp.h"  // RENDER-VIEW-CURRENCY-1 currency-checked accessor
+// NOTE: raw gos_terrain_indirect_getDispatchMvp16() is phase-private to terrain/
+// water passes — object draw uses gos_GetObjectDrawMVP() (the accessor above).
+// Enforced by scripts/check-object-mvp-currency.py.
 
 // MC2_PROP_FIXB_MVP — default ON (=0 reverts, killswitch). Consume the
 // dispatch-MVP snapshot when the solid pass is armed so object draws agree with
@@ -83,14 +85,11 @@ static bool s_propFixBMvpEnabled() {
 // Returns the MVP the object draw should upload (GL_FALSE, axisSwap*worldToClip).
 // Gate OFF -> live terrain MVP. Gate ON + solid pass armed -> dispatch snapshot,
 // with live-MVP nullptr-safety identical to the terrain chunk fallback.
+// RENDER-VIEW-CURRENCY-1: snapshot only when its view epoch matches the current
+// view; otherwise the live MVP. Closes the BUG1/3/5 staleness (objects projected
+// through a stale / mid-frame-superseded camera). Killswitch preserved via the arg.
 static const float* gos_GetObjectFixBMVPMat4() {
-    if (!s_propFixBMvpEnabled())
-        return gos_GetTerrainMVPMat4();
-    const float* mvp = gos_terrain_indirect::IsFrameSolidArmed()
-                       ? gos_terrain_indirect_getDispatchMvp16()
-                       : gos_GetTerrainMVPMat4();
-    if (!mvp) mvp = gos_GetTerrainMVPMat4();
-    return mvp;
+    return gos_GetObjectDrawMVP(s_propFixBMvpEnabled());
 }
 
 // MC2_TEX_HANDOFF_TRACE=1 — logs texture handle resolution at register and draw time.

@@ -59,8 +59,10 @@ static_assert(MECH_RING_FRAMES == STATIC_PROP_RING_FRAMES,
 // is untouched. Same gate (MC2_PROP_FIXB_MVP) as the static-prop sites so the
 // whole object family shares one matrix policy. Signatures copied verbatim from
 // gos_terrain_lod_chunk.cpp.
-extern "C" const float* gos_terrain_indirect_getDispatchMvp16();
-namespace gos_terrain_indirect { bool IsFrameSolidArmed(); }
+#include "gos_object_draw_mvp.h"  // RENDER-VIEW-CURRENCY-1 currency-checked accessor
+// NOTE: raw gos_terrain_indirect_getDispatchMvp16() is phase-private to terrain/
+// water passes — mech draw uses gos_GetObjectDrawMVP() (the accessor above).
+// Enforced by scripts/check-object-mvp-currency.py.
 
 // MC2_PROP_FIXB_MVP — default ON (=0 reverts, killswitch). Consume the
 // dispatch-MVP snapshot when the solid pass is armed (un-armed arm returns the
@@ -72,14 +74,11 @@ static bool s_mechFixBMvpEnabled() {
     }();
     return on;
 }
+// RENDER-VIEW-CURRENCY-1: snapshot only when its view epoch matches the current
+// view; otherwise the live MVP. Same policy as the static-prop family. Killswitch
+// preserved via the arg.
 static const float* gos_GetMechFixBMVPMat4() {
-    if (!s_mechFixBMvpEnabled())
-        return gos_GetTerrainMVPMat4();
-    const float* mvp = gos_terrain_indirect::IsFrameSolidArmed()
-                       ? gos_terrain_indirect_getDispatchMvp16()
-                       : gos_GetTerrainMVPMat4();
-    if (!mvp) mvp = gos_GetTerrainMVPMat4();
-    return mvp;
+    return gos_GetObjectDrawMVP(s_mechFixBMvpEnabled());
 }
 
 // Default-on flip (2026-05-09): all GPU mech killswitches now default to ON.

@@ -1808,6 +1808,14 @@ static GLuint  g_thinCanarySSBO         = 0;   // probe 6: separate buffer, neve
 // Probe 8: MVP fingerprint at compute dispatch time, read by bridge at draw time.
 static uint32_t g_dispatchMvpFp      = 0;
 static uint64_t g_dispatchMvpFrameIdx = 0;
+// RENDER-VIEW-CURRENCY-1: the VIEW EPOCH (g_mvpDiagFrame, bumped on every
+// gos_SetWorldToClipGL = every authoritative camera-matrix publish) observed at
+// the moment this snapshot's MVP was sourced. Object/mech consumers compare this
+// against the CURRENT g_mvpDiagFrame to reject a snapshot taken under a different
+// camera — even within the same engine frame (e.g. an early publish followed by a
+// mid-frame zoom-anchor camera change). -1 = never published. Engine-frame is NOT
+// sufficient here: same frame, different camera must be detectable.
+static long     g_dispatchMvpViewEpoch = -1;
 // Probe 8b: verification — also stash first 4 floats from compute-time MVP.
 // Bridge logs both sets on mismatch so we can see byte-level difference.
 static float    g_dispatchMvpFloats[4] = { 0, 0, 0, 0 };
@@ -3333,6 +3341,9 @@ void ComputeDispatch() {
         // Water-consistency fix: full MVP snapshot (see decl). This is the
         // exact matrix terrain-solid's Fix-B clipPos bake uses this frame.
         memcpy(g_dispatchMvp16, mvp, sizeof(float) * 16);
+        // RENDER-VIEW-CURRENCY-1: stamp the snapshot with the view epoch it was
+        // sourced under, so object/mech consumers can prove same-view currency.
+        g_dispatchMvpViewEpoch = ::g_mvpDiagFrame;
 
         // ── [DEPTH_TRANSITION v1] zoom-step depth-pop diagnostic ───────────
         // Env-gated MC2_DEPTH_TRANSITION_PROBE (cached static const bool;
@@ -3892,6 +3903,12 @@ const float* gos_terrain_indirect_getDispatchMvp16() {
 
 uint64_t gos_terrain_indirect_getDispatchMvpFrameIdx() {
     return g_dispatchMvpFrameIdx;
+}
+
+// RENDER-VIEW-CURRENCY-1: view epoch (g_mvpDiagFrame) the live dispatch snapshot
+// was sourced under. Consumers compare against the current g_mvpDiagFrame.
+long gos_terrain_indirect_getDispatchMvpViewEpoch() {
+    return g_dispatchMvpViewEpoch;
 }
 
 void gos_terrain_indirect_getDispatchMvpFloats4(float out[4]) {

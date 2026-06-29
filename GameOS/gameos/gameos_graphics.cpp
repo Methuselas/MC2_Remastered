@@ -9369,6 +9369,27 @@ void gos_GetTerrainCameraPos(float* x, float* y, float* z) {
 // is throttled (frames {1,5,30,120}) — silent at steady state.
 long g_mvpDiagFrame = 0;
 
+// RENDER-VIEW-CURRENCY-1 (M2): object/mech stale-snapshot-read telemetry. Bumped
+// by gos_GetObjectDrawMVP() (gos_object_draw_mvp.h) whenever an armed object draw
+// requested the dispatch snapshot but its view epoch did not match the current
+// view (it fell back to the live MVP instead). Should be 0 in steady state; a
+// rising count localizes a future re-introduction of the BUG1/3/5 staleness. The
+// counter is read by the debug-state dump. MC2_OBJ_MVP_STALE_FATAL=1 aborts so CI
+// catches it instead of a player on NVIDIA three days later.
+static unsigned long g_objMvpStaleCount = 0;
+unsigned long gos_object_mvp_stale_count() { return g_objMvpStaleCount; }
+void gos_object_mvp_note_stale() {
+    ++g_objMvpStaleCount;
+    static const bool s_fatal = (std::getenv("MC2_OBJ_MVP_STALE_FATAL") != nullptr);
+    if (s_fatal) {
+        fprintf(stderr, "[OBJ_MVP] FATAL: object draw read a stale-view dispatch "
+                        "MVP snapshot (view-epoch mismatch); count=%lu\n",
+                        g_objMvpStaleCount);
+        fflush(stderr);
+        abort();
+    }
+}
+
 // [MVP_EARLY v1] MVP-PUBLISH-EARLY-HOIST. Records the g_mvpDiagFrame counter
 // value observed at the gated early world-to-clip publish in Mission::update
 // (code/mission.cpp, right after eye->update()). ComputeDispatch
