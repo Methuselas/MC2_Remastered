@@ -121,7 +121,7 @@ Component Table,Type,Name,crit hits,Recycle (if ammo = #shots),Heat,Weight,Damag
 119,undefined,undefined,0,na,na,0,na,0,0,0,0,0,0,0,0,0,0,0,na,0,0,0,0,0,32119,34119,,
 120,MissileWeapon,LRM5 Rack,2,10,2,4,2,174.46,1700,long,No,Yes,Yes,Yes,Yes,Yes,No,No,LRM,0,9,220,MCL_MC_LRMRack.tga,MCL_MC_LRMRack,32120,34120,1,1
 121,MissileWeapon,LR Missile/15,4,5,1.6,9.5,1,136,4100,long,Yes,Yes,Yes,Yes,Yes,Yes,Yes,Yes,LRM,0,9,221,MCL_MC_LRMRack.tga,MCL_MC_LRMRack,32121,34121,1,3
-122,MissileWeapon,LR Missile/20,7,3.75,1.5,13,1,181,5400,long,No,Yes,Yes,Yes,Yes,Yes,No,No,LRM,0,9,222,MCL_MC_LRM20Rack.tga,MCL_MC_LRM20Rack,32122,34122,1,3
+122,MissileWeapon,LR Missile/20,7,3.75,1.5,13,1,181,5400,long,No,Yes,Yes,Yes,Yes,Yes,No,No,LRM,0,9,222,MCL_MC_LRM20Rack.tga,MCL_MC_LRM20,32122,34122,1,3
 123,MissileWeapon,Swarm LRM5 Rack,2,10,2,4,2,261.69,2600,long,No,Yes,Yes,Yes,Yes,Yes,No,No,LRM,0,74,231,MCL_MC_SwarmLRMRack.tga,MCL_MC_SwarmLRMRack,32123,34123,1,1
 124,MissileWeapon,SRM2 Pack,1,4,1,2,1,37.63,500,short,No,Yes,Yes,Yes,Yes,Yes,No,No,SRM,0,8,223,MCL_MC_SRMPack.tga,MCL_MC_SRMPack,32124,34124,1,1
 125,MissileWeapon,Streak SRM2 Pack,1,4,2,2,2,103.76,2000,short,No,Yes,Yes,Yes,Yes,Yes,No,No,ST,1,8,225,MCL_MC_StreakSRMPack.tga,MCL_MC_StreakSRMPack,32125,34125,1,1
@@ -131,7 +131,7 @@ Component Table,Type,Name,crit hits,Recycle (if ammo = #shots),Heat,Weight,Damag
 129,undefined,undefined,0,na,na,0,na,0,0,0,0,0,0,0,0,0,0,0,na,0,0,0,0,0,32129,34129,,
 130,MissileWeapon,Clan LRM5 Rack,2,5,4,4,2,348.92,4500,long,No,Yes,Yes,Yes,Yes,Yes,No,No,LRM,0,9,230,MCL_MC_ClanLRMRack.tga,MCL_MC_ClanLRMRack,32130,34130,1,1
 131,MissileWeapon,C LR Missile/15,3,5,1.67,5.5,1.15,164,4920,long,Yes,Yes,Yes,Yes,Yes,Yes,Yes,Yes,LRM,0,9,231,MCL_MC_ClanLRMRack.tga,MCL_MC_ClanLRMRack,32131,34131,1,3
-132,MissileWeapon,C LR Missile/20,6,3.75,1.5,8,1.15,220,6600,long,No,Yes,Yes,Yes,Yes,Yes,No,No,LRM,0,9,232,MCL_MC_ClanLRM20Rack.tga,MCL_MC_ClanLRM20Rack,32132,34132,1,3
+132,MissileWeapon,C LR Missile/20,6,3.75,1.5,8,1.15,220,6600,long,No,Yes,Yes,Yes,Yes,Yes,No,No,LRM,0,9,232,MCL_MC_ClanLRM20Rack.tga,MCL_MC_ClanLRM20,32132,34132,1,3
 133,MissileWeapon,C SR Missile Pack,2,3,1,2.5,1,60,740,short,No,Yes,Yes,Yes,Yes,Yes,Yes,Yes,SRM,0,8,233,MCL_MC_SRMPack.tga,MCL_MC_SRMPack,32133,34133,1,1
 134,MissileWeapon,C SR Missile/6,3,4,3,3.5,2.5,80,1800,short,Yes,Yes,Yes,Yes,Yes,Yes,Yes,Yes,SRM,0,8,234,MCL_MC_SRMPack.tga,MCL_MC_SRMPack,32134,34134,1,1
 135,MissileWeapon,Clan Streak SRM2 Pack,1,3,2,2,2,110.45,2200,short,No,Yes,Yes,Yes,Yes,Yes,No,No,ST,1,8,235,MCL_MC_ClanStreakSRMPack.tga,MCL_MC_ClanStreakSRMPack,32135,34135,1,1
