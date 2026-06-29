@@ -4204,9 +4204,16 @@ DWORD MC_TextureManager::loadTexture (const char *textureFullPathName, gos_Textu
 		//  - cursors*.tga (mouse-cursor sheets): a 128x128 sheet -> logical 32, while the
 		//    cursor FIT UNormal (e.g. 48) is physical -> U=48/32=1.5 off-texture ->
 		//    INVISIBLE cursor (notably MC2X at the 800-logical cursorsa.fit tier).
+		//  - mcl_mc_*.tga (mech-lab component icons: weapons/armor/heatsinks/engines):
+		//    native-res UI icons whose FIT/list UVs are physical-pixel. Stock ones
+		//    load from the FST (never hit this disk path, so stay uvScale=1), but a
+		//    MOD ships them as loose disk TGAs -> blanket uvScale=4 made logical =
+		//    physical/4 -> the icon sampled a 1/4 sub-rect and rendered tiny in the
+		//    corner. They are NOT 4x-upscaled gameplay art, so force uvScale=1.
 		const bool isNativeResUiAtlas = textureFullPathName &&
 			(strstr(textureFullPathName, "mcui_gn_mechicons") != nullptr ||
-			 strstr(textureFullPathName, "cursors") != nullptr);
+			 strstr(textureFullPathName, "cursors") != nullptr ||
+			 strstr(textureFullPathName, "mcl_mc_") != nullptr);
 		masterTextureNodes[i].uvScale = isNativeResUiAtlas ? 1 : 4;
 	}
 
