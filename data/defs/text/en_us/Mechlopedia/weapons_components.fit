@@ -2117,7 +2117,7 @@ MechlopediaTextGroup {
 
 String {
     key = "mechlopedia.component.026_vehicle_ferro_fibrous_armor.name"
-    text = "Vehicle Ferro-Fibrous Armor"
+    text = "Ferro Fibrous"
     legacyId = 32026
     legacySymbol = "IDS_COMP26"
     legacyKey = "legacy.mc2res.32026"
