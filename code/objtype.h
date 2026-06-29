@@ -29,6 +29,8 @@
 #include<stuff/stuff.hpp>
 #endif
 
+#include "unitprofile.h"            // UNIT-PROFILE-SEAM-1
+
 #define MAX_NAME		25
 
 //---------------------------------------------------------------------------
@@ -51,6 +53,7 @@ class ObjectType {
 		long					iconNumber;				//my index into the big strip o' icons
 		long					teamId;					//DEfault for this type
 		unsigned char			subType;				//if building, what type of building? etc.
+		UnitProfile				unitProfile;			// UNIT-PROFILE-SEAM-1
 
 	public:
 
@@ -139,6 +142,10 @@ class ObjectType {
 		ObjectClass getObjectClass (void) {
 			return(objectClass);
 		}
+
+		// UNIT-PROFILE-SEAM-1
+		UnitProfile&       profile (void)       { return unitProfile; }
+		const UnitProfile& profile (void) const { return unitProfile; }
 
 		ObjectTypeNumber getDestroyedObject (void) {
 			return(destroyedObject);

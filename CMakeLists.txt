@@ -339,6 +339,7 @@ set(SOURCES
     "code/mover.cpp"
     "code/objmgr.cpp"
     "code/objtype.cpp"
+    "code/unitprofile.cpp"
     "code/tacordr.cpp"
     "code/team.cpp"
     "code/terrobj.cpp"
