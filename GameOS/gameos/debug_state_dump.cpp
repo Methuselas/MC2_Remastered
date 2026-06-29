@@ -27,6 +27,7 @@ extern "C" unsigned long mc2_framegraph_dryrun_enabled();
 extern "C" unsigned long mc2_framegraph_dryrun_frames();
 extern "C" unsigned long mc2_framegraph_dryrun_out_of_order();
 extern "C" unsigned long mc2_framegraph_dryrun_unobserved();
+extern "C" unsigned long mc2_framegraph_dryrun_observed();  // DRYRUN-OBSERVE-COVERAGE-1
 extern "C" unsigned long mc2_framegraph_dryrun_terrain_mutex();
 extern "C" unsigned long mc2_framegraph_dryrun_latch_miss();
 extern "C" unsigned long mc2_framegraph_dryrun_known_early_suppressed();
@@ -259,6 +260,10 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
         s << "      \"frames\": " << mc2_framegraph_dryrun_frames() << ",\n";
         s << "      \"out_of_order\": " << mc2_framegraph_dryrun_out_of_order() << ",\n";
         s << "      \"unobserved_total\": " << mc2_framegraph_dryrun_unobserved() << ",\n";
+        // DRYRUN-OBSERVE-COVERAGE-1: running total of fired (observed) declared-slot
+        // occurrences. observed/missing split is now explicit (observed + unobserved =
+        // frames * kFramePassOrderCount); no inference from unobserved_total needed.
+        s << "      \"observed_pass_count\": " << mc2_framegraph_dryrun_observed() << ",\n";
         s << "      \"terrain_mutex_violations\": " << mc2_framegraph_dryrun_terrain_mutex() << ",\n";
         s << "      \"latch_miss_frames\": " << mc2_framegraph_dryrun_latch_miss() << ",\n";
         s << "      \"known_early_suppressed\": " << mc2_framegraph_dryrun_known_early_suppressed() << "\n";

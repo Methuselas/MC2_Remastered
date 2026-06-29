@@ -379,6 +379,13 @@ void GosVegetation::flush(float lightDirX, float lightDirY, float lightDirZ, flo
     render_contract::assertPassContract(
         render_contract::PassIdentity::VegetationCards,
         "GosVegetation::flush");
+    // DRYRUN-OBSERVE-COVERAGE-1: observe-only. VegetationCards has no AmbientContract
+    // row and no declared FBO target -> ambient/FBO probe skips it. Outer adapter
+    // early-returns when MC2_VEGETATION_CARDS (default-OFF) is unset, so this is a
+    // legitimate UNOBSERVED-this-frame in default smoke. No GL state / draw change.
+    render_contract::noteRenderPass(
+        render_contract::PassIdentity::VegetationCards,
+        "GosVegetation::flush");
 
     s_prog->apply();
     const GLuint progId = s_prog->shp_;

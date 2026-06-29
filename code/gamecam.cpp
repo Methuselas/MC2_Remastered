@@ -45,6 +45,11 @@
 #include "../GameAdapters/StaticPropRenderAdapter.h"  // M1 CI-gate: firewall bridge for frameBegin()
 #include "../GameAdapters/VegetationAdapter.h"         // vegetation card flush (post-renderLists)
 #include "particles/batcher.h"  // GPU particle batcher flush (Stage 2' and beyond)
+// DRYRUN-OBSERVE-COVERAGE-1: observe-only VFX pass note. render_contract.h pulls
+// RenderCore/RenderPassContract.h, which the mc2/code TU's include path can't resolve
+// (root not on its -I list). Use the thin extern "C" shim defined in render_contract.cpp
+// instead of the full header — same noteRenderPass(ParticleEffect) effect, no draw change.
+extern "C" void mc2_note_particle_effect_pass();
 #include "../GameOS/gameos/gos_particle_bridge.h"  // B2 P1: camera basis bridge
 #include "../GameOS/gameos/debug_renderer.h"
 #include "../GuiRuntime/EditorInspector.h"  // IMG-INSPECT-3 flushDebugHighlight
@@ -582,6 +587,11 @@ void GameCamera::render (void)
 				}
 
 				::mc2::particles::Batcher::Instance().ResolveTextures();  // resolve MLR->GOS after renderLists
+				// DRYRUN-OBSERVE-COVERAGE-1: observe-only. ParticleEffect (VFX) has no
+				// AmbientContract row and no declared FBO target -> ambient/FBO probe skips
+				// it. Fires once per frame even on empty-particle frames (the pass was
+				// entered). Gated MC2_GPU_PARTICLES (default ON). No draw change.
+				mc2_note_particle_effect_pass();
 				::mc2::particles::Batcher::Instance().Flush();
 
 				// TUBE-DEFERRED-FLUSH-1: drain the ribbon queue enqueued by

@@ -707,6 +707,7 @@ bool           g_dryrunTraceInit = false;
 unsigned long g_dryrunFrames              = 0;  // frames compared
 unsigned long g_dryrunOutOfOrder          = 0;  // total out-of-order events
 unsigned long g_dryrunUnobservedTotal     = 0;  // total unobserved declared-slot occurrences
+unsigned long g_dryrunObservedTotal       = 0;  // DRYRUN-OBSERVE-COVERAGE-1: total fired (observed) declared-slot occurrences
 unsigned long g_dryrunTerrainMutexViol    = 0;  // frames with >1 terrain branch drawing
 unsigned long g_dryrunLatchMissFrames     = 0;  // frames whose dominant branch declares-but-misses latch
 unsigned long g_dryrunKnownEarlySuppressed = 0; // DRYRUN-DRAWSITE-ORDER-1: suppressed early-draw events
@@ -765,6 +766,7 @@ void dryrunFrameBoundary() {
     ++g_dryrunFrames;
     g_dryrunOutOfOrder           += static_cast<unsigned long>(rep.outOfOrderCount);
     g_dryrunUnobservedTotal      += static_cast<unsigned long>(rep.unobservedCount);
+    g_dryrunObservedTotal        += static_cast<unsigned long>(rep.firedCount);  // DRYRUN-OBSERVE-COVERAGE-1
     g_dryrunKnownEarlySuppressed += static_cast<unsigned long>(rep.knownEarlySuppressed);
     if (rep.terrainMutexViolation)  ++g_dryrunTerrainMutexViol;
     if (rep.terrainLatchMissActive) ++g_dryrunLatchMissFrames;
@@ -795,6 +797,7 @@ extern "C" unsigned long mc2_framegraph_dryrun_enabled()            { return dry
 extern "C" unsigned long mc2_framegraph_dryrun_frames()             { return g_dryrunFrames; }
 extern "C" unsigned long mc2_framegraph_dryrun_out_of_order()       { return g_dryrunOutOfOrder; }
 extern "C" unsigned long mc2_framegraph_dryrun_unobserved()         { return g_dryrunUnobservedTotal; }
+extern "C" unsigned long mc2_framegraph_dryrun_observed()           { return g_dryrunObservedTotal; }  // DRYRUN-OBSERVE-COVERAGE-1
 extern "C" unsigned long mc2_framegraph_dryrun_terrain_mutex()      { return g_dryrunTerrainMutexViol; }
 extern "C" unsigned long mc2_framegraph_dryrun_latch_miss()         { return g_dryrunLatchMissFrames; }
 extern "C" unsigned long mc2_framegraph_dryrun_known_early_suppressed() { return g_dryrunKnownEarlySuppressed; }
@@ -828,6 +831,13 @@ void noteRenderPass(PassIdentity id, const char* callerHint) {
            (int)vp[0], (int)vp[1], (int)vp[2], (int)vp[3], drawBuffers,
            callerHint ? callerHint : "?");
     fflush(stdout);
+}
+
+// DRYRUN-OBSERVE-COVERAGE-1: thin extern "C" shim so code/gamecam.cpp can fire the
+// observe-only VFX/ParticleEffect note without including render_contract.h (its
+// RenderCore/ include isn't on the mc2/code TU include path). Pure forward; no draw change.
+extern "C" void mc2_note_particle_effect_pass() {
+    noteRenderPass(PassIdentity::ParticleEffect, "gamecam::particlesFlush");
 }
 
 // ---- CONTRACT-3: per-frame resource-ordering audit ---------------------------
