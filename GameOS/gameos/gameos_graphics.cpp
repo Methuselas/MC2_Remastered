@@ -6273,16 +6273,11 @@ void gosRenderer::beginShadowPrePass(bool clearDepth) {
     if (clearDepth) { glClearDepth(1.0f); glClear(GL_DEPTH_BUFFER_BIT); glClearDepth(0.0f); }
     render_contract::assertPassContract(render_contract::PassIdentity::ShadowCaster,
                                         "gosRenderer::beginShadowPrePass");
-    // DRYRUN-OBSERVE-COVERAGE-1: Shadow EXCLUDED from observe-coverage. Its colorMask=AllOff
-    // entry-state isn't established at this begin point: applyPipeline(ShadowTerrain) above
-    // does NOT set colorMask (see :6262 comment — colorMask stays hand-set), and the actual
-    // glColorMask(GL_FALSE,...) is applied later inside the per-batch draw path
-    // (gameos_graphics.cpp ~:4473/:4688), AFTER this begin. Adding noteRenderPass(ShadowCaster)
-    // here would call the DEFAULT-ON ambientProbeAtPassBegin(Shadow), which samples colorMask
-    // at entry (still AllOn from the scene pass) and compares against the declared AllOff ->
-    // a guaranteed colorMask mismatch that trips scripts/check-ambient-guard.py (mismatch==0).
-    // A clean single-begin ambient-entry model for shadow is deferred to SHADOW-OBSERVE-2.
-    // Per slice spec, an honest exclusion is a PASS; do NOT instrument here.
+    // SHADOW-OBSERVE-2: colorMask=AllOff was mismodeled; active path is FBO-enforced depth-only
+    // (DrawBufferSet::ShadowDepthOnly), not glColorMask. colorMaskOnEntry relaxed to Inherit in
+    // ambient_contract.h — guard now skips colorMask and checks depthFunc=ShadowLess+depthWrite=On.
+    render_contract::noteRenderPass(render_contract::PassIdentity::ShadowCaster,
+                                    "gosRenderer::beginShadowPrePass");
 
     // Bind shadow shader and upload lightSpaceMatrix
     shadow_terrain_material_->apply();

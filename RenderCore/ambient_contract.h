@@ -75,13 +75,20 @@ struct AmbientContract {
 };
 
 static constexpr AmbientContract kPassAmbient[] = {
-    // Shadow: depth-only; sets per-attachment color write OFF (gos_postprocess.cpp
-    // :2798-2799/:3470/:3492), GL_LESS depth, renders into the shadow atlas.
+    // Shadow: depth-only; enforced via FBO attachment (DrawBufferSet::ShadowDepthOnly,
+    // no color attachment), NOT via glColorMask. The active new shadow pre-pass
+    // (gameos_graphics.cpp beginShadowPrePass) never calls glColorMask(FALSE) —
+    // the legacy path (gos_postprocess.cpp :3490/:3512) does, but that is not the
+    // active path. colorMask is AllOn at the observe point (:6270). Declared Inherit
+    // so the ambient guard skips colorMask comparison (avoids a guaranteed AllOn-vs-AllOff
+    // false mismatch). disablesColorWrite stays true — shadow IS depth-only, however
+    // enforced — so the colorMaskHandshakeDeclared() landmine is not weakened.
+    // SHADOW-OBSERVE-2: FBO-enforced depth-only; colorMaskOnEntry relaxed Inherit.
     { RenderPassId::Shadow,
-      ColorMaskState::AllOff, /*reassert*/ false, /*disables*/ true,
+      ColorMaskState::Inherit, /*reassert*/ false, /*disables*/ true,
       DepthFuncState::ShadowLess, ViewportKind::ShadowMap,
       /*producesLatch*/ false, /*consumesLatch*/ false,
-      "depth-only; color write OFF; GL_LESS; shadow-atlas viewport",
+      "depth-only via FBO attachment; colorMask Inherit (not an entry invariant); GL_LESS; shadow-atlas viewport",
       /*blend*/ BlendState::Inherit, /*depthWrite*/ DepthWriteState::On },
 
     { RenderPassId::StaticPropOpaque,

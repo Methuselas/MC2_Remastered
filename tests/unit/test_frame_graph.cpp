@@ -95,6 +95,25 @@ TEST_CASE("ambient ledger: colorMask handshake is declared (shadow OFF, terrain 
     CHECK(terrain->reassertsColorMaskAllOn == true);
 }
 
+TEST_CASE("SHADOW-OBSERVE-2: shadow colorMaskOnEntry=Inherit + disablesColorWrite=true + depthFunc=ShadowLess") {
+    // SHADOW-OBSERVE-2: Active shadow pre-pass enforces depth-only via FBO attachment
+    // (DrawBufferSet::ShadowDepthOnly), NOT glColorMask. colorMask is AllOn at the observe
+    // point (beginShadowPrePass:6270). colorMaskOnEntry relaxed to Inherit so the ambient
+    // guard skips colorMask comparison (avoids AllOn-vs-AllOff false mismatch).
+    // disablesColorWrite stays true — shadow IS depth-only, however enforced — so
+    // colorMaskHandshakeDeclared() is not weakened. depthFunc=ShadowLess must hold.
+    const AmbientContract* shadow = findAmbient(RenderPassId::Shadow);
+    REQUIRE(shadow != nullptr);
+    CHECK(static_cast<unsigned>(shadow->colorMaskOnEntry) ==
+          static_cast<unsigned>(ColorMaskState::Inherit));
+    CHECK(shadow->disablesColorWrite == true);   // depth-only invariant preserved
+    CHECK(static_cast<unsigned>(shadow->depthFunc) ==
+          static_cast<unsigned>(DepthFuncState::ShadowLess));
+    // Handshake integrity: colorMaskHandshakeDeclared() uses disablesColorWrite, not
+    // colorMaskOnEntry, so relaxing colorMaskOnEntry to Inherit does not weaken it.
+    CHECK(colorMaskHandshakeDeclared() == true);
+}
+
 TEST_CASE("ambient ledger: terrain latch handshake declared (terrain sets, post consumes)") {
     // Recon landmine #2: markTerrainDrawn/sceneHasTerrain_ is a cross-phase latch; if a
     // producer is removed, screenShadow/cloudShadow/shoreline/edgeFog/fogOob silently
