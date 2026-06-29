@@ -40,6 +40,7 @@ add_executable(mc2_tests
     test_host_services.cpp  # ENGINE-HOST-SERVICES-0: host-service contract + default impls
     test_tactical_overview.cpp   # TACTICAL-OVERVIEW-1: blend-state pure logic
     test_xform_convention.cpp    # XFORM-CONVENTION-HARNESS-1: clip-space convention lock
+    test_capability.cpp     # UNIT-PROFILE-SEAM-1
 
     # Leaf-TU engine sources (no transitive engine include drag).
     ${MC2_WORKTREE_ROOT}/mclib/fst_hash.cpp
@@ -59,6 +60,7 @@ target_include_directories(mc2_tests PRIVATE
     ${MC2_WORKTREE_ROOT}/RenderWorld
     ${MC2_WORKTREE_ROOT}/RenderCore
     ${MC2_WORKTREE_ROOT}/HostServices
+    ${MC2_WORKTREE_ROOT}/code     # UNIT-PROFILE-SEAM-1: capability.h / unitprofile.h
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
