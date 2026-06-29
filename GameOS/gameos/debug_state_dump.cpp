@@ -8,6 +8,7 @@
 #include "../../RenderCore/RendererFeatureRegistry.h"
 #include "../../RenderCore/RenderResourceRegistry.h"
 #include "gos_frame_pass_stats.h"   // [FRAME_PASS_STATS v1] additive JSON section
+#include "../../code/unitprofile.h" // UNIT-PROFILE-SEAM-1 witness bridge (POD only)
 
 // Texture name lookup for mech node indices (mcTextureManager slot → name string).
 // Defined in gos_mech_batcher.cpp; not declared in any header.
@@ -440,6 +441,27 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
             s << "      }";
         }
         s << (first ? "" : "\n") << "    ]\n";
+        s << "  }\n";
+    }
+    // UNIT-PROFILE-SEAM-1 proof: per-mover fact (baseline/current) vs
+    // executability (canPerform). Additive section, present ONLY when
+    // MC2_UNIT_PROFILE_DATA=1 — schema byte-for-byte unchanged when absent.
+    if (envFlagOn("MC2_UNIT_PROFILE_DATA")) {
+        constexpr int kCap = 64;
+        UnitProfileWitnessRow rows[kCap];
+        const int nrows = mc2_unitprofile_collect_witness(rows, kCap);
+        s << "  ,\n";
+        s << "  \"unitProfile\": {\n";
+        s << "    \"version\": 1,\n";
+        s << "    \"rows\": [\n";
+        for (int i = 0; i < nrows; ++i) {
+            s << "      { \"objectId\": " << rows[i].objectId
+              << ", \"cap_jump_baseline\": "; b(s, rows[i].capJumpBaseline != 0);
+            s << ", \"cap_jump_current\": ";  b(s, rows[i].capJumpCurrent != 0);
+            s << ", \"can_perform_jump\": ";  b(s, rows[i].canPerformJump != 0);
+            s << " }" << (i + 1 < nrows ? "," : "") << "\n";
+        }
+        s << "    ]\n";
         s << "  }\n";
     }
     s << "}\n";

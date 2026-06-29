@@ -4,6 +4,9 @@
 // doctest target forbids, so this populator lives in its own engine-only TU.
 #include "unitprofile.h"
 #include "inifile.h"                    // resolves via mclib/ on the engine include path
+#include "objmgr.h"
+#include "mover.h"
+#include "objtype.h"
 
 void populateProfileFromFit(FitIniFile& fit, UnitProfile& p) {
     // Optional, additive (grant-only, never clears). Stock .fits have no
@@ -15,4 +18,26 @@ void populateProfileFromFit(FitIniFile& fit, UnitProfile& p) {
         if (fit.readIdBoolean("Jump", jump) == NO_ERR && jump)
             p.baselineCapabilities.set(CAP_JUMP, true);
     }
+}
+
+// UNIT-PROFILE-SEAM-1: fill the state-dump witness array from live movers.
+// Returns the number of rows written (capped at maxRows). Read-only.
+extern "C" int mc2_unitprofile_collect_witness(UnitProfileWitnessRow* out, int maxRows) {
+    if (!out || maxRows <= 0 || !ObjectManager)
+        return 0;
+    int n = 0;
+    const long numMovers = ObjectManager->getNumMovers();
+    for (long i = 0; i < numMovers && n < maxRows; ++i) {
+        MoverPtr m = ObjectManager->getMover(i);
+        if (!m)
+            continue;
+        const bool baseline = m->getObjectType()
+            ? m->getObjectType()->profile().baselineCapabilities.has(CAP_JUMP) : false;
+        out[n].objectId        = m->getPartId();
+        out[n].capJumpBaseline = baseline ? 1 : 0;
+        out[n].capJumpCurrent  = m->hasCapability(CAP_JUMP) ? 1 : 0;
+        out[n].canPerformJump  = m->canPerform(UnitAction::Jump) ? 1 : 0;
+        ++n;
+    }
+    return n;
 }

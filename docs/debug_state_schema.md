@@ -199,3 +199,13 @@ The engine writes V2 snapshots via tmp-file + `MoveFileExW(MOVEFILE_REPLACE_EXIS
 ### Shutdown dump
 
 `mc2_debug_state::writeShutdownState()` writes a `dump_kind="shutdown"` snapshot on clean exit. Gate: `MC2_DEBUG_STATE_DUMP=1`. Useful for post-mortem queries when the engine is not running.
+
+### unitProfile (UNIT-PROFILE-SEAM-1)
+
+Additive section, present ONLY when `MC2_UNIT_PROFILE_DATA=1`. Schema byte-for-byte unchanged when the gate is absent. One row per live mover.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `cap_jump_baseline` | bool | Static `CAP_JUMP` fact on the mover's `ObjectType` profile (from installed-equipment scan, or `.fit [UnitProfile] Jump`). |
+| `cap_jump_current` | bool | Current `CAP_JUMP` fact in the mover's runtime state (seeded from baseline at type-bind, refreshed post-Load). |
+| `can_perform_jump` | bool | Executability: `cap_jump_current` AND a working jump executor (`hasJumpExecutor()`, true only for `BattleMech` this slice). Fact != executability. |

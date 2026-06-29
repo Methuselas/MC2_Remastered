@@ -17,4 +17,15 @@ struct UnitRuntimeState {            // mutable, on Mover
 
 class FitIniFile;                      // fwd; keep heavy I/O header out of unitprofile.h
 void populateProfileFromFit(FitIniFile& fit, UnitProfile& profile);
+
+// UNIT-PROFILE-SEAM-1: state-dump witness bridge. debug_state_dump.cpp keeps no
+// game headers, so the mover walk lives engine-side (unitprofile_fit.cpp) and is
+// exposed as a flat POD array, mirroring gos_getMechTextureNameByNodeIdx.
+struct UnitProfileWitnessRow {
+    long objectId;
+    int  capJumpBaseline;   // 0/1
+    int  capJumpCurrent;    // 0/1
+    int  canPerformJump;    // 0/1
+};
+extern "C" int mc2_unitprofile_collect_witness(UnitProfileWitnessRow* out, int maxRows);
 #endif // UNITPROFILE_H
