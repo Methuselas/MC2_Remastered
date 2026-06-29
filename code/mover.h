@@ -1650,8 +1650,13 @@ class Mover : public GameObject {
 			return(true);
 		}
 		
+		// UNIT-PROFILE-SEAM-1
+		bool         hasCapability (Capability c) const { return runtime.currentCapabilities.has(c); }
+		virtual bool canPerform    (UnitAction a) const;
+		virtual bool hasJumpExecutor (void) const { return false; }   // base: no executor
 		virtual bool canJump (void) {
-			return(false);
+			if (mc2UnitProfileDataEnabled()) return canPerform(UnitAction::Jump);
+			return false;                       // original Mover behavior
 		}
 
 		// UNIT-PROFILE-SEAM-1: copy type baseline -> runtime at the type-bind seam.

@@ -3162,6 +3162,18 @@ void Mover::onTypeBound (void) {
 
 //---------------------------------------------------------------------------
 
+// UNIT-PROFILE-SEAM-1: gameplay intent = capability FACT + working executor.
+// Slice 1's only jump executor is the legacy BattleMech path (override below).
+bool Mover::canPerform(UnitAction a) const {
+	switch (a) {
+		case UnitAction::Jump:
+			return hasCapability(CAP_JUMP) && hasJumpExecutor();
+	}
+	return false;
+}
+
+//---------------------------------------------------------------------------
+
 float Mover::getEcmRange (void) {
 
 	if ((ecm != 255))
@@ -3261,7 +3273,10 @@ if (queuePlayerOrder)
 			break;
 		case TACTICAL_ORDER_JUMPTO_POINT:
 		case TACTICAL_ORDER_JUMPTO_OBJECT: {
-			bool canJump = (getObjectClass() == BATTLEMECH);
+			// UNIT-PROFILE-SEAM-1: gated rewire of the hidden jump gate (:3256/:3264).
+			bool canJump = mc2UnitProfileDataEnabled()
+				? canPerform(UnitAction::Jump)
+				: (getObjectClass() == BATTLEMECH);
 			GameObjectPtr target = tacOrder.getTarget();
 			if (target && target->isMover() && (target->getTeam() == getTeam()))
 				canJump = false;

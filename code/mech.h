@@ -653,8 +653,11 @@ class BattleMech : public Mover {
 
 		virtual long getSpeedState (void);
 
+		// UNIT-PROFILE-SEAM-1
+		virtual bool hasJumpExecutor (void) const { return true; }   // legacy mech jump path
 		virtual bool canJump (void) {
-			return(numJumpJets > 0);
+			if (mc2UnitProfileDataEnabled()) return canPerform(UnitAction::Jump);
+			return (numJumpJets > 0);           // original
 		}
 
 		virtual float getJumpRange (long* numOffsets = NULL, long* jumpCost = NULL);
