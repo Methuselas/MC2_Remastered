@@ -365,6 +365,24 @@ void MechBayScreen::drawWeightMeter(long xOffset, long yOffset)
 
 void MechBayScreen::update()
 {
+	// MC2_BOOT_TO_MECHLAB harness: once a mech is selected in the bay (e.g. via
+	// MC2_SOAK_AUTO_PURCHASE), auto-click "Modify Mech" to enter the mech lab so
+	// its component palette loads/renders for capture + file-resolve tracing.
+	{
+		static const bool s_bootMechLab = ( getenv("MC2_BOOT_TO_MECHLAB") != nullptr );
+		static int s_mechLabDelay = 0;
+		static bool s_mechLabFired = false;
+		if ( s_bootMechLab && !s_mechLabFired && pCurMech )
+		{
+			if ( ++s_mechLabDelay > 30 )
+			{
+				s_mechLabFired = true;
+				status = DOWN;
+				LogisticsData::instance->setMechToModify( pCurMech );
+				return;
+			}
+		}
+	}
 
 	mechListBox.disableItemsThatCanNotGoInFG();
 
