@@ -1231,8 +1231,13 @@ namespace {
 // clip's bone globals. Shared by the per-actor GPU path and the shared CPU path.
 // Returns false if the clip can't be evaluated (caller skips this frame).
 bool sampleActorClip(const ImportedAnimEntry& e, ActorAnimState& s, float dt,
-                     const mc2mechanim::MechMotion& motion, std::vector<mc2skel::GpuBone>& globals) {
-    if (e.pinnedClip.empty()) {
+                     const mc2mechanim::MechMotion& motion, std::vector<mc2skel::GpuBone>& globals,
+                     bool advanceClock) {
+    // ASSIMP-MECH-PAUSE-GATE-1: when the game is paused (advanceClock==false) freeze
+    // BOTH the clip clock and the motion-driven clip selection, then fall through to
+    // re-sample the pose at the frozen clipTimeSec. This re-bakes the SAME pose every
+    // paused frame (geometry/skinning still runs) instead of striding in place.
+    if (advanceClock && e.pinnedClip.empty()) {
         float speed = 0.0f, turnRate = 0.0f;
         if (s.havePrev) {
             const float ddx = motion.px - s.prevPx, ddy = motion.py - s.prevPy, ddz = motion.pz - s.prevPz;
@@ -1261,7 +1266,7 @@ bool sampleActorClip(const ImportedAnimEntry& e, ActorAnimState& s, float dt,
         }
     }
     const bool holdAtEnd = e.pinnedClip.empty() && gestureHoldsAtEnd(motion.gestureId);
-    s.clipTimeSec += dt;
+    if (advanceClock) s.clipTimeSec += dt;
     if (s.durationSec > 0.0f) {
         if (holdAtEnd) { if (s.clipTimeSec > s.durationSec) s.clipTimeSec = s.durationSec; }
         else while (s.clipTimeSec >= s.durationSec) s.clipTimeSec -= s.durationSec;
@@ -1293,7 +1298,7 @@ void buildGpuModelDelta(const ImportedAnimEntry& e, ActorAnimState& s,
 } // namespace
 
 void mc2mechanim::TickImportedMechs(float dt, unsigned frameStamp, const MechMotion& motion,
-                                    const void* actorKey, const void* typeKey) {
+                                    const void* actorKey, const void* typeKey, bool advanceClock) {
     if (g_importedAnims.empty()) return;
     if (dt <= 0.0f) dt = 1.0f / 30.0f;   // defensive: never divide by zero below
     // Find the type entry for this actor's chassis (keyed by its TG_TypeMultiShape).
@@ -1314,7 +1319,7 @@ void mc2mechanim::TickImportedMechs(float dt, unsigned frameStamp, const MechMot
         if (s.lastFrame == frameStamp) return;      // per-actor idempotency (combat double-update)
         s.lastFrame = frameStamp;
         std::vector<mc2skel::GpuBone> globals;
-        if (sampleActorClip(e, s, dt, motion, globals)) {
+        if (sampleActorClip(e, s, dt, motion, globals, advanceClock)) {
             buildGpuModelDelta(e, s, globals);
             s.lastGlobals = std::move(globals);   // 1A: firepoint/hit-node source
         }
@@ -1336,7 +1341,7 @@ void mc2mechanim::TickImportedMechs(float dt, unsigned frameStamp, const MechMot
     if (s.lastFrame == frameStamp) return;
     s.lastFrame = frameStamp;
     std::vector<mc2skel::GpuBone> globals;
-    if (!sampleActorClip(e, s, dt, motion, globals)) return;
+    if (!sampleActorClip(e, s, dt, motion, globals, advanceClock)) return;
     s.lastGlobals = globals;                      // 1A: firepoint/hit-node source (shared CPU state)
     TG_TypeVertex* vt = e.shape->GetTypeVerticesMutable();
     if (!vt) return;

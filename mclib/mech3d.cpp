@@ -3674,8 +3674,19 @@ void Mech3DAppearance::updateGeometry (void)
 		// PER-ACTOR: actorKey = this instance shape; typeKey = the chassis type shape
 		// (== the batcher's rec.importedGpuType / desc.mechShape keying).
 		const void* _typeKey = (mechType ? (const void*)mechType->mechShape[currentLOD] : nullptr);
+		// ASSIMP-MECH-PAUSE-GATE-1: stock mechs freeze their gait while paused (the
+		// if(animate) guard below at ~5000). Imported mechs advance through updateGeometry
+		// regardless, so they kept striding in place during pause. Freeze the imported clip
+		// clock when gamePaused (timing.h global). Killswitch MC2_ASSIMP_PAUSE_GATE=0 restores
+		// the old always-advance behavior for A/B.
+		extern bool gamePaused;  // mclib/timing.h
+		static const bool s_assimpPauseGate = []{
+			const char* v = std::getenv("MC2_ASSIMP_PAUSE_GATE");
+			return !(v && v[0] == '0');   // default-ON; only "0" disables
+		}();
+		const bool _advanceClock = s_assimpPauseGate ? !gamePaused : true;
 		mc2mechanim::TickImportedMechs(frameLength, (unsigned)g_mc2FrameCounter, _mm,
-		                               (const void*)mechShape, _typeKey);
+		                               (const void*)mechShape, _typeKey, _advanceClock);
 		// ANIM-FROZEN-WARNING-FIX-1: imported-mech GPU animation IS implemented and
 		// working at shipped defaults (per-actor model-delta palette; proven by
 		// IMPORTED-GPU-ANIM-READPATH-RECON-1). It is armed by MC2_MECH_IMPORT_GPU.

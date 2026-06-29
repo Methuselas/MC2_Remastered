@@ -39,8 +39,11 @@ struct MechMotion {
 // PER-ACTOR (GPU path): call once per actor per frame with its own actorKey (the
 // actor's instance TG_MultiShape*) and typeKey (its TG_TypeMultiShape*). Each actor
 // advances its own clip/palette, so two mechs of one chassis no longer lockstep.
+// ASSIMP-MECH-PAUSE-GATE-1: advanceClock=false (game paused) freezes the clip clock
+// and clip selection; the pose is still re-baked at the frozen time so geometry/skinning
+// keeps running. Defaults true so non-pause-aware callers are unchanged.
 void TickImportedMechs(float frameLengthSec, unsigned frameStamp, const MechMotion& motion,
-                       const void* actorKey, const void* typeKey);
+                       const void* actorKey, const void* typeKey, bool advanceClock = true);
 
 // True once at least one imported mech anim is registered (gate on + bones).
 bool AnyImportedAnim();

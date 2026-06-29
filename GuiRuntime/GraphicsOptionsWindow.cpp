@@ -356,7 +356,7 @@ static void drawTerrainTuningSection() {
     ImGui::SeparatorText("Normal Maps");
 
     float tiling   = gos_GetTerrainDetailTiling();
-    static float s_strength = 4.0f;  // no public getter
+    static float s_strength = 1.0f;  // no public getter; matches terrain_detail_strength_ default
 
     if (ImGui::SliderFloat("Tiling##nm", &tiling, 0.1f, 4.0f))
         gos_SetTerrainDetailParams(tiling, s_strength);
@@ -369,11 +369,11 @@ static void drawTerrainTuningSection() {
         gos_SetTerrainDetailParams(tiling, s_strength);
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Global normal-map amplitude multiplier.\n"
-                          "Per-material boost applied on top: rock=0.9×, grass/dirt=1.1×, concrete=2.5×. Default: 4.0");
+                          "Per-material boost applied on top: rock=0.9×, grass=0.5×, dirt=1.1×, concrete=2.5×. Default: 1.0");
     ImGui::SameLine();
     if (ImGui::SmallButton("Reset##nm")) {
-        s_strength = 4.0f;
-        gos_SetTerrainDetailParams(1.0f, 4.0f);
+        s_strength = 1.0f;
+        gos_SetTerrainDetailParams(1.0f, 1.0f);
     }
 
     // ── Material tint colors ──────────────────────────────────────────────────
