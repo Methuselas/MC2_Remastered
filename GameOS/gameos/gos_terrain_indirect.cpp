@@ -3737,6 +3737,18 @@ bool DrawIndirect() {
     }
     g_thinRingFences[g_thinRingSlot] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 
+    // TERRAIN-INDIRECT-LATCH-FIX-1: like the chunk/patch-stream/legacy branches, the
+    // Indirect terrain draw MUST set the terrain-drawn latch. sceneHasTerrain_ gates 5
+    // post passes (screenShadow / cloudShadow / shoreline / edgeFog-godrays / clear-color);
+    // without this, MC2_TERRAIN_LOD_CHUNK=0 + armed-camera + indirect draws terrain but
+    // silently kills those passes (the dead-cloud-shadow bug the other branches were fixed
+    // for; TERRAIN-SUBPASS-RECON-1 §4). Gated on commands actually issued so a terrainless
+    // frame doesn't enable post (mirrors the legacy extras>0 caution). Suppressed by the
+    // chunk default today -> byte-identical on the default path.
+    if (s_frameSolidCmdCount > 0) {
+        if (gosPostProcess* pp = getGosPostProcess()) pp->markTerrainDrawn();
+    }
+
     return true;
 }
 
