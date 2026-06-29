@@ -33,6 +33,12 @@ public:
     bool executorSceneColorTexValid()    const;   // sceneColorTex_ != 0
     bool executorSceneHasTerrain()       const { return sceneHasTerrain_; }
 
+    // FRAME-GRAPH-EXECUTOR-ISLAND-2: sub-stage accessors (EdgeFog + FogOob).
+    // Each WillRun() mirrors the exact early-return gates of the matching run*().
+    bool executorEdgeFogWillRun()      const;   // edgeFogEnabled_+prog_+mapHalfExtent_+terrain
+    bool executorFogOobWillRun()       const;   // fogOobEnabled_+prog_+terrain
+    bool executorSceneDepthTexValid()  const;   // sceneDepthTex_ != 0
+
     float  getSkyYaw()    const { return skyYaw_; }    // WATER-HDRI-REFL-1: cached per-frame
 
     // HDRI-SKY-NUMBER-1: reload the HDRI texture to match theSkyNumber from the

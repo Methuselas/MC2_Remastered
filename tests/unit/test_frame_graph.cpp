@@ -499,38 +499,70 @@ TEST_CASE("dryrun (f): Option B knownEarlyDrawSite suppression proof") {
     }
 }
 
-// FRAME-GRAPH-EXECUTOR-ISLAND-1: offline test for the pure IslandContract table.
+// FRAME-GRAPH-EXECUTOR-ISLAND-1/2: offline tests for the pure IslandContract table.
 // GL-free — tests only the constexpr descriptor, not the GL wrapper.
+// ISLAND-2: re-keyed IslandContract to ExecutorIslandId; added EdgeFog + FogOob rows.
 
-TEST_CASE("executor island (a): kExecutorIslands has exactly one PostProcess row") {
+TEST_CASE("executor island (a): kExecutorIslands has PostProcess + EdgeFog + FogOob rows") {
     using namespace RenderCore::framegraph;
-    // There must be at least one row.
-    CHECK(kExecutorIslandCount >= 1u);
-    // The first row must be PostProcess.
+    // Three rows: PostProcess(0), EdgeFog(1), FogOob(2).
+    CHECK(kExecutorIslandCount == 3u);
     CHECK(static_cast<unsigned>(kExecutorIslands[0].id) ==
-          static_cast<unsigned>(RenderPassId::PostProcess));
+          static_cast<unsigned>(ExecutorIslandId::PostProcess));
+    CHECK(static_cast<unsigned>(kExecutorIslands[1].id) ==
+          static_cast<unsigned>(ExecutorIslandId::EdgeFog));
+    CHECK(static_cast<unsigned>(kExecutorIslands[2].id) ==
+          static_cast<unsigned>(ExecutorIslandId::FogOob));
 }
 
 TEST_CASE("executor island (b): findIslandContract(PostProcess) returns non-null with expected flags") {
     using namespace RenderCore::framegraph;
-    const IslandContract* c = findIslandContract(RenderPassId::PostProcess);
+    const IslandContract* c = findIslandContract(ExecutorIslandId::PostProcess);
     CHECK(c != nullptr);
     if (c) {
         CHECK(c->requiresProgramValid    == true);
         CHECK(c->requiresSceneColorTex   == true);
+        CHECK(c->requiresSceneDepthTex   == false);
         CHECK(c->warnIfNoTerrainLatch    == true);
         CHECK(c->postRequiresDefaultFbo  == true);
+        CHECK(c->postRequiresBlendDisabled   == false);
+        CHECK(c->postRequiresActiveTexture0  == false);
     }
 }
 
-TEST_CASE("executor island (c): findIslandContract(Terrain) returns nullptr (not an owned island)") {
+TEST_CASE("executor island (c): findIslandContract(EdgeFog) returns non-null with expected flags") {
     using namespace RenderCore::framegraph;
-    CHECK(findIslandContract(RenderPassId::Terrain) == nullptr);
+    const IslandContract* c = findIslandContract(ExecutorIslandId::EdgeFog);
+    CHECK(c != nullptr);
+    if (c) {
+        CHECK(c->requiresProgramValid        == true);
+        CHECK(c->requiresSceneColorTex       == false);
+        CHECK(c->requiresSceneDepthTex       == true);
+        CHECK(c->warnIfNoTerrainLatch        == true);
+        CHECK(c->postRequiresDefaultFbo      == false);  // stays on sceneFBO_
+        CHECK(c->postRequiresBlendDisabled   == true);
+        CHECK(c->postRequiresActiveTexture0  == true);
+    }
 }
 
-TEST_CASE("executor island (d): findIslandContract(None) returns nullptr") {
+TEST_CASE("executor island (d): findIslandContract(FogOob) returns non-null with expected flags") {
     using namespace RenderCore::framegraph;
-    CHECK(findIslandContract(RenderPassId::None) == nullptr);
+    const IslandContract* c = findIslandContract(ExecutorIslandId::FogOob);
+    CHECK(c != nullptr);
+    if (c) {
+        CHECK(c->requiresProgramValid        == true);
+        CHECK(c->requiresSceneColorTex       == false);
+        CHECK(c->requiresSceneDepthTex       == true);
+        CHECK(c->warnIfNoTerrainLatch        == true);
+        CHECK(c->postRequiresDefaultFbo      == false);  // stays on sceneFBO_
+        CHECK(c->postRequiresBlendDisabled   == true);
+        CHECK(c->postRequiresActiveTexture0  == true);
+    }
+}
+
+TEST_CASE("executor island (e): findIslandContract(Count) returns nullptr (out-of-range)") {
+    using namespace RenderCore::framegraph;
+    CHECK(findIslandContract(ExecutorIslandId::Count) == nullptr);
 }
 
 } // TEST_SUITE

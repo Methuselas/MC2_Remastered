@@ -2395,6 +2395,10 @@ void gosPostProcess::runFogOob()
     glActiveTexture(GL_TEXTURE0);
 }
 
+// Forward declarations for ISLAND-2 sub-stage wrappers (defined below the executor section).
+static void executorOwnBeginSub(gosPostProcess*, RenderCore::framegraph::ExecutorIslandId);
+static void executorOwnEndSub(gosPostProcess*, RenderCore::framegraph::ExecutorIslandId);
+
 void gosPostProcess::endScene()
 {
     ZoneScopedN("Render.PostProcess");
@@ -2463,11 +2467,17 @@ void gosPostProcess::endScene()
 
     // Edge fog: fades geometry near the map boundary into the cloud color.
     // After SSAO so AO-darkening is preserved under the fog.
+    // FRAME-GRAPH-EXECUTOR-ISLAND-2: validate->call-unchanged->validate (default-OFF).
+    executorOwnBeginSub(this, RenderCore::framegraph::ExecutorIslandId::EdgeFog);
     runEdgeFog();
+    executorOwnEndSub(this, RenderCore::framegraph::ExecutorIslandId::EdgeFog);
 
     // OOB fog: applies fog color to far-plane pixels pointing toward ground.
     // After edge fog so the two cloud colors match seamlessly.
+    // FRAME-GRAPH-EXECUTOR-ISLAND-2: validate->call-unchanged->validate (default-OFF).
+    executorOwnBeginSub(this, RenderCore::framegraph::ExecutorIslandId::FogOob);
     runFogOob();
+    executorOwnEndSub(this, RenderCore::framegraph::ExecutorIslandId::FogOob);
 
     // Bind default framebuffer
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -4530,6 +4540,27 @@ bool gosPostProcess::executorSceneColorTexValid() const
     return sceneColorTex_ != 0;
 }
 
+// FRAME-GRAPH-EXECUTOR-ISLAND-2: sub-stage accessor implementations.
+// Each WillRun() mirrors the exact early-return gates of the matching run*()
+// function so the executor only counts/validates when the body actually draws.
+
+bool gosPostProcess::executorEdgeFogWillRun() const
+{
+    return edgeFogEnabled_ && edgeFogProg_ && edgeFogProg_->is_valid()
+        && mapHalfExtent_ > 0.0f && sceneHasTerrain_;
+}
+
+bool gosPostProcess::executorFogOobWillRun() const
+{
+    return fogOobEnabled_ && fogOobProg_ && fogOobProg_->is_valid()
+        && sceneHasTerrain_;
+}
+
+bool gosPostProcess::executorSceneDepthTexValid() const
+{
+    return sceneDepthTex_ != 0;
+}
+
 // --- Gate helper (read once, static lambda) ---------------------------------
 
 static bool executorEnabled()
@@ -4561,7 +4592,7 @@ static void executorOwnBegin(gosPostProcess* pp)
     if (!executorEnabled()) return;
 
     using namespace RenderCore::framegraph;
-    const IslandContract* c = findIslandContract(RenderCore::RenderPassId::PostProcess);
+    const IslandContract* c = findIslandContract(ExecutorIslandId::PostProcess);
     if (!c) return;   // not an owned island (defensive; kExecutorIslands has the row)
 
     bool ok = true;
@@ -4621,7 +4652,7 @@ static void executorOwnEnd(gosPostProcess* /*pp*/)
     if (!executorEnabled()) return;
 
     using namespace RenderCore::framegraph;
-    const IslandContract* c = findIslandContract(RenderCore::RenderPassId::PostProcess);
+    const IslandContract* c = findIslandContract(ExecutorIslandId::PostProcess);
     if (!c) return;
 
     bool postOk = true;
@@ -4650,6 +4681,120 @@ static void executorOwnEnd(gosPostProcess* /*pp*/)
                     "[EXECUTOR v1] FAIL island=PostProcess postcond=glNoError "
                     "err=0x%X owned=%lu failures=%lu\n",
                     (unsigned)err, g_executorOwnedPasses, g_executorValidationFailures + 1);
+            ++g_executorValidationFailures;
+            postOk = false;
+        }
+    }
+
+    if (postOk)
+        ++g_executorOwnedPasses;
+}
+
+// --- FRAME-GRAPH-EXECUTOR-ISLAND-2: sub-stage wrappers (EdgeFog + FogOob) ----
+//
+// Each pair gates on executorEnabled(). Begin: if WillRun()==false the sub-pass
+// is gated off this frame -> return WITHOUT counting (legitimately not owned).
+// End: validate postconditions declared in the IslandContract row; on success
+// increment g_executorOwnedPasses (aggregate — sub-stages contribute).
+
+static void executorOwnBeginSub(gosPostProcess* pp, RenderCore::framegraph::ExecutorIslandId islandId)
+{
+    if (!executorEnabled()) return;
+
+    using namespace RenderCore::framegraph;
+    const IslandContract* c = findIslandContract(islandId);
+    if (!c) return;
+
+    // Gate: if the sub-pass won't draw this frame, don't count/validate it.
+    bool willRun = false;
+    if (islandId == ExecutorIslandId::EdgeFog) willRun = pp->executorEdgeFogWillRun();
+    if (islandId == ExecutorIslandId::FogOob)  willRun = pp->executorFogOobWillRun();
+    if (!willRun) return;
+
+    // Pre-call validation (non-fatal).
+    if (c->requiresProgramValid) {
+        // Program validity is encoded in WillRun() — already proven above.
+        // Defensive: no separate accessor needed (WillRun mirrors the gate).
+    }
+    if (c->requiresSceneDepthTex && !pp->executorSceneDepthTexValid()) {
+        if (g_executorValidationFailures < kMaxExecutorFailureLog) {
+            const char* name = (islandId == ExecutorIslandId::EdgeFog) ? "EdgeFog" : "FogOob";
+            fprintf(stderr,
+                "[EXECUTOR v1] FAIL island=%s check=sceneDepthTex_valid "
+                "owned=%lu failures=%lu\n",
+                name, g_executorOwnedPasses, g_executorValidationFailures + 1);
+        }
+        ++g_executorValidationFailures;
+    }
+    // warnIfNoTerrainLatch: can't happen (WillRun checks sceneHasTerrain_) but assert for symmetry.
+    if (c->warnIfNoTerrainLatch && !pp->executorSceneHasTerrain()) {
+        const char* name = (islandId == ExecutorIslandId::EdgeFog) ? "EdgeFog" : "FogOob";
+        fprintf(stderr,
+            "[EXECUTOR v1] ASSERT island=%s warnIfNoTerrainLatch but WillRun passed — logic error\n", name);
+    }
+}
+
+static void executorOwnEndSub(gosPostProcess* pp, RenderCore::framegraph::ExecutorIslandId islandId)
+{
+    if (!executorEnabled()) return;
+
+    using namespace RenderCore::framegraph;
+    const IslandContract* c = findIslandContract(islandId);
+    if (!c) return;
+
+    // If the sub-pass didn't run (WillRun==false at Begin time) we returned early there.
+    // Re-checking WillRun here would be racy if state changed; use a lightweight proxy:
+    // if g_executorOwnedPasses hasn't changed since Begin, we are in the skip path.
+    // Simpler: just guard with a local flag pair — but to keep this dependency-free we
+    // replicate the WillRun check. This is safe: WillRun() is pure state read, no side effects.
+    bool willRun = false;
+    if (islandId == ExecutorIslandId::EdgeFog) willRun = pp->executorEdgeFogWillRun();
+    if (islandId == ExecutorIslandId::FogOob)  willRun = pp->executorFogOobWillRun();
+
+    // NOTE: after runEdgeFog()/runFogOob() completes, sceneHasTerrain_ is still true (it's only
+    // cleared at beginScene). WillRun() re-check is safe here.
+    if (!willRun) return;
+
+    const char* name = (islandId == ExecutorIslandId::EdgeFog) ? "EdgeFog" : "FogOob";
+    bool postOk = true;
+
+    // 1. GL_BLEND must be disabled (both run*() call glDisable(GL_BLEND) on exit).
+    if (c->postRequiresBlendDisabled) {
+        if (glIsEnabled(GL_BLEND) != GL_FALSE) {
+            if (g_executorValidationFailures < kMaxExecutorFailureLog)
+                fprintf(stderr,
+                    "[EXECUTOR v1] FAIL island=%s postcond=blendDisabled "
+                    "owned=%lu failures=%lu\n",
+                    name, g_executorOwnedPasses, g_executorValidationFailures + 1);
+            ++g_executorValidationFailures;
+            postOk = false;
+        }
+    }
+
+    // 2. Active texture unit must be GL_TEXTURE0 (both run*() restore it on exit).
+    if (c->postRequiresActiveTexture0) {
+        GLint activeUnit = 0;
+        glGetIntegerv(GL_ACTIVE_TEXTURE, &activeUnit);
+        if (activeUnit != GL_TEXTURE0) {
+            if (g_executorValidationFailures < kMaxExecutorFailureLog)
+                fprintf(stderr,
+                    "[EXECUTOR v1] FAIL island=%s postcond=activeTexture0 "
+                    "activeUnit=0x%X owned=%lu failures=%lu\n",
+                    name, (unsigned)activeUnit, g_executorOwnedPasses, g_executorValidationFailures + 1);
+            ++g_executorValidationFailures;
+            postOk = false;
+        }
+    }
+
+    // 3. No GL errors after the sub-stage draw.
+    {
+        const GLenum err = glGetError();
+        if (err != GL_NO_ERROR) {
+            if (g_executorValidationFailures < kMaxExecutorFailureLog)
+                fprintf(stderr,
+                    "[EXECUTOR v1] FAIL island=%s postcond=glNoError "
+                    "err=0x%X owned=%lu failures=%lu\n",
+                    name, (unsigned)err, g_executorOwnedPasses, g_executorValidationFailures + 1);
             ++g_executorValidationFailures;
             postOk = false;
         }
