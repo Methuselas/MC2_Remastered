@@ -295,6 +295,25 @@ def get_render_health() -> str:
     lines.append(f"iblSh:            {sp_opaque.get('iblShEnabled', '?')} strength={sp_opaque.get('iblShStrength', '?')} set={sp_opaque.get('iblShSet', '?')!r}")
     lines.append(f"pbr:              {sp_opaque.get('pbrEnabled', '?')} strength={sp_opaque.get('pbrStrength', '?')}")
 
+    # RENDER-FRAME-CONTEXT-1 / VIEW-EPOCH-DEDUPE-1 currency telemetry.
+    fc = data.get("frame_context", {})
+    if fc:
+        mm = fc.get("mismatch_count", 0)
+        mok = fc.get("mirror_ok", True)
+        mm_fail = mm not in (0, "?")
+        mok_fail = mok is False
+        if mm_fail or mok_fail:
+            any_fail = True
+        lines.append("")
+        lines.append("frame_context:")
+        lines.append(f"  engine_frame:       {fc.get('engine_frame', '?')}")
+        lines.append(f"  view_epoch:         {fc.get('view_epoch', '?')} (raw publish counter)")
+        lines.append(f"  view_content_epoch: {fc.get('view_content_epoch', '?')} (semantic; ~engine_frame, not 2x)")
+        lines.append(f"  mvp_snapshot_used:  {fc.get('mvp_snapshot_used', '?')} (z-fight fix active when ~engine_frame)")
+        lines.append(f"  stale_mvp_reads:    {fc.get('stale_mvp_reads', '?')} (rises only on real camera motion)")
+        lines.append(f"  mismatch_count:     {mm}{' *** FAIL' if mm_fail else ''}")
+        lines.append(f"  mirror_ok:          {mok}{' *** FAIL' if mok_fail else ''}")
+
     if any_fail:
         lines.insert(0, "HEALTH: FAIL — nonzero counters detected")
     elif not ok:
@@ -325,6 +344,31 @@ def get_render_health() -> str:
     lines.append(f"session_id:   {liveness.get('session_id') or '(V1/unknown)'}")
 
     return "\n".join(lines)
+
+
+@mcp.tool()
+def get_frame_context() -> str:
+    """
+    Return the RENDER-FRAME-CONTEXT-1 frame-context block as JSON — the per-frame
+    view-epoch currency telemetry. Use to verify VIEW-EPOCH-DEDUPE-1 /
+    RENDER-VIEW-CURRENCY-1 without reading logs:
+      - view_content_epoch should track ~engine_frame (NOT ~2x; 2x = view_epoch, the
+        raw publish counter), proving same-camera republishes are deduped.
+      - mvp_snapshot_used ~engine_frame + stale_mvp_reads ~0 on a static camera means
+        the FixB depth-matched snapshot path is active (object/mech z-fight fix live).
+      - stale_mvp_reads rises only on real camera motion between producer and consumer.
+      - mirror_ok must be true and mismatch_count 0 (the additive-context self-check;
+        MC2_FRAMECTX_MISMATCH_FATAL=1 aborts the engine on divergence).
+    """
+    data = _latest()
+    if data is None:
+        return _not_available()
+    fc = data.get("frame_context")
+    if not fc:
+        return ("frame_context absent from the dump — the running exe predates "
+                "RENDER-FRAME-CONTEXT-1, or MC2_DEBUG_STATE_DUMP is off.")
+    banner = _stale_banner()
+    return (banner if banner else "") + json.dumps(fc, indent=2)
 
 
 @mcp.tool()
