@@ -22,6 +22,9 @@ extern "C" unsigned long mc2_ambient_probe_samples();
 // FRAME-GRAPH-FBO-LEDGER-1: bound-FBO-vs-declared-target guard counters.
 extern "C" unsigned long mc2_fbo_mismatch_count();
 extern "C" unsigned long mc2_fbo_samples();
+// FRAME-GRAPH-EXECUTOR-ISLAND-1: executor-owned pass counters (default-OFF gate).
+extern "C" unsigned long mc2_framegraph_executor_owned_passes();
+extern "C" unsigned long mc2_framegraph_executor_validation_failures();
 // FRAME-GRAPH-EXECUTOR-DRYRUN-1: per-frame observe-and-diff accumulators (default-OFF gate).
 extern "C" unsigned long mc2_framegraph_dryrun_enabled();
 extern "C" unsigned long mc2_framegraph_dryrun_frames();
@@ -252,6 +255,11 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
         // FRAME-GRAPH-FBO-LEDGER-1: passes rendering into the WRONG logical target.
         s << "    \"fbo_mismatches\": " << mc2_fbo_mismatch_count() << ",\n";
         s << "    \"fbo_samples\": " << mc2_fbo_samples() << ",\n";
+        // FRAME-GRAPH-EXECUTOR-ISLAND-1: passes owned+validated by the executor
+        // (gate MC2_FRAMEGRAPH_EXECUTOR, default-OFF). executor_owned_passes > 0
+        // means at least one island validated clean this process lifetime.
+        s << "    \"executor_owned_passes\": " << mc2_framegraph_executor_owned_passes() << ",\n";
+        s << "    \"executor_validation_failures\": " << mc2_framegraph_executor_validation_failures() << ",\n";
         // FRAME-GRAPH-EXECUTOR-DRYRUN-1: per-frame fired-set/order/terrain-mutex/latch diff
         // (default-OFF gate MC2_FRAMEGRAPH_DRYRUN). unobserved_total counts declared-slot
         // occurrences with NO record this frame (the 4 invisible passes) — NOT divergences.

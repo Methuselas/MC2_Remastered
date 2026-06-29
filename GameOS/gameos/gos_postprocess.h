@@ -24,6 +24,15 @@ public:
 
     bool   isHdriReady()  const { return hdriReady_; }
     GLuint getHdriTex()   const { return hdriTex_; }   // WATER-HDRI-REFL-1
+
+    // FRAME-GRAPH-EXECUTOR-ISLAND-1: read-only accessors used by the executor
+    // wrapper (executorOwnBegin / executorOwnEnd) in gos_postprocess.cpp to
+    // validate pre/postconditions without touching private members from outside
+    // the class. These expose only what the executor's IslandContract checks.
+    bool executorCompositeProgramValid() const;   // compositeProg_ && is_valid()
+    bool executorSceneColorTexValid()    const;   // sceneColorTex_ != 0
+    bool executorSceneHasTerrain()       const { return sceneHasTerrain_; }
+
     float  getSkyYaw()    const { return skyYaw_; }    // WATER-HDRI-REFL-1: cached per-frame
 
     // HDRI-SKY-NUMBER-1: reload the HDRI texture to match theSkyNumber from the

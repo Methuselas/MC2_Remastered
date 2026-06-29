@@ -197,6 +197,12 @@ extern "C" {
 
 extern void gos_GetTerrainCameraPos(float* x, float* y, float* z);
 
+// FRAME-GRAPH-EXECUTOR-ISLAND-1: pre/post-call validation wrappers for the
+// PostProcess island.  Defined in gos_postprocess.cpp.  When gate
+// MC2_FRAMEGRAPH_EXECUTOR is unset they are early-return no-ops (byte-identical).
+extern void mc2_executor_own_begin_postprocess(gosPostProcess* pp);
+extern void mc2_executor_own_end_postprocess(gosPostProcess* pp);
+
 extern void gos_CreateRenderer(graphics::RenderContextHandle ctx_h, graphics::RenderWindowHandle win_h, int w, int h);
 extern void gos_DestroyRenderer();
 extern void gos_RendererBeginFrame();
@@ -611,7 +617,12 @@ static void draw_screen( void )
         gos_render_pass_timer::Begin(gos_render_pass_timer::Pass_Post);
         render_contract::beginPassScope(render_contract::PassIdentity::PostProcess,
                                         "gosPostProcess_endScene");
+        // FRAME-GRAPH-EXECUTOR-ISLAND-1: validate→call-unchanged→validate.
+        // When MC2_FRAMEGRAPH_EXECUTOR is unset both wrappers are no-ops;
+        // pp->endScene() is called unconditionally (byte-identical OFF path).
+        mc2_executor_own_begin_postprocess(pp);
         pp->endScene();
+        mc2_executor_own_end_postprocess(pp);
         render_contract::endPassScope(render_contract::PassIdentity::PostProcess,
                                       "gosPostProcess_endScene");
         gos_render_pass_timer::End(gos_render_pass_timer::Pass_Post);

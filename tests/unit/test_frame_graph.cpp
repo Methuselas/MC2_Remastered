@@ -10,6 +10,7 @@
 #include "RenderCore/fbo_ledger.h"
 #include "RenderCore/terrain_subpass_contract.h"
 #include "RenderCore/frame_pass_trace.h"   // FRAME-GRAPH-EXECUTOR-DRYRUN-1 pure kernel
+#include "RenderCore/frame_executor.h"     // FRAME-GRAPH-EXECUTOR-ISLAND-1 IslandContract
 
 using namespace RenderCore;
 using namespace RenderCore::framegraph;
@@ -496,6 +497,40 @@ TEST_CASE("dryrun (f): Option B knownEarlyDrawSite suppression proof") {
         CHECK(r.outOfOrderCount == 0);
         CHECK(r.knownEarlySuppressed > 0);
     }
+}
+
+// FRAME-GRAPH-EXECUTOR-ISLAND-1: offline test for the pure IslandContract table.
+// GL-free — tests only the constexpr descriptor, not the GL wrapper.
+
+TEST_CASE("executor island (a): kExecutorIslands has exactly one PostProcess row") {
+    using namespace RenderCore::framegraph;
+    // There must be at least one row.
+    CHECK(kExecutorIslandCount >= 1u);
+    // The first row must be PostProcess.
+    CHECK(static_cast<unsigned>(kExecutorIslands[0].id) ==
+          static_cast<unsigned>(RenderPassId::PostProcess));
+}
+
+TEST_CASE("executor island (b): findIslandContract(PostProcess) returns non-null with expected flags") {
+    using namespace RenderCore::framegraph;
+    const IslandContract* c = findIslandContract(RenderPassId::PostProcess);
+    CHECK(c != nullptr);
+    if (c) {
+        CHECK(c->requiresProgramValid    == true);
+        CHECK(c->requiresSceneColorTex   == true);
+        CHECK(c->warnIfNoTerrainLatch    == true);
+        CHECK(c->postRequiresDefaultFbo  == true);
+    }
+}
+
+TEST_CASE("executor island (c): findIslandContract(Terrain) returns nullptr (not an owned island)") {
+    using namespace RenderCore::framegraph;
+    CHECK(findIslandContract(RenderPassId::Terrain) == nullptr);
+}
+
+TEST_CASE("executor island (d): findIslandContract(None) returns nullptr") {
+    using namespace RenderCore::framegraph;
+    CHECK(findIslandContract(RenderPassId::None) == nullptr);
 }
 
 } // TEST_SUITE
