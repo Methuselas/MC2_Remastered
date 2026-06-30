@@ -4,22 +4,27 @@
 **Primary task:** continue the FRAME-GRAPH arc. **Do frame-graph first; legacy-terrain
 retirement is SECONDARY (after).**
 
-**▶ RESUME POINTER (latest):** **VFX-FBO-ONLY-VALIDATE-1** (`15c5ca1e`) is
-**DONE+VERIFIED** — VFX is now the **9th** validate-only top-level executor-owned pass, deliberately
-**FBO-ONLY** (MainColor; validateAmbient=FALSE — mirrors VegetationCards; the VFX note seam at
-gamecam:594 fires BEFORE the particle body sets state and in a DIFFERENT TU via a C-shim, over 2 draw
-entrypoints, even on empty frames → ambient not honestly declarable there). Top-level same-order
-ownership now covers **9 passes** (StaticProp, Terrain-LODchunk, TerrainOverlay, TerrainDecal,
-Vegetation, Shadow, MechOpaque, Water, **VFX**); **remaining deferred = UI ONLY**
-(`kTopLevelDeferredPassCount=1`). Gauntlet PASS (OFF executor metrics=0; ON validation_failures=0 /
-validated_top_level=11982 / owned_wrappers=9986; DRYRUN out_of_order=0 / fbo_mismatches=0 /
-ambient_probe_mismatches=0). Prior: WATER (8th, `33f590f8`+`110fb605`); REMOVE-1/REMOVE-2/
-APPLY-STATE-SCREENSHADOW-1 — 6/6 PostProcess apply-state islands executor-applied (body-skip sole-setter).
-NEXT FRONTIER: **UI recon** (the LAST deferred top-level pass; advisor ranks it HARDEST — runtime-dynamic
-blend/scissor, HUD/editor coupling, PipelineId::Invalid) + **VFX-AMBIENT-VALIDATE** follow-up (needs a
-LIVE measurement of ambient at the gamecam:594 seam before declaring any ambient axis). Also pending per
-the advisor list: (1) **SHADOW-OBSERVE-3 recon** — per-frame dynamic-shadow seam; (2)
-**MECHOPAQUE-PASSIDENTITY-RECON-1** — disambiguate lossy OpaqueObject identity. Do NOT rush.
+**▶ RESUME POINTER (latest):** **UI-SAME-ORDER-VALIDATE-1** (`85369151`) is
+**DONE+VERIFIED**. ★**ALL 10 top-level passes are executor-owned (`kTopLevelDeferredPassCount=0`) —
+same-order top-level VALIDATE coverage is COMPLETE.** UI/HUD is the 10th & last, deliberately
+**FBO-ONLY** (Backbuffer — the FIRST `kPassFboTarget` row using Backbuffer; ambient DO_NOT_MODEL,
+legacy per-draw gos state → validateAmbient=FALSE; direct call, no C-shim — GameOS TU includes the
+contract header; RAII guard mirrors Water). Owned set (10): StaticProp, Terrain-LODchunk,
+TerrainOverlay, TerrainDecal, Vegetation, Shadow, MechOpaque, Water, VFX, **UI**. Gauntlet PASS
+(OFF executor metrics=0; ON validation_failures=0 / validated_top_level=13903 (up from ~11982) /
+owned_wrappers=9931; DRYRUN out_of_order=0 / fbo_mismatches=0 (Backbuffer matches — UI lands on
+FBO 0) / ambient_probe_mismatches=0). Prior: VFX (9th, `15c5ca1e`); WATER (8th, `33f590f8`).
+**NEXT PHASE: top-level APPLY-STATE expansion** (executor becomes sole state-setter, body-skips
+applyPipeline): **APPLY-STATE-TERRAINDECAL-1 IN FLIGHT** (builds top-level apply infra
+`kTopLevelStateDesc`/`findTopLevelStateDesc` + `executorApplyTerrainDecalState`) → next
+**APPLY-STATE-TERRAINOVERLAY-1**; **EXCLUDED**: Terrain/Mech/Shadow (pin-sensitive / PipelineId::Invalid).
+Plus **Phase 8 RAW-GL-BYPASS gate**: **RAW-GL-DEPTHFUNC-DIFF-GATE-1 IN FLIGHT** (diff static check
+banning new raw `glDepthFunc`). **VFX-AMBIENT-VALIDATE: DROPPED permanently** (seam structurally
+upstream of the cross-TU state-setting body; only depthFunc=GEQUAL declarable, redundant w/ Water).
+Side finding (future one-liner, NOT done): `kParticleEffectState` (render_contract.cpp:315) declares
+blend=Additive but live particle body uses alpha-blend (gos_particle_bridge.cpp:1164) — stale entry.
+Also pending per advisor: (1) **SHADOW-OBSERVE-3 recon** — per-frame dynamic-shadow seam;
+(2) **MECHOPAQUE-PASSIDENTITY-RECON-1** — disambiguate lossy OpaqueObject identity. Do NOT rush.
 
 ---
 
@@ -556,6 +561,38 @@ shared primary — NOT redeployed this session by convention (we use 0.4c spare)
     seam (entry-state, not eventual pipeline state — cf. the WATER measure-first catch above) BEFORE
     declaring any ambient axis. (b) **UI** is now the LAST deferred top-level pass — advisor ranks it the
     HARDEST: runtime-dynamic blend/scissor, HUD/editor coupling, PipelineId::Invalid → needs its own recon.
+
+## ✓ UI-SAME-ORDER-VALIDATE-1 (`85369151`) — 10th & LAST owned top-level pass — ★MILESTONE 10/10
+38. **UI-SAME-ORDER-VALIDATE-1** — UI/HUD is now the **10th & LAST** top-level executor-owned pass,
+    deliberately **FBO-ONLY** (Backbuffer — the **FIRST** `kPassFboTarget` row using **Backbuffer**;
+    ambient is **DO_NOT_MODEL** — legacy per-draw gos state → `validateAmbient=FALSE`). Direct call
+    (no C-shim — the GameOS TU includes the contract header directly); RAII guard mirrors Water.
+    `kTopLevelDeferredPassCount` 1→**0**. Touched `top_level_pass_executor.h` + `fbo_ledger.h` +
+    `gameos_graphics.cpp` + `test_frame_graph.cpp` (85369151).
+    ★**MILESTONE — every top-level pass is executor-owned (10/10, 0 deferred). Same-order top-level
+    VALIDATE coverage is COMPLETE.** VERIFIED: 80 doctests / 510 assertions pass, build 0, deploy 0
+    (src 85369151). Gauntlet PASS — OFF all executor metrics=0; ON validation_failures=0 /
+    validated_top_level=13903 (up from ~11982) / owned_wrappers=9931; DRYRUN out_of_order=0 /
+    fbo_mismatches=0 (Backbuffer row matches — UI lands on FBO 0) / ambient_probe_mismatches=0;
+    all exits 0. Byte-identical OFF.
+    DECISIONS this session (for next session):
+    - **VFX-AMBIENT-VALIDATE: DROPPED permanently.** The VFX begin-seam (gamecam:594) is structurally
+      upstream of the cross-TU particle body that sets state; only depthFunc=GEQUAL would be honestly
+      declarable (redundant w/ Water). VFX stays FBO-only. (Throwaway measurement recipe exists if needed.)
+    - **Side finding (future one-liner cleanup, NOT done):** `kParticleEffectState`
+      (render_contract.cpp:315) declares blend=Additive but the live particle body uses **alpha-blend**
+      (SRC_ALPHA/ONE_MINUS_SRC_ALPHA, gos_particle_bridge.cpp:1164) — stale PassStateContract entry.
+
+## ▶ NEXT PHASE — top-level APPLY-STATE expansion + Phase 8 RAW-GL-BYPASS gate
+Same-order top-level VALIDATE is done (10/10). Frontier moves to top-level **APPLY-STATE** (executor
+becomes the sole state-setter for a pass, body-skips its `applyPipeline`):
+- **IN FLIGHT (do not duplicate): APPLY-STATE-TERRAINDECAL-1** — first top-level scene-pass apply-state.
+  Builds top-level apply infra (`kTopLevelStateDesc` / `findTopLevelStateDesc` +
+  `executorApplyTerrainDecalState` + `decalStateAppliedByExecutor_`); decal body skips applyPipeline.
+- **NEXT after decal: APPLY-STATE-TERRAINOVERLAY-1** — same infra, slice 2.
+- **EXCLUDED from apply-state**: Terrain / Mech / Shadow — pin-sensitive / PipelineId::Invalid per recon.
+- **IN FLIGHT (do not duplicate): RAW-GL-DEPTHFUNC-DIFF-GATE-1** — Phase 8 first enforcement gate;
+  diff-based static check banning new raw `glDepthFunc`.
 
 ## ⚠ (RESOLVED above) prior RED note — SAME-ORDER-SLICE-2 was committed-but-RED
 
