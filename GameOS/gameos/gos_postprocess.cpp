@@ -962,6 +962,50 @@ void gosPostProcess::createFBOs(int w, int h)
         RenderCore::registerOrUpdateRenderResource(dd);
     }
 
+    // REGISTRY-POSTPROCESS-FBO-1: publish the scene FBO color targets (observe-only
+    // metadata; this owner keeps the GL lifetimes — registry is never read by the
+    // draw path). MainColor closes the asymmetry where the FBO-LEDGER tracked
+    // sceneFBO_ but the resource registry had no glName for sceneColorTex_.
+    {
+        RenderCore::RenderResourceDesc d;
+        d.id        = RenderCore::RenderResourceId::MainColor;
+        d.kind      = RenderCore::RenderResourceKind::Texture2D;
+        d.format    = RenderCore::RenderResourceFormat::RGBA16F;
+        d.debugName = "MainColor";
+        d.width     = (uint32_t)w;
+        d.height    = (uint32_t)h;
+        d.glName    = sceneColorTex_;
+        d.valid     = (status == GL_FRAMEBUFFER_COMPLETE);
+        RenderCore::registerOrUpdateRenderResource(d);
+    }
+    {
+        RenderCore::RenderResourceDesc d;
+        d.id        = RenderCore::RenderResourceId::MainNormal;
+        d.kind      = RenderCore::RenderResourceKind::Texture2D;
+        d.format    = RenderCore::RenderResourceFormat::RGBA16F;
+        d.debugName = "MainNormal";
+        d.width     = (uint32_t)w;
+        d.height    = (uint32_t)h;
+        d.glName    = sceneNormalTex_;
+        d.valid     = (status == GL_FRAMEBUFFER_COMPLETE);
+        RenderCore::registerOrUpdateRenderResource(d);
+    }
+    // SceneObjectId is gated on RenderWorld::IsObjectIdBufferEnabled(); the GBuffer2
+    // texture only exists when the gate is live, so register valid ONLY then. When
+    // the gate is OFF the slot stays at its default (unregistered / invalid).
+    if (sceneObjectIdTex_ != 0) {
+        RenderCore::RenderResourceDesc d;
+        d.id        = RenderCore::RenderResourceId::SceneObjectId;
+        d.kind      = RenderCore::RenderResourceKind::Texture2D;
+        d.format    = RenderCore::RenderResourceFormat::Unknown;  // GL_R32UI; no enum slot
+        d.debugName = "SceneObjectId";
+        d.width     = (uint32_t)w;
+        d.height    = (uint32_t)h;
+        d.glName    = sceneObjectIdTex_;
+        d.valid     = (status == GL_FRAMEBUFFER_COMPLETE);
+        RenderCore::registerOrUpdateRenderResource(d);
+    }
+
     // --- SSAO FBO (half resolution, single-channel R16F) ---
     {
         ssaoW_ = w / 2; if (ssaoW_ < 1) ssaoW_ = 1;
@@ -982,6 +1026,18 @@ void gosPostProcess::createFBOs(int w, int h)
         GLenum aoStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
         if (aoStatus != GL_FRAMEBUFFER_COMPLETE)
             fprintf(stderr, "gosPostProcess: SSAO FBO incomplete (0x%x)\n", aoStatus);
+
+        // REGISTRY-POSTPROCESS-FBO-1: publish the half-res AO target (observe-only).
+        RenderCore::RenderResourceDesc d;
+        d.id        = RenderCore::RenderResourceId::SsaoOcclusion;
+        d.kind      = RenderCore::RenderResourceKind::Texture2D;
+        d.format    = RenderCore::RenderResourceFormat::R32F;  // GL_R16F storage; closest enum
+        d.debugName = "SsaoOcclusion";
+        d.width     = (uint32_t)ssaoW_;
+        d.height    = (uint32_t)ssaoH_;
+        d.glName    = ssaoColorTex_;
+        d.valid     = (aoStatus == GL_FRAMEBUFFER_COMPLETE);
+        RenderCore::registerOrUpdateRenderResource(d);
     }
 
     // --- WATER-REFLECTION-RESOURCE-1: quarter-res reflection target ---
@@ -1085,6 +1141,23 @@ void gosPostProcess::createFBOs(int w, int h)
 
         std::fprintf(stderr, "[HZB_BUILD v1] allocated %dx%d mips=%d (R32F, per-level textures)\n",
                      hzbW_, hzbH_, hzbMipCount_);
+
+        // REGISTRY-POSTPROCESS-FBO-1: publish the Hi-Z pyramid base level (observe-only).
+        // Gated: only allocated/registered when hzbEnabled_; the per-level chain is
+        // surfaced via getHzb* accessors, the registry tracks the level-0 handle.
+        if (hzbLevelTex_[0]) {
+            RenderCore::RenderResourceDesc d;
+            d.id        = RenderCore::RenderResourceId::HzbPyramid;
+            d.kind      = RenderCore::RenderResourceKind::Texture2D;
+            d.format    = RenderCore::RenderResourceFormat::R32F;
+            d.debugName = "HzbPyramid";
+            d.width     = (uint32_t)hzbW_;
+            d.height    = (uint32_t)hzbH_;
+            d.layers    = (uint32_t)hzbMipCount_;
+            d.glName    = hzbLevelTex_[0];
+            d.valid     = true;
+            RenderCore::registerOrUpdateRenderResource(d);
+        }
     }
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -1109,6 +1182,20 @@ void gosPostProcess::copySceneDepthForParticles()
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glBindTexture(GL_TEXTURE_2D, 0);
+
+        // REGISTRY-POSTPROCESS-FBO-1: publish the lazily-allocated depth-copy RT
+        // (observe-only). Registered at the lazy-alloc site so glName is the live
+        // handle; invalidated in destroyFBOs (resize re-allocates lazily).
+        RenderCore::RenderResourceDesc d;
+        d.id        = RenderCore::RenderResourceId::SceneDepthCopy;
+        d.kind      = RenderCore::RenderResourceKind::Texture2D;
+        d.format    = RenderCore::RenderResourceFormat::Depth24;  // DEPTH24_STENCIL8; closest enum
+        d.debugName = "SceneDepthCopy";
+        d.width     = (uint32_t)width_;
+        d.height    = (uint32_t)height_;
+        d.glName    = sceneDepthCopyTex_;
+        d.valid     = true;
+        RenderCore::registerOrUpdateRenderResource(d);
     }
 
     // Texture-to-texture copy of the whole depth image. Ordered after the
@@ -1160,6 +1247,11 @@ void gosPostProcess::destroyFBOs()
     if (sceneColorTex_) {
         glDeleteTextures(1, &sceneColorTex_);
         sceneColorTex_ = 0;
+        // REGISTRY-POSTPROCESS-FBO-1: mark MainColor unavailable on teardown
+        // (resize destroys+recreates; createFBOs re-validates).
+        RenderCore::RenderResourceDesc inv;
+        inv.id = RenderCore::RenderResourceId::MainColor; inv.valid = false;
+        RenderCore::registerOrUpdateRenderResource(inv);
     }
     if (sceneDepthTex_) {
         glDeleteTextures(1, &sceneDepthTex_);
@@ -1173,28 +1265,54 @@ void gosPostProcess::destroyFBOs()
     if (sceneNormalTex_) {
         glDeleteTextures(1, &sceneNormalTex_);
         sceneNormalTex_ = 0;
+        // REGISTRY-POSTPROCESS-FBO-1: mark MainNormal unavailable on teardown.
+        RenderCore::RenderResourceDesc inv;
+        inv.id = RenderCore::RenderResourceId::MainNormal; inv.valid = false;
+        RenderCore::registerOrUpdateRenderResource(inv);
     }
     if (sceneObjectIdTex_) {
         glDeleteTextures(1, &sceneObjectIdTex_);
         sceneObjectIdTex_ = 0;
+        // REGISTRY-POSTPROCESS-FBO-1: mark SceneObjectId unavailable on teardown.
+        RenderCore::RenderResourceDesc inv;
+        inv.id = RenderCore::RenderResourceId::SceneObjectId; inv.valid = false;
+        RenderCore::registerOrUpdateRenderResource(inv);
     }
     if (sceneDepthCopyTex_) {  // VFX-SOFT-PARTICLES-MVP-1
         glDeleteTextures(1, &sceneDepthCopyTex_);
         sceneDepthCopyTex_ = 0;
+        // REGISTRY-POSTPROCESS-FBO-1: mark SceneDepthCopy unavailable on teardown
+        // (lazily re-allocated by copySceneDepthForParticles after resize).
+        RenderCore::RenderResourceDesc inv;
+        inv.id = RenderCore::RenderResourceId::SceneDepthCopy; inv.valid = false;
+        RenderCore::registerOrUpdateRenderResource(inv);
     }
     if (sceneColorCopyTex_) {  // VFX-SCENECOLOR-GRAB-1
         glDeleteTextures(1, &sceneColorCopyTex_);
         sceneColorCopyTex_ = 0;
     }
     // SSAO-GTAO-LITE-MVP-1: free half-res AO target.
-    if (ssaoColorTex_) { glDeleteTextures(1, &ssaoColorTex_); ssaoColorTex_ = 0; }
+    if (ssaoColorTex_) {
+        glDeleteTextures(1, &ssaoColorTex_); ssaoColorTex_ = 0;
+        // REGISTRY-POSTPROCESS-FBO-1: mark SsaoOcclusion unavailable on teardown.
+        RenderCore::RenderResourceDesc inv;
+        inv.id = RenderCore::RenderResourceId::SsaoOcclusion; inv.valid = false;
+        RenderCore::registerOrUpdateRenderResource(inv);
+    }
     if (ssaoFBO_)      { glDeleteFramebuffers(1, &ssaoFBO_);   ssaoFBO_ = 0; }
     ssaoW_ = ssaoH_ = 0;
 
     // HZB-DEPTH-PYRAMID-MVP-1: free the per-level pyramid textures + FBO
     // (resize re-allocates if the gate is on).
+    bool hzbHadBase = (hzbLevelTex_[0] != 0);
     for (int i = 0; i < kHzbMaxLevels; ++i) {
         if (hzbLevelTex_[i]) { glDeleteTextures(1, &hzbLevelTex_[i]); hzbLevelTex_[i] = 0; }
+    }
+    if (hzbHadBase) {
+        // REGISTRY-POSTPROCESS-FBO-1: mark HzbPyramid unavailable on teardown.
+        RenderCore::RenderResourceDesc inv;
+        inv.id = RenderCore::RenderResourceId::HzbPyramid; inv.valid = false;
+        RenderCore::registerOrUpdateRenderResource(inv);
     }
     if (hzbFBO_) { glDeleteFramebuffers(1, &hzbFBO_); hzbFBO_ = 0; }
     hzbW_ = hzbH_ = hzbMipCount_ = 0;
