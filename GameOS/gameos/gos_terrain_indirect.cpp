@@ -20,6 +20,7 @@
 #include "gos_static_prop_killswitch.h" // gos_GetTerrainMVPMat4()
 #include "gos_postprocess.h"            // WATER-TERRAIN-REFLECTION-1: reflection FBO
 #include "../../RenderCore/terrain_path_telemetry.h"  // TERRAIN-PATH-TELEMETRY-1
+#include "../../RenderCore/RenderResourceRegistry.h"   // REGISTRY-TERRAIN-SSBO-1: recipe/thin/cement/mask ids
 // WATER-TERRAIN-REFLECTION-1: install a mirror MVP into the terrain_mvp_ cache
 // (defined __stdcall in gameos_graphics.cpp; same cache gos_GetTerrainMVPMat4 reads).
 void __stdcall gos_SetTerrainMVP(const float* matrix16);
@@ -841,6 +842,23 @@ static void BuildTransitionMaskArray() {
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
     g_transitionMaskReady = true;
+
+    // REGISTRY-TERRAIN-SSBO-1: register the transition-mask 2D_ARRAY (observe-only).
+    {
+        RenderCore::RenderResourceDesc d;
+        d.id        = RenderCore::RenderResourceId::TransitionMaskArray;
+        d.kind      = RenderCore::RenderResourceKind::Texture2DArray;
+        d.format    = RenderCore::RenderResourceFormat::RGBA8;  // R8 storage; closest enum slot
+        d.debugName = "TransitionMaskArray";
+        d.width     = static_cast<uint32_t>(S);
+        d.height    = static_cast<uint32_t>(S);
+        d.layers    = static_cast<uint32_t>(N);
+        d.glName    = static_cast<uint32_t>(g_transitionMaskArrayGL);
+        d.sizeBytes = static_cast<uint64_t>(N) * static_cast<uint64_t>(S) * static_cast<uint64_t>(S);
+        d.valid     = true;
+        RenderCore::registerOrUpdateRenderResource(d);
+    }
+
     printf("[CEMENT_ATLAS v1] event=transition_mask_array_built layers=%d size=%dx%d\n", N, S, S);
     fflush(stdout);
 }
@@ -1279,6 +1297,21 @@ void BuildCementCatalogAtlas() {
     g_cementCatalogTruncated = truncated ? 1 : 0;
     g_cementLayerMapReady    = true;
 
+    // REGISTRY-TERRAIN-SSBO-1: register the cement catalog atlas (observe-only).
+    {
+        RenderCore::RenderResourceDesc d;
+        d.id        = RenderCore::RenderResourceId::CementAtlas;
+        d.kind      = RenderCore::RenderResourceKind::Texture2D;
+        d.format    = RenderCore::RenderResourceFormat::RGBA8;
+        d.debugName = "CementAtlas";
+        d.width     = static_cast<uint32_t>(atlasPixelSide);
+        d.height    = static_cast<uint32_t>(atlasPixelSide);
+        d.glName    = static_cast<uint32_t>(g_cementAtlasGLTex);
+        d.sizeBytes = static_cast<uint64_t>(atlasPixelSide) * static_cast<uint64_t>(atlasPixelSide) * 4ull;
+        d.valid     = true;
+        RenderCore::registerOrUpdateRenderResource(d);
+    }
+
     if (traceOn()) {
         printf("[TERRAIN_INDIRECT v1] event=cement_catalog_built tile_count=%d "
                "atlas_size=%dx%d grid_side=%d gltex=%u truncated=%d "
@@ -1392,6 +1425,19 @@ void BuildDenseRecipe() {
                  GL_DYNAMIC_DRAW);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
+    // REGISTRY-TERRAIN-SSBO-1: register the dense recipe SSBO (observe-only).
+    {
+        RenderCore::RenderResourceDesc d;
+        d.id        = RenderCore::RenderResourceId::TerrainRecipeBuffer;
+        d.kind      = RenderCore::RenderResourceKind::Buffer;
+        d.format    = RenderCore::RenderResourceFormat::BufferRaw;
+        d.debugName = "TerrainRecipeBuffer";
+        d.glName    = static_cast<uint32_t>(g_recipeSSBO);
+        d.sizeBytes = static_cast<uint64_t>(N) * sizeof(TerrainQuadRecipe);
+        d.valid     = true;
+        RenderCore::registerOrUpdateRenderResource(d);
+    }
+
     // Clear dirty flags — data already in GPU from glBufferData above.
     g_denseRecipeDirty.assign(N, false);
     g_denseRecipeAnyDirty = false;
@@ -1452,6 +1498,11 @@ void ResetDenseRecipe() {
     if (g_cementAtlasGLTex != 0) {
         glDeleteTextures(1, &g_cementAtlasGLTex);
         g_cementAtlasGLTex = 0;
+
+        // REGISTRY-TERRAIN-SSBO-1: mark the cement atlas slot unavailable on teardown.
+        RenderCore::RenderResourceDesc invalid;
+        invalid.id = RenderCore::RenderResourceId::CementAtlas;
+        RenderCore::registerOrUpdateRenderResource(invalid);
     }
     g_cementAtlasGridSide    = 0;
     g_cementAtlasTileCount   = 0;
@@ -1912,6 +1963,20 @@ static bool ResourcesReady() {
             }
             s_resourcesAllocated = true;
             return false;
+        }
+
+        // REGISTRY-TERRAIN-SSBO-1: register the triple-buffered thin-record SSBO
+        // (observe-only metadata; never read by the draw path).
+        {
+            RenderCore::RenderResourceDesc d;
+            d.id        = RenderCore::RenderResourceId::TerrainThinBuffer;
+            d.kind      = RenderCore::RenderResourceKind::Buffer;
+            d.format    = RenderCore::RenderResourceFormat::BufferRaw;
+            d.debugName = "TerrainThinBuffer";
+            d.glName    = static_cast<uint32_t>(g_thinRecordSSBO);
+            d.sizeBytes = static_cast<uint64_t>(kThinRingFrames) * static_cast<uint64_t>(kThinRecordBytes);
+            d.valid     = true;
+            RenderCore::registerOrUpdateRenderResource(d);
         }
     }
 

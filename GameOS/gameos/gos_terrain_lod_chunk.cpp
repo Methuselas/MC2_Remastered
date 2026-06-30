@@ -9,6 +9,7 @@
 #include "../../RenderCore/terrain_path_telemetry.h"  // TERRAIN-PATH-TELEMETRY-1
 #include "pipeline_binder.h"                     // applyPipeline(TerrainSolid)
 #include "../../mclib/render_contract.h"  // [RENDER_PASS v1] noteRenderPass
+#include "../../RenderCore/RenderResourceRegistry.h"  // REGISTRY-TERRAIN-SSBO-1: TerrainHeightSsbo
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
@@ -592,6 +593,11 @@ void gos_TerrainLodChunk_Destroy()
         s_heightSsbo = 0;
         s_mapSide    = 0;
         s_halfMap    = 0.0f;
+
+        // REGISTRY-TERRAIN-SSBO-1: mark the slot unavailable on teardown.
+        RenderCore::RenderResourceDesc invalid;
+        invalid.id = RenderCore::RenderResourceId::TerrainHeightSsbo;
+        RenderCore::registerOrUpdateRenderResource(invalid);
     }
     if (s_typeSsbo != 0)
     {
@@ -1220,6 +1226,21 @@ void gos_TerrainLodChunk_UploadHeightFull(const float* elevations, int mapSide)
 
     s_mapSide = mapSide;
     s_halfMap = (float)mapSide * 128.0f * 0.5f;
+
+    // REGISTRY-TERRAIN-SSBO-1: register the live height SSBO (observe-only metadata;
+    // never read by the draw path). Registered here (not at Init) because the byte
+    // size is only known once the full heightfield is uploaded.
+    {
+        RenderCore::RenderResourceDesc d;
+        d.id        = RenderCore::RenderResourceId::TerrainHeightSsbo;
+        d.kind      = RenderCore::RenderResourceKind::Buffer;
+        d.format    = RenderCore::RenderResourceFormat::BufferRaw;
+        d.debugName = "TerrainHeightSsbo";
+        d.glName    = static_cast<uint32_t>(s_heightSsbo);
+        d.sizeBytes = static_cast<uint64_t>(bytes);
+        d.valid     = true;
+        RenderCore::registerOrUpdateRenderResource(d);
+    }
 
 #ifdef _DEBUG
     // First-frame readback verify: confirm that the GPU round-trips the first
