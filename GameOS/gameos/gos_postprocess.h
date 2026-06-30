@@ -293,6 +293,14 @@ public:
     // Fades terrain/props/mechs near the map boundary into the cloud color.
     // Default ON (MC2_EDGE_FOG=0 to disable).
     bool  edgeFogEnabled_  = false;
+    // APPLY-STATE-REDUNDANT-BODY-REMOVE-1: set by executorApplyEdgeFogState() when
+    // MC2_FRAMEGRAPH_EXECUTOR is ON and the executor pre-applies EdgeFog's 4 setup
+    // GL calls (FBO/drawBuffers/viewport/applyPipeline) before runEdgeFog() runs.
+    // runEdgeFog() checks this flag: if true, skips its own redundant 4 setup calls
+    // (executor is sole setter), then resets to false (one-shot per frame).
+    // Gate OFF (executor never called): flag stays false → body sets state as before
+    // → byte-identical to pre-slice behavior.
+    bool  edgeFogStateAppliedByExecutor_ = false;
     float edgeFogColor_[3] = {0.93f, 0.94f, 0.95f};
     float edgeFogStart_    = 50.0f;    // world units inside boundary where fog begins
     float edgeFogHeight_   = 2000.0f;  // cloud bank top in world Z (MC2_EDGE_FOG_HEIGHT)

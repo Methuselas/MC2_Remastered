@@ -2294,21 +2294,31 @@ void gosPostProcess::runEdgeFog()
     // sibling passes (cloud-shadow, godrays, shoreline, OOB fog) use.
     if (!sceneHasTerrain_) return;
 
-    // Bind scene FBO — writes to colour attachment 0 only.
-    // Reads sceneDepthTex_ (separate attachment — no read/write conflict).
-    // sceneColorTex_ is NEVER sampled here; blend equation does the composite.
-    glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
-    setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
-    glViewport(0, 0, width_, height_);
+    // APPLY-STATE-REDUNDANT-BODY-REMOVE-1: when MC2_FRAMEGRAPH_EXECUTOR is ON,
+    // executorApplyEdgeFogState() already ran these 4 setup calls before us
+    // (executorOwnBeginSub → executorApplyEdgeFogState → runEdgeFog).
+    // Skip the body's copies so the executor is the SOLE setter (no double-set).
+    // Gate OFF: flag stays false → body still sets state → byte-identical to pre-slice.
+    if (!edgeFogStateAppliedByExecutor_) {
+        // Bind scene FBO — writes to colour attachment 0 only.
+        // Reads sceneDepthTex_ (separate attachment — no read/write conflict).
+        // sceneColorTex_ is NEVER sampled here; blend equation does the composite.
+        glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
+        setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
+        glViewport(0, 0, width_, height_);
 
-    // POSTPROCESS-FOG-REGISTRATION-1: drive FF state from the PostProcessEdgeFog
-    // row instead of hand-setting it. Byte-identical: depth test+write OFF, cull
-    // None, AlphaBlend (SRC_ALPHA/ONE_MINUS_SRC_ALPHA). glProgramName=0 -> the
-    // edgeFogProg_->apply() below still binds the program. Teardown (glDisable
-    // BLEND / glDepthMask TRUE / glEnable DEPTH_TEST) stays owned by this site.
-    pipeline_binder::applyPipeline(
-        RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessEdgeFog),
-        "PostProcessEdgeFog");
+        // POSTPROCESS-FOG-REGISTRATION-1: drive FF state from the PostProcessEdgeFog
+        // row instead of hand-setting it. Byte-identical: depth test+write OFF, cull
+        // None, AlphaBlend (SRC_ALPHA/ONE_MINUS_SRC_ALPHA). glProgramName=0 -> the
+        // edgeFogProg_->apply() below still binds the program. Teardown (glDisable
+        // BLEND / glDepthMask TRUE / glEnable DEPTH_TEST) stays owned by this site.
+        pipeline_binder::applyPipeline(
+            RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessEdgeFog),
+            "PostProcessEdgeFog");
+    }
+    // Reset flag: one-shot per executor-apply; must clear before draw so flag never
+    // leaks to a subsequent frame or a second call in the same composite pass.
+    edgeFogStateAppliedByExecutor_ = false;
     render_frame_plan::trace(render_frame_plan::Phase::PostProcess, "EdgeFog",
         render_frame_plan::PathKind::ApplyPipeline, 1, "PostProcessEdgeFog");
 
@@ -4753,6 +4763,9 @@ void gosPostProcess::executorApplyEdgeFogState()
         RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessEdgeFog),
         "PostProcessEdgeFog");
     ++g_applyStatePasses;
+    // APPLY-STATE-REDUNDANT-BODY-REMOVE-1: signal to runEdgeFog() that the executor
+    // already applied these 4 setup calls so the body should skip its own copies.
+    edgeFogStateAppliedByExecutor_ = true;
 }
 
 // FRAMEGRAPH-APPLY-STATE-ISLAND-2: pre-apply declared GL state for FogOob.
