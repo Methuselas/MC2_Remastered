@@ -39,6 +39,7 @@
 #include "../../mclib/camera_frustum_math.h"  // CAMERA-FRUSTUM-HARNESS-1 pure rect/frustum math
 #include "../../mclib/render_contract.h"      // [RENDER_PASS v1] noteRenderPass
 #include "RenderCore/top_level_pass_executor.h" // APPLY-STATE-TERRAINDECAL-1: findTopLevelStateDesc
+#include "RenderCore/top_level_apply_axes.h"   // FRAMEGRAPH-APPLY-STATE-EXTEND-1: applyTopLevelGenericAxes
 #include "../../RenderCore/frame_executor.h"     // PER-PASS-APPLY-COUNTERS-1: ApplyPassId
 #include "Stuff/Stuff.hpp"                     // Stuff::Matrix4D for gos_SetWorldToClipGL (full chain required; matrix.hpp alone creates circular include ordering)
 
@@ -10229,6 +10230,34 @@ void gosRenderer::executorApplyWaterState()
     mc2_framegraph_executor_bump_apply_state((unsigned)RenderCore::framegraph::ApplyPassId::Water);
     waterStateAppliedByExecutor_ = true;
 }
+
+// FRAMEGRAPH-APPLY-STATE-EXTEND-1: shared GENERIC-AXES apply helper (declared in
+// RenderCore/top_level_apply_axes.h). Applies the OPTIONAL non-pipeline axes a
+// TopLevelStateDesc declares, each SKIPPED on its sentinel so the 4 unchanged consumers
+// (fboTarget=Unknown / viewport=Inherit / clear=None) are byte-identical no-ops. The
+// pipeline is applied by the per-pass fn AFTER this returns. Cross-TU shared so the
+// upcoming Shadow slice reuses it (FBO + ShadowMap viewport + DepthForwardZ clear).
+namespace RenderCore { namespace framegraph {
+void applyTopLevelGenericAxes(const TopLevelStateDesc& d, unsigned fbo, int vpW, int vpH) {
+    // 1. FBO bind — skip on Unknown (body inherits the bound FBO).
+    if (d.fboTarget != RenderResourceId::Unknown) {
+        glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)fbo);
+    }
+    // 2. Viewport — skip on Inherit (body inherits the active viewport).
+    if (d.viewport != ViewportKind::Inherit) {
+        glViewport(0, 0, vpW, vpH);
+    }
+    // 3. Depth clear — skip on None. DepthForwardZ = forward-Z clear; the scene runs reverse-Z
+    //    (clear-to-0) by default, so we clear to 1 then RESTORE clear-depth to 0 to leave global
+    //    GL clear-depth state unchanged. NOT used this slice (StaticProp.clear == None); present
+    //    for the Shadow slice (forward-Z shadow map).
+    if (d.clear == ClearSpec::DepthForwardZ) {
+        glClearDepth(1.0);
+        glClear(GL_DEPTH_BUFFER_BIT);
+        glClearDepth(0.0);
+    }
+}
+}} // namespace RenderCore::framegraph
 
 // ── Thin exported wrappers ────────────────────────────────────────────────────
 

@@ -1544,7 +1544,10 @@ TEST_CASE("top-level apply-state (f): TerrainOverlay lifted pipelineId matches t
 // APPLY-STATE-STATICPROP-1: third top-level apply-state consumer — first one whose
 // ON-path body-skip is actually exercised at runtime (StaticPropOpaque runs every
 // tier1 frame).
-TEST_CASE("top-level apply-state (g): findTopLevelStateDesc(StaticPropOpaque) = StaticPropOpaque pipeline, FBO/viewport inherit (not applied)") {
+// FRAMEGRAPH-APPLY-STATE-EXTEND-1 SELF-PROOF: StaticPropOpaque is re-expressed to EXPLICITLY
+// apply MainColor/MainScene (the axes it already inherits + runs every tier1 frame) -> proves
+// the richer apply path is byte-identical to inheritance. clear stays None.
+TEST_CASE("top-level apply-state (g): findTopLevelStateDesc(StaticPropOpaque) = StaticPropOpaque pipeline, EXPLICIT MainColor/MainScene, clear None") {
     using namespace RenderCore;
     using namespace RenderCore::framegraph;
     const TopLevelStateDesc* d = findTopLevelStateDesc(RenderPassId::StaticPropOpaque);
@@ -1552,10 +1555,34 @@ TEST_CASE("top-level apply-state (g): findTopLevelStateDesc(StaticPropOpaque) = 
     CHECK(static_cast<unsigned>(d->id)         == static_cast<unsigned>(RenderPassId::StaticPropOpaque));
     // pipelineId reused from the authoritative kPassRenderState[] row — not duplicated.
     CHECK(static_cast<unsigned>(d->pipelineId) == static_cast<unsigned>(PipelineId::StaticPropOpaque));
-    // Only the pipeline is lifted this slice; FBO/MRT/viewport are honestly NOT applied
-    // (static props inherit the preceding pass's scene FBO/drawBuffers/viewport).
-    CHECK(static_cast<unsigned>(d->fboTarget)  == static_cast<unsigned>(RenderResourceId::Unknown));
-    CHECK(static_cast<unsigned>(d->viewport)   == static_cast<unsigned>(ViewportKind::Inherit));
+    // EXTEND self-proof: now EXPLICITLY applied (no longer Unknown/Inherit).
+    CHECK(static_cast<unsigned>(d->fboTarget)  == static_cast<unsigned>(RenderResourceId::MainColor));
+    CHECK(static_cast<unsigned>(d->viewport)   == static_cast<unsigned>(ViewportKind::MainScene));
+    // No depth clear for the opaque scene pass.
+    CHECK(static_cast<unsigned>(d->clear)      == static_cast<unsigned>(ClearSpec::None));
+}
+
+// FRAMEGRAPH-APPLY-STATE-EXTEND-1: the 4 non-self-proof consumers stay byte-identical —
+// fboTarget=Unknown / viewport=Inherit (skip-sentinels) and clear defaults to None on ALL
+// 5 rows. StaticPropOpaque is the SOLE row with explicit FBO/viewport this slice.
+TEST_CASE("top-level apply-state (k): EXTEND — 4 consumers unchanged (Unknown/Inherit); ClearSpec default None on all 5 rows") {
+    using namespace RenderCore;
+    using namespace RenderCore::framegraph;
+    const RenderPassId unchanged[] = {
+        RenderPassId::TerrainDecal, RenderPassId::TerrainOverlay,
+        RenderPassId::MechOpaque,   RenderPassId::Water,
+    };
+    for (RenderPassId id : unchanged) {
+        const TopLevelStateDesc* d = findTopLevelStateDesc(id);
+        REQUIRE(d != nullptr);
+        CHECK(static_cast<unsigned>(d->fboTarget) == static_cast<unsigned>(RenderResourceId::Unknown));
+        CHECK(static_cast<unsigned>(d->viewport)  == static_cast<unsigned>(ViewportKind::Inherit));
+        CHECK(static_cast<unsigned>(d->clear)     == static_cast<unsigned>(ClearSpec::None));
+    }
+    // Default-member-initializer leaves ClearSpec::None on the StaticProp row too (explicit here).
+    const TopLevelStateDesc* sp = findTopLevelStateDesc(RenderPassId::StaticPropOpaque);
+    REQUIRE(sp != nullptr);
+    CHECK(static_cast<unsigned>(sp->clear) == static_cast<unsigned>(ClearSpec::None));
 }
 
 TEST_CASE("top-level apply-state (h): StaticPropOpaque lifted pipelineId matches the authoritative kPassRenderState row") {

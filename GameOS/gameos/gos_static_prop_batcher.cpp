@@ -26,6 +26,7 @@
 #include "../../mclib/terrain.h"         // C1b temporal-superset: Terrain::worldToBlockIdx()
 #include "../../mclib/render_contract.h" // [RENDER_PASS v1] noteRenderPass
 #include "../../RenderCore/top_level_pass_executor.h" // APPLY-STATE-STATICPROP-1: findTopLevelStateDesc
+#include "../../RenderCore/top_level_apply_axes.h"   // FRAMEGRAPH-APPLY-STATE-EXTEND-1: applyTopLevelGenericAxes
 #include "../../RenderCore/frame_executor.h"          // PER-PASS-APPLY-COUNTERS-1: ApplyPassId
 #include "gameos.hpp"
 #include "utils/shader_builder.h"
@@ -5352,6 +5353,21 @@ static bool s_staticPropStateAppliedByExecutor = false;
 // Idempotent: the body makes the identical call when the flag is false. Only reached when
 // MC2_FRAMEGRAPH_EXECUTOR is ON and the pass runs.
 static void executorApplyStaticPropOpaqueState() {
+    // FRAMEGRAPH-APPLY-STATE-EXTEND-1 SELF-PROOF: apply the EXPLICIT generic axes the
+    // StaticPropOpaque row now declares (fboTarget=MainColor, viewport=MainScene, clear=None)
+    // BEFORE the pipeline. StaticProp already inherits exactly the scene FBO + full-scene
+    // viewport, so this explicit bind is idempotent and byte-identical to inheritance — it
+    // proves the richer apply path at runtime (fbo_mismatches must stay 0). If the scene FBO/
+    // size are unavailable we skip the generic-axes (defensive; the desc still drives the
+    // pipeline apply below) — but getGosPostProcess() is established by the time static props
+    // flush every tier1 frame.
+    const RenderCore::framegraph::TopLevelStateDesc* desc =
+        RenderCore::framegraph::findTopLevelStateDesc(RenderCore::RenderPassId::StaticPropOpaque);
+    gosPostProcess* pp = getGosPostProcess();
+    if (desc && pp) {
+        RenderCore::framegraph::applyTopLevelGenericAxes(
+            *desc, (unsigned)pp->getSceneFBO(), pp->getWidth(), pp->getHeight());
+    }
     pipeline_binder::applyPipeline(
         RenderCore::getPipelineDesc(RenderCore::PipelineId::StaticPropOpaque),
         "StaticPropOpaque");

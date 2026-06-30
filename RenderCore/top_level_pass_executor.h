@@ -148,11 +148,22 @@ static constexpr unsigned kTopLevelDeferredPassCount = 0u;
 // Pure / constexpr / GL-free. The GL-touching apply lives in the gosRenderer TU
 // (gameos_graphics.cpp executorApplyTerrainDecalState()) where applyPipeline /
 // getPipelineDesc are already used. This header is offline-testable.
+// FRAMEGRAPH-APPLY-STATE-EXTEND-1: optional depth-clear axis applied by the generic-axes
+// helper. None = skip (every existing consumer; default). DepthForwardZ = forward-Z depth
+// clear (glClearDepth(1)/glClear(DEPTH)/glClearDepth(0)) — NOT used this slice; implemented
+// so the upcoming Shadow slice can declare it. depthFunc/depthWrite are deliberately OMITTED:
+// the ambient ledger owns those axes.
+enum class ClearSpec : uint8_t { None = 0, DepthForwardZ };
+
 struct TopLevelStateDesc {
     RenderPassId           id;
     RenderCore::PipelineId pipelineId;  // lifted this slice: executor applies via applyPipeline()
-    RenderResourceId       fboTarget;   // Unknown = NOT applied this slice (body inherits it)
-    ViewportKind           viewport;    // Inherit = NOT applied this slice (body inherits it)
+    RenderResourceId       fboTarget;   // Unknown = NOT applied (body inherits it); else applied
+    ViewportKind           viewport;    // Inherit = NOT applied (body inherits it); else applied
+    // FRAMEGRAPH-APPLY-STATE-EXTEND-1: trailing optional axis. Defaults to None (skip) so the
+    // 4 unchanged rows below remain byte-identical (aggregate init leaves it at the member
+    // initializer). Only StaticPropOpaque sets fboTarget/viewport explicitly this slice.
+    ClearSpec              clear = ClearSpec::None;
 };
 
 // Compile-time table of top-level passes whose render-state the executor APPLIES.
@@ -185,13 +196,19 @@ static constexpr TopLevelStateDesc kTopLevelStateDesc[] = {
     // apply-state row whose ON-path body-skip is actually exercised at runtime. The
     // preceding StaticPropDepth prepass is a SEPARATE helper and is NOT lifted here.
     // objectId is an SSBO per-instance + shader #define, not a body drawBuffers call.
-    // FBO/MRT/drawBuffers/viewport are inherited from the preceding Mech/Terrain pass
-    // and are deliberately NOT applied here (same honesty shape as decal/overlay).
+    // FRAMEGRAPH-APPLY-STATE-EXTEND-1 SELF-PROOF: StaticPropOpaque is now re-expressed to
+    // EXPLICITLY apply fboTarget=MainColor + viewport=MainScene (no longer Unknown/Inherit).
+    // StaticProp already inherits exactly those (the scene FBO + full-scene viewport) and runs
+    // EVERY tier1 frame, so the explicit FBO/viewport bind is idempotent and MUST be byte-
+    // identical to inheritance — this proves the richer apply path at runtime before Shadow
+    // (which genuinely needs FBO/viewport/clear) is owned. clear stays None (no depth clear
+    // for the opaque scene pass — the scene depth is established upstream).
     {
         /*id*/         RenderPassId::StaticPropOpaque,
         /*pipelineId*/ RenderCore::PipelineId::StaticPropOpaque,
-        /*fboTarget*/  RenderResourceId::Unknown,   // inherit (not applied)
-        /*viewport*/   ViewportKind::Inherit,       // inherit (not applied)
+        /*fboTarget*/  RenderResourceId::MainColor,  // EXPLICIT apply (self-proof == inheritance)
+        /*viewport*/   ViewportKind::MainScene,       // EXPLICIT apply (self-proof == inheritance)
+        /*clear*/      ClearSpec::None,               // no depth clear for opaque scene pass
     },
     // APPLY-STATE-MECHOPAQUE-1: MechOpaque — GpuMechBatcher::flush(): the SOLE entry
     // render-state is applyPipeline(getPipelineDesc(MechOpaque)) (~gos_mech_batcher.cpp:2152).
