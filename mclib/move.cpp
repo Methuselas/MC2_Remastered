@@ -3719,7 +3719,7 @@ void GlobalMap::setGoalDoor (long goalArea) {
 	if ((goalArea < 0) || (goalArea >= numAreas)) {
 		char errMsg[256];
 		sprintf(errMsg, " GlobalMap.setGoalDoor: bad goalArea (%d of %d) ", goalArea, numAreas);
-		gosASSERT((goalArea >= 0) || (goalArea < numAreas));
+		gosASSERT((goalArea >= 0) && (goalArea < numAreas));
 	}
 
 	GlobalMapDoorPtr goalDoor = &doors[numDoors + DOOR_OFFSET_GOAL];
