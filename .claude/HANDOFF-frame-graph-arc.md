@@ -5,21 +5,34 @@
 retirement is SECONDARY (after).**
 
 **▶ RESUME POINTER (latest):** **Top-level VALIDATE is 10/10 COMPLETE** (UI-SAME-ORDER-VALIDATE-1
-`85369151`). **Top-level APPLY-STATE has STARTED:** **StaticPropOpaque is RUNTIME-PROVEN**
-(APPLY-STATE-STATICPROP-1 `129df9c9` — first runtime-proven top-level apply-state, runs every
-tier1 frame); **TerrainDecal + TerrainOverlay are DECLARED + unit-tested but NOT content-exercised**
-(APPLY-STATE-TERRAINDECAL-1 `2bf12b30`, APPLY-STATE-TERRAINOVERLAY-1 `4d87c563` — neither pass runs in
-tier1 maps; exercise-smokes in flight). **Phase 8 = 4 RAW-GL axis gates LIVE** (depthFunc `7339dd90` /
+`85369151`). ★**PIPELINE-ONLY APPLY-STATE PHASE COMPLETE** — every top-level pass that lifts a SINGLE
+`applyPipeline` is now executor apply-state owned + RUNTIME-PROVEN: PostProcess 6/6 + StaticPropOpaque
+(=1890) + MechOpaque (=1890, APPLY-STATE-MECHOPAQUE-1 `efa73c71`) + Water (=1784, APPLY-STATE-WATER-1
+`2b217ee9`). TerrainDecal/TerrainOverlay stay code-correct-but-content-unexercised (no road/runway map
++ MC2_DYNAMIC_DECALS not in smoke allowlist); Shadow deferred (needs richer infra → EXTEND); VFX/UI/
+Vegetation/Terrain-main are correctly validate/FBO-only (no single liftable pipeline).
+**NEXT DECISION = build FRAMEGRAPH-APPLY-STATE-EXTEND-1 (design ready, shovel-ready section below) OR
+hold. Shadow apply-state is GATED on EXTEND** (it lifts pipeline + a depth clear, which the current
+single-applyPipeline infra can't express). **Phase 8 = 4 RAW-GL axis gates LIVE** (depthFunc `7339dd90` /
 depthMask `33820a2f` / colormask `ff9fed17` / blendFunc `00c61255`, all wired into
 `scripts/check-contracts.sh`); FBO-bind gate DEFERRED (too numerous/context-sensitive — own recon).
 Per-pass apply counters shipped (PER-PASS-APPLY-COUNTERS-1 `0e0b582a` — `executor_apply_state_by_pass`,
 8-entry ApplyPassId enum, aggregate==sum so no drift).
 
-★**THREE-STATE APPLY-STATE DASHBOARD (advisor):**
+★**UPDATED APPLY-STATE THREE-STATE CLASSIFICATION (advisor; pipeline-only phase COMPLETE):**
+- **Runtime-proven sole-setter:** PostProcess **6/6** islands (EdgeFog/FogOob/Shoreline/CloudShadow/
+  ScreenShadow + outer endScene) + **StaticPropOpaque (1890)** + **MechOpaque (1890)** + **Water (1784)**.
+- **Code-correct but stock-content-unexercised:** TerrainDecal, TerrainOverlay (need a road/runway map +
+  MC2_DYNAMIC_DECALS in the run_smoke allowlist).
+- **Deferred (needs richer infra → EXTEND):** Shadow (pipeline + depth clear; single-applyPipeline infra
+  can't express the clear).
+- **Correctly validate/FBO-only (no single liftable pipeline):** VFX, UI, Vegetation, Terrain-main.
+
+★**THREE-STATE APPLY-STATE DASHBOARD (advisor — original):**
 1. **Runtime-proven SOLE-SETTER (body-skip):** PostProcess **6/6** islands
    (EdgeFog/FogOob/Shoreline/CloudShadow/ScreenShadow + outer endScene).
-2. **Runtime-proven TOP-LEVEL apply-state:** **StaticPropOpaque** (named-counter proven,
-   `StaticPropOpaque=1665-1993`/tier1 run; apply +0.46/frame attributed, render-correct +0 destroys).
+2. **Runtime-proven TOP-LEVEL apply-state:** **StaticPropOpaque** + **MechOpaque** + **Water** (named-
+   counter proven: StaticProp/Mech=1890, Water=1784/tier1 run; apply attributed, render-correct +0 destroys).
    ★This is the RUNTIME PROOF of the shared top-level apply MECHANISM — the same infra TerrainDecal/
    TerrainOverlay use. So accept the code-faithful proof for decal/overlay (below).
 3. **Declared + unit-tested + code-correct (live-site) + byte-identical-OFF, but CONTENT-UNEXERCISABLE
@@ -660,6 +673,54 @@ shared primary — NOT redeployed this session by convention (we use 0.4c spare)
     identical OFF, 91 doctests. ★Site-correct now — but still CONTENT-UNEXERCISABLE in stock smoke (see
     the three-state dashboard finding above: stock maps have zero road/runway/bridge `&Overlays` tiles;
     mc2_02 cement is drawn by the TERRAIN-SOLID path, not the overlay pass → counter stays 0).
+
+## ✓ Pipeline-only apply-state COMPLETE (entries 47–48) — Mech + Water
+47. **APPLY-STATE-MECHOPAQUE-1** (`efa73c71`; +script-allowlist `189f0b75`) — 4th top-level scene-pass
+    apply-state. Added `ApplyPassId::MechOpaque`. Dispatch is at the flush CALL SITE (txmmgr.cpp:3271-3273),
+    **NOT the begin seam**; body-skip at gos_mech_batcher.cpp:2152; `flushShadow` untouched. ★RUNTIME-PROVEN:
+    MechOpaque counter=**1890/frame** (== StaticProp), `verify_executor_slice.py --assert-pass-fired
+    MechOpaque` exit 0, byte-identical OFF, 92 doctests, tier1 gauntlet GREEN. This lifts the GREEN-RECON-
+    PARKED Mech (the redline is now cleared by the runtime proof at the dispatch site).
+48. **APPLY-STATE-WATER-1** (`2b217ee9`) — 5th top-level apply-state. ★**BODY-SITE apply** (not the begin
+    seam): the dispatch fires immediately BEFORE the existing `applyPipeline(WaterArmed)` at
+    gameos_graphics.cpp:3276, AFTER the mid-body compute dispatch `ComputeDispatchAndBindThinRecords`:3232
+    — mirrors the overlay SITE-FIX rationale (a seam pre-apply would be mistimed). Pipeline-only lift (Water
+    inherits the scene FBO/viewport). `ApplyPassId::Water`. RUNTIME-PROVEN: Water counter=**1784/frame** on
+    mc2_01 (water on-camera), `--assert-pass-fired Water:1` PASS, byte-identical OFF, 93 doctests, gauntlet
+    GREEN. Also fixed a latent `check-apply-pass-bumped.py` MULTILINE comment-strip bug.
+
+★**MILESTONE — PIPELINE-ONLY APPLY-STATE PHASE COMPLETE.** Every top-level pass whose state lift is a
+single `applyPipeline` is now executor apply-state owned. See the UPDATED THREE-STATE CLASSIFICATION near
+the resume pointer. The remaining apply-state target (Shadow) needs the EXTEND design below.
+
+## ▶ PHASE BOUNDARY: FRAMEGRAPH-APPLY-STATE-EXTEND (design ready, awaiting go — NOT yet built)
+Shovel-ready spec to lift passes whose state is MORE than a single applyPipeline (Shadow = pipeline + a
+depth clear + a distinct viewport/FBO). Current single-applyPipeline infra can't express the clear.
+
+**Descriptor** (top_level_pass_executor.h): add `enum ClearSpec { None, DepthForwardZ }` + field
+`ClearSpec clear = None` to `TopLevelStateDesc`. **OMIT depthFunc/depthWrite** (the ambient ledger already
+owns them — don't double-own). `ViewportKind::ShadowMap` + `RenderResourceId::ShadowDynamicMap` +
+`PipelineId::ShadowMech` ALL already exist.
+
+**Apply** — HYBRID: a shared `applyTopLevelGenericAxes(desc, fbo, w, h)` helper (FBO → viewport → pipeline
+→ clear; each step skips on its sentinel) PLUS per-pass resolver fns (NOT fully generic — the FBO logical→
+GLuint resolution is pass-specific; the glName is debug-only). Shadow's resolver fn resolves via
+`getDynamicShadowFBO()` / `getDynamicShadowMapSize()`.
+
+**Backward-compat:** the appended `clear` field defaults to the skip-sentinel → the 5 existing pipeline-only
+consumers stay byte-identical.
+
+**Validation:** FBO (fbo_ledger) + depth (ambient ledger) already covered. Viewport = an OPTIONAL new
+`AmbientSample` field + a `GL_VIEWPORT` sampler. Clear = via the shadow-state trace (no live sampler).
+
+**Sequence (one slice at a time):**
+- **SLICE A — EXTEND-1:** add `ClearSpec` + the shared `applyTopLevelGenericAxes` helper. PROVE by
+  re-expressing StaticPropOpaque with explicit MainColor/MainScene targets = byte-identical to the current
+  inheritance, runtime-exercised in tier1.
+- **SLICE B — APPLY-STATE-SHADOW-1:** Shadow lifts pipeline + clear ONLY. Dynamic seam =
+  `beginDynamicShadowPass` (gameos_graphics.cpp:6445); lift :6467/6468/6474/6484-6486. KEEP in the body:
+  :6452 (capture), :6458-60 (AMD-unbind), :6463-65 (compare-flip), :6480 (note), :6488-94 (material + lsm).
+- **SLICE C (optional) — SHADOW-2:** lift the FBO + viewport too, AFTER the AMD-unbind ordering is proven.
 
 ## ▶ OPEN ITEMS — overlay/decal content-exercise + automation now in place
 - **Overlay/decal full content-exercise (future, NOT a blocker):** needs (a) an editor/road map or mod
