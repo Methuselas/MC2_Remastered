@@ -1378,8 +1378,10 @@ void executorOwnEndTopLevel(PassIdentity passId, const char* callerHint) {
 extern "C" unsigned long mc2_framegraph_executor_validated_top_level_passes() {
     return g_validatedTopLevel;
 }
+// FRAMEGRAPH-APPLY-STATE-ISLAND-1: forward to the live counter in gos_postprocess.cpp.
+extern "C" unsigned long mc2_framegraph_executor_apply_state_passes_impl();
 extern "C" unsigned long mc2_framegraph_executor_apply_state_passes() {
-    return 0ul;  // always 0; VALIDATE-ONLY slice, no apply path
+    return mc2_framegraph_executor_apply_state_passes_impl();
 }
 extern "C" unsigned long mc2_framegraph_executor_scheduled_passes() {
     return 0ul;  // always 0; VALIDATE-ONLY slice, no scheduling

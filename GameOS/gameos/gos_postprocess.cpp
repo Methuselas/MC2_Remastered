@@ -4599,6 +4599,9 @@ static bool executorEnabled()
 
 static unsigned long g_executorOwnedPasses       = 0;
 static unsigned long g_executorValidationFailures = 0;
+// FRAMEGRAPH-APPLY-STATE-ISLAND-1: incremented each time executorApplyEdgeFogState() fires.
+// Exposed via mc2_framegraph_executor_apply_state_passes() so the advisor can assert > 0.
+static unsigned long g_applyStatePasses          = 0;
 
 // Max log lines for validation failures — prevent log flooding in pathological cases.
 static constexpr unsigned kMaxExecutorFailureLog = 32u;
@@ -4713,6 +4716,27 @@ static void executorOwnEnd(gosPostProcess* /*pp*/)
         ++g_executorOwnedPasses;
 }
 
+// --- FRAMEGRAPH-APPLY-STATE-ISLAND-1: EdgeFog pre-apply -----------------------
+//
+// Pre-applies the 4 GL state calls that runEdgeFog() makes at entry, in the
+// SAME ORDER as the body (glBindFramebuffer → setSceneDrawBuffers → glViewport
+// → applyPipeline). Body's own identical calls are idempotent re-sets this slice.
+//
+// Only called from executorOwnBeginSub(EdgeFog) when MC2_FRAMEGRAPH_EXECUTOR is
+// ON and executorEdgeFogWillRun(). Increments g_applyStatePasses on each call.
+
+void gosPostProcess::executorApplyEdgeFogState()
+{
+    // Exactly matches runEdgeFog() lines 2293-2306 entry sequence.
+    glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
+    setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
+    glViewport(0, 0, width_, height_);
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessEdgeFog),
+        "PostProcessEdgeFog");
+    ++g_applyStatePasses;
+}
+
 // --- FRAME-GRAPH-EXECUTOR-ISLAND-2: sub-stage wrappers (EdgeFog + FogOob) ----
 //
 // Each pair gates on executorEnabled(). Begin: if WillRun()==false the sub-pass
@@ -4761,6 +4785,16 @@ static void executorOwnBeginSub(gosPostProcess* pp, RenderCore::framegraph::Exec
     if (c->warnIfNoTerrainLatch && !pp->executorSceneHasTerrain()) {
         fprintf(stderr,
             "[EXECUTOR v1] ASSERT island=%s warnIfNoTerrainLatch but WillRun passed — logic error\n", name);
+    }
+
+    // FRAMEGRAPH-APPLY-STATE-ISLAND-1: pre-apply declared GL state before the body.
+    // Only EdgeFog is wired this slice; FogOob/Shoreline/CloudShadow are vocabulary-only.
+    // findSubStageState() guards: if the island is not in the table, we do nothing.
+    // The pre-apply is idempotent: the body makes identical calls at entry (slice 2 removes them).
+    if (islandId == ExecutorIslandId::EdgeFog) {
+        using namespace RenderCore::framegraph;
+        if (findSubStageState(ExecutorIslandId::EdgeFog) != nullptr)
+            pp->executorApplyEdgeFogState();
     }
 }
 
@@ -4862,4 +4896,11 @@ extern "C" unsigned long mc2_framegraph_executor_owned_passes()
 extern "C" unsigned long mc2_framegraph_executor_validation_failures()
 {
     return g_executorValidationFailures;
+}
+
+// FRAMEGRAPH-APPLY-STATE-ISLAND-1: apply-state counter (0 until EdgeFog fires, then >0 per frame).
+// Declared extern "C" so debug_state_dump.cpp and render_contract.cpp can forward-declare + call.
+extern "C" unsigned long mc2_framegraph_executor_apply_state_passes_impl()
+{
+    return g_applyStatePasses;
 }

@@ -1,5 +1,6 @@
 #pragma once
 // FRAME-GRAPH-EXECUTOR-ISLAND-1 — pure/constexpr IslandContract descriptor.
+// FRAMEGRAPH-APPLY-STATE-ISLAND-1 — adds SubStageStateDesc vocabulary table.
 //
 // Declares WHAT the executor validates for each owned island; contains no GL
 // includes and no game-side runtime state. The GL-touching wrapper lives in
@@ -18,6 +19,10 @@
 // FRAME-GRAPH-EXECUTOR-ISLAND-3: adds Shoreline + CloudShadow sub-stage islands.
 // ScreenShadow SKIPPED: uses units 0-4 incl. GL_TEXTURE_2D_ARRAY on unit 3 (CSM path)
 // and does NOT restore glActiveTexture(GL_TEXTURE0) on exit — not texture-safe.
+
+#include "RenderCore/PipelineRegistry.h"         // PipelineId
+#include "RenderCore/RenderResourceRegistry.h"    // RenderResourceId
+#include "RenderCore/ambient_contract.h"           // ViewportKind
 
 namespace RenderCore { namespace framegraph {
 
@@ -121,6 +126,69 @@ inline const IslandContract* findIslandContract(ExecutorIslandId id) {
     for (unsigned i = 0; i < kExecutorIslandCount; ++i) {
         if (kExecutorIslands[i].id == id)
             return &kExecutorIslands[i];
+    }
+    return nullptr;
+}
+
+// ---------------------------------------------------------------------------
+// FRAMEGRAPH-APPLY-STATE-ISLAND-1: SubStageStateDesc — GL-free descriptor for
+// the executor's pre-apply of a sub-stage's declared GL state.
+//
+// The table is the vocabulary; only EdgeFog is WIRED in this slice (slice 2
+// removes the body's redundant apply once all 4 are wired).
+// Fields:
+//   id         — sub-stage island id
+//   pipelineId — PipelineId used at the top of the body (passed to applyPipeline)
+//   fboTarget  — logical resource the body binds as the draw FBO (MainColor=sceneFBO_)
+//   viewport   — viewport scope (MainScene = glViewport(0,0,width_,height_))
+// Pure, constexpr-compatible, no GL.
+// ---------------------------------------------------------------------------
+struct SubStageStateDesc {
+    ExecutorIslandId         id;
+    RenderCore::PipelineId       pipelineId;
+    RenderCore::RenderResourceId fboTarget;
+    ViewportKind                 viewport;    // RenderCore::framegraph::ViewportKind (same namespace)
+};
+
+static constexpr SubStageStateDesc kSubStageState[] = {
+    // EdgeFog — runEdgeFog(): bindFB(sceneFBO_) + SingleColor + viewport + applyPipeline(PostProcessEdgeFog)
+    {
+        /*id*/         ExecutorIslandId::EdgeFog,
+        /*pipelineId*/ RenderCore::PipelineId::PostProcessEdgeFog,
+        /*fboTarget*/  RenderCore::RenderResourceId::MainColor,
+        /*viewport*/   ViewportKind::MainScene,
+    },
+    // FogOob — same entry state as EdgeFog (validate-only this slice; not wired to apply yet)
+    {
+        /*id*/         ExecutorIslandId::FogOob,
+        /*pipelineId*/ RenderCore::PipelineId::PostProcessFogOob,
+        /*fboTarget*/  RenderCore::RenderResourceId::MainColor,
+        /*viewport*/   ViewportKind::MainScene,
+    },
+    // Shoreline (validate-only this slice)
+    {
+        /*id*/         ExecutorIslandId::Shoreline,
+        /*pipelineId*/ RenderCore::PipelineId::PostProcessShoreline,
+        /*fboTarget*/  RenderCore::RenderResourceId::MainColor,
+        /*viewport*/   ViewportKind::MainScene,
+    },
+    // CloudShadow (validate-only this slice)
+    {
+        /*id*/         ExecutorIslandId::CloudShadow,
+        /*pipelineId*/ RenderCore::PipelineId::PostProcessCloudShadow,
+        /*fboTarget*/  RenderCore::RenderResourceId::MainColor,
+        /*viewport*/   ViewportKind::MainScene,
+    },
+};
+static constexpr unsigned kSubStageStateCount =
+    sizeof(kSubStageState) / sizeof(kSubStageState[0]);
+
+// Find the SubStageStateDesc for the given island id, or nullptr if not in table.
+// Pure, constexpr-compatible, no GL.
+inline const SubStageStateDesc* findSubStageState(ExecutorIslandId id) {
+    for (unsigned i = 0; i < kSubStageStateCount; ++i) {
+        if (kSubStageState[i].id == id)
+            return &kSubStageState[i];
     }
     return nullptr;
 }

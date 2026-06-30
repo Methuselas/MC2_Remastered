@@ -44,6 +44,16 @@ public:
     bool executorShorelineWillRun()    const;   // shorelineEnabled_+prog_+terrain
     bool executorCloudShadowWillRun()  const;   // enableCloudShadow_+prog_+terrain
 
+    // FRAMEGRAPH-APPLY-STATE-ISLAND-1: executor pre-apply for EdgeFog sub-stage.
+    // Performs the 4 GL state calls that runEdgeFog() makes at entry:
+    //   glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_)
+    //   setSceneDrawBuffers(SingleColor, false)
+    //   glViewport(0, 0, width_, height_)
+    //   pipeline_binder::applyPipeline(PostProcessEdgeFog, "PostProcessEdgeFog")
+    // This method touches GL; it lives in gos_postprocess.cpp (private member access).
+    // Only called when executorEnabled() && executorEdgeFogWillRun() (gate: MC2_FRAMEGRAPH_EXECUTOR).
+    void executorApplyEdgeFogState();
+
     float  getSkyYaw()    const { return skyYaw_; }    // WATER-HDRI-REFL-1: cached per-frame
 
     // HDRI-SKY-NUMBER-1: reload the HDRI texture to match theSkyNumber from the

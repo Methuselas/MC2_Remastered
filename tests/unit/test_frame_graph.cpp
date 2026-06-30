@@ -1351,4 +1351,41 @@ TEST_CASE("top-level executor (h): kTopLevelDeferredPassCount matches the 5 defe
     CHECK(kTopLevelDeferredPassCount == 5u);
 }
 
+// ---------------------------------------------------------------------------
+// FRAMEGRAPH-APPLY-STATE-ISLAND-1: offline tests for SubStageStateDesc table.
+// Pure/GL-free — the pre-apply GL calls are not tested here (GL context required).
+// ---------------------------------------------------------------------------
+
+TEST_CASE("apply-state-island (a): kSubStageState has exactly 4 rows") {
+    using namespace RenderCore::framegraph;
+    CHECK(kSubStageStateCount == 4u);
+}
+
+TEST_CASE("apply-state-island (b): findSubStageState(EdgeFog) returns PostProcessEdgeFog + MainColor + MainScene") {
+    using namespace RenderCore;
+    using namespace RenderCore::framegraph;
+    const SubStageStateDesc* d = findSubStageState(ExecutorIslandId::EdgeFog);
+    REQUIRE(d != nullptr);
+    CHECK(static_cast<unsigned>(d->id)         == static_cast<unsigned>(ExecutorIslandId::EdgeFog));
+    CHECK(static_cast<unsigned>(d->pipelineId) == static_cast<unsigned>(PipelineId::PostProcessEdgeFog));
+    CHECK(static_cast<unsigned>(d->fboTarget)  == static_cast<unsigned>(RenderResourceId::MainColor));
+    CHECK(static_cast<unsigned>(d->viewport)   == static_cast<unsigned>(ViewportKind::MainScene));
+}
+
+TEST_CASE("apply-state-island (c): findSubStageState(Composite) returns nullptr — not an apply island") {
+    using namespace RenderCore::framegraph;
+    // Composite is a postprocess sub-stage but NOT in the SubStageStateDesc table.
+    const SubStageStateDesc* d = findSubStageState(ExecutorIslandId::Composite);
+    CHECK(d == nullptr);
+}
+
+TEST_CASE("apply-state-island (d): all 4 table rows have valid PipelineId (not Invalid)") {
+    using namespace RenderCore;
+    using namespace RenderCore::framegraph;
+    for (unsigned i = 0; i < kSubStageStateCount; ++i) {
+        CHECK(static_cast<unsigned>(kSubStageState[i].pipelineId)
+              != static_cast<unsigned>(PipelineId::Invalid));
+    }
+}
+
 } // TEST_SUITE
