@@ -2,6 +2,7 @@
 
 #include "gos_cluster_depth_pyramid.h"
 #include "gos_gpu_sync.h"
+#include "../../RenderCore/RenderResourceRegistry.h"  // REGISTRY-COMPUTE-IDS-1: ClusterDepthPyramid
 
 #include <GL/glew.h>
 #include <GL/gl.h>
@@ -134,6 +135,23 @@ void ensureTileTexture(int width, int height) {
     glBindTexture(GL_TEXTURE_2D, 0);
 
     s_tileW = tw; s_tileH = th; s_srcW = width; s_srcH = height;
+
+    // REGISTRY-COMPUTE-IDS-1: register the live tile min/max texture
+    // (observe-only metadata; never read by the draw path). Gated/default-OFF,
+    // so this only fires when the cluster-depth-pyramid compute path runs.
+    {
+        RenderCore::RenderResourceDesc d;
+        d.id        = RenderCore::RenderResourceId::ClusterDepthPyramid;
+        d.kind      = RenderCore::RenderResourceKind::Texture2D;
+        d.format    = RenderCore::RenderResourceFormat::Unknown;  // RG32F (no enum case)
+        d.debugName = "ClusterDepthPyramid";
+        d.width     = static_cast<uint32_t>(tw);
+        d.height    = static_cast<uint32_t>(th);
+        d.glName    = static_cast<uint32_t>(s_tileTex);
+        d.sizeBytes = static_cast<uint64_t>(tw) * th * 8;  // RG32F = 8 bytes/texel
+        d.valid     = true;
+        RenderCore::registerOrUpdateRenderResource(d);
+    }
 
     fprintf(stderr, "[CLUSTER_DEPTH_PYRAMID v1] tile image %dx%d (RG32F) for "
                     "scene %dx%d, tile=%d\n", tw, th, width, height, kTileSize);
@@ -278,6 +296,11 @@ void Shutdown() {
     if (s_tileTex) { glDeleteTextures(1, &s_tileTex); s_tileTex = 0; }
     if (s_program) { glDeleteProgram(s_program); s_program = 0; }
     s_tileW = s_tileH = s_srcW = s_srcH = 0;
+
+    // REGISTRY-COMPUTE-IDS-1: mark the slot unavailable on teardown.
+    RenderCore::RenderResourceDesc invalid;
+    invalid.id = RenderCore::RenderResourceId::ClusterDepthPyramid;
+    RenderCore::registerOrUpdateRenderResource(invalid);
 }
 
 // --- Accessors (MC2-LIGHTGRID-BUILD-NATIVE-1) -------------------------------

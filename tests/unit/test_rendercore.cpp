@@ -14,6 +14,8 @@
 #include <cstring>
 #include <cmath>                       // NAN / INFINITY for sanitizer test
 #include <type_traits>                 // is_trivially_copyable
+#include <set>                         // REGISTRY-COMPUTE-IDS-1: unique-name check
+#include <string>                      // REGISTRY-COMPUTE-IDS-1: unique-name check
 
 using namespace RenderCore;
 
@@ -111,6 +113,49 @@ TEST_CASE("RenderResourceRegistry toString") {
     CHECK(std::strcmp(toString(RenderResourceKind::Buffer),    "Buffer")    == 0);
     CHECK(std::strcmp(toString(RenderResourceFormat::RGBA8),   "RGBA8")     == 0);
     CHECK(std::strcmp(toString(RenderResourceFormat::Depth32F),"Depth32F")  == 0);
+}
+
+// REGISTRY-COMPUTE-IDS-1: the 4 new compute-intermediate ids round-trip
+// through toString with non-empty, unique names; Count covers them.
+TEST_CASE("RenderResourceRegistry compute-intermediate ids toString") {
+    CHECK(std::strcmp(toString(RenderResourceId::ClusterDepthPyramid),    "ClusterDepthPyramid")    == 0);
+    CHECK(std::strcmp(toString(RenderResourceId::LightgridGrid),          "LightgridGrid")          == 0);
+    CHECK(std::strcmp(toString(RenderResourceId::LightgridIndex),         "LightgridIndex")         == 0);
+    CHECK(std::strcmp(toString(RenderResourceId::PostprocessComputeBlur), "PostprocessComputeBlur") == 0);
+
+    // Count is the last enumerator; the new ids are strictly below it.
+    CHECK(int(RenderResourceId::PostprocessComputeBlur) < int(RenderResourceId::Count));
+    CHECK(int(RenderResourceId::ClusterDepthPyramid)    < int(RenderResourceId::Count));
+}
+
+TEST_CASE("RenderResourceRegistry all ids have non-empty unique names") {
+    std::set<std::string> seen;
+    for (int i = 0; i < int(RenderResourceId::Count); ++i) {
+        const char* name = toString(RenderResourceId(i));
+        REQUIRE(name != nullptr);
+        CHECK(name[0] != '\0');
+        // No duplicate names across distinct ids.
+        CHECK(seen.insert(std::string(name)).second);
+    }
+}
+
+TEST_CASE("RenderResourceRegistry compute-intermediate ids register and invalidate") {
+    RenderResourceDesc d{};
+    d.id        = RenderResourceId::ClusterDepthPyramid;
+    d.kind      = RenderResourceKind::Texture2D;
+    d.glName    = 4242;
+    d.valid     = true;
+    registerOrUpdateRenderResource(d);
+    const RenderResourceDesc* got = getRenderResource(RenderResourceId::ClusterDepthPyramid);
+    REQUIRE(got != nullptr);
+    CHECK(got->glName == 4242);
+    CHECK((got->id == RenderResourceId::ClusterDepthPyramid));
+
+    RenderResourceDesc inv{};
+    inv.id = RenderResourceId::ClusterDepthPyramid;
+    registerOrUpdateRenderResource(inv);
+    CHECK(getRenderResource(RenderResourceId::ClusterDepthPyramid) == nullptr);
+    CHECK(getRenderResourceCount() == 0);
 }
 
 // ---------------------------------------------------------------------------

@@ -6,6 +6,7 @@
 #include "gos_lightgrid_build.h"
 #include "gos_cluster_depth_pyramid.h"
 #include "gos_gpu_sync.h"
+#include "../../RenderCore/RenderResourceRegistry.h"  // REGISTRY-COMPUTE-IDS-1: LightgridGrid/LightgridIndex
 
 #include <GL/glew.h>
 #include <GL/gl.h>
@@ -195,6 +196,32 @@ void ensureBuffers(int tileW, int tileH) {
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     s_headerW = tileW; s_headerH = tileH;
+
+    // REGISTRY-COMPUTE-IDS-1: register the live lightgrid SSBOs (observe-only
+    // metadata; never read by the draw path). Gated/default-OFF, so this only
+    // fires when the lightgrid-build compute path runs.
+    {
+        RenderCore::RenderResourceDesc d;
+        d.id        = RenderCore::RenderResourceId::LightgridGrid;
+        d.kind      = RenderCore::RenderResourceKind::Buffer;
+        d.format    = RenderCore::RenderResourceFormat::BufferRaw;
+        d.debugName = "LightgridGrid";
+        d.glName    = static_cast<uint32_t>(s_sphereSsbo);
+        d.sizeBytes = static_cast<uint64_t>(kSphereStride) * kMaxLights;
+        d.valid     = true;
+        RenderCore::registerOrUpdateRenderResource(d);
+    }
+    {
+        RenderCore::RenderResourceDesc d;
+        d.id        = RenderCore::RenderResourceId::LightgridIndex;
+        d.kind      = RenderCore::RenderResourceKind::Buffer;
+        d.format    = RenderCore::RenderResourceFormat::BufferRaw;
+        d.debugName = "LightgridIndex";
+        d.glName    = static_cast<uint32_t>(s_indexPool);
+        d.sizeBytes = static_cast<uint64_t>(poolBytes);
+        d.valid     = true;
+        RenderCore::registerOrUpdateRenderResource(d);
+    }
 }
 
 // --- CPU reference + parity ------------------------------------------------
@@ -536,6 +563,13 @@ void Shutdown() {
     if (s_progSphere)  { glDeleteProgram(s_progSphere);      s_progSphere = 0; }
     if (s_progGrid)    { glDeleteProgram(s_progGrid);        s_progGrid = 0; }
     s_headerW = s_headerH = 0;
+
+    // REGISTRY-COMPUTE-IDS-1: mark the slots unavailable on teardown.
+    RenderCore::RenderResourceDesc invalid;
+    invalid.id = RenderCore::RenderResourceId::LightgridGrid;
+    RenderCore::registerOrUpdateRenderResource(invalid);
+    invalid.id = RenderCore::RenderResourceId::LightgridIndex;
+    RenderCore::registerOrUpdateRenderResource(invalid);
 }
 
 }  // namespace lightgrid_build

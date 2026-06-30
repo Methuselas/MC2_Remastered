@@ -29,6 +29,10 @@ enum class RenderResourceId : uint16_t {
     HzbPyramid           = 18,  // POSTPROCESS-SUBGRAPH-2: Hi-Z pyramid mip chain (hzbLevelTex_[0..N], R32F); produced by HzbReduce (draw pass via hzbFBO_); read by HzbProbe (CPU diagnostic). Frame-persistent (survives mission reload).
     SsaoOcclusion        = 19,  // POSTPROCESS-SUBGRAPH-2: half-res AO result (ssaoColorTex_, R8/RGBA8); produced by SSAO pass1 (ssaoFBO_); consumed by SSAO pass2/apply (sceneFBO_). Transient within endScene.
     SceneColorCopy       = 20,  // POSTPROCESS-SUBGRAPH-2: feedback-safe scene color copy (sceneColorCopyTex_, RGBA16F); producer not yet modeled; consumed by PostprocessComputeBlur (substrate only, default-OFF).
+    ClusterDepthPyramid  = 21,  // REGISTRY-COMPUTE-IDS-1: cluster_depth_pyramid tile min/max texture (s_tileTex, RG32F, tile-grid res); produced by cluster_depth_pyramid::Run (compute), default-OFF gated substrate. Consumed by Lightgrid build (tileMinMax).
+    LightgridGrid        = 22,  // REGISTRY-COMPUTE-IDS-1: lightgrid sphere SSBO (s_sphereSsbo, kSphereStride*kMaxLights bytes); produced by lightgrid_build (compute), default-OFF gated substrate.
+    LightgridIndex       = 23,  // REGISTRY-COMPUTE-IDS-1: lightgrid per-tile index pool SSBO (s_indexPool, nTiles*kMaxLights uints); produced by lightgrid_build (compute), default-OFF gated substrate.
+    PostprocessComputeBlur = 24,// REGISTRY-COMPUTE-IDS-1: compute-blur ping-pong output substrate (postprocess_blur s_pingA, RGBA16F half-res); produced by postprocess_blur::Run (compute), default-OFF gated substrate. No consumer (substrate only).
     Count
 };
 

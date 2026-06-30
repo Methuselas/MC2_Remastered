@@ -2,6 +2,7 @@
 
 #include "gos_postprocess_blur.h"
 #include "gos_gpu_sync.h"
+#include "../../RenderCore/RenderResourceRegistry.h"  // REGISTRY-COMPUTE-IDS-1: PostprocessComputeBlur
 
 #include <GL/glew.h>
 #include <GL/gl.h>
@@ -170,6 +171,25 @@ void ensurePingPong(int halfW, int halfH) {
     s_pingA = makeHalfResImage(halfW, halfH);
     s_pingB = makeHalfResImage(halfW, halfH);
     s_halfW = halfW; s_halfH = halfH;
+
+    // REGISTRY-COMPUTE-IDS-1: register the live compute-blur output substrate
+    // (s_pingA receives the final V-pass output). Observe-only metadata; never
+    // read by the draw path. Gated/default-OFF, so this only fires when the
+    // compute-blur path runs.
+    {
+        RenderCore::RenderResourceDesc d;
+        d.id        = RenderCore::RenderResourceId::PostprocessComputeBlur;
+        d.kind      = RenderCore::RenderResourceKind::Texture2D;
+        d.format    = RenderCore::RenderResourceFormat::RGBA16F;
+        d.debugName = "PostprocessComputeBlur";
+        d.width     = static_cast<uint32_t>(halfW);
+        d.height    = static_cast<uint32_t>(halfH);
+        d.glName    = static_cast<uint32_t>(s_pingA);
+        d.sizeBytes = static_cast<uint64_t>(halfW) * halfH * 8;  // RGBA16F = 8 bytes/texel
+        d.valid     = true;
+        RenderCore::registerOrUpdateRenderResource(d);
+    }
+
     fprintf(stderr, "[POSTPROCESS_BLUR v1] ping-pong %dx%d (RGBA16F x2)\n",
             halfW, halfH);
 }
@@ -396,6 +416,11 @@ void Shutdown() {
     if (s_pingA)   { glDeleteTextures(1, &s_pingA);  s_pingA  = 0; }
     if (s_pingB)   { glDeleteTextures(1, &s_pingB);  s_pingB  = 0; }
     if (s_testTex) { glDeleteTextures(1, &s_testTex); s_testTex = 0; }
+
+    // REGISTRY-COMPUTE-IDS-1: mark the slot unavailable on teardown.
+    RenderCore::RenderResourceDesc invalid;
+    invalid.id = RenderCore::RenderResourceId::PostprocessComputeBlur;
+    RenderCore::registerOrUpdateRenderResource(invalid);
     if (s_progDown)  { glDeleteProgram(s_progDown);  s_progDown  = 0; }
     if (s_progBlurH) { glDeleteProgram(s_progBlurH); s_progBlurH = 0; }
     if (s_progBlurV) { glDeleteProgram(s_progBlurV); s_progBlurV = 0; }
