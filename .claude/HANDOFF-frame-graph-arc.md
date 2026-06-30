@@ -4,15 +4,21 @@
 **Primary task:** continue the FRAME-GRAPH arc. **Do frame-graph first; legacy-terrain
 retirement is SECONDARY (after).**
 
-**▶ RESUME POINTER (latest):** **WATER-SAME-ORDER-VALIDATE-1** (`33f590f8` + fixup `110fb605`) is
-**DONE+VERIFIED** — Water is now the **8th** validate-only top-level executor-owned pass (mirrors
-TerrainOverlay). Top-level same-order ownership now covers **8 passes** (StaticProp, Terrain-LODchunk,
-TerrainOverlay, TerrainDecal, Vegetation, Shadow, MechOpaque, **Water**); **remaining deferred = VFX, UI**
-(`kTopLevelDeferredPassCount=2`). ScreenShadow reconciliation DONE (clean rebuild, exe SHA match,
-apply_state=7976). Prior: REMOVE-1/REMOVE-2/APPLY-STATE-SCREENSHADOW-1 (`95f4d498`/`c706dde6`/`6d316519`)
-— 6/6 PostProcess apply-state islands executor-applied (body-skip sole-setter). NEXT FRONTIER:
-**VFX same-order recon** (then UI — runtime-dynamic blend → PipelineId::Invalid). Also pending per the
-advisor list: (1) **SHADOW-OBSERVE-3 recon** — per-frame dynamic-shadow seam; (2)
+**▶ RESUME POINTER (latest):** **VFX-FBO-ONLY-VALIDATE-1** (`15c5ca1e`) is
+**DONE+VERIFIED** — VFX is now the **9th** validate-only top-level executor-owned pass, deliberately
+**FBO-ONLY** (MainColor; validateAmbient=FALSE — mirrors VegetationCards; the VFX note seam at
+gamecam:594 fires BEFORE the particle body sets state and in a DIFFERENT TU via a C-shim, over 2 draw
+entrypoints, even on empty frames → ambient not honestly declarable there). Top-level same-order
+ownership now covers **9 passes** (StaticProp, Terrain-LODchunk, TerrainOverlay, TerrainDecal,
+Vegetation, Shadow, MechOpaque, Water, **VFX**); **remaining deferred = UI ONLY**
+(`kTopLevelDeferredPassCount=1`). Gauntlet PASS (OFF executor metrics=0; ON validation_failures=0 /
+validated_top_level=11982 / owned_wrappers=9986; DRYRUN out_of_order=0 / fbo_mismatches=0 /
+ambient_probe_mismatches=0). Prior: WATER (8th, `33f590f8`+`110fb605`); REMOVE-1/REMOVE-2/
+APPLY-STATE-SCREENSHADOW-1 — 6/6 PostProcess apply-state islands executor-applied (body-skip sole-setter).
+NEXT FRONTIER: **UI recon** (the LAST deferred top-level pass; advisor ranks it HARDEST — runtime-dynamic
+blend/scissor, HUD/editor coupling, PipelineId::Invalid) + **VFX-AMBIENT-VALIDATE** follow-up (needs a
+LIVE measurement of ambient at the gamecam:594 seam before declaring any ambient axis). Also pending per
+the advisor list: (1) **SHADOW-OBSERVE-3 recon** — per-frame dynamic-shadow seam; (2)
 **MECHOPAQUE-PASSIDENTITY-RECON-1** — disambiguate lossy OpaqueObject identity. Do NOT rush.
 
 ---
@@ -529,6 +535,27 @@ shared primary — NOT redeployed this session by convention (we use 0.4c spare)
     seam-ENTRY-state value the begin-sample actually sees. begin-sample entry-state ≠ established-state;
     declare contracts against the seam's observed state, not the eventual pipeline state. Textbook
     measure-first win. ★ScreenShadow reconciliation DONE (clean rebuild, exe SHA match, apply_state=7976).
+
+## ✓ VFX-FBO-ONLY-VALIDATE-1 (`15c5ca1e`) — 9th owned top-level pass (FBO-only)
+37. **VFX-FBO-ONLY-VALIDATE-1** — VFX is now the **9th** validate-only top-level executor-owned pass,
+    deliberately **FBO-ONLY** (mirrors VegetationCards). Added VFX rows: `kTopLevelExecutorPasses`
+    (validateFbo=true→MainColor, **validateAmbient=FALSE**), `fbo_ledger` (MainColor). New
+    `mc2_vfx_pass_begin`/`mc2_vfx_pass_end` C-shims (`render_contract.cpp`) forwarding to
+    `executorOwnBeginTopLevel`/`EndTopLevel(PassIdentity::ParticleEffect → RenderPassId::VFX)`; RAII
+    guard in `gamecam.cpp` (~:594) covers `Batcher::Flush` + `gos_tube_ribbon_flush_deferred`.
+    `kTopLevelDeferredPassCount` 2→1 (now **UI only**). Touched `top_level_pass_executor.h` +
+    `fbo_ledger.h` + `render_contract.cpp` + `gamecam.cpp` + `test_frame_graph.cpp` (15c5ca1e).
+    ★WHY AMBIENT DEFERRED (deliberate scope): the VFX note seam at gamecam:594 fires BEFORE the particle
+    body sets state AND in a DIFFERENT TU (reached via the C-shim), and it fires even on empty frames /
+    over 2 distinct draw entrypoints — so ambient state is NOT honestly declarable at that seam (same
+    rationale that kept VegetationCards FBO-only). VERIFIED: 80 doctests pass, build 0, deploy 0
+    (src 15c5ca1e). Gauntlet PASS — OFF all executor metrics=0; ON validation_failures=0 /
+    validated_top_level=11982 (up from ~9805) / owned_wrappers=9986; DRYRUN out_of_order=0 /
+    fbo_mismatches=0 / ambient_probe_mismatches=0 / 2001 frames; all exits 0.
+    FOLLOW-UPS: (a) **VFX-AMBIENT-VALIDATE** — needs a LIVE measurement of ambient at the gamecam:594
+    seam (entry-state, not eventual pipeline state — cf. the WATER measure-first catch above) BEFORE
+    declaring any ambient axis. (b) **UI** is now the LAST deferred top-level pass — advisor ranks it the
+    HARDEST: runtime-dynamic blend/scissor, HUD/editor coupling, PipelineId::Invalid → needs its own recon.
 
 ## ⚠ (RESOLVED above) prior RED note — SAME-ORDER-SLICE-2 was committed-but-RED
 
