@@ -40,9 +40,14 @@ public:
     bool executorSceneDepthTexValid()  const;   // sceneDepthTex_ != 0
 
     // FRAME-GRAPH-EXECUTOR-ISLAND-3: sub-stage accessors (Shoreline + CloudShadow).
-    // WillRun() mirrors exact early-return gates; ScreenShadow SKIPPED (no activeTexture0 restore).
     bool executorShorelineWillRun()    const;   // shorelineEnabled_+prog_+terrain
     bool executorCloudShadowWillRun()  const;   // enableCloudShadow_+prog_+terrain
+
+    // EXECUTOR-ISLAND-SCREENSHADOW-1: sub-stage accessor for ScreenShadow.
+    // WillRun() mirrors exact early-return gates of runScreenShadow() (lines 2033-2036):
+    //   screenShadowEnabled_ && sceneHasTerrain_ && screenShadowProg_ valid && shadowsEnabled_
+    // Unblocked by SCREENSHADOW-TEX-RESTORE-1 (a0b4189b); validate-only island.
+    bool executorScreenShadowWillRun() const;   // screenShadowEnabled_+prog_+terrain+shadowsEnabled_
 
     // FRAMEGRAPH-APPLY-STATE-ISLAND-1: executor pre-apply for EdgeFog sub-stage.
     // Performs the 4 GL state calls that runEdgeFog() makes at entry:

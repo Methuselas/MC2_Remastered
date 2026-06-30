@@ -524,12 +524,14 @@ TEST_CASE("dryrun (f): Option B knownEarlyDrawSite suppression proof") {
 // FRAME-GRAPH-EXECUTOR-ISLAND-1/2/3: offline tests for the pure IslandContract table.
 // GL-free — tests only the constexpr descriptor, not the GL wrapper.
 // ISLAND-2: re-keyed IslandContract to ExecutorIslandId; added EdgeFog + FogOob rows.
-// ISLAND-3: added Shoreline + CloudShadow rows. ScreenShadow SKIPPED (no activeTexture0 restore).
+// ISLAND-3: added Shoreline + CloudShadow rows.
+// EXECUTOR-ISLAND-SCREENSHADOW-1: added ScreenShadow row (6th island, leak fixed by a0b4189b).
 
-TEST_CASE("executor island (a): kExecutorIslands has PostProcess + EdgeFog + FogOob + Shoreline + CloudShadow rows") {
+TEST_CASE("executor island (a): kExecutorIslands has PostProcess + EdgeFog + FogOob + Shoreline + CloudShadow + ScreenShadow rows") {
     using namespace RenderCore::framegraph;
-    // Five rows: PostProcess(0), EdgeFog(1), FogOob(2), Shoreline(3), CloudShadow(4).
-    CHECK(kExecutorIslandCount == 5u);
+    // Six rows: PostProcess(0), EdgeFog(1), FogOob(2), Shoreline(3), CloudShadow(4), ScreenShadow(5).
+    // EXECUTOR-ISLAND-SCREENSHADOW-1: ScreenShadow added as 6th validate-only island.
+    CHECK(kExecutorIslandCount == 6u);
     CHECK(static_cast<unsigned>(kExecutorIslands[0].id) ==
           static_cast<unsigned>(ExecutorIslandId::PostProcess));
     CHECK(static_cast<unsigned>(kExecutorIslands[1].id) ==
@@ -540,6 +542,8 @@ TEST_CASE("executor island (a): kExecutorIslands has PostProcess + EdgeFog + Fog
           static_cast<unsigned>(ExecutorIslandId::Shoreline));
     CHECK(static_cast<unsigned>(kExecutorIslands[4].id) ==
           static_cast<unsigned>(ExecutorIslandId::CloudShadow));
+    CHECK(static_cast<unsigned>(kExecutorIslands[5].id) ==
+          static_cast<unsigned>(ExecutorIslandId::ScreenShadow));
 }
 
 TEST_CASE("executor island (b): findIslandContract(PostProcess) returns non-null with expected flags") {
@@ -617,7 +621,27 @@ TEST_CASE("executor island (f): findIslandContract(CloudShadow) returns non-null
     }
 }
 
-TEST_CASE("executor island (g): findIslandContract(Count) returns nullptr (out-of-range)") {
+// EXECUTOR-ISLAND-SCREENSHADOW-1: ScreenShadow contract test.
+// postconditions ground-truthed from runScreenShadow() exit (lines 2149-2160):
+//   postRequiresBlendDisabled=true  (glDisable(GL_BLEND) line 2150)
+//   postRequiresActiveTexture0=true (glActiveTexture(GL_TEXTURE0) line 2160)
+//   postRequiresDefaultFbo=false    (stays on sceneFBO_, no FBO 0 bind)
+TEST_CASE("executor island (g): findIslandContract(ScreenShadow) returns non-null with ground-truthed postconditions") {
+    using namespace RenderCore::framegraph;
+    const IslandContract* c = findIslandContract(ExecutorIslandId::ScreenShadow);
+    CHECK(c != nullptr);
+    if (c) {
+        CHECK(c->requiresProgramValid        == true);
+        CHECK(c->requiresSceneColorTex       == false);
+        CHECK(c->requiresSceneDepthTex       == true);   // reads sceneDepthTex_(unit0)+sceneNormalTex_(unit1)
+        CHECK(c->warnIfNoTerrainLatch        == true);   // bails on !sceneHasTerrain_
+        CHECK(c->postRequiresDefaultFbo      == false);  // stays on sceneFBO_, not FBO 0
+        CHECK(c->postRequiresBlendDisabled   == true);   // glDisable(GL_BLEND) at line 2150
+        CHECK(c->postRequiresActiveTexture0  == true);   // glActiveTexture(GL_TEXTURE0) at line 2160
+    }
+}
+
+TEST_CASE("executor island (h): findIslandContract(Count) returns nullptr (out-of-range)") {
     using namespace RenderCore::framegraph;
     CHECK(findIslandContract(ExecutorIslandId::Count) == nullptr);
 }
@@ -660,22 +684,23 @@ TEST_CASE("postprocess subgraph (c): validateShippedPostProcessSubgraph().ok == 
     CHECK(static_cast<unsigned>(r.missingResource)   == static_cast<unsigned>(RenderResourceId::Unknown));
 }
 
-TEST_CASE("postprocess subgraph (d): owned flags match spec (5 executor-owned; all SUBGRAPH-2 + ShadowDebugOverlay not owned)") {
+TEST_CASE("postprocess subgraph (d): owned flags match spec (6 executor-owned; SUBGRAPH-2 non-ScreenShadow + ShadowDebugOverlay not owned)") {
     using namespace RenderCore::framegraph;
-    // The 5 owned rows (unchanged from Slice-1).
+    // EXECUTOR-ISLAND-SCREENSHADOW-1: ScreenShadow now owned (6th). CloudShadow/Shoreline/EdgeFog/FogOob/Composite unchanged.
     const ExecutorIslandId ownedIds[] = {
         ExecutorIslandId::CloudShadow,
         ExecutorIslandId::Shoreline,
         ExecutorIslandId::EdgeFog,
         ExecutorIslandId::FogOob,
         ExecutorIslandId::Composite,
+        ExecutorIslandId::ScreenShadow,   // EXECUTOR-ISLAND-SCREENSHADOW-1: newly owned
     };
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 6; ++i) {
         const PostProcessSubpass* sp = findPostProcessSubpass(ownedIds[i]);
         REQUIRE(sp != nullptr);
         CHECK(sp->ownedByExecutor == true);
     }
-    // All 8 new Slice-2 rows + ShadowDebugOverlay must be NOT owned.
+    // ShadowDebugOverlay + 7 remaining SUBGRAPH-2 rows (ScreenShadow now owned, not here).
     const ExecutorIslandId notOwnedIds[] = {
         ExecutorIslandId::ShadowDebugOverlay,
         ExecutorIslandId::HzbReduce,
@@ -683,11 +708,10 @@ TEST_CASE("postprocess subgraph (d): owned flags match spec (5 executor-owned; a
         ExecutorIslandId::ClusterDepthPyramid,
         ExecutorIslandId::LightgridBuild,
         ExecutorIslandId::PostprocessComputeBlur,
-        ExecutorIslandId::ScreenShadow,
         ExecutorIslandId::Ssao,
         ExecutorIslandId::BoxDecals,
     };
-    for (int i = 0; i < 9; ++i) {
+    for (int i = 0; i < 8; ++i) {
         const PostProcessSubpass* sp = findPostProcessSubpass(notOwnedIds[i]);
         REQUIRE(sp != nullptr);
         CHECK(sp->ownedByExecutor == false);

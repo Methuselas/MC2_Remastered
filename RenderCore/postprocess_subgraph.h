@@ -179,15 +179,14 @@ static constexpr PostProcessSubpass kPostProcessSubpasses[] = {
                            "isCompute=true: skipped by read-satisfaction walk. MC2_POSTPROCESS_COMPUTE_BLUR default-OFF.",
     },
     // -----------------------------------------------------------------------
-    // 6. ScreenShadow (call-site :2451) — POSTPROCESS-SUBGRAPH-2
+    // 6. ScreenShadow (call-site :2458) — EXECUTOR-ISLAND-SCREENSHADOW-1
     //    Gate: screenShadowEnabled_ && sceneHasTerrain_ && shadowsEnabled_ (default ON in-mission)
     //    Reads: sceneDepthTex_(unit0), sceneNormalTex_(unit1), shadowDepthTex_(unit2),
     //           dynShadowArrayTex_/dynShadowDepthTex_(unit3), dynamicFullMapTex_(unit4, CSM only).
-    //    Writes sceneFBO_.COLOR0 (multiplicative darken). NOT executor-owned.
-    //    ownedByExecutor=false: uses tex units 0-4 incl. GL_TEXTURE_2D_ARRAY on unit 3
-    //    (CSM path) — texture-unit safety was the exclusion reason per frame_executor.h:19.
-    //    NOTE: runScreenShadow() DOES restore glActiveTexture(GL_TEXTURE0) at line 2153
-    //    — the original exclusion reason is the 2D_ARRAY on unit3, not missing restore.
+    //    Writes sceneFBO_.COLOR0 (multiplicative darken). NOW executor-owned (validate-only).
+    //    ownedByExecutor=true: SCREENSHADOW-TEX-RESTORE-1 (a0b4189b) fixed the unit-3
+    //    GL_TEXTURE_2D_ARRAY leak (CSM path now unbinds at exit). Body unchanged.
+    //    Exit: glDisable(GL_BLEND)+glActiveTexture(GL_TEXTURE0) at lines 2150/2160.
     // -----------------------------------------------------------------------
     {
         /*id*/             ExecutorIslandId::ScreenShadow,
@@ -201,17 +200,16 @@ static constexpr PostProcessSubpass kPostProcessSubpasses[] = {
                              RenderResourceId::Unknown },
         /*fboTarget*/      RenderResourceId::MainColor,
         /*conditional*/    true,
-        /*ownedByExecutor*/false,
+        /*ownedByExecutor*/true,
         /*isCompute*/      false,
-        /*note*/           "SUBGRAPH-2. Screen-space shadow (draw, sceneFBO_ SingleColor). "
+        /*note*/           "SUBGRAPH-2. EXECUTOR-ISLAND-SCREENSHADOW-1 (validate-only). "
+                           "Screen-space shadow (draw, sceneFBO_ SingleColor). "
                            "Reads MainDepth(unit0), MainNormal(unit1), ShadowStaticMap(unit2), "
-                           "ShadowDynamicMap(unit3, GL_TEXTURE_2D_ARRAY on CSM path), "
-                           "dynamicFullMapTex_(unit4, CSM only). Writes MainColor (multiply darken). "
-                           "NOT executor-owned: uses units 0-4 incl. 2D_ARRAY — texture-unit safety. "
-                           "CORRECTION vs recon frame_executor.h:19 note: runScreenShadow() DOES "
-                           "call glActiveTexture(GL_TEXTURE0) on exit (line 2153). "
-                           "Exclusion reason is 2D_ARRAY on unit3, not missing restore. "
-                           "screenShadowEnabled_ default-ON in-mission, also gates shadowsEnabled_.",
+                           "ShadowDynamicMap(unit3), dynamicFullMapTex_(unit4, CSM only). "
+                           "Writes MainColor (multiply darken). Owned since SCREENSHADOW-TEX-RESTORE-1 "
+                           "(a0b4189b) unbinds unit-3 2D_ARRAY on exit. "
+                           "Exit: glDisable(GL_BLEND) line 2150, glActiveTexture(GL_TEXTURE0) line 2160. "
+                           "screenShadowEnabled_+shadowsEnabled_ default-ON in-mission.",
     },
     // -----------------------------------------------------------------------
     // 7. CloudShadow (call-site :2458) — POSTPROCESS-SUBGRAPH-1

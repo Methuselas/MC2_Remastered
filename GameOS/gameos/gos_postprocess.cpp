@@ -2455,7 +2455,10 @@ void gosPostProcess::endScene()
 
     // Post-process shadow pass: covers terrain, objects, and overlays in one
     // pass, with reduced terrain darkening to avoid obvious double-shadowing.
+    // EXECUTOR-ISLAND-SCREENSHADOW-1: validate->call-unchanged->validate (default-OFF).
+    executorOwnBeginSub(this, RenderCore::framegraph::ExecutorIslandId::ScreenShadow);
     runScreenShadow();
+    executorOwnEndSub(this, RenderCore::framegraph::ExecutorIslandId::ScreenShadow);
 
     // Procedural cloud shadows: single fullscreen multiplicative pass over all
     // non-sky pixels (replaces the four inline cloud blocks). After the screen
@@ -4576,8 +4579,7 @@ bool gosPostProcess::executorSceneDepthTexValid() const
 
 // FRAME-GRAPH-EXECUTOR-ISLAND-3: sub-stage accessor implementations.
 // WillRun() mirrors exact early-return gates of runShoreline() / runCloudShadow().
-// ScreenShadow SKIPPED: no glActiveTexture(GL_TEXTURE0) restore on exit (units 0-4 used,
-// CSM path leaves active unit at GL_TEXTURE4 — not texture-safe to own).
+// EXECUTOR-ISLAND-SCREENSHADOW-1: executorScreenShadowWillRun() added below (leak fixed).
 
 bool gosPostProcess::executorShorelineWillRun() const
 {
@@ -4589,6 +4591,15 @@ bool gosPostProcess::executorCloudShadowWillRun() const
 {
     return enableCloudShadow_ && cloudProg_ && cloudProg_->is_valid()
         && sceneHasTerrain_;
+}
+
+// EXECUTOR-ISLAND-SCREENSHADOW-1: mirrors runScreenShadow() early-return gates exactly
+// (lines 2033-2036). Now owned: SCREENSHADOW-TEX-RESTORE-1 (a0b4189b) fixed unit-3 leak.
+bool gosPostProcess::executorScreenShadowWillRun() const
+{
+    return screenShadowEnabled_ && sceneHasTerrain_
+        && screenShadowProg_ && screenShadowProg_->is_valid()
+        && shadowsEnabled_;
 }
 
 // --- Gate helper (read once, static lambda) ---------------------------------
@@ -4803,18 +4814,20 @@ static void executorOwnBeginSub(gosPostProcess* pp, RenderCore::framegraph::Exec
 
     // Gate: if the sub-pass won't draw this frame, don't count/validate it.
     bool willRun = false;
-    if (islandId == ExecutorIslandId::EdgeFog)     willRun = pp->executorEdgeFogWillRun();
-    if (islandId == ExecutorIslandId::FogOob)      willRun = pp->executorFogOobWillRun();
-    if (islandId == ExecutorIslandId::Shoreline)   willRun = pp->executorShorelineWillRun();
-    if (islandId == ExecutorIslandId::CloudShadow) willRun = pp->executorCloudShadowWillRun();
+    if (islandId == ExecutorIslandId::EdgeFog)       willRun = pp->executorEdgeFogWillRun();
+    if (islandId == ExecutorIslandId::FogOob)        willRun = pp->executorFogOobWillRun();
+    if (islandId == ExecutorIslandId::Shoreline)     willRun = pp->executorShorelineWillRun();
+    if (islandId == ExecutorIslandId::CloudShadow)   willRun = pp->executorCloudShadowWillRun();
+    if (islandId == ExecutorIslandId::ScreenShadow)  willRun = pp->executorScreenShadowWillRun();
     if (!willRun) return;
 
     // Island name for diagnostics.
     const char* name = "Unknown";
-    if (islandId == ExecutorIslandId::EdgeFog)     name = "EdgeFog";
-    if (islandId == ExecutorIslandId::FogOob)      name = "FogOob";
-    if (islandId == ExecutorIslandId::Shoreline)   name = "Shoreline";
-    if (islandId == ExecutorIslandId::CloudShadow) name = "CloudShadow";
+    if (islandId == ExecutorIslandId::EdgeFog)       name = "EdgeFog";
+    if (islandId == ExecutorIslandId::FogOob)        name = "FogOob";
+    if (islandId == ExecutorIslandId::Shoreline)     name = "Shoreline";
+    if (islandId == ExecutorIslandId::CloudShadow)   name = "CloudShadow";
+    if (islandId == ExecutorIslandId::ScreenShadow)  name = "ScreenShadow";
 
     // Pre-call validation (non-fatal).
     if (c->requiresProgramValid) {
@@ -4876,20 +4889,22 @@ static void executorOwnEndSub(gosPostProcess* pp, RenderCore::framegraph::Execut
     // Simpler: just guard with a local flag pair — but to keep this dependency-free we
     // replicate the WillRun check. This is safe: WillRun() is pure state read, no side effects.
     bool willRun = false;
-    if (islandId == ExecutorIslandId::EdgeFog)     willRun = pp->executorEdgeFogWillRun();
-    if (islandId == ExecutorIslandId::FogOob)      willRun = pp->executorFogOobWillRun();
-    if (islandId == ExecutorIslandId::Shoreline)   willRun = pp->executorShorelineWillRun();
-    if (islandId == ExecutorIslandId::CloudShadow) willRun = pp->executorCloudShadowWillRun();
+    if (islandId == ExecutorIslandId::EdgeFog)       willRun = pp->executorEdgeFogWillRun();
+    if (islandId == ExecutorIslandId::FogOob)        willRun = pp->executorFogOobWillRun();
+    if (islandId == ExecutorIslandId::Shoreline)     willRun = pp->executorShorelineWillRun();
+    if (islandId == ExecutorIslandId::CloudShadow)   willRun = pp->executorCloudShadowWillRun();
+    if (islandId == ExecutorIslandId::ScreenShadow)  willRun = pp->executorScreenShadowWillRun();
 
     // NOTE: after run*() completes, sceneHasTerrain_ is still true (only cleared at beginScene).
     // WillRun() re-check is safe here.
     if (!willRun) return;
 
     const char* name = "Unknown";
-    if (islandId == ExecutorIslandId::EdgeFog)     name = "EdgeFog";
-    if (islandId == ExecutorIslandId::FogOob)      name = "FogOob";
-    if (islandId == ExecutorIslandId::Shoreline)   name = "Shoreline";
-    if (islandId == ExecutorIslandId::CloudShadow) name = "CloudShadow";
+    if (islandId == ExecutorIslandId::EdgeFog)       name = "EdgeFog";
+    if (islandId == ExecutorIslandId::FogOob)        name = "FogOob";
+    if (islandId == ExecutorIslandId::Shoreline)     name = "Shoreline";
+    if (islandId == ExecutorIslandId::CloudShadow)   name = "CloudShadow";
+    if (islandId == ExecutorIslandId::ScreenShadow)  name = "ScreenShadow";
     bool postOk = true;
 
     // 1. GL_BLEND must be disabled (both run*() call glDisable(GL_BLEND) on exit).

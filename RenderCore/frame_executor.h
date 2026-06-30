@@ -17,8 +17,9 @@
 // FRAME-GRAPH-EXECUTOR-ISLAND-2: re-keyed IslandContract to ExecutorIslandId (owns
 // sub-stage islands EdgeFog + FogOob in addition to PostProcess).
 // FRAME-GRAPH-EXECUTOR-ISLAND-3: adds Shoreline + CloudShadow sub-stage islands.
-// ScreenShadow SKIPPED: uses units 0-4 incl. GL_TEXTURE_2D_ARRAY on unit 3 (CSM path)
-// and does NOT restore glActiveTexture(GL_TEXTURE0) on exit — not texture-safe.
+// EXECUTOR-ISLAND-SCREENSHADOW-1: adds ScreenShadow (6th validate-only island).
+//   ScreenShadow now owned: SCREENSHADOW-TEX-RESTORE-1 (a0b4189b) fixed the unit-3
+//   GL_TEXTURE_2D_ARRAY leak; glActiveTexture(GL_TEXTURE0) was always restored.
 
 #include "RenderCore/PipelineRegistry.h"         // PipelineId
 #include "RenderCore/RenderResourceRegistry.h"    // RenderResourceId
@@ -43,7 +44,7 @@ enum class ExecutorIslandId : uint8_t {
     ClusterDepthPyramid, // sub-stage: per-tile (min,max) depth image compute dispatch; NOT executor-owned; gated MC2_CLUSTER_DEPTH_PYRAMID default-OFF; isCompute=true
     LightgridBuild,   // sub-stage: per-tile light-bin grid compute dispatch; NOT executor-owned; gated MC2_LIGHTGRID_BUILD default-OFF; isCompute=true
     PostprocessComputeBlur, // sub-stage: GPU compute downsample+Gaussian blur substrate; NOT executor-owned; gated MC2_POSTPROCESS_COMPUTE_BLUR default-OFF; isCompute=true
-    ScreenShadow,     // sub-stage: screen-space shadow (draw, sceneFBO_); NOT executor-owned (uses tex units 0-4 incl. 2D_ARRAY); gated screenShadowEnabled_ default-ON in-mission
+    ScreenShadow,     // sub-stage: screen-space shadow (draw, sceneFBO_); EXECUTOR-ISLAND-SCREENSHADOW-1 (validate-only); tex-unit leak fixed by a0b4189b; gated screenShadowEnabled_+shadowsEnabled_ default-ON in-mission
     Ssao,             // sub-stage: GTAO-lite AO (two-pass: ssaoFBO_ then sceneFBO_); NOT executor-owned; gated MC2_SSAO default-OFF
     BoxDecals,        // sub-stage: screen-space box decal (draw, sceneFBO_); NOT executor-owned; reads SceneDepthCopy cross-boundary; gated MC2_PROJECTED_DECALS default-OFF
     Count,
@@ -115,6 +116,23 @@ static constexpr IslandContract kExecutorIslands[] = {
         /*postRequiresDefaultFbo*/  false,  // stays on sceneFBO_, not FBO 0
         /*postRequiresBlendDisabled*/true,  // runCloudShadow() calls glDisable(GL_BLEND) on exit
         /*postRequiresActiveTexture0*/true, // runCloudShadow() calls glActiveTexture(GL_TEXTURE0) on exit
+    },
+    // EXECUTOR-ISLAND-SCREENSHADOW-1: ScreenShadow — validate-only (body unchanged).
+    // Unblocked by SCREENSHADOW-TEX-RESTORE-1 (a0b4189b): unit-3 2D_ARRAY now unbound at exit.
+    // Exit state (ground-truthed from runScreenShadow() lines 2149-2160):
+    //   glDisable(GL_BLEND)          at line 2150 — postRequiresBlendDisabled=true
+    //   glActiveTexture(GL_TEXTURE0) at line 2160 — postRequiresActiveTexture0=true
+    //   stays on sceneFBO_           — postRequiresDefaultFbo=false
+    // Gates: screenShadowEnabled_ && sceneHasTerrain_ && screenShadowProg_ valid && shadowsEnabled_
+    {
+        /*id*/                       ExecutorIslandId::ScreenShadow,
+        /*requiresProgramValid*/     true,
+        /*requiresSceneColorTex*/    false,
+        /*requiresSceneDepthTex*/    true,   // reads sceneDepthTex_(unit0)+sceneNormalTex_(unit1)
+        /*warnIfNoTerrainLatch*/     true,   // runScreenShadow() bails on !sceneHasTerrain_
+        /*postRequiresDefaultFbo*/   false,  // stays on sceneFBO_, not FBO 0
+        /*postRequiresBlendDisabled*/true,   // glDisable(GL_BLEND) at line 2150
+        /*postRequiresActiveTexture0*/true,  // glActiveTexture(GL_TEXTURE0) at line 2160
     },
 };
 static constexpr unsigned kExecutorIslandCount =

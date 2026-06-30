@@ -1386,7 +1386,11 @@ def main():
                             # to load <name>_specials.fit instead of <mission>_specials.fit.
                             # Required for Gates B/C/D/E eject fixture validation.
                             "MC2_BRAIN_SPECIAL_FIT",
-                            "MC2_BRAIN_DISPATCH_CALL")},
+                            "MC2_BRAIN_DISPATCH_CALL",
+                            # EXECUTOR-ISLAND-SCREENSHADOW-1: frame-graph executor gate.
+                            # Without this in the allowlist Popen drops it and
+                            # MC2_FRAMEGRAPH_EXECUTOR=1 smoke runs are inert.
+                            "MC2_FRAMEGRAPH_EXECUTOR")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission
