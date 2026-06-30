@@ -39,6 +39,11 @@ public:
     bool executorFogOobWillRun()       const;   // fogOobEnabled_+prog_+terrain
     bool executorSceneDepthTexValid()  const;   // sceneDepthTex_ != 0
 
+    // FRAME-GRAPH-EXECUTOR-ISLAND-3: sub-stage accessors (Shoreline + CloudShadow).
+    // WillRun() mirrors exact early-return gates; ScreenShadow SKIPPED (no activeTexture0 restore).
+    bool executorShorelineWillRun()    const;   // shorelineEnabled_+prog_+terrain
+    bool executorCloudShadowWillRun()  const;   // enableCloudShadow_+prog_+terrain
+
     float  getSkyYaw()    const { return skyYaw_; }    // WATER-HDRI-REFL-1: cached per-frame
 
     // HDRI-SKY-NUMBER-1: reload the HDRI texture to match theSkyNumber from the

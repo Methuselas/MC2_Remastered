@@ -518,20 +518,25 @@ TEST_CASE("dryrun (f): Option B knownEarlyDrawSite suppression proof") {
     }
 }
 
-// FRAME-GRAPH-EXECUTOR-ISLAND-1/2: offline tests for the pure IslandContract table.
+// FRAME-GRAPH-EXECUTOR-ISLAND-1/2/3: offline tests for the pure IslandContract table.
 // GL-free — tests only the constexpr descriptor, not the GL wrapper.
 // ISLAND-2: re-keyed IslandContract to ExecutorIslandId; added EdgeFog + FogOob rows.
+// ISLAND-3: added Shoreline + CloudShadow rows. ScreenShadow SKIPPED (no activeTexture0 restore).
 
-TEST_CASE("executor island (a): kExecutorIslands has PostProcess + EdgeFog + FogOob rows") {
+TEST_CASE("executor island (a): kExecutorIslands has PostProcess + EdgeFog + FogOob + Shoreline + CloudShadow rows") {
     using namespace RenderCore::framegraph;
-    // Three rows: PostProcess(0), EdgeFog(1), FogOob(2).
-    CHECK(kExecutorIslandCount == 3u);
+    // Five rows: PostProcess(0), EdgeFog(1), FogOob(2), Shoreline(3), CloudShadow(4).
+    CHECK(kExecutorIslandCount == 5u);
     CHECK(static_cast<unsigned>(kExecutorIslands[0].id) ==
           static_cast<unsigned>(ExecutorIslandId::PostProcess));
     CHECK(static_cast<unsigned>(kExecutorIslands[1].id) ==
           static_cast<unsigned>(ExecutorIslandId::EdgeFog));
     CHECK(static_cast<unsigned>(kExecutorIslands[2].id) ==
           static_cast<unsigned>(ExecutorIslandId::FogOob));
+    CHECK(static_cast<unsigned>(kExecutorIslands[3].id) ==
+          static_cast<unsigned>(ExecutorIslandId::Shoreline));
+    CHECK(static_cast<unsigned>(kExecutorIslands[4].id) ==
+          static_cast<unsigned>(ExecutorIslandId::CloudShadow));
 }
 
 TEST_CASE("executor island (b): findIslandContract(PostProcess) returns non-null with expected flags") {
@@ -579,7 +584,37 @@ TEST_CASE("executor island (d): findIslandContract(FogOob) returns non-null with
     }
 }
 
-TEST_CASE("executor island (e): findIslandContract(Count) returns nullptr (out-of-range)") {
+TEST_CASE("executor island (e): findIslandContract(Shoreline) returns non-null with expected flags") {
+    using namespace RenderCore::framegraph;
+    const IslandContract* c = findIslandContract(ExecutorIslandId::Shoreline);
+    CHECK(c != nullptr);
+    if (c) {
+        CHECK(c->requiresProgramValid        == true);
+        CHECK(c->requiresSceneColorTex       == false);
+        CHECK(c->requiresSceneDepthTex       == true);   // reads sceneDepthTex_ + sceneNormalTex_
+        CHECK(c->warnIfNoTerrainLatch        == true);   // bails on !sceneHasTerrain_
+        CHECK(c->postRequiresDefaultFbo      == false);  // stays on sceneFBO_
+        CHECK(c->postRequiresBlendDisabled   == true);   // glDisable(GL_BLEND) on exit
+        CHECK(c->postRequiresActiveTexture0  == true);   // glActiveTexture(GL_TEXTURE0) on exit
+    }
+}
+
+TEST_CASE("executor island (f): findIslandContract(CloudShadow) returns non-null with expected flags") {
+    using namespace RenderCore::framegraph;
+    const IslandContract* c = findIslandContract(ExecutorIslandId::CloudShadow);
+    CHECK(c != nullptr);
+    if (c) {
+        CHECK(c->requiresProgramValid        == true);
+        CHECK(c->requiresSceneColorTex       == false);
+        CHECK(c->requiresSceneDepthTex       == true);   // reads sceneDepthTex_ (unit 0 only)
+        CHECK(c->warnIfNoTerrainLatch        == true);   // bails on !sceneHasTerrain_
+        CHECK(c->postRequiresDefaultFbo      == false);  // stays on sceneFBO_
+        CHECK(c->postRequiresBlendDisabled   == true);   // glDisable(GL_BLEND) on exit
+        CHECK(c->postRequiresActiveTexture0  == true);   // glActiveTexture(GL_TEXTURE0) on exit
+    }
+}
+
+TEST_CASE("executor island (g): findIslandContract(Count) returns nullptr (out-of-range)") {
     using namespace RenderCore::framegraph;
     CHECK(findIslandContract(ExecutorIslandId::Count) == nullptr);
 }

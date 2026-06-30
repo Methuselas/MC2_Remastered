@@ -2453,10 +2453,16 @@ void gosPostProcess::endScene()
     // Procedural cloud shadows: single fullscreen multiplicative pass over all
     // non-sky pixels (replaces the four inline cloud blocks). After the screen
     // shadow so cloud darkens the already-shadowed scene color.
+    // FRAME-GRAPH-EXECUTOR-ISLAND-3: validate->call-unchanged->validate (default-OFF).
+    executorOwnBeginSub(this, RenderCore::framegraph::ExecutorIslandId::CloudShadow);
     runCloudShadow();
+    executorOwnEndSub(this, RenderCore::framegraph::ExecutorIslandId::CloudShadow);
 
     // Shoreline foam pass (brightens water pixels adjacent to terrain)
+    // FRAME-GRAPH-EXECUTOR-ISLAND-3: validate->call-unchanged->validate (default-OFF).
+    executorOwnBeginSub(this, RenderCore::framegraph::ExecutorIslandId::Shoreline);
     runShoreline();
+    executorOwnEndSub(this, RenderCore::framegraph::ExecutorIslandId::Shoreline);
 
     // SSAO grounding pass (multiplicative darkening into scene color). Default-OFF (gated).
     runSSAO();
@@ -4561,6 +4567,23 @@ bool gosPostProcess::executorSceneDepthTexValid() const
     return sceneDepthTex_ != 0;
 }
 
+// FRAME-GRAPH-EXECUTOR-ISLAND-3: sub-stage accessor implementations.
+// WillRun() mirrors exact early-return gates of runShoreline() / runCloudShadow().
+// ScreenShadow SKIPPED: no glActiveTexture(GL_TEXTURE0) restore on exit (units 0-4 used,
+// CSM path leaves active unit at GL_TEXTURE4 — not texture-safe to own).
+
+bool gosPostProcess::executorShorelineWillRun() const
+{
+    return shorelineEnabled_ && shorelineProg_ && shorelineProg_->is_valid()
+        && sceneHasTerrain_;
+}
+
+bool gosPostProcess::executorCloudShadowWillRun() const
+{
+    return enableCloudShadow_ && cloudProg_ && cloudProg_->is_valid()
+        && sceneHasTerrain_;
+}
+
 // --- Gate helper (read once, static lambda) ---------------------------------
 
 static bool executorEnabled()
@@ -4707,9 +4730,18 @@ static void executorOwnBeginSub(gosPostProcess* pp, RenderCore::framegraph::Exec
 
     // Gate: if the sub-pass won't draw this frame, don't count/validate it.
     bool willRun = false;
-    if (islandId == ExecutorIslandId::EdgeFog) willRun = pp->executorEdgeFogWillRun();
-    if (islandId == ExecutorIslandId::FogOob)  willRun = pp->executorFogOobWillRun();
+    if (islandId == ExecutorIslandId::EdgeFog)     willRun = pp->executorEdgeFogWillRun();
+    if (islandId == ExecutorIslandId::FogOob)      willRun = pp->executorFogOobWillRun();
+    if (islandId == ExecutorIslandId::Shoreline)   willRun = pp->executorShorelineWillRun();
+    if (islandId == ExecutorIslandId::CloudShadow) willRun = pp->executorCloudShadowWillRun();
     if (!willRun) return;
+
+    // Island name for diagnostics.
+    const char* name = "Unknown";
+    if (islandId == ExecutorIslandId::EdgeFog)     name = "EdgeFog";
+    if (islandId == ExecutorIslandId::FogOob)      name = "FogOob";
+    if (islandId == ExecutorIslandId::Shoreline)   name = "Shoreline";
+    if (islandId == ExecutorIslandId::CloudShadow) name = "CloudShadow";
 
     // Pre-call validation (non-fatal).
     if (c->requiresProgramValid) {
@@ -4718,7 +4750,6 @@ static void executorOwnBeginSub(gosPostProcess* pp, RenderCore::framegraph::Exec
     }
     if (c->requiresSceneDepthTex && !pp->executorSceneDepthTexValid()) {
         if (g_executorValidationFailures < kMaxExecutorFailureLog) {
-            const char* name = (islandId == ExecutorIslandId::EdgeFog) ? "EdgeFog" : "FogOob";
             fprintf(stderr,
                 "[EXECUTOR v1] FAIL island=%s check=sceneDepthTex_valid "
                 "owned=%lu failures=%lu\n",
@@ -4728,7 +4759,6 @@ static void executorOwnBeginSub(gosPostProcess* pp, RenderCore::framegraph::Exec
     }
     // warnIfNoTerrainLatch: can't happen (WillRun checks sceneHasTerrain_) but assert for symmetry.
     if (c->warnIfNoTerrainLatch && !pp->executorSceneHasTerrain()) {
-        const char* name = (islandId == ExecutorIslandId::EdgeFog) ? "EdgeFog" : "FogOob";
         fprintf(stderr,
             "[EXECUTOR v1] ASSERT island=%s warnIfNoTerrainLatch but WillRun passed — logic error\n", name);
     }
@@ -4748,14 +4778,20 @@ static void executorOwnEndSub(gosPostProcess* pp, RenderCore::framegraph::Execut
     // Simpler: just guard with a local flag pair — but to keep this dependency-free we
     // replicate the WillRun check. This is safe: WillRun() is pure state read, no side effects.
     bool willRun = false;
-    if (islandId == ExecutorIslandId::EdgeFog) willRun = pp->executorEdgeFogWillRun();
-    if (islandId == ExecutorIslandId::FogOob)  willRun = pp->executorFogOobWillRun();
+    if (islandId == ExecutorIslandId::EdgeFog)     willRun = pp->executorEdgeFogWillRun();
+    if (islandId == ExecutorIslandId::FogOob)      willRun = pp->executorFogOobWillRun();
+    if (islandId == ExecutorIslandId::Shoreline)   willRun = pp->executorShorelineWillRun();
+    if (islandId == ExecutorIslandId::CloudShadow) willRun = pp->executorCloudShadowWillRun();
 
-    // NOTE: after runEdgeFog()/runFogOob() completes, sceneHasTerrain_ is still true (it's only
-    // cleared at beginScene). WillRun() re-check is safe here.
+    // NOTE: after run*() completes, sceneHasTerrain_ is still true (only cleared at beginScene).
+    // WillRun() re-check is safe here.
     if (!willRun) return;
 
-    const char* name = (islandId == ExecutorIslandId::EdgeFog) ? "EdgeFog" : "FogOob";
+    const char* name = "Unknown";
+    if (islandId == ExecutorIslandId::EdgeFog)     name = "EdgeFog";
+    if (islandId == ExecutorIslandId::FogOob)      name = "FogOob";
+    if (islandId == ExecutorIslandId::Shoreline)   name = "Shoreline";
+    if (islandId == ExecutorIslandId::CloudShadow) name = "CloudShadow";
     bool postOk = true;
 
     // 1. GL_BLEND must be disabled (both run*() call glDisable(GL_BLEND) on exit).

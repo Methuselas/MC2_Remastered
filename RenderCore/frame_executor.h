@@ -15,6 +15,9 @@
 //
 // FRAME-GRAPH-EXECUTOR-ISLAND-2: re-keyed IslandContract to ExecutorIslandId (owns
 // sub-stage islands EdgeFog + FogOob in addition to PostProcess).
+// FRAME-GRAPH-EXECUTOR-ISLAND-3: adds Shoreline + CloudShadow sub-stage islands.
+// ScreenShadow SKIPPED: uses units 0-4 incl. GL_TEXTURE_2D_ARRAY on unit 3 (CSM path)
+// and does NOT restore glActiveTexture(GL_TEXTURE0) on exit — not texture-safe.
 
 namespace RenderCore { namespace framegraph {
 
@@ -25,6 +28,8 @@ enum class ExecutorIslandId : uint8_t {
     PostProcess = 0,  // outer composite blit (ISLAND-1)
     EdgeFog,          // sub-stage: map-boundary edge fog (ISLAND-2)
     FogOob,           // sub-stage: out-of-bounds ground fog (ISLAND-2)
+    Shoreline,        // sub-stage: shoreline foam brightening (ISLAND-3)
+    CloudShadow,      // sub-stage: procedural cloud shadow darkening (ISLAND-3)
     Count,
 };
 
@@ -72,6 +77,28 @@ static constexpr IslandContract kExecutorIslands[] = {
         /*postRequiresDefaultFbo*/  false,  // stays on sceneFBO_, not FBO 0
         /*postRequiresBlendDisabled*/true,  // runFogOob() calls glDisable(GL_BLEND) on exit
         /*postRequiresActiveTexture0*/true, // runFogOob() calls glActiveTexture(GL_TEXTURE0) on exit
+    },
+    // ISLAND-3: Shoreline foam pass (reads sceneDepthTex_ + sceneNormalTex_, stays sceneFBO_)
+    {
+        /*id*/                      ExecutorIslandId::Shoreline,
+        /*requiresProgramValid*/    true,
+        /*requiresSceneColorTex*/   false,
+        /*requiresSceneDepthTex*/   true,   // Shoreline reads sceneDepthTex_ (unit 0) + sceneNormalTex_ (unit 1)
+        /*warnIfNoTerrainLatch*/    true,   // runShoreline() bails on !sceneHasTerrain_
+        /*postRequiresDefaultFbo*/  false,  // stays on sceneFBO_, not FBO 0
+        /*postRequiresBlendDisabled*/true,  // runShoreline() calls glDisable(GL_BLEND) on exit
+        /*postRequiresActiveTexture0*/true, // runShoreline() calls glActiveTexture(GL_TEXTURE0) on exit
+    },
+    // ISLAND-3: CloudShadow pass (reads sceneDepthTex_ only, stays sceneFBO_)
+    {
+        /*id*/                      ExecutorIslandId::CloudShadow,
+        /*requiresProgramValid*/    true,
+        /*requiresSceneColorTex*/   false,
+        /*requiresSceneDepthTex*/   true,   // CloudShadow reads sceneDepthTex_ (unit 0 only)
+        /*warnIfNoTerrainLatch*/    true,   // runCloudShadow() bails on !sceneHasTerrain_
+        /*postRequiresDefaultFbo*/  false,  // stays on sceneFBO_, not FBO 0
+        /*postRequiresBlendDisabled*/true,  // runCloudShadow() calls glDisable(GL_BLEND) on exit
+        /*postRequiresActiveTexture0*/true, // runCloudShadow() calls glActiveTexture(GL_TEXTURE0) on exit
     },
 };
 static constexpr unsigned kExecutorIslandCount =
