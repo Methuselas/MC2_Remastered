@@ -6477,19 +6477,23 @@ void gosRenderer::beginDynamicShadowPass() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    glBindFramebuffer(GL_FRAMEBUFFER, pp->getDynamicShadowFBO());
-    glViewport(0, 0, pp->getDynamicShadowMapSize(), pp->getDynamicShadowMapSize());
-    // APPLY-STATE-SHADOW-1: when MC2_FRAMEGRAPH_EXECUTOR is ON and the executor applies
-    // Shadow's state, dispatch the executor apply HERE (the position of the body's
-    // applyPipeline(ShadowMech)) AFTER the capture/AMD-unbind/compare-flip and FBO+viewport
-    // bind. executorApplyShadowState() applies the DepthForwardZ clear (via the EXTEND helper)
-    // + the ShadowMech base pipeline and sets shadowStateAppliedByExecutor_; the body's own
-    // applyPipeline and forward-Z clear below are then skipped (one-shot). FBO/viewport stay
-    // body-owned this slice (the bind above runs unconditionally). Gate OFF -> flag stays
-    // false -> body applies + clears as before -> byte-identical.
+    // APPLY-STATE-SHADOW-2: when MC2_FRAMEGRAPH_EXECUTOR is ON and the executor applies
+    // Shadow's state, dispatch the executor apply HERE — at the body's former FBO-bind position,
+    // AFTER the capture/AMD-unbind/compare-flip preamble above (those shadow-TEXTURE mutations
+    // MUST precede the FBO bind and stay body-owned). executorApplyShadowState() now applies the
+    // FULL render-target mode in order via the EXTEND helper: FBO bind (ShadowDynamicMap) ->
+    // viewport (ShadowMap size) -> DepthForwardZ clear, then the ShadowMech base pipeline, and
+    // sets shadowStateAppliedByExecutor_. The body's own FBO bind + viewport + applyPipeline +
+    // forward-Z clear below are then ALL skipped (one-shot). Gate OFF -> flag stays false ->
+    // body binds + sets viewport + applies + clears as before -> byte-identical.
     if (render_contract::isTopLevelExecutorEnabled() &&
         RenderCore::framegraph::findTopLevelStateDesc(RenderCore::RenderPassId::Shadow) != nullptr) {
         executorApplyShadowState();
+    }
+    // APPLY-STATE-SHADOW-2: FBO bind + viewport now skipped when the executor applied them.
+    if (!shadowStateAppliedByExecutor_) {
+        glBindFramebuffer(GL_FRAMEBUFFER, pp->getDynamicShadowFBO());
+        glViewport(0, 0, pp->getDynamicShadowMapSize(), pp->getDynamicShadowMapSize());
     }
     // SHADOW-CASTER-APPLYPIPELINE-ROUTING-1: base fixed-function state from the
     // ShadowMech pipeline row (depth test+write, GL_LESS forward-Z, cull none,
@@ -10289,10 +10293,15 @@ void gosRenderer::executorApplyShadowState()
     const RenderCore::framegraph::TopLevelStateDesc* desc =
         RenderCore::framegraph::findTopLevelStateDesc(RenderCore::RenderPassId::Shadow);
     if (desc) {
-        // fbo/w/h are 0 and ignored: the Shadow row's fboTarget=Unknown / viewport=Inherit
-        // make the helper skip the FBO bind + viewport (body-owned this slice). Only the
-        // DepthForwardZ clear is applied.
-        RenderCore::framegraph::applyTopLevelGenericAxes(*desc, /*fbo*/0u, /*vpW*/0, /*vpH*/0);
+        // APPLY-STATE-SHADOW-2: resolve the dynamic shadow FBO + shadow-map size and pass them
+        // so the EXTEND helper binds fboTarget=ShadowDynamicMap, sets viewport=ShadowMap (the
+        // shadow-map size), then does the DepthForwardZ clear — in that order, AFTER the body's
+        // AMD-unbind + GL_TEXTURE_COMPARE_MODE preamble (the dispatch sits at the body's former
+        // FBO-bind position). Byte-identical to the body's FBO->viewport->clear sequence.
+        gosPostProcess* pp = getGosPostProcess();
+        const unsigned fbo = pp ? pp->getDynamicShadowFBO() : 0u;
+        const int      sz  = pp ? pp->getDynamicShadowMapSize() : 0;
+        RenderCore::framegraph::applyTopLevelGenericAxes(*desc, fbo, sz, sz);
     }
     pipeline_binder::applyPipeline(
         RenderCore::getPipelineDesc(RenderCore::PipelineId::ShadowMech), "ShadowMech");

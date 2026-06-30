@@ -247,15 +247,17 @@ static constexpr TopLevelStateDesc kTopLevelStateDesc[] = {
         /*fboTarget*/  RenderResourceId::Unknown,   // inherit (not applied)
         /*viewport*/   ViewportKind::Inherit,       // inherit (not applied)
     },
-    // APPLY-STATE-SHADOW-1: Shadow — gosRenderer::beginDynamicShadowPass() (dynamic shadow
+    // APPLY-STATE-SHADOW-1/2: Shadow — gosRenderer::beginDynamicShadowPass() (dynamic shadow
     // seam, per-frame; NOT the static once/mission beginShadowPrePass). ★FIRST render-target-MODE
     // apply consumer (first ClearSpec::DepthForwardZ row): Shadow owns a render-target mode
     // (pipeline + forward-Z depth clear), not just a pipeline.
-    // SCOPE THIS SLICE (SHADOW-1): pipeline + clear ONLY. fboTarget/viewport are recorded as
-    // Unknown/Inherit (skip-sentinels) so the EXTEND helper applies ONLY the DepthForwardZ clear;
-    // the body keeps the FBO bind (ShadowDynamicMap) + viewport (ShadowMap size). FBO+viewport are
-    // deferred to SHADOW-2 because the AMD feedback-unbind / GL_TEXTURE_COMPARE_MODE-flip ordering
-    // relative to the FBO bind must be proven first.
+    // APPLY-STATE-SHADOW-2: NOW a FULL render-target-mode owner — fboTarget=ShadowDynamicMap +
+    // viewport=ShadowMap lifted (was Unknown/Inherit in SHADOW-1). The EXTEND helper applies
+    // FBO bind -> viewport -> DepthForwardZ clear in order; the body's own FBO bind + viewport +
+    // pipeline + clear are skipped (one-shot). The AMD feedback-unbind / GL_TEXTURE_COMPARE_MODE
+    // flip are shadow-TEXTURE mutations that MUST run BEFORE the FBO bind (the shadow texture
+    // stops being a sampled input as it becomes a render target) — they stay a BODY PREAMBLE
+    // ahead of the executor dispatch, NOT lifted into the helper.
     // ★pipelineId=ShadowMech is the BASE caster pipeline only (the authoritative kPassRenderState
     // Shadow row is intentionally PipelineId::Invalid — Shadow has 3 descriptive sub-caster
     // pipelines ShadowTerrain/ShadowMech/ShadowStaticProp). Per-caster ShadowStaticProp re-applies
@@ -264,8 +266,8 @@ static constexpr TopLevelStateDesc kTopLevelStateDesc[] = {
     {
         /*id*/         RenderPassId::Shadow,
         /*pipelineId*/ RenderCore::PipelineId::ShadowMech,
-        /*fboTarget*/  RenderResourceId::Unknown,   // SHADOW-2: lift to ShadowDynamicMap; body owns it this slice
-        /*viewport*/   ViewportKind::Inherit,       // SHADOW-2: lift to ShadowMap; body owns it this slice
+        /*fboTarget*/  RenderResourceId::ShadowDynamicMap,  // SHADOW-2: executor binds the dynamic shadow FBO
+        /*viewport*/   ViewportKind::ShadowMap,             // SHADOW-2: executor sets the shadow-map viewport
         /*clear*/      ClearSpec::DepthForwardZ,     // forward-Z shadow clear (1.0->clear->0.0; reverse-Z scene protected)
     },
 };

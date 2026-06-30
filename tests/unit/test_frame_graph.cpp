@@ -1491,24 +1491,25 @@ TEST_CASE("top-level apply-state (c): findTopLevelStateDesc returns nullptr for 
     CHECK(findTopLevelStateDesc(RenderCore::RenderPassId::Shadow)  != nullptr);
 }
 
-// APPLY-STATE-SHADOW-1: Shadow descriptor — first render-target-MODE row.
+// APPLY-STATE-SHADOW-1/2: Shadow descriptor — first FULL render-target-MODE row.
 // Pipeline = ShadowMech (the BASE caster pipeline; per-caster ShadowStaticProp re-applies in
-// the body). fboTarget/viewport stay Unknown/Inherit this slice (FBO+viewport deferred to
-// SHADOW-2 — body owns them). clear = DepthForwardZ (the SOLE non-None ClearSpec in the table).
+// the body). APPLY-STATE-SHADOW-2: fboTarget/viewport are NOW lifted (ShadowDynamicMap/ShadowMap)
+// — Shadow is a full render-target-mode owner (FBO+viewport+clear+pipeline). clear = DepthForwardZ
+// (the SOLE non-None ClearSpec in the table).
 // ★Shadow is intentionally EXEMPT from the "lifted pipeline matches the authoritative
 // kPassRenderState row" invariant: the authoritative Shadow row is PipelineId::Invalid
 // (3 descriptive sub-caster pipelines), so passHasStaticPipeline(Shadow) is false and Shadow
 // is NOT in the registration row table below. This test asserts ShadowMech directly.
-TEST_CASE("top-level apply-state (l): findTopLevelStateDesc(Shadow) = ShadowMech base pipeline, FBO/viewport deferred, clear DepthForwardZ") {
+TEST_CASE("top-level apply-state (l): findTopLevelStateDesc(Shadow) = ShadowMech base pipeline, FBO ShadowDynamicMap, viewport ShadowMap, clear DepthForwardZ") {
     using namespace RenderCore;
     using namespace RenderCore::framegraph;
     const TopLevelStateDesc* d = findTopLevelStateDesc(RenderPassId::Shadow);
     REQUIRE(d != nullptr);
     CHECK(static_cast<unsigned>(d->id)         == static_cast<unsigned>(RenderPassId::Shadow));
     CHECK(static_cast<unsigned>(d->pipelineId) == static_cast<unsigned>(PipelineId::ShadowMech));
-    // FBO/viewport deferred to SHADOW-2 -> skip-sentinels (helper applies ONLY the clear).
-    CHECK(static_cast<unsigned>(d->fboTarget)  == static_cast<unsigned>(RenderResourceId::Unknown));
-    CHECK(static_cast<unsigned>(d->viewport)   == static_cast<unsigned>(ViewportKind::Inherit));
+    // APPLY-STATE-SHADOW-2: FBO + viewport NOW lifted (full render-target-mode ownership).
+    CHECK(static_cast<unsigned>(d->fboTarget)  == static_cast<unsigned>(RenderResourceId::ShadowDynamicMap));
+    CHECK(static_cast<unsigned>(d->viewport)   == static_cast<unsigned>(ViewportKind::ShadowMap));
     // First DepthForwardZ consumer.
     CHECK(static_cast<unsigned>(d->clear)      == static_cast<unsigned>(ClearSpec::DepthForwardZ));
 }
