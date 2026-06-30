@@ -6414,12 +6414,6 @@ void gosRenderer::beginDynamicShadowPass() {
 
     glBindFramebuffer(GL_FRAMEBUFFER, pp->getDynamicShadowFBO());
     glViewport(0, 0, pp->getDynamicShadowMapSize(), pp->getDynamicShadowMapSize());
-    // SHADOW-OBSERVE-3: note per-frame dynamic shadow pass AFTER the shadow FBO is
-    // bound and before any draw. applyPipeline(ShadowMech) below sets GL_LESS +
-    // depthWrite=GL_TRUE so the ambient sample here matches kShadowCasterState.
-    // Distinct from beginShadowPrePass (static, once-per-mission); this fires every frame.
-    render_contract::noteRenderPass(render_contract::PassIdentity::ShadowCaster,
-                                    "gosRenderer::beginDynamicShadowPass");
     // SHADOW-CASTER-APPLYPIPELINE-ROUTING-1: base fixed-function state from the
     // ShadowMech pipeline row (depth test+write, GL_LESS forward-Z, cull none,
     // frontFace ccw, polygon-offset off). Before the clear so depthMask=GL_TRUE
@@ -6427,6 +6421,12 @@ void gosRenderer::beginDynamicShadowPass() {
     // polygon offset via applyPipeline(ShadowStaticProp) at their draw site.
     pipeline_binder::applyPipeline(
         RenderCore::getPipelineDesc(RenderCore::PipelineId::ShadowMech), "ShadowMech");
+    // SHADOW-OBSERVE-3: note per-frame dynamic shadow AFTER applyPipeline(ShadowMech)
+    // sets GL_LESS + depthWrite=GL_TRUE, so the ambient probe sees ShadowLess.
+    // FBO already bound above (ShadowDynamicMap). Fires every frame; distinct from
+    // beginShadowPrePass (static, once/mission).
+    render_contract::noteRenderPass(render_contract::PassIdentity::ShadowCaster,
+                                    "gosRenderer::beginDynamicShadowPass");
     // Reverse-Z (U2) state-safe partition: dynamic shadow stays forward-Z;
     // scene set glClearDepth(0), so force 1.0f around this shadow clear.
     glClearDepth(1.0f);
