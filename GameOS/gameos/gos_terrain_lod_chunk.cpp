@@ -10,6 +10,7 @@
 #include "pipeline_binder.h"                     // applyPipeline(TerrainSolid)
 #include "../../mclib/render_contract.h"  // [RENDER_PASS v1] noteRenderPass
 #include "../../RenderCore/RenderResourceRegistry.h"  // REGISTRY-TERRAIN-SSBO-1: TerrainHeightSsbo
+#include "../../RenderCore/GpuBufferOwner.h"  // TERRAIN-LODCHUNK-SSBO-OWNER-1: type/cement owner records
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
@@ -49,8 +50,21 @@ namespace gos_terrain_indirect { bool IsFrameSolidArmed(); }
 static GLuint s_heightSsbo = 0;   // GL handle; 0 = not yet allocated
 static GLuint s_visualHeightSsbo = 0; // TERRAIN-VISUAL-HEIGHT-SAMPLE-1: 4x visual heightfield (binding 26)
 static int    s_visualSide       = 0; // V = (mapSide-1)*4+1, fine grid side (0 = bake not loaded)
-static GLuint s_typeSsbo   = 0;   // Step 5b: per-vertex terrainType SSBO (binding 24)
-static GLuint s_cementSsbo = 0;   // Step 5c: per-vertex cement word SSBO (binding 25)
+// TERRAIN-LODCHUNK-SSBO-OWNER-1: the LOD-chunk type/cement SSBOs are no longer
+// bare GLuints. Each is narrowed behind a GpuBufferOwner identity record (logical
+// id + lifetime + debug name + GLuint value). GL calls still happen at the same
+// sites with the same args/order/flags/slots; the raw handle is reached only via
+// owner.glName. Lifetime Mission: (re-)uploaded per mission load via glBufferData.
+static RenderCore::GpuBufferOwner s_typeSsbo{   // Step 5b: per-vertex terrainType SSBO (binding 24)
+    RenderCore::RenderResourceId::TerrainTypeSsbo,
+    RenderCore::RenderResourceLifetime::Mission,
+    "TerrainTypeSsbo",
+    0u};
+static RenderCore::GpuBufferOwner s_cementSsbo{ // Step 5c: per-vertex cement word SSBO (binding 25)
+    RenderCore::RenderResourceId::TerrainCementSsbo,
+    RenderCore::RenderResourceLifetime::Mission,
+    "TerrainCementSsbo",
+    0u};
 static int    s_mapSide    = 0;   // mapSide stored at last UploadHeightFull
 static float  s_halfMap    = 0.0f;// (mapSide * 128.0 * 0.5)
 
@@ -438,8 +452,13 @@ void gos_TerrainLodChunk_Init()
         fflush(stderr);
         return;
     }
-    glGenBuffers(1, &s_typeSsbo);   // Step 5b: terrainType SSBO (concrete)
-    glGenBuffers(1, &s_cementSsbo); // Step 5c: cement word SSBO
+    {
+        GLuint typeBuf = 0, cementBuf = 0;
+        glGenBuffers(1, &typeBuf);   // Step 5b: terrainType SSBO (concrete)
+        glGenBuffers(1, &cementBuf); // Step 5c: cement word SSBO
+        s_typeSsbo.glName   = static_cast<uint32_t>(typeBuf);
+        s_cementSsbo.glName = static_cast<uint32_t>(cementBuf);
+    }
 
     // Shader program (Phase 4) — load unconditionally; SubmitDrawCommands gates
     // on the env var so no pixels change unless MC2_TERRAIN_LOD_CHUNK=1.
@@ -599,15 +618,27 @@ void gos_TerrainLodChunk_Destroy()
         invalid.id = RenderCore::RenderResourceId::TerrainHeightSsbo;
         RenderCore::registerOrUpdateRenderResource(invalid);
     }
-    if (s_typeSsbo != 0)
+    if (s_typeSsbo.glName != 0)
     {
-        glDeleteBuffers(1, &s_typeSsbo);
-        s_typeSsbo = 0;
+        GLuint typeBuf = static_cast<GLuint>(s_typeSsbo.glName);
+        glDeleteBuffers(1, &typeBuf);
+        s_typeSsbo.glName = 0;
+
+        // TERRAIN-LODCHUNK-SSBO-OWNER-1: mark the slot unavailable on teardown.
+        RenderCore::RenderResourceDesc invalid;
+        invalid.id = RenderCore::RenderResourceId::TerrainTypeSsbo;
+        RenderCore::registerOrUpdateRenderResource(invalid);
     }
-    if (s_cementSsbo != 0)
+    if (s_cementSsbo.glName != 0)
     {
-        glDeleteBuffers(1, &s_cementSsbo);
-        s_cementSsbo = 0;
+        GLuint cementBuf = static_cast<GLuint>(s_cementSsbo.glName);
+        glDeleteBuffers(1, &cementBuf);
+        s_cementSsbo.glName = 0;
+
+        // TERRAIN-LODCHUNK-SSBO-OWNER-1: mark the slot unavailable on teardown.
+        RenderCore::RenderResourceDesc invalid;
+        invalid.id = RenderCore::RenderResourceId::TerrainCementSsbo;
+        RenderCore::registerOrUpdateRenderResource(invalid);
     }
 }
 
@@ -746,11 +777,11 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     // Bind height SSBO (stays bound for all patches this frame).
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_HEIGHT_SSBO_BINDING, s_heightSsbo);
     // Step 5b: terrainType SSBO (concrete). 0 if never uploaded -> vert reads 0.
-    if (s_typeSsbo != 0)
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_TYPE_SSBO_BINDING, s_typeSsbo);
+    if (s_typeSsbo.glName != 0)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_TYPE_SSBO_BINDING, static_cast<GLuint>(s_typeSsbo.glName));
     // Step 5c: cement word SSBO.
-    if (s_cementSsbo != 0)
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_CEMENT_SSBO_BINDING, s_cementSsbo);
+    if (s_cementSsbo.glName != 0)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_CEMENT_SSBO_BINDING, static_cast<GLuint>(s_cementSsbo.glName));
 
     // TERRAIN-VISUAL-HEIGHT-SAMPLE-1: resolve geometry-displacement activation once
     // per frame. Active = MC2_TERRAIN_VISUAL_DISPLACE on AND the 4x bake loaded.
@@ -906,7 +937,7 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     {
         bool cementReady = gos_terrain_indirect_isCementAtlasReady();
         if (s_locUseCement >= 0)
-            glUniform1i(s_locUseCement, (cementReady && s_cementSsbo != 0) ? 1 : 0);
+            glUniform1i(s_locUseCement, (cementReady && s_cementSsbo.glName != 0) ? 1 : 0);
         // CEMENT-DIAG-CONNECT-1: env gate MC2_TERRAIN_CEMENT_DIAG_CONNECT, default OFF
         // -> uploads 0 -> frag diagonal-fill block skipped (byte-identical).
         if (s_locCementDiagConnect >= 0) {
@@ -1292,26 +1323,60 @@ void gos_TerrainLodChunk_UploadVisualHeightFull(const float* visualHeights, int 
 // the chunk frag's concrete material/colour selection (pureConcrete).
 void gos_TerrainLodChunk_UploadTerrainTypeFull(const float* types, int mapSide)
 {
-    if (s_typeSsbo == 0 || !types || mapSide <= 0)
+    if (s_typeSsbo.glName == 0 || !types || mapSide <= 0)
         return;
     GLsizeiptr bytes = (GLsizeiptr)mapSide * mapSide * sizeof(float);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_typeSsbo);
+    const GLuint typeBuf = static_cast<GLuint>(s_typeSsbo.glName);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, typeBuf);
     glBufferData(GL_SHADER_STORAGE_BUFFER, bytes, types, GL_DYNAMIC_DRAW);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_TYPE_SSBO_BINDING, s_typeSsbo);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_TYPE_SSBO_BINDING, typeBuf);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    // TERRAIN-LODCHUNK-SSBO-OWNER-1: register the live type SSBO (observe-only
+    // metadata; never read by the draw path). Registered here (not at Init)
+    // because the byte size is only known once the type data is uploaded.
+    {
+        RenderCore::RenderResourceDesc d;
+        d.id        = s_typeSsbo.id;
+        d.kind      = RenderCore::RenderResourceKind::Buffer;
+        d.lifetime  = s_typeSsbo.lifetime;
+        d.format    = RenderCore::RenderResourceFormat::BufferRaw;
+        d.debugName = s_typeSsbo.debugName;
+        d.glName    = s_typeSsbo.glName;
+        d.sizeBytes = static_cast<uint64_t>(bytes);
+        d.valid     = true;
+        RenderCore::registerOrUpdateRenderResource(d);
+    }
 }
 
 // Step 5c: per-vertex cement word upload (valid bit | atlas layer index). Built by
 // gos_terrain_indirect after the cement catalog atlas is ready (PopulateRecipeCementWords).
 void gos_TerrainLodChunk_UploadCementWordsFull(const unsigned int* words, int count, int mapSide)
 {
-    if (s_cementSsbo == 0 || !words || count <= 0 || mapSide <= 0)
+    if (s_cementSsbo.glName == 0 || !words || count <= 0 || mapSide <= 0)
         return;
     GLsizeiptr bytes = (GLsizeiptr)count * sizeof(unsigned int);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_cementSsbo);
+    const GLuint cementBuf = static_cast<GLuint>(s_cementSsbo.glName);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, cementBuf);
     glBufferData(GL_SHADER_STORAGE_BUFFER, bytes, words, GL_DYNAMIC_DRAW);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_CEMENT_SSBO_BINDING, s_cementSsbo);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_CEMENT_SSBO_BINDING, cementBuf);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    // TERRAIN-LODCHUNK-SSBO-OWNER-1: register the live cement SSBO. Conditional by
+    // construction -- this upload only runs when cement words actually exist, so
+    // the cement slot is registered only when the buffer carries real data.
+    {
+        RenderCore::RenderResourceDesc d;
+        d.id        = s_cementSsbo.id;
+        d.kind      = RenderCore::RenderResourceKind::Buffer;
+        d.lifetime  = s_cementSsbo.lifetime;
+        d.format    = RenderCore::RenderResourceFormat::BufferRaw;
+        d.debugName = s_cementSsbo.debugName;
+        d.glName    = s_cementSsbo.glName;
+        d.sizeBytes = static_cast<uint64_t>(bytes);
+        d.valid     = true;
+        RenderCore::registerOrUpdateRenderResource(d);
+    }
 }
 
 // ---------------------------------------------------------------------------
