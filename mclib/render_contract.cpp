@@ -759,32 +759,6 @@ void dryrunFrameBoundary() {
         }
     }
 
-    // SHADOW-OBSERVE-2: Shadow is declared first in kFramePassOrder (logical dependency:
-    // it writes ShadowDynamicMap consumed by StaticProp/MechOpaque). However, the runtime
-    // Shadow static-build fires INSIDE renderLists() AFTER the MechOpaque preamble note
-    // (txmmgr.cpp:2362 fires MechOpaque, then :2599 fires Shadow). On the one mission-load
-    // frame where the static shadow builds, MechOpaque records first (seqIdx=0) and Shadow
-    // records second (seqIdx=1); walking in declared order (Shadow=slot0, MechOpaque=slot1)
-    // makes MechOpaque appear out-of-order. Mark MechOpaque as knownEarlyDrawSite on such
-    // frames (Shadow observed after MechOpaque) to suppress the spurious event.
-    {
-        const int shadowSlot   = RenderCore::framegraph::declaredOrderIndex(
-            RenderCore::RenderPassId::Shadow,
-            RenderCore::kFramePassOrder, RenderCore::kFramePassOrderCount);
-        const int mechSlot     = RenderCore::framegraph::declaredOrderIndex(
-            RenderCore::RenderPassId::MechOpaque,
-            RenderCore::kFramePassOrder, RenderCore::kFramePassOrderCount);
-        if (shadowSlot >= 0 && mechSlot >= 0 &&
-            g_dryrunTrace.entries[shadowSlot].fired &&
-            g_dryrunTrace.entries[mechSlot].fired &&
-            g_dryrunTrace.entries[mechSlot].sequenceIdx < g_dryrunTrace.entries[shadowSlot].sequenceIdx) {
-            // MechOpaque fired before Shadow in actual sequence but is declared after it.
-            RenderCore::framegraph::markEntryKnownEarly(
-                g_dryrunTrace, RenderCore::RenderPassId::MechOpaque,
-                RenderCore::kFramePassOrder, RenderCore::kFramePassOrderCount);
-        }
-    }
-
     const RenderCore::framegraph::DryRunReport rep =
         RenderCore::framegraph::dryRunCompare(g_dryrunTrace,
             RenderCore::kFramePassOrder, RenderCore::kFramePassOrderCount);

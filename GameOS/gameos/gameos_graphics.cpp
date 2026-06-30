@@ -6215,11 +6215,10 @@ void gosRenderer::beginShadowPrePass(bool clearDepth) {
     if (clearDepth) { glClearDepth(1.0f); glClear(GL_DEPTH_BUFFER_BIT); glClearDepth(0.0f); }
     render_contract::assertPassContract(render_contract::PassIdentity::ShadowCaster,
                                         "gosRenderer::beginShadowPrePass");
-    // SHADOW-OBSERVE-2: colorMask=AllOff was mismodeled; active path is FBO-enforced depth-only
-    // (DrawBufferSet::ShadowDepthOnly), not glColorMask. colorMaskOnEntry relaxed to Inherit in
-    // ambient_contract.h — guard now skips colorMask and checks depthFunc=ShadowLess+depthWrite=On.
-    render_contract::noteRenderPass(render_contract::PassIdentity::ShadowCaster,
-                                    "gosRenderer::beginShadowPrePass");
+    // SHADOW-OBSERVE-2-REVISE: static shadow build is once-per-mission (gos_StaticLightMatrixBuilt-gated),
+    // not a per-frame pass — NOT instrumented here. Per-frame dynamic shadow observation
+    // (gos_BeginDynamicShadowPass / beginDynamicShadowPass, txmmgr:2728) is the correct future
+    // target (SHADOW-OBSERVE-3).
 
     // Bind shadow shader and upload lightSpaceMatrix
     shadow_terrain_material_->apply();
