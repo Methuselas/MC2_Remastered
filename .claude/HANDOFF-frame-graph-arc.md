@@ -4,27 +4,36 @@
 **Primary task:** continue the FRAME-GRAPH arc. **Do frame-graph first; legacy-terrain
 retirement is SECONDARY (after).**
 
-**▶ RESUME POINTER (latest):** **UI-SAME-ORDER-VALIDATE-1** (`85369151`) is
-**DONE+VERIFIED**. ★**ALL 10 top-level passes are executor-owned (`kTopLevelDeferredPassCount=0`) —
-same-order top-level VALIDATE coverage is COMPLETE.** UI/HUD is the 10th & last, deliberately
-**FBO-ONLY** (Backbuffer — the FIRST `kPassFboTarget` row using Backbuffer; ambient DO_NOT_MODEL,
-legacy per-draw gos state → validateAmbient=FALSE; direct call, no C-shim — GameOS TU includes the
-contract header; RAII guard mirrors Water). Owned set (10): StaticProp, Terrain-LODchunk,
-TerrainOverlay, TerrainDecal, Vegetation, Shadow, MechOpaque, Water, VFX, **UI**. Gauntlet PASS
-(OFF executor metrics=0; ON validation_failures=0 / validated_top_level=13903 (up from ~11982) /
-owned_wrappers=9931; DRYRUN out_of_order=0 / fbo_mismatches=0 (Backbuffer matches — UI lands on
-FBO 0) / ambient_probe_mismatches=0). Prior: VFX (9th, `15c5ca1e`); WATER (8th, `33f590f8`).
-**NEXT PHASE: top-level APPLY-STATE expansion** (executor becomes sole state-setter, body-skips
-applyPipeline): **APPLY-STATE-TERRAINDECAL-1 IN FLIGHT** (builds top-level apply infra
-`kTopLevelStateDesc`/`findTopLevelStateDesc` + `executorApplyTerrainDecalState`) → next
-**APPLY-STATE-TERRAINOVERLAY-1**; **EXCLUDED**: Terrain/Mech/Shadow (pin-sensitive / PipelineId::Invalid).
-Plus **Phase 8 RAW-GL-BYPASS gate**: **RAW-GL-DEPTHFUNC-DIFF-GATE-1 IN FLIGHT** (diff static check
-banning new raw `glDepthFunc`). **VFX-AMBIENT-VALIDATE: DROPPED permanently** (seam structurally
-upstream of the cross-TU state-setting body; only depthFunc=GEQUAL declarable, redundant w/ Water).
-Side finding (future one-liner, NOT done): `kParticleEffectState` (render_contract.cpp:315) declares
-blend=Additive but live particle body uses alpha-blend (gos_particle_bridge.cpp:1164) — stale entry.
-Also pending per advisor: (1) **SHADOW-OBSERVE-3 recon** — per-frame dynamic-shadow seam;
-(2) **MECHOPAQUE-PASSIDENTITY-RECON-1** — disambiguate lossy OpaqueObject identity. Do NOT rush.
+**▶ RESUME POINTER (latest):** **Top-level VALIDATE is 10/10 COMPLETE** (UI-SAME-ORDER-VALIDATE-1
+`85369151`). **Top-level APPLY-STATE has STARTED:** **StaticPropOpaque is RUNTIME-PROVEN**
+(APPLY-STATE-STATICPROP-1 `129df9c9` — first runtime-proven top-level apply-state, runs every
+tier1 frame); **TerrainDecal + TerrainOverlay are DECLARED + unit-tested but NOT content-exercised**
+(APPLY-STATE-TERRAINDECAL-1 `2bf12b30`, APPLY-STATE-TERRAINOVERLAY-1 `4d87c563` — neither pass runs in
+tier1 maps; exercise-smokes in flight). **Phase 8 = 4 RAW-GL axis gates LIVE** (depthFunc `7339dd90` /
+depthMask `33820a2f` / colormask `ff9fed17` / blendFunc `00c61255`, all wired into
+`scripts/check-contracts.sh`); FBO-bind gate DEFERRED (too numerous/context-sensitive — own recon).
+Per-pass apply counters shipped (PER-PASS-APPLY-COUNTERS-1 `0e0b582a` — `executor_apply_state_by_pass`,
+8-entry ApplyPassId enum, aggregate==sum so no drift).
+
+★**THREE-STATE APPLY-STATE DASHBOARD (advisor):**
+1. **Runtime-proven SOLE-SETTER (body-skip):** PostProcess **6/6** islands
+   (EdgeFog/FogOob/Shoreline/CloudShadow/ScreenShadow + outer endScene).
+2. **Runtime-proven TOP-LEVEL apply-state:** **StaticPropOpaque** (named-counter proven,
+   `StaticPropOpaque=1993`/tier1 run; apply +0.46/frame attributed, render-correct +0 destroys).
+3. **Declared + unit-tested, NOT content-exercised:** **TerrainDecal**, **TerrainOverlay**
+   — await exercise-smokes (mc2_02 for overlay; mc2_17 + `MC2_DYNAMIC_DECALS` for decal). ⚠⚠
+   **TerrainOverlay may need a LIVE-SITE FIX:** recon found the live overlay draw is
+   `drawDecalStaticBatch` (gameos_graphics.cpp:9617, default-ON `MC2_TERRAIN_INDIRECT_OVERLAY`) but the
+   slice may have instrumented the DORMANT `drawTerrainOverlays` (:9798). If the TerrainOverlay
+   per-pass counter == 0 on the mc2_02 exercise-smoke → move the hook to `drawDecalStaticBatch`.
+
+**NEXT (advisor):** run the in-flight exercise-smokes → fix the overlay site if counter==0 →
+pick the next apply-state candidate. **Mech = GREEN-RECON-PARKED** (recon clean at a4c9926d-era,
+dispatch at txmmgr:3273 NOT the begin seam — but **do NOT build until the redline is lifted**).
+Water / Terrain-main / Shadow deferred. Side cleanup noted: `kParticleEffectState` stale
+blend=Additive vs live alpha-blend (render_contract.cpp:315 vs gos_particle_bridge.cpp:1164).
+⚠ TOOLING: the recurring `stale_deploy_check` WARN in `verify_executor_slice.py` is a known
+**benign parser quirk** — the manifest `src_commit` IS correct; flag for a tooling fix.
 
 ---
 
@@ -582,6 +591,38 @@ shared primary — NOT redeployed this session by convention (we use 0.4c spare)
     - **Side finding (future one-liner cleanup, NOT done):** `kParticleEffectState`
       (render_contract.cpp:315) declares blend=Additive but the live particle body uses **alpha-blend**
       (SRC_ALPHA/ONE_MINUS_SRC_ALPHA, gos_particle_bridge.cpp:1164) — stale PassStateContract entry.
+
+## ✓ Top-level APPLY-STATE rollout (entries 39–43) + per-pass counters
+39. **APPLY-STATE-TERRAINDECAL-1** (`2bf12b30`) — FIRST top-level scene-pass apply-state; built the
+    REUSABLE top-level apply infra: `kTopLevelStateDesc` / `findTopLevelStateDesc`
+    (top_level_pass_executor.h), the `gosRenderer::executorApply<X>State` pattern, the
+    `<x>StateAppliedByExecutor_` one-shot flag, `isTopLevelExecutorEnabled()` gate, and the
+    `mc2_framegraph_executor_bump_apply_state()` counter shim. TerrainDecal = first consumer (body
+    skips applyPipeline when the executor pre-applied). ⚠ **NOT tier1-runtime-exercised** — the decal
+    pass does not run in tier1 maps (exercise via mc2_17 + `MC2_DYNAMIC_DECALS`).
+40. **APPLY-STATE-TERRAINOVERLAY-1** (`4d87c563`) — second consumer, same infra. ⚠ **ALSO not
+    tier1-exercised.** ⚠⚠ OPEN QUESTION: recon found the LIVE overlay draw is `drawDecalStaticBatch`
+    (gameos_graphics.cpp:9617, default-ON `MC2_TERRAIN_INDIRECT_OVERLAY`) but the slice may have
+    instrumented the DORMANT `drawTerrainOverlays` (:9798). An mc2_02 exercise-smoke is in flight to
+    arbitrate via the per-pass counter — if the TerrainOverlay counter == 0 on mc2_02, a SITE-FIX
+    slice is needed (move the hook to `drawDecalStaticBatch`).
+41. **APPLY-STATE-STATICPROP-1** (`129df9c9`) — third consumer; ★**FIRST RUNTIME-PROVEN top-level
+    apply-state** (StaticProp runs every tier1 frame). A/B build attribution: apply +0.46/frame from
+    the dispatch (1.83→2.29/frame), render-correct +0 destroys, byte-identical OFF, 88 doctests.
+    Single applyPipeline lift; FBO/MRT/objectId-SSBO/viewport inherited.
+42. **RAW-GL diff-gates Phase 8** (entries 42a–42d; all script-only, regression-proof, freeze backlog,
+    comment-safe, negative-tested, wired into `scripts/check-contracts.sh`):
+    - 42a. **RAW-GL-DEPTHFUNC-DIFF-GATE-1** (`7339dd90`, 49 sites)
+    - 42b. **RAW-GL-DEPTHMASK-DIFF-GATE-1** (`33820a2f`, 72 sites)
+    - 42c. **RAW-GL-COLORMASK-DIFF-GATE-1** (`ff9fed17`, 33 sites incl. `glColorMaski`)
+    - 42d. **RAW-GL-BLENDFUNC-DIFF-GATE-1** (`00c61255`, 35 sites — Func/FuncSeparate/Equation)
+    4 raw-GL axes now enforced. **FBO-bind gating DEFERRED** (too numerous / context-sensitive —
+    needs its own recon, NOT a clone of these).
+43. **PER-PASS-APPLY-COUNTERS-1** (`0e0b582a`) — replaced the coarse aggregate with an
+    `executor_apply_state_by_pass` map (8-entry `ApplyPassId` enum; aggregate DERIVED from the sum →
+    no drift). 89 doctests. ★VERIFIED ON tier1 dump: StaticPropOpaque=1993, TerrainDecal=0,
+    TerrainOverlay=0, EdgeFog/FogOob/Shoreline/ScreenShadow=1993, CloudShadow=0 (gated),
+    aggregate==sum==9965. The decal/overlay false-inference is now structurally impossible.
 
 ## ▶ NEXT PHASE — top-level APPLY-STATE expansion + Phase 8 RAW-GL-BYPASS gate
 Same-order top-level VALIDATE is done (10/10). Frontier moves to top-level **APPLY-STATE** (executor
