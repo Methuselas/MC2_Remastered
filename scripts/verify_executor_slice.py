@@ -483,6 +483,10 @@ def main() -> int:
     # Step 2: Smoke ON (MC2_FRAMEGRAPH_EXECUTOR=1)
     # -----------------------------------------------------------------------
     print("[verify_executor_slice] Step 2: smoke ON (MC2_FRAMEGRAPH_EXECUTOR=1)")
+    # Hoisted to outer scope so Step 4 (--assert-pass-fired) reads the executor-ON
+    # frame_graph block rather than re-parsing dump_path, which a Step-3 dryrun run
+    # would have overwritten with an executor-OFF dump (all-0 apply state -> false FAIL).
+    fg_on = None
     on_env = {**base_env, "MC2_FRAMEGRAPH_EXECUTOR": "1"}
     rc, stderr = _run_smoke(exe, missions, on_env,
                             ["MC2_FRAMEGRAPH_EXECUTOR"], smoke_script)
@@ -538,16 +542,18 @@ def main() -> int:
     if pass_fired_specs:
         print("[verify_executor_slice] Step 4: --assert-pass-fired "
               "(executor_apply_state_by_pass)")
-        try:
-            fg_assert = extract_frame_graph(parse_dump(dump_path))
-            assert_rows, all_ok = assert_passes_fired(fg_assert, pass_fired_specs)
+        # Use the Step-2 executor-ON frame_graph block (fg_on). Do NOT re-parse
+        # dump_path: a Step-3 --with-dryrun run overwrites it with an executor-OFF
+        # dump whose executor_apply_state_by_pass is all-0, which would falsely FAIL.
+        if fg_on is None:
+            all_rows.append(("assert_pass_fired_dump", "FAIL",
+                             "no executor-ON dump (Step 2 did not produce one)"))
+            overall_pass = False
+        else:
+            assert_rows, all_ok = assert_passes_fired(fg_on, pass_fired_specs)
             all_rows.extend(assert_rows)
             if not all_ok:
                 overall_pass = False
-        except Exception as exc:
-            all_rows.append(("assert_pass_fired_dump", "FAIL",
-                             f"cannot read dump: {exc}"))
-            overall_pass = False
 
     # -----------------------------------------------------------------------
     # Summary table
