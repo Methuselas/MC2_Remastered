@@ -105,6 +105,7 @@ run_check "raw_gl_depthfunc"       "py -3 scripts/check-raw-gl-depthfunc.py --qu
 run_check "raw_gl_depthmask"       "py -3 scripts/check-raw-gl-depthmask.py --quiet"
 run_check "raw_gl_colormask"       "py -3 scripts/check-raw-gl-colormask.py --quiet"
 run_check "raw_gl_blendfunc"       "py -3 scripts/check-raw-gl-blendfunc.py --quiet"
+run_check "apply_pass_bumped"      "py -3 scripts/check-apply-pass-bumped.py --quiet"
 run_check "static_prop_family"     "py -3 scripts/check-static-prop-family.py --quiet"
 run_check "mdi_submission"         "py -3 scripts/check-mdi-submission-ownership.py --quiet"
 run_check "buffer_lifetime"        "py -3 scripts/check-buffer-lifetime-ownership.py --quiet"

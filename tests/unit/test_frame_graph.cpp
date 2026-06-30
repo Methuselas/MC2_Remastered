@@ -1661,4 +1661,63 @@ TEST_CASE("per-pass-apply-counters-1: ApplyPassId table is complete + names uniq
     CHECK(std::string(applyPassName(ApplyPassId::Count)) == "Unknown");
 }
 
+// APPLY-STATE-REGISTRATION-CHECK-1 (Part A.3): each of the 3 TOP-LEVEL apply
+// passes (TerrainDecal / TerrainOverlay / StaticPropOpaque) maps to a RenderPassId
+// whose kPassRenderState[] row declares a CONCRETE (non-Invalid) pipelineId. You
+// must not declare a top-level apply on a multi-pipeline / Invalid pass — the
+// executor cannot pre-apply a pipeline that doesn't statically exist.
+TEST_CASE("apply-state-registration (top-level): each top-level ApplyPassId maps to a pass with a concrete pipeline") {
+    using namespace RenderCore;
+    using namespace RenderCore::framegraph;
+
+    // name -> RenderPassId mapping for the 3 top-level apply ids (small local switch).
+    struct Row { ApplyPassId apply; RenderPassId pass; };
+    const Row topLevel[] = {
+        { ApplyPassId::TerrainDecal,     RenderPassId::TerrainDecal     },
+        { ApplyPassId::TerrainOverlay,   RenderPassId::TerrainOverlay   },
+        { ApplyPassId::StaticPropOpaque, RenderPassId::StaticPropOpaque },
+    };
+    for (const Row& r : topLevel) {
+        // The ApplyPassId name and the RenderPassId name must agree (no silent skew).
+        const RenderStateDesc* desc = findPassRenderState(r.pass);
+        REQUIRE(desc != nullptr);
+        // INVARIANT: a top-level apply pass has a concrete pipeline.
+        CHECK(passHasStaticPipeline(r.pass));
+        CHECK(static_cast<unsigned>(desc->pipelineId) != static_cast<unsigned>(PipelineId::Invalid));
+        // The executor's top-level apply table must agree on the same pipeline.
+        const TopLevelStateDesc* tl = findTopLevelStateDesc(r.pass);
+        REQUIRE(tl != nullptr);
+        CHECK(static_cast<unsigned>(tl->pipelineId) == static_cast<unsigned>(desc->pipelineId));
+    }
+}
+
+// APPLY-STATE-REGISTRATION-CHECK-1 (Part A.4): each PostProcess ApplyPassId has a
+// matching kSubStageState[] row (by ExecutorIslandId), and every kSubStageState row's
+// island exists in kExecutorIslands[]. Confirms the PostProcess apply vocabulary is
+// internally closed (apply id -> sub-stage desc -> owned island contract).
+TEST_CASE("apply-state-registration (post-process): each PostProcess ApplyPassId has a closed sub-stage/island chain") {
+    using namespace RenderCore;
+    using namespace RenderCore::framegraph;
+
+    struct Row { ApplyPassId apply; ExecutorIslandId island; };
+    const Row pp[] = {
+        { ApplyPassId::PostProcessEdgeFog,      ExecutorIslandId::EdgeFog      },
+        { ApplyPassId::PostProcessFogOob,       ExecutorIslandId::FogOob       },
+        { ApplyPassId::PostProcessShoreline,    ExecutorIslandId::Shoreline    },
+        { ApplyPassId::PostProcessCloudShadow,  ExecutorIslandId::CloudShadow  },
+        { ApplyPassId::PostProcessScreenShadow, ExecutorIslandId::ScreenShadow },
+    };
+    for (const Row& r : pp) {
+        // apply id -> sub-stage descriptor must exist.
+        const SubStageStateDesc* sub = findSubStageState(r.island);
+        REQUIRE(sub != nullptr);
+        CHECK(static_cast<unsigned>(sub->id) == static_cast<unsigned>(r.island));
+    }
+    // Every kSubStageState row's island must be an owned island (closure check).
+    for (unsigned i = 0; i < kSubStageStateCount; ++i) {
+        const IslandContract* ic = findIslandContract(kSubStageState[i].id);
+        CHECK(ic != nullptr);
+    }
+}
+
 } // TEST_SUITE
