@@ -182,7 +182,9 @@ static constexpr RenderPassContract kRenderPassContracts[] = {
         "Terrain",
         "TerrainPatchStream",
         /*viewUniformsBound*/        false,
-        /*pipelineDescRegistered*/   false,
+        /*pipelineDescRegistered*/   true,  // FRAMEGRAPH-STATEPACK-SKELETON-1: routed via applyPipeline(TerrainSolid)
+                                            // in gos_terrain_lod_chunk.cpp:717 (LODChunk) and
+                                            // gameos_graphics.cpp:4041 (PatchStreamThin). Was false — stale.
         /*snapshotRowAuthoritative*/ false,
         "Terrain Pass##tp",
         nullptr,
@@ -213,7 +215,11 @@ static constexpr RenderPassContract kRenderPassContracts[] = {
         "Shadow",
         "gosPostProcess + per-lane shadow programs",
         /*viewUniformsBound*/        false,
-        /*pipelineDescRegistered*/   false,
+        /*pipelineDescRegistered*/   false,  // FRAMEGRAPH-STATEPACK-SKELETON-1: three PipelineIds
+                                             // (ShadowTerrain/ShadowMech/ShadowStaticProp) are
+                                             // DESCRIPTIVE ONLY per PipelineRegistry.h comment;
+                                             // the pass itself does NOT have a single registered
+                                             // pipeline routed via applyPipeline. Left false.
         /*snapshotRowAuthoritative*/ false,
         "Shadow Pass##sp",
         nullptr,
@@ -235,7 +241,11 @@ static constexpr RenderPassContract kRenderPassContracts[] = {
         "VFX",
         "mc2::particles::Batcher",
         /*viewUniformsBound*/        false,
-        /*pipelineDescRegistered*/   false,
+        /*pipelineDescRegistered*/   true,  // FRAMEGRAPH-STATEPACK-SKELETON-1: multiple sub-pipelines
+                                            // (VfxBillboard/Tube/MeshAlpha/Additive) all route through
+                                            // applyPipeline (gos_particle_bridge.cpp:847/1263,
+                                            // gos_vfx_mesh_bridge.cpp:315). Was false — stale.
+                                            // Note: no single PipelineId (StatePack uses Invalid).
         /*snapshotRowAuthoritative*/ false,
         "VFX Pass##vfx",
         nullptr,
@@ -252,7 +262,9 @@ static constexpr RenderPassContract kRenderPassContracts[] = {
         "Water",
         "quad.cpp / renderWaterFastPath",
         /*viewUniformsBound*/        false,
-        /*pipelineDescRegistered*/   false,
+        /*pipelineDescRegistered*/   true,  // FRAMEGRAPH-STATEPACK-SKELETON-1: armed water fast path
+                                            // routes through applyPipeline(WaterArmed) in
+                                            // gameos_graphics.cpp:3287. Was false — stale.
         /*snapshotRowAuthoritative*/ false,
         "Water Pass##water",
         nullptr,
@@ -266,7 +278,13 @@ static constexpr RenderPassContract kRenderPassContracts[] = {
         "PostProcess",
         "gos_postprocess",
         /*viewUniformsBound*/        false,
-        /*pipelineDescRegistered*/   false,
+        /*pipelineDescRegistered*/   true,  // FRAMEGRAPH-STATEPACK-SKELETON-1: multiple sub-pipelines
+                                            // all route applyPipeline (PostProcessComposite at :2542,
+                                            // PostProcessScreenShadow :2050, PostProcessCloudShadow :2192,
+                                            // PostProcessShoreline :2248, PostProcessSsaoApply :1988,
+                                            // PostProcessEdgeFog :2302, PostProcessFogOob :2358 in
+                                            // gos_postprocess.cpp). Was false — stale.
+                                            // Note: no single PipelineId (StatePack uses Invalid).
         /*snapshotRowAuthoritative*/ false,
         "PostProcess##pp",
         nullptr,
@@ -302,7 +320,8 @@ static constexpr RenderPassContract kRenderPassContracts[] = {
         "TerrainDecal",
         "craterManager / quad.cpp",
         /*viewUniformsBound*/        false,
-        /*pipelineDescRegistered*/   false,
+        /*pipelineDescRegistered*/   true,  // FRAMEGRAPH-STATEPACK-SKELETON-1: routes applyPipeline(TerrainDecal)
+                                            // at gameos_graphics.cpp:10005. Was false — stale.
         /*snapshotRowAuthoritative*/ false,
         "TerrainDecal##td",
         nullptr,
@@ -316,7 +335,9 @@ static constexpr RenderPassContract kRenderPassContracts[] = {
         "TerrainOverlay",
         "quad.cpp M2d producer",
         /*viewUniformsBound*/        false,
-        /*pipelineDescRegistered*/   false,
+        /*pipelineDescRegistered*/   true,  // FRAMEGRAPH-STATEPACK-SKELETON-1: routes applyPipeline(TerrainOverlay)
+                                            // at gameos_graphics.cpp:9810 (and again at 9930 for the
+                                            // static-decal path within drawTerrainOverlays). Was false — stale.
         /*snapshotRowAuthoritative*/ false,
         "TerrainOverlay##to",
         nullptr,
