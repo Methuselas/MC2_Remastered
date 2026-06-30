@@ -4,13 +4,14 @@
 **Primary task:** continue the FRAME-GRAPH arc. **Do frame-graph first; legacy-terrain
 retirement is SECONDARY (after).**
 
-**▶ RESUME POINTER (latest):** APPLY-STATE-REDUNDANT-BODY-REMOVE-1 (EdgeFog `95f4d498`) **and** REMOVE-2
-(FogOob/Shoreline/CloudShadow `c706dde6`) are **DONE+VERIFIED** — all 4 ISLAND-2 sub-stages now have the
-executor as the SOLE state setter under MC2_FRAMEGRAPH_EXECUTOR (idempotent double-set eliminated for those
-islands; byte-identical OFF). NEXT TARGETS per the advisor list (★ADVISOR REFINED ORDER section): (1)
-**SHADOW-OBSERVE-3 recon** — model the per-frame dynamic-shadow seam honestly; (2) **MECHOPAQUE-PASSIDENTITY-RECON-1**
-— disambiguate the lossy OpaqueObject identity; then (3) **SAME-ORDER-EXECUTOR-SLICE-2** (Water/VFX/UI) once
-#1/#2 land. Do NOT rush #1/#2.
+**▶ RESUME POINTER (latest):** REMOVE-1 (EdgeFog `95f4d498`) / REMOVE-2 (FogOob/Shoreline/CloudShadow
+`c706dde6`) / **APPLY-STATE-SCREENSHADOW-1** (`6d316519`) are **DONE+VERIFIED** — **6/6 PostProcess
+apply-state islands executor-applied** (the 4 endScene sub-stages + ScreenShadow are executor-sole-setter
+via body-skip; outer endScene applied too), byte-identical OFF under MC2_FRAMEGRAPH_EXECUTOR. NEXT FRONTIER:
+**Water/VFX/UI same-order top-level ownership** — each needs its OWN recon (real ambient/FBO/blend seam gaps;
+UI blend is runtime-dynamic → PipelineId::Invalid). Also pending per the advisor list: (1) **SHADOW-OBSERVE-3
+recon** — per-frame dynamic-shadow seam; (2) **MECHOPAQUE-PASSIDENTITY-RECON-1** — disambiguate lossy
+OpaqueObject identity; then (3) **SAME-ORDER-EXECUTOR-SLICE-2** once #1/#2 land. Do NOT rush #1/#2.
 
 ---
 
@@ -404,12 +405,29 @@ validated_top_level=7552, exit 0; DRYRUN out_of_order=0, ambient_mismatches=0, f
 frames=2281, exit 0. Reviewer subagent PASS (all 7 checks; body/WillRun gates match → no flag leak).
 79 doctests (FrameGraph suite, 0 failed).
 
+DONE: **APPLY-STATE-SCREENSHADOW-1** (`6d316519`) — extends the body-skip ownership to the 6th PostProcess
+island. The ScreenShadow island (previously owned validate-only, EXECUTOR-ISLAND-SCREENSHADOW-1 `fef58925`)
+now APPLIES its declared GL state via the executor AND skips the body's 4 redundant setup calls (FBO/
+SingleColor/viewport/applyPipeline) via a new per-island flag `screenShadowStateAppliedByExecutor_`,
+mirroring ISLAND-2 + REMOVE-2. New PipelineId::PostProcessScreenShadow=21. Byte-identical OFF (body still
+applies when the gate didn't run). VERIFIED (slice-preflight PASS, gate-match confirmed no flag leak,
+build 0, deploy 0 to mc2-win64-0.4c src 6ace513f): gauntlet PASS — OFF all executor metrics=0 + smoke
+exit 0; ON validation_failures=0 / owned_wrappers=9881 / apply_state_passes=7904 (up from 5664 —
+ScreenShadow now applies) / validated_top_level=7904 / exit 0; DRYRUN out_of_order=0 /
+ambient_probe_mismatches=0 / fbo_mismatches=0 / frames=1984 / exit 0. 80 doctests. ⇒ All 6 PostProcess
+apply-state islands (EdgeFog/FogOob/Shoreline/CloudShadow/ScreenShadow + outer endScene) now
+executor-applied; the 4 endScene sub-stages + ScreenShadow are executor-sole-setter (body-skip).
+
 ★ADVISOR REFINED ORDER (the push from "validated" → "owned"; idempotent double-set is now the ENEMY —
 a transition strategy, NOT end-state. End-state = executor applies + body DRAWS ONLY):
 - **SCREENSHADOW-TEX-RESTORE-1** (IN FLIGHT, w/ BRIDGE-DELETE-2) — unbind leaked unit-N CSM 2D_ARRAY at
   runScreenShadow exit. Fix the leak BEFORE owning the pass.
-1. **EXECUTOR-ISLAND-SCREENSHADOW-1** — own ScreenShadow (now leak-fixed) as the 6th PostProcess island,
-   validate-only first (mirror the others; apply-state later). Don't pretend state is clean before #SCREENSHADOW-TEX-RESTORE.
+1. ✓ **EXECUTOR-ISLAND-SCREENSHADOW-1** (`fef58925`) — owned ScreenShadow (leak-fixed) as the 6th
+   PostProcess island, validate-only. ✓ **APPLY-STATE-SCREENSHADOW-1** (`6d316519`) — DONE: ScreenShadow
+   now executor-applies its declared state + body-skips the 4 redundant setup calls via
+   `screenShadowStateAppliedByExecutor_` (PipelineId::PostProcessScreenShadow=21). All 6 PostProcess
+   apply-state islands are now executor-applied; gauntlet PASS (ON owned_wrappers=9881 /
+   apply_state_passes=7904 / failures=0; DRYRUN out_of_order=0; OFF=0), 80 doctests.
 2. ✓ **APPLY-STATE-REDUNDANT-BODY-REMOVE-1** (`95f4d498`, EdgeFog ONLY) — DONE. ★the first TRUE
    state-ownership proof. EdgeFog's body NO LONGER applies its own FBO/drawBuffers/viewport/applyPipeline;
    the executor's pre-apply is the sole setter. Body STILL applies when gate OFF → byte-identical OFF.
