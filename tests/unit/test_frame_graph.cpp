@@ -1277,44 +1277,60 @@ TEST_CASE("statepack (g): consistency validator catches a deliberately-wrong Ren
 // GL-free — tests only the constexpr descriptor, not the GL wrapper.
 // ---------------------------------------------------------------------------
 
-TEST_CASE("top-level executor (a): kTopLevelExecutorPasses has 5 rows (the 5 wrappable passes)") {
+TEST_CASE("top-level executor (a): kTopLevelExecutorPasses has 7 rows (slice-2 adds Shadow + MechOpaque)") {
     using namespace RenderCore::framegraph;
-    CHECK(kTopLevelExecutorPassCount == 5u);
+    CHECK(kTopLevelExecutorPassCount == 7u);
 }
 
-TEST_CASE("top-level executor (b): findTopLevelExecutorPass returns non-null for all 5 wrappable passes") {
+TEST_CASE("top-level executor (b): findTopLevelExecutorPass returns non-null for all 7 wrappable passes") {
     using namespace RenderCore::framegraph;
     const RenderPassId wrappable[] = {
+        RenderPassId::Shadow,           // SAME-ORDER-EXECUTOR-SLICE-2
+        RenderPassId::MechOpaque,       // SAME-ORDER-EXECUTOR-SLICE-2
         RenderPassId::StaticPropOpaque,
         RenderPassId::Terrain,
         RenderPassId::TerrainOverlay,
         RenderPassId::TerrainDecal,
         RenderPassId::VegetationCards,
     };
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 7; ++i) {
         const TopLevelPassContract* c = findTopLevelExecutorPass(wrappable[i]);
         CHECK(c != nullptr);
     }
 }
 
 TEST_CASE("top-level executor (c): deferred passes return nullptr (not executor-owned)") {
-    // Shadow, MechOpaque, Water, VFX, UI are deferred to slice 2.
+    // Water, VFX, UI remain deferred (ambient/FBO gaps). Shadow + MechOpaque are now owned.
     using namespace RenderCore::framegraph;
     const RenderPassId deferred[] = {
-        RenderPassId::Shadow,
-        RenderPassId::MechOpaque,
         RenderPassId::Water,
         RenderPassId::VFX,
         RenderPassId::UI,
     };
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 3; ++i) {
         CHECK(findTopLevelExecutorPass(deferred[i]) == nullptr);
     }
+    // Confirm Shadow + MechOpaque are NOW owned (not deferred):
+    CHECK(findTopLevelExecutorPass(RenderPassId::Shadow)     != nullptr);
+    CHECK(findTopLevelExecutorPass(RenderPassId::MechOpaque) != nullptr);
 }
 
 TEST_CASE("top-level executor (d): ambient + FBO flags match declared ledger declarations") {
-    // StaticPropOpaque and Terrain have AmbientContract + FBO ledger rows.
     using namespace RenderCore::framegraph;
+
+    // SAME-ORDER-EXECUTOR-SLICE-2: Shadow has AmbientContract (ShadowLess/ShadowMap) + FBO
+    // ledger (ShadowDynamicMap). MechOpaque has AmbientContract (SceneGEqual) + FBO (MainColor).
+    const TopLevelPassContract* shadow = findTopLevelExecutorPass(RenderPassId::Shadow);
+    REQUIRE(shadow != nullptr);
+    CHECK(shadow->validateAmbient == true);   // AmbientContract: ShadowLess + ShadowMap viewport
+    CHECK(shadow->validateFbo     == true);   // FBO ledger: ShadowDynamicMap
+
+    const TopLevelPassContract* mech = findTopLevelExecutorPass(RenderPassId::MechOpaque);
+    REQUIRE(mech != nullptr);
+    CHECK(mech->validateAmbient == true);     // AmbientContract: SceneGEqual + MainScene viewport
+    CHECK(mech->validateFbo     == true);     // FBO ledger: MainColor
+
+    // StaticPropOpaque and Terrain have AmbientContract + FBO ledger rows.
     const TopLevelPassContract* sp = findTopLevelExecutorPass(RenderPassId::StaticPropOpaque);
     REQUIRE(sp != nullptr);
     CHECK(sp->validateAmbient == true);  // AmbientContract row exists
@@ -1343,8 +1359,10 @@ TEST_CASE("top-level executor (d): ambient + FBO flags match declared ledger dec
     CHECK(veg->validateFbo     == false);
 }
 
-TEST_CASE("top-level executor (e): ambient ledger cross-check — StaticProp and Terrain have AmbientContract; TerrainOverlay/Decal/Veg do not") {
+TEST_CASE("top-level executor (e): ambient ledger cross-check — Shadow/MechOpaque/StaticProp/Terrain have AmbientContract; TerrainOverlay/Decal/Veg do not") {
     // Verifies the validateAmbient flags are backed by actual ambient_contract.h rows.
+    CHECK(findAmbient(RenderPassId::Shadow)           != nullptr);  // ShadowLess+ShadowMap
+    CHECK(findAmbient(RenderPassId::MechOpaque)       != nullptr);  // SceneGEqual+MainScene
     CHECK(findAmbient(RenderPassId::StaticPropOpaque) != nullptr);
     CHECK(findAmbient(RenderPassId::Terrain)          != nullptr);
     CHECK(findAmbient(RenderPassId::TerrainOverlay)   == nullptr);
@@ -1352,10 +1370,13 @@ TEST_CASE("top-level executor (e): ambient ledger cross-check — StaticProp and
     CHECK(findAmbient(RenderPassId::VegetationCards)  == nullptr);
 }
 
-TEST_CASE("top-level executor (f): FBO ledger cross-check — 4 passes declare MainColor; VegetationCards undeclared") {
+TEST_CASE("top-level executor (f): FBO ledger cross-check — Shadow=ShadowDynamicMap, MechOpaque+4=MainColor; VegetationCards undeclared") {
     auto rid = [](RenderResourceId r){ return static_cast<unsigned>(r); };
-    const unsigned mc = rid(RenderResourceId::MainColor);
+    const unsigned mc  = rid(RenderResourceId::MainColor);
+    const unsigned sdm = rid(RenderResourceId::ShadowDynamicMap);
     const unsigned unk = rid(RenderResourceId::Unknown);
+    CHECK(rid(declaredFboTarget(RenderPassId::Shadow))           == sdm);  // SLICE-2
+    CHECK(rid(declaredFboTarget(RenderPassId::MechOpaque))       == mc);   // SLICE-2
     CHECK(rid(declaredFboTarget(RenderPassId::StaticPropOpaque)) == mc);
     CHECK(rid(declaredFboTarget(RenderPassId::Terrain))          == mc);
     CHECK(rid(declaredFboTarget(RenderPassId::TerrainOverlay))   == mc);
@@ -1370,9 +1391,10 @@ TEST_CASE("top-level executor (g): note field is non-null for all wrappable pass
     }
 }
 
-TEST_CASE("top-level executor (h): kTopLevelDeferredPassCount matches the 5 deferred passes") {
+TEST_CASE("top-level executor (h): kTopLevelDeferredPassCount matches the 3 remaining deferred passes (Water/VFX/UI)") {
+    // Shadow + MechOpaque are now owned in SAME-ORDER-EXECUTOR-SLICE-2.
     using namespace RenderCore::framegraph;
-    CHECK(kTopLevelDeferredPassCount == 5u);
+    CHECK(kTopLevelDeferredPassCount == 3u);
 }
 
 // ---------------------------------------------------------------------------

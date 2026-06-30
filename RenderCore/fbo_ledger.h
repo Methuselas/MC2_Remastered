@@ -56,6 +56,13 @@ inline bool fboMismatch(RenderResourceId declared, RenderResourceId actual) {
 // the probe will tell us before we declare it, the same discipline that caught blend).
 struct PassFboTarget { RenderPassId id; RenderResourceId target; };
 static constexpr PassFboTarget kPassFboTarget[] = {
+    // SAME-ORDER-EXECUTOR-SLICE-2: Shadow and MechOpaque added now that their
+    // noteRenderPass seams are at the correct draw sites (SHADOW-OBSERVE-3 +
+    // MECHOPAQUE-NOTE-RELOCATE-1): Shadow fires inside beginDynamicShadowPass
+    // after glBindFramebuffer(ShadowFBO); MechOpaque fires before
+    // GpuMechBatcher::flush() inside the scene FBO (MainColor).
+    { RenderPassId::Shadow,           RenderResourceId::ShadowDynamicMap },
+    { RenderPassId::MechOpaque,       RenderResourceId::MainColor },
     { RenderPassId::StaticPropOpaque, RenderResourceId::MainColor },
     { RenderPassId::Terrain,          RenderResourceId::MainColor },
     { RenderPassId::TerrainOverlay,   RenderResourceId::MainColor },

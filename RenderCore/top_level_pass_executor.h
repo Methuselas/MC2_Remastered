@@ -13,8 +13,13 @@
 // Gate: MC2_FRAMEGRAPH_EXECUTOR (default-OFF). When unset -> executorOwnBeginTopLevel /
 // executorOwnEndTopLevel are early-return no-ops -> byte-identical to unwrapped draw.
 //
-// DEFERRED (slice 2): Shadow (dynamic-shadow seam unmodeled), MechOpaque (OpaqueObject
-// PassIdentity is lossy — no clean single seam), Water, VFX, UI.
+// DEFERRED (beyond slice 2): Water, VFX, UI (ambient/FBO gaps per same-order recon).
+// Shadow and MechOpaque are NOW OWNED in this slice (SAME-ORDER-EXECUTOR-SLICE-2):
+//   Shadow   — dynamic-shadow seam: gos_BeginDynamicShadowPass / gos_EndDynamicShadowPass
+//              (txmmgr.cpp); noteRenderPass(ShadowCaster) fires after FBO bind in
+//              gosRenderer::beginDynamicShadowPass (SHADOW-OBSERVE-3).
+//   MechOpaque — GpuMechBatcher::flush() seam in renderLists(); noteRenderPass(OpaqueObject)
+//              relocated from preamble to the real draw site (MECHOPAQUE-NOTE-RELOCATE-1).
 
 #include "RenderCore/RenderPassContract.h"  // RenderPassId
 
@@ -34,7 +39,23 @@ struct TopLevelPassContract {
 //
 // VegetationCards: gated MC2_VEGETATION_CARDS default-OFF -> legitimately fires 0 times
 // per frame in default smoke. That is correct and NOT a validation failure.
+// Shadow: dynamic-shadow only (per-frame). Static shadow (once/mission) is NOT wrapped
+// here — it is not a per-frame top-level pass. The seam is gos_Begin/EndDynamicShadowPass
+// in txmmgr.cpp renderLists(). Shadow FBO = ShadowDynamicMap (registered in gos_postprocess).
+// MechOpaque: wraps GpuMechBatcher::flush() in renderLists(). FBO = MainColor (scene FBO).
 static constexpr TopLevelPassContract kTopLevelExecutorPasses[] = {
+    {
+        /*id*/              RenderPassId::Shadow,
+        /*validateAmbient*/ true,   // AmbientContract row: ShadowLess depthFunc, ShadowMap viewport
+        /*validateFbo*/     true,   // FBO ledger: ShadowDynamicMap registered in gos_postprocess
+        /*note*/            "Shadow/gosRenderer_beginDynamicShadowPass",
+    },
+    {
+        /*id*/              RenderPassId::MechOpaque,
+        /*validateAmbient*/ true,   // AmbientContract row: SceneGEqual depthFunc, MainScene viewport
+        /*validateFbo*/     true,   // FBO ledger: MainColor (scene FBO, established by terrain)
+        /*note*/            "MechOpaque/GpuMechBatcher_flush",
+    },
     {
         /*id*/              RenderPassId::StaticPropOpaque,
         /*validateAmbient*/ true,   // AmbientContract row exists (SceneGEqual, depthWrite=On)
@@ -80,8 +101,8 @@ inline const TopLevelPassContract* findTopLevelExecutorPass(RenderPassId id) {
 }
 
 // Count of deferred top-level passes (not executor-owned this slice).
-// Shadow, MechOpaque, Water, VFX, UI = 5.
+// Water, VFX, UI = 3. (Shadow + MechOpaque are now owned in SAME-ORDER-EXECUTOR-SLICE-2.)
 // Called by the dump to populate executor_skipped_deferred_passes.
-static constexpr unsigned kTopLevelDeferredPassCount = 5u;
+static constexpr unsigned kTopLevelDeferredPassCount = 3u;
 
 }} // namespace RenderCore::framegraph

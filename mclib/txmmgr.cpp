@@ -2474,6 +2474,10 @@ void MC_TextureManager::renderLists (void)
 		ZoneScopedN("Render.3DObjects");
 		TracyGpuZone("Render.3DObjects");
 		gos_render_pass_timer::Begin(gos_render_pass_timer::Pass_Obj3d);
+		// SAME-ORDER-EXECUTOR-SLICE-2: validate-only ownership of MechOpaque top-level
+		// pass. Body sets its own state (no apply); this just validates ambient+FBO.
+		render_contract::executorOwnBeginTopLevel(render_contract::PassIdentity::OpaqueObject,
+		                                          "renderLists_Render.3DObjects");
 	for (size_t i = 0; i<nextAvailableHardwareVertexNode; i++)
 	{
 		if ((masterHardwareVertexNodes[i].flags & MC2_DRAWSOLID) &&
@@ -2720,6 +2724,11 @@ void MC_TextureManager::renderLists (void)
 			bool scOk = true;                                   // camera target always valid
 			gos_BuildDynamicLightMatrix(-lx, -ly, -lz, cornersMC2,
 			                            shadowCenterXYZ, scOk);  // sign matches old shim
+			// SAME-ORDER-EXECUTOR-SLICE-2: validate-only ownership of the Shadow top-level
+			// pass (dynamic shadow only — static is once/mission, not wrapped here).
+			// Body sets its own state (FBO bind, depth, lightSpaceMatrix); we just validate.
+			render_contract::executorOwnBeginTopLevel(render_contract::PassIdentity::ShadowCaster,
+			                                          "renderLists_gos_BeginDynamicShadowPass");
 			gos_BeginDynamicShadowPass();             // no-op if shadowsEnabled_ false
 			// Item 1 P1: caster set used by the CSM cascade replay (set in the
 			// prop-caster path below; nullptr => CSM replay uses flushShadow).
@@ -2890,6 +2899,8 @@ void MC_TextureManager::renderLists (void)
 			}
 			GpuMechBatcher::instance().flushShadow();
 			gos_EndDynamicShadowPass();
+			render_contract::executorOwnEndTopLevel(render_contract::PassIdentity::ShadowCaster,
+			                                        "renderLists_gos_EndDynamicShadowPass");
 
 			// Item 1 P1: replay casters into each CSM array layer. The legacy
 			// single-map pass above is fully complete (props+mech+EndPass restored
@@ -3262,6 +3273,8 @@ void MC_TextureManager::renderLists (void)
 			GpuMechBatcher::instance().flush();
 			gos_render_pass_timer::End(gos_render_pass_timer::Pass_Mechs);
 		}
+		render_contract::executorOwnEndTopLevel(render_contract::PassIdentity::OpaqueObject,
+		                                        "renderLists_GpuMechBatcher_flush");
 	}
 
 	// DRAWSOLID done

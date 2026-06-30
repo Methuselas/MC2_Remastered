@@ -393,8 +393,8 @@ static_assert(
 // of truth that can rot.
 static constexpr RenderPassId kFramePassOrder[] = {
     RenderPassId::Shadow,
-    RenderPassId::MechOpaque,       // noteRenderPass at renderLists() preamble (txmmgr.cpp:2361) —
-                                    // fires before GpuStaticPropBatcher::flush
+    RenderPassId::MechOpaque,       // noteRenderPass before GpuMechBatcher::flush (MECHOPAQUE-NOTE-RELOCATE-1);
+                                    // executorOwnBegin at Render.3DObjects zone entry (SAME-ORDER-EXECUTOR-SLICE-2)
     RenderPassId::StaticPropOpaque, // GpuStaticPropBatcher::flush fires after renderLists preamble
     RenderPassId::Terrain,          // LODChunk fires pre-renderLists (Gamecam site, see comment above)
     RenderPassId::TerrainOverlay,   // gos_DrawTerrainOverlays fires before gos_DrawDecals in renderLists
