@@ -304,9 +304,9 @@ constexpr SOC kAlphaObjectOutput{
     /*writesDepth*/     false,
 };
 
-// ParticleEffect: additive/alpha-blend forward pass INTO the scene FBO while
+// ParticleEffect: alpha-blend forward pass INTO the scene FBO while
 // MRT is still active. Only writes location 0; location 1 write would corrupt
-// GBuffer1 shadow mask for additive transparent pixels.
+// GBuffer1 shadow mask for transparent pixels.
 constexpr ShadowContract kParticleEffectShadow{
     /*castsStaticShadow*/    false,
     /*castsDynamicShadow*/   false,
@@ -315,7 +315,7 @@ constexpr ShadowContract kParticleEffectShadow{
 constexpr PassStateContract kParticleEffectState{
     /*requiresDepthTest*/    true,
     /*requiresDepthWrite*/   false,
-    /*blend*/                BM::Additive,
+    /*blend*/                BM::AlphaBlend,  // live: SRC_ALPHA/ONE_MINUS_SRC_ALPHA (gos_particle_bridge.cpp:1164)
     /*requiresMRT*/          false,  // doesn't rely on MRT; just needs color0
     /*attachmentCount*/      1,
     /*attachments*/          RA{true, false, false},
