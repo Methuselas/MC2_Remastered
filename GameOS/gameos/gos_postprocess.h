@@ -238,6 +238,11 @@ public:
     void runCloudShadow();
     glsl_program* cloudProg_;
     bool  enableCloudShadow_;   // seeded from mc2CloudShadowEnabled()
+    // APPLY-STATE-REDUNDANT-BODY-REMOVE-2: set by executorApplyCloudShadowState()
+    // when MC2_FRAMEGRAPH_EXECUTOR is ON; runCloudShadow() skips its own 4 setup
+    // calls when true, then resets (one-shot). Gate OFF → stays false → body sets
+    // state → byte-identical. Per-island flag (siblings share sceneFBO_/viewport).
+    bool  cloudShadowStateAppliedByExecutor_ = false;
     float cloudStrength_;       // max darkening (factor floor = 1-strength)
     float cloudScale_;          // worldXY * scale (smaller = bigger clouds)
     float cloudScrollX_;
@@ -270,6 +275,9 @@ public:
 
     // Shoreline
     bool shorelineEnabled_;
+    // APPLY-STATE-REDUNDANT-BODY-REMOVE-2: per-island executor-applied flag (see
+    // cloudShadowStateAppliedByExecutor_). Set by executorApplyShorelineState().
+    bool shorelineStateAppliedByExecutor_ = false;
     void runShoreline();
 
     // SSAO-GTAO-LITE-MVP-1 (Track V, MC2_SSAO). Half-res world-space AO.
@@ -312,6 +320,9 @@ public:
     // Default ON (MC2_OOB_FOG=0 to disable). Reads only scene depth —
     // no sceneColorTex_ feedback loop; blends SRC_ALPHA over scene color.
     bool  fogOobEnabled_ = false;
+    // APPLY-STATE-REDUNDANT-BODY-REMOVE-2: per-island executor-applied flag (see
+    // cloudShadowStateAppliedByExecutor_). Set by executorApplyFogOobState().
+    bool  fogOobStateAppliedByExecutor_ = false;
     float oobFogColor_[3] = {0.93f, 0.94f, 0.95f}; // default: white cloud bank
     float oobFogOpacity_ = 1.0f;
     void  runFogOob();

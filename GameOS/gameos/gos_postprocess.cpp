@@ -2190,15 +2190,20 @@ void gosPostProcess::runCloudShadow()
         return;
     }
 
-    glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
-    setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
-    glViewport(0, 0, width_, height_);
+    // APPLY-STATE-REDUNDANT-BODY-REMOVE-2: skip the 4 setup calls when the executor
+    // already applied them (MC2_FRAMEGRAPH_EXECUTOR ON). Reset one-shot before draw.
+    if (!cloudShadowStateAppliedByExecutor_) {
+        glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
+        setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
+        glViewport(0, 0, width_, height_);
 
-    // BLENDMODE-MULTIPLY-1: PostProcessCloudShadow row (Multiply = DST_COLOR/ZERO
-    // cloud darkening, depth test+write OFF, cull None). Byte-identical to hand-set.
-    pipeline_binder::applyPipeline(
-        RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessCloudShadow),
-        "PostProcessCloudShadow");
+        // BLENDMODE-MULTIPLY-1: PostProcessCloudShadow row (Multiply = DST_COLOR/ZERO
+        // cloud darkening, depth test+write OFF, cull None). Byte-identical to hand-set.
+        pipeline_binder::applyPipeline(
+            RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessCloudShadow),
+            "PostProcessCloudShadow");
+    }
+    cloudShadowStateAppliedByExecutor_ = false;
     render_frame_plan::trace(render_frame_plan::Phase::PostProcess, "CloudShadow",
         render_frame_plan::PathKind::ApplyPipeline, 1, "PostProcessCloudShadow");
 
@@ -2244,17 +2249,22 @@ void gosPostProcess::runShoreline()
 
     if (!shorelineEnabled_ || !sceneHasTerrain_ || !shorelineProg_ || !shorelineProg_->is_valid()) return;
 
-    glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
-    // M1.5: single-color multiplicative composite; helper preserves env shape.
-    setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
-    glViewport(0, 0, width_, height_);
+    // APPLY-STATE-REDUNDANT-BODY-REMOVE-2: skip the 4 setup calls when the executor
+    // already applied them (MC2_FRAMEGRAPH_EXECUTOR ON). Reset one-shot before draw.
+    if (!shorelineStateAppliedByExecutor_) {
+        glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
+        // M1.5: single-color multiplicative composite; helper preserves env shape.
+        setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
+        glViewport(0, 0, width_, height_);
 
-    // BLENDMODE-MULTIPLY-1: PostProcessShoreline row (Multiply = DST_COLOR/ZERO;
-    // mask values >1 brighten water at the shoreline). depth test+write OFF, cull
-    // None. Byte-identical to the hand-set state.
-    pipeline_binder::applyPipeline(
-        RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessShoreline),
-        "PostProcessShoreline");
+        // BLENDMODE-MULTIPLY-1: PostProcessShoreline row (Multiply = DST_COLOR/ZERO;
+        // mask values >1 brighten water at the shoreline). depth test+write OFF, cull
+        // None. Byte-identical to the hand-set state.
+        pipeline_binder::applyPipeline(
+            RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessShoreline),
+            "PostProcessShoreline");
+    }
+    shorelineStateAppliedByExecutor_ = false;
     render_frame_plan::trace(render_frame_plan::Phase::PostProcess, "Shoreline",
         render_frame_plan::PathKind::ApplyPipeline, 1, "PostProcessShoreline");
 
@@ -2361,20 +2371,25 @@ void gosPostProcess::runFogOob()
     // leaks onto the front-end backdrop. markTerrainDrawn() sets this in-mission.
     if (!sceneHasTerrain_) return;
 
-    // Bind scene FBO — writes to color attachment 0 only.
-    // Reads sceneDepthTex_ (separate attachment — no read/write conflict).
-    glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
-    setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
-    glViewport(0, 0, width_, height_);
+    // APPLY-STATE-REDUNDANT-BODY-REMOVE-2: skip the 4 setup calls when the executor
+    // already applied them (MC2_FRAMEGRAPH_EXECUTOR ON). Reset one-shot before draw.
+    if (!fogOobStateAppliedByExecutor_) {
+        // Bind scene FBO — writes to color attachment 0 only.
+        // Reads sceneDepthTex_ (separate attachment — no read/write conflict).
+        glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
+        setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
+        glViewport(0, 0, width_, height_);
 
-    // POSTPROCESS-FOG-REGISTRATION-1: drive FF state from the PostProcessFogOob row.
-    // Byte-identical: depth test+write OFF, cull None, AlphaBlend
-    // (SRC_ALPHA/ONE_MINUS_SRC_ALPHA). fogOobProg_->apply() below binds the program.
-    // OOB pixels emit (fogColor, opacity), sky pixels (0,0); sceneColorTex_ never
-    // sampled (no read/write feedback). Teardown stays owned by this site.
-    pipeline_binder::applyPipeline(
-        RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessFogOob),
-        "PostProcessFogOob");
+        // POSTPROCESS-FOG-REGISTRATION-1: drive FF state from the PostProcessFogOob row.
+        // Byte-identical: depth test+write OFF, cull None, AlphaBlend
+        // (SRC_ALPHA/ONE_MINUS_SRC_ALPHA). fogOobProg_->apply() below binds the program.
+        // OOB pixels emit (fogColor, opacity), sky pixels (0,0); sceneColorTex_ never
+        // sampled (no read/write feedback). Teardown stays owned by this site.
+        pipeline_binder::applyPipeline(
+            RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessFogOob),
+            "PostProcessFogOob");
+    }
+    fogOobStateAppliedByExecutor_ = false;
     render_frame_plan::trace(render_frame_plan::Phase::PostProcess, "FogOob",
         render_frame_plan::PathKind::ApplyPipeline, 1, "PostProcessFogOob");
 
@@ -4780,6 +4795,8 @@ void gosPostProcess::executorApplyFogOobState()
         RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessFogOob),
         "PostProcessFogOob");
     ++g_applyStatePasses;
+    // APPLY-STATE-REDUNDANT-BODY-REMOVE-2: signal runFogOob() to skip its own copies.
+    fogOobStateAppliedByExecutor_ = true;
 }
 
 // FRAMEGRAPH-APPLY-STATE-ISLAND-2: pre-apply declared GL state for Shoreline.
@@ -4794,6 +4811,8 @@ void gosPostProcess::executorApplyShorelineState()
         RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessShoreline),
         "PostProcessShoreline");
     ++g_applyStatePasses;
+    // APPLY-STATE-REDUNDANT-BODY-REMOVE-2: signal runShoreline() to skip its own copies.
+    shorelineStateAppliedByExecutor_ = true;
 }
 
 // FRAMEGRAPH-APPLY-STATE-ISLAND-2: pre-apply declared GL state for CloudShadow.
@@ -4808,6 +4827,8 @@ void gosPostProcess::executorApplyCloudShadowState()
         RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessCloudShadow),
         "PostProcessCloudShadow");
     ++g_applyStatePasses;
+    // APPLY-STATE-REDUNDANT-BODY-REMOVE-2: signal runCloudShadow() to skip its own copies.
+    cloudShadowStateAppliedByExecutor_ = true;
 }
 
 // --- FRAME-GRAPH-EXECUTOR-ISLAND-2: sub-stage wrappers (EdgeFog + FogOob) ----
