@@ -37,6 +37,7 @@ const KeyboardInfo* getKeyboardInfo() {
 
 void resetKeypress() {
     g_keyboard_info.key_pressed_ = g_keyboard_info.key_released_ = false;
+    g_keyboard_info.first_pressed_ = -1;
 }
 
 ////////////////////////////////////////////////////////////////////////////////

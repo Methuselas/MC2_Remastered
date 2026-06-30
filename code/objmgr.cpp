@@ -1257,7 +1257,7 @@ void GameObjectManager::countTerrainObjects (PacketFile* terrainFile, long first
 		tileCol -= blockI * 20;
 		tileRow -= blockJ * 20;
 		
-		data->vertexNumber = tileRow * 20 + tileRow;
+		data->vertexNumber = tileRow * 20 + tileCol;
 		countObject(data);
 		
 		data++;

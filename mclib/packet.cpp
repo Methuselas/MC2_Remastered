@@ -590,7 +590,7 @@ int PacketFile::writePacket (int packet, MemoryPtr buffer, unsigned int nbytes, 
 		gosASSERT(workBuffer != NULL);
 	}
 
-	gosASSERT((packet > 0) || (packet < numPackets));
+	gosASSERT((packet >= 0) && (packet < numPackets));
 
 	packetBase = getLength();
 	currentPacket = packet;

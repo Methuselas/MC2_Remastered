@@ -22,7 +22,9 @@
 inline signed int double2long(double _in)
 {
 	_in+=6755399441055744.0;
-	return(*(signed int*)&_in);
+	signed int result;
+	memcpy(&result, &_in, sizeof(result));
+	return result;
 }
 
 //***************************************************************************

@@ -530,7 +530,7 @@ bool CSVFile::booleanToLong (char *num)
 long CSVFile::floatToText (char *result, float num, unsigned long bufLen)
 {
 	char temp[250];
-	sprintf(temp,"%f4",num);
+	sprintf(temp,"%.4f",num);
 
 	unsigned long numLength = strlen(temp);
 	if (numLength >= bufLen)
