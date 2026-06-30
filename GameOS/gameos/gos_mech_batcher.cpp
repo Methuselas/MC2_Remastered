@@ -9,6 +9,7 @@
 #include "../../RenderCore/PipelineRegistry.h"  // MECH-PIPELINEDESC-1
 #include "pipeline_binder.h"                     // MECH-PIPELINEDESC-1 applyPipeline
 #include "../../RenderCore/frame_executor.h"     // APPLY-STATE-MECHOPAQUE-1: ApplyPassId
+#include "../../RenderCore/RenderResourceRegistry.h"  // REGISTRY-MATERIAL-SSBO-1: MaterialGpuBuffer
 // M2.5: IsObjectIdBufferEnabled() drives the GLSL prefix that gates the
 // mech.frag layout(location=2) write. Mirrors the include shipped by M1.5
 // at gos_static_prop_batcher.cpp:3. GameOS/ is outside the firewall
@@ -868,6 +869,11 @@ void GpuMechBatcher::onMapLoad() {
     if (s_mechMaterialSsbo != 0) {
         glDeleteBuffers(1, &s_mechMaterialSsbo);
         s_mechMaterialSsbo = 0;
+
+        // REGISTRY-MATERIAL-SSBO-1: mark the slot unavailable on teardown.
+        RenderCore::RenderResourceDesc invalid;
+        invalid.id = RenderCore::RenderResourceId::MaterialGpuBuffer;
+        RenderCore::registerOrUpdateRenderResource(invalid);
     }
     s_mechMaterialTable.clear();
     s_mechHandleToMaterialIdx.clear();
@@ -919,6 +925,11 @@ void GpuMechBatcher::onMapUnload() {
     if (s_mechMaterialSsbo != 0) {
         glDeleteBuffers(1, &s_mechMaterialSsbo);
         s_mechMaterialSsbo = 0;
+
+        // REGISTRY-MATERIAL-SSBO-1: mark the slot unavailable on teardown.
+        RenderCore::RenderResourceDesc invalid;
+        invalid.id = RenderCore::RenderResourceId::MaterialGpuBuffer;
+        RenderCore::registerOrUpdateRenderResource(invalid);
     }
     s_mechMaterialTable.clear();
     s_mechHandleToMaterialIdx.clear();
@@ -1977,6 +1988,22 @@ void GpuMechBatcher::flush() {
             glBufferData(GL_SHADER_STORAGE_BUFFER, static_cast<GLsizeiptr>(byteSize),
                          s_mechMaterialTable.data(), GL_DYNAMIC_DRAW);
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+            // REGISTRY-MATERIAL-SSBO-1: register the mech material SSBO (observe-only
+            // metadata; never read by the draw path). Registered here (not at init)
+            // because both the live GL handle and the byte size are only known once
+            // the material table has been sized and uploaded.
+            {
+                RenderCore::RenderResourceDesc d;
+                d.id        = RenderCore::RenderResourceId::MaterialGpuBuffer;
+                d.kind      = RenderCore::RenderResourceKind::Buffer;
+                d.format    = RenderCore::RenderResourceFormat::BufferRaw;
+                d.debugName = "MaterialGpuBuffer";
+                d.glName    = static_cast<uint32_t>(s_mechMaterialSsbo);
+                d.sizeBytes = static_cast<uint64_t>(byteSize);
+                d.valid     = true;
+                RenderCore::registerOrUpdateRenderResource(d);
+            }
         }
     }
     // Throttled table_link log (first flush + every 600th)
