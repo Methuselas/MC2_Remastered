@@ -249,6 +249,11 @@ class GameObjectManager {
 		RemovedMoverRec			moversRemoved[MAX_REMOVED];
 		unsigned long			nextWatchID;
 		GameObjectPtr			*watchList;
+		// MF3-GENERATIONAL-HANDLE-1: runtime-only generation counters, one per
+		// watchList[] slot, heap-allocated in EXACT lockstep with watchList
+		// (same size getMaxObjects()+1, same memset-0). Never serialized; reset
+		// to base at Load by design. Inert unless MC2_WATCHID_GENERATION is set.
+		uint16_t				*watchGeneration;
 
 		long					currentWeaponsIndex;			//points to next entry in rotating weapon array.
 		long					currentCarnageIndex;			//points to next entry in rotating carnage list		
@@ -502,6 +507,14 @@ class GameObjectManager {
 			// OBJMGR-WATCH-POLICY-EXTRACT-1: shared resolve predicate (behavior-identical).
 			return mc2watch::isResolvableWatchId(watchID, nextWatchID) ? watchList[watchID] : NULL;
 		}
+
+		// MF3-GENERATIONAL-HANDLE-1: additive generational resolve. Behaves like
+		// getByWatchID, plus (when MC2_WATCHID_GENERATION is set) rejects a handle
+		// whose expectedGen no longer matches the slot's current generation
+		// (stale -> NULL + rate-limited diag). Gate OFF: generation ignored, so
+		// behavior is byte-identical to getByWatchID. Defined in objmgr.cpp.
+		// Zero callers this slice (jobs-arc reconcile entry point).
+		GameObjectPtr getByWatchIDGenerational (unsigned long watchID, uint16_t expectedGen);
 
 		long buildMoverLists (void);
 

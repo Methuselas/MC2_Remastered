@@ -142,6 +142,15 @@ extern std::atomic<int> g_workerResubmitCalls;  // FRAME-JOBS-2D: msl.cpp
 static const bool s_gpuCullLifecycle = (getenv("MC2_GPU_CULL_LIFECYCLE") != nullptr);
 
 // ---------------------------------------------------------------------------
+// MF3-GENERATIONAL-HANDLE-1: generational watch-id validation killswitch.
+// MC2_WATCHID_GENERATION present -> bump-on-free + validate-on-access via the
+// watchGeneration[] side array. Default off: the side array is still allocated
+// in lockstep with watchList[] (always valid) but is never read/written, so
+// behavior is byte-identical to before. No slot reuse this slice.
+// ---------------------------------------------------------------------------
+static const bool s_watchGen = (getenv("MC2_WATCHID_GENERATION") != nullptr);
+
+// ---------------------------------------------------------------------------
 // GOM Recon: object type classification & mutation tracking (read-only).
 // MC2_GOM_RECON=1 enables per-frame logging of terrain object types and counts.
 // Zero overhead when disabled. Gated diagnostics only.
@@ -720,6 +729,13 @@ void GameObjectManager::setNumObjects (long nMechs,
 	watchList = (GameObjectPtr*)ObjectTypeManager::objectCache->Malloc(sizeof(GameObjectPtr) * (getMaxObjects() + 1));
 	memset(watchList,0,sizeof(GameObjectPtr) * (getMaxObjects() + 1));
 
+	// MF3-GENERATIONAL-HANDLE-1: generation side array, LOCKSTEP with watchList
+	// (same size, same memset-0). Allocated unconditionally so the pointer is
+	// always valid; only read/written under s_watchGen. Shares watchList's
+	// objectCache lifecycle (no discrete Free; reclaimed with the cache).
+	watchGeneration = (uint16_t*)ObjectTypeManager::objectCache->Malloc(sizeof(uint16_t) * (getMaxObjects() + 1));
+	memset(watchGeneration,0,sizeof(uint16_t) * (getMaxObjects() + 1));
+
 	long curHandle = 1;
 	//--------------------------------------------------------------
 	// For now, we'll use an array of pointers due to the irritating
@@ -1009,8 +1025,41 @@ void GameObjectManager::setWatchID (GameObjectPtr obj) {
 			return;
 		}
 		watchList[nextWatchID] = obj;
+		// MF3-GENERATIONAL-HANDLE-1: stamp the slot's generation on assign (gated).
+		// No reuse this slice, so nextWatchID is a fresh slot (gen 0 -> 1).
+		if (s_watchGen)
+			watchGeneration[nextWatchID] = mc2watch::nextGenerationOnAssign(watchGeneration[nextWatchID]);
 		obj->watchID = nextWatchID++;
 	}
+}
+
+//---------------------------------------------------------------------------
+// MF3-GENERATIONAL-HANDLE-1: additive generational resolve. When the gate is
+// OFF this is behavior-identical to getByWatchID (generation ignored). When ON,
+// a handle whose expectedGen no longer matches the slot's current generation is
+// rejected (fail-safe NULL + rate-limited diag), the same shape as an
+// unresolvable id. No hard assert: a stale result is a recoverable drop, like
+// the existing un-watchable / load-invalidate fail-safes. Zero callers this
+// slice; exercised by gate-ON proof only.
+GameObjectPtr GameObjectManager::getByWatchIDGenerational (unsigned long watchID, uint16_t expectedGen) {
+
+	if (!mc2watch::isResolvableWatchId(watchID, nextWatchID))
+		return NULL;
+	if (s_watchGen && !mc2watch::generationMatches(watchGeneration[watchID], expectedGen)) {
+		static unsigned long s_watchStaleDrops = 0;
+		++s_watchStaleDrops;
+		if (mc2_diag::tagEnabled("WATCHID_STALE") &&
+			(s_watchStaleDrops == 1 || (s_watchStaleDrops & 0xFF) == 0)) {
+			char _ws_buf[160];
+			snprintf(_ws_buf, sizeof(_ws_buf),
+				"{\"watchID\":%lu,\"expected\":%u,\"stored\":%u,\"drops\":%lu}",
+				watchID, (unsigned)expectedGen,
+				(unsigned)watchGeneration[watchID], s_watchStaleDrops);
+			mc2_diag::writeEvent("WATCHID_STALE", 1, 0, _ws_buf);
+		}
+		return NULL;
+	}
+	return watchList[watchID];
 }
 
 //---------------------------------------------------------------------------
@@ -1023,6 +1072,10 @@ void GameObjectManager::freeMover (MoverPtr mover) {
 		MC2_DESTROY(mover, "mover_freed");
 		mover->setFlag(OBJECT_FLAG_REMOVED, true);
 		mover->setPartId(0);
+		// MF3-GENERATIONAL-HANDLE-1: bump the slot's generation on free (gated) so
+		// any cross-frame handle captured at the old generation reads as stale.
+		if (s_watchGen)
+			watchGeneration[mover->watchID] = mc2watch::bumpGenerationOnFree(watchGeneration[mover->watchID]);
 		watchList[mover->watchID] = NULL;
 		mover->watchID = 0;
 	}
@@ -4932,6 +4985,12 @@ long GameObjectManager::Load (PacketFilePtr file, long packetNum)
 
 	watchList = (GameObjectPtr*)ObjectTypeManager::objectCache->Malloc(sizeof(GameObjectPtr) * (getMaxObjects() + 1));
 	memset(watchList,0,sizeof(GameObjectPtr) * (getMaxObjects() + 1));
+
+	// MF3-GENERATIONAL-HANDLE-1: Load re-alloc of the generation side array, in
+	// LOCKSTEP with watchList above. Load = fresh generations by design (reset
+	// to 0); generation is runtime-only and never deserialized.
+	watchGeneration = (uint16_t*)ObjectTypeManager::objectCache->Malloc(sizeof(uint16_t) * (getMaxObjects() + 1));
+	memset(watchGeneration,0,sizeof(uint16_t) * (getMaxObjects() + 1));
 
 	long i = 0;
 	long curHandle = 1;

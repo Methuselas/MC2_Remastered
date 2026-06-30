@@ -144,6 +144,39 @@ static bool test_load_restore_never_derefs_oob(TestCtx& t) {
     return true;
 }
 
+// --- MF3 generational handle policy ------------------------------------------
+
+static bool test_generation_assign_sets_one(TestCtx& t) {
+    // Fresh (never-assigned) slot is gen 0; first assign promotes it to 1.
+    CH_CHECK(t, wp::nextGenerationOnAssign(0) == (uint16_t)1);
+    // An already-assigned slot keeps its current generation on re-assign.
+    CH_CHECK(t, wp::nextGenerationOnAssign(1) == (uint16_t)1);
+    CH_CHECK(t, wp::nextGenerationOnAssign(42) == (uint16_t)42);
+    return true;
+}
+
+static bool test_generation_bump_on_free(TestCtx& t) {
+    CH_CHECK(t, wp::bumpGenerationOnFree(1) == (uint16_t)2);
+    CH_CHECK(t, wp::bumpGenerationOnFree(0) == (uint16_t)1);
+    // Wrap is acceptable (staleness-only): 65535 -> 0.
+    CH_CHECK(t, wp::bumpGenerationOnFree((uint16_t)65535) == (uint16_t)0);
+    return true;
+}
+
+static bool test_generation_stale_vs_fresh(TestCtx& t) {
+    // Simulate alloc -> free -> realloc into the SAME slot, then validate handles.
+    uint16_t gen = wp::nextGenerationOnAssign(0);   // first assign: gen 1
+    const uint16_t oldHandleGen = gen;              // a handle captured while gen==1
+    gen = wp::bumpGenerationOnFree(gen);            // slot freed: gen 2
+    const uint16_t newHandleGen = wp::nextGenerationOnAssign(gen); // re-assign keeps gen 2
+    CH_CHECK(t, newHandleGen == (uint16_t)2);
+    // Stale handle (gen 1) must NOT match the slot's current generation.
+    CH_CHECK(t, wp::generationMatches(gen, oldHandleGen) == false);
+    // Fresh handle (gen 2) must match.
+    CH_CHECK(t, wp::generationMatches(gen, newHandleGen) == true);
+    return true;
+}
+
 // Demo-only (not in the default suite): proves the harness actually fails when a
 // guard is wrong, so a green default run is meaningful.
 static bool test_demo_intentional_fail(TestCtx& t) {
@@ -162,6 +195,9 @@ int main(int argc, char** argv) {
     h.add("load_rejects_out_of_range_index",        test_load_rejects_out_of_range_index);
     h.add("load_allows_boundary_and_valid_index",   test_load_allows_boundary_and_valid_index);
     h.add("load_restore_never_derefs_oob",          test_load_restore_never_derefs_oob);
+    h.add("generation_assign_sets_one",             test_generation_assign_sets_one);
+    h.add("generation_bump_on_free",                test_generation_bump_on_free);
+    h.add("generation_stale_vs_fresh",              test_generation_stale_vs_fresh);
     h.add("demo_intentional_fail",                  test_demo_intentional_fail, /*inDefault=*/false);
     return h.run(argc, argv);
 }

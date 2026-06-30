@@ -1108,6 +1108,10 @@ def main():
                             # Both require --with-env overrides; not automated yet.
                             "MC2_GPU_CULL_LIFECYCLE",
                             "MC2_GPU_CULL_LIFECYCLE_TRACE",
+                            # MF3-GENERATIONAL-HANDLE-1: generational watch-id
+                            # validation gate (default-OFF). Allowlisted so the
+                            # gate-ON smoke exercises the side-array bump/alloc path.
+                            "MC2_WATCHID_GENERATION",
                             # Phase C — GPU-driven unified path
                             "MC2_GPU_DRIVEN",
                             "MC2_GPU_DRIVEN_WATER",
