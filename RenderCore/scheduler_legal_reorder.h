@@ -429,4 +429,190 @@ inline bool isCurrentOrderLegal() {
                                   kFramePassOrder, kFramePassOrderCount);
 }
 
+// ===========================================================================
+// SCHEDULER-REORDER-ORACLE-1 — the SLICE-2 permutation-legality ORACLE.
+//
+// ★ PROOF-ONLY. This oracle answers "would this reorder be legal?" for an
+//   ARBITRARY candidate permutation of the frame passes. It MOVES NOTHING and
+//   EXECUTES NOTHING. A `Legal` verdict is NOT a license to reorder — it means
+//   only "eligible for a future MEASURED reorder experiment". Byte-identical by
+//   construction: header + doctests, ZERO runtime callers.
+//
+// Three-state verdict (deliberately NOT collapsed to a boolean): a candidate can
+// be resource-wise legal yet STILL unsafe to actually move because it crosses a
+// deferred soft-state hazard (tex-unit latch / bound FBO / clip-control) that the
+// resource model cannot fully see. Reporting that case DISTINCTLY is the whole
+// point — the advisor must not overclaim "safe to reorder".
+// ---------------------------------------------------------------------------
+enum class ReorderVerdict : uint8_t {
+    Legal = 0,                  // every forbidden edge held AND no deferred hazard crossed
+    ForbiddenEdgeViolated,      // a HardResource/SoftState/LegacyLatch edge runs backwards
+    BlockedByDeferredSoftState, // forbidden edges hold, but the move crosses a deferred hazard
+};
+
+inline const char* reorderVerdictName(ReorderVerdict v) {
+    switch (v) {
+        case ReorderVerdict::Legal:                      return "Legal";
+        case ReorderVerdict::ForbiddenEdgeViolated:      return "ForbiddenEdgeViolated";
+        case ReorderVerdict::BlockedByDeferredSoftState: return "BlockedByDeferredSoftState";
+    }
+    return "?";
+}
+
+// The deferred soft-state hazards (kDeferredSoftStateEdges) are real GL-state
+// latches with NO stable per-pass declarable value — they carry None/None pass
+// ids precisely because the resource model cannot pin them to a from/to pair.
+// What the corpus DOES tell us is WHERE they live: the colorMask-reassert / FBO /
+// clip-control / tex-unit hazards all bracket the Terrain..PostProcess region of
+// the shipped order (terrain re-asserts colorMask, post sub-passes consume the
+// latch, FBO/clip-control churn across the overlay/decal/water/veg/vfx/ui block).
+// Passes STRICTLY BEFORE Terrain in the shipped order (Shadow, the two opaque
+// geometry passes) sit OUTSIDE that hazard region — they are z-tested opaque
+// draws that do not touch the deferred soft-state. So a swap is "deferred-clean"
+// iff BOTH moved passes sit before the deferred-hazard boundary (= Terrain's
+// shipped slot). This is the conservative analog of KnownEarly suppression: it is
+// the ONE region the resource DAG provably does not cover.
+inline int deferredHazardBoundaryIndex() {
+    return orderIndexOf(RenderPassId::Terrain, kFramePassOrder, kFramePassOrderCount);
+}
+
+// crossesDeferredSoftState — true iff the candidate permutation moves a pass into
+// or out of the deferred-hazard region relative to the shipped order. Concretely:
+// a pass participates in the hazard iff its SHIPPED slot is >= the boundary; if a
+// candidate changes the relative order of ANY hazard-region pass against ANY other
+// pass, the resource model cannot prove the deferred soft-state still holds, so we
+// must block (refuse to overclaim). For an adjacent swap this reduces to: at least
+// one of the two swapped passes is in the hazard region.
+inline bool crossesDeferredSoftState(const RenderPassId* candidate, int n,
+                                     PassEdge* outDeferred) {
+    const int boundary = deferredHazardBoundaryIndex();
+    if (boundary < 0) return false;
+    // The shipped slot of every pass; a pass at shipped slot >= boundary is "in" the
+    // deferred-hazard region. Detect any pair whose relative order differs between the
+    // shipped order and the candidate AND where at least one member is in the region.
+    for (int i = 0; i < n; ++i) {
+        const int si = orderIndexOf(candidate[i], kFramePassOrder, kFramePassOrderCount);
+        if (si < 0) continue;
+        for (int j = i + 1; j < n; ++j) {
+            const int sj = orderIndexOf(candidate[j], kFramePassOrder, kFramePassOrderCount);
+            if (sj < 0) continue;
+            // candidate has i before j; shipped has them in (si,sj) order.
+            const bool reorderedPair = (si > sj); // they appear swapped vs shipped
+            if (!reorderedPair) continue;
+            const bool inRegion = (si >= boundary) || (sj >= boundary);
+            if (inRegion) {
+                if (outDeferred && kDeferredSoftStateEdgeCount > 0)
+                    *outDeferred = kDeferredSoftStateEdges[0];
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// isReorderLegal — the oracle. For a candidate permutation:
+//   1. Classify edges over the SHIPPED contract table against the CANDIDATE order
+//      (so the producer-walk resolves last-writer relative to the candidate).
+//   2. For every forbidden edge (HardResource/SoftState/LegacyLatch), assert
+//      pos(from) < pos(to) in the candidate, honoring KnownEarly suppression. The
+//      forbidden edges are evaluated against the SHIPPED classification so a swap
+//      cannot "hide" an edge by relabelling the last writer: we OR the candidate-
+//      derived forbidden edges WITH the shipped hand tables (already folded in by
+//      classifyEdgesFor). First backwards edge -> ForbiddenEdgeViolated.
+//   3. If all forbidden edges hold, check crossesDeferredSoftState; if so ->
+//      BlockedByDeferredSoftState (resource-wise legal but not safe to move).
+//   4. Else Legal (a CANDIDATE legal adjacent swap; eligible for a future MEASURED
+//      reorder experiment — NOT an approved/scheduled reorder).
+//
+// outFirstViolated (optional) receives the first forbidden edge that runs
+// backwards (when ForbiddenEdgeViolated) or the deferred hazard edge (when
+// BlockedByDeferredSoftState); left untouched on Legal.
+inline ReorderVerdict isReorderLegal(const RenderPassId* candidate, int n,
+                                     PassEdge* outFirstViolated) {
+    // Classify the shipped contract table against the candidate order. forbidden
+    // edges (derived producer->consumer + the shipped hand tables) come back folded.
+    PassEdge edges[256];
+    int ec = 0;
+    classifyEdgesFor(kRenderPassContracts, kRenderPassIdCount, candidate, n, edges, ec);
+
+    // KnownEarly suppression set (same rule as isCurrentOrderLegalFor).
+    bool knownEarly[static_cast<int>(RenderPassId::_SentinelLast)] = { false };
+    for (int i = 0; i < ec; ++i)
+        if (edges[i].cls == EdgeClass::KnownEarly && edges[i].to != RenderPassId::None)
+            knownEarly[static_cast<int>(edges[i].to)] = true;
+
+    for (int i = 0; i < ec; ++i) {
+        const PassEdge& e = edges[i];
+        if (!e.forbidden) continue;
+        if (e.from == RenderPassId::None || e.to == RenderPassId::None) continue;
+        const int pf = orderIndexOf(e.from, candidate, n);
+        const int pt = orderIndexOf(e.to,   candidate, n);
+        if (pf < 0 || pt < 0) continue;      // edge references a pass absent from candidate
+        if (pf < pt) continue;               // satisfied: producer precedes consumer
+        if (knownEarly[static_cast<int>(e.to)]) continue; // suppressed apparent-early
+        if (outFirstViolated) *outFirstViolated = e;
+        return ReorderVerdict::ForbiddenEdgeViolated;
+    }
+
+    // Forbidden edges all hold. Now the conservative deferred-soft-state gate.
+    PassEdge deferred;
+    if (crossesDeferredSoftState(candidate, n, &deferred)) {
+        if (outFirstViolated) *outFirstViolated = deferred;
+        return ReorderVerdict::BlockedByDeferredSoftState;
+    }
+    return ReorderVerdict::Legal;
+}
+
+// legalAdjacentSwaps — for each adjacent pair (i, i+1) in kFramePassOrder, build
+// the swapped permutation and run the oracle. out[i] = true IFF the verdict is
+// Legal (NOT merely "forbidden-edges-hold"; a deferred-blocked swap is out[i]=
+// false). On the content-free shipped baseline the ONLY true entry is the
+// StaticPropOpaque<->MechOpaque swap (E6: two opaque, z-tested passes with no
+// hard edge between them, both before the deferred-hazard boundary). Everything
+// else is forbidden or deferred-blocked. `out` must hold (n-1) bools.
+inline void legalAdjacentSwaps(bool* out, int n) {
+    for (int i = 0; i + 1 < n; ++i) {
+        RenderPassId cand[static_cast<int>(RenderPassId::_SentinelLast)];
+        for (int k = 0; k < n; ++k) cand[k] = kFramePassOrder[k];
+        const RenderPassId tmp = cand[i];
+        cand[i] = cand[i + 1];
+        cand[i + 1] = tmp;
+        const ReorderVerdict v = isReorderLegal(cand, n, nullptr);
+        out[i] = (v == ReorderVerdict::Legal);
+    }
+}
+
+// reportReorderVerdict — format a candidate's verdict + (if not Legal) the first
+// blocking edge and its class, into a caller-provided buffer.
+//
+// ★ WORDING CONTRACT: a Legal verdict is reported as a "candidate legal adjacent
+//   swap" / "eligible for a future MEASURED reorder experiment" — NEVER as
+//   "approved reorder", "safe to reorder", or "scheduled". The oracle proves
+//   eligibility, not sanction. Do not soften this wording.
+inline void reportReorderVerdict(ReorderVerdict v, const PassEdge* blocking,
+                                 char* buf, int bufLen) {
+    if (!buf || bufLen <= 0) return;
+    const char* head =
+        (v == ReorderVerdict::Legal)
+            ? "candidate legal adjacent swap (eligible for a future MEASURED reorder experiment)"
+        : (v == ReorderVerdict::ForbiddenEdgeViolated)
+            ? "NOT a candidate: forbidden edge violated"
+        :   "NOT a candidate: resource-wise legal BUT blocked by a deferred soft-state edge";
+
+    // Tiny GL-free formatter (no <cstdio> dependency contract beyond what doctest
+    // already pulls in is assumed; use a manual append to stay self-contained).
+    int p = 0;
+    auto put = [&](const char* s) {
+        for (int k = 0; s[k] && p < bufLen - 1; ++k) buf[p++] = s[k];
+    };
+    put(head);
+    if (v != ReorderVerdict::Legal && blocking) {
+        put(" [");
+        put(edgeClassName(blocking->cls));
+        put("] ");
+        put(blocking->note ? blocking->note : "");
+    }
+    buf[p] = '\0';
+}
+
 }} // namespace RenderCore::framegraph

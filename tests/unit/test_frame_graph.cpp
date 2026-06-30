@@ -2011,4 +2011,153 @@ TEST_CASE("edge classify (f): SoftState colorMask-reassert + LegacyLatch terrain
     CHECK(legacyLatch  == true);
 }
 
+// ---------------------------------------------------------------------------
+// SCHEDULER-REORDER-ORACLE-1: GL-free permutation-legality oracle. PROOF-ONLY —
+// the oracle moves nothing and executes nothing; a Legal verdict = "eligible for
+// a future MEASURED reorder experiment", NOT an approved/scheduled reorder.
+// ---------------------------------------------------------------------------
+
+// doctest cannot stringify these scoped enums (no operator<<), so compare via a
+// uint cast — the same pattern the resource-id CHECKs above use.
+template <class E> static unsigned uns(E e) { return static_cast<unsigned>(e); }
+
+// Helper: build the shipped order into a caller buffer, return the count.
+static int buildShippedOrder(RenderCore::RenderPassId* out) {
+    using namespace RenderCore::framegraph;
+    for (int i = 0; i < kFramePassOrderCount; ++i) out[i] = kFramePassOrder[i];
+    return kFramePassOrderCount;
+}
+
+TEST_CASE("oracle (a): identity (kFramePassOrder) -> Legal") {
+    using namespace RenderCore::framegraph;
+    RenderPassId cand[32];
+    const int n = buildShippedOrder(cand);
+    PassEdge v{};
+    CHECK(uns(isReorderLegal(cand, n, &v)) == uns(ReorderVerdict::Legal));
+}
+
+TEST_CASE("oracle (b): StaticProp moved BEFORE Shadow -> ForbiddenEdgeViolated (Shadow->StaticProp RAW)") {
+    using namespace RenderCore::framegraph;
+    RenderPassId cand[32];
+    const int n = buildShippedOrder(cand);
+    // Shipped: Shadow(0), StaticProp(1). Swap so StaticProp precedes Shadow.
+    cand[0] = RenderPassId::StaticPropOpaque;
+    cand[1] = RenderPassId::Shadow;
+    PassEdge first{};
+    const ReorderVerdict v = isReorderLegal(cand, n, &first);
+    CHECK(uns(v) == uns(ReorderVerdict::ForbiddenEdgeViolated));
+    // First violated edge must be Shadow -> StaticPropOpaque via ShadowDynamicMap.
+    CHECK(uns(first.from) == uns(RenderPassId::Shadow));
+    CHECK(uns(first.to)   == uns(RenderPassId::StaticPropOpaque));
+    CHECK(static_cast<unsigned>(first.via) == static_cast<unsigned>(RenderResourceId::ShadowDynamicMap));
+}
+
+TEST_CASE("oracle (c): Terrain moved AFTER PostProcess breaks the sceneHasTerrain latch -> ForbiddenEdgeViolated") {
+    using namespace RenderCore::framegraph;
+    // Move Terrain to the very end (after PostProcess) by rotating it out of slot 3.
+    // This breaks Terrain->PostProcess (both the colorMask reassert and the
+    // sceneHasTerrain latch run backwards). Verdict must be ForbiddenEdgeViolated,
+    // and a Terrain->PostProcess LegacyLatch forbidden edge must be present + violated.
+    RenderPassId base[32];
+    const int n = buildShippedOrder(base);
+    // Build candidate: everything except Terrain in shipped order, then Terrain last.
+    RenderPassId cand[32];
+    int c = 0;
+    for (int i = 0; i < n; ++i)
+        if (base[i] != RenderPassId::Terrain) cand[c++] = base[i];
+    cand[c++] = RenderPassId::Terrain;
+    REQUIRE(c == n);
+
+    PassEdge first{};
+    const ReorderVerdict v = isReorderLegal(cand, n, &first);
+    CHECK(uns(v) == uns(ReorderVerdict::ForbiddenEdgeViolated));
+    // The first violated edge is a Terrain->PostProcess soft/latch handshake.
+    CHECK(uns(first.from) == uns(RenderPassId::Terrain));
+    CHECK(uns(first.to)   == uns(RenderPassId::PostProcess));
+    CHECK((first.cls == EdgeClass::SoftState || first.cls == EdgeClass::LegacyLatch));
+
+    // And specifically the LegacyLatch (sceneHasTerrain) edge exists, is forbidden,
+    // and runs backwards in this candidate (pos(Terrain) > pos(PostProcess)).
+    PassEdge edges[256];
+    int ec = 0;
+    classifyEdgesFor(kRenderPassContracts, kRenderPassIdCount, cand, n, edges, ec);
+    bool latchViolated = false;
+    const int pTerrain = orderIndexOf(RenderPassId::Terrain, cand, n);
+    const int pPost    = orderIndexOf(RenderPassId::PostProcess, cand, n);
+    for (int i = 0; i < ec; ++i) {
+        const PassEdge& e = edges[i];
+        if (e.cls == EdgeClass::LegacyLatch && e.from == RenderPassId::Terrain &&
+            e.to == RenderPassId::PostProcess && e.forbidden && pTerrain > pPost)
+            latchViolated = true;
+    }
+    CHECK(latchViolated == true);
+}
+
+TEST_CASE("oracle (d): legalAdjacentSwaps -> exactly one true (StaticProp<->Mech), asserted by index") {
+    using namespace RenderCore::framegraph;
+    bool swaps[32] = { false };
+    legalAdjacentSwaps(swaps, kFramePassOrderCount);
+
+    int trueCount = 0, trueIdx = -1;
+    for (int i = 0; i + 1 < kFramePassOrderCount; ++i)
+        if (swaps[i]) { ++trueCount; trueIdx = i; }
+
+    CHECK(trueCount == 1);
+    // The one true must be the adjacent pair (StaticPropOpaque, MechOpaque).
+    REQUIRE(trueIdx >= 0);
+    CHECK(uns(kFramePassOrder[trueIdx])     == uns(RenderPassId::StaticPropOpaque));
+    CHECK(uns(kFramePassOrder[trueIdx + 1]) == uns(RenderPassId::MechOpaque));
+}
+
+TEST_CASE("oracle (e): forbidden-edges-hold but crosses a deferred soft-state pair -> BlockedByDeferredSoftState") {
+    using namespace RenderCore::framegraph;
+    // Swap TerrainOverlay(slot 4) <-> TerrainDecal(slot 5). No forbidden edge runs
+    // between them (Terrain produces MainDepth for both; neither depends on the
+    // other), so the resource model says "legal" — BUT both sit in the deferred
+    // soft-state hazard region (>= Terrain's boundary), so the oracle must REFUSE to
+    // overclaim and return BlockedByDeferredSoftState.
+    RenderPassId cand[32];
+    const int n = buildShippedOrder(cand);
+    const int io = orderIndexOf(RenderPassId::TerrainOverlay, cand, n);
+    const int id = orderIndexOf(RenderPassId::TerrainDecal,   cand, n);
+    REQUIRE(io >= 0); REQUIRE(id >= 0);
+    const RenderPassId tmp = cand[io]; cand[io] = cand[id]; cand[id] = tmp;
+
+    PassEdge blocking{};
+    const ReorderVerdict v = isReorderLegal(cand, n, &blocking);
+    CHECK(uns(v) == uns(ReorderVerdict::BlockedByDeferredSoftState));
+    // The reported blocking edge is a deferred soft-state hazard (non-forbidden ledger).
+    CHECK(uns(blocking.cls) == uns(EdgeClass::SoftState));
+    CHECK(blocking.forbidden == false);
+}
+
+TEST_CASE("oracle (f): StaticProp<->Mech swap -> Legal, reported with conservative wording (not 'approved')") {
+    using namespace RenderCore::framegraph;
+    RenderPassId cand[32];
+    const int n = buildShippedOrder(cand);
+    const int is = orderIndexOf(RenderPassId::StaticPropOpaque, cand, n);
+    const int im = orderIndexOf(RenderPassId::MechOpaque,       cand, n);
+    REQUIRE(is >= 0); REQUIRE(im >= 0);
+    const RenderPassId tmp = cand[is]; cand[is] = cand[im]; cand[im] = tmp;
+
+    PassEdge unused{};
+    const ReorderVerdict v = isReorderLegal(cand, n, &unused);
+    CHECK(uns(v) == uns(ReorderVerdict::Legal));
+
+    // Reporting helper uses the conservative wording — NEVER "approved"/"safe"/"scheduled".
+    char buf[256];
+    reportReorderVerdict(v, nullptr, buf, sizeof(buf));
+    const std::string s = buf;
+    CHECK(s.find("candidate legal adjacent swap") != std::string::npos);
+    CHECK(s.find("MEASURED reorder experiment")   != std::string::npos);
+    CHECK(s.find("approved")  == std::string::npos);
+    CHECK(s.find("safe to reorder") == std::string::npos);
+    CHECK(s.find("scheduled") == std::string::npos);
+
+    // reorderVerdictName cross-check.
+    CHECK(std::string(reorderVerdictName(ReorderVerdict::Legal)) == "Legal");
+    CHECK(std::string(reorderVerdictName(ReorderVerdict::ForbiddenEdgeViolated)) == "ForbiddenEdgeViolated");
+    CHECK(std::string(reorderVerdictName(ReorderVerdict::BlockedByDeferredSoftState)) == "BlockedByDeferredSoftState");
+}
+
 } // TEST_SUITE
