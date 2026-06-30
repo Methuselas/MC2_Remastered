@@ -22,6 +22,7 @@
 #include "gos_materials.h"
 
 #include "../../RenderCore/MaterialGpu.h"
+#include "../../RenderCore/GpuBufferOwner.h"  // MECH-PROFILE-SSBO-OWNER-1: owner record
 #include "utils/Image.h"
 #include <GL/glew.h>
 
@@ -55,7 +56,20 @@ struct ProfileEntry {
 
 std::vector<ProfileEntry>                s_profiles;
 std::unordered_map<std::string, uint32_t> s_nameToIndex;
-GLuint                                    s_ssbo = 0;
+// MECH-PROFILE-SSBO-OWNER-1: mech material-profile table SSBO (binding 7),
+// narrowed behind a GpuBufferOwner identity record (logical id + lifetime +
+// debug name + GLuint value). GL calls happen at the same sites with the same
+// args/order/flags/slot; the raw handle is reached only via owner.glName.
+// Lifetime Persistent: created once in uploadSsbo() (from init()), destroyed in
+// shutdown(); survives mission reload (not rebuilt per map). Registered at
+// create, invalidated on destroy. When MC2_MECH_SURFACE_MATERIAL is unset,
+// s_profiles is empty, uploadSsbo() early-returns, and glName stays 0 (no
+// register) — passthrough is byte-identical.
+RenderCore::GpuBufferOwner                s_ssbo{
+    RenderCore::RenderResourceId::MechProfileMaterialGpuBuffer,
+    RenderCore::RenderResourceLifetime::Persistent,
+    "MechProfileMaterialGpuBuffer",
+    0u};
 bool                                      s_initialized = false;
 
 // Binding 7: mech material profile table (temporary; binding 5 owned by static-prop batcher).
@@ -74,17 +88,38 @@ static void uploadSsbo() {
     for (const auto& p : s_profiles)
         table.push_back(p.gpu);
 
-    if (s_ssbo == 0) glGenBuffers(1, &s_ssbo);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_ssbo);
+    const GLsizeiptr byteSize =
+        static_cast<GLsizeiptr>(table.size() * sizeof(RenderCore::MaterialGpu));
+
+    if (s_ssbo.glName == 0) {
+        GLuint local = 0;
+        glGenBuffers(1, &local);
+        s_ssbo.glName = static_cast<uint32_t>(local);
+    }
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, static_cast<GLuint>(s_ssbo.glName));
     glBufferData(GL_SHADER_STORAGE_BUFFER,
-                 static_cast<GLsizeiptr>(table.size() * sizeof(RenderCore::MaterialGpu)),
+                 byteSize,
                  table.data(),
                  GL_STATIC_DRAW);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
+    // MECH-PROFILE-SSBO-OWNER-1: register the live profile table SSBO (observe-only
+    // metadata; never read by the draw path). Reached here only when a profile was
+    // loaded (s_profiles non-empty), i.e. MC2_MECH_SURFACE_MATERIAL set.
+    RenderCore::RenderResourceDesc d;
+    d.id        = s_ssbo.id;
+    d.kind      = RenderCore::RenderResourceKind::Buffer;
+    d.lifetime  = s_ssbo.lifetime;
+    d.format    = RenderCore::RenderResourceFormat::BufferRaw;
+    d.debugName = s_ssbo.debugName;
+    d.glName    = s_ssbo.glName;
+    d.sizeBytes = static_cast<uint64_t>(byteSize);
+    d.valid     = true;
+    RenderCore::registerOrUpdateRenderResource(d);
+
     std::fprintf(stderr,
         "[GOS_MATERIALS] uploaded profile table: %u entries, ssbo=%u\n",
-        static_cast<uint32_t>(table.size()), s_ssbo);
+        static_cast<uint32_t>(table.size()), s_ssbo.glName);
 }
 
 // ---------------------------------------------------------------------------
@@ -459,7 +494,7 @@ void init() {
 
     std::fprintf(stderr,
         "[GOS_MATERIALS] init complete: %u profiles, ssbo=%u\n",
-        static_cast<uint32_t>(s_profiles.size()), s_ssbo);
+        static_cast<uint32_t>(s_profiles.size()), s_ssbo.glName);
 }
 
 void shutdown() {
@@ -477,9 +512,16 @@ void shutdown() {
     s_profiles.clear();
     s_nameToIndex.clear();
 
-    if (s_ssbo) {
-        glDeleteBuffers(1, &s_ssbo);
-        s_ssbo = 0;
+    if (s_ssbo.glName != 0) {
+        GLuint local = static_cast<GLuint>(s_ssbo.glName);
+        glDeleteBuffers(1, &local);
+        s_ssbo.glName = 0;
+
+        // MECH-PROFILE-SSBO-OWNER-1: mark the slot unavailable on teardown.
+        RenderCore::RenderResourceDesc invalid;
+        invalid.id    = RenderCore::RenderResourceId::MechProfileMaterialGpuBuffer;
+        invalid.valid = false;
+        RenderCore::registerOrUpdateRenderResource(invalid);
     }
 
     s_initialized = false;
@@ -499,8 +541,8 @@ uint32_t profileCount() {
 
 void bindMaterialTable() {
     if (!s_gpuEnabled) return;
-    if (s_ssbo == 0) return;
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, kMechMaterialTableBinding, s_ssbo);
+    if (s_ssbo.glName == 0) return;
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, kMechMaterialTableBinding, static_cast<GLuint>(s_ssbo.glName));
 }
 
 uint32_t getProfileNormalTex(uint32_t index) {

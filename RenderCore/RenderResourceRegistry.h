@@ -37,6 +37,7 @@ enum class RenderResourceId : uint16_t {
     TerrainTypeSsbo      = 26,  // GPU-BUFFER-OWNER-SKELETON-1: LOD-chunk per-quad type SSBO (s_typeSsbo, gos_terrain_lod_chunk.cpp); LIVE, raw-owned, UNregistered today.
     TerrainCementSsbo    = 27,  // GPU-BUFFER-OWNER-SKELETON-1: LOD-chunk cement-word SSBO (s_cementSsbo, gos_terrain_lod_chunk.cpp); LIVE, raw-owned, UNregistered today.
     StaticPropMaterialGpuBuffer = 28,  // STATICPROP-MATERIAL-SSBO-OWNER-1: static-prop MaterialGpu table SSBO (s_materialGpuSsbo, binding 5, gos_static_prop_batcher.cpp); LIVE default-ON, Mission lifetime. Distinct from mech-material MaterialGpuBuffer(id5, binding 2).
+    MechProfileMaterialGpuBuffer = 29,  // MECH-PROFILE-SSBO-OWNER-1: mech material-profile table SSBO (s_ssbo, binding 7, gos_materials.cpp); Persistent lifetime (init→shutdown). Only created when MC2_MECH_SURFACE_MATERIAL loads a profile; default run leaves glName==0. Distinct from binding-5 static-prop and binding-2 mech-material tables.
     Count
 };
 

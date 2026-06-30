@@ -71,6 +71,7 @@ const char* toString(RenderResourceId id) {
         case RenderResourceId::TerrainTypeSsbo:      return "TerrainTypeSsbo";
         case RenderResourceId::TerrainCementSsbo:    return "TerrainCementSsbo";
         case RenderResourceId::StaticPropMaterialGpuBuffer: return "StaticPropMaterialGpuBuffer";
+        case RenderResourceId::MechProfileMaterialGpuBuffer: return "MechProfileMaterialGpuBuffer";
         case RenderResourceId::Count:                return "Count";
     }
     return "unknown";
