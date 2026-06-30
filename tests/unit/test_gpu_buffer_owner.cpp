@@ -95,3 +95,99 @@ TEST_CASE("GPU-BUFFER-OWNER-SKELETON-1 new ids toString and ordering") {
 }
 
 } // TEST_SUITE("GpuBufferOwner")
+
+// GPU-BUFFER-OWNER-LIFETIME-CHECK-1: offline guard that the 4 GPU-owner
+// RenderResourceIds (view-UBO / terrain type / cement / height), when
+// registered as valid Buffer resources, carry a concrete (non-Unset) lifetime
+// and pass the registry lifetime validator. This locks in the prior owner
+// slices against a future registration that defaults the lifetime to Unset.
+// GL-free, offline; uses only the existing registry API.
+TEST_SUITE("GpuBufferOwnerLifetimeCheck") {
+
+namespace {
+// The 4 owner ids paired with their registered lifetime + debugName literal.
+struct OwnerExpectation {
+    RenderCore::RenderResourceId     id;
+    RenderCore::RenderResourceLifetime lifetime;
+    const char*                      name;
+};
+const OwnerExpectation kOwners[] = {
+    { RenderCore::RenderResourceId::ViewUniformsUbo,   RenderCore::RenderResourceLifetime::Persistent, "ViewUniformsUbo"   },
+    { RenderCore::RenderResourceId::TerrainTypeSsbo,   RenderCore::RenderResourceLifetime::Mission,     "TerrainTypeSsbo"   },
+    { RenderCore::RenderResourceId::TerrainCementSsbo, RenderCore::RenderResourceLifetime::Mission,     "TerrainCementSsbo" },
+    { RenderCore::RenderResourceId::TerrainHeightSsbo, RenderCore::RenderResourceLifetime::Mission,     "TerrainHeightSsbo" },
+};
+} // namespace
+
+TEST_CASE("the 4 GPU-owner ids register as Buffer resources with non-Unset lifetimes that pass the validator") {
+    REQUIRE(getRenderResourceCount() == 0);  // clean registry from prior tests
+
+    for (const auto& e : kOwners) {
+        RenderResourceDesc d{};
+        d.id        = e.id;
+        d.kind      = RenderResourceKind::Buffer;
+        d.format    = RenderResourceFormat::BufferRaw;
+        d.lifetime  = e.lifetime;
+        d.debugName = e.name;
+        d.glName    = 100u + uint32_t(e.id);  // nonzero handle
+        d.sizeBytes = 4096u;
+        d.valid     = true;
+        registerOrUpdateRenderResource(d);
+    }
+    REQUIRE(getRenderResourceCount() == 4);
+
+    // Every valid resource carries a lifetime -> validator clean.
+    RenderResourceId off = RenderResourceId::MainColor;  // poison
+    CHECK(validateRenderResourceLifetimes(&off));
+    CHECK((off == RenderResourceId::Unknown));
+
+    // Per-owner contract: Buffer kind, non-Unset lifetime, nonzero handle,
+    // and toString(id) matches the debugName literal.
+    for (const auto& e : kOwners) {
+        const RenderResourceDesc* got = getRenderResource(e.id);
+        REQUIRE(got != nullptr);
+        CHECK((got->kind == RenderResourceKind::Buffer));
+        CHECK((got->lifetime != RenderResourceLifetime::Unset));
+        CHECK((got->lifetime == e.lifetime));
+        CHECK(got->glName != 0u);
+        CHECK(got->valid);
+        CHECK(std::strcmp(toString(e.id), e.name) == 0);
+    }
+
+    // Clean up so sibling suites see an empty registry.
+    for (const auto& e : kOwners) {
+        RenderResourceDesc inv{};
+        inv.id = e.id; inv.valid = false;
+        registerOrUpdateRenderResource(inv);
+    }
+    CHECK(getRenderResourceCount() == 0);
+}
+
+// Guards the failure direction: an owner id registered with a DEFAULTED
+// (Unset) lifetime must be caught by the validator and named. This is exactly
+// the future regression this slice exists to block.
+TEST_CASE("a GPU-owner id registered with a defaulted Unset lifetime is detected by the validator") {
+    REQUIRE(getRenderResourceCount() == 0);
+
+    RenderResourceDesc bad{};
+    bad.id        = RenderResourceId::TerrainHeightSsbo;
+    bad.kind      = RenderResourceKind::Buffer;
+    bad.debugName = "TerrainHeightSsbo";
+    bad.glName    = 314u;
+    bad.valid     = true;
+    // bad.lifetime deliberately left at the struct default (Unset).
+    REQUIRE((bad.lifetime == RenderResourceLifetime::Unset));
+    registerOrUpdateRenderResource(bad);
+
+    RenderResourceId off = RenderResourceId::Unknown;
+    CHECK_FALSE(validateRenderResourceLifetimes(&off));
+    CHECK((off == RenderResourceId::TerrainHeightSsbo));
+
+    // Clean up.
+    RenderResourceDesc inv{};
+    inv.id = RenderResourceId::TerrainHeightSsbo; inv.valid = false;
+    registerOrUpdateRenderResource(inv);
+    CHECK(getRenderResourceCount() == 0);
+}
+
+} // TEST_SUITE("GpuBufferOwnerLifetimeCheck")
