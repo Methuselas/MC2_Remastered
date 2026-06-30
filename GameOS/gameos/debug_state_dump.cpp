@@ -25,6 +25,11 @@ extern "C" unsigned long mc2_fbo_samples();
 // FRAME-GRAPH-EXECUTOR-ISLAND-1: executor-owned pass counters (default-OFF gate).
 extern "C" unsigned long mc2_framegraph_executor_owned_passes();
 extern "C" unsigned long mc2_framegraph_executor_validation_failures();
+// SAME-ORDER-EXECUTOR-VALIDATE-1: split top-level executor metrics (default-OFF gate).
+extern "C" unsigned long mc2_framegraph_executor_validated_top_level_passes();
+extern "C" unsigned long mc2_framegraph_executor_apply_state_passes();
+extern "C" unsigned long mc2_framegraph_executor_scheduled_passes();
+extern "C" unsigned long mc2_framegraph_executor_skipped_deferred_passes();
 // FRAME-GRAPH-EXECUTOR-DRYRUN-1: per-frame observe-and-diff accumulators (default-OFF gate).
 extern "C" unsigned long mc2_framegraph_dryrun_enabled();
 extern "C" unsigned long mc2_framegraph_dryrun_frames();
@@ -260,6 +265,17 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
         // means at least one island validated clean this process lifetime.
         s << "    \"executor_owned_passes\": " << mc2_framegraph_executor_owned_passes() << ",\n";
         s << "    \"executor_validation_failures\": " << mc2_framegraph_executor_validation_failures() << ",\n";
+        // SAME-ORDER-EXECUTOR-VALIDATE-1: split top-level executor metrics.
+        // executor_owned_wrappers = sub-stage islands (= executor_owned_passes above; kept for compat).
+        // executor_validated_top_level_passes: top-level frame-order passes validated this process.
+        // executor_apply_state_passes: always 0 (VALIDATE-ONLY slice; no apply path).
+        // executor_scheduled_passes: always 0 (VALIDATE-ONLY slice; no scheduling).
+        // executor_skipped_deferred_passes: deferred top-level passes seen per process (Shadow/Mech/Water/VFX/UI).
+        s << "    \"executor_owned_wrappers\": " << mc2_framegraph_executor_owned_passes() << ",\n";
+        s << "    \"executor_validated_top_level_passes\": " << mc2_framegraph_executor_validated_top_level_passes() << ",\n";
+        s << "    \"executor_apply_state_passes\": " << mc2_framegraph_executor_apply_state_passes() << ",\n";
+        s << "    \"executor_scheduled_passes\": " << mc2_framegraph_executor_scheduled_passes() << ",\n";
+        s << "    \"executor_skipped_deferred_passes\": " << mc2_framegraph_executor_skipped_deferred_passes() << ",\n";
         // FRAME-GRAPH-EXECUTOR-DRYRUN-1: per-frame fired-set/order/terrain-mutex/latch diff
         // (default-OFF gate MC2_FRAMEGRAPH_DRYRUN). unobserved_total counts declared-slot
         // occurrences with NO record this frame (the 4 invisible passes) — NOT divergences.

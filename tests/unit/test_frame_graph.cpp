@@ -13,6 +13,7 @@
 #include "RenderCore/frame_executor.h"     // FRAME-GRAPH-EXECUTOR-ISLAND-1 IslandContract
 #include "RenderCore/postprocess_subgraph.h" // POSTPROCESS-SUBGRAPH-1 PostProcessSubpass table
 #include "RenderCore/render_state_desc.h"  // FRAMEGRAPH-STATEPACK-SKELETON-1
+#include "RenderCore/top_level_pass_executor.h" // SAME-ORDER-EXECUTOR-VALIDATE-1
 
 using namespace RenderCore;
 using namespace RenderCore::framegraph;
@@ -1245,6 +1246,109 @@ TEST_CASE("statepack (g): consistency validator catches a deliberately-wrong Ren
     bool bothConcrete = (rowVal != ColorMaskState::Inherit && ambVal != ColorMaskState::Inherit);
     CHECK(bothConcrete == true);
     CHECK(rowVal != ambVal);   // AllOff != AllOn — validator would return ok=false for this row
+}
+
+// ---------------------------------------------------------------------------
+// SAME-ORDER-EXECUTOR-VALIDATE-1: offline tests for the pure TopLevelPassContract table.
+// GL-free — tests only the constexpr descriptor, not the GL wrapper.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("top-level executor (a): kTopLevelExecutorPasses has 5 rows (the 5 wrappable passes)") {
+    using namespace RenderCore::framegraph;
+    CHECK(kTopLevelExecutorPassCount == 5u);
+}
+
+TEST_CASE("top-level executor (b): findTopLevelExecutorPass returns non-null for all 5 wrappable passes") {
+    using namespace RenderCore::framegraph;
+    const RenderPassId wrappable[] = {
+        RenderPassId::StaticPropOpaque,
+        RenderPassId::Terrain,
+        RenderPassId::TerrainOverlay,
+        RenderPassId::TerrainDecal,
+        RenderPassId::VegetationCards,
+    };
+    for (int i = 0; i < 5; ++i) {
+        const TopLevelPassContract* c = findTopLevelExecutorPass(wrappable[i]);
+        CHECK(c != nullptr);
+    }
+}
+
+TEST_CASE("top-level executor (c): deferred passes return nullptr (not executor-owned)") {
+    // Shadow, MechOpaque, Water, VFX, UI are deferred to slice 2.
+    using namespace RenderCore::framegraph;
+    const RenderPassId deferred[] = {
+        RenderPassId::Shadow,
+        RenderPassId::MechOpaque,
+        RenderPassId::Water,
+        RenderPassId::VFX,
+        RenderPassId::UI,
+    };
+    for (int i = 0; i < 5; ++i) {
+        CHECK(findTopLevelExecutorPass(deferred[i]) == nullptr);
+    }
+}
+
+TEST_CASE("top-level executor (d): ambient + FBO flags match declared ledger declarations") {
+    // StaticPropOpaque and Terrain have AmbientContract + FBO ledger rows.
+    using namespace RenderCore::framegraph;
+    const TopLevelPassContract* sp = findTopLevelExecutorPass(RenderPassId::StaticPropOpaque);
+    REQUIRE(sp != nullptr);
+    CHECK(sp->validateAmbient == true);  // AmbientContract row exists
+    CHECK(sp->validateFbo     == true);  // FBO ledger declares MainColor
+
+    const TopLevelPassContract* terrain = findTopLevelExecutorPass(RenderPassId::Terrain);
+    REQUIRE(terrain != nullptr);
+    CHECK(terrain->validateAmbient == true);
+    CHECK(terrain->validateFbo     == true);
+
+    // TerrainOverlay and TerrainDecal have FBO ledger but no AmbientContract row.
+    const TopLevelPassContract* overlay = findTopLevelExecutorPass(RenderPassId::TerrainOverlay);
+    REQUIRE(overlay != nullptr);
+    CHECK(overlay->validateAmbient == false);
+    CHECK(overlay->validateFbo     == true);
+
+    const TopLevelPassContract* decal = findTopLevelExecutorPass(RenderPassId::TerrainDecal);
+    REQUIRE(decal != nullptr);
+    CHECK(decal->validateAmbient == false);
+    CHECK(decal->validateFbo     == true);
+
+    // VegetationCards has neither AmbientContract row nor FBO ledger target.
+    const TopLevelPassContract* veg = findTopLevelExecutorPass(RenderPassId::VegetationCards);
+    REQUIRE(veg != nullptr);
+    CHECK(veg->validateAmbient == false);
+    CHECK(veg->validateFbo     == false);
+}
+
+TEST_CASE("top-level executor (e): ambient ledger cross-check — StaticProp and Terrain have AmbientContract; TerrainOverlay/Decal/Veg do not") {
+    // Verifies the validateAmbient flags are backed by actual ambient_contract.h rows.
+    CHECK(findAmbient(RenderPassId::StaticPropOpaque) != nullptr);
+    CHECK(findAmbient(RenderPassId::Terrain)          != nullptr);
+    CHECK(findAmbient(RenderPassId::TerrainOverlay)   == nullptr);
+    CHECK(findAmbient(RenderPassId::TerrainDecal)     == nullptr);
+    CHECK(findAmbient(RenderPassId::VegetationCards)  == nullptr);
+}
+
+TEST_CASE("top-level executor (f): FBO ledger cross-check — 4 passes declare MainColor; VegetationCards undeclared") {
+    auto rid = [](RenderResourceId r){ return static_cast<unsigned>(r); };
+    const unsigned mc = rid(RenderResourceId::MainColor);
+    const unsigned unk = rid(RenderResourceId::Unknown);
+    CHECK(rid(declaredFboTarget(RenderPassId::StaticPropOpaque)) == mc);
+    CHECK(rid(declaredFboTarget(RenderPassId::Terrain))          == mc);
+    CHECK(rid(declaredFboTarget(RenderPassId::TerrainOverlay))   == mc);
+    CHECK(rid(declaredFboTarget(RenderPassId::TerrainDecal))     == mc);
+    CHECK(rid(declaredFboTarget(RenderPassId::VegetationCards))  == unk);
+}
+
+TEST_CASE("top-level executor (g): note field is non-null for all wrappable passes") {
+    using namespace RenderCore::framegraph;
+    for (unsigned i = 0; i < kTopLevelExecutorPassCount; ++i) {
+        CHECK(kTopLevelExecutorPasses[i].note != nullptr);
+    }
+}
+
+TEST_CASE("top-level executor (h): kTopLevelDeferredPassCount matches the 5 deferred passes") {
+    using namespace RenderCore::framegraph;
+    CHECK(kTopLevelDeferredPassCount == 5u);
 }
 
 } // TEST_SUITE

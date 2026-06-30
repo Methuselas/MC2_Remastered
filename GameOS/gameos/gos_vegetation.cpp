@@ -341,6 +341,20 @@ void GosVegetation::flush(float lightDirX, float lightDirY, float lightDirZ, flo
         return;
     }
 
+    // SAME-ORDER-EXECUTOR-VALIDATE-1: top-level validate-only wrapper (gate MC2_FRAMEGRAPH_EXECUTOR).
+    // No-op when gate unset (byte-identical). VegetationCards has no AmbientContract row and no
+    // declared FBO target -> ambient/FBO probe skips it (validateAmbient=false, validateFbo=false).
+    // MC2_VEGETATION_CARDS default-OFF -> this is a legit 0-fires-per-frame-in-smoke pass.
+    // PIN INVARIANT: additive only — no GL state change, no reorder.
+    render_contract::executorOwnBeginTopLevel(render_contract::PassIdentity::VegetationCards,
+                                              "GosVegetation_flush");
+    struct TopLevelGuard_ {
+        ~TopLevelGuard_() {
+            render_contract::executorOwnEndTopLevel(render_contract::PassIdentity::VegetationCards,
+                                                    "GosVegetation_flush");
+        }
+    } _tlGuard;
+
     const float* mvp = gos_GetTerrainMVPMat4();
 
     static int s_flushCount = 0;

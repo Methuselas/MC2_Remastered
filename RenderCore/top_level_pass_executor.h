@@ -1,0 +1,87 @@
+#pragma once
+// SAME-ORDER-EXECUTOR-VALIDATE-1 — pure/constexpr top-level pass executor descriptor.
+//
+// Declares WHICH top-level (frame-order) passes the executor validate-owns and what
+// preconditions to check. Contains NO GL, NO runtime state. The GL-touching runtime
+// wrapper lives in mclib/render_contract.cpp (executorOwnBeginTopLevel /
+// executorOwnEndTopLevel). This header is offline-testable (tests/unit/test_frame_graph.cpp).
+//
+// Design note: VALIDATE-ONLY. The body still sets its own state; the executor wraps,
+// validates preconditions + postconditions, and counts. NO glApplyState, NO reorder,
+// NO scheduling.
+//
+// Gate: MC2_FRAMEGRAPH_EXECUTOR (default-OFF). When unset -> executorOwnBeginTopLevel /
+// executorOwnEndTopLevel are early-return no-ops -> byte-identical to unwrapped draw.
+//
+// DEFERRED (slice 2): Shadow (dynamic-shadow seam unmodeled), MechOpaque (OpaqueObject
+// PassIdentity is lossy — no clean single seam), Water, VFX, UI.
+
+#include "RenderCore/RenderPassContract.h"  // RenderPassId
+
+namespace RenderCore { namespace framegraph {
+
+// What the executor validates at begin/end of a top-level pass.
+// All fields are plain bool; no GL, no runtime state.
+struct TopLevelPassContract {
+    RenderPassId id;
+    bool         validateAmbient; // check ambient ledger (colorMask/depthFunc/depthWrite) on begin
+    bool         validateFbo;     // check FBO ledger (declared vs live draw FBO) on begin
+    const char*  note;            // human-readable label (for log/debug only)
+};
+
+// Compile-time table of top-level passes the executor validate-owns this slice.
+// Order is documentary; the executor does NOT reorder.
+//
+// VegetationCards: gated MC2_VEGETATION_CARDS default-OFF -> legitimately fires 0 times
+// per frame in default smoke. That is correct and NOT a validation failure.
+static constexpr TopLevelPassContract kTopLevelExecutorPasses[] = {
+    {
+        /*id*/              RenderPassId::StaticPropOpaque,
+        /*validateAmbient*/ true,   // AmbientContract row exists (SceneGEqual, depthWrite=On)
+        /*validateFbo*/     true,   // FBO ledger declares MainColor target
+        /*note*/            "StaticPropOpaque/GpuStaticPropBatcher_flush",
+    },
+    {
+        /*id*/              RenderPassId::Terrain,
+        /*validateAmbient*/ true,   // AmbientContract row exists (SceneGEqual, depthWrite=On, AllOn colorMask)
+        /*validateFbo*/     true,   // FBO ledger declares MainColor target
+        /*note*/            "Terrain/gos_TerrainLodChunk_SubmitDrawCommands",
+    },
+    {
+        /*id*/              RenderPassId::TerrainOverlay,
+        /*validateAmbient*/ false,  // no AmbientContract row for TerrainOverlay
+        /*validateFbo*/     true,   // FBO ledger declares MainColor target
+        /*note*/            "TerrainOverlay/gosRenderer_drawTerrainOverlays",
+    },
+    {
+        /*id*/              RenderPassId::TerrainDecal,
+        /*validateAmbient*/ false,  // no AmbientContract row for TerrainDecal
+        /*validateFbo*/     true,   // FBO ledger declares MainColor target
+        /*note*/            "TerrainDecal/gosRenderer_drawDecals",
+    },
+    {
+        /*id*/              RenderPassId::VegetationCards,
+        /*validateAmbient*/ false,  // DRYRUN-OBSERVE-COVERAGE-1: no AmbientContract row
+        /*validateFbo*/     false,  // no declared FBO target for VegetationCards
+        /*note*/            "VegetationCards/GosVegetation_flush",
+    },
+};
+static constexpr unsigned kTopLevelExecutorPassCount =
+    sizeof(kTopLevelExecutorPasses) / sizeof(kTopLevelExecutorPasses[0]);
+
+// Find the TopLevelPassContract for the given pass id, or nullptr if not executor-owned.
+// Pure, constexpr-compatible, no GL.
+inline const TopLevelPassContract* findTopLevelExecutorPass(RenderPassId id) {
+    for (unsigned i = 0; i < kTopLevelExecutorPassCount; ++i) {
+        if (kTopLevelExecutorPasses[i].id == id)
+            return &kTopLevelExecutorPasses[i];
+    }
+    return nullptr;
+}
+
+// Count of deferred top-level passes (not executor-owned this slice).
+// Shadow, MechOpaque, Water, VFX, UI = 5.
+// Called by the dump to populate executor_skipped_deferred_passes.
+static constexpr unsigned kTopLevelDeferredPassCount = 5u;
+
+}} // namespace RenderCore::framegraph

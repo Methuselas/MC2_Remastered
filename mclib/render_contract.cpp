@@ -32,6 +32,7 @@
 #include "RenderCore/fbo_ledger.h"         // FRAME-GRAPH-FBO-LEDGER-1 cross-check
 #include "RenderCore/frame_pass_trace.h"           // FRAME-GRAPH-EXECUTOR-DRYRUN-1 pure kernel
 #include "RenderCore/terrain_subpass_contract.h"   // dominantTerrainPathLive / terrainPathsThatDrew
+#include "RenderCore/top_level_pass_executor.h"    // SAME-ORDER-EXECUTOR-VALIDATE-1 descriptor table
 
 namespace render_contract {
 
@@ -1223,6 +1224,168 @@ void renderPassScopeFrameBoundary() {
 
 uint32_t getPassScopeViolationCount() {
     return s_scope.violationCount;
+}
+
+// ---- SAME-ORDER-EXECUTOR-VALIDATE-1: top-level frame-order pass wrapper ----------
+//
+// VALIDATE-ONLY. Wraps StaticPropOpaque / Terrain / TerrainOverlay / TerrainDecal /
+// VegetationCards at their begin/end seams. The body between begin and end is
+// UNCHANGED — executor is ADDITIVE (no GL state change, no reorder, no scheduling).
+//
+// Gate: MC2_FRAMEGRAPH_EXECUTOR (default-OFF). When unset both wrappers are no-ops.
+// PIN INVARIANT: markTerrainDrawn latch timing, g_dispatchMvp16 snapshot timing,
+// knownEarly terrain handling, body-owned state setup, and call order are undisturbed.
+
+// Process-lifetime counters in the same anonymous namespace block so they share
+// visibility with sampleColorMask/sampleDepthFunc/sampleBlend/sampleDepthWrite
+// (all anonymous-namespace members of this TU are in the same unnamed namespace).
+namespace {
+
+bool topLevelExecutorEnabled() {
+    // Shares the same gate as the sub-stage island executor in gos_postprocess.cpp.
+    static const bool s_on = []() {
+        const char* v = ::getenv("MC2_FRAMEGRAPH_EXECUTOR");
+        return v && v[0] == '1';
+    }();
+    return s_on;
+}
+
+// g_validatedTopLevel: End reached (begin+end structurally complete) — optimistic count.
+// g_topLevelFailures: ambient or FBO mismatch, or glGetError != NO_ERROR.
+// g_skippedDeferred: deferred pass Begin calls seen (Shadow/Mech/Water/VFX/UI).
+unsigned long g_validatedTopLevel  = 0;
+unsigned long g_topLevelFailures   = 0;
+unsigned long g_skippedDeferred    = 0;
+
+static constexpr unsigned kMaxTopLevelFailureLog = 32u;
+
+} // namespace
+
+void executorOwnBeginTopLevel(PassIdentity passId, const char* callerHint) {
+    if (!topLevelExecutorEnabled()) return;
+
+    const RenderCore::RenderPassId id = toRenderPassId(passId);
+    const RenderCore::framegraph::TopLevelPassContract* c =
+        RenderCore::framegraph::findTopLevelExecutorPass(id);
+    if (!c) {
+        // Deferred pass (Shadow/Mech/Water/VFX/UI) — count but do nothing.
+        ++g_skippedDeferred;
+        return;
+    }
+
+    // --- Ambient precondition (ONLY where declared, reusing same sampler helpers) ---
+    if (c->validateAmbient) {
+        if (const RenderCore::framegraph::AmbientContract* decl =
+                RenderCore::framegraph::findAmbient(id)) {
+            RenderCore::framegraph::AmbientSample live;
+            live.colorMask  = sampleColorMask();
+            live.depthFunc  = sampleDepthFunc();
+            live.blend      = sampleBlend();
+            live.depthWrite = sampleDepthWrite();
+            const RenderCore::framegraph::AmbientMismatch mm =
+                RenderCore::framegraph::compareAmbient(*decl, live);
+            if (mm.any()) {
+                ++g_topLevelFailures;
+                if (g_topLevelFailures <= kMaxTopLevelFailureLog)
+                    fprintf(stderr,
+                        "[EXECUTOR_TOPLEVEL v1] BEGIN FAIL ambient pass=%s hint=%s "
+                        "cmMiss=%d dfMiss=%d dwMiss=%d failures=%lu\n",
+                        c->note, callerHint ? callerHint : "?",
+                        (int)mm.colorMask, (int)mm.depthFunc, (int)mm.depthWrite,
+                        g_topLevelFailures);
+            }
+        }
+    }
+
+    // --- FBO precondition (ONLY where declared, reusing same FBO ledger helpers) ---
+    if (c->validateFbo) {
+        const RenderCore::RenderResourceId fboDecl =
+            RenderCore::framegraph::declaredFboTarget(id);
+        if (fboDecl != RenderCore::RenderResourceId::Unknown) {
+            GLint bound = 0;
+            glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &bound);
+            const RenderCore::RenderResourceId actual =
+                RenderCore::framegraph::fboLedger().resolve(static_cast<unsigned>(bound));
+            if (RenderCore::framegraph::fboMismatch(fboDecl, actual)) {
+                ++g_topLevelFailures;
+                if (g_topLevelFailures <= kMaxTopLevelFailureLog)
+                    fprintf(stderr,
+                        "[EXECUTOR_TOPLEVEL v1] BEGIN FAIL fbo pass=%s hint=%s "
+                        "declFbo=%u actualFbo=%u boundFbo=%d failures=%lu\n",
+                        c->note, callerHint ? callerHint : "?",
+                        (unsigned)fboDecl, (unsigned)actual, (int)bound,
+                        g_topLevelFailures);
+            }
+        }
+    }
+
+    // PIN INVARIANT: no GL state change, no reorder, no scheduling.
+    // The body runs UNCHANGED between this call and executorOwnEndTopLevel.
+}
+
+void executorOwnEndTopLevel(PassIdentity passId, const char* callerHint) {
+    if (!topLevelExecutorEnabled()) return;
+
+    const RenderCore::RenderPassId id = toRenderPassId(passId);
+    const RenderCore::framegraph::TopLevelPassContract* c =
+        RenderCore::framegraph::findTopLevelExecutorPass(id);
+    if (!c) return;  // deferred pass; Begin already counted it
+
+    // --- Postcondition: glGetError must be GL_NO_ERROR ---
+    {
+        const GLenum err = glGetError();
+        if (err != GL_NO_ERROR) {
+            ++g_topLevelFailures;
+            if (g_topLevelFailures <= kMaxTopLevelFailureLog)
+                fprintf(stderr,
+                    "[EXECUTOR_TOPLEVEL v1] END FAIL glGetError pass=%s hint=%s "
+                    "err=0x%x failures=%lu\n",
+                    c->note, callerHint ? callerHint : "?",
+                    (unsigned)err, g_topLevelFailures);
+            // Clear the error state so downstream code doesn't trip on our sample.
+            while (glGetError() != GL_NO_ERROR) {}
+        }
+    }
+
+    // --- FBO postcondition (ONLY where declared) ---
+    if (c->validateFbo) {
+        const RenderCore::RenderResourceId fboDecl =
+            RenderCore::framegraph::declaredFboTarget(id);
+        if (fboDecl != RenderCore::RenderResourceId::Unknown) {
+            GLint bound = 0;
+            glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &bound);
+            const RenderCore::RenderResourceId actual =
+                RenderCore::framegraph::fboLedger().resolve(static_cast<unsigned>(bound));
+            if (RenderCore::framegraph::fboMismatch(fboDecl, actual)) {
+                ++g_topLevelFailures;
+                if (g_topLevelFailures <= kMaxTopLevelFailureLog)
+                    fprintf(stderr,
+                        "[EXECUTOR_TOPLEVEL v1] END FAIL fbo pass=%s hint=%s "
+                        "declFbo=%u actualFbo=%u boundFbo=%d failures=%lu\n",
+                        c->note, callerHint ? callerHint : "?",
+                        (unsigned)fboDecl, (unsigned)actual, (int)bound,
+                        g_topLevelFailures);
+            }
+        }
+    }
+
+    // Count every completed end (optimistic; failures separately surfaced in dump).
+    // Matches the sub-stage island model in gos_postprocess.cpp.
+    ++g_validatedTopLevel;
+    // PIN INVARIANT: no GL state change, no reorder, no scheduling.
+}
+
+extern "C" unsigned long mc2_framegraph_executor_validated_top_level_passes() {
+    return g_validatedTopLevel;
+}
+extern "C" unsigned long mc2_framegraph_executor_apply_state_passes() {
+    return 0ul;  // always 0; VALIDATE-ONLY slice, no apply path
+}
+extern "C" unsigned long mc2_framegraph_executor_scheduled_passes() {
+    return 0ul;  // always 0; VALIDATE-ONLY slice, no scheduling
+}
+extern "C" unsigned long mc2_framegraph_executor_skipped_deferred_passes() {
+    return g_skippedDeferred;
 }
 
 } // namespace render_contract

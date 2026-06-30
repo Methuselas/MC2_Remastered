@@ -191,6 +191,21 @@ void endPassScope(PassIdentity id, const char* hint = nullptr);
 void renderPassScopeFrameBoundary();
 uint32_t getPassScopeViolationCount();   // cumulative since process start (test/inspect)
 
+// ---- SAME-ORDER-EXECUTOR-VALIDATE-1: top-level frame-order pass wrapper --------
+//
+// VALIDATE-ONLY. The body still sets its own state; the executor wraps + validates +
+// counts. NO glApplyState, NO reorder, NO scheduling.
+//
+// Gate: MC2_FRAMEGRAPH_EXECUTOR (default-OFF). When unset both wrappers are no-ops
+// (byte-identical). On mismatch: NON-FATAL (increments failure counter + capped log).
+//
+// PIN INVARIANT: the wrapper must NOT disturb markTerrainDrawn latch timing,
+// g_dispatchMvp16 snapshot timing, knownEarly terrain handling, body-owned state
+// setup, or existing pass call order. Wrapper calls are ADDITIVE around the
+// existing draw — no GL state change, no reorder.
+void executorOwnBeginTopLevel(PassIdentity id, const char* callerHint = nullptr);
+void executorOwnEndTopLevel(PassIdentity id, const char* callerHint = nullptr);
+
 } // namespace render_contract
 
 #endif // MC2_RENDER_CONTRACT_H

@@ -9793,6 +9793,18 @@ void gosRenderer::drawTerrainOverlays()
         return;
     }
 
+    // SAME-ORDER-EXECUTOR-VALIDATE-1: top-level validate-only wrapper (gate MC2_FRAMEGRAPH_EXECUTOR).
+    // No-op when gate unset (byte-identical). PIN INVARIANT: additive only — no GL state change,
+    // no reorder. Body sets its own state UNCHANGED between begin and end.
+    render_contract::executorOwnBeginTopLevel(render_contract::PassIdentity::TerrainOverlay,
+                                              "gosRenderer_drawTerrainOverlays");
+    struct TopLevelGuard_ {
+        ~TopLevelGuard_() {
+            render_contract::executorOwnEndTopLevel(render_contract::PassIdentity::TerrainOverlay,
+                                                    "gosRenderer_drawTerrainOverlays");
+        }
+    } _tlGuard;
+
     render_contract::noteRenderPass(render_contract::PassIdentity::TerrainOverlay,
                                     "gosRenderer_drawTerrainOverlays");
     render_contract::beginPassScope(render_contract::PassIdentity::TerrainOverlay,
@@ -9986,6 +9998,18 @@ void gosRenderer::drawDecals()
         decalBatch_.draws.clear();
         return;
     }
+
+    // SAME-ORDER-EXECUTOR-VALIDATE-1: top-level validate-only wrapper (gate MC2_FRAMEGRAPH_EXECUTOR).
+    // No-op when gate unset (byte-identical). PIN INVARIANT: additive only — no GL state change,
+    // no reorder. Body sets its own state UNCHANGED between begin and end.
+    render_contract::executorOwnBeginTopLevel(render_contract::PassIdentity::TerrainDecal,
+                                              "gosRenderer_drawDecals");
+    struct TopLevelGuard_ {
+        ~TopLevelGuard_() {
+            render_contract::executorOwnEndTopLevel(render_contract::PassIdentity::TerrainDecal,
+                                                    "gosRenderer_drawDecals");
+        }
+    } _tlGuard;
 
     render_contract::noteRenderPass(render_contract::PassIdentity::TerrainDecal,
                                     "gosRenderer_drawDecals");

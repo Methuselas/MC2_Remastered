@@ -5331,6 +5331,17 @@ static bool flushDepthPrepassV6(
 //   rc_gbuffer1_screenShadowEligible (production) or
 //   rc_gbuffer1_legacyDebugSentinelScreenShadowEligible (debug).
 void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
+    // SAME-ORDER-EXECUTOR-VALIDATE-1: top-level validate-only wrapper (gate MC2_FRAMEGRAPH_EXECUTOR).
+    // No-op when gate unset (byte-identical). PIN INVARIANT: additive only — no GL state change,
+    // no reorder. Body sets its own state UNCHANGED between begin and end.
+    render_contract::executorOwnBeginTopLevel(render_contract::PassIdentity::StaticProp,
+                                              "GpuStaticPropBatcher_flush");
+    struct TopLevelGuard_ {
+        ~TopLevelGuard_() {
+            render_contract::executorOwnEndTopLevel(render_contract::PassIdentity::StaticProp,
+                                                    "GpuStaticPropBatcher_flush");
+        }
+    } _tlGuard;
     ZoneScopedN("GpuStaticProps.Flush");
     mc2_hitch::HitchScope _hitchFlush(mc2_hitch::HitchSpanKind::GpuStaticPropsFlush);
     initTraceOnce();

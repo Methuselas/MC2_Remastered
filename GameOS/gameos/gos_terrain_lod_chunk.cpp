@@ -623,6 +623,18 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
     if (s_terrainProgram == 0 || s_heightSsbo == 0) return;
     if (s_patchVao == 0) return;
 
+    // SAME-ORDER-EXECUTOR-VALIDATE-1: top-level validate-only wrapper (gate MC2_FRAMEGRAPH_EXECUTOR).
+    // No-op when gate unset (byte-identical). PIN INVARIANT: additive only — no GL state change,
+    // no reorder. markTerrainDrawn/g_dispatchMvp16/knownEarly undisturbed.
+    render_contract::executorOwnBeginTopLevel(render_contract::PassIdentity::TerrainBase,
+                                              "gos_TerrainLodChunk_SubmitDrawCommands");
+    struct TopLevelGuard_ {
+        ~TopLevelGuard_() {
+            render_contract::executorOwnEndTopLevel(render_contract::PassIdentity::TerrainBase,
+                                                    "gos_TerrainLodChunk_SubmitDrawCommands");
+        }
+    } _tlGuard;
+
     // [RENDER_PASS v1] advisory telemetry (env-gated, rate-limited).
     // Chunk path is the default-on production terrain draw (8z cutover).
     render_contract::noteRenderPass(render_contract::PassIdentity::TerrainBase,
