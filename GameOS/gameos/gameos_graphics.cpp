@@ -2810,9 +2810,8 @@ void gos_terrain_bridge_bindUniforms(gosRenderMaterial* material) {
         g_gos_renderer->terrainBindUniformsForPatchStream(material);
 }
 
-void gos_terrain_bridge_applyVertexDeclaration(gosRenderMaterial* material) {
-    if (material) material->applyVertexDeclaration();
-}
+// gos_terrain_bridge_applyVertexDeclaration deleted by TERRAIN-BRIDGE-BODY-DELETE-2:
+// callerless after TerrainPatchStream::flush() retired (TERRAIN-BRIDGE-BODY-DELETE-1).
 
 // gos_terrain_bridge_endVertexDeclaration and gos_terrain_bridge_end deleted by
 // TERRAIN-BRIDGE-BODY-DELETE-1: these were called only from TerrainPatchStream::flush(),
@@ -2826,24 +2825,8 @@ unsigned int gos_terrain_bridge_glTextureForGosHandle(unsigned int gosHandle) {
     return (unsigned int)tex->getTextureId();
 }
 
-void gos_terrain_bridge_drawPatchStreamBucket(
-    unsigned int gosHandle,
-    unsigned int firstVertex,
-    unsigned int vertexCount)
-{
-    if (!g_gos_renderer || vertexCount == 0) return;
-
-    g_gos_renderer->setRenderState(gos_State_ZCompare, 1);
-    g_gos_renderer->setRenderState(gos_State_ZWrite, 1);
-    g_gos_renderer->setRenderState(gos_State_AlphaMode, gos_Alpha_OneZero);
-    g_gos_renderer->setRenderState(gos_State_TextureAddress, gos_TextureClamp);
-    g_gos_renderer->setRenderState(gos_State_Terrain, 1);
-    g_gos_renderer->setRenderState(gos_State_Texture, (int)gosHandle);
-    g_gos_renderer->applyRenderStates();
-    glActiveTexture(GL_TEXTURE0);
-
-    glDrawArrays(GL_PATCHES, (GLint)firstVertex, (GLsizei)vertexCount);
-}
+// gos_terrain_bridge_drawPatchStreamBucket deleted by TERRAIN-BRIDGE-BODY-DELETE-2:
+// callerless after TerrainPatchStream::flush() retired (TERRAIN-BRIDGE-BODY-DELETE-1).
 
 static const bool s_patchStreamDirectBind =
     (getenv("MC2_PATCHSTREAM_DIRECT_TEXTURE_BIND") != nullptr);
@@ -2858,21 +2841,8 @@ static GLuint s_terrainBucketSampler = 0;
 // TERRAIN-BRIDGE-BODY-DELETE-1: called only from TerrainPatchStream::flush() (retired
 // in PATCHSTREAM-THIN-RETIRE-1, 026e7276).
 
-void gos_terrain_bridge_endBucketLoop(unsigned int lastGosHandle) {
-    if (!s_patchStreamDirectBind || !g_gos_renderer) return;
-    // Restore per-texture sampler state on unit 0.
-    glBindSampler(0, 0);
-    // 0xFFFFFFFFu means no draws were issued (bucket loop was empty).
-    // gosHandle==0 is a valid (but evicted) texture — do not conflate.
-    if (lastGosHandle == 0xFFFFFFFFu) return;
-    // Re-sync state cache: one redundant glBindTexture, but subsequent
-    // renderers see a coherent cache entry for gos_State_Texture.
-    g_gos_renderer->setRenderState(gos_State_Texture, (int)lastGosHandle);
-    g_gos_renderer->applyRenderStates();
-    // applyRenderStates iterates units 0→2, leaving active unit at GL_TEXTURE2.
-    // Restore to unit 0 so subsequent renderers bind on the expected unit.
-    glActiveTexture(GL_TEXTURE0);
-}
+// gos_terrain_bridge_endBucketLoop deleted by TERRAIN-BRIDGE-BODY-DELETE-2:
+// callerless after TerrainPatchStream::flush() retired (TERRAIN-BRIDGE-BODY-DELETE-1).
 
 unsigned int gos_terrain_bridge_getThinShaderProgram() {
     if (!g_gos_renderer) return 0u;
@@ -2885,17 +2855,8 @@ int gos_terrain_bridge_bindThinUniforms() {
     return g_gos_renderer->terrainBindThinUniformsForPatchStream();
 }
 
-void gos_terrain_bridge_drawSingleBucketTriangles(
-    unsigned int gosHandle,
-    unsigned int firstVertex,
-    unsigned int vertexCount)
-{
-    if (!g_gos_renderer || vertexCount == 0) return;
-    g_gos_renderer->setRenderState(gos_State_Texture, (int)gosHandle);
-    g_gos_renderer->applyRenderStates();
-    glActiveTexture(GL_TEXTURE0);
-    glDrawArrays(GL_TRIANGLES, (GLint)firstVertex, (GLsizei)vertexCount);
-}
+// gos_terrain_bridge_drawSingleBucketTriangles deleted by TERRAIN-BRIDGE-BODY-DELETE-2:
+// callerless after TerrainPatchStream::flush() retired (TERRAIN-BRIDGE-BODY-DELETE-1).
 
 unsigned int gos_terrain_bridge_getWaterFastShaderProgram() {
     if (!g_gos_renderer) return 0u;

@@ -29,12 +29,9 @@ unsigned int gos_terrain_bridge_getShaderProgram();
 // calls inside it are AFTER apply() per AMD rule line 10.
 void gos_terrain_bridge_bindUniforms(gosRenderMaterial* material);
 
-// Material lifecycle helpers — needed because gosRenderMaterial is defined
-// inside gameos_graphics.cpp and is not visible from gos_terrain_patch_stream.cpp.
-// flush() calls these after issuing per-bucket glDrawArrays.
-// NOTE: gos_terrain_bridge_endVertexDeclaration and gos_terrain_bridge_end deleted by
-// TERRAIN-BRIDGE-BODY-DELETE-1 (flush-exclusive; flush retired in 026e7276).
-void gos_terrain_bridge_applyVertexDeclaration(gosRenderMaterial* material);
+// gos_terrain_bridge_applyVertexDeclaration and gos_terrain_bridge_endVertexDeclaration
+// and gos_terrain_bridge_end deleted by TERRAIN-BRIDGE-BODY-DELETE-1/2
+// (flush-exclusive; flush retired in PATCHSTREAM-THIN-RETIRE-1, 026e7276).
 
 // Translate engine gosTextureHandle → actual GL texture object name.
 //
@@ -48,25 +45,10 @@ void gos_terrain_bridge_applyVertexDeclaration(gosRenderMaterial* material);
 // or any case where the texture isn't resident.
 unsigned int gos_terrain_bridge_glTextureForGosHandle(unsigned int gosHandle);
 
-// Renderer-owned PatchStream bucket draw. Binds the colormap for gosHandle
-// on unit 0 and issues the draw. Does NOT touch the gosRenderer render-state
-// cache — terrain state was established once by gos_terrain_bridge_bindUniforms.
-void gos_terrain_bridge_drawPatchStreamBucket(
-    unsigned int gosHandle,
-    unsigned int firstVertex,
-    unsigned int vertexCount);
-
-// gos_terrain_bridge_beginBucketLoop and gos_terrain_bridge_drawSingleBucket declarations
-// removed by TERRAIN-BRIDGE-BODY-DELETE-1: these were called only from
-// TerrainPatchStream::flush() (retired in PATCHSTREAM-THIN-RETIRE-1, 026e7276).
-
-// Call once after the per-bucket draw loop when MC2_PATCHSTREAM_DIRECT_TEXTURE_BIND
-// is set. Unbinds the terrain sampler object from unit 0, then re-syncs the
-// render-state cache (one applyRenderStates + glActiveTexture(GL_TEXTURE0)) so
-// subsequent renderers see coherent state. Pass 0xFFFFFFFFu if no draws were
-// issued (empty bucket loop); any other value (including 0 for evicted textures)
-// triggers the cache sync. No-op when the fast path env var is not set.
-void gos_terrain_bridge_endBucketLoop(unsigned int lastGosHandle);
+// gos_terrain_bridge_drawPatchStreamBucket, gos_terrain_bridge_beginBucketLoop,
+// gos_terrain_bridge_drawSingleBucket, gos_terrain_bridge_endBucketLoop deleted by
+// TERRAIN-BRIDGE-BODY-DELETE-1/2: callerless after TerrainPatchStream::flush() retired
+// (PATCHSTREAM-THIN-RETIRE-1, 026e7276).
 
 // Returns the GL program ID of the thin-record VS-only terrain shader (gos_terrain_thin.vert +
 // gos_terrain.frag). Returns 0 if not yet loaded or failed to compile.
@@ -79,13 +61,8 @@ unsigned int gos_terrain_bridge_getThinShaderProgram();
 // IMPORTANT: call gos_terrain_bridge_beginBucketLoop() first to dirty the Z/blend states.
 int gos_terrain_bridge_bindThinUniforms();
 
-// Like gos_terrain_bridge_drawSingleBucket but issues glDrawArrays(GL_TRIANGLES, ...).
-// Binds gosHandle texture, calls applyRenderStates(), then draws. Does NOT change glUseProgram —
-// assumes gos_terrain_bridge_bindThinUniforms() was already called.
-void gos_terrain_bridge_drawSingleBucketTriangles(
-    unsigned int gosHandle,
-    unsigned int firstVertex,
-    unsigned int vertexCount);
+// gos_terrain_bridge_drawSingleBucketTriangles deleted by TERRAIN-BRIDGE-BODY-DELETE-2:
+// callerless after TerrainPatchStream::flush() retired (TERRAIN-BRIDGE-BODY-DELETE-1).
 
 // --- Water fast-path bridge (Stage 2 of renderWater architectural slice) ---
 //
