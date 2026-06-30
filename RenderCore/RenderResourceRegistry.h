@@ -33,6 +33,9 @@ enum class RenderResourceId : uint16_t {
     LightgridGrid        = 22,  // REGISTRY-COMPUTE-IDS-1: lightgrid sphere SSBO (s_sphereSsbo, kSphereStride*kMaxLights bytes); produced by lightgrid_build (compute), default-OFF gated substrate.
     LightgridIndex       = 23,  // REGISTRY-COMPUTE-IDS-1: lightgrid per-tile index pool SSBO (s_indexPool, nTiles*kMaxLights uints); produced by lightgrid_build (compute), default-OFF gated substrate.
     PostprocessComputeBlur = 24,// REGISTRY-COMPUTE-IDS-1: compute-blur ping-pong output substrate (postprocess_blur s_pingA, RGBA16F half-res); produced by postprocess_blur::Run (compute), default-OFF gated substrate. No consumer (substrate only).
+    ViewUniformsUbo      = 25,  // GPU-BUFFER-OWNER-SKELETON-1: view-uniforms UBO (s_viewUniformsUbo, view_uniforms_gl.cpp); LIVE, raw-owned, UNregistered today. First owner target.
+    TerrainTypeSsbo      = 26,  // GPU-BUFFER-OWNER-SKELETON-1: LOD-chunk per-quad type SSBO (s_typeSsbo, gos_terrain_lod_chunk.cpp); LIVE, raw-owned, UNregistered today.
+    TerrainCementSsbo    = 27,  // GPU-BUFFER-OWNER-SKELETON-1: LOD-chunk cement-word SSBO (s_cementSsbo, gos_terrain_lod_chunk.cpp); LIVE, raw-owned, UNregistered today.
     Count
 };
 

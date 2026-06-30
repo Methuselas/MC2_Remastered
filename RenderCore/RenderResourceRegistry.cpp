@@ -67,6 +67,9 @@ const char* toString(RenderResourceId id) {
         case RenderResourceId::LightgridGrid:        return "LightgridGrid";
         case RenderResourceId::LightgridIndex:       return "LightgridIndex";
         case RenderResourceId::PostprocessComputeBlur: return "PostprocessComputeBlur";
+        case RenderResourceId::ViewUniformsUbo:      return "ViewUniformsUbo";
+        case RenderResourceId::TerrainTypeSsbo:      return "TerrainTypeSsbo";
+        case RenderResourceId::TerrainCementSsbo:    return "TerrainCementSsbo";
         case RenderResourceId::Count:                return "Count";
     }
     return "unknown";
