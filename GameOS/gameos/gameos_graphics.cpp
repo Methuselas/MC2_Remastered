@@ -3056,9 +3056,20 @@ void gosRenderer::renderWaterFastPath(
     ZoneScopedN("renderWaterFastPath");
     TracyGpuZone("renderWaterFastPath");
     if (!water_fast_prog_ || !water_fast_prog_->shp_ || recordCount == 0) return;
-    // DRYRUN-OBSERVE-COVERAGE-1: observe-only. Water has no AmbientContract row and no
-    // declared FBO target -> ambientProbeAtPassBegin skips it (pure glGet-free no-op).
-    // Self-gated dedup in the dryrun recorder. No GL state / draw change.
+    // WATER-SAME-ORDER-VALIDATE-1: top-level validate-only wrapper (gate MC2_FRAMEGRAPH_EXECUTOR).
+    // No-op when gate unset (byte-identical). PIN INVARIANT: additive only — no GL state change,
+    // no reorder. Body sets its own state UNCHANGED between begin and end. Placed AFTER the
+    // early-return guards so begin only fires on real draws; the RAII end fires on all exit paths.
+    render_contract::executorOwnBeginTopLevel(render_contract::PassIdentity::Water,
+                                              "gosRenderer_renderWaterFastPath");
+    struct TopLevelGuard_ {
+        ~TopLevelGuard_() {
+            render_contract::executorOwnEndTopLevel(render_contract::PassIdentity::Water,
+                                                    "gosRenderer_renderWaterFastPath");
+        }
+    } _tlGuard;
+    // Water now HAS an AmbientContract row (depthFunc=GEQUAL, depthWrite=On, colorMask/blend
+    // Inherit) and an fbo_ledger MainColor row -> ambient/fbo guards validate (no longer skip).
     render_contract::noteRenderPass(render_contract::PassIdentity::Water,
                                     "gosRenderer::renderWaterFastPath");
     GLuint prog = water_fast_prog_->shp_;

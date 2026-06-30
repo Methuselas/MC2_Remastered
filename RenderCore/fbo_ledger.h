@@ -63,6 +63,8 @@ static constexpr PassFboTarget kPassFboTarget[] = {
     // GpuMechBatcher::flush() inside the scene FBO (MainColor).
     { RenderPassId::Shadow,           RenderResourceId::ShadowDynamicMap },
     { RenderPassId::MechOpaque,       RenderResourceId::MainColor },
+    // WATER-SAME-ORDER-VALIDATE-1: water fast path renders into the scene FBO (MainColor).
+    { RenderPassId::Water,            RenderResourceId::MainColor },
     { RenderPassId::StaticPropOpaque, RenderResourceId::MainColor },
     { RenderPassId::Terrain,          RenderResourceId::MainColor },
     { RenderPassId::TerrainOverlay,   RenderResourceId::MainColor },

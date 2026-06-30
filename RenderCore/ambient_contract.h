@@ -113,6 +113,16 @@ static constexpr AmbientContract kPassAmbient[] = {
       false, false, "reverse-Z scene opaque",
       /*blend*/ BlendState::Inherit, /*depthWrite*/ DepthWriteState::On },
 
+    // WATER-SAME-ORDER-VALIDATE-1: alpha-blend water overlay. blend is GLOBALLY enabled
+    // in MC2 (controlled via func, not enable) -> Inherit. colorMask Inherit (not an entry
+    // invariant). depthFunc/depthWrite are the WaterArmed pipeline's reverse-Z values.
+    { RenderPassId::Water,
+      ColorMaskState::Inherit, false, false,
+      DepthFuncState::SceneGEqual, ViewportKind::MainScene,
+      /*producesLatch*/ false, /*consumesLatch*/ false,
+      "alpha-blend water; reverse-Z GEQUAL; depthWrite ON (WaterArmed pipeline)",
+      /*blend*/ BlendState::Inherit, /*depthWrite*/ DepthWriteState::On },
+
     // PostProcess: screenShadow/cloudShadow/shoreline/edgeFog/fogOob bail if
     // !sceneHasTerrain_ (gos_postprocess.cpp :1303/1936/2030/2173/2234/2284/2341) -> the
     // terrain latch is a hard cross-phase dependency; reorder terrain after post and 4

@@ -1280,12 +1280,12 @@ TEST_CASE("statepack (g): consistency validator catches a deliberately-wrong Ren
 // GL-free — tests only the constexpr descriptor, not the GL wrapper.
 // ---------------------------------------------------------------------------
 
-TEST_CASE("top-level executor (a): kTopLevelExecutorPasses has 7 rows (slice-2 adds Shadow + MechOpaque)") {
+TEST_CASE("top-level executor (a): kTopLevelExecutorPasses has 8 rows (WATER-SAME-ORDER-VALIDATE-1 adds Water)") {
     using namespace RenderCore::framegraph;
-    CHECK(kTopLevelExecutorPassCount == 7u);
+    CHECK(kTopLevelExecutorPassCount == 8u);
 }
 
-TEST_CASE("top-level executor (b): findTopLevelExecutorPass returns non-null for all 7 wrappable passes") {
+TEST_CASE("top-level executor (b): findTopLevelExecutorPass returns non-null for all 8 wrappable passes") {
     using namespace RenderCore::framegraph;
     const RenderPassId wrappable[] = {
         RenderPassId::Shadow,           // SAME-ORDER-EXECUTOR-SLICE-2
@@ -1294,28 +1294,30 @@ TEST_CASE("top-level executor (b): findTopLevelExecutorPass returns non-null for
         RenderPassId::Terrain,
         RenderPassId::TerrainOverlay,
         RenderPassId::TerrainDecal,
+        RenderPassId::Water,            // WATER-SAME-ORDER-VALIDATE-1
         RenderPassId::VegetationCards,
     };
-    for (int i = 0; i < 7; ++i) {
+    for (int i = 0; i < 8; ++i) {
         const TopLevelPassContract* c = findTopLevelExecutorPass(wrappable[i]);
         CHECK(c != nullptr);
     }
 }
 
 TEST_CASE("top-level executor (c): deferred passes return nullptr (not executor-owned)") {
-    // Water, VFX, UI remain deferred (ambient/FBO gaps). Shadow + MechOpaque are now owned.
+    // VFX, UI remain deferred. Water now owned (WATER-SAME-ORDER-VALIDATE-1);
+    // Shadow + MechOpaque owned (SLICE-2).
     using namespace RenderCore::framegraph;
     const RenderPassId deferred[] = {
-        RenderPassId::Water,
         RenderPassId::VFX,
         RenderPassId::UI,
     };
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 2; ++i) {
         CHECK(findTopLevelExecutorPass(deferred[i]) == nullptr);
     }
-    // Confirm Shadow + MechOpaque are NOW owned (not deferred):
+    // Confirm Shadow + MechOpaque + Water are NOW owned (not deferred):
     CHECK(findTopLevelExecutorPass(RenderPassId::Shadow)     != nullptr);
     CHECK(findTopLevelExecutorPass(RenderPassId::MechOpaque) != nullptr);
+    CHECK(findTopLevelExecutorPass(RenderPassId::Water)      != nullptr);
 }
 
 TEST_CASE("top-level executor (d): ambient + FBO flags match declared ledger declarations") {
@@ -1355,6 +1357,12 @@ TEST_CASE("top-level executor (d): ambient + FBO flags match declared ledger dec
     CHECK(decal->validateAmbient == false);
     CHECK(decal->validateFbo     == true);
 
+    // Water has AmbientContract (SceneGEqual/depthWrite On) + FBO ledger (MainColor).
+    const TopLevelPassContract* water = findTopLevelExecutorPass(RenderPassId::Water);
+    REQUIRE(water != nullptr);
+    CHECK(water->validateAmbient == true);
+    CHECK(water->validateFbo     == true);
+
     // VegetationCards has neither AmbientContract row nor FBO ledger target.
     const TopLevelPassContract* veg = findTopLevelExecutorPass(RenderPassId::VegetationCards);
     REQUIRE(veg != nullptr);
@@ -1368,6 +1376,7 @@ TEST_CASE("top-level executor (e): ambient ledger cross-check — Shadow/MechOpa
     CHECK(findAmbient(RenderPassId::MechOpaque)       != nullptr);  // SceneGEqual+MainScene
     CHECK(findAmbient(RenderPassId::StaticPropOpaque) != nullptr);
     CHECK(findAmbient(RenderPassId::Terrain)          != nullptr);
+    CHECK(findAmbient(RenderPassId::Water)            != nullptr);  // WATER-SAME-ORDER-VALIDATE-1
     CHECK(findAmbient(RenderPassId::TerrainOverlay)   == nullptr);
     CHECK(findAmbient(RenderPassId::TerrainDecal)     == nullptr);
     CHECK(findAmbient(RenderPassId::VegetationCards)  == nullptr);
@@ -1384,6 +1393,7 @@ TEST_CASE("top-level executor (f): FBO ledger cross-check — Shadow=ShadowDynam
     CHECK(rid(declaredFboTarget(RenderPassId::Terrain))          == mc);
     CHECK(rid(declaredFboTarget(RenderPassId::TerrainOverlay))   == mc);
     CHECK(rid(declaredFboTarget(RenderPassId::TerrainDecal))     == mc);
+    CHECK(rid(declaredFboTarget(RenderPassId::Water))           == mc);   // WATER-SAME-ORDER-VALIDATE-1
     CHECK(rid(declaredFboTarget(RenderPassId::VegetationCards))  == unk);
 }
 
@@ -1394,10 +1404,10 @@ TEST_CASE("top-level executor (g): note field is non-null for all wrappable pass
     }
 }
 
-TEST_CASE("top-level executor (h): kTopLevelDeferredPassCount matches the 3 remaining deferred passes (Water/VFX/UI)") {
-    // Shadow + MechOpaque are now owned in SAME-ORDER-EXECUTOR-SLICE-2.
+TEST_CASE("top-level executor (h): kTopLevelDeferredPassCount matches the 2 remaining deferred passes (VFX/UI)") {
+    // Shadow + MechOpaque owned in SLICE-2; Water owned in WATER-SAME-ORDER-VALIDATE-1.
     using namespace RenderCore::framegraph;
-    CHECK(kTopLevelDeferredPassCount == 3u);
+    CHECK(kTopLevelDeferredPassCount == 2u);
 }
 
 // ---------------------------------------------------------------------------

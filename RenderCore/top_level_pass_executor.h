@@ -81,6 +81,12 @@ static constexpr TopLevelPassContract kTopLevelExecutorPasses[] = {
         /*note*/            "TerrainDecal/gosRenderer_drawDecals",
     },
     {
+        /*id*/              RenderPassId::Water,
+        /*validateAmbient*/ true,   // AmbientContract row: SceneGEqual depthFunc, depthWrite On, MainScene viewport
+        /*validateFbo*/     true,   // FBO ledger declares MainColor target (scene FBO)
+        /*note*/            "Water/gosRenderer_renderWaterFastPath",
+    },
+    {
         /*id*/              RenderPassId::VegetationCards,
         /*validateAmbient*/ false,  // DRYRUN-OBSERVE-COVERAGE-1: no AmbientContract row
         /*validateFbo*/     false,  // no declared FBO target for VegetationCards
@@ -101,8 +107,8 @@ inline const TopLevelPassContract* findTopLevelExecutorPass(RenderPassId id) {
 }
 
 // Count of deferred top-level passes (not executor-owned this slice).
-// Water, VFX, UI = 3. (Shadow + MechOpaque are now owned in SAME-ORDER-EXECUTOR-SLICE-2.)
+// VFX, UI = 2. (Water now owned in WATER-SAME-ORDER-VALIDATE-1; Shadow + MechOpaque in SLICE-2.)
 // Called by the dump to populate executor_skipped_deferred_passes.
-static constexpr unsigned kTopLevelDeferredPassCount = 3u;
+static constexpr unsigned kTopLevelDeferredPassCount = 2u;
 
 }} // namespace RenderCore::framegraph
