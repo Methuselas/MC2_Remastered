@@ -1051,6 +1051,10 @@ def get_executor_health() -> str:
     owned_p   = fg.get("executor_owned_passes", owned_w)   # older name alias
     top_level = fg.get("executor_validated_top_level_passes", 0)
     apply_st  = fg.get("executor_apply_state_passes", 0)
+    # PER-PASS-APPLY-COUNTERS-1 + Mech/Water slices: per-pass apply-state breakdown
+    # (6 PostProcess + TerrainDecal/TerrainOverlay/StaticPropOpaque/MechOpaque/Water).
+    # Absent on builds predating PER-PASS-APPLY-COUNTERS-1 — handled gracefully below.
+    apply_by_pass = fg.get("executor_apply_state_by_pass", {})
     scheduled = fg.get("executor_scheduled_passes", 0)
     skipped   = fg.get("executor_skipped_deferred_passes", 0)
 
@@ -1102,6 +1106,20 @@ def get_executor_health() -> str:
         f"  executor_owned_passes:                  {owned_p}",
         f"  executor_validated_top_level_passes:    {top_level}",
         f"  executor_apply_state_passes:            {apply_st}",
+        "",
+        "# Apply-state by pass",
+    ]
+
+    if isinstance(apply_by_pass, dict) and apply_by_pass:
+        for _pass_name, _pass_count in apply_by_pass.items():
+            lines.append(f"  {_pass_name + ':':<38} {_pass_count}")
+    else:
+        lines.append(
+            "  (per-pass map not in dump — pre-PER-PASS-APPLY-COUNTERS-1 build)"
+        )
+
+    lines += [
+        "",
         f"  executor_scheduled_passes:              {scheduled}",
         f"  executor_skipped_deferred_passes:       {skipped}",
         f"  executor_validation_failures:           {val_fail}{_flag(val_fail)}",
