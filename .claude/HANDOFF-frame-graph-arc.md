@@ -19,21 +19,35 @@ Per-pass apply counters shipped (PER-PASS-APPLY-COUNTERS-1 `0e0b582a` — `execu
 1. **Runtime-proven SOLE-SETTER (body-skip):** PostProcess **6/6** islands
    (EdgeFog/FogOob/Shoreline/CloudShadow/ScreenShadow + outer endScene).
 2. **Runtime-proven TOP-LEVEL apply-state:** **StaticPropOpaque** (named-counter proven,
-   `StaticPropOpaque=1993`/tier1 run; apply +0.46/frame attributed, render-correct +0 destroys).
-3. **Declared + unit-tested, NOT content-exercised:** **TerrainDecal**, **TerrainOverlay**
-   — await exercise-smokes (mc2_02 for overlay; mc2_17 + `MC2_DYNAMIC_DECALS` for decal). ⚠⚠
-   **TerrainOverlay may need a LIVE-SITE FIX:** recon found the live overlay draw is
-   `drawDecalStaticBatch` (gameos_graphics.cpp:9617, default-ON `MC2_TERRAIN_INDIRECT_OVERLAY`) but the
-   slice may have instrumented the DORMANT `drawTerrainOverlays` (:9798). If the TerrainOverlay
-   per-pass counter == 0 on the mc2_02 exercise-smoke → move the hook to `drawDecalStaticBatch`.
+   `StaticPropOpaque=1665-1993`/tier1 run; apply +0.46/frame attributed, render-correct +0 destroys).
+   ★This is the RUNTIME PROOF of the shared top-level apply MECHANISM — the same infra TerrainDecal/
+   TerrainOverlay use. So accept the code-faithful proof for decal/overlay (below).
+3. **Declared + unit-tested + code-correct (live-site) + byte-identical-OFF, but CONTENT-UNEXERCISABLE
+   in stock smoke:** **TerrainOverlay** (SITE-FIXED `bd645aa6` → now on the LIVE draw site
+   `drawDecalStaticBatch`), **TerrainDecal**. ★KEY FINDING (corrects earlier "mc2_02=980 overlay tris"
+   — that was a MISREAD of a different trace): NO stock smoke mission (mc2_01–24) exercises the overlay
+   pass — ALL report `[TERRAIN_OVERLAY v1] decal_vbo_built tris=0`. The decal-static/overlay pass only
+   draws true road/runway/bridge `&Overlays` tiles; stock maps have none. mc2_02's cement (75
+   CEMENT_ATLAS tiles) is drawn by the **TERRAIN-SOLID** path (CEMENT-BAKE-INTO-TERRAIN, composited in
+   the LOD-chunk terrain pass), NOT the TerrainOverlay pass → `executor_apply_state_by_pass.TerrainOverlay`
+   stays 0 even with cement present. TerrainDecal needs combat craters/footprints (dynamic, +
+   `MC2_DYNAMIC_DECALS` which is NOT in run_smoke.py's allowlist). Full content-exercise = a future
+   editor/road-map or mod-mission task, **NOT a blocker** — the mechanism is StaticProp-proven.
 
-**NEXT (advisor):** run the in-flight exercise-smokes → fix the overlay site if counter==0 →
-pick the next apply-state candidate. **Mech = GREEN-RECON-PARKED** (recon clean at a4c9926d-era,
-dispatch at txmmgr:3273 NOT the begin seam — but **do NOT build until the redline is lifted**).
-Water / Terrain-main / Shadow deferred. Side cleanup noted: `kParticleEffectState` stale
-blend=Additive vs live alpha-blend (render_contract.cpp:315 vs gos_particle_bridge.cpp:1164).
-⚠ TOOLING: the recurring `stale_deploy_check` WARN in `verify_executor_slice.py` is a known
-**benign parser quirk** — the manifest `src_commit` IS correct; flag for a tooling fix.
+**NEXT (advisor):** pick the next apply-state candidate. Overlay/decal full content-exercise needs
+(a) an editor/road map or mod mission with real road/runway/bridge tiles, and (b) adding
+`MC2_DYNAMIC_DECALS` to run_smoke.py's mission-Popen env allowlist (decal). **Mech = GREEN-RECON-PARKED**
+(recon clean at a4c9926d-era, dispatch at txmmgr:3273 NOT the begin seam — but **do NOT build until the
+redline is lifted**). Water / Terrain-main / Shadow deferred; Terrain-main / Veg / VFX / UI likely-never
+top-level apply-state (PipelineId::Invalid / pin-sensitive / runtime-dynamic). Side cleanup noted:
+`kParticleEffectState` stale blend=Additive vs live alpha-blend (render_contract.cpp:315 vs
+gos_particle_bridge.cpp:1164).
+✓ TOOLING (FIXED `6f6d1454`): the recurring `stale_deploy_check` WARN in `verify_executor_slice.py` was a
+benign parser quirk (read `src_commit` as a top-level line, not the per-row col-3) — now parses per-row;
+genuine staleness still flagged. Also added `verify_executor_slice.py --assert-pass-fired NAME[:MIN]`
+(reads `executor_apply_state_by_pass`; StaticPropOpaque:1→exit0, TerrainDecal:1→exit1, bogus→error w/
+valid names) + grep-gate `scripts/check-apply-pass-bumped.py` (every ApplyPassId bumped exactly once
+across engine TUs; wired into check-contracts.sh after raw_gl_blendfunc) + offline registration doctests.
 
 ---
 
@@ -623,6 +637,40 @@ shared primary — NOT redeployed this session by convention (we use 0.4c spare)
     no drift). 89 doctests. ★VERIFIED ON tier1 dump: StaticPropOpaque=1993, TerrainDecal=0,
     TerrainOverlay=0, EdgeFog/FogOob/Shoreline/ScreenShadow=1993, CloudShadow=0 (gated),
     aggregate==sum==9965. The decal/overlay false-inference is now structurally impossible.
+
+## ✓ Overlay site-fix + content-unexercisable finding + verify/registration automation (entries 44–46)
+44. **verify_executor_slice.py upgrades** (`6f6d1454`) — FIXED the recurring false `stale_deploy_check`
+    WARN (now parses `src_commit` as the per-row column 3, not a top-level line; genuine staleness still
+    flagged) + added `--assert-pass-fired NAME[:MIN]` (reads `executor_apply_state_by_pass`;
+    StaticPropOpaque:1→exit0, TerrainDecal:1→exit1, bogus→error-with-valid-names). Automates the manual
+    dump-reading + kills the WARN noise.
+45. **APPLY-STATE-REGISTRATION-CHECK-1** (`20d89a3b`) — offline doctests (top-level apply ⇒ concrete
+    non-Invalid pipelineId for TerrainDecal/Overlay/StaticProp; PostProcess apply ⇒ matching kSubStageState
+    row + island in kExecutorIslands) [FrameGraph 89→91] + new `scripts/check-apply-pass-bumped.py`
+    grep-gate (every ApplyPassId bumped exactly once across engine TUs; negative-tested; wired into
+    check-contracts.sh after raw_gl_blendfunc). ⇒ Apply-state wiring can't half-ship.
+46. **APPLY-STATE-TERRAINOVERLAY-SITE-FIX-1** (`bd645aa6`) — relocated the TerrainOverlay executor
+    validate+apply hooks to the LIVE draw site `drawDecalStaticBatch` (gameos_graphics.cpp:9908;
+    applyPipeline at :9970) — the dormant per-tri `drawTerrainOverlays` (:9799) is skipped under default-ON
+    `MC2_TERRAIN_INDIRECT_OVERLAY` (this resolves the entry-40 OPEN QUESTION: yes, the hook was on the
+    dormant site). Kept the dormant-site instrumentation too (mutually exclusive per the indirect gate →
+    no double-own; preserves ownership in the gate-OFF editor path). Reused the existing kTopLevelStateDesc
+    row + `executorApplyTerrainOverlayState()` + `overlayStateAppliedByExecutor_` flag. Tier1 gauntlet
+    PASS (validated_top_level=13567, validation_failures=0; DRYRUN out_of_order/ambient/fbo=0), byte-
+    identical OFF, 91 doctests. ★Site-correct now — but still CONTENT-UNEXERCISABLE in stock smoke (see
+    the three-state dashboard finding above: stock maps have zero road/runway/bridge `&Overlays` tiles;
+    mc2_02 cement is drawn by the TERRAIN-SOLID path, not the overlay pass → counter stays 0).
+
+## ▶ OPEN ITEMS — overlay/decal content-exercise + automation now in place
+- **Overlay/decal full content-exercise (future, NOT a blocker):** needs (a) an editor/road map or mod
+  mission carrying real road/runway/bridge `&Overlays` tiles (overlay) and combat craters/footprints
+  (decal), and (b) adding **`MC2_DYNAMIC_DECALS`** to `run_smoke.py`'s mission-Popen env allowlist
+  (currently dropped → decal pass never runs in smoke). The shared apply MECHANISM is already runtime-
+  proven by StaticPropOpaque, so this is content coverage, not correctness.
+- **Automation now in place (use it):** `verify_executor_slice.py --assert-pass-fired NAME[:MIN]`
+  (per-pass apply-counter assertion, no manual dump-reading); `scripts/check-apply-pass-bumped.py`
+  (ApplyPassId bump-exactly-once grep-gate, in check-contracts.sh); apply-state registration doctests
+  (FrameGraph suite, 91). Apply-state wiring is now self-checking end-to-end.
 
 ## ▶ NEXT PHASE — top-level APPLY-STATE expansion + Phase 8 RAW-GL-BYPASS gate
 Same-order top-level VALIDATE is done (10/10). Frontier moves to top-level **APPLY-STATE** (executor
