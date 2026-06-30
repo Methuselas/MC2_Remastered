@@ -25,6 +25,7 @@
 #include "gpu_cull_record.h"             // 2026-05-10: GpuActorRecord, Cat_StaticProp
 #include "../../mclib/terrain.h"         // C1b temporal-superset: Terrain::worldToBlockIdx()
 #include "../../mclib/render_contract.h" // [RENDER_PASS v1] noteRenderPass
+#include "../../RenderCore/top_level_pass_executor.h" // APPLY-STATE-STATICPROP-1: findTopLevelStateDesc
 #include "gameos.hpp"
 #include "utils/shader_builder.h"
 #include "tgl.h"  // TG_Shape::s_worldToClip
@@ -5326,6 +5327,37 @@ static bool flushDepthPrepassV6(
     return true;
 }
 
+// APPLY-STATE-STATICPROP-1: third top-level scene-pass apply-state. Forward-decl of
+// the cross-TU apply-state counter bump (defined in gos_postprocess.cpp). Bumps the
+// SAME g_applyStatePasses that the PostProcess apply-state islands + the TerrainDecal/
+// TerrainOverlay top-level applies use, so executor_apply_state_passes aggregates with
+// no double-count (single increment per apply).
+extern "C" void mc2_framegraph_executor_bump_apply_state();
+
+// APPLY-STATE-STATICPROP-1: file-static flag mirroring decalStateAppliedByExecutor_.
+// When MC2_FRAMEGRAPH_EXECUTOR is ON, executorApplyStaticPropOpaqueState() pre-applies
+// the StaticPropOpaque pipeline and sets this; flush()'s COLOR-pass body then skips its
+// own applyPipeline (one-shot reset). Gate OFF -> flag stays false -> body applies as
+// before -> byte-identical.
+static bool s_staticPropStateAppliedByExecutor = false;
+
+// APPLY-STATE-STATICPROP-1: pre-apply the declared StaticPropOpaque pipeline. Top-level
+// analog of gosRenderer::executorApplyTerrainDecalState() / ...OverlayState(): performs
+// the SOLE entry render-state of the static-prop COLOR pass (applyPipeline(StaticPropOpaque)
+// at flush ~:5503), bumps the shared apply-state counter, and flags the body to skip its
+// own applyPipeline (one-shot). Only the pipeline is lifted; FBO/MRT/drawBuffers/viewport
+// are inherited from the preceding pass and are NOT touched here (kTopLevelStateDesc records
+// them as Unknown/Inherit). The separate StaticPropDepth prepass (~:5252) is NOT lifted.
+// Idempotent: the body makes the identical call when the flag is false. Only reached when
+// MC2_FRAMEGRAPH_EXECUTOR is ON and the pass runs.
+static void executorApplyStaticPropOpaqueState() {
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::StaticPropOpaque),
+        "StaticPropOpaque");
+    mc2_framegraph_executor_bump_apply_state();
+    s_staticPropStateAppliedByExecutor = true;
+}
+
 // [RENDER_CONTRACT:Pass=StaticProp id=GpuStaticPropBatcher_flush]
 //   Routes through static_prop.frag which writes
 //   rc_gbuffer1_screenShadowEligible (production) or
@@ -5500,9 +5532,26 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
     // applyPipeline: binds program, depth (test+write+func=GL_GEQUAL), blend, cull.
     // PipelineDesc v1: DepthFunc::GreaterEqual encoded in the table row — no
     // explicit glDepthFunc() call needed here any more.
+    // APPLY-STATE-STATICPROP-1: third top-level scene-pass apply-state. Gated by the
+    // SAME predicate executorOwnBeginTopLevel uses internally (MC2_FRAMEGRAPH_EXECUTOR).
+    // Dispatched here (after the early-return guards, immediately before the body bind)
+    // so the executor apply only fires when the COLOR pass actually reaches its bind —
+    // exactly the body's applyPipeline call lifted up, no double-count. Idempotent ON.
+    // ★ Unlike decal/overlay, StaticPropOpaque runs every tier1 frame, so this body-skip
+    // path is genuinely exercised at runtime.
+    if (render_contract::isTopLevelExecutorEnabled() &&
+        RenderCore::framegraph::findTopLevelStateDesc(RenderCore::RenderPassId::StaticPropOpaque) != nullptr) {
+        executorApplyStaticPropOpaqueState();
+    }
+    // APPLY-STATE-STATICPROP-1: skip when the executor already applied the pipeline
+    // (MC2_FRAMEGRAPH_EXECUTOR ON). Reset one-shot before draw. Gate OFF -> flag false ->
+    // body applies -> byte-identical. The separate StaticPropDepth prepass is untouched.
+    if (!s_staticPropStateAppliedByExecutor) {
     pipeline_binder::applyPipeline(
         RenderCore::getPipelineDesc(RenderCore::PipelineId::StaticPropOpaque),
         "StaticPropOpaque");  // STATIC-PROP-COLOR-LABEL-HARDENING-1: label the live color bind
+    }
+    s_staticPropStateAppliedByExecutor = false;
     render_frame_plan::trace(render_frame_plan::Phase::StaticOpaque, "StaticPropOpaque",
         render_frame_plan::PathKind::Batcher, -1, "StaticPropOpaque");
     // MDI-SUBMISSION-SCAFFOLD-1: flush-level submission self-report. Per-variant command

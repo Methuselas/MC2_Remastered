@@ -1435,9 +1435,9 @@ TEST_CASE("top-level executor (h): kTopLevelDeferredPassCount == 0 (UI-SAME-ORDE
 // (GL context required); only the descriptor table shape is asserted.
 // ---------------------------------------------------------------------------
 
-TEST_CASE("top-level apply-state (a): kTopLevelStateDesc has exactly 2 rows (TerrainDecal, TerrainOverlay)") {
+TEST_CASE("top-level apply-state (a): kTopLevelStateDesc has exactly 3 rows (TerrainDecal, TerrainOverlay, StaticPropOpaque)") {
     using namespace RenderCore::framegraph;
-    CHECK(kTopLevelStateDescCount == 2u);
+    CHECK(kTopLevelStateDescCount == 3u);
 }
 
 TEST_CASE("top-level apply-state (b): findTopLevelStateDesc(TerrainDecal) = TerrainDecal pipeline, FBO/viewport inherit (not applied)") {
@@ -1503,6 +1503,40 @@ TEST_CASE("top-level apply-state (f): TerrainOverlay lifted pipelineId matches t
     bool found = false;
     for (int i = 0; i < kPassRenderStateCount; ++i) {
         if (kPassRenderState[i].id == RenderPassId::TerrainOverlay) {
+            CHECK(static_cast<unsigned>(td->pipelineId) ==
+                  static_cast<unsigned>(kPassRenderState[i].pipelineId));
+            found = true;
+        }
+    }
+    CHECK(found);
+}
+
+// APPLY-STATE-STATICPROP-1: third top-level apply-state consumer — first one whose
+// ON-path body-skip is actually exercised at runtime (StaticPropOpaque runs every
+// tier1 frame).
+TEST_CASE("top-level apply-state (g): findTopLevelStateDesc(StaticPropOpaque) = StaticPropOpaque pipeline, FBO/viewport inherit (not applied)") {
+    using namespace RenderCore;
+    using namespace RenderCore::framegraph;
+    const TopLevelStateDesc* d = findTopLevelStateDesc(RenderPassId::StaticPropOpaque);
+    REQUIRE(d != nullptr);
+    CHECK(static_cast<unsigned>(d->id)         == static_cast<unsigned>(RenderPassId::StaticPropOpaque));
+    // pipelineId reused from the authoritative kPassRenderState[] row — not duplicated.
+    CHECK(static_cast<unsigned>(d->pipelineId) == static_cast<unsigned>(PipelineId::StaticPropOpaque));
+    // Only the pipeline is lifted this slice; FBO/MRT/viewport are honestly NOT applied
+    // (static props inherit the preceding pass's scene FBO/drawBuffers/viewport).
+    CHECK(static_cast<unsigned>(d->fboTarget)  == static_cast<unsigned>(RenderResourceId::Unknown));
+    CHECK(static_cast<unsigned>(d->viewport)   == static_cast<unsigned>(ViewportKind::Inherit));
+}
+
+TEST_CASE("top-level apply-state (h): StaticPropOpaque lifted pipelineId matches the authoritative kPassRenderState row") {
+    using namespace RenderCore;
+    using namespace RenderCore::framegraph;
+    const TopLevelStateDesc* td = findTopLevelStateDesc(RenderPassId::StaticPropOpaque);
+    REQUIRE(td != nullptr);
+    REQUIRE(passHasStaticPipeline(RenderPassId::StaticPropOpaque));
+    bool found = false;
+    for (int i = 0; i < kPassRenderStateCount; ++i) {
+        if (kPassRenderState[i].id == RenderPassId::StaticPropOpaque) {
             CHECK(static_cast<unsigned>(td->pipelineId) ==
                   static_cast<unsigned>(kPassRenderState[i].pipelineId));
             found = true;

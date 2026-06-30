@@ -156,7 +156,7 @@ struct TopLevelStateDesc {
 };
 
 // Compile-time table of top-level passes whose render-state the executor APPLIES.
-// Consumers: TerrainDecal, TerrainOverlay — both pipeline-only lifts.
+// Consumers: TerrainDecal, TerrainOverlay, StaticPropOpaque — all pipeline-only lifts.
 static constexpr TopLevelStateDesc kTopLevelStateDesc[] = {
     // TerrainDecal — drawDecals(): the sole entry render-state is
     // applyPipeline(TerrainDecal). FBO/drawBuffers/viewport are inherited from
@@ -175,6 +175,21 @@ static constexpr TopLevelStateDesc kTopLevelStateDesc[] = {
     {
         /*id*/         RenderPassId::TerrainOverlay,
         /*pipelineId*/ RenderCore::PipelineId::TerrainOverlay,
+        /*fboTarget*/  RenderResourceId::Unknown,   // inherit (not applied)
+        /*viewport*/   ViewportKind::Inherit,       // inherit (not applied)
+    },
+    // APPLY-STATE-STATICPROP-1: StaticPropOpaque — GpuStaticPropBatcher::flush(): the
+    // sole entry render-state of the COLOR pass is applyPipeline(StaticPropOpaque)
+    // (~gos_static_prop_batcher.cpp:5503). Unlike decal/overlay (which do not run in
+    // tier1 maps), StaticPropOpaque runs EVERY tier1 frame — so this is the first
+    // apply-state row whose ON-path body-skip is actually exercised at runtime. The
+    // preceding StaticPropDepth prepass is a SEPARATE helper and is NOT lifted here.
+    // objectId is an SSBO per-instance + shader #define, not a body drawBuffers call.
+    // FBO/MRT/drawBuffers/viewport are inherited from the preceding Mech/Terrain pass
+    // and are deliberately NOT applied here (same honesty shape as decal/overlay).
+    {
+        /*id*/         RenderPassId::StaticPropOpaque,
+        /*pipelineId*/ RenderCore::PipelineId::StaticPropOpaque,
         /*fboTarget*/  RenderResourceId::Unknown,   // inherit (not applied)
         /*viewport*/   ViewportKind::Inherit,       // inherit (not applied)
     },
