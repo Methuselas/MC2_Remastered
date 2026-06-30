@@ -22,12 +22,16 @@
 
 #include"gameos.hpp"
 #include"gos_profiler.h"
+#include"path_trace.h"  // PATHFINDING-FACTS-1 gated PATH telemetry
 
 
 long MovePathManager::numPaths = 0;
 long MovePathManager::peakPaths = 0;
 long MovePathManager::sourceTally[50];
 MovePathManagerPtr PathManager = NULL;
+
+// PATHFINDING-FACTS-1: per-frame path-queue activity counters (telemetry only).
+static long s_pathQueuedThisFrame = 0;
 
 //***************************************************************************
 // PATH MANAGER class
@@ -167,6 +171,7 @@ void MovePathManager::request (MechWarriorPtr pilot, long selectionIndex, unsign
 	
 	numPaths++;
 	sourceTally[source]++;
+	s_pathQueuedThisFrame++;  // PATHFINDING-FACTS-1: enqueue tally (telemetry only)
 
 	if (numPaths > peakPaths)
 		peakPaths = numPaths;
@@ -207,11 +212,17 @@ void MovePathManager::update (void) {
 	long numPathsToProcess = 6;
 	//if (numPaths > 15)
 	//	numPathsToProcess = 10;
+	long processedThisFrame = 0;  // PATHFINDING-FACTS-1 (telemetry only)
 	for (long i = 0; i < numPathsToProcess; i++) {
 		if (!queueFront)
 			break;
 		calcPath();
+		processedThisFrame++;
 	}
+
+	// PATHFINDING-FACTS-1: per-frame queue depth/throttle emit (gated, default-OFF).
+	mc2_path_trace::emitFrame(s_pathQueuedThisFrame, processedThisFrame, numPaths, peakPaths);
+	s_pathQueuedThisFrame = 0;
 
 //	char s[50];
 //	sprintf(s, "num paths = %d", numPaths);

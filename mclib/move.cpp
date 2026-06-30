@@ -28,6 +28,7 @@
 #include"gos_profiler.h"
 #include"../GameOS/gameos/gos_terrain_indirect.h"  // PR2c Stage 1c — MarkMineDirty
 #include"move_recon.h"  // MC2_MOVE_RECON per-frame pathfinding cost instrumentation
+#include"path_trace.h"  // PATHFINDING-FACTS-1 Stage 1 gated PATH telemetry
 
 //---------------------------------------------------------------------------
 // Bounded readPacket helper for GlobalMap::init — refuses to read a packet
@@ -799,6 +800,15 @@ long MOVE_readData (PacketFile* packetFile, long whichPacket) {
 	//	for (long c = 0; c < GameMap->width; c++)
 	//		if (GameMap->getOffMap(r, c))
 	//			numOffMap[0]++;
+
+	// PATHFINDING-FACTS-1: emit map topology once at mission load (gated, default-OFF).
+	{
+		int areas = (GlobalMoveMap[0]) ? (int)GlobalMoveMap[0]->numAreas : 0;
+		int doors = (GlobalMoveMap[0]) ? (int)GlobalMoveMap[0]->numDoors : 0;
+		int cellW = (GameMap) ? (int)GameMap->width : 0;
+		int cellH = (GameMap) ? (int)GameMap->height : 0;
+		mc2_path_trace::emitMap(areas, doors, (int)tempNumSpecialAreas, cellW, cellH);
+	}
 
 	return(numMissionMapPackets + numGlobalMap0Packets + numGlobalMap1Packets + numGlobalMap2Packets + 2);
 }
@@ -5510,6 +5520,12 @@ inline void MoveMap::propogateCostJUMP (long r, long c, long cost, long g) {
 
 long MoveMap::calcPath (MovePathPtr path, Stuff::Vector3D* goalWorldPos, int* goalCell) {
 
+	// PATHFINDING-FACTS-1: gated per-solve telemetry (default-OFF, byte-identical).
+	mc2_path_trace::SolveScope _pt("plain");
+	const bool _pathTrace = _pt.active;
+	long _ptNodes = 0;
+	long _ptOpenPeak = 0;
+
 	MoveReconScope _recon_al(&g_moveRecon_astar_local_ns, &g_moveRecon_frame_astar_local_ns);
 	MoveReconNodeCounter _aln;  // per-call local node-expansion size (Warrior.Path 2ms layer)
 	// MOVE_CHUNK_SHADOW: popped-cell bbox (over-exploration vs final path) +
@@ -5616,11 +5632,17 @@ long MoveMap::calcPath (MovePathPtr path, Stuff::Vector3D* goalWorldPos, int* go
 				topOpenNodes = openList->getNumItems();
 		#endif
 
+		if (_pathTrace) {
+			long openN = openList->getNumItems();
+			if (openN > _ptOpenPeak) _ptOpenPeak = openN;
+		}
+
 		//----------------------
 		// Grab the best node...
 		PQNode bestPQNode;
 		openList->remove(bestPQNode);
 		_aln.n++;
+		if (_pathTrace) _ptNodes++;
 		bestRow = bestPQNode.row;
 		bestCol = bestPQNode.col;
 		if (g_moveReconEnabled) {
@@ -5845,6 +5867,16 @@ long MoveMap::calcPath (MovePathPtr path, Stuff::Vector3D* goalWorldPos, int* go
 		if (doorDirection != -1)
 			numCells++;
 
+		// PATHFINDING-FACTS-1: record path length + MAX_STEPS truncation (release-silent today).
+		if (_pathTrace) {
+			_pt.len = numCells;
+			_pt.fail = 0;
+			_pt.nodes = _ptNodes;
+			_pt.openPeak = _ptOpenPeak;
+			if (numCells > MAX_STEPS_PER_MOVEPATH)
+				_pt.trunc = 1;
+		}
+
 		#ifdef _DEBUG
 		if (numCells > MAX_STEPS_PER_MOVEPATH) {
 			File* pathDebugFile = new File;
@@ -6037,6 +6069,12 @@ long MoveMap::calcPath (MovePathPtr path, Stuff::Vector3D* goalWorldPos, int* go
 
 long MoveMap::calcPathJUMP (MovePathPtr path, Stuff::Vector3D* goalWorldPos, int* goalCell) {
 
+	// PATHFINDING-FACTS-1: gated per-solve telemetry (default-OFF, byte-identical).
+	mc2_path_trace::SolveScope _pt("jump");
+	const bool _pathTrace = _pt.active;
+	long _ptNodes = 0;
+	long _ptOpenPeak = 0;
+
 	#ifdef TIME_PATH
 		L_INTEGER calcStart, calcStop;
 		QueryPerformanceCounter(calcStart);
@@ -6144,15 +6182,21 @@ long MoveMap::calcPathJUMP (MovePathPtr path, Stuff::Vector3D* goalWorldPos, int
 				topOpenNodes = openList->getNumItems();
 		#endif
 
+		if (_pathTrace) {
+			long openN = openList->getNumItems();
+			if (openN > _ptOpenPeak) _ptOpenPeak = openN;
+		}
+
 		//----------------------
 		// Grab the best node...
 		PQNode bestPQNode;
 		openList->remove(bestPQNode);
+		if (_pathTrace) _ptNodes++;
 		bestRow = bestPQNode.row;
 		bestCol = bestPQNode.col;
 		MoveMapNodePtr bestMapNode = &map[bestRow * maxWidth + bestCol];
 		bestMapNode->clearFlag(MOVEFLAG_OPEN);
-		
+
 		int bestNodeG = bestMapNode->g;
 
 		//----------------------------
@@ -6339,6 +6383,16 @@ long MoveMap::calcPathJUMP (MovePathPtr path, Stuff::Vector3D* goalWorldPos, int
 		if (doorDirection != -1)
 			numCells++;
 
+		// PATHFINDING-FACTS-1: record path length + MAX_STEPS truncation (release-silent today).
+		if (_pathTrace) {
+			_pt.len = numCells;
+			_pt.fail = 0;
+			_pt.nodes = _ptNodes;
+			_pt.openPeak = _ptOpenPeak;
+			if (numCells > MAX_STEPS_PER_MOVEPATH)
+				_pt.trunc = 1;
+		}
+
 #ifdef _DEBUG
 		if (numCells > MAX_STEPS_PER_MOVEPATH) {
 			File* pathDebugFile = new File;
@@ -6361,8 +6415,8 @@ long MoveMap::calcPathJUMP (MovePathPtr path, Stuff::Vector3D* goalWorldPos, int
 		// Grab the path and return it...
 		path->init();
 		if (numCells) {
-#ifdef _DEBUG			
-			int maxSteps = 
+#ifdef _DEBUG
+			int maxSteps =
 #endif
 
 			path->init(numCells);
@@ -6510,6 +6564,12 @@ long MoveMap::calcPathJUMP (MovePathPtr path, Stuff::Vector3D* goalWorldPos, int
 
 long MoveMap::calcEscapePath (MovePathPtr path, Stuff::Vector3D* goalWorldPos, long* goalCell) {
 
+	// PATHFINDING-FACTS-1: gated per-solve telemetry (default-OFF, byte-identical).
+	mc2_path_trace::SolveScope _pt("escape");
+	const bool _pathTrace = _pt.active;
+	long _ptNodes = 0;
+	long _ptOpenPeak = 0;
+
 	#ifdef TIME_PATH
 		L_INTEGER calcStart, calcStop;
 		QueryPerformanceCounter(calcStart);
@@ -6611,15 +6671,21 @@ long MoveMap::calcEscapePath (MovePathPtr path, Stuff::Vector3D* goalWorldPos, l
 				topOpenNodes = openList->getNumItems();
 		#endif
 
+		if (_pathTrace) {
+			long openN = openList->getNumItems();
+			if (openN > _ptOpenPeak) _ptOpenPeak = openN;
+		}
+
 		//----------------------
 		// Grab the best node...
 		PQNode bestPQNode;
 		openList->remove(bestPQNode);
+		if (_pathTrace) _ptNodes++;
 		bestRow = bestPQNode.row;
 		bestCol = bestPQNode.col;
 		MoveMapNodePtr bestMapNode = &map[bestRow * maxWidth + bestCol];
 		bestMapNode->clearFlag(MOVEFLAG_OPEN);
-		
+
 		long bestNodeG = bestMapNode->g;
 
 		//----------------------------
@@ -6803,6 +6869,16 @@ long MoveMap::calcEscapePath (MovePathPtr path, Stuff::Vector3D* goalWorldPos, l
 		// we need to walk "thru" the door...
 		if (doorDirection != -1)
 			numCells++;
+
+		// PATHFINDING-FACTS-1: record path length + MAX_STEPS truncation (release-silent today).
+		if (_pathTrace) {
+			_pt.len = (int)numCells;
+			_pt.fail = 0;
+			_pt.nodes = _ptNodes;
+			_pt.openPeak = _ptOpenPeak;
+			if (numCells > MAX_STEPS_PER_MOVEPATH)
+				_pt.trunc = 1;
+		}
 
 #ifdef _DEBUG
 		if (numCells > MAX_STEPS_PER_MOVEPATH) {
