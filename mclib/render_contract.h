@@ -206,6 +206,12 @@ uint32_t getPassScopeViolationCount();   // cumulative since process start (test
 void executorOwnBeginTopLevel(PassIdentity id, const char* callerHint = nullptr);
 void executorOwnEndTopLevel(PassIdentity id, const char* callerHint = nullptr);
 
+// APPLY-STATE-TERRAINDECAL-1: public accessor for the MC2_FRAMEGRAPH_EXECUTOR gate
+// used by executorOwnBeginTopLevel. Callers in other TUs (gameos_graphics.cpp) gate
+// their executor apply-state calls on the SAME predicate so the apply only runs when
+// the executor is ON and the pass body runs — identical gating to the validate path.
+bool isTopLevelExecutorEnabled();
+
 } // namespace render_contract
 
 #endif // MC2_RENDER_CONTRACT_H

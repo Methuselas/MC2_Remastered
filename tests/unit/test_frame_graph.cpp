@@ -1429,6 +1429,57 @@ TEST_CASE("top-level executor (h): kTopLevelDeferredPassCount == 0 (UI-SAME-ORDE
 }
 
 // ---------------------------------------------------------------------------
+// APPLY-STATE-TERRAINDECAL-1: offline tests for the top-level apply-state table
+// (kTopLevelStateDesc / findTopLevelStateDesc). Pure/GL-free — mirrors the
+// findSubStageState coverage below. The pre-apply GL calls are not tested here
+// (GL context required); only the descriptor table shape is asserted.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("top-level apply-state (a): kTopLevelStateDesc has exactly 1 row (TerrainDecal)") {
+    using namespace RenderCore::framegraph;
+    CHECK(kTopLevelStateDescCount == 1u);
+}
+
+TEST_CASE("top-level apply-state (b): findTopLevelStateDesc(TerrainDecal) = TerrainDecal pipeline, FBO/viewport inherit (not applied)") {
+    using namespace RenderCore;
+    using namespace RenderCore::framegraph;
+    const TopLevelStateDesc* d = findTopLevelStateDesc(RenderPassId::TerrainDecal);
+    REQUIRE(d != nullptr);
+    CHECK(static_cast<unsigned>(d->id)         == static_cast<unsigned>(RenderPassId::TerrainDecal));
+    // pipelineId reused from the authoritative kPassRenderState[] row — not duplicated.
+    CHECK(static_cast<unsigned>(d->pipelineId) == static_cast<unsigned>(PipelineId::TerrainDecal));
+    // Only the pipeline is lifted this slice; FBO/viewport are honestly NOT applied.
+    CHECK(static_cast<unsigned>(d->fboTarget)  == static_cast<unsigned>(RenderResourceId::Unknown));
+    CHECK(static_cast<unsigned>(d->viewport)   == static_cast<unsigned>(ViewportKind::Inherit));
+}
+
+TEST_CASE("top-level apply-state (c): findTopLevelStateDesc returns nullptr for a non-apply pass (Terrain)") {
+    using namespace RenderCore::framegraph;
+    // Terrain is validate-owned but the executor does NOT apply its state this slice.
+    CHECK(findTopLevelStateDesc(RenderCore::RenderPassId::Terrain) == nullptr);
+    CHECK(findTopLevelStateDesc(RenderCore::RenderPassId::Shadow)  == nullptr);
+}
+
+TEST_CASE("top-level apply-state (d): lifted pipelineId matches the authoritative kPassRenderState row") {
+    using namespace RenderCore;
+    using namespace RenderCore::framegraph;
+    const TopLevelStateDesc* td = findTopLevelStateDesc(RenderPassId::TerrainDecal);
+    REQUIRE(td != nullptr);
+    // passHasStaticPipeline(TerrainDecal) is true with pipelineId=TerrainDecal in
+    // render_state_desc.h — the top-level table must reuse the SAME id, not re-pick.
+    REQUIRE(passHasStaticPipeline(RenderPassId::TerrainDecal));
+    bool found = false;
+    for (int i = 0; i < kPassRenderStateCount; ++i) {
+        if (kPassRenderState[i].id == RenderPassId::TerrainDecal) {
+            CHECK(static_cast<unsigned>(td->pipelineId) ==
+                  static_cast<unsigned>(kPassRenderState[i].pipelineId));
+            found = true;
+        }
+    }
+    CHECK(found);
+}
+
+// ---------------------------------------------------------------------------
 // FRAMEGRAPH-APPLY-STATE-ISLAND-1: offline tests for SubStageStateDesc table.
 // Pure/GL-free — the pre-apply GL calls are not tested here (GL context required).
 // ---------------------------------------------------------------------------

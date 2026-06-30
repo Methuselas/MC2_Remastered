@@ -22,6 +22,9 @@
 //              relocated from preamble to the real draw site (MECHOPAQUE-NOTE-RELOCATE-1).
 
 #include "RenderCore/RenderPassContract.h"  // RenderPassId
+#include "RenderCore/PipelineRegistry.h"      // PipelineId (APPLY-STATE-TERRAINDECAL-1)
+#include "RenderCore/ambient_contract.h"      // ViewportKind (APPLY-STATE-TERRAINDECAL-1)
+#include "RenderCore/RenderResourceRegistry.h" // RenderResourceId (APPLY-STATE-TERRAINDECAL-1)
 
 namespace RenderCore { namespace framegraph {
 
@@ -126,5 +129,57 @@ inline const TopLevelPassContract* findTopLevelExecutorPass(RenderPassId id) {
 // Shadow + MechOpaque in SLICE-2.)
 // Called by the dump to populate executor_skipped_deferred_passes.
 static constexpr unsigned kTopLevelDeferredPassCount = 0u;
+
+// ---- APPLY-STATE-TERRAINDECAL-1: top-level APPLY-STATE descriptor table -----
+//
+// The top-level analog of kSubStageState (frame_executor.h), which describes the
+// PostProcess sub-stage islands the executor *applies* state for. This table is
+// the FIRST step toward the north-star: executor applies declared pipeline state,
+// the pass body stops self-setting it.
+//
+// SCOPE THIS SLICE: only the pipeline is lifted. fboTarget/viewport are recorded
+// as Inherit/Unknown to be HONEST that they are NOT applied here — TerrainDecal
+// inherits Terrain's scene FBO / drawBuffers / viewport (recon ground-truth:
+// drawDecals() at gameos_graphics.cpp does no FBO/viewport setup at entry; its
+// only entry render-state is applyPipeline(TerrainDecal)). pipelineId is reused
+// from the authoritative kPassRenderState[] row (render_state_desc.h), NOT
+// duplicated — see findTopLevelStateDesc().
+//
+// Pure / constexpr / GL-free. The GL-touching apply lives in the gosRenderer TU
+// (gameos_graphics.cpp executorApplyTerrainDecalState()) where applyPipeline /
+// getPipelineDesc are already used. This header is offline-testable.
+struct TopLevelStateDesc {
+    RenderPassId           id;
+    RenderCore::PipelineId pipelineId;  // lifted this slice: executor applies via applyPipeline()
+    RenderResourceId       fboTarget;   // Unknown = NOT applied this slice (body inherits it)
+    ViewportKind           viewport;    // Inherit = NOT applied this slice (body inherits it)
+};
+
+// Compile-time table of top-level passes whose render-state the executor APPLIES.
+// First (and only, this slice) consumer: TerrainDecal — pipeline-only lift.
+static constexpr TopLevelStateDesc kTopLevelStateDesc[] = {
+    // TerrainDecal — drawDecals(): the sole entry render-state is
+    // applyPipeline(TerrainDecal). FBO/drawBuffers/viewport are inherited from
+    // the preceding Terrain pass and are deliberately NOT applied here.
+    {
+        /*id*/         RenderPassId::TerrainDecal,
+        /*pipelineId*/ RenderCore::PipelineId::TerrainDecal,
+        /*fboTarget*/  RenderResourceId::Unknown,   // inherit (not applied)
+        /*viewport*/   ViewportKind::Inherit,       // inherit (not applied)
+    },
+};
+static constexpr unsigned kTopLevelStateDescCount =
+    sizeof(kTopLevelStateDesc) / sizeof(kTopLevelStateDesc[0]);
+
+// Find the TopLevelStateDesc for the given pass id, or nullptr if the executor does
+// not apply state for it. Pure, constexpr-compatible, no GL. Mirrors
+// findSubStageState() (frame_executor.h).
+inline const TopLevelStateDesc* findTopLevelStateDesc(RenderPassId id) {
+    for (unsigned i = 0; i < kTopLevelStateDescCount; ++i) {
+        if (kTopLevelStateDesc[i].id == id)
+            return &kTopLevelStateDesc[i];
+    }
+    return nullptr;
+}
 
 }} // namespace RenderCore::framegraph

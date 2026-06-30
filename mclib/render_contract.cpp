@@ -1276,6 +1276,13 @@ static constexpr unsigned kMaxTopLevelFailureLog = 32u;
 
 } // namespace
 
+// APPLY-STATE-TERRAINDECAL-1: public forwarder to the anonymous-namespace gate so
+// out-of-TU executor apply-state callers (gameos_graphics.cpp) gate identically to
+// executorOwnBeginTopLevel. Same cached env read (MC2_FRAMEGRAPH_EXECUTOR).
+bool isTopLevelExecutorEnabled() {
+    return topLevelExecutorEnabled();
+}
+
 void executorOwnBeginTopLevel(PassIdentity passId, const char* callerHint) {
     if (!topLevelExecutorEnabled()) return;
 

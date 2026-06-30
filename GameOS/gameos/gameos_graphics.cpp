@@ -38,6 +38,7 @@
 #include "../../mclib/cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline
 #include "../../mclib/camera_frustum_math.h"  // CAMERA-FRUSTUM-HARNESS-1 pure rect/frustum math
 #include "../../mclib/render_contract.h"      // [RENDER_PASS v1] noteRenderPass
+#include "RenderCore/top_level_pass_executor.h" // APPLY-STATE-TERRAINDECAL-1: findTopLevelStateDesc
 #include "Stuff/Stuff.hpp"                     // Stuff::Matrix4D for gos_SetWorldToClipGL (full chain required; matrix.hpp alone creates circular include ordering)
 
 // [B1 C16] (diagnostic) gosFX heap + child accumulation counters; env-gated on
@@ -2138,6 +2139,14 @@ class gosRenderer {
         void pushDecalTri(const WorldOverlayVert* verts3, unsigned int texHandle);
         void drawTerrainOverlays();
         void drawDecals();
+        // APPLY-STATE-TERRAINDECAL-1: first top-level scene-pass apply-state.
+        // When MC2_FRAMEGRAPH_EXECUTOR is ON, the executor pre-applies the
+        // TerrainDecal pipeline (the sole entry render-state of drawDecals) and
+        // sets decalStateAppliedByExecutor_; drawDecals() then skips its own
+        // applyPipeline (one-shot reset). Gate OFF -> flag stays false -> body
+        // applies as before -> byte-identical.
+        void executorApplyTerrainDecalState();
+        bool decalStateAppliedByExecutor_ = false;
         // Slice A — draw the mission-static cement-overlay bake. Reproduces
         // drawTerrainOverlays()'s exact state/shader/uniforms/VAO but draws
         // the passed static VBO with per-overlayTexId ranges and does NOT
@@ -10005,6 +10014,17 @@ void gosRenderer::drawDecals()
         }
     } _tlGuard;
 
+    // APPLY-STATE-TERRAINDECAL-1: first top-level scene-pass apply-state. Gated by the
+    // SAME predicate executorOwnBeginTopLevel uses internally (MC2_FRAMEGRAPH_EXECUTOR).
+    // When ON and the executor applies state for this pass, executorApplyTerrainDecalState()
+    // pre-applies the TerrainDecal pipeline and sets decalStateAppliedByExecutor_; the body
+    // applyPipeline below is then skipped (one-shot). The VBO upload that follows touches no
+    // FF pipeline state, so this apply is order-equivalent to the body's. Idempotent ON.
+    if (render_contract::isTopLevelExecutorEnabled() &&
+        RenderCore::framegraph::findTopLevelStateDesc(RenderCore::RenderPassId::TerrainDecal) != nullptr) {
+        executorApplyTerrainDecalState();
+    }
+
     render_contract::noteRenderPass(render_contract::PassIdentity::TerrainDecal,
                                     "gosRenderer_drawDecals");
     render_contract::beginPassScope(render_contract::PassIdentity::TerrainDecal,
@@ -10020,8 +10040,14 @@ void gosRenderer::drawDecals()
     // SRC_ALPHA/ONE_MINUS_SRC_ALPHA, depth-test but depth-WRITE OFF, GEQUAL, cull
     // none) — byte-identical to the old hand-set state. program(0)=skip keeps the
     // manual decalProg_ bind below.
-    pipeline_binder::applyPipeline(
-        RenderCore::getPipelineDesc(RenderCore::PipelineId::TerrainDecal), "TerrainDecal");
+    // APPLY-STATE-TERRAINDECAL-1: skip when the executor already applied the pipeline
+    // (MC2_FRAMEGRAPH_EXECUTOR ON). Reset one-shot before draw. Mirrors EdgeFog
+    // REMOVE-1 / SCREENSHADOW-1. Gate OFF -> flag false -> body applies -> byte-identical.
+    if (!decalStateAppliedByExecutor_) {
+        pipeline_binder::applyPipeline(
+            RenderCore::getPipelineDesc(RenderCore::PipelineId::TerrainDecal), "TerrainDecal");
+    }
+    decalStateAppliedByExecutor_ = false;
 
     glUseProgram(decalProg_->shp_);
     float elapsed = SmokeMode::fixedTimestepEnabled()
@@ -10063,6 +10089,28 @@ void gosRenderer::drawDecals()
 
     render_contract::endPassScope(render_contract::PassIdentity::TerrainDecal,
                                   "gosRenderer_drawDecals");
+}
+
+// APPLY-STATE-TERRAINDECAL-1: forward-decl of the cross-TU apply-state counter bump
+// (defined in gos_postprocess.cpp). Bumps the SAME g_applyStatePasses that the
+// PostProcess apply-state islands use, so executor_apply_state_passes aggregates
+// top-level + sub-stage applies without a separate gauge.
+extern "C" void mc2_framegraph_executor_bump_apply_state();
+
+// APPLY-STATE-TERRAINDECAL-1: pre-apply the declared TerrainDecal pipeline. This is
+// the top-level analog of gosPostProcess::executorApply<X>State() — it performs the
+// SOLE entry render-state of drawDecals (applyPipeline(TerrainDecal)), bumps the
+// apply-state counter, and flags the body to skip its own applyPipeline (one-shot).
+// Only the pipeline is lifted this slice; FBO/drawBuffers/viewport are inherited from
+// the preceding Terrain pass and are NOT touched here (kTopLevelStateDesc records them
+// as Unknown/Inherit). Idempotent: the body makes the identical call when the flag is
+// false. Only reached when MC2_FRAMEGRAPH_EXECUTOR is ON and the pass runs.
+void gosRenderer::executorApplyTerrainDecalState()
+{
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::TerrainDecal), "TerrainDecal");
+    mc2_framegraph_executor_bump_apply_state();
+    decalStateAppliedByExecutor_ = true;
 }
 
 // ── Thin exported wrappers ────────────────────────────────────────────────────

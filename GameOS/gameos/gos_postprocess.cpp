@@ -5047,3 +5047,13 @@ extern "C" unsigned long mc2_framegraph_executor_apply_state_passes_impl()
 {
     return g_applyStatePasses;
 }
+
+// APPLY-STATE-TERRAINDECAL-1: cross-TU bump of the SAME g_applyStatePasses counter
+// so a top-level apply-state pass (gosRenderer::executorApplyTerrainDecalState in
+// gameos_graphics.cpp) AGGREGATES into the single reported value rather than
+// double-counting via a separate gauge. One increment per apply; the dump reads
+// mc2_framegraph_executor_apply_state_passes() which forwards to _impl() above.
+extern "C" void mc2_framegraph_executor_bump_apply_state()
+{
+    ++g_applyStatePasses;
+}
