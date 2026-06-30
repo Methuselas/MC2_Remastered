@@ -2814,13 +2814,9 @@ void gos_terrain_bridge_applyVertexDeclaration(gosRenderMaterial* material) {
     if (material) material->applyVertexDeclaration();
 }
 
-void gos_terrain_bridge_endVertexDeclaration(gosRenderMaterial* material) {
-    if (material) material->endVertexDeclaration();
-}
-
-void gos_terrain_bridge_end(gosRenderMaterial* material) {
-    if (material) material->end();
-}
+// gos_terrain_bridge_endVertexDeclaration and gos_terrain_bridge_end deleted by
+// TERRAIN-BRIDGE-BODY-DELETE-1: these were called only from TerrainPatchStream::flush(),
+// which was retired in PATCHSTREAM-THIN-RETIRE-1 (026e7276).
 
 unsigned int gos_terrain_bridge_glTextureForGosHandle(unsigned int gosHandle) {
     if (!g_gos_renderer) return 0;
@@ -2858,62 +2854,9 @@ static const bool s_patchStreamDirectBind =
 // Terrain colormaps have no mipmaps → GL_LINEAR + GL_CLAMP_TO_EDGE.
 static GLuint s_terrainBucketSampler = 0;
 
-void gos_terrain_bridge_beginBucketLoop() {
-    if (!g_gos_renderer) return;
-    g_gos_renderer->setRenderState(gos_State_ZCompare, 1);
-    g_gos_renderer->setRenderState(gos_State_ZWrite, 1);
-    g_gos_renderer->setRenderState(gos_State_AlphaMode, gos_Alpha_OneZero);
-    g_gos_renderer->setRenderState(gos_State_TextureAddress, gos_TextureClamp);
-    g_gos_renderer->setRenderState(gos_State_Terrain, 1);
-    // glActiveTexture intentionally NOT here — applyRenderStates() in
-    // drawSingleBucket may change the active unit; set it after.
-
-    if (s_patchStreamDirectBind) {
-        // Create sampler object lazily. It enforces GL_LINEAR + GL_CLAMP_TO_EDGE
-        // on unit 0 for the entire bucket loop, overriding any stale per-texture
-        // sampler state (e.g. GL_NEAREST_MIPMAP_LINEAR default on fresh uploads).
-        if (!s_terrainBucketSampler) {
-            glGenSamplers(1, &s_terrainBucketSampler);
-            glSamplerParameteri(s_terrainBucketSampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glSamplerParameteri(s_terrainBucketSampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            glSamplerParameteri(s_terrainBucketSampler, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-            glSamplerParameteri(s_terrainBucketSampler, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glSamplerParameteri(s_terrainBucketSampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        }
-        glBindSampler(0, s_terrainBucketSampler);
-    }
-}
-
-void gos_terrain_bridge_drawSingleBucket(
-    unsigned int gosHandle,
-    unsigned int firstVertex,
-    unsigned int vertexCount)
-{
-    if (!g_gos_renderer || vertexCount == 0) return;
-
-    if (s_patchStreamDirectBind) {
-        // Fast path: direct GL texture bind, bypassing applyRenderStates.
-        // Terrain contract already established by beginBucketLoop(); only
-        // the texture changes per bucket. glActiveTexture is per-bucket
-        // here because applyRenderStates (in standard path) can change the
-        // active unit; we cannot rely on beginBucketLoop's setup persisting.
-        gosTexture* tex = g_gos_renderer->getTexture((DWORD)gosHandle);
-        const GLuint glTex = tex ? (GLuint)tex->getTextureId() : 0u;
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, glTex); // binding 0 is valid; matches standard path behavior
-        glDrawArrays(GL_PATCHES, (GLint)firstVertex, (GLsizei)vertexCount);
-        // RENDER_STATES v1: direct-bind path bypasses applyRenderStates; cache is
-        // stale wrt unit-0 binding. Invalidate so the next applyRenderStates
-        // (called by endBucketLoop, or by the next renderer) re-binds fully.
-        g_gos_renderer->invalidateRenderStateCache();
-    } else {
-        // Standard path: full state machine flush.
-        g_gos_renderer->setRenderState(gos_State_Texture, (int)gosHandle);
-        g_gos_renderer->applyRenderStates();
-        glActiveTexture(GL_TEXTURE0);
-        glDrawArrays(GL_PATCHES, (GLint)firstVertex, (GLsizei)vertexCount);
-    }
-}
+// gos_terrain_bridge_beginBucketLoop and gos_terrain_bridge_drawSingleBucket deleted by
+// TERRAIN-BRIDGE-BODY-DELETE-1: called only from TerrainPatchStream::flush() (retired
+// in PATCHSTREAM-THIN-RETIRE-1, 026e7276).
 
 void gos_terrain_bridge_endBucketLoop(unsigned int lastGosHandle) {
     if (!s_patchStreamDirectBind || !g_gos_renderer) return;

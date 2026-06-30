@@ -187,7 +187,7 @@ public:
                            const gos_TERRAIN_EXTRA* vExtra2,
                            bool tri2Valid);
 
-    static bool flush();
+    // flush() deleted by TERRAIN-BRIDGE-BODY-DELETE-1: retired in 026e7276 (PATCHSTREAM-THIN-RETIRE-1).
     static void beginFrame();
 
     // Emit one compact quad record for the GPU reconstruction path (M1).

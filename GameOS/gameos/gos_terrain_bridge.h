@@ -32,9 +32,9 @@ void gos_terrain_bridge_bindUniforms(gosRenderMaterial* material);
 // Material lifecycle helpers — needed because gosRenderMaterial is defined
 // inside gameos_graphics.cpp and is not visible from gos_terrain_patch_stream.cpp.
 // flush() calls these after issuing per-bucket glDrawArrays.
+// NOTE: gos_terrain_bridge_endVertexDeclaration and gos_terrain_bridge_end deleted by
+// TERRAIN-BRIDGE-BODY-DELETE-1 (flush-exclusive; flush retired in 026e7276).
 void gos_terrain_bridge_applyVertexDeclaration(gosRenderMaterial* material);
-void gos_terrain_bridge_endVertexDeclaration(gosRenderMaterial* material);
-void gos_terrain_bridge_end(gosRenderMaterial* material);
 
 // Translate engine gosTextureHandle → actual GL texture object name.
 //
@@ -56,22 +56,9 @@ void gos_terrain_bridge_drawPatchStreamBucket(
     unsigned int firstVertex,
     unsigned int vertexCount);
 
-// Call once before the per-bucket draw loop to set render states that are
-// invariant across all buckets (ZCompare, ZWrite, AlphaMode, TextureAddress,
-// Terrain). Only gos_State_Texture changes per bucket. glActiveTexture is
-// set in drawSingleBucket() AFTER applyRenderStates(), matching the ordering
-// of the original drawPatchStreamBucket() to prevent AMD driver clobbering.
-// Does NOT call applyRenderStates() — the first drawSingleBucket() flushes
-// all pending dirty flags including these invariants.
-void gos_terrain_bridge_beginBucketLoop();
-
-// Per-bucket draw call: sets gos_State_Texture for gosHandle, calls
-// applyRenderStates(), issues glDrawArrays(GL_PATCHES, firstVertex, count).
-// Call gos_terrain_bridge_beginBucketLoop() exactly once before the loop.
-void gos_terrain_bridge_drawSingleBucket(
-    unsigned int gosHandle,
-    unsigned int firstVertex,
-    unsigned int vertexCount);
+// gos_terrain_bridge_beginBucketLoop and gos_terrain_bridge_drawSingleBucket declarations
+// removed by TERRAIN-BRIDGE-BODY-DELETE-1: these were called only from
+// TerrainPatchStream::flush() (retired in PATCHSTREAM-THIN-RETIRE-1, 026e7276).
 
 // Call once after the per-bucket draw loop when MC2_PATCHSTREAM_DIRECT_TEXTURE_BIND
 // is set. Unbinds the terrain sampler object from unit 0, then re-syncs the
