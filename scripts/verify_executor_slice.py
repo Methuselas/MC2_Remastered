@@ -49,6 +49,7 @@ APPLY_PASS_NAMES: tuple[str, ...] = (
     "TerrainDecal",
     "TerrainOverlay",
     "StaticPropOpaque",
+    "MechOpaque",  # APPLY-STATE-MECHOPAQUE-1
 )
 
 # Default deploy path for the 0.4c release folder.
