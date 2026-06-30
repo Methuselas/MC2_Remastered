@@ -27,8 +27,20 @@ apply-state ownable set complete. (NEXT was tier-C VALIDATOR — now SHIPPED, se
 10/10 + apply-state for every ownable pass is now runtime-proven-or-code-correct: PostProcess **6/6**
 + **StaticProp/Mech/Water** runtime-proven sole-setter + **Shadow now FULL render-target-mode owner**
 (FBO+viewport+clear+pipeline, APPLY-STATE-SHADOW-2 `2a3b0967`). TerrainDecal/TerrainOverlay stay
-code-correct-but-CONTENT-UNEXERCISABLE in stock (need a road/runway map + add **MC2_DYNAMIC_DECALS** to
-run_smoke.py's allowlist). The single-applyPipeline limitation is GONE — FRAMEGRAPH-APPLY-STATE-EXTEND-1
+code-correct; the earlier "CONTENT-UNEXERCISABLE in stock" read was WRONG ABOUT THE CAUSE — see
+★CORRECTION below: roads/overlays are basically TURNED OFF in the v0.4/0.4c builds we smoke to; they DO
+draw in the **v0.5 install**, so decal/overlay apply-state IS exercisable — deploy to the v0.5.0 path.
+
+★**CORRECTION (2026-06-30, from user) — DECAL/OVERLAY ARE EXERCISABLE, DEPLOY TARGET WAS WRONG.**
+The cause of `decal_vbo tris=0` on all stock missions is NOT "stock maps have no overlay content." Roads/
+overlays simply **do not draw in the v0.4 / v0.4c builds/installs** we deploy to for smokes — they are
+effectively turned off there. They **DO draw in the v0.5 install.** So to actually content-exercise
+TerrainOverlay + TerrainDecal apply-state (light up `executor_apply_state_by_pass.TerrainOverlay` /
+`.TerrainDecal` > 0), the NEXT session must DEPLOY TO:
+`A:\Games\mc2-opengl\releases\0.5 testing\mc2-win64-v0.5.0` (note the SPACE in "0.5 testing") — NOT
+v0.4/0.4c. Then run an executor-ON smoke on a road/overlay-bearing mission there and read the per-pass
+apply counter. Also still add **MC2_DYNAMIC_DECALS** to run_smoke.py's env allowlist for the dynamic-decal
+path. This removes the asterisk on decal/overlay apply-state being only "code-correct, unexercised." The single-applyPipeline limitation is GONE — FRAMEGRAPH-APPLY-STATE-EXTEND-1
 (`6def9bd2`) added `ClearSpec` + the shared GL-free `applyTopLevelGenericAxes(desc,fbo,w,h)` helper
 (FBO→viewport→clear, skip-sentinel, pipeline by caller; header `RenderCore/top_level_apply_axes.h`),
 which unblocked Shadow's pipeline+depth-clear lift.
@@ -59,8 +71,11 @@ per-pass (`447a1de7`).
   ScreenShadow + outer endScene) + **StaticPropOpaque (1890)** + **MechOpaque (1890)** + **Water (1784)**.
 - **FULL render-target-mode owner (FBO+viewport+clear+pipeline), runtime-proven:** **Shadow** (=1608/
   frame, APPLY-STATE-SHADOW-2 `2a3b0967`; uses the EXTEND `applyTopLevelGenericAxes` helper).
-- **Code-correct but stock-content-unexercisable:** TerrainDecal, TerrainOverlay (need a road/runway map +
-  add MC2_DYNAMIC_DECALS to the run_smoke allowlist; mechanism is StaticProp-proven).
+- **Code-correct; exercisable on v0.5 (NOT v0.4):** TerrainDecal, TerrainOverlay. ★CORRECTION: roads/
+  overlays are OFF in the v0.4/0.4c builds we smoke to — they DRAW in v0.5. Deploy to
+  `A:\Games\mc2-opengl\releases\0.5 testing\mc2-win64-v0.5.0` + executor-ON smoke on a road/overlay
+  mission to light the per-pass apply counter (+ add MC2_DYNAMIC_DECALS for the dynamic-decal path).
+  Mechanism is StaticProp-proven.
 - **Correctly validate/FBO-only (no single liftable pipeline):** VFX, UI, Vegetation, Terrain-main.
 
 ★**THREE-STATE APPLY-STATE DASHBOARD (advisor — original):**
@@ -79,8 +94,14 @@ per-pass (`447a1de7`).
    CEMENT_ATLAS tiles) is drawn by the **TERRAIN-SOLID** path (CEMENT-BAKE-INTO-TERRAIN, composited in
    the LOD-chunk terrain pass), NOT the TerrainOverlay pass → `executor_apply_state_by_pass.TerrainOverlay`
    stays 0 even with cement present. TerrainDecal needs combat craters/footprints (dynamic, +
-   `MC2_DYNAMIC_DECALS` which is NOT in run_smoke.py's allowlist). Full content-exercise = a future
-   editor/road-map or mod-mission task, **NOT a blocker** — the mechanism is StaticProp-proven.
+   `MC2_DYNAMIC_DECALS` which is NOT in run_smoke.py's allowlist). **NOT a blocker** — the mechanism is
+   StaticProp-proven.
+   ★**CORRECTION (2026-06-30, user):** the `tris=0` cause above is WRONG. It is NOT "stock maps have no
+   overlay content" — roads/overlays are **turned off in the v0.4/0.4c builds we smoke to** and DRAW in
+   the **v0.5 install**. So decal/overlay ARE content-exercisable: deploy to
+   `A:\Games\mc2-opengl\releases\0.5 testing\mc2-win64-v0.5.0` (space in "0.5 testing") and run an
+   executor-ON smoke on a road/overlay-bearing mission, then read `executor_apply_state_by_pass.
+   TerrainOverlay` / `.TerrainDecal`. (+ add MC2_DYNAMIC_DECALS for the dynamic-decal path.)
 
 **NEXT (advisor):** pick the next apply-state candidate. Overlay/decal full content-exercise needs
 (a) an editor/road map or mod mission with real road/runway/bridge tiles, and (b) adding
@@ -803,7 +824,9 @@ registry, all live registrations lifetime-classed, validator fails on Unset.
 
 **Remaining tier-B follow-ups (do NOT block the milestone):**
 - `kExternalResources` FULL migration to the lifetime field (kept as a consistency-doctest for now).
-- Decal/overlay **content-exercise** — needs `MC2_DYNAMIC_DECALS` in run_smoke.py's allowlist + a road map.
+- Decal/overlay **content-exercise** — ★deploy to `A:\Games\mc2-opengl\releases\0.5 testing\mc2-win64-v0.5.0`
+  (roads/overlays are OFF in v0.4/0.4c, ON in v0.5) + `MC2_DYNAMIC_DECALS` in run_smoke.py's allowlist;
+  executor-ON smoke on a road/overlay mission, read the per-pass apply counter.
 - `kParticleEffectState` stale blend=Additive vs live alpha-blend (render_contract.cpp:315).
 - Optional **viewport validator** (`GL_VIEWPORT` AmbientSample sampler).
 
@@ -913,8 +936,9 @@ see the SCHEDULER recon above).
 
 **Minor cleanups (between runs):**
 - `kParticleEffectState` stale blend=Additive → alpha (render_contract.cpp:315).
-- Add **MC2_DYNAMIC_DECALS** to run_smoke.py's allowlist (enables decal/overlay content-exercise on
-  mc2_02 overlay / mc2_17 + combat decal).
+- Decal/overlay content-exercise: ★deploy to `A:\Games\mc2-opengl\releases\0.5 testing\mc2-win64-v0.5.0`
+  (roads/overlays OFF in v0.4/0.4c, ON in v0.5) + add **MC2_DYNAMIC_DECALS** to run_smoke.py's allowlist,
+  then executor-ON smoke on a road/overlay mission and read the per-pass apply counter.
 - (optional) viewport validator: an `AmbientSample` `GL_VIEWPORT` sampler.
 
 **Automation now in place (use it):** `verify_executor_slice.py --assert-pass-fired NAME[:MIN]` + the
@@ -951,11 +975,15 @@ consumers stay byte-identical.
 - **SLICE C (optional) — SHADOW-2:** lift the FBO + viewport too, AFTER the AMD-unbind ordering is proven.
 
 ## ▶ OPEN ITEMS — overlay/decal content-exercise + automation now in place
-- **Overlay/decal full content-exercise (future, NOT a blocker):** needs (a) an editor/road map or mod
-  mission carrying real road/runway/bridge `&Overlays` tiles (overlay) and combat craters/footprints
-  (decal), and (b) adding **`MC2_DYNAMIC_DECALS`** to `run_smoke.py`'s mission-Popen env allowlist
-  (currently dropped → decal pass never runs in smoke). The shared apply MECHANISM is already runtime-
-  proven by StaticPropOpaque, so this is content coverage, not correctness.
+- **Overlay/decal full content-exercise (NOT a blocker):** ★CORRECTION (2026-06-30, user) — the prior
+  read "stock maps have no overlay content" was WRONG ABOUT THE CAUSE. Roads/overlays are **OFF in the
+  v0.4/0.4c builds we smoke to** and **DRAW in the v0.5 install**. So to light up
+  `executor_apply_state_by_pass.TerrainOverlay` / `.TerrainDecal`: **DEPLOY TO**
+  `A:\Games\mc2-opengl\releases\0.5 testing\mc2-win64-v0.5.0` (note the SPACE in "0.5 testing"), NOT
+  v0.4/0.4c, then run an executor-ON smoke on a road/overlay-bearing mission and read the per-pass apply
+  counter. Also add **`MC2_DYNAMIC_DECALS`** to `run_smoke.py`'s mission-Popen env allowlist (currently
+  dropped → dynamic-decal pass never runs in smoke). The shared apply MECHANISM is already runtime-proven
+  by StaticPropOpaque, so this is content coverage, not correctness.
 - **Automation now in place (use it):** `verify_executor_slice.py --assert-pass-fired NAME[:MIN]`
   (per-pass apply-counter assertion, no manual dump-reading); `scripts/check-apply-pass-bumped.py`
   (ApplyPassId bump-exactly-once grep-gate, in check-contracts.sh); apply-state registration doctests
