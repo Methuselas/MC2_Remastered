@@ -746,4 +746,67 @@ TEST_CASE("postprocess subgraph (f): order regression — Composite before a Mai
           static_cast<unsigned>(RenderResourceId::MainDepth));
 }
 
+// ---------------------------------------------------------------------------
+// POSTPROCESS-MAINNORMAL-PRODUCER-1: verify MainNormal producer/consumer
+// declarations are present and load-bearing in the shipped frame graph.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("MainNormal: PostProcess reads it; Terrain writes it") {
+    // PostProcess reads[] must include MainNormal.
+    bool ppReads = false;
+    for (int i = 0; i < kRenderPassContractCount; ++i) {
+        if (kRenderPassContracts[i].id != RenderPassId::PostProcess) continue;
+        for (int j = 0; j < 4; ++j) {
+            if (kRenderPassContracts[i].reads[j] == RenderResourceId::MainNormal)
+                ppReads = true;
+        }
+    }
+    CHECK(ppReads == true);
+
+    // At least Terrain must declare MainNormal in writes[].
+    bool terrainWrites = false;
+    for (int i = 0; i < kRenderPassContractCount; ++i) {
+        if (kRenderPassContracts[i].id != RenderPassId::Terrain) continue;
+        for (int j = 0; j < 4; ++j) {
+            if (kRenderPassContracts[i].writes[j] == RenderResourceId::MainNormal)
+                terrainWrites = true;
+        }
+    }
+    CHECK(terrainWrites == true);
+
+    // The shipped frame graph must still be valid with MainNormal declared.
+    const ValidationResult r = validateShippedFrameGraph();
+    CHECK(r.ok == true);
+    CHECK(static_cast<unsigned>(r.offendingPass) == 0u);
+    CHECK(static_cast<unsigned>(r.missingResource) == 0u);
+}
+
+TEST_CASE("MainNormal regression: removing all producers causes PostProcess unsatisfied") {
+    // Build synthetic contracts identical to shipped, but strip MainNormal from ALL
+    // geometry-pass writes[]. The DAG validator must then flag PostProcess/MainNormal.
+    // This proves the producer declarations are load-bearing, not decorative.
+
+    // Copy the shipped contracts into a mutable local array.
+    RenderPassContract synthetic[kRenderPassIdCount];
+    for (int i = 0; i < kRenderPassContractCount; ++i)
+        synthetic[i] = kRenderPassContracts[i];
+
+    // Strip MainNormal from every pass's writes[].
+    for (int i = 0; i < kRenderPassContractCount; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            if (synthetic[i].writes[j] == RenderResourceId::MainNormal)
+                synthetic[i].writes[j] = RenderResourceId::Unknown;
+        }
+    }
+
+    // With no producers, PostProcess's read of MainNormal must be unsatisfied.
+    const ValidationResult r = validateReadsSatisfied(
+        synthetic, kRenderPassIdCount,
+        kFramePassOrder, kFramePassOrderCount,
+        kExternalResources, kExternalResourceCount);
+    CHECK(r.ok == false);
+    CHECK(static_cast<unsigned>(r.offendingPass)    == static_cast<unsigned>(RenderPassId::PostProcess));
+    CHECK(static_cast<unsigned>(r.missingResource)  == static_cast<unsigned>(RenderResourceId::MainNormal));
+}
+
 } // TEST_SUITE

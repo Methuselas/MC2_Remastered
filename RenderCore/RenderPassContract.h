@@ -172,7 +172,7 @@ static constexpr RenderPassContract kRenderPassContracts[] = {
         "MC2_SNAPSHOT_STATIC_PROP_BUILD",
         "Reference path: snapshot-owned v6 DrawPacket+meta dispatch default-on (STATIC-PROP-V3-FLIP 2a88a5a8).",
         /* reads[4]    */ { RenderResourceId::ShadowDynamicMap },
-        /* writes[4]   */ { RenderResourceId::MainColor, RenderResourceId::MainDepth },
+        /* writes[4]   */ { RenderResourceId::MainColor, RenderResourceId::MainDepth, RenderResourceId::MainNormal },
         /* barrierAfter */ BarrierKind::Framebuffer
     },
     {
@@ -186,7 +186,7 @@ static constexpr RenderPassContract kRenderPassContracts[] = {
         nullptr,
         "TerrainPassFacts row landed in RenderSnapshot at 1d7b9ea6 as passive recorder; not yet authoritative.",
         /* reads[4]    */ { RenderResourceId::ShadowDynamicMap },
-        /* writes[4]   */ { RenderResourceId::MainColor, RenderResourceId::MainDepth },
+        /* writes[4]   */ { RenderResourceId::MainColor, RenderResourceId::MainDepth, RenderResourceId::MainNormal },
         /* barrierAfter */ BarrierKind::Framebuffer
     },
     {
@@ -201,7 +201,7 @@ static constexpr RenderPassContract kRenderPassContracts[] = {
         "Wired through PipelineId::MechOpaque (MECH-PIPELINEDESC-1, applyPipeline) "
         "+ ViewUniforms UBO consumer default-on (MECH-VIEWUNIFORMS).",
         /* reads[4]    */ { RenderResourceId::ShadowDynamicMap },
-        /* writes[4]   */ { RenderResourceId::MainColor, RenderResourceId::MainDepth },
+        /* writes[4]   */ { RenderResourceId::MainColor, RenderResourceId::MainDepth, RenderResourceId::MainNormal },
         /* barrierAfter */ BarrierKind::Framebuffer
     },
     {
@@ -263,8 +263,9 @@ static constexpr RenderPassContract kRenderPassContracts[] = {
         /*snapshotRowAuthoritative*/ false,
         "PostProcess##pp",
         nullptr,
-        "Composite chain after gos_RendererEndFrame: HZB/SSAO/screen-shadow/shoreline/godrays/composite.",
-        /* reads[4]    */ { RenderResourceId::MainColor, RenderResourceId::MainDepth, RenderResourceId::ShadowDynamicMap },
+        "Composite chain after gos_RendererEndFrame: HZB/SSAO/screen-shadow/shoreline/godrays/composite. "
+        "Samples GBuffer normal (sceneNormalTex_ / MainNormal) for SSAO, Shoreline, ScreenShadow, BoxDecals sub-stages.",
+        /* reads[4]    */ { RenderResourceId::MainColor, RenderResourceId::MainDepth, RenderResourceId::ShadowDynamicMap, RenderResourceId::MainNormal },
         /* writes[4]   */ { RenderResourceId::MainColor },
         /* barrierAfter */ BarrierKind::Framebuffer,
         // Final on-screen pass -> color attachment ends in Present layout.
