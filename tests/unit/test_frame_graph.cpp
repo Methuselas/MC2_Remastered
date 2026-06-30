@@ -1280,12 +1280,12 @@ TEST_CASE("statepack (g): consistency validator catches a deliberately-wrong Ren
 // GL-free — tests only the constexpr descriptor, not the GL wrapper.
 // ---------------------------------------------------------------------------
 
-TEST_CASE("top-level executor (a): kTopLevelExecutorPasses has 9 rows (VFX-FBO-ONLY-VALIDATE-1 adds VFX)") {
+TEST_CASE("top-level executor (a): kTopLevelExecutorPasses has 10 rows (UI-SAME-ORDER-VALIDATE-1 adds UI)") {
     using namespace RenderCore::framegraph;
-    CHECK(kTopLevelExecutorPassCount == 9u);
+    CHECK(kTopLevelExecutorPassCount == 10u);
 }
 
-TEST_CASE("top-level executor (b): findTopLevelExecutorPass returns non-null for all 9 wrappable passes") {
+TEST_CASE("top-level executor (b): findTopLevelExecutorPass returns non-null for all 10 wrappable passes") {
     using namespace RenderCore::framegraph;
     const RenderPassId wrappable[] = {
         RenderPassId::Shadow,           // SAME-ORDER-EXECUTOR-SLICE-2
@@ -1297,28 +1297,25 @@ TEST_CASE("top-level executor (b): findTopLevelExecutorPass returns non-null for
         RenderPassId::Water,            // WATER-SAME-ORDER-VALIDATE-1
         RenderPassId::VegetationCards,
         RenderPassId::VFX,              // VFX-FBO-ONLY-VALIDATE-1
+        RenderPassId::UI,               // UI-SAME-ORDER-VALIDATE-1
     };
-    for (int i = 0; i < 9; ++i) {
+    for (int i = 0; i < 10; ++i) {
         const TopLevelPassContract* c = findTopLevelExecutorPass(wrappable[i]);
         CHECK(c != nullptr);
     }
 }
 
-TEST_CASE("top-level executor (c): deferred passes return nullptr (not executor-owned)") {
-    // UI remains deferred. VFX now owned (VFX-FBO-ONLY-VALIDATE-1); Water owned
-    // (WATER-SAME-ORDER-VALIDATE-1); Shadow + MechOpaque owned (SLICE-2).
+TEST_CASE("top-level executor (c): all top-level passes now executor-owned (0 deferred)") {
+    // UI-SAME-ORDER-VALIDATE-1: UI now owned -> NO deferred top-level passes remain.
+    // VFX (VFX-FBO-ONLY-VALIDATE-1); Water (WATER-SAME-ORDER-VALIDATE-1);
+    // Shadow + MechOpaque (SLICE-2).
     using namespace RenderCore::framegraph;
-    const RenderPassId deferred[] = {
-        RenderPassId::UI,
-    };
-    for (int i = 0; i < 1; ++i) {
-        CHECK(findTopLevelExecutorPass(deferred[i]) == nullptr);
-    }
-    // Confirm Shadow + MechOpaque + Water + VFX are NOW owned (not deferred):
+    // Confirm Shadow + MechOpaque + Water + VFX + UI are ALL owned (none deferred):
     CHECK(findTopLevelExecutorPass(RenderPassId::Shadow)     != nullptr);
     CHECK(findTopLevelExecutorPass(RenderPassId::MechOpaque) != nullptr);
     CHECK(findTopLevelExecutorPass(RenderPassId::Water)      != nullptr);
     CHECK(findTopLevelExecutorPass(RenderPassId::VFX)        != nullptr);
+    CHECK(findTopLevelExecutorPass(RenderPassId::UI)         != nullptr);
 }
 
 TEST_CASE("top-level executor (d): ambient + FBO flags match declared ledger declarations") {
@@ -1376,6 +1373,13 @@ TEST_CASE("top-level executor (d): ambient + FBO flags match declared ledger dec
     REQUIRE(vfx != nullptr);
     CHECK(vfx->validateAmbient == false);
     CHECK(vfx->validateFbo     == true);
+
+    // UI-SAME-ORDER-VALIDATE-1: UI has FBO ledger (Backbuffer) but NO AmbientContract row
+    // (UI ambient is per-draw legacy gos dynamic state -> DO_NOT_MODEL).
+    const TopLevelPassContract* ui = findTopLevelExecutorPass(RenderPassId::UI);
+    REQUIRE(ui != nullptr);
+    CHECK(ui->validateAmbient == false);
+    CHECK(ui->validateFbo     == true);
 }
 
 TEST_CASE("top-level executor (e): ambient ledger cross-check — Shadow/MechOpaque/StaticProp/Terrain have AmbientContract; TerrainOverlay/Decal/Veg do not") {
@@ -1389,12 +1393,14 @@ TEST_CASE("top-level executor (e): ambient ledger cross-check — Shadow/MechOpa
     CHECK(findAmbient(RenderPassId::TerrainDecal)     == nullptr);
     CHECK(findAmbient(RenderPassId::VegetationCards)  == nullptr);
     CHECK(findAmbient(RenderPassId::VFX)              == nullptr);  // VFX-FBO-ONLY-VALIDATE-1 (FBO-only)
+    CHECK(findAmbient(RenderPassId::UI)               == nullptr);  // UI-SAME-ORDER-VALIDATE-1 (FBO-only; ambient DO_NOT_MODEL)
 }
 
 TEST_CASE("top-level executor (f): FBO ledger cross-check — Shadow=ShadowDynamicMap, MechOpaque+4=MainColor; VegetationCards undeclared") {
     auto rid = [](RenderResourceId r){ return static_cast<unsigned>(r); };
     const unsigned mc  = rid(RenderResourceId::MainColor);
     const unsigned sdm = rid(RenderResourceId::ShadowDynamicMap);
+    const unsigned bb  = rid(RenderResourceId::Backbuffer);
     const unsigned unk = rid(RenderResourceId::Unknown);
     CHECK(rid(declaredFboTarget(RenderPassId::Shadow))           == sdm);  // SLICE-2
     CHECK(rid(declaredFboTarget(RenderPassId::MechOpaque))       == mc);   // SLICE-2
@@ -1404,6 +1410,7 @@ TEST_CASE("top-level executor (f): FBO ledger cross-check — Shadow=ShadowDynam
     CHECK(rid(declaredFboTarget(RenderPassId::TerrainDecal))     == mc);
     CHECK(rid(declaredFboTarget(RenderPassId::Water))           == mc);   // WATER-SAME-ORDER-VALIDATE-1
     CHECK(rid(declaredFboTarget(RenderPassId::VFX))             == mc);   // VFX-FBO-ONLY-VALIDATE-1
+    CHECK(rid(declaredFboTarget(RenderPassId::UI))             == bb);   // UI-SAME-ORDER-VALIDATE-1 (Backbuffer, first such row)
     CHECK(rid(declaredFboTarget(RenderPassId::VegetationCards))  == unk);
 }
 
@@ -1414,11 +1421,11 @@ TEST_CASE("top-level executor (g): note field is non-null for all wrappable pass
     }
 }
 
-TEST_CASE("top-level executor (h): kTopLevelDeferredPassCount matches the 1 remaining deferred pass (UI)") {
+TEST_CASE("top-level executor (h): kTopLevelDeferredPassCount == 0 (UI-SAME-ORDER-VALIDATE-1: all top-level passes owned)") {
     // Shadow + MechOpaque owned in SLICE-2; Water in WATER-SAME-ORDER-VALIDATE-1;
-    // VFX in VFX-FBO-ONLY-VALIDATE-1.
+    // VFX in VFX-FBO-ONLY-VALIDATE-1; UI in UI-SAME-ORDER-VALIDATE-1 -> 0 deferred.
     using namespace RenderCore::framegraph;
-    CHECK(kTopLevelDeferredPassCount == 1u);
+    CHECK(kTopLevelDeferredPassCount == 0u);
 }
 
 // ---------------------------------------------------------------------------

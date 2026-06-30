@@ -99,6 +99,13 @@ static constexpr TopLevelPassContract kTopLevelExecutorPasses[] = {
         /*validateFbo*/     true,   // FBO ledger declares MainColor (scene HDR FBO bound across whole flush window)
         /*note*/            "VFX/gamecam_particlesFlush",
     },
+    {
+        /*id*/              RenderPassId::UI,
+        /*validateAmbient*/ false,  // UI-SAME-ORDER-VALIDATE-1: UI ambient is per-draw legacy gos
+                                    // dynamic state (DO_NOT_MODEL) -> no AmbientContract row
+        /*validateFbo*/     true,   // FBO ledger declares Backbuffer (default FBO 0, post-composite)
+        /*note*/            "UI/gosRenderer_flushHUDBatch",
+    },
 };
 static constexpr unsigned kTopLevelExecutorPassCount =
     sizeof(kTopLevelExecutorPasses) / sizeof(kTopLevelExecutorPasses[0]);
@@ -114,9 +121,10 @@ inline const TopLevelPassContract* findTopLevelExecutorPass(RenderPassId id) {
 }
 
 // Count of deferred top-level passes (not executor-owned this slice).
-// UI = 1. (VFX now owned FBO-only in VFX-FBO-ONLY-VALIDATE-1; Water in WATER-SAME-ORDER-VALIDATE-1;
+// none = 0. (UI now owned FBO-only in UI-SAME-ORDER-VALIDATE-1 -> EVERY top-level pass is
+// executor-owned; VFX in VFX-FBO-ONLY-VALIDATE-1; Water in WATER-SAME-ORDER-VALIDATE-1;
 // Shadow + MechOpaque in SLICE-2.)
 // Called by the dump to populate executor_skipped_deferred_passes.
-static constexpr unsigned kTopLevelDeferredPassCount = 1u;
+static constexpr unsigned kTopLevelDeferredPassCount = 0u;
 
 }} // namespace RenderCore::framegraph

@@ -72,6 +72,10 @@ static constexpr PassFboTarget kPassFboTarget[] = {
     // VFX-FBO-ONLY-VALIDATE-1: particle/VFX flush renders into the scene HDR FBO (MainColor),
     // bound across the whole flush window at gamecam:594 (every frame, incl. empty-particle frames).
     { RenderPassId::VFX,              RenderResourceId::MainColor },
+    // UI-SAME-ORDER-VALIDATE-1: HUD/UI batch flush renders into the DEFAULT framebuffer
+    // (post-composite). pp->endScene() binds FBO 0 before flushHUDBatch (gameos_graphics:7485-7487);
+    // fboLedger().resolve(0) == Backbuffer. First ledger row using Backbuffer.
+    { RenderPassId::UI,               RenderResourceId::Backbuffer },
 };
 static constexpr int kPassFboTargetCount =
     sizeof(kPassFboTarget) / sizeof(kPassFboTarget[0]);
