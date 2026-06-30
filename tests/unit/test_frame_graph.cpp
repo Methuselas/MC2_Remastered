@@ -1405,9 +1405,10 @@ TEST_CASE("top-level executor (h): kTopLevelDeferredPassCount matches the 3 rema
 // Pure/GL-free — the pre-apply GL calls are not tested here (GL context required).
 // ---------------------------------------------------------------------------
 
-TEST_CASE("apply-state-island (a): kSubStageState has exactly 4 rows") {
+TEST_CASE("apply-state-island (a): kSubStageState has exactly 5 rows") {
     using namespace RenderCore::framegraph;
-    CHECK(kSubStageStateCount == 4u);
+    // APPLY-STATE-SCREENSHADOW-1: ScreenShadow is the 5th wired row.
+    CHECK(kSubStageStateCount == 5u);
 }
 
 TEST_CASE("apply-state-island (b): findSubStageState(EdgeFog) returns PostProcessEdgeFog + MainColor + MainScene") {
@@ -1428,7 +1429,7 @@ TEST_CASE("apply-state-island (c): findSubStageState(Composite) returns nullptr 
     CHECK(d == nullptr);
 }
 
-TEST_CASE("apply-state-island (d): all 4 table rows have valid PipelineId (not Invalid)") {
+TEST_CASE("apply-state-island (d): all table rows have valid PipelineId (not Invalid)") {
     using namespace RenderCore;
     using namespace RenderCore::framegraph;
     for (unsigned i = 0; i < kSubStageStateCount; ++i) {
@@ -1472,13 +1473,26 @@ TEST_CASE("apply-state-island (g): findSubStageState(CloudShadow) returns PostPr
     CHECK(static_cast<unsigned>(d->viewport)   == static_cast<unsigned>(ViewportKind::MainScene));
 }
 
-TEST_CASE("apply-state-island (h): all 4 apply-island descriptors present (EdgeFog/FogOob/Shoreline/CloudShadow)") {
+// APPLY-STATE-SCREENSHADOW-1: ScreenShadow apply island now wired (6th apply-state island).
+TEST_CASE("apply-state-island (i): findSubStageState(ScreenShadow) returns PostProcessScreenShadow + MainColor + MainScene") {
+    using namespace RenderCore;
     using namespace RenderCore::framegraph;
-    // All 4 sub-stages from ISLAND-1+2 must be in the table.
-    CHECK(findSubStageState(ExecutorIslandId::EdgeFog)     != nullptr);
-    CHECK(findSubStageState(ExecutorIslandId::FogOob)      != nullptr);
-    CHECK(findSubStageState(ExecutorIslandId::Shoreline)   != nullptr);
-    CHECK(findSubStageState(ExecutorIslandId::CloudShadow) != nullptr);
+    const SubStageStateDesc* d = findSubStageState(ExecutorIslandId::ScreenShadow);
+    REQUIRE(d != nullptr);
+    CHECK(static_cast<unsigned>(d->id)         == static_cast<unsigned>(ExecutorIslandId::ScreenShadow));
+    CHECK(static_cast<unsigned>(d->pipelineId) == static_cast<unsigned>(PipelineId::PostProcessScreenShadow));
+    CHECK(static_cast<unsigned>(d->fboTarget)  == static_cast<unsigned>(RenderResourceId::MainColor));
+    CHECK(static_cast<unsigned>(d->viewport)   == static_cast<unsigned>(ViewportKind::MainScene));
+}
+
+TEST_CASE("apply-state-island (h): all 5 apply-island descriptors present (EdgeFog/FogOob/Shoreline/CloudShadow/ScreenShadow)") {
+    using namespace RenderCore::framegraph;
+    // All 5 sub-stages from ISLAND-1+2 + SCREENSHADOW-1 must be in the table.
+    CHECK(findSubStageState(ExecutorIslandId::EdgeFog)      != nullptr);
+    CHECK(findSubStageState(ExecutorIslandId::FogOob)       != nullptr);
+    CHECK(findSubStageState(ExecutorIslandId::Shoreline)    != nullptr);
+    CHECK(findSubStageState(ExecutorIslandId::CloudShadow)  != nullptr);
+    CHECK(findSubStageState(ExecutorIslandId::ScreenShadow) != nullptr);
 }
 
 } // TEST_SUITE

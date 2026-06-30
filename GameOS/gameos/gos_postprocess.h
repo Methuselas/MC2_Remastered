@@ -64,6 +64,8 @@ public:
     void executorApplyFogOobState();
     void executorApplyShorelineState();
     void executorApplyCloudShadowState();
+    // APPLY-STATE-SCREENSHADOW-1: pre-apply declared GL state for ScreenShadow.
+    void executorApplyScreenShadowState();
 
     float  getSkyYaw()    const { return skyYaw_; }    // WATER-HDRI-REFL-1: cached per-frame
 
@@ -231,6 +233,11 @@ public:
 
     void runScreenShadow();
     bool screenShadowEnabled_;
+    // APPLY-STATE-SCREENSHADOW-1: per-island executor-applied flag (see
+    // cloudShadowStateAppliedByExecutor_). Set by executorApplyScreenShadowState();
+    // runScreenShadow() skips its own 4 setup calls when true, then resets (one-shot).
+    // Gate OFF → stays false → body sets state → byte-identical.
+    bool screenShadowStateAppliedByExecutor_ = false;
     int screenShadowDebug_;  // 0=normal, 1=visualize
 
     // Cloud shadows — single fullscreen multiplicative pass (replaces the four

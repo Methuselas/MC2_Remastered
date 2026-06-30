@@ -2035,21 +2035,28 @@ void gosPostProcess::runScreenShadow()
     if (!screenShadowProg_ || !screenShadowProg_->is_valid()) return;
     if (!shadowsEnabled_) return;
 
-    // Render to sceneFBO_ color-only (no normal write) with multiplicative blending
-    glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
-    // M1.5: single-color composite. Helper preserves env-OFF/ON parity
-    // (the postprocess composite never writes attachment-2 regardless).
-    setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
-    glViewport(0, 0, width_, height_);
+    // APPLY-STATE-SCREENSHADOW-1: skip the 4 setup calls when the executor already
+    // applied them (MC2_FRAMEGRAPH_EXECUTOR ON). Reset one-shot before draw.
+    if (!screenShadowStateAppliedByExecutor_) {
+        // Render to sceneFBO_ color-only (no normal write) with multiplicative blending
+        glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
+        // M1.5: single-color composite. Helper preserves env-OFF/ON parity
+        // (the postprocess composite never writes attachment-2 regardless).
+        setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
+        glViewport(0, 0, width_, height_);
 
-    // BLENDMODE-MULTIPLY-1: drive FF state from the PostProcessScreenShadow row
-    // (Multiply = DST_COLOR/ZERO scene-darkening, depth test+write OFF, cull None).
-    // Byte-identical in the default path. The debug override (screenShadowDebug_!=0
-    // overwrites scene color) is preserved explicitly — applyPipeline sets Multiply,
-    // then debug disables blend.
-    pipeline_binder::applyPipeline(
-        RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessScreenShadow),
-        "PostProcessScreenShadow");
+        // BLENDMODE-MULTIPLY-1: drive FF state from the PostProcessScreenShadow row
+        // (Multiply = DST_COLOR/ZERO scene-darkening, depth test+write OFF, cull None).
+        // Byte-identical in the default path. The debug override (screenShadowDebug_!=0
+        // overwrites scene color) is preserved explicitly — applyPipeline sets Multiply,
+        // then debug disables blend.
+        pipeline_binder::applyPipeline(
+            RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessScreenShadow),
+            "PostProcessScreenShadow");
+    }
+    screenShadowStateAppliedByExecutor_ = false;
+    // Debug override stays body-owned (depends on applyPipeline having set Multiply,
+    // which the executor also did). Runs regardless of who applied the pipeline.
     if (screenShadowDebug_ != 0) glDisable(GL_BLEND);
     render_frame_plan::trace(render_frame_plan::Phase::PostProcess, "ScreenShadow",
         render_frame_plan::PathKind::ApplyPipeline, 1, "PostProcessScreenShadow");
@@ -4831,6 +4838,23 @@ void gosPostProcess::executorApplyCloudShadowState()
     cloudShadowStateAppliedByExecutor_ = true;
 }
 
+// APPLY-STATE-SCREENSHADOW-1: pre-apply declared GL state for ScreenShadow.
+// Exactly matches runScreenShadow() entry (lines 2039-2052): FBO bind + SingleColor + viewport + applyPipeline.
+// No tex binds, no uniforms, and NOT the screenShadowDebug_ glDisable(GL_BLEND) — those remain body-owned.
+// Idempotent (body makes identical calls at entry when the flag is false).
+void gosPostProcess::executorApplyScreenShadowState()
+{
+    glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
+    setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
+    glViewport(0, 0, width_, height_);
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::PostProcessScreenShadow),
+        "PostProcessScreenShadow");
+    ++g_applyStatePasses;
+    // APPLY-STATE-REDUNDANT-BODY-REMOVE-2 pattern: signal runScreenShadow() to skip its own copies.
+    screenShadowStateAppliedByExecutor_ = true;
+}
+
 // --- FRAME-GRAPH-EXECUTOR-ISLAND-2: sub-stage wrappers (EdgeFog + FogOob) ----
 //
 // Each pair gates on executorEnabled(). Begin: if WillRun()==false the sub-pass
@@ -4906,6 +4930,12 @@ static void executorOwnBeginSub(gosPostProcess* pp, RenderCore::framegraph::Exec
         using namespace RenderCore::framegraph;
         if (findSubStageState(ExecutorIslandId::CloudShadow) != nullptr)
             pp->executorApplyCloudShadowState();
+    }
+    // APPLY-STATE-SCREENSHADOW-1: ScreenShadow wired.
+    if (islandId == ExecutorIslandId::ScreenShadow) {
+        using namespace RenderCore::framegraph;
+        if (findSubStageState(ExecutorIslandId::ScreenShadow) != nullptr)
+            pp->executorApplyScreenShadowState();
     }
 }
 

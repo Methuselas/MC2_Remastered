@@ -197,6 +197,14 @@ static constexpr SubStageStateDesc kSubStageState[] = {
         /*fboTarget*/  RenderCore::RenderResourceId::MainColor,
         /*viewport*/   ViewportKind::MainScene,
     },
+    // ScreenShadow — runScreenShadow(): bindFB(sceneFBO_) + SingleColor + viewport + applyPipeline(PostProcessScreenShadow)
+    // APPLY-STATE-SCREENSHADOW-1: 6th apply-state island (matches CloudShadow shape).
+    {
+        /*id*/         ExecutorIslandId::ScreenShadow,
+        /*pipelineId*/ RenderCore::PipelineId::PostProcessScreenShadow,
+        /*fboTarget*/  RenderCore::RenderResourceId::MainColor,
+        /*viewport*/   ViewportKind::MainScene,
+    },
 };
 static constexpr unsigned kSubStageStateCount =
     sizeof(kSubStageState) / sizeof(kSubStageState[0]);
