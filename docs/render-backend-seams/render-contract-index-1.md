@@ -37,6 +37,31 @@ lifetime/sync**.
 - `check-shader-schema.sh` — SSBO struct ABI vs `manifest.json` golden, std430/offsetof
 - `check-material-gpu-mirror.sh` — `MaterialGpu.h` ↔ `material_gpu.hglsl` field-order lockstep
 - `check-render-contract-gbuffer1.sh` — fragment shaders must use `rc_*` helpers for GBuffer1
+- `check-raw-gl-depthfunc.py` — **RAW-GL-DEPTHFUNC-DIFF-GATE-1** (Phase 8 first enforcement gate). See note below.
+
+#### RAW-GL-DEPTHFUNC-DIFF-GATE-1 (`scripts/check-raw-gl-depthfunc.py`)
+
+A diff-based static check that bans **new** raw `glDepthFunc()` call sites on ADDED lines,
+outside a sanctioned-file allowlist. It mirrors `scripts/check-new-gates.py` Mode A: diff vs
+a base ref (default `merge-base HEAD origin/main`, or `--base`), inspect only ADDED lines,
+exit 1 naming each offender when a non-allowlisted file gains a raw `glDepthFunc(`. This is a
+**different, non-overlapping** mechanism from `check-colormask-ownership.py` /
+`check-drawbuffer-ownership.py`, which validate the descriptive PipelineDesc state table —
+this gate bans the raw *call site*, steering depth-func state through the sanctioned emitter
+(`pipeline_binder.cpp` applyPipeline) or the `ScopedDepthFunc` RAII wrapper.
+
+- **Allowlist rationale:** the chokepoint emitter and RAII wrapper are sanctioned by design;
+  `debug_renderer.cpp` and `editor/EditorGameOS.cpp` are out of the frame loop; `tools/asset_viewer/`
+  and `tests/` are out-of-engine / offline (prefix-matched). The **frozen backlog** (9 existing
+  render TUs, e.g. `gameos_graphics.cpp`, `gos_postprocess.cpp`, `gos_particle_bridge.cpp`) is
+  allowlisted by exact file so it doesn't retro-fail; it's documented as the v1 freeze.
+- **v1 = file-level freeze** (backlog files may add raw calls; new files may not) →
+  **v2 tightening = per-file count ceiling** (record per-file baseline counts from Mode B so
+  even backlog files can't ADD raw calls). v1 is intentionally simple.
+- **Run:** Mode A (enforcement, default) `py -3 scripts/check-raw-gl-depthfunc.py [--base REF] [--quiet]`;
+  Mode B (audit, advisory exit 0) `py -3 scripts/check-raw-gl-depthfunc.py --all` lists every raw
+  site with file:line + per-file counts. Wired into `scripts/check-contracts.sh` as `raw_gl_depthfunc`
+  (same way as the other seam checkers). Regression-proof: freezes the backlog, blocks new bypasses.
 - `check-include-firewall.sh`, `check-no-raw-gl-from-game.sh`, `check-vfx-no-objectid.sh`, `check-visibility-log-schema.sh`, `check-unified-projection-retirement.sh`, `check-mlr-leaves-gated.sh`, `check-particles-no-cpu-projection.sh` — RenderWorld-boundary / lane firewalls (PARTIAL contract coverage)
 - `validate_shaders.py` — glslang SPIR-V compile gate; uses `--auto-map-bindings` (compile-only; **does NOT record sampler occupancy** — symptom of the blind spot, not coverage)
 
