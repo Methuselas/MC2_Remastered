@@ -4,14 +4,16 @@
 **Primary task:** continue the FRAME-GRAPH arc. **Do frame-graph first; legacy-terrain
 retirement is SECONDARY (after).**
 
-**▶ RESUME POINTER (latest):** REMOVE-1 (EdgeFog `95f4d498`) / REMOVE-2 (FogOob/Shoreline/CloudShadow
-`c706dde6`) / **APPLY-STATE-SCREENSHADOW-1** (`6d316519`) are **DONE+VERIFIED** — **6/6 PostProcess
-apply-state islands executor-applied** (the 4 endScene sub-stages + ScreenShadow are executor-sole-setter
-via body-skip; outer endScene applied too), byte-identical OFF under MC2_FRAMEGRAPH_EXECUTOR. NEXT FRONTIER:
-**Water/VFX/UI same-order top-level ownership** — each needs its OWN recon (real ambient/FBO/blend seam gaps;
-UI blend is runtime-dynamic → PipelineId::Invalid). Also pending per the advisor list: (1) **SHADOW-OBSERVE-3
-recon** — per-frame dynamic-shadow seam; (2) **MECHOPAQUE-PASSIDENTITY-RECON-1** — disambiguate lossy
-OpaqueObject identity; then (3) **SAME-ORDER-EXECUTOR-SLICE-2** once #1/#2 land. Do NOT rush #1/#2.
+**▶ RESUME POINTER (latest):** **WATER-SAME-ORDER-VALIDATE-1** (`33f590f8` + fixup `110fb605`) is
+**DONE+VERIFIED** — Water is now the **8th** validate-only top-level executor-owned pass (mirrors
+TerrainOverlay). Top-level same-order ownership now covers **8 passes** (StaticProp, Terrain-LODchunk,
+TerrainOverlay, TerrainDecal, Vegetation, Shadow, MechOpaque, **Water**); **remaining deferred = VFX, UI**
+(`kTopLevelDeferredPassCount=2`). ScreenShadow reconciliation DONE (clean rebuild, exe SHA match,
+apply_state=7976). Prior: REMOVE-1/REMOVE-2/APPLY-STATE-SCREENSHADOW-1 (`95f4d498`/`c706dde6`/`6d316519`)
+— 6/6 PostProcess apply-state islands executor-applied (body-skip sole-setter). NEXT FRONTIER:
+**VFX same-order recon** (then UI — runtime-dynamic blend → PipelineId::Invalid). Also pending per the
+advisor list: (1) **SHADOW-OBSERVE-3 recon** — per-frame dynamic-shadow seam; (2)
+**MECHOPAQUE-PASSIDENTITY-RECON-1** — disambiguate lossy OpaqueObject identity. Do NOT rush.
 
 ---
 
@@ -438,7 +440,9 @@ a transition strategy, NOT end-state. End-state = executor applies + body DRAWS 
    byte-identical OFF, 79 doctests.
 3. **SHADOW-OBSERVE-3 recon** — model the dynamic-shadow seam honestly (do NOT rush). 
 4. **MECHOPAQUE-PASSIDENTITY-RECON-1** — disambiguate the lossy OpaqueObject identity (do NOT rush).
-5. **SAME-ORDER-EXECUTOR-SLICE-2** — only AFTER #3/#4 land; add Shadow/Mech (+Water/VFX/UI) to top-level.
+5. **SAME-ORDER-EXECUTOR-SLICE-2** — Shadow/Mech DONE (`d32e8990`); ✓ **Water DONE**
+   (WATER-SAME-ORDER-VALIDATE-1 `33f590f8`+`110fb605` — 8th owned pass). Remaining top-level deferred:
+   **VFX, UI** (UI blend runtime-dynamic → PipelineId::Invalid). NEXT: VFX same-order recon.
 Updated north-star: same-order executor owns pass/subpass validation + declared STATE APPLICATION +
 resource/FBO setup + ZERO hidden body-side state for owned islands. THEN: own all safe passes / ban raw-GL
 bypasses (named exceptions) / centralize state+resource application. ONLY THEN talk reorder/scheduler.
@@ -506,6 +510,25 @@ NOT this session's `mc2-win64-0.4c` deploy — so it shows a STALE pre-fix dump 
 deploy d32e8990 to v0.4 + a dryrun smoke to refresh the canonical dump. FOLLOW-UP: give
 get_executor_health a `dump_path` arg (or point it at the session deploy dir). The v0.4 install is the
 shared primary — NOT redeployed this session by convention (we use 0.4c spare).
+
+## ✓ WATER-SAME-ORDER-VALIDATE-1 (`33f590f8` + fixup `110fb605`) — 8th owned top-level pass
+36. **WATER-SAME-ORDER-VALIDATE-1** — Water is now the **8th** validate-only top-level executor-owned
+    pass (mirrors TerrainOverlay). Added Water rows: `kTopLevelExecutorPasses` (validateAmbient=true,
+    validateFbo=true), `ambient_contract` (depthFunc=GEQUAL; colorMask/blend/depthWrite=Inherit),
+    `fbo_ledger` (MainColor). `kTopLevelDeferredPassCount` 3→2 (now VFX, UI only). Touched
+    `top_level_pass_executor.h` + `ambient_contract.h` + `fbo_ledger.h` + `gameos_graphics.cpp` +
+    `test_frame_graph.cpp` (33f590f8); fixup 110fb605 = `ambient_contract.h` depthWrite On→Inherit.
+    VERIFIED: 80 doctests pass, build 0, deploy 0 (src 110fb605). Gauntlet PASS — OFF all executor
+    metrics=0; ON validation_failures=0 / validated_top_level=9805 (~+1/frame from 7904) /
+    owned_wrappers=9806; DRYRUN out_of_order=0 / ambient_probe_mismatches=0 / fbo_mismatches=0; all
+    exits 0. ★MEASURE-FIRST CATCH: first gauntlet had **ambient_probe_mismatches=1971** — a depthWrite
+    mismatch (declared On vs live Off). The begin-ambient sample fires at function ENTRY, BEFORE
+    applyPipeline(WaterArmed) AND before water's depth-mask-off → live dw=Off at the seam. Relaxed
+    depthWrite→Inherit (depthFunc=GEQUAL kept; sampled clean). ★LESSON: the recon ground-truthed
+    "depthWrite=On from the WaterArmed pipeline" — that is the ESTABLISHED-state value, NOT the
+    seam-ENTRY-state value the begin-sample actually sees. begin-sample entry-state ≠ established-state;
+    declare contracts against the seam's observed state, not the eventual pipeline state. Textbook
+    measure-first win. ★ScreenShadow reconciliation DONE (clean rebuild, exe SHA match, apply_state=7976).
 
 ## ⚠ (RESOLVED above) prior RED note — SAME-ORDER-SLICE-2 was committed-but-RED
 
