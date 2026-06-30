@@ -156,7 +156,7 @@ struct TopLevelStateDesc {
 };
 
 // Compile-time table of top-level passes whose render-state the executor APPLIES.
-// Consumers: TerrainDecal, TerrainOverlay, StaticPropOpaque, MechOpaque — all pipeline-only lifts.
+// Consumers: TerrainDecal, TerrainOverlay, StaticPropOpaque, MechOpaque, Water — all pipeline-only lifts.
 static constexpr TopLevelStateDesc kTopLevelStateDesc[] = {
     // TerrainDecal — drawDecals(): the sole entry render-state is
     // applyPipeline(TerrainDecal). FBO/drawBuffers/viewport are inherited from
@@ -205,6 +205,26 @@ static constexpr TopLevelStateDesc kTopLevelStateDesc[] = {
     {
         /*id*/         RenderPassId::MechOpaque,
         /*pipelineId*/ RenderCore::PipelineId::MechOpaque,
+        /*fboTarget*/  RenderResourceId::Unknown,   // inherit (not applied)
+        /*viewport*/   ViewportKind::Inherit,       // inherit (not applied)
+    },
+    // APPLY-STATE-WATER-1: Water — gosRenderer::renderWaterFastPath(): the SOLE liftable
+    // entry render-state is applyPipeline(getPipelineDesc(WaterArmed)) at the body's live
+    // draw site (~gameos_graphics.cpp:3276). ★BODY-SITE apply, NOT a begin-seam pre-apply:
+    // WaterStream::ComputeDispatchAndBindThinRecords() (~:3232) runs glUseProgram(compute)+
+    // glDispatchCompute BETWEEN the begin seam and the applyPipeline, so a seam pre-apply
+    // would be mistimed (clobbered by the compute program bind). Instead the dispatch fires
+    // immediately before the existing :3276 applyPipeline — mirrors the TerrainOverlay
+    // SITE-FIX (apply hook at the live draw site). renderWaterFastPath has NO
+    // glBindFramebuffer/glDrawBuffers/glViewport — it inherits the scene/MainColor FBO +
+    // viewport from the caller, so this is a pipeline-only lift (FBO/viewport Unknown/Inherit,
+    // same honesty shape as decal/overlay/staticprop/mech). The debug-gated glDepthMask
+    // (MC2_WATER_NO_DEPTH_WRITE) fires AFTER applyPipeline and is NOT executor-ownable — left
+    // unchanged. The reflection pass (RenderWaterReflectionPass, default-OFF, self-restoring)
+    // is a separate TU and is NOT lifted.
+    {
+        /*id*/         RenderPassId::Water,
+        /*pipelineId*/ RenderCore::PipelineId::WaterArmed,
         /*fboTarget*/  RenderResourceId::Unknown,   // inherit (not applied)
         /*viewport*/   ViewportKind::Inherit,       // inherit (not applied)
     },

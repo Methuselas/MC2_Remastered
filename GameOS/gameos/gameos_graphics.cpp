@@ -2155,6 +2155,16 @@ class gosRenderer {
         // then skips its own applyPipeline (one-shot). Gate OFF -> byte-identical.
         void executorApplyTerrainOverlayState();
         bool overlayStateAppliedByExecutor_ = false;
+        // APPLY-STATE-WATER-1: fifth top-level scene-pass apply-state. ★BODY-SITE apply
+        // (NOT a begin-seam pre-apply): renderWaterFastPath has a mid-body COMPUTE
+        // dispatch (WaterStream::ComputeDispatchAndBindThinRecords -> glUseProgram(compute))
+        // BETWEEN the begin seam and the applyPipeline(WaterArmed), so the executor apply is
+        // dispatched at the live draw site (immediately before the body's :3276 applyPipeline,
+        // AFTER the compute dispatch) and the body skips its own applyPipeline (one-shot).
+        // Pipeline-only lift (water inherits the scene/MainColor FBO + viewport from the
+        // caller). Gate OFF -> flag stays false -> body applies as before -> byte-identical.
+        void executorApplyWaterState();
+        bool waterStateAppliedByExecutor_ = false;
         // Slice A — draw the mission-static cement-overlay bake. Reproduces
         // drawTerrainOverlays()'s exact state/shader/uniforms/VAO but draws
         // the passed static VBO with per-overlayTexId ranges and does NOT
@@ -3273,8 +3283,22 @@ void gosRenderer::renderWaterFastPath(
     // overrides applyPipeline's depthWriteEnable=true), preserving the
     // MC2_WATER_NO_DEPTH_WRITE A/B gate. The existing save block + restore
     // epilogue still own teardown.
-    pipeline_binder::applyPipeline(
-        RenderCore::getPipelineDesc(RenderCore::PipelineId::WaterArmed), "WaterArmed");
+    //
+    // APPLY-STATE-WATER-1: when MC2_FRAMEGRAPH_EXECUTOR is ON the executor APPLIES the
+    // WaterArmed pipeline here (the body's live draw site, AFTER the compute dispatch at
+    // :3232 — a begin-seam pre-apply would be clobbered by glUseProgram(compute)). The
+    // dispatch sets waterStateAppliedByExecutor_; the body applyPipeline below is then
+    // skipped (one-shot reset). Gate OFF -> flag stays false -> body applies as before ->
+    // byte-identical.
+    if (render_contract::isTopLevelExecutorEnabled() &&
+        RenderCore::framegraph::findTopLevelStateDesc(RenderCore::RenderPassId::Water) != nullptr) {
+        executorApplyWaterState();
+    }
+    if (!waterStateAppliedByExecutor_) {
+        pipeline_binder::applyPipeline(
+            RenderCore::getPipelineDesc(RenderCore::PipelineId::WaterArmed), "WaterArmed");
+    }
+    waterStateAppliedByExecutor_ = false;
     render_frame_plan::trace(render_frame_plan::Phase::Water, "WaterFastPath",
         render_frame_plan::PathKind::ApplyPipeline, 1, "WaterArmed");
     // OOB-FOG-WATER-DEPTH-1: water must write depth so runFogOob() (which
@@ -10183,6 +10207,27 @@ void gosRenderer::executorApplyTerrainOverlayState()
         RenderCore::getPipelineDesc(RenderCore::PipelineId::TerrainOverlay), "TerrainOverlay");
     mc2_framegraph_executor_bump_apply_state((unsigned)RenderCore::framegraph::ApplyPassId::TerrainOverlay);
     overlayStateAppliedByExecutor_ = true;
+}
+
+// APPLY-STATE-WATER-1: pre-apply the declared WaterArmed pipeline. Fifth consumer of the
+// top-level apply-state machinery, mirroring executorApplyTerrainOverlayState(). ★Unlike
+// decal/overlay/staticprop/mech (whose apply is dispatched at the begin seam), this is
+// dispatched at the BODY draw site (renderWaterFastPath, immediately before the :3276
+// applyPipeline) because a mid-body COMPUTE dispatch (ComputeDispatchAndBindThinRecords ->
+// glUseProgram(compute)) runs between the begin seam and the applyPipeline, so a seam
+// pre-apply would be clobbered. Performs the SOLE liftable entry render-state
+// (applyPipeline(WaterArmed)), bumps the apply-state counter, and flags the body to skip its
+// own applyPipeline (one-shot). Only the pipeline is lifted; FBO/drawBuffers/viewport are
+// inherited from the caller (scene/MainColor FBO) and NOT touched here (kTopLevelStateDesc
+// records them Unknown/Inherit). The debug-gated glDepthMask (MC2_WATER_NO_DEPTH_WRITE) that
+// follows in the body is NOT lifted. Idempotent: the body makes the identical call when the
+// flag is false. Only reached when MC2_FRAMEGRAPH_EXECUTOR is ON and the pass runs.
+void gosRenderer::executorApplyWaterState()
+{
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::WaterArmed), "WaterArmed");
+    mc2_framegraph_executor_bump_apply_state((unsigned)RenderCore::framegraph::ApplyPassId::Water);
+    waterStateAppliedByExecutor_ = true;
 }
 
 // ── Thin exported wrappers ────────────────────────────────────────────────────

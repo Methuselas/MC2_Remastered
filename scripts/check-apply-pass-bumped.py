@@ -53,7 +53,7 @@ def parse_enumerators():
     body = m.group(1)
     names = []
     for raw in body.split(","):
-        line = re.sub(r"//.*$", "", raw)               # strip line comment
+        line = re.sub(r"//.*$", "", raw, flags=re.MULTILINE)  # strip line comment(s)
         line = re.sub(r"/\*.*?\*/", "", line, flags=re.DOTALL)  # strip block comment
         line = line.strip()
         if not line:
