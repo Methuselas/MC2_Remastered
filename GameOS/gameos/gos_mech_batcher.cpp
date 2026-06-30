@@ -572,6 +572,7 @@ static bool     s_spotlightReal_firstHitDraw     = false;
 // MC2_MATERIAL_GPU defaults ON. Set MC2_MATERIAL_GPU=0 to disable.
 // ---------------------------------------------------------------------------
 #include "../../RenderCore/MaterialGpu.h"
+#include "../../RenderCore/GpuBufferOwner.h"
 static const bool s_mechMaterialGpuEnabled = []() {
     const char* v = getenv("MC2_MATERIAL_GPU");
     return v != nullptr && (v[0] != '0');
@@ -579,7 +580,16 @@ static const bool s_mechMaterialGpuEnabled = []() {
 static std::vector<RenderCore::MaterialGpu>        s_mechMaterialTable;
 static std::unordered_map<uint32_t, uint32_t>      s_mechHandleToMaterialIdx;
 static std::vector<uint32_t>                       s_mechDrawMaterialIdx;
-static GLuint                                      s_mechMaterialSsbo          = 0;
+// MECH-MATERIAL-SSBO-OWNER-1: per-actor MaterialGpu table SSBO (binding 2),
+// narrowed behind a GpuBufferOwner identity record (logical id + lifetime +
+// debug name + GLuint value). GL calls happen at the same sites with the same
+// args/order/flags/slot; the raw handle is reached only via owner.glName.
+// Lifetime Persistent: survives across frames, torn down on map load/unload.
+static RenderCore::GpuBufferOwner                  s_mechMaterialSsbo{
+    RenderCore::RenderResourceId::MaterialGpuBuffer,
+    RenderCore::RenderResourceLifetime::Persistent,
+    "MaterialGpuBuffer",
+    0u};
 static uint32_t                                    s_mechMaterialGpuFrameCount = 0;
 
 // Slice C1: named profile index for binding-7 SSBO (gos_materials).
@@ -866,9 +876,10 @@ void GpuMechBatcher::onMapLoad() {
     s_lastTotalInstances = 0;
     s_lastTotalBones     = 0;
     // Mech-1: reset MaterialGpu SSBO and tables on map load
-    if (s_mechMaterialSsbo != 0) {
-        glDeleteBuffers(1, &s_mechMaterialSsbo);
-        s_mechMaterialSsbo = 0;
+    if (s_mechMaterialSsbo.glName != 0) {
+        GLuint local = static_cast<GLuint>(s_mechMaterialSsbo.glName);
+        glDeleteBuffers(1, &local);
+        s_mechMaterialSsbo.glName = 0;
 
         // REGISTRY-MATERIAL-SSBO-1: mark the slot unavailable on teardown.
         RenderCore::RenderResourceDesc invalid;
@@ -922,9 +933,10 @@ void GpuMechBatcher::onMapUnload() {
     s_pendingSubmits.clear();
     s_mechExtractPersist.clear();  // MECH-EXTRACTION-0
     // Mech-1: teardown MaterialGpu SSBO and tables
-    if (s_mechMaterialSsbo != 0) {
-        glDeleteBuffers(1, &s_mechMaterialSsbo);
-        s_mechMaterialSsbo = 0;
+    if (s_mechMaterialSsbo.glName != 0) {
+        GLuint local = static_cast<GLuint>(s_mechMaterialSsbo.glName);
+        glDeleteBuffers(1, &local);
+        s_mechMaterialSsbo.glName = 0;
 
         // REGISTRY-MATERIAL-SSBO-1: mark the slot unavailable on teardown.
         RenderCore::RenderResourceDesc invalid;
@@ -1981,10 +1993,14 @@ void GpuMechBatcher::flush() {
             s_mechDrawMaterialIdx.push_back(mIdx);
         }
         // Upload only when the table grew (or buffer not yet created).
-        if (s_mechMaterialSsbo == 0 || tableDirty) {
+        if (s_mechMaterialSsbo.glName == 0 || tableDirty) {
             const size_t byteSize = s_mechMaterialTable.size() * sizeof(RenderCore::MaterialGpu);
-            if (s_mechMaterialSsbo == 0) glGenBuffers(1, &s_mechMaterialSsbo);
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_mechMaterialSsbo);
+            if (s_mechMaterialSsbo.glName == 0) {
+                GLuint local = 0;
+                glGenBuffers(1, &local);
+                s_mechMaterialSsbo.glName = static_cast<uint32_t>(local);
+            }
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, static_cast<GLuint>(s_mechMaterialSsbo.glName));
             glBufferData(GL_SHADER_STORAGE_BUFFER, static_cast<GLsizeiptr>(byteSize),
                          s_mechMaterialTable.data(), GL_DYNAMIC_DRAW);
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
@@ -2000,7 +2016,7 @@ void GpuMechBatcher::flush() {
                 d.lifetime  = RenderCore::RenderResourceLifetime::Persistent;  // persistent material table (not a pass output)
                 d.format    = RenderCore::RenderResourceFormat::BufferRaw;
                 d.debugName = "MaterialGpuBuffer";
-                d.glName    = static_cast<uint32_t>(s_mechMaterialSsbo);
+                d.glName    = s_mechMaterialSsbo.glName;
                 d.sizeBytes = static_cast<uint64_t>(byteSize);
                 d.valid     = true;
                 RenderCore::registerOrUpdateRenderResource(d);
@@ -2145,8 +2161,8 @@ void GpuMechBatcher::flush() {
         (long long)(totalBones * sizeof(GpuMechBone)),
         "mech.bone.shadow");
     // Mech-1: bind MaterialGpu table SSBO at binding 2
-    if (s_mechMaterialGpuEnabled && s_mechMaterialSsbo != 0) {
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, s_mechMaterialSsbo);
+    if (s_mechMaterialGpuEnabled && s_mechMaterialSsbo.glName != 0) {
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, static_cast<GLuint>(s_mechMaterialSsbo.glName));
     }
     // Slice C1: bind named material profile SSBO at binding 7.
     // No-op when MC2_MATERIAL_GPU=0, init() not called, or no textured profiles.
