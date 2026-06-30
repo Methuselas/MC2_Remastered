@@ -58,6 +58,7 @@ const char* toString(RenderResourceId id) {
         case RenderResourceId::TransitionMaskArray:  return "TransitionMaskArray";
         case RenderResourceId::TerrainHeightSsbo:    return "TerrainHeightSsbo";
         case RenderResourceId::MainNormal:           return "MainNormal";
+        case RenderResourceId::SceneDepthCopy:       return "SceneDepthCopy";
         case RenderResourceId::Count:                return "Count";
     }
     return "unknown";

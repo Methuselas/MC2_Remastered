@@ -284,11 +284,14 @@ inline PostProcessValidationResult validatePostProcessSubgraph(
 
 // Convenience overload with the baked-in Slice-1 external resource set.
 // External inputs to the PostProcess subgraph from upstream frame-graph passes:
-//   MainColor      — produced by Terrain + MechOpaque + StaticPropOpaque + VFX passes
-//   MainDepth      — produced by Terrain + opaque passes
-//   MainNormal     — produced by Terrain (GBuffer1 / sceneNormalTex_)
+//   MainColor        — produced by Terrain + MechOpaque + StaticPropOpaque + VFX passes
+//   MainDepth        — produced by Terrain + opaque passes
+//   MainNormal       — produced by Terrain (GBuffer1 / sceneNormalTex_)
 //   ShadowStaticMap  — external (pre-mission bake)
 //   ShadowDynamicMap — produced by Shadow pass
+//   SceneDepthCopy   — POSTPROCESS-SCENEDEPTHCOPY-RESOURCE-1: produced by VFX pass
+//                      (copySceneDepthForParticles, gos_particle_bridge.cpp:1068), cross-boundary.
+//                      BoxDecals (SUBGRAPH-2) will consume it for soft-depth reject.
 inline PostProcessValidationResult validateShippedPostProcessSubgraph() {
     static const RenderResourceId kExternal[] = {
         RenderResourceId::MainColor,
@@ -296,9 +299,10 @@ inline PostProcessValidationResult validateShippedPostProcessSubgraph() {
         RenderResourceId::MainNormal,
         RenderResourceId::ShadowStaticMap,
         RenderResourceId::ShadowDynamicMap,
+        RenderResourceId::SceneDepthCopy,  // POSTPROCESS-SCENEDEPTHCOPY-RESOURCE-1: VFX producer, BoxDecals (SUBGRAPH-2) consumer
         RenderResourceId::Unknown,
     };
-    constexpr int kExternalCount = 5;  // excludes the Unknown terminator
+    constexpr int kExternalCount = 6;  // excludes the Unknown terminator
     return validatePostProcessSubgraph(kExternal, kExternalCount);
 }
 

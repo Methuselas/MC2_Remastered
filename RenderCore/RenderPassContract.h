@@ -235,9 +235,12 @@ static constexpr RenderPassContract kRenderPassContracts[] = {
         /*snapshotRowAuthoritative*/ false,
         "VFX Pass##vfx",
         nullptr,
-        "Object-ID PROHIBITED. GpuTrailKind {None, MissileSmoke, PpcBolt}.",
+        "Object-ID PROHIBITED. GpuTrailKind {None, MissileSmoke, PpcBolt}. "
+        "POSTPROCESS-SCENEDEPTHCOPY-RESOURCE-1: produces SceneDepthCopy "
+        "(copySceneDepthForParticles in gos_particle_bridge.cpp:1068, VFX flush path); "
+        "consumed downstream by PostProcess BoxDecals (SUBGRAPH-2) for soft-depth reject.",
         /* reads[4]    */ { RenderResourceId::MainDepth },
-        /* writes[4]   */ { RenderResourceId::MainColor },
+        /* writes[4]   */ { RenderResourceId::MainColor, RenderResourceId::SceneDepthCopy },
         /* barrierAfter */ BarrierKind::None
     },
     {
