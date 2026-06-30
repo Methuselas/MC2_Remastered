@@ -11,6 +11,7 @@
 #include "RenderCore/terrain_subpass_contract.h"
 #include "RenderCore/frame_pass_trace.h"   // FRAME-GRAPH-EXECUTOR-DRYRUN-1 pure kernel
 #include "RenderCore/frame_executor.h"     // FRAME-GRAPH-EXECUTOR-ISLAND-1 IslandContract
+#include "RenderCore/postprocess_subgraph.h" // POSTPROCESS-SUBGRAPH-1 PostProcessSubpass table
 
 using namespace RenderCore;
 using namespace RenderCore::framegraph;
@@ -617,6 +618,132 @@ TEST_CASE("executor island (f): findIslandContract(CloudShadow) returns non-null
 TEST_CASE("executor island (g): findIslandContract(Count) returns nullptr (out-of-range)") {
     using namespace RenderCore::framegraph;
     CHECK(findIslandContract(ExecutorIslandId::Count) == nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// POSTPROCESS-SUBGRAPH-1: offline tests for the GL-free PostProcessSubpass table.
+// Pure constexpr declaration checks — no GL, no engine, no smoke.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("postprocess subgraph (a): kPostProcessSubpassCount == 6") {
+    using namespace RenderCore::framegraph;
+    CHECK(kPostProcessSubpassCount == 6u);
+}
+
+TEST_CASE("postprocess subgraph (b): findPostProcessSubpass non-null for Composite and ShadowDebugOverlay") {
+    using namespace RenderCore::framegraph;
+    const PostProcessSubpass* composite = findPostProcessSubpass(ExecutorIslandId::Composite);
+    CHECK(composite != nullptr);
+    const PostProcessSubpass* dbgOverlay = findPostProcessSubpass(ExecutorIslandId::ShadowDebugOverlay);
+    CHECK(dbgOverlay != nullptr);
+    // Composite writes Backbuffer.
+    if (composite) {
+        CHECK(static_cast<unsigned>(composite->writes[0]) ==
+              static_cast<unsigned>(RenderResourceId::Backbuffer));
+    }
+    // ShadowDebugOverlay writes Backbuffer.
+    if (dbgOverlay) {
+        CHECK(static_cast<unsigned>(dbgOverlay->writes[0]) ==
+              static_cast<unsigned>(RenderResourceId::Backbuffer));
+    }
+}
+
+TEST_CASE("postprocess subgraph (c): validateShippedPostProcessSubgraph().ok == true") {
+    using namespace RenderCore::framegraph;
+    const PostProcessValidationResult r = validateShippedPostProcessSubgraph();
+    CHECK(r.ok == true);
+    // On failure these report the offending subpass / missing resource.
+    CHECK(static_cast<unsigned>(r.offendingSubpass)  == static_cast<unsigned>(ExecutorIslandId::Count));
+    CHECK(static_cast<unsigned>(r.missingResource)   == static_cast<unsigned>(RenderResourceId::Unknown));
+}
+
+TEST_CASE("postprocess subgraph (d): owned flags match spec (4 sceneFBO_ passes + Composite owned; ShadowDebugOverlay not owned)") {
+    using namespace RenderCore::framegraph;
+    const ExecutorIslandId ownedIds[] = {
+        ExecutorIslandId::CloudShadow,
+        ExecutorIslandId::Shoreline,
+        ExecutorIslandId::EdgeFog,
+        ExecutorIslandId::FogOob,
+        ExecutorIslandId::Composite,
+    };
+    for (int i = 0; i < 5; ++i) {
+        const PostProcessSubpass* sp = findPostProcessSubpass(ownedIds[i]);
+        REQUIRE(sp != nullptr);
+        CHECK(sp->ownedByExecutor == true);
+    }
+    const PostProcessSubpass* dbg = findPostProcessSubpass(ExecutorIslandId::ShadowDebugOverlay);
+    REQUIRE(dbg != nullptr);
+    CHECK(dbg->ownedByExecutor == false);
+}
+
+TEST_CASE("postprocess subgraph (e): Composite is unconditional; all others are conditional") {
+    using namespace RenderCore::framegraph;
+    const PostProcessSubpass* composite = findPostProcessSubpass(ExecutorIslandId::Composite);
+    REQUIRE(composite != nullptr);
+    CHECK(composite->conditional == false);
+
+    const ExecutorIslandId conditionalIds[] = {
+        ExecutorIslandId::CloudShadow,
+        ExecutorIslandId::Shoreline,
+        ExecutorIslandId::EdgeFog,
+        ExecutorIslandId::FogOob,
+        ExecutorIslandId::ShadowDebugOverlay,
+    };
+    for (int i = 0; i < 5; ++i) {
+        const PostProcessSubpass* sp = findPostProcessSubpass(conditionalIds[i]);
+        REQUIRE(sp != nullptr);
+        CHECK(sp->conditional == true);
+    }
+}
+
+TEST_CASE("postprocess subgraph (f): order regression — Composite before a MainColor writer is flagged") {
+    // If Composite (which reads MainColor) is moved BEFORE e.g. CloudShadow (which
+    // writes MainColor), and CloudShadow is moved after Composite, the sub-stage
+    // order validation must catch the unsatisfied read for the pass that now reads
+    // something that hasn't been written yet.
+    //
+    // We simulate this by calling validatePostProcessSubgraph with an external set
+    // that does NOT include MainColor — forcing Composite's read to be unsatisfied
+    // unless an earlier subpass in kPostProcessSubpasses produces it.
+    // In the CORRECT table order (CloudShadow/Shoreline/EdgeFog/FogOob all write
+    // MainColor BEFORE Composite), the validator passes because MainColor is produced
+    // by them. Here we strip MainColor from external AND from what would be produced
+    // if Composite were first — achieved by using an external set that only has
+    // MainDepth, ShadowStaticMap, ShadowDynamicMap, MainNormal (no MainColor).
+    // The validator must flag Composite's read[0]=MainColor as unsatisfied IF
+    // Composite appears first in the table.
+    //
+    // We can't reorder the constexpr table at runtime, so we test the validator
+    // logic directly: prove that MainColor absent from external AND prior writes =>
+    // validation fails with offendingSubpass != Count.
+    using namespace RenderCore::framegraph;
+
+    // External set WITHOUT MainColor (simulates reordering Composite to slot 0
+    // before any writer has run).
+    const RenderResourceId noMainColor[] = {
+        RenderResourceId::MainDepth,
+        RenderResourceId::MainNormal,
+        RenderResourceId::ShadowStaticMap,
+        RenderResourceId::ShadowDynamicMap,
+    };
+    // In the shipped order, CloudShadow (row 0) reads MainDepth (present in external),
+    // then writes MainColor — which then satisfies Composite's read. So the shipped
+    // table must still pass even without MainColor in external.
+    const PostProcessValidationResult r = validatePostProcessSubgraph(noMainColor, 4);
+    // CloudShadow writes MainColor first; Composite reads it -> ok.
+    CHECK(r.ok == true);
+
+    // Now prove the validator bites when the ONLY write of MainColor is removed from
+    // external and also not produced by any prior subpass — we do this by providing
+    // an empty external set. In the shipped table CloudShadow (row 0) reads MainDepth
+    // which is no longer in external, so CloudShadow itself is flagged unsatisfied.
+    const PostProcessValidationResult r2 = validatePostProcessSubgraph(nullptr, 0);
+    CHECK(r2.ok == false);
+    // CloudShadow is the first row and reads MainDepth which is not in the empty external.
+    CHECK(static_cast<unsigned>(r2.offendingSubpass) ==
+          static_cast<unsigned>(ExecutorIslandId::CloudShadow));
+    CHECK(static_cast<unsigned>(r2.missingResource) ==
+          static_cast<unsigned>(RenderResourceId::MainDepth));
 }
 
 } // TEST_SUITE

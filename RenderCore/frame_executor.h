@@ -30,6 +30,8 @@ enum class ExecutorIslandId : uint8_t {
     FogOob,           // sub-stage: out-of-bounds ground fog (ISLAND-2)
     Shoreline,        // sub-stage: shoreline foam brightening (ISLAND-3)
     CloudShadow,      // sub-stage: procedural cloud shadow darkening (ISLAND-3)
+    Composite,        // POSTPROCESS-SUBGRAPH-1: outer fullscreen blit sceneFBO_->FBO0 (owned, always runs)
+    ShadowDebugOverlay, // POSTPROCESS-SUBGRAPH-1: debug shadow-map overlay on FBO0 (not owned, default-OFF)
     Count,
 };
 
