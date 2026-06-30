@@ -122,7 +122,7 @@ emits `glColorMaski` from `PipelineDesc`) or the `GlScopedColorMask` RAII wrappe
   site with file:line + per-file counts (plain vs indexed). Wired into `scripts/check-contracts.sh`
   as `raw_gl_colormask` (right after `raw_gl_depthmask`). Regression-proof: freezes the backlog,
   blocks new bypasses.
-- `check-raw-gl-blendfunc.py` — **RAW-GL-BLENDFUNC-DIFF-GATE-1** (Phase 8 fourth — and last-for-now — enforcement gate). See note below.
+- `check-raw-gl-blendfunc.py` — **RAW-GL-BLENDFUNC-DIFF-GATE-1** (Phase 8 fourth enforcement gate). See note below.
 
 #### RAW-GL-BLENDFUNC-DIFF-GATE-1 (`scripts/check-raw-gl-blendfunc.py`)
 
@@ -155,10 +155,47 @@ or a scoped blend wrapper (`gl_state_guard.h`).
   site with file:line + variant + per-file counts. Wired into `scripts/check-contracts.sh` as
   `raw_gl_blendfunc` (right after `raw_gl_colormask`). Regression-proof: freezes the backlog, blocks
   new bypasses.
-- **Last raw-GL axis gate for now.** FBO-bind (`glBindFramebuffer`) gating is intentionally **deferred**
-  per advisor — those call sites are too numerous and context-sensitive (FBO identity is logical, not a
-  simple flag) to gate cleanly at this stage. The four shipped axes — depth-func, depth-mask,
-  color-mask, blend-func/equation — cover the meaningful scalar pipeline-state setters.
+- `check-raw-gl-fbobind.py` — **RAW-GL-FBO-BIND-GATE-1** (Phase 8 fifth raw-GL axis gate). See note below.
+
+#### RAW-GL-FBO-BIND-GATE-1 (`scripts/check-raw-gl-fbobind.py`)
+
+The fifth — and highest-context — raw-GL axis gate. Bans **new** unsanctioned `glBindFramebuffer`
+call sites on ADDED diff lines outside a sanctioned-file allowlist, so the FBO-bind backlog cannot
+grow new bypasses of the sanctioned FBO-redirect chokepoint (executor `applyTopLevelGenericAxes` /
+the FBO-owner TUs). Regex `\bglBindFramebuffer\s*\(`.
+
+**Not a flat clone of the four scalar axis gates.** An FBO bind is higher-context than a scalar state
+setter: FBO identity is a *logical resource*, not a flag, and many binds are load-bearing save/restore
+brackets that RETURN to a previously-captured FBO (cannot redirect to a new target). So this gate uses
+a **hybrid taxonomy** with three escape paths:
+1. **file allowlist** — sanctioned FBO-owner / executor / editor TUs (exact: `gos_postprocess.cpp`
+   create/init/resize/PP-apply + registerFbo, `gameos_graphics.cpp` executor + shadow brackets,
+   `gameosmain.cpp` screenshot/video READ-blit, `gos_terrain_indirect.cpp` water-reflection
+   prev-restore, `RenderWorld.cpp` readback, `editor/EditorGameOS.cpp`, `editor/EditorInterface.cpp`;
+   prefix: `tools/`, `tests/`).
+2. **`// FBO-OWNER: <reason>` tag** — a deliberate new owner in a non-allowlisted file escapes by
+   tagging the added line OR the immediately-previous added line.
+3. **restore-pattern exempt** — a bind whose added line targets a `prev`/`saved`/`csmSaved*` variable
+   (regex `\b(prev|saved|csmSaved)\w*`, case-insensitive) is a save/restore RETURN, not a new
+   redirect → auto-exempt.
+
+Mode A (default, enforcement) diffs vs a base ref (default `merge-base HEAD origin/main`, or `--base`),
+inspects only ADDED lines, exit 1 naming each offender when a non-allowlisted file gains a raw bind
+that is neither a restore nor FBO-OWNER-tagged. Mode B (`--all`, advisory exit 0) lists every site with
+file:line + class tag (ALLOWLISTED / RESTORE / OWNER-TAGGED / RAW) + per-file/by-class counts —
+currently **82 sites across 11 files, all ALLOWLISTED, 0 RAW** (freeze-forward baseline).
+
+- **v1 = file-allowlist + `// FBO-OWNER:` tag + prev/saved-restore exempt** (static only, no registry
+  dependency). **v2 (after RESOURCE-REGISTRY-COMPLETE-1) = require the FBO-OWNER tag to name a
+  ledger-registered logical resource** + optional runtime resolve != Unknown.
+- **Run:** Mode A `py -3 scripts/check-raw-gl-fbobind.py [--base REF] [--quiet]`; Mode B
+  `py -3 scripts/check-raw-gl-fbobind.py --all`. Wired into `scripts/check-contracts.sh` as
+  `raw_gl_fbobind` (right after `raw_gl_blendfunc`). Regression-proof: freezes the backlog, blocks
+  new bypasses.
+- **Fifth and final raw-GL axis gate.** The five shipped axes — depth-func, depth-mask, color-mask,
+  blend-func/equation, and FBO-bind — cover the meaningful pipeline-state setters plus the logical
+  render-target redirect. The **raw-GL-bypass CAPSTONE** (a unifying meta-gate / no-raw-GL-from-game
+  consolidation) comes after this gate.
 
 - `check-include-firewall.sh`, `check-no-raw-gl-from-game.sh`, `check-vfx-no-objectid.sh`, `check-visibility-log-schema.sh`, `check-unified-projection-retirement.sh`, `check-mlr-leaves-gated.sh`, `check-particles-no-cpu-projection.sh` — RenderWorld-boundary / lane firewalls (PARTIAL contract coverage)
 - `validate_shaders.py` — glslang SPIR-V compile gate; uses `--auto-map-bindings` (compile-only; **does NOT record sampler occupancy** — symptom of the blind spot, not coverage)
