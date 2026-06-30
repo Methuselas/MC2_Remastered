@@ -115,13 +115,18 @@ static constexpr AmbientContract kPassAmbient[] = {
 
     // WATER-SAME-ORDER-VALIDATE-1: alpha-blend water overlay. blend is GLOBALLY enabled
     // in MC2 (controlled via func, not enable) -> Inherit. colorMask Inherit (not an entry
-    // invariant). depthFunc/depthWrite are the WaterArmed pipeline's reverse-Z values.
+    // invariant). depthFunc=GEQUAL is the WaterArmed reverse-Z value.
+    // WATER-SAME-ORDER-VALIDATE-1 fixup: depthWrite relaxed Inherit. The begin sample fires
+    // at function ENTRY, BEFORE applyPipeline(WaterArmed); the water path then sets
+    // depth-mask OFF temporarily (savedDepthMask save/restore epilogue). Live entry sample
+    // measured depthWrite=Off (dwMiss=1 vs declared On) -> not an entry invariant. depthFunc
+    // sampled Inherit at entry too -> skipped (dfMiss=0), so GEQUAL is safe to keep.
     { RenderPassId::Water,
       ColorMaskState::Inherit, false, false,
       DepthFuncState::SceneGEqual, ViewportKind::MainScene,
       /*producesLatch*/ false, /*consumesLatch*/ false,
-      "alpha-blend water; reverse-Z GEQUAL; depthWrite ON (WaterArmed pipeline)",
-      /*blend*/ BlendState::Inherit, /*depthWrite*/ DepthWriteState::On },
+      "alpha-blend water; reverse-Z GEQUAL; depthWrite Inherit (entry-sample measured Off)",
+      /*blend*/ BlendState::Inherit, /*depthWrite*/ DepthWriteState::Inherit },
 
     // PostProcess: screenShadow/cloudShadow/shoreline/edgeFog/fogOob bail if
     // !sceneHasTerrain_ (gos_postprocess.cpp :1303/1936/2030/2173/2234/2284/2341) -> the
