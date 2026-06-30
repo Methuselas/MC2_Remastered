@@ -157,6 +157,36 @@ TEST_CASE("MECH-PROFILE-SSBO-OWNER-1 mech-profile material owner round-trips id/
     CHECK((RenderResourceId::MechProfileMaterialGpuBuffer != RenderResourceId::MaterialGpuBuffer));
 }
 
+TEST_CASE("TERRAIN-VISUAL-HEIGHT-SSBO-OWNER-1 visual-height owner round-trips id/lifetime/name and valid->invalid") {
+    GpuBufferOwner o{
+        RenderResourceId::TerrainVisualHeightSsbo,
+        RenderResourceLifetime::Mission,
+        "TerrainVisualHeightSsbo",
+        0u};
+    // Newly-constructed (glName 0) -> not yet allocated -> invalid. WIP feature: the
+    // create path is gated upstream (MC2_TERRAIN_VISUAL_HEIGHT/_DISPLACE + a bake that
+    // does NOT ship), so default smoke never creates the buffer — glName stays 0.
+    CHECK_FALSE(o.valid());
+
+    // After glGen stores a handle -> valid, fields preserved.
+    o.glName = 30u;
+    CHECK((o.id == RenderResourceId::TerrainVisualHeightSsbo));
+    CHECK((o.lifetime == RenderResourceLifetime::Mission));
+    CHECK(std::strcmp(o.debugName, "TerrainVisualHeightSsbo") == 0);
+    CHECK(o.valid());
+
+    // Invalidate-on-destroy (glName cleared) -> invalid again.
+    o.glName = 0u;
+    CHECK_FALSE(o.valid());
+
+    CHECK(std::strcmp(toString(RenderResourceId::TerrainVisualHeightSsbo), "TerrainVisualHeightSsbo") == 0);
+    CHECK(int(RenderResourceId::TerrainVisualHeightSsbo) < int(RenderResourceId::Count));
+    // Distinct id from the 1x live height field and the type/cement siblings.
+    CHECK((RenderResourceId::TerrainVisualHeightSsbo != RenderResourceId::TerrainHeightSsbo));
+    CHECK((RenderResourceId::TerrainVisualHeightSsbo != RenderResourceId::TerrainTypeSsbo));
+    CHECK((RenderResourceId::TerrainVisualHeightSsbo != RenderResourceId::TerrainCementSsbo));
+}
+
 TEST_CASE("GpuBufferOwner is a trivially-copyable POD") {
     CHECK(std::is_trivially_copyable<GpuBufferOwner>::value);
 }

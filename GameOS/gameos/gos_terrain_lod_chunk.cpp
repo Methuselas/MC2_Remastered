@@ -58,7 +58,20 @@ static RenderCore::GpuBufferOwner s_heightSsbo{  // GL handle; glName 0 = not ye
     RenderCore::RenderResourceLifetime::Mission,
     "TerrainHeightSsbo",
     0u};
-static GLuint s_visualHeightSsbo = 0; // TERRAIN-VISUAL-HEIGHT-SAMPLE-1: 4x visual heightfield (binding 26)
+// TERRAIN-VISUAL-HEIGHT-SSBO-OWNER-1: the 4x visual heightfield SSBO (binding 26)
+// is narrowed behind a GpuBufferOwner identity record (logical id + lifetime +
+// debug name + GLuint value), mirroring the height/type/cement siblings. GL calls
+// happen at the same sites with the same args/order/flags/slot; the raw handle is
+// reached only via owner.glName. Lifetime Mission: uploaded per mission load via
+// glBufferData. CREATE is gated upstream (mclib/terrain.cpp: MC2_TERRAIN_VISUAL_HEIGHT
+// / _DISPLACE + a visual_height_4x.r32 bake) — when the gate is off / no bake ships,
+// the upload entry is never called, glName stays 0, and nothing registers
+// (passthrough byte-identical). No stock bake ships → create path is offline-only.
+static RenderCore::GpuBufferOwner s_visualHeightSsbo{ // TERRAIN-VISUAL-HEIGHT-SAMPLE-1: 4x visual heightfield (binding 26)
+    RenderCore::RenderResourceId::TerrainVisualHeightSsbo,
+    RenderCore::RenderResourceLifetime::Mission,
+    "TerrainVisualHeightSsbo",
+    0u};
 static int    s_visualSide       = 0; // V = (mapSide-1)*4+1, fine grid side (0 = bake not loaded)
 // TERRAIN-LODCHUNK-SSBO-OWNER-1: the LOD-chunk type/cement SSBOs are no longer
 // bare GLuints. Each is narrowed behind a GpuBufferOwner identity record (logical
@@ -615,10 +628,16 @@ void gos_TerrainLodChunk_Destroy()
         s_locForceColor     = -1;
     }
 
-    if (s_visualHeightSsbo != 0)
+    if (s_visualHeightSsbo.glName != 0)
     {
-        glDeleteBuffers(1, &s_visualHeightSsbo);
-        s_visualHeightSsbo = 0;
+        GLuint visualBuf = static_cast<GLuint>(s_visualHeightSsbo.glName);
+        glDeleteBuffers(1, &visualBuf);
+        s_visualHeightSsbo.glName = 0;
+
+        // TERRAIN-VISUAL-HEIGHT-SSBO-OWNER-1: mark the slot unavailable on teardown.
+        RenderCore::RenderResourceDesc invalid;
+        invalid.id = RenderCore::RenderResourceId::TerrainVisualHeightSsbo;
+        RenderCore::registerOrUpdateRenderResource(invalid);
     }
     if (s_heightSsbo.glName != 0)
     {
@@ -806,9 +825,9 @@ void gos_TerrainLodChunk_SubmitDrawCommands(
         const char* v = getenv("MC2_TERRAIN_VISUAL_DISPLACE");
         return v && v[0] && v[0] != '0';
     }();
-    const bool visualDisplaceActive = s_visualDisplaceGate && s_visualHeightSsbo != 0 && s_visualSide > 0;
+    const bool visualDisplaceActive = s_visualDisplaceGate && s_visualHeightSsbo.glName != 0 && s_visualSide > 0;
     if (visualDisplaceActive)
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_VISUAL_HEIGHT_SSBO_BINDING, s_visualHeightSsbo);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TERRAIN_VISUAL_HEIGHT_SSBO_BINDING, static_cast<GLuint>(s_visualHeightSsbo.glName));
     if (s_locVisualSide >= 0)
         glUniform1i(s_locVisualSide, s_visualSide);
 
@@ -1314,10 +1333,12 @@ void gos_TerrainLodChunk_UploadVisualHeightFull(const float* visualHeights, int 
 {
     if (!visualHeights || V <= 0)
         return;
-    if (s_visualHeightSsbo == 0)
+    if (s_visualHeightSsbo.glName == 0)
     {
-        glGenBuffers(1, &s_visualHeightSsbo);
-        if (s_visualHeightSsbo == 0)
+        GLuint local = 0;
+        glGenBuffers(1, &local);
+        s_visualHeightSsbo.glName = static_cast<uint32_t>(local);
+        if (s_visualHeightSsbo.glName == 0)
         {
             fprintf(stderr, "[VISUAL_HEIGHT v1] glGenBuffers failed\n");
             fflush(stderr);
@@ -1325,10 +1346,26 @@ void gos_TerrainLodChunk_UploadVisualHeightFull(const float* visualHeights, int 
         }
     }
     GLsizeiptr bytes = (GLsizeiptr)V * (GLsizeiptr)V * (GLsizeiptr)sizeof(float);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_visualHeightSsbo);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, static_cast<GLuint>(s_visualHeightSsbo.glName));
     glBufferData(GL_SHADER_STORAGE_BUFFER, bytes, visualHeights, GL_STATIC_DRAW);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     s_visualSide = V;   // remembered for the displaced draw (u_visualSide)
+
+    // TERRAIN-VISUAL-HEIGHT-SSBO-OWNER-1: register the live visual-height SSBO
+    // (observe-only metadata; never read by the draw path). Reached here only when
+    // the upstream gate (MC2_TERRAIN_VISUAL_HEIGHT/_DISPLACE + bake) called us.
+    {
+        RenderCore::RenderResourceDesc d;
+        d.id        = RenderCore::RenderResourceId::TerrainVisualHeightSsbo;
+        d.kind      = RenderCore::RenderResourceKind::Buffer;
+        d.lifetime  = RenderCore::RenderResourceLifetime::Mission;  // rebuilt per mission load
+        d.format    = RenderCore::RenderResourceFormat::BufferRaw;
+        d.debugName = s_visualHeightSsbo.debugName;
+        d.glName    = s_visualHeightSsbo.glName;
+        d.sizeBytes = static_cast<uint64_t>(bytes);
+        d.valid     = true;
+        RenderCore::registerOrUpdateRenderResource(d);
+    }
     // Bound to base 26 in the draw only when displacement is active.
     fprintf(stderr, "[VISUAL_HEIGHT v1] SSBO uploaded binding=%u V=%d bytes=%lld first=%.3f\n",
             TERRAIN_VISUAL_HEIGHT_SSBO_BINDING, V, (long long)bytes, visualHeights[0]);
