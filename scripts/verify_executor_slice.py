@@ -51,6 +51,7 @@ APPLY_PASS_NAMES: tuple[str, ...] = (
     "StaticPropOpaque",
     "MechOpaque",  # APPLY-STATE-MECHOPAQUE-1
     "Water",  # APPLY-STATE-WATER-1
+    "Shadow",  # APPLY-STATE-SHADOW-1 (render-target MODE: pipeline + DepthForwardZ clear)
 )
 
 # Default deploy path for the 0.4c release folder.
