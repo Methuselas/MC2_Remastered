@@ -2356,11 +2356,6 @@ void GatherLightsParameters(TG_HWLightsData* lights)
 void MC_TextureManager::renderLists (void)
 {
 	ZoneScopedN("textureManagerRenderLists");
-	// [RENDER_PASS v1] advisory telemetry (env-gated, rate-limited).
-	// renderLists is the SUBMIT point for TGL-enqueued object geometry
-	// (mechs/vehicles/buildings) — FBO/viewport facts here are draw-time.
-	render_contract::noteRenderPass(render_contract::PassIdentity::OpaqueObject,
-	                                "MC_TextureManager_renderLists(submit)");
 	static bool bSkip = true; // used across preamble and Render.3DObjects
 	{
 	ZoneScopedN("RenderLists.Preamble");
@@ -3257,6 +3252,13 @@ void MC_TextureManager::renderLists (void)
 			ZoneScopedN("Render.GpuMechs");
 			TracyGpuZone("Render.GpuMechs");
 			gos_render_pass_timer::Begin(gos_render_pass_timer::Pass_Mechs);
+			// [RENDER_PASS v1] advisory telemetry (env-gated, rate-limited).
+			// MECHOPAQUE-NOTE-RELOCATE-1: note fires at the real mech GPU draw
+			// site (after shadow, after static-prop flush) — NOT at the preamble.
+			// FBO/viewport facts here are draw-time (scene FBO + SceneGEqual depth
+			// state established by terrain/static-prop passes above).
+			render_contract::noteRenderPass(render_contract::PassIdentity::OpaqueObject,
+			                               "GpuMechBatcher_flush(submit)");
 			GpuMechBatcher::instance().flush();
 			gos_render_pass_timer::End(gos_render_pass_timer::Pass_Mechs);
 		}
