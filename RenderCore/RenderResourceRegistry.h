@@ -36,6 +36,7 @@ enum class RenderResourceId : uint16_t {
     ViewUniformsUbo      = 25,  // GPU-BUFFER-OWNER-SKELETON-1: view-uniforms UBO (s_viewUniformsUbo, view_uniforms_gl.cpp); LIVE, raw-owned, UNregistered today. First owner target.
     TerrainTypeSsbo      = 26,  // GPU-BUFFER-OWNER-SKELETON-1: LOD-chunk per-quad type SSBO (s_typeSsbo, gos_terrain_lod_chunk.cpp); LIVE, raw-owned, UNregistered today.
     TerrainCementSsbo    = 27,  // GPU-BUFFER-OWNER-SKELETON-1: LOD-chunk cement-word SSBO (s_cementSsbo, gos_terrain_lod_chunk.cpp); LIVE, raw-owned, UNregistered today.
+    StaticPropMaterialGpuBuffer = 28,  // STATICPROP-MATERIAL-SSBO-OWNER-1: static-prop MaterialGpu table SSBO (s_materialGpuSsbo, binding 5, gos_static_prop_batcher.cpp); LIVE default-ON, Mission lifetime. Distinct from mech-material MaterialGpuBuffer(id5, binding 2).
     Count
 };
 

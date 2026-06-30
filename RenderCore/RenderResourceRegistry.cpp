@@ -70,6 +70,7 @@ const char* toString(RenderResourceId id) {
         case RenderResourceId::ViewUniformsUbo:      return "ViewUniformsUbo";
         case RenderResourceId::TerrainTypeSsbo:      return "TerrainTypeSsbo";
         case RenderResourceId::TerrainCementSsbo:    return "TerrainCementSsbo";
+        case RenderResourceId::StaticPropMaterialGpuBuffer: return "StaticPropMaterialGpuBuffer";
         case RenderResourceId::Count:                return "Count";
     }
     return "unknown";

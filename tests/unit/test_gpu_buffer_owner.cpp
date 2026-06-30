@@ -103,6 +103,32 @@ TEST_CASE("MECH-MATERIAL-SSBO-OWNER-1 material owner round-trips id/lifetime/nam
     CHECK(int(RenderResourceId::MaterialGpuBuffer) < int(RenderResourceId::Count));
 }
 
+TEST_CASE("STATICPROP-MATERIAL-SSBO-OWNER-1 static-prop material owner round-trips id/lifetime/name and valid->invalid") {
+    GpuBufferOwner o{
+        RenderResourceId::StaticPropMaterialGpuBuffer,
+        RenderResourceLifetime::Mission,
+        "StaticPropMaterialGpuBuffer",
+        0u};
+    // Newly-constructed (glName 0) -> not yet allocated -> invalid.
+    CHECK_FALSE(o.valid());
+
+    // After glGen stores a handle -> valid, fields preserved.
+    o.glName = 28u;
+    CHECK((o.id == RenderResourceId::StaticPropMaterialGpuBuffer));
+    CHECK((o.lifetime == RenderResourceLifetime::Mission));
+    CHECK(std::strcmp(o.debugName, "StaticPropMaterialGpuBuffer") == 0);
+    CHECK(o.valid());
+
+    // Invalidate-on-destroy (glName cleared) -> invalid again.
+    o.glName = 0u;
+    CHECK_FALSE(o.valid());
+
+    CHECK(std::strcmp(toString(RenderResourceId::StaticPropMaterialGpuBuffer), "StaticPropMaterialGpuBuffer") == 0);
+    CHECK(int(RenderResourceId::StaticPropMaterialGpuBuffer) < int(RenderResourceId::Count));
+    // Distinct id from the mech-material table (binding 2) — separate buffer/consumer.
+    CHECK((RenderResourceId::StaticPropMaterialGpuBuffer != RenderResourceId::MaterialGpuBuffer));
+}
+
 TEST_CASE("GpuBufferOwner is a trivially-copyable POD") {
     CHECK(std::is_trivially_copyable<GpuBufferOwner>::value);
 }
