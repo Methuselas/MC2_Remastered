@@ -1435,9 +1435,9 @@ TEST_CASE("top-level executor (h): kTopLevelDeferredPassCount == 0 (UI-SAME-ORDE
 // (GL context required); only the descriptor table shape is asserted.
 // ---------------------------------------------------------------------------
 
-TEST_CASE("top-level apply-state (a): kTopLevelStateDesc has exactly 1 row (TerrainDecal)") {
+TEST_CASE("top-level apply-state (a): kTopLevelStateDesc has exactly 2 rows (TerrainDecal, TerrainOverlay)") {
     using namespace RenderCore::framegraph;
-    CHECK(kTopLevelStateDescCount == 1u);
+    CHECK(kTopLevelStateDescCount == 2u);
 }
 
 TEST_CASE("top-level apply-state (b): findTopLevelStateDesc(TerrainDecal) = TerrainDecal pipeline, FBO/viewport inherit (not applied)") {
@@ -1471,6 +1471,38 @@ TEST_CASE("top-level apply-state (d): lifted pipelineId matches the authoritativ
     bool found = false;
     for (int i = 0; i < kPassRenderStateCount; ++i) {
         if (kPassRenderState[i].id == RenderPassId::TerrainDecal) {
+            CHECK(static_cast<unsigned>(td->pipelineId) ==
+                  static_cast<unsigned>(kPassRenderState[i].pipelineId));
+            found = true;
+        }
+    }
+    CHECK(found);
+}
+
+// APPLY-STATE-TERRAINOVERLAY-1: second top-level apply-state consumer.
+TEST_CASE("top-level apply-state (e): findTopLevelStateDesc(TerrainOverlay) = TerrainOverlay pipeline, FBO/viewport inherit (not applied)") {
+    using namespace RenderCore;
+    using namespace RenderCore::framegraph;
+    const TopLevelStateDesc* d = findTopLevelStateDesc(RenderPassId::TerrainOverlay);
+    REQUIRE(d != nullptr);
+    CHECK(static_cast<unsigned>(d->id)         == static_cast<unsigned>(RenderPassId::TerrainOverlay));
+    // pipelineId reused from the authoritative kPassRenderState[] row — not duplicated.
+    CHECK(static_cast<unsigned>(d->pipelineId) == static_cast<unsigned>(PipelineId::TerrainOverlay));
+    // Only the pipeline is lifted this slice; FBO/viewport are honestly NOT applied
+    // (overlay inherits Terrain's scene FBO/drawBuffers/viewport).
+    CHECK(static_cast<unsigned>(d->fboTarget)  == static_cast<unsigned>(RenderResourceId::Unknown));
+    CHECK(static_cast<unsigned>(d->viewport)   == static_cast<unsigned>(ViewportKind::Inherit));
+}
+
+TEST_CASE("top-level apply-state (f): TerrainOverlay lifted pipelineId matches the authoritative kPassRenderState row") {
+    using namespace RenderCore;
+    using namespace RenderCore::framegraph;
+    const TopLevelStateDesc* td = findTopLevelStateDesc(RenderPassId::TerrainOverlay);
+    REQUIRE(td != nullptr);
+    REQUIRE(passHasStaticPipeline(RenderPassId::TerrainOverlay));
+    bool found = false;
+    for (int i = 0; i < kPassRenderStateCount; ++i) {
+        if (kPassRenderState[i].id == RenderPassId::TerrainOverlay) {
             CHECK(static_cast<unsigned>(td->pipelineId) ==
                   static_cast<unsigned>(kPassRenderState[i].pipelineId));
             found = true;

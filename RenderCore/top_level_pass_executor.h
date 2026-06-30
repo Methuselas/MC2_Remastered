@@ -156,7 +156,7 @@ struct TopLevelStateDesc {
 };
 
 // Compile-time table of top-level passes whose render-state the executor APPLIES.
-// First (and only, this slice) consumer: TerrainDecal — pipeline-only lift.
+// Consumers: TerrainDecal, TerrainOverlay — both pipeline-only lifts.
 static constexpr TopLevelStateDesc kTopLevelStateDesc[] = {
     // TerrainDecal — drawDecals(): the sole entry render-state is
     // applyPipeline(TerrainDecal). FBO/drawBuffers/viewport are inherited from
@@ -164,6 +164,17 @@ static constexpr TopLevelStateDesc kTopLevelStateDesc[] = {
     {
         /*id*/         RenderPassId::TerrainDecal,
         /*pipelineId*/ RenderCore::PipelineId::TerrainDecal,
+        /*fboTarget*/  RenderResourceId::Unknown,   // inherit (not applied)
+        /*viewport*/   ViewportKind::Inherit,       // inherit (not applied)
+    },
+    // APPLY-STATE-TERRAINOVERLAY-1: TerrainOverlay — drawTerrainOverlays(): the
+    // sole entry render-state is applyPipeline(TerrainOverlay) (opaque, depth-write
+    // ON, vs decal's OFF). The preceding VBO upload touches no FF pipeline state.
+    // FBO/drawBuffers/viewport are inherited from the preceding Terrain pass and
+    // are deliberately NOT applied here (same honesty shape as decal).
+    {
+        /*id*/         RenderPassId::TerrainOverlay,
+        /*pipelineId*/ RenderCore::PipelineId::TerrainOverlay,
         /*fboTarget*/  RenderResourceId::Unknown,   // inherit (not applied)
         /*viewport*/   ViewportKind::Inherit,       // inherit (not applied)
     },

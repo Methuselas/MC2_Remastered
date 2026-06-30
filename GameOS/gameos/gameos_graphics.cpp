@@ -2147,6 +2147,13 @@ class gosRenderer {
         // applies as before -> byte-identical.
         void executorApplyTerrainDecalState();
         bool decalStateAppliedByExecutor_ = false;
+        // APPLY-STATE-TERRAINOVERLAY-1: second top-level scene-pass apply-state.
+        // Same pattern as decal — when MC2_FRAMEGRAPH_EXECUTOR is ON the executor
+        // pre-applies the TerrainOverlay pipeline (the sole entry render-state of
+        // drawTerrainOverlays) and sets overlayStateAppliedByExecutor_; the body
+        // then skips its own applyPipeline (one-shot). Gate OFF -> byte-identical.
+        void executorApplyTerrainOverlayState();
+        bool overlayStateAppliedByExecutor_ = false;
         // Slice A — draw the mission-static cement-overlay bake. Reproduces
         // drawTerrainOverlays()'s exact state/shader/uniforms/VAO but draws
         // the passed static VBO with per-overlayTexId ranges and does NOT
@@ -9808,6 +9815,17 @@ void gosRenderer::drawTerrainOverlays()
         }
     } _tlGuard;
 
+    // APPLY-STATE-TERRAINOVERLAY-1: second top-level scene-pass apply-state. Gated by the
+    // SAME predicate executorOwnBeginTopLevel uses internally (MC2_FRAMEGRAPH_EXECUTOR).
+    // When ON and the executor applies state for this pass, executorApplyTerrainOverlayState()
+    // pre-applies the TerrainOverlay pipeline and sets overlayStateAppliedByExecutor_; the body
+    // applyPipeline below is then skipped (one-shot). The VBO upload that follows touches no FF
+    // pipeline state, so this apply is order-equivalent to the body's. Idempotent ON.
+    if (render_contract::isTopLevelExecutorEnabled() &&
+        RenderCore::framegraph::findTopLevelStateDesc(RenderCore::RenderPassId::TerrainOverlay) != nullptr) {
+        executorApplyTerrainOverlayState();
+    }
+
     render_contract::noteRenderPass(render_contract::PassIdentity::TerrainOverlay,
                                     "gosRenderer_drawTerrainOverlays");
     render_contract::beginPassScope(render_contract::PassIdentity::TerrainOverlay,
@@ -9822,8 +9840,14 @@ void gosRenderer::drawTerrainOverlays()
     // TERRAIN-OVERLAY-DECAL-APPLYPIPELINE-ROUTING-1: TerrainOverlay row (opaque,
     // depth test+write, GEQUAL, cull none) — byte-identical to the old hand-set
     // state. program(0)=skip keeps the manual overlay program bind below.
-    pipeline_binder::applyPipeline(
-        RenderCore::getPipelineDesc(RenderCore::PipelineId::TerrainOverlay), "TerrainOverlay");
+    // APPLY-STATE-TERRAINOVERLAY-1: skip when the executor already applied the pipeline
+    // (MC2_FRAMEGRAPH_EXECUTOR ON). Reset one-shot before draw. Mirrors decal.
+    // Gate OFF -> flag false -> body applies -> byte-identical.
+    if (!overlayStateAppliedByExecutor_) {
+        pipeline_binder::applyPipeline(
+            RenderCore::getPipelineDesc(RenderCore::PipelineId::TerrainOverlay), "TerrainOverlay");
+    }
+    overlayStateAppliedByExecutor_ = false;
 
     glUseProgram(overlayProg_->shp_);
     float elapsed = SmokeMode::fixedTimestepEnabled()
@@ -10111,6 +10135,22 @@ void gosRenderer::executorApplyTerrainDecalState()
         RenderCore::getPipelineDesc(RenderCore::PipelineId::TerrainDecal), "TerrainDecal");
     mc2_framegraph_executor_bump_apply_state();
     decalStateAppliedByExecutor_ = true;
+}
+
+// APPLY-STATE-TERRAINOVERLAY-1: pre-apply the declared TerrainOverlay pipeline. Second
+// consumer of the top-level apply-state machinery, mirroring executorApplyTerrainDecalState().
+// Performs the SOLE entry render-state of drawTerrainOverlays (applyPipeline(TerrainOverlay)
+// — opaque, depth-write ON), bumps the apply-state counter, and flags the body to skip its
+// own applyPipeline (one-shot). Only the pipeline is lifted; FBO/drawBuffers/viewport are
+// inherited from the preceding Terrain pass and NOT touched here (kTopLevelStateDesc records
+// them Unknown/Inherit). Idempotent: the body makes the identical call when the flag is false.
+// Only reached when MC2_FRAMEGRAPH_EXECUTOR is ON and the pass runs.
+void gosRenderer::executorApplyTerrainOverlayState()
+{
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::TerrainOverlay), "TerrainOverlay");
+    mc2_framegraph_executor_bump_apply_state();
+    overlayStateAppliedByExecutor_ = true;
 }
 
 // ── Thin exported wrappers ────────────────────────────────────────────────────
