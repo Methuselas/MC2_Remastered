@@ -372,11 +372,29 @@ void MechIcon::setDrawBack( bool bSet)
 		for( int j = 0; j < unitIconY; ++j )
 		{
 			int srcY = (int)(offsetY * f.y) + (int)(j * f.y);
-			DWORD* pSrcRow = (DWORD*)pTmp + (long)srcY * (long)actualW;
 			pDestData = pDestRow;
+			// CRASH-HARDEN-OBJECTIVE-ICON-1: this damage-color blit lacked the
+			// per-pixel bounds check the other two blits (:574/:1286) have, so an
+			// out-of-atlas whichMech (bad/MC2X-mod mech beyond stock slots) caused
+			// an OOB read off s_MechTextures. Mirror the guarded pattern: blank row
+			// for OOB srcY, blank pixel for OOB srcX.
+			if ( srcY < 0 || (uint32_t)srcY >= actualH )
+			{
+				// srcY out of source texture bounds -- leave dest row blank
+				for ( int i = 0; i < unitIconX; ++i )
+					*pDestData++ = 0;
+				pDestRow += textureData.Width;
+				continue;
+			}
+			DWORD* pSrcRow = (DWORD*)pTmp + (long)srcY * (long)actualW;
 			for ( int i = 0; i < unitIconX; ++i ) // do four icons per row
 			{
 				int srcX = (int)(offsetX * f.x) + (int)(i * f.x);
+				if ( srcX < 0 || (uint32_t)srcX >= actualW )
+				{
+					*pDestData++ = 0; // srcX OOB -- blank pixel
+					continue;
+				}
 				DWORD srcPixel = pSrcRow[srcX];
 
 				bool bDraw = 0;

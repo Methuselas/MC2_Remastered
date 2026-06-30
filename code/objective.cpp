@@ -1413,7 +1413,11 @@ CObjectiveCondition *CObjective::new_CObjectiveCondition(condition_species_type 
 	case BOOLEAN_FLAG_IS_SET: retval = new CBooleanFlagIsSet(alignment); break;
 	case ELAPSED_MISSION_TIME: retval = new CElapsedMissionTime(alignment); break;
 	default:
-		assert(false);
+		// CRASH-HARDEN-OBJECTIVE-ICON-1: a bad/mod .fit can map to a condition
+		// species with no factory case (e.g. *_ENEMY_UNIT_GROUP). assert() is a
+		// no-op in RelWithDebInfo, so this silently returned null -> null-deref at
+		// the CastAndCopy consumers. Warn loudly; consumers now null-guard.
+		PAUSE(("CObjective: unimplemented condition species %d (skipping)", (int)conditionSpecies));
 		retval = 0;
 		break;
 	}
@@ -1528,8 +1532,12 @@ CObjective &CObjective::operator=(const CObjective &master) {
 		while (!it.IsDone()) {
 			condition_species_type conditionSpecies = (*it)->Species();
 			CObjectiveCondition *pTmpCondition = new_CObjectiveCondition(conditionSpecies, m_alignment);
-			(*pTmpCondition).CastAndCopy(*it);
-			Append(pTmpCondition);
+			// CRASH-HARDEN-OBJECTIVE-ICON-1: factory returns null for unimplemented
+			// (bad/mod-asset) condition species -> skip instead of null-deref.
+			if (pTmpCondition) {
+				(*pTmpCondition).CastAndCopy(*it);
+				Append(pTmpCondition);
+			}
 			it++;
 		}
 	}
@@ -1550,8 +1558,12 @@ CObjective &CObjective::operator=(const CObjective &master) {
 		while (!it.IsDone()) {
 			condition_species_type conditionSpecies = (*it)->Species();
 			CObjectiveCondition *pTmpCondition = new_CObjectiveCondition(conditionSpecies, m_alignment);
-			(*pTmpCondition).CastAndCopy(*it);
-			m_failureConditionList.Append(pTmpCondition);
+			// CRASH-HARDEN-OBJECTIVE-ICON-1: factory returns null for unimplemented
+			// (bad/mod-asset) condition species -> skip instead of null-deref.
+			if (pTmpCondition) {
+				(*pTmpCondition).CastAndCopy(*it);
+				m_failureConditionList.Append(pTmpCondition);
+			}
 			it++;
 		}
 	}
