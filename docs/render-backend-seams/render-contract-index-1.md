@@ -89,6 +89,39 @@ wrapper (`gl_state_guard.h`, ctor takes `(mask, func)`).
   Mode B (audit, advisory exit 0) `py -3 scripts/check-raw-gl-depthmask.py --all` lists every raw
   site with file:line + per-file counts. Wired into `scripts/check-contracts.sh` as `raw_gl_depthmask`
   (right after `raw_gl_depthfunc`). Regression-proof: freezes the backlog, blocks new bypasses.
+- `check-raw-gl-colormask.py` — **RAW-GL-COLORMASK-DIFF-GATE-1** (Phase 8 third enforcement gate). See note below.
+
+#### RAW-GL-COLORMASK-DIFF-GATE-1 (`scripts/check-raw-gl-colormask.py`)
+
+Exact clone of the depth-mask gate above, swapped to the `glColorMask()` axis (the color-WRITE
+mask). Diff-based static check that bans **new** raw `glColorMask()` / `glColorMaski()` call sites
+on ADDED lines outside a sanctioned-file allowlist; the regex `\bglColorMaski?\s*\(` catches BOTH
+the plain four-channel form AND the indexed per-draw-buffer (MRT) form. Mode A (default) diffs vs a
+base ref (default `merge-base HEAD origin/main`, or `--base`), inspects only ADDED lines, exit 1
+naming each offender when a non-allowlisted file gains a raw `glColorMask(i)`. Non-overlapping with
+the PipelineDesc state-table checks (`check-colormask-ownership.py`) — it bans the raw *call site*,
+steering color-mask state through the sanctioned emitter (`pipeline_binder.cpp` applyPipeline, which
+emits `glColorMaski` from `PipelineDesc`) or the `GlScopedColorMask` RAII wrapper (`gl_state_guard.h`).
+
+- **Allowlist rationale:** same shape as the depth-mask gate — chokepoint emitter + RAII wrapper
+  sanctioned by design; `debug_renderer.cpp` and `editor/EditorGameOS.cpp` out of the frame loop;
+  `tools/asset_viewer/` and `tests/` out-of-engine / offline (prefix-matched). The **frozen
+  backlog** (existing render TUs: `gameos_graphics.cpp`, `gos_postprocess.cpp`,
+  `gos_static_prop_batcher.cpp`, `RenderCore/ambient_contract.h`) is allowlisted by exact file so it
+  doesn't retro-fail; documented as the v1 freeze. **These include the LOAD-BEARING save/restore
+  sites the default-ON ambient guard depends on** — the shadow-pass `glColorMask(GL_TRUE,...)`
+  re-assert in `gameos_graphics.cpp` and the `glColorMaski` MRT masks in `gos_postprocess.cpp` —
+  so they MUST stay allowlisted, not banned. Mode B currently reports 33 raw sites across 5 files
+  (gos_postprocess.cpp: 4 plain + 12 indexed; gameos_graphics.cpp: 11 plain; pipeline_binder.cpp:
+  3 indexed; gos_static_prop_batcher.cpp: 2 plain; ambient_contract.h: 1 plain).
+- **v1 = file-level freeze** (backlog files may add raw calls; new files may not) →
+  **v2 tightening = per-file count ceiling** (record per-file baseline counts from Mode B so
+  even backlog files can't ADD raw calls). v1 is intentionally simple.
+- **Run:** Mode A (enforcement, default) `py -3 scripts/check-raw-gl-colormask.py [--base REF] [--quiet]`;
+  Mode B (audit, advisory exit 0) `py -3 scripts/check-raw-gl-colormask.py --all` lists every raw
+  site with file:line + per-file counts (plain vs indexed). Wired into `scripts/check-contracts.sh`
+  as `raw_gl_colormask` (right after `raw_gl_depthmask`). Regression-proof: freezes the backlog,
+  blocks new bypasses.
 - `check-include-firewall.sh`, `check-no-raw-gl-from-game.sh`, `check-vfx-no-objectid.sh`, `check-visibility-log-schema.sh`, `check-unified-projection-retirement.sh`, `check-mlr-leaves-gated.sh`, `check-particles-no-cpu-projection.sh` — RenderWorld-boundary / lane firewalls (PARTIAL contract coverage)
 - `validate_shaders.py` — glslang SPIR-V compile gate; uses `--auto-map-bindings` (compile-only; **does NOT record sampler occupancy** — symptom of the blind spot, not coverage)
 
