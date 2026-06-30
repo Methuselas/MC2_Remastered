@@ -69,6 +69,9 @@ static constexpr PassFboTarget kPassFboTarget[] = {
     { RenderPassId::Terrain,          RenderResourceId::MainColor },
     { RenderPassId::TerrainOverlay,   RenderResourceId::MainColor },
     { RenderPassId::TerrainDecal,     RenderResourceId::MainColor },
+    // VFX-FBO-ONLY-VALIDATE-1: particle/VFX flush renders into the scene HDR FBO (MainColor),
+    // bound across the whole flush window at gamecam:594 (every frame, incl. empty-particle frames).
+    { RenderPassId::VFX,              RenderResourceId::MainColor },
 };
 static constexpr int kPassFboTargetCount =
     sizeof(kPassFboTarget) / sizeof(kPassFboTarget[0]);

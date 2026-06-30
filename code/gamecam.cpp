@@ -50,6 +50,11 @@
 // (root not on its -I list). Use the thin extern "C" shim defined in render_contract.cpp
 // instead of the full header — same noteRenderPass(ParticleEffect) effect, no draw change.
 extern "C" void mc2_note_particle_effect_pass();
+// VFX-FBO-ONLY-VALIDATE-1: top-level executor ownership of the VFX/particle flush.
+// FBO-only validate (no ambient row). No-op when MC2_FRAMEGRAPH_EXECUTOR unset (byte-identical OFF).
+// Same extern "C" shim bridge as the note above (mc2/code TU can't include render_contract.h).
+extern "C" void mc2_vfx_pass_begin();
+extern "C" void mc2_vfx_pass_end();
 #include "../GameOS/gameos/gos_particle_bridge.h"  // B2 P1: camera basis bridge
 #include "../GameOS/gameos/debug_renderer.h"
 #include "../GuiRuntime/EditorInspector.h"  // IMG-INSPECT-3 flushDebugHighlight
@@ -592,6 +597,15 @@ void GameCamera::render (void)
 				// it. Fires once per frame even on empty-particle frames (the pass was
 				// entered). Gated MC2_GPU_PARTICLES (default ON). No draw change.
 				mc2_note_particle_effect_pass();
+				// VFX-FBO-ONLY-VALIDATE-1: top-level validate-only ownership (gate
+				// MC2_FRAMEGRAPH_EXECUTOR). begin fires right after the note; the RAII
+				// guard's dtor fires end on ALL exit paths of this flush scope, covering
+				// both Batcher::Flush() and gos_tube_ribbon_flush_deferred() below.
+				// FBO-only: MainColor (scene HDR FBO) is bound across the whole window,
+				// incl. empty-particle frames. PIN: pure validate counters — no draw/state
+				// change, no reorder; the flush body runs UNCHANGED between begin and end.
+				mc2_vfx_pass_begin();
+				struct TlVfxGuard_ { ~TlVfxGuard_() { mc2_vfx_pass_end(); } } _tlVfxGuard;
 				::mc2::particles::Batcher::Instance().Flush();
 
 				// TUBE-DEFERRED-FLUSH-1: drain the ribbon queue enqueued by

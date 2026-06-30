@@ -841,6 +841,21 @@ extern "C" void mc2_note_particle_effect_pass() {
     noteRenderPass(PassIdentity::ParticleEffect, "gamecam::particlesFlush");
 }
 
+// VFX-FBO-ONLY-VALIDATE-1: thin extern "C" shims so code/gamecam.cpp can take top-level
+// executor ownership of the VFX/ParticleEffect pass without including render_contract.h
+// (same TU-include-path constraint as the note shim above). FBO-only validation: the
+// AmbientContract has NO VFX row (the note seam fires pre-body in a different TU, so ambient
+// axes are not honestly declarable), but the FBO ledger declares MainColor (scene HDR FBO
+// bound across the whole flush window). executorOwn* are no-ops when MC2_FRAMEGRAPH_EXECUTOR
+// is unset (byte-identical OFF). PassIdentity::ParticleEffect -> RenderPassId::VFX via
+// toRenderPassId(), same mapping path Water uses. No draw/state change.
+extern "C" void mc2_vfx_pass_begin() {
+    executorOwnBeginTopLevel(PassIdentity::ParticleEffect, "gamecam::particlesFlush");
+}
+extern "C" void mc2_vfx_pass_end() {
+    executorOwnEndTopLevel(PassIdentity::ParticleEffect, "gamecam::particlesFlush");
+}
+
 // ---- CONTRACT-3: per-frame resource-ordering audit ---------------------------
 //
 // MC2_RENDER_PASS_ORDER=1  -- check reads[] satisfied each beginPass

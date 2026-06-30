@@ -92,6 +92,13 @@ static constexpr TopLevelPassContract kTopLevelExecutorPasses[] = {
         /*validateFbo*/     false,  // no declared FBO target for VegetationCards
         /*note*/            "VegetationCards/GosVegetation_flush",
     },
+    {
+        /*id*/              RenderPassId::VFX,
+        /*validateAmbient*/ false,  // VFX-FBO-ONLY-VALIDATE-1: note seam (gamecam:594) fires
+                                    // pre-body in a different TU -> ambient not honestly declarable
+        /*validateFbo*/     true,   // FBO ledger declares MainColor (scene HDR FBO bound across whole flush window)
+        /*note*/            "VFX/gamecam_particlesFlush",
+    },
 };
 static constexpr unsigned kTopLevelExecutorPassCount =
     sizeof(kTopLevelExecutorPasses) / sizeof(kTopLevelExecutorPasses[0]);
@@ -107,8 +114,9 @@ inline const TopLevelPassContract* findTopLevelExecutorPass(RenderPassId id) {
 }
 
 // Count of deferred top-level passes (not executor-owned this slice).
-// VFX, UI = 2. (Water now owned in WATER-SAME-ORDER-VALIDATE-1; Shadow + MechOpaque in SLICE-2.)
+// UI = 1. (VFX now owned FBO-only in VFX-FBO-ONLY-VALIDATE-1; Water in WATER-SAME-ORDER-VALIDATE-1;
+// Shadow + MechOpaque in SLICE-2.)
 // Called by the dump to populate executor_skipped_deferred_passes.
-static constexpr unsigned kTopLevelDeferredPassCount = 2u;
+static constexpr unsigned kTopLevelDeferredPassCount = 1u;
 
 }} // namespace RenderCore::framegraph
