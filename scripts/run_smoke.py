@@ -484,6 +484,13 @@ def main():
     ap.add_argument("--strict", action="store_true",
                     help="with --verify-only/--verify-preflight: a hard "
                          "mismatch (stale/missing) exits 1 instead of advisory")
+    ap.add_argument("--require-gate", action="append", default=[],
+                    metavar="MC2_VAR",
+                    help="after the run, assert the named MC2_* gate reached the "
+                         "child and did work (reads its proof-counter from "
+                         "debug_state/latest_render_state.json; exits non-zero if "
+                         "counter is 0). Repeatable. Known gates: "
+                         "MC2_FRAMEGRAPH_EXECUTOR, MC2_FRAMEGRAPH_DRYRUN.")
     args = ap.parse_args()
     if args.gl_debug_fatal:
         os.environ["MC2_GL_DEBUG_FATAL"] = "1"
@@ -1390,9 +1397,32 @@ def main():
                             # EXECUTOR-ISLAND-SCREENSHADOW-1: frame-graph executor gate.
                             # Without this in the allowlist Popen drops it and
                             # MC2_FRAMEGRAPH_EXECUTOR=1 smoke runs are inert.
-                            "MC2_FRAMEGRAPH_EXECUTOR")},
+                            "MC2_FRAMEGRAPH_EXECUTOR",
+                            # SMOKE-GATE-GUARD-1: frame-graph dryrun gate.
+                            # Without this in the allowlist Popen drops it and
+                            # MC2_FRAMEGRAPH_DRYRUN=1 smoke runs are inert.
+                            "MC2_FRAMEGRAPH_DRYRUN")},
             },
         )
+        # SMOKE-GATE-GUARD-1: ENV-DROP WARNING.
+        # cfg.env_extra was built from the allowlist above.  Any MC2_* var
+        # that is set in the parent env but absent from cfg.env_extra was
+        # silently dropped by the Popen env-replacement — the gate runs
+        # inert.  This is the exact failure mode that caused executor
+        # ON-smokes to run as OFF for ~8 slices.  Make it LOUD.
+        _dropped_gates = sorted(
+            k for k in os.environ
+            if k.startswith("MC2_") and k not in cfg.env_extra
+        )
+        for _dk in _dropped_gates:
+            print(
+                f"[runner] [ENV-DROP] WARNING: {_dk}={os.environ[_dk]!r} is set "
+                f"in your shell but NOT in the smoke allowlist -- it will NOT "
+                f"reach mc2.exe (gate inert). Add it to the allowlist tuple in "
+                f"scripts/run_smoke.py.",
+                file=sys.stderr,
+            )
+
         # Clear the file-sink probe log next to mc2.exe before each mission
         # so each run captures its own probe events.  See gos_terrain_indirect
         # PROBE_LOG / RING_SINK in the engine: ring-buffer / cmd-patch /
@@ -1555,6 +1585,58 @@ def main():
             _rf.write("\n" + _vline + "\n")
     except Exception as _vexc:  # noqa: BLE001  advisory must never break the gate
         print(f"[runner] [visual-advisory] skipped ({_vexc})", file=sys.stderr)
+
+    # SMOKE-GATE-GUARD-1: --require-gate assertion.
+    # Gate → dotted counter path in latest_render_state.json["frame_graph"].
+    # Counter must be > 0 to prove the gate reached the child and did work.
+    _REQUIRE_GATE_COUNTERS: dict[str, str] = {
+        "MC2_FRAMEGRAPH_EXECUTOR": "executor_owned_passes",
+        "MC2_FRAMEGRAPH_DRYRUN": "frame_graph_dryrun.frames",
+    }
+    if args.require_gate:
+        try:
+            _rg_dir_env = os.environ.get("MC2_DEBUG_STATE_DUMP_DIR", "")
+            _rg_state_dir = (Path(_rg_dir_env)
+                             if _rg_dir_env
+                             else Path(args.exe).resolve().parent / "debug_state")
+            _rg_latest = _rg_state_dir / "latest_render_state.json"
+            if not _rg_latest.exists():
+                print(f"[runner] [REQUIRE_GATE] FATAL: latest_render_state.json not found "
+                      f"at {_rg_latest} -- cannot verify --require-gate counters. "
+                      f"Set MC2_DEBUG_STATE_DUMP=1.", file=sys.stderr)
+                passed = False
+            else:
+                _rg_ds = json.loads(_rg_latest.read_text(encoding="utf-8"))
+                _rg_fg = _rg_ds.get("frame_graph", {})
+                for _rg_gate in args.require_gate:
+                    _rg_path = _REQUIRE_GATE_COUNTERS.get(_rg_gate)
+                    if _rg_path is None:
+                        print(f"[runner] [REQUIRE_GATE] WARNING: {_rg_gate} has no "
+                              f"known proof-counter in _REQUIRE_GATE_COUNTERS; "
+                              f"add it to scripts/run_smoke.py.", file=sys.stderr)
+                        continue
+                    # Resolve dotted path (e.g. "frame_graph_dryrun.frames")
+                    _rg_val: object = _rg_fg
+                    for _rg_part in _rg_path.split("."):
+                        if isinstance(_rg_val, dict):
+                            _rg_val = _rg_val.get(_rg_part, 0)
+                        else:
+                            _rg_val = 0
+                            break
+                    _rg_count = int(_rg_val) if _rg_val else 0
+                    if _rg_count == 0:
+                        print(f"[runner] FATAL: --require-gate {_rg_gate} but its "
+                              f"dump counter frame_graph.{_rg_path}={_rg_count} "
+                              f"(var did not reach child or did nothing).",
+                              file=sys.stderr)
+                        passed = False
+                    else:
+                        print(f"[runner] [REQUIRE_GATE] {_rg_gate}: "
+                              f"frame_graph.{_rg_path}={_rg_count} -- PASS",
+                              file=sys.stderr)
+        except Exception as _rg_exc:
+            print(f"[runner] [REQUIRE_GATE] check failed: {_rg_exc}", file=sys.stderr)
+            passed = False
 
     # Diag-state check: verify V2 schema + shutdown dump + CONFIG trace event.
     # Advisory by default; MC2_SMOKE_REQUIRE_DIAG_STATE=1 = hard fail on any
