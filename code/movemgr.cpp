@@ -33,6 +33,11 @@ MovePathManagerPtr PathManager = NULL;
 // PATHFINDING-FACTS-1: per-frame path-queue activity counters (telemetry only).
 static long s_pathQueuedThisFrame = 0;
 
+// PATHFINDING-FACTS-2: monotonic path-manager frame counter, advanced once per
+// update(). Used to stamp request enqueue frames and compute oldest-request age.
+// Telemetry only; only read/written under the cached PATH gate.
+static long s_pathFrameCounter = 0;
+
 //***************************************************************************
 // PATH MANAGER class
 //***************************************************************************
@@ -173,6 +178,11 @@ void MovePathManager::request (MechWarriorPtr pilot, long selectionIndex, unsign
 	sourceTally[source]++;
 	s_pathQueuedThisFrame++;  // PATHFINDING-FACTS-1: enqueue tally (telemetry only)
 
+	// PATHFINDING-FACTS-2: stamp enqueue frame so update() can compute the age of
+	// the oldest request it services. Only meaningful under the PATH gate; written
+	// unconditionally (cheap scalar store) but consumed only when PATH is enabled.
+	pathQRec->enqueueFrame = s_pathFrameCounter;
+
 	if (numPaths > peakPaths)
 		peakPaths = numPaths;
 }
@@ -212,6 +222,13 @@ void MovePathManager::update (void) {
 	long numPathsToProcess = 6;
 	//if (numPaths > 15)
 	//	numPathsToProcess = 10;
+
+	// PATHFINDING-FACTS-2: capture the oldest-serviced request's age. The queue is
+	// FIFO, so queueFront at loop entry is the oldest request we will service this
+	// frame. Read before the loop (calcPath() pops queueFront). -1 == none serviced.
+	long oldestEnqueueFrame = queueFront ? queueFront->enqueueFrame : 0;
+	bool hadWorkAtEntry = (queueFront != NULL);
+
 	long processedThisFrame = 0;  // PATHFINDING-FACTS-1 (telemetry only)
 	for (long i = 0; i < numPathsToProcess; i++) {
 		if (!queueFront)
@@ -220,9 +237,18 @@ void MovePathManager::update (void) {
 		processedThisFrame++;
 	}
 
-	// PATHFINDING-FACTS-1: per-frame queue depth/throttle emit (gated, default-OFF).
-	mc2_path_trace::emitFrame(s_pathQueuedThisFrame, processedThisFrame, numPaths, peakPaths);
+	// PATHFINDING-FACTS-2: throttle-cap-hit -- did the 6-cap stop us with the queue
+	// still non-empty? (processed == cap AND queueFront still set after the loop).
+	int capHit = (processedThisFrame == numPathsToProcess && queueFront != NULL) ? 1 : 0;
+	long oldestAge = hadWorkAtEntry ? (s_pathFrameCounter - oldestEnqueueFrame) : -1;
+
+	// PATHFINDING-FACTS-1/2: per-frame queue depth/throttle emit (gated, default-OFF).
+	mc2_path_trace::emitFrame(s_pathQueuedThisFrame, processedThisFrame, numPaths, peakPaths,
+	                          oldestAge, capHit);
 	s_pathQueuedThisFrame = 0;
+
+	// PATHFINDING-FACTS-2: advance the frame counter once per update().
+	s_pathFrameCounter++;
 
 //	char s[50];
 //	sprintf(s, "num paths = %d", numPaths);

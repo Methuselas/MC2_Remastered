@@ -32,6 +32,7 @@ typedef struct _PathQueueRec {
 	unsigned long		moveParams;
 	bool				initPath;
 	bool				faceObject;
+	long				enqueueFrame;	// PATHFINDING-FACTS-2: frame stamped at request() (telemetry only; written/read only under PATH gate)
 	PathQueueRecPtr		prev;
 	PathQueueRecPtr		next;
 } PathQueueRec;

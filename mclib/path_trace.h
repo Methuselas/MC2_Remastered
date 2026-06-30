@@ -74,15 +74,23 @@ inline void emitMap(int areas, int doors, int special, int cellW, int cellH) {
 }
 
 // Per-frame queue event (only emit when there was path activity).
-inline void emitFrame(long queued, long processed, long backlog, long peak) {
+//
+// PATHFINDING-FACTS-2 adds two high-concurrency probes:
+//   oldestAge  -- frames the oldest request serviced this frame waited in queue
+//                 (currentFrame - enqueueFrame); 0 if same-frame service, -1 if none serviced.
+//   capHit     -- 1 if the numPathsToProcess=6 throttle left requests queued this
+//                 frame (processed hit the cap with the queue still non-empty), else 0.
+inline void emitFrame(long queued, long processed, long backlog, long peak,
+                      long oldestAge, int capHit) {
 	if (!mc2_diag::tagEnabled("PATH"))
 		return;
 	if (queued == 0 && processed == 0 && backlog == 0)
 		return;  // skip idle frames to avoid spam
-	char buf[160];
+	char buf[224];
 	snprintf(buf, sizeof(buf),
-		"{\"ev\":\"frame\",\"queued\":%ld,\"processed\":%ld,\"backlog\":%ld,\"peak\":%ld}",
-		queued, processed, backlog, peak);
+		"{\"ev\":\"frame\",\"queued\":%ld,\"processed\":%ld,\"backlog\":%ld,\"peak\":%ld,"
+		"\"oldest_age\":%ld,\"cap_hit\":%d}",
+		queued, processed, backlog, peak, oldestAge, capHit);
 	mc2_diag::writeEvent("PATH", 1, 0, buf);
 }
 
