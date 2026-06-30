@@ -196,6 +196,50 @@ currently **82 sites across 11 files, all ALLOWLISTED, 0 RAW** (freeze-forward b
   blend-func/equation, and FBO-bind — cover the meaningful pipeline-state setters plus the logical
   render-target redirect. The **raw-GL-bypass CAPSTONE** (a unifying meta-gate / no-raw-GL-from-game
   consolidation) comes after this gate.
+- `check-raw-gl-capstone.py` — **RAW-GL-BYPASS-CAPSTONE-1** (Phase 8 capstone meta-gate). See note below.
+
+#### RAW-GL-BYPASS-CAPSTONE-1 (`scripts/check-raw-gl-capstone.py`)
+
+The Phase-8 capstone. **Not another per-axis gate — it is the enforcement-COMPLETENESS meta-gate**
+that validates the raw-GL enforcement SET ITSELF, so the set cannot silently regress (a gate file
+deleted, an un-wired `run_check`, or a gate quietly gutted to an empty stub). It also records the
+KNOWN-DEFERRED raw-GL axes as an explicit ledger so "no un-gated escape" is a documented decision,
+not a silent gap.
+
+**What it asserts (Mode A, default; exit 1 on any failure):** for each of the 5 enforced axes —
+(a) the gate SCRIPT EXISTS in `scripts/`; (b) it is WIRED into `check-contracts.sh` (a `run_check`
+line invokes it); (c) the gate script CONTAINS its expected axis token (sanity that it gates the
+right axis and is not an empty stub). Mode B (`--all`) additionally prints the full enforced +
+deferred matrix (advisory) but still validates and returns the same exit code.
+
+**The 5 ENFORCED axes** (canonical `ENFORCED_AXES` list in the script): `depthFunc`
+(check-raw-gl-depthfunc.py), `depthMask` (check-raw-gl-depthmask.py), `colorMask`
+(check-raw-gl-colormask.py), `blendFunc` (check-raw-gl-blendfunc.py), `fboBind`
+(check-raw-gl-fbobind.py).
+
+**KNOWN-DEFERRED axes** (intentionally NOT gated — explicit, not forgotten; `KNOWN_DEFERRED` list):
+- `glViewport` — render-target-mode state owned by the executor applyTopLevel* path; too many
+  load-bearing save/restore brackets, no stable per-callsite contract yet.
+- `glActiveTexture / glBindTexture` — texture-unit latch is far too numerous (every sampler bind)
+  and is covered descriptively by the sampler-occupancy manifest (`check-sampler-bindings.py`).
+- `glScissor / glEnable(GL_SCISSOR_TEST)` — narrow UI/clip brackets only; low blast radius, no
+  migration chokepoint defined.
+- `glStencil* (Func/Op/Mask)` — effectively unused in the current frame; no backlog to freeze, no
+  contracted owner — a gate would be empty.
+- `glCullFace / glFrontFace` — cull state carried in `PipelineDesc` (CullMode), emitted by the
+  sanctioned applyPipeline; a raw-callsite gate would duplicate existing descriptive coverage.
+
+**Maintenance rule** (keeps the set self-describing): adding a **new** raw-GL axis gate → add a row
+to `ENFORCED_AXES` in the capstone AND wire its `run_check` into `check-contracts.sh`; **promoting a
+deferred axis** to gated → MOVE it from `KNOWN_DEFERRED` into `ENFORCED_AXES` and ship its gate +
+wiring. The capstone then enforces the new gate exists + is wired + is non-stub.
+
+- **Run:** Mode A `py -3 scripts/check-raw-gl-capstone.py [--quiet]`; Mode B
+  `py -3 scripts/check-raw-gl-capstone.py --all` prints the matrix. Wired into
+  `scripts/check-contracts.sh` as `raw_gl_capstone`, AFTER the 5 axis gates (it validates them, so it
+  runs last). With Phase 8 the raw-GL bypass surface is now **regression-proof**: the 5 axis gates
+  freeze the per-axis backlogs and block new bypasses, and this capstone freezes the gate SET so it
+  cannot silently lose a gate.
 
 - `check-include-firewall.sh`, `check-no-raw-gl-from-game.sh`, `check-vfx-no-objectid.sh`, `check-visibility-log-schema.sh`, `check-unified-projection-retirement.sh`, `check-mlr-leaves-gated.sh`, `check-particles-no-cpu-projection.sh` — RenderWorld-boundary / lane firewalls (PARTIAL contract coverage)
 - `validate_shaders.py` — glslang SPIR-V compile gate; uses `--auto-map-bindings` (compile-only; **does NOT record sampler occupancy** — symptom of the blind spot, not coverage)
