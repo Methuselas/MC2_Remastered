@@ -5,7 +5,16 @@
 **Primary task:** continue the FRAME-GRAPH arc. **Do frame-graph first; legacy-terrain
 retirement is SECONDARY (after).**
 
-**▶ RESUME POINTER (latest — 2026-06-30):** ★**APPLY-STATE OWNABLE SET COMPLETE.** Top-level VALIDATE
+**▶ RESUME POINTER (latest — 2026-06-30, HEAD `40e0f5af`):** ★★**TIER-B PRACTICAL COMPLETE.**
+**Tier-B practical same-order frame graph COMPLETE: the graph validates, applies, enforces, and names/
+lifetimes all ownable current-order render work.** (NOT scheduler, NOT backend, NOT Vulkan-ready, NOT
+renderer-fully-optimized — tier-B = same-order ownership is boring + enforced.) Registry complete (24
+ids, lifetimes on all 14 live registrations), enforcement = 5 raw-GL axis gates + the capstone meta-gate,
+apply-state ownable set complete. **NEXT = tier-C legal-reorder VALIDATOR (proof-only): SCHEDULER-EDGE-
+CLASSIFY-1 → SCHEDULER-REORDER-ORACLE-1, both GL-free/offline/no-reorderer** (see the TIER-B-COMPLETE
+milestone block + the tier-C recon below — reorderer + any pass movement stay GATED). See entries 54–58.
+
+**(superseded resume pointer — 2026-06-30 reboot, kept for trail):** ★**APPLY-STATE OWNABLE SET COMPLETE.** Top-level VALIDATE
 10/10 + apply-state for every ownable pass is now runtime-proven-or-code-correct: PostProcess **6/6**
 + **StaticProp/Mech/Water** runtime-proven sole-setter + **Shadow now FULL render-target-mode owner**
 (FBO+viewport+clear+pipeline, APPLY-STATE-SHADOW-2 `2a3b0967`). TerrainDecal/TerrainOverlay stay
@@ -741,6 +750,77 @@ the resume pointer. The remaining apply-state target (Shadow) needs the EXTEND d
     build64) CONCURRENTLY with the Shadow lane (smokes lease-serialized), then cherry-picked clean onto
     nifty — see the validated spare-worktree pattern.
 
+## ✓ TIER-B FINISH BATCH (entries 54–58) — 2026-06-30, HEAD `40e0f5af`
+54. **RAW-GL-BYPASS-CAPSTONE-1** (`567af186`) — Phase-8 enforcement capstone. New
+    `scripts/check-raw-gl-capstone.py` asserts all 5 axis gates (depthFunc/depthMask/colormask/blendfunc/
+    fbobind) EXIST + are wired into check-contracts.sh + are non-stub (negative-tested: renaming a gate →
+    exit 1). Plus a KNOWN_DEFERRED axis ledger (viewport/activeTexture/scissor/stencil/cull — explicit-
+    not-forgotten). ⇒ the enforcement set is now itself regression-proof (a deleted/renamed gate fails CI).
+55. **REGISTRY-POSTPROCESS-FBO-1** (`9e7ed61e`) — registered MainColor (closed the FBO-ledger-only
+    asymmetry) + MainNormal / SceneObjectId / SsaoOcclusion (live glNames) + SceneDepthCopy / HzbPyramid
+    (gated-lazy). Registry live count 10→**14**.
+56. **REGISTRY-COMPUTE-IDS-1** (`0c8102fa` spare → cherry-picked `0d7aa9fe`) — added 4 enum ids
+    (ClusterDepthPyramid / LightgridGrid / LightgridIndex / PostprocessComputeBlur) + their gen-site
+    registrations; default-OFF gated-absent. ★PARALLEL-BUILT in the spare worktree (validated pattern).
+57. **REGISTRY-SCENECOLORCOPY-PRODUCER-1** (`7e407910`) — registered SceneColorCopy + added its producer
+    edge (VFX writes[], 3/4 cap) — closed the LAST id-without-producer gap; `validateReadsSatisfied` clean.
+58. **REGISTRY-LIFETIME-CLASS-1** (`40e0f5af`) — ★registry capstone. Added
+    `RenderResourceLifetime{Unset,FrameLocal,Mission,Persistent,External}` on every registration:
+    **Persistent** (6+): MainColor/Depth/Normal/SceneObjectId/Hzb/ShadowStatic/ShadowDynamic/
+    MaterialGpuBuffer; **FrameLocal**: Ssao/SceneDepthCopy/SceneColorCopy/compute-ids; **Mission**: terrain
+    ids + atlases; **External**: WaterReflection×2. Validator now FAILS on `Unset`; the dump emits lifetime.
+    `kExternalResources` kept as a consistency-doctest (the External *concept* is broader than
+    lifetime==External — sound, drift-guard added; full migration = follow-up).
+
+## ★★ TIER-B PRACTICAL COMPLETE — MILESTONE (2026-06-30, HEAD `40e0f5af`)
+**Tier-B practical same-order frame graph COMPLETE: the graph validates, applies, enforces, and names/
+lifetimes all ownable current-order render work.**
+★Scope discipline (what tier-B is NOT): **NOT scheduler, NOT backend, NOT Vulkan-ready, NOT renderer-
+fully-optimized.** Tier-B = same-order ownership is boring + enforced. No pass moves; no reorder; no GPU
+barrier planning; no transient aliasing. That is tier-C/D, deliberately not started.
+
+**ALL-GREEN TIER-B GATE (the evidence):**
+- **OFF** (`MC2_FRAMEGRAPH_EXECUTOR=0`): all executor metrics = **0**, byte-identical rendering.
+- **ON** (`=1`): `validation_failures=0` across every owned pass.
+- **DRYRUN**: `out_of_order=0`, `ambient_probe_mismatches=0`, `fbo_mismatches=0`.
+- **Registry validator**: **0 missing lifetimes**, 14/14 live registrations carry a lifetime class.
+- **RAW-GL capstone**: green (all 5 axis gates present+wired+non-stub; KNOWN_DEFERRED ledger explicit).
+- **Byte-identical** OFF; **97 doctests** pass.
+
+Concretely tier-B = the union of: VALIDATE 10/10 top-level passes; the ownable APPLY-STATE set (PostProcess
+6/6 + StaticProp/Mech/Water runtime-proven sole-setter + Shadow full render-target-mode owner; decal/overlay
+code-correct + content-unexercisable); ENFORCE = 5 raw-GL axis gates + capstone; NAME/LIFETIME = 24-id
+registry, all live registrations lifetime-classed, validator fails on Unset.
+
+**Remaining tier-B follow-ups (do NOT block the milestone):**
+- `kExternalResources` FULL migration to the lifetime field (kept as a consistency-doctest for now).
+- Decal/overlay **content-exercise** — needs `MC2_DYNAMIC_DECALS` in run_smoke.py's allowlist + a road map.
+- `kParticleEffectState` stale blend=Additive vs live alpha-blend (render_contract.cpp:315).
+- Optional **viewport validator** (`GL_VIEWPORT` AmbientSample sampler).
+
+## ★ TIER-C SCHEDULER RECON (SCHEDULER-LEGAL-REORDER-VALIDATOR-RECON-1 — analysis-only, BANKED, NOT built)
+★Supersedes the old "~15-20% LOW" read below. **Validator readiness ~60-65%** — NOT because we can
+reorder, but because the lifetime field + the ambient/terrain/dryrun tables already model most edges.
+The legal-reorder **VALIDATOR** is buildable: GL-free, offline, **no reorderer**.
+★★**REDLINE: tier-C is PROOF infrastructure, NOT a scheduler.** A "legal" verdict ≠ license to move a
+pass. The reorderer + ANY pass movement + a runtime scheduler stay GATED — deferred soft-state edges
+(tex-unit/FBO/clip-control the resource DAG can't see) mean even a correct legality verdict is not
+sufficient to actually reorder. **60-65% ready to build the VALIDATOR, NOT 60-65% ready to reorder.**
+
+**SLICE 1 — SCHEDULER-EDGE-CLASSIFY-1:** new GL-free `RenderCore/scheduler_legal_reorder.h`.
+- `enum EdgeClass { HardResource, SoftState, LegacyLatch, KnownEarly, ContentConditional, ExternalNonEdge }`
+- `classifyEdges()` + a **no-op baseline doctest** (the current `kFramePassOrder` proves legal — mirrors
+  `validateShippedFrameGraph`).
+- THREE hand-declared tables: `kContentConditionalEdges`, `kForbiddenReorderEdges`, `kDeferredSoftStateEdges`
+  (the tex-unit / FBO / clip-control edges the resource DAG cannot see).
+- ★Lifetime win: External/Mission/Persistent reads auto-EXCLUDED from in-frame edges (the `ExternalNonEdge`
+  category makes that explicit in debug output); only **FrameLocal** producers create real in-frame edges.
+
+**SLICE 2 — SCHEDULER-REORDER-ORACLE-1:** `isReorderLegal(permutation)` predicate.
+- identity = legal; known-bad = illegal WITH the first-violated edge named.
+- StaticProp↔Mech = "candidate legal **adjacent swap**" (NOT "approved reorder").
+- the oracle distinguishes "resource-wise legal BUT blocked by a deferred soft-state edge".
+
 ## ★★ INDEX-RACE INCIDENT + LESSON (critical — read before any parallel committing)
 Two COMMITTING agents in the SAME nifty worktree (FBO-gate lane + SHADOW-1 lane) raced on the shared git
 INDEX: SHADOW-1's commit (`ecfe38e2`) SWEPT the gate's staged files into itself. Recovery: soft-reset,
@@ -755,7 +835,10 @@ spare detached worktree + spare deploy dir + lease-serialized smoke + cherry-pic
 nifty.
 
 ## ★ SCHEDULER / TIER-C RECON (SCHEDULER-LEGAL-REORDER-RECON-1, analysis-only — DO NOT build)
-Tier-C (legal reorder/schedule) readiness ~**15-20% (LOW)**. Reorder DAG mapped:
+⚠ **SUPERSEDED by SCHEDULER-LEGAL-REORDER-VALIDATOR-RECON-1 (above, ~60-65% VALIDATOR-ready).** The
+"15-20%" below was pre-lifetime-field; the registry + lifetime classes + ambient/terrain/dryrun tables now
+model most edges. Kept for the reorder-DAG map (still accurate).
+Tier-C (legal reorder/schedule) readiness ~**15-20% (LOW)** [STALE — see superseding recon]. Reorder DAG mapped:
 - **Forbidden edges:** Shadow → all-geometry + PP (ShadowDynamicMap); opaque → blend/PP (MainColor/Depth/
   Normal); VFX → PP-BoxDecals (SceneDepthCopy); Terrain → overlay/decal + 5 PP sub-stages (sceneHasTerrain
   latch). **ONLY StaticProp↔Mech is truly reorder-safe.**
@@ -765,7 +848,17 @@ Tier-C (legal reorder/schedule) readiness ~**15-20% (LOW)**. Reorder DAG mapped:
 - **First tier-C step (FUTURE):** a legal-reorder VALIDATOR (model-before-mutate, like the dry-run), NOT a
   reorderer. Refresh this recon before building.
 
-## ▶ NEXT-STEPS (precise — reboot resume; tier-b finish order)
+## ▶ NEXT-STEPS (precise — tier-b finish order) — ✓ ALL DONE; tier-b practical COMPLETE (HEAD `40e0f5af`)
+✓ **(a) RAW-GL-BYPASS-CAPSTONE-1** — DONE `567af186` (entry 54). Meta-gate enumerates all 5 axis gates +
+asserts no un-gated escape + KNOWN_DEFERRED ledger. Enforcement is now a single regression-proof capstone.
+✓ **(b) Remaining RESOURCE-REGISTRY slices** — DONE: REGISTRY-POSTPROCESS-FBO-1 `9e7ed61e` (entry 55),
+REGISTRY-COMPUTE-IDS-1 `0d7aa9fe` (entry 56), REGISTRY-SCENECOLORCOPY-PRODUCER-1 `7e407910` (entry 57),
+REGISTRY-LIFETIME-CLASS-1 `40e0f5af` (entry 58, capstone). Registry = 24 ids, all live registrations
+lifetime-classed. ✓ **(c) tier-b practical 100%** — REACHED (see the TIER-B-COMPLETE milestone block).
+**NEXT = tier-C legal-reorder VALIDATOR (proof-only): SCHEDULER-EDGE-CLASSIFY-1 → SCHEDULER-REORDER-ORACLE-1**
+(GL-free/offline/no-reorderer; reorderer GATED — see the tier-C recon above).
+
+**(historical original plan — kept for trail):**
 **(a) RAW-GL-BYPASS-CAPSTONE-1** — meta-gate that ENUMERATES all 5 axis gates (depthFunc/depthMask/
 colormask/blendFunc/fbobind) + asserts there is no un-gated escape path. Comes AFTER the FBO gate (now
 shipped). This is where Phase-8 enforcement becomes a single regression-proof capstone.
