@@ -104,8 +104,8 @@ static constexpr RenderStateDesc kPassRenderState[] = {
         RenderResourceId::MainColor
     },
     // Terrain: routed via applyPipeline(TerrainSolid) in LODChunk (gos_terrain_lod_chunk.cpp:717)
-    // and PatchStreamThin (gameos_graphics.cpp:4041). pipelineDescRegistered was false in contract
-    // — STALE (see FRAMEGRAPH-STATEPACK-SKELETON-1 notes in RenderPassContract.h).
+    // and PatchStreamThin (gameos_graphics.cpp:4041). pipelineDescRegistered = true
+    // (FRAMEGRAPH-STATEPACK-SKELETON-1, see RenderPassContract.h notes).
     // ambient_contract: colorMask=AllOn (re-asserts after shadow), depthWrite=On, depthFunc=SceneGEqual, viewport=MainScene.
     // fbo: kPassFboTarget declares MainColor.
     {
@@ -118,7 +118,7 @@ static constexpr RenderStateDesc kPassRenderState[] = {
         RenderResourceId::MainColor
     },
     // TerrainOverlay: routed via applyPipeline(TerrainOverlay) in gameos_graphics.cpp:9810.
-    // pipelineDescRegistered was false — STALE.
+    // pipelineDescRegistered = true (FRAMEGRAPH-STATEPACK-SKELETON-1).
     // ambient_contract: not declared (Inherit/Inherit/Inherit/Inherit).
     // fbo: kPassFboTarget declares MainColor.
     {
@@ -131,7 +131,7 @@ static constexpr RenderStateDesc kPassRenderState[] = {
         RenderResourceId::MainColor
     },
     // TerrainDecal: routed via applyPipeline(TerrainDecal) in gameos_graphics.cpp:10005.
-    // pipelineDescRegistered was false — STALE.
+    // pipelineDescRegistered = true (FRAMEGRAPH-STATEPACK-SKELETON-1).
     // ambient_contract: not declared.
     // fbo: kPassFboTarget declares MainColor.
     {
@@ -144,7 +144,7 @@ static constexpr RenderStateDesc kPassRenderState[] = {
         RenderResourceId::MainColor
     },
     // Water: routed via applyPipeline(WaterArmed) in gameos_graphics.cpp:3287.
-    // pipelineDescRegistered was false — STALE.
+    // pipelineDescRegistered = true (FRAMEGRAPH-STATEPACK-SKELETON-1).
     // ambient_contract: not declared (Water has no kPassAmbient row).
     // fbo: not in kPassFboTarget -> Unknown.
     {
@@ -172,7 +172,8 @@ static constexpr RenderStateDesc kPassRenderState[] = {
     // VFX: multiple pipelines per draw (VfxBillboard/Tube/Mesh x Alpha/Additive) — no single
     // representative PipelineId -> Invalid. All sub-pipelines do route applyPipeline
     // (gos_particle_bridge.cpp:847/1263, gos_vfx_mesh_bridge.cpp:315).
-    // pipelineDescRegistered=false in contract — STALE (multiple pipelines, not one).
+    // pipelineDescRegistered = true (FRAMEGRAPH-STATEPACK-SKELETON-1; multiple pipelines, so
+    // the representative PipelineId is Invalid, but the lane does route applyPipeline).
     // ambient_contract: not declared.
     // fbo: not in kPassFboTarget -> Unknown.
     {
@@ -199,7 +200,8 @@ static constexpr RenderStateDesc kPassRenderState[] = {
     },
     // PostProcess: multiple sub-pipelines (PostProcessComposite/ScreenShadow/CloudShadow/
     // Shoreline/SsaoApply/EdgeFog/FogOob) all route applyPipeline in gos_postprocess.cpp.
-    // pipelineDescRegistered=false in contract — STALE (multiple sub-pipelines, not one).
+    // pipelineDescRegistered = true (FRAMEGRAPH-STATEPACK-SKELETON-1; multiple sub-pipelines, so
+    // the representative PipelineId is Invalid, but the lane does route applyPipeline).
     // No single representative -> Invalid (the executor-island model in frame_executor.h
     // models sub-pipelines individually; that is the right granularity for PostProcess).
     // ambient_contract: colorMask=Inherit, depthFunc=Inherit, viewport=MainScene, consumesTerrainLatch.

@@ -57,9 +57,11 @@ struct PostProcessSubpass {
     bool             ownedByExecutor;
     // POSTPROCESS-SUBGRAPH-2: true = sub-stage is a compute dispatch (no FBO, no color/depth chain).
     // isCompute rows are SKIPPED by the read-satisfaction walk (they do not consume the
-    // color/depth chain and their internal compute images have no RenderResourceId yet).
-    // Coarse resource I/O (reads[]/writes[]) is Unknown-terminated empty; detailed
-    // compute-resource modeling is deferred until a consumer of the output is wired.
+    // color/depth chain). Their compute outputs now HAVE RenderResourceIds
+    // (REGISTRY-COMPUTE-IDS-1: ClusterDepthPyramid=21, LightgridGrid=22,
+    // LightgridIndex=23, PostprocessComputeBlur=24), but the reads[]/writes[] coarse
+    // I/O is intentionally left Unknown-terminated empty here because these are
+    // default-OFF substrate stages with no wired downstream consumer yet.
     bool             isCompute;
     // Note for cross-reference / slice rationale (string literal).
     const char*      note;
@@ -69,8 +71,10 @@ struct PostProcessSubpass {
 // kPostProcessSubpasses — 14 rows (Slice-1 + Slice-2), IN CALL ORDER from endScene().
 //
 // isCompute=true rows (ClusterDepthPyramid, LightgridBuild, PostprocessComputeBlur)
-// are SKIPPED by the read-satisfaction walk — they have no FBO and their compute
-// outputs have no RenderResourceId yet. See validatePostProcessSubgraph() below.
+// are SKIPPED by the read-satisfaction walk — they have no FBO. Their compute outputs
+// now have RenderResourceIds (REGISTRY-COMPUTE-IDS-1: ClusterDepthPyramid=21,
+// LightgridGrid=22, LightgridIndex=23, PostprocessComputeBlur=24), but remain
+// default-OFF substrate with no wired consumer. See validatePostProcessSubgraph() below.
 // ---------------------------------------------------------------------------
 
 static constexpr PostProcessSubpass kPostProcessSubpasses[] = {
@@ -120,8 +124,9 @@ static constexpr PostProcessSubpass kPostProcessSubpasses[] = {
     // -----------------------------------------------------------------------
     // 3. ClusterDepthPyramid (call-site :2429) — POSTPROCESS-SUBGRAPH-2
     //    Gate: MC2_CLUSTER_DEPTH_PYRAMID, default OFF. Compute dispatch; no FBO.
-    //    isCompute=true: skipped by read-satisfaction walk. Internal tile image
-    //    has no RenderResourceId — compute-resource modeling deferred.
+    //    isCompute=true: skipped by read-satisfaction walk. Output tile image now has
+    //    RenderResourceId::ClusterDepthPyramid=21 (REGISTRY-COMPUTE-IDS-1);
+    //    coarse reads[]/writes[] left empty (default-OFF substrate, no wired consumer).
     // -----------------------------------------------------------------------
     {
         /*id*/             ExecutorIslandId::ClusterDepthPyramid,
@@ -133,15 +138,17 @@ static constexpr PostProcessSubpass kPostProcessSubpasses[] = {
         /*ownedByExecutor*/false,
         /*isCompute*/      true,
         /*note*/           "SUBGRAPH-2. Compute dispatch: per-tile (min,max) depth image. "
-                           "Reads sceneDepthTex_ (inferred; no RenderResourceId consumer yet). "
-                           "Internal tile image has no RenderResourceId — compute I/O modeling deferred. "
+                           "Reads sceneDepthTex_ (inferred). Output tile image = "
+                           "RenderResourceId::ClusterDepthPyramid (=21, REGISTRY-COMPUTE-IDS-1); "
+                           "coarse reads[]/writes[] left empty (default-OFF substrate, no wired consumer). "
                            "isCompute=true: skipped by read-satisfaction walk. MC2_CLUSTER_DEPTH_PYRAMID default-OFF.",
     },
     // -----------------------------------------------------------------------
     // 4. LightgridBuild (call-site :2437) — POSTPROCESS-SUBGRAPH-2
     //    Gate: MC2_LIGHTGRID_BUILD, default OFF. Compute dispatch; no FBO.
-    //    isCompute=true: skipped by read-satisfaction walk. Internal light-bin
-    //    grid has no RenderResourceId — compute-resource modeling deferred.
+    //    isCompute=true: skipped by read-satisfaction walk. Outputs now have
+    //    RenderResourceIds: LightgridGrid=22 + LightgridIndex=23 (REGISTRY-COMPUTE-IDS-1),
+    //    reading ClusterDepthPyramid=21; coarse reads[]/writes[] left empty (default-OFF substrate).
     // -----------------------------------------------------------------------
     {
         /*id*/             ExecutorIslandId::LightgridBuild,
@@ -153,15 +160,17 @@ static constexpr PostProcessSubpass kPostProcessSubpasses[] = {
         /*ownedByExecutor*/false,
         /*isCompute*/      true,
         /*note*/           "SUBGRAPH-2. Compute dispatch: per-tile light-bin grid. "
-                           "Reads ClusterDepthPyramid tile image (no RenderResourceId yet). "
-                           "Internal light-bin grid has no RenderResourceId — modeling deferred. "
+                           "Reads ClusterDepthPyramid (=21) tile image. Outputs = "
+                           "LightgridGrid (=22, sphere SSBO) + LightgridIndex (=23, per-tile index pool), "
+                           "REGISTRY-COMPUTE-IDS-1; coarse reads[]/writes[] left empty (default-OFF substrate). "
                            "isCompute=true: skipped by read-satisfaction walk. MC2_LIGHTGRID_BUILD default-OFF.",
     },
     // -----------------------------------------------------------------------
     // 5. PostprocessComputeBlur (call-site :2447) — POSTPROCESS-SUBGRAPH-2
     //    Gate: MC2_POSTPROCESS_COMPUTE_BLUR, default OFF. Compute dispatch; no FBO.
     //    isCompute=true: skipped by read-satisfaction walk. Reads SceneColorCopy
-    //    (sceneColorCopyTex_); internal blur output has no RenderResourceId.
+    //    (sceneColorCopyTex_); blur output now = RenderResourceId::PostprocessComputeBlur=24
+    //    (REGISTRY-COMPUTE-IDS-1, substrate only — no consumer).
     // -----------------------------------------------------------------------
     {
         /*id*/             ExecutorIslandId::PostprocessComputeBlur,
@@ -175,7 +184,8 @@ static constexpr PostProcessSubpass kPostProcessSubpasses[] = {
         /*isCompute*/      true,
         /*note*/           "SUBGRAPH-2. Compute dispatch: downsample + Gaussian blur substrate. "
                            "Reads SceneColorCopy (sceneColorCopyTex_ via getSceneColorCopyTexture()). "
-                           "Internal blur output has no RenderResourceId — modeling deferred. "
+                           "Output = RenderResourceId::PostprocessComputeBlur (=24, REGISTRY-COMPUTE-IDS-1, "
+                           "ping-pong substrate — no wired consumer). "
                            "isCompute=true: skipped by read-satisfaction walk. MC2_POSTPROCESS_COMPUTE_BLUR default-OFF.",
     },
     // -----------------------------------------------------------------------
@@ -471,8 +481,9 @@ inline PostProcessValidationResult validatePostProcessSubgraph(
         const PostProcessSubpass& sp = kPostProcessSubpasses[si];
 
         // POSTPROCESS-SUBGRAPH-2: isCompute rows are skipped by the read-satisfaction
-        // walk. Their compute inputs/outputs have no RenderResourceId yet, and they
-        // don't participate in the color/depth chain. Treat them as no-ops for validation.
+        // walk. Their compute outputs now have RenderResourceIds (REGISTRY-COMPUTE-IDS-1:
+        // 21..24) but the coarse reads[]/writes[] are left empty and they don't participate
+        // in the color/depth chain. Treat them as no-ops for validation.
         if (sp.isCompute) continue;
 
         // Check that every read is satisfied.

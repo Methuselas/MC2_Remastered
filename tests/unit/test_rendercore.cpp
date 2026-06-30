@@ -458,51 +458,61 @@ TEST_CASE("IblShRegistry kIblShSetCount is at least 1") {
 // ---------------------------------------------------------------------------
 
 TEST_CASE("RenderPassContract pipelineDescRegistered matches current shipped truth") {
-    // Per-row expected state from kRenderPassContracts at branch tip:
-    //   StaticPropOpaque = true; MechOpaque = true (MECH-PIPELINEDESC-1);
-    //   Terrain / Shadow / VFX = false.
+    // Per-row expected state from kRenderPassContracts at branch tip
+    // (FRAMEGRAPH-STATEPACK-SKELETON-1 a6854d69 flipped six lanes from the
+    // earlier StaticProp/Mech-only truth to applyPipeline()-routed):
+    //   true:  StaticPropOpaque, MechOpaque, Terrain, TerrainDecal,
+    //          TerrainOverlay, Water, VFX, PostProcess
+    //   false: Shadow (descriptive-only PipelineIds), VegetationCards, UI.
     int trueCount = 0;
     for (int i = 0; i < kRenderPassContractCount; ++i) {
         const RenderPassContract& c = kRenderPassContracts[i];
         const bool expected = (c.id == RenderPassId::StaticPropOpaque ||
-                               c.id == RenderPassId::MechOpaque);
+                               c.id == RenderPassId::MechOpaque ||
+                               c.id == RenderPassId::Terrain ||
+                               c.id == RenderPassId::TerrainDecal ||
+                               c.id == RenderPassId::TerrainOverlay ||
+                               c.id == RenderPassId::Water ||
+                               c.id == RenderPassId::VFX ||
+                               c.id == RenderPassId::PostProcess);
         CHECK(c.pipelineDescRegistered == expected);
         if (c.pipelineDescRegistered) ++trueCount;
     }
-    // Two passes route through PipelineDesc today: StaticPropOpaque + MechOpaque.
-    CHECK(trueCount == 2);
+    // Eight passes route through applyPipeline() today (see list above).
+    CHECK(trueCount == 8);
 }
 
-TEST_CASE("RenderPassContract: only a registered PipelineId family may claim pipelineDescRegistered") {
+TEST_CASE("RenderPassContract: PipelineId-family passes back their flag with a real enumerator") {
     // PipelineRegistry registers the static-prop family + MechOpaque
-    // (MECH-PIPELINEDESC-1):
-    //   PipelineId { Invalid=0, StaticPropOpaque=1, StaticPropAlphaTest=2,
-    //                MechOpaque=3, StaticPropDepth=4, Count_=5 }
-    // (Terrain/Water/... remain "Future:" -- no PipelineId enumerator yet.)
+    // (MECH-PIPELINEDESC-1) plus a set of DESCRIPTIVE-ONLY rows (shadow casters,
+    // terrain overlay/decal, water, VFX, post-process) that are NOT routed through
+    // applyPipeline. The enum has since grown to Count_=25:
+    //   0 Invalid, 1 StaticPropOpaque, 2 StaticPropAlphaTest, 3 MechOpaque,
+    //   4 StaticPropDepth, 5..24 descriptive-only families, 25 Count_.
     //
-    // StaticPropDepth (the camera depth-prepass) IS a real registered PipelineId
-    // family (full PipelineDesc row, wired via bindProgram/getPipelineDesc in
-    // gos_static_prop_batcher.cpp), but it is a SUB-STEP of the StaticPropOpaque
-    // render pass, not its own RenderPassId lane -- there is no
-    // RenderPassId::StaticPropDepth contract row, so it never claims
-    // pipelineDescRegistered on the contract side. The contract-side registered
-    // set therefore stays {StaticPropOpaque, MechOpaque}.
+    // Since FRAMEGRAPH-STATEPACK-SKELETON-1 (a6854d69) pipelineDescRegistered
+    // means "routes through applyPipeline()", which is BROADER than "owns a
+    // dedicated PipelineId enumerator": Terrain/Water/VFX/PostProcess/
+    // TerrainDecal/TerrainOverlay route applyPipeline with a StatePack whose
+    // PipelineId is Invalid (multi-sub-pipeline lanes), yet they are correctly
+    // flagged true. So the old "only a registered PipelineId family may claim"
+    // invariant no longer holds. What still holds: the two lanes that DO own a
+    // PipelineId family (StaticPropOpaque, MechOpaque) must be flagged true and
+    // map to a real (non-Invalid, in-range) enumerator.
     //
-    // Count_ is hardcoded as a tripwire: bump it (and re-examine the registered
-    // family set below) every time a PipelineId enumerator is added, so adding a
-    // pipeline forces re-validating this invariant instead of silently widening.
-    CHECK(static_cast<uint32_t>(PipelineId::Count_) == 5u);
+    // Count_ is hardcoded as a tripwire: bump it (and re-examine the family set
+    // below) every time a PipelineId enumerator is added.
+    CHECK(static_cast<uint32_t>(PipelineId::Count_) == 25u);
     CHECK(static_cast<uint32_t>(PipelineId::Invalid) == 0u);
 
-    // Every pass flagged true must be backed by a real (non-Invalid, in-range)
-    // PipelineId family. Registered families: StaticProp* (RenderPassId
-    // StaticPropOpaque) and MechOpaque (RenderPassId MechOpaque).
     for (int i = 0; i < kRenderPassContractCount; ++i) {
         const RenderPassContract& c = kRenderPassContracts[i];
-        if (!c.pipelineDescRegistered) continue;
+        const bool hasFamily = (c.id == RenderPassId::StaticPropOpaque ||
+                                c.id == RenderPassId::MechOpaque);
+        if (!hasFamily) continue;
 
-        CHECK((c.id == RenderPassId::StaticPropOpaque ||
-               c.id == RenderPassId::MechOpaque));
+        // A lane that owns a PipelineId family must be flagged registered.
+        CHECK(c.pipelineDescRegistered);
 
         const uint32_t fam =
             (c.id == RenderPassId::MechOpaque)
@@ -513,14 +523,16 @@ TEST_CASE("RenderPassContract: only a registered PipelineId family may claim pip
     }
 }
 
-TEST_CASE("RenderPassContract: passes with no PipelineId family are not flagged registered") {
-    // Defensive complement -- Terrain/Shadow/VFX have no PipelineId enumerator,
-    // so none may legitimately report PipelineDesc routing. (StaticPropOpaque and
-    // MechOpaque DO have a PipelineId family and are excluded here.)
+TEST_CASE("RenderPassContract: non-applyPipeline lanes stay unregistered") {
+    // Defensive complement -- since FRAMEGRAPH-STATEPACK-SKELETON-1 the lanes
+    // that do NOT route through applyPipeline() are exactly Shadow (its three
+    // shadow PipelineIds are descriptive-only per PipelineRegistry.h),
+    // VegetationCards, and UI. Every one of them must report false.
     for (int i = 0; i < kRenderPassContractCount; ++i) {
         const RenderPassContract& c = kRenderPassContracts[i];
-        if (c.id == RenderPassId::StaticPropOpaque) continue;
-        if (c.id == RenderPassId::MechOpaque) continue;
+        if (c.id != RenderPassId::Shadow &&
+            c.id != RenderPassId::VegetationCards &&
+            c.id != RenderPassId::UI) continue;
         CHECK_FALSE(c.pipelineDescRegistered);
     }
 }
@@ -537,21 +549,26 @@ TEST_CASE("RenderPassContract: enum/table/order counts are all 11") {
     CHECK(kFramePassOrderCount == 11);
 }
 
-TEST_CASE("RenderPassContract: 6 new lanes resolve to unregistered contract rows") {
-    const RenderPassId newIds[] = {
-        RenderPassId::Water,
-        RenderPassId::PostProcess,
-        RenderPassId::VegetationCards,
-        RenderPassId::TerrainDecal,
-        RenderPassId::TerrainOverlay,
-        RenderPassId::UI,
+TEST_CASE("RenderPassContract: 6 new lanes resolve to contract rows with current registration") {
+    // RENDER-PASS-DAG-CONTRACT-1 added six lanes. FRAMEGRAPH-STATEPACK-SKELETON-1
+    // (a6854d69) subsequently routed four of them through applyPipeline():
+    //   registered=true:  Water, PostProcess, TerrainDecal, TerrainOverlay
+    //   registered=false: VegetationCards, UI
+    struct LaneExpect { RenderPassId id; bool registered; };
+    const LaneExpect newIds[] = {
+        { RenderPassId::Water,           true  },
+        { RenderPassId::PostProcess,     true  },
+        { RenderPassId::VegetationCards, false },
+        { RenderPassId::TerrainDecal,    true  },
+        { RenderPassId::TerrainOverlay,  true  },
+        { RenderPassId::UI,              false },
     };
-    for (RenderPassId want : newIds) {
+    for (const LaneExpect& want : newIds) {
         const RenderPassContract* row = nullptr;
         for (int i = 0; i < kRenderPassContractCount; ++i)
-            if (kRenderPassContracts[i].id == want) { row = &kRenderPassContracts[i]; break; }
+            if (kRenderPassContracts[i].id == want.id) { row = &kRenderPassContracts[i]; break; }
         REQUIRE(row != nullptr);
-        CHECK_FALSE(row->pipelineDescRegistered);
+        CHECK(row->pipelineDescRegistered == want.registered);
     }
 }
 
