@@ -400,12 +400,13 @@ TEST_CASE("dryrun (b): only 7 observable passes fired, 4 invisible -> unobserved
     // The 4 passes with NO noteRenderPass callsite today (recon): Shadow, Water, VFX, Veg.
     // Everything else fires in declared order. Must yield ZERO false alarms.
     // NOTE: kFramePassOrder now reflects the real engine fire order:
-    // MechOpaque(slot1) before StaticPropOpaque(slot2) — MechOpaque fires at the top of
-    // renderLists() (txmmgr.cpp:2361); StaticProp fires after GpuStaticPropBatcher::flush.
-    // TerrainOverlay(slot4) fires before TerrainDecal(slot5) — txmmgr.cpp:3275/3311.
+    // StaticPropOpaque(slot1) before MechOpaque(slot2) — Static flush fires at renderLists
+    // preamble (~txmmgr:3250); Mech GPU draw fires after (~txmmgr:3271).
+    // MECHOPAQUE-ORDER-FIX-2: enqueue-time tgl.cpp note removed; OpaqueObject observed only
+    // at its draw site. TerrainOverlay(slot4) fires before TerrainDecal(slot5) — txmmgr:3275/3311.
     const RenderPassId fired[] = {
-        RenderPassId::MechOpaque,
         RenderPassId::StaticPropOpaque,
+        RenderPassId::MechOpaque,
         RenderPassId::Terrain,
         RenderPassId::TerrainOverlay,  // fires before Decal in renderLists
         RenderPassId::TerrainDecal,
@@ -422,14 +423,14 @@ TEST_CASE("dryrun (b): only 7 observable passes fired, 4 invisible -> unobserved
 }
 
 TEST_CASE("dryrun (c): two NON-whitelisted passes swapped -> outOfOrder>0 with an offender") {
-    // Swap StaticPropOpaque before MechOpaque (declared order: Mech then StaticProp).
-    // Neither has knownEarlyDrawSite, so generic out-of-order detection must fire.
-    // NOTE: kFramePassOrder now has MechOpaque(slot1) before StaticPropOpaque(slot2)
-    // to match actual engine fire order. Reversing them here is the intentional OOO case.
+    // Swap MechOpaque before StaticPropOpaque (declared order: Static then Mech).
+    // MECHOPAQUE-ORDER-FIX-2: kFramePassOrder now has StaticPropOpaque(slot1) before
+    // MechOpaque(slot2) — Static flush precedes Mech GPU draw. Reversing them here is
+    // the intentional OOO case. Neither has knownEarlyDrawSite, so generic detection fires.
     const RenderPassId fired[] = {
         RenderPassId::Shadow,
-        RenderPassId::StaticPropOpaque,   // recorded before its declared predecessor MechOpaque
-        RenderPassId::MechOpaque,
+        RenderPassId::MechOpaque,         // recorded before its declared predecessor StaticPropOpaque
+        RenderPassId::StaticPropOpaque,
         RenderPassId::Terrain,
         RenderPassId::TerrainOverlay,    // correct order (Overlay before Decal)
         RenderPassId::TerrainDecal,
@@ -483,13 +484,15 @@ TEST_CASE("dryrun (f): Option B knownEarlyDrawSite suppression proof") {
     // (gamecam.cpp:508 pre-renderLists). This is an apparent out-of-order vs kFramePassOrder.
     // Without knownEarly -> outOfOrderCount>0 (kernel detects it). With knownEarly -> suppressed.
     //
-    // Record Terrain before StaticPropOpaque (the LOD-chunk runtime sequence).
-    // The LOD-chunk runtime fire order: Terrain early, then renderLists (Mech, StaticProp, Overlays...)
+    // MECHOPAQUE-ORDER-FIX-2: kFramePassOrder now has StaticPropOpaque(slot1) before
+    // MechOpaque(slot2). The LOD-chunk runtime fire order: Terrain early (knownEarly),
+    // then renderLists (StaticProp flush, then Mech GPU draw).
+    // fired[] reflects real renderLists order (Static before Mech) — only Terrain is early.
     const RenderPassId fired[] = {
         RenderPassId::Shadow,
         RenderPassId::Terrain,            // fires pre-renderLists in LOD-chunk path
-        RenderPassId::MechOpaque,         // fires first in renderLists preamble
-        RenderPassId::StaticPropOpaque,   // fires after GpuStaticPropBatcher::flush
+        RenderPassId::StaticPropOpaque,   // fires at GpuStaticPropBatcher::flush in renderLists
+        RenderPassId::MechOpaque,         // fires after Static flush (GpuMechBatcher::flush)
         RenderPassId::TerrainOverlay,
         RenderPassId::TerrainDecal,
         RenderPassId::Water,
