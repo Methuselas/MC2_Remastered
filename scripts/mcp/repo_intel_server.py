@@ -48,6 +48,7 @@ import env_index   as ei
 import binding_index as bi
 import grep_tool   as gt
 import dead_gate_scan as dgs
+import citation_verifier as cv
 
 # ---------------------------------------------------------------------------
 # Server
@@ -471,6 +472,49 @@ def repo_symbol(
         in_ref      = in_ref,
         def_context = def_context,
     )
+    return _j(result)
+
+
+# ---------------------------------------------------------------------------
+# MCP-TOOLING-1: verify_citations
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def verify_citations(doc_path: str, max_checks: int = 200) -> str:
+    """
+    Verify file:line and symbol citations in a recon/handoff markdown doc against
+    the current source tree. Catches stale/wrong citations — the #1 cause of
+    recon mischaracterizations this session (~11 incidents).
+
+    For each file:line citation (e.g. mclib/txmmgr.cpp:3017):
+      - Checks the file exists
+      - Checks the file has >= that many lines
+      - If a backtick-quoted symbol appears nearby in the doc, greps ±3 lines
+        for it — if absent, flags "DRIFTED"
+
+    For symbol-only "dead / 0 callers / delete" claims:
+      - Checks whether the symbol still exists in source
+      - Reports caller_count so you can verify "dead" claims
+
+    Args:
+      doc_path   — repo-relative or absolute path to the markdown doc
+      max_checks — cap on total citations checked (default 200)
+
+    Returns JSON: {doc, checked, ok_count, drifted_count, missing_count,
+      ok:[...], drifted:[{citation, reason}], missing:[{citation, reason}],
+      confidence:"lexical", note:"heuristic — verify flagged items by hand"}
+
+    confidence="lexical": this is a heuristic scan, not AST/clangd. Verify
+    all drifted + missing entries by hand before acting on them.
+    """
+    root = _repo()
+
+    # Resolve doc_path: try absolute first, then relative to repo root
+    dp = Path(doc_path)
+    if not dp.is_absolute():
+        dp = root / doc_path
+
+    result = cv.verify_citations(str(dp), root, max_checks=max_checks)
     return _j(result)
 
 
