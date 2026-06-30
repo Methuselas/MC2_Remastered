@@ -14,7 +14,18 @@
 #include <cstdio>
 #include <cstdlib>
 
-static GLuint s_viewUniformsUbo = 0;
+#include "../../RenderCore/GpuBufferOwner.h"
+#include "../../RenderCore/RenderResourceRegistry.h"
+
+// TERRAIN-VIEW-UBO-OWNER-1: the view-uniforms UBO is no longer a bare GLuint.
+// It is now narrowed behind a GpuBufferOwner identity record (logical id +
+// lifetime + debug name + the GLuint value). GL calls still happen at the same
+// sites with the same args; the raw handle is reached only via owner.glName.
+static RenderCore::GpuBufferOwner s_viewUniformsUbo{
+    RenderCore::RenderResourceId::ViewUniformsUbo,
+    RenderCore::RenderResourceLifetime::Persistent,
+    "ViewUniformsUbo",
+    0u};
 static int    s_vuFrame         = 0;
 
 // Registry: fixed-size array of registered EngineViews, upserted by id.
@@ -25,22 +36,42 @@ static uint32_t               s_viewCount = 0;
 static RenderCore::EngineView s_currentView{};
 
 void RenderCore::initViewUniformsUbo() {
-    glGenBuffers(1, &s_viewUniformsUbo);
-    glBindBuffer(GL_UNIFORM_BUFFER, s_viewUniformsUbo);
+    GLuint ubo = 0;
+    glGenBuffers(1, &ubo);
+    s_viewUniformsUbo.glName = static_cast<uint32_t>(ubo);
+    glBindBuffer(GL_UNIFORM_BUFFER, ubo);
     glBufferStorage(GL_UNIFORM_BUFFER, sizeof(RenderCore::ViewUniforms), nullptr,
                     GL_DYNAMIC_STORAGE_BIT);
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
-    glBindBufferBase(GL_UNIFORM_BUFFER, RenderCore::kViewUniformsBinding, s_viewUniformsUbo);
+    glBindBufferBase(GL_UNIFORM_BUFFER, RenderCore::kViewUniformsBinding, ubo);
+
+    // TERRAIN-VIEW-UBO-OWNER-1: register the live view-uniforms UBO at creation
+    // (observe-only metadata; never read by the draw path). Mirrors the
+    // s_heightSsbo registration in gos_terrain_lod_chunk.cpp.
+    {
+        RenderCore::RenderResourceDesc d;
+        d.id        = s_viewUniformsUbo.id;
+        d.kind      = RenderCore::RenderResourceKind::Buffer;
+        d.lifetime  = s_viewUniformsUbo.lifetime;
+        d.format    = RenderCore::RenderResourceFormat::BufferRaw;
+        d.debugName = s_viewUniformsUbo.debugName;
+        d.glName    = s_viewUniformsUbo.glName;
+        d.sizeBytes = static_cast<uint64_t>(sizeof(RenderCore::ViewUniforms));
+        d.valid     = true;
+        RenderCore::registerOrUpdateRenderResource(d);
+    }
+
     fprintf(stderr, "[VIEW_UNIFORMS v1] event=init binding=%u size=%zu\n",
             RenderCore::kViewUniformsBinding, sizeof(RenderCore::ViewUniforms));
     fflush(stderr);
 }
 
 void RenderCore::uploadViewUniforms(const RenderCore::ViewUniforms& vu) {
-    if (s_viewUniformsUbo == 0)
+    if (s_viewUniformsUbo.glName == 0)
         initViewUniformsUbo();
-    glBindBufferBase(GL_UNIFORM_BUFFER, RenderCore::kViewUniformsBinding, s_viewUniformsUbo);
-    glBindBuffer(GL_UNIFORM_BUFFER, s_viewUniformsUbo);
+    const GLuint ubo = static_cast<GLuint>(s_viewUniformsUbo.glName);
+    glBindBufferBase(GL_UNIFORM_BUFFER, RenderCore::kViewUniformsBinding, ubo);
+    glBindBuffer(GL_UNIFORM_BUFFER, ubo);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(RenderCore::ViewUniforms), &vu);
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
     ++s_vuFrame;
