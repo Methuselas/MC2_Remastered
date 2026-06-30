@@ -1234,6 +1234,7 @@ void gos_TerrainLodChunk_UploadHeightFull(const float* elevations, int mapSide)
         RenderCore::RenderResourceDesc d;
         d.id        = RenderCore::RenderResourceId::TerrainHeightSsbo;
         d.kind      = RenderCore::RenderResourceKind::Buffer;
+        d.lifetime  = RenderCore::RenderResourceLifetime::Mission;  // rebuilt per mission load (heightfield upload)
         d.format    = RenderCore::RenderResourceFormat::BufferRaw;
         d.debugName = "TerrainHeightSsbo";
         d.glName    = static_cast<uint32_t>(s_heightSsbo);

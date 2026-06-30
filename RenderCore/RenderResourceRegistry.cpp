@@ -83,6 +83,29 @@ const char* toString(RenderResourceKind kind) {
     return "unknown";
 }
 
+const char* toString(RenderResourceLifetime lifetime) {
+    switch (lifetime) {
+        case RenderResourceLifetime::Unset:      return "Unset";
+        case RenderResourceLifetime::FrameLocal: return "FrameLocal";
+        case RenderResourceLifetime::Mission:    return "Mission";
+        case RenderResourceLifetime::Persistent: return "Persistent";
+        case RenderResourceLifetime::External:   return "External";
+    }
+    return "unknown";
+}
+
+bool validateRenderResourceLifetimes(RenderResourceId* offending) {
+    for (size_t i = 1; i < kSlots; ++i) {
+        if (s_registry[i].valid &&
+            s_registry[i].lifetime == RenderResourceLifetime::Unset) {
+            if (offending) *offending = s_registry[i].id;
+            return false;
+        }
+    }
+    if (offending) *offending = RenderResourceId::Unknown;
+    return true;
+}
+
 const char* toString(RenderResourceFormat fmt) {
     switch (fmt) {
         case RenderResourceFormat::Unknown:   return "Unknown";

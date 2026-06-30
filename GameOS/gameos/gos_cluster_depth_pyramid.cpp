@@ -143,6 +143,7 @@ void ensureTileTexture(int width, int height) {
         RenderCore::RenderResourceDesc d;
         d.id        = RenderCore::RenderResourceId::ClusterDepthPyramid;
         d.kind      = RenderCore::RenderResourceKind::Texture2D;
+        d.lifetime  = RenderCore::RenderResourceLifetime::FrameLocal;  // transient compute intermediate, per-frame
         d.format    = RenderCore::RenderResourceFormat::Unknown;  // RG32F (no enum case)
         d.debugName = "ClusterDepthPyramid";
         d.width     = static_cast<uint32_t>(tw);

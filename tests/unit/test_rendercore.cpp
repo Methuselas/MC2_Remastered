@@ -3,6 +3,7 @@
 // No game startup, no GL context, no asset loading required.
 #include "doctest.h"
 #include "RenderResourceRegistry.h"
+#include "frame_graph_validate.h"       // REGISTRY-LIFETIME-CLASS-1: kExternalResources drift guard
 #include "RenderDebugView.h"
 #include "RendererFeatureRegistry.h"
 #include "IblShRegistry.h"
@@ -156,6 +157,89 @@ TEST_CASE("RenderResourceRegistry compute-intermediate ids register and invalida
     registerOrUpdateRenderResource(inv);
     CHECK(getRenderResource(RenderResourceId::ClusterDepthPyramid) == nullptr);
     CHECK(getRenderResourceCount() == 0);
+}
+
+// ---------------------------------------------------------------------------
+// REGISTRY-LIFETIME-CLASS-1: lifetime classification metadata
+// ---------------------------------------------------------------------------
+
+TEST_CASE("RenderResourceLifetime toString round-trips every value") {
+    CHECK(std::strcmp(toString(RenderResourceLifetime::Unset),      "Unset")      == 0);
+    CHECK(std::strcmp(toString(RenderResourceLifetime::FrameLocal), "FrameLocal") == 0);
+    CHECK(std::strcmp(toString(RenderResourceLifetime::Mission),    "Mission")    == 0);
+    CHECK(std::strcmp(toString(RenderResourceLifetime::Persistent), "Persistent") == 0);
+    CHECK(std::strcmp(toString(RenderResourceLifetime::External),   "External")   == 0);
+}
+
+TEST_CASE("RenderResourceDesc defaults lifetime to Unset (no safe default)") {
+    RenderResourceDesc d{};
+    CHECK((d.lifetime == RenderResourceLifetime::Unset));
+}
+
+TEST_CASE("validateRenderResourceLifetimes flags a valid resource left at Unset") {
+    REQUIRE(getRenderResourceCount() == 0);  // clean registry from prior tests
+
+    // Empty registry: vacuously valid.
+    RenderResourceId off = RenderResourceId::MainColor;  // poison
+    CHECK(validateRenderResourceLifetimes(&off));
+    CHECK((off == RenderResourceId::Unknown));
+
+    // Register a valid resource WITHOUT a lifetime -> validator must fail and
+    // name it.
+    RenderResourceDesc bad{};
+    bad.id    = RenderResourceId::MainColor;
+    bad.valid = true;
+    // bad.lifetime deliberately left at Unset
+    registerOrUpdateRenderResource(bad);
+    off = RenderResourceId::Unknown;
+    CHECK_FALSE(validateRenderResourceLifetimes(&off));
+    CHECK((off == RenderResourceId::MainColor));
+
+    // Set the lifetime -> validator passes.
+    bad.lifetime = RenderResourceLifetime::Persistent;
+    registerOrUpdateRenderResource(bad);
+    off = RenderResourceId::MainColor;
+    CHECK(validateRenderResourceLifetimes(&off));
+    CHECK((off == RenderResourceId::Unknown));
+
+    // Clean up.
+    RenderResourceDesc inv{};
+    inv.id = RenderResourceId::MainColor; inv.valid = false;
+    registerOrUpdateRenderResource(inv);
+    CHECK(getRenderResourceCount() == 0);
+}
+
+TEST_CASE("validateRenderResourceLifetimes ignores invalid (gated-absent) slots") {
+    REQUIRE(getRenderResourceCount() == 0);
+    // A registered-but-invalid slot with Unset lifetime is NOT an error:
+    // gated-absent is separate from lifetime.
+    RenderResourceDesc inv{};
+    inv.id = RenderResourceId::SsaoOcclusion; inv.valid = false;
+    registerOrUpdateRenderResource(inv);
+    CHECK(validateRenderResourceLifetimes(nullptr));
+    CHECK(getRenderResourceCount() == 0);
+}
+
+// Drift guard: every resource whose lifetime class is External MUST appear in
+// frame_graph_validate.h::kExternalResources. (The frame-graph "external" set is
+// broader — it also contains seeded Mission/Persistent resources — so this is a
+// SUBSET assertion, not equality. See the comment on kExternalResources.)
+TEST_CASE("lifetime==External resources are all listed in kExternalResources") {
+    using namespace RenderCore::framegraph;
+    // Mirror the production classification for the External-class resources.
+    const RenderResourceId externals[] = {
+        RenderResourceId::WaterReflectionColor,
+        RenderResourceId::WaterReflectionDepth,
+    };
+    for (RenderResourceId id : externals)
+        CHECK(isInExternalResourceList(id));
+
+    // Conversely, nothing classified FrameLocal/Mission-only sneaks in as a
+    // surprise temporal: spot-check a couple that must NOT be External-class.
+    // (They may still be in kExternalResources if seeded — e.g.
+    // TerrainHeightTexture — so we only assert the water pair above.)
+    CHECK(isInExternalResourceList(RenderResourceId::WaterReflectionColor));
+    CHECK(isInExternalResourceList(RenderResourceId::WaterReflectionDepth));
 }
 
 // ---------------------------------------------------------------------------

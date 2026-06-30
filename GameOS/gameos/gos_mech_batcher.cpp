@@ -1997,6 +1997,7 @@ void GpuMechBatcher::flush() {
                 RenderCore::RenderResourceDesc d;
                 d.id        = RenderCore::RenderResourceId::MaterialGpuBuffer;
                 d.kind      = RenderCore::RenderResourceKind::Buffer;
+                d.lifetime  = RenderCore::RenderResourceLifetime::Persistent;  // persistent material table (not a pass output)
                 d.format    = RenderCore::RenderResourceFormat::BufferRaw;
                 d.debugName = "MaterialGpuBuffer";
                 d.glName    = static_cast<uint32_t>(s_mechMaterialSsbo);

@@ -210,6 +210,7 @@ void __stdcall gos_uploadTerrainHeightTex(
         RenderCore::RenderResourceDesc d;
         d.id        = RenderCore::RenderResourceId::TerrainHeightTexture;
         d.kind      = RenderCore::RenderResourceKind::Texture2D;
+        d.lifetime  = RenderCore::RenderResourceLifetime::Mission;  // static height upload, rebuilt per mission load
         d.format    = RenderCore::RenderResourceFormat::R32F;
         d.debugName = "TerrainHeightTexture";
         d.width     = static_cast<uint32_t>(g_side);

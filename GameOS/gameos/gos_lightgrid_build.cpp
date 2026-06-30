@@ -204,6 +204,7 @@ void ensureBuffers(int tileW, int tileH) {
         RenderCore::RenderResourceDesc d;
         d.id        = RenderCore::RenderResourceId::LightgridGrid;
         d.kind      = RenderCore::RenderResourceKind::Buffer;
+        d.lifetime  = RenderCore::RenderResourceLifetime::FrameLocal;  // transient lightgrid compute output, per-frame
         d.format    = RenderCore::RenderResourceFormat::BufferRaw;
         d.debugName = "LightgridGrid";
         d.glName    = static_cast<uint32_t>(s_sphereSsbo);
@@ -215,6 +216,7 @@ void ensureBuffers(int tileW, int tileH) {
         RenderCore::RenderResourceDesc d;
         d.id        = RenderCore::RenderResourceId::LightgridIndex;
         d.kind      = RenderCore::RenderResourceKind::Buffer;
+        d.lifetime  = RenderCore::RenderResourceLifetime::FrameLocal;  // transient lightgrid compute output, per-frame
         d.format    = RenderCore::RenderResourceFormat::BufferRaw;
         d.debugName = "LightgridIndex";
         d.glName    = static_cast<uint32_t>(s_indexPool);

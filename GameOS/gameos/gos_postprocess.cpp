@@ -953,6 +953,7 @@ void gosPostProcess::createFBOs(int w, int h)
         RenderCore::RenderResourceDesc dd;
         dd.id        = RenderCore::RenderResourceId::MainDepth;
         dd.kind      = RenderCore::RenderResourceKind::Texture2D;
+        dd.lifetime  = RenderCore::RenderResourceLifetime::Persistent;  // screen-sized, recreated only on resize
         dd.format    = RenderCore::RenderResourceFormat::Depth24;
         dd.debugName = "MainDepth";
         dd.width     = (uint32_t)w;
@@ -970,6 +971,7 @@ void gosPostProcess::createFBOs(int w, int h)
         RenderCore::RenderResourceDesc d;
         d.id        = RenderCore::RenderResourceId::MainColor;
         d.kind      = RenderCore::RenderResourceKind::Texture2D;
+        d.lifetime  = RenderCore::RenderResourceLifetime::Persistent;  // screen-sized, recreated only on resize
         d.format    = RenderCore::RenderResourceFormat::RGBA16F;
         d.debugName = "MainColor";
         d.width     = (uint32_t)w;
@@ -982,6 +984,7 @@ void gosPostProcess::createFBOs(int w, int h)
         RenderCore::RenderResourceDesc d;
         d.id        = RenderCore::RenderResourceId::MainNormal;
         d.kind      = RenderCore::RenderResourceKind::Texture2D;
+        d.lifetime  = RenderCore::RenderResourceLifetime::Persistent;  // screen-sized GBuffer1, recreated only on resize
         d.format    = RenderCore::RenderResourceFormat::RGBA16F;
         d.debugName = "MainNormal";
         d.width     = (uint32_t)w;
@@ -997,6 +1000,7 @@ void gosPostProcess::createFBOs(int w, int h)
         RenderCore::RenderResourceDesc d;
         d.id        = RenderCore::RenderResourceId::SceneObjectId;
         d.kind      = RenderCore::RenderResourceKind::Texture2D;
+        d.lifetime  = RenderCore::RenderResourceLifetime::Persistent;  // screen-sized GBuffer2, recreated only on resize
         d.format    = RenderCore::RenderResourceFormat::Unknown;  // GL_R32UI; no enum slot
         d.debugName = "SceneObjectId";
         d.width     = (uint32_t)w;
@@ -1031,6 +1035,7 @@ void gosPostProcess::createFBOs(int w, int h)
         RenderCore::RenderResourceDesc d;
         d.id        = RenderCore::RenderResourceId::SsaoOcclusion;
         d.kind      = RenderCore::RenderResourceKind::Texture2D;
+        d.lifetime  = RenderCore::RenderResourceLifetime::FrameLocal;  // transient AO, produced+consumed within endScene
         d.format    = RenderCore::RenderResourceFormat::R32F;  // GL_R16F storage; closest enum
         d.debugName = "SsaoOcclusion";
         d.width     = (uint32_t)ssaoW_;
@@ -1080,6 +1085,7 @@ void gosPostProcess::createFBOs(int w, int h)
         RenderCore::RenderResourceDesc cdesc;
         cdesc.id        = RenderCore::RenderResourceId::WaterReflectionColor;
         cdesc.kind      = RenderCore::RenderResourceKind::Texture2D;
+        cdesc.lifetime  = RenderCore::RenderResourceLifetime::External;  // temporal N-1 reflection target
         cdesc.format    = RenderCore::RenderResourceFormat::RGBA16F;
         cdesc.debugName = "WaterReflectionColor";
         cdesc.width     = (uint32_t)waterReflW_;
@@ -1091,6 +1097,7 @@ void gosPostProcess::createFBOs(int w, int h)
         RenderCore::RenderResourceDesc ddesc;
         ddesc.id        = RenderCore::RenderResourceId::WaterReflectionDepth;
         ddesc.kind      = RenderCore::RenderResourceKind::Texture2D;
+        ddesc.lifetime  = RenderCore::RenderResourceLifetime::External;  // temporal N-1 reflection target
         ddesc.format    = RenderCore::RenderResourceFormat::Depth24;
         ddesc.debugName = "WaterReflectionDepth";
         ddesc.width     = (uint32_t)waterReflW_;
@@ -1149,6 +1156,7 @@ void gosPostProcess::createFBOs(int w, int h)
             RenderCore::RenderResourceDesc d;
             d.id        = RenderCore::RenderResourceId::HzbPyramid;
             d.kind      = RenderCore::RenderResourceKind::Texture2D;
+            d.lifetime  = RenderCore::RenderResourceLifetime::Persistent;  // frame-persistent, survives mission reload; recreated on resize
             d.format    = RenderCore::RenderResourceFormat::R32F;
             d.debugName = "HzbPyramid";
             d.width     = (uint32_t)hzbW_;
@@ -1189,6 +1197,7 @@ void gosPostProcess::copySceneDepthForParticles()
         RenderCore::RenderResourceDesc d;
         d.id        = RenderCore::RenderResourceId::SceneDepthCopy;
         d.kind      = RenderCore::RenderResourceKind::Texture2D;
+        d.lifetime  = RenderCore::RenderResourceLifetime::FrameLocal;  // per-frame depth snapshot for soft-depth sampling
         d.format    = RenderCore::RenderResourceFormat::Depth24;  // DEPTH24_STENCIL8; closest enum
         d.debugName = "SceneDepthCopy";
         d.width     = (uint32_t)width_;
@@ -1236,6 +1245,7 @@ void gosPostProcess::copySceneColorForVfx()
         RenderCore::RenderResourceDesc d;
         d.id        = RenderCore::RenderResourceId::SceneColorCopy;
         d.kind      = RenderCore::RenderResourceKind::Texture2D;
+        d.lifetime  = RenderCore::RenderResourceLifetime::FrameLocal;  // per-frame scene-color snapshot for VFX feedback safety
         d.format    = RenderCore::RenderResourceFormat::RGBA16F;
         d.debugName = "SceneColorCopy";
         d.width     = (uint32_t)width_;
@@ -3640,6 +3650,7 @@ void gosPostProcess::initShadows()
         RenderCore::RenderResourceDesc d;
         d.id        = RenderCore::RenderResourceId::ShadowStaticMap;
         d.kind      = RenderCore::RenderResourceKind::Texture2D;
+        d.lifetime  = RenderCore::RenderResourceLifetime::Persistent;  // built outside dynamic frame order, long-lived
         d.format    = RenderCore::RenderResourceFormat::Depth24;
         d.debugName = "ShadowStaticMap";
         d.width     = static_cast<uint32_t>(shadowMapSize_);
@@ -3966,6 +3977,7 @@ void gosPostProcess::initDynamicShadows()
         RenderCore::RenderResourceDesc d;
         d.id        = RenderCore::RenderResourceId::ShadowDynamicMap;
         d.kind      = RenderCore::RenderResourceKind::Texture2D;
+        d.lifetime  = RenderCore::RenderResourceLifetime::Persistent;  // long-lived dynamic shadow target, recreated on resize
         d.format    = RenderCore::RenderResourceFormat::Depth24;
         d.debugName = "ShadowDynamicMap";
         d.width     = static_cast<uint32_t>(dynShadowMapSize_);

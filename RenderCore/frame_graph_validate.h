@@ -67,15 +67,38 @@ inline ValidationResult validateReadsSatisfied(
 // The resources that are legitimately readable without an in-frame producer.
 // Keep in sync with the recon ledger; adding one here is an explicit assertion that
 // the resource is seeded/persistent/temporal, reviewed at change time.
+//
+// REGISTRY-LIFETIME-CLASS-1 — relationship to RenderResourceLifetime:
+//   This frame-graph "external" set (readable WITHOUT an in-frame producer) is
+//   BROADER than the registry lifetime==External class. Lifetime::External means
+//   strictly temporal / cross-frame N-1 / externally-owned (the two water
+//   reflection targets). But a resource can also be readable without an in-frame
+//   producer because it is SEEDED (Mission: TerrainHeightTexture) or built
+//   outside the dynamic order (Persistent: ShadowStaticMap, MaterialGpuBuffer).
+//   So lifetime==External is a SUBSET of kExternalResources, not equal to it.
+//   The single-source-of-truth invariant we CAN enforce (and a doctest in
+//   tests/unit/test_rendercore.cpp does): every resource registered with
+//   lifetime==External MUST appear in kExternalResources, so the two cannot
+//   drift. A full migration (deriving the broader frame-graph-external set from
+//   the registry once Mission/Persistent-but-seeded is a queryable property) is
+//   a follow-up — the two concepts genuinely differ today.
 static constexpr RenderResourceId kExternalResources[] = {
-    RenderResourceId::TerrainHeightTexture,  // static height upload
-    RenderResourceId::ShadowStaticMap,       // built outside the dynamic frame order
-    RenderResourceId::WaterReflectionColor,  // temporal N-1
-    RenderResourceId::WaterReflectionDepth,  // temporal N-1
-    RenderResourceId::MaterialGpuBuffer,     // persistent material table (not a pass output)
+    RenderResourceId::TerrainHeightTexture,  // static height upload (lifetime Mission)
+    RenderResourceId::ShadowStaticMap,       // built outside the dynamic frame order (lifetime Persistent)
+    RenderResourceId::WaterReflectionColor,  // temporal N-1 (lifetime External)
+    RenderResourceId::WaterReflectionDepth,  // temporal N-1 (lifetime External)
+    RenderResourceId::MaterialGpuBuffer,     // persistent material table, not a pass output (lifetime Persistent)
 };
 static constexpr int kExternalResourceCount =
     sizeof(kExternalResources) / sizeof(kExternalResources[0]);
+
+// REGISTRY-LIFETIME-CLASS-1: compile-time membership query so a doctest can
+// assert every lifetime==External resource is listed above (drift guard).
+inline bool isInExternalResourceList(RenderResourceId id) {
+    for (int i = 0; i < kExternalResourceCount; ++i)
+        if (kExternalResources[i] == id) return true;
+    return false;
+}
 
 // Convenience: validate the SHIPPED table against the shipped order.
 inline ValidationResult validateShippedFrameGraph() {

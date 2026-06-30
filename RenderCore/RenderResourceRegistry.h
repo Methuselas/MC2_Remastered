@@ -36,6 +36,27 @@ enum class RenderResourceId : uint16_t {
     Count
 };
 
+// REGISTRY-LIFETIME-CLASS-1: how long a registered resource stays valid.
+// Observe-only metadata — the bridge to a future scheduler/backend that needs to
+// know aliasing/recreation lifetime. Vocabulary is deliberately small.
+//   Unset      — sentinel; NOT a real lifetime. A valid resource left at Unset is
+//                a registration bug (the validator fails on it). Note: this is
+//                distinct from the existing valid=false / gated-absent behavior,
+//                which means "registered but currently unavailable" and is NOT a
+//                lifetime.
+//   FrameLocal — transient, produced+consumed within a frame, aliasable.
+//   Mission    — rebuilt on each mission load (terrain SSBOs, atlases).
+//   Persistent — process/long-lived; survives mission reload (screen-sized FBO
+//                targets are recreated only on resize, still Persistent).
+//   External   — temporal / cross-frame N-1 / externally-owned (water reflection).
+enum class RenderResourceLifetime : uint8_t {
+    Unset      = 0,
+    FrameLocal = 1,
+    Mission    = 2,
+    Persistent = 3,
+    External   = 4,
+};
+
 enum class RenderResourceKind : uint8_t {
     Unknown        = 0,
     Texture2D      = 1,
@@ -63,6 +84,9 @@ struct RenderResourceDesc {
     RenderResourceId     id             = RenderResourceId::Unknown;
     RenderResourceKind   kind           = RenderResourceKind::Unknown;
     RenderResourceFormat format         = RenderResourceFormat::Unknown;
+    // REGISTRY-LIFETIME-CLASS-1: lifetime class. No safe default — a valid
+    // resource MUST set this explicitly; the validator fails on Unset.
+    RenderResourceLifetime lifetime     = RenderResourceLifetime::Unset;
     const char*          debugName      = nullptr;
     uint32_t             width          = 0;
     uint32_t             height         = 0;
@@ -92,5 +116,12 @@ const RenderResourceDesc* getRenderResourceByIndex(size_t index);
 const char* toString(RenderResourceId id);
 const char* toString(RenderResourceKind kind);
 const char* toString(RenderResourceFormat fmt);
+const char* toString(RenderResourceLifetime lifetime);
+
+// REGISTRY-LIFETIME-CLASS-1: validate that every currently-registered (valid)
+// resource has a lifetime set (!= Unset). Returns true if all valid resources
+// carry a lifetime; on failure, *offending (if non-null) receives the id of the
+// first valid resource missing a lifetime. A clean registry returns true.
+bool validateRenderResourceLifetimes(RenderResourceId* offending = nullptr);
 
 } // namespace RenderCore

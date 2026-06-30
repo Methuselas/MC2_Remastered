@@ -848,6 +848,7 @@ static void BuildTransitionMaskArray() {
         RenderCore::RenderResourceDesc d;
         d.id        = RenderCore::RenderResourceId::TransitionMaskArray;
         d.kind      = RenderCore::RenderResourceKind::Texture2DArray;
+        d.lifetime  = RenderCore::RenderResourceLifetime::Mission;  // rebuilt per mission load
         d.format    = RenderCore::RenderResourceFormat::RGBA8;  // R8 storage; closest enum slot
         d.debugName = "TransitionMaskArray";
         d.width     = static_cast<uint32_t>(S);
@@ -1302,6 +1303,7 @@ void BuildCementCatalogAtlas() {
         RenderCore::RenderResourceDesc d;
         d.id        = RenderCore::RenderResourceId::CementAtlas;
         d.kind      = RenderCore::RenderResourceKind::Texture2D;
+        d.lifetime  = RenderCore::RenderResourceLifetime::Mission;  // rebuilt per mission load
         d.format    = RenderCore::RenderResourceFormat::RGBA8;
         d.debugName = "CementAtlas";
         d.width     = static_cast<uint32_t>(atlasPixelSide);
@@ -1430,6 +1432,7 @@ void BuildDenseRecipe() {
         RenderCore::RenderResourceDesc d;
         d.id        = RenderCore::RenderResourceId::TerrainRecipeBuffer;
         d.kind      = RenderCore::RenderResourceKind::Buffer;
+        d.lifetime  = RenderCore::RenderResourceLifetime::Mission;  // rebuilt per mission load
         d.format    = RenderCore::RenderResourceFormat::BufferRaw;
         d.debugName = "TerrainRecipeBuffer";
         d.glName    = static_cast<uint32_t>(g_recipeSSBO);
@@ -1971,6 +1974,7 @@ static bool ResourcesReady() {
             RenderCore::RenderResourceDesc d;
             d.id        = RenderCore::RenderResourceId::TerrainThinBuffer;
             d.kind      = RenderCore::RenderResourceKind::Buffer;
+            d.lifetime  = RenderCore::RenderResourceLifetime::Mission;  // rebuilt per mission load (triple-buffered thin records)
             d.format    = RenderCore::RenderResourceFormat::BufferRaw;
             d.debugName = "TerrainThinBuffer";
             d.glName    = static_cast<uint32_t>(g_thinRecordSSBO);

@@ -180,6 +180,7 @@ void ensurePingPong(int halfW, int halfH) {
         RenderCore::RenderResourceDesc d;
         d.id        = RenderCore::RenderResourceId::PostprocessComputeBlur;
         d.kind      = RenderCore::RenderResourceKind::Texture2D;
+        d.lifetime  = RenderCore::RenderResourceLifetime::FrameLocal;  // transient compute-blur substrate, per-frame
         d.format    = RenderCore::RenderResourceFormat::RGBA16F;
         d.debugName = "PostprocessComputeBlur";
         d.width     = static_cast<uint32_t>(halfW);

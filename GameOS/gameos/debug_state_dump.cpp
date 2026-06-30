@@ -513,6 +513,7 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
             s << "      \"id\": \""       << RenderCore::toString(r->id)     << "\",\n";
             s << "      \"kind\": \""     << RenderCore::toString(r->kind)   << "\",\n";
             s << "      \"format\": \""   << RenderCore::toString(r->format) << "\",\n";
+            s << "      \"lifetime\": \"" << RenderCore::toString(r->lifetime) << "\",\n";  // REGISTRY-LIFETIME-CLASS-1
             s << "      \"debugName\": \"" << jsonEscape(r->debugName ? r->debugName : "") << "\",\n";
             s << "      \"width\": "   << r->width   << ",\n";
             s << "      \"height\": "  << r->height  << ",\n";
