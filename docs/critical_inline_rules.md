@@ -22,6 +22,7 @@ matching condition is met. Read them all before touching anything.
 - **Deploy:** NEVER `cp -r`. ALWAYS `cp -f` per file + `diff -q`. `cp -r` silently fails on Windows/MSYS2.
 - **Deploy ONLY to the 5 canonical deploy folders** (`mc2-win64-v0.4` / `v0.4c` / `0.4c` / `abl-validate` / `v0.3` under `A:/Games/mc2-opengl`). `deploy_payload.py` ENFORCES this (`DEPLOY_ALLOWLIST` + `--allow-new-target` override). **NEVER `cp -r` a full install to a per-lane folder** (`mc2-<lane>-test`) — each is ~5GB and bloats `A:/Games/mc2-opengl` by tens of GB. Pick a FREE canonical folder (a sibling may hold the lease) + md5-verify after. New install / release cut = deliberate `--allow-new-target`.
 - **Shaders deploy in lockstep with exe.** Any slice touching a shader MUST redeploy the shader tree, not just mc2.exe. See `memory/shader_exe_deploy_lockstep.md`.
+- **Parallel build+smoke + deploy-dir/worktree map + verification tooling:** `docs/build-parallel-and-tooling.md`.
 - **Git:** NEVER push to `alariq/mc2` origin. All work is local.
 
 ## GPU resource invariants (S2 NVIDIA hardening — enforced)
