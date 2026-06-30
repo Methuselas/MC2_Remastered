@@ -1227,6 +1227,22 @@ void gosPostProcess::copySceneColorForVfx()
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glBindTexture(GL_TEXTURE_2D, 0);
+
+        // REGISTRY-SCENECOLORCOPY-PRODUCER-1: publish the lazily-allocated scene
+        // color-copy RT (observe-only). Registered at the lazy-alloc site so glName
+        // is the live handle; invalidated in destroyFBOs (resize re-allocates
+        // lazily). Mirrors SceneDepthCopy (REGISTRY-POSTPROCESS-FBO-1). Closes the
+        // "id-without-producer" gap for SceneColorCopy (enum id 20).
+        RenderCore::RenderResourceDesc d;
+        d.id        = RenderCore::RenderResourceId::SceneColorCopy;
+        d.kind      = RenderCore::RenderResourceKind::Texture2D;
+        d.format    = RenderCore::RenderResourceFormat::RGBA16F;
+        d.debugName = "SceneColorCopy";
+        d.width     = (uint32_t)width_;
+        d.height    = (uint32_t)height_;
+        d.glName    = sceneColorCopyTex_;
+        d.valid     = true;
+        RenderCore::registerOrUpdateRenderResource(d);
     }
 
     // Texture-to-texture copy of the whole color image. Ordered after the
@@ -1290,6 +1306,11 @@ void gosPostProcess::destroyFBOs()
     if (sceneColorCopyTex_) {  // VFX-SCENECOLOR-GRAB-1
         glDeleteTextures(1, &sceneColorCopyTex_);
         sceneColorCopyTex_ = 0;
+        // REGISTRY-SCENECOLORCOPY-PRODUCER-1: mark SceneColorCopy unavailable on
+        // teardown (lazily re-allocated by copySceneColorForVfx after resize).
+        RenderCore::RenderResourceDesc inv;
+        inv.id = RenderCore::RenderResourceId::SceneColorCopy; inv.valid = false;
+        RenderCore::registerOrUpdateRenderResource(inv);
     }
     // SSAO-GTAO-LITE-MVP-1: free half-res AO target.
     if (ssaoColorTex_) {

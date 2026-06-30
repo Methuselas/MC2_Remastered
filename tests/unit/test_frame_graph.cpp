@@ -1009,6 +1009,37 @@ TEST_CASE("SceneDepthCopy: validateShippedFrameGraph still ok with VFX producer 
     CHECK(static_cast<unsigned>(r.missingResource)  == 0u);
 }
 
+// ---------------------------------------------------------------------------
+// REGISTRY-SCENECOLORCOPY-PRODUCER-1: offline tests for SceneColorCopy
+// producer declaration (closes the id-without-producer gap). Pure / GL-free.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("SceneColorCopy: VFX pass declares it in writes[]") {
+    // Ground-truth: copySceneColorForVfx() is called from gos_particle_bridge.cpp:1097
+    // during the VFX/particle flush (gated MC2_VFX_SCENECOLOR_GRAB), same window as the
+    // soft-particle depth copy. The VFX pass is the producer; before this slice the id
+    // (enum 20) had no modeled producer. Lock the declaration as a regression guard.
+    bool vfxWritesColorCopy = false;
+    for (int i = 0; i < kRenderPassContractCount; ++i) {
+        if (kRenderPassContracts[i].id != RenderPassId::VFX) continue;
+        for (int j = 0; j < 4; ++j) {
+            if (kRenderPassContracts[i].writes[j] == RenderResourceId::SceneColorCopy)
+                vfxWritesColorCopy = true;
+        }
+    }
+    CHECK(vfxWritesColorCopy == true);
+}
+
+TEST_CASE("SceneColorCopy: validateShippedFrameGraph still ok with VFX producer declared") {
+    // Adding SceneColorCopy to VFX writes must not break the shipped frame-graph DAG
+    // validation (no MAIN-order pass reads SceneColorCopy — only an isCompute PP subpass
+    // does, which the read-satisfaction walk skips), so the write is purely additive.
+    const ValidationResult r = validateShippedFrameGraph();
+    CHECK(r.ok == true);
+    CHECK(static_cast<unsigned>(r.offendingPass)    == 0u);
+    CHECK(static_cast<unsigned>(r.missingResource)  == 0u);
+}
+
 TEST_CASE("SceneDepthCopy: present in PP subgraph external set (validateShippedPostProcessSubgraph ok)") {
     // SceneDepthCopy must appear in validateShippedPostProcessSubgraph's kExternal[] so
     // that when BoxDecals (SUBGRAPH-2) reads it in a future slice, the subgraph validator
